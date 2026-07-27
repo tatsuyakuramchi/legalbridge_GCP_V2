@@ -1,0 +1,36 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: legalbridge_v2
+      POSTGRES_USER: legalbridge
+      POSTGRES_PASSWORD: legalbridge
+    ports:
+      - "5432:5432"
+    volumes:
+      - legalbridge_pgdata:/var/lib/postgresql/data
+      - ./infra/local-db:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U legalbridge -d legalbridge_v2"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: 8080
+      DATABASE_URL: postgresql://legalbridge:legalbridge@db:5432/legalbridge_v2
+      INTEGRATION_MODE: local
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  legalbridge_pgdata:
+
