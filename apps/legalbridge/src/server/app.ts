@@ -3,7 +3,22 @@ import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { DashboardSummary, DocumentFormSchema } from "../types.js";
-import { buildDocumentFormContext, validateDocumentForm } from "./documents/form-mapper.js";
+import { checkDatabase, getPool } from "./db/pool.js";
+import {
+  MemoryDraftRepository,
+  PgDraftRepository,
+  type DraftRepository
+} from "./documents/draft-repository.js";
+import { createDocumentRouter } from "./documents/routes.js";
+import {
+  MemoryTemplateRepository,
+  PgTemplateRepository,
+  type TemplateRepository
+} from "./documents/template-repository.js";
+import {
+  createIntegrationAdapters,
+  type IntegrationAdapter
+} from "./integrations/index.js";
 
 const dashboard: DashboardSummary = {
   kpis: [
@@ -77,30 +92,65 @@ const sampleSchema: DocumentFormSchema = {
   ]
 };
 
-export function createApp() {
+export interface AppDependencies {
+  templates: TemplateRepository;
+  drafts: DraftRepository;
+  integrations: IntegrationAdapter[];
+}
+
+function createDefaultDependencies(): AppDependencies {
+  const database = getPool();
+  return {
+    templates: database
+      ? new PgTemplateRepository(database)
+      : new MemoryTemplateRepository([sampleSchema]),
+    drafts: database
+      ? new PgDraftRepository(database)
+      : new MemoryDraftRepository(),
+    integrations: createIntegrationAdapters()
+  };
+}
+
+export function createApp(dependencies: AppDependencies = createDefaultDependencies()) {
   const app = express();
   app.use(cors());
   app.use(express.json({ limit: "5mb" }));
 
-  app.get("/health", (_request, response) => {
-    response.json({ ok: true, service: "legalbridge-worker-v2" });
+  app.get("/health", async (_request, response) => {
+    const database = await checkDatabase(getPool());
+    const status = database.configured && !database.reachable ? 503 : 200;
+    response.status(status).json({
+      ok: status === 200,
+      service: "legalbridge-v2",
+      database
+    });
   });
 
   app.get("/api/v2/dashboard", (_request, response) => {
     response.json(dashboard);
   });
 
-  app.get("/api/v2/document-templates/:templateKey/form-schema", (request, response) => {
-    if (request.params.templateKey !== sampleSchema.templateKey) {
-      return response.status(404).json({ error: "template not found" });
-    }
-    response.json(sampleSchema);
+  app.get("/api/v2/integrations/status", async (_request, response) => {
+    const integrations = await Promise.all(
+      dependencies.integrations.map(async (adapter) => ({
+        name: adapter.name,
+        mode: adapter.mode,
+        ...(await adapter.check())
+      }))
+    );
+    response.json({ integrations });
   });
 
-  app.post("/api/v2/documents/validate", (request, response) => {
-    const data = buildDocumentFormContext(sampleSchema, {}, request.body?.formData ?? {});
-    const errors = validateDocumentForm(sampleSchema.fields, data);
-    response.status(errors.length ? 422 : 200).json({ ok: errors.length === 0, errors });
+  app.use("/api/v2", createDocumentRouter(dependencies.templates, dependencies.drafts));
+
+  app.use((
+    error: unknown,
+    _request: express.Request,
+    response: express.Response,
+    _next: express.NextFunction
+  ) => {
+    console.error(error);
+    response.status(500).json({ error: "internal server error" });
   });
 
   if (process.env.NODE_ENV === "production") {
