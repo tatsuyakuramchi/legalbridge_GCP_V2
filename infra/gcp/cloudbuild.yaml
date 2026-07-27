@@ -26,14 +26,14 @@ steps:
     args:
       - build
       - --tag
-      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPOSITORY}/${_IMAGE}:${SHORT_SHA}
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPOSITORY}/${_IMAGE}:${BUILD_ID}
       - .
 
   - id: push-image
     name: gcr.io/cloud-builders/docker
     args:
       - push
-      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPOSITORY}/${_IMAGE}:${SHORT_SHA}
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPOSITORY}/${_IMAGE}:${BUILD_ID}
 
   - id: deploy
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
@@ -42,7 +42,7 @@ steps:
       - -ceu
       - |
         gcloud run deploy "${_SERVICE}" \
-          --image="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPOSITORY}/${_IMAGE}:${SHORT_SHA}" \
+          --image="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPOSITORY}/${_IMAGE}:${BUILD_ID}" \
           --region="${_REGION}" \
           --platform=managed \
           --no-allow-unauthenticated \
@@ -52,7 +52,7 @@ steps:
           --set-env-vars="NODE_ENV=production,INTEGRATION_MODE=local,DB_ACCESS_MODE=readonly,REQUIRE_DATABASE=true,DB_HOST=/cloudsql/${_CLOUD_SQL_INSTANCE},DB_PORT=5432,DB_NAME=${_DB_NAME},DB_USER=${_DB_USER},DB_POOL_MAX=5"
 
 images:
-  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPOSITORY}/${_IMAGE}:${SHORT_SHA}
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPOSITORY}/${_IMAGE}:${BUILD_ID}
 
 options:
   logging: CLOUD_LOGGING_ONLY
