@@ -23,10 +23,21 @@ export interface DocumentFormSchema {
   templateKey: string;
   templateVersionId: number;
   label: string;
+  category?: string;
   fields: TemplateField[];
 }
 
 export type DocumentFormData = Record<string, unknown>;
+
+export interface DocumentDraft {
+  id: number;
+  issueKey: string;
+  templateType: string;
+  formData: DocumentFormData;
+  documentNumber: string | null;
+  updatedAt: string;
+  updatedBy: string | null;
+}
 
 export interface DashboardSummary {
   kpis: Array<{ label: string; value: number; tone?: "default" | "warning" | "danger" }>;
@@ -41,4 +52,3 @@ export interface DashboardSummary {
     status: string;
   }>;
 }
-
