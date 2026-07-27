@@ -13,10 +13,7 @@ LegalBridgeのAdmin UIとDocument Workerを再構築するためのV2リポジ�
 
 ```text
 apps/
-  admin-ui/       法務オペレーション・コックピット
-  worker/         Admin UI向けWorker API v2
-packages/
-  shared/         API DTOとtemplateフォーム型
+  legalbridge/    Admin UI・API・業務処理を統合した単一アプリ
 docs/
   architecture.md
   form-db-mapping.md
@@ -25,18 +22,34 @@ docs/
 ## 起動
 
 ```bash
+cp .env.example .env
 npm install
+docker compose up -d db
 npm run dev
 ```
 
-- Admin UI: http://localhost:5173
-- Worker API: http://localhost:8080
+- 開発UI: http://localhost:5173
+- 開発API: http://localhost:8080
+
+本番ではAPIがビルド済みUIを配信し、1つのサービスとして起動します。
+
+コンテナを含む本番相当の確認:
+
+```bash
+docker compose up --build
+```
 
 ## 現在の実装範囲
 
 - 案件・期限・工程を一覧できるコックピットUI
-- Worker APIのヘルスチェックとダッシュボードAPI
+- 統合アプリ内APIのヘルスチェックとダッシュボードAPI
 - DB template駆動フォームのDTOと描画基盤
 - `field_schema`、`document_drafts.form_data`、`documents.form_data`の互換マッピング
+- 下書き保存・復元・競合検出API
+- ローカルPostgreSQL fixture
+- 外部連携の送信なしモック
+- Cloud BuildからCloud Runへデプロイする設定
 
-本番DB接続、認証、既存業務Commandの移植は後続フェーズで実装します。
+詳しい手順は[`docs/local-to-gcp.md`](docs/local-to-gcp.md)を参照してください。
+
+本番認証、文書レンダリング・発行、既存業務Command及び外部連携live adapterの移植は後続フェーズで実装します。
