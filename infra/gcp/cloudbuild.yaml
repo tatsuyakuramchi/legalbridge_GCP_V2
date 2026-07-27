@@ -1,0 +1,57 @@
+substitutions:
+  _REGION: asia-northeast1
+  _SERVICE: legalbridge-v2
+  _AR_REPOSITORY: legalbridge
+  _IMAGE: legalbridge-v2
+  _CLOUD_SQL_INSTANCE: ""
+
+steps:
+  - id: test
+    name: node:22
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        npm ci
+        npm run typecheck
+        npm test
+        npm run build
+
+  - id: build-image
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --tag
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPOSITORY}/${_IMAGE}:${SHORT_SHA}
+      - .
+
+  - id: push-image
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPOSITORY}/${_IMAGE}:${SHORT_SHA}
+
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        extra_args=()
+        if [[ -n "${_CLOUD_SQL_INSTANCE}" ]]; then
+          extra_args+=(--add-cloudsql-instances="${_CLOUD_SQL_INSTANCE}")
+        fi
+        gcloud run deploy "${_SERVICE}" \
+          --image="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPOSITORY}/${_IMAGE}:${SHORT_SHA}" \
+          --region="${_REGION}" \
+          --platform=managed \
+          --no-allow-unauthenticated \
+          --set-env-vars="NODE_ENV=production,INTEGRATION_MODE=local" \
+          "${extra_args[@]}"
+
+images:
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPOSITORY}/${_IMAGE}:${SHORT_SHA}
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
