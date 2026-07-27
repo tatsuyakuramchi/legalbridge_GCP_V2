@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
-import type { DashboardSummary, DocumentFormSchema } from "../types";
+import type {
+  DashboardSummary,
+  DocumentDraft,
+  DocumentFormData,
+  DocumentFormSchema
+} from "../types";
 
 const fallback: DashboardSummary = {
   kpis: [
@@ -98,19 +103,99 @@ function Dashboard({ dashboard, onCreateDocument }: { dashboard: DashboardSummar
 }
 
 function DocumentForm({ schema }: { schema: DocumentFormSchema | null }) {
+  const issueKey = "LOCAL-1";
+  const [formData, setFormData] = useState<DocumentFormData>({});
+  const [draft, setDraft] = useState<DocumentDraft | null>(null);
+  const [notice, setNotice] = useState("");
+  const [previewHtml, setPreviewHtml] = useState("");
+
+  useEffect(() => {
+    if (!schema) return;
+    fetch(`/api/v2/document-form-context?template_key=${encodeURIComponent(schema.templateKey)}&issue_key=${issueKey}`)
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error("context load failed")))
+      .then((context) => {
+        setFormData(context.formData ?? {});
+        setDraft(context.draft ?? null);
+      })
+      .catch(() => setNotice("初期値を取得できませんでした"));
+  }, [schema]);
+
   if (!schema) return <section className="page"><h1>文書作成</h1><p>フォーム定義を読み込んでいます。</p></section>;
   const groups = [...new Set(schema.fields.map((field) => field.group ?? "基本情報"))];
+
+  function updateValue(name: string, value: unknown) {
+    setFormData((current) => ({ ...current, [name]: value }));
+    setNotice("未保存の変更があります");
+  }
+
+  async function saveDraft() {
+    const response = await fetch(`/api/v2/document-drafts/${issueKey}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        templateType: schema!.templateKey,
+        formData,
+        updatedBy: "local@example.com",
+        expectedUpdatedAt: draft?.updatedAt ?? null
+      })
+    });
+    const result = await response.json();
+    if (response.status === 409) {
+      setDraft(result.current);
+      setNotice("別の画面で更新されています。内容を再確認してください");
+      return;
+    }
+    if (!response.ok) {
+      setNotice("下書き保存に失敗しました");
+      return;
+    }
+    setDraft(result.draft);
+    setNotice("下書きを保存しました");
+  }
+
+  async function validate() {
+    const response = await fetch("/api/v2/documents/validate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        templateKey: schema!.templateKey,
+        templateVersionId: schema!.templateVersionId,
+        formData
+      })
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      setNotice(result.errors?.map((item: { message: string }) => item.message).join("、") ?? result.error);
+      return;
+    }
+    const previewResponse = await fetch("/api/v2/documents/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        templateKey: schema!.templateKey,
+        templateVersionId: schema!.templateVersionId,
+        formData
+      })
+    });
+    const preview = await previewResponse.json();
+    setPreviewHtml(previewResponse.ok ? preview.html : "");
+    setNotice(previewResponse.ok ? "入力検証とプレビュー生成が完了しました" : preview.error);
+  }
+
   return (
     <section className="page">
-      <div className="page-title"><div><p>DOCUMENT COMMAND</p><h1>{schema.label}</h1></div><button className="primary">下書き保存</button></div>
+      <div className="page-title">
+        <div><p>DOCUMENT COMMAND</p><h1>{schema.label}</h1><small>{issueKey} {notice && `・${notice}`}</small></div>
+        <div className="actions"><button onClick={validate}>入力確認</button><button className="primary" onClick={saveDraft}>下書き保存</button></div>
+      </div>
       <div className="form-layout">
         <nav className="form-nav">{groups.map((group, index) => <a key={group} href={`#group-${index}`}>{group}</a>)}</nav>
         <form className="form-panel">
           {groups.map((group, index) => <section id={`group-${index}`} key={group}><h2>{group}</h2>
-            <div className="field-grid">{schema.fields.filter((field) => (field.group ?? "基本情報") === group && field.type !== "hidden").map((field) => <label key={field.name}><span>{field.label ?? field.name}{field.required && <em>必須</em>}</span>{field.type === "textarea" ? <textarea placeholder={field.placeholder} /> : field.type === "select" ? <select>{field.options?.map((option) => <option key={option}>{option}</option>)}</select> : <input type={field.type === "number" ? "number" : field.type === "date" ? "date" : "text"} placeholder={field.placeholder} />}<small>{field.helpText}{field.dbField && ` 自動補完: ${field.dbField}`}</small></label>)}</div>
+            <div className="field-grid">{schema.fields.filter((field) => (field.group ?? "基本情報") === group && field.type !== "hidden").map((field) => <label key={field.name}><span>{field.label ?? field.name}{field.required && <em>必須</em>}</span>{field.type === "textarea" ? <textarea value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, event.target.value)} placeholder={field.placeholder} /> : field.type === "select" ? <select value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, event.target.value)}><option value="">選択してください</option>{field.options?.map((option) => <option key={option}>{option}</option>)}</select> : field.type === "boolean" ? <input type="checkbox" checked={Boolean(formData[field.name])} onChange={(event) => updateValue(field.name, event.target.checked)} /> : <input value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, field.type === "number" ? Number(event.target.value) : event.target.value)} type={field.type === "number" ? "number" : field.type === "date" ? "date" : "text"} placeholder={field.placeholder} />}<small>{field.helpText}{field.dbField && ` 自動補完: ${field.dbField}`}</small></label>)}</div>
           </section>)}
         </form>
-        <aside className="preview"><strong>文書プレビュー</strong><div>入力内容がDB templateへ反映されます。</div><small>Template version: {schema.templateVersionId}</small></aside>
+        <aside className="preview"><strong>文書プレビュー</strong>{previewHtml ? <iframe title="文書プレビュー" sandbox="" srcDoc={previewHtml} /> : <div>「入力確認」でDB templateによるプレビューを生成します。</div>}<small>Template version: {schema.templateVersionId}</small></aside>
       </div>
     </section>
   );
