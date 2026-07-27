@@ -19,6 +19,7 @@ import {
   createIntegrationAdapters,
   type IntegrationAdapter
 } from "./integrations/index.js";
+import { config } from "./config.js";
 
 const dashboard: DashboardSummary = {
   kpis: [
@@ -98,6 +99,11 @@ export interface AppDependencies {
   integrations: IntegrationAdapter[];
 }
 
+export interface AppOptions {
+  accessMode: "readonly" | "readwrite";
+  requireDatabase: boolean;
+}
+
 function createDefaultDependencies(): AppDependencies {
   const database = getPool();
   return {
@@ -111,18 +117,40 @@ function createDefaultDependencies(): AppDependencies {
   };
 }
 
-export function createApp(dependencies: AppDependencies = createDefaultDependencies()) {
+export function createApp(
+  dependencies: AppDependencies = createDefaultDependencies(),
+  options: AppOptions = {
+    accessMode: config.databaseAccessMode,
+    requireDatabase: config.requireDatabase
+  }
+) {
   const app = express();
   app.use(cors());
   app.use(express.json({ limit: "5mb" }));
 
   app.get("/health", async (_request, response) => {
     const database = await checkDatabase(getPool());
-    const status = database.configured && !database.reachable ? 503 : 200;
+    const databaseUnavailable =
+      (options.requireDatabase && !database.configured) ||
+      (database.configured && !database.reachable);
+    const readOnlyMismatch =
+      options.accessMode === "readonly" &&
+      database.reachable &&
+      database.readOnly !== true;
+    const status = databaseUnavailable || readOnlyMismatch ? 503 : 200;
     response.status(status).json({
       ok: status === 200,
       service: "legalbridge-v2",
+      accessMode: options.accessMode,
       database
+    });
+  });
+
+  app.get("/api/v2/runtime", (_request, response) => {
+    response.json({
+      service: "legalbridge-v2",
+      accessMode: options.accessMode,
+      integrations: config.integrationMode
     });
   });
 
@@ -139,6 +167,23 @@ export function createApp(dependencies: AppDependencies = createDefaultDependenc
       }))
     );
     response.json({ integrations });
+  });
+
+  app.use("/api/v2", (request, response, next) => {
+    if (options.accessMode !== "readonly") return next();
+
+    const safeMethods = new Set(["GET", "HEAD", "OPTIONS"]);
+    const safePostPaths = new Set([
+      "/documents/validate",
+      "/documents/preview"
+    ]);
+    if (safeMethods.has(request.method)) return next();
+    if (request.method === "POST" && safePostPaths.has(request.path)) return next();
+
+    return response.status(403).json({
+      error: "read-only environment",
+      code: "READ_ONLY_MODE"
+    });
   });
 
   app.use("/api/v2", createDocumentRouter(dependencies.templates, dependencies.drafts));
