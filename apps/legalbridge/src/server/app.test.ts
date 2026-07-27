@@ -36,6 +36,17 @@ function app() {
   });
 }
 
+function readOnlyApp() {
+  return createApp({
+    templates: new MemoryTemplateRepository([schema]),
+    drafts: new MemoryDraftRepository(),
+    integrations: createIntegrationAdapters()
+  }, {
+    accessMode: "readonly",
+    requireDatabase: false
+  });
+}
+
 test("DB template由来のフォーム定義を返す", async () => {
   const response = await request(app())
     .get("/api/v2/document-templates/purchase_order/form-schema")
@@ -96,4 +107,38 @@ test("DB templateの現行版でHTMLをプレビューする", async () => {
     .expect(200);
   assert.match(response.body.html, /新商品制作/);
   assert.equal(response.body.templateVersionId, 10);
+});
+
+test("読取専用環境では下書き保存を拒否する", async () => {
+  const response = await request(readOnlyApp())
+    .put("/api/v2/document-drafts/LOCAL-10")
+    .send({
+      templateType: "purchase_order",
+      formData: { PROJECT_TITLE: "保存されないデータ" }
+    })
+    .expect(403);
+  assert.equal(response.body.code, "READ_ONLY_MODE");
+});
+
+test("読取専用環境でも入力検証とプレビューを許可する", async () => {
+  await request(readOnlyApp())
+    .post("/api/v2/documents/validate")
+    .send({
+      templateKey: "purchase_order",
+      templateVersionId: 10,
+      formData: {
+        PROJECT_TITLE: "プレビュー対象",
+        ORDER_DATE: "2026-07-27"
+      }
+    })
+    .expect(200);
+
+  await request(readOnlyApp())
+    .post("/api/v2/documents/preview")
+    .send({
+      templateKey: "purchase_order",
+      templateVersionId: 10,
+      formData: { PROJECT_TITLE: "プレビュー対象" }
+    })
+    .expect(200);
 });

@@ -27,9 +27,14 @@ export function App() {
   const [dashboard, setDashboard] = useState(fallback);
   const [schema, setSchema] = useState<DocumentFormSchema | null>(null);
   const [view, setView] = useState<"home" | "document">("home");
+  const [readOnly, setReadOnly] = useState(false);
 
   useEffect(() => {
     fetch("/api/v2/dashboard").then((response) => response.ok && response.json()).then((data) => data && setDashboard(data)).catch(() => undefined);
+    fetch("/api/v2/runtime")
+      .then((response) => response.ok ? response.json() : Promise.reject())
+      .then((runtime) => setReadOnly(runtime.accessMode === "readonly"))
+      .catch(() => undefined);
   }, []);
 
   async function openDocumentForm() {
@@ -53,6 +58,11 @@ export function App() {
       </aside>
 
       <main>
+        {readOnly && (
+          <div className="readonly-banner">
+            読取専用プレビュー環境：本番データの保存・更新・削除・外部送信は停止しています
+          </div>
+        )}
         <header>
           <input aria-label="グローバル検索" placeholder="案件、文書、契約、作品を検索" />
           <div className="profile">法務担当</div>
@@ -61,7 +71,7 @@ export function App() {
         {view === "home" ? (
           <Dashboard dashboard={dashboard} onCreateDocument={openDocumentForm} />
         ) : (
-          <DocumentForm schema={schema} />
+          <DocumentForm schema={schema} readOnly={readOnly} />
         )}
       </main>
     </div>
@@ -102,7 +112,13 @@ function Dashboard({ dashboard, onCreateDocument }: { dashboard: DashboardSummar
   );
 }
 
-function DocumentForm({ schema }: { schema: DocumentFormSchema | null }) {
+function DocumentForm({
+  schema,
+  readOnly
+}: {
+  schema: DocumentFormSchema | null;
+  readOnly: boolean;
+}) {
   const issueKey = "LOCAL-1";
   const [formData, setFormData] = useState<DocumentFormData>({});
   const [draft, setDraft] = useState<DocumentDraft | null>(null);
@@ -129,6 +145,10 @@ function DocumentForm({ schema }: { schema: DocumentFormSchema | null }) {
   }
 
   async function saveDraft() {
+    if (readOnly) {
+      setNotice("読取専用環境のため下書きは保存されません");
+      return;
+    }
     const response = await fetch(`/api/v2/document-drafts/${issueKey}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -186,7 +206,17 @@ function DocumentForm({ schema }: { schema: DocumentFormSchema | null }) {
     <section className="page">
       <div className="page-title">
         <div><p>DOCUMENT COMMAND</p><h1>{schema.label}</h1><small>{issueKey} {notice && `・${notice}`}</small></div>
-        <div className="actions"><button onClick={validate}>入力確認</button><button className="primary" onClick={saveDraft}>下書き保存</button></div>
+        <div className="actions">
+          <button onClick={validate}>入力確認</button>
+          <button
+            className="primary"
+            onClick={saveDraft}
+            disabled={readOnly}
+            title={readOnly ? "読取専用環境では保存できません" : undefined}
+          >
+            {readOnly ? "下書き保存（停止中）" : "下書き保存"}
+          </button>
+        </div>
       </div>
       <div className="form-layout">
         <nav className="form-nav">{groups.map((group, index) => <a key={group} href={`#group-${index}`}>{group}</a>)}</nav>
