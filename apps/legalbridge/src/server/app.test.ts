@@ -6,6 +6,7 @@ import { MemoryDraftRepository } from "./documents/draft-repository.js";
 import { MemoryTemplateRepository } from "./documents/template-repository.js";
 import { createIntegrationAdapters } from "./integrations/index.js";
 import type { DocumentFormSchema } from "../types.js";
+import { buildIndividualLicenseV3Context, individualLicenseV3Fields } from "./documents/individual-license-v3.js";
 
 const schema: DocumentFormSchema = {
   templateKey: "purchase_order",
@@ -194,4 +195,26 @@ test("読取専用環境でも入力検証とプレビューを許可する", as
       formData: { PROJECT_TITLE: "プレビュー対象" }
     })
     .expect(200);
+});
+
+test("空field_schemaを補うV3基本フォーム定義を持つ", () => {
+  assert.ok(individualLicenseV3Fields.length >= 20);
+  assert.ok(individualLicenseV3Fields.some((field) => field.name === "Licensor_氏名会社名"));
+});
+
+test("V3の取引形態と構成要素から加算料率を構築する", () => {
+  const context = buildIndividualLicenseV3Context({
+    契約書番号: "LIC-TEST-1",
+    v3_conds: [
+      { id: "sale", name: "製造販売", addon: true },
+      { id: "sub", name: "サブライセンス", addon: false, fixedRate: "50" }
+    ],
+    v3_lcs: [
+      { material_code: "LO-1", name: "原作A", rates: { sale: "5" } },
+      { material_code: "LO-2", name: "原作B", rates: { sale: "2" } }
+    ]
+  });
+  assert.equal(context.contractNo, "LIC-TEST-1");
+  assert.equal(context.conds[0].appliedRate, "7%");
+  assert.equal(context.conds[1].appliedRate, "50%");
 });
