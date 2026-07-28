@@ -7,6 +7,7 @@ import { MemoryTemplateRepository } from "./documents/template-repository.js";
 import { createIntegrationAdapters } from "./integrations/index.js";
 import type { DocumentFormSchema } from "../types.js";
 import { buildIndividualLicenseV3Context, individualLicenseV3Fields } from "./documents/individual-license-v3.js";
+import { inspectTemplateCompatibility } from "./documents/compatibility.js";
 
 const schema: DocumentFormSchema = {
   templateKey: "purchase_order",
@@ -217,4 +218,16 @@ test("V3の取引形態と構成要素から加算料率を構築する", () => 
   assert.equal(context.contractNo, "LIC-TEST-1");
   assert.equal(context.conds[0].appliedRate, "7%");
   assert.equal(context.conds[1].appliedRate, "50%");
+});
+
+test("template互換性検査で不足helperとpartialを検出する", () => {
+  const report = inspectTemplateCompatibility(schema, "<p>{{unknownHelper PROJECT_TITLE}}</p>{{> missing_terms}}", {});
+  assert.equal(report.status, "error");
+  assert.deepEqual(report.missingHelpers, ["unknownHelper"]);
+  assert.deepEqual(report.missingPartials, ["missing_terms"]);
+});
+test("template互換性レポートAPIを返す", async () => {
+  const response = await request(app()).get("/api/v2/document-templates/compatibility-report").expect(200);
+  assert.equal(response.body.summary.total, 1);
+  assert.equal(response.body.reports[0].templateKey, "purchase_order");
 });
