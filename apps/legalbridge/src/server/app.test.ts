@@ -109,6 +109,34 @@ test("DB templateの現行版でHTMLをプレビューする", async () => {
   assert.equal(response.body.templateVersionId, 10);
 });
 
+test("旧Worker互換helperと日付展開を使ってプレビューする", async () => {
+  const helperApp = createApp({
+    templates: new MemoryTemplateRepository(
+      [schema],
+      {
+        purchase_order:
+          "<p>{{concat PROJECT_TITLE ' / ' ORDER_DATE_YEAR}}</p><p>{{formatYen AMOUNT}}</p>"
+      }
+    ),
+    drafts: new MemoryDraftRepository(),
+    integrations: createIntegrationAdapters()
+  });
+  const response = await request(helperApp)
+    .post("/api/v2/documents/preview")
+    .send({
+      templateKey: "purchase_order",
+      templateVersionId: 10,
+      formData: {
+        PROJECT_TITLE: "制作業務",
+        ORDER_DATE: "2026-07-28",
+        AMOUNT: 120000
+      }
+    })
+    .expect(200);
+  assert.match(response.body.html, /制作業務 \/ 2026/);
+  assert.match(response.body.html, /¥ 120,000/);
+});
+
 test("DBのpartialを登録して文書プレビューへ展開する", async () => {
   const partialApp = createApp({
     templates: new MemoryTemplateRepository(
