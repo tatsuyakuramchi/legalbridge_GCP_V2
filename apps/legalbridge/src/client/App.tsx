@@ -6,6 +6,8 @@ import type {
   DocumentFormSchema
 } from "../types";
 
+type CompatibilityReport = { summary: { total: number; ok: number; warning: number; error: number }; reports: Array<{ templateKey: string; status: "ok" | "warning" | "error"; missingHelpers: string[]; missingPartials: string[]; unmappedVariables: string[]; renderError?: string }> };
+
 const fallback: DashboardSummary = {
   kpis: [
     { label: "対応待ち", value: 12, tone: "warning" },
@@ -27,6 +29,7 @@ export function App() {
   const [dashboard, setDashboard] = useState(fallback);
   const [templates, setTemplates] = useState<DocumentFormSchema[]>([]);
   const [schema, setSchema] = useState<DocumentFormSchema | null>(null);
+  const [compatibility, setCompatibility] = useState<CompatibilityReport | null>(null);
   const [view, setView] = useState<"home" | "templates" | "document">("home");
   const [readOnly, setReadOnly] = useState(false);
 
@@ -40,6 +43,7 @@ export function App() {
       .then((response) => response.ok ? response.json() : Promise.reject())
       .then((data) => setTemplates(data.templates ?? []))
       .catch(() => undefined);
+    fetch("/api/v2/document-templates/compatibility-report").then((response) => response.ok ? response.json() : Promise.reject()).then(setCompatibility).catch(() => undefined);
   }, []);
 
   async function openDocumentForm(templateKey: string) {
@@ -85,7 +89,7 @@ export function App() {
           <Dashboard dashboard={dashboard} onCreateDocument={() => setView("templates")} />
         )}
         {view === "templates" && (
-          <TemplateCatalog templates={templates} onSelect={openDocumentForm} />
+          <TemplateCatalog templates={templates} compatibility={compatibility} onSelect={openDocumentForm} />
         )}
         {view === "document" && (
           <DocumentForm
@@ -101,9 +105,11 @@ export function App() {
 
 function TemplateCatalog({
   templates,
+  compatibility,
   onSelect
 }: {
   templates: DocumentFormSchema[];
+  compatibility: CompatibilityReport | null;
   onSelect: (templateKey: string) => void;
 }) {
   const [query, setQuery] = useState("");
@@ -148,6 +154,7 @@ function TemplateCatalog({
         </select>
         <span>{visibleTemplates.length}件</span>
       </div>
+      {compatibility && <div className="compatibility-summary"><strong>Template互換性検査</strong><span className="compat-ok">正常 {compatibility.summary.ok}</span><span className="compat-warning">要確認 {compatibility.summary.warning}</span><span className="compat-error">エラー {compatibility.summary.error}</span></div>}
       {visibleTemplates.length ? (
         <div className="template-grid">
           {visibleTemplates.map((template) => (
@@ -160,6 +167,7 @@ function TemplateCatalog({
               <strong>{template.label}</strong>
               <small>{template.templateKey}</small>
               <em>{template.fields.length}項目</em>
+              {(() => { const result = compatibility?.reports.find((item) => item.templateKey === template.templateKey); return result && <i className={`compat-badge ${result.status}`} title={[result.renderError, result.missingHelpers.length ? `helper: ${result.missingHelpers.join(", ")}` : "", result.missingPartials.length ? `partial: ${result.missingPartials.join(", ")}` : "", result.unmappedVariables.length ? `未マッピング: ${result.unmappedVariables.join(", ")}` : ""].filter(Boolean).join("\n")}>{result.status === "ok" ? "互換" : result.status === "warning" ? "要確認" : "エラー"}</i>; })()}
             </button>
           ))}
         </div>
