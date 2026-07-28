@@ -25,8 +25,9 @@ const fallback: DashboardSummary = {
 
 export function App() {
   const [dashboard, setDashboard] = useState(fallback);
+  const [templates, setTemplates] = useState<DocumentFormSchema[]>([]);
   const [schema, setSchema] = useState<DocumentFormSchema | null>(null);
-  const [view, setView] = useState<"home" | "document">("home");
+  const [view, setView] = useState<"home" | "templates" | "document">("home");
   const [readOnly, setReadOnly] = useState(false);
 
   useEffect(() => {
@@ -35,11 +36,18 @@ export function App() {
       .then((response) => response.ok ? response.json() : Promise.reject())
       .then((runtime) => setReadOnly(runtime.accessMode === "readonly"))
       .catch(() => undefined);
+    fetch("/api/v2/document-templates")
+      .then((response) => response.ok ? response.json() : Promise.reject())
+      .then((data) => setTemplates(data.templates ?? []))
+      .catch(() => undefined);
   }, []);
 
-  async function openDocumentForm() {
-    const response = await fetch("/api/v2/document-templates/purchase_order/form-schema");
-    if (response.ok) setSchema(await response.json());
+  async function openDocumentForm(templateKey: string) {
+    const response = await fetch(
+      `/api/v2/document-templates/${encodeURIComponent(templateKey)}/form-schema`
+    );
+    if (!response.ok) return;
+    setSchema(await response.json());
     setView("document");
   }
 
@@ -50,7 +58,12 @@ export function App() {
         <nav>
           <button className={view === "home" ? "active" : ""} onClick={() => setView("home")}>ホーム</button>
           <button>案件</button>
-          <button className={view === "document" ? "active" : ""} onClick={openDocumentForm}>文書</button>
+          <button
+            className={view === "templates" || view === "document" ? "active" : ""}
+            onClick={() => setView("templates")}
+          >
+            文書
+          </button>
           <button>台帳</button>
           <button>管理</button>
         </nav>
@@ -68,13 +81,92 @@ export function App() {
           <div className="profile">法務担当</div>
         </header>
 
-        {view === "home" ? (
-          <Dashboard dashboard={dashboard} onCreateDocument={openDocumentForm} />
-        ) : (
-          <DocumentForm schema={schema} readOnly={readOnly} />
+        {view === "home" && (
+          <Dashboard dashboard={dashboard} onCreateDocument={() => setView("templates")} />
+        )}
+        {view === "templates" && (
+          <TemplateCatalog templates={templates} onSelect={openDocumentForm} />
+        )}
+        {view === "document" && (
+          <DocumentForm
+            schema={schema}
+            readOnly={readOnly}
+            onBack={() => setView("templates")}
+          />
         )}
       </main>
     </div>
+  );
+}
+
+function TemplateCatalog({
+  templates,
+  onSelect
+}: {
+  templates: DocumentFormSchema[];
+  onSelect: (templateKey: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [category, setCategory] = useState("すべて");
+  const categories = [
+    "すべて",
+    ...new Set(templates.map((template) => template.category ?? "未分類"))
+  ];
+  const normalizedQuery = query.trim().toLowerCase();
+  const visibleTemplates = templates.filter((template) => {
+    const matchesCategory =
+      category === "すべて" || (template.category ?? "未分類") === category;
+    const matchesQuery =
+      !normalizedQuery ||
+      template.label.toLowerCase().includes(normalizedQuery) ||
+      template.templateKey.toLowerCase().includes(normalizedQuery);
+    return matchesCategory && matchesQuery;
+  });
+
+  return (
+    <section className="page template-catalog">
+      <div className="page-title">
+        <div>
+          <p>DOCUMENT TEMPLATES</p>
+          <h1>文書を作成</h1>
+          <small>DB登録済みの有効な文書template {templates.length}件</small>
+        </div>
+      </div>
+      <div className="template-toolbar">
+        <input
+          aria-label="templateを検索"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="文書名またはtemplate keyで検索"
+        />
+        <select
+          aria-label="カテゴリ"
+          value={category}
+          onChange={(event) => setCategory(event.target.value)}
+        >
+          {categories.map((item) => <option key={item}>{item}</option>)}
+        </select>
+        <span>{visibleTemplates.length}件</span>
+      </div>
+      {visibleTemplates.length ? (
+        <div className="template-grid">
+          {visibleTemplates.map((template) => (
+            <button
+              className="template-card"
+              key={template.templateKey}
+              onClick={() => onSelect(template.templateKey)}
+            >
+              <span>{template.category ?? "未分類"}</span>
+              <strong>{template.label}</strong>
+              <small>{template.templateKey}</small>
+              <em>{template.fields.length}項目</em>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="empty-state">条件に一致する文書templateがありません。</div>
+      )}
+    </section>
   );
 }
 
@@ -114,10 +206,12 @@ function Dashboard({ dashboard, onCreateDocument }: { dashboard: DashboardSummar
 
 function DocumentForm({
   schema,
-  readOnly
+  readOnly,
+  onBack
 }: {
   schema: DocumentFormSchema | null;
   readOnly: boolean;
+  onBack: () => void;
 }) {
   const issueKey = "LOCAL-1";
   const [formData, setFormData] = useState<DocumentFormData>({});
@@ -205,7 +299,12 @@ function DocumentForm({
   return (
     <section className="page">
       <div className="page-title">
-        <div><p>DOCUMENT COMMAND</p><h1>{schema.label}</h1><small>{issueKey} {notice && `・${notice}`}</small></div>
+        <div>
+          <button className="text-button" onClick={onBack}>← template一覧</button>
+          <p>DOCUMENT COMMAND</p>
+          <h1>{schema.label}</h1>
+          <small>{schema.templateKey}・{schema.fields.length}項目 {notice && `・${notice}`}</small>
+        </div>
         <div className="actions">
           <button onClick={validate}>入力確認</button>
           <button
