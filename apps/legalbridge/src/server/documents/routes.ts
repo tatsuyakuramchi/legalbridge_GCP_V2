@@ -5,6 +5,7 @@ import type { DraftRepository } from "./draft-repository.js";
 import { DraftConflictError } from "./draft-repository.js";
 import type { TemplateRepository } from "./template-repository.js";
 import { buildDocumentFormContext, validateDocumentForm } from "./form-mapper.js";
+import { buildRenderContext, registerLegacyHelpers } from "./rendering.js";
 
 const saveDraftSchema = z.object({
   templateType: z.string().min(1),
@@ -149,13 +150,20 @@ export function createDocumentRouter(
           currentTemplateVersionId: template.templateVersionId
         });
       }
-      const render = Handlebars.compile(template.htmlSource, {
+      const handlebars = Handlebars.create();
+      registerLegacyHelpers(handlebars);
+      const partials = await templates.findPartials();
+      for (const [name, source] of Object.entries(partials)) {
+        handlebars.registerPartial(name, source);
+      }
+      const render = handlebars.compile(template.htmlSource, {
         strict: false,
         noEscape: false
       });
       response.json({
         templateVersionId: template.templateVersionId,
-        html: render(input.formData)
+        partials: Object.keys(partials),
+        html: render(buildRenderContext(input.formData))
       });
     } catch (error) {
       if (error instanceof z.ZodError) {

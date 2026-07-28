@@ -4,6 +4,7 @@ import type { DocumentFormSchema, TemplateField } from "../../types.js";
 export interface TemplateRepository {
   list(): Promise<DocumentFormSchema[]>;
   findCurrent(templateKey: string): Promise<DocumentFormSchema | null>;
+  findPartials(): Promise<Record<string, string>>;
   findRenderSource(templateKey: string): Promise<{
     templateVersionId: number;
     htmlSource: string;
@@ -48,6 +49,18 @@ export class PgTemplateRepository implements TemplateRepository {
       ? { templateVersionId: row.template_version_id, htmlSource: row.html_source }
       : null;
   }
+
+  async findPartials() {
+    const result = await this.database.query<Pick<TemplateRow, "template_key" | "html_source">>(
+      `${BASE_QUERY}
+       WHERE dt.kind = 'partial'
+         AND dt.is_active = TRUE
+       ORDER BY dt.template_key`
+    );
+    return Object.fromEntries(
+      result.rows.map((row) => [row.template_key, row.html_source])
+    );
+  }
 }
 
 interface TemplateRow {
@@ -87,7 +100,8 @@ export class MemoryTemplateRepository implements TemplateRepository {
     private readonly templates: DocumentFormSchema[],
     private readonly htmlSources: Record<string, string> = {
       purchase_order: "<h1>発注書</h1><p>{{PROJECT_TITLE}}</p><p>{{VENDOR_NAME}}</p><p>{{ORDER_DATE}}</p>"
-    }
+    },
+    private readonly partialSources: Record<string, string> = {}
   ) {}
 
   async list() {
@@ -104,5 +118,9 @@ export class MemoryTemplateRepository implements TemplateRepository {
     return template && htmlSource
       ? { templateVersionId: template.templateVersionId, htmlSource }
       : null;
+  }
+
+  async findPartials() {
+    return this.partialSources;
   }
 }
