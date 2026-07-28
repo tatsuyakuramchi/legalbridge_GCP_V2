@@ -61,7 +61,13 @@ export async function checkDatabase(database: DatabasePool | null) {
       readOnly: result.rows[0]?.transaction_read_only ?? false,
       currentDatabase: result.rows[0]?.current_database ?? null
     };
-  } catch {
+  } catch (error) {
+    const databaseError = error as Error & { code?: string };
+    console.error("Database health check failed", {
+      name: databaseError?.name ?? "UnknownError",
+      code: databaseError?.code ?? "UNKNOWN",
+      message: databaseError?.message ?? "Unknown database error"
+    });
     return {
       configured: true,
       reachable: false,
