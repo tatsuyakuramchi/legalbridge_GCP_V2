@@ -231,3 +231,10 @@ test("template互換性レポートAPIを返す", async () => {
   assert.equal(response.body.summary.total, 1);
   assert.equal(response.body.reports[0].templateKey, "purchase_order");
 });
+
+test("elseとeach内のローカル変数を誤検出しない", () => {
+  const report = inspectTemplateCompatibility(schema, "{{#if PROJECT_TITLE}}ok{{else if VENDOR_NAME}}fallback{{/if}}{{#each items}}{{item_name}}{{formatYen amount}}{{/each}}", {});
+  assert.ok(!report.missingHelpers.includes("else"));
+  assert.ok(!report.unmappedVariables.includes("item_name"));
+  assert.ok(!report.unmappedVariables.includes("amount"));
+});
