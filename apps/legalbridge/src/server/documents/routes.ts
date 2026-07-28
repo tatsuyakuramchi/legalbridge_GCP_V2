@@ -149,12 +149,18 @@ export function createDocumentRouter(
           currentTemplateVersionId: template.templateVersionId
         });
       }
-      const render = Handlebars.compile(template.htmlSource, {
+      const handlebars = Handlebars.create();
+      const partials = await templates.findPartials();
+      for (const [name, source] of Object.entries(partials)) {
+        handlebars.registerPartial(name, source);
+      }
+      const render = handlebars.compile(template.htmlSource, {
         strict: false,
         noEscape: false
       });
       response.json({
         templateVersionId: template.templateVersionId,
+        partials: Object.keys(partials),
         html: render(input.formData)
       });
     } catch (error) {
