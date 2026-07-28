@@ -109,6 +109,31 @@ test("DB templateの現行版でHTMLをプレビューする", async () => {
   assert.equal(response.body.templateVersionId, 10);
 });
 
+test("DBのpartialを登録して文書プレビューへ展開する", async () => {
+  const partialApp = createApp({
+    templates: new MemoryTemplateRepository(
+      [schema],
+      { purchase_order: "<main>{{PROJECT_TITLE}}{{> terms_spot_2026}}</main>" },
+      { terms_spot_2026: "<footer>共通条件：{{ORDER_DATE}}</footer>" }
+    ),
+    drafts: new MemoryDraftRepository(),
+    integrations: createIntegrationAdapters()
+  });
+  const response = await request(partialApp)
+    .post("/api/v2/documents/preview")
+    .send({
+      templateKey: "purchase_order",
+      templateVersionId: 10,
+      formData: {
+        PROJECT_TITLE: "制作業務",
+        ORDER_DATE: "2026-07-28"
+      }
+    })
+    .expect(200);
+  assert.match(response.body.html, /共通条件：2026-07-28/);
+  assert.deepEqual(response.body.partials, ["terms_spot_2026"]);
+});
+
 test("読取専用環境では下書き保存を拒否する", async () => {
   const response = await request(readOnlyApp())
     .put("/api/v2/document-drafts/LOCAL-10")
