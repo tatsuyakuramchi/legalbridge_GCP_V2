@@ -6,6 +6,7 @@ import { DraftConflictError } from "./draft-repository.js";
 import type { TemplateRepository } from "./template-repository.js";
 import { buildDocumentFormContext, validateDocumentForm } from "./form-mapper.js";
 import { buildRenderContext, registerLegacyHelpers } from "./rendering.js";
+import { buildIndividualLicenseV3Context, INDIVIDUAL_LICENSE_V3_KEY } from "./individual-license-v3.js";
 
 const saveDraftSchema = z.object({
   templateType: z.string().min(1),
@@ -163,7 +164,9 @@ export function createDocumentRouter(
       response.json({
         templateVersionId: template.templateVersionId,
         partials: Object.keys(partials),
-        html: render(buildRenderContext(input.formData))
+        html: render(input.templateKey === INDIVIDUAL_LICENSE_V3_KEY
+          ? buildIndividualLicenseV3Context(input.formData)
+          : buildRenderContext(input.formData))
       });
     } catch (error) {
       if (error instanceof z.ZodError) {

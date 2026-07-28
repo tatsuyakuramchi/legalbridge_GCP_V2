@@ -323,9 +323,77 @@ function DocumentForm({
           {groups.map((group, index) => <section id={`group-${index}`} key={group}><h2>{group}</h2>
             <div className="field-grid">{schema.fields.filter((field) => (field.group ?? "基本情報") === group && field.type !== "hidden").map((field) => <label key={field.name}><span>{field.label ?? field.name}{field.required && <em>必須</em>}</span>{field.type === "textarea" ? <textarea value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, event.target.value)} placeholder={field.placeholder} /> : field.type === "select" ? <select value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, event.target.value)}><option value="">選択してください</option>{field.options?.map((option) => <option key={option}>{option}</option>)}</select> : field.type === "boolean" ? <input type="checkbox" checked={Boolean(formData[field.name])} onChange={(event) => updateValue(field.name, event.target.checked)} /> : <input value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, field.type === "number" ? Number(event.target.value) : event.target.value)} type={field.type === "number" ? "number" : field.type === "date" ? "date" : "text"} placeholder={field.placeholder} />}<small>{field.helpText}{field.dbField && ` 自動補完: ${field.dbField}`}</small></label>)}</div>
           </section>)}
+          {schema.templateKey === "individual_license_terms_v3" && (
+            <IndividualLicenseV3Form formData={formData} onChange={updateValue} />
+          )}
         </form>
         <aside className="preview"><strong>文書プレビュー</strong>{previewHtml ? <iframe title="文書プレビュー" sandbox="" srcDoc={previewHtml} /> : <div>「入力確認」でDB templateによるプレビューを生成します。</div>}<small>Template version: {schema.templateVersionId}</small></aside>
       </div>
     </section>
   );
+}
+
+type V3Row = Record<string, unknown>;
+
+function IndividualLicenseV3Form({ formData, onChange }: { formData: DocumentFormData; onChange: (name: string, value: unknown) => void }) {
+  const rows = (key: string): V3Row[] => Array.isArray(formData[key]) ? formData[key] as V3Row[] : [];
+  const conditions = rows("v3_conds");
+  const materials = rows("v3_lcs");
+  const replaceRow = (key: string, index: number, patch: V3Row) => onChange(key, rows(key).map((row, i) => i === index ? { ...row, ...patch } : row));
+  const addRow = (key: string, row: V3Row) => onChange(key, [...rows(key), row]);
+  const removeRow = (key: string, index: number) => onChange(key, rows(key).filter((_, i) => i !== index));
+  const field = (label: string, value: unknown, set: (value: string) => void, type: "text" | "number" = "text") =>
+    <label><span>{label}</span><input type={type} value={String(value ?? "")} onChange={(event) => set(event.target.value)} /></label>;
+  return <div className="v3-editor">
+    <section>
+      <div className="repeater-title"><div><h2>V. 取引形態</h2><small>製造販売、サブライセンス等の条件を追加します。</small></div><button type="button" onClick={() => addRow("v3_conds", { id: String(Date.now()), addon: true, cur: "JPY", qty: "1", ag: "0", mg: "0" })}>＋ 取引形態</button></div>
+      {!conditions.length && <p className="inline-empty">取引形態を追加してください。</p>}
+      {conditions.map((condition, index) => <article className="repeater-card" key={String(condition.id ?? index)}>
+        <div className="repeater-card-head"><strong>条件{index + 1}</strong><button type="button" onClick={() => removeRow("v3_conds", index)}>削除</button></div>
+        <div className="field-grid">
+          {field("取引形態名", condition.name, (value) => replaceRow("v3_conds", index, { name: value }))}
+          <label><span>料率方式</span><select value={condition.addon ? "addon" : "fixed"} onChange={(event) => replaceRow("v3_conds", index, { addon: event.target.value === "addon" })}><option value="addon">加算型（構成要素の料率合計）</option><option value="fixed">非加算型（実効料率）</option></select></label>
+          {!condition.addon && field("実効料率（%）", condition.fixedRate, (value) => replaceRow("v3_conds", index, { fixedRate: value }), "number")}
+          <label><span>計算モデル</span><select value={String(condition.calc_type ?? "")} onChange={(event) => replaceRow("v3_conds", index, { calc_type: event.target.value })}><option value="">選択してください</option><option value="BASE_QTY_RATE">基準価格×個数×料率</option><option value="BASE_RATE">実効料率</option><option value="FIXED">固定額</option><option value="SUBSCRIPTION">サブスク</option><option value="SUPPLY_QTY">供給価格×個数×料率</option></select></label>
+          {field("製造者", condition.manufacturer, (v) => replaceRow("v3_conds", index, { manufacturer: v }))}
+          {field("販売者", condition.seller, (v) => replaceRow("v3_conds", index, { seller: v }))}
+          {field("基準価格", condition.basePrice, (v) => replaceRow("v3_conds", index, { basePrice: v }))}
+          {field("今回地域", condition.reg, (v) => replaceRow("v3_conds", index, { reg: v }))}
+          {field("今回言語", condition.lang, (v) => replaceRow("v3_conds", index, { lang: v }))}
+          {field("数量", condition.qty, (v) => replaceRow("v3_conds", index, { qty: v }))}
+          {field("AG", condition.ag, (v) => replaceRow("v3_conds", index, { ag: v }), "number")}
+          {field("MG", condition.mg, (v) => replaceRow("v3_conds", index, { mg: v }), "number")}
+          {field("通貨", condition.cur, (v) => replaceRow("v3_conds", index, { cur: v }))}
+        </div>
+      </article>)}
+    </section>
+    <section>
+      <div className="repeater-title"><div><h2>VI. 構成要素・料率マトリクス</h2><small>権利台帳の構成要素と取引形態別料率を入力します。</small></div><button type="button" onClick={() => addRow("v3_lcs", { rates: {} })}>＋ 構成要素</button></div>
+      {!materials.length && <p className="inline-empty">構成要素を追加してください。</p>}
+      {materials.map((material, index) => {
+        const rates = material.rates && typeof material.rates === "object" ? material.rates as V3Row : {};
+        return <article className="repeater-card" key={index}>
+          <div className="repeater-card-head"><strong>構成要素{index + 1}</strong><button type="button" onClick={() => removeRow("v3_lcs", index)}>削除</button></div>
+          <div className="field-grid">
+            {field("素材コード", material.material_code, (v) => replaceRow("v3_lcs", index, { material_code: v }))}
+            {field("構成要素名", material.name, (v) => replaceRow("v3_lcs", index, { name: v }))}
+            {field("権利元", material.holder, (v) => replaceRow("v3_lcs", index, { holder: v }))}
+            {field("根拠文書番号", material.source_doc, (v) => replaceRow("v3_lcs", index, { source_doc: v }))}
+            {field("許諾地域", material.region, (v) => replaceRow("v3_lcs", index, { region: v }))}
+            {field("許諾言語", material.language, (v) => replaceRow("v3_lcs", index, { language: v }))}
+            {conditions.filter((condition) => Boolean(condition.addon)).map((condition, ci) => {
+              const key = String(condition.id ?? ci);
+              return field(`${String(condition.name || `条件${ci + 1}`)} 料率（%）`, rates[key], (v) => replaceRow("v3_lcs", index, { rates: { ...rates, [key]: v } }), "number");
+            })}
+          </div>
+        </article>;
+      })}
+    </section>
+    <SimpleRepeater title="VII. サブライセンシー" itemLabel="サブライセンシー" rows={rows("v3_sublicensees")} fields={[["slPartner","相手方"],["slRegion","地域"],["slLang","言語"],["slCond","条件"],["slRate","料率"],["slDate","開始日"],["slNote","備考"]]} onAdd={() => addRow("v3_sublicensees", {})} onChange={(i,p) => replaceRow("v3_sublicensees",i,p)} onRemove={(i) => removeRow("v3_sublicensees",i)} />
+    <SimpleRepeater title="VIII. 計算基準日" itemLabel="基準日" rows={rows("v3_calc_base_rows")} fields={[["edition","版"],["trigger","起点事由"],["note","備考"]]} onAdd={() => addRow("v3_calc_base_rows", {})} onChange={(i,p) => replaceRow("v3_calc_base_rows",i,p)} onRemove={(i) => removeRow("v3_calc_base_rows",i)} />
+    <SimpleRepeater title="IX. 特記事項" itemLabel="特記事項" rows={rows("v3_special_extras")} fields={[["seId","項番"],["seText","内容"]]} onAdd={() => addRow("v3_special_extras", {})} onChange={(i,p) => replaceRow("v3_special_extras",i,p)} onRemove={(i) => removeRow("v3_special_extras",i)} />
+  </div>;
+}
+function SimpleRepeater({ title, itemLabel, rows, fields, onAdd, onChange, onRemove }: { title: string; itemLabel: string; rows: V3Row[]; fields: string[][]; onAdd: () => void; onChange: (index: number, patch: V3Row) => void; onRemove: (index: number) => void }) {
+  return <section><div className="repeater-title"><h2>{title}</h2><button type="button" onClick={onAdd}>＋ 追加</button></div>{rows.map((row,index) => <article className="repeater-card" key={index}><div className="repeater-card-head"><strong>{itemLabel}{index+1}</strong><button type="button" onClick={() => onRemove(index)}>削除</button></div><div className="field-grid">{fields.map(([name,label]) => <label key={name}><span>{label}</span><input value={String(row[name] ?? "")} onChange={(event) => onChange(index,{[name]:event.target.value})} /></label>)}</div></article>)}</section>;
 }

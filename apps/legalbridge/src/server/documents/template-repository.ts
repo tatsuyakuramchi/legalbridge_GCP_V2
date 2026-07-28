@@ -1,5 +1,6 @@
 import type { DatabasePool } from "../db/pool.js";
 import type { DocumentFormSchema, TemplateField } from "../../types.js";
+import { INDIVIDUAL_LICENSE_V3_KEY, individualLicenseV3Fields } from "./individual-license-v3.js";
 
 export interface TemplateRepository {
   list(): Promise<DocumentFormSchema[]>;
@@ -86,12 +87,15 @@ const BASE_QUERY = `
 `;
 
 function mapTemplate(row: TemplateRow): DocumentFormSchema {
+  const databaseFields = Array.isArray(row.field_schema) ? row.field_schema : [];
   return {
     templateKey: row.template_key,
     templateVersionId: row.template_version_id,
     label: row.label ?? row.template_key,
     category: row.category ?? undefined,
-    fields: Array.isArray(row.field_schema) ? row.field_schema : []
+    fields: row.template_key === INDIVIDUAL_LICENSE_V3_KEY && databaseFields.length === 0
+      ? individualLicenseV3Fields
+      : databaseFields
   };
 }
 
