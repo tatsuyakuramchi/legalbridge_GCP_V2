@@ -8,6 +8,7 @@ import { createIntegrationAdapters } from "./integrations/index.js";
 import type { DocumentFormSchema } from "../types.js";
 import { buildIndividualLicenseV3Context, individualLicenseV3Fields } from "./documents/individual-license-v3.js";
 import { inspectTemplateCompatibility } from "./documents/compatibility.js";
+import { buildCommonDocumentContext } from "./documents/context-adapter.js";
 
 const schema: DocumentFormSchema = {
   templateKey: "purchase_order",
@@ -237,4 +238,37 @@ test("elseとeach内のローカル変数を誤検出しない", () => {
   assert.ok(!report.missingHelpers.includes("else"));
   assert.ok(!report.unmappedVariables.includes("item_name"));
   assert.ok(!report.unmappedVariables.includes("amount"));
+});
+
+test("共通文書番号・担当者・再発行情報を互換キーへ展開する", () => {
+  const context = buildCommonDocumentContext({
+    契約書番号: "ARC-LIC-2026-0001",
+    契約締結日: "2026-07-28",
+    担当者名: "法務担当",
+    担当者メール: "legal@example.com",
+    元契約番号: "ARC-LIC-2025-0001",
+    改訂番号: "2",
+    取引先種別: "法人"
+  });
+  assert.equal(context.CONTRACT_NO, "ARC-LIC-2026-0001");
+  assert.equal(context.DOC_NO, "ARC-LIC-2026-0001");
+  assert.equal(context.SIGN_DATE, "2026-07-28");
+  assert.equal(context.STAFF_NAME, "法務担当");
+  assert.equal(context.BASE_DOC_NO, "ARC-LIC-2025-0001");
+  assert.equal(context.REVISION, 2);
+  assert.equal(context.isReissue, true);
+  assert.equal(context.VENDOR_IS_CORPORATION, true);
+});
+
+test("共通生成キーとtemplate説明記号を未マッピング扱いしない", () => {
+  const report = inspectTemplateCompatibility(
+    schema,
+    "{{CONTRACT_NO}}{{STAFF_NAME}}{{BASE_DOC_NO}}{{VAR \"説明\"}}{{xxx}}",
+    {}
+  );
+  assert.ok(!report.unmappedVariables.includes("CONTRACT_NO"));
+  assert.ok(!report.unmappedVariables.includes("STAFF_NAME"));
+  assert.ok(!report.unmappedVariables.includes("BASE_DOC_NO"));
+  assert.ok(!report.unmappedVariables.includes("VAR"));
+  assert.ok(!report.unmappedVariables.includes("xxx"));
 });
