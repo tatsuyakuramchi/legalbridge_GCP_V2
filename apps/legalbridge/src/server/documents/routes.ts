@@ -7,6 +7,7 @@ import type { TemplateRepository } from "./template-repository.js";
 import { buildDocumentFormContext, validateDocumentForm } from "./form-mapper.js";
 import { buildRenderContext, registerLegacyHelpers } from "./rendering.js";
 import { buildIndividualLicenseV3Context, INDIVIDUAL_LICENSE_V3_KEY } from "./individual-license-v3.js";
+import { inspectTemplateCompatibility } from "./compatibility.js";
 
 const saveDraftSchema = z.object({
   templateType: z.string().min(1),
@@ -36,6 +37,30 @@ export function createDocumentRouter(
     } catch (error) {
       next(error);
     }
+  });
+
+  router.get("/document-templates/compatibility-report", async (_request, response, next) => {
+    try {
+      const [schemas, partials] = await Promise.all([templates.list(), templates.findPartials()]);
+      const reports = await Promise.all(schemas.map(async (schema) => {
+        const source = await templates.findRenderSource(schema.templateKey);
+        return source ? inspectTemplateCompatibility(schema, source.htmlSource, partials) : {
+          templateKey: schema.templateKey, label: schema.label, fieldCount: schema.fields.length,
+          status: "error" as const, variables: [], helpers: [], partials: [],
+          missingHelpers: [], missingPartials: [], unmappedVariables: [],
+          renderError: "current template source not found"
+        };
+      }));
+      response.json({
+        summary: {
+          total: reports.length,
+          ok: reports.filter((item) => item.status === "ok").length,
+          warning: reports.filter((item) => item.status === "warning").length,
+          error: reports.filter((item) => item.status === "error").length
+        },
+        reports
+      });
+    } catch (error) { next(error); }
   });
 
   router.get("/document-templates/:templateKey/form-schema", async (request, response, next) => {
