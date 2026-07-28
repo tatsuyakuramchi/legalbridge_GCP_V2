@@ -5,9 +5,10 @@ import type { DraftRepository } from "./draft-repository.js";
 import { DraftConflictError } from "./draft-repository.js";
 import type { TemplateRepository } from "./template-repository.js";
 import { buildDocumentFormContext, validateDocumentForm } from "./form-mapper.js";
-import { buildRenderContext, registerLegacyHelpers } from "./rendering.js";
+import { registerLegacyHelpers } from "./rendering.js";
 import { buildIndividualLicenseV3Context, INDIVIDUAL_LICENSE_V3_KEY } from "./individual-license-v3.js";
 import { inspectTemplateCompatibility } from "./compatibility.js";
+import { buildCommonDocumentContext } from "./context-adapter.js";
 
 const saveDraftSchema = z.object({
   templateType: z.string().min(1),
@@ -191,7 +192,7 @@ export function createDocumentRouter(
         partials: Object.keys(partials),
         html: render(input.templateKey === INDIVIDUAL_LICENSE_V3_KEY
           ? buildIndividualLicenseV3Context(input.formData)
-          : buildRenderContext(input.formData))
+          : buildCommonDocumentContext(input.formData))
       });
     } catch (error) {
       if (error instanceof z.ZodError) {
