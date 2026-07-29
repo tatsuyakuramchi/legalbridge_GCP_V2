@@ -20,6 +20,12 @@ import {
   type IntegrationAdapter
 } from "./integrations/index.js";
 import { config } from "./config.js";
+import {
+  MemoryMasterDataRepository,
+  PgMasterDataRepository,
+  type MasterDataRepository
+} from "./master-data/repository.js";
+import { createMasterDataRouter } from "./master-data/routes.js";
 
 const dashboard: DashboardSummary = {
   kpis: [
@@ -97,6 +103,7 @@ export interface AppDependencies {
   templates: TemplateRepository;
   drafts: DraftRepository;
   integrations: IntegrationAdapter[];
+  masterData?: MasterDataRepository;
 }
 
 export interface AppOptions {
@@ -113,7 +120,10 @@ function createDefaultDependencies(): AppDependencies {
     drafts: database
       ? new PgDraftRepository(database)
       : new MemoryDraftRepository(),
-    integrations: createIntegrationAdapters()
+    integrations: createIntegrationAdapters(),
+    masterData: database
+      ? new PgMasterDataRepository(database)
+      : new MemoryMasterDataRepository()
   };
 }
 
@@ -187,6 +197,9 @@ export function createApp(
   });
 
   app.use("/api/v2", createDocumentRouter(dependencies.templates, dependencies.drafts));
+  app.use("/api/v2", createMasterDataRouter(
+    dependencies.masterData ?? new MemoryMasterDataRepository()
+  ));
 
   app.use((
     error: unknown,
