@@ -5,6 +5,7 @@ import type {
   DocumentFormData,
   DocumentFormSchema
 } from "../types";
+import { SpecializedDocumentForms } from "./SpecializedDocumentForms";
 
 type CompatibilityReport = { summary: { total: number; ok: number; warning: number; error: number }; reports: Array<{ templateKey: string; status: "ok" | "warning" | "error"; missingHelpers: string[]; missingPartials: string[]; unmappedVariables: string[]; renderError?: string }> };
 
@@ -326,7 +327,10 @@ function DocumentForm({
         </div>
       </div>
       <div className="form-layout">
-        <nav className="form-nav">{groups.map((group, index) => <a key={group} href={`#group-${index}`}>{group}</a>)}</nav>
+        <nav className="form-nav">
+          {groups.map((group, index) => <a key={group} href={`#group-${index}`}>{group}</a>)}
+          {hasSpecializedForm(schema.templateKey) && <a href="#specialized-fields">明細・条件</a>}
+        </nav>
         <form className="form-panel">
           {groups.map((group, index) => <section id={`group-${index}`} key={group}><h2>{group}</h2>
             <div className="field-grid">{schema.fields.filter((field) => (field.group ?? "基本情報") === group && field.type !== "hidden").map((field) => <label key={field.name}><span>{field.label ?? field.name}{field.required && <em>必須</em>}</span>{field.type === "textarea" ? <textarea value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, event.target.value)} placeholder={field.placeholder} /> : field.type === "select" ? <select value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, event.target.value)}><option value="">選択してください</option>{field.options?.map((option) => <option key={option}>{option}</option>)}</select> : field.type === "boolean" ? <input type="checkbox" checked={Boolean(formData[field.name])} onChange={(event) => updateValue(field.name, event.target.checked)} /> : <input value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, field.type === "number" ? Number(event.target.value) : event.target.value)} type={field.type === "number" ? "number" : field.type === "date" ? "date" : "text"} placeholder={field.placeholder} />}<small>{field.helpText}{field.dbField && ` 自動補完: ${field.dbField}`}</small></label>)}</div>
@@ -334,11 +338,22 @@ function DocumentForm({
           {schema.templateKey === "individual_license_terms_v3" && (
             <IndividualLicenseV3Form formData={formData} onChange={updateValue} />
           )}
+          <SpecializedDocumentForms templateKey={schema.templateKey} formData={formData} onChange={updateValue} />
         </form>
         <aside className="preview"><strong>文書プレビュー</strong>{previewHtml ? <iframe title="文書プレビュー" sandbox="" srcDoc={previewHtml} /> : <div>「入力確認」でDB templateによるプレビューを生成します。</div>}<small>Template version: {schema.templateVersionId}</small></aside>
       </div>
     </section>
   );
+}
+
+function hasSpecializedForm(templateKey: string) {
+  return [
+    "purchase_order",
+    "intl_purchase_order",
+    "individual_license_terms",
+    "royalty_statement",
+    "inspection_certificate"
+  ].includes(templateKey);
 }
 
 type V3Row = Record<string, unknown>;

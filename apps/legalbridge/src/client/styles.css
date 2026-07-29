@@ -44,6 +44,15 @@ header input { width: min(540px, 60%); border: 1px solid #d9e2ec; border-radius:
 .repeater-card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .repeater-card-head button { color: #9f2d2d; border-color: #e3bdbd; background: #fff8f8; }
 .inline-empty { border: 1px dashed #b7c9c3; color: #64756f; border-radius: 8px; padding: 16px; }
+.specialized-editor { margin-top: 28px; border-top: 2px solid #20b8cd !important; padding-top: 22px !important; }
+.specialized-heading { display: flex; justify-content: space-between; margin-bottom: 22px; }
+.specialized-heading span { color: #168ca0; font-size: 10px; font-weight: 800; letter-spacing: .12em; }
+.specialized-heading h2 { margin: 4px 0; }
+.specialized-heading p { margin: 0; color: #64748b; font-size: 13px; }
+.array-editor { border-top: 1px solid #e2e8f0; padding-top: 18px; margin-top: 18px; }
+.array-editor .repeater-title h3 { margin: 0 0 3px; color: #172a44; }
+.row-actions { display: flex; gap: 6px; }
+.row-actions button { min-width: 34px; }
 
 .compatibility-summary { display: flex; gap: 14px; align-items: center; padding: 11px 14px; margin-bottom: 14px; border: 1px solid #d9e2ec; border-radius: 8px; background: #fff; font-size: 13px; }
 .compat-ok { color: #16724e; }.compat-warning { color: #9a6700; }.compat-error { color: #b42318; }
