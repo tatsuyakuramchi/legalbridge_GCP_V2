@@ -8,7 +8,7 @@ import { buildDocumentFormContext, validateDocumentForm } from "./form-mapper.js
 import { registerLegacyHelpers } from "./rendering.js";
 import { buildIndividualLicenseV3Context, INDIVIDUAL_LICENSE_V3_KEY } from "./individual-license-v3.js";
 import { inspectTemplateCompatibility } from "./compatibility.js";
-import { buildCommonDocumentContext } from "./context-adapter.js";
+import { buildTemplateDocumentContext } from "./template-context-adapters.js";
 
 const saveDraftSchema = z.object({
   templateType: z.string().min(1),
@@ -192,7 +192,7 @@ export function createDocumentRouter(
         partials: Object.keys(partials),
         html: render(input.templateKey === INDIVIDUAL_LICENSE_V3_KEY
           ? buildIndividualLicenseV3Context(input.formData)
-          : buildCommonDocumentContext(input.formData))
+          : buildTemplateDocumentContext(input.templateKey, input.formData))
       });
     } catch (error) {
       if (error instanceof z.ZodError) {

@@ -9,6 +9,7 @@ import type { DocumentFormSchema } from "../types.js";
 import { buildIndividualLicenseV3Context, individualLicenseV3Fields } from "./documents/individual-license-v3.js";
 import { inspectTemplateCompatibility } from "./documents/compatibility.js";
 import { buildCommonDocumentContext } from "./documents/context-adapter.js";
+import { buildTemplateDocumentContext } from "./documents/template-context-adapters.js";
 
 const schema: DocumentFormSchema = {
   templateKey: "purchase_order",
@@ -271,4 +272,78 @@ test("共通生成キーとtemplate説明記号を未マッピング扱いしな
   assert.ok(!report.unmappedVariables.includes("BASE_DOC_NO"));
   assert.ok(!report.unmappedVariables.includes("VAR"));
   assert.ok(!report.unmappedVariables.includes("xxx"));
+});
+
+test("発注書の明細・経費・金銭条件をプレビュー用に集計する", () => {
+  const context = buildTemplateDocumentContext("purchase_order", {
+    ORDER_DATE: "2026-07-29",
+    BANK_NAME: "サンプル銀行",
+    BRANCH_NAME: "本店",
+    items: [
+      { item_name: "制作業務", unit_price: 10000, quantity: 2 },
+      { item_name: "監修業務", amount_ex_tax: 5000 }
+    ],
+    expenses: [{ expense_name: "交通費", amount_inc_tax: 1100 }],
+    financial_conditions: [{ calc_method: "ROYALTY", rights_holder: "受注者" }]
+  });
+  assert.equal(context.itemsSubtotalExTax, 25000);
+  assert.equal(context.expensesTotalIncTax, 1100);
+  assert.equal(context.BANK_INFO, "サンプル銀行 / 本店");
+  assert.equal(context.has_license_conditions, true);
+  assert.equal(context.has_performance_incentive, true);
+  assert.equal(context.has_seller_owned_license, true);
+});
+
+test("個別利用許諾条件書の旧金銭条件を配列へ変換する", () => {
+  const context = buildTemplateDocumentContext("individual_license_terms", {
+    金銭条件1_地域言語ラベル: "国内・日本語",
+    金銭条件1_計算方式: "ROYALTY",
+    金銭条件1_料率: "5",
+    金銭条件1_基準価格ラベル: "上代",
+    金銭条件1_通貨: "JPY"
+  });
+  const conditions = context.financial_conditions as Array<Record<string, unknown>>;
+  assert.equal(conditions.length, 1);
+  assert.equal(conditions[0].calc_method, "ROYALTY");
+  assert.match(String(context.金銭条件1_概要), /国内・日本語/);
+});
+
+test("利用許諾料計算書と検収書の合計額を再構築する", () => {
+  const royalty = buildTemplateDocumentContext("royalty_statement", {
+    taxRate: 10,
+    lines: [
+      { sales_amount: 100000, royalty_amount: 5000 },
+      { sales_amount: 50000, royalty_amount: 2500 }
+    ]
+  });
+  assert.equal(royalty.linesTotalSalesStr, "150,000");
+  assert.equal(royalty.linesTotalPaymentStr, "7,500");
+  assert.equal(royalty.linesTotalIncTaxStr, "8,250");
+
+  const inspection = buildTemplateDocumentContext("inspection_certificate", {
+    taxRate: 10,
+    delivery_line_items: [{ inspected_amount_ex_tax: 10000, calc_method: "ROYALTY" }],
+    other_fees: [{ amount: 1000 }],
+    expenses: [{ amount_inc_tax: 500 }],
+    CHANGE_RECORDS: "2026-07-29|金額|9000|10000|修正"
+  });
+  assert.equal(inspection.combinedTaxStr, "1,100");
+  assert.equal(inspection.grandTotalPayableStr, "12,600");
+  assert.equal(inspection.hasChangeLogs, true);
+  assert.equal(inspection.hasPerformanceRoyalty, true);
+});
+
+test("残る6テンプレートの生成変数を互換性警告にしない", () => {
+  const cases = [
+    ["purchase_order", "{{items}}{{expensesTotalIncTax}}{{BANK_INFO}}"],
+    ["intl_purchase_order", "{{itemsSubtotalExTax}}{{PAYMENT_TERMS}}"],
+    ["individual_license_terms", "{{financial_conditions}}{{サブライセンシー一覧}}"],
+    ["individual_license_terms_v3", "{{xxx}}"],
+    ["royalty_statement", "{{lineGroups}}{{linesTotalPaymentStr}}"],
+    ["inspection_certificate", "{{delivery_line_items}}{{grandTotalPayableStr}}"]
+  ] as const;
+  for (const [templateKey, html] of cases) {
+    const report = inspectTemplateCompatibility({ ...schema, templateKey }, html, {});
+    assert.deepEqual(report.unmappedVariables, []);
+  }
 });

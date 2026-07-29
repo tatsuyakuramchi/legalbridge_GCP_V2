@@ -2,7 +2,8 @@ import Handlebars from "handlebars";
 import type { DocumentFormSchema, TemplateField } from "../../types.js";
 import { buildIndividualLicenseV3Context, INDIVIDUAL_LICENSE_V3_KEY } from "./individual-license-v3.js";
 import { registerLegacyHelpers } from "./rendering.js";
-import { buildCommonDocumentContext, COMMON_GENERATED_VARIABLES } from "./context-adapter.js";
+import { COMMON_GENERATED_VARIABLES } from "./context-adapter.js";
+import { buildTemplateDocumentContext, isTemplateGeneratedVariable } from "./template-context-adapters.js";
 
 const BUILTIN_HELPERS = new Set(["if", "unless", "each", "with", "lookup", "log"]);
 const REGISTERED_HELPERS = new Set(["eq","ne","formatCurrency","formatDate","formatDateCompact","add","multiply","index1","circledNum","formatPct","formatYen","formatMoney","or","gt","lt","join","length","concat","cycleLabel","invoiceLabel","cycleLabelEn","billingDayLabel","billingDayLabelEn"]);
@@ -14,7 +15,7 @@ export function inspectTemplateCompatibility(schema:DocumentFormSchema, htmlSour
  const fieldNames=new Set(schema.fields.map(f=>f.name));
  const unmappedVariables=variables.filter(v=>{const root=v.split(/[.[\]]/,1)[0];return root&&!fieldNames.has(root)&&!knownGeneratedVariable(schema.templateKey,root)});
  let renderError:string|undefined;
- try{const h=Handlebars.create();registerLegacyHelpers(h);for(const[n,s]of Object.entries(partialSources))h.registerPartial(n,s);const fd=Object.fromEntries(schema.fields.map(f=>[f.name,sampleValue(f)]));const context=schema.templateKey===INDIVIDUAL_LICENSE_V3_KEY?buildIndividualLicenseV3Context({...fd,v3_conds:[{id:"audit",name:"製造販売",addon:true}],v3_lcs:[{material_code:"AUDIT-001",name:"構成要素",rates:{audit:"5"}}]}):buildCommonDocumentContext(fd);h.compile(htmlSource,{strict:false,noEscape:false})(context)}catch(error){renderError=error instanceof Error?error.message:String(error)}
+ try{const h=Handlebars.create();registerLegacyHelpers(h);for(const[n,s]of Object.entries(partialSources))h.registerPartial(n,s);const fd=Object.fromEntries(schema.fields.map(f=>[f.name,sampleValue(f)]));const context=schema.templateKey===INDIVIDUAL_LICENSE_V3_KEY?buildIndividualLicenseV3Context({...fd,v3_conds:[{id:"audit",name:"製造販売",addon:true}],v3_lcs:[{material_code:"AUDIT-001",name:"構成要素",rates:{audit:"5"}}]}):buildTemplateDocumentContext(schema.templateKey,fd);h.compile(htmlSource,{strict:false,noEscape:false})(context)}catch(error){renderError=error instanceof Error?error.message:String(error)}
  const status=renderError||missingHelpers.length||missingPartials.length?"error":schema.fields.length===0||unmappedVariables.length?"warning":"ok";
  return{templateKey:schema.templateKey,label:schema.label,fieldCount:schema.fields.length,status,variables,helpers,partials,missingHelpers,missingPartials,unmappedVariables,...(renderError?{renderError}:{})};
 }
@@ -43,4 +44,4 @@ function analyzeExpressions(htmlSource:string){
 function addVariable(target:string[],raw:string){const token=raw.replace(/^\.\.\//,"").replace(/[()]/g,"").split("=")[0].trim();if(token&&!token.startsWith("@")&&!token.startsWith(".")&&!/^['"\d]/.test(token))target.push(token)}
 const unique=(v:string[])=>[...new Set(v)].sort();
 function sampleValue(f:TemplateField):unknown{if(f.type==="boolean")return true;if(f.type==="number")return 1;if(f.type==="date")return"2026-07-28";if(f.type==="select")return f.options?.[0]??"選択値";return f.name}
-function knownGeneratedVariable(k:string,v:string){if(COMMON_GENERATED_VARIABLES.has(v))return true;if(k===INDIVIDUAL_LICENSE_V3_KEY)return new Set(["issueDate","contractNo","workId","masterAgreement","licensorName","licenseeName","startDate","licensorContact","licenseeContact","productDefinition","productName","exclusivity","maxRegion","maxLanguage","scope","conds","addonConds","showHolder","scopeColCount","rateColCount","licensorIsCorp","lcs","calcBaseRows","sublicensees","supervisor","specialExtras","licensorAddress","licensorRep","licenseeAddress","licenseeRep"]).has(v);return v.endsWith("_YEAR")||v.endsWith("_MONTH")||v.endsWith("_DAY")}
+function knownGeneratedVariable(k:string,v:string){if(COMMON_GENERATED_VARIABLES.has(v)||isTemplateGeneratedVariable(k,v))return true;if(k===INDIVIDUAL_LICENSE_V3_KEY)return new Set(["issueDate","contractNo","workId","masterAgreement","licensorName","licenseeName","startDate","licensorContact","licenseeContact","productDefinition","productName","exclusivity","maxRegion","maxLanguage","scope","conds","addonConds","showHolder","scopeColCount","rateColCount","licensorIsCorp","lcs","calcBaseRows","sublicensees","supervisor","specialExtras","licensorAddress","licensorRep","licenseeAddress","licenseeRep","xxx"]).has(v);return v.endsWith("_YEAR")||v.endsWith("_MONTH")||v.endsWith("_DAY")}
