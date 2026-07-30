@@ -6,6 +6,7 @@ import type {
   DocumentFormSchema
 } from "../types";
 import { SpecializedDocumentForms } from "./SpecializedDocumentForms";
+import { MasterDataPicker } from "./MasterDataPicker";
 
 type CompatibilityReport = { summary: { total: number; ok: number; warning: number; error: number }; reports: Array<{ templateKey: string; status: "ok" | "warning" | "error"; missingHelpers: string[]; missingPartials: string[]; unmappedVariables: string[]; renderError?: string }> };
 
@@ -332,6 +333,11 @@ function DocumentForm({
           {hasSpecializedForm(schema.templateKey) && <a href="#specialized-fields">明細・条件</a>}
         </nav>
         <form className="form-panel">
+          <MasterDataPicker schema={schema} formData={formData}
+            onApply={(patch, message) => {
+              setFormData((current) => ({ ...current, ...patch }));
+              setNotice(message);
+            }} />
           {groups.map((group, index) => <section id={`group-${index}`} key={group}><h2>{group}</h2>
             <div className="field-grid">{schema.fields.filter((field) => (field.group ?? "基本情報") === group && field.type !== "hidden").map((field) => <label key={field.name}><span>{field.label ?? field.name}{field.required && <em>必須</em>}</span>{field.type === "textarea" ? <textarea value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, event.target.value)} placeholder={field.placeholder} /> : field.type === "select" ? <select value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, event.target.value)}><option value="">選択してください</option>{field.options?.map((option) => <option key={option}>{option}</option>)}</select> : field.type === "boolean" ? <input type="checkbox" checked={Boolean(formData[field.name])} onChange={(event) => updateValue(field.name, event.target.checked)} /> : <input value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, field.type === "number" ? Number(event.target.value) : event.target.value)} type={field.type === "number" ? "number" : field.type === "date" ? "date" : "text"} placeholder={field.placeholder} />}<small>{field.helpText}{field.dbField && ` 自動補完: ${field.dbField}`}</small></label>)}</div>
           </section>)}

@@ -53,6 +53,21 @@ header input { width: min(540px, 60%); border: 1px solid #d9e2ec; border-radius:
 .array-editor .repeater-title h3 { margin: 0 0 3px; color: #172a44; }
 .row-actions { display: flex; gap: 6px; }
 .row-actions button { min-width: 34px; }
+.master-picker { border: 1px solid #b9dfe5 !important; border-radius: 9px; background: #f7fcfd; padding: 15px; margin-bottom: 24px; }
+.master-picker-head { display: flex; justify-content: space-between; gap: 12px; align-items: end; }
+.master-picker-head > div { display: grid; gap: 3px; }
+.master-picker-head span { color: #168ca0; font-size: 10px; font-weight: 800; letter-spacing: .1em; }
+.master-picker-head strong { color: #172a44; }
+.master-picker-head small { color: #64748b; }
+.master-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0 10px; }
+.master-tabs button { border: 1px solid #bdd4d9; border-radius: 999px; padding: 6px 11px; background: white; color: #48636a; }
+.master-tabs button.active { background: #168ca0; border-color: #168ca0; color: white; }
+.master-search { width: 100%; border: 1px solid #b8ccd1; border-radius: 7px; padding: 10px; background: white; }
+.master-results { display: grid; gap: 6px; max-height: 210px; overflow-y: auto; margin-top: 9px; }
+.master-results > p { color: #64748b; font-size: 12px; margin: 8px; }
+.master-results > button { display: grid; gap: 2px; text-align: left; border: 1px solid #d5e3e6; border-radius: 7px; background: white; padding: 9px 11px; }
+.master-results > button:hover { border-color: #20b8cd; background: #f0fbfc; }
+.master-results small { color: #64748b; }
 
 .compatibility-summary { display: flex; gap: 14px; align-items: center; padding: 11px 14px; margin-bottom: 14px; border: 1px solid #d9e2ec; border-radius: 8px; background: #fff; font-size: 13px; }
 .compat-ok { color: #16724e; }.compat-warning { color: #9a6700; }.compat-error { color: #b42318; }

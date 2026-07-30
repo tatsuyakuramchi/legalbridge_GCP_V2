@@ -10,6 +10,7 @@ import { buildIndividualLicenseV3Context, individualLicenseV3Fields } from "./do
 import { inspectTemplateCompatibility } from "./documents/compatibility.js";
 import { buildCommonDocumentContext } from "./documents/context-adapter.js";
 import { buildTemplateDocumentContext } from "./documents/template-context-adapters.js";
+import { MemoryMasterDataRepository } from "./master-data/repository.js";
 
 const schema: DocumentFormSchema = {
   templateKey: "purchase_order",
@@ -198,6 +199,41 @@ test("読取専用環境でも入力検証とプレビューを許可する", as
       formData: { PROJECT_TITLE: "プレビュー対象" }
     })
     .expect(200);
+});
+
+test("マスターデータを検索してフォーム自動入力候補を返す", async () => {
+  const target = createApp({
+    templates: new MemoryTemplateRepository([schema]),
+    drafts: new MemoryDraftRepository(),
+    integrations: createIntegrationAdapters(),
+    masterData: new MemoryMasterDataRepository([
+      {
+        id: "vendor-1",
+        type: "vendor",
+        label: "取引先A",
+        description: "V-001・法人",
+        values: {
+          vendor_name: "取引先A",
+          address: "東京都千代田区"
+        }
+      }
+    ])
+  });
+
+  const response = await request(target)
+    .get("/api/v2/master-data/search")
+    .query({ type: "vendor", q: "取引先" })
+    .expect(200);
+
+  assert.equal(response.body.items.length, 1);
+  assert.equal(response.body.items[0].values.vendor_name, "取引先A");
+});
+
+test("未対応のマスターデータ種別を拒否する", async () => {
+  await request(app())
+    .get("/api/v2/master-data/search")
+    .query({ type: "unknown" })
+    .expect(400);
 });
 
 test("空field_schemaを補うV3基本フォーム定義を持つ", () => {
