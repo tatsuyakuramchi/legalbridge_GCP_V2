@@ -17,16 +17,20 @@ type RegisteredDocument = {
 
 export function DocumentRegistry({
   templates,
-  onCreate
+  onCreate,
+  selectedId
 }: {
   templates: DocumentFormSchema[];
   onCreate: () => void;
+  selectedId?: number;
 }) {
   const [query, setQuery] = useState("");
   const [templateType, setTemplateType] = useState("");
   const [documents, setDocuments] = useState<RegisteredDocument[]>([]);
   const [selected, setSelected] = useState<RegisteredDocument | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [reload, setReload] = useState(0);
   const labels = useMemo(
     () => new Map(templates.map((item) => [item.templateKey, item.label])),
     [templates]
@@ -38,17 +42,26 @@ export function DocumentRegistry({
       const params = new URLSearchParams({ q: query, limit: "100" });
       if (templateType) params.set("template_type", templateType);
       setLoading(true);
+      setError("");
       fetch(`/api/v2/documents?${params}`, { signal: controller.signal })
         .then((response) => response.ok ? response.json() : Promise.reject())
         .then((data) => setDocuments(data.documents ?? []))
-        .catch(() => undefined)
+        .catch((cause) => { if (cause?.name !== "AbortError") setError("文書一覧を取得できませんでした。"); })
         .finally(() => setLoading(false));
     }, 250);
     return () => {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [query, templateType]);
+  }, [query, templateType, reload]);
+
+  async function selectDocument(id: number) {
+    setError("");
+    const response = await fetch(`/api/v2/documents/${id}`);
+    if (!response.ok) { setError("文書詳細を取得できませんでした。"); return; }
+    setSelected((await response.json()).document);
+  }
+  useEffect(() => { if (selectedId) void selectDocument(selectedId); }, [selectedId]);
 
   return <section className="page registry-page">
     <div className="page-title">
@@ -64,18 +77,14 @@ export function DocumentRegistry({
       </select>
       <span>{loading ? "検索中…" : `${documents.length}件`}</span>
     </div>
+    {error && <div className="async-error">{error}<button onClick={() => setReload((value) => value + 1)}>再試行</button></div>}
     <div className="registry-layout">
       <div className="registry-table panel">
         <table>
           <thead><tr><th>文書番号・件名</th><th>種別</th><th>相手方</th><th>作成日</th></tr></thead>
           <tbody>{documents.map((document) =>
             <tr key={document.id} className={selected?.id === document.id ? "selected" : ""}
-              onClick={() => {
-                fetch(`/api/v2/documents/${document.id}`)
-                  .then((response) => response.ok ? response.json() : Promise.reject())
-                  .then((data) => setSelected(data.document))
-                  .catch(() => undefined);
-              }}>
+              onClick={() => void selectDocument(document.id)}>
               <td><b>{document.documentNumber ?? "未発番"}</b><br /><small>{document.title}</small></td>
               <td>{labels.get(document.templateType) ?? document.templateType}<br /><small>{document.issueKey}</small></td>
               <td>{document.counterparty || "—"}</td>
