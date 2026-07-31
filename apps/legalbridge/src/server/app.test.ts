@@ -15,6 +15,7 @@ import { MemoryDocumentRegistryRepository } from "./documents/registry-repositor
 import { MemoryMatterRepository } from "./matters/repository.js";
 import { MemoryLedgerRepository } from "./ledgers/repository.js";
 import { MemoryGlobalSearchRepository } from "./search/repository.js";
+import { MemoryAdminRepository } from "./admin/repository.js";
 
 const schema: DocumentFormSchema = {
   templateKey: "purchase_order",
@@ -360,6 +361,28 @@ test("案件・文書・取引先・作品を横断検索する", async () => {
   assert.deepEqual(response.body.results.map((item: { target: string }) => item.target), ["matter", "vendor"]);
   const shortQuery = await request(target).get("/api/v2/search").query({ q: "A" }).expect(200);
   assert.equal(shortQuery.body.results.length, 0);
+});
+
+test("管理画面用の主要データ件数と最終更新を返す", async () => {
+  const target = createApp({
+    templates: new MemoryTemplateRepository([schema]),
+    drafts: new MemoryDraftRepository(),
+    integrations: createIntegrationAdapters(),
+    admin: new MemoryAdminRepository({
+      counts: {
+        templates: 19, partials: 1, documents: 831, matters: 199,
+        vendors: 2003, staff: 20, works: 150, conditions: 600
+      },
+      activity: {
+        latestDocumentAt: "2026-07-30T10:47:42.000Z",
+        latestMatterAt: "2026-07-30T10:50:53.000Z"
+      }
+    })
+  }, { accessMode: "readonly", requireDatabase: false });
+  const response = await request(target).get("/api/v2/admin/overview").expect(200);
+  assert.equal(response.body.counts.templates, 19);
+  assert.equal(response.body.counts.documents, 831);
+  assert.equal(response.body.activity.latestMatterAt, "2026-07-30T10:50:53.000Z");
 });
 
 test("空field_schemaを補うV3基本フォーム定義を持つ", () => {
