@@ -99,6 +99,7 @@ export function App() {
 
   const legalWorkspace = currentUser?.role === "admin" || currentUser?.role === "legal";
   const adminWorkspace = currentUser?.role === "admin";
+  const requesterWorkspace = currentUser?.role === "requester";
 
   return (
     <div className="shell">
@@ -107,15 +108,15 @@ export function App() {
         <nav>
           <button className={view === "home" ? "active" : ""} onClick={() => setView("home")}>ホーム</button>
           {legalWorkspace && <button className={view === "matters" ? "active" : ""} onClick={() => setView("matters")}>案件</button>}
-          {legalWorkspace && <button
+          {(legalWorkspace || requesterWorkspace) && <button
             className={view === "documents" || view === "templates" || view === "document" ? "active" : ""}
             onClick={() => setView("documents")}
           >
-            文書
+            {requesterWorkspace ? "自分の文書" : "文書"}
           </button>}
-          {!readOnly && legalWorkspace && (
+          {!readOnly && (legalWorkspace || requesterWorkspace) && (
             <button className={view === "drafts" ? "active" : ""} onClick={() => setView("drafts")}>
-              下書き
+              {requesterWorkspace ? "自分の下書き" : "下書き"}
             </button>
           )}
           {legalWorkspace && <button className={view === "ledgers" ? "active" : ""} onClick={() => setView("ledgers")}>台帳</button>}
