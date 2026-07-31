@@ -9,6 +9,7 @@ substitutions:
   _DB_PASSWORD_SECRET: legalbridge-v2-validation-writer-db-password
   _SERVICE_ACCOUNT: legalbridge-v2-preview@legalbridge-488506.iam.gserviceaccount.com
   _CONFIRM_ISOLATED_DB: BLOCKED
+  _CONFIRM_DOCUMENT_TABLES: BLOCKED
 
 steps:
   - id: test
@@ -33,6 +34,10 @@ steps:
         test "${_DB_USER}" != "legalbridge"
         if [ "${_CONFIRM_ISOLATED_DB}" != "ISOLATED_DRAFT_TEST" ]; then
           echo "Write-test deployment blocked: isolated DB confirmation is missing."
+          exit 1
+        fi
+        if [ "${_CONFIRM_DOCUMENT_TABLES}" != "EMPTY_DOCUMENT_TABLES_CONFIRMED" ]; then
+          echo "Document finalization deployment blocked: empty validation tables are not confirmed."
           exit 1
         fi
 
@@ -64,7 +69,7 @@ steps:
           --service-account="${_SERVICE_ACCOUNT}" \
           --add-cloudsql-instances="${_CLOUD_SQL_INSTANCE}" \
           --set-secrets="DB_PASSWORD=${_DB_PASSWORD_SECRET}:latest" \
-          --set-env-vars="NODE_ENV=production,INTEGRATION_MODE=local,DB_ACCESS_MODE=readwrite,REQUIRE_DATABASE=true,WRITE_FEATURES_ENABLED=true,WRITE_SCOPES=drafts,DB_HOST=/cloudsql/${_CLOUD_SQL_INSTANCE},DB_PORT=5432,DB_NAME=${_DB_NAME},DB_USER=${_DB_USER},DB_POOL_MAX=3"
+          --set-env-vars="^~^NODE_ENV=production~INTEGRATION_MODE=local~DB_ACCESS_MODE=readwrite~REQUIRE_DATABASE=true~WRITE_FEATURES_ENABLED=true~WRITE_SCOPES=drafts,documents~DB_HOST=/cloudsql/${_CLOUD_SQL_INSTANCE}~DB_PORT=5432~DB_NAME=${_DB_NAME}~DB_USER=${_DB_USER}~DB_POOL_MAX=3"
 
 images:
   - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPOSITORY}/${_IMAGE}:${BUILD_ID}
