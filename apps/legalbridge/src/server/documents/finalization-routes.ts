@@ -45,7 +45,11 @@ export function createDocumentFinalizationRouter(
         return response.status(409).json({ error: "draft changed", current: draft });
       }
 
-      const document = await finalizations.finalize(input, draft);
+      const actor = response.locals.currentUser!;
+      const document = await finalizations.finalize({
+        ...input,
+        createdBy: actor.source === "iap" ? actor.email : input.createdBy
+      }, draft);
       await drafts.remove(input.issueKey, input.templateType);
       response.status(201).json({
         document,

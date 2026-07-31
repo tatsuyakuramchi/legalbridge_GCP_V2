@@ -47,12 +47,14 @@ test("許可対象外ドメインのアカウントを拒否する", async () =>
   assert.equal(response.body.code, "ACCOUNT_NOT_AUTHORIZED");
 });
 
-test("依頼者は公開フォーム機能だけを利用できる", async () => {
+test("依頼者は公開フォームと本人所有レコードの機能を利用できる", async () => {
   const target = app();
   await request(target).get("/api/v2/dashboard").set(identity("person@example.com")).expect(200);
   await request(target).post("/api/v2/documents/preview").set(identity("person@example.com")).expect(200);
+  await request(target).get("/api/v2/documents").set(identity("person@example.com")).expect(200);
+
   const blocked = await request(target)
-    .get("/api/v2/documents")
+    .get("/api/v2/matters")
     .set(identity("person@example.com"))
     .expect(403);
   assert.equal(blocked.body.code, "ROLE_FORBIDDEN");
