@@ -9,6 +9,7 @@ import { SpecializedDocumentForms } from "./SpecializedDocumentForms";
 import { MasterDataPicker } from "./MasterDataPicker";
 import { DocumentRegistry } from "./DocumentRegistry";
 import { MatterRegistry } from "./MatterRegistry";
+import { LedgerWorkspace } from "./LedgerWorkspace";
 
 type CompatibilityReport = { summary: { total: number; ok: number; warning: number; error: number }; reports: Array<{ templateKey: string; status: "ok" | "warning" | "error"; missingHelpers: string[]; missingPartials: string[]; unmappedVariables: string[]; renderError?: string }> };
 
@@ -34,7 +35,7 @@ export function App() {
   const [templates, setTemplates] = useState<DocumentFormSchema[]>([]);
   const [schema, setSchema] = useState<DocumentFormSchema | null>(null);
   const [compatibility, setCompatibility] = useState<CompatibilityReport | null>(null);
-  const [view, setView] = useState<"home" | "matters" | "documents" | "templates" | "document">("home");
+  const [view, setView] = useState<"home" | "matters" | "documents" | "templates" | "document" | "ledgers">("home");
   const [readOnly, setReadOnly] = useState(false);
 
   useEffect(() => {
@@ -72,7 +73,7 @@ export function App() {
           >
             文書
           </button>
-          <button>台帳</button>
+          <button className={view === "ledgers" ? "active" : ""} onClick={() => setView("ledgers")}>台帳</button>
           <button>管理</button>
         </nav>
         <div className="backlog"><strong>Backlog連携</strong><small>参照のみ・変更なし</small></div>
@@ -93,6 +94,7 @@ export function App() {
           <Dashboard dashboard={dashboard} onCreateDocument={() => setView("templates")} />
         )}
         {view === "matters" && <MatterRegistry templates={templates} />}
+        {view === "ledgers" && <LedgerWorkspace />}
         {view === "documents" && (
           <DocumentRegistry templates={templates} onCreate={() => setView("templates")} />
         )}
