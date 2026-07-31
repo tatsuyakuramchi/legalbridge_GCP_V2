@@ -128,6 +128,8 @@ export interface AppDependencies {
 export interface AppOptions {
   accessMode: "readonly" | "readwrite";
   requireDatabase: boolean;
+  writeFeaturesEnabled?: boolean;
+  writeScopes?: Set<string>;
 }
 
 function createDefaultDependencies(): AppDependencies {
@@ -157,10 +159,16 @@ export function createApp(
   dependencies: AppDependencies = createDefaultDependencies(),
   options: AppOptions = {
     accessMode: config.databaseAccessMode,
-    requireDatabase: config.requireDatabase
+    requireDatabase: config.requireDatabase,
+    writeFeaturesEnabled: config.writeFeaturesEnabled,
+    writeScopes: config.writeScopes
   }
 ) {
   const app = express();
+  const draftWriteEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.writeScopes?.has("drafts") === true;
   app.use(cors());
   app.use(express.json({ limit: "5mb" }));
 
@@ -173,11 +181,14 @@ export function createApp(
       options.accessMode === "readonly" &&
       database.reachable &&
       database.readOnly !== true;
-    const status = databaseUnavailable || readOnlyMismatch ? 503 : 200;
+    const writeModeMismatch =
+      draftWriteEnabled && database.reachable && database.readOnly === true;
+    const status = databaseUnavailable || readOnlyMismatch || writeModeMismatch ? 503 : 200;
     response.status(status).json({
       ok: status === 200,
       service: "legalbridge-v2",
       accessMode: options.accessMode,
+      writeCapabilities: draftWriteEnabled ? ["drafts"] : [],
       database
     });
   });
@@ -186,6 +197,8 @@ export function createApp(
     response.json({
       service: "legalbridge-v2",
       accessMode: options.accessMode,
+      writeFeaturesEnabled: draftWriteEnabled,
+      writeCapabilities: draftWriteEnabled ? ["drafts"] : [],
       integrations: config.integrationMode
     });
   });
@@ -206,8 +219,6 @@ export function createApp(
   });
 
   app.use("/api/v2", (request, response, next) => {
-    if (options.accessMode !== "readonly") return next();
-
     const safeMethods = new Set(["GET", "HEAD", "OPTIONS"]);
     const safePostPaths = new Set([
       "/documents/validate",
@@ -215,10 +226,16 @@ export function createApp(
     ]);
     if (safeMethods.has(request.method)) return next();
     if (request.method === "POST" && safePostPaths.has(request.path)) return next();
+    const isDraftWrite =
+      ["PUT", "DELETE"].includes(request.method) &&
+      /^\/document-drafts\/[^/]+$/.test(request.path);
+    if (draftWriteEnabled && isDraftWrite) return next();
 
     return response.status(403).json({
-      error: "read-only environment",
-      code: "READ_ONLY_MODE"
+      error: options.accessMode === "readonly"
+        ? "read-only environment"
+        : "write capability is not enabled for this operation",
+      code: options.accessMode === "readonly" ? "READ_ONLY_MODE" : "WRITE_SCOPE_DISABLED"
     });
   });
 
