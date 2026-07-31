@@ -94,6 +94,17 @@ test("下書きを保存して復元する", async () => {
   assert.equal(restored.body.draft.formData.PROJECT_TITLE, "新しい発注");
   assert.equal(restored.body.draft.formData.compatibility_key, "keep");
   assert.equal(saved.body.draft.updatedBy, "local@example.com");
+
+  const removed = await request(target)
+    .delete("/api/v2/document-drafts/LOCAL-10")
+    .query({ template_type: "purchase_order" })
+    .expect(200);
+  assert.equal(removed.body.removed, true);
+
+  await request(target)
+    .get("/api/v2/document-drafts/LOCAL-10")
+    .query({ template_type: "purchase_order" })
+    .expect(404);
 });
 
 test("表示時と異なるtemplate版では検証を停止する", async () => {
