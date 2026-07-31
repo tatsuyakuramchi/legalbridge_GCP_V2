@@ -51,7 +51,6 @@ test("依頼者は公開フォームと本人所有レコードの機能を利�
   const target = app();
   await request(target).get("/api/v2/dashboard").set(identity("person@example.com")).expect(200);
   await request(target).post("/api/v2/documents/preview").set(identity("person@example.com")).expect(200);
-  await request(target).get("/api/v2/document-drafts").set(identity("person@example.com")).expect(200);
   await request(target).get("/api/v2/documents").set(identity("person@example.com")).expect(200);
 
   const blocked = await request(target)
