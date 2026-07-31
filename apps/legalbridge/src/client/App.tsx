@@ -7,6 +7,7 @@ import type {
 } from "../types";
 import { SpecializedDocumentForms } from "./SpecializedDocumentForms";
 import { MasterDataPicker } from "./MasterDataPicker";
+import { DocumentRegistry } from "./DocumentRegistry";
 
 type CompatibilityReport = { summary: { total: number; ok: number; warning: number; error: number }; reports: Array<{ templateKey: string; status: "ok" | "warning" | "error"; missingHelpers: string[]; missingPartials: string[]; unmappedVariables: string[]; renderError?: string }> };
 
@@ -32,7 +33,7 @@ export function App() {
   const [templates, setTemplates] = useState<DocumentFormSchema[]>([]);
   const [schema, setSchema] = useState<DocumentFormSchema | null>(null);
   const [compatibility, setCompatibility] = useState<CompatibilityReport | null>(null);
-  const [view, setView] = useState<"home" | "templates" | "document">("home");
+  const [view, setView] = useState<"home" | "documents" | "templates" | "document">("home");
   const [readOnly, setReadOnly] = useState(false);
 
   useEffect(() => {
@@ -65,8 +66,8 @@ export function App() {
           <button className={view === "home" ? "active" : ""} onClick={() => setView("home")}>ホーム</button>
           <button>案件</button>
           <button
-            className={view === "templates" || view === "document" ? "active" : ""}
-            onClick={() => setView("templates")}
+            className={view === "documents" || view === "templates" || view === "document" ? "active" : ""}
+            onClick={() => setView("documents")}
           >
             文書
           </button>
@@ -89,6 +90,9 @@ export function App() {
 
         {view === "home" && (
           <Dashboard dashboard={dashboard} onCreateDocument={() => setView("templates")} />
+        )}
+        {view === "documents" && (
+          <DocumentRegistry templates={templates} onCreate={() => setView("templates")} />
         )}
         {view === "templates" && (
           <TemplateCatalog templates={templates} compatibility={compatibility} onSelect={openDocumentForm} />
