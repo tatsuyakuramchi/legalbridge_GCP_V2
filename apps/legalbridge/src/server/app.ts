@@ -32,6 +32,8 @@ import {
   type MasterDataRepository
 } from "./master-data/repository.js";
 import { createMasterDataRouter } from "./master-data/routes.js";
+import { MemoryMatterRepository, PgMatterRepository, type MatterRepository } from "./matters/repository.js";
+import { createMatterRouter } from "./matters/routes.js";
 
 const dashboard: DashboardSummary = {
   kpis: [
@@ -111,6 +113,7 @@ export interface AppDependencies {
   integrations: IntegrationAdapter[];
   masterData?: MasterDataRepository;
   documentRegistry?: DocumentRegistryRepository;
+  matters?: MatterRepository;
 }
 
 export interface AppOptions {
@@ -133,7 +136,8 @@ function createDefaultDependencies(): AppDependencies {
       : new MemoryMasterDataRepository(),
     documentRegistry: database
       ? new PgDocumentRegistryRepository(database)
-      : new MemoryDocumentRegistryRepository()
+      : new MemoryDocumentRegistryRepository(),
+    matters: database ? new PgMatterRepository(database) : new MemoryMatterRepository()
   };
 }
 
@@ -209,6 +213,9 @@ export function createApp(
   app.use("/api/v2", createDocumentRouter(dependencies.templates, dependencies.drafts));
   app.use("/api/v2", createDocumentRegistryRouter(
     dependencies.documentRegistry ?? new MemoryDocumentRegistryRepository()
+  ));
+  app.use("/api/v2", createMatterRouter(
+    dependencies.matters ?? new MemoryMatterRepository()
   ));
   app.use("/api/v2", createMasterDataRouter(
     dependencies.masterData ?? new MemoryMasterDataRepository()
