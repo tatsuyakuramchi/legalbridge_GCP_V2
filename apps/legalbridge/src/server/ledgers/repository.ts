@@ -28,7 +28,7 @@ export class PgLedgerRepository implements LedgerRepository {
         id: String(row.id), type, code: row.vendor_code, title: row.vendor_name,
         subtitle: [row.trade_name, row.pen_name, row.entity_type].filter(Boolean).join("・"),
         detail: {
-          取引先区分: row.entity_type, 住所: row.address,
+          取引先区分: row.entity_type, 住所: maskLedgerAddress(row.address, row.entity_type),
           電話番号: maskPhone(row.phone), メール: maskEmail(row.email),
           担当部署: row.contact_department, 担当者: row.contact_name,
           代表者: row.vendor_rep, インボイス登録: Boolean(row.is_invoice_issuer),
@@ -100,4 +100,16 @@ function maskPhone(value: unknown) {
   if (!value) return null; const text = String(value); return text.length > 4 ? `${"*".repeat(Math.max(4, text.length - 4))}${text.slice(-4)}` : "****";
 }
 function iso(value: unknown) { return value ? new Date(String(value)).toISOString() : undefined; }
-function dateOnly(value: unknown) { return value ? String(value).slice(0, 10) : null; }
+export function maskLedgerAddress(address: unknown, entityType: unknown) {
+  if (!address) return null;
+  if (!String(entityType ?? "").includes("個人")) return String(address);
+  const text = String(address);
+  const prefecture = text.match(/^(東京都|北海道|大阪府|京都府|.{2,3}県)/)?.[1];
+  return prefecture ? `${prefecture}（詳細非表示）` : "住所詳細非表示";
+}
+export function formatLedgerDate(value: unknown) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(String(value));
+  return Number.isNaN(date.getTime()) ? String(value).slice(0, 10) : date.toISOString().slice(0, 10);
+}
+function dateOnly(value: unknown) { return formatLedgerDate(value); }

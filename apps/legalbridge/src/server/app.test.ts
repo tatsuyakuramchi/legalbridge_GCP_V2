@@ -14,6 +14,7 @@ import { MemoryMasterDataRepository } from "./master-data/repository.js";
 import { MemoryDocumentRegistryRepository } from "./documents/registry-repository.js";
 import { MemoryMatterRepository } from "./matters/repository.js";
 import { MemoryLedgerRepository } from "./ledgers/repository.js";
+import { formatLedgerDate, maskLedgerAddress } from "./ledgers/repository.js";
 import { MemoryGlobalSearchRepository } from "./search/repository.js";
 import { MemoryAdminRepository } from "./admin/repository.js";
 
@@ -342,6 +343,14 @@ test("取引先・作品・金銭条件台帳を検索する", async () => {
   const works = await request(target).get("/api/v2/ledgers/works").query({ q: "作品" }).expect(200);
   assert.equal(works.body.items[0].title, "作品A");
   await request(target).get("/api/v2/ledgers/unknown").expect(404);
+});
+
+test("個人住所を都道府県単位にマスクしDB日付をISO形式へ揃える", () => {
+  assert.equal(maskLedgerAddress("東京都港区台場2-2-2", "個人"), "東京都（詳細非表示）");
+  assert.equal(maskLedgerAddress("Seoul, Korea", "個人"), "住所詳細非表示");
+  assert.equal(maskLedgerAddress("東京都千代田区", "法人"), "東京都千代田区");
+  assert.equal(formatLedgerDate(new Date("2026-08-23T00:00:00.000Z")), "2026-08-23");
+  assert.equal(formatLedgerDate("2026-09-20"), "2026-09-20");
 });
 
 test("案件・文書・取引先・作品を横断検索する", async () => {
