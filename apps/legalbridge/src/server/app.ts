@@ -11,6 +11,12 @@ import {
 } from "./documents/draft-repository.js";
 import { createDocumentRouter } from "./documents/routes.js";
 import {
+  MemoryDocumentRegistryRepository,
+  PgDocumentRegistryRepository,
+  type DocumentRegistryRepository
+} from "./documents/registry-repository.js";
+import { createDocumentRegistryRouter } from "./documents/registry-routes.js";
+import {
   MemoryTemplateRepository,
   PgTemplateRepository,
   type TemplateRepository
@@ -104,6 +110,7 @@ export interface AppDependencies {
   drafts: DraftRepository;
   integrations: IntegrationAdapter[];
   masterData?: MasterDataRepository;
+  documentRegistry?: DocumentRegistryRepository;
 }
 
 export interface AppOptions {
@@ -123,7 +130,10 @@ function createDefaultDependencies(): AppDependencies {
     integrations: createIntegrationAdapters(),
     masterData: database
       ? new PgMasterDataRepository(database)
-      : new MemoryMasterDataRepository()
+      : new MemoryMasterDataRepository(),
+    documentRegistry: database
+      ? new PgDocumentRegistryRepository(database)
+      : new MemoryDocumentRegistryRepository()
   };
 }
 
@@ -197,6 +207,9 @@ export function createApp(
   });
 
   app.use("/api/v2", createDocumentRouter(dependencies.templates, dependencies.drafts));
+  app.use("/api/v2", createDocumentRegistryRouter(
+    dependencies.documentRegistry ?? new MemoryDocumentRegistryRepository()
+  ));
   app.use("/api/v2", createMasterDataRouter(
     dependencies.masterData ?? new MemoryMasterDataRepository()
   ));

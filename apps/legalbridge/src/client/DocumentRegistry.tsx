@@ -1,0 +1,115 @@
+import { useEffect, useMemo, useState } from "react";
+import type { DocumentFormSchema } from "../types";
+
+type RegisteredDocument = {
+  id: number;
+  documentNumber: string | null;
+  issueKey: string;
+  templateType: string;
+  templateVersionId: number | null;
+  title: string;
+  counterparty: string;
+  driveLink: string;
+  createdAt: string;
+  createdBy: string | null;
+  formData: Record<string, unknown>;
+};
+
+export function DocumentRegistry({
+  templates,
+  onCreate
+}: {
+  templates: DocumentFormSchema[];
+  onCreate: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [templateType, setTemplateType] = useState("");
+  const [documents, setDocuments] = useState<RegisteredDocument[]>([]);
+  const [selected, setSelected] = useState<RegisteredDocument | null>(null);
+  const [loading, setLoading] = useState(false);
+  const labels = useMemo(
+    () => new Map(templates.map((item) => [item.templateKey, item.label])),
+    [templates]
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      const params = new URLSearchParams({ q: query, limit: "100" });
+      if (templateType) params.set("template_type", templateType);
+      setLoading(true);
+      fetch(`/api/v2/documents?${params}`, { signal: controller.signal })
+        .then((response) => response.ok ? response.json() : Promise.reject())
+        .then((data) => setDocuments(data.documents ?? []))
+        .catch(() => undefined)
+        .finally(() => setLoading(false));
+    }, 250);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [query, templateType]);
+
+  return <section className="page registry-page">
+    <div className="page-title">
+      <div><p>DOCUMENT REGISTRY</p><h1>文書一覧</h1><small>既存文書を読み取り専用で検索・確認します</small></div>
+      <button className="primary" onClick={onCreate}>文書を作成</button>
+    </div>
+    <div className="registry-toolbar">
+      <input value={query} onChange={(event) => setQuery(event.target.value)}
+        placeholder="文書番号、案件キー、件名、相手方で検索" />
+      <select value={templateType} onChange={(event) => setTemplateType(event.target.value)}>
+        <option value="">すべての文書種別</option>
+        {templates.map((item) => <option key={item.templateKey} value={item.templateKey}>{item.label}</option>)}
+      </select>
+      <span>{loading ? "検索中…" : `${documents.length}件`}</span>
+    </div>
+    <div className="registry-layout">
+      <div className="registry-table panel">
+        <table>
+          <thead><tr><th>文書番号・件名</th><th>種別</th><th>相手方</th><th>作成日</th></tr></thead>
+          <tbody>{documents.map((document) =>
+            <tr key={document.id} className={selected?.id === document.id ? "selected" : ""}
+              onClick={() => setSelected(document)}>
+              <td><b>{document.documentNumber ?? "未発番"}</b><br /><small>{document.title}</small></td>
+              <td>{labels.get(document.templateType) ?? document.templateType}<br /><small>{document.issueKey}</small></td>
+              <td>{document.counterparty || "—"}</td>
+              <td>{formatDate(document.createdAt)}</td>
+            </tr>)}</tbody>
+        </table>
+        {!loading && !documents.length && <div className="empty-state">該当する文書がありません。</div>}
+      </div>
+      <DocumentDetail document={selected} label={selected ? labels.get(selected.templateType) : undefined} />
+    </div>
+  </section>;
+}
+
+function DocumentDetail({ document, label }: { document: RegisteredDocument | null; label?: string }) {
+  if (!document) return <aside className="panel registry-detail empty-detail">一覧から文書を選択してください。</aside>;
+  const entries = Object.entries(document.formData)
+    .filter(([, value]) => value !== null && value !== "" && typeof value !== "object")
+    .slice(0, 40);
+  return <aside className="panel registry-detail">
+    <span className="detail-kicker">DOCUMENT DETAIL</span>
+    <h2>{document.documentNumber ?? "未発番"}</h2>
+    <p className="detail-title">{document.title}</p>
+    <dl>
+      <dt>種別</dt><dd>{label ?? document.templateType}</dd>
+      <dt>案件キー</dt><dd>{document.issueKey}</dd>
+      <dt>作成日時</dt><dd>{formatDate(document.createdAt)}</dd>
+      <dt>作成者</dt><dd>{document.createdBy ?? "—"}</dd>
+    </dl>
+    {document.driveLink && <a className="drive-link" href={document.driveLink} target="_blank" rel="noreferrer">保存文書を開く</a>}
+    <h3>登録項目</h3>
+    <dl className="form-data-list">
+      {entries.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}
+    </dl>
+  </aside>;
+}
+
+function formatDate(value: string) {
+  if (!value) return "—";
+  return new Intl.DateTimeFormat("ja-JP", {
+    timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit"
+  }).format(new Date(value));
+}
