@@ -3,28 +3,43 @@ type LedgerType = "vendors" | "works" | "conditions";
 type Item = { id: string; type: LedgerType; code: string; title: string; subtitle: string; status?: string; updatedAt?: string; detail: Record<string, unknown> };
 const labels: Record<LedgerType, string> = { vendors: "取引先", works: "作品・原作", conditions: "金銭条件" };
 
-export function LedgerWorkspace() {
-  const [type, setType] = useState<LedgerType>("vendors");
-  const [query, setQuery] = useState("");
+export function LedgerWorkspace({ initialType, initialQuery, selectedId }: { initialType?: LedgerType; initialQuery?: string; selectedId?: string }) {
+  const [type, setType] = useState<LedgerType>(initialType ?? "vendors");
+  const [query, setQuery] = useState(initialQuery ?? "");
   const [items, setItems] = useState<Item[]>([]);
   const [selected, setSelected] = useState<Item | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [reload, setReload] = useState(0);
+  useEffect(() => {
+    if (initialType) setType(initialType);
+    if (initialQuery !== undefined) setQuery(initialQuery);
+  }, [initialType, initialQuery]);
   useEffect(() => {
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       setLoading(true); setSelected(null);
+      setError("");
       fetch(`/api/v2/ledgers/${type}?q=${encodeURIComponent(query)}&limit=200`, { signal: controller.signal })
         .then((response) => response.ok ? response.json() : Promise.reject())
-        .then((data) => setItems(data.items ?? [])).catch(() => undefined).finally(() => setLoading(false));
+        .then((data) => setItems(data.items ?? []))
+        .catch((cause) => { if (cause?.name !== "AbortError") setError("台帳を取得できませんでした。"); })
+        .finally(() => setLoading(false));
     }, 250);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [type, query]);
+  }, [type, query, reload]);
+  useEffect(() => {
+    if (!selectedId) return;
+    const item = items.find((candidate) => candidate.id === selectedId);
+    if (item) setSelected(item);
+  }, [items, selectedId]);
   return <section className="page ledger-page">
     <div className="page-title"><div><p>MASTER LEDGERS</p><h1>台帳</h1><small>既存マスターと契約条件を読み取り専用で横断確認します</small></div></div>
     <div className="ledger-tabs">{(Object.keys(labels) as LedgerType[]).map((key) =>
       <button className={type === key ? "active" : ""} key={key} onClick={() => { setType(key); setQuery(""); }}>{labels[key]}</button>)}</div>
     <div className="ledger-toolbar"><input value={query} onChange={(event) => setQuery(event.target.value)}
       placeholder={`${labels[type]}を名称・コード・文書番号で検索`} /><span>{loading ? "検索中…" : `${items.length}件`}</span></div>
+    {error && <div className="async-error">{error}<button onClick={() => setReload((value) => value + 1)}>再試行</button></div>}
     <div className="ledger-layout">
       <div className="ledger-list">{items.map((item) => <button key={item.id}
         className={selected?.id === item.id ? "selected" : ""} onClick={() => setSelected(item)}>
