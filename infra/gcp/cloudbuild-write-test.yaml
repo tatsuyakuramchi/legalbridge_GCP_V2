@@ -65,6 +65,9 @@ steps:
           --image="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPOSITORY}/${_IMAGE}:${BUILD_ID}" \
           --region="${_REGION}" \
           --platform=managed \
+          --memory=1Gi \
+          --cpu=1 \
+          --concurrency=2 \
           --no-allow-unauthenticated \
           --service-account="${_SERVICE_ACCOUNT}" \
           --add-cloudsql-instances="${_CLOUD_SQL_INSTANCE}" \
