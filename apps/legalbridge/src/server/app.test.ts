@@ -18,6 +18,7 @@ import { MemoryLedgerRepository } from "./ledgers/repository.js";
 import { formatLedgerDate, maskLedgerAddress } from "./ledgers/repository.js";
 import { MemoryGlobalSearchRepository } from "./search/repository.js";
 import { MemoryAdminRepository } from "./admin/repository.js";
+import { MemoryPdfRenderer } from "./documents/pdf-renderer.js";
 
 const schema: DocumentFormSchema = {
   templateKey: "purchase_order",
@@ -676,4 +677,60 @@ test("残る6テンプレートの生成変数を互換性警告にしない", (
     const report = inspectTemplateCompatibility({ ...schema, templateKey }, html, {});
     assert.deepEqual(report.unmappedVariables, []);
   }
+});
+
+
+test("PDFスコープ有効時だけ登録文書をPDFとして返す", async () => {
+  const documentRegistry = new MemoryDocumentRegistryRepository([{
+    id: 201,
+    documentNumber: "ARC-PO-2026-0001",
+    issueKey: "VALIDATION-PDF-1",
+    templateType: "purchase_order",
+    templateVersionId: 10,
+    title: "PDF検証",
+    counterparty: "検証先",
+    driveLink: "",
+    createdAt: "2026-07-31T00:00:00.000Z",
+    createdBy: "legal@example.com",
+    formData: {
+      PROJECT_TITLE: "PDF検証",
+      ORDER_DATE: "2026-07-31"
+    }
+  }]);
+  const target = createApp({
+    templates: new MemoryTemplateRepository([schema]),
+    drafts: new MemoryDraftRepository(),
+    integrations: createIntegrationAdapters(),
+    documentRegistry,
+    pdfRenderer: new MemoryPdfRenderer()
+  }, {
+    accessMode: "readwrite",
+    requireDatabase: false,
+    writeFeaturesEnabled: true,
+    writeScopes: new Set(["pdf"])
+  });
+
+  const response = await request(target)
+    .get("/api/v2/documents/201/pdf")
+    .expect("Content-Type", /application\/pdf/)
+    .expect(200);
+  assert.match(response.headers["content-disposition"], /ARC-PO-2026-0001\.pdf/);
+
+  const runtime = await request(target).get("/api/v2/runtime").expect(200);
+  assert.deepEqual(runtime.body.writeCapabilities, ["pdf"]);
+
+  const disabled = createApp({
+    templates: new MemoryTemplateRepository([schema]),
+    drafts: new MemoryDraftRepository(),
+    integrations: createIntegrationAdapters(),
+    documentRegistry,
+    pdfRenderer: new MemoryPdfRenderer()
+  }, {
+    accessMode: "readonly",
+    requireDatabase: false
+  });
+  const rejected = await request(disabled)
+    .get("/api/v2/documents/201/pdf")
+    .expect(403);
+  assert.equal(rejected.body.code, "PDF_GENERATION_DISABLED");
 });

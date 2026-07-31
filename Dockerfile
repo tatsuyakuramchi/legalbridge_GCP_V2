@@ -10,8 +10,10 @@ RUN npm run build
 
 FROM node:22-alpine AS runtime
 WORKDIR /app
+RUN apk add --no-cache chromium font-noto-cjk
 ENV NODE_ENV=production
 ENV PORT=8080
+ENV CHROMIUM_PATH=/usr/bin/chromium-browser
 
 COPY package.json package-lock.json ./
 COPY apps/legalbridge/package.json apps/legalbridge/package.json

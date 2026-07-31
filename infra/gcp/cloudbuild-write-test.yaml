@@ -69,7 +69,7 @@ steps:
           --service-account="${_SERVICE_ACCOUNT}" \
           --add-cloudsql-instances="${_CLOUD_SQL_INSTANCE}" \
           --set-secrets="DB_PASSWORD=${_DB_PASSWORD_SECRET}:latest" \
-          --set-env-vars="^~^NODE_ENV=production~INTEGRATION_MODE=local~DB_ACCESS_MODE=readwrite~REQUIRE_DATABASE=true~WRITE_FEATURES_ENABLED=true~WRITE_SCOPES=drafts,documents~DB_HOST=/cloudsql/${_CLOUD_SQL_INSTANCE}~DB_PORT=5432~DB_NAME=${_DB_NAME}~DB_USER=${_DB_USER}~DB_POOL_MAX=3"
+          --set-env-vars="^~^NODE_ENV=production~INTEGRATION_MODE=local~DB_ACCESS_MODE=readwrite~REQUIRE_DATABASE=true~WRITE_FEATURES_ENABLED=true~WRITE_SCOPES=drafts,documents,pdf~DB_HOST=/cloudsql/${_CLOUD_SQL_INSTANCE}~DB_PORT=5432~DB_NAME=${_DB_NAME}~DB_USER=${_DB_USER}~DB_POOL_MAX=3"
 
 images:
   - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPOSITORY}/${_IMAGE}:${BUILD_ID}
