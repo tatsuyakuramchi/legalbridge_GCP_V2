@@ -22,6 +22,11 @@ import {
   type DocumentRegistryRepository
 } from "./documents/registry-repository.js";
 import { createDocumentRegistryRouter } from "./documents/registry-routes.js";
+import { createDocumentPdfRouter } from "./documents/pdf-routes.js";
+import {
+  ChromiumPdfRenderer,
+  type PdfRenderer
+} from "./documents/pdf-renderer.js";
 import {
   MemoryTemplateRepository,
   PgTemplateRepository,
@@ -130,6 +135,7 @@ export interface AppDependencies {
   search?: GlobalSearchRepository;
   admin?: AdminRepository;
   finalizations?: DocumentFinalizationRepository;
+  pdfRenderer?: PdfRenderer;
 }
 
 export interface AppOptions {
@@ -161,7 +167,8 @@ function createDefaultDependencies(): AppDependencies {
     admin: database ? new PgAdminRepository(database) : new MemoryAdminRepository(),
     finalizations: database
       ? new PgDocumentFinalizationRepository(database)
-      : new MemoryDocumentFinalizationRepository()
+      : new MemoryDocumentFinalizationRepository(),
+    pdfRenderer: new ChromiumPdfRenderer()
   };
 }
 
@@ -183,6 +190,10 @@ export function createApp(
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
     options.writeScopes?.has("documents") === true;
+  const pdfGenerationEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.writeScopes?.has("pdf") === true;
   app.use(cors());
   app.use(express.json({ limit: "5mb" }));
 
@@ -205,7 +216,8 @@ export function createApp(
       accessMode: options.accessMode,
       writeCapabilities: [
         ...(draftWriteEnabled ? ["drafts"] : []),
-        ...(documentFinalizeEnabled ? ["documents"] : [])
+        ...(documentFinalizeEnabled ? ["documents"] : []),
+        ...(pdfGenerationEnabled ? ["pdf"] : [])
       ],
       database
     });
@@ -215,10 +227,12 @@ export function createApp(
     response.json({
       service: "legalbridge-v2",
       accessMode: options.accessMode,
-      writeFeaturesEnabled: draftWriteEnabled || documentFinalizeEnabled,
+      writeFeaturesEnabled:
+        draftWriteEnabled || documentFinalizeEnabled || pdfGenerationEnabled,
       writeCapabilities: [
         ...(draftWriteEnabled ? ["drafts"] : []),
-        ...(documentFinalizeEnabled ? ["documents"] : [])
+        ...(documentFinalizeEnabled ? ["documents"] : []),
+        ...(pdfGenerationEnabled ? ["pdf"] : [])
       ],
       integrations: config.integrationMode
     });
@@ -273,8 +287,14 @@ export function createApp(
     dependencies.drafts,
     dependencies.finalizations ?? new MemoryDocumentFinalizationRepository()
   ));
-  app.use("/api/v2", createDocumentRegistryRouter(
-    dependencies.documentRegistry ?? new MemoryDocumentRegistryRepository()
+  const documentRegistry =
+    dependencies.documentRegistry ?? new MemoryDocumentRegistryRepository();
+  app.use("/api/v2", createDocumentRegistryRouter(documentRegistry));
+  app.use("/api/v2", createDocumentPdfRouter(
+    documentRegistry,
+    dependencies.templates,
+    dependencies.pdfRenderer ?? new ChromiumPdfRenderer(),
+    pdfGenerationEnabled
   ));
   app.use("/api/v2", createMatterRouter(
     dependencies.matters ?? new MemoryMatterRepository()
