@@ -170,3 +170,19 @@ header input { width: 100%; border: 1px solid #d9e2ec; border-radius: 8px; paddi
 .admin-note { margin-top: 20px; border-radius: 7px; padding: 10px; background: #f0fbfc; color: #137689; font-size: 12px; }
 @media (max-width: 1050px) { .admin-status-grid, .admin-counts { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 760px) { .admin-status-grid, .admin-counts, .admin-columns { grid-template-columns: 1fr; } }
+
+.document-form-title { align-items: flex-start; }
+.draft-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 7px 10px; margin-top: 7px; }
+.draft-summary small { color: #64748b; }
+.draft-status { display: inline-flex; align-items: center; border-radius: 999px; padding: 4px 9px; font-size: 11px; font-weight: 800; background: #eef2f7; color: #475569; }
+.draft-status.loading, .draft-status.saving { background: #e6f7fa; color: #137689; }
+.draft-status.clean { background: #f1f5f9; color: #64748b; }
+.draft-status.dirty { background: #fff4d6; color: #8a5a00; }
+.draft-status.saved { background: #e8f7f0; color: #16724e; }
+.draft-status.error { background: #feeceb; color: #b42318; }
+.actions .danger-button { border-color: #efb5b5; color: #9f2d2d; background: #fff8f8; }
+.form-readonly-note { margin: -8px 0 16px; border: 1px solid #fed7aa; border-radius: 8px; background: #fff7ed; color: #9a3412; padding: 10px 12px; font-size: 12px; }
+@media (max-width: 760px) {
+  .document-form-title { display: grid; gap: 14px; }
+  .document-form-title .actions { flex-wrap: wrap; }
+}
