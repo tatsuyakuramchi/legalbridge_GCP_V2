@@ -285,7 +285,7 @@ export function createApp(
       request.method === "POST" && request.path === "/documents/finalize";
     if (documentFinalizeEnabled && isDocumentFinalize) return next();
     const isDriveStorage =
-      request.method === "POST" && /^\\/documents\\/[^/]+\\/drive$/.test(request.path);
+      request.method === "POST" && /^\/documents\/[^/]+\/drive$/.test(request.path);
     if (driveStorageEnabled && isDriveStorage) return next();
 
     return response.status(403).json({
