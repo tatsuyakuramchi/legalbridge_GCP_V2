@@ -248,52 +248,129 @@ function DocumentForm({
   const [draft, setDraft] = useState<DocumentDraft | null>(null);
   const [notice, setNotice] = useState("");
   const [previewHtml, setPreviewHtml] = useState("");
+  const [draftStatus, setDraftStatus] = useState<
+    "loading" | "clean" | "dirty" | "saving" | "saved" | "error"
+  >("loading");
 
   useEffect(() => {
-    if (!schema) return;
-    fetch(`/api/v2/document-form-context?template_key=${encodeURIComponent(schema.templateKey)}&issue_key=${issueKey}`)
-      .then((response) => response.ok ? response.json() : Promise.reject(new Error("context load failed")))
+    if (!schema || !issueKey.trim()) return;
+    const controller = new AbortController();
+    setDraftStatus("loading");
+    setNotice("");
+
+    fetch(
+      `/api/v2/document-form-context?template_key=${encodeURIComponent(schema.templateKey)}&issue_key=${encodeURIComponent(issueKey.trim())}`,
+      { signal: controller.signal }
+    )
+      .then((response) =>
+        response.ok ? response.json() : Promise.reject(new Error("context load failed"))
+      )
       .then((context) => {
+        const restoredDraft = context.draft ?? null;
         setFormData(context.formData ?? {});
-        setDraft(context.draft ?? null);
+        setDraft(restoredDraft);
+        setDraftStatus(restoredDraft ? "saved" : "clean");
+        setNotice(
+          restoredDraft
+            ? `保存済みの下書きを復元しました（${formatDraftTime(restoredDraft.updatedAt)}）`
+            : "新しい文書として入力できます"
+        );
       })
-      .catch(() => setNotice("初期値を取得できませんでした"));
+      .catch((error) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setDraftStatus("error");
+        setNotice("初期値または下書きを取得できませんでした");
+      });
+
+    return () => controller.abort();
   }, [schema, issueKey]);
 
-  if (!schema) return <section className="page"><h1>文書作成</h1><p>フォーム定義を読み込んでいます。</p></section>;
+  if (!schema) {
+    return <section className="page"><h1>文書作成</h1><p>フォーム定義を読み込んでいます。</p></section>;
+  }
   const groups = [...new Set(schema.fields.map((field) => field.group ?? "基本情報"))];
 
   function updateValue(name: string, value: unknown) {
     setFormData((current) => ({ ...current, [name]: value }));
+    setDraftStatus("dirty");
     setNotice("未保存の変更があります");
   }
 
   async function saveDraft() {
-    if (readOnly) {
-      setNotice("読取専用環境のため下書きは保存されません");
+    if (readOnly) return;
+    if (!issueKey.trim()) {
+      setDraftStatus("error");
+      setNotice("案件キーを入力してください");
       return;
     }
-    const response = await fetch(`/api/v2/document-drafts/${issueKey}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        templateType: schema!.templateKey,
-        formData,
-        expectedUpdatedAt: draft?.updatedAt ?? null
-      })
-    });
-    const result = await response.json();
-    if (response.status === 409) {
-      setDraft(result.current);
-      setNotice("別の画面で更新されています。内容を再確認してください");
-      return;
+
+    setDraftStatus("saving");
+    setNotice("下書きを保存しています");
+    try {
+      const response = await fetch(`/api/v2/document-drafts/${encodeURIComponent(issueKey.trim())}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          templateType: schema!.templateKey,
+          formData,
+          expectedUpdatedAt: draft?.updatedAt ?? null
+        })
+      });
+      const result = await response.json();
+      if (response.status === 409) {
+        setDraft(result.current);
+        setDraftStatus("error");
+        setNotice("別の画面で更新されています。案件キーを再入力して最新の下書きを復元してください");
+        return;
+      }
+      if (!response.ok) {
+        setDraftStatus("error");
+        setNotice(result.error ?? "下書き保存に失敗しました");
+        return;
+      }
+      setDraft(result.draft);
+      setDraftStatus("saved");
+      setNotice(`下書きを保存しました（${formatDraftTime(result.draft.updatedAt)}）`);
+    } catch {
+      setDraftStatus("error");
+      setNotice("通信エラーにより下書きを保存できませんでした");
     }
-    if (!response.ok) {
-      setNotice("下書き保存に失敗しました");
-      return;
+  }
+
+  async function discardDraft() {
+    if (readOnly || !draft) return;
+    if (!window.confirm("保存済みの下書きを破棄します。元に戻せません。よろしいですか？")) return;
+
+    setDraftStatus("saving");
+    setNotice("下書きを破棄しています");
+    try {
+      const query = new URLSearchParams({ template_type: schema!.templateKey });
+      const response = await fetch(
+        `/api/v2/document-drafts/${encodeURIComponent(issueKey.trim())}?${query.toString()}`,
+        { method: "DELETE" }
+      );
+      const result = await response.json();
+      if (!response.ok) {
+        setDraftStatus("error");
+        setNotice(result.error ?? "下書きを破棄できませんでした");
+        return;
+      }
+
+      const contextQuery = new URLSearchParams({
+        template_key: schema!.templateKey,
+        issue_key: issueKey.trim()
+      });
+      const contextResponse = await fetch(`/api/v2/document-form-context?${contextQuery.toString()}`);
+      const context = contextResponse.ok ? await contextResponse.json() : { formData: {} };
+      setDraft(null);
+      setFormData(context.formData ?? {});
+      setPreviewHtml("");
+      setDraftStatus("clean");
+      setNotice("下書きを破棄しました");
+    } catch {
+      setDraftStatus("error");
+      setNotice("通信エラーにより下書きを破棄できませんでした");
     }
-    setDraft(result.draft);
-    setNotice("下書きを保存しました");
   }
 
   async function validate() {
@@ -327,29 +404,64 @@ function DocumentForm({
 
   return (
     <section className="page">
-      <div className="page-title">
+      <div className="page-title document-form-title">
         <div>
           <button className="text-button" onClick={onBack}>← template一覧</button>
           <p>DOCUMENT COMMAND</p>
           <h1>{schema.label}</h1>
-          <small>{schema.templateKey}・{schema.fields.length}項目 {notice && `・${notice}`}</small>
-          <label className="draft-key">検証用案件キー
-            <input value={issueKey} onChange={(event) => setIssueKey(event.target.value)}
-              disabled={Boolean(draft)} placeholder="VALIDATION-1" />
+          <div className="draft-summary" aria-live="polite">
+            <span className={`draft-status ${draftStatus}`}>
+              {draftStatus === "loading" ? "読込中" :
+                draftStatus === "clean" ? "未保存" :
+                draftStatus === "dirty" ? "変更あり" :
+                draftStatus === "saving" ? "処理中" :
+                draftStatus === "saved" ? "保存済み" : "要確認"}
+            </span>
+            <small>{schema.templateKey}・{schema.fields.length}項目</small>
+            {notice && <small>{notice}</small>}
+          </div>
+          <label className="draft-key">案件キー
+            <input
+              value={issueKey}
+              onChange={(event) => {
+                setIssueKey(event.target.value);
+                setDraft(null);
+                setDraftStatus("loading");
+              }}
+              disabled={draftStatus === "saving"}
+              placeholder="VALIDATION-1"
+            />
           </label>
         </div>
         <div className="actions">
           <button onClick={validate}>入力確認</button>
-          <button
-            className="primary"
-            onClick={saveDraft}
-            disabled={readOnly}
-            title={readOnly ? "読取専用環境では保存できません" : undefined}
-          >
-            {readOnly ? "下書き保存（停止中）" : "下書き保存"}
-          </button>
+          {!readOnly && (
+            <>
+              {draft && (
+                <button
+                  className="danger-button"
+                  onClick={discardDraft}
+                  disabled={draftStatus === "saving"}
+                >
+                  下書きを破棄
+                </button>
+              )}
+              <button
+                className="primary"
+                onClick={saveDraft}
+                disabled={draftStatus === "saving" || draftStatus === "loading" || !issueKey.trim()}
+              >
+                {draftStatus === "saving" ? "保存中…" : draft ? "下書きを更新" : "下書きを保存"}
+              </button>
+            </>
+          )}
         </div>
       </div>
+      {readOnly && (
+        <div className="form-readonly-note">
+          読取専用環境では入力確認とプレビューのみ利用できます。下書きは保存されません。
+        </div>
+      )}
       <div className="form-layout">
         <nav className="form-nav">
           {groups.map((group, index) => <a key={group} href={`#group-${index}`}>{group}</a>)}
@@ -359,6 +471,7 @@ function DocumentForm({
           <MasterDataPicker schema={schema} formData={formData}
             onApply={(patch, message) => {
               setFormData((current) => ({ ...current, ...patch }));
+              setDraftStatus("dirty");
               setNotice(message);
             }} />
           {groups.map((group, index) => <section id={`group-${index}`} key={group}><h2>{group}</h2>
@@ -373,6 +486,18 @@ function DocumentForm({
       </div>
     </section>
   );
+}
+
+function formatDraftTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("ja-JP", {
+    timeZone: "Asia/Tokyo",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
 }
 
 function hasSpecializedForm(templateKey: string) {
