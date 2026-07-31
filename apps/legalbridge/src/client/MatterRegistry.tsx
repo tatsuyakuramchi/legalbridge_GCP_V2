@@ -22,12 +22,14 @@ const stageLabels: Record<string, string> = {
   completed: "完了", cancelled: "中止"
 };
 
-export function MatterRegistry({ templates }: { templates: DocumentFormSchema[] }) {
+export function MatterRegistry({ templates, selectedId }: { templates: DocumentFormSchema[]; selectedId?: number }) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
   const [matters, setMatters] = useState<Matter[]>([]);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [reload, setReload] = useState(0);
   const labels = new Map(templates.map((item) => [item.templateKey, item.label]));
 
   useEffect(() => {
@@ -36,18 +38,21 @@ export function MatterRegistry({ templates }: { templates: DocumentFormSchema[] 
       const params = new URLSearchParams({ q: query, limit: "200" });
       if (status) params.set("status", status);
       setLoading(true);
+      setError("");
       fetch(`/api/v2/matters?${params}`, { signal: controller.signal })
         .then((response) => response.ok ? response.json() : Promise.reject())
         .then((data) => setMatters(data.matters ?? []))
-        .catch(() => undefined).finally(() => setLoading(false));
+        .catch((cause) => { if (cause?.name !== "AbortError") setError("案件一覧を取得できませんでした。"); }).finally(() => setLoading(false));
     }, 250);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [query, status]);
+  }, [query, status, reload]);
 
   async function selectMatter(id: number) {
     const response = await fetch(`/api/v2/matters/${id}`);
     if (response.ok) setDetail(await response.json());
+    else setError("案件詳細を取得できませんでした。");
   }
+  useEffect(() => { if (selectedId) void selectMatter(selectedId); }, [selectedId]);
 
   return <section className="page matter-page">
     <div className="page-title"><div><p>MATTER MANAGEMENT</p><h1>案件一覧</h1>
@@ -59,6 +64,7 @@ export function MatterRegistry({ templates }: { templates: DocumentFormSchema[] 
         <option value="">すべての状態</option>{Object.entries(statusLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
       </select><span>{loading ? "検索中…" : `${matters.length}件`}</span>
     </div>
+    {error && <div className="async-error">{error}<button onClick={() => setReload((value) => value + 1)}>再試行</button></div>}
     <div className="matter-layout">
       <div className="matter-list">{matters.map((matter) =>
         <button key={matter.id} className={detail?.matter.id === matter.id ? "selected" : ""} onClick={() => selectMatter(matter.id)}>
