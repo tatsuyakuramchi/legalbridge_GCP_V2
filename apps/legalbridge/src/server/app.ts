@@ -38,6 +38,8 @@ import { MemoryLedgerRepository, PgLedgerRepository, type LedgerRepository } fro
 import { createLedgerRouter } from "./ledgers/routes.js";
 import { MemoryGlobalSearchRepository, PgGlobalSearchRepository, type GlobalSearchRepository } from "./search/repository.js";
 import { createGlobalSearchRouter } from "./search/routes.js";
+import { MemoryAdminRepository, PgAdminRepository, type AdminRepository } from "./admin/repository.js";
+import { createAdminRouter } from "./admin/routes.js";
 
 const dashboard: DashboardSummary = {
   kpis: [
@@ -120,6 +122,7 @@ export interface AppDependencies {
   matters?: MatterRepository;
   ledgers?: LedgerRepository;
   search?: GlobalSearchRepository;
+  admin?: AdminRepository;
 }
 
 export interface AppOptions {
@@ -145,7 +148,8 @@ function createDefaultDependencies(): AppDependencies {
       : new MemoryDocumentRegistryRepository(),
     matters: database ? new PgMatterRepository(database) : new MemoryMatterRepository(),
     ledgers: database ? new PgLedgerRepository(database) : new MemoryLedgerRepository(),
-    search: database ? new PgGlobalSearchRepository(database) : new MemoryGlobalSearchRepository()
+    search: database ? new PgGlobalSearchRepository(database) : new MemoryGlobalSearchRepository(),
+    admin: database ? new PgAdminRepository(database) : new MemoryAdminRepository()
   };
 }
 
@@ -230,6 +234,9 @@ export function createApp(
   ));
   app.use("/api/v2", createGlobalSearchRouter(
     dependencies.search ?? new MemoryGlobalSearchRepository()
+  ));
+  app.use("/api/v2", createAdminRouter(
+    dependencies.admin ?? new MemoryAdminRepository()
   ));
   app.use("/api/v2", createMasterDataRouter(
     dependencies.masterData ?? new MemoryMasterDataRepository()
