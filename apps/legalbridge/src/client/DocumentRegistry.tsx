@@ -12,7 +12,7 @@ type RegisteredDocument = {
   driveLink: string;
   createdAt: string;
   createdBy: string | null;
-  formData: Record<string, unknown>;
+  formData?: Record<string, unknown>;
 };
 
 export function DocumentRegistry({
@@ -70,7 +70,12 @@ export function DocumentRegistry({
           <thead><tr><th>文書番号・件名</th><th>種別</th><th>相手方</th><th>作成日</th></tr></thead>
           <tbody>{documents.map((document) =>
             <tr key={document.id} className={selected?.id === document.id ? "selected" : ""}
-              onClick={() => setSelected(document)}>
+              onClick={() => {
+                fetch(`/api/v2/documents/${document.id}`)
+                  .then((response) => response.ok ? response.json() : Promise.reject())
+                  .then((data) => setSelected(data.document))
+                  .catch(() => undefined);
+              }}>
               <td><b>{document.documentNumber ?? "未発番"}</b><br /><small>{document.title}</small></td>
               <td>{labels.get(document.templateType) ?? document.templateType}<br /><small>{document.issueKey}</small></td>
               <td>{document.counterparty || "—"}</td>
@@ -86,7 +91,7 @@ export function DocumentRegistry({
 
 function DocumentDetail({ document, label }: { document: RegisteredDocument | null; label?: string }) {
   if (!document) return <aside className="panel registry-detail empty-detail">一覧から文書を選択してください。</aside>;
-  const entries = Object.entries(document.formData)
+  const entries = Object.entries(document.formData ?? {})
     .filter(([, value]) => value !== null && value !== "" && typeof value !== "object")
     .slice(0, 40);
   return <aside className="panel registry-detail">
