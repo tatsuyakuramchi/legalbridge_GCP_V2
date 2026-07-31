@@ -1,5 +1,5 @@
 import type { DatabasePool } from "../db/pool.js";
-import type { DocumentDraft, DocumentFormData } from "../../types.js";
+import type { DocumentDraft, DocumentDraftSummary, DocumentFormData } from "../../types.js";
 
 export interface SaveDraftInput {
   issueKey: string;
@@ -11,6 +11,7 @@ export interface SaveDraftInput {
 }
 
 export interface DraftRepository {
+  list(query?: string, limit?: number): Promise<DocumentDraftSummary[]>;
   find(issueKey: string, templateType: string): Promise<DocumentDraft | null>;
   save(input: SaveDraftInput): Promise<DocumentDraft>;
   remove(issueKey: string, templateType: string): Promise<boolean>;
@@ -18,6 +19,28 @@ export interface DraftRepository {
 
 export class PgDraftRepository implements DraftRepository {
   constructor(private readonly database: DatabasePool) {}
+
+  async list(query = "", limit = 50) {
+    const normalizedQuery = query.trim();
+    const values: unknown[] = [];
+    const where = normalizedQuery
+      ? `WHERE issue_key ILIKE $1
+          OR template_type ILIKE $1
+          OR COALESCE(document_number, '') ILIKE $1
+          OR COALESCE(updated_by, '') ILIKE $1`
+      : "";
+    if (normalizedQuery) values.push(`%${normalizedQuery}%`);
+    values.push(Math.min(Math.max(limit, 1), 100));
+    const limitParameter = values.length;
+    const result = await this.database.query<DraftRow>(
+      `${SELECT_DRAFT}
+       ${where}
+       ORDER BY updated_at DESC, id DESC
+       LIMIT ${limitParameter}`,
+      values
+    );
+    return result.rows.map(mapDraftSummary);
+  }
 
   async find(issueKey: string, templateType: string) {
     const result = await this.database.query<DraftRow>(
@@ -89,6 +112,17 @@ const SELECT_DRAFT = `
   FROM document_drafts
 `;
 
+function mapDraftSummary(row: DraftRow): DocumentDraftSummary {
+  return {
+    id: row.id,
+    issueKey: row.issue_key,
+    templateType: row.template_type,
+    documentNumber: row.document_number,
+    updatedAt: new Date(row.updated_at).toISOString(),
+    updatedBy: row.updated_by
+  };
+}
+
 function mapDraft(row: DraftRow): DocumentDraft {
   return {
     id: row.id,
@@ -104,6 +138,20 @@ function mapDraft(row: DraftRow): DocumentDraft {
 export class MemoryDraftRepository implements DraftRepository {
   private readonly drafts = new Map<string, DocumentDraft>();
   private sequence = 1;
+
+  async list(query = "", limit = 50) {
+    const normalizedQuery = query.trim().toLowerCase();
+    return [...this.drafts.values()]
+      .filter((draft) => !normalizedQuery || [
+        draft.issueKey,
+        draft.templateType,
+        draft.documentNumber ?? "",
+        draft.updatedBy ?? ""
+      ].some((value) => value.toLowerCase().includes(normalizedQuery)))
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .slice(0, Math.min(Math.max(limit, 1), 100))
+      .map(({ formData: _formData, ...summary }) => summary);
+  }
 
   async find(issueKey: string, templateType: string) {
     return this.drafts.get(`${issueKey}:${templateType}`) ?? null;
