@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Response } from "express";
 import Handlebars from "handlebars";
 import { z } from "zod";
 import type { DraftRepository } from "./draft-repository.js";
@@ -89,7 +89,9 @@ export function createDocumentRouter(
       }
       const schema = await templates.findCurrent(templateKey);
       if (!schema) return response.status(404).json({ error: "template not found" });
-      const draft = await drafts.find(issueKey, templateKey);
+      const foundDraft = await drafts.find(issueKey, templateKey);
+      const owner = requesterEmail(response);
+      const draft = foundDraft && owns(foundDraft.updatedBy, owner) ? foundDraft : null;
       const today = new Intl.DateTimeFormat("en-CA", {
         timeZone: "Asia/Tokyo",
         year: "numeric",
@@ -116,7 +118,9 @@ export function createDocumentRouter(
         });
       }
       const query = draftListQuerySchema.parse(request.query);
-      response.json({ drafts: await drafts.list(query.q, query.limit) });
+      const owner = requesterEmail(response);
+      const listed = await drafts.list(query.q, owner ? 100 : query.limit);
+      response.json({ drafts: listed.filter((draft) => owns(draft.updatedBy, owner)).slice(0, query.limit) });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return response.status(400).json({ error: "invalid request", issues: error.issues });
@@ -130,7 +134,7 @@ export function createDocumentRouter(
       const templateType = String(request.query.template_type ?? "");
       if (!templateType) return response.status(400).json({ error: "template_type is required" });
       const draft = await drafts.find(request.params.issueKey, templateType);
-      if (!draft) return response.status(404).json({ error: "draft not found" });
+      if (!draft || !owns(draft.updatedBy, requesterEmail(response))) return response.status(404).json({ error: "draft not found" });
       response.json({ draft });
     } catch (error) {
       next(error);
@@ -142,8 +146,18 @@ export function createDocumentRouter(
       const input = saveDraftSchema.parse(request.body);
       const schema = await templates.findCurrent(input.templateType);
       if (!schema) return response.status(404).json({ error: "template not found" });
+      const owner = requesterEmail(response);
+      const existing = owner ? await drafts.find(request.params.issueKey, input.templateType) : null;
+      if (existing && !owns(existing.updatedBy, owner)) {
+        return response.status(404).json({ error: "draft not found" });
+      }
+      const actor = response.locals.currentUser!;
       response.json({
-        draft: await drafts.save({ issueKey: request.params.issueKey, ...input })
+        draft: await drafts.save({
+          issueKey: request.params.issueKey,
+          ...input,
+          updatedBy: actor.source === "iap" ? actor.email : input.updatedBy
+        })
       });
     } catch (error) {
       if (error instanceof DraftConflictError) {
@@ -160,6 +174,11 @@ export function createDocumentRouter(
     try {
       const templateType = String(request.query.template_type ?? "");
       if (!templateType) return response.status(400).json({ error: "template_type is required" });
+      const owner = requesterEmail(response);
+      const existing = await drafts.find(request.params.issueKey, templateType);
+      if (!existing || !owns(existing.updatedBy, owner)) {
+        return response.status(404).json({ error: "draft not found" });
+      }
       response.json({
         ok: true,
         removed: await drafts.remove(request.params.issueKey, templateType)
@@ -227,4 +246,13 @@ export function createDocumentRouter(
   });
 
   return router;
+}
+
+function requesterEmail(response: Response) {
+  const user = response.locals.currentUser;
+  return user?.role === "requester" ? user.email.toLowerCase() : "";
+}
+
+function owns(recordEmail: string | null | undefined, requiredOwner: string) {
+  return !requiredOwner || recordEmail?.toLowerCase() === requiredOwner;
 }
