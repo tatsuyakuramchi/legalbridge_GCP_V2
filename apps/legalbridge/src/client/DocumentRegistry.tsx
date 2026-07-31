@@ -18,10 +18,12 @@ type RegisteredDocument = {
 export function DocumentRegistry({
   templates,
   onCreate,
+  canGeneratePdf,
   selectedId
 }: {
   templates: DocumentFormSchema[];
   onCreate: () => void;
+  canGeneratePdf: boolean;
   selectedId?: number;
 }) {
   const [query, setQuery] = useState("");
@@ -93,12 +95,24 @@ export function DocumentRegistry({
         </table>
         {!loading && !documents.length && <div className="empty-state">該当する文書がありません。</div>}
       </div>
-      <DocumentDetail document={selected} label={selected ? labels.get(selected.templateType) : undefined} />
+      <DocumentDetail
+        document={selected}
+        label={selected ? labels.get(selected.templateType) : undefined}
+        canGeneratePdf={canGeneratePdf}
+      />
     </div>
   </section>;
 }
 
-function DocumentDetail({ document, label }: { document: RegisteredDocument | null; label?: string }) {
+function DocumentDetail({
+  document,
+  label,
+  canGeneratePdf
+}: {
+  document: RegisteredDocument | null;
+  label?: string;
+  canGeneratePdf: boolean;
+}) {
   if (!document) return <aside className="panel registry-detail empty-detail">一覧から文書を選択してください。</aside>;
   const entries = Object.entries(document.formData ?? {})
     .filter(([, value]) => value !== null && value !== "" && typeof value !== "object")
@@ -113,7 +127,28 @@ function DocumentDetail({ document, label }: { document: RegisteredDocument | nu
       <dt>作成日時</dt><dd>{formatDate(document.createdAt)}</dd>
       <dt>作成者</dt><dd>{document.createdBy ?? "—"}</dd>
     </dl>
-    {document.driveLink && <a className="drive-link" href={document.driveLink} target="_blank" rel="noreferrer">保存文書を開く</a>}
+    <div className="document-output-actions">
+      {canGeneratePdf && (
+        <a
+          className="pdf-download-link"
+          href={`/api/v2/documents/${document.id}/pdf`}
+          target="_blank"
+          rel="noreferrer"
+        >
+          PDFを生成・ダウンロード
+        </a>
+      )}
+      {document.driveLink && (
+        <a className="drive-link" href={document.driveLink} target="_blank" rel="noreferrer">
+          保存文書を開く
+        </a>
+      )}
+    </div>
+    {canGeneratePdf && (
+      <small className="pdf-safety-note">
+        PDFは都度生成されます。Drive・Backlog・メールへの保存や送信は行いません。
+      </small>
+    )}
     <h3>登録項目</h3>
     <dl className="form-data-list">
       {entries.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}
