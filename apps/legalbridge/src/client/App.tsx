@@ -40,6 +40,7 @@ export function App() {
   const [compatibility, setCompatibility] = useState<CompatibilityReport | null>(null);
   const [view, setView] = useState<"home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "admin">("home");
   const [readOnly, setReadOnly] = useState(true);
+  const [canFinalizeDocuments, setCanFinalizeDocuments] = useState(false);
   const [searchSelection, setSearchSelection] = useState<{ target: "matter" | "document" | "vendor" | "work"; id: string; title: string } | null>(null);
   const [draftSelection, setDraftSelection] = useState<{ issueKey: string; templateType: string } | null>(null);
 
@@ -47,8 +48,17 @@ export function App() {
     fetch("/api/v2/dashboard").then((response) => response.ok && response.json()).then((data) => data && setDashboard(data)).catch(() => undefined);
     fetch("/api/v2/runtime")
       .then((response) => response.ok ? response.json() : Promise.reject())
-      .then((runtime) => setReadOnly(!runtime.writeCapabilities?.includes("drafts")))
-      .catch(() => undefined);
+      .then((runtime) => {
+        const capabilities = Array.isArray(runtime.writeCapabilities)
+          ? runtime.writeCapabilities as string[]
+          : [];
+        setReadOnly(!capabilities.includes("drafts"));
+        setCanFinalizeDocuments(capabilities.includes("documents"));
+      })
+      .catch(() => {
+        setReadOnly(true);
+        setCanFinalizeDocuments(false);
+      });
     fetch("/api/v2/document-templates")
       .then((response) => response.ok ? response.json() : Promise.reject())
       .then((data) => setTemplates(data.templates ?? []))
@@ -139,6 +149,7 @@ export function App() {
             key={`${schema?.templateKey ?? "loading"}:${draftSelection?.issueKey ?? "new"}`}
             schema={schema}
             readOnly={readOnly}
+            canFinalizeDocuments={canFinalizeDocuments}
             initialIssueKey={draftSelection?.issueKey ?? "VALIDATION-1"}
             onBack={() => setView(draftSelection ? "drafts" : "templates")}
           />
@@ -260,11 +271,13 @@ function Dashboard({ dashboard, onCreateDocument }: { dashboard: DashboardSummar
 function DocumentForm({
   schema,
   readOnly,
+  canFinalizeDocuments,
   initialIssueKey,
   onBack
 }: {
   schema: DocumentFormSchema | null;
   readOnly: boolean;
+  canFinalizeDocuments: boolean;
   initialIssueKey: string;
   onBack: () => void;
 }) {
@@ -273,6 +286,11 @@ function DocumentForm({
   const [draft, setDraft] = useState<DocumentDraft | null>(null);
   const [notice, setNotice] = useState("");
   const [previewHtml, setPreviewHtml] = useState("");
+  const [finalizedDocument, setFinalizedDocument] = useState<{
+    id: number;
+    documentNumber: string;
+    integrations: { pdf: string; drive: string; backlog: string };
+  } | null>(null);
   const [draftStatus, setDraftStatus] = useState<
     "loading" | "clean" | "dirty" | "saving" | "saved" | "error"
   >("loading");
@@ -282,6 +300,7 @@ function DocumentForm({
     const controller = new AbortController();
     setDraftStatus("loading");
     setNotice("");
+    setFinalizedDocument(null);
 
     fetch(
       `/api/v2/document-form-context?template_key=${encodeURIComponent(schema.templateKey)}&issue_key=${encodeURIComponent(issueKey.trim())}`,
@@ -316,6 +335,7 @@ function DocumentForm({
   const groups = [...new Set(schema.fields.map((field) => field.group ?? "基本情報"))];
 
   function updateValue(name: string, value: unknown) {
+    if (finalizedDocument) return;
     setFormData((current) => ({ ...current, [name]: value }));
     setDraftStatus("dirty");
     setNotice("未保存の変更があります");
@@ -398,6 +418,52 @@ function DocumentForm({
     }
   }
 
+  async function finalizeDocument() {
+    if (!canFinalizeDocuments || !draft || draftStatus !== "saved") return;
+    if (!window.confirm(
+      "保存済みの下書きを文書として確定します。確定後はこの下書きを編集できません。よろしいですか？"
+    )) return;
+
+    setDraftStatus("saving");
+    setNotice("文書を確定しています");
+    try {
+      const response = await fetch("/api/v2/documents/finalize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          issueKey: issueKey.trim(),
+          templateType: schema!.templateKey,
+          templateVersionId: schema!.templateVersionId,
+          formData,
+          expectedDraftUpdatedAt: draft.updatedAt
+        })
+      });
+      const result = await response.json();
+      if (response.status === 409) {
+        setDraftStatus("error");
+        setNotice("下書きが別の画面で更新されています。再読み込みしてから確定してください");
+        return;
+      }
+      if (!response.ok) {
+        setDraftStatus("error");
+        setNotice(result.error ?? "文書を確定できませんでした");
+        return;
+      }
+
+      setFinalizedDocument({
+        id: result.document.id,
+        documentNumber: result.document.documentNumber,
+        integrations: result.integrations
+      });
+      setDraft(null);
+      setDraftStatus("clean");
+      setNotice(`文書 ${result.document.documentNumber} を確定しました`);
+    } catch {
+      setDraftStatus("error");
+      setNotice("通信エラーにより文書を確定できませんでした");
+    }
+  }
+
   async function validate() {
     const response = await fetch("/api/v2/documents/validate", {
       method: "POST",
@@ -453,7 +519,7 @@ function DocumentForm({
                 setDraft(null);
                 setDraftStatus("loading");
               }}
-              disabled={draftStatus === "saving"}
+              disabled={draftStatus === "saving" || Boolean(finalizedDocument)}
               placeholder="VALIDATION-1"
             />
           </label>
@@ -474,14 +540,39 @@ function DocumentForm({
               <button
                 className="primary"
                 onClick={saveDraft}
-                disabled={draftStatus === "saving" || draftStatus === "loading" || !issueKey.trim()}
+                disabled={draftStatus === "saving" || draftStatus === "loading" || !issueKey.trim() || Boolean(finalizedDocument)}
               >
-                {draftStatus === "saving" ? "保存中…" : draft ? "下書きを更新" : "下書きを保存"}
+                {draftStatus === "saving" ? "処理中…" : draft ? "下書きを更新" : "下書きを保存"}
               </button>
+              {canFinalizeDocuments && (
+                <button
+                  className="finalize-button"
+                  onClick={finalizeDocument}
+                  disabled={!draft || draftStatus !== "saved"}
+                  title={!draft || draftStatus !== "saved" ? "保存済みで未変更の下書きが必要です" : undefined}
+                >
+                  文書を確定
+                </button>
+              )}
             </>
           )}
         </div>
       </div>
+      {finalizedDocument && (
+        <div className="finalization-result" role="status">
+          <div>
+            <span>DOCUMENT FINALIZED</span>
+            <strong>{finalizedDocument.documentNumber}</strong>
+            <small>文書ID: {finalizedDocument.id}</small>
+          </div>
+          <dl>
+            <div><dt>PDF</dt><dd>{formatIntegrationStatus(finalizedDocument.integrations.pdf)}</dd></div>
+            <div><dt>Drive</dt><dd>{formatIntegrationStatus(finalizedDocument.integrations.drive)}</dd></div>
+            <div><dt>Backlog</dt><dd>{formatIntegrationStatus(finalizedDocument.integrations.backlog)}</dd></div>
+          </dl>
+          <p>外部連携は実行していません。文書番号の発番とDB確定のみ完了しています。</p>
+        </div>
+      )}
       {readOnly && (
         <div className="form-readonly-note">
           読取専用環境では入力確認とプレビューのみ利用できます。下書きは保存されません。
@@ -495,6 +586,7 @@ function DocumentForm({
         <form className="form-panel">
           <MasterDataPicker schema={schema} formData={formData}
             onApply={(patch, message) => {
+              if (finalizedDocument) return;
               setFormData((current) => ({ ...current, ...patch }));
               setDraftStatus("dirty");
               setNotice(message);
@@ -511,6 +603,12 @@ function DocumentForm({
       </div>
     </section>
   );
+}
+
+function formatIntegrationStatus(value: string) {
+  if (value === "pending") return "未実行";
+  if (value === "disabled") return "停止";
+  return value;
 }
 
 function formatDraftTime(value: string) {
