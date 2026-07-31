@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Response } from "express";
 import type { DocumentRegistryRepository } from "./registry-repository.js";
 
 export function createDocumentRegistryRouter(repository: DocumentRegistryRepository) {
@@ -9,7 +9,9 @@ export function createDocumentRegistryRouter(repository: DocumentRegistryReposit
       const query = String(request.query.q ?? "").slice(0, 100);
       const templateType = String(request.query.template_type ?? "").slice(0, 60);
       const limit = Number.parseInt(String(request.query.limit ?? "100"), 10) || 100;
-      const documents = await repository.list(query, templateType || undefined, limit);
+      const owner = requesterEmail(response);
+      const listed = await repository.list(query, templateType || undefined, owner ? 200 : limit);
+      const documents = listed.filter((document) => owns(document.createdBy, owner)).slice(0, limit);
       response.json({
         documents: documents.map(({ formData: _formData, ...document }) => document)
       });
@@ -25,7 +27,9 @@ export function createDocumentRegistryRouter(repository: DocumentRegistryReposit
         return response.status(400).json({ error: "invalid document id" });
       }
       const document = await repository.find(id);
-      if (!document) return response.status(404).json({ error: "document not found" });
+      if (!document || !owns(document.createdBy, requesterEmail(response))) {
+        return response.status(404).json({ error: "document not found" });
+      }
       response.json({ document: { ...document, formData: maskSensitiveFields(document.formData) } });
     } catch (error) {
       next(error);
@@ -33,6 +37,15 @@ export function createDocumentRegistryRouter(repository: DocumentRegistryReposit
   });
 
   return router;
+}
+
+function requesterEmail(response: Response) {
+  const user = response.locals.currentUser;
+  return user?.role === "requester" ? user.email.toLowerCase() : "";
+}
+
+function owns(recordEmail: string | null | undefined, requiredOwner: string) {
+  return !requiredOwner || recordEmail?.toLowerCase() === requiredOwner;
 }
 
 function maskSensitiveFields(formData: Record<string, unknown>) {
