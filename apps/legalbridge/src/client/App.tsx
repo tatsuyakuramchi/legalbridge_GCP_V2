@@ -335,6 +335,7 @@ function DocumentForm({
   const groups = [...new Set(schema.fields.map((field) => field.group ?? "基本情報"))];
 
   function updateValue(name: string, value: unknown) {
+    if (finalizedDocument) return;
     setFormData((current) => ({ ...current, [name]: value }));
     setDraftStatus("dirty");
     setNotice("未保存の変更があります");
@@ -518,7 +519,7 @@ function DocumentForm({
                 setDraft(null);
                 setDraftStatus("loading");
               }}
-              disabled={draftStatus === "saving"}
+              disabled={draftStatus === "saving" || Boolean(finalizedDocument)}
               placeholder="VALIDATION-1"
             />
           </label>
@@ -539,7 +540,7 @@ function DocumentForm({
               <button
                 className="primary"
                 onClick={saveDraft}
-                disabled={draftStatus === "saving" || draftStatus === "loading" || !issueKey.trim()}
+                disabled={draftStatus === "saving" || draftStatus === "loading" || !issueKey.trim() || Boolean(finalizedDocument)}
               >
                 {draftStatus === "saving" ? "処理中…" : draft ? "下書きを更新" : "下書きを保存"}
               </button>
@@ -585,6 +586,7 @@ function DocumentForm({
         <form className="form-panel">
           <MasterDataPicker schema={schema} formData={formData}
             onApply={(patch, message) => {
+              if (finalizedDocument) return;
               setFormData((current) => ({ ...current, ...patch }));
               setDraftStatus("dirty");
               setNotice(message);
