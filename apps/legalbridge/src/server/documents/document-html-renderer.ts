@@ -43,9 +43,17 @@ export async function renderStoredDocumentHtml(
     strict: false,
     noEscape: false
   });
+  const numberedFormData = {
+    ...document.formData,
+    契約書番号: document.documentNumber,
+    文書番号: document.documentNumber,
+    CONTRACT_NO: document.documentNumber,
+    DOC_NO: document.documentNumber,
+    document_number: document.documentNumber
+  };
   const context = document.templateType === INDIVIDUAL_LICENSE_V3_KEY
-    ? buildIndividualLicenseV3Context(document.formData)
-    : buildTemplateDocumentContext(document.templateType, document.formData);
+    ? buildIndividualLicenseV3Context(numberedFormData)
+    : buildTemplateDocumentContext(document.templateType, numberedFormData);
   const rendered = render({
     ...context,
     DOCUMENT_NUMBER: document.documentNumber,
