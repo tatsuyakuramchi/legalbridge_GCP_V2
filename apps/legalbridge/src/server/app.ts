@@ -215,7 +215,7 @@ export function createApp(
     response.json({
       service: "legalbridge-v2",
       accessMode: options.accessMode,
-      writeFeaturesEnabled: draftWriteEnabled,
+      writeFeaturesEnabled: draftWriteEnabled || documentFinalizeEnabled,
       writeCapabilities: [
         ...(draftWriteEnabled ? ["drafts"] : []),
         ...(documentFinalizeEnabled ? ["documents"] : [])
