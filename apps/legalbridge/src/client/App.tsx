@@ -10,6 +10,7 @@ import { MasterDataPicker } from "./MasterDataPicker";
 import { DocumentRegistry } from "./DocumentRegistry";
 import { MatterRegistry } from "./MatterRegistry";
 import { LedgerWorkspace } from "./LedgerWorkspace";
+import { GlobalSearch } from "./GlobalSearch";
 
 type CompatibilityReport = { summary: { total: number; ok: number; warning: number; error: number }; reports: Array<{ templateKey: string; status: "ok" | "warning" | "error"; missingHelpers: string[]; missingPartials: string[]; unmappedVariables: string[]; renderError?: string }> };
 
@@ -86,7 +87,9 @@ export function App() {
           </div>
         )}
         <header>
-          <input aria-label="グローバル検索" placeholder="案件、文書、契約、作品を検索" />
+          <GlobalSearch onNavigate={(target) => {
+            setView(target === "matter" ? "matters" : target === "document" ? "documents" : "ledgers");
+          }} />
           <div className="profile">法務担当</div>
         </header>
 

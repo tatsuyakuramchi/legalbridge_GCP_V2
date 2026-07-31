@@ -14,6 +14,7 @@ import { MemoryMasterDataRepository } from "./master-data/repository.js";
 import { MemoryDocumentRegistryRepository } from "./documents/registry-repository.js";
 import { MemoryMatterRepository } from "./matters/repository.js";
 import { MemoryLedgerRepository } from "./ledgers/repository.js";
+import { MemoryGlobalSearchRepository } from "./search/repository.js";
 
 const schema: DocumentFormSchema = {
   templateKey: "purchase_order",
@@ -340,6 +341,25 @@ test("取引先・作品・金銭条件台帳を検索する", async () => {
   const works = await request(target).get("/api/v2/ledgers/works").query({ q: "作品" }).expect(200);
   assert.equal(works.body.items[0].title, "作品A");
   await request(target).get("/api/v2/ledgers/unknown").expect(404);
+});
+
+test("案件・文書・取引先・作品を横断検索する", async () => {
+  const target = createApp({
+    templates: new MemoryTemplateRepository([schema]),
+    drafts: new MemoryDraftRepository(),
+    integrations: createIntegrationAdapters(),
+    search: new MemoryGlobalSearchRepository([
+      { id: "1", target: "matter", title: "海外ライセンス契約", code: "MTR-001", description: "取引先A" },
+      { id: "2", target: "document", title: "利用許諾契約書", code: "LEGAL-2", description: "license_master" },
+      { id: "3", target: "vendor", title: "取引先A", code: "V-001", description: "法人" },
+      { id: "work:4", target: "work", title: "作品A", code: "W-001", description: "自社作品" }
+    ])
+  }, { accessMode: "readonly", requireDatabase: false });
+  const response = await request(target).get("/api/v2/search").query({ q: "取引先A" }).expect(200);
+  assert.equal(response.body.results.length, 2);
+  assert.deepEqual(response.body.results.map((item: { target: string }) => item.target), ["matter", "vendor"]);
+  const shortQuery = await request(target).get("/api/v2/search").query({ q: "A" }).expect(200);
+  assert.equal(shortQuery.body.results.length, 0);
 });
 
 test("空field_schemaを補うV3基本フォーム定義を持つ", () => {
