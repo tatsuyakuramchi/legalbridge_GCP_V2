@@ -43,10 +43,15 @@ export function App() {
   const [canFinalizeDocuments, setCanFinalizeDocuments] = useState(false);
   const [canGeneratePdf, setCanGeneratePdf] = useState(false);
   const [canSaveToDrive, setCanSaveToDrive] = useState(false);
+  const [currentUser, setCurrentUser] = useState<{ email: string; role: "admin" | "legal" | "requester" } | null>(null);
   const [searchSelection, setSearchSelection] = useState<{ target: "matter" | "document" | "vendor" | "work"; id: string; title: string } | null>(null);
   const [draftSelection, setDraftSelection] = useState<{ issueKey: string; templateType: string } | null>(null);
 
   useEffect(() => {
+    fetch("/api/v2/me")
+      .then((response) => response.ok ? response.json() : Promise.reject())
+      .then((data) => setCurrentUser(data.user ?? null))
+      .catch(() => setCurrentUser(null));
     fetch("/api/v2/dashboard").then((response) => response.ok && response.json()).then((data) => data && setDashboard(data)).catch(() => undefined);
     fetch("/api/v2/runtime")
       .then((response) => response.ok ? response.json() : Promise.reject())
@@ -92,26 +97,29 @@ export function App() {
     setView("document");
   }
 
+  const legalWorkspace = currentUser?.role === "admin" || currentUser?.role === "legal";
+  const adminWorkspace = currentUser?.role === "admin";
+
   return (
     <div className="shell">
       <aside className="rail">
         <div className="brand">LegalBridge <span>V2</span></div>
         <nav>
           <button className={view === "home" ? "active" : ""} onClick={() => setView("home")}>ホーム</button>
-          <button className={view === "matters" ? "active" : ""} onClick={() => setView("matters")}>案件</button>
-          <button
+          {legalWorkspace && <button className={view === "matters" ? "active" : ""} onClick={() => setView("matters")}>案件</button>}
+          {legalWorkspace && <button
             className={view === "documents" || view === "templates" || view === "document" ? "active" : ""}
             onClick={() => setView("documents")}
           >
             文書
-          </button>
-          {!readOnly && (
+          </button>}
+          {!readOnly && legalWorkspace && (
             <button className={view === "drafts" ? "active" : ""} onClick={() => setView("drafts")}>
               下書き
             </button>
           )}
-          <button className={view === "ledgers" ? "active" : ""} onClick={() => setView("ledgers")}>台帳</button>
-          <button className={view === "admin" ? "active" : ""} onClick={() => setView("admin")}>管理</button>
+          {legalWorkspace && <button className={view === "ledgers" ? "active" : ""} onClick={() => setView("ledgers")}>台帳</button>}
+          {adminWorkspace && <button className={view === "admin" ? "active" : ""} onClick={() => setView("admin")}>管理</button>}
         </nav>
         <div className="backlog"><strong>Backlog連携</strong><small>参照のみ・変更なし</small></div>
       </aside>
@@ -127,7 +135,7 @@ export function App() {
             setSearchSelection({ target, id, title });
             setView(target === "matter" ? "matters" : target === "document" ? "documents" : "ledgers");
           }} />
-          <div className="profile">法務担当</div>
+          <div className="profile">{currentUser ? `${roleLabel(currentUser.role)}・${currentUser.email}` : "認証確認中"}</div>
         </header>
 
         {view === "home" && (
@@ -704,4 +712,10 @@ function IndividualLicenseV3Form({ formData, onChange }: { formData: DocumentFor
 }
 function SimpleRepeater({ title, itemLabel, rows, fields, onAdd, onChange, onRemove }: { title: string; itemLabel: string; rows: V3Row[]; fields: string[][]; onAdd: () => void; onChange: (index: number, patch: V3Row) => void; onRemove: (index: number) => void }) {
   return <section><div className="repeater-title"><h2>{title}</h2><button type="button" onClick={onAdd}>＋ 追加</button></div>{rows.map((row,index) => <article className="repeater-card" key={index}><div className="repeater-card-head"><strong>{itemLabel}{index+1}</strong><button type="button" onClick={() => onRemove(index)}>削除</button></div><div className="field-grid">{fields.map(([name,label]) => <label key={name}><span>{label}</span><input value={String(row[name] ?? "")} onChange={(event) => onChange(index,{[name]:event.target.value})} /></label>)}</div></article>)}</section>;
+}
+
+function roleLabel(role: "admin" | "legal" | "requester") {
+  if (role === "admin") return "管理者";
+  if (role === "legal") return "法務担当";
+  return "依頼者";
 }
