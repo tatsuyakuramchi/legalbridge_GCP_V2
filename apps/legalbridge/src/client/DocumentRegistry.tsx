@@ -102,7 +102,7 @@ export function DocumentRegistry({
         label={selected ? labels.get(selected.templateType) : undefined}
         canGeneratePdf={canGeneratePdf}
         canSaveToDrive={canSaveToDrive}
-        onRefresh={() => selected && selectDocument(selected.id)}
+        onRefresh={() => { if (selected) return selectDocument(selected.id); }}
       />
     </div>
   </section>;
