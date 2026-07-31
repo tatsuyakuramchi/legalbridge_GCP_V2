@@ -11,6 +11,7 @@ import { inspectTemplateCompatibility } from "./documents/compatibility.js";
 import { buildCommonDocumentContext } from "./documents/context-adapter.js";
 import { buildTemplateDocumentContext } from "./documents/template-context-adapters.js";
 import { MemoryMasterDataRepository } from "./master-data/repository.js";
+import { MemoryDocumentRegistryRepository } from "./documents/registry-repository.js";
 
 const schema: DocumentFormSchema = {
   templateKey: "purchase_order",
@@ -234,6 +235,45 @@ test("未対応のマスターデータ種別を拒否する", async () => {
     .get("/api/v2/master-data/search")
     .query({ type: "unknown" })
     .expect(400);
+});
+
+test("登録文書の一覧検索と詳細を読取専用で返す", async () => {
+  const registeredDocument = {
+    id: 101,
+    documentNumber: "PO-ARC-202607-001",
+    issueKey: "LEGAL-101",
+    templateType: "purchase_order",
+    templateVersionId: 10,
+    title: "新商品制作",
+    counterparty: "取引先A",
+    driveLink: "https://drive.google.com/example",
+    createdAt: "2026-07-30T01:00:00.000Z",
+    createdBy: "legal@example.com",
+    formData: { PROJECT_TITLE: "新商品制作", VENDOR_NAME: "取引先A" }
+  };
+  const target = createApp({
+    templates: new MemoryTemplateRepository([schema]),
+    drafts: new MemoryDraftRepository(),
+    integrations: createIntegrationAdapters(),
+    documentRegistry: new MemoryDocumentRegistryRepository([registeredDocument])
+  }, {
+    accessMode: "readonly",
+    requireDatabase: false
+  });
+
+  const list = await request(target)
+    .get("/api/v2/documents")
+    .query({ q: "取引先A" })
+    .expect(200);
+  assert.equal(list.body.documents.length, 1);
+  assert.equal(list.body.documents[0].documentNumber, "PO-ARC-202607-001");
+
+  const detail = await request(target).get("/api/v2/documents/101").expect(200);
+  assert.equal(detail.body.document.formData.PROJECT_TITLE, "新商品制作");
+});
+
+test("不正な文書IDを拒否する", async () => {
+  await request(app()).get("/api/v2/documents/not-a-number").expect(400);
 });
 
 test("空field_schemaを補うV3基本フォーム定義を持つ", () => {
