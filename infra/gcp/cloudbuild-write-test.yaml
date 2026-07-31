@@ -10,6 +10,8 @@ substitutions:
   _SERVICE_ACCOUNT: legalbridge-v2-preview@legalbridge-488506.iam.gserviceaccount.com
   _CONFIRM_ISOLATED_DB: BLOCKED
   _CONFIRM_DOCUMENT_TABLES: BLOCKED
+  _DRIVE_FOLDER_ID: 1zXCqiESaJimlRGOffLy_tN167IheJ2Lj
+  _CONFIRM_DRIVE_FOLDER: BLOCKED
 
 steps:
   - id: test
@@ -40,6 +42,11 @@ steps:
           echo "Document finalization deployment blocked: empty validation tables are not confirmed."
           exit 1
         fi
+        if [ "${_CONFIRM_DRIVE_FOLDER}" != "ISOLATED_DRIVE_FOLDER_CONFIRMED" ]; then
+          echo "Drive deployment blocked: isolated folder confirmation is missing."
+          exit 1
+        fi
+        test "${_DRIVE_FOLDER_ID}" = "1zXCqiESaJimlRGOffLy_tN167IheJ2Lj"
 
   - id: build-image
     name: gcr.io/cloud-builders/docker
@@ -72,7 +79,7 @@ steps:
           --service-account="${_SERVICE_ACCOUNT}" \
           --add-cloudsql-instances="${_CLOUD_SQL_INSTANCE}" \
           --set-secrets="DB_PASSWORD=${_DB_PASSWORD_SECRET}:latest" \
-          --set-env-vars="^~^NODE_ENV=production~INTEGRATION_MODE=local~DB_ACCESS_MODE=readwrite~REQUIRE_DATABASE=true~WRITE_FEATURES_ENABLED=true~WRITE_SCOPES=drafts,documents,pdf~DB_HOST=/cloudsql/${_CLOUD_SQL_INSTANCE}~DB_PORT=5432~DB_NAME=${_DB_NAME}~DB_USER=${_DB_USER}~DB_POOL_MAX=3"
+          --set-env-vars="^~^NODE_ENV=production~INTEGRATION_MODE=local~DB_ACCESS_MODE=readwrite~REQUIRE_DATABASE=true~WRITE_FEATURES_ENABLED=true~WRITE_SCOPES=drafts,documents,pdf,drive~GOOGLE_DRIVE_FOLDER_ID=${_DRIVE_FOLDER_ID}~DB_HOST=/cloudsql/${_CLOUD_SQL_INSTANCE}~DB_PORT=5432~DB_NAME=${_DB_NAME}~DB_USER=${_DB_USER}~DB_POOL_MAX=3"
 
 images:
   - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPOSITORY}/${_IMAGE}:${BUILD_ID}
