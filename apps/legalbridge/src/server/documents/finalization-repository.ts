@@ -34,7 +34,7 @@ export class PgDocumentFinalizationRepository implements DocumentFinalizationRep
       await client.query("BEGIN");
       const prefix = await findPrefix(client, input.templateType);
       const year = currentYearInTokyo();
-      const sequence = await nextSequence(client, input.templateType, year);
+      const sequence = await nextSequence(client, prefix, year);
       const numberPrefix = prefix.startsWith("ARC-") ? prefix : `ARC-${prefix}`;
       const documentNumber = `${numberPrefix}-${year}-${String(sequence).padStart(4, "0")}`;
 
@@ -85,6 +85,28 @@ function currentYearInTokyo() {
   }).format(new Date()));
 }
 
+const DOCUMENT_PREFIXES: Record<string, string> = {
+  purchase_order: "PO",
+  intl_purchase_order: "IPO",
+  inspection_certificate: "INS",
+  license_master: "LIC",
+  individual_license_terms: "ILT",
+  individual_license_terms_v3: "ILT",
+  royalty_statement: "ROY",
+  service_master: "SVC",
+  pub_master_individual: "PUB",
+  pub_master_corporate: "PUB",
+  pub_license_terms: "PUBT",
+  pub_additional_terms: "PUBA",
+  sales_master_buyer: "SAL",
+  sales_master_credit: "SAL",
+  sales_master_standard: "SAL",
+  maintenance_spec: "MNT",
+  legal_response: "LG",
+  notice_consent_personal_info_freelance: "PR",
+  nda: "NDA"
+};
+
 async function findPrefix(client: PoolClient, templateType: string) {
   const result = await client.query(
     `SELECT document_prefix
@@ -94,11 +116,13 @@ async function findPrefix(client: PoolClient, templateType: string) {
       FOR SHARE`,
     [templateType]
   );
-  const prefix = String(result.rows[0]?.document_prefix ?? "").trim().toUpperCase();
+  if (!result.rows[0]) throw new Error("active template is required");
+  const configured = String(result.rows[0].document_prefix ?? "").trim().toUpperCase();
+  const prefix = configured || DOCUMENT_PREFIXES[templateType];
   if (!prefix || !/^[A-Z0-9-]{1,20}$/.test(prefix)) {
-    throw new Error("active template document_prefix is required");
+    throw new Error("document prefix mapping is required");
   }
-  return prefix;
+  return prefix.startsWith("ARC-") ? prefix.slice(4) : prefix;
 }
 
 async function nextSequence(client: PoolClient, kind: string, year: number) {
