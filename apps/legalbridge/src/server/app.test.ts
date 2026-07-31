@@ -13,6 +13,7 @@ import { buildTemplateDocumentContext } from "./documents/template-context-adapt
 import { MemoryMasterDataRepository } from "./master-data/repository.js";
 import { MemoryDocumentRegistryRepository } from "./documents/registry-repository.js";
 import { MemoryMatterRepository } from "./matters/repository.js";
+import { MemoryLedgerRepository } from "./ledgers/repository.js";
 
 const schema: DocumentFormSchema = {
   templateKey: "purchase_order",
@@ -250,7 +251,11 @@ test("登録文書の一覧検索と詳細を読取専用で返す", async () =>
     driveLink: "https://drive.google.com/example",
     createdAt: "2026-07-30T01:00:00.000Z",
     createdBy: "legal@example.com",
-    formData: { PROJECT_TITLE: "新商品制作", VENDOR_NAME: "取引先A" }
+    formData: {
+      PROJECT_TITLE: "新商品制作",
+      VENDOR_NAME: "取引先A",
+      ACCOUNT_NUMBER: "12345678"
+    }
   };
   const target = createApp({
     templates: new MemoryTemplateRepository([schema]),
@@ -268,9 +273,11 @@ test("登録文書の一覧検索と詳細を読取専用で返す", async () =>
     .expect(200);
   assert.equal(list.body.documents.length, 1);
   assert.equal(list.body.documents[0].documentNumber, "PO-ARC-202607-001");
+  assert.equal(list.body.documents[0].formData, undefined);
 
   const detail = await request(target).get("/api/v2/documents/101").expect(200);
   assert.equal(detail.body.document.formData.PROJECT_TITLE, "新商品制作");
+  assert.equal(detail.body.document.formData.ACCOUNT_NUMBER, "****5678");
 });
 
 test("不正な文書IDを拒否する", async () => {
@@ -310,6 +317,29 @@ test("案件一覧と関連課題・タスク・文書を返す", async () => {
 test("不正な案件状態と案件IDを拒否する", async () => {
   await request(app()).get("/api/v2/matters").query({ status: "deleted" }).expect(400);
   await request(app()).get("/api/v2/matters/invalid").expect(400);
+});
+
+test("取引先・作品・金銭条件台帳を検索する", async () => {
+  const target = createApp({
+    templates: new MemoryTemplateRepository([schema]),
+    drafts: new MemoryDraftRepository(),
+    integrations: createIntegrationAdapters(),
+    ledgers: new MemoryLedgerRepository([
+      {
+        id: "vendor-1", type: "vendors", code: "V-001", title: "取引先A",
+        subtitle: "法人", detail: { メール: "ab***@example.com" }
+      },
+      {
+        id: "work-1", type: "works", code: "W-001", title: "作品A",
+        subtitle: "自社作品", detail: { 状態: "released" }
+      }
+    ])
+  }, { accessMode: "readonly", requireDatabase: false });
+  const vendors = await request(target).get("/api/v2/ledgers/vendors").query({ q: "取引先" }).expect(200);
+  assert.equal(vendors.body.items[0].code, "V-001");
+  const works = await request(target).get("/api/v2/ledgers/works").query({ q: "作品" }).expect(200);
+  assert.equal(works.body.items[0].title, "作品A");
+  await request(target).get("/api/v2/ledgers/unknown").expect(404);
 });
 
 test("空field_schemaを補うV3基本フォーム定義を持つ", () => {
