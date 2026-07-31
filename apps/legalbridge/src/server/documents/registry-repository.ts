@@ -17,6 +17,7 @@ export interface RegisteredDocument {
 export interface DocumentRegistryRepository {
   list(query: string, templateType?: string, limit?: number): Promise<RegisteredDocument[]>;
   find(id: number): Promise<RegisteredDocument | null>;
+  setDriveLink(id: number, driveLink: string): Promise<void>;
 }
 
 export class PgDocumentRegistryRepository implements DocumentRegistryRepository {
@@ -41,6 +42,14 @@ export class PgDocumentRegistryRepository implements DocumentRegistryRepository 
       [keyword, templateType ?? "", Math.min(Math.max(limit, 1), 200)]
     );
     return result.rows.map(mapRow);
+  }
+
+  async setDriveLink(id: number, driveLink: string) {
+    const result = await this.database.query(
+      `UPDATE documents SET drive_link = $2 WHERE id = $1`,
+      [id, driveLink]
+    );
+    if (result.rowCount !== 1) throw new Error("document not found while updating drive link");
   }
 
   async find(id: number) {
@@ -70,6 +79,12 @@ export class MemoryDocumentRegistryRepository implements DocumentRegistryReposit
 
   async find(id: number) {
     return this.documents.find((item) => item.id === id) ?? null;
+  }
+
+  async setDriveLink(id: number, driveLink: string) {
+    const document = this.documents.find((item) => item.id === id);
+    if (!document) throw new Error("document not found while updating drive link");
+    document.driveLink = driveLink;
   }
 }
 

@@ -23,6 +23,11 @@ import {
 } from "./documents/registry-repository.js";
 import { createDocumentRegistryRouter } from "./documents/registry-routes.js";
 import { createDocumentPdfRouter } from "./documents/pdf-routes.js";
+import { createDocumentDriveRouter } from "./documents/drive-routes.js";
+import {
+  GoogleDriveStorage,
+  type DriveStorage
+} from "./documents/drive-storage.js";
 import {
   ChromiumPdfRenderer,
   type PdfRenderer
@@ -136,6 +141,7 @@ export interface AppDependencies {
   admin?: AdminRepository;
   finalizations?: DocumentFinalizationRepository;
   pdfRenderer?: PdfRenderer;
+  driveStorage?: DriveStorage | null;
 }
 
 export interface AppOptions {
@@ -168,7 +174,10 @@ function createDefaultDependencies(): AppDependencies {
     finalizations: database
       ? new PgDocumentFinalizationRepository(database)
       : new MemoryDocumentFinalizationRepository(),
-    pdfRenderer: new ChromiumPdfRenderer()
+    pdfRenderer: new ChromiumPdfRenderer(),
+    driveStorage: config.googleDriveFolderId
+      ? new GoogleDriveStorage(config.googleDriveFolderId)
+      : null
   };
 }
 
@@ -194,6 +203,11 @@ export function createApp(
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
     options.writeScopes?.has("pdf") === true;
+  const driveStorageEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.writeScopes?.has("drive") === true &&
+    Boolean(config.googleDriveFolderId || dependencies.driveStorage);
   app.use(cors());
   app.use(express.json({ limit: "5mb" }));
 
@@ -207,7 +221,7 @@ export function createApp(
       database.reachable &&
       database.readOnly !== true;
     const writeModeMismatch =
-      (draftWriteEnabled || documentFinalizeEnabled) &&
+      (draftWriteEnabled || documentFinalizeEnabled || driveStorageEnabled) &&
       database.reachable && database.readOnly === true;
     const status = databaseUnavailable || readOnlyMismatch || writeModeMismatch ? 503 : 200;
     response.status(status).json({
@@ -217,7 +231,8 @@ export function createApp(
       writeCapabilities: [
         ...(draftWriteEnabled ? ["drafts"] : []),
         ...(documentFinalizeEnabled ? ["documents"] : []),
-        ...(pdfGenerationEnabled ? ["pdf"] : [])
+        ...(pdfGenerationEnabled ? ["pdf"] : []),
+        ...(driveStorageEnabled ? ["drive"] : [])
       ],
       database
     });
@@ -228,11 +243,12 @@ export function createApp(
       service: "legalbridge-v2",
       accessMode: options.accessMode,
       writeFeaturesEnabled:
-        draftWriteEnabled || documentFinalizeEnabled || pdfGenerationEnabled,
+        draftWriteEnabled || documentFinalizeEnabled || pdfGenerationEnabled || driveStorageEnabled,
       writeCapabilities: [
         ...(draftWriteEnabled ? ["drafts"] : []),
         ...(documentFinalizeEnabled ? ["documents"] : []),
-        ...(pdfGenerationEnabled ? ["pdf"] : [])
+        ...(pdfGenerationEnabled ? ["pdf"] : []),
+        ...(driveStorageEnabled ? ["drive"] : [])
       ],
       integrations: config.integrationMode
     });
@@ -268,6 +284,9 @@ export function createApp(
     const isDocumentFinalize =
       request.method === "POST" && request.path === "/documents/finalize";
     if (documentFinalizeEnabled && isDocumentFinalize) return next();
+    const isDriveStorage =
+      request.method === "POST" && /^\/documents\/[^/]+\/drive$/.test(request.path);
+    if (driveStorageEnabled && isDriveStorage) return next();
 
     return response.status(403).json({
       error: options.accessMode === "readonly"
@@ -290,11 +309,19 @@ export function createApp(
   const documentRegistry =
     dependencies.documentRegistry ?? new MemoryDocumentRegistryRepository();
   app.use("/api/v2", createDocumentRegistryRouter(documentRegistry));
+  const pdfRenderer = dependencies.pdfRenderer ?? new ChromiumPdfRenderer();
   app.use("/api/v2", createDocumentPdfRouter(
     documentRegistry,
     dependencies.templates,
-    dependencies.pdfRenderer ?? new ChromiumPdfRenderer(),
+    pdfRenderer,
     pdfGenerationEnabled
+  ));
+  app.use("/api/v2", createDocumentDriveRouter(
+    documentRegistry,
+    dependencies.templates,
+    pdfRenderer,
+    dependencies.driveStorage ?? null,
+    driveStorageEnabled
   ));
   app.use("/api/v2", createMatterRouter(
     dependencies.matters ?? new MemoryMatterRepository()
