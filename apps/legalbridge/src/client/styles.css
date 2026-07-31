@@ -124,3 +124,22 @@ header input { width: min(540px, 60%); border: 1px solid #d9e2ec; border-radius:
 .matter-detail-section p { white-space: pre-wrap; font-size: 13px; }
 @media (max-width: 1120px) { .matter-layout { grid-template-columns: 1fr; }.matter-detail { position: static; max-height: none; } }
 @media (max-width: 760px) { .matter-toolbar { grid-template-columns: 1fr; }.matter-list > button { grid-template-columns: 1fr; }.matter-card-meta { justify-items: start; } }
+.ledger-tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+.ledger-tabs button { border: 1px solid #cbd5e1; border-radius: 999px; background: white; color: #475569; padding: 8px 14px; }
+.ledger-tabs button.active { background: #168ca0; border-color: #168ca0; color: white; }
+.ledger-toolbar { display: grid; grid-template-columns: minmax(300px, 1fr) auto; gap: 12px; align-items: center; margin-bottom: 16px; }
+.ledger-toolbar input { border: 1px solid #cbd5e1; border-radius: 8px; background: white; padding: 11px 12px; }
+.ledger-toolbar span { color: #64748b; font-size: 13px; }
+.ledger-layout { display: grid; grid-template-columns: minmax(480px, 1fr) 400px; gap: 16px; align-items: start; }
+.ledger-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.ledger-list > button { display: grid; gap: 4px; text-align: left; border: 1px solid #d9e2ec; border-radius: 9px; background: white; padding: 14px; }
+.ledger-list > button:hover, .ledger-list > button.selected { border-color: #20b8cd; background: #f7fcfd; }
+.ledger-list > button span { color: #168ca0; font-size: 11px; font-weight: 800; }
+.ledger-list > button strong { color: #172a44; }.ledger-list > button small { color: #64748b; }
+.ledger-detail { position: sticky; top: 80px; max-height: calc(100vh - 104px); overflow-y: auto; }
+.ledger-detail h2 { margin: 5px 0; }.ledger-detail > p { color: #64748b; font-size: 12px; }
+.ledger-detail dl > div { display: grid; grid-template-columns: 120px 1fr; gap: 12px; border-bottom: 1px solid #eef2f7; padding: 9px 0; font-size: 12px; }
+.ledger-detail dt { color: #64748b; }.ledger-detail dd { margin: 0; color: #172a44; white-space: pre-wrap; overflow-wrap: anywhere; }
+.mask-note { display: block; margin-top: 16px; padding: 9px; border-radius: 6px; background: #fff7ed; color: #9a3412; }
+@media (max-width: 1080px) { .ledger-layout { grid-template-columns: 1fr; }.ledger-detail { position: static; max-height: none; } }
+@media (max-width: 760px) { .ledger-list { grid-template-columns: 1fr; }.ledger-toolbar { grid-template-columns: 1fr; } }

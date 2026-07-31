@@ -9,8 +9,9 @@ export function createDocumentRegistryRouter(repository: DocumentRegistryReposit
       const query = String(request.query.q ?? "").slice(0, 100);
       const templateType = String(request.query.template_type ?? "").slice(0, 60);
       const limit = Number.parseInt(String(request.query.limit ?? "100"), 10) || 100;
+      const documents = await repository.list(query, templateType || undefined, limit);
       response.json({
-        documents: await repository.list(query, templateType || undefined, limit)
+        documents: documents.map(({ formData: _formData, ...document }) => document)
       });
     } catch (error) {
       next(error);
@@ -25,11 +26,20 @@ export function createDocumentRegistryRouter(repository: DocumentRegistryReposit
       }
       const document = await repository.find(id);
       if (!document) return response.status(404).json({ error: "document not found" });
-      response.json({ document });
+      response.json({ document: { ...document, formData: maskSensitiveFields(document.formData) } });
     } catch (error) {
       next(error);
     }
   });
 
   return router;
+}
+
+function maskSensitiveFields(formData: Record<string, unknown>) {
+  const sensitive = /account|口座|bank|銀行|email|メール|phone|電話/i;
+  return Object.fromEntries(Object.entries(formData).map(([key, value]) => {
+    if (!sensitive.test(key) || value == null || value === "") return [key, value];
+    const text = String(value);
+    return [key, text.length > 4 ? `${"*".repeat(Math.min(8, text.length - 4))}${text.slice(-4)}` : "****"];
+  }));
 }
