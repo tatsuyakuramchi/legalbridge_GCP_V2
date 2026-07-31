@@ -102,6 +102,14 @@ function isAllowed(role: UserRole, method: string, path: string) {
   if (role === "legal") return !path.startsWith("/admin");
   if (method === "GET" && path === "/dashboard") return true;
   if (method === "GET" && (
+    path === "/document-form-context" ||
+    path === "/document-drafts" ||
+    /^\/document-drafts\/[^/]+$/.test(path) ||
+    path === "/documents" ||
+    /^\/documents\/\d+$/.test(path)
+  )) return true;
+  if (["PUT", "DELETE"].includes(method) && /^\/document-drafts\/[^/]+$/.test(path)) return true;
+  if (method === "GET" && (
     path === "/document-templates" ||
     path.startsWith("/document-templates/")
   )) return true;
