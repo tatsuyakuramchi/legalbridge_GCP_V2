@@ -39,6 +39,15 @@ export interface DocumentDraft {
   updatedBy: string | null;
 }
 
+export interface DocumentDraftSummary {
+  id: number;
+  issueKey: string;
+  templateType: string;
+  documentNumber: string | null;
+  updatedAt: string;
+  updatedBy: string | null;
+}
+
 export interface DashboardSummary {
   kpis: Array<{ label: string; value: number; tone?: "default" | "warning" | "danger" }>;
   stages: Array<{ label: string; count: number }>;

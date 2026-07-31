@@ -12,6 +12,7 @@ import { MatterRegistry } from "./MatterRegistry";
 import { LedgerWorkspace } from "./LedgerWorkspace";
 import { GlobalSearch } from "./GlobalSearch";
 import { AdminOverview } from "./AdminOverview";
+import { DraftWorkspace } from "./DraftWorkspace";
 
 type CompatibilityReport = { summary: { total: number; ok: number; warning: number; error: number }; reports: Array<{ templateKey: string; status: "ok" | "warning" | "error"; missingHelpers: string[]; missingPartials: string[]; unmappedVariables: string[]; renderError?: string }> };
 
@@ -37,9 +38,10 @@ export function App() {
   const [templates, setTemplates] = useState<DocumentFormSchema[]>([]);
   const [schema, setSchema] = useState<DocumentFormSchema | null>(null);
   const [compatibility, setCompatibility] = useState<CompatibilityReport | null>(null);
-  const [view, setView] = useState<"home" | "matters" | "documents" | "templates" | "document" | "ledgers" | "admin">("home");
+  const [view, setView] = useState<"home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "admin">("home");
   const [readOnly, setReadOnly] = useState(true);
   const [searchSelection, setSearchSelection] = useState<{ target: "matter" | "document" | "vendor" | "work"; id: string; title: string } | null>(null);
+  const [draftSelection, setDraftSelection] = useState<{ issueKey: string; templateType: string } | null>(null);
 
   useEffect(() => {
     fetch("/api/v2/dashboard").then((response) => response.ok && response.json()).then((data) => data && setDashboard(data)).catch(() => undefined);
@@ -59,6 +61,17 @@ export function App() {
       `/api/v2/document-templates/${encodeURIComponent(templateKey)}/form-schema`
     );
     if (!response.ok) return;
+    setDraftSelection(null);
+    setSchema(await response.json());
+    setView("document");
+  }
+
+  async function resumeDraft(issueKey: string, templateType: string) {
+    const response = await fetch(
+      `/api/v2/document-templates/${encodeURIComponent(templateType)}/form-schema`
+    );
+    if (!response.ok) return;
+    setDraftSelection({ issueKey, templateType });
     setSchema(await response.json());
     setView("document");
   }
@@ -76,6 +89,11 @@ export function App() {
           >
             文書
           </button>
+          {!readOnly && (
+            <button className={view === "drafts" ? "active" : ""} onClick={() => setView("drafts")}>
+              下書き
+            </button>
+          )}
           <button className={view === "ledgers" ? "active" : ""} onClick={() => setView("ledgers")}>台帳</button>
           <button className={view === "admin" ? "active" : ""} onClick={() => setView("admin")}>管理</button>
         </nav>
@@ -101,6 +119,9 @@ export function App() {
         )}
         {view === "matters" && <MatterRegistry templates={templates}
           selectedId={searchSelection?.target === "matter" ? Number(searchSelection.id) : undefined} />}
+        {view === "drafts" && !readOnly && (
+          <DraftWorkspace templates={templates} onResume={resumeDraft} />
+        )}
         {view === "ledgers" && <LedgerWorkspace
           initialType={searchSelection?.target === "work" ? "works" : searchSelection?.target === "vendor" ? "vendors" : undefined}
           initialQuery={searchSelection?.target === "work" || searchSelection?.target === "vendor" ? searchSelection.title : undefined}
@@ -115,9 +136,11 @@ export function App() {
         )}
         {view === "document" && (
           <DocumentForm
+            key={`${schema?.templateKey ?? "loading"}:${draftSelection?.issueKey ?? "new"}`}
             schema={schema}
             readOnly={readOnly}
-            onBack={() => setView("templates")}
+            initialIssueKey={draftSelection?.issueKey ?? "VALIDATION-1"}
+            onBack={() => setView(draftSelection ? "drafts" : "templates")}
           />
         )}
       </main>
@@ -237,13 +260,15 @@ function Dashboard({ dashboard, onCreateDocument }: { dashboard: DashboardSummar
 function DocumentForm({
   schema,
   readOnly,
+  initialIssueKey,
   onBack
 }: {
   schema: DocumentFormSchema | null;
   readOnly: boolean;
+  initialIssueKey: string;
   onBack: () => void;
 }) {
-  const [issueKey, setIssueKey] = useState("VALIDATION-1");
+  const [issueKey, setIssueKey] = useState(initialIssueKey);
   const [formData, setFormData] = useState<DocumentFormData>({});
   const [draft, setDraft] = useState<DocumentDraft | null>(null);
   const [notice, setNotice] = useState("");

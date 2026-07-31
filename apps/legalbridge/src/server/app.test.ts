@@ -107,6 +107,39 @@ test("下書きを保存して復元する", async () => {
     .expect(404);
 });
 
+test("書込検証環境で下書き一覧を検索しフォーム内容を返さない", async () => {
+  const target = app();
+  await request(target)
+    .put("/api/v2/document-drafts/VALIDATION-LIST-1")
+    .send({
+      templateType: "purchase_order",
+      formData: { PROJECT_TITLE: "一覧テスト" },
+      updatedBy: "legal@example.com"
+    })
+    .expect(200);
+  await request(target)
+    .put("/api/v2/document-drafts/OTHER-1")
+    .send({ templateType: "purchase_order", formData: { PROJECT_TITLE: "対象外" } })
+    .expect(200);
+
+  const response = await request(target)
+    .get("/api/v2/document-drafts")
+    .query({ q: "VALIDATION-LIST", limit: 10 })
+    .expect(200);
+
+  assert.equal(response.body.drafts.length, 1);
+  assert.equal(response.body.drafts[0].issueKey, "VALIDATION-LIST-1");
+  assert.equal(response.body.drafts[0].updatedBy, "legal@example.com");
+  assert.equal(response.body.drafts[0].formData, undefined);
+});
+
+test("読取専用環境では下書き一覧を公開しない", async () => {
+  const response = await request(readOnlyApp())
+    .get("/api/v2/document-drafts")
+    .expect(403);
+  assert.equal(response.body.code, "DRAFT_WORKSPACE_DISABLED");
+});
+
 test("表示時と異なるtemplate版では検証を停止する", async () => {
   const response = await request(app())
     .post("/api/v2/documents/validate")

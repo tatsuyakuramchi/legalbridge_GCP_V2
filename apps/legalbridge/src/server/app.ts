@@ -239,7 +239,11 @@ export function createApp(
     });
   });
 
-  app.use("/api/v2", createDocumentRouter(dependencies.templates, dependencies.drafts));
+  app.use("/api/v2", createDocumentRouter(
+    dependencies.templates,
+    dependencies.drafts,
+    draftWriteEnabled
+  ));
   app.use("/api/v2", createDocumentRegistryRouter(
     dependencies.documentRegistry ?? new MemoryDocumentRegistryRepository()
   ));
