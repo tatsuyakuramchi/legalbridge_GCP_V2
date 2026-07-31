@@ -1,0 +1,73 @@
+substitutions:
+  _REGION: asia-northeast1
+  _SERVICE: legalbridge-v2-write-test
+  _AR_REPOSITORY: legalbridge
+  _IMAGE: legalbridge-v2-write-test
+  _CLOUD_SQL_INSTANCE: legalbridge-488506:asia-northeast1:legalbridge-db
+  _DB_NAME: legalbridge_v2_validation
+  _DB_USER: legalbridge_v2_validation_writer
+  _DB_PASSWORD_SECRET: legalbridge-v2-validation-writer-db-password
+  _SERVICE_ACCOUNT: legalbridge-v2-preview@legalbridge-488506.iam.gserviceaccount.com
+  _CONFIRM_ISOLATED_DB: BLOCKED
+
+steps:
+  - id: test
+    name: node:22
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        npm ci
+        npm run typecheck
+        npm test
+        npm run build
+
+  - id: verify-isolation
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        test "${_SERVICE}" != "legalbridge-v2-preview"
+        test "${_DB_NAME}" != "legalbridge"
+        test "${_DB_USER}" != "legalbridge"
+        if [ "${_CONFIRM_ISOLATED_DB}" != "ISOLATED_DRAFT_TEST" ]; then
+          echo "Write-test deployment blocked: isolated DB confirmation is missing."
+          exit 1
+        fi
+
+  - id: build-image
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --tag
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPOSITORY}/${_IMAGE}:${BUILD_ID}
+      - .
+
+  - id: push-image
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPOSITORY}/${_IMAGE}:${BUILD_ID}
+
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        gcloud run deploy "${_SERVICE}" \
+          --image="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPOSITORY}/${_IMAGE}:${BUILD_ID}" \
+          --region="${_REGION}" \
+          --platform=managed \
+          --no-allow-unauthenticated \
+          --service-account="${_SERVICE_ACCOUNT}" \
+          --add-cloudsql-instances="${_CLOUD_SQL_INSTANCE}" \
+          --set-secrets="DB_PASSWORD=${_DB_PASSWORD_SECRET}:latest" \
+          --set-env-vars="NODE_ENV=production,INTEGRATION_MODE=local,DB_ACCESS_MODE=readwrite,REQUIRE_DATABASE=true,WRITE_FEATURES_ENABLED=true,WRITE_SCOPES=drafts,DB_HOST=/cloudsql/${_CLOUD_SQL_INSTANCE},DB_PORT=5432,DB_NAME=${_DB_NAME},DB_USER=${_DB_USER},DB_POOL_MAX=3"
+
+images:
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPOSITORY}/${_IMAGE}:${BUILD_ID}
+
+options:
+  logging: CLOUD_LOGGING_ONLY
