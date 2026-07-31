@@ -18,6 +18,11 @@ const saveDraftSchema = z.object({
   expectedUpdatedAt: z.string().datetime().nullable().optional()
 });
 
+const draftListQuerySchema = z.object({
+  q: z.string().trim().max(100).optional().default(""),
+  limit: z.coerce.number().int().min(1).max(100).optional().default(50)
+});
+
 const validateSchema = z.object({
   templateKey: z.string().min(1),
   templateVersionId: z.number().int().positive(),
@@ -28,7 +33,8 @@ const previewSchema = validateSchema;
 
 export function createDocumentRouter(
   templates: TemplateRepository,
-  drafts: DraftRepository
+  drafts: DraftRepository,
+  draftListingEnabled = false
 ) {
   const router = Router();
 
@@ -97,6 +103,24 @@ export function createDocumentRouter(
       );
       response.json({ schema, draft, formData });
     } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/document-drafts", async (request, response, next) => {
+    try {
+      if (!draftListingEnabled) {
+        return response.status(403).json({
+          error: "draft workspace is not enabled",
+          code: "DRAFT_WORKSPACE_DISABLED"
+        });
+      }
+      const query = draftListQuerySchema.parse(request.query);
+      response.json({ drafts: await drafts.list(query.q, query.limit) });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return response.status(400).json({ error: "invalid request", issues: error.issues });
+      }
       next(error);
     }
   });
