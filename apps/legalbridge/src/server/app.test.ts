@@ -12,6 +12,7 @@ import { buildCommonDocumentContext } from "./documents/context-adapter.js";
 import { buildTemplateDocumentContext } from "./documents/template-context-adapters.js";
 import { MemoryMasterDataRepository } from "./master-data/repository.js";
 import { MemoryDocumentRegistryRepository } from "./documents/registry-repository.js";
+import { MemoryMatterRepository } from "./matters/repository.js";
 
 const schema: DocumentFormSchema = {
   templateKey: "purchase_order",
@@ -274,6 +275,41 @@ test("登録文書の一覧検索と詳細を読取専用で返す", async () =>
 
 test("不正な文書IDを拒否する", async () => {
   await request(app()).get("/api/v2/documents/not-a-number").expect(400);
+});
+
+test("案件一覧と関連課題・タスク・文書を返す", async () => {
+  const matter = {
+    id: 22, matterCode: "MTR-2026-00022", title: "海外ライセンス契約更新",
+    status: "in_progress", counterparty: "North Star Games",
+    primaryIssueKey: "LEGAL-22", lifecycleStage: "counterparty_review",
+    ownerName: "法務 田中", targetDueDate: "2026-08-05", blockedReason: null,
+    issueCount: 1, documentCount: 1, openTaskCount: 1,
+    nextTaskTitle: "修正版を確認", nextTaskDueAt: "2026-08-01T00:00:00.000Z",
+    updatedAt: "2026-07-31T00:00:00.000Z", remarks: "更新条件を確認",
+    driveFolderUrl: "https://drive.google.com/matter"
+  };
+  const target = createApp({
+    templates: new MemoryTemplateRepository([schema]),
+    drafts: new MemoryDraftRepository(),
+    integrations: createIntegrationAdapters(),
+    matters: new MemoryMatterRepository([{
+      matter,
+      issues: [{ issueKey: "LEGAL-22", relation: "primary", summary: "契約更新", note: null }],
+      tasks: [{ id: 1, title: "修正版を確認", status: "open", assigneeName: "法務 田中", dueAt: "2026-08-01T00:00:00.000Z", isPrimary: true, blockedReason: null }],
+      documents: [{ id: 10, documentNumber: "LIC-2026-022", templateType: "license_master", issueKey: "LEGAL-22", createdAt: "2026-07-30T00:00:00.000Z", driveLink: "https://drive.google.com/document" }]
+    }])
+  }, { accessMode: "readonly", requireDatabase: false });
+
+  const list = await request(target).get("/api/v2/matters").query({ q: "North Star" }).expect(200);
+  assert.equal(list.body.matters[0].matterCode, "MTR-2026-00022");
+  const detail = await request(target).get("/api/v2/matters/22").expect(200);
+  assert.equal(detail.body.issues[0].issueKey, "LEGAL-22");
+  assert.equal(detail.body.documents[0].documentNumber, "LIC-2026-022");
+});
+
+test("不正な案件状態と案件IDを拒否する", async () => {
+  await request(app()).get("/api/v2/matters").query({ status: "deleted" }).expect(400);
+  await request(app()).get("/api/v2/matters/invalid").expect(400);
 });
 
 test("空field_schemaを補うV3基本フォーム定義を持つ", () => {
