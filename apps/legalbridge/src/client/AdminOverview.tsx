@@ -1,0 +1,65 @@
+import { useEffect, useState } from "react";
+type State = {
+  health: any; runtime: any; overview: any; compatibility: any;
+  integrations: Array<{ name: string; mode: string; ok?: boolean; message?: string }>;
+};
+const countLabels: Record<string, string> = {
+  matters: "案件", documents: "文書", templates: "文書テンプレート", partials: "共通条項",
+  vendors: "取引先", staff: "担当者", works: "作品・原作", conditions: "金銭条件"
+};
+export function AdminOverview() {
+  const [state, setState] = useState<State>({ health: null, runtime: null, overview: null, compatibility: null, integrations: [] });
+  const [loading, setLoading] = useState(true);
+  async function load() {
+    setLoading(true);
+    const fetchJson = (url: string) => fetch(url).then((response) => response.ok ? response.json() : Promise.reject());
+    const [health, runtime, overview, compatibility, integrationResult] = await Promise.all([
+      fetchJson("/health").catch(() => null), fetchJson("/api/v2/runtime").catch(() => null),
+      fetchJson("/api/v2/admin/overview").catch(() => null),
+      fetchJson("/api/v2/document-templates/compatibility-report").catch(() => null),
+      fetchJson("/api/v2/integrations/status").catch(() => ({ integrations: [] }))
+    ]);
+    setState({ health, runtime, overview, compatibility, integrations: integrationResult.integrations ?? [] });
+    setLoading(false);
+  }
+  useEffect(() => { void load(); }, []);
+  const healthy = state.health?.ok && state.health?.database?.reachable;
+  return <section className="page admin-page">
+    <div className="page-title"><div><p>SYSTEM OVERVIEW</p><h1>管理・運用監視</h1>
+      <small>設定変更は行わず、稼働状態とデータ統合状況を確認します</small></div>
+      <button className="primary" onClick={() => void load()} disabled={loading}>{loading ? "確認中…" : "再読込"}</button></div>
+    <div className="admin-status-grid">
+      <StatusCard label="アプリケーション" value={healthy ? "正常" : "要確認"} ok={healthy} detail={state.health?.service ?? "取得できません"} />
+      <StatusCard label="Cloud SQL" value={state.health?.database?.reachable ? "接続済み" : "未接続"} ok={state.health?.database?.reachable}
+        detail={state.health?.database?.currentDatabase ?? "取得できません"} />
+      <StatusCard label="DBアクセス" value={state.health?.database?.readOnly ? "読取専用" : "要確認"} ok={state.health?.database?.readOnly}
+        detail={state.runtime?.accessMode ?? "取得できません"} />
+      <StatusCard label="Template互換性" value={state.compatibility ? `${state.compatibility.summary.ok}/${state.compatibility.summary.total} 正常` : "取得不可"}
+        ok={state.compatibility?.summary?.error === 0 && state.compatibility?.summary?.warning === 0}
+        detail={`警告 ${state.compatibility?.summary?.warning ?? "—"}・エラー ${state.compatibility?.summary?.error ?? "—"}`} />
+    </div>
+    <section className="panel admin-section"><div className="panel-head"><h2>データ件数</h2><span>既存DB・参照のみ</span></div>
+      <div className="admin-counts">{Object.entries(state.overview?.counts ?? {}).map(([key, value]) =>
+        <article key={key}><span>{countLabels[key] ?? key}</span><strong>{String(value)}</strong></article>)}</div>
+    </section>
+    <div className="admin-columns">
+      <section className="panel admin-section"><div className="panel-head"><h2>連携状態</h2></div>
+        <div className="integration-list">{state.integrations.map((item) => <article key={item.name}>
+          <span className={item.ok ? "health-dot ok" : "health-dot"} /><div><b>{item.name}</b><small>{item.mode}・{item.message ?? (item.ok ? "正常" : "要確認")}</small></div></article>)}
+          {!state.integrations.length && <p>連携情報を取得できません。</p>}</div>
+      </section>
+      <section className="panel admin-section"><div className="panel-head"><h2>最終更新</h2></div>
+        <dl className="activity-list"><dt>最新文書作成</dt><dd>{formatDate(state.overview?.activity?.latestDocumentAt)}</dd>
+          <dt>最新案件更新</dt><dd>{formatDate(state.overview?.activity?.latestMatterAt)}</dd></dl>
+        <p className="admin-note">この画面には、保存・更新・削除・外部送信機能はありません。</p>
+      </section>
+    </div>
+  </section>;
+}
+function StatusCard({ label, value, detail, ok }: { label: string; value: string; detail: string; ok?: boolean }) {
+  return <article className={`admin-status ${ok ? "ok" : "warning"}`}><span>{label}</span><strong>{value}</strong><small>{detail}</small></article>;
+}
+function formatDate(value?: string | null) {
+  if (!value) return "—";
+  return new Intl.DateTimeFormat("ja-JP", { timeZone: "Asia/Tokyo", dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+}
