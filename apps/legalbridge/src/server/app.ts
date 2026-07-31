@@ -56,6 +56,12 @@ import { MemoryGlobalSearchRepository, PgGlobalSearchRepository, type GlobalSear
 import { createGlobalSearchRouter } from "./search/routes.js";
 import { MemoryAdminRepository, PgAdminRepository, type AdminRepository } from "./admin/repository.js";
 import { createAdminRouter } from "./admin/routes.js";
+import {
+  createApiAuthorization,
+  createAuthentication,
+  publicUser,
+  type AuthSettings
+} from "./auth.js";
 
 const dashboard: DashboardSummary = {
   kpis: [
@@ -149,6 +155,7 @@ export interface AppOptions {
   requireDatabase: boolean;
   writeFeaturesEnabled?: boolean;
   writeScopes?: Set<string>;
+  auth?: AuthSettings;
 }
 
 function createDefaultDependencies(): AppDependencies {
@@ -187,7 +194,8 @@ export function createApp(
     accessMode: config.databaseAccessMode,
     requireDatabase: config.requireDatabase,
     writeFeaturesEnabled: config.writeFeaturesEnabled,
-    writeScopes: config.writeScopes
+    writeScopes: config.writeScopes,
+    auth: config.auth
   }
 ) {
   const app = express();
@@ -210,6 +218,8 @@ export function createApp(
     Boolean(config.googleDriveFolderId || dependencies.driveStorage);
   app.use(cors());
   app.use(express.json({ limit: "5mb" }));
+  app.use(createAuthentication(options.auth ?? config.auth));
+  app.use(createApiAuthorization());
 
   app.get("/health", async (_request, response) => {
     const database = await checkDatabase(getPool());
@@ -238,6 +248,10 @@ export function createApp(
     });
   });
 
+  app.get("/api/v2/me", (_request, response) => {
+    response.json({ user: publicUser(response.locals.currentUser!) });
+  });
+
   app.get("/api/v2/runtime", (_request, response) => {
     response.json({
       service: "legalbridge-v2",
@@ -250,7 +264,8 @@ export function createApp(
         ...(pdfGenerationEnabled ? ["pdf"] : []),
         ...(driveStorageEnabled ? ["drive"] : [])
       ],
-      integrations: config.integrationMode
+      integrations: config.integrationMode,
+      authMode: (options.auth ?? config.auth).mode
     });
   });
 
