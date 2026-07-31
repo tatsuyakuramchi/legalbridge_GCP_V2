@@ -3,6 +3,7 @@ import test from "node:test";
 import request from "supertest";
 import { createApp } from "./app.js";
 import { MemoryDraftRepository } from "./documents/draft-repository.js";
+import { MemoryDocumentFinalizationRepository } from "./documents/finalization-repository.js";
 import { MemoryTemplateRepository } from "./documents/template-repository.js";
 import { createIntegrationAdapters } from "./integrations/index.js";
 import type { DocumentFormSchema } from "../types.js";
@@ -258,6 +259,65 @@ test("draftsスコープは下書きだけを許可し他の書込を拒否す�
     .expect(200);
   const response = await request(app()).post("/api/v2/matters").send({ title: "作成禁止" }).expect(403);
   assert.equal(response.body.code, "WRITE_SCOPE_DISABLED");
+});
+
+test("documentsスコープなしでは文書確定を拒否する", async () => {
+  const response = await request(app())
+    .post("/api/v2/documents/finalize")
+    .send({})
+    .expect(403);
+  assert.equal(response.body.code, "WRITE_SCOPE_DISABLED");
+});
+
+test("文書確定は検証済み下書きを発番し外部連携を停止したまま削除する", async () => {
+  const drafts = new MemoryDraftRepository();
+  const finalizations = new MemoryDocumentFinalizationRepository();
+  const target = createApp({
+    templates: new MemoryTemplateRepository([schema]),
+    drafts,
+    finalizations,
+    integrations: createIntegrationAdapters()
+  }, {
+    accessMode: "readwrite",
+    requireDatabase: false,
+    writeFeaturesEnabled: true,
+    writeScopes: new Set(["drafts", "documents"])
+  });
+
+  const saved = await request(target)
+    .put("/api/v2/document-drafts/VALIDATION-FINALIZE-1")
+    .send({
+      templateType: "purchase_order",
+      formData: {
+        PROJECT_TITLE: "文書確定テスト",
+        ORDER_DATE: "2026-07-31"
+      },
+      updatedBy: "legal@example.com"
+    })
+    .expect(200);
+
+  const finalized = await request(target)
+    .post("/api/v2/documents/finalize")
+    .send({
+      issueKey: "VALIDATION-FINALIZE-1",
+      templateType: "purchase_order",
+      templateVersionId: 10,
+      formData: saved.body.draft.formData,
+      expectedDraftUpdatedAt: saved.body.draft.updatedAt,
+      createdBy: "legal@example.com"
+    })
+    .expect(201);
+
+  assert.match(finalized.body.document.documentNumber, /^ARC-TEST-/);
+  assert.equal(finalized.body.integrations.drive, "disabled");
+  assert.equal(finalized.body.integrations.backlog, "disabled");
+  await request(target)
+    .get("/api/v2/document-drafts/VALIDATION-FINALIZE-1")
+    .query({ template_type: "purchase_order" })
+    .expect(404);
+
+  const runtime = await request(target).get("/api/v2/runtime").expect(200);
+  assert.deepEqual(runtime.body.writeCapabilities, ["drafts", "documents"]);
 });
 
 test("読取専用環境でも入力検証とプレビューを許可する", async () => {

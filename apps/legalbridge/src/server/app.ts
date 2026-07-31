@@ -11,6 +11,12 @@ import {
 } from "./documents/draft-repository.js";
 import { createDocumentRouter } from "./documents/routes.js";
 import {
+  MemoryDocumentFinalizationRepository,
+  PgDocumentFinalizationRepository,
+  type DocumentFinalizationRepository
+} from "./documents/finalization-repository.js";
+import { createDocumentFinalizationRouter } from "./documents/finalization-routes.js";
+import {
   MemoryDocumentRegistryRepository,
   PgDocumentRegistryRepository,
   type DocumentRegistryRepository
@@ -123,6 +129,7 @@ export interface AppDependencies {
   ledgers?: LedgerRepository;
   search?: GlobalSearchRepository;
   admin?: AdminRepository;
+  finalizations?: DocumentFinalizationRepository;
 }
 
 export interface AppOptions {
@@ -151,7 +158,10 @@ function createDefaultDependencies(): AppDependencies {
     matters: database ? new PgMatterRepository(database) : new MemoryMatterRepository(),
     ledgers: database ? new PgLedgerRepository(database) : new MemoryLedgerRepository(),
     search: database ? new PgGlobalSearchRepository(database) : new MemoryGlobalSearchRepository(),
-    admin: database ? new PgAdminRepository(database) : new MemoryAdminRepository()
+    admin: database ? new PgAdminRepository(database) : new MemoryAdminRepository(),
+    finalizations: database
+      ? new PgDocumentFinalizationRepository(database)
+      : new MemoryDocumentFinalizationRepository()
   };
 }
 
@@ -169,6 +179,10 @@ export function createApp(
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
     options.writeScopes?.has("drafts") === true;
+  const documentFinalizeEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.writeScopes?.has("documents") === true;
   app.use(cors());
   app.use(express.json({ limit: "5mb" }));
 
@@ -182,13 +196,17 @@ export function createApp(
       database.reachable &&
       database.readOnly !== true;
     const writeModeMismatch =
-      draftWriteEnabled && database.reachable && database.readOnly === true;
+      (draftWriteEnabled || documentFinalizeEnabled) &&
+      database.reachable && database.readOnly === true;
     const status = databaseUnavailable || readOnlyMismatch || writeModeMismatch ? 503 : 200;
     response.status(status).json({
       ok: status === 200,
       service: "legalbridge-v2",
       accessMode: options.accessMode,
-      writeCapabilities: draftWriteEnabled ? ["drafts"] : [],
+      writeCapabilities: [
+        ...(draftWriteEnabled ? ["drafts"] : []),
+        ...(documentFinalizeEnabled ? ["documents"] : [])
+      ],
       database
     });
   });
@@ -197,8 +215,11 @@ export function createApp(
     response.json({
       service: "legalbridge-v2",
       accessMode: options.accessMode,
-      writeFeaturesEnabled: draftWriteEnabled,
-      writeCapabilities: draftWriteEnabled ? ["drafts"] : [],
+      writeFeaturesEnabled: draftWriteEnabled || documentFinalizeEnabled,
+      writeCapabilities: [
+        ...(draftWriteEnabled ? ["drafts"] : []),
+        ...(documentFinalizeEnabled ? ["documents"] : [])
+      ],
       integrations: config.integrationMode
     });
   });
@@ -230,6 +251,9 @@ export function createApp(
       ["PUT", "DELETE"].includes(request.method) &&
       /^\/document-drafts\/[^/]+$/.test(request.path);
     if (draftWriteEnabled && isDraftWrite) return next();
+    const isDocumentFinalize =
+      request.method === "POST" && request.path === "/documents/finalize";
+    if (documentFinalizeEnabled && isDocumentFinalize) return next();
 
     return response.status(403).json({
       error: options.accessMode === "readonly"
@@ -243,6 +267,11 @@ export function createApp(
     dependencies.templates,
     dependencies.drafts,
     draftWriteEnabled
+  ));
+  app.use("/api/v2", createDocumentFinalizationRouter(
+    dependencies.templates,
+    dependencies.drafts,
+    dependencies.finalizations ?? new MemoryDocumentFinalizationRepository()
   ));
   app.use("/api/v2", createDocumentRegistryRouter(
     dependencies.documentRegistry ?? new MemoryDocumentRegistryRepository()
