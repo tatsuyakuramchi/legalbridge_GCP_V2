@@ -131,10 +131,10 @@ export function App() {
           </div>
         )}
         <header>
-          <GlobalSearch onNavigate={(target, id, title) => {
+          {legalWorkspace && <GlobalSearch onNavigate={(target, id, title) => {
             setSearchSelection({ target, id, title });
             setView(target === "matter" ? "matters" : target === "document" ? "documents" : "ledgers");
-          }} />
+          }} />}
           <div className="profile">{currentUser ? `${roleLabel(currentUser.role)}・${currentUser.email}` : "認証確認中"}</div>
         </header>
 
