@@ -30,13 +30,12 @@ export class PgDraftRepository implements DraftRepository {
           OR COALESCE(updated_by, '') ILIKE $1`
       : "";
     if (normalizedQuery) values.push(`%${normalizedQuery}%`);
-    values.push(Math.min(Math.max(limit, 1), 100));
-    const limitParameter = values.length;
+    const boundedLimit = Math.min(Math.max(limit, 1), 100);
     const result = await this.database.query<DraftRow>(
       `${SELECT_DRAFT}
        ${where}
        ORDER BY updated_at DESC, id DESC
-       LIMIT ${limitParameter}`,
+       LIMIT ${boundedLimit}`,
       values
     );
     return result.rows.map(mapDraftSummary);
