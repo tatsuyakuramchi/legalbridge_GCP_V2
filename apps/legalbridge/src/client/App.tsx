@@ -42,6 +42,7 @@ export function App() {
   const [readOnly, setReadOnly] = useState(true);
   const [canFinalizeDocuments, setCanFinalizeDocuments] = useState(false);
   const [canGeneratePdf, setCanGeneratePdf] = useState(false);
+  const [canSaveToDrive, setCanSaveToDrive] = useState(false);
   const [searchSelection, setSearchSelection] = useState<{ target: "matter" | "document" | "vendor" | "work"; id: string; title: string } | null>(null);
   const [draftSelection, setDraftSelection] = useState<{ issueKey: string; templateType: string } | null>(null);
 
@@ -56,11 +57,13 @@ export function App() {
         setReadOnly(!capabilities.includes("drafts"));
         setCanFinalizeDocuments(capabilities.includes("documents"));
         setCanGeneratePdf(capabilities.includes("pdf"));
+        setCanSaveToDrive(capabilities.includes("drive"));
       })
       .catch(() => {
         setReadOnly(true);
         setCanFinalizeDocuments(false);
         setCanGeneratePdf(false);
+        setCanSaveToDrive(false);
       });
     fetch("/api/v2/document-templates")
       .then((response) => response.ok ? response.json() : Promise.reject())
@@ -143,6 +146,7 @@ export function App() {
         {view === "documents" && (
           <DocumentRegistry templates={templates} onCreate={() => setView("templates")}
             canGeneratePdf={canGeneratePdf}
+            canSaveToDrive={canSaveToDrive}
             selectedId={searchSelection?.target === "document" ? Number(searchSelection.id) : undefined} />
         )}
         {view === "templates" && (
