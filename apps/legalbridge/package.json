@@ -10,7 +10,7 @@
     "build:client": "vite build",
     "start": "node dist/server/server/index.js",
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.client.json --noEmit",
-    "test": "node --import tsx --test src/**/*.test.ts"
+    "test": "node --import tsx --test src/server/*.test.ts src/server/**/*.test.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",
