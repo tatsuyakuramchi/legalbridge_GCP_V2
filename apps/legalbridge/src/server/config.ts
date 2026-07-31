@@ -1,3 +1,7 @@
+function emailSet(value: string | undefined) {
+  return new Set(String(value ?? "").split(",").map((item) => item.trim().toLowerCase()).filter(Boolean));
+}
+
 export const config = {
   port: Number(process.env.PORT ?? 8080),
   databaseUrl: process.env.DATABASE_URL ?? null,
@@ -14,6 +18,12 @@ export const config = {
       .split(",").map((value) => value.trim()).filter(Boolean)
   ),
   requireDatabase: process.env.REQUIRE_DATABASE === "true",
+  auth: {
+    mode: process.env.AUTH_MODE === "iap" ? "iap" as const : "disabled" as const,
+    adminEmails: emailSet(process.env.AUTH_ADMIN_EMAILS),
+    legalEmails: emailSet(process.env.AUTH_LEGAL_EMAILS),
+    requesterDomains: emailSet(process.env.AUTH_REQUESTER_DOMAINS)
+  },
   googleDriveFolderId: process.env.GOOGLE_DRIVE_FOLDER_ID ?? "",
   templateSource: "db" as const,
   integrationMode: process.env.INTEGRATION_MODE === "live" ? "live" : "local"
