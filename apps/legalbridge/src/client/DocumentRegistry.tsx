@@ -19,11 +19,13 @@ export function DocumentRegistry({
   templates,
   onCreate,
   canGeneratePdf,
+  canSaveToDrive,
   selectedId
 }: {
   templates: DocumentFormSchema[];
   onCreate: () => void;
   canGeneratePdf: boolean;
+  canSaveToDrive: boolean;
   selectedId?: number;
 }) {
   const [query, setQuery] = useState("");
@@ -99,6 +101,8 @@ export function DocumentRegistry({
         document={selected}
         label={selected ? labels.get(selected.templateType) : undefined}
         canGeneratePdf={canGeneratePdf}
+        canSaveToDrive={canSaveToDrive}
+        onRefresh={() => selected && selectDocument(selected.id)}
       />
     </div>
   </section>;
@@ -107,13 +111,36 @@ export function DocumentRegistry({
 function DocumentDetail({
   document,
   label,
-  canGeneratePdf
+  canGeneratePdf,
+  canSaveToDrive,
+  onRefresh
 }: {
   document: RegisteredDocument | null;
   label?: string;
   canGeneratePdf: boolean;
+  canSaveToDrive: boolean;
+  onRefresh: () => Promise<void> | void;
 }) {
+  const [savingDrive, setSavingDrive] = useState(false);
+  const [driveError, setDriveError] = useState("");
   if (!document) return <aside className="panel registry-detail empty-detail">一覧から文書を選択してください。</aside>;
+  async function saveToDrive() {
+    if (!document || savingDrive) return;
+    setSavingDrive(true);
+    setDriveError("");
+    try {
+      const response = await fetch(`/api/v2/documents/${document.id}/drive`, { method: "POST" });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "Driveへの保存に失敗しました。");
+      await onRefresh();
+      window.open(result.driveLink, "_blank", "noopener,noreferrer");
+    } catch (error) {
+      setDriveError(error instanceof Error ? error.message : "Driveへの保存に失敗しました。");
+    } finally {
+      setSavingDrive(false);
+    }
+  }
+
   const entries = Object.entries(document.formData ?? {})
     .filter(([, value]) => value !== null && value !== "" && typeof value !== "object")
     .slice(0, 40);
@@ -138,15 +165,21 @@ function DocumentDetail({
           PDFを生成・ダウンロード
         </a>
       )}
+      {canSaveToDrive && !document.driveLink && (
+        <button className="drive-save-button" onClick={() => void saveToDrive()} disabled={savingDrive}>
+          {savingDrive ? "Driveへ保存中…" : "Driveへ保存"}
+        </button>
+      )}
       {document.driveLink && (
         <a className="drive-link" href={document.driveLink} target="_blank" rel="noreferrer">
           保存文書を開く
         </a>
       )}
     </div>
-    {canGeneratePdf && (
+    {driveError && <small className="drive-save-error">{driveError}</small>}
+    {(canGeneratePdf || canSaveToDrive) && (
       <small className="pdf-safety-note">
-        PDFは都度生成されます。Drive・Backlog・メールへの保存や送信は行いません。
+        PDFのDrive保存は検証用フォルダだけに限定されます。Backlog・Slack・メールへの送信は行いません。
       </small>
     )}
     <h3>登録項目</h3>
