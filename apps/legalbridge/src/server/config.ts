@@ -7,7 +7,12 @@ export const config = {
   databaseUser: process.env.DB_USER ?? null,
   databasePassword: process.env.DB_PASSWORD ?? null,
   databaseAccessMode:
-    process.env.DB_ACCESS_MODE === "readonly" ? "readonly" as const : "readwrite" as const,
+    process.env.DB_ACCESS_MODE === "readwrite" ? "readwrite" as const : "readonly" as const,
+  writeFeaturesEnabled: process.env.WRITE_FEATURES_ENABLED === "true",
+  writeScopes: new Set(
+    String(process.env.WRITE_SCOPES ?? "")
+      .split(",").map((value) => value.trim()).filter(Boolean)
+  ),
   requireDatabase: process.env.REQUIRE_DATABASE === "true",
   templateSource: "db" as const,
   integrationMode: process.env.INTEGRATION_MODE === "live" ? "live" : "local"

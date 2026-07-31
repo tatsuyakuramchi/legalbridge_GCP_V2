@@ -44,6 +44,11 @@ function app() {
     templates: new MemoryTemplateRepository([schema]),
     drafts: new MemoryDraftRepository(),
     integrations: createIntegrationAdapters()
+  }, {
+    accessMode: "readwrite",
+    requireDatabase: false,
+    writeFeaturesEnabled: true,
+    writeScopes: new Set(["drafts"])
   });
 }
 
@@ -182,6 +187,33 @@ test("読取専用環境では下書き保存を拒否する", async () => {
     })
     .expect(403);
   assert.equal(response.body.code, "READ_ONLY_MODE");
+});
+
+test("readwrite環境でも明示スコープなしでは下書き保存を拒否する", async () => {
+  const target = createApp({
+    templates: new MemoryTemplateRepository([schema]),
+    drafts: new MemoryDraftRepository(),
+    integrations: createIntegrationAdapters()
+  }, {
+    accessMode: "readwrite",
+    requireDatabase: false,
+    writeFeaturesEnabled: true,
+    writeScopes: new Set()
+  });
+  const response = await request(target)
+    .put("/api/v2/document-drafts/VALIDATION-1")
+    .send({ templateType: "purchase_order", formData: { PROJECT_TITLE: "保存されない" } })
+    .expect(403);
+  assert.equal(response.body.code, "WRITE_SCOPE_DISABLED");
+});
+
+test("draftsスコープは下書きだけを許可し他の書込を拒否する", async () => {
+  await request(app())
+    .put("/api/v2/document-drafts/VALIDATION-1")
+    .send({ templateType: "purchase_order", formData: { PROJECT_TITLE: "検証下書き" } })
+    .expect(200);
+  const response = await request(app()).post("/api/v2/matters").send({ title: "作成禁止" }).expect(403);
+  assert.equal(response.body.code, "WRITE_SCOPE_DISABLED");
 });
 
 test("読取専用環境でも入力検証とプレビューを許可する", async () => {

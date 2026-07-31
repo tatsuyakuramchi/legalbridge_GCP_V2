@@ -154,6 +154,8 @@ header input { width: 100%; border: 1px solid #d9e2ec; border-radius: 8px; paddi
 .global-results .search-error { color: #b42318; background: #fff4f2; border-radius: 6px; }
 .async-error { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 14px; border: 1px solid #fecaca; border-radius: 8px; background: #fff7f7; color: #b42318; padding: 10px 12px; font-size: 13px; }
 .async-error button { border: 1px solid #efb5b5; border-radius: 6px; background: white; color: #9f2d2d; padding: 6px 10px; }
+.draft-key { display: flex; align-items: center; gap: 8px; margin-top: 9px; color: #64748b; font-size: 11px; }
+.draft-key input { width: 180px; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px 8px; background: white; }
 .admin-status-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
 .admin-status { display: grid; gap: 5px; border: 1px solid #d9e2ec; border-top: 4px solid #f59e0b; border-radius: 9px; background: white; padding: 15px; }
 .admin-status.ok { border-top-color: #20b8cd; }.admin-status > span { color: #64748b; font-size: 11px; }.admin-status strong { color: #172a44; font-size: 18px; }.admin-status small { color: #64748b; }

@@ -38,14 +38,14 @@ export function App() {
   const [schema, setSchema] = useState<DocumentFormSchema | null>(null);
   const [compatibility, setCompatibility] = useState<CompatibilityReport | null>(null);
   const [view, setView] = useState<"home" | "matters" | "documents" | "templates" | "document" | "ledgers" | "admin">("home");
-  const [readOnly, setReadOnly] = useState(false);
+  const [readOnly, setReadOnly] = useState(true);
   const [searchSelection, setSearchSelection] = useState<{ target: "matter" | "document" | "vendor" | "work"; id: string; title: string } | null>(null);
 
   useEffect(() => {
     fetch("/api/v2/dashboard").then((response) => response.ok && response.json()).then((data) => data && setDashboard(data)).catch(() => undefined);
     fetch("/api/v2/runtime")
       .then((response) => response.ok ? response.json() : Promise.reject())
-      .then((runtime) => setReadOnly(runtime.accessMode === "readonly"))
+      .then((runtime) => setReadOnly(!runtime.writeCapabilities?.includes("drafts")))
       .catch(() => undefined);
     fetch("/api/v2/document-templates")
       .then((response) => response.ok ? response.json() : Promise.reject())
@@ -243,7 +243,7 @@ function DocumentForm({
   readOnly: boolean;
   onBack: () => void;
 }) {
-  const issueKey = "LOCAL-1";
+  const [issueKey, setIssueKey] = useState("VALIDATION-1");
   const [formData, setFormData] = useState<DocumentFormData>({});
   const [draft, setDraft] = useState<DocumentDraft | null>(null);
   const [notice, setNotice] = useState("");
@@ -258,7 +258,7 @@ function DocumentForm({
         setDraft(context.draft ?? null);
       })
       .catch(() => setNotice("初期値を取得できませんでした"));
-  }, [schema]);
+  }, [schema, issueKey]);
 
   if (!schema) return <section className="page"><h1>文書作成</h1><p>フォーム定義を読み込んでいます。</p></section>;
   const groups = [...new Set(schema.fields.map((field) => field.group ?? "基本情報"))];
@@ -279,7 +279,6 @@ function DocumentForm({
       body: JSON.stringify({
         templateType: schema!.templateKey,
         formData,
-        updatedBy: "local@example.com",
         expectedUpdatedAt: draft?.updatedAt ?? null
       })
     });
@@ -334,6 +333,10 @@ function DocumentForm({
           <p>DOCUMENT COMMAND</p>
           <h1>{schema.label}</h1>
           <small>{schema.templateKey}・{schema.fields.length}項目 {notice && `・${notice}`}</small>
+          <label className="draft-key">検証用案件キー
+            <input value={issueKey} onChange={(event) => setIssueKey(event.target.value)}
+              disabled={Boolean(draft)} placeholder="VALIDATION-1" />
+          </label>
         </div>
         <div className="actions">
           <button onClick={validate}>入力確認</button>
