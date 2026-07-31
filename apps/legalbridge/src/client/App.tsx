@@ -8,6 +8,7 @@ import type {
 import { SpecializedDocumentForms } from "./SpecializedDocumentForms";
 import { MasterDataPicker } from "./MasterDataPicker";
 import { DocumentRegistry } from "./DocumentRegistry";
+import { MatterRegistry } from "./MatterRegistry";
 
 type CompatibilityReport = { summary: { total: number; ok: number; warning: number; error: number }; reports: Array<{ templateKey: string; status: "ok" | "warning" | "error"; missingHelpers: string[]; missingPartials: string[]; unmappedVariables: string[]; renderError?: string }> };
 
@@ -33,7 +34,7 @@ export function App() {
   const [templates, setTemplates] = useState<DocumentFormSchema[]>([]);
   const [schema, setSchema] = useState<DocumentFormSchema | null>(null);
   const [compatibility, setCompatibility] = useState<CompatibilityReport | null>(null);
-  const [view, setView] = useState<"home" | "documents" | "templates" | "document">("home");
+  const [view, setView] = useState<"home" | "matters" | "documents" | "templates" | "document">("home");
   const [readOnly, setReadOnly] = useState(false);
 
   useEffect(() => {
@@ -64,7 +65,7 @@ export function App() {
         <div className="brand">LegalBridge <span>V2</span></div>
         <nav>
           <button className={view === "home" ? "active" : ""} onClick={() => setView("home")}>ホーム</button>
-          <button>案件</button>
+          <button className={view === "matters" ? "active" : ""} onClick={() => setView("matters")}>案件</button>
           <button
             className={view === "documents" || view === "templates" || view === "document" ? "active" : ""}
             onClick={() => setView("documents")}
@@ -91,6 +92,7 @@ export function App() {
         {view === "home" && (
           <Dashboard dashboard={dashboard} onCreateDocument={() => setView("templates")} />
         )}
+        {view === "matters" && <MatterRegistry templates={templates} />}
         {view === "documents" && (
           <DocumentRegistry templates={templates} onCreate={() => setView("templates")} />
         )}
