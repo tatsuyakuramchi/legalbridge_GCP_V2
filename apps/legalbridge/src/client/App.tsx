@@ -39,6 +39,7 @@ export function App() {
   const [compatibility, setCompatibility] = useState<CompatibilityReport | null>(null);
   const [view, setView] = useState<"home" | "matters" | "documents" | "templates" | "document" | "ledgers" | "admin">("home");
   const [readOnly, setReadOnly] = useState(false);
+  const [searchSelection, setSearchSelection] = useState<{ target: "matter" | "document" | "vendor" | "work"; id: string; title: string } | null>(null);
 
   useEffect(() => {
     fetch("/api/v2/dashboard").then((response) => response.ok && response.json()).then((data) => data && setDashboard(data)).catch(() => undefined);
@@ -88,7 +89,8 @@ export function App() {
           </div>
         )}
         <header>
-          <GlobalSearch onNavigate={(target) => {
+          <GlobalSearch onNavigate={(target, id, title) => {
+            setSearchSelection({ target, id, title });
             setView(target === "matter" ? "matters" : target === "document" ? "documents" : "ledgers");
           }} />
           <div className="profile">法務担当</div>
@@ -97,11 +99,16 @@ export function App() {
         {view === "home" && (
           <Dashboard dashboard={dashboard} onCreateDocument={() => setView("templates")} />
         )}
-        {view === "matters" && <MatterRegistry templates={templates} />}
-        {view === "ledgers" && <LedgerWorkspace />}
+        {view === "matters" && <MatterRegistry templates={templates}
+          selectedId={searchSelection?.target === "matter" ? Number(searchSelection.id) : undefined} />}
+        {view === "ledgers" && <LedgerWorkspace
+          initialType={searchSelection?.target === "work" ? "works" : searchSelection?.target === "vendor" ? "vendors" : undefined}
+          initialQuery={searchSelection?.target === "work" || searchSelection?.target === "vendor" ? searchSelection.title : undefined}
+          selectedId={searchSelection?.target === "work" || searchSelection?.target === "vendor" ? searchSelection.id : undefined} />}
         {view === "admin" && <AdminOverview />}
         {view === "documents" && (
-          <DocumentRegistry templates={templates} onCreate={() => setView("templates")} />
+          <DocumentRegistry templates={templates} onCreate={() => setView("templates")}
+            selectedId={searchSelection?.target === "document" ? Number(searchSelection.id) : undefined} />
         )}
         {view === "templates" && (
           <TemplateCatalog templates={templates} compatibility={compatibility} onSelect={openDocumentForm} />
