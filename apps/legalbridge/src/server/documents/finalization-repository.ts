@@ -33,9 +33,10 @@ export class PgDocumentFinalizationRepository implements DocumentFinalizationRep
     try {
       await client.query("BEGIN");
       const prefix = await findPrefix(client, input.templateType);
-      const year = new Date().getUTCFullYear();
+      const year = currentYearInTokyo();
       const sequence = await nextSequence(client, input.templateType, year);
-      const documentNumber = `ARC-${prefix}-${year}-${String(sequence).padStart(4, "0")}`;
+      const numberPrefix = prefix.startsWith("ARC-") ? prefix : `ARC-${prefix}`;
+      const documentNumber = `${numberPrefix}-${year}-${String(sequence).padStart(4, "0")}`;
 
       const inserted = await client.query(
         `INSERT INTO documents (
@@ -75,6 +76,13 @@ export class PgDocumentFinalizationRepository implements DocumentFinalizationRep
       client.release();
     }
   }
+}
+
+function currentYearInTokyo() {
+  return Number(new Intl.DateTimeFormat("en", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric"
+  }).format(new Date()));
 }
 
 async function findPrefix(client: PoolClient, templateType: string) {
