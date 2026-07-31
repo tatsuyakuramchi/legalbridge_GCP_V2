@@ -32,6 +32,7 @@ export class PgDocumentFinalizationRepository implements DocumentFinalizationRep
     const client = await this.database.connect();
     try {
       await client.query("BEGIN");
+      await lockCurrentDraft(client, input, draft.id);
       const prefix = await findPrefix(client, input.templateType);
       const year = currentYearInTokyo();
       const sequence = await nextSequence(client, prefix, year);
@@ -59,9 +60,8 @@ export class PgDocumentFinalizationRepository implements DocumentFinalizationRep
         `DELETE FROM document_drafts
           WHERE id = $1
             AND issue_key = $2
-            AND template_type = $3
-            AND updated_at = $4::timestamptz`,
-        [draft.id, input.issueKey, input.templateType, input.expectedDraftUpdatedAt]
+            AND template_type = $3`,
+        [draft.id, input.issueKey, input.templateType]
       );
       if (removed.rowCount !== 1) {
         throw new DocumentFinalizationConflictError();
@@ -75,6 +75,29 @@ export class PgDocumentFinalizationRepository implements DocumentFinalizationRep
     } finally {
       client.release();
     }
+  }
+}
+
+async function lockCurrentDraft(
+  client: PoolClient,
+  input: FinalizeDocumentInput,
+  draftId: number
+) {
+  const result = await client.query(
+    `SELECT updated_at
+       FROM document_drafts
+      WHERE id = $1
+        AND issue_key = $2
+        AND template_type = $3
+      FOR UPDATE`,
+    [draftId, input.issueKey, input.templateType]
+  );
+  const currentUpdatedAt = result.rows[0]?.updated_at;
+  if (
+    !currentUpdatedAt ||
+    new Date(currentUpdatedAt).toISOString() !== input.expectedDraftUpdatedAt
+  ) {
+    throw new DocumentFinalizationConflictError();
   }
 }
 
