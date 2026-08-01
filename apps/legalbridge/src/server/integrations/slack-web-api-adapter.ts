@@ -62,6 +62,10 @@ export class SlackWebApiDeliveryAdapter implements SlackDeliveryAdapter {
   constructor(private readonly client: SlackWebApiClient) {}
 
   async send(request: SlackDeliveryRequest): Promise<SlackDeliveryReceipt> {
+    if (!/^[UW][A-Z0-9]{8,}$/.test(request.userId)) {
+      throw new Error("Slack delivery requires a valid user ID");
+    }
+    const clientMessageId = fingerprintToClientMessageId(request.idempotencyKey);
     const opened = await this.client.post("conversations.open", {
       users: request.userId,
       return_im: false
@@ -78,7 +82,7 @@ export class SlackWebApiDeliveryAdapter implements SlackDeliveryAdapter {
 
     const posted = await this.client.post("chat.postMessage", {
       channel: channelId,
-      client_msg_id: fingerprintToClientMessageId(request.idempotencyKey),
+      client_msg_id: clientMessageId,
       text: fallbackText(request),
       blocks: messageBlocks(request),
       unfurl_links: false,
