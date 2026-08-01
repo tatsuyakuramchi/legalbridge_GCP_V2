@@ -10,6 +10,7 @@ import {
   type DraftRepository
 } from "./documents/draft-repository.js";
 import { createDocumentRouter } from "./documents/routes.js";
+import { createTemplateRegressionRouter } from "./documents/template-regression.js";
 import {
   MemoryDocumentFinalizationRepository,
   PgDocumentFinalizationRepository,
@@ -350,6 +351,7 @@ export function createApp(
   app.use("/api/v2", createAdminRouter(
     dependencies.admin ?? new MemoryAdminRepository()
   ));
+  app.use("/api/v2", createTemplateRegressionRouter(dependencies.templates));
   app.use("/api/v2", createMasterDataRouter(
     dependencies.masterData ?? new MemoryMasterDataRepository()
   ));
