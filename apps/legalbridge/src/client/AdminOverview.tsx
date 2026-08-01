@@ -112,7 +112,7 @@ export function AdminOverview() {
         {state.slackCandidates && !state.slackCandidates.candidates?.length && <p>判定対象の案件がありません。</p>}
         {!state.slackCandidates && <p>通知候補を取得できません。</p>}
       </div>
-      <p className="admin-note">承認履歴：${state.slackCandidates?.approvals?.status === "connected" ? "接続済み" : "未接続"}。通知指紋による重複判定に加え、依頼者とSlackユーザーの対応・履歴・HTTPSリンクをドライランで確認します。表示中の内容はSlackへ送信せず、通知履歴にも記録しません。管理者承認と送信アダプターも未接続です。</p>
+      <p className="admin-note">承認履歴：{state.slackCandidates?.approvals?.status === "connected" ? "接続済み" : "未接続"}。通知指紋による重複判定に加え、依頼者とSlackユーザーの対応・履歴・HTTPSリンクをドライランで確認します。表示中の内容はSlackへ送信せず、通知履歴にも記録しません。承認操作と送信アダプターは未接続です。</p>
     </section>
     <section className="panel admin-section slack-ux-preview">
       <div className="panel-head">
