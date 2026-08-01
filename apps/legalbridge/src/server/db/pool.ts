@@ -6,6 +6,7 @@ const { Pool } = pg;
 export type DatabasePool = pg.Pool;
 
 let pool: DatabasePool | null = null;
+let outboundPool: DatabasePool | null = null;
 
 export function getPool(): DatabasePool | null {
   const hasDiscreteConfig =
@@ -35,6 +36,29 @@ export function getPool(): DatabasePool | null {
     connectionTimeoutMillis: 5_000
   });
   return pool;
+}
+
+export function getOutboundPool(): DatabasePool | null {
+  const configured =
+    config.outboundConditionWritesEnabled &&
+    config.outboundDatabaseHost &&
+    config.outboundDatabaseName === "legalbridge" &&
+    config.outboundDatabaseUser &&
+    config.outboundDatabasePassword;
+  if (!configured) return null;
+
+  outboundPool ??= new Pool({
+    host: config.outboundDatabaseHost!,
+    port: config.outboundDatabasePort,
+    database: config.outboundDatabaseName!,
+    user: config.outboundDatabaseUser!,
+    password: config.outboundDatabasePassword!,
+    application_name: "legalbridge-v2-outbound",
+    max: 2,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 5_000
+  });
+  return outboundPool;
 }
 
 export async function checkDatabase(database: DatabasePool | null) {
