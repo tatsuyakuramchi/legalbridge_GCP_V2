@@ -45,7 +45,7 @@ export function evaluateSlackCandidates(
   const historyByFingerprint = new Map(
     (history ?? [])
       .filter((record) => record.outcome === "sent" || record.outcome === "acknowledged")
-      .map((record) => [\`\${record.issueKey}:\${record.fingerprint}\`, record])
+      .map((record) => [record.issueKey + ":" + record.fingerprint, record])
   );
 
   return candidates.map((candidate) => {
@@ -62,7 +62,7 @@ export function evaluateSlackCandidates(
         null
       );
     }
-    const previous = historyByFingerprint.get(\`\${candidate.issueKey}:\${fingerprint}\`);
+    const previous = historyByFingerprint.get(candidate.issueKey + ":" + fingerprint);
     if (previous) {
       return evaluated(
         candidate,
