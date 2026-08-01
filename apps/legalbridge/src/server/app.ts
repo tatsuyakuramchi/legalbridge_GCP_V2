@@ -59,6 +59,10 @@ import { MemoryAdminRepository, PgAdminRepository, type AdminRepository } from "
 import { createAdminRouter } from "./admin/routes.js";
 import { createOperationalDiagnosticsRouter } from "./admin/diagnostics.js";
 import {
+  PgSlackNotificationHistoryRepository,
+  type SlackNotificationHistoryRepository
+} from "./integrations/slack-history-repository.js";
+import {
   createApiAuthorization,
   createAuthentication,
   publicUser,
@@ -150,6 +154,7 @@ export interface AppDependencies {
   finalizations?: DocumentFinalizationRepository;
   pdfRenderer?: PdfRenderer;
   driveStorage?: DriveStorage | null;
+  slackHistory?: SlackNotificationHistoryRepository;
 }
 
 export interface AppOptions {
@@ -180,6 +185,9 @@ function createDefaultDependencies(): AppDependencies {
     ledgers: database ? new PgLedgerRepository(database) : new MemoryLedgerRepository(),
     search: database ? new PgGlobalSearchRepository(database) : new MemoryGlobalSearchRepository(),
     admin: database ? new PgAdminRepository(database) : new MemoryAdminRepository(),
+    slackHistory: database && config.slackNotificationHistoryEnabled
+      ? new PgSlackNotificationHistoryRepository(database)
+      : undefined,
     finalizations: database
       ? new PgDocumentFinalizationRepository(database)
       : new MemoryDocumentFinalizationRepository(),
@@ -267,7 +275,8 @@ export function createApp(
         ...(driveStorageEnabled ? ["drive"] : [])
       ],
       integrations: config.integrationMode,
-      authMode: (options.auth ?? config.auth).mode
+      authMode: (options.auth ?? config.auth).mode,
+      slackNotificationHistory: Boolean(dependencies.slackHistory)
     });
   });
 
@@ -350,7 +359,8 @@ export function createApp(
   ));
   app.use("/api/v2", createAdminRouter(
     dependencies.admin ?? new MemoryAdminRepository(),
-    matterRepository
+    matterRepository,
+    dependencies.slackHistory
   ));
   app.use("/api/v2", createTemplateRegressionRouter(dependencies.templates));
   app.use("/api/v2", createOperationalDiagnosticsRouter(
