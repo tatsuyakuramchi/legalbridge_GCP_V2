@@ -46,6 +46,17 @@ export function App() {
   const [currentUser, setCurrentUser] = useState<{ email: string; role: "admin" | "legal" | "requester" } | null>(null);
   const [searchSelection, setSearchSelection] = useState<{ target: "matter" | "document" | "vendor" | "work"; id: string; title: string } | null>(null);
   const [draftSelection, setDraftSelection] = useState<{ issueKey: string; templateType: string } | null>(null);
+  const [deepLinkIssue, setDeepLinkIssue] = useState("");
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const issueKey = params.get("issue")?.trim().slice(0, 100) ?? "";
+    const requestedView = params.get("view");
+    if (issueKey) setDeepLinkIssue(issueKey);
+    if (requestedView === "drafts") setView("drafts");
+    else if (requestedView === "documents") setView("documents");
+    else if (requestedView === "home") setView("home");
+  }, []);
 
   useEffect(() => {
     fetch("/api/v2/me")
@@ -145,7 +156,7 @@ export function App() {
         {view === "matters" && <MatterRegistry templates={templates}
           selectedId={searchSelection?.target === "matter" ? Number(searchSelection.id) : undefined} />}
         {view === "drafts" && !readOnly && (
-          <DraftWorkspace templates={templates} onResume={resumeDraft} />
+          <DraftWorkspace templates={templates} onResume={resumeDraft} initialQuery={deepLinkIssue} />
         )}
         {view === "ledgers" && <LedgerWorkspace
           initialType={searchSelection?.target === "work" ? "works" : searchSelection?.target === "vendor" ? "vendors" : undefined}
@@ -156,6 +167,7 @@ export function App() {
           <DocumentRegistry templates={templates} onCreate={() => setView("templates")}
             canGeneratePdf={canGeneratePdf}
             canSaveToDrive={canSaveToDrive}
+            initialQuery={deepLinkIssue}
             selectedId={searchSelection?.target === "document" ? Number(searchSelection.id) : undefined} />
         )}
         {view === "templates" && (
