@@ -21,7 +21,8 @@ export function createAdminRouter(
   dispatchSettings: Pick<
     SlackDispatchGateSettings,
     "integrationMode" | "slackCapabilityEnabled" | "adapterConfigured"
-  >
+  >,
+  approvalWriteEnabled = false
 ) {
   const router = Router();
   router.get("/admin/overview", async (_request, response, next) => {
@@ -107,7 +108,7 @@ export function createAdminRouter(
           configured: Boolean(approvals),
           connected: approvalStatus === "connected",
           status: approvalStatus,
-          appendEnabled: false,
+          appendEnabled: approvalWriteEnabled,
           records: approvalRecords.map((item) => ({
             issueKey: item.issueKey,
             fingerprint: item.fingerprint,
@@ -128,6 +129,75 @@ export function createAdminRouter(
           recipientDirectoryResolved: dryRunQueue.some((item) => item.target.resolution === "resolved"),
           queue: dryRunQueue
         }
+      });
+    } catch (error) { next(error); }
+  });
+  router.post("/admin/slack-notification-approvals", async (request, response, next) => {
+    try {
+      if (!approvalWriteEnabled || !approvals) {
+        return response.status(403).json({
+          error: "Slack approval writes are disabled",
+          code: "SLACK_APPROVAL_DISABLED"
+        });
+      }
+      const issueKey = typeof request.body?.issueKey === "string"
+        ? request.body.issueKey.trim()
+        : "";
+      const fingerprint = typeof request.body?.fingerprint === "string"
+        ? request.body.fingerprint.trim().toLowerCase()
+        : "";
+      const decision = request.body?.decision;
+      if (!/^[A-Z][A-Z0-9_]*-[0-9]+$/.test(issueKey) ||
+          !/^[a-f0-9]{64}$/.test(fingerprint) ||
+          !["approved", "revoked"].includes(decision)) {
+        return response.status(400).json({
+          error: "Invalid Slack approval request",
+          code: "SLACK_APPROVAL_INVALID"
+        });
+      }
+      if (!matters || !history) {
+        return response.status(503).json({
+          error: "Slack approval prerequisites are unavailable",
+          code: "SLACK_APPROVAL_UNAVAILABLE"
+        });
+      }
+      const sourceMatters = await matters.list("", undefined, 200);
+      const baseUrl = `${request.protocol}://${request.get("host")}`;
+      const rawCandidates = buildSlackNotificationCandidates(sourceMatters, baseUrl);
+      const historyRecords = await history.list(rawCandidates.map((item) => item.issueKey));
+      const candidates = evaluateSlackCandidates(rawCandidates, historyRecords);
+      const dryRunQueue = buildSlackDryRunQueue(candidates, slackRecipients);
+      const candidate = candidates.find(
+        (item) => item.issueKey === issueKey && item.fingerprint === fingerprint
+      );
+      const dryRun = dryRunQueue.find(
+        (item) => item.issueKey === issueKey && item.fingerprint === fingerprint
+      );
+      if (!candidate || !dryRun) {
+        return response.status(409).json({
+          error: "Slack notification content has changed; reload before deciding",
+          code: "SLACK_APPROVAL_STALE"
+        });
+      }
+      if (dryRun.readiness !== "ready_for_review") {
+        return response.status(409).json({
+          error: "Slack notification is not ready for approval",
+          code: "SLACK_APPROVAL_BLOCKED",
+          readiness: dryRun.readiness,
+          reasons: dryRun.blockingReasons
+        });
+      }
+      await approvals.append({
+        matterId: candidate.matterId,
+        issueKey,
+        fingerprint,
+        decision,
+        recordedBy: response.locals.currentUser!.email
+      });
+      return response.status(201).json({
+        approval: { issueKey, fingerprint, decision },
+        externalSend: false,
+        historyAppend: false
       });
     } catch (error) { next(error); }
   });
