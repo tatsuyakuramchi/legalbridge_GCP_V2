@@ -616,6 +616,9 @@ test("実案件からSlack通知候補を読取専用で返す", async () => {
   assert.equal(response.body.summary.historyUnavailable, 1);
   assert.equal(response.body.candidates[0].eligibility, "history_unavailable");
   assert.match(response.body.candidates[0].fingerprint, /^[a-f0-9]{64}$/);
+  assert.equal(response.body.dryRun.externalSend, false);
+  assert.equal(response.body.dryRun.historyAppend, false);
+  assert.equal(response.body.dryRun.queue[0].readiness, "blocked_history");
 });
 
 test("通知履歴接続時だけ未通知候補を送信可能として返す", async () => {
@@ -661,6 +664,9 @@ test("通知履歴接続時だけ未通知候補を送信可能として返す",
   assert.equal(response.body.summary.ready, 1);
   assert.equal(response.body.summary.historyUnavailable, 0);
   assert.equal(response.body.candidates[0].eligibility, "ready");
+  assert.equal(response.body.summary.dryRunBlocked, 1);
+  assert.equal(response.body.dryRun.destinationConfigured, false);
+  assert.equal(response.body.dryRun.queue[0].readiness, "blocked_destination");
 });
 
 test("空field_schemaを補うV3基本フォーム定義を持つ", () => {
