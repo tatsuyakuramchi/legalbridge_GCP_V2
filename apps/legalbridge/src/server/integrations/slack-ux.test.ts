@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildSlackNotificationPreview,
   requesterStatus,
+  requesterDeepLink,
   slackUxPreviewCatalog
 } from "./slack-ux.js";
 
@@ -46,4 +47,23 @@ test("管理画面用プレビューは七状態を外部送信せず比較で�
       "withdrawn"
     ]
   );
+});
+
+
+test("Slackリンクは依頼者が利用できる下書き・文書画面へ直接遷移する", () => {
+  const base = "https://legalbridge.example/";
+  const information = new URL(requesterDeepLink(base, "information_required", "LEGAL-200"));
+  const completed = new URL(requesterDeepLink(base, "completed", "LEGAL-201"));
+  const intake = new URL(requesterDeepLink(base, "intake", "LEGAL-202"));
+
+  assert.equal(information.searchParams.get("view"), "drafts");
+  assert.equal(information.searchParams.get("issue"), "LEGAL-200");
+  assert.equal(completed.searchParams.get("view"), "documents");
+  assert.equal(completed.searchParams.get("issue"), "LEGAL-201");
+  assert.equal(intake.searchParams.get("view"), "home");
+  assert.equal(intake.searchParams.get("issue"), "LEGAL-202");
+
+  for (const item of slackUxPreviewCatalog(base)) {
+    assert.notEqual(new URL(item.actions[0].url).searchParams.get("view"), "matters");
+  }
 });
