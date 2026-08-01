@@ -610,6 +610,11 @@ test("実案件からSlack通知候補を読取専用で返す", async () => {
     "information_required"
   );
   assert.equal(response.body.candidates[0].deliveryState, "not_evaluated");
+  assert.equal(response.body.history.connected, false);
+  assert.equal(response.body.summary.ready, 0);
+  assert.equal(response.body.summary.historyUnavailable, 1);
+  assert.equal(response.body.candidates[0].eligibility, "history_unavailable");
+  assert.match(response.body.candidates[0].fingerprint, /^[a-f0-9]{64}$/);
 });
 
 test("空field_schemaを補うV3基本フォーム定義を持つ", () => {
