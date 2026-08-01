@@ -140,3 +140,23 @@ test("不正なBot Token形式を初期化時に拒否する", () => {
     /valid Slack bot token/
   );
 });
+
+
+test("不正な宛先と通知指紋はAPI呼出し前に拒否する", async () => {
+  const client = new StubClient([]);
+  await assert.rejects(
+    new SlackWebApiDeliveryAdapter(client).send({
+      ...deliveryRequest,
+      userId: "invalid"
+    }),
+    /valid user ID/
+  );
+  await assert.rejects(
+    new SlackWebApiDeliveryAdapter(client).send({
+      ...deliveryRequest,
+      idempotencyKey: "invalid"
+    }),
+    /SHA-256 fingerprint/
+  );
+  assert.deepEqual(client.calls, []);
+});
