@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 type State = {
-  health: any; runtime: any; overview: any; compatibility: any; diagnostics: any;
+  health: any; runtime: any; overview: any; compatibility: any; diagnostics: any; slackPreview: any;
   integrations: Array<{ name: string; mode: string; ok?: boolean; message?: string }>;
 };
 const countLabels: Record<string, string> = {
@@ -8,19 +8,20 @@ const countLabels: Record<string, string> = {
   vendors: "取引先", staff: "担当者", works: "作品・原作", conditions: "金銭条件"
 };
 export function AdminOverview() {
-  const [state, setState] = useState<State>({ health: null, runtime: null, overview: null, compatibility: null, diagnostics: null, integrations: [] });
+  const [state, setState] = useState<State>({ health: null, runtime: null, overview: null, compatibility: null, diagnostics: null, slackPreview: null, integrations: [] });
   const [loading, setLoading] = useState(true);
   async function load() {
     setLoading(true);
     const fetchJson = (url: string) => fetch(url).then((response) => response.ok ? response.json() : Promise.reject());
-    const [health, runtime, overview, compatibility, diagnostics, integrationResult] = await Promise.all([
+    const [health, runtime, overview, compatibility, diagnostics, slackPreview, integrationResult] = await Promise.all([
       fetchJson("/health").catch(() => null), fetchJson("/api/v2/runtime").catch(() => null),
       fetchJson("/api/v2/admin/overview").catch(() => null),
       fetchJson("/api/v2/document-templates/compatibility-report").catch(() => null),
       fetchJson("/api/v2/admin/diagnostics").catch(() => null),
+      fetchJson("/api/v2/admin/slack-ux-preview").catch(() => null),
       fetchJson("/api/v2/integrations/status").catch(() => ({ integrations: [] }))
     ]);
-    setState({ health, runtime, overview, compatibility, diagnostics, integrations: integrationResult.integrations ?? [] });
+    setState({ health, runtime, overview, compatibility, diagnostics, slackPreview, integrations: integrationResult.integrations ?? [] });
     setLoading(false);
   }
   useEffect(() => { void load(); }, []);
@@ -60,6 +61,31 @@ export function AdminOverview() {
           </article>;
         })}
         {!state.diagnostics && <p>診断情報を取得できません。</p>}
+      </div>
+    </section>
+    <section className="panel admin-section slack-ux-preview">
+      <div className="panel-head">
+        <h2>Slack UXプレビュー</h2>
+        <span>外部送信なし・管理画面内の比較表示</span>
+      </div>
+      <div className="slack-principles">
+        {(state.slackPreview?.principles ?? []).map((item: string) => <span key={item}>{item}</span>)}
+      </div>
+      <div className="slack-preview-grid">
+        {(state.slackPreview?.notifications ?? []).map((item: any) => <article key={item.requesterStatus}>
+          <div className="slack-preview-head">
+            <span>{item.statusLabel}</span>
+            <small>{item.shouldNotify ? "通知する" : "原則通知しない"}</small>
+          </div>
+          <strong>{item.headline}</strong>
+          <p>{item.body}</p>
+          <em>次の行動：{item.nextAction}</em>
+          <div className="slack-preview-actions">
+            {item.actions.map((action: any) => <button key={action.id} className={action.style}>{action.label}</button>)}
+          </div>
+          <small>{item.delivery.newRootMessage ? "受付メッセージを作成" : "既存案件スレッドへ集約"}</small>
+        </article>)}
+        {!state.slackPreview && <p>Slack UXプレビューを取得できません。</p>}
       </div>
     </section>
     <section className="panel admin-section"><div className="panel-head"><h2>データ件数</h2><span>既存DB・参照のみ</span></div>

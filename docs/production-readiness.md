@@ -74,8 +74,9 @@ Gate Aが失敗した変更はデプロイしない。
 2. 文書確定・発番
 3. PDF
 4. Drive
-5. Slack・Gmail・CloudSign
-6. Backlog
+5. Slack（UXプレビュー、検証チャンネル、段階開放）
+6. Gmail・CloudSign
+7. Backlog
 
 各段階で確認する。
 
@@ -85,7 +86,28 @@ Gate Aが失敗した変更はデプロイしない。
 - [ ] 操作者、対象文書、実行時刻を追跡できる
 - [ ] 直前段階へ戻す手順が確認済み
 
-## 6. 監視
+## 6. Slack UXゲート
+
+SlackはLegalBridgeの代替画面にせず、申請入口と利用者の行動が必要な通知に限定する。
+
+- [ ] 内部のBacklog工程が利用者向け七段階へ正しく変換される
+- [ ] 受付時だけ新しい起点メッセージを作成する
+- [ ] 受付後の通知は案件ごとの既存スレッドへ集約する
+- [ ] 通知に受付番号、現在地、次の行動、LegalBridgeへのボタンがある
+- [ ] 法務部内の細かな進捗は依頼者へ過剰通知しない
+- [ ] 情報不足と依頼者確認待ちは行動ボタン付きで通知する
+- [ ] 二重送信、同一状態の反復通知、別スレッド生成を防止する
+- [ ] まず管理画面プレビュー、次に検証チャンネル、最後に本番チャンネルの順で開放する
+- [ ] Slack送信失敗時もBacklogとLegalBridgeの状態を変更しない
+
+役割分担:
+
+- Slack: 申請入口、追加情報依頼、重要な状態通知
+- LegalBridge: 入力、文書作成、進捗・成果物確認
+- Backlog: 法務担当者のタスク、期限、対応履歴
+- Drive: 最終成果物の保存
+
+## 7. 監視
 
 日常確認:
 
@@ -104,7 +126,7 @@ Gate Aが失敗した変更はデプロイしない。
 - 外部連携無効環境からの送信
 - 認証メールと文書所有者の不一致
 
-## 7. 障害時の初動
+## 8. 障害時の初動
 
 1. 新規書込みを停止する
 2. `WRITE_FEATURES_ENABLED=false`又は対象`WRITE_SCOPES`を除外する
@@ -132,7 +154,7 @@ gcloud run services update-traffic SERVICE_NAME \
   --to-revisions=KNOWN_GOOD_REVISION=100
 ```
 
-## 8. 本番切替判定
+## 9. 本番切替判定
 
 次をすべて満たすまで旧サービスを停止しない。
 
@@ -144,10 +166,10 @@ gcloud run services update-traffic SERVICE_NAME \
 - [ ] 本番切替日時と旧サービス停止日時を承認
 - [ ] 切替後に件数、発番、PDF、外部連携を再照合
 
-## 9. 現在の保留事項
+## 10. 現在の保留事項
 
 - Google Driveフォルダ権限
 - IAPのDNS・証明書・実アカウント確認
-- `kadokawa.jp`外部ユーザー認証
-- Slack、Gmail、CloudSign、Backlogのlive adapter
+- Slack UXの検証チャンネル確認とlive adapter
+- Gmail、CloudSign、Backlogのlive adapter
 - 本番DB書込み

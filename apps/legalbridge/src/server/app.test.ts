@@ -552,6 +552,18 @@ test("管理者向け診断APIは機密設定を含めず稼働状態を返す",
   assert.equal(serialized.includes("token"), false);
 });
 
+test("Slack UXプレビューは外部送信せず七状態を返す", async () => {
+  const response = await request(app())
+    .get("/api/v2/admin/slack-ux-preview")
+    .expect(200);
+
+  assert.equal(response.body.mode, "preview");
+  assert.equal(response.body.externalSend, false);
+  assert.equal(response.body.notifications.length, 7);
+  assert.equal(response.body.notifications[1].requesterStatus, "information_required");
+  assert.equal(response.body.notifications[1].shouldNotify, true);
+});
+
 test("空field_schemaを補うV3基本フォーム定義を持つ", () => {
   assert.ok(individualLicenseV3Fields.length >= 20);
   assert.ok(individualLicenseV3Fields.some((field) => field.name === "Licensor_氏名会社名"));
