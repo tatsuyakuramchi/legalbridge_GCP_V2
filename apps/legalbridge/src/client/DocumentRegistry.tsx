@@ -13,6 +13,14 @@ type RegisteredDocument = {
   createdAt: string;
   createdBy: string | null;
   formData?: Record<string, unknown>;
+  lifecycle?: {
+    state: "finalized" | "registered";
+    label: string;
+    pdfState: "ready" | "unavailable";
+    pdfLabel: string;
+    driveState: "stored" | "not_stored";
+    driveLabel: string;
+  };
 };
 
 export function DocumentRegistry({
@@ -123,7 +131,39 @@ function DocumentDetail({
 }) {
   const [savingDrive, setSavingDrive] = useState(false);
   const [driveError, setDriveError] = useState("");
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [pdfError, setPdfError] = useState("");
   if (!document) return <aside className="panel registry-detail empty-detail">一覧から文書を選択してください。</aside>;
+  async function downloadPdf() {
+    if (!document || downloadingPdf) return;
+    setDownloadingPdf(true);
+    setPdfError("");
+    try {
+      const response = await fetch(`/api/v2/documents/${document.id}/pdf`, {
+        headers: { Accept: "application/pdf" }
+      });
+      if (!response.ok) {
+        const message = await response.json()
+          .then((body) => body.error as string | undefined)
+          .catch(() => undefined);
+        throw new Error(message ?? "PDFの生成に失敗しました。");
+      }
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const download = window.document.createElement("a");
+      download.href = objectUrl;
+      download.download = `${safeFilename(document.documentNumber ?? `document-${document.id}`)}.pdf`;
+      window.document.body.appendChild(download);
+      download.click();
+      download.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch (error) {
+      setPdfError(error instanceof Error ? error.message : "PDFの生成に失敗しました。");
+    } finally {
+      setDownloadingPdf(false);
+    }
+  }
+
   async function saveToDrive() {
     if (!document || savingDrive) return;
     setSavingDrive(true);
@@ -148,6 +188,17 @@ function DocumentDetail({
     <span className="detail-kicker">DOCUMENT DETAIL</span>
     <h2>{document.documentNumber ?? "未発番"}</h2>
     <p className="detail-title">{document.title}</p>
+    <div className="document-lifecycle">
+      <span className={document.lifecycle?.state === "finalized" ? "complete" : "pending"}>
+        {document.lifecycle?.label ?? (document.documentNumber ? "確定済み" : "登録済み・未発番")}
+      </span>
+      <span className={document.lifecycle?.pdfState === "ready" ? "complete" : "pending"}>
+        {document.lifecycle?.pdfLabel ?? (document.documentNumber ? "PDF生成可能" : "発番後にPDF生成可能")}
+      </span>
+      <span className={document.lifecycle?.driveState === "stored" ? "complete" : "pending"}>
+        {document.lifecycle?.driveLabel ?? (document.driveLink ? "Drive保存済み" : "Drive未保存")}
+      </span>
+    </div>
     <dl>
       <dt>種別</dt><dd>{label ?? document.templateType}</dd>
       <dt>案件キー</dt><dd>{document.issueKey}</dd>
@@ -155,15 +206,14 @@ function DocumentDetail({
       <dt>作成者</dt><dd>{document.createdBy ?? "—"}</dd>
     </dl>
     <div className="document-output-actions">
-      {canGeneratePdf && (
-        <a
+      {canGeneratePdf && document.documentNumber && (
+        <button
           className="pdf-download-link"
-          href={`/api/v2/documents/${document.id}/pdf`}
-          target="_blank"
-          rel="noreferrer"
+          onClick={() => void downloadPdf()}
+          disabled={downloadingPdf}
         >
-          PDFを生成・ダウンロード
-        </a>
+          {downloadingPdf ? "PDFを生成中…" : "PDFを再生成・ダウンロード"}
+        </button>
       )}
       {canSaveToDrive && !document.driveLink && (
         <button className="drive-save-button" onClick={() => void saveToDrive()} disabled={savingDrive}>
@@ -176,10 +226,11 @@ function DocumentDetail({
         </a>
       )}
     </div>
-    {driveError && <small className="drive-save-error">{driveError}</small>}
+    {pdfError && <small className="document-output-error">{pdfError}</small>}
+    {driveError && <small className="document-output-error">{driveError}</small>}
     {(canGeneratePdf || canSaveToDrive) && (
       <small className="pdf-safety-note">
-        PDFのDrive保存は検証用フォルダだけに限定されます。Backlog・Slack・メールへの送信は行いません。
+        PDFは選択した文書から都度再生成します。Drive保存は検証用フォルダに限定され、Backlog・Slack・メールへの送信は行いません。
       </small>
     )}
     <h3>登録項目</h3>
@@ -194,4 +245,9 @@ function formatDate(value: string) {
   return new Intl.DateTimeFormat("ja-JP", {
     timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit"
   }).format(new Date(value));
+}
+
+
+function safeFilename(value: string) {
+  return value.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 120) || "document";
 }
