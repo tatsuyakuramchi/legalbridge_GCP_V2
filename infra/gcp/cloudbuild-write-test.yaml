@@ -10,6 +10,11 @@ substitutions:
   _SERVICE_ACCOUNT: legalbridge-v2-preview@legalbridge-488506.iam.gserviceaccount.com
   _CONFIRM_ISOLATED_DB: BLOCKED
   _CONFIRM_DOCUMENT_TABLES: BLOCKED
+  _AUTH_MODE: disabled
+  _AUTH_ADMIN_EMAILS: BLOCKED
+  _AUTH_LEGAL_EMAILS: BLOCKED
+  _AUTH_REQUESTER_DOMAINS: BLOCKED
+  _CONFIRM_IAP_BACKEND: BLOCKED
 
 steps:
   - id: test
@@ -40,6 +45,26 @@ steps:
           echo "Document finalization deployment blocked: empty validation tables are not confirmed."
           exit 1
         fi
+        case "${_AUTH_MODE}" in
+          disabled)
+            ;;
+          iap)
+            if [ "${_CONFIRM_IAP_BACKEND}" != "IAP_BACKEND_READY" ]; then
+              echo "IAP deployment blocked: backend readiness confirmation is missing."
+              exit 1
+            fi
+            for value in "${_AUTH_ADMIN_EMAILS}" "${_AUTH_LEGAL_EMAILS}" "${_AUTH_REQUESTER_DOMAINS}"; do
+              if [ -z "$value" ] || [ "$value" = "BLOCKED" ]; then
+                echo "IAP deployment blocked: role configuration is missing."
+                exit 1
+              fi
+            done
+            ;;
+          *)
+            echo "Deployment blocked: AUTH_MODE must be disabled or iap."
+            exit 1
+            ;;
+        esac
 
   - id: build-image
     name: gcr.io/cloud-builders/docker
@@ -72,7 +97,7 @@ steps:
           --service-account="${_SERVICE_ACCOUNT}" \
           --add-cloudsql-instances="${_CLOUD_SQL_INSTANCE}" \
           --set-secrets="DB_PASSWORD=${_DB_PASSWORD_SECRET}:latest" \
-          --set-env-vars="^~^NODE_ENV=production~AUTH_MODE=disabled~INTEGRATION_MODE=local~DB_ACCESS_MODE=readwrite~REQUIRE_DATABASE=true~WRITE_FEATURES_ENABLED=true~WRITE_SCOPES=drafts,documents,pdf~DB_HOST=/cloudsql/${_CLOUD_SQL_INSTANCE}~DB_PORT=5432~DB_NAME=${_DB_NAME}~DB_USER=${_DB_USER}~DB_POOL_MAX=3"
+          --set-env-vars="^~^NODE_ENV=production~AUTH_MODE=${_AUTH_MODE}~AUTH_ADMIN_EMAILS=${_AUTH_ADMIN_EMAILS}~AUTH_LEGAL_EMAILS=${_AUTH_LEGAL_EMAILS}~AUTH_REQUESTER_DOMAINS=${_AUTH_REQUESTER_DOMAINS}~INTEGRATION_MODE=local~DB_ACCESS_MODE=readwrite~REQUIRE_DATABASE=true~WRITE_FEATURES_ENABLED=true~WRITE_SCOPES=drafts,documents,pdf~DB_HOST=/cloudsql/${_CLOUD_SQL_INSTANCE}~DB_PORT=5432~DB_NAME=${_DB_NAME}~DB_USER=${_DB_USER}~DB_POOL_MAX=3"
 
 images:
   - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPOSITORY}/${_IMAGE}:${BUILD_ID}
