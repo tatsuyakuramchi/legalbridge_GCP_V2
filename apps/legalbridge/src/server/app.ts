@@ -340,9 +340,8 @@ export function createApp(
     dependencies.driveStorage ?? null,
     driveStorageEnabled
   ));
-  app.use("/api/v2", createMatterRouter(
-    dependencies.matters ?? new MemoryMatterRepository()
-  ));
+  const matterRepository = dependencies.matters ?? new MemoryMatterRepository();
+  app.use("/api/v2", createMatterRouter(matterRepository));
   app.use("/api/v2", createLedgerRouter(
     dependencies.ledgers ?? new MemoryLedgerRepository()
   ));
@@ -350,7 +349,8 @@ export function createApp(
     dependencies.search ?? new MemoryGlobalSearchRepository()
   ));
   app.use("/api/v2", createAdminRouter(
-    dependencies.admin ?? new MemoryAdminRepository()
+    dependencies.admin ?? new MemoryAdminRepository(),
+    matterRepository
   ));
   app.use("/api/v2", createTemplateRegressionRouter(dependencies.templates));
   app.use("/api/v2", createOperationalDiagnosticsRouter(
