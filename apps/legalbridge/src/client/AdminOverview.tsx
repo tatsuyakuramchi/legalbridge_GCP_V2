@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 type State = {
-  health: any; runtime: any; overview: any; compatibility: any;
+  health: any; runtime: any; overview: any; compatibility: any; diagnostics: any;
   integrations: Array<{ name: string; mode: string; ok?: boolean; message?: string }>;
 };
 const countLabels: Record<string, string> = {
@@ -8,18 +8,19 @@ const countLabels: Record<string, string> = {
   vendors: "取引先", staff: "担当者", works: "作品・原作", conditions: "金銭条件"
 };
 export function AdminOverview() {
-  const [state, setState] = useState<State>({ health: null, runtime: null, overview: null, compatibility: null, integrations: [] });
+  const [state, setState] = useState<State>({ health: null, runtime: null, overview: null, compatibility: null, diagnostics: null, integrations: [] });
   const [loading, setLoading] = useState(true);
   async function load() {
     setLoading(true);
     const fetchJson = (url: string) => fetch(url).then((response) => response.ok ? response.json() : Promise.reject());
-    const [health, runtime, overview, compatibility, integrationResult] = await Promise.all([
+    const [health, runtime, overview, compatibility, diagnostics, integrationResult] = await Promise.all([
       fetchJson("/health").catch(() => null), fetchJson("/api/v2/runtime").catch(() => null),
       fetchJson("/api/v2/admin/overview").catch(() => null),
       fetchJson("/api/v2/document-templates/compatibility-report").catch(() => null),
+      fetchJson("/api/v2/admin/diagnostics").catch(() => null),
       fetchJson("/api/v2/integrations/status").catch(() => ({ integrations: [] }))
     ]);
-    setState({ health, runtime, overview, compatibility, integrations: integrationResult.integrations ?? [] });
+    setState({ health, runtime, overview, compatibility, diagnostics, integrations: integrationResult.integrations ?? [] });
     setLoading(false);
   }
   useEffect(() => { void load(); }, []);
@@ -38,6 +39,29 @@ export function AdminOverview() {
         ok={state.compatibility?.summary?.error === 0 && state.compatibility?.summary?.warning === 0}
         detail={`警告 ${state.compatibility?.summary?.warning ?? "—"}・エラー ${state.compatibility?.summary?.error ?? "—"}`} />
     </div>
+    <section className="panel admin-section">
+      <div className="panel-head">
+        <h2>運用診断</h2>
+        <span>最終確認 {formatDate(state.diagnostics?.generatedAt)}</span>
+      </div>
+      <div className="diagnostic-summary">
+        <strong className={`diagnostic-overall ${state.diagnostics?.status ?? "warning"}`}>
+          {diagnosticOverallLabel(state.diagnostics?.status)}
+        </strong>
+        <small>Secret・接続文字列・認証情報は表示しません。</small>
+      </div>
+      <div className="diagnostic-grid">
+        {Object.entries(state.diagnostics?.checks ?? {}).map(([key, value]) => {
+          const check = value as { status?: string };
+          return <article key={key} className={`diagnostic-check ${check.status ?? "warning"}`}>
+            <span>{diagnosticLabels[key] ?? key}</span>
+            <strong>{diagnosticStatusLabel(check.status)}</strong>
+            <small>{diagnosticDetail(key, value)}</small>
+          </article>;
+        })}
+        {!state.diagnostics && <p>診断情報を取得できません。</p>}
+      </div>
+    </section>
     <section className="panel admin-section"><div className="panel-head"><h2>データ件数</h2><span>既存DB・参照のみ</span></div>
       <div className="admin-counts">{Object.entries(state.overview?.counts ?? {}).map(([key, value]) =>
         <article key={key}><span>{countLabels[key] ?? key}</span><strong>{String(value)}</strong></article>)}</div>
@@ -62,4 +86,50 @@ function StatusCard({ label, value, detail, ok }: { label: string; value: string
 function formatDate(value?: string | null) {
   if (!value) return "—";
   return new Intl.DateTimeFormat("ja-JP", { timeZone: "Asia/Tokyo", dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+}
+
+
+const diagnosticLabels: Record<string, string> = {
+  database: "Cloud SQL・DBモード",
+  templates: "全テンプレート回帰",
+  pdfRuntime: "PDF実行環境",
+  integrations: "外部連携",
+  writeSafety: "書込み安全境界"
+};
+
+function diagnosticOverallLabel(status?: string) {
+  if (status === "ok") return "全項目正常";
+  if (status === "error") return "要対応";
+  return "要確認";
+}
+
+function diagnosticStatusLabel(status?: string) {
+  if (status === "ok") return "正常";
+  if (status === "disabled") return "無効";
+  if (status === "error") return "エラー";
+  return "要確認";
+}
+
+function diagnosticDetail(key: string, value: unknown) {
+  const item = value as Record<string, any>;
+  if (key === "database") {
+    return item.reachable
+      ? `${item.currentDatabase ?? "DB"}・${item.actualMode ?? "unknown"}`
+      : "DBへ接続できません";
+  }
+  if (key === "templates") {
+    return `合格 ${item.passed ?? 0}/${item.total ?? 0}・警告 ${item.warnings ?? 0}・失敗 ${item.failed ?? 0}`;
+  }
+  if (key === "pdfRuntime") {
+    return item.enabled
+      ? item.executableAvailable ? "Chromium実行可能" : "Chromiumを実行できません"
+      : "PDF capability無効";
+  }
+  if (key === "integrations") {
+    return item.externalWritesDisabled ? "local・外部書込み停止" : "live設定を確認してください";
+  }
+  if (key === "writeSafety") {
+    return `scope: ${(item.scopes ?? []).join(", ") || "なし"}・Drive ${item.driveEnabled ? "有効" : "無効"}`;
+  }
+  return "—";
 }
