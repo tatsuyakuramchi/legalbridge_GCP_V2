@@ -13,7 +13,10 @@ export function createDocumentRegistryRouter(repository: DocumentRegistryReposit
       const listed = await repository.list(query, templateType || undefined, owner ? 200 : limit);
       const documents = listed.filter((document) => owns(document.createdBy, owner)).slice(0, limit);
       response.json({
-        documents: documents.map(({ formData: _formData, ...document }) => document)
+        documents: documents.map(({ formData: _formData, ...document }) => ({
+          ...document,
+          lifecycle: documentLifecycle(document)
+        }))
       });
     } catch (error) {
       next(error);
@@ -30,7 +33,13 @@ export function createDocumentRegistryRouter(repository: DocumentRegistryReposit
       if (!document || !owns(document.createdBy, requesterEmail(response))) {
         return response.status(404).json({ error: "document not found" });
       }
-      response.json({ document: { ...document, formData: maskSensitiveFields(document.formData) } });
+      response.json({
+        document: {
+          ...document,
+          lifecycle: documentLifecycle(document),
+          formData: maskSensitiveFields(document.formData)
+        }
+      });
     } catch (error) {
       next(error);
     }
@@ -55,4 +64,21 @@ function maskSensitiveFields(formData: Record<string, unknown>) {
     const text = String(value);
     return [key, text.length > 4 ? `${"*".repeat(Math.min(8, text.length - 4))}${text.slice(-4)}` : "****"];
   }));
+}
+
+
+function documentLifecycle(document: {
+  documentNumber: string | null;
+  driveLink: string;
+}) {
+  const finalized = Boolean(document.documentNumber);
+  const driveStored = Boolean(document.driveLink);
+  return {
+    state: finalized ? "finalized" : "registered",
+    label: finalized ? "確定済み" : "登録済み・未発番",
+    pdfState: finalized ? "ready" : "unavailable",
+    pdfLabel: finalized ? "PDF生成可能" : "発番後にPDF生成可能",
+    driveState: driveStored ? "stored" : "not_stored",
+    driveLabel: driveStored ? "Drive保存済み" : "Drive未保存"
+  };
 }

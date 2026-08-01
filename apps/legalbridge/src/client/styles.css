@@ -292,3 +292,60 @@ header input { width: 100%; border: 1px solid #d9e2ec; border-radius: 8px; paddi
   padding: 8px 9px;
   line-height: 1.5;
 }
+
+
+.document-lifecycle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 14px;
+}
+.document-lifecycle span {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #d9e2ec;
+  border-radius: 999px;
+  padding: 5px 9px;
+  font-size: 10px;
+  font-weight: 800;
+}
+.document-lifecycle span.complete {
+  border-color: #9bd9c2;
+  background: #e8f7f0;
+  color: #16724e;
+}
+.document-lifecycle span.pending {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #9a3412;
+}
+button.pdf-download-link {
+  width: 100%;
+  cursor: pointer;
+  font: inherit;
+}
+button.pdf-download-link:disabled {
+  border-color: #94a3b8;
+  background: #cbd5e1;
+  cursor: wait;
+}
+.document-output-error {
+  display: block;
+  border-radius: 6px;
+  background: #fff4f2;
+  color: #b42318;
+  padding: 8px 9px;
+  line-height: 1.5;
+}
+
+
+.registry-state {
+  display: inline-flex;
+  border-radius: 999px;
+  padding: 4px 8px;
+  white-space: nowrap;
+  font-size: 10px;
+  font-weight: 800;
+}
+.registry-state.complete { background: #e8f7f0; color: #16724e; }
+.registry-state.pending { background: #fff7ed; color: #9a3412; }
