@@ -20,7 +20,7 @@ import { MemoryGlobalSearchRepository } from "./search/repository.js";
 import { MemoryAdminRepository } from "./admin/repository.js";
 import { MemoryPdfRenderer } from "./documents/pdf-renderer.js";
 import { MemorySlackNotificationHistoryRepository } from "./integrations/slack-history-repository.js";
-import { MemorySlackNotificationApprovalRepository } from "./integrations/slack-approval-repository.js";
+import { MemorySlackNotificationApprovalRepository } from "./integrations/slack-approval-repository.js";\nimport { MemoryOutboundConditionRepository } from "./ledgers/outbound-condition-repository.js";
 
 const schema: DocumentFormSchema = {
   templateKey: "purchase_order",
@@ -930,4 +930,109 @@ test("Slack承認は専用scopeなしで拒否し外部送信しない", async (
     .expect(503);
   assert.equal(unavailable.body.code, "SLACK_APPROVAL_UNAVAILABLE");
   assert.deepEqual(await approvals.listLatest(["LEGAL-1"]), []);
+});
+
+
+function outboundConditionPayload() {
+  return {
+    workId: "work:42",
+    workLabel: "W-42 作品",
+    counterpartyId: "18",
+    counterpartyLabel: "V-18 相手方",
+    transactionKind: "license",
+    conditionName: "英語版ライセンス",
+    documentNumber: "ARC-LIC-2026-0001",
+    territory: "全世界",
+    languages: ["英語"],
+    exclusivity: "non_exclusive",
+    sublicenseAllowed: false,
+    currency: "USD",
+    paymentScheme: "royalty",
+    ratePct: 5
+  };
+}
+
+test("アウト条件は専用フラグとscopeが揃わなければ保存しない", async () => {
+  const repository = new MemoryOutboundConditionRepository();
+  const target = createApp({
+    templates: new MemoryTemplateRepository([schema]),
+    drafts: new MemoryDraftRepository(),
+    integrations: createIntegrationAdapters(),
+    outboundConditions: repository
+  }, {
+    accessMode: "readwrite",
+    requireDatabase: false,
+    writeFeaturesEnabled: true,
+    writeScopes: new Set(["outbound-conditions"]),
+    outboundConditionWritesEnabled: false
+  });
+
+  const response = await request(target)
+    .post("/api/v2/outbound-conditions")
+    .send(outboundConditionPayload())
+    .expect(403);
+  assert.equal(response.body.code, "WRITE_SCOPE_DISABLED");
+  assert.equal(repository.conditions.length, 0);
+});
+
+test("管理者は専用ゲート経由でアウト条件を保存し外部連携を起動しない", async () => {
+  const repository = new MemoryOutboundConditionRepository();
+  const target = createApp({
+    templates: new MemoryTemplateRepository([schema]),
+    drafts: new MemoryDraftRepository(),
+    integrations: createIntegrationAdapters(),
+    outboundConditions: repository
+  }, {
+    accessMode: "readwrite",
+    requireDatabase: false,
+    writeFeaturesEnabled: true,
+    writeScopes: new Set(["outbound-conditions"]),
+    outboundConditionWritesEnabled: true
+  });
+
+  const response = await request(target)
+    .post("/api/v2/outbound-conditions")
+    .send(outboundConditionPayload())
+    .expect(201);
+  assert.equal(response.body.condition.direction, "receivable");
+  assert.deepEqual(response.body.integrations, {
+    backlog: "disabled",
+    slack: "disabled",
+    drive: "disabled"
+  });
+  assert.equal(repository.conditions.length, 1);
+
+  const runtime = await request(target).get("/api/v2/runtime").expect(200);
+  assert.deepEqual(runtime.body.writeCapabilities, ["outbound-conditions"]);
+});
+
+test("法務担当者でも管理者指定がなければアウト条件を保存しない", async () => {
+  const repository = new MemoryOutboundConditionRepository();
+  const target = createApp({
+    templates: new MemoryTemplateRepository([schema]),
+    drafts: new MemoryDraftRepository(),
+    integrations: createIntegrationAdapters(),
+    outboundConditions: repository
+  }, {
+    accessMode: "readwrite",
+    requireDatabase: false,
+    writeFeaturesEnabled: true,
+    writeScopes: new Set(["outbound-conditions"]),
+    outboundConditionWritesEnabled: true,
+    auth: {
+      mode: "iap",
+      adminEmails: new Set(["admin@example.com"]),
+      legalEmails: new Set(["legal@example.com"]),
+      requesterDomains: new Set(["example.com"])
+    }
+  });
+
+  const response = await request(target)
+    .post("/api/v2/outbound-conditions")
+    .set("x-goog-authenticated-user-email", "accounts.google.com:legal@example.com")
+    .set("x-goog-authenticated-user-id", "accounts.google.com:legal-user")
+    .send(outboundConditionPayload())
+    .expect(403);
+  assert.equal(response.body.code, "OUTBOUND_CONDITION_ADMIN_REQUIRED");
+  assert.equal(repository.conditions.length, 0);
 });
