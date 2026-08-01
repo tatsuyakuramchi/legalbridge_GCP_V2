@@ -20,7 +20,7 @@ export function createAdminRouter(
       const sourceMatters = matters ? await matters.list("", undefined, 200) : [];
       const baseUrl = `${request.protocol}://${request.get("host")}`;
       const rawCandidates = buildSlackNotificationCandidates(sourceMatters, baseUrl);
-      let historyRecords = null;
+      let historyRecords: Awaited<ReturnType<SlackNotificationHistoryRepository["list"]>> | null = null;
       let historyStatus: "disabled" | "connected" | "unavailable" = "disabled";
       if (history) {
         try {
