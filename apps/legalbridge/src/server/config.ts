@@ -14,9 +14,16 @@ export const config = {
   databaseName: process.env.DB_NAME ?? null,
   databaseUser: process.env.DB_USER ?? null,
   databasePassword: process.env.DB_PASSWORD ?? null,
+  outboundDatabaseHost: process.env.OUTBOUND_DB_HOST ?? null,
+  outboundDatabasePort: Number(process.env.OUTBOUND_DB_PORT ?? 5432),
+  outboundDatabaseName: process.env.OUTBOUND_DB_NAME ?? null,
+  outboundDatabaseUser: process.env.OUTBOUND_DB_USER ?? null,
+  outboundDatabasePassword: process.env.OUTBOUND_DB_PASSWORD ?? null,
   databaseAccessMode:
     process.env.DB_ACCESS_MODE === "readwrite" ? "readwrite" as const : "readonly" as const,
   writeFeaturesEnabled: process.env.WRITE_FEATURES_ENABLED === "true",
+  outboundConditionWritesEnabled:
+    process.env.OUTBOUND_CONDITION_WRITES_ENABLED === "true",
   writeScopes: new Set(
     String(process.env.WRITE_SCOPES ?? "")
       .split(",").map((value) => value.trim()).filter(Boolean)
