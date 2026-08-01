@@ -5,10 +5,12 @@ import { buildSlackNotificationCandidates } from "../integrations/slack-candidat
 import { evaluateSlackCandidates } from "../integrations/slack-deduplication.js";
 import type { MatterRepository } from "../matters/repository.js";
 import type { SlackNotificationHistoryRepository } from "../integrations/slack-history-repository.js";
+import { buildSlackDryRunQueue } from "../integrations/slack-dry-run.js";
 export function createAdminRouter(
   repository: AdminRepository,
   matters?: MatterRepository,
-  history?: SlackNotificationHistoryRepository
+  history?: SlackNotificationHistoryRepository,
+  slackDryRunChannelId?: string
 ) {
   const router = Router();
   router.get("/admin/overview", async (_request, response, next) => {
@@ -34,6 +36,7 @@ export function createAdminRouter(
         }
       }
       const candidates = evaluateSlackCandidates(rawCandidates, historyRecords);
+      const dryRunQueue = buildSlackDryRunQueue(candidates, slackDryRunChannelId);
       response.json({
         mode: "preview",
         externalSend: false,
@@ -46,7 +49,10 @@ export function createAdminRouter(
           duplicates: candidates.filter((item) => item.eligibility === "duplicate").length,
           historyUnavailable: candidates.filter((item) => item.eligibility === "history_unavailable").length,
           quiet: candidates.filter((item) => item.eligibility === "quiet").length,
-          withoutPrimaryIssue: sourceMatters.filter((item) => !item.primaryIssueKey).length
+          withoutPrimaryIssue: sourceMatters.filter((item) => !item.primaryIssueKey).length,
+          dryRunReviewable: dryRunQueue.filter((item) => item.readiness === "ready_for_review").length,
+          dryRunBlocked: dryRunQueue.filter((item) => item.readiness.startsWith("blocked_")).length,
+          dryRunSuppressed: dryRunQueue.filter((item) => item.readiness.startsWith("suppressed_")).length
         },
         history: {
           configured: Boolean(history),
@@ -54,7 +60,14 @@ export function createAdminRouter(
           status: historyStatus,
           externalSend: false
         },
-        candidates
+        candidates,
+        dryRun: {
+          mode: "dry-run",
+          externalSend: false,
+          historyAppend: false,
+          destinationConfigured: dryRunQueue.some((item) => item.target.resolution === "configured"),
+          queue: dryRunQueue
+        }
       });
     } catch (error) { next(error); }
   });
