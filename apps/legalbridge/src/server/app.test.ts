@@ -19,6 +19,7 @@ import { formatLedgerDate, maskLedgerAddress } from "./ledgers/repository.js";
 import { MemoryGlobalSearchRepository } from "./search/repository.js";
 import { MemoryAdminRepository } from "./admin/repository.js";
 import { MemoryPdfRenderer } from "./documents/pdf-renderer.js";
+import { MemorySlackNotificationHistoryRepository } from "./integrations/slack-history-repository.js";
 
 const schema: DocumentFormSchema = {
   templateKey: "purchase_order",
@@ -615,6 +616,51 @@ test("実案件からSlack通知候補を読取専用で返す", async () => {
   assert.equal(response.body.summary.historyUnavailable, 1);
   assert.equal(response.body.candidates[0].eligibility, "history_unavailable");
   assert.match(response.body.candidates[0].fingerprint, /^[a-f0-9]{64}$/);
+});
+
+test("通知履歴接続時だけ未通知候補を送信可能として返す", async () => {
+  const matter = {
+    id: 81,
+    matterCode: "MTR-2026-00081",
+    title: "契約完了通知",
+    status: "closed",
+    counterparty: "取引先C",
+    primaryIssueKey: "LEGAL-81",
+    lifecycleStage: "completed",
+    ownerName: "法務担当",
+    targetDueDate: null,
+    blockedReason: null,
+    issueCount: 1,
+    documentCount: 1,
+    openTaskCount: 0,
+    nextTaskTitle: null,
+    nextTaskDueAt: null,
+    updatedAt: "2026-08-01T00:00:00.000Z",
+    remarks: null,
+    driveFolderUrl: null
+  };
+  const target = createApp({
+    templates: new MemoryTemplateRepository([schema]),
+    drafts: new MemoryDraftRepository(),
+    integrations: createIntegrationAdapters(),
+    slackHistory: new MemorySlackNotificationHistoryRepository(),
+    matters: new MemoryMatterRepository([{
+      matter,
+      issues: [],
+      tasks: [],
+      documents: []
+    }])
+  }, { accessMode: "readonly", requireDatabase: false });
+
+  const response = await request(target)
+    .get("/api/v2/admin/slack-notification-candidates")
+    .expect(200);
+
+  assert.equal(response.body.history.connected, true);
+  assert.equal(response.body.history.status, "connected");
+  assert.equal(response.body.summary.ready, 1);
+  assert.equal(response.body.summary.historyUnavailable, 0);
+  assert.equal(response.body.candidates[0].eligibility, "ready");
 });
 
 test("空field_schemaを補うV3基本フォーム定義を持つ", () => {

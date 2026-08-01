@@ -4,7 +4,12 @@ import { slackUxPreviewCatalog } from "../integrations/slack-ux.js";
 import { buildSlackNotificationCandidates } from "../integrations/slack-candidates.js";
 import { evaluateSlackCandidates } from "../integrations/slack-deduplication.js";
 import type { MatterRepository } from "../matters/repository.js";
-export function createAdminRouter(repository: AdminRepository, matters?: MatterRepository) {
+import type { SlackNotificationHistoryRepository } from "../integrations/slack-history-repository.js";
+export function createAdminRouter(
+  repository: AdminRepository,
+  matters?: MatterRepository,
+  history?: SlackNotificationHistoryRepository
+) {
   const router = Router();
   router.get("/admin/overview", async (_request, response, next) => {
     try { response.json(await repository.overview()); }
@@ -15,7 +20,20 @@ export function createAdminRouter(repository: AdminRepository, matters?: MatterR
       const sourceMatters = matters ? await matters.list("", undefined, 200) : [];
       const baseUrl = `${request.protocol}://${request.get("host")}`;
       const rawCandidates = buildSlackNotificationCandidates(sourceMatters, baseUrl);
-      const candidates = evaluateSlackCandidates(rawCandidates, null);
+      let historyRecords: Awaited<ReturnType<SlackNotificationHistoryRepository["list"]>> | null = null;
+      let historyStatus: "disabled" | "connected" | "unavailable" = "disabled";
+      if (history) {
+        try {
+          historyRecords = await history.list(rawCandidates.map((item) => item.issueKey));
+          historyStatus = "connected";
+        } catch (error) {
+          historyStatus = "unavailable";
+          console.error("Slack notification history lookup failed", {
+            name: error instanceof Error ? error.name : "UnknownError"
+          });
+        }
+      }
+      const candidates = evaluateSlackCandidates(rawCandidates, historyRecords);
       response.json({
         mode: "preview",
         externalSend: false,
@@ -30,7 +48,12 @@ export function createAdminRouter(repository: AdminRepository, matters?: MatterR
           quiet: candidates.filter((item) => item.eligibility === "quiet").length,
           withoutPrimaryIssue: sourceMatters.filter((item) => !item.primaryIssueKey).length
         },
-        history: { connected: false, externalSend: false },
+        history: {
+          configured: Boolean(history),
+          connected: historyStatus === "connected",
+          status: historyStatus,
+          externalSend: false
+        },
         candidates
       });
     } catch (error) { next(error); }

@@ -25,6 +25,8 @@ export const config = {
     requesterDomains: emailSet(process.env.AUTH_REQUESTER_DOMAINS)
   },
   googleDriveFolderId: process.env.GOOGLE_DRIVE_FOLDER_ID ?? "",
+  slackNotificationHistoryEnabled:
+    process.env.SLACK_NOTIFICATION_HISTORY_ENABLED === "true",
   templateSource: "db" as const,
   integrationMode: process.env.INTEGRATION_MODE === "live"
     ? "live" as const
