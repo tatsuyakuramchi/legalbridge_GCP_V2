@@ -68,7 +68,7 @@ const conditionFields: FieldDefinition[] = [
 
 export function SpecializedDocumentForms({ templateKey, formData, onChange }: Props) {
   if (templateKey === "purchase_order" || templateKey === "intl_purchase_order") {
-    return <SpecializedSection title="明細・金銭条件" description="発注内容、経費、ライセンス条件を行単位で入力します。">
+    return <SpecializedSection title="明細・金銭条件" description="発注明細と、必要な場合だけ経費・手数料・利用許諾条件を追加します。">
       <ArrayEditor title="発注明細" itemLabel="明細" dataKey="items" rows={rows(formData.items)}
         fields={itemFields} onChange={onChange} defaultRow={{ quantity: 1 }} />
       <ArrayEditor title="経費" itemLabel="経費" dataKey="expenses" rows={rows(formData.expenses)}
@@ -82,7 +82,7 @@ export function SpecializedDocumentForms({ templateKey, formData, onChange }: Pr
   }
 
   if (templateKey === "individual_license_terms") {
-    return <SpecializedSection title="利用許諾の詳細条件" description="金銭条件とサブライセンシーを動的に追加できます。">
+    return <SpecializedSection title="利用許諾の詳細条件" description="利用許諾の金銭条件と、再許諾先がある場合の情報を入力します。">
       <ArrayEditor title="金銭条件" itemLabel="条件" dataKey="financial_conditions"
         rows={rows(formData.financial_conditions)} fields={conditionFields} onChange={onChange}
         defaultRow={{ currency: "JPY" }} />
@@ -100,7 +100,7 @@ export function SpecializedDocumentForms({ templateKey, formData, onChange }: Pr
   }
 
   if (templateKey === "royalty_statement") {
-    return <SpecializedSection title="利用許諾料明細" description="売上・料率・支払額を明細単位で入力し、プレビュー時に合計します。">
+    return <SpecializedSection title="利用許諾料明細" description="計算対象ごとに売上額・料率・利用許諾料を入力します。合計額は自動計算されます。">
       <ArrayEditor title="計算明細" itemLabel="計算明細" dataKey="lines" rows={rows(formData.lines)}
         fields={[
           { name: "productName", label: "対象商品・契約" },
@@ -113,7 +113,7 @@ export function SpecializedDocumentForms({ templateKey, formData, onChange }: Pr
   }
 
   if (templateKey === "inspection_certificate") {
-    return <SpecializedSection title="検収・支払明細" description="検収対象、手数料、経費、変更履歴を分けて入力します。">
+    return <SpecializedSection title="検収・支払明細" description="検収した成果物を入力し、必要な場合だけ手数料・経費・変更履歴を追加します。">
       <ArrayEditor title="検収明細" itemLabel="検収明細" dataKey="delivery_line_items"
         rows={rows(formData.delivery_line_items)}
         fields={[
@@ -159,7 +159,7 @@ function SpecializedSection({
 }) {
   return <section id="specialized-fields" className="specialized-editor">
     <div className="specialized-heading">
-      <div><span>SPECIALIZED FORM</span><h2>{title}</h2><p>{description}</p></div>
+      <div><span>追加項目</span><h2>{title}</h2><p>{description}</p></div>
     </div>
     {children}
   </section>;
@@ -191,7 +191,7 @@ function ArrayEditor({
       <div><h3>{title}</h3><small>{currentRows.length}件</small></div>
       <button type="button" onClick={() => onChange(dataKey, [...currentRows, { ...defaultRow }])}>＋ {itemLabel}を追加</button>
     </div>
-    {!currentRows.length && <p className="inline-empty">{itemLabel}はまだ登録されていません。</p>}
+    {!currentRows.length && <p className="inline-empty">必要な場合は「＋ {itemLabel}を追加」を押してください。</p>}
     {currentRows.map((row, index) => <article className="repeater-card" key={index}>
       <div className="repeater-card-head">
         <strong>{itemLabel} {index + 1}</strong>
