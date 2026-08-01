@@ -53,6 +53,7 @@ import { MemoryMatterRepository, PgMatterRepository, type MatterRepository } fro
 import { createMatterRouter } from "./matters/routes.js";
 import { MemoryLedgerRepository, PgLedgerRepository, type LedgerRepository } from "./ledgers/repository.js";
 import { createLedgerRouter } from "./ledgers/routes.js";
+import { createOutboundConditionRouter } from "./ledgers/outbound-conditions.js";
 import { MemoryGlobalSearchRepository, PgGlobalSearchRepository, type GlobalSearchRepository } from "./search/repository.js";
 import { createGlobalSearchRouter } from "./search/routes.js";
 import { MemoryAdminRepository, PgAdminRepository, type AdminRepository } from "./admin/repository.js";
@@ -316,7 +317,8 @@ export function createApp(
     const safeMethods = new Set(["GET", "HEAD", "OPTIONS"]);
     const safePostPaths = new Set([
       "/documents/validate",
-      "/documents/preview"
+      "/documents/preview",
+      "/outbound-conditions/validate"
     ]);
     if (safeMethods.has(request.method)) return next();
     if (request.method === "POST" && safePostPaths.has(request.path)) return next();
@@ -375,6 +377,7 @@ export function createApp(
   app.use("/api/v2", createLedgerRouter(
     dependencies.ledgers ?? new MemoryLedgerRepository()
   ));
+  app.use("/api/v2", createOutboundConditionRouter());
   app.use("/api/v2", createGlobalSearchRouter(
     dependencies.search ?? new MemoryGlobalSearchRepository()
   ));
