@@ -80,7 +80,7 @@ export function DocumentRegistry({
 
   return <section className="page registry-page">
     <div className="page-title">
-      <div><p>DOCUMENT REGISTRY</p><h1>文書一覧</h1><small>既存文書を読み取り専用で検索・確認します</small></div>
+      <div><p>DOCUMENT REGISTRY</p><h1>確定済みの文書</h1><small>確定した文書の内容確認とPDF出力ができます</small></div>
       <button className="primary" onClick={onCreate}>文書を作成</button>
     </div>
     {initialQuery && (
@@ -90,7 +90,7 @@ export function DocumentRegistry({
     )}
     <div className="registry-toolbar">
       <input value={query} onChange={(event) => setQuery(event.target.value)}
-        placeholder="文書番号、案件キー、件名、相手方で検索" />
+        placeholder="文書番号、受付番号、件名、相手方で検索" />
       <select value={templateType} onChange={(event) => setTemplateType(event.target.value)}>
         <option value="">すべての文書種別</option>
         {templates.map((item) => <option key={item.templateKey} value={item.templateKey}>{item.label}</option>)}
@@ -214,7 +214,7 @@ function DocumentDetail({
     </div>
     <dl>
       <dt>種別</dt><dd>{label ?? document.templateType}</dd>
-      <dt>案件キー</dt><dd>{document.issueKey}</dd>
+      <dt>受付番号</dt><dd>{document.issueKey}</dd>
       <dt>作成日時</dt><dd>{formatDate(document.createdAt)}</dd>
       <dt>作成者</dt><dd>{document.createdBy ?? "—"}</dd>
     </dl>
@@ -225,7 +225,7 @@ function DocumentDetail({
           onClick={() => void downloadPdf()}
           disabled={downloadingPdf}
         >
-          {downloadingPdf ? "PDFを生成中…" : "PDFを再生成・ダウンロード"}
+          {downloadingPdf ? "PDFを生成中…" : "PDFを生成・ダウンロード"}
         </button>
       )}
       {canSaveToDrive && !document.driveLink && (
@@ -235,15 +235,16 @@ function DocumentDetail({
       )}
       {document.driveLink && (
         <a className="drive-link" href={document.driveLink} target="_blank" rel="noreferrer">
-          保存文書を開く
+          Drive上の文書を開く
         </a>
       )}
     </div>
     {pdfError && <small className="document-output-error">{pdfError}</small>}
     {driveError && <small className="document-output-error">{driveError}</small>}
-    {(canGeneratePdf || canSaveToDrive) && (
+    {canGeneratePdf && (
       <small className="pdf-safety-note">
-        PDFは選択した文書から都度再生成します。Drive保存は検証用フォルダに限定され、Backlog・Slack・メールへの送信は行いません。
+        PDFは選択した確定済み文書から生成します。Slack・メールへの送信は行いません。
+        {canSaveToDrive && " Driveへの保存先は検証用フォルダに限定されます。"}
       </small>
     )}
     <h3>登録項目</h3>
