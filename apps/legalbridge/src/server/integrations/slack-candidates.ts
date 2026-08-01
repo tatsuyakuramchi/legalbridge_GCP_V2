@@ -11,6 +11,7 @@ export interface SlackNotificationCandidate {
   title: string;
   lifecycleStage: string | null;
   sourceUpdatedAt: string;
+  requesterEmail: string | null;
   trigger: "requester_input" | "requester_confirmation" | "lifecycle";
   triggerDetail: string;
   notification: SlackNotificationPreview;
@@ -45,6 +46,7 @@ export function buildSlackNotificationCandidates(
         title: matter.title,
         lifecycleStage: matter.lifecycleStage,
         sourceUpdatedAt: matter.updatedAt,
+        requesterEmail: matter.requesterEmail ?? null,
         trigger: signal.trigger,
         triggerDetail: signal.detail,
         notification,
