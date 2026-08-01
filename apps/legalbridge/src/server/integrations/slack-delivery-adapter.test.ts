@@ -7,6 +7,7 @@ import {
 } from "./slack-delivery-adapter.js";
 import { MemorySlackNotificationHistoryRepository } from "./slack-history-repository.js";
 import type { SlackDryRunEnvelope } from "./slack-dry-run.js";
+import type { SlackDispatchGateSettings } from "./slack-dispatch-gate.js";
 
 const fingerprint = "a".repeat(64);
 
@@ -52,7 +53,9 @@ function envelope(): SlackDryRunEnvelope {
   };
 }
 
-function settings(overrides: Record<string, unknown> = {}) {
+function settings(
+  overrides: Partial<Omit<SlackDispatchGateSettings, "adapterConfigured">> = {}
+): Omit<SlackDispatchGateSettings, "adapterConfigured"> {
   return {
     integrationMode: "live" as const,
     slackCapabilityEnabled: true,
