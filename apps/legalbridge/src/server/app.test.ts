@@ -536,6 +536,22 @@ test("管理画面用の主要データ件数と最終更新を返す", async ()
   assert.equal(response.body.activity.latestMatterAt, "2026-07-30T10:50:53.000Z");
 });
 
+test("管理者向け診断APIは機密設定を含めず稼働状態を返す", async () => {
+  const response = await request(app())
+    .get("/api/v2/admin/diagnostics")
+    .expect(200);
+
+  assert.equal(response.body.status, "warning");
+  assert.equal(response.body.checks.database.status, "warning");
+  assert.equal(response.body.checks.templates.failed, 0);
+  assert.equal(response.body.checks.integrations.externalWritesDisabled, true);
+  assert.equal(response.body.checks.writeSafety.driveEnabled, false);
+  assert.deepEqual(response.body.checks.writeSafety.scopes, ["drafts"]);
+  const serialized = JSON.stringify(response.body).toLowerCase();
+  assert.equal(serialized.includes("password"), false);
+  assert.equal(serialized.includes("token"), false);
+});
+
 test("空field_schemaを補うV3基本フォーム定義を持つ", () => {
   assert.ok(individualLicenseV3Fields.length >= 20);
   assert.ok(individualLicenseV3Fields.some((field) => field.name === "Licensor_氏名会社名"));
