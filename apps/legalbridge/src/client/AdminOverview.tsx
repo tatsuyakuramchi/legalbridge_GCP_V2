@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 type State = {
-  health: any; runtime: any; overview: any; compatibility: any; diagnostics: any; slackPreview: any;
+  health: any; runtime: any; overview: any; compatibility: any; diagnostics: any; slackPreview: any; slackCandidates: any;
   integrations: Array<{ name: string; mode: string; ok?: boolean; message?: string }>;
 };
 const countLabels: Record<string, string> = {
@@ -8,20 +8,21 @@ const countLabels: Record<string, string> = {
   vendors: "取引先", staff: "担当者", works: "作品・原作", conditions: "金銭条件"
 };
 export function AdminOverview() {
-  const [state, setState] = useState<State>({ health: null, runtime: null, overview: null, compatibility: null, diagnostics: null, slackPreview: null, integrations: [] });
+  const [state, setState] = useState<State>({ health: null, runtime: null, overview: null, compatibility: null, diagnostics: null, slackPreview: null, slackCandidates: null, integrations: [] });
   const [loading, setLoading] = useState(true);
   async function load() {
     setLoading(true);
     const fetchJson = (url: string) => fetch(url).then((response) => response.ok ? response.json() : Promise.reject());
-    const [health, runtime, overview, compatibility, diagnostics, slackPreview, integrationResult] = await Promise.all([
+    const [health, runtime, overview, compatibility, diagnostics, slackPreview, slackCandidates, integrationResult] = await Promise.all([
       fetchJson("/health").catch(() => null), fetchJson("/api/v2/runtime").catch(() => null),
       fetchJson("/api/v2/admin/overview").catch(() => null),
       fetchJson("/api/v2/document-templates/compatibility-report").catch(() => null),
       fetchJson("/api/v2/admin/diagnostics").catch(() => null),
       fetchJson("/api/v2/admin/slack-ux-preview").catch(() => null),
+      fetchJson("/api/v2/admin/slack-notification-candidates").catch(() => null),
       fetchJson("/api/v2/integrations/status").catch(() => ({ integrations: [] }))
     ]);
-    setState({ health, runtime, overview, compatibility, diagnostics, slackPreview, integrations: integrationResult.integrations ?? [] });
+    setState({ health, runtime, overview, compatibility, diagnostics, slackPreview, slackCandidates, integrations: integrationResult.integrations ?? [] });
     setLoading(false);
   }
   useEffect(() => { void load(); }, []);
@@ -62,6 +63,35 @@ export function AdminOverview() {
         })}
         {!state.diagnostics && <p>診断情報を取得できません。</p>}
       </div>
+    </section>
+    <section className="panel admin-section slack-candidate-section">
+      <div className="panel-head">
+        <h2>実案件のSlack通知候補</h2>
+        <span>同期済み案件から判定・外部送信なし</span>
+      </div>
+      <div className="slack-candidate-summary">
+        <span>判定対象 <strong>{state.slackCandidates?.summary?.matters ?? "—"}</strong></span>
+        <span>通知候補 <strong>{state.slackCandidates?.summary?.candidates ?? "—"}</strong></span>
+        <span>通知不要 <strong>{state.slackCandidates?.summary?.quiet ?? "—"}</strong></span>
+      </div>
+      <div className="slack-candidate-list">
+        {(state.slackCandidates?.candidates ?? []).slice(0, 30).map((item: any) => <article key={item.matterId}>
+          <div>
+            <span className={item.notification.shouldNotify ? "candidate-notify" : "candidate-quiet"}>
+              {item.notification.shouldNotify ? "通知候補" : "通知不要"}
+            </span>
+            <strong>{item.issueKey}・{item.title}</strong>
+            <small>{item.notification.statusLabel}・判定根拠：{item.triggerDetail}</small>
+          </div>
+          <div>
+            <b>{item.notification.headline}</b>
+            <small>次の行動：{item.notification.nextAction}</small>
+          </div>
+        </article>)}
+        {state.slackCandidates && !state.slackCandidates.candidates?.length && <p>判定対象の案件がありません。</p>}
+        {!state.slackCandidates && <p>通知候補を取得できません。</p>}
+      </div>
+      <p className="admin-note">通知履歴との重複確認は未実装です。この一覧からSlackへの送信はできません。</p>
     </section>
     <section className="panel admin-section slack-ux-preview">
       <div className="panel-head">
