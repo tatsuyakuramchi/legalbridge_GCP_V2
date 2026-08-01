@@ -34,7 +34,7 @@ function licenseCondition() {
 
 test("検証済みアウト条件をcondition_lines用の値へ変換する", () => {
   const value = mapOutboundConditionForStorage(licenseCondition());
-  assert.equal(value.direction, "receive");
+  assert.equal(value.direction, "receivable");
   assert.equal(value.workId, 42);
   assert.equal(value.counterpartyVendorId, 18);
   assert.equal(value.transactionKind, "license");
