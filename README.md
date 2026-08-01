@@ -41,15 +41,36 @@ docker compose up --build
 
 ## 現在の実装範囲
 
-- 案件・期限・工程を一覧できるコックピットUI
-- 統合アプリ内APIのヘルスチェックとダッシュボードAPI
-- DB template駆動フォームのDTOと描画基盤
-- `field_schema`、`document_drafts.form_data`、`documents.form_data`の互換マッピング
-- 下書き保存・復元・競合検出API
-- ローカルPostgreSQL fixture
-- 外部連携の送信なしモック
-- Cloud BuildからCloud Runへデプロイする設定
+- 案件、文書、取引先、作品、金銭条件の統合UI・API
+- 横断検索、管理概要、DB template互換性レポート
+- DB template駆動フォームと既存`field_schema`互換マッピング
+- 特殊フォーム、マスターデータ自動入力、HTMLプレビュー
+- 下書き保存・復元・削除・競合防止
+- 文書確定、既存形式の発番、確定後の文書一覧・詳細
+- ChromiumによるPDF生成・ダウンロード
+- Drive保存adapter（実環境のフォルダ権限確認は保留）
+- 管理者・法務担当・依頼者のロール認可
+- 依頼者本人の下書き・文書だけを返す所有者分離
+- 読取専用本番プレビューと独立書込み検証環境
+- IAP接続を前提とした認証モードとデプロイガード
+- 外部連携を送信しない`INTEGRATION_MODE=local`
+- pull requestと`main`を検証するGitHub Actions CI
 
-詳しい手順は[`docs/local-to-gcp.md`](docs/local-to-gcp.md)を参照してください。
+## 現在の安全境界
 
-本番認証、文書レンダリング・発行、既存業務Command及び外部連携live adapterの移植は後続フェーズで実装します。
+- 書込み検証は独立DBだけを使用
+- 書込み機能は`WRITE_FEATURES_ENABLED`と`WRITE_SCOPES`で限定
+- Drive、Slack、Gmail、CloudSign、Backlogを一括で有効化しない
+- 本番DB参照環境ではアプリとDBセッションの両方をread-onlyにする
+- Backlog、Slack、メール、CloudSignへのlive送信は未開放
+
+詳しい環境構築は[ローカル・GCP手順](docs/local-to-gcp.md)、本番移行条件は[Production Readiness Runbook](docs/production-readiness.md)を参照してください。
+
+## 次のフェーズ
+
+1. 主要文書類型の実帳票回帰
+2. IAP実アカウント確認
+3. 本番書込みの段階的開放
+4. Drive権限の解決
+5. Slack、Gmail、CloudSign、Backlogのadapter単位の移植
+6. 旧サービスとの並行稼働、監視、切戻し、本番切替
