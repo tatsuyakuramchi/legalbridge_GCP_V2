@@ -377,7 +377,7 @@ function DocumentForm({
     if (readOnly) return;
     if (!issueKey.trim()) {
       setDraftStatus("error");
-      setNotice("案件キーを入力してください");
+      setNotice("受付番号を入力してください");
       return;
     }
 
@@ -397,7 +397,7 @@ function DocumentForm({
       if (response.status === 409) {
         setDraft(result.current);
         setDraftStatus("error");
-        setNotice("別の画面で更新されています。案件キーを再入力して最新の下書きを復元してください");
+        setNotice("別の画面で更新されています。受付番号を再入力して最新の下書きを読み込んでください");
         return;
       }
       if (!response.ok) {
@@ -540,7 +540,7 @@ function DocumentForm({
                 draftStatus === "saving" ? "処理中" :
                 draftStatus === "saved" ? "保存済み" : "要確認"}
             </span>
-            <small>{schema.templateKey}・{schema.fields.length}項目</small>
+            <small>テンプレート：{schema.templateKey}</small>
             {notice && <small>{notice}</small>}
           </div>
           <label className="draft-key">受付番号（Backlog課題キー）
@@ -557,7 +557,7 @@ function DocumentForm({
           </label>
         </div>
         <div className="actions">
-          <button onClick={validate}>入力確認</button>
+          <button onClick={validate}>内容をプレビュー</button>
           {!readOnly && (
             <>
               {draft && (
@@ -631,7 +631,7 @@ function DocumentForm({
           )}
           <SpecializedDocumentForms templateKey={schema.templateKey} formData={formData} onChange={updateValue} />
         </form>
-        <aside className="preview"><strong>文書プレビュー</strong>{previewHtml ? <iframe title="文書プレビュー" sandbox="" srcDoc={previewHtml} /> : <div>「入力確認」でDB templateによるプレビューを生成します。</div>}<small>Template version: {schema.templateVersionId}</small></aside>
+        <aside className="preview"><strong>文書プレビュー</strong>{previewHtml ? <iframe title="文書プレビュー" sandbox="" srcDoc={previewHtml} /> : <div>「内容をプレビュー」を押すと、現在の入力内容を文書形式で確認できます。</div>}<small>Template version: {schema.templateVersionId}</small></aside>
       </div>
     </section>
   );
@@ -672,6 +672,7 @@ function hasSpecializedForm(templateKey: string) {
     "purchase_order",
     "intl_purchase_order",
     "individual_license_terms",
+    "individual_license_terms_v3",
     "royalty_statement",
     "inspection_certificate"
   ].includes(templateKey);
@@ -688,7 +689,7 @@ function IndividualLicenseV3Form({ formData, onChange }: { formData: DocumentFor
   const removeRow = (key: string, index: number) => onChange(key, rows(key).filter((_, i) => i !== index));
   const field = (label: string, value: unknown, set: (value: string) => void, type: "text" | "number" = "text") =>
     <label><span>{label}</span><input type={type} value={String(value ?? "")} onChange={(event) => set(event.target.value)} /></label>;
-  return <div className="v3-editor">
+  return <div id="specialized-fields" className="v3-editor">
     <section>
       <div className="repeater-title"><div><h2>V. 取引形態</h2><small>製造販売、サブライセンス等の条件を追加します。</small></div><button type="button" onClick={() => addRow("v3_conds", { id: String(Date.now()), addon: true, cur: "JPY", qty: "1", ag: "0", mg: "0" })}>＋ 取引形態</button></div>
       {!conditions.length && <p className="inline-empty">取引形態を追加してください。</p>}
