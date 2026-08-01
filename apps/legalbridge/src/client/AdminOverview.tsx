@@ -71,14 +71,17 @@ export function AdminOverview() {
       </div>
       <div className="slack-candidate-summary">
         <span>判定対象 <strong>{state.slackCandidates?.summary?.matters ?? "—"}</strong></span>
-        <span>通知候補 <strong>{state.slackCandidates?.summary?.candidates ?? "—"}</strong></span>
+        <span>状態通知候補 <strong>{state.slackCandidates?.summary?.candidates ?? "—"}</strong></span>
+        <span>新規送信可 <strong>{state.slackCandidates?.summary?.ready ?? "—"}</strong></span>
+        <span>履歴確認待ち <strong>{state.slackCandidates?.summary?.historyUnavailable ?? "—"}</strong></span>
+        <span>重複抑止 <strong>{state.slackCandidates?.summary?.duplicates ?? "—"}</strong></span>
         <span>通知不要 <strong>{state.slackCandidates?.summary?.quiet ?? "—"}</strong></span>
       </div>
       <div className="slack-candidate-list">
         {(state.slackCandidates?.candidates ?? []).slice(0, 30).map((item: any) => <article key={item.matterId}>
           <div>
-            <span className={item.notification.shouldNotify ? "candidate-notify" : "candidate-quiet"}>
-              {item.notification.shouldNotify ? "通知候補" : "通知不要"}
+            <span className={item.eligibility === "quiet" ? "candidate-quiet" : "candidate-notify"}>
+              {item.eligibilityLabel}
             </span>
             <strong>{item.issueKey}・{item.title}</strong>
             <small>{item.notification.statusLabel}・判定根拠：{item.triggerDetail}</small>
@@ -91,7 +94,7 @@ export function AdminOverview() {
         {state.slackCandidates && !state.slackCandidates.candidates?.length && <p>判定対象の案件がありません。</p>}
         {!state.slackCandidates && <p>通知候補を取得できません。</p>}
       </div>
-      <p className="admin-note">通知履歴との重複確認は未実装です。この一覧からSlackへの送信はできません。</p>
+      <p className="admin-note">通知指紋による重複判定を行います。履歴ストア未接続時は安全のため送信可能にせず、この一覧からSlackへの送信もできません。</p>
     </section>
     <section className="panel admin-section slack-ux-preview">
       <div className="panel-head">

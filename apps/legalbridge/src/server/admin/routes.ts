@@ -2,6 +2,7 @@ import { Router } from "express";
 import type { AdminRepository } from "./repository.js";
 import { slackUxPreviewCatalog } from "../integrations/slack-ux.js";
 import { buildSlackNotificationCandidates } from "../integrations/slack-candidates.js";
+import { evaluateSlackCandidates } from "../integrations/slack-deduplication.js";
 import type { MatterRepository } from "../matters/repository.js";
 export function createAdminRouter(repository: AdminRepository, matters?: MatterRepository) {
   const router = Router();
@@ -13,7 +14,8 @@ export function createAdminRouter(repository: AdminRepository, matters?: MatterR
     try {
       const sourceMatters = matters ? await matters.list("", undefined, 200) : [];
       const baseUrl = `${request.protocol}://${request.get("host")}`;
-      const candidates = buildSlackNotificationCandidates(sourceMatters, baseUrl);
+      const rawCandidates = buildSlackNotificationCandidates(sourceMatters, baseUrl);
+      const candidates = evaluateSlackCandidates(rawCandidates, null);
       response.json({
         mode: "preview",
         externalSend: false,
@@ -22,9 +24,13 @@ export function createAdminRouter(repository: AdminRepository, matters?: MatterR
         summary: {
           matters: sourceMatters.length,
           candidates: candidates.filter((item) => item.notification.shouldNotify).length,
-          quiet: candidates.filter((item) => !item.notification.shouldNotify).length,
+          ready: candidates.filter((item) => item.eligibility === "ready").length,
+          duplicates: candidates.filter((item) => item.eligibility === "duplicate").length,
+          historyUnavailable: candidates.filter((item) => item.eligibility === "history_unavailable").length,
+          quiet: candidates.filter((item) => item.eligibility === "quiet").length,
           withoutPrimaryIssue: sourceMatters.filter((item) => !item.primaryIssueKey).length
         },
+        history: { connected: false, externalSend: false },
         candidates
       });
     } catch (error) { next(error); }
