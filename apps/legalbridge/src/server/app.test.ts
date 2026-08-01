@@ -619,6 +619,10 @@ test("実案件からSlack通知候補を読取専用で返す", async () => {
   assert.equal(response.body.dryRun.externalSend, false);
   assert.equal(response.body.dryRun.historyAppend, false);
   assert.equal(response.body.dryRun.queue[0].readiness, "blocked_history");
+  assert.equal(response.body.dispatch.externalSend, false);
+  assert.equal(response.body.dispatch.adapterConfigured, false);
+  assert.equal(response.body.dispatch.queue[0].dispatchAllowed, false);
+  assert.ok(response.body.dispatch.queue[0].blockers.includes("history_unavailable"));
 });
 
 test("通知履歴接続時だけ未通知候補を送信可能として返す", async () => {
@@ -668,6 +672,12 @@ test("通知履歴接続時だけ未通知候補を送信可能として返す",
   assert.equal(response.body.dryRun.recipientDirectoryResolved, false);
   assert.equal(response.body.dryRun.queue[0].readiness, "blocked_recipient");
   assert.equal(response.body.dryRun.queue[0].target.resolution, "missing_identity");
+  assert.equal(response.body.summary.dispatchAllowed, 0);
+  assert.equal(response.body.summary.dispatchBlocked, 1);
+  assert.equal(response.body.dispatch.queue[0].statusLabel, "送信停止");
+  assert.ok(response.body.dispatch.queue[0].blockers.includes("integration_local"));
+  assert.ok(response.body.dispatch.queue[0].blockers.includes("approval_missing"));
+  assert.ok(response.body.dispatch.queue[0].blockers.includes("adapter_unavailable"));
 });
 
 test("空field_schemaを補うV3基本フォーム定義を持つ", () => {

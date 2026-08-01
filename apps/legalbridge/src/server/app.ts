@@ -362,7 +362,14 @@ export function createApp(
     dependencies.admin ?? new MemoryAdminRepository(),
     matterRepository,
     dependencies.slackHistory,
-    createSlackRecipientDirectory(config.slackDryRunUserMap)
+    createSlackRecipientDirectory(config.slackDryRunUserMap),
+    {
+      integrationMode: config.integrationMode,
+      slackCapabilityEnabled:
+        options.writeFeaturesEnabled === true &&
+        options.writeScopes?.has("slack") === true,
+      adapterConfigured: false
+    }
   ));
   app.use("/api/v2", createTemplateRegressionRouter(dependencies.templates));
   app.use("/api/v2", createOperationalDiagnosticsRouter(

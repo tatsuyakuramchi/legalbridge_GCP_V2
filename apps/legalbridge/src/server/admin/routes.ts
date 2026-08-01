@@ -7,11 +7,19 @@ import type { MatterRepository } from "../matters/repository.js";
 import type { SlackNotificationHistoryRepository } from "../integrations/slack-history-repository.js";
 import { buildSlackDryRunQueue } from "../integrations/slack-dry-run.js";
 import type { SlackRecipientDirectory } from "../integrations/slack-recipient-resolver.js";
+import {
+  evaluateSlackDispatchGate,
+  type SlackDispatchGateSettings
+} from "../integrations/slack-dispatch-gate.js";
 export function createAdminRouter(
   repository: AdminRepository,
   matters: MatterRepository | undefined,
   history: SlackNotificationHistoryRepository | undefined,
-  slackRecipients: SlackRecipientDirectory
+  slackRecipients: SlackRecipientDirectory,
+  dispatchSettings: Pick<
+    SlackDispatchGateSettings,
+    "integrationMode" | "slackCapabilityEnabled" | "adapterConfigured"
+  >
 ) {
   const router = Router();
   router.get("/admin/overview", async (_request, response, next) => {
@@ -38,6 +46,11 @@ export function createAdminRouter(
       }
       const candidates = evaluateSlackCandidates(rawCandidates, historyRecords);
       const dryRunQueue = buildSlackDryRunQueue(candidates, slackRecipients);
+      const dispatchQueue = dryRunQueue.map((item) => evaluateSlackDispatchGate(item, {
+        ...dispatchSettings,
+        historyConnected: historyStatus === "connected",
+        approvedFingerprint: null
+      }));
       response.json({
         mode: "preview",
         externalSend: false,
@@ -53,7 +66,9 @@ export function createAdminRouter(
           withoutPrimaryIssue: sourceMatters.filter((item) => !item.primaryIssueKey).length,
           dryRunReviewable: dryRunQueue.filter((item) => item.readiness === "ready_for_review").length,
           dryRunBlocked: dryRunQueue.filter((item) => item.readiness.startsWith("blocked_")).length,
-          dryRunSuppressed: dryRunQueue.filter((item) => item.readiness.startsWith("suppressed_")).length
+          dryRunSuppressed: dryRunQueue.filter((item) => item.readiness.startsWith("suppressed_")).length,
+          dispatchAllowed: dispatchQueue.filter((item) => item.dispatchAllowed).length,
+          dispatchBlocked: dispatchQueue.filter((item) => !item.dispatchAllowed).length
         },
         history: {
           configured: Boolean(history),
@@ -62,6 +77,12 @@ export function createAdminRouter(
           externalSend: false
         },
         candidates,
+        dispatch: {
+          mode: "guarded",
+          externalSend: false,
+          adapterConfigured: dispatchSettings.adapterConfigured,
+          queue: dispatchQueue
+        },
         dryRun: {
           mode: "dry-run",
           externalSend: false,
