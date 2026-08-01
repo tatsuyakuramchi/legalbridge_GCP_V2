@@ -26,5 +26,7 @@ export const config = {
   },
   googleDriveFolderId: process.env.GOOGLE_DRIVE_FOLDER_ID ?? "",
   templateSource: "db" as const,
-  integrationMode: process.env.INTEGRATION_MODE === "live" ? "live" : "local"
+  integrationMode: process.env.INTEGRATION_MODE === "live"
+    ? "live" as const
+    : "local" as const
 };
