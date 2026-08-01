@@ -21,6 +21,12 @@ substitutions:
   _WRITE_SCOPES: drafts,documents,pdf
   _CONFIRM_SLACK_APPROVAL_WRITES: BLOCKED
   _SLACK_DRY_RUN_USER_MAP: UNRESOLVED
+  _SLACK_DELIVERY_MODE: disabled
+  _BACKLOG_MODE: disabled
+  _BACKLOG_HOST: BLOCKED
+  _BACKLOG_PROJECT_KEY: BLOCKED
+  _BACKLOG_API_KEY_SECRET: backlog-api-key
+  _CONFIRM_BACKLOG_READONLY: BLOCKED
 
 steps:
   - id: test
@@ -68,6 +74,40 @@ steps:
             ;;
           *)
             echo "Deployment blocked: AUTH_MODE must be disabled or iap."
+            exit 1
+            ;;
+        esac
+        case "${_BACKLOG_MODE}" in
+          disabled)
+            ;;
+          readonly)
+            if [ "${_CONFIRM_BACKLOG_READONLY}" != "BACKLOG_READONLY_VALIDATION_ONLY" ]; then
+              echo "Backlog deployment blocked: explicit read-only validation confirmation is missing."
+              exit 1
+            fi
+            if [ "${_SERVICE}" != "legalbridge-v2-write-test" ] || [ "${_BACKLOG_HOST}" != "arclight.backlog.com" ] || [ "${_BACKLOG_PROJECT_KEY}" != "LEGAL" ]; then
+              echo "Backlog deployment blocked: validation service, host, or project does not match the approved target."
+              exit 1
+            fi
+            ;;
+          live)
+            echo "Backlog live writes remain blocked while the existing worker is authoritative."
+            exit 1
+            ;;
+          *)
+            echo "Deployment blocked: BACKLOG_MODE must be disabled or readonly."
+            exit 1
+            ;;
+        esac
+        case "${_SLACK_DELIVERY_MODE}" in
+          disabled)
+            ;;
+          live)
+            echo "Slack live delivery is not enabled by this deployment foundation."
+            exit 1
+            ;;
+          *)
+            echo "Deployment blocked: SLACK_DELIVERY_MODE must be disabled or live."
             exit 1
             ;;
         esac
@@ -140,8 +180,8 @@ steps:
           --no-allow-unauthenticated \
           --service-account="${_SERVICE_ACCOUNT}" \
           --add-cloudsql-instances="${_CLOUD_SQL_INSTANCE}" \
-          --set-secrets="DB_PASSWORD=${_DB_PASSWORD_SECRET}:latest" \
-          --set-env-vars="^~^NODE_ENV=production~AUTH_MODE=${_AUTH_MODE}~AUTH_ADMIN_EMAILS=${_AUTH_ADMIN_EMAILS}~AUTH_LEGAL_EMAILS=${_AUTH_LEGAL_EMAILS}~AUTH_REQUESTER_DOMAINS=${_AUTH_REQUESTER_DOMAINS}~INTEGRATION_MODE=local~SLACK_NOTIFICATION_HISTORY_ENABLED=${_SLACK_NOTIFICATION_HISTORY_ENABLED}~SLACK_NOTIFICATION_APPROVALS_ENABLED=${_SLACK_NOTIFICATION_APPROVALS_ENABLED}~SLACK_DRY_RUN_USER_MAP=${_SLACK_DRY_RUN_USER_MAP}~DB_ACCESS_MODE=readwrite~REQUIRE_DATABASE=true~WRITE_FEATURES_ENABLED=true~WRITE_SCOPES=${_WRITE_SCOPES}~DB_HOST=/cloudsql/${_CLOUD_SQL_INSTANCE}~DB_PORT=5432~DB_NAME=${_DB_NAME}~DB_USER=${_DB_USER}~DB_POOL_MAX=3"
+          --set-secrets="DB_PASSWORD=${_DB_PASSWORD_SECRET}:latest,BACKLOG_API_KEY=${_BACKLOG_API_KEY_SECRET}:latest" \
+          --set-env-vars="^~^NODE_ENV=production~AUTH_MODE=${_AUTH_MODE}~AUTH_ADMIN_EMAILS=${_AUTH_ADMIN_EMAILS}~AUTH_LEGAL_EMAILS=${_AUTH_LEGAL_EMAILS}~AUTH_REQUESTER_DOMAINS=${_AUTH_REQUESTER_DOMAINS}~INTEGRATION_MODE=local~SLACK_DELIVERY_MODE=${_SLACK_DELIVERY_MODE}~BACKLOG_MODE=${_BACKLOG_MODE}~BACKLOG_HOST=${_BACKLOG_HOST}~BACKLOG_PROJECT_KEY=${_BACKLOG_PROJECT_KEY}~SLACK_NOTIFICATION_HISTORY_ENABLED=${_SLACK_NOTIFICATION_HISTORY_ENABLED}~SLACK_NOTIFICATION_APPROVALS_ENABLED=${_SLACK_NOTIFICATION_APPROVALS_ENABLED}~SLACK_DRY_RUN_USER_MAP=${_SLACK_DRY_RUN_USER_MAP}~DB_ACCESS_MODE=readwrite~REQUIRE_DATABASE=true~WRITE_FEATURES_ENABLED=true~WRITE_SCOPES=${_WRITE_SCOPES}~DB_HOST=/cloudsql/${_CLOUD_SQL_INSTANCE}~DB_PORT=5432~DB_NAME=${_DB_NAME}~DB_USER=${_DB_USER}~DB_POOL_MAX=3"
 
 images:
   - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPOSITORY}/${_IMAGE}:${BUILD_ID}
