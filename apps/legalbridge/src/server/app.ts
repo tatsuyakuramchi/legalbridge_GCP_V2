@@ -360,7 +360,8 @@ export function createApp(
   app.use("/api/v2", createAdminRouter(
     dependencies.admin ?? new MemoryAdminRepository(),
     matterRepository,
-    dependencies.slackHistory
+    dependencies.slackHistory,
+    config.slackDryRunChannelId
   ));
   app.use("/api/v2", createTemplateRegressionRouter(dependencies.templates));
   app.use("/api/v2", createOperationalDiagnosticsRouter(
