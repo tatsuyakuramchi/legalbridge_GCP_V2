@@ -30,6 +30,7 @@ export interface EvaluatedSlackCandidate extends SlackNotificationCandidate {
 export function notificationFingerprint(candidate: SlackNotificationCandidate) {
   const payload = JSON.stringify({
     issueKey: candidate.issueKey,
+    requesterEmail: candidate.requesterEmail,
     requesterStatus: candidate.notification.requesterStatus,
     shouldNotify: candidate.notification.shouldNotify,
     nextAction: candidate.notification.nextAction,
