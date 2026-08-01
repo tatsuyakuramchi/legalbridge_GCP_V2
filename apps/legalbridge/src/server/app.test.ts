@@ -20,6 +20,7 @@ import { MemoryGlobalSearchRepository } from "./search/repository.js";
 import { MemoryAdminRepository } from "./admin/repository.js";
 import { MemoryPdfRenderer } from "./documents/pdf-renderer.js";
 import { MemorySlackNotificationHistoryRepository } from "./integrations/slack-history-repository.js";
+import { MemorySlackNotificationApprovalRepository } from "./integrations/slack-approval-repository.js";
 
 const schema: DocumentFormSchema = {
   templateKey: "purchase_order",
@@ -884,4 +885,49 @@ test("PDFスコープ有効時だけ登録文書をPDFとして返す", async ()
     .get("/api/v2/documents/201/pdf")
     .expect(403);
   assert.equal(rejected.body.code, "PDF_GENERATION_DISABLED");
+});
+
+
+test("Slack承認は専用scopeなしで拒否し外部送信しない", async () => {
+  const approvals = new MemorySlackNotificationApprovalRepository();
+  const dependencies = {
+    templates: new MemoryTemplateRepository([schema]),
+    drafts: new MemoryDraftRepository(),
+    integrations: createIntegrationAdapters(),
+    slackApprovals: approvals
+  };
+  const disabled = createApp(dependencies, {
+    accessMode: "readwrite",
+    requireDatabase: false,
+    writeFeaturesEnabled: true,
+    writeScopes: new Set(["drafts", "documents", "pdf"])
+  });
+  const rejected = await request(disabled)
+    .post("/api/v2/admin/slack-notification-approvals")
+    .send({
+      issueKey: "LEGAL-1",
+      fingerprint: "a".repeat(64),
+      decision: "approved"
+    })
+    .expect(403);
+  assert.equal(rejected.body.code, "WRITE_SCOPE_DISABLED");
+
+  const enabled = createApp(dependencies, {
+    accessMode: "readwrite",
+    requireDatabase: false,
+    writeFeaturesEnabled: true,
+    writeScopes: new Set(["slack-approvals"])
+  });
+  const runtime = await request(enabled).get("/api/v2/runtime").expect(200);
+  assert.deepEqual(runtime.body.writeCapabilities, ["slack-approvals"]);
+  const unavailable = await request(enabled)
+    .post("/api/v2/admin/slack-notification-approvals")
+    .send({
+      issueKey: "LEGAL-1",
+      fingerprint: "a".repeat(64),
+      decision: "approved"
+    })
+    .expect(503);
+  assert.equal(unavailable.body.code, "SLACK_APPROVAL_UNAVAILABLE");
+  assert.deepEqual(await approvals.listLatest(["LEGAL-1"]), []);
 });

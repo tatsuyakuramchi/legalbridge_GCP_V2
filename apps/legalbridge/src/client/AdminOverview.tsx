@@ -10,6 +10,8 @@ const countLabels: Record<string, string> = {
 export function AdminOverview() {
   const [state, setState] = useState<State>({ health: null, runtime: null, overview: null, compatibility: null, diagnostics: null, slackPreview: null, slackCandidates: null, integrations: [] });
   const [loading, setLoading] = useState(true);
+  const [approvalPending, setApprovalPending] = useState<string | null>(null);
+  const [approvalMessage, setApprovalMessage] = useState<string | null>(null);
   async function load() {
     setLoading(true);
     const fetchJson = (url: string) => fetch(url).then((response) => response.ok ? response.json() : Promise.reject());
@@ -24,6 +26,31 @@ export function AdminOverview() {
     ]);
     setState({ health, runtime, overview, compatibility, diagnostics, slackPreview, slackCandidates, integrations: integrationResult.integrations ?? [] });
     setLoading(false);
+  }
+  async function decideSlackApproval(
+    issueKey: string,
+    fingerprint: string,
+    decision: "approved" | "revoked"
+  ) {
+    const label = decision === "approved" ? "承認" : "取消し";
+    if (!window.confirm(`${issueKey} の現在の通知内容を${label}しますか？ Slackへの送信は行いません。`)) return;
+    setApprovalPending(issueKey);
+    setApprovalMessage(null);
+    try {
+      const response = await fetch("/api/v2/admin/slack-notification-approvals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ issueKey, fingerprint, decision })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error ?? `${label}できませんでした`);
+      setApprovalMessage(`${issueKey} の通知内容を${label}しました。外部送信は行っていません。`);
+      await load();
+    } catch (error) {
+      setApprovalMessage(error instanceof Error ? error.message : `${label}できませんでした`);
+    } finally {
+      setApprovalPending(null);
+    }
   }
   useEffect(() => { void load(); }, []);
   const healthy = state.health?.ok && state.health?.database?.reachable;
@@ -90,6 +117,10 @@ export function AdminOverview() {
           const dispatch = (state.slackCandidates?.dispatch?.queue ?? []).find(
             (entry: any) => entry.fingerprint === item.fingerprint
           );
+          const approval = (state.slackCandidates?.approvals?.records ?? []).find(
+            (entry: any) => entry.issueKey === item.issueKey
+          );
+          const approvalEnabled = state.slackCandidates?.approvals?.appendEnabled === true;
           return <article key={item.matterId}>
           <div>
             <span className={item.eligibility === "quiet" ? "candidate-quiet" : "candidate-notify"}>
@@ -106,13 +137,21 @@ export function AdminOverview() {
             {dryRun?.blockingReasons?.map((reason: string) => <small key={reason}>ドライラン停止：{reason}</small>)}
             <small>実送信ゲート：{dispatch?.statusLabel ?? "未判定"}</small>
             {dispatch?.blockerLabels?.map((reason: string) => <small key={reason}>送信停止：{reason}</small>)}
+            <small>承認状態：{approval?.decision === "approved" && approval?.fingerprint === item.fingerprint ? "承認済み" : approval?.decision === "revoked" ? "取消し済み" : "未承認"}</small>
+            <div className="slack-preview-actions">
+              <button className="primary" disabled={!approvalEnabled || dryRun?.readiness !== "ready_for_review" || approvalPending === item.issueKey}
+                onClick={() => void decideSlackApproval(item.issueKey, item.fingerprint, "approved")}>通知内容を承認</button>
+              <button disabled={!approvalEnabled || dryRun?.readiness !== "ready_for_review" || approvalPending === item.issueKey}
+                onClick={() => void decideSlackApproval(item.issueKey, item.fingerprint, "revoked")}>承認を取り消す</button>
+            </div>
           </div>
         </article>;
         })}
         {state.slackCandidates && !state.slackCandidates.candidates?.length && <p>判定対象の案件がありません。</p>}
         {!state.slackCandidates && <p>通知候補を取得できません。</p>}
       </div>
-      <p className="admin-note">承認履歴：{state.slackCandidates?.approvals?.status === "connected" ? "接続済み" : "未接続"}。通知指紋による重複判定に加え、依頼者とSlackユーザーの対応・履歴・HTTPSリンクをドライランで確認します。表示中の内容はSlackへ送信せず、通知履歴にも記録しません。承認操作と送信アダプターは未接続です。</p>
+      {approvalMessage && <p className="admin-note">{approvalMessage}</p>}
+      <p className="admin-note">承認履歴：{state.slackCandidates?.approvals?.status === "connected" ? "接続済み" : "未接続"}。通知指紋による重複判定に加え、依頼者とSlackユーザーの対応・履歴・HTTPSリンクをドライランで確認します。表示中の内容はSlackへ送信せず、通知履歴にも記録しません。承認・取消しは現在の通知指紋だけを記録し、Slack送信は別ゲートで停止します。</p>
     </section>
     <section className="panel admin-section slack-ux-preview">
       <div className="panel-head">

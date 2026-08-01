@@ -230,6 +230,11 @@ export function createApp(
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
     options.writeScopes?.has("pdf") === true;
+  const slackApprovalWriteEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.writeScopes?.has("slack-approvals") === true &&
+    Boolean(dependencies.slackApprovals);
   const driveStorageEnabled =
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
@@ -250,7 +255,7 @@ export function createApp(
       database.reachable &&
       database.readOnly !== true;
     const writeModeMismatch =
-      (draftWriteEnabled || documentFinalizeEnabled || driveStorageEnabled) &&
+      (draftWriteEnabled || documentFinalizeEnabled || driveStorageEnabled || slackApprovalWriteEnabled) &&
       database.reachable && database.readOnly === true;
     const status = databaseUnavailable || readOnlyMismatch || writeModeMismatch ? 503 : 200;
     response.status(status).json({
@@ -261,7 +266,8 @@ export function createApp(
         ...(draftWriteEnabled ? ["drafts"] : []),
         ...(documentFinalizeEnabled ? ["documents"] : []),
         ...(pdfGenerationEnabled ? ["pdf"] : []),
-        ...(driveStorageEnabled ? ["drive"] : [])
+        ...(driveStorageEnabled ? ["drive"] : []),
+        ...(slackApprovalWriteEnabled ? ["slack-approvals"] : [])
       ],
       database
     });
@@ -276,12 +282,13 @@ export function createApp(
       service: "legalbridge-v2",
       accessMode: options.accessMode,
       writeFeaturesEnabled:
-        draftWriteEnabled || documentFinalizeEnabled || pdfGenerationEnabled || driveStorageEnabled,
+        draftWriteEnabled || documentFinalizeEnabled || pdfGenerationEnabled || driveStorageEnabled || slackApprovalWriteEnabled,
       writeCapabilities: [
         ...(draftWriteEnabled ? ["drafts"] : []),
         ...(documentFinalizeEnabled ? ["documents"] : []),
         ...(pdfGenerationEnabled ? ["pdf"] : []),
-        ...(driveStorageEnabled ? ["drive"] : [])
+        ...(driveStorageEnabled ? ["drive"] : []),
+        ...(slackApprovalWriteEnabled ? ["slack-approvals"] : [])
       ],
       integrations: config.integrationMode,
       authMode: (options.auth ?? config.auth).mode,
@@ -323,6 +330,10 @@ export function createApp(
     const isDriveStorage =
       request.method === "POST" && /^\/documents\/[^/]+\/drive$/.test(request.path);
     if (driveStorageEnabled && isDriveStorage) return next();
+    const isSlackApproval =
+      request.method === "POST" &&
+      request.path === "/admin/slack-notification-approvals";
+    if (slackApprovalWriteEnabled && isSlackApproval) return next();
 
     return response.status(403).json({
       error: options.accessMode === "readonly"
@@ -379,7 +390,8 @@ export function createApp(
         options.writeFeaturesEnabled === true &&
         options.writeScopes?.has("slack") === true,
       adapterConfigured: false
-    }
+    },
+    slackApprovalWriteEnabled
   ));
   app.use("/api/v2", createTemplateRegressionRouter(dependencies.templates));
   app.use("/api/v2", createOperationalDiagnosticsRouter(
