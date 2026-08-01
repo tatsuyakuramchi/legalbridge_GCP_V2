@@ -57,6 +57,7 @@ import { MemoryGlobalSearchRepository, PgGlobalSearchRepository, type GlobalSear
 import { createGlobalSearchRouter } from "./search/routes.js";
 import { MemoryAdminRepository, PgAdminRepository, type AdminRepository } from "./admin/repository.js";
 import { createAdminRouter } from "./admin/routes.js";
+import { createOperationalDiagnosticsRouter } from "./admin/diagnostics.js";
 import {
   createApiAuthorization,
   createAuthentication,
@@ -352,6 +353,19 @@ export function createApp(
     dependencies.admin ?? new MemoryAdminRepository()
   ));
   app.use("/api/v2", createTemplateRegressionRouter(dependencies.templates));
+  app.use("/api/v2", createOperationalDiagnosticsRouter(
+    getPool(),
+    dependencies.templates,
+    dependencies.integrations,
+    {
+      accessMode: options.accessMode,
+      requireDatabase: options.requireDatabase,
+      writeFeaturesEnabled: options.writeFeaturesEnabled === true,
+      writeScopes: options.writeScopes ?? new Set(),
+      integrationMode: config.integrationMode,
+      driveEnabled: driveStorageEnabled
+    }
+  ));
   app.use("/api/v2", createMasterDataRouter(
     dependencies.masterData ?? new MemoryMasterDataRepository()
   ));
