@@ -13,6 +13,7 @@ import { LedgerWorkspace } from "./LedgerWorkspace";
 import { GlobalSearch } from "./GlobalSearch";
 import { AdminOverview } from "./AdminOverview";
 import { DraftWorkspace } from "./DraftWorkspace";
+import { OutboundConditionWorkspace } from "./OutboundConditionWorkspace";
 
 type CompatibilityReport = { summary: { total: number; ok: number; warning: number; error: number }; reports: Array<{ templateKey: string; status: "ok" | "warning" | "error"; missingHelpers: string[]; missingPartials: string[]; unmappedVariables: string[]; renderError?: string }> };
 
@@ -38,7 +39,7 @@ export function App() {
   const [templates, setTemplates] = useState<DocumentFormSchema[]>([]);
   const [schema, setSchema] = useState<DocumentFormSchema | null>(null);
   const [compatibility, setCompatibility] = useState<CompatibilityReport | null>(null);
-  const [view, setView] = useState<"home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "admin">("home");
+  const [view, setView] = useState<"home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "outbound" | "admin">("home");
   const [readOnly, setReadOnly] = useState(true);
   const [canFinalizeDocuments, setCanFinalizeDocuments] = useState(false);
   const [canGeneratePdf, setCanGeneratePdf] = useState(false);
@@ -131,6 +132,7 @@ export function App() {
             </button>
           )}
           {legalWorkspace && <button className={view === "ledgers" ? "active" : ""} onClick={() => setView("ledgers")}>台帳</button>}
+          {legalWorkspace && <button className={view === "outbound" ? "active" : ""} onClick={() => setView("outbound")}>アウト条件</button>}
           {adminWorkspace && <button className={view === "admin" ? "active" : ""} onClick={() => setView("admin")}>管理</button>}
         </nav>
         <div className="backlog"><strong>Backlog連携</strong><small>参照のみ・変更なし</small></div>
@@ -162,6 +164,7 @@ export function App() {
           initialType={searchSelection?.target === "work" ? "works" : searchSelection?.target === "vendor" ? "vendors" : undefined}
           initialQuery={searchSelection?.target === "work" || searchSelection?.target === "vendor" ? searchSelection.title : undefined}
           selectedId={searchSelection?.target === "work" || searchSelection?.target === "vendor" ? searchSelection.id : undefined} />}
+        {view === "outbound" && <OutboundConditionWorkspace />}
         {view === "admin" && <AdminOverview />}
         {view === "documents" && (
           <DocumentRegistry templates={templates} onCreate={() => setView("templates")}
