@@ -5,6 +5,7 @@ import { buildSlackNotificationCandidates } from "../integrations/slack-candidat
 import { evaluateSlackCandidates } from "../integrations/slack-deduplication.js";
 import type { MatterRepository } from "../matters/repository.js";
 import type { SlackNotificationHistoryRepository } from "../integrations/slack-history-repository.js";
+import type { SlackNotificationApprovalRepository } from "../integrations/slack-approval-repository.js";
 import { buildSlackDryRunQueue } from "../integrations/slack-dry-run.js";
 import type { SlackRecipientDirectory } from "../integrations/slack-recipient-resolver.js";
 import {
@@ -15,6 +16,7 @@ export function createAdminRouter(
   repository: AdminRepository,
   matters: MatterRepository | undefined,
   history: SlackNotificationHistoryRepository | undefined,
+  approvals: SlackNotificationApprovalRepository | undefined,
   slackRecipients: SlackRecipientDirectory,
   dispatchSettings: Pick<
     SlackDispatchGateSettings,
@@ -46,11 +48,33 @@ export function createAdminRouter(
       }
       const candidates = evaluateSlackCandidates(rawCandidates, historyRecords);
       const dryRunQueue = buildSlackDryRunQueue(candidates, slackRecipients);
-      const dispatchQueue = dryRunQueue.map((item) => evaluateSlackDispatchGate(item, {
-        ...dispatchSettings,
-        historyConnected: historyStatus === "connected",
-        approvedFingerprint: null
-      }));
+      let approvalRecords: Awaited<ReturnType<SlackNotificationApprovalRepository["listLatest"]>> = [];
+      let approvalStatus: "disabled" | "connected" | "unavailable" = "disabled";
+      if (approvals) {
+        try {
+          approvalRecords = await approvals.listLatest(
+            rawCandidates.map((item) => item.issueKey)
+          );
+          approvalStatus = "connected";
+        } catch (error) {
+          approvalStatus = "unavailable";
+          console.error("Slack notification approval lookup failed", {
+            name: error instanceof Error ? error.name : "UnknownError"
+          });
+        }
+      }
+      const approvalByIssue = new Map(
+        approvalRecords.map((item) => [item.issueKey, item])
+      );
+      const dispatchQueue = dryRunQueue.map((item) => {
+        const approval = approvalByIssue.get(item.issueKey);
+        return evaluateSlackDispatchGate(item, {
+          ...dispatchSettings,
+          historyConnected: historyStatus === "connected",
+          approvedFingerprint:
+            approval?.decision === "approved" ? approval.fingerprint : null
+        });
+      });
       response.json({
         mode: "preview",
         externalSend: false,
@@ -68,7 +92,9 @@ export function createAdminRouter(
           dryRunBlocked: dryRunQueue.filter((item) => item.readiness.startsWith("blocked_")).length,
           dryRunSuppressed: dryRunQueue.filter((item) => item.readiness.startsWith("suppressed_")).length,
           dispatchAllowed: dispatchQueue.filter((item) => item.dispatchAllowed).length,
-          dispatchBlocked: dispatchQueue.filter((item) => !item.dispatchAllowed).length
+          dispatchBlocked: dispatchQueue.filter((item) => !item.dispatchAllowed).length,
+          approvals: approvalRecords.filter((item) => item.decision === "approved").length,
+          revocations: approvalRecords.filter((item) => item.decision === "revoked").length
         },
         history: {
           configured: Boolean(history),
@@ -77,6 +103,18 @@ export function createAdminRouter(
           externalSend: false
         },
         candidates,
+        approvals: {
+          configured: Boolean(approvals),
+          connected: approvalStatus === "connected",
+          status: approvalStatus,
+          appendEnabled: false,
+          records: approvalRecords.map((item) => ({
+            issueKey: item.issueKey,
+            fingerprint: item.fingerprint,
+            decision: item.decision,
+            recordedAt: item.recordedAt
+          }))
+        },
         dispatch: {
           mode: "guarded",
           externalSend: false,
