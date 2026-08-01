@@ -13,7 +13,8 @@ export interface SlackUxInput {
   lifecycleStage?: string | null;
   needsRequesterInput?: boolean;
   requesterConfirmationRequired?: boolean;
-  legalBridgeUrl: string;
+  legalBridgeUrl?: string;
+  legalBridgeBaseUrl?: string;
 }
 
 export interface SlackAction {
@@ -131,10 +132,15 @@ export function buildSlackNotificationPreview(
 ): SlackNotificationPreview {
   const status = requesterStatus(input);
   const content = statusContent[status];
+  const legalBridgeUrl = input.legalBridgeUrl ?? requesterDeepLink(
+    input.legalBridgeBaseUrl ?? "https://legalbridge.example",
+    status,
+    input.issueKey
+  );
   const actions: SlackAction[] = [{
     id: "open_request",
     label: status === "requester_review" ? "内容を確認" : "依頼内容を確認",
-    url: input.legalBridgeUrl,
+    url: legalBridgeUrl,
     style: "primary"
   }];
 
@@ -142,7 +148,7 @@ export function buildSlackNotificationPreview(
     actions.unshift({
       id: "add_information",
       label: "不足情報を入力",
-      url: input.legalBridgeUrl,
+      url: legalBridgeUrl,
       style: "primary"
     });
     actions[1] = { ...actions[1], style: "default" };
@@ -151,7 +157,7 @@ export function buildSlackNotificationPreview(
     actions.push({
       id: "confirm_request",
       label: "確認結果を回答",
-      url: input.legalBridgeUrl,
+      url: legalBridgeUrl,
       style: "default"
     });
   }
@@ -172,6 +178,22 @@ export function buildSlackNotificationPreview(
   };
 }
 
+export function requesterDeepLink(
+  baseUrl: string,
+  status: RequesterStatus,
+  issueKey: string
+) {
+  const url = new URL(baseUrl);
+  const view = status === "information_required" || status === "requester_review"
+    ? "drafts"
+    : status === "completed" || status === "legal_review" || status === "execution"
+      ? "documents"
+      : "home";
+  url.searchParams.set("view", view);
+  url.searchParams.set("issue", issueKey);
+  return url.toString();
+}
+
 export function slackUxPreviewCatalog(baseUrl = "https://legalbridge.example") {
   const scenarios: Array<Pick<SlackUxInput,
     "lifecycleStage" | "needsRequesterInput" | "requesterConfirmationRequired"
@@ -189,6 +211,6 @@ export function slackUxPreviewCatalog(baseUrl = "https://legalbridge.example") {
     ...scenario,
     issueKey: `LEGAL-PREVIEW-${index + 1}`,
     title: "海外ライセンス契約の確認",
-    legalBridgeUrl: `${baseUrl}/?view=matters&issue=LEGAL-PREVIEW-${index + 1}`
+    legalBridgeBaseUrl: baseUrl
   }));
 }

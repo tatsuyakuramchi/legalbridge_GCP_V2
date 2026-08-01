@@ -470,3 +470,13 @@ button.pdf-download-link:disabled {
 @media (max-width: 760px) {
   .slack-preview-grid { grid-template-columns: 1fr; }
 }
+
+.deep-link-notice {
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  border: 1px solid #b8d7cf;
+  border-radius: 8px;
+  background: #f0faf7;
+  color: #205a4d;
+  font-size: 0.88rem;
+}

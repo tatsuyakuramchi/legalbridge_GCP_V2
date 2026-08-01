@@ -3,16 +3,19 @@ import type { DocumentDraftSummary, DocumentFormSchema } from "../types";
 
 export function DraftWorkspace({
   templates,
-  onResume
+  onResume,
+  initialQuery = ""
 }: {
   templates: DocumentFormSchema[];
   onResume: (issueKey: string, templateType: string) => void;
+  initialQuery?: string;
 }) {
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const [drafts, setDrafts] = useState<DocumentDraftSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [refreshToken, setRefreshToken] = useState(0);
+  useEffect(() => { if (initialQuery) setQuery(initialQuery); }, [initialQuery]);
   const labels = useMemo(
     () => new Map(templates.map((template) => [template.templateKey, template.label])),
     [templates]
@@ -67,6 +70,12 @@ export function DraftWorkspace({
           <small>検証環境に保存された作業途中の文書を再開できます</small>
         </div>
       </div>
+
+      {initialQuery && (
+        <div className="deep-link-notice">
+          Slackで案内された受付番号 <strong>{initialQuery}</strong> の下書きを表示しています。
+        </div>
+      )}
 
       <div className="draft-toolbar">
         <input

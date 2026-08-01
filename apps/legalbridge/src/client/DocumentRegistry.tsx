@@ -28,21 +28,24 @@ export function DocumentRegistry({
   onCreate,
   canGeneratePdf,
   canSaveToDrive,
-  selectedId
+  selectedId,
+  initialQuery = ""
 }: {
   templates: DocumentFormSchema[];
   onCreate: () => void;
   canGeneratePdf: boolean;
   canSaveToDrive: boolean;
   selectedId?: number;
+  initialQuery?: string;
 }) {
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const [templateType, setTemplateType] = useState("");
   const [documents, setDocuments] = useState<RegisteredDocument[]>([]);
   const [selected, setSelected] = useState<RegisteredDocument | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
+  useEffect(() => { if (initialQuery) setQuery(initialQuery); }, [initialQuery]);
   const labels = useMemo(
     () => new Map(templates.map((item) => [item.templateKey, item.label])),
     [templates]
@@ -80,6 +83,11 @@ export function DocumentRegistry({
       <div><p>DOCUMENT REGISTRY</p><h1>文書一覧</h1><small>既存文書を読み取り専用で検索・確認します</small></div>
       <button className="primary" onClick={onCreate}>文書を作成</button>
     </div>
+    {initialQuery && (
+      <div className="deep-link-notice">
+        Slackで案内された受付番号 <strong>{initialQuery}</strong> の文書を表示しています。
+      </div>
+    )}
     <div className="registry-toolbar">
       <input value={query} onChange={(event) => setQuery(event.target.value)}
         placeholder="文書番号、案件キー、件名、相手方で検索" />
