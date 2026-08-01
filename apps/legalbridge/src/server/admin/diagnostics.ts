@@ -82,7 +82,7 @@ export function createOperationalDiagnosticsRouter(
           driveEnabled: options.driveEnabled,
           externalWritesDisabled: options.integrationMode === "local"
         }
-      } satisfies Record<string, { status: DiagnosticStatus }>;
+      };
 
       const statuses = Object.values(checks).map((check) => check.status);
       const status: Exclude<DiagnosticStatus, "disabled"> = statuses.includes("error")
