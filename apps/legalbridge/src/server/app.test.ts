@@ -665,8 +665,9 @@ test("通知履歴接続時だけ未通知候補を送信可能として返す",
   assert.equal(response.body.summary.historyUnavailable, 0);
   assert.equal(response.body.candidates[0].eligibility, "ready");
   assert.equal(response.body.summary.dryRunBlocked, 1);
-  assert.equal(response.body.dryRun.destinationConfigured, false);
-  assert.equal(response.body.dryRun.queue[0].readiness, "blocked_destination");
+  assert.equal(response.body.dryRun.recipientDirectoryResolved, false);
+  assert.equal(response.body.dryRun.queue[0].readiness, "blocked_recipient");
+  assert.equal(response.body.dryRun.queue[0].target.resolution, "missing_identity");
 });
 
 test("空field_schemaを補うV3基本フォーム定義を持つ", () => {

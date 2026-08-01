@@ -6,11 +6,12 @@ import { evaluateSlackCandidates } from "../integrations/slack-deduplication.js"
 import type { MatterRepository } from "../matters/repository.js";
 import type { SlackNotificationHistoryRepository } from "../integrations/slack-history-repository.js";
 import { buildSlackDryRunQueue } from "../integrations/slack-dry-run.js";
+import type { SlackRecipientDirectory } from "../integrations/slack-recipient-resolver.js";
 export function createAdminRouter(
   repository: AdminRepository,
   matters?: MatterRepository,
-  history?: SlackNotificationHistoryRepository,
-  slackDryRunChannelId?: string
+  history: SlackNotificationHistoryRepository | undefined,
+  slackRecipients: SlackRecipientDirectory
 ) {
   const router = Router();
   router.get("/admin/overview", async (_request, response, next) => {
@@ -36,7 +37,7 @@ export function createAdminRouter(
         }
       }
       const candidates = evaluateSlackCandidates(rawCandidates, historyRecords);
-      const dryRunQueue = buildSlackDryRunQueue(candidates, slackDryRunChannelId);
+      const dryRunQueue = buildSlackDryRunQueue(candidates, slackRecipients);
       response.json({
         mode: "preview",
         externalSend: false,
@@ -65,7 +66,7 @@ export function createAdminRouter(
           mode: "dry-run",
           externalSend: false,
           historyAppend: false,
-          destinationConfigured: dryRunQueue.some((item) => item.target.resolution === "configured"),
+          recipientDirectoryResolved: dryRunQueue.some((item) => item.target.resolution === "resolved"),
           queue: dryRunQueue
         }
       });

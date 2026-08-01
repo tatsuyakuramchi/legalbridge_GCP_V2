@@ -7,7 +7,7 @@ import {
   notificationFingerprint
 } from "./slack-deduplication.js";
 
-function candidate(stage = "completed") {
+function candidate(stage = "completed", requesterEmail = "requester@arclight.co.jp") {
   const matter: MatterSummary = {
     id: 1,
     matterCode: "MTR-1",
@@ -24,7 +24,8 @@ function candidate(stage = "completed") {
     openTaskCount: 0,
     nextTaskTitle: null,
     nextTaskDueAt: null,
-    updatedAt: "2026-08-01T00:00:00.000Z"
+    updatedAt: "2026-08-01T00:00:00.000Z",
+    requesterEmail
   };
   return buildSlackNotificationCandidates(
     [matter],
@@ -36,6 +37,13 @@ test("同じ案件状態と必要行動から同じ通知指紋を生成する",
   const first = candidate();
   const second = candidate();
   assert.equal(notificationFingerprint(first), notificationFingerprint(second));
+});
+
+test("依頼者が変更された場合は別の通知指紋を生成する", () => {
+  assert.notEqual(
+    notificationFingerprint(candidate("completed", "first@arclight.co.jp")),
+    notificationFingerprint(candidate("completed", "second@arclight.co.jp"))
+  );
 });
 
 test("通知済みの同一指紋を重複として抑止する", () => {

@@ -95,7 +95,8 @@ export function AdminOverview() {
           <div>
             <b>{item.notification.headline}</b>
             <small>次の行動：{item.notification.nextAction}</small>
-            <small>ドライラン：{dryRun?.readinessLabel ?? "未判定"}・送信先 {dryRun?.target?.channelId ?? "未設定"}</small>
+            <small>ドライラン：{dryRun?.readinessLabel ?? "未判定"}・依頼者 {dryRun?.target?.recipientEmailMasked ?? "特定不能"}</small>
+            <small>Slack宛先：{dryRun?.target?.userId ?? "未解決"}（DM）</small>
             {dryRun?.blockingReasons?.map((reason: string) => <small key={reason}>停止理由：{reason}</small>)}
           </div>
         </article>;
@@ -103,7 +104,7 @@ export function AdminOverview() {
         {state.slackCandidates && !state.slackCandidates.candidates?.length && <p>判定対象の案件がありません。</p>}
         {!state.slackCandidates && <p>通知候補を取得できません。</p>}
       </div>
-      <p className="admin-note">通知指紋による重複判定に加え、送信先・履歴・HTTPSリンクをドライランで確認します。表示中の内容はSlackへ送信せず、通知履歴にも記録しません。</p>
+      <p className="admin-note">通知指紋による重複判定に加え、依頼者とSlackユーザーの対応・履歴・HTTPSリンクをドライランで確認します。表示中の内容はSlackへ送信せず、通知履歴にも記録しません。</p>
     </section>
     <section className="panel admin-section slack-ux-preview">
       <div className="panel-head">
