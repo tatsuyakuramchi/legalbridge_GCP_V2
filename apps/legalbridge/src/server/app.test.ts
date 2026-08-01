@@ -564,6 +564,54 @@ test("Slack UXプレビューは外部送信せず七状態を返す", async () 
   assert.equal(response.body.notifications[1].shouldNotify, true);
 });
 
+test("実案件からSlack通知候補を読取専用で返す", async () => {
+  const matter = {
+    id: 80,
+    matterCode: "MTR-2026-00080",
+    title: "取引基本契約の確認",
+    status: "in_progress",
+    counterparty: "取引先B",
+    primaryIssueKey: "LEGAL-80",
+    lifecycleStage: "internal_review",
+    ownerName: "法務担当",
+    targetDueDate: null,
+    blockedReason: "依頼者から追加情報の回答待ち",
+    issueCount: 1,
+    documentCount: 0,
+    openTaskCount: 1,
+    nextTaskTitle: "不足情報を確認",
+    nextTaskDueAt: null,
+    updatedAt: "2026-08-01T00:00:00.000Z",
+    remarks: null,
+    driveFolderUrl: null
+  };
+  const target = createApp({
+    templates: new MemoryTemplateRepository([schema]),
+    drafts: new MemoryDraftRepository(),
+    integrations: createIntegrationAdapters(),
+    matters: new MemoryMatterRepository([{
+      matter,
+      issues: [],
+      tasks: [],
+      documents: []
+    }])
+  }, { accessMode: "readonly", requireDatabase: false });
+
+  const response = await request(target)
+    .get("/api/v2/admin/slack-notification-candidates")
+    .expect(200);
+
+  assert.equal(response.body.externalSend, false);
+  assert.equal(response.body.source, "matter_overview_v");
+  assert.equal(response.body.summary.candidates, 1);
+  assert.equal(response.body.candidates[0].issueKey, "LEGAL-80");
+  assert.equal(
+    response.body.candidates[0].notification.requesterStatus,
+    "information_required"
+  );
+  assert.equal(response.body.candidates[0].deliveryState, "not_evaluated");
+});
+
 test("空field_schemaを補うV3基本フォーム定義を持つ", () => {
   assert.ok(individualLicenseV3Fields.length >= 20);
   assert.ok(individualLicenseV3Fields.some((field) => field.name === "Licensor_氏名会社名"));
