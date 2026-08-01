@@ -54,7 +54,7 @@ steps:
               exit 1
             fi
             for value in "${_AUTH_ADMIN_EMAILS}" "${_AUTH_LEGAL_EMAILS}" "${_AUTH_REQUESTER_DOMAINS}"; do
-              if [ -z "$value" ] || [ "$value" = "BLOCKED" ]; then
+              if [ -z "$$value" ] || [ "$$value" = "BLOCKED" ]; then
                 echo "IAP deployment blocked: role configuration is missing."
                 exit 1
               fi
