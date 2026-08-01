@@ -6,6 +6,7 @@ export interface MatterSummary {
   ownerName: string | null; targetDueDate: string | null; blockedReason: string | null;
   issueCount: number; documentCount: number; openTaskCount: number;
   nextTaskTitle: string | null; nextTaskDueAt: string | null; updatedAt: string;
+  requesterEmail?: string | null;
 }
 export interface MatterDetail {
   matter: MatterSummary & { remarks: string | null; driveFolderUrl: string | null };
@@ -95,8 +96,15 @@ function mapSummary(row: Record<string, any>): MatterSummary {
     blockedReason: row.blocked_reason, issueCount: Number(row.issue_count ?? 0),
     documentCount: Number(row.document_count ?? 0), openTaskCount: Number(row.open_task_count ?? 0),
     nextTaskTitle: row.next_task_title, nextTaskDueAt: iso(row.next_task_due_at),
-    updatedAt: iso(row.updated_at) ?? ""
+    updatedAt: iso(row.updated_at) ?? "",
+    requesterEmail: optionalEmail(
+      row.requester_email ?? row.created_by ?? row.requester
+    )
   };
+}
+function optionalEmail(value: unknown) {
+  const email = String(value ?? "").trim().toLowerCase();
+  return /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email) ? email : null;
 }
 function iso(value: unknown) { return value ? new Date(String(value)).toISOString() : null; }
 function dateOnly(value: unknown) { return value ? String(value).slice(0, 10) : null; }
