@@ -72,5 +72,6 @@ docker compose up --build
 2. IAP実アカウント確認
 3. 本番書込みの段階的開放
 4. Drive権限の解決
-5. Slack、Gmail、CloudSign、Backlogのadapter単位の移植
-6. 旧サービスとの並行稼働、監視、切戻し、本番切替
+5. Slack UXプレビュー、検証チャンネル、live adapterの段階開放
+6. Gmail、CloudSign、Backlogのadapter単位の移植
+7. 旧サービスとの並行稼働、監視、切戻し、本番切替
