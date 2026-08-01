@@ -7,7 +7,7 @@ export interface OutboundConditionStorageValues {
   workId: number;
   counterpartyVendorId: number;
   transactionKind: "license" | "product";
-  direction: "receive";
+  direction: "receivable";
   conditionName: string;
   documentNumber: string | null;
   territory: string;
@@ -39,7 +39,7 @@ export function mapOutboundConditionForStorage(
     workId: numericIdentifier(condition.workId, "work"),
     counterpartyVendorId: numericIdentifier(condition.counterpartyId),
     transactionKind: condition.transactionKind,
-    direction: "receive",
+    direction: "receivable",
     conditionName: condition.conditionName,
     documentNumber: nullable(condition.documentNumber),
     territory: condition.territory,
