@@ -29,7 +29,7 @@ function envelope(): SlackDryRunEnvelope {
       body: "法務から確認依頼があります。",
       nextAction: "LegalBridgeで内容を確認してください",
       actions: [{
-        id: "open_document",
+        id: "confirm_request",
         label: "内容を確認",
         url: "https://legalbridge-v2-test.arclight.co.jp/documents/10",
         style: "primary"
@@ -39,7 +39,7 @@ function envelope(): SlackDryRunEnvelope {
       matterId: 10,
       issueKey: "LEGAL-10",
       fingerprint,
-      requesterStatus: "requester_confirmation",
+      requesterStatus: "requester_review",
       outcome: "sent",
       headline: "内容を確認してください",
       triggerDetail: "依頼者確認",
