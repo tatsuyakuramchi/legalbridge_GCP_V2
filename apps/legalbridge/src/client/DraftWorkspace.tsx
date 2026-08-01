@@ -66,8 +66,8 @@ export function DraftWorkspace({
       <div className="page-title">
         <div>
           <p>DRAFT WORKSPACE</p>
-          <h1>保存済みの下書き</h1>
-          <small>検証環境に保存された作業途中の文書を再開できます</small>
+          <h1>下書き</h1>
+          <small>作成途中の文書を選んで、入力を再開できます</small>
         </div>
       </div>
 
@@ -82,7 +82,7 @@ export function DraftWorkspace({
           aria-label="下書きを検索"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="案件キー、文書種別、文書番号、更新者で検索"
+          placeholder="受付番号、文書種別、文書番号、更新者で検索"
         />
         <span>{loading ? "読込中" : `${drafts.length}件`}</span>
       </div>
@@ -109,10 +109,10 @@ export function DraftWorkspace({
             <dl>
               <div><dt>更新日時</dt><dd>{formatDateTime(draft.updatedAt)}</dd></div>
               <div><dt>更新者</dt><dd>{draft.updatedBy ?? "未記録"}</dd></div>
-              <div><dt>文書番号</dt><dd>{draft.documentNumber ?? "未発番"}</dd></div>
+              <div><dt>文書番号</dt><dd>{draft.documentNumber ?? "確定前"}</dd></div>
             </dl>
             <div className="draft-list-actions">
-              <button onClick={() => removeDraft(draft)}>破棄</button>
+              <button onClick={() => removeDraft(draft)}>下書きを削除</button>
               <button className="primary" onClick={() => onResume(draft.issueKey, draft.templateType)}>
                 作業を再開
               </button>
