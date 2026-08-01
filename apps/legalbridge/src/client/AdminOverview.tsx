@@ -79,6 +79,8 @@ export function AdminOverview() {
         <span>ドライラン確認可 <strong>{state.slackCandidates?.summary?.dryRunReviewable ?? "—"}</strong></span>
         <span>ドライラン停止 <strong>{state.slackCandidates?.summary?.dryRunBlocked ?? "—"}</strong></span>
         <span>実送信可能 <strong>{state.slackCandidates?.summary?.dispatchAllowed ?? "—"}</strong></span>
+        <span>承認記録 <strong>{state.slackCandidates?.summary?.approvals ?? "—"}</strong></span>
+        <span>承認取消し <strong>{state.slackCandidates?.summary?.revocations ?? "—"}</strong></span>
       </div>
       <div className="slack-candidate-list">
         {(state.slackCandidates?.candidates ?? []).slice(0, 30).map((item: any) => {
@@ -110,7 +112,7 @@ export function AdminOverview() {
         {state.slackCandidates && !state.slackCandidates.candidates?.length && <p>判定対象の案件がありません。</p>}
         {!state.slackCandidates && <p>通知候補を取得できません。</p>}
       </div>
-      <p className="admin-note">通知指紋による重複判定に加え、依頼者とSlackユーザーの対応・履歴・HTTPSリンクをドライランで確認します。表示中の内容はSlackへ送信せず、通知履歴にも記録しません。管理者承認と送信アダプターも未接続です。</p>
+      <p className="admin-note">承認履歴：{state.slackCandidates?.approvals?.status === "connected" ? "接続済み" : "未接続"}。通知指紋による重複判定に加え、依頼者とSlackユーザーの対応・履歴・HTTPSリンクをドライランで確認します。表示中の内容はSlackへ送信せず、通知履歴にも記録しません。承認操作と送信アダプターは未接続です。</p>
     </section>
     <section className="panel admin-section slack-ux-preview">
       <div className="panel-head">

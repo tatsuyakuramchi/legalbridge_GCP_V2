@@ -622,6 +622,8 @@ test("実案件からSlack通知候補を読取専用で返す", async () => {
   assert.equal(response.body.dispatch.externalSend, false);
   assert.equal(response.body.dispatch.adapterConfigured, false);
   assert.equal(response.body.dispatch.queue[0].dispatchAllowed, false);
+  assert.equal(response.body.approvals.configured, false);
+  assert.equal(response.body.approvals.appendEnabled, false);
   assert.ok(response.body.dispatch.queue[0].blockers.includes("history_unavailable"));
 });
 

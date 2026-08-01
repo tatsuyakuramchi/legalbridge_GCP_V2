@@ -60,6 +60,10 @@ import { createAdminRouter } from "./admin/routes.js";
 import { createOperationalDiagnosticsRouter } from "./admin/diagnostics.js";
 import { createSlackRecipientDirectory } from "./integrations/slack-recipient-resolver.js";
 import {
+  PgSlackNotificationApprovalRepository,
+  type SlackNotificationApprovalRepository
+} from "./integrations/slack-approval-repository.js";
+import {
   PgSlackNotificationHistoryRepository,
   type SlackNotificationHistoryRepository
 } from "./integrations/slack-history-repository.js";
@@ -156,6 +160,7 @@ export interface AppDependencies {
   pdfRenderer?: PdfRenderer;
   driveStorage?: DriveStorage | null;
   slackHistory?: SlackNotificationHistoryRepository;
+  slackApprovals?: SlackNotificationApprovalRepository;
 }
 
 export interface AppOptions {
@@ -188,6 +193,9 @@ function createDefaultDependencies(): AppDependencies {
     admin: database ? new PgAdminRepository(database) : new MemoryAdminRepository(),
     slackHistory: database && config.slackNotificationHistoryEnabled
       ? new PgSlackNotificationHistoryRepository(database)
+      : undefined,
+    slackApprovals: database && config.slackNotificationApprovalsEnabled
+      ? new PgSlackNotificationApprovalRepository(database)
       : undefined,
     finalizations: database
       ? new PgDocumentFinalizationRepository(database)
@@ -277,7 +285,8 @@ export function createApp(
       ],
       integrations: config.integrationMode,
       authMode: (options.auth ?? config.auth).mode,
-      slackNotificationHistory: Boolean(dependencies.slackHistory)
+      slackNotificationHistory: Boolean(dependencies.slackHistory),
+      slackNotificationApprovals: Boolean(dependencies.slackApprovals)
     });
   });
 
@@ -362,6 +371,7 @@ export function createApp(
     dependencies.admin ?? new MemoryAdminRepository(),
     matterRepository,
     dependencies.slackHistory,
+    dependencies.slackApprovals,
     createSlackRecipientDirectory(config.slackDryRunUserMap),
     {
       integrationMode: config.integrationMode,

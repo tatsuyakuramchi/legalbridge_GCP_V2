@@ -27,6 +27,8 @@ export const config = {
   googleDriveFolderId: process.env.GOOGLE_DRIVE_FOLDER_ID ?? "",
   slackNotificationHistoryEnabled:
     process.env.SLACK_NOTIFICATION_HISTORY_ENABLED === "true",
+  slackNotificationApprovalsEnabled:
+    process.env.SLACK_NOTIFICATION_APPROVALS_ENABLED === "true",
   slackDryRunUserMap:
     process.env.SLACK_DRY_RUN_USER_MAP ?? "",
   templateSource: "db" as const,
