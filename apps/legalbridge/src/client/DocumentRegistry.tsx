@@ -93,7 +93,7 @@ export function DocumentRegistry({
     <div className="registry-layout">
       <div className="registry-table panel">
         <table>
-          <thead><tr><th>文書番号・件名</th><th>種別</th><th>相手方</th><th>作成日</th></tr></thead>
+          <thead><tr><th>文書番号・件名</th><th>種別</th><th>相手方</th><th>作成日</th><th>状態</th></tr></thead>
           <tbody>{documents.map((document) =>
             <tr key={document.id} className={selected?.id === document.id ? "selected" : ""}
               onClick={() => void selectDocument(document.id)}>
@@ -101,6 +101,11 @@ export function DocumentRegistry({
               <td>{labels.get(document.templateType) ?? document.templateType}<br /><small>{document.issueKey}</small></td>
               <td>{document.counterparty || "—"}</td>
               <td>{formatDate(document.createdAt)}</td>
+              <td>
+                <span className={document.lifecycle?.state === "finalized" ? "registry-state complete" : "registry-state pending"}>
+                  {document.lifecycle?.label ?? (document.documentNumber ? "確定済み" : "未発番")}
+                </span>
+              </td>
             </tr>)}</tbody>
         </table>
         {!loading && !documents.length && <div className="empty-state">該当する文書がありません。</div>}
