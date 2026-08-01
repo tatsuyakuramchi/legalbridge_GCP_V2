@@ -59,8 +59,8 @@ export function MasterDataPicker({
 
   return <section className="master-picker">
     <div className="master-picker-head">
-      <div><span>DB AUTOFILL</span><strong>マスターから自動補完</strong></div>
-      <small>選択後も各入力欄で上書きできます</small>
+      <div><span>入力補助</span><strong>登録情報を呼び出す</strong></div>
+      <small>取引先などを選ぶと、該当する項目だけ入力されます。入力後の修正も可能です。</small>
     </div>
     <div className="master-tabs">
       {availableTypes.map((candidate) =>
@@ -71,13 +71,13 @@ export function MasterDataPicker({
     </div>
     {type !== "company" &&
       <input className="master-search" value={query} onChange={(event) => setQuery(event.target.value)}
-        placeholder={`${labels[type]}を名称・番号で検索`} />}
+        placeholder={`${labels[type]}の名称または番号を入力`} />}
     <div className="master-results">
       {loading && <p>検索しています…</p>}
       {!loading && !items.length && <p>該当するデータがありません。</p>}
       {!loading && items.map((item) =>
         <button type="button" key={item.id}
-          onClick={() => onApply(buildPatch(schema, formData, item), `${item.label}から自動補完しました`)}>
+          onClick={() => onApply(buildPatch(schema, formData, item), `${item.label}の登録情報を入力しました`)}>
           <strong>{item.label}</strong><small>{item.description}</small>
         </button>)}
     </div>
