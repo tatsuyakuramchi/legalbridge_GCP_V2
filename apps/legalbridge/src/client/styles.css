@@ -337,3 +337,15 @@ button.pdf-download-link:disabled {
   padding: 8px 9px;
   line-height: 1.5;
 }
+
+
+.registry-state {
+  display: inline-flex;
+  border-radius: 999px;
+  padding: 4px 8px;
+  white-space: nowrap;
+  font-size: 10px;
+  font-weight: 800;
+}
+.registry-state.complete { background: #e8f7f0; color: #16724e; }
+.registry-state.pending { background: #fff7ed; color: #9a3412; }
