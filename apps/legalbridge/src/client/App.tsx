@@ -361,7 +361,10 @@ function DocumentForm({
   if (!schema) {
     return <section className="page"><h1>文書作成</h1><p>フォーム定義を読み込んでいます。</p></section>;
   }
-  const groups = [...new Set(schema.fields.map((field) => field.group ?? "基本情報"))];
+  const visibleFields = schema.fields.filter((field) =>
+    field.type !== "hidden" && !isSpecializedDataField(schema.templateKey, field.name)
+  );
+  const groups = [...new Set(visibleFields.map((field) => field.group ?? "基本情報"))];
 
   function updateValue(name: string, value: unknown) {
     if (finalizedDocument) return;
@@ -526,8 +529,8 @@ function DocumentForm({
     <section className="page">
       <div className="page-title document-form-title">
         <div>
-          <button className="text-button" onClick={onBack}>← template一覧</button>
-          <p>DOCUMENT COMMAND</p>
+          <button className="text-button" onClick={onBack}>← 前の画面へ戻る</button>
+          <p>DOCUMENT CREATION</p>
           <h1>{schema.label}</h1>
           <div className="draft-summary" aria-live="polite">
             <span className={`draft-status ${draftStatus}`}>
@@ -540,7 +543,7 @@ function DocumentForm({
             <small>{schema.templateKey}・{schema.fields.length}項目</small>
             {notice && <small>{notice}</small>}
           </div>
-          <label className="draft-key">案件キー
+          <label className="draft-key">受付番号（Backlog課題キー）
             <input
               value={issueKey}
               onChange={(event) => {
@@ -549,7 +552,7 @@ function DocumentForm({
                 setDraftStatus("loading");
               }}
               disabled={draftStatus === "saving" || Boolean(finalizedDocument)}
-              placeholder="VALIDATION-1"
+              placeholder="例：LEGAL-123"
             />
           </label>
         </div>
@@ -621,7 +624,7 @@ function DocumentForm({
               setNotice(message);
             }} />
           {groups.map((group, index) => <section id={`group-${index}`} key={group}><h2>{group}</h2>
-            <div className="field-grid">{schema.fields.filter((field) => (field.group ?? "基本情報") === group && field.type !== "hidden").map((field) => <label key={field.name}><span>{field.label ?? field.name}{field.required && <em>必須</em>}</span>{field.type === "textarea" ? <textarea value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, event.target.value)} placeholder={field.placeholder} /> : field.type === "select" ? <select value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, event.target.value)}><option value="">選択してください</option>{field.options?.map((option) => <option key={option}>{option}</option>)}</select> : field.type === "boolean" ? <input type="checkbox" checked={Boolean(formData[field.name])} onChange={(event) => updateValue(field.name, event.target.checked)} /> : <input value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, field.type === "number" ? Number(event.target.value) : event.target.value)} type={field.type === "number" ? "number" : field.type === "date" ? "date" : "text"} placeholder={field.placeholder} />}<small>{field.helpText}{field.dbField && ` 自動補完: ${field.dbField}`}</small></label>)}</div>
+            <div className="field-grid">{visibleFields.filter((field) => (field.group ?? "基本情報") === group).map((field) => <label key={field.name}><span>{field.label ?? field.name}{field.required && <em>必須</em>}</span>{field.type === "textarea" ? <textarea value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, event.target.value)} placeholder={field.placeholder} /> : field.type === "select" ? <select value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, event.target.value)}><option value="">選択してください</option>{field.options?.map((option) => <option key={option}>{option}</option>)}</select> : field.type === "boolean" ? <input type="checkbox" checked={Boolean(formData[field.name])} onChange={(event) => updateValue(field.name, event.target.checked)} /> : <input value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, field.type === "number" ? Number(event.target.value) : event.target.value)} type={field.type === "number" ? "number" : field.type === "date" ? "date" : "text"} placeholder={field.placeholder} />}{field.helpText && <small>{field.helpText}</small>}</label>)}</div>
           </section>)}
           {schema.templateKey === "individual_license_terms_v3" && (
             <IndividualLicenseV3Form formData={formData} onChange={updateValue} />
@@ -650,6 +653,18 @@ function formatDraftTime(value: string) {
     hour: "2-digit",
     minute: "2-digit"
   }).format(date);
+}
+
+function isSpecializedDataField(templateKey: string, fieldName: string) {
+  const specializedFields: Record<string, string[]> = {
+    purchase_order: ["items", "expenses", "other_fees", "financial_conditions"],
+    intl_purchase_order: ["items", "expenses", "other_fees", "financial_conditions"],
+    individual_license_terms: ["financial_conditions", "サブライセンシー一覧"],
+    individual_license_terms_v3: ["v3_conds", "v3_lcs", "v3_sublicensees", "v3_calc_base_rows", "v3_special_extras"],
+    royalty_statement: ["lines"],
+    inspection_certificate: ["delivery_line_items", "other_fees", "expenses", "changeLogs"]
+  };
+  return specializedFields[templateKey]?.includes(fieldName) ?? false;
 }
 
 function hasSpecializedForm(templateKey: string) {
