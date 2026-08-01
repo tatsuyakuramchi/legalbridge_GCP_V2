@@ -1,10 +1,14 @@
 import type { NotificationHistoryAppend } from "./slack-history-repository.js";
 import type { EvaluatedSlackCandidate } from "./slack-deduplication.js";
+import type {
+  SlackRecipientDirectory,
+  SlackRecipientTarget
+} from "./slack-recipient-resolver.js";
 
 export type SlackDryRunReadiness =
   | "ready_for_review"
   | "blocked_history"
-  | "blocked_destination"
+  | "blocked_recipient"
   | "blocked_link"
   | "suppressed_duplicate"
   | "suppressed_quiet";
@@ -16,10 +20,7 @@ export interface SlackDryRunEnvelope {
   readiness: SlackDryRunReadiness;
   readinessLabel: string;
   blockingReasons: string[];
-  target: {
-    channelId: string | null;
-    resolution: "configured" | "missing";
-  };
+  target: SlackRecipientTarget;
   message: {
     headline: string;
     body: string;
@@ -35,11 +36,11 @@ export interface SlackDryRunEnvelope {
 
 export function buildSlackDryRunQueue(
   candidates: EvaluatedSlackCandidate[],
-  channelId?: string | null
+  recipients: SlackRecipientDirectory
 ): SlackDryRunEnvelope[] {
-  const resolvedChannelId = normalizeChannelId(channelId);
   return candidates.map((candidate) => {
     const blockingReasons: string[] = [];
+    const recipient = recipients.resolve(candidate.requesterEmail);
     let readiness: SlackDryRunReadiness;
 
     if (candidate.eligibility === "duplicate") {
@@ -51,9 +52,9 @@ export function buildSlackDryRunQueue(
     } else if (candidate.eligibility === "history_unavailable") {
       readiness = "blocked_history";
       blockingReasons.push("通知履歴を確認できないため重複判定ができません");
-    } else if (!resolvedChannelId) {
-      readiness = "blocked_destination";
-      blockingReasons.push("検証用Slack送信先が設定されていません");
+    } else if (recipient.resolution !== "resolved") {
+      readiness = "blocked_recipient";
+      blockingReasons.push(recipientBlockingReason(recipient.resolution));
     } else if (!hasSafeActionLinks(candidate)) {
       readiness = "blocked_link";
       blockingReasons.push("LegalBridgeへの安全なHTTPSリンクを確認できません");
@@ -68,10 +69,7 @@ export function buildSlackDryRunQueue(
       readiness,
       readinessLabel: readinessLabels[readiness],
       blockingReasons,
-      target: {
-        channelId: resolvedChannelId,
-        resolution: resolvedChannelId ? "configured" : "missing"
-      },
+      target: recipient,
       message: {
         headline: candidate.notification.headline,
         body: candidate.notification.body,
@@ -86,7 +84,7 @@ export function buildSlackDryRunQueue(
         outcome: "sent",
         headline: candidate.notification.headline,
         triggerDetail: candidate.triggerDetail,
-        slackChannelId: resolvedChannelId,
+        slackChannelId: null,
         slackMessageTs: null,
         recordedBy: "dry-run"
       },
@@ -99,16 +97,27 @@ export function buildSlackDryRunQueue(
 const readinessLabels: Record<SlackDryRunReadiness, string> = {
   ready_for_review: "送信内容を確認可能",
   blocked_history: "履歴確認待ち",
-  blocked_destination: "送信先未設定",
+  blocked_recipient: "宛先解決待ち",
   blocked_link: "リンク確認待ち",
   suppressed_duplicate: "重複のため抑止",
   suppressed_quiet: "通知不要"
 };
 
-function normalizeChannelId(value?: string | null) {
-  const normalized = value?.trim() ?? "";
-  if (!normalized || normalized.toUpperCase() === "UNRESOLVED") return null;
-  return normalized;
+function recipientBlockingReason(
+  resolution: SlackRecipientTarget["resolution"]
+) {
+  switch (resolution) {
+    case "missing_identity":
+      return "案件から依頼者メールを特定できません";
+    case "unmapped":
+      return "依頼者メールに対応するSlackユーザーが登録されていません";
+    case "ambiguous":
+      return "依頼者メールに複数のSlackユーザーが登録されています";
+    case "invalid":
+      return "登録されたSlackユーザーIDの形式が不正です";
+    default:
+      return "Slack通知先を確認できません";
+  }
 }
 
 function hasSafeActionLinks(candidate: EvaluatedSlackCandidate) {
