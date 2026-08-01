@@ -414,10 +414,15 @@ test("登録文書の一覧検索と詳細を読取専用で返す", async () =>
   assert.equal(list.body.documents.length, 1);
   assert.equal(list.body.documents[0].documentNumber, "PO-ARC-202607-001");
   assert.equal(list.body.documents[0].formData, undefined);
+  assert.equal(list.body.documents[0].lifecycle.state, "finalized");
+  assert.equal(list.body.documents[0].lifecycle.pdfState, "ready");
+  assert.equal(list.body.documents[0].lifecycle.driveState, "stored");
 
   const detail = await request(target).get("/api/v2/documents/101").expect(200);
   assert.equal(detail.body.document.formData.PROJECT_TITLE, "新商品制作");
   assert.equal(detail.body.document.formData.ACCOUNT_NUMBER, "****5678");
+  assert.equal(detail.body.document.lifecycle.label, "確定済み");
+  assert.equal(detail.body.document.lifecycle.driveLabel, "Drive保存済み");
 });
 
 test("不正な文書IDを拒否する", async () => {
