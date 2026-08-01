@@ -1,5 +1,10 @@
 import { Router } from "express";
 import { z } from "zod";
+import {
+  OutboundConditionConflictError,
+  OutboundConditionReferenceError,
+  type OutboundConditionRepository
+} from "./outbound-condition-repository.js";
 
 const optionalText = z.string().trim().max(500).optional().default("");
 const optionalNumber = z.number().nonnegative().optional();
@@ -70,16 +75,67 @@ export function validateOutboundCondition(input: unknown) {
     ok: true as const,
     condition: {
       ...result.data,
-      direction: "receive" as const
+      direction: "receivable" as const
     }
   };
 }
 
-export function createOutboundConditionRouter() {
+export function createOutboundConditionRouter(
+  repository?: OutboundConditionRepository,
+  writeEnabled = false
+) {
   const router = Router();
+
   router.post("/outbound-conditions/validate", (request, response) => {
     const result = validateOutboundCondition(request.body);
     response.status(result.ok ? 200 : 400).json(result);
   });
+
+  router.post("/outbound-conditions", async (request, response, next) => {
+    try {
+      if (!writeEnabled || !repository) {
+        return response.status(503).json({
+          error: "outbound condition storage is unavailable",
+          code: "OUTBOUND_CONDITION_STORAGE_UNAVAILABLE"
+        });
+      }
+      if (response.locals.currentUser?.role !== "admin") {
+        return response.status(403).json({
+          error: "administrator approval is required",
+          code: "OUTBOUND_CONDITION_ADMIN_REQUIRED"
+        });
+      }
+      const condition = outboundConditionSchema.parse(request.body);
+      if (!condition.documentNumber) {
+        return response.status(400).json({
+          error: "document number is required",
+          code: "OUTBOUND_DOCUMENT_REQUIRED"
+        });
+      }
+      const saved = await repository.save(condition);
+      return response.status(201).json({
+        condition: saved,
+        integrations: { backlog: "disabled", slack: "disabled", drive: "disabled" }
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return response.status(400).json({ error: "invalid request", issues: error.issues });
+      }
+      if (error instanceof OutboundConditionReferenceError) {
+        return response.status(404).json({
+          error: error.message,
+          code: "OUTBOUND_REFERENCE_NOT_FOUND"
+        });
+      }
+      if (error instanceof OutboundConditionConflictError) {
+        return response.status(409).json({
+          error: error.message,
+          code: "OUTBOUND_CONDITION_CONFLICT"
+        });
+      }
+      next(error);
+    }
+  });
+
   return router;
 }
