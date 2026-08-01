@@ -58,6 +58,7 @@ import { createGlobalSearchRouter } from "./search/routes.js";
 import { MemoryAdminRepository, PgAdminRepository, type AdminRepository } from "./admin/repository.js";
 import { createAdminRouter } from "./admin/routes.js";
 import { createOperationalDiagnosticsRouter } from "./admin/diagnostics.js";
+import { createSlackRecipientDirectory } from "./integrations/slack-recipient-resolver.js";
 import {
   PgSlackNotificationHistoryRepository,
   type SlackNotificationHistoryRepository
@@ -361,7 +362,7 @@ export function createApp(
     dependencies.admin ?? new MemoryAdminRepository(),
     matterRepository,
     dependencies.slackHistory,
-    config.slackDryRunChannelId
+    createSlackRecipientDirectory(config.slackDryRunUserMap)
   ));
   app.use("/api/v2", createTemplateRegressionRouter(dependencies.templates));
   app.use("/api/v2", createOperationalDiagnosticsRouter(
