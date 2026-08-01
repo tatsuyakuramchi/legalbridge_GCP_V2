@@ -17,6 +17,9 @@ substitutions:
   _CONFIRM_IAP_BACKEND: BLOCKED
   _SLACK_NOTIFICATION_HISTORY_ENABLED: "false"
   _SLACK_NOTIFICATION_APPROVALS_ENABLED: "false"
+  _SLACK_APPROVAL_WRITES_ENABLED: "false"
+  _WRITE_SCOPES: drafts,documents,pdf
+  _CONFIRM_SLACK_APPROVAL_WRITES: BLOCKED
   _SLACK_DRY_RUN_USER_MAP: UNRESOLVED
 
 steps:
@@ -68,6 +71,44 @@ steps:
             exit 1
             ;;
         esac
+        case "${_SLACK_APPROVAL_WRITES_ENABLED}" in
+          false)
+            if [ "${_WRITE_SCOPES}" != "drafts,documents,pdf" ]; then
+              echo "Deployment blocked: approval scope must remain disabled unless explicitly enabled."
+              exit 1
+            fi
+            ;;
+          true)
+            if [ "${_WRITE_SCOPES}" != "drafts,documents,pdf,slack-approvals" ]; then
+              echo "Slack approval deployment blocked: WRITE_SCOPES must contain only the approved validation capabilities."
+              exit 1
+            fi
+            if [ "${_CONFIRM_SLACK_APPROVAL_WRITES}" != "SLACK_APPROVAL_WRITES_VALIDATION_ONLY" ]; then
+              echo "Slack approval deployment blocked: explicit validation-only confirmation is missing."
+              exit 1
+            fi
+            if [ "${_SERVICE}" != "legalbridge-v2-write-test" ] || [ "${_DB_NAME}" != "legalbridge_v2_validation" ]; then
+              echo "Slack approval deployment blocked: target is not the isolated validation environment."
+              exit 1
+            fi
+            if [ "${_AUTH_MODE}" != "iap" ]; then
+              echo "Slack approval deployment blocked: IAP authentication is required."
+              exit 1
+            fi
+            if [ "${_SLACK_NOTIFICATION_HISTORY_ENABLED}" != "true" ] || [ "${_SLACK_NOTIFICATION_APPROVALS_ENABLED}" != "true" ]; then
+              echo "Slack approval deployment blocked: history and approval repositories must both be enabled."
+              exit 1
+            fi
+            if [ -z "${_SLACK_DRY_RUN_USER_MAP}" ] || [ "${_SLACK_DRY_RUN_USER_MAP}" = "UNRESOLVED" ]; then
+              echo "Slack approval deployment blocked: an explicit dry-run recipient map is required."
+              exit 1
+            fi
+            ;;
+          *)
+            echo "Deployment blocked: SLACK_APPROVAL_WRITES_ENABLED must be true or false."
+            exit 1
+            ;;
+        esac
 
   - id: build-image
     name: gcr.io/cloud-builders/docker
@@ -100,7 +141,7 @@ steps:
           --service-account="${_SERVICE_ACCOUNT}" \
           --add-cloudsql-instances="${_CLOUD_SQL_INSTANCE}" \
           --set-secrets="DB_PASSWORD=${_DB_PASSWORD_SECRET}:latest" \
-          --set-env-vars="^~^NODE_ENV=production~AUTH_MODE=${_AUTH_MODE}~AUTH_ADMIN_EMAILS=${_AUTH_ADMIN_EMAILS}~AUTH_LEGAL_EMAILS=${_AUTH_LEGAL_EMAILS}~AUTH_REQUESTER_DOMAINS=${_AUTH_REQUESTER_DOMAINS}~INTEGRATION_MODE=local~SLACK_NOTIFICATION_HISTORY_ENABLED=${_SLACK_NOTIFICATION_HISTORY_ENABLED}~SLACK_NOTIFICATION_APPROVALS_ENABLED=${_SLACK_NOTIFICATION_APPROVALS_ENABLED}~SLACK_DRY_RUN_USER_MAP=${_SLACK_DRY_RUN_USER_MAP}~DB_ACCESS_MODE=readwrite~REQUIRE_DATABASE=true~WRITE_FEATURES_ENABLED=true~WRITE_SCOPES=drafts,documents,pdf~DB_HOST=/cloudsql/${_CLOUD_SQL_INSTANCE}~DB_PORT=5432~DB_NAME=${_DB_NAME}~DB_USER=${_DB_USER}~DB_POOL_MAX=3"
+          --set-env-vars="^~^NODE_ENV=production~AUTH_MODE=${_AUTH_MODE}~AUTH_ADMIN_EMAILS=${_AUTH_ADMIN_EMAILS}~AUTH_LEGAL_EMAILS=${_AUTH_LEGAL_EMAILS}~AUTH_REQUESTER_DOMAINS=${_AUTH_REQUESTER_DOMAINS}~INTEGRATION_MODE=local~SLACK_NOTIFICATION_HISTORY_ENABLED=${_SLACK_NOTIFICATION_HISTORY_ENABLED}~SLACK_NOTIFICATION_APPROVALS_ENABLED=${_SLACK_NOTIFICATION_APPROVALS_ENABLED}~SLACK_DRY_RUN_USER_MAP=${_SLACK_DRY_RUN_USER_MAP}~DB_ACCESS_MODE=readwrite~REQUIRE_DATABASE=true~WRITE_FEATURES_ENABLED=true~WRITE_SCOPES=${_WRITE_SCOPES}~DB_HOST=/cloudsql/${_CLOUD_SQL_INSTANCE}~DB_PORT=5432~DB_NAME=${_DB_NAME}~DB_USER=${_DB_USER}~DB_POOL_MAX=3"
 
 images:
   - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPOSITORY}/${_IMAGE}:${BUILD_ID}
