@@ -9,7 +9,7 @@ import { buildSlackDryRunQueue } from "../integrations/slack-dry-run.js";
 import type { SlackRecipientDirectory } from "../integrations/slack-recipient-resolver.js";
 export function createAdminRouter(
   repository: AdminRepository,
-  matters?: MatterRepository,
+  matters: MatterRepository | undefined,
   history: SlackNotificationHistoryRepository | undefined,
   slackRecipients: SlackRecipientDirectory
 ) {
