@@ -241,7 +241,10 @@ function createDefaultDependencies(): AppDependencies {
       : new MemoryDocumentFinalizationRepository(),
     pdfRenderer: new ChromiumPdfRenderer(),
     driveStorage: config.googleDriveFolderId
-      ? new GoogleDriveStorage(config.googleDriveFolderId)
+      ? new GoogleDriveStorage(config.googleDriveFolderId, {
+          keyFilePath: config.googleServiceAccountKeyPath || undefined,
+          environmentTag: config.driveEnvironmentTag
+        })
       : null
   };
 }

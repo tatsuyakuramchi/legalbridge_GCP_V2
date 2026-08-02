@@ -48,7 +48,7 @@ docker compose up --build
 - 下書き保存・復元・削除・競合防止
 - 文書確定、既存形式の発番、確定後の文書一覧・詳細
 - ChromiumによるPDF生成・ダウンロード
-- Drive保存adapter（実環境のフォルダ権限確認は保留）
+- Drive保存adapter（V1準拠：専用Workspace SA鍵優先＋フルdriveスコープ＋共有ドライブ対応）
 - 締結済イン契約の登録wizard（原作・素材・自社作品・イン条件をイン先確定として登録）
 - 登録済み契約への後日アウト条件追記（`condition_lines`）と、許諾先ごとの個別利用許諾条件書・利用許諾料明細書の作成
 - 登録済み契約取込の一覧・再選択レジストリ
@@ -67,7 +67,7 @@ docker compose up --build
 - 本番DB参照環境ではアプリとDBセッションの両方をread-onlyにする
 - Backlog、Slack、メール、CloudSignへのlive送信は未開放
 
-詳しい環境構築は[ローカル・GCP手順](docs/local-to-gcp.md)、本番移行条件は[Production Readiness Runbook](docs/production-readiness.md)、締結済契約取込の書込みデプロイは[契約取込デプロイ手順](docs/contract-intake-deploy.md)を参照してください。
+詳しい環境構築は[ローカル・GCP手順](docs/local-to-gcp.md)、本番移行条件は[Production Readiness Runbook](docs/production-readiness.md)、締結済契約取込の書込みデプロイは[契約取込デプロイ手順](docs/contract-intake-deploy.md)、Drive連携は[Google Drive連携](docs/drive-integration.md)を参照してください。
 
 ## 次のフェーズ
 
