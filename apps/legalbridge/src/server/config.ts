@@ -26,6 +26,8 @@ export const config = {
     process.env.OUTBOUND_CONDITION_WRITES_ENABLED === "true",
   contractIntakeWritesEnabled:
     process.env.CONTRACT_INTAKE_WRITES_ENABLED === "true",
+  matterWritesEnabled:
+    process.env.MATTER_WRITES_ENABLED === "true",
   writeScopes: new Set(
     String(process.env.WRITE_SCOPES ?? "")
       .split(",").map((value) => value.trim()).filter(Boolean)

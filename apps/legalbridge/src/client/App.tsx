@@ -46,6 +46,7 @@ export function App() {
   const [canGeneratePdf, setCanGeneratePdf] = useState(false);
   const [canSaveToDrive, setCanSaveToDrive] = useState(false);
   const [canCommitContractIntake, setCanCommitContractIntake] = useState(false);
+  const [canEditMatters, setCanEditMatters] = useState(false);
   const [currentUser, setCurrentUser] = useState<{ email: string; role: "admin" | "legal" | "requester" } | null>(null);
   const [searchSelection, setSearchSelection] = useState<{ target: "matter" | "document" | "vendor" | "work"; id: string; title: string } | null>(null);
   const [draftSelection, setDraftSelection] = useState<{ issueKey: string; templateType: string } | null>(null);
@@ -78,6 +79,7 @@ export function App() {
         setCanGeneratePdf(capabilities.includes("pdf"));
         setCanSaveToDrive(capabilities.includes("drive"));
         setCanCommitContractIntake(capabilities.includes("contract-intake"));
+        setCanEditMatters(capabilities.includes("matters"));
       })
       .catch(() => {
         setReadOnly(true);
@@ -85,6 +87,7 @@ export function App() {
         setCanGeneratePdf(false);
         setCanSaveToDrive(false);
         setCanCommitContractIntake(false);
+        setCanEditMatters(false);
       });
     fetch("/api/v2/document-templates")
       .then((response) => response.ok ? response.json() : Promise.reject())
@@ -161,6 +164,7 @@ export function App() {
           <Dashboard dashboard={dashboard} onCreateDocument={() => setView("templates")} />
         )}
         {view === "matters" && <MatterRegistry templates={templates}
+          canEdit={canEditMatters}
           selectedId={searchSelection?.target === "matter" ? Number(searchSelection.id) : undefined} />}
         {view === "drafts" && !readOnly && (
           <DraftWorkspace templates={templates} onResume={resumeDraft} initialQuery={deepLinkIssue} />

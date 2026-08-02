@@ -15,14 +15,19 @@ type Detail = {
   documents: Array<{ id: number; documentNumber: string | null; templateType: string; issueKey: string; createdAt: string; driveLink: string }>;
 };
 const statusLabels: Record<string, string> = { open: "未着手", in_progress: "進行中", closed: "完了", archived: "保管" };
+const MATTER_STATUSES = ["open", "in_progress", "closed", "archived"] as const;
+const TASK_STATUSES = ["open", "in_progress", "done", "cancelled"] as const;
+const taskStatusLabels: Record<string, string> = { open: "未着手", in_progress: "進行中", done: "完了", cancelled: "中止" };
 const stageLabels: Record<string, string> = {
   intake: "受付", triage: "仕分け", drafting: "ドラフト", internal_review: "社内審査",
   counterparty_review: "相手方確認", signing: "締結", performance: "履行",
   inspection: "検収", invoicing_payment: "請求・支払", completion_check: "完了確認",
   completed: "完了", cancelled: "中止"
 };
+const LIFECYCLE_STAGES = Object.keys(stageLabels);
 
-export function MatterRegistry({ templates, selectedId }: { templates: DocumentFormSchema[]; selectedId?: number }) {
+export function MatterRegistry({ templates, selectedId, canEdit = false }:
+  { templates: DocumentFormSchema[]; selectedId?: number; canEdit?: boolean }) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
   const [matters, setMatters] = useState<Matter[]>([]);
@@ -30,6 +35,7 @@ export function MatterRegistry({ templates, selectedId }: { templates: DocumentF
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
+  const [creating, setCreating] = useState(false);
   const labels = new Map(templates.map((item) => [item.templateKey, item.label]));
 
   useEffect(() => {
@@ -54,9 +60,16 @@ export function MatterRegistry({ templates, selectedId }: { templates: DocumentF
   }
   useEffect(() => { if (selectedId) void selectMatter(selectedId); }, [selectedId]);
 
+  function refreshAll(selected?: number) {
+    setReload((value) => value + 1);
+    if (selected) void selectMatter(selected);
+  }
+
   return <section className="page matter-page">
     <div className="page-title"><div><p>MATTER MANAGEMENT</p><h1>案件一覧</h1>
-      <small>案件・課題・タスク・関連文書を一つの画面で確認します</small></div></div>
+      <small>案件・課題・タスク・関連文書を一つの画面で確認します</small></div>
+      {canEdit && <button className="primary" onClick={() => { setCreating(true); setDetail(null); }}>＋ 新規案件</button>}
+    </div>
     <div className="matter-toolbar">
       <input value={query} onChange={(event) => setQuery(event.target.value)}
         placeholder="案件番号、案件名、相手方、Backlogキーで検索" />
@@ -67,7 +80,7 @@ export function MatterRegistry({ templates, selectedId }: { templates: DocumentF
     {error && <div className="async-error">{error}<button onClick={() => setReload((value) => value + 1)}>再試行</button></div>}
     <div className="matter-layout">
       <div className="matter-list">{matters.map((matter) =>
-        <button key={matter.id} className={detail?.matter.id === matter.id ? "selected" : ""} onClick={() => selectMatter(matter.id)}>
+        <button key={matter.id} className={detail?.matter.id === matter.id ? "selected" : ""} onClick={() => { setCreating(false); selectMatter(matter.id); }}>
           <div><span>{matter.matterCode ?? `#${matter.id}`}</span><strong>{matter.title}</strong><small>{matter.counterparty || "相手方未設定"}</small></div>
           <div className="matter-card-meta"><span className={`matter-status ${matter.status}`}>{statusLabels[matter.status] ?? matter.status}</span>
             <small>{stageLabels[matter.lifecycleStage ?? ""] ?? "工程未設定"}</small>
@@ -77,23 +90,47 @@ export function MatterRegistry({ templates, selectedId }: { templates: DocumentF
         </button>)}
         {!loading && !matters.length && <div className="empty-state">該当する案件がありません。</div>}
       </div>
-      <MatterDetail detail={detail} labels={labels} />
+      {creating
+        ? <MatterForm mode="create" onCancel={() => setCreating(false)}
+            onSaved={(id) => { setCreating(false); refreshAll(id); }} />
+        : <MatterDetail detail={detail} labels={labels} canEdit={canEdit}
+            onChanged={() => refreshAll(detail?.matter.id)} />}
     </div>
   </section>;
 }
 
-function MatterDetail({ detail, labels }: { detail: Detail | null; labels: Map<string, string> }) {
+function MatterDetail({ detail, labels, canEdit, onChanged }:
+  { detail: Detail | null; labels: Map<string, string>; canEdit: boolean; onChanged: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const [addingTask, setAddingTask] = useState(false);
+  useEffect(() => { setEditing(false); setAddingTask(false); }, [detail?.matter.id]);
   if (!detail) return <aside className="panel matter-detail empty-detail">一覧から案件を選択してください。</aside>;
   const { matter } = detail;
+  if (editing) {
+    return <MatterForm mode="edit" matter={matter} onCancel={() => setEditing(false)}
+      onSaved={() => { setEditing(false); onChanged(); }} />;
+  }
   return <aside className="panel matter-detail">
-    <span className="detail-kicker">MATTER DETAIL</span><h2>{matter.title}</h2>
-    <div className="matter-summary"><span>{matter.matterCode ?? `#${matter.id}`}</span><span>{matter.counterparty || "相手方未設定"}</span><span>{matter.ownerName ?? "担当者未設定"}</span></div>
+    <div className="matter-detail-head">
+      <div><span className="detail-kicker">MATTER DETAIL</span><h2>{matter.title}</h2></div>
+      {canEdit && <button onClick={() => setEditing(true)}>編集</button>}
+    </div>
+    <div className="matter-summary"><span>{matter.matterCode ?? `#${matter.id}`}</span>
+      <span className={`matter-status ${matter.status}`}>{statusLabels[matter.status] ?? matter.status}</span>
+      <span>{stageLabels[matter.lifecycleStage ?? ""] ?? "工程未設定"}</span>
+      <span>{matter.counterparty || "相手方未設定"}</span><span>{matter.ownerName ?? "担当者未設定"}</span>
+      {matter.targetDueDate && <span>期限 {matter.targetDueDate}</span>}</div>
+    {matter.blockedReason && <p className="matter-blocked">停滞理由：{matter.blockedReason}</p>}
     {matter.driveFolderUrl && <a className="drive-link" href={matter.driveFolderUrl} target="_blank" rel="noreferrer">案件フォルダを開く</a>}
     <DetailSection title={`関連課題 ${detail.issues.length}`}>
       {detail.issues.map((issue) => <article key={issue.issueKey}><b>{issue.issueKey}</b><span>{issue.summary ?? issue.relation}</span><small>{issue.note}</small></article>)}
     </DetailSection>
-    <DetailSection title={`次アクション・タスク ${detail.tasks.length}`}>
-      {detail.tasks.map((task) => <article key={task.id} className={task.isPrimary ? "primary-task" : ""}><b>{task.title}</b><span>{task.assigneeName ?? "担当未設定"}・{task.status}</span><small>{task.dueAt ? formatDate(task.dueAt) : "期限未設定"}{task.blockedReason && `・${task.blockedReason}`}</small></article>)}
+    <DetailSection title={`次アクション・タスク ${detail.tasks.length}`}
+      action={canEdit && !addingTask ? <button onClick={() => setAddingTask(true)}>＋ タスク追加</button> : undefined}>
+      {addingTask && <TaskForm matterId={matter.id} onCancel={() => setAddingTask(false)}
+        onSaved={() => { setAddingTask(false); onChanged(); }} />}
+      {detail.tasks.map((task) => <TaskRow key={task.id} matterId={matter.id} task={task}
+        canEdit={canEdit} onChanged={onChanged} />)}
     </DetailSection>
     <DetailSection title={`関連文書 ${detail.documents.length}`}>
       {detail.documents.map((document) => <article key={document.id}><b>{document.documentNumber ?? "未発番"}</b><span>{labels.get(document.templateType) ?? document.templateType}</span><small>{document.issueKey}・{formatDate(document.createdAt)}</small>{document.driveLink && <a href={document.driveLink} target="_blank" rel="noreferrer">開く</a>}</article>)}
@@ -101,8 +138,162 @@ function MatterDetail({ detail, labels }: { detail: Detail | null; labels: Map<s
     {matter.remarks && <DetailSection title="備考"><p>{matter.remarks}</p></DetailSection>}
   </aside>;
 }
-function DetailSection({ title, children }: { title: string; children: React.ReactNode }) {
-  return <section className="matter-detail-section"><h3>{title}</h3><div>{children}</div></section>;
+
+type MatterFormValues = {
+  title: string; status: string; lifecycleStage: string; counterparty: string;
+  primaryIssueKey: string; targetDueDate: string; blockedReason: string; remarks: string;
+};
+function MatterForm({ mode, matter, onCancel, onSaved }: {
+  mode: "create" | "edit";
+  matter?: Detail["matter"];
+  onCancel: () => void;
+  onSaved: (id: number) => void;
+}) {
+  const [values, setValues] = useState<MatterFormValues>({
+    title: matter?.title ?? "", status: matter?.status ?? "open",
+    lifecycleStage: matter?.lifecycleStage ?? "", counterparty: matter?.counterparty ?? "",
+    primaryIssueKey: matter?.primaryIssueKey ?? "", targetDueDate: matter?.targetDueDate ?? "",
+    blockedReason: matter?.blockedReason ?? "", remarks: matter?.remarks ?? ""
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  function set<K extends keyof MatterFormValues>(key: K, value: string) {
+    setValues((prev) => ({ ...prev, [key]: value }));
+  }
+  async function submit() {
+    if (!values.title.trim()) { setError("案件名は必須です。"); return; }
+    setSaving(true); setError("");
+    const body = {
+      title: values.title.trim(),
+      status: values.status,
+      lifecycleStage: values.lifecycleStage || null,
+      counterparty: values.counterparty,
+      primaryIssueKey: values.primaryIssueKey,
+      targetDueDate: values.targetDueDate || null,
+      blockedReason: values.blockedReason,
+      remarks: values.remarks
+    };
+    const url = mode === "create" ? "/api/v2/matters" : `/api/v2/matters/${matter!.id}`;
+    const method = mode === "create" ? "POST" : "PATCH";
+    try {
+      const response = await fetch(url, {
+        method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+      });
+      if (!response.ok) {
+        const detail = await response.json().catch(() => ({}));
+        setError(detail.error ?? "保存に失敗しました。"); setSaving(false); return;
+      }
+      const saved = await response.json();
+      onSaved(Number(saved.id));
+    } catch {
+      setError("通信に失敗しました。"); setSaving(false);
+    }
+  }
+  return <aside className="panel matter-detail matter-editor">
+    <span className="detail-kicker">{mode === "create" ? "NEW MATTER" : "EDIT MATTER"}</span>
+    <h2>{mode === "create" ? "新規案件" : values.title || "案件を編集"}</h2>
+    {error && <div className="async-error">{error}</div>}
+    <label>案件名 *<input value={values.title} onChange={(e) => set("title", e.target.value)} placeholder="案件名" /></label>
+    <div className="matter-form-grid">
+      <label>状態<select value={values.status} onChange={(e) => set("status", e.target.value)}>
+        {MATTER_STATUSES.map((s) => <option key={s} value={s}>{statusLabels[s]}</option>)}</select></label>
+      <label>工程<select value={values.lifecycleStage} onChange={(e) => set("lifecycleStage", e.target.value)}>
+        <option value="">未設定</option>{LIFECYCLE_STAGES.map((s) => <option key={s} value={s}>{stageLabels[s]}</option>)}</select></label>
+      <label>相手方<input value={values.counterparty} onChange={(e) => set("counterparty", e.target.value)} /></label>
+      <label>代表課題キー<input value={values.primaryIssueKey} onChange={(e) => set("primaryIssueKey", e.target.value)} placeholder="LEGAL-123" /></label>
+      <label>目標期限<input type="date" value={values.targetDueDate ?? ""} onChange={(e) => set("targetDueDate", e.target.value)} /></label>
+    </div>
+    <label>停滞理由<input value={values.blockedReason} onChange={(e) => set("blockedReason", e.target.value)} /></label>
+    <label>備考<textarea rows={3} value={values.remarks} onChange={(e) => set("remarks", e.target.value)} /></label>
+    <div className="matter-form-actions">
+      <button className="primary" disabled={saving} onClick={submit}>{saving ? "保存中…" : "保存"}</button>
+      <button disabled={saving} onClick={onCancel}>キャンセル</button>
+    </div>
+  </aside>;
+}
+
+function TaskRow({ matterId, task, canEdit, onChanged }: {
+  matterId: number;
+  task: Detail["tasks"][number];
+  canEdit: boolean;
+  onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  async function patch(body: Record<string, unknown>) {
+    setBusy(true);
+    try {
+      const response = await fetch(`/api/v2/matters/${matterId}/tasks/${task.id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+      });
+      if (response.ok) onChanged();
+    } finally { setBusy(false); }
+  }
+  return <article className={task.isPrimary ? "primary-task" : ""}>
+    <b>{task.title}</b>
+    <span>{task.assigneeName ?? "担当未設定"}・{taskStatusLabels[task.status] ?? task.status}{task.isPrimary ? "・次アクション" : ""}</span>
+    <small>{task.dueAt ? formatDate(task.dueAt) : "期限未設定"}{task.blockedReason && `・${task.blockedReason}`}</small>
+    {canEdit && <div className="task-actions">
+      <select value={task.status} disabled={busy} onChange={(e) => patch({ status: e.target.value })}>
+        {TASK_STATUSES.map((s) => <option key={s} value={s}>{taskStatusLabels[s]}</option>)}
+      </select>
+      {!task.isPrimary && <button disabled={busy} onClick={() => patch({ isPrimary: true })}>次アクションに設定</button>}
+    </div>}
+  </article>;
+}
+
+function TaskForm({ matterId, onCancel, onSaved }: {
+  matterId: number; onCancel: () => void; onSaved: () => void;
+}) {
+  const [title, setTitle] = useState("");
+  const [taskStatus, setTaskStatus] = useState("open");
+  const [dueAt, setDueAt] = useState("");
+  const [isPrimary, setIsPrimary] = useState(false);
+  const [blockedReason, setBlockedReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  async function submit() {
+    if (!title.trim()) { setError("タスク名は必須です。"); return; }
+    setSaving(true); setError("");
+    const body = {
+      title: title.trim(), status: taskStatus, isPrimary,
+      blockedReason,
+      dueAt: dueAt ? new Date(dueAt).toISOString() : null
+    };
+    try {
+      const response = await fetch(`/api/v2/matters/${matterId}/tasks`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+      });
+      if (!response.ok) {
+        const detail = await response.json().catch(() => ({}));
+        setError(detail.error ?? "保存に失敗しました。"); setSaving(false); return;
+      }
+      onSaved();
+    } catch {
+      setError("通信に失敗しました。"); setSaving(false);
+    }
+  }
+  return <div className="task-form">
+    {error && <div className="async-error">{error}</div>}
+    <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="タスク名（例：ドラフト送付）" />
+    <div className="matter-form-grid">
+      <label>状態<select value={taskStatus} onChange={(e) => setTaskStatus(e.target.value)}>
+        {TASK_STATUSES.map((s) => <option key={s} value={s}>{taskStatusLabels[s]}</option>)}</select></label>
+      <label>期限<input type="datetime-local" value={dueAt} onChange={(e) => setDueAt(e.target.value)} /></label>
+    </div>
+    <label>停滞理由<input value={blockedReason} onChange={(e) => setBlockedReason(e.target.value)} /></label>
+    <label className="task-primary-toggle"><input type="checkbox" checked={isPrimary} onChange={(e) => setIsPrimary(e.target.checked)} />この案件の次アクションにする</label>
+    <div className="matter-form-actions">
+      <button className="primary" disabled={saving} onClick={submit}>{saving ? "保存中…" : "タスクを追加"}</button>
+      <button disabled={saving} onClick={onCancel}>キャンセル</button>
+    </div>
+  </div>;
+}
+
+function DetailSection({ title, children, action }:
+  { title: string; children: React.ReactNode; action?: React.ReactNode }) {
+  return <section className="matter-detail-section">
+    <h3>{title}{action}</h3><div>{children}</div>
+  </section>;
 }
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("ja-JP", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(value));

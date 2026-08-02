@@ -188,6 +188,28 @@ case "${CONTRACT_INTAKE_WRITES_ENABLED}" in
     exit 1
     ;;
 esac
+case "${MATTER_WRITES_ENABLED}" in
+  false)
+    ;;
+  true)
+    if [ "${CONFIRM_MATTER_WRITES}" != "MATTER_MANAGEMENT_LEGALBRIDGE_VALIDATION_ONLY" ]; then
+      echo "Matter management deployment blocked: explicit production validation confirmation is missing."
+      exit 1
+    fi
+    if [ "${PRIMARY_DB_MODE}" != "production" ] || [ "${SERVICE}" != "legalbridge-v2-write-test" ] || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
+      echo "Matter management deployment blocked: service, database, runtime user, or password secret does not match the approved target."
+      exit 1
+    fi
+    if [ "${AUTH_MODE}" != "iap" ] && [ "${AUTH_MODE}" != "cloudrun-iam" ]; then
+      echo "Matter management deployment blocked: IAP or Cloud Run IAM authentication is required."
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Deployment blocked: MATTER_WRITES_ENABLED must be true or false."
+    exit 1
+    ;;
+esac
 case "${SLACK_APPROVAL_WRITES_ENABLED}" in
   false)
     ;;
@@ -262,6 +284,9 @@ if [ "${OUTBOUND_CONDITION_WRITES_ENABLED}" = "true" ]; then
 fi
 if [ "${CONTRACT_INTAKE_WRITES_ENABLED}" = "true" ]; then
   expected_write_scopes="$expected_write_scopes,contract-intake"
+fi
+if [ "${MATTER_WRITES_ENABLED}" = "true" ]; then
+  expected_write_scopes="$expected_write_scopes,matters"
 fi
 if [ "${SLACK_DISPATCH_ENABLED}" = "true" ]; then
   expected_write_scopes="$expected_write_scopes,slack,slack-dispatch"
