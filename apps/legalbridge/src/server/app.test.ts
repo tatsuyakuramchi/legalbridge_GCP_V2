@@ -480,6 +480,10 @@ test("取引先・作品・金銭条件台帳を検索する", async () => {
       {
         id: "work-1", type: "works", code: "W-001", title: "作品A",
         subtitle: "自社作品", detail: { 状態: "released" }
+      },
+      {
+        id: "material-1", type: "materials", code: "MAT-001", title: "原作素材A",
+        subtitle: "W-001・作品A・game_design", detail: { 権利区分: "license" }
       }
     ])
   }, { accessMode: "readonly", requireDatabase: false });
@@ -487,6 +491,8 @@ test("取引先・作品・金銭条件台帳を検索する", async () => {
   assert.equal(vendors.body.items[0].code, "V-001");
   const works = await request(target).get("/api/v2/ledgers/works").query({ q: "作品" }).expect(200);
   assert.equal(works.body.items[0].title, "作品A");
+  const materials = await request(target).get("/api/v2/ledgers/materials").query({ q: "原作素材" }).expect(200);
+  assert.equal(materials.body.items[0].code, "MAT-001");
   await request(target).get("/api/v2/ledgers/unknown").expect(404);
 });
 
