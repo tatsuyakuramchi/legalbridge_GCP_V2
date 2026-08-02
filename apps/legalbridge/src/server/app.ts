@@ -51,6 +51,10 @@ import {
 import { createMasterDataRouter } from "./master-data/routes.js";
 import { MemoryMatterRepository, PgMatterRepository, type MatterRepository } from "./matters/repository.js";
 import { createMatterRouter } from "./matters/routes.js";
+import {
+  MemoryMatterWriteRepository, PgMatterWriteRepository, type MatterWriteRepository
+} from "./matters/write-repository.js";
+import { createMatterWriteRouter } from "./matters/write-routes.js";
 import { MemoryLedgerRepository, PgLedgerRepository, type LedgerRepository } from "./ledgers/repository.js";
 import { createLedgerRouter } from "./ledgers/routes.js";
 import { createOutboundConditionRouter } from "./ledgers/outbound-conditions.js";
@@ -181,6 +185,7 @@ export interface AppDependencies {
   masterData?: MasterDataRepository;
   documentRegistry?: DocumentRegistryRepository;
   matters?: MatterRepository;
+  matterWrites?: MatterWriteRepository;
   ledgers?: LedgerRepository;
   search?: GlobalSearchRepository;
   admin?: AdminRepository;
@@ -202,6 +207,7 @@ export interface AppOptions {
   writeScopes?: Set<string>;
   outboundConditionWritesEnabled?: boolean;
   contractIntakeWritesEnabled?: boolean;
+  matterWritesEnabled?: boolean;
   auth?: AuthSettings;
 }
 
@@ -223,6 +229,9 @@ function createDefaultDependencies(): AppDependencies {
       ? new PgDocumentRegistryRepository(database)
       : new MemoryDocumentRegistryRepository(),
     matters: database ? new PgMatterRepository(database) : new MemoryMatterRepository(),
+    matterWrites: database
+      ? new PgMatterWriteRepository(database)
+      : new MemoryMatterWriteRepository(),
     ledgers: database ? new PgLedgerRepository(database) : new MemoryLedgerRepository(),
     search: database ? new PgGlobalSearchRepository(database) : new MemoryGlobalSearchRepository(),
     admin: database ? new PgAdminRepository(database) : new MemoryAdminRepository(),
@@ -266,6 +275,7 @@ export function createApp(
     writeScopes: config.writeScopes,
     outboundConditionWritesEnabled: config.outboundConditionWritesEnabled,
     contractIntakeWritesEnabled: config.contractIntakeWritesEnabled,
+    matterWritesEnabled: config.matterWritesEnabled,
     auth: config.auth
   }
 ) {
@@ -322,6 +332,12 @@ export function createApp(
   const contractOutboundWriteEnabled =
     contractIntakeWriteEnabled &&
     Boolean(dependencies.contractOutbound);
+  const matterWriteEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.matterWritesEnabled === true &&
+    options.writeScopes?.has("matters") === true &&
+    Boolean(dependencies.matterWrites);
   const driveStorageEnabled =
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
@@ -366,6 +382,7 @@ export function createApp(
         ...(slackApprovalWriteEnabled ? ["slack-approvals"] : []),
         ...(outboundConditionWriteEnabled ? ["outbound-conditions"] : []),
         ...(contractIntakeWriteEnabled ? ["contract-intake"] : []),
+        ...(matterWriteEnabled ? ["matters"] : []),
         ...(slackDispatchEnabled ? ["slack-dispatch"] : [])
       ],
       database,
@@ -384,7 +401,8 @@ export function createApp(
       writeFeaturesEnabled:
         draftWriteEnabled || documentFinalizeEnabled || pdfGenerationEnabled ||
         driveStorageEnabled || slackApprovalWriteEnabled ||
-        outboundConditionWriteEnabled || contractIntakeWriteEnabled,
+        outboundConditionWriteEnabled || contractIntakeWriteEnabled ||
+        matterWriteEnabled,
       writeCapabilities: [
         ...(draftWriteEnabled ? ["drafts"] : []),
         ...(documentFinalizeEnabled ? ["documents"] : []),
@@ -393,6 +411,7 @@ export function createApp(
         ...(slackApprovalWriteEnabled ? ["slack-approvals"] : []),
         ...(outboundConditionWriteEnabled ? ["outbound-conditions"] : []),
         ...(contractIntakeWriteEnabled ? ["contract-intake"] : []),
+        ...(matterWriteEnabled ? ["matters"] : []),
         ...(slackDispatchEnabled ? ["slack-dispatch"] : [])
       ],
       integrations: config.integrationMode,
@@ -422,6 +441,7 @@ export function createApp(
     const safePostPaths = new Set([
       "/documents/validate",
       "/documents/preview",
+      "/matters/validate",
       "/outbound-conditions/validate",
       "/contract-intakes/validate",
       "/contract-intakes/preflight",
@@ -464,6 +484,12 @@ export function createApp(
       /^\/contract-intakes\/\d+\/outbound-conditions$/.test(request.path);
     if (contractOutboundWriteEnabled &&
         isContractOutboundAppend) return next();
+    const isMatterWrite =
+      (request.method === "POST" && request.path === "/matters") ||
+      (request.method === "PATCH" && /^\/matters\/\d+$/.test(request.path)) ||
+      (request.method === "POST" && /^\/matters\/\d+\/tasks$/.test(request.path)) ||
+      (request.method === "PATCH" && /^\/matters\/\d+\/tasks\/\d+$/.test(request.path));
+    if (matterWriteEnabled && isMatterWrite) return next();
 
     return response.status(403).json({
       error: options.accessMode === "readonly"
@@ -502,6 +528,10 @@ export function createApp(
   ));
   const matterRepository = dependencies.matters ?? new MemoryMatterRepository();
   app.use("/api/v2", createMatterRouter(matterRepository));
+  app.use("/api/v2", createMatterWriteRouter(
+    dependencies.matterWrites,
+    matterWriteEnabled
+  ));
   app.use("/api/v2", createLedgerRouter(
     dependencies.ledgers ?? new MemoryLedgerRepository()
   ));
