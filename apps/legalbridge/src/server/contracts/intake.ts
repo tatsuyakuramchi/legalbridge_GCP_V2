@@ -154,11 +154,11 @@ const conditionBaseSchema = z.object({
   }
 });
 
-const inboundConditionSchema = conditionBaseSchema.extend({
+const inboundConditionSchema = conditionBaseSchema.safeExtend({
   counterpartyVendorId: z.number().int().positive().optional()
 });
 
-const outboundConditionSchema = conditionBaseSchema.extend({
+const outboundConditionSchema = conditionBaseSchema.safeExtend({
   counterpartyVendorId: z.number().int().positive(),
   parentInboundIndex: z.number().int().nonnegative()
 });
