@@ -80,6 +80,14 @@ import { createAdminRouter } from "./admin/routes.js";
 import { createOperationalDiagnosticsRouter } from "./admin/diagnostics.js";
 import { createSlackRecipientDirectory } from "./integrations/slack-recipient-resolver.js";
 import {
+  DisabledSlackDeliveryAdapter,
+  type SlackDeliveryAdapter
+} from "./integrations/slack-delivery-adapter.js";
+import {
+  SlackWebApiDeliveryAdapter,
+  FetchSlackWebApiClient
+} from "./integrations/slack-web-api-adapter.js";
+import {
   PgSlackNotificationApprovalRepository,
   type SlackNotificationApprovalRepository
 } from "./integrations/slack-approval-repository.js";
@@ -279,6 +287,22 @@ export function createApp(
     options.writeFeaturesEnabled === true &&
     options.writeScopes?.has("slack-approvals") === true &&
     Boolean(dependencies.slackApprovals);
+  const slackCapabilityEnabled =
+    options.writeFeaturesEnabled === true &&
+    options.writeScopes?.has("slack") === true;
+  const slackDeliveryAdapter: SlackDeliveryAdapter =
+    config.slackDeliveryMode === "live" && /^xoxb-[A-Za-z0-9-]+$/.test(config.slackBotToken)
+      ? new SlackWebApiDeliveryAdapter(new FetchSlackWebApiClient(config.slackBotToken))
+      : new DisabledSlackDeliveryAdapter();
+  const slackDispatchEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.writeScopes?.has("slack-dispatch") === true &&
+    slackCapabilityEnabled &&
+    config.slackDeliveryMode === "live" &&
+    slackDeliveryAdapter.configured &&
+    Boolean(dependencies.slackHistory) &&
+    Boolean(dependencies.slackApprovals);
   const outboundConditionWriteEnabled =
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
@@ -341,7 +365,8 @@ export function createApp(
         ...(driveStorageEnabled ? ["drive"] : []),
         ...(slackApprovalWriteEnabled ? ["slack-approvals"] : []),
         ...(outboundConditionWriteEnabled ? ["outbound-conditions"] : []),
-        ...(contractIntakeWriteEnabled ? ["contract-intake"] : [])
+        ...(contractIntakeWriteEnabled ? ["contract-intake"] : []),
+        ...(slackDispatchEnabled ? ["slack-dispatch"] : [])
       ],
       database,
       outboundDatabase
@@ -367,7 +392,8 @@ export function createApp(
         ...(driveStorageEnabled ? ["drive"] : []),
         ...(slackApprovalWriteEnabled ? ["slack-approvals"] : []),
         ...(outboundConditionWriteEnabled ? ["outbound-conditions"] : []),
-        ...(contractIntakeWriteEnabled ? ["contract-intake"] : [])
+        ...(contractIntakeWriteEnabled ? ["contract-intake"] : []),
+        ...(slackDispatchEnabled ? ["slack-dispatch"] : [])
       ],
       integrations: config.integrationMode,
       authMode: (options.auth ?? config.auth).mode,
@@ -417,6 +443,10 @@ export function createApp(
       request.method === "POST" &&
       request.path === "/admin/slack-notification-approvals";
     if (slackApprovalWriteEnabled && isSlackApproval) return next();
+    const isSlackDispatch =
+      request.method === "POST" &&
+      request.path === "/admin/slack-notifications/dispatch";
+    if (slackDispatchEnabled && isSlackDispatch) return next();
     const isOutboundConditionWrite =
       request.method === "POST" && request.path === "/outbound-conditions";
     if (outboundConditionWriteEnabled && isOutboundConditionWrite) return next();
@@ -503,12 +533,11 @@ export function createApp(
     createSlackRecipientDirectory(config.slackDryRunUserMap),
     {
       integrationMode: config.integrationMode,
-      slackCapabilityEnabled:
-        options.writeFeaturesEnabled === true &&
-        options.writeScopes?.has("slack") === true,
-      adapterConfigured: false
+      slackCapabilityEnabled,
+      adapterConfigured: slackDeliveryAdapter.configured
     },
-    slackApprovalWriteEnabled
+    slackApprovalWriteEnabled,
+    { adapter: slackDeliveryAdapter, enabled: slackDispatchEnabled }
   ));
   app.use("/api/v2", createTemplateRegressionRouter(dependencies.templates));
   app.use("/api/v2", createOperationalDiagnosticsRouter(

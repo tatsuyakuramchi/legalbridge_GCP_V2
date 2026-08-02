@@ -56,10 +56,24 @@ curl -s -H "Authorization: Bearer $TOKEN" "$SERVICE_URL/api/v2/integrations/stat
 
 - **プレビュー（送信なし）**：`GET /api/v2/admin/slack-notification-candidates` が実案件を七状態の通知候補へ変換して返す（`slackUxPreviewCatalog` / `buildSlackNotificationCandidates`）。まずここで文面・現在地・次の行動・重複抑止を確認
 - **承認（DB追記のみ）**：`slack-approvals` スコープ + 履歴/承認テーブル（`SLACK_NOTIFICATION_HISTORY_ENABLED` / `SLACK_NOTIFICATION_APPROVALS_ENABLED`）で、送信可否の判断を追記（送信はまだしない）
-- **検証チャンネルへ dry-run**：`SLACK_DRY_RUN_USER_MAP` を実解決し、配信ゲート（`slack-dispatch-gate`）の全条件が揃った候補だけを検証チャンネルへ送る。冪等（同一指紋の重複送信を抑止）
+- **検証送信（実DM・検証宛先限定）**：`POST /api/v2/admin/slack-notifications/dispatch`（管理者・要 `confirmation:"SEND_SLACK_VALIDATION"`）。承認済みの1件を、多重ゲート充足時だけ**DMで1回**送る。宛先は `SLACK_DRY_RUN_USER_MAP` に解決される検証ユーザーのみ（未マップの実依頼者へは送られない）。冪等（同一指紋の重複送信を抑止）
 - **本番チャンネル**：検証完了後に限定開放
 
-> Slackはデフォルト画面にせず、申請入口と利用者の行動が必要な通知に限定する（Production Readiness §6）。
+### 検証送信の有効化（deploy）
+
+実DMは次が**すべて揃った時だけ**送信される：`SLACK_DELIVERY_MODE=live` ＋ 実アダプタ（`SLACK_BOT_TOKEN`）＋ 管理者による個別承認 ＋ 履歴接続 ＋ 非重複 ＋ 宛先が検証マップに存在。
+
+前提：`SLACK_BOT_TOKEN` Secret（V1が保有）へ V2デプロイSAの `secretAccessor`、006で本番`legalbridge`にSlack履歴/承認テーブル作成済み、検証宛先マップ（`メール=SlackユーザーID`）。
+
+`cloudbuild-write-test` の Slack配信ゲートを通す substitution（既存の deploy に追加）：
+
+```
+|_SLACK_NOTIFICATION_HISTORY_ENABLED=true|_SLACK_NOTIFICATION_APPROVALS_ENABLED=true|_SLACK_APPROVAL_WRITES_ENABLED=true|_CONFIRM_SLACK_APPROVAL_WRITES=SLACK_APPROVAL_WRITES_VALIDATION_ONLY|_SLACK_DRY_RUN_USER_MAP=<メール>=<SlackユーザーID>|_SLACK_DELIVERY_MODE=live|_SLACK_DISPATCH_ENABLED=true|_CONFIRM_SLACK_DISPATCH=SLACK_DISPATCH_VALIDATION_ONLY|_SLACK_BOT_TOKEN_SECRET=SLACK_BOT_TOKEN
+```
+
+`WRITE_SCOPES` の末尾に `,slack,slack-dispatch` を追加（`slack-approvals` 有効時は該当位置に含める。順序は `verify-isolation` と完全一致）。有効化後、`/api/v2/runtime` の `writeCapabilities` に `slack-dispatch` が出る。
+
+> Slackはデフォルト画面にせず、申請入口と利用者の行動が必要な通知に限定する（Production Readiness §6）。検証段階では `SLACK_DRY_RUN_USER_MAP` を**検証ユーザーのみ**に絞ること。
 
 ## 5. Gmail / CloudSign（V1移植が必要）
 

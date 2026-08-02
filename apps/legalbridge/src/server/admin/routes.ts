@@ -12,6 +12,17 @@ import {
   evaluateSlackDispatchGate,
   type SlackDispatchGateSettings
 } from "../integrations/slack-dispatch-gate.js";
+import {
+  dispatchSlackNotification,
+  DisabledSlackDeliveryAdapter,
+  type SlackDeliveryAdapter
+} from "../integrations/slack-delivery-adapter.js";
+
+export interface SlackDeliveryBinding {
+  adapter: SlackDeliveryAdapter;
+  enabled: boolean;
+}
+
 export function createAdminRouter(
   repository: AdminRepository,
   matters: MatterRepository | undefined,
@@ -22,7 +33,11 @@ export function createAdminRouter(
     SlackDispatchGateSettings,
     "integrationMode" | "slackCapabilityEnabled" | "adapterConfigured"
   >,
-  approvalWriteEnabled = false
+  approvalWriteEnabled = false,
+  slackDelivery: SlackDeliveryBinding = {
+    adapter: new DisabledSlackDeliveryAdapter(),
+    enabled: false
+  }
 ) {
   const router = Router();
   router.get("/admin/overview", async (_request, response, next) => {
@@ -199,6 +214,73 @@ export function createAdminRouter(
         externalSend: false,
         historyAppend: false
       });
+    } catch (error) { next(error); }
+  });
+  router.post("/admin/slack-notifications/dispatch", async (request, response, next) => {
+    try {
+      if (!slackDelivery.enabled || !slackDelivery.adapter.configured ||
+          !matters || !history || !approvals) {
+        return response.status(403).json({
+          error: "Slack validation dispatch is disabled",
+          code: "SLACK_DISPATCH_DISABLED"
+        });
+      }
+      if (request.body?.confirmation !== "SEND_SLACK_VALIDATION") {
+        return response.status(400).json({
+          error: "explicit validation dispatch confirmation is required",
+          code: "SLACK_DISPATCH_CONFIRMATION_REQUIRED"
+        });
+      }
+      const issueKey = typeof request.body?.issueKey === "string"
+        ? request.body.issueKey.trim()
+        : "";
+      const fingerprint = typeof request.body?.fingerprint === "string"
+        ? request.body.fingerprint.trim().toLowerCase()
+        : "";
+      if (!/^[A-Z][A-Z0-9_]*-[0-9]+$/.test(issueKey) ||
+          !/^[a-f0-9]{64}$/.test(fingerprint)) {
+        return response.status(400).json({
+          error: "Invalid Slack dispatch request",
+          code: "SLACK_DISPATCH_INVALID"
+        });
+      }
+      const sourceMatters = await matters.list("", undefined, 200);
+      const baseUrl = `${request.protocol}://${request.get("host")}`;
+      const rawCandidates = buildSlackNotificationCandidates(sourceMatters, baseUrl);
+      const historyRecords = await history.list(rawCandidates.map((item) => item.issueKey));
+      const candidates = evaluateSlackCandidates(rawCandidates, historyRecords);
+      const dryRunQueue = buildSlackDryRunQueue(candidates, slackRecipients);
+      const envelope = dryRunQueue.find(
+        (item) => item.issueKey === issueKey && item.fingerprint === fingerprint
+      );
+      if (!envelope) {
+        return response.status(409).json({
+          error: "Slack notification content has changed; reload before sending",
+          code: "SLACK_DISPATCH_STALE"
+        });
+      }
+      const approval = (await approvals.listLatest([issueKey]))
+        .find((item) => item.issueKey === issueKey);
+      const approvedFingerprint =
+        approval?.decision === "approved" ? approval.fingerprint : null;
+      const execution = await dispatchSlackNotification({
+        envelope,
+        gateSettings: {
+          integrationMode: dispatchSettings.integrationMode,
+          slackCapabilityEnabled: dispatchSettings.slackCapabilityEnabled,
+          historyConnected: true,
+          approvedFingerprint
+        },
+        adapter: slackDelivery.adapter,
+        history,
+        recordedBy: response.locals.currentUser!.email
+      });
+      const status = execution.status === "sent"
+        ? 201
+        : execution.status === "duplicate"
+          ? 200
+          : 409;
+      return response.status(status).json({ issueKey, fingerprint, execution });
     } catch (error) { next(error); }
   });
   router.get("/admin/slack-ux-preview", (_request, response) => {

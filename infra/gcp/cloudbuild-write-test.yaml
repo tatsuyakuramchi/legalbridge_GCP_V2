@@ -42,6 +42,9 @@ substitutions:
   _GOOGLE_DRIVE_FOLDER_ID: BLOCKED
   _GWS_SA_KEY_SECRET: BLOCKED
   _DRIVE_ENVIRONMENT_TAG: validation
+  _SLACK_DISPATCH_ENABLED: "false"
+  _CONFIRM_SLACK_DISPATCH: BLOCKED
+  _SLACK_BOT_TOKEN_SECRET: SLACK_BOT_TOKEN
 
 steps:
   - id: test
@@ -154,11 +157,47 @@ steps:
           disabled)
             ;;
           live)
-            echo "Slack live delivery is not enabled by this deployment foundation."
-            exit 1
+            if [ "${_SLACK_DISPATCH_ENABLED}" != "true" ]; then
+              echo "Slack live delivery requires SLACK_DISPATCH_ENABLED=true with the validation gate."
+              exit 1
+            fi
             ;;
           *)
             echo "Deployment blocked: SLACK_DELIVERY_MODE must be disabled or live."
+            exit 1
+            ;;
+        esac
+        case "${_SLACK_DISPATCH_ENABLED}" in
+          false)
+            ;;
+          true)
+            if [ "${_CONFIRM_SLACK_DISPATCH}" != "SLACK_DISPATCH_VALIDATION_ONLY" ]; then
+              echo "Slack dispatch deployment blocked: explicit validation confirmation is missing."
+              exit 1
+            fi
+            if [ "${_SERVICE}" != "legalbridge-v2-write-test" ] || [ "${_SLACK_DELIVERY_MODE}" != "live" ]; then
+              echo "Slack dispatch deployment blocked: service or delivery mode does not match the approved target."
+              exit 1
+            fi
+            if [ "${_AUTH_MODE}" != "iap" ] && [ "${_AUTH_MODE}" != "cloudrun-iam" ]; then
+              echo "Slack dispatch deployment blocked: IAP or Cloud Run IAM authentication is required."
+              exit 1
+            fi
+            if [ "${_SLACK_APPROVAL_WRITES_ENABLED}" != "true" ] || [ "${_SLACK_NOTIFICATION_HISTORY_ENABLED}" != "true" ] || [ "${_SLACK_NOTIFICATION_APPROVALS_ENABLED}" != "true" ]; then
+              echo "Slack dispatch deployment blocked: approval writes, history, and approvals must all be enabled."
+              exit 1
+            fi
+            if [ -z "${_SLACK_DRY_RUN_USER_MAP}" ] || [ "${_SLACK_DRY_RUN_USER_MAP}" = "UNRESOLVED" ]; then
+              echo "Slack dispatch deployment blocked: an explicit validation recipient map is required."
+              exit 1
+            fi
+            if [ -z "${_SLACK_BOT_TOKEN_SECRET}" ] || [ "${_SLACK_BOT_TOKEN_SECRET}" = "BLOCKED" ]; then
+              echo "Slack dispatch deployment blocked: Slack bot token secret is not set."
+              exit 1
+            fi
+            ;;
+          *)
+            echo "Deployment blocked: SLACK_DISPATCH_ENABLED must be true or false."
             exit 1
             ;;
         esac
@@ -220,8 +259,14 @@ steps:
               echo "Slack approval deployment blocked: explicit validation-only confirmation is missing."
               exit 1
             fi
-            if [ "${_SERVICE}" != "legalbridge-v2-write-test" ] || [ "${_DB_NAME}" != "legalbridge_v2_validation" ]; then
-              echo "Slack approval deployment blocked: target is not the isolated validation environment."
+            # 隔離検証DB、または本番runtime（006がlegalbridgeにSlack履歴/承認
+            # テーブルを作成しruntimeへ権限付与済み）のいずれかを許可する。
+            if [ "${_SERVICE}" != "legalbridge-v2-write-test" ]; then
+              echo "Slack approval deployment blocked: target service is not the write-test environment."
+              exit 1
+            fi
+            if [ "${_DB_NAME}" != "legalbridge_v2_validation" ] && [ "${_DB_NAME}" != "legalbridge" ]; then
+              echo "Slack approval deployment blocked: unexpected database target."
               exit 1
             fi
             if [ "${_AUTH_MODE}" != "iap" ] && [ "${_AUTH_MODE}" != "cloudrun-iam" ]; then
@@ -281,6 +326,9 @@ steps:
         if [ "${_CONTRACT_INTAKE_WRITES_ENABLED}" = "true" ]; then
           expected_write_scopes="$$expected_write_scopes,contract-intake"
         fi
+        if [ "${_SLACK_DISPATCH_ENABLED}" = "true" ]; then
+          expected_write_scopes="$$expected_write_scopes,slack,slack-dispatch"
+        fi
         if [ "${_WRITE_SCOPES}" != "$$expected_write_scopes" ]; then
           echo "Deployment blocked: WRITE_SCOPES does not exactly match the enabled guarded capabilities."
           exit 1
@@ -314,6 +362,9 @@ steps:
             SECRETS="$$SECRETS,/secrets/gws-service-account.json=${_GWS_SA_KEY_SECRET}:latest"
             ENVVARS="$$ENVVARS~GOOGLE_SERVICE_ACCOUNT_KEY_PATH=/secrets/gws-service-account.json"
           fi
+        fi
+        if [ "${_SLACK_DISPATCH_ENABLED}" = "true" ]; then
+          SECRETS="$$SECRETS,SLACK_BOT_TOKEN=${_SLACK_BOT_TOKEN_SECRET}:latest"
         fi
         gcloud run deploy "${_SERVICE}" \
           --image="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPOSITORY}/${_IMAGE}:${BUILD_ID}" \
