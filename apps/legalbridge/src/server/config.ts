@@ -52,7 +52,7 @@ export const config = {
     process.env.SLACK_DRY_RUN_USER_MAP ?? "",
   slackDeliveryMode:
     process.env.SLACK_DELIVERY_MODE === "live" ? "live" as const : "disabled" as const,
-  slackBotToken: process.env.SLACK_BOT_TOKEN ?? "",
+  slackBotToken: (process.env.SLACK_BOT_TOKEN ?? "").trim(),
   backlogMode: backlogMode(process.env.BACKLOG_MODE),
   backlogHost: process.env.BACKLOG_HOST ?? "",
   backlogProjectKey: process.env.BACKLOG_PROJECT_KEY ?? "",
