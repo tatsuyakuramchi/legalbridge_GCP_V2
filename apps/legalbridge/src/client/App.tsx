@@ -14,7 +14,7 @@ import { GlobalSearch } from "./GlobalSearch";
 import { AdminOverview } from "./AdminOverview";
 import { DraftWorkspace } from "./DraftWorkspace";
 import { OutboundConditionWorkspace } from "./OutboundConditionWorkspace";
-import { ContractIntakeWorkspace } from "./ContractIntakeWorkspace";
+import { ContractChainWizard } from "./ContractChainWizard";
 
 type CompatibilityReport = { summary: { total: number; ok: number; warning: number; error: number }; reports: Array<{ templateKey: string; status: "ok" | "warning" | "error"; missingHelpers: string[]; missingPartials: string[]; unmappedVariables: string[]; renderError?: string }> };
 
@@ -170,7 +170,7 @@ export function App() {
           initialQuery={searchSelection?.target === "work" || searchSelection?.target === "vendor" ? searchSelection.title : undefined}
           selectedId={searchSelection?.target === "work" || searchSelection?.target === "vendor" ? searchSelection.id : undefined} />}
         {view === "contract-intake" && adminWorkspace && (
-          <ContractIntakeWorkspace
+          <ContractChainWizard
             canCommit={canCommitContractIntake}
             onOpenDraft={resumeDraft}
           />
