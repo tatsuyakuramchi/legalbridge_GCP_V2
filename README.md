@@ -67,7 +67,7 @@ docker compose up --build
 - 本番DB参照環境ではアプリとDBセッションの両方をread-onlyにする
 - Backlog、Slack、メール、CloudSignへのlive送信は未開放
 
-詳しい環境構築は[ローカル・GCP手順](docs/local-to-gcp.md)、本番移行条件は[Production Readiness Runbook](docs/production-readiness.md)、締結済契約取込の書込みデプロイは[契約取込デプロイ手順](docs/contract-intake-deploy.md)、Drive連携は[Google Drive連携](docs/drive-integration.md)を参照してください。
+詳しい環境構築は[ローカル・GCP手順](docs/local-to-gcp.md)、本番移行条件は[Production Readiness Runbook](docs/production-readiness.md)、締結済契約取込の書込みデプロイは[契約取込デプロイ手順](docs/contract-intake-deploy.md)、Drive連携は[Google Drive連携](docs/drive-integration.md)、外部連携の段階開放は[外部連携 段階的接続](docs/integrations-rollout.md)を参照してください。
 
 ## 次のフェーズ
 
