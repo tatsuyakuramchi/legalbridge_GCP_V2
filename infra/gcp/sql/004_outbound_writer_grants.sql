@@ -44,12 +44,12 @@ BEGIN
 END
 $guard$;
 
+-- Cloud SQL's built-in postgres account is not a true PostgreSQL superuser.
+-- It can remove CREATEDB and CREATEROLE from ordinary login roles, but it
+-- cannot execute ALTER ROLE clauses that touch superuser-only attributes.
 ALTER ROLE legalbridge_v2_outbound_writer
-  NOSUPERUSER
   NOCREATEDB
-  NOCREATEROLE
-  NOREPLICATION
-  NOBYPASSRLS;
+  NOCREATEROLE;
 
 GRANT CONNECT ON DATABASE legalbridge TO legalbridge_v2_outbound_writer;
 GRANT USAGE ON SCHEMA public TO legalbridge_v2_outbound_writer;
