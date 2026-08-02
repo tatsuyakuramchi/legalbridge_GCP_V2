@@ -82,6 +82,8 @@ ALTER ROLE legalbridge_v2_runtime
 
 GRANT CONNECT ON DATABASE legalbridge TO legalbridge_v2_runtime;
 GRANT USAGE ON SCHEMA public TO legalbridge_v2_runtime;
+GRANT EXECUTE ON FUNCTION public.lb_norm_name(text)
+TO legalbridge_v2_runtime;
 
 GRANT SELECT ON TABLE
   public.vendors
