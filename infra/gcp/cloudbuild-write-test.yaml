@@ -35,6 +35,8 @@ substitutions:
   _OUTBOUND_DB_USER: BLOCKED
   _OUTBOUND_DB_PASSWORD_SECRET: legalbridge-v2-outbound-db-password
   _CONFIRM_OUTBOUND_WRITES: BLOCKED
+  _CONTRACT_INTAKE_WRITES_ENABLED: "false"
+  _CONFIRM_CONTRACT_INTAKE_WRITES: BLOCKED
 
 steps:
   - id: test
@@ -183,6 +185,28 @@ steps:
             exit 1
             ;;
         esac
+        case "${_CONTRACT_INTAKE_WRITES_ENABLED}" in
+          false)
+            ;;
+          true)
+            if [ "${_CONFIRM_CONTRACT_INTAKE_WRITES}" != "CONTRACT_INTAKE_LEGALBRIDGE_VALIDATION_ONLY" ]; then
+              echo "Contract intake deployment blocked: explicit production validation confirmation is missing."
+              exit 1
+            fi
+            if [ "${_PRIMARY_DB_MODE}" != "production" ] || [ "${_SERVICE}" != "legalbridge-v2-write-test" ] || [ "${_DB_NAME}" != "legalbridge" ] || [ "${_DB_USER}" != "legalbridge_v2_runtime" ] || [ "${_DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
+              echo "Contract intake deployment blocked: service, database, runtime user, or password secret does not match the approved target."
+              exit 1
+            fi
+            if [ "${_AUTH_MODE}" != "iap" ] && [ "${_AUTH_MODE}" != "cloudrun-iam" ]; then
+              echo "Contract intake deployment blocked: IAP or Cloud Run IAM authentication is required."
+              exit 1
+            fi
+            ;;
+          *)
+            echo "Deployment blocked: CONTRACT_INTAKE_WRITES_ENABLED must be true or false."
+            exit 1
+            ;;
+        esac
         case "${_SLACK_APPROVAL_WRITES_ENABLED}" in
           false)
             ;;
@@ -218,7 +242,10 @@ steps:
           expected_write_scopes="$$expected_write_scopes,slack-approvals"
         fi
         if [ "${_OUTBOUND_CONDITION_WRITES_ENABLED}" = "true" ]; then
-          expected_write_scopes="$$expected_write_scopes,outbound-conditions"
+          expected_write_scopes="$expected_write_scopes,outbound-conditions"
+        fi
+        if [ "${_CONTRACT_INTAKE_WRITES_ENABLED}" = "true" ]; then
+          expected_write_scopes="$expected_write_scopes,contract-intake"
         fi
         if [ "${_WRITE_SCOPES}" != "$$expected_write_scopes" ]; then
           echo "Deployment blocked: WRITE_SCOPES does not exactly match the enabled guarded capabilities."
@@ -256,7 +283,7 @@ steps:
           --service-account="${_SERVICE_ACCOUNT}" \
           --add-cloudsql-instances="${_CLOUD_SQL_INSTANCE}" \
           --set-secrets="DB_PASSWORD=${_DB_PASSWORD_SECRET}:latest,BACKLOG_API_KEY=${_BACKLOG_API_KEY_SECRET}:latest,OUTBOUND_DB_PASSWORD=${_OUTBOUND_DB_PASSWORD_SECRET}:latest" \
-          --set-env-vars="^~^NODE_ENV=production~AUTH_MODE=${_AUTH_MODE}~AUTH_ADMIN_EMAILS=${_AUTH_ADMIN_EMAILS}~AUTH_LEGAL_EMAILS=${_AUTH_LEGAL_EMAILS}~AUTH_REQUESTER_DOMAINS=${_AUTH_REQUESTER_DOMAINS}~INTEGRATION_MODE=local~SLACK_DELIVERY_MODE=${_SLACK_DELIVERY_MODE}~BACKLOG_MODE=${_BACKLOG_MODE}~BACKLOG_HOST=${_BACKLOG_HOST}~BACKLOG_PROJECT_KEY=${_BACKLOG_PROJECT_KEY}~SLACK_NOTIFICATION_HISTORY_ENABLED=${_SLACK_NOTIFICATION_HISTORY_ENABLED}~SLACK_NOTIFICATION_APPROVALS_ENABLED=${_SLACK_NOTIFICATION_APPROVALS_ENABLED}~SLACK_DRY_RUN_USER_MAP=${_SLACK_DRY_RUN_USER_MAP}~DB_ACCESS_MODE=readwrite~REQUIRE_DATABASE=true~WRITE_FEATURES_ENABLED=true~WRITE_SCOPES=${_WRITE_SCOPES}~DB_HOST=/cloudsql/${_CLOUD_SQL_INSTANCE}~DB_PORT=5432~DB_NAME=${_DB_NAME}~DB_USER=${_DB_USER}~DB_POOL_MAX=3~OUTBOUND_CONDITION_WRITES_ENABLED=${_OUTBOUND_CONDITION_WRITES_ENABLED}~OUTBOUND_DB_HOST=/cloudsql/${_CLOUD_SQL_INSTANCE}~OUTBOUND_DB_PORT=5432~OUTBOUND_DB_NAME=${_OUTBOUND_DB_NAME}~OUTBOUND_DB_USER=${_OUTBOUND_DB_USER}"
+          --set-env-vars="^~^NODE_ENV=production~AUTH_MODE=${_AUTH_MODE}~AUTH_ADMIN_EMAILS=${_AUTH_ADMIN_EMAILS}~AUTH_LEGAL_EMAILS=${_AUTH_LEGAL_EMAILS}~AUTH_REQUESTER_DOMAINS=${_AUTH_REQUESTER_DOMAINS}~INTEGRATION_MODE=local~SLACK_DELIVERY_MODE=${_SLACK_DELIVERY_MODE}~BACKLOG_MODE=${_BACKLOG_MODE}~BACKLOG_HOST=${_BACKLOG_HOST}~BACKLOG_PROJECT_KEY=${_BACKLOG_PROJECT_KEY}~SLACK_NOTIFICATION_HISTORY_ENABLED=${_SLACK_NOTIFICATION_HISTORY_ENABLED}~SLACK_NOTIFICATION_APPROVALS_ENABLED=${_SLACK_NOTIFICATION_APPROVALS_ENABLED}~SLACK_DRY_RUN_USER_MAP=${_SLACK_DRY_RUN_USER_MAP}~DB_ACCESS_MODE=readwrite~REQUIRE_DATABASE=true~WRITE_FEATURES_ENABLED=true~WRITE_SCOPES=${_WRITE_SCOPES}~DB_HOST=/cloudsql/${_CLOUD_SQL_INSTANCE}~DB_PORT=5432~DB_NAME=${_DB_NAME}~DB_USER=${_DB_USER}~DB_POOL_MAX=3~CONTRACT_INTAKE_WRITES_ENABLED=${_CONTRACT_INTAKE_WRITES_ENABLED}~OUTBOUND_CONDITION_WRITES_ENABLED=${_OUTBOUND_CONDITION_WRITES_ENABLED}~OUTBOUND_DB_HOST=/cloudsql/${_CLOUD_SQL_INSTANCE}~OUTBOUND_DB_PORT=5432~OUTBOUND_DB_NAME=${_OUTBOUND_DB_NAME}~OUTBOUND_DB_USER=${_OUTBOUND_DB_USER}"
 
 images:
   - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPOSITORY}/${_IMAGE}:${BUILD_ID}
