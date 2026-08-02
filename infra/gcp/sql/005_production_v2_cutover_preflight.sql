@@ -1,7 +1,7 @@
 \set ON_ERROR_STOP on
 \pset pager off
 
-BEGIN READ ONLY;
+BEGIN;
 
 SELECT
   current_database() AS database_name,
@@ -13,7 +13,7 @@ CREATE TEMP TABLE expected_relations (
   relation_name text PRIMARY KEY,
   expected_kind text NOT NULL,
   usage_kind text NOT NULL
-) ON COMMIT DROP;
+) ON COMMIT PRESERVE ROWS;
 
 INSERT INTO expected_relations (relation_name, expected_kind, usage_kind) VALUES
   ('document_drafts', 'table', 'V2 read/write'),
@@ -63,7 +63,7 @@ CREATE TEMP TABLE expected_columns (
   column_name text NOT NULL,
   usage_kind text NOT NULL,
   PRIMARY KEY (table_name, column_name)
-) ON COMMIT DROP;
+) ON COMMIT PRESERVE ROWS;
 
 INSERT INTO expected_columns (table_name, column_name, usage_kind) VALUES
   ('document_drafts', 'id', 'draft write'),
@@ -123,6 +123,9 @@ INSERT INTO expected_columns (table_name, column_name, usage_kind) VALUES
   ('condition_lines', 'sell_off_months', 'outbound write'),
   ('condition_lines', 'withholding_tax_treatment', 'outbound write'),
   ('condition_lines', 'notes', 'outbound write');
+
+COMMIT;
+BEGIN READ ONLY;
 
 SELECT
   e.table_name,
