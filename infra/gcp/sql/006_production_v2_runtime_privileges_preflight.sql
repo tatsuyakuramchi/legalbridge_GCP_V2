@@ -55,6 +55,14 @@ WHERE grantee = 'legalbridge_v2_runtime'
       'matter_tasks',
       'matter_overview_v',
       'condition_lines',
+      'work_materials',
+      'material_categories',
+      'material_rights_sources',
+      'contracts',
+      'contract_works',
+      'work_relations',
+      'condition_line_regions',
+      'condition_line_languages',
       'lb_v2_slack_notification_history',
       'lb_v2_slack_notification_approvals'
     )
@@ -65,7 +73,6 @@ WHERE grantee = 'legalbridge_v2_runtime'
         'document_templates',
         'vendors',
         'staff',
-        'works',
         'source_ips',
         'matters',
         'matter_issues',
@@ -78,6 +85,15 @@ WHERE grantee = 'legalbridge_v2_runtime'
       table_name IN (
         'documents',
         'condition_lines',
+        'works',
+        'work_materials',
+        'material_categories',
+        'material_rights_sources',
+        'contracts',
+        'contract_works',
+        'work_relations',
+        'condition_line_regions',
+        'condition_line_languages',
         'lb_v2_slack_notification_history',
         'lb_v2_slack_notification_approvals'
       )
