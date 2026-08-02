@@ -107,6 +107,13 @@ FROM expected
 ORDER BY sequence_name;
 
 SELECT
+  has_function_privilege(
+    'legalbridge_v2_runtime',
+    'public.lb_norm_name(text)',
+    'EXECUTE'
+  ) AS can_normalize_duplicate_names;
+
+SELECT
   has_database_privilege(
     'legalbridge_v2_runtime', 'legalbridge', 'CONNECT'
   ) AS can_connect,
