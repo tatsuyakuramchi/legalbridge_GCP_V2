@@ -85,3 +85,28 @@ test("対象通知が見つからなければ送信せず409を返す", async ()
   assert.equal(response.status, 409);
   assert.equal(response.body.code, "SLACK_DISPATCH_STALE");
 });
+
+test("検証送信は配信ゲート無効時に拒否する", async () => {
+  const response = await request(appFor({ enabled: false }))
+    .post("/api/v2/admin/slack-notifications/test-dispatch")
+    .send({ confirmation: "SEND_SLACK_VALIDATION", userId: "U01234567" });
+  assert.equal(response.status, 403);
+  assert.equal(response.body.code, "SLACK_DISPATCH_DISABLED");
+});
+
+test("検証送信は不正なSlackユーザーIDを拒否する", async () => {
+  const response = await request(appFor({ enabled: true }))
+    .post("/api/v2/admin/slack-notifications/test-dispatch")
+    .send({ confirmation: "SEND_SLACK_VALIDATION", userId: "not-a-user" });
+  assert.equal(response.status, 400);
+  assert.equal(response.body.code, "SLACK_DISPATCH_INVALID_USER");
+});
+
+test("検証送信は有効なユーザーへ固定メッセージをDMする", async () => {
+  const response = await request(appFor({ enabled: true }))
+    .post("/api/v2/admin/slack-notifications/test-dispatch")
+    .send({ confirmation: "SEND_SLACK_VALIDATION", userId: "U01234567" });
+  assert.equal(response.status, 201);
+  assert.equal(response.body.externalSend, true);
+  assert.match(response.body.receipt.channelId, /^[A-Z0-9]+$/);
+});

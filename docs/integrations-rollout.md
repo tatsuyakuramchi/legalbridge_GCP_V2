@@ -73,6 +73,10 @@ curl -s -H "Authorization: Bearer $TOKEN" "$SERVICE_URL/api/v2/integrations/stat
 
 `WRITE_SCOPES` の末尾に `,slack,slack-dispatch` を追加（`slack-approvals` 有効時は該当位置に含める。順序は `verify-isolation` と完全一致）。有効化後、`/api/v2/runtime` の `writeCapabilities` に `slack-dispatch` が出る。
 
+**配信経路のスモークテスト**：`POST /api/v2/admin/slack-notifications/test-dispatch`（管理者・要 `confirmation:"SEND_SLACK_VALIDATION"`・`userId:"U…"`）で、指定Slackユーザーへ固定の検証メッセージをDMし、bot token・アダプタ・Slack API疎通だけを確認できる（候補フロー非経由）。
+
+> 注：候補フローの実送信は候補の `requesterEmail` が `SLACK_DRY_RUN_USER_MAP` で解決される必要がある。本番 `matter_overview_v` に requester email が無い場合、候補経由の送信は不可のため、まず上記 test-dispatch で配信経路を検証する。requester email の供給はDBビュー側の課題。
+
 > Slackはデフォルト画面にせず、申請入口と利用者の行動が必要な通知に限定する（Production Readiness §6）。検証段階では `SLACK_DRY_RUN_USER_MAP` を**検証ユーザーのみ**に絞ること。
 
 ## 5. Gmail / CloudSign（V1移植が必要）
