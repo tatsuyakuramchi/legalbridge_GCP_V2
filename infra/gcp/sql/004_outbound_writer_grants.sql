@@ -44,6 +44,13 @@ BEGIN
 END
 $guard$;
 
+ALTER ROLE legalbridge_v2_outbound_writer
+  NOSUPERUSER
+  NOCREATEDB
+  NOCREATEROLE
+  NOREPLICATION
+  NOBYPASSRLS;
+
 GRANT CONNECT ON DATABASE legalbridge TO legalbridge_v2_outbound_writer;
 GRANT USAGE ON SCHEMA public TO legalbridge_v2_outbound_writer;
 

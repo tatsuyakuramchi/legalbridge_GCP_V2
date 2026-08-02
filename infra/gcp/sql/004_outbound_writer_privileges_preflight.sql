@@ -30,13 +30,14 @@ WHERE grantee = 'legalbridge_v2_outbound_writer'
 ORDER BY table_name, privilege_type;
 
 SELECT
-  sequence_schema,
-  sequence_name,
+  object_schema AS sequence_schema,
+  object_name AS sequence_name,
   privilege_type
 FROM information_schema.role_usage_grants
 WHERE grantee = 'legalbridge_v2_outbound_writer'
-  AND sequence_schema = 'public'
-  AND sequence_name = 'condition_lines_id_seq'
+  AND object_type = 'SEQUENCE'
+  AND object_schema = 'public'
+  AND object_name = 'condition_lines_id_seq'
 ORDER BY privilege_type;
 
 SELECT
