@@ -3,6 +3,10 @@ import {
   contractIntakeSchema,
   type ValidatedContractIntake
 } from "./intake.js";
+import {
+  listContractOutboundConditions,
+  type OutboundBridgeCondition
+} from "./intake-outbound-repository.js";
 
 export interface IntakeBridgeWork {
   id: number;
@@ -37,6 +41,9 @@ export interface ContractIntakeDocumentSource {
   ownWork: IntakeBridgeWork;
   materials: IntakeBridgeMaterial[];
   vendors: Record<number, IntakeBridgeVendor>;
+  // Outbound conditions are registered later and stored as condition_lines,
+  // not inside the intake form_data. The bridge reads them from here.
+  outboundConditions: OutboundBridgeCondition[];
 }
 
 export interface ContractIntakeRegistrySummary {
@@ -69,7 +76,10 @@ implements ContractIntakeDocumentSourceRepository {
       `SELECT d.id, d.contract_id, d.document_number, d.form_data,
               COALESCE(v.vendor_name, '') AS primary_vendor_name,
               COALESCE(sw.title, '') AS source_work_title,
-              COALESCE(ow.title, '') AS own_work_title
+              COALESCE(ow.title, '') AS own_work_title,
+              (SELECT COUNT(*) FROM condition_lines cl
+                WHERE cl.document_id = d.id AND cl.flow_direction = 'out')
+                AS outbound_condition_count
          FROM documents d
          LEFT JOIN vendors v
            ON v.id = NULLIF(d.form_data->'contract'->>'primaryVendorId', '')::integer
@@ -105,7 +115,7 @@ implements ContractIntakeDocumentSourceRepository {
           parsed.data.ownWork.title || "",
         executedAt: parsed.data.contract.executedAt,
         inboundConditionCount: parsed.data.inboundConditions.length,
-        outboundConditionCount: parsed.data.outboundConditions.length
+        outboundConditionCount: Number(row.outbound_condition_count ?? 0)
       });
     }
     return summaries;
@@ -169,6 +179,12 @@ implements ContractIntakeDocumentSourceRepository {
       if (material.rightsHolderVendorId) vendorIds.add(material.rightsHolderVendorId);
     }
 
+    const outboundConditions =
+      await listContractOutboundConditions(this.database, documentId);
+    for (const condition of outboundConditions) {
+      vendorIds.add(condition.counterpartyVendorId);
+    }
+
     const vendorResult = await this.database.query(
       `SELECT id, vendor_name, entity_type, address, vendor_rep,
               contact_name, phone, email
@@ -203,7 +219,8 @@ implements ContractIntakeDocumentSourceRepository {
         materialName: String(material.material_name),
         rightsHolderLabel: String(material.rights_holder_label)
       })),
-      vendors
+      vendors,
+      outboundConditions
     } satisfies ContractIntakeDocumentSource;
   }
 }
@@ -240,7 +257,7 @@ implements ContractIntakeDocumentSourceRepository {
         ownWorkTitle: source.ownWork.title,
         executedAt: source.intake.contract.executedAt,
         inboundConditionCount: source.intake.inboundConditions.length,
-        outboundConditionCount: source.intake.outboundConditions.length
+        outboundConditionCount: source.outboundConditions.length
       } satisfies ContractIntakeRegistrySummary));
   }
 

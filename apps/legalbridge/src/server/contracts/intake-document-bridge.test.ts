@@ -82,7 +82,8 @@ function source(value = intake): ContractIntakeDocumentSource {
       20: vendor(20, "原作権利者"),
       30: vendor(30, "国内ライセンシー"),
       31: vendor(31, "海外ライセンシー")
-    }
+    },
+    outboundConditions: value.outboundConditions
   };
 }
 

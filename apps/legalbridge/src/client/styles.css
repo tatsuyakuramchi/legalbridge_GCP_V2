@@ -844,6 +844,29 @@ button.pdf-download-link:disabled {
 .intake-registry-list span { color: #2f4a56; font-size: 13px; }
 .intake-registry-list small { color: #6a8794; font-size: 12px; overflow-wrap: anywhere; }
 .intake-registry-list em { color: #7a95a1; font-size: 11px; font-style: normal; }
+.intake-registry-detail {
+  border-top: 1px solid #d4e9f0;
+  margin-top: 14px;
+  padding-top: 14px;
+  display: grid;
+  gap: 12px;
+}
+.outbound-existing h3 { margin: 0 0 6px; color: #0c5468; font-size: 14px; }
+.outbound-existing ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.outbound-existing li {
+  display: grid;
+  gap: 2px;
+  border: 1px solid #dbeef4;
+  border-radius: 8px;
+  padding: 8px 11px;
+  background: white;
+}
+.outbound-existing strong { color: #0c3d4c; }
+.outbound-existing span { color: #2f4a56; font-size: 13px; }
+.outbound-existing small { color: #6a8794; font-size: 12px; }
+.outbound-append-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.outbound-append-actions small { color: #9a6a15; }
+.outbound-notice { margin: 0; color: #0c5468; font-size: 13px; font-weight: 600; }
 @media (max-width: 760px) {
   .intake-document-actions { grid-template-columns: 1fr; }
   .intake-document-actions small { grid-column: auto; }
