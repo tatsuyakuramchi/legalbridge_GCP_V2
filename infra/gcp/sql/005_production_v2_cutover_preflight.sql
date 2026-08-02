@@ -167,20 +167,21 @@ ORDER BY e.relation_name
 
 SELECT format(
   'SELECT %L AS duplicate_check, count(*) AS duplicate_groups FROM (' ||
-  'SELECT %s FROM public.%I GROUP BY %s HAVING count(*) > 1' ||
+  'SELECT %s FROM public.%I WHERE %s GROUP BY %s HAVING count(*) > 1' ||
   ') duplicates;',
   check_name,
   columns,
   table_name,
+  predicate,
   columns
 )
 FROM (VALUES
-  ('document_drafts(issue_key,template_type)', 'document_drafts', 'issue_key, template_type'),
-  ('document_sequences(kind,year)', 'document_sequences', 'kind, year'),
-  ('document_templates(template_key)', 'document_templates', 'template_key'),
-  ('documents(document_number)', 'documents', 'document_number'),
-  ('condition_lines(document_id,line_no)', 'condition_lines', 'document_id, line_no')
-) checks(check_name, table_name, columns)
+  ('document_drafts(issue_key,template_type)', 'document_drafts', 'issue_key, template_type', 'issue_key IS NOT NULL AND template_type IS NOT NULL'),
+  ('document_sequences(kind,year)', 'document_sequences', 'kind, year', 'kind IS NOT NULL AND year IS NOT NULL'),
+  ('document_templates(template_key)', 'document_templates', 'template_key', 'template_key IS NOT NULL'),
+  ('documents(document_number)', 'documents', 'document_number', 'document_number IS NOT NULL'),
+  ('condition_lines(document_id,line_no)', 'condition_lines', 'document_id, line_no', 'document_id IS NOT NULL AND line_no IS NOT NULL')
+) checks(check_name, table_name, columns, predicate)
 WHERE to_regclass(format('public.%I', table_name)) IS NOT NULL
 ORDER BY check_name
 \gexec
