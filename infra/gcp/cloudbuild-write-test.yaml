@@ -64,276 +64,46 @@ steps:
     args:
       - -ceu
       - |
-        test "${_SERVICE}" != "legalbridge-v2-preview"
-        case "${_PRIMARY_DB_MODE}" in
-          validation)
-            test "${_DB_NAME}" != "legalbridge"
-            test "${_DB_USER}" != "legalbridge"
-            if [ "${_CONFIRM_ISOLATED_DB}" != "ISOLATED_DRAFT_TEST" ]; then
-              echo "Write-test deployment blocked: isolated DB confirmation is missing."
-              exit 1
-            fi
-            if [ "${_CONFIRM_DOCUMENT_TABLES}" != "EMPTY_DOCUMENT_TABLES_CONFIRMED" ]; then
-              echo "Document finalization deployment blocked: empty validation tables are not confirmed."
-              exit 1
-            fi
-            ;;
-          production)
-            if [ "${_CONFIRM_PRODUCTION_PRIMARY}" != "CUTOVER_V2_PRIMARY_TO_LEGALBRIDGE" ]; then
-              echo "Production primary deployment blocked: explicit cutover confirmation is missing."
-              exit 1
-            fi
-            if [ "${_SERVICE}" != "legalbridge-v2-write-test" ] || [ "${_DB_NAME}" != "legalbridge" ] || [ "${_DB_USER}" != "legalbridge_v2_runtime" ] || [ "${_DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
-              echo "Production primary deployment blocked: service, database, runtime user, or password secret does not match the approved target."
-              exit 1
-            fi
-            if [ "${_CONFIRM_DOCUMENT_TABLES}" != "PRODUCTION_DOCUMENT_TABLES_PREFLIGHT_CONFIRMED" ]; then
-              echo "Production primary deployment blocked: production document-table preflight is not confirmed."
-              exit 1
-            fi
-            if [ "${_AUTH_MODE}" = "disabled" ]; then
-              echo "Production primary deployment blocked: upstream authentication is required."
-              exit 1
-            fi
-            ;;
-          *)
-            echo "Deployment blocked: PRIMARY_DB_MODE must be validation or production."
-            exit 1
-            ;;
-        esac
-        case "${_AUTH_MODE}" in
-          disabled)
-            ;;
-          cloudrun-iam)
-            if [ "${_CONFIRM_CLOUDRUN_IAM}" != "CLOUDRUN_IAM_PROXY_VALIDATION_ONLY" ]; then
-              echo "Cloud Run IAM deployment blocked: explicit proxy-validation confirmation is missing."
-              exit 1
-            fi
-            if [ "${_SERVICE}" != "legalbridge-v2-write-test" ] || [ "${_AUTH_ADMIN_EMAILS}" != "tatsuya.kuramochi@arclight.co.jp" ]; then
-              echo "Cloud Run IAM deployment blocked: service or sole administrator does not match the approved validation target."
-              exit 1
-            fi
-            ;;
-          iap)
-            if [ "${_CONFIRM_IAP_BACKEND}" != "IAP_BACKEND_READY" ]; then
-              echo "IAP deployment blocked: backend readiness confirmation is missing."
-              exit 1
-            fi
-            for value in "${_AUTH_ADMIN_EMAILS}" "${_AUTH_LEGAL_EMAILS}" "${_AUTH_REQUESTER_DOMAINS}"; do
-              if [ -z "$$value" ] || [ "$$value" = "BLOCKED" ]; then
-                echo "IAP deployment blocked: role configuration is missing."
-                exit 1
-              fi
-            done
-            ;;
-          *)
-            echo "Deployment blocked: AUTH_MODE must be disabled, cloudrun-iam, or iap."
-            exit 1
-            ;;
-        esac
-        case "${_BACKLOG_MODE}" in
-          disabled)
-            ;;
-          readonly)
-            if [ "${_CONFIRM_BACKLOG_READONLY}" != "BACKLOG_READONLY_VALIDATION_ONLY" ]; then
-              echo "Backlog deployment blocked: explicit read-only validation confirmation is missing."
-              exit 1
-            fi
-            if [ "${_SERVICE}" != "legalbridge-v2-write-test" ] || [ "${_BACKLOG_HOST}" != "arclight.backlog.com" ] || [ "${_BACKLOG_PROJECT_KEY}" != "LEGAL" ]; then
-              echo "Backlog deployment blocked: validation service, host, or project does not match the approved target."
-              exit 1
-            fi
-            ;;
-          live)
-            echo "Backlog live writes remain blocked while the existing worker is authoritative."
-            exit 1
-            ;;
-          *)
-            echo "Deployment blocked: BACKLOG_MODE must be disabled or readonly."
-            exit 1
-            ;;
-        esac
-        case "${_SLACK_DELIVERY_MODE}" in
-          disabled)
-            ;;
-          live)
-            if [ "${_SLACK_DISPATCH_ENABLED}" != "true" ]; then
-              echo "Slack live delivery requires SLACK_DISPATCH_ENABLED=true with the validation gate."
-              exit 1
-            fi
-            ;;
-          *)
-            echo "Deployment blocked: SLACK_DELIVERY_MODE must be disabled or live."
-            exit 1
-            ;;
-        esac
-        case "${_SLACK_DISPATCH_ENABLED}" in
-          false)
-            ;;
-          true)
-            if [ "${_CONFIRM_SLACK_DISPATCH}" != "SLACK_DISPATCH_VALIDATION_ONLY" ]; then
-              echo "Slack dispatch deployment blocked: explicit validation confirmation is missing."
-              exit 1
-            fi
-            if [ "${_SERVICE}" != "legalbridge-v2-write-test" ] || [ "${_SLACK_DELIVERY_MODE}" != "live" ]; then
-              echo "Slack dispatch deployment blocked: service or delivery mode does not match the approved target."
-              exit 1
-            fi
-            if [ "${_AUTH_MODE}" != "iap" ] && [ "${_AUTH_MODE}" != "cloudrun-iam" ]; then
-              echo "Slack dispatch deployment blocked: IAP or Cloud Run IAM authentication is required."
-              exit 1
-            fi
-            if [ "${_SLACK_APPROVAL_WRITES_ENABLED}" != "true" ] || [ "${_SLACK_NOTIFICATION_HISTORY_ENABLED}" != "true" ] || [ "${_SLACK_NOTIFICATION_APPROVALS_ENABLED}" != "true" ]; then
-              echo "Slack dispatch deployment blocked: approval writes, history, and approvals must all be enabled."
-              exit 1
-            fi
-            if [ -z "${_SLACK_DRY_RUN_USER_MAP}" ] || [ "${_SLACK_DRY_RUN_USER_MAP}" = "UNRESOLVED" ]; then
-              echo "Slack dispatch deployment blocked: an explicit validation recipient map is required."
-              exit 1
-            fi
-            if [ -z "${_SLACK_BOT_TOKEN_SECRET}" ] || [ "${_SLACK_BOT_TOKEN_SECRET}" = "BLOCKED" ]; then
-              echo "Slack dispatch deployment blocked: Slack bot token secret is not set."
-              exit 1
-            fi
-            ;;
-          *)
-            echo "Deployment blocked: SLACK_DISPATCH_ENABLED must be true or false."
-            exit 1
-            ;;
-        esac
-        case "${_OUTBOUND_CONDITION_WRITES_ENABLED}" in
-          false)
-            ;;
-          true)
-            if [ "${_CONFIRM_OUTBOUND_WRITES}" != "OUTBOUND_WRITES_LEGALBRIDGE_VALIDATION_ONLY" ]; then
-              echo "Outbound deployment blocked: explicit production-schema validation confirmation is missing."
-              exit 1
-            fi
-            expected_outbound_user="legalbridge_v2_outbound_writer"
-            expected_outbound_secret="legalbridge-v2-outbound-db-password"
-            if [ "${_PRIMARY_DB_MODE}" = "production" ]; then
-              expected_outbound_user="legalbridge_v2_runtime"
-              expected_outbound_secret="legalbridge-v2-runtime-db-password"
-            fi
-            if [ "${_SERVICE}" != "legalbridge-v2-write-test" ] || [ "${_OUTBOUND_DB_NAME}" != "legalbridge" ] || [ "${_OUTBOUND_DB_USER}" != "$$expected_outbound_user" ] || [ "${_OUTBOUND_DB_PASSWORD_SECRET}" != "$$expected_outbound_secret" ]; then
-              echo "Outbound deployment blocked: service, database, dedicated user, or password secret does not match the approved target."
-              exit 1
-            fi
-            if [ "${_AUTH_MODE}" != "iap" ] && [ "${_AUTH_MODE}" != "cloudrun-iam" ]; then
-              echo "Outbound deployment blocked: IAP or Cloud Run IAM authentication is required."
-              exit 1
-            fi
-            ;;
-          *)
-            echo "Deployment blocked: OUTBOUND_CONDITION_WRITES_ENABLED must be true or false."
-            exit 1
-            ;;
-        esac
-        case "${_CONTRACT_INTAKE_WRITES_ENABLED}" in
-          false)
-            ;;
-          true)
-            if [ "${_CONFIRM_CONTRACT_INTAKE_WRITES}" != "CONTRACT_INTAKE_LEGALBRIDGE_VALIDATION_ONLY" ]; then
-              echo "Contract intake deployment blocked: explicit production validation confirmation is missing."
-              exit 1
-            fi
-            if [ "${_PRIMARY_DB_MODE}" != "production" ] || [ "${_SERVICE}" != "legalbridge-v2-write-test" ] || [ "${_DB_NAME}" != "legalbridge" ] || [ "${_DB_USER}" != "legalbridge_v2_runtime" ] || [ "${_DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
-              echo "Contract intake deployment blocked: service, database, runtime user, or password secret does not match the approved target."
-              exit 1
-            fi
-            if [ "${_AUTH_MODE}" != "iap" ] && [ "${_AUTH_MODE}" != "cloudrun-iam" ]; then
-              echo "Contract intake deployment blocked: IAP or Cloud Run IAM authentication is required."
-              exit 1
-            fi
-            ;;
-          *)
-            echo "Deployment blocked: CONTRACT_INTAKE_WRITES_ENABLED must be true or false."
-            exit 1
-            ;;
-        esac
-        case "${_SLACK_APPROVAL_WRITES_ENABLED}" in
-          false)
-            ;;
-          true)
-            if [ "${_CONFIRM_SLACK_APPROVAL_WRITES}" != "SLACK_APPROVAL_WRITES_VALIDATION_ONLY" ]; then
-              echo "Slack approval deployment blocked: explicit validation-only confirmation is missing."
-              exit 1
-            fi
-            # 隔離検証DB、または本番runtime（006がlegalbridgeにSlack履歴/承認
-            # テーブルを作成しruntimeへ権限付与済み）のいずれかを許可する。
-            if [ "${_SERVICE}" != "legalbridge-v2-write-test" ]; then
-              echo "Slack approval deployment blocked: target service is not the write-test environment."
-              exit 1
-            fi
-            if [ "${_DB_NAME}" != "legalbridge_v2_validation" ] && [ "${_DB_NAME}" != "legalbridge" ]; then
-              echo "Slack approval deployment blocked: unexpected database target."
-              exit 1
-            fi
-            if [ "${_AUTH_MODE}" != "iap" ] && [ "${_AUTH_MODE}" != "cloudrun-iam" ]; then
-              echo "Slack approval deployment blocked: IAP or Cloud Run IAM authentication is required."
-              exit 1
-            fi
-            if [ "${_SLACK_NOTIFICATION_HISTORY_ENABLED}" != "true" ] || [ "${_SLACK_NOTIFICATION_APPROVALS_ENABLED}" != "true" ]; then
-              echo "Slack approval deployment blocked: history and approval repositories must both be enabled."
-              exit 1
-            fi
-            if [ -z "${_SLACK_DRY_RUN_USER_MAP}" ] || [ "${_SLACK_DRY_RUN_USER_MAP}" = "UNRESOLVED" ]; then
-              echo "Slack approval deployment blocked: an explicit dry-run recipient map is required."
-              exit 1
-            fi
-            ;;
-          *)
-            echo "Deployment blocked: SLACK_APPROVAL_WRITES_ENABLED must be true or false."
-            exit 1
-            ;;
-        esac
-        case "${_DRIVE_STORAGE_ENABLED}" in
-          false)
-            ;;
-          true)
-            if [ "${_CONFIRM_DRIVE_STORAGE}" != "DRIVE_LEGALBRIDGE_VALIDATION_ONLY" ]; then
-              echo "Drive deployment blocked: explicit validation confirmation is missing."
-              exit 1
-            fi
-            if [ "${_SERVICE}" != "legalbridge-v2-write-test" ] || [ "${_GOOGLE_DRIVE_FOLDER_ID}" = "BLOCKED" ] || [ -z "${_GOOGLE_DRIVE_FOLDER_ID}" ]; then
-              echo "Drive deployment blocked: service or Shared Drive folder is not set."
-              exit 1
-            fi
-            # _GWS_SA_KEY_SECRET は任意。未設定なら鍵ファイルをマウントせず
-            # ADC（ランタイムSA + drive スコープ）で認証する（V1本番と同方式）。
-            # その場合、ランタイムSAが対象の共有ドライブフォルダのメンバーで
-            # あること。
-            if [ "${_AUTH_MODE}" != "iap" ] && [ "${_AUTH_MODE}" != "cloudrun-iam" ]; then
-              echo "Drive deployment blocked: IAP or Cloud Run IAM authentication is required."
-              exit 1
-            fi
-            ;;
-          *)
-            echo "Deployment blocked: DRIVE_STORAGE_ENABLED must be true or false."
-            exit 1
-            ;;
-        esac
-        expected_write_scopes="drafts,documents,pdf"
-        if [ "${_DRIVE_STORAGE_ENABLED}" = "true" ]; then
-          expected_write_scopes="$$expected_write_scopes,drive"
-        fi
-        if [ "${_SLACK_APPROVAL_WRITES_ENABLED}" = "true" ]; then
-          expected_write_scopes="$$expected_write_scopes,slack-approvals"
-        fi
-        if [ "${_OUTBOUND_CONDITION_WRITES_ENABLED}" = "true" ]; then
-          expected_write_scopes="$$expected_write_scopes,outbound-conditions"
-        fi
-        if [ "${_CONTRACT_INTAKE_WRITES_ENABLED}" = "true" ]; then
-          expected_write_scopes="$$expected_write_scopes,contract-intake"
-        fi
-        if [ "${_SLACK_DISPATCH_ENABLED}" = "true" ]; then
-          expected_write_scopes="$$expected_write_scopes,slack,slack-dispatch"
-        fi
-        if [ "${_WRITE_SCOPES}" != "$$expected_write_scopes" ]; then
-          echo "Deployment blocked: WRITE_SCOPES does not exactly match the enabled guarded capabilities."
-          exit 1
-        fi
-
+        AUTH_ADMIN_EMAILS="${_AUTH_ADMIN_EMAILS}"
+        AUTH_LEGAL_EMAILS="${_AUTH_LEGAL_EMAILS}"
+        AUTH_MODE="${_AUTH_MODE}"
+        AUTH_REQUESTER_DOMAINS="${_AUTH_REQUESTER_DOMAINS}"
+        BACKLOG_HOST="${_BACKLOG_HOST}"
+        BACKLOG_MODE="${_BACKLOG_MODE}"
+        BACKLOG_PROJECT_KEY="${_BACKLOG_PROJECT_KEY}"
+        CONFIRM_BACKLOG_READONLY="${_CONFIRM_BACKLOG_READONLY}"
+        CONFIRM_CLOUDRUN_IAM="${_CONFIRM_CLOUDRUN_IAM}"
+        CONFIRM_CONTRACT_INTAKE_WRITES="${_CONFIRM_CONTRACT_INTAKE_WRITES}"
+        CONFIRM_DOCUMENT_TABLES="${_CONFIRM_DOCUMENT_TABLES}"
+        CONFIRM_DRIVE_STORAGE="${_CONFIRM_DRIVE_STORAGE}"
+        CONFIRM_IAP_BACKEND="${_CONFIRM_IAP_BACKEND}"
+        CONFIRM_ISOLATED_DB="${_CONFIRM_ISOLATED_DB}"
+        CONFIRM_OUTBOUND_WRITES="${_CONFIRM_OUTBOUND_WRITES}"
+        CONFIRM_PRODUCTION_PRIMARY="${_CONFIRM_PRODUCTION_PRIMARY}"
+        CONFIRM_SLACK_APPROVAL_WRITES="${_CONFIRM_SLACK_APPROVAL_WRITES}"
+        CONFIRM_SLACK_DISPATCH="${_CONFIRM_SLACK_DISPATCH}"
+        CONTRACT_INTAKE_WRITES_ENABLED="${_CONTRACT_INTAKE_WRITES_ENABLED}"
+        DB_NAME="${_DB_NAME}"
+        DB_PASSWORD_SECRET="${_DB_PASSWORD_SECRET}"
+        DB_USER="${_DB_USER}"
+        DRIVE_STORAGE_ENABLED="${_DRIVE_STORAGE_ENABLED}"
+        GOOGLE_DRIVE_FOLDER_ID="${_GOOGLE_DRIVE_FOLDER_ID}"
+        OUTBOUND_CONDITION_WRITES_ENABLED="${_OUTBOUND_CONDITION_WRITES_ENABLED}"
+        OUTBOUND_DB_NAME="${_OUTBOUND_DB_NAME}"
+        OUTBOUND_DB_PASSWORD_SECRET="${_OUTBOUND_DB_PASSWORD_SECRET}"
+        OUTBOUND_DB_USER="${_OUTBOUND_DB_USER}"
+        PRIMARY_DB_MODE="${_PRIMARY_DB_MODE}"
+        SERVICE="${_SERVICE}"
+        SLACK_APPROVAL_WRITES_ENABLED="${_SLACK_APPROVAL_WRITES_ENABLED}"
+        SLACK_BOT_TOKEN_SECRET="${_SLACK_BOT_TOKEN_SECRET}"
+        SLACK_DELIVERY_MODE="${_SLACK_DELIVERY_MODE}"
+        SLACK_DISPATCH_ENABLED="${_SLACK_DISPATCH_ENABLED}"
+        SLACK_DRY_RUN_USER_MAP="${_SLACK_DRY_RUN_USER_MAP}"
+        SLACK_NOTIFICATION_APPROVALS_ENABLED="${_SLACK_NOTIFICATION_APPROVALS_ENABLED}"
+        SLACK_NOTIFICATION_HISTORY_ENABLED="${_SLACK_NOTIFICATION_HISTORY_ENABLED}"
+        WRITE_SCOPES="${_WRITE_SCOPES}"
+        export AUTH_ADMIN_EMAILS AUTH_LEGAL_EMAILS AUTH_MODE AUTH_REQUESTER_DOMAINS BACKLOG_HOST BACKLOG_MODE BACKLOG_PROJECT_KEY CONFIRM_BACKLOG_READONLY CONFIRM_CLOUDRUN_IAM CONFIRM_CONTRACT_INTAKE_WRITES CONFIRM_DOCUMENT_TABLES CONFIRM_DRIVE_STORAGE CONFIRM_IAP_BACKEND CONFIRM_ISOLATED_DB CONFIRM_OUTBOUND_WRITES CONFIRM_PRODUCTION_PRIMARY CONFIRM_SLACK_APPROVAL_WRITES CONFIRM_SLACK_DISPATCH CONTRACT_INTAKE_WRITES_ENABLED DB_NAME DB_PASSWORD_SECRET DB_USER DRIVE_STORAGE_ENABLED GOOGLE_DRIVE_FOLDER_ID OUTBOUND_CONDITION_WRITES_ENABLED OUTBOUND_DB_NAME OUTBOUND_DB_PASSWORD_SECRET OUTBOUND_DB_USER PRIMARY_DB_MODE SERVICE SLACK_APPROVAL_WRITES_ENABLED SLACK_BOT_TOKEN_SECRET SLACK_DELIVERY_MODE SLACK_DISPATCH_ENABLED SLACK_DRY_RUN_USER_MAP SLACK_NOTIFICATION_APPROVALS_ENABLED SLACK_NOTIFICATION_HISTORY_ENABLED WRITE_SCOPES
+        bash infra/gcp/verify-write-test.sh
   - id: build-image
     name: gcr.io/cloud-builders/docker
     args:
