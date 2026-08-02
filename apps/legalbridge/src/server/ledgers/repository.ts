@@ -1,6 +1,6 @@
 import type { DatabasePool } from "../db/pool.js";
 
-export type LedgerType = "vendors" | "works" | "conditions";
+export type LedgerType = "vendors" | "works" | "materials" | "conditions";
 export interface LedgerItem {
   id: string; type: LedgerType; code: string; title: string; subtitle: string;
   status?: string; updatedAt?: string; detail: Record<string, unknown>;
@@ -37,22 +37,66 @@ export class PgLedgerRepository implements LedgerRepository {
         }
       }));
     }
+    if (type === "materials") {
+      const result = await this.database.query(
+        `SELECT wm.id, wm.material_code, wm.material_name, wm.material_type,
+                wm.material_role, wm.rights_type, wm.is_default,
+                w.id AS work_id, w.work_code, w.title AS work_title
+           FROM work_materials wm
+           JOIN works w ON w.id = wm.work_id
+          WHERE $1 = '%%'
+             OR COALESCE(wm.material_code, '') ILIKE $1
+             OR COALESCE(wm.material_name, '') ILIKE $1
+             OR w.work_code ILIKE $1
+             OR w.title ILIKE $1
+          ORDER BY w.title, wm.material_no NULLS LAST, wm.id
+          LIMIT $2`,
+        [keyword, bounded]
+      );
+      return result.rows.map((row) => ({
+        id: String(row.id),
+        type,
+        code: row.material_code ?? `MAT-${row.id}`,
+        title: row.material_name ?? row.material_code ?? `素材 ${row.id}`,
+        subtitle: [row.work_code, row.work_title, row.material_type]
+          .filter(Boolean).join("・"),
+        detail: {
+          作品ID: row.work_id,
+          作品コード: row.work_code,
+          作品名: row.work_title,
+          素材区分: row.material_type,
+          構成上の役割: row.material_role,
+          権利区分: row.rights_type,
+          代表素材: Boolean(row.is_default)
+        }
+      }));
+    }
     if (type === "works") {
       const result = await this.database.query(
         `(SELECT 'work' AS source, id, work_code AS code, title, work_type AS category,
-                 status, remarks, updated_at, NULL::text AS rights_holder
+                 kind AS work_kind, status, remarks, updated_at, NULL::text AS rights_holder
             FROM works
            WHERE is_active = TRUE AND ($1 = '%%' OR work_code ILIKE $1 OR title ILIKE $1))
          UNION ALL
          (SELECT 'source_ip' AS source, id, source_code AS code, title,
-                 '原作IP' AS category, 'active' AS status, remarks, updated_at,
+                 '原作IP' AS category, 'source_ip'::text AS work_kind, 'active' AS status,
+                 remarks, updated_at,
                  COALESCE(default_rights_holder, original_publisher) AS rights_holder
             FROM source_ips
            WHERE is_active = TRUE AND ($1 = '%%' OR source_code ILIKE $1 OR title ILIKE $1))
          ORDER BY title LIMIT $2`, [keyword, bounded]);
       return result.rows.map((row) => ({
         id: `${row.source}:${row.id}`, type, code: row.code, title: row.title,
-        subtitle: [row.source === "source_ip" ? "原作IP" : "自社作品", row.category].filter(Boolean).join("・"),
+        subtitle: [
+          row.source === "source_ip"
+            ? "原作IP"
+            : row.work_kind === "licensed_in"
+              ? "原作・ライセンスイン"
+              : row.work_kind === "own"
+                ? "自社作品"
+                : row.work_kind,
+          row.category
+        ].filter(Boolean).join("・"),
         status: row.status, updatedAt: iso(row.updated_at),
         detail: { 種別: row.category, 権利者: row.rights_holder, 状態: row.status, 備考: row.remarks }
       }));
