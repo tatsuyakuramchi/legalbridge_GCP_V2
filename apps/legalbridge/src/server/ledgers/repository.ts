@@ -74,19 +74,29 @@ export class PgLedgerRepository implements LedgerRepository {
     if (type === "works") {
       const result = await this.database.query(
         `(SELECT 'work' AS source, id, work_code AS code, title, work_type AS category,
-                 status, remarks, updated_at, NULL::text AS rights_holder
+                 kind AS work_kind, status, remarks, updated_at, NULL::text AS rights_holder
             FROM works
            WHERE is_active = TRUE AND ($1 = '%%' OR work_code ILIKE $1 OR title ILIKE $1))
          UNION ALL
          (SELECT 'source_ip' AS source, id, source_code AS code, title,
-                 '原作IP' AS category, 'active' AS status, remarks, updated_at,
+                 '原作IP' AS category, 'source_ip'::text AS work_kind, 'active' AS status,
+                 remarks, updated_at,
                  COALESCE(default_rights_holder, original_publisher) AS rights_holder
             FROM source_ips
            WHERE is_active = TRUE AND ($1 = '%%' OR source_code ILIKE $1 OR title ILIKE $1))
          ORDER BY title LIMIT $2`, [keyword, bounded]);
       return result.rows.map((row) => ({
         id: `${row.source}:${row.id}`, type, code: row.code, title: row.title,
-        subtitle: [row.source === "source_ip" ? "原作IP" : "自社作品", row.category].filter(Boolean).join("・"),
+        subtitle: [
+          row.source === "source_ip"
+            ? "原作IP"
+            : row.work_kind === "licensed_in"
+              ? "原作・ライセンスイン"
+              : row.work_kind === "own"
+                ? "自社作品"
+                : row.work_kind,
+          row.category
+        ].filter(Boolean).join("・"),
         status: row.status, updatedAt: iso(row.updated_at),
         detail: { 種別: row.category, 権利者: row.rights_holder, 状態: row.status, 備考: row.remarks }
       }));
