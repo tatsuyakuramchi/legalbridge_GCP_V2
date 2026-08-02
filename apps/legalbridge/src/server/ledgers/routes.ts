@@ -1,6 +1,6 @@
 import { Router } from "express";
 import type { LedgerRepository, LedgerType } from "./repository.js";
-const types = new Set<LedgerType>(["vendors", "works", "conditions"]);
+const types = new Set<LedgerType>(["vendors", "works", "materials", "conditions"]);
 export function createLedgerRouter(repository: LedgerRepository) {
   const router = Router();
   router.get("/ledgers/:type", async (request, response, next) => {
