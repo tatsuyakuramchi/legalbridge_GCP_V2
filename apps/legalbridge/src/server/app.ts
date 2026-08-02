@@ -56,6 +56,10 @@ import { createLedgerRouter } from "./ledgers/routes.js";
 import { createOutboundConditionRouter } from "./ledgers/outbound-conditions.js";
 import { createContractIntakeRouter } from "./contracts/intake.js";
 import {
+  PgContractIntakeRepository,
+  type ContractIntakeRepository
+} from "./contracts/intake-repository.js";
+import {
   PgOutboundConditionRepository,
   type OutboundConditionRepository
 } from "./ledgers/outbound-condition-repository.js";
@@ -168,6 +172,7 @@ export interface AppDependencies {
   slackHistory?: SlackNotificationHistoryRepository;
   slackApprovals?: SlackNotificationApprovalRepository;
   outboundConditions?: OutboundConditionRepository;
+  contractIntakes?: ContractIntakeRepository;
 }
 
 export interface AppOptions {
@@ -176,6 +181,7 @@ export interface AppOptions {
   writeFeaturesEnabled?: boolean;
   writeScopes?: Set<string>;
   outboundConditionWritesEnabled?: boolean;
+  contractIntakeWritesEnabled?: boolean;
   auth?: AuthSettings;
 }
 
@@ -209,6 +215,9 @@ function createDefaultDependencies(): AppDependencies {
     outboundConditions: outboundDatabase
       ? new PgOutboundConditionRepository(outboundDatabase)
       : undefined,
+    contractIntakes: database
+      ? new PgContractIntakeRepository(database)
+      : undefined,
     finalizations: database
       ? new PgDocumentFinalizationRepository(database)
       : new MemoryDocumentFinalizationRepository(),
@@ -227,6 +236,7 @@ export function createApp(
     writeFeaturesEnabled: config.writeFeaturesEnabled,
     writeScopes: config.writeScopes,
     outboundConditionWritesEnabled: config.outboundConditionWritesEnabled,
+    contractIntakeWritesEnabled: config.contractIntakeWritesEnabled,
     auth: config.auth
   }
 ) {
@@ -254,6 +264,12 @@ export function createApp(
     options.outboundConditionWritesEnabled === true &&
     options.writeScopes?.has("outbound-conditions") === true &&
     Boolean(dependencies.outboundConditions);
+  const contractIntakeWriteEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.contractIntakeWritesEnabled === true &&
+    options.writeScopes?.has("contract-intake") === true &&
+    Boolean(dependencies.contractIntakes);
   const driveStorageEnabled =
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
@@ -277,7 +293,8 @@ export function createApp(
       database.reachable &&
       database.readOnly !== true;
     const writeModeMismatch =
-      (draftWriteEnabled || documentFinalizeEnabled || driveStorageEnabled || slackApprovalWriteEnabled) &&
+      (draftWriteEnabled || documentFinalizeEnabled || driveStorageEnabled ||
+        slackApprovalWriteEnabled || contractIntakeWriteEnabled) &&
       database.reachable && database.readOnly === true;
     const outboundDatabaseMismatch =
       outboundConditionWriteEnabled &&
@@ -295,7 +312,8 @@ export function createApp(
         ...(pdfGenerationEnabled ? ["pdf"] : []),
         ...(driveStorageEnabled ? ["drive"] : []),
         ...(slackApprovalWriteEnabled ? ["slack-approvals"] : []),
-        ...(outboundConditionWriteEnabled ? ["outbound-conditions"] : [])
+        ...(outboundConditionWriteEnabled ? ["outbound-conditions"] : []),
+        ...(contractIntakeWriteEnabled ? ["contract-intake"] : [])
       ],
       database,
       outboundDatabase
@@ -311,14 +329,17 @@ export function createApp(
       service: "legalbridge-v2",
       accessMode: options.accessMode,
       writeFeaturesEnabled:
-        draftWriteEnabled || documentFinalizeEnabled || pdfGenerationEnabled || driveStorageEnabled || slackApprovalWriteEnabled || outboundConditionWriteEnabled,
+        draftWriteEnabled || documentFinalizeEnabled || pdfGenerationEnabled ||
+        driveStorageEnabled || slackApprovalWriteEnabled ||
+        outboundConditionWriteEnabled || contractIntakeWriteEnabled,
       writeCapabilities: [
         ...(draftWriteEnabled ? ["drafts"] : []),
         ...(documentFinalizeEnabled ? ["documents"] : []),
         ...(pdfGenerationEnabled ? ["pdf"] : []),
         ...(driveStorageEnabled ? ["drive"] : []),
         ...(slackApprovalWriteEnabled ? ["slack-approvals"] : []),
-        ...(outboundConditionWriteEnabled ? ["outbound-conditions"] : [])
+        ...(outboundConditionWriteEnabled ? ["outbound-conditions"] : []),
+        ...(contractIntakeWriteEnabled ? ["contract-intake"] : [])
       ],
       integrations: config.integrationMode,
       authMode: (options.auth ?? config.auth).mode,
@@ -348,7 +369,8 @@ export function createApp(
       "/documents/validate",
       "/documents/preview",
       "/outbound-conditions/validate",
-      "/contract-intakes/validate"
+      "/contract-intakes/validate",
+      "/contract-intakes/preflight"
     ]);
     if (safeMethods.has(request.method)) return next();
     if (request.method === "POST" && safePostPaths.has(request.path)) return next();
@@ -369,6 +391,9 @@ export function createApp(
     const isOutboundConditionWrite =
       request.method === "POST" && request.path === "/outbound-conditions";
     if (outboundConditionWriteEnabled && isOutboundConditionWrite) return next();
+    const isContractIntakeWrite =
+      request.method === "POST" && request.path === "/contract-intakes";
+    if (contractIntakeWriteEnabled && isContractIntakeWrite) return next();
 
     return response.status(403).json({
       error: options.accessMode === "readonly"
@@ -414,7 +439,10 @@ export function createApp(
     dependencies.outboundConditions,
     outboundConditionWriteEnabled
   ));
-  app.use("/api/v2", createContractIntakeRouter());
+  app.use("/api/v2", createContractIntakeRouter(
+    dependencies.contractIntakes,
+    contractIntakeWriteEnabled
+  ));
   app.use("/api/v2", createGlobalSearchRouter(
     dependencies.search ?? new MemoryGlobalSearchRepository()
   ));
