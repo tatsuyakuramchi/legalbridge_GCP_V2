@@ -25,19 +25,25 @@
 | `GOOGLE_SERVICE_ACCOUNT_KEY_PATH` | 専用SA鍵のマウントパス（例 `/secrets/gws-service-account.json`）。未設定/不在ならADCへフォールバック |
 | `DRIVE_ENVIRONMENT_TAG` | 保存ファイルの `appProperties.legalbridgeEnvironment`（既定 `validation`） |
 
-## 3. 前提（V1の資産を再利用）
+## 3. 前提（認証SAとフォルダ）
 
-V1が本番で使っている**専用Workspace SA鍵**と**共有ドライブフォルダ**をそのまま再利用するのが最短。フォルダはSAへ共有済みなので追加共有は不要。
+保存先はV1と同じ共有ドライブフォルダを再利用する（例：法務共有 `1e7_saBqerqhn94cgeoiiO-fqpkdpF6Ej`）。認証は2通り。**V1本番は鍵ファイルを使わず ADC（workerランタイムSA）**で動いている（`GOOGLE_SERVICE_ACCOUNT_KEY_PATH` は設定されているが実ファイルが無くADCへフォールバック）。
 
-```bash
-# V1 worker から実フォルダIDと鍵Secret名を確認（値は環境依存）
-gcloud run services describe legalbridge-document-worker \
-  --region=asia-northeast1 --project=legalbridge-488506 \
-  --format="yaml(spec.template.spec.containers[0].env, spec.template.spec.volumes)"
-# → GOOGLE_DRIVE_FOLDER_ID と、マウントしている Secret 名（gws-service-account 等）を控える
+### 方式A（推奨・V1と同じ）：ADC＋フォルダ共有
+
+鍵Secret不要。V2 write-test のランタイムSA（`legalbridge-v2-preview@…`）を、対象共有ドライブフォルダへ**コンテンツ管理者**で共有する。google-auth-library がメタデータから drive スコープのトークンを取得する。
+
+```
+# Google Drive の対象フォルダ（共有ドライブ）を開き、
+# 共有 → legalbridge-v2-preview@legalbridge-488506.iam.gserviceaccount.com を
+# 「コンテンツ管理者」で追加
 ```
 
-デプロイに使うSA（`legalbridge-v2-preview@…`）へ、その鍵Secretのアクセス権を付与：
+共有が無いと権限があっても `files.create` が404/403になる（V1で確認済み）。
+
+### 方式B：専用SA鍵をマウント
+
+V1同様の鍵ファイル方式にする場合は、鍵Secretを用意し、その鍵のSA（`client_email`）をフォルダへ共有。デプロイに使うSAへ鍵Secretのアクセス権を付与：
 
 ```bash
 gcloud secrets add-iam-policy-binding <GWS_SA_KEY_SECRET> \
@@ -45,20 +51,22 @@ gcloud secrets add-iam-policy-binding <GWS_SA_KEY_SECRET> \
   --role="roles/secretmanager.secretAccessor" --project=legalbridge-488506
 ```
 
-> 別SA鍵/別フォルダにする場合は、共有ドライブのフォルダをその鍵のSAメール（`client_email`）へ「コンテンツ管理者」で共有する。共有が無いと権限があっても `files.create` が404/403になる（V1で確認済み）。
+`cloudbuild-write-test` の Drive ゲートで `_GWS_SA_KEY_SECRET` は任意。設定時のみ `/secrets/gws-service-account.json` へマウントし `GOOGLE_SERVICE_ACCOUNT_KEY_PATH` を設定する。未設定なら方式A（ADC）になる。
 
 ## 4. デプロイ（契約取込 + Drive を同一サービスで有効化）
 
-`cloudbuild-write-test.yaml` の Drive ゲートを通す。`--substitutions` はカンマを含むため `^|^` 区切り＋ダブルクオート（[契約取込デプロイ手順](contract-intake-deploy.md) と同様）。`<...>` は実値へ置換。
+`cloudbuild-write-test.yaml` の Drive ゲートを通す。`--substitutions` はカンマを含むため `^|^` 区切り＋ダブルクオート（[契約取込デプロイ手順](contract-intake-deploy.md) と同様）。以下は**方式A（ADC・鍵Secretなし）**で、法務共有フォルダを使う例。
 
 ```bash
 gcloud builds submit \
   --config infra/gcp/cloudbuild-write-test.yaml \
   --project=legalbridge-488506 \
-  --substitutions="^|^_SERVICE=legalbridge-v2-write-test|_IMAGE=legalbridge-v2-write-test|_CLOUD_SQL_INSTANCE=legalbridge-488506:asia-northeast1:legalbridge-db|_DB_NAME=legalbridge|_DB_USER=legalbridge_v2_runtime|_DB_PASSWORD_SECRET=legalbridge-v2-runtime-db-password|_SERVICE_ACCOUNT=legalbridge-v2-preview@legalbridge-488506.iam.gserviceaccount.com|_PRIMARY_DB_MODE=production|_CONFIRM_PRODUCTION_PRIMARY=CUTOVER_V2_PRIMARY_TO_LEGALBRIDGE|_CONFIRM_DOCUMENT_TABLES=PRODUCTION_DOCUMENT_TABLES_PREFLIGHT_CONFIRMED|_AUTH_MODE=cloudrun-iam|_AUTH_ADMIN_EMAILS=tatsuya.kuramochi@arclight.co.jp|_CONFIRM_CLOUDRUN_IAM=CLOUDRUN_IAM_PROXY_VALIDATION_ONLY|_WRITE_SCOPES=drafts,documents,pdf,drive,contract-intake|_CONTRACT_INTAKE_WRITES_ENABLED=true|_CONFIRM_CONTRACT_INTAKE_WRITES=CONTRACT_INTAKE_LEGALBRIDGE_VALIDATION_ONLY|_DRIVE_STORAGE_ENABLED=true|_CONFIRM_DRIVE_STORAGE=DRIVE_LEGALBRIDGE_VALIDATION_ONLY|_GOOGLE_DRIVE_FOLDER_ID=<SHARED_DRIVE_FOLDER_ID>|_GWS_SA_KEY_SECRET=<GWS_SA_KEY_SECRET>|_DRIVE_ENVIRONMENT_TAG=validation"
+  --substitutions="^|^_SERVICE=legalbridge-v2-write-test|_IMAGE=legalbridge-v2-write-test|_CLOUD_SQL_INSTANCE=legalbridge-488506:asia-northeast1:legalbridge-db|_DB_NAME=legalbridge|_DB_USER=legalbridge_v2_runtime|_DB_PASSWORD_SECRET=legalbridge-v2-runtime-db-password|_SERVICE_ACCOUNT=legalbridge-v2-preview@legalbridge-488506.iam.gserviceaccount.com|_PRIMARY_DB_MODE=production|_CONFIRM_PRODUCTION_PRIMARY=CUTOVER_V2_PRIMARY_TO_LEGALBRIDGE|_CONFIRM_DOCUMENT_TABLES=PRODUCTION_DOCUMENT_TABLES_PREFLIGHT_CONFIRMED|_AUTH_MODE=cloudrun-iam|_AUTH_ADMIN_EMAILS=tatsuya.kuramochi@arclight.co.jp|_CONFIRM_CLOUDRUN_IAM=CLOUDRUN_IAM_PROXY_VALIDATION_ONLY|_WRITE_SCOPES=drafts,documents,pdf,drive,contract-intake|_CONTRACT_INTAKE_WRITES_ENABLED=true|_CONFIRM_CONTRACT_INTAKE_WRITES=CONTRACT_INTAKE_LEGALBRIDGE_VALIDATION_ONLY|_DRIVE_STORAGE_ENABLED=true|_CONFIRM_DRIVE_STORAGE=DRIVE_LEGALBRIDGE_VALIDATION_ONLY|_GOOGLE_DRIVE_FOLDER_ID=1e7_saBqerqhn94cgeoiiO-fqpkdpF6Ej|_DRIVE_ENVIRONMENT_TAG=validation"
 ```
 
-`verify-isolation` の Drive ゲートは、サービス名・フォルダID/鍵Secretの設定・認証（iap/cloudrun-iam）・`WRITE_SCOPES` に `drive` を含むことを検証する。デプロイ時、鍵Secretは `/secrets/gws-service-account.json` にファイルとしてマウントされる。
+方式B（鍵ファイル）にする場合は末尾に `|_GWS_SA_KEY_SECRET=<鍵Secret名>` を追加する。
+
+`verify-isolation` の Drive ゲートは、サービス名・フォルダID・認証（iap/cloudrun-iam）・`WRITE_SCOPES` に `drive` を含むことを検証する（`_GWS_SA_KEY_SECRET` は任意）。
 
 > `WRITE_SCOPES` の順序は `drafts,documents,pdf,drive,…` に合わせる（`verify-isolation` は完全一致で照合）。
 
