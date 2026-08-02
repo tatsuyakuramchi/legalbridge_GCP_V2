@@ -27,7 +27,7 @@
 
 ## 3. 前提（認証SAとフォルダ）
 
-保存先はV1と同じ共有ドライブフォルダを再利用する（例：法務共有 `1e7_saBqerqhn94cgeoiiO-fqpkdpF6Ej`）。認証は2通り。**V1本番は鍵ファイルを使わず ADC（workerランタイムSA）**で動いている（`GOOGLE_SERVICE_ACCOUNT_KEY_PATH` は設定されているが実ファイルが無くADCへフォールバック）。
+V2 write-test の保存先は共有ドライブ内フォルダ **`V2_FOLD`（`1KA1H525VDve71anot0Wv8p5qsggTiUja`）** を使用する。権限確認済み：ランタイムSA `legalbridge-v2-preview@legalbridge-488506.iam.gserviceaccount.com` は当該フォルダに `fileOrganizer`（コンテンツ管理者）として登録済みで、`organizer`/`fileOrganizer` ロールの存在から**共有ドライブ内**であることが確認できる（＝サービスアカウントでもアップロード可能。マイドライブは容量が無く不可）。認証は2通り。**V1本番は鍵ファイルを使わず ADC（workerランタイムSA）**で動いている（`GOOGLE_SERVICE_ACCOUNT_KEY_PATH` は設定されているが実ファイルが無くADCへフォールバック）。V2も既定はADCパス（`_GWS_SA_KEY_SECRET=BLOCKED`）。
 
 ### 方式A（推奨・V1と同じ）：ADC＋フォルダ共有
 
