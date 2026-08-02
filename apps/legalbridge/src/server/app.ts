@@ -54,6 +54,7 @@ import { createMatterRouter } from "./matters/routes.js";
 import { MemoryLedgerRepository, PgLedgerRepository, type LedgerRepository } from "./ledgers/repository.js";
 import { createLedgerRouter } from "./ledgers/routes.js";
 import { createOutboundConditionRouter } from "./ledgers/outbound-conditions.js";
+import { createContractIntakeRouter } from "./contracts/intake.js";
 import {
   PgOutboundConditionRepository,
   type OutboundConditionRepository
@@ -346,7 +347,8 @@ export function createApp(
     const safePostPaths = new Set([
       "/documents/validate",
       "/documents/preview",
-      "/outbound-conditions/validate"
+      "/outbound-conditions/validate",
+      "/contract-intakes/validate"
     ]);
     if (safeMethods.has(request.method)) return next();
     if (request.method === "POST" && safePostPaths.has(request.path)) return next();
@@ -412,6 +414,7 @@ export function createApp(
     dependencies.outboundConditions,
     outboundConditionWriteEnabled
   ));
+  app.use("/api/v2", createContractIntakeRouter());
   app.use("/api/v2", createGlobalSearchRouter(
     dependencies.search ?? new MemoryGlobalSearchRepository()
   ));
