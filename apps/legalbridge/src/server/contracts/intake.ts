@@ -1,5 +1,9 @@
 import { Router } from "express";
 import { z } from "zod";
+import {
+  ContractIntakeConflictError,
+  type ContractIntakeRepository
+} from "./intake-repository.js";
 
 const optionalText = (max = 500) =>
   z.string().trim().max(max).optional().transform((value) => value || undefined);
@@ -269,12 +273,104 @@ export function validateContractIntake(input: unknown) {
   };
 }
 
-export function createContractIntakeRouter() {
+export function createContractIntakeRouter(
+  repository?: ContractIntakeRepository,
+  writeEnabled = false
+) {
   const router = Router();
 
   router.post("/contract-intakes/validate", (request, response) => {
     const result = validateContractIntake(request.body);
     response.status(result.ok ? 200 : 400).json(result);
+  });
+
+  router.post("/contract-intakes/preflight", async (request, response, next) => {
+    try {
+      if (!repository) {
+        return response.status(503).json({
+          error: "contract intake database preflight is unavailable",
+          code: "CONTRACT_INTAKE_STORAGE_UNAVAILABLE"
+        });
+      }
+      const intake = contractIntakeSchema.parse(request.body);
+      const preview = await repository.preflight(intake);
+      return response.status(200).json({
+        ok: preview.committable,
+        preview,
+        integrations: {
+          backlog: "disabled",
+          slack: "disabled",
+          drive: "disabled"
+        }
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return response.status(400).json({
+          error: "invalid request",
+          issues: error.issues
+        });
+      }
+      next(error);
+    }
+  });
+
+  router.post("/contract-intakes", async (request, response, next) => {
+    try {
+      if (!writeEnabled || !repository) {
+        return response.status(503).json({
+          error: "contract intake storage is unavailable",
+          code: "CONTRACT_INTAKE_STORAGE_UNAVAILABLE"
+        });
+      }
+      if (response.locals.currentUser?.role !== "admin") {
+        return response.status(403).json({
+          error: "administrator approval is required",
+          code: "CONTRACT_INTAKE_ADMIN_REQUIRED"
+        });
+      }
+      if (request.body?.confirmation !== "COMMIT_PRODUCTION_CONTRACT_INTAKE") {
+        return response.status(400).json({
+          error: "explicit production confirmation is required",
+          code: "CONTRACT_INTAKE_CONFIRMATION_REQUIRED"
+        });
+      }
+      const intake = contractIntakeSchema.parse(request.body?.intake);
+      const preview = await repository.preflight(intake);
+      if (!preview.committable) {
+        return response.status(409).json({
+          error: "contract intake preflight failed",
+          code: "CONTRACT_INTAKE_PREFLIGHT_FAILED",
+          preview
+        });
+      }
+      const saved = await repository.save(
+        intake,
+        response.locals.currentUser.email
+      );
+      return response.status(201).json({
+        intake: saved,
+        integrations: {
+          backlog: "disabled",
+          slack: "disabled",
+          drive: "disabled"
+        }
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return response.status(400).json({
+          error: "invalid request",
+          issues: error.issues
+        });
+      }
+      if (error instanceof ContractIntakeConflictError) {
+        return response.status(409).json({
+          error: error.message,
+          code: "CONTRACT_INTAKE_CONFLICT",
+          blockers: error.blockers
+        });
+      }
+      next(error);
+    }
   });
 
   return router;
