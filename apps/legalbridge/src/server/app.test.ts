@@ -20,7 +20,8 @@ import { MemoryGlobalSearchRepository } from "./search/repository.js";
 import { MemoryAdminRepository } from "./admin/repository.js";
 import { MemoryPdfRenderer } from "./documents/pdf-renderer.js";
 import { MemorySlackNotificationHistoryRepository } from "./integrations/slack-history-repository.js";
-import { MemorySlackNotificationApprovalRepository } from "./integrations/slack-approval-repository.js";\nimport { MemoryOutboundConditionRepository } from "./ledgers/outbound-condition-repository.js";
+import { MemorySlackNotificationApprovalRepository } from "./integrations/slack-approval-repository.js";
+import { MemoryOutboundConditionRepository } from "./ledgers/outbound-condition-repository.js";
 
 const schema: DocumentFormSchema = {
   templateKey: "purchase_order",
