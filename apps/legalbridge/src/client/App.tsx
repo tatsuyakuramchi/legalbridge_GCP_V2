@@ -170,7 +170,10 @@ export function App() {
           initialQuery={searchSelection?.target === "work" || searchSelection?.target === "vendor" ? searchSelection.title : undefined}
           selectedId={searchSelection?.target === "work" || searchSelection?.target === "vendor" ? searchSelection.id : undefined} />}
         {view === "contract-intake" && adminWorkspace && (
-          <ContractIntakeWorkspace\n            canCommit={canCommitContractIntake}\n            onOpenDraft={resumeDraft}\n          />
+          <ContractIntakeWorkspace
+            canCommit={canCommitContractIntake}
+            onOpenDraft={resumeDraft}
+          />
         )}
         {view === "outbound" && <OutboundConditionWorkspace />}
         {view === "admin" && <AdminOverview />}
