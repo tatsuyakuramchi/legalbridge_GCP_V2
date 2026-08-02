@@ -14,6 +14,7 @@ import { GlobalSearch } from "./GlobalSearch";
 import { AdminOverview } from "./AdminOverview";
 import { DraftWorkspace } from "./DraftWorkspace";
 import { OutboundConditionWorkspace } from "./OutboundConditionWorkspace";
+import { ContractIntakeWorkspace } from "./ContractIntakeWorkspace";
 
 type CompatibilityReport = { summary: { total: number; ok: number; warning: number; error: number }; reports: Array<{ templateKey: string; status: "ok" | "warning" | "error"; missingHelpers: string[]; missingPartials: string[]; unmappedVariables: string[]; renderError?: string }> };
 
@@ -39,11 +40,12 @@ export function App() {
   const [templates, setTemplates] = useState<DocumentFormSchema[]>([]);
   const [schema, setSchema] = useState<DocumentFormSchema | null>(null);
   const [compatibility, setCompatibility] = useState<CompatibilityReport | null>(null);
-  const [view, setView] = useState<"home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "outbound" | "admin">("home");
+  const [view, setView] = useState<"home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "admin">("home");
   const [readOnly, setReadOnly] = useState(true);
   const [canFinalizeDocuments, setCanFinalizeDocuments] = useState(false);
   const [canGeneratePdf, setCanGeneratePdf] = useState(false);
   const [canSaveToDrive, setCanSaveToDrive] = useState(false);
+  const [canCommitContractIntake, setCanCommitContractIntake] = useState(false);
   const [currentUser, setCurrentUser] = useState<{ email: string; role: "admin" | "legal" | "requester" } | null>(null);
   const [searchSelection, setSearchSelection] = useState<{ target: "matter" | "document" | "vendor" | "work"; id: string; title: string } | null>(null);
   const [draftSelection, setDraftSelection] = useState<{ issueKey: string; templateType: string } | null>(null);
@@ -75,12 +77,14 @@ export function App() {
         setCanFinalizeDocuments(capabilities.includes("documents"));
         setCanGeneratePdf(capabilities.includes("pdf"));
         setCanSaveToDrive(capabilities.includes("drive"));
+        setCanCommitContractIntake(capabilities.includes("contract-intake"));
       })
       .catch(() => {
         setReadOnly(true);
         setCanFinalizeDocuments(false);
         setCanGeneratePdf(false);
         setCanSaveToDrive(false);
+        setCanCommitContractIntake(false);
       });
     fetch("/api/v2/document-templates")
       .then((response) => response.ok ? response.json() : Promise.reject())
@@ -132,6 +136,7 @@ export function App() {
             </button>
           )}
           {legalWorkspace && <button className={view === "ledgers" ? "active" : ""} onClick={() => setView("ledgers")}>台帳</button>}
+          {adminWorkspace && <button className={view === "contract-intake" ? "active" : ""} onClick={() => setView("contract-intake")}>契約取込</button>}
           {legalWorkspace && <button className={view === "outbound" ? "active" : ""} onClick={() => setView("outbound")}>アウト条件</button>}
           {adminWorkspace && <button className={view === "admin" ? "active" : ""} onClick={() => setView("admin")}>管理</button>}
         </nav>
@@ -164,6 +169,9 @@ export function App() {
           initialType={searchSelection?.target === "work" ? "works" : searchSelection?.target === "vendor" ? "vendors" : undefined}
           initialQuery={searchSelection?.target === "work" || searchSelection?.target === "vendor" ? searchSelection.title : undefined}
           selectedId={searchSelection?.target === "work" || searchSelection?.target === "vendor" ? searchSelection.id : undefined} />}
+        {view === "contract-intake" && adminWorkspace && (
+          <ContractIntakeWorkspace canCommit={canCommitContractIntake} />
+        )}
         {view === "outbound" && <OutboundConditionWorkspace />}
         {view === "admin" && <AdminOverview />}
         {view === "documents" && (
