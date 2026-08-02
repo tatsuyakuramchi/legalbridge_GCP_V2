@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 
 type LedgerItem = {
   id: string;
@@ -189,7 +189,7 @@ export function ContractIntakeWorkspace({
   }
 
   function updateWork(
-    setter: React.Dispatch<React.SetStateAction<WorkInput>>,
+    setter: Dispatch<SetStateAction<WorkInput>>,
     patch: Partial<WorkInput>
   ) {
     setter((current) => ({ ...current, ...patch }));
