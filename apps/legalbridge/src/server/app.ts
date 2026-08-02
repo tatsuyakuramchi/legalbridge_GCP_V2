@@ -60,6 +60,11 @@ import {
   type ContractIntakeRepository
 } from "./contracts/intake-repository.js";
 import {
+  PgContractIntakeDocumentSourceRepository,
+  type ContractIntakeDocumentSourceRepository
+} from "./contracts/intake-document-repository.js";
+import { createContractIntakeDocumentRouter } from "./contracts/intake-document-routes.js";
+import {
   PgOutboundConditionRepository,
   type OutboundConditionRepository
 } from "./ledgers/outbound-condition-repository.js";
@@ -173,6 +178,7 @@ export interface AppDependencies {
   slackApprovals?: SlackNotificationApprovalRepository;
   outboundConditions?: OutboundConditionRepository;
   contractIntakes?: ContractIntakeRepository;
+  contractIntakeDocuments?: ContractIntakeDocumentSourceRepository;
 }
 
 export interface AppOptions {
@@ -217,6 +223,9 @@ function createDefaultDependencies(): AppDependencies {
       : undefined,
     contractIntakes: database
       ? new PgContractIntakeRepository(database)
+      : undefined,
+    contractIntakeDocuments: database
+      ? new PgContractIntakeDocumentSourceRepository(database)
       : undefined,
     finalizations: database
       ? new PgDocumentFinalizationRepository(database)
@@ -270,6 +279,10 @@ export function createApp(
     options.contractIntakeWritesEnabled === true &&
     options.writeScopes?.has("contract-intake") === true &&
     Boolean(dependencies.contractIntakes);
+  const contractIntakeDocumentBridgeEnabled =
+    contractIntakeWriteEnabled &&
+    draftWriteEnabled &&
+    Boolean(dependencies.contractIntakeDocuments);
   const driveStorageEnabled =
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
@@ -394,6 +407,11 @@ export function createApp(
     const isContractIntakeWrite =
       request.method === "POST" && request.path === "/contract-intakes";
     if (contractIntakeWriteEnabled && isContractIntakeWrite) return next();
+    const isContractIntakeDocumentDraft =
+      request.method === "POST" &&
+      /^\/contract-intakes\/\d+\/document-drafts$/.test(request.path);
+    if (contractIntakeDocumentBridgeEnabled &&
+        isContractIntakeDocumentDraft) return next();
 
     return response.status(403).json({
       error: options.accessMode === "readonly"
@@ -442,6 +460,12 @@ export function createApp(
   app.use("/api/v2", createContractIntakeRouter(
     dependencies.contractIntakes,
     contractIntakeWriteEnabled
+  ));
+  app.use("/api/v2", createContractIntakeDocumentRouter(
+    dependencies.contractIntakeDocuments,
+    dependencies.templates,
+    dependencies.drafts,
+    contractIntakeDocumentBridgeEnabled
   ));
   app.use("/api/v2", createGlobalSearchRouter(
     dependencies.search ?? new MemoryGlobalSearchRepository()
