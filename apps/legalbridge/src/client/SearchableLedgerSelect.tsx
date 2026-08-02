@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-export type SearchableLedgerType = "vendors" | "works";
+export type SearchableLedgerType = "vendors" | "works" | "materials";
 
 export type SearchableLedgerItem = {
   id: string;
