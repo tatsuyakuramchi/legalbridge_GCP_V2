@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { Router } from "express";
 import type { AdminRepository } from "./repository.js";
 import { slackUxPreviewCatalog } from "../integrations/slack-ux.js";
@@ -281,6 +282,54 @@ export function createAdminRouter(
           ? 200
           : 409;
       return response.status(status).json({ issueKey, fingerprint, execution });
+    } catch (error) { next(error); }
+  });
+  router.post("/admin/slack-notifications/test-dispatch", async (request, response, next) => {
+    try {
+      if (!slackDelivery.enabled || !slackDelivery.adapter.configured) {
+        return response.status(403).json({
+          error: "Slack validation dispatch is disabled",
+          code: "SLACK_DISPATCH_DISABLED"
+        });
+      }
+      if (request.body?.confirmation !== "SEND_SLACK_VALIDATION") {
+        return response.status(400).json({
+          error: "explicit validation dispatch confirmation is required",
+          code: "SLACK_DISPATCH_CONFIRMATION_REQUIRED"
+        });
+      }
+      const userId = typeof request.body?.userId === "string"
+        ? request.body.userId.trim().toUpperCase()
+        : "";
+      if (!/^[UW][A-Z0-9]{8,}$/.test(userId)) {
+        return response.status(400).json({
+          error: "A valid Slack user ID is required",
+          code: "SLACK_DISPATCH_INVALID_USER"
+        });
+      }
+      // 候補フローを介さない配信経路のスモークテスト。指定ユーザーへ固定の
+      // 検証メッセージをDMし、bot token・アダプタ・Slack APIの疎通を確認する。
+      const idempotencyKey = crypto
+        .createHash("sha256")
+        .update(`slack-validation:${userId}`)
+        .digest("hex");
+      try {
+        const receipt = await slackDelivery.adapter.send({
+          userId,
+          idempotencyKey,
+          issueKey: "LEGAL-VALIDATION-0",
+          headline: "LegalBridge V2 Slack配信検証",
+          body: "これはLegalBridge V2からのSlack配信の検証メッセージです。実際の案件通知ではありません。",
+          nextAction: "確認のみで、対応は不要です。",
+          actions: []
+        });
+        return response.status(201).json({ userId, receipt, externalSend: true });
+      } catch (sendError) {
+        return response.status(502).json({
+          error: sendError instanceof Error ? sendError.message : "Slack delivery failed",
+          code: "SLACK_DELIVERY_FAILED"
+        });
+      }
     } catch (error) { next(error); }
   });
   router.get("/admin/slack-ux-preview", (_request, response) => {

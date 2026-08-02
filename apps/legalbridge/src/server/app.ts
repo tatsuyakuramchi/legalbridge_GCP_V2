@@ -445,7 +445,8 @@ export function createApp(
     if (slackApprovalWriteEnabled && isSlackApproval) return next();
     const isSlackDispatch =
       request.method === "POST" &&
-      request.path === "/admin/slack-notifications/dispatch";
+      (request.path === "/admin/slack-notifications/dispatch" ||
+        request.path === "/admin/slack-notifications/test-dispatch");
     if (slackDispatchEnabled && isSlackDispatch) return next();
     const isOutboundConditionWrite =
       request.method === "POST" && request.path === "/outbound-conditions";
