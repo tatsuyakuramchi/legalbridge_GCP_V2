@@ -17,6 +17,9 @@ const pathSchema = z.object({
 const requestSchema = z.object({
   templateType: z.enum(contractIntakeDocumentTypes)
 });
+const listQuerySchema = z.object({
+  limit: z.coerce.number().int().positive().max(200).optional().default(50)
+});
 
 export function createContractIntakeDocumentRouter(
   sources: ContractIntakeDocumentSourceRepository | undefined,
@@ -25,6 +28,34 @@ export function createContractIntakeDocumentRouter(
   writeEnabled = false
 ) {
   const router = Router();
+
+  router.get("/contract-intakes", async (request, response, next) => {
+    try {
+      if (!sources) {
+        return response.status(503).json({
+          error: "contract intake registry is unavailable",
+          code: "CONTRACT_INTAKE_REGISTRY_UNAVAILABLE"
+        });
+      }
+      if (response.locals.currentUser?.role !== "admin") {
+        return response.status(403).json({
+          error: "administrator approval is required",
+          code: "CONTRACT_INTAKE_ADMIN_REQUIRED"
+        });
+      }
+      const { limit } = listQuerySchema.parse(request.query);
+      const items = await sources.list(limit);
+      return response.status(200).json({ items });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return response.status(400).json({
+          error: "invalid request",
+          issues: error.issues
+        });
+      }
+      next(error);
+    }
+  });
 
   router.post(
     "/contract-intakes/:documentId/document-drafts",

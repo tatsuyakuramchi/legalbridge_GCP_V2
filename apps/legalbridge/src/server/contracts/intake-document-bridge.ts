@@ -8,6 +8,7 @@ import type {
   ContractIntakeDocumentSource,
   IntakeBridgeVendor
 } from "./intake-document-repository.js";
+import type { OutboundBridgeCondition } from "./intake-outbound-repository.js";
 
 export const contractIntakeDocumentTypes = [
   "individual_license_terms",
@@ -84,9 +85,9 @@ function buildIndividualLicensePlans(
 ): DraftPlan[] {
   const groups = new Map<number, Array<{
     index: number;
-    value: ContractIntakeDocumentSource["intake"]["outboundConditions"][number];
+    value: OutboundBridgeCondition;
   }>>();
-  source.intake.outboundConditions.forEach((value, index) => {
+  source.outboundConditions.forEach((value, index) => {
     const current = groups.get(value.counterpartyVendorId) ?? [];
     current.push({ index, value });
     groups.set(value.counterpartyVendorId, current);
@@ -210,7 +211,7 @@ function buildRoyaltyStatementPlan(
 
 function financialCondition(
   source: ContractIntakeDocumentSource,
-  condition: ContractIntakeDocumentSource["intake"]["outboundConditions"][number],
+  condition: OutboundBridgeCondition,
   index: number
 ) {
   const material = condition.materialIndex === undefined

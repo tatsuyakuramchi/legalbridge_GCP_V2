@@ -1,4 +1,4 @@
-import { useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import {
   SearchableLedgerSelect,
   isCanonicalWork,
@@ -56,13 +56,21 @@ type ConditionInput = {
 
 type OutboundCondition = ConditionInput & { parentInboundIndex: string };
 
-type OutboundAgreement = {
+type OutboundRow = {
   id: string;
   counterpartyVendorId: string;
   counterpartyName: string;
-  agreementType: "license" | "product";
-  agreementTitle: string;
-  conditions: OutboundCondition[];
+  condition: ConditionInput;
+};
+
+type OutboundView = {
+  conditionLineId: number;
+  conditionName: string;
+  counterpartyName: string;
+  territory: string;
+  languages: string[];
+  paymentScheme: string;
+  ratePct?: number;
 };
 
 type ContractForm = {
@@ -88,7 +96,53 @@ type PreparedDraft = {
   created: boolean;
 };
 
-const steps = ["イン契約", "取得権利", "自社作品", "アウト契約", "文書・登録"];
+type RegisteredIntake = {
+  documentId: number;
+  contractId: number;
+  documentNumber: string;
+  contractTitle: string;
+  contractType: string;
+  primaryVendorName: string;
+  sourceWorkTitle: string;
+  ownWorkTitle: string;
+  executedAt: string;
+  inboundConditionCount: number;
+  outboundConditionCount: number;
+};
+
+const steps = ["イン契約", "取得権利", "自社作品", "文書・登録"];
+
+const numberField = (value: string) => value === "" ? undefined : Number(value);
+const textField = (value: string) => value.trim() || undefined;
+
+function conditionToPayload(value: ConditionInput) {
+  return {
+    conditionName: value.conditionName.trim(),
+    transactionKind: value.transactionKind,
+    materialIndex: numberField(value.materialIndex),
+    territory: value.territory.trim(),
+    languages: value.languages.split(/[,、]/).map((item) => item.trim()).filter(Boolean),
+    exclusivity: value.exclusivity,
+    sublicenseAllowed: value.sublicenseAllowed,
+    termStart: textField(value.termStart),
+    termEnd: textField(value.termEnd),
+    currency: value.currency.trim().toUpperCase(),
+    paymentScheme: value.paymentScheme,
+    ratePct: numberField(value.ratePct),
+    amountExTax: numberField(value.amountExTax),
+    mgAmount: numberField(value.mgAmount),
+    advanceAmount: numberField(value.advanceAmount),
+    reportingCycle: textField(value.reportingCycle),
+    paymentTerms: textField(value.paymentTerms),
+    royaltyBase: textField(value.royaltyBase),
+    deductibleCosts: textField(value.deductibleCosts),
+    withholdingTaxTreatment: textField(value.withholdingTaxTreatment),
+    minimumQuantity: numberField(value.minimumQuantity),
+    sellOffMonths: numberField(value.sellOffMonths),
+    incoterms: textField(value.incoterms),
+    notes: textField(value.notes)
+  };
+}
 
 const initialWork = (kind: "source" | "own"): WorkInput => ({
   mode: "new",
@@ -141,13 +195,11 @@ const initialCondition = (
   notes: ""
 });
 
-const initialOutboundAgreement = (): OutboundAgreement => ({
-  id: globalThis.crypto?.randomUUID?.() ?? `agreement-${Date.now()}`,
+const initialOutboundRow = (): OutboundRow => ({
+  id: globalThis.crypto?.randomUUID?.() ?? `outbound-${Date.now()}`,
   counterpartyVendorId: "",
   counterpartyName: "",
-  agreementType: "license",
-  agreementTitle: "個別利用許諾",
-  conditions: [{ ...initialCondition("license"), parentInboundIndex: "0" }]
+  condition: { ...initialCondition("license"), conditionName: "個別利用許諾条件" }
 });
 
 const initialContract = (): ContractForm => ({
@@ -179,7 +231,6 @@ export function ContractChainWizard({
   const [materials, setMaterials] = useState<MaterialInput[]>([initialMaterial()]);
   const [contract, setContract] = useState<ContractForm>(initialContract);
   const [inbound, setInbound] = useState<ConditionInput[]>([initialCondition()]);
-  const [outboundAgreements, setOutboundAgreements] = useState<OutboundAgreement[]>([]);
   const [notice, setNotice] = useState("入力検証とDBプリフライトでは本番データを変更しません。");
   const [errors, setErrors] = useState<Array<{ field: string; message: string }>>([]);
   const [preflight, setPreflight] = useState<{
@@ -188,7 +239,30 @@ export function ContractChainWizard({
   } | null>(null);
   const [saved, setSaved] = useState<Record<string, unknown> | null>(null);
   const [preparedDrafts, setPreparedDrafts] = useState<PreparedDraft[]>([]);
+  const [registered, setRegistered] = useState<RegisteredIntake[]>([]);
+  const [selectedRegistered, setSelectedRegistered] = useState<number | null>(null);
+  const [existingOutbound, setExistingOutbound] = useState<OutboundView[]>([]);
+  const [outboundRows, setOutboundRows] = useState<OutboundRow[]>([]);
+  const [outboundNotice, setOutboundNotice] = useState("");
   const [working, setWorking] = useState(false);
+
+  async function loadRegistered() {
+    try {
+      const response = await fetch("/api/v2/contract-intakes?limit=100");
+      if (!response.ok) {
+        setRegistered([]);
+        return;
+      }
+      const result = await response.json();
+      setRegistered(result.items ?? []);
+    } catch {
+      setRegistered([]);
+    }
+  }
+
+  useEffect(() => {
+    loadRegistered();
+  }, []);
 
   function changed(message = "入力内容が変更されました。再度プリフライトしてください。") {
     setPreflight(null);
@@ -225,61 +299,10 @@ export function ContractChainWizard({
     changed();
   }
 
-  function updateAgreement(index: number, patch: Partial<OutboundAgreement>) {
-    setOutboundAgreements((current) => current.map((item, candidate) =>
-      candidate === index ? { ...item, ...patch } : item
-    ));
-    changed();
-  }
-
-  function updateOutboundCondition(
-    agreementIndex: number,
-    conditionIndex: number,
-    patch: Partial<OutboundCondition>
-  ) {
-    setOutboundAgreements((current) => current.map((agreement, candidate) =>
-      candidate !== agreementIndex ? agreement : {
-        ...agreement,
-        conditions: agreement.conditions.map((condition, conditionCandidate) =>
-          conditionCandidate === conditionIndex ? { ...condition, ...patch } : condition
-        )
-      }
-    ));
-    changed();
-  }
-
   function payload() {
-    const number = (value: string) => value === "" ? undefined : Number(value);
-    const text = (value: string) => value.trim() || undefined;
     const workPayload = (value: WorkInput) => value.mode === "existing"
       ? { existingWorkId: Number(value.existingWorkId) }
       : { title: value.title.trim(), workType: value.workType, status: value.status || undefined };
-    const conditionPayload = (value: ConditionInput) => ({
-      conditionName: value.conditionName.trim(),
-      transactionKind: value.transactionKind,
-      materialIndex: number(value.materialIndex),
-      territory: value.territory.trim(),
-      languages: value.languages.split(/[,、]/).map((item) => item.trim()).filter(Boolean),
-      exclusivity: value.exclusivity,
-      sublicenseAllowed: value.sublicenseAllowed,
-      termStart: text(value.termStart),
-      termEnd: text(value.termEnd),
-      currency: value.currency.trim().toUpperCase(),
-      paymentScheme: value.paymentScheme,
-      ratePct: number(value.ratePct),
-      amountExTax: number(value.amountExTax),
-      mgAmount: number(value.mgAmount),
-      advanceAmount: number(value.advanceAmount),
-      reportingCycle: text(value.reportingCycle),
-      paymentTerms: text(value.paymentTerms),
-      royaltyBase: text(value.royaltyBase),
-      deductibleCosts: text(value.deductibleCosts),
-      withholdingTaxTreatment: text(value.withholdingTaxTreatment),
-      minimumQuantity: number(value.minimumQuantity),
-      sellOffMonths: number(value.sellOffMonths),
-      incoterms: text(value.incoterms),
-      notes: text(value.notes)
-    });
 
     return {
       sourceWork: workPayload(sourceWork),
@@ -301,22 +324,16 @@ export function ContractChainWizard({
         primaryVendorId: Number(contract.primaryVendorId),
         contractType: contract.contractType.trim(),
         executedAt: contract.executedAt,
-        effectiveDate: text(contract.effectiveDate),
-        expirationDate: text(contract.expirationDate),
+        effectiveDate: textField(contract.effectiveDate),
+        expirationDate: textField(contract.expirationDate),
         autoRenewal: contract.autoRenewal,
-        renewalNoticeMonths: number(contract.renewalNoticeMonths),
-        scope: text(contract.scope),
-        documentUrl: text(contract.documentUrl)
+        renewalNoticeMonths: numberField(contract.renewalNoticeMonths),
+        scope: textField(contract.scope),
+        documentUrl: textField(contract.documentUrl)
       },
-      inboundConditions: inbound.map(conditionPayload),
-      outboundConditions: outboundAgreements.flatMap((agreement) =>
-        agreement.conditions.map((value) => ({
-          ...conditionPayload(value),
-          transactionKind: agreement.agreementType,
-          counterpartyVendorId: Number(agreement.counterpartyVendorId),
-          parentInboundIndex: Number(value.parentInboundIndex)
-        }))
-      )
+      inboundConditions: inbound.map(conditionToPayload),
+      // アウト条件は登録後にレジストリから追記する（イン先確定→アウト後日）。
+      outboundConditions: []
     };
   }
 
@@ -342,15 +359,6 @@ export function ContractChainWizard({
     if (index === 2 && (ownWork.mode === "existing" ? !ownWork.existingWorkId : !ownWork.title.trim())) {
       return "自社作品を選択または入力してください。";
     }
-    if (index === 3) {
-      for (const agreement of outboundAgreements) {
-        if (!agreement.counterpartyVendorId) return "各アウト契約の取引先を選択してください。";
-        if (!agreement.conditions.length) return "各アウト契約に条件を1件以上追加してください。";
-        if (agreement.conditions.some((item) => !item.conditionName.trim() || !item.territory.trim() || !item.languages.trim())) {
-          return "アウト条件の条件名・地域・言語を入力してください。";
-        }
-      }
-    }
     return "";
   }
 
@@ -363,7 +371,7 @@ export function ContractChainWizard({
     const target = Math.min(step + 1, steps.length - 1);
     setFurthestStep((current) => Math.max(current, target));
     setStep(target);
-    setNotice(target === 4 ? "入力のつながりを確認し、検証とDBプリフライトを実行してください。" : `${steps[target]}を入力してください。`);
+    setNotice(target === steps.length - 1 ? "入力のつながりを確認し、検証とDBプリフライトを実行してください。" : `${steps[target]}を入力してください。`);
   }
 
   async function validate() {
@@ -383,7 +391,7 @@ export function ContractChainWizard({
         setNotice("入力内容に修正が必要です。");
         return;
       }
-      setNotice(`入力検証OK：素材${materials.length}件・イン条件${inbound.length}件・アウト契約${outboundAgreements.length}件をDBプリフライトできます。`);
+      setNotice(`入力検証OK：素材${materials.length}件・イン条件${inbound.length}件をDBプリフライトできます。`);
     } catch {
       setNotice("入力検証APIへ接続できませんでした。");
     } finally {
@@ -443,6 +451,7 @@ export function ContractChainWizard({
       setSaved(result.intake);
       setPreparedDrafts([]);
       setNotice(`登録完了：契約書番号 ${result.intake.documentNumber}。外部連携は実行されていません。`);
+      loadRegistered();
     } catch {
       setNotice("登録APIへ接続できませんでした。");
     } finally {
@@ -450,13 +459,16 @@ export function ContractChainWizard({
     }
   }
 
-  async function prepareDocumentDraft(templateType: "individual_license_terms" | "royalty_statement") {
-    if (!saved || working) return;
+  async function prepareDocumentDraft(
+    templateType: "individual_license_terms" | "royalty_statement",
+    documentId: number
+  ) {
+    if (!documentId || working) return;
     setWorking(true);
     setErrors([]);
     setNotice("登録済み契約から文書下書きを作成しています。");
     try {
-      const response = await fetch(`/api/v2/contract-intakes/${Number(saved.documentId)}/document-drafts`, {
+      const response = await fetch(`/api/v2/contract-intakes/${documentId}/document-drafts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ templateType })
@@ -481,12 +493,88 @@ export function ContractChainWizard({
     }
   }
 
+  async function selectRegistered(documentId: number) {
+    setSelectedRegistered(documentId);
+    setPreparedDrafts([]);
+    setOutboundRows([]);
+    setOutboundNotice("");
+    setExistingOutbound([]);
+    try {
+      const response = await fetch(
+        `/api/v2/contract-intakes/${documentId}/outbound-conditions`
+      );
+      if (response.ok) {
+        const result = await response.json();
+        setExistingOutbound(result.items ?? []);
+      }
+    } catch {
+      setExistingOutbound([]);
+    }
+  }
+
+  function updateOutboundRow(index: number, patch: Partial<ConditionInput>) {
+    setOutboundRows((current) => current.map((row, candidate) =>
+      candidate === index ? { ...row, condition: { ...row.condition, ...patch } } : row
+    ));
+    setOutboundNotice("");
+  }
+
+  async function appendOutbound(documentId: number) {
+    if (working) return;
+    if (!outboundRows.length) {
+      setOutboundNotice("アウト条件を1件以上追加してください。");
+      return;
+    }
+    if (outboundRows.some((row) => !row.counterpartyVendorId)) {
+      setOutboundNotice("各アウト条件の許諾先を選択してください。");
+      return;
+    }
+    if (!window.confirm(
+      `選択した契約へアウト条件を${outboundRows.length}件、本番DBへ追記します。よろしいですか？`
+    )) return;
+
+    setWorking(true);
+    setOutboundNotice("アウト条件を本番DBへ追記しています。");
+    try {
+      const response = await fetch(
+        `/api/v2/contract-intakes/${documentId}/outbound-conditions`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            conditions: outboundRows.map((row) => ({
+              ...conditionToPayload(row.condition),
+              counterpartyVendorId: Number(row.counterpartyVendorId)
+            }))
+          })
+        }
+      );
+      const result = await response.json();
+      if (!response.ok) {
+        setOutboundNotice(
+          result.error ??
+          result.errors?.map((item: { message: string }) => item.message).join("、") ??
+          "アウト条件を追記できませんでした。"
+        );
+        return;
+      }
+      setOutboundRows([]);
+      setOutboundNotice(`アウト条件を${result.appended.length}件追記しました。個別利用許諾条件書を作成できます。`);
+      await selectRegistered(documentId);
+      await loadRegistered();
+    } catch {
+      setOutboundNotice("アウト条件追記APIへ接続できませんでした。");
+    } finally {
+      setWorking(false);
+    }
+  }
+
   return <section className="page contract-intake contract-chain-wizard">
     <div className="page-title">
       <div>
-        <p>INBOUND TO OUTBOUND CONTRACT CHAIN</p>
-        <h1>イン契約からアウト契約・文書作成へ</h1>
-        <small>締結済イン契約を権利根拠として、原作・素材・自社作品・許諾先を順番に登録します</small>
+        <p>INBOUND CONTRACT INTAKE</p>
+        <h1>締結済イン契約の登録</h1>
+        <small>原作・素材・自社作品・イン条件を登録します。アウト条件は登録後、下の一覧から後日追加します</small>
       </div>
     </div>
 
@@ -507,7 +595,7 @@ export function ContractChainWizard({
 
     <div className="contract-chain-map" aria-label="権利と文書の流れ">
       <span>締結済イン契約</span><i>→</i><span>取得権利</span><i>→</i>
-      <span>自社作品</span><i>→</i><span>アウト契約・条件書</span>
+      <span>自社作品</span><i>→</i><span>登録・利用許諾料明細</span>
     </div>
 
     <section className="wizard-panel" hidden={step !== 0}>
@@ -567,54 +655,7 @@ export function ContractChainWizard({
     </section>
 
     <section className="wizard-panel" hidden={step !== 3}>
-      <header><p>STEP 4</p><h2>アウト契約</h2><small>被許諾者・買主を先に選び、その契約の配下へ許諾条件を設定します。</small></header>
-      <RepeaterHeader title="アウト契約・許諾先" action="＋ アウト契約を追加" onAdd={() => { setOutboundAgreements((current) => [...current, initialOutboundAgreement()]); changed(); }} />
-      {!outboundAgreements.length && <div className="inline-empty">
-        アウト契約が未定なら、このままイン契約だけ登録できます。個別利用許諾条件書はアウト契約追加後に作成します。
-      </div>}
-      {outboundAgreements.map((agreement, agreementIndex) => <fieldset className="outbound-agreement" key={agreement.id}>
-        <legend>アウト契約 {agreementIndex + 1}</legend>
-        <div className="repeat-actions"><button type="button" onClick={() => {
-          setOutboundAgreements((current) => current.filter((_, candidate) => candidate !== agreementIndex));
-          changed();
-        }}>契約を削除</button></div>
-        <div className="agreement-head">
-          <SearchableLedgerSelect type="vendors" value={agreement.counterpartyVendorId}
-            label="取引先（被許諾者・買主）" placeholder="会社名・取引先コードで検索"
-            helper="このアウト契約の文書相手方"
-            onChange={(value, item) => updateAgreement(agreementIndex, { counterpartyVendorId: value, counterpartyName: item?.title ?? "" })} />
-          <label>アウト契約類型<select value={agreement.agreementType} onChange={(event) => {
-            const agreementType = event.target.value as OutboundAgreement["agreementType"];
-            updateAgreement(agreementIndex, {
-              agreementType,
-              conditions: agreement.conditions.map((condition) => ({
-                ...condition,
-                transactionKind: agreementType,
-                paymentScheme: agreementType === "product" && condition.paymentScheme === "royalty" ? "per_unit" : condition.paymentScheme,
-                ratePct: agreementType === "product" ? "" : condition.ratePct,
-                mgAmount: agreementType === "product" ? "" : condition.mgAmount,
-                advanceAmount: agreementType === "product" ? "" : condition.advanceAmount
-              }))
-            });
-          }}><option value="license">License-Out</option><option value="product">Product-Out</option></select></label>
-          <label>管理上の契約名<input value={agreement.agreementTitle} onChange={(event) => updateAgreement(agreementIndex, { agreementTitle: event.target.value })} placeholder="例：〇〇社 個別利用許諾" /></label>
-        </div>
-        <div className="agreement-flow"><strong>{ownWork.selectedTitle || ownWork.title || "自社作品"}</strong><i>→</i><strong>{agreement.counterpartyName || "取引先を選択"}</strong></div>
-        <RepeaterHeader title="この契約のアウト条件" action="＋ 条件を追加" onAdd={() => updateAgreement(agreementIndex, {
-          conditions: [...agreement.conditions, { ...initialCondition(agreement.agreementType), conditionName: agreement.agreementType === "product" ? "製品化許諾条件" : "個別利用許諾条件", parentInboundIndex: "0" }]
-        })} />
-        {agreement.conditions.map((condition, conditionIndex) => <ConditionEditor key={conditionIndex}
-          value={condition} title={`アウト条件 ${conditionIndex + 1}`}
-          materials={materials} inbound={inbound} fixedTransactionKind={agreement.agreementType}
-          onChange={(patch) => updateOutboundCondition(agreementIndex, conditionIndex, patch)}
-          onRemove={agreement.conditions.length > 1 ? () => updateAgreement(agreementIndex, {
-            conditions: agreement.conditions.filter((_, candidate) => candidate !== conditionIndex)
-          }) : undefined} />)}
-      </fieldset>)}
-    </section>
-
-    <section className="wizard-panel" hidden={step !== 4}>
-      <header><p>STEP 5</p><h2>文書・DB確定</h2><small>権利の流れと作成予定文書を確認してから、本番DBへ登録します。</small></header>
+      <header><p>STEP 4</p><h2>文書・DB確定</h2><small>権利の流れを確認してから、締結済イン契約を本番DBへ登録します。</small></header>
       <div className="chain-review">
         <article><span>イン契約</span><strong>{contract.documentNumber || "未入力"}</strong><small>{contract.primaryVendorName || "許諾者未選択"} → 当社</small></article>
         <i>→</i>
@@ -623,12 +664,7 @@ export function ContractChainWizard({
         <article><span>自社作品</span><strong>{ownWork.selectedTitle || ownWork.title || "未入力"}</strong><small>イン契約を権利根拠として紐付け</small></article>
       </div>
       <div className="outbound-review">
-        <h3>アウト契約と作成予定文書</h3>
-        {outboundAgreements.length ? outboundAgreements.map((agreement) => <article key={agreement.id}>
-          <div><span>{agreement.agreementType === "license" ? "License-Out" : "Product-Out"}</span><strong>{agreement.counterpartyName || "取引先未選択"}</strong><small>{agreement.agreementTitle} ／ 条件 {agreement.conditions.length}件</small></div>
-          <b>個別利用許諾条件書：許諾先ごとに1件</b>
-        </article>) : <div className="inline-empty">アウト契約なし：個別利用許諾条件書は作成されません。</div>}
-        <p>利用許諾料明細書はイン契約の条件・料率を引き継ぎます。実績売上額、利用許諾料、控除・源泉徴収は下書きで入力します。</p>
+        <p>登録後、利用許諾料明細書はイン条件の料率を引き継いで作成できます。アウト条件（許諾先ごとの個別利用許諾条件）は登録後に下の一覧から追加し、個別利用許諾条件書を作成します。</p>
       </div>
 
       <section className="intake-actions">
@@ -655,12 +691,10 @@ export function ContractChainWizard({
           <dt>自社作品ID</dt><dd>{String(saved.ownWorkId)}</dd>
           <dt>素材ID</dt><dd>{(saved.materialIds as number[]).join("、")}</dd>
           <dt>イン条件ID</dt><dd>{(saved.inboundConditionIds as number[]).join("、")}</dd>
-          <dt>文書化待ちアウト条件</dt><dd>{String(saved.outboundConditionsPendingDocument)}件</dd>
         </dl>
         <div className="intake-document-actions">
-          <button type="button" onClick={() => prepareDocumentDraft("individual_license_terms")} disabled={working || !outboundAgreements.length}>個別利用許諾条件書の下書きを作成</button>
-          <button type="button" onClick={() => prepareDocumentDraft("royalty_statement")} disabled={working}>利用許諾料明細書の下書きを作成</button>
-          <small>利用許諾料明細書の実績売上額・利用許諾料・控除・源泉徴収は、下書き画面で確認して入力してください。</small>
+          <button type="button" onClick={() => prepareDocumentDraft("royalty_statement", Number(saved.documentId))} disabled={working}>利用許諾料明細書の下書きを作成</button>
+          <small>個別利用許諾条件書は、下の「登録済み契約から文書を作成」でアウト条件を追加してから作成します。利用許諾料明細書の実績売上額・利用許諾料・控除・源泉徴収は、下書き画面で入力してください。</small>
         </div>
         {preparedDrafts.length > 1 && <div className="intake-prepared-drafts">
           {preparedDrafts.map((draft) => <button type="button" key={draft.issueKey} onClick={() => onOpenDraft(draft.issueKey, draft.templateType)}>
@@ -675,6 +709,86 @@ export function ContractChainWizard({
       <span>{notice}</span>
       {step < steps.length - 1 && <button type="button" className="primary" onClick={next}>次へ：{steps[step + 1]} →</button>}
     </footer>
+
+    {registered.length > 0 && <section className="panel intake-registry">
+      <div className="intake-registry-head">
+        <h2>登録済み契約から文書を作成</h2>
+        <button type="button" onClick={loadRegistered} disabled={working}>再読み込み</button>
+      </div>
+      <p>確定登録済みの契約を選択し、個別利用許諾条件書・利用許諾料明細書の下書きを作成できます。新規登録を完了しなくても既存契約から再作成できます。既存データの更新・削除は行いません。</p>
+      <div className="intake-registry-list">
+        {registered.map((item) => <button type="button" key={item.documentId}
+          className={selectedRegistered === item.documentId ? "active" : ""}
+          onClick={() => selectRegistered(item.documentId)}>
+          <strong>{item.documentNumber}</strong>
+          <span>{item.contractTitle}</span>
+          <small>{[item.ownWorkTitle || item.sourceWorkTitle, item.primaryVendorName].filter(Boolean).join(" ／ ")}</small>
+          <em>締結日 {item.executedAt}・イン{item.inboundConditionCount}／アウト{item.outboundConditionCount}</em>
+        </button>)}
+      </div>
+      {(() => {
+        const item = registered.find((candidate) => candidate.documentId === selectedRegistered);
+        if (!item) return null;
+        return <div className="intake-registry-detail">
+          <div className="outbound-existing">
+            <h3>登録済みアウト条件（許諾先ごと）</h3>
+            {existingOutbound.length ? <ul>
+              {existingOutbound.map((row) => <li key={row.conditionLineId}>
+                <strong>{row.counterpartyName || "許諾先"}</strong>
+                <span>{row.conditionName}</span>
+                <small>{[row.territory, row.languages.join("・")].filter(Boolean).join(" ／ ")}
+                  {row.ratePct !== undefined ? ` ／ 料率 ${row.ratePct}%` : ""}</small>
+              </li>)}
+            </ul> : <div className="inline-empty">
+              アウト条件はまだありません。追加すると個別利用許諾条件書を作成できます。
+            </div>}
+          </div>
+
+          <RepeaterHeader title="アウト条件を追加（許諾先ごと）"
+            action="＋ アウト条件を追加"
+            onAdd={() => setOutboundRows((current) => [...current, initialOutboundRow()])} />
+          {outboundRows.map((row, index) => <fieldset className="outbound-agreement" key={row.id}>
+            <legend>追加アウト条件 {index + 1}</legend>
+            <div className="repeat-actions"><button type="button"
+              onClick={() => setOutboundRows((current) =>
+                current.filter((_, candidate) => candidate !== index))}>削除</button></div>
+            <SearchableLedgerSelect type="vendors" value={row.counterpartyVendorId}
+              label="許諾先（被許諾者・買主）" placeholder="会社名・取引先コードで検索"
+              helper="このアウト条件の文書相手方"
+              onChange={(value, vendor) => setOutboundRows((current) =>
+                current.map((candidate, candidateIndex) => candidateIndex === index
+                  ? { ...candidate, counterpartyVendorId: value, counterpartyName: vendor?.title ?? "" }
+                  : candidate))} />
+            <ConditionEditor value={row.condition} title="アウト条件" materials={[]}
+              onChange={(patch) => updateOutboundRow(index, patch)} />
+          </fieldset>)}
+
+          {outboundRows.length > 0 && <div className="outbound-append-actions">
+            <button type="button" className="primary"
+              onClick={() => appendOutbound(item.documentId)}
+              disabled={working || !canCommit}>本番DBへアウト条件を追記</button>
+            {!canCommit && <small>contract-intake書込ゲートが無効のため追記できません。</small>}
+          </div>}
+          {outboundNotice && <p className="outbound-notice">{outboundNotice}</p>}
+
+          <div className="intake-document-actions">
+            <button type="button"
+              onClick={() => prepareDocumentDraft("individual_license_terms", item.documentId)}
+              disabled={working || item.outboundConditionCount === 0}
+              title={item.outboundConditionCount === 0 ? "アウト条件を追加すると作成できます" : undefined}>個別利用許諾条件書の下書きを作成</button>
+            <button type="button"
+              onClick={() => prepareDocumentDraft("royalty_statement", item.documentId)}
+              disabled={working}>利用許諾料明細書の下書きを作成</button>
+            <small>利用許諾料明細書の実績売上額・利用許諾料・控除・源泉徴収は、下書き画面で確認して入力してください。</small>
+          </div>
+        </div>;
+      })()}
+      {selectedRegistered && preparedDrafts.length > 1 && <div className="intake-prepared-drafts">
+        {preparedDrafts.map((draft) => <button type="button" key={draft.issueKey} onClick={() => onOpenDraft(draft.issueKey, draft.templateType)}>
+          <strong>{draft.label}</strong><span>{draft.counterpartyName}</span><small>{draft.created ? "新規作成" : "既存下書き"}</small>
+        </button>)}
+      </div>}
+    </section>}
   </section>;
 }
 

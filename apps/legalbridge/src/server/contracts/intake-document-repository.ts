@@ -3,6 +3,10 @@ import {
   contractIntakeSchema,
   type ValidatedContractIntake
 } from "./intake.js";
+import {
+  listContractOutboundConditions,
+  type OutboundBridgeCondition
+} from "./intake-outbound-repository.js";
 
 export interface IntakeBridgeWork {
   id: number;
@@ -37,15 +41,85 @@ export interface ContractIntakeDocumentSource {
   ownWork: IntakeBridgeWork;
   materials: IntakeBridgeMaterial[];
   vendors: Record<number, IntakeBridgeVendor>;
+  // Outbound conditions are registered later and stored as condition_lines,
+  // not inside the intake form_data. The bridge reads them from here.
+  outboundConditions: OutboundBridgeCondition[];
+}
+
+export interface ContractIntakeRegistrySummary {
+  documentId: number;
+  contractId: number;
+  documentNumber: string;
+  contractTitle: string;
+  contractType: string;
+  primaryVendorId: number;
+  primaryVendorName: string;
+  sourceWorkTitle: string;
+  ownWorkTitle: string;
+  executedAt: string;
+  inboundConditionCount: number;
+  outboundConditionCount: number;
 }
 
 export interface ContractIntakeDocumentSourceRepository {
   find(documentId: number): Promise<ContractIntakeDocumentSource | null>;
+  list(limit?: number): Promise<ContractIntakeRegistrySummary[]>;
 }
 
 export class PgContractIntakeDocumentSourceRepository
 implements ContractIntakeDocumentSourceRepository {
   constructor(private readonly database: DatabasePool) {}
+
+  async list(limit = 50) {
+    const boundedLimit = Math.min(Math.max(Math.trunc(limit), 1), 200);
+    const result = await this.database.query(
+      `SELECT d.id, d.contract_id, d.document_number, d.form_data,
+              COALESCE(v.vendor_name, '') AS primary_vendor_name,
+              COALESCE(sw.title, '') AS source_work_title,
+              COALESCE(ow.title, '') AS own_work_title,
+              (SELECT COUNT(*) FROM condition_lines cl
+                WHERE cl.document_id = d.id AND cl.flow_direction = 'out')
+                AS outbound_condition_count
+         FROM documents d
+         LEFT JOIN vendors v
+           ON v.id = NULLIF(d.form_data->'contract'->>'primaryVendorId', '')::integer
+         LEFT JOIN contract_works cws
+           ON cws.contract_id = d.contract_id AND cws.role = 'licensed_source'
+         LEFT JOIN works sw ON sw.id = cws.work_id
+         LEFT JOIN contract_works cwo
+           ON cwo.contract_id = d.contract_id AND cwo.role = 'licensed_work'
+         LEFT JOIN works ow ON ow.id = cwo.work_id
+        WHERE d.template_type = 'registered_master'
+          AND d.record_type = 'license_condition'
+          AND d.contract_id IS NOT NULL
+        ORDER BY d.id DESC
+        LIMIT $1`,
+      [boundedLimit]
+    );
+
+    const summaries: ContractIntakeRegistrySummary[] = [];
+    for (const row of result.rows) {
+      const parsed = contractIntakeSchema.safeParse(row.form_data);
+      if (!parsed.success) continue;
+      summaries.push({
+        documentId: Number(row.id),
+        contractId: Number(row.contract_id),
+        documentNumber: String(row.document_number),
+        contractTitle: parsed.data.contract.contractTitle,
+        contractType: parsed.data.contract.contractType,
+        primaryVendorId: parsed.data.contract.primaryVendorId,
+        primaryVendorName: String(row.primary_vendor_name),
+        sourceWorkTitle: String(row.source_work_title) ||
+          parsed.data.sourceWork.title || "",
+        ownWorkTitle: String(row.own_work_title) ||
+          parsed.data.ownWork.title || "",
+        executedAt: parsed.data.contract.executedAt,
+        inboundConditionCount: parsed.data.inboundConditions.length,
+        outboundConditionCount: Number(row.outbound_condition_count ?? 0)
+      });
+    }
+    return summaries;
+  }
 
   async find(documentId: number) {
     const document = await this.database.query(
@@ -105,6 +179,12 @@ implements ContractIntakeDocumentSourceRepository {
       if (material.rightsHolderVendorId) vendorIds.add(material.rightsHolderVendorId);
     }
 
+    const outboundConditions =
+      await listContractOutboundConditions(this.database, documentId);
+    for (const condition of outboundConditions) {
+      vendorIds.add(condition.counterpartyVendorId);
+    }
+
     const vendorResult = await this.database.query(
       `SELECT id, vendor_name, entity_type, address, vendor_rep,
               contact_name, phone, email
@@ -139,7 +219,8 @@ implements ContractIntakeDocumentSourceRepository {
         materialName: String(material.material_name),
         rightsHolderLabel: String(material.rights_holder_label)
       })),
-      vendors
+      vendors,
+      outboundConditions
     } satisfies ContractIntakeDocumentSource;
   }
 }
@@ -157,6 +238,28 @@ implements ContractIntakeDocumentSourceRepository {
   constructor(
     readonly sources = new Map<number, ContractIntakeDocumentSource>()
   ) {}
+
+  async list(limit = 50) {
+    const boundedLimit = Math.min(Math.max(Math.trunc(limit), 1), 200);
+    return [...this.sources.values()]
+      .sort((left, right) => right.documentId - left.documentId)
+      .slice(0, boundedLimit)
+      .map((source) => ({
+        documentId: source.documentId,
+        contractId: source.contractId,
+        documentNumber: source.documentNumber,
+        contractTitle: source.intake.contract.contractTitle,
+        contractType: source.intake.contract.contractType,
+        primaryVendorId: source.intake.contract.primaryVendorId,
+        primaryVendorName:
+          source.vendors[source.intake.contract.primaryVendorId]?.vendorName ?? "",
+        sourceWorkTitle: source.sourceWork.title,
+        ownWorkTitle: source.ownWork.title,
+        executedAt: source.intake.contract.executedAt,
+        inboundConditionCount: source.intake.inboundConditions.length,
+        outboundConditionCount: source.outboundConditions.length
+      } satisfies ContractIntakeRegistrySummary));
+  }
 
   async find(documentId: number) {
     return this.sources.get(documentId) ?? null;

@@ -65,6 +65,11 @@ import {
 } from "./contracts/intake-document-repository.js";
 import { createContractIntakeDocumentRouter } from "./contracts/intake-document-routes.js";
 import {
+  PgContractOutboundRepository,
+  type ContractOutboundRepository
+} from "./contracts/intake-outbound-repository.js";
+import { createContractOutboundRouter } from "./contracts/intake-outbound-routes.js";
+import {
   PgOutboundConditionRepository,
   type OutboundConditionRepository
 } from "./ledgers/outbound-condition-repository.js";
@@ -179,6 +184,7 @@ export interface AppDependencies {
   outboundConditions?: OutboundConditionRepository;
   contractIntakes?: ContractIntakeRepository;
   contractIntakeDocuments?: ContractIntakeDocumentSourceRepository;
+  contractOutbound?: ContractOutboundRepository;
 }
 
 export interface AppOptions {
@@ -226,6 +232,9 @@ function createDefaultDependencies(): AppDependencies {
       : undefined,
     contractIntakeDocuments: database
       ? new PgContractIntakeDocumentSourceRepository(database)
+      : undefined,
+    contractOutbound: database
+      ? new PgContractOutboundRepository(database)
       : undefined,
     finalizations: database
       ? new PgDocumentFinalizationRepository(database)
@@ -283,6 +292,9 @@ export function createApp(
     contractIntakeWriteEnabled &&
     draftWriteEnabled &&
     Boolean(dependencies.contractIntakeDocuments);
+  const contractOutboundWriteEnabled =
+    contractIntakeWriteEnabled &&
+    Boolean(dependencies.contractOutbound);
   const driveStorageEnabled =
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
@@ -383,7 +395,8 @@ export function createApp(
       "/documents/preview",
       "/outbound-conditions/validate",
       "/contract-intakes/validate",
-      "/contract-intakes/preflight"
+      "/contract-intakes/preflight",
+      "/contract-intakes/outbound-conditions/validate"
     ]);
     if (safeMethods.has(request.method)) return next();
     if (request.method === "POST" && safePostPaths.has(request.path)) return next();
@@ -412,6 +425,11 @@ export function createApp(
       /^\/contract-intakes\/\d+\/document-drafts$/.test(request.path);
     if (contractIntakeDocumentBridgeEnabled &&
         isContractIntakeDocumentDraft) return next();
+    const isContractOutboundAppend =
+      request.method === "POST" &&
+      /^\/contract-intakes\/\d+\/outbound-conditions$/.test(request.path);
+    if (contractOutboundWriteEnabled &&
+        isContractOutboundAppend) return next();
 
     return response.status(403).json({
       error: options.accessMode === "readonly"
@@ -466,6 +484,10 @@ export function createApp(
     dependencies.templates,
     dependencies.drafts,
     contractIntakeDocumentBridgeEnabled
+  ));
+  app.use("/api/v2", createContractOutboundRouter(
+    dependencies.contractOutbound,
+    contractOutboundWriteEnabled
   ));
   app.use("/api/v2", createGlobalSearchRouter(
     dependencies.search ?? new MemoryGlobalSearchRepository()

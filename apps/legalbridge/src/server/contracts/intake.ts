@@ -167,6 +167,15 @@ const outboundConditionSchema = conditionBaseSchema.safeExtend({
   parentInboundIndex: z.number().int().nonnegative()
 });
 
+export const contractOutboundConditionSchema = conditionBaseSchema.safeExtend({
+  counterpartyVendorId: z.number().int().positive()
+});
+
+export type ContractOutboundConditionInput =
+  z.input<typeof contractOutboundConditionSchema>;
+export type ValidatedContractOutboundCondition =
+  z.output<typeof contractOutboundConditionSchema>;
+
 const contractSchema = z.object({
   documentNumber: z.string().trim().min(1, "締結済契約書番号を入力してください").max(100),
   contractTitle: z.string().trim().min(1, "契約名を入力してください").max(500),
