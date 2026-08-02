@@ -242,10 +242,10 @@ steps:
           expected_write_scopes="$$expected_write_scopes,slack-approvals"
         fi
         if [ "${_OUTBOUND_CONDITION_WRITES_ENABLED}" = "true" ]; then
-          expected_write_scopes="$expected_write_scopes,outbound-conditions"
+          expected_write_scopes="$$expected_write_scopes,outbound-conditions"
         fi
         if [ "${_CONTRACT_INTAKE_WRITES_ENABLED}" = "true" ]; then
-          expected_write_scopes="$expected_write_scopes,contract-intake"
+          expected_write_scopes="$$expected_write_scopes,contract-intake"
         fi
         if [ "${_WRITE_SCOPES}" != "$$expected_write_scopes" ]; then
           echo "Deployment blocked: WRITE_SCOPES does not exactly match the enabled guarded capabilities."
