@@ -170,12 +170,12 @@ steps:
         esac
         expected_write_scopes="drafts,documents,pdf"
         if [ "${_SLACK_APPROVAL_WRITES_ENABLED}" = "true" ]; then
-          expected_write_scopes="$expected_write_scopes,slack-approvals"
+          expected_write_scopes="$$expected_write_scopes,slack-approvals"
         fi
         if [ "${_OUTBOUND_CONDITION_WRITES_ENABLED}" = "true" ]; then
-          expected_write_scopes="$expected_write_scopes,outbound-conditions"
+          expected_write_scopes="$$expected_write_scopes,outbound-conditions"
         fi
-        if [ "${_WRITE_SCOPES}" != "$expected_write_scopes" ]; then
+        if [ "${_WRITE_SCOPES}" != "$$expected_write_scopes" ]; then
           echo "Deployment blocked: WRITE_SCOPES does not exactly match the enabled guarded capabilities."
           exit 1
         fi
