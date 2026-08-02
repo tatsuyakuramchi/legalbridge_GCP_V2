@@ -1,4 +1,4 @@
-import { useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import {
   SearchableLedgerSelect,
   isCanonicalWork,
@@ -86,6 +86,20 @@ type PreparedDraft = {
   label: string;
   counterpartyName: string;
   created: boolean;
+};
+
+type RegisteredIntake = {
+  documentId: number;
+  contractId: number;
+  documentNumber: string;
+  contractTitle: string;
+  contractType: string;
+  primaryVendorName: string;
+  sourceWorkTitle: string;
+  ownWorkTitle: string;
+  executedAt: string;
+  inboundConditionCount: number;
+  outboundConditionCount: number;
 };
 
 const steps = ["イン契約", "取得権利", "自社作品", "アウト契約", "文書・登録"];
@@ -188,7 +202,27 @@ export function ContractChainWizard({
   } | null>(null);
   const [saved, setSaved] = useState<Record<string, unknown> | null>(null);
   const [preparedDrafts, setPreparedDrafts] = useState<PreparedDraft[]>([]);
+  const [registered, setRegistered] = useState<RegisteredIntake[]>([]);
+  const [selectedRegistered, setSelectedRegistered] = useState<number | null>(null);
   const [working, setWorking] = useState(false);
+
+  async function loadRegistered() {
+    try {
+      const response = await fetch("/api/v2/contract-intakes?limit=100");
+      if (!response.ok) {
+        setRegistered([]);
+        return;
+      }
+      const result = await response.json();
+      setRegistered(result.items ?? []);
+    } catch {
+      setRegistered([]);
+    }
+  }
+
+  useEffect(() => {
+    loadRegistered();
+  }, []);
 
   function changed(message = "入力内容が変更されました。再度プリフライトしてください。") {
     setPreflight(null);
@@ -443,6 +477,7 @@ export function ContractChainWizard({
       setSaved(result.intake);
       setPreparedDrafts([]);
       setNotice(`登録完了：契約書番号 ${result.intake.documentNumber}。外部連携は実行されていません。`);
+      loadRegistered();
     } catch {
       setNotice("登録APIへ接続できませんでした。");
     } finally {
@@ -450,13 +485,16 @@ export function ContractChainWizard({
     }
   }
 
-  async function prepareDocumentDraft(templateType: "individual_license_terms" | "royalty_statement") {
-    if (!saved || working) return;
+  async function prepareDocumentDraft(
+    templateType: "individual_license_terms" | "royalty_statement",
+    documentId: number
+  ) {
+    if (!documentId || working) return;
     setWorking(true);
     setErrors([]);
     setNotice("登録済み契約から文書下書きを作成しています。");
     try {
-      const response = await fetch(`/api/v2/contract-intakes/${Number(saved.documentId)}/document-drafts`, {
+      const response = await fetch(`/api/v2/contract-intakes/${documentId}/document-drafts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ templateType })
@@ -658,8 +696,8 @@ export function ContractChainWizard({
           <dt>文書化待ちアウト条件</dt><dd>{String(saved.outboundConditionsPendingDocument)}件</dd>
         </dl>
         <div className="intake-document-actions">
-          <button type="button" onClick={() => prepareDocumentDraft("individual_license_terms")} disabled={working || !outboundAgreements.length}>個別利用許諾条件書の下書きを作成</button>
-          <button type="button" onClick={() => prepareDocumentDraft("royalty_statement")} disabled={working}>利用許諾料明細書の下書きを作成</button>
+          <button type="button" onClick={() => prepareDocumentDraft("individual_license_terms", Number(saved.documentId))} disabled={working || !outboundAgreements.length}>個別利用許諾条件書の下書きを作成</button>
+          <button type="button" onClick={() => prepareDocumentDraft("royalty_statement", Number(saved.documentId))} disabled={working}>利用許諾料明細書の下書きを作成</button>
           <small>利用許諾料明細書の実績売上額・利用許諾料・控除・源泉徴収は、下書き画面で確認して入力してください。</small>
         </div>
         {preparedDrafts.length > 1 && <div className="intake-prepared-drafts">
@@ -675,6 +713,43 @@ export function ContractChainWizard({
       <span>{notice}</span>
       {step < steps.length - 1 && <button type="button" className="primary" onClick={next}>次へ：{steps[step + 1]} →</button>}
     </footer>
+
+    {registered.length > 0 && <section className="panel intake-registry">
+      <div className="intake-registry-head">
+        <h2>登録済み契約から文書を作成</h2>
+        <button type="button" onClick={loadRegistered} disabled={working}>再読み込み</button>
+      </div>
+      <p>確定登録済みの契約を選択し、個別利用許諾条件書・利用許諾料明細書の下書きを作成できます。新規登録を完了しなくても既存契約から再作成できます。既存データの更新・削除は行いません。</p>
+      <div className="intake-registry-list">
+        {registered.map((item) => <button type="button" key={item.documentId}
+          className={selectedRegistered === item.documentId ? "active" : ""}
+          onClick={() => { setSelectedRegistered(item.documentId); setPreparedDrafts([]); }}>
+          <strong>{item.documentNumber}</strong>
+          <span>{item.contractTitle}</span>
+          <small>{[item.ownWorkTitle || item.sourceWorkTitle, item.primaryVendorName].filter(Boolean).join(" ／ ")}</small>
+          <em>締結日 {item.executedAt}・イン{item.inboundConditionCount}／アウト{item.outboundConditionCount}</em>
+        </button>)}
+      </div>
+      {(() => {
+        const item = registered.find((candidate) => candidate.documentId === selectedRegistered);
+        if (!item) return null;
+        return <div className="intake-document-actions">
+          <button type="button"
+            onClick={() => prepareDocumentDraft("individual_license_terms", item.documentId)}
+            disabled={working || item.outboundConditionCount === 0}
+            title={item.outboundConditionCount === 0 ? "アウト条件がないため個別利用許諾条件書は作成できません" : undefined}>個別利用許諾条件書の下書きを作成</button>
+          <button type="button"
+            onClick={() => prepareDocumentDraft("royalty_statement", item.documentId)}
+            disabled={working}>利用許諾料明細書の下書きを作成</button>
+          <small>利用許諾料明細書の実績売上額・利用許諾料・控除・源泉徴収は、下書き画面で確認して入力してください。</small>
+        </div>;
+      })()}
+      {selectedRegistered && preparedDrafts.length > 1 && <div className="intake-prepared-drafts">
+        {preparedDrafts.map((draft) => <button type="button" key={draft.issueKey} onClick={() => onOpenDraft(draft.issueKey, draft.templateType)}>
+          <strong>{draft.label}</strong><span>{draft.counterpartyName}</span><small>{draft.created ? "新規作成" : "既存下書き"}</small>
+        </button>)}
+      </div>}
+    </section>}
   </section>;
 }
 
