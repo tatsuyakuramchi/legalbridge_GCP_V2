@@ -49,30 +49,20 @@
 
 ## 4. デプロイ（Cloud Run IAM 検証構成）
 
+`_WRITE_SCOPES`の値がカンマを含むため、`--substitutions`の区切り文字を`^|^`で`|`に変更する（既定のカンマ区切りだと`documents`以降がキー扱いになり`Bad syntax for dict arg`で失敗する）。値全体をダブルクオートで囲み、`|`がシェルのパイプに解釈されないようにする。
+
 ```bash
 gcloud builds submit \
   --config infra/gcp/cloudbuild-write-test.yaml \
-  --substitutions \
-_REGION=asia-northeast1,\
-_SERVICE=legalbridge-v2-write-test,\
-_IMAGE=legalbridge-v2-write-test,\
-_CLOUD_SQL_INSTANCE=legalbridge-488506:asia-northeast1:legalbridge-db,\
-_DB_NAME=legalbridge,\
-_DB_USER=legalbridge_v2_runtime,\
-_DB_PASSWORD_SECRET=legalbridge-v2-runtime-db-password,\
-_SERVICE_ACCOUNT=legalbridge-v2-preview@legalbridge-488506.iam.gserviceaccount.com,\
-_PRIMARY_DB_MODE=production,\
-_CONFIRM_PRODUCTION_PRIMARY=CUTOVER_V2_PRIMARY_TO_LEGALBRIDGE,\
-_CONFIRM_DOCUMENT_TABLES=PRODUCTION_DOCUMENT_TABLES_PREFLIGHT_CONFIRMED,\
-_AUTH_MODE=cloudrun-iam,\
-_AUTH_ADMIN_EMAILS=tatsuya.kuramochi@arclight.co.jp,\
-_CONFIRM_CLOUDRUN_IAM=CLOUDRUN_IAM_PROXY_VALIDATION_ONLY,\
-_WRITE_SCOPES=drafts,documents,pdf,contract-intake,\
-_CONTRACT_INTAKE_WRITES_ENABLED=true,\
-_CONFIRM_CONTRACT_INTAKE_WRITES=CONTRACT_INTAKE_LEGALBRIDGE_VALIDATION_ONLY
+  --project=legalbridge-488506 \
+  --substitutions="^|^_REGION=asia-northeast1|_SERVICE=legalbridge-v2-write-test|_IMAGE=legalbridge-v2-write-test|_CLOUD_SQL_INSTANCE=legalbridge-488506:asia-northeast1:legalbridge-db|_DB_NAME=legalbridge|_DB_USER=legalbridge_v2_runtime|_DB_PASSWORD_SECRET=legalbridge-v2-runtime-db-password|_SERVICE_ACCOUNT=legalbridge-v2-preview@legalbridge-488506.iam.gserviceaccount.com|_PRIMARY_DB_MODE=production|_CONFIRM_PRODUCTION_PRIMARY=CUTOVER_V2_PRIMARY_TO_LEGALBRIDGE|_CONFIRM_DOCUMENT_TABLES=PRODUCTION_DOCUMENT_TABLES_PREFLIGHT_CONFIRMED|_AUTH_MODE=cloudrun-iam|_AUTH_ADMIN_EMAILS=tatsuya.kuramochi@arclight.co.jp|_CONFIRM_CLOUDRUN_IAM=CLOUDRUN_IAM_PROXY_VALIDATION_ONLY|_WRITE_SCOPES=drafts,documents,pdf,contract-intake|_CONTRACT_INTAKE_WRITES_ENABLED=true|_CONFIRM_CONTRACT_INTAKE_WRITES=CONTRACT_INTAKE_LEGALBRIDGE_VALIDATION_ONLY"
 ```
 
-その他のsubstitution（Slack・Backlog・Outbound専用DB等）は既定の`BLOCKED`/`false`のままにする。`verify-isolation`は次を検証する。
+その他のsubstitution（Slack・Backlog・Outbound専用DB等）は既定の`BLOCKED`/`false`のままにする。
+
+> 既存のアウト条件書込み（別モジュール`OUTBOUND_CONDITION_WRITES_ENABLED`）を同じサービスで併用する場合は、`|_WRITE_SCOPES=drafts,documents,pdf,outbound-conditions,contract-intake|_OUTBOUND_CONDITION_WRITES_ENABLED=true|_CONFIRM_OUTBOUND_WRITES=OUTBOUND_WRITES_LEGALBRIDGE_VALIDATION_ONLY|_OUTBOUND_DB_NAME=legalbridge|_OUTBOUND_DB_USER=legalbridge_v2_runtime|_OUTBOUND_DB_PASSWORD_SECRET=legalbridge-v2-runtime-db-password`を追加する（本番モードではアウト側ユーザー/Secretも`legalbridge_v2_runtime`）。
+
+`verify-isolation`は次を検証する。
 
 - サービスが`legalbridge-v2-write-test`、DBが`legalbridge`、ユーザーが`legalbridge_v2_runtime`、パスワードSecretが一致
 - `AUTH_MODE`が`cloudrun-iam`または`iap`（`disabled`不可）
@@ -83,9 +73,17 @@ _CONFIRM_CONTRACT_INTAKE_WRITES=CONTRACT_INTAKE_LEGALBRIDGE_VALIDATION_ONLY
 ## 5. デプロイ後の検証
 
 ```bash
-# サービスURLを取得し、認証付きで/healthを確認
+# サービスURLとIDトークンを取得し、認証付きで確認
+SERVICE_URL=$(gcloud run services describe legalbridge-v2-write-test \
+  --region=asia-northeast1 --project=legalbridge-488506 --format='value(status.url)')
 TOKEN=$(gcloud auth print-identity-token)
-curl -H "Authorization: Bearer $TOKEN" "$SERVICE_URL/health"
+
+# 1) /health
+curl -s -H "Authorization: Bearer $TOKEN" "$SERVICE_URL/health" | python3 -m json.tool
+
+# 2) 新リビジョンの確認：登録済み契約一覧APIがJSON {"items": [...]} を返す
+#    （旧イメージにはこのGETルートが無く、本番モードではSPAのHTMLを返すため区別できる）
+curl -s -H "Authorization: Bearer $TOKEN" "$SERVICE_URL/api/v2/contract-intakes" | python3 -m json.tool
 ```
 
 `/health`が次を返すこと。
@@ -96,6 +94,17 @@ curl -H "Authorization: Bearer $TOKEN" "$SERVICE_URL/health"
 - ステータス200（read-only不一致・DB到達不能なら503）
 
 `/api/v2/runtime`で`writeFeaturesEnabled: true`、`authMode: "cloudrun-iam"`を確認する。
+
+### ブラウザでUIを開く
+
+サービスは`--no-allow-unauthenticated`のため、認証付きプロキシ経由でUIを開く。
+
+```bash
+gcloud run services proxy legalbridge-v2-write-test \
+  --region=asia-northeast1 --project=legalbridge-488506 --port=8080
+```
+
+Cloud Shellでは起動後に「ウェブでプレビュー → ポート 8080」で開く。`cloudrun-iam`モードにより、`_AUTH_ADMIN_EMAILS`で指定した単一管理者として扱われる。
 
 ## 6. 運用フロー（イン先確定 → アウト後日）
 
