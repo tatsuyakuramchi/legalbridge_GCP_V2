@@ -84,3 +84,24 @@ test("認証無効モードは既存検証環境を管理者として維持す�
   })).get("/api/v2/admin/summary").expect(200);
   assert.equal(response.body.ok, true);
 });
+
+
+test("Cloud Run IAMモードは単一の設定済み管理者として処理する", async () => {
+  const response = await request(app({
+    mode: "cloudrun-iam",
+    adminEmails: new Set(["admin@example.com"]),
+    legalEmails: new Set(),
+    requesterDomains: new Set()
+  })).get("/api/v2/admin/summary").expect(200);
+  assert.equal(response.body.ok, true);
+});
+
+test("Cloud Run IAMモードは管理者が複数なら安全側で拒否する", async () => {
+  const response = await request(app({
+    mode: "cloudrun-iam",
+    adminEmails: new Set(["one@example.com", "two@example.com"]),
+    legalEmails: new Set(),
+    requesterDomains: new Set()
+  })).get("/api/v2/admin/summary").expect(503);
+  assert.equal(response.body.code, "AUTHENTICATION_CONFIGURATION_INVALID");
+});

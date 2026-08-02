@@ -6,11 +6,11 @@ export interface AuthenticatedUser {
   email: string;
   subject: string;
   role: UserRole;
-  source: "disabled" | "iap";
+  source: "disabled" | "iap" | "cloudrun-iam";
 }
 
 export interface AuthSettings {
-  mode: "disabled" | "iap";
+  mode: "disabled" | "iap" | "cloudrun-iam";
   adminEmails: Set<string>;
   legalEmails: Set<string>;
   requesterDomains: Set<string>;
@@ -34,6 +34,23 @@ export function createAuthentication(settings: AuthSettings) {
         subject: "disabled-auth",
         role: "admin",
         source: "disabled"
+      };
+      return next();
+    }
+
+    if (settings.mode === "cloudrun-iam") {
+      const [email, ...additionalAdmins] = settings.adminEmails;
+      if (!email || additionalAdmins.length > 0) {
+        return response.status(503).json({
+          error: "Cloud Run IAM validation requires exactly one configured administrator",
+          code: "AUTHENTICATION_CONFIGURATION_INVALID"
+        });
+      }
+      response.locals.currentUser = {
+        email,
+        subject: "cloudrun-iam-upstream",
+        role: "admin",
+        source: "cloudrun-iam"
       };
       return next();
     }

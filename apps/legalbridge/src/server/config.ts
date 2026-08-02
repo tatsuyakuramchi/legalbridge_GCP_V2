@@ -30,7 +30,11 @@ export const config = {
   ),
   requireDatabase: process.env.REQUIRE_DATABASE === "true",
   auth: {
-    mode: process.env.AUTH_MODE === "iap" ? "iap" as const : "disabled" as const,
+    mode: process.env.AUTH_MODE === "iap"
+      ? "iap" as const
+      : process.env.AUTH_MODE === "cloudrun-iam"
+        ? "cloudrun-iam" as const
+        : "disabled" as const,
     adminEmails: emailSet(process.env.AUTH_ADMIN_EMAILS),
     legalEmails: emailSet(process.env.AUTH_LEGAL_EMAILS),
     requesterDomains: emailSet(process.env.AUTH_REQUESTER_DOMAINS)
