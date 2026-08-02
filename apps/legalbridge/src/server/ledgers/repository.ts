@@ -1,6 +1,6 @@
 import type { DatabasePool } from "../db/pool.js";
 
-export type LedgerType = "vendors" | "works" | "conditions";
+export type LedgerType = "vendors" | "works" | "materials" | "conditions";
 export interface LedgerItem {
   id: string; type: LedgerType; code: string; title: string; subtitle: string;
   status?: string; updatedAt?: string; detail: Record<string, unknown>;
@@ -34,6 +34,40 @@ export class PgLedgerRepository implements LedgerRepository {
           代表者: row.vendor_rep, インボイス登録: Boolean(row.is_invoice_issuer),
           インボイス番号: row.invoice_registration_number,
           源泉徴収対象: Boolean(row.withholding_enabled)
+        }
+      }));
+    }
+    if (type === "materials") {
+      const result = await this.database.query(
+        `SELECT wm.id, wm.material_code, wm.material_name, wm.material_type,
+                wm.material_role, wm.rights_type, wm.is_default,
+                w.id AS work_id, w.work_code, w.title AS work_title
+           FROM work_materials wm
+           JOIN works w ON w.id = wm.work_id
+          WHERE $1 = '%%'
+             OR COALESCE(wm.material_code, '') ILIKE $1
+             OR COALESCE(wm.material_name, '') ILIKE $1
+             OR w.work_code ILIKE $1
+             OR w.title ILIKE $1
+          ORDER BY w.title, wm.material_no NULLS LAST, wm.id
+          LIMIT $2`,
+        [keyword, bounded]
+      );
+      return result.rows.map((row) => ({
+        id: String(row.id),
+        type,
+        code: row.material_code ?? `MAT-${row.id}`,
+        title: row.material_name ?? row.material_code ?? `素材 ${row.id}`,
+        subtitle: [row.work_code, row.work_title, row.material_type]
+          .filter(Boolean).join("・"),
+        detail: {
+          作品ID: row.work_id,
+          作品コード: row.work_code,
+          作品名: row.work_title,
+          素材区分: row.material_type,
+          構成上の役割: row.material_role,
+          権利区分: row.rights_type,
+          代表素材: Boolean(row.is_default)
         }
       }));
     }
