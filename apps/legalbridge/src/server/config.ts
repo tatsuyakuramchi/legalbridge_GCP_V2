@@ -42,6 +42,8 @@ export const config = {
     requesterDomains: emailSet(process.env.AUTH_REQUESTER_DOMAINS)
   },
   googleDriveFolderId: process.env.GOOGLE_DRIVE_FOLDER_ID ?? "",
+  googleServiceAccountKeyPath: process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH ?? "",
+  driveEnvironmentTag: process.env.DRIVE_ENVIRONMENT_TAG ?? "validation",
   slackNotificationHistoryEnabled:
     process.env.SLACK_NOTIFICATION_HISTORY_ENABLED === "true",
   slackNotificationApprovalsEnabled:
