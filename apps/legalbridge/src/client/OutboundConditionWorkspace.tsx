@@ -25,7 +25,7 @@ export function OutboundConditionWorkspace() {
   const [form, setForm] = useState(initial);
   const [works, setWorks] = useState<LedgerItem[]>([]);
   const [vendors, setVendors] = useState<LedgerItem[]>([]);
-  const [notice, setNotice] = useState("入力内容の検証のみ行います。DBには保存されません。");
+  const [notice, setNotice] = useState("入力内容を確認後、管理者だけが保存できます。");
   const [preview, setPreview] = useState<Record<string, unknown> | null>(null);
   const license = form.transactionKind === "license";
 
@@ -56,25 +56,29 @@ export function OutboundConditionWorkspace() {
     setPreview(null);
   }
 
+  function requestBody() {
+    const number = (value: string) => value === "" ? undefined : Number(value);
+    return {
+      ...form,
+      workLabel: work ? `${work.code} ${work.title}` : "",
+      counterpartyLabel: vendor ? `${vendor.code} ${vendor.title}` : "",
+      languages: form.languages.split(/[,、]/).map((value) => value.trim()).filter(Boolean),
+      termStart: form.termStart || undefined,
+      termEnd: form.termEnd || undefined,
+      ratePct: number(form.ratePct),
+      amountExTax: number(form.amountExTax),
+      mgAmount: number(form.mgAmount),
+      advanceAmount: number(form.advanceAmount),
+      minimumQuantity: number(form.minimumQuantity)
+    };
+  }
+
   async function validate() {
     setNotice("入力内容を確認しています");
-    const number = (value: string) => value === "" ? undefined : Number(value);
     const response = await fetch("/api/v2/outbound-conditions/validate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ...form,
-        workLabel: work ? `${work.code} ${work.title}` : "",
-        counterpartyLabel: vendor ? `${vendor.code} ${vendor.title}` : "",
-        languages: form.languages.split(/[,、]/).map((value) => value.trim()).filter(Boolean),
-        termStart: form.termStart || undefined,
-        termEnd: form.termEnd || undefined,
-        ratePct: number(form.ratePct),
-        amountExTax: number(form.amountExTax),
-        mgAmount: number(form.mgAmount),
-        advanceAmount: number(form.advanceAmount),
-        minimumQuantity: number(form.minimumQuantity)
-      })
+      body: JSON.stringify(requestBody())
     });
     const result = await response.json();
     if (!response.ok) {
@@ -83,7 +87,32 @@ export function OutboundConditionWorkspace() {
       return;
     }
     setPreview(result.condition);
-    setNotice("入力内容を確認しました。保存機能は次段階で有効化します。");
+    setNotice("入力内容を確認しました。根拠文書番号と登録予定内容を確認して保存してください。");
+  }
+
+  async function save() {
+    if (!preview) return;
+    if (!form.documentNumber.trim()) {
+      setNotice("保存には実在する根拠文書番号が必要です。");
+      return;
+    }
+    if (!window.confirm(`${form.conditionName}を受取条件として本番台帳へ追加します。よろしいですか？`)) return;
+
+    setNotice("アウト条件を保存しています");
+    const response = await fetch("/api/v2/outbound-conditions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requestBody())
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      const messages = (result.errors ?? result.issues ?? [])
+        .map((error: { message?: string }) => error.message)
+        .filter(Boolean);
+      setNotice(messages.join("／") || result.error || "アウト条件を保存できませんでした");
+      return;
+    }
+    setNotice(`アウト条件を保存しました（ID: ${result.condition.id}）。外部連携は実行されていません。`);
   }
 
   return <section className="page outbound-condition">
@@ -132,7 +161,11 @@ export function OutboundConditionWorkspace() {
         <label className="wide">備考<textarea value={form.notes} onChange={(e) => update("notes", e.target.value)} /></label>
       </fieldset>
     </div>
-    <div className="outbound-actions"><button className="primary" onClick={validate}>入力内容を確認</button><span>{notice}</span></div>
+    <div className="outbound-actions">
+      <button className="primary" onClick={validate}>入力内容を確認</button>
+      <button onClick={save} disabled={!preview}>確認済み内容を保存</button>
+      <span>{notice}</span>
+    </div>
     {preview && <section className="panel outbound-preview"><h2>登録予定内容</h2><dl><dt>作品</dt><dd>{String(preview.workLabel)}</dd><dt>相手方</dt><dd>{String(preview.counterpartyLabel)}</dd><dt>取引</dt><dd>{preview.transactionKind === "license" ? "ライセンスアウト" : "プロダクトアウト"}</dd><dt>方向</dt><dd>受取</dd><dt>地域・言語</dt><dd>{String(preview.territory)}／{(preview.languages as string[]).join("、")}</dd><dt>通貨</dt><dd>{String(preview.currency)}</dd></dl></section>}
   </section>;
 }
