@@ -129,9 +129,11 @@ const initialContract = (): ContractForm => ({
 });
 
 export function ContractIntakeWorkspace({
-  canCommit
+  canCommit,
+  onOpenDraft
 }: {
   canCommit: boolean;
+  onOpenDraft: (issueKey: string, templateType: string) => void;
 }) {
   const [sourceWork, setSourceWork] = useState(() => initialWork("source"));
   const [ownWork, setOwnWork] = useState(() => initialWork("own"));
@@ -150,6 +152,13 @@ export function ContractIntakeWorkspace({
     blockers: Array<{ code: string; field: string; message: string }>;
   } | null>(null);
   const [saved, setSaved] = useState<Record<string, unknown> | null>(null);
+  const [preparedDrafts, setPreparedDrafts] = useState<Array<{
+    issueKey: string;
+    templateType: string;
+    label: string;
+    counterpartyName: string;
+    created: boolean;
+  }>>([]);
   const [working, setWorking] = useState(false);
 
   useEffect(() => {
@@ -184,6 +193,7 @@ export function ContractIntakeWorkspace({
   function changed(message = "入力内容が変更されました。再度プリフライトしてください。") {
     setPreflight(null);
     setSaved(null);
+    setPreparedDrafts([]);
     setErrors([]);
     setNotice(message);
   }
@@ -380,11 +390,55 @@ export function ContractIntakeWorkspace({
         return;
       }
       setSaved(result.intake);
+      setPreparedDrafts([]);
       setNotice(
         `登録完了：契約書番号 ${result.intake.documentNumber}。外部連携は実行されていません。`
       );
     } catch {
       setNotice("登録APIへ接続できませんでした。");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function prepareDocumentDraft(
+    templateType: "individual_license_terms" | "royalty_statement"
+  ) {
+    if (!saved || working) return;
+    setWorking(true);
+    setErrors([]);
+    setNotice("登録済み契約から文書下書きを作成しています。");
+    try {
+      const response = await fetch(
+        `/api/v2/contract-intakes/${Number(saved.documentId)}/document-drafts`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ templateType })
+        }
+      );
+      const result = await response.json();
+      if (!response.ok) {
+        setErrors([{
+          field: templateType === "individual_license_terms"
+            ? "アウト条件"
+            : "文書作成",
+          message: result.error ?? "文書下書きを作成できませんでした。"
+        }]);
+        setNotice("文書下書きの作成を停止しました。");
+        return;
+      }
+      const created = result.drafts ?? [];
+      setPreparedDrafts(created);
+      if (created.length === 1) {
+        onOpenDraft(created[0].issueKey, created[0].templateType);
+        return;
+      }
+      setNotice(
+        `許諾先ごとに${created.length}件の下書きを準備しました。確認する文書を選択してください。`
+      );
+    } catch {
+      setNotice("文書下書き作成APIへ接続できませんでした。");
     } finally {
       setWorking(false);
     }
@@ -757,9 +811,38 @@ export function ContractIntakeWorkspace({
         <dd>{String(saved.outboundConditionsPendingDocument)}件</dd>
       </dl>
       <p>
-        アウト条件は登録文書のフォームデータに保持されています。
-        次工程で個別利用許諾条件書へ展開します。
+        原契約・作品・素材・イン条件は登録済みです。個別利用許諾条件書は
+        アウト条件を許諾先ごとに分割し、利用許諾料明細書は契約条件と料率を
+        引き継いだ下書きを作成します。
       </p>
+      <div className="intake-document-actions">
+        <button type="button"
+          onClick={() => prepareDocumentDraft("individual_license_terms")}
+          disabled={working}>
+          個別利用許諾条件書の下書きを作成
+        </button>
+        <button type="button"
+          onClick={() => prepareDocumentDraft("royalty_statement")}
+          disabled={working}>
+          利用許諾料明細書の下書きを作成
+        </button>
+        <small>
+          利用許諾料明細書の実績売上額・利用許諾料・控除・源泉徴収は、
+          下書き画面で確認して入力してください。
+        </small>
+      </div>
+      {preparedDrafts.length > 1 && (
+        <div className="intake-prepared-drafts">
+          {preparedDrafts.map((draft) => (
+            <button type="button" key={draft.issueKey}
+              onClick={() => onOpenDraft(draft.issueKey, draft.templateType)}>
+              <strong>{draft.label}</strong>
+              <span>{draft.counterpartyName}</span>
+              <small>{draft.created ? "新規作成" : "既存下書き"}</small>
+            </button>
+          ))}
+        </div>
+      )}
     </section>}
   </section>;
 }
