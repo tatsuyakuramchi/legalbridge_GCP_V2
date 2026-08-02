@@ -754,3 +754,55 @@ button.pdf-download-link:disabled {
   .intake-result dl { grid-template-columns: 1fr; }
   .intake-result dd { margin-bottom: 5px; }
 }
+
+
+/* Contract intake document bridge */
+.intake-document-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+.intake-document-actions button {
+  border: 1px solid #168ca0;
+  border-radius: 8px;
+  background: white;
+  color: #137689;
+  padding: 11px 13px;
+  font-weight: 800;
+}
+.intake-document-actions button:hover:not(:disabled) { background: #f0fbfc; }
+.intake-document-actions button:disabled { opacity: .6; cursor: wait; }
+.intake-document-actions small {
+  grid-column: 1 / -1;
+  border-radius: 6px;
+  background: #fff7ed;
+  color: #9a3412;
+  padding: 8px 10px;
+  line-height: 1.5;
+}
+.intake-prepared-drafts {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+.intake-prepared-drafts button {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(160px, .8fr) auto;
+  gap: 10px;
+  align-items: center;
+  text-align: left;
+  border: 1px solid #c8e8dc;
+  border-radius: 8px;
+  background: white;
+  padding: 11px 13px;
+}
+.intake-prepared-drafts button:hover { border-color: #16805b; background: #f0fbf6; }
+.intake-prepared-drafts strong { color: #153d31; }
+.intake-prepared-drafts span { color: #475569; }
+.intake-prepared-drafts small { color: #16805b; font-weight: 800; }
+@media (max-width: 760px) {
+  .intake-document-actions { grid-template-columns: 1fr; }
+  .intake-document-actions small { grid-column: auto; }
+  .intake-prepared-drafts button { grid-template-columns: 1fr; }
+}
