@@ -90,7 +90,7 @@ export function OutboundConditionWorkspace() {
     <div className="page-title">
       <div><p>OUTBOUND CONDITIONS</p><h1>アウト側契約条件</h1><small>当社が対価を受け取るライセンス・製品販売条件</small></div>
     </div>
-    <div className="outbound-direction"><strong>請求方向：受取</strong><span>direction = receive（変更不可）</span></div>
+    <div className="outbound-direction"><strong>請求方向：受取</strong><span>受取条件として固定されます</span></div>
     <div className="outbound-kind">
       <button className={license ? "active" : ""} onClick={() => update("transactionKind", "license")}>ライセンスアウト</button>
       <button className={!license ? "active" : ""} onClick={() => update("transactionKind", "product")}>プロダクトアウト</button>

@@ -3,7 +3,7 @@ import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { DashboardSummary, DocumentFormSchema } from "../types.js";
-import { checkDatabase, getPool } from "./db/pool.js";
+import { checkDatabase, getOutboundPool, getPool } from "./db/pool.js";
 import {
   MemoryDraftRepository,
   PgDraftRepository,
@@ -54,6 +54,10 @@ import { createMatterRouter } from "./matters/routes.js";
 import { MemoryLedgerRepository, PgLedgerRepository, type LedgerRepository } from "./ledgers/repository.js";
 import { createLedgerRouter } from "./ledgers/routes.js";
 import { createOutboundConditionRouter } from "./ledgers/outbound-conditions.js";
+import {
+  PgOutboundConditionRepository,
+  type OutboundConditionRepository
+} from "./ledgers/outbound-condition-repository.js";
 import { MemoryGlobalSearchRepository, PgGlobalSearchRepository, type GlobalSearchRepository } from "./search/repository.js";
 import { createGlobalSearchRouter } from "./search/routes.js";
 import { MemoryAdminRepository, PgAdminRepository, type AdminRepository } from "./admin/repository.js";
@@ -162,6 +166,7 @@ export interface AppDependencies {
   driveStorage?: DriveStorage | null;
   slackHistory?: SlackNotificationHistoryRepository;
   slackApprovals?: SlackNotificationApprovalRepository;
+  outboundConditions?: OutboundConditionRepository;
 }
 
 export interface AppOptions {
@@ -169,11 +174,13 @@ export interface AppOptions {
   requireDatabase: boolean;
   writeFeaturesEnabled?: boolean;
   writeScopes?: Set<string>;
+  outboundConditionWritesEnabled?: boolean;
   auth?: AuthSettings;
 }
 
 function createDefaultDependencies(): AppDependencies {
   const database = getPool();
+  const outboundDatabase = getOutboundPool();
   return {
     templates: database
       ? new PgTemplateRepository(database)
@@ -198,6 +205,9 @@ function createDefaultDependencies(): AppDependencies {
     slackApprovals: database && config.slackNotificationApprovalsEnabled
       ? new PgSlackNotificationApprovalRepository(database)
       : undefined,
+    outboundConditions: outboundDatabase
+      ? new PgOutboundConditionRepository(outboundDatabase)
+      : undefined,
     finalizations: database
       ? new PgDocumentFinalizationRepository(database)
       : new MemoryDocumentFinalizationRepository(),
@@ -215,6 +225,7 @@ export function createApp(
     requireDatabase: config.requireDatabase,
     writeFeaturesEnabled: config.writeFeaturesEnabled,
     writeScopes: config.writeScopes,
+    outboundConditionWritesEnabled: config.outboundConditionWritesEnabled,
     auth: config.auth
   }
 ) {
@@ -236,6 +247,12 @@ export function createApp(
     options.writeFeaturesEnabled === true &&
     options.writeScopes?.has("slack-approvals") === true &&
     Boolean(dependencies.slackApprovals);
+  const outboundConditionWriteEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.outboundConditionWritesEnabled === true &&
+    options.writeScopes?.has("outbound-conditions") === true &&
+    Boolean(dependencies.outboundConditions);
   const driveStorageEnabled =
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
@@ -247,7 +264,10 @@ export function createApp(
   app.use(createApiAuthorization());
 
   app.get("/health", async (_request, response) => {
-    const database = await checkDatabase(getPool());
+    const [database, outboundDatabase] = await Promise.all([
+      checkDatabase(getPool()),
+      checkDatabase(getOutboundPool())
+    ]);
     const databaseUnavailable =
       (options.requireDatabase && !database.configured) ||
       (database.configured && !database.reachable);
@@ -258,7 +278,12 @@ export function createApp(
     const writeModeMismatch =
       (draftWriteEnabled || documentFinalizeEnabled || driveStorageEnabled || slackApprovalWriteEnabled) &&
       database.reachable && database.readOnly === true;
-    const status = databaseUnavailable || readOnlyMismatch || writeModeMismatch ? 503 : 200;
+    const outboundDatabaseMismatch =
+      outboundConditionWriteEnabled &&
+      (!outboundDatabase.reachable ||
+        outboundDatabase.readOnly === true ||
+        outboundDatabase.currentDatabase !== "legalbridge");
+    const status = databaseUnavailable || readOnlyMismatch || writeModeMismatch || outboundDatabaseMismatch ? 503 : 200;
     response.status(status).json({
       ok: status === 200,
       service: "legalbridge-v2",
@@ -268,9 +293,11 @@ export function createApp(
         ...(documentFinalizeEnabled ? ["documents"] : []),
         ...(pdfGenerationEnabled ? ["pdf"] : []),
         ...(driveStorageEnabled ? ["drive"] : []),
-        ...(slackApprovalWriteEnabled ? ["slack-approvals"] : [])
+        ...(slackApprovalWriteEnabled ? ["slack-approvals"] : []),
+        ...(outboundConditionWriteEnabled ? ["outbound-conditions"] : [])
       ],
-      database
+      database,
+      outboundDatabase
     });
   });
 
@@ -283,13 +310,14 @@ export function createApp(
       service: "legalbridge-v2",
       accessMode: options.accessMode,
       writeFeaturesEnabled:
-        draftWriteEnabled || documentFinalizeEnabled || pdfGenerationEnabled || driveStorageEnabled || slackApprovalWriteEnabled,
+        draftWriteEnabled || documentFinalizeEnabled || pdfGenerationEnabled || driveStorageEnabled || slackApprovalWriteEnabled || outboundConditionWriteEnabled,
       writeCapabilities: [
         ...(draftWriteEnabled ? ["drafts"] : []),
         ...(documentFinalizeEnabled ? ["documents"] : []),
         ...(pdfGenerationEnabled ? ["pdf"] : []),
         ...(driveStorageEnabled ? ["drive"] : []),
-        ...(slackApprovalWriteEnabled ? ["slack-approvals"] : [])
+        ...(slackApprovalWriteEnabled ? ["slack-approvals"] : []),
+        ...(outboundConditionWriteEnabled ? ["outbound-conditions"] : [])
       ],
       integrations: config.integrationMode,
       authMode: (options.auth ?? config.auth).mode,
@@ -336,6 +364,9 @@ export function createApp(
       request.method === "POST" &&
       request.path === "/admin/slack-notification-approvals";
     if (slackApprovalWriteEnabled && isSlackApproval) return next();
+    const isOutboundConditionWrite =
+      request.method === "POST" && request.path === "/outbound-conditions";
+    if (outboundConditionWriteEnabled && isOutboundConditionWrite) return next();
 
     return response.status(403).json({
       error: options.accessMode === "readonly"
@@ -377,7 +408,10 @@ export function createApp(
   app.use("/api/v2", createLedgerRouter(
     dependencies.ledgers ?? new MemoryLedgerRepository()
   ));
-  app.use("/api/v2", createOutboundConditionRouter());
+  app.use("/api/v2", createOutboundConditionRouter(
+    dependencies.outboundConditions,
+    outboundConditionWriteEnabled
+  ));
   app.use("/api/v2", createGlobalSearchRouter(
     dependencies.search ?? new MemoryGlobalSearchRepository()
   ));

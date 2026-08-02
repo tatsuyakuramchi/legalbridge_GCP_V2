@@ -27,7 +27,7 @@ test("ライセンスアウト条件を受取方向として検証する", () =>
   });
   assert.equal(result.ok, true);
   if (result.ok) {
-    assert.equal(result.condition.direction, "receive");
+    assert.equal(result.condition.direction, "receivable");
     assert.equal(result.condition.currency, "USD");
     assert.equal(result.condition.ratePct, 5);
   }
