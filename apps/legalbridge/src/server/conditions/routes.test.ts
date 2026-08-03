@@ -46,6 +46,21 @@ test("キーワードで絞り込む", async () => {
   assert.equal(response.body.items[0].conditionName, "許諾A");
 });
 
+test("存在しない条件明細の詳細は404を返す", async () => {
+  const response = await request(appFor([row({ id: 1 })])).get("/api/v2/condition-lines/999");
+  assert.equal(response.status, 404);
+  assert.equal(response.body.code, "CONDITION_LINE_NOT_FOUND");
+});
+
+test("条件明細の詳細を返す", async () => {
+  const response = await request(appFor([row({ id: 7, conditionName: "許諾C" })])).get("/api/v2/condition-lines/7");
+  assert.equal(response.status, 200);
+  assert.equal(response.body.detail.id, 7);
+  assert.equal(response.body.detail.conditionName, "許諾C");
+  assert.ok(Array.isArray(response.body.detail.regions));
+  assert.ok(Array.isArray(response.body.detail.languages));
+});
+
 test("集計サマリを向き・通貨で返す", async () => {
   const response = await request(appFor([
     row({ id: 1, direction: "receivable", currency: "JPY", amountExTax: 100000, mgAmount: 0 }),

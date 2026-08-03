@@ -189,6 +189,16 @@ header input { width: 100%; border: 1px solid #d9e2ec; border-radius: 8px; paddi
 .hub-note { color: #64748b; font-size: 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 9px 12px; margin: 0 0 14px; }
 .inline-cta { border: 1px solid #20b8cd; color: #0f5f6e; background: #eff9fb; border-radius: 7px; padding: 4px 10px; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap; }
 .inline-cta:hover { background: #e0f5f9; }
+.condition-detail { padding: 18px 20px; }
+.condition-detail .matter-summary { margin: 6px 0 14px; }
+.condition-detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 20px; margin: 0; }
+.condition-detail-grid dt { color: #64748b; font-size: 11px; margin-bottom: 2px; }
+.condition-detail-grid dd { margin: 0; color: #172a44; font-size: 14px; }
+.condition-notes { border-top: 1px solid #e2e8f0; margin-top: 16px; padding-top: 12px; }
+.condition-notes h3 { margin: 0 0 6px; font-size: 13px; color: #172a44; }
+.condition-notes p { margin: 0; white-space: pre-wrap; font-size: 13px; color: #334155; }
+@media (max-width: 900px) { .condition-detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 600px) { .condition-detail-grid { grid-template-columns: 1fr; } }
 .matter-detail-section h3 { display: flex; justify-content: space-between; align-items: center; }
 .matter-summary .matter-status { padding: 1px 8px; border-radius: 999px; font-size: 11px; }
 .matter-blocked { color: #b45309; background: #fff7ed; border-radius: 7px; padding: 6px 9px; font-size: 12px; margin: 8px 0 0; }

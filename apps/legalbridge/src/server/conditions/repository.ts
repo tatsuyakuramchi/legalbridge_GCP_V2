@@ -34,9 +34,25 @@ export interface ConditionLineSummaryRow {
   totalMg: number;     // sum of mg_amount
 }
 
+export interface ConditionLineDetail extends ConditionLineRow {
+  matterCode: string | null;
+  matterTitle: string | null;
+  exclusivity: string | null;
+  sublicenseAllowed: boolean | null;
+  paymentScheme: string | null;
+  paymentTerms: string | null;
+  royaltyBase: string | null;
+  deductibleCosts: string | null;
+  agAmount: number | null;
+  notes: string | null;
+  regions: string[];
+  languages: string[];
+}
+
 export interface ConditionLineRepository {
   list(query: string, limit?: number): Promise<ConditionLineRow[]>;
   summary(): Promise<ConditionLineSummaryRow[]>;
+  find(id: number): Promise<ConditionLineDetail | null>;
 }
 
 export class PgConditionLineRepository implements ConditionLineRepository {
@@ -79,6 +95,54 @@ export class PgConditionLineRepository implements ConditionLineRepository {
         ORDER BY 1, 2`
     );
     return result.rows.map(mapSummary);
+  }
+
+  async find(id: number) {
+    const detail = await this.database.query(
+      `SELECT cl.id, cl.line_no, cl.document_id, cl.direction, cl.flow_direction,
+              cl.transaction_kind, cl.condition_name, cl.currency,
+              cl.amount_ex_tax, cl.mg_amount, cl.ag_amount, cl.rate_pct, cl.term_start,
+              cl.region_territory, cl.exclusivity, cl.sublicense_allowed,
+              cl.payment_scheme, cl.payment_terms, cl.royalty_base,
+              cl.deductible_costs, cl.notes,
+              d.document_number, d.matter_id, d.template_type,
+              m.matter_code, m.title AS matter_title,
+              COALESCE(v.vendor_name, '') AS vendor_name,
+              COALESCE(w.title, '')       AS work_title
+         FROM condition_lines cl
+         LEFT JOIN documents d ON d.id = cl.document_id
+         LEFT JOIN matters m ON m.id = d.matter_id
+         LEFT JOIN vendors v ON v.id = cl.counterparty_vendor_id
+         LEFT JOIN works w ON w.id = cl.work_id
+        WHERE cl.id = $1`,
+      [id]
+    );
+    if (!detail.rows[0]) return null;
+    const [regions, languages] = await Promise.all([
+      this.database.query(
+        `SELECT country_name FROM condition_line_regions
+          WHERE condition_line_id = $1 ORDER BY sort_order, id`, [id]),
+      this.database.query(
+        `SELECT language_name FROM condition_line_languages
+          WHERE condition_line_id = $1 ORDER BY sort_order, id`, [id])
+    ]);
+    const row = detail.rows[0];
+    return {
+      ...mapRow(row),
+      matterCode: row.matter_code ?? null,
+      matterTitle: row.matter_title ?? null,
+      exclusivity: row.exclusivity ?? null,
+      sublicenseAllowed: row.sublicense_allowed === null || row.sublicense_allowed === undefined
+        ? null : Boolean(row.sublicense_allowed),
+      paymentScheme: row.payment_scheme ?? null,
+      paymentTerms: row.payment_terms ?? null,
+      royaltyBase: row.royalty_base ?? null,
+      deductibleCosts: row.deductible_costs ?? null,
+      agAmount: num(row.ag_amount),
+      notes: row.notes ?? null,
+      regions: regions.rows.map((r) => String(r.country_name)).filter(Boolean),
+      languages: languages.rows.map((r) => String(r.language_name)).filter(Boolean)
+    };
   }
 }
 
@@ -144,5 +208,14 @@ export class MemoryConditionLineRepository implements ConditionLineRepository {
     }
     return [...groups.values()].sort((a, b) =>
       a.direction.localeCompare(b.direction) || a.currency.localeCompare(b.currency));
+  }
+  async find(id: number) {
+    const row = this.rows.find((r) => r.id === id);
+    if (!row) return null;
+    return {
+      ...row, matterCode: null, matterTitle: null, exclusivity: null, sublicenseAllowed: null,
+      paymentScheme: null, paymentTerms: null, royaltyBase: null, deductibleCosts: null,
+      agAmount: null, notes: null, regions: [], languages: []
+    };
   }
 }
