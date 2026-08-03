@@ -114,6 +114,7 @@ export function App() {
   const [canSaveToDrive, setCanSaveToDrive] = useState(false);
   const [canCommitContractIntake, setCanCommitContractIntake] = useState(false);
   const [canEditMatters, setCanEditMatters] = useState(false);
+  const [canEditVendors, setCanEditVendors] = useState(false);
   const [currentUser, setCurrentUser] = useState<{ email: string; role: "admin" | "legal" | "requester" } | null>(null);
   const [searchSelection, setSearchSelection] = useState<{ target: "matter" | "document" | "vendor" | "work"; id: string; title: string } | null>(null);
   const [draftSelection, setDraftSelection] = useState<{ issueKey: string; templateType: string } | null>(null);
@@ -149,6 +150,7 @@ export function App() {
         setCanSaveToDrive(capabilities.includes("drive"));
         setCanCommitContractIntake(capabilities.includes("contract-intake"));
         setCanEditMatters(capabilities.includes("matters"));
+        setCanEditVendors(capabilities.includes("vendors"));
       })
       .catch(() => {
         setReadOnly(true);
@@ -157,6 +159,7 @@ export function App() {
         setCanSaveToDrive(false);
         setCanCommitContractIntake(false);
         setCanEditMatters(false);
+        setCanEditVendors(false);
       });
     fetch("/api/v2/document-templates")
       .then((response) => response.ok ? response.json() : Promise.reject())
@@ -246,6 +249,7 @@ export function App() {
           <DraftWorkspace templates={templates} onResume={resumeDraft} initialQuery={deepLinkIssue} />
         )}
         {view === "ledgers" && <LedgerWorkspace
+          canEditVendors={canEditVendors}
           initialType={searchSelection?.target === "work" ? "works" : searchSelection?.target === "vendor" ? "vendors" : undefined}
           initialQuery={searchSelection?.target === "work" || searchSelection?.target === "vendor" ? searchSelection.title : undefined}
           selectedId={searchSelection?.target === "work" || searchSelection?.target === "vendor" ? searchSelection.id : undefined} />}

@@ -28,6 +28,8 @@ export const config = {
     process.env.CONTRACT_INTAKE_WRITES_ENABLED === "true",
   matterWritesEnabled:
     process.env.MATTER_WRITES_ENABLED === "true",
+  vendorWritesEnabled:
+    process.env.VENDOR_WRITES_ENABLED === "true",
   writeScopes: new Set(
     String(process.env.WRITE_SCOPES ?? "")
       .split(",").map((value) => value.trim()).filter(Boolean)
