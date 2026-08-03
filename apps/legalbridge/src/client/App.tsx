@@ -230,6 +230,8 @@ export function App() {
             canFinalizeDocuments={canFinalizeDocuments}
             initialIssueKey={draftSelection?.issueKey ?? "VALIDATION-1"}
             onBack={() => setView(draftSelection ? "drafts" : "templates")}
+            onCreateNew={() => setView("templates")}
+            onOpenDocuments={() => setView("documents")}
           />
         )}
       </main>
@@ -402,13 +404,17 @@ function DocumentForm({
   readOnly,
   canFinalizeDocuments,
   initialIssueKey,
-  onBack
+  onBack,
+  onCreateNew,
+  onOpenDocuments
 }: {
   schema: DocumentFormSchema | null;
   readOnly: boolean;
   canFinalizeDocuments: boolean;
   initialIssueKey: string;
   onBack: () => void;
+  onCreateNew?: () => void;
+  onOpenDocuments?: () => void;
 }) {
   const [issueKey, setIssueKey] = useState(initialIssueKey);
   const [formData, setFormData] = useState<DocumentFormData>({});
@@ -703,6 +709,14 @@ function DocumentForm({
             <div><dt>Backlog</dt><dd>{formatIntegrationStatus(finalizedDocument.integrations.backlog)}</dd></div>
           </dl>
           <p>外部連携は実行していません。文書番号の発番とDB確定のみ完了しています。</p>
+          <div className="finalization-next">
+            <span className="next-label">次の操作</span>
+            {onOpenDocuments && <button className="primary" onClick={onOpenDocuments}>
+              文書一覧へ（PDF・Drive保存）
+            </button>}
+            {onCreateNew && <button onClick={onCreateNew}>新しい文書を作成</button>}
+            <button onClick={onBack}>閉じる</button>
+          </div>
         </div>
       )}
       {readOnly && (
