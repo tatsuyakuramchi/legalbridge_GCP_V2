@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import type { DocumentFormSchema } from "../types";
+import { useToast } from "./Toast";
+import { EmptyState } from "./EmptyState";
 
 type Matter = {
   id: number; matterCode: string | null; title: string; status: string; counterparty: string;
@@ -138,7 +140,12 @@ export function MatterRegistry({ templates, selectedId, canEdit = false }:
           {matter.blockedReason && <em>停滞理由：{matter.blockedReason}</em>}
         </button>;
       })}
-        {!loading && !visible.length && <div className="empty-state">{matters.length ? "この絞り込みに該当する案件はありません。" : "該当する案件がありません。"}</div>}
+        {!loading && !visible.length && (matters.length
+          ? <EmptyState icon="⛃" title="この絞り込みに該当する案件はありません" description="別のチップやキーワードをお試しください。" compact />
+          : <EmptyState icon="⛃" title="案件がありません"
+              description={canEdit ? "最初の案件を作成しましょう。" : "該当する案件がありません。"}
+              actionLabel={canEdit ? "＋ 新規案件" : undefined}
+              onAction={canEdit ? () => { setCreating(true); setDetail(null); } : undefined} />)}
       </div>
       {creating
         ? <MatterForm mode="create" onCancel={() => setCreating(false)}
@@ -154,7 +161,9 @@ function MatterDetail({ detail, labels, canEdit, onChanged }:
   const [editing, setEditing] = useState(false);
   const [addingTask, setAddingTask] = useState(false);
   useEffect(() => { setEditing(false); setAddingTask(false); }, [detail?.matter.id]);
-  if (!detail) return <aside className="panel matter-detail empty-detail">一覧から案件を選択してください。</aside>;
+  if (!detail) return <aside className="panel matter-detail empty-detail">
+    <EmptyState icon="◧" title="案件を選択してください" description="左の一覧から案件を選ぶと、課題・タスク・関連文書が表示されます。" compact />
+  </aside>;
   const { matter } = detail;
   if (editing) {
     return <MatterForm mode="edit" matter={matter} onCancel={() => setEditing(false)}
@@ -193,16 +202,16 @@ function MatterDetail({ detail, labels, canEdit, onChanged }:
 function InlineMatterControls({ matter, onChanged }:
   { matter: Detail["matter"]; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
-  const [note, setNote] = useState("");
+  const toast = useToast();
   async function patch(body: Record<string, unknown>, okLabel: string) {
-    setBusy(true); setNote("");
+    setBusy(true);
     try {
-      const response = await fetch(`/api/v2/matters/${matter.id}`, {
+      const request = fetch(`/api/v2/matters/${matter.id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
-      });
-      if (response.ok) { setNote(okLabel); onChanged(); }
-      else setNote("保存に失敗しました");
-    } catch { setNote("通信に失敗しました"); }
+      }).then(async (response) => { if (!response.ok) throw new Error("保存に失敗しました"); });
+      await toast.run(request, okLabel);
+      onChanged();
+    } catch { /* toast shown */ }
     finally { setBusy(false); }
   }
   return <div className="matter-inline-controls">
@@ -219,7 +228,6 @@ function InlineMatterControls({ matter, onChanged }:
         {LIFECYCLE_STAGES.map((s) => <option key={s} value={s}>{stageLabels[s]}</option>)}
       </select>
     </label>
-    {note && <span className="inline-note">{note}</span>}
   </div>;
 }
 
@@ -241,6 +249,7 @@ function MatterForm({ mode, matter, onCancel, onSaved }: {
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const toast = useToast();
   function set<K extends keyof MatterFormValues>(key: K, value: string) {
     setValues((prev) => ({ ...prev, [key]: value }));
   }
@@ -268,6 +277,7 @@ function MatterForm({ mode, matter, onCancel, onSaved }: {
         setError(detail.error ?? "保存に失敗しました。"); setSaving(false); return;
       }
       const saved = await response.json();
+      toast.push(mode === "create" ? "案件を作成しました" : "案件を更新しました", "success");
       onSaved(Number(saved.id));
     } catch {
       setError("通信に失敗しました。"); setSaving(false);
@@ -303,24 +313,27 @@ function TaskRow({ matterId, task, canEdit, onChanged }: {
   onChanged: () => void;
 }) {
   const [busy, setBusy] = useState(false);
-  async function patch(body: Record<string, unknown>) {
+  const toast = useToast();
+  async function patch(body: Record<string, unknown>, okLabel: string) {
     setBusy(true);
     try {
-      const response = await fetch(`/api/v2/matters/${matterId}/tasks/${task.id}`, {
+      const request = fetch(`/api/v2/matters/${matterId}/tasks/${task.id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
-      });
-      if (response.ok) onChanged();
-    } finally { setBusy(false); }
+      }).then(async (response) => { if (!response.ok) throw new Error("保存に失敗しました"); });
+      await toast.run(request, okLabel);
+      onChanged();
+    } catch { /* toast shown */ }
+    finally { setBusy(false); }
   }
   return <article className={task.isPrimary ? "primary-task" : ""}>
     <b>{task.title}</b>
     <span>{task.assigneeName ?? "担当未設定"}・{taskStatusLabels[task.status] ?? task.status}{task.isPrimary ? "・次アクション" : ""}</span>
     <small>{task.dueAt ? formatDate(task.dueAt) : "期限未設定"}{task.blockedReason && `・${task.blockedReason}`}</small>
     {canEdit && <div className="task-actions">
-      <select value={task.status} disabled={busy} onChange={(e) => patch({ status: e.target.value })}>
+      <select value={task.status} disabled={busy} onChange={(e) => patch({ status: e.target.value }, "タスク状態を更新しました")}>
         {TASK_STATUSES.map((s) => <option key={s} value={s}>{taskStatusLabels[s]}</option>)}
       </select>
-      {!task.isPrimary && <button disabled={busy} onClick={() => patch({ isPrimary: true })}>次アクションに設定</button>}
+      {!task.isPrimary && <button disabled={busy} onClick={() => patch({ isPrimary: true }, "次アクションに設定しました")}>次アクションに設定</button>}
     </div>}
   </article>;
 }
@@ -335,6 +348,7 @@ function TaskForm({ matterId, onCancel, onSaved }: {
   const [blockedReason, setBlockedReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const toast = useToast();
   async function submit() {
     if (!title.trim()) { setError("タスク名は必須です。"); return; }
     setSaving(true); setError("");
@@ -351,6 +365,7 @@ function TaskForm({ matterId, onCancel, onSaved }: {
         const detail = await response.json().catch(() => ({}));
         setError(detail.error ?? "保存に失敗しました。"); setSaving(false); return;
       }
+      toast.push("タスクを追加しました", "success");
       onSaved();
     } catch {
       setError("通信に失敗しました。"); setSaving(false);
