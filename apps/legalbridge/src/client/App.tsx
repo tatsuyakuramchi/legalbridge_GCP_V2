@@ -16,6 +16,7 @@ import { DraftWorkspace } from "./DraftWorkspace";
 import { OutboundConditionWorkspace } from "./OutboundConditionWorkspace";
 import { ContractChainWizard } from "./ContractChainWizard";
 import { ConditionLinesWorkspace } from "./ConditionLinesWorkspace";
+import { StaffWorkspace } from "./StaffWorkspace";
 
 type CompatibilityReport = { summary: { total: number; ok: number; warning: number; error: number }; reports: Array<{ templateKey: string; status: "ok" | "warning" | "error"; missingHelpers: string[]; missingPartials: string[]; unmappedVariables: string[]; renderError?: string }> };
 
@@ -36,7 +37,7 @@ const fallback: DashboardSummary = {
   priorities: []
 };
 
-type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "admin";
+type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin";
 type NavItem = { view: View; label: string; description: string; match: View[] };
 type NavGroup = { label: string; items: NavItem[] };
 
@@ -60,6 +61,7 @@ function navGroups(access: {
       ...(access.legalWorkspace ? [{ view: "ledgers" as const, label: "台帳", description: "作品・取引先などのマスタ", match: ["ledgers" as const] }] : [])
     ] },
     { label: "管理", items: [
+      ...(access.adminWorkspace ? [{ view: "staff" as const, label: "担当者", description: "担当者マスタの管理", match: ["staff" as const] }] : []),
       ...(access.adminWorkspace ? [{ view: "admin" as const, label: "管理", description: "通知・運用の管理", match: ["admin" as const] }] : [])
     ] }
   ];
@@ -81,6 +83,7 @@ function breadcrumbFor(view: View): Array<{ label: string; view?: View }> {
     "contract-intake": [home, { label: "契約取込" }],
     outbound: [home, { label: "アウト条件" }],
     conditions: [home, { label: "条件明細" }],
+    staff: [home, { label: "担当者" }],
     admin: [home, { label: "管理" }]
   };
   return trails[view] ?? [{ label: "ホーム" }];
@@ -115,6 +118,7 @@ export function App() {
   const [canCommitContractIntake, setCanCommitContractIntake] = useState(false);
   const [canEditMatters, setCanEditMatters] = useState(false);
   const [canEditVendors, setCanEditVendors] = useState(false);
+  const [canEditStaff, setCanEditStaff] = useState(false);
   const [currentUser, setCurrentUser] = useState<{ email: string; role: "admin" | "legal" | "requester" } | null>(null);
   const [searchSelection, setSearchSelection] = useState<{ target: "matter" | "document" | "vendor" | "work"; id: string; title: string } | null>(null);
   const [draftSelection, setDraftSelection] = useState<{ issueKey: string; templateType: string } | null>(null);
@@ -151,6 +155,7 @@ export function App() {
         setCanCommitContractIntake(capabilities.includes("contract-intake"));
         setCanEditMatters(capabilities.includes("matters"));
         setCanEditVendors(capabilities.includes("vendors"));
+        setCanEditStaff(capabilities.includes("staff"));
       })
       .catch(() => {
         setReadOnly(true);
@@ -160,6 +165,7 @@ export function App() {
         setCanCommitContractIntake(false);
         setCanEditMatters(false);
         setCanEditVendors(false);
+        setCanEditStaff(false);
       });
     fetch("/api/v2/document-templates")
       .then((response) => response.ok ? response.json() : Promise.reject())
@@ -268,6 +274,7 @@ export function App() {
           onCreateDocument={(legalWorkspace || requesterWorkspace)
             ? (issueKey) => { setNewDocIssueKey(issueKey ?? ""); setDraftSelection(null); setView("templates"); }
             : undefined} />}
+        {view === "staff" && adminWorkspace && <StaffWorkspace canEdit={canEditStaff} />}
         {view === "admin" && <AdminOverview />}
         {view === "documents" && (
           <DocumentRegistry templates={templates} onCreate={() => { setNewDocIssueKey(""); setView("templates"); }}
