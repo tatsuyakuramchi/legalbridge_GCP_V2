@@ -165,6 +165,16 @@ header input { width: 100%; border: 1px solid #d9e2ec; border-radius: 8px; paddi
 .matter-detail-actions button.primary { background: #20b8cd; border-color: #20b8cd; color: white; font-weight: 700; }
 .context-banner { background: #eff9fb; border: 1px solid #b6e6ee; border-left: 4px solid #20b8cd; border-radius: 8px; padding: 10px 13px; margin-bottom: 14px; font-size: 13px; color: #0f5f6e; }
 .context-banner strong { color: #0a3f49; }
+.condition-table-wrap { padding: 4px 8px; overflow-x: auto; }
+.condition-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.condition-table th { text-align: left; color: #64748b; font-size: 11px; font-weight: 700; padding: 10px 10px; border-bottom: 1px solid #e2e8f0; }
+.condition-table td { padding: 10px 10px; border-bottom: 1px solid #eef2f7; vertical-align: top; }
+.condition-table td small { color: #94a3b8; }
+.condition-table tr.row-link { cursor: pointer; }
+.condition-table tr.row-link:hover { background: #f3fbfc; }
+.cond-dir { padding: 1px 8px; border-radius: 999px; font-size: 11px; background: #eef2f7; color: #475569; }
+.cond-dir.payable { background: #fff7ed; color: #c2410c; }
+.cond-dir.receivable { background: #ecfdf5; color: #047857; }
 .matter-detail-section h3 { display: flex; justify-content: space-between; align-items: center; }
 .matter-summary .matter-status { padding: 1px 8px; border-radius: 999px; font-size: 11px; }
 .matter-blocked { color: #b45309; background: #fff7ed; border-radius: 7px; padding: 6px 9px; font-size: 12px; margin: 8px 0 0; }
