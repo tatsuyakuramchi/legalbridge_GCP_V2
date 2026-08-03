@@ -120,6 +120,7 @@ function MatterDetail({ detail, labels, canEdit, onChanged }:
       <span>{stageLabels[matter.lifecycleStage ?? ""] ?? "工程未設定"}</span>
       <span>{matter.counterparty || "相手方未設定"}</span><span>{matter.ownerName ?? "担当者未設定"}</span>
       {matter.targetDueDate && <span>期限 {matter.targetDueDate}</span>}</div>
+    {canEdit && <InlineMatterControls matter={matter} onChanged={onChanged} />}
     {matter.blockedReason && <p className="matter-blocked">停滞理由：{matter.blockedReason}</p>}
     {matter.driveFolderUrl && <a className="drive-link" href={matter.driveFolderUrl} target="_blank" rel="noreferrer">案件フォルダを開く</a>}
     <DetailSection title={`関連課題 ${detail.issues.length}`}>
@@ -137,6 +138,39 @@ function MatterDetail({ detail, labels, canEdit, onChanged }:
     </DetailSection>
     {matter.remarks && <DetailSection title="備考"><p>{matter.remarks}</p></DetailSection>}
   </aside>;
+}
+
+function InlineMatterControls({ matter, onChanged }:
+  { matter: Detail["matter"]; onChanged: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState("");
+  async function patch(body: Record<string, unknown>, okLabel: string) {
+    setBusy(true); setNote("");
+    try {
+      const response = await fetch(`/api/v2/matters/${matter.id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+      });
+      if (response.ok) { setNote(okLabel); onChanged(); }
+      else setNote("保存に失敗しました");
+    } catch { setNote("通信に失敗しました"); }
+    finally { setBusy(false); }
+  }
+  return <div className="matter-inline-controls">
+    <label>状態
+      <select value={matter.status} disabled={busy}
+        onChange={(e) => patch({ status: e.target.value }, "状態を更新しました")}>
+        {MATTER_STATUSES.map((s) => <option key={s} value={s}>{statusLabels[s]}</option>)}
+      </select>
+    </label>
+    <label>工程
+      <select value={matter.lifecycleStage ?? ""} disabled={busy}
+        onChange={(e) => patch({ lifecycleStage: e.target.value || null }, "工程を更新しました")}>
+        <option value="">未設定</option>
+        {LIFECYCLE_STAGES.map((s) => <option key={s} value={s}>{stageLabels[s]}</option>)}
+      </select>
+    </label>
+    {note && <span className="inline-note">{note}</span>}
+  </div>;
 }
 
 type MatterFormValues = {
