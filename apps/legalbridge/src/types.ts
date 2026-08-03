@@ -53,11 +53,22 @@ export interface DashboardSummary {
   stages: Array<{ label: string; count: number }>;
   priorities: Array<{
     id: string;
+    matterId?: number;
     title: string;
     counterparty: string;
     owner: string;
     stage: string;
     dueDate: string;
     status: string;
+    overdue?: boolean;
   }>;
+  nextActions?: Array<{
+    matterId: number;
+    matterCode: string;
+    title: string;
+    taskTitle: string;
+    dueAt: string | null;
+    overdue?: boolean;
+  }>;
+  source?: "live" | "sample";
 }
