@@ -283,6 +283,11 @@ header input { width: 100%; border: 1px solid #d9e2ec; border-radius: 8px; paddi
 .finalization-result dt { color: #64748b; font-size: 10px; }
 .finalization-result dd { margin: 2px 0 0; color: #334155; font-size: 12px; font-weight: 800; }
 .finalization-result p { grid-column: 1 / -1; margin: 0; color: #527267; font-size: 12px; }
+.finalization-next { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; border-top: 1px solid #c8e8dc; padding-top: 11px; }
+.finalization-next .next-label { color: #16805b; font-size: 10px; font-weight: 800; letter-spacing: .12em; margin-right: 4px; }
+.finalization-next button { border: 1px solid #9bd9c2; border-radius: 8px; padding: 8px 14px; background: white; color: #153d31; font-weight: 700; font-size: 13px; cursor: pointer; }
+.finalization-next button.primary { background: #16805b; color: white; border-color: #16805b; }
+.finalization-next button:hover { filter: brightness(0.97); }
 @media (max-width: 760px) {
   .finalization-result { grid-template-columns: 1fr; }
   .finalization-result dl { flex-wrap: wrap; }
