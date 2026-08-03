@@ -175,6 +175,14 @@ header input { width: 100%; border: 1px solid #d9e2ec; border-radius: 8px; paddi
 .cond-dir { padding: 1px 8px; border-radius: 999px; font-size: 11px; background: #eef2f7; color: #475569; }
 .cond-dir.payable { background: #fff7ed; color: #c2410c; }
 .cond-dir.receivable { background: #ecfdf5; color: #047857; }
+.condition-summary-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-bottom: 16px; }
+.cond-summary { background: white; border: 1px solid #d9e2ec; border-radius: 10px; padding: 14px 16px; display: grid; gap: 3px; }
+.cond-summary.receivable { border-left: 4px solid #047857; }
+.cond-summary.payable { border-left: 4px solid #c2410c; }
+.cond-summary span { color: #64748b; font-size: 12px; font-weight: 700; }
+.cond-summary strong { color: #172a44; font-size: 18px; }
+.cond-summary small { color: #94a3b8; font-size: 12px; }
+@media (max-width: 760px) { .condition-summary-cards { grid-template-columns: 1fr; } }
 .matter-detail-section h3 { display: flex; justify-content: space-between; align-items: center; }
 .matter-summary .matter-status { padding: 1px 8px; border-radius: 999px; font-size: 11px; }
 .matter-blocked { color: #b45309; background: #fff7ed; border-radius: 7px; padding: 6px 9px; font-size: 12px; margin: 8px 0 0; }

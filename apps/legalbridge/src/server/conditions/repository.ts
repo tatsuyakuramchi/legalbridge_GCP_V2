@@ -24,8 +24,19 @@ export interface ConditionLineRow {
   termStart: string | null;
 }
 
+// Grant-free rollup over condition_lines only (installments/events are not
+// granted to the runtime role, so true consumption is a later, granted slice).
+export interface ConditionLineSummaryRow {
+  direction: string;   // payable / receivable / unknown
+  currency: string;    // JPY etc.
+  lineCount: number;
+  totalAmount: number; // sum of amount_ex_tax
+  totalMg: number;     // sum of mg_amount
+}
+
 export interface ConditionLineRepository {
   list(query: string, limit?: number): Promise<ConditionLineRow[]>;
+  summary(): Promise<ConditionLineSummaryRow[]>;
 }
 
 export class PgConditionLineRepository implements ConditionLineRepository {
@@ -54,6 +65,20 @@ export class PgConditionLineRepository implements ConditionLineRepository {
       [keyword, Math.min(Math.max(limit, 1), 1000)]
     );
     return result.rows.map(mapRow);
+  }
+
+  async summary() {
+    const result = await this.database.query(
+      `SELECT COALESCE(NULLIF(cl.direction, ''), 'unknown') AS direction,
+              COALESCE(NULLIF(cl.currency, ''), 'JPY')      AS currency,
+              COUNT(*)::int                                 AS line_count,
+              COALESCE(SUM(cl.amount_ex_tax), 0)            AS total_amount,
+              COALESCE(SUM(cl.mg_amount), 0)                AS total_mg
+         FROM condition_lines cl
+        GROUP BY 1, 2
+        ORDER BY 1, 2`
+    );
+    return result.rows.map(mapSummary);
   }
 }
 
@@ -86,6 +111,16 @@ function mapRow(row: Record<string, any>): ConditionLineRow {
   };
 }
 
+function mapSummary(row: Record<string, any>): ConditionLineSummaryRow {
+  return {
+    direction: String(row.direction ?? "unknown"),
+    currency: String(row.currency ?? "JPY"),
+    lineCount: Number(row.line_count ?? 0),
+    totalAmount: num(row.total_amount) ?? 0,
+    totalMg: num(row.total_mg) ?? 0
+  };
+}
+
 export class MemoryConditionLineRepository implements ConditionLineRepository {
   constructor(private readonly rows: ConditionLineRow[] = []) {}
   async list(query: string, limit = 300) {
@@ -94,5 +129,20 @@ export class MemoryConditionLineRepository implements ConditionLineRepository {
       .filter((row) => !keyword || [row.conditionName, row.documentNumber, row.vendorName, row.workTitle]
         .some((value) => value?.toLowerCase().includes(keyword)))
       .slice(0, limit);
+  }
+  async summary() {
+    const groups = new Map<string, ConditionLineSummaryRow>();
+    for (const row of this.rows) {
+      const direction = row.direction || "unknown";
+      const currency = row.currency || "JPY";
+      const key = `${direction}|${currency}`;
+      const entry = groups.get(key) ?? { direction, currency, lineCount: 0, totalAmount: 0, totalMg: 0 };
+      entry.lineCount += 1;
+      entry.totalAmount += row.amountExTax ?? 0;
+      entry.totalMg += row.mgAmount ?? 0;
+      groups.set(key, entry);
+    }
+    return [...groups.values()].sort((a, b) =>
+      a.direction.localeCompare(b.direction) || a.currency.localeCompare(b.currency));
   }
 }
