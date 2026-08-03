@@ -8,6 +8,7 @@ type ConditionLine = {
   vendorName: string; workTitle: string; territory: string | null; currency: string | null;
   amountExTax: number | null; mgAmount: number | null; ratePct: number | null; termStart: string | null;
 };
+type SummaryRow = { direction: string; currency: string; lineCount: number; totalAmount: number; totalMg: number };
 type DirFilter = "all" | "payable" | "receivable";
 
 const directionLabels: Record<string, string> = { payable: "支払", receivable: "受取" };
@@ -18,14 +19,45 @@ function money(currency: string | null, amount: number | null) {
   return `${currency ?? "JPY"} ${amount.toLocaleString("ja-JP")}`;
 }
 
+function ConditionSummary({ summary }: { summary: SummaryRow[] }) {
+  if (!summary.length) return null;
+  const cards = (["receivable", "payable"] as const).map((dir) => {
+    const groups = summary.filter((s) => s.direction === dir);
+    return {
+      dir,
+      label: directionLabels[dir],
+      count: groups.reduce((sum, g) => sum + g.lineCount, 0),
+      amounts: groups.filter((g) => g.totalAmount > 0).map((g) => money(g.currency, g.totalAmount))
+    };
+  }).filter((card) => card.count > 0);
+  if (!cards.length) return null;
+  return <div className="condition-summary-cards">
+    {cards.map((card) => (
+      <article key={card.dir} className={`cond-summary ${card.dir}`}>
+        <span>{card.label}</span>
+        <strong>{card.amounts.length ? card.amounts.join(" / ") : "金額未設定"}</strong>
+        <small>{card.count}件</small>
+      </article>
+    ))}
+  </div>;
+}
+
 export function ConditionLinesWorkspace({ onOpenDocument }:
   { onOpenDocument?: (documentId: number) => void }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<DirFilter>("all");
   const [rows, setRows] = useState<ConditionLine[]>([]);
+  const [summary, setSummary] = useState<SummaryRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
+
+  useEffect(() => {
+    fetch("/api/v2/condition-lines/summary")
+      .then((response) => response.ok ? response.json() : Promise.reject())
+      .then((data) => setSummary(data.groups ?? []))
+      .catch(() => setSummary([]));
+  }, [reload]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -54,7 +86,8 @@ export function ConditionLinesWorkspace({ onOpenDocument }:
 
   return <section className="page">
     <div className="page-title"><div><p>CONDITION LINES</p><h1>条件明細</h1>
-      <small>契約条件を横断で検索・確認します（消化・残高／検収は今後追加）</small></div></div>
+      <small>契約条件を横断で検索・確認します（消化実績・検収は今後追加）</small></div></div>
+    <ConditionSummary summary={summary} />
     <div className="matter-toolbar">
       <input value={query} onChange={(e) => setQuery(e.target.value)}
         placeholder="条件名、文書番号、相手方、作品名で検索" />

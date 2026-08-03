@@ -45,3 +45,17 @@ test("キーワードで絞り込む", async () => {
   assert.equal(response.body.items.length, 1);
   assert.equal(response.body.items[0].conditionName, "許諾A");
 });
+
+test("集計サマリを向き・通貨で返す", async () => {
+  const response = await request(appFor([
+    row({ id: 1, direction: "receivable", currency: "JPY", amountExTax: 100000, mgAmount: 0 }),
+    row({ id: 2, direction: "receivable", currency: "JPY", amountExTax: 50000, mgAmount: 0 }),
+    row({ id: 3, direction: "payable", currency: "JPY", amountExTax: 30000, mgAmount: 0 })
+  ])).get("/api/v2/condition-lines/summary");
+  assert.equal(response.status, 200);
+  const receivable = response.body.groups.find((g: { direction: string }) => g.direction === "receivable");
+  assert.equal(receivable.lineCount, 2);
+  assert.equal(receivable.totalAmount, 150000);
+  const payable = response.body.groups.find((g: { direction: string }) => g.direction === "payable");
+  assert.equal(payable.totalAmount, 30000);
+});
