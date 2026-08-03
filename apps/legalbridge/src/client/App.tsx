@@ -15,6 +15,7 @@ import { AdminOverview } from "./AdminOverview";
 import { DraftWorkspace } from "./DraftWorkspace";
 import { OutboundConditionWorkspace } from "./OutboundConditionWorkspace";
 import { ContractChainWizard } from "./ContractChainWizard";
+import { ConditionLinesWorkspace } from "./ConditionLinesWorkspace";
 
 type CompatibilityReport = { summary: { total: number; ok: number; warning: number; error: number }; reports: Array<{ templateKey: string; status: "ok" | "warning" | "error"; missingHelpers: string[]; missingPartials: string[]; unmappedVariables: string[]; renderError?: string }> };
 
@@ -35,7 +36,7 @@ const fallback: DashboardSummary = {
   priorities: []
 };
 
-type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "admin";
+type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "admin";
 type NavItem = { view: View; label: string; description: string; match: View[] };
 type NavGroup = { label: string; items: NavItem[] };
 
@@ -55,6 +56,7 @@ function navGroups(access: {
     { label: "登録・条件", items: [
       ...(access.adminWorkspace ? [{ view: "contract-intake" as const, label: "契約取込", description: "締結済イン契約の登録", match: ["contract-intake" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "outbound" as const, label: "アウト条件", description: "許諾先へのアウト条件追記", match: ["outbound" as const] }] : []),
+      ...(access.legalWorkspace ? [{ view: "conditions" as const, label: "条件明細", description: "契約条件の横断検索・確認", match: ["conditions" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "ledgers" as const, label: "台帳", description: "作品・取引先などのマスタ", match: ["ledgers" as const] }] : [])
     ] },
     { label: "管理", items: [
@@ -78,6 +80,7 @@ function breadcrumbFor(view: View): Array<{ label: string; view?: View }> {
     ledgers: [home, { label: "台帳" }],
     "contract-intake": [home, { label: "契約取込" }],
     outbound: [home, { label: "アウト条件" }],
+    conditions: [home, { label: "条件明細" }],
     admin: [home, { label: "管理" }]
   };
   return trails[view] ?? [{ label: "ホーム" }];
@@ -253,6 +256,11 @@ export function App() {
           />
         )}
         {view === "outbound" && <OutboundConditionWorkspace />}
+        {view === "conditions" && <ConditionLinesWorkspace
+          onOpenDocument={(id) => {
+            setSearchSelection({ target: "document", id: String(id), title: "" });
+            setView("documents");
+          }} />}
         {view === "admin" && <AdminOverview />}
         {view === "documents" && (
           <DocumentRegistry templates={templates} onCreate={() => { setNewDocIssueKey(""); setView("templates"); }}

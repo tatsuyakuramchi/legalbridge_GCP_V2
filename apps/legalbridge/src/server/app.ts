@@ -56,6 +56,10 @@ import {
 } from "./matters/write-repository.js";
 import { createMatterWriteRouter } from "./matters/write-routes.js";
 import { buildMatterDashboard } from "./matters/dashboard.js";
+import {
+  MemoryConditionLineRepository, PgConditionLineRepository, type ConditionLineRepository
+} from "./conditions/repository.js";
+import { createConditionLineRouter } from "./conditions/routes.js";
 import { MemoryLedgerRepository, PgLedgerRepository, type LedgerRepository } from "./ledgers/repository.js";
 import { createLedgerRouter } from "./ledgers/routes.js";
 import { createOutboundConditionRouter } from "./ledgers/outbound-conditions.js";
@@ -188,6 +192,7 @@ export interface AppDependencies {
   documentRegistry?: DocumentRegistryRepository;
   matters?: MatterRepository;
   matterWrites?: MatterWriteRepository;
+  conditionLines?: ConditionLineRepository;
   ledgers?: LedgerRepository;
   search?: GlobalSearchRepository;
   admin?: AdminRepository;
@@ -234,6 +239,9 @@ function createDefaultDependencies(): AppDependencies {
     matterWrites: database
       ? new PgMatterWriteRepository(database)
       : new MemoryMatterWriteRepository(),
+    conditionLines: database
+      ? new PgConditionLineRepository(database)
+      : new MemoryConditionLineRepository(),
     ledgers: database ? new PgLedgerRepository(database) : new MemoryLedgerRepository(),
     search: database ? new PgGlobalSearchRepository(database) : new MemoryGlobalSearchRepository(),
     admin: database ? new PgAdminRepository(database) : new MemoryAdminRepository(),
@@ -544,6 +552,7 @@ export function createApp(
     dependencies.matterWrites,
     matterWriteEnabled
   ));
+  app.use("/api/v2", createConditionLineRouter(dependencies.conditionLines));
   app.use("/api/v2", createLedgerRouter(
     dependencies.ledgers ?? new MemoryLedgerRepository()
   ));
