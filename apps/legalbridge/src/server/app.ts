@@ -55,6 +55,7 @@ import {
   MemoryMatterWriteRepository, PgMatterWriteRepository, type MatterWriteRepository
 } from "./matters/write-repository.js";
 import { createMatterWriteRouter } from "./matters/write-routes.js";
+import { buildMatterDashboard } from "./matters/dashboard.js";
 import { MemoryLedgerRepository, PgLedgerRepository, type LedgerRepository } from "./ledgers/repository.js";
 import { createLedgerRouter } from "./ledgers/routes.js";
 import { createOutboundConditionRouter } from "./ledgers/outbound-conditions.js";
@@ -106,7 +107,8 @@ import {
   type AuthSettings
 } from "./auth.js";
 
-const dashboard: DashboardSummary = {
+const sampleDashboard: DashboardSummary = {
+  source: "sample",
   kpis: [
     { label: "対応待ち", value: 12, tone: "warning" },
     { label: "本日期限", value: 4, tone: "danger" },
@@ -421,8 +423,18 @@ export function createApp(
     });
   });
 
-  app.get("/api/v2/dashboard", (_request, response) => {
-    response.json(dashboard);
+  app.get("/api/v2/dashboard", async (_request, response) => {
+    // Real cockpit from matter_overview_v (read-only). Fall back to the static
+    // sample when no repository/data is available so the UI still renders.
+    try {
+      const matters = await matterRepository.list("", undefined, 500);
+      if (matters.length) {
+        return response.json(buildMatterDashboard(matters, new Date()));
+      }
+    } catch (error) {
+      console.error("dashboard aggregation failed", error);
+    }
+    return response.json(sampleDashboard);
   });
 
   app.get("/api/v2/integrations/status", async (_request, response) => {

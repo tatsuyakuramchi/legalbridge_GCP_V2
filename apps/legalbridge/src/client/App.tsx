@@ -35,12 +35,41 @@ const fallback: DashboardSummary = {
   priorities: []
 };
 
+type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "admin";
+type NavItem = { view: View; label: string; description: string; match: View[] };
+type NavGroup = { label: string; items: NavItem[] };
+
+function navGroups(access: {
+  legalWorkspace: boolean; adminWorkspace: boolean; requesterWorkspace: boolean; readOnly: boolean;
+}): NavGroup[] {
+  const legalOrRequester = access.legalWorkspace || access.requesterWorkspace;
+  const groups: NavGroup[] = [
+    { label: "概要", items: [
+      { view: "home", label: "ホーム", description: "業務の全体状況と次アクション", match: ["home"] }
+    ] },
+    { label: "業務", items: [
+      ...(access.legalWorkspace ? [{ view: "matters" as const, label: "案件", description: "案件・課題・タスクの管理", match: ["matters" as const] }] : []),
+      ...(legalOrRequester ? [{ view: "documents" as const, label: access.requesterWorkspace ? "自分の文書" : "文書", description: "文書の作成・確定・PDF", match: ["documents" as const, "templates" as const, "document" as const] }] : []),
+      ...(!access.readOnly && legalOrRequester ? [{ view: "drafts" as const, label: access.requesterWorkspace ? "自分の下書き" : "下書き", description: "保存中の下書きを再開", match: ["drafts" as const] }] : [])
+    ] },
+    { label: "登録・条件", items: [
+      ...(access.adminWorkspace ? [{ view: "contract-intake" as const, label: "契約取込", description: "締結済イン契約の登録", match: ["contract-intake" as const] }] : []),
+      ...(access.legalWorkspace ? [{ view: "outbound" as const, label: "アウト条件", description: "許諾先へのアウト条件追記", match: ["outbound" as const] }] : []),
+      ...(access.legalWorkspace ? [{ view: "ledgers" as const, label: "台帳", description: "作品・取引先などのマスタ", match: ["ledgers" as const] }] : [])
+    ] },
+    { label: "管理", items: [
+      ...(access.adminWorkspace ? [{ view: "admin" as const, label: "管理", description: "通知・運用の管理", match: ["admin" as const] }] : [])
+    ] }
+  ];
+  return groups.filter((group) => group.items.length > 0);
+}
+
 export function App() {
   const [dashboard, setDashboard] = useState(fallback);
   const [templates, setTemplates] = useState<DocumentFormSchema[]>([]);
   const [schema, setSchema] = useState<DocumentFormSchema | null>(null);
   const [compatibility, setCompatibility] = useState<CompatibilityReport | null>(null);
-  const [view, setView] = useState<"home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "admin">("home");
+  const [view, setView] = useState<View>("home");
   const [readOnly, setReadOnly] = useState(true);
   const [canFinalizeDocuments, setCanFinalizeDocuments] = useState(false);
   const [canGeneratePdf, setCanGeneratePdf] = useState(false);
@@ -125,23 +154,18 @@ export function App() {
       <aside className="rail">
         <div className="brand">LegalBridge <span>V2</span></div>
         <nav>
-          <button className={view === "home" ? "active" : ""} onClick={() => setView("home")}>ホーム</button>
-          {legalWorkspace && <button className={view === "matters" ? "active" : ""} onClick={() => setView("matters")}>案件</button>}
-          {(legalWorkspace || requesterWorkspace) && <button
-            className={view === "documents" || view === "templates" || view === "document" ? "active" : ""}
-            onClick={() => setView("documents")}
-          >
-            {requesterWorkspace ? "自分の文書" : "文書"}
-          </button>}
-          {!readOnly && (legalWorkspace || requesterWorkspace) && (
-            <button className={view === "drafts" ? "active" : ""} onClick={() => setView("drafts")}>
-              {requesterWorkspace ? "自分の下書き" : "下書き"}
-            </button>
-          )}
-          {legalWorkspace && <button className={view === "ledgers" ? "active" : ""} onClick={() => setView("ledgers")}>台帳</button>}
-          {adminWorkspace && <button className={view === "contract-intake" ? "active" : ""} onClick={() => setView("contract-intake")}>契約取込</button>}
-          {legalWorkspace && <button className={view === "outbound" ? "active" : ""} onClick={() => setView("outbound")}>アウト条件</button>}
-          {adminWorkspace && <button className={view === "admin" ? "active" : ""} onClick={() => setView("admin")}>管理</button>}
+          {navGroups({ legalWorkspace, adminWorkspace, requesterWorkspace, readOnly }).map((group) => (
+            <div className="nav-group" key={group.label}>
+              <span className="nav-group-label">{group.label}</span>
+              {group.items.map((item) => (
+                <button key={item.view}
+                  className={item.match.includes(view) ? "active" : ""}
+                  onClick={() => setView(item.view)}
+                  title={item.description}
+                >{item.label}</button>
+              ))}
+            </div>
+          ))}
         </nav>
         <div className="backlog"><strong>Backlog連携</strong><small>参照のみ・変更なし</small></div>
       </aside>
@@ -161,7 +185,14 @@ export function App() {
         </header>
 
         {view === "home" && (
-          <Dashboard dashboard={dashboard} onCreateDocument={() => setView("templates")} />
+          <Dashboard dashboard={dashboard}
+            access={{ legalWorkspace, adminWorkspace, requesterWorkspace }}
+            onNavigate={setView}
+            onOpenMatter={(id, title) => {
+              setSearchSelection({ target: "matter", id: String(id), title });
+              setView("matters");
+            }}
+            onCreateDocument={() => setView("templates")} />
         )}
         {view === "matters" && <MatterRegistry templates={templates}
           canEdit={canEditMatters}
@@ -281,38 +312,89 @@ function TemplateCatalog({
   );
 }
 
-function Dashboard({ dashboard, onCreateDocument }: { dashboard: DashboardSummary; onCreateDocument: () => void }) {
+const matterStatusLabels: Record<string, string> = { open: "未着手", in_progress: "進行中", closed: "完了", archived: "保管" };
+
+function Dashboard({ dashboard, access, onNavigate, onOpenMatter, onCreateDocument }: {
+  dashboard: DashboardSummary;
+  access: { legalWorkspace: boolean; adminWorkspace: boolean; requesterWorkspace: boolean };
+  onNavigate: (view: View) => void;
+  onOpenMatter: (id: number, title: string) => void;
+  onCreateDocument: () => void;
+}) {
+  const kpiByLabel = new Map(dashboard.kpis.map((k) => [k.label, k.value]));
+  // 業務動線レール（V1準拠）：その日の作業順を①→④で明示する。
+  const railCards: Array<{ step: string; label: string; hint: string; view: View; metric?: number; show: boolean }> = [
+    { step: "①", label: "案件を確認", hint: "対応中・停滞を把握", view: "matters", metric: kpiByLabel.get("対応中"), show: access.legalWorkspace },
+    { step: "②", label: "文書を作成", hint: "テンプレートから起票", view: "templates", metric: undefined, show: access.legalWorkspace || access.requesterWorkspace },
+    { step: "③", label: "下書きを再開", hint: "保存中の下書き", view: "drafts", metric: undefined, show: access.legalWorkspace || access.requesterWorkspace },
+    { step: "④", label: "アウト条件を追記", hint: "許諾先ごとの条件", view: "outbound", metric: undefined, show: access.legalWorkspace }
+  ];
+  const rail = railCards.filter((card) => card.show);
+
   return (
     <section className="page">
       <div className="page-title">
-        <div><p>LEGAL OPERATIONS</p><h1>法務オペレーション</h1></div>
+        <div><p>LEGAL OPERATIONS</p><h1>法務オペレーション</h1>
+          <small>{dashboard.source === "sample" ? "サンプル表示（本番データ未接続）" : "本番データに基づく現在状況"}</small></div>
         <button className="primary" onClick={onCreateDocument}>文書を作成</button>
       </div>
+
+      {rail.length > 0 && <div className="workflow-rail">
+        {rail.map((card) => (
+          <button key={card.view} className="workflow-card" onClick={() => onNavigate(card.view)}>
+            <span className="wf-step">{card.step}</span>
+            <strong>{card.label}</strong>
+            <small>{card.hint}</small>
+            <span className="wf-metric">{card.metric !== undefined ? `${card.metric}件` : "開く"} →</span>
+          </button>
+        ))}
+      </div>}
+
       <div className="kpis">
         {dashboard.kpis.map((kpi) => <article key={kpi.label} className={kpi.tone ?? ""}><span>{kpi.label}</span><strong>{kpi.value}</strong></article>)}
       </div>
       <section className="panel">
-        <div className="panel-head"><h2>案件工程</h2><span>全案件 68</span></div>
+        <div className="panel-head"><h2>案件工程</h2>
+          <span>全案件 {dashboard.stages.reduce((sum, s) => sum + s.count, 0)}</span></div>
         <div className="stages">
           {dashboard.stages.map((stage, index) => <article key={stage.label}><small>0{index + 1}</small><strong>{stage.count}</strong><span>{stage.label}</span></article>)}
         </div>
       </section>
       <div className="content-grid">
         <section className="panel">
-          <div className="panel-head"><h2>優先対応案件</h2><button>すべて表示</button></div>
-          <table><thead><tr><th>案件</th><th>相手方</th><th>工程</th><th>期限</th><th>状態</th></tr></thead>
-            <tbody>
-              {(dashboard.priorities.length ? dashboard.priorities : [
-                { id: "LB-2026-0148", title: "海外ライセンス契約更新", counterparty: "North Star Games", stage: "審査", dueDate: "7/28", status: "要確認", owner: "" },
-                { id: "LB-2026-0144", title: "制作業務委託基本契約", counterparty: "青空スタジオ", stage: "ドラフト", dueDate: "7/30", status: "作成中", owner: "" }
-              ]).map((matter) => <tr key={matter.id}><td><b>{matter.id}</b><br />{matter.title}</td><td>{matter.counterparty}</td><td>{matter.stage}</td><td>{matter.dueDate}</td><td><span className="status">{matter.status}</span></td></tr>)}
-            </tbody>
-          </table>
+          <div className="panel-head"><h2>優先対応案件</h2>
+            {access.legalWorkspace && <button onClick={() => onNavigate("matters")}>すべて表示</button>}</div>
+          {dashboard.priorities.length ? (
+            <table><thead><tr><th>案件</th><th>相手方</th><th>工程</th><th>期限</th><th>状態</th></tr></thead>
+              <tbody>
+                {dashboard.priorities.map((matter) => <tr key={matter.id}
+                  className={matter.matterId ? "row-link" : ""}
+                  onClick={() => matter.matterId && onOpenMatter(matter.matterId, matter.title)}>
+                  <td><b>{matter.id}</b><br />{matter.title}</td>
+                  <td>{matter.counterparty}</td><td>{matter.stage}</td>
+                  <td className={matter.overdue ? "overdue" : ""}>{matter.dueDate || "—"}</td>
+                  <td><span className="status">{matterStatusLabels[matter.status] ?? matter.status}</span></td></tr>)}
+              </tbody>
+            </table>
+          ) : <div className="empty-state">対応中の案件はありません。</div>}
         </section>
-        <aside className="panel alerts"><div className="panel-head"><h2>本日の対応</h2><span>4件</span></div><p><b>契約レビュー期限</b><br />海外ライセンス契約更新</p><p><b>承認待ち</b><br />出版契約書 第3稿</p></aside>
+        <aside className="panel alerts"><div className="panel-head"><h2>本日の次アクション</h2>
+          <span>{dashboard.nextActions?.length ?? 0}件</span></div>
+          {dashboard.nextActions?.length ? dashboard.nextActions.map((action) => (
+            <button key={action.matterId} className="next-action" onClick={() => onOpenMatter(action.matterId, action.title)}>
+              <b>{action.taskTitle}</b>
+              <small>{action.matterCode}・{action.title}</small>
+              <em className={action.overdue ? "overdue" : ""}>{action.dueAt ? formatShortDate(action.dueAt) : "期限未設定"}</em>
+            </button>
+          )) : <p className="empty-inline">次アクションに設定されたタスクはありません。</p>}
+        </aside>
       </div>
     </section>
   );
+}
+
+function formatShortDate(value: string) {
+  return new Intl.DateTimeFormat("ja-JP", { timeZone: "Asia/Tokyo", month: "2-digit", day: "2-digit" }).format(new Date(value));
 }
 
 function DocumentForm({
