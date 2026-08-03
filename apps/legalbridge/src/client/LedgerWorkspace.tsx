@@ -12,6 +12,7 @@ export function LedgerWorkspace({ initialType, initialQuery, selectedId, canEdit
   const [items, setItems] = useState<Item[]>([]);
   const [selected, setSelected] = useState<Item | null>(null);
   const [creating, setCreating] = useState(false);
+  const [editingVendorId, setEditingVendorId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
@@ -22,7 +23,7 @@ export function LedgerWorkspace({ initialType, initialQuery, selectedId, canEdit
   useEffect(() => {
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      setLoading(true); setSelected(null); setCreating(false);
+      setLoading(true); setSelected(null); setCreating(false); setEditingVendorId(null);
       setError("");
       fetch(`/api/v2/ledgers/${type}?q=${encodeURIComponent(query)}&limit=200`, { signal: controller.signal })
         .then((response) => response.ok ? response.json() : Promise.reject())
@@ -54,15 +55,21 @@ export function LedgerWorkspace({ initialType, initialQuery, selectedId, canEdit
       </button>)}{!loading && !items.length && <div className="empty-state">該当するデータがありません。</div>}</div>
       {creating
         ? <VendorForm onCancel={() => setCreating(false)} onSaved={() => { setCreating(false); setReload((v) => v + 1); }} />
-        : <LedgerDetail item={selected} />}
+        : editingVendorId !== null
+          ? <VendorForm vendorId={editingVendorId} onCancel={() => setEditingVendorId(null)} onSaved={() => { setEditingVendorId(null); setReload((v) => v + 1); }} />
+          : <LedgerDetail item={selected} canEdit={canCreate}
+              onEdit={(item) => { setEditingVendorId(Number(item.id)); }} />}
     </div>
   </section>;
 }
 
-function LedgerDetail({ item }: { item: Item | null }) {
+function LedgerDetail({ item, canEdit = false, onEdit }:
+  { item: Item | null; canEdit?: boolean; onEdit?: (item: Item) => void }) {
   if (!item) return <aside className="panel ledger-detail empty-detail">一覧から項目を選択してください。</aside>;
   const entries = Object.entries(item.detail).filter(([, value]) => value !== null && value !== "");
-  return <aside className="panel ledger-detail"><span className="detail-kicker">LEDGER DETAIL</span>
+  return <aside className="panel ledger-detail">
+    <div className="matter-detail-head"><span className="detail-kicker">LEDGER DETAIL</span>
+      {canEdit && onEdit && <button onClick={() => onEdit(item)}>編集</button>}</div>
     <h2>{item.title}</h2><p>{item.code}　{item.subtitle}</p>
     <dl>{entries.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{typeof value === "boolean" ? (value ? "はい" : "いいえ") : String(value)}</dd></div>)}</dl>
     <small className="mask-note">口座情報は表示しません。電話番号・メールアドレスはマスキングされています。</small>
@@ -80,11 +87,31 @@ const emptyVendor: VendorValues = {
   invoiceRegistrationNumber: "", isInvoiceIssuer: false, withholdingEnabled: false
 };
 
-function VendorForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () => void }) {
+function VendorForm({ vendorId, onCancel, onSaved }: { vendorId?: number; onCancel: () => void; onSaved: () => void }) {
+  const isEdit = vendorId !== undefined;
   const [values, setValues] = useState<VendorValues>(emptyVendor);
+  const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const toast = useToast();
+  useEffect(() => {
+    if (!isEdit) return;
+    setLoading(true);
+    fetch(`/api/v2/vendors/${vendorId}`)
+      .then((response) => response.ok ? response.json() : Promise.reject())
+      .then((data) => {
+        const v = data.vendor;
+        setValues({
+          vendorName: v.vendorName ?? "", vendorCode: v.vendorCode ?? "", tradeName: v.tradeName ?? "",
+          penName: v.penName ?? "", entityType: v.entityType ?? "", email: v.email ?? "", phone: v.phone ?? "",
+          contactName: v.contactName ?? "", contactDepartment: v.contactDepartment ?? "", address: v.address ?? "",
+          invoiceRegistrationNumber: v.invoiceRegistrationNumber ?? "",
+          isInvoiceIssuer: Boolean(v.isInvoiceIssuer), withholdingEnabled: Boolean(v.withholdingEnabled)
+        });
+      })
+      .catch(() => setError("取引先の情報を取得できませんでした。"))
+      .finally(() => setLoading(false));
+  }, [vendorId, isEdit]);
   function set<K extends keyof VendorValues>(key: K, value: VendorValues[K]) {
     setValues((prev) => ({ ...prev, [key]: value }));
   }
@@ -101,22 +128,23 @@ function VendorForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () =
     };
     if (values.vendorCode.trim()) body.vendorCode = values.vendorCode.trim();
     try {
-      const response = await fetch("/api/v2/vendors", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+      const response = await fetch(isEdit ? `/api/v2/vendors/${vendorId}` : "/api/v2/vendors", {
+        method: isEdit ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
       });
       if (!response.ok) {
         const detail = await response.json().catch(() => ({}));
         setError(detail.error ?? "保存に失敗しました。"); setSaving(false); return;
       }
       const saved = await response.json();
-      toast.push(`取引先を登録しました（${saved.vendorCode ?? ""}）`, "success");
+      toast.push(isEdit ? "取引先を更新しました" : `取引先を登録しました（${saved.vendorCode ?? ""}）`, "success");
       onSaved();
     } catch {
       setError("通信に失敗しました。"); setSaving(false);
     }
   }
+  if (loading) return <aside className="panel ledger-detail"><div className="empty-inline">読み込み中…</div></aside>;
   return <aside className="panel ledger-detail matter-editor">
-    <span className="detail-kicker">NEW VENDOR</span><h2>新規取引先</h2>
+    <span className="detail-kicker">{isEdit ? "EDIT VENDOR" : "NEW VENDOR"}</span><h2>{isEdit ? "取引先を編集" : "新規取引先"}</h2>
     {error && <div className="async-error">{error}</div>}
     <label>取引先名 *<input value={values.vendorName} onChange={(e) => set("vendorName", e.target.value)} /></label>
     <div className="matter-form-grid">
@@ -134,7 +162,7 @@ function VendorForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () =
     <label className="task-primary-toggle"><input type="checkbox" checked={values.isInvoiceIssuer} onChange={(e) => set("isInvoiceIssuer", e.target.checked)} />インボイス発行事業者</label>
     <label className="task-primary-toggle"><input type="checkbox" checked={values.withholdingEnabled} onChange={(e) => set("withholdingEnabled", e.target.checked)} />源泉徴収対象</label>
     <div className="matter-form-actions">
-      <button className="primary" disabled={saving} onClick={submit}>{saving ? "保存中…" : "登録"}</button>
+      <button className="primary" disabled={saving} onClick={submit}>{saving ? "保存中…" : isEdit ? "保存" : "登録"}</button>
       <button disabled={saving} onClick={onCancel}>キャンセル</button>
     </div>
   </aside>;

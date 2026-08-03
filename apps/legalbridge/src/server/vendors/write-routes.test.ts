@@ -60,3 +60,19 @@ test("取引先を部分更新できる", async () => {
   assert.equal(response.status, 200);
   assert.equal(response.body.id, created.body.id);
 });
+
+test("編集用に取引先の生値を返す", async () => {
+  const { app } = appFor({ enabled: true });
+  const created = await request(app).post("/api/v2/vendors").send({ vendorName: "生値社", email: "raw@example.com" });
+  const response = await request(app).get(`/api/v2/vendors/${created.body.id}`);
+  assert.equal(response.status, 200);
+  assert.equal(response.body.vendor.vendorName, "生値社");
+  assert.equal(response.body.vendor.email, "raw@example.com");
+});
+
+test("依頼者ロールは取引先の生値を取得できない", async () => {
+  const { app } = appFor({ enabled: true, role: "requester" });
+  const response = await request(app).get("/api/v2/vendors/1");
+  assert.equal(response.status, 403);
+  assert.equal(response.body.code, "VENDOR_EDIT_FORBIDDEN");
+});

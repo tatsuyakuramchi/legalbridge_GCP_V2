@@ -12,9 +12,28 @@ export class VendorWriteError extends Error {
   }
 }
 
+// Editable vendor record (admin/legal only) for prefilling the edit form.
+export interface VendorRecord {
+  id: number;
+  vendorName: string;
+  vendorCode: string | null;
+  tradeName: string | null;
+  penName: string | null;
+  entityType: string | null;
+  email: string | null;
+  phone: string | null;
+  contactName: string | null;
+  contactDepartment: string | null;
+  address: string | null;
+  invoiceRegistrationNumber: string | null;
+  isInvoiceIssuer: boolean;
+  withholdingEnabled: boolean;
+}
+
 export interface VendorWriteRepository {
   createVendor(input: VendorCreateInput, createdBy: string): Promise<SavedVendor>;
   updateVendor(id: number, input: VendorUpdateInput): Promise<SavedVendor>;
+  find(id: number): Promise<VendorRecord | null>;
 }
 
 const COLUMNS: Record<string, string> = {
@@ -102,6 +121,34 @@ export class PgVendorWriteRepository implements VendorWriteRepository {
       throw translate(error);
     }
   }
+
+  async find(id: number) {
+    const result = await this.database.query(
+      `SELECT id, vendor_name, vendor_code, trade_name, pen_name, entity_type,
+              email, phone, contact_name, contact_department, address,
+              invoice_registration_number, is_invoice_issuer, withholding_enabled
+         FROM vendors WHERE id = $1`,
+      [id]
+    );
+    if (!result.rows[0]) return null;
+    const row = result.rows[0];
+    return {
+      id: Number(row.id),
+      vendorName: String(row.vendor_name ?? ""),
+      vendorCode: row.vendor_code ?? null,
+      tradeName: row.trade_name ?? null,
+      penName: row.pen_name ?? null,
+      entityType: row.entity_type ?? null,
+      email: row.email ?? null,
+      phone: row.phone ?? null,
+      contactName: row.contact_name ?? null,
+      contactDepartment: row.contact_department ?? null,
+      address: row.address ?? null,
+      invoiceRegistrationNumber: row.invoice_registration_number ?? null,
+      isInvoiceIssuer: Boolean(row.is_invoice_issuer),
+      withholdingEnabled: Boolean(row.withholding_enabled)
+    };
+  }
 }
 
 function translate(error: unknown): Error {
@@ -126,5 +173,18 @@ export class MemoryVendorWriteRepository implements VendorWriteRepository {
     if (!existing) throw new VendorWriteError("VENDOR_NOT_FOUND", "指定した取引先が見つかりません");
     Object.assign(existing, input);
     return { id, vendorCode: (existing.vendorCode as string | null) ?? null };
+  }
+  async find(id: number) {
+    const v = this.vendors.get(id);
+    if (!v) return null;
+    return {
+      id, vendorName: String(v.vendorName ?? ""), vendorCode: (v.vendorCode as string | null) ?? null,
+      tradeName: (v.tradeName as string | null) ?? null, penName: (v.penName as string | null) ?? null,
+      entityType: (v.entityType as string | null) ?? null, email: (v.email as string | null) ?? null,
+      phone: (v.phone as string | null) ?? null, contactName: (v.contactName as string | null) ?? null,
+      contactDepartment: (v.contactDepartment as string | null) ?? null, address: (v.address as string | null) ?? null,
+      invoiceRegistrationNumber: (v.invoiceRegistrationNumber as string | null) ?? null,
+      isInvoiceIssuer: Boolean(v.isInvoiceIssuer), withholdingEnabled: Boolean(v.withholdingEnabled)
+    };
   }
 }
