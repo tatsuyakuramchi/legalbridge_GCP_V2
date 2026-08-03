@@ -43,9 +43,17 @@ export function ConditionLinesWorkspace({ onOpenDocument, onCreateDocument }:
   </section>;
 }
 
+type ConditionDetailData = ConditionLine & {
+  matterCode: string | null; matterTitle: string | null; exclusivity: string | null;
+  sublicenseAllowed: boolean | null; paymentScheme: string | null; paymentTerms: string | null;
+  royaltyBase: string | null; deductibleCosts: string | null; agAmount: number | null;
+  notes: string | null; regions: string[]; languages: string[];
+};
+
 function ConditionSearch({ onOpenDocument }: { onOpenDocument?: (documentId: number) => void }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<DirFilter>("all");
+  const [selectedId, setSelectedId] = useState<number | null>(null);
   const [rows, setRows] = useState<ConditionLine[]>([]);
   const [summary, setSummary] = useState<SummaryRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -84,6 +92,10 @@ function ConditionSearch({ onOpenDocument }: { onOpenDocument?: (documentId: num
   ];
   const visible = rows.filter((r) => filter === "all" || r.direction === filter);
 
+  if (selectedId) {
+    return <ConditionDetail id={selectedId} onBack={() => setSelectedId(null)} onOpenDocument={onOpenDocument} />;
+  }
+
   return <>
     <ConditionSummary summary={summary} />
     <div className="matter-toolbar">
@@ -109,8 +121,7 @@ function ConditionSearch({ onOpenDocument }: { onOpenDocument?: (documentId: num
           </tr></thead>
           <tbody>
             {visible.map((row) => (
-              <tr key={row.id} className={row.documentId ? "row-link" : ""}
-                onClick={() => row.documentId && onOpenDocument?.(row.documentId)}>
+              <tr key={row.id} className="row-link" onClick={() => setSelectedId(row.id)}>
                 <td><b>{row.conditionName || "（無題）"}</b>{row.termStart && <><br /><small>開始 {row.termStart}</small></>}</td>
                 <td>
                   <span className={`cond-dir ${row.direction ?? ""}`}>{directionLabels[row.direction ?? ""] ?? "—"}</span>
@@ -128,6 +139,62 @@ function ConditionSearch({ onOpenDocument }: { onOpenDocument?: (documentId: num
         </table>
       </div>}
   </>;
+}
+
+function ConditionDetail({ id, onBack, onOpenDocument }:
+  { id: number; onBack: () => void; onOpenDocument?: (documentId: number) => void }) {
+  const [detail, setDetail] = useState<ConditionDetailData | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    setDetail(null); setError("");
+    fetch(`/api/v2/condition-lines/${id}`)
+      .then((response) => response.ok ? response.json() : Promise.reject())
+      .then((data) => setDetail(data.detail))
+      .catch(() => setError("条件明細の詳細を取得できませんでした。"));
+  }, [id]);
+
+  return <div>
+    <div className="breadcrumb"><button onClick={onBack}>← 条件明細一覧に戻る</button></div>
+    {error && <div className="async-error">{error}</div>}
+    {!detail && !error && <div className="empty-inline">読み込み中…</div>}
+    {detail && <div className="panel condition-detail">
+      <div className="matter-detail-head">
+        <div><span className="detail-kicker">CONDITION DETAIL</span><h2>{detail.conditionName || "（無題の条件）"}</h2></div>
+        {detail.documentId && onOpenDocument &&
+          <button className="primary" onClick={() => onOpenDocument(detail.documentId!)}>文書を開く</button>}
+      </div>
+      <div className="matter-summary">
+        <span className={`cond-dir ${detail.direction ?? ""}`}>{directionLabels[detail.direction ?? ""] ?? "—"}</span>
+        {detail.flowDirection && <span>{flowLabels[detail.flowDirection] ?? detail.flowDirection}</span>}
+        <span>{detail.documentNumber ?? "未発番"}</span>
+        {detail.matterCode && <span>{detail.matterCode}</span>}
+        {detail.vendorName && <span>{detail.vendorName}</span>}
+      </div>
+      <dl className="condition-detail-grid">
+        <Field label="作品" value={detail.workTitle} />
+        <Field label="相手方" value={detail.vendorName} />
+        <Field label="地域" value={detail.regions.length ? detail.regions.join("、") : detail.territory} />
+        <Field label="言語" value={detail.languages.length ? detail.languages.join("、") : null} />
+        <Field label="独占性" value={detail.exclusivity} />
+        <Field label="再許諾" value={detail.sublicenseAllowed === null ? null : detail.sublicenseAllowed ? "可" : "不可"} />
+        <Field label="金額(税抜)" value={detail.amountExTax !== null ? money(detail.currency, detail.amountExTax) : null} />
+        <Field label="MG" value={detail.mgAmount !== null ? money(detail.currency, detail.mgAmount) : null} />
+        <Field label="AG" value={detail.agAmount !== null ? money(detail.currency, detail.agAmount) : null} />
+        <Field label="料率" value={detail.ratePct !== null ? `${detail.ratePct}%` : null} />
+        <Field label="支払方式" value={detail.paymentScheme} />
+        <Field label="支払条件" value={detail.paymentTerms} />
+        <Field label="ロイヤリティ基準" value={detail.royaltyBase} />
+        <Field label="控除費用" value={detail.deductibleCosts} />
+        <Field label="開始日" value={detail.termStart} />
+        <Field label="取引種別" value={detail.transactionKind} />
+      </dl>
+      {detail.notes && <div className="condition-notes"><h3>備考</h3><p>{detail.notes}</p></div>}
+    </div>}
+  </div>;
+}
+
+function Field({ label, value }: { label: string; value: string | null | undefined }) {
+  return <div><dt>{label}</dt><dd>{value ? value : "—"}</dd></div>;
 }
 
 function ConditionSummary({ summary }: { summary: SummaryRow[] }) {

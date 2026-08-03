@@ -45,5 +45,28 @@ export function createConditionLineRouter(conditions: ConditionLineRepository | 
     }
   });
 
+  // Registered after /condition-lines/summary so the literal path wins.
+  router.get("/condition-lines/:id", async (request, response, next) => {
+    try {
+      if (!conditions) {
+        return response.status(503).json({
+          error: "condition line registry is unavailable",
+          code: "CONDITION_LINES_UNAVAILABLE"
+        });
+      }
+      const { id } = z.object({ id: z.coerce.number().int().positive() }).parse(request.params);
+      const detail = await conditions.find(id);
+      if (!detail) {
+        return response.status(404).json({ error: "condition line not found", code: "CONDITION_LINE_NOT_FOUND" });
+      }
+      return response.status(200).json({ detail });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return response.status(400).json({ error: "invalid request", issues: error.issues });
+      }
+      next(error);
+    }
+  });
+
   return router;
 }
