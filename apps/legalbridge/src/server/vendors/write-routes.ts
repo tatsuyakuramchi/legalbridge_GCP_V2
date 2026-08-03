@@ -32,6 +32,22 @@ export function createVendorWriteRouter(
     return response.status(200).json({ ok: true });
   });
 
+  // Raw vendor for the edit form (admin/legal via createApiAuthorization).
+  router.get("/vendors/:id", async (request, response, next) => {
+    try {
+      if (!vendors) return unavailable(response);
+      if (!editorAllowed(response.locals.currentUser?.role)) return forbidden(response);
+      const { id } = idPath.parse(request.params);
+      const record = await vendors.find(id);
+      if (!record) {
+        return response.status(404).json({ error: "指定した取引先が見つかりません", code: "VENDOR_NOT_FOUND" });
+      }
+      return response.status(200).json({ vendor: record });
+    } catch (error) {
+      return handle(error, response, next);
+    }
+  });
+
   router.post("/vendors", async (request, response, next) => {
     try {
       if (!writeEnabled || !vendors) return unavailable(response);
