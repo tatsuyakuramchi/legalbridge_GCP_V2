@@ -26,10 +26,32 @@ const stageLabels: Record<string, string> = {
 };
 const LIFECYCLE_STAGES = Object.keys(stageLabels);
 
+type FilterKey = "all" | "active" | "blocked" | "overdue" | "done";
+function isActive(matter: { status: string }) {
+  return matter.status === "open" || matter.status === "in_progress";
+}
+function matterTodayKey() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit"
+  }).format(new Date());
+}
+function isOverdue(dueDate: string | null, today: string) {
+  return Boolean(dueDate && dueDate.slice(0, 10) < today);
+}
+function matchesFilter(matter: Matter, filter: FilterKey, today: string) {
+  switch (filter) {
+    case "active": return isActive(matter);
+    case "blocked": return isActive(matter) && Boolean(matter.blockedReason);
+    case "overdue": return isActive(matter) && isOverdue(matter.targetDueDate, today);
+    case "done": return matter.status === "closed" || matter.status === "archived";
+    default: return true;
+  }
+}
+
 export function MatterRegistry({ templates, selectedId, canEdit = false }:
   { templates: DocumentFormSchema[]; selectedId?: number; canEdit?: boolean }) {
   const [query, setQuery] = useState("");
-  const [status, setStatus] = useState("");
+  const [filter, setFilter] = useState<FilterKey>("all");
   const [matters, setMatters] = useState<Matter[]>([]);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [loading, setLoading] = useState(false);
@@ -41,8 +63,9 @@ export function MatterRegistry({ templates, selectedId, canEdit = false }:
   useEffect(() => {
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
+      // Fetch by keyword only; status/alert buckets are derived client-side so
+      // the filter chips can show live counts.
       const params = new URLSearchParams({ q: query, limit: "200" });
-      if (status) params.set("status", status);
       setLoading(true);
       setError("");
       fetch(`/api/v2/matters?${params}`, { signal: controller.signal })
@@ -51,7 +74,7 @@ export function MatterRegistry({ templates, selectedId, canEdit = false }:
         .catch((cause) => { if (cause?.name !== "AbortError") setError("案件一覧を取得できませんでした。"); }).finally(() => setLoading(false));
     }, 250);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [query, status, reload]);
+  }, [query, reload]);
 
   async function selectMatter(id: number) {
     const response = await fetch(`/api/v2/matters/${id}`);
@@ -65,6 +88,23 @@ export function MatterRegistry({ templates, selectedId, canEdit = false }:
     if (selected) void selectMatter(selected);
   }
 
+  const today = matterTodayKey();
+  const counts = {
+    all: matters.length,
+    active: matters.filter(isActive).length,
+    blocked: matters.filter((m) => isActive(m) && Boolean(m.blockedReason)).length,
+    overdue: matters.filter((m) => isActive(m) && isOverdue(m.targetDueDate, today)).length,
+    done: matters.filter((m) => m.status === "closed" || m.status === "archived").length
+  };
+  const chips: Array<{ key: FilterKey; label: string; count: number; tone?: "warning" | "danger" }> = [
+    { key: "all", label: "すべて", count: counts.all },
+    { key: "active", label: "対応中", count: counts.active },
+    { key: "blocked", label: "停滞", count: counts.blocked, tone: "warning" },
+    { key: "overdue", label: "期限超過", count: counts.overdue, tone: "danger" },
+    { key: "done", label: "完了", count: counts.done }
+  ];
+  const visible = matters.filter((m) => matchesFilter(m, filter, today));
+
   return <section className="page matter-page">
     <div className="page-title"><div><p>MATTER MANAGEMENT</p><h1>案件一覧</h1>
       <small>案件・課題・タスク・関連文書を一つの画面で確認します</small></div>
@@ -73,22 +113,32 @@ export function MatterRegistry({ templates, selectedId, canEdit = false }:
     <div className="matter-toolbar">
       <input value={query} onChange={(event) => setQuery(event.target.value)}
         placeholder="案件番号、案件名、相手方、Backlogキーで検索" />
-      <select value={status} onChange={(event) => setStatus(event.target.value)}>
-        <option value="">すべての状態</option>{Object.entries(statusLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-      </select><span>{loading ? "検索中…" : `${matters.length}件`}</span>
+      <span>{loading ? "検索中…" : `${visible.length}件`}</span>
+    </div>
+    <div className="matter-chips">
+      {chips.map((chip) => (
+        <button key={chip.key}
+          className={`matter-chip ${chip.tone ?? ""} ${filter === chip.key ? "active" : ""}`}
+          onClick={() => setFilter(chip.key)}>
+          {chip.label}<em>{chip.count}</em>
+        </button>
+      ))}
     </div>
     {error && <div className="async-error">{error}<button onClick={() => setReload((value) => value + 1)}>再試行</button></div>}
     <div className="matter-layout">
-      <div className="matter-list">{matters.map((matter) =>
-        <button key={matter.id} className={detail?.matter.id === matter.id ? "selected" : ""} onClick={() => { setCreating(false); selectMatter(matter.id); }}>
+      <div className="matter-list">{visible.map((matter) => {
+        const overdue = isActive(matter) && isOverdue(matter.targetDueDate, today);
+        return <button key={matter.id} className={detail?.matter.id === matter.id ? "selected" : ""} onClick={() => { setCreating(false); selectMatter(matter.id); }}>
           <div><span>{matter.matterCode ?? `#${matter.id}`}</span><strong>{matter.title}</strong><small>{matter.counterparty || "相手方未設定"}</small></div>
           <div className="matter-card-meta"><span className={`matter-status ${matter.status}`}>{statusLabels[matter.status] ?? matter.status}</span>
             <small>{stageLabels[matter.lifecycleStage ?? ""] ?? "工程未設定"}</small>
-            <small>文書 {matter.documentCount}・タスク {matter.openTaskCount}</small></div>
-          {matter.nextTaskTitle && <p><b>次：</b>{matter.nextTaskTitle}{matter.targetDueDate && `（${matter.targetDueDate}）`}</p>}
+            <small>文書 {matter.documentCount}・タスク {matter.openTaskCount}</small>
+            {overdue && <small className="matter-overdue-tag">期限超過</small>}</div>
+          {matter.nextTaskTitle && <p><b>次：</b>{matter.nextTaskTitle}{matter.targetDueDate && <span className={overdue ? "overdue" : ""}>（{matter.targetDueDate}）</span>}</p>}
           {matter.blockedReason && <em>停滞理由：{matter.blockedReason}</em>}
-        </button>)}
-        {!loading && !matters.length && <div className="empty-state">該当する案件がありません。</div>}
+        </button>;
+      })}
+        {!loading && !visible.length && <div className="empty-state">{matters.length ? "この絞り込みに該当する案件はありません。" : "該当する案件がありません。"}</div>}
       </div>
       {creating
         ? <MatterForm mode="create" onCancel={() => setCreating(false)}
