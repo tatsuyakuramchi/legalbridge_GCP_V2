@@ -260,7 +260,10 @@ export function App() {
           onOpenDocument={(id) => {
             setSearchSelection({ target: "document", id: String(id), title: "" });
             setView("documents");
-          }} />}
+          }}
+          onCreateDocument={(legalWorkspace || requesterWorkspace)
+            ? (issueKey) => { setNewDocIssueKey(issueKey ?? ""); setDraftSelection(null); setView("templates"); }
+            : undefined} />}
         {view === "admin" && <AdminOverview />}
         {view === "documents" && (
           <DocumentRegistry templates={templates} onCreate={() => { setNewDocIssueKey(""); setView("templates"); }}

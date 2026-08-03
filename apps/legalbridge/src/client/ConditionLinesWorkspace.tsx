@@ -10,6 +10,10 @@ type ConditionLine = {
 };
 type SummaryRow = { direction: string; currency: string; lineCount: number; totalAmount: number; totalMg: number };
 type DirFilter = "all" | "payable" | "receivable";
+type PendingInspection = {
+  id: number; documentNumber: string | null; issueKey: string | null; matterId: number | null;
+  matterCode: string | null; matterTitle: string | null; createdAt: string | null; hasInspection: boolean;
+};
 
 const directionLabels: Record<string, string> = { payable: "支払", receivable: "受取" };
 const flowLabels: Record<string, string> = { in: "イン", out: "アウト" };
@@ -18,32 +22,28 @@ function money(currency: string | null, amount: number | null) {
   if (amount === null) return "—";
   return `${currency ?? "JPY"} ${amount.toLocaleString("ja-JP")}`;
 }
-
-function ConditionSummary({ summary }: { summary: SummaryRow[] }) {
-  if (!summary.length) return null;
-  const cards = (["receivable", "payable"] as const).map((dir) => {
-    const groups = summary.filter((s) => s.direction === dir);
-    return {
-      dir,
-      label: directionLabels[dir],
-      count: groups.reduce((sum, g) => sum + g.lineCount, 0),
-      amounts: groups.filter((g) => g.totalAmount > 0).map((g) => money(g.currency, g.totalAmount))
-    };
-  }).filter((card) => card.count > 0);
-  if (!cards.length) return null;
-  return <div className="condition-summary-cards">
-    {cards.map((card) => (
-      <article key={card.dir} className={`cond-summary ${card.dir}`}>
-        <span>{card.label}</span>
-        <strong>{card.amounts.length ? card.amounts.join(" / ") : "金額未設定"}</strong>
-        <small>{card.count}件</small>
-      </article>
-    ))}
-  </div>;
+function formatDate(value: string | null) {
+  if (!value) return "—";
+  return new Intl.DateTimeFormat("ja-JP", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(value));
 }
 
-export function ConditionLinesWorkspace({ onOpenDocument }:
-  { onOpenDocument?: (documentId: number) => void }) {
+export function ConditionLinesWorkspace({ onOpenDocument, onCreateDocument }:
+  { onOpenDocument?: (documentId: number) => void; onCreateDocument?: (issueKey: string | null) => void }) {
+  const [tab, setTab] = useState<"search" | "inspections">("search");
+  return <section className="page">
+    <div className="page-title"><div><p>CONDITION LINES</p><h1>条件明細</h1>
+      <small>契約条件の横断検索と、発注書の検収状況を確認します</small></div></div>
+    <div className="hub-tabs">
+      <button className={tab === "search" ? "active" : ""} onClick={() => setTab("search")}>横断検索</button>
+      <button className={tab === "inspections" ? "active" : ""} onClick={() => setTab("inspections")}>検収待ち</button>
+    </div>
+    {tab === "inspections"
+      ? <PendingInspections onOpenDocument={onOpenDocument} onCreateDocument={onCreateDocument} />
+      : <ConditionSearch onOpenDocument={onOpenDocument} />}
+  </section>;
+}
+
+function ConditionSearch({ onOpenDocument }: { onOpenDocument?: (documentId: number) => void }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<DirFilter>("all");
   const [rows, setRows] = useState<ConditionLine[]>([]);
@@ -84,9 +84,7 @@ export function ConditionLinesWorkspace({ onOpenDocument }:
   ];
   const visible = rows.filter((r) => filter === "all" || r.direction === filter);
 
-  return <section className="page">
-    <div className="page-title"><div><p>CONDITION LINES</p><h1>条件明細</h1>
-      <small>契約条件を横断で検索・確認します（消化実績・検収は今後追加）</small></div></div>
+  return <>
     <ConditionSummary summary={summary} />
     <div className="matter-toolbar">
       <input value={query} onChange={(e) => setQuery(e.target.value)}
@@ -129,5 +127,90 @@ export function ConditionLinesWorkspace({ onOpenDocument }:
           </tbody>
         </table>
       </div>}
-  </section>;
+  </>;
+}
+
+function ConditionSummary({ summary }: { summary: SummaryRow[] }) {
+  if (!summary.length) return null;
+  const cards = (["receivable", "payable"] as const).map((dir) => {
+    const groups = summary.filter((s) => s.direction === dir);
+    return {
+      dir,
+      label: directionLabels[dir],
+      count: groups.reduce((sum, g) => sum + g.lineCount, 0),
+      amounts: groups.filter((g) => g.totalAmount > 0).map((g) => money(g.currency, g.totalAmount))
+    };
+  }).filter((card) => card.count > 0);
+  if (!cards.length) return null;
+  return <div className="condition-summary-cards">
+    {cards.map((card) => (
+      <article key={card.dir} className={`cond-summary ${card.dir}`}>
+        <span>{card.label}</span>
+        <strong>{card.amounts.length ? card.amounts.join(" / ") : "金額未設定"}</strong>
+        <small>{card.count}件</small>
+      </article>
+    ))}
+  </div>;
+}
+
+function PendingInspections({ onOpenDocument, onCreateDocument }:
+  { onOpenDocument?: (documentId: number) => void; onCreateDocument?: (issueKey: string | null) => void }) {
+  const [query, setQuery] = useState("");
+  const [onlyPending, setOnlyPending] = useState(true);
+  const [rows, setRows] = useState<PendingInspection[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [reload, setReload] = useState(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      setLoading(true); setError("");
+      const params = new URLSearchParams({ q: query, pending: onlyPending ? "1" : "0", limit: "300" });
+      fetch(`/api/v2/pending-inspections?${params}`, { signal: controller.signal })
+        .then((response) => response.ok ? response.json() : Promise.reject())
+        .then((data) => setRows(data.items ?? []))
+        .catch((cause) => { if (cause?.name !== "AbortError") setError("検収待ちを取得できませんでした。"); })
+        .finally(() => setLoading(false));
+    }, 250);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [query, onlyPending, reload]);
+
+  return <>
+    <p className="hub-note">発注書のうち、同じ案件・課題に検収書が未作成のものを検収待ちとして表示します（文書単位の簡易判定。明細ごとの検収率は今後追加）。</p>
+    <div className="matter-toolbar">
+      <input value={query} onChange={(e) => setQuery(e.target.value)}
+        placeholder="発注書番号・課題キー・案件で検索" />
+      <span>{loading ? "検索中…" : `${rows.length}件`}</span>
+    </div>
+    <div className="matter-chips">
+      <button className={`matter-chip ${onlyPending ? "active" : ""}`} onClick={() => setOnlyPending(true)}>検収書未作成のみ</button>
+      <button className={`matter-chip ${!onlyPending ? "active" : ""}`} onClick={() => setOnlyPending(false)}>すべての発注書</button>
+    </div>
+    {error && <div className="async-error">{error}<button onClick={() => setReload((v) => v + 1)}>再試行</button></div>}
+    {!loading && !rows.length
+      ? <EmptyState icon="✓" title={onlyPending ? "検収待ちの発注書はありません" : "発注書がありません"}
+          description={onlyPending ? "すべての発注書に検収書が作成済みです。" : "発注書が作成されるとここに表示されます。"} />
+      : <div className="panel condition-table-wrap">
+        <table className="condition-table">
+          <thead><tr><th>発注書番号</th><th>案件</th><th>課題</th><th>作成日</th><th>検収書</th><th></th></tr></thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.id}>
+                <td className="row-link" onClick={() => onOpenDocument?.(row.id)}>
+                  <b>{row.documentNumber ?? "未発番"}</b></td>
+                <td>{row.matterCode ? `${row.matterCode}` : "—"}{row.matterTitle && <><br /><small>{row.matterTitle}</small></>}</td>
+                <td>{row.issueKey || "—"}</td>
+                <td>{formatDate(row.createdAt)}</td>
+                <td>{row.hasInspection
+                  ? <span className="cond-dir receivable">作成済み</span>
+                  : <span className="cond-dir payable">未作成</span>}</td>
+                <td>{!row.hasInspection && onCreateDocument &&
+                  <button className="inline-cta" onClick={() => onCreateDocument(row.issueKey)}>検収書を作成</button>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>}
+  </>;
 }
