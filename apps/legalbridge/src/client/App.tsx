@@ -64,6 +64,41 @@ function navGroups(access: {
   return groups.filter((group) => group.items.length > 0);
 }
 
+// URL-less breadcrumb: derive the trail from the current view so every screen
+// shows where the user is and offers a one-click path back to the parent.
+function breadcrumbFor(view: View): Array<{ label: string; view?: View }> {
+  const home = { label: "ホーム", view: "home" as View };
+  const trails: Record<View, Array<{ label: string; view?: View }>> = {
+    home: [{ label: "ホーム" }],
+    matters: [home, { label: "案件" }],
+    documents: [home, { label: "文書" }],
+    templates: [home, { label: "文書", view: "documents" }, { label: "テンプレート選択" }],
+    document: [home, { label: "文書", view: "documents" }, { label: "文書作成" }],
+    drafts: [home, { label: "下書き" }],
+    ledgers: [home, { label: "台帳" }],
+    "contract-intake": [home, { label: "契約取込" }],
+    outbound: [home, { label: "アウト条件" }],
+    admin: [home, { label: "管理" }]
+  };
+  return trails[view] ?? [{ label: "ホーム" }];
+}
+
+function Breadcrumb({ view, onNavigate }: { view: View; onNavigate: (view: View) => void }) {
+  const trail = breadcrumbFor(view);
+  if (trail.length <= 1) return null;
+  return <nav className="breadcrumb" aria-label="現在地">
+    {trail.map((crumb, index) => {
+      const last = index === trail.length - 1;
+      return <span key={`${crumb.label}-${index}`}>
+        {crumb.view && !last
+          ? <button onClick={() => onNavigate(crumb.view!)}>{crumb.label}</button>
+          : <span className={last ? "current" : ""}>{crumb.label}</span>}
+        {!last && <i aria-hidden="true">›</i>}
+      </span>;
+    })}
+  </nav>;
+}
+
 export function App() {
   const [dashboard, setDashboard] = useState(fallback);
   const [templates, setTemplates] = useState<DocumentFormSchema[]>([]);
@@ -183,6 +218,8 @@ export function App() {
           }} />}
           <div className="profile">{currentUser ? `${roleLabel(currentUser.role)}・${currentUser.email}` : "認証確認中"}</div>
         </header>
+
+        <Breadcrumb view={view} onNavigate={setView} />
 
         {view === "home" && (
           <Dashboard dashboard={dashboard}

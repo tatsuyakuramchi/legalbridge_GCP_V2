@@ -30,6 +30,12 @@ td.overdue, .next-action em.overdue { color: #dc5a5a; font-weight: 700; }
 .backlog { margin-top: auto; border-top: 1px solid #334b68; padding: 16px 10px 0; display: grid; }.backlog small { color: #94a3b8; margin-top: 4px; }
 main > header { height: 64px; background: white; border-bottom: 1px solid #d9e2ec; padding: 12px 24px; display: flex; justify-content: space-between; align-items: center; }
 header input { width: 100%; border: 1px solid #d9e2ec; border-radius: 8px; padding: 10px 14px; }.profile { font-size: 13px; font-weight: 700; }
+.breadcrumb { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 10px 24px 0; font-size: 12px; }
+.breadcrumb button { border: 0; background: transparent; color: #168ca0; padding: 0; cursor: pointer; font: inherit; }
+.breadcrumb button:hover { text-decoration: underline; }
+.breadcrumb .current { color: #172a44; font-weight: 700; }
+.breadcrumb span span { color: #94a3b8; }
+.breadcrumb i { color: #cbd5e1; font-style: normal; margin: 0 2px; }
 .page { padding: 24px; }.page-title { display: flex; justify-content: space-between; align-items: end; margin-bottom: 20px; }.page-title p { margin: 0 0 4px; color: #20b8cd; font-size: 11px; font-weight: 800; letter-spacing: .12em; }.page-title h1 { margin: 0; color: #172a44; }
 .primary { border: 0; border-radius: 8px; padding: 10px 16px; background: #20b8cd; color: white; font-weight: 700; }
 .actions { display: flex; gap: 8px; }.actions button { border: 1px solid #d9e2ec; border-radius: 8px; padding: 10px 16px; background: white; }.actions .primary { background: #20b8cd; color: white; border-color: #20b8cd; }
