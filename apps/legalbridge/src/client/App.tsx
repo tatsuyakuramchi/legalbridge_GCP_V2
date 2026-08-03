@@ -115,6 +115,8 @@ export function App() {
   const [searchSelection, setSearchSelection] = useState<{ target: "matter" | "document" | "vendor" | "work"; id: string; title: string } | null>(null);
   const [draftSelection, setDraftSelection] = useState<{ issueKey: string; templateType: string } | null>(null);
   const [deepLinkIssue, setDeepLinkIssue] = useState("");
+  // Issue key seeded when 文書を作成 is launched from a matter (LB-F01 導線).
+  const [newDocIssueKey, setNewDocIssueKey] = useState("");
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -229,10 +231,13 @@ export function App() {
               setSearchSelection({ target: "matter", id: String(id), title });
               setView("matters");
             }}
-            onCreateDocument={() => setView("templates")} />
+            onCreateDocument={() => { setNewDocIssueKey(""); setView("templates"); }} />
         )}
         {view === "matters" && <MatterRegistry templates={templates}
           canEdit={canEditMatters}
+          onCreateDocument={(legalWorkspace || requesterWorkspace)
+            ? (issueKey) => { setNewDocIssueKey(issueKey ?? ""); setDraftSelection(null); setView("templates"); }
+            : undefined}
           selectedId={searchSelection?.target === "matter" ? Number(searchSelection.id) : undefined} />}
         {view === "drafts" && !readOnly && (
           <DraftWorkspace templates={templates} onResume={resumeDraft} initialQuery={deepLinkIssue} />
@@ -250,14 +255,15 @@ export function App() {
         {view === "outbound" && <OutboundConditionWorkspace />}
         {view === "admin" && <AdminOverview />}
         {view === "documents" && (
-          <DocumentRegistry templates={templates} onCreate={() => setView("templates")}
+          <DocumentRegistry templates={templates} onCreate={() => { setNewDocIssueKey(""); setView("templates"); }}
             canGeneratePdf={canGeneratePdf}
             canSaveToDrive={canSaveToDrive}
             initialQuery={deepLinkIssue}
             selectedId={searchSelection?.target === "document" ? Number(searchSelection.id) : undefined} />
         )}
         {view === "templates" && (
-          <TemplateCatalog templates={templates} compatibility={compatibility} onSelect={openDocumentForm} />
+          <TemplateCatalog templates={templates} compatibility={compatibility} onSelect={openDocumentForm}
+            seededIssueKey={newDocIssueKey} />
         )}
         {view === "document" && (
           <DocumentForm
@@ -265,7 +271,7 @@ export function App() {
             schema={schema}
             readOnly={readOnly}
             canFinalizeDocuments={canFinalizeDocuments}
-            initialIssueKey={draftSelection?.issueKey ?? "VALIDATION-1"}
+            initialIssueKey={draftSelection?.issueKey ?? (newDocIssueKey || "VALIDATION-1")}
             onBack={() => setView(draftSelection ? "drafts" : "templates")}
             onCreateNew={() => setView("templates")}
             onOpenDocuments={() => setView("documents")}
@@ -279,11 +285,13 @@ export function App() {
 function TemplateCatalog({
   templates,
   compatibility,
-  onSelect
+  onSelect,
+  seededIssueKey
 }: {
   templates: DocumentFormSchema[];
   compatibility: CompatibilityReport | null;
   onSelect: (templateKey: string) => void;
+  seededIssueKey?: string;
 }) {
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("すべて");
@@ -311,6 +319,7 @@ function TemplateCatalog({
           <small>DB登録済みの有効な文書template {templates.length}件</small>
         </div>
       </div>
+      {seededIssueKey && <div className="context-banner">案件の課題キー <strong>{seededIssueKey}</strong> を引き継いで作成します。テンプレートを選択してください。</div>}
       <div className="template-toolbar">
         <input
           aria-label="templateを検索"

@@ -50,8 +50,9 @@ function matchesFilter(matter: Matter, filter: FilterKey, today: string) {
   }
 }
 
-export function MatterRegistry({ templates, selectedId, canEdit = false }:
-  { templates: DocumentFormSchema[]; selectedId?: number; canEdit?: boolean }) {
+export function MatterRegistry({ templates, selectedId, canEdit = false, onCreateDocument }:
+  { templates: DocumentFormSchema[]; selectedId?: number; canEdit?: boolean;
+    onCreateDocument?: (issueKey: string | null) => void }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FilterKey>("all");
   const [matters, setMatters] = useState<Matter[]>([]);
@@ -151,13 +152,15 @@ export function MatterRegistry({ templates, selectedId, canEdit = false }:
         ? <MatterForm mode="create" onCancel={() => setCreating(false)}
             onSaved={(id) => { setCreating(false); refreshAll(id); }} />
         : <MatterDetail detail={detail} labels={labels} canEdit={canEdit}
+            onCreateDocument={onCreateDocument}
             onChanged={() => refreshAll(detail?.matter.id)} />}
     </div>
   </section>;
 }
 
-function MatterDetail({ detail, labels, canEdit, onChanged }:
-  { detail: Detail | null; labels: Map<string, string>; canEdit: boolean; onChanged: () => void }) {
+function MatterDetail({ detail, labels, canEdit, onChanged, onCreateDocument }:
+  { detail: Detail | null; labels: Map<string, string>; canEdit: boolean; onChanged: () => void;
+    onCreateDocument?: (issueKey: string | null) => void }) {
   const [editing, setEditing] = useState(false);
   const [addingTask, setAddingTask] = useState(false);
   useEffect(() => { setEditing(false); setAddingTask(false); }, [detail?.matter.id]);
@@ -172,7 +175,10 @@ function MatterDetail({ detail, labels, canEdit, onChanged }:
   return <aside className="panel matter-detail">
     <div className="matter-detail-head">
       <div><span className="detail-kicker">MATTER DETAIL</span><h2>{matter.title}</h2></div>
-      {canEdit && <button onClick={() => setEditing(true)}>編集</button>}
+      <div className="matter-detail-actions">
+        {onCreateDocument && <button className="primary" onClick={() => onCreateDocument(matter.primaryIssueKey)}>文書を作成</button>}
+        {canEdit && <button onClick={() => setEditing(true)}>編集</button>}
+      </div>
     </div>
     <div className="matter-summary"><span>{matter.matterCode ?? `#${matter.id}`}</span>
       <span className={`matter-status ${matter.status}`}>{statusLabels[matter.status] ?? matter.status}</span>
