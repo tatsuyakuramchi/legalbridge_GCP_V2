@@ -61,6 +61,28 @@ test("取引先を部分更新できる", async () => {
   assert.equal(response.body.id, created.body.id);
 });
 
+test("CSV一括取込は有効行を登録し無効行を報告する", async () => {
+  const { app } = appFor({ enabled: true });
+  const response = await request(app).post("/api/v2/vendors/import").send({
+    rows: [
+      { vendorName: "会社A", entityType: "法人" },
+      { vendorName: "", email: "x@example.com" },
+      { vendorName: "会社B" }
+    ]
+  });
+  assert.equal(response.status, 201);
+  assert.equal(response.body.insertedCount, 2);
+  assert.equal(response.body.failedCount, 1);
+  assert.equal(response.body.failed[0].index, 1);
+});
+
+test("一括取込は書込み無効時に拒否する", async () => {
+  const { app } = appFor({ enabled: false });
+  const response = await request(app).post("/api/v2/vendors/import").send({ rows: [{ vendorName: "A" }] });
+  assert.equal(response.status, 503);
+  assert.equal(response.body.code, "VENDOR_WRITE_UNAVAILABLE");
+});
+
 test("編集用に取引先の生値を返す", async () => {
   const { app } = appFor({ enabled: true });
   const created = await request(app).post("/api/v2/vendors").send({ vendorName: "生値社", email: "raw@example.com" });

@@ -60,6 +60,40 @@ export function createVendorWriteRouter(
     }
   });
 
+  // Bulk import: validate each row, insert independently, report per-row.
+  router.post("/vendors/import", async (request, response, next) => {
+    try {
+      if (!writeEnabled || !vendors) return unavailable(response);
+      if (!editorAllowed(response.locals.currentUser?.role)) return forbidden(response);
+      const body = z.object({
+        rows: z.array(z.record(z.string(), z.unknown())).min(1, "取込む行がありません").max(500)
+      }).parse(request.body);
+      const email = response.locals.currentUser!.email;
+      const inserted: Array<{ index: number; id: number; vendorCode: string | null }> = [];
+      const failed: Array<{ index: number; error: string }> = [];
+      for (let index = 0; index < body.rows.length; index += 1) {
+        const parsed = vendorCreateSchema.safeParse(body.rows[index]);
+        if (!parsed.success) {
+          failed.push({ index, error: parsed.error.issues.map((i) => i.message).join(" / ") });
+          continue;
+        }
+        try {
+          const created = await vendors.createVendor(parsed.data, email);
+          inserted.push({ index, id: created.id, vendorCode: created.vendorCode });
+        } catch (error) {
+          const message = error instanceof VendorWriteError ? error.message
+            : error instanceof Error ? error.message : "登録に失敗しました";
+          failed.push({ index, error: message });
+        }
+      }
+      return response.status(inserted.length ? 201 : 422).json({
+        insertedCount: inserted.length, failedCount: failed.length, inserted, failed
+      });
+    } catch (error) {
+      return handle(error, response, next);
+    }
+  });
+
   router.patch("/vendors/:id", async (request, response, next) => {
     try {
       if (!writeEnabled || !vendors) return unavailable(response);
