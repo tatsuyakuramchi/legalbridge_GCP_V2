@@ -55,6 +55,20 @@ test("重複するSlackIDは409を返す", async () => {
   assert.equal(dup.body.code, "STAFF_CONFLICT");
 });
 
+test("CSV一括取込は有効行を登録し無効行を報告する", async () => {
+  const { app } = appFor({ enabled: true });
+  const response = await request(app).post("/api/v2/staff/import").send({
+    rows: [
+      { slackUserId: "U100", staffName: "田中" },
+      { slackUserId: "", staffName: "無効" },
+      { slackUserId: "U100", staffName: "重複" }
+    ]
+  });
+  assert.equal(response.status, 201);
+  assert.equal(response.body.insertedCount, 1);
+  assert.equal(response.body.failedCount, 2);
+});
+
 test("存在しない担当者の更新は404を返す", async () => {
   const { app } = appFor({ enabled: true });
   const response = await request(app).patch("/api/v2/staff/999").send({ staffName: "改名" });

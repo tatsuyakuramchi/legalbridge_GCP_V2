@@ -71,6 +71,36 @@ export function createStaffRouter(staff: StaffRepository | undefined, writeEnabl
     } catch (error) { return handle(error, response, next); }
   });
 
+  router.post("/staff/import", async (request, response, next) => {
+    try {
+      if (!writeEnabled || !staff) return unavailable(response);
+      if (!editorAllowed(response.locals.currentUser?.role)) return forbidden(response);
+      const body = z.object({
+        rows: z.array(z.record(z.string(), z.unknown())).min(1, "取込む行がありません").max(500)
+      }).parse(request.body);
+      const inserted: Array<{ index: number; id: number; slackUserId: string }> = [];
+      const failed: Array<{ index: number; error: string }> = [];
+      for (let index = 0; index < body.rows.length; index += 1) {
+        const parsed = staffCreateSchema.safeParse(body.rows[index]);
+        if (!parsed.success) {
+          failed.push({ index, error: parsed.error.issues.map((i) => i.message).join(" / ") });
+          continue;
+        }
+        try {
+          const created = await staff.create(parsed.data);
+          inserted.push({ index, id: created.id, slackUserId: created.slackUserId });
+        } catch (error) {
+          const message = error instanceof StaffWriteError ? error.message
+            : error instanceof Error ? error.message : "登録に失敗しました";
+          failed.push({ index, error: message });
+        }
+      }
+      return response.status(inserted.length ? 201 : 422).json({
+        insertedCount: inserted.length, failedCount: failed.length, inserted, failed
+      });
+    } catch (error) { return handle(error, response, next); }
+  });
+
   router.patch("/staff/:id", async (request, response, next) => {
     try {
       if (!writeEnabled || !staff) return unavailable(response);
