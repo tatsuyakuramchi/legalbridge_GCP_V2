@@ -68,7 +68,30 @@ CloudSign の `GET /documents/:id` からステータス（draft/sent/completed/
   - ライブ未設定なら `{ live: false, status: null }`。ライブ時は `{ live: true, status: { status, completed, participants[] } }`。
   - `CLOUDSIGN_MODE=live`＋`CLOUDSIGN_CLIENT_ID` があれば有効（④-2と同じ設定を共有、追加スコープ不要）。
 
-## ④-4 Gmail：受信メールから契約PDF取込（予定）
+## ④-4 Gmail：受信メールから契約PDF取込（足場実装済み）
+
+対象メールボックスを `gmail.readonly` のドメイン全体委任で impersonate し、PDF添付のある契約候補メールを検索・取得する**読取専用**連携。外部メールボックス閲覧は機微なため、専用スコープ `gmail-inbound` ＋ live ＋ 対象メールボックス設定が揃わない限り無効。
+
+### API
+
+- `GET /api/v2/gmail-inbound/contracts?q=`（admin/legal・read）
+  - PDF添付のあるメールを件名・差出人・日付・添付名で一覧。未有効なら `{ live: false, messages: [] }`。既定クエリは `GMAIL_INBOUND_QUERY`（既定 `has:attachment filename:pdf newer_than:180d`）。
+- `GET /api/v2/gmail-inbound/messages/:messageId/attachments/:attachmentId`（admin/legal・read）
+  - 添付PDFを `application/pdf` で返す（%PDF マジックバイト検証あり）。未有効なら409。
+
+### 有効化（デプロイ substitution 追加）
+
+`_WRITE_SCOPES` 末尾に `,gmail-inbound` を追加（順序：`...,cloudsign,gmail-inbound`）し、次を追加:
+
+```
+|_GMAIL_INBOUND_MODE=live|_CONFIRM_GMAIL_INBOUND=GMAIL_INBOUND_VALIDATION_ONLY|_GMAIL_INBOUND_MAILBOX=tatsuya.kuramochi@arclight.co.jp
+```
+
+送信元認証はGmail送信(④-1)と同じSA鍵を再利用。当該SAに `gmail.readonly` のドメイン全体委任と、対象メールボックスへの委任が必要。
+
+## 参照
+
+- [Slack配信ゲート（同型の実績パターン）](../apps/legalbridge/src/server/integrations/slack-dispatch-gate.ts)
 
 ## 参照
 

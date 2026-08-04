@@ -350,6 +350,32 @@ case "${CLOUDSIGN_MODE}" in
     exit 1
     ;;
 esac
+case "${GMAIL_INBOUND_MODE}" in
+  disabled)
+    ;;
+  live)
+    if [ "${CONFIRM_GMAIL_INBOUND}" != "GMAIL_INBOUND_VALIDATION_ONLY" ]; then
+      echo "Gmail inbound deployment blocked: explicit validation confirmation is missing."
+      exit 1
+    fi
+    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
+      echo "Gmail inbound deployment blocked: service does not match the approved target."
+      exit 1
+    fi
+    if [ "${AUTH_MODE}" != "iap" ] && [ "${AUTH_MODE}" != "cloudrun-iam" ]; then
+      echo "Gmail inbound deployment blocked: IAP or Cloud Run IAM authentication is required."
+      exit 1
+    fi
+    if [ -z "${GMAIL_INBOUND_MAILBOX}" ] || [ "${GMAIL_INBOUND_MAILBOX}" = "BLOCKED" ]; then
+      echo "Gmail inbound deployment blocked: a target mailbox is required."
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Deployment blocked: GMAIL_INBOUND_MODE must be live or disabled."
+    exit 1
+    ;;
+esac
 case "${SLACK_APPROVAL_WRITES_ENABLED}" in
   false)
     ;;
@@ -445,6 +471,9 @@ if [ "${GMAIL_DELIVERY_MODE}" = "live" ]; then
 fi
 if [ "${CLOUDSIGN_MODE}" = "live" ]; then
   expected_write_scopes="$expected_write_scopes,cloudsign"
+fi
+if [ "${GMAIL_INBOUND_MODE}" = "live" ]; then
+  expected_write_scopes="$expected_write_scopes,gmail-inbound"
 fi
 if [ "${SLACK_DISPATCH_ENABLED}" = "true" ]; then
   expected_write_scopes="$expected_write_scopes,slack,slack-dispatch"

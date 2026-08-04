@@ -72,6 +72,11 @@ export const config = {
     process.env.CLOUDSIGN_MODE === "live" ? "live" as const : "disabled" as const,
   cloudSignBaseUrl: (process.env.CLOUDSIGN_BASE_URL ?? "https://api.cloudsign.jp").trim(),
   cloudSignClientId: (process.env.CLOUDSIGN_CLIENT_ID ?? "").trim(),
+  gmailInboundMode:
+    process.env.GMAIL_INBOUND_MODE === "live" ? "live" as const : "disabled" as const,
+  gmailInboundMailbox: (process.env.GMAIL_INBOUND_MAILBOX ?? "").trim(),
+  gmailInboundQuery:
+    (process.env.GMAIL_INBOUND_QUERY ?? "has:attachment filename:pdf newer_than:180d").trim(),
   backlogMode: backlogMode(process.env.BACKLOG_MODE),
   backlogHost: process.env.BACKLOG_HOST ?? "",
   backlogProjectKey: process.env.BACKLOG_PROJECT_KEY ?? "",
