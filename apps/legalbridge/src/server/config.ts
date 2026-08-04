@@ -63,6 +63,11 @@ export const config = {
   slackDeliveryMode:
     process.env.SLACK_DELIVERY_MODE === "live" ? "live" as const : "disabled" as const,
   slackBotToken: (process.env.SLACK_BOT_TOKEN ?? "").trim(),
+  gmailDeliveryMode:
+    process.env.GMAIL_DELIVERY_MODE === "live" ? "live" as const : "disabled" as const,
+  gmailSenderEmail: (process.env.GMAIL_SENDER ?? "").trim(),
+  gmailServiceAccountKeyPath:
+    (process.env.GMAIL_SA_KEY_PATH ?? process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH ?? "").trim(),
   backlogMode: backlogMode(process.env.BACKLOG_MODE),
   backlogHost: process.env.BACKLOG_HOST ?? "",
   backlogProjectKey: process.env.BACKLOG_PROJECT_KEY ?? "",
