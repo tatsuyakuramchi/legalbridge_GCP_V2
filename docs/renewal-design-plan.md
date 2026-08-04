@@ -152,7 +152,8 @@ Phase 7 は全フェーズの受け入れ後
 **純関数の計算基盤トリオ完成**（`src/server/royalty/`）：`calc.ts`（料率カスケード）/ `tax.ts`（源泉・消費税）/ `fx.ts`（為替・明細）。いずれもDB非依存・GRANT不要。次段の書込み系（`condition_events` INSERT 等・要GRANT）が乗る土台。
 
 | 2026-08-04 | Phase 1 | ロイヤリティ試算UI（読み取り専用・エンジン接続・GRANT不要） | `f8ad6ae` | ✅ |
-| 2026-08-04 | Phase 1 | スライス2：消化イベント書込（`condition_events` INSERT・guarded・既定OFF）＋grant 014 | — | ✅ |
+| 2026-08-04 | Phase 1 | スライス2：消化イベント書込（`condition_events` INSERT・guarded・既定OFF）＋grant 014 | `fb64f05` | ✅ |
+| 2026-08-04 | Phase 1 | 受領再許諾料・分配 計算（純関数・GRANT不要・債権/請求の土台） | `a0641eb` | ✅ |
 
 **スライス2（消化イベント書込・要GRANT）**：`POST /api/v2/royalty/events`（guarded-write：既定OFF・admin/legal限定・確認トークン `COMMIT_PRODUCTION_ROYALTY_EVENT`・DELETEなし・金額はサーバ再計算）。書込みリポジトリ（Pg/Memory）＋grant 014（`condition_events` INSERT＋seq、`relkind='r'`検証）。config/app結線・writeCapabilities `royalty-events`・safe-write許可。有効化手順は `docs/royalty-events-deploy.md`。本番GRANT適用と `verify-write-test` はオペレーター作業。
 
