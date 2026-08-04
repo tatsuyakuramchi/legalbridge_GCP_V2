@@ -559,7 +559,7 @@ export function createApp(
       (request.method === "PATCH" && /^\/vendors\/\d+$/.test(request.path));
     if (vendorWriteEnabled && isVendorWrite) return next();
     const isStaffWrite =
-      (request.method === "POST" && request.path === "/staff") ||
+      (request.method === "POST" && (request.path === "/staff" || request.path === "/staff/import")) ||
       (request.method === "PATCH" && /^\/staff\/\d+$/.test(request.path));
     if (staffWriteEnabled && isStaffWrite) return next();
 

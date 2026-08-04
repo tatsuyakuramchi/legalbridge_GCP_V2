@@ -13,6 +13,7 @@ export function StaffWorkspace({ canEdit = false }: { canEdit?: boolean }) {
   const [selected, setSelected] = useState<Staff | null>(null);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
@@ -20,7 +21,7 @@ export function StaffWorkspace({ canEdit = false }: { canEdit?: boolean }) {
   useEffect(() => {
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      setLoading(true); setError(""); setSelected(null); setCreating(false); setEditing(false);
+      setLoading(true); setError(""); setSelected(null); setCreating(false); setEditing(false); setImporting(false);
       fetch(`/api/v2/staff?${new URLSearchParams({ q: query })}`, { signal: controller.signal })
         .then((response) => response.ok ? response.json() : Promise.reject())
         .then((data) => setItems(data.items ?? []))
@@ -35,7 +36,10 @@ export function StaffWorkspace({ canEdit = false }: { canEdit?: boolean }) {
   return <section className="page">
     <div className="page-title"><div><p>STAFF MASTER</p><h1>担当者</h1>
       <small>Slack連携する担当者マスタを管理します</small></div>
-      {canEdit && <button className="primary" onClick={() => { setCreating(true); setSelected(null); setEditing(false); }}>＋ 新規担当者</button>}
+      {canEdit && <div className="matter-detail-actions">
+        <button onClick={() => { setImporting(true); setCreating(false); setSelected(null); setEditing(false); }}>CSV取込</button>
+        <button className="primary" onClick={() => { setCreating(true); setImporting(false); setSelected(null); setEditing(false); }}>＋ 新規担当者</button>
+      </div>}
     </div>
     <div className="matter-toolbar">
       <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="氏名・部署・メールで検索" />
@@ -51,7 +55,9 @@ export function StaffWorkspace({ canEdit = false }: { canEdit?: boolean }) {
         {!loading && !items.length && <EmptyState icon="⚇" title="担当者がありません" compact
           description={canEdit ? "「＋ 新規担当者」から登録できます。" : undefined} />}
       </div>
-      {creating
+      {importing
+        ? <StaffImport onCancel={() => setImporting(false)} onDone={refresh} />
+        : creating
         ? <StaffForm onCancel={() => setCreating(false)} onSaved={() => { setCreating(false); refresh(); }} />
         : editing && selected
           ? <StaffForm staffId={selected.id} onCancel={() => setEditing(false)} onSaved={() => { setEditing(false); refresh(); }} />
@@ -138,6 +144,85 @@ function StaffForm({ staffId, onCancel, onSaved }: { staffId?: number; onCancel:
     <div className="matter-form-actions">
       <button className="primary" disabled={saving} onClick={submit}>{saving ? "保存中…" : isEdit ? "保存" : "登録"}</button>
       <button disabled={saving} onClick={onCancel}>キャンセル</button>
+    </div>
+  </aside>;
+}
+
+const STAFF_HEADER_MAP: Record<string, string> = {
+  "氏名": "staffName", staff_name: "staffName", staffname: "staffName", name: "staffName", "担当者": "staffName",
+  "slackユーザーid": "slackUserId", slack_user_id: "slackUserId", slackuserid: "slackUserId", "slackid": "slackUserId", "slack": "slackUserId",
+  "部署": "department", department: "department",
+  "部署コード": "departmentCode", department_code: "departmentCode",
+  "メール": "email", email: "email",
+  "電話": "phone", phone: "phone"
+};
+
+function parseStaffCsv(text: string): { rows: Record<string, string>[]; unmapped: string[] } {
+  const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  if (!lines.length) return { rows: [], unmapped: [] };
+  const rawHeaders = lines[0].split(",").map((h) => h.trim());
+  const fields = rawHeaders.map((h) => STAFF_HEADER_MAP[h] ?? STAFF_HEADER_MAP[h.toLowerCase()] ?? "");
+  const unmapped = rawHeaders.filter((_, i) => !fields[i]);
+  const rows = lines.slice(1).map((line) => {
+    const cells = line.split(",");
+    const row: Record<string, string> = {};
+    fields.forEach((field, i) => { if (field) row[field] = (cells[i] ?? "").trim(); });
+    return row;
+  });
+  return { rows, unmapped };
+}
+
+function StaffImport({ onCancel, onDone }: { onCancel: () => void; onDone: () => void }) {
+  const [text, setText] = useState("");
+  const [result, setResult] = useState<{ insertedCount: number; failedCount: number; failed: Array<{ index: number; error: string }> } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const toast = useToast();
+  const parsed = parseStaffCsv(text);
+  const valid = parsed.rows.filter((r) => (r.staffName ?? "").trim() && (r.slackUserId ?? "").trim());
+
+  async function submit() {
+    if (!valid.length) { setError("取込む担当者がありません（氏名とSlack ユーザーIDの列が必要です）。"); return; }
+    setSaving(true); setError(""); setResult(null);
+    try {
+      const response = await fetch("/api/v2/staff/import", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rows: valid })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok && response.status !== 422 && response.status !== 201) {
+        setError(data.error ?? "取込に失敗しました。"); setSaving(false); return;
+      }
+      setResult(data);
+      toast.push(`${data.insertedCount}件を登録しました${data.failedCount ? `（${data.failedCount}件失敗）` : ""}`,
+        data.failedCount ? "info" : "success");
+      if (data.insertedCount) onDone();
+    } catch {
+      setError("通信に失敗しました。");
+    } finally { setSaving(false); }
+  }
+
+  return <aside className="panel matter-detail matter-editor">
+    <span className="detail-kicker">IMPORT STAFF</span><h2>担当者CSV取込</h2>
+    <p className="hub-note">1行目にヘッダ（氏名 / Slackユーザーid / 部署 / メール 等）、2行目以降にデータを貼り付けてください。氏名とSlack ユーザーIDは必須。</p>
+    {error && <div className="async-error">{error}</div>}
+    <textarea rows={8} value={text} onChange={(e) => { setText(e.target.value); setResult(null); }}
+      placeholder={"氏名,Slackユーザーid,部署\n田中太郎,U01234567,法務部"} />
+    {parsed.rows.length > 0 && <p className="import-preview-note">
+      解析 {parsed.rows.length}行 / 登録対象 {valid.length}行
+      {parsed.unmapped.length > 0 && `・未対応列: ${parsed.unmapped.join(", ")}`}
+    </p>}
+    {valid.length > 0 && <div className="condition-table-wrap"><table className="condition-table">
+      <thead><tr><th>氏名</th><th>Slack ID</th><th>部署</th></tr></thead>
+      <tbody>{valid.slice(0, 20).map((r, i) => <tr key={i}>
+        <td><b>{r.staffName}</b></td><td>{r.slackUserId}</td><td>{r.department || "—"}</td>
+      </tr>)}</tbody></table>{valid.length > 20 && <p className="import-preview-note">ほか {valid.length - 20}行…</p>}</div>}
+    {result && <div className="import-result">
+      <strong>{result.insertedCount}件 登録完了</strong>{result.failedCount > 0 && <span>・{result.failedCount}件 失敗</span>}
+      {result.failed.slice(0, 10).map((f) => <small key={f.index}>行{f.index + 2}: {f.error}</small>)}
+    </div>}
+    <div className="matter-form-actions">
+      <button className="primary" disabled={saving || !valid.length} onClick={submit}>{saving ? "取込中…" : `${valid.length}件を登録`}</button>
+      <button disabled={saving} onClick={onCancel}>閉じる</button>
     </div>
   </aside>;
 }
