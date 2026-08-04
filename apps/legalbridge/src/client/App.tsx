@@ -47,22 +47,25 @@ function navGroups(access: {
   gmailInbound?: boolean;
 }): NavGroup[] {
   const legalOrRequester = access.legalWorkspace || access.requesterWorkspace;
+  // 情報設計（計画 §2.1）：概要／業務／作成／設定 の4グループ。
+  // 業務＝案件を軸にした日々の遂行と条件確認、作成＝文書と契約の起票・取込、
+  // 設定＝マスタ・連携・運用。表示はロールと writeCapabilities で出し分ける。
   const groups: NavGroup[] = [
     { label: "概要", items: [
       { view: "home", label: "ホーム", description: "業務の全体状況と次アクション", match: ["home"] }
     ] },
     { label: "業務", items: [
       ...(access.legalWorkspace ? [{ view: "matters" as const, label: "案件", description: "案件・課題・タスクの管理", match: ["matters" as const] }] : []),
+      ...(access.legalWorkspace ? [{ view: "conditions" as const, label: "条件明細", description: "契約条件の横断検索・消化・検収", match: ["conditions" as const] }] : []),
+      ...(access.legalWorkspace ? [{ view: "outbound" as const, label: "アウト条件", description: "許諾先へのアウト条件追記", match: ["outbound" as const] }] : [])
+    ] },
+    { label: "作成", items: [
       ...(legalOrRequester ? [{ view: "documents" as const, label: access.requesterWorkspace ? "自分の文書" : "文書", description: "文書の作成・確定・PDF", match: ["documents" as const, "templates" as const, "document" as const] }] : []),
-      ...(!access.readOnly && legalOrRequester ? [{ view: "drafts" as const, label: access.requesterWorkspace ? "自分の下書き" : "下書き", description: "保存中の下書きを再開", match: ["drafts" as const] }] : [])
+      ...(!access.readOnly && legalOrRequester ? [{ view: "drafts" as const, label: access.requesterWorkspace ? "自分の下書き" : "下書き", description: "保存中の下書きを再開", match: ["drafts" as const] }] : []),
+      ...(access.adminWorkspace ? [{ view: "contract-intake" as const, label: "契約取込", description: "締結済イン契約の登録", match: ["contract-intake" as const] }] : [])
     ] },
-    { label: "登録・条件", items: [
-      ...(access.adminWorkspace ? [{ view: "contract-intake" as const, label: "契約取込", description: "締結済イン契約の登録", match: ["contract-intake" as const] }] : []),
-      ...(access.legalWorkspace ? [{ view: "outbound" as const, label: "アウト条件", description: "許諾先へのアウト条件追記", match: ["outbound" as const] }] : []),
-      ...(access.legalWorkspace ? [{ view: "conditions" as const, label: "条件明細", description: "契約条件の横断検索・確認", match: ["conditions" as const] }] : []),
-      ...(access.legalWorkspace ? [{ view: "ledgers" as const, label: "台帳", description: "作品・取引先などのマスタ", match: ["ledgers" as const] }] : [])
-    ] },
-    { label: "管理", items: [
+    { label: "設定", items: [
+      ...(access.legalWorkspace ? [{ view: "ledgers" as const, label: "台帳", description: "作品・取引先などのマスタ", match: ["ledgers" as const] }] : []),
       ...(access.adminWorkspace ? [{ view: "staff" as const, label: "担当者", description: "担当者マスタの管理", match: ["staff" as const] }] : []),
       ...(access.adminWorkspace && access.gmailInbound ? [{ view: "gmail-inbound" as const, label: "受信取込", description: "受信メールの契約PDF取込", match: ["gmail-inbound" as const] }] : []),
       ...(access.adminWorkspace ? [{ view: "admin" as const, label: "管理", description: "通知・運用の管理", match: ["admin" as const] }] : [])
