@@ -32,6 +32,8 @@ export const config = {
     process.env.VENDOR_WRITES_ENABLED === "true",
   staffWritesEnabled:
     process.env.STAFF_WRITES_ENABLED === "true",
+  workWritesEnabled:
+    process.env.WORK_WRITES_ENABLED === "true",
   writeScopes: new Set(
     String(process.env.WRITE_SCOPES ?? "")
       .split(",").map((value) => value.trim()).filter(Boolean)

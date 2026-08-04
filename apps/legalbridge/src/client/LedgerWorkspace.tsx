@@ -5,14 +5,15 @@ type LedgerType = "vendors" | "works" | "conditions";
 type Item = { id: string; type: LedgerType; code: string; title: string; subtitle: string; status?: string; updatedAt?: string; detail: Record<string, unknown> };
 const labels: Record<LedgerType, string> = { vendors: "取引先", works: "作品・原作", conditions: "金銭条件" };
 
-export function LedgerWorkspace({ initialType, initialQuery, selectedId, canEditVendors = false }:
-  { initialType?: LedgerType; initialQuery?: string; selectedId?: string; canEditVendors?: boolean }) {
+export function LedgerWorkspace({ initialType, initialQuery, selectedId, canEditVendors = false, canEditWorks = false }:
+  { initialType?: LedgerType; initialQuery?: string; selectedId?: string; canEditVendors?: boolean; canEditWorks?: boolean }) {
   const [type, setType] = useState<LedgerType>(initialType ?? "vendors");
   const [query, setQuery] = useState(initialQuery ?? "");
   const [items, setItems] = useState<Item[]>([]);
   const [selected, setSelected] = useState<Item | null>(null);
   const [creating, setCreating] = useState(false);
   const [editingVendorId, setEditingVendorId] = useState<number | null>(null);
+  const [editingWorkId, setEditingWorkId] = useState<number | null>(null);
   const [importing, setImporting] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -24,7 +25,7 @@ export function LedgerWorkspace({ initialType, initialQuery, selectedId, canEdit
   useEffect(() => {
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      setLoading(true); setSelected(null); setCreating(false); setEditingVendorId(null); setImporting(false);
+      setLoading(true); setSelected(null); setCreating(false); setEditingVendorId(null); setEditingWorkId(null); setImporting(false);
       setError("");
       fetch(`/api/v2/ledgers/${type}?q=${encodeURIComponent(query)}&limit=200`, { signal: controller.signal })
         .then((response) => response.ok ? response.json() : Promise.reject())
@@ -39,13 +40,16 @@ export function LedgerWorkspace({ initialType, initialQuery, selectedId, canEdit
     const item = items.find((candidate) => candidate.id === selectedId);
     if (item) setSelected(item);
   }, [items, selectedId]);
-  const canCreate = type === "vendors" && canEditVendors;
+  const canCreateVendor = type === "vendors" && canEditVendors;
+  const canCreateWork = type === "works" && canEditWorks;
+  const canCreate = canCreateVendor || canCreateWork;
   return <section className="page ledger-page">
     <div className="page-title"><div><p>MASTER LEDGERS</p><h1>台帳</h1><small>既存マスターと契約条件を横断確認します</small></div>
-      {canCreate && <div className="matter-detail-actions">
+      {canCreateVendor && <div className="matter-detail-actions">
         <button onClick={() => { setImporting(true); setCreating(false); setSelected(null); }}>CSV取込</button>
         <button className="primary" onClick={() => { setCreating(true); setImporting(false); setSelected(null); }}>＋ 新規取引先</button>
       </div>}
+      {canCreateWork && <button className="primary" onClick={() => { setCreating(true); setSelected(null); }}>＋ 新規作品</button>}
     </div>
     <div className="ledger-tabs">{(Object.keys(labels) as LedgerType[]).map((key) =>
       <button className={type === key ? "active" : ""} key={key} onClick={() => { setType(key); setQuery(""); }}>{labels[key]}</button>)}</div>
@@ -59,12 +63,16 @@ export function LedgerWorkspace({ initialType, initialQuery, selectedId, canEdit
       </button>)}{!loading && !items.length && <div className="empty-state">該当するデータがありません。</div>}</div>
       {importing
         ? <VendorImport onCancel={() => setImporting(false)} onDone={() => setReload((v) => v + 1)} />
+        : creating && type === "works"
+        ? <WorkForm onCancel={() => setCreating(false)} onSaved={() => { setCreating(false); setReload((v) => v + 1); }} />
         : creating
         ? <VendorForm onCancel={() => setCreating(false)} onSaved={() => { setCreating(false); setReload((v) => v + 1); }} />
         : editingVendorId !== null
-          ? <VendorForm vendorId={editingVendorId} onCancel={() => setEditingVendorId(null)} onSaved={() => { setEditingVendorId(null); setReload((v) => v + 1); }} />
+        ? <VendorForm vendorId={editingVendorId} onCancel={() => setEditingVendorId(null)} onSaved={() => { setEditingVendorId(null); setReload((v) => v + 1); }} />
+        : editingWorkId !== null
+          ? <WorkForm workId={editingWorkId} onCancel={() => setEditingWorkId(null)} onSaved={() => { setEditingWorkId(null); setReload((v) => v + 1); }} />
           : <LedgerDetail item={selected} canEdit={canCreate}
-              onEdit={(item) => { setEditingVendorId(Number(item.id)); }} />}
+              onEdit={(item) => { if (type === "works") setEditingWorkId(Number(item.id)); else setEditingVendorId(Number(item.id)); }} />}
     </div>
   </section>;
 }
@@ -255,6 +263,67 @@ function VendorImport({ onCancel, onDone }: { onCancel: () => void; onDone: () =
     <div className="matter-form-actions">
       <button className="primary" disabled={saving || !valid.length} onClick={submit}>{saving ? "取込中…" : `${valid.length}件を登録`}</button>
       <button disabled={saving} onClick={onCancel}>閉じる</button>
+    </div>
+  </aside>;
+}
+
+type WorkValues = { title: string; workCode: string; ledgerCode: string; remarks: string; isActive: boolean };
+const emptyWork: WorkValues = { title: "", workCode: "", ledgerCode: "", remarks: "", isActive: true };
+
+function WorkForm({ workId, onCancel, onSaved }: { workId?: number; onCancel: () => void; onSaved: () => void }) {
+  const isEdit = workId !== undefined;
+  const [values, setValues] = useState<WorkValues>(emptyWork);
+  const [loading, setLoading] = useState(isEdit);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const toast = useToast();
+  useEffect(() => {
+    if (!isEdit) return;
+    setLoading(true);
+    fetch(`/api/v2/works/${workId}`)
+      .then((response) => response.ok ? response.json() : Promise.reject())
+      .then((data) => {
+        const w = data.work;
+        setValues({ title: w.title ?? "", workCode: w.workCode ?? "", ledgerCode: w.ledgerCode ?? "", remarks: w.remarks ?? "", isActive: Boolean(w.isActive) });
+      })
+      .catch(() => setError("作品の情報を取得できませんでした。"))
+      .finally(() => setLoading(false));
+  }, [workId, isEdit]);
+  function set<K extends keyof WorkValues>(key: K, value: WorkValues[K]) { setValues((prev) => ({ ...prev, [key]: value })); }
+  async function submit() {
+    if (!values.title.trim()) { setError("作品名は必須です。"); return; }
+    setSaving(true); setError("");
+    const body: Record<string, unknown> = {
+      title: values.title.trim(), ledgerCode: values.ledgerCode, remarks: values.remarks, isActive: values.isActive
+    };
+    if (values.workCode.trim()) body.workCode = values.workCode.trim();
+    try {
+      const response = await fetch(isEdit ? `/api/v2/works/${workId}` : "/api/v2/works", {
+        method: isEdit ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+      });
+      if (!response.ok) {
+        const detail = await response.json().catch(() => ({}));
+        setError(detail.error ?? "保存に失敗しました。"); setSaving(false); return;
+      }
+      const saved = await response.json();
+      toast.push(isEdit ? "作品を更新しました" : `作品を登録しました（${saved.workCode ?? ""}）`, "success");
+      onSaved();
+    } catch { setError("通信に失敗しました。"); setSaving(false); }
+  }
+  if (loading) return <aside className="panel ledger-detail"><div className="empty-inline">読み込み中…</div></aside>;
+  return <aside className="panel ledger-detail matter-editor">
+    <span className="detail-kicker">{isEdit ? "EDIT WORK" : "NEW WORK"}</span><h2>{isEdit ? "作品を編集" : "新規作品"}</h2>
+    {error && <div className="async-error">{error}</div>}
+    <label>作品名 *<input value={values.title} onChange={(e) => set("title", e.target.value)} /></label>
+    <div className="matter-form-grid">
+      <label>作品コード<input value={values.workCode} onChange={(e) => set("workCode", e.target.value)} placeholder="未入力で自動採番" /></label>
+      <label>台帳コード<input value={values.ledgerCode} onChange={(e) => set("ledgerCode", e.target.value)} /></label>
+    </div>
+    <label>備考<textarea rows={3} value={values.remarks} onChange={(e) => set("remarks", e.target.value)} /></label>
+    <label className="task-primary-toggle"><input type="checkbox" checked={values.isActive} onChange={(e) => set("isActive", e.target.checked)} />有効</label>
+    <div className="matter-form-actions">
+      <button className="primary" disabled={saving} onClick={submit}>{saving ? "保存中…" : isEdit ? "保存" : "登録"}</button>
+      <button disabled={saving} onClick={onCancel}>キャンセル</button>
     </div>
   </aside>;
 }
