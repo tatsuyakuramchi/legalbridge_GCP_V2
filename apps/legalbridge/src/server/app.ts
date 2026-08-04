@@ -135,6 +135,11 @@ import {
 } from "./integrations/cloudsign-api-adapter.js";
 import { createCloudSignRouter } from "./documents/cloudsign-routes.js";
 import {
+  LocalGmailInboundAdapter, type GmailInboundAdapter
+} from "./integrations/gmail-inbound-adapter.js";
+import { GmailInboundApiAdapter, FetchGmailInboundApiClient } from "./integrations/gmail-inbound-api-adapter.js";
+import { createGmailInboundRouter } from "./documents/gmail-inbound-routes.js";
+import {
   PgSlackNotificationApprovalRepository,
   type SlackNotificationApprovalRepository
 } from "./integrations/slack-approval-repository.js";
@@ -423,6 +428,17 @@ export function createApp(
     cloudSignCapabilityEnabled: options.writeScopes?.has("cloudsign") === true,
     adapterConfigured: cloudSignAdapter.configured
   };
+  const gmailInboundAdapter: GmailInboundAdapter =
+    config.gmailInboundMode === "live" && config.gmailInboundMailbox
+      ? new GmailInboundApiAdapter(
+          new FetchGmailInboundApiClient(config.gmailInboundMailbox, { keyFilePath: config.gmailServiceAccountKeyPath }))
+      : new LocalGmailInboundAdapter();
+  const gmailInboundEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.writeScopes?.has("gmail-inbound") === true &&
+    config.gmailInboundMode === "live" &&
+    gmailInboundAdapter.configured;
   const outboundConditionWriteEnabled =
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
@@ -523,6 +539,7 @@ export function createApp(
         ...(materialWriteEnabled ? ["materials"] : []),
         ...(gmailDispatchEnabled ? ["gmail"] : []),
         ...(cloudSignDispatchEnabled ? ["cloudsign"] : []),
+        ...(gmailInboundEnabled ? ["gmail-inbound"] : []),
         ...(slackDispatchEnabled ? ["slack-dispatch"] : [])
       ],
       database,
@@ -543,7 +560,8 @@ export function createApp(
         driveStorageEnabled || slackApprovalWriteEnabled ||
         outboundConditionWriteEnabled || contractIntakeWriteEnabled ||
         matterWriteEnabled || vendorWriteEnabled || staffWriteEnabled || workWriteEnabled ||
-        materialWriteEnabled || gmailDispatchEnabled || cloudSignDispatchEnabled,
+        materialWriteEnabled || gmailDispatchEnabled || cloudSignDispatchEnabled ||
+        gmailInboundEnabled,
       writeCapabilities: [
         ...(draftWriteEnabled ? ["drafts"] : []),
         ...(documentFinalizeEnabled ? ["documents"] : []),
@@ -559,6 +577,7 @@ export function createApp(
         ...(materialWriteEnabled ? ["materials"] : []),
         ...(gmailDispatchEnabled ? ["gmail"] : []),
         ...(cloudSignDispatchEnabled ? ["cloudsign"] : []),
+        ...(gmailInboundEnabled ? ["gmail-inbound"] : []),
         ...(slackDispatchEnabled ? ["slack-dispatch"] : [])
       ],
       integrations: config.integrationMode,
@@ -735,6 +754,9 @@ export function createApp(
   app.use("/api/v2", createGmailNotificationRouter(documentRegistry, gmailDeliveryAdapter, gmailGateSettings));
   app.use("/api/v2", createCloudSignRouter(
     documentRegistry, dependencies.templates, pdfRenderer, cloudSignAdapter, cloudSignGateSettings));
+  app.use("/api/v2", createGmailInboundRouter(gmailInboundAdapter, {
+    enabled: gmailInboundEnabled, query: config.gmailInboundQuery, mailbox: config.gmailInboundMailbox
+  }));
   app.use("/api/v2", createLedgerRouter(
     dependencies.ledgers ?? new MemoryLedgerRepository()
   ));
