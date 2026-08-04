@@ -1,0 +1,78 @@
+/*
+ * LegalBridge V2 — デザイントークン（単一の真実源）
+ * ------------------------------------------------------------------
+ * cleanベースの単一デザインシステム。色・角丸・影・タイポの唯一の定義元。
+ * 既存のハードコード値をそのまま昇格したもので、見た目は変わらない。
+ * 新しいUIとフェーズ移植は必ずこのトークンを参照する（生のhexを新規に書かない）。
+ * 各トークンの値は変更前の実値と一致する（純粋な抽出）。
+ */
+:root {
+  /* --- タイポグラフィ --- */
+  --font-sans: "Noto Sans JP", system-ui, sans-serif;
+
+  /* --- インク（文字色スケール） --- */
+  --ink-strong: #172a44; /* 見出し・強調 */
+  --ink: #334155;        /* 本文 */
+  --ink-muted: #475569;  /* 補助テキスト */
+  --ink-soft: #64748b;   /* ラベル・控えめ */
+  --ink-faint: #94a3b8;  /* 最も薄い */
+
+  /* --- アクセント（ティール系） --- */
+  --accent: #20b8cd;         /* ブランドアクセント・主ボタン */
+  --accent-strong: #168ca0;  /* リンク・アクセント文字 */
+  --accent-deep: #137689;    /* 確定など強い操作 */
+  --accent-deeper: #116778;  /* さらに深い */
+  --accent-ink: #0f5f6e;     /* 淡色面上のアクセント文字 */
+  --accent-hover: #0f6070;   /* 深いボタンのホバー */
+
+  /* --- サーフェス／ボーダー --- */
+  --bg: #f4f7fa;              /* アプリ背景 */
+  --surface: #ffffff;        /* カード・パネル面 */
+  --surface-subtle: #f8fafc; /* 控えめな内側面 */
+  --surface-tint: #f0fbfc;   /* アクセント淡色（ホバー等） */
+  --border: #d9e2ec;         /* カード枠 */
+  --border-strong: #cbd5e1;  /* 入力枠 */
+  --divider: #e2e8f0;        /* 区切り線 */
+  --divider-faint: #eef2f7;  /* 薄い区切り線 */
+
+  /* --- レール（ダークナビ） --- */
+  --rail-bg: #132238;
+  --rail-active: #1d3557;
+  --rail-text: #cbd5e1;
+  --rail-border: #334b68;
+
+  /* --- セマンティック：成功（グリーン） --- */
+  --success: #16805b;
+  --success-strong: #16724e;
+  --success-accent: #047857;
+  --success-bg: #e8f7f0;
+  --success-surface: #f0fbf6;
+  --success-border: #9bd9c2;
+
+  /* --- セマンティック：警告（アンバー） --- */
+  --warning: #f59e0b;
+  --warning-ink: #9a3412;
+  --warning-ink-strong: #b45309;
+  --warning-accent: #c2410c;
+  --warning-bg: #fff7ed;
+  --warning-border: #fed7aa;
+
+  /* --- セマンティック：危険（レッド） --- */
+  --danger: #dc5a5a;
+  --danger-strong: #b42318;
+  --danger-bg: #fff4f2;
+  --danger-surface: #feeceb;
+  --danger-border: #fecaca;
+
+  /* --- 角丸 --- */
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-md: 10px;
+  --radius-pill: 999px;
+
+  /* --- 影 --- */
+  --shadow-sm: 0 5px 18px rgba(19, 34, 56, .07);
+  --shadow-md: 0 8px 24px rgba(23, 42, 68, .09);
+  --shadow-lg: 0 14px 36px rgba(19, 34, 56, .16);
+  --shadow-toast: 0 8px 24px rgba(23, 42, 68, .14);
+}
