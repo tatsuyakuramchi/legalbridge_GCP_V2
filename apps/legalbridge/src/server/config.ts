@@ -68,6 +68,10 @@ export const config = {
   gmailSenderEmail: (process.env.GMAIL_SENDER ?? "").trim(),
   gmailServiceAccountKeyPath:
     (process.env.GMAIL_SA_KEY_PATH ?? process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH ?? "").trim(),
+  cloudSignMode:
+    process.env.CLOUDSIGN_MODE === "live" ? "live" as const : "disabled" as const,
+  cloudSignBaseUrl: (process.env.CLOUDSIGN_BASE_URL ?? "https://api.cloudsign.jp").trim(),
+  cloudSignClientId: (process.env.CLOUDSIGN_CLIENT_ID ?? "").trim(),
   backlogMode: backlogMode(process.env.BACKLOG_MODE),
   backlogHost: process.env.BACKLOG_HOST ?? "",
   backlogProjectKey: process.env.BACKLOG_PROJECT_KEY ?? "",

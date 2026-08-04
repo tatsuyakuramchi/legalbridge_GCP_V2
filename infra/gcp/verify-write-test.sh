@@ -324,6 +324,32 @@ case "${GMAIL_DELIVERY_MODE}" in
     exit 1
     ;;
 esac
+case "${CLOUDSIGN_MODE}" in
+  disabled)
+    ;;
+  live)
+    if [ "${CONFIRM_CLOUDSIGN_DISPATCH}" != "CLOUDSIGN_DISPATCH_VALIDATION_ONLY" ]; then
+      echo "CloudSign dispatch deployment blocked: explicit validation confirmation is missing."
+      exit 1
+    fi
+    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
+      echo "CloudSign dispatch deployment blocked: service does not match the approved target."
+      exit 1
+    fi
+    if [ "${AUTH_MODE}" != "iap" ] && [ "${AUTH_MODE}" != "cloudrun-iam" ]; then
+      echo "CloudSign dispatch deployment blocked: IAP or Cloud Run IAM authentication is required."
+      exit 1
+    fi
+    if [ -z "${CLOUDSIGN_CLIENT_ID}" ] || [ "${CLOUDSIGN_CLIENT_ID}" = "BLOCKED" ]; then
+      echo "CloudSign dispatch deployment blocked: a CloudSign client id is required."
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Deployment blocked: CLOUDSIGN_MODE must be live or disabled."
+    exit 1
+    ;;
+esac
 case "${SLACK_APPROVAL_WRITES_ENABLED}" in
   false)
     ;;
@@ -416,6 +442,9 @@ if [ "${MATERIAL_WRITES_ENABLED}" = "true" ]; then
 fi
 if [ "${GMAIL_DELIVERY_MODE}" = "live" ]; then
   expected_write_scopes="$expected_write_scopes,gmail"
+fi
+if [ "${CLOUDSIGN_MODE}" = "live" ]; then
+  expected_write_scopes="$expected_write_scopes,cloudsign"
 fi
 if [ "${SLACK_DISPATCH_ENABLED}" = "true" ]; then
   expected_write_scopes="$expected_write_scopes,slack,slack-dispatch"

@@ -39,7 +39,27 @@ Driveと同じ Workspace サービスアカウント鍵を再利用できる（`
 
 デプロイ後 `/api/v2/runtime` の `writeCapabilities` に `gmail` が出れば能力ON。実送信は `integration_mode=live` かつ上記が揃ったときのみ。
 
-## ④-2 CloudSign：電子署名依頼（予定）
+## ④-2 CloudSign：電子署名依頼（足場実装済み）
+
+確定済み文書のPDF（Drive連携と同じ描画パイプラインで生成）を CloudSign に送り、署名者へ依頼を発行する。API契約は CloudSign v2 の一般形（OAuth2 で `client_id` からトークン取得 → `/documents` 作成 → ファイル添付 → 参加者追加 → 送信）を想定した足場で、実URL・`client_id` は有効化時に確定する。
+
+### API
+
+- `POST /api/v2/documents/:id/cloudsign/preview`（admin/legal）
+  - 送信せず、署名者一覧・文書タイトル・**ゲートのブロック理由**を返す。`documents` スコープ配下。
+- `POST /api/v2/documents/:id/cloudsign/dispatch`（**admin限定**）
+  - ゲート通過時のみ、文書PDFを描画して CloudSign に署名依頼。ブロック時409。`cloudsign` スコープ配下。
+
+### 有効化（デプロイ substitution 追加）
+
+`_WRITE_SCOPES` 末尾に `,cloudsign` を追加（順序：`...,gmail,cloudsign`）し、次を追加:
+
+```
+|_CLOUDSIGN_MODE=live|_CONFIRM_CLOUDSIGN_DISPATCH=CLOUDSIGN_DISPATCH_VALIDATION_ONLY|_CLOUDSIGN_CLIENT_ID=<CloudSignのclient_id>
+```
+
+`_CLOUDSIGN_BASE_URL` は既定 `https://api.cloudsign.jp`。かつ `INTEGRATION_MODE=live` が必要（未設定なら `integration_local` でブロック）。実発火前に、CloudSign の実APIエンドポイント／認証方式を最終確認して調整すること（足場は差し替え可能な client 層に分離済み）。
+
 ## ④-3 CloudSign：署名完了ステータス取込（予定）
 ## ④-4 Gmail：受信メールから契約PDF取込（予定）
 
