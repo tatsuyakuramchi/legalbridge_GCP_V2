@@ -144,8 +144,13 @@ Phase 7 は全フェーズの受け入れ後
 | 2026-08-04 | Phase 0 | 0-A デザイントークン土台 | `311f1d5` | ✅ |
 | 2026-08-04 | Phase 0 | 0-B ナビIA刷新（概要/業務/作成/設定） | `6947514` | ✅ |
 | 2026-08-04 | Phase 0 | 0-C ダッシュボード決算バンド（消化/検収） | `42b8c45` | ✅ |
+| 2026-08-04 | Phase 1 | 現行ロジック棚卸し（決定1）→ `docs/phase1-money-inventory.md` | — | ✅ |
 
-**次アクション**：Phase 1（金銭・ロイヤリティ）着手には、着手前判断（§5 決定1：移植可否と範囲）と、billing系テーブルへの最小GRANT（grant 011：SELECT/INSERT/UPDATE）の付与方針確定が必要。決定1は本計画全体の重心。
+**決定1（金銭管理の移植可否・範囲）＝「まず現行ロジックの棚卸し」**：V1の金銭実装を4系統（計算エンジン／支払報告・源泉・為替／請求・債権マップ／DBスキーマ・GRANT）で精査し、`docs/phase1-money-inventory.md` に集約。V2ギャップと移植ロードマップ（9スライス素案）、Phase 1 GRANT必要範囲を確定。
+
+**grant 011（本番投入OK）**：既存の非破壊・SELECTのみGRANT（`condition_line_installments`/`condition_events`）。適用で0-Cの決算バンドが点火。適用コマンドは棚卸しドキュメント §5.2 参照。Phase 1の書込（`condition_events` INSERT、`condition_lines` UPDATE、`payments`/`invoices`/`condition_receipts`/`royalty_*` 等の新規付与）は次段の新規grantファイル（014+）で起こす。
+
+**次アクション**：棚卸しを踏まえ、Phase 1の着手スコープを確定（全移植 or 計算〜支払報告のみ先行の部分cutover）。着手時は「計算エンジン（純関数・GRANT不要）」から。
 
 ---
 
