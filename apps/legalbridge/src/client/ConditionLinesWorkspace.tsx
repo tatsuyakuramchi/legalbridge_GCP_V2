@@ -43,11 +43,24 @@ export function ConditionLinesWorkspace({ onOpenDocument, onCreateDocument }:
   </section>;
 }
 
+type Consumption = {
+  currency: string | null; plannedTotal: number; consumedTotal: number; balance: number;
+  inspectionRequired: boolean; inspectionDone: boolean;
+  installments: Array<{ installmentNo: number; triggerKind: string; plannedAmount: number; dueDate: string | null; settled: boolean }>;
+  events: Array<{ eventNo: number; eventType: string; occurredAt: string | null; amount: number; period: string | null; documentId: number | null }>;
+};
 type ConditionDetailData = ConditionLine & {
   matterCode: string | null; matterTitle: string | null; exclusivity: string | null;
   sublicenseAllowed: boolean | null; paymentScheme: string | null; paymentTerms: string | null;
   royaltyBase: string | null; deductibleCosts: string | null; agAmount: number | null;
-  notes: string | null; regions: string[]; languages: string[];
+  notes: string | null; regions: string[]; languages: string[]; consumption: Consumption | null;
+};
+
+const triggerLabels: Record<string, string> = {
+  on_signing: "契約時", on_delivery: "納品時", on_inspection: "検収時", fixed_date: "期日"
+};
+const eventTypeLabels: Record<string, string> = {
+  inspection: "検収", royalty_calc: "計算", payment: "支払"
 };
 
 function ConditionSearch({ onOpenDocument }: { onOpenDocument?: (documentId: number) => void }) {
@@ -188,6 +201,7 @@ function ConditionDetail({ id, onBack, onOpenDocument }:
         <Field label="開始日" value={detail.termStart} />
         <Field label="取引種別" value={detail.transactionKind} />
       </dl>
+      {detail.consumption && <ConsumptionPanel c={detail.consumption} />}
       {detail.notes && <div className="condition-notes"><h3>備考</h3><p>{detail.notes}</p></div>}
     </div>}
   </div>;
@@ -195,6 +209,38 @@ function ConditionDetail({ id, onBack, onOpenDocument }:
 
 function Field({ label, value }: { label: string; value: string | null | undefined }) {
   return <div><dt>{label}</dt><dd>{value ? value : "—"}</dd></div>;
+}
+
+function ConsumptionPanel({ c }: { c: Consumption }) {
+  const pct = c.plannedTotal > 0 ? Math.min(100, Math.round((c.consumedTotal / c.plannedTotal) * 100)) : 0;
+  const inspection = !c.inspectionRequired ? "不要" : c.inspectionDone ? "検収済み" : "検収待ち";
+  return <div className="condition-consumption">
+    <h3>消化・残高</h3>
+    <div className="consumption-cards">
+      <article><span>予定総額</span><strong>{money(c.currency, c.plannedTotal)}</strong></article>
+      <article><span>消化実績</span><strong>{money(c.currency, c.consumedTotal)}</strong></article>
+      <article className={c.balance <= 0 ? "settled" : ""}><span>残高</span><strong>{money(c.currency, c.balance)}</strong></article>
+      <article><span>検収</span><strong className={inspection === "検収待ち" ? "warn" : ""}>{inspection}</strong></article>
+    </div>
+    {c.plannedTotal > 0 && <div className="consumption-bar"><div style={{ width: `${pct}%` }} /><small>{pct}% 消化</small></div>}
+    {c.installments.length > 0 && <div className="consumption-sub">
+      <h4>支払回スケジュール</h4>
+      {c.installments.map((i) => <div key={i.installmentNo} className="consumption-row">
+        <span>第{i.installmentNo}回・{triggerLabels[i.triggerKind] ?? i.triggerKind}</span>
+        <span>{money(c.currency, i.plannedAmount)}</span>
+        <span>{i.dueDate ?? "期日未定"}</span>
+        <span className={i.settled ? "settled-tag" : "pending-tag"}>{i.settled ? "精算済" : "未精算"}</span>
+      </div>)}
+    </div>}
+    {c.events.length > 0 && <div className="consumption-sub">
+      <h4>実績イベント</h4>
+      {c.events.slice(0, 8).map((e) => <div key={e.eventNo} className="consumption-row">
+        <span>{eventTypeLabels[e.eventType] ?? e.eventType}{e.period ? `・${e.period}` : ""}</span>
+        <span>{money(c.currency, e.amount)}</span>
+        <span>{e.occurredAt ? formatDate(e.occurredAt) : "—"}</span>
+      </div>)}
+    </div>}
+  </div>;
 }
 
 function ConditionSummary({ summary }: { summary: SummaryRow[] }) {

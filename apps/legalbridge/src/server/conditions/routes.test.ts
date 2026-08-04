@@ -59,6 +59,8 @@ test("条件明細の詳細を返す", async () => {
   assert.equal(response.body.detail.conditionName, "許諾C");
   assert.ok(Array.isArray(response.body.detail.regions));
   assert.ok(Array.isArray(response.body.detail.languages));
+  // consumption is null without a DB-backed settlement source (grant 011).
+  assert.equal(response.body.detail.consumption, null);
 });
 
 test("集計サマリを向き・通貨で返す", async () => {
