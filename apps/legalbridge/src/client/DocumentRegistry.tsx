@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { DocumentFormSchema } from "../types";
 import { useToast } from "./Toast";
+import { DocumentIntegrations } from "./DocumentIntegrations";
 
 type RegisteredDocument = {
   id: number;
@@ -30,6 +31,8 @@ export function DocumentRegistry({
   canGeneratePdf,
   canSaveToDrive,
   canImport = false,
+  canGmailNotify = false,
+  canCloudSign = false,
   selectedId,
   initialQuery = ""
 }: {
@@ -38,6 +41,8 @@ export function DocumentRegistry({
   canGeneratePdf: boolean;
   canSaveToDrive: boolean;
   canImport?: boolean;
+  canGmailNotify?: boolean;
+  canCloudSign?: boolean;
   selectedId?: number;
   initialQuery?: string;
 }) {
@@ -131,6 +136,8 @@ export function DocumentRegistry({
         label={selected ? labels.get(selected.templateType) : undefined}
         canGeneratePdf={canGeneratePdf}
         canSaveToDrive={canSaveToDrive}
+        canGmailNotify={canGmailNotify}
+        canCloudSign={canCloudSign}
         onRefresh={() => { if (selected) return selectDocument(selected.id); }}
       />
     </div>
@@ -142,12 +149,16 @@ function DocumentDetail({
   label,
   canGeneratePdf,
   canSaveToDrive,
+  canGmailNotify = false,
+  canCloudSign = false,
   onRefresh
 }: {
   document: RegisteredDocument | null;
   label?: string;
   canGeneratePdf: boolean;
   canSaveToDrive: boolean;
+  canGmailNotify?: boolean;
+  canCloudSign?: boolean;
   onRefresh: () => Promise<void> | void;
 }) {
   const [savingDrive, setSavingDrive] = useState(false);
@@ -251,9 +262,12 @@ function DocumentDetail({
     {driveError && <small className="document-output-error">{driveError}</small>}
     {canGeneratePdf && (
       <small className="pdf-safety-note">
-        PDFは選択した確定済み文書から生成します。Slack・メールへの送信は行いません。
+        PDFは選択した確定済み文書から生成します。
         {canSaveToDrive && " Driveへの保存先は検証用フォルダに限定されます。"}
       </small>
+    )}
+    {document.documentNumber && (canGmailNotify || canCloudSign) && (
+      <DocumentIntegrations documentId={document.id} canGmailNotify={canGmailNotify} canCloudSign={canCloudSign} />
     )}
     <h3>登録項目</h3>
     <dl className="form-data-list">
