@@ -17,6 +17,7 @@ import { OutboundConditionWorkspace } from "./OutboundConditionWorkspace";
 import { ContractChainWizard } from "./ContractChainWizard";
 import { ConditionLinesWorkspace } from "./ConditionLinesWorkspace";
 import { StaffWorkspace } from "./StaffWorkspace";
+import { GmailInboundWorkspace } from "./GmailInboundWorkspace";
 
 type CompatibilityReport = { summary: { total: number; ok: number; warning: number; error: number }; reports: Array<{ templateKey: string; status: "ok" | "warning" | "error"; missingHelpers: string[]; missingPartials: string[]; unmappedVariables: string[]; renderError?: string }> };
 
@@ -37,12 +38,13 @@ const fallback: DashboardSummary = {
   priorities: []
 };
 
-type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin";
+type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound";
 type NavItem = { view: View; label: string; description: string; match: View[] };
 type NavGroup = { label: string; items: NavItem[] };
 
 function navGroups(access: {
   legalWorkspace: boolean; adminWorkspace: boolean; requesterWorkspace: boolean; readOnly: boolean;
+  gmailInbound?: boolean;
 }): NavGroup[] {
   const legalOrRequester = access.legalWorkspace || access.requesterWorkspace;
   const groups: NavGroup[] = [
@@ -62,6 +64,7 @@ function navGroups(access: {
     ] },
     { label: "管理", items: [
       ...(access.adminWorkspace ? [{ view: "staff" as const, label: "担当者", description: "担当者マスタの管理", match: ["staff" as const] }] : []),
+      ...(access.adminWorkspace && access.gmailInbound ? [{ view: "gmail-inbound" as const, label: "受信取込", description: "受信メールの契約PDF取込", match: ["gmail-inbound" as const] }] : []),
       ...(access.adminWorkspace ? [{ view: "admin" as const, label: "管理", description: "通知・運用の管理", match: ["admin" as const] }] : [])
     ] }
   ];
@@ -84,6 +87,7 @@ function breadcrumbFor(view: View): Array<{ label: string; view?: View }> {
     outbound: [home, { label: "アウト条件" }],
     conditions: [home, { label: "条件明細" }],
     staff: [home, { label: "担当者" }],
+    "gmail-inbound": [home, { label: "受信取込" }],
     admin: [home, { label: "管理" }]
   };
   return trails[view] ?? [{ label: "ホーム" }];
@@ -121,6 +125,9 @@ export function App() {
   const [canEditWorks, setCanEditWorks] = useState(false);
   const [canEditMaterials, setCanEditMaterials] = useState(false);
   const [canEditStaff, setCanEditStaff] = useState(false);
+  const [canGmailNotify, setCanGmailNotify] = useState(false);
+  const [canCloudSign, setCanCloudSign] = useState(false);
+  const [canGmailInbound, setCanGmailInbound] = useState(false);
   const [currentUser, setCurrentUser] = useState<{ email: string; role: "admin" | "legal" | "requester" } | null>(null);
   const [searchSelection, setSearchSelection] = useState<{ target: "matter" | "document" | "vendor" | "work"; id: string; title: string } | null>(null);
   const [draftSelection, setDraftSelection] = useState<{ issueKey: string; templateType: string } | null>(null);
@@ -160,6 +167,9 @@ export function App() {
         setCanEditWorks(capabilities.includes("works"));
         setCanEditMaterials(capabilities.includes("materials"));
         setCanEditStaff(capabilities.includes("staff"));
+        setCanGmailNotify(capabilities.includes("gmail"));
+        setCanCloudSign(capabilities.includes("cloudsign"));
+        setCanGmailInbound(capabilities.includes("gmail-inbound"));
       })
       .catch(() => {
         setReadOnly(true);
@@ -172,6 +182,9 @@ export function App() {
         setCanEditWorks(false);
         setCanEditMaterials(false);
         setCanEditStaff(false);
+        setCanGmailNotify(false);
+        setCanCloudSign(false);
+        setCanGmailInbound(false);
       });
     fetch("/api/v2/document-templates")
       .then((response) => response.ok ? response.json() : Promise.reject())
@@ -209,7 +222,7 @@ export function App() {
       <aside className="rail">
         <div className="brand">LegalBridge <span>V2</span></div>
         <nav>
-          {navGroups({ legalWorkspace, adminWorkspace, requesterWorkspace, readOnly }).map((group) => (
+          {navGroups({ legalWorkspace, adminWorkspace, requesterWorkspace, readOnly, gmailInbound: canGmailInbound }).map((group) => (
             <div className="nav-group" key={group.label}>
               <span className="nav-group-label">{group.label}</span>
               {group.items.map((item) => (
@@ -283,12 +296,15 @@ export function App() {
             ? (issueKey) => { setNewDocIssueKey(issueKey ?? ""); setDraftSelection(null); setView("templates"); }
             : undefined} />}
         {view === "staff" && adminWorkspace && <StaffWorkspace canEdit={canEditStaff} />}
+        {view === "gmail-inbound" && adminWorkspace && <GmailInboundWorkspace />}
         {view === "admin" && <AdminOverview />}
         {view === "documents" && (
           <DocumentRegistry templates={templates} onCreate={() => { setNewDocIssueKey(""); setView("templates"); }}
             canGeneratePdf={canGeneratePdf}
             canSaveToDrive={canSaveToDrive}
             canImport={canFinalizeDocuments}
+            canGmailNotify={canGmailNotify}
+            canCloudSign={canCloudSign}
             initialQuery={deepLinkIssue}
             selectedId={searchSelection?.target === "document" ? Number(searchSelection.id) : undefined} />
         )}
