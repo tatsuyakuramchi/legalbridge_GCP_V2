@@ -19,8 +19,8 @@ export function createConditionLineRouter(conditions: ConditionLineRepository | 
           code: "CONDITION_LINES_UNAVAILABLE"
         });
       }
-      const groups = await conditions.summary();
-      return response.status(200).json({ groups });
+      const [groups, settlement] = await Promise.all([conditions.summary(), conditions.settlement()]);
+      return response.status(200).json({ groups, settlement });
     } catch (error) {
       next(error);
     }
