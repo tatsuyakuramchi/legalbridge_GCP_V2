@@ -73,6 +73,10 @@ import {
 } from "./staff/repository.js";
 import { createStaffRouter } from "./staff/routes.js";
 import {
+  MemoryWorkWriteRepository, PgWorkWriteRepository, type WorkWriteRepository
+} from "./works/write-repository.js";
+import { createWorkWriteRouter } from "./works/write-routes.js";
+import {
   MemoryDocumentImportRepository, PgDocumentImportRepository, type DocumentImportRepository
 } from "./documents/import-repository.js";
 import { createDocumentImportRouter } from "./documents/import-routes.js";
@@ -213,6 +217,7 @@ export interface AppDependencies {
   vendorWrites?: VendorWriteRepository;
   staff?: StaffRepository;
   documentImports?: DocumentImportRepository;
+  workWrites?: WorkWriteRepository;
   ledgers?: LedgerRepository;
   search?: GlobalSearchRepository;
   admin?: AdminRepository;
@@ -237,6 +242,7 @@ export interface AppOptions {
   matterWritesEnabled?: boolean;
   vendorWritesEnabled?: boolean;
   staffWritesEnabled?: boolean;
+  workWritesEnabled?: boolean;
   auth?: AuthSettings;
 }
 
@@ -274,6 +280,9 @@ function createDefaultDependencies(): AppDependencies {
     documentImports: database
       ? new PgDocumentImportRepository(database)
       : new MemoryDocumentImportRepository(),
+    workWrites: database
+      ? new PgWorkWriteRepository(database)
+      : new MemoryWorkWriteRepository(),
     ledgers: database ? new PgLedgerRepository(database) : new MemoryLedgerRepository(),
     search: database ? new PgGlobalSearchRepository(database) : new MemoryGlobalSearchRepository(),
     admin: database ? new PgAdminRepository(database) : new MemoryAdminRepository(),
@@ -320,6 +329,7 @@ export function createApp(
     matterWritesEnabled: config.matterWritesEnabled,
     vendorWritesEnabled: config.vendorWritesEnabled,
     staffWritesEnabled: config.staffWritesEnabled,
+    workWritesEnabled: config.workWritesEnabled,
     auth: config.auth
   }
 ) {
@@ -394,6 +404,12 @@ export function createApp(
     options.staffWritesEnabled === true &&
     options.writeScopes?.has("staff") === true &&
     Boolean(dependencies.staff);
+  const workWriteEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.workWritesEnabled === true &&
+    options.writeScopes?.has("works") === true &&
+    Boolean(dependencies.workWrites);
   const driveStorageEnabled =
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
@@ -441,6 +457,7 @@ export function createApp(
         ...(matterWriteEnabled ? ["matters"] : []),
         ...(vendorWriteEnabled ? ["vendors"] : []),
         ...(staffWriteEnabled ? ["staff"] : []),
+        ...(workWriteEnabled ? ["works"] : []),
         ...(slackDispatchEnabled ? ["slack-dispatch"] : [])
       ],
       database,
@@ -460,7 +477,7 @@ export function createApp(
         draftWriteEnabled || documentFinalizeEnabled || pdfGenerationEnabled ||
         driveStorageEnabled || slackApprovalWriteEnabled ||
         outboundConditionWriteEnabled || contractIntakeWriteEnabled ||
-        matterWriteEnabled || vendorWriteEnabled || staffWriteEnabled,
+        matterWriteEnabled || vendorWriteEnabled || staffWriteEnabled || workWriteEnabled,
       writeCapabilities: [
         ...(draftWriteEnabled ? ["drafts"] : []),
         ...(documentFinalizeEnabled ? ["documents"] : []),
@@ -472,6 +489,7 @@ export function createApp(
         ...(matterWriteEnabled ? ["matters"] : []),
         ...(vendorWriteEnabled ? ["vendors"] : []),
         ...(staffWriteEnabled ? ["staff"] : []),
+        ...(workWriteEnabled ? ["works"] : []),
         ...(slackDispatchEnabled ? ["slack-dispatch"] : [])
       ],
       integrations: config.integrationMode,
@@ -515,6 +533,7 @@ export function createApp(
       "/matters/validate",
       "/vendors/validate",
       "/staff/validate",
+      "/works/validate",
       "/outbound-conditions/validate",
       "/contract-intakes/validate",
       "/contract-intakes/preflight",
@@ -574,6 +593,10 @@ export function createApp(
       (request.method === "POST" && (request.path === "/staff" || request.path === "/staff/import")) ||
       (request.method === "PATCH" && /^\/staff\/\d+$/.test(request.path));
     if (staffWriteEnabled && isStaffWrite) return next();
+    const isWorkWrite =
+      (request.method === "POST" && request.path === "/works") ||
+      (request.method === "PATCH" && /^\/works\/\d+$/.test(request.path));
+    if (workWriteEnabled && isWorkWrite) return next();
 
     return response.status(403).json({
       error: options.accessMode === "readonly"
@@ -620,6 +643,7 @@ export function createApp(
   app.use("/api/v2", createPendingInspectionRouter(dependencies.pendingInspections));
   app.use("/api/v2", createVendorWriteRouter(dependencies.vendorWrites, vendorWriteEnabled));
   app.use("/api/v2", createStaffRouter(dependencies.staff, staffWriteEnabled));
+  app.use("/api/v2", createWorkWriteRouter(dependencies.workWrites, workWriteEnabled));
   app.use("/api/v2", createDocumentImportRouter(dependencies.documentImports, documentFinalizeEnabled));
   app.use("/api/v2", createLedgerRouter(
     dependencies.ledgers ?? new MemoryLedgerRepository()
