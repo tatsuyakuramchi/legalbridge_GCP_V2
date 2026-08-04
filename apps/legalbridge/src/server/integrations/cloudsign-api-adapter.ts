@@ -1,6 +1,7 @@
 import {
-  CloudSignError, isValidEmail,
-  type CloudSignAdapter, type CloudSignSignatureReceipt, type CloudSignSignatureRequest
+  CloudSignError, isValidEmail, normalizeCloudSignStatus,
+  type CloudSignAdapter, type CloudSignSignatureReceipt, type CloudSignSignatureRequest,
+  type CloudSignStatus
 } from "./cloudsign-adapter.js";
 
 // CloudSign REST クライアント（テストで差し替え可能）。実HTTP実装は
@@ -10,6 +11,7 @@ export interface CloudSignApiClient {
   addFile(documentId: string, filename: string, pdf: Buffer): Promise<{ id: string }>;
   addParticipant(documentId: string, participant: { email: string; name: string; organization?: string }): Promise<{ id: string }>;
   send(documentId: string): Promise<{ status: string }>;
+  getDocument(documentId: string): Promise<Record<string, unknown>>;
 }
 
 // CloudSign v2 の一般形に対する実HTTP実装。OAuth2 で client_id からアクセス
@@ -92,6 +94,10 @@ export class FetchCloudSignApiClient implements CloudSignApiClient {
     const payload = await this.authed(`/documents/${encodeURIComponent(documentId)}`, { method: "POST" });
     return { status: typeof payload.status === "string" ? payload.status : "sent" };
   }
+
+  async getDocument(documentId: string) {
+    return this.authed(`/documents/${encodeURIComponent(documentId)}`, { method: "GET" });
+  }
 }
 
 export class CloudSignApiAdapter implements CloudSignAdapter {
@@ -113,5 +119,19 @@ export class CloudSignApiAdapter implements CloudSignAdapter {
     }
     const sent = await this.client.send(document.id);
     return { cloudSignDocumentId: document.id, status: sent.status, participantIds };
+  }
+
+  async fetchStatus(cloudSignDocumentId: string): Promise<CloudSignStatus> {
+    const raw = await this.client.getDocument(cloudSignDocumentId);
+    const { status, completed } = normalizeCloudSignStatus(raw.status);
+    const rawParticipants = Array.isArray(raw.participants) ? raw.participants : [];
+    const participants = rawParticipants.map((entry) => {
+      const record = entry as Record<string, unknown>;
+      return {
+        email: typeof record.email === "string" ? record.email : "",
+        status: normalizeCloudSignStatus(record.status).status
+      };
+    });
+    return { cloudSignDocumentId, status, completed, participants };
   }
 }

@@ -8,6 +8,10 @@ class FakeClient implements CloudSignApiClient {
   async addFile(documentId: string, filename: string) { this.calls.push(`file:${documentId}:${filename}`); return { id: "file-1" }; }
   async addParticipant(documentId: string, p: { email: string }) { this.calls.push(`participant:${p.email}`); return { id: `pt-${p.email}` }; }
   async send(documentId: string) { this.calls.push(`send:${documentId}`); return { status: "sent" }; }
+  async getDocument(documentId: string) {
+    this.calls.push(`get:${documentId}`);
+    return { id: documentId, status: 2, participants: [{ email: "a@example.com", status: 2 }] };
+  }
 }
 
 const baseRequest = {
@@ -39,4 +43,13 @@ test("署名者のメールが不正なら送信せず失敗する", async () =>
   await assert.rejects(
     () => adapter.requestSignature({ ...baseRequest, participants: [{ email: "bad", name: "甲" }] }),
     /valid participant email/);
+});
+
+test("ステータス取得はコードを正規化して完了判定を返す", async () => {
+  const adapter = new CloudSignApiAdapter(new FakeClient());
+  const status = await adapter.fetchStatus("doc-9");
+  assert.equal(status.status, "completed");
+  assert.equal(status.completed, true);
+  assert.equal(status.participants[0].email, "a@example.com");
+  assert.equal(status.participants[0].status, "completed");
 });
