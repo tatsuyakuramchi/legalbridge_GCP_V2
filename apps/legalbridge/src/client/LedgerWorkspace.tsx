@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useToast } from "./Toast";
 import { EmptyState } from "./EmptyState";
+import { CsvImport, vendorCsvConfig, workCsvConfig } from "./CsvImport";
 type LedgerType = "vendors" | "works" | "materials" | "conditions";
 type Item = { id: string; type: LedgerType; code: string; title: string; subtitle: string; status?: string; updatedAt?: string; detail: Record<string, unknown> };
 const labels: Record<LedgerType, string> = { vendors: "取引先", works: "作品・原作", materials: "原作マテリアル", conditions: "金銭条件" };
@@ -51,7 +52,10 @@ export function LedgerWorkspace({ initialType, initialQuery, selectedId, canEdit
         <button onClick={() => { setImporting(true); setCreating(false); setSelected(null); }}>CSV取込</button>
         <button className="primary" onClick={() => { setCreating(true); setImporting(false); setSelected(null); }}>＋ 新規取引先</button>
       </div>}
-      {canCreateWork && <button className="primary" onClick={() => { setCreating(true); setSelected(null); }}>＋ 新規作品</button>}
+      {canCreateWork && <div className="matter-detail-actions">
+        <button onClick={() => { setImporting(true); setCreating(false); setSelected(null); }}>CSV取込</button>
+        <button className="primary" onClick={() => { setCreating(true); setImporting(false); setSelected(null); }}>＋ 新規作品</button>
+      </div>}
       {canCreateMaterial && <button className="primary" onClick={() => { setCreating(true); setSelected(null); }}>＋ 新規マテリアル</button>}
     </div>
     <div className="ledger-tabs">{(Object.keys(labels) as LedgerType[]).map((key) =>
@@ -65,7 +69,8 @@ export function LedgerWorkspace({ initialType, initialQuery, selectedId, canEdit
         <span>{item.code}</span><strong>{item.title}</strong><small>{item.subtitle || "—"}</small>
       </button>)}{!loading && !items.length && <div className="empty-state">該当するデータがありません。</div>}</div>
       {importing
-        ? <VendorImport onCancel={() => setImporting(false)} onDone={() => setReload((v) => v + 1)} />
+        ? <CsvImport config={type === "works" ? workCsvConfig : vendorCsvConfig}
+            onCancel={() => setImporting(false)} onDone={() => setReload((v) => v + 1)} />
         : creating && type === "materials"
         ? <MaterialForm onCancel={() => setCreating(false)} onSaved={() => { setCreating(false); setReload((v) => v + 1); }} />
         : creating && type === "works"
@@ -185,91 +190,6 @@ function VendorForm({ vendorId, onCancel, onSaved }: { vendorId?: number; onCanc
     <div className="matter-form-actions">
       <button className="primary" disabled={saving} onClick={submit}>{saving ? "保存中…" : isEdit ? "保存" : "登録"}</button>
       <button disabled={saving} onClick={onCancel}>キャンセル</button>
-    </div>
-  </aside>;
-}
-
-// Header aliases → vendor field. Accepts Japanese and snake/camel column names.
-const VENDOR_HEADER_MAP: Record<string, string> = {
-  "取引先名": "vendorName", vendor_name: "vendorName", vendorname: "vendorName", name: "vendorName",
-  "取引先コード": "vendorCode", vendor_code: "vendorCode", vendorcode: "vendorCode", code: "vendorCode",
-  "種別": "entityType", entity_type: "entityType",
-  "屋号": "tradeName", trade_name: "tradeName",
-  "ペンネーム": "penName", pen_name: "penName",
-  "メール": "email", email: "email", "メールアドレス": "email",
-  "電話": "phone", phone: "phone", "電話番号": "phone",
-  "担当者": "contactName", contact_name: "contactName",
-  "担当部署": "contactDepartment", contact_department: "contactDepartment", "部署": "contactDepartment",
-  "住所": "address", address: "address",
-  "インボイス番号": "invoiceRegistrationNumber", invoice_registration_number: "invoiceRegistrationNumber"
-};
-
-function parseCsv(text: string): { headers: string[]; rows: Record<string, string>[]; unmapped: string[] } {
-  const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
-  if (!lines.length) return { headers: [], rows: [], unmapped: [] };
-  const rawHeaders = lines[0].split(",").map((h) => h.trim());
-  const fields = rawHeaders.map((h) => VENDOR_HEADER_MAP[h] ?? VENDOR_HEADER_MAP[h.toLowerCase()] ?? "");
-  const unmapped = rawHeaders.filter((_, i) => !fields[i]);
-  const rows = lines.slice(1).map((line) => {
-    const cells = line.split(",");
-    const row: Record<string, string> = {};
-    fields.forEach((field, i) => { if (field) row[field] = (cells[i] ?? "").trim(); });
-    return row;
-  });
-  return { headers: rawHeaders, rows, unmapped };
-}
-
-function VendorImport({ onCancel, onDone }: { onCancel: () => void; onDone: () => void }) {
-  const [text, setText] = useState("");
-  const [result, setResult] = useState<{ insertedCount: number; failedCount: number; failed: Array<{ index: number; error: string }> } | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const toast = useToast();
-  const parsed = parseCsv(text);
-  const valid = parsed.rows.filter((r) => (r.vendorName ?? "").trim().length > 0);
-
-  async function submit() {
-    if (!valid.length) { setError("取込む取引先がありません（取引先名の列が必要です）。"); return; }
-    setSaving(true); setError(""); setResult(null);
-    try {
-      const response = await fetch("/api/v2/vendors/import", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rows: valid })
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok && response.status !== 422 && response.status !== 201) {
-        setError(data.error ?? "取込に失敗しました。"); setSaving(false); return;
-      }
-      setResult(data);
-      toast.push(`${data.insertedCount}件を登録しました${data.failedCount ? `（${data.failedCount}件失敗）` : ""}`,
-        data.failedCount ? "info" : "success");
-      if (data.insertedCount) onDone();
-    } catch {
-      setError("通信に失敗しました。");
-    } finally { setSaving(false); }
-  }
-
-  return <aside className="panel ledger-detail matter-editor">
-    <span className="detail-kicker">IMPORT VENDORS</span><h2>取引先CSV取込</h2>
-    <p className="hub-note">1行目にヘッダ（取引先名 / 取引先コード / 種別 / メール 等）、2行目以降にデータを貼り付けてください。取引先名は必須。カンマ区切り、囲み文字なしの簡易CSVに対応します。</p>
-    {error && <div className="async-error">{error}</div>}
-    <textarea rows={8} value={text} onChange={(e) => { setText(e.target.value); setResult(null); }}
-      placeholder={"取引先名,種別,メール\n株式会社アークライト,法人,info@example.com"} />
-    {parsed.rows.length > 0 && <p className="import-preview-note">
-      解析 {parsed.rows.length}行 / 登録対象 {valid.length}行
-      {parsed.unmapped.length > 0 && `・未対応列: ${parsed.unmapped.join(", ")}`}
-    </p>}
-    {valid.length > 0 && <div className="condition-table-wrap"><table className="condition-table">
-      <thead><tr><th>取引先名</th><th>種別</th><th>メール</th><th>コード</th></tr></thead>
-      <tbody>{valid.slice(0, 20).map((r, i) => <tr key={i}>
-        <td><b>{r.vendorName}</b></td><td>{r.entityType || "—"}</td><td>{r.email || "—"}</td><td>{r.vendorCode || "自動"}</td>
-      </tr>)}</tbody></table>{valid.length > 20 && <p className="import-preview-note">ほか {valid.length - 20}行…</p>}</div>}
-    {result && <div className="import-result">
-      <strong>{result.insertedCount}件 登録完了</strong>{result.failedCount > 0 && <span>・{result.failedCount}件 失敗</span>}
-      {result.failed.slice(0, 10).map((f) => <small key={f.index}>行{f.index + 2}: {f.error}</small>)}
-    </div>}
-    <div className="matter-form-actions">
-      <button className="primary" disabled={saving || !valid.length} onClick={submit}>{saving ? "取込中…" : `${valid.length}件を登録`}</button>
-      <button disabled={saving} onClick={onCancel}>閉じる</button>
     </div>
   </aside>;
 }

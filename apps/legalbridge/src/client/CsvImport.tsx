@@ -1,0 +1,171 @@
+import { useMemo, useState } from "react";
+import { useToast } from "./Toast";
+
+// 汎用CSV取込UI。マスタごとの差分（列マッピング・必須項目・投入先・ラベル）を
+// config で受け取り、貼り付け→ヘッダ自動マップ→プレビュー→一括投入→結果表示までを共通化する。
+// サーバ側は各 /<master>/import が {rows} を受けて per-row で検証・投入し
+// {insertedCount, failedCount, inserted, failed} を返す前提。
+
+export type CsvColumn = {
+  field: string;            // サーバに渡すフィールド名
+  label: string;            // プレビュー見出し
+  headers: string[];        // 受理するヘッダ表記（日本語・英語・別名）
+  required?: boolean;       // 全required列が非空の行だけ投入対象
+};
+
+export type CsvImportConfig = {
+  kicker: string;
+  title: string;
+  note: string;
+  sampleText: string;
+  endpoint: string;
+  unit: string;             // メッセージ用の名詞（例：取引先／担当者／作品）
+  columns: CsvColumn[];
+  panelClass?: string;      // 既定は台帳詳細パネル。担当者は matter-detail 系を渡す。
+};
+
+type ImportResult = {
+  insertedCount: number;
+  failedCount: number;
+  failed: Array<{ index: number; error: string }>;
+};
+
+function buildHeaderMap(columns: CsvColumn[]): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const column of columns) {
+    for (const header of column.headers) {
+      map[header] = column.field;
+      map[header.toLowerCase()] = column.field;
+    }
+  }
+  return map;
+}
+
+function parseCsv(text: string, headerMap: Record<string, string>): { rows: Record<string, string>[]; unmapped: string[] } {
+  const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  if (!lines.length) return { rows: [], unmapped: [] };
+  const rawHeaders = lines[0].split(",").map((header) => header.trim());
+  const fields = rawHeaders.map((header) => headerMap[header] ?? headerMap[header.toLowerCase()] ?? "");
+  const unmapped = rawHeaders.filter((_, index) => !fields[index]);
+  const rows = lines.slice(1).map((line) => {
+    const cells = line.split(",");
+    const row: Record<string, string> = {};
+    fields.forEach((field, index) => { if (field) row[field] = (cells[index] ?? "").trim(); });
+    return row;
+  });
+  return { rows, unmapped };
+}
+
+export function CsvImport({ config, onCancel, onDone }: { config: CsvImportConfig; onCancel: () => void; onDone: () => void }) {
+  const [text, setText] = useState("");
+  const [result, setResult] = useState<ImportResult | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const toast = useToast();
+  const headerMap = useMemo(() => buildHeaderMap(config.columns), [config.columns]);
+  const parsed = parseCsv(text, headerMap);
+  const requiredFields = config.columns.filter((column) => column.required);
+  const valid = parsed.rows.filter((row) =>
+    requiredFields.every((column) => (row[column.field] ?? "").trim().length > 0));
+  const previewColumns = config.columns.slice(0, 4);
+
+  async function submit() {
+    if (!valid.length) {
+      const names = requiredFields.map((column) => column.label).join("・");
+      setError(`取込む${config.unit}がありません（${names}の列が必要です）。`); return;
+    }
+    setSaving(true); setError(""); setResult(null);
+    try {
+      const response = await fetch(config.endpoint, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rows: valid })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok && response.status !== 422 && response.status !== 201) {
+        setError(data.error ?? "取込に失敗しました。"); setSaving(false); return;
+      }
+      setResult(data);
+      toast.push(`${data.insertedCount}件を登録しました${data.failedCount ? `（${data.failedCount}件失敗）` : ""}`,
+        data.failedCount ? "info" : "success");
+      if (data.insertedCount) onDone();
+    } catch {
+      setError("通信に失敗しました。");
+    } finally { setSaving(false); }
+  }
+
+  return <aside className={config.panelClass ?? "panel ledger-detail matter-editor"}>
+    <span className="detail-kicker">{config.kicker}</span><h2>{config.title}</h2>
+    <p className="hub-note">{config.note}</p>
+    {error && <div className="async-error">{error}</div>}
+    <textarea rows={8} value={text} onChange={(event) => { setText(event.target.value); setResult(null); }}
+      placeholder={config.sampleText} />
+    {parsed.rows.length > 0 && <p className="import-preview-note">
+      解析 {parsed.rows.length}行 / 登録対象 {valid.length}行
+      {parsed.unmapped.length > 0 && `・未対応列: ${parsed.unmapped.join(", ")}`}
+    </p>}
+    {valid.length > 0 && <div className="condition-table-wrap"><table className="condition-table">
+      <thead><tr>{previewColumns.map((column) => <th key={column.field}>{column.label}</th>)}</tr></thead>
+      <tbody>{valid.slice(0, 20).map((row, index) => <tr key={index}>
+        {previewColumns.map((column, columnIndex) => <td key={column.field}>
+          {columnIndex === 0 ? <b>{row[column.field]}</b> : (row[column.field] || "—")}
+        </td>)}
+      </tr>)}</tbody></table>{valid.length > 20 && <p className="import-preview-note">ほか {valid.length - 20}行…</p>}</div>}
+    {result && <div className="import-result">
+      <strong>{result.insertedCount}件 登録完了</strong>{result.failedCount > 0 && <span>・{result.failedCount}件 失敗</span>}
+      {result.failed.slice(0, 10).map((failure) => <small key={failure.index}>行{failure.index + 2}: {failure.error}</small>)}
+    </div>}
+    <div className="matter-form-actions">
+      <button className="primary" disabled={saving || !valid.length} onClick={submit}>{saving ? "取込中…" : `${valid.length}件を登録`}</button>
+      <button disabled={saving} onClick={onCancel}>閉じる</button>
+    </div>
+  </aside>;
+}
+
+// マスタ別の列定義（ヘッダ別名を1か所に集約）。
+export const vendorCsvConfig: CsvImportConfig = {
+  kicker: "IMPORT VENDORS", title: "取引先CSV取込", unit: "取引先",
+  note: "1行目にヘッダ（取引先名 / 取引先コード / 種別 / メール 等）、2行目以降にデータを貼り付けてください。取引先名は必須。カンマ区切り、囲み文字なしの簡易CSVに対応します。",
+  sampleText: "取引先名,種別,メール\n株式会社アークライト,法人,info@example.com",
+  endpoint: "/api/v2/vendors/import",
+  columns: [
+    { field: "vendorName", label: "取引先名", required: true, headers: ["取引先名", "vendor_name", "vendorname", "name"] },
+    { field: "entityType", label: "種別", headers: ["種別", "entity_type"] },
+    { field: "email", label: "メール", headers: ["メール", "email", "メールアドレス"] },
+    { field: "vendorCode", label: "コード", headers: ["取引先コード", "vendor_code", "vendorcode", "code"] },
+    { field: "tradeName", label: "屋号", headers: ["屋号", "trade_name"] },
+    { field: "penName", label: "ペンネーム", headers: ["ペンネーム", "pen_name"] },
+    { field: "phone", label: "電話", headers: ["電話", "phone", "電話番号"] },
+    { field: "contactName", label: "担当者", headers: ["担当者", "contact_name"] },
+    { field: "contactDepartment", label: "担当部署", headers: ["担当部署", "contact_department", "部署"] },
+    { field: "address", label: "住所", headers: ["住所", "address"] },
+    { field: "invoiceRegistrationNumber", label: "インボイス番号", headers: ["インボイス番号", "invoice_registration_number"] }
+  ]
+};
+
+export const staffCsvConfig: CsvImportConfig = {
+  kicker: "IMPORT STAFF", title: "担当者CSV取込", unit: "担当者",
+  panelClass: "panel matter-detail matter-editor",
+  note: "1行目にヘッダ（氏名 / Slackユーザーid / 部署 / メール 等）、2行目以降にデータを貼り付けてください。氏名とSlack ユーザーIDは必須。",
+  sampleText: "氏名,Slackユーザーid,部署\n田中太郎,U01234567,法務部",
+  endpoint: "/api/v2/staff/import",
+  columns: [
+    { field: "staffName", label: "氏名", required: true, headers: ["氏名", "staff_name", "staffname", "name", "担当者"] },
+    { field: "slackUserId", label: "Slack ID", required: true, headers: ["slackユーザーid", "slack_user_id", "slackuserid", "slackid", "slack"] },
+    { field: "department", label: "部署", headers: ["部署", "department"] },
+    { field: "departmentCode", label: "部署コード", headers: ["部署コード", "department_code"] },
+    { field: "email", label: "メール", headers: ["メール", "email"] },
+    { field: "phone", label: "電話", headers: ["電話", "phone"] }
+  ]
+};
+
+export const workCsvConfig: CsvImportConfig = {
+  kicker: "IMPORT WORKS", title: "作品CSV取込", unit: "作品",
+  note: "1行目にヘッダ（作品名 / 作品コード / 台帳コード / 備考 等）、2行目以降にデータを貼り付けてください。作品名は必須。コードは未入力で自動採番されます。",
+  sampleText: "作品名,台帳コード,備考\nサンプル作品,LG-001,テスト",
+  endpoint: "/api/v2/works/import",
+  columns: [
+    { field: "title", label: "作品名", required: true, headers: ["作品名", "title", "name", "作品"] },
+    { field: "workCode", label: "作品コード", headers: ["作品コード", "work_code", "workcode", "code"] },
+    { field: "ledgerCode", label: "台帳コード", headers: ["台帳コード", "ledger_code", "ledgercode"] },
+    { field: "remarks", label: "備考", headers: ["備考", "remarks", "note"] }
+  ]
+};

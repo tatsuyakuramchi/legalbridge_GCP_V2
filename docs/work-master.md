@@ -6,6 +6,7 @@
 
 - 詳細（編集用の生値）：`GET /api/v2/works/:id`（admin/legal）
 - 新規登録：`POST /api/v2/works`（`works`へINSERT。`work_code`は未入力で`WRK-NNNNN`自動採番）
+- CSV一括取込：`POST /api/v2/works/import`（`{rows}` を per-row 検証・投入、`{insertedCount,failedCount,inserted,failed}` を返す。最大500行）
 - 編集：`PATCH /api/v2/works/:id`
 
 DELETEは提供しない。`work_code`重複は409。台帳画面「作品」タブの「＋新規作品」および詳細「編集」から操作する。

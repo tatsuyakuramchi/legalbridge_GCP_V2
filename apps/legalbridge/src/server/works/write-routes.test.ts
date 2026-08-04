@@ -70,6 +70,28 @@ test("編集用に作品の生値を返す", async () => {
   assert.equal(response.body.work.ledgerCode, "LG-1");
 });
 
+test("CSV一括取込は有効行を登録し無効行を報告する", async () => {
+  const { app } = appFor({ enabled: true });
+  const response = await request(app).post("/api/v2/works/import").send({
+    rows: [
+      { title: "作品A" },
+      { title: "" },
+      { title: "作品B", ledgerCode: "LG-2" }
+    ]
+  });
+  assert.equal(response.status, 201);
+  assert.equal(response.body.insertedCount, 2);
+  assert.equal(response.body.failedCount, 1);
+  assert.equal(response.body.failed[0].index, 1);
+});
+
+test("作品一括取込は書込み無効時に拒否する", async () => {
+  const { app } = appFor({ enabled: false });
+  const response = await request(app).post("/api/v2/works/import").send({ rows: [{ title: "A" }] });
+  assert.equal(response.status, 503);
+  assert.equal(response.body.code, "WORK_WRITE_UNAVAILABLE");
+});
+
 test("依頼者ロールは作品の生値を取得できない", async () => {
   const { app } = appFor({ enabled: true, role: "requester" });
   const response = await request(app).get("/api/v2/works/1");

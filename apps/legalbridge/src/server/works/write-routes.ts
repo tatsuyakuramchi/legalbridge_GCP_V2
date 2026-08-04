@@ -54,6 +54,39 @@ export function createWorkWriteRouter(works: WorkWriteRepository | undefined, wr
     } catch (error) { return handle(error, response, next); }
   });
 
+  // Bulk import: validate each row, insert independently, report per-row.
+  router.post("/works/import", async (request, response, next) => {
+    try {
+      if (!writeEnabled || !works) return unavailable(response);
+      if (!editorAllowed(response.locals.currentUser?.role)) return forbidden(response);
+      const body = z.object({
+        rows: z.array(z.record(z.string(), z.unknown())).min(1, "取込む行がありません").max(500)
+      }).parse(request.body);
+      const inserted: Array<{ index: number; id: number; workCode: string | null }> = [];
+      const failed: Array<{ index: number; error: string }> = [];
+      for (let index = 0; index < body.rows.length; index += 1) {
+        const parsed = workCreateSchema.safeParse(body.rows[index]);
+        if (!parsed.success) {
+          failed.push({ index, error: parsed.error.issues.map((i) => i.message).join(" / ") });
+          continue;
+        }
+        try {
+          const created = await works.create(parsed.data);
+          inserted.push({ index, id: created.id, workCode: created.workCode });
+        } catch (error) {
+          const message = error instanceof WorkWriteError ? error.message
+            : error instanceof Error ? error.message : "登録に失敗しました";
+          failed.push({ index, error: message });
+        }
+      }
+      return response.status(inserted.length ? 201 : 422).json({
+        insertedCount: inserted.length, failedCount: failed.length, inserted, failed
+      });
+    } catch (error) {
+      return handle(error, response, next);
+    }
+  });
+
   router.patch("/works/:id", async (request, response, next) => {
     try {
       if (!writeEnabled || !works) return unavailable(response);
