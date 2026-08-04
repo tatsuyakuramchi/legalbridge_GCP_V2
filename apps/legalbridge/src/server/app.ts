@@ -72,6 +72,10 @@ import {
   MemoryStaffRepository, PgStaffRepository, type StaffRepository
 } from "./staff/repository.js";
 import { createStaffRouter } from "./staff/routes.js";
+import {
+  MemoryDocumentImportRepository, PgDocumentImportRepository, type DocumentImportRepository
+} from "./documents/import-repository.js";
+import { createDocumentImportRouter } from "./documents/import-routes.js";
 import { MemoryLedgerRepository, PgLedgerRepository, type LedgerRepository } from "./ledgers/repository.js";
 import { createLedgerRouter } from "./ledgers/routes.js";
 import { createOutboundConditionRouter } from "./ledgers/outbound-conditions.js";
@@ -208,6 +212,7 @@ export interface AppDependencies {
   pendingInspections?: PendingInspectionRepository;
   vendorWrites?: VendorWriteRepository;
   staff?: StaffRepository;
+  documentImports?: DocumentImportRepository;
   ledgers?: LedgerRepository;
   search?: GlobalSearchRepository;
   admin?: AdminRepository;
@@ -266,6 +271,9 @@ function createDefaultDependencies(): AppDependencies {
       ? new PgVendorWriteRepository(database)
       : new MemoryVendorWriteRepository(),
     staff: database ? new PgStaffRepository(database) : new MemoryStaffRepository(),
+    documentImports: database
+      ? new PgDocumentImportRepository(database)
+      : new MemoryDocumentImportRepository(),
     ledgers: database ? new PgLedgerRepository(database) : new MemoryLedgerRepository(),
     search: database ? new PgGlobalSearchRepository(database) : new MemoryGlobalSearchRepository(),
     admin: database ? new PgAdminRepository(database) : new MemoryAdminRepository(),
@@ -503,6 +511,7 @@ export function createApp(
     const safePostPaths = new Set([
       "/documents/validate",
       "/documents/preview",
+      "/documents/import/validate",
       "/matters/validate",
       "/vendors/validate",
       "/staff/validate",
@@ -520,6 +529,9 @@ export function createApp(
     const isDocumentFinalize =
       request.method === "POST" && request.path === "/documents/finalize";
     if (documentFinalizeEnabled && isDocumentFinalize) return next();
+    const isDocumentImport =
+      request.method === "POST" && request.path === "/documents/import";
+    if (documentFinalizeEnabled && isDocumentImport) return next();
     const isDriveStorage =
       request.method === "POST" && /^\/documents\/[^/]+\/drive$/.test(request.path);
     if (driveStorageEnabled && isDriveStorage) return next();
@@ -608,6 +620,7 @@ export function createApp(
   app.use("/api/v2", createPendingInspectionRouter(dependencies.pendingInspections));
   app.use("/api/v2", createVendorWriteRouter(dependencies.vendorWrites, vendorWriteEnabled));
   app.use("/api/v2", createStaffRouter(dependencies.staff, staffWriteEnabled));
+  app.use("/api/v2", createDocumentImportRouter(dependencies.documentImports, documentFinalizeEnabled));
   app.use("/api/v2", createLedgerRouter(
     dependencies.ledgers ?? new MemoryLedgerRepository()
   ));
