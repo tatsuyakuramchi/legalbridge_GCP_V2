@@ -78,9 +78,20 @@ export interface ConditionLineDetail extends ConditionLineRow {
   languages: string[];
 }
 
+// Portfolio-wide settlement KPIs (grant 011); null when not readable.
+export interface ConditionSettlementSummary {
+  plannedTotal: number;
+  consumedTotal: number;
+  consumptionRate: number;        // 0..1
+  linesRequiringInspection: number;
+  linesInspected: number;
+  inspectionRate: number;         // 0..1
+}
+
 export interface ConditionLineRepository {
   list(query: string, limit?: number): Promise<ConditionLineRow[]>;
   summary(): Promise<ConditionLineSummaryRow[]>;
+  settlement(): Promise<ConditionSettlementSummary | null>;
   find(id: number): Promise<ConditionLineDetail | null>;
 }
 
@@ -124,6 +135,40 @@ export class PgConditionLineRepository implements ConditionLineRepository {
         ORDER BY 1, 2`
     );
     return result.rows.map(mapSummary);
+  }
+
+  async settlement(): Promise<ConditionSettlementSummary | null> {
+    try {
+      const result = await this.database.query(
+        `SELECT
+           COALESCE((SELECT SUM(planned_amount_ex_tax) FROM condition_line_installments), 0) AS planned,
+           COALESCE((SELECT SUM(amount_ex_tax) FROM condition_events WHERE voided_at IS NULL), 0) AS consumed,
+           (SELECT COUNT(DISTINCT condition_line_id) FROM condition_line_installments
+             WHERE trigger_kind = 'on_inspection') AS required,
+           (SELECT COUNT(DISTINCT e.condition_line_id) FROM condition_events e
+             WHERE e.event_type = 'inspection' AND e.voided_at IS NULL
+               AND EXISTS (SELECT 1 FROM condition_line_installments i
+                            WHERE i.condition_line_id = e.condition_line_id
+                              AND i.trigger_kind = 'on_inspection')) AS inspected`
+      );
+      const row = result.rows[0];
+      const planned = num(row.planned) ?? 0;
+      const consumed = num(row.consumed) ?? 0;
+      const required = Number(row.required ?? 0);
+      const inspected = Number(row.inspected ?? 0);
+      if (planned === 0 && consumed === 0 && required === 0) return null;
+      return {
+        plannedTotal: planned,
+        consumedTotal: consumed,
+        consumptionRate: planned > 0 ? Math.min(1, consumed / planned) : 0,
+        linesRequiringInspection: required,
+        linesInspected: inspected,
+        inspectionRate: required > 0 ? inspected / required : 0
+      };
+    } catch (error) {
+      if ((error as { code?: string })?.code === "42501") return null;
+      throw error;
+    }
   }
 
   async find(id: number) {
@@ -291,6 +336,7 @@ export class MemoryConditionLineRepository implements ConditionLineRepository {
     return [...groups.values()].sort((a, b) =>
       a.direction.localeCompare(b.direction) || a.currency.localeCompare(b.currency));
   }
+  async settlement() { return null; }
   async find(id: number) {
     const row = this.rows.find((r) => r.id === id);
     if (!row) return null;

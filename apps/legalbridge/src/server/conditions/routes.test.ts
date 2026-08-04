@@ -75,4 +75,6 @@ test("集計サマリを向き・通貨で返す", async () => {
   assert.equal(receivable.totalAmount, 150000);
   const payable = response.body.groups.find((g: { direction: string }) => g.direction === "payable");
   assert.equal(payable.totalAmount, 30000);
+  // settlement is null without the granted settlement tables (grant 011).
+  assert.equal(response.body.settlement, null);
 });

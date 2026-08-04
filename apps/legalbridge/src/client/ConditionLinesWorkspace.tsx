@@ -9,6 +9,10 @@ type ConditionLine = {
   amountExTax: number | null; mgAmount: number | null; ratePct: number | null; termStart: string | null;
 };
 type SummaryRow = { direction: string; currency: string; lineCount: number; totalAmount: number; totalMg: number };
+type Settlement = {
+  plannedTotal: number; consumedTotal: number; consumptionRate: number;
+  linesRequiringInspection: number; linesInspected: number; inspectionRate: number;
+};
 type DirFilter = "all" | "payable" | "receivable";
 type PendingInspection = {
   id: number; documentNumber: string | null; issueKey: string | null; matterId: number | null;
@@ -69,6 +73,7 @@ function ConditionSearch({ onOpenDocument }: { onOpenDocument?: (documentId: num
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [rows, setRows] = useState<ConditionLine[]>([]);
   const [summary, setSummary] = useState<SummaryRow[]>([]);
+  const [settlement, setSettlement] = useState<Settlement | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
@@ -76,8 +81,8 @@ function ConditionSearch({ onOpenDocument }: { onOpenDocument?: (documentId: num
   useEffect(() => {
     fetch("/api/v2/condition-lines/summary")
       .then((response) => response.ok ? response.json() : Promise.reject())
-      .then((data) => setSummary(data.groups ?? []))
-      .catch(() => setSummary([]));
+      .then((data) => { setSummary(data.groups ?? []); setSettlement(data.settlement ?? null); })
+      .catch(() => { setSummary([]); setSettlement(null); });
   }, [reload]);
 
   useEffect(() => {
@@ -110,6 +115,7 @@ function ConditionSearch({ onOpenDocument }: { onOpenDocument?: (documentId: num
   }
 
   return <>
+    <SettlementKpis settlement={settlement} />
     <ConditionSummary summary={summary} />
     <div className="matter-toolbar">
       <input value={query} onChange={(e) => setQuery(e.target.value)}
@@ -240,6 +246,20 @@ function ConsumptionPanel({ c }: { c: Consumption }) {
         <span>{e.occurredAt ? formatDate(e.occurredAt) : "—"}</span>
       </div>)}
     </div>}
+  </div>;
+}
+
+function SettlementKpis({ settlement }: { settlement: Settlement | null }) {
+  if (!settlement) return null;
+  const pct = (v: number) => `${Math.round(v * 100)}%`;
+  return <div className="settlement-kpis">
+    <article><span>消化率</span><strong>{pct(settlement.consumptionRate)}</strong>
+      <small>{settlement.consumedTotal.toLocaleString("ja-JP")} / {settlement.plannedTotal.toLocaleString("ja-JP")}</small></article>
+    <article className={settlement.inspectionRate < 1 && settlement.linesRequiringInspection > 0 ? "warn" : ""}>
+      <span>検収率</span><strong>{settlement.linesRequiringInspection ? pct(settlement.inspectionRate) : "—"}</strong>
+      <small>{settlement.linesInspected} / {settlement.linesRequiringInspection} 明細</small></article>
+    <article><span>残高</span><strong>{(settlement.plannedTotal - settlement.consumedTotal).toLocaleString("ja-JP")}</strong>
+      <small>予定 − 消化</small></article>
   </div>;
 }
 
