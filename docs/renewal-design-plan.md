@@ -151,6 +151,10 @@ Phase 7 は全フェーズの受け入れ後
 
 **純関数の計算基盤トリオ完成**（`src/server/royalty/`）：`calc.ts`（料率カスケード）/ `tax.ts`（源泉・消費税）/ `fx.ts`（為替・明細）。いずれもDB非依存・GRANT不要。次段の書込み系（`condition_events` INSERT 等・要GRANT）が乗る土台。
 
+| 2026-08-04 | Phase 1 | ロイヤリティ試算UI（読み取り専用・エンジン接続・GRANT不要） | `f8ad6ae` | ✅ |
+
+**試算プレビュー**：`POST /api/v2/royalty/preview`（計算専用・DB書込みなし・safe-POST許可）＋ `RoyaltyPreview.tsx`（業務ナビ・法務限定・300msデバウンスのライブ試算）。純関数エンジンを実UIに接続し、実データ・GRANT無しで計算を検証可能に。V1 `RoyaltyPreviewPanel` 相当。
+
 **決定1（金銭管理の移植可否・範囲）＝「まず現行ロジックの棚卸し」**：V1の金銭実装を4系統（計算エンジン／支払報告・源泉・為替／請求・債権マップ／DBスキーマ・GRANT）で精査し、`docs/phase1-money-inventory.md` に集約。V2ギャップと移植ロードマップ（9スライス素案）、Phase 1 GRANT必要範囲を確定。
 
 **grant 011（本番投入OK）**：既存の非破壊・SELECTのみGRANT（`condition_line_installments`/`condition_events`）。適用で0-Cの決算バンドが点火。適用コマンドは棚卸しドキュメント §5.2 参照。Phase 1の書込（`condition_events` INSERT、`condition_lines` UPDATE、`payments`/`invoices`/`condition_receipts`/`royalty_*` 等の新規付与）は次段の新規grantファイル（014+）で起こす。
