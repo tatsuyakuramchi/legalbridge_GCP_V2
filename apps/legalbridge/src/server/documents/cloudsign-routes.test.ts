@@ -28,6 +28,9 @@ class CapturingCloudSign implements CloudSignAdapter {
   async requestSignature(req: CloudSignSignatureRequest) {
     this.sent = req; return { cloudSignDocumentId: "cs-1", status: "sent", participantIds: ["pt-1"] };
   }
+  async fetchStatus(cloudSignDocumentId: string) {
+    return { cloudSignDocumentId, status: "completed", completed: true, participants: [] };
+  }
 }
 
 function appFor(options: { role?: "admin" | "legal" | "requester"; live?: boolean; adapter?: CloudSignAdapter }) {

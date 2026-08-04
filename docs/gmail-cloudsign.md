@@ -60,7 +60,14 @@ Driveと同じ Workspace サービスアカウント鍵を再利用できる（`
 
 `_CLOUDSIGN_BASE_URL` は既定 `https://api.cloudsign.jp`。かつ `INTEGRATION_MODE=live` が必要（未設定なら `integration_local` でブロック）。実発火前に、CloudSign の実APIエンドポイント／認証方式を最終確認して調整すること（足場は差し替え可能な client 層に分離済み）。
 
-## ④-3 CloudSign：署名完了ステータス取込（予定）
+## ④-3 CloudSign：署名完了ステータス取込（足場実装済み）
+
+CloudSign の `GET /documents/:id` からステータス（draft/sent/completed/canceled）と参加者の署名状況を取得し、正規化して返す（**表示のみ・DBテーブル変更なし**）。
+
+- `GET /api/v2/cloudsign/:cloudSignDocumentId/status`（admin/legal・read）
+  - ライブ未設定なら `{ live: false, status: null }`。ライブ時は `{ live: true, status: { status, completed, participants[] } }`。
+  - `CLOUDSIGN_MODE=live`＋`CLOUDSIGN_CLIENT_ID` があれば有効（④-2と同じ設定を共有、追加スコープ不要）。
+
 ## ④-4 Gmail：受信メールから契約PDF取込（予定）
 
 ## 参照

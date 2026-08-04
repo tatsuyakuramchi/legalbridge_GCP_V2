@@ -103,5 +103,22 @@ export function createCloudSignRouter(
     }
   });
 
+  // 署名ステータス取込（read）。ライブ未設定なら live=false で返す（テーブル変更なし・表示のみ）。
+  router.get("/cloudsign/:cloudSignDocumentId/status", async (request, response, next) => {
+    try {
+      if (!editorAllowed(response.locals.currentUser?.role)) {
+        return response.status(403).json({ error: "法務または管理者のみが操作できます", code: "CLOUDSIGN_FORBIDDEN" });
+      }
+      if (!cloudSign || !cloudSign.configured) {
+        return response.status(200).json({ live: false, status: null });
+      }
+      const cloudSignDocumentId = String(request.params.cloudSignDocumentId).slice(0, 200);
+      const status = await cloudSign.fetchStatus(cloudSignDocumentId);
+      return response.status(200).json({ live: true, status });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
   return router;
 }
