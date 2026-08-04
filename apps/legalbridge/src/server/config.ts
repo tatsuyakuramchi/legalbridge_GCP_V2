@@ -38,6 +38,8 @@ export const config = {
     process.env.MATERIAL_WRITES_ENABLED === "true",
   royaltyEventWritesEnabled:
     process.env.ROYALTY_EVENT_WRITES_ENABLED === "true",
+  receiptWritesEnabled:
+    process.env.RECEIPT_WRITES_ENABLED === "true",
   writeScopes: new Set(
     String(process.env.WRITE_SCOPES ?? "")
       .split(",").map((value) => value.trim()).filter(Boolean)

@@ -86,6 +86,10 @@ import {
 } from "./royalty/event-repository.js";
 import { createRoyaltyEventRouter } from "./royalty/event-routes.js";
 import {
+  MemoryReceiptRepository, PgReceiptRepository, type ReceiptRepository
+} from "./royalty/receipt-repository.js";
+import { createReceiptRouter } from "./royalty/receipt-routes.js";
+import {
   MemoryDocumentImportRepository, PgDocumentImportRepository, type DocumentImportRepository
 } from "./documents/import-repository.js";
 import { createDocumentImportRouter } from "./documents/import-routes.js";
@@ -260,6 +264,7 @@ export interface AppDependencies {
   contractIntakeDocuments?: ContractIntakeDocumentSourceRepository;
   contractOutbound?: ContractOutboundRepository;
   royaltyEvents?: RoyaltyEventRepository;
+  receipts?: ReceiptRepository;
 }
 
 export interface AppOptions {
@@ -274,6 +279,7 @@ export interface AppOptions {
   staffWritesEnabled?: boolean;
   workWritesEnabled?: boolean;
   royaltyEventWritesEnabled?: boolean;
+  receiptWritesEnabled?: boolean;
   materialWritesEnabled?: boolean;
   auth?: AuthSettings;
 }
@@ -321,6 +327,9 @@ function createDefaultDependencies(): AppDependencies {
     royaltyEvents: database
       ? new PgRoyaltyEventRepository(database)
       : new MemoryRoyaltyEventRepository(),
+    receipts: database
+      ? new PgReceiptRepository(database)
+      : new MemoryReceiptRepository(),
     ledgers: database ? new PgLedgerRepository(database) : new MemoryLedgerRepository(),
     search: database ? new PgGlobalSearchRepository(database) : new MemoryGlobalSearchRepository(),
     admin: database ? new PgAdminRepository(database) : new MemoryAdminRepository(),
@@ -370,6 +379,7 @@ export function createApp(
     workWritesEnabled: config.workWritesEnabled,
     materialWritesEnabled: config.materialWritesEnabled,
     royaltyEventWritesEnabled: config.royaltyEventWritesEnabled,
+    receiptWritesEnabled: config.receiptWritesEnabled,
     auth: config.auth
   }
 ) {
@@ -505,6 +515,12 @@ export function createApp(
     options.royaltyEventWritesEnabled === true &&
     options.writeScopes?.has("royalty-events") === true &&
     Boolean(dependencies.royaltyEvents);
+  const receiptWriteEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.receiptWritesEnabled === true &&
+    options.writeScopes?.has("receipts") === true &&
+    Boolean(dependencies.receipts);
   const driveStorageEnabled =
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
@@ -555,6 +571,7 @@ export function createApp(
         ...(workWriteEnabled ? ["works"] : []),
         ...(materialWriteEnabled ? ["materials"] : []),
         ...(royaltyEventWriteEnabled ? ["royalty-events"] : []),
+        ...(receiptWriteEnabled ? ["receipts"] : []),
         ...(gmailDispatchEnabled ? ["gmail"] : []),
         ...(cloudSignDispatchEnabled ? ["cloudsign"] : []),
         ...(gmailInboundEnabled ? ["gmail-inbound"] : []),
@@ -578,8 +595,8 @@ export function createApp(
         driveStorageEnabled || slackApprovalWriteEnabled ||
         outboundConditionWriteEnabled || contractIntakeWriteEnabled ||
         matterWriteEnabled || vendorWriteEnabled || staffWriteEnabled || workWriteEnabled ||
-        materialWriteEnabled || royaltyEventWriteEnabled || gmailDispatchEnabled ||
-        cloudSignDispatchEnabled || gmailInboundEnabled,
+        materialWriteEnabled || royaltyEventWriteEnabled || receiptWriteEnabled ||
+        gmailDispatchEnabled || cloudSignDispatchEnabled || gmailInboundEnabled,
       writeCapabilities: [
         ...(draftWriteEnabled ? ["drafts"] : []),
         ...(documentFinalizeEnabled ? ["documents"] : []),
@@ -594,6 +611,7 @@ export function createApp(
         ...(workWriteEnabled ? ["works"] : []),
         ...(materialWriteEnabled ? ["materials"] : []),
         ...(royaltyEventWriteEnabled ? ["royalty-events"] : []),
+        ...(receiptWriteEnabled ? ["receipts"] : []),
         ...(gmailDispatchEnabled ? ["gmail"] : []),
         ...(cloudSignDispatchEnabled ? ["cloudsign"] : []),
         ...(gmailInboundEnabled ? ["gmail-inbound"] : []),
@@ -732,6 +750,10 @@ export function createApp(
     const isRoyaltyEventWrite =
       request.method === "POST" && request.path === "/royalty/events";
     if (royaltyEventWriteEnabled && isRoyaltyEventWrite) return next();
+    const isReceiptWrite =
+      (request.method === "POST" && request.path === "/condition-receipts") ||
+      (request.method === "PUT" && /^\/condition-receipts\/\d+$/.test(request.path));
+    if (receiptWriteEnabled && isReceiptWrite) return next();
 
     return response.status(403).json({
       error: options.accessMode === "readonly"
@@ -779,6 +801,8 @@ export function createApp(
   app.use("/api/v2", createRoyaltyRouter());
   // ロイヤリティ消化イベント書込（guarded-write・既定OFF）。
   app.use("/api/v2", createRoyaltyEventRouter(dependencies.royaltyEvents, royaltyEventWriteEnabled));
+  // 再許諾料の受領記録 書込（guarded-write・既定OFF）。
+  app.use("/api/v2", createReceiptRouter(dependencies.receipts, receiptWriteEnabled));
   app.use("/api/v2", createPendingInspectionRouter(dependencies.pendingInspections));
   app.use("/api/v2", createVendorWriteRouter(dependencies.vendorWrites, vendorWriteEnabled));
   app.use("/api/v2", createStaffRouter(dependencies.staff, staffWriteEnabled));
