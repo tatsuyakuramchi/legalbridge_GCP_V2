@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { useToast } from "./Toast";
 import { EmptyState } from "./EmptyState";
-type LedgerType = "vendors" | "works" | "conditions";
+type LedgerType = "vendors" | "works" | "materials" | "conditions";
 type Item = { id: string; type: LedgerType; code: string; title: string; subtitle: string; status?: string; updatedAt?: string; detail: Record<string, unknown> };
-const labels: Record<LedgerType, string> = { vendors: "取引先", works: "作品・原作", conditions: "金銭条件" };
+const labels: Record<LedgerType, string> = { vendors: "取引先", works: "作品・原作", materials: "原作マテリアル", conditions: "金銭条件" };
 
-export function LedgerWorkspace({ initialType, initialQuery, selectedId, canEditVendors = false, canEditWorks = false }:
-  { initialType?: LedgerType; initialQuery?: string; selectedId?: string; canEditVendors?: boolean; canEditWorks?: boolean }) {
+export function LedgerWorkspace({ initialType, initialQuery, selectedId, canEditVendors = false, canEditWorks = false, canEditMaterials = false }:
+  { initialType?: LedgerType; initialQuery?: string; selectedId?: string; canEditVendors?: boolean; canEditWorks?: boolean; canEditMaterials?: boolean }) {
   const [type, setType] = useState<LedgerType>(initialType ?? "vendors");
   const [query, setQuery] = useState(initialQuery ?? "");
   const [items, setItems] = useState<Item[]>([]);
@@ -14,6 +14,7 @@ export function LedgerWorkspace({ initialType, initialQuery, selectedId, canEdit
   const [creating, setCreating] = useState(false);
   const [editingVendorId, setEditingVendorId] = useState<number | null>(null);
   const [editingWorkId, setEditingWorkId] = useState<number | null>(null);
+  const [editingMaterialId, setEditingMaterialId] = useState<number | null>(null);
   const [importing, setImporting] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -25,7 +26,7 @@ export function LedgerWorkspace({ initialType, initialQuery, selectedId, canEdit
   useEffect(() => {
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      setLoading(true); setSelected(null); setCreating(false); setEditingVendorId(null); setEditingWorkId(null); setImporting(false);
+      setLoading(true); setSelected(null); setCreating(false); setEditingVendorId(null); setEditingWorkId(null); setEditingMaterialId(null); setImporting(false);
       setError("");
       fetch(`/api/v2/ledgers/${type}?q=${encodeURIComponent(query)}&limit=200`, { signal: controller.signal })
         .then((response) => response.ok ? response.json() : Promise.reject())
@@ -42,7 +43,8 @@ export function LedgerWorkspace({ initialType, initialQuery, selectedId, canEdit
   }, [items, selectedId]);
   const canCreateVendor = type === "vendors" && canEditVendors;
   const canCreateWork = type === "works" && canEditWorks;
-  const canCreate = canCreateVendor || canCreateWork;
+  const canCreateMaterial = type === "materials" && canEditMaterials;
+  const canCreate = canCreateVendor || canCreateWork || canCreateMaterial;
   return <section className="page ledger-page">
     <div className="page-title"><div><p>MASTER LEDGERS</p><h1>台帳</h1><small>既存マスターと契約条件を横断確認します</small></div>
       {canCreateVendor && <div className="matter-detail-actions">
@@ -50,6 +52,7 @@ export function LedgerWorkspace({ initialType, initialQuery, selectedId, canEdit
         <button className="primary" onClick={() => { setCreating(true); setImporting(false); setSelected(null); }}>＋ 新規取引先</button>
       </div>}
       {canCreateWork && <button className="primary" onClick={() => { setCreating(true); setSelected(null); }}>＋ 新規作品</button>}
+      {canCreateMaterial && <button className="primary" onClick={() => { setCreating(true); setSelected(null); }}>＋ 新規マテリアル</button>}
     </div>
     <div className="ledger-tabs">{(Object.keys(labels) as LedgerType[]).map((key) =>
       <button className={type === key ? "active" : ""} key={key} onClick={() => { setType(key); setQuery(""); }}>{labels[key]}</button>)}</div>
@@ -63,6 +66,8 @@ export function LedgerWorkspace({ initialType, initialQuery, selectedId, canEdit
       </button>)}{!loading && !items.length && <div className="empty-state">該当するデータがありません。</div>}</div>
       {importing
         ? <VendorImport onCancel={() => setImporting(false)} onDone={() => setReload((v) => v + 1)} />
+        : creating && type === "materials"
+        ? <MaterialForm onCancel={() => setCreating(false)} onSaved={() => { setCreating(false); setReload((v) => v + 1); }} />
         : creating && type === "works"
         ? <WorkForm onCancel={() => setCreating(false)} onSaved={() => { setCreating(false); setReload((v) => v + 1); }} />
         : creating
@@ -70,9 +75,11 @@ export function LedgerWorkspace({ initialType, initialQuery, selectedId, canEdit
         : editingVendorId !== null
         ? <VendorForm vendorId={editingVendorId} onCancel={() => setEditingVendorId(null)} onSaved={() => { setEditingVendorId(null); setReload((v) => v + 1); }} />
         : editingWorkId !== null
-          ? <WorkForm workId={editingWorkId} onCancel={() => setEditingWorkId(null)} onSaved={() => { setEditingWorkId(null); setReload((v) => v + 1); }} />
+        ? <WorkForm workId={editingWorkId} onCancel={() => setEditingWorkId(null)} onSaved={() => { setEditingWorkId(null); setReload((v) => v + 1); }} />
+        : editingMaterialId !== null
+          ? <MaterialForm materialId={editingMaterialId} onCancel={() => setEditingMaterialId(null)} onSaved={() => { setEditingMaterialId(null); setReload((v) => v + 1); }} />
           : <LedgerDetail item={selected} canEdit={canCreate}
-              onEdit={(item) => { if (type === "works") setEditingWorkId(Number(item.id)); else setEditingVendorId(Number(item.id)); }} />}
+              onEdit={(item) => { if (type === "works") setEditingWorkId(Number(item.id)); else if (type === "materials") setEditingMaterialId(Number(item.id)); else setEditingVendorId(Number(item.id)); }} />}
     </div>
   </section>;
 }
@@ -321,6 +328,137 @@ function WorkForm({ workId, onCancel, onSaved }: { workId?: number; onCancel: ()
     </div>
     <label>備考<textarea rows={3} value={values.remarks} onChange={(e) => set("remarks", e.target.value)} /></label>
     <label className="task-primary-toggle"><input type="checkbox" checked={values.isActive} onChange={(e) => set("isActive", e.target.checked)} />有効</label>
+    <div className="matter-form-actions">
+      <button className="primary" disabled={saving} onClick={submit}>{saving ? "保存中…" : isEdit ? "保存" : "登録"}</button>
+      <button disabled={saving} onClick={onCancel}>キャンセル</button>
+    </div>
+  </aside>;
+}
+
+const materialTypeOptions = [
+  { value: "manuscript", label: "原稿" }, { value: "scenario", label: "シナリオ" },
+  { value: "illustration", label: "イラスト" }, { value: "game_design", label: "ゲームデザイン" },
+  { value: "other", label: "その他" }
+];
+const materialRoleOptions = [
+  { value: "core_logic", label: "中核" }, { value: "sub_component", label: "補助" }
+];
+const acquisitionTypeOptions = [
+  { value: "license", label: "ライセンス" }, { value: "buyout_commission", label: "買切・委託" },
+  { value: "in_house", label: "内製" }
+];
+const rightsTypeOptions = [
+  { value: "license", label: "ライセンス" }, { value: "owned", label: "自社保有" }
+];
+type MaterialValues = {
+  materialName: string; materialType: string; materialRole: string; acquisitionType: string;
+  rightsType: string; rightsHolderLabel: string; territory: string; language: string;
+  isDefault: boolean; isRoyaltyBearing: boolean; remarks: string;
+};
+const emptyMaterial: MaterialValues = {
+  materialName: "", materialType: "manuscript", materialRole: "core_logic", acquisitionType: "license",
+  rightsType: "license", rightsHolderLabel: "", territory: "", language: "",
+  isDefault: false, isRoyaltyBearing: false, remarks: ""
+};
+
+function MaterialForm({ materialId, onCancel, onSaved }: { materialId?: number; onCancel: () => void; onSaved: () => void }) {
+  const isEdit = materialId !== undefined;
+  const [values, setValues] = useState<MaterialValues>(emptyMaterial);
+  const [workId, setWorkId] = useState<number | null>(null);
+  const [workLabel, setWorkLabel] = useState("");
+  const [workQuery, setWorkQuery] = useState("");
+  const [workOptions, setWorkOptions] = useState<{ id: number; workCode: string | null; title: string }[]>([]);
+  const [loading, setLoading] = useState(isEdit);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const toast = useToast();
+  useEffect(() => {
+    if (!isEdit) return;
+    setLoading(true);
+    fetch(`/api/v2/materials/${materialId}`)
+      .then((response) => response.ok ? response.json() : Promise.reject())
+      .then((data) => {
+        const m = data.material;
+        setWorkId(Number(m.workId));
+        setWorkLabel([m.workCode, m.workTitle].filter(Boolean).join(" ") || `作品 ${m.workId}`);
+        setValues({
+          materialName: m.materialName ?? "", materialType: m.materialType ?? "manuscript",
+          materialRole: m.materialRole ?? "core_logic", acquisitionType: m.acquisitionType ?? "license",
+          rightsType: m.rightsType ?? "license", rightsHolderLabel: m.rightsHolderLabel ?? "",
+          territory: m.territory ?? "", language: m.language ?? "",
+          isDefault: Boolean(m.isDefault), isRoyaltyBearing: Boolean(m.isRoyaltyBearing), remarks: m.remarks ?? ""
+        });
+      })
+      .catch(() => setError("素材の情報を取得できませんでした。"))
+      .finally(() => setLoading(false));
+  }, [materialId, isEdit]);
+  useEffect(() => {
+    if (isEdit) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      fetch(`/api/v2/materials/works?q=${encodeURIComponent(workQuery)}`, { signal: controller.signal })
+        .then((response) => response.ok ? response.json() : Promise.reject())
+        .then((data) => setWorkOptions(data.works ?? []))
+        .catch(() => undefined);
+    }, 250);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [workQuery, isEdit]);
+  function set<K extends keyof MaterialValues>(key: K, value: MaterialValues[K]) { setValues((prev) => ({ ...prev, [key]: value })); }
+  async function submit() {
+    if (!isEdit && workId === null) { setError("作品を選択してください。"); return; }
+    if (!values.materialName.trim()) { setError("素材名は必須です。"); return; }
+    setSaving(true); setError("");
+    const body: Record<string, unknown> = {
+      materialName: values.materialName.trim(), materialRole: values.materialRole,
+      acquisitionType: values.acquisitionType, rightsType: values.rightsType,
+      rightsHolderLabel: values.rightsHolderLabel, territory: values.territory, language: values.language,
+      isDefault: values.isDefault, isRoyaltyBearing: values.isRoyaltyBearing, remarks: values.remarks
+    };
+    if (!isEdit) { body.workId = workId; body.materialType = values.materialType; }
+    try {
+      const response = await fetch(isEdit ? `/api/v2/materials/${materialId}` : "/api/v2/materials", {
+        method: isEdit ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+      });
+      if (!response.ok) {
+        const detail = await response.json().catch(() => ({}));
+        setError(detail.error ?? "保存に失敗しました。"); setSaving(false); return;
+      }
+      const saved = await response.json();
+      toast.push(isEdit ? "素材を更新しました" : `素材を登録しました（${saved.materialCode ?? ""}）`, "success");
+      onSaved();
+    } catch { setError("通信に失敗しました。"); setSaving(false); }
+  }
+  if (loading) return <aside className="panel ledger-detail"><div className="empty-inline">読み込み中…</div></aside>;
+  return <aside className="panel ledger-detail matter-editor">
+    <span className="detail-kicker">{isEdit ? "EDIT MATERIAL" : "NEW MATERIAL"}</span><h2>{isEdit ? "素材を編集" : "新規マテリアル"}</h2>
+    {error && <div className="async-error">{error}</div>}
+    {isEdit
+      ? <label>所属作品<input value={workLabel} disabled /></label>
+      : <label>所属作品 *
+          <input value={workLabel || workQuery} placeholder="作品名・コードで検索"
+            onChange={(e) => { setWorkQuery(e.target.value); setWorkLabel(""); setWorkId(null); }} />
+          {!workId && workOptions.length > 0 && <div className="ledger-list work-picker">{workOptions.map((w) =>
+            <button key={w.id} onClick={() => { setWorkId(w.id); setWorkLabel([w.workCode, w.title].filter(Boolean).join(" ")); setWorkOptions([]); }}>
+              <span>{w.workCode ?? "—"}</span><strong>{w.title}</strong></button>)}</div>}
+        </label>}
+    <label>素材名 *<input value={values.materialName} onChange={(e) => set("materialName", e.target.value)} /></label>
+    <div className="matter-form-grid">
+      <label>素材区分{isEdit ? "（変更不可）" : ""}
+        <select value={values.materialType} disabled={isEdit} onChange={(e) => set("materialType", e.target.value)}>
+          {materialTypeOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></label>
+      <label>構成上の役割<select value={values.materialRole} onChange={(e) => set("materialRole", e.target.value)}>
+        {materialRoleOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></label>
+      <label>取得区分<select value={values.acquisitionType} onChange={(e) => set("acquisitionType", e.target.value)}>
+        {acquisitionTypeOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></label>
+      <label>権利区分<select value={values.rightsType} onChange={(e) => set("rightsType", e.target.value)}>
+        {rightsTypeOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></label>
+      <label>権利者表記<input value={values.rightsHolderLabel} onChange={(e) => set("rightsHolderLabel", e.target.value)} /></label>
+      <label>地域<input value={values.territory} onChange={(e) => set("territory", e.target.value)} /></label>
+      <label>言語<input value={values.language} onChange={(e) => set("language", e.target.value)} /></label>
+    </div>
+    <label>備考<textarea rows={3} value={values.remarks} onChange={(e) => set("remarks", e.target.value)} /></label>
+    <label className="task-primary-toggle"><input type="checkbox" checked={values.isDefault} onChange={(e) => set("isDefault", e.target.checked)} />代表素材</label>
+    <label className="task-primary-toggle"><input type="checkbox" checked={values.isRoyaltyBearing} onChange={(e) => set("isRoyaltyBearing", e.target.checked)} />ロイヤリティ対象</label>
     <div className="matter-form-actions">
       <button className="primary" disabled={saving} onClick={submit}>{saving ? "保存中…" : isEdit ? "保存" : "登録"}</button>
       <button disabled={saving} onClick={onCancel}>キャンセル</button>
