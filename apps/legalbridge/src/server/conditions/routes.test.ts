@@ -63,6 +63,26 @@ test("条件明細の詳細を返す", async () => {
   assert.equal(response.body.detail.consumption, null);
 });
 
+test("作品IDが無ければ重複チェックは400を返す", async () => {
+  const response = await request(appFor([])).get("/api/v2/condition-lines/overlap");
+  assert.equal(response.status, 400);
+});
+
+test("作品の既存条件を向き別件数と一覧で返す（重複警告）", async () => {
+  const app = express();
+  app.use("/api/v2", createConditionLineRouter(new MemoryConditionLineRepository([], [
+    { workId: 3, id: 1, conditionName: "既存受取", direction: "receivable", flowDirection: "out", sourceMaterialId: null, materialName: null, amountExTax: 100000, mgAmount: null, currency: "JPY", documentNumber: "DOC-1" },
+    { workId: 3, id: 2, conditionName: "素材コスト", direction: "payable", flowDirection: "in", sourceMaterialId: 9, materialName: "第1原稿", amountExTax: 20000, mgAmount: null, currency: "JPY", documentNumber: "DOC-2" },
+    { workId: 4, id: 3, conditionName: "別作品", direction: "receivable", flowDirection: "out", sourceMaterialId: null, materialName: null, amountExTax: 1, mgAmount: null, currency: "JPY", documentNumber: null }
+  ])));
+  const response = await request(app).get("/api/v2/condition-lines/overlap?workId=3");
+  assert.equal(response.status, 200);
+  assert.equal(response.body.overlap.total, 2);
+  assert.equal(response.body.overlap.receivableCount, 1);
+  assert.equal(response.body.overlap.payableCount, 1);
+  assert.equal(response.body.overlap.lines[0].sourceMaterialId, null);
+});
+
 test("集計サマリを向き・通貨で返す", async () => {
   const response = await request(appFor([
     row({ id: 1, direction: "receivable", currency: "JPY", amountExTax: 100000, mgAmount: 0 }),

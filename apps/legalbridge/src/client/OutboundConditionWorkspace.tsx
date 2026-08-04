@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 
 type LedgerItem = { id: string; code: string; title: string; subtitle: string };
+type OverlapLine = {
+  id: number; conditionName: string; direction: string | null; flowDirection: string | null;
+  sourceMaterialId: number | null; materialName: string | null;
+  amountExTax: number | null; mgAmount: number | null; currency: string | null; documentNumber: string | null;
+};
+type Overlap = { workId: number; total: number; receivableCount: number; payableCount: number; lines: OverlapLine[] };
 type Kind = "license" | "product";
 type FormState = {
   workId: string; counterpartyId: string; conditionName: string; transactionKind: Kind;
@@ -27,6 +33,7 @@ export function OutboundConditionWorkspace() {
   const [vendors, setVendors] = useState<LedgerItem[]>([]);
   const [notice, setNotice] = useState("入力内容を確認後、管理者だけが保存できます。");
   const [preview, setPreview] = useState<Record<string, unknown> | null>(null);
+  const [overlap, setOverlap] = useState<Overlap | null>(null);
   const license = form.transactionKind === "license";
 
   useEffect(() => {
@@ -41,6 +48,21 @@ export function OutboundConditionWorkspace() {
 
   const work = useMemo(() => works.find((item) => item.id === form.workId), [works, form.workId]);
   const vendor = useMemo(() => vendors.find((item) => item.id === form.counterpartyId), [vendors, form.counterpartyId]);
+
+  // 作品を選ぶと、その作品に既に紐づく条件を取得して重複警告を出す（導線ガード）。
+  // 包括条件と個別（マテリアル由来）条件は別建てで消化実績に合算されるため、
+  // 同一方向（受取）の既存条件があれば二重計上に気づけるようにする。
+  useEffect(() => {
+    const numericId = form.workId.includes(":") ? form.workId.split(":").pop() : form.workId;
+    if (!numericId || !/^\d+$/.test(numericId)) { setOverlap(null); return; }
+    const controller = new AbortController();
+    fetch(`/api/v2/condition-lines/overlap?workId=${numericId}`, { signal: controller.signal })
+      .then((response) => response.ok ? response.json() : Promise.reject())
+      .then((data) => setOverlap(data.overlap ?? null))
+      .catch(() => setOverlap(null));
+    return () => controller.abort();
+  }, [form.workId]);
+  const sameDirectionCount = overlap?.receivableCount ?? 0;
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((current) => {
@@ -124,6 +146,19 @@ export function OutboundConditionWorkspace() {
       <button className={license ? "active" : ""} onClick={() => update("transactionKind", "license")}>ライセンスアウト</button>
       <button className={!license ? "active" : ""} onClick={() => update("transactionKind", "product")}>プロダクトアウト</button>
     </div>
+    {overlap && overlap.total > 0 && <div className={`outbound-overlap${sameDirectionCount > 0 ? " warn" : ""}`}>
+      <strong>{sameDirectionCount > 0
+        ? `⚠ この作品には既に受取(アウト)条件が${sameDirectionCount}件あります。重複登録に注意してください。`
+        : `この作品には既存の条件が${overlap.total}件あります（受取${overlap.receivableCount}／支払${overlap.payableCount}）。`}</strong>
+      <small>包括条件と個別（マテリアル由来）条件は別建てで消化実績に合算されます。同じ債権を二重に登録しないでください。</small>
+      <ul>{overlap.lines.slice(0, 8).map((line) => <li key={line.id}>
+        <span className={`ov-dir ov-${line.direction ?? "unknown"}`}>{line.direction === "receivable" ? "受取" : line.direction === "payable" ? "支払" : "—"}</span>
+        <span className="ov-scope">{line.sourceMaterialId === null ? "作品レベル" : `素材：${line.materialName ?? line.sourceMaterialId}`}</span>
+        <span className="ov-name">{line.conditionName || "名称未設定"}</span>
+        <span className="ov-amt">{line.amountExTax !== null ? `${line.currency ?? ""} ${line.amountExTax.toLocaleString()}` : line.mgAmount !== null ? `MG ${line.mgAmount.toLocaleString()}` : ""}</span>
+        {line.documentNumber && <span className="ov-doc">{line.documentNumber}</span>}
+      </li>)}{overlap.lines.length > 8 && <li className="ov-more">ほか{overlap.lines.length - 8}件</li>}</ul>
+    </div>}
     <div className="outbound-form">
       <fieldset><legend>1. 対象と相手方</legend>
         <label>自社作品<select value={form.workId} onChange={(e) => update("workId", e.target.value)}><option value="">選択してください</option>{works.map((item) => <option key={item.id} value={item.id}>{item.code} {item.title}</option>)}</select></label>

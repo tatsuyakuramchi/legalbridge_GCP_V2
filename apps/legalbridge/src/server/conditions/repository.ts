@@ -88,11 +88,35 @@ export interface ConditionSettlementSummary {
   inspectionRate: number;         // 0..1
 }
 
+// 重複警告用（導線ガード）。ある作品に既に紐づく条件行を、作品レベル
+// (source_material_id IS NULL) とマテリアル由来 (IS NOT NULL) を区別して返す。
+// 消化実績はこれらを別建てで合算するため、新規条件作成時に重複の気づきを与える。
+export interface ConditionOverlapLine {
+  id: number;
+  conditionName: string;
+  direction: string | null;          // payable / receivable
+  flowDirection: string | null;      // in / out
+  sourceMaterialId: number | null;   // null=作品レベル / 値=マテリアル由来
+  materialName: string | null;
+  amountExTax: number | null;
+  mgAmount: number | null;
+  currency: string | null;
+  documentNumber: string | null;
+}
+export interface ConditionOverlap {
+  workId: number;
+  total: number;
+  receivableCount: number;
+  payableCount: number;
+  lines: ConditionOverlapLine[];
+}
+
 export interface ConditionLineRepository {
   list(query: string, limit?: number): Promise<ConditionLineRow[]>;
   summary(): Promise<ConditionLineSummaryRow[]>;
   settlement(): Promise<ConditionSettlementSummary | null>;
   find(id: number): Promise<ConditionLineDetail | null>;
+  overlap(workId: number): Promise<ConditionOverlap>;
 }
 
 export class PgConditionLineRepository implements ConditionLineRepository {
@@ -271,6 +295,41 @@ export class PgConditionLineRepository implements ConditionLineRepository {
       throw error;
     }
   }
+
+  async overlap(workId: number): Promise<ConditionOverlap> {
+    const result = await this.database.query(
+      `SELECT cl.id, cl.condition_name, cl.direction, cl.flow_direction,
+              cl.source_material_id, wm.material_name,
+              cl.amount_ex_tax, cl.mg_amount, cl.currency,
+              d.document_number
+         FROM condition_lines cl
+         LEFT JOIN work_materials wm ON wm.id = cl.source_material_id
+         LEFT JOIN documents d ON d.id = cl.document_id
+        WHERE cl.work_id = $1
+        ORDER BY cl.direction NULLS LAST, cl.source_material_id NULLS FIRST, cl.id DESC
+        LIMIT 200`,
+      [workId]
+    );
+    const lines: ConditionOverlapLine[] = result.rows.map((row) => ({
+      id: Number(row.id),
+      conditionName: String(row.condition_name ?? ""),
+      direction: row.direction ?? null,
+      flowDirection: row.flow_direction ?? null,
+      sourceMaterialId: row.source_material_id === null ? null : Number(row.source_material_id),
+      materialName: row.material_name ?? null,
+      amountExTax: num(row.amount_ex_tax),
+      mgAmount: num(row.mg_amount),
+      currency: row.currency ?? null,
+      documentNumber: row.document_number ?? null
+    }));
+    return {
+      workId,
+      total: lines.length,
+      receivableCount: lines.filter((line) => line.direction === "receivable").length,
+      payableCount: lines.filter((line) => line.direction === "payable").length,
+      lines
+    };
+  }
 }
 
 function num(value: unknown): number | null {
@@ -313,7 +372,10 @@ function mapSummary(row: Record<string, any>): ConditionLineSummaryRow {
 }
 
 export class MemoryConditionLineRepository implements ConditionLineRepository {
-  constructor(private readonly rows: ConditionLineRow[] = []) {}
+  constructor(
+    private readonly rows: ConditionLineRow[] = [],
+    private readonly overlapLines: (ConditionOverlapLine & { workId: number })[] = []
+  ) {}
   async list(query: string, limit = 300) {
     const keyword = query.trim().toLowerCase();
     return this.rows
@@ -337,6 +399,17 @@ export class MemoryConditionLineRepository implements ConditionLineRepository {
       a.direction.localeCompare(b.direction) || a.currency.localeCompare(b.currency));
   }
   async settlement() { return null; }
+  async overlap(workId: number): Promise<ConditionOverlap> {
+    const lines = this.overlapLines.filter((line) => line.workId === workId)
+      .map(({ workId: _workId, ...line }) => line);
+    return {
+      workId,
+      total: lines.length,
+      receivableCount: lines.filter((line) => line.direction === "receivable").length,
+      payableCount: lines.filter((line) => line.direction === "payable").length,
+      lines
+    };
+  }
   async find(id: number) {
     const row = this.rows.find((r) => r.id === id);
     if (!row) return null;

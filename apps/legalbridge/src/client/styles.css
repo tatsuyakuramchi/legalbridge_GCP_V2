@@ -681,6 +681,18 @@ button.pdf-download-link:disabled {
 /* Outbound contract conditions */
 .outbound-direction { display:flex; gap:16px; align-items:center; padding:14px 18px; margin-bottom:16px; border:1px solid #b8d5c3; border-radius:10px; background:#f1faf4; color:#245b39; }
 .outbound-direction span { font-size:12px; color:#557463; }
+.outbound-overlap { padding:12px 16px; margin-bottom:16px; border:1px solid #cdd8e4; border-radius:10px; background:#f5f8fc; color:#2a3f57; display:grid; gap:6px; }
+.outbound-overlap.warn { border-color:#e6b800; background:#fff9e6; color:#6b5200; }
+.outbound-overlap strong { font-size:13px; }
+.outbound-overlap small { color:#64748b; font-size:11px; }
+.outbound-overlap ul { list-style:none; margin:4px 0 0; padding:0; display:grid; gap:4px; }
+.outbound-overlap li { display:flex; gap:8px; align-items:center; font-size:12px; flex-wrap:wrap; }
+.outbound-overlap .ov-dir { font-weight:800; border-radius:5px; padding:1px 6px; font-size:11px; }
+.outbound-overlap .ov-receivable { background:#e6f5ea; color:#245b39; }
+.outbound-overlap .ov-payable { background:#fce8e8; color:#8a2a2a; }
+.outbound-overlap .ov-scope { color:#168ca0; font-weight:700; }
+.outbound-overlap .ov-doc { color:#64748b; }
+.outbound-overlap .ov-more { color:#64748b; font-style:italic; }
 .outbound-kind { display:flex; gap:8px; margin-bottom:18px; }
 .outbound-kind button { padding:10px 18px; border:1px solid #ccd2d9; border-radius:8px; background:#fff; }
 .outbound-kind button.active { color:#fff; border-color:#234b73; background:#234b73; }
