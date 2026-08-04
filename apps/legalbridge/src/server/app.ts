@@ -82,6 +82,10 @@ import {
 } from "./materials/write-repository.js";
 import { createMaterialWriteRouter } from "./materials/write-routes.js";
 import {
+  MemoryRoyaltyEventRepository, PgRoyaltyEventRepository, type RoyaltyEventRepository
+} from "./royalty/event-repository.js";
+import { createRoyaltyEventRouter } from "./royalty/event-routes.js";
+import {
   MemoryDocumentImportRepository, PgDocumentImportRepository, type DocumentImportRepository
 } from "./documents/import-repository.js";
 import { createDocumentImportRouter } from "./documents/import-routes.js";
@@ -255,6 +259,7 @@ export interface AppDependencies {
   contractIntakes?: ContractIntakeRepository;
   contractIntakeDocuments?: ContractIntakeDocumentSourceRepository;
   contractOutbound?: ContractOutboundRepository;
+  royaltyEvents?: RoyaltyEventRepository;
 }
 
 export interface AppOptions {
@@ -268,6 +273,7 @@ export interface AppOptions {
   vendorWritesEnabled?: boolean;
   staffWritesEnabled?: boolean;
   workWritesEnabled?: boolean;
+  royaltyEventWritesEnabled?: boolean;
   materialWritesEnabled?: boolean;
   auth?: AuthSettings;
 }
@@ -312,6 +318,9 @@ function createDefaultDependencies(): AppDependencies {
     materialWrites: database
       ? new PgMaterialWriteRepository(database)
       : new MemoryMaterialWriteRepository(),
+    royaltyEvents: database
+      ? new PgRoyaltyEventRepository(database)
+      : new MemoryRoyaltyEventRepository(),
     ledgers: database ? new PgLedgerRepository(database) : new MemoryLedgerRepository(),
     search: database ? new PgGlobalSearchRepository(database) : new MemoryGlobalSearchRepository(),
     admin: database ? new PgAdminRepository(database) : new MemoryAdminRepository(),
@@ -360,6 +369,7 @@ export function createApp(
     staffWritesEnabled: config.staffWritesEnabled,
     workWritesEnabled: config.workWritesEnabled,
     materialWritesEnabled: config.materialWritesEnabled,
+    royaltyEventWritesEnabled: config.royaltyEventWritesEnabled,
     auth: config.auth
   }
 ) {
@@ -489,6 +499,12 @@ export function createApp(
     options.materialWritesEnabled === true &&
     options.writeScopes?.has("materials") === true &&
     Boolean(dependencies.materialWrites);
+  const royaltyEventWriteEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.royaltyEventWritesEnabled === true &&
+    options.writeScopes?.has("royalty-events") === true &&
+    Boolean(dependencies.royaltyEvents);
   const driveStorageEnabled =
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
@@ -538,6 +554,7 @@ export function createApp(
         ...(staffWriteEnabled ? ["staff"] : []),
         ...(workWriteEnabled ? ["works"] : []),
         ...(materialWriteEnabled ? ["materials"] : []),
+        ...(royaltyEventWriteEnabled ? ["royalty-events"] : []),
         ...(gmailDispatchEnabled ? ["gmail"] : []),
         ...(cloudSignDispatchEnabled ? ["cloudsign"] : []),
         ...(gmailInboundEnabled ? ["gmail-inbound"] : []),
@@ -561,8 +578,8 @@ export function createApp(
         driveStorageEnabled || slackApprovalWriteEnabled ||
         outboundConditionWriteEnabled || contractIntakeWriteEnabled ||
         matterWriteEnabled || vendorWriteEnabled || staffWriteEnabled || workWriteEnabled ||
-        materialWriteEnabled || gmailDispatchEnabled || cloudSignDispatchEnabled ||
-        gmailInboundEnabled,
+        materialWriteEnabled || royaltyEventWriteEnabled || gmailDispatchEnabled ||
+        cloudSignDispatchEnabled || gmailInboundEnabled,
       writeCapabilities: [
         ...(draftWriteEnabled ? ["drafts"] : []),
         ...(documentFinalizeEnabled ? ["documents"] : []),
@@ -576,6 +593,7 @@ export function createApp(
         ...(staffWriteEnabled ? ["staff"] : []),
         ...(workWriteEnabled ? ["works"] : []),
         ...(materialWriteEnabled ? ["materials"] : []),
+        ...(royaltyEventWriteEnabled ? ["royalty-events"] : []),
         ...(gmailDispatchEnabled ? ["gmail"] : []),
         ...(cloudSignDispatchEnabled ? ["cloudsign"] : []),
         ...(gmailInboundEnabled ? ["gmail-inbound"] : []),
@@ -711,6 +729,9 @@ export function createApp(
       (request.method === "POST" && request.path === "/materials") ||
       (request.method === "PATCH" && /^\/materials\/\d+$/.test(request.path));
     if (materialWriteEnabled && isMaterialWrite) return next();
+    const isRoyaltyEventWrite =
+      request.method === "POST" && request.path === "/royalty/events";
+    if (royaltyEventWriteEnabled && isRoyaltyEventWrite) return next();
 
     return response.status(403).json({
       error: options.accessMode === "readonly"
@@ -756,6 +777,8 @@ export function createApp(
   app.use("/api/v2", createConditionLineRouter(dependencies.conditionLines));
   // 計算専用（read-only・DB非依存）のロイヤリティ試算。
   app.use("/api/v2", createRoyaltyRouter());
+  // ロイヤリティ消化イベント書込（guarded-write・既定OFF）。
+  app.use("/api/v2", createRoyaltyEventRouter(dependencies.royaltyEvents, royaltyEventWriteEnabled));
   app.use("/api/v2", createPendingInspectionRouter(dependencies.pendingInspections));
   app.use("/api/v2", createVendorWriteRouter(dependencies.vendorWrites, vendorWriteEnabled));
   app.use("/api/v2", createStaffRouter(dependencies.staff, staffWriteEnabled));

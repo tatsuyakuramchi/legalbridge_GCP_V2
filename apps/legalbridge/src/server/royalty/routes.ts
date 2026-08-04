@@ -7,7 +7,7 @@ import { computeRoyaltyPayment, resolveWithholdingEnabled } from "./tax.js";
 // V1 の /api/royalty-calculations/preview 相当の「確定前ライブ試算」を、
 // V2 の純関数エンジン（calc / tax）で構成する。書込みは一切行わない。
 
-const feeTermsSchema = z.discriminatedUnion("type", [
+export const feeTermsSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("fixed"), unit_price: z.number(), quantity: z.number() }),
   z.object({
     type: z.literal("subscription"),
@@ -20,7 +20,7 @@ const feeTermsSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("revenue"), base_amount: z.number(), rate_pct: z.number() })
 ]);
 
-const adjustmentsSchema = z.object({
+export const adjustmentsSchema = z.object({
   acceptance_ratio: z.number().optional(),
   sample_quantity: z.number().optional(),
   mg_amount: z.number().optional(),
