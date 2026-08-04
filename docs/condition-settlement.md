@@ -27,7 +27,19 @@ psql "$RUNTIME_ADMIN_DSN" \
 
 再デプロイは不要（既に稼働中のリビジョンが、GRANT適用後は自動でSELECT可能になり消化パネルが表示される）。
 
-## 4. 参照
+## 4. 重複計上の考え方と導線ガード
+
+作品(works)には、業務委託などで作った**マテリアル由来の個別条件**（`condition_lines.source_material_id` 有り）と、作品レベルの**包括条件**（`source_material_id IS NULL`）が併存し得る。
+
+- **方向が違えば二重計上ではない**：マテリアル由来（業務委託）は `payable`（コスト脚）、作品のライセンスアウト包括条件は `receivable`（収入脚）。集計は `direction` ごとに分かれるため、両方あってもコスト×収入の両建て。
+- **同一方向を別建てで作ると合算される**：消化実績（本ページの集計）は `source_material_id` を区別せず同一方向の全行を合算する。`condition_lines` に親子（ロールアップ）FKが無いため、包括と個別の重複は自動排除されない。運用としては**別建てで加算**する前提。
+
+そこで**作成導線で重複を可視化**する：
+
+- `GET /api/v2/condition-lines/overlap?workId=<id>`（読取・grant不要）が、その作品に既に紐づく条件を向き別件数（受取/支払）と、作品レベル/マテリアル由来の区別付き一覧で返す。
+- アウト条件フォーム（`OutboundConditionWorkspace`）で作品を選ぶと既存条件を提示し、同一方向（受取）が既にある場合は警告を表示する。ブロックはせず、担当者が二重登録を意識できるようにする。
+
+## 5. 参照
 
 - [条件明細（横断検索・検収待ち・詳細）](../apps/legalbridge/src/client/ConditionLinesWorkspace.tsx)
 - [契約取込デプロイ手順](contract-intake-deploy.md)

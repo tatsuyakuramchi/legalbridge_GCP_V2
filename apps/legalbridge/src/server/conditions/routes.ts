@@ -45,6 +45,27 @@ export function createConditionLineRouter(conditions: ConditionLineRepository | 
     }
   });
 
+  // 重複警告（導線ガード）：ある作品に既に紐づく条件行を返す。
+  // /:id より前に登録して literal path を優先させる。
+  router.get("/condition-lines/overlap", async (request, response, next) => {
+    try {
+      if (!conditions) {
+        return response.status(503).json({
+          error: "condition line registry is unavailable",
+          code: "CONDITION_LINES_UNAVAILABLE"
+        });
+      }
+      const { workId } = z.object({ workId: z.coerce.number().int().positive() }).parse(request.query);
+      const overlap = await conditions.overlap(workId);
+      return response.status(200).json({ overlap });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return response.status(400).json({ error: "invalid request", issues: error.issues });
+      }
+      next(error);
+    }
+  });
+
   // Registered after /condition-lines/summary so the literal path wins.
   router.get("/condition-lines/:id", async (request, response, next) => {
     try {
