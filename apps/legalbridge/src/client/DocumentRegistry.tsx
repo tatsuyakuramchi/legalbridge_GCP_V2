@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { DocumentFormSchema } from "../types";
+import { useToast } from "./Toast";
 
 type RegisteredDocument = {
   id: number;
@@ -28,6 +29,7 @@ export function DocumentRegistry({
   onCreate,
   canGeneratePdf,
   canSaveToDrive,
+  canImport = false,
   selectedId,
   initialQuery = ""
 }: {
@@ -35,9 +37,11 @@ export function DocumentRegistry({
   onCreate: () => void;
   canGeneratePdf: boolean;
   canSaveToDrive: boolean;
+  canImport?: boolean;
   selectedId?: number;
   initialQuery?: string;
 }) {
+  const [importing, setImporting] = useState(false);
   const [query, setQuery] = useState(initialQuery);
   const [templateType, setTemplateType] = useState("");
   const [documents, setDocuments] = useState<RegisteredDocument[]>([]);
@@ -81,8 +85,12 @@ export function DocumentRegistry({
   return <section className="page registry-page">
     <div className="page-title">
       <div><p>DOCUMENT REGISTRY</p><h1>確定済みの文書</h1><small>確定した文書の内容確認とPDF出力ができます</small></div>
-      <button className="primary" onClick={onCreate}>文書を作成</button>
+      <div className="matter-detail-actions">
+        {canImport && <button onClick={() => setImporting(true)}>過去文書取込</button>}
+        <button className="primary" onClick={onCreate}>文書を作成</button>
+      </div>
     </div>
+    {importing && <PastDocumentImport onClose={() => { setImporting(false); setReload((v) => v + 1); }} />}
     {initialQuery && (
       <div className="deep-link-notice">
         Slackで案内された受付番号 <strong>{initialQuery}</strong> の文書を表示しています。
@@ -264,4 +272,81 @@ function formatDate(value: string) {
 
 function safeFilename(value: string) {
   return value.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 120) || "document";
+}
+
+const DOC_HEADER_MAP: Record<string, string> = {
+  "文書番号": "documentNumber", document_number: "documentNumber", documentnumber: "documentNumber", number: "documentNumber",
+  "テンプレート種別": "templateType", template_type: "templateType", templatetype: "templateType", "種別": "templateType", template: "templateType",
+  "課題キー": "issueKey", issue_key: "issueKey", issuekey: "issueKey", "backlog": "issueKey",
+  "driveリンク": "driveLink", drive_link: "driveLink", drivelink: "driveLink", "drive": "driveLink", url: "driveLink",
+  "案件id": "matterId", matter_id: "matterId", matterid: "matterId"
+};
+
+function parseDocCsv(text: string): { rows: Record<string, string>[]; unmapped: string[] } {
+  const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  if (!lines.length) return { rows: [], unmapped: [] };
+  const rawHeaders = lines[0].split(",").map((h) => h.trim());
+  const fields = rawHeaders.map((h) => DOC_HEADER_MAP[h] ?? DOC_HEADER_MAP[h.toLowerCase()] ?? "");
+  const unmapped = rawHeaders.filter((_, i) => !fields[i]);
+  const rows = lines.slice(1).map((line) => {
+    const cells = line.split(",");
+    const row: Record<string, string> = {};
+    fields.forEach((field, i) => { if (field) row[field] = (cells[i] ?? "").trim(); });
+    return row;
+  });
+  return { rows, unmapped };
+}
+
+function PastDocumentImport({ onClose }: { onClose: () => void }) {
+  const [text, setText] = useState("");
+  const [result, setResult] = useState<{ insertedCount: number; failedCount: number; failed: Array<{ index: number; error: string }> } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const toast = useToast();
+  const parsed = parseDocCsv(text);
+  const valid = parsed.rows.filter((r) => (r.documentNumber ?? "").trim() && (r.templateType ?? "").trim());
+
+  async function submit() {
+    if (!valid.length) { setError("取込む文書がありません（文書番号とテンプレート種別が必要です）。"); return; }
+    setSaving(true); setError(""); setResult(null);
+    try {
+      const response = await fetch("/api/v2/documents/import", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rows: valid })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok && response.status !== 422 && response.status !== 201) {
+        setError(data.error ?? "取込に失敗しました。"); setSaving(false); return;
+      }
+      setResult(data);
+      toast.push(`${data.insertedCount}件を取込みました${data.failedCount ? `（${data.failedCount}件失敗）` : ""}`,
+        data.failedCount ? "info" : "success");
+    } catch {
+      setError("通信に失敗しました。");
+    } finally { setSaving(false); }
+  }
+
+  return <div className="panel past-doc-import">
+    <div className="matter-detail-head"><div><span className="detail-kicker">IMPORT PAST DOCUMENTS</span><h2>過去文書取込</h2></div>
+      <button onClick={onClose}>閉じる</button></div>
+    <p className="hub-note">既存の文書番号を持つ過去文書を、文書番号・テンプレート種別・課題キー・Driveリンクで一括登録します（生成は行いません）。1行目にヘッダ。文書番号とテンプレート種別は必須。テンプレート版・本文は空で登録されます。</p>
+    {error && <div className="async-error">{error}</div>}
+    <textarea rows={7} value={text} onChange={(e) => { setText(e.target.value); setResult(null); }}
+      placeholder={"文書番号,テンプレート種別,課題キー,Driveリンク\nPO-2024-0001,purchase_order,LEGAL-12,https://drive.google.com/..."} />
+    {parsed.rows.length > 0 && <p className="import-preview-note">
+      解析 {parsed.rows.length}行 / 登録対象 {valid.length}行
+      {parsed.unmapped.length > 0 && `・未対応列: ${parsed.unmapped.join(", ")}`}
+    </p>}
+    {valid.length > 0 && <div className="condition-table-wrap"><table className="condition-table">
+      <thead><tr><th>文書番号</th><th>種別</th><th>課題</th></tr></thead>
+      <tbody>{valid.slice(0, 20).map((r, i) => <tr key={i}>
+        <td><b>{r.documentNumber}</b></td><td>{r.templateType}</td><td>{r.issueKey || "—"}</td>
+      </tr>)}</tbody></table>{valid.length > 20 && <p className="import-preview-note">ほか {valid.length - 20}行…</p>}</div>}
+    {result && <div className="import-result">
+      <strong>{result.insertedCount}件 取込完了</strong>{result.failedCount > 0 && <span>・{result.failedCount}件 失敗</span>}
+      {result.failed.slice(0, 10).map((f) => <small key={f.index}>行{f.index + 2}: {f.error}</small>)}
+    </div>}
+    <div className="matter-form-actions">
+      <button className="primary" disabled={saving || !valid.length} onClick={submit}>{saving ? "取込中…" : `${valid.length}件を取込`}</button>
+    </div>
+  </div>;
 }

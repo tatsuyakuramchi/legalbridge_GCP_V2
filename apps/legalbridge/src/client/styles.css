@@ -195,6 +195,9 @@ header input { width: 100%; border: 1px solid #d9e2ec; border-radius: 8px; paddi
 .import-result strong { color: #153d31; }
 .import-result span { color: #b45309; font-size: 12px; }
 .import-result small { color: #7c2d12; font-size: 11px; }
+.past-doc-import { padding: 16px 18px; margin-bottom: 16px; }
+.past-doc-import textarea { width: 100%; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px 12px; font: inherit; font-size: 13px; }
+.past-doc-import .matter-detail-head button { border: 1px solid #d9e2ec; border-radius: 7px; padding: 5px 11px; background: white; font-size: 12px; cursor: pointer; }
 .condition-detail { padding: 18px 20px; }
 .condition-detail .matter-summary { margin: 6px 0 14px; }
 .condition-detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 20px; margin: 0; }

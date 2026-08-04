@@ -280,6 +280,7 @@ export function App() {
           <DocumentRegistry templates={templates} onCreate={() => { setNewDocIssueKey(""); setView("templates"); }}
             canGeneratePdf={canGeneratePdf}
             canSaveToDrive={canSaveToDrive}
+            canImport={canFinalizeDocuments}
             initialQuery={deepLinkIssue}
             selectedId={searchSelection?.target === "document" ? Number(searchSelection.id) : undefined} />
         )}
