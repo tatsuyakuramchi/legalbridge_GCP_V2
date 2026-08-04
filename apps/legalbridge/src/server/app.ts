@@ -60,6 +60,7 @@ import {
   MemoryConditionLineRepository, PgConditionLineRepository, type ConditionLineRepository
 } from "./conditions/repository.js";
 import { createConditionLineRouter } from "./conditions/routes.js";
+import { createRoyaltyRouter } from "./royalty/routes.js";
 import {
   MemoryPendingInspectionRepository, PgPendingInspectionRepository, type PendingInspectionRepository
 } from "./inspections/repository.js";
@@ -632,7 +633,9 @@ export function createApp(
       "/outbound-conditions/validate",
       "/contract-intakes/validate",
       "/contract-intakes/preflight",
-      "/contract-intakes/outbound-conditions/validate"
+      "/contract-intakes/outbound-conditions/validate",
+      // 計算専用（DB書込みなし）のロイヤリティ試算。
+      "/royalty/preview"
     ]);
     if (safeMethods.has(request.method)) return next();
     if (request.method === "POST" && safePostPaths.has(request.path)) return next();
@@ -751,6 +754,8 @@ export function createApp(
     matterWriteEnabled
   ));
   app.use("/api/v2", createConditionLineRouter(dependencies.conditionLines));
+  // 計算専用（read-only・DB非依存）のロイヤリティ試算。
+  app.use("/api/v2", createRoyaltyRouter());
   app.use("/api/v2", createPendingInspectionRouter(dependencies.pendingInspections));
   app.use("/api/v2", createVendorWriteRouter(dependencies.vendorWrites, vendorWriteEnabled));
   app.use("/api/v2", createStaffRouter(dependencies.staff, staffWriteEnabled));

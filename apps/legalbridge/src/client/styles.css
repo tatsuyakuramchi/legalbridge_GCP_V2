@@ -182,6 +182,35 @@ header input { width: 100%; border: 1px solid var(--border); border-radius: var(
 .cond-dir { padding: 1px 8px; border-radius: 999px; font-size: 11px; background: #eef2f7; color: #475569; }
 .cond-dir.payable { background: #fff7ed; color: #c2410c; }
 .cond-dir.receivable { background: #ecfdf5; color: #047857; }
+/* Royalty preview (試算・読み取り専用) */
+.royalty-preview-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
+.royalty-preview-form { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 16px; }
+.royalty-models { display: flex; flex-wrap: wrap; gap: 6px; }
+.royalty-models button { border: 1px solid var(--border-strong); border-radius: var(--radius-pill); background: var(--surface); color: var(--ink-muted); padding: 7px 13px; }
+.royalty-models button.active { background: var(--accent-strong); border-color: var(--accent-strong); color: white; }
+.royalty-model-hint { color: var(--ink-soft); font-size: 12px; margin: 8px 0 14px; }
+.royalty-section-head { font-size: 14px; color: var(--ink-strong); border-top: 1px solid var(--divider-faint); margin: 20px 0 12px; padding-top: 14px; }
+.royalty-check { flex-direction: row !important; align-items: center; gap: 8px; align-self: end; }
+.royalty-check input { width: auto; }
+.royalty-preview-result { position: sticky; top: 80px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 16px; display: grid; gap: 12px; align-content: start; }
+.royalty-breakdown { display: grid; gap: 0; margin: 0; }
+.royalty-breakdown > div { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--divider-faint); font-size: 13px; }
+.royalty-breakdown dt { color: var(--ink-soft); margin: 0; }
+.royalty-breakdown dd { margin: 0; color: var(--ink-strong); font-weight: 700; }
+.royalty-breakdown > div.hl dd { color: var(--accent-strong); }
+.royalty-total-cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.royalty-total-cards article { border: 1px solid var(--border); border-top: 3px solid var(--accent); border-radius: var(--radius); padding: 10px 12px; display: grid; gap: 2px; }
+.royalty-total-cards article.warn { border-top-color: var(--warning); }
+.royalty-total-cards span { color: var(--ink-soft); font-size: 11px; }
+.royalty-total-cards strong { color: var(--ink-strong); font-size: 17px; }
+.royalty-net { display: flex; justify-content: space-between; align-items: center; border: 1px solid var(--success-border); background: var(--success-surface); border-radius: var(--radius); padding: 12px 14px; }
+.royalty-net span { color: var(--success-strong); font-size: 12px; font-weight: 700; }
+.royalty-net strong { color: var(--success-strong); font-size: 22px; }
+.royalty-formula { color: var(--ink-soft); font-size: 11px; overflow-wrap: anywhere; }
+.royalty-error { border: 1px solid var(--danger-border); background: var(--danger-bg); color: var(--danger-strong); border-radius: var(--radius); padding: 10px 12px; font-size: 13px; }
+.royalty-empty { color: var(--ink-soft); font-size: 13px; padding: 24px 8px; text-align: center; }
+@media (max-width: 1050px) { .royalty-preview-layout { grid-template-columns: 1fr; } .royalty-preview-result { position: static; } }
+
 .settlement-band { margin-bottom: 16px; }
 .settlement-band .panel-head { margin-bottom: 10px; }
 .settlement-band .panel-head h2 { font-size: 17px; color: var(--ink-strong); }
