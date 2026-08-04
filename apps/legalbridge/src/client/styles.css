@@ -182,6 +182,27 @@ header input { width: 100%; border: 1px solid var(--border); border-radius: var(
 .cond-dir { padding: 1px 8px; border-radius: 999px; font-size: 11px; background: #eef2f7; color: #475569; }
 .cond-dir.payable { background: #fff7ed; color: #c2410c; }
 .cond-dir.receivable { background: #ecfdf5; color: #047857; }
+/* Billing dashboard (請求・読み取り専用) */
+.billing-kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 16px; }
+.billing-kpis article { background: var(--surface); border: 1px solid var(--border); border-top: 3px solid var(--accent); border-radius: var(--radius-md); padding: 14px 16px; display: grid; gap: 4px; }
+.billing-kpis article.warn { border-top-color: var(--warning); }
+.billing-kpis span { color: var(--ink-soft); font-size: 12px; font-weight: 700; }
+.billing-kpis strong { color: var(--ink-strong); font-size: 24px; }
+.billing-toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
+.billing-toolbar input { border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); padding: 10px 12px; }
+.billing-toolbar input:first-child { flex: 1 1 280px; }
+.billing-toolbar button { border: 1px solid var(--border-strong); border-radius: var(--radius-pill); background: var(--surface); color: var(--ink-muted); padding: 8px 14px; }
+.billing-toolbar button.active { background: var(--ink-strong); border-color: var(--ink-strong); color: white; }
+.billing-toolbar span { color: var(--ink-soft); font-size: 13px; margin-left: auto; }
+.billing-table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); overflow-x: auto; }
+.billing-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.billing-table th { text-align: left; color: var(--ink-soft); font-size: 11px; font-weight: 700; padding: 11px 12px; border-bottom: 1px solid var(--divider); white-space: nowrap; }
+.billing-table td { padding: 11px 12px; border-bottom: 1px solid var(--divider-faint); vertical-align: top; }
+.billing-table td small { color: var(--ink-faint); }
+.billing-pending { color: var(--warning-ink-strong); font-weight: 700; }
+.billing-unlinked { display: inline-flex; border-radius: var(--radius-pill); background: var(--warning-bg); color: var(--warning-ink); padding: 2px 8px; font-size: 10px; font-weight: 800; }
+@media (max-width: 760px) { .billing-kpis { grid-template-columns: 1fr; } }
+
 /* Royalty preview (試算・読み取り専用) */
 .royalty-preview-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
 .royalty-preview-form { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 16px; }

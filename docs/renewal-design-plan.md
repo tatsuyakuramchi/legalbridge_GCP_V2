@@ -154,7 +154,10 @@ Phase 7 は全フェーズの受け入れ後
 | 2026-08-04 | Phase 1 | ロイヤリティ試算UI（読み取り専用・エンジン接続・GRANT不要） | `f8ad6ae` | ✅ |
 | 2026-08-04 | Phase 1 | スライス2：消化イベント書込（`condition_events` INSERT・guarded・既定OFF）＋grant 014 | `fb64f05` | ✅ |
 | 2026-08-04 | Phase 1 | 受領再許諾料・分配 計算（純関数・GRANT不要・債権/請求の土台） | `a0641eb` | ✅ |
-| 2026-08-04 | Phase 1 | スライス6：受領記録CRUD（`condition_receipts` 作成/更新・guarded・既定OFF）＋grant 015 | — | ✅ |
+| 2026-08-04 | Phase 1 | スライス6：受領記録CRUD（`condition_receipts` 作成/更新・guarded・既定OFF）＋grant 015 | `9e9d89c` | ✅ |
+| 2026-08-04 | Phase 1 | スライス5：請求ダッシュボード（受領・分配の横断俯瞰・3KPI・読取・GRANT不要※015のSELECT利用） | — | ✅ |
+
+**スライス5（請求ダッシュボード・読取）**：`GET /api/v2/receipts-dashboard`（admin/legal限定・書込みなし・42501等で空縮退）＋ `BillingDashboard.tsx`（業務ナビ・3KPI・フィルタ:検索/期間/未受領/未分配）。読み取りリポジトリ（Pg/Memory）は`condition_receipts`を`condition_lines`/`works`/`vendors`に結合し集計。新規GRANT不要（015の`condition_receipts` SELECTを利用、works/vendorsは既存SELECT）。受領記録（S6）が入るとKPIが点灯。
 
 **スライス6（受領記録CRUD・要GRANT）**：`POST/PUT /api/v2/condition-receipts`（guarded-write：既定OFF・admin/legal・確認トークン `COMMIT_PRODUCTION_RECEIPT`・DELETEなし）。受領再許諾料はサーバ再計算（料率/単価は`condition_lines`から、qty判定/報告値はリクエスト）。書込みリポジトリ（Pg/Memory）＋grant 015（`condition_receipts` SELECT/INSERT/UPDATE＋seq）。**payments台帳同期・上流分配は次スライスへ分離**。有効化手順は `docs/receipt-recording-deploy.md`。
 

@@ -19,6 +19,7 @@ import { ConditionLinesWorkspace } from "./ConditionLinesWorkspace";
 import { StaffWorkspace } from "./StaffWorkspace";
 import { GmailInboundWorkspace } from "./GmailInboundWorkspace";
 import { RoyaltyPreview } from "./RoyaltyPreview";
+import { BillingDashboard } from "./BillingDashboard";
 
 type CompatibilityReport = { summary: { total: number; ok: number; warning: number; error: number }; reports: Array<{ templateKey: string; status: "ok" | "warning" | "error"; missingHelpers: string[]; missingPartials: string[]; unmappedVariables: string[]; renderError?: string }> };
 
@@ -39,7 +40,7 @@ const fallback: DashboardSummary = {
   priorities: []
 };
 
-type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview";
+type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview" | "billing";
 type NavItem = { view: View; label: string; description: string; match: View[] };
 type NavGroup = { label: string; items: NavItem[] };
 
@@ -59,6 +60,7 @@ function navGroups(access: {
       ...(access.legalWorkspace ? [{ view: "matters" as const, label: "案件", description: "案件・課題・タスクの管理", match: ["matters" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "conditions" as const, label: "条件明細", description: "契約条件の横断検索・消化・検収", match: ["conditions" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "outbound" as const, label: "アウト条件", description: "許諾先へのアウト条件追記", match: ["outbound" as const] }] : []),
+      ...(access.legalWorkspace ? [{ view: "billing" as const, label: "請求", description: "再許諾料の受領・分配の横断俯瞰", match: ["billing" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "royalty-preview" as const, label: "ロイヤリティ試算", description: "確定前のロイヤリティ・源泉のライブ試算（保存なし）", match: ["royalty-preview" as const] }] : [])
     ] },
     { label: "作成", items: [
@@ -92,6 +94,7 @@ function breadcrumbFor(view: View): Array<{ label: string; view?: View }> {
     outbound: [home, { label: "アウト条件" }],
     conditions: [home, { label: "条件明細" }],
     "royalty-preview": [home, { label: "ロイヤリティ試算" }],
+    billing: [home, { label: "請求" }],
     staff: [home, { label: "担当者" }],
     "gmail-inbound": [home, { label: "受信取込" }],
     admin: [home, { label: "管理" }]
@@ -294,6 +297,7 @@ export function App() {
         )}
         {view === "outbound" && <OutboundConditionWorkspace />}
         {view === "royalty-preview" && <RoyaltyPreview />}
+        {view === "billing" && <BillingDashboard />}
         {view === "conditions" && <ConditionLinesWorkspace
           onOpenDocument={(id) => {
             setSearchSelection({ target: "document", id: String(id), title: "" });
