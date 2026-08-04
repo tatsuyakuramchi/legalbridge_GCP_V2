@@ -298,6 +298,32 @@ case "${MATERIAL_WRITES_ENABLED}" in
     exit 1
     ;;
 esac
+case "${GMAIL_DELIVERY_MODE}" in
+  disabled)
+    ;;
+  live)
+    if [ "${CONFIRM_GMAIL_DISPATCH}" != "GMAIL_DISPATCH_VALIDATION_ONLY" ]; then
+      echo "Gmail dispatch deployment blocked: explicit validation confirmation is missing."
+      exit 1
+    fi
+    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
+      echo "Gmail dispatch deployment blocked: service does not match the approved target."
+      exit 1
+    fi
+    if [ "${AUTH_MODE}" != "iap" ] && [ "${AUTH_MODE}" != "cloudrun-iam" ]; then
+      echo "Gmail dispatch deployment blocked: IAP or Cloud Run IAM authentication is required."
+      exit 1
+    fi
+    if [ -z "${GMAIL_SENDER}" ] || [ "${GMAIL_SENDER}" = "BLOCKED" ]; then
+      echo "Gmail dispatch deployment blocked: a send-as sender address is required."
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Deployment blocked: GMAIL_DELIVERY_MODE must be live or disabled."
+    exit 1
+    ;;
+esac
 case "${SLACK_APPROVAL_WRITES_ENABLED}" in
   false)
     ;;
@@ -387,6 +413,9 @@ if [ "${WORK_WRITES_ENABLED}" = "true" ]; then
 fi
 if [ "${MATERIAL_WRITES_ENABLED}" = "true" ]; then
   expected_write_scopes="$expected_write_scopes,materials"
+fi
+if [ "${GMAIL_DELIVERY_MODE}" = "live" ]; then
+  expected_write_scopes="$expected_write_scopes,gmail"
 fi
 if [ "${SLACK_DISPATCH_ENABLED}" = "true" ]; then
   expected_write_scopes="$expected_write_scopes,slack,slack-dispatch"

@@ -41,6 +41,15 @@ class BacklogReadOnlyIntegrationAdapter implements IntegrationAdapter {
   }
 }
 
+class GmailLiveIntegrationAdapter implements IntegrationAdapter {
+  readonly name = "gmail" as const;
+  readonly mode = "live" as const;
+  constructor(private readonly senderEmail: string) {}
+  async check() {
+    return { ok: true, detail: `live: send-as ${this.senderEmail}` };
+  }
+}
+
 export function createIntegrationAdapters(): IntegrationAdapter[] {
   const names: IntegrationName[] = ["backlog", "slack", "drive", "cloudsign", "gmail"];
   return names.map((name) => {
@@ -56,6 +65,9 @@ export function createIntegrationAdapters(): IntegrationAdapter[] {
         projectKey: config.backlogProjectKey,
         apiKey: config.backlogApiKey
       }));
+    }
+    if (name === "gmail" && config.gmailDeliveryMode === "live" && config.gmailSenderEmail) {
+      return new GmailLiveIntegrationAdapter(config.gmailSenderEmail);
     }
     return new LocalIntegrationAdapter(name);
   });

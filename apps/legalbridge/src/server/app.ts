@@ -121,6 +121,13 @@ import {
   FetchSlackWebApiClient
 } from "./integrations/slack-web-api-adapter.js";
 import {
+  LocalGmailDeliveryAdapter, type GmailDeliveryAdapter
+} from "./integrations/gmail-delivery-adapter.js";
+import {
+  GmailApiDeliveryAdapter, FetchGmailApiClient
+} from "./integrations/gmail-api-adapter.js";
+import { createGmailNotificationRouter } from "./documents/gmail-notification-routes.js";
+import {
   PgSlackNotificationApprovalRepository,
   type SlackNotificationApprovalRepository
 } from "./integrations/slack-approval-repository.js";
@@ -377,6 +384,23 @@ export function createApp(
     slackDeliveryAdapter.configured &&
     Boolean(dependencies.slackHistory) &&
     Boolean(dependencies.slackApprovals);
+  const gmailDeliveryAdapter: GmailDeliveryAdapter =
+    config.gmailDeliveryMode === "live" && config.gmailSenderEmail
+      ? new GmailApiDeliveryAdapter(
+          new FetchGmailApiClient(config.gmailSenderEmail, { keyFilePath: config.gmailServiceAccountKeyPath }))
+      : new LocalGmailDeliveryAdapter();
+  const gmailDispatchEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.writeScopes?.has("gmail") === true &&
+    config.gmailDeliveryMode === "live" &&
+    gmailDeliveryAdapter.configured;
+  const gmailGateSettings = {
+    integrationMode: config.integrationMode,
+    gmailCapabilityEnabled: options.writeScopes?.has("gmail") === true,
+    adapterConfigured: gmailDeliveryAdapter.configured,
+    senderEmail: config.gmailSenderEmail
+  };
   const outboundConditionWriteEnabled =
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
@@ -475,6 +499,7 @@ export function createApp(
         ...(staffWriteEnabled ? ["staff"] : []),
         ...(workWriteEnabled ? ["works"] : []),
         ...(materialWriteEnabled ? ["materials"] : []),
+        ...(gmailDispatchEnabled ? ["gmail"] : []),
         ...(slackDispatchEnabled ? ["slack-dispatch"] : [])
       ],
       database,
@@ -495,7 +520,7 @@ export function createApp(
         driveStorageEnabled || slackApprovalWriteEnabled ||
         outboundConditionWriteEnabled || contractIntakeWriteEnabled ||
         matterWriteEnabled || vendorWriteEnabled || staffWriteEnabled || workWriteEnabled ||
-        materialWriteEnabled,
+        materialWriteEnabled || gmailDispatchEnabled,
       writeCapabilities: [
         ...(draftWriteEnabled ? ["drafts"] : []),
         ...(documentFinalizeEnabled ? ["documents"] : []),
@@ -509,6 +534,7 @@ export function createApp(
         ...(staffWriteEnabled ? ["staff"] : []),
         ...(workWriteEnabled ? ["works"] : []),
         ...(materialWriteEnabled ? ["materials"] : []),
+        ...(gmailDispatchEnabled ? ["gmail"] : []),
         ...(slackDispatchEnabled ? ["slack-dispatch"] : [])
       ],
       integrations: config.integrationMode,
@@ -583,6 +609,12 @@ export function createApp(
       (request.path === "/admin/slack-notifications/dispatch" ||
         request.path === "/admin/slack-notifications/test-dispatch");
     if (slackDispatchEnabled && isSlackDispatch) return next();
+    const isGmailPreview =
+      request.method === "POST" && /^\/documents\/\d+\/gmail-notification\/preview$/.test(request.path);
+    if (documentFinalizeEnabled && isGmailPreview) return next();
+    const isGmailDispatch =
+      request.method === "POST" && /^\/documents\/\d+\/gmail-notification\/dispatch$/.test(request.path);
+    if (gmailDispatchEnabled && isGmailDispatch) return next();
     const isOutboundConditionWrite =
       request.method === "POST" && request.path === "/outbound-conditions";
     if (outboundConditionWriteEnabled && isOutboundConditionWrite) return next();
@@ -670,6 +702,7 @@ export function createApp(
   app.use("/api/v2", createWorkWriteRouter(dependencies.workWrites, workWriteEnabled));
   app.use("/api/v2", createMaterialWriteRouter(dependencies.materialWrites, materialWriteEnabled));
   app.use("/api/v2", createDocumentImportRouter(dependencies.documentImports, documentFinalizeEnabled));
+  app.use("/api/v2", createGmailNotificationRouter(documentRegistry, gmailDeliveryAdapter, gmailGateSettings));
   app.use("/api/v2", createLedgerRouter(
     dependencies.ledgers ?? new MemoryLedgerRepository()
   ));
