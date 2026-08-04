@@ -128,6 +128,13 @@ import {
 } from "./integrations/gmail-api-adapter.js";
 import { createGmailNotificationRouter } from "./documents/gmail-notification-routes.js";
 import {
+  LocalCloudSignAdapter, type CloudSignAdapter
+} from "./integrations/cloudsign-adapter.js";
+import {
+  CloudSignApiAdapter, FetchCloudSignApiClient
+} from "./integrations/cloudsign-api-adapter.js";
+import { createCloudSignRouter } from "./documents/cloudsign-routes.js";
+import {
   PgSlackNotificationApprovalRepository,
   type SlackNotificationApprovalRepository
 } from "./integrations/slack-approval-repository.js";
@@ -401,6 +408,21 @@ export function createApp(
     adapterConfigured: gmailDeliveryAdapter.configured,
     senderEmail: config.gmailSenderEmail
   };
+  const cloudSignAdapter: CloudSignAdapter =
+    config.cloudSignMode === "live" && config.cloudSignClientId && config.cloudSignBaseUrl
+      ? new CloudSignApiAdapter(new FetchCloudSignApiClient(config.cloudSignBaseUrl, config.cloudSignClientId))
+      : new LocalCloudSignAdapter();
+  const cloudSignDispatchEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.writeScopes?.has("cloudsign") === true &&
+    config.cloudSignMode === "live" &&
+    cloudSignAdapter.configured;
+  const cloudSignGateSettings = {
+    integrationMode: config.integrationMode,
+    cloudSignCapabilityEnabled: options.writeScopes?.has("cloudsign") === true,
+    adapterConfigured: cloudSignAdapter.configured
+  };
   const outboundConditionWriteEnabled =
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
@@ -500,6 +522,7 @@ export function createApp(
         ...(workWriteEnabled ? ["works"] : []),
         ...(materialWriteEnabled ? ["materials"] : []),
         ...(gmailDispatchEnabled ? ["gmail"] : []),
+        ...(cloudSignDispatchEnabled ? ["cloudsign"] : []),
         ...(slackDispatchEnabled ? ["slack-dispatch"] : [])
       ],
       database,
@@ -520,7 +543,7 @@ export function createApp(
         driveStorageEnabled || slackApprovalWriteEnabled ||
         outboundConditionWriteEnabled || contractIntakeWriteEnabled ||
         matterWriteEnabled || vendorWriteEnabled || staffWriteEnabled || workWriteEnabled ||
-        materialWriteEnabled || gmailDispatchEnabled,
+        materialWriteEnabled || gmailDispatchEnabled || cloudSignDispatchEnabled,
       writeCapabilities: [
         ...(draftWriteEnabled ? ["drafts"] : []),
         ...(documentFinalizeEnabled ? ["documents"] : []),
@@ -535,6 +558,7 @@ export function createApp(
         ...(workWriteEnabled ? ["works"] : []),
         ...(materialWriteEnabled ? ["materials"] : []),
         ...(gmailDispatchEnabled ? ["gmail"] : []),
+        ...(cloudSignDispatchEnabled ? ["cloudsign"] : []),
         ...(slackDispatchEnabled ? ["slack-dispatch"] : [])
       ],
       integrations: config.integrationMode,
@@ -615,6 +639,12 @@ export function createApp(
     const isGmailDispatch =
       request.method === "POST" && /^\/documents\/\d+\/gmail-notification\/dispatch$/.test(request.path);
     if (gmailDispatchEnabled && isGmailDispatch) return next();
+    const isCloudSignPreview =
+      request.method === "POST" && /^\/documents\/\d+\/cloudsign\/preview$/.test(request.path);
+    if (documentFinalizeEnabled && isCloudSignPreview) return next();
+    const isCloudSignDispatch =
+      request.method === "POST" && /^\/documents\/\d+\/cloudsign\/dispatch$/.test(request.path);
+    if (cloudSignDispatchEnabled && isCloudSignDispatch) return next();
     const isOutboundConditionWrite =
       request.method === "POST" && request.path === "/outbound-conditions";
     if (outboundConditionWriteEnabled && isOutboundConditionWrite) return next();
@@ -703,6 +733,8 @@ export function createApp(
   app.use("/api/v2", createMaterialWriteRouter(dependencies.materialWrites, materialWriteEnabled));
   app.use("/api/v2", createDocumentImportRouter(dependencies.documentImports, documentFinalizeEnabled));
   app.use("/api/v2", createGmailNotificationRouter(documentRegistry, gmailDeliveryAdapter, gmailGateSettings));
+  app.use("/api/v2", createCloudSignRouter(
+    documentRegistry, dependencies.templates, pdfRenderer, cloudSignAdapter, cloudSignGateSettings));
   app.use("/api/v2", createLedgerRouter(
     dependencies.ledgers ?? new MemoryLedgerRepository()
   ));

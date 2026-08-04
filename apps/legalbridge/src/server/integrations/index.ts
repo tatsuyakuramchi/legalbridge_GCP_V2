@@ -50,6 +50,15 @@ class GmailLiveIntegrationAdapter implements IntegrationAdapter {
   }
 }
 
+class CloudSignLiveIntegrationAdapter implements IntegrationAdapter {
+  readonly name = "cloudsign" as const;
+  readonly mode = "live" as const;
+  constructor(private readonly baseUrl: string) {}
+  async check() {
+    return { ok: true, detail: `live: ${this.baseUrl}` };
+  }
+}
+
 export function createIntegrationAdapters(): IntegrationAdapter[] {
   const names: IntegrationName[] = ["backlog", "slack", "drive", "cloudsign", "gmail"];
   return names.map((name) => {
@@ -68,6 +77,9 @@ export function createIntegrationAdapters(): IntegrationAdapter[] {
     }
     if (name === "gmail" && config.gmailDeliveryMode === "live" && config.gmailSenderEmail) {
       return new GmailLiveIntegrationAdapter(config.gmailSenderEmail);
+    }
+    if (name === "cloudsign" && config.cloudSignMode === "live" && config.cloudSignClientId) {
+      return new CloudSignLiveIntegrationAdapter(config.cloudSignBaseUrl);
     }
     return new LocalIntegrationAdapter(name);
   });
