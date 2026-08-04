@@ -34,9 +34,38 @@ export interface ConditionLineSummaryRow {
   totalMg: number;     // sum of mg_amount
 }
 
+export interface ConditionInstallment {
+  installmentNo: number;
+  triggerKind: string;
+  plannedAmount: number;
+  dueDate: string | null;
+  settled: boolean;
+}
+export interface ConditionEvent {
+  eventNo: number;
+  eventType: string;   // inspection / royalty_calc / payment
+  occurredAt: string | null;
+  amount: number;
+  period: string | null;
+  documentId: number | null;
+}
+export interface ConditionConsumption {
+  currency: string | null;
+  plannedTotal: number;
+  consumedTotal: number;
+  balance: number;
+  inspectionRequired: boolean;
+  inspectionDone: boolean;
+  installments: ConditionInstallment[];
+  events: ConditionEvent[];
+}
+
 export interface ConditionLineDetail extends ConditionLineRow {
   matterCode: string | null;
   matterTitle: string | null;
+  // null when the settlement tables are not readable (grant 011 not applied)
+  // or when there is no schedule/event data for the line.
+  consumption: ConditionConsumption | null;
   exclusivity: string | null;
   sublicenseAllowed: boolean | null;
   paymentScheme: string | null;
@@ -129,6 +158,7 @@ export class PgConditionLineRepository implements ConditionLineRepository {
     const row = detail.rows[0];
     return {
       ...mapRow(row),
+      consumption: await this.consumption(id, row.currency ?? null),
       matterCode: row.matter_code ?? null,
       matterTitle: row.matter_title ?? null,
       exclusivity: row.exclusivity ?? null,
@@ -143,6 +173,58 @@ export class PgConditionLineRepository implements ConditionLineRepository {
       regions: regions.rows.map((r) => String(r.country_name)).filter(Boolean),
       languages: languages.rows.map((r) => String(r.language_name)).filter(Boolean)
     };
+  }
+
+  // Real settlement: planned installments vs non-voided events. Degrades to
+  // null if the settlement tables are not readable (grant 011 not applied).
+  private async consumption(id: number, currency: string | null): Promise<ConditionConsumption | null> {
+    try {
+      const [installments, events] = await Promise.all([
+        this.database.query(
+          `SELECT id, installment_no, trigger_kind, planned_amount_ex_tax, due_date
+             FROM condition_line_installments
+            WHERE condition_line_id = $1 ORDER BY installment_no`, [id]),
+        this.database.query(
+          `SELECT event_no, event_type, occurred_at, amount_ex_tax, period, document_id, installment_id
+             FROM condition_events
+            WHERE condition_line_id = $1 AND voided_at IS NULL
+            ORDER BY occurred_at, event_no`, [id])
+      ]);
+      if (!installments.rows.length && !events.rows.length) return null;
+      const settledInstallmentIds = new Set(
+        events.rows.map((e) => (e.installment_id === null ? null : Number(e.installment_id))).filter((v) => v !== null)
+      );
+      const plannedTotal = installments.rows.reduce((sum, r) => sum + (num(r.planned_amount_ex_tax) ?? 0), 0);
+      const consumedTotal = events.rows.reduce((sum, r) => sum + (num(r.amount_ex_tax) ?? 0), 0);
+      const installmentList: ConditionInstallment[] = installments.rows.map((r) => ({
+        installmentNo: Number(r.installment_no),
+        triggerKind: String(r.trigger_kind ?? ""),
+        plannedAmount: num(r.planned_amount_ex_tax) ?? 0,
+        dueDate: r.due_date ? String(r.due_date).slice(0, 10) : null,
+        settled: settledInstallmentIds.has(Number(r.id))
+      }));
+      return {
+        currency,
+        plannedTotal,
+        consumedTotal,
+        balance: plannedTotal - consumedTotal,
+        inspectionRequired: installments.rows.some((r) => r.trigger_kind === "on_inspection"),
+        inspectionDone: events.rows.some((e) => e.event_type === "inspection"),
+        installments: installmentList,
+        events: events.rows.map((r) => ({
+          eventNo: Number(r.event_no),
+          eventType: String(r.event_type ?? ""),
+          occurredAt: r.occurred_at ? new Date(String(r.occurred_at)).toISOString() : null,
+          amount: num(r.amount_ex_tax) ?? 0,
+          period: r.period ?? null,
+          documentId: r.document_id === null ? null : Number(r.document_id)
+        }))
+      };
+    } catch (error) {
+      // 42501 = insufficient privilege (grant 011 not yet applied) — degrade.
+      if ((error as { code?: string })?.code === "42501") return null;
+      throw error;
+    }
   }
 }
 
@@ -215,7 +297,7 @@ export class MemoryConditionLineRepository implements ConditionLineRepository {
     return {
       ...row, matterCode: null, matterTitle: null, exclusivity: null, sublicenseAllowed: null,
       paymentScheme: null, paymentTerms: null, royaltyBase: null, deductibleCosts: null,
-      agAmount: null, notes: null, regions: [], languages: []
+      agAmount: null, notes: null, regions: [], languages: [], consumption: null
     };
   }
 }

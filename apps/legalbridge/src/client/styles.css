@@ -206,6 +206,22 @@ header input { width: 100%; border: 1px solid #d9e2ec; border-radius: 8px; paddi
 .condition-notes { border-top: 1px solid #e2e8f0; margin-top: 16px; padding-top: 12px; }
 .condition-notes h3 { margin: 0 0 6px; font-size: 13px; color: #172a44; }
 .condition-notes p { margin: 0; white-space: pre-wrap; font-size: 13px; color: #334155; }
+.condition-consumption { border-top: 1px solid #e2e8f0; margin-top: 16px; padding-top: 12px; }
+.condition-consumption h3 { margin: 0 0 8px; font-size: 13px; color: #172a44; }
+.condition-consumption h4 { margin: 12px 0 6px; font-size: 12px; color: #475569; }
+.consumption-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.consumption-cards article { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; display: grid; gap: 3px; }
+.consumption-cards span { color: #64748b; font-size: 11px; }
+.consumption-cards strong { color: #172a44; font-size: 15px; }
+.consumption-cards article.settled { border-left: 3px solid #16805b; }
+.consumption-cards strong.warn { color: #b45309; }
+.consumption-bar { position: relative; height: 20px; background: #eef2f7; border-radius: 999px; margin: 10px 0 2px; overflow: hidden; }
+.consumption-bar > div { height: 100%; background: linear-gradient(90deg, #20b8cd, #168ca0); border-radius: 999px; }
+.consumption-bar small { position: absolute; right: 8px; top: 2px; font-size: 11px; color: #0f5f6e; }
+.consumption-row { display: grid; grid-template-columns: 1.6fr 1fr 1fr auto; gap: 8px; font-size: 12px; padding: 5px 0; border-bottom: 1px solid #f1f5f9; align-items: center; }
+.consumption-row .settled-tag { color: #047857; font-weight: 700; }
+.consumption-row .pending-tag { color: #b45309; font-weight: 700; }
+@media (max-width: 700px) { .consumption-cards { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 900px) { .condition-detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 600px) { .condition-detail-grid { grid-template-columns: 1fr; } }
 .matter-detail-section h3 { display: flex; justify-content: space-between; align-items: center; }
