@@ -1,5 +1,6 @@
 import type { DashboardSummary } from "../../types.js";
 import type { MatterSummary } from "./repository.js";
+import type { ConditionSettlementSummary } from "../conditions/repository.js";
 
 // Map the fine-grained lifecycle_stage values onto the five-step funnel the
 // home cockpit shows. Read-only projection over matter_overview_v — no schema
@@ -26,7 +27,14 @@ function dueSortKey(due: string | null | undefined) {
 }
 
 // Pure so it is trivially testable; `now` is injected to stay deterministic.
-export function buildMatterDashboard(matters: MatterSummary[], now: Date): DashboardSummary {
+// `settlement` is the portfolio-wide 消化/検収 band; null when the finance
+// tables are not granted (grant 011), in which case the home cockpit shows
+// matter KPIs only.
+export function buildMatterDashboard(
+  matters: MatterSummary[],
+  now: Date,
+  settlement: ConditionSettlementSummary | null = null
+): DashboardSummary {
   const today = todayKey(now);
   const open = matters.filter((m) => OPEN_STATUSES.has(m.status));
   const dueToday = open.filter((m) => Boolean(m.targetDueDate) && m.targetDueDate!.slice(0, 10) <= today);
@@ -80,5 +88,5 @@ export function buildMatterDashboard(matters: MatterSummary[], now: Date): Dashb
       overdue: isOverdue(m.nextTaskDueAt, today)
     }));
 
-  return { kpis, stages, priorities, nextActions, source: "live" };
+  return { kpis, stages, priorities, nextActions, settlement, source: "live" };
 }

@@ -591,9 +591,15 @@ export function createApp(
     // Real cockpit from matter_overview_v (read-only). Fall back to the static
     // sample when no repository/data is available so the UI still renders.
     try {
-      const matters = await matterRepository.list("", undefined, 500);
+      // Settlement (消化/検収) is best-effort: it degrades to null when the
+      // finance tables are not granted, so a failure here must not drop the
+      // matter cockpit.
+      const [matters, settlement] = await Promise.all([
+        matterRepository.list("", undefined, 500),
+        dependencies.conditionLines?.settlement().catch(() => null) ?? Promise.resolve(null)
+      ]);
       if (matters.length) {
-        return response.json(buildMatterDashboard(matters, new Date()));
+        return response.json(buildMatterDashboard(matters, new Date(), settlement));
       }
     } catch (error) {
       console.error("dashboard aggregation failed", error);

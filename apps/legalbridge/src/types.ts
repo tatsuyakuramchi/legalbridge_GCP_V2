@@ -70,5 +70,15 @@ export interface DashboardSummary {
     dueAt: string | null;
     overdue?: boolean;
   }>;
+  // 決算バンド（消化実績・検収）。財務テーブルへのSELECT付与（grant 011）が
+  // 未適用の環境では null で安全に縮退し、ホームは案件KPIのみを表示する。
+  settlement?: {
+    plannedTotal: number;
+    consumedTotal: number;
+    consumptionRate: number;        // 0..1
+    linesRequiringInspection: number;
+    linesInspected: number;
+    inspectionRate: number;         // 0..1
+  } | null;
   source?: "live" | "sample";
 }

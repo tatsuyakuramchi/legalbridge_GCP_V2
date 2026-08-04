@@ -60,6 +60,17 @@ test("優先案件は停滞→期限昇順で並び、期限超過を検出す�
   assert.ok(result.priorities.every((p) => p.status !== "closed"));
 });
 
+test("決算バンドは省略時 null、渡すとそのまま反映される", () => {
+  assert.equal(buildMatterDashboard([matter({ id: 1 })], NOW).settlement, null);
+
+  const settlement = {
+    plannedTotal: 1000, consumedTotal: 600, consumptionRate: 0.6,
+    linesRequiringInspection: 4, linesInspected: 3, inspectionRate: 0.75
+  };
+  const result = buildMatterDashboard([matter({ id: 1 })], NOW, settlement);
+  assert.deepEqual(result.settlement, settlement);
+});
+
 test("次アクションはprimaryタスクを期限昇順で返す", () => {
   const result = buildMatterDashboard([
     matter({ id: 1, nextTaskTitle: "ドラフト送付", nextTaskDueAt: "2026-08-05T00:00:00.000Z" }),

@@ -451,6 +451,9 @@ function Dashboard({ dashboard, access, onNavigate, onOpenMatter, onCreateDocume
       <div className="kpis">
         {dashboard.kpis.map((kpi) => <article key={kpi.label} className={kpi.tone ?? ""}><span>{kpi.label}</span><strong>{kpi.value}</strong></article>)}
       </div>
+
+      {dashboard.settlement && <SettlementBand settlement={dashboard.settlement} />}
+
       <section className="panel">
         <div className="panel-head"><h2>案件工程</h2>
           <span>全案件 {dashboard.stages.reduce((sum, s) => sum + s.count, 0)}</span></div>
@@ -493,6 +496,45 @@ function Dashboard({ dashboard, access, onNavigate, onOpenMatter, onCreateDocume
 
 function formatShortDate(value: string) {
   return new Intl.DateTimeFormat("ja-JP", { timeZone: "Asia/Tokyo", month: "2-digit", day: "2-digit" }).format(new Date(value));
+}
+
+function formatPercent(rate: number) {
+  return `${Math.round((rate || 0) * 100)}%`;
+}
+function formatAmount(value: number) {
+  return new Intl.NumberFormat("ja-JP").format(Math.round(value || 0));
+}
+
+// 決算バンド：消化実績・検収をポートフォリオ全体で俯瞰する。財務テーブルの
+// SELECT付与がある環境でのみ dashboard.settlement が入り、ここが描画される。
+function SettlementBand({ settlement }: { settlement: NonNullable<DashboardSummary["settlement"]> }) {
+  const balance = settlement.plannedTotal - settlement.consumedTotal;
+  const consumptionPct = Math.min(100, Math.round((settlement.consumptionRate || 0) * 100));
+  const inspectionPct = Math.min(100, Math.round((settlement.inspectionRate || 0) * 100));
+  return (
+    <section className="settlement-band">
+      <div className="panel-head"><h2>決算：消化・検収</h2><span>ポートフォリオ全体</span></div>
+      <div className="settlement-kpis">
+        <article>
+          <span>消化率</span>
+          <strong>{formatPercent(settlement.consumptionRate)}</strong>
+          <div className="consumption-bar"><div style={{ width: `${consumptionPct}%` }} /><small>{consumptionPct}%</small></div>
+          <small>消化 {formatAmount(settlement.consumedTotal)} / 計画 {formatAmount(settlement.plannedTotal)}</small>
+        </article>
+        <article>
+          <span>検収率</span>
+          <strong>{formatPercent(settlement.inspectionRate)}</strong>
+          <div className="consumption-bar"><div style={{ width: `${inspectionPct}%` }} /><small>{inspectionPct}%</small></div>
+          <small>検収 {settlement.linesInspected} / 要検収 {settlement.linesRequiringInspection} 件</small>
+        </article>
+        <article className={balance > 0 ? "warn" : ""}>
+          <span>未消化残</span>
+          <strong>{formatAmount(balance)}</strong>
+          <small>計画に対する未消化額</small>
+        </article>
+      </div>
+    </section>
+  );
 }
 
 function DocumentForm({
