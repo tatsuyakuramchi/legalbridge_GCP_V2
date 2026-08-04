@@ -119,6 +119,7 @@ export function App() {
   const [canEditMatters, setCanEditMatters] = useState(false);
   const [canEditVendors, setCanEditVendors] = useState(false);
   const [canEditWorks, setCanEditWorks] = useState(false);
+  const [canEditMaterials, setCanEditMaterials] = useState(false);
   const [canEditStaff, setCanEditStaff] = useState(false);
   const [currentUser, setCurrentUser] = useState<{ email: string; role: "admin" | "legal" | "requester" } | null>(null);
   const [searchSelection, setSearchSelection] = useState<{ target: "matter" | "document" | "vendor" | "work"; id: string; title: string } | null>(null);
@@ -157,6 +158,7 @@ export function App() {
         setCanEditMatters(capabilities.includes("matters"));
         setCanEditVendors(capabilities.includes("vendors"));
         setCanEditWorks(capabilities.includes("works"));
+        setCanEditMaterials(capabilities.includes("materials"));
         setCanEditStaff(capabilities.includes("staff"));
       })
       .catch(() => {
@@ -168,6 +170,7 @@ export function App() {
         setCanEditMatters(false);
         setCanEditVendors(false);
         setCanEditWorks(false);
+        setCanEditMaterials(false);
         setCanEditStaff(false);
       });
     fetch("/api/v2/document-templates")
@@ -260,6 +263,7 @@ export function App() {
         {view === "ledgers" && <LedgerWorkspace
           canEditVendors={canEditVendors}
           canEditWorks={canEditWorks}
+          canEditMaterials={canEditMaterials}
           initialType={searchSelection?.target === "work" ? "works" : searchSelection?.target === "vendor" ? "vendors" : undefined}
           initialQuery={searchSelection?.target === "work" || searchSelection?.target === "vendor" ? searchSelection.title : undefined}
           selectedId={searchSelection?.target === "work" || searchSelection?.target === "vendor" ? searchSelection.id : undefined} />}

@@ -278,6 +278,7 @@ header input { width: 100%; border: 1px solid #d9e2ec; border-radius: 8px; paddi
 .ledger-list > button span { color: #168ca0; font-size: 11px; font-weight: 800; }
 .ledger-list > button strong { color: #172a44; }.ledger-list > button small { color: #64748b; }
 .ledger-detail { position: sticky; top: 80px; max-height: calc(100vh - 104px); overflow-y: auto; }
+.work-picker { grid-template-columns: 1fr; max-height: 180px; overflow-y: auto; margin-top: 6px; }
 .ledger-detail h2 { margin: 5px 0; }.ledger-detail > p { color: #64748b; font-size: 12px; }
 .ledger-detail dl > div { display: grid; grid-template-columns: 120px 1fr; gap: 12px; border-bottom: 1px solid #eef2f7; padding: 9px 0; font-size: 12px; }
 .ledger-detail dt { color: #64748b; }.ledger-detail dd { margin: 0; color: #172a44; white-space: pre-wrap; overflow-wrap: anywhere; }
