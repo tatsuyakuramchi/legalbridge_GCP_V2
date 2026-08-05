@@ -78,6 +78,10 @@ import {
 } from "./works/write-repository.js";
 import { createWorkWriteRouter } from "./works/write-routes.js";
 import {
+  MemoryWorkReadRepository, PgWorkReadRepository, type WorkReadRepository
+} from "./works/read-repository.js";
+import { createWorkReadRouter } from "./works/read-routes.js";
+import {
   MemoryMaterialWriteRepository, PgMaterialWriteRepository, type MaterialWriteRepository
 } from "./materials/write-repository.js";
 import { createMaterialWriteRouter } from "./materials/write-routes.js";
@@ -262,6 +266,7 @@ export interface AppDependencies {
   staff?: StaffRepository;
   documentImports?: DocumentImportRepository;
   workWrites?: WorkWriteRepository;
+  worksRead?: WorkReadRepository;
   materialWrites?: MaterialWriteRepository;
   ledgers?: LedgerRepository;
   search?: GlobalSearchRepository;
@@ -337,6 +342,9 @@ function createDefaultDependencies(): AppDependencies {
     workWrites: database
       ? new PgWorkWriteRepository(database)
       : new MemoryWorkWriteRepository(),
+    worksRead: database
+      ? new PgWorkReadRepository(database)
+      : new MemoryWorkReadRepository(),
     materialWrites: database
       ? new PgMaterialWriteRepository(database)
       : new MemoryMaterialWriteRepository(),
@@ -846,6 +854,8 @@ export function createApp(
   app.use("/api/v2", createPendingInspectionRouter(dependencies.pendingInspections));
   app.use("/api/v2", createVendorWriteRouter(dependencies.vendorWrites, vendorWriteEnabled));
   app.use("/api/v2", createStaffRouter(dependencies.staff, staffWriteEnabled));
+  // 作品集約リード（読み取り・admin/legal限定・Phase 2）。書込みなし。
+  app.use("/api/v2", createWorkReadRouter(dependencies.worksRead));
   app.use("/api/v2", createWorkWriteRouter(dependencies.workWrites, workWriteEnabled));
   app.use("/api/v2", createMaterialWriteRouter(dependencies.materialWrites, materialWriteEnabled));
   app.use("/api/v2", createDocumentImportRouter(dependencies.documentImports, documentFinalizeEnabled));

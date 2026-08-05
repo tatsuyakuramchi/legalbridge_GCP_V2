@@ -176,6 +176,11 @@ Phase 7 は全フェーズの受け入れ後
 
 > **Phase 1 完了サマリ**：純関数エンジン7種（calc/tax/fx/receipt/payment-sync/receivable-map/payment-report）＋書込3系統（消化イベント/受領記録/payments台帳・grant 014/015/016）＋読取・印刷UI6種（試算/請求ダッシュボード/債権マップ/支払報告書/請求印刷＋受領記録UI）。テスト327件。すべて既定OFF・capability-gated・no-DELETE・DB/template無改変・既存ゼロ破壊。本番GRANT適用（011/014/015/016）と`verify-write-test`はオペレーター作業として残る。S4は軽量Excel(.xls・HTMLテーブル方式・依存なし)＋CSV出力に対応済み（正式xlsx/ZIPはSheetJS等の依存判断があれば後日）。デプロイは統合Runbook `docs/phase1-deploy-runbook.md` 参照。
 
+| 2026-08-05 | Phase 2 | 棚卸し＋計画 → `docs/phase2-works-rights-plan.md` | — | ✅ |
+| 2026-08-05 | Phase 2 | スライス2-1：作品集約リードAPI（一覧/検索＋詳細集約：概要/系譜/素材/権利ソース/条件・読取・GRANT不要※006+007 SELECT利用・セクションnull縮退） | — | ✅ |
+
+**スライス2-1（作品集約リード）**：`works/work-detail.ts`（純関数：条件分類`groupWorkConditions`・系譜ラベル`buildLineageView`）＋`works/read-repository.ts`（`list`/`detail`・並行取得・権限不足セクションnull縮退・Memory同梱）＋`works/read-routes.ts`（`GET /works`・`GET /works/:id/detail`・admin/legal限定）。app.ts結線（読取・フラグ無し）。作品を起点に系譜/素材/権利ソース/条件を一望する土台。新規GRANT・新規env不要（既存デプロイで反映）。テスト339件。決定ポイント（製品テーブルはDDL要・系譜の真実源二重化）は計画doc §2参照。
+
 **スライス4（支払報告書・読取）**：出金台帳（`payments` outbound）の各行に源泉徴収・消費税を適用し差引振込額まで算定。純関数`buildPaymentReport`が`tax.ts`（源泉10.21%/100万超20.42%/個人強制ON・消費税ceil）を合成。読み取りリポジトリ（Pg/Memory・42501等で縮退）が`payments`＋`vendors`（源泉フラグ）を集約。`GET /api/v2/payment-report`（admin/legal限定）＋`PaymentReport.tsx`（期間フィルタ・4KPI・明細・**クライアント側CSV出力**）。**SheetJS等の新規バイナリ依存は追加せず**、XLSX/ZIP特有形式は後日拡張。新規GRANT不要（016の`payments` SELECT＋vendors利用）。
 
 **スライス7（債権マップ・読取）**：段跨ぎカスケードを純関数`buildLineageCascade`で厳密移植（`cascade_base=Σ(i段〜最下段の受領)`・`分配=料率×base`・同一capabilityの二重計上防止`seenCap`・`Math.round`）。読み取りリポジトリ（Pg/Memory・42501等で縮退）が作品の派生系譜（`works.parent_work_id`）を辿り、各段の受領（`condition_receipts`）と上流料率（`parent_license_condition_id`→親`rate_pct`）を集約。`GET /api/v2/receivable-map`（admin/legal限定）＋`ReceivableMap.tsx`（作品ID入力→段ごとの受領/分配基礎/上流分配/留保＋合計）。新規GRANT不要。
