@@ -204,6 +204,34 @@ header input { width: 100%; border: 1px solid var(--border); border-radius: var(
 .billing-unlinked { display: inline-flex; border-radius: var(--radius-pill); background: var(--warning-bg); color: var(--warning-ink); padding: 2px 8px; font-size: 10px; font-weight: 800; }
 @media (max-width: 760px) { .billing-kpis { grid-template-columns: 1fr; } }
 
+/* Billing print (請求印刷・計算書) */
+.print-statement { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 28px 32px; }
+.print-statement-head { text-align: center; border-bottom: 2px solid var(--ink-strong); padding-bottom: 14px; margin-bottom: 20px; }
+.print-statement-head h2 { margin: 0 0 12px; color: var(--ink-strong); font-size: 22px; letter-spacing: .08em; }
+.print-statement-head dl { display: flex; justify-content: center; gap: 32px; margin: 0; }
+.print-statement-head dl div { display: flex; gap: 8px; font-size: 13px; }
+.print-statement-head dt { color: var(--ink-soft); }
+.print-statement-head dd { margin: 0; color: var(--ink-strong); font-weight: 700; }
+.print-group { margin-bottom: 22px; }
+.print-group h3 { margin: 0 0 8px; color: var(--ink-strong); font-size: 15px; border-left: 3px solid var(--accent); padding-left: 8px; }
+.print-group table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.print-group th { text-align: left; color: var(--ink-soft); font-weight: 700; padding: 8px 10px; border-bottom: 1px solid var(--divider); }
+.print-group td { padding: 8px 10px; border-bottom: 1px solid var(--divider-faint); }
+.print-group tfoot td { border-top: 2px solid var(--divider); border-bottom: 0; font-weight: 800; color: var(--ink-strong); }
+.print-grand { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; border-top: 2px solid var(--ink-strong); padding-top: 16px; margin-top: 8px; }
+.print-grand div { display: grid; gap: 4px; text-align: right; }
+.print-grand span { color: var(--ink-soft); font-size: 12px; }
+.print-grand strong { color: var(--ink-strong); font-size: 20px; }
+.print-note { margin-top: 20px; color: var(--ink-soft); font-size: 11px; }
+@media print {
+  .rail, main > header, .breadcrumb, .readonly-banner, .print-hide, .toast-stack { display: none !important; }
+  .shell { display: block; }
+  main { display: block; }
+  .page, .billing-print { padding: 0; }
+  .print-statement { border: 0; border-radius: 0; padding: 0; }
+  body, .print-statement { background: white; }
+}
+
 /* Receivable map (債権マップ・読み取り専用) */
 .rmap-toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; }
 .rmap-toolbar input { border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); padding: 10px 12px; width: 220px; }

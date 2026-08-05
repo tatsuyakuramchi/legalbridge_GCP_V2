@@ -68,7 +68,7 @@ V1の4グループ構成を基礎に、V2の実装状況とcapabilityで出し�
   - **0-B** ナビIA刷新（`6947514`）：サイドナビを 概要／業務／作成／設定 の4グループへ再構成（§2.1）。ロール・`writeCapabilities` の出し分けは完全維持。
   - **0-C** ダッシュボード決算バンド（`42b8c45`）：ホームに 消化率／検収率／未消化残 を追加。既存 `conditionLines.settlement()` を再利用し、財務テーブル未付与（grant 011）時は `null` で安全縮退（非表示）。Phase 1のGRANT適用で自動点火。
 
-### Phase 1：金銭・ロイヤリティ管理【最重要・最大】
+### Phase 1：金銭・ロイヤリティ管理【最重要・最大】✅ 主要スライス完了（§7進捗ログ参照）
 - ロイヤリティ計算エンジン（料率×製造/販売数、MG/AG消化）
 - 支払報告書/ロイヤリティステートメント生成（templateは既存を使用）
 - 源泉徴収・租税条約・多通貨/為替レート
@@ -169,7 +169,12 @@ Phase 7 は全フェーズの受け入れ後
 **payments台帳同期**：受領記録時に同一トランザクションで`payments`へ同期（受領→inbound/sublicense_income、分配→outbound/royalty・相手=親）。同期意図は純関数`planPaymentSync`が算出（no-DELETE：クリアは金額ゼロUPDATE、`work_id`欠落時はCHECK不成立でスキップ）。**capability分離**：受領記録（015）は単独動作、台帳同期は追加スコープ`payments`＋grant 016（`payments` SELECT/INSERT/UPDATE）有効時のみ。有効化手順は `docs/payment-ledger-deploy.md`。
 
 | 2026-08-04 | Phase 1 | スライス7：債権マップ（作品中心3層カスケード・読取・GRANT不要※既存SELECT利用） | `cd15a8e` | ✅ |
-| 2026-08-04 | Phase 1 | スライス4：支払報告書（源泉込み支払内訳・CSV出力・読取・GRANT不要※016 SELECT利用） | — | ✅ |
+| 2026-08-04 | Phase 1 | スライス4：支払報告書（源泉込み支払内訳・CSV出力・読取・GRANT不要※016 SELECT利用） | `ffb99d3` | ✅ |
+| 2026-08-04 | Phase 1 | スライス8：請求印刷（受領・分配 計算書・window.print()・クライアント完結） | — | ✅ |
+
+**スライス8（請求印刷・クライアント完結）**：`receipts-dashboard`読み取りを作品ごとに集計し、印刷最適化した「再許諾料 受領・分配 計算書」を`BillingPrint.tsx`で描画。`@media print`でシェル（レール/ヘッダ/パンくず/トースト）を隠し、計算書のみ印刷。`window.print()`でPDF化。新規依存・新規GRANT・サーバ変更なし。**これにて Phase 1（金銭・ロイヤリティ）の主要スライスが完了**。
+
+> **Phase 1 完了サマリ**：純関数エンジン7種（calc/tax/fx/receipt/payment-sync/receivable-map/payment-report）＋書込3系統（消化イベント/受領記録/payments台帳・grant 014/015/016）＋読取・印刷UI6種（試算/請求ダッシュボード/債権マップ/支払報告書/請求印刷＋受領記録UI）。テスト327件。すべて既定OFF・capability-gated・no-DELETE・DB/template無改変・既存ゼロ破壊。本番GRANT適用（011/014/015/016）と`verify-write-test`はオペレーター作業として残る。残：S4のXLSX/ZIP拡張（SheetJS依存の判断が必要・後日）。
 
 **スライス4（支払報告書・読取）**：出金台帳（`payments` outbound）の各行に源泉徴収・消費税を適用し差引振込額まで算定。純関数`buildPaymentReport`が`tax.ts`（源泉10.21%/100万超20.42%/個人強制ON・消費税ceil）を合成。読み取りリポジトリ（Pg/Memory・42501等で縮退）が`payments`＋`vendors`（源泉フラグ）を集約。`GET /api/v2/payment-report`（admin/legal限定）＋`PaymentReport.tsx`（期間フィルタ・4KPI・明細・**クライアント側CSV出力**）。**SheetJS等の新規バイナリ依存は追加せず**、XLSX/ZIP特有形式は後日拡張。新規GRANT不要（016の`payments` SELECT＋vendors利用）。
 
