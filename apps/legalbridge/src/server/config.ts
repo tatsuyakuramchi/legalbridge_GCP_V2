@@ -40,6 +40,8 @@ export const config = {
     process.env.ROYALTY_EVENT_WRITES_ENABLED === "true",
   receiptWritesEnabled:
     process.env.RECEIPT_WRITES_ENABLED === "true",
+  paymentLedgerWritesEnabled:
+    process.env.PAYMENT_LEDGER_WRITES_ENABLED === "true",
   writeScopes: new Set(
     String(process.env.WRITE_SCOPES ?? "")
       .split(",").map((value) => value.trim()).filter(Boolean)

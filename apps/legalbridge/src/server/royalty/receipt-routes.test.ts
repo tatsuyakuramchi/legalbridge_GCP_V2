@@ -5,7 +5,7 @@ import request from "supertest";
 import { createReceiptRouter } from "./receipt-routes.js";
 import { MemoryReceiptRepository } from "./receipt-repository.js";
 
-function app(opts: { writeEnabled?: boolean; role?: string } = {}) {
+function app(opts: { writeEnabled?: boolean; role?: string; syncPayments?: boolean; repo?: MemoryReceiptRepository } = {}) {
   const a = express();
   a.use(express.json());
   a.use((_req, res, next) => {
@@ -14,10 +14,14 @@ function app(opts: { writeEnabled?: boolean; role?: string } = {}) {
       : undefined;
     next();
   });
-  a.use("/api/v2", createReceiptRouter(
-    opts.writeEnabled ? new MemoryReceiptRepository(new Map([[1, { ratePct: 10, unitPrice: 500, parentLicenseConditionId: null, parentRatePct: null }]])) : undefined,
-    opts.writeEnabled ?? false
-  ));
+  const repository = opts.writeEnabled
+    ? (opts.repo ?? new MemoryReceiptRepository(new Map([[1, {
+        ratePct: 10, unitPrice: 500, parentLicenseConditionId: 91, parentRatePct: 20,
+        sourceWorkId: 42, counterpartyVendorId: 18, currency: "JPY",
+        parentCounterpartyVendorId: 9, parentCurrency: "JPY"
+      }]])))
+    : undefined;
+  a.use("/api/v2", createReceiptRouter(repository, opts.writeEnabled ?? false, opts.syncPayments ?? false));
   return a;
 }
 
@@ -63,6 +67,20 @@ test("更新：PUTで再計算する", async () => {
   assert.equal(res.status, 200);
   assert.equal(res.body.receipt.computedRoyaltyExTax, 25000); // 250000 × 10%
   assert.equal(res.body.receipt.status, "received");
+});
+
+test("payments同期無効時は台帳同期しない（paymentsSynced=0）", async () => {
+  const res = await request(app({ writeEnabled: true, role: "legal", syncPayments: false }))
+    .post("/api/v2/condition-receipts").send({ ...validBody, receivedAmount: 9000 });
+  assert.equal(res.status, 201);
+  assert.equal(res.body.receipt.paymentsSynced, 0);
+});
+
+test("payments同期有効時は受領→入金・分配→出金を同期（paymentsSynced=2）", async () => {
+  const res = await request(app({ writeEnabled: true, role: "legal", syncPayments: true }))
+    .post("/api/v2/condition-receipts").send({ ...validBody, receivedAmount: 9000 });
+  assert.equal(res.status, 201);
+  assert.equal(res.body.receipt.paymentsSynced, 2);
 });
 
 test("未知の条件行は404", async () => {

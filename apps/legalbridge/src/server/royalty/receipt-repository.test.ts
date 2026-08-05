@@ -4,10 +4,14 @@ import { MemoryReceiptRepository, ReceiptReferenceError } from "./receipt-reposi
 
 function repo() {
   return new MemoryReceiptRepository(new Map([
-    // line1: 親料率20%の親条件あり → 分配算定可
-    [1, { ratePct: 10, unitPrice: 500, parentLicenseConditionId: 9, parentRatePct: 20 }],
+    // line1: 親料率20%の親条件あり（親相手=9）→ 分配算定可・作品42
+    [1, { ratePct: 10, unitPrice: 500, parentLicenseConditionId: 91, parentRatePct: 20,
+          sourceWorkId: 42, counterpartyVendorId: 18, currency: "JPY",
+          parentCounterpartyVendorId: 9, parentCurrency: "JPY" }],
     // line2: 親なし → 分配 null
-    [2, { ratePct: 8, unitPrice: 0, parentLicenseConditionId: null, parentRatePct: null }]
+    [2, { ratePct: 8, unitPrice: 0, parentLicenseConditionId: null, parentRatePct: null,
+          sourceWorkId: 43, counterpartyVendorId: 19, currency: "JPY",
+          parentCounterpartyVendorId: null, parentCurrency: null }]
   ]));
 }
 
@@ -29,6 +33,21 @@ test("親料率がある条件は分配を算定する（受領再許諾料×1×
 test("親料率が無い条件は分配 null で縮退する", async () => {
   const r = await repo().create(2, { reportedSales: 50000 });
   assert.equal(r.computedDistributionExTax, null);
+});
+
+test("syncPayments無効時は台帳を作らない", async () => {
+  const store = repo();
+  const r = await store.create(1, { reportedSales: 100000, receivedAmount: 9000 });
+  assert.equal(r.paymentsSynced, 0);
+  assert.equal(store.payments.length, 0);
+});
+
+test("syncPayments有効時は受領→入金・分配→出金の2台帳を作る", async () => {
+  const store = repo();
+  const r = await store.create(1, { reportedSales: 100000, receivedAmount: 9000 }, { syncPayments: true });
+  assert.equal(r.paymentsSynced, 2); // inbound(受領) + outbound(分配)
+  assert.equal(store.payments.filter((p) => p.kind === "inbound").length, 1);
+  assert.equal(store.payments.filter((p) => p.kind === "outbound").length, 1);
 });
 
 test("数量ベース（calcType）は数量×単価×料率で再計算", async () => {

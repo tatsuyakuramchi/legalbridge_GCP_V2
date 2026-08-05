@@ -34,7 +34,8 @@ const updateSchema = z.object({
 
 export function createReceiptRouter(
   repository?: ReceiptRepository,
-  writeEnabled = false
+  writeEnabled = false,
+  paymentsSyncEnabled = false
 ) {
   const router = Router();
 
@@ -60,7 +61,7 @@ export function createReceiptRouter(
       if (!guard(request, response)) return;
       const input = createSchema.parse(request.body);
       const { confirmation: _c, conditionLineId, ...fields } = input;
-      const saved = await repository!.create(conditionLineId, fields);
+      const saved = await repository!.create(conditionLineId, fields, { syncPayments: paymentsSyncEnabled });
       return response.status(201).json({ receipt: saved });
     } catch (error) {
       return handleError(error, response, next);
@@ -73,7 +74,7 @@ export function createReceiptRouter(
       const { id } = z.object({ id: z.coerce.number().int().positive() }).parse(request.params);
       const input = updateSchema.parse(request.body);
       const { confirmation: _c, ...fields } = input;
-      const saved = await repository!.update(id, fields);
+      const saved = await repository!.update(id, fields, { syncPayments: paymentsSyncEnabled });
       return response.status(200).json({ receipt: saved });
     } catch (error) {
       return handleError(error, response, next);

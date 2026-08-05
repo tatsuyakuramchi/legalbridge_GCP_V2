@@ -285,6 +285,7 @@ export interface AppOptions {
   workWritesEnabled?: boolean;
   royaltyEventWritesEnabled?: boolean;
   receiptWritesEnabled?: boolean;
+  paymentLedgerWritesEnabled?: boolean;
   materialWritesEnabled?: boolean;
   auth?: AuthSettings;
 }
@@ -388,6 +389,7 @@ export function createApp(
     materialWritesEnabled: config.materialWritesEnabled,
     royaltyEventWritesEnabled: config.royaltyEventWritesEnabled,
     receiptWritesEnabled: config.receiptWritesEnabled,
+    paymentLedgerWritesEnabled: config.paymentLedgerWritesEnabled,
     auth: config.auth
   }
 ) {
@@ -529,6 +531,11 @@ export function createApp(
     options.receiptWritesEnabled === true &&
     options.writeScopes?.has("receipts") === true &&
     Boolean(dependencies.receipts);
+  const paymentLedgerWriteEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.paymentLedgerWritesEnabled === true &&
+    options.writeScopes?.has("payments") === true;
   const driveStorageEnabled =
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
@@ -580,6 +587,7 @@ export function createApp(
         ...(materialWriteEnabled ? ["materials"] : []),
         ...(royaltyEventWriteEnabled ? ["royalty-events"] : []),
         ...(receiptWriteEnabled ? ["receipts"] : []),
+        ...(paymentLedgerWriteEnabled ? ["payments"] : []),
         ...(gmailDispatchEnabled ? ["gmail"] : []),
         ...(cloudSignDispatchEnabled ? ["cloudsign"] : []),
         ...(gmailInboundEnabled ? ["gmail-inbound"] : []),
@@ -604,7 +612,7 @@ export function createApp(
         outboundConditionWriteEnabled || contractIntakeWriteEnabled ||
         matterWriteEnabled || vendorWriteEnabled || staffWriteEnabled || workWriteEnabled ||
         materialWriteEnabled || royaltyEventWriteEnabled || receiptWriteEnabled ||
-        gmailDispatchEnabled || cloudSignDispatchEnabled || gmailInboundEnabled,
+        paymentLedgerWriteEnabled || gmailDispatchEnabled || cloudSignDispatchEnabled || gmailInboundEnabled,
       writeCapabilities: [
         ...(draftWriteEnabled ? ["drafts"] : []),
         ...(documentFinalizeEnabled ? ["documents"] : []),
@@ -620,6 +628,7 @@ export function createApp(
         ...(materialWriteEnabled ? ["materials"] : []),
         ...(royaltyEventWriteEnabled ? ["royalty-events"] : []),
         ...(receiptWriteEnabled ? ["receipts"] : []),
+        ...(paymentLedgerWriteEnabled ? ["payments"] : []),
         ...(gmailDispatchEnabled ? ["gmail"] : []),
         ...(cloudSignDispatchEnabled ? ["cloudsign"] : []),
         ...(gmailInboundEnabled ? ["gmail-inbound"] : []),
@@ -809,8 +818,9 @@ export function createApp(
   app.use("/api/v2", createRoyaltyRouter());
   // ロイヤリティ消化イベント書込（guarded-write・既定OFF）。
   app.use("/api/v2", createRoyaltyEventRouter(dependencies.royaltyEvents, royaltyEventWriteEnabled));
-  // 再許諾料の受領記録 書込（guarded-write・既定OFF）。
-  app.use("/api/v2", createReceiptRouter(dependencies.receipts, receiptWriteEnabled));
+  // 再許諾料の受領記録 書込（guarded-write・既定OFF）。payments台帳同期は
+  // 追加capability（scope 'payments'・grant 016）が有効な時のみ。
+  app.use("/api/v2", createReceiptRouter(dependencies.receipts, receiptWriteEnabled, paymentLedgerWriteEnabled));
   // 請求ダッシュボード（読み取り・admin/legal限定）。
   app.use("/api/v2", createReceiptDashboardRouter(dependencies.receiptDashboard));
   app.use("/api/v2", createPendingInspectionRouter(dependencies.pendingInspections));

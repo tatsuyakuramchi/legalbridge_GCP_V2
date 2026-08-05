@@ -164,6 +164,10 @@ Phase 7 は全フェーズの受け入れ後
 
 **分配算定・保存**：受領記録時に上流ライセンサーへの分配（`基準額×個数×親料率`）を`resolveDistribution`で算定し、`condition_receipts`の分配列（`distribution_base/qty/rate_pct`・`computed_distribution_ex_tax`・`distribution_parent_condition_id`）へ保存。親料率は`condition_lines.parent_license_condition_id`→親の`rate_pct`から取得、引けなければ分配nullで安全縮退。ダッシュボードの「分配」列・「ライセンサー分配合計」KPIが点灯。**payments台帳同期は次スライス（grant 016）へ分離**。GRANT不要（015のUPDATE＋condition_lines SELECT利用）。
 
+| 2026-08-04 | Phase 1 | payments台帳同期（受領→入金/分配→出金・追加capability・既定OFF）＋grant 016 | — | ✅ |
+
+**payments台帳同期**：受領記録時に同一トランザクションで`payments`へ同期（受領→inbound/sublicense_income、分配→outbound/royalty・相手=親）。同期意図は純関数`planPaymentSync`が算出（no-DELETE：クリアは金額ゼロUPDATE、`work_id`欠落時はCHECK不成立でスキップ）。**capability分離**：受領記録（015）は単独動作、台帳同期は追加スコープ`payments`＋grant 016（`payments` SELECT/INSERT/UPDATE）有効時のみ。有効化手順は `docs/payment-ledger-deploy.md`。
+
 **スライス5（請求ダッシュボード・読取）**：`GET /api/v2/receipts-dashboard`（admin/legal限定・書込みなし・42501等で空縮退）＋ `BillingDashboard.tsx`（業務ナビ・3KPI・フィルタ:検索/期間/未受領/未分配）。読み取りリポジトリ（Pg/Memory）は`condition_receipts`を`condition_lines`/`works`/`vendors`に結合し集計。新規GRANT不要（015の`condition_receipts` SELECTを利用、works/vendorsは既存SELECT）。受領記録（S6）が入るとKPIが点灯。
 
 **スライス6（受領記録CRUD・要GRANT）**：`POST/PUT /api/v2/condition-receipts`（guarded-write：既定OFF・admin/legal・確認トークン `COMMIT_PRODUCTION_RECEIPT`・DELETEなし）。受領再許諾料はサーバ再計算（料率/単価は`condition_lines`から、qty判定/報告値はリクエスト）。書込みリポジトリ（Pg/Memory）＋grant 015（`condition_receipts` SELECT/INSERT/UPDATE＋seq）。**payments台帳同期・上流分配は次スライスへ分離**。有効化手順は `docs/receipt-recording-deploy.md`。
