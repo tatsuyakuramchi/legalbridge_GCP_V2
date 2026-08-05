@@ -203,6 +203,34 @@ header input { width: 100%; border: 1px solid var(--border); border-radius: var(
 .billing-unlinked { display: inline-flex; border-radius: var(--radius-pill); background: var(--warning-bg); color: var(--warning-ink); padding: 2px 8px; font-size: 10px; font-weight: 800; }
 @media (max-width: 760px) { .billing-kpis { grid-template-columns: 1fr; } }
 
+/* Receivable map (債権マップ・読み取り専用) */
+.rmap-toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; }
+.rmap-toolbar input { border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); padding: 10px 12px; width: 220px; }
+.rmap-totals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 16px; }
+.rmap-totals article { background: var(--surface); border: 1px solid var(--border); border-top: 3px solid var(--accent); border-radius: var(--radius-md); padding: 14px 16px; display: grid; gap: 4px; }
+.rmap-totals article.warn { border-top-color: var(--warning); }
+.rmap-totals article.ok { border-top-color: var(--success); }
+.rmap-totals span { color: var(--ink-soft); font-size: 12px; font-weight: 700; }
+.rmap-totals strong { color: var(--ink-strong); font-size: 22px; }
+.rmap-chain { display: grid; gap: 12px; }
+.rmap-tier { border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: var(--radius-md); background: var(--surface); padding: 14px 16px; }
+.rmap-tier-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.rmap-tier-no { border-radius: var(--radius-pill); background: var(--surface-tint); color: var(--accent-strong); padding: 3px 10px; font-size: 11px; font-weight: 800; }
+.rmap-tier-head strong { color: var(--ink-strong); }
+.rmap-tier-head small { color: var(--ink-faint); }
+.rmap-tier-figures { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 0; }
+.rmap-tier-figures > div { display: grid; gap: 2px; }
+.rmap-tier-figures dt { color: var(--ink-soft); font-size: 11px; }
+.rmap-tier-figures dd { margin: 0; color: var(--ink-strong); font-weight: 700; }
+.rmap-tier-figures dd.rmap-dist { color: var(--warning-ink-strong); }
+.rmap-tier-figures dd.rmap-retain { color: var(--success-strong); }
+.rmap-upstream { list-style: none; margin: 10px 0 0; padding: 10px 0 0; border-top: 1px solid var(--divider-faint); display: grid; gap: 6px; }
+.rmap-upstream li { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.rmap-upstream span { color: var(--ink-muted); }
+.rmap-upstream em { color: var(--accent-strong); font-style: normal; font-size: 12px; font-weight: 700; }
+.rmap-upstream b { margin-left: auto; color: var(--ink-strong); }
+@media (max-width: 760px) { .rmap-totals, .rmap-tier-figures { grid-template-columns: 1fr 1fr; } }
+
 /* Receipt entry form (受領記録・capability-gated) */
 .receipt-form { border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: var(--radius-md); background: var(--surface); padding: 16px; margin-bottom: 16px; }
 .receipt-form-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }

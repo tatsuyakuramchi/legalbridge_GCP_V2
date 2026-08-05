@@ -94,6 +94,10 @@ import {
 } from "./royalty/receipt-dashboard-repository.js";
 import { createReceiptDashboardRouter } from "./royalty/receipt-dashboard-routes.js";
 import {
+  MemoryReceivableMapRepository, PgReceivableMapRepository, type ReceivableMapRepository
+} from "./royalty/receivable-map-repository.js";
+import { createReceivableMapRouter } from "./royalty/receivable-map-routes.js";
+import {
   MemoryDocumentImportRepository, PgDocumentImportRepository, type DocumentImportRepository
 } from "./documents/import-repository.js";
 import { createDocumentImportRouter } from "./documents/import-routes.js";
@@ -270,6 +274,7 @@ export interface AppDependencies {
   royaltyEvents?: RoyaltyEventRepository;
   receipts?: ReceiptRepository;
   receiptDashboard?: ReceiptDashboardRepository;
+  receivableMap?: ReceivableMapRepository;
 }
 
 export interface AppOptions {
@@ -339,6 +344,9 @@ function createDefaultDependencies(): AppDependencies {
     receiptDashboard: database
       ? new PgReceiptDashboardRepository(database)
       : new MemoryReceiptDashboardRepository(),
+    receivableMap: database
+      ? new PgReceivableMapRepository(database)
+      : new MemoryReceivableMapRepository(),
     ledgers: database ? new PgLedgerRepository(database) : new MemoryLedgerRepository(),
     search: database ? new PgGlobalSearchRepository(database) : new MemoryGlobalSearchRepository(),
     admin: database ? new PgAdminRepository(database) : new MemoryAdminRepository(),
@@ -823,6 +831,8 @@ export function createApp(
   app.use("/api/v2", createReceiptRouter(dependencies.receipts, receiptWriteEnabled, paymentLedgerWriteEnabled));
   // 請求ダッシュボード（読み取り・admin/legal限定）。
   app.use("/api/v2", createReceiptDashboardRouter(dependencies.receiptDashboard));
+  // 債権マップ（読み取り・admin/legal限定）。
+  app.use("/api/v2", createReceivableMapRouter(dependencies.receivableMap));
   app.use("/api/v2", createPendingInspectionRouter(dependencies.pendingInspections));
   app.use("/api/v2", createVendorWriteRouter(dependencies.vendorWrites, vendorWriteEnabled));
   app.use("/api/v2", createStaffRouter(dependencies.staff, staffWriteEnabled));
