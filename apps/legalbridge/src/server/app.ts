@@ -98,6 +98,10 @@ import {
 } from "./royalty/receivable-map-repository.js";
 import { createReceivableMapRouter } from "./royalty/receivable-map-routes.js";
 import {
+  MemoryPaymentReportRepository, PgPaymentReportRepository, type PaymentReportRepository
+} from "./royalty/payment-report-repository.js";
+import { createPaymentReportRouter } from "./royalty/payment-report-routes.js";
+import {
   MemoryDocumentImportRepository, PgDocumentImportRepository, type DocumentImportRepository
 } from "./documents/import-repository.js";
 import { createDocumentImportRouter } from "./documents/import-routes.js";
@@ -275,6 +279,7 @@ export interface AppDependencies {
   receipts?: ReceiptRepository;
   receiptDashboard?: ReceiptDashboardRepository;
   receivableMap?: ReceivableMapRepository;
+  paymentReport?: PaymentReportRepository;
 }
 
 export interface AppOptions {
@@ -347,6 +352,9 @@ function createDefaultDependencies(): AppDependencies {
     receivableMap: database
       ? new PgReceivableMapRepository(database)
       : new MemoryReceivableMapRepository(),
+    paymentReport: database
+      ? new PgPaymentReportRepository(database)
+      : new MemoryPaymentReportRepository(),
     ledgers: database ? new PgLedgerRepository(database) : new MemoryLedgerRepository(),
     search: database ? new PgGlobalSearchRepository(database) : new MemoryGlobalSearchRepository(),
     admin: database ? new PgAdminRepository(database) : new MemoryAdminRepository(),
@@ -833,6 +841,8 @@ export function createApp(
   app.use("/api/v2", createReceiptDashboardRouter(dependencies.receiptDashboard));
   // 債権マップ（読み取り・admin/legal限定）。
   app.use("/api/v2", createReceivableMapRouter(dependencies.receivableMap));
+  // 支払報告書（読み取り・admin/legal限定）。
+  app.use("/api/v2", createPaymentReportRouter(dependencies.paymentReport));
   app.use("/api/v2", createPendingInspectionRouter(dependencies.pendingInspections));
   app.use("/api/v2", createVendorWriteRouter(dependencies.vendorWrites, vendorWriteEnabled));
   app.use("/api/v2", createStaffRouter(dependencies.staff, staffWriteEnabled));

@@ -184,6 +184,7 @@ header input { width: 100%; border: 1px solid var(--border); border-radius: var(
 .cond-dir.receivable { background: #ecfdf5; color: #047857; }
 /* Billing dashboard (請求・読み取り専用) */
 .billing-kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 16px; }
+.billing-kpis.four { grid-template-columns: repeat(4, 1fr); }
 .billing-kpis article { background: var(--surface); border: 1px solid var(--border); border-top: 3px solid var(--accent); border-radius: var(--radius-md); padding: 14px 16px; display: grid; gap: 4px; }
 .billing-kpis article.warn { border-top-color: var(--warning); }
 .billing-kpis span { color: var(--ink-soft); font-size: 12px; font-weight: 700; }
