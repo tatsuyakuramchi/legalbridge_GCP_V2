@@ -21,6 +21,7 @@ import { GmailInboundWorkspace } from "./GmailInboundWorkspace";
 import { RoyaltyPreview } from "./RoyaltyPreview";
 import { BillingDashboard } from "./BillingDashboard";
 import { ReceivableMap } from "./ReceivableMap";
+import { WorkDetail } from "./WorkDetail";
 import { PaymentReport } from "./PaymentReport";
 import { BillingPrint } from "./BillingPrint";
 
@@ -43,7 +44,7 @@ const fallback: DashboardSummary = {
   priorities: []
 };
 
-type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview" | "billing" | "receivable-map" | "payment-report" | "billing-print";
+type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview" | "billing" | "receivable-map" | "payment-report" | "billing-print" | "works";
 type NavItem = { view: View; label: string; description: string; match: View[] };
 type NavGroup = { label: string; items: NavItem[] };
 
@@ -61,6 +62,7 @@ function navGroups(access: {
     ] },
     { label: "業務", items: [
       ...(access.legalWorkspace ? [{ view: "matters" as const, label: "案件", description: "案件・課題・タスクの管理", match: ["matters" as const] }] : []),
+      ...(access.legalWorkspace ? [{ view: "works" as const, label: "作品", description: "作品を起点に系譜・素材・条件・権利ソースを一望", match: ["works" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "conditions" as const, label: "条件明細", description: "契約条件の横断検索・消化・検収", match: ["conditions" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "outbound" as const, label: "アウト条件", description: "許諾先へのアウト条件追記", match: ["outbound" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "billing" as const, label: "請求", description: "再許諾料の受領・分配の横断俯瞰", match: ["billing" as const] }] : []),
@@ -98,6 +100,7 @@ function breadcrumbFor(view: View): Array<{ label: string; view?: View }> {
     ledgers: [home, { label: "台帳" }],
     "contract-intake": [home, { label: "契約取込" }],
     outbound: [home, { label: "アウト条件" }],
+    works: [home, { label: "作品" }],
     conditions: [home, { label: "条件明細" }],
     "royalty-preview": [home, { label: "ロイヤリティ試算" }],
     billing: [home, { label: "請求" }],
@@ -310,6 +313,7 @@ export function App() {
         {view === "outbound" && <OutboundConditionWorkspace />}
         {view === "royalty-preview" && <RoyaltyPreview />}
         {view === "billing" && <BillingDashboard canRecord={canRecordReceipt} />}
+        {view === "works" && <WorkDetail />}
         {view === "receivable-map" && <ReceivableMap />}
         {view === "payment-report" && <PaymentReport />}
         {view === "billing-print" && <BillingPrint />}

@@ -412,6 +412,39 @@ header input { width: 100%; border: 1px solid var(--border); border-radius: var(
 .ledger-list > button strong { color: #172a44; }.ledger-list > button small { color: #64748b; }
 .ledger-detail { position: sticky; top: 80px; max-height: calc(100vh - 104px); overflow-y: auto; }
 .work-picker { grid-template-columns: 1fr; max-height: 180px; overflow-y: auto; margin-top: 6px; }
+
+/* 作品詳細（Phase 2・WorkDetail） */
+.wd-layout { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 16px; align-items: start; margin-top: 16px; }
+.wd-picker { display: grid; gap: 8px; position: sticky; top: 80px; }
+.wd-picker > input { width: 100%; padding: 9px 12px; border: 1px solid var(--divider, #d9e2ec); border-radius: 8px; }
+.wd-picker-list { display: grid; gap: 6px; max-height: calc(100vh - 180px); overflow-y: auto; }
+.wd-picker-list > button { display: grid; gap: 2px; text-align: left; border: 1px solid #d9e2ec; border-radius: 8px; background: white; padding: 10px 12px; }
+.wd-picker-list > button:hover, .wd-picker-list > button.selected { border-color: #20b8cd; background: #f7fcfd; }
+.wd-picker-list > button strong { color: #172a44; font-size: 13px; }
+.wd-picker-list > button small { color: #64748b; }
+.wd-picker-list > button span { color: #168ca0; font-size: 11px; font-weight: 700; }
+.wd-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.wd-head strong { font-size: 18px; color: #172a44; }
+.wd-head em { display: block; color: #64748b; font-style: normal; font-size: 12px; margin-top: 2px; }
+.wd-badges { display: flex; gap: 6px; flex-wrap: wrap; }
+.wd-overview { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 20px; margin: 0; }
+.wd-overview > div { display: grid; grid-template-columns: 120px 1fr; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--divider, #eef2f7); }
+.wd-overview > div.wide { grid-column: 1 / -1; }
+.wd-overview dt { color: #64748b; font-size: 12px; }
+.wd-overview dd { margin: 0; color: #172a44; font-size: 13px; }
+.wd-chain { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; }
+.wd-node { display: grid; gap: 2px; border: 1px solid #d9e2ec; border-radius: 8px; padding: 8px 12px; background: white; }
+.wd-node.current { border-color: #168ca0; background: #f2fbfc; }
+.wd-node-label { color: #168ca0; font-size: 11px; font-weight: 800; }
+.wd-node strong { font-size: 13px; color: #172a44; }
+.wd-list { list-style: none; padding: 0; margin: 6px 0 12px; display: grid; gap: 6px; }
+.wd-list > li > button { border: none; background: none; color: #168ca0; padding: 0; text-align: left; cursor: pointer; }
+.wd-list.warn > li { color: #92400e; }
+.wd-cond-summary { display: flex; gap: 14px; flex-wrap: wrap; margin: 8px 0 12px; font-size: 12px; color: #475569; }
+.wd-cond-summary span { background: var(--surface-subtle, #f1f5f9); border-radius: 999px; padding: 4px 12px; }
+.wd-pane h4 { margin: 16px 0 6px; font-size: 13px; color: #334155; }
+.wd-pane .hint { display: block; color: #64748b; font-size: 12px; margin-top: 4px; }
+@media (max-width: 860px) { .wd-layout { grid-template-columns: 1fr; } .wd-picker { position: static; } .wd-overview { grid-template-columns: 1fr; } }
 .doc-integrations { margin-top: 16px; border-top: 1px solid #e2e8f0; padding-top: 12px; display: grid; gap: 12px; }
 .doc-integrations > h3 { margin: 0; font-size: 13px; color: #334155; }
 .doc-integration-card { border: 1px solid #d9e2ec; border-radius: 10px; padding: 12px; display: grid; gap: 8px; background: #fbfdff; }
