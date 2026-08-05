@@ -155,7 +155,10 @@ Phase 7 は全フェーズの受け入れ後
 | 2026-08-04 | Phase 1 | スライス2：消化イベント書込（`condition_events` INSERT・guarded・既定OFF）＋grant 014 | `fb64f05` | ✅ |
 | 2026-08-04 | Phase 1 | 受領再許諾料・分配 計算（純関数・GRANT不要・債権/請求の土台） | `a0641eb` | ✅ |
 | 2026-08-04 | Phase 1 | スライス6：受領記録CRUD（`condition_receipts` 作成/更新・guarded・既定OFF）＋grant 015 | `9e9d89c` | ✅ |
-| 2026-08-04 | Phase 1 | スライス5：請求ダッシュボード（受領・分配の横断俯瞰・3KPI・読取・GRANT不要※015のSELECT利用） | — | ✅ |
+| 2026-08-04 | Phase 1 | スライス5：請求ダッシュボード（受領・分配の横断俯瞰・3KPI・読取・GRANT不要※015のSELECT利用） | `0952e9a` | ✅ |
+| 2026-08-04 | Phase 1 | 受領記録UI（請求ダッシュボードに登録フォーム・capability-gated・S6 API利用） | `2aa4496` | ✅ |
+
+**受領記録UI**：請求ダッシュボードに「受領を記録」フォームを追加（`receipts` capability連動）。S6の`POST /api/v2/condition-receipts`へ接続し、受領再許諾料はサーバ再計算値をトーストで表示。受領→ダッシュボードKPIの一気通貫UIが完成（GRANT追加なし・読取専用環境では非表示）。
 
 **スライス5（請求ダッシュボード・読取）**：`GET /api/v2/receipts-dashboard`（admin/legal限定・書込みなし・42501等で空縮退）＋ `BillingDashboard.tsx`（業務ナビ・3KPI・フィルタ:検索/期間/未受領/未分配）。読み取りリポジトリ（Pg/Memory）は`condition_receipts`を`condition_lines`/`works`/`vendors`に結合し集計。新規GRANT不要（015の`condition_receipts` SELECTを利用、works/vendorsは既存SELECT）。受領記録（S6）が入るとKPIが点灯。
 
