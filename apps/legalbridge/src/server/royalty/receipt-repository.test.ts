@@ -4,8 +4,10 @@ import { MemoryReceiptRepository, ReceiptReferenceError } from "./receipt-reposi
 
 function repo() {
   return new MemoryReceiptRepository(new Map([
-    [1, { ratePct: 10, unitPrice: 500 }],
-    [2, { ratePct: 8, unitPrice: 0 }]
+    // line1: 親料率20%の親条件あり → 分配算定可
+    [1, { ratePct: 10, unitPrice: 500, parentLicenseConditionId: 9, parentRatePct: 20 }],
+    // line2: 親なし → 分配 null
+    [2, { ratePct: 8, unitPrice: 0, parentLicenseConditionId: null, parentRatePct: null }]
   ]));
 }
 
@@ -14,6 +16,19 @@ test("受領記録を作成し、受領再許諾料をサーバ再計算する�
   assert.equal(r.computedRoyaltyExTax, 10000); // 100000 × 10%
   assert.equal(r.status, "reported");           // received_amount 無し
   assert.equal(r.period, "2026-08");
+});
+
+test("親料率がある条件は分配を算定する（受領再許諾料×1×親料率）", async () => {
+  const r = await repo().create(1, { reportedSales: 100000 }); // 受領10000
+  assert.equal(r.computedRoyaltyExTax, 10000);
+  assert.equal(r.distributionBase, 10000);        // 権利許諾=受領再許諾料
+  assert.equal(r.distributionQty, 1);
+  assert.equal(r.computedDistributionExTax, 2000); // 10000 × 1 × 20%
+});
+
+test("親料率が無い条件は分配 null で縮退する", async () => {
+  const r = await repo().create(2, { reportedSales: 50000 });
+  assert.equal(r.computedDistributionExTax, null);
 });
 
 test("数量ベース（calcType）は数量×単価×料率で再計算", async () => {

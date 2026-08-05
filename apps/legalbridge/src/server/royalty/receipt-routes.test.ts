@@ -15,7 +15,7 @@ function app(opts: { writeEnabled?: boolean; role?: string } = {}) {
     next();
   });
   a.use("/api/v2", createReceiptRouter(
-    opts.writeEnabled ? new MemoryReceiptRepository(new Map([[1, { ratePct: 10, unitPrice: 500 }]])) : undefined,
+    opts.writeEnabled ? new MemoryReceiptRepository(new Map([[1, { ratePct: 10, unitPrice: 500, parentLicenseConditionId: null, parentRatePct: null }]])) : undefined,
     opts.writeEnabled ?? false
   ));
   return a;

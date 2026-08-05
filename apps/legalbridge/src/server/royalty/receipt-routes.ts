@@ -16,7 +16,9 @@ const bodyFields = {
   receivedAmount: z.number().optional(),
   receivedDate: z.iso.date().optional(),
   note: z.string().trim().max(4000).optional(),
-  calcType: z.string().trim().max(30).optional()
+  calcType: z.string().trim().max(30).optional(),
+  distributionBase: z.number().optional(),
+  distributionQty: z.number().optional()
 };
 
 const createSchema = z.object({
