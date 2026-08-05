@@ -203,6 +203,21 @@ header input { width: 100%; border: 1px solid var(--border); border-radius: var(
 .billing-unlinked { display: inline-flex; border-radius: var(--radius-pill); background: var(--warning-bg); color: var(--warning-ink); padding: 2px 8px; font-size: 10px; font-weight: 800; }
 @media (max-width: 760px) { .billing-kpis { grid-template-columns: 1fr; } }
 
+/* Receipt entry form (受領記録・capability-gated) */
+.receipt-form { border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: var(--radius-md); background: var(--surface); padding: 16px; margin-bottom: 16px; }
+.receipt-form-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.receipt-form-head strong { color: var(--ink-strong); }
+.receipt-qty-toggle { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-muted); font-size: 12px; }
+.receipt-form-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.receipt-form-grid label { display: grid; gap: 4px; font-size: 12px; }
+.receipt-form-grid label > span { color: var(--ink-muted); font-weight: 700; }
+.receipt-form-grid em { color: var(--danger); font-size: 10px; margin-left: 6px; font-style: normal; }
+.receipt-form-grid input { border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface); padding: 9px 11px; }
+.receipt-note { grid-column: 1 / -1; }
+.receipt-form-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
+.receipt-form-actions small { color: var(--ink-soft); font-size: 12px; }
+@media (max-width: 760px) { .receipt-form-grid { grid-template-columns: 1fr; } }
+
 /* Royalty preview (試算・読み取り専用) */
 .royalty-preview-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
 .royalty-preview-form { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 16px; }

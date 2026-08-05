@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
+import { useToast } from "./Toast";
 
-// 請求ダッシュボード（読み取り）。再許諾料の受領・分配を横断俯瞰し、3KPIを表示。
-// V1 BillingDashboardPanel 相当。書込みは行わない。
+// 請求ダッシュボード（読み取り）＋受領記録の登録フォーム（capability-gated）。
+// V1 BillingDashboardPanel / BillingTablePanel 相当。受領登録は S6 の書込みAPI
+// （POST /api/v2/condition-receipts）を使い、受領再許諾料はサーバが再計算する。
 
 type Row = {
   id: number;
@@ -28,7 +30,7 @@ type Summary = {
 
 const yen = (value: number | null) => `¥${new Intl.NumberFormat("ja-JP").format(Math.round(value ?? 0))}`;
 
-export function BillingDashboard() {
+export function BillingDashboard({ canRecord = false }: { canRecord?: boolean }) {
   const [rows, setRows] = useState<Row[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [query, setQuery] = useState("");
@@ -37,6 +39,8 @@ export function BillingDashboard() {
   const [undistributed, setUndistributed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
+  const [showForm, setShowForm] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -67,7 +71,7 @@ export function BillingDashboard() {
       }
     }, 250);
     return () => { controller.abort(); window.clearTimeout(timer); };
-  }, [query, period, unreceived, undistributed]);
+  }, [query, period, unreceived, undistributed, reloadKey]);
 
   return (
     <section className="page">
@@ -75,9 +79,14 @@ export function BillingDashboard() {
         <div>
           <p>BILLING</p>
           <h1>請求ダッシュボード</h1>
-          <small>再許諾料の受領・分配を横断俯瞰（読み取り専用）{loading ? "・読込中" : ""}</small>
+          <small>再許諾料の受領・分配を横断俯瞰{canRecord ? "・受領を登録できます" : "（読み取り専用）"}{loading ? "・読込中" : ""}</small>
         </div>
+        {canRecord && <button className="primary" onClick={() => setShowForm((v) => !v)}>{showForm ? "閉じる" : "受領を記録"}</button>}
       </div>
+
+      {canRecord && showForm && (
+        <ReceiptForm onSaved={() => { setShowForm(false); setReloadKey((k) => k + 1); }} />
+      )}
 
       <div className="billing-kpis">
         <article><span>受領再許諾料 合計</span><strong>{yen(summary?.totalReceiptRoyalty ?? 0)}</strong></article>
@@ -122,5 +131,89 @@ export function BillingDashboard() {
         !error && <div className="empty-state">{loading ? "読み込んでいます。" : "該当する受領記録がありません。"}</div>
       )}
     </section>
+  );
+}
+
+// 受領記録の登録フォーム。受領再許諾料はサーバが再計算するため、ここでは
+// 条件行・報告値・実受領などの入力のみを送る（確認トークンは自動付与）。
+function ReceiptForm({ onSaved }: { onSaved: () => void }) {
+  const toast = useToast();
+  const [conditionLineId, setConditionLineId] = useState("");
+  const [qtyBased, setQtyBased] = useState(false);
+  const [period, setPeriod] = useState("");
+  const [periodDate, setPeriodDate] = useState("");
+  const [reportedSales, setReportedSales] = useState("");
+  const [reportedQuantity, setReportedQuantity] = useState("");
+  const [receivedAmount, setReceivedAmount] = useState("");
+  const [receivedDate, setReceivedDate] = useState("");
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const numOrUndef = (v: string) => (v.trim() === "" ? undefined : Number(v));
+
+  async function submit() {
+    if (!/^\d+$/.test(conditionLineId)) {
+      toast.push("条件行ID（数値）を入力してください", "error");
+      return;
+    }
+    if (period && !/^\d{4}-\d{2}$/.test(period)) {
+      toast.push("期間は YYYY-MM 形式で入力してください", "error");
+      return;
+    }
+    setSaving(true);
+    const body = {
+      confirmation: "COMMIT_PRODUCTION_RECEIPT",
+      conditionLineId: Number(conditionLineId),
+      calcType: qtyBased ? "BASE_QTY_RATE" : undefined,
+      period: period || undefined,
+      periodDate: periodDate || undefined,
+      reportedSales: qtyBased ? undefined : numOrUndef(reportedSales),
+      reportedQuantity: qtyBased ? numOrUndef(reportedQuantity) : undefined,
+      receivedAmount: numOrUndef(receivedAmount),
+      receivedDate: receivedDate || undefined,
+      note: note.trim() || undefined
+    };
+    try {
+      const response = await fetch("/api/v2/condition-receipts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        toast.push(result.error ?? "受領記録の保存に失敗しました", "error");
+        return;
+      }
+      toast.push(`受領を記録しました（受領再許諾料 ¥${new Intl.NumberFormat("ja-JP").format(Math.round(result.receipt.computedRoyaltyExTax || 0))}）`, "success");
+      onSaved();
+    } catch {
+      toast.push("通信エラーにより保存できませんでした", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="receipt-form">
+      <div className="receipt-form-head">
+        <strong>受領を記録</strong>
+        <label className="receipt-qty-toggle"><input type="checkbox" checked={qtyBased} onChange={(e) => setQtyBased(e.target.checked)} /> 数量ベース（数量×単価×料率）</label>
+      </div>
+      <div className="receipt-form-grid">
+        <label><span>条件行ID<em>必須</em></span><input value={conditionLineId} onChange={(e) => setConditionLineId(e.target.value)} placeholder="例：123" /></label>
+        <label><span>期間</span><input value={period} onChange={(e) => setPeriod(e.target.value)} placeholder="YYYY-MM" /></label>
+        <label><span>期の代表日</span><input type="date" value={periodDate} onChange={(e) => setPeriodDate(e.target.value)} /></label>
+        {qtyBased
+          ? <label><span>報告数量</span><input type="number" value={reportedQuantity} onChange={(e) => setReportedQuantity(e.target.value)} /></label>
+          : <label><span>報告売上（税抜）</span><input type="number" value={reportedSales} onChange={(e) => setReportedSales(e.target.value)} /></label>}
+        <label><span>実受領額（税抜）</span><input type="number" value={receivedAmount} onChange={(e) => setReceivedAmount(e.target.value)} /></label>
+        <label><span>受領日</span><input type="date" value={receivedDate} onChange={(e) => setReceivedDate(e.target.value)} /></label>
+        <label className="receipt-note"><span>備考</span><input value={note} onChange={(e) => setNote(e.target.value)} /></label>
+      </div>
+      <div className="receipt-form-actions">
+        <small>受領再許諾料は条件行の料率でサーバが再計算します。</small>
+        <button className="primary" onClick={submit} disabled={saving}>{saving ? "保存中…" : "記録する"}</button>
+      </div>
+    </div>
   );
 }
