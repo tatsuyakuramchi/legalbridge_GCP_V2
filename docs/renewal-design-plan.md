@@ -174,7 +174,7 @@ Phase 7 は全フェーズの受け入れ後
 
 **スライス8（請求印刷・クライアント完結）**：`receipts-dashboard`読み取りを作品ごとに集計し、印刷最適化した「再許諾料 受領・分配 計算書」を`BillingPrint.tsx`で描画。`@media print`でシェル（レール/ヘッダ/パンくず/トースト）を隠し、計算書のみ印刷。`window.print()`でPDF化。新規依存・新規GRANT・サーバ変更なし。**これにて Phase 1（金銭・ロイヤリティ）の主要スライスが完了**。
 
-> **Phase 1 完了サマリ**：純関数エンジン7種（calc/tax/fx/receipt/payment-sync/receivable-map/payment-report）＋書込3系統（消化イベント/受領記録/payments台帳・grant 014/015/016）＋読取・印刷UI6種（試算/請求ダッシュボード/債権マップ/支払報告書/請求印刷＋受領記録UI）。テスト327件。すべて既定OFF・capability-gated・no-DELETE・DB/template無改変・既存ゼロ破壊。本番GRANT適用（011/014/015/016）と`verify-write-test`はオペレーター作業として残る。残：S4のXLSX/ZIP拡張（SheetJS依存の判断が必要・後日）。
+> **Phase 1 完了サマリ**：純関数エンジン7種（calc/tax/fx/receipt/payment-sync/receivable-map/payment-report）＋書込3系統（消化イベント/受領記録/payments台帳・grant 014/015/016）＋読取・印刷UI6種（試算/請求ダッシュボード/債権マップ/支払報告書/請求印刷＋受領記録UI）。テスト327件。すべて既定OFF・capability-gated・no-DELETE・DB/template無改変・既存ゼロ破壊。本番GRANT適用（011/014/015/016）と`verify-write-test`はオペレーター作業として残る。S4は軽量Excel(.xls・HTMLテーブル方式・依存なし)＋CSV出力に対応済み（正式xlsx/ZIPはSheetJS等の依存判断があれば後日）。デプロイは統合Runbook `docs/phase1-deploy-runbook.md` 参照。
 
 **スライス4（支払報告書・読取）**：出金台帳（`payments` outbound）の各行に源泉徴収・消費税を適用し差引振込額まで算定。純関数`buildPaymentReport`が`tax.ts`（源泉10.21%/100万超20.42%/個人強制ON・消費税ceil）を合成。読み取りリポジトリ（Pg/Memory・42501等で縮退）が`payments`＋`vendors`（源泉フラグ）を集約。`GET /api/v2/payment-report`（admin/legal限定）＋`PaymentReport.tsx`（期間フィルタ・4KPI・明細・**クライアント側CSV出力**）。**SheetJS等の新規バイナリ依存は追加せず**、XLSX/ZIP特有形式は後日拡張。新規GRANT不要（016の`payments` SELECT＋vendors利用）。
 
