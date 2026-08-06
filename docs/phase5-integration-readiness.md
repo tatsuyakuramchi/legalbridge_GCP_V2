@@ -38,7 +38,7 @@ Gmail送受信 / CloudSign / Slack / Drive を1つずつ本番相当で点火す
 ### ④ Gmail送信（通知メール）— 🟡 DWD鍵が必須・冪等未実装
 - **状態**：`gmail-api-adapter.ts`（`gmail.send`＋DWD `subject=GMAIL_SENDER`）で実送信。ルートは preview(admin/legal)・dispatch(admin)。
 - **点火手順**：`gmail.send` のドメイン全体委任SAを `GMAIL_SENDER` 送信元へ、鍵secret、`GMAIL_DELIVERY_MODE=live`・`GMAIL_SENDER`・`CONFIRM_GMAIL_DISPATCH=GMAIL_DISPATCH_VALIDATION_ONLY`・scope `gmail`・AUTH・**`INTEGRATION_MODE=live`**。
-- **ギャップ**：(a) **SA鍵はDriveブランチでのみマウント**されるため、Drive未使用でGmailを立てると鍵ファイルが無くDWDが失敗（下記共通）。(b) **冪等未実装**：`idempotencyKey` を算出するがGmailクライアントが無視・送信履歴テーブルも無し → 再POSTで再送。運用では preview→dispatch を一度だけ、を徹底。
+- **ギャップ**：(a) ~~SA鍵がDriveブランチ従属~~ → **修正済**（鍵マウントを Drive/Gmail送信/Gmail受信 の共有条件へ切り出し）。(b) **冪等未実装**：`idempotencyKey` を算出するがGmailクライアントが無視・送信履歴テーブルも無し → 再POSTで再送。運用では preview→dispatch を一度だけ、を徹底。
 - **検証**：preview（MIME確認）→ dispatch 1通。二重送信ガードは運用対応。
 
 ### ⑤ CloudSign（署名依頼＋ステータス）— ⚠️ 認証未確定（最終確認必須）
@@ -54,7 +54,7 @@ Gmail送受信 / CloudSign / Slack / Drive を1つずつ本番相当で点火す
 ## 3. 共通ギャップ（点火前の整備推奨）
 
 1. ~~`INTEGRATION_MODE=local` ハードコード~~ → **本レビューで修正**（`_INTEGRATION_MODE` 化・ガード付き）。
-2. **SA鍵マウントがDriveブランチに従属**（`cloudbuild-write-test.yaml` deploy step）：Gmail送信/受信をDrive無しで立てると `/secrets/gws-service-account.json` が無くDWD不可。→ Gmail点火時はDriveも併せて有効化するか、鍵マウント条件をGmail系にも広げるcloudbuild改修が必要（**要フォロー**）。
+2. ~~SA鍵マウントがDriveブランチに従属~~ → **修正済**：鍵マウントを共有条件へ切り出し、`_DRIVE_STORAGE_ENABLED=true` **または** `_GMAIL_DELIVERY_MODE=live` **または** `_GMAIL_INBOUND_MODE=live` のいずれかで鍵secretがあれば `/secrets/gws-service-account.json` をマウントし `GOOGLE_SERVICE_ACCOUNT_KEY_PATH` を設定する（Drive無しでもGmail送受信のDWDが機能）。Gmail送信は `GMAIL_SA_KEY_PATH` 未設定時に同パスへフォールバック。
 3. **Gmail/CloudSign に送信履歴・冪等強制が無い**（キーは算出するが未使用）。多重送信は運用手順で回避。恒久対応は履歴テーブル（Slack 001/002 相当）追加＝新規GRANT判断。
 4. **CloudSign認証の実突合**（上記④）。
 5. **Gmail受信の取込→登録書込導線**（②）。
