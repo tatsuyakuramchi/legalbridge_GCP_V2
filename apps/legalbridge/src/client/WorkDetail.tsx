@@ -32,7 +32,13 @@ function Degraded() {
   return <div className="empty-state">このセクションは表示権限（GRANT 007）が未付与のため取得できませんでした。付与後に自動表示されます。</div>;
 }
 
-export function WorkDetail() {
+type EditForm = {
+  title: string; titleKana: string; workType: string; kind: "" | "licensed_in" | "own";
+  derivationType: string; isOriginal: boolean; parentWorkId: string;
+  creatorName: string; publisherName: string; ledgerCode: string; remarks: string;
+};
+
+export function WorkDetail({ canEdit = false }: { canEdit?: boolean }) {
   const [keyword, setKeyword] = useState("");
   const [results, setResults] = useState<Summary[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -40,6 +46,11 @@ export function WorkDetail() {
   const [tab, setTab] = useState<Tab>("overview");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [reload, setReload] = useState(0);
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState<EditForm | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
 
   // 作品検索（デバウンス）。
   useEffect(() => {
@@ -70,14 +81,61 @@ export function WorkDetail() {
       try {
         const res = await fetch(`/api/v2/works/${selectedId}/detail`, { signal: controller.signal });
         if (!res.ok) { setDetail(null); setError(res.status === 403 ? "閲覧権限がありません" : res.status === 404 ? "作品が見つかりません" : "取得に失敗しました"); return; }
-        setDetail(await res.json()); setTab("overview");
+        setDetail(await res.json());
       } catch (e) {
         if (e instanceof DOMException && e.name === "AbortError") return;
         setDetail(null); setError("通信に失敗しました");
       } finally { setLoading(false); }
     })();
     return () => controller.abort();
-  }, [selectedId]);
+  }, [selectedId, reload]);
+
+  // 作品を切り替えたら編集状態・タブを初期化。
+  useEffect(() => { setEditing(false); setForm(null); setSaveError(""); setTab("overview"); }, [selectedId]);
+
+  function startEdit() {
+    if (!detail) return;
+    const w = detail.work;
+    setForm({
+      title: w.title ?? "", titleKana: w.titleKana ?? "", workType: w.workType ?? "",
+      kind: (w.kind === "licensed_in" || w.kind === "own") ? w.kind : "",
+      derivationType: w.derivationType ?? "", isOriginal: w.isOriginal === true,
+      parentWorkId: w.parentWorkId != null ? String(w.parentWorkId) : "",
+      creatorName: w.creatorName ?? "", publisherName: w.publisherName ?? "",
+      ledgerCode: w.ledgerCode ?? "", remarks: w.remarks ?? ""
+    });
+    setSaveError(""); setEditing(true);
+  }
+
+  async function save() {
+    if (!form || selectedId == null) return;
+    setSaving(true); setSaveError("");
+    const body: Record<string, unknown> = {
+      title: form.title.trim(),
+      titleKana: form.titleKana.trim() || null,
+      workType: form.workType.trim() || null,
+      derivationType: form.derivationType.trim() || null,
+      isOriginal: form.isOriginal,
+      parentWorkId: form.parentWorkId.trim() ? Number(form.parentWorkId.trim()) : null,
+      creatorName: form.creatorName.trim() || null,
+      publisherName: form.publisherName.trim() || null,
+      ledgerCode: form.ledgerCode.trim() || null,
+      remarks: form.remarks.trim() || null
+    };
+    if (form.kind) body.kind = form.kind;
+    try {
+      const res = await fetch(`/api/v2/works/${selectedId}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setSaveError(data.error ?? (res.status === 503 ? "編集は現在無効です" : res.status === 403 ? "編集権限がありません" : "保存に失敗しました"));
+        return;
+      }
+      setEditing(false); setForm(null); setReload((n) => n + 1);
+    } catch { setSaveError("通信に失敗しました"); }
+    finally { setSaving(false); }
+  }
 
   return (
     <section className="page">
@@ -118,6 +176,7 @@ export function WorkDetail() {
                 {detail.work.isOriginal && <span className="status">原作</span>}
                 {detail.lineage?.isDerivative && <span className="status">派生{detail.lineage.depth}段</span>}
                 <span className="status">{kindLabel(detail.work.kind)}</span>
+                {canEdit && !editing && <button onClick={startEdit}>編集</button>}
               </div>
             </div>
 
@@ -127,7 +186,36 @@ export function WorkDetail() {
               ))}
             </div>
 
-            {tab === "overview" && (
+            {tab === "overview" && (editing && form ? (
+              <div className="wd-edit">
+                {saveError && <div className="async-error"><span>{saveError}</span></div>}
+                <div className="wd-edit-grid">
+                  <label>作品名<input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></label>
+                  <label>作品名カナ<input value={form.titleKana} onChange={(e) => setForm({ ...form, titleKana: e.target.value })} /></label>
+                  <label>作品種別<input value={form.workType} onChange={(e) => setForm({ ...form, workType: e.target.value })} /></label>
+                  <label>区分
+                    <select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value as EditForm["kind"] })}>
+                      <option value="">未設定</option><option value="licensed_in">ライセンスイン</option><option value="own">自社作品</option>
+                    </select>
+                  </label>
+                  <label>派生種別<input value={form.derivationType} onChange={(e) => setForm({ ...form, derivationType: e.target.value })} placeholder="licensed_derivative 等" /></label>
+                  <label className="wd-check"><input type="checkbox" checked={form.isOriginal} onChange={(e) => setForm({ ...form, isOriginal: e.target.checked })} />原作フラグ</label>
+                  <label>親作品ID（系譜）
+                    <input value={form.parentWorkId} onChange={(e) => setForm({ ...form, parentWorkId: e.target.value.replace(/[^\d]/g, "") })} placeholder="空で親なし" inputMode="numeric" />
+                  </label>
+                  <label>作者<input value={form.creatorName} onChange={(e) => setForm({ ...form, creatorName: e.target.value })} /></label>
+                  <label>出版社<input value={form.publisherName} onChange={(e) => setForm({ ...form, publisherName: e.target.value })} /></label>
+                  <label>台帳コード<input value={form.ledgerCode} onChange={(e) => setForm({ ...form, ledgerCode: e.target.value })} /></label>
+                  <label className="wd-wide">備考<textarea value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} rows={2} /></label>
+                </div>
+                {form.parentWorkId && detail.work.id === Number(form.parentWorkId) && <small className="hint">自身を親には設定できません。</small>}
+                <div className="wd-edit-actions">
+                  <button onClick={() => { setEditing(false); setForm(null); }} disabled={saving}>キャンセル</button>
+                  <button className="primary" onClick={save} disabled={saving || !form.title.trim()}>{saving ? "保存中…" : "保存"}</button>
+                </div>
+                <small className="hint">親作品IDは左の一覧で対象作品を選ぶとヘッダに表示されるIDを参照できます（系譜の循環はサーバ側で拒否されます）。</small>
+              </div>
+            ) : (
               <dl className="wd-overview">
                 <div><dt>作品種別</dt><dd>{detail.work.workType ?? "—"}</dd></div>
                 <div><dt>ステータス</dt><dd>{detail.work.status ?? "—"}</dd></div>
@@ -136,9 +224,10 @@ export function WorkDetail() {
                 <div><dt>作者</dt><dd>{detail.work.creatorName ?? "—"}</dd></div>
                 <div><dt>出版社</dt><dd>{detail.work.publisherName ?? "—"}</dd></div>
                 <div><dt>台帳コード</dt><dd>{detail.work.ledgerCode ?? "—"}</dd></div>
+                <div><dt>作品ID</dt><dd>{detail.work.id}</dd></div>
                 <div className="wide"><dt>備考</dt><dd>{detail.work.remarks ?? "—"}</dd></div>
               </dl>
-            )}
+            ))}
 
             {tab === "lineage" && (detail.lineage ? <>
               <div className="wd-chain">

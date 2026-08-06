@@ -444,6 +444,14 @@ header input { width: 100%; border: 1px solid var(--border); border-radius: var(
 .wd-cond-summary span { background: var(--surface-subtle, #f1f5f9); border-radius: 999px; padding: 4px 12px; }
 .wd-pane h4 { margin: 16px 0 6px; font-size: 13px; color: #334155; }
 .wd-pane .hint { display: block; color: #64748b; font-size: 12px; margin-top: 4px; }
+.wd-edit-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; }
+.wd-edit-grid label { display: grid; gap: 4px; font-size: 12px; color: #475569; }
+.wd-edit-grid label.wd-wide { grid-column: 1 / -1; }
+.wd-edit-grid label.wd-check { flex-direction: row; align-items: center; display: flex; gap: 8px; }
+.wd-edit-grid input, .wd-edit-grid select, .wd-edit-grid textarea { padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 8px; font: inherit; }
+.wd-edit-grid label.wd-check input { width: auto; }
+.wd-edit-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+@media (max-width: 860px) { .wd-edit-grid { grid-template-columns: 1fr; } }
 @media (max-width: 860px) { .wd-layout { grid-template-columns: 1fr; } .wd-picker { position: static; } .wd-overview { grid-template-columns: 1fr; } }
 .doc-integrations { margin-top: 16px; border-top: 1px solid #e2e8f0; padding-top: 12px; display: grid; gap: 12px; }
 .doc-integrations > h3 { margin: 0; font-size: 13px; color: #334155; }

@@ -313,7 +313,7 @@ export function App() {
         {view === "outbound" && <OutboundConditionWorkspace />}
         {view === "royalty-preview" && <RoyaltyPreview />}
         {view === "billing" && <BillingDashboard canRecord={canRecordReceipt} />}
-        {view === "works" && <WorkDetail />}
+        {view === "works" && <WorkDetail canEdit={canEditWorks} />}
         {view === "receivable-map" && <ReceivableMap />}
         {view === "payment-report" && <PaymentReport />}
         {view === "billing-print" && <BillingPrint />}

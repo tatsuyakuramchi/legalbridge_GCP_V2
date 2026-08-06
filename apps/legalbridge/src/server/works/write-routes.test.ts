@@ -98,3 +98,57 @@ test("依頼者ロールは作品の生値を取得できない", async () => {
   assert.equal(response.status, 403);
   assert.equal(response.body.code, "WORK_EDIT_FORBIDDEN");
 });
+
+test("拡張列（種別・系譜・権利者）を更新し生値で返す", async () => {
+  const { app } = appFor({ enabled: true });
+  const parent = await request(app).post("/api/v2/works").send({ title: "原作", isOriginal: true, kind: "own" });
+  const child = await request(app).post("/api/v2/works").send({ title: "派生" });
+  const patched = await request(app).patch(`/api/v2/works/${child.body.id}`).send({
+    kind: "licensed_in", derivationType: "licensed_derivative", isOriginal: false,
+    parentWorkId: parent.body.id, rightsHolderVendorId: 7, creatorName: "作者名", titleKana: "ハセイ"
+  });
+  assert.equal(patched.status, 200);
+  const raw = await request(app).get(`/api/v2/works/${child.body.id}`);
+  assert.equal(raw.body.work.kind, "licensed_in");
+  assert.equal(raw.body.work.parentWorkId, parent.body.id);
+  assert.equal(raw.body.work.rightsHolderVendorId, 7);
+  assert.equal(raw.body.work.creatorName, "作者名");
+  assert.equal(raw.body.work.titleKana, "ハセイ");
+  assert.equal(raw.body.work.isOriginal, false);
+});
+
+test("親を自分自身に設定すると422（閉路防止）", async () => {
+  const { app } = appFor({ enabled: true });
+  const w = await request(app).post("/api/v2/works").send({ title: "自己" });
+  const res = await request(app).patch(`/api/v2/works/${w.body.id}`).send({ parentWorkId: w.body.id });
+  assert.equal(res.status, 422);
+  assert.equal(res.body.code, "WORK_LINEAGE_CYCLE");
+});
+
+test("子孫を親に設定すると422（系譜循環）", async () => {
+  const { app } = appFor({ enabled: true });
+  const a = await request(app).post("/api/v2/works").send({ title: "A" });
+  const b = await request(app).post("/api/v2/works").send({ title: "B" });
+  // B の親を A にする（A→B）。
+  await request(app).patch(`/api/v2/works/${b.body.id}`).send({ parentWorkId: a.body.id });
+  // A の親を B にすると循環（A→B→A）。
+  const res = await request(app).patch(`/api/v2/works/${a.body.id}`).send({ parentWorkId: b.body.id });
+  assert.equal(res.status, 422);
+  assert.equal(res.body.code, "WORK_LINEAGE_CYCLE");
+});
+
+test("親をnullでクリアできる", async () => {
+  const { app } = appFor({ enabled: true });
+  const parent = await request(app).post("/api/v2/works").send({ title: "親" });
+  const child = await request(app).post("/api/v2/works").send({ title: "子", parentWorkId: parent.body.id });
+  const res = await request(app).patch(`/api/v2/works/${child.body.id}`).send({ parentWorkId: null });
+  assert.equal(res.status, 200);
+  const raw = await request(app).get(`/api/v2/works/${child.body.id}`);
+  assert.equal(raw.body.work.parentWorkId, null);
+});
+
+test("kindは列挙のみ許可", async () => {
+  const { app } = appFor({ enabled: true });
+  const res = await request(app).post("/api/v2/works/validate").send({ title: "x", kind: "invalid" });
+  assert.equal(res.status, 400);
+});

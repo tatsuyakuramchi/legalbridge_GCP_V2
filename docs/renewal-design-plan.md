@@ -185,6 +185,10 @@ Phase 7 は全フェーズの受け入れ後
 
 **スライス2-2（作品詳細ページUI）**：`WorkDetail.tsx`。作品ピッカー（キーワード検索・デバウンス＝ReceivableMapの生ID入力問題も解消）で選択 → `GET /works/:id/detail` を集約表示。タブ 概要/系譜/素材/条件/権利ソース/料率対象。系譜は原作→派生Nを段表示し、派生作品・「未反映の親（work_relations）」への遷移導線を提供。権限未付与セクションは縮退注記。ナビ「業務」に**作品**を新設（`view: works`・legal限定）。CSSは`wd-*`名前空間で追加（既存無改変）。新規依存・新規GRANT・新規env・サーバ変更なし（2-1のAPIのみ利用）。テスト339件。**これで「作品を起点に権利・条件・製品を一望」の一望（読取）が完結**。残：編集（2-3）・権利ソース書込（2-4）・製品（DDL要・保留）。
 
+| 2026-08-05 | Phase 2 | スライス2-3：作品編集の書込み拡張（系譜/種別/権利者・capability-gated・grant 012流用・閉路防止） | — | ✅ |
+
+**スライス2-3（作品編集の書込み拡張）**：既存の作品書込み（5列）を拡張し、`title_kana`/`work_type`/`kind`(enum)/`derivation_type`/`is_original`/**`parent_work_id`（系譜）**/`rights_holder_vendor_id`/`creator_name`/`publisher_name` を編集可能に。**grant 012（works全表UPDATE）流用で新規GRANT不要**、既存 `works` capability（scope `works`・`WORK_WRITES_ENABLED`）で一体ゲート。系譜の**閉路防止**（自己親・子孫を親にする操作を422 `WORK_LINEAGE_CYCLE` で拒否・Pg再帰CTE＋Memory両実装）。`find`と`WorkRecord`を拡張列まで返すよう更新。UIは `WorkDetail` 概要タブに capability-gated（`canEditWorks`）な編集フォームを追加（親作品ID・区分・原作フラグ等、保存はPATCH→再取得）。DELETEなし。テスト344件。残：権利ソース書込（2-4）・work_relationsグラフ編集・製品（DDL要・保留）。
+
 **スライス4（支払報告書・読取）**：出金台帳（`payments` outbound）の各行に源泉徴収・消費税を適用し差引振込額まで算定。純関数`buildPaymentReport`が`tax.ts`（源泉10.21%/100万超20.42%/個人強制ON・消費税ceil）を合成。読み取りリポジトリ（Pg/Memory・42501等で縮退）が`payments`＋`vendors`（源泉フラグ）を集約。`GET /api/v2/payment-report`（admin/legal限定）＋`PaymentReport.tsx`（期間フィルタ・4KPI・明細・**クライアント側CSV出力**）。**SheetJS等の新規バイナリ依存は追加せず**、XLSX/ZIP特有形式は後日拡張。新規GRANT不要（016の`payments` SELECT＋vendors利用）。
 
 **スライス7（債権マップ・読取）**：段跨ぎカスケードを純関数`buildLineageCascade`で厳密移植（`cascade_base=Σ(i段〜最下段の受領)`・`分配=料率×base`・同一capabilityの二重計上防止`seenCap`・`Math.round`）。読み取りリポジトリ（Pg/Memory・42501等で縮退）が作品の派生系譜（`works.parent_work_id`）を辿り、各段の受領（`condition_receipts`）と上流料率（`parent_license_condition_id`→親`rate_pct`）を集約。`GET /api/v2/receivable-map`（admin/legal限定）＋`ReceivableMap.tsx`（作品ID入力→段ごとの受領/分配基礎/上流分配/留保＋合計）。新規GRANT不要。

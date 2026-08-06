@@ -15,6 +15,7 @@ function statusFor(code: string) {
   if (code === "WORK_NOT_FOUND") return 404;
   if (code === "WORK_CONFLICT") return 409;
   if (code === "WORK_REQUIRED") return 422;
+  if (code === "WORK_LINEAGE_CYCLE") return 422;
   return 400;
 }
 function handle(error: unknown, r: import("express").Response, next: import("express").NextFunction) {
