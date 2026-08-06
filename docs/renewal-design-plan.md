@@ -277,3 +277,7 @@ Phase 7 は全フェーズの受け入れ後
 | 2026-08-05 | Phase 5 | 点火レディネス・レビュー → `docs/phase5-integration-readiness.md`＋INTEGRATION_MODEブロッカー解消 | — | ✅ |
 
 **Phase 5 レディネス・レビュー**：各外部連携（Drive/Gmail送受信/CloudSign/Slack）のコード監査。**最優先ブロッカーを解消**：`cloudbuild-write-test.yaml` がハードコードしていた `INTEGRATION_MODE=local`（Gmail送信/CloudSign/Slack配信の実送信を一律ブロック＝「停止中」の正体）を substitution `_INTEGRATION_MODE`（既定`local`）へ変更し、`verify-write-test.sh` で `live` を write-test＋IAP必須にガード（既定localは挙動不変・default検証パス）。コネクタ別の点火手順・残ギャップ（SA鍵マウントのDrive従属／CloudSign認証未確定／Gmail・CloudSignの冪等未実装／Gmail受信の登録導線無し／Slack候補フローの依頼者メール）・推奨順序（Drive→Gmail受信→Slack→Gmail送信→CloudSign）を `docs/phase5-integration-readiness.md` に集約。実トークン投入・DWD設定・CloudSign認証突合はオペレーター/要判断として残る。
+
+| 2026-08-06 | Phase 3 | スライス3-2b-prep：Backlogプロジェクトメタデータ（statuses/customFields）読取API＋判断事項の確定 | — | ✅ |
+
+**スライス3-2b-prep（メタデータ一覧API）＋判断確定**：3-2b（ステータス同期・カスタム属性更新）本体はプロジェクト固有IDが要るため、**まず実IDを確認する読取APIを先行実装**（判断：「まず一覧APIを追加」）。`BacklogReadClient.getProjectMetadata()`（`GET /projects/:key/statuses`・`/customFields`→`{statuses:[{id,name}], customFields:[{id,name,typeId}]}` に防御的整形）。`GET /api/v2/backlog/metadata`（admin/legal・読取・未構成は`{enabled:false}`・API失敗502）。`RequestsWorkspace` に「プロジェクトID一覧」トグル（オンデマンド読取専用表示）。**新規GRANT・依存なし**（読取のみ）。テスト420件。**判断事項を確定**：①**稟議(Ringi)＝保留/廃止**（V2へ移植せず、承認はSlack承認／案件ステータスで代替）②**製品(products)＝オプションA継続**（製品専用テーブルは新設せず既存エンティティで表現・DDL回避）。`docs/v1-v2-parity-checklist.md`／`docs/phase3-backlog-plan.md` に反映。3-2b同期本体は運用側が実IDを確認・マッピング確定後に別スライスで着手。

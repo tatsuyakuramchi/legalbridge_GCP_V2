@@ -42,6 +42,27 @@ export function createBacklogRequestRouter(client?: BacklogReadClient) {
     }
   });
 
+  // プロジェクト固有の status ID / custom field ID の実値一覧（読取・admin/legal）。
+  // 3-2b（ステータス/カスタム属性同期）を実装する前に運用側が実IDを確認するための参照。
+  router.get("/backlog/metadata", async (_request, response, next) => {
+    try {
+      const role = response.locals.currentUser?.role;
+      if (role !== "admin" && role !== "legal") {
+        return response.status(403).json({ error: "legal or administrator access is required", code: "BACKLOG_ROLE_REQUIRED" });
+      }
+      if (!client) {
+        return response.status(200).json({ enabled: false, statuses: [], customFields: [] });
+      }
+      const metadata = await client.getProjectMetadata();
+      return response.status(200).json({ enabled: true, ...metadata });
+    } catch (error) {
+      if (error instanceof BacklogApiError) {
+        return response.status(502).json({ error: "Backlog API request failed", code: "BACKLOG_API_ERROR", status: error.status });
+      }
+      next(error);
+    }
+  });
+
   return router;
 }
 

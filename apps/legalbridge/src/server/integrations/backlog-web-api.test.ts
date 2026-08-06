@@ -74,3 +74,51 @@ test("課題一覧はprojectIdを解決してGETし、要点を整形する", as
   assert.equal(issuesUrl.searchParams.get("keyword"), "契約");
   assert.equal(issuesUrl.searchParams.get("apiKey"), "secret");
 });
+
+test("プロジェクトメタデータはstatuses/customFieldsの実IDを整形して返す", async () => {
+  const urls: URL[] = [];
+  const client = new BacklogWebApiClient({
+    host: "arclight.backlog.com", apiKey: "secret", projectKey: "LEGAL",
+    fetch: async (input) => {
+      const url = new URL(String(input));
+      urls.push(url);
+      if (url.pathname.endsWith("/statuses")) {
+        return new Response(JSON.stringify([
+          { id: 1, name: "未対応" },
+          { id: 4, name: "完了", color: "#b0be3c" }
+        ]), { status: 200 });
+      }
+      if (url.pathname.endsWith("/customFields")) {
+        return new Response(JSON.stringify([
+          { id: 101, typeId: 6, name: "契約種別" },
+          { id: 102, typeId: 1, name: "相手方" }
+        ]), { status: 200 });
+      }
+      return new Response("not found", { status: 404 });
+    }
+  });
+  const metadata = await client.getProjectMetadata();
+  assert.deepEqual(metadata.statuses, [
+    { id: 1, name: "未対応" },
+    { id: 4, name: "完了" }
+  ]);
+  assert.deepEqual(metadata.customFields, [
+    { id: 101, name: "契約種別", typeId: 6 },
+    { id: 102, name: "相手方", typeId: 1 }
+  ]);
+  assert.ok(urls.some((u) => u.pathname.endsWith("/projects/LEGAL/statuses")));
+  assert.ok(urls.some((u) => u.pathname.endsWith("/projects/LEGAL/customFields")));
+  assert.ok(urls.every((u) => u.searchParams.get("apiKey") === "secret"));
+});
+
+test("メタデータ取得もAPIエラー時はBacklogApiError", async () => {
+  const client = new BacklogWebApiClient({
+    host: "arclight.backlog.com", apiKey: "do-not-leak", projectKey: "LEGAL",
+    fetch: async () => new Response("forbidden", { status: 403 })
+  });
+  await assert.rejects(client.getProjectMetadata(), (error: unknown) => {
+    assert.ok(error instanceof BacklogApiError);
+    assert.equal(error.message.includes("do-not-leak"), false);
+    return true;
+  });
+});

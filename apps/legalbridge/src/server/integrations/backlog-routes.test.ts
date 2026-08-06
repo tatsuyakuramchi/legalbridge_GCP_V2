@@ -35,10 +35,13 @@ test("クライアント未構成（未設定）は enabled:false で空", async
   assert.deepEqual(res.body.issues, []);
 });
 
+const emptyMetadata = async () => ({ statuses: [], customFields: [] });
+
 test("legalは課題一覧を取得できる", async () => {
   const client: BacklogReadClient = {
     getProject: async () => ({ id: 1, projectKey: "LEGAL", name: "法務" }),
-    getIssues: async () => [issue({ id: 1 }), issue({ id: 2 })]
+    getIssues: async () => [issue({ id: 1 }), issue({ id: 2 })],
+    getProjectMetadata: emptyMetadata
   };
   const res = await request(app({ role: "admin", client })).get("/api/v2/backlog/issues?keyword=NDA");
   assert.equal(res.status, 200);
@@ -50,9 +53,53 @@ test("legalは課題一覧を取得できる", async () => {
 test("Backlog APIエラーは502", async () => {
   const client: BacklogReadClient = {
     getProject: async () => ({ id: 1, projectKey: "LEGAL", name: "法務" }),
-    getIssues: async () => { throw new BacklogApiError(403); }
+    getIssues: async () => { throw new BacklogApiError(403); },
+    getProjectMetadata: emptyMetadata
   };
   const res = await request(app({ role: "legal", client })).get("/api/v2/backlog/issues");
+  assert.equal(res.status, 502);
+  assert.equal(res.body.code, "BACKLOG_API_ERROR");
+});
+
+test("メタデータ: admin/legal以外は403", async () => {
+  const res = await request(app({ role: "requester" })).get("/api/v2/backlog/metadata");
+  assert.equal(res.status, 403);
+  assert.equal(res.body.code, "BACKLOG_ROLE_REQUIRED");
+});
+
+test("メタデータ: クライアント未構成は enabled:false で空", async () => {
+  const res = await request(app({ role: "legal" })).get("/api/v2/backlog/metadata");
+  assert.equal(res.status, 200);
+  assert.equal(res.body.enabled, false);
+  assert.deepEqual(res.body.statuses, []);
+  assert.deepEqual(res.body.customFields, []);
+});
+
+test("メタデータ: legalは実IDを取得できる", async () => {
+  const client: BacklogReadClient = {
+    getProject: async () => ({ id: 1, projectKey: "LEGAL", name: "法務" }),
+    getIssues: async () => [],
+    getProjectMetadata: async () => ({
+      statuses: [{ id: 1, name: "未対応" }, { id: 4, name: "完了" }],
+      customFields: [{ id: 101, name: "契約種別", typeId: 6 }]
+    })
+  };
+  const res = await request(app({ role: "legal", client })).get("/api/v2/backlog/metadata");
+  assert.equal(res.status, 200);
+  assert.equal(res.body.enabled, true);
+  assert.equal(res.body.statuses.length, 2);
+  assert.equal(res.body.statuses[1].id, 4);
+  assert.equal(res.body.customFields[0].id, 101);
+  assert.equal(res.body.customFields[0].typeId, 6);
+});
+
+test("メタデータ: Backlog APIエラーは502", async () => {
+  const client: BacklogReadClient = {
+    getProject: async () => ({ id: 1, projectKey: "LEGAL", name: "法務" }),
+    getIssues: async () => [],
+    getProjectMetadata: async () => { throw new BacklogApiError(403); }
+  };
+  const res = await request(app({ role: "admin", client })).get("/api/v2/backlog/metadata");
   assert.equal(res.status, 502);
   assert.equal(res.body.code, "BACKLOG_API_ERROR");
 });

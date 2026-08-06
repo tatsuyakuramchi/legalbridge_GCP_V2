@@ -50,6 +50,30 @@ export function RequestsWorkspace({ onCreateDocument, canComment = false }: { on
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  // プロジェクト固有ID一覧（3-2b 同期実装前の参照・オンデマンド読取）。
+  const [metaOpen, setMetaOpen] = useState(false);
+  const [meta, setMeta] = useState<{ statuses: { id: number; name: string }[]; customFields: { id: number; name: string; typeId: number }[] } | null>(null);
+  const [metaLoading, setMetaLoading] = useState(false);
+  const [metaError, setMetaError] = useState("");
+
+  async function loadMetadata() {
+    const next = !metaOpen;
+    setMetaOpen(next);
+    if (!next || meta) return;
+    setMetaLoading(true); setMetaError("");
+    try {
+      const res = await fetch("/api/v2/backlog/metadata");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setMetaError(res.status === 403 ? "この一覧は管理者/法務のみ参照できます" : res.status === 502 ? "Backlog APIへの接続に失敗しました" : "取得に失敗しました");
+        return;
+      }
+      if (data.enabled === false) { setMetaError("Backlog連携が未設定です"); return; }
+      setMeta({ statuses: data.statuses ?? [], customFields: data.customFields ?? [] });
+    } catch { setMetaError("通信に失敗しました"); }
+    finally { setMetaLoading(false); }
+  }
+
   useEffect(() => {
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
@@ -95,7 +119,32 @@ export function RequestsWorkspace({ onCreateDocument, canComment = false }: { on
         <div className="matter-toolbar">
           <input value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="課題を検索（件名・キーワード）" />
           <span>{loading ? "読込中…" : `${issues.length}件`}</span>
+          <button type="button" onClick={loadMetadata}>{metaOpen ? "プロジェクトID一覧を閉じる" : "プロジェクトID一覧"}</button>
         </div>
+
+        {metaOpen && (
+          <div className="request-metadata">
+            <small className="hint">ステータス／カスタム属性の実ID（3-2b のステータス同期・属性更新を設定する際の参照値）。読み取りのみ。</small>
+            {metaLoading && <p>読込中…</p>}
+            {metaError && <div className="async-error"><span>{metaError}</span></div>}
+            {meta && (
+              <div className="request-metadata-grid">
+                <div>
+                  <h4>ステータス（status ID）</h4>
+                  {meta.statuses.length ? (
+                    <ul>{meta.statuses.map((s) => <li key={s.id}><code>{s.id}</code> {s.name}</li>)}</ul>
+                  ) : <p className="hint">なし</p>}
+                </div>
+                <div>
+                  <h4>カスタム属性（custom field ID）</h4>
+                  {meta.customFields.length ? (
+                    <ul>{meta.customFields.map((f) => <li key={f.id}><code>{f.id}</code> {f.name} <span className="hint">type {f.typeId}</span></li>)}</ul>
+                  ) : <p className="hint">なし</p>}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {error && <div className="async-error"><span>{error}</span></div>}
 

@@ -15,9 +15,27 @@ export interface BacklogIssueSummary {
   updated: string | null;
 }
 
+// プロジェクト固有のステータス／カスタム属性の実ID一覧（3-2b の同期実装前に運用側で確定するための読取）。
+export interface BacklogStatusSummary {
+  id: number;
+  name: string;
+}
+
+export interface BacklogCustomFieldSummary {
+  id: number;
+  name: string;
+  typeId: number;
+}
+
+export interface BacklogProjectMetadata {
+  statuses: BacklogStatusSummary[];
+  customFields: BacklogCustomFieldSummary[];
+}
+
 export interface BacklogReadClient {
   getProject(): Promise<BacklogProjectSummary>;
   getIssues(options?: { count?: number; keyword?: string }): Promise<BacklogIssueSummary[]>;
+  getProjectMetadata(): Promise<BacklogProjectMetadata>;
 }
 
 // 書き戻し（Phase 3・guarded）。現状はコメント投稿のみ（ID非依存）。
@@ -39,6 +57,23 @@ function mapIssue(raw: unknown): BacklogIssueSummary {
     assigneeName: typeof assignee.name === "string" ? assignee.name : null,
     created: typeof r.created === "string" ? r.created : null,
     updated: typeof r.updated === "string" ? r.updated : null
+  };
+}
+
+function mapStatus(raw: unknown): BacklogStatusSummary {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  return {
+    id: Number(r.id),
+    name: typeof r.name === "string" ? r.name : ""
+  };
+}
+
+function mapCustomField(raw: unknown): BacklogCustomFieldSummary {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  return {
+    id: Number(r.id),
+    name: typeof r.name === "string" ? r.name : "",
+    typeId: Number(r.typeId)
   };
 }
 
@@ -114,6 +149,26 @@ export class BacklogWebApiClient implements BacklogReadClient, BacklogWriteClien
     const value = await response.json();
     if (!Array.isArray(value)) throw new Error("Backlog API returned an invalid issues response");
     return value.map(mapIssue);
+  }
+
+  async getProjectMetadata(): Promise<BacklogProjectMetadata> {
+    const key = encodeURIComponent(this.projectKey);
+    const statuses = await this.getJsonArray(`projects/${key}/statuses`);
+    const customFields = await this.getJsonArray(`projects/${key}/customFields`);
+    return {
+      statuses: statuses.map(mapStatus),
+      customFields: customFields.map(mapCustomField)
+    };
+  }
+
+  private async getJsonArray(path: string): Promise<unknown[]> {
+    const url = new URL(path, this.baseUrl);
+    url.searchParams.set("apiKey", this.apiKey);
+    const response = await this.request(url, { method: "GET", headers: { accept: "application/json" } });
+    if (!response.ok) throw new BacklogApiError(response.status);
+    const value = await response.json();
+    if (!Array.isArray(value)) throw new Error("Backlog API returned an invalid response");
+    return value;
   }
 
   async addComment(issueKey: string, content: string): Promise<{ id: number }> {
