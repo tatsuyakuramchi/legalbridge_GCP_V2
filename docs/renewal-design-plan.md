@@ -260,3 +260,8 @@ Phase 7 は全フェーズの受け入れ後
 | 2026-08-05 | Phase 6 | スライス6-4/6-5：アーカイブ表示分離（案件）＋契約チェック（作品条件の作成時点検・純関数）・依存ゼロ | — | ✅ |
 
 **スライス6-4/6-5（アーカイブ＋契約チェック）**：どちらも依存ゼロ。6-4＝`MatterRegistry` で保管(`status='archived'`)を既定「すべて」から除外し「保管」チップを新設（案件のstatus編集は既存 `InlineMatterControls` を流用・grant 008）。6-5＝`contract-check.ts`（純関数 `checkWorkConditions`＝サブライセンス上流未リンク/MG無料率/方向欠落/受取素材未紐付け/条件名空 の作成時ルール、`summarizeFindings`）を `WorkDetail` の「契約チェック」タブで表示（4-1の横断スキャンとは別・条件単位）。新規GRANT・env・依存なし。クライアント純関数テスト追加。テスト400件。**これでPhase 6の依存ゼロ枠（6-1〜6-5）が完了**。残：稟議6-6（新規テーブル判断）・銀行口座（非表示方針で対象外）・設定拡張（サーバ永続化は要判断）。
+
+| 2026-08-05 | Phase 3 | 棚卸し＋計画 → `docs/phase3-backlog-plan.md` | — | ✅ |
+| 2026-08-05 | Phase 3 | スライス3-1：Backlog課題一覧→依頼画面（課題起点で文書作成・読取・既存env） | — | ✅ |
+
+**スライス3-1（Backlog依頼取込・読取）**：`BacklogWebApiClient.getIssues({count,keyword})` を追加（projectId解決→`GET /issues`・防御的整形・APIキー非漏洩）。`integrations/backlog-routes.ts`＝`GET /api/v2/backlog/issues`（admin/legal・読取・未構成は`enabled:false`・API失敗は502）。app.tsは`BACKLOG_MODE=readonly`＋接続情報がある時のみクライアント構築（`defaultBacklogClient`）。UI `RequestsWorkspace.tsx`（業務＞依頼）＝課題を検索一覧し「この課題で文書作成」で issueKey を文書作成へ引き継ぐ（課題→リーガルリクエスト導線）。mock fetchでテスト。**新規GRANT・依存なし**（有効化は既存 `BACKLOG_MODE`/`BACKLOG_HOST`/`BACKLOG_PROJECT_KEY`/`BACKLOG_API_KEY`）。テスト405件。残：書き戻し（3-2コメント＝汎用で実装可・3-2bステータス/カスタム属性＝プロジェクト固有ID判断）・変数自動抽出（3-3）。

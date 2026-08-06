@@ -26,6 +26,7 @@ import { DataQuality } from "./DataQuality";
 import { VendorMerge } from "./VendorMerge";
 import { OperationsGuide } from "./OperationsGuide";
 import { TextSnippets } from "./TextSnippets";
+import { RequestsWorkspace } from "./RequestsWorkspace";
 import { PaymentReport } from "./PaymentReport";
 import { BillingPrint } from "./BillingPrint";
 
@@ -48,7 +49,7 @@ const fallback: DashboardSummary = {
   priorities: []
 };
 
-type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview" | "billing" | "receivable-map" | "payment-report" | "billing-print" | "works" | "data-quality" | "vendor-merge" | "guide" | "snippets";
+type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview" | "billing" | "receivable-map" | "payment-report" | "billing-print" | "works" | "data-quality" | "vendor-merge" | "guide" | "snippets" | "requests";
 type NavItem = { view: View; label: string; description: string; match: View[] };
 type NavGroup = { label: string; items: NavItem[] };
 
@@ -65,6 +66,7 @@ function navGroups(access: {
       { view: "home", label: "ホーム", description: "業務の全体状況と次アクション", match: ["home"] }
     ] },
     { label: "業務", items: [
+      ...(access.legalWorkspace ? [{ view: "requests" as const, label: "依頼", description: "Backlog課題を起点に文書作成（読み取り）", match: ["requests" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "matters" as const, label: "案件", description: "案件・課題・タスクの管理", match: ["matters" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "works" as const, label: "作品", description: "作品を起点に系譜・素材・条件・権利ソースを一望", match: ["works" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "conditions" as const, label: "条件明細", description: "契約条件の横断検索・消化・検収", match: ["conditions" as const] }] : []),
@@ -108,6 +110,7 @@ function breadcrumbFor(view: View): Array<{ label: string; view?: View }> {
     ledgers: [home, { label: "台帳" }],
     "contract-intake": [home, { label: "契約取込" }],
     outbound: [home, { label: "アウト条件" }],
+    requests: [home, { label: "依頼" }],
     works: [home, { label: "作品" }],
     "data-quality": [home, { label: "データ品質" }],
     "vendor-merge": [home, { label: "取引先名寄せ" }],
@@ -332,6 +335,9 @@ export function App() {
         {view === "works" && <WorkDetail canEdit={canEditWorks} canEditRights={canEditRightsSources} />}
         {view === "data-quality" && <DataQuality onNavigate={(v) => setView(v as View)} />}
         {view === "vendor-merge" && <VendorMerge canMerge={canMergeVendors} />}
+        {view === "requests" && (legalWorkspace || requesterWorkspace) && (
+          <RequestsWorkspace onCreateDocument={(issueKey) => { setNewDocIssueKey(issueKey); setDraftSelection(null); setView("templates"); }} />
+        )}
         {view === "guide" && <OperationsGuide />}
         {view === "snippets" && <TextSnippets />}
         {view === "receivable-map" && <ReceivableMap />}

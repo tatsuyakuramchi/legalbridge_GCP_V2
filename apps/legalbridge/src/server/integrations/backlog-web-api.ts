@@ -4,8 +4,34 @@ export interface BacklogProjectSummary {
   name: string;
 }
 
+export interface BacklogIssueSummary {
+  id: number;
+  issueKey: string;
+  summary: string;
+  statusName: string | null;
+  assigneeName: string | null;
+  created: string | null;
+  updated: string | null;
+}
+
 export interface BacklogReadClient {
   getProject(): Promise<BacklogProjectSummary>;
+  getIssues(options?: { count?: number; keyword?: string }): Promise<BacklogIssueSummary[]>;
+}
+
+function mapIssue(raw: unknown): BacklogIssueSummary {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  const status = (r.status ?? {}) as Record<string, unknown>;
+  const assignee = (r.assignee ?? {}) as Record<string, unknown>;
+  return {
+    id: Number(r.id),
+    issueKey: typeof r.issueKey === "string" ? r.issueKey : "",
+    summary: typeof r.summary === "string" ? r.summary : "",
+    statusName: typeof status.name === "string" ? status.name : null,
+    assigneeName: typeof assignee.name === "string" ? assignee.name : null,
+    created: typeof r.created === "string" ? r.created : null,
+    updated: typeof r.updated === "string" ? r.updated : null
+  };
 }
 
 export interface BacklogReadClientOptions {
@@ -27,6 +53,7 @@ export class BacklogWebApiClient implements BacklogReadClient {
   private readonly apiKey: string;
   private readonly projectKey: string;
   private readonly request: typeof globalThis.fetch;
+  private projectId: number | null = null;
 
   constructor(options: BacklogReadClientOptions) {
     const host = normalizeBacklogHost(options.host);
@@ -55,7 +82,30 @@ export class BacklogWebApiClient implements BacklogReadClient {
     ) {
       throw new Error("Backlog API returned an invalid project response");
     }
+    this.projectId = value.id;
     return { id: value.id, projectKey: value.projectKey, name: value.name };
+  }
+
+  private async resolveProjectId(): Promise<number> {
+    if (this.projectId != null) return this.projectId;
+    return (await this.getProject()).id;
+  }
+
+  async getIssues(options: { count?: number; keyword?: string } = {}): Promise<BacklogIssueSummary[]> {
+    const projectId = await this.resolveProjectId();
+    const url = new URL("issues", this.baseUrl);
+    url.searchParams.set("apiKey", this.apiKey);
+    url.searchParams.append("projectId[]", String(projectId));
+    url.searchParams.set("count", String(Math.min(Math.max(options.count ?? 50, 1), 100)));
+    url.searchParams.set("sort", "updated");
+    url.searchParams.set("order", "desc");
+    const keyword = options.keyword?.trim();
+    if (keyword) url.searchParams.set("keyword", keyword);
+    const response = await this.request(url, { method: "GET", headers: { accept: "application/json" } });
+    if (!response.ok) throw new BacklogApiError(response.status);
+    const value = await response.json();
+    if (!Array.isArray(value)) throw new Error("Backlog API returned an invalid issues response");
+    return value.map(mapIssue);
   }
 }
 

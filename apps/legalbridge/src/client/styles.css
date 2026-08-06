@@ -529,6 +529,18 @@ header input { width: 100%; border: 1px solid var(--border); border-radius: var(
 .guide-section dl { margin: 0; display: grid; gap: 10px; }
 .guide-section dt { font-weight: 700; color: #172a44; font-size: 13px; }
 .guide-section dd { margin: 2px 0 0; color: #475569; font-size: 13px; line-height: 1.5; }
+
+/* 依頼（Backlog課題・Phase 3・RequestsWorkspace） */
+.request-list { display: grid; gap: 10px; margin-top: 8px; }
+.request-list article { border: 1px solid var(--divider, #e2e8f0); border-radius: 10px; padding: 12px 14px; background: white; display: grid; gap: 8px; }
+.request-main { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.request-key { color: #0e7490; font-weight: 800; font-size: 12px; }
+.request-main strong { color: #172a44; }
+.request-list dl { display: flex; gap: 20px; margin: 0; flex-wrap: wrap; }
+.request-list dl > div { display: flex; gap: 6px; font-size: 12px; }
+.request-list dt { color: #64748b; }
+.request-list dd { margin: 0; color: #172a44; }
+.request-actions { display: flex; justify-content: flex-end; }
 @media (max-width: 860px) { .wd-layout { grid-template-columns: 1fr; } .wd-picker { position: static; } .wd-overview { grid-template-columns: 1fr; } }
 .doc-integrations { margin-top: 16px; border-top: 1px solid #e2e8f0; padding-top: 12px; display: grid; gap: 12px; }
 .doc-integrations > h3 { margin: 0; font-size: 13px; color: #334155; }

@@ -42,6 +42,20 @@ import {
   createIntegrationAdapters,
   type IntegrationAdapter
 } from "./integrations/index.js";
+import { BacklogWebApiClient, type BacklogReadClient } from "./integrations/backlog-web-api.js";
+import { createBacklogRequestRouter } from "./integrations/backlog-routes.js";
+
+// BACKLOG_MODE=readonly＋接続情報がある時のみ読取クライアントを構築（依頼取込・Phase 3）。
+function defaultBacklogClient(): BacklogReadClient | undefined {
+  if (config.backlogMode !== "readonly" || !config.backlogHost || !config.backlogProjectKey || !config.backlogApiKey) {
+    return undefined;
+  }
+  try {
+    return new BacklogWebApiClient({
+      host: config.backlogHost, projectKey: config.backlogProjectKey, apiKey: config.backlogApiKey
+    });
+  } catch { return undefined; }
+}
 import { config } from "./config.js";
 import {
   MemoryMasterDataRepository,
@@ -268,6 +282,7 @@ export interface AppDependencies {
   templates: TemplateRepository;
   drafts: DraftRepository;
   integrations: IntegrationAdapter[];
+  backlogClient?: BacklogReadClient;
   masterData?: MasterDataRepository;
   documentRegistry?: DocumentRegistryRepository;
   matters?: MatterRepository;
@@ -333,6 +348,7 @@ function createDefaultDependencies(): AppDependencies {
       ? new PgDraftRepository(database)
       : new MemoryDraftRepository(),
     integrations: createIntegrationAdapters(),
+    backlogClient: defaultBacklogClient(),
     masterData: database
       ? new PgMasterDataRepository(database)
       : new MemoryMasterDataRepository(),
@@ -910,6 +926,8 @@ export function createApp(
   app.use("/api/v2", createWorkReadRouter(dependencies.worksRead));
   // データ品質センター（読み取り・admin/legal限定・Phase 4）。書込みなし。
   app.use("/api/v2", createDataQualityRouter(dependencies.dataQuality));
+  // Backlog課題一覧（依頼取込・読み取り・admin/legal限定・Phase 3）。書込みなし。
+  app.use("/api/v2", createBacklogRequestRouter(dependencies.backlogClient));
   app.use("/api/v2", createWorkWriteRouter(dependencies.workWrites, workWriteEnabled));
   app.use("/api/v2", createMaterialWriteRouter(dependencies.materialWrites, materialWriteEnabled));
   // 権利ソース書込（guarded-write・既定OFF・scope 'rights-sources'・grant 017）。
