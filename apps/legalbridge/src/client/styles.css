@@ -544,6 +544,10 @@ header input { width: 100%; border: 1px solid var(--border); border-radius: var(
 .request-comment { display: grid; gap: 8px; border-top: 1px solid var(--divider, #eef2f7); padding-top: 10px; }
 .request-comment textarea { padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 8px; font: inherit; }
 .request-comment-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.request-vars { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.request-vars-label { color: #64748b; font-size: 11px; font-weight: 700; }
+.request-var { font-size: 11px; background: #f1f5f9; border-radius: 6px; padding: 3px 8px; color: #334155; }
+.request-var b { color: #0e7490; margin-right: 4px; font-size: 10px; }
 @media (max-width: 860px) { .wd-layout { grid-template-columns: 1fr; } .wd-picker { position: static; } .wd-overview { grid-template-columns: 1fr; } }
 .doc-integrations { margin-top: 16px; border-top: 1px solid #e2e8f0; padding-top: 12px; display: grid; gap: 12px; }
 .doc-integrations > h3 { margin: 0; font-size: 13px; color: #334155; }

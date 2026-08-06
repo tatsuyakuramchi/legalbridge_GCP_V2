@@ -8,6 +8,7 @@ export interface BacklogIssueSummary {
   id: number;
   issueKey: string;
   summary: string;
+  description: string | null;
   statusName: string | null;
   assigneeName: string | null;
   created: string | null;
@@ -33,6 +34,7 @@ function mapIssue(raw: unknown): BacklogIssueSummary {
     id: Number(r.id),
     issueKey: typeof r.issueKey === "string" ? r.issueKey : "",
     summary: typeof r.summary === "string" ? r.summary : "",
+    description: typeof r.description === "string" ? r.description : null,
     statusName: typeof status.name === "string" ? status.name : null,
     assigneeName: typeof assignee.name === "string" ? assignee.name : null,
     created: typeof r.created === "string" ? r.created : null,

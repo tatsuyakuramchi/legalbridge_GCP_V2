@@ -269,3 +269,7 @@ Phase 7 は全フェーズの受け入れ後
 | 2026-08-05 | Phase 3 | スライス3-2：Backlogコメント書き戻し（guarded・確認トークン・新capability `backlog-comment`・BACKLOG_MODE=live非依存） | — | ✅ |
 
 **スライス3-2（Backlogコメント書き戻し）**：`BacklogWriteClient.addComment(issueKey, content)`（`POST /issues/:key/comments`・ID非依存）。`POST /api/v2/backlog/issues/:key/comments`（admin/legal・確認トークン `COMMIT_BACKLOG_COMMENT`・未有効は503・API失敗502）。新capability **`backlog-comment`**（`BACKLOG_COMMENT_WRITE_ENABLED`）でPhase 1同型の5条件ゲート。**既存の `BACKLOG_MODE=live` ブロックは維持**し、コメント書き戻しは独立capability（readonly接続を維持しつつ明示有効化時のみ動作＝既存workerとの棲み分け）。config/app（gating・safe-write・writeCapabilities）・`verify-write-test.sh`（validation-only＋IAP＋readonly必須のcase＋scope）・`cloudbuild`（subs/verify/env）全結線（既定OFF・default検証で無影響確認）。UI `RequestsWorkspace` に capability-gated（`canBacklogComment`）なコメント投稿（確認ダイアログ）。テスト409件。残：ステータス/カスタム属性同期（3-2b・プロジェクト固有ID判断）・変数自動抽出（3-3）。
+
+| 2026-08-05 | Phase 3 | スライス3-3：Backlog課題本文の変数自動抽出→文書フォーム非破壊シード（純関数・依存ゼロ） | — | ✅ |
+
+**スライス3-3（変数自動抽出）**：`extract-variables.ts`（純関数 `extractVariables`＝「ラベル：値」「【ラベル】値」を解析し別名表 `DEFAULT_ALIASES` で正規フィールド名（PROJECT_TITLE/COUNTERPARTY/AMOUNT等）へ対応付け、`seedFormData`＝空欄のみ非破壊補完）。`getIssues` に `description` を追加。`RequestsWorkspace` が課題本文から抽出変数をプレビュー表示し「この課題で文書作成」で App へ引き継ぎ、`DocumentForm` の context 読込後に `seedFormData` でフォームを非破壊シード（下書き復元時はシードしない）。クライアント純関数テスト。**新規GRANT・依存なし**。テスト414件。**これで Phase 3 の主要スライス（依頼取込・コメント書き戻し・変数抽出）が完了**。残：ステータス/カスタム属性同期（3-2b・プロジェクト固有ID判断）。

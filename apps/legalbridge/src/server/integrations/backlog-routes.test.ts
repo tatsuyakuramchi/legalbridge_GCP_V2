@@ -18,7 +18,7 @@ function app(opts: { role?: string; client?: BacklogReadClient } = {}) {
 }
 
 const issue = (over: Partial<BacklogIssueSummary> & { id: number }): BacklogIssueSummary => ({
-  issueKey: `LEGAL-${over.id}`, summary: "件名", statusName: "未対応", assigneeName: null,
+  issueKey: `LEGAL-${over.id}`, summary: "件名", description: null, statusName: "未対応", assigneeName: null,
   created: null, updated: null, ...over
 });
 

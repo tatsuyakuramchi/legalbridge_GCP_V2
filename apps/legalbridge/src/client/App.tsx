@@ -27,6 +27,7 @@ import { VendorMerge } from "./VendorMerge";
 import { OperationsGuide } from "./OperationsGuide";
 import { TextSnippets } from "./TextSnippets";
 import { RequestsWorkspace } from "./RequestsWorkspace";
+import { seedFormData } from "./extract-variables";
 import { PaymentReport } from "./PaymentReport";
 import { BillingPrint } from "./BillingPrint";
 
@@ -174,6 +175,7 @@ export function App() {
   const [deepLinkIssue, setDeepLinkIssue] = useState("");
   // Issue key seeded when 文書を作成 is launched from a matter (LB-F01 導線).
   const [newDocIssueKey, setNewDocIssueKey] = useState("");
+  const [newDocSeed, setNewDocSeed] = useState<Record<string, string>>({});
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -307,12 +309,12 @@ export function App() {
               setSearchSelection({ target: "matter", id: String(id), title });
               setView("matters");
             }}
-            onCreateDocument={() => { setNewDocIssueKey(""); setView("templates"); }} />
+            onCreateDocument={() => { setNewDocIssueKey(""); setNewDocSeed({}); setView("templates"); }} />
         )}
         {view === "matters" && <MatterRegistry templates={templates}
           canEdit={canEditMatters}
           onCreateDocument={(legalWorkspace || requesterWorkspace)
-            ? (issueKey) => { setNewDocIssueKey(issueKey ?? ""); setDraftSelection(null); setView("templates"); }
+            ? (issueKey) => { setNewDocIssueKey(issueKey ?? ""); setNewDocSeed({}); setDraftSelection(null); setView("templates"); }
             : undefined}
           selectedId={searchSelection?.target === "matter" ? Number(searchSelection.id) : undefined} />}
         {view === "drafts" && !readOnly && (
@@ -339,7 +341,7 @@ export function App() {
         {view === "vendor-merge" && <VendorMerge canMerge={canMergeVendors} />}
         {view === "requests" && (legalWorkspace || requesterWorkspace) && (
           <RequestsWorkspace canComment={canBacklogComment}
-            onCreateDocument={(issueKey) => { setNewDocIssueKey(issueKey); setDraftSelection(null); setView("templates"); }} />
+            onCreateDocument={(issueKey, seed) => { setNewDocIssueKey(issueKey); setNewDocSeed(seed ?? {}); setDraftSelection(null); setView("templates"); }} />
         )}
         {view === "guide" && <OperationsGuide />}
         {view === "snippets" && <TextSnippets />}
@@ -352,13 +354,13 @@ export function App() {
             setView("documents");
           }}
           onCreateDocument={(legalWorkspace || requesterWorkspace)
-            ? (issueKey) => { setNewDocIssueKey(issueKey ?? ""); setDraftSelection(null); setView("templates"); }
+            ? (issueKey) => { setNewDocIssueKey(issueKey ?? ""); setNewDocSeed({}); setDraftSelection(null); setView("templates"); }
             : undefined} />}
         {view === "staff" && adminWorkspace && <StaffWorkspace canEdit={canEditStaff} />}
         {view === "gmail-inbound" && adminWorkspace && <GmailInboundWorkspace />}
         {view === "admin" && <AdminOverview />}
         {view === "documents" && (
-          <DocumentRegistry templates={templates} onCreate={() => { setNewDocIssueKey(""); setView("templates"); }}
+          <DocumentRegistry templates={templates} onCreate={() => { setNewDocIssueKey(""); setNewDocSeed({}); setView("templates"); }}
             canGeneratePdf={canGeneratePdf}
             canSaveToDrive={canSaveToDrive}
             canImport={canFinalizeDocuments}
@@ -378,6 +380,7 @@ export function App() {
             readOnly={readOnly}
             canFinalizeDocuments={canFinalizeDocuments}
             initialIssueKey={draftSelection?.issueKey ?? (newDocIssueKey || "VALIDATION-1")}
+            seedValues={draftSelection ? undefined : newDocSeed}
             onBack={() => setView(draftSelection ? "drafts" : "templates")}
             onCreateNew={() => setView("templates")}
             onOpenDocuments={() => setView("documents")}
@@ -598,6 +601,7 @@ function DocumentForm({
   readOnly,
   canFinalizeDocuments,
   initialIssueKey,
+  seedValues,
   onBack,
   onCreateNew,
   onOpenDocuments
@@ -606,6 +610,7 @@ function DocumentForm({
   readOnly: boolean;
   canFinalizeDocuments: boolean;
   initialIssueKey: string;
+  seedValues?: Record<string, string>;
   onBack: () => void;
   onCreateNew?: () => void;
   onOpenDocuments?: () => void;
@@ -640,7 +645,8 @@ function DocumentForm({
       )
       .then((context) => {
         const restoredDraft = context.draft ?? null;
-        setFormData(context.formData ?? {});
+        // Backlog抽出変数を非破壊シード（下書き復元時は既存値優先で行わない）。
+        setFormData(restoredDraft ? (context.formData ?? {}) : seedFormData(context.formData ?? {}, seedValues ?? {}));
         setDraft(restoredDraft);
         setDraftStatus(restoredDraft ? "saved" : "clean");
         setNotice(

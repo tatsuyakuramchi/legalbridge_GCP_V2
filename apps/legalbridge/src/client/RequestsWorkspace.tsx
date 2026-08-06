@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
+import { extractVariables } from "./extract-variables";
 
 // 依頼（Backlog課題取込・Phase 3・読み取り）。Backlog課題を一覧し、課題を起点に
 // リーガル文書の作成へ導く（issueKey を文書作成に引き継ぐ）。書き戻しは別途。
 // BACKLOG_MODE=readonly＋接続情報が無い場合は未設定として案内する。
 
 type Issue = {
-  id: number; issueKey: string; summary: string;
+  id: number; issueKey: string; summary: string; description: string | null;
   statusName: string | null; assigneeName: string | null;
   created: string | null; updated: string | null;
 };
@@ -18,7 +19,7 @@ const fmt = (v: string | null) => {
 
 const COMMENT_TOKEN = "COMMIT_BACKLOG_COMMENT";
 
-export function RequestsWorkspace({ onCreateDocument, canComment = false }: { onCreateDocument: (issueKey: string) => void; canComment?: boolean }) {
+export function RequestsWorkspace({ onCreateDocument, canComment = false }: { onCreateDocument: (issueKey: string, seed?: Record<string, string>) => void; canComment?: boolean }) {
   const [commentFor, setCommentFor] = useState<string | null>(null);
   const [commentText, setCommentText] = useState("");
   const [commentBusy, setCommentBusy] = useState(false);
@@ -99,7 +100,10 @@ export function RequestsWorkspace({ onCreateDocument, canComment = false }: { on
         {error && <div className="async-error"><span>{error}</span></div>}
 
         <div className="request-list">
-          {issues.map((issue) => (
+          {issues.map((issue) => {
+            const extracted = extractVariables(issue.description);
+            const varEntries = Object.entries(extracted.variables);
+            return (
             <article key={issue.id}>
               <div className="request-main">
                 <span className="request-key">{issue.issueKey}</span>
@@ -110,9 +114,15 @@ export function RequestsWorkspace({ onCreateDocument, canComment = false }: { on
                 <div><dt>担当</dt><dd>{issue.assigneeName ?? "—"}</dd></div>
                 <div><dt>更新</dt><dd>{fmt(issue.updated)}</dd></div>
               </dl>
+              {varEntries.length > 0 && (
+                <div className="request-vars">
+                  <span className="request-vars-label">抽出変数（文書へ引き継ぎ）</span>
+                  {varEntries.map(([field, value]) => <span key={field} className="request-var"><b>{field}</b>{value}</span>)}
+                </div>
+              )}
               <div className="request-actions">
                 {canComment && <button onClick={() => { setCommentFor(commentFor === issue.issueKey ? null : issue.issueKey); setCommentText(""); setCommentMsg(""); }}>コメント書き戻し</button>}
-                <button className="primary" onClick={() => onCreateDocument(issue.issueKey)}>この課題で文書作成</button>
+                <button className="primary" onClick={() => onCreateDocument(issue.issueKey, extracted.variables)}>この課題で文書作成</button>
               </div>
               {canComment && commentFor === issue.issueKey && (
                 <div className="request-comment">
@@ -125,7 +135,8 @@ export function RequestsWorkspace({ onCreateDocument, canComment = false }: { on
                 </div>
               )}
             </article>
-          ))}
+            );
+          })}
           {!loading && !error && !issues.length && <div className="empty-state">該当する課題がありません。</div>}
         </div>
       </>}
