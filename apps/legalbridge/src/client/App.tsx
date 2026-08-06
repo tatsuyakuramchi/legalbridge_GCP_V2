@@ -23,6 +23,7 @@ import { BillingDashboard } from "./BillingDashboard";
 import { ReceivableMap } from "./ReceivableMap";
 import { WorkDetail } from "./WorkDetail";
 import { DataQuality } from "./DataQuality";
+import { VendorMerge } from "./VendorMerge";
 import { PaymentReport } from "./PaymentReport";
 import { BillingPrint } from "./BillingPrint";
 
@@ -45,7 +46,7 @@ const fallback: DashboardSummary = {
   priorities: []
 };
 
-type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview" | "billing" | "receivable-map" | "payment-report" | "billing-print" | "works" | "data-quality";
+type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview" | "billing" | "receivable-map" | "payment-report" | "billing-print" | "works" | "data-quality" | "vendor-merge";
 type NavItem = { view: View; label: string; description: string; match: View[] };
 type NavGroup = { label: string; items: NavItem[] };
 
@@ -80,6 +81,7 @@ function navGroups(access: {
     { label: "設定", items: [
       ...(access.legalWorkspace ? [{ view: "ledgers" as const, label: "台帳", description: "作品・取引先などのマスタ", match: ["ledgers" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "data-quality" as const, label: "データ品質", description: "横断整合スキャン（未リンク・重複・欠落）の俯瞰", match: ["data-quality" as const] }] : []),
+      ...(access.legalWorkspace ? [{ view: "vendor-merge" as const, label: "取引先名寄せ", description: "重複した取引先を統合（参照再指定・旧は無効化）", match: ["vendor-merge" as const] }] : []),
       ...(access.adminWorkspace ? [{ view: "staff" as const, label: "担当者", description: "担当者マスタの管理", match: ["staff" as const] }] : []),
       ...(access.adminWorkspace && access.gmailInbound ? [{ view: "gmail-inbound" as const, label: "受信取込", description: "受信メールの契約PDF取込", match: ["gmail-inbound" as const] }] : []),
       ...(access.adminWorkspace ? [{ view: "admin" as const, label: "管理", description: "通知・運用の管理", match: ["admin" as const] }] : [])
@@ -104,6 +106,7 @@ function breadcrumbFor(view: View): Array<{ label: string; view?: View }> {
     outbound: [home, { label: "アウト条件" }],
     works: [home, { label: "作品" }],
     "data-quality": [home, { label: "データ品質" }],
+    "vendor-merge": [home, { label: "取引先名寄せ" }],
     conditions: [home, { label: "条件明細" }],
     "royalty-preview": [home, { label: "ロイヤリティ試算" }],
     billing: [home, { label: "請求" }],
@@ -149,6 +152,7 @@ export function App() {
   const [canEditWorks, setCanEditWorks] = useState(false);
   const [canEditMaterials, setCanEditMaterials] = useState(false);
   const [canEditRightsSources, setCanEditRightsSources] = useState(false);
+  const [canMergeVendors, setCanMergeVendors] = useState(false);
   const [canEditStaff, setCanEditStaff] = useState(false);
   const [canGmailNotify, setCanGmailNotify] = useState(false);
   const [canCloudSign, setCanCloudSign] = useState(false);
@@ -193,6 +197,7 @@ export function App() {
         setCanEditWorks(capabilities.includes("works"));
         setCanEditMaterials(capabilities.includes("materials"));
         setCanEditRightsSources(capabilities.includes("rights-sources"));
+        setCanMergeVendors(capabilities.includes("vendor-merge"));
         setCanEditStaff(capabilities.includes("staff"));
         setCanGmailNotify(capabilities.includes("gmail"));
         setCanCloudSign(capabilities.includes("cloudsign"));
@@ -320,6 +325,7 @@ export function App() {
         {view === "billing" && <BillingDashboard canRecord={canRecordReceipt} />}
         {view === "works" && <WorkDetail canEdit={canEditWorks} canEditRights={canEditRightsSources} />}
         {view === "data-quality" && <DataQuality onNavigate={(v) => setView(v as View)} />}
+        {view === "vendor-merge" && <VendorMerge canMerge={canMergeVendors} />}
         {view === "receivable-map" && <ReceivableMap />}
         {view === "payment-report" && <PaymentReport />}
         {view === "billing-print" && <BillingPrint />}

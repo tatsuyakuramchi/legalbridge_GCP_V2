@@ -480,6 +480,27 @@ header input { width: 100%; border: 1px solid var(--border); border-radius: var(
 .dq-samples { width: 100%; margin-top: 10px; font-size: 13px; }
 .dq-samples td { padding: 6px 8px; border-bottom: 1px solid var(--divider, #eef2f7); }
 .dq-samples td.muted { color: #64748b; }
+
+/* 取引先名寄せ（Phase 4・VendorMerge） */
+.vm-inputs { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin-top: 16px; }
+.vm-inputs label { display: grid; gap: 4px; font-size: 12px; color: #475569; }
+.vm-inputs input { padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 8px; width: 160px; }
+.vm-vendors { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 16px; }
+.vm-vendors article { border: 1px solid var(--divider, #e2e8f0); border-radius: 10px; padding: 12px 14px; background: white; display: grid; gap: 2px; }
+.vm-vendors article span { color: #64748b; font-size: 12px; }
+.vm-vendors article strong { color: #172a44; }
+.vm-vendors article em { color: #94a3b8; font-style: normal; font-size: 12px; }
+.vm-vendors article.warn { border-color: #f5c6a5; background: #fff7ed; }
+.vm-refs { width: 100%; margin-top: 14px; border-collapse: collapse; font-size: 13px; }
+.vm-refs th, .vm-refs td { padding: 8px; border-bottom: 1px solid var(--divider, #eef2f7); text-align: left; }
+.vm-refs td.muted { color: #64748b; font-size: 12px; }
+.vm-refs tfoot td { border-top: 2px solid #cbd5e1; }
+.vm-confirm { margin-top: 16px; border: 1px solid #f5c6a5; background: #fff7ed; border-radius: 10px; padding: 14px 16px; display: grid; gap: 10px; }
+.vm-confirm p { margin: 0; font-size: 13px; color: #7c2d12; }
+.vm-confirm label { display: grid; gap: 4px; font-size: 12px; color: #475569; }
+.vm-confirm input { padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 8px; max-width: 320px; }
+.vm-confirm code { background: #fde68a; padding: 1px 6px; border-radius: 4px; }
+.vm-result { margin-top: 12px; border: 1px solid #a7f3d0; background: #ecfdf5; color: #065f46; border-radius: 10px; padding: 12px 14px; font-size: 13px; }
 @media (max-width: 860px) { .wd-layout { grid-template-columns: 1fr; } .wd-picker { position: static; } .wd-overview { grid-template-columns: 1fr; } }
 .doc-integrations { margin-top: 16px; border-top: 1px solid #e2e8f0; padding-top: 12px; display: grid; gap: 12px; }
 .doc-integrations > h3 { margin: 0; font-size: 13px; color: #334155; }

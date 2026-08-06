@@ -102,7 +102,7 @@ const SCANS: ScanDef[] = [
         WHERE COALESCE(btrim(vendor_name), '') <> ''
         GROUP BY lower(btrim(vendor_name)) HAVING count(*) > 1
         ORDER BY count(*) DESC LIMIT ${SAMPLE_LIMIT}`,
-    toSample: (r) => ({ id: num(r.id), label: str(r.norm), detail: `${num(r.c)}件が重複`, link: { view: "ledgers" } })
+    toSample: (r) => ({ id: num(r.id), label: str(r.norm), detail: `${num(r.c)}件が重複`, link: { view: "vendor-merge" } })
   }
 ];
 

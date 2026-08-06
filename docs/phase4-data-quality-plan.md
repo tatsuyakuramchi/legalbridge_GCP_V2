@@ -17,12 +17,12 @@
 |---|---|---|---|---|
 | **4-1** | データ品質センター（横断整合スキャン俯瞰・drill導線） | 読取 | 不要（006/007/015のSELECT・スキャン単位null縮退） | ✅ |
 | **4-2** | CSV取込の拡張（素材・権利ソース取込・共通bulkヘルパ） | 書込 | 既存INSERT（007）流用 | ✅ |
-| 4-3 | 名寄せ（取引先マージ・FK再指定＋旧レコード無効化） | 書込 | 新規（複数表UPDATE） | 未 |
+| **4-3** | 名寄せ（取引先マージ・8表FK再指定＋旧is_active=false・プレビュー2段） | 書込 | **018**（列単位UPDATE×4表） | ✅ |
 | 4-4 | 下書き一括整理（stale sweep） | 書込 | 006 DELETE済 | 未 |
 | 4-5 | Excel/LegalOn一括取込 | 書込 | 依存判断 | 未 |
 
-### 決定ポイント（着手時に確認）
-- **名寄せの副作用範囲（4-3）**：取引先マージは `condition_lines.counterparty_vendor_id` / `works.rights_holder_vendor_id` / `payments.counterparty_vendor_id` / `material_rights_sources.rights_holder_vendor_id` 等を旧→新へ再指定する広域UPDATE。対象表と付与GRANT、監査（no-DELETE：旧取引先は`is_active=false`で残す）を要確定。
+### 決定ポイント
+- **名寄せ（4-3）＝確定・実装済**：取引先マージは8表のFKを旧→新へ再指定（`condition_lines.counterparty_vendor_id` / `payments.counterparty_vendor_id` / `works.rights_holder_vendor_id` / `work_materials.rights_holder_vendor_id` / `material_rights_sources.rights_holder_vendor_id` / `material_categories.rights_holder_vendor_id` / `contracts.primary_vendor_id` / `contract_works.rights_holder_vendor_id`）。旧取引先は**削除せず `is_active=false`**（no-DELETE・監査保持）。既にUPDATE済（payments/works/work_materials/material_rights_sources/vendors）以外の4表は **grant 018 で列単位UPDATE**のみ付与（全列UPDATEはしない）。プレビュー（再指定件数）→合言葉 `COMMIT_VENDOR_MERGE`→実行の2段。
 - **Excel/LegalOn（4-5）**：解析ライブラリの依存判断（S4 Excel同様、まず依存なしのCSV正規化で代替可）。
 
 ## 3. Slice 4-1（実装済み）

@@ -86,6 +86,10 @@ import {
 } from "./data-quality/repository.js";
 import { createDataQualityRouter } from "./data-quality/routes.js";
 import {
+  MemoryVendorMergeRepository, PgVendorMergeRepository, type VendorMergeRepository
+} from "./vendors/merge-repository.js";
+import { createVendorMergeRouter } from "./vendors/merge-routes.js";
+import {
   MemoryMaterialWriteRepository, PgMaterialWriteRepository, type MaterialWriteRepository
 } from "./materials/write-repository.js";
 import { createMaterialWriteRouter } from "./materials/write-routes.js";
@@ -276,6 +280,7 @@ export interface AppDependencies {
   workWrites?: WorkWriteRepository;
   worksRead?: WorkReadRepository;
   dataQuality?: DataQualityRepository;
+  vendorMerge?: VendorMergeRepository;
   materialWrites?: MaterialWriteRepository;
   rightsSourceWrites?: RightsSourceWriteRepository;
   ledgers?: LedgerRepository;
@@ -313,6 +318,7 @@ export interface AppOptions {
   paymentLedgerWritesEnabled?: boolean;
   materialWritesEnabled?: boolean;
   rightsSourceWritesEnabled?: boolean;
+  vendorMergeEnabled?: boolean;
   auth?: AuthSettings;
 }
 
@@ -359,6 +365,9 @@ function createDefaultDependencies(): AppDependencies {
     dataQuality: database
       ? new PgDataQualityRepository(database)
       : new MemoryDataQualityRepository(),
+    vendorMerge: database
+      ? new PgVendorMergeRepository(database)
+      : new MemoryVendorMergeRepository(),
     materialWrites: database
       ? new PgMaterialWriteRepository(database)
       : new MemoryMaterialWriteRepository(),
@@ -429,6 +438,7 @@ export function createApp(
     workWritesEnabled: config.workWritesEnabled,
     materialWritesEnabled: config.materialWritesEnabled,
     rightsSourceWritesEnabled: config.rightsSourceWritesEnabled,
+    vendorMergeEnabled: config.vendorMergeEnabled,
     royaltyEventWritesEnabled: config.royaltyEventWritesEnabled,
     receiptWritesEnabled: config.receiptWritesEnabled,
     paymentLedgerWritesEnabled: config.paymentLedgerWritesEnabled,
@@ -567,6 +577,12 @@ export function createApp(
     options.rightsSourceWritesEnabled === true &&
     options.writeScopes?.has("rights-sources") === true &&
     Boolean(dependencies.rightsSourceWrites);
+  const vendorMergeEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.vendorMergeEnabled === true &&
+    options.writeScopes?.has("vendor-merge") === true &&
+    Boolean(dependencies.vendorMerge);
   const royaltyEventWriteEnabled =
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
@@ -634,6 +650,7 @@ export function createApp(
         ...(workWriteEnabled ? ["works"] : []),
         ...(materialWriteEnabled ? ["materials"] : []),
         ...(rightsSourceWriteEnabled ? ["rights-sources"] : []),
+        ...(vendorMergeEnabled ? ["vendor-merge"] : []),
         ...(royaltyEventWriteEnabled ? ["royalty-events"] : []),
         ...(receiptWriteEnabled ? ["receipts"] : []),
         ...(paymentLedgerWriteEnabled ? ["payments"] : []),
@@ -660,7 +677,7 @@ export function createApp(
         driveStorageEnabled || slackApprovalWriteEnabled ||
         outboundConditionWriteEnabled || contractIntakeWriteEnabled ||
         matterWriteEnabled || vendorWriteEnabled || staffWriteEnabled || workWriteEnabled ||
-        materialWriteEnabled || rightsSourceWriteEnabled || royaltyEventWriteEnabled || receiptWriteEnabled ||
+        materialWriteEnabled || rightsSourceWriteEnabled || vendorMergeEnabled || royaltyEventWriteEnabled || receiptWriteEnabled ||
         paymentLedgerWriteEnabled || gmailDispatchEnabled || cloudSignDispatchEnabled || gmailInboundEnabled,
       writeCapabilities: [
         ...(draftWriteEnabled ? ["drafts"] : []),
@@ -676,6 +693,7 @@ export function createApp(
         ...(workWriteEnabled ? ["works"] : []),
         ...(materialWriteEnabled ? ["materials"] : []),
         ...(rightsSourceWriteEnabled ? ["rights-sources"] : []),
+        ...(vendorMergeEnabled ? ["vendor-merge"] : []),
         ...(royaltyEventWriteEnabled ? ["royalty-events"] : []),
         ...(receiptWriteEnabled ? ["receipts"] : []),
         ...(paymentLedgerWriteEnabled ? ["payments"] : []),
@@ -820,6 +838,8 @@ export function createApp(
       (request.method === "POST" && (request.path === "/rights-sources" || request.path === "/rights-sources/import")) ||
       (request.method === "PATCH" && /^\/rights-sources\/\d+$/.test(request.path));
     if (rightsSourceWriteEnabled && isRightsSourceWrite) return next();
+    const isVendorMerge = request.method === "POST" && request.path === "/vendor-merge";
+    if (vendorMergeEnabled && isVendorMerge) return next();
     const isRoyaltyEventWrite =
       request.method === "POST" && request.path === "/royalty/events";
     if (royaltyEventWriteEnabled && isRoyaltyEventWrite) return next();
@@ -894,6 +914,8 @@ export function createApp(
   app.use("/api/v2", createMaterialWriteRouter(dependencies.materialWrites, materialWriteEnabled));
   // 権利ソース書込（guarded-write・既定OFF・scope 'rights-sources'・grant 017）。
   app.use("/api/v2", createRightsSourceWriteRouter(dependencies.rightsSourceWrites, rightsSourceWriteEnabled));
+  // 取引先マージ（名寄せ）。プレビュー読取＋guarded-write実行（既定OFF・grant 018）。
+  app.use("/api/v2", createVendorMergeRouter(dependencies.vendorMerge, vendorMergeEnabled));
   app.use("/api/v2", createDocumentImportRouter(dependencies.documentImports, documentFinalizeEnabled));
   app.use("/api/v2", createGmailNotificationRouter(documentRegistry, gmailDeliveryAdapter, gmailGateSettings));
   app.use("/api/v2", createCloudSignRouter(
