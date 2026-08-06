@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
+import { ExportButtons } from "./ExportButtons";
+import type { ExportColumn } from "./export-util";
 
 // 支払報告書（読み取り）。出金台帳に源泉徴収・消費税を適用し、差引振込額まで表示。
-// CSV出力はクライアント側で生成（外部依存なし）。V1 支払Excel出力の内容に相当。
+// CSV/Excel出力は共通ユーティリティ（外部依存なし）。V1 支払Excel出力の内容に相当。
 
 type Line = {
   paymentId: number;
@@ -20,52 +22,23 @@ type Line = {
 type Totals = { subtotalExTax: number; consumptionTax: number; withholdingTax: number; netTransfer: number; count: number };
 
 const yen = (v: number) => new Intl.NumberFormat("ja-JP").format(Math.round(v || 0));
+const num = (v: number) => Math.round(v || 0);
 
-function toCsv(lines: Line[]): string {
-  const header = ["支払ID", "取引先コード", "取引先", "インボイス番号", "期間", "通貨", "源泉対象", "税抜", "消費税", "税込", "源泉税", "差引振込額"];
-  const escape = (v: string | number) => {
-    const s = String(v);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-  const rows = lines.map((l) => [
-    l.paymentId, l.vendorCode, l.vendorName, l.invoiceRegistrationNumber, l.period, l.currency,
-    l.withholdingEnabled ? "対象" : "対象外", l.subtotalExTax, l.consumptionTax, l.taxIncluded, l.withholdingTax, l.netTransfer
-  ].map(escape).join(","));
-  return [header.join(","), ...rows].join("\r\n");
-}
-
-// 軽量Excel出力：HTMLテーブルを .xls として出力する（Excelがそのまま開く）。
-// 外部ライブラリ（SheetJS等）を使わず、新規依存・脆弱性リスクを持たない。
-function toExcelHtml(lines: Line[], totals: Totals | null): string {
-  const esc = (v: string | number) => String(v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const num = (v: number) => Math.round(v || 0);
-  const headers = ["取引先コード", "取引先", "インボイス番号", "期間", "通貨", "源泉対象", "税抜", "消費税", "税込", "源泉税", "差引振込額"];
-  const body = lines.map((l) => `<tr>
-    <td>${esc(l.vendorCode)}</td><td>${esc(l.vendorName)}</td><td>${esc(l.invoiceRegistrationNumber)}</td>
-    <td>${esc(l.period)}</td><td>${esc(l.currency)}</td><td>${l.withholdingEnabled ? "対象" : "対象外"}</td>
-    <td>${num(l.subtotalExTax)}</td><td>${num(l.consumptionTax)}</td><td>${num(l.taxIncluded)}</td>
-    <td>${num(l.withholdingTax)}</td><td>${num(l.netTransfer)}</td>
-  </tr>`).join("");
-  const foot = totals ? `<tr>
-    <td colspan="6"><b>合計 ${totals.count}件</b></td>
-    <td><b>${num(totals.subtotalExTax)}</b></td><td><b>${num(totals.consumptionTax)}</b></td><td></td>
-    <td><b>${num(totals.withholdingTax)}</b></td><td><b>${num(totals.netTransfer)}</b></td>
-  </tr>` : "";
-  return `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
-<head><meta charset="utf-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>支払報告書</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head>
-<body><table border="1"><thead><tr>${headers.map((h) => `<th>${esc(h)}</th>`).join("")}</tr></thead>
-<tbody>${body}${foot}</tbody></table></body></html>`;
-}
-
-function download(content: string, filename: string, mime: string) {
-  const blob = new Blob(["﻿" + content], { type: mime });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
+// 出力列（合計行は paymentId=0 で識別）。CSV/Excel 共通。
+const exportColumns: ExportColumn<Line>[] = [
+  { header: "支払ID", value: (l) => l.paymentId || "" },
+  { header: "取引先コード", value: (l) => l.vendorCode },
+  { header: "取引先", value: (l) => l.vendorName },
+  { header: "インボイス番号", value: (l) => l.invoiceRegistrationNumber },
+  { header: "期間", value: (l) => l.period },
+  { header: "通貨", value: (l) => l.currency },
+  { header: "源泉対象", value: (l) => (l.paymentId === 0 ? "" : l.withholdingEnabled ? "対象" : "対象外") },
+  { header: "税抜", value: (l) => num(l.subtotalExTax) },
+  { header: "消費税", value: (l) => num(l.consumptionTax) },
+  { header: "税込", value: (l) => num(l.taxIncluded) },
+  { header: "源泉税", value: (l) => num(l.withholdingTax) },
+  { header: "差引振込額", value: (l) => num(l.netTransfer) }
+];
 
 export function PaymentReport() {
   const [lines, setLines] = useState<Line[]>([]);
@@ -94,8 +67,13 @@ export function PaymentReport() {
   }, [period]);
 
   const suffix = period ? `-${period}` : "";
-  const downloadCsv = () => download(toCsv(lines), `payment-report${suffix}.csv`, "text/csv;charset=utf-8");
-  const downloadExcel = () => download(toExcelHtml(lines, totals), `payment-report${suffix}.xls`, "application/vnd.ms-excel");
+  // 合計行を末尾に付す（paymentId=0 で識別）。CSV/Excel双方に反映。
+  const exportRows: Line[] = totals ? [...lines, {
+    paymentId: 0, vendorCode: "", vendorName: "合計", invoiceRegistrationNumber: "",
+    period: `${totals.count}件`, currency: "", withholdingEnabled: false,
+    subtotalExTax: totals.subtotalExTax, consumptionTax: totals.consumptionTax, taxIncluded: 0,
+    withholdingTax: totals.withholdingTax, netTransfer: totals.netTransfer
+  }] : lines;
 
   return (
     <section className="page">
@@ -105,10 +83,7 @@ export function PaymentReport() {
           <h1>支払報告書</h1>
           <small>出金台帳に源泉徴収・消費税を適用（読み取り専用）{loading ? "・読込中" : ""}</small>
         </div>
-        <div className="actions">
-          <button onClick={downloadCsv} disabled={!lines.length}>CSV出力</button>
-          <button className="primary" onClick={downloadExcel} disabled={!lines.length}>Excel出力</button>
-        </div>
+        <ExportButtons filename={`payment-report${suffix}`} sheetName="支払報告書" columns={exportColumns} rows={exportRows} />
       </div>
 
       <div className="billing-toolbar">

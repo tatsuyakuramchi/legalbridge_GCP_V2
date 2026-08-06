@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import type { DocumentFormSchema } from "../types";
 import { useToast } from "./Toast";
 import { DocumentIntegrations } from "./DocumentIntegrations";
+import { ExportButtons } from "./ExportButtons";
+import type { ExportColumn } from "./export-util";
 
 type RegisteredDocument = {
   id: number;
@@ -24,6 +26,19 @@ type RegisteredDocument = {
     driveLabel: string;
   };
 };
+
+const documentExportColumns: ExportColumn<RegisteredDocument>[] = [
+  { header: "文書番号", value: (d) => d.documentNumber ?? "" },
+  { header: "受付番号", value: (d) => d.issueKey },
+  { header: "文書種別", value: (d) => d.templateType },
+  { header: "件名", value: (d) => d.title },
+  { header: "取引先", value: (d) => d.counterparty },
+  { header: "状態", value: (d) => d.lifecycle?.label ?? "" },
+  { header: "PDF", value: (d) => d.lifecycle?.pdfLabel ?? "" },
+  { header: "Drive", value: (d) => d.lifecycle?.driveLabel ?? "" },
+  { header: "作成日時", value: (d) => d.createdAt },
+  { header: "作成者", value: (d) => d.createdBy ?? "" }
+];
 
 export function DocumentRegistry({
   templates,
@@ -91,6 +106,7 @@ export function DocumentRegistry({
     <div className="page-title">
       <div><p>DOCUMENT REGISTRY</p><h1>確定済みの文書</h1><small>確定した文書の内容確認とPDF出力ができます</small></div>
       <div className="matter-detail-actions">
+        <ExportButtons filename="documents" sheetName="文書一覧" columns={documentExportColumns} rows={documents} />
         {canImport && <button onClick={() => setImporting(true)}>過去文書取込</button>}
         <button className="primary" onClick={onCreate}>文書を作成</button>
       </div>

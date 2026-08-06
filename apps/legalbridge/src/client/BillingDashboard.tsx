@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { useToast } from "./Toast";
+import { ExportButtons } from "./ExportButtons";
+import type { ExportColumn } from "./export-util";
 
 // 請求ダッシュボード（読み取り）＋受領記録の登録フォーム（capability-gated）。
 // V1 BillingDashboardPanel / BillingTablePanel 相当。受領登録は S6 の書込みAPI
@@ -29,6 +31,21 @@ type Summary = {
 };
 
 const yen = (value: number | null) => `¥${new Intl.NumberFormat("ja-JP").format(Math.round(value ?? 0))}`;
+const n0 = (v: number | null) => (v == null ? "" : Math.round(v));
+
+const billingExportColumns: ExportColumn<Row>[] = [
+  { header: "期間", value: (r) => r.period ?? "" },
+  { header: "作品コード", value: (r) => r.workCode ?? "" },
+  { header: "作品", value: (r) => r.workTitle ?? "" },
+  { header: "相手方", value: (r) => r.counterpartyName ?? "" },
+  { header: "条件名", value: (r) => r.conditionName ?? "" },
+  { header: "報告売上", value: (r) => n0(r.reportedSales) },
+  { header: "受領再許諾料(税抜)", value: (r) => n0(r.computedRoyaltyExTax) },
+  { header: "実受領額", value: (r) => n0(r.receivedAmount) },
+  { header: "ライセンサー分配(税抜)", value: (r) => n0(r.computedDistributionExTax) },
+  { header: "受領", value: (r) => (r.received ? "済" : "未") },
+  { header: "分配", value: (r) => (r.distributed ? "済" : "—") }
+];
 
 export function BillingDashboard({ canRecord = false }: { canRecord?: boolean }) {
   const [rows, setRows] = useState<Row[]>([]);
@@ -81,7 +98,10 @@ export function BillingDashboard({ canRecord = false }: { canRecord?: boolean })
           <h1>請求ダッシュボード</h1>
           <small>再許諾料の受領・分配を横断俯瞰{canRecord ? "・受領を登録できます" : "（読み取り専用）"}{loading ? "・読込中" : ""}</small>
         </div>
-        {canRecord && <button className="primary" onClick={() => setShowForm((v) => !v)}>{showForm ? "閉じる" : "受領を記録"}</button>}
+        <div className="matter-detail-actions">
+          <ExportButtons filename="billing" sheetName="請求ダッシュボード" columns={billingExportColumns} rows={rows} />
+          {canRecord && <button className="primary" onClick={() => setShowForm((v) => !v)}>{showForm ? "閉じる" : "受領を記録"}</button>}
+        </div>
       </div>
 
       {canRecord && showForm && (

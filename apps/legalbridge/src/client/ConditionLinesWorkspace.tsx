@@ -1,5 +1,29 @@
 import { useEffect, useState } from "react";
 import { EmptyState } from "./EmptyState";
+import { ExportButtons } from "./ExportButtons";
+import type { ExportColumn } from "./export-util";
+
+const conditionExportColumns: ExportColumn<ConditionLine>[] = [
+  { header: "条件名", value: (c) => c.conditionName },
+  { header: "向き", value: (c) => (c.direction === "receivable" ? "受取" : c.direction === "payable" ? "支払" : "") },
+  { header: "相手方", value: (c) => c.vendorName },
+  { header: "作品", value: (c) => c.workTitle },
+  { header: "地域", value: (c) => c.territory ?? "" },
+  { header: "通貨", value: (c) => c.currency ?? "" },
+  { header: "税抜金額", value: (c) => (c.amountExTax == null ? "" : Math.round(c.amountExTax)) },
+  { header: "MG", value: (c) => (c.mgAmount == null ? "" : Math.round(c.mgAmount)) },
+  { header: "料率%", value: (c) => (c.ratePct == null ? "" : c.ratePct) },
+  { header: "文書番号", value: (c) => c.documentNumber ?? "" },
+  { header: "開始", value: (c) => c.termStart ?? "" }
+];
+const inspectionExportColumns: ExportColumn<PendingInspection>[] = [
+  { header: "文書番号", value: (i) => i.documentNumber ?? "" },
+  { header: "受付番号", value: (i) => i.issueKey ?? "" },
+  { header: "案件コード", value: (i) => i.matterCode ?? "" },
+  { header: "案件名", value: (i) => i.matterTitle ?? "" },
+  { header: "作成日時", value: (i) => i.createdAt ?? "" },
+  { header: "検収", value: (i) => (i.hasInspection ? "済" : "未") }
+];
 
 type ConditionLine = {
   id: number; lineNo: number | null; documentId: number | null; documentNumber: string | null;
@@ -121,6 +145,7 @@ function ConditionSearch({ onOpenDocument }: { onOpenDocument?: (documentId: num
       <input value={query} onChange={(e) => setQuery(e.target.value)}
         placeholder="条件名、文書番号、相手方、作品名で検索" />
       <span>{loading ? "検索中…" : `${visible.length}件`}</span>
+      <ExportButtons filename="condition-lines" sheetName="条件明細" columns={conditionExportColumns} rows={visible} />
     </div>
     <div className="matter-chips">
       {chips.map((chip) => (
@@ -315,6 +340,7 @@ function PendingInspections({ onOpenDocument, onCreateDocument }:
       <input value={query} onChange={(e) => setQuery(e.target.value)}
         placeholder="発注書番号・課題キー・案件で検索" />
       <span>{loading ? "検索中…" : `${rows.length}件`}</span>
+      <ExportButtons filename="pending-inspections" sheetName="検収待ち" columns={inspectionExportColumns} rows={rows} />
     </div>
     <div className="matter-chips">
       <button className={`matter-chip ${onlyPending ? "active" : ""}`} onClick={() => setOnlyPending(true)}>検収書未作成のみ</button>

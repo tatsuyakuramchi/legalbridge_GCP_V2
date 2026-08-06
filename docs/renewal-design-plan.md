@@ -247,3 +247,8 @@ Phase 7 は全フェーズの受け入れ後
 ---
 
 *本計画はV1実装（`src/layout`・`src/pages`・`services/api/src`・要件定義）とV2現状を突き合わせて作成。フェーズ内の各スライスは着手時に個別設計する。*
+
+| 2026-08-05 | Phase 6 | 棚卸し＋計画 → `docs/phase6-remaining-features-plan.md` | — | ✅ |
+| 2026-08-05 | Phase 6 | スライス6-1：Excel/CSV一覧出力の共通化＋主要一覧配線（文書/検収/条件/請求/支払・依存ゼロ・GRANT不要） | — | ✅ |
+
+**スライス6-1（Excel/CSV一覧出力）**：`client/export-util.ts`（純関数 `toCsv`/`toExcelHtml`＝SheetJS非依存の`.xls`/`download`/`exportCsv`/`exportExcel`、`ExportColumn<T>` 型安全）＋`ExportButtons.tsx` を新設し、`PaymentReport` のローカル実装を汎用化。**文書一覧・検収待ち・条件明細(許諾)・請求ダッシュボード・支払報告書**にCSV/Excel出力を配線（ロードマップ「Excel出力（未発行/検収/許諾）」）。全て既存GETの読取＝**新規GRANT・env・依存なし**（既存デプロイで反映）。クライアント純関数テスト追加。テスト390件。Phase 6の残（運用ガイド6-2/スニペット6-3/アーカイブ6-4/契約チェック6-5＝依存ゼロ版で実装可、稟議6-6＝新規テーブル判断、銀行口座＝非表示方針で対象外）は `docs/phase6-remaining-features-plan.md` §1参照。

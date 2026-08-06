@@ -501,6 +501,12 @@ header input { width: 100%; border: 1px solid var(--border); border-radius: var(
 .vm-confirm input { padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 8px; max-width: 320px; }
 .vm-confirm code { background: #fde68a; padding: 1px 6px; border-radius: 4px; }
 .vm-result { margin-top: 12px; border: 1px solid #a7f3d0; background: #ecfdf5; color: #065f46; border-radius: 10px; padding: 12px 14px; font-size: 13px; }
+
+/* 一覧エクスポートボタン（Phase 6・ExportButtons） */
+.export-buttons { display: inline-flex; gap: 8px; }
+.export-buttons button { border: 1px solid #cbd5e1; border-radius: 8px; background: white; color: #334155; padding: 8px 14px; font-size: 13px; }
+.export-buttons button:hover:not(:disabled) { border-color: #20b8cd; color: #0e7490; }
+.export-buttons button:disabled { opacity: 0.5; cursor: not-allowed; }
 @media (max-width: 860px) { .wd-layout { grid-template-columns: 1fr; } .wd-picker { position: static; } .wd-overview { grid-template-columns: 1fr; } }
 .doc-integrations { margin-top: 16px; border-top: 1px solid #e2e8f0; padding-top: 12px; display: grid; gap: 12px; }
 .doc-integrations > h3 { margin: 0; font-size: 13px; color: #334155; }
