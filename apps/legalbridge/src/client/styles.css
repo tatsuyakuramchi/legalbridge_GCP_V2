@@ -452,6 +452,34 @@ header input { width: 100%; border: 1px solid var(--border); border-radius: var(
 .wd-edit-grid label.wd-check input { width: auto; }
 .wd-edit-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 @media (max-width: 860px) { .wd-edit-grid { grid-template-columns: 1fr; } }
+
+/* データ品質センター（Phase 4・DataQuality） */
+.dq-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-top: 16px; }
+.dq-summary article { border: 1px solid var(--divider, #e2e8f0); border-radius: 10px; padding: 14px; background: white; display: grid; gap: 4px; }
+.dq-summary article span { color: #64748b; font-size: 12px; }
+.dq-summary article strong { font-size: 22px; color: #172a44; }
+.dq-summary article.warn { border-color: #f5c6a5; background: #fff7ed; }
+.dq-summary article.warn strong { color: #c2410c; }
+.dq-summary article.muted strong { color: #64748b; }
+.dq-list { display: grid; gap: 10px; margin-top: 16px; }
+.dq-card { border: 1px solid var(--divider, #e2e8f0); border-radius: 10px; padding: 14px 16px; background: white; border-left: 4px solid #cbd5e1; }
+.dq-card.sev-high { border-left-color: #dc2626; }
+.dq-card.sev-medium { border-left-color: #f59e0b; }
+.dq-card.sev-low { border-left-color: #94a3b8; }
+.dq-card.unavailable { opacity: 0.7; }
+.dq-card-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; cursor: pointer; }
+.dq-card-head > div:first-child { display: grid; gap: 2px; }
+.dq-card-head strong { color: #172a44; font-size: 14px; margin-left: 8px; }
+.dq-card-head em { color: #64748b; font-style: normal; font-size: 12px; }
+.dq-sev { font-size: 11px; font-weight: 800; padding: 2px 8px; border-radius: 999px; }
+.dq-sev.sev-high { background: #fef2f2; color: #dc2626; }
+.dq-sev.sev-medium { background: #fffbeb; color: #b45309; }
+.dq-sev.sev-low { background: #f1f5f9; color: #475569; }
+.dq-count b { font-size: 22px; color: #172a44; }
+.dq-count small { color: #94a3b8; font-size: 12px; }
+.dq-samples { width: 100%; margin-top: 10px; font-size: 13px; }
+.dq-samples td { padding: 6px 8px; border-bottom: 1px solid var(--divider, #eef2f7); }
+.dq-samples td.muted { color: #64748b; }
 @media (max-width: 860px) { .wd-layout { grid-template-columns: 1fr; } .wd-picker { position: static; } .wd-overview { grid-template-columns: 1fr; } }
 .doc-integrations { margin-top: 16px; border-top: 1px solid #e2e8f0; padding-top: 12px; display: grid; gap: 12px; }
 .doc-integrations > h3 { margin: 0; font-size: 13px; color: #334155; }

@@ -203,6 +203,11 @@ Phase 7 は全フェーズの受け入れ後
 
 > **Phase 2 完了サマリ**：作品集約リード（`GET /works`・`GET /works/:id/detail`）＋作品詳細UI（概要/系譜/製品/素材/条件/権利ソース/料率対象）。書込3系統（作品拡張列＝grant 012流用・権利ソース＝grant 017新規・work_relations＝007流用）はすべて capability-gated・既定OFF・no-DELETE・DDLなし・既存ゼロ破壊。系譜は `parent_work_id` を正とし `work_relations` 差分を整合導線として提示。製品はオプションA（既存代替）。本番有効化（scope `works`,`rights-sources`＋grant 012/017）はオペレーター作業。デプロイは既存 `cloudbuild-write-test.yaml`（読取は追加設定なしで反映）。
 
+| 2026-08-05 | Phase 4 | 棚卸し＋計画 → `docs/phase4-data-quality-plan.md` | — | ✅ |
+| 2026-08-05 | Phase 4 | スライス4-1：データ品質センター（横断整合スキャン俯瞰・drill・読取・GRANT不要※006/007/015 SELECT・スキャン単位null縮退） | — | ✅ |
+
+**スライス4-1（データ品質センター）**：`data-quality/scan.ts`（純関数 `summarizeQuality`＝available集計・重大度→件数降順整列・未スキャン末尾）＋`data-quality/repository.ts`（`scan()` が5カテゴリ並行・**スキャン単位で42501/42P01/42703/42883を縮退** available:false・Memory同梱）＋`data-quality/routes.ts`（`GET /data-quality`・admin/legal限定）。5スキャン：未リンク条件明細(high)／素材未登録の作品(medium)／権利ソース未登録の素材(medium)／未受領報告済(low)／取引先重複候補(medium・`lower(btrim())`で関数非依存)。app.ts結線（読取・フラグ無し）。UI `DataQuality.tsx`（サマリバンド＋重大度色分けカード＋サンプル展開＋drill導線）をナビ「設定＞データ品質」に新設。**新規GRANT・env・依存なし**（既存デプロイで反映）。テスト361件。残：スキーマ駆動取込拡張(4-2)・名寄せ(4-3・広域UPDATEの範囲判断)・下書き一括整理(4-4)・Excel/LegalOn(4-5・依存判断)。
+
 **スライス4（支払報告書・読取）**：出金台帳（`payments` outbound）の各行に源泉徴収・消費税を適用し差引振込額まで算定。純関数`buildPaymentReport`が`tax.ts`（源泉10.21%/100万超20.42%/個人強制ON・消費税ceil）を合成。読み取りリポジトリ（Pg/Memory・42501等で縮退）が`payments`＋`vendors`（源泉フラグ）を集約。`GET /api/v2/payment-report`（admin/legal限定）＋`PaymentReport.tsx`（期間フィルタ・4KPI・明細・**クライアント側CSV出力**）。**SheetJS等の新規バイナリ依存は追加せず**、XLSX/ZIP特有形式は後日拡張。新規GRANT不要（016の`payments` SELECT＋vendors利用）。
 
 **スライス7（債権マップ・読取）**：段跨ぎカスケードを純関数`buildLineageCascade`で厳密移植（`cascade_base=Σ(i段〜最下段の受領)`・`分配=料率×base`・同一capabilityの二重計上防止`seenCap`・`Math.round`）。読み取りリポジトリ（Pg/Memory・42501等で縮退）が作品の派生系譜（`works.parent_work_id`）を辿り、各段の受領（`condition_receipts`）と上流料率（`parent_license_condition_id`→親`rate_pct`）を集約。`GET /api/v2/receivable-map`（admin/legal限定）＋`ReceivableMap.tsx`（作品ID入力→段ごとの受領/分配基礎/上流分配/留保＋合計）。新規GRANT不要。

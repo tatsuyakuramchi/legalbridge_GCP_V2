@@ -82,6 +82,10 @@ import {
 } from "./works/read-repository.js";
 import { createWorkReadRouter } from "./works/read-routes.js";
 import {
+  MemoryDataQualityRepository, PgDataQualityRepository, type DataQualityRepository
+} from "./data-quality/repository.js";
+import { createDataQualityRouter } from "./data-quality/routes.js";
+import {
   MemoryMaterialWriteRepository, PgMaterialWriteRepository, type MaterialWriteRepository
 } from "./materials/write-repository.js";
 import { createMaterialWriteRouter } from "./materials/write-routes.js";
@@ -271,6 +275,7 @@ export interface AppDependencies {
   documentImports?: DocumentImportRepository;
   workWrites?: WorkWriteRepository;
   worksRead?: WorkReadRepository;
+  dataQuality?: DataQualityRepository;
   materialWrites?: MaterialWriteRepository;
   rightsSourceWrites?: RightsSourceWriteRepository;
   ledgers?: LedgerRepository;
@@ -351,6 +356,9 @@ function createDefaultDependencies(): AppDependencies {
     worksRead: database
       ? new PgWorkReadRepository(database)
       : new MemoryWorkReadRepository(),
+    dataQuality: database
+      ? new PgDataQualityRepository(database)
+      : new MemoryDataQualityRepository(),
     materialWrites: database
       ? new PgMaterialWriteRepository(database)
       : new MemoryMaterialWriteRepository(),
@@ -880,6 +888,8 @@ export function createApp(
   app.use("/api/v2", createStaffRouter(dependencies.staff, staffWriteEnabled));
   // 作品集約リード（読み取り・admin/legal限定・Phase 2）。書込みなし。
   app.use("/api/v2", createWorkReadRouter(dependencies.worksRead));
+  // データ品質センター（読み取り・admin/legal限定・Phase 4）。書込みなし。
+  app.use("/api/v2", createDataQualityRouter(dependencies.dataQuality));
   app.use("/api/v2", createWorkWriteRouter(dependencies.workWrites, workWriteEnabled));
   app.use("/api/v2", createMaterialWriteRouter(dependencies.materialWrites, materialWriteEnabled));
   // 権利ソース書込（guarded-write・既定OFF・scope 'rights-sources'・grant 017）。
