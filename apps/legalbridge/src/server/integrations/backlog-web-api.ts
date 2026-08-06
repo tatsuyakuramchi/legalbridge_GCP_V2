@@ -19,6 +19,12 @@ export interface BacklogReadClient {
   getIssues(options?: { count?: number; keyword?: string }): Promise<BacklogIssueSummary[]>;
 }
 
+// 書き戻し（Phase 3・guarded）。現状はコメント投稿のみ（ID非依存）。
+// ステータス/カスタム属性はプロジェクト固有IDの確定後に別途。
+export interface BacklogWriteClient {
+  addComment(issueKey: string, content: string): Promise<{ id: number }>;
+}
+
 function mapIssue(raw: unknown): BacklogIssueSummary {
   const r = (raw ?? {}) as Record<string, unknown>;
   const status = (r.status ?? {}) as Record<string, unknown>;
@@ -48,7 +54,7 @@ export class BacklogApiError extends Error {
   }
 }
 
-export class BacklogWebApiClient implements BacklogReadClient {
+export class BacklogWebApiClient implements BacklogReadClient, BacklogWriteClient {
   private readonly baseUrl: URL;
   private readonly apiKey: string;
   private readonly projectKey: string;
@@ -106,6 +112,19 @@ export class BacklogWebApiClient implements BacklogReadClient {
     const value = await response.json();
     if (!Array.isArray(value)) throw new Error("Backlog API returned an invalid issues response");
     return value.map(mapIssue);
+  }
+
+  async addComment(issueKey: string, content: string): Promise<{ id: number }> {
+    const url = new URL(`issues/${encodeURIComponent(issueKey)}/comments`, this.baseUrl);
+    url.searchParams.set("apiKey", this.apiKey);
+    const response = await this.request(url, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+      body: new URLSearchParams({ content }).toString()
+    });
+    if (!response.ok) throw new BacklogApiError(response.status);
+    const value = await response.json() as { id?: unknown };
+    return { id: Number(value?.id) };
   }
 }
 

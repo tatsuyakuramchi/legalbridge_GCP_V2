@@ -42,19 +42,26 @@ import {
   createIntegrationAdapters,
   type IntegrationAdapter
 } from "./integrations/index.js";
-import { BacklogWebApiClient, type BacklogReadClient } from "./integrations/backlog-web-api.js";
-import { createBacklogRequestRouter } from "./integrations/backlog-routes.js";
+import {
+  BacklogWebApiClient, type BacklogReadClient, type BacklogWriteClient
+} from "./integrations/backlog-web-api.js";
+import { createBacklogRequestRouter, createBacklogCommentRouter } from "./integrations/backlog-routes.js";
 
-// BACKLOG_MODE=readonly＋接続情報がある時のみ読取クライアントを構築（依頼取込・Phase 3）。
-function defaultBacklogClient(): BacklogReadClient | undefined {
-  if (config.backlogMode !== "readonly" || !config.backlogHost || !config.backlogProjectKey || !config.backlogApiKey) {
-    return undefined;
-  }
+function newBacklogClient(): BacklogWebApiClient | undefined {
+  if (!config.backlogHost || !config.backlogProjectKey || !config.backlogApiKey) return undefined;
   try {
     return new BacklogWebApiClient({
       host: config.backlogHost, projectKey: config.backlogProjectKey, apiKey: config.backlogApiKey
     });
   } catch { return undefined; }
+}
+// BACKLOG_MODE=readonly＋接続情報がある時のみ読取クライアントを構築（依頼取込・Phase 3）。
+function defaultBacklogClient(): BacklogReadClient | undefined {
+  return config.backlogMode === "readonly" ? newBacklogClient() : undefined;
+}
+// コメント書き戻し用クライアント（capabilityゲートは app 側・BACKLOG_MODE=live には依存しない）。
+function defaultBacklogWriteClient(): BacklogWriteClient | undefined {
+  return newBacklogClient();
 }
 import { config } from "./config.js";
 import {
@@ -283,6 +290,7 @@ export interface AppDependencies {
   drafts: DraftRepository;
   integrations: IntegrationAdapter[];
   backlogClient?: BacklogReadClient;
+  backlogWriteClient?: BacklogWriteClient;
   masterData?: MasterDataRepository;
   documentRegistry?: DocumentRegistryRepository;
   matters?: MatterRepository;
@@ -334,6 +342,7 @@ export interface AppOptions {
   materialWritesEnabled?: boolean;
   rightsSourceWritesEnabled?: boolean;
   vendorMergeEnabled?: boolean;
+  backlogCommentWriteEnabled?: boolean;
   auth?: AuthSettings;
 }
 
@@ -349,6 +358,7 @@ function createDefaultDependencies(): AppDependencies {
       : new MemoryDraftRepository(),
     integrations: createIntegrationAdapters(),
     backlogClient: defaultBacklogClient(),
+    backlogWriteClient: defaultBacklogWriteClient(),
     masterData: database
       ? new PgMasterDataRepository(database)
       : new MemoryMasterDataRepository(),
@@ -455,6 +465,7 @@ export function createApp(
     materialWritesEnabled: config.materialWritesEnabled,
     rightsSourceWritesEnabled: config.rightsSourceWritesEnabled,
     vendorMergeEnabled: config.vendorMergeEnabled,
+    backlogCommentWriteEnabled: config.backlogCommentWriteEnabled,
     royaltyEventWritesEnabled: config.royaltyEventWritesEnabled,
     receiptWritesEnabled: config.receiptWritesEnabled,
     paymentLedgerWritesEnabled: config.paymentLedgerWritesEnabled,
@@ -599,6 +610,12 @@ export function createApp(
     options.vendorMergeEnabled === true &&
     options.writeScopes?.has("vendor-merge") === true &&
     Boolean(dependencies.vendorMerge);
+  const backlogCommentWriteEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.backlogCommentWriteEnabled === true &&
+    options.writeScopes?.has("backlog-comment") === true &&
+    Boolean(dependencies.backlogWriteClient);
   const royaltyEventWriteEnabled =
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
@@ -667,6 +684,7 @@ export function createApp(
         ...(materialWriteEnabled ? ["materials"] : []),
         ...(rightsSourceWriteEnabled ? ["rights-sources"] : []),
         ...(vendorMergeEnabled ? ["vendor-merge"] : []),
+        ...(backlogCommentWriteEnabled ? ["backlog-comment"] : []),
         ...(royaltyEventWriteEnabled ? ["royalty-events"] : []),
         ...(receiptWriteEnabled ? ["receipts"] : []),
         ...(paymentLedgerWriteEnabled ? ["payments"] : []),
@@ -693,7 +711,7 @@ export function createApp(
         driveStorageEnabled || slackApprovalWriteEnabled ||
         outboundConditionWriteEnabled || contractIntakeWriteEnabled ||
         matterWriteEnabled || vendorWriteEnabled || staffWriteEnabled || workWriteEnabled ||
-        materialWriteEnabled || rightsSourceWriteEnabled || vendorMergeEnabled || royaltyEventWriteEnabled || receiptWriteEnabled ||
+        materialWriteEnabled || rightsSourceWriteEnabled || vendorMergeEnabled || backlogCommentWriteEnabled || royaltyEventWriteEnabled || receiptWriteEnabled ||
         paymentLedgerWriteEnabled || gmailDispatchEnabled || cloudSignDispatchEnabled || gmailInboundEnabled,
       writeCapabilities: [
         ...(draftWriteEnabled ? ["drafts"] : []),
@@ -710,6 +728,7 @@ export function createApp(
         ...(materialWriteEnabled ? ["materials"] : []),
         ...(rightsSourceWriteEnabled ? ["rights-sources"] : []),
         ...(vendorMergeEnabled ? ["vendor-merge"] : []),
+        ...(backlogCommentWriteEnabled ? ["backlog-comment"] : []),
         ...(royaltyEventWriteEnabled ? ["royalty-events"] : []),
         ...(receiptWriteEnabled ? ["receipts"] : []),
         ...(paymentLedgerWriteEnabled ? ["payments"] : []),
@@ -856,6 +875,8 @@ export function createApp(
     if (rightsSourceWriteEnabled && isRightsSourceWrite) return next();
     const isVendorMerge = request.method === "POST" && request.path === "/vendor-merge";
     if (vendorMergeEnabled && isVendorMerge) return next();
+    const isBacklogComment = request.method === "POST" && /^\/backlog\/issues\/[^/]+\/comments$/.test(request.path);
+    if (backlogCommentWriteEnabled && isBacklogComment) return next();
     const isRoyaltyEventWrite =
       request.method === "POST" && request.path === "/royalty/events";
     if (royaltyEventWriteEnabled && isRoyaltyEventWrite) return next();
@@ -928,6 +949,8 @@ export function createApp(
   app.use("/api/v2", createDataQualityRouter(dependencies.dataQuality));
   // Backlog課題一覧（依頼取込・読み取り・admin/legal限定・Phase 3）。書込みなし。
   app.use("/api/v2", createBacklogRequestRouter(dependencies.backlogClient));
+  // Backlogコメント書き戻し（guarded・既定OFF・確認トークン・scope 'backlog-comment'）。
+  app.use("/api/v2", createBacklogCommentRouter(dependencies.backlogWriteClient, backlogCommentWriteEnabled));
   app.use("/api/v2", createWorkWriteRouter(dependencies.workWrites, workWriteEnabled));
   app.use("/api/v2", createMaterialWriteRouter(dependencies.materialWrites, materialWriteEnabled));
   // 権利ソース書込（guarded-write・既定OFF・scope 'rights-sources'・grant 017）。

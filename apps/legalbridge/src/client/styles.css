@@ -540,7 +540,10 @@ header input { width: 100%; border: 1px solid var(--border); border-radius: var(
 .request-list dl > div { display: flex; gap: 6px; font-size: 12px; }
 .request-list dt { color: #64748b; }
 .request-list dd { margin: 0; color: #172a44; }
-.request-actions { display: flex; justify-content: flex-end; }
+.request-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.request-comment { display: grid; gap: 8px; border-top: 1px solid var(--divider, #eef2f7); padding-top: 10px; }
+.request-comment textarea { padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 8px; font: inherit; }
+.request-comment-actions { display: flex; justify-content: flex-end; gap: 8px; }
 @media (max-width: 860px) { .wd-layout { grid-template-columns: 1fr; } .wd-picker { position: static; } .wd-overview { grid-template-columns: 1fr; } }
 .doc-integrations { margin-top: 16px; border-top: 1px solid #e2e8f0; padding-top: 12px; display: grid; gap: 12px; }
 .doc-integrations > h3 { margin: 0; font-size: 13px; color: #334155; }

@@ -90,6 +90,30 @@ case "${BACKLOG_MODE}" in
     exit 1
     ;;
 esac
+# コメント書き戻しは BACKLOG_MODE=live とは独立の限定capability（既定OFF）。
+# 有効化には readonly接続＋検証専用の合言葉＋IAP等を要求する（liveブロックは維持）。
+case "${BACKLOG_COMMENT_WRITE_ENABLED}" in
+  false)
+    ;;
+  true)
+    if [ "${CONFIRM_BACKLOG_COMMENT_WRITE}" != "BACKLOG_COMMENT_WRITEBACK_VALIDATION_ONLY" ]; then
+      echo "Backlog comment write-back blocked: explicit validation confirmation is missing."
+      exit 1
+    fi
+    if [ "${SERVICE}" != "legalbridge-v2-write-test" ] || [ "${BACKLOG_MODE}" != "readonly" ] || [ "${BACKLOG_HOST}" != "arclight.backlog.com" ] || [ "${BACKLOG_PROJECT_KEY}" != "LEGAL" ]; then
+      echo "Backlog comment write-back blocked: service, mode, host, or project does not match the approved target."
+      exit 1
+    fi
+    if [ "${AUTH_MODE}" != "iap" ] && [ "${AUTH_MODE}" != "cloudrun-iam" ]; then
+      echo "Backlog comment write-back blocked: IAP or Cloud Run IAM authentication is required."
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Deployment blocked: BACKLOG_COMMENT_WRITE_ENABLED must be true or false."
+    exit 1
+    ;;
+esac
 case "${SLACK_DELIVERY_MODE}" in
   disabled)
     ;;
@@ -515,6 +539,9 @@ if [ "${RIGHTS_SOURCE_WRITES_ENABLED}" = "true" ]; then
 fi
 if [ "${VENDOR_MERGE_ENABLED}" = "true" ]; then
   expected_write_scopes="$expected_write_scopes,vendor-merge"
+fi
+if [ "${BACKLOG_COMMENT_WRITE_ENABLED}" = "true" ]; then
+  expected_write_scopes="$expected_write_scopes,backlog-comment"
 fi
 if [ "${GMAIL_DELIVERY_MODE}" = "live" ]; then
   expected_write_scopes="$expected_write_scopes,gmail"

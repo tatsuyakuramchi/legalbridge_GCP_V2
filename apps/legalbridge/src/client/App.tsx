@@ -162,6 +162,7 @@ export function App() {
   const [canEditMaterials, setCanEditMaterials] = useState(false);
   const [canEditRightsSources, setCanEditRightsSources] = useState(false);
   const [canMergeVendors, setCanMergeVendors] = useState(false);
+  const [canBacklogComment, setCanBacklogComment] = useState(false);
   const [canEditStaff, setCanEditStaff] = useState(false);
   const [canGmailNotify, setCanGmailNotify] = useState(false);
   const [canCloudSign, setCanCloudSign] = useState(false);
@@ -207,6 +208,7 @@ export function App() {
         setCanEditMaterials(capabilities.includes("materials"));
         setCanEditRightsSources(capabilities.includes("rights-sources"));
         setCanMergeVendors(capabilities.includes("vendor-merge"));
+        setCanBacklogComment(capabilities.includes("backlog-comment"));
         setCanEditStaff(capabilities.includes("staff"));
         setCanGmailNotify(capabilities.includes("gmail"));
         setCanCloudSign(capabilities.includes("cloudsign"));
@@ -336,7 +338,8 @@ export function App() {
         {view === "data-quality" && <DataQuality onNavigate={(v) => setView(v as View)} />}
         {view === "vendor-merge" && <VendorMerge canMerge={canMergeVendors} />}
         {view === "requests" && (legalWorkspace || requesterWorkspace) && (
-          <RequestsWorkspace onCreateDocument={(issueKey) => { setNewDocIssueKey(issueKey); setDraftSelection(null); setView("templates"); }} />
+          <RequestsWorkspace canComment={canBacklogComment}
+            onCreateDocument={(issueKey) => { setNewDocIssueKey(issueKey); setDraftSelection(null); setView("templates"); }} />
         )}
         {view === "guide" && <OperationsGuide />}
         {view === "snippets" && <TextSnippets />}

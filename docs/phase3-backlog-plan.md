@@ -13,7 +13,7 @@ Backlog課題を起点にリーガル業務へ取り込み（読取）、V2側�
 | # | 内容 | 種別 | 判断 |
 |---|---|---|---|
 | **3-1** | Backlog課題一覧 → 依頼画面（課題起点で文書作成） | 読取 | 不要（`BACKLOG_MODE=readonly`＋接続情報） |
-| 3-2 | 書き戻し：コメント投稿 | 書込 | コメントは汎用（`POST /issues/:id/comments`）で実装可。guarded＋確認＋新capability |
+| **3-2** | 書き戻し：コメント投稿 | 書込 | ✅ guarded＋確認＋新capability `backlog-comment`（`BACKLOG_MODE=live`非依存） |
 | 3-2b | 書き戻し：ステータス同期／カスタム属性更新 | 書込 | **要判断**：status ID・custom field ID はプロジェクト固有。運用側から実値を確定してから |
 | 3-3 | 変数自動抽出（課題本文→フォーム変数） | 読取/変換 | 抽出ルールの移植（intakeで一部実績あり） |
 

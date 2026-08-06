@@ -265,3 +265,7 @@ Phase 7 は全フェーズの受け入れ後
 | 2026-08-05 | Phase 3 | スライス3-1：Backlog課題一覧→依頼画面（課題起点で文書作成・読取・既存env） | — | ✅ |
 
 **スライス3-1（Backlog依頼取込・読取）**：`BacklogWebApiClient.getIssues({count,keyword})` を追加（projectId解決→`GET /issues`・防御的整形・APIキー非漏洩）。`integrations/backlog-routes.ts`＝`GET /api/v2/backlog/issues`（admin/legal・読取・未構成は`enabled:false`・API失敗は502）。app.tsは`BACKLOG_MODE=readonly`＋接続情報がある時のみクライアント構築（`defaultBacklogClient`）。UI `RequestsWorkspace.tsx`（業務＞依頼）＝課題を検索一覧し「この課題で文書作成」で issueKey を文書作成へ引き継ぐ（課題→リーガルリクエスト導線）。mock fetchでテスト。**新規GRANT・依存なし**（有効化は既存 `BACKLOG_MODE`/`BACKLOG_HOST`/`BACKLOG_PROJECT_KEY`/`BACKLOG_API_KEY`）。テスト405件。残：書き戻し（3-2コメント＝汎用で実装可・3-2bステータス/カスタム属性＝プロジェクト固有ID判断）・変数自動抽出（3-3）。
+
+| 2026-08-05 | Phase 3 | スライス3-2：Backlogコメント書き戻し（guarded・確認トークン・新capability `backlog-comment`・BACKLOG_MODE=live非依存） | — | ✅ |
+
+**スライス3-2（Backlogコメント書き戻し）**：`BacklogWriteClient.addComment(issueKey, content)`（`POST /issues/:key/comments`・ID非依存）。`POST /api/v2/backlog/issues/:key/comments`（admin/legal・確認トークン `COMMIT_BACKLOG_COMMENT`・未有効は503・API失敗502）。新capability **`backlog-comment`**（`BACKLOG_COMMENT_WRITE_ENABLED`）でPhase 1同型の5条件ゲート。**既存の `BACKLOG_MODE=live` ブロックは維持**し、コメント書き戻しは独立capability（readonly接続を維持しつつ明示有効化時のみ動作＝既存workerとの棲み分け）。config/app（gating・safe-write・writeCapabilities）・`verify-write-test.sh`（validation-only＋IAP＋readonly必須のcase＋scope）・`cloudbuild`（subs/verify/env）全結線（既定OFF・default検証で無影響確認）。UI `RequestsWorkspace` に capability-gated（`canBacklogComment`）なコメント投稿（確認ダイアログ）。テスト409件。残：ステータス/カスタム属性同期（3-2b・プロジェクト固有ID判断）・変数自動抽出（3-3）。

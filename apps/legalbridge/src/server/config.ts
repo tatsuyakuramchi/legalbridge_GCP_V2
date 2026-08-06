@@ -91,6 +91,7 @@ export const config = {
   backlogHost: process.env.BACKLOG_HOST ?? "",
   backlogProjectKey: process.env.BACKLOG_PROJECT_KEY ?? "",
   backlogApiKey: process.env.BACKLOG_API_KEY ?? "",
+  backlogCommentWriteEnabled: process.env.BACKLOG_COMMENT_WRITE_ENABLED === "true",
   templateSource: "db" as const,
   integrationMode: process.env.INTEGRATION_MODE === "live"
     ? "live" as const

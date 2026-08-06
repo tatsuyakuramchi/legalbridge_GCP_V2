@@ -16,7 +16,33 @@ const fmt = (v: string | null) => {
   return Number.isNaN(d.getTime()) ? v : new Intl.DateTimeFormat("ja-JP", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
 };
 
-export function RequestsWorkspace({ onCreateDocument }: { onCreateDocument: (issueKey: string) => void }) {
+const COMMENT_TOKEN = "COMMIT_BACKLOG_COMMENT";
+
+export function RequestsWorkspace({ onCreateDocument, canComment = false }: { onCreateDocument: (issueKey: string) => void; canComment?: boolean }) {
+  const [commentFor, setCommentFor] = useState<string | null>(null);
+  const [commentText, setCommentText] = useState("");
+  const [commentBusy, setCommentBusy] = useState(false);
+  const [commentMsg, setCommentMsg] = useState("");
+
+  async function postComment(issueKey: string) {
+    if (!commentText.trim()) return;
+    if (!window.confirm(`${issueKey} にBacklogコメントを投稿します。`)) return;
+    setCommentBusy(true); setCommentMsg("");
+    try {
+      const res = await fetch(`/api/v2/backlog/issues/${encodeURIComponent(issueKey)}/comments`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: commentText, confirmation: COMMENT_TOKEN })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setCommentMsg(data.error ?? (res.status === 503 ? "コメント書き戻しは無効です" : res.status === 502 ? "Backlogへの投稿に失敗しました" : "投稿に失敗しました"));
+        return;
+      }
+      setCommentMsg("投稿しました"); setCommentText(""); setCommentFor(null);
+    } catch { setCommentMsg("通信に失敗しました"); }
+    finally { setCommentBusy(false); }
+  }
+
   const [keyword, setKeyword] = useState("");
   const [issues, setIssues] = useState<Issue[]>([]);
   const [enabled, setEnabled] = useState(true);
@@ -85,8 +111,19 @@ export function RequestsWorkspace({ onCreateDocument }: { onCreateDocument: (iss
                 <div><dt>更新</dt><dd>{fmt(issue.updated)}</dd></div>
               </dl>
               <div className="request-actions">
+                {canComment && <button onClick={() => { setCommentFor(commentFor === issue.issueKey ? null : issue.issueKey); setCommentText(""); setCommentMsg(""); }}>コメント書き戻し</button>}
                 <button className="primary" onClick={() => onCreateDocument(issue.issueKey)}>この課題で文書作成</button>
               </div>
+              {canComment && commentFor === issue.issueKey && (
+                <div className="request-comment">
+                  <textarea rows={3} value={commentText} onChange={(e) => setCommentText(e.target.value)} placeholder="Backlogに投稿するコメント…" />
+                  {commentMsg && <small className="hint">{commentMsg}</small>}
+                  <div className="request-comment-actions">
+                    <button onClick={() => setCommentFor(null)} disabled={commentBusy}>キャンセル</button>
+                    <button className="primary" onClick={() => postComment(issue.issueKey)} disabled={commentBusy || !commentText.trim()}>{commentBusy ? "投稿中…" : "Backlogに投稿"}</button>
+                  </div>
+                </div>
+              )}
             </article>
           ))}
           {!loading && !error && !issues.length && <div className="empty-state">該当する課題がありません。</div>}
