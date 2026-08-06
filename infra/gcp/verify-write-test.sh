@@ -114,6 +114,26 @@ case "${BACKLOG_COMMENT_WRITE_ENABLED}" in
     exit 1
     ;;
 esac
+# 外部送信の総元栓。local 以外はサービス/認証を検証済みの write-test に限定する
+# （各コネクタの *_MODE=live＋確認トークンに加え、この live が揃って初めて実送信）。
+case "${INTEGRATION_MODE}" in
+  local)
+    ;;
+  live)
+    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
+      echo "Integration live blocked: external sends require the write-test service."
+      exit 1
+    fi
+    if [ "${AUTH_MODE}" != "iap" ] && [ "${AUTH_MODE}" != "cloudrun-iam" ]; then
+      echo "Integration live blocked: IAP or Cloud Run IAM authentication is required."
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Deployment blocked: INTEGRATION_MODE must be local or live."
+    exit 1
+    ;;
+esac
 case "${SLACK_DELIVERY_MODE}" in
   disabled)
     ;;

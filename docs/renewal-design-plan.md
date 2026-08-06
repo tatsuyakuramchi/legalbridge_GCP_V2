@@ -273,3 +273,7 @@ Phase 7 は全フェーズの受け入れ後
 | 2026-08-05 | Phase 3 | スライス3-3：Backlog課題本文の変数自動抽出→文書フォーム非破壊シード（純関数・依存ゼロ） | — | ✅ |
 
 **スライス3-3（変数自動抽出）**：`extract-variables.ts`（純関数 `extractVariables`＝「ラベル：値」「【ラベル】値」を解析し別名表 `DEFAULT_ALIASES` で正規フィールド名（PROJECT_TITLE/COUNTERPARTY/AMOUNT等）へ対応付け、`seedFormData`＝空欄のみ非破壊補完）。`getIssues` に `description` を追加。`RequestsWorkspace` が課題本文から抽出変数をプレビュー表示し「この課題で文書作成」で App へ引き継ぎ、`DocumentForm` の context 読込後に `seedFormData` でフォームを非破壊シード（下書き復元時はシードしない）。クライアント純関数テスト。**新規GRANT・依存なし**。テスト414件。**これで Phase 3 の主要スライス（依頼取込・コメント書き戻し・変数抽出）が完了**。残：ステータス/カスタム属性同期（3-2b・プロジェクト固有ID判断）。
+
+| 2026-08-05 | Phase 5 | 点火レディネス・レビュー → `docs/phase5-integration-readiness.md`＋INTEGRATION_MODEブロッカー解消 | — | ✅ |
+
+**Phase 5 レディネス・レビュー**：各外部連携（Drive/Gmail送受信/CloudSign/Slack）のコード監査。**最優先ブロッカーを解消**：`cloudbuild-write-test.yaml` がハードコードしていた `INTEGRATION_MODE=local`（Gmail送信/CloudSign/Slack配信の実送信を一律ブロック＝「停止中」の正体）を substitution `_INTEGRATION_MODE`（既定`local`）へ変更し、`verify-write-test.sh` で `live` を write-test＋IAP必須にガード（既定localは挙動不変・default検証パス）。コネクタ別の点火手順・残ギャップ（SA鍵マウントのDrive従属／CloudSign認証未確定／Gmail・CloudSignの冪等未実装／Gmail受信の登録導線無し／Slack候補フローの依頼者メール）・推奨順序（Drive→Gmail受信→Slack→Gmail送信→CloudSign）を `docs/phase5-integration-readiness.md` に集約。実トークン投入・DWD設定・CloudSign認証突合はオペレーター/要判断として残る。
