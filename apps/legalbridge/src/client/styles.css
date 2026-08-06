@@ -507,6 +507,28 @@ header input { width: 100%; border: 1px solid var(--border); border-radius: var(
 .export-buttons button { border: 1px solid #cbd5e1; border-radius: 8px; background: white; color: #334155; padding: 8px 14px; font-size: 13px; }
 .export-buttons button:hover:not(:disabled) { border-color: #20b8cd; color: #0e7490; }
 .export-buttons button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* テキストスニペット（Phase 6・TextSnippets） */
+.snippet-editor { display: grid; gap: 8px; margin-top: 16px; background: var(--surface-subtle, #f8fafc); border: 1px solid var(--divider, #e2e8f0); border-radius: 10px; padding: 14px; }
+.snippet-editor input, .snippet-editor textarea { padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 8px; font: inherit; }
+.snippet-editor-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.snippet-toolbar { display: flex; align-items: center; gap: 12px; margin: 16px 0 8px; }
+.snippet-toolbar input { flex: 1; padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 8px; }
+.snippet-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.snippet-list article { border: 1px solid var(--divider, #e2e8f0); border-radius: 10px; padding: 12px 14px; background: white; display: grid; gap: 6px; }
+.snippet-head strong { color: #172a44; font-size: 14px; }
+.snippet-list p { margin: 0; color: #475569; font-size: 13px; white-space: pre-wrap; max-height: 120px; overflow: auto; }
+.snippet-actions { display: flex; gap: 6px; }
+.snippet-actions button { border: 1px solid #cbd5e1; background: white; border-radius: 6px; padding: 5px 10px; font-size: 12px; }
+.snippet-actions button.danger { border-color: #fecaca; color: #b91c1c; background: #fef2f2; }
+
+/* 運用ガイド（Phase 6・OperationsGuide） */
+.guide-sections { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; margin-top: 16px; }
+.guide-section { border: 1px solid var(--divider, #e2e8f0); border-radius: 10px; padding: 14px 16px; background: white; }
+.guide-section h3 { margin: 0 0 10px; font-size: 14px; color: #0e7490; }
+.guide-section dl { margin: 0; display: grid; gap: 10px; }
+.guide-section dt { font-weight: 700; color: #172a44; font-size: 13px; }
+.guide-section dd { margin: 2px 0 0; color: #475569; font-size: 13px; line-height: 1.5; }
 @media (max-width: 860px) { .wd-layout { grid-template-columns: 1fr; } .wd-picker { position: static; } .wd-overview { grid-template-columns: 1fr; } }
 .doc-integrations { margin-top: 16px; border-top: 1px solid #e2e8f0; padding-top: 12px; display: grid; gap: 12px; }
 .doc-integrations > h3 { margin: 0; font-size: 13px; color: #334155; }

@@ -24,6 +24,8 @@ import { ReceivableMap } from "./ReceivableMap";
 import { WorkDetail } from "./WorkDetail";
 import { DataQuality } from "./DataQuality";
 import { VendorMerge } from "./VendorMerge";
+import { OperationsGuide } from "./OperationsGuide";
+import { TextSnippets } from "./TextSnippets";
 import { PaymentReport } from "./PaymentReport";
 import { BillingPrint } from "./BillingPrint";
 
@@ -46,7 +48,7 @@ const fallback: DashboardSummary = {
   priorities: []
 };
 
-type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview" | "billing" | "receivable-map" | "payment-report" | "billing-print" | "works" | "data-quality" | "vendor-merge";
+type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview" | "billing" | "receivable-map" | "payment-report" | "billing-print" | "works" | "data-quality" | "vendor-merge" | "guide" | "snippets";
 type NavItem = { view: View; label: string; description: string; match: View[] };
 type NavGroup = { label: string; items: NavItem[] };
 
@@ -76,7 +78,8 @@ function navGroups(access: {
     { label: "作成", items: [
       ...(legalOrRequester ? [{ view: "documents" as const, label: access.requesterWorkspace ? "自分の文書" : "文書", description: "文書の作成・確定・PDF", match: ["documents" as const, "templates" as const, "document" as const] }] : []),
       ...(!access.readOnly && legalOrRequester ? [{ view: "drafts" as const, label: access.requesterWorkspace ? "自分の下書き" : "下書き", description: "保存中の下書きを再開", match: ["drafts" as const] }] : []),
-      ...(access.adminWorkspace ? [{ view: "contract-intake" as const, label: "契約取込", description: "締結済イン契約の登録", match: ["contract-intake" as const] }] : [])
+      ...(access.adminWorkspace ? [{ view: "contract-intake" as const, label: "契約取込", description: "締結済イン契約の登録", match: ["contract-intake" as const] }] : []),
+      ...(legalOrRequester ? [{ view: "snippets" as const, label: "スニペット", description: "定型文の保存・コピー（この端末に保存）", match: ["snippets" as const] }] : [])
     ] },
     { label: "設定", items: [
       ...(access.legalWorkspace ? [{ view: "ledgers" as const, label: "台帳", description: "作品・取引先などのマスタ", match: ["ledgers" as const] }] : []),
@@ -84,7 +87,8 @@ function navGroups(access: {
       ...(access.legalWorkspace ? [{ view: "vendor-merge" as const, label: "取引先名寄せ", description: "重複した取引先を統合（参照再指定・旧は無効化）", match: ["vendor-merge" as const] }] : []),
       ...(access.adminWorkspace ? [{ view: "staff" as const, label: "担当者", description: "担当者マスタの管理", match: ["staff" as const] }] : []),
       ...(access.adminWorkspace && access.gmailInbound ? [{ view: "gmail-inbound" as const, label: "受信取込", description: "受信メールの契約PDF取込", match: ["gmail-inbound" as const] }] : []),
-      ...(access.adminWorkspace ? [{ view: "admin" as const, label: "管理", description: "通知・運用の管理", match: ["admin" as const] }] : [])
+      ...(access.adminWorkspace ? [{ view: "admin" as const, label: "管理", description: "通知・運用の管理", match: ["admin" as const] }] : []),
+      ...(access.adminWorkspace ? [{ view: "guide" as const, label: "運用ガイド", description: "権限・有効化・GRANT・デプロイの要点", match: ["guide" as const] }] : [])
     ] }
   ];
   return groups.filter((group) => group.items.length > 0);
@@ -107,6 +111,8 @@ function breadcrumbFor(view: View): Array<{ label: string; view?: View }> {
     works: [home, { label: "作品" }],
     "data-quality": [home, { label: "データ品質" }],
     "vendor-merge": [home, { label: "取引先名寄せ" }],
+    guide: [home, { label: "運用ガイド" }],
+    snippets: [home, { label: "テキストスニペット" }],
     conditions: [home, { label: "条件明細" }],
     "royalty-preview": [home, { label: "ロイヤリティ試算" }],
     billing: [home, { label: "請求" }],
@@ -326,6 +332,8 @@ export function App() {
         {view === "works" && <WorkDetail canEdit={canEditWorks} canEditRights={canEditRightsSources} />}
         {view === "data-quality" && <DataQuality onNavigate={(v) => setView(v as View)} />}
         {view === "vendor-merge" && <VendorMerge canMerge={canMergeVendors} />}
+        {view === "guide" && <OperationsGuide />}
+        {view === "snippets" && <TextSnippets />}
         {view === "receivable-map" && <ReceivableMap />}
         {view === "payment-report" && <PaymentReport />}
         {view === "billing-print" && <BillingPrint />}
