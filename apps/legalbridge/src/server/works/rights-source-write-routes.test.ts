@@ -79,3 +79,24 @@ test("空の更新は400", async () => {
   const res = await request(app).patch(`/api/v2/rights-sources/${created.body.id}`).send({});
   assert.equal(res.status, 400);
 });
+
+test("権利ソースCSV一括取込は有効行を登録し無効行を報告する", async () => {
+  const { app } = appFor({ enabled: true });
+  const res = await request(app).post("/api/v2/rights-sources/import").send({
+    rows: [
+      { materialId: "10", sourceType: "direct_contract", isPrimary: "○", validFrom: "2026-01-01" },
+      { materialId: "", sourceType: "direct_contract" },
+      { materialId: "11", sourceType: "" }
+    ]
+  });
+  assert.equal(res.status, 201);
+  assert.equal(res.body.insertedCount, 1);
+  assert.equal(res.body.failedCount, 2);
+});
+
+test("権利ソースCSV取込は書込み無効時に拒否する", async () => {
+  const { app } = appFor({ enabled: false });
+  const res = await request(app).post("/api/v2/rights-sources/import").send({ rows: [{ materialId: "10", sourceType: "direct_contract" }] });
+  assert.equal(res.status, 503);
+  assert.equal(res.body.code, "RIGHTS_SOURCE_WRITE_UNAVAILABLE");
+});

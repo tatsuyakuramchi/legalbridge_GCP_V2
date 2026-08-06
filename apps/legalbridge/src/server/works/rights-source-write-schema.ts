@@ -39,5 +39,25 @@ export const rightsSourceUpdateSchema = z.object({
   message: "更新するフィールドを1つ以上指定してください"
 });
 
+// CSV一括取込用（文字列を数値へ寄せる）。create と同じFK制約。
+export const rightsSourceImportRowSchema = z.object({
+  materialId: z.coerce.number().int().positive(),
+  sourceType: z.string().trim().min(1, "ソース種別は必須です").max(80),
+  sourceWorkId: nullablePositiveId,
+  rightsHolderVendorId: nullablePositiveId,
+  sourceDocumentId: nullablePositiveId,
+  sourceContractId: nullablePositiveId,
+  sourceRole: nullableText(80),
+  isPrimary: z.preprocess((v) => {
+    const s = String(v ?? "").trim().toLowerCase();
+    if (["true", "1", "yes", "○", "主"].includes(s)) return true;
+    if (["", "false", "0", "no"].includes(s)) return false;
+    return v;
+  }, z.boolean().optional().default(false)),
+  validFrom: nullableDate,
+  validTo: nullableDate
+});
+
 export type RightsSourceCreateInput = z.infer<typeof rightsSourceCreateSchema>;
 export type RightsSourceUpdateInput = z.infer<typeof rightsSourceUpdateSchema>;
+export type RightsSourceImportRowInput = z.infer<typeof rightsSourceImportRowSchema>;

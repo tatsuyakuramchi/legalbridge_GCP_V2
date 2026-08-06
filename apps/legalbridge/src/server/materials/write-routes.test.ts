@@ -93,3 +93,26 @@ test("依頼者ロールは素材の生値を取得できない", async () => {
   assert.equal(response.status, 403);
   assert.equal(response.body.code, "MATERIAL_EDIT_FORBIDDEN");
 });
+
+test("素材CSV一括取込は有効行を登録し無効行を報告する（作品IDは既存作品を指す）", async () => {
+  const { app } = appFor({ enabled: true });
+  const res = await request(app).post("/api/v2/materials/import").send({
+    rows: [
+      { workId: "1", materialName: "取込A", materialType: "scenario", materialRole: "core_logic", acquisitionType: "license", isRoyaltyBearing: "対象" },
+      { workId: "1", materialName: "", materialType: "scenario", materialRole: "core_logic", acquisitionType: "license" },
+      { workId: "999", materialName: "作品なし", materialType: "other", materialRole: "sub_component", acquisitionType: "in_house" }
+    ]
+  });
+  assert.equal(res.status, 201);
+  assert.equal(res.body.insertedCount, 1);
+  assert.equal(res.body.failedCount, 2);
+  // index1=素材名空(検証)、index2=作品なし(登録時)。
+  assert.deepEqual(res.body.failed.map((f: { index: number }) => f.index), [1, 2]);
+});
+
+test("素材CSV取込は書込み無効時に拒否する", async () => {
+  const { app } = appFor({ enabled: false });
+  const res = await request(app).post("/api/v2/materials/import").send({ rows: [{ workId: "1", materialName: "x", materialType: "other", materialRole: "core_logic", acquisitionType: "license" }] });
+  assert.equal(res.status, 503);
+  assert.equal(res.body.code, "MATERIAL_WRITE_UNAVAILABLE");
+});

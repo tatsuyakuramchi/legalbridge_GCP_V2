@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { csvBool, csvOptionalId } from "../import/bulk.js";
 
 // 原作マテリアル(work_materials)の登録・編集スキーマ。
 // マテリアルは必ず作品(works)に属する（work_id FK）。素材区分(materialType)は
@@ -32,6 +33,24 @@ export const materialCreateSchema = z.object({
   remarks: z.string().trim().max(2000).optional()
 });
 export type MaterialCreateInput = z.infer<typeof materialCreateSchema>;
+
+// CSV一括取込用（文字列を数値/真偽へ寄せる）。create と同じFK・enum制約。
+export const materialImportRowSchema = z.object({
+  workId: z.coerce.number().int().positive(),
+  materialName: z.string().trim().min(1, "素材名は必須です").max(300),
+  materialType: materialTypeEnum,
+  materialRole: materialRoleEnum,
+  acquisitionType: acquisitionTypeEnum,
+  rightsType: rightsTypeEnum.optional().default("license"),
+  rightsHolderVendorId: csvOptionalId,
+  rightsHolderLabel: z.string().trim().max(300).optional(),
+  territory: z.string().trim().max(500).optional(),
+  language: z.string().trim().max(500).optional(),
+  isDefault: csvBool.optional().default(false),
+  isRoyaltyBearing: csvBool.optional().default(false),
+  remarks: z.string().trim().max(2000).optional()
+});
+export type MaterialImportRowInput = z.infer<typeof materialImportRowSchema>;
 
 // 更新は素材区分(materialType)・所属作品(workId)を変更しない。
 // これらはカテゴリと素材コードを規定するため、付け替えは新規作成で行う。

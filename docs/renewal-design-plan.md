@@ -206,7 +206,11 @@ Phase 7 は全フェーズの受け入れ後
 | 2026-08-05 | Phase 4 | 棚卸し＋計画 → `docs/phase4-data-quality-plan.md` | — | ✅ |
 | 2026-08-05 | Phase 4 | スライス4-1：データ品質センター（横断整合スキャン俯瞰・drill・読取・GRANT不要※006/007/015 SELECT・スキャン単位null縮退） | — | ✅ |
 
-**スライス4-1（データ品質センター）**：`data-quality/scan.ts`（純関数 `summarizeQuality`＝available集計・重大度→件数降順整列・未スキャン末尾）＋`data-quality/repository.ts`（`scan()` が5カテゴリ並行・**スキャン単位で42501/42P01/42703/42883を縮退** available:false・Memory同梱）＋`data-quality/routes.ts`（`GET /data-quality`・admin/legal限定）。5スキャン：未リンク条件明細(high)／素材未登録の作品(medium)／権利ソース未登録の素材(medium)／未受領報告済(low)／取引先重複候補(medium・`lower(btrim())`で関数非依存)。app.ts結線（読取・フラグ無し）。UI `DataQuality.tsx`（サマリバンド＋重大度色分けカード＋サンプル展開＋drill導線）をナビ「設定＞データ品質」に新設。**新規GRANT・env・依存なし**（既存デプロイで反映）。テスト361件。残：スキーマ駆動取込拡張(4-2)・名寄せ(4-3・広域UPDATEの範囲判断)・下書き一括整理(4-4)・Excel/LegalOn(4-5・依存判断)。
+**スライス4-1（データ品質センター）**：`data-quality/scan.ts`（純関数 `summarizeQuality`＝available集計・重大度→件数降順整列・未スキャン末尾）＋`data-quality/repository.ts`（`scan()` が5カテゴリ並行・**スキャン単位で42501/42P01/42703/42883を縮退** available:false・Memory同梱）＋`data-quality/routes.ts`（`GET /data-quality`・admin/legal限定）。5スキャン：未リンク条件明細(high)／素材未登録の作品(medium)／権利ソース未登録の素材(medium)／未受領報告済(low)／取引先重複候補(medium・`lower(btrim())`で関数非依存)。app.ts結線（読取・フラグ無し）。UI `DataQuality.tsx`（サマリバンド＋重大度色分けカード＋サンプル展開＋drill導線）をナビ「設定＞データ品質」に新設。**新規GRANT・env・依存なし**（既存デプロイで反映）。テスト361件。
+
+| 2026-08-05 | Phase 4 | スライス4-2：CSV取込の拡張（素材・権利ソース・共通bulkヘルパ・既存INSERT流用・GRANT不要） | — | ✅ |
+
+**スライス4-2（CSV取込拡張）**：`import/bulk.ts`（共通 `bulkImport(rows, schema, create)`＝行独立の検証→登録→成否集計、CSV文字列を寄せる `csvBool`/`csvOptionalId`）を新設。素材：`materialImportRowSchema`（workId/enumをcoerce）＋`POST /materials/import`（既存 `materials` capability・INSERTは007済）。権利ソース：`rightsSourceImportRowSchema`＋`POST /rights-sources/import`（既存 `rights-sources` capability）。app.ts safe-write に `/materials/import`・`/rights-sources/import` を追加。UIは `CsvImport` に `materialCsvConfig`（enum値ガイド付き）を追加し `LedgerWorkspace` 素材タブに CSV取込ボタンを結線（権利ソース取込はAPI・configレディ、専用UIは後段）。DELETEなし・新規GRANT/env不要。テスト369件。残：名寄せ(4-3・広域UPDATEの範囲判断)・下書き一括整理(4-4)・Excel/LegalOn(4-5・依存判断)。
 
 **スライス4（支払報告書・読取）**：出金台帳（`payments` outbound）の各行に源泉徴収・消費税を適用し差引振込額まで算定。純関数`buildPaymentReport`が`tax.ts`（源泉10.21%/100万超20.42%/個人強制ON・消費税ceil）を合成。読み取りリポジトリ（Pg/Memory・42501等で縮退）が`payments`＋`vendors`（源泉フラグ）を集約。`GET /api/v2/payment-report`（admin/legal限定）＋`PaymentReport.tsx`（期間フィルタ・4KPI・明細・**クライアント側CSV出力**）。**SheetJS等の新規バイナリ依存は追加せず**、XLSX/ZIP特有形式は後日拡張。新規GRANT不要（016の`payments` SELECT＋vendors利用）。
 

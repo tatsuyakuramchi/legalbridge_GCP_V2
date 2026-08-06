@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { z } from "zod";
-import { materialCreateSchema, materialUpdateSchema } from "./write-schema.js";
+import { materialCreateSchema, materialUpdateSchema, materialImportRowSchema } from "./write-schema.js";
 import { MaterialWriteError, type MaterialWriteRepository } from "./write-repository.js";
+import { bulkImport } from "../import/bulk.js";
 
 const idPath = z.object({ id: z.coerce.number().int().positive() });
 function editorAllowed(role: string | undefined) { return role === "admin" || role === "legal"; }
@@ -62,6 +63,19 @@ export function createMaterialWriteRouter(materials: MaterialWriteRepository | u
       if (!editorAllowed(response.locals.currentUser?.role)) return forbidden(response);
       const created = await materials.create(materialCreateSchema.parse(request.body));
       return response.status(201).json(created);
+    } catch (error) { return handle(error, response, next); }
+  });
+
+  // CSV一括取込：行ごとに検証→登録し、成否を独立に報告（作品IDは既存作品を指す）。
+  router.post("/materials/import", async (request, response, next) => {
+    try {
+      if (!writeEnabled || !materials) return unavailable(response);
+      if (!editorAllowed(response.locals.currentUser?.role)) return forbidden(response);
+      const body = z.object({
+        rows: z.array(z.record(z.string(), z.unknown())).min(1, "取込む行がありません").max(500)
+      }).parse(request.body);
+      const report = await bulkImport(body.rows, materialImportRowSchema, (input) => materials.create(input));
+      return response.status(report.insertedCount ? 201 : 422).json(report);
     } catch (error) { return handle(error, response, next); }
   });
 

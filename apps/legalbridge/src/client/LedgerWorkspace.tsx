@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useToast } from "./Toast";
 import { EmptyState } from "./EmptyState";
-import { CsvImport, vendorCsvConfig, workCsvConfig } from "./CsvImport";
+import { CsvImport, vendorCsvConfig, workCsvConfig, materialCsvConfig } from "./CsvImport";
 type LedgerType = "vendors" | "works" | "materials" | "conditions";
 type Item = { id: string; type: LedgerType; code: string; title: string; subtitle: string; status?: string; updatedAt?: string; detail: Record<string, unknown> };
 const labels: Record<LedgerType, string> = { vendors: "取引先", works: "作品・原作", materials: "原作マテリアル", conditions: "金銭条件" };
@@ -56,7 +56,10 @@ export function LedgerWorkspace({ initialType, initialQuery, selectedId, canEdit
         <button onClick={() => { setImporting(true); setCreating(false); setSelected(null); }}>CSV取込</button>
         <button className="primary" onClick={() => { setCreating(true); setImporting(false); setSelected(null); }}>＋ 新規作品</button>
       </div>}
-      {canCreateMaterial && <button className="primary" onClick={() => { setCreating(true); setSelected(null); }}>＋ 新規マテリアル</button>}
+      {canCreateMaterial && <div className="matter-detail-actions">
+        <button onClick={() => { setImporting(true); setCreating(false); setSelected(null); }}>CSV取込</button>
+        <button className="primary" onClick={() => { setCreating(true); setImporting(false); setSelected(null); }}>＋ 新規マテリアル</button>
+      </div>}
     </div>
     <div className="ledger-tabs">{(Object.keys(labels) as LedgerType[]).map((key) =>
       <button className={type === key ? "active" : ""} key={key} onClick={() => { setType(key); setQuery(""); }}>{labels[key]}</button>)}</div>
@@ -69,7 +72,7 @@ export function LedgerWorkspace({ initialType, initialQuery, selectedId, canEdit
         <span>{item.code}</span><strong>{item.title}</strong><small>{item.subtitle || "—"}</small>
       </button>)}{!loading && !items.length && <div className="empty-state">該当するデータがありません。</div>}</div>
       {importing
-        ? <CsvImport config={type === "works" ? workCsvConfig : vendorCsvConfig}
+        ? <CsvImport config={type === "works" ? workCsvConfig : type === "materials" ? materialCsvConfig : vendorCsvConfig}
             onCancel={() => setImporting(false)} onDone={() => setReload((v) => v + 1)} />
         : creating && type === "materials"
         ? <MaterialForm onCancel={() => setCreating(false)} onSaved={() => { setCreating(false); setReload((v) => v + 1); }} />

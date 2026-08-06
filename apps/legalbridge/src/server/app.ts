@@ -813,11 +813,11 @@ export function createApp(
       (request.method === "PATCH" && /^\/works\/\d+$/.test(request.path));
     if (workWriteEnabled && isWorkWrite) return next();
     const isMaterialWrite =
-      (request.method === "POST" && request.path === "/materials") ||
+      (request.method === "POST" && (request.path === "/materials" || request.path === "/materials/import")) ||
       (request.method === "PATCH" && /^\/materials\/\d+$/.test(request.path));
     if (materialWriteEnabled && isMaterialWrite) return next();
     const isRightsSourceWrite =
-      (request.method === "POST" && request.path === "/rights-sources") ||
+      (request.method === "POST" && (request.path === "/rights-sources" || request.path === "/rights-sources/import")) ||
       (request.method === "PATCH" && /^\/rights-sources\/\d+$/.test(request.path));
     if (rightsSourceWriteEnabled && isRightsSourceWrite) return next();
     const isRoyaltyEventWrite =

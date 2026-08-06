@@ -157,6 +157,27 @@ export const staffCsvConfig: CsvImportConfig = {
   ]
 };
 
+export const materialCsvConfig: CsvImportConfig = {
+  kicker: "IMPORT MATERIALS", title: "素材CSV取込", unit: "素材",
+  note: "1行目にヘッダ、2行目以降にデータ。作品ID・素材名・素材区分・役割・取得区分は必須。素材区分=game_design/illustration/scenario/manuscript/other、役割=core_logic/sub_component、取得区分=license/buyout_commission/in_house、権利区分=owned/license。作品IDは既存作品の数値ID。",
+  sampleText: "作品ID,素材名,素材区分,役割,取得区分,ロイヤリティ対象\n123,シナリオ原稿,scenario,core_logic,license,対象",
+  endpoint: "/api/v2/materials/import",
+  columns: [
+    { field: "workId", label: "作品ID", required: true, headers: ["作品id", "work_id", "workid", "作品"] },
+    { field: "materialName", label: "素材名", required: true, headers: ["素材名", "material_name", "materialname", "name"] },
+    { field: "materialType", label: "素材区分", required: true, headers: ["素材区分", "material_type", "materialtype", "type"] },
+    { field: "materialRole", label: "役割", required: true, headers: ["役割", "material_role", "materialrole", "role"] },
+    { field: "acquisitionType", label: "取得区分", required: true, headers: ["取得区分", "acquisition_type", "acquisitiontype"] },
+    { field: "rightsType", label: "権利区分", headers: ["権利区分", "rights_type", "rightstype"] },
+    { field: "rightsHolderVendorId", label: "権利者ID", headers: ["権利者id", "rights_holder_vendor_id"] },
+    { field: "rightsHolderLabel", label: "権利者名", headers: ["権利者名", "rights_holder_label"] },
+    { field: "territory", label: "地域", headers: ["地域", "territory"] },
+    { field: "language", label: "言語", headers: ["言語", "language"] },
+    { field: "isRoyaltyBearing", label: "ロイヤリティ対象", headers: ["ロイヤリティ対象", "is_royalty_bearing", "royalty"] },
+    { field: "remarks", label: "備考", headers: ["備考", "remarks", "note"] }
+  ]
+};
+
 export const workCsvConfig: CsvImportConfig = {
   kicker: "IMPORT WORKS", title: "作品CSV取込", unit: "作品",
   note: "1行目にヘッダ（作品名 / 作品コード / 台帳コード / 備考 等）、2行目以降にデータを貼り付けてください。作品名は必須。コードは未入力で自動採番されます。",
