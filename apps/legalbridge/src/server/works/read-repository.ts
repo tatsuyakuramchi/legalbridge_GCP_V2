@@ -194,7 +194,7 @@ export class PgWorkReadRepository implements WorkReadRepository {
       [workId]
     );
     const children = await this.database.query(
-      `SELECT id, title, work_code FROM works WHERE parent_work_id = $1
+      `SELECT id, title, work_code, kind, status FROM works WHERE parent_work_id = $1
         ORDER BY work_code NULLS LAST, id`,
       [workId]
     );
@@ -207,10 +207,12 @@ export class PgWorkReadRepository implements WorkReadRepository {
     );
     const node = (r: Record<string, unknown>): LineageNode =>
       ({ workId: Number(r.id), title: str(r.title), workCode: str(r.work_code) });
+    const childNode = (r: Record<string, unknown>): LineageNode =>
+      ({ workId: Number(r.id), title: str(r.title), workCode: str(r.work_code), kind: str(r.kind), status: str(r.status) });
     return buildLineageView(
       workId,
       ancestors.rows.map(node),
-      children.rows.map(node),
+      children.rows.map(childNode),
       relationParents.rows.map(node)
     );
   }

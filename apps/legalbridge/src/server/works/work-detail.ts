@@ -75,6 +75,9 @@ export interface LineageNode {
   workId: number;
   title: string | null;
   workCode: string | null;
+  // 子（派生作品）ノードでのみ設定。製品タブで自社/ライセンスインを区別する。
+  kind?: string | null;
+  status?: string | null;
 }
 
 export interface LineageTier extends LineageNode {

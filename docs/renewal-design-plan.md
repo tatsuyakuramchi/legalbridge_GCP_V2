@@ -195,7 +195,13 @@ Phase 7 は全フェーズの受け入れ後
 
 | 2026-08-05 | Phase 2 | スライス2-4b：work_relationsグラフ編集（derived_from追加・冪等・循環拒否・既存works capability流用・GRANT不要※007 INSERT） | — | ✅ |
 
-**スライス2-4b（work_relationsグラフ編集）**：系譜の第2真実源 `work_relations` に `derived_from` 関係を追加。`POST /work-relations`（＋validate）を既存の作品書込ルーターに追加し、**既存 `works` capability ゲート流用・新規scope/GRANT不要**（INSERTは007付与済）。`ON CONFLICT DO NOTHING` で冪等（重複は200 `created:false`）、自己参照400、`parent_work_id`系譜と整合する**循環を422で拒否**（Pg `assertNoCycle`＋Memoryの祖先走査）。UIは `WorkDetail` 系譜タブに capability-gated な「派生元を追加」＋「現在の親を系譜に記録」（二重管理の整合導線）。**削除はDELETE権限が必要なため保留**（財務系と同じくno-DELETE方針。整合維持は追加＝additive中心）。テスト356件。**これでPhase 2の書込系（作品編集・権利ソース・系譜グラフ）が出揃った**。残：製品(products)＝新規テーブル＝DDL承認待ち（§2 決定ポイント）。
+**スライス2-4b（work_relationsグラフ編集）**：系譜の第2真実源 `work_relations` に `derived_from` 関係を追加。`POST /work-relations`（＋validate）を既存の作品書込ルーターに追加し、**既存 `works` capability ゲート流用・新規scope/GRANT不要**（INSERTは007付与済）。`ON CONFLICT DO NOTHING` で冪等（重複は200 `created:false`）、自己参照400、`parent_work_id`系譜と整合する**循環を422で拒否**（Pg `assertNoCycle`＋Memoryの祖先走査）。UIは `WorkDetail` 系譜タブに capability-gated な「派生元を追加」＋「現在の親を系譜に記録」（二重管理の整合導線）。**削除はDELETE権限が必要なため保留**（財務系と同じくno-DELETE方針。整合維持は追加＝additive中心）。テスト356件。
+
+| 2026-08-05 | Phase 2 | スライス2-5：製品タブ（オプションA・既存エンティティ代替・読取・DDL/GRANT不要） | — | ✅ |
+
+**スライス2-5（製品タブ・オプションA）**：製品専用テーブルは共有DB無改変の原則によりDDL保留とし、**既存エンティティで代替**。読取リポジトリの系譜子ノードに `kind`/`status` を追加し、`WorkDetail` に「製品」タブを新設。この作品を派生元とする**派生作品を「製品」として表**（コード/製品名/区分/ステータス・詳細へ遷移）＋**構成素材**を集約表示。DDL・新規GRANT・書込みなし。注記で代替表示である旨を明示。テスト356件。**これにて Phase 2（作品・権利モデル）完了**：読取一望（2-1/2-2）＋作品編集（2-3）＋権利ソース編集（2-4）＋系譜グラフ編集（2-4b）＋製品タブ（2-5）。正式な製品モデル（SKU/版を持つ `products` テーブル）が要件化した時点でオプションBへ置換可能。
+
+> **Phase 2 完了サマリ**：作品集約リード（`GET /works`・`GET /works/:id/detail`）＋作品詳細UI（概要/系譜/製品/素材/条件/権利ソース/料率対象）。書込3系統（作品拡張列＝grant 012流用・権利ソース＝grant 017新規・work_relations＝007流用）はすべて capability-gated・既定OFF・no-DELETE・DDLなし・既存ゼロ破壊。系譜は `parent_work_id` を正とし `work_relations` 差分を整合導線として提示。製品はオプションA（既存代替）。本番有効化（scope `works`,`rights-sources`＋grant 012/017）はオペレーター作業。デプロイは既存 `cloudbuild-write-test.yaml`（読取は追加設定なしで反映）。
 
 **スライス4（支払報告書・読取）**：出金台帳（`payments` outbound）の各行に源泉徴収・消費税を適用し差引振込額まで算定。純関数`buildPaymentReport`が`tax.ts`（源泉10.21%/100万超20.42%/個人強制ON・消費税ceil）を合成。読み取りリポジトリ（Pg/Memory・42501等で縮退）が`payments`＋`vendors`（源泉フラグ）を集約。`GET /api/v2/payment-report`（admin/legal限定）＋`PaymentReport.tsx`（期間フィルタ・4KPI・明細・**クライアント側CSV出力**）。**SheetJS等の新規バイナリ依存は追加せず**、XLSX/ZIP特有形式は後日拡張。新規GRANT不要（016の`payments` SELECT＋vendors利用）。
 

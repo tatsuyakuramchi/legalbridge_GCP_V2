@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 
 type Summary = { id: number; workCode: string | null; title: string | null; kind: string | null; isOriginal: boolean | null; parentWorkId: number | null };
 type Tier = { workId: number; title: string | null; workCode: string | null; label: string; isSelected: boolean };
-type Node = { workId: number; title: string | null; workCode: string | null };
+type Node = { workId: number; title: string | null; workCode: string | null; kind?: string | null; status?: string | null };
 type Lineage = { chain: Tier[]; children: Node[]; unlinkedRelationParents: Node[]; depth: number; isDerivative: boolean };
 type Material = { id: number; materialCode: string | null; materialName: string | null; materialType: string | null; materialRole: string | null; acquisitionType: string | null; rightsType: string | null; rightsHolderLabel: string | null; isRoyaltyBearing: boolean | null; categoryName: string | null; territory: string | null; language: string | null };
 type RightsSource = { id: number; materialId: number | null; materialName: string | null; sourceType: string | null; sourceWorkId: number | null; sourceWorkTitle: string | null; rightsHolderVendorId: number | null; rightsHolderName: string | null; sourceDocumentId: number | null; sourceContractId: number | null; sourceRole: string | null; isPrimary: boolean | null; validFrom: string | null; validTo: string | null };
@@ -15,10 +15,11 @@ type Conditions = { receivable: Cond[]; payable: Cond[]; sublicense: Cond[]; wor
 type Core = Summary & { titleKana: string | null; workType: string | null; status: string | null; derivationType: string | null; rightsHolderName: string | null; creatorName: string | null; publisherName: string | null; ledgerCode: string | null; remarks: string | null };
 type Detail = { work: Core; lineage: Lineage | null; materials: Material[] | null; rightsSources: RightsSource[] | null; conditions: Conditions | null };
 
-type Tab = "overview" | "lineage" | "materials" | "conditions" | "rights" | "rates";
+type Tab = "overview" | "lineage" | "products" | "materials" | "conditions" | "rights" | "rates";
 const TABS: { key: Tab; label: string }[] = [
   { key: "overview", label: "概要" },
   { key: "lineage", label: "系譜" },
+  { key: "products", label: "製品" },
   { key: "materials", label: "素材" },
   { key: "conditions", label: "条件" },
   { key: "rights", label: "権利ソース" },
@@ -328,6 +329,25 @@ export function WorkDetail({ canEdit = false, canEditRights = false }: { canEdit
                 </div>
                 <small className="hint">work_relations に derived_from 関係を追加します（parent_work_id 系譜と二重管理の整合用・冪等・循環は拒否）。</small>
               </>}
+            </> : <Degraded />)}
+
+            {tab === "products" && (detail.lineage ? <>
+              <small className="hint">この作品から生まれた製品（派生作品）と構成素材を集約表示します。※製品専用テーブルは未導入のため、派生作品・素材から代替表示しています。</small>
+              <h4>製品（派生作品）</h4>
+              {detail.lineage.children.length ? <table>
+                <thead><tr><th>コード</th><th>製品名</th><th>区分</th><th>ステータス</th><th></th></tr></thead>
+                <tbody>{detail.lineage.children.map((c) => <tr key={c.workId}>
+                  <td>{c.workCode ?? "—"}</td><td>{c.title ?? `作品#${c.workId}`}</td>
+                  <td>{kindLabel(c.kind ?? null)}</td><td>{c.status ?? "—"}</td>
+                  <td><button onClick={() => setSelectedId(c.workId)}>開く</button></td>
+                </tr>)}</tbody>
+              </table> : <div className="empty-state">この作品を派生元とする製品（派生作品）はありません。</div>}
+              <h4>構成素材</h4>
+              {detail.materials == null ? <Degraded /> : (
+                detail.materials.length
+                  ? <ul className="wd-list">{detail.materials.map((m) => <li key={m.id}>{m.materialCode ? m.materialCode + " " : ""}{m.materialName}{m.materialType ? `（${m.materialType}）` : ""}</li>)}</ul>
+                  : <div className="empty-state">登録された素材はありません。</div>
+              )}
             </> : <Degraded />)}
 
             {tab === "materials" && (detail.materials ? (
