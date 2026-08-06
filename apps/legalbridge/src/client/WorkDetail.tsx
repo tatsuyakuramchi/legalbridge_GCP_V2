@@ -9,7 +9,7 @@ type Tier = { workId: number; title: string | null; workCode: string | null; lab
 type Node = { workId: number; title: string | null; workCode: string | null };
 type Lineage = { chain: Tier[]; children: Node[]; unlinkedRelationParents: Node[]; depth: number; isDerivative: boolean };
 type Material = { id: number; materialCode: string | null; materialName: string | null; materialType: string | null; materialRole: string | null; acquisitionType: string | null; rightsType: string | null; rightsHolderLabel: string | null; isRoyaltyBearing: boolean | null; categoryName: string | null; territory: string | null; language: string | null };
-type RightsSource = { id: number; materialName: string | null; sourceType: string | null; sourceWorkTitle: string | null; rightsHolderName: string | null; sourceRole: string | null; isPrimary: boolean | null; validFrom: string | null; validTo: string | null };
+type RightsSource = { id: number; materialId: number | null; materialName: string | null; sourceType: string | null; sourceWorkId: number | null; sourceWorkTitle: string | null; rightsHolderVendorId: number | null; rightsHolderName: string | null; sourceDocumentId: number | null; sourceContractId: number | null; sourceRole: string | null; isPrimary: boolean | null; validFrom: string | null; validTo: string | null };
 type Cond = { id: number; conditionName: string | null; direction: string | null; sourceMaterialId: number | null; materialName: string | null; sublicenseAllowed: boolean | null; parentLicenseConditionId: number | null; ratePct: number | null; amountExTax: number | null; mgAmount: number | null; currency: string | null; documentNumber: string | null };
 type Conditions = { receivable: Cond[]; payable: Cond[]; sublicense: Cond[]; workLevel: Cond[]; materialLinked: Cond[]; totals: { count: number; receivableCount: number; payableCount: number; sublicenseCount: number; workLevelCount: number } };
 type Core = Summary & { titleKana: string | null; workType: string | null; status: string | null; derivationType: string | null; rightsHolderName: string | null; creatorName: string | null; publisherName: string | null; ledgerCode: string | null; remarks: string | null };
@@ -38,7 +38,13 @@ type EditForm = {
   creatorName: string; publisherName: string; ledgerCode: string; remarks: string;
 };
 
-export function WorkDetail({ canEdit = false }: { canEdit?: boolean }) {
+type RightsForm = {
+  id: number | null; materialId: string; sourceType: string; sourceRole: string;
+  isPrimary: boolean; validFrom: string; validTo: string;
+  sourceWorkId: string; rightsHolderVendorId: string; sourceDocumentId: string; sourceContractId: string;
+};
+
+export function WorkDetail({ canEdit = false, canEditRights = false }: { canEdit?: boolean; canEditRights?: boolean }) {
   const [keyword, setKeyword] = useState("");
   const [results, setResults] = useState<Summary[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -51,6 +57,9 @@ export function WorkDetail({ canEdit = false }: { canEdit?: boolean }) {
   const [form, setForm] = useState<EditForm | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const [rightsForm, setRightsForm] = useState<RightsForm | null>(null);
+  const [rightsSaving, setRightsSaving] = useState(false);
+  const [rightsError, setRightsError] = useState("");
 
   // 作品検索（デバウンス）。
   useEffect(() => {
@@ -91,7 +100,46 @@ export function WorkDetail({ canEdit = false }: { canEdit?: boolean }) {
   }, [selectedId, reload]);
 
   // 作品を切り替えたら編集状態・タブを初期化。
-  useEffect(() => { setEditing(false); setForm(null); setSaveError(""); setTab("overview"); }, [selectedId]);
+  useEffect(() => { setEditing(false); setForm(null); setSaveError(""); setTab("overview"); setRightsForm(null); setRightsError(""); }, [selectedId]);
+
+  const emptyRights = (materialId: number | null): RightsForm => ({
+    id: null, materialId: materialId != null ? String(materialId) : "", sourceType: "direct_contract",
+    sourceRole: "", isPrimary: false, validFrom: "", validTo: "",
+    sourceWorkId: "", rightsHolderVendorId: "", sourceDocumentId: "", sourceContractId: ""
+  });
+
+  async function saveRights() {
+    if (!rightsForm) return;
+    const materialId = Number(rightsForm.materialId);
+    if (!materialId) { setRightsError("素材を選択してください"); return; }
+    setRightsSaving(true); setRightsError("");
+    const numOrNull = (s: string) => s.trim() ? Number(s.trim()) : null;
+    const body: Record<string, unknown> = {
+      sourceType: rightsForm.sourceType.trim(),
+      sourceRole: rightsForm.sourceRole.trim() || null,
+      isPrimary: rightsForm.isPrimary,
+      validFrom: rightsForm.validFrom || null,
+      validTo: rightsForm.validTo || null,
+      sourceWorkId: numOrNull(rightsForm.sourceWorkId),
+      rightsHolderVendorId: numOrNull(rightsForm.rightsHolderVendorId),
+      sourceDocumentId: numOrNull(rightsForm.sourceDocumentId),
+      sourceContractId: numOrNull(rightsForm.sourceContractId)
+    };
+    const isNew = rightsForm.id == null;
+    if (isNew) body.materialId = materialId;
+    try {
+      const res = await fetch(isNew ? "/api/v2/rights-sources" : `/api/v2/rights-sources/${rightsForm.id}`, {
+        method: isNew ? "POST" : "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setRightsError(data.error ?? (res.status === 503 ? "権利ソース編集は現在無効です" : res.status === 403 ? "編集権限がありません" : "保存に失敗しました"));
+        return;
+      }
+      setRightsForm(null); setReload((n) => n + 1);
+    } catch { setRightsError("通信に失敗しました"); }
+    finally { setRightsSaving(false); }
+  }
 
   function startEdit() {
     if (!detail) return;
@@ -279,14 +327,55 @@ export function WorkDetail({ canEdit = false }: { canEdit?: boolean }) {
             </> : <Degraded />)}
 
             {tab === "rights" && (detail.rightsSources ? (
-              detail.rightsSources.length ? <table>
-                <thead><tr><th>素材</th><th>ソース種別</th><th>ソース作品</th><th>権利者</th><th>役割</th><th>主</th><th>有効期間</th></tr></thead>
-                <tbody>{detail.rightsSources.map((r) => <tr key={r.id}>
-                  <td>{r.materialName ?? "—"}</td><td>{r.sourceType ?? "—"}</td><td>{r.sourceWorkTitle ?? "—"}</td>
-                  <td>{r.rightsHolderName ?? "—"}</td><td>{r.sourceRole ?? "—"}</td><td>{r.isPrimary ? "○" : ""}</td>
-                  <td>{[r.validFrom, r.validTo].filter(Boolean).join(" 〜 ") || "—"}</td>
-                </tr>)}</tbody>
-              </table> : <div className="empty-state">登録された権利ソースはありません。</div>
+              <>
+                {canEditRights && !rightsForm && (
+                  <div className="wd-edit-actions">
+                    <button className="primary" onClick={() => { setRightsError(""); setRightsForm(emptyRights(detail.materials?.[0]?.id ?? null)); }}
+                      disabled={!detail.materials || !detail.materials.length}>＋ 権利ソース追加</button>
+                  </div>
+                )}
+                {rightsForm && (
+                  <div className="wd-edit">
+                    {rightsError && <div className="async-error"><span>{rightsError}</span></div>}
+                    <div className="wd-edit-grid">
+                      <label>素材
+                        <select value={rightsForm.materialId} disabled={rightsForm.id != null}
+                          onChange={(e) => setRightsForm({ ...rightsForm, materialId: e.target.value })}>
+                          <option value="">選択…</option>
+                          {(detail.materials ?? []).map((m) => <option key={m.id} value={m.id}>{m.materialCode ? m.materialCode + " " : ""}{m.materialName}</option>)}
+                        </select>
+                      </label>
+                      <label>ソース種別<input value={rightsForm.sourceType} onChange={(e) => setRightsForm({ ...rightsForm, sourceType: e.target.value })} placeholder="direct_contract 等" /></label>
+                      <label>役割<input value={rightsForm.sourceRole} onChange={(e) => setRightsForm({ ...rightsForm, sourceRole: e.target.value })} placeholder="原作者 等" /></label>
+                      <label className="wd-check"><input type="checkbox" checked={rightsForm.isPrimary} onChange={(e) => setRightsForm({ ...rightsForm, isPrimary: e.target.checked })} />主たるソース</label>
+                      <label>有効開始<input type="date" value={rightsForm.validFrom} onChange={(e) => setRightsForm({ ...rightsForm, validFrom: e.target.value })} /></label>
+                      <label>有効終了<input type="date" value={rightsForm.validTo} onChange={(e) => setRightsForm({ ...rightsForm, validTo: e.target.value })} /></label>
+                      <label>ソース作品ID<input value={rightsForm.sourceWorkId} onChange={(e) => setRightsForm({ ...rightsForm, sourceWorkId: e.target.value.replace(/[^\d]/g, "") })} inputMode="numeric" /></label>
+                      <label>権利者取引先ID<input value={rightsForm.rightsHolderVendorId} onChange={(e) => setRightsForm({ ...rightsForm, rightsHolderVendorId: e.target.value.replace(/[^\d]/g, "") })} inputMode="numeric" /></label>
+                      <label>ソース文書ID<input value={rightsForm.sourceDocumentId} onChange={(e) => setRightsForm({ ...rightsForm, sourceDocumentId: e.target.value.replace(/[^\d]/g, "") })} inputMode="numeric" /></label>
+                      <label>ソース契約ID<input value={rightsForm.sourceContractId} onChange={(e) => setRightsForm({ ...rightsForm, sourceContractId: e.target.value.replace(/[^\d]/g, "") })} inputMode="numeric" /></label>
+                    </div>
+                    <div className="wd-edit-actions">
+                      <button onClick={() => setRightsForm(null)} disabled={rightsSaving}>キャンセル</button>
+                      <button className="primary" onClick={saveRights} disabled={rightsSaving || !rightsForm.materialId || !rightsForm.sourceType.trim()}>{rightsSaving ? "保存中…" : "保存"}</button>
+                    </div>
+                  </div>
+                )}
+                {detail.rightsSources.length ? <table>
+                  <thead><tr><th>素材</th><th>ソース種別</th><th>ソース作品</th><th>権利者</th><th>役割</th><th>主</th><th>有効期間</th>{canEditRights && <th></th>}</tr></thead>
+                  <tbody>{detail.rightsSources.map((r) => <tr key={r.id}>
+                    <td>{r.materialName ?? "—"}</td><td>{r.sourceType ?? "—"}</td><td>{r.sourceWorkTitle ?? "—"}</td>
+                    <td>{r.rightsHolderName ?? "—"}</td><td>{r.sourceRole ?? "—"}</td><td>{r.isPrimary ? "○" : ""}</td>
+                    <td>{[r.validFrom, r.validTo].filter(Boolean).join(" 〜 ") || "—"}</td>
+                    {canEditRights && <td><button onClick={() => { setRightsError(""); setRightsForm({
+                      id: r.id, materialId: r.materialId != null ? String(r.materialId) : "", sourceType: r.sourceType ?? "",
+                      sourceRole: r.sourceRole ?? "", isPrimary: r.isPrimary === true, validFrom: r.validFrom ?? "", validTo: r.validTo ?? "",
+                      sourceWorkId: r.sourceWorkId != null ? String(r.sourceWorkId) : "", rightsHolderVendorId: r.rightsHolderVendorId != null ? String(r.rightsHolderVendorId) : "",
+                      sourceDocumentId: r.sourceDocumentId != null ? String(r.sourceDocumentId) : "", sourceContractId: r.sourceContractId != null ? String(r.sourceContractId) : ""
+                    }); }}>編集</button></td>}
+                  </tr>)}</tbody>
+                </table> : <div className="empty-state">登録された権利ソースはありません。</div>}
+              </>
             ) : <Degraded />)}
 
             {tab === "rates" && (

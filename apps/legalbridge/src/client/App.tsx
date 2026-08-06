@@ -145,6 +145,7 @@ export function App() {
   const [canEditVendors, setCanEditVendors] = useState(false);
   const [canEditWorks, setCanEditWorks] = useState(false);
   const [canEditMaterials, setCanEditMaterials] = useState(false);
+  const [canEditRightsSources, setCanEditRightsSources] = useState(false);
   const [canEditStaff, setCanEditStaff] = useState(false);
   const [canGmailNotify, setCanGmailNotify] = useState(false);
   const [canCloudSign, setCanCloudSign] = useState(false);
@@ -188,6 +189,7 @@ export function App() {
         setCanEditVendors(capabilities.includes("vendors"));
         setCanEditWorks(capabilities.includes("works"));
         setCanEditMaterials(capabilities.includes("materials"));
+        setCanEditRightsSources(capabilities.includes("rights-sources"));
         setCanEditStaff(capabilities.includes("staff"));
         setCanGmailNotify(capabilities.includes("gmail"));
         setCanCloudSign(capabilities.includes("cloudsign"));
@@ -313,7 +315,7 @@ export function App() {
         {view === "outbound" && <OutboundConditionWorkspace />}
         {view === "royalty-preview" && <RoyaltyPreview />}
         {view === "billing" && <BillingDashboard canRecord={canRecordReceipt} />}
-        {view === "works" && <WorkDetail canEdit={canEditWorks} />}
+        {view === "works" && <WorkDetail canEdit={canEditWorks} canEditRights={canEditRightsSources} />}
         {view === "receivable-map" && <ReceivableMap />}
         {view === "payment-report" && <PaymentReport />}
         {view === "billing-print" && <BillingPrint />}

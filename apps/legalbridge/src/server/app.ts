@@ -86,6 +86,10 @@ import {
 } from "./materials/write-repository.js";
 import { createMaterialWriteRouter } from "./materials/write-routes.js";
 import {
+  MemoryRightsSourceWriteRepository, PgRightsSourceWriteRepository, type RightsSourceWriteRepository
+} from "./works/rights-source-write-repository.js";
+import { createRightsSourceWriteRouter } from "./works/rights-source-write-routes.js";
+import {
   MemoryRoyaltyEventRepository, PgRoyaltyEventRepository, type RoyaltyEventRepository
 } from "./royalty/event-repository.js";
 import { createRoyaltyEventRouter } from "./royalty/event-routes.js";
@@ -268,6 +272,7 @@ export interface AppDependencies {
   workWrites?: WorkWriteRepository;
   worksRead?: WorkReadRepository;
   materialWrites?: MaterialWriteRepository;
+  rightsSourceWrites?: RightsSourceWriteRepository;
   ledgers?: LedgerRepository;
   search?: GlobalSearchRepository;
   admin?: AdminRepository;
@@ -302,6 +307,7 @@ export interface AppOptions {
   receiptWritesEnabled?: boolean;
   paymentLedgerWritesEnabled?: boolean;
   materialWritesEnabled?: boolean;
+  rightsSourceWritesEnabled?: boolean;
   auth?: AuthSettings;
 }
 
@@ -348,6 +354,9 @@ function createDefaultDependencies(): AppDependencies {
     materialWrites: database
       ? new PgMaterialWriteRepository(database)
       : new MemoryMaterialWriteRepository(),
+    rightsSourceWrites: database
+      ? new PgRightsSourceWriteRepository(database)
+      : new MemoryRightsSourceWriteRepository(),
     royaltyEvents: database
       ? new PgRoyaltyEventRepository(database)
       : new MemoryRoyaltyEventRepository(),
@@ -411,6 +420,7 @@ export function createApp(
     staffWritesEnabled: config.staffWritesEnabled,
     workWritesEnabled: config.workWritesEnabled,
     materialWritesEnabled: config.materialWritesEnabled,
+    rightsSourceWritesEnabled: config.rightsSourceWritesEnabled,
     royaltyEventWritesEnabled: config.royaltyEventWritesEnabled,
     receiptWritesEnabled: config.receiptWritesEnabled,
     paymentLedgerWritesEnabled: config.paymentLedgerWritesEnabled,
@@ -543,6 +553,12 @@ export function createApp(
     options.materialWritesEnabled === true &&
     options.writeScopes?.has("materials") === true &&
     Boolean(dependencies.materialWrites);
+  const rightsSourceWriteEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.rightsSourceWritesEnabled === true &&
+    options.writeScopes?.has("rights-sources") === true &&
+    Boolean(dependencies.rightsSourceWrites);
   const royaltyEventWriteEnabled =
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
@@ -609,6 +625,7 @@ export function createApp(
         ...(staffWriteEnabled ? ["staff"] : []),
         ...(workWriteEnabled ? ["works"] : []),
         ...(materialWriteEnabled ? ["materials"] : []),
+        ...(rightsSourceWriteEnabled ? ["rights-sources"] : []),
         ...(royaltyEventWriteEnabled ? ["royalty-events"] : []),
         ...(receiptWriteEnabled ? ["receipts"] : []),
         ...(paymentLedgerWriteEnabled ? ["payments"] : []),
@@ -635,7 +652,7 @@ export function createApp(
         driveStorageEnabled || slackApprovalWriteEnabled ||
         outboundConditionWriteEnabled || contractIntakeWriteEnabled ||
         matterWriteEnabled || vendorWriteEnabled || staffWriteEnabled || workWriteEnabled ||
-        materialWriteEnabled || royaltyEventWriteEnabled || receiptWriteEnabled ||
+        materialWriteEnabled || rightsSourceWriteEnabled || royaltyEventWriteEnabled || receiptWriteEnabled ||
         paymentLedgerWriteEnabled || gmailDispatchEnabled || cloudSignDispatchEnabled || gmailInboundEnabled,
       writeCapabilities: [
         ...(draftWriteEnabled ? ["drafts"] : []),
@@ -650,6 +667,7 @@ export function createApp(
         ...(staffWriteEnabled ? ["staff"] : []),
         ...(workWriteEnabled ? ["works"] : []),
         ...(materialWriteEnabled ? ["materials"] : []),
+        ...(rightsSourceWriteEnabled ? ["rights-sources"] : []),
         ...(royaltyEventWriteEnabled ? ["royalty-events"] : []),
         ...(receiptWriteEnabled ? ["receipts"] : []),
         ...(paymentLedgerWriteEnabled ? ["payments"] : []),
@@ -707,6 +725,7 @@ export function createApp(
       "/staff/validate",
       "/works/validate",
       "/materials/validate",
+      "/rights-sources/validate",
       "/outbound-conditions/validate",
       "/contract-intakes/validate",
       "/contract-intakes/preflight",
@@ -788,6 +807,10 @@ export function createApp(
       (request.method === "POST" && request.path === "/materials") ||
       (request.method === "PATCH" && /^\/materials\/\d+$/.test(request.path));
     if (materialWriteEnabled && isMaterialWrite) return next();
+    const isRightsSourceWrite =
+      (request.method === "POST" && request.path === "/rights-sources") ||
+      (request.method === "PATCH" && /^\/rights-sources\/\d+$/.test(request.path));
+    if (rightsSourceWriteEnabled && isRightsSourceWrite) return next();
     const isRoyaltyEventWrite =
       request.method === "POST" && request.path === "/royalty/events";
     if (royaltyEventWriteEnabled && isRoyaltyEventWrite) return next();
@@ -858,6 +881,8 @@ export function createApp(
   app.use("/api/v2", createWorkReadRouter(dependencies.worksRead));
   app.use("/api/v2", createWorkWriteRouter(dependencies.workWrites, workWriteEnabled));
   app.use("/api/v2", createMaterialWriteRouter(dependencies.materialWrites, materialWriteEnabled));
+  // 権利ソース書込（guarded-write・既定OFF・scope 'rights-sources'・grant 017）。
+  app.use("/api/v2", createRightsSourceWriteRouter(dependencies.rightsSourceWrites, rightsSourceWriteEnabled));
   app.use("/api/v2", createDocumentImportRouter(dependencies.documentImports, documentFinalizeEnabled));
   app.use("/api/v2", createGmailNotificationRouter(documentRegistry, gmailDeliveryAdapter, gmailGateSettings));
   app.use("/api/v2", createCloudSignRouter(

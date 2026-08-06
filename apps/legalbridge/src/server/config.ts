@@ -36,6 +36,8 @@ export const config = {
     process.env.WORK_WRITES_ENABLED === "true",
   materialWritesEnabled:
     process.env.MATERIAL_WRITES_ENABLED === "true",
+  rightsSourceWritesEnabled:
+    process.env.RIGHTS_SOURCE_WRITES_ENABLED === "true",
   royaltyEventWritesEnabled:
     process.env.ROYALTY_EVENT_WRITES_ENABLED === "true",
   receiptWritesEnabled:

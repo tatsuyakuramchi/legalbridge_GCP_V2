@@ -187,7 +187,11 @@ Phase 7 は全フェーズの受け入れ後
 
 | 2026-08-05 | Phase 2 | スライス2-3：作品編集の書込み拡張（系譜/種別/権利者・capability-gated・grant 012流用・閉路防止） | — | ✅ |
 
-**スライス2-3（作品編集の書込み拡張）**：既存の作品書込み（5列）を拡張し、`title_kana`/`work_type`/`kind`(enum)/`derivation_type`/`is_original`/**`parent_work_id`（系譜）**/`rights_holder_vendor_id`/`creator_name`/`publisher_name` を編集可能に。**grant 012（works全表UPDATE）流用で新規GRANT不要**、既存 `works` capability（scope `works`・`WORK_WRITES_ENABLED`）で一体ゲート。系譜の**閉路防止**（自己親・子孫を親にする操作を422 `WORK_LINEAGE_CYCLE` で拒否・Pg再帰CTE＋Memory両実装）。`find`と`WorkRecord`を拡張列まで返すよう更新。UIは `WorkDetail` 概要タブに capability-gated（`canEditWorks`）な編集フォームを追加（親作品ID・区分・原作フラグ等、保存はPATCH→再取得）。DELETEなし。テスト344件。残：権利ソース書込（2-4）・work_relationsグラフ編集・製品（DDL要・保留）。
+**スライス2-3（作品編集の書込み拡張）**：既存の作品書込み（5列）を拡張し、`title_kana`/`work_type`/`kind`(enum)/`derivation_type`/`is_original`/**`parent_work_id`（系譜）**/`rights_holder_vendor_id`/`creator_name`/`publisher_name` を編集可能に。**grant 012（works全表UPDATE）流用で新規GRANT不要**、既存 `works` capability（scope `works`・`WORK_WRITES_ENABLED`）で一体ゲート。系譜の**閉路防止**（自己親・子孫を親にする操作を422 `WORK_LINEAGE_CYCLE` で拒否・Pg再帰CTE＋Memory両実装）。`find`と`WorkRecord`を拡張列まで返すよう更新。UIは `WorkDetail` 概要タブに capability-gated（`canEditWorks`）な編集フォームを追加（親作品ID・区分・原作フラグ等、保存はPATCH→再取得）。DELETEなし。テスト344件。
+
+| 2026-08-05 | Phase 2 | スライス2-4：権利ソース(material_rights_sources)書込（作成/更新・guarded・既定OFF・scope `rights-sources`）＋grant 017（UPDATE） | — | ✅ |
+
+**スライス2-4（権利ソース書込）**：`works/rights-source-write-{schema,repository,routes}.ts`。`POST /rights-sources`・`PATCH /rights-sources/:id`（admin/legal限定・validate同梱・DELETEなし・material_id付替禁止）。新capability **`rights-sources`**（`RIGHTS_SOURCE_WRITES_ENABLED`）でPhase 1と同一の5条件ゲート。**grant 017**（`material_rights_sources` UPDATE。INSERT/seqは007済・`relkind='r'`検証）＋preflight。config/app（gating・safe-write許可・writeCapabilities）・`verify-write-test.sh`（case＋expected_write_scopes）・`cloudbuild-write-test.yaml`（substitutions/verify export/deploy ENVVARS）を全結線（既定OFF・BLOCKED＝既存デプロイ無影響、default検証で確認）。UIは `WorkDetail` 権利ソースタブに capability-gated（`canEditRights`）な追加/編集フォーム（素材選択・ソース種別・役割・主フラグ・有効期間・各参照ID）。テスト352件。**これでPhase 2の主要スライス（作品を起点に一望・作品編集・権利ソース編集）が完了**。残：work_relationsグラフ編集（2-4b）・製品（DDL要・保留）。有効化手順は `docs/phase2-works-rights-plan.md`。
 
 **スライス4（支払報告書・読取）**：出金台帳（`payments` outbound）の各行に源泉徴収・消費税を適用し差引振込額まで算定。純関数`buildPaymentReport`が`tax.ts`（源泉10.21%/100万超20.42%/個人強制ON・消費税ceil）を合成。読み取りリポジトリ（Pg/Memory・42501等で縮退）が`payments`＋`vendors`（源泉フラグ）を集約。`GET /api/v2/payment-report`（admin/legal限定）＋`PaymentReport.tsx`（期間フィルタ・4KPI・明細・**クライアント側CSV出力**）。**SheetJS等の新規バイナリ依存は追加せず**、XLSX/ZIP特有形式は後日拡張。新規GRANT不要（016の`payments` SELECT＋vendors利用）。
 
