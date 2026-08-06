@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { checkWorkConditions, summarizeFindings } from "./contract-check";
 
 // 作品詳細（Phase 2・読み取り専用）。作品を起点に 概要/系譜/素材/条件/権利ソース/
 // 料率対象 を一望する。作品ピッカー（検索）で選択 → GET /works/:id/detail を集約表示。
@@ -15,7 +16,7 @@ type Conditions = { receivable: Cond[]; payable: Cond[]; sublicense: Cond[]; wor
 type Core = Summary & { titleKana: string | null; workType: string | null; status: string | null; derivationType: string | null; rightsHolderName: string | null; creatorName: string | null; publisherName: string | null; ledgerCode: string | null; remarks: string | null };
 type Detail = { work: Core; lineage: Lineage | null; materials: Material[] | null; rightsSources: RightsSource[] | null; conditions: Conditions | null };
 
-type Tab = "overview" | "lineage" | "products" | "materials" | "conditions" | "rights" | "rates";
+type Tab = "overview" | "lineage" | "products" | "materials" | "conditions" | "rights" | "rates" | "check";
 const TABS: { key: Tab; label: string }[] = [
   { key: "overview", label: "概要" },
   { key: "lineage", label: "系譜" },
@@ -23,8 +24,10 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "materials", label: "素材" },
   { key: "conditions", label: "条件" },
   { key: "rights", label: "権利ソース" },
-  { key: "rates", label: "料率対象" }
+  { key: "rates", label: "料率対象" },
+  { key: "check", label: "契約チェック" }
 ];
+const sevLabel: Record<"high" | "medium" | "low", string> = { high: "重大", medium: "注意", low: "軽微" };
 
 const yen = (v: number | null, ccy: string | null) => v == null ? "—" : `${ccy && ccy !== "JPY" ? ccy + " " : "¥"}${new Intl.NumberFormat("ja-JP").format(Math.round(v))}`;
 const kindLabel = (k: string | null) => k === "licensed_in" ? "ライセンスイン" : k === "own" ? "自社作品" : (k ?? "—");
@@ -453,6 +456,24 @@ export function WorkDetail({ canEdit = false, canEditRights = false }: { canEdit
                 )}
               </>
             )}
+
+            {tab === "check" && (detail.conditions == null ? <Degraded /> : (() => {
+              const all = [...detail.conditions.receivable, ...detail.conditions.payable];
+              const findings = checkWorkConditions(all);
+              const sum = summarizeFindings(findings);
+              return <>
+                <small className="hint">この作品の条件明細を作成時ルールで点検します（重複・欠落の横断はデータ品質センター）。</small>
+                <div className="wd-cond-summary">
+                  <span>重大 {sum.high}</span><span>注意 {sum.medium}</span><span>軽微 {sum.low}</span><span>対象 {all.length}件</span>
+                </div>
+                {findings.length ? <table>
+                  <thead><tr><th>重大度</th><th>条件</th><th>指摘</th></tr></thead>
+                  <tbody>{findings.map((f, i) => <tr key={`${f.conditionId}-${i}`}>
+                    <td>{sevLabel[f.severity]}</td><td>{f.conditionName}</td><td>{f.message}</td>
+                  </tr>)}</tbody>
+                </table> : <div className="empty-state">指摘はありません。条件は整合しています。</div>}
+              </>;
+            })())}
           </>}
         </div>
       </div>

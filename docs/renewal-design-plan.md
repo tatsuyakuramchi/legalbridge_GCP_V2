@@ -256,3 +256,7 @@ Phase 7 は全フェーズの受け入れ後
 | 2026-08-05 | Phase 6 | スライス6-2/6-3：運用ガイド（静的）＋テキストスニペット（localStorage）・依存ゼロ | — | ✅ |
 
 **スライス6-2/6-3（運用ガイド＋スニペット）**：どちらもクライアント完結・サーバ/DB非依存。`OperationsGuide.tsx`＝権限/機能有効化/GRANT早見/デプロイ/安全設計の要点を画面内集約（設定＞運用ガイド・admin）。`TextSnippets.tsx`＋純関数`snippets-store.ts`（upsert/remove/filter/sanitize）＝定型文をlocalStorageに保存しコピー（作成＞スニペット・legal/requester）。新規GRANT・env・依存なし。クライアント純関数テスト追加。テスト394件。
+
+| 2026-08-05 | Phase 6 | スライス6-4/6-5：アーカイブ表示分離（案件）＋契約チェック（作品条件の作成時点検・純関数）・依存ゼロ | — | ✅ |
+
+**スライス6-4/6-5（アーカイブ＋契約チェック）**：どちらも依存ゼロ。6-4＝`MatterRegistry` で保管(`status='archived'`)を既定「すべて」から除外し「保管」チップを新設（案件のstatus編集は既存 `InlineMatterControls` を流用・grant 008）。6-5＝`contract-check.ts`（純関数 `checkWorkConditions`＝サブライセンス上流未リンク/MG無料率/方向欠落/受取素材未紐付け/条件名空 の作成時ルール、`summarizeFindings`）を `WorkDetail` の「契約チェック」タブで表示（4-1の横断スキャンとは別・条件単位）。新規GRANT・env・依存なし。クライアント純関数テスト追加。テスト400件。**これでPhase 6の依存ゼロ枠（6-1〜6-5）が完了**。残：稟議6-6（新規テーブル判断）・銀行口座（非表示方針で対象外）・設定拡張（サーバ永続化は要判断）。

@@ -28,7 +28,7 @@ const stageLabels: Record<string, string> = {
 };
 const LIFECYCLE_STAGES = Object.keys(stageLabels);
 
-type FilterKey = "all" | "active" | "blocked" | "overdue" | "done";
+type FilterKey = "all" | "active" | "blocked" | "overdue" | "done" | "archived";
 function isActive(matter: { status: string }) {
   return matter.status === "open" || matter.status === "in_progress";
 }
@@ -45,8 +45,10 @@ function matchesFilter(matter: Matter, filter: FilterKey, today: string) {
     case "active": return isActive(matter);
     case "blocked": return isActive(matter) && Boolean(matter.blockedReason);
     case "overdue": return isActive(matter) && isOverdue(matter.targetDueDate, today);
-    case "done": return matter.status === "closed" || matter.status === "archived";
-    default: return true;
+    case "done": return matter.status === "closed";
+    case "archived": return matter.status === "archived";
+    // 「すべて」は保管(archived)を除外し、通常運用の案件だけを表示する。
+    default: return matter.status !== "archived";
   }
 }
 
@@ -93,18 +95,20 @@ export function MatterRegistry({ templates, selectedId, canEdit = false, onCreat
 
   const today = matterTodayKey();
   const counts = {
-    all: matters.length,
+    all: matters.filter((m) => m.status !== "archived").length,
     active: matters.filter(isActive).length,
     blocked: matters.filter((m) => isActive(m) && Boolean(m.blockedReason)).length,
     overdue: matters.filter((m) => isActive(m) && isOverdue(m.targetDueDate, today)).length,
-    done: matters.filter((m) => m.status === "closed" || m.status === "archived").length
+    done: matters.filter((m) => m.status === "closed").length,
+    archived: matters.filter((m) => m.status === "archived").length
   };
   const chips: Array<{ key: FilterKey; label: string; count: number; tone?: "warning" | "danger" }> = [
     { key: "all", label: "すべて", count: counts.all },
     { key: "active", label: "対応中", count: counts.active },
     { key: "blocked", label: "停滞", count: counts.blocked, tone: "warning" },
     { key: "overdue", label: "期限超過", count: counts.overdue, tone: "danger" },
-    { key: "done", label: "完了", count: counts.done }
+    { key: "done", label: "完了", count: counts.done },
+    { key: "archived", label: "保管", count: counts.archived }
   ];
   const visible = matters.filter((m) => matchesFilter(m, filter, today));
 
