@@ -38,7 +38,7 @@ Gmail送受信 / CloudSign / Slack / Drive を1つずつ本番相当で点火す
 ### ④ Gmail送信（通知メール）— 🟡 DWD鍵が必須・冪等未実装
 - **状態**：`gmail-api-adapter.ts`（`gmail.send`＋DWD `subject=GMAIL_SENDER`）で実送信。ルートは preview(admin/legal)・dispatch(admin)。
 - **点火手順**：`gmail.send` のドメイン全体委任SAを `GMAIL_SENDER` 送信元へ、鍵secret、`GMAIL_DELIVERY_MODE=live`・`GMAIL_SENDER`・`CONFIRM_GMAIL_DISPATCH=GMAIL_DISPATCH_VALIDATION_ONLY`・scope `gmail`・AUTH・**`INTEGRATION_MODE=live`**。
-- **ギャップ**：(a) ~~SA鍵がDriveブランチ従属~~ → **修正済**（鍵マウントを Drive/Gmail送信/Gmail受信 の共有条件へ切り出し）。(b) **冪等未実装**：`idempotencyKey` を算出するがGmailクライアントが無視・送信履歴テーブルも無し → 再POSTで再送。運用では preview→dispatch を一度だけ、を徹底。
+- **ギャップ**：(a) ~~SA鍵がDriveブランチ従属~~ → **修正済**（鍵マウントを Drive/Gmail送信/Gmail受信 の共有条件へ切り出し）。(b) ~~冪等未実装~~ → **修正済（スライス5-1）**：送信履歴テーブル `lb_v2_gmail_send_history`（grant 019・append専用）＋dispatch の送信前照会で二重送信を防止。有効化は `GMAIL_SEND_HISTORY_ENABLED=true`（既定OFF・write-test限定・grant 019 適用が前提）。無効時は従来通り（後方互換）。
 - **検証**：preview（MIME確認）→ dispatch 1通。二重送信ガードは運用対応。
 
 ### ⑤ CloudSign（署名依頼＋ステータス）— ⚠️ 認証未確定（最終確認必須）
@@ -55,7 +55,9 @@ Gmail送受信 / CloudSign / Slack / Drive を1つずつ本番相当で点火す
 
 1. ~~`INTEGRATION_MODE=local` ハードコード~~ → **本レビューで修正**（`_INTEGRATION_MODE` 化・ガード付き）。
 2. ~~SA鍵マウントがDriveブランチに従属~~ → **修正済**：鍵マウントを共有条件へ切り出し、`_DRIVE_STORAGE_ENABLED=true` **または** `_GMAIL_DELIVERY_MODE=live` **または** `_GMAIL_INBOUND_MODE=live` のいずれかで鍵secretがあれば `/secrets/gws-service-account.json` をマウントし `GOOGLE_SERVICE_ACCOUNT_KEY_PATH` を設定する（Drive無しでもGmail送受信のDWDが機能）。Gmail送信は `GMAIL_SA_KEY_PATH` 未設定時に同パスへフォールバック。
-3. **Gmail/CloudSign に送信履歴・冪等強制が無い**（キーは算出するが未使用）。多重送信は運用手順で回避。恒久対応は履歴テーブル（Slack 001/002 相当）追加＝新規GRANT判断。
+3. **Gmail/CloudSign に送信履歴・冪等強制が無い**（キーは算出するが未使用）。
+   - **Gmail は修正済（スライス5-1）**：append専用の送信履歴テーブル `lb_v2_gmail_send_history`（grant 019・SELECT/INSERT のみ・`idempotency_key` 一意）を追加し、dispatch が送信前に既送信を照会→重複なら実送信せず受領を返す（`integrations.gmail="duplicate"`・200）。有効化は `GMAIL_SEND_HISTORY_ENABLED=true`（既定OFF・write-test限定）。
+   - **CloudSign は未対応**：認証未確定（下記④）のため live 化不可。認証突合後に同型（履歴テーブル＋冪等）を追加する。
 4. **CloudSign認証の実突合**（上記④）。
 5. **Gmail受信の取込→登録書込導線**（②）。
 6. **Slack候補フローの依頼者メール**（`matter_overview_v` 拡充・DBビュー作業）。

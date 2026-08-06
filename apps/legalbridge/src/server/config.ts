@@ -78,6 +78,9 @@ export const config = {
   gmailSenderEmail: (process.env.GMAIL_SENDER ?? "").trim(),
   gmailServiceAccountKeyPath:
     (process.env.GMAIL_SA_KEY_PATH ?? process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH ?? "").trim(),
+  // 送信履歴による冪等強制（Slack 001 相当・append専用・既定OFF）。
+  gmailSendHistoryEnabled:
+    process.env.GMAIL_SEND_HISTORY_ENABLED === "true",
   cloudSignMode:
     process.env.CLOUDSIGN_MODE === "live" ? "live" as const : "disabled" as const,
   cloudSignBaseUrl: (process.env.CLOUDSIGN_BASE_URL ?? "https://api.cloudsign.jp").trim(),

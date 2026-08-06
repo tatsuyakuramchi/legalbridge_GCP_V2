@@ -206,6 +206,10 @@ import {
   type SlackNotificationHistoryRepository
 } from "./integrations/slack-history-repository.js";
 import {
+  PgGmailSendHistoryRepository,
+  type GmailSendHistoryRepository
+} from "./integrations/gmail-send-history-repository.js";
+import {
   createApiAuthorization,
   createAuthentication,
   publicUser,
@@ -314,6 +318,7 @@ export interface AppDependencies {
   driveStorage?: DriveStorage | null;
   slackHistory?: SlackNotificationHistoryRepository;
   slackApprovals?: SlackNotificationApprovalRepository;
+  gmailSendHistory?: GmailSendHistoryRepository;
   outboundConditions?: OutboundConditionRepository;
   contractIntakes?: ContractIntakeRepository;
   contractIntakeDocuments?: ContractIntakeDocumentSourceRepository;
@@ -423,6 +428,9 @@ function createDefaultDependencies(): AppDependencies {
       : undefined,
     slackApprovals: database && config.slackNotificationApprovalsEnabled
       ? new PgSlackNotificationApprovalRepository(database)
+      : undefined,
+    gmailSendHistory: database && config.gmailSendHistoryEnabled
+      ? new PgGmailSendHistoryRepository(database)
       : undefined,
     outboundConditions: outboundDatabase
       ? new PgOutboundConditionRepository(outboundDatabase)
@@ -958,7 +966,7 @@ export function createApp(
   // 取引先マージ（名寄せ）。プレビュー読取＋guarded-write実行（既定OFF・grant 018）。
   app.use("/api/v2", createVendorMergeRouter(dependencies.vendorMerge, vendorMergeEnabled));
   app.use("/api/v2", createDocumentImportRouter(dependencies.documentImports, documentFinalizeEnabled));
-  app.use("/api/v2", createGmailNotificationRouter(documentRegistry, gmailDeliveryAdapter, gmailGateSettings));
+  app.use("/api/v2", createGmailNotificationRouter(documentRegistry, gmailDeliveryAdapter, gmailGateSettings, dependencies.gmailSendHistory));
   app.use("/api/v2", createCloudSignRouter(
     documentRegistry, dependencies.templates, pdfRenderer, cloudSignAdapter, cloudSignGateSettings));
   app.use("/api/v2", createGmailInboundRouter(gmailInboundAdapter, {

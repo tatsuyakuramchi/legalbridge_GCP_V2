@@ -412,6 +412,26 @@ case "${GMAIL_DELIVERY_MODE}" in
     exit 1
     ;;
 esac
+# Gmail 送信の冪等履歴（append専用・Slack履歴同型）。有効化は隔離検証DBに限定する
+# （grant 019 が lb_v2_gmail_send_history を作成・SELECT/INSERT のみ付与）。
+case "${GMAIL_SEND_HISTORY_ENABLED}" in
+  false)
+    ;;
+  true)
+    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
+      echo "Gmail send-history blocked: append-only history is limited to the write-test service."
+      exit 1
+    fi
+    if [ "${DB_NAME}" != "legalbridge_v2_validation" ] && [ "${DB_NAME}" != "legalbridge" ]; then
+      echo "Gmail send-history blocked: unexpected database target."
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Deployment blocked: GMAIL_SEND_HISTORY_ENABLED must be true or false."
+    exit 1
+    ;;
+esac
 case "${CLOUDSIGN_MODE}" in
   disabled)
     ;;

@@ -7,6 +7,7 @@ import { isValidEmail } from "../integrations/gmail-delivery-adapter.js";
 import {
   evaluateGmailDispatchGate, type GmailDispatchGateSettings
 } from "../integrations/gmail-dispatch-gate.js";
+import type { GmailSendHistoryRepository } from "../integrations/gmail-send-history-repository.js";
 
 const idPath = z.object({ id: z.coerce.number().int().positive() });
 const bodySchema = z.object({ to: z.string().trim().min(1, "宛先が必要です").max(255) });
@@ -36,7 +37,8 @@ export function buildFinalizeNotification(document: RegisteredDocument, to: stri
 export function createGmailNotificationRouter(
   documents: DocumentRegistryRepository | undefined,
   gmail: GmailDeliveryAdapter | undefined,
-  gateSettings: GmailDispatchGateSettings
+  gateSettings: GmailDispatchGateSettings,
+  sendHistory?: GmailSendHistoryRepository
 ) {
   const router = Router();
 
@@ -89,11 +91,31 @@ export function createGmailNotificationRouter(
           error: "送信条件が整っていません", code: "GMAIL_DISPATCH_BLOCKED", blockers: loaded.gate.blockerLabels
         });
       }
+      // 冪等強制：送信履歴が有効なら、同一指紋の既送信は再送せず受領情報を返す。
+      if (sendHistory) {
+        const prior = await sendHistory.findByKey(loaded.content.idempotencyKey);
+        if (prior) {
+          return response.status(200).json({
+            receipt: { messageId: prior.messageId, threadId: prior.threadId },
+            integrations: { gmail: "duplicate" }
+          });
+        }
+      }
       const receipt = await gmail.send({
         to: loaded.content.to, subject: loaded.content.subject, bodyText: loaded.content.bodyText,
         fromEmail: gateSettings.senderEmail, fromName: "LegalBridge",
         idempotencyKey: loaded.content.idempotencyKey
       });
+      if (sendHistory) {
+        await sendHistory.record({
+          idempotencyKey: loaded.content.idempotencyKey,
+          documentId: loaded.document.id,
+          recipient: loaded.content.to,
+          messageId: receipt.messageId,
+          threadId: receipt.threadId,
+          recordedBy: response.locals.currentUser?.email ?? "unknown"
+        });
+      }
       return response.status(201).json({ receipt, integrations: { gmail: "sent" } });
     } catch (error) {
       if (error instanceof z.ZodError) return response.status(400).json({ error: "invalid request", issues: error.issues });

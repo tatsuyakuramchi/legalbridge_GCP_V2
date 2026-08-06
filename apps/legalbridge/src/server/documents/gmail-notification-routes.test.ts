@@ -5,6 +5,7 @@ import request from "supertest";
 import { createGmailNotificationRouter, buildFinalizeNotification } from "./gmail-notification-routes.js";
 import { MemoryDocumentRegistryRepository, type RegisteredDocument } from "./registry-repository.js";
 import type { GmailDeliveryAdapter } from "../integrations/gmail-delivery-adapter.js";
+import { MemoryGmailSendHistoryRepository } from "../integrations/gmail-send-history-repository.js";
 
 const doc: RegisteredDocument = {
   id: 7, documentNumber: "DOC-2026-0007", issueKey: "LB-7", templateType: "license",
@@ -16,11 +17,13 @@ const doc: RegisteredDocument = {
 class CapturingGmailAdapter implements GmailDeliveryAdapter {
   readonly configured = true;
   sent: unknown = null;
-  async send(req: unknown) { this.sent = req; return { messageId: "m1", threadId: "t1" }; }
+  sendCount = 0;
+  async send(req: unknown) { this.sent = req; this.sendCount += 1; return { messageId: "m1", threadId: "t1" }; }
 }
 
 function appFor(options: {
   role?: "admin" | "legal" | "requester"; live?: boolean; adapter?: GmailDeliveryAdapter;
+  history?: MemoryGmailSendHistoryRepository;
 }) {
   const registry = new MemoryDocumentRegistryRepository([doc]);
   const adapter = options.adapter ?? new CapturingGmailAdapter();
@@ -35,7 +38,7 @@ function appFor(options: {
     gmailCapabilityEnabled: options.live ?? false,
     adapterConfigured: adapter.configured,
     senderEmail: "legal@arclight.co.jp"
-  }));
+  }, options.history));
   return { app, adapter };
 }
 
@@ -83,4 +86,25 @@ test("法務ロールは実送信できない（管理者限定）", async () =>
   const response = await request(app).post("/api/v2/documents/7/gmail-notification/dispatch").send({ to: "to@example.com" });
   assert.equal(response.status, 403);
   assert.equal(response.body.code, "GMAIL_ADMIN_REQUIRED");
+});
+
+test("送信履歴有効時、同一宛先の再送は冪等で実送信をスキップする", async () => {
+  const history = new MemoryGmailSendHistoryRepository();
+  const { app, adapter } = appFor({ live: true, role: "admin", history });
+  const first = await request(app).post("/api/v2/documents/7/gmail-notification/dispatch").send({ to: "to@example.com" });
+  assert.equal(first.status, 201);
+  assert.equal(first.body.integrations.gmail, "sent");
+  const second = await request(app).post("/api/v2/documents/7/gmail-notification/dispatch").send({ to: "to@example.com" });
+  assert.equal(second.status, 200);
+  assert.equal(second.body.integrations.gmail, "duplicate");
+  assert.equal(second.body.receipt.messageId, "m1");
+  // アダプタは1回しか呼ばれない（二重送信しない）。
+  assert.equal((adapter as CapturingGmailAdapter).sendCount, 1);
+});
+
+test("送信履歴が無効なら従来通り毎回送信する（後方互換）", async () => {
+  const { app, adapter } = appFor({ live: true, role: "admin" });
+  await request(app).post("/api/v2/documents/7/gmail-notification/dispatch").send({ to: "to@example.com" });
+  await request(app).post("/api/v2/documents/7/gmail-notification/dispatch").send({ to: "to@example.com" });
+  assert.equal((adapter as CapturingGmailAdapter).sendCount, 2);
 });
