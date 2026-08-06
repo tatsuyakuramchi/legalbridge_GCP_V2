@@ -218,7 +218,13 @@ Phase 7 は全フェーズの受け入れ後
 
 | 2026-08-05 | Phase 4 | スライス4-4：下書き一括整理（stale sweep・プレビュー→一括削除・owner scoped・既存 `drafts` capability・GRANT不要※006 DELETE済） | — | ✅ |
 
-**スライス4-4（下書き一括整理）**：`document_drafts` の古い下書きを一括整理。`draft-repository` に `listStale(days, owner, limit)`／`purgeStale(days, owner)` を追加（owner=""＝全件、requesterは自分のみ）。`GET /document-drafts/stale?days=N`（プレビュー・件数）＋`POST /document-drafts/purge {days}`（一括削除・既存 `drafts` capability の safe-write ゲート）。**新規GRANT不要**（006で document_drafts の DELETE 付与済）。UI `DraftWorkspace` に「古い下書きの整理」（日数指定→対象確認→一括削除・確認ダイアログ）を追加。テスト381件。**これで Phase 4 の主要スライス（データ品質・取込拡張・名寄せ・下書き整理）が完了**。残：Excel/LegalOn一括取込(4-5・解析ライブラリの依存判断)。
+**スライス4-4（下書き一括整理）**：`document_drafts` の古い下書きを一括整理。`draft-repository` に `listStale(days, owner, limit)`／`purgeStale(days, owner)` を追加（owner=""＝全件、requesterは自分のみ）。`GET /document-drafts/stale?days=N`（プレビュー・件数）＋`POST /document-drafts/purge {days}`（一括削除・既存 `drafts` capability の safe-write ゲート）。**新規GRANT不要**（006で document_drafts の DELETE 付与済）。UI `DraftWorkspace` に「古い下書きの整理」（日数指定→対象確認→一括削除・確認ダイアログ）を追加。テスト381件。
+
+| 2026-08-05 | Phase 4 | スライス4-5：Excel一括取込（依存ゼロ・区切り自動判定/引用符対応パーサ）＋LegalOn土台 | — | ✅ |
+
+**スライス4-5（Excel一括取込・依存ゼロ）**：S4 Excel出力と同じ無依存方針で取込を堅牢化。`client/csv-parse.ts`（`detectDelimiter`＝**Excelセル範囲コピペのTSV**を自動判定／`parseRecords`＝**引用符付きCSV**の埋め込みカンマ・改行・`""`を復元／`parseDelimited`＝ヘッダ別名マップ）を新設し、`CsvImport` の素朴なカンマ分割を置換。全取込（取引先/担当者/作品/素材/権利ソース）がExcel実データで壊れない。UIに貼付ガイド追記。テストは純関数化により**クライアントも対象化**（package.json testグロブに `src/client/**/*.test.ts` 追加）。**SheetJS等の`.xlsx`直接パースは新規依存回避のため見送り**。**LegalOn**専用presetは実export列仕様が判明した時点で追加（現状も汎用取込のヘッダマッピングで取込可能）。テスト387件。**これにて Phase 4（データ品質・保全・取込）完了**。
+
+> **Phase 4 完了サマリ**：データ品質センター（横断整合5スキャン・読取・GRANT不要）／CSV取込拡張（素材・権利ソース・共通bulkヘルパ）／取引先名寄せ（8表FK再指定＋is_active=false・guarded・grant 018列単位UPDATE）／下書き一括整理（stale sweep・既存drafts capability）／Excel一括取込（依存ゼロ・TSV/引用符対応パーサ）。書込は全て capability-gated・既定OFF・no-DELETE・既存ゼロ破壊。本番有効化（scope `vendor-merge`＋grant 018）はオペレーター作業。読取（品質センター）と取込パーサ堅牢化は追加設定なしで反映。LegalOn専用presetのみ実仕様待ちで保留。
 
 **スライス4（支払報告書・読取）**：出金台帳（`payments` outbound）の各行に源泉徴収・消費税を適用し差引振込額まで算定。純関数`buildPaymentReport`が`tax.ts`（源泉10.21%/100万超20.42%/個人強制ON・消費税ceil）を合成。読み取りリポジトリ（Pg/Memory・42501等で縮退）が`payments`＋`vendors`（源泉フラグ）を集約。`GET /api/v2/payment-report`（admin/legal限定）＋`PaymentReport.tsx`（期間フィルタ・4KPI・明細・**クライアント側CSV出力**）。**SheetJS等の新規バイナリ依存は追加せず**、XLSX/ZIP特有形式は後日拡張。新規GRANT不要（016の`payments` SELECT＋vendors利用）。
 

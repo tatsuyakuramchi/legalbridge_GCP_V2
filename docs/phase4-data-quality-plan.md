@@ -19,11 +19,11 @@
 | **4-2** | CSV取込の拡張（素材・権利ソース取込・共通bulkヘルパ） | 書込 | 既存INSERT（007）流用 | ✅ |
 | **4-3** | 名寄せ（取引先マージ・8表FK再指定＋旧is_active=false・プレビュー2段） | 書込 | **018**（列単位UPDATE×4表） | ✅ |
 | **4-4** | 下書き一括整理（stale sweep・プレビュー→一括削除） | 書込 | 006 DELETE済・既存 `drafts` capability | ✅ |
-| 4-5 | Excel/LegalOn一括取込 | 書込 | 依存判断 | 未 |
+| **4-5** | Excel一括取込（依存ゼロ・TSV/引用符対応パーサ）＋LegalOn土台 | 書込 | 既存取込流用 | ✅（LegalOn専用presetは実export仕様待ち） |
 
 ### 決定ポイント
 - **名寄せ（4-3）＝確定・実装済**：取引先マージは8表のFKを旧→新へ再指定（`condition_lines.counterparty_vendor_id` / `payments.counterparty_vendor_id` / `works.rights_holder_vendor_id` / `work_materials.rights_holder_vendor_id` / `material_rights_sources.rights_holder_vendor_id` / `material_categories.rights_holder_vendor_id` / `contracts.primary_vendor_id` / `contract_works.rights_holder_vendor_id`）。旧取引先は**削除せず `is_active=false`**（no-DELETE・監査保持）。既にUPDATE済（payments/works/work_materials/material_rights_sources/vendors）以外の4表は **grant 018 で列単位UPDATE**のみ付与（全列UPDATEはしない）。プレビュー（再指定件数）→合言葉 `COMMIT_VENDOR_MERGE`→実行の2段。
-- **Excel/LegalOn（4-5）**：解析ライブラリの依存判断（S4 Excel同様、まず依存なしのCSV正規化で代替可）。
+- **Excel/LegalOn（4-5）＝オプションA（依存ゼロ）で確定・実装済**：S4 Excel出力と同じ無依存方針。`csv-parse.ts`（区切り自動判定＝**Excelセル範囲コピペのTSV**／**引用符付きCSV**対応）で全取込を堅牢化。SheetJS等の`.xlsx`直接パースは新規依存（脆弱性・保守）を避けるため見送り。**LegalOn**は実際のexport列仕様が判明した時点でヘッダ別名presetを追加（現状は汎用取込のヘッダマッピングで対応可能）。
 
 ## 3. Slice 4-1（実装済み）
 

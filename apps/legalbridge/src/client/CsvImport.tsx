@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useToast } from "./Toast";
+import { parseDelimited } from "./csv-parse";
 
 // 汎用CSV取込UI。マスタごとの差分（列マッピング・必須項目・投入先・ラベル）を
 // config で受け取り、貼り付け→ヘッダ自動マップ→プレビュー→一括投入→結果表示までを共通化する。
@@ -41,20 +42,8 @@ function buildHeaderMap(columns: CsvColumn[]): Record<string, string> {
   return map;
 }
 
-function parseCsv(text: string, headerMap: Record<string, string>): { rows: Record<string, string>[]; unmapped: string[] } {
-  const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
-  if (!lines.length) return { rows: [], unmapped: [] };
-  const rawHeaders = lines[0].split(",").map((header) => header.trim());
-  const fields = rawHeaders.map((header) => headerMap[header] ?? headerMap[header.toLowerCase()] ?? "");
-  const unmapped = rawHeaders.filter((_, index) => !fields[index]);
-  const rows = lines.slice(1).map((line) => {
-    const cells = line.split(",");
-    const row: Record<string, string> = {};
-    fields.forEach((field, index) => { if (field) row[field] = (cells[index] ?? "").trim(); });
-    return row;
-  });
-  return { rows, unmapped };
-}
+// 区切りテキストの解析は csv-parse.ts（区切り自動判定・引用符対応）へ委譲する。
+const parseCsv = parseDelimited;
 
 export function CsvImport({ config, onCancel, onDone }: { config: CsvImportConfig; onCancel: () => void; onDone: () => void }) {
   const [text, setText] = useState("");
@@ -95,6 +84,7 @@ export function CsvImport({ config, onCancel, onDone }: { config: CsvImportConfi
   return <aside className={config.panelClass ?? "panel ledger-detail matter-editor"}>
     <span className="detail-kicker">{config.kicker}</span><h2>{config.title}</h2>
     <p className="hub-note">{config.note}</p>
+    <p className="hub-note">Excelからセル範囲をコピーして貼り付け（タブ区切り）や、「CSVとして保存」した引用符付きCSVもそのまま取り込めます。</p>
     {error && <div className="async-error">{error}</div>}
     <textarea rows={8} value={text} onChange={(event) => { setText(event.target.value); setResult(null); }}
       placeholder={config.sampleText} />
