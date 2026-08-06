@@ -129,6 +129,39 @@ export function createDocumentRouter(
     }
   });
 
+  // 古い下書きの一括整理（Phase 4）。更新から days 日以上経過した下書きを
+  // 一覧（プレビュー）／一括削除する。requester は自分の下書きのみ、admin/legal は全件。
+  // 実行(POST)は safe-write ミドルウェアで draftWriteEnabled ゲート済。
+  router.get("/document-drafts/stale", async (request, response, next) => {
+    try {
+      if (!draftListingEnabled) {
+        return response.status(403).json({ error: "draft workspace is not enabled", code: "DRAFT_WORKSPACE_DISABLED" });
+      }
+      const { days } = z.object({ days: z.coerce.number().int().min(1).max(3650).default(30) }).parse(request.query);
+      const owner = requesterEmail(response);
+      const stale = await drafts.listStale(days, owner, 200);
+      response.json({ days, count: stale.length, drafts: stale });
+    } catch (error) {
+      if (error instanceof z.ZodError) return response.status(400).json({ error: "invalid request", issues: error.issues });
+      next(error);
+    }
+  });
+
+  router.post("/document-drafts/purge", async (request, response, next) => {
+    try {
+      if (!draftListingEnabled) {
+        return response.status(403).json({ error: "draft workspace is not enabled", code: "DRAFT_WORKSPACE_DISABLED" });
+      }
+      const { days } = z.object({ days: z.coerce.number().int().min(1).max(3650) }).parse(request.body);
+      const owner = requesterEmail(response);
+      const purgedCount = await drafts.purgeStale(days, owner);
+      response.json({ ok: true, purgedCount, days });
+    } catch (error) {
+      if (error instanceof z.ZodError) return response.status(400).json({ error: "invalid request", issues: error.issues });
+      next(error);
+    }
+  });
+
   router.get("/document-drafts/:issueKey", async (request, response, next) => {
     try {
       const templateType = String(request.query.template_type ?? "");

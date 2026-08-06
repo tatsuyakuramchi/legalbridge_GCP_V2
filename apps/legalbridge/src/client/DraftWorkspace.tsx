@@ -15,6 +15,10 @@ export function DraftWorkspace({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [refreshToken, setRefreshToken] = useState(0);
+  const [staleDays, setStaleDays] = useState("30");
+  const [staleCount, setStaleCount] = useState<number | null>(null);
+  const [purging, setPurging] = useState(false);
+  const [cleanupMsg, setCleanupMsg] = useState("");
   useEffect(() => { if (initialQuery) setQuery(initialQuery); }, [initialQuery]);
   const labels = useMemo(
     () => new Map(templates.map((template) => [template.templateKey, template.label])),
@@ -46,6 +50,35 @@ export function DraftWorkspace({
       controller.abort();
     };
   }, [query, refreshToken]);
+
+  async function previewStale() {
+    setCleanupMsg(""); setStaleCount(null);
+    const days = Number(staleDays);
+    if (!Number.isInteger(days) || days < 1) { setCleanupMsg("日数は1以上で指定してください"); return; }
+    try {
+      const res = await fetch(`/api/v2/document-drafts/stale?days=${days}`);
+      if (!res.ok) { setCleanupMsg("対象の取得に失敗しました"); return; }
+      const data = await res.json();
+      setStaleCount(data.count ?? 0);
+    } catch { setCleanupMsg("通信に失敗しました"); }
+  }
+
+  async function purgeStale() {
+    const days = Number(staleDays);
+    if (!Number.isInteger(days) || days < 1) return;
+    if (!window.confirm(`更新から${days}日以上経過した下書きを一括削除します。元に戻せません。`)) return;
+    setPurging(true); setCleanupMsg("");
+    try {
+      const res = await fetch("/api/v2/document-drafts/purge", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ days })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { setCleanupMsg(data.error ?? "一括削除に失敗しました"); return; }
+      setCleanupMsg(`${data.purgedCount}件の古い下書きを削除しました。`);
+      setStaleCount(null); setRefreshToken((c) => c + 1);
+    } catch { setCleanupMsg("通信に失敗しました"); }
+    finally { setPurging(false); }
+  }
 
   async function removeDraft(draft: DocumentDraftSummary) {
     if (!window.confirm(`${draft.issueKey} の下書きを破棄します。元に戻せません。`)) return;
@@ -85,6 +118,18 @@ export function DraftWorkspace({
           placeholder="受付番号、文書種別、文書番号、更新者で検索"
         />
         <span>{loading ? "読込中" : `${drafts.length}件`}</span>
+      </div>
+
+      <div className="draft-cleanup">
+        <span>古い下書きの整理：更新から</span>
+        <input aria-label="日数" value={staleDays} onChange={(e) => setStaleDays(e.target.value.replace(/[^\d]/g, ""))} inputMode="numeric" />
+        <span>日以上</span>
+        <button onClick={previewStale}>対象を確認</button>
+        {staleCount != null && <>
+          <b>{staleCount}件</b>
+          <button className="danger" onClick={purgeStale} disabled={purging || staleCount === 0}>{purging ? "削除中…" : "一括削除"}</button>
+        </>}
+        {cleanupMsg && <em>{cleanupMsg}</em>}
       </div>
 
       {error && (

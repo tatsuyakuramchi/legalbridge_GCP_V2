@@ -15,6 +15,9 @@ export interface DraftRepository {
   find(issueKey: string, templateType: string): Promise<DocumentDraft | null>;
   save(input: SaveDraftInput): Promise<DocumentDraft>;
   remove(issueKey: string, templateType: string): Promise<boolean>;
+  // 一括整理（Phase 4）：更新から staleDays 日以上経過した下書き。owner="" は全件。
+  listStale(staleDays: number, owner: string, limit?: number): Promise<DocumentDraftSummary[]>;
+  purgeStale(staleDays: number, owner: string): Promise<number>;
 }
 
 export class PgDraftRepository implements DraftRepository {
@@ -87,6 +90,29 @@ export class PgDraftRepository implements DraftRepository {
       [issueKey, templateType]
     );
     return (result.rowCount ?? 0) > 0;
+  }
+
+  async listStale(staleDays: number, owner: string, limit = 100) {
+    const boundedLimit = Math.min(Math.max(limit, 1), 500);
+    const result = await this.database.query<DraftRow>(
+      `${SELECT_DRAFT}
+       WHERE updated_at < now() - ($1 * interval '1 day')
+         AND ($2 = '' OR lower(COALESCE(updated_by, '')) = $2)
+       ORDER BY updated_at ASC, id ASC
+       LIMIT ${boundedLimit}`,
+      [staleDays, owner]
+    );
+    return result.rows.map(mapDraftSummary);
+  }
+
+  async purgeStale(staleDays: number, owner: string) {
+    const result = await this.database.query(
+      `DELETE FROM document_drafts
+       WHERE updated_at < now() - ($1 * interval '1 day')
+         AND ($2 = '' OR lower(COALESCE(updated_by, '')) = $2)`,
+      [staleDays, owner]
+    );
+    return result.rowCount ?? 0;
   }
 }
 
@@ -177,6 +203,26 @@ export class MemoryDraftRepository implements DraftRepository {
 
   async remove(issueKey: string, templateType: string) {
     return this.drafts.delete(`${issueKey}:${templateType}`);
+  }
+
+  private staleFilter(staleDays: number, owner: string) {
+    const cutoff = Date.now() - staleDays * 86_400_000;
+    return [...this.drafts.values()].filter((d) =>
+      new Date(d.updatedAt).getTime() < cutoff &&
+      (owner === "" || (d.updatedBy ?? "").toLowerCase() === owner));
+  }
+
+  async listStale(staleDays: number, owner: string, limit = 100) {
+    return this.staleFilter(staleDays, owner)
+      .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt))
+      .slice(0, Math.min(Math.max(limit, 1), 500))
+      .map(({ formData: _formData, ...summary }) => summary);
+  }
+
+  async purgeStale(staleDays: number, owner: string) {
+    const victims = this.staleFilter(staleDays, owner);
+    for (const d of victims) this.drafts.delete(`${d.issueKey}:${d.templateType}`);
+    return victims.length;
   }
 }
 

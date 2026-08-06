@@ -763,8 +763,8 @@ export function createApp(
     if (safeMethods.has(request.method)) return next();
     if (request.method === "POST" && safePostPaths.has(request.path)) return next();
     const isDraftWrite =
-      ["PUT", "DELETE"].includes(request.method) &&
-      /^\/document-drafts\/[^/]+$/.test(request.path);
+      (["PUT", "DELETE"].includes(request.method) && /^\/document-drafts\/[^/]+$/.test(request.path)) ||
+      (request.method === "POST" && request.path === "/document-drafts/purge");
     if (draftWriteEnabled && isDraftWrite) return next();
     const isDocumentFinalize =
       request.method === "POST" && request.path === "/documents/finalize";

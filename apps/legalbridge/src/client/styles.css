@@ -564,6 +564,11 @@ header input { width: 100%; border: 1px solid var(--border); border-radius: var(
 }
 
 .draft-toolbar { display: grid; grid-template-columns: minmax(280px, 1fr) auto; gap: 12px; align-items: center; margin-bottom: 16px; }
+.draft-cleanup { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; color: #475569; background: var(--surface-subtle, #f1f5f9); border-radius: 8px; padding: 10px 12px; margin-bottom: 16px; }
+.draft-cleanup input { width: 64px; padding: 6px 8px; border: 1px solid #cbd5e1; border-radius: 6px; }
+.draft-cleanup b { color: #172a44; }
+.draft-cleanup em { color: #065f46; font-style: normal; }
+.draft-cleanup button.danger { background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; border-radius: 6px; padding: 6px 12px; }
 .draft-toolbar input { border: 1px solid #cbd5e1; border-radius: 8px; background: white; padding: 11px 12px; }
 .draft-toolbar span { color: #64748b; font-size: 13px; }
 .draft-list { display: grid; gap: 10px; }
