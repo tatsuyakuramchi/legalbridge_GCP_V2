@@ -48,5 +48,16 @@ export const workUpdateSchema = z.object({
   message: "更新するフィールドを1つ以上指定してください"
 });
 
+// work_relations（派生グラフ・系譜の第2真実源）追加。007でINSERT付与済。
+// relation_type は現状 'derived_from' のみ。自己参照は不可。
+export const workRelationCreateSchema = z.object({
+  childWorkId: z.coerce.number().int().positive(),
+  parentWorkId: z.coerce.number().int().positive(),
+  relationType: z.string().trim().min(1).max(40).optional().default("derived_from")
+}).refine((v) => v.childWorkId !== v.parentWorkId, {
+  message: "作品を自身の派生元にできません", path: ["parentWorkId"]
+});
+
 export type WorkCreateInput = z.infer<typeof workCreateSchema>;
 export type WorkUpdateInput = z.infer<typeof workUpdateSchema>;
+export type WorkRelationCreateInput = z.infer<typeof workRelationCreateSchema>;

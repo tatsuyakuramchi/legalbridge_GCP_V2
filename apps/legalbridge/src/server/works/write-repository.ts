@@ -1,5 +1,5 @@
 import type { DatabasePool } from "../db/pool.js";
-import type { WorkCreateInput, WorkUpdateInput } from "./write-schema.js";
+import type { WorkCreateInput, WorkUpdateInput, WorkRelationCreateInput } from "./write-schema.js";
 
 export interface SavedWork { id: number; workCode: string | null; }
 export interface WorkRecord {
@@ -15,10 +15,12 @@ export class WorkWriteError extends Error {
   constructor(readonly code: string, message: string) { super(message); }
 }
 
+export interface SavedRelation { childWorkId: number; parentWorkId: number; created: boolean; }
 export interface WorkWriteRepository {
   create(input: WorkCreateInput): Promise<SavedWork>;
   update(id: number, input: WorkUpdateInput): Promise<SavedWork>;
   find(id: number): Promise<WorkRecord | null>;
+  addRelation(input: WorkRelationCreateInput): Promise<SavedRelation>;
 }
 
 const COLUMNS: Record<string, string> = {
@@ -127,6 +129,21 @@ export class PgWorkWriteRepository implements WorkWriteRepository {
       creatorName: row.creator_name ?? null, publisherName: row.publisher_name ?? null
     };
   }
+
+  async addRelation(input: WorkRelationCreateInput) {
+    // parent_work_id 系譜と整合させ、閉路（親が子の子孫）を防ぐ。
+    await this.assertNoCycle(input.childWorkId, input.parentWorkId);
+    try {
+      const result = await this.database.query(
+        `INSERT INTO work_relations (child_work_id, parent_work_id, relation_type)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (child_work_id, parent_work_id) DO NOTHING
+         RETURNING child_work_id`,
+        [input.childWorkId, input.parentWorkId, input.relationType]
+      );
+      return { childWorkId: input.childWorkId, parentWorkId: input.parentWorkId, created: result.rows.length > 0 };
+    } catch (error) { throw translate(error); }
+  }
 }
 
 function translate(error: unknown): Error {
@@ -134,6 +151,7 @@ function translate(error: unknown): Error {
   const code = (error as { code?: string })?.code;
   if (code === "23505") return new WorkWriteError("WORK_CONFLICT", "作品コードが既に存在します");
   if (code === "23502") return new WorkWriteError("WORK_REQUIRED", "必須項目が不足しています");
+  if (code === "23503") return new WorkWriteError("WORK_INVALID_REF", "指定した作品が存在しません");
   return error instanceof Error ? error : new Error(String(error));
 }
 
@@ -171,4 +189,19 @@ export class MemoryWorkWriteRepository implements WorkWriteRepository {
     return { id, workCode: existing.workCode };
   }
   async find(id: number) { return this.works.get(id) ?? null; }
+  readonly relations: Array<{ childWorkId: number; parentWorkId: number; relationType: string }> = [];
+  async addRelation(input: WorkRelationCreateInput) {
+    if (input.childWorkId === input.parentWorkId) throw new WorkWriteError("WORK_LINEAGE_CYCLE", "作品を自身の派生元にできません");
+    // 親が子の子孫（parent_work_id 系譜）なら循環。
+    let cursor: number | null = input.parentWorkId;
+    const seen = new Set<number>();
+    while (cursor != null && !seen.has(cursor)) {
+      if (cursor === input.childWorkId) throw new WorkWriteError("WORK_LINEAGE_CYCLE", "系譜が循環するため、その派生元は設定できません");
+      seen.add(cursor);
+      cursor = this.works.get(cursor)?.parentWorkId ?? null;
+    }
+    const exists = this.relations.some((r) => r.childWorkId === input.childWorkId && r.parentWorkId === input.parentWorkId);
+    if (!exists) this.relations.push({ childWorkId: input.childWorkId, parentWorkId: input.parentWorkId, relationType: input.relationType });
+    return { childWorkId: input.childWorkId, parentWorkId: input.parentWorkId, created: !exists };
+  }
 }

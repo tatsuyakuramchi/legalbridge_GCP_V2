@@ -60,6 +60,9 @@ export function WorkDetail({ canEdit = false, canEditRights = false }: { canEdit
   const [rightsForm, setRightsForm] = useState<RightsForm | null>(null);
   const [rightsSaving, setRightsSaving] = useState(false);
   const [rightsError, setRightsError] = useState("");
+  const [relParentId, setRelParentId] = useState("");
+  const [relSaving, setRelSaving] = useState(false);
+  const [relError, setRelError] = useState("");
 
   // 作品検索（デバウンス）。
   useEffect(() => {
@@ -100,7 +103,25 @@ export function WorkDetail({ canEdit = false, canEditRights = false }: { canEdit
   }, [selectedId, reload]);
 
   // 作品を切り替えたら編集状態・タブを初期化。
-  useEffect(() => { setEditing(false); setForm(null); setSaveError(""); setTab("overview"); setRightsForm(null); setRightsError(""); }, [selectedId]);
+  useEffect(() => { setEditing(false); setForm(null); setSaveError(""); setTab("overview"); setRightsForm(null); setRightsError(""); setRelParentId(""); setRelError(""); }, [selectedId]);
+
+  async function addRelation(parentWorkId: number) {
+    if (selectedId == null) return;
+    setRelSaving(true); setRelError("");
+    try {
+      const res = await fetch("/api/v2/work-relations", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ childWorkId: selectedId, parentWorkId })
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setRelError(data.error ?? (res.status === 503 ? "系譜編集は現在無効です" : res.status === 403 ? "編集権限がありません" : "保存に失敗しました"));
+        return;
+      }
+      setRelParentId(""); setReload((n) => n + 1);
+    } catch { setRelError("通信に失敗しました"); }
+    finally { setRelSaving(false); }
+  }
 
   const emptyRights = (materialId: number | null): RightsForm => ({
     id: null, materialId: materialId != null ? String(materialId) : "", sourceType: "direct_contract",
@@ -294,6 +315,18 @@ export function WorkDetail({ canEdit = false, canEditRights = false }: { canEdit
                 <h4>系譜に未反映の親（work_relations のみ）</h4>
                 <ul className="wd-list warn">{detail.lineage.unlinkedRelationParents.map((c) => <li key={c.workId}><button onClick={() => setSelectedId(c.workId)}>{c.workCode ? c.workCode + " " : ""}{c.title ?? `作品#${c.workId}`}</button></li>)}</ul>
                 <small className="hint">parent_work_id 系譜に現れない親です。系譜（親子）の整合を確認してください。</small>
+              </>}
+              {canEdit && <>
+                <h4>系譜（派生元）を追加</h4>
+                {relError && <div className="async-error"><span>{relError}</span></div>}
+                <div className="wd-edit-actions" style={{ justifyContent: "flex-start" }}>
+                  <input value={relParentId} onChange={(e) => setRelParentId(e.target.value.replace(/[^\d]/g, ""))} placeholder="派生元の作品ID" inputMode="numeric" style={{ padding: "8px 10px", border: "1px solid #cbd5e1", borderRadius: 8 }} />
+                  <button className="primary" onClick={() => relParentId && addRelation(Number(relParentId))} disabled={relSaving || !relParentId}>{relSaving ? "追加中…" : "派生元を追加"}</button>
+                  {detail.work.parentWorkId != null && (
+                    <button onClick={() => addRelation(detail.work.parentWorkId!)} disabled={relSaving}>現在の親(#{detail.work.parentWorkId})を系譜に記録</button>
+                  )}
+                </div>
+                <small className="hint">work_relations に derived_from 関係を追加します（parent_work_id 系譜と二重管理の整合用・冪等・循環は拒否）。</small>
               </>}
             </> : <Degraded />)}
 

@@ -152,3 +152,42 @@ test("kindは列挙のみ許可", async () => {
   const res = await request(app).post("/api/v2/works/validate").send({ title: "x", kind: "invalid" });
   assert.equal(res.status, 400);
 });
+
+test("系譜関係(work_relations)を追加できる", async () => {
+  const { app } = appFor({ enabled: true });
+  const parent = await request(app).post("/api/v2/works").send({ title: "原作" });
+  const child = await request(app).post("/api/v2/works").send({ title: "派生" });
+  const res = await request(app).post("/api/v2/work-relations").send({ childWorkId: child.body.id, parentWorkId: parent.body.id });
+  assert.equal(res.status, 201);
+  assert.equal(res.body.created, true);
+  // 重複は200・created:false（冪等）。
+  const dup = await request(app).post("/api/v2/work-relations").send({ childWorkId: child.body.id, parentWorkId: parent.body.id });
+  assert.equal(dup.status, 200);
+  assert.equal(dup.body.created, false);
+});
+
+test("系譜関係の自己参照は400", async () => {
+  const { app } = appFor({ enabled: true });
+  const w = await request(app).post("/api/v2/works").send({ title: "自己" });
+  const res = await request(app).post("/api/v2/work-relations").send({ childWorkId: w.body.id, parentWorkId: w.body.id });
+  assert.equal(res.status, 400);
+});
+
+test("系譜関係の循環は422", async () => {
+  const { app } = appFor({ enabled: true });
+  const a = await request(app).post("/api/v2/works").send({ title: "A" });
+  const b = await request(app).post("/api/v2/works").send({ title: "B" });
+  // B の親を A に（parent_work_id: A→B）。
+  await request(app).patch(`/api/v2/works/${b.body.id}`).send({ parentWorkId: a.body.id });
+  // A の派生元を B にすると循環。
+  const res = await request(app).post("/api/v2/work-relations").send({ childWorkId: a.body.id, parentWorkId: b.body.id });
+  assert.equal(res.status, 422);
+  assert.equal(res.body.code, "WORK_LINEAGE_CYCLE");
+});
+
+test("系譜関係の追加は書込み無効時に拒否", async () => {
+  const { app } = appFor({ enabled: false });
+  const res = await request(app).post("/api/v2/work-relations").send({ childWorkId: 2, parentWorkId: 1 });
+  assert.equal(res.status, 503);
+  assert.equal(res.body.code, "WORK_WRITE_UNAVAILABLE");
+});

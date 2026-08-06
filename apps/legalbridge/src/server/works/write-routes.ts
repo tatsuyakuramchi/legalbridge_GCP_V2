@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { workCreateSchema, workUpdateSchema } from "./write-schema.js";
+import { workCreateSchema, workUpdateSchema, workRelationCreateSchema } from "./write-schema.js";
 import { WorkWriteError, type WorkWriteRepository } from "./write-repository.js";
 
 const idPath = z.object({ id: z.coerce.number().int().positive() });
@@ -16,6 +16,7 @@ function statusFor(code: string) {
   if (code === "WORK_CONFLICT") return 409;
   if (code === "WORK_REQUIRED") return 422;
   if (code === "WORK_LINEAGE_CYCLE") return 422;
+  if (code === "WORK_INVALID_REF") return 422;
   return 400;
 }
 function handle(error: unknown, r: import("express").Response, next: import("express").NextFunction) {
@@ -95,6 +96,25 @@ export function createWorkWriteRouter(works: WorkWriteRepository | undefined, wr
       const { id } = idPath.parse(request.params);
       const updated = await works.update(id, workUpdateSchema.parse(request.body));
       return response.status(200).json(updated);
+    } catch (error) { return handle(error, response, next); }
+  });
+
+  // 系譜（work_relations・派生グラフ）に derived_from 関係を追加（INSERT・007付与済）。
+  // parent_work_id 系譜と同じ works capability ゲートで許可。DELETEなし。
+  router.post("/work-relations/validate", (request, response) => {
+    const result = workRelationCreateSchema.safeParse(request.body);
+    if (!result.success) {
+      return response.status(400).json({ ok: false, errors: result.error.issues.map((i) => ({ field: i.path.join("."), message: i.message })) });
+    }
+    return response.status(200).json({ ok: true });
+  });
+
+  router.post("/work-relations", async (request, response, next) => {
+    try {
+      if (!writeEnabled || !works) return unavailable(response);
+      if (!editorAllowed(response.locals.currentUser?.role)) return forbidden(response);
+      const saved = await works.addRelation(workRelationCreateSchema.parse(request.body));
+      return response.status(saved.created ? 201 : 200).json(saved);
     } catch (error) { return handle(error, response, next); }
   });
 

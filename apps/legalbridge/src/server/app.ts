@@ -724,6 +724,7 @@ export function createApp(
       "/vendors/validate",
       "/staff/validate",
       "/works/validate",
+      "/work-relations/validate",
       "/materials/validate",
       "/rights-sources/validate",
       "/outbound-conditions/validate",
@@ -800,7 +801,7 @@ export function createApp(
       (request.method === "PATCH" && /^\/staff\/\d+$/.test(request.path));
     if (staffWriteEnabled && isStaffWrite) return next();
     const isWorkWrite =
-      (request.method === "POST" && (request.path === "/works" || request.path === "/works/import")) ||
+      (request.method === "POST" && (request.path === "/works" || request.path === "/works/import" || request.path === "/work-relations")) ||
       (request.method === "PATCH" && /^\/works\/\d+$/.test(request.path));
     if (workWriteEnabled && isWorkWrite) return next();
     const isMaterialWrite =
