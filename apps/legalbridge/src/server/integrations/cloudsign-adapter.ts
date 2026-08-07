@@ -66,6 +66,26 @@ export function isValidEmail(value: string): boolean {
   return EMAIL_PATTERN.test(value.trim());
 }
 
+// 宛先allowlist（V1 CLOUDSIGN_ALLOWED_RECIPIENTS 相当）。カンマ区切りの小文字集合。
+// 検証中の誤送信防止ガード：設定時は全宛先が集合内であることを要求する。
+export function parseAllowedRecipients(raw?: string | null): Set<string> {
+  const set = new Set<string>();
+  for (const item of String(raw ?? "").split(",")) {
+    const email = item.trim().toLowerCase();
+    if (email) set.add(email);
+  }
+  return set;
+}
+
+// allowlist が空なら制限なし（null）。設定時は最初の非許可メールを返す。
+export function findDisallowedRecipient(emails: string[], allowlist: Set<string>): string | null {
+  if (allowlist.size === 0) return null;
+  for (const email of emails) {
+    if (!allowlist.has(email.trim().toLowerCase())) return email;
+  }
+  return null;
+}
+
 // 送信しないローカル実装。ゲートが integration_local でブロックするため
 // requestSignature が呼ばれることは無いが、安全側に倒して明示的に失敗させる。
 export class LocalCloudSignAdapter implements CloudSignAdapter {

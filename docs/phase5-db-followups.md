@@ -130,6 +130,29 @@ psql "$RUNTIME_APP_DSN" -c \
 
 ---
 
+## D. CloudSign 依頼の冪等履歴（`lb_v2_cloudsign_requests`・スライス5-7）
+
+append＋status・`idempotency_key` 一意・`cloud_sign_document_id` 永続化・**SELECT/INSERT/UPDATE**
+（UPDATE は締結状況の反映のみ。DELETE/TRUNCATE 無し）。Gmail 送信履歴(A)と同型。
+
+```bash
+# 1) 事前確認
+psql "$RUNTIME_ADMIN_DSN" -f infra/gcp/sql/022_cloudsign_request_history_production_preflight.sql || true
+
+# 2) 作成＋付与
+psql "$RUNTIME_ADMIN_DSN" \
+  -v confirm_cloudsign_history=GRANT_PRODUCTION_CLOUDSIGN_HISTORY \
+  -f infra/gcp/sql/022_cloudsign_request_history_production_grants.sql
+
+# 3) 事後確認（runtime に SELECT, INSERT, UPDATE）
+psql "$RUNTIME_ADMIN_DSN" -f infra/gcp/sql/022_cloudsign_request_history_production_preflight.sql
+```
+
+有効化：`_CLOUDSIGN_REQUEST_HISTORY_ENABLED=true`（Aと同じくサービス名ガードの扱いに注意）。
+併せて **`_CLOUDSIGN_ALLOWED_RECIPIENTS`（宛先allowlist）** を設定する（verify は live 点火時に必須）。
+検証DB用は `022_cloudsign_request_history_validation.sql`。ロールバックは
+`_CLOUDSIGN_REQUEST_HISTORY_ENABLED=false`（従来動作・履歴無しの毎回送信）。
+
 ## まとめ（適用順）
 
 1. A・B（本番作成＋付与）… 独立、順不同。preflight→grants→preflight。

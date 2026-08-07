@@ -7,6 +7,7 @@ import { MemoryDocumentRegistryRepository, type RegisteredDocument } from "./reg
 import type { TemplateRepository } from "./template-repository.js";
 import type { PdfRenderer } from "./pdf-renderer.js";
 import type { CloudSignAdapter, CloudSignSignatureRequest } from "../integrations/cloudsign-adapter.js";
+import { MemoryCloudSignRequestRepository } from "../integrations/cloudsign-request-repository.js";
 
 const doc: RegisteredDocument = {
   id: 5, documentNumber: "DOC-2026-0005", issueKey: "LB-5", templateType: "license",
@@ -25,15 +26,20 @@ const pdfRenderer: PdfRenderer = { async render() { return Buffer.from("%PDF-1.4
 class CapturingCloudSign implements CloudSignAdapter {
   readonly configured = true;
   sent: CloudSignSignatureRequest | null = null;
+  sendCount = 0;
   async requestSignature(req: CloudSignSignatureRequest) {
-    this.sent = req; return { cloudSignDocumentId: "cs-1", status: "sent", participantIds: ["pt-1"] };
+    this.sent = req; this.sendCount += 1;
+    return { cloudSignDocumentId: "cs-1", status: "sent", participantIds: ["pt-1"] };
   }
   async fetchStatus(cloudSignDocumentId: string) {
     return { cloudSignDocumentId, status: "completed", completed: true, participants: [] };
   }
 }
 
-function appFor(options: { role?: "admin" | "legal" | "requester"; live?: boolean; adapter?: CloudSignAdapter }) {
+function appFor(options: {
+  role?: "admin" | "legal" | "requester"; live?: boolean; adapter?: CloudSignAdapter;
+  allowedRecipients?: Set<string>; requestHistory?: MemoryCloudSignRequestRepository;
+}) {
   const registry = new MemoryDocumentRegistryRepository([doc]);
   const adapter = options.adapter ?? new CapturingCloudSign();
   const app = express();
@@ -46,7 +52,7 @@ function appFor(options: { role?: "admin" | "legal" | "requester"; live?: boolea
     integrationMode: options.live ? "live" : "local",
     cloudSignCapabilityEnabled: options.live ?? false,
     adapterConfigured: adapter.configured
-  }));
+  }, { allowedRecipients: options.allowedRecipients, requestHistory: options.requestHistory }));
   return { app, adapter };
 }
 
@@ -91,4 +97,56 @@ test("法務ロールは実依頼できない（管理者限定）", async () =>
   const response = await request(app).post("/api/v2/documents/5/cloudsign/dispatch").send(body);
   assert.equal(response.status, 403);
   assert.equal(response.body.code, "CLOUDSIGN_ADMIN_REQUIRED");
+});
+
+test("allowlist設定時、許可外の宛先は422でブロックする", async () => {
+  const allowedRecipients = new Set(["allowed@example.com"]);
+  const { app, adapter } = appFor({ live: true, role: "admin", allowedRecipients });
+  const response = await request(app).post("/api/v2/documents/5/cloudsign/dispatch")
+    .send({ participants: [{ email: "a@example.com", name: "甲" }] });
+  assert.equal(response.status, 422);
+  assert.equal(response.body.code, "CLOUDSIGN_RECIPIENT_NOT_ALLOWED");
+  assert.equal((adapter as CapturingCloudSign).sendCount, 0);
+});
+
+test("allowlist設定時、全宛先が許可内なら送信する", async () => {
+  const allowedRecipients = new Set(["a@example.com"]);
+  const { app, adapter } = appFor({ live: true, role: "admin", allowedRecipients });
+  const response = await request(app).post("/api/v2/documents/5/cloudsign/dispatch").send(body);
+  assert.equal(response.status, 201);
+  assert.equal((adapter as CapturingCloudSign).sendCount, 1);
+});
+
+test("履歴有効時、同一文書の再依頼は冪等で再送しない(duplicate)", async () => {
+  const requestHistory = new MemoryCloudSignRequestRepository();
+  const { app, adapter } = appFor({ live: true, role: "admin", requestHistory });
+  const first = await request(app).post("/api/v2/documents/5/cloudsign/dispatch").send(body);
+  assert.equal(first.status, 201);
+  assert.equal(first.body.integrations.cloudsign, "requested");
+  const second = await request(app).post("/api/v2/documents/5/cloudsign/dispatch").send(body);
+  assert.equal(second.status, 200);
+  assert.equal(second.body.integrations.cloudsign, "duplicate");
+  assert.equal(second.body.receipt.cloudSignDocumentId, "cs-1");
+  assert.equal((adapter as CapturingCloudSign).sendCount, 1);
+});
+
+test("履歴有効時、cloudSignDocumentId が永続化されステータス取得で更新される", async () => {
+  const requestHistory = new MemoryCloudSignRequestRepository();
+  const { app } = appFor({ live: true, role: "admin", requestHistory });
+  await request(app).post("/api/v2/documents/5/cloudsign/dispatch").send(body);
+  const stored = await requestHistory.list();
+  assert.equal(stored.length, 1);
+  assert.equal(stored[0].cloudSignDocumentId, "cs-1");
+  assert.equal(stored[0].participantCount, 1);
+  // ステータス取得で status が completed に反映される。
+  await request(app).get("/api/v2/cloudsign/cs-1/status");
+  const after = await requestHistory.findByKey(stored[0].idempotencyKey);
+  assert.equal(after?.status, "completed");
+});
+
+test("履歴無効なら従来通り毎回送信する（後方互換）", async () => {
+  const { app, adapter } = appFor({ live: true, role: "admin" });
+  await request(app).post("/api/v2/documents/5/cloudsign/dispatch").send(body);
+  await request(app).post("/api/v2/documents/5/cloudsign/dispatch").send(body);
+  assert.equal((adapter as CapturingCloudSign).sendCount, 2);
 });

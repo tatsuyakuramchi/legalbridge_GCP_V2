@@ -452,9 +452,34 @@ case "${CLOUDSIGN_MODE}" in
       echo "CloudSign dispatch deployment blocked: a CloudSign client id is required."
       exit 1
     fi
+    # 検証中の誤送信防止：live 点火時は宛先allowlistを必須にする（V1 テストガード相当）。
+    if [ -z "${CLOUDSIGN_ALLOWED_RECIPIENTS}" ] || [ "${CLOUDSIGN_ALLOWED_RECIPIENTS}" = "BLOCKED" ]; then
+      echo "CloudSign dispatch deployment blocked: CLOUDSIGN_ALLOWED_RECIPIENTS (recipient allowlist) is required for validation."
+      exit 1
+    fi
     ;;
   *)
     echo "Deployment blocked: CLOUDSIGN_MODE must be live or disabled."
+    exit 1
+    ;;
+esac
+# CloudSign 依頼の冪等履歴（append専用・grant 022 で lb_v2_cloudsign_requests 作成・
+# SELECT/INSERT/UPDATE のみ付与）。有効化は隔離検証DB＋write-testサービスに限定する。
+case "${CLOUDSIGN_REQUEST_HISTORY_ENABLED}" in
+  false)
+    ;;
+  true)
+    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
+      echo "CloudSign request-history blocked: append-only history is limited to the write-test service."
+      exit 1
+    fi
+    if [ "${DB_NAME}" != "legalbridge_v2_validation" ] && [ "${DB_NAME}" != "legalbridge" ]; then
+      echo "CloudSign request-history blocked: unexpected database target."
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Deployment blocked: CLOUDSIGN_REQUEST_HISTORY_ENABLED must be true or false."
     exit 1
     ;;
 esac

@@ -50,9 +50,9 @@ Gmail送受信 / CloudSign / Slack / Drive を1つずつ本番相当で点火す
   - **addParticipant**：`POST /documents/:id/participants`（form-urlencoded・`email/name/organization`）。
   - **send**：`POST /documents/:id`（本文なし）／**getDocument**：`GET /documents/:id`（既に一致）。
   - base URL：`https://api.cloudsign.jp`（sandbox: `api-sandbox.cloudsign.jp`）。
-- **残る（点火をより安全にするための小項目・hard-blockではない）**：
-  - `cloudSignDocumentId` の永続化・送信冪等（Gmail 5-1 と同型の履歴テーブルが未整備。再送ガードは運用対応 or 別スライス）。
-  - 宛先allowlist（V1 の `CLOUDSIGN_ALLOWED_RECIPIENTS` 相当。検証中の誤送信防止に推奨）。
+- **小項目（スライス5-7で対応）**：
+  - ~~送信冪等・`cloudSignDocumentId` 永続化~~ → **対応済**：`lb_v2_cloudsign_requests`（grant 022・append＋status）＋dispatch の送信前照会で二重依頼を防止（重複は `integrations.cloudsign="duplicate"`・200）。`cloudSignDocumentId` を永続化し、`GET /cloudsign/:id/status` 取得時に締結状況を反映。有効化 `CLOUDSIGN_REQUEST_HISTORY_ENABLED=true`（既定OFF・write-test限定）。
+  - ~~宛先allowlist~~ → **対応済**：`CLOUDSIGN_ALLOWED_RECIPIENTS`（V1準拠・設定時は全宛先が集合内であることを要求・許可外は422）。verify は **live 点火時に allowlist 必須**（検証中の誤送信防止）。
   - reportees（CC共有先）は V2 未対応（必要時に追加）。
 - **点火手順**：実 `client_id`、base URL、`CLOUDSIGN_MODE=live`・`CONFIRM_CLOUDSIGN_DISPATCH`・scope `cloudsign`・AUTH・`INTEGRATION_MODE=live`。**認証方式は確定済み**のため、他の送信系コネクタと同じゲート運用で点火可能。
 

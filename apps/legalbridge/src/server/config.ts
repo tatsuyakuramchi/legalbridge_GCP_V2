@@ -85,6 +85,11 @@ export const config = {
     process.env.CLOUDSIGN_MODE === "live" ? "live" as const : "disabled" as const,
   cloudSignBaseUrl: (process.env.CLOUDSIGN_BASE_URL ?? "https://api.cloudsign.jp").trim(),
   cloudSignClientId: (process.env.CLOUDSIGN_CLIENT_ID ?? "").trim(),
+  // 宛先allowlist（カンマ区切り・空なら無制限）。検証中の誤送信防止ガード。
+  cloudSignAllowedRecipients: (process.env.CLOUDSIGN_ALLOWED_RECIPIENTS ?? "").trim(),
+  // 署名依頼の冪等履歴＋cloudSignDocumentId 永続化（append専用・既定OFF）。
+  cloudSignRequestHistoryEnabled:
+    process.env.CLOUDSIGN_REQUEST_HISTORY_ENABLED === "true",
   gmailInboundMode:
     process.env.GMAIL_INBOUND_MODE === "live" ? "live" as const : "disabled" as const,
   gmailInboundMailbox: (process.env.GMAIL_INBOUND_MAILBOX ?? "").trim(),

@@ -186,12 +186,16 @@ import {
 } from "./integrations/gmail-api-adapter.js";
 import { createGmailNotificationRouter } from "./documents/gmail-notification-routes.js";
 import {
-  LocalCloudSignAdapter, type CloudSignAdapter
+  LocalCloudSignAdapter, parseAllowedRecipients, type CloudSignAdapter
 } from "./integrations/cloudsign-adapter.js";
 import {
   CloudSignApiAdapter, FetchCloudSignApiClient
 } from "./integrations/cloudsign-api-adapter.js";
 import { createCloudSignRouter } from "./documents/cloudsign-routes.js";
+import {
+  PgCloudSignRequestRepository,
+  type CloudSignRequestRepository
+} from "./integrations/cloudsign-request-repository.js";
 import {
   LocalGmailInboundAdapter, type GmailInboundAdapter
 } from "./integrations/gmail-inbound-adapter.js";
@@ -324,6 +328,7 @@ export interface AppDependencies {
   slackApprovals?: SlackNotificationApprovalRepository;
   gmailSendHistory?: GmailSendHistoryRepository;
   inboundContracts?: InboundContractRepository;
+  cloudSignRequests?: CloudSignRequestRepository;
   outboundConditions?: OutboundConditionRepository;
   contractIntakes?: ContractIntakeRepository;
   contractIntakeDocuments?: ContractIntakeDocumentSourceRepository;
@@ -439,6 +444,9 @@ function createDefaultDependencies(): AppDependencies {
       : undefined,
     inboundContracts: database && config.gmailInboundIntakeEnabled
       ? new PgInboundContractRepository(database)
+      : undefined,
+    cloudSignRequests: database && config.cloudSignRequestHistoryEnabled
+      ? new PgCloudSignRequestRepository(database)
       : undefined,
     outboundConditions: outboundDatabase
       ? new PgOutboundConditionRepository(outboundDatabase)
@@ -977,7 +985,11 @@ export function createApp(
   app.use("/api/v2", createDocumentImportRouter(dependencies.documentImports, documentFinalizeEnabled));
   app.use("/api/v2", createGmailNotificationRouter(documentRegistry, gmailDeliveryAdapter, gmailGateSettings, dependencies.gmailSendHistory));
   app.use("/api/v2", createCloudSignRouter(
-    documentRegistry, dependencies.templates, pdfRenderer, cloudSignAdapter, cloudSignGateSettings));
+    documentRegistry, dependencies.templates, pdfRenderer, cloudSignAdapter, cloudSignGateSettings,
+    {
+      allowedRecipients: parseAllowedRecipients(config.cloudSignAllowedRecipients),
+      requestHistory: dependencies.cloudSignRequests
+    }));
   app.use("/api/v2", createGmailInboundRouter(gmailInboundAdapter, {
     enabled: gmailInboundEnabled, query: config.gmailInboundQuery, mailbox: config.gmailInboundMailbox
   }, dependencies.inboundContracts));

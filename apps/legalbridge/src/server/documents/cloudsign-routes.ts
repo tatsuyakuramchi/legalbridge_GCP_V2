@@ -8,10 +8,11 @@ import {
   renderStoredDocumentHtml, StoredDocumentTemplateVersionError
 } from "./document-html-renderer.js";
 import type { CloudSignAdapter } from "../integrations/cloudsign-adapter.js";
-import { isValidEmail } from "../integrations/cloudsign-adapter.js";
+import { isValidEmail, findDisallowedRecipient } from "../integrations/cloudsign-adapter.js";
 import {
   evaluateCloudSignDispatchGate, type CloudSignDispatchGateSettings
 } from "../integrations/cloudsign-dispatch-gate.js";
+import type { CloudSignRequestRepository } from "../integrations/cloudsign-request-repository.js";
 
 const idPath = z.object({ id: z.coerce.number().int().positive() });
 const participantSchema = z.object({
@@ -37,9 +38,12 @@ export function createCloudSignRouter(
   templates: TemplateRepository,
   pdfRenderer: PdfRenderer,
   cloudSign: CloudSignAdapter | undefined,
-  gateSettings: CloudSignDispatchGateSettings
+  gateSettings: CloudSignDispatchGateSettings,
+  options: { allowedRecipients?: Set<string>; requestHistory?: CloudSignRequestRepository } = {}
 ) {
   const router = Router();
+  const allowedRecipients = options.allowedRecipients ?? new Set<string>();
+  const requestHistory = options.requestHistory;
 
   // 依頼前プレビュー（送信しない）。署名者とゲートのブロック理由を返す。
   router.post("/documents/:id/cloudsign/preview", async (request, response, next) => {
@@ -75,6 +79,13 @@ export function createCloudSignRouter(
       if (!participants.every((participant) => isValidEmail(participant.email))) {
         return response.status(400).json({ error: "署名者のメールアドレスが不正です", code: "CLOUDSIGN_PARTICIPANT_INVALID" });
       }
+      // 宛先allowlist（設定時のみ）：検証中の誤送信防止。全宛先が許可集合内であること。
+      const disallowed = findDisallowedRecipient(participants.map((p) => p.email), allowedRecipients);
+      if (disallowed) {
+        return response.status(422).json({
+          error: `許可されていない宛先です: ${disallowed}`, code: "CLOUDSIGN_RECIPIENT_NOT_ALLOWED"
+        });
+      }
       const document = await documents.find(id);
       if (!document) return response.status(404).json({ error: "文書が見つかりません", code: "CLOUDSIGN_DOCUMENT_NOT_FOUND" });
       const title = documentTitle(document);
@@ -82,17 +93,35 @@ export function createCloudSignRouter(
       if (!gate.dispatchAllowed) {
         return response.status(409).json({ error: "依頼条件が整っていません", code: "CLOUDSIGN_DISPATCH_BLOCKED", blockers: gate.blockerLabels });
       }
-      const html = await renderStoredDocumentHtml(templates, document);
-      if (!html) return response.status(404).json({ error: "テンプレートが見つかりません", code: "CLOUDSIGN_TEMPLATE_NOT_FOUND" });
-      const pdf = await pdfRenderer.render(html);
       const idempotencyKey = createHash("sha256")
         .update(`cloudsign:${document.id}:${document.documentNumber ?? document.issueKey}`)
         .digest("hex");
+      // 冪等強制：履歴が有効なら、同一文書の既依頼は再送せず既存受領を返す。
+      if (requestHistory) {
+        const prior = await requestHistory.findByKey(idempotencyKey);
+        if (prior) {
+          return response.status(200).json({
+            receipt: { cloudSignDocumentId: prior.cloudSignDocumentId, status: prior.status, participantIds: [] },
+            integrations: { cloudsign: "duplicate" }
+          });
+        }
+      }
+      const html = await renderStoredDocumentHtml(templates, document);
+      if (!html) return response.status(404).json({ error: "テンプレートが見つかりません", code: "CLOUDSIGN_TEMPLATE_NOT_FOUND" });
+      const pdf = await pdfRenderer.render(html);
       const receipt = await cloudSign.requestSignature({
         documentTitle: title, note: `案件：${document.issueKey}`,
         filename: `${safeFilename(document.documentNumber ?? `document-${id}`)}.pdf`,
         pdf, participants, idempotencyKey
       });
+      if (requestHistory) {
+        await requestHistory.record({
+          idempotencyKey, documentId: document.id,
+          cloudSignDocumentId: receipt.cloudSignDocumentId, status: receipt.status,
+          participantCount: participants.length,
+          recordedBy: response.locals.currentUser?.email ?? "unknown"
+        });
+      }
       return response.status(201).json({ receipt, integrations: { cloudsign: "requested" } });
     } catch (error) {
       if (error instanceof StoredDocumentTemplateVersionError) {
@@ -114,6 +143,8 @@ export function createCloudSignRouter(
       }
       const cloudSignDocumentId = String(request.params.cloudSignDocumentId).slice(0, 200);
       const status = await cloudSign.fetchStatus(cloudSignDocumentId);
+      // 履歴が有効なら締結状況を反映（存在しない ID は no-op）。
+      if (requestHistory) await requestHistory.updateStatus(cloudSignDocumentId, status.status);
       return response.status(200).json({ live: true, status });
     } catch (error) {
       return next(error);
