@@ -14,19 +14,32 @@ export interface CloudSignApiClient {
   getDocument(documentId: string): Promise<Record<string, unknown>>;
 }
 
-// CloudSign v2 の一般形に対する実HTTP実装。OAuth2 で client_id からアクセス
-// トークンを取得し、Bearer で /documents 系を呼ぶ。実URL・client_id は
-// 有効化時に確定する（既定では live 化されない）。
+export interface CloudSignApiClientOptions {
+  // 実CloudSign OAuth が要求するクライアントシークレット。設定時のみ
+  // /token へ client_secret として付与する。未設定なら従来どおり付与しない。
+  // 注意: エンドポイント/verb/grant_type は実API突合で確定する（本フックだけでは
+  // live 化を保証しない）。
+  clientSecret?: string;
+  fetchImpl?: typeof fetch;
+}
+
+// CloudSign v2 の一般形に対する実HTTP実装。OAuth2 で client_id（＋任意で
+// client_secret）からアクセストークンを取得し、Bearer で /documents 系を呼ぶ。
+// 実URL・client_id・認証方式は有効化時に実API突合で確定する（既定では live 化されない）。
 export class FetchCloudSignApiClient implements CloudSignApiClient {
   private cachedToken: string | null = null;
+  private readonly clientSecret: string;
+  private readonly fetchImpl: typeof fetch;
 
   constructor(
     private readonly baseUrl: string,
     private readonly clientId: string,
-    private readonly fetchImpl: typeof fetch = fetch
+    options: CloudSignApiClientOptions = {}
   ) {
     if (!baseUrl.trim()) throw new Error("CloudSign base URL is required");
     if (!clientId.trim()) throw new Error("CloudSign client id is required");
+    this.clientSecret = (options.clientSecret ?? "").trim();
+    this.fetchImpl = options.fetchImpl ?? fetch;
   }
 
   private base(path: string) {
@@ -37,6 +50,8 @@ export class FetchCloudSignApiClient implements CloudSignApiClient {
     if (this.cachedToken) return this.cachedToken;
     const url = new URL(this.base("/token"));
     url.searchParams.set("client_id", this.clientId);
+    // シークレットは設定時のみ付与（未設定は従来の挙動を厳密に維持）。
+    if (this.clientSecret) url.searchParams.set("client_secret", this.clientSecret);
     const response = await this.fetchImpl(url, { method: "POST" });
     const payload = await response.json().catch(() => null) as { access_token?: unknown } | null;
     if (!response.ok || typeof payload?.access_token !== "string") {

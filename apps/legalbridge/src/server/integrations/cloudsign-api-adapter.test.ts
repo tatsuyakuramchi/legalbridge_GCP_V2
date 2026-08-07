@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CloudSignApiAdapter, type CloudSignApiClient } from "./cloudsign-api-adapter.js";
+import { CloudSignApiAdapter, FetchCloudSignApiClient, type CloudSignApiClient } from "./cloudsign-api-adapter.js";
 
 class FakeClient implements CloudSignApiClient {
   calls: string[] = [];
@@ -52,4 +52,35 @@ test("ステータス取得はコードを正規化して完了判定を返す",
   assert.equal(status.completed, true);
   assert.equal(status.participants[0].email, "a@example.com");
   assert.equal(status.participants[0].status, "completed");
+});
+
+// トークン交換フック：client_secret は設定時のみ /token へ付与する。
+function tokenFetch(seen: string[]): typeof fetch {
+  return (async (input: any) => {
+    seen.push(String(input));
+    return { ok: true, status: 200, json: async () => ({ access_token: "tok-1" }) } as Response;
+  }) as unknown as typeof fetch;
+}
+
+test("client_secret 設定時は /token に client_secret を付与する", async () => {
+  const seen: string[] = [];
+  const client = new FetchCloudSignApiClient(
+    "https://api.cloudsign.jp", "cid-1",
+    { clientSecret: "sec-1", fetchImpl: tokenFetch(seen) });
+  await client.getDocument("doc-1");
+  const tokenCall = seen.find((u) => u.includes("/token"));
+  assert.ok(tokenCall, "token endpoint should be called");
+  assert.match(tokenCall!, /client_id=cid-1/);
+  assert.match(tokenCall!, /client_secret=sec-1/);
+});
+
+test("client_secret 未設定時は /token に client_secret を付与しない（従来挙動）", async () => {
+  const seen: string[] = [];
+  const client = new FetchCloudSignApiClient(
+    "https://api.cloudsign.jp", "cid-1", { fetchImpl: tokenFetch(seen) });
+  await client.getDocument("doc-1");
+  const tokenCall = seen.find((u) => u.includes("/token"));
+  assert.ok(tokenCall, "token endpoint should be called");
+  assert.match(tokenCall!, /client_id=cid-1/);
+  assert.doesNotMatch(tokenCall!, /client_secret/);
 });

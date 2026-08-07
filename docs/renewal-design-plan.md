@@ -288,6 +288,10 @@ Phase 7 は全フェーズの受け入れ後
 
 | 2026-08-07 | Phase 5 | スライス5-3：Slack依頼者宛先の二重エスケープ・バグ修正（`optionalEmail`）＋回帰テスト | — | ✅ |
 
+| 2026-08-07 | Phase 5 | スライス5-4：CloudSign `client_secret` フック（設定時のみ付与・実API突合の足場） | — | 🟡 |
+
+**スライス5-4（CloudSign認証フック・部分対応）**：Phase 5 残ギャップ④の**コード側で安全に前進できる部分のみ**を対応。`FetchCloudSignApiClient` を options 化し `clientSecret` を受け取り、**設定時のみ** `/token` に `client_secret` を付与（未設定は従来リクエストと厳密同一）。config `cloudSignClientSecret`（`CLOUDSIGN_CLIENT_SECRET`）＋app.ts 結線＋トークン交換テスト2件（付与/非付与）。テスト440件。**これは live 化を保証しない**：エンドポイント/verb/grant_type は依然想定値で、**実CloudSign APIとの突合（外部依存）が唯一の hard-block として残存**。本フックは確定後に「コード変更でなく設定＋シークレット投入＋Secret Managerマウント配線」で済ませるための足場。
+
 **スライス5-3（Slack依頼者メール解決バグ修正）**：Phase 5 残ギャップ⑥のコード側を解消。`matters/repository.ts` の `optionalEmail` が**正規表現リテラルを二重エスケープ**（`/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/`）していたため、`matter_overview_v` が `requester_email`/`created_by`/`requester` を返しても **`mapSummary` が全メールを null 化**していた（＝Slack候補フローの依頼者宛先が常に `unmapped`/`missing_identity` になる隠れ原因）。単一エスケープ（`/^[^\s@]+@[^\s@]+\.[^\s@]+$/`・`gmail-delivery-adapter` の `EMAIL_PATTERN` と同一）へ修正し、`optionalEmail` を export して回帰テスト追加（正当メール通過・正規化・非メール棄却）。テスト438件。**残りは DB作業のみ**：`matter_overview_v` が上記いずれかの列で依頼者メールを露出すれば、コード側は解決可能になる。
 
 **スライス5-2（Gmail受信取込の登録導線）**：Phase 5 残ギャップ⑤（②）＝「取得PDFは閲覧+DLのみで文書レジストリ/Driveへの書込導線が無い」を解消。隔離ファースト方針に沿い**本番 `documents` テーブルは触れず**、隔離台帳 `lb_v2_inbound_contracts`（grant 020＝検証DBに作成・`idempotency_key`〈message+attachment指紋〉一意・SELECT/INSERT/UPDATE のみ・DELETE/TRUNCATE 不可）＋preflight。`inbound-contract-repository.ts`（Pg/Memory・`findByKey`/`capture`〈ON CONFLICT DO NOTHING＋再取得〉/`list(status?)`/`updateStatus`）。`gmail-inbound-routes` に3ルート追加：`POST .../register`（添付取得→`isPdfBufferSafe`検証→台帳へcaptured記録・既記録は`intake="duplicate"`で実バイト再取得せず200・非PDFは422）、`GET /gmail-inbound/registered`（一覧・status絞込・台帳無しは`enabled:false`）、`POST /gmail-inbound/registered/:key/status`（captured→linked/dismissed）。config `gmailInboundIntakeEnabled`（`GMAIL_INBOUND_INTAKE_ENABLED`・既定OFF）／app.ts（依存構築・ルート結線）／verify（true/false検証＋write-test限定ガード）／cloudbuild（subs既定false・export・ENVVARS）全結線。テスト435件。**Driveバイト実保管は identity方式（appProperties名前空間）決定後に別スライス**へ明示的に繰延。

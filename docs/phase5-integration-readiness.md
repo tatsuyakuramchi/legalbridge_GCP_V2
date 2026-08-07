@@ -44,7 +44,7 @@ Gmail送受信 / CloudSign / Slack / Drive を1つずつ本番相当で点火す
 ### ⑤ CloudSign（署名依頼＋ステータス）— ⚠️ 認証未確定（最終確認必須）
 - **状態**：`cloudsign-api-adapter.ts` に**実HTTPクライアントの足場**あり（`POST /token?client_id=`→Bearer、`/documents`作成→ファイル→参加者→送信、`GET /documents/:id`）。ただしエンドポイント/認証は**想定値**。
 - **要最終確認（点火前ブロッカー）**：
-  - **トークン交換が未検証**：`POST /token?client_id=` に**クライアントシークレット無し・grant_type無し**。実CloudSign OAuthはほぼ確実にsecret/交換が必要で、`CLOUDSIGN_CLIENT_SECRET` env が存在しない → **実APIとの突合が必要**。
+  - **トークン交換が未検証**：`POST /token?client_id=` に**クライアントシークレット無し・grant_type無し**。実CloudSign OAuthはほぼ確実にsecret/交換が必要。**部分対応（スライス5-4）**：`CLOUDSIGN_CLIENT_SECRET` env＋クライアント側フックを追加し、**設定時のみ** `/token` に `client_secret` を付与（未設定は従来挙動を厳密維持）。config/app 結線・テスト済。**ただしエンドポイント/verb/grant_type は依然想定値**であり、本フックだけでは live 化しない＝実APIとの突合が引き続き必須（本フックは確定後に「コード変更でなく設定＋シークレット投入」で済ませるための足場）。
   - エンドポイント/送信verb（`POST /documents/:id`）も想定。
   - `cloudSignDocumentId` を永続化せず（ステータス照会は呼び出し側がID保持）・冪等未実装。
 - **点火手順**：実 `client_id`（＋secret/認証方式の確定）、base URL、`CLOUDSIGN_MODE=live`・`CONFIRM_CLOUDSIGN_DISPATCH`・scope `cloudsign`・AUTH・`INTEGRATION_MODE=live`。**ただし上記認証確定が先**。
@@ -58,7 +58,7 @@ Gmail送受信 / CloudSign / Slack / Drive を1つずつ本番相当で点火す
 3. **Gmail/CloudSign に送信履歴・冪等強制が無い**（キーは算出するが未使用）。
    - **Gmail は修正済（スライス5-1）**：append専用の送信履歴テーブル `lb_v2_gmail_send_history`（grant 019・SELECT/INSERT のみ・`idempotency_key` 一意）を追加し、dispatch が送信前に既送信を照会→重複なら実送信せず受領を返す（`integrations.gmail="duplicate"`・200）。有効化は `GMAIL_SEND_HISTORY_ENABLED=true`（既定OFF・write-test限定）。
    - **CloudSign は未対応**：認証未確定（下記④）のため live 化不可。認証突合後に同型（履歴テーブル＋冪等）を追加する。
-4. **CloudSign認証の実突合**（上記④）。
+4. **CloudSign認証の実突合**（上記④）。コード側は `CLOUDSIGN_CLIENT_SECRET` フックを追加済（スライス5-4・設定時のみ付与）だが、**エンドポイント/verb/grant_type の実API確定は外部依存で未了**（＝唯一の hard-block）。secret を live 化するには cloudbuild への Secret Manager マウント配線も別途必要。
 5. ~~**Gmail受信の取込→登録書込導線**（②）~~ → **修正済（スライス5-2）**：隔離台帳 `lb_v2_inbound_contracts`（grant 020・append＋status）＋登録/一覧/状態遷移ルート。冪等（message+attachment指紋）。Driveバイト保管のみ別スライスへ（identity方式決定後）。
 6. **Slack候補フローの依頼者メール**：コード側の二重エスケープ・バグを修正済（スライス5-3・`optionalEmail`）。**残りは DB作業のみ** — `matter_overview_v` が `requester_email`/`created_by`/`requester` のいずれかで依頼者メールを露出すること。
 
