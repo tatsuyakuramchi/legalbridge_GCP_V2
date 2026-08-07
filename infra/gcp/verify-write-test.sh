@@ -448,8 +448,8 @@ case "${CLOUDSIGN_MODE}" in
       echo "CloudSign dispatch deployment blocked: IAP or Cloud Run IAM authentication is required."
       exit 1
     fi
-    if [ -z "${CLOUDSIGN_CLIENT_ID}" ] || [ "${CLOUDSIGN_CLIENT_ID}" = "BLOCKED" ]; then
-      echo "CloudSign dispatch deployment blocked: a CloudSign client id is required."
+    if [ -z "${CLOUDSIGN_CLIENT_ID_SECRET}" ] || [ "${CLOUDSIGN_CLIENT_ID_SECRET}" = "BLOCKED" ]; then
+      echo "CloudSign dispatch deployment blocked: a CloudSign client id secret (Secret Manager name) is required."
       exit 1
     fi
     # 検証中の誤送信防止：live 点火時は宛先allowlistを必須にする（V1 テストガード相当）。

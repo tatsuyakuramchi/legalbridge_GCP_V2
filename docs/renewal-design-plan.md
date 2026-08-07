@@ -294,6 +294,10 @@ Phase 7 は全フェーズの受け入れ後
 
 | 2026-08-07 | Phase 5 | 点火準備：CloudSign 点火 Runbook 新設＋gmail-cloudsign.md を確定仕様へ更新 | — | ✅ |
 
+| 2026-08-07 | Phase 5 | CloudSign client_id を Secret Manager 化（平文 substitution 廃止・SLACK_BOT_TOKEN 同型） | — | ✅ |
+
+**CloudSign client_id の Secret Manager 配線**：`client_id` を平文ビルド substitution（Cloud Build ログ／Cloud Run env に露出）から **Secret Manager 注入**へ変更。cloudbuild は `_CLOUDSIGN_CLIENT_ID`（値）を廃し `_CLOUDSIGN_CLIENT_ID_SECRET`（シークレット名・既定 BLOCKED）を導入。`_CLOUDSIGN_MODE=live` かつシークレット名設定時のみ `--set-secrets` で `CLOUDSIGN_CLIENT_ID` env を注入（Slack bot token と同型・ENVVARS からは平文値を除去）。verify は live 時に**シークレット名の設定**を要求（値ではなく名前）。アプリは従来どおり `process.env.CLOUDSIGN_CLIENT_ID` を読む（変更不要）。runbook §1 にシークレット作成＋secretAccessor 付与手順、点火コマンドを `_CLOUDSIGN_CLIENT_ID_SECRET=cloudsign-client-id` へ更新。verify 構文OK・default（disabled）パス確認。
+
 **点火準備（CloudSign Runbook）**：`docs/phase5-cloudsign-ignition.md` を新設。多重ゲート条件・事前準備（実 client_id／宛先allowlist／grant 022）・**実本番デプロイコマンド**（`^|^` 区切り・`_INTEGRATION_MODE=live`＋`cloudsign` スコープ＋CloudSign変数を契約取込の実値土台に追加）・スモークテスト（能力ON→preview→許可外422→実依頼→冪等duplicate→status取込）・ロールバックを収録。参照した substitution 変数が cloudbuild に全て存在することを確認済み。旧 `docs/gmail-cloudsign.md` の CloudSign 節（「想定・最終確認必須」）を確定仕様（V1準拠・form-urlencoded・allowlist/history 変数）へ更新。
 
 **スライス5-7（CloudSign 送信路の堅牢化）**：5-6 で確定した CloudSign を点火可能な状態へ。①**送信冪等＋永続化**：`lb_v2_cloudsign_requests`（grant 022＝検証/本番の作成＋付与・`idempotency_key` 一意・SELECT/INSERT/UPDATE・DELETE/TRUNCATE不可）＋`cloudsign-request-repository`（Pg/Memory・findByKey/record〈ON CONFLICT DO NOTHING〉/updateStatus/list）。dispatch が送信前に既依頼を照会し重複は再送せず既存受領を返す（`cloudsign="duplicate"`・200）。`cloudSignDocumentId` を永続化し `GET /cloudsign/:id/status` 取得時に締結状況を反映。②**宛先allowlist**（V1 `CLOUDSIGN_ALLOWED_RECIPIENTS` 準拠）：`parseAllowedRecipients`/`findDisallowedRecipient`（純関数）で、設定時は全宛先が許可集合内であることを要求（許可外は422 `CLOUDSIGN_RECIPIENT_NOT_ALLOWED`・空なら無制限）。config（`CLOUDSIGN_ALLOWED_RECIPIENTS`/`CLOUDSIGN_REQUEST_HISTORY_ENABLED`）／app.ts／verify（history は write-test 限定・**live 点火時は allowlist 必須**）／cloudbuild 全結線。テスト455件。**CloudSign は他送信系と同等の堅牢度に到達**＝実 client_id 投入で点火準備完了。残るは reportees(CC) のみ（必要時）。

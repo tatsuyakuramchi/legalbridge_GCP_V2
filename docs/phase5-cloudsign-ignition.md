@@ -19,6 +19,18 @@ CloudSign 電子署名依頼を **write-test サービスで検証点火**する
 ## 1. 事前準備
 
 1. **CloudSign `client_id`** を入手（本番 or sandbox）。sandbox は `_CLOUDSIGN_BASE_URL=https://api-sandbox.cloudsign.jp`。
+   **client_id は Secret Manager に格納する**（平文 substitution にしない）。シークレット作成とアクセス権付与：
+   ```bash
+   # シークレット作成（値の投入は標準入力から。シェル履歴に残さない）
+   printf '%s' '<client_id>' | gcloud secrets create cloudsign-client-id \
+     --project=legalbridge-488506 --replication-policy=automatic --data-file=-
+   # 既存なら新バージョン追加： printf '%s' '<client_id>' | gcloud secrets versions add cloudsign-client-id --data-file=-
+   # ランタイムSAへ読取許可
+   gcloud secrets add-iam-policy-binding cloudsign-client-id --project=legalbridge-488506 \
+     --member="serviceAccount:legalbridge-v2-preview@legalbridge-488506.iam.gserviceaccount.com" \
+     --role="roles/secretmanager.secretAccessor"
+   ```
+   デプロイでは値ではなく**シークレット名**を `_CLOUDSIGN_CLIENT_ID_SECRET=cloudsign-client-id` で渡す（Cloud Run 起動時に `CLOUDSIGN_CLIENT_ID` env へ注入される）。
 2. **宛先allowlist**：検証中に実送信してよい自分・社内の署名者メールをカンマ区切りで用意（例：`tatsuya.kuramochi@arclight.co.jp`）。
 3. **冪等履歴テーブル（任意だが推奨）**：grant 022 を本番へ適用（`docs/phase5-db-followups.md` §D）。適用済みなら `_CLOUDSIGN_REQUEST_HISTORY_ENABLED=true`、未適用なら `=false`（冪等は無効・毎回送信）。
    ```bash
@@ -31,7 +43,7 @@ CloudSign 電子署名依頼を **write-test サービスで検証点火**する
 6. **ネットワーク到達性（重要）**：
    - デプロイ実行環境／Cloud Run の egress が `api.cloudsign.jp`（sandbox: `api-sandbox.cloudsign.jp`）へ到達できること。**egress 許可リスト方式の環境ではこのホストを明示追加する**（未許可だと `403 Host not in allowlist` で `/token` すら通らない。※Claude Code 等のサンドボックスからは既定でブロックされるため、client_id の疎通確認はデプロイ先の Cloud Run で行う）。
    - CloudSign 側の **送信元IP許可**：CloudSign 管理でトークン発行元IP（Cloud Run の固定egress IP）を許可登録しておくこと。未登録だと有効な client_id でも 403 になり得る。
-   - `client_id` は機微情報。ビルド substitution（＝Cloud Build ログ／Cloud Run env に平文で残る）で渡す代わりに、**Secret Manager 化**が望ましい（`_SLACK_BOT_TOKEN_SECRET` と同型の配線が必要）。当面 substitution で点火する場合はログ共有時にマスクすること。
+   - `client_id` は **Secret Manager 経由で注入する配線に変更済み**（上記1参照・`_SLACK_BOT_TOKEN_SECRET` と同型）。cloudbuild は `_CLOUDSIGN_MODE=live` かつ `_CLOUDSIGN_CLIENT_ID_SECRET` が設定されたときのみ `--set-secrets` で `CLOUDSIGN_CLIENT_ID` を注入する。平文 substitution では渡らない。
 
 ## 2. デプロイ（write-test・本番DB primary）
 
@@ -40,7 +52,7 @@ CloudSign 電子署名依頼を **write-test サービスで検証点火**する
 ```bash
 gcloud builds submit \
   --config infra/gcp/cloudbuild-write-test.yaml \
-  --substitutions="^|^_REGION=asia-northeast1|_SERVICE=legalbridge-v2-write-test|_IMAGE=legalbridge-v2-write-test|_CLOUD_SQL_INSTANCE=legalbridge-488506:asia-northeast1:legalbridge-db|_DB_NAME=legalbridge|_DB_USER=legalbridge_v2_runtime|_DB_PASSWORD_SECRET=legalbridge-v2-runtime-db-password|_SERVICE_ACCOUNT=legalbridge-v2-preview@legalbridge-488506.iam.gserviceaccount.com|_PRIMARY_DB_MODE=production|_CONFIRM_PRODUCTION_PRIMARY=CUTOVER_V2_PRIMARY_TO_LEGALBRIDGE|_CONFIRM_DOCUMENT_TABLES=PRODUCTION_DOCUMENT_TABLES_PREFLIGHT_CONFIRMED|_AUTH_MODE=cloudrun-iam|_AUTH_ADMIN_EMAILS=tatsuya.kuramochi@arclight.co.jp|_CONFIRM_CLOUDRUN_IAM=CLOUDRUN_IAM_PROXY_VALIDATION_ONLY|_INTEGRATION_MODE=live|_WRITE_SCOPES=drafts,documents,pdf,cloudsign|_CLOUDSIGN_MODE=live|_CONFIRM_CLOUDSIGN_DISPATCH=CLOUDSIGN_DISPATCH_VALIDATION_ONLY|_CLOUDSIGN_CLIENT_ID=<実client_id>|_CLOUDSIGN_ALLOWED_RECIPIENTS=tatsuya.kuramochi@arclight.co.jp|_CLOUDSIGN_REQUEST_HISTORY_ENABLED=true"
+  --substitutions="^|^_REGION=asia-northeast1|_SERVICE=legalbridge-v2-write-test|_IMAGE=legalbridge-v2-write-test|_CLOUD_SQL_INSTANCE=legalbridge-488506:asia-northeast1:legalbridge-db|_DB_NAME=legalbridge|_DB_USER=legalbridge_v2_runtime|_DB_PASSWORD_SECRET=legalbridge-v2-runtime-db-password|_SERVICE_ACCOUNT=legalbridge-v2-preview@legalbridge-488506.iam.gserviceaccount.com|_PRIMARY_DB_MODE=production|_CONFIRM_PRODUCTION_PRIMARY=CUTOVER_V2_PRIMARY_TO_LEGALBRIDGE|_CONFIRM_DOCUMENT_TABLES=PRODUCTION_DOCUMENT_TABLES_PREFLIGHT_CONFIRMED|_AUTH_MODE=cloudrun-iam|_AUTH_ADMIN_EMAILS=tatsuya.kuramochi@arclight.co.jp|_CONFIRM_CLOUDRUN_IAM=CLOUDRUN_IAM_PROXY_VALIDATION_ONLY|_INTEGRATION_MODE=live|_WRITE_SCOPES=drafts,documents,pdf,cloudsign|_CLOUDSIGN_MODE=live|_CONFIRM_CLOUDSIGN_DISPATCH=CLOUDSIGN_DISPATCH_VALIDATION_ONLY|_CLOUDSIGN_CLIENT_ID_SECRET=cloudsign-client-id|_CLOUDSIGN_ALLOWED_RECIPIENTS=tatsuya.kuramochi@arclight.co.jp|_CLOUDSIGN_REQUEST_HISTORY_ENABLED=true"
 ```
 
 - sandbox で試すなら `|_CLOUDSIGN_BASE_URL=https://api-sandbox.cloudsign.jp` を追加。

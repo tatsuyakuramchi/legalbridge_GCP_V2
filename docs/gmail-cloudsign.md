@@ -57,8 +57,10 @@ Driveと同じ Workspace サービスアカウント鍵を再利用できる（`
 `_WRITE_SCOPES` 末尾に `,cloudsign` を追加（順序：`...,gmail,cloudsign`）し、次を追加:
 
 ```
-|_CLOUDSIGN_MODE=live|_CONFIRM_CLOUDSIGN_DISPATCH=CLOUDSIGN_DISPATCH_VALIDATION_ONLY|_CLOUDSIGN_CLIENT_ID=<CloudSignのclient_id>|_CLOUDSIGN_ALLOWED_RECIPIENTS=<検証宛先1,検証宛先2>|_CLOUDSIGN_REQUEST_HISTORY_ENABLED=true
+|_CLOUDSIGN_MODE=live|_CONFIRM_CLOUDSIGN_DISPATCH=CLOUDSIGN_DISPATCH_VALIDATION_ONLY|_CLOUDSIGN_CLIENT_ID_SECRET=cloudsign-client-id|_CLOUDSIGN_ALLOWED_RECIPIENTS=<検証宛先1,検証宛先2>|_CLOUDSIGN_REQUEST_HISTORY_ENABLED=true
 ```
+
+`client_id` は Secret Manager シークレット（例 `cloudsign-client-id`）に格納し、名前を `_CLOUDSIGN_CLIENT_ID_SECRET` で渡す（平文では渡さない）。作成/権限付与は `docs/phase5-cloudsign-ignition.md` §1 参照。
 
 `_CLOUDSIGN_BASE_URL` は既定 `https://api.cloudsign.jp`（sandbox は `https://api-sandbox.cloudsign.jp`）。かつ `INTEGRATION_MODE=live` が必要（未設定なら `integration_local` でブロック）。**verify は live 点火時に `CLOUDSIGN_ALLOWED_RECIPIENTS` 必須**（検証中の誤送信防止）。`CLOUDSIGN_REQUEST_HISTORY_ENABLED=true` は事前に grant 022 の適用が前提（`docs/phase5-db-followups.md` §D）。詳細な点火手順は **`docs/phase5-cloudsign-ignition.md`**。
 
