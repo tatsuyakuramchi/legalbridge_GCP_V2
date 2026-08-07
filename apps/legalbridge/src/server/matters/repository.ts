@@ -102,9 +102,13 @@ function mapSummary(row: Record<string, any>): MatterSummary {
     )
   };
 }
-function optionalEmail(value: unknown) {
+// 依頼者メールの正規化。matter_overview_v が requester_email / created_by /
+// requester のいずれかで返す値を検証する。正規表現リテラルなので単一エスケープ。
+// （旧実装は \\s / \\. と二重エスケープされ、全ての正当なメールを null にしていた
+//  ＝Slack候補フローの宛先解決が常に失敗する原因だった）
+export function optionalEmail(value: unknown): string | null {
   const email = String(value ?? "").trim().toLowerCase();
-  return /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email) ? email : null;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null;
 }
 function iso(value: unknown) { return value ? new Date(String(value)).toISOString() : null; }
 function dateOnly(value: unknown) { return value ? String(value).slice(0, 10) : null; }

@@ -32,7 +32,7 @@ Gmail送受信 / CloudSign / Slack / Drive を1つずつ本番相当で点火す
 ### ③ Slack配信 — 🟡 実xoxbトークン待ち（パイプラインは堅牢）
 - **状態**：`slack-delivery-adapter.ts`（gate→履歴重複チェック→送信→受領検証→履歴追記）＋`slack-web-api-adapter.ts`（`xoxb-` 必須・`conversations.open`→`chat.postMessage`）。**冪等/履歴が堅牢**：`(issue_key, fingerprint)` の一意インデックス（grant 001）＋承認テーブル（grant 002）＋`ON CONFLICT DO NOTHING`。
 - **点火手順**：実 **`xoxb-` bot token** を Secret Manager（`_SLACK_BOT_TOKEN_SECRET`）へ、V2デプロイSAに secretAccessor 付与。grant 001/002（履歴/承認・追記のみ）を適用。`SLACK_DELIVERY_MODE=live`＋`SLACK_DISPATCH_ENABLED=true`＋`CONFIRM_SLACK_DISPATCH=SLACK_DISPATCH_VALIDATION_ONLY`＋履歴/承認/承認書込を全て true＋`SLACK_DRY_RUN_USER_MAP`（`email=SlackID`・検証宛先限定）＋scope `slack,slack-dispatch(,slack-approvals)`＋AUTH＋**`INTEGRATION_MODE=live`**。
-- **ギャップ**：`matter_overview_v` に依頼者メールが無く、候補フロー実送信は宛先解決不可 → まず `POST /admin/slack-notifications/test-dispatch`（固定文＋指定userId）でトークン/経路を検証。
+- **ギャップ**：候補フロー実送信の依頼者宛先解決。**コード側の潜在バグを修正（スライス5-3）**：`matters/repository.ts` の `optionalEmail` が正規表現リテラルを二重エスケープ（`\\s`/`\\.`）していたため、`matter_overview_v` が `requester_email`/`created_by`/`requester` を返しても**全メールを null 化**していた（＝宛先解決が常に失敗する隠れ原因）。単一エスケープへ修正＋回帰テスト。**残作業（DB側）**：`matter_overview_v` が上記いずれかの列で依頼者メールを実際に露出すること（露出後はコード側で解決可能）。当面は `POST /admin/slack-notifications/test-dispatch`（固定文＋指定userId）でトークン/経路を検証。
 - **検証**：test-dispatch で1通到達 → 候補フローはDBビュー整備後。
 
 ### ④ Gmail送信（通知メール）— 🟡 DWD鍵が必須・冪等未実装
@@ -60,7 +60,7 @@ Gmail送受信 / CloudSign / Slack / Drive を1つずつ本番相当で点火す
    - **CloudSign は未対応**：認証未確定（下記④）のため live 化不可。認証突合後に同型（履歴テーブル＋冪等）を追加する。
 4. **CloudSign認証の実突合**（上記④）。
 5. ~~**Gmail受信の取込→登録書込導線**（②）~~ → **修正済（スライス5-2）**：隔離台帳 `lb_v2_inbound_contracts`（grant 020・append＋status）＋登録/一覧/状態遷移ルート。冪等（message+attachment指紋）。Driveバイト保管のみ別スライスへ（identity方式決定後）。
-6. **Slack候補フローの依頼者メール**（`matter_overview_v` 拡充・DBビュー作業）。
+6. **Slack候補フローの依頼者メール**：コード側の二重エスケープ・バグを修正済（スライス5-3・`optionalEmail`）。**残りは DB作業のみ** — `matter_overview_v` が `requester_email`/`created_by`/`requester` のいずれかで依頼者メールを露出すること。
 
 ## 4. 有効化・検証の共通チェックリスト
 
