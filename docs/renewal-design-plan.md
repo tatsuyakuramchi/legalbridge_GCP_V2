@@ -294,6 +294,10 @@ Phase 7 は全フェーズの受け入れ後
 
 | 2026-08-07 | Phase 5 | 点火準備：CloudSign 点火 Runbook 新設＋gmail-cloudsign.md を確定仕様へ更新 | — | ✅ |
 
+| 2026-08-07 | Phase 7 | 案件Slack 7-1/7-2：法務相談スレッド＋<@id>メンション（V1 パネル移植・grant 024） | LegalBridge_AI_GCP | ✅ |
+
+**スライス7-1/7-2（案件 Slack スレッド＋メンション）**：V1↔V2 突合（並行調査）で「V2 は Slack が依頼者DMのみ・チャンネル/スレッド/メンション非対応」と確定。V1 の案件 Slack パネル（法務相談スレッド）を V2 へ移植。①`SlackWebApiClient` に `conversations.replies` を追加、`slack-matter-channel.ts` に `WebApiMatterSlackChannelAdapter`（`chat.postMessage`＋`thread_ts`）＋純関数（`mentionTokens`/`composeMentionMessage`/`buildThreadRootText`）。②隔離テーブル `lb_v2_matter_slack_threads`（grant 024＝validation＋production＋preflight・1案件1スレッド・SELECT/INSERT）＋`matter-slack-thread-repository.ts`（Pg/Memory・スレッド冪等＋`staff.slack_user_id` メンション候補）。③`matter-slack-routes.ts`：候補/スレッド会話（read）＋スレッド作成/メンション投稿（guarded）。④config `MATTER_SLACK_ENABLED`/`SLACK_LEGAL_CONSULT_CHANNEL`／app.ts／verify（scope `matter-slack`＋live/channel/write-test ガード）／cloudbuild 全結線。テスト 467 件。設計は `docs/phase7-matter-slack.md`。残：7-3 定型文＋Drive権限、7-4 案件イベント自動通知、7-5 UI。
+
 | 2026-08-07 | Phase 5 | gap⑥ `matter_overview_v` 依頼者メール露出を V1 定義突合で apply-ready DDL 化（023） | LegalBridge_AI_GCP | ✅ |
 
 **gap⑥ ビュー拡張の DDL 確定（023）**：V1 リポジトリの `matter_overview_v` 現行定義（migration `0126_matter_lifecycle_and_tasks.sql`）を取得し、`matters.created_by`（V1 では `x-user-email`＝案件作成者＝依頼者メール）が依頼者メール源と特定。`023_matter_overview_requester_email.sql` として、0126 の SELECT を逐語再現し末尾に `m.created_by AS requester_email` を追加する **apply-ready DDL**（テンプレートでなく実適用可）を authored。確認トークン `EXTEND_PRODUCTION_MATTER_OVERVIEW_REQUESTER`＋`current_database()='legalbridge'` guard＋runtime へ SELECT 再付与。非メール値は V2 `optionalEmail`（5-3修正済）が null 化するため安全。唯一の前提は 021 introspect で本番現行定義が 023 再現部と一致（ドリフト無し）を確認すること。`docs/phase5-db-followups.md` §C を「テンプレート穴埋め」から「023 をそのまま適用」に更新。これで gap⑥ の残りは運用 psql 実行のみ。

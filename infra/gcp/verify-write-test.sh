@@ -483,6 +483,38 @@ case "${CLOUDSIGN_REQUEST_HISTORY_ENABLED}" in
     exit 1
     ;;
 esac
+# 案件 Slack スレッド（法務相談・チャンネル投稿＋メンション）。外部投稿のため
+# INTEGRATION_MODE=live＋Slack live＋投稿先チャンネル＋write-test＋IAP/IAM を要求する。
+case "${MATTER_SLACK_ENABLED}" in
+  false)
+    ;;
+  true)
+    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
+      echo "Matter Slack blocked: limited to the write-test service."
+      exit 1
+    fi
+    if [ "${INTEGRATION_MODE}" != "live" ]; then
+      echo "Matter Slack blocked: INTEGRATION_MODE=live is required for external Slack posts."
+      exit 1
+    fi
+    if [ "${SLACK_DELIVERY_MODE}" != "live" ]; then
+      echo "Matter Slack blocked: SLACK_DELIVERY_MODE=live is required."
+      exit 1
+    fi
+    if [ -z "${SLACK_LEGAL_CONSULT_CHANNEL}" ] || [ "${SLACK_LEGAL_CONSULT_CHANNEL}" = "BLOCKED" ]; then
+      echo "Matter Slack blocked: SLACK_LEGAL_CONSULT_CHANNEL (target channel) is required."
+      exit 1
+    fi
+    if [ "${AUTH_MODE}" != "iap" ] && [ "${AUTH_MODE}" != "cloudrun-iam" ]; then
+      echo "Matter Slack blocked: IAP or Cloud Run IAM authentication is required."
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Deployment blocked: MATTER_SLACK_ENABLED must be true or false."
+    exit 1
+    ;;
+esac
 case "${GMAIL_INBOUND_MODE}" in
   disabled)
     ;;
@@ -639,6 +671,9 @@ if [ "${GMAIL_INBOUND_MODE}" = "live" ]; then
 fi
 if [ "${SLACK_DISPATCH_ENABLED}" = "true" ]; then
   expected_write_scopes="$expected_write_scopes,slack,slack-dispatch"
+fi
+if [ "${MATTER_SLACK_ENABLED}" = "true" ]; then
+  expected_write_scopes="$expected_write_scopes,matter-slack"
 fi
 if [ "${WRITE_SCOPES}" != "$expected_write_scopes" ]; then
   echo "Deployment blocked: WRITE_SCOPES does not exactly match the enabled guarded capabilities."

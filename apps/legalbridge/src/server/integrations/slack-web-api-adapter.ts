@@ -4,8 +4,13 @@ import type {
   SlackDeliveryRequest
 } from "./slack-delivery-adapter.js";
 
+export type SlackWebApiMethod =
+  | "conversations.open"
+  | "chat.postMessage"
+  | "conversations.replies";
+
 export interface SlackWebApiClient {
-  post(method: "conversations.open" | "chat.postMessage", body: Record<string, unknown>): Promise<unknown>;
+  post(method: SlackWebApiMethod, body: Record<string, unknown>): Promise<unknown>;
 }
 
 export class SlackWebApiError extends Error {
@@ -30,7 +35,7 @@ export class FetchSlackWebApiClient implements SlackWebApiClient {
     }
   }
 
-  async post(method: "conversations.open" | "chat.postMessage", body: Record<string, unknown>) {
+  async post(method: SlackWebApiMethod, body: Record<string, unknown>) {
     const response = await this.fetchImpl(`https://slack.com/api/${method}`, {
       method: "POST",
       headers: {

@@ -73,6 +73,9 @@ export const config = {
   slackDeliveryMode:
     process.env.SLACK_DELIVERY_MODE === "live" ? "live" as const : "disabled" as const,
   slackBotToken: (process.env.SLACK_BOT_TOKEN ?? "").trim(),
+  // 案件 Slack スレッド（法務相談）機能。投稿先チャンネルと有効化フラグ。
+  slackLegalConsultChannel: (process.env.SLACK_LEGAL_CONSULT_CHANNEL ?? "").trim(),
+  matterSlackEnabled: process.env.MATTER_SLACK_ENABLED === "true",
   gmailDeliveryMode:
     process.env.GMAIL_DELIVERY_MODE === "live" ? "live" as const : "disabled" as const,
   gmailSenderEmail: (process.env.GMAIL_SENDER ?? "").trim(),

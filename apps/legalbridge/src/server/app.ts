@@ -179,6 +179,18 @@ import {
   FetchSlackWebApiClient
 } from "./integrations/slack-web-api-adapter.js";
 import {
+  WebApiMatterSlackChannelAdapter,
+  LocalMatterSlackChannelAdapter,
+  type MatterSlackChannelAdapter
+} from "./integrations/slack-matter-channel.js";
+import { createMatterSlackRouter } from "./matters/matter-slack-routes.js";
+import {
+  PgMatterSlackThreadRepository,
+  PgMatterMentionRepository,
+  type MatterSlackThreadRepository,
+  type MatterMentionRepository
+} from "./matters/matter-slack-thread-repository.js";
+import {
   LocalGmailDeliveryAdapter, type GmailDeliveryAdapter
 } from "./integrations/gmail-delivery-adapter.js";
 import {
@@ -329,6 +341,8 @@ export interface AppDependencies {
   gmailSendHistory?: GmailSendHistoryRepository;
   inboundContracts?: InboundContractRepository;
   cloudSignRequests?: CloudSignRequestRepository;
+  matterSlackThreads?: MatterSlackThreadRepository;
+  matterMentions?: MatterMentionRepository;
   outboundConditions?: OutboundConditionRepository;
   contractIntakes?: ContractIntakeRepository;
   contractIntakeDocuments?: ContractIntakeDocumentSourceRepository;
@@ -448,6 +462,8 @@ function createDefaultDependencies(): AppDependencies {
     cloudSignRequests: database && config.cloudSignRequestHistoryEnabled
       ? new PgCloudSignRequestRepository(database)
       : undefined,
+    matterSlackThreads: database ? new PgMatterSlackThreadRepository(database) : undefined,
+    matterMentions: database ? new PgMatterMentionRepository(database) : undefined,
     outboundConditions: outboundDatabase
       ? new PgOutboundConditionRepository(outboundDatabase)
       : undefined,
@@ -530,6 +546,20 @@ export function createApp(
     slackDeliveryAdapter.configured &&
     Boolean(dependencies.slackHistory) &&
     Boolean(dependencies.slackApprovals);
+  // 案件 Slack スレッド（法務相談・チャンネル投稿＋thread_ts＋<@id>メンション）。
+  const matterSlackChannelAdapter: MatterSlackChannelAdapter =
+    config.slackDeliveryMode === "live" && /^xoxb-[A-Za-z0-9-]+$/.test(config.slackBotToken)
+      ? new WebApiMatterSlackChannelAdapter(new FetchSlackWebApiClient(config.slackBotToken))
+      : new LocalMatterSlackChannelAdapter();
+  const matterSlackEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.writeScopes?.has("matter-slack") === true &&
+    config.matterSlackEnabled &&
+    config.integrationMode === "live" &&
+    config.slackDeliveryMode === "live" &&
+    matterSlackChannelAdapter.configured &&
+    Boolean(config.slackLegalConsultChannel);
   const gmailDeliveryAdapter: GmailDeliveryAdapter =
     config.gmailDeliveryMode === "live" && config.gmailSenderEmail
       ? new GmailApiDeliveryAdapter(
@@ -951,6 +981,14 @@ export function createApp(
     dependencies.matterWrites,
     matterWriteEnabled
   ));
+  // 案件 Slack スレッド（法務相談・メンション）。
+  app.use("/api/v2", createMatterSlackRouter({
+    matters: matterRepository,
+    threads: dependencies.matterSlackThreads,
+    mentions: dependencies.matterMentions,
+    channel: matterSlackChannelAdapter,
+    settings: { enabled: matterSlackEnabled, legalChannelId: config.slackLegalConsultChannel }
+  }));
   app.use("/api/v2", createConditionLineRouter(dependencies.conditionLines));
   // 計算専用（read-only・DB非依存）のロイヤリティ試算。
   app.use("/api/v2", createRoyaltyRouter());
