@@ -67,7 +67,7 @@ Gmail送受信 / CloudSign / Slack / Drive を1つずつ本番相当で点火す
    - **CloudSign は未対応**：認証未確定（下記④）のため live 化不可。認証突合後に同型（履歴テーブル＋冪等）を追加する。
 4. ~~**CloudSign認証の実突合**（上記④）~~ → **解消（スライス5-6）**：V1 実動クライアントに突合し、`/token` は `client_id` のみ form-urlencoded（secret/grant_type 不要）、`uploadfile` multipart、form-urlencoded の document/participant と確定。5-4 の client_secret フックは誤想定として撤去。残るは永続化/冪等/宛先allowlist の小項目（hard-block ではない）。
 5. ~~**Gmail受信の取込→登録書込導線**（②）~~ → **修正済（スライス5-2）**：隔離台帳 `lb_v2_inbound_contracts`（grant 020・append＋status）＋登録/一覧/状態遷移ルート。冪等（message+attachment指紋）。Driveバイト保管のみ別スライスへ（identity方式決定後）。
-6. **Slack候補フローの依頼者メール**：コード側の二重エスケープ・バグを修正済（スライス5-3・`optionalEmail`）。**残りは DB作業のみ** — `matter_overview_v` が `requester_email`/`created_by`/`requester` のいずれかで依頼者メールを露出すること。→ 手順・SQL を用意済：`infra/gcp/sql/021_matter_overview_requester_introspect.sql`（現行定義吸い出し）＋`docs/phase5-db-followups.md` §C（introspect→拡張ビュー適用→検証）。
+6. **Slack候補フローの依頼者メール**：コード側の二重エスケープ・バグを修正済（スライス5-3・`optionalEmail`）。**DDL も authored 済** — V1 migration 0126 の `matter_overview_v` 定義に突合し、`m.created_by AS requester_email` を末尾追加する apply-ready DDL `infra/gcp/sql/023_matter_overview_requester_email.sql`。適用前に `021_..._introspect.sql` で本番の現行定義が 023 再現部と一致（ドリフト無し）を確認するだけ。手順は `docs/phase5-db-followups.md` §C。残りは運用側の psql 実行のみ。
 
 > **DB適用手順（A/B/C）**：`docs/phase5-db-followups.md` に集約。A) `lb_v2_gmail_send_history` 本番作成＋付与（019 production grants/preflight）、B) `lb_v2_inbound_contracts` 本番作成＋付与（020 production grants/preflight）、C) `matter_overview_v` 依頼者メール露出（021 introspect→拡張）。いずれも preflight（読取専用）→ 本適用の順。
 

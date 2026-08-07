@@ -294,6 +294,10 @@ Phase 7 は全フェーズの受け入れ後
 
 | 2026-08-07 | Phase 5 | 点火準備：CloudSign 点火 Runbook 新設＋gmail-cloudsign.md を確定仕様へ更新 | — | ✅ |
 
+| 2026-08-07 | Phase 5 | gap⑥ `matter_overview_v` 依頼者メール露出を V1 定義突合で apply-ready DDL 化（023） | LegalBridge_AI_GCP | ✅ |
+
+**gap⑥ ビュー拡張の DDL 確定（023）**：V1 リポジトリの `matter_overview_v` 現行定義（migration `0126_matter_lifecycle_and_tasks.sql`）を取得し、`matters.created_by`（V1 では `x-user-email`＝案件作成者＝依頼者メール）が依頼者メール源と特定。`023_matter_overview_requester_email.sql` として、0126 の SELECT を逐語再現し末尾に `m.created_by AS requester_email` を追加する **apply-ready DDL**（テンプレートでなく実適用可）を authored。確認トークン `EXTEND_PRODUCTION_MATTER_OVERVIEW_REQUESTER`＋`current_database()='legalbridge'` guard＋runtime へ SELECT 再付与。非メール値は V2 `optionalEmail`（5-3修正済）が null 化するため安全。唯一の前提は 021 introspect で本番現行定義が 023 再現部と一致（ドリフト無し）を確認すること。`docs/phase5-db-followups.md` §C を「テンプレート穴埋め」から「023 をそのまま適用」に更新。これで gap⑥ の残りは運用 psql 実行のみ。
+
 | 2026-08-07 | Phase 5 | CloudSign client_id を Secret Manager 化（平文 substitution 廃止・SLACK_BOT_TOKEN 同型） | — | ✅ |
 
 **CloudSign client_id の Secret Manager 配線**：`client_id` を平文ビルド substitution（Cloud Build ログ／Cloud Run env に露出）から **Secret Manager 注入**へ変更。cloudbuild は `_CLOUDSIGN_CLIENT_ID`（値）を廃し `_CLOUDSIGN_CLIENT_ID_SECRET`（シークレット名・既定 BLOCKED）を導入。`_CLOUDSIGN_MODE=live` かつシークレット名設定時のみ `--set-secrets` で `CLOUDSIGN_CLIENT_ID` env を注入（Slack bot token と同型・ENVVARS からは平文値を除去）。verify は live 時に**シークレット名の設定**を要求（値ではなく名前）。アプリは従来どおり `process.env.CLOUDSIGN_CLIENT_ID` を読む（変更不要）。runbook §1 にシークレット作成＋secretAccessor 付与手順、点火コマンドを `_CLOUDSIGN_CLIENT_ID_SECRET=cloudsign-client-id` へ更新。verify 構文OK・default（disabled）パス確認。

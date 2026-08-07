@@ -78,41 +78,36 @@ psql "$RUNTIME_ADMIN_DSN" -f infra/gcp/sql/020_inbound_contract_intake_productio
 「全メールを null 化していた正規表現バグ」は修正済み。**残るのは、ビューが上記いずれかの
 列で依頼者メールを実際に露出すること**。
 
-**注意**：`matter_overview_v` の現行定義は本 repo に無い（V1本番側の既存ビュー）。
-`CREATE OR REPLACE VIEW` は**全既存カラムを保持したまま**1列追加する必要があり、
-現行定義を知らずに書くと既存カラムを壊す。よって **introspect → 定義確定 → 適用**の順で行う。
+**派生元は確定**：V1 migration `0126_matter_lifecycle_and_tasks.sql` の現行定義を突合し、
+`matters.created_by`（V1 では `x-user-email`＝案件作成者＝依頼者のメール）を露出する。
+`023_matter_overview_requester_email.sql` は 0126 の SELECT を**逐語再現**し末尾に
+`m.created_by AS requester_email` を追加する **apply-ready DDL**。非メール値は V2 の
+`optionalEmail` が null 化するため安全。
 
-### C-1. 現行定義と候補列の調査（読取専用）
+**唯一の注意**：本番の現行ビューが 0126 からドリフトしていないこと。`CREATE OR REPLACE VIEW`
+は既存カラムの名前/型/順序を変えられない（末尾追加のみ可）ため、適用前に 021 で実定義が
+023 の再現部と一致することを確認する（一致すれば 023 をそのまま適用可）。
+
+### C-1. 現行定義の一致確認（読取専用）
 
 ```bash
 psql "$RUNTIME_ADMIN_DSN" -f infra/gcp/sql/021_matter_overview_requester_introspect.sql
 ```
 
-出力で確認すること：
-- (1) `pg_get_viewdef` の現行 SELECT 全文（＝拡張の土台）。
-- (2) 既に `requester_email`/`created_by` 等が出ていないか（出ていれば C は不要、コードが解決可能）。
-- (3) `matters` の依頼者メール候補列（`created_by` / `requester_email` / `*owner*` / `*email*` 等）。
+- (1) `pg_get_viewdef` の現行 SELECT が `023` の SELECT 本体（0126 由来）と一致するか。
+- (2) 既に `requester_email` 列が出ていれば C は不要（コードが解決可能）。
+- ドリフトしていたら、023 の SELECT を実定義に合わせて差し替えてから適用（既存カラムは不変・末尾に `requester_email` 追加のみ）。
 
-### C-2. 拡張ビューの適用（定義確定後）
+### C-2. 拡張ビューの適用
 
-(1) の現行 SELECT をベースに、末尾へ依頼者メール列を1つ追加する。派生元は (3) の実列に
-合わせて決める。典型例（`matters.created_by` に依頼者メールが入っている場合）：
-
-```sql
--- ※ 下の SELECT 本体は 021 の (1) 出力で置き換えること（既存カラムを一切変えない）。
---   ここでは「末尾に requester_email を1列追加する」差分だけを示す。
-CREATE OR REPLACE VIEW public.matter_overview_v AS
-SELECT
-  <<-- 021(1) の現行カラムをそのまま列挙 -->>,
-  -- 追加：依頼者メール（実列に合わせて派生。例は created_by をそのまま露出）
-  m.created_by AS requester_email
-FROM <<-- 021(1) の現行 FROM/JOIN をそのまま -->>;
--- 権限はビュー再作成でも保持されるが、念のため：
-GRANT SELECT ON public.matter_overview_v TO legalbridge_v2_runtime;
+```bash
+psql "$RUNTIME_ADMIN_DSN" \
+  -v confirm_matter_overview_requester=EXTEND_PRODUCTION_MATTER_OVERVIEW_REQUESTER \
+  -f infra/gcp/sql/023_matter_overview_requester_email.sql
 ```
 
-適用は管理接続で。`CREATE OR REPLACE VIEW` はカラムの**追加は可**だが、既存カラムの
-名前/型/順序変更や削除は不可（その場合 `DROP VIEW` が要り依存に波及するため、まず追加のみで）。
+guard は `current_database()='legalbridge'`・ビュー存在を検証。既存カラムを一切変えず末尾に
+`requester_email` を追加し、`legalbridge_v2_runtime` へ SELECT を再付与する。
 
 ### C-3. 検証
 
@@ -126,7 +121,8 @@ psql "$RUNTIME_APP_DSN" -c \
 その後アプリ側は無変更で解決可能：`GET /api/v2/matters` の各行 `requesterEmail` が非 null に
 なり、Slack 候補フローの `resolve()` が `SLACK_DRY_RUN_USER_MAP` と突合して宛先解決できる。
 
-ロールバック：`CREATE OR REPLACE VIEW` で追加列を外した現行定義に戻す（データ影響なし）。
+ロールバック：023 の SELECT から末尾 `requester_email` 行を外した（＝0126そのままの）
+`CREATE OR REPLACE VIEW` を適用して戻す（データ影響なし）。
 
 ---
 
