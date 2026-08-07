@@ -28,6 +28,10 @@ CloudSign 電子署名依頼を **write-test サービスで検証点火**する
    ```
 4. **確定済み文書**が最低1件あること（dispatch は `documents` を描画して送る）。無ければ先に文書を確定。
 5. Google SA/DWD は **不要**（CloudSign は `client_id` 認証。Drive/Gmail のような鍵委任は使わない）。
+6. **ネットワーク到達性（重要）**：
+   - デプロイ実行環境／Cloud Run の egress が `api.cloudsign.jp`（sandbox: `api-sandbox.cloudsign.jp`）へ到達できること。**egress 許可リスト方式の環境ではこのホストを明示追加する**（未許可だと `403 Host not in allowlist` で `/token` すら通らない。※Claude Code 等のサンドボックスからは既定でブロックされるため、client_id の疎通確認はデプロイ先の Cloud Run で行う）。
+   - CloudSign 側の **送信元IP許可**：CloudSign 管理でトークン発行元IP（Cloud Run の固定egress IP）を許可登録しておくこと。未登録だと有効な client_id でも 403 になり得る。
+   - `client_id` は機微情報。ビルド substitution（＝Cloud Build ログ／Cloud Run env に平文で残る）で渡す代わりに、**Secret Manager 化**が望ましい（`_SLACK_BOT_TOKEN_SECRET` と同型の配線が必要）。当面 substitution で点火する場合はログ共有時にマスクすること。
 
 ## 2. デプロイ（write-test・本番DB primary）
 
