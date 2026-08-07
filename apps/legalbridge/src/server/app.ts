@@ -542,8 +542,7 @@ export function createApp(
   const cloudSignAdapter: CloudSignAdapter =
     config.cloudSignMode === "live" && config.cloudSignClientId && config.cloudSignBaseUrl
       ? new CloudSignApiAdapter(new FetchCloudSignApiClient(
-          config.cloudSignBaseUrl, config.cloudSignClientId,
-          { clientSecret: config.cloudSignClientSecret }))
+          config.cloudSignBaseUrl, config.cloudSignClientId))
       : new LocalCloudSignAdapter();
   const cloudSignDispatchEnabled =
     options.accessMode === "readwrite" &&

@@ -15,20 +15,18 @@ export interface CloudSignApiClient {
 }
 
 export interface CloudSignApiClientOptions {
-  // 実CloudSign OAuth が要求するクライアントシークレット。設定時のみ
-  // /token へ client_secret として付与する。未設定なら従来どおり付与しない。
-  // 注意: エンドポイント/verb/grant_type は実API突合で確定する（本フックだけでは
-  // live 化を保証しない）。
-  clientSecret?: string;
   fetchImpl?: typeof fetch;
 }
 
-// CloudSign v2 の一般形に対する実HTTP実装。OAuth2 で client_id（＋任意で
-// client_secret）からアクセストークンを取得し、Bearer で /documents 系を呼ぶ。
-// 実URL・client_id・認証方式は有効化時に実API突合で確定する（既定では live 化されない）。
+// CloudSign Web API 実HTTP実装。V1 (LegalBridge_AI_GCP) の実動クライアントに準拠。
+//   認証: POST /token に client_id を form-urlencoded で渡し access_token(Bearer)取得。
+//         短命トークンのため expires_in を尊重してキャッシュ＆更新（30秒前倒し失効）。
+//         401 は 1 回だけトークンを捨てて再取得リトライ。
+//   送信: createDocument → addFile(uploadfile) → addParticipant → send。いずれも
+//         form-urlencoded / multipart（CloudSign は JSON body を受けない）。
+//   ※ client_secret は使用しない（CloudSign の /token は client_id のみ）。
 export class FetchCloudSignApiClient implements CloudSignApiClient {
-  private cachedToken: string | null = null;
-  private readonly clientSecret: string;
+  private cachedToken: { value: string; expiresAt: number } | null = null;
   private readonly fetchImpl: typeof fetch;
 
   constructor(
@@ -38,7 +36,6 @@ export class FetchCloudSignApiClient implements CloudSignApiClient {
   ) {
     if (!baseUrl.trim()) throw new Error("CloudSign base URL is required");
     if (!clientId.trim()) throw new Error("CloudSign client id is required");
-    this.clientSecret = (options.clientSecret ?? "").trim();
     this.fetchImpl = options.fetchImpl ?? fetch;
   }
 
@@ -46,48 +43,83 @@ export class FetchCloudSignApiClient implements CloudSignApiClient {
     return `${this.baseUrl.replace(/\/$/, "")}${path}`;
   }
 
+  // POST /token: client_id を form-urlencoded で送り access_token を取得。
+  // expires_in（秒・不明時600）を尊重し、30秒前倒しで失効扱いにしてキャッシュする。
   private async token(): Promise<string> {
-    if (this.cachedToken) return this.cachedToken;
-    const url = new URL(this.base("/token"));
-    url.searchParams.set("client_id", this.clientId);
-    // シークレットは設定時のみ付与（未設定は従来の挙動を厳密に維持）。
-    if (this.clientSecret) url.searchParams.set("client_secret", this.clientSecret);
-    const response = await this.fetchImpl(url, { method: "POST" });
-    const payload = await response.json().catch(() => null) as { access_token?: unknown } | null;
+    const now = Date.now();
+    if (this.cachedToken && this.cachedToken.expiresAt > now) return this.cachedToken.value;
+    const body = new URLSearchParams({ client_id: this.clientId });
+    const response = await this.fetchImpl(this.base("/token"), {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString()
+    });
+    const payload = await response.json().catch(() => null) as
+      { access_token?: unknown; expires_in?: unknown } | null;
     if (!response.ok || typeof payload?.access_token !== "string") {
       throw new CloudSignError("CloudSign token acquisition failed", "token_error", response.status);
     }
-    this.cachedToken = payload.access_token;
-    return this.cachedToken;
+    const expiresIn = Number(payload.expires_in) || 600;
+    this.cachedToken = {
+      value: payload.access_token,
+      expiresAt: now + Math.max(60, expiresIn - 30) * 1000
+    };
+    return this.cachedToken.value;
+  }
+
+  // 401（トークン失効）のときだけ 1 回トークンを捨てて再試行する薄いラッパ。
+  private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn();
+    } catch (error) {
+      if (error instanceof CloudSignError && error.status === 401) {
+        this.cachedToken = null;
+        return await fn();
+      }
+      throw error;
+    }
   }
 
   private async authed(path: string, init: RequestInit): Promise<Record<string, unknown>> {
-    const token = await this.token();
-    const response = await this.fetchImpl(this.base(path), {
-      ...init,
-      headers: { Authorization: `Bearer ${token}`, ...(init.headers ?? {}) }
+    return this.withRetry(async () => {
+      const token = await this.token();
+      const response = await this.fetchImpl(this.base(path), {
+        ...init,
+        headers: { Authorization: `Bearer ${token}`, ...(init.headers ?? {}) }
+      });
+      const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
+      if (!response.ok) {
+        throw new CloudSignError(`CloudSign API HTTP error: ${response.status}`, "http_error", response.status);
+      }
+      if (!payload) throw new CloudSignError("CloudSign API returned no body", "invalid_response");
+      return payload;
     });
-    const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
-    if (!response.ok) {
-      throw new CloudSignError(`CloudSign API HTTP error: ${response.status}`, "http_error", response.status);
+  }
+
+  private form(fields: Record<string, string | undefined>) {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(fields)) {
+      if (value !== undefined && value !== "") params.set(key, value);
     }
-    if (!payload) throw new CloudSignError("CloudSign API returned no body", "invalid_response");
-    return payload;
+    return params.toString();
   }
 
   async createDocument(input: { title: string; note?: string }) {
+    // CloudSign /documents は form-urlencoded。title のみ送る（note は API 対象外）。
     const payload = await this.authed("/documents", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: input.title, ...(input.note ? { note: input.note } : {}) })
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: this.form({ title: input.title })
     });
     if (typeof payload.id !== "string") throw new CloudSignError("CloudSign createDocument returned no id", "invalid_response");
     return { id: payload.id };
   }
 
   async addFile(documentId: string, filename: string, pdf: Buffer) {
+    // multipart のファイル項目名は uploadfile（V1 実装準拠）。Content-Type は
+    // FormData に任せる（boundary 自動付与）ため明示しない。
     const form = new FormData();
-    form.append("files", new Blob([new Uint8Array(pdf)], { type: "application/pdf" }), filename);
+    form.append("uploadfile", new Blob([new Uint8Array(pdf)], { type: "application/pdf" }), filename);
     const payload = await this.authed(`/documents/${encodeURIComponent(documentId)}/files`, {
       method: "POST",
       body: form
@@ -95,17 +127,19 @@ export class FetchCloudSignApiClient implements CloudSignApiClient {
     return { id: typeof payload.id === "string" ? payload.id : documentId };
   }
 
-  async addParticipant(documentId: string, participant: { email: string; name: string; organization?: string }) {
-    const payload = await this.authed(`/documents/${encodeURIComponent(documentId)}/participants`, {
+  async addParticipant(participantDocumentId: string, participant: { email: string; name: string; organization?: string }) {
+    // participants は form-urlencoded（email/name/organization）。
+    const payload = await this.authed(`/documents/${encodeURIComponent(participantDocumentId)}/participants`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(participant)
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: this.form({ email: participant.email, name: participant.name, organization: participant.organization })
     });
     if (typeof payload.id !== "string") throw new CloudSignError("CloudSign addParticipant returned no id", "invalid_response");
     return { id: payload.id };
   }
 
   async send(documentId: string) {
+    // 送信確定は POST /documents/{id}（本文なし）。
     const payload = await this.authed(`/documents/${encodeURIComponent(documentId)}`, { method: "POST" });
     return { status: typeof payload.status === "string" ? payload.status : "sent" };
   }

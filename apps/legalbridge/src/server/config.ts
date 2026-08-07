@@ -85,9 +85,6 @@ export const config = {
     process.env.CLOUDSIGN_MODE === "live" ? "live" as const : "disabled" as const,
   cloudSignBaseUrl: (process.env.CLOUDSIGN_BASE_URL ?? "https://api.cloudsign.jp").trim(),
   cloudSignClientId: (process.env.CLOUDSIGN_CLIENT_ID ?? "").trim(),
-  // 実CloudSign OAuth が要求する場合のクライアントシークレット（設定時のみ /token へ付与）。
-  // 未設定なら従来どおり付与しない。認証方式の実API突合が別途必要。
-  cloudSignClientSecret: (process.env.CLOUDSIGN_CLIENT_SECRET ?? "").trim(),
   gmailInboundMode:
     process.env.GMAIL_INBOUND_MODE === "live" ? "live" as const : "disabled" as const,
   gmailInboundMailbox: (process.env.GMAIL_INBOUND_MAILBOX ?? "").trim(),

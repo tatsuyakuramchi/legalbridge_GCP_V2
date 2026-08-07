@@ -11,7 +11,7 @@ Gmail送受信 / CloudSign / Slack / Drive を1つずつ本番相当で点火す
 
 ## 1. 推奨点火順序（低リスク→高リスク）
 
-1. **Drive**（最も安全・実クライアント・V1実績）→ 2. **Gmail受信**（読取のみ）→ 3. **Slack**（配信・履歴/冪等が堅牢・要実xoxb）→ 4. **Gmail送信**（DWD必須・冪等未実装）→ 5. **CloudSign**（**認証未確定・要最終確認**）。
+1. **Drive**（最も安全・実クライアント・V1実績）→ 2. **Gmail受信**（読取のみ）→ 3. **Slack**（配信・履歴/冪等が堅牢・要実xoxb）→ 4. **Gmail送信**（DWD必須・冪等は5-1で対応済）→ 5. **CloudSign**（**API契約はV1準拠で確定・要実client_id**／永続化・冪等は小項目）。
 
 ---
 
@@ -41,13 +41,20 @@ Gmail送受信 / CloudSign / Slack / Drive を1つずつ本番相当で点火す
 - **ギャップ**：(a) ~~SA鍵がDriveブランチ従属~~ → **修正済**（鍵マウントを Drive/Gmail送信/Gmail受信 の共有条件へ切り出し）。(b) ~~冪等未実装~~ → **修正済（スライス5-1）**：送信履歴テーブル `lb_v2_gmail_send_history`（grant 019・append専用）＋dispatch の送信前照会で二重送信を防止。有効化は `GMAIL_SEND_HISTORY_ENABLED=true`（既定OFF・write-test限定・grant 019 適用が前提）。無効時は従来通り（後方互換）。
 - **検証**：preview（MIME確認）→ dispatch 1通。二重送信ガードは運用対応。
 
-### ⑤ CloudSign（署名依頼＋ステータス）— ⚠️ 認証未確定（最終確認必須）
-- **状態**：`cloudsign-api-adapter.ts` に**実HTTPクライアントの足場**あり（`POST /token?client_id=`→Bearer、`/documents`作成→ファイル→参加者→送信、`GET /documents/:id`）。ただしエンドポイント/認証は**想定値**。
-- **要最終確認（点火前ブロッカー）**：
-  - **トークン交換が未検証**：`POST /token?client_id=` に**クライアントシークレット無し・grant_type無し**。実CloudSign OAuthはほぼ確実にsecret/交換が必要。**部分対応（スライス5-4）**：`CLOUDSIGN_CLIENT_SECRET` env＋クライアント側フックを追加し、**設定時のみ** `/token` に `client_secret` を付与（未設定は従来挙動を厳密維持）。config/app 結線・テスト済。**ただしエンドポイント/verb/grant_type は依然想定値**であり、本フックだけでは live 化しない＝実APIとの突合が引き続き必須（本フックは確定後に「コード変更でなく設定＋シークレット投入」で済ませるための足場）。
-  - エンドポイント/送信verb（`POST /documents/:id`）も想定。
-  - `cloudSignDocumentId` を永続化せず（ステータス照会は呼び出し側がID保持）・冪等未実装。
-- **点火手順**：実 `client_id`（＋secret/認証方式の確定）、base URL、`CLOUDSIGN_MODE=live`・`CONFIRM_CLOUDSIGN_DISPATCH`・scope `cloudsign`・AUTH・`INTEGRATION_MODE=live`。**ただし上記認証確定が先**。
+### ⑤ CloudSign（署名依頼＋ステータス）— 🟡 API契約は確定（V1準拠）・残るは永続化/安全ガード
+- **状態**：`cloudsign-api-adapter.ts` の実HTTPクライアントを **V1（LegalBridge_AI_GCP `cloudSignService.ts`）の実動実装に突合して確定（スライス5-6）**。
+- **確定した実仕様（V1準拠・スライス5-6で反映）**：
+  - **トークン交換**：`POST /token` に **`client_id` のみを form-urlencoded body** で送る（**client_secret も grant_type も不要**）。`expires_in` を尊重してキャッシュ（30秒前倒し失効）、**401 は1回だけ再取得**。→ スライス5-4 の「secret 必須」想定は**誤りと判明**し、`CLOUDSIGN_CLIENT_SECRET` フックは撤去。
+  - **createDocument**：`POST /documents`（form-urlencoded・`title` のみ）。
+  - **addFile**：`POST /documents/:id/files`（multipart・項目名 **`uploadfile`**）。
+  - **addParticipant**：`POST /documents/:id/participants`（form-urlencoded・`email/name/organization`）。
+  - **send**：`POST /documents/:id`（本文なし）／**getDocument**：`GET /documents/:id`（既に一致）。
+  - base URL：`https://api.cloudsign.jp`（sandbox: `api-sandbox.cloudsign.jp`）。
+- **残る（点火をより安全にするための小項目・hard-blockではない）**：
+  - `cloudSignDocumentId` の永続化・送信冪等（Gmail 5-1 と同型の履歴テーブルが未整備。再送ガードは運用対応 or 別スライス）。
+  - 宛先allowlist（V1 の `CLOUDSIGN_ALLOWED_RECIPIENTS` 相当。検証中の誤送信防止に推奨）。
+  - reportees（CC共有先）は V2 未対応（必要時に追加）。
+- **点火手順**：実 `client_id`、base URL、`CLOUDSIGN_MODE=live`・`CONFIRM_CLOUDSIGN_DISPATCH`・scope `cloudsign`・AUTH・`INTEGRATION_MODE=live`。**認証方式は確定済み**のため、他の送信系コネクタと同じゲート運用で点火可能。
 
 ---
 
@@ -58,7 +65,7 @@ Gmail送受信 / CloudSign / Slack / Drive を1つずつ本番相当で点火す
 3. **Gmail/CloudSign に送信履歴・冪等強制が無い**（キーは算出するが未使用）。
    - **Gmail は修正済（スライス5-1）**：append専用の送信履歴テーブル `lb_v2_gmail_send_history`（grant 019・SELECT/INSERT のみ・`idempotency_key` 一意）を追加し、dispatch が送信前に既送信を照会→重複なら実送信せず受領を返す（`integrations.gmail="duplicate"`・200）。有効化は `GMAIL_SEND_HISTORY_ENABLED=true`（既定OFF・write-test限定）。
    - **CloudSign は未対応**：認証未確定（下記④）のため live 化不可。認証突合後に同型（履歴テーブル＋冪等）を追加する。
-4. **CloudSign認証の実突合**（上記④）。コード側は `CLOUDSIGN_CLIENT_SECRET` フックを追加済（スライス5-4・設定時のみ付与）だが、**エンドポイント/verb/grant_type の実API確定は外部依存で未了**（＝唯一の hard-block）。secret を live 化するには cloudbuild への Secret Manager マウント配線も別途必要。
+4. ~~**CloudSign認証の実突合**（上記④）~~ → **解消（スライス5-6）**：V1 実動クライアントに突合し、`/token` は `client_id` のみ form-urlencoded（secret/grant_type 不要）、`uploadfile` multipart、form-urlencoded の document/participant と確定。5-4 の client_secret フックは誤想定として撤去。残るは永続化/冪等/宛先allowlist の小項目（hard-block ではない）。
 5. ~~**Gmail受信の取込→登録書込導線**（②）~~ → **修正済（スライス5-2）**：隔離台帳 `lb_v2_inbound_contracts`（grant 020・append＋status）＋登録/一覧/状態遷移ルート。冪等（message+attachment指紋）。Driveバイト保管のみ別スライスへ（identity方式決定後）。
 6. **Slack候補フローの依頼者メール**：コード側の二重エスケープ・バグを修正済（スライス5-3・`optionalEmail`）。**残りは DB作業のみ** — `matter_overview_v` が `requester_email`/`created_by`/`requester` のいずれかで依頼者メールを露出すること。→ 手順・SQL を用意済：`infra/gcp/sql/021_matter_overview_requester_introspect.sql`（現行定義吸い出し）＋`docs/phase5-db-followups.md` §C（introspect→拡張ビュー適用→検証）。
 
