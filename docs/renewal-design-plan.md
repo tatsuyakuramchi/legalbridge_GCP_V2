@@ -288,7 +288,9 @@ Phase 7 は全フェーズの受け入れ後
 
 | 2026-08-07 | Phase 5 | スライス5-3：Slack依頼者宛先の二重エスケープ・バグ修正（`optionalEmail`）＋回帰テスト | — | ✅ |
 
-| 2026-08-07 | Phase 5 | スライス5-4：CloudSign `client_secret` フック（設定時のみ付与・実API突合の足場） | — | 🟡 |
+| 2026-08-07 | Phase 5 | スライス5-5：DB フォローアップ（019/020 本番作成＋付与・021 依頼者メール introspect・適用runbook） | — | ✅ |
+
+**スライス5-5（Phase 5 DB フォローアップ）**：コード側スライス（5-1〜5-4）で残った本番 DB 作業を実行可能な SQL＋手順として整備。①**A：`lb_v2_gmail_send_history` 本番版**（`019_gmail_send_history_production_grants.sql`＝006同型の作成＋runtime へ SELECT/INSERT・確認トークン `GRANT_PRODUCTION_GMAIL_SEND_HISTORY`＋read-only preflight）。②**B：`lb_v2_inbound_contracts` 本番版**（`020_..._production_grants.sql`＝作成＋SELECT/INSERT/UPDATE・トークン `GRANT_PRODUCTION_INBOUND_INTAKE`＋preflight）。③**C：gap ⑥ 依頼者メール露出**（`021_matter_overview_requester_introspect.sql`＝現行ビュー定義 `pg_get_viewdef` と `matters` の候補列を吸い出す読取専用調査）。ビュー現行定義が本 repo に無い（V1本番側）ため**盲目 `CREATE OR REPLACE` は不可**＝introspect→定義確定→拡張の順を `docs/phase5-db-followups.md` に明記（既存カラム全保持＋末尾に `requester_email` 1列追加、ロールバック付き）。全て preflight→本適用の二段。**残る唯一の hard-block は ④CloudSign 認証の実API突合（外部依存）**。
 
 **スライス5-4（CloudSign認証フック・部分対応）**：Phase 5 残ギャップ④の**コード側で安全に前進できる部分のみ**を対応。`FetchCloudSignApiClient` を options 化し `clientSecret` を受け取り、**設定時のみ** `/token` に `client_secret` を付与（未設定は従来リクエストと厳密同一）。config `cloudSignClientSecret`（`CLOUDSIGN_CLIENT_SECRET`）＋app.ts 結線＋トークン交換テスト2件（付与/非付与）。テスト440件。**これは live 化を保証しない**：エンドポイント/verb/grant_type は依然想定値で、**実CloudSign APIとの突合（外部依存）が唯一の hard-block として残存**。本フックは確定後に「コード変更でなく設定＋シークレット投入＋Secret Managerマウント配線」で済ませるための足場。
 
