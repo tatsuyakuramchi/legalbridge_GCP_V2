@@ -39,9 +39,11 @@ Driveと同じ Workspace サービスアカウント鍵を再利用できる（`
 
 デプロイ後 `/api/v2/runtime` の `writeCapabilities` に `gmail` が出れば能力ON。実送信は `integration_mode=live` かつ上記が揃ったときのみ。
 
-## ④-2 CloudSign：電子署名依頼（足場実装済み）
+## ④-2 CloudSign：電子署名依頼（実装済み・API契約はV1準拠で確定）
 
-確定済み文書のPDF（Drive連携と同じ描画パイプラインで生成）を CloudSign に送り、署名者へ依頼を発行する。API契約は CloudSign v2 の一般形（OAuth2 で `client_id` からトークン取得 → `/documents` 作成 → ファイル添付 → 参加者追加 → 送信）を想定した足場で、実URL・`client_id` は有効化時に確定する。
+確定済み文書のPDF（Drive連携と同じ描画パイプラインで生成）を CloudSign に送り、署名者へ依頼を発行する。**API契約は V1（LegalBridge_AI_GCP）の実動クライアントに突合して確定済み**（スライス5-6）：`POST /token` に **`client_id` のみを form-urlencoded**（client_secret 不要）→ `expires_in` 尊重・401再取得、`POST /documents`（form-urlencoded `title`）→ `POST /documents/:id/files`（multipart `uploadfile`）→ `POST /documents/:id/participants`（form-urlencoded）→ `POST /documents/:id`（送信確定）。
+
+**送信堅牢化（スライス5-7）**：二重依頼防止の冪等履歴 `lb_v2_cloudsign_requests`（`CLOUDSIGN_REQUEST_HISTORY_ENABLED=true`＋grant 022）と、**宛先allowlist `CLOUDSIGN_ALLOWED_RECIPIENTS`**（設定時は全宛先が集合内であることを要求・検証中は必須）。
 
 ### API
 
@@ -55,10 +57,10 @@ Driveと同じ Workspace サービスアカウント鍵を再利用できる（`
 `_WRITE_SCOPES` 末尾に `,cloudsign` を追加（順序：`...,gmail,cloudsign`）し、次を追加:
 
 ```
-|_CLOUDSIGN_MODE=live|_CONFIRM_CLOUDSIGN_DISPATCH=CLOUDSIGN_DISPATCH_VALIDATION_ONLY|_CLOUDSIGN_CLIENT_ID=<CloudSignのclient_id>
+|_CLOUDSIGN_MODE=live|_CONFIRM_CLOUDSIGN_DISPATCH=CLOUDSIGN_DISPATCH_VALIDATION_ONLY|_CLOUDSIGN_CLIENT_ID=<CloudSignのclient_id>|_CLOUDSIGN_ALLOWED_RECIPIENTS=<検証宛先1,検証宛先2>|_CLOUDSIGN_REQUEST_HISTORY_ENABLED=true
 ```
 
-`_CLOUDSIGN_BASE_URL` は既定 `https://api.cloudsign.jp`。かつ `INTEGRATION_MODE=live` が必要（未設定なら `integration_local` でブロック）。実発火前に、CloudSign の実APIエンドポイント／認証方式を最終確認して調整すること（足場は差し替え可能な client 層に分離済み）。
+`_CLOUDSIGN_BASE_URL` は既定 `https://api.cloudsign.jp`（sandbox は `https://api-sandbox.cloudsign.jp`）。かつ `INTEGRATION_MODE=live` が必要（未設定なら `integration_local` でブロック）。**verify は live 点火時に `CLOUDSIGN_ALLOWED_RECIPIENTS` 必須**（検証中の誤送信防止）。`CLOUDSIGN_REQUEST_HISTORY_ENABLED=true` は事前に grant 022 の適用が前提（`docs/phase5-db-followups.md` §D）。詳細な点火手順は **`docs/phase5-cloudsign-ignition.md`**。
 
 ## ④-3 CloudSign：署名完了ステータス取込（足場実装済み）
 
