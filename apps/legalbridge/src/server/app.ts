@@ -198,6 +198,10 @@ import {
 import { GmailInboundApiAdapter, FetchGmailInboundApiClient } from "./integrations/gmail-inbound-api-adapter.js";
 import { createGmailInboundRouter } from "./documents/gmail-inbound-routes.js";
 import {
+  PgInboundContractRepository,
+  type InboundContractRepository
+} from "./integrations/inbound-contract-repository.js";
+import {
   PgSlackNotificationApprovalRepository,
   type SlackNotificationApprovalRepository
 } from "./integrations/slack-approval-repository.js";
@@ -319,6 +323,7 @@ export interface AppDependencies {
   slackHistory?: SlackNotificationHistoryRepository;
   slackApprovals?: SlackNotificationApprovalRepository;
   gmailSendHistory?: GmailSendHistoryRepository;
+  inboundContracts?: InboundContractRepository;
   outboundConditions?: OutboundConditionRepository;
   contractIntakes?: ContractIntakeRepository;
   contractIntakeDocuments?: ContractIntakeDocumentSourceRepository;
@@ -431,6 +436,9 @@ function createDefaultDependencies(): AppDependencies {
       : undefined,
     gmailSendHistory: database && config.gmailSendHistoryEnabled
       ? new PgGmailSendHistoryRepository(database)
+      : undefined,
+    inboundContracts: database && config.gmailInboundIntakeEnabled
+      ? new PgInboundContractRepository(database)
       : undefined,
     outboundConditions: outboundDatabase
       ? new PgOutboundConditionRepository(outboundDatabase)
@@ -971,7 +979,7 @@ export function createApp(
     documentRegistry, dependencies.templates, pdfRenderer, cloudSignAdapter, cloudSignGateSettings));
   app.use("/api/v2", createGmailInboundRouter(gmailInboundAdapter, {
     enabled: gmailInboundEnabled, query: config.gmailInboundQuery, mailbox: config.gmailInboundMailbox
-  }));
+  }, dependencies.inboundContracts));
   app.use("/api/v2", createLedgerRouter(
     dependencies.ledgers ?? new MemoryLedgerRepository()
   ));

@@ -484,6 +484,26 @@ case "${GMAIL_INBOUND_MODE}" in
     exit 1
     ;;
 esac
+# 受信取込の登録台帳（append専用・grant 020 で lb_v2_inbound_contracts を作成・
+# SELECT/INSERT/UPDATE のみ付与）。有効化は隔離検証DB＋write-testサービスに限定する。
+case "${GMAIL_INBOUND_INTAKE_ENABLED}" in
+  false)
+    ;;
+  true)
+    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
+      echo "Gmail inbound intake blocked: append-only intake ledger is limited to the write-test service."
+      exit 1
+    fi
+    if [ "${DB_NAME}" != "legalbridge_v2_validation" ] && [ "${DB_NAME}" != "legalbridge" ]; then
+      echo "Gmail inbound intake blocked: unexpected database target."
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Deployment blocked: GMAIL_INBOUND_INTAKE_ENABLED must be true or false."
+    exit 1
+    ;;
+esac
 case "${SLACK_APPROVAL_WRITES_ENABLED}" in
   false)
     ;;

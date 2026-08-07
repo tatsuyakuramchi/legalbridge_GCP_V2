@@ -26,7 +26,7 @@ Gmail送受信 / CloudSign / Slack / Drive を1つずつ本番相当で点火す
 ### ② Gmail受信（契約PDF取込）— 🟡 読取点火可・ただし「取込→登録」の書込導線は未実装
 - **状態**：`gmail-inbound-api-adapter.ts`（`gmail.readonly`＋DWD `subject=mailbox`）で `messages.list/get/attachments` を叩き、PDF添付メッセージのみ抽出。ルートは read（`GET /gmail-inbound/contracts`・`.../attachments/:id`）。
 - **点火手順**：`gmail.readonly` のドメイン全体委任をSAに付与し対象メールボックスへ委任、`GMAIL_INBOUND_MAILBOX`、鍵secret、`GMAIL_INBOUND_MODE=live`・`CONFIRM_GMAIL_INBOUND=GMAIL_INBOUND_VALIDATION_ONLY`・scope `gmail-inbound`・AUTH。`INTEGRATION_MODE` 不要（読取）。
-- **ギャップ**：**取得PDFはクライアントへ返すのみで、文書レジストリ/Driveへ保存する書込導線が無い**（＝ブラウズ＋DLまで）。SA鍵マウントがDriveブランチに従属（下記共通ギャップ）。
+- **ギャップ**：(a) ~~取込→登録の書込導線が無い（閲覧+DLまで）~~ → **修正済（スライス5-2）**：隔離台帳 `lb_v2_inbound_contracts`（grant 020・append＋status）への取込登録導線を追加。`POST /gmail-inbound/messages/:m/attachments/:a/register` が添付を取得・PDF検証し台帳に1件記録（`message+attachment` 指紋で冪等・再登録は `intake="duplicate"`・200）。`GET /gmail-inbound/registered`（一覧・status絞込）と `POST /gmail-inbound/registered/:key/status`（captured→linked/dismissed）。有効化 `GMAIL_INBOUND_INTAKE_ENABLED=true`（既定OFF・write-test限定）。**本番 `documents` テーブルには触れない**（identity名前空間を汚さない）。(b) **Driveバイト保管は未対応**：受信PDFの実バイトをDriveへ格納する導線は identity方式（appProperties）決定後に別スライス。SA鍵マウントは共通ギャップ2で解消済。
 - **検証**：`GET /gmail-inbound/contracts?q=` が対象箱のPDF添付課題を返すこと。
 
 ### ③ Slack配信 — 🟡 実xoxbトークン待ち（パイプラインは堅牢）
@@ -59,7 +59,7 @@ Gmail送受信 / CloudSign / Slack / Drive を1つずつ本番相当で点火す
    - **Gmail は修正済（スライス5-1）**：append専用の送信履歴テーブル `lb_v2_gmail_send_history`（grant 019・SELECT/INSERT のみ・`idempotency_key` 一意）を追加し、dispatch が送信前に既送信を照会→重複なら実送信せず受領を返す（`integrations.gmail="duplicate"`・200）。有効化は `GMAIL_SEND_HISTORY_ENABLED=true`（既定OFF・write-test限定）。
    - **CloudSign は未対応**：認証未確定（下記④）のため live 化不可。認証突合後に同型（履歴テーブル＋冪等）を追加する。
 4. **CloudSign認証の実突合**（上記④）。
-5. **Gmail受信の取込→登録書込導線**（②）。
+5. ~~**Gmail受信の取込→登録書込導線**（②）~~ → **修正済（スライス5-2）**：隔離台帳 `lb_v2_inbound_contracts`（grant 020・append＋status）＋登録/一覧/状態遷移ルート。冪等（message+attachment指紋）。Driveバイト保管のみ別スライスへ（identity方式決定後）。
 6. **Slack候補フローの依頼者メール**（`matter_overview_v` 拡充・DBビュー作業）。
 
 ## 4. 有効化・検証の共通チェックリスト

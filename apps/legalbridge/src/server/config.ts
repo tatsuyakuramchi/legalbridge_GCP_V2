@@ -90,6 +90,9 @@ export const config = {
   gmailInboundMailbox: (process.env.GMAIL_INBOUND_MAILBOX ?? "").trim(),
   gmailInboundQuery:
     (process.env.GMAIL_INBOUND_QUERY ?? "has:attachment filename:pdf newer_than:180d").trim(),
+  // 受信取込を隔離台帳へ登録する導線（append専用・既定OFF）。
+  gmailInboundIntakeEnabled:
+    process.env.GMAIL_INBOUND_INTAKE_ENABLED === "true",
   backlogMode: backlogMode(process.env.BACKLOG_MODE),
   backlogHost: process.env.BACKLOG_HOST ?? "",
   backlogProjectKey: process.env.BACKLOG_PROJECT_KEY ?? "",
