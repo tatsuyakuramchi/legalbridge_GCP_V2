@@ -81,6 +81,10 @@ import {
   type MatterIssueWriteRepository
 } from "./matters/matter-issue-write-repository.js";
 import {
+  PgMatterDocumentWriteRepository,
+  type MatterDocumentWriteRepository
+} from "./matters/matter-document-write-repository.js";
+import {
   LiveMatterSlackNotifier,
   NoopMatterSlackNotifier,
   type MatterSlackNotifier
@@ -334,6 +338,7 @@ export interface AppDependencies {
   matters?: MatterRepository;
   matterWrites?: MatterWriteRepository;
   matterIssueWrites?: MatterIssueWriteRepository;
+  matterDocumentWrites?: MatterDocumentWriteRepository;
   conditionLines?: ConditionLineRepository;
   pendingInspections?: PendingInspectionRepository;
   vendorWrites?: VendorWriteRepository;
@@ -414,6 +419,7 @@ function createDefaultDependencies(): AppDependencies {
       ? new PgMatterWriteRepository(database)
       : new MemoryMatterWriteRepository(),
     matterIssueWrites: database ? new PgMatterIssueWriteRepository(database) : undefined,
+    matterDocumentWrites: database ? new PgMatterDocumentWriteRepository(database) : undefined,
     conditionLines: database
       ? new PgConditionLineRepository(database)
       : new MemoryConditionLineRepository(),
@@ -924,7 +930,9 @@ export function createApp(
       (request.method === "POST" && /^\/matters\/\d+\/tasks$/.test(request.path)) ||
       (request.method === "PATCH" && /^\/matters\/\d+\/tasks\/\d+$/.test(request.path)) ||
       (request.method === "POST" && /^\/matters\/\d+\/issues$/.test(request.path)) ||
-      (request.method === "DELETE" && /^\/matters\/\d+\/issues\/[^/]+$/.test(request.path));
+      (request.method === "DELETE" && /^\/matters\/\d+\/issues\/[^/]+$/.test(request.path)) ||
+      (request.method === "POST" && /^\/matters\/\d+\/documents$/.test(request.path)) ||
+      (request.method === "DELETE" && /^\/matters\/\d+\/documents\/\d+$/.test(request.path));
     if (matterWriteEnabled && isMatterWrite) return next();
     const isVendorWrite =
       (request.method === "POST" && (request.path === "/vendors" || request.path === "/vendors/import")) ||
@@ -1009,7 +1017,8 @@ export function createApp(
     dependencies.matterWrites,
     matterWriteEnabled,
     matterSlackNotifier,
-    dependencies.matterIssueWrites
+    dependencies.matterIssueWrites,
+    dependencies.matterDocumentWrites
   ));
   // 案件 Slack スレッド（法務相談・メンション・定型文）。
   const drivePermissionGranter: DrivePermissionGranter =

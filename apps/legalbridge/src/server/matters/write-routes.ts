@@ -8,6 +8,7 @@ import { NoopMatterSlackNotifier, type MatterSlackNotifier } from "./matter-slac
 import {
   MATTER_ISSUE_RELATIONS, type MatterIssueWriteRepository
 } from "./matter-issue-write-repository.js";
+import type { MatterDocumentWriteRepository } from "./matter-document-write-repository.js";
 
 const matterPath = z.object({ id: z.coerce.number().int().positive() });
 const taskPath = z.object({
@@ -35,7 +36,8 @@ function statusFor(code: string) {
   if (code === "MATTER_REFERENCE_INVALID") return 422;
   if (code === "MATTER_CONFLICT") return 409;
   if (code === "MATTER_CHECK_FAILED") return 422;
-  if (code === "MATTER_ISSUE_GRANT_MISSING") return 503;
+  if (code === "MATTER_ISSUE_GRANT_MISSING" || code === "MATTER_DOCUMENT_GRANT_MISSING") return 503;
+  if (code === "MATTER_DOCUMENT_NOT_FOUND") return 404;
   return 400;
 }
 
@@ -50,11 +52,18 @@ const issueKeyPath = z.object({
   key: z.string().trim().min(1).max(50)
 });
 
+const documentPath = z.object({
+  id: z.coerce.number().int().positive(),
+  docId: z.coerce.number().int().positive()
+});
+const documentLinkBody = z.object({ documentId: z.coerce.number().int().positive() });
+
 export function createMatterWriteRouter(
   matters: MatterWriteRepository | undefined,
   writeEnabled = false,
   notifier: MatterSlackNotifier = new NoopMatterSlackNotifier(),
-  issues?: MatterIssueWriteRepository
+  issues?: MatterIssueWriteRepository,
+  documents?: MatterDocumentWriteRepository
 ) {
   const router = Router();
 
@@ -145,6 +154,32 @@ export function createMatterWriteRouter(
       if (!editorAllowed(response.locals.currentUser?.role)) return forbidden(response);
       const { id, key } = issueKeyPath.parse(request.params);
       const removed = await issues.detach(id, key);
+      return response.status(200).json({ removed });
+    } catch (error) {
+      return handleError(error, response, next);
+    }
+  });
+
+  // 案件⇄文書のリンク（付け替え＝matter_id 設定 / 解除＝NULL）。案件編集権限を共有。
+  router.post("/matters/:id/documents", async (request, response, next) => {
+    try {
+      if (!writeEnabled || !documents) return unavailable(response);
+      if (!editorAllowed(response.locals.currentUser?.role)) return forbidden(response);
+      const { id } = matterPath.parse(request.params);
+      const { documentId } = documentLinkBody.parse(request.body);
+      const linked = await documents.link(id, documentId);
+      return response.status(201).json({ document: linked });
+    } catch (error) {
+      return handleError(error, response, next);
+    }
+  });
+
+  router.delete("/matters/:id/documents/:docId", async (request, response, next) => {
+    try {
+      if (!writeEnabled || !documents) return unavailable(response);
+      if (!editorAllowed(response.locals.currentUser?.role)) return forbidden(response);
+      const { id, docId } = documentPath.parse(request.params);
+      const removed = await documents.unlink(id, docId);
       return response.status(200).json({ removed });
     } catch (error) {
       return handleError(error, response, next);

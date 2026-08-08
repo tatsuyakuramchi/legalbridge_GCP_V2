@@ -294,6 +294,10 @@ Phase 7 は全フェーズの受け入れ後
 
 | 2026-08-07 | Phase 5 | 点火準備：CloudSign 点火 Runbook 新設＋gmail-cloudsign.md を確定仕様へ更新 | — | ✅ |
 
+| 2026-08-08 | Phase 8 | 案件管理パリティ 8-2：文書リンク/解除（documents.matter_id・grant 026 列レベルUPDATE） | LegalBridge_AI_GCP | ✅ |
+
+**スライス8-2（文書リンク/解除）**：案件⇄文書の紐付け付け替え。`matter-document-write-repository.ts`（Pg/Memory・`link`=`UPDATE documents SET matter_id`・対象無し404／`unlink`=`SET matter_id=NULL`）。grant 026＝**`documents` の列レベル `UPDATE(matter_id)` のみ**（最小権限・他列更新不可）＋preflight。ルート `POST/DELETE /matters/:id/documents(/:docId)`（`matterWriteEnabled` 共有・write-guard allowlist 追加）。UI＝`MatterDocumentLinks`（文書ID紐付け／行ごと解除）。テスト492件・build緑。`from-drive`（Drive→新規文書INSERT）は V1固有列のため 8-2b へ。
+
 | 2026-08-08 | Phase 8 | 案件管理パリティ 8-1：課題（Backlog）紐付け 追加/解除（grant 025・matterWrites 共有） | LegalBridge_AI_GCP | ✅ |
 
 **スライス8-1（課題紐付け）**：V1 突合で判明した案件管理欠落（Drive/課題/文書リンク/送信履歴/名寄せ/削除）のうち、中心的な **課題（Backlog）紐付け 追加/解除** を移植。`matter-issue-write-repository.ts`（Pg/Memory・`attach`=V1 準拠 UPSERT／`detach`=解除のみ・権限不足42501→`MATTER_ISSUE_GRANT_MISSING`503）。`write-routes` に `POST /matters/:id/issues`・`DELETE /matters/:id/issues/:key`（**既存 `matterWriteEnabled`＝scope `matters` を共有**・フラグ乱立回避）＋app.ts write-guard allowlist 追加。grant 025（`matter_issues` INSERT/UPDATE/DELETE・トークン `GRANT_PRODUCTION_MATTER_ISSUE_LINKS`）＋preflight（008 は matters/matter_tasks のみだったため新設）。UI＝`MatterRegistry` 関連課題に `MatterIssueLinks`（キー＋relation で紐付け／行ごとに解除）。テスト全緑・client build 緑。設計は `docs/phase8-matter-management.md`。残：8-2 文書リンク / 8-3 送信履歴 / 8-4 Driveフォルダ / 8-5 名寄せ / 8-6 削除。

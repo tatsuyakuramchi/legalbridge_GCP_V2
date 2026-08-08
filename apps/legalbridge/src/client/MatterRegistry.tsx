@@ -204,7 +204,7 @@ function MatterDetail({ detail, labels, canEdit, onChanged, onCreateDocument }:
         canEdit={canEdit} onChanged={onChanged} />)}
     </DetailSection>
     <DetailSection title={`関連文書 ${detail.documents.length}`}>
-      {detail.documents.map((document) => <article key={document.id}><b>{document.documentNumber ?? "未発番"}</b><span>{labels.get(document.templateType) ?? document.templateType}</span><small>{document.issueKey}・{formatDate(document.createdAt)}</small>{document.driveLink && <a href={document.driveLink} target="_blank" rel="noreferrer">開く</a>}</article>)}
+      <MatterDocumentLinks matterId={matter.id} documents={detail.documents} labels={labels} canEdit={canEdit} onChanged={onChanged} />
     </DetailSection>
     {matter.remarks && <DetailSection title="備考"><p>{matter.remarks}</p></DetailSection>}
     {canEdit && <MatterSlackPanel matterId={matter.id} />}
@@ -249,6 +249,40 @@ function MatterIssueLinks({ matterId, issues, canEdit, onChanged }:
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ backlogIssueKey: key.trim(), relation })
         }), "課題を紐付けました").then(() => setKey(""))}>紐付け</button>
+    </div>}
+  </>;
+}
+
+function MatterDocumentLinks({ matterId, documents, labels, canEdit, onChanged }:
+  { matterId: number; documents: Detail["documents"]; labels: Map<string, string>; canEdit: boolean; onChanged: () => void }) {
+  const toast = useToast();
+  const [docId, setDocId] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function run(request: Promise<Response>, ok: string) {
+    setBusy(true);
+    try {
+      await toast.run(request.then(async (r) => { if (!r.ok) throw new Error("失敗しました"); }), ok);
+      onChanged();
+    } catch { /* toast shown */ }
+    finally { setBusy(false); }
+  }
+  return <>
+    {documents.map((document) => <article key={document.id}>
+      <b>{document.documentNumber ?? "未発番"}</b>
+      <span>{labels.get(document.templateType) ?? document.templateType}</span>
+      <small>{document.issueKey}・{formatDate(document.createdAt)}</small>
+      {document.driveLink && <a href={document.driveLink} target="_blank" rel="noreferrer">開く</a>}
+      {canEdit && <button className="link-remove" disabled={busy}
+        onClick={() => run(fetch(`/api/v2/matters/${matterId}/documents/${document.id}`, { method: "DELETE" }), "文書の紐付けを解除しました")}>解除</button>}
+    </article>)}
+    {!documents.length && <small className="muted-note">紐付いた文書はありません。</small>}
+    {canEdit && <div className="issue-link-form">
+      <input value={docId} placeholder="文書ID" inputMode="numeric" onChange={(e) => setDocId(e.target.value.replace(/[^0-9]/g, ""))} />
+      <button className="primary" disabled={busy || !docId}
+        onClick={() => run(fetch(`/api/v2/matters/${matterId}/documents`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ documentId: Number(docId) })
+        }), "文書を紐付けました").then(() => setDocId(""))}>紐付け</button>
     </div>}
   </>;
 }

@@ -9,7 +9,7 @@ list/detail/create/update/task と Slack（Phase 7）まで。以下を guarded-
 | 機能 | V1 | Phase 8 |
 |---|---|---|
 | 課題（Backlog）紐付け 追加/解除（`matter_issues`） | あり | **8-1 実装済** |
-| 文書リンク/解除（`documents.matter_id`） | あり | 8-2（予定） |
+| 文書リンク/解除（`documents.matter_id`） | あり | **8-2 実装済** |
 | 送信履歴（`document_sends`：email/slack/drive/manual） | あり | 8-3（予定） |
 | Drive フォルダ連携（作成/添付/一覧/Drive→文書登録） | あり | 8-4（予定・重量級） |
 | 名寄せ（案件マージ/absorb） | あり | 8-5（予定・複数表write） |
@@ -32,12 +32,28 @@ list/detail/create/update/task と Slack（Phase 7）まで。以下を guarded-
   `MATTER_WRITES_ENABLED` を再利用。有効化時は grant 025 の適用が前提（未適用は 503）。
 - テスト（attach UPSERT・detach removed・503/403・400）。
 
+## スライス 8-2（実装済）：文書リンク/解除
+
+- **grant 026**（`026_production_matter_document_links_grants.sql`・トークン
+  `GRANT_PRODUCTION_MATTER_DOCUMENT_LINKS`）：`documents` に**列レベル UPDATE(matter_id) のみ**を付与
+  （最小権限・他列は更新不可）＋preflight（`role_column_grants` で確認）。
+- `matter-document-write-repository.ts`（Pg/Memory）：`link`（`UPDATE documents SET matter_id`・
+  対象無しは `MATTER_DOCUMENT_NOT_FOUND`404）／`unlink`（`SET matter_id=NULL WHERE ... AND matter_id`・
+  removed 返却）。42501→`MATTER_DOCUMENT_GRANT_MISSING`503。
+- ルート（`matterWriteEnabled` 共有）：`POST /matters/:id/documents`（documentId 指定）／
+  `DELETE /matters/:id/documents/:docId`。write-guard allowlist にも追加。
+- UI：`MatterRegistry` 関連文書に `MatterDocumentLinks`（文書ID入力で紐付け／各行に解除）。
+- `from-drive`（Drive ファイルから新規文書INSERT）は V1 固有列を含むため別途（8-2b 予定）。
+
 ## 有効化
 
-案件編集（`MATTER_WRITES_ENABLED=true`＋scope `matters`）に加え、**grant 025 を本番適用**：
+案件編集（`MATTER_WRITES_ENABLED=true`＋scope `matters`）に加え、**grant 025/026 を本番適用**：
 
 ```bash
 psql "$RUNTIME_ADMIN_DSN" -f infra/gcp/sql/025_production_matter_issue_links_preflight.sql || true
 psql "$RUNTIME_ADMIN_DSN" -v confirm_matter_issue_links=GRANT_PRODUCTION_MATTER_ISSUE_LINKS \
   -f infra/gcp/sql/025_production_matter_issue_links_grants.sql
+psql "$RUNTIME_ADMIN_DSN" -f infra/gcp/sql/026_production_matter_document_links_preflight.sql || true
+psql "$RUNTIME_ADMIN_DSN" -v confirm_matter_document_links=GRANT_PRODUCTION_MATTER_DOCUMENT_LINKS \
+  -f infra/gcp/sql/026_production_matter_document_links_grants.sql
 ```

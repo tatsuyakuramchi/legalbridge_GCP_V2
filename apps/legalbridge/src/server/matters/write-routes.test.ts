@@ -6,10 +6,14 @@ import { createMatterWriteRouter } from "./write-routes.js";
 import { MemoryMatterWriteRepository } from "./write-repository.js";
 import { NoopMatterSlackNotifier } from "./matter-slack-notifier.js";
 import { MemoryMatterIssueWriteRepository } from "./matter-issue-write-repository.js";
+import { MemoryMatterDocumentWriteRepository } from "./matter-document-write-repository.js";
 
 function appFor(options: { enabled: boolean; role?: "admin" | "legal" | "requester" }) {
   const repository = new MemoryMatterWriteRepository();
   const issues = new MemoryMatterIssueWriteRepository();
+  const documents = new MemoryMatterDocumentWriteRepository([
+    { id: 9, documentNumber: "DOC-9", driveLink: "https://drive.example/9" }
+  ]);
   const app = express();
   app.use(express.json());
   app.use((_request, response, next) => {
@@ -21,8 +25,8 @@ function appFor(options: { enabled: boolean; role?: "admin" | "legal" | "request
     };
     next();
   });
-  app.use("/api/v2", createMatterWriteRouter(repository, options.enabled, new NoopMatterSlackNotifier(), issues));
-  return { app, repository, issues };
+  app.use("/api/v2", createMatterWriteRouter(repository, options.enabled, new NoopMatterSlackNotifier(), issues, documents));
+  return { app, repository, issues, documents };
 }
 
 test("案件検証は不正な本文を拒否する", async () => {
@@ -152,4 +156,35 @@ test("課題紐付け: キー無しは400", async () => {
   const { app } = appFor({ enabled: true });
   const res = await request(app).post("/api/v2/matters/5/issues").send({ relation: "related" });
   assert.equal(res.status, 400);
+});
+
+test("文書リンク: 付け替えは文書情報を返す", async () => {
+  const { app } = appFor({ enabled: true });
+  const res = await request(app).post("/api/v2/matters/5/documents").send({ documentId: 9 });
+  assert.equal(res.status, 201);
+  assert.equal(res.body.document.documentNumber, "DOC-9");
+});
+
+test("文書リンク: 存在しない文書は404", async () => {
+  const { app } = appFor({ enabled: true });
+  const res = await request(app).post("/api/v2/matters/5/documents").send({ documentId: 404 });
+  assert.equal(res.status, 404);
+  assert.equal(res.body.code, "MATTER_DOCUMENT_NOT_FOUND");
+});
+
+test("文書リンク: 解除は removed を返す", async () => {
+  const { app } = appFor({ enabled: true });
+  await request(app).post("/api/v2/matters/5/documents").send({ documentId: 9 });
+  const res = await request(app).delete("/api/v2/matters/5/documents/9");
+  assert.equal(res.status, 200);
+  assert.equal(res.body.removed, true);
+  const miss = await request(app).delete("/api/v2/matters/5/documents/9");
+  assert.equal(miss.body.removed, false);
+});
+
+test("文書リンク: 書込無効は503、documentId 無しは400", async () => {
+  const off = await request(appFor({ enabled: false }).app).post("/api/v2/matters/5/documents").send({ documentId: 9 });
+  assert.equal(off.status, 503);
+  const bad = await request(appFor({ enabled: true }).app).post("/api/v2/matters/5/documents").send({});
+  assert.equal(bad.status, 400);
 });
