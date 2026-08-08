@@ -194,7 +194,7 @@ function MatterDetail({ detail, labels, canEdit, onChanged, onCreateDocument }:
     {matter.blockedReason && <p className="matter-blocked">停滞理由：{matter.blockedReason}</p>}
     {matter.driveFolderUrl && <a className="drive-link" href={matter.driveFolderUrl} target="_blank" rel="noreferrer">案件フォルダを開く</a>}
     <DetailSection title={`関連課題 ${detail.issues.length}`}>
-      {detail.issues.map((issue) => <article key={issue.issueKey}><b>{issue.issueKey}</b><span>{issue.summary ?? issue.relation}</span><small>{issue.note}</small></article>)}
+      <MatterIssueLinks matterId={matter.id} issues={detail.issues} canEdit={canEdit} onChanged={onChanged} />
     </DetailSection>
     <DetailSection title={`次アクション・タスク ${detail.tasks.length}`}
       action={canEdit && !addingTask ? <button onClick={() => setAddingTask(true)}>＋ タスク追加</button> : undefined}>
@@ -209,6 +209,48 @@ function MatterDetail({ detail, labels, canEdit, onChanged, onCreateDocument }:
     {matter.remarks && <DetailSection title="備考"><p>{matter.remarks}</p></DetailSection>}
     {canEdit && <MatterSlackPanel matterId={matter.id} />}
   </aside>;
+}
+
+const ISSUE_RELATIONS: Array<{ value: string; label: string }> = [
+  { value: "primary", label: "主" }, { value: "duplicate", label: "重複" },
+  { value: "partial", label: "部分" }, { value: "related", label: "関連" }
+];
+
+function MatterIssueLinks({ matterId, issues, canEdit, onChanged }:
+  { matterId: number; issues: Detail["issues"]; canEdit: boolean; onChanged: () => void }) {
+  const toast = useToast();
+  const [key, setKey] = useState("");
+  const [relation, setRelation] = useState("related");
+  const [busy, setBusy] = useState(false);
+  async function run(request: Promise<Response>, ok: string) {
+    setBusy(true);
+    try {
+      await toast.run(request.then(async (r) => { if (!r.ok) throw new Error("失敗しました"); }), ok);
+      onChanged();
+    } catch { /* toast shown */ }
+    finally { setBusy(false); }
+  }
+  return <>
+    {issues.map((issue) => <article key={issue.issueKey}>
+      <b>{issue.issueKey}</b>
+      <span>{issue.summary ?? (ISSUE_RELATIONS.find((r) => r.value === issue.relation)?.label ?? issue.relation)}</span>
+      <small>{issue.note}</small>
+      {canEdit && <button className="link-remove" disabled={busy}
+        onClick={() => run(fetch(`/api/v2/matters/${matterId}/issues/${encodeURIComponent(issue.issueKey)}`, { method: "DELETE" }), "紐付けを解除しました")}>解除</button>}
+    </article>)}
+    {!issues.length && <small className="muted-note">紐付いた課題はありません。</small>}
+    {canEdit && <div className="issue-link-form">
+      <input value={key} placeholder="課題キー（例 LB-123）" onChange={(e) => setKey(e.target.value)} />
+      <select value={relation} onChange={(e) => setRelation(e.target.value)}>
+        {ISSUE_RELATIONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+      </select>
+      <button className="primary" disabled={busy || !key.trim()}
+        onClick={() => run(fetch(`/api/v2/matters/${matterId}/issues`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ backlogIssueKey: key.trim(), relation })
+        }), "課題を紐付けました").then(() => setKey(""))}>紐付け</button>
+    </div>}
+  </>;
 }
 
 function InlineMatterControls({ matter, onChanged }:

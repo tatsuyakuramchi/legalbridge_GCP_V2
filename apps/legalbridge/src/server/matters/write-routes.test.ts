@@ -4,9 +4,12 @@ import express from "express";
 import request from "supertest";
 import { createMatterWriteRouter } from "./write-routes.js";
 import { MemoryMatterWriteRepository } from "./write-repository.js";
+import { NoopMatterSlackNotifier } from "./matter-slack-notifier.js";
+import { MemoryMatterIssueWriteRepository } from "./matter-issue-write-repository.js";
 
 function appFor(options: { enabled: boolean; role?: "admin" | "legal" | "requester" }) {
   const repository = new MemoryMatterWriteRepository();
+  const issues = new MemoryMatterIssueWriteRepository();
   const app = express();
   app.use(express.json());
   app.use((_request, response, next) => {
@@ -18,8 +21,8 @@ function appFor(options: { enabled: boolean; role?: "admin" | "legal" | "request
     };
     next();
   });
-  app.use("/api/v2", createMatterWriteRouter(repository, options.enabled));
-  return { app, repository };
+  app.use("/api/v2", createMatterWriteRouter(repository, options.enabled, new NoopMatterSlackNotifier(), issues));
+  return { app, repository, issues };
 }
 
 test("案件検証は不正な本文を拒否する", async () => {
@@ -112,4 +115,41 @@ test("存在しないタスクの更新は404を返す", async () => {
     .send({ status: "done" });
   assert.equal(response.status, 404);
   assert.equal(response.body.code, "MATTER_TASK_NOT_FOUND");
+});
+
+test("課題紐付け: 追加はUPSERTで返り、案件編集権限を要する", async () => {
+  const { app, issues } = appFor({ enabled: true });
+  const res = await request(app).post("/api/v2/matters/5/issues")
+    .send({ backlogIssueKey: "LB-9", relation: "duplicate", note: "重複" });
+  assert.equal(res.status, 201);
+  assert.equal(res.body.issue.backlogIssueKey, "LB-9");
+  assert.equal(res.body.issue.relation, "duplicate");
+  // 再追加は UPSERT（relation 更新）。
+  const again = await request(app).post("/api/v2/matters/5/issues")
+    .send({ backlogIssueKey: "LB-9", relation: "related" });
+  assert.equal(again.body.issue.relation, "related");
+  assert.equal((await issues.detach(5, "LB-9")), true);
+});
+
+test("課題紐付け: 解除は removed を返す", async () => {
+  const { app } = appFor({ enabled: true });
+  await request(app).post("/api/v2/matters/5/issues").send({ backlogIssueKey: "LB-9" });
+  const res = await request(app).delete("/api/v2/matters/5/issues/LB-9");
+  assert.equal(res.status, 200);
+  assert.equal(res.body.removed, true);
+  const miss = await request(app).delete("/api/v2/matters/5/issues/LB-404");
+  assert.equal(miss.body.removed, false);
+});
+
+test("課題紐付け: 書込無効時は503、依頼者は403", async () => {
+  const off = await request(appFor({ enabled: false }).app).post("/api/v2/matters/5/issues").send({ backlogIssueKey: "LB-9" });
+  assert.equal(off.status, 503);
+  const req = await request(appFor({ enabled: true, role: "requester" }).app).post("/api/v2/matters/5/issues").send({ backlogIssueKey: "LB-9" });
+  assert.equal(req.status, 403);
+});
+
+test("課題紐付け: キー無しは400", async () => {
+  const { app } = appFor({ enabled: true });
+  const res = await request(app).post("/api/v2/matters/5/issues").send({ relation: "related" });
+  assert.equal(res.status, 400);
 });

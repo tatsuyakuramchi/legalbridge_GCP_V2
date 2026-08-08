@@ -77,6 +77,10 @@ import {
 } from "./matters/write-repository.js";
 import { createMatterWriteRouter } from "./matters/write-routes.js";
 import {
+  PgMatterIssueWriteRepository,
+  type MatterIssueWriteRepository
+} from "./matters/matter-issue-write-repository.js";
+import {
   LiveMatterSlackNotifier,
   NoopMatterSlackNotifier,
   type MatterSlackNotifier
@@ -329,6 +333,7 @@ export interface AppDependencies {
   documentRegistry?: DocumentRegistryRepository;
   matters?: MatterRepository;
   matterWrites?: MatterWriteRepository;
+  matterIssueWrites?: MatterIssueWriteRepository;
   conditionLines?: ConditionLineRepository;
   pendingInspections?: PendingInspectionRepository;
   vendorWrites?: VendorWriteRepository;
@@ -408,6 +413,7 @@ function createDefaultDependencies(): AppDependencies {
     matterWrites: database
       ? new PgMatterWriteRepository(database)
       : new MemoryMatterWriteRepository(),
+    matterIssueWrites: database ? new PgMatterIssueWriteRepository(database) : undefined,
     conditionLines: database
       ? new PgConditionLineRepository(database)
       : new MemoryConditionLineRepository(),
@@ -916,7 +922,9 @@ export function createApp(
       (request.method === "POST" && request.path === "/matters") ||
       (request.method === "PATCH" && /^\/matters\/\d+$/.test(request.path)) ||
       (request.method === "POST" && /^\/matters\/\d+\/tasks$/.test(request.path)) ||
-      (request.method === "PATCH" && /^\/matters\/\d+\/tasks\/\d+$/.test(request.path));
+      (request.method === "PATCH" && /^\/matters\/\d+\/tasks\/\d+$/.test(request.path)) ||
+      (request.method === "POST" && /^\/matters\/\d+\/issues$/.test(request.path)) ||
+      (request.method === "DELETE" && /^\/matters\/\d+\/issues\/[^/]+$/.test(request.path));
     if (matterWriteEnabled && isMatterWrite) return next();
     const isVendorWrite =
       (request.method === "POST" && (request.path === "/vendors" || request.path === "/vendors/import")) ||
@@ -1000,7 +1008,8 @@ export function createApp(
   app.use("/api/v2", createMatterWriteRouter(
     dependencies.matterWrites,
     matterWriteEnabled,
-    matterSlackNotifier
+    matterSlackNotifier,
+    dependencies.matterIssueWrites
   ));
   // 案件 Slack スレッド（法務相談・メンション・定型文）。
   const drivePermissionGranter: DrivePermissionGranter =

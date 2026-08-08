@@ -5,6 +5,9 @@ import {
 } from "./write-schema.js";
 import { MatterWriteError, type MatterWriteRepository } from "./write-repository.js";
 import { NoopMatterSlackNotifier, type MatterSlackNotifier } from "./matter-slack-notifier.js";
+import {
+  MATTER_ISSUE_RELATIONS, type MatterIssueWriteRepository
+} from "./matter-issue-write-repository.js";
 
 const matterPath = z.object({ id: z.coerce.number().int().positive() });
 const taskPath = z.object({
@@ -32,13 +35,26 @@ function statusFor(code: string) {
   if (code === "MATTER_REFERENCE_INVALID") return 422;
   if (code === "MATTER_CONFLICT") return 409;
   if (code === "MATTER_CHECK_FAILED") return 422;
+  if (code === "MATTER_ISSUE_GRANT_MISSING") return 503;
   return 400;
 }
+
+const issueLinkBody = z.object({
+  backlogIssueKey: z.string().trim().min(1, "課題キーが必要です").max(50),
+  relation: z.enum(MATTER_ISSUE_RELATIONS).default("related"),
+  summarySnapshot: z.string().trim().max(2000).nullable().optional(),
+  note: z.string().trim().max(2000).nullable().optional()
+});
+const issueKeyPath = z.object({
+  id: z.coerce.number().int().positive(),
+  key: z.string().trim().min(1).max(50)
+});
 
 export function createMatterWriteRouter(
   matters: MatterWriteRepository | undefined,
   writeEnabled = false,
-  notifier: MatterSlackNotifier = new NoopMatterSlackNotifier()
+  notifier: MatterSlackNotifier = new NoopMatterSlackNotifier(),
+  issues?: MatterIssueWriteRepository
 ) {
   const router = Router();
 
@@ -104,6 +120,32 @@ export function createMatterWriteRouter(
       const updated = await matters.updateTask(id, taskId, input);
       await notifier.notifyTask(id, input, { isCreate: false });
       return response.status(200).json(updated);
+    } catch (error) {
+      return handleError(error, response, next);
+    }
+  });
+
+  // 案件⇄Backlog課題の紐付け（追加＝UPSERT / 解除＝DELETE）。案件編集権限を共有。
+  router.post("/matters/:id/issues", async (request, response, next) => {
+    try {
+      if (!writeEnabled || !issues) return unavailable(response);
+      if (!editorAllowed(response.locals.currentUser?.role)) return forbidden(response);
+      const { id } = matterPath.parse(request.params);
+      const input = issueLinkBody.parse(request.body);
+      const link = await issues.attach(id, input);
+      return response.status(201).json({ issue: link });
+    } catch (error) {
+      return handleError(error, response, next);
+    }
+  });
+
+  router.delete("/matters/:id/issues/:key", async (request, response, next) => {
+    try {
+      if (!writeEnabled || !issues) return unavailable(response);
+      if (!editorAllowed(response.locals.currentUser?.role)) return forbidden(response);
+      const { id, key } = issueKeyPath.parse(request.params);
+      const removed = await issues.detach(id, key);
+      return response.status(200).json({ removed });
     } catch (error) {
       return handleError(error, response, next);
     }

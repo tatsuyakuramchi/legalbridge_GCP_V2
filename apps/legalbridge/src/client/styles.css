@@ -371,6 +371,10 @@ header input { width: 100%; border: 1px solid var(--border); border-radius: var(
 .matter-inline-controls label { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #475569; }
 .matter-inline-controls select { border: 1px solid #cbd5e1; border-radius: 7px; background: white; padding: 6px 9px; font: inherit; font-size: 12px; }
 .matter-inline-controls .inline-note { color: #168ca0; font-size: 11px; }
+.issue-link-form { display: flex; gap: 6px; margin-top: 8px; align-items: center; }
+.issue-link-form input { flex: 1; border: 1px solid #cbd5e1; border-radius: 7px; padding: 6px 9px; font: inherit; font-size: 12px; }
+.issue-link-form select { border: 1px solid #cbd5e1; border-radius: 7px; padding: 6px 8px; font: inherit; font-size: 12px; background: white; }
+.link-remove { border: 1px solid #e2e8f0; background: white; color: #64748b; border-radius: 6px; padding: 2px 8px; font-size: 11px; cursor: pointer; }
 .matter-slack { margin-top: 14px; padding: 12px; border: 1px solid #e2e8f0; border-radius: 10px; background: #f8fafc; }
 .matter-slack.muted { opacity: .8; }
 .matter-slack .muted-note { color: #94a3b8; font-size: 11px; margin: 6px 0 0; }
