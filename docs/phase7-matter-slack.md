@@ -37,8 +37,13 @@ V1 にあって V2 に欠けていた「案件詳細から Slack で法務相談
     - `POST /matters/:id/slack/messages`（メンション付き投稿・guarded）
   - config / app.ts / grant 024（validation＋production＋preflight）/ verify（scope `matter-slack`＋
     flag ガード）/ cloudbuild 全結線。テスト 467 件。
-- **7-3（予定）**：定型文3種（CloudSign送信済／文書作成完了／評価完了）＋メンション＋
-  Drive 閲覧権限付与（`emailsForSlackIds`→Drive grant）。
+- **7-3（実装済み）**：定型文3種（CloudSign送信済／文書作成完了／評価完了）＋メンション＋
+  Drive 閲覧権限付与。`slack-matter-channel.ts` の `buildTemplateMessage`（純関数）＋
+  `documents/drive-permission.ts`（`DrivePermissionGranter`＝Google/Local/Memory・
+  `extractDriveFileId`）。`POST /matters/:id/slack/template`：閲覧リンクは documentId＞
+  driveLink＞案件最新文書の順で解決し、テンプレ2/3 は granter があればメンション先staff
+  （`emailsForSlackIds`）へ `role=reader` を best-effort 付与（結果は `grant` で返す）。
+  app.ts で Drive SA を再利用した `GoogleDrivePermissionGranter` を結線。テスト 476 件。
 - **7-4（予定）**：案件イベント連動の自動通知（ステータス/期限/ブロック/タスク割当時に
   スレッドへ `@メンション`自動投稿・冪等）。**V1 に無い新規**。
 - **7-5（予定）**：案件詳細の Slack パネル UI（メンションピッカー・スレッド表示）。

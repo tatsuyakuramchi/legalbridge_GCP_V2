@@ -8,6 +8,7 @@ import {
   MemoryMatterSlackThreadRepository, MemoryMatterMentionRepository
 } from "./matter-slack-thread-repository.js";
 import type { MatterSlackChannelAdapter, MatterSlackReply } from "../integrations/slack-matter-channel.js";
+import { MemoryDrivePermissionGranter } from "../documents/drive-permission.js";
 
 const detail: MatterDetail = {
   matter: {
@@ -37,6 +38,7 @@ function appFor(options: {
   role?: "admin" | "legal" | "requester"; enabled?: boolean;
   channel?: MatterSlackChannelAdapter; threads?: MemoryMatterSlackThreadRepository;
   mentions?: MemoryMatterMentionRepository; legalChannelId?: string;
+  granter?: MemoryDrivePermissionGranter; withDocument?: boolean;
 }) {
   const channel = options.channel ?? new FakeChannel();
   const threads = options.threads ?? new MemoryMatterSlackThreadRepository();
@@ -46,6 +48,9 @@ function appFor(options: {
     enabled: options.enabled ?? true,
     legalChannelId: options.legalChannelId ?? "C0LEGAL"
   };
+  const matterDetail: MatterDetail = options.withDocument
+    ? { ...detail, documents: [{ id: 9, documentNumber: "DOC-1", templateType: "license", issueKey: "LB-5", createdAt: "2026-08-07T00:00:00.000Z", driveLink: "https://drive.google.com/file/d/1Abc_def-GHI23456789/view" }] }
+    : detail;
   const app = express();
   app.use(express.json());
   app.use((_req, res, next) => {
@@ -53,7 +58,8 @@ function appFor(options: {
     next();
   });
   app.use("/api/v2", createMatterSlackRouter({
-    matters: new MemoryMatterRepository([detail]), threads, mentions, channel, settings
+    matters: new MemoryMatterRepository([matterDetail]), threads, mentions, channel, settings,
+    granter: options.granter
   }));
   return { app, channel, threads };
 }
@@ -118,4 +124,32 @@ test("チャンネル未設定なら enabled=false（候補は返る）", async 
     .get("/api/v2/matters/slack/mention-candidates");
   assert.equal(res.status, 200);
   assert.equal(res.body.enabled, false);
+});
+
+test("テンプレ2は閲覧リンク（最新文書）を載せ、メンション先へDrive権限を付与する", async () => {
+  const threads = new MemoryMatterSlackThreadRepository();
+  const granter = new MemoryDrivePermissionGranter();
+  const { app } = appFor({ enabled: true, threads, granter, withDocument: true });
+  await request(app).post("/api/v2/matters/5/slack/thread").send({});
+  const res = await request(app).post("/api/v2/matters/5/slack/template")
+    .send({ template: 2, mentions: ["U01ABCDEFGH"] });
+  assert.equal(res.status, 201);
+  assert.match(res.body.text, /^文書作成が完了しました。 <@U01ABCDEFGH>/);
+  assert.match(res.body.text, /閲覧リンク: https:\/\/drive\.google\.com/);
+  assert.equal(res.body.grant.skipped, false);
+  assert.deepEqual(res.body.grant.granted, ["kono@example.com"]);
+  assert.deepEqual(granter.grants, [{ fileId: "1Abc_def-GHI23456789", email: "kono@example.com" }]);
+});
+
+test("テンプレ1(CloudSign送信済)はDrive付与せず相手方チェーンを投稿", async () => {
+  const threads = new MemoryMatterSlackThreadRepository();
+  const granter = new MemoryDrivePermissionGranter();
+  const { app } = appFor({ enabled: true, threads, granter });
+  await request(app).post("/api/v2/matters/5/slack/thread").send({});
+  const res = await request(app).post("/api/v2/matters/5/slack/template")
+    .send({ template: 1, mentions: ["U01ABCDEFGH"], cc: ["U02ABCDEFGH"] });
+  assert.equal(res.status, 201);
+  assert.match(res.body.text, /クラウドサインで送信しました。 <@U01ABCDEFGH> → 相手方  CC: <@U02ABCDEFGH>/);
+  assert.equal(res.body.grant.skipped, true);
+  assert.equal(granter.grants.length, 0);
 });

@@ -4,10 +4,12 @@ import type { MatterRepository } from "./repository.js";
 import type {
   MatterSlackThreadRepository, MatterMentionRepository
 } from "./matter-slack-thread-repository.js";
-import type { MatterSlackChannelAdapter } from "../integrations/slack-matter-channel.js";
+import type { MatterSlackChannelAdapter, MatterSlackTemplate } from "../integrations/slack-matter-channel.js";
 import {
-  composeMentionMessage, buildThreadRootText, isSlackUserId
+  composeMentionMessage, buildThreadRootText, isSlackUserId, buildTemplateMessage
 } from "../integrations/slack-matter-channel.js";
+import type { DrivePermissionGranter } from "../documents/drive-permission.js";
+import { extractDriveFileId } from "../documents/drive-permission.js";
 
 const idPath = z.object({ id: z.coerce.number().int().positive() });
 
@@ -25,11 +27,19 @@ export interface MatterSlackDeps {
   mentions: MatterMentionRepository | undefined;
   channel: MatterSlackChannelAdapter;
   settings: MatterSlackSettings;
+  granter?: DrivePermissionGranter;   // Drive 閲覧権限付与（任意・テンプレ2/3）
 }
 
 const messageBody = z.object({
   text: z.string().trim().min(1, "本文が必要です").max(3000),
   mentions: z.array(z.string().trim()).max(20).optional()
+});
+const templateBody = z.object({
+  template: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+  mentions: z.array(z.string().trim()).max(20).default([]),
+  cc: z.array(z.string().trim()).max(20).optional(),
+  documentId: z.coerce.number().int().positive().optional(),
+  driveLink: z.string().trim().max(1000).optional()
 });
 
 export function createMatterSlackRouter(deps: MatterSlackDeps) {
@@ -122,6 +132,61 @@ export function createMatterSlackRouter(deps: MatterSlackDeps) {
         channel: thread.channelId, text, threadTs: thread.threadTs
       });
       return response.status(201).json({ ok: true, ts: posted.ts, text });
+    } catch (error) {
+      if (error instanceof z.ZodError) return response.status(400).json({ error: "invalid request", issues: error.issues });
+      return next(error);
+    }
+  });
+
+  // 定型文（1:CloudSign送信済 / 2:文書作成完了 / 3:評価完了）をスレッドへ投稿。
+  // テンプレ2/3 は閲覧リンクを載せ、granter があればメンション先へ Drive 閲覧権限を付与。
+  router.post("/matters/:id/slack/template", async (request, response, next) => {
+    try {
+      if (!editorAllowed(response.locals.currentUser?.role)) {
+        return response.status(403).json({ error: "法務または管理者のみが操作できます", code: "MATTER_SLACK_FORBIDDEN" });
+      }
+      if (!ready() || !deps.matters || !deps.threads || !deps.mentions) {
+        return response.status(409).json({ error: "Slack連携が有効ではありません", code: "MATTER_SLACK_DISABLED" });
+      }
+      const { id } = idPath.parse(request.params);
+      const body = templateBody.parse(request.body);
+      const thread = await deps.threads.findByMatter(id);
+      if (!thread) return response.status(409).json({ error: "スレッド未作成です", code: "MATTER_SLACK_THREAD_MISSING" });
+      const detail = await deps.matters.find(id);
+      if (!detail) return response.status(404).json({ error: "案件が見つかりません", code: "MATTER_NOT_FOUND" });
+
+      const toIds = body.mentions.filter(isSlackUserId);
+      const ccIds = (body.cc ?? []).filter(isSlackUserId);
+      const template = body.template as MatterSlackTemplate;
+
+      // 閲覧リンク解決：documentId > driveLink > 案件の最新文書。
+      let driveLink: string | null = null;
+      if (template !== 1) {
+        if (body.documentId) {
+          driveLink = detail.documents.find((d) => d.id === body.documentId)?.driveLink || null;
+        }
+        driveLink = driveLink || body.driveLink || detail.documents.find((d) => d.driveLink)?.driveLink || null;
+      }
+
+      // Drive 閲覧権限付与（best-effort・granter 有効かつリンク有時のみ）。
+      let grant: { granted: string[]; failed: string[]; skipped: boolean } = { granted: [], failed: [], skipped: true };
+      if (template !== 1 && driveLink && deps.granter?.configured) {
+        const fileId = extractDriveFileId(driveLink);
+        const recipients = await deps.mentions.emailsForSlackIds(toIds);
+        if (fileId && recipients.length) {
+          grant = { granted: [], failed: [], skipped: false };
+          for (const r of recipients) {
+            try { await deps.granter.grantView(fileId, r.email); grant.granted.push(r.email); }
+            catch { grant.failed.push(r.email); }
+          }
+        }
+      }
+
+      const text = buildTemplateMessage(template, { toIds, ccIds, driveLink });
+      const posted = await deps.channel.postMessage({
+        channel: thread.channelId, text, threadTs: thread.threadTs
+      });
+      return response.status(201).json({ ok: true, ts: posted.ts, text, grant });
     } catch (error) {
       if (error instanceof z.ZodError) return response.status(400).json({ error: "invalid request", issues: error.issues });
       return next(error);

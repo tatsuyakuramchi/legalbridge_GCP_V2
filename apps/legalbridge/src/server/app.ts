@@ -185,6 +185,11 @@ import {
 } from "./integrations/slack-matter-channel.js";
 import { createMatterSlackRouter } from "./matters/matter-slack-routes.js";
 import {
+  GoogleDrivePermissionGranter,
+  LocalDrivePermissionGranter,
+  type DrivePermissionGranter
+} from "./documents/drive-permission.js";
+import {
   PgMatterSlackThreadRepository,
   PgMatterMentionRepository,
   type MatterSlackThreadRepository,
@@ -981,13 +986,18 @@ export function createApp(
     dependencies.matterWrites,
     matterWriteEnabled
   ));
-  // 案件 Slack スレッド（法務相談・メンション）。
+  // 案件 Slack スレッド（法務相談・メンション・定型文）。
+  const drivePermissionGranter: DrivePermissionGranter =
+    config.googleDriveFolderId
+      ? new GoogleDrivePermissionGranter({ keyFilePath: config.googleServiceAccountKeyPath || undefined })
+      : new LocalDrivePermissionGranter();
   app.use("/api/v2", createMatterSlackRouter({
     matters: matterRepository,
     threads: dependencies.matterSlackThreads,
     mentions: dependencies.matterMentions,
     channel: matterSlackChannelAdapter,
-    settings: { enabled: matterSlackEnabled, legalChannelId: config.slackLegalConsultChannel }
+    settings: { enabled: matterSlackEnabled, legalChannelId: config.slackLegalConsultChannel },
+    granter: drivePermissionGranter
   }));
   app.use("/api/v2", createConditionLineRouter(dependencies.conditionLines));
   // 計算専用（read-only・DB非依存）のロイヤリティ試算。

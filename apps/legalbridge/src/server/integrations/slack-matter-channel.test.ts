@@ -38,3 +38,21 @@ test("buildThreadRootText は matter_code か #id と相手方を含む", () => 
   assert.match(noCode, /#5/);
   assert.doesNotMatch(noCode, /相手方/);
 });
+
+import { buildTemplateMessage } from "./slack-matter-channel.js";
+
+test("テンプレ1: CloudSign送信済は TO を→で結び相手方を末尾に、CCを付ける", () => {
+  const text = buildTemplateMessage(1, { toIds: ["U01ABCDEFGH", "U02ABCDEFGH"], ccIds: ["U03ABCDEFGH"] });
+  assert.equal(text, "クラウドサインで送信しました。 <@U01ABCDEFGH> → <@U02ABCDEFGH> → 相手方  CC: <@U03ABCDEFGH>");
+});
+
+test("テンプレ2: 文書作成完了はメンション＋閲覧リンク", () => {
+  const text = buildTemplateMessage(2, { toIds: ["U01ABCDEFGH"], driveLink: "https://drive.example/x" });
+  assert.match(text, /^文書作成が完了しました。 <@U01ABCDEFGH>/);
+  assert.match(text, /\n閲覧リンク: https:\/\/drive\.example\/x$/);
+});
+
+test("テンプレ3: 評価完了・リンク無しなら閲覧リンク行を出さない", () => {
+  const text = buildTemplateMessage(3, { toIds: ["U01ABCDEFGH"], driveLink: null });
+  assert.equal(text, "評価が完了しました。 <@U01ABCDEFGH>");
+});

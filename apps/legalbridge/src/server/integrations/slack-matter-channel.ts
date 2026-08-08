@@ -115,3 +115,27 @@ export function buildThreadRootText(input: {
   const counterparty = input.counterparty?.trim() ? `｜相手方: ${input.counterparty.trim()}` : "";
   return `:memo: 法務相談スレッド ${label}｜*${input.title}*${counterparty}`;
 }
+
+// 定型文テンプレート（V1 準拠）。
+//   1: クラウドサイン送信済（TO を「→」で結び相手方を末尾に・任意で CC）
+//   2: 文書作成完了（メンション＋閲覧リンク）
+//   3: 評価完了（メンション＋閲覧リンク）
+export type MatterSlackTemplate = 1 | 2 | 3;
+
+export function buildTemplateMessage(
+  template: MatterSlackTemplate,
+  input: { toIds: string[]; ccIds?: string[]; driveLink?: string | null }
+): string {
+  const to = mentionTokens(input.toIds);
+  const cc = mentionTokens(input.ccIds ?? []);
+  if (template === 1) {
+    const chain = [...to, "相手方"].join(" → ");
+    const ccPart = cc.length ? `  CC: ${cc.join(" ")}` : "";
+    return `クラウドサインで送信しました。 ${chain}${ccPart}`.trim();
+  }
+  const lead = template === 2 ? "文書作成が完了しました。" : "評価が完了しました。";
+  const mentions = to.join(" ");
+  const head = [lead, mentions].filter((p) => p.length > 0).join(" ");
+  const link = input.driveLink?.trim() ? `\n閲覧リンク: ${input.driveLink.trim()}` : "";
+  return `${head}${link}`;
+}
