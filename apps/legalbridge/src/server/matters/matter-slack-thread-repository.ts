@@ -98,6 +98,8 @@ export interface MatterMentionRepository {
   listCandidates(): Promise<MatterMentionCandidate[]>;
   // 指定 slack_user_id のメール（Drive 権限付与用・存在するものだけ）。
   emailsForSlackIds(ids: string[]): Promise<Array<{ id: string; email: string }>>;
+  // staff_id → slack_user_id（自動通知のメンション解決用・存在するものだけ）。
+  slackIdsForStaffIds(ids: number[]): Promise<Array<{ staffId: number; slackId: string }>>;
 }
 
 export class PgMatterMentionRepository implements MatterMentionRepository {
@@ -122,17 +124,32 @@ export class PgMatterMentionRepository implements MatterMentionRepository {
     );
     return result.rows.map((row) => ({ id: row.slack_user_id, email: row.email }));
   }
+
+  async slackIdsForStaffIds(ids: number[]) {
+    if (!ids.length) return [];
+    const result = await this.database.query(
+      `SELECT id, slack_user_id FROM staff
+        WHERE id = ANY($1::bigint[]) AND slack_user_id IS NOT NULL AND btrim(slack_user_id) <> ''`,
+      [ids]
+    );
+    return result.rows.map((row) => ({ staffId: Number(row.id), slackId: row.slack_user_id }));
+  }
 }
 
 export class MemoryMatterMentionRepository implements MatterMentionRepository {
   constructor(
     private readonly candidates: MatterMentionCandidate[] = [],
-    private readonly emails: Array<{ id: string; email: string }> = []
+    private readonly emails: Array<{ id: string; email: string }> = [],
+    private readonly staffSlack: Array<{ staffId: number; slackId: string }> = []
   ) {}
 
   async listCandidates() { return this.candidates; }
   async emailsForSlackIds(ids: string[]) {
     const set = new Set(ids);
     return this.emails.filter((e) => set.has(e.id));
+  }
+  async slackIdsForStaffIds(ids: number[]) {
+    const set = new Set(ids);
+    return this.staffSlack.filter((s) => set.has(s.staffId));
   }
 }

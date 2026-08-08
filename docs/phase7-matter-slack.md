@@ -44,8 +44,13 @@ V1 にあって V2 に欠けていた「案件詳細から Slack で法務相談
   driveLink＞案件最新文書の順で解決し、テンプレ2/3 は granter があればメンション先staff
   （`emailsForSlackIds`）へ `role=reader` を best-effort 付与（結果は `grant` で返す）。
   app.ts で Drive SA を再利用した `GoogleDrivePermissionGranter` を結線。テスト 476 件。
-- **7-4（予定）**：案件イベント連動の自動通知（ステータス/期限/ブロック/タスク割当時に
-  スレッドへ `@メンション`自動投稿・冪等）。**V1 に無い新規**。
+- **7-4（実装済み）**：案件イベント連動の自動通知（**V1 に無い新規**）。`matter-slack-notifier.ts`：
+  純関数 `deriveMatterUpdateNotification`（ステータス/工程/ブロック/担当変更を1件にまとめる）／
+  `deriveTaskNotification`（作成=割当文言、更新=状態/担当）。`LiveMatterSlackNotifier` が案件書込後に
+  スレッド有無を確認し、担当変更時は `staff_id→slack_user_id`（`slackIdsForStaffIds`）を解決して
+  `<@id>` 付きでスレッド投稿（**best-effort**・失敗や無効・スレッド未作成では書込を妨げない）。
+  `write-routes` の updateMatter/createTask/updateTask 後に発火、app.ts で案件Slack有効時のみ Live を結線。
+  期限/停滞のスケジュール通知（cron）は 7-4 対象外（別途）。テスト 484 件。
 - **7-5（予定）**：案件詳細の Slack パネル UI（メンションピッカー・スレッド表示）。
 
 ## 有効化（点火）

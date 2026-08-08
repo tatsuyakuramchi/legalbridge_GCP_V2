@@ -4,6 +4,7 @@ import {
   matterCreateSchema, matterUpdateSchema, taskCreateSchema, taskUpdateSchema
 } from "./write-schema.js";
 import { MatterWriteError, type MatterWriteRepository } from "./write-repository.js";
+import { NoopMatterSlackNotifier, type MatterSlackNotifier } from "./matter-slack-notifier.js";
 
 const matterPath = z.object({ id: z.coerce.number().int().positive() });
 const taskPath = z.object({
@@ -36,7 +37,8 @@ function statusFor(code: string) {
 
 export function createMatterWriteRouter(
   matters: MatterWriteRepository | undefined,
-  writeEnabled = false
+  writeEnabled = false,
+  notifier: MatterSlackNotifier = new NoopMatterSlackNotifier()
 ) {
   const router = Router();
 
@@ -72,6 +74,7 @@ export function createMatterWriteRouter(
       const { id } = matterPath.parse(request.params);
       const input = matterUpdateSchema.parse(request.body);
       const updated = await matters.updateMatter(id, input, response.locals.currentUser!.email);
+      await notifier.notifyMatterUpdate(id, input);
       return response.status(200).json(updated);
     } catch (error) {
       return handleError(error, response, next);
@@ -85,6 +88,7 @@ export function createMatterWriteRouter(
       const { id } = matterPath.parse(request.params);
       const input = taskCreateSchema.parse(request.body);
       const created = await matters.createTask(id, input, response.locals.currentUser!.email);
+      await notifier.notifyTask(id, input, { isCreate: true });
       return response.status(201).json(created);
     } catch (error) {
       return handleError(error, response, next);
@@ -98,6 +102,7 @@ export function createMatterWriteRouter(
       const { id, taskId } = taskPath.parse(request.params);
       const input = taskUpdateSchema.parse(request.body);
       const updated = await matters.updateTask(id, taskId, input);
+      await notifier.notifyTask(id, input, { isCreate: false });
       return response.status(200).json(updated);
     } catch (error) {
       return handleError(error, response, next);

@@ -76,6 +76,11 @@ import {
   MemoryMatterWriteRepository, PgMatterWriteRepository, type MatterWriteRepository
 } from "./matters/write-repository.js";
 import { createMatterWriteRouter } from "./matters/write-routes.js";
+import {
+  LiveMatterSlackNotifier,
+  NoopMatterSlackNotifier,
+  type MatterSlackNotifier
+} from "./matters/matter-slack-notifier.js";
 import { buildMatterDashboard } from "./matters/dashboard.js";
 import {
   MemoryConditionLineRepository, PgConditionLineRepository, type ConditionLineRepository
@@ -982,9 +987,20 @@ export function createApp(
   ));
   const matterRepository = dependencies.matters ?? new MemoryMatterRepository();
   app.use("/api/v2", createMatterRouter(matterRepository));
+  // 案件イベント連動の自動 Slack 通知（案件Slack有効時のみ・best-effort）。
+  const matterSlackNotifier: MatterSlackNotifier =
+    matterSlackEnabled && dependencies.matterSlackThreads && dependencies.matterMentions
+      ? new LiveMatterSlackNotifier({
+          enabled: true,
+          threads: dependencies.matterSlackThreads,
+          mentions: dependencies.matterMentions,
+          channel: matterSlackChannelAdapter
+        })
+      : new NoopMatterSlackNotifier();
   app.use("/api/v2", createMatterWriteRouter(
     dependencies.matterWrites,
-    matterWriteEnabled
+    matterWriteEnabled,
+    matterSlackNotifier
   ));
   // 案件 Slack スレッド（法務相談・メンション・定型文）。
   const drivePermissionGranter: DrivePermissionGranter =
