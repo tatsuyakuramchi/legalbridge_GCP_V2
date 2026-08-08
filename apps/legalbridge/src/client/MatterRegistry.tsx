@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { DocumentFormSchema } from "../types";
 import { useToast } from "./Toast";
 import { EmptyState } from "./EmptyState";
+import { MatterSlackPanel } from "./MatterSlackPanel";
 
 type Matter = {
   id: number; matterCode: string | null; title: string; status: string; counterparty: string;
@@ -206,6 +207,7 @@ function MatterDetail({ detail, labels, canEdit, onChanged, onCreateDocument }:
       {detail.documents.map((document) => <article key={document.id}><b>{document.documentNumber ?? "未発番"}</b><span>{labels.get(document.templateType) ?? document.templateType}</span><small>{document.issueKey}・{formatDate(document.createdAt)}</small>{document.driveLink && <a href={document.driveLink} target="_blank" rel="noreferrer">開く</a>}</article>)}
     </DetailSection>
     {matter.remarks && <DetailSection title="備考"><p>{matter.remarks}</p></DetailSection>}
+    {canEdit && <MatterSlackPanel matterId={matter.id} />}
   </aside>;
 }
 

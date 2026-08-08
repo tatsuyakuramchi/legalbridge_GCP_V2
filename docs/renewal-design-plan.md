@@ -294,6 +294,10 @@ Phase 7 は全フェーズの受け入れ後
 
 | 2026-08-07 | Phase 5 | 点火準備：CloudSign 点火 Runbook 新設＋gmail-cloudsign.md を確定仕様へ更新 | — | ✅ |
 
+| 2026-08-07 | Phase 7 | 案件Slack 完了：7-3 定型文＋Drive権限 / 7-4 自動通知 / 7-5 UI パネル | LegalBridge_AI_GCP | ✅ |
+
+**スライス7-3/7-4/7-5（案件Slack 完了）**：7-3=定型文3種（`buildTemplateMessage`）＋`documents/drive-permission.ts`（メンション先へ Drive 閲覧権限 best-effort 付与）＋`POST /matters/:id/slack/template`。7-4=**案件イベント連動の自動通知**（`matter-slack-notifier.ts`・`deriveMatterUpdateNotification`/`deriveTaskNotification`＋`LiveMatterSlackNotifier`・`staff_id→slack_user_id` 解決・書込後 best-effort 投稿・V1 に無い新規）。7-5=`MatterSlackPanel.tsx`（案件詳細のスレッド作成/メンションチップ/本文投稿/定型文/会話表示・admin/legal）。テスト 484 件・client build 緑。Phase 7（案件Slack メンション＋自動通知＋UI）完了。設計は `docs/phase7-matter-slack.md`。
+
 | 2026-08-07 | Phase 7 | 案件Slack 7-1/7-2：法務相談スレッド＋<@id>メンション（V1 パネル移植・grant 024） | LegalBridge_AI_GCP | ✅ |
 
 **スライス7-1/7-2（案件 Slack スレッド＋メンション）**：V1↔V2 突合（並行調査）で「V2 は Slack が依頼者DMのみ・チャンネル/スレッド/メンション非対応」と確定。V1 の案件 Slack パネル（法務相談スレッド）を V2 へ移植。①`SlackWebApiClient` に `conversations.replies` を追加、`slack-matter-channel.ts` に `WebApiMatterSlackChannelAdapter`（`chat.postMessage`＋`thread_ts`）＋純関数（`mentionTokens`/`composeMentionMessage`/`buildThreadRootText`）。②隔離テーブル `lb_v2_matter_slack_threads`（grant 024＝validation＋production＋preflight・1案件1スレッド・SELECT/INSERT）＋`matter-slack-thread-repository.ts`（Pg/Memory・スレッド冪等＋`staff.slack_user_id` メンション候補）。③`matter-slack-routes.ts`：候補/スレッド会話（read）＋スレッド作成/メンション投稿（guarded）。④config `MATTER_SLACK_ENABLED`/`SLACK_LEGAL_CONSULT_CHANNEL`／app.ts／verify（scope `matter-slack`＋live/channel/write-test ガード）／cloudbuild 全結線。テスト 467 件。設計は `docs/phase7-matter-slack.md`。残：7-3 定型文＋Drive権限、7-4 案件イベント自動通知、7-5 UI。

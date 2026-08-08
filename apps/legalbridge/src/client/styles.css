@@ -371,6 +371,22 @@ header input { width: 100%; border: 1px solid var(--border); border-radius: var(
 .matter-inline-controls label { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #475569; }
 .matter-inline-controls select { border: 1px solid #cbd5e1; border-radius: 7px; background: white; padding: 6px 9px; font: inherit; font-size: 12px; }
 .matter-inline-controls .inline-note { color: #168ca0; font-size: 11px; }
+.matter-slack { margin-top: 14px; padding: 12px; border: 1px solid #e2e8f0; border-radius: 10px; background: #f8fafc; }
+.matter-slack.muted { opacity: .8; }
+.matter-slack .muted-note { color: #94a3b8; font-size: 11px; margin: 6px 0 0; }
+.matter-slack-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.matter-slack-mentions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.mention-chip { border: 1px solid #cbd5e1; background: white; color: #334155; border-radius: 999px; padding: 4px 10px; font-size: 11px; cursor: pointer; }
+.mention-chip.active { background: #168ca0; border-color: #168ca0; color: white; }
+.matter-slack-compose { display: flex; gap: 8px; margin-top: 10px; align-items: flex-start; }
+.matter-slack-compose textarea { flex: 1; border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px; font: inherit; font-size: 12px; resize: vertical; }
+.matter-slack-templates { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.matter-slack-templates button { border: 1px solid #cbd5e1; background: white; color: #334155; border-radius: 7px; padding: 5px 10px; font-size: 11px; cursor: pointer; }
+.matter-slack-thread { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow-y: auto; }
+.matter-slack-thread article { background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 6px 9px; }
+.matter-slack-thread article.bot { background: #eef6f8; }
+.matter-slack-thread article span { display: block; font-size: 10px; font-weight: 700; color: #64748b; }
+.matter-slack-thread article p { margin: 2px 0 0; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
 .empty-state-box { display: grid; justify-items: center; gap: 8px; text-align: center; border: 1px dashed var(--border-strong); border-radius: 12px; background: var(--surface-subtle); padding: 32px 20px; color: var(--ink-soft); }
 .empty-state-box.compact { padding: 20px 16px; }
 .empty-state-box .empty-icon { font-size: 26px; color: var(--ink-faint); }

@@ -51,7 +51,10 @@ V1 にあって V2 に欠けていた「案件詳細から Slack で法務相談
   `<@id>` 付きでスレッド投稿（**best-effort**・失敗や無効・スレッド未作成では書込を妨げない）。
   `write-routes` の updateMatter/createTask/updateTask 後に発火、app.ts で案件Slack有効時のみ Live を結線。
   期限/停滞のスケジュール通知（cron）は 7-4 対象外（別途）。テスト 484 件。
-- **7-5（予定）**：案件詳細の Slack パネル UI（メンションピッカー・スレッド表示）。
+- **7-5（実装済み）**：案件詳細の Slack パネル UI。`MatterSlackPanel.tsx`：候補/スレッドを取得し、
+  スレッド未作成なら「スレッド作成」、作成済なら メンションチップ（`staff` の Slack ID）＋
+  本文投稿＋定型文3ボタン＋スレッド会話表示。Slack 未設定時は目立たないヒントのみ。
+  `MatterRegistry` の案件詳細（admin/legal）に結線。styles.css にパネル用スタイル追加。
 
 ## 有効化（点火）
 
