@@ -11,7 +11,7 @@ list/detail/create/update/task と Slack（Phase 7）まで。以下を guarded-
 | 課題（Backlog）紐付け 追加/解除（`matter_issues`） | あり | **8-1 実装済** |
 | 文書リンク/解除（`documents.matter_id`） | あり | **8-2 実装済** |
 | 送信履歴（`document_sends`：email/slack/drive/manual） | あり | **8-3 実装済** |
-| Drive フォルダ連携（作成/添付/一覧/Drive→文書登録） | あり | **8-4 実装済**（作成/一覧。Drive→登録は 8-2b） |
+| Drive フォルダ連携（作成/添付/一覧/Drive→文書登録） | あり | **8-4 実装済**（作成/一覧）＋**8-2b 実装済**（Drive→文書登録） |
 | 名寄せ（案件マージ/absorb） | あり | **8-5 実装済**（複数表write・grant 028） |
 | 案件削除・タスク削除 | あり | **8-6 実装済**（破壊的・grant 029・専用フラグ＋合言葉） |
 
@@ -43,7 +43,21 @@ list/detail/create/update/task と Slack（Phase 7）まで。以下を guarded-
 - ルート（`matterWriteEnabled` 共有）：`POST /matters/:id/documents`（documentId 指定）／
   `DELETE /matters/:id/documents/:docId`。write-guard allowlist にも追加。
 - UI：`MatterRegistry` 関連文書に `MatterDocumentLinks`（文書ID入力で紐付け／各行に解除）。
-- `from-drive`（Drive ファイルから新規文書INSERT）は V1 固有列を含むため別途（8-2b 予定）。
+
+## スライス 8-2b（実装済）：Drive ファイル → 案件文書として新規登録
+
+V1 の `POST /api/matters/:id/documents/from-drive` 相当。案件フォルダ内の Drive ファイルを
+外部文書（`template_type='external_file'`）として `documents` に登録し案件へ紐付ける。
+
+- **新規 grant 不要**：`documents` の INSERT は grant 006（SELECT/INSERT）で付与済み。
+  `document_number` は NULL（外部ファイルは採番しない・V1 と同じ）、ファイル名は `form_data`
+  （`{title, source:"drive"}`）に格納。
+- `matter-document-write-repository.ts` に `registerFromDrive(matterId, {link, name})` を追加
+  （Pg/Memory）。**冪等**：同一案件×同一 `drive_link` が既にあれば作らず既存を返す（`created:false`）。
+- ルート（`write-routes` に追加・`matterWriteEnabled` 共有）：
+  `POST /matters/:id/documents/from-drive`（新規=201／既存=200）。write-guard allowlist にも追加。
+- UI：`MatterDriveFolder` のファイル一覧の各ファイルに「案件文書に登録」ボタン（登録後は詳細を再取得）。
+- テスト（新規created:true・冪等created:false・503/400・403）。
 
 ## スライス 8-3（実装済）：送信履歴（document_sends）
 

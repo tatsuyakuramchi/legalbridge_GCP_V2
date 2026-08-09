@@ -193,7 +193,7 @@ function MatterDetail({ detail, labels, canEdit, canDelete = false, onChanged, o
       {matter.targetDueDate && <span>期限 {matter.targetDueDate}</span>}</div>
     {canEdit && <InlineMatterControls matter={matter} onChanged={onChanged} />}
     {matter.blockedReason && <p className="matter-blocked">停滞理由：{matter.blockedReason}</p>}
-    <MatterDriveFolder matterId={matter.id} canEdit={canEdit} />
+    <MatterDriveFolder matterId={matter.id} canEdit={canEdit} onRegistered={onChanged} />
     <DetailSection title={`関連課題 ${detail.issues.length}`}>
       <MatterIssueLinks matterId={matter.id} issues={detail.issues} canEdit={canEdit} onChanged={onChanged} />
     </DetailSection>
@@ -320,13 +320,28 @@ function MatterIssueLinks({ matterId, issues, canEdit, onChanged }:
 
 type DriveFile = { id: string; name: string; link: string; isFolder: boolean };
 
-function MatterDriveFolder({ matterId, canEdit }: { matterId: number; canEdit: boolean }) {
+function MatterDriveFolder({ matterId, canEdit, onRegistered }:
+  { matterId: number; canEdit: boolean; onRegistered?: () => void }) {
   const toast = useToast();
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [folder, setFolder] = useState<{ id: string; url: string | null } | null>(null);
   const [files, setFiles] = useState<DriveFile[]>([]);
   const [busy, setBusy] = useState(false);
+  const [registering, setRegistering] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
+  async function register(file: DriveFile) {
+    setRegistering(file.id);
+    try {
+      const request = fetch(`/api/v2/matters/${matterId}/documents/from-drive`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ link: file.link, name: file.name })
+      }).then(async (r) => { if (!r.ok) throw new Error("登録に失敗しました"); return r.json(); });
+      const body = await toast.run(request, "案件文書として登録しました");
+      if (body?.created === false) toast.push("この文書は既に登録済みです");
+      onRegistered?.();
+    } catch { /* toast shown */ }
+    finally { setRegistering(null); }
+  }
   useEffect(() => {
     let cancelled = false;
     fetch(`/api/v2/matters/${matterId}/drive-files`).then(async (r) => {
@@ -356,7 +371,11 @@ function MatterDriveFolder({ matterId, canEdit }: { matterId: number; canEdit: b
       {canEdit && !folder && <button className="primary" disabled={busy} onClick={create}>フォルダ作成</button>}
     </div>
     {folder && files.length > 0 && <ul className="matter-drive-files">
-      {files.map((f) => <li key={f.id}><a href={f.link} target="_blank" rel="noreferrer">{f.isFolder ? "📁 " : "📄 "}{f.name}</a></li>)}
+      {files.map((f) => <li key={f.id}>
+        <a href={f.link} target="_blank" rel="noreferrer">{f.isFolder ? "📁 " : "📄 "}{f.name}</a>
+        {canEdit && !f.isFolder && <button className="link-inline" disabled={registering === f.id}
+          onClick={() => register(f)}>案件文書に登録</button>}
+      </li>)}
     </ul>}
   </div>;
 }

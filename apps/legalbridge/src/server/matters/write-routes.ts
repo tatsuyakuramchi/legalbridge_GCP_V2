@@ -57,6 +57,10 @@ const documentPath = z.object({
   docId: z.coerce.number().int().positive()
 });
 const documentLinkBody = z.object({ documentId: z.coerce.number().int().positive() });
+const documentFromDriveBody = z.object({
+  link: z.string().trim().min(1, "Drive リンクが必要です").max(1000),
+  name: z.string().trim().max(500).optional().transform((v) => (v && v.length ? v : "(無題ファイル)"))
+});
 
 export function createMatterWriteRouter(
   matters: MatterWriteRepository | undefined,
@@ -181,6 +185,20 @@ export function createMatterWriteRouter(
       const { id, docId } = documentPath.parse(request.params);
       const removed = await documents.unlink(id, docId);
       return response.status(200).json({ removed });
+    } catch (error) {
+      return handleError(error, response, next);
+    }
+  });
+
+  // Drive ファイルを外部文書として案件に新規登録（8-2b・冪等）。案件編集権限を共有。
+  router.post("/matters/:id/documents/from-drive", async (request, response, next) => {
+    try {
+      if (!writeEnabled || !documents) return unavailable(response);
+      if (!editorAllowed(response.locals.currentUser?.role)) return forbidden(response);
+      const { id } = matterPath.parse(request.params);
+      const input = documentFromDriveBody.parse(request.body);
+      const result = await documents.registerFromDrive(id, input);
+      return response.status(result.created ? 201 : 200).json(result);
     } catch (error) {
       return handleError(error, response, next);
     }

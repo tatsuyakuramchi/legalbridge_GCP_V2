@@ -188,3 +188,33 @@ test("文書リンク: 書込無効は503、documentId 無しは400", async () =
   const bad = await request(appFor({ enabled: true }).app).post("/api/v2/matters/5/documents").send({});
   assert.equal(bad.status, 400);
 });
+
+test("Drive登録: 新規はcreated:true・201", async () => {
+  const { app } = appFor({ enabled: true });
+  const res = await request(app).post("/api/v2/matters/5/documents/from-drive")
+    .send({ link: "https://drive.example/new", name: "契約書.pdf" });
+  assert.equal(res.status, 201);
+  assert.equal(res.body.created, true);
+  assert.equal(res.body.document.driveLink, "https://drive.example/new");
+});
+
+test("Drive登録: 同一案件×同一リンクは冪等（created:false・200）", async () => {
+  const { app } = appFor({ enabled: true });
+  await request(app).post("/api/v2/matters/5/documents/from-drive").send({ link: "https://drive.example/dup", name: "a" });
+  const res = await request(app).post("/api/v2/matters/5/documents/from-drive").send({ link: "https://drive.example/dup", name: "a" });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.created, false);
+});
+
+test("Drive登録: 書込無効は503、link 無しは400", async () => {
+  const off = await request(appFor({ enabled: false }).app).post("/api/v2/matters/5/documents/from-drive").send({ link: "x" });
+  assert.equal(off.status, 503);
+  const bad = await request(appFor({ enabled: true }).app).post("/api/v2/matters/5/documents/from-drive").send({});
+  assert.equal(bad.status, 400);
+});
+
+test("Drive登録: admin/legal以外は403", async () => {
+  const { app } = appFor({ enabled: true, role: "requester" });
+  const res = await request(app).post("/api/v2/matters/5/documents/from-drive").send({ link: "https://drive.example/z" });
+  assert.equal(res.status, 403);
+});

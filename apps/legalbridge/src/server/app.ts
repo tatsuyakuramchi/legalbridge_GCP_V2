@@ -985,6 +985,7 @@ export function createApp(
       (request.method === "POST" && /^\/matters\/\d+\/issues$/.test(request.path)) ||
       (request.method === "DELETE" && /^\/matters\/\d+\/issues\/[^/]+$/.test(request.path)) ||
       (request.method === "POST" && /^\/matters\/\d+\/documents$/.test(request.path)) ||
+      (request.method === "POST" && /^\/matters\/\d+\/documents\/from-drive$/.test(request.path)) ||
       (request.method === "DELETE" && /^\/matters\/\d+\/documents\/\d+$/.test(request.path)) ||
       (request.method === "POST" && /^\/matters\/\d+\/sends$/.test(request.path)) ||
       (request.method === "POST" && /^\/matters\/\d+\/drive-folder$/.test(request.path));
