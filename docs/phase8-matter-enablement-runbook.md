@@ -85,14 +85,31 @@ drafts,documents,pdf
 | A+Drive: ＋案件フォルダ | `drafts,documents,pdf,drive,matters` | A ＋ `_DRIVE_STORAGE_ENABLED=true` `_CONFIRM_DRIVE_STORAGE=DRIVE_LEGALBRIDGE_VALIDATION_ONLY` `_GOOGLE_DRIVE_FOLDER_ID=<親>` |
 | B: ＋名寄せ | `drafts,documents,pdf,matters,matter-merge` | A ＋ `_MATTER_MERGE_ENABLED=true` `_CONFIRM_MATTER_MERGE=MATTER_MERGE_LEGALBRIDGE_VALIDATION_ONLY` |
 | C: ＋削除 | `drafts,documents,pdf,matters,matter-merge,matter-delete` | B ＋ `_MATTER_DELETE_ENABLED=true` `_CONFIRM_MATTER_DELETE=MATTER_DELETE_LEGALBRIDGE_VALIDATION_ONLY` |
-| D: ＋Slack 連携（フル） | `drafts,documents,pdf,matters,matter-merge,matter-delete,matter-slack` | C ＋ `_MATTER_SLACK_ENABLED=true` `_INTEGRATION_MODE=live` `_SLACK_DELIVERY_MODE=live` `_SLACK_LEGAL_CONSULT_CHANNEL=<CID>` `_SLACK_BOT_TOKEN_SECRET=<secret名>`（既定 `SLACK_BOT_TOKEN`） |
+| D: ＋Slack 連携（フル・現行 gating） | `drafts,documents,pdf,slack-approvals,matters,matter-merge,matter-delete,slack,slack-dispatch,matter-slack` | C ＋ Slack フルスタック（下記） |
 
-> 併用注意：Drive を有効化する場合 `drive` は `matters` の**前**（正準順）に入る（例：`...,pdf,drive,matters,matter-merge,...`）。
+**Profile D の Slack フルスタック（現行 verify の連鎖依存）**：`matter-slack` は `SLACK_DELIVERY_MODE=live` を要求し、
+`SLACK_DELIVERY_MODE=live` は `SLACK_DISPATCH_ENABLED=true` を要求する（verify L141）。`SLACK_DISPATCH_ENABLED=true` は
+承認書込み・通知履歴・通知承認の全 ON と dry-run 宛先マップ・Bot トークン secret を要求する（L167–178）。
+そのため案件Slackメンションだけを点けても、DM承認ディスパッチ一式まで有効化される。追加 substitution：
+
+```
+_MATTER_SLACK_ENABLED=true
+_INTEGRATION_MODE=live
+_SLACK_DELIVERY_MODE=live
+_SLACK_DISPATCH_ENABLED=true   _CONFIRM_SLACK_DISPATCH=SLACK_DISPATCH_VALIDATION_ONLY
+_SLACK_APPROVAL_WRITES_ENABLED=true   _CONFIRM_SLACK_APPROVAL_WRITES=SLACK_APPROVAL_WRITES_VALIDATION_ONLY
+_SLACK_NOTIFICATION_HISTORY_ENABLED=true
+_SLACK_NOTIFICATION_APPROVALS_ENABLED=true
+_SLACK_DRY_RUN_USER_MAP=<email=SLACKID[,email2=SLACKID2]>   # UNRESOLVED/空は不可・ID は ^[UW][A-Z0-9]{8,}$
+_SLACK_LEGAL_CONSULT_CHANNEL=<チャンネルID>
+_SLACK_BOT_TOKEN_SECRET=<secret名>   # 既定 SLACK_BOT_TOKEN・xoxb- トークンを格納した secret
+```
+
+> DB：Slack 履歴/承認テーブル（`lb_v2_slack_notification_history`／`_approvals`）は grant 006 で付与済み。
+> matter-slack のスレッド表は grant 024。実送信には Bot が対象チャンネルに参加済みで `chat:write`／`conversations` スコープを持つこと。
+> メンション対象の staff→Slack ID は DB から解決する（dry-run マップは承認ディスパッチ側の検証宛先）。
 >
-> Slack 前提：`_MATTER_SLACK_ENABLED=true` のとき cloudbuild は Bot トークン secret（`_SLACK_BOT_TOKEN_SECRET`）を
-> 自動マウントする（slack-dispatch 未使用でも実送信可）。実送信には Bot が対象チャンネルに参加済みで
-> `chat:write`／`conversations` スコープを持つこと、`_SLACK_LEGAL_CONSULT_CHANNEL` にチャンネルIDを渡すことが必要。
-> `matter-slack` は `slack-dispatch` を必要としない（scope も付けない）。メンション対象の staff→Slack ID は DB から解決する。
+> 併用注意：Drive を有効化する場合 `drive` は `slack-approvals` の**前**（正準順）に入る（例：`...,pdf,drive,slack-approvals,matters,...`）。
 
 ### 実行例（プロファイル C：基本＋名寄せ＋削除）
 
