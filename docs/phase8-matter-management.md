@@ -138,6 +138,9 @@ V1 の `DELETE /api/matters/:id`・`DELETE /api/matters/:id/tasks/:taskId` 相�
 
 ## 有効化
 
+> **段階的な有効化（GRANT＋デプロイ substitution＋scope 正準順＋確認）を一枚にまとめた手順は
+> `docs/phase8-matter-enablement-runbook.md`（Phase 7/8 横断）を参照。** 以下は最小の抜粋。
+
 案件編集（`MATTER_WRITES_ENABLED=true`＋scope `matters`）に加え、**grant 025/026/027 を本番適用**：
 
 ```bash

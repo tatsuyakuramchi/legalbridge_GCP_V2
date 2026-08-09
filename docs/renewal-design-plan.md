@@ -294,6 +294,10 @@ Phase 7 は全フェーズの受け入れ後
 
 | 2026-08-07 | Phase 5 | 点火準備：CloudSign 点火 Runbook 新設＋gmail-cloudsign.md を確定仕様へ更新 | — | ✅ |
 
+| 2026-08-09 | Phase 8 | 有効化ランブック整理：Phase 7/8 の GRANT×フラグ×scope 正準順を一枚に集約 | — | ✅ |
+
+**有効化ランブック（`docs/phase8-matter-enablement-runbook.md`）**：案件管理（Phase 7 Slack＋Phase 8）の本番有効化を段階化。機能↔GRANT↔フラグ対応表（024〜029・8-2b/8-4 は追加GRANT不要）、GRANT 適用ブロック（preflight→本適用・確認変数）、`verify-write-test.sh` が要求する **WRITE_SCOPES 完全一致の正準順**（drafts,documents,pdf,…,matters,…,matter-merge,matter-delete,…,matter-slack）、有効化プロファイル A〜D（`_WRITE_SCOPES` と substitution の対応）、`gcloud builds submit` 実行例（プロファイルC）、`/api/v2/runtime` capability 確認、個別停止・ロールバックを収録。confirm トークン（MATTER_MANAGEMENT/MERGE/DELETE_LEGALBRIDGE_VALIDATION_ONLY・DRIVE_LEGALBRIDGE_VALIDATION_ONLY）と GRANT トークンを明記。phase8-matter-management.md から相互参照。
+
 | 2026-08-09 | Phase 8 | 案件管理パリティ 8-2b：Drive ファイル→案件文書として新規登録（grant 006 再利用・冪等） | LegalBridge_AI_GCP | ✅ |
 
 **スライス8-2b（Drive→文書登録）**：V1 の `POST /api/matters/:id/documents/from-drive` 相当。案件フォルダ内の Drive ファイルを外部文書（`template_type='external_file'`）として `documents` に登録し案件へ紐付ける。**新規 grant 不要**（`documents` INSERT は grant 006 で付与済み・`document_number` は NULL＝外部ファイルは採番しない・ファイル名は `form_data`{title,source:"drive"} に格納）。`matter-document-write-repository.ts` に `registerFromDrive(matterId,{link,name})`（Pg/Memory）を追加＝**冪等**（同一案件×同一 drive_link は既存を返し created:false）。ルート `POST /matters/:id/documents/from-drive`（`matterWriteEnabled` 共有・新規201/既存200）を write-routes に追加＋write-guard allowlist 追加。UI＝`MatterDriveFolder` のファイル一覧各行に「案件文書に登録」ボタン（登録後 detail 再取得）。テスト524件・typecheck緑・build緑。**Phase 8 完了（8-1〜8-6＋8-2b）**。
