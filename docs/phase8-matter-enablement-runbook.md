@@ -85,9 +85,14 @@ drafts,documents,pdf
 | A+Drive: ＋案件フォルダ | `drafts,documents,pdf,drive,matters` | A ＋ `_DRIVE_STORAGE_ENABLED=true` `_CONFIRM_DRIVE_STORAGE=DRIVE_LEGALBRIDGE_VALIDATION_ONLY` `_GOOGLE_DRIVE_FOLDER_ID=<親>` |
 | B: ＋名寄せ | `drafts,documents,pdf,matters,matter-merge` | A ＋ `_MATTER_MERGE_ENABLED=true` `_CONFIRM_MATTER_MERGE=MATTER_MERGE_LEGALBRIDGE_VALIDATION_ONLY` |
 | C: ＋削除 | `drafts,documents,pdf,matters,matter-merge,matter-delete` | B ＋ `_MATTER_DELETE_ENABLED=true` `_CONFIRM_MATTER_DELETE=MATTER_DELETE_LEGALBRIDGE_VALIDATION_ONLY` |
-| D: ＋Slack 連携（フル） | `drafts,documents,pdf,matters,matter-merge,matter-delete,matter-slack` | C ＋ `_MATTER_SLACK_ENABLED=true` `_INTEGRATION_MODE=live` `_SLACK_DELIVERY_MODE=live` `_SLACK_LEGAL_CONSULT_CHANNEL=<CID>` ＋ Slack Bot トークン secret |
+| D: ＋Slack 連携（フル） | `drafts,documents,pdf,matters,matter-merge,matter-delete,matter-slack` | C ＋ `_MATTER_SLACK_ENABLED=true` `_INTEGRATION_MODE=live` `_SLACK_DELIVERY_MODE=live` `_SLACK_LEGAL_CONSULT_CHANNEL=<CID>` `_SLACK_BOT_TOKEN_SECRET=<secret名>`（既定 `SLACK_BOT_TOKEN`） |
 
 > 併用注意：Drive を有効化する場合 `drive` は `matters` の**前**（正準順）に入る（例：`...,pdf,drive,matters,matter-merge,...`）。
+>
+> Slack 前提：`_MATTER_SLACK_ENABLED=true` のとき cloudbuild は Bot トークン secret（`_SLACK_BOT_TOKEN_SECRET`）を
+> 自動マウントする（slack-dispatch 未使用でも実送信可）。実送信には Bot が対象チャンネルに参加済みで
+> `chat:write`／`conversations` スコープを持つこと、`_SLACK_LEGAL_CONSULT_CHANNEL` にチャンネルIDを渡すことが必要。
+> `matter-slack` は `slack-dispatch` を必要としない（scope も付けない）。メンション対象の staff→Slack ID は DB から解決する。
 
 ### 実行例（プロファイル C：基本＋名寄せ＋削除）
 

@@ -216,7 +216,9 @@ steps:
           SECRETS="$$SECRETS,/secrets/gws-service-account.json=${_GWS_SA_KEY_SECRET}:latest"
           ENVVARS="$$ENVVARS~GOOGLE_SERVICE_ACCOUNT_KEY_PATH=/secrets/gws-service-account.json"
         fi
-        if [ "${_SLACK_DISPATCH_ENABLED}" = "true" ]; then
+        # Slack Bot トークンは通知ディスパッチ（slack-dispatch）と案件Slack連携（matter-slack）の
+        # 双方が参照する。いずれか有効ならマウントする（matter-slack 単独有効でも実送信できるように）。
+        if [ "${_SLACK_DISPATCH_ENABLED}" = "true" ] || [ "${_MATTER_SLACK_ENABLED}" = "true" ]; then
           SECRETS="$$SECRETS,SLACK_BOT_TOKEN=${_SLACK_BOT_TOKEN_SECRET}:latest"
         fi
         # CloudSign client_id は Secret Manager から CLOUDSIGN_CLIENT_ID env として注入する
