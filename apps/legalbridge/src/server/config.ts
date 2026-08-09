@@ -40,6 +40,8 @@ export const config = {
     process.env.RIGHTS_SOURCE_WRITES_ENABLED === "true",
   vendorMergeEnabled:
     process.env.VENDOR_MERGE_ENABLED === "true",
+  matterMergeEnabled:
+    process.env.MATTER_MERGE_ENABLED === "true",
   royaltyEventWritesEnabled:
     process.env.ROYALTY_EVENT_WRITES_ENABLED === "true",
   receiptWritesEnabled:

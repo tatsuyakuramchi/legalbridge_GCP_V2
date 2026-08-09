@@ -294,6 +294,10 @@ Phase 7 は全フェーズの受け入れ後
 
 | 2026-08-07 | Phase 5 | 点火準備：CloudSign 点火 Runbook 新設＋gmail-cloudsign.md を確定仕様へ更新 | — | ✅ |
 
+| 2026-08-09 | Phase 8 | 案件管理パリティ 8-5：名寄せ（案件マージ／absorb・専用フラグ＋合言葉・grant 028） | LegalBridge_AI_GCP | ✅ |
+
+**スライス8-5（名寄せ／案件マージ）**：V1 の `POST /api/matters/:id/absorb` 相当。重複案件（source）を存続案件（target）へ寄せ、課題・タスク・文書・送信履歴を移送。`matter-merge-schema.ts`（合言葉 `COMMIT_MATTER_MERGE`・自己マージ拒否）。`matter-merge-repository.ts`（Pg/Memory・`preview`＝SELECT のみで移送件数集計・GRANT不要／権限未付与表は count=null／`merge`＝両案件 `FOR UPDATE`・課題は衝突する `backlog_issue_key` を source 残置・タスクは `is_primary=FALSE` 降格・文書/送信履歴は matter_id 付替え・target 未設定なら Drive フォルダを DB 上で引継ぎ・source は `status='archived'`＝**DELETE しない**・42501→`MATTER_MERGE_FORBIDDEN_DB`503）。grant 028＝`document_sends` 列レベル UPDATE(matter_id)（027 は SELECT/INSERT のみ・履歴移送用・トークン `GRANT_PRODUCTION_MATTER_SENDS_MATTER_ID`）＋preflight。課題=025／文書=026／タスク・matters=008 を再利用。`matter-merge-routes.ts`：`GET /matter-merge/preview`（read・admin/legal・書込無効でも可）／`POST /matter-merge`（guarded・**専用フラグ `MATTER_MERGE_ENABLED`＋scope `matter-merge`＋合言葉**＝vendor-merge に倣い破壊操作を隔離）。write-guard allowlist に `POST /matter-merge` 追加。capability `matter-merge` 露出。verify/cloudbuild に `_MATTER_MERGE_ENABLED`／`_CONFIRM_MATTER_MERGE`（=`MATTER_MERGE_LEGALBRIDGE_VALIDATION_ONLY`）を追加（有効時は write-test サービス・production DB・IAP/Cloud Run IAM 必須）。UI＝`MatterMerge`（設定 > 案件名寄せ・ID→プレビュー→合言葉→実行）。テスト511件・typecheck緑。残：8-6 削除 / 8-2b Drive→文書登録。
+
 | 2026-08-08 | Phase 8 | 案件管理パリティ 8-4：Drive フォルダ連携（作成/一覧・grant不要・Drive SA共有） | LegalBridge_AI_GCP | ✅ |
 
 **スライス8-4（Drive フォルダ連携）**：案件ごとの Drive フォルダ作成/一覧。`documents/drive-folder.ts`（`MatterDriveFolderService`＝Google/Local/Memory・drive-storage と同じ Drive SA を生fetchで再利用・`ensureFolder` 冪等／`listFiles`／純関数 `matterFolderName`）。`matter-drive-repository.ts`（`getFolder`/`setFolder`＝`matters.drive_folder_id/url`・**008 の matters UPDATE で更新可＝新規grant不要**）。`matter-drive-routes.ts`：`POST /matters/:id/drive-folder`（作成/取得・冪等）／`GET /matters/:id/drive-files`（一覧）。ゲート＝`driveStorageEnabled`（読取）＋`matterWriteEnabled`（作成）の**既存能力再利用**（新フラグ無し）。write-guard allowlist に POST 追加。UI＝`MatterDriveFolder`（作成/開く＋ファイル一覧）。テスト503件・build緑。`from-drive`（Drive→新規文書登録）は 8-2b へ。

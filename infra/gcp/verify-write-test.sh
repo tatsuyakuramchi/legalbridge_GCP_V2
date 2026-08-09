@@ -386,6 +386,28 @@ case "${VENDOR_MERGE_ENABLED}" in
     exit 1
     ;;
 esac
+case "${MATTER_MERGE_ENABLED}" in
+  false)
+    ;;
+  true)
+    if [ "${CONFIRM_MATTER_MERGE}" != "MATTER_MERGE_LEGALBRIDGE_VALIDATION_ONLY" ]; then
+      echo "Matter merge deployment blocked: explicit production validation confirmation is missing."
+      exit 1
+    fi
+    if [ "${PRIMARY_DB_MODE}" != "production" ] || [ "${SERVICE}" != "legalbridge-v2-write-test" ] || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
+      echo "Matter merge deployment blocked: service, database, runtime user, or password secret does not match the approved target."
+      exit 1
+    fi
+    if [ "${AUTH_MODE}" != "iap" ] && [ "${AUTH_MODE}" != "cloudrun-iam" ]; then
+      echo "Matter merge deployment blocked: IAP or Cloud Run IAM authentication is required."
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Deployment blocked: MATTER_MERGE_ENABLED must be true or false."
+    exit 1
+    ;;
+esac
 case "${GMAIL_DELIVERY_MODE}" in
   disabled)
     ;;
@@ -656,6 +678,9 @@ if [ "${RIGHTS_SOURCE_WRITES_ENABLED}" = "true" ]; then
 fi
 if [ "${VENDOR_MERGE_ENABLED}" = "true" ]; then
   expected_write_scopes="$expected_write_scopes,vendor-merge"
+fi
+if [ "${MATTER_MERGE_ENABLED}" = "true" ]; then
+  expected_write_scopes="$expected_write_scopes,matter-merge"
 fi
 if [ "${BACKLOG_COMMENT_WRITE_ENABLED}" = "true" ]; then
   expected_write_scopes="$expected_write_scopes,backlog-comment"

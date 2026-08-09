@@ -12,7 +12,7 @@ list/detail/create/update/task と Slack（Phase 7）まで。以下を guarded-
 | 文書リンク/解除（`documents.matter_id`） | あり | **8-2 実装済** |
 | 送信履歴（`document_sends`：email/slack/drive/manual） | あり | **8-3 実装済** |
 | Drive フォルダ連携（作成/添付/一覧/Drive→文書登録） | あり | **8-4 実装済**（作成/一覧。Drive→登録は 8-2b） |
-| 名寄せ（案件マージ/absorb） | あり | 8-5（予定・複数表write） |
+| 名寄せ（案件マージ/absorb） | あり | **8-5 実装済**（複数表write・grant 028） |
 | 案件削除・タスク削除 | あり | 8-6（予定・破壊的） |
 
 ## スライス 8-1（実装済）：課題紐付け 追加/解除
@@ -70,6 +70,31 @@ list/detail/create/update/task と Slack（Phase 7）まで。以下を guarded-
 - UI：`MatterDriveFolder`（フォルダ作成ボタン／開くリンク＋フォルダ内ファイル一覧）。
 - `from-drive`（Drive ファイル→新規文書登録）は V1 固有列のため 8-2b へ。
 
+## スライス 8-5（実装済）：名寄せ（案件マージ / absorb）
+
+V1 の `POST /api/matters/:id/absorb` 相当。重複案件（source）を存続案件（target）へ寄せ、
+紐付き（課題・タスク・文書・送信履歴）を移送する。破壊的なので**専用フラグ＋scope＋合言葉**。
+
+- **grant 028**（`028_production_matter_sends_matter_id_grants.sql`・トークン
+  `GRANT_PRODUCTION_MATTER_SENDS_MATTER_ID`）：`document_sends` に**列レベル UPDATE(matter_id) のみ**を付与
+  （027 は SELECT/INSERT のみ・履歴移送に matter_id 更新が必要）＋preflight。
+  課題は 025（UPDATE）、文書は 026（UPDATE(matter_id)）、タスク/matters は 008（UPDATE）で移送。
+- `matter-merge-schema.ts`：合言葉 `COMMIT_MATTER_MERGE`・自己マージ拒否。
+- `matter-merge-repository.ts`（Pg/Memory）：`preview`（SELECT のみ・移送件数を集計・GRANT不要／
+  権限未付与の表は count=null）／`merge`（トランザクション・両案件 `FOR UPDATE`・課題は衝突する
+  `backlog_issue_key` を source に残す・タスクは `is_primary=FALSE` へ降格・文書/送信履歴は matter_id 付替え・
+  target 未設定なら Drive フォルダを DB 上で引継ぎ・source は `status='archived'`＝**DELETE しない**）。
+  42501→`MATTER_MERGE_FORBIDDEN_DB`503。
+- `matter-merge-routes.ts`：`GET /matter-merge/preview`（read・admin/legal・書込無効でも可）／
+  `POST /matter-merge`（guarded・専用フラグ `MATTER_MERGE_ENABLED`＋scope `matter-merge`＋合言葉）。
+  app.ts の write-guard allowlist に `POST /matter-merge` を追加。
+- 有効化ゲート：`accessMode=readwrite`＋`WRITE_FEATURES_ENABLED`＋scope `matter-merge`＋
+  `MATTER_MERGE_ENABLED=true`＋DB接続。capability `matter-merge` を露出（UI 実行ボタンの条件）。
+- verify/cloudbuild：`_MATTER_MERGE_ENABLED` / `_CONFIRM_MATTER_MERGE`（=`MATTER_MERGE_LEGALBRIDGE_VALIDATION_ONLY`）
+  を追加。有効時は write-test サービス・production DB・IAP/Cloud Run IAM を要求。
+- UI：`MatterMerge`（設定 > 案件名寄せ・存続先/統合元ID→プレビュー→合言葉→実行）。
+- テスト（プレビュー集計・403/404/400・503・移送＋アーカイブ＋Drive引継ぎ・自己マージ拒否）。
+
 ## 有効化
 
 案件編集（`MATTER_WRITES_ENABLED=true`＋scope `matters`）に加え、**grant 025/026/027 を本番適用**：
@@ -84,4 +109,14 @@ psql "$RUNTIME_ADMIN_DSN" -v confirm_matter_document_links=GRANT_PRODUCTION_MATT
 psql "$RUNTIME_ADMIN_DSN" -f infra/gcp/sql/027_production_matter_sends_preflight.sql || true
 psql "$RUNTIME_ADMIN_DSN" -v confirm_matter_sends=GRANT_PRODUCTION_MATTER_SENDS \
   -f infra/gcp/sql/027_production_matter_sends_grants.sql
+```
+
+名寄せ（8-5）を有効化する場合は、加えて **grant 028 を本番適用**し、デプロイで
+`_MATTER_MERGE_ENABLED=true` / `_CONFIRM_MATTER_MERGE=MATTER_MERGE_LEGALBRIDGE_VALIDATION_ONLY`
+と WRITE_SCOPES に `matter-merge` を含める：
+
+```bash
+psql "$RUNTIME_ADMIN_DSN" -f infra/gcp/sql/028_production_matter_sends_matter_id_preflight.sql || true
+psql "$RUNTIME_ADMIN_DSN" -v confirm_matter_sends_matter_id=GRANT_PRODUCTION_MATTER_SENDS_MATTER_ID \
+  -f infra/gcp/sql/028_production_matter_sends_matter_id_grants.sql
 ```

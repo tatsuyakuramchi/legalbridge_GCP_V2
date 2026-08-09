@@ -24,6 +24,7 @@ import { ReceivableMap } from "./ReceivableMap";
 import { WorkDetail } from "./WorkDetail";
 import { DataQuality } from "./DataQuality";
 import { VendorMerge } from "./VendorMerge";
+import { MatterMerge } from "./MatterMerge";
 import { OperationsGuide } from "./OperationsGuide";
 import { TextSnippets } from "./TextSnippets";
 import { RequestsWorkspace } from "./RequestsWorkspace";
@@ -50,7 +51,7 @@ const fallback: DashboardSummary = {
   priorities: []
 };
 
-type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview" | "billing" | "receivable-map" | "payment-report" | "billing-print" | "works" | "data-quality" | "vendor-merge" | "guide" | "snippets" | "requests";
+type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview" | "billing" | "receivable-map" | "payment-report" | "billing-print" | "works" | "data-quality" | "vendor-merge" | "matter-merge" | "guide" | "snippets" | "requests";
 type NavItem = { view: View; label: string; description: string; match: View[] };
 type NavGroup = { label: string; items: NavItem[] };
 
@@ -88,6 +89,7 @@ function navGroups(access: {
       ...(access.legalWorkspace ? [{ view: "ledgers" as const, label: "台帳", description: "作品・取引先などのマスタ", match: ["ledgers" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "data-quality" as const, label: "データ品質", description: "横断整合スキャン（未リンク・重複・欠落）の俯瞰", match: ["data-quality" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "vendor-merge" as const, label: "取引先名寄せ", description: "重複した取引先を統合（参照再指定・旧は無効化）", match: ["vendor-merge" as const] }] : []),
+      ...(access.legalWorkspace ? [{ view: "matter-merge" as const, label: "案件名寄せ", description: "重複した案件を統合（課題・文書・送信履歴を移送・旧はアーカイブ）", match: ["matter-merge" as const] }] : []),
       ...(access.adminWorkspace ? [{ view: "staff" as const, label: "担当者", description: "担当者マスタの管理", match: ["staff" as const] }] : []),
       ...(access.adminWorkspace && access.gmailInbound ? [{ view: "gmail-inbound" as const, label: "受信取込", description: "受信メールの契約PDF取込", match: ["gmail-inbound" as const] }] : []),
       ...(access.adminWorkspace ? [{ view: "admin" as const, label: "管理", description: "通知・運用の管理", match: ["admin" as const] }] : []),
@@ -115,6 +117,7 @@ function breadcrumbFor(view: View): Array<{ label: string; view?: View }> {
     works: [home, { label: "作品" }],
     "data-quality": [home, { label: "データ品質" }],
     "vendor-merge": [home, { label: "取引先名寄せ" }],
+    "matter-merge": [home, { label: "案件名寄せ" }],
     guide: [home, { label: "運用ガイド" }],
     snippets: [home, { label: "テキストスニペット" }],
     conditions: [home, { label: "条件明細" }],
@@ -163,6 +166,7 @@ export function App() {
   const [canEditMaterials, setCanEditMaterials] = useState(false);
   const [canEditRightsSources, setCanEditRightsSources] = useState(false);
   const [canMergeVendors, setCanMergeVendors] = useState(false);
+  const [canMergeMatters, setCanMergeMatters] = useState(false);
   const [canBacklogComment, setCanBacklogComment] = useState(false);
   const [canEditStaff, setCanEditStaff] = useState(false);
   const [canGmailNotify, setCanGmailNotify] = useState(false);
@@ -210,6 +214,7 @@ export function App() {
         setCanEditMaterials(capabilities.includes("materials"));
         setCanEditRightsSources(capabilities.includes("rights-sources"));
         setCanMergeVendors(capabilities.includes("vendor-merge"));
+        setCanMergeMatters(capabilities.includes("matter-merge"));
         setCanBacklogComment(capabilities.includes("backlog-comment"));
         setCanEditStaff(capabilities.includes("staff"));
         setCanGmailNotify(capabilities.includes("gmail"));
@@ -339,6 +344,7 @@ export function App() {
         {view === "works" && <WorkDetail canEdit={canEditWorks} canEditRights={canEditRightsSources} />}
         {view === "data-quality" && <DataQuality onNavigate={(v) => setView(v as View)} />}
         {view === "vendor-merge" && <VendorMerge canMerge={canMergeVendors} />}
+        {view === "matter-merge" && <MatterMerge canMerge={canMergeMatters} />}
         {view === "requests" && (legalWorkspace || requesterWorkspace) && (
           <RequestsWorkspace canComment={canBacklogComment}
             onCreateDocument={(issueKey, seed) => { setNewDocIssueKey(issueKey); setNewDocSeed(seed ?? {}); setDraftSelection(null); setView("templates"); }} />
