@@ -206,6 +206,7 @@ function MatterDetail({ detail, labels, canEdit, onChanged, onCreateDocument }:
     <DetailSection title={`関連文書 ${detail.documents.length}`}>
       <MatterDocumentLinks matterId={matter.id} documents={detail.documents} labels={labels} canEdit={canEdit} onChanged={onChanged} />
     </DetailSection>
+    <DetailSection title="送信履歴"><MatterSends matterId={matter.id} documents={detail.documents} canEdit={canEdit} /></DetailSection>
     {matter.remarks && <DetailSection title="備考"><p>{matter.remarks}</p></DetailSection>}
     {canEdit && <MatterSlackPanel matterId={matter.id} />}
   </aside>;
@@ -249,6 +250,62 @@ function MatterIssueLinks({ matterId, issues, canEdit, onChanged }:
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ backlogIssueKey: key.trim(), relation })
         }), "課題を紐付けました").then(() => setKey(""))}>紐付け</button>
+    </div>}
+  </>;
+}
+
+type Send = { id: number; documentId: number; channel: string; recipient: string | null; status: string; subject: string | null; sentBy: string | null; sentAt: string };
+const SEND_CHANNELS = ["email", "slack", "drive", "manual"];
+
+function MatterSends({ matterId, documents, canEdit }:
+  { matterId: number; documents: Detail["documents"]; canEdit: boolean }) {
+  const toast = useToast();
+  const [sends, setSends] = useState<Send[]>([]);
+  const [enabled, setEnabled] = useState(true);
+  const [documentId, setDocumentId] = useState("");
+  const [channel, setChannel] = useState("email");
+  const [recipient, setRecipient] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [reload, setReload] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/v2/matters/${matterId}/sends`).then(async (r) => {
+      if (cancelled || !r.ok) return;
+      const body = await r.json();
+      setEnabled(Boolean(body.enabled));
+      setSends(Array.isArray(body.sends) ? body.sends : []);
+    });
+    return () => { cancelled = true; };
+  }, [matterId, reload]);
+  async function record() {
+    setBusy(true);
+    try {
+      await toast.run(fetch(`/api/v2/matters/${matterId}/sends`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ documentId: Number(documentId), channel, recipient: recipient || null })
+      }).then(async (r) => { if (!r.ok) throw new Error("失敗しました"); }), "送信を記録しました");
+      setDocumentId(""); setRecipient(""); setReload((v) => v + 1);
+    } catch { /* toast shown */ }
+    finally { setBusy(false); }
+  }
+  return <>
+    {!enabled && <small className="muted-note">送信履歴は未設定です。</small>}
+    {sends.map((s) => <article key={s.id}>
+      <b>{s.channel}</b>
+      <span>{s.subject ?? s.recipient ?? `文書#${s.documentId}`}</span>
+      <small>{s.status}・{formatDate(s.sentAt)}{s.sentBy ? `・${s.sentBy}` : ""}</small>
+    </article>)}
+    {enabled && !sends.length && <small className="muted-note">送信履歴はありません。</small>}
+    {canEdit && enabled && <div className="issue-link-form">
+      <select value={documentId} onChange={(e) => setDocumentId(e.target.value)}>
+        <option value="">文書を選択</option>
+        {documents.map((d) => <option key={d.id} value={d.id}>{d.documentNumber ?? `#${d.id}`}</option>)}
+      </select>
+      <select value={channel} onChange={(e) => setChannel(e.target.value)}>
+        {SEND_CHANNELS.map((c) => <option key={c} value={c}>{c}</option>)}
+      </select>
+      <input value={recipient} placeholder="宛先（任意）" onChange={(e) => setRecipient(e.target.value)} />
+      <button className="primary" disabled={busy || !documentId} onClick={record}>記録</button>
     </div>}
   </>;
 }

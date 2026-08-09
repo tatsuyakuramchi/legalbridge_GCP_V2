@@ -294,6 +294,10 @@ Phase 7 は全フェーズの受け入れ後
 
 | 2026-08-07 | Phase 5 | 点火準備：CloudSign 点火 Runbook 新設＋gmail-cloudsign.md を確定仕様へ更新 | — | ✅ |
 
+| 2026-08-08 | Phase 8 | 案件管理パリティ 8-3：送信履歴（document_sends・grant 027 SELECT/INSERT・read＋append） | LegalBridge_AI_GCP | ✅ |
+
+**スライス8-3（送信履歴）**：案件の文書送信履歴（`document_sends`・email/slack/drive/manual）。`matter-send-repository.ts`（Pg/Memory・`list` 新しい順／`record` append）。grant 027＝`document_sends` SELECT/INSERT（append専用・006未付与）＋preflight。`matter-send-routes.ts`：`GET /matters/:id/sends`（read・台帳無しは enabled:false）／`POST /matters/:id/sends`（append・`matterWriteEnabled` 共有・sentBy=current user）。write-guard allowlist に POST 追加。UI＝`MatterSends`（履歴一覧＋手動記録フォーム）。テスト497件・build緑。
+
 | 2026-08-08 | Phase 8 | 案件管理パリティ 8-2：文書リンク/解除（documents.matter_id・grant 026 列レベルUPDATE） | LegalBridge_AI_GCP | ✅ |
 
 **スライス8-2（文書リンク/解除）**：案件⇄文書の紐付け付け替え。`matter-document-write-repository.ts`（Pg/Memory・`link`=`UPDATE documents SET matter_id`・対象無し404／`unlink`=`SET matter_id=NULL`）。grant 026＝**`documents` の列レベル `UPDATE(matter_id)` のみ**（最小権限・他列更新不可）＋preflight。ルート `POST/DELETE /matters/:id/documents(/:docId)`（`matterWriteEnabled` 共有・write-guard allowlist 追加）。UI＝`MatterDocumentLinks`（文書ID紐付け／行ごと解除）。テスト492件・build緑。`from-drive`（Drive→新規文書INSERT）は V1固有列のため 8-2b へ。

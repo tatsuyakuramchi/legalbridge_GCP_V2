@@ -85,6 +85,11 @@ import {
   type MatterDocumentWriteRepository
 } from "./matters/matter-document-write-repository.js";
 import {
+  PgMatterSendRepository,
+  type MatterSendRepository
+} from "./matters/matter-send-repository.js";
+import { createMatterSendRouter } from "./matters/matter-send-routes.js";
+import {
   LiveMatterSlackNotifier,
   NoopMatterSlackNotifier,
   type MatterSlackNotifier
@@ -339,6 +344,7 @@ export interface AppDependencies {
   matterWrites?: MatterWriteRepository;
   matterIssueWrites?: MatterIssueWriteRepository;
   matterDocumentWrites?: MatterDocumentWriteRepository;
+  matterSends?: MatterSendRepository;
   conditionLines?: ConditionLineRepository;
   pendingInspections?: PendingInspectionRepository;
   vendorWrites?: VendorWriteRepository;
@@ -420,6 +426,7 @@ function createDefaultDependencies(): AppDependencies {
       : new MemoryMatterWriteRepository(),
     matterIssueWrites: database ? new PgMatterIssueWriteRepository(database) : undefined,
     matterDocumentWrites: database ? new PgMatterDocumentWriteRepository(database) : undefined,
+    matterSends: database ? new PgMatterSendRepository(database) : undefined,
     conditionLines: database
       ? new PgConditionLineRepository(database)
       : new MemoryConditionLineRepository(),
@@ -932,7 +939,8 @@ export function createApp(
       (request.method === "POST" && /^\/matters\/\d+\/issues$/.test(request.path)) ||
       (request.method === "DELETE" && /^\/matters\/\d+\/issues\/[^/]+$/.test(request.path)) ||
       (request.method === "POST" && /^\/matters\/\d+\/documents$/.test(request.path)) ||
-      (request.method === "DELETE" && /^\/matters\/\d+\/documents\/\d+$/.test(request.path));
+      (request.method === "DELETE" && /^\/matters\/\d+\/documents\/\d+$/.test(request.path)) ||
+      (request.method === "POST" && /^\/matters\/\d+\/sends$/.test(request.path));
     if (matterWriteEnabled && isMatterWrite) return next();
     const isVendorWrite =
       (request.method === "POST" && (request.path === "/vendors" || request.path === "/vendors/import")) ||
@@ -1020,6 +1028,7 @@ export function createApp(
     dependencies.matterIssueWrites,
     dependencies.matterDocumentWrites
   ));
+  app.use("/api/v2", createMatterSendRouter(dependencies.matterSends, matterWriteEnabled));
   // 案件 Slack スレッド（法務相談・メンション・定型文）。
   const drivePermissionGranter: DrivePermissionGranter =
     config.googleDriveFolderId
