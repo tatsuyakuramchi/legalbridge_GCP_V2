@@ -161,6 +161,7 @@ export function App() {
   const [canSaveToDrive, setCanSaveToDrive] = useState(false);
   const [canCommitContractIntake, setCanCommitContractIntake] = useState(false);
   const [canEditMatters, setCanEditMatters] = useState(false);
+  const [canDeleteMatters, setCanDeleteMatters] = useState(false);
   const [canEditVendors, setCanEditVendors] = useState(false);
   const [canEditWorks, setCanEditWorks] = useState(false);
   const [canEditMaterials, setCanEditMaterials] = useState(false);
@@ -209,6 +210,7 @@ export function App() {
         setCanSaveToDrive(capabilities.includes("drive"));
         setCanCommitContractIntake(capabilities.includes("contract-intake"));
         setCanEditMatters(capabilities.includes("matters"));
+        setCanDeleteMatters(capabilities.includes("matter-delete"));
         setCanEditVendors(capabilities.includes("vendors"));
         setCanEditWorks(capabilities.includes("works"));
         setCanEditMaterials(capabilities.includes("materials"));
@@ -318,6 +320,7 @@ export function App() {
         )}
         {view === "matters" && <MatterRegistry templates={templates}
           canEdit={canEditMatters}
+          canDelete={canDeleteMatters}
           onCreateDocument={(legalWorkspace || requesterWorkspace)
             ? (issueKey) => { setNewDocIssueKey(issueKey ?? ""); setNewDocSeed({}); setDraftSelection(null); setView("templates"); }
             : undefined}

@@ -53,8 +53,8 @@ function matchesFilter(matter: Matter, filter: FilterKey, today: string) {
   }
 }
 
-export function MatterRegistry({ templates, selectedId, canEdit = false, onCreateDocument }:
-  { templates: DocumentFormSchema[]; selectedId?: number; canEdit?: boolean;
+export function MatterRegistry({ templates, selectedId, canEdit = false, canDelete = false, onCreateDocument }:
+  { templates: DocumentFormSchema[]; selectedId?: number; canEdit?: boolean; canDelete?: boolean;
     onCreateDocument?: (issueKey: string | null) => void }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FilterKey>("all");
@@ -156,16 +156,17 @@ export function MatterRegistry({ templates, selectedId, canEdit = false, onCreat
       {creating
         ? <MatterForm mode="create" onCancel={() => setCreating(false)}
             onSaved={(id) => { setCreating(false); refreshAll(id); }} />
-        : <MatterDetail detail={detail} labels={labels} canEdit={canEdit}
+        : <MatterDetail detail={detail} labels={labels} canEdit={canEdit} canDelete={canDelete}
             onCreateDocument={onCreateDocument}
-            onChanged={() => refreshAll(detail?.matter.id)} />}
+            onChanged={() => refreshAll(detail?.matter.id)}
+            onDeleted={() => { setDetail(null); setReload((v) => v + 1); }} />}
     </div>
   </section>;
 }
 
-function MatterDetail({ detail, labels, canEdit, onChanged, onCreateDocument }:
-  { detail: Detail | null; labels: Map<string, string>; canEdit: boolean; onChanged: () => void;
-    onCreateDocument?: (issueKey: string | null) => void }) {
+function MatterDetail({ detail, labels, canEdit, canDelete = false, onChanged, onDeleted, onCreateDocument }:
+  { detail: Detail | null; labels: Map<string, string>; canEdit: boolean; canDelete?: boolean; onChanged: () => void;
+    onDeleted?: () => void; onCreateDocument?: (issueKey: string | null) => void }) {
   const [editing, setEditing] = useState(false);
   const [addingTask, setAddingTask] = useState(false);
   useEffect(() => { setEditing(false); setAddingTask(false); }, [detail?.matter.id]);
@@ -201,7 +202,7 @@ function MatterDetail({ detail, labels, canEdit, onChanged, onCreateDocument }:
       {addingTask && <TaskForm matterId={matter.id} onCancel={() => setAddingTask(false)}
         onSaved={() => { setAddingTask(false); onChanged(); }} />}
       {detail.tasks.map((task) => <TaskRow key={task.id} matterId={matter.id} task={task}
-        canEdit={canEdit} onChanged={onChanged} />)}
+        canEdit={canEdit} canDelete={canDelete} onChanged={onChanged} />)}
     </DetailSection>
     <DetailSection title={`関連文書 ${detail.documents.length}`}>
       <MatterDocumentLinks matterId={matter.id} documents={detail.documents} labels={labels} canEdit={canEdit} onChanged={onChanged} />
@@ -209,7 +210,70 @@ function MatterDetail({ detail, labels, canEdit, onChanged, onCreateDocument }:
     <DetailSection title="送信履歴"><MatterSends matterId={matter.id} documents={detail.documents} canEdit={canEdit} /></DetailSection>
     {matter.remarks && <DetailSection title="備考"><p>{matter.remarks}</p></DetailSection>}
     {canEdit && <MatterSlackPanel matterId={matter.id} />}
+    {canDelete && <MatterDangerZone matterId={matter.id} title={matter.title} onDeleted={onDeleted} />}
   </aside>;
+}
+
+const MATTER_DELETE_TOKEN = "COMMIT_MATTER_DELETE";
+type DeleteImpact = { key: string; label: string; count: number | null; effect: "cascade" | "unlink" };
+
+// 案件削除（破壊的・Phase 8-6）。プレビュー（連鎖削除・解除件数）→合言葉→削除。
+function MatterDangerZone({ matterId, title, onDeleted }:
+  { matterId: number; title: string; onDeleted?: () => void }) {
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const [impacts, setImpacts] = useState<DeleteImpact[] | null>(null);
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => { setOpen(false); setImpacts(null); setToken(""); }, [matterId]);
+
+  async function loadPreview() {
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/v2/matters/${matterId}/delete-preview`);
+      if (!res.ok) throw new Error("プレビューを取得できませんでした");
+      const data = await res.json();
+      setImpacts(data.preview.impacts); setOpen(true);
+    } catch { toast.push("プレビューを取得できませんでした", "error"); }
+    finally { setBusy(false); }
+  }
+
+  async function remove() {
+    setBusy(true);
+    try {
+      const request = fetch(`/api/v2/matters/${matterId}`, {
+        method: "DELETE", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmation: token })
+      }).then(async (res) => { if (!res.ok) throw new Error("削除に失敗しました"); });
+      await toast.run(request, "案件を削除しました");
+      onDeleted?.();
+    } catch { /* toast shown */ }
+    finally { setBusy(false); }
+  }
+
+  return <DetailSection title="危険操作">
+    {!open
+      ? <button className="link-remove" disabled={busy} onClick={loadPreview}>この案件を削除…</button>
+      : <div className="matter-danger">
+          <p>「{title}」を削除します。次の紐付きに影響します（取り消せません）。</p>
+          <table className="vm-refs">
+            <thead><tr><th>紐付き</th><th>影響</th><th>件数</th></tr></thead>
+            <tbody>{(impacts ?? []).map((i) => <tr key={i.key}>
+              <td>{i.label}</td>
+              <td className="muted">{i.effect === "cascade" ? "連鎖削除" : "解除（保持）"}</td>
+              <td>{i.count == null ? "権限未付与" : i.count}</td>
+            </tr>)}</tbody>
+          </table>
+          <label>確認のため <code>{MATTER_DELETE_TOKEN}</code> と入力
+            <input value={token} onChange={(e) => setToken(e.target.value)} placeholder={MATTER_DELETE_TOKEN} />
+          </label>
+          <div className="task-actions">
+            <button disabled={busy} onClick={() => { setOpen(false); setToken(""); }}>キャンセル</button>
+            <button className="link-remove" disabled={busy || token !== MATTER_DELETE_TOKEN} onClick={remove}>案件を削除</button>
+          </div>
+        </div>}
+  </DetailSection>;
 }
 
 const ISSUE_RELATIONS: Array<{ value: string; label: string }> = [
@@ -494,10 +558,11 @@ function MatterForm({ mode, matter, onCancel, onSaved }: {
   </aside>;
 }
 
-function TaskRow({ matterId, task, canEdit, onChanged }: {
+function TaskRow({ matterId, task, canEdit, canDelete = false, onChanged }: {
   matterId: number;
   task: Detail["tasks"][number];
   canEdit: boolean;
+  canDelete?: boolean;
   onChanged: () => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -513,6 +578,16 @@ function TaskRow({ matterId, task, canEdit, onChanged }: {
     } catch { /* toast shown */ }
     finally { setBusy(false); }
   }
+  async function removeTask() {
+    setBusy(true);
+    try {
+      const request = fetch(`/api/v2/matters/${matterId}/tasks/${task.id}`, { method: "DELETE" })
+        .then(async (response) => { if (!response.ok) throw new Error("削除に失敗しました"); });
+      await toast.run(request, "タスクを削除しました");
+      onChanged();
+    } catch { /* toast shown */ }
+    finally { setBusy(false); }
+  }
   return <article className={task.isPrimary ? "primary-task" : ""}>
     <b>{task.title}</b>
     <span>{task.assigneeName ?? "担当未設定"}・{taskStatusLabels[task.status] ?? task.status}{task.isPrimary ? "・次アクション" : ""}</span>
@@ -522,6 +597,7 @@ function TaskRow({ matterId, task, canEdit, onChanged }: {
         {TASK_STATUSES.map((s) => <option key={s} value={s}>{taskStatusLabels[s]}</option>)}
       </select>
       {!task.isPrimary && <button disabled={busy} onClick={() => patch({ isPrimary: true }, "次アクションに設定しました")}>次アクションに設定</button>}
+      {canDelete && !task.isPrimary && <button className="link-remove" disabled={busy} onClick={removeTask}>削除</button>}
     </div>}
   </article>;
 }

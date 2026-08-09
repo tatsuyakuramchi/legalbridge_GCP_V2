@@ -42,6 +42,8 @@ export const config = {
     process.env.VENDOR_MERGE_ENABLED === "true",
   matterMergeEnabled:
     process.env.MATTER_MERGE_ENABLED === "true",
+  matterDeleteEnabled:
+    process.env.MATTER_DELETE_ENABLED === "true",
   royaltyEventWritesEnabled:
     process.env.ROYALTY_EVENT_WRITES_ENABLED === "true",
   receiptWritesEnabled:

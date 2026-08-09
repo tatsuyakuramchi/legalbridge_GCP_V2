@@ -13,7 +13,7 @@ list/detail/create/update/task と Slack（Phase 7）まで。以下を guarded-
 | 送信履歴（`document_sends`：email/slack/drive/manual） | あり | **8-3 実装済** |
 | Drive フォルダ連携（作成/添付/一覧/Drive→文書登録） | あり | **8-4 実装済**（作成/一覧。Drive→登録は 8-2b） |
 | 名寄せ（案件マージ/absorb） | あり | **8-5 実装済**（複数表write・grant 028） |
-| 案件削除・タスク削除 | あり | 8-6（予定・破壊的） |
+| 案件削除・タスク削除 | あり | **8-6 実装済**（破壊的・grant 029・専用フラグ＋合言葉） |
 
 ## スライス 8-1（実装済）：課題紐付け 追加/解除
 
@@ -95,6 +95,33 @@ V1 の `POST /api/matters/:id/absorb` 相当。重複案件（source）を存続
 - UI：`MatterMerge`（設定 > 案件名寄せ・存続先/統合元ID→プレビュー→合言葉→実行）。
 - テスト（プレビュー集計・403/404/400・503・移送＋アーカイブ＋Drive引継ぎ・自己マージ拒否）。
 
+## スライス 8-6（実装済）：案件削除・タスク削除（破壊的）
+
+V1 の `DELETE /api/matters/:id`・`DELETE /api/matters/:id/tasks/:taskId` 相当。取り返しがつかない
+ため**専用フラグ＋scope＋合言葉**（案件削除）で隔離する。
+
+- **grant 029**（`029_production_matter_delete_grants.sql`・トークン `GRANT_PRODUCTION_MATTER_DELETE`）：
+  `matters`・`matter_tasks` に DELETE を付与＋preflight。**案件削除は `DELETE FROM matters` のみ**を実行し、
+  FK 参照アクションで `matter_issues`／`matter_tasks`（ON DELETE CASCADE）を連鎖削除、
+  `documents.matter_id`／`document_sends.matter_id`（ON DELETE SET NULL）を解除する。
+  参照アクションは PostgreSQL 内部実行のため、削除ロールに参照先表の権限は不要（本番文書の行は消えない・解除のみ）。
+  preflight は matters を参照する FK の `confdeltype` を一覧し想定外の CASCADE が無いか確認する。
+- `matter-delete-schema.ts`：合言葉 `COMMIT_MATTER_DELETE`（案件削除のみ）。
+- `matter-delete-repository.ts`（Pg/Memory）：`preview`（連鎖=cascade／解除=unlink の件数を集計・GRANT不要）／
+  `deleteMatter`（`FOR UPDATE`→件数確定→`DELETE FROM matters`・42501→`MATTER_DELETE_FORBIDDEN_DB`503・
+  23503→`MATTER_DELETE_REFERENCED`409）／`deleteTask`（**代表タスク is_primary は拒否**＝`MATTER_TASK_PRIMARY`409／
+  非代表のみ削除・無ければ 404）。
+- `matter-delete-routes.ts`：`GET /matters/:id/delete-preview`（read・admin/legal）／
+  `DELETE /matters/:id`（guarded・合言葉）／`DELETE /matters/:id/tasks/:taskId`（guarded・合言葉不要）。
+  app.ts write-guard allowlist に両 DELETE を追加。
+- 有効化ゲート：`accessMode=readwrite`＋`WRITE_FEATURES_ENABLED`＋scope `matter-delete`＋
+  `MATTER_DELETE_ENABLED=true`＋DB接続。capability `matter-delete` を露出。
+- verify/cloudbuild：`_MATTER_DELETE_ENABLED`／`_CONFIRM_MATTER_DELETE`（=`MATTER_DELETE_LEGALBRIDGE_VALIDATION_ONLY`）
+  を追加。有効時は write-test サービス・production DB・IAP/Cloud Run IAM を要求。
+- UI：`MatterRegistry` 案件詳細に「危険操作」（削除プレビュー→合言葉→削除・削除後は一覧を再取得）＋
+  タスク行に削除ボタン（非代表のみ）。capability 未付与では非表示。
+- テスト（プレビュー cascade/unlink・403/404・503・確認トークン・削除・代表タスク409・非代表削除・404）。
+
 ## 有効化
 
 案件編集（`MATTER_WRITES_ENABLED=true`＋scope `matters`）に加え、**grant 025/026/027 を本番適用**：
@@ -119,4 +146,15 @@ psql "$RUNTIME_ADMIN_DSN" -v confirm_matter_sends=GRANT_PRODUCTION_MATTER_SENDS 
 psql "$RUNTIME_ADMIN_DSN" -f infra/gcp/sql/028_production_matter_sends_matter_id_preflight.sql || true
 psql "$RUNTIME_ADMIN_DSN" -v confirm_matter_sends_matter_id=GRANT_PRODUCTION_MATTER_SENDS_MATTER_ID \
   -f infra/gcp/sql/028_production_matter_sends_matter_id_grants.sql
+```
+
+案件・タスク削除（8-6）を有効化する場合は、加えて **grant 029 を本番適用**（preflight で
+matters を参照する FK の ON DELETE アクションを確認）し、デプロイで
+`_MATTER_DELETE_ENABLED=true` / `_CONFIRM_MATTER_DELETE=MATTER_DELETE_LEGALBRIDGE_VALIDATION_ONLY`
+と WRITE_SCOPES に `matter-delete` を含める：
+
+```bash
+psql "$RUNTIME_ADMIN_DSN" -f infra/gcp/sql/029_production_matter_delete_preflight.sql || true
+psql "$RUNTIME_ADMIN_DSN" -v confirm_matter_delete=GRANT_PRODUCTION_MATTER_DELETE \
+  -f infra/gcp/sql/029_production_matter_delete_grants.sql
 ```

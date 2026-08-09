@@ -100,6 +100,11 @@ import {
 } from "./matters/matter-merge-repository.js";
 import { createMatterMergeRouter } from "./matters/matter-merge-routes.js";
 import {
+  PgMatterDeleteRepository,
+  type MatterDeleteRepository
+} from "./matters/matter-delete-repository.js";
+import { createMatterDeleteRouter } from "./matters/matter-delete-routes.js";
+import {
   GoogleMatterDriveFolderService,
   LocalMatterDriveFolderService,
   type MatterDriveFolderService
@@ -362,6 +367,7 @@ export interface AppDependencies {
   matterSends?: MatterSendRepository;
   matterDrive?: MatterDriveRepository;
   matterMerge?: MatterMergeRepository;
+  matterDelete?: MatterDeleteRepository;
   conditionLines?: ConditionLineRepository;
   pendingInspections?: PendingInspectionRepository;
   vendorWrites?: VendorWriteRepository;
@@ -415,6 +421,7 @@ export interface AppOptions {
   rightsSourceWritesEnabled?: boolean;
   vendorMergeEnabled?: boolean;
   matterMergeEnabled?: boolean;
+  matterDeleteEnabled?: boolean;
   backlogCommentWriteEnabled?: boolean;
   auth?: AuthSettings;
 }
@@ -447,6 +454,7 @@ function createDefaultDependencies(): AppDependencies {
     matterSends: database ? new PgMatterSendRepository(database) : undefined,
     matterDrive: database ? new PgMatterDriveRepository(database) : undefined,
     matterMerge: database ? new PgMatterMergeRepository(database) : undefined,
+    matterDelete: database ? new PgMatterDeleteRepository(database) : undefined,
     conditionLines: database
       ? new PgConditionLineRepository(database)
       : new MemoryConditionLineRepository(),
@@ -555,6 +563,7 @@ export function createApp(
     rightsSourceWritesEnabled: config.rightsSourceWritesEnabled,
     vendorMergeEnabled: config.vendorMergeEnabled,
     matterMergeEnabled: config.matterMergeEnabled,
+    matterDeleteEnabled: config.matterDeleteEnabled,
     backlogCommentWriteEnabled: config.backlogCommentWriteEnabled,
     royaltyEventWritesEnabled: config.royaltyEventWritesEnabled,
     receiptWritesEnabled: config.receiptWritesEnabled,
@@ -721,6 +730,12 @@ export function createApp(
     options.matterMergeEnabled === true &&
     options.writeScopes?.has("matter-merge") === true &&
     Boolean(dependencies.matterMerge);
+  const matterDeleteEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.matterDeleteEnabled === true &&
+    options.writeScopes?.has("matter-delete") === true &&
+    Boolean(dependencies.matterDelete);
   const backlogCommentWriteEnabled =
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
@@ -796,6 +811,7 @@ export function createApp(
         ...(rightsSourceWriteEnabled ? ["rights-sources"] : []),
         ...(vendorMergeEnabled ? ["vendor-merge"] : []),
         ...(matterMergeEnabled ? ["matter-merge"] : []),
+        ...(matterDeleteEnabled ? ["matter-delete"] : []),
         ...(backlogCommentWriteEnabled ? ["backlog-comment"] : []),
         ...(royaltyEventWriteEnabled ? ["royalty-events"] : []),
         ...(receiptWriteEnabled ? ["receipts"] : []),
@@ -823,7 +839,7 @@ export function createApp(
         driveStorageEnabled || slackApprovalWriteEnabled ||
         outboundConditionWriteEnabled || contractIntakeWriteEnabled ||
         matterWriteEnabled || vendorWriteEnabled || staffWriteEnabled || workWriteEnabled ||
-        materialWriteEnabled || rightsSourceWriteEnabled || vendorMergeEnabled || matterMergeEnabled || backlogCommentWriteEnabled || royaltyEventWriteEnabled || receiptWriteEnabled ||
+        materialWriteEnabled || rightsSourceWriteEnabled || vendorMergeEnabled || matterMergeEnabled || matterDeleteEnabled || backlogCommentWriteEnabled || royaltyEventWriteEnabled || receiptWriteEnabled ||
         paymentLedgerWriteEnabled || gmailDispatchEnabled || cloudSignDispatchEnabled || gmailInboundEnabled,
       writeCapabilities: [
         ...(draftWriteEnabled ? ["drafts"] : []),
@@ -841,6 +857,7 @@ export function createApp(
         ...(rightsSourceWriteEnabled ? ["rights-sources"] : []),
         ...(vendorMergeEnabled ? ["vendor-merge"] : []),
         ...(matterMergeEnabled ? ["matter-merge"] : []),
+        ...(matterDeleteEnabled ? ["matter-delete"] : []),
         ...(backlogCommentWriteEnabled ? ["backlog-comment"] : []),
         ...(royaltyEventWriteEnabled ? ["royalty-events"] : []),
         ...(receiptWriteEnabled ? ["receipts"] : []),
@@ -996,6 +1013,9 @@ export function createApp(
     if (vendorMergeEnabled && isVendorMerge) return next();
     const isMatterMerge = request.method === "POST" && request.path === "/matter-merge";
     if (matterMergeEnabled && isMatterMerge) return next();
+    const isMatterDelete = request.method === "DELETE" && /^\/matters\/\d+$/.test(request.path);
+    const isMatterTaskDelete = request.method === "DELETE" && /^\/matters\/\d+\/tasks\/\d+$/.test(request.path);
+    if (matterDeleteEnabled && (isMatterDelete || isMatterTaskDelete)) return next();
     const isBacklogComment = request.method === "POST" && /^\/backlog\/issues\/[^/]+\/comments$/.test(request.path);
     if (backlogCommentWriteEnabled && isBacklogComment) return next();
     const isRoyaltyEventWrite =
@@ -1123,6 +1143,8 @@ export function createApp(
   app.use("/api/v2", createVendorMergeRouter(dependencies.vendorMerge, vendorMergeEnabled));
   // 案件マージ（名寄せ）。プレビュー読取＋guarded-write実行（既定OFF・scope 'matter-merge'・grant 025/026/028/008）。
   app.use("/api/v2", createMatterMergeRouter(dependencies.matterMerge, matterMergeEnabled));
+  // 案件・タスク削除（破壊的）。プレビュー読取＋guarded-write実行（既定OFF・scope 'matter-delete'・grant 029）。
+  app.use("/api/v2", createMatterDeleteRouter(dependencies.matterDelete, matterDeleteEnabled));
   app.use("/api/v2", createDocumentImportRouter(dependencies.documentImports, documentFinalizeEnabled));
   app.use("/api/v2", createGmailNotificationRouter(documentRegistry, gmailDeliveryAdapter, gmailGateSettings, dependencies.gmailSendHistory));
   app.use("/api/v2", createCloudSignRouter(
