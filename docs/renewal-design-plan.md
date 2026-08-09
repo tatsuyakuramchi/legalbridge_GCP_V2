@@ -294,6 +294,10 @@ Phase 7 は全フェーズの受け入れ後
 
 | 2026-08-07 | Phase 5 | 点火準備：CloudSign 点火 Runbook 新設＋gmail-cloudsign.md を確定仕様へ更新 | — | ✅ |
 
+| 2026-08-09 | 監査 | V1→V2 未移植機能の残課題台帳を新設（バックエンド/フロント/自動処理の3並列監査を統合） | LegalBridge_AI_GCP | ✅ |
+
+**V1→V2 ギャップ監査（`docs/v1-v2-gap-remaining.md`）**：Phase 1〜8 の移植済みを除外し、V1 にあって V2 に無い機能を 3 観点（バックエンドAPI・フロントエンド・自動/バックグラウンド）で並列監査し統合。最大の発見は **V2 に Cloud Scheduler/cron・Pub-Sub・Webhook 受信口の土台が皆無**で、督促自動化（納期アラート・契約更新通告・満了自動遷移・検収ダイジェスト）と外部イベント駆動連携（CloudSign/Backlog Webhook）が丸ごと欠落（ポーリング/手動へ退化）。以下を提案 Phase 9〜15 として粒度・優先度付きで台帳化：9=自動化基盤＋督促/Webhook、10=文書運用オペ（void/再発行/アーカイブ/Excel一括）、11=設定・マスタ書込（会社設定/承認ルート/台帳・契約マスタCRUD/原作マテリアル登録）、12=データ保守（連結チェック修復/未リンクCL棚卸し/監査）、13=条件明細・課題横断オペ、14=関連当事者取引(RPT)独立サブシステム、15=テンプレ編集・取込・Drive健全性。稟議(Ringi)は廃止決定済み・要トリアージ。`v1-v2-parity-checklist.md`（旧・誤記あり）を本台帳が置換。
+
 | 2026-08-09 | Phase 8 | 有効化ランブック整理：Phase 7/8 の GRANT×フラグ×scope 正準順を一枚に集約 | — | ✅ |
 
 **有効化ランブック（`docs/phase8-matter-enablement-runbook.md`）**：案件管理（Phase 7 Slack＋Phase 8）の本番有効化を段階化。機能↔GRANT↔フラグ対応表（024〜029・8-2b/8-4 は追加GRANT不要）、GRANT 適用ブロック（preflight→本適用・確認変数）、`verify-write-test.sh` が要求する **WRITE_SCOPES 完全一致の正準順**（drafts,documents,pdf,…,matters,…,matter-merge,matter-delete,…,matter-slack）、有効化プロファイル A〜D（`_WRITE_SCOPES` と substitution の対応）、`gcloud builds submit` 実行例（プロファイルC）、`/api/v2/runtime` capability 確認、個別停止・ロールバックを収録。confirm トークン（MATTER_MANAGEMENT/MERGE/DELETE_LEGALBRIDGE_VALIDATION_ONLY・DRIVE_LEGALBRIDGE_VALIDATION_ONLY）と GRANT トークンを明記。phase8-matter-management.md から相互参照。
