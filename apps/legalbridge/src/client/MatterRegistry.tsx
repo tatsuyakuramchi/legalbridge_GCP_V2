@@ -192,7 +192,7 @@ function MatterDetail({ detail, labels, canEdit, onChanged, onCreateDocument }:
       {matter.targetDueDate && <span>期限 {matter.targetDueDate}</span>}</div>
     {canEdit && <InlineMatterControls matter={matter} onChanged={onChanged} />}
     {matter.blockedReason && <p className="matter-blocked">停滞理由：{matter.blockedReason}</p>}
-    {matter.driveFolderUrl && <a className="drive-link" href={matter.driveFolderUrl} target="_blank" rel="noreferrer">案件フォルダを開く</a>}
+    <MatterDriveFolder matterId={matter.id} canEdit={canEdit} />
     <DetailSection title={`関連課題 ${detail.issues.length}`}>
       <MatterIssueLinks matterId={matter.id} issues={detail.issues} canEdit={canEdit} onChanged={onChanged} />
     </DetailSection>
@@ -252,6 +252,49 @@ function MatterIssueLinks({ matterId, issues, canEdit, onChanged }:
         }), "課題を紐付けました").then(() => setKey(""))}>紐付け</button>
     </div>}
   </>;
+}
+
+type DriveFile = { id: string; name: string; link: string; isFolder: boolean };
+
+function MatterDriveFolder({ matterId, canEdit }: { matterId: number; canEdit: boolean }) {
+  const toast = useToast();
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [folder, setFolder] = useState<{ id: string; url: string | null } | null>(null);
+  const [files, setFiles] = useState<DriveFile[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [reload, setReload] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/v2/matters/${matterId}/drive-files`).then(async (r) => {
+      if (cancelled || !r.ok) return;
+      const body = await r.json();
+      setEnabled(Boolean(body.enabled));
+      setFolder(body.folder ?? null);
+      setFiles(Array.isArray(body.files) ? body.files : []);
+    });
+    return () => { cancelled = true; };
+  }, [matterId, reload]);
+  async function create() {
+    setBusy(true);
+    try {
+      await toast.run(fetch(`/api/v2/matters/${matterId}/drive-folder`, { method: "POST" })
+        .then(async (r) => { if (!r.ok) throw new Error("失敗しました"); }), "案件フォルダを作成しました");
+      setReload((v) => v + 1);
+    } catch { /* toast shown */ }
+    finally { setBusy(false); }
+  }
+  if (!enabled) return null;
+  return <div className="matter-drive">
+    <div className="matter-drive-head">
+      {folder?.url
+        ? <a className="drive-link" href={folder.url} target="_blank" rel="noreferrer">案件フォルダを開く</a>
+        : <span className="muted-note">案件フォルダ未作成</span>}
+      {canEdit && !folder && <button className="primary" disabled={busy} onClick={create}>フォルダ作成</button>}
+    </div>
+    {folder && files.length > 0 && <ul className="matter-drive-files">
+      {files.map((f) => <li key={f.id}><a href={f.link} target="_blank" rel="noreferrer">{f.isFolder ? "📁 " : "📄 "}{f.name}</a></li>)}
+    </ul>}
+  </div>;
 }
 
 type Send = { id: number; documentId: number; channel: string; recipient: string | null; status: string; subject: string | null; sentBy: string | null; sentAt: string };

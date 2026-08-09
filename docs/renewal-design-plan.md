@@ -294,6 +294,10 @@ Phase 7 は全フェーズの受け入れ後
 
 | 2026-08-07 | Phase 5 | 点火準備：CloudSign 点火 Runbook 新設＋gmail-cloudsign.md を確定仕様へ更新 | — | ✅ |
 
+| 2026-08-08 | Phase 8 | 案件管理パリティ 8-4：Drive フォルダ連携（作成/一覧・grant不要・Drive SA共有） | LegalBridge_AI_GCP | ✅ |
+
+**スライス8-4（Drive フォルダ連携）**：案件ごとの Drive フォルダ作成/一覧。`documents/drive-folder.ts`（`MatterDriveFolderService`＝Google/Local/Memory・drive-storage と同じ Drive SA を生fetchで再利用・`ensureFolder` 冪等／`listFiles`／純関数 `matterFolderName`）。`matter-drive-repository.ts`（`getFolder`/`setFolder`＝`matters.drive_folder_id/url`・**008 の matters UPDATE で更新可＝新規grant不要**）。`matter-drive-routes.ts`：`POST /matters/:id/drive-folder`（作成/取得・冪等）／`GET /matters/:id/drive-files`（一覧）。ゲート＝`driveStorageEnabled`（読取）＋`matterWriteEnabled`（作成）の**既存能力再利用**（新フラグ無し）。write-guard allowlist に POST 追加。UI＝`MatterDriveFolder`（作成/開く＋ファイル一覧）。テスト503件・build緑。`from-drive`（Drive→新規文書登録）は 8-2b へ。
+
 | 2026-08-08 | Phase 8 | 案件管理パリティ 8-3：送信履歴（document_sends・grant 027 SELECT/INSERT・read＋append） | LegalBridge_AI_GCP | ✅ |
 
 **スライス8-3（送信履歴）**：案件の文書送信履歴（`document_sends`・email/slack/drive/manual）。`matter-send-repository.ts`（Pg/Memory・`list` 新しい順／`record` append）。grant 027＝`document_sends` SELECT/INSERT（append専用・006未付与）＋preflight。`matter-send-routes.ts`：`GET /matters/:id/sends`（read・台帳無しは enabled:false）／`POST /matters/:id/sends`（append・`matterWriteEnabled` 共有・sentBy=current user）。write-guard allowlist に POST 追加。UI＝`MatterSends`（履歴一覧＋手動記録フォーム）。テスト497件・build緑。

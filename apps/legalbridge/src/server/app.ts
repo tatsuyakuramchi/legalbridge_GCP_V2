@@ -90,6 +90,16 @@ import {
 } from "./matters/matter-send-repository.js";
 import { createMatterSendRouter } from "./matters/matter-send-routes.js";
 import {
+  PgMatterDriveRepository,
+  type MatterDriveRepository
+} from "./matters/matter-drive-repository.js";
+import { createMatterDriveRouter } from "./matters/matter-drive-routes.js";
+import {
+  GoogleMatterDriveFolderService,
+  LocalMatterDriveFolderService,
+  type MatterDriveFolderService
+} from "./documents/drive-folder.js";
+import {
   LiveMatterSlackNotifier,
   NoopMatterSlackNotifier,
   type MatterSlackNotifier
@@ -345,6 +355,7 @@ export interface AppDependencies {
   matterIssueWrites?: MatterIssueWriteRepository;
   matterDocumentWrites?: MatterDocumentWriteRepository;
   matterSends?: MatterSendRepository;
+  matterDrive?: MatterDriveRepository;
   conditionLines?: ConditionLineRepository;
   pendingInspections?: PendingInspectionRepository;
   vendorWrites?: VendorWriteRepository;
@@ -427,6 +438,7 @@ function createDefaultDependencies(): AppDependencies {
     matterIssueWrites: database ? new PgMatterIssueWriteRepository(database) : undefined,
     matterDocumentWrites: database ? new PgMatterDocumentWriteRepository(database) : undefined,
     matterSends: database ? new PgMatterSendRepository(database) : undefined,
+    matterDrive: database ? new PgMatterDriveRepository(database) : undefined,
     conditionLines: database
       ? new PgConditionLineRepository(database)
       : new MemoryConditionLineRepository(),
@@ -940,7 +952,8 @@ export function createApp(
       (request.method === "DELETE" && /^\/matters\/\d+\/issues\/[^/]+$/.test(request.path)) ||
       (request.method === "POST" && /^\/matters\/\d+\/documents$/.test(request.path)) ||
       (request.method === "DELETE" && /^\/matters\/\d+\/documents\/\d+$/.test(request.path)) ||
-      (request.method === "POST" && /^\/matters\/\d+\/sends$/.test(request.path));
+      (request.method === "POST" && /^\/matters\/\d+\/sends$/.test(request.path)) ||
+      (request.method === "POST" && /^\/matters\/\d+\/drive-folder$/.test(request.path));
     if (matterWriteEnabled && isMatterWrite) return next();
     const isVendorWrite =
       (request.method === "POST" && (request.path === "/vendors" || request.path === "/vendors/import")) ||
@@ -1029,6 +1042,22 @@ export function createApp(
     dependencies.matterDocumentWrites
   ));
   app.use("/api/v2", createMatterSendRouter(dependencies.matterSends, matterWriteEnabled));
+  // 案件 Drive フォルダ（作成/一覧）。Drive SA を drive-storage と共有。
+  const matterDriveFolderService: MatterDriveFolderService =
+    config.googleDriveFolderId
+      ? new GoogleMatterDriveFolderService({ keyFilePath: config.googleServiceAccountKeyPath || undefined })
+      : new LocalMatterDriveFolderService();
+  const matterDriveReadEnabled = driveStorageEnabled && matterDriveFolderService.configured;
+  app.use("/api/v2", createMatterDriveRouter({
+    matters: matterRepository,
+    drive: dependencies.matterDrive,
+    folders: matterDriveFolderService,
+    settings: {
+      enabled: matterDriveReadEnabled,
+      writeEnabled: matterDriveReadEnabled && matterWriteEnabled,
+      parentFolderId: config.googleDriveFolderId
+    }
+  }));
   // 案件 Slack スレッド（法務相談・メンション・定型文）。
   const drivePermissionGranter: DrivePermissionGranter =
     config.googleDriveFolderId

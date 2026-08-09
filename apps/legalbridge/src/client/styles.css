@@ -1596,3 +1596,7 @@ button.pdf-download-link:disabled {
   .wizard-navigation { position: static; align-items: stretch; flex-direction: column; }
   .wizard-navigation button { width: 100%; }
 }
+.matter-drive { margin-top: 10px; }
+.matter-drive-head { display: flex; align-items: center; gap: 10px; }
+.matter-drive-files { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.matter-drive-files a { font-size: 12px; color: #168ca0; text-decoration: none; }

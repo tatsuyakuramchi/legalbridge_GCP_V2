@@ -11,7 +11,7 @@ list/detail/create/update/task と Slack（Phase 7）まで。以下を guarded-
 | 課題（Backlog）紐付け 追加/解除（`matter_issues`） | あり | **8-1 実装済** |
 | 文書リンク/解除（`documents.matter_id`） | あり | **8-2 実装済** |
 | 送信履歴（`document_sends`：email/slack/drive/manual） | あり | **8-3 実装済** |
-| Drive フォルダ連携（作成/添付/一覧/Drive→文書登録） | あり | 8-4（予定・重量級） |
+| Drive フォルダ連携（作成/添付/一覧/Drive→文書登録） | あり | **8-4 実装済**（作成/一覧。Drive→登録は 8-2b） |
 | 名寄せ（案件マージ/absorb） | あり | 8-5（予定・複数表write） |
 | 案件削除・タスク削除 | あり | 8-6（予定・破壊的） |
 
@@ -55,6 +55,20 @@ list/detail/create/update/task と Slack（Phase 7）まで。以下を guarded-
   `POST /matters/:id/sends`（append・`matterWriteEnabled` 共有・sentBy は current user）。
   write-guard allowlist に POST を追加。
 - UI：`MatterSends`（送信履歴一覧＋手動記録フォーム：文書選択/チャネル/宛先）。
+
+## スライス 8-4（実装済）：Drive フォルダ連携（作成/一覧）
+
+- `documents/drive-folder.ts`：`MatterDriveFolderService`（Google/Local/Memory・drive-storage と同じ Drive SA
+  認証を生 fetch で再利用）。`ensureFolder`（親フォルダ配下に同名検索→無ければ作成＝冪等）／
+  `listFiles`（フォルダ内一覧）＋純関数 `matterFolderName`。
+- `matter-drive-repository.ts`（Pg/Memory）：`getFolder`/`setFolder`（`matters.drive_folder_id/url`・
+  **008 の matters UPDATE 権限で更新可＝新規 grant 不要**）。42501→`MATTER_DRIVE_GRANT_MISSING`503。
+- `matter-drive-routes.ts`：`POST /matters/:id/drive-folder`（作成/取得・冪等・案件編集権限＋Drive設定）／
+  `GET /matters/:id/drive-files`（一覧・read）。write-guard allowlist に POST 追加。
+- 有効化ゲート：`driveStorageEnabled`（scope `drive`＋`DRIVE_STORAGE_ENABLED`＋SA）で読取、加えて
+  `matterWriteEnabled` で作成（**新フラグ無し**・既存 Drive 能力＋案件編集を再利用）。
+- UI：`MatterDriveFolder`（フォルダ作成ボタン／開くリンク＋フォルダ内ファイル一覧）。
+- `from-drive`（Drive ファイル→新規文書登録）は V1 固有列のため 8-2b へ。
 
 ## 有効化
 
