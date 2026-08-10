@@ -3,6 +3,10 @@
 V1（`legalbridge_ai_gcp`）と V2（本リポジトリ）を突き合わせ、**Phase 1〜8 で移植済みの機能を除外した未移植機能**を洗い出したもの。
 バックエンドAPI・フロントエンド・自動処理/連携の 3 観点で並列監査し、重複を統合した。
 
+> **2026-08-10 追記**：載せ替え前の再監査で、本台帳に**行が無い未追跡ギャップ 23 件（U1〜U23）**と
+> DB スキーマ矛盾・UX 違反を検出。**`docs/cutover-readiness-audit.md` を必ず併読のこと**（P0 は載せ替え前必修）。
+> 特に U1 Slack スラッシュコマンド受信口（V1 の依頼インテーク主経路）は本台帳のどの Phase にも未収載。
+
 ## 前提・注意
 
 - 既移植（対象外）：金銭/ロイヤリティ/受領/支払/請求（P1）、作品/権利ソース/製品（P2）、Backlog課題read＋コメント書戻し＋変数抽出（P3）、データ品質俯瞰/CSV取込/取引先名寄せ/古ドラフト整理/Excel・CSVパーサ（P4）、Gmail送受信/CloudSign送信・状態/Slackディスパッチ・承認（P5）、エクスポート/運用ガイド/スニペット/案件アーカイブ表示/契約チェック（P6）、案件Slackメンション（P7）、案件管理（課題/文書/送信/Drive/名寄せ/削除・P8）。
@@ -12,11 +16,14 @@ V1（`legalbridge_ai_gcp`）と V2（本リポジトリ）を突き合わせ、*
 
 ---
 
-## ⭐ 最重要：V2 に土台ごと欠けている領域
+## ⭐ 自動化基盤（Phase 9 で解消済み・2026-08-10 更新）
 
-V2 には **Cloud Scheduler / cron・Pub-Sub ワーカー・Webhook 受信口が一切存在しない**（infra/・src/server 双方で確認）。
-V1 の「自動督促」「外部イベント駆動連携」がまるごと失われ、CloudSign/Backlog 連携は**ポーリング/手動へ退化**している。
-下記 Phase 9 の自動化基盤（スケジューラ呼び出し口＋Webhook 受信口＋認証）新設が、多くの督促・連携機能の前提になる。
+~~V2 には Cloud Scheduler / cron・Webhook 受信口が一切存在しない~~ → **Phase 9 で実装済み**：
+`/internal/jobs/:name`（共有シークレット）＋ daily-checks / inspection-digest / cloudsign-sync ランナー、
+`/internal/webhooks/{cloudsign,backlog}` 受信口（冪等・lb_v2_webhook_receipts）。本番点火は未（runbook =
+`docs/phase9-automation-ignition.md`）。**残乖離**：9-7 Backlog Webhook は受信記録＋Slack 通知のみで、
+V1 の自動起票（legal_requests 作成）は未実装（`cutover-readiness-audit.md` P2 参照）。
+また **Slack スラッシュコマンド/インタラクティビティ受信口（U1）は Phase 9 の範囲外のまま未移植**。
 
 ---
 
