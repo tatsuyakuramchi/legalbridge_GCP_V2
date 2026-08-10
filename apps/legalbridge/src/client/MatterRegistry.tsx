@@ -262,7 +262,7 @@ function MatterDangerZone({ matterId, title, onDeleted }:
             <tbody>{(impacts ?? []).map((i) => <tr key={i.key}>
               <td>{i.label}</td>
               <td className="muted">{i.effect === "cascade" ? "連鎖削除" : "解除（保持）"}</td>
-              <td>{i.count == null ? "権限未付与" : i.count}</td>
+              <td>{i.count == null ? "不明（表示権限なし）" : i.count}</td>
             </tr>)}</tbody>
           </table>
           <label>確認のため <code>{MATTER_DELETE_TOKEN}</code> と入力

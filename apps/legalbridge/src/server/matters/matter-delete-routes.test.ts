@@ -16,7 +16,7 @@ function appFor(opts: { enabled?: boolean; role?: string } = {}) {
     [11, { id: 11, matterId: 1, isPrimary: false }]
   ]);
   const counts = new Map<number, Partial<Record<string, number>>>([
-    [1, { issues: 2, tasks: 2, documents: 3, sends: 1 }]
+    [1, { issues: 2, tasks: 2, documents: 3, sends: 1, slackThreads: 1, files: 2, v2SlackThreads: 1 }]
   ]);
   const repository = new MemoryMatterDeleteRepository(matters, tasks, counts);
   const app = express();
@@ -45,6 +45,11 @@ test("プレビュー: 連鎖・解除の件数を返す（書込無効でも可
   assert.equal(issues.count, 2);
   assert.equal(issues.effect, "cascade");
   assert.equal(documents.effect, "unlink");
+  // V1 の全子表＋V2 スレッド記録が影響列挙に含まれる（監査 P0-10）
+  const keys = res.body.preview.impacts.map((i: { key: string }) => i.key);
+  for (const k of ["slackThreads", "files", "v2SlackThreads"]) assert.ok(keys.includes(k), k);
+  assert.equal(res.body.preview.impacts.find((i: { key: string }) => i.key === "slackThreads").effect, "cascade");
+  assert.equal(res.body.preview.impacts.find((i: { key: string }) => i.key === "files").effect, "unlink");
 });
 
 test("プレビュー: 存在しない案件は404", async () => {
@@ -73,7 +78,10 @@ test("案件削除: 連鎖・解除件数を返し案件を削除する", async 
   assert.equal(res.status, 200);
   assert.equal(res.body.deletedId, 1);
   assert.equal(res.body.cascaded.issues, 2);
+  assert.equal(res.body.cascaded.slackThreads, 1);
   assert.equal(res.body.unlinked.documents, 3);
+  assert.equal(res.body.unlinked.files, 2);
+  assert.equal(res.body.v2SlackThreads, 1);   // V2 スレッド記録も同時削除（孤児化防止・P0-10）
   assert.equal(repository.matters.has(1), false);
 });
 

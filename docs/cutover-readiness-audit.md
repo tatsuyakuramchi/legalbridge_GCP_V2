@@ -89,7 +89,7 @@ S-D で V1 準拠の repoint 方式に修正済み。**再有効化は次の順�
   （プレビュー＋確認必須）該当。フィルタに見える誤アフォーダンスも併発。
 - 対処: 選択→「変更内容（現→新）」確認バナー→確定ボタンの2段階に。expired/terminated/cancelled は確認必須。
 
-### P0-10. matter-delete の影響列挙漏れ＋孤児行
+### P0-10. matter-delete の影響列挙漏れ＋孤児行 ✅ S-E で修正済み（grant 042 は本番適用待ち）
 - V1 の子テーブルのうち `matter_slack_threads`（CASCADE）と `document_files`（SET NULL）が
   `matter-delete-repository.ts:28` の IMPACTS に無い → 破壊確認画面が過少申告。
   さらに `lb_v2_matter_slack_threads`（FK 無し）が削除後に孤児化し、matter_id 再利用時にスレッド作成を恒久ブロック。
@@ -170,6 +170,11 @@ S-D で V1 準拠の repoint 方式に修正済み。**再有効化は次の順�
      -f infra/gcp/sql/040_production_document_status_backfill.sql
    ```
 4. **S-D 再発行再設計** ✅ 完了（2026-08-10）：condition_events.document_id を系列旧版→新版へ付け替え（voided_at には触れない＝残高不変）。condition_line_id は旧版明細のまま（V1 の明細付替えは新版に明細を再作成する場合のみの処理で V2 は対象が生じない）。台帳列 canceled_events→carried_events。点火は上記手順
-5. **S-E 案件削除整合**：P0-10
+5. **S-E 案件削除整合** ✅ 完了（2026-08-10）：影響列挙に matter_slack_threads（連鎖）・document_files（解除）・lb_v2_matter_slack_threads（明示削除）を追加。件数は SAVEPOINT で権限未付与でも degrade（削除は止めない）。lb_v2 行は削除トランザクション内で明示 DELETE（grant 042 未適用なら skip・孤児は 042 適用時に一掃）。点火：
+   ```bash
+   psql "" -f infra/gcp/sql/042_production_matter_delete_integrity_preflight.sql || true
+   psql "" -v confirm_matter_delete_integrity=GRANT_PRODUCTION_MATTER_DELETE_INTEGRITY \
+     -f infra/gcp/sql/042_production_matter_delete_integrity_grants.sql
+   ```
 6. **S-F UX 一括**：P1-6〜P1-14
 7. **P2 は業務トリアージ後に台帳へ正式行を起こして通常スライス化**
