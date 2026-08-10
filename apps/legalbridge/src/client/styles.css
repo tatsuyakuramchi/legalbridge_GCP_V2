@@ -386,6 +386,10 @@ header input { width: 100%; border: 1px solid var(--border); border-radius: var(
 .doc-link-hit b { font-size: 12px; color: #0f172a; }
 .doc-link-hit span { font-size: 11px; color: #475569; }
 .doc-link-hit small { font-size: 11px; color: #94a3b8; margin-left: auto; }
+.surface-xref { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: -2px 0 14px; font-size: 12px; }
+.surface-xref-here { color: #475569; background: #eef2f7; border-radius: 999px; padding: 3px 10px; font-weight: 600; }
+.surface-xref button { border: 1px solid #cbd5e1; background: white; color: #3d4ea3; border-radius: 999px; padding: 3px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+.surface-xref button:hover { background: #f1f5f9; }
 .link-remove { border: 1px solid #e2e8f0; background: white; color: #64748b; border-radius: 6px; padding: 2px 8px; font-size: 11px; cursor: pointer; }
 .matter-slack { margin-top: 14px; padding: 12px; border: 1px solid #e2e8f0; border-radius: 10px; background: #f8fafc; }
 .matter-slack.muted { opacity: .8; }

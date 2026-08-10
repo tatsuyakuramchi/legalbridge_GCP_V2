@@ -173,6 +173,8 @@ export function App() {
   const [canMergeVendors, setCanMergeVendors] = useState(false);
   // データ品質→名寄せのドリル時に統合元IDを引き継ぐ（発見→是正を1動線に・Q1）。
   const [mergeSourceSeed, setMergeSourceSeed] = useState("");
+  // 条件明細→台帳（金銭条件）へのクロスリンクで開くタブを指定（R2）。
+  const [ledgerSeedType, setLedgerSeedType] = useState<"conditions" | undefined>(undefined);
   const [canMergeMatters, setCanMergeMatters] = useState(false);
   const [canBacklogComment, setCanBacklogComment] = useState(false);
   const [canEditStaff, setCanEditStaff] = useState(false);
@@ -288,7 +290,7 @@ export function App() {
               {group.items.map((item) => (
                 <button key={item.view}
                   className={item.match.includes(view) ? "active" : ""}
-                  onClick={() => { setMergeSourceSeed(""); setView(item.view); }}
+                  onClick={() => { setMergeSourceSeed(""); setLedgerSeedType(undefined); setView(item.view); }}
                   title={item.description}
                 >{item.label}</button>
               ))}
@@ -338,7 +340,7 @@ export function App() {
           canEditVendors={canEditVendors}
           canEditWorks={canEditWorks}
           canEditMaterials={canEditMaterials}
-          initialType={searchSelection?.target === "work" ? "works" : searchSelection?.target === "vendor" ? "vendors" : undefined}
+          initialType={ledgerSeedType ?? (searchSelection?.target === "work" ? "works" : searchSelection?.target === "vendor" ? "vendors" : undefined)}
           initialQuery={searchSelection?.target === "work" || searchSelection?.target === "vendor" ? searchSelection.title : undefined}
           selectedId={searchSelection?.target === "work" || searchSelection?.target === "vendor" ? searchSelection.id : undefined} />}
         {view === "contract-intake" && adminWorkspace && (
@@ -347,7 +349,7 @@ export function App() {
             onOpenDraft={resumeDraft}
           />
         )}
-        {view === "outbound" && <OutboundConditionWorkspace />}
+        {view === "outbound" && <OutboundConditionWorkspace onNavigate={(t) => setView(t as View)} />}
         {view === "royalty-preview" && <RoyaltyPreview />}
         {view === "billing" && <BillingDashboard canRecord={canRecordReceipt} />}
         {view === "works" && <WorkDetail canEdit={canEditWorks} canEditRights={canEditRightsSources} />}
@@ -373,7 +375,11 @@ export function App() {
           }}
           onCreateDocument={(legalWorkspace || requesterWorkspace)
             ? (issueKey) => { setNewDocIssueKey(issueKey ?? ""); setNewDocSeed({}); setDraftSelection(null); setView("templates"); }
-            : undefined} />}
+            : undefined}
+          onNavigate={(target) => {
+            if (target === "ledgers-conditions") { setLedgerSeedType("conditions"); setView("ledgers"); }
+            else setView(target as View);
+          }} />}
         {view === "staff" && adminWorkspace && <StaffWorkspace canEdit={canEditStaff} />}
         {view === "gmail-inbound" && adminWorkspace && <GmailInboundWorkspace />}
         {view === "admin" && <AdminOverview />}

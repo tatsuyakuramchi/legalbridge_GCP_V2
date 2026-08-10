@@ -55,12 +55,18 @@ function formatDate(value: string | null) {
   return new Intl.DateTimeFormat("ja-JP", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(value));
 }
 
-export function ConditionLinesWorkspace({ onOpenDocument, onCreateDocument }:
-  { onOpenDocument?: (documentId: number) => void; onCreateDocument?: (issueKey: string | null) => void }) {
+export function ConditionLinesWorkspace({ onOpenDocument, onCreateDocument, onNavigate }:
+  { onOpenDocument?: (documentId: number) => void; onCreateDocument?: (issueKey: string | null) => void;
+    onNavigate?: (target: string) => void }) {
   const [tab, setTab] = useState<"search" | "inspections">("search");
   return <section className="page">
     <div className="page-title"><div><p>CONDITION LINES</p><h1>条件明細</h1>
       <small>契約条件の横断検索と、発注書の検収状況を確認します</small></div></div>
+    {onNavigate && <div className="surface-xref" role="navigation" aria-label="条件の関連画面">
+      <span className="surface-xref-here">閲覧・検収（ここ）</span>
+      <button type="button" onClick={() => onNavigate("outbound")}>作成 → アウト条件</button>
+      <button type="button" onClick={() => onNavigate("ledgers-conditions")}>マスタ → 台帳（金銭条件）</button>
+    </div>}
     <div className="hub-tabs">
       <button className={tab === "search" ? "active" : ""} onClick={() => setTab("search")}>横断検索</button>
       <button className={tab === "inspections" ? "active" : ""} onClick={() => setTab("inspections")}>検収待ち</button>

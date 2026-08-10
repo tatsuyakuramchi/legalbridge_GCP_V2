@@ -27,7 +27,7 @@ const initial: FormState = {
   withholdingTaxTreatment: "", documentNumber: "", notes: ""
 };
 
-export function OutboundConditionWorkspace() {
+export function OutboundConditionWorkspace({ onNavigate }: { onNavigate?: (target: string) => void } = {}) {
   const [form, setForm] = useState(initial);
   const [works, setWorks] = useState<LedgerItem[]>([]);
   const [vendors, setVendors] = useState<LedgerItem[]>([]);
@@ -141,6 +141,10 @@ export function OutboundConditionWorkspace() {
     <div className="page-title">
       <div><p>OUTBOUND CONDITIONS</p><h1>アウト側契約条件</h1><small>当社が対価を受け取るライセンス・製品販売条件</small></div>
     </div>
+    {onNavigate && <div className="surface-xref" role="navigation" aria-label="条件の関連画面">
+      <span className="surface-xref-here">作成（ここ）</span>
+      <button type="button" onClick={() => onNavigate("conditions")}>閲覧・検収 → 条件明細</button>
+    </div>}
     <div className="outbound-direction"><strong>請求方向：受取</strong><span>受取条件として固定されます</span></div>
     <div className="outbound-kind">
       <button className={license ? "active" : ""} onClick={() => update("transactionKind", "license")}>ライセンスアウト</button>
