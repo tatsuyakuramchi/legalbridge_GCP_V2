@@ -8,7 +8,7 @@ V2 の Admin は読取専用ステータスのみ。設定・承認ルート・�
 | # | 機能 | 粒度 | 状態 |
 |---|---|---|---|
 | 11-1 | システム設定（会社プロファイル） | 中 | ✅ 実装済 |
-| 11-2 | 承認ルート/ワークフロールール設定 | 中 | 未 |
+| 11-2 | 承認ルート/ワークフロールール設定 | 中 | ✅ 実装済 |
 | 11-3 | 台帳マスタ CRUD 書込 | 中 | ✅ 実装済（Create/Update は既存・今回 vendor 無効化を追加） |
 | 11-4 | 契約マスタ CRUD | 中 | 未 |
 | 11-5 | 原作マテリアル登録ワークフロー | 中 | 未 |
@@ -69,7 +69,38 @@ Create/Update/無効化を本番で使うには WRITE_SCOPES に該当スコー�
 各 `*_WRITES_ENABLED=true`＋確認トークン＋対応 GRANT（既存の 009〜013/017 等）。
 > 台帳マスタの CRUD 自体は揃っている。cutover 時に「どのマスタ編集を V2 で解禁するか」を選んで有効化する。
 
-## 次スライス候補
-- **11-2 承認ルート**（部門別 承認者/押印/Slack・`workflow_rules`）
-- **11-5 原作マテリアル登録ワークフロー**（原作→素材起点の作成/編集）
+## 11-2：承認ルート（department_workflow_rules）✅ 実装済
+
+部門ごとの承認者/押印担当/責任者の Slack ID・部署チャンネル・有効フラグを管理する。共有
+`department_workflow_rules`（department UNIQUE・V1 の通知/承認ルーティングも参照）を V2 が upsert。
+
+- `settings/workflow-rules-schema.ts`：`workflowRuleSchema`（department 必須・Slack ID は U/W/C 形式か空・
+  isActive 既定 true）。
+- **grant 037**（`037_production_workflow_rules_grants.sql`＋preflight）：`department_workflow_rules` に
+  SELECT/INSERT/UPDATE＋シーケンス USAGE（upsert・新部門 INSERT 用）。DELETE は付与しない（is_active で無効化）。
+  token `GRANT_PRODUCTION_WORKFLOW_RULES`。V1 既存テーブル＝CREATE しない。
+- `settings/workflow-rules-repository.ts`（Pg/Memory）：`list`（42P01 空縮退）／`upsert`
+  （ON CONFLICT (department)・42501 throw）。
+- `settings/workflow-rules-routes.ts`：`GET /workflow-rules`（admin）＋`POST /workflow-rules`
+  （guarded・admin・department 一意・42501→FORBIDDEN_DB）。
+- config `WORKFLOW_RULES_WRITE_ENABLED`／app.ts（gating・scope `workflow-rules`・writeCapabilities）／
+  verify（write-test＋IAP/IAM＋WRITE_SCOPES 正準順）／cloudbuild 全結線。
+- UI：`WorkflowRulesWorkspace`（マスタ・設定＞承認ルート・admin）＝部門別一覧＋編集フォーム
+  （承認者/押印/責任者 Slack ID・チャンネル・有効/無効・新規部門追加・capability 有効時のみ保存）。
+- tests：403/一覧/無効時503/upsert 一意/不正 Slack ID 400/部門空 400/FORBIDDEN_DB の 7 件。631 緑。
+
+### 点火（本番）
+```bash
+psql "" -f infra/gcp/sql/037_production_workflow_rules_preflight.sql || true
+psql "" -v confirm_workflow_rules=GRANT_PRODUCTION_WORKFLOW_RULES \
+  -f infra/gcp/sql/037_production_workflow_rules_grants.sql
+```
+Profile D substitutions 末尾へ `|_WORKFLOW_RULES_WRITE_ENABLED=true`、`_WRITE_SCOPES` の `settings`
+直後に `workflow-rules` を追加。閲覧は grant/フラグ不要・編集のみ点火要。
+
+> 将来：V2 の Slack 承認/通知ルーティングが department_workflow_rules を参照する配線は別スライス
+> （現状は保存され V1 が参照する共有データの先行整備）。
+
+## 次スライス候補（Tier 1 残）
+- **11-5 原作マテリアル登録ワークフロー**（原作→素材起点の作成/編集・現状素材タブ読取＋materials write は既存）
 - **11-4 契約マスタ CRUD**

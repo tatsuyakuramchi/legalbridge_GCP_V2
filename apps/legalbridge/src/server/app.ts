@@ -118,6 +118,8 @@ import { PgExcelBatchRepository, type ExcelBatchRepository } from "./documents/e
 import { createExcelBatchRouter } from "./documents/excel-batch-routes.js";
 import { PgAppSettingsRepository, type AppSettingsRepository } from "./settings/settings-repository.js";
 import { createSettingsRouter } from "./settings/settings-routes.js";
+import { PgWorkflowRulesRepository, type WorkflowRulesRepository } from "./settings/workflow-rules-repository.js";
+import { createWorkflowRulesRouter } from "./settings/workflow-rules-routes.js";
 import { createJobsRouter, type JobRunner } from "./internal/jobs-routes.js";
 import { PgDailyChecksRepository } from "./jobs/daily-checks-repository.js";
 import { runDailyChecks, DryRunDailyChecksNotifier, jstTodayYmd } from "./jobs/daily-checks-runner.js";
@@ -397,6 +399,7 @@ export interface AppDependencies {
   documentReissue?: DocumentReissueRepository;
   excelBatch?: ExcelBatchRepository;
   appSettings?: AppSettingsRepository;
+  workflowRules?: WorkflowRulesRepository;
   // Phase 9 自動化基盤：ジョブ本体・Webhook ハンドラの注入口（既定は空＝無効）。
   jobRunners?: Record<string, JobRunner>;
   cloudSignWebhookHandler?: WebhookHandler;
@@ -459,6 +462,7 @@ export interface AppOptions {
   documentReissueEnabled?: boolean;
   excelBatchEnabled?: boolean;
   appSettingsWriteEnabled?: boolean;
+  workflowRulesWriteEnabled?: boolean;
   backlogCommentWriteEnabled?: boolean;
   auth?: AuthSettings;
 }
@@ -496,6 +500,7 @@ function createDefaultDependencies(): AppDependencies {
     documentReissue: database ? new PgDocumentReissueRepository(database) : undefined,
     excelBatch: database ? new PgExcelBatchRepository(database) : undefined,
     appSettings: database ? new PgAppSettingsRepository(database) : undefined,
+    workflowRules: database ? new PgWorkflowRulesRepository(database) : undefined,
     conditionLines: database
       ? new PgConditionLineRepository(database)
       : new MemoryConditionLineRepository(),
@@ -609,6 +614,7 @@ export function createApp(
     documentReissueEnabled: config.documentReissueEnabled,
     excelBatchEnabled: config.excelBatchEnabled,
     appSettingsWriteEnabled: config.appSettingsWriteEnabled,
+    workflowRulesWriteEnabled: config.workflowRulesWriteEnabled,
     backlogCommentWriteEnabled: config.backlogCommentWriteEnabled,
     royaltyEventWritesEnabled: config.royaltyEventWritesEnabled,
     receiptWritesEnabled: config.receiptWritesEnabled,
@@ -805,6 +811,12 @@ export function createApp(
     options.appSettingsWriteEnabled === true &&
     options.writeScopes?.has("settings") === true &&
     Boolean(dependencies.appSettings);
+  const workflowRulesWriteEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.workflowRulesWriteEnabled === true &&
+    options.writeScopes?.has("workflow-rules") === true &&
+    Boolean(dependencies.workflowRules);
   const backlogCommentWriteEnabled =
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
@@ -885,6 +897,7 @@ export function createApp(
         ...(documentReissueEnabled ? ["document-reissue"] : []),
         ...(excelBatchEnabled ? ["excel-batch"] : []),
         ...(appSettingsWriteEnabled ? ["settings"] : []),
+        ...(workflowRulesWriteEnabled ? ["workflow-rules"] : []),
         ...(backlogCommentWriteEnabled ? ["backlog-comment"] : []),
         ...(royaltyEventWriteEnabled ? ["royalty-events"] : []),
         ...(receiptWriteEnabled ? ["receipts"] : []),
@@ -912,7 +925,7 @@ export function createApp(
         driveStorageEnabled || slackApprovalWriteEnabled ||
         outboundConditionWriteEnabled || contractIntakeWriteEnabled ||
         matterWriteEnabled || vendorWriteEnabled || staffWriteEnabled || workWriteEnabled ||
-        materialWriteEnabled || rightsSourceWriteEnabled || vendorMergeEnabled || matterMergeEnabled || matterDeleteEnabled || documentVoidEnabled || documentReissueEnabled || excelBatchEnabled || appSettingsWriteEnabled || backlogCommentWriteEnabled || royaltyEventWriteEnabled || receiptWriteEnabled ||
+        materialWriteEnabled || rightsSourceWriteEnabled || vendorMergeEnabled || matterMergeEnabled || matterDeleteEnabled || documentVoidEnabled || documentReissueEnabled || excelBatchEnabled || appSettingsWriteEnabled || workflowRulesWriteEnabled || backlogCommentWriteEnabled || royaltyEventWriteEnabled || receiptWriteEnabled ||
         paymentLedgerWriteEnabled || gmailDispatchEnabled || cloudSignDispatchEnabled || gmailInboundEnabled,
       writeCapabilities: [
         ...(draftWriteEnabled ? ["drafts"] : []),
@@ -935,6 +948,7 @@ export function createApp(
         ...(documentReissueEnabled ? ["document-reissue"] : []),
         ...(excelBatchEnabled ? ["excel-batch"] : []),
         ...(appSettingsWriteEnabled ? ["settings"] : []),
+        ...(workflowRulesWriteEnabled ? ["workflow-rules"] : []),
         ...(backlogCommentWriteEnabled ? ["backlog-comment"] : []),
         ...(royaltyEventWriteEnabled ? ["royalty-events"] : []),
         ...(receiptWriteEnabled ? ["receipts"] : []),
@@ -1103,6 +1117,8 @@ export function createApp(
     if (excelBatchEnabled && isExcelBatchMark) return next();
     const isSettingsWrite = request.method === "POST" && request.path === "/settings";
     if (appSettingsWriteEnabled && isSettingsWrite) return next();
+    const isWorkflowRulesWrite = request.method === "POST" && request.path === "/workflow-rules";
+    if (workflowRulesWriteEnabled && isWorkflowRulesWrite) return next();
     const isBacklogComment = request.method === "POST" && /^\/backlog\/issues\/[^/]+\/comments$/.test(request.path);
     if (backlogCommentWriteEnabled && isBacklogComment) return next();
     const isRoyaltyEventWrite =
@@ -1257,6 +1273,8 @@ export function createApp(
   ));
   // システム設定（会社プロファイル・Phase 11-1）。読取 admin・保存 guarded（scope 'settings'・grant 036）。
   app.use("/api/v2", createSettingsRouter(dependencies.appSettings, appSettingsWriteEnabled));
+  // 承認ルート（部門別・Phase 11-2）。読取 admin・保存 guarded（scope 'workflow-rules'・grant 037）。
+  app.use("/api/v2", createWorkflowRulesRouter(dependencies.workflowRules, workflowRulesWriteEnabled));
 
   // 内部自動化基盤（Phase 9）。ユーザー認証をバイパスし共有シークレットで保護（既定OFF）。
   //   /internal/jobs/:name … Cloud Scheduler 起動口（runners は 9-1 以降で注入）
