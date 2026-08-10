@@ -46,6 +46,8 @@ export const config = {
     process.env.MATTER_DELETE_ENABLED === "true",
   documentVoidEnabled:
     process.env.DOCUMENT_VOID_ENABLED === "true",
+  documentReissueEnabled:
+    process.env.DOCUMENT_REISSUE_ENABLED === "true",
   royaltyEventWritesEnabled:
     process.env.ROYALTY_EVENT_WRITES_ENABLED === "true",
   receiptWritesEnabled:

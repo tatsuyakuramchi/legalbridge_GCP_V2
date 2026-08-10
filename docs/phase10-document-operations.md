@@ -11,7 +11,8 @@ V2 は draft→finalize→pdf→drive までは移植済みだが、**発行後�
 | 10-2 | 文書 void（無効化）＋実績取消（残高復元） | 小 | ✅ 実装済 |
 | 10-3 | PDF 再生成（Drive 上書き更新） | 小 | ✅ 実装済 |
 | 10-6 | 文書ルックアップ（番号検索・PDF未生成一覧・次番号プレビュー） | 小 | ✅ 実装済 |
-| 10-1 | 文書アーカイブ（状態フィルタ・PDF未生成キュー・バージョン履歴） | 中 | ✅ 実装済（再発行 write は 10-1b へ） |
+| 10-1 | 文書アーカイブ（状態フィルタ・PDF未生成キュー・バージョン履歴） | 中 | ✅ 実装済 |
+| 10-1b | 文書再発行（新版採番＋旧版 supersede＋実績取消） | 中 | ✅ 実装済 |
 | 10-6 | 文書ルックアップ（番号検索・次番号・PDF未生成一覧） | 小 | 未 |
 | 10-4 | 一括削除／一括項目更新 | 中 | 未（優先低） |
 | 10-5 | Excel 一括出力（担当×支払期日×種別集計→Drive保存） | 大 | 未 |
@@ -109,6 +110,43 @@ V1 の別ページ ArchivePage を新設せず、V2 で既にアーカイブを�
 > 専用の列レベル GRANT（documents.superseded_by/is_primary/lifecycle_status）＋確認トークンが必要で、
 > void（10-2 grant 033）と重なる部分もあるため独立スライスで扱う。
 
+## 10-1b：文書再発行（reissue）✅ 実装済
+
+既存確定文書を基に新版 `<base>-R<n>` を採番して発行し、旧版を supersede する guarded-write。
+**重要**：V2 の残高は `condition_events.voided_at IS NULL` のみで判定し文書 lifecycle では絞らない
+（`conditions/repository.ts` で確認）。そのため旧版の実績を残すと二重計上になるため、再発行時に
+旧版の有効実績を同一トランザクションで取消する（void 10-2 と同じ列 UPDATE を再利用）。
+
+- **grant 034**（`034_production_document_reissue_grants.sql`＋preflight）：列レベル
+  `UPDATE(lifecycle_status, is_primary, superseded_by) ON documents` ＋
+  `UPDATE(voided_at, void_reason) ON condition_events`（033 と同一・再掲）。INSERT は 006 の表レベルで既付与。
+  監査は隔離台帳 `lb_v2_document_reissue_ledger`（append-only）。token `GRANT_PRODUCTION_DOCUMENT_REISSUE`。
+- `document-reissue-schema.ts`：確認トークン `COMMIT_DOCUMENT_REISSUE`＋任意 reason＋任意 formData
+  （省略時は旧版内容を複製）。
+- `document-reissue-repository.ts`（Pg/Memory）：`nextReissueNumber`（純関数・系列最大版+1）＋
+  トランザクション（source を FOR UPDATE→voided は 409→系列ロック→新版 INSERT〈final/primary〉→
+  系列他行 is_primary=false→旧版 reissued＋superseded_by→旧版実績取消→台帳）。42501 は FORBIDDEN_DB。
+- `document-reissue-routes.ts`：`POST /documents/:id/reissue`（admin/legal・既定OFF503・確認トークン・
+  404/409/503）。Backlog 書戻しは backlog-comment 有効時のみ（旧版 issue_key を registry から解決）。
+- config `DOCUMENT_REISSUE_ENABLED`／app.ts（gating・safe-write scope `document-reissue`・
+  writeCapabilities）／verify（validation-only＋本番DB＋IAP/IAM＋WRITE_SCOPES 正準順に `document-reissue`）／
+  cloudbuild（subs/export/ENVVARS）全結線。
+- UI：`DocumentRegistry` の詳細ペインに「再発行」ゾーン（capability-gated・合言葉＋理由）。成功で新版へ切替。
+- tests：nextReissueNumber＋ルート（無効/403/トークン/実行＋通知/404/voided 409/FORBIDDEN_DB）8件。605 緑。
+
+### 点火（本番）
+```bash
+psql "" -f infra/gcp/sql/034_production_document_reissue_preflight.sql || true
+psql "" -v confirm_document_reissue=GRANT_PRODUCTION_DOCUMENT_REISSUE \
+  -f infra/gcp/sql/034_production_document_reissue_grants.sql
+```
+デプロイは Profile D substitutions 末尾へ
+`|_DOCUMENT_REISSUE_ENABLED=true|_CONFIRM_DOCUMENT_REISSUE=DOCUMENT_REISSUE_LEGALBRIDGE_VALIDATION_ONLY`
+＋ `_WRITE_SCOPES` の `document-void` の直後に `document-reissue` を追加（正準順）。
+
 ## 次スライス候補
-- **10-1b 再発行（reissue）**：新版採番＋旧版 superseded（guarded-write）。
-- **10-4 一括操作**／**10-5 Excel 一括出力**（大）。
+- **10-4 一括操作**（一括削除／一括項目更新）／**10-5 Excel 一括出力**（大）。
+
+## 既知の限定（将来拡張）
+- 再発行は旧版の実績を**取消**する（carryover は未実装）。新版で実績が要る場合は再入力する。
+  V1 の `carryOverReissueConsumption`（一意対応時のみ引継ぎ）は将来スライスで検討。

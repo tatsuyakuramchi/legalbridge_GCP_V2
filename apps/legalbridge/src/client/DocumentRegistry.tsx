@@ -64,6 +64,7 @@ export function DocumentRegistry({
   canGmailNotify = false,
   canCloudSign = false,
   canVoidDocument = false,
+  canReissueDocument = false,
   selectedId,
   initialQuery = ""
 }: {
@@ -75,6 +76,7 @@ export function DocumentRegistry({
   canGmailNotify?: boolean;
   canCloudSign?: boolean;
   canVoidDocument?: boolean;
+  canReissueDocument?: boolean;
   selectedId?: number;
   initialQuery?: string;
 }) {
@@ -187,8 +189,10 @@ export function DocumentRegistry({
         canGmailNotify={canGmailNotify}
         canCloudSign={canCloudSign}
         canVoidDocument={canVoidDocument}
+        canReissueDocument={canReissueDocument}
         onRefresh={() => { if (selected) return selectDocument(selected.id); }}
         onVoided={() => { setReload((v) => v + 1); if (selected) return selectDocument(selected.id); }}
+        onReissued={(newId) => { setReload((v) => v + 1); return selectDocument(newId); }}
         onSelectVersion={(id) => void selectDocument(id)}
       />
     </div>
@@ -203,8 +207,10 @@ function DocumentDetail({
   canGmailNotify = false,
   canCloudSign = false,
   canVoidDocument = false,
+  canReissueDocument = false,
   onRefresh,
   onVoided,
+  onReissued,
   onSelectVersion
 }: {
   document: RegisteredDocument | null;
@@ -214,8 +220,10 @@ function DocumentDetail({
   canGmailNotify?: boolean;
   canCloudSign?: boolean;
   canVoidDocument?: boolean;
+  canReissueDocument?: boolean;
   onRefresh: () => Promise<void> | void;
   onVoided?: () => Promise<void> | void;
+  onReissued?: (newId: number) => Promise<void> | void;
   onSelectVersion?: (id: number) => void;
 }) {
   if (!document) return <aside className="panel registry-detail empty-detail">一覧から文書を選択してください。</aside>;
@@ -254,6 +262,8 @@ function DocumentDetail({
       canGmailNotify={canGmailNotify}
       canCloudSign={canCloudSign}
       onSaved={onRefresh} />}
+    {canReissueDocument && !isVoided && document.documentNumber &&
+      <DocumentReissueZone documentId={document.id} documentNumber={document.documentNumber} onReissued={onReissued} />}
     {canVoidDocument && !isVoided &&
       <DocumentVoidZone documentId={document.id} documentNumber={document.documentNumber} onVoided={onVoided} />}
     <VersionHistory documentId={document.id} onSelect={onSelectVersion} />
@@ -292,6 +302,56 @@ function VersionHistory({ documentId, onSelect }: { documentId: number; onSelect
         </button>
       </li>)}
     </ul>
+  </div>;
+}
+
+function DocumentReissueZone({ documentId, documentNumber, onReissued }: {
+  documentId: number;
+  documentNumber: string;
+  onReissued?: (newId: number) => Promise<void> | void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [confirmText, setConfirmText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+  const CONFIRM = "COMMIT_DOCUMENT_REISSUE";
+
+  async function submit() {
+    setBusy(true);
+    try {
+      const response = await fetch(`/api/v2/documents/${documentId}/reissue`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmation: CONFIRM, reason: reason.trim() || undefined })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) { toast.push(data.error ?? "再発行に失敗しました。", "error"); return; }
+      toast.push(`再発行しました：${data.newNumber}（旧版の実績 ${data.canceledEvents ?? 0} 件を取消）。`, "success");
+      setOpen(false); setReason(""); setConfirmText("");
+      if (typeof data.newId === "number") await onReissued?.(data.newId);
+    } catch { toast.push("通信に失敗しました。", "error"); }
+    finally { setBusy(false); }
+  }
+
+  return <div className="danger-zone">
+    <h3>再発行</h3>
+    {!open
+      ? <button onClick={() => setOpen(true)}>この文書を再発行（新版を作成）</button>
+      : <div className="danger-form">
+          <p className="hub-note">
+            <strong>{documentNumber}</strong> を基に新版（<code>{documentNumber}-R…</code>）を採番して発行します。
+            旧版は「再発行済み」となり、旧版に紐づく実績（消化）は取消されます（残高の二重計上を防ぐため）。
+            続けるには合言葉 <code>{CONFIRM}</code> を入力してください。
+          </p>
+          <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="理由（任意・Backlogへ記録）" />
+          <input value={confirmText} onChange={(e) => setConfirmText(e.target.value)} placeholder={CONFIRM} />
+          <div className="matter-form-actions">
+            <button onClick={() => { setOpen(false); setConfirmText(""); }}>やめる</button>
+            <button className="primary" disabled={busy || confirmText !== CONFIRM} onClick={submit}>
+              {busy ? "処理中…" : "再発行を実行"}
+            </button>
+          </div>
+        </div>}
   </div>;
 }
 

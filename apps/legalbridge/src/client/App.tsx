@@ -184,6 +184,7 @@ export function App() {
   const [canGmailInbound, setCanGmailInbound] = useState(false);
   const [canRecordReceipt, setCanRecordReceipt] = useState(false);
   const [canVoidDocument, setCanVoidDocument] = useState(false);
+  const [canReissueDocument, setCanReissueDocument] = useState(false);
   const [currentUser, setCurrentUser] = useState<{ email: string; role: "admin" | "legal" | "requester" } | null>(null);
   const [searchSelection, setSearchSelection] = useState<{ target: "matter" | "document" | "vendor" | "work"; id: string; title: string } | null>(null);
   const [draftSelection, setDraftSelection] = useState<{ issueKey: string; templateType: string } | null>(null);
@@ -234,6 +235,7 @@ export function App() {
         setCanGmailInbound(capabilities.includes("gmail-inbound"));
         setCanRecordReceipt(capabilities.includes("receipts"));
         setCanVoidDocument(capabilities.includes("document-void"));
+        setCanReissueDocument(capabilities.includes("document-reissue"));
       })
       .catch(() => {
         setReadOnly(true);
@@ -399,6 +401,7 @@ export function App() {
             canGmailNotify={canGmailNotify}
             canCloudSign={canCloudSign}
             canVoidDocument={canVoidDocument}
+            canReissueDocument={canReissueDocument}
             initialQuery={deepLinkIssue}
             selectedId={searchSelection?.target === "document" ? Number(searchSelection.id) : undefined} />
         )}

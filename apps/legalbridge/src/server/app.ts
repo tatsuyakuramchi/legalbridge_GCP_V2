@@ -112,6 +112,8 @@ import {
 import { createMatterDeleteRouter } from "./matters/matter-delete-routes.js";
 import { PgDocumentVoidRepository, type DocumentVoidRepository } from "./documents/document-void-repository.js";
 import { createDocumentVoidRouter } from "./documents/document-void-routes.js";
+import { PgDocumentReissueRepository, type DocumentReissueRepository } from "./documents/document-reissue-repository.js";
+import { createDocumentReissueRouter } from "./documents/document-reissue-routes.js";
 import { createJobsRouter, type JobRunner } from "./internal/jobs-routes.js";
 import { PgDailyChecksRepository } from "./jobs/daily-checks-repository.js";
 import { runDailyChecks, DryRunDailyChecksNotifier, jstTodayYmd } from "./jobs/daily-checks-runner.js";
@@ -388,6 +390,7 @@ export interface AppDependencies {
   matterMerge?: MatterMergeRepository;
   matterDelete?: MatterDeleteRepository;
   documentVoid?: DocumentVoidRepository;
+  documentReissue?: DocumentReissueRepository;
   // Phase 9 自動化基盤：ジョブ本体・Webhook ハンドラの注入口（既定は空＝無効）。
   jobRunners?: Record<string, JobRunner>;
   cloudSignWebhookHandler?: WebhookHandler;
@@ -447,6 +450,7 @@ export interface AppOptions {
   matterMergeEnabled?: boolean;
   matterDeleteEnabled?: boolean;
   documentVoidEnabled?: boolean;
+  documentReissueEnabled?: boolean;
   backlogCommentWriteEnabled?: boolean;
   auth?: AuthSettings;
 }
@@ -481,6 +485,7 @@ function createDefaultDependencies(): AppDependencies {
     matterMerge: database ? new PgMatterMergeRepository(database) : undefined,
     matterDelete: database ? new PgMatterDeleteRepository(database) : undefined,
     documentVoid: database ? new PgDocumentVoidRepository(database) : undefined,
+    documentReissue: database ? new PgDocumentReissueRepository(database) : undefined,
     conditionLines: database
       ? new PgConditionLineRepository(database)
       : new MemoryConditionLineRepository(),
@@ -591,6 +596,7 @@ export function createApp(
     matterMergeEnabled: config.matterMergeEnabled,
     matterDeleteEnabled: config.matterDeleteEnabled,
     documentVoidEnabled: config.documentVoidEnabled,
+    documentReissueEnabled: config.documentReissueEnabled,
     backlogCommentWriteEnabled: config.backlogCommentWriteEnabled,
     royaltyEventWritesEnabled: config.royaltyEventWritesEnabled,
     receiptWritesEnabled: config.receiptWritesEnabled,
@@ -769,6 +775,12 @@ export function createApp(
     options.documentVoidEnabled === true &&
     options.writeScopes?.has("document-void") === true &&
     Boolean(dependencies.documentVoid);
+  const documentReissueEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.documentReissueEnabled === true &&
+    options.writeScopes?.has("document-reissue") === true &&
+    Boolean(dependencies.documentReissue);
   const backlogCommentWriteEnabled =
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
@@ -846,6 +858,7 @@ export function createApp(
         ...(matterMergeEnabled ? ["matter-merge"] : []),
         ...(matterDeleteEnabled ? ["matter-delete"] : []),
         ...(documentVoidEnabled ? ["document-void"] : []),
+        ...(documentReissueEnabled ? ["document-reissue"] : []),
         ...(backlogCommentWriteEnabled ? ["backlog-comment"] : []),
         ...(royaltyEventWriteEnabled ? ["royalty-events"] : []),
         ...(receiptWriteEnabled ? ["receipts"] : []),
@@ -873,7 +886,7 @@ export function createApp(
         driveStorageEnabled || slackApprovalWriteEnabled ||
         outboundConditionWriteEnabled || contractIntakeWriteEnabled ||
         matterWriteEnabled || vendorWriteEnabled || staffWriteEnabled || workWriteEnabled ||
-        materialWriteEnabled || rightsSourceWriteEnabled || vendorMergeEnabled || matterMergeEnabled || matterDeleteEnabled || documentVoidEnabled || backlogCommentWriteEnabled || royaltyEventWriteEnabled || receiptWriteEnabled ||
+        materialWriteEnabled || rightsSourceWriteEnabled || vendorMergeEnabled || matterMergeEnabled || matterDeleteEnabled || documentVoidEnabled || documentReissueEnabled || backlogCommentWriteEnabled || royaltyEventWriteEnabled || receiptWriteEnabled ||
         paymentLedgerWriteEnabled || gmailDispatchEnabled || cloudSignDispatchEnabled || gmailInboundEnabled,
       writeCapabilities: [
         ...(draftWriteEnabled ? ["drafts"] : []),
@@ -893,6 +906,7 @@ export function createApp(
         ...(matterMergeEnabled ? ["matter-merge"] : []),
         ...(matterDeleteEnabled ? ["matter-delete"] : []),
         ...(documentVoidEnabled ? ["document-void"] : []),
+        ...(documentReissueEnabled ? ["document-reissue"] : []),
         ...(backlogCommentWriteEnabled ? ["backlog-comment"] : []),
         ...(royaltyEventWriteEnabled ? ["royalty-events"] : []),
         ...(receiptWriteEnabled ? ["receipts"] : []),
@@ -1054,6 +1068,8 @@ export function createApp(
     if (matterDeleteEnabled && (isMatterDelete || isMatterTaskDelete)) return next();
     const isDocumentVoid = request.method === "POST" && /^\/documents\/\d+\/void$/.test(request.path);
     if (documentVoidEnabled && isDocumentVoid) return next();
+    const isDocumentReissue = request.method === "POST" && /^\/documents\/\d+\/reissue$/.test(request.path);
+    if (documentReissueEnabled && isDocumentReissue) return next();
     const isBacklogComment = request.method === "POST" && /^\/backlog\/issues\/[^/]+\/comments$/.test(request.path);
     if (backlogCommentWriteEnabled && isBacklogComment) return next();
     const isRoyaltyEventWrite =
@@ -1196,6 +1212,14 @@ export function createApp(
           dependencies.backlogWriteClient!.addComment(issueKey, text).then(() => undefined)
       : undefined;
   app.use("/api/v2", createDocumentVoidRouter(dependencies.documentVoid, documentVoidEnabled, documentVoidNotifier));
+  // 文書再発行（破壊的・Phase 10-1b）。guarded-write（既定OFF・scope 'document-reissue'・grant 034）。
+  //   Backlog 書き戻しは backlog-comment 有効時のみ（旧版の issue_key を registry から解決）。
+  app.use("/api/v2", createDocumentReissueRouter(
+    dependencies.documentReissue,
+    documentReissueEnabled,
+    documentVoidNotifier,
+    documentVoidNotifier ? async (sourceId) => (await documentRegistry.find(sourceId))?.issueKey ?? null : undefined
+  ));
 
   // 内部自動化基盤（Phase 9）。ユーザー認証をバイパスし共有シークレットで保護（既定OFF）。
   //   /internal/jobs/:name … Cloud Scheduler 起動口（runners は 9-1 以降で注入）
