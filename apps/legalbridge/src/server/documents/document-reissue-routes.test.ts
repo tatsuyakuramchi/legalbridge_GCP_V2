@@ -61,14 +61,20 @@ test("reissue: 確認トークン不正は400", async () => {
   assert.equal(res.status, 400);
 });
 
-test("reissue: 新版を採番し旧版を reissued に倒して実績を取消す", async () => {
+test("reissue: 新版を採番し旧版を reissued に倒して実績を新版へ引き継ぐ（残高不変・P0-1）", async () => {
   const posted: string[] = [];
   const target = appFor({ enabled: true, notify: async (_k, t) => { posted.push(t); } });
   const res = await request(target.app).post("/api/v2/documents/1/reissue")
     .send({ confirmation: "COMMIT_DOCUMENT_REISSUE", reason: "誤記訂正" });
   assert.equal(res.status, 200);
   assert.equal(res.body.newNumber, "ARC-PO-2026-0001-R1");
-  assert.equal(res.body.canceledEvents, 2);
+  assert.equal(res.body.carriedEvents, 2);
+  // 実績は void されず（voidedAt は null のまま）新版の文書へ付け替わる＝残高不変
+  const newDocId = res.body.newId as number;
+  for (const e of target.events) {
+    assert.equal(e.voidedAt, null);
+    assert.equal(e.documentId, newDocId);
+  }
   // 旧版は reissued・非正本、新版は final・正本
   const source = target.docs.find((d) => d.id === 1)!;
   assert.equal(source.lifecycleStatus, "reissued");

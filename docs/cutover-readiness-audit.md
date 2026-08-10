@@ -9,17 +9,21 @@ V1 = `/workspace/legalbridge_ai_gcp`（migrations 0001〜0164 を正とする）
 
 ---
 
-## 🚨 即時緩和（コード修正より先に・デプロイ設定で）
+## 🚨 再発行（document-reissue）の点火手順（S-D 修正済み・順序厳守）
 
-**`DOCUMENT_REISSUE_ENABLED=false` に戻し、`_WRITE_SCOPES` から `document-reissue` を外すこと。**
-理由：P0-1（再発行が消化実績を消滅させる）。現行デプロイでは再発行が有効化済みのため、
-本番文書を1件でも再発行すると支払済み発注が「全額未消化」に戻る（二重払いリスク）。修正が入るまで停止。
+旧コード（void 方式）は本番文書を再発行すると支払済み発注が「全額未消化」に戻る（P0-1）。
+S-D で V1 準拠の repoint 方式に修正済み。**再有効化は次の順序で**：
+1. まだなら `_DOCUMENT_REISSUE_ENABLED` を外し scope から `document-reissue` を除去（旧コード停止）
+2. S-D を含むコードをデプロイ
+3. `041_production_reissue_repoint_grants.sql` を適用（condition_events.document_id UPDATE＋台帳列名 carried_events）
+4. preflight 041 が「旧方式で void された実績」を列挙する — 該当があれば voided_at を戻す個別リカバリを判断
+5. `_DOCUMENT_REISSUE_ENABLED=true`＋scope 復帰
 
 ---
 
 ## P0：載せ替え前必修（実データ破壊・機能不全）
 
-### P0-1. 再発行のセマンティクスが V1 と正反対（残高消滅）〔最重大〕
+### P0-1. 再発行のセマンティクスが V1 と正反対（残高消滅）〔最重大〕✅ S-D で修正済み（点火は新コードデプロイ＋041 適用後）
 - V1: `services/worker/server.ts:16969`「void ではなく付け替えなので残高は不変」— 有効イベントを新版へ **repoint**
   （`reissueCarryover.ts` は condition_line_id も付替え）。
 - V2: `document-reissue-repository.ts:102` — 旧版イベントを **一括 void**、新実績は作らない。
@@ -165,7 +169,7 @@ V1 = `/workspace/legalbridge_ai_gcp`（migrations 0001〜0164 を正とする）
    psql "" -v confirm_document_backfill=BACKFILL_PRODUCTION_DOCUMENT_STATUS \
      -f infra/gcp/sql/040_production_document_status_backfill.sql
    ```
-4. **S-D 再発行再設計**：P0-1 イベント repoint 方式へ（V1 reissueCarryover 準拠）— 完了までスコープ点火禁止
+4. **S-D 再発行再設計** ✅ 完了（2026-08-10）：condition_events.document_id を系列旧版→新版へ付け替え（voided_at には触れない＝残高不変）。condition_line_id は旧版明細のまま（V1 の明細付替えは新版に明細を再作成する場合のみの処理で V2 は対象が生じない）。台帳列 canceled_events→carried_events。点火は上記手順
 5. **S-E 案件削除整合**：P0-10
 6. **S-F UX 一括**：P1-6〜P1-14
 7. **P2 は業務トリアージ後に台帳へ正式行を起こして通常スライス化**

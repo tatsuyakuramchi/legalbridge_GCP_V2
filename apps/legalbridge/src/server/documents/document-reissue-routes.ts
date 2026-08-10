@@ -52,7 +52,7 @@ export function createDocumentReissueRouter(
           const reasonLine = input.reason?.trim() ? `\n理由: ${input.reason.trim()}` : "";
           return notify(issueKey,
             `♻️ 文書を再発行しました: ${result.sourceNumber || "(採番なし)"} → ${result.newNumber}${reasonLine}` +
-            `\n→ 旧版の実績 ${result.canceledEvents} 件を取消しました。`
+            `\n→ 旧版の実績 ${result.carriedEvents} 件を新版へ引き継ぎました（残高は変わりません）。`
           );
         }).catch(() => undefined);
       }

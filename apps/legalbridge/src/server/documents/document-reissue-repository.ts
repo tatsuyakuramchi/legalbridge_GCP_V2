@@ -2,10 +2,16 @@ import type { PoolClient } from "pg";
 import type { DatabasePool } from "../db/pool.js";
 import type { DocumentReissueInput } from "./document-reissue-schema.js";
 
-// 文書の再発行（Phase 10-1b）。既存確定文書を基に新版 <base>-R<n> を採番して INSERT し、
-// 旧版を lifecycle_status='reissued'・is_primary=FALSE・superseded_by=<新番号> に倒す。
-// V2 の残高は condition_events.voided_at IS NULL のみで判定する（文書 lifecycle では絞らない）
-// ため、旧版に紐づく有効実績を同一トランザクションで取消して二重計上を防ぐ。grant 034。
+// 文書の再発行（Phase 10-1b・S-D で V1 準拠に再設計）。既存確定文書を基に新版 <base>-R<n> を
+// 採番して INSERT し、旧版を lifecycle_status='reissued'・is_primary=FALSE・superseded_by=<新番号> に倒す。
+// 実績（condition_events）は **void ではなく新版へ付け替える（repoint）**：V1 Phase E-1 の
+// 「有効実績1件 = final文書1件」不変条件と同じで、再発行しても残高は不変（監査 P0-1）。
+//   - 付け替えは document_id のみ。condition_line_id は旧版明細を指したままにする＝残高ビュー
+//     （condition_line_status_v）は明細基準なので消化は保たれ、V1 横断検索も「非void 実績を持つ
+//     明細」を表示し続ける。V1 の明細付替え（reissueCarryover）は新版に明細を作り直す場合のみの
+//     処理で、V2 は新版に明細を作らないため対象が構造的に生じない。
+//   - 新版を後から void すれば付け替えた実績ごと取消される（残高復元の導線は void に一本化）。
+// grant 034＋041（condition_events.document_id の UPDATE と台帳列名 carried_events は 041）。
 
 export interface DocumentReissueResult {
   sourceId: number;
@@ -13,7 +19,7 @@ export interface DocumentReissueResult {
   newId: number;
   newNumber: string;
   baseNumber: string;
-  canceledEvents: number;
+  carriedEvents: number;
 }
 
 export interface DocumentReissueRepository {
@@ -46,7 +52,6 @@ export class PgDocumentReissueRepository implements DocumentReissueRepository {
   constructor(private readonly database: DatabasePool) {}
 
   async reissue(sourceId: number, input: DocumentReissueInput, actor: string): Promise<DocumentReissueResult> {
-    const reason = input.reason?.trim() || "reissue";
     const client = await this.database.connect();
     try {
       await client.query("BEGIN");
@@ -108,28 +113,36 @@ export class PgDocumentReissueRepository implements DocumentReissueRepository {
             AND template_type = $3 AND id <> $2`,
         [base, newId, source.template_type]
       );
-      // 旧版を reissued に倒す。
+      // 旧版を reissued に倒す（V1 同様 updated_at も進める・grant 039）。
       await client.query(
-        `UPDATE documents SET lifecycle_status = 'reissued', superseded_by = $2 WHERE id = $1`,
+        `UPDATE documents SET lifecycle_status = 'reissued', superseded_by = $2, updated_at = now()
+          WHERE id = $1`,
         [sourceId, newNumber]
       );
-      // 旧版の有効実績を取消（残高の二重計上防止）。
+      // 旧版（系列全体）の有効実績を新版へ付け替える（V1 Phase E-1 準拠・残高不変）。
+      // void ではないので消化済みの発注を再発行しても残額は変わらない（監査 P0-1）。
       const events = await client.query(
-        `UPDATE condition_events SET voided_at = now(), void_reason = $2
-          WHERE document_id = $1 AND voided_at IS NULL RETURNING id`,
-        [sourceId, reason]
+        `UPDATE condition_events SET document_id = $2
+          WHERE voided_at IS NULL
+            AND document_id IN (
+              SELECT id FROM documents
+               WHERE COALESCE(NULLIF(base_document_number, ''), document_number) = $1
+                 AND id <> $2
+            )
+          RETURNING id`,
+        [base, newId]
       );
-      const canceledEvents = events.rowCount ?? 0;
+      const carriedEvents = events.rowCount ?? 0;
 
       await client.query(
         `INSERT INTO lb_v2_document_reissue_ledger
-           (source_id, source_number, new_id, new_number, base_number, canceled_events, reason, reissued_by)
+           (source_id, source_number, new_id, new_number, base_number, carried_events, reason, reissued_by)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [sourceId, source.document_number ?? null, newId, newNumber, base, canceledEvents, input.reason?.trim() || null, actor]
+        [sourceId, source.document_number ?? null, newId, newNumber, base, carriedEvents, input.reason?.trim() || null, actor]
       );
 
       await client.query("COMMIT");
-      return { sourceId, sourceNumber: source.document_number ?? null, newId, newNumber, baseNumber: base, canceledEvents };
+      return { sourceId, sourceNumber: source.document_number ?? null, newId, newNumber, baseNumber: base, carriedEvents };
     } catch (error) {
       await client.query("ROLLBACK").catch(() => {});
       if ((error as { code?: string })?.code === "42501") {
@@ -204,11 +217,12 @@ export class MemoryDocumentReissueRepository implements DocumentReissueRepositor
     for (const d of series) if (d.id !== newId && d.templateType === source.templateType) d.isPrimary = false;
     source.lifecycleStatus = "reissued";
     source.supersededBy = newNumber;
-    const reason = input.reason?.trim() || "reissue";
-    const affected = this.events.filter((e) => e.documentId === sourceId && e.voidedAt === null);
-    for (const e of affected) { e.voidedAt = new Date().toISOString(); e.voidReason = reason; }
+    // 有効実績は void せず新版へ付け替える（残高不変・P0-1）。系列の旧版全体が対象。
+    const oldIds = new Set(series.filter((d) => d.id !== newId).map((d) => d.id));
+    const affected = this.events.filter((e) => oldIds.has(e.documentId) && e.voidedAt === null);
+    for (const e of affected) e.documentId = newId;
 
-    const result = { sourceId, sourceNumber: source.documentNumber, newId, newNumber, baseNumber: base, canceledEvents: affected.length };
+    const result = { sourceId, sourceNumber: source.documentNumber, newId, newNumber, baseNumber: base, carriedEvents: affected.length };
     this.ledger.push(result);
     return result;
   }

@@ -398,7 +398,7 @@ function DocumentReissueZone({ documentId, documentNumber, onReissued }: {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) { toast.push(data.error ?? "再発行に失敗しました。", "error"); return; }
-      toast.push(`再発行しました：${data.newNumber}（旧版の実績 ${data.canceledEvents ?? 0} 件を取消）。`, "success");
+      toast.push(`再発行しました：${data.newNumber}（旧版の実績 ${data.carriedEvents ?? 0} 件を新版へ引き継ぎ）。`, "success");
       setOpen(false); setReason(""); setConfirmText("");
       if (typeof data.newId === "number") await onReissued?.(data.newId);
     } catch { toast.push("通信に失敗しました。", "error"); }
@@ -412,7 +412,7 @@ function DocumentReissueZone({ documentId, documentNumber, onReissued }: {
       : <div className="danger-form">
           <p className="hub-note">
             <strong>{documentNumber}</strong> を基に新版（<code>{documentNumber}-R…</code>）を採番して発行します。
-            旧版は「再発行済み」となり、旧版に紐づく実績（消化）は取消されます（残高の二重計上を防ぐため）。
+            旧版は「再発行済み」となり、旧版に紐づく実績（消化）は新版へ引き継がれます（残高は変わりません）。
             続けるには合言葉 <code>{CONFIRM}</code> を入力してください。
           </p>
           <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="理由（任意・Backlogへ記録）" />
