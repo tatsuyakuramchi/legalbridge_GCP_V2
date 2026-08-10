@@ -56,5 +56,25 @@ DB 書込まで同期（実課題キーを完了ビューに出す）→通知�
 明細行（最大5行・views.update）／既存課題への紐付け（candidates＋link-trigger）／納期変更モーダル／
 `/法務検索`（16-2 契約チェック API に依存）／署名URLアップロードリンク（ポータル廃止判断待ち）。
 
-## 16-1 スニペット共有化／16-2 契約チェック API／16-4 添付アップロード
+## 16-2：契約チェック API ✅ 実装済（読取専用・grant 不要）
+
+V1 services/api/contractCheckService.ts（API 世代・914L）を最小構成で移植。**判定文字列は V1 と同一**
+（唯一 V1:844 の「契約書案 of 法務レビュー」typo は修正）。
+
+- `contract-check/engine.ts`（純関数）：`normalizeName`（NFKC→空白除去→法人格語除去→括弧除去）・
+  用途マスタ 17 件の TS 定数（V1 は静的シード表＝grant 不要化）・master サマリ（**V1 の「最後の行勝ち」
+  非決定を final・正本優先に改良**・void 除外）・license/publication 条件整形・`buildPurposeResult`
+  （カテゴリ別基本契約の存在×用途接頭辞×再許諾/海外フラグ）・`buildSuggestedAction`・未検出定型。
+- `contract-check/repository.ts`（Pg/Memory）：vendors 3段ランキング検索（完全→原文部分→正規化部分・
+  is_active のみ・NFKC は JS 側）・vendor 文書一括 SELECT・番号ルックアップ（正本・final のみ）。
+  **documents/vendors への SELECT のみ＝新規 grant 不要**。
+- `contract-check/routes.ts`：`GET /contract-check/purposes`＋`POST /contract-check/search`
+  （単一/複数≤5/未検出の V1 互換 shape）＋`POST /contract-check/lookup-number`。全ロール利用可。
+- 移植から**意図的に落としたもの**：稟議ディスパッチ（ringi_* 表なし）・decision log 書込・Backlog
+  ステータス enrich（N 回の HTTP・後続で opt-in）・external_assets/cloudsign_requests 結合・
+  42883/42703 レガシーフォールバック・documentsByCategory（V2 は DocumentRegistry が担う）。
+- tests 12 件（正規化・判定分岐・フラグ格上げ・master 優先順位・API 3 endpoints・バリデーション）。676 緑。
+- これで 16-3b の `/法務検索` は同プロセスでこの engine/repository を呼べる（V1 現行世代と同じ構成）。
+
+## 16-1 スニペット共有化／16-4 添付アップロード
 未着手（台帳参照）。

@@ -121,6 +121,8 @@ import { createSettingsRouter } from "./settings/settings-routes.js";
 import { PgWorkflowRulesRepository, type WorkflowRulesRepository } from "./settings/workflow-rules-repository.js";
 import { createWorkflowRulesRouter } from "./settings/workflow-rules-routes.js";
 import { PgContractMasterRepository, type ContractMasterRepository } from "./contracts/contract-master-repository.js";
+import { PgContractCheckRepository, type ContractCheckRepository } from "./contract-check/repository.js";
+import { createContractCheckRouter } from "./contract-check/routes.js";
 import { createContractMasterRouter } from "./contracts/contract-master-routes.js";
 import { createJobsRouter, type JobRunner } from "./internal/jobs-routes.js";
 import { PgDailyChecksRepository } from "./jobs/daily-checks-repository.js";
@@ -406,6 +408,7 @@ export interface AppDependencies {
   appSettings?: AppSettingsRepository;
   workflowRules?: WorkflowRulesRepository;
   contractMaster?: ContractMasterRepository;
+  contractCheck?: ContractCheckRepository;
   // Phase 9 自動化基盤：ジョブ本体・Webhook ハンドラの注入口（既定は空＝無効）。
   jobRunners?: Record<string, JobRunner>;
   cloudSignWebhookHandler?: WebhookHandler;
@@ -509,6 +512,7 @@ function createDefaultDependencies(): AppDependencies {
     appSettings: database ? new PgAppSettingsRepository(database) : undefined,
     workflowRules: database ? new PgWorkflowRulesRepository(database) : undefined,
     contractMaster: database ? new PgContractMasterRepository(database) : undefined,
+    contractCheck: database ? new PgContractCheckRepository(database) : undefined,
     conditionLines: database
       ? new PgConditionLineRepository(database)
       : new MemoryConditionLineRepository(),
@@ -1296,6 +1300,8 @@ export function createApp(
   app.use("/api/v2", createWorkflowRulesRouter(dependencies.workflowRules, workflowRulesWriteEnabled));
   // 契約マスタ（Phase 11-4）。読取 admin/legal・更新/状態変更 guarded（scope 'contract-master'・grant 038）。
   app.use("/api/v2", createContractMasterRouter(dependencies.contractMaster, contractMasterWriteEnabled));
+  // 契約チェック（Phase 16-2・読取専用・全ロール）。用途×スコープ判定＝/法務検索(16-3b)の中核。
+  app.use("/api/v2", createContractCheckRouter(dependencies.contractCheck));
 
   // 内部自動化基盤（Phase 9）。ユーザー認証をバイパスし共有シークレットで保護（既定OFF）。
   //   /internal/jobs/:name … Cloud Scheduler 起動口（runners は 9-1 以降で注入）
