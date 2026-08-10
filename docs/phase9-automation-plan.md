@@ -77,9 +77,12 @@ Webhook 受信口・督促自動化・外部イベント連携** を、既存 gu
   `_CONFIRM_CONTRACT_EXPIRY`（=`CONTRACT_EXPIRY_LEGALBRIDGE_VALIDATION_ONLY`）＋ゲート（JOBS_ENABLED 必須・
   production DB・IAP/IAM）。terminated は触らない。tests 3。
 
-### 9-4：検収待ちダイジェスト
-- runner `inspection-digest`：`pending-inspections` 読取（既存）を PO 単位集計 → Slack 定期投稿。
-- 抑止不要（ダイジェストは毎回全量）。dry-run 対応。
+### 9-4：検収待ちダイジェスト ✅ 実装済
+- `jobs/inspection-digest-runner.ts`：既存 `PendingInspectionRepository.list("", true, 200)`（検収書未作成の
+  発注書）を読取り、`composeInspectionDigest`（件数＋文書番号/案件/課題・上限20行＋「他N件」）で1通に集約。
+  **新規 grant 不要**（documents SELECT）・台帳/重複抑止なし（毎回スナップショット）。
+- runner `inspection-digest` を app.ts に登録。Slack live なら `matterSlackChannelAdapter` で投稿、
+  それ以外は dry-run（`post` 未注入＝件数のみ）。0件は投稿しない。tests 5。
 
 ### 9-5：CloudSign Webhook 受信（handler 注入）
 - `cloudSignWebhookHandler`：署名/トークン検証済み前提で payload 解釈 → `lb_v2_webhook_receipts`

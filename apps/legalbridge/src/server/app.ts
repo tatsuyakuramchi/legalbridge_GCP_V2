@@ -108,6 +108,7 @@ import { createJobsRouter, type JobRunner } from "./internal/jobs-routes.js";
 import { PgDailyChecksRepository } from "./jobs/daily-checks-repository.js";
 import { runDailyChecks, DryRunDailyChecksNotifier, jstTodayYmd } from "./jobs/daily-checks-runner.js";
 import { LiveDailyChecksNotifier } from "./jobs/daily-checks-live-notifier.js";
+import { runInspectionDigest } from "./jobs/inspection-digest-runner.js";
 import { createWebhooksRouter, type WebhookHandler } from "./internal/webhooks-routes.js";
 import {
   GoogleMatterDriveFolderService,
@@ -1182,6 +1183,16 @@ export function createApp(
       nowMs: Date.now(),
       expiryTransitionEnabled: config.contractExpiryTransitionEnabled
     });
+    // 検収待ちダイジェスト（9-4）。Slack live なら投稿、それ以外は dry-run（件数のみ）。
+    if (dependencies.pendingInspections && !jobRunners["inspection-digest"]) {
+      const inspectionsRepo = dependencies.pendingInspections;
+      const post = dailyChecksLive
+        ? (text: string) => matterSlackChannelAdapter
+            .postMessage({ channel: config.slackLegalConsultChannel, text })
+            .then(() => true).catch(() => false)
+        : undefined;
+      jobRunners["inspection-digest"] = () => runInspectionDigest({ repo: inspectionsRepo, post });
+    }
   }
   app.use(createJobsRouter({ enabled: config.jobsEnabled, token: config.jobsTriggerToken, runners: jobRunners }));
   app.use(createWebhooksRouter({
