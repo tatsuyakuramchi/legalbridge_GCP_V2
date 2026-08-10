@@ -9,21 +9,21 @@ V1 = `/workspace/legalbridge_ai_gcp`（migrations 0001〜0164 を正とする）
 
 ---
 
-## 🚨 再発行（document-reissue）の点火手順（S-D 修正済み・順序厳守）
+## ✅ 本番反映 完了（2026-08-10）
 
-旧コード（void 方式）は本番文書を再発行すると支払済み発注が「全額未消化」に戻る（P0-1）。
-S-D で V1 準拠の repoint 方式に修正済み。**再有効化は次の順序で**：
-1. まだなら `_DOCUMENT_REISSUE_ENABLED` を外し scope から `document-reissue` を除去（旧コード停止）
-2. S-D を含むコードをデプロイ
-3. `041_production_reissue_repoint_grants.sql` を適用（condition_events.document_id UPDATE＋台帳列名 carried_events）
-4. preflight 041 が「旧方式で void された実績」を列挙する — 該当があれば voided_at を戻す個別リカバリを判断
-5. `_DOCUMENT_REISSUE_ENABLED=true`＋scope 復帰
+S-A〜S-F のコード（build 82aa5b31…）と grant 032/034/035/036/037/038/039/040/041/042 を本番適用済み。
+- 適用時の発見：**032/034/035（webhook 受信・再発行・Excel出力の lb_v2 台帳）が Phase 9/10 デプロイ時に未適用のまま**
+  スコープだけ点火されていた（テーブル不存在）。今回作成し、039 の追記専用 REVOKE も再適用で宣言済み。
+- preflight 041：旧方式（void）で再発行された実績は 0 件＝リカバリ不要。040 バックフィル対象も 0 件
+  （V2 finalize は本番未使用・以後は新コードが最初から刻む）。
+- 現在の有効スコープ：drafts,documents,pdf,slack-approvals,matters,matter-merge,matter-delete,document-void,
+  document-reissue,excel-batch,settings,workflow-rules,contract-master,slack,slack-dispatch,matter-slack
 
 ---
 
 ## P0：載せ替え前必修（実データ破壊・機能不全）
 
-### P0-1. 再発行のセマンティクスが V1 と正反対（残高消滅）〔最重大〕✅ S-D で修正済み（点火は新コードデプロイ＋041 適用後）
+### P0-1. 再発行のセマンティクスが V1 と正反対（残高消滅）〔最重大〕✅ S-D 修正済み・デプロイ＋041 適用済み（旧方式の void 実績 0 件＝リカバリ不要）
 - V1: `services/worker/server.ts:16969`「void ではなく付け替えなので残高は不変」— 有効イベントを新版へ **repoint**
   （`reissueCarryover.ts` は condition_line_id も付替え）。
 - V2: `document-reissue-repository.ts:102` — 旧版イベントを **一括 void**、新実績は作らない。
@@ -31,7 +31,7 @@ S-D で V1 準拠の repoint 方式に修正済み。**再有効化は次の順�
   V1 横断検索（`server.ts:15088`）は「非void イベントが存在する行のみ表示」のため、**条件明細が V1 から消える**。
 - 対処: V1 方式（イベント repoint）へ改修。可視性フィルタとの整合まで含めて再設計（新版の行・イベント帰属）。
 
-### P0-2. `vendors.is_active` が V1 スキーマに存在しない ✅ S-B（grant 039）で整備済み・本番適用待ち
+### P0-2. `vendors.is_active` が V1 スキーマに存在しない ✅ S-B（grant 039）本番適用済み（2026-08-10）
 - V1 の全 164 migration に `vendors` への `is_active` 追加が無い（`is_active` は source_ips/works/documents 等のみ）。
   V1 サーバコードにも vendors.is_active 参照なし。
 - V2 は `vendors/write-repository.ts:54,132` と `merge-repository.ts:104` が参照 → 本番初回実行で **42703**（未翻訳→500）。
@@ -39,7 +39,7 @@ S-D で V1 準拠の repoint 方式に修正済み。**再有効化は次の順�
 - 対処: **grant 039 系で `ALTER TABLE vendors ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE`**
   ＋preflight は `information_schema.columns` で列存在を確認（038 が唯一やっている方式を標準化）。
 
-### P0-3. V2 作成文書の `contract_status` が NULL → 状態機械が永遠に発火しない ✅ S-C で修正済み（既存分は 040 バックフィル・本番適用待ち）
+### P0-3. V2 作成文書の `contract_status` が NULL → 状態機械が永遠に発火しない ✅ S-C 修正済み・040 適用済み（対象0件＝V2 finalize 本番未使用のため）
 - V1 は保存時に必ず既定 `'executed'` を刻む（`documentSave.ts:298`）。列に DB default は無い。
 - V2 の `finalization-repository.ts:42` / `document-reissue-repository.ts:79` は `contract_status` を書かない。
 - 帰結: CloudSign「executed 遷移」（`contract-status-writer.ts:20` の IN ('draft','awaiting_signature')）も
@@ -62,7 +62,7 @@ S-D で V1 準拠の repoint 方式に修正済み。**再有効化は次の順�
 - V1 の void は無述語（`server.ts:14830`）。本番に lifecycle_status NULL は実在（preflight 033 で 1 件確認済み）。
 - 対処: `lifecycle_status IS DISTINCT FROM 'voided'` に変更＋rowCount=0 なら ROLLBACK。
 
-### P0-6. GRANT 列漏れ 2 件（サイレント恒久故障／未翻訳500）✅ S-B（grant 039）で整備済み・本番適用待ち
+### P0-6. GRANT 列漏れ 2 件（サイレント恒久故障／未翻訳500）✅ S-B（grant 039）本番適用済み（2026-08-10）
 - `documents.updated_at`: `contract-status-writer.ts:18` と `daily-checks-repository.ts:153` が SET するが
   どの grant にも無い → 42501 が「grant 未適用」と同じ見え方で **恒久 forbidden 誤報**（CloudSign executed 遷移・
   満了ジョブが grant 適用後も動かない）。
@@ -89,7 +89,7 @@ S-D で V1 準拠の repoint 方式に修正済み。**再有効化は次の順�
   （プレビュー＋確認必須）該当。フィルタに見える誤アフォーダンスも併発。
 - 対処: 選択→「変更内容（現→新）」確認バナー→確定ボタンの2段階に。expired/terminated/cancelled は確認必須。
 
-### P0-10. matter-delete の影響列挙漏れ＋孤児行 ✅ S-E で修正済み（grant 042 は本番適用待ち）
+### P0-10. matter-delete の影響列挙漏れ＋孤児行 ✅ S-E 修正済み・grant 042 適用済み（孤児 0 件）
 - V1 の子テーブルのうち `matter_slack_threads`（CASCADE）と `document_files`（SET NULL）が
   `matter-delete-repository.ts:28` の IMPACTS に無い → 破壊確認画面が過少申告。
   さらに `lb_v2_matter_slack_threads`（FK 無し）が削除後に孤児化し、matter_id 再利用時にスレッド作成を恒久ブロック。
