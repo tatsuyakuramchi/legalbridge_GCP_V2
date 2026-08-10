@@ -26,6 +26,17 @@ Webhook 受信口・督促自動化・外部イベント連携** を、既存 gu
   投稿成功で全件 delivered→台帳記録、失敗で全件未達→次回再送。app.ts は Slack live
   （配信live＋Botトークン＋チャンネル）なら Live、それ以外は Dry-run を注入。tests 3。
   宛先DM（申請者個別）は email→Slack ID 解決が要るため将来拡張。
+- ✅ **9-3 満了ステータス自動遷移**（済・opt-in）：grant 031（`documents.contract_status` 列 UPDATE・
+  token `GRANT_PRODUCTION_CONTRACT_EXPIRY`）。daily-checks 内で満了到達を executed 以外→expired へ。
+  既定 OFF（`CONTRACT_EXPIRY_TRANSITION_ENABLED`）。verify で write-test/本番DB/IAP を二重確認。
+- ✅ **9-4 検収待ちダイジェスト**（済）：`inspection-digest` runner。詳細は下記スライス節。
+- ✅ **9-5 CloudSign Webhook 受信 / 9-7 Backlog Webhook 受信**（済）：grant 032
+  （`lb_v2_webhook_receipts` CREATE＋GRANT・token `GRANT_PRODUCTION_WEBHOOK_RECEIPTS`）。
+  純関数パーサ（`internal/webhook-parsers.ts`）＋べき等台帳（`recordIfFirst`）＋契約状態ライタ
+  （`documents/contract-status-writer.ts`・grant 031 再利用）＋ハンドラ（`integrations/webhook-handlers.ts`）。
+  CloudSign 締結→送付履歴更新＋契約 executed、Backlog 課題追加→Slack 通知。すべてべき等・
+  判別不能/二重/未知は 200 skip。app.ts で DB があれば自動構築。verify/cloudbuild に
+  `_CLOUDSIGN_WEBHOOK_TOKEN_SECRET`/`_BACKLOG_WEBHOOK_TOKEN_SECRET`（既定 BLOCKED・設定時のみマウント）。tests 8。
 
 ## 重要な設計判断（実装前に確定した事項）
 
@@ -84,20 +95,35 @@ Webhook 受信口・督促自動化・外部イベント連携** を、既存 gu
 - runner `inspection-digest` を app.ts に登録。Slack live なら `matterSlackChannelAdapter` で投稿、
   それ以外は dry-run（`post` 未注入＝件数のみ）。0件は投稿しない。tests 5。
 
-### 9-5：CloudSign Webhook 受信（handler 注入）
-- `cloudSignWebhookHandler`：署名/トークン検証済み前提で payload 解釈 → `lb_v2_webhook_receipts`
-  へべき等記録 → `cloudsign_requests` 状態更新（既存 CloudSign 履歴表）→ 締結時に契約 `executed`
-  （9-3 と同じ `documents.contract_status` UPDATE grant を再利用）。
-- grant 0NN+2：`lb_v2_webhook_receipts`（CREATE＋GRANT）。
-- 設定：`CLOUDSIGN_WEBHOOK_TOKEN`（9-0 で追加済）。
+### 9-5：CloudSign Webhook 受信（handler 注入）✅ 実装済
+- `internal/webhook-parsers.ts`：`parseCloudSignEvent`（純関数）。untrusted payload から
+  `documentID` と `status`（1=先方確認中/2=締結済/3=取消却下）＋`text` を型安全に抽出し、
+  `completed/declined/sent/other` に正規化。判別不能は `null`（副作用させない）。
+- `internal/webhook-receipts-repository.ts`：`lb_v2_webhook_receipts` へ `(source, external_id)` で
+  `recordIfFirst`（INSERT ON CONFLICT DO NOTHING → 初回のみ true）。Memory 実装も併設。
+- `documents/contract-status-writer.ts`：`markExecuted`（`documents.contract_status`
+  draft/awaiting_signature → executed、9-3 と同じ grant 031 を再利用、42501 は forbidden で受信は成功）。
+- `integrations/webhook-handlers.ts` `createCloudSignWebhookHandler`：べき等記録 →
+  `cloudsign-request-repository.updateStatus` で送付履歴更新 → 締結時に契約 executed。
+  未知ドキュメント/二重送信/判別不能はすべて 200 skip（再送を誘発しない）。
+- grant 032：`lb_v2_webhook_receipts`（CREATE＋GRANT SELECT/INSERT・token `GRANT_PRODUCTION_WEBHOOK_RECEIPTS`）。
+- 設定：`CLOUDSIGN_WEBHOOK_TOKEN`（9-0 で追加済）。app.ts で DB があれば handler を自動構築。
+- verify/cloudbuild：`_CLOUDSIGN_WEBHOOK_TOKEN_SECRET`（既定 BLOCKED）→ 設定時のみ Secret Manager から
+  `CLOUDSIGN_WEBHOOK_TOKEN` をマウント。write-test サービス限定。tests は parsers＋handler で 8。
 
 ### 9-6：CloudSign 一括ステータス同期
 - runner `cloudsign-sync`：未確定 `cloudsign_request_history` を一括で `getDocument` 照会し後追い更新
   （既存 FetchCloudSignApiClient 再利用）。INTEGRATION_MODE=live 前提。
 
-### 9-7：Backlog Webhook 自動起票
-- `backlogWebhookHandler`：課題作成イベント(type=1)を `lb_v2_webhook_receipts` でべき等化し、
-  V2 の依頼取込（Phase 3 requests）へ自動投入。設定：`BACKLOG_WEBHOOK_TOKEN`（9-0 で追加済）。
+### 9-7：Backlog Webhook 自動起票 ✅ 実装済
+- `internal/webhook-parsers.ts`：`parseBacklogIssueCreated`（純関数）。課題追加(type=1)のみを対象化し、
+  `projectKey-key_id` で issueKey を合成。更新(type≠1)や projectKey 欠落は `null`。
+- `integrations/webhook-handlers.ts` `createBacklogWebhookHandler`：`(backlog, issueKey:created)` で
+  べき等化し、Slack live 時のみ法務相談チャンネルへ新規依頼を通知（`notify` 未注入なら記録のみ）。
+  二重は 200 skip。設定：`BACKLOG_WEBHOOK_TOKEN`（9-0 で追加済）。
+- verify/cloudbuild：`_BACKLOG_WEBHOOK_TOKEN_SECRET`（既定 BLOCKED）→ 設定時のみ `BACKLOG_WEBHOOK_TOKEN`
+  をマウント。write-test サービス限定。
+- 注：現時点は「受信＋通知」まで。V2 依頼取込（Phase 3 requests）への自動投入は後続で拡張余地。
 
 ## デプロイ（Cloud Scheduler / Webhook 配線・別途）
 - Cloud Scheduler ジョブ：`POST https://<svc>/internal/jobs/daily-checks` に

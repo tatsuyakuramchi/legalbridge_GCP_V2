@@ -110,6 +110,9 @@ import { runDailyChecks, DryRunDailyChecksNotifier, jstTodayYmd } from "./jobs/d
 import { LiveDailyChecksNotifier } from "./jobs/daily-checks-live-notifier.js";
 import { runInspectionDigest } from "./jobs/inspection-digest-runner.js";
 import { createWebhooksRouter, type WebhookHandler } from "./internal/webhooks-routes.js";
+import { PgWebhookReceiptsRepository } from "./internal/webhook-receipts-repository.js";
+import { PgContractStatusWriter } from "./documents/contract-status-writer.js";
+import { createCloudSignWebhookHandler, createBacklogWebhookHandler } from "./integrations/webhook-handlers.js";
 import {
   GoogleMatterDriveFolderService,
   LocalMatterDriveFolderService,
@@ -1195,9 +1198,37 @@ export function createApp(
     }
   }
   app.use(createJobsRouter({ enabled: config.jobsEnabled, token: config.jobsTriggerToken, runners: jobRunners }));
+  // 外部 Webhook ハンドラ（9-5 CloudSign / 9-7 Backlog）。DB があり handler 未注入なら既定を構築。
+  //   CloudSign 締結→送付履歴 updateStatus＋契約 executed（grant 031 未整備なら forbidden で受信は成功）。
+  //   Backlog 課題追加→Slack live 時のみ法務相談チャンネルへ通知。いずれも lb_v2_webhook_receipts でべき等。
+  let cloudSignWebhookHandler = dependencies.cloudSignWebhookHandler;
+  let backlogWebhookHandler = dependencies.backlogWebhookHandler;
+  if (jobsDatabase) {
+    const receipts = new PgWebhookReceiptsRepository(jobsDatabase);
+    if (!cloudSignWebhookHandler) {
+      const requests = dependencies.cloudSignRequests ?? new PgCloudSignRequestRepository(jobsDatabase);
+      cloudSignWebhookHandler = createCloudSignWebhookHandler({
+        receipts,
+        requests,
+        contract: new PgContractStatusWriter(jobsDatabase)
+      });
+    }
+    if (!backlogWebhookHandler) {
+      const webhookSlackLive =
+        config.slackDeliveryMode === "live" &&
+        /^xoxb-[A-Za-z0-9-]+$/.test(config.slackBotToken) &&
+        Boolean(config.slackLegalConsultChannel);
+      const notify = webhookSlackLive
+        ? (text: string) => matterSlackChannelAdapter
+            .postMessage({ channel: config.slackLegalConsultChannel, text })
+            .then(() => true).catch(() => false)
+        : undefined;
+      backlogWebhookHandler = createBacklogWebhookHandler({ receipts, notify });
+    }
+  }
   app.use(createWebhooksRouter({
-    cloudsign: { token: config.cloudSignWebhookToken, handler: dependencies.cloudSignWebhookHandler },
-    backlog: { token: config.backlogWebhookToken, handler: dependencies.backlogWebhookHandler }
+    cloudsign: { token: config.cloudSignWebhookToken, handler: cloudSignWebhookHandler },
+    backlog: { token: config.backlogWebhookToken, handler: backlogWebhookHandler }
   }));
   app.use("/api/v2", createDocumentImportRouter(dependencies.documentImports, documentFinalizeEnabled));
   app.use("/api/v2", createGmailNotificationRouter(documentRegistry, gmailDeliveryAdapter, gmailGateSettings, dependencies.gmailSendHistory));

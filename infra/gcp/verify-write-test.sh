@@ -478,6 +478,19 @@ case "${CONTRACT_EXPIRY_TRANSITION_ENABLED}" in
     exit 1
     ;;
 esac
+# 外部 Webhook 受信口（CloudSign 9-5 / Backlog 9-7）。共有シークレット未設定なら自動的に無効
+# （webhooks-routes が token 未設定＝404）。シークレット注入時は write-test サービス限定。
+# 外部プロバイダから到達するためユーザー認証はバイパス済み・共有シークレットのみで保護する。
+for webhook_secret in "CLOUDSIGN_WEBHOOK_TOKEN_SECRET:${CLOUDSIGN_WEBHOOK_TOKEN_SECRET:-BLOCKED}" "BACKLOG_WEBHOOK_TOKEN_SECRET:${BACKLOG_WEBHOOK_TOKEN_SECRET:-BLOCKED}"; do
+  webhook_name="${webhook_secret%%:*}"
+  webhook_value="${webhook_secret#*:}"
+  if [ -n "${webhook_value}" ] && [ "${webhook_value}" != "BLOCKED" ]; then
+    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
+      echo "Webhook endpoint blocked: ${webhook_name} is limited to the write-test service."
+      exit 1
+    fi
+  fi
+done
 case "${GMAIL_DELIVERY_MODE}" in
   disabled)
     ;;
