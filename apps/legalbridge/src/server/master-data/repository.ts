@@ -29,11 +29,12 @@ export class PgMasterDataRepository implements MasterDataRepository {
                 account_number, account_holder_kana, is_invoice_issuer,
                 invoice_registration_number, withholding_enabled
            FROM vendors
-          WHERE $1 = '%%'
+          WHERE is_active
+            AND ($1 = '%%'
              OR vendor_name ILIKE $1
              OR vendor_code ILIKE $1
              OR COALESCE(trade_name, '') ILIKE $1
-             OR COALESCE(pen_name, '') ILIKE $1
+             OR COALESCE(pen_name, '') ILIKE $1)
           ORDER BY vendor_name
           LIMIT $2`,
         [keyword, boundedLimit]

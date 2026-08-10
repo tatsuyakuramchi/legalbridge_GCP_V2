@@ -106,8 +106,8 @@ S-A〜S-F のコード（build 82aa5b31…）と grant 032/034/035/036/037/038/0
 |---|---|---|
 | P1-1 | ✅ S-C: 「有効」は voided/reissued/superseded を除外（V1 横断検索と同義に） | registry-repository.ts |
 | P1-2 | ✅ S-C: 発注は現行版＋正本のみ・検収書 EXISTS は voided 除外 | inspections/repository.ts |
-| P1-3 | vendor-merge が `documents.vendor_id` を付替えない（8表中に無い） | `merge-repository.ts:11` vs 0101:36 |
-| P1-4 | V2 のベンダーピッカー/台帳/検索が is_active を無視（自分で無効化した取引先が選べる） | `master-data/repository.ts:31` ほか |
+| P1-3 | ✅ vendor スライス: VENDOR_REFERENCES に documents.vendor_id を追加（grant 043 は vendor-merge 点火時に適用） | merge-repository.ts／043_…grants.sql |
+| P1-4 | ✅ vendor スライス: ピッカー/横断検索は is_active のみ・台帳は全件＋【無効】表示＋状態欄（再有効化の導線維持） | master-data/search/ledgers repository |
 | P1-5 | ✅ S-C: 降格を template_type 単位に限定（V1 の正本選定と同義） | document-reissue-repository.ts |
 | P1-6 | ✅ S-F: FeatureLockedNote 追加（出力は可・記録のみ未有効の旨） | ExcelBatchWorkspace.tsx |
 | P1-7 | ✅ S-F: Degraded() の中身を FeatureLockedNote に統一 | WorkDetail.tsx |

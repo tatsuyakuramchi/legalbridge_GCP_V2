@@ -19,15 +19,18 @@ export class PgLedgerRepository implements LedgerRepository {
         `SELECT id, vendor_code, vendor_name, trade_name, pen_name, entity_type,
                 address, phone, email, contact_department, contact_name,
                 vendor_rep, is_invoice_issuer, invoice_registration_number,
-                withholding_enabled
+                withholding_enabled, is_active
            FROM vendors
           WHERE $1 = '%%' OR vendor_code ILIKE $1 OR vendor_name ILIKE $1
              OR COALESCE(trade_name, '') ILIKE $1 OR COALESCE(pen_name, '') ILIKE $1
-          ORDER BY vendor_name LIMIT $2`, [keyword, bounded]);
+          ORDER BY is_active DESC, vendor_name LIMIT $2`, [keyword, bounded]);
       return result.rows.map((row) => ({
         id: String(row.id), type, code: row.vendor_code, title: row.vendor_name,
-        subtitle: [row.trade_name, row.pen_name, row.entity_type].filter(Boolean).join("・"),
+        // 台帳は無効も表示する（再有効化の導線を残す）。ピッカー/横断検索は有効のみ（P1-4）。
+        subtitle: [row.is_active === false ? "【無効】" : null, row.trade_name, row.pen_name, row.entity_type]
+          .filter(Boolean).join("・"),
         detail: {
+          状態: row.is_active === false ? "無効" : "有効",
           取引先区分: row.entity_type, 住所: maskLedgerAddress(row.address, row.entity_type),
           電話番号: maskPhone(row.phone), メール: maskEmail(row.email),
           担当部署: row.contact_department, 担当者: row.contact_name,

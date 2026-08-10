@@ -16,7 +16,10 @@ export const VENDOR_REFERENCES: Array<{ table: string; column: string; label: st
   { table: "material_rights_sources", column: "rights_holder_vendor_id", label: "権利ソース（権利者）" },
   { table: "material_categories", column: "rights_holder_vendor_id", label: "素材カテゴリ（権利者）" },
   { table: "contracts", column: "primary_vendor_id", label: "契約（主取引先）" },
-  { table: "contract_works", column: "rights_holder_vendor_id", label: "契約-作品（権利者）" }
+  { table: "contract_works", column: "rights_holder_vendor_id", label: "契約-作品（権利者）" },
+  // documents.vendor_id は 0101 で capability を documents に統合した際の実FK。ここに無いと
+  // 名寄せ後も旧取引先が全文書に残る（監査 P1-3）。UPDATE 権限は grant 043。
+  { table: "documents", column: "vendor_id", label: "文書（取引先）" }
 ];
 
 export class VendorMergeError extends Error {

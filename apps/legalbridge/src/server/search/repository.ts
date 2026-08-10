@@ -24,8 +24,9 @@ export class PgGlobalSearchRepository implements GlobalSearchRepository {
           ORDER BY created_at DESC NULLS LAST LIMIT $2`, [keyword, limit]),
       this.database.query(
         `SELECT id, vendor_code, vendor_name, entity_type FROM vendors
-          WHERE vendor_code ILIKE $1 OR vendor_name ILIKE $1
-             OR COALESCE(trade_name, '') ILIKE $1 OR COALESCE(pen_name, '') ILIKE $1
+          WHERE is_active
+            AND (vendor_code ILIKE $1 OR vendor_name ILIKE $1
+             OR COALESCE(trade_name, '') ILIKE $1 OR COALESCE(pen_name, '') ILIKE $1)
           ORDER BY vendor_name LIMIT $2`, [keyword, limit]),
       this.database.query(
         `(SELECT 'work' AS source, id, work_code AS code, title, work_type AS category
