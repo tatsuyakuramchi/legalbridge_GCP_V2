@@ -109,6 +109,7 @@ import { PgDailyChecksRepository } from "./jobs/daily-checks-repository.js";
 import { runDailyChecks, DryRunDailyChecksNotifier, jstTodayYmd } from "./jobs/daily-checks-runner.js";
 import { LiveDailyChecksNotifier } from "./jobs/daily-checks-live-notifier.js";
 import { runInspectionDigest } from "./jobs/inspection-digest-runner.js";
+import { runCloudSignSync } from "./jobs/cloudsign-sync-runner.js";
 import { createWebhooksRouter, type WebhookHandler } from "./internal/webhooks-routes.js";
 import { PgWebhookReceiptsRepository } from "./internal/webhook-receipts-repository.js";
 import { PgContractStatusWriter } from "./documents/contract-status-writer.js";
@@ -1195,6 +1196,17 @@ export function createApp(
             .then(() => true).catch(() => false)
         : undefined;
       jobRunners["inspection-digest"] = () => runInspectionDigest({ repo: inspectionsRepo, post });
+    }
+    // CloudSign 一括ステータス同期（9-6）。live 構成かつ送信履歴台帳がある時のみ登録。
+    // Webhook(9-5)の取りこぼし・遅延の保険。締結判明時は契約 executed（grant 031 再利用）。
+    if (cloudSignAdapter.configured && dependencies.cloudSignRequests && !jobRunners["cloudsign-sync"]) {
+      const cloudSignRequests = dependencies.cloudSignRequests;
+      const contractWriter = new PgContractStatusWriter(jobsDatabase);
+      jobRunners["cloudsign-sync"] = () => runCloudSignSync({
+        requests: cloudSignRequests,
+        adapter: cloudSignAdapter,
+        contract: contractWriter
+      });
     }
   }
   app.use(createJobsRouter({ enabled: config.jobsEnabled, token: config.jobsTriggerToken, runners: jobRunners }));

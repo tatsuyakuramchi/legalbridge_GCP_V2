@@ -37,6 +37,10 @@ Webhook 受信口・督促自動化・外部イベント連携** を、既存 gu
   CloudSign 締結→送付履歴更新＋契約 executed、Backlog 課題追加→Slack 通知。すべてべき等・
   判別不能/二重/未知は 200 skip。app.ts で DB があれば自動構築。verify/cloudbuild に
   `_CLOUDSIGN_WEBHOOK_TOKEN_SECRET`/`_BACKLOG_WEBHOOK_TOKEN_SECRET`（既定 BLOCKED・設定時のみマウント）。tests 8。
+- ✅ **9-6 CloudSign 一括ステータス同期**（済）：`cloudsign-request-repository.listPending`
+  ＋`jobs/cloudsign-sync-runner.ts`＝未確定依頼を `fetchStatus` で後追い照会→状態更新（grant 022）
+  →締結なら契約 executed（grant 031 再利用）。live 未構成は no-op・個別失敗は継続。runner
+  `cloudsign-sync` を CloudSign live＋履歴台帳がある時のみ登録。**新規 grant/config/infra なし**。tests 6。
 
 ## 重要な設計判断（実装前に確定した事項）
 
@@ -111,9 +115,20 @@ Webhook 受信口・督促自動化・外部イベント連携** を、既存 gu
 - verify/cloudbuild：`_CLOUDSIGN_WEBHOOK_TOKEN_SECRET`（既定 BLOCKED）→ 設定時のみ Secret Manager から
   `CLOUDSIGN_WEBHOOK_TOKEN` をマウント。write-test サービス限定。tests は parsers＋handler で 8。
 
-### 9-6：CloudSign 一括ステータス同期
-- runner `cloudsign-sync`：未確定 `cloudsign_request_history` を一括で `getDocument` 照会し後追い更新
-  （既存 FetchCloudSignApiClient 再利用）。INTEGRATION_MODE=live 前提。
+### 9-6：CloudSign 一括ステータス同期 ✅ 実装済
+- `integrations/cloudsign-request-repository.ts` に `listPending(limit)` を追加
+  （terminal=completed/canceled を除外・古い順・grant 022 の SELECT 再利用）。
+  終端集合は `CLOUDSIGN_TERMINAL_STATUSES` として公開。
+- `jobs/cloudsign-sync-runner.ts` `runCloudSignSync`：未確定依頼を `fetchStatus`（既存
+  `CloudSignAdapter`＝`CloudSignApiAdapter`/`FetchCloudSignApiClient` 再利用）で後追い照会し、
+  状態変化があれば `updateStatus`（grant 022 UPDATE）、締結なら契約 executed
+  （9-5 と同じ `contract-status-writer`・grant 031 再利用・42501 は forbidden で継続）。
+  live 未構成なら **no-op**（`configured:false`）。個別照会失敗はジョブを止めず `failed` に計上。
+  summary＝`{configured,scanned,updated,unchanged,completed,contractExecuted,contractForbidden,failed}`。
+- app.ts：CloudSign live（`CLOUDSIGN_MODE=live`＋client_id＋baseUrl）かつ送信履歴台帳
+  （`cloudSignRequestHistoryEnabled`）がある時のみ runner `cloudsign-sync` を登録。
+  **新規 grant/config/infra なし**（`JOBS_ENABLED` と既存 CloudSign ゲートに従属）。tests 6。
+- 起動：`POST /internal/jobs/cloudsign-sync`（Cloud Scheduler・数時間ごと等）。
 
 ### 9-7：Backlog Webhook 自動起票 ✅ 実装済
 - `internal/webhook-parsers.ts`：`parseBacklogIssueCreated`（純関数）。課題追加(type=1)のみを対象化し、

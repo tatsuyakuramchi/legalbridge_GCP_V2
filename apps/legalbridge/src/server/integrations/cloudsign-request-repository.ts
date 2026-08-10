@@ -33,7 +33,12 @@ export interface CloudSignRequestRepository {
   // 締結状況の更新（fetchStatus 取得時に反映）。存在しなければ null。
   updateStatus(cloudSignDocumentId: string, status: CloudSignRequestStatus): Promise<CloudSignRequestRecord | null>;
   list(): Promise<CloudSignRequestRecord[]>;
+  // 未確定（terminal でない）依頼を古い順に取得（一括ステータス同期 9-6）。
+  listPending(limit?: number): Promise<CloudSignRequestRecord[]>;
 }
+
+// 終端状態（これ以上照会不要）。9-6 の同期対象から除外する。
+export const CLOUDSIGN_TERMINAL_STATUSES = ["completed", "canceled"] as const;
 
 const COLUMNS = `idempotency_key, document_id, cloud_sign_document_id, status,
   participant_count, recorded_at, recorded_by`;
@@ -91,6 +96,16 @@ export class PgCloudSignRequestRepository implements CloudSignRequestRepository 
     );
     return result.rows.map(mapRow);
   }
+
+  async listPending(limit = 100) {
+    const result = await this.database.query(
+      `SELECT ${COLUMNS} FROM lb_v2_cloudsign_requests
+        WHERE status <> ALL($1::text[])
+        ORDER BY recorded_at ASC, id ASC LIMIT $2`,
+      [CLOUDSIGN_TERMINAL_STATUSES, limit]
+    );
+    return result.rows.map(mapRow);
+  }
 }
 
 export class MemoryCloudSignRequestRepository implements CloudSignRequestRepository {
@@ -125,5 +140,10 @@ export class MemoryCloudSignRequestRepository implements CloudSignRequestReposit
 
   async list() {
     return this.records.slice().reverse();
+  }
+
+  async listPending(limit = 100) {
+    const terminal = new Set<string>(CLOUDSIGN_TERMINAL_STATUSES);
+    return this.records.filter((r) => !terminal.has(r.status)).slice(0, limit);
   }
 }
