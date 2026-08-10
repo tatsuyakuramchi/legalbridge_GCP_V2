@@ -1,5 +1,5 @@
 import { Router, type Response } from "express";
-import type { DocumentRegistryRepository } from "./registry-repository.js";
+import type { DocumentRegistryRepository, LifecycleFilter } from "./registry-repository.js";
 
 export function createDocumentRegistryRouter(repository: DocumentRegistryRepository) {
   const router = Router();
@@ -9,8 +9,11 @@ export function createDocumentRegistryRouter(repository: DocumentRegistryReposit
       const query = String(request.query.q ?? "").slice(0, 100);
       const templateType = String(request.query.template_type ?? "").slice(0, 60);
       const limit = Number.parseInt(String(request.query.limit ?? "100"), 10) || 100;
+      const lifecycleRaw = String(request.query.lifecycle ?? "all");
+      const lifecycle: LifecycleFilter =
+        lifecycleRaw === "active" || lifecycleRaw === "voided" ? lifecycleRaw : "all";
       const owner = requesterEmail(response);
-      const listed = await repository.list(query, templateType || undefined, owner ? 200 : limit);
+      const listed = await repository.list(query, templateType || undefined, owner ? 200 : limit, lifecycle);
       const documents = listed.filter((document) => owns(document.createdBy, owner)).slice(0, limit);
       response.json({
         documents: documents.map(({ formData: _formData, ...document }) => ({

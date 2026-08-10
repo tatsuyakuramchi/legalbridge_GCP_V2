@@ -39,7 +39,7 @@ V2 は draft/finalize/pdf/drive-storage は移植済みだが、**発行後の�
 
 | # | 機能 | V1所在 | 概要 | 粒度 | 優先 |
 |---|---|---|---|---|---|
-| 10-1 | 文書アーカイブ画面＋再発行 | FE `ArchivePage.tsx`／BE `management/assets`・`reissue`・`include_history` | 確定文書の一覧・検索・履歴トグル・再編集/再発行導線 | 中 | 中 |
+| 10-1 | 文書アーカイブ画面＋再発行 | FE `ArchivePage.tsx`／BE `management/assets`・`reissue`・`include_history` | 確定文書の一覧・検索・履歴トグル・再編集/再発行導線 | 中 | 中 | ✅ 実装済（状態フィルタ・PDF未生成キュー・バージョン履歴を DocumentRegistry に集約。再発行 write は 10-1b へ） |
 | 10-2 | 文書 void（無効化） | `server.ts:14809 documents/:id/void` | 発行文書の無効化＋実績取消（残高復元） | 小 | 中 | ✅ 実装済（grant 033・`docs/phase10-document-operations.md`） |
 | 10-3 | PDF 再生成 | `server.ts:12983 regenerate-pdf` | 確定文書の PDF 再生成（Drive 上書き更新） | 小 | 中 | ✅ 実装済（drive scope 従属・grant不要） |
 | 10-4 | 一括削除 / 一括項目更新 | `server.ts:13414 bulk-delete`・`13279 bulk-update-fields` | 発行文書の一括削除・一括フィールド更新 | 中 | 低 |

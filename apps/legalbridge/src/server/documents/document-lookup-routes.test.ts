@@ -25,7 +25,11 @@ function doc(over: Partial<RegisteredDocument> = {}): RegisteredDocument {
 
 function appFor() {
   const registry = new MemoryDocumentRegistryRepository([
-    doc(),
+    // バージョン系列（base=ARC-PO-2026-0001）：0001(旧版) → 0001-R1(正本)
+    doc({ id: 1, documentNumber: "ARC-PO-2026-0001", baseDocumentNumber: "ARC-PO-2026-0001",
+      isPrimary: false, supersededBy: "ARC-PO-2026-0001-R1", createdAt: "2026-07-01T00:00:00.000Z" }),
+    doc({ id: 4, documentNumber: "ARC-PO-2026-0001-R1", baseDocumentNumber: "ARC-PO-2026-0001",
+      isPrimary: true, title: "発注A(改訂)", createdAt: "2026-07-05T00:00:00.000Z" }),
     doc({ id: 2, documentNumber: "ARC-PO-2026-0002", driveLink: "https://drive/x", title: "発注B" }),
     doc({ id: 3, documentNumber: "ARC-PO-2026-0003", lifecycleStatus: "voided", title: "廃止" })
   ]);
@@ -87,4 +91,27 @@ test("pending-pdf は /documents/:id より先に評価される（誤って詳�
   // pending-pdf が :id="pending-pdf" として registry に吸われていないことを確認
   const res = await request(appFor()).get("/api/v2/documents/pending-pdf").expect(200);
   assert.ok(Array.isArray(res.body.rows));
+});
+
+test("history: 同一系列のバージョンを古い順に返す", async () => {
+  const res = await request(appFor()).get("/api/v2/documents/1/history").expect(200);
+  assert.equal(res.body.versions.length, 2);
+  assert.deepEqual(res.body.versions.map((v: any) => v.documentNumber), ["ARC-PO-2026-0001", "ARC-PO-2026-0001-R1"]);
+  assert.equal(res.body.versions[0].isPrimary, false);
+  assert.equal(res.body.versions[1].isPrimary, true);
+});
+
+test("history: 系列を持たない文書は自身1件のみ", async () => {
+  const res = await request(appFor()).get("/api/v2/documents/2/history").expect(200);
+  assert.equal(res.body.versions.length, 1);
+  assert.equal(res.body.versions[0].documentNumber, "ARC-PO-2026-0002");
+});
+
+test("lifecycle フィルタ: voided のみ／active のみを切り分ける", async () => {
+  const app = appFor();
+  const voided = await request(app).get("/api/v2/documents?lifecycle=voided").expect(200);
+  assert.deepEqual(voided.body.documents.map((d: any) => d.id), [3]);
+  const active = await request(app).get("/api/v2/documents?lifecycle=active").expect(200);
+  assert.ok(!active.body.documents.some((d: any) => d.id === 3));
+  assert.ok(active.body.documents.some((d: any) => d.id === 1));
 });

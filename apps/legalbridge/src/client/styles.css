@@ -836,6 +836,17 @@ button.pdf-download-link:disabled {
   color: #b91c1c;
   font-size: 13px;
 }
+/* バージョン履歴（アーカイブ・Phase 10-1） */
+.version-history { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px; }
+.version-history h3 { font-size: 13px; margin: 0 0 8px; }
+.version-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.version-list li button {
+  width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); cursor: pointer;
+}
+.version-list li.current button { border-color: var(--accent, #2563eb); background: var(--surface-accent, #eff6ff); cursor: default; }
+.version-list .v-num { font-weight: 700; }
+
 .danger-zone { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px; }
 .danger-zone h3 { color: #b91c1c; margin: 0 0 8px; font-size: 13px; }
 .danger-zone .danger-form { display: flex; flex-direction: column; gap: 8px; }

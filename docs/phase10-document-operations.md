@@ -11,7 +11,7 @@ V2 は draft→finalize→pdf→drive までは移植済みだが、**発行後�
 | 10-2 | 文書 void（無効化）＋実績取消（残高復元） | 小 | ✅ 実装済 |
 | 10-3 | PDF 再生成（Drive 上書き更新） | 小 | ✅ 実装済 |
 | 10-6 | 文書ルックアップ（番号検索・PDF未生成一覧・次番号プレビュー） | 小 | ✅ 実装済 |
-| 10-1 | 文書アーカイブ画面＋再発行 | 中 | 未 |
+| 10-1 | 文書アーカイブ（状態フィルタ・PDF未生成キュー・バージョン履歴） | 中 | ✅ 実装済（再発行 write は 10-1b へ） |
 | 10-6 | 文書ルックアップ（番号検索・次番号・PDF未生成一覧） | 小 | 未 |
 | 10-4 | 一括削除／一括項目更新 | 中 | 未（優先低） |
 | 10-5 | Excel 一括出力（担当×支払期日×種別集計→Drive保存） | 大 | 未 |
@@ -90,7 +90,25 @@ Drive のファイルが古いままになる。10-3 はこれを解消する。
 > UI 統合は 10-1 アーカイブ画面（PDF未生成キュー表示・番号検索・再発行導線）で行う。本スライスは
 > その土台となる読取 API を提供する。
 
+## 10-1：文書アーカイブ（既存レジストリに集約）✅ 実装済
+
+V1 の別ページ ArchivePage を新設せず、V2 で既にアーカイブを担う `DocumentRegistry` に機能を集約
+（UX 重複回避）。発行後の void（10-2）・PDF 再生成（10-3）・ルックアップ（10-6）の集約 UI。
+
+- **状態フィルタ**（読取）：`registry-repository.list` に `lifecycle`（all/active/voided）を追加。
+  `GET /documents?lifecycle=` で切替（Pg/Memory）。UI は「すべて／有効のみ／無効化のみ」セレクト。
+- **PDF未生成キュー**：UI トグルで一覧ソースを `GET /documents/pending-pdf`（10-6）へ切替。
+- **バージョン履歴**（include_history）：`registry-repository.versionHistory(id)` を追加
+  （同一 `base_document_number` 系列を古い順・Pg/Memory）。`GET /documents/:id/history`
+  （lookup ルーターに配置＝`/documents/:id` に吸われない）。UI は詳細ペインに系列を表示し、
+  各版クリックで切替（正本/旧版/無効化バッジ・単一版なら非表示）。
+- tests：history（系列2件・単一1件）／lifecycle フィルタ（voided/active）を追加。597 緑。
+- **新規 grant/config なし**（すべて読取）。
+
+> **再発行（reissue・write）は 10-1b へ分離**：新しい版を採番して旧版を superseded にする書込みは
+> 専用の列レベル GRANT（documents.superseded_by/is_primary/lifecycle_status）＋確認トークンが必要で、
+> void（10-2 grant 033）と重なる部分もあるため独立スライスで扱う。
+
 ## 次スライス候補
-- **10-1 アーカイブ画面**：確定文書の一覧・履歴トグル・PDF未生成キュー・番号検索・再編集/再発行導線
-  （10-2/10-3/10-6 の集約 UI）。
+- **10-1b 再発行（reissue）**：新版採番＋旧版 superseded（guarded-write）。
 - **10-4 一括操作**／**10-5 Excel 一括出力**（大）。

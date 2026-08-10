@@ -35,6 +35,19 @@ export function createDocumentLookupRouter(
     } catch (error) { return next(error); }
   });
 
+  // バージョン履歴（同一系列・アーカイブ履歴トグル 10-1）。/documents/:id/history。
+  const idPath = z.object({ id: z.coerce.number().int().positive() });
+  router.get("/documents/:id/history", async (request, response, next) => {
+    try {
+      const { id } = idPath.parse(request.params);
+      const versions = await registry.versionHistory(id);
+      return response.status(200).json({ versions });
+    } catch (error) {
+      if (error instanceof z.ZodError) return response.status(400).json({ error: "invalid request", issues: error.issues });
+      return next(error);
+    }
+  });
+
   // 文書番号から1件を引く（アーカイブ再編集導線・番号検索）。
   const numberPath = z.object({ docNumber: z.string().trim().min(1).max(120) });
   router.get("/documents/by-number/:docNumber", async (request, response, next) => {

@@ -29,6 +29,19 @@ type RegisteredDocument = {
   };
 };
 
+// 通常一覧（{documents}）と PDF未生成キュー（{rows}）のレスポンスを表の行形へ正規化する。
+function normalizeRows(data: any, pdfQueue: boolean): RegisteredDocument[] {
+  if (pdfQueue) {
+    return (data.rows ?? []).map((r: any) => ({
+      id: r.id, documentNumber: r.documentNumber ?? null, issueKey: r.issueKey,
+      templateType: r.templateType, templateVersionId: null,
+      title: r.title ?? "", counterparty: r.counterparty ?? "", driveLink: "",
+      createdAt: r.createdAt ?? "", createdBy: null, lifecycleStatus: "final"
+    }));
+  }
+  return data.documents ?? [];
+}
+
 const documentExportColumns: ExportColumn<RegisteredDocument>[] = [
   { header: "文書番号", value: (d) => d.documentNumber ?? "" },
   { header: "受付番号", value: (d) => d.issueKey },
@@ -68,6 +81,8 @@ export function DocumentRegistry({
   const [importing, setImporting] = useState(false);
   const [query, setQuery] = useState(initialQuery);
   const [templateType, setTemplateType] = useState("");
+  const [lifecycle, setLifecycle] = useState<"all" | "active" | "voided">("all");
+  const [pdfQueue, setPdfQueue] = useState(false);
   const [documents, setDocuments] = useState<RegisteredDocument[]>([]);
   const [selected, setSelected] = useState<RegisteredDocument | null>(null);
   const [loading, setLoading] = useState(false);
@@ -82,13 +97,15 @@ export function DocumentRegistry({
   useEffect(() => {
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      const params = new URLSearchParams({ q: query, limit: "100" });
-      if (templateType) params.set("template_type", templateType);
       setLoading(true);
       setError("");
-      fetch(`/api/v2/documents?${params}`, { signal: controller.signal })
+      // PDF未生成キュー（10-6 pending-pdf）と通常一覧（状態フィルタ付き）を切り替える。
+      const url = pdfQueue
+        ? `/api/v2/documents/pending-pdf?${new URLSearchParams(templateType ? { template_type: templateType, limit: "200" } : { limit: "200" })}`
+        : `/api/v2/documents?${new URLSearchParams({ q: query, limit: "100", lifecycle, ...(templateType ? { template_type: templateType } : {}) })}`;
+      fetch(url, { signal: controller.signal })
         .then((response) => response.ok ? response.json() : Promise.reject())
-        .then((data) => setDocuments(data.documents ?? []))
+        .then((data) => setDocuments(normalizeRows(data, pdfQueue)))
         .catch((cause) => { if (cause?.name !== "AbortError") setError("文書一覧を取得できませんでした。"); })
         .finally(() => setLoading(false));
     }, 250);
@@ -96,7 +113,7 @@ export function DocumentRegistry({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [query, templateType, reload]);
+  }, [query, templateType, lifecycle, pdfQueue, reload]);
 
   async function selectDocument(id: number) {
     setError("");
@@ -123,11 +140,20 @@ export function DocumentRegistry({
     )}
     <div className="registry-toolbar">
       <input value={query} onChange={(event) => setQuery(event.target.value)}
-        placeholder="文書番号、受付番号、件名、相手方で検索" />
+        placeholder="文書番号、受付番号、件名、相手方で検索" disabled={pdfQueue} />
       <select value={templateType} onChange={(event) => setTemplateType(event.target.value)}>
         <option value="">すべての文書種別</option>
         {templates.map((item) => <option key={item.templateKey} value={item.templateKey}>{item.label}</option>)}
       </select>
+      <select value={lifecycle} onChange={(event) => setLifecycle(event.target.value as typeof lifecycle)} disabled={pdfQueue}>
+        <option value="all">すべての状態</option>
+        <option value="active">有効のみ</option>
+        <option value="voided">無効化のみ</option>
+      </select>
+      <button className={pdfQueue ? "primary" : ""} onClick={() => { setPdfQueue((v) => !v); setSelected(null); }}
+        title="Drive未保存の発行済み文書（PDF出力待ち）だけを表示します">
+        {pdfQueue ? "通常一覧へ戻る" : "PDF未生成のみ"}
+      </button>
       <span>{loading ? "検索中…" : `${documents.length}件`}</span>
     </div>
     {error && <div className="async-error">{error}<button onClick={() => setReload((value) => value + 1)}>再試行</button></div>}
@@ -163,6 +189,7 @@ export function DocumentRegistry({
         canVoidDocument={canVoidDocument}
         onRefresh={() => { if (selected) return selectDocument(selected.id); }}
         onVoided={() => { setReload((v) => v + 1); if (selected) return selectDocument(selected.id); }}
+        onSelectVersion={(id) => void selectDocument(id)}
       />
     </div>
   </section>;
@@ -177,7 +204,8 @@ function DocumentDetail({
   canCloudSign = false,
   canVoidDocument = false,
   onRefresh,
-  onVoided
+  onVoided,
+  onSelectVersion
 }: {
   document: RegisteredDocument | null;
   label?: string;
@@ -188,6 +216,7 @@ function DocumentDetail({
   canVoidDocument?: boolean;
   onRefresh: () => Promise<void> | void;
   onVoided?: () => Promise<void> | void;
+  onSelectVersion?: (id: number) => void;
 }) {
   if (!document) return <aside className="panel registry-detail empty-detail">一覧から文書を選択してください。</aside>;
   const isVoided = document.lifecycleStatus === "voided";
@@ -227,11 +256,43 @@ function DocumentDetail({
       onSaved={onRefresh} />}
     {canVoidDocument && !isVoided &&
       <DocumentVoidZone documentId={document.id} documentNumber={document.documentNumber} onVoided={onVoided} />}
+    <VersionHistory documentId={document.id} onSelect={onSelectVersion} />
     <h3>登録項目</h3>
     <dl className="form-data-list">
       {entries.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}
     </dl>
   </aside>;
+}
+
+type VersionRow = {
+  id: number; documentNumber: string | null; templateType: string;
+  lifecycleStatus: string; isPrimary: boolean; supersededBy: string | null; createdAt: string;
+};
+
+function VersionHistory({ documentId, onSelect }: { documentId: number; onSelect?: (id: number) => void }) {
+  const [versions, setVersions] = useState<VersionRow[]>([]);
+  useEffect(() => {
+    let active = true;
+    fetch(`/api/v2/documents/${documentId}/history`)
+      .then((r) => r.ok ? r.json() : { versions: [] })
+      .then((d) => { if (active) setVersions(d.versions ?? []); })
+      .catch(() => { if (active) setVersions([]); });
+    return () => { active = false; };
+  }, [documentId]);
+  if (versions.length <= 1) return null;   // 系列が1件のみなら履歴は出さない
+  return <div className="version-history">
+    <h3>バージョン履歴（{versions.length}）</h3>
+    <ul className="version-list">
+      {versions.map((v) => <li key={v.id} className={v.id === documentId ? "current" : ""}>
+        <button onClick={() => { if (v.id !== documentId) onSelect?.(v.id); }} disabled={v.id === documentId}>
+          <span className="v-num">{v.documentNumber ?? "未発番"}</span>
+          <span className={`registry-state ${v.lifecycleStatus === "voided" ? "voided" : v.isPrimary ? "complete" : "pending"}`}>
+            {v.lifecycleStatus === "voided" ? "無効化" : v.isPrimary ? "正本" : "旧版"}
+          </span>
+        </button>
+      </li>)}
+    </ul>
+  </div>;
 }
 
 function DocumentVoidZone({ documentId, documentNumber, onVoided }: {

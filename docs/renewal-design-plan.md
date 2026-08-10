@@ -318,6 +318,10 @@ Phase 7 は全フェーズの受け入れ後
 
 **UI/UX 合理性レビュー（`docs/v2-ux-rationality-review.md`）**：V1 の「迷いの構造」を 5 類型化（作業オブジェクト三重帳簿・暗黙モードの入口乱立・用語不整合・ロール未分岐・巨大マルチ目的画面）し、V2 現状 IA を並列監査して統合。V2 は既に主要な V1 病を治療済み（案件へ正典化・文書作成 funnel 統一・破壊操作トークン型統一・ロール一級市民化・Breadcrumb）＝維持資産として明記。残摩擦 F1〜F9（業務グループ過積載/OFF機能の伝え方3系統/GRANT番号露出/発見→是正断絶/条件・作品の画面分散/ガード重み付け不揃い/空状態2系統/作成→出力4遷移/生ID入力）を洗い出し、実タスクフロー（申請者・法務・管理者）に立脚した設計原則6点と、Quick Wins（Q1発見→是正prop配線・Q2未有効化統一＋GRANT番号除去・Q3空状態一本化・Q4文書検索UI）／構造リファクタ（R1ナビ再編・R2条件集約・R3作品二重解消・R4ガード階層化・R5ロール別ホーム）／大（B1作成→出力1画面化・B2 Phase10/11新規UIへ本指針適用）を優先度・粒度付きで提案。機能ギャップ台帳と対になる体験台帳。
 
+| 2026-08-10 | Phase 10 | 10-1 文書アーカイブ（状態フィルタ／PDF未生成キュー／バージョン履歴を DocumentRegistry に集約・読取・grant不要） | LegalBridge_AI_GCP | ✅ |
+
+**10-1 文書アーカイブ**：V1 の別ページ ArchivePage を新設せず、V2 で既にアーカイブを担う `DocumentRegistry` に機能を集約（UX 重複回避）。①状態フィルタ＝`registry-repository.list` に `lifecycle`（all/active/voided）を追加し `GET /documents?lifecycle=` で切替（Pg/Memory）。UI に「すべて／有効のみ／無効化のみ」セレクト。②PDF未生成キュー＝UI トグルで一覧ソースを `GET /documents/pending-pdf`（10-6）へ切替。③バージョン履歴＝`registry-repository.versionHistory(id)`（同一 `base_document_number` 系列を古い順・Pg/Memory）＋`GET /documents/:id/history`（lookup ルーター配置で `/documents/:id` に吸われない）。UI は詳細ペインに系列を表示し各版クリックで切替（正本/旧版/無効化バッジ・単一版なら非表示）。**新規 grant/config なし（すべて読取）**。再発行（reissue・write）は列レベル GRANT＋確認トークンが要るため 10-1b に分離。テスト597件緑・typecheck緑・build緑。残 10-1b 再発行／10-4 一括／10-5 Excel一括。
+
 | 2026-08-10 | Phase 10 | 10-6 文書ルックアップ（番号検索／PDF未生成一覧／次番号プレビュー・読取専用・grant不要） | LegalBridge_AI_GCP | ✅ |
 
 **10-6 文書ルックアップ**：発行後運用の下支えとなる読取ユーティリティ3種（すべて SELECT のみ＝新規 GRANT/config なし）。①`registry-repository.findByNumber` 追加。②`document-lookup-repository`（Pg/Memory）＝`pendingPdf`（Drive 未保存かつ void でない文書の一覧＋種別別件数＝PDF未生成キュー）と `peekNextNumber`（**非破壊**の次番号プレビュー・V1 は document_sequences を増分するが V2 は採番を消費しない）。採番接頭辞・番号組み立ては finalize と共用の純関数 `resolveNumberPrefix`/`formatDocumentNumber` に集約（finalize の findPrefix もこれへ委譲・挙動不変）。③`document-lookup-routes`＝`GET /documents/by-number/:docNumber`／`/documents/pending-pdf`／`/documents/numbering/next?type=`。`/documents/:id`（registry）に吸われないよう registry より前にマウント。稟議リンク（Ringi=保留）と mark-as-imported（取込フロー責務）は対象外。UI 統合は 10-1 アーカイブ画面で実施予定。テスト594件緑・typecheck緑・build緑。残 10-1 アーカイブ画面／10-4 一括／10-5 Excel一括。
