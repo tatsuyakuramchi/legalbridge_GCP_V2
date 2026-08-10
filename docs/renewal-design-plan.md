@@ -294,6 +294,10 @@ Phase 7 は全フェーズの受け入れ後
 
 | 2026-08-07 | Phase 5 | 点火準備：CloudSign 点火 Runbook 新設＋gmail-cloudsign.md を確定仕様へ更新 | — | ✅ |
 
+| 2026-08-10 | UX | Quick Wins Q3（空状態の2ティア整流）・Q4（文書紐付け検索UI）実装 | LegalBridge_AI_GCP | ✅ |
+
+**UX Quick Wins Q3/Q4 実装**：Q4＝案件詳細の文書紐付けを生ID入力から**デバウンス検索ピッカー**へ（`GET /documents?q=` を叩き候補クリックで POST 紐付け・紐付け済みは候補除外・`.doc-link-*` CSS 追加）＝F9 解消。Q3＝主要リストの空状態を `EmptyState` 箱に統一（DocumentRegistry/Requests/Draft/Ledger/TemplateCatalog）、表内・ローディング等のインライン注記は軽量 `.empty-state` を下位ティアとして維持し「意図した2ティア」に整流＝F7 緩和。テスト545件緑・typecheck緑・build緑。Quick Wins Q1〜Q4 完了。
+
 | 2026-08-10 | UX | Quick Wins Q1（発見→是正の prop 配線）・Q2（未有効化メッセージ統一＋GRANT番号除去）実装 | LegalBridge_AI_GCP | ✅ |
 
 **UX Quick Wins 実装**：Q1＝データ品質の重複ドリルが名寄せ画面へ統合元IDを引き継ぐよう配線（`data-quality/repository.ts` の vendor-merge link に `id` 付与、`DataQuality.onNavigate(view,id)`、`App` に `mergeSourceSeed`→`VendorMerge/MatterMerge` の `initialSource` 配線、ナビ直接遷移では seed クリア）＝発見と是正を1動線化。Q2＝`FeatureLockedNote.tsx` を新設して未有効化注記を統一し、VendorMerge/MatterMerge/WorkDetail の end-user 文言から GRANT 番号（018/025/026/028/007）と capability 名を除去。テスト545件緑・typecheck緑・build緑。

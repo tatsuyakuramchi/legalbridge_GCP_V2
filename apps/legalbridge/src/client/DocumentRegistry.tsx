@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { DocumentFormSchema } from "../types";
 import { useToast } from "./Toast";
+import { EmptyState } from "./EmptyState";
 import { DocumentIntegrations } from "./DocumentIntegrations";
 import { ExportButtons } from "./ExportButtons";
 import type { ExportColumn } from "./export-util";
@@ -145,7 +146,7 @@ export function DocumentRegistry({
               </td>
             </tr>)}</tbody>
         </table>
-        {!loading && !documents.length && <div className="empty-state">該当する文書がありません。</div>}
+        {!loading && !documents.length && <EmptyState compact icon="▤" title="該当する文書がありません" description="検索条件を変えるか、新規に文書を作成してください。" />}
       </div>
       <DocumentDetail
         document={selected}

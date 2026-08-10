@@ -374,6 +374,18 @@ header input { width: 100%; border: 1px solid var(--border); border-radius: var(
 .issue-link-form { display: flex; gap: 6px; margin-top: 8px; align-items: center; }
 .issue-link-form input { flex: 1; border: 1px solid #cbd5e1; border-radius: 7px; padding: 6px 9px; font: inherit; font-size: 12px; }
 .issue-link-form select { border: 1px solid #cbd5e1; border-radius: 7px; padding: 6px 8px; font: inherit; font-size: 12px; background: white; }
+.doc-link-picker { margin-top: 8px; }
+.doc-link-picker > input { width: 100%; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 7px; padding: 6px 9px; font: inherit; font-size: 12px; }
+.doc-link-results { list-style: none; margin: 6px 0 0; padding: 0; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; }
+.doc-link-results > li { border-bottom: 1px solid #eef2f7; }
+.doc-link-results > li:last-child { border-bottom: none; }
+.doc-link-results .muted-note { display: block; padding: 8px 10px; color: #94a3b8; font-size: 11px; }
+.doc-link-hit { display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left; border: none; background: white; padding: 8px 10px; font: inherit; cursor: pointer; }
+.doc-link-hit:hover:not(:disabled) { background: #f1f5f9; }
+.doc-link-hit:disabled { opacity: .5; cursor: default; }
+.doc-link-hit b { font-size: 12px; color: #0f172a; }
+.doc-link-hit span { font-size: 11px; color: #475569; }
+.doc-link-hit small { font-size: 11px; color: #94a3b8; margin-left: auto; }
 .link-remove { border: 1px solid #e2e8f0; background: white; color: #64748b; border-radius: 6px; padding: 2px 8px; font-size: 11px; cursor: pointer; }
 .matter-slack { margin-top: 14px; padding: 12px; border: 1px solid #e2e8f0; border-radius: 10px; background: #f8fafc; }
 .matter-slack.muted { opacity: .8; }

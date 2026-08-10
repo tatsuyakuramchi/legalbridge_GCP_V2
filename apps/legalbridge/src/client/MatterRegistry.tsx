@@ -436,11 +436,32 @@ function MatterSends({ matterId, documents, canEdit }:
   </>;
 }
 
+type DocHit = { id: number; documentNumber: string | null; templateType: string; issueKey: string };
+
 function MatterDocumentLinks({ matterId, documents, labels, canEdit, onChanged }:
   { matterId: number; documents: Detail["documents"]; labels: Map<string, string>; canEdit: boolean; onChanged: () => void }) {
   const toast = useToast();
-  const [docId, setDocId] = useState("");
+  const [query, setQuery] = useState("");
+  const [hits, setHits] = useState<DocHit[]>([]);
+  const [searching, setSearching] = useState(false);
   const [busy, setBusy] = useState(false);
+  const linkedIds = new Set(documents.map((d) => d.id));
+  // 文書検索（番号・課題キー・キーワード）で候補を出し、生ID入力を廃止（Q4）。
+  useEffect(() => {
+    if (!canEdit) return;
+    const term = query.trim();
+    if (!term) { setHits([]); return; }
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      setSearching(true);
+      fetch(`/api/v2/documents?q=${encodeURIComponent(term)}&limit=8`, { signal: controller.signal })
+        .then((r) => r.ok ? r.json() : Promise.reject())
+        .then((d) => setHits(Array.isArray(d.documents) ? d.documents : []))
+        .catch(() => { /* aborted or failed */ })
+        .finally(() => setSearching(false));
+    }, 250);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [query, canEdit]);
   async function run(request: Promise<Response>, ok: string) {
     setBusy(true);
     try {
@@ -448,6 +469,12 @@ function MatterDocumentLinks({ matterId, documents, labels, canEdit, onChanged }
       onChanged();
     } catch { /* toast shown */ }
     finally { setBusy(false); }
+  }
+  function link(documentId: number) {
+    return run(fetch(`/api/v2/matters/${matterId}/documents`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ documentId })
+    }), "文書を紐付けました").then(() => setQuery(""));
   }
   return <>
     {documents.map((document) => <article key={document.id}>
@@ -459,13 +486,21 @@ function MatterDocumentLinks({ matterId, documents, labels, canEdit, onChanged }
         onClick={() => run(fetch(`/api/v2/matters/${matterId}/documents/${document.id}`, { method: "DELETE" }), "文書の紐付けを解除しました")}>解除</button>}
     </article>)}
     {!documents.length && <small className="muted-note">紐付いた文書はありません。</small>}
-    {canEdit && <div className="issue-link-form">
-      <input value={docId} placeholder="文書ID" inputMode="numeric" onChange={(e) => setDocId(e.target.value.replace(/[^0-9]/g, ""))} />
-      <button className="primary" disabled={busy || !docId}
-        onClick={() => run(fetch(`/api/v2/matters/${matterId}/documents`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ documentId: Number(docId) })
-        }), "文書を紐付けました").then(() => setDocId(""))}>紐付け</button>
+    {canEdit && <div className="doc-link-picker">
+      <input value={query} placeholder="文書を検索して紐付け（番号・課題キー・キーワード）"
+        onChange={(e) => setQuery(e.target.value)} />
+      {query.trim() && <ul className="doc-link-results">
+        {searching && <li className="muted-note">検索中…</li>}
+        {!searching && hits.filter((h) => !linkedIds.has(h.id)).length === 0 &&
+          <li className="muted-note">該当する文書がありません。</li>}
+        {hits.filter((h) => !linkedIds.has(h.id)).map((h) => <li key={h.id}>
+          <button className="doc-link-hit" disabled={busy} onClick={() => link(h.id)}>
+            <b>{h.documentNumber ?? "未発番"}</b>
+            <span>{labels.get(h.templateType) ?? h.templateType}</span>
+            <small>{h.issueKey}</small>
+          </button>
+        </li>)}
+      </ul>}
     </div>}
   </>;
 }

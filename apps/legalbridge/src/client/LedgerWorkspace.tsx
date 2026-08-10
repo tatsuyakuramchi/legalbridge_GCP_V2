@@ -70,7 +70,7 @@ export function LedgerWorkspace({ initialType, initialQuery, selectedId, canEdit
       <div className="ledger-list">{items.map((item) => <button key={item.id}
         className={selected?.id === item.id ? "selected" : ""} onClick={() => { setCreating(false); setSelected(item); }}>
         <span>{item.code}</span><strong>{item.title}</strong><small>{item.subtitle || "—"}</small>
-      </button>)}{!loading && !items.length && <div className="empty-state">該当するデータがありません。</div>}</div>
+      </button>)}{!loading && !items.length && <EmptyState compact icon="▤" title="該当するデータがありません" />}</div>
       {importing
         ? <CsvImport config={type === "works" ? workCsvConfig : type === "materials" ? materialCsvConfig : vendorCsvConfig}
             onCancel={() => setImporting(false)} onDone={() => setReload((v) => v + 1)} />

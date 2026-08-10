@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { DocumentDraftSummary, DocumentFormSchema } from "../types";
+import { EmptyState } from "./EmptyState";
 
 export function DraftWorkspace({
   templates,
@@ -140,7 +141,7 @@ export function DraftWorkspace({
       )}
 
       {!loading && !error && drafts.length === 0 && (
-        <div className="empty-state">保存済みの下書きはありません。</div>
+        <EmptyState compact icon="✎" title="保存済みの下書きはありません" description="文書を作成すると、途中経過がここに保存されます。" />
       )}
 
       <div className="draft-list">

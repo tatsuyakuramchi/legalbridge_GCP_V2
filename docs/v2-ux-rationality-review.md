@@ -60,8 +60,8 @@ V1 は「ユーザーに迷いを生じやすい構造」だった。本レビ�
 |---|---|---|---|
 | Q1 ✅ | **データ品質→名寄せの prop 配線（実装済）**：重複ドリルの `link.id` を `onNavigate(view,id)` で受け、`mergeSourceSeed`→`initialSource` で名寄せ画面の統合元をプリフィル。ナビ直接遷移では seed をクリア | `App.tsx`/`DataQuality`/`data-quality/repository.ts`/`VendorMerge`/`MatterMerge` | 小 |
 | Q2 ✅ | **未有効化メッセージの統一（実装済）**：`FeatureLockedNote.tsx` を新設し統一文言へ。VendorMerge/MatterMerge/WorkDetail から **GRANT番号（018/025/026/028/007）と capability 名を UI から除去** | `FeatureLockedNote`＋3画面 | 小 |
-| Q3 | **空状態を `EmptyState` に一本化**（素の div を置換） | Ledger/DocRegistry/Requests/DataQuality/TemplateCatalog | 小 |
-| Q4 | **文書紐付けに検索 UI**（生ID入力を廃し、番号/タイトルで選択） | `MatterDocumentLinks` | 小〜中 |
+| Q3 ✅ | **空状態を二層に整理（実装済）**：主要リストの空状態を `EmptyState`（箱・アイコン＋見出し＋説明）へ統一（DocumentRegistry・Requests・Draft・Ledger・TemplateCatalog）。表内やローディング等の**インライン注記は軽量 `.empty-state` を正規の下位ティア**として維持（大箱化しない）＝2系統の混在を「意図した2ティア」に整流 | 上記5画面 | 小 |
+| Q4 ✅ | **文書紐付けに検索 UI（実装済）**：生ID入力を廃し、`GET /documents?q=` のデバウンス検索→候補クリックで紐付け。紐付け済みは候補から除外 | `MatterDocumentLinks` | 小〜中 |
 
 ### 構造的リファクタ（中・IA変更）
 | 提案 | 内容 | 粒度 |

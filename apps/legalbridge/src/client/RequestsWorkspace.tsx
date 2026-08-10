@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { extractVariables } from "./extract-variables";
+import { EmptyState } from "./EmptyState";
 
 // 依頼（Backlog課題取込・Phase 3・読み取り）。Backlog課題を一覧し、課題を起点に
 // リーガル文書の作成へ導く（issueKey を文書作成に引き継ぐ）。書き戻しは別途。
@@ -186,7 +187,7 @@ export function RequestsWorkspace({ onCreateDocument, canComment = false }: { on
             </article>
             );
           })}
-          {!loading && !error && !issues.length && <div className="empty-state">該当する課題がありません。</div>}
+          {!loading && !error && !issues.length && <EmptyState compact icon="◫" title="該当する課題がありません" description="Backlog の対象プロジェクト・絞り込み条件をご確認ください。" />}
         </div>
       </>}
     </section>

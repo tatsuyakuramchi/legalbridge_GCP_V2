@@ -22,6 +22,7 @@ import { RoyaltyPreview } from "./RoyaltyPreview";
 import { BillingDashboard } from "./BillingDashboard";
 import { ReceivableMap } from "./ReceivableMap";
 import { WorkDetail } from "./WorkDetail";
+import { EmptyState } from "./EmptyState";
 import { DataQuality } from "./DataQuality";
 import { VendorMerge } from "./VendorMerge";
 import { MatterMerge } from "./MatterMerge";
@@ -477,7 +478,7 @@ function TemplateCatalog({
           ))}
         </div>
       ) : (
-        <div className="empty-state">条件に一致する文書templateがありません。</div>
+        <EmptyState compact icon="▤" title="該当するテンプレートがありません" description="キーワードを変えてお試しください。" />
       )}
     </section>
   );
