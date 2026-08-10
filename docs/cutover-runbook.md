@@ -79,10 +79,14 @@ Backlog/CloudSign はカスタムヘッダ不可のため、リレーが `?token
    本体 build 3dfd59e0 で `_BACKLOG_WEBHOOK_TOKEN_SECRET`＋`_BACKLOG_INTAKE_ENABLED=true` 点火。
    **実スモーク成功**（不正トークン401／正トークンで intakeCreated:true＝legal_requests 書込＋
    0103 トリガの案件自動生成まで動作確認・テスト行は掃除済み）
-③ 残り＝外部登録：Backlog コンソールに Webhook URL（`<RECV_URL>/internal/webhooks/backlog?token=…`・
-   課題の追加/更新）を登録。Slack App（signing secret→`SLACK_SIGNING_SECRET` secret→
-   `_SLACK_INTAKE_ENABLED`+`_SLACK_SIGNING_SECRET_NAME` で再デプロイ→コマンド/Interactivity URL 登録）。
-   CloudSign Webhook は 2-5 の CloudSign live と同時に（secret は作成済み）
+③ 残り＝外部登録（**Backlog と Slack をまとめて実施予定**・インフラ側は準備完了）：
+   - Backlog：コンソールに Webhook URL（`<RECV_URL>/internal/webhooks/backlog?token=<BACKLOG_WEBHOOK_TOKEN>`・
+     イベント=課題の追加/更新）を登録 → テスト課題1件で lb_v2_webhook_receipts／legal_requests を確認。
+   - Slack App：作成 → signing secret を `SLACK_SIGNING_SECRET` secret へ →
+     `_SLACK_INTAKE_ENABLED=true`＋`_SLACK_SIGNING_SECRET_NAME=SLACK_SIGNING_SECRET` で再デプロイ →
+     slash `/法務依頼`・`/法務検索`＋Interactivity の Request URL を `<RECV_URL>/internal/slack/…` に設定
+     （scopes: commands, chat:write。Backlog 未 live の間は dry-run＝隔離台帳のみで安全に検証可）。
+   - CloudSign Webhook は 2-5 の CloudSign live と同時に（secret は作成済み）
 
 ### 2-5. 統合 live 化（Drive / Gmail / CloudSign）
 - Drive：`phase5-integration-readiness.md`＋`drive-integration.md`。SA 鍵 Secret・フォルダID →
