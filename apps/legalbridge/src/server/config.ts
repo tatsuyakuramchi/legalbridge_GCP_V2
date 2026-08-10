@@ -80,6 +80,12 @@ export const config = {
   // 案件 Slack スレッド（法務相談）機能。投稿先チャンネルと有効化フラグ。
   slackLegalConsultChannel: (process.env.SLACK_LEGAL_CONSULT_CHANNEL ?? "").trim(),
   matterSlackEnabled: process.env.MATTER_SLACK_ENABLED === "true",
+  // 内部ジョブ起動口（Cloud Scheduler）と外部 Webhook 受信口（Phase 9・自動化基盤）。
+  // いずれもユーザー認証をバイパスするため共有シークレットで保護し、既定 OFF。
+  jobsEnabled: process.env.JOBS_ENABLED === "true",
+  jobsTriggerToken: (process.env.JOBS_TRIGGER_TOKEN ?? "").trim(),
+  cloudSignWebhookToken: (process.env.CLOUDSIGN_WEBHOOK_TOKEN ?? "").trim(),
+  backlogWebhookToken: (process.env.BACKLOG_WEBHOOK_TOKEN ?? "").trim(),
   gmailDeliveryMode:
     process.env.GMAIL_DELIVERY_MODE === "live" ? "live" as const : "disabled" as const,
   gmailSenderEmail: (process.env.GMAIL_SENDER ?? "").trim(),

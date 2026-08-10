@@ -104,6 +104,8 @@ import {
   type MatterDeleteRepository
 } from "./matters/matter-delete-repository.js";
 import { createMatterDeleteRouter } from "./matters/matter-delete-routes.js";
+import { createJobsRouter, type JobRunner } from "./internal/jobs-routes.js";
+import { createWebhooksRouter, type WebhookHandler } from "./internal/webhooks-routes.js";
 import {
   GoogleMatterDriveFolderService,
   LocalMatterDriveFolderService,
@@ -368,6 +370,10 @@ export interface AppDependencies {
   matterDrive?: MatterDriveRepository;
   matterMerge?: MatterMergeRepository;
   matterDelete?: MatterDeleteRepository;
+  // Phase 9 自動化基盤：ジョブ本体・Webhook ハンドラの注入口（既定は空＝無効）。
+  jobRunners?: Record<string, JobRunner>;
+  cloudSignWebhookHandler?: WebhookHandler;
+  backlogWebhookHandler?: WebhookHandler;
   conditionLines?: ConditionLineRepository;
   pendingInspections?: PendingInspectionRepository;
   vendorWrites?: VendorWriteRepository;
@@ -1146,6 +1152,16 @@ export function createApp(
   app.use("/api/v2", createMatterMergeRouter(dependencies.matterMerge, matterMergeEnabled));
   // 案件・タスク削除（破壊的）。プレビュー読取＋guarded-write実行（既定OFF・scope 'matter-delete'・grant 029）。
   app.use("/api/v2", createMatterDeleteRouter(dependencies.matterDelete, matterDeleteEnabled));
+
+  // 内部自動化基盤（Phase 9）。ユーザー認証をバイパスし共有シークレットで保護（既定OFF）。
+  //   /internal/jobs/:name … Cloud Scheduler 起動口（runners は 9-1 以降で注入）
+  //   /internal/webhooks/{cloudsign,backlog} … 外部 Webhook 受信口（handler は 9-5/9-7 で注入）
+  const jobRunners: Record<string, JobRunner> = { ...(dependencies.jobRunners ?? {}) };
+  app.use(createJobsRouter({ enabled: config.jobsEnabled, token: config.jobsTriggerToken, runners: jobRunners }));
+  app.use(createWebhooksRouter({
+    cloudsign: { token: config.cloudSignWebhookToken, handler: dependencies.cloudSignWebhookHandler },
+    backlog: { token: config.backlogWebhookToken, handler: dependencies.backlogWebhookHandler }
+  }));
   app.use("/api/v2", createDocumentImportRouter(dependencies.documentImports, documentFinalizeEnabled));
   app.use("/api/v2", createGmailNotificationRouter(documentRegistry, gmailDeliveryAdapter, gmailGateSettings, dependencies.gmailSendHistory));
   app.use("/api/v2", createCloudSignRouter(
