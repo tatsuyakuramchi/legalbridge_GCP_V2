@@ -551,6 +551,24 @@ case "${CONTRACT_MASTER_WRITE_ENABLED}" in
     exit 1
     ;;
 esac
+case "${SNIPPETS_WRITE_ENABLED}" in
+  false)
+    ;;
+  true)
+    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
+      echo "Snippets deployment blocked: limited to the write-test service."
+      exit 1
+    fi
+    if [ "${AUTH_MODE}" != "iap" ] && [ "${AUTH_MODE}" != "cloudrun-iam" ]; then
+      echo "Snippets deployment blocked: IAP or Cloud Run IAM authentication is required."
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Deployment blocked: SNIPPETS_WRITE_ENABLED must be true or false."
+    exit 1
+    ;;
+esac
 case "${JOBS_ENABLED}" in
   false)
     ;;
@@ -933,6 +951,9 @@ if [ "${WORKFLOW_RULES_WRITE_ENABLED}" = "true" ]; then
 fi
 if [ "${CONTRACT_MASTER_WRITE_ENABLED}" = "true" ]; then
   expected_write_scopes="$expected_write_scopes,contract-master"
+fi
+if [ "${SNIPPETS_WRITE_ENABLED}" = "true" ]; then
+  expected_write_scopes="$expected_write_scopes,snippets"
 fi
 if [ "${BACKLOG_COMMENT_WRITE_ENABLED}" = "true" ]; then
   expected_write_scopes="$expected_write_scopes,backlog-comment"

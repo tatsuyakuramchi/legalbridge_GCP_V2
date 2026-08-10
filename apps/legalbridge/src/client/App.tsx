@@ -79,7 +79,7 @@ function navGroups(access: {
       ...(access.legalWorkspace ? [{ view: "matters" as const, label: "案件", description: "案件・課題・タスクの管理", match: ["matters" as const] }] : []),
       ...(legalOrRequester ? [{ view: "documents" as const, label: access.requesterWorkspace ? "自分の文書" : "文書", description: "文書の作成・確定・PDF", match: ["documents" as const, "templates" as const, "document" as const] }] : []),
       ...(!access.readOnly && legalOrRequester ? [{ view: "drafts" as const, label: access.requesterWorkspace ? "自分の下書き" : "下書き", description: "保存中の下書きを再開", match: ["drafts" as const] }] : []),
-      ...(legalOrRequester ? [{ view: "snippets" as const, label: "スニペット", description: "定型文の保存・コピー（この端末に保存）", match: ["snippets" as const] }] : [])
+      ...(legalOrRequester ? [{ view: "snippets" as const, label: "スニペット", description: "定型文の全社共有・コピー", match: ["snippets" as const] }] : [])
     ] },
     { label: "権利・条件", items: [
       ...(access.legalWorkspace ? [{ view: "works" as const, label: "作品", description: "作品を起点に系譜・素材・条件・権利ソースを一望", match: ["works" as const] }] : []),
@@ -207,6 +207,7 @@ export function App() {
   const [canEditSettings, setCanEditSettings] = useState(false);
   const [canEditWorkflowRules, setCanEditWorkflowRules] = useState(false);
   const [canEditContractMaster, setCanEditContractMaster] = useState(false);
+  const [canEditSnippets, setCanEditSnippets] = useState(false);
   const [currentUser, setCurrentUser] = useState<{ email: string; role: "admin" | "legal" | "requester" } | null>(null);
   const [searchSelection, setSearchSelection] = useState<{ target: "matter" | "document" | "vendor" | "work"; id: string; title: string } | null>(null);
   const [draftSelection, setDraftSelection] = useState<{ issueKey: string; templateType: string } | null>(null);
@@ -262,6 +263,7 @@ export function App() {
         setCanEditSettings(capabilities.includes("settings"));
         setCanEditWorkflowRules(capabilities.includes("workflow-rules"));
         setCanEditContractMaster(capabilities.includes("contract-master"));
+        setCanEditSnippets(capabilities.includes("snippets"));
       })
       .catch(() => {
         setReadOnly(true);
@@ -400,7 +402,7 @@ export function App() {
             onCreateDocument={(issueKey, seed) => { setNewDocIssueKey(issueKey); setNewDocSeed(seed ?? {}); setDraftSelection(null); setView("templates"); }} />
         )}
         {view === "guide" && <OperationsGuide />}
-        {view === "snippets" && <TextSnippets />}
+        {view === "snippets" && <TextSnippets canEdit={canEditSnippets} />}
         {view === "receivable-map" && <ReceivableMap />}
         {view === "payment-report" && <PaymentReport />}
         {view === "billing-print" && <BillingPrint />}

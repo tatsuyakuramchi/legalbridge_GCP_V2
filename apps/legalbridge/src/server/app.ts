@@ -122,6 +122,8 @@ import { PgWorkflowRulesRepository, type WorkflowRulesRepository } from "./setti
 import { createWorkflowRulesRouter } from "./settings/workflow-rules-routes.js";
 import { PgContractMasterRepository, type ContractMasterRepository } from "./contracts/contract-master-repository.js";
 import { PgContractCheckRepository, type ContractCheckRepository } from "./contract-check/repository.js";
+import { PgSnippetsRepository, type SnippetsRepository } from "./snippets/snippets-repository.js";
+import { createSnippetsRouter } from "./snippets/snippets-routes.js";
 import { createContractCheckRouter } from "./contract-check/routes.js";
 import { createContractMasterRouter } from "./contracts/contract-master-routes.js";
 import { createJobsRouter, type JobRunner } from "./internal/jobs-routes.js";
@@ -409,6 +411,7 @@ export interface AppDependencies {
   workflowRules?: WorkflowRulesRepository;
   contractMaster?: ContractMasterRepository;
   contractCheck?: ContractCheckRepository;
+  snippets?: SnippetsRepository;
   // Phase 9 自動化基盤：ジョブ本体・Webhook ハンドラの注入口（既定は空＝無効）。
   jobRunners?: Record<string, JobRunner>;
   cloudSignWebhookHandler?: WebhookHandler;
@@ -473,6 +476,7 @@ export interface AppOptions {
   appSettingsWriteEnabled?: boolean;
   workflowRulesWriteEnabled?: boolean;
   contractMasterWriteEnabled?: boolean;
+  snippetsWriteEnabled?: boolean;
   backlogCommentWriteEnabled?: boolean;
   auth?: AuthSettings;
 }
@@ -513,6 +517,7 @@ function createDefaultDependencies(): AppDependencies {
     workflowRules: database ? new PgWorkflowRulesRepository(database) : undefined,
     contractMaster: database ? new PgContractMasterRepository(database) : undefined,
     contractCheck: database ? new PgContractCheckRepository(database) : undefined,
+    snippets: database ? new PgSnippetsRepository(database) : undefined,
     conditionLines: database
       ? new PgConditionLineRepository(database)
       : new MemoryConditionLineRepository(),
@@ -628,6 +633,7 @@ export function createApp(
     appSettingsWriteEnabled: config.appSettingsWriteEnabled,
     workflowRulesWriteEnabled: config.workflowRulesWriteEnabled,
     contractMasterWriteEnabled: config.contractMasterWriteEnabled,
+    snippetsWriteEnabled: config.snippetsWriteEnabled,
     backlogCommentWriteEnabled: config.backlogCommentWriteEnabled,
     royaltyEventWritesEnabled: config.royaltyEventWritesEnabled,
     receiptWritesEnabled: config.receiptWritesEnabled,
@@ -836,6 +842,12 @@ export function createApp(
     options.contractMasterWriteEnabled === true &&
     options.writeScopes?.has("contract-master") === true &&
     Boolean(dependencies.contractMaster);
+  const snippetsWriteEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.snippetsWriteEnabled === true &&
+    options.writeScopes?.has("snippets") === true &&
+    Boolean(dependencies.snippets);
   const backlogCommentWriteEnabled =
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
@@ -918,6 +930,7 @@ export function createApp(
         ...(appSettingsWriteEnabled ? ["settings"] : []),
         ...(workflowRulesWriteEnabled ? ["workflow-rules"] : []),
         ...(contractMasterWriteEnabled ? ["contract-master"] : []),
+        ...(snippetsWriteEnabled ? ["snippets"] : []),
         ...(backlogCommentWriteEnabled ? ["backlog-comment"] : []),
         ...(royaltyEventWriteEnabled ? ["royalty-events"] : []),
         ...(receiptWriteEnabled ? ["receipts"] : []),
@@ -945,7 +958,7 @@ export function createApp(
         driveStorageEnabled || slackApprovalWriteEnabled ||
         outboundConditionWriteEnabled || contractIntakeWriteEnabled ||
         matterWriteEnabled || vendorWriteEnabled || staffWriteEnabled || workWriteEnabled ||
-        materialWriteEnabled || rightsSourceWriteEnabled || vendorMergeEnabled || matterMergeEnabled || matterDeleteEnabled || documentVoidEnabled || documentReissueEnabled || excelBatchEnabled || appSettingsWriteEnabled || workflowRulesWriteEnabled || contractMasterWriteEnabled || backlogCommentWriteEnabled || royaltyEventWriteEnabled || receiptWriteEnabled ||
+        materialWriteEnabled || rightsSourceWriteEnabled || vendorMergeEnabled || matterMergeEnabled || matterDeleteEnabled || documentVoidEnabled || documentReissueEnabled || excelBatchEnabled || appSettingsWriteEnabled || workflowRulesWriteEnabled || contractMasterWriteEnabled || snippetsWriteEnabled || backlogCommentWriteEnabled || royaltyEventWriteEnabled || receiptWriteEnabled ||
         paymentLedgerWriteEnabled || gmailDispatchEnabled || cloudSignDispatchEnabled || gmailInboundEnabled,
       writeCapabilities: [
         ...(draftWriteEnabled ? ["drafts"] : []),
@@ -970,6 +983,7 @@ export function createApp(
         ...(appSettingsWriteEnabled ? ["settings"] : []),
         ...(workflowRulesWriteEnabled ? ["workflow-rules"] : []),
         ...(contractMasterWriteEnabled ? ["contract-master"] : []),
+        ...(snippetsWriteEnabled ? ["snippets"] : []),
         ...(backlogCommentWriteEnabled ? ["backlog-comment"] : []),
         ...(royaltyEventWriteEnabled ? ["royalty-events"] : []),
         ...(receiptWriteEnabled ? ["receipts"] : []),
@@ -1142,6 +1156,8 @@ export function createApp(
     if (workflowRulesWriteEnabled && isWorkflowRulesWrite) return next();
     const isContractMasterWrite = request.method === "PATCH" && /^\/contracts\/\d+(\/status)?$/.test(request.path);
     if (contractMasterWriteEnabled && isContractMasterWrite) return next();
+    const isSnippetsWrite = request.method === "POST" && /^\/snippets(\/\d+\/deactivate)?$/.test(request.path);
+    if (snippetsWriteEnabled && isSnippetsWrite) return next();
     const isBacklogComment = request.method === "POST" && /^\/backlog\/issues\/[^/]+\/comments$/.test(request.path);
     if (backlogCommentWriteEnabled && isBacklogComment) return next();
     const isRoyaltyEventWrite =
@@ -1302,6 +1318,8 @@ export function createApp(
   app.use("/api/v2", createContractMasterRouter(dependencies.contractMaster, contractMasterWriteEnabled));
   // 契約チェック（Phase 16-2・読取専用・全ロール）。用途×スコープ判定＝/法務検索(16-3b)の中核。
   app.use("/api/v2", createContractCheckRouter(dependencies.contractCheck));
+  // スニペット（Phase 16-1）。読取 全ロール・保存/無効化 guarded（scope 'snippets'・grant 045）。
+  app.use("/api/v2", createSnippetsRouter(dependencies.snippets, snippetsWriteEnabled));
 
   // 内部自動化基盤（Phase 9）。ユーザー認証をバイパスし共有シークレットで保護（既定OFF）。
   //   /internal/jobs/:name … Cloud Scheduler 起動口（runners は 9-1 以降で注入）

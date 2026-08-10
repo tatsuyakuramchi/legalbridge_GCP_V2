@@ -557,6 +557,13 @@ header input { width: 100%; border: 1px solid var(--border); border-radius: var(
 .snippet-actions { display: flex; gap: 6px; }
 .snippet-actions button { border: 1px solid #cbd5e1; background: white; border-radius: 6px; padding: 5px 10px; font-size: 12px; }
 .snippet-actions button.danger { border-color: #fecaca; color: #b91c1c; background: #fef2f2; }
+/* Phase 16-1: 共有スニペットの分類グループと編集フォーム */
+.snippet-editor-fields { display: grid; grid-template-columns: 160px 1fr 90px; gap: 8px; }
+.snippet-editor select { padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 8px; font: inherit; background: white; }
+.snippet-group { margin-top: 18px; display: grid; gap: 8px; }
+.snippet-group h2 { margin: 0; font-size: 14px; color: #334155; border-bottom: 1px solid var(--divider, #e2e8f0); padding-bottom: 6px; }
+.snippet-group.snippet-local h2 { color: #92610a; }
+.snippet-load-error { margin-top: 12px; padding: 10px 12px; border: 1px solid #fecaca; border-radius: 8px; background: #fef2f2; color: #b42318; font-size: 13px; }
 
 /* 運用ガイド（Phase 6・OperationsGuide） */
 .guide-sections { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; margin-top: 16px; }

@@ -88,5 +88,33 @@ V1 services/api/contractCheckService.ts（API 世代・914L）を最小構成で
 - tests 12 件（正規化・判定分岐・フラグ格上げ・master 優先順位・API 3 endpoints・バリデーション）。676 緑。
 - これで 16-3b の `/法務検索` は同プロセスでこの engine/repository を呼べる（V1 現行世代と同じ構成）。
 
-## 16-1 スニペット共有化／16-4 添付アップロード
+## 16-1：スニペットのサーバ共有化 ✅ 実装済（guarded・grant 045）
+
+Phase 6 の localStorage 完結（U17 退化）を解消し、V1 の `text_snippets`（0151）を V2 が
+全社共有で読み書きする。V1 同様、削除は論理削除（`is_active=false`）＝DELETE grant 不要。
+
+- `snippets/snippets-repository.ts`（Pg/Memory）：カテゴリ `special_terms`／`work_item`／`other`。
+  一覧は有効行のみ `category, sort_order, id` 順（**表未作成 42P01 は空縮退＝V1 同様**）。
+  保存は id 有無で upsert（更新は `updated_at=now()`）。無効化は `is_active=false`。
+- `snippets/snippets-routes.ts`：`GET /snippets`＝認証済み**全ロール**（requester も文書作成で
+  使うため）・`{snippets, writeEnabled}`。`POST /snippets`＋`POST /snippets/:id/deactivate`＝
+  guarded（admin/legal・scope `snippets`・42501→`SNIPPETS_FORBIDDEN_DB` 503・未存在→404）。
+- app.ts：guarded-write 定型一式（`SNIPPETS_WRITE_ENABLED`×scope `snippets`×safe-write bypass
+  `POST /snippets(/:id/deactivate)`）。capability `snippets` を writeCapabilities に公開。
+- クライアント `TextSnippets.tsx`：共有一覧（カテゴリ別グループ・検索・コピー全ロール）＋
+  編集フォーム（capability 保持者のみ・分類/タイトル/表示順/本文）。**旧ローカル保存の下書きは
+  「この端末の下書き」節に残し、「共有へ移行」（サーバ保存→ローカル削除）／「削除」導線を提供**。
+- verify-write-test.sh：`SNIPPETS_WRITE_ENABLED` case＋WRITE_SCOPES 順序（contract-master の次に
+  `snippets`）。cloudbuild：`_SNIPPETS_WRITE_ENABLED` 4 箇所。
+- tests 13 件（全ロール読取・順序・503/403/400/404・insert/update・論理削除・FORBIDDEN_DB）＝**707 緑**。
+
+### 16-1 点火手順
+1. `psql -f infra/gcp/sql/045_production_snippets_grants.sql`（token `GRANT_PRODUCTION_SNIPPETS`・
+   text_snippets SELECT/INSERT/UPDATE＋seq。DELETE なし）。
+2. デプロイ substitutions：`_SNIPPETS_WRITE_ENABLED=true`＋`_WRITE_SCOPES` に `snippets` を
+   **contract-master の直後**へ追加。
+3. 読取（一覧・コピー）は grant 前でも動作（42P01/未 grant SELECT なら V1 が表を持つ本番では
+   grant 045 適用後に表示される）。
+
+## 16-4 添付アップロード
 未着手（台帳参照）。
