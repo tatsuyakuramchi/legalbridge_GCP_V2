@@ -7,7 +7,7 @@ V2（本リポジトリ）を本番サービスとして V1（legalbridge_ai_gcp
 ## 0. 現在地（2026-08-10 デプロイ・点火完了時点）
 
 - コード：Phase 1〜11 Tier 1＋監査修正 S-A〜S-F（build 82aa5b31…）。
-- 適用済み grant：001〜030・032〜042（**031 のみ未適用** — 下記 2-1）。
+- 適用済み grant：**001〜046 すべて適用済み**（031・043・044・045・046 は 2026-08-10 に適用・検証済み。残る DB 作業なし）。
 - 有効スコープ：drafts, documents, pdf, slack-approvals, matters, matter-merge, matter-delete,
   document-void, document-reissue, excel-batch, settings, workflow-rules, contract-master,
   slack, slack-dispatch, matter-slack。
@@ -32,7 +32,7 @@ V2（本リポジトリ）を本番サービスとして V1（legalbridge_ai_gcp
 
 ## 2. 点火メニュー（実装済み・スイッチ待ち）
 
-### 2-1. 満了自動遷移（grant 031 未適用）
+### 2-1. 満了自動遷移（grant 031 ✅ 適用済み 2026-08-10・preflight 対象0件）
 ```bash
 psql "" -f infra/gcp/sql/031_production_contract_expiry_preflight.sql || true
 psql "" -v confirm_contract_expiry=GRANT_PRODUCTION_CONTRACT_EXPIRY \
@@ -42,7 +42,7 @@ substitutions：`_CONTRACT_EXPIRY_TRANSITION_ENABLED=true`＋`_CONFIRM_CONTRACT_
 ※トークン名・要求値は 031 ファイルと verify-write-test.sh の該当 case を参照。
 
 ### 2-2. マスタ書込（台帳の Create/Update を解禁）
-grant は適用済み（009/010/011 系）。**043（名寄せの documents.vendor_id）だけ追加適用**：
+grant は適用済み（009/010/011 系＋**043 も 2026-08-10 適用済み**）。DB 作業なし＝substitutions のみ：
 ```bash
 psql "" -v confirm_vendor_merge_documents=GRANT_PRODUCTION_VENDOR_MERGE_DOCUMENTS \
   -f infra/gcp/sql/043_production_vendor_merge_documents_grants.sql
@@ -93,7 +93,7 @@ Slack（16-3）は Slack App の signing secret 検証で同じ受信サービ�
 ## 6. cutover 判定チェックリスト
 - [ ] Phase 16-3（Slack インテーク）実装・点火済み
 - [x] Phase 16-1/2/4 実装済み（点火は 16-1＝grant 045、16-4＝Drive 構成が前提）
-- [ ] grant 031・043 適用済み
+- [x] grant 031・043・044・045・046 適用済み（2026-08-10・6項目検証済み）
 - [ ] マスタ書込スコープ点火済み（2-2）
 - [ ] Scheduler 3 ジョブ稼働（2-3）
 - [ ] Webhook 受信 live（2-4）・CloudSign/Gmail/Drive live（2-5）
