@@ -15,7 +15,8 @@ export const COMPANY_PROFILE_FIELDS: SettingField[] = [
   { key: "COMPANY_TEL", label: "電話番号" },
   { key: "COMPANY_FAX", label: "FAX" },
   { key: "COMPANY_REPRESENTATIVE", label: "代表者" },
-  { key: "COMPANY_REGISTRATION_NUMBER", label: "適格請求書発行事業者番号（T番号）", placeholder: "T1234567890123" },
+  // キー名は V1 が実際に読む COMPANY_INVOICE_NO に合わせる（V1 sharedReads.ts:239 参照・監査 P0-11）。
+  { key: "COMPANY_INVOICE_NO", label: "適格請求書発行事業者番号（T番号）", placeholder: "T1234567890123" },
   { key: "COMPANY_BANK_INFO", label: "振込先（銀行・支店・口座）" },
   { key: "COMPANY_SEAL_NOTE", label: "捺印・備考" }
 ];

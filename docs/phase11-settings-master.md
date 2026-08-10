@@ -134,7 +134,8 @@ work_id 必須＝作品スコープ。素材タブ読取のみだったのは UI
   primary_vendor_id は 018 で既存）。
 - `contracts/contract-master-repository.ts`（Pg/Memory）：`list(q)`（文書番号/表題/種別 ILIKE・締結/起票日 desc）／
   `find(id)`／`update(id, input)`（`FIELD_COLUMNS` 動的 assignment・in 演算子で存在キーのみ）／
-  `setStatus(id, {lifecycleStage})`（lifecycle_stage を正とし legacy 互換の contract_status も同値へ）。
+  `setStatus(id, {lifecycleStage})`（**lifecycle_stage のみ更新**。contract_status は V1 の文書レベル語彙を持つ
+  legacy 列のため触らない＝S-A/P0-7 で修正済み）。
 - `contracts/contract-master-routes.ts`：`GET /contracts`（**admin/legal**・q 検索）＋
   `PATCH /contracts/:id`（guarded・部分更新）＋`PATCH /contracts/:id/status`（guarded・状態変更）。
   42501→CONTRACT_MASTER_FORBIDDEN_DB(503)／CONTRACT_NOT_FOUND→404。

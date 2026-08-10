@@ -78,12 +78,13 @@ test("契約マスタ: 存在しない契約は404", async () => {
   assert.equal(res.body.code, "CONTRACT_NOT_FOUND");
 });
 
-test("契約マスタ: ライフサイクル状態変更", async () => {
+test("契約マスタ: ライフサイクル状態変更（legacy contract_status は据え置き）", async () => {
   const target = appFor({ enabled: true });
   const res = await request(target.app).patch("/api/v2/contracts/2/status")
     .send({ lifecycleStage: "awaiting_signature" }).expect(200);
   assert.equal(res.body.contract.lifecycleStage, "awaiting_signature");
-  assert.equal(res.body.contract.contractStatus, "awaiting_signature");
+  // contract_status は V1 の文書レベル語彙を持つ legacy 列。V2 語彙で汚染しない（監査 P0-7）。
+  assert.equal(res.body.contract.contractStatus, "reviewing");
 });
 
 test("契約マスタ: 不正な状態は400", async () => {

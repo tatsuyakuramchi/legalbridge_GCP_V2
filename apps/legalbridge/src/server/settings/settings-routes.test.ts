@@ -26,7 +26,8 @@ test("settings: 現在値＋フィールド定義を返す", async () => {
   const res = await request(appFor({ enabled: false }).app).get("/api/v2/settings").expect(200);
   assert.equal(res.body.values.COMPANY_NAME, "旧社名");
   assert.equal(res.body.writeEnabled, false);
-  assert.ok(res.body.fields.some((f: { key: string }) => f.key === "COMPANY_REGISTRATION_NUMBER"));
+  // V1 が実際に読むキー（COMPANY_INVOICE_NO）で提供されること（監査 P0-11）。
+  assert.ok(res.body.fields.some((f: { key: string }) => f.key === "COMPANY_INVOICE_NO"));
 });
 
 test("settings: 書込無効時は503", async () => {

@@ -108,9 +108,11 @@ export class PgContractMasterRepository implements ContractMasterRepository {
   }
 
   async setStatus(id: number, input: ContractStatusInput): Promise<ContractSummary> {
-    // lifecycle_stage を正とし、legacy 互換の contract_status も同値へ寄せる。
+    // lifecycle_stage のみ更新する。contract_status は V1 の文書レベル語彙（draft/awaiting_signature/
+    // executed/expired/terminated）を持つ legacy 互換列で、V2 の lifecycle 語彙（requested/reviewing 等）を
+    // 書くと V1 に無い値で汚染される（監査 P0-7）。V1 も contracts.contract_status は読まないため据え置き。
     const r = await this.database.query(
-      `UPDATE contracts SET lifecycle_stage = $2, contract_status = $2 WHERE id = $1 RETURNING ${SELECT}`,
+      `UPDATE contracts SET lifecycle_stage = $2 WHERE id = $1 RETURNING ${SELECT}`,
       [id, input.lifecycleStage]
     );
     if (!r.rows[0]) throw new ContractMasterError("CONTRACT_NOT_FOUND", "契約が見つかりません");
@@ -144,7 +146,7 @@ export class MemoryContractMasterRepository implements ContractMasterRepository 
     this.guard();
     const c = this.rows.find((r) => r.id === id);
     if (!c) throw new ContractMasterError("CONTRACT_NOT_FOUND", "契約が見つかりません");
-    c.lifecycleStage = input.lifecycleStage; c.contractStatus = input.lifecycleStage;
+    c.lifecycleStage = input.lifecycleStage;   // contract_status は legacy 語彙のため触らない（P0-7）
     return c;
   }
 }

@@ -90,10 +90,29 @@ export function LedgerWorkspace({ initialType, initialQuery, selectedId, canEdit
         ? <WorkForm workId={editingWorkId} onCancel={() => setEditingWorkId(null)} onSaved={() => { setEditingWorkId(null); setReload((v) => v + 1); }} />
         : editingMaterialId !== null
           ? <MaterialForm materialId={editingMaterialId} onCancel={() => setEditingMaterialId(null)} onSaved={() => { setEditingMaterialId(null); setReload((v) => v + 1); }} />
-          : <LedgerDetail item={selected} canEdit={canCreate}
-              onEdit={(item) => { if (type === "works") setEditingWorkId(Number(item.id)); else if (type === "materials") setEditingMaterialId(Number(item.id)); else setEditingVendorId(Number(item.id)); }} />}
+          : <LedgerDetail item={selected}
+              canEdit={canCreate && (type !== "works" || (selected !== null && editableWorkId(String(selected.id)) !== null))}
+              onEdit={(item) => {
+                if (type === "works") {
+                  const workId = editableWorkId(String(item.id));
+                  if (workId !== null) setEditingWorkId(workId);
+                } else if (type === "materials") setEditingMaterialId(Number(item.id));
+                else setEditingVendorId(Number(item.id));
+              }} />}
     </div>
   </section>;
+}
+
+// 作品一覧の id は "work:12"／"source_ip:34" 形式（UNION の一意性確保）。編集できるのは works 行のみ。
+// Number("work:12") は NaN になるため、必ずここでプレフィックスを剥がす（監査 P0-8 のバグ修正）。
+function editableWorkId(id: string): number | null {
+  if (id.startsWith("work:")) {
+    const n = Number(id.slice("work:".length));
+    return Number.isInteger(n) && n > 0 ? n : null;
+  }
+  if (id.startsWith("source_ip:")) return null;   // 原作IPの編集は未対応（別スライス）
+  const n = Number(id);
+  return Number.isInteger(n) && n > 0 ? n : null;
 }
 
 function LedgerDetail({ item, canEdit = false, onEdit }:

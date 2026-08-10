@@ -98,11 +98,18 @@ export class PgDocumentVoidRepository implements DocumentVoidRepository {
         };
       }
 
-      await client.query(
+      // IS DISTINCT FROM: 本番には lifecycle_status IS NULL の legacy 行が実在し、
+      // `<> 'voided'` だと NULL 評価で 0 行更新＝「実績だけ取消して文書は生存」の半完了になる。
+      const updated = await client.query(
         `UPDATE documents SET lifecycle_status = 'voided', is_primary = FALSE
-          WHERE id = $1 AND lifecycle_status <> 'voided'`,
+          WHERE id = $1 AND lifecycle_status IS DISTINCT FROM 'voided'`,
         [documentId]
       );
+      if ((updated.rowCount ?? 0) !== 1) {
+        // 事前チェック通過後にここへ来ることは無いはずだが、文書更新なしでのイベント取消を防ぐ。
+        await client.query("ROLLBACK");
+        throw new DocumentVoidError("文書の状態更新に失敗しました（void を中断）", "DOCUMENT_VOID_CONFLICT");
+      }
 
       const events = await client.query(
         `UPDATE condition_events
@@ -160,7 +167,8 @@ export interface MemoryVoidDoc {
   id: number;
   documentNumber: string | null;
   issueKey: string | null;
-  lifecycleStatus: string;
+  // 本番には NULL の legacy 行が実在する。void は NULL でも成功しなければならない（P0-5）。
+  lifecycleStatus: string | null;
 }
 export interface MemoryVoidEvent {
   id: number;

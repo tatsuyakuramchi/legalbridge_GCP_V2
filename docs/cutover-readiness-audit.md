@@ -52,7 +52,7 @@ V1 = `/workspace/legalbridge_ai_gcp`（migrations 0001〜0164 を正とする）
 - 対処: reissue は旧版から業務列を丸ごとコピー。finalize は form_data から主要列をマップ（最低限 vendor_id・
   contract_title・template 由来の record_type）。
 
-### P0-5. void が legacy 行（lifecycle_status NULL）で「半分だけ」成功する
+### P0-5. void が legacy 行（lifecycle_status NULL）で「半分だけ」成功する ✅ S-A で修正済み
 - V2 `document-void-repository.ts:102` の `WHERE ... lifecycle_status <> 'voided'` は NULL 行で 0 件更新。
   だが直前チェックは通過するため、**イベント void と監査台帳だけ書いて COMMIT** する（文書は生きたまま実績消滅）。
 - V1 の void は無述語（`server.ts:14830`）。本番に lifecycle_status NULL は実在（preflight 033 で 1 件確認済み）。
@@ -65,7 +65,7 @@ V1 = `/workspace/legalbridge_ai_gcp`（migrations 0001〜0164 を正とする）
 - `documents.drive_link`: `registry-repository.ts:94` の UPDATE に grant 無し → Drive 添付が未翻訳 42501 → 500。
 - 対処: grant 039 に `GRANT UPDATE (updated_at, drive_link) ON documents` を追加。
 
-### P0-7. 契約マスタ setStatus が legacy 列を V2 語彙で汚染（11-4 実装の自己バグ）
+### P0-7. 契約マスタ setStatus が legacy 列を V2 語彙で汚染（11-4 実装の自己バグ）✅ S-A で修正済み
 - V1 の正準: `lifecycle_stage` が正・`contract_status` は文書レベル語彙（draft/awaiting_signature/executed/
   expired/terminated）の legacy 互換（0005:56、0129:59 のマッピング参照）。
 - V2 `contract-master-repository.ts:113` は両列に同値を書くため、`requested/drafting/reviewing/on_hold/cancelled`
@@ -74,13 +74,13 @@ V1 = `/workspace/legalbridge_ai_gcp`（migrations 0001〜0164 を正とする）
 - 対処: setStatus は **lifecycle_stage のみ更新**（contract_status は触らない。V1 も contracts.contract_status を
   読まないことを確認済み）。UI は enum 外の stage 値を素通し表示（現状フォールバックあり・維持）。
 
-### P0-8. 台帳画面の作品「編集」が常に失敗（11-3 の半分が不動作）
+### P0-8. 台帳画面の作品「編集」が常に失敗（11-3 の半分が不動作）✅ S-A で修正済み
 - `ledgers/repository.ts:89` が works 行の id を `work:12`/`source_ip:34` 形式で返し、
   `LedgerWorkspace.tsx:94` が `Number("work:12")`=NaN → `/api/v2/works/NaN` で常に取得失敗。
 - 対処: `work:` プレフィックスを剥がして数値化・`source_ip:` 行は編集ボタン非表示（source_ips は書込経路自体が
   未実装＝U14）。
 
-### P0-9. 契約マスタの状態セレクトが無ガードで即時 PATCH（UX 自己違反）
+### P0-9. 契約マスタの状態セレクトが無ガードで即時 PATCH（UX 自己違反）✅ S-A で修正済み
 - `ContractMasterWorkspace.tsx:155` — select 変更で即本番更新。満了/解約/中止は UX レビュー R4 の T3
   （プレビュー＋確認必須）該当。フィルタに見える誤アフォーダンスも併発。
 - 対処: 選択→「変更内容（現→新）」確認バナー→確定ボタンの2段階に。expired/terminated/cancelled は確認必須。
@@ -91,7 +91,7 @@ V1 = `/workspace/legalbridge_ai_gcp`（migrations 0001〜0164 を正とする）
   さらに `lb_v2_matter_slack_threads`（FK 無し）が削除後に孤児化し、matter_id 再利用時にスレッド作成を恒久ブロック。
 - 対処: IMPACTS に 2 表を追加＋削除トランザクションで lb_v2 行も削除。
 
-### P0-11. 会社プロファイルのキー不一致（11-1 が V1 に届いていない）
+### P0-11. 会社プロファイルのキー不一致（11-1 が V1 に届いていない）✅ S-A で修正済み
 - V1 が読むのは `COMPANY_INVOICE_NO`（`sharedReads.ts:230,239`）。V2 allowlist は `COMPANY_REGISTRATION_NUMBER`。
 - 対処: allowlist のキーを `COMPANY_INVOICE_NO` に改名（UI ラベルは適格請求書番号のまま）。
   ※V2 自身の帳票が app_settings を未参照（`master-data/repository.ts:141` はハードコード）なのは既知の将来配線。
@@ -152,7 +152,7 @@ V1 = `/workspace/legalbridge_ai_gcp`（migrations 0001〜0164 を正とする）
 
 ## 修正スライス案（推奨順）
 
-1. **S-A 緊急止血**：即時緩和（reissue OFF）＋ P0-5 void 述語 ＋ P0-8 台帳編集バグ ＋ P0-7 setStatus ＋ P0-9 状態確認 UI ＋ P0-11 設定キー（小粒・即日）
+1. **S-A 緊急止血** ✅ 完了（2026-08-10）：P0-5 void 述語（IS DISTINCT FROM＋rowCount 検査）／P0-7 setStatus は lifecycle_stage のみ／P0-8 work: プレフィックス解析＋source_ip 行は編集非表示／P0-9 状態変更を2段階確認（破壊的遷移は警告付き）／P0-11 キーを COMPANY_INVOICE_NO に統一。即時緩和（reissue OFF）はデプロイ側の操作（下記）
 2. **S-B grant 039**：P0-2 vendors.is_active 列追加 ＋ P0-6 updated_at/drive_link GRANT ＋ P1-15 検証 SQL（SQL のみ）
 3. **S-C 文書ライフサイクル整合**：P0-3 contract_status 刻印＋バックフィル ＋ P0-4 業務列コピー ＋ P1-1/P1-2/P1-5
 4. **S-D 再発行再設計**：P0-1 イベント repoint 方式へ（V1 reissueCarryover 準拠）— 完了までスコープ点火禁止

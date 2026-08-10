@@ -10,12 +10,15 @@ import {
 function appFor(opts: { enabled?: boolean; role?: string; forbidden?: boolean; notify?: (k: string, t: string) => Promise<void> } = {}) {
   const docs: MemoryVoidDoc[] = [
     { id: 1, documentNumber: "ARC-PO-2026-0001", issueKey: "LB-1", lifecycleStatus: "final" },
-    { id: 2, documentNumber: "ARC-PO-2026-0002", issueKey: null, lifecycleStatus: "voided" }
+    { id: 2, documentNumber: "ARC-PO-2026-0002", issueKey: null, lifecycleStatus: "voided" },
+    // 本番に実在する legacy 行（lifecycle_status IS NULL）。void は成功しなければならない（P0-5）。
+    { id: 3, documentNumber: "ARC-PO-2020-0009", issueKey: null, lifecycleStatus: null }
   ];
   const events: MemoryVoidEvent[] = [
     { id: 100, documentId: 1, conditionLineId: 50, voidedAt: null, voidReason: null },
     { id: 101, documentId: 1, conditionLineId: 50, voidedAt: null, voidReason: null },
-    { id: 102, documentId: 1, conditionLineId: 51, voidedAt: null, voidReason: null }
+    { id: 102, documentId: 1, conditionLineId: 51, voidedAt: null, voidReason: null },
+    { id: 103, documentId: 3, conditionLineId: 52, voidedAt: null, voidReason: null }
   ];
   const repository = new MemoryDocumentVoidRepository(docs, events, opts.forbidden ?? false);
   const app = express();
@@ -78,6 +81,18 @@ test("void: 既に void 済みは alreadyVoided=true・副作用なし", async (
   assert.equal(res.body.voidedEvents, 0);
   await new Promise((r) => setTimeout(r, 5));
   assert.equal(posted.length, 0); // 既 void は通知しない
+});
+
+test("void: lifecycle_status NULL の legacy 行も無効化できる", async () => {
+  const { app, repository } = appFor({ enabled: true });
+  const res = await request(app).post("/api/v2/documents/3/void")
+    .send({ confirmation: "COMMIT_DOCUMENT_VOID", reason: "legacy 整理" });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.alreadyVoided, false);
+  assert.equal(res.body.voidedEvents, 1);
+  // 文書更新なしにイベントだけ取消される「半完了」が起きないこと（台帳にも記録される）
+  assert.equal(repository.ledger.length, 1);
+  assert.equal(repository.ledger[0].documentId, 3);
 });
 
 test("void: 権限未整備(FORBIDDEN_DB)は503", async () => {

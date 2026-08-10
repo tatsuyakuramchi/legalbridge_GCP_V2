@@ -29,6 +29,12 @@ const STAGE_LABELS: Record<string, string> = {
   requested: "起票", drafting: "作成中", reviewing: "審査中", awaiting_signature: "署名待ち",
   executed: "締結済", on_hold: "保留", cancelled: "中止", expired: "満了", terminated: "解約"
 };
+// 契約を実質終わらせる遷移。確認バナーで明示的な警告を出す。
+const DESTRUCTIVE_STAGES = new Set(["cancelled", "expired", "terminated"]);
+function stageLabel(stage: string | null): string {
+  if (!stage) return "（未設定）";
+  return STAGE_LABELS[stage] ?? stage;   // V1 由来の enum 外値（draft 等）は素通し表示
+}
 
 type Draft = {
   contractTitle: string;
@@ -65,6 +71,9 @@ export function ContractMasterWorkspace({ canEdit = false }: { canEdit?: boolean
   const [reload, setReload] = useState(0);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
+  // 状態変更は select 直結ではなく2段階（選択→確認バナー→確定）。満了/解約/中止のような
+  // 破壊的遷移が誤クリック1回で本番に入るのを防ぐ（監査 P0-9）。
+  const [pendingStage, setPendingStage] = useState<{ id: number; label: string; from: string | null; to: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const toast = useToast();
 
@@ -108,17 +117,18 @@ export function ContractMasterWorkspace({ canEdit = false }: { canEdit?: boolean
     finally { setSaving(false); }
   }
 
-  async function changeStatus(id: number, lifecycleStage: string) {
+  async function confirmStatusChange() {
+    if (!pendingStage) return;
     setSaving(true);
     try {
-      const response = await fetch(`/api/v2/contracts/${id}/status`, {
+      const response = await fetch(`/api/v2/contracts/${pendingStage.id}/status`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lifecycleStage })
+        body: JSON.stringify({ lifecycleStage: pendingStage.to })
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) { toast.push(data.error ?? "状態変更に失敗しました。", "error"); return; }
-      toast.push(`ライフサイクル状態を「${STAGE_LABELS[lifecycleStage] ?? lifecycleStage}」に変更しました。`, "success");
-      setReload((v) => v + 1);
+      toast.push(`ライフサイクル状態を「${stageLabel(pendingStage.to)}」に変更しました。`, "success");
+      setPendingStage(null); setReload((v) => v + 1);
     } catch { toast.push("通信に失敗しました。", "error"); }
     finally { setSaving(false); }
   }
@@ -138,6 +148,21 @@ export function ContractMasterWorkspace({ canEdit = false }: { canEdit?: boolean
     </div>
     {error && <div className="async-error">{error}</div>}
 
+    {pendingStage && <div className="panel danger-zone">
+      <h3>ライフサイクル状態の変更確認</h3>
+      <p>
+        <b>{pendingStage.label}</b> の状態を
+        「{stageLabel(pendingStage.from)}」→「<b>{stageLabel(pendingStage.to)}</b>」に変更します。
+      </p>
+      {DESTRUCTIVE_STAGES.has(pendingStage.to) &&
+        <p className="hub-note">⚠ 「{stageLabel(pendingStage.to)}」は契約を実質終了させる遷移です。アラート・更新通告の対象からも外れます。</p>}
+      <div className="matter-form-actions">
+        <button className="primary" disabled={saving} onClick={() => void confirmStatusChange()}>
+          {saving ? "変更中…" : "状態を変更"}</button>
+        <button disabled={saving} onClick={() => setPendingStage(null)}>キャンセル</button>
+      </div>
+    </div>}
+
     {loading ? <p className="hub-note">読み込み中…</p> :
       <div className="registry-table panel">
         <table>
@@ -153,12 +178,20 @@ export function ContractMasterWorkspace({ canEdit = false }: { canEdit?: boolean
                 : (c.contractTitle ?? "—")}</td>
               <td>{c.contractType ?? "—"}</td>
               <td>{canEdit
-                ? <select value={c.lifecycleStage ?? ""} disabled={saving}
-                    onChange={(e) => void changeStatus(c.id, e.target.value)}>
-                    {!c.lifecycleStage && <option value="">（未設定）</option>}
+                ? <select
+                    value={pendingStage?.id === c.id ? pendingStage.to : (c.lifecycleStage ?? "")}
+                    disabled={saving}
+                    onChange={(e) => {
+                      const to = e.target.value;
+                      if (!to || to === c.lifecycleStage) { setPendingStage(null); return; }
+                      // 即時 PATCH しない。確認バナーで内容を見せてから確定する（誤操作防止）。
+                      setPendingStage({ id: c.id, label: c.documentNumber ?? c.contractTitle ?? `#${c.id}`, from: c.lifecycleStage, to });
+                    }}>
+                    {(!c.lifecycleStage || !STAGE_LABELS[c.lifecycleStage]) &&
+                      <option value={c.lifecycleStage ?? ""}>{stageLabel(c.lifecycleStage)}</option>}
                     {LIFECYCLE_STAGES.map((s) => <option key={s} value={s}>{STAGE_LABELS[s]}</option>)}
                   </select>
-                : <span>{STAGE_LABELS[c.lifecycleStage ?? ""] ?? c.lifecycleStage ?? "—"}</span>}</td>
+                : <span>{stageLabel(c.lifecycleStage)}</span>}</td>
               <td>{isEditing
                 ? <span style={{ display: "flex", gap: "4px" }}>
                     <input type="date" value={draft!.effectiveDate} onChange={(e) => set("effectiveDate", e.target.value)} />
@@ -172,7 +205,7 @@ export function ContractMasterWorkspace({ canEdit = false }: { canEdit?: boolean
               {canEdit && <td>{isEditing
                 ? <span style={{ display: "flex", gap: "4px" }}>
                     <button className="primary" disabled={saving} onClick={() => void saveFields(c.id)}>{saving ? "保存中…" : "保存"}</button>
-                    <button disabled={saving} onClick={cancel}>取消</button>
+                    <button disabled={saving} onClick={cancel}>キャンセル</button>
                   </span>
                 : <button onClick={() => startEdit(c)}>編集</button>}</td>}
             </tr>;
