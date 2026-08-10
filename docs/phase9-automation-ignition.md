@@ -141,6 +141,26 @@ Profile D の `gcloud builds submit`（`docs/phase8-matter-deploy-profileD-cloud
 
 ## 5｜Cloud Scheduler ジョブ登録
 
+> **2026-08-10 点火済み・重要な実地知見（統合 IAP）**：write-test サービスは Cloud Run 統合 IAP
+> （`run.googleapis.com/iap-enabled: true`）の背後にあり、**Scheduler の OIDC は Cloud Run IAM では
+> なく IAP に検証される**。判明した制約と最終構成：
+> - IAP は audience=サービス URL の OIDC を受け付けない（`Invalid JWT audience`）。リソースパス形式も不可。
+> - Scheduler の OAuth アクセストークン方式は `*.googleapis.com` 宛て専用＝run.app には使えない。
+> - **正解**：IAP OAuth クライアント `lb-v2-scheduler`
+>   （`988056987352-k521jsfnimvejpt9tj5doe2k6mcgdvu6.apps.googleusercontent.com`）を作成し、
+>   IAP 設定 `accessSettings.oauthSettings.programmaticClients` に登録。Scheduler の
+>   `--oidc-token-audience` をこのクライアント ID にする。SA（legalbridge-v2-preview@…）には
+>   `roles/iap.httpsResourceAccessor` を付与
+>   （`gcloud beta iap web add-iam-policy-binding --resource-type=cloud-run --service=… --region=…`）。
+> - IAP OAuth Admin API は廃止済みのため新規クライアントの CLI 作成は不可になる：
+>   以後はコンソール（APIs & Services→認証情報）で作成した OAuth クライアント ID でも同様に使える。
+> - 検証済み：impersonation curl・Scheduler 実発火とも IAP 通過→アプリ応答を確認
+>   （cloudsign-sync は CloudSign 未構成のため JOB_NOT_FOUND 404＝正常）。
+> - **現在の状態：3 ジョブとも PAUSED**。daily-checks／inspection-digest は V1 cron
+>   （`daily-checks`・`legalbridge-daily-scheduler`・毎朝9時）併走中の二重通知防止のため停止し、
+>   cutover 5-2（V1 cron 停止）と同時に resume する。cloudsign-sync は CloudSign live 後に resume。
+
+
 サービス URL と invoker を用意（Scheduler が OIDC でサービスを呼べるように run.invoker を付与）：
 
 ```bash

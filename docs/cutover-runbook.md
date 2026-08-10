@@ -55,9 +55,16 @@ _RIGHTS_SOURCE_WRITES_ENABLED/_VENDOR_MERGE_ENABLED=true`＋対応する `_CONFI
 （canonical: drafts,documents,pdf,[drive,]slack-approvals,[outbound-conditions,contract-intake,]matters,
 vendors,staff,works,materials,rights-sources,vendor-merge,matter-merge,…）。
 
-### 2-3. Cloud Scheduler（督促ジョブの自動化）
-`phase9-automation-ignition.md` §Scheduler の通り：JOBS_TRIGGER_TOKEN を使い
-`lb-v2-daily-checks`（毎朝）／`lb-v2-inspection-digest`（週次）／`lb-v2-cloudsign-sync`（CloudSign live 後）を作成。
+### 2-3. Cloud Scheduler ✅ 作成・疎通確認済み（2026-08-10・3ジョブとも意図的に PAUSED）
+`lb-v2-daily-checks`（平日9:00）／`lb-v2-inspection-digest`（平日9:05）／`lb-v2-cloudsign-sync`（3時間毎）を
+作成し、**統合 IAP 経由の疎通を確認済み**（構成の詳細＝IAP OAuth クライアント `lb-v2-scheduler` を
+programmaticClients に登録し audience に使用・SA へ iap.httpsResourceAccessor 付与、は
+`phase9-automation-ignition.md` §5 冒頭の実地知見を参照）。
+**PAUSED の理由と resume 条件**：
+- daily-checks／inspection-digest：V1 cron（`daily-checks`・`legalbridge-daily-scheduler`）併走中の
+  **二重通知防止**。→ **5-2（V1 cron 停止）と同時に `gcloud scheduler jobs resume` で起動**。
+  満了自動遷移（2-1）も daily-checks resume まで実行されない。
+- cloudsign-sync：CloudSign 未構成の間はランナー未登録（404）。→ **2-5 CloudSign live 後に resume**。
 
 ### 2-4. 外部 Webhook（CloudSign/Backlog）＋ Slack 受信（Phase 16-3）
 **公開 ingress の判断が前提**（Cloud Run IAM は外部 OIDC 無しの caller を通せない）。選択肢は
@@ -88,7 +95,7 @@ Slack（16-3）は Slack App の signing secret 検証で同じ受信サービ�
 | 段階 | 内容 |
 |---|---|
 | 5-1 | V1 を読み取り専用運用に（書込は V2 へ誘導）。共有DBのため両輪書込期間を短く |
-| 5-2 | V1 の cron/GAS トリガ停止（daily-checks 等は V2 Scheduler に移譲済みであること） |
+| 5-2 | V1 の cron/GAS トリガ停止＋**同時に V2 の lb-v2-daily-checks／lb-v2-inspection-digest を resume**（二重通知防止で PAUSED 中） |
 | 5-3 | V1 Slack コマンドの向き先を V2 受信口へ切替（16-3 完了後） |
 | 5-4 | 観察期間（2週間目安）後、V1 サービス停止・インフラ縮退 |
 
@@ -97,7 +104,7 @@ Slack（16-3）は Slack App の signing secret 検証で同じ受信サービ�
 - [x] Phase 16-1/2/4 実装済み（点火は 16-1＝grant 045、16-4＝Drive 構成が前提）
 - [x] grant 031・043・044・045・046 適用済み（2026-08-10・6項目検証済み）
 - [x] マスタ書込スコープ点火済み（2-2・2026-08-10。snippets・満了遷移も同時点火）
-- [ ] Scheduler 3 ジョブ稼働（2-3）
+- [x] Scheduler 3 ジョブ作成・疎通済み（2-3・2026-08-10。resume は 5-2／CloudSign live 時）
 - [ ] Webhook 受信 live（2-4）・CloudSign/Gmail/Drive live（2-5）
 - [ ] legal/requester 開放＋スモーク合格（3）
 - [ ] 正式サービス名で稼働（4）
