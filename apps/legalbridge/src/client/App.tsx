@@ -173,8 +173,8 @@ export function App() {
   const [canMergeVendors, setCanMergeVendors] = useState(false);
   // データ品質→名寄せのドリル時に統合元IDを引き継ぐ（発見→是正を1動線に・Q1）。
   const [mergeSourceSeed, setMergeSourceSeed] = useState("");
-  // 条件明細→台帳（金銭条件）へのクロスリンクで開くタブを指定（R2）。
-  const [ledgerSeedType, setLedgerSeedType] = useState<"conditions" | undefined>(undefined);
+  // 条件明細→台帳（金銭条件）/ 作品ビュー→台帳（作品）へのクロスリンクで開くタブを指定（R2/R3）。
+  const [ledgerSeedType, setLedgerSeedType] = useState<"conditions" | "works" | undefined>(undefined);
   const [canMergeMatters, setCanMergeMatters] = useState(false);
   const [canBacklogComment, setCanBacklogComment] = useState(false);
   const [canEditStaff, setCanEditStaff] = useState(false);
@@ -342,7 +342,8 @@ export function App() {
           canEditMaterials={canEditMaterials}
           initialType={ledgerSeedType ?? (searchSelection?.target === "work" ? "works" : searchSelection?.target === "vendor" ? "vendors" : undefined)}
           initialQuery={searchSelection?.target === "work" || searchSelection?.target === "vendor" ? searchSelection.title : undefined}
-          selectedId={searchSelection?.target === "work" || searchSelection?.target === "vendor" ? searchSelection.id : undefined} />}
+          selectedId={searchSelection?.target === "work" || searchSelection?.target === "vendor" ? searchSelection.id : undefined}
+          onNavigate={(t) => setView(t as View)} />}
         {view === "contract-intake" && adminWorkspace && (
           <ContractChainWizard
             canCommit={canCommitContractIntake}
@@ -352,7 +353,8 @@ export function App() {
         {view === "outbound" && <OutboundConditionWorkspace onNavigate={(t) => setView(t as View)} />}
         {view === "royalty-preview" && <RoyaltyPreview />}
         {view === "billing" && <BillingDashboard canRecord={canRecordReceipt} />}
-        {view === "works" && <WorkDetail canEdit={canEditWorks} canEditRights={canEditRightsSources} />}
+        {view === "works" && <WorkDetail canEdit={canEditWorks} canEditRights={canEditRightsSources}
+          onNavigate={(t) => { if (t === "ledgers-works") { setLedgerSeedType("works"); setView("ledgers"); } else setView(t as View); }} />}
         {view === "data-quality" && <DataQuality onNavigate={(v, id) => {
           setMergeSourceSeed((v === "vendor-merge" || v === "matter-merge") && id != null ? String(id) : "");
           setView(v as View);

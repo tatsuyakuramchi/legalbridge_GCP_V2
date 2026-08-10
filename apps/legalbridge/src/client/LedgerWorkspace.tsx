@@ -6,8 +6,8 @@ type LedgerType = "vendors" | "works" | "materials" | "conditions";
 type Item = { id: string; type: LedgerType; code: string; title: string; subtitle: string; status?: string; updatedAt?: string; detail: Record<string, unknown> };
 const labels: Record<LedgerType, string> = { vendors: "取引先", works: "作品・原作", materials: "原作マテリアル", conditions: "金銭条件" };
 
-export function LedgerWorkspace({ initialType, initialQuery, selectedId, canEditVendors = false, canEditWorks = false, canEditMaterials = false }:
-  { initialType?: LedgerType; initialQuery?: string; selectedId?: string; canEditVendors?: boolean; canEditWorks?: boolean; canEditMaterials?: boolean }) {
+export function LedgerWorkspace({ initialType, initialQuery, selectedId, canEditVendors = false, canEditWorks = false, canEditMaterials = false, onNavigate }:
+  { initialType?: LedgerType; initialQuery?: string; selectedId?: string; canEditVendors?: boolean; canEditWorks?: boolean; canEditMaterials?: boolean; onNavigate?: (target: string) => void }) {
   const [type, setType] = useState<LedgerType>(initialType ?? "vendors");
   const [query, setQuery] = useState(initialQuery ?? "");
   const [items, setItems] = useState<Item[]>([]);
@@ -61,6 +61,10 @@ export function LedgerWorkspace({ initialType, initialQuery, selectedId, canEdit
         <button className="primary" onClick={() => { setCreating(true); setImporting(false); setSelected(null); }}>＋ 新規マテリアル</button>
       </div>}
     </div>
+    {onNavigate && type === "works" && <div className="surface-xref" role="navigation" aria-label="作品の関連画面">
+      <span className="surface-xref-here">マスタ編集（ここ）</span>
+      <button type="button" onClick={() => onNavigate("works")}>作品ビュー → 作品（系譜・条件）</button>
+    </div>}
     <div className="ledger-tabs">{(Object.keys(labels) as LedgerType[]).map((key) =>
       <button className={type === key ? "active" : ""} key={key} onClick={() => { setType(key); setQuery(""); }}>{labels[key]}</button>)}</div>
     <div className="ledger-toolbar"><input value={query} onChange={(event) => setQuery(event.target.value)}

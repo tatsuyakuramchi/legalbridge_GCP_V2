@@ -48,7 +48,7 @@ type RightsForm = {
   sourceWorkId: string; rightsHolderVendorId: string; sourceDocumentId: string; sourceContractId: string;
 };
 
-export function WorkDetail({ canEdit = false, canEditRights = false }: { canEdit?: boolean; canEditRights?: boolean }) {
+export function WorkDetail({ canEdit = false, canEditRights = false, onNavigate }: { canEdit?: boolean; canEditRights?: boolean; onNavigate?: (target: string) => void }) {
   const [keyword, setKeyword] = useState("");
   const [results, setResults] = useState<Summary[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -219,6 +219,10 @@ export function WorkDetail({ canEdit = false, canEditRights = false }: { canEdit
           <small>作品を起点に系譜・素材・条件・権利ソース・料率対象を一望（読み取り専用）</small>
         </div>
       </div>
+      {onNavigate && <div className="surface-xref" role="navigation" aria-label="作品の関連画面">
+        <span className="surface-xref-here">作品ビュー（ここ・閲覧）</span>
+        <button type="button" onClick={() => onNavigate("ledgers-works")}>マスタ編集 → 台帳（作品・原作）</button>
+      </div>}
 
       <div className="wd-layout">
         <div className="wd-picker">
