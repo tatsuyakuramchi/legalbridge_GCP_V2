@@ -7,7 +7,8 @@ import type {
 export type SlackWebApiMethod =
   | "conversations.open"
   | "chat.postMessage"
-  | "conversations.replies";
+  | "conversations.replies"
+  | "views.open";
 
 export interface SlackWebApiClient {
   post(method: SlackWebApiMethod, body: Record<string, unknown>): Promise<unknown>;

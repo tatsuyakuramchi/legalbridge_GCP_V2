@@ -38,10 +38,12 @@ export interface BacklogReadClient {
   getProjectMetadata(): Promise<BacklogProjectMetadata>;
 }
 
-// 書き戻し（Phase 3・guarded）。現状はコメント投稿のみ（ID非依存）。
+// 書き戻し（Phase 3・guarded）。コメント投稿＋課題起票（Phase 16-3・Slack インテーク用）。
 // ステータス/カスタム属性はプロジェクト固有IDの確定後に別途。
 export interface BacklogWriteClient {
   addComment(issueKey: string, content: string): Promise<{ id: number }>;
+  // 課題を起票して issueKey を返す。issueTypeName は名前で解決（不明時は先頭種別へフォールバック）。
+  createIssue(input: { summary: string; description: string; issueTypeName: string }): Promise<{ issueKey: string }>;
 }
 
 function mapIssue(raw: unknown): BacklogIssueSummary {
@@ -169,6 +171,40 @@ export class BacklogWebApiClient implements BacklogReadClient, BacklogWriteClien
     const value = await response.json();
     if (!Array.isArray(value)) throw new Error("Backlog API returned an invalid response");
     return value;
+  }
+
+  // 課題起票（Phase 16-3）。V1 backlogService.createIssue のサブセット：種別は名前で解決し
+  // priority は「中」(3) 固定。カスタム属性はプロジェクト固有IDが要るため 16-3a では見送り。
+  async createIssue(input: { summary: string; description: string; issueTypeName: string }): Promise<{ issueKey: string }> {
+    const projectId = await this.resolveProjectId();
+    const key = encodeURIComponent(this.projectKey);
+    const types = await this.getJsonArray(`projects/${key}/issueTypes`);
+    const named = types
+      .map((t) => t as { id?: unknown; name?: unknown })
+      .find((t) => typeof t.name === "string" && t.name === input.issueTypeName);
+    const first = types[0] as { id?: unknown } | undefined;
+    const issueTypeId = Number(named?.id ?? first?.id);
+    if (!Number.isFinite(issueTypeId)) throw new Error("Backlog issue type could not be resolved");
+
+    const url = new URL("issues", this.baseUrl);
+    url.searchParams.set("apiKey", this.apiKey);
+    const response = await this.request(url, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+      body: new URLSearchParams({
+        projectId: String(projectId),
+        summary: input.summary,
+        description: input.description,
+        issueTypeId: String(issueTypeId),
+        priorityId: "3"
+      }).toString()
+    });
+    if (!response.ok) throw new BacklogApiError(response.status);
+    const value = await response.json() as { issueKey?: unknown };
+    if (typeof value?.issueKey !== "string" || !value.issueKey) {
+      throw new Error("Backlog issue creation returned an invalid response");
+    }
+    return { issueKey: value.issueKey };
   }
 
   async addComment(issueKey: string, content: string): Promise<{ id: number }> {

@@ -573,6 +573,33 @@ case "${JOBS_ENABLED}" in
     exit 1
     ;;
 esac
+case "${SLACK_INTAKE_ENABLED}" in
+  false)
+    ;;
+  true)
+    # Slack 法務依頼インテーク受信口（16-3a）。署名シークレット必須・write-test 限定・IAP/IAM 必須。
+    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
+      echo "Slack intake blocked: limited to the write-test service."
+      exit 1
+    fi
+    if [ -z "${SLACK_SIGNING_SECRET_NAME}" ] || [ "${SLACK_SIGNING_SECRET_NAME}" = "BLOCKED" ]; then
+      echo "Slack intake blocked: SLACK_SIGNING_SECRET_NAME (Slack signing secret) is required."
+      exit 1
+    fi
+    if [ -z "${SLACK_BOT_TOKEN_SECRET}" ] || [ "${SLACK_BOT_TOKEN_SECRET}" = "BLOCKED" ]; then
+      echo "Slack intake blocked: SLACK_BOT_TOKEN_SECRET is required (views.open needs the bot token)."
+      exit 1
+    fi
+    if [ "${AUTH_MODE}" != "iap" ] && [ "${AUTH_MODE}" != "cloudrun-iam" ]; then
+      echo "Slack intake blocked: IAP or Cloud Run IAM authentication is required."
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Deployment blocked: SLACK_INTAKE_ENABLED must be true or false."
+    exit 1
+    ;;
+esac
 case "${CONTRACT_EXPIRY_TRANSITION_ENABLED}" in
   false)
     ;;

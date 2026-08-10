@@ -129,6 +129,9 @@ import { LiveDailyChecksNotifier } from "./jobs/daily-checks-live-notifier.js";
 import { runInspectionDigest } from "./jobs/inspection-digest-runner.js";
 import { runCloudSignSync } from "./jobs/cloudsign-sync-runner.js";
 import { createWebhooksRouter, type WebhookHandler } from "./internal/webhooks-routes.js";
+import { createSlackIntakeRouter } from "./internal/slack-intake-routes.js";
+import { createSlackIntakeHandler } from "./slack-intake/handler.js";
+import { PgSlackIntakeRepository } from "./slack-intake/intake-repository.js";
 import { PgWebhookReceiptsRepository } from "./internal/webhook-receipts-repository.js";
 import { PgContractStatusWriter } from "./documents/contract-status-writer.js";
 import { createCloudSignWebhookHandler, createBacklogWebhookHandler } from "./integrations/webhook-handlers.js";
@@ -1375,6 +1378,28 @@ export function createApp(
     cloudsign: { token: config.cloudSignWebhookToken, handler: cloudSignWebhookHandler },
     backlog: { token: config.backlogWebhookToken, handler: backlogWebhookHandler }
   }));
+  // Slack 法務依頼インテーク（Phase 16-3a）。署名検証（fail-closed）で保護・既定 OFF。
+  //   有効条件：フラグ＋signing secret＋Bot トークン（views.open 用）＋DB＋readwrite。
+  //   Backlog は live 構成のときのみ起票（それ以外は dry-run＝隔離台帳のみ・共有表を触らない）。
+  if (
+    config.slackIntakeEnabled && config.slackSigningSecret &&
+    /^xoxb-[A-Za-z0-9-]+$/.test(config.slackBotToken) &&
+    options.accessMode === "readwrite" && jobsDatabase
+  ) {
+    const intakeBacklog = config.backlogMode === "live" ? newBacklogClient() : undefined;
+    const intakeHandler = createSlackIntakeHandler({
+      repository: new PgSlackIntakeRepository(jobsDatabase),
+      slack: new FetchSlackWebApiClient(config.slackBotToken),
+      backlog: intakeBacklog ?? null,
+      backlogHost: config.backlogHost || null,
+      log: (message) => console.warn(`[slack-intake] ${message}`)
+    });
+    app.use(createSlackIntakeRouter({
+      signingSecret: config.slackSigningSecret,
+      onCommand: intakeHandler.handleCommand,
+      onInteractivity: intakeHandler.handleInteractivity
+    }));
+  }
   app.use("/api/v2", createDocumentImportRouter(dependencies.documentImports, documentFinalizeEnabled));
   app.use("/api/v2", createGmailNotificationRouter(documentRegistry, gmailDeliveryAdapter, gmailGateSettings, dependencies.gmailSendHistory));
   app.use("/api/v2", createCloudSignRouter(

@@ -100,6 +100,10 @@ export const config = {
   contractExpiryTransitionEnabled: process.env.CONTRACT_EXPIRY_TRANSITION_ENABLED === "true",
   cloudSignWebhookToken: (process.env.CLOUDSIGN_WEBHOOK_TOKEN ?? "").trim(),
   backlogWebhookToken: (process.env.BACKLOG_WEBHOOK_TOKEN ?? "").trim(),
+  // Slack 法務依頼インテーク受信口（Phase 16-3・/内部 slack コマンド＋インタラクティビティ）。
+  // 署名検証（signing secret・fail-closed）で保護。既定 OFF。
+  slackIntakeEnabled: process.env.SLACK_INTAKE_ENABLED === "true",
+  slackSigningSecret: (process.env.SLACK_SIGNING_SECRET ?? "").trim(),
   gmailDeliveryMode:
     process.env.GMAIL_DELIVERY_MODE === "live" ? "live" as const : "disabled" as const,
   gmailSenderEmail: (process.env.GMAIL_SENDER ?? "").trim(),

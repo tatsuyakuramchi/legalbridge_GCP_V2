@@ -114,7 +114,8 @@ function commentApp(opts: { role?: string; enabled?: boolean; client?: BacklogWr
   a.use("/api/v2", createBacklogCommentRouter(opts.client, opts.enabled ?? false));
   return a;
 }
-const okWriteClient: BacklogWriteClient = { addComment: async () => ({ id: 999 }) };
+const stubCreateIssue = async () => ({ issueKey: "LEGAL-0" });
+const okWriteClient: BacklogWriteClient = { addComment: async () => ({ id: 999 }), createIssue: stubCreateIssue };
 
 test("コメント: 書込み無効時は503", async () => {
   const res = await request(commentApp({ role: "legal", enabled: false, client: okWriteClient }))
@@ -137,7 +138,7 @@ test("コメント: admin/legal以外は403", async () => {
 
 test("コメント: 有効かつトークン一致で投稿", async () => {
   let captured: { key: string; content: string } | null = null;
-  const client: BacklogWriteClient = { addComment: async (key, content) => { captured = { key, content }; return { id: 42 }; } };
+  const client: BacklogWriteClient = { addComment: async (key, content) => { captured = { key, content }; return { id: 42 }; }, createIssue: stubCreateIssue };
   const res = await request(commentApp({ role: "admin", enabled: true, client }))
     .post("/api/v2/backlog/issues/LEGAL-9/comments").send({ content: "レビュー完了", confirmation: "COMMIT_BACKLOG_COMMENT" });
   assert.equal(res.status, 201);
