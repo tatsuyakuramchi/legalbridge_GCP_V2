@@ -141,10 +141,15 @@ Webhook 受信口・督促自動化・外部イベント連携** を、既存 gu
 - 注：現時点は「受信＋通知」まで。V2 依頼取込（Phase 3 requests）への自動投入は後続で拡張余地。
 
 ## デプロイ（Cloud Scheduler / Webhook 配線・別途）
-- Cloud Scheduler ジョブ：`POST https://<svc>/internal/jobs/daily-checks` に
-  `X-Jobs-Token: <JOBS_TRIGGER_TOKEN>` を付与、平日 09:00 JST 等。OIDC（SA）＋共有シークレット二重。
-- CloudSign/Backlog 管理画面で Webhook URL（`/internal/webhooks/...`）＋トークンを登録。
+
+**→ 実行手順は `docs/phase9-automation-ignition.md`（点火ランブック）に集約。**
+
+- Cloud Scheduler ジョブ：`POST https://<svc>/internal/jobs/{daily-checks,inspection-digest,cloudsign-sync}`
+  に `X-Jobs-Token: <JOBS_TRIGGER_TOKEN>` を付与。OIDC（SA）＋共有シークレット二重。
 - secret：`JOBS_TRIGGER_TOKEN` / `CLOUDSIGN_WEBHOOK_TOKEN` / `BACKLOG_WEBHOOK_TOKEN` を Secret Manager へ。
+- **Webhook の公開到達性**：外部プロバイダは Google OIDC を提示できないため、`--no-allow-unauthenticated`
+  のままでは Cloud Run IAM 層で 403。専用公開経路／API Gateway を用意するか、当面は cloudsign-sync
+  （ポーリング）で代替（検証フェーズ推奨）。詳細はランブック §7。
 
 ## セキュリティ注記
 - `/internal/*` はユーザー認証バイパス。**必ず**共有シークレット＋（本番は）Cloud Run IAM の二重で保護。
