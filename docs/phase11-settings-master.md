@@ -11,7 +11,7 @@ V2 の Admin は読取専用ステータスのみ。設定・承認ルート・�
 | 11-2 | 承認ルート/ワークフロールール設定 | 中 | ✅ 実装済 |
 | 11-3 | 台帳マスタ CRUD 書込 | 中 | ✅ 実装済（Create/Update は既存・今回 vendor 無効化を追加） |
 | 11-4 | 契約マスタ CRUD | 中 | 未 |
-| 11-5 | 原作マテリアル登録ワークフロー | 中 | 未 |
+| 11-5 | 原作マテリアル登録ワークフロー | 中 | ✅ 実装済（原作起点の追加/編集 UX。materials write は既存） |
 | 11-6〜11-9 | PII同意/bulk/テーマ/稟議 | 小〜中 | 優先低・要判断（Ringi 保留） |
 
 ## 11-1：システム設定（会社プロファイル）✅ 実装済
@@ -101,6 +101,27 @@ Profile D substitutions 末尾へ `|_WORKFLOW_RULES_WRITE_ENABLED=true`、`_WRIT
 > 将来：V2 の Slack 承認/通知ルーティングが department_workflow_rules を参照する配線は別スライス
 > （現状は保存され V1 が参照する共有データの先行整備）。
 
-## 次スライス候補（Tier 1 残）
-- **11-5 原作マテリアル登録ワークフロー**（原作→素材起点の作成/編集・現状素材タブ読取＋materials write は既存）
-- **11-4 契約マスタ CRUD**
+## 11-5：原作マテリアル登録ワークフロー ✅ 実装済
+
+**調査**：materials write（create/update・work_materials）は Phase 4 で実装済みで、create は元々
+work_id 必須＝作品スコープ。素材タブ読取のみだったのは UI で、バックエンドは揃っていた。V1 の
+「原作→素材起点で作成/編集」の実体＝**作品詳細から素材を追加/編集する UX**を本スライスで補完。
+
+- `WorkDetail`（権利・条件＞作品）の素材タブに **原作起点の素材フォーム**を追加：
+  - `canEditMaterials`（既存 `materials` capability）有効時のみ「素材を追加」＋各行「編集」。
+  - 新規は現在の作品 id を workId として `POST /materials`、更新は `PATCH /materials/:id`（既存 API 再利用）。
+  - 素材名・種別・役割・取得区分・権利区分・権利者・備考・**ロイヤリティ対象（金銭条件付帯）**トグル。
+- **新規 grant/config/endpoint なし**（既存 materials write を作品起点で呼ぶだけ）。tests 631 緑（既存維持）。
+
+> **見送り（将来）**：①素材の安全削除＝work_materials に is_active 列が無く、ハード DELETE は
+> 参照（condition_lines 等）チェック＋DELETE grant が要るため別スライス。②「金銭条件付帯必須」の
+> ハード強制＝現状は isRoyaltyBearing フラグまで（条件明細への必須リンクは条件オペ Phase 13 と併せて検討）。
+
+## Phase 11 まとめ（cutover Tier 1）
+11-1 設定 ／ 11-2 承認ルート ／ 11-3 台帳マスタ（Create/Update 既存＋vendor 無効化）／
+11-5 原作起点マテリアル登録 を実装。**運用自立（管理者が V2 だけで設定・マスタ・承認ルートを自己完結）
+の主要導線が揃った**。残 11-4 契約マスタ CRUD（優先中）、11-6〜11-9（優先低・Ringi 保留）。
+
+## 次スライス候補
+- **11-4 契約マスタ CRUD**（intake と別の契約レジストリ登録・更新・状態変更）
+- Phase 12（データ保守・検出→修復）／cutover runbook（Phase 7）

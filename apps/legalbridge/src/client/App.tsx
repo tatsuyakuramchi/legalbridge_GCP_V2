@@ -376,7 +376,7 @@ export function App() {
         {view === "outbound" && <OutboundConditionWorkspace onNavigate={(t) => setView(t as View)} />}
         {view === "royalty-preview" && <RoyaltyPreview />}
         {view === "billing" && <BillingDashboard canRecord={canRecordReceipt} />}
-        {view === "works" && <WorkDetail canEdit={canEditWorks} canEditRights={canEditRightsSources}
+        {view === "works" && <WorkDetail canEdit={canEditWorks} canEditRights={canEditRightsSources} canEditMaterials={canEditMaterials}
           onNavigate={(t) => { if (t === "ledgers-works") { setLedgerSeedType("works"); setView("ledgers"); } else setView(t as View); }} />}
         {view === "data-quality" && <DataQuality onNavigate={(v, id) => {
           setMergeSourceSeed((v === "vendor-merge" || v === "matter-merge") && id != null ? String(id) : "");

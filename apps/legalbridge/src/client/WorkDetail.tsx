@@ -48,7 +48,21 @@ type RightsForm = {
   sourceWorkId: string; rightsHolderVendorId: string; sourceDocumentId: string; sourceContractId: string;
 };
 
-export function WorkDetail({ canEdit = false, canEditRights = false, onNavigate }: { canEdit?: boolean; canEditRights?: boolean; onNavigate?: (target: string) => void }) {
+const MATERIAL_TYPES = ["game_design", "illustration", "scenario", "manuscript", "other"] as const;
+const MATERIAL_ROLES = ["core_logic", "sub_component"] as const;
+const ACQUISITION_TYPES = ["license", "buyout_commission", "in_house"] as const;
+const RIGHTS_TYPES = ["owned", "license"] as const;
+type MaterialForm = {
+  id: number | null; materialName: string; materialType: typeof MATERIAL_TYPES[number];
+  materialRole: typeof MATERIAL_ROLES[number]; acquisitionType: typeof ACQUISITION_TYPES[number];
+  rightsType: typeof RIGHTS_TYPES[number]; rightsHolderLabel: string; isRoyaltyBearing: boolean; remarks: string;
+};
+const emptyMaterial = (): MaterialForm => ({
+  id: null, materialName: "", materialType: "other", materialRole: "sub_component",
+  acquisitionType: "license", rightsType: "license", rightsHolderLabel: "", isRoyaltyBearing: false, remarks: ""
+});
+
+export function WorkDetail({ canEdit = false, canEditRights = false, canEditMaterials = false, onNavigate }: { canEdit?: boolean; canEditRights?: boolean; canEditMaterials?: boolean; onNavigate?: (target: string) => void }) {
   const [keyword, setKeyword] = useState("");
   const [results, setResults] = useState<Summary[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -67,6 +81,9 @@ export function WorkDetail({ canEdit = false, canEditRights = false, onNavigate 
   const [relParentId, setRelParentId] = useState("");
   const [relSaving, setRelSaving] = useState(false);
   const [relError, setRelError] = useState("");
+  const [matForm, setMatForm] = useState<MaterialForm | null>(null);
+  const [matSaving, setMatSaving] = useState(false);
+  const [matError, setMatError] = useState("");
 
   // 作品検索（デバウンス）。
   useEffect(() => {
@@ -164,6 +181,33 @@ export function WorkDetail({ canEdit = false, canEditRights = false, onNavigate 
       setRightsForm(null); setReload((n) => n + 1);
     } catch { setRightsError("通信に失敗しました"); }
     finally { setRightsSaving(false); }
+  }
+
+  async function saveMaterial() {
+    if (!matForm || selectedId == null) return;
+    if (!matForm.materialName.trim()) { setMatError("素材名は必須です"); return; }
+    setMatSaving(true); setMatError("");
+    const isNew = matForm.id == null;
+    const body: Record<string, unknown> = {
+      materialName: matForm.materialName.trim(), materialType: matForm.materialType,
+      materialRole: matForm.materialRole, acquisitionType: matForm.acquisitionType,
+      rightsType: matForm.rightsType,
+      rightsHolderLabel: matForm.rightsHolderLabel.trim() || (isNew ? undefined : null),
+      isRoyaltyBearing: matForm.isRoyaltyBearing,
+      remarks: matForm.remarks.trim() || (isNew ? undefined : null)
+    };
+    if (isNew) body.workId = selectedId;
+    try {
+      const res = await fetch(isNew ? "/api/v2/materials" : `/api/v2/materials/${matForm.id}`, {
+        method: isNew ? "POST" : "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        setMatError(d.error ?? "保存に失敗しました"); setMatSaving(false); return;
+      }
+      setMatForm(null); setReload((n) => n + 1);
+    } catch { setMatError("通信に失敗しました"); }
+    finally { setMatSaving(false); }
   }
 
   function startEdit() {
@@ -357,16 +401,48 @@ export function WorkDetail({ canEdit = false, canEditRights = false, onNavigate 
               )}
             </> : <Degraded />)}
 
-            {tab === "materials" && (detail.materials ? (
-              detail.materials.length ? <table>
-                <thead><tr><th>コード</th><th>素材名</th><th>種別</th><th>役割</th><th>取得</th><th>権利</th><th>権利者</th><th>ロイヤリティ</th></tr></thead>
+            {tab === "materials" && (detail.materials ? <>
+              {canEditMaterials && !matForm &&
+                <div className="wd-actions"><button className="primary" onClick={() => { setMatError(""); setMatForm(emptyMaterial()); }}>素材を追加</button></div>}
+              {matForm && <div className="wd-edit-form">
+                <h4>{matForm.id == null ? "この作品に素材を追加" : "素材を編集"}</h4>
+                {matError && <div className="async-error">{matError}</div>}
+                <label>素材名 *<input value={matForm.materialName} onChange={(e) => setMatForm({ ...matForm, materialName: e.target.value })} /></label>
+                <div className="matter-form-grid">
+                  <label>種別<select value={matForm.materialType} onChange={(e) => setMatForm({ ...matForm, materialType: e.target.value as MaterialForm["materialType"] })}>
+                    {MATERIAL_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}</select></label>
+                  <label>役割<select value={matForm.materialRole} onChange={(e) => setMatForm({ ...matForm, materialRole: e.target.value as MaterialForm["materialRole"] })}>
+                    {MATERIAL_ROLES.map((t) => <option key={t} value={t}>{t}</option>)}</select></label>
+                  <label>取得<select value={matForm.acquisitionType} onChange={(e) => setMatForm({ ...matForm, acquisitionType: e.target.value as MaterialForm["acquisitionType"] })}>
+                    {ACQUISITION_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}</select></label>
+                  <label>権利<select value={matForm.rightsType} onChange={(e) => setMatForm({ ...matForm, rightsType: e.target.value as MaterialForm["rightsType"] })}>
+                    {RIGHTS_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}</select></label>
+                  <label>権利者<input value={matForm.rightsHolderLabel} onChange={(e) => setMatForm({ ...matForm, rightsHolderLabel: e.target.value })} /></label>
+                </div>
+                <label>備考<input value={matForm.remarks} onChange={(e) => setMatForm({ ...matForm, remarks: e.target.value })} /></label>
+                <label className="task-primary-toggle"><input type="checkbox" checked={matForm.isRoyaltyBearing} onChange={(e) => setMatForm({ ...matForm, isRoyaltyBearing: e.target.checked })} />ロイヤリティ対象（金銭条件を付帯）</label>
+                <div className="matter-form-actions">
+                  <button className="primary" disabled={matSaving} onClick={() => void saveMaterial()}>{matSaving ? "保存中…" : "保存"}</button>
+                  <button disabled={matSaving} onClick={() => setMatForm(null)}>キャンセル</button>
+                </div>
+              </div>}
+              {detail.materials.length ? <table>
+                <thead><tr><th>コード</th><th>素材名</th><th>種別</th><th>役割</th><th>取得</th><th>権利</th><th>権利者</th><th>ロイヤリティ</th>{canEditMaterials && <th></th>}</tr></thead>
                 <tbody>{detail.materials.map((m) => <tr key={m.id}>
                   <td>{m.materialCode ?? "—"}</td><td>{m.materialName ?? "—"}</td><td>{m.materialType ?? "—"}</td>
                   <td>{m.materialRole ?? "—"}</td><td>{m.acquisitionType ?? "—"}</td><td>{m.rightsType ?? "—"}</td>
                   <td>{m.rightsHolderLabel ?? "—"}</td><td>{m.isRoyaltyBearing ? "対象" : "—"}</td>
+                  {canEditMaterials && <td><button onClick={() => { setMatError(""); setMatForm({
+                    id: m.id, materialName: m.materialName ?? "",
+                    materialType: (MATERIAL_TYPES as readonly string[]).includes(m.materialType ?? "") ? m.materialType as MaterialForm["materialType"] : "other",
+                    materialRole: (MATERIAL_ROLES as readonly string[]).includes(m.materialRole ?? "") ? m.materialRole as MaterialForm["materialRole"] : "sub_component",
+                    acquisitionType: (ACQUISITION_TYPES as readonly string[]).includes(m.acquisitionType ?? "") ? m.acquisitionType as MaterialForm["acquisitionType"] : "license",
+                    rightsType: (RIGHTS_TYPES as readonly string[]).includes(m.rightsType ?? "") ? m.rightsType as MaterialForm["rightsType"] : "license",
+                    rightsHolderLabel: m.rightsHolderLabel ?? "", isRoyaltyBearing: Boolean(m.isRoyaltyBearing), remarks: ""
+                  }); }}>編集</button></td>}
                 </tr>)}</tbody>
-              </table> : <div className="empty-state">登録された素材はありません。</div>
-            ) : <Degraded />)}
+              </table> : <div className="empty-state">登録された素材はありません。{canEditMaterials && "「素材を追加」から登録できます。"}</div>}
+            </> : <Degraded />)}
 
             {tab === "conditions" && (detail.conditions ? <>
               <div className="wd-cond-summary">

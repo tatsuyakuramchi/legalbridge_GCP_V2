@@ -56,7 +56,7 @@ V2 の `AdminOverview` は読み取り専用ステータスのみ。**設定・�
 | 11-2 | 承認ルート/ワークフロールール設定 | FE `master/RulesPanel.tsx`／BE `workflow-settings`・`rules` | 部門ごとの承認者/押印担当/管理者 Slack ID・チャンネル（`workflow_rules`） | 中 | 中 | ✅ 実装済（department_workflow_rules upsert・grant 037・`docs/phase11-settings-master.md`。V2 ルーティング参照は将来配線） |
 | 11-3 | 台帳マスタ CRUD 書込 | BE `master/ledgers` POST/PUT/DELETE | V2は`GET /ledgers/:type`読取のみ。作成/更新/削除が無い | 中 | 中 | ✅ 実装済（**過大計上だった**：Create/Update は Phase 2/4/8 で実装済・未有効化。今回 vendor 論理削除〈is_active〉追加。cutover は WRITE_SCOPES 有効化で解禁） |
 | 11-4 | 契約マスタ CRUD | BE `master/contracts` POST/PUT/DELETE・`:id/status` | intake とは別の契約レジストリ登録・更新・状態変更 | 中 | 中 |
-| 11-5 | 原作マテリアル登録ワークフロー | FE `master/MaterialEntryPanel.tsx` | 原作→素材検索起点で新規マテリアル作成/編集/安全削除（金銭条件付帯必須）。V2は素材タブ読取のみ | 中 | 中 |
+| 11-5 | 原作マテリアル登録ワークフロー | FE `master/MaterialEntryPanel.tsx` | 原作→素材検索起点で新規マテリアル作成/編集/安全削除（金銭条件付帯必須）。V2は素材タブ読取のみ | 中 | 中 | ✅ 実装済（materials write は Phase 4 既存・work_id 必須＝作品スコープ。今回 WorkDetail に原作起点の追加/編集 UX。安全削除＝is_active 列なしで別スライス、金銭条件必須のハード強制は将来） |
 | 11-6 | PII同意記録 / 会社プロフィール | BE `master/vendors/:code/pii-consent`・`company-profile` | ベンダーPII取得同意の記録・自社プロフィール取得 | 小 | 低 |
 | 11-7 | マスタ横断 bulk-export/import | BE `master/bulk-export`・`bulk-import` | マスタ横断の一括書出/取込（個別importはV2にあり） | 小 | 低 |
 | 11-8 | テーマ/スキン切替 | FE `layout/Topbar.tsx`・`lib/skin` | 複数スキン＋ダーク/ライト切替（localStorage永続） | 小 | 低 |

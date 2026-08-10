@@ -836,6 +836,12 @@ button.pdf-download-link:disabled {
   color: #b91c1c;
   font-size: 13px;
 }
+/* 作品詳細の編集フォーム（Phase 11-5 原作起点マテリアル登録ほか） */
+.wd-actions { margin-bottom: 8px; }
+.wd-edit-form { display: flex; flex-direction: column; gap: 8px; padding: 12px; margin-bottom: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
+.wd-edit-form h4 { margin: 0; }
+.wd-edit-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+
 /* システム設定（Phase 11-1） */
 .settings-form { padding: 16px; display: flex; flex-direction: column; gap: 12px; max-width: 640px; }
 .settings-field { display: flex; flex-direction: column; gap: 4px; }
