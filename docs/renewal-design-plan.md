@@ -294,6 +294,10 @@ Phase 7 は全フェーズの受け入れ後
 
 | 2026-08-07 | Phase 5 | 点火準備：CloudSign 点火 Runbook 新設＋gmail-cloudsign.md を確定仕様へ更新 | — | ✅ |
 
+| 2026-08-10 | Phase 9 | 自動化基盤 9-0（スケジューラ/Webhook 受信口・共有シークレット）＋ 9-1 daily-checks 判定エンジン（純関数） | LegalBridge_AI_GCP | ✅ |
+
+**Phase 9 着手（自動化基盤＋督促）**：V2 に欠けていた Cloud Scheduler 起動口・Webhook 受信口を新設。`/internal/jobs/:name`・`/internal/webhooks/{cloudsign,backlog}` をユーザー認証バイパス＋共有シークレット（定数時間比較）で保護し既定OFF、runner/handler は注入式（`internal/{shared-secret,jobs-routes,webhooks-routes}.ts`・tests 10）。daily-checks 判定ロジックを純関数移植（`jobs/daily-checks-engine.ts`＝納期7/3/1/超過・契約更新通告窓・満了遷移・tests 11）。**重要発見**：V1 の納期アラート重複抑止列 `last_alert_at` は互換ビューで NULL 固定＝現行スキーマに実在せず → V2 は本番を更新せず隔離台帳 `lb_v2_job_alert_ledger` で抑止する設計に確定。残スライス（9-1b配信/9-2契約通告/9-3満了遷移(本番UPDATE opt-in)/9-4検収ダイジェスト/9-5,9-7 Webhookハンドラ/9-6一括同期）と grant・verify・Scheduler配線を `docs/phase9-automation-plan.md` に precise plan 化。テスト545件緑。
+
 | 2026-08-09 | 監査 | V1→V2 未移植機能の残課題台帳を新設（バックエンド/フロント/自動処理の3並列監査を統合） | LegalBridge_AI_GCP | ✅ |
 
 **V1→V2 ギャップ監査（`docs/v1-v2-gap-remaining.md`）**：Phase 1〜8 の移植済みを除外し、V1 にあって V2 に無い機能を 3 観点（バックエンドAPI・フロントエンド・自動/バックグラウンド）で並列監査し統合。最大の発見は **V2 に Cloud Scheduler/cron・Pub-Sub・Webhook 受信口の土台が皆無**で、督促自動化（納期アラート・契約更新通告・満了自動遷移・検収ダイジェスト）と外部イベント駆動連携（CloudSign/Backlog Webhook）が丸ごと欠落（ポーリング/手動へ退化）。以下を提案 Phase 9〜15 として粒度・優先度付きで台帳化：9=自動化基盤＋督促/Webhook、10=文書運用オペ（void/再発行/アーカイブ/Excel一括）、11=設定・マスタ書込（会社設定/承認ルート/台帳・契約マスタCRUD/原作マテリアル登録）、12=データ保守（連結チェック修復/未リンクCL棚卸し/監査）、13=条件明細・課題横断オペ、14=関連当事者取引(RPT)独立サブシステム、15=テンプレ編集・取込・Drive健全性。稟議(Ringi)は廃止決定済み・要トリアージ。`v1-v2-parity-checklist.md`（旧・誤記あり）を本台帳が置換。
