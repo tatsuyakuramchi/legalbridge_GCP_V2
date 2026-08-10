@@ -89,10 +89,17 @@ Backlog/CloudSign はカスタムヘッダ不可のため、リレーが `?token
    - CloudSign Webhook は 2-5 の CloudSign live と同時に（secret は作成済み）
 
 ### 2-5. 統合 live 化（Drive / Gmail / CloudSign）
-- Drive：`phase5-integration-readiness.md`＋`drive-integration.md`。SA 鍵 Secret・フォルダID →
-  `_DRIVE_STORAGE_ENABLED=true`＋`_CONFIRM_DRIVE_STORAGE`。（grant 039 で drive_link UPDATE は付与済み）
-- Gmail 送信/受信・CloudSign：`gmail-cloudsign.md`／`phase5-cloudsign-ignition.md`。CloudSign live 後に
-  2-3 の cloudsign-sync と 2-4 の Webhook を有効化すると executed 遷移が自動化される（grant 031/039 適用済み前提）。
+- **Drive ✅ 点火済み（2026-08-10）**：ADC 方式（鍵 Secret 不要・V1 本番と同じ）・保存先 V2_FOLD
+  （`1KA1H525VDve71anot0Wv8p5qsggTiUja`・ランタイム SA がコンテンツ管理者）。同デプロイで
+  **16-4 添付アップロードも解禁**（WRITE_SCOPES に `drive`＋`attachments`）。
+  `DRIVE_ENVIRONMENT_TAG=validation` のまま＝**§4 正式サービス名化の際に `production` へ切替**。
+  ブラウザスモーク（文書確定→Drive保存／案件詳細→資料アップロード）で実ファイル確認のこと。
+- Gmail 送信/受信・CloudSign（残）：`gmail-cloudsign.md`／`phase5-cloudsign-ignition.md`。
+  - CloudSign：client_id を Secret Manager へ（リポジトリ厳禁）＋宛先 allowlist 必須＋
+    `_CLOUDSIGN_MODE=live`＋`_CONFIRM_CLOUDSIGN_DISPATCH`＋`_CLOUDSIGN_REQUEST_HISTORY_ENABLED`。
+    live 後に cloudsign-sync resume＋CloudSign Webhook 登録（token secret 作成済み）で executed 遷移が自動化。
+  - Gmail：送信元アドレス決定＋Workspace 管理者の DWD 設定＋SA 鍵 Secret（`_GWS_SA_KEY_SECRET`・
+    Gmail の JWT 署名は鍵必須）→ `_GMAIL_DELIVERY_MODE=live`＋`_CONFIRM_GMAIL_DISPATCH`＋`_GMAIL_SENDER`。
 
 ## 3. 利用者開放（認証・ロール）
 - `_AUTH_LEGAL_EMAILS`（法務メンバー）・`_AUTH_REQUESTER_DOMAINS`（依頼者ドメイン）を実値に。
@@ -121,7 +128,8 @@ Backlog/CloudSign はカスタムヘッダ不可のため、リレーが `?token
 - [x] マスタ書込スコープ点火済み（2-2・2026-08-10。snippets・満了遷移も同時点火）
 - [x] Scheduler 3 ジョブ作成・疎通済み（2-3・2026-08-10。resume は 5-2／CloudSign live 時）
 - [x] Webhook 受信 live（2-4・Backlog 分＝リレー＋自動起票スモーク成功。Backlog コンソール登録と Slack App 設定が残）
-- [ ] CloudSign/Gmail/Drive live（2-5）
+- [x] Drive live＋添付アップロード解禁（2-5・2026-08-10。タグは §4 で production へ）
+- [ ] CloudSign/Gmail live（2-5 残・外部準備待ち：client_id secret＋allowlist／DWD＋SA鍵）
 - [ ] legal/requester 開放＋スモーク合格（3）
 - [ ] 正式サービス名で稼働（4）
 - [ ] V1 読み取り専用化→停止（5）
