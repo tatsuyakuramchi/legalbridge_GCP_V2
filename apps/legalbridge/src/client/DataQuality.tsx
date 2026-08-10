@@ -11,7 +11,7 @@ type Report = { categories: Category[]; summary: Summary };
 
 const sevLabel: Record<Severity, string> = { high: "重大", medium: "注意", low: "軽微" };
 
-export function DataQuality({ onNavigate }: { onNavigate?: (view: string) => void }) {
+export function DataQuality({ onNavigate }: { onNavigate?: (view: string, id?: number) => void }) {
   const [report, setReport] = useState<Report | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -71,7 +71,7 @@ export function DataQuality({ onNavigate }: { onNavigate?: (view: string) => voi
                 <table className="dq-samples">
                   <tbody>{c.samples.map((s) => <tr key={s.id}>
                     <td>{s.label}</td><td className="muted">{s.detail}</td>
-                    <td>{s.link && onNavigate && <button onClick={() => onNavigate(s.link!.view)}>開く</button>}</td>
+                    <td>{s.link && onNavigate && <button onClick={() => onNavigate(s.link!.view, s.link!.id)}>開く</button>}</td>
                   </tr>)}</tbody>
                 </table>
               )}

@@ -58,8 +58,8 @@ V1 は「ユーザーに迷いを生じやすい構造」だった。本レビ�
 ### すぐ効く Quick Wins（小・低リスク）
 | 提案 | 内容 | 該当 | 粒度 |
 |---|---|---|---|
-| Q1 | **データ品質→名寄せの prop 配線**：ドリル時に `initialSource`（対象ID）を渡し名寄せ画面をプリフィル。発見→是正を1動線に | `App.tsx`/`DataQuality`/`VendorMerge`/`MatterMerge` | 小 |
-| Q2 | **未有効化メッセージの統一**：`<FeatureLockedNote>` を新設し「この機能は未有効化です（管理者が設定で有効化できます）」に統一。**GRANT番号を UI から除去** | 共通 + 各画面 | 小 |
+| Q1 ✅ | **データ品質→名寄せの prop 配線（実装済）**：重複ドリルの `link.id` を `onNavigate(view,id)` で受け、`mergeSourceSeed`→`initialSource` で名寄せ画面の統合元をプリフィル。ナビ直接遷移では seed をクリア | `App.tsx`/`DataQuality`/`data-quality/repository.ts`/`VendorMerge`/`MatterMerge` | 小 |
+| Q2 ✅ | **未有効化メッセージの統一（実装済）**：`FeatureLockedNote.tsx` を新設し統一文言へ。VendorMerge/MatterMerge/WorkDetail から **GRANT番号（018/025/026/028/007）と capability 名を UI から除去** | `FeatureLockedNote`＋3画面 | 小 |
 | Q3 | **空状態を `EmptyState` に一本化**（素の div を置換） | Ledger/DocRegistry/Requests/DataQuality/TemplateCatalog | 小 |
 | Q4 | **文書紐付けに検索 UI**（生ID入力を廃し、番号/タイトルで選択） | `MatterDocumentLinks` | 小〜中 |
 

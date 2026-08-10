@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { FeatureLockedNote } from "./FeatureLockedNote";
 
 // 案件マージ（名寄せ・Phase 8-5）。存続先(target)へ統合元(source)を寄せる。
 // プレビュー（移送される紐付き件数）→ 合言葉入力 → 実行。統合元は status='archived' で残る（削除しない）。
@@ -98,7 +99,7 @@ export function MatterMerge({ canMerge = false, initialSource = "" }: { canMerge
             <button className="primary" onClick={runMerge} disabled={merging || token !== TOKEN}>{merging ? "統合中…" : "名寄せを実行"}</button>
           </div>
         ) : (
-          <small className="hint">名寄せの実行権限（capability `matter-merge` / grant 025・026・028）が未付与のため、プレビューのみ表示しています。</small>
+          <FeatureLockedNote>名寄せの実行は現在ご利用いただけません（プレビューのみ表示）。管理者が設定で有効化できます。</FeatureLockedNote>
         )}
       </>}
     </section>

@@ -294,6 +294,10 @@ Phase 7 は全フェーズの受け入れ後
 
 | 2026-08-07 | Phase 5 | 点火準備：CloudSign 点火 Runbook 新設＋gmail-cloudsign.md を確定仕様へ更新 | — | ✅ |
 
+| 2026-08-10 | UX | Quick Wins Q1（発見→是正の prop 配線）・Q2（未有効化メッセージ統一＋GRANT番号除去）実装 | LegalBridge_AI_GCP | ✅ |
+
+**UX Quick Wins 実装**：Q1＝データ品質の重複ドリルが名寄せ画面へ統合元IDを引き継ぐよう配線（`data-quality/repository.ts` の vendor-merge link に `id` 付与、`DataQuality.onNavigate(view,id)`、`App` に `mergeSourceSeed`→`VendorMerge/MatterMerge` の `initialSource` 配線、ナビ直接遷移では seed クリア）＝発見と是正を1動線化。Q2＝`FeatureLockedNote.tsx` を新設して未有効化注記を統一し、VendorMerge/MatterMerge/WorkDetail の end-user 文言から GRANT 番号（018/025/026/028/007）と capability 名を除去。テスト545件緑・typecheck緑・build緑。
+
 | 2026-08-10 | UX | V2 UI/UX 合理性レビュー（V1 の迷いの構造監査＋V2 現状 IA 監査を統合・改善指針化） | LegalBridge_AI_GCP | ✅ |
 
 **UI/UX 合理性レビュー（`docs/v2-ux-rationality-review.md`）**：V1 の「迷いの構造」を 5 類型化（作業オブジェクト三重帳簿・暗黙モードの入口乱立・用語不整合・ロール未分岐・巨大マルチ目的画面）し、V2 現状 IA を並列監査して統合。V2 は既に主要な V1 病を治療済み（案件へ正典化・文書作成 funnel 統一・破壊操作トークン型統一・ロール一級市民化・Breadcrumb）＝維持資産として明記。残摩擦 F1〜F9（業務グループ過積載/OFF機能の伝え方3系統/GRANT番号露出/発見→是正断絶/条件・作品の画面分散/ガード重み付け不揃い/空状態2系統/作成→出力4遷移/生ID入力）を洗い出し、実タスクフロー（申請者・法務・管理者）に立脚した設計原則6点と、Quick Wins（Q1発見→是正prop配線・Q2未有効化統一＋GRANT番号除去・Q3空状態一本化・Q4文書検索UI）／構造リファクタ（R1ナビ再編・R2条件集約・R3作品二重解消・R4ガード階層化・R5ロール別ホーム）／大（B1作成→出力1画面化・B2 Phase10/11新規UIへ本指針適用）を優先度・粒度付きで提案。機能ギャップ台帳と対になる体験台帳。

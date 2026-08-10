@@ -167,6 +167,8 @@ export function App() {
   const [canEditMaterials, setCanEditMaterials] = useState(false);
   const [canEditRightsSources, setCanEditRightsSources] = useState(false);
   const [canMergeVendors, setCanMergeVendors] = useState(false);
+  // データ品質→名寄せのドリル時に統合元IDを引き継ぐ（発見→是正を1動線に・Q1）。
+  const [mergeSourceSeed, setMergeSourceSeed] = useState("");
   const [canMergeMatters, setCanMergeMatters] = useState(false);
   const [canBacklogComment, setCanBacklogComment] = useState(false);
   const [canEditStaff, setCanEditStaff] = useState(false);
@@ -282,7 +284,7 @@ export function App() {
               {group.items.map((item) => (
                 <button key={item.view}
                   className={item.match.includes(view) ? "active" : ""}
-                  onClick={() => setView(item.view)}
+                  onClick={() => { setMergeSourceSeed(""); setView(item.view); }}
                   title={item.description}
                 >{item.label}</button>
               ))}
@@ -345,9 +347,12 @@ export function App() {
         {view === "royalty-preview" && <RoyaltyPreview />}
         {view === "billing" && <BillingDashboard canRecord={canRecordReceipt} />}
         {view === "works" && <WorkDetail canEdit={canEditWorks} canEditRights={canEditRightsSources} />}
-        {view === "data-quality" && <DataQuality onNavigate={(v) => setView(v as View)} />}
-        {view === "vendor-merge" && <VendorMerge canMerge={canMergeVendors} />}
-        {view === "matter-merge" && <MatterMerge canMerge={canMergeMatters} />}
+        {view === "data-quality" && <DataQuality onNavigate={(v, id) => {
+          setMergeSourceSeed((v === "vendor-merge" || v === "matter-merge") && id != null ? String(id) : "");
+          setView(v as View);
+        }} />}
+        {view === "vendor-merge" && <VendorMerge canMerge={canMergeVendors} initialSource={mergeSourceSeed} />}
+        {view === "matter-merge" && <MatterMerge canMerge={canMergeMatters} initialSource={mergeSourceSeed} />}
         {view === "requests" && (legalWorkspace || requesterWorkspace) && (
           <RequestsWorkspace canComment={canBacklogComment}
             onCreateDocument={(issueKey, seed) => { setNewDocIssueKey(issueKey); setNewDocSeed(seed ?? {}); setDraftSelection(null); setView("templates"); }} />

@@ -33,7 +33,7 @@ const yen = (v: number | null, ccy: string | null) => v == null ? "—" : `${ccy
 const kindLabel = (k: string | null) => k === "licensed_in" ? "ライセンスイン" : k === "own" ? "自社作品" : (k ?? "—");
 
 function Degraded() {
-  return <div className="empty-state">このセクションは表示権限（GRANT 007）が未付与のため取得できませんでした。付与後に自動表示されます。</div>;
+  return <div className="empty-state">このセクションは現在表示できません（表示権限が未付与）。管理者が有効化すると自動的に表示されます。</div>;
 }
 
 type EditForm = {

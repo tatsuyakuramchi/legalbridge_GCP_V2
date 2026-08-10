@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { FeatureLockedNote } from "./FeatureLockedNote";
 
 // 取引先マージ（名寄せ・Phase 4）。存続先(target)へ統合元(source)を寄せる。
 // プレビュー（再指定される参照件数）→ 合言葉入力 → 実行。旧はis_active=falseで残る。
@@ -97,7 +98,7 @@ export function VendorMerge({ canMerge = false, initialSource = "" }: { canMerge
             <button className="primary" onClick={runMerge} disabled={merging || token !== TOKEN}>{merging ? "統合中…" : "名寄せを実行"}</button>
           </div>
         ) : (
-          <small className="hint">名寄せの実行権限（capability `vendor-merge` / grant 018）が未付与のため、プレビューのみ表示しています。</small>
+          <FeatureLockedNote>名寄せの実行は現在ご利用いただけません（プレビューのみ表示）。管理者が設定で有効化できます。</FeatureLockedNote>
         )}
       </>}
     </section>
