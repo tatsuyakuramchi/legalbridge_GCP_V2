@@ -105,6 +105,8 @@ import {
 } from "./matters/matter-delete-repository.js";
 import { createMatterDeleteRouter } from "./matters/matter-delete-routes.js";
 import { createJobsRouter, type JobRunner } from "./internal/jobs-routes.js";
+import { PgDailyChecksRepository } from "./jobs/daily-checks-repository.js";
+import { runDailyChecks, DryRunDailyChecksNotifier, jstTodayYmd } from "./jobs/daily-checks-runner.js";
 import { createWebhooksRouter, type WebhookHandler } from "./internal/webhooks-routes.js";
 import {
   GoogleMatterDriveFolderService,
@@ -1157,6 +1159,19 @@ export function createApp(
   //   /internal/jobs/:name … Cloud Scheduler 起動口（runners は 9-1 以降で注入）
   //   /internal/webhooks/{cloudsign,backlog} … 外部 Webhook 受信口（handler は 9-5/9-7 で注入）
   const jobRunners: Record<string, JobRunner> = { ...(dependencies.jobRunners ?? {}) };
+  // daily-checks（納期・契約更新通告アラート・9-1b/9-2）。DB があれば登録。
+  // 既定は dry-run ノーティファイア（送信せず件数のみ返す・台帳へ記録しない）＝安全。
+  // 実送信は後続スライスで live ノーティファイアを注入する。
+  const jobsDatabase = getPool();
+  if (jobsDatabase && !jobRunners["daily-checks"]) {
+    const dailyChecksRepo = new PgDailyChecksRepository(jobsDatabase);
+    jobRunners["daily-checks"] = () => runDailyChecks({
+      repo: dailyChecksRepo,
+      notifier: new DryRunDailyChecksNotifier(),
+      todayYmd: jstTodayYmd(Date.now()),
+      nowMs: Date.now()
+    });
+  }
   app.use(createJobsRouter({ enabled: config.jobsEnabled, token: config.jobsTriggerToken, runners: jobRunners }));
   app.use(createWebhooksRouter({
     cloudsign: { token: config.cloudSignWebhookToken, handler: dependencies.cloudSignWebhookHandler },

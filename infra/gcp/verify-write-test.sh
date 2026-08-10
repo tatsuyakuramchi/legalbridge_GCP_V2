@@ -430,6 +430,28 @@ case "${MATTER_DELETE_ENABLED}" in
     exit 1
     ;;
 esac
+case "${JOBS_ENABLED}" in
+  false)
+    ;;
+  true)
+    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
+      echo "Jobs endpoint blocked: limited to the write-test service."
+      exit 1
+    fi
+    if [ -z "${JOBS_TRIGGER_TOKEN_SECRET}" ] || [ "${JOBS_TRIGGER_TOKEN_SECRET}" = "BLOCKED" ]; then
+      echo "Jobs endpoint blocked: JOBS_TRIGGER_TOKEN_SECRET (shared-secret) is required."
+      exit 1
+    fi
+    if [ "${AUTH_MODE}" != "iap" ] && [ "${AUTH_MODE}" != "cloudrun-iam" ]; then
+      echo "Jobs endpoint blocked: IAP or Cloud Run IAM authentication is required."
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Deployment blocked: JOBS_ENABLED must be true or false."
+    exit 1
+    ;;
+esac
 case "${GMAIL_DELIVERY_MODE}" in
   disabled)
     ;;

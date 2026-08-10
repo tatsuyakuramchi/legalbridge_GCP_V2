@@ -11,6 +11,16 @@ Webhook 受信口・督促自動化・外部イベント連携** を、既存 gu
   （定数時間比較）。既定OFF。runner/handler は注入式（未注入＝実質無効）。tests 10。
 - ✅ **9-1(core) daily-checks 判定エンジン**（済・純関数）：納期(7/3/1/超過)・契約更新通告窓・
   満了遷移の判定を `jobs/daily-checks-engine.ts` に移植。tests 11。SQL/Slack/DB更新は未接続。
+- ✅ **9-1b/9-2 daily-checks 配線**（済）：grant 030（`lb_v2_job_alert_ledger` CREATE＋GRANT・
+  SELECT/INSERT・同日重複抑止の UNIQUE）。`jobs/daily-checks-repository.ts`（Pg/Memory・候補読取
+  ＝condition_lines[legacy_role='cli']＋documents[record_type='purchase_order']・fulfilled除外・
+  台帳の最新 alert_date を lastAlertAt として渡す・権限未整備は空配列に縮退）。
+  `jobs/daily-checks-runner.ts`（エンジンで発火判定→通知→**live のみ台帳へ記録**・dry-run は記録せず
+  件数のみ）＋ `DryRunDailyChecksNotifier`。app.ts の jobRunners に `daily-checks` を登録
+  （既定 **dry-run**＝安全・実送信は 9-1c で live ノーティファイア注入）。config は 9-0 の
+  `JOBS_ENABLED`/`JOBS_TRIGGER_TOKEN`。verify/cloudbuild に `_JOBS_ENABLED`/`_JOBS_TRIGGER_TOKEN_SECRET`
+  （Secret Manager 注入）＋ゲート（write-test・IAP/IAM・token 必須）を追加。tests 7。
+  **本番テーブルは更新しない**（満了遷移 9-3 は別 opt-in）。
 
 ## 重要な設計判断（実装前に確定した事項）
 
