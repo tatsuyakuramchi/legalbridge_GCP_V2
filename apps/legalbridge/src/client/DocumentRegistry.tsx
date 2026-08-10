@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { DocumentFormSchema } from "../types";
 import { useToast } from "./Toast";
 import { EmptyState } from "./EmptyState";
-import { DocumentIntegrations } from "./DocumentIntegrations";
+import { DocumentOutputActions } from "./DocumentOutputActions";
 import { ExportButtons } from "./ExportButtons";
 import type { ExportColumn } from "./export-util";
 
@@ -178,58 +178,7 @@ function DocumentDetail({
   canCloudSign?: boolean;
   onRefresh: () => Promise<void> | void;
 }) {
-  const [savingDrive, setSavingDrive] = useState(false);
-  const [driveError, setDriveError] = useState("");
-  const [downloadingPdf, setDownloadingPdf] = useState(false);
-  const [pdfError, setPdfError] = useState("");
   if (!document) return <aside className="panel registry-detail empty-detail">一覧から文書を選択してください。</aside>;
-  async function downloadPdf() {
-    if (!document || downloadingPdf) return;
-    setDownloadingPdf(true);
-    setPdfError("");
-    try {
-      const response = await fetch(`/api/v2/documents/${document.id}/pdf`, {
-        headers: { Accept: "application/pdf" }
-      });
-      if (!response.ok) {
-        const message = await response.json()
-          .then((body) => body.error as string | undefined)
-          .catch(() => undefined);
-        throw new Error(message ?? "PDFの生成に失敗しました。");
-      }
-      const blob = await response.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      const download = window.document.createElement("a");
-      download.href = objectUrl;
-      download.download = `${safeFilename(document.documentNumber ?? `document-${document.id}`)}.pdf`;
-      window.document.body.appendChild(download);
-      download.click();
-      download.remove();
-      URL.revokeObjectURL(objectUrl);
-    } catch (error) {
-      setPdfError(error instanceof Error ? error.message : "PDFの生成に失敗しました。");
-    } finally {
-      setDownloadingPdf(false);
-    }
-  }
-
-  async function saveToDrive() {
-    if (!document || savingDrive) return;
-    setSavingDrive(true);
-    setDriveError("");
-    try {
-      const response = await fetch(`/api/v2/documents/${document.id}/drive`, { method: "POST" });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error ?? "Driveへの保存に失敗しました。");
-      await onRefresh();
-      window.open(result.driveLink, "_blank", "noopener,noreferrer");
-    } catch (error) {
-      setDriveError(error instanceof Error ? error.message : "Driveへの保存に失敗しました。");
-    } finally {
-      setSavingDrive(false);
-    }
-  }
-
   const entries = Object.entries(document.formData ?? {})
     .filter(([, value]) => value !== null && value !== "" && typeof value !== "object")
     .slice(0, 40);
@@ -254,38 +203,15 @@ function DocumentDetail({
       <dt>作成日時</dt><dd>{formatDate(document.createdAt)}</dd>
       <dt>作成者</dt><dd>{document.createdBy ?? "—"}</dd>
     </dl>
-    <div className="document-output-actions">
-      {canGeneratePdf && document.documentNumber && (
-        <button
-          className="pdf-download-link"
-          onClick={() => void downloadPdf()}
-          disabled={downloadingPdf}
-        >
-          {downloadingPdf ? "PDFを生成中…" : "PDFを生成・ダウンロード"}
-        </button>
-      )}
-      {canSaveToDrive && !document.driveLink && (
-        <button className="drive-save-button" onClick={() => void saveToDrive()} disabled={savingDrive}>
-          {savingDrive ? "Driveへ保存中…" : "Driveへ保存"}
-        </button>
-      )}
-      {document.driveLink && (
-        <a className="drive-link" href={document.driveLink} target="_blank" rel="noreferrer">
-          Drive上の文書を開く
-        </a>
-      )}
-    </div>
-    {pdfError && <small className="document-output-error">{pdfError}</small>}
-    {driveError && <small className="document-output-error">{driveError}</small>}
-    {canGeneratePdf && (
-      <small className="pdf-safety-note">
-        PDFは選択した確定済み文書から生成します。
-        {canSaveToDrive && " Driveへの保存先は検証用フォルダに限定されます。"}
-      </small>
-    )}
-    {document.documentNumber && (canGmailNotify || canCloudSign) && (
-      <DocumentIntegrations documentId={document.id} canGmailNotify={canGmailNotify} canCloudSign={canCloudSign} />
-    )}
+    <DocumentOutputActions
+      documentId={document.id}
+      documentNumber={document.documentNumber}
+      driveLink={document.driveLink || null}
+      canGeneratePdf={canGeneratePdf}
+      canSaveToDrive={canSaveToDrive}
+      canGmailNotify={canGmailNotify}
+      canCloudSign={canCloudSign}
+      onSaved={onRefresh} />
     <h3>登録項目</h3>
     <dl className="form-data-list">
       {entries.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}
@@ -300,10 +226,6 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
-
-function safeFilename(value: string) {
-  return value.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 120) || "document";
-}
 
 const DOC_HEADER_MAP: Record<string, string> = {
   "文書番号": "documentNumber", document_number: "documentNumber", documentnumber: "documentNumber", number: "documentNumber",

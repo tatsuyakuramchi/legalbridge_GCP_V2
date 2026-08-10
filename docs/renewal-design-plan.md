@@ -294,6 +294,10 @@ Phase 7 は全フェーズの受け入れ後
 
 | 2026-08-07 | Phase 5 | 点火準備：CloudSign 点火 Runbook 新設＋gmail-cloudsign.md を確定仕様へ更新 | — | ✅ |
 
+| 2026-08-10 | UX | B1（作成→出力の1画面化）実装：DocumentOutputActions を抽出し確定結果へインライン | LegalBridge_AI_GCP | ✅ |
+
+**B1 実装**：文書の出力アクション（PDF生成・Drive保存・Gmail/CloudSign送信）を `DocumentOutputActions.tsx` に抽出。確定結果パネル（DocumentForm）にインライン化し、`documents` 一覧詳細への必須ジャンプ（従来4遷移・F8）を解消。同部品を DocumentRegistry 詳細ペインでも共用（DRY・重複ロジック削除）。DocumentForm に canGeneratePdf/canSaveToDrive/canGmailNotify/canCloudSign を配線。テスト545件緑・typecheck緑・build緑。UX 改善は Quick Wins Q1〜Q4・構造 R1〜R5・大物 B1 まで完了（残 B2＝新規画面に指針適用）。
+
 | 2026-08-10 | UX | 構造リファクタ R2（条件面集約）・R3（作品二重解消）・R5（申請者ホーム分離）実装 | LegalBridge_AI_GCP | ✅ |
 
 **R2/R3/R5 実装**：R2＝条件明細を正典ハブに `surface-xref`（役割ラベル付き相互リンク：閲覧＝条件明細／作成＝アウト条件／マスタ＝台帳金銭条件）、`ledgerSeedType` で台帳の該当タブを直接開く。R3＝作品ビュー（WorkDetail）と台帳「作品・原作」を役割明示＋相互リンクで整流（F5）。R5＝申請者（requester かつ非 legal）のホームを `RequesterHome`（文書作成・自分の文書・自分の下書き＋Backlog起票案内）に分離し、法務オペ俯瞰を見せない（法務/管理者は従来 Dashboard 維持）。テスト545件緑・typecheck緑・build緑。構造リファクタ R1〜R5 完了（R4 は標準確定＝新規画面適用）。

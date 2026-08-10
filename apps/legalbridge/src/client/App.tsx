@@ -23,6 +23,7 @@ import { BillingDashboard } from "./BillingDashboard";
 import { ReceivableMap } from "./ReceivableMap";
 import { WorkDetail } from "./WorkDetail";
 import { EmptyState } from "./EmptyState";
+import { DocumentOutputActions } from "./DocumentOutputActions";
 import { DataQuality } from "./DataQuality";
 import { VendorMerge } from "./VendorMerge";
 import { MatterMerge } from "./MatterMerge";
@@ -408,6 +409,10 @@ export function App() {
             schema={schema}
             readOnly={readOnly}
             canFinalizeDocuments={canFinalizeDocuments}
+            canGeneratePdf={canGeneratePdf}
+            canSaveToDrive={canSaveToDrive}
+            canGmailNotify={canGmailNotify}
+            canCloudSign={canCloudSign}
             initialIssueKey={draftSelection?.issueKey ?? (newDocIssueKey || "VALIDATION-1")}
             seedValues={draftSelection ? undefined : newDocSeed}
             onBack={() => setView(draftSelection ? "drafts" : "templates")}
@@ -661,6 +666,10 @@ function DocumentForm({
   schema,
   readOnly,
   canFinalizeDocuments,
+  canGeneratePdf = false,
+  canSaveToDrive = false,
+  canGmailNotify = false,
+  canCloudSign = false,
   initialIssueKey,
   seedValues,
   onBack,
@@ -670,6 +679,10 @@ function DocumentForm({
   schema: DocumentFormSchema | null;
   readOnly: boolean;
   canFinalizeDocuments: boolean;
+  canGeneratePdf?: boolean;
+  canSaveToDrive?: boolean;
+  canGmailNotify?: boolean;
+  canCloudSign?: boolean;
   initialIssueKey: string;
   seedValues?: Record<string, string>;
   onBack: () => void;
@@ -969,13 +982,18 @@ function DocumentForm({
             <div><dt>Drive</dt><dd>{formatIntegrationStatus(finalizedDocument.integrations.drive)}</dd></div>
             <div><dt>Backlog</dt><dd>{formatIntegrationStatus(finalizedDocument.integrations.backlog)}</dd></div>
           </dl>
-          <p>外部連携は実行していません。文書番号の発番とDB確定のみ完了しています。</p>
+          <p>文書番号の発番とDB確定が完了しました。この画面から PDF 生成・Drive 保存・送信まで行えます。</p>
+          <DocumentOutputActions
+            documentId={finalizedDocument.id}
+            documentNumber={finalizedDocument.documentNumber}
+            canGeneratePdf={canGeneratePdf}
+            canSaveToDrive={canSaveToDrive}
+            canGmailNotify={canGmailNotify}
+            canCloudSign={canCloudSign} />
           <div className="finalization-next">
             <span className="next-label">次の操作</span>
-            {onOpenDocuments && <button className="primary" onClick={onOpenDocuments}>
-              文書一覧へ（PDF・Drive保存）
-            </button>}
-            {onCreateNew && <button onClick={onCreateNew}>新しい文書を作成</button>}
+            {onCreateNew && <button className="primary" onClick={onCreateNew}>新しい文書を作成</button>}
+            {onOpenDocuments && <button onClick={onOpenDocuments}>文書一覧へ</button>}
             <button onClick={onBack}>閉じる</button>
           </div>
         </div>
