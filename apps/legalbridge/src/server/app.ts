@@ -499,7 +499,7 @@ function createDefaultDependencies(): AppDependencies {
     backlogClient: defaultBacklogClient(),
     backlogWriteClient: defaultBacklogWriteClient(),
     masterData: database
-      ? new PgMasterDataRepository(database)
+      ? new PgMasterDataRepository(database, new PgAppSettingsRepository(database))
       : new MemoryMasterDataRepository(),
     documentRegistry: database
       ? new PgDocumentRegistryRepository(database)
@@ -1492,7 +1492,8 @@ export function createApp(
     dependencies.contractIntakeDocuments,
     dependencies.templates,
     dependencies.drafts,
-    contractIntakeDocumentBridgeEnabled
+    contractIntakeDocumentBridgeEnabled,
+    dependencies.appSettings
   ));
   app.use("/api/v2", createContractOutboundRouter(
     dependencies.contractOutbound,

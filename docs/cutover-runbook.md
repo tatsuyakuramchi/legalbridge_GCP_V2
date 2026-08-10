@@ -17,6 +17,8 @@ V2（本リポジトリ）を本番サービスとして V1（legalbridge_ai_gcp
 
 ## 1. 残実装（コード）— cutover 前に必要
 
+> **2026-08-10：本節の残実装はすべて完了**（1-1〜1-6 ✅）。以降は §2 点火メニューと業務判断のみ。
+
 | # | 内容 | 状態 |
 |---|---|---|
 | 1-1 | **Phase 16-3：Slack インテーク** | ✅ 16-3a〜16-3c 実装済（受信口＋/法務依頼＝明細行・既存課題紐付け・納期変更込み＋/法務検索・grant 044）。点火は `phase16-cutover-gaps.md`（公開 ingress 決定が前提） |
@@ -24,7 +26,7 @@ V2（本リポジトリ）を本番サービスとして V1（legalbridge_ai_gcp
 | 1-3 | Phase 16-2：契約チェック API | ✅ 実装済（読取専用・grant 不要・全ロール。/法務検索 16-3b の前提解消） |
 | 1-4 | Phase 16-4：添付アップロード（multipart） | ✅ 実装済（新規 grant 不要。点火＝Drive ストレージ構成＋`_ATTACHMENT_UPLOAD_ENABLED=true`＋WRITE_SCOPES へ `attachments`（snippets の直後）。`phase16-cutover-gaps.md`） |
 | 1-5 | 9-7 Backlog Webhook 自動起票（受信→legal_requests 作成） | ✅ 実装済（課題追加→自動取込＋Slack経由は受付済み遷移＋type=2 状態同期。点火＝grant 046＋`_BACKLOG_INTAKE_ENABLED=true`＋`_BACKLOG_WEBHOOK_TOKEN_SECRET`。公開 ingress（2-4）が前提。`phase9-automation-plan.md` 9-7） |
-| 1-6 | V2 帳票への会社プロファイル差込（app_settings 参照。現状ハードコード） | 未着手（小） |
+| 1-6 | V2 帳票への会社プロファイル差込（app_settings 参照。現状ハードコード） | ✅ 実装済（自社差込ピッカー＋intake ブリッジが COMPANY_* を参照・未設定は従来値へ縮退＝grant/env 追加なし。設定は 11-1 の設定画面＝settings scope 点火で編集可） |
 
 > B 群（納期変更・DQ トリアージ等）は V1 併走中は V1 側で運用＝cutover ブロッカーではない。
 

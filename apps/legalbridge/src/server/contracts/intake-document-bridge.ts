@@ -40,7 +40,9 @@ export async function prepareContractIntakeDocumentDrafts(
   templateType: ContractIntakeDocumentType,
   drafts: DraftRepository,
   templates: TemplateRepository,
-  updatedBy: string
+  updatedBy: string,
+  // 自社名（1-6）。app_settings の会社プロファイルから解決（未指定は従来値）。
+  companyName = "株式会社アークライト"
 ): Promise<PreparedIntakeDraft[]> {
   const template = await templates.findCurrent(templateType);
   if (!template) {
@@ -50,7 +52,7 @@ export async function prepareContractIntakeDocumentDrafts(
     );
   }
 
-  const plans = buildContractIntakeDraftPlans(source, templateType);
+  const plans = buildContractIntakeDraftPlans(source, templateType, companyName);
   const prepared: PreparedIntakeDraft[] = [];
   for (const plan of plans) {
     const existing = await drafts.find(plan.issueKey, plan.templateType);
@@ -73,15 +75,17 @@ export async function prepareContractIntakeDocumentDrafts(
 
 export function buildContractIntakeDraftPlans(
   source: ContractIntakeDocumentSource,
-  templateType: ContractIntakeDocumentType
+  templateType: ContractIntakeDocumentType,
+  companyName = "株式会社アークライト"
 ): DraftPlan[] {
   return templateType === "individual_license_terms"
-    ? buildIndividualLicensePlans(source)
-    : [buildRoyaltyStatementPlan(source)];
+    ? buildIndividualLicensePlans(source, companyName)
+    : [buildRoyaltyStatementPlan(source, companyName)];
 }
 
 function buildIndividualLicensePlans(
-  source: ContractIntakeDocumentSource
+  source: ContractIntakeDocumentSource,
+  companyName: string
 ): DraftPlan[] {
   const groups = new Map<number, Array<{
     index: number;
@@ -128,13 +132,13 @@ function buildIndividualLicensePlans(
         ORIGINAL_WORK: source.sourceWork.title,
         PROJECT_TITLE: source.ownWork.title,
         対象製品予定名: source.ownWork.title,
-        Licensor_氏名会社名: "株式会社アークライト",
+        Licensor_氏名会社名: companyName,
         Licensee_氏名会社名: vendor.vendorName,
         Licensee_住所: vendor.address,
         Licensee_代表者名: vendor.representative,
         Licensee_連絡先: [vendor.contactName, vendor.phone, vendor.email]
           .filter(Boolean).join(" ／ "),
-        PARTY_A_NAME: "株式会社アークライト",
+        PARTY_A_NAME: companyName,
         PARTY_B_NAME: vendor.vendorName,
         VENDOR_NAME: vendor.vendorName,
         許諾開始日: first.termStart ??
@@ -156,7 +160,8 @@ function buildIndividualLicensePlans(
 }
 
 function buildRoyaltyStatementPlan(
-  source: ContractIntakeDocumentSource
+  source: ContractIntakeDocumentSource,
+  companyName: string
 ): DraftPlan {
   const vendorId = source.intake.contract.primaryVendorId;
   const vendor = requireVendor(source, vendorId);
@@ -193,8 +198,8 @@ function buildRoyaltyStatementPlan(
       PROJECT_TITLE: source.ownWork.title,
       ORIGINAL_WORK: source.sourceWork.title,
       WORK_ID: source.ownWork.workCode,
-      payerCompany: "株式会社アークライト",
-      PARTY_A_NAME: "株式会社アークライト",
+      payerCompany: companyName,
+      PARTY_A_NAME: companyName,
       designerName: vendor.vendorName,
       licensor: vendor.vendorName,
       VENDOR_NAME: vendor.vendorName,

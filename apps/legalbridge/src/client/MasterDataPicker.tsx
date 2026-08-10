@@ -153,7 +153,12 @@ function applyCompanyAliases(schema: DocumentFormSchema, patch: DocumentFormData
     COMPANY_REPRESENTATIVE: "rep", PARTY_A_NAME: "name", PARTY_A_ADDRESS: "address",
     PARTY_A_REP: "rep", Licensee_名称: "name", Licensee_氏名会社名: "name",
     Licensee_住所: "address", Licensee_代表者名: "rep", licensee: "name",
-    アークライト住所: "address", アークライト代表者氏名: "rep"
+    アークライト住所: "address", アークライト代表者氏名: "rep",
+    // 会社プロファイル拡張（1-6・app_settings 由来）。
+    COMPANY_NAME_KANA: "name_kana", COMPANY_POSTAL_CODE: "postal_code",
+    COMPANY_TEL: "tel", COMPANY_FAX: "fax",
+    COMPANY_INVOICE_NO: "invoice_no", 適格請求書発行事業者番号: "invoice_no",
+    COMPANY_BANK_INFO: "bank_info", COMPANY_SEAL_NOTE: "seal_note"
   });
 }
 

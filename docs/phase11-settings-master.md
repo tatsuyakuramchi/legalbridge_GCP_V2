@@ -44,8 +44,11 @@ Profile D substitutions 末尾へ `|_SETTINGS_WRITE_ENABLED=true`、`_WRITE_SCOP
 直後に `settings` を追加（正準順）。**閲覧は grant/フラグ不要**（app_settings が空でも空表示）、
 編集のみ点火が要る。
 
-> 将来：V2 の帳票レンダリング（テンプレート）に会社プロファイルを差し込む配線は別スライスで
-> （現状 app_settings は保存されるが V2 レンダリングは未参照＝V1 と共有データの先行整備）。
+> ~~将来：帳票差込の配線は別スライス~~ → **runbook 1-6 で配線済み（2026-08-10）**：
+> `settings/company-profile.ts`（loadCompanyProfile・未整備は従来値へ縮退）を新設し、
+> 文書作成の自社差込（MasterDataPicker の company タイプ＝全 10 キーを values 化＋クライアント
+> エイリアス拡張）と contract-intake ブリッジ（Licensor/PARTY_A/payerCompany）が app_settings の
+> COMPANY_* を参照する。追加 grant/env なし（SELECT は grant 036 で付与済み）。
 
 ## 11-3：台帳マスタ CRUD ✅ 実装済
 

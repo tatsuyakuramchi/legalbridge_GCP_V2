@@ -1,4 +1,6 @@
 import type { DatabasePool } from "../db/pool.js";
+import type { AppSettingsRepository } from "../settings/settings-repository.js";
+import { loadCompanyProfile, type CompanyProfile } from "../settings/company-profile.js";
 
 export type MasterDataType = "vendor" | "staff" | "document" | "work" | "company";
 
@@ -15,10 +17,14 @@ export interface MasterDataRepository {
 }
 
 export class PgMasterDataRepository implements MasterDataRepository {
-  constructor(private readonly database: DatabasePool) {}
+  constructor(
+    private readonly database: DatabasePool,
+    // 会社プロファイル（1-6）。app_settings の COMPANY_* を差込に使う（未整備は既定へ縮退）。
+    private readonly settings?: AppSettingsRepository
+  ) {}
 
   async search(type: MasterDataType, query: string, limit = 20) {
-    if (type === "company") return companyProfile();
+    if (type === "company") return companyProfile(await loadCompanyProfile(this.settings));
     const keyword = `%${query.trim()}%`;
     const boundedLimit = Math.min(Math.max(limit, 1), 50);
     if (type === "vendor") {
@@ -139,16 +145,26 @@ export class MemoryMasterDataRepository implements MasterDataRepository {
   }
 }
 
-function companyProfile(): MasterDataItem[] {
+function companyProfile(profile?: CompanyProfile): MasterDataItem[] {
+  const p = profile ?? { name: "株式会社アークライト", nameKana: "", postalCode: "",
+    address: "東京都千代田区神田小川町1-2 風雲堂ビル2階", tel: "", fax: "",
+    rep: "代表取締役　青柳 昌行", invoiceNo: "", bankInfo: "", sealNote: "" };
   return [{
-    id: "arclight",
+    id: "company",
     type: "company",
-    label: "株式会社アークライト",
-    description: "自社プロファイル",
+    label: p.name,
+    description: "自社プロファイル（マスタ・設定＞システム設定で編集）",
     values: {
-      name: "株式会社アークライト",
-      address: "東京都千代田区神田小川町1-2 風雲堂ビル2階",
-      rep: "代表取締役　青柳 昌行"
+      name: p.name,
+      name_kana: p.nameKana,
+      postal_code: p.postalCode,
+      address: p.address,
+      tel: p.tel,
+      fax: p.fax,
+      rep: p.rep,
+      invoice_no: p.invoiceNo,
+      bank_info: p.bankInfo,
+      seal_note: p.sealNote
     }
   }];
 }

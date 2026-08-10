@@ -118,6 +118,16 @@ test("個別利用許諾条件書を許諾先ごとの下書きへ分割する",
   assert.equal(conditions[0].subject, "ゲームデザイン");
 });
 
+test("自社名は会社プロファイルの値で差し込める（1-6・既定は従来値）", () => {
+  const [withDefault] = buildContractIntakeDraftPlans(source(), "individual_license_terms");
+  assert.equal(withDefault.formData["Licensor_氏名会社名"], "株式会社アークライト");
+  const [custom] = buildContractIntakeDraftPlans(source(), "individual_license_terms", "新社名株式会社");
+  assert.equal(custom.formData["Licensor_氏名会社名"], "新社名株式会社");
+  assert.equal(custom.formData["PARTY_A_NAME"], "新社名株式会社");
+  const [statement] = buildContractIntakeDraftPlans(source(), "royalty_statement", "新社名株式会社");
+  assert.equal(statement.formData["payerCompany"], "新社名株式会社");
+});
+
 test("利用許諾料明細は料率だけを転記し実績金額を空欄にする", () => {
   const [plan] = buildContractIntakeDraftPlans(
     source(),

@@ -10,6 +10,8 @@ import {
 import type {
   ContractIntakeDocumentSourceRepository
 } from "./intake-document-repository.js";
+import type { AppSettingsRepository } from "../settings/settings-repository.js";
+import { loadCompanyProfile } from "../settings/company-profile.js";
 
 const pathSchema = z.object({
   documentId: z.coerce.number().int().positive()
@@ -25,7 +27,9 @@ export function createContractIntakeDocumentRouter(
   sources: ContractIntakeDocumentSourceRepository | undefined,
   templates: TemplateRepository,
   drafts: DraftRepository,
-  writeEnabled = false
+  writeEnabled = false,
+  // 会社プロファイル（1-6）。未注入は従来のハードコード値で動く。
+  settings?: AppSettingsRepository
 ) {
   const router = Router();
 
@@ -84,12 +88,14 @@ export function createContractIntakeDocumentRouter(
           });
         }
 
+        const company = await loadCompanyProfile(settings);
         const prepared = await prepareContractIntakeDocumentDrafts(
           source,
           templateType,
           drafts,
           templates,
-          response.locals.currentUser.email
+          response.locals.currentUser.email,
+          company.name
         );
         const created = prepared.some((item) => item.created);
         return response.status(created ? 201 : 200).json({
