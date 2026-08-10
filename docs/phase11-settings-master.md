@@ -10,7 +10,7 @@ V2 の Admin は読取専用ステータスのみ。設定・承認ルート・�
 | 11-1 | システム設定（会社プロファイル） | 中 | ✅ 実装済 |
 | 11-2 | 承認ルート/ワークフロールール設定 | 中 | ✅ 実装済 |
 | 11-3 | 台帳マスタ CRUD 書込 | 中 | ✅ 実装済（Create/Update は既存・今回 vendor 無効化を追加） |
-| 11-4 | 契約マスタ CRUD | 中 | 未 |
+| 11-4 | 契約マスタ CRUD | 中 | ✅ 実装済（既存契約の更新・状態変更。登録は intake が担う） |
 | 11-5 | 原作マテリアル登録ワークフロー | 中 | ✅ 実装済（原作起点の追加/編集 UX。materials write は既存） |
 | 11-6〜11-9 | PII同意/bulk/テーマ/稟議 | 小〜中 | 優先低・要判断（Ringi 保留） |
 
@@ -117,11 +117,51 @@ work_id 必須＝作品スコープ。素材タブ読取のみだったのは UI
 > 参照（condition_lines 等）チェック＋DELETE grant が要るため別スライス。②「金銭条件付帯必須」の
 > ハード強制＝現状は isRoyaltyBearing フラグまで（条件明細への必須リンクは条件オペ Phase 13 と併せて検討）。
 
-## Phase 11 まとめ（cutover Tier 1）
+## 11-4：契約マスタ CRUD ✅ 実装済
+
+**調査で判明**：gap 台帳の 11-4 は「登録・更新・状態変更」を想定していたが、**契約の新規登録(INSERT)は
+既に contract-intake（`contracts/intake-repository.ts`）が担っている**（締結済インバウンド契約の取込）。
+実ギャップは **既存 contracts 行の中核項目編集とライフサイクル状態変更**。ここに絞って実装した。
+
+- `contracts/contract-master-schema.ts`：`LIFECYCLE_STAGES`（requested〜terminated の 9 値）＋
+  `contractUpdateSchema`（表題・有効期間・自動更新・更新通知/アラート月数・レビュー期日。**全 optional・
+  部分更新**＝省略キーは触らない。transform は optional の undefined でも走るため `undefined` はそのまま
+  返して出力にキーを増やさない＝**部分 PATCH が他列を null で潰さない**）＋`contractStatusSchema`。
+- **grant 038**（`038_production_contract_master_grants.sql`＋preflight）：`contracts` に**列単位 UPDATE**
+  （lifecycle_stage / contract_status / contract_title / effective_date / expiration_date / auto_renewal /
+  renewal_notice_months / alert_lead_months / review_due_date の 9 列のみ）。token
+  `GRANT_PRODUCTION_CONTRACT_MASTER`。全列 UPDATE・DELETE は付与しない（SELECT は 006/intake で既存、
+  primary_vendor_id は 018 で既存）。
+- `contracts/contract-master-repository.ts`（Pg/Memory）：`list(q)`（文書番号/表題/種別 ILIKE・締結/起票日 desc）／
+  `find(id)`／`update(id, input)`（`FIELD_COLUMNS` 動的 assignment・in 演算子で存在キーのみ）／
+  `setStatus(id, {lifecycleStage})`（lifecycle_stage を正とし legacy 互換の contract_status も同値へ）。
+- `contracts/contract-master-routes.ts`：`GET /contracts`（**admin/legal**・q 検索）＋
+  `PATCH /contracts/:id`（guarded・部分更新）＋`PATCH /contracts/:id/status`（guarded・状態変更）。
+  42501→CONTRACT_MASTER_FORBIDDEN_DB(503)／CONTRACT_NOT_FOUND→404。
+- config `CONTRACT_MASTER_WRITE_ENABLED`／app.ts（gating・scope `contract-master`・safe-write は
+  `PATCH /contracts/:id(/status)`・writeCapabilities 両所・OR-chain）／verify（write-test＋IAP/IAM＋
+  WRITE_SCOPES 正準順で workflow-rules 直後に `contract-master`）／cloudbuild 全結線。
+- UI：`ContractMasterWorkspace`（マスタ・設定＞契約マスタ・admin/legal）＝一覧＋検索、行内で表題・有効期間・
+  自動更新の**インライン編集**、状態は**セレクトで即時変更**（capability 有効時のみ・未有効化は
+  FeatureLockedNote で閲覧のみ）。
+- tests：403(読取)／一覧／検索／無効時503／中核更新／空更新400／404／状態変更／不正状態400／
+  編集不可403／FORBIDDEN_DB の 11 件。**642 緑**。
+
+### 点火（本番）
+```bash
+psql "" -f infra/gcp/sql/038_production_contract_master_preflight.sql || true
+psql "" -v confirm_contract_master=GRANT_PRODUCTION_CONTRACT_MASTER \
+  -f infra/gcp/sql/038_production_contract_master_grants.sql
+```
+Profile D substitutions 末尾へ `|_CONTRACT_MASTER_WRITE_ENABLED=true`、`_WRITE_SCOPES` の `workflow-rules`
+直後に `contract-master` を追加（正準順）。**閲覧は grant/フラグ不要**（admin/legal は既存 SELECT で見える）、
+編集のみ点火が要る。
+
+## Phase 11 まとめ（cutover Tier 1 完了）
 11-1 設定 ／ 11-2 承認ルート ／ 11-3 台帳マスタ（Create/Update 既存＋vendor 無効化）／
-11-5 原作起点マテリアル登録 を実装。**運用自立（管理者が V2 だけで設定・マスタ・承認ルートを自己完結）
-の主要導線が揃った**。残 11-4 契約マスタ CRUD（優先中）、11-6〜11-9（優先低・Ringi 保留）。
+11-4 契約マスタ（既存契約の更新・状態変更）／ 11-5 原作起点マテリアル登録 を実装。
+**cutover Tier 1（運用自立＝管理者が V2 だけで設定・マスタ・承認ルート・契約を自己完結）が揃った**。
+残 11-6〜11-9（優先低・Ringi 保留）。
 
 ## 次スライス候補
-- **11-4 契約マスタ CRUD**（intake と別の契約レジストリ登録・更新・状態変更）
-- Phase 12（データ保守・検出→修復）／cutover runbook（Phase 7）
+- Phase 12（データ保守・検出→修復）／cutover runbook（Phase 7・各種点火＋master WRITE_SCOPES 有効化）

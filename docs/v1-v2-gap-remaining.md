@@ -55,7 +55,7 @@ V2 の `AdminOverview` は読み取り専用ステータスのみ。**設定・�
 | 11-1 | システム設定（会社プロファイル/アプリ設定） | FE `SettingsPage.tsx`／BE `app-settings` | 会社プロファイル・アプリ設定のタブ編集保存 | 中 | 中 | ✅ 実装済（会社プロファイル allowlist・grant 036・`docs/phase11-settings-master.md`。連携トグル/秘密は対象外＝env管理） |
 | 11-2 | 承認ルート/ワークフロールール設定 | FE `master/RulesPanel.tsx`／BE `workflow-settings`・`rules` | 部門ごとの承認者/押印担当/管理者 Slack ID・チャンネル（`workflow_rules`） | 中 | 中 | ✅ 実装済（department_workflow_rules upsert・grant 037・`docs/phase11-settings-master.md`。V2 ルーティング参照は将来配線） |
 | 11-3 | 台帳マスタ CRUD 書込 | BE `master/ledgers` POST/PUT/DELETE | V2は`GET /ledgers/:type`読取のみ。作成/更新/削除が無い | 中 | 中 | ✅ 実装済（**過大計上だった**：Create/Update は Phase 2/4/8 で実装済・未有効化。今回 vendor 論理削除〈is_active〉追加。cutover は WRITE_SCOPES 有効化で解禁） |
-| 11-4 | 契約マスタ CRUD | BE `master/contracts` POST/PUT/DELETE・`:id/status` | intake とは別の契約レジストリ登録・更新・状態変更 | 中 | 中 |
+| 11-4 | 契約マスタ CRUD | BE `master/contracts` POST/PUT/DELETE・`:id/status` | intake とは別の契約レジストリ登録・更新・状態変更 | 中 | 中 | ✅ 実装済（**登録は contract-intake が既存**。今回 既存 contracts の列単位更新・ライフサイクル状態変更＝grant 038・`GET /contracts`／`PATCH /contracts/:id(/status)`・admin/legal・`docs/phase11-settings-master.md`） |
 | 11-5 | 原作マテリアル登録ワークフロー | FE `master/MaterialEntryPanel.tsx` | 原作→素材検索起点で新規マテリアル作成/編集/安全削除（金銭条件付帯必須）。V2は素材タブ読取のみ | 中 | 中 | ✅ 実装済（materials write は Phase 4 既存・work_id 必須＝作品スコープ。今回 WorkDetail に原作起点の追加/編集 UX。安全削除＝is_active 列なしで別スライス、金銭条件必須のハード強制は将来） |
 | 11-6 | PII同意記録 / 会社プロフィール | BE `master/vendors/:code/pii-consent`・`company-profile` | ベンダーPII取得同意の記録・自社プロフィール取得 | 小 | 低 |
 | 11-7 | マスタ横断 bulk-export/import | BE `master/bulk-export`・`bulk-import` | マスタ横断の一括書出/取込（個別importはV2にあり） | 小 | 低 |
@@ -108,7 +108,7 @@ V2 は condition-lines の一覧/summary/receipts は移植済み。**書込オ�
 
 1. **Phase 9（自動化基盤＋督促/Webhook）** — 業務の督促自動化と外部イベント連携の回復。V2の最大の機能的退化。土台（9-0）を先に。
 2. **Phase 10（文書運用オペ）** — 発行後の void/再発行/アーカイブ/Excel一括は現場運用で必須度が高い。
-3. **Phase 11（設定・マスタ書込）** — 承認ルート・システム設定・台帳/契約マスタの編集。運用自立に必要。
+3. **Phase 11（設定・マスタ書込）** — ✅ Tier 1 完了（11-1 設定／11-2 承認ルート／11-3 台帳マスタ／11-4 契約マスタ／11-5 マテリアル）。残 11-6〜11-9 は優先低・Ringi 保留。運用自立の主要導線が揃った。
 4. **Phase 12（データ保守）** — 検出だけの現状から修復まで。移行安定後の優先。
 5. **Phase 13/15（明細オペ・テンプレ編集・小物）** — 個別必要性でトリアージ。
 6. **Phase 14（RPT）** — 独立・大。実利用の有無を確認してから着手判断。

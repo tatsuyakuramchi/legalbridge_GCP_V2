@@ -54,6 +54,8 @@ export const config = {
     process.env.SETTINGS_WRITE_ENABLED === "true",
   workflowRulesWriteEnabled:
     process.env.WORKFLOW_RULES_WRITE_ENABLED === "true",
+  contractMasterWriteEnabled:
+    process.env.CONTRACT_MASTER_WRITE_ENABLED === "true",
   royaltyEventWritesEnabled:
     process.env.ROYALTY_EVENT_WRITES_ENABLED === "true",
   receiptWritesEnabled:

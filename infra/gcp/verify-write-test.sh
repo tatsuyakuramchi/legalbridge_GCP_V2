@@ -532,6 +532,25 @@ case "${WORKFLOW_RULES_WRITE_ENABLED}" in
     exit 1
     ;;
 esac
+case "${CONTRACT_MASTER_WRITE_ENABLED}" in
+  false)
+    ;;
+  true)
+    # 契約マスタ（contracts 列 UPDATE）編集。書込サービス限定＋IAP/IAM 必須。
+    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
+      echo "Contract master deployment blocked: limited to the write-test service."
+      exit 1
+    fi
+    if [ "${AUTH_MODE}" != "iap" ] && [ "${AUTH_MODE}" != "cloudrun-iam" ]; then
+      echo "Contract master deployment blocked: IAP or Cloud Run IAM authentication is required."
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Deployment blocked: CONTRACT_MASTER_WRITE_ENABLED must be true or false."
+    exit 1
+    ;;
+esac
 case "${JOBS_ENABLED}" in
   false)
     ;;
@@ -884,6 +903,9 @@ if [ "${SETTINGS_WRITE_ENABLED}" = "true" ]; then
 fi
 if [ "${WORKFLOW_RULES_WRITE_ENABLED}" = "true" ]; then
   expected_write_scopes="$expected_write_scopes,workflow-rules"
+fi
+if [ "${CONTRACT_MASTER_WRITE_ENABLED}" = "true" ]; then
+  expected_write_scopes="$expected_write_scopes,contract-master"
 fi
 if [ "${BACKLOG_COMMENT_WRITE_ENABLED}" = "true" ]; then
   expected_write_scopes="$expected_write_scopes,backlog-comment"
