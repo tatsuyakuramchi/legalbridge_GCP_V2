@@ -72,12 +72,17 @@ programmaticClients に登録し audience に使用・SA へ iap.httpsResourceAc
 OIDC（audience=IAP `programmaticClients` のクライアント ID＝2-3 と同じ `lb-v2-scheduler`）を付けて
 IAP 越しに本体へ転送する。実認証は本体のアプリ層（X-Webhook-Token／Slack v0 署名・fail-closed）。
 Backlog/CloudSign はカスタムヘッダ不可のため、リレーが `?token=` → `X-Webhook-Token` 変換を行う。
-デプロイ・スモークは `infra/receiver/README.md`。残作業＝
-① リレーのデプロイ（SA 作成＋iap.httpsResourceAccessor＋`gcloud run deploy --source infra/receiver`）
-② secret 登録（`CLOUDSIGN_WEBHOOK_TOKEN`/`BACKLOG_WEBHOOK_TOKEN`/`SLACK_SIGNING_SECRET`）→
-   本体 substitutions（`_CLOUDSIGN_WEBHOOK_TOKEN_SECRET`/`_BACKLOG_WEBHOOK_TOKEN_SECRET`/
-   `_SLACK_INTAKE_ENABLED`+`_SLACK_SIGNING_SECRET_NAME`/`_BACKLOG_INTAKE_ENABLED`）で再デプロイ
-③ 外部登録（Backlog Webhook URL・CloudSign Webhook URL・Slack App コマンド/Interactivity URL）
+デプロイ・スモークは `infra/receiver/README.md`。進捗（2026-08-10）＝
+① ✅ リレー稼働（`lb-v2-receiver`・SA lb-v2-receiver@＋iap.httpsResourceAccessor。
+   公開→IAP→本体の経路をスモークで確認）
+② ✅ Backlog 分点火：secret `BACKLOG_WEBHOOK_TOKEN`/`CLOUDSIGN_WEBHOOK_TOKEN` 作成、
+   本体 build 3dfd59e0 で `_BACKLOG_WEBHOOK_TOKEN_SECRET`＋`_BACKLOG_INTAKE_ENABLED=true` 点火。
+   **実スモーク成功**（不正トークン401／正トークンで intakeCreated:true＝legal_requests 書込＋
+   0103 トリガの案件自動生成まで動作確認・テスト行は掃除済み）
+③ 残り＝外部登録：Backlog コンソールに Webhook URL（`<RECV_URL>/internal/webhooks/backlog?token=…`・
+   課題の追加/更新）を登録。Slack App（signing secret→`SLACK_SIGNING_SECRET` secret→
+   `_SLACK_INTAKE_ENABLED`+`_SLACK_SIGNING_SECRET_NAME` で再デプロイ→コマンド/Interactivity URL 登録）。
+   CloudSign Webhook は 2-5 の CloudSign live と同時に（secret は作成済み）
 
 ### 2-5. 統合 live 化（Drive / Gmail / CloudSign）
 - Drive：`phase5-integration-readiness.md`＋`drive-integration.md`。SA 鍵 Secret・フォルダID →
@@ -111,7 +116,8 @@ Backlog/CloudSign はカスタムヘッダ不可のため、リレーが `?token
 - [x] grant 031・043・044・045・046 適用済み（2026-08-10・6項目検証済み）
 - [x] マスタ書込スコープ点火済み（2-2・2026-08-10。snippets・満了遷移も同時点火）
 - [x] Scheduler 3 ジョブ作成・疎通済み（2-3・2026-08-10。resume は 5-2／CloudSign live 時）
-- [ ] Webhook 受信 live（2-4）・CloudSign/Gmail/Drive live（2-5）
+- [x] Webhook 受信 live（2-4・Backlog 分＝リレー＋自動起票スモーク成功。Backlog コンソール登録と Slack App 設定が残）
+- [ ] CloudSign/Gmail/Drive live（2-5）
 - [ ] legal/requester 開放＋スモーク合格（3）
 - [ ] 正式サービス名で稼働（4）
 - [ ] V1 読み取り専用化→停止（5）
