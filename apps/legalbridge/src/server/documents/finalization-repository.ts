@@ -36,8 +36,7 @@ export class PgDocumentFinalizationRepository implements DocumentFinalizationRep
       const prefix = await findPrefix(client, input.templateType);
       const year = currentYearInTokyo();
       const sequence = await nextSequence(client, prefix, year);
-      const numberPrefix = prefix.startsWith("ARC-") ? prefix : `ARC-${prefix}`;
-      const documentNumber = `${numberPrefix}-${year}-${String(sequence).padStart(4, "0")}`;
+      const documentNumber = formatDocumentNumber(prefix, year, sequence);
 
       const inserted = await client.query(
         `INSERT INTO documents (
@@ -101,14 +100,32 @@ async function lockCurrentDraft(
   }
 }
 
-function currentYearInTokyo() {
+export function currentYearInTokyo() {
   return Number(new Intl.DateTimeFormat("en", {
     timeZone: "Asia/Tokyo",
     year: "numeric"
   }).format(new Date()));
 }
 
-const DOCUMENT_PREFIXES: Record<string, string> = {
+// 採番プレフィックスの正規化（純関数）。設定値優先→種別既定→検証。ARC- 接頭辞は基底に戻す。
+// numbering/next プレビュー（10-6）と finalize の findPrefix で共用する。
+export function resolveNumberPrefix(
+  configured: string | null | undefined,
+  templateType: string
+): string | null {
+  const c = String(configured ?? "").trim().toUpperCase();
+  const prefix = c || DOCUMENT_PREFIXES[templateType];
+  if (!prefix || !/^[A-Z0-9-]{1,20}$/.test(prefix)) return null;
+  return prefix.startsWith("ARC-") ? prefix.slice(4) : prefix;
+}
+
+// 文書番号の組み立て（純関数）。ARC-<prefix>-<year>-<0001> 形式。
+export function formatDocumentNumber(basePrefix: string, year: number, sequence: number): string {
+  const numberPrefix = basePrefix.startsWith("ARC-") ? basePrefix : `ARC-${basePrefix}`;
+  return `${numberPrefix}-${year}-${String(sequence).padStart(4, "0")}`;
+}
+
+export const DOCUMENT_PREFIXES: Record<string, string> = {
   purchase_order: "PO",
   intl_purchase_order: "IPO",
   inspection_certificate: "INS",
@@ -140,12 +157,9 @@ async function findPrefix(client: PoolClient, templateType: string) {
     [templateType]
   );
   if (!result.rows[0]) throw new Error("active template is required");
-  const configured = String(result.rows[0].document_prefix ?? "").trim().toUpperCase();
-  const prefix = configured || DOCUMENT_PREFIXES[templateType];
-  if (!prefix || !/^[A-Z0-9-]{1,20}$/.test(prefix)) {
-    throw new Error("document prefix mapping is required");
-  }
-  return prefix.startsWith("ARC-") ? prefix.slice(4) : prefix;
+  const prefix = resolveNumberPrefix(result.rows[0].document_prefix, templateType);
+  if (!prefix) throw new Error("document prefix mapping is required");
+  return prefix;
 }
 
 async function nextSequence(client: PoolClient, kind: string, year: number) {

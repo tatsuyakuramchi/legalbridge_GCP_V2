@@ -18,6 +18,7 @@ export interface RegisteredDocument {
 export interface DocumentRegistryRepository {
   list(query: string, templateType?: string, limit?: number): Promise<RegisteredDocument[]>;
   find(id: number): Promise<RegisteredDocument | null>;
+  findByNumber(documentNumber: string): Promise<RegisteredDocument | null>;
   setDriveLink(id: number, driveLink: string): Promise<void>;
 }
 
@@ -65,6 +66,20 @@ export class PgDocumentRegistryRepository implements DocumentRegistryRepository 
     );
     return result.rows[0] ? mapRow(result.rows[0]) : null;
   }
+
+  async findByNumber(documentNumber: string) {
+    const result = await this.database.query(
+      `SELECT id, document_number, issue_key, template_type, template_version_id,
+              form_data, drive_link, created_at, created_by,
+              COALESCE(lifecycle_status, 'final') AS lifecycle_status
+         FROM documents
+        WHERE document_number = $1
+        ORDER BY id DESC
+        LIMIT 1`,
+      [documentNumber]
+    );
+    return result.rows[0] ? mapRow(result.rows[0]) : null;
+  }
 }
 
 export class MemoryDocumentRegistryRepository implements DocumentRegistryRepository {
@@ -82,6 +97,10 @@ export class MemoryDocumentRegistryRepository implements DocumentRegistryReposit
 
   async find(id: number) {
     return this.documents.find((item) => item.id === id) ?? null;
+  }
+
+  async findByNumber(documentNumber: string) {
+    return this.documents.find((item) => item.documentNumber === documentNumber) ?? null;
   }
 
   async setDriveLink(id: number, driveLink: string) {

@@ -10,6 +10,7 @@ V2 は draft→finalize→pdf→drive までは移植済みだが、**発行後�
 |---|---|---|---|
 | 10-2 | 文書 void（無効化）＋実績取消（残高復元） | 小 | ✅ 実装済 |
 | 10-3 | PDF 再生成（Drive 上書き更新） | 小 | ✅ 実装済 |
+| 10-6 | 文書ルックアップ（番号検索・PDF未生成一覧・次番号プレビュー） | 小 | ✅ 実装済 |
 | 10-1 | 文書アーカイブ画面＋再発行 | 中 | 未 |
 | 10-6 | 文書ルックアップ（番号検索・次番号・PDF未生成一覧） | 小 | 未 |
 | 10-4 | 一括削除／一括項目更新 | 中 | 未（優先低） |
@@ -69,6 +70,27 @@ Drive のファイルが古いままになる。10-3 はこれを解消する。
 - UI：`DocumentOutputActions` に「PDFを再生成（Drive更新）」ボタン（Drive 保存済みのときのみ表示）。
 - tests：drive-routes に3件追加（上書き更新／未保存は新規／scope なし403）。587 緑。
 
+## 10-6：文書ルックアップ（読取専用）✅ 実装済
+
+発行後運用の下支えとなる読取ユーティリティ3種。**すべて SELECT のみ＝新規 GRANT/config なし**。
+稟議リンク（Ringi）は保留決定済みのため対象外、mark-as-imported は取込フロー側の責務のため見送り。
+
+- `registry-repository.findByNumber(documentNumber)` を追加（Pg/Memory）。
+- `document-lookup-repository.ts`（Pg/Memory）：
+  - `pendingPdf(templateType?, limit)`＝Drive 未保存かつ void でない文書の一覧＋種別別件数
+    （PDF 未生成キュー）。
+  - `peekNextNumber(templateType)`＝**非破壊**の次番号プレビュー。V1（`getNewDocumentNumber`）は
+    document_sequences を増分するが、V2 はプレビューで採番を消費しない（SELECT のみ）。採番接頭辞・
+    番号組み立ては finalize と共用の純関数 `resolveNumberPrefix`/`formatDocumentNumber` に集約。
+- `document-lookup-routes.ts`：`GET /documents/by-number/:docNumber`／`GET /documents/pending-pdf`／
+  `GET /documents/numbering/next?type=`。読取＝認証済みユーザー可・ロール限定なし。
+- app.ts：`/documents/:id`（registry）に吸われないよう **registry ルーターより前にマウント**。
+- finalize リファクタ：`findPrefix`／番号生成を共用純関数へ委譲（挙動不変）。tests 594 緑。
+
+> UI 統合は 10-1 アーカイブ画面（PDF未生成キュー表示・番号検索・再発行導線）で行う。本スライスは
+> その土台となる読取 API を提供する。
+
 ## 次スライス候補
-- **10-6 文書ルックアップ**：番号検索・次番号採番・PDF未生成一覧（小・読取中心）。
-- **10-1 アーカイブ画面**：確定文書の一覧・履歴トグル・再編集/再発行導線（読取＋既存 void/再生成の集約）。
+- **10-1 アーカイブ画面**：確定文書の一覧・履歴トグル・PDF未生成キュー・番号検索・再編集/再発行導線
+  （10-2/10-3/10-6 の集約 UI）。
+- **10-4 一括操作**／**10-5 Excel 一括出力**（大）。

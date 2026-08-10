@@ -23,6 +23,12 @@ import {
   type DocumentRegistryRepository
 } from "./documents/registry-repository.js";
 import { createDocumentRegistryRouter } from "./documents/registry-routes.js";
+import { createDocumentLookupRouter } from "./documents/document-lookup-routes.js";
+import {
+  PgDocumentLookupRepository,
+  MemoryDocumentLookupRepository,
+  type DocumentLookupRepository
+} from "./documents/document-lookup-repository.js";
 import { createDocumentPdfRouter } from "./documents/pdf-routes.js";
 import { createDocumentDriveRouter } from "./documents/drive-routes.js";
 import {
@@ -372,6 +378,7 @@ export interface AppDependencies {
   backlogWriteClient?: BacklogWriteClient;
   masterData?: MasterDataRepository;
   documentRegistry?: DocumentRegistryRepository;
+  documentLookup?: DocumentLookupRepository;
   matters?: MatterRepository;
   matterWrites?: MatterWriteRepository;
   matterIssueWrites?: MatterIssueWriteRepository;
@@ -1077,6 +1084,11 @@ export function createApp(
   ));
   const documentRegistry =
     dependencies.documentRegistry ?? new MemoryDocumentRegistryRepository();
+  // 文書ルックアップ（読取・10-6）。/documents/:id より前に評価させるため registry より先にマウント。
+  const lookupDatabase = getPool();
+  const documentLookup = dependencies.documentLookup
+    ?? (lookupDatabase ? new PgDocumentLookupRepository(lookupDatabase) : new MemoryDocumentLookupRepository());
+  app.use("/api/v2", createDocumentLookupRouter(documentRegistry, documentLookup));
   app.use("/api/v2", createDocumentRegistryRouter(documentRegistry));
   const pdfRenderer = dependencies.pdfRenderer ?? new ChromiumPdfRenderer();
   app.use("/api/v2", createDocumentPdfRouter(

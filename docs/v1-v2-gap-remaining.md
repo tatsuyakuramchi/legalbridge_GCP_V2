@@ -44,7 +44,7 @@ V2 は draft/finalize/pdf/drive-storage は移植済みだが、**発行後の�
 | 10-3 | PDF 再生成 | `server.ts:12983 regenerate-pdf` | 確定文書の PDF 再生成（Drive 上書き更新） | 小 | 中 | ✅ 実装済（drive scope 従属・grant不要） |
 | 10-4 | 一括削除 / 一括項目更新 | `server.ts:13414 bulk-delete`・`13279 bulk-update-fields` | 発行文書の一括削除・一括フィールド更新 | 中 | 低 |
 | 10-5 | Excel 一括出力 | FE `ExcelBatchPage.tsx`／BE `15759 export-excel`・`15908 excel-batches/pending` | 検収書/利用許諾料計算書を担当者×支払期日×種別で集計し Excel 一括生成＋Drive保存 | 大 | 中 |
-| 10-6 | 文書ルックアップ | `by-number/:docNumber`・`pending-pdf`・`:id/ringi-links`・`numbering/next`・`mark-as-imported` | 番号検索・PDF未生成一覧・次番号採番・取込済フラグ | 小 | 低 |
+| 10-6 | 文書ルックアップ | `by-number/:docNumber`・`pending-pdf`・`:id/ringi-links`・`numbering/next`・`mark-as-imported` | 番号検索・PDF未生成一覧・次番号採番・取込済フラグ | 小 | 低 | ✅ 実装済（by-number/pending-pdf/numbering-next・読取・grant不要。ringi=保留・mark-as-imported=見送り） |
 
 ## Phase 11（提案）：設定・マスタ書込
 
