@@ -6,11 +6,13 @@ V2（本リポジトリ）を本番サービスとして V1（legalbridge_ai_gcp
 
 ## 0. 現在地（2026-08-10 デプロイ・点火完了時点）
 
-- コード：Phase 1〜11 Tier 1＋監査修正 S-A〜S-F（build 82aa5b31…）。
+- コード：Phase 1〜16 全実装（runbook §1 完了）＋監査修正 S-A〜S-F（build a4806a35…）。
 - 適用済み grant：**001〜046 すべて適用済み**（031・043・044・045・046 は 2026-08-10 に適用・検証済み。残る DB 作業なし）。
-- 有効スコープ：drafts, documents, pdf, slack-approvals, matters, matter-merge, matter-delete,
+- 有効スコープ：drafts, documents, pdf, slack-approvals, matters, **vendors, staff, works,
+  materials, rights-sources, vendor-merge**（2026-08-10 点火）, matter-merge, matter-delete,
   document-void, document-reissue, excel-batch, settings, workflow-rules, contract-master,
-  slack, slack-dispatch, matter-slack。
+  **snippets**（同）, slack, slack-dispatch, matter-slack。
+  満了自動遷移 CONTRACT_EXPIRY_TRANSITION_ENABLED=true（同・実行は daily-checks ジョブ起動時）。
 - ジョブ基盤 JOBS_ENABLED=true（**Cloud Scheduler は未作成**＝手動/未点火）。
 - 連携：Slack live／Gmail・CloudSign・Drive・Backlog は disabled/dry-run。
 - 認証：cloudrun-iam（admin 1名のみ。legal/requester は未開放）。
@@ -32,7 +34,7 @@ V2（本リポジトリ）を本番サービスとして V1（legalbridge_ai_gcp
 
 ## 2. 点火メニュー（実装済み・スイッチ待ち）
 
-### 2-1. 満了自動遷移（grant 031 ✅ 適用済み 2026-08-10・preflight 対象0件）
+### 2-1. 満了自動遷移 ✅ 点火済み（2026-08-10・grant 031＋flag true。自動実行は 2-3 Scheduler の daily-checks 作成後）
 ```bash
 psql "" -f infra/gcp/sql/031_production_contract_expiry_preflight.sql || true
 psql "" -v confirm_contract_expiry=GRANT_PRODUCTION_CONTRACT_EXPIRY \
@@ -41,7 +43,7 @@ psql "" -v confirm_contract_expiry=GRANT_PRODUCTION_CONTRACT_EXPIRY \
 substitutions：`_CONTRACT_EXPIRY_TRANSITION_ENABLED=true`＋`_CONFIRM_CONTRACT_EXPIRY=<verify の要求値>`。
 ※トークン名・要求値は 031 ファイルと verify-write-test.sh の該当 case を参照。
 
-### 2-2. マスタ書込（台帳の Create/Update を解禁）
+### 2-2. マスタ書込 ✅ 点火済み（2026-08-10・vendors/staff/works/materials/rights-sources/vendor-merge＋snippets）
 grant は適用済み（009/010/011 系＋**043 も 2026-08-10 適用済み**）。DB 作業なし＝substitutions のみ：
 ```bash
 psql "" -v confirm_vendor_merge_documents=GRANT_PRODUCTION_VENDOR_MERGE_DOCUMENTS \
@@ -94,7 +96,7 @@ Slack（16-3）は Slack App の signing secret 検証で同じ受信サービ�
 - [ ] Phase 16-3（Slack インテーク）実装・点火済み
 - [x] Phase 16-1/2/4 実装済み（点火は 16-1＝grant 045、16-4＝Drive 構成が前提）
 - [x] grant 031・043・044・045・046 適用済み（2026-08-10・6項目検証済み）
-- [ ] マスタ書込スコープ点火済み（2-2）
+- [x] マスタ書込スコープ点火済み（2-2・2026-08-10。snippets・満了遷移も同時点火）
 - [ ] Scheduler 3 ジョブ稼働（2-3）
 - [ ] Webhook 受信 live（2-4）・CloudSign/Gmail/Drive live（2-5）
 - [ ] legal/requester 開放＋スモーク合格（3）
