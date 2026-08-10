@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useToast } from "./Toast";
 import { FeatureLockedNote } from "./FeatureLockedNote";
+import { EmptyState } from "./EmptyState";
 
 // 契約マスタ（Phase 11-4）。既存 contracts の一覧・中核項目編集・ライフサイクル状態変更。
 // 登録(INSERT)は契約取込が担うため、ここでは既存行の更新のみ。編集は capability 有効時のみ。
@@ -35,6 +36,13 @@ function stageLabel(stage: string | null): string {
   if (!stage) return "（未設定）";
   return STAGE_LABELS[stage] ?? stage;   // V1 由来の enum 外値（draft 等）は素通し表示
 }
+// 状態バッジの色分け（DocumentRegistry と同じ registry-state 語彙）。
+function stageBadgeClass(stage: string | null): string {
+  if (stage === "executed") return "registry-state complete";
+  if (stage === "cancelled" || stage === "expired" || stage === "terminated") return "registry-state voided";
+  if (!stage) return "registry-state neutral";
+  return "registry-state pending";   // 進行中（起票〜署名待ち・保留・V1 由来値）
+}
 
 type Draft = {
   contractTitle: string;
@@ -63,7 +71,9 @@ function toInt(v: string): number | null {
   return Number.isInteger(n) ? n : null;
 }
 
-export function ContractMasterWorkspace({ canEdit = false }: { canEdit?: boolean }) {
+export function ContractMasterWorkspace({ canEdit = false, onNavigate }: {
+  canEdit?: boolean; onNavigate?: (view: string) => void;
+}) {
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
@@ -138,12 +148,16 @@ export function ContractMasterWorkspace({ canEdit = false }: { canEdit?: boolean
       <div><p>CONTRACT MASTER</p><h1>契約マスタ</h1>
         <small>既存契約の中核項目（表題・有効期間・自動更新・アラート）とライフサイクル状態を編集します</small></div>
     </div>
+    {onNavigate && <div className="surface-xref" role="navigation" aria-label="契約の関連画面">
+      <span className="surface-xref-here">既存契約の編集（ここ）</span>
+      <button type="button" onClick={() => onNavigate("contract-intake")}>新規登録 → 契約取込</button>
+    </div>}
     {!canEdit && <FeatureLockedNote>契約マスタの編集は未有効化です（管理者・法務権限＋有効化が必要）。閲覧のみ可能です。</FeatureLockedNote>}
 
-    <div className="panel" style={{ padding: "12px", display: "flex", gap: "8px" }}>
+    <div className="panel cm-search">
       <input value={query} onChange={(e) => setQuery(e.target.value)}
         placeholder="文書番号・表題・契約種別で検索"
-        onKeyDown={(e) => { if (e.key === "Enter") setReload((v) => v + 1); }} style={{ flex: 1 }} />
+        onKeyDown={(e) => { if (e.key === "Enter") setReload((v) => v + 1); }} />
       <button onClick={() => setReload((v) => v + 1)}>検索</button>
     </div>
     {error && <div className="async-error">{error}</div>}
@@ -164,7 +178,7 @@ export function ContractMasterWorkspace({ canEdit = false }: { canEdit?: boolean
     </div>}
 
     {loading ? <p className="hub-note">読み込み中…</p> :
-      <div className="registry-table panel">
+      <div className="registry-table static-rows panel">
         <table>
           <thead><tr>
             <th>文書番号</th><th>表題</th><th>種別</th><th>状態</th><th>有効期間</th><th>自動更新</th>{canEdit && <th></th>}
@@ -191,9 +205,9 @@ export function ContractMasterWorkspace({ canEdit = false }: { canEdit?: boolean
                       <option value={c.lifecycleStage ?? ""}>{stageLabel(c.lifecycleStage)}</option>}
                     {LIFECYCLE_STAGES.map((s) => <option key={s} value={s}>{STAGE_LABELS[s]}</option>)}
                   </select>
-                : <span>{stageLabel(c.lifecycleStage)}</span>}</td>
+                : <span className={stageBadgeClass(c.lifecycleStage)}>{stageLabel(c.lifecycleStage)}</span>}</td>
               <td>{isEditing
-                ? <span style={{ display: "flex", gap: "4px" }}>
+                ? <span className="cm-inline-fields">
                     <input type="date" value={draft!.effectiveDate} onChange={(e) => set("effectiveDate", e.target.value)} />
                     <input type="date" value={draft!.expirationDate} onChange={(e) => set("expirationDate", e.target.value)} />
                   </span>
@@ -203,7 +217,7 @@ export function ContractMasterWorkspace({ canEdit = false }: { canEdit?: boolean
                     onChange={(e) => set("autoRenewal", e.target.checked)} />自動更新</label>
                 : (c.autoRenewal ? "○" : "—")}</td>
               {canEdit && <td>{isEditing
-                ? <span style={{ display: "flex", gap: "4px" }}>
+                ? <span className="cm-inline-fields">
                     <button className="primary" disabled={saving} onClick={() => void saveFields(c.id)}>{saving ? "保存中…" : "保存"}</button>
                     <button disabled={saving} onClick={cancel}>キャンセル</button>
                   </span>
@@ -211,7 +225,7 @@ export function ContractMasterWorkspace({ canEdit = false }: { canEdit?: boolean
             </tr>;
           })}</tbody>
         </table>
-        {!contracts.length && <p className="hub-note" style={{ padding: "12px" }}>該当する契約がありません。</p>}
+        {!contracts.length && <EmptyState compact icon="▤" title="該当する契約がありません" />}
       </div>}
   </section>;
 }

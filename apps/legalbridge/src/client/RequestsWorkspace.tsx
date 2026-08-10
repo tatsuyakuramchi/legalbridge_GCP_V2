@@ -125,7 +125,7 @@ export function RequestsWorkspace({ onCreateDocument, canComment = false }: { on
 
         {metaOpen && (
           <div className="request-metadata">
-            <small className="hint">ステータス／カスタム属性の実ID（3-2b のステータス同期・属性更新を設定する際の参照値）。読み取りのみ。</small>
+            <small className="hint">ステータス／カスタム属性の実ID（Backlog 連携の同期設定に使う参照値）。読み取りのみ。</small>
             {metaLoading && <p>読込中…</p>}
             {metaError && <div className="async-error"><span>{metaError}</span></div>}
             {meta && (

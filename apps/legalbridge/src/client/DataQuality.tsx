@@ -65,7 +65,7 @@ export function DataQuality({ onNavigate }: { onNavigate?: (view: string, id?: n
                   {c.available ? <b>{c.count}</b> : <small>未スキャン</small>}
                 </div>
               </div>
-              {!c.available && <small className="hint">表示権限（GRANT）が未付与のためスキャンできませんでした。付与後に自動表示されます。</small>}
+              {!c.available && <small className="hint">表示権限が未設定のためこの項目はスキャンできませんでした。管理者が有効化すると自動表示されます。</small>}
               {c.available && c.count === 0 && <small className="hint">問題は検出されませんでした。</small>}
               {c.available && open[c.key] && c.samples.length > 0 && (
                 <table className="dq-samples">

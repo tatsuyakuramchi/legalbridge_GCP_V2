@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useToast } from "./Toast";
 import { FeatureLockedNote } from "./FeatureLockedNote";
+import { EmptyState } from "./EmptyState";
 
 // 承認ルート（Phase 11-2）。部門ごとの承認者/押印担当/責任者の Slack ID・部署チャンネル・有効フラグを
 // 一覧・編集する。編集は capability 有効時のみ。department 一意（upsert）。
@@ -96,7 +97,7 @@ export function WorkflowRulesWorkspace({ canEdit = false }: { canEdit?: boolean 
     </div>}
 
     {loading ? <p className="hub-note">読み込み中…</p> :
-      <div className="registry-table panel">
+      <div className="registry-table static-rows panel">
         <table>
           <thead><tr><th>部門</th><th>承認者</th><th>押印担当</th><th>責任者</th><th>チャンネル</th><th>状態</th>{canEdit && <th></th>}</tr></thead>
           <tbody>{rules.map((r) => <tr key={r.department}>
@@ -107,11 +108,11 @@ export function WorkflowRulesWorkspace({ canEdit = false }: { canEdit?: boolean 
             <td>{r.slackChannelId ?? "—"}</td>
             <td>{r.isActive
               ? <span className="registry-state complete">有効</span>
-              : <span className="registry-state voided">無効</span>}</td>
+              : <span className="registry-state neutral">無効</span>}</td>
             {canEdit && <td><button onClick={() => setEditing(toDraft(r))}>編集</button></td>}
           </tr>)}</tbody>
         </table>
-        {!rules.length && <p className="hub-note" style={{ padding: "12px" }}>承認ルートが未登録です。</p>}
+        {!rules.length && <EmptyState compact icon="▤" title="承認ルートが未登録です" />}
       </div>}
   </section>;
 }

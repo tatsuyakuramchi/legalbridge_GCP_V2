@@ -825,6 +825,25 @@ button.pdf-download-link:disabled {
 .registry-state.complete { background: #e8f7f0; color: #16724e; }
 .registry-state.pending { background: #fff7ed; color: #9a3412; }
 .registry-state.voided { background: #fef2f2; color: #b91c1c; }
+/* 状態ではない区分ラベル・単なる無効フラグ用（destructive の赤や完了の緑を流用しない） */
+.registry-state.neutral { background: #eef2f7; color: #475569; }
+
+/* 行クリックが無いテーブル（承認ルート・契約マスタ等）。registry-table の
+   cursor:pointer/hover ハイライトを打ち消し、偽のクリック可能アフォーダンスを出さない。 */
+.registry-table.static-rows tbody tr { cursor: default; }
+.registry-table.static-rows tbody tr:hover { background: transparent; }
+
+/* 契約マスタ（Phase 11-4）。検索バーと行内編集のフィールド群。 */
+.cm-search { padding: 12px; display: flex; gap: 8px; }
+.cm-search input { flex: 1; }
+.cm-inline-fields { display: flex; gap: 4px; }
+
+/* 作品詳細：派生元の検索ピッカー（生ID入力の置換・P1-14）。 */
+.wd-rel-picker { display: flex; gap: 8px; align-items: flex-start; flex-wrap: wrap; position: relative; }
+.wd-rel-picker > input { min-width: 260px; padding: 8px 10px; border: 1px solid var(--border-strong, #cbd5e1); border-radius: var(--radius-md, 8px); }
+.wd-rel-options { display: flex; flex-direction: column; gap: 2px; width: 100%; max-width: 420px; }
+.wd-rel-options button { text-align: left; padding: 6px 10px; }
+.wd-rel-selected { display: inline-flex; gap: 8px; align-items: center; }
 
 /* 文書 void（Phase 10-2）。危険操作ゾーンと無効化バナー。 */
 .void-banner {

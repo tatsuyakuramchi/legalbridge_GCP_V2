@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { checkWorkConditions, summarizeFindings } from "./contract-check";
+import { FeatureLockedNote } from "./FeatureLockedNote";
 
 // 作品詳細（Phase 2・読み取り専用）。作品を起点に 概要/系譜/素材/条件/権利ソース/
 // 料率対象 を一望する。作品ピッカー（検索）で選択 → GET /works/:id/detail を集約表示。
@@ -33,7 +34,8 @@ const yen = (v: number | null, ccy: string | null) => v == null ? "—" : `${ccy
 const kindLabel = (k: string | null) => k === "licensed_in" ? "ライセンスイン" : k === "own" ? "自社作品" : (k ?? "—");
 
 function Degraded() {
-  return <div className="empty-state">このセクションは現在表示できません（表示権限が未付与）。管理者が有効化すると自動的に表示されます。</div>;
+  // 未有効化の伝え方は FeatureLockedNote に統一（Q2）。
+  return <FeatureLockedNote>このセクションは現在表示できません。管理者が有効化すると自動的に表示されます。</FeatureLockedNote>;
 }
 
 type EditForm = {
@@ -78,7 +80,10 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
   const [rightsForm, setRightsForm] = useState<RightsForm | null>(null);
   const [rightsSaving, setRightsSaving] = useState(false);
   const [rightsError, setRightsError] = useState("");
-  const [relParentId, setRelParentId] = useState("");
+  // 派生元の追加は生ID入力ではなく検索ピッカーで選ぶ（監査 P1-14）。
+  const [relQuery, setRelQuery] = useState("");
+  const [relOptions, setRelOptions] = useState<Summary[]>([]);
+  const [relParent, setRelParent] = useState<Summary | null>(null);
   const [relSaving, setRelSaving] = useState(false);
   const [relError, setRelError] = useState("");
   const [matForm, setMatForm] = useState<MaterialForm | null>(null);
@@ -105,6 +110,25 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
     return () => { controller.abort(); window.clearTimeout(timer); };
   }, [keyword]);
 
+  // 派生元候補の検索（デバウンス・選択中の作品自身は除外）。
+  useEffect(() => {
+    if (!relQuery.trim()) { setRelOptions([]); return; }
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({ keyword: relQuery.trim(), limit: "8" });
+        const res = await fetch(`/api/v2/works?${params.toString()}`, { signal: controller.signal });
+        if (!res.ok) { setRelOptions([]); return; }
+        const data = await res.json();
+        setRelOptions(((data.works ?? []) as Summary[]).filter((w) => w.id !== selectedId));
+      } catch (e) {
+        if (e instanceof DOMException && e.name === "AbortError") return;
+        setRelOptions([]);
+      }
+    }, 250);
+    return () => { controller.abort(); window.clearTimeout(timer); };
+  }, [relQuery, selectedId]);
+
   // 選択された作品の詳細取得。
   useEffect(() => {
     if (selectedId == null) { setDetail(null); return; }
@@ -124,7 +148,7 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
   }, [selectedId, reload]);
 
   // 作品を切り替えたら編集状態・タブを初期化。
-  useEffect(() => { setEditing(false); setForm(null); setSaveError(""); setTab("overview"); setRightsForm(null); setRightsError(""); setRelParentId(""); setRelError(""); }, [selectedId]);
+  useEffect(() => { setEditing(false); setForm(null); setSaveError(""); setTab("overview"); setRightsForm(null); setRightsError(""); setRelParent(null); setRelQuery(""); setRelError(""); }, [selectedId]);
 
   async function addRelation(parentWorkId: number) {
     if (selectedId == null) return;
@@ -139,7 +163,7 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
         setRelError(data.error ?? (res.status === 503 ? "系譜編集は現在無効です" : res.status === 403 ? "編集権限がありません" : "保存に失敗しました"));
         return;
       }
-      setRelParentId(""); setReload((n) => n + 1);
+      setRelParent(null); setRelQuery(""); setReload((n) => n + 1);
     } catch { setRelError("通信に失敗しました"); }
     finally { setRelSaving(false); }
   }
@@ -260,7 +284,7 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
         <div>
           <p>WORKS</p>
           <h1>作品</h1>
-          <small>作品を起点に系譜・素材・条件・権利ソース・料率対象を一望（読み取り専用）</small>
+          <small>作品を起点に系譜・素材・条件・権利ソース・料率対象を一望・編集します</small>
         </div>
       </div>
       {onNavigate && <div className="surface-xref" role="navigation" aria-label="作品の関連画面">
@@ -364,21 +388,36 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
                 ? <ul className="wd-list">{detail.lineage.children.map((c) => <li key={c.workId}><button onClick={() => setSelectedId(c.workId)}>{c.workCode ? c.workCode + " " : ""}{c.title ?? `作品#${c.workId}`}</button></li>)}</ul>
                 : <div className="empty-state">派生作品はありません。</div>}
               {detail.lineage.unlinkedRelationParents.length > 0 && <>
-                <h4>系譜に未反映の親（work_relations のみ）</h4>
+                <h4>系譜に未反映の親（関連付けのみ）</h4>
                 <ul className="wd-list warn">{detail.lineage.unlinkedRelationParents.map((c) => <li key={c.workId}><button onClick={() => setSelectedId(c.workId)}>{c.workCode ? c.workCode + " " : ""}{c.title ?? `作品#${c.workId}`}</button></li>)}</ul>
-                <small className="hint">parent_work_id 系譜に現れない親です。系譜（親子）の整合を確認してください。</small>
+                <small className="hint">親子系譜には現れない関連付け上の親です。系譜（親子）の整合を確認してください。</small>
               </>}
               {canEdit && <>
                 <h4>系譜（派生元）を追加</h4>
                 {relError && <div className="async-error"><span>{relError}</span></div>}
-                <div className="wd-edit-actions" style={{ justifyContent: "flex-start" }}>
-                  <input value={relParentId} onChange={(e) => setRelParentId(e.target.value.replace(/[^\d]/g, ""))} placeholder="派生元の作品ID" inputMode="numeric" style={{ padding: "8px 10px", border: "1px solid #cbd5e1", borderRadius: 8 }} />
-                  <button className="primary" onClick={() => relParentId && addRelation(Number(relParentId))} disabled={relSaving || !relParentId}>{relSaving ? "追加中…" : "派生元を追加"}</button>
+                <div className="wd-rel-picker">
+                  {relParent
+                    ? <span className="wd-rel-selected">
+                        <strong>{relParent.workCode ? `${relParent.workCode} ` : ""}{relParent.title ?? `作品#${relParent.id}`}</strong>
+                        <button type="button" onClick={() => { setRelParent(null); setRelQuery(""); }}>選び直す</button>
+                      </span>
+                    : <>
+                        <input value={relQuery} onChange={(e) => setRelQuery(e.target.value)}
+                          placeholder="派生元の作品を名称・コードで検索" />
+                        {relOptions.length > 0 && <div className="wd-rel-options">
+                          {relOptions.map((w) => <button key={w.id} type="button"
+                            onClick={() => { setRelParent(w); setRelOptions([]); }}>
+                            {w.workCode ? <small>{w.workCode} </small> : ""}{w.title ?? `作品#${w.id}`}
+                          </button>)}
+                        </div>}
+                      </>}
+                  <button className="primary" onClick={() => relParent && addRelation(relParent.id)}
+                    disabled={relSaving || !relParent}>{relSaving ? "追加中…" : "派生元を追加"}</button>
                   {detail.work.parentWorkId != null && (
-                    <button onClick={() => addRelation(detail.work.parentWorkId!)} disabled={relSaving}>現在の親(#{detail.work.parentWorkId})を系譜に記録</button>
+                    <button onClick={() => addRelation(detail.work.parentWorkId!)} disabled={relSaving}>現在の親を系譜に記録</button>
                   )}
                 </div>
-                <small className="hint">work_relations に derived_from 関係を追加します（parent_work_id 系譜と二重管理の整合用・冪等・循環は拒否）。</small>
+                <small className="hint">「この作品の派生元」の関連付けを追加します（既に登録済みなら重複しません・循環する指定は拒否されます）。</small>
               </>}
             </> : <Degraded />)}
 

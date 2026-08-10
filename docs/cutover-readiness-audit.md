@@ -109,15 +109,15 @@ S-D で V1 準拠の repoint 方式に修正済み。**再有効化は次の順�
 | P1-3 | vendor-merge が `documents.vendor_id` を付替えない（8表中に無い） | `merge-repository.ts:11` vs 0101:36 |
 | P1-4 | V2 のベンダーピッカー/台帳/検索が is_active を無視（自分で無効化した取引先が選べる） | `master-data/repository.ts:31` ほか |
 | P1-5 | ✅ S-C: 降格を template_type 単位に限定（V1 の正本選定と同義） | document-reissue-repository.ts |
-| P1-6 | ExcelBatch だけ FeatureLockedNote 不採用（無効時ボタンが黙って消える） | `ExcelBatchWorkspace.tsx:91` |
-| P1-7 | WorkDetail の private な Degraded() 重複（FeatureLockedNote へ統一） | `WorkDetail.tsx:35` |
-| P1-8 | 内部識別子の end-user 露出（DataQuality「GRANT」、WorkDetail parent_work_id/work_relations、Requests「3-2b」） | `DataQuality.tsx:68` ほか |
-| P1-9 | 新テーブル2画面の偽クリック行（registry-table の cursor:pointer 継承） | WorkflowRules/ContractMaster |
-| P1-10 | WorkDetail の「読み取り専用」表記が虚偽（編集導線多数） | `WorkDetail.tsx:263` |
-| P1-11 | bulk void に影響説明が無い（単票にはある） | `DocumentRegistry.tsx:351` |
-| P1-12 | 空状態の第3流派（hub-note 流用）／バッジ語彙の逸脱（有効無効に voided 色・カテゴリに complete 色・契約マスタは無バッジ）／取消ボタン語彙3種 | 新4画面 |
-| P1-13 | マスタ・設定グループが admin 12 項目（F1 過積載の移住）。「マスタ」「設定・運用」分割か契約マスタ↔契約取込 surface-xref | `App.tsx:97` |
-| P1-14 | WorkDetail 派生元IDが生入力（同画面に作品ピッカー既存） | `WorkDetail.tsx:375` |
+| P1-6 | ✅ S-F: FeatureLockedNote 追加（出力は可・記録のみ未有効の旨） | ExcelBatchWorkspace.tsx |
+| P1-7 | ✅ S-F: Degraded() の中身を FeatureLockedNote に統一 | WorkDetail.tsx |
+| P1-8 | ✅ S-F: GRANT/parent_work_id/work_relations/3-2b/ナビ説明の GRANT を平易な文言へ | DataQuality/WorkDetail/Requests/App |
+| P1-9 | ✅ S-F: `.registry-table.static-rows` で cursor/hover を打ち消し | styles.css＋両画面 |
+| P1-10 | ✅ S-F: サブタイトルを「一望・編集します」に修正 | WorkDetail.tsx |
+| P1-11 | ✅ S-F: 確認段に影響説明（実績取消・残高復元・不可逆）を追加 | DocumentRegistry.tsx |
+| P1-12 | ✅ S-F: 空状態を EmptyState に統一・`registry-state.neutral` 新設（無効/カテゴリ）・契約マスタに状態バッジ・キャンセル語彙統一（やめる/取消→キャンセル） | 新4画面＋styles.css |
+| P1-13 | ✅ S-F: マスタ(5)／データ整備(3)／設定・運用(4) に3分割＋契約マスタ→契約取込 surface-xref | App.tsx／ContractMasterWorkspace |
+| P1-14 | ✅ S-F: 派生元は検索ピッカーで選択（生ID入力・ハードコード色の inline style も除去） | WorkDetail.tsx |
 | P1-15 | ✅ S-B: 039 が実在する台帳へ UPDATE/DELETE/TRUNCATE を明示 REVOKE＋事後検証（actor 列規約の揺れは据え置き） | 039_production_cutover_fixes_grants.sql |
 | P1-16 | `TZ` を Cloud Run に設定すると日付が全て1日ずれる脆さ（DATE→toISOString UTC 前提）。**TZ 未設定を運用ルール化** | `contract-master-repository.ts:40` ほか |
 | P1-17 | document-lookup の by-number / numbering-next に UI 消費者が無い（10-6 の配線残） | `document-lookup-routes.ts` |
@@ -176,5 +176,5 @@ S-D で V1 準拠の repoint 方式に修正済み。**再有効化は次の順�
    psql "" -v confirm_matter_delete_integrity=GRANT_PRODUCTION_MATTER_DELETE_INTEGRITY \
      -f infra/gcp/sql/042_production_matter_delete_integrity_grants.sql
    ```
-6. **S-F UX 一括**：P1-6〜P1-14
+6. **S-F UX 一括** ✅ 完了（2026-08-10）：P1-6〜P1-14 全件（上表）。残る P1 は P1-3/P1-4（vendor 整合・別スライス）と P1-16/P1-17/P1-18（運用ルール・配線残・許容）
 7. **P2 は業務トリアージ後に台帳へ正式行を起こして通常スライス化**

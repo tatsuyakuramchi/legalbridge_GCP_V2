@@ -366,13 +366,14 @@ function BulkVoidBar({ count, onCancel, onRun }: {
           <button onClick={onCancel}>選択解除</button>
         </>
       : <>
+          <span className="hint">選択した文書を無効化し、紐づく有効な実績（消化）を取消して残高を復元します（取り消せません）。</span>
           <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="理由（任意）" />
           <input value={confirmText} onChange={(e) => setConfirmText(e.target.value)} placeholder={CONFIRM} />
           <button className="danger" disabled={busy || confirmText !== CONFIRM}
             onClick={async () => { setBusy(true); try { await onRun(reason); setOpen(false); setConfirmText(""); setReason(""); } finally { setBusy(false); } }}>
             {busy ? "処理中…" : `${count}件を無効化`}
           </button>
-          <button onClick={() => { setOpen(false); setConfirmText(""); }}>やめる</button>
+          <button onClick={() => { setOpen(false); setConfirmText(""); }}>キャンセル</button>
         </>}
   </div>;
 }
@@ -418,7 +419,7 @@ function DocumentReissueZone({ documentId, documentNumber, onReissued }: {
           <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="理由（任意・Backlogへ記録）" />
           <input value={confirmText} onChange={(e) => setConfirmText(e.target.value)} placeholder={CONFIRM} />
           <div className="matter-form-actions">
-            <button onClick={() => { setOpen(false); setConfirmText(""); }}>やめる</button>
+            <button onClick={() => { setOpen(false); setConfirmText(""); }}>キャンセル</button>
             <button className="primary" disabled={busy || confirmText !== CONFIRM} onClick={submit}>
               {busy ? "処理中…" : "再発行を実行"}
             </button>
@@ -470,7 +471,7 @@ function DocumentVoidZone({ documentId, documentNumber, onVoided }: {
           <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="理由（任意・Backlogへ記録）" />
           <input value={confirmText} onChange={(e) => setConfirmText(e.target.value)} placeholder={CONFIRM} />
           <div className="matter-form-actions">
-            <button onClick={() => { setOpen(false); setConfirmText(""); }}>やめる</button>
+            <button onClick={() => { setOpen(false); setConfirmText(""); }}>キャンセル</button>
             <button className="danger" disabled={busy || confirmText !== CONFIRM} onClick={submit}>
               {busy ? "処理中…" : "無効化を実行"}
             </button>

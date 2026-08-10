@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useToast } from "./Toast";
 import { EmptyState } from "./EmptyState";
+import { FeatureLockedNote } from "./FeatureLockedNote";
 import { exportExcel, type ExportColumn } from "./export-util";
 
 // Excel 一括出力（Phase 10-5）。検収書・利用許諾料計算書を「種別×担当者×支払期日」で束ねて表示し、
@@ -74,6 +75,7 @@ export function ExcelBatchWorkspace({ canMark = false }: { canMark?: boolean }) 
         <small>未出力の検収書・利用許諾料計算書を担当者×支払期日でまとめてExcel化します</small></div>
       <button onClick={() => setReload((v) => v + 1)}>再読込</button>
     </div>
+    {!canMark && <FeatureLockedNote>「発行済みにする」の記録は未有効化です。Excel出力（ダウンロード）は利用できます。</FeatureLockedNote>}
     {error && <div className="async-error">{error}<button onClick={() => setReload((v) => v + 1)}>再試行</button></div>}
     {loading && <p className="hub-note">集計中…</p>}
     {!loading && !groups.length && <EmptyState icon="▤" title="未出力の対象がありません"
@@ -82,7 +84,7 @@ export function ExcelBatchWorkspace({ canMark = false }: { canMark?: boolean }) 
       {groups.map((g) => <div key={g.key} className="panel batch-group">
         <div className="batch-group-head">
           <div>
-            <span className="registry-state complete">{CATEGORY_LABEL[g.category]}</span>
+            <span className="registry-state neutral">{CATEGORY_LABEL[g.category]}</span>
             <strong> {g.inspectorName}</strong>
             <span className="muted"> ｜支払期日 {g.paymentDate || "未設定"} ｜{g.count}件</span>
           </div>

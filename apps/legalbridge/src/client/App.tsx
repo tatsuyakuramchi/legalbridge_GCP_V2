@@ -94,19 +94,25 @@ function navGroups(access: {
       ...(access.legalWorkspace ? [{ view: "excel-batch" as const, label: "Excel一括", description: "検収書・利用許諾料計算書を担当者×支払期日で束ねてExcel出力", match: ["excel-batch" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "royalty-preview" as const, label: "ロイヤリティ試算", description: "確定前のロイヤリティ・源泉のライブ試算（保存なし）", match: ["royalty-preview" as const] }] : [])
     ] },
-    { label: "マスタ・設定", items: [
+    // 旧「マスタ・設定」は admin で12項目に肥大していた（F1 過積載の再発・監査 P1-13）。
+    // マスタ／データ整備／設定・運用の3グループに分割する。
+    { label: "マスタ", items: [
       ...(access.legalWorkspace ? [{ view: "ledgers" as const, label: "台帳", description: "作品・取引先などのマスタ", match: ["ledgers" as const] }] : []),
+      ...(access.legalWorkspace ? [{ view: "contract-master" as const, label: "契約マスタ", description: "既存契約の中核項目・ライフサイクル状態の編集", match: ["contract-master" as const] }] : []),
       ...(access.adminWorkspace ? [{ view: "contract-intake" as const, label: "契約取込", description: "締結済イン契約の登録", match: ["contract-intake" as const] }] : []),
+      ...(access.adminWorkspace ? [{ view: "staff" as const, label: "担当者", description: "担当者マスタの管理", match: ["staff" as const] }] : []),
+      ...(access.adminWorkspace && access.gmailInbound ? [{ view: "gmail-inbound" as const, label: "受信取込", description: "受信メールの契約PDF取込", match: ["gmail-inbound" as const] }] : [])
+    ] },
+    { label: "データ整備", items: [
       ...(access.legalWorkspace ? [{ view: "data-quality" as const, label: "データ品質", description: "横断整合スキャン（未リンク・重複・欠落）の俯瞰", match: ["data-quality" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "vendor-merge" as const, label: "取引先名寄せ", description: "重複した取引先を統合（参照再指定・旧は無効化）", match: ["vendor-merge" as const] }] : []),
-      ...(access.legalWorkspace ? [{ view: "matter-merge" as const, label: "案件名寄せ", description: "重複した案件を統合（課題・文書・送信履歴を移送・旧はアーカイブ）", match: ["matter-merge" as const] }] : []),
-      ...(access.adminWorkspace ? [{ view: "staff" as const, label: "担当者", description: "担当者マスタの管理", match: ["staff" as const] }] : []),
-      ...(access.adminWorkspace && access.gmailInbound ? [{ view: "gmail-inbound" as const, label: "受信取込", description: "受信メールの契約PDF取込", match: ["gmail-inbound" as const] }] : []),
+      ...(access.legalWorkspace ? [{ view: "matter-merge" as const, label: "案件名寄せ", description: "重複した案件を統合（課題・文書・送信履歴を移送・旧はアーカイブ）", match: ["matter-merge" as const] }] : [])
+    ] },
+    { label: "設定・運用", items: [
       ...(access.adminWorkspace ? [{ view: "settings" as const, label: "システム設定", description: "会社プロファイル（自社情報）の編集", match: ["settings" as const] }] : []),
       ...(access.adminWorkspace ? [{ view: "workflow-rules" as const, label: "承認ルート", description: "部門別の承認者・押印担当・責任者・Slackチャンネル", match: ["workflow-rules" as const] }] : []),
-      ...(access.legalWorkspace ? [{ view: "contract-master" as const, label: "契約マスタ", description: "既存契約の中核項目・ライフサイクル状態の編集", match: ["contract-master" as const] }] : []),
       ...(access.adminWorkspace ? [{ view: "admin" as const, label: "管理", description: "通知・運用の管理", match: ["admin" as const] }] : []),
-      ...(access.adminWorkspace ? [{ view: "guide" as const, label: "運用ガイド", description: "権限・有効化・GRANT・デプロイの要点", match: ["guide" as const] }] : [])
+      ...(access.adminWorkspace ? [{ view: "guide" as const, label: "運用ガイド", description: "権限・有効化・デプロイの要点", match: ["guide" as const] }] : [])
     ] }
   ];
   return groups.filter((group) => group.items.length > 0);
@@ -401,7 +407,7 @@ export function App() {
         {view === "excel-batch" && <ExcelBatchWorkspace canMark={canExcelBatch} />}
         {view === "settings" && adminWorkspace && <SettingsWorkspace canEdit={canEditSettings} />}
         {view === "workflow-rules" && adminWorkspace && <WorkflowRulesWorkspace canEdit={canEditWorkflowRules} />}
-        {view === "contract-master" && legalWorkspace && <ContractMasterWorkspace canEdit={canEditContractMaster} />}
+        {view === "contract-master" && legalWorkspace && <ContractMasterWorkspace canEdit={canEditContractMaster} onNavigate={(t) => setView(t as View)} />}
         {view === "conditions" && <ConditionLinesWorkspace
           onOpenDocument={(id) => {
             setSearchSelection({ target: "document", id: String(id), title: "" });
