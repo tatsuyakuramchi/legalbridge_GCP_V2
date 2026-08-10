@@ -52,7 +52,7 @@ V2 の `AdminOverview` は読み取り専用ステータスのみ。**設定・�
 
 | # | 機能 | V1所在 | 概要 | 粒度 | 優先 |
 |---|---|---|---|---|---|
-| 11-1 | システム設定（会社プロファイル/アプリ設定） | FE `SettingsPage.tsx`／BE `app-settings` | 会社プロファイル・アプリ設定のタブ編集保存 | 中 | 中 |
+| 11-1 | システム設定（会社プロファイル/アプリ設定） | FE `SettingsPage.tsx`／BE `app-settings` | 会社プロファイル・アプリ設定のタブ編集保存 | 中 | 中 | ✅ 実装済（会社プロファイル allowlist・grant 036・`docs/phase11-settings-master.md`。連携トグル/秘密は対象外＝env管理） |
 | 11-2 | 承認ルート/ワークフロールール設定 | FE `master/RulesPanel.tsx`／BE `workflow-settings`・`rules` | 部門ごとの承認者/押印担当/管理者 Slack ID・チャンネル（`workflow_rules`） | 中 | 中 |
 | 11-3 | 台帳マスタ CRUD 書込 | BE `master/ledgers` POST/PUT/DELETE | V2は`GET /ledgers/:type`読取のみ。作成/更新/削除が無い | 中 | 中 |
 | 11-4 | 契約マスタ CRUD | BE `master/contracts` POST/PUT/DELETE・`:id/status` | intake とは別の契約レジストリ登録・更新・状態変更 | 中 | 中 |

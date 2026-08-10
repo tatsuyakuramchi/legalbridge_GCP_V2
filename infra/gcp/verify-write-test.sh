@@ -494,6 +494,25 @@ case "${EXCEL_BATCH_ENABLED}" in
     exit 1
     ;;
 esac
+case "${SETTINGS_WRITE_ENABLED}" in
+  false)
+    ;;
+  true)
+    # 会社プロファイル（app_settings・allowlist キー）編集。書込サービス限定＋IAP/IAM 必須。
+    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
+      echo "Settings write deployment blocked: limited to the write-test service."
+      exit 1
+    fi
+    if [ "${AUTH_MODE}" != "iap" ] && [ "${AUTH_MODE}" != "cloudrun-iam" ]; then
+      echo "Settings write deployment blocked: IAP or Cloud Run IAM authentication is required."
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Deployment blocked: SETTINGS_WRITE_ENABLED must be true or false."
+    exit 1
+    ;;
+esac
 case "${JOBS_ENABLED}" in
   false)
     ;;
@@ -840,6 +859,9 @@ if [ "${DOCUMENT_REISSUE_ENABLED}" = "true" ]; then
 fi
 if [ "${EXCEL_BATCH_ENABLED}" = "true" ]; then
   expected_write_scopes="$expected_write_scopes,excel-batch"
+fi
+if [ "${SETTINGS_WRITE_ENABLED}" = "true" ]; then
+  expected_write_scopes="$expected_write_scopes,settings"
 fi
 if [ "${BACKLOG_COMMENT_WRITE_ENABLED}" = "true" ]; then
   expected_write_scopes="$expected_write_scopes,backlog-comment"

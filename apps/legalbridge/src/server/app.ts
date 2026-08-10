@@ -116,6 +116,8 @@ import { PgDocumentReissueRepository, type DocumentReissueRepository } from "./d
 import { createDocumentReissueRouter } from "./documents/document-reissue-routes.js";
 import { PgExcelBatchRepository, type ExcelBatchRepository } from "./documents/excel-batch-repository.js";
 import { createExcelBatchRouter } from "./documents/excel-batch-routes.js";
+import { PgAppSettingsRepository, type AppSettingsRepository } from "./settings/settings-repository.js";
+import { createSettingsRouter } from "./settings/settings-routes.js";
 import { createJobsRouter, type JobRunner } from "./internal/jobs-routes.js";
 import { PgDailyChecksRepository } from "./jobs/daily-checks-repository.js";
 import { runDailyChecks, DryRunDailyChecksNotifier, jstTodayYmd } from "./jobs/daily-checks-runner.js";
@@ -394,6 +396,7 @@ export interface AppDependencies {
   documentVoid?: DocumentVoidRepository;
   documentReissue?: DocumentReissueRepository;
   excelBatch?: ExcelBatchRepository;
+  appSettings?: AppSettingsRepository;
   // Phase 9 自動化基盤：ジョブ本体・Webhook ハンドラの注入口（既定は空＝無効）。
   jobRunners?: Record<string, JobRunner>;
   cloudSignWebhookHandler?: WebhookHandler;
@@ -455,6 +458,7 @@ export interface AppOptions {
   documentVoidEnabled?: boolean;
   documentReissueEnabled?: boolean;
   excelBatchEnabled?: boolean;
+  appSettingsWriteEnabled?: boolean;
   backlogCommentWriteEnabled?: boolean;
   auth?: AuthSettings;
 }
@@ -491,6 +495,7 @@ function createDefaultDependencies(): AppDependencies {
     documentVoid: database ? new PgDocumentVoidRepository(database) : undefined,
     documentReissue: database ? new PgDocumentReissueRepository(database) : undefined,
     excelBatch: database ? new PgExcelBatchRepository(database) : undefined,
+    appSettings: database ? new PgAppSettingsRepository(database) : undefined,
     conditionLines: database
       ? new PgConditionLineRepository(database)
       : new MemoryConditionLineRepository(),
@@ -603,6 +608,7 @@ export function createApp(
     documentVoidEnabled: config.documentVoidEnabled,
     documentReissueEnabled: config.documentReissueEnabled,
     excelBatchEnabled: config.excelBatchEnabled,
+    appSettingsWriteEnabled: config.appSettingsWriteEnabled,
     backlogCommentWriteEnabled: config.backlogCommentWriteEnabled,
     royaltyEventWritesEnabled: config.royaltyEventWritesEnabled,
     receiptWritesEnabled: config.receiptWritesEnabled,
@@ -793,6 +799,12 @@ export function createApp(
     options.excelBatchEnabled === true &&
     options.writeScopes?.has("excel-batch") === true &&
     Boolean(dependencies.excelBatch);
+  const appSettingsWriteEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.appSettingsWriteEnabled === true &&
+    options.writeScopes?.has("settings") === true &&
+    Boolean(dependencies.appSettings);
   const backlogCommentWriteEnabled =
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
@@ -872,6 +884,7 @@ export function createApp(
         ...(documentVoidEnabled ? ["document-void"] : []),
         ...(documentReissueEnabled ? ["document-reissue"] : []),
         ...(excelBatchEnabled ? ["excel-batch"] : []),
+        ...(appSettingsWriteEnabled ? ["settings"] : []),
         ...(backlogCommentWriteEnabled ? ["backlog-comment"] : []),
         ...(royaltyEventWriteEnabled ? ["royalty-events"] : []),
         ...(receiptWriteEnabled ? ["receipts"] : []),
@@ -899,7 +912,7 @@ export function createApp(
         driveStorageEnabled || slackApprovalWriteEnabled ||
         outboundConditionWriteEnabled || contractIntakeWriteEnabled ||
         matterWriteEnabled || vendorWriteEnabled || staffWriteEnabled || workWriteEnabled ||
-        materialWriteEnabled || rightsSourceWriteEnabled || vendorMergeEnabled || matterMergeEnabled || matterDeleteEnabled || documentVoidEnabled || documentReissueEnabled || excelBatchEnabled || backlogCommentWriteEnabled || royaltyEventWriteEnabled || receiptWriteEnabled ||
+        materialWriteEnabled || rightsSourceWriteEnabled || vendorMergeEnabled || matterMergeEnabled || matterDeleteEnabled || documentVoidEnabled || documentReissueEnabled || excelBatchEnabled || appSettingsWriteEnabled || backlogCommentWriteEnabled || royaltyEventWriteEnabled || receiptWriteEnabled ||
         paymentLedgerWriteEnabled || gmailDispatchEnabled || cloudSignDispatchEnabled || gmailInboundEnabled,
       writeCapabilities: [
         ...(draftWriteEnabled ? ["drafts"] : []),
@@ -921,6 +934,7 @@ export function createApp(
         ...(documentVoidEnabled ? ["document-void"] : []),
         ...(documentReissueEnabled ? ["document-reissue"] : []),
         ...(excelBatchEnabled ? ["excel-batch"] : []),
+        ...(appSettingsWriteEnabled ? ["settings"] : []),
         ...(backlogCommentWriteEnabled ? ["backlog-comment"] : []),
         ...(royaltyEventWriteEnabled ? ["royalty-events"] : []),
         ...(receiptWriteEnabled ? ["receipts"] : []),
@@ -1087,6 +1101,8 @@ export function createApp(
     if (documentReissueEnabled && isDocumentReissue) return next();
     const isExcelBatchMark = request.method === "POST" && request.path === "/documents/excel-batches/mark";
     if (excelBatchEnabled && isExcelBatchMark) return next();
+    const isSettingsWrite = request.method === "POST" && request.path === "/settings";
+    if (appSettingsWriteEnabled && isSettingsWrite) return next();
     const isBacklogComment = request.method === "POST" && /^\/backlog\/issues\/[^/]+\/comments$/.test(request.path);
     if (backlogCommentWriteEnabled && isBacklogComment) return next();
     const isRoyaltyEventWrite =
@@ -1239,6 +1255,8 @@ export function createApp(
     documentVoidNotifier,
     documentVoidNotifier ? async (sourceId) => (await documentRegistry.find(sourceId))?.issueKey ?? null : undefined
   ));
+  // システム設定（会社プロファイル・Phase 11-1）。読取 admin・保存 guarded（scope 'settings'・grant 036）。
+  app.use("/api/v2", createSettingsRouter(dependencies.appSettings, appSettingsWriteEnabled));
 
   // 内部自動化基盤（Phase 9）。ユーザー認証をバイパスし共有シークレットで保護（既定OFF）。
   //   /internal/jobs/:name … Cloud Scheduler 起動口（runners は 9-1 以降で注入）

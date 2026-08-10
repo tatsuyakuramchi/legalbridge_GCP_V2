@@ -33,6 +33,7 @@ import { RequestsWorkspace } from "./RequestsWorkspace";
 import { seedFormData } from "./extract-variables";
 import { PaymentReport } from "./PaymentReport";
 import { ExcelBatchWorkspace } from "./ExcelBatchWorkspace";
+import { SettingsWorkspace } from "./SettingsWorkspace";
 import { BillingPrint } from "./BillingPrint";
 
 type CompatibilityReport = { summary: { total: number; ok: number; warning: number; error: number }; reports: Array<{ templateKey: string; status: "ok" | "warning" | "error"; missingHelpers: string[]; missingPartials: string[]; unmappedVariables: string[]; renderError?: string }> };
@@ -54,7 +55,7 @@ const fallback: DashboardSummary = {
   priorities: []
 };
 
-type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview" | "billing" | "receivable-map" | "payment-report" | "billing-print" | "works" | "data-quality" | "vendor-merge" | "matter-merge" | "guide" | "snippets" | "requests" | "excel-batch";
+type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview" | "billing" | "receivable-map" | "payment-report" | "billing-print" | "works" | "data-quality" | "vendor-merge" | "matter-merge" | "guide" | "snippets" | "requests" | "excel-batch" | "settings";
 type NavItem = { view: View; label: string; description: string; match: View[] };
 type NavGroup = { label: string; items: NavItem[] };
 
@@ -99,6 +100,7 @@ function navGroups(access: {
       ...(access.legalWorkspace ? [{ view: "matter-merge" as const, label: "案件名寄せ", description: "重複した案件を統合（課題・文書・送信履歴を移送・旧はアーカイブ）", match: ["matter-merge" as const] }] : []),
       ...(access.adminWorkspace ? [{ view: "staff" as const, label: "担当者", description: "担当者マスタの管理", match: ["staff" as const] }] : []),
       ...(access.adminWorkspace && access.gmailInbound ? [{ view: "gmail-inbound" as const, label: "受信取込", description: "受信メールの契約PDF取込", match: ["gmail-inbound" as const] }] : []),
+      ...(access.adminWorkspace ? [{ view: "settings" as const, label: "システム設定", description: "会社プロファイル（自社情報）の編集", match: ["settings" as const] }] : []),
       ...(access.adminWorkspace ? [{ view: "admin" as const, label: "管理", description: "通知・運用の管理", match: ["admin" as const] }] : []),
       ...(access.adminWorkspace ? [{ view: "guide" as const, label: "運用ガイド", description: "権限・有効化・GRANT・デプロイの要点", match: ["guide" as const] }] : [])
     ] }
@@ -134,6 +136,7 @@ function breadcrumbFor(view: View): Array<{ label: string; view?: View }> {
     "payment-report": [home, { label: "支払報告書" }],
     "billing-print": [home, { label: "請求印刷" }],
     "excel-batch": [home, { label: "Excel一括" }],
+    settings: [home, { label: "システム設定" }],
     staff: [home, { label: "担当者" }],
     "gmail-inbound": [home, { label: "受信取込" }],
     admin: [home, { label: "管理" }]
@@ -189,6 +192,7 @@ export function App() {
   const [canVoidDocument, setCanVoidDocument] = useState(false);
   const [canReissueDocument, setCanReissueDocument] = useState(false);
   const [canExcelBatch, setCanExcelBatch] = useState(false);
+  const [canEditSettings, setCanEditSettings] = useState(false);
   const [currentUser, setCurrentUser] = useState<{ email: string; role: "admin" | "legal" | "requester" } | null>(null);
   const [searchSelection, setSearchSelection] = useState<{ target: "matter" | "document" | "vendor" | "work"; id: string; title: string } | null>(null);
   const [draftSelection, setDraftSelection] = useState<{ issueKey: string; templateType: string } | null>(null);
@@ -241,6 +245,7 @@ export function App() {
         setCanVoidDocument(capabilities.includes("document-void"));
         setCanReissueDocument(capabilities.includes("document-reissue"));
         setCanExcelBatch(capabilities.includes("excel-batch"));
+        setCanEditSettings(capabilities.includes("settings"));
       })
       .catch(() => {
         setReadOnly(true);
@@ -384,6 +389,7 @@ export function App() {
         {view === "payment-report" && <PaymentReport />}
         {view === "billing-print" && <BillingPrint />}
         {view === "excel-batch" && <ExcelBatchWorkspace canMark={canExcelBatch} />}
+        {view === "settings" && adminWorkspace && <SettingsWorkspace canEdit={canEditSettings} />}
         {view === "conditions" && <ConditionLinesWorkspace
           onOpenDocument={(id) => {
             setSearchSelection({ target: "document", id: String(id), title: "" });

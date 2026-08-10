@@ -836,6 +836,12 @@ button.pdf-download-link:disabled {
   color: #b91c1c;
   font-size: 13px;
 }
+/* システム設定（Phase 11-1） */
+.settings-form { padding: 16px; display: flex; flex-direction: column; gap: 12px; max-width: 640px; }
+.settings-field { display: flex; flex-direction: column; gap: 4px; }
+.settings-field span { font-size: 12px; font-weight: 700; color: var(--ink); }
+.settings-field input { width: 100%; }
+
 /* Excel 一括出力（Phase 10-5） */
 .batch-groups { display: flex; flex-direction: column; gap: 12px; }
 .batch-group-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }

@@ -50,6 +50,8 @@ export const config = {
     process.env.DOCUMENT_REISSUE_ENABLED === "true",
   excelBatchEnabled:
     process.env.EXCEL_BATCH_ENABLED === "true",
+  appSettingsWriteEnabled:
+    process.env.SETTINGS_WRITE_ENABLED === "true",
   royaltyEventWritesEnabled:
     process.env.ROYALTY_EVENT_WRITES_ENABLED === "true",
   receiptWritesEnabled:
