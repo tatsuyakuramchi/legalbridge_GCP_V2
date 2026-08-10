@@ -61,33 +61,36 @@ function navGroups(access: {
   gmailInbound?: boolean;
 }): NavGroup[] {
   const legalOrRequester = access.legalWorkspace || access.requesterWorkspace;
-  // 情報設計（計画 §2.1）：概要／業務／作成／設定 の4グループ。
-  // 業務＝案件を軸にした日々の遂行と条件確認、作成＝文書と契約の起票・取込、
-  // 設定＝マスタ・連携・運用。表示はロールと writeCapabilities で出し分ける。
+  // 情報設計（UX R1・タスクフロー優先）：概要／しごと／権利・条件／お金／マスタ・設定。
+  //   しごと＝依頼→案件→文書→送信の主ループ（作成もここへ寄せる）、
+  //   権利・条件＝作品と契約条件の閲覧・作成、お金＝財務レポート（法務のみ）、
+  //   マスタ・設定＝マスタ編集・連携・保守・運用。表示はロールで出し分ける。
   const groups: NavGroup[] = [
     { label: "概要", items: [
       { view: "home", label: "ホーム", description: "業務の全体状況と次アクション", match: ["home"] }
     ] },
-    { label: "業務", items: [
+    { label: "しごと", items: [
       ...(access.legalWorkspace ? [{ view: "requests" as const, label: "依頼", description: "Backlog課題を起点に文書作成（読み取り）", match: ["requests" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "matters" as const, label: "案件", description: "案件・課題・タスクの管理", match: ["matters" as const] }] : []),
+      ...(legalOrRequester ? [{ view: "documents" as const, label: access.requesterWorkspace ? "自分の文書" : "文書", description: "文書の作成・確定・PDF", match: ["documents" as const, "templates" as const, "document" as const] }] : []),
+      ...(!access.readOnly && legalOrRequester ? [{ view: "drafts" as const, label: access.requesterWorkspace ? "自分の下書き" : "下書き", description: "保存中の下書きを再開", match: ["drafts" as const] }] : []),
+      ...(legalOrRequester ? [{ view: "snippets" as const, label: "スニペット", description: "定型文の保存・コピー（この端末に保存）", match: ["snippets" as const] }] : [])
+    ] },
+    { label: "権利・条件", items: [
       ...(access.legalWorkspace ? [{ view: "works" as const, label: "作品", description: "作品を起点に系譜・素材・条件・権利ソースを一望", match: ["works" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "conditions" as const, label: "条件明細", description: "契約条件の横断検索・消化・検収", match: ["conditions" as const] }] : []),
-      ...(access.legalWorkspace ? [{ view: "outbound" as const, label: "アウト条件", description: "許諾先へのアウト条件追記", match: ["outbound" as const] }] : []),
+      ...(access.legalWorkspace ? [{ view: "outbound" as const, label: "アウト条件", description: "許諾先へのアウト条件追記", match: ["outbound" as const] }] : [])
+    ] },
+    { label: "お金", items: [
       ...(access.legalWorkspace ? [{ view: "billing" as const, label: "請求", description: "再許諾料の受領・分配の横断俯瞰", match: ["billing" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "receivable-map" as const, label: "債権マップ", description: "作品中心の受領・分配・留保の系譜俯瞰", match: ["receivable-map" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "payment-report" as const, label: "支払報告書", description: "出金台帳の源泉・消費税・振込額とCSV出力", match: ["payment-report" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "billing-print" as const, label: "請求印刷", description: "受領・分配 計算書の印刷/PDF", match: ["billing-print" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "royalty-preview" as const, label: "ロイヤリティ試算", description: "確定前のロイヤリティ・源泉のライブ試算（保存なし）", match: ["royalty-preview" as const] }] : [])
     ] },
-    { label: "作成", items: [
-      ...(legalOrRequester ? [{ view: "documents" as const, label: access.requesterWorkspace ? "自分の文書" : "文書", description: "文書の作成・確定・PDF", match: ["documents" as const, "templates" as const, "document" as const] }] : []),
-      ...(!access.readOnly && legalOrRequester ? [{ view: "drafts" as const, label: access.requesterWorkspace ? "自分の下書き" : "下書き", description: "保存中の下書きを再開", match: ["drafts" as const] }] : []),
-      ...(access.adminWorkspace ? [{ view: "contract-intake" as const, label: "契約取込", description: "締結済イン契約の登録", match: ["contract-intake" as const] }] : []),
-      ...(legalOrRequester ? [{ view: "snippets" as const, label: "スニペット", description: "定型文の保存・コピー（この端末に保存）", match: ["snippets" as const] }] : [])
-    ] },
-    { label: "設定", items: [
+    { label: "マスタ・設定", items: [
       ...(access.legalWorkspace ? [{ view: "ledgers" as const, label: "台帳", description: "作品・取引先などのマスタ", match: ["ledgers" as const] }] : []),
+      ...(access.adminWorkspace ? [{ view: "contract-intake" as const, label: "契約取込", description: "締結済イン契約の登録", match: ["contract-intake" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "data-quality" as const, label: "データ品質", description: "横断整合スキャン（未リンク・重複・欠落）の俯瞰", match: ["data-quality" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "vendor-merge" as const, label: "取引先名寄せ", description: "重複した取引先を統合（参照再指定・旧は無効化）", match: ["vendor-merge" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "matter-merge" as const, label: "案件名寄せ", description: "重複した案件を統合（課題・文書・送信履歴を移送・旧はアーカイブ）", match: ["matter-merge" as const] }] : []),

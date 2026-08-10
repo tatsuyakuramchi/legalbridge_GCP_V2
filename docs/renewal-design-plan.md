@@ -294,6 +294,10 @@ Phase 7 は全フェーズの受け入れ後
 
 | 2026-08-07 | Phase 5 | 点火準備：CloudSign 点火 Runbook 新設＋gmail-cloudsign.md を確定仕様へ更新 | — | ✅ |
 
+| 2026-08-10 | UX | 構造リファクタ R1（ナビ再編：業務10項目を分割）実装 ＋ R4（ガード階層 標準）確定 | LegalBridge_AI_GCP | ✅ |
+
+**R1 ナビ再編（実装）**：`App.tsx navGroups` を タスクフロー優先の 概要／しごと（依頼・案件・文書・下書き・スニペット）／権利・条件（作品・条件明細・アウト条件）／お金（請求・債権マップ・支払報告・請求印刷・試算）／マスタ・設定（台帳・契約取込・データ品質・名寄せ×2・担当者・受信取込・管理・運用ガイド）へ再編。過積載だった「業務10項目」を主ループ／権利条件／財務に分割し、財務系を日常ループから隔離（F1 解消）。ロール別出し分けは維持。**R4 ガード階層 標準**：T3 不可逆/破壊＝プレビュー＋合言葉、T2 本番書込＝インライン確認、T1 低リスク/外部＝通常、の3ティアを `docs/v2-ux-rationality-review.md` に明文化し新規画面（Phase 10/11）へ適用（既存 retrofit は業務合意の上で個別）。テスト545件緑・typecheck緑・build緑。
+
 | 2026-08-10 | UX | Quick Wins Q3（空状態の2ティア整流）・Q4（文書紐付け検索UI）実装 | LegalBridge_AI_GCP | ✅ |
 
 **UX Quick Wins Q3/Q4 実装**：Q4＝案件詳細の文書紐付けを生ID入力から**デバウンス検索ピッカー**へ（`GET /documents?q=` を叩き候補クリックで POST 紐付け・紐付け済みは候補除外・`.doc-link-*` CSS 追加）＝F9 解消。Q3＝主要リストの空状態を `EmptyState` 箱に統一（DocumentRegistry/Requests/Draft/Ledger/TemplateCatalog）、表内・ローディング等のインライン注記は軽量 `.empty-state` を下位ティアとして維持し「意図した2ティア」に整流＝F7 緩和。テスト545件緑・typecheck緑・build緑。Quick Wins Q1〜Q4 完了。
