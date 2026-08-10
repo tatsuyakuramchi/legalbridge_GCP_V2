@@ -21,6 +21,11 @@ Webhook 受信口・督促自動化・外部イベント連携** を、既存 gu
   `JOBS_ENABLED`/`JOBS_TRIGGER_TOKEN`。verify/cloudbuild に `_JOBS_ENABLED`/`_JOBS_TRIGGER_TOKEN_SECRET`
   （Secret Manager 注入）＋ゲート（write-test・IAP/IAM・token 必須）を追加。tests 7。
   **本番テーブルは更新しない**（満了遷移 9-3 は別 opt-in）。
+- ✅ **9-1c 実送信**（済）：`jobs/daily-checks-live-notifier.ts`＝`LiveDailyChecksNotifier`。督促を
+  法務相談チャンネルへ**1通のダイジェスト**として投稿（既存 `matterSlackChannelAdapter` を再利用）。
+  投稿成功で全件 delivered→台帳記録、失敗で全件未達→次回再送。app.ts は Slack live
+  （配信live＋Botトークン＋チャンネル）なら Live、それ以外は Dry-run を注入。tests 3。
+  宛先DM（申請者個別）は email→Slack ID 解決が要るため将来拡張。
 
 ## 重要な設計判断（実装前に確定した事項）
 

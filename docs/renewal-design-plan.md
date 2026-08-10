@@ -318,6 +318,10 @@ Phase 7 は全フェーズの受け入れ後
 
 **UI/UX 合理性レビュー（`docs/v2-ux-rationality-review.md`）**：V1 の「迷いの構造」を 5 類型化（作業オブジェクト三重帳簿・暗黙モードの入口乱立・用語不整合・ロール未分岐・巨大マルチ目的画面）し、V2 現状 IA を並列監査して統合。V2 は既に主要な V1 病を治療済み（案件へ正典化・文書作成 funnel 統一・破壊操作トークン型統一・ロール一級市民化・Breadcrumb）＝維持資産として明記。残摩擦 F1〜F9（業務グループ過積載/OFF機能の伝え方3系統/GRANT番号露出/発見→是正断絶/条件・作品の画面分散/ガード重み付け不揃い/空状態2系統/作成→出力4遷移/生ID入力）を洗い出し、実タスクフロー（申請者・法務・管理者）に立脚した設計原則6点と、Quick Wins（Q1発見→是正prop配線・Q2未有効化統一＋GRANT番号除去・Q3空状態一本化・Q4文書検索UI）／構造リファクタ（R1ナビ再編・R2条件集約・R3作品二重解消・R4ガード階層化・R5ロール別ホーム）／大（B1作成→出力1画面化・B2 Phase10/11新規UIへ本指針適用）を優先度・粒度付きで提案。機能ギャップ台帳と対になる体験台帳。
 
+| 2026-08-10 | Phase 9 | 9-1c 実送信（LiveDailyChecksNotifier＝Slack 法務相談チャンネルへダイジェスト投稿） | LegalBridge_AI_GCP | ✅ |
+
+**9-1c 実送信**：`jobs/daily-checks-live-notifier.ts`＝`LiveDailyChecksNotifier`。督促を法務相談チャンネルへ1通のダイジェスト（`:bell: 本日の督促（N件）` ＋ 箇条書き）として投稿し、既存 `matterSlackChannelAdapter` を再利用。投稿成功で全件 delivered→台帳記録、失敗で全件未達→次回再送（all-or-nothing）。app.ts は Slack live 設定（SLACK_DELIVERY_MODE=live＋xoxb トークン＋法務相談チャンネル）なら Live、それ以外は Dry-run を daily-checks runner へ注入。宛先DM（申請者個別）は email→Slack ID 解決が要るため将来拡張。テスト555件緑・typecheck緑・build緑。残 9-3 満了遷移／9-4 検収ダイジェスト／9-5・9-7 Webhook／9-6 一括同期。
+
 | 2026-08-10 | Phase 9 | 9-1b/9-2 daily-checks 配線（隔離台帳 grant 030・repo・runner・dry-run 既定・jobs 起動口配線） | LegalBridge_AI_GCP | ✅ |
 
 **9-1b/9-2 実装**：督促ジョブ本体を配線。grant 030＝`lb_v2_job_alert_ledger`（CREATE＋GRANT 自己完結・SELECT/INSERT・(kind,ref_type,ref_id,alert_date) UNIQUE で同日重複抑止）。`jobs/daily-checks-repository.ts`（Pg/Memory）＝候補読取（condition_lines[legacy_role='cli']×documents[record_type='purchase_order']・condition_line_status_v で全量検収除外・**本番は更新せず台帳の最新 alert_date を lastAlertAt として渡す**・権限未整備は空縮退）＋recordAlerts（ON CONFLICT DO NOTHING）。`jobs/daily-checks-runner.ts`＝エンジンで発火判定→通知→**live のみ台帳へ記録**（dry-run は記録せず件数のみ返す）＋`DryRunDailyChecksNotifier`（既定・安全）。app.ts の `/internal/jobs/daily-checks` runner を登録（既定 dry-run）。verify/cloudbuild に `_JOBS_ENABLED`/`_JOBS_TRIGGER_TOKEN_SECRET`（Secret 注入）＋ゲート追加。テスト552件緑・typecheck緑・build緑。実送信（live ノーティファイア）と満了遷移(9-3)・Webhook(9-5/9-7)は後続。

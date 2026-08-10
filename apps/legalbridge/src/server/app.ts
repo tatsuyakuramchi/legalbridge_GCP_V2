@@ -107,6 +107,7 @@ import { createMatterDeleteRouter } from "./matters/matter-delete-routes.js";
 import { createJobsRouter, type JobRunner } from "./internal/jobs-routes.js";
 import { PgDailyChecksRepository } from "./jobs/daily-checks-repository.js";
 import { runDailyChecks, DryRunDailyChecksNotifier, jstTodayYmd } from "./jobs/daily-checks-runner.js";
+import { LiveDailyChecksNotifier } from "./jobs/daily-checks-live-notifier.js";
 import { createWebhooksRouter, type WebhookHandler } from "./internal/webhooks-routes.js";
 import {
   GoogleMatterDriveFolderService,
@@ -1165,9 +1166,18 @@ export function createApp(
   const jobsDatabase = getPool();
   if (jobsDatabase && !jobRunners["daily-checks"]) {
     const dailyChecksRepo = new PgDailyChecksRepository(jobsDatabase);
+    // Slack が live 設定（配信live＋Botトークン＋法務相談チャンネル）なら実送信、
+    // それ以外は dry-run（送信・台帳記録せず件数のみ）＝安全既定。
+    const dailyChecksLive =
+      config.slackDeliveryMode === "live" &&
+      /^xoxb-[A-Za-z0-9-]+$/.test(config.slackBotToken) &&
+      Boolean(config.slackLegalConsultChannel);
+    const dailyChecksNotifier = dailyChecksLive
+      ? new LiveDailyChecksNotifier(matterSlackChannelAdapter, config.slackLegalConsultChannel)
+      : new DryRunDailyChecksNotifier();
     jobRunners["daily-checks"] = () => runDailyChecks({
       repo: dailyChecksRepo,
-      notifier: new DryRunDailyChecksNotifier(),
+      notifier: dailyChecksNotifier,
       todayYmd: jstTodayYmd(Date.now()),
       nowMs: Date.now()
     });
