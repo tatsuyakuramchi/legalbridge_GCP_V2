@@ -22,7 +22,7 @@ V2（本リポジトリ）を本番サービスとして V1（legalbridge_ai_gcp
 | 1-1 | **Phase 16-3：Slack インテーク** | ✅ 16-3a＋16-3b 実装済（受信口＋/法務依頼＋起票/記録/通知＋/法務検索・grant 044）。点火は `phase16-cutover-gaps.md`。16-3c（明細行/紐付け/納期変更）残 |
 | 1-2 | Phase 16-1：スニペットのサーバ共有化 | ✅ 実装済（guarded・grant 045＋`_SNIPPETS_WRITE_ENABLED=true`＋WRITE_SCOPES へ `snippets`（contract-master の直後）。点火は `phase16-cutover-gaps.md`） |
 | 1-3 | Phase 16-2：契約チェック API | ✅ 実装済（読取専用・grant 不要・全ロール。/法務検索 16-3b の前提解消） |
-| 1-4 | Phase 16-4：添付アップロード（multipart） | 未着手（中） |
+| 1-4 | Phase 16-4：添付アップロード（multipart） | ✅ 実装済（新規 grant 不要。点火＝Drive ストレージ構成＋`_ATTACHMENT_UPLOAD_ENABLED=true`＋WRITE_SCOPES へ `attachments`（snippets の直後）。`phase16-cutover-gaps.md`） |
 | 1-5 | 9-7 Backlog Webhook 自動起票（受信→legal_requests 作成） | 部分実装（受信記録＋通知のみ） |
 | 1-6 | V2 帳票への会社プロファイル差込（app_settings 参照。現状ハードコード） | 未着手（小） |
 
@@ -90,7 +90,7 @@ Slack（16-3）は Slack App の signing secret 検証で同じ受信サービ�
 
 ## 6. cutover 判定チェックリスト
 - [ ] Phase 16-3（Slack インテーク）実装・点火済み
-- [ ] Phase 16-1/2/4 実装済み
+- [x] Phase 16-1/2/4 実装済み（点火は 16-1＝grant 045、16-4＝Drive 構成が前提）
 - [ ] grant 031・043 適用済み
 - [ ] マスタ書込スコープ点火済み（2-2）
 - [ ] Scheduler 3 ジョブ稼働（2-3）

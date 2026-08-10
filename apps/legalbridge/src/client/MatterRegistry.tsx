@@ -53,9 +53,9 @@ function matchesFilter(matter: Matter, filter: FilterKey, today: string) {
   }
 }
 
-export function MatterRegistry({ templates, selectedId, canEdit = false, canDelete = false, onCreateDocument }:
+export function MatterRegistry({ templates, selectedId, canEdit = false, canDelete = false, canUploadAttachments = false, onCreateDocument }:
   { templates: DocumentFormSchema[]; selectedId?: number; canEdit?: boolean; canDelete?: boolean;
-    onCreateDocument?: (issueKey: string | null) => void }) {
+    canUploadAttachments?: boolean; onCreateDocument?: (issueKey: string | null) => void }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FilterKey>("all");
   const [matters, setMatters] = useState<Matter[]>([]);
@@ -157,6 +157,7 @@ export function MatterRegistry({ templates, selectedId, canEdit = false, canDele
         ? <MatterForm mode="create" onCancel={() => setCreating(false)}
             onSaved={(id) => { setCreating(false); refreshAll(id); }} />
         : <MatterDetail detail={detail} labels={labels} canEdit={canEdit} canDelete={canDelete}
+            canUploadAttachments={canUploadAttachments}
             onCreateDocument={onCreateDocument}
             onChanged={() => refreshAll(detail?.matter.id)}
             onDeleted={() => { setDetail(null); setReload((v) => v + 1); }} />}
@@ -164,9 +165,9 @@ export function MatterRegistry({ templates, selectedId, canEdit = false, canDele
   </section>;
 }
 
-function MatterDetail({ detail, labels, canEdit, canDelete = false, onChanged, onDeleted, onCreateDocument }:
-  { detail: Detail | null; labels: Map<string, string>; canEdit: boolean; canDelete?: boolean; onChanged: () => void;
-    onDeleted?: () => void; onCreateDocument?: (issueKey: string | null) => void }) {
+function MatterDetail({ detail, labels, canEdit, canDelete = false, canUploadAttachments = false, onChanged, onDeleted, onCreateDocument }:
+  { detail: Detail | null; labels: Map<string, string>; canEdit: boolean; canDelete?: boolean; canUploadAttachments?: boolean;
+    onChanged: () => void; onDeleted?: () => void; onCreateDocument?: (issueKey: string | null) => void }) {
   const [editing, setEditing] = useState(false);
   const [addingTask, setAddingTask] = useState(false);
   useEffect(() => { setEditing(false); setAddingTask(false); }, [detail?.matter.id]);
@@ -206,6 +207,7 @@ function MatterDetail({ detail, labels, canEdit, canDelete = false, onChanged, o
     </DetailSection>
     <DetailSection title={`関連文書 ${detail.documents.length}`}>
       <MatterDocumentLinks matterId={matter.id} documents={detail.documents} labels={labels} canEdit={canEdit} onChanged={onChanged} />
+      {canUploadAttachments && <MatterAttachmentUpload matterId={matter.id} onUploaded={onChanged} />}
     </DetailSection>
     <DetailSection title="送信履歴"><MatterSends matterId={matter.id} documents={detail.documents} canEdit={canEdit} /></DetailSection>
     {matter.remarks && <DetailSection title="備考"><p>{matter.remarks}</p></DetailSection>}
@@ -503,6 +505,72 @@ function MatterDocumentLinks({ matterId, documents, labels, canEdit, onChanged }
       </ul>}
     </div>}
   </>;
+}
+
+// 資料アップロード（Phase 16-4）。生ファイル（Word/PDF 等）を Drive へ格納し、
+// documents 行（ATT 採番）として案件に紐付ける。登録後は上の関連文書一覧に載る。
+const ATTACHMENT_KIND_OPTIONS = [
+  { value: "counterparty_draft", label: "相手方ドラフト（レビュー対象）" },
+  { value: "own_draft", label: "自社ドラフト" },
+  { value: "reference", label: "参考資料" }
+] as const;
+const ATTACHMENT_MAX_BYTES = 30 * 1024 * 1024;
+
+function MatterAttachmentUpload({ matterId, onUploaded }:
+  { matterId: number; onUploaded: () => void }) {
+  const toast = useToast();
+  const [kind, setKind] = useState<string>("reference");
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<string>("");
+
+  async function uploadFiles(list: FileList | null) {
+    if (!list || !list.length || busy) return;
+    setBusy(true);
+    let uploaded = 0;
+    try {
+      for (const file of Array.from(list)) {
+        if (file.size > ATTACHMENT_MAX_BYTES) {
+          toast.push(`${file.name} は 30MB を超えています`);
+          continue;
+        }
+        setProgress(`${file.name} をアップロード中…`);
+        const form = new FormData();
+        form.append("docKind", kind);
+        // multipart ヘッダの filename は非 ASCII で化ける環境があるため通常フィールドで併送。
+        form.append("originalName", file.name);
+        form.append("file", file);
+        const response = await fetch(`/api/v2/matters/${matterId}/attachments`, {
+          method: "POST", body: form
+        });
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({})) as { error?: string };
+          toast.push(`${file.name}: ${body.error ?? `HTTP ${response.status}`}`);
+          continue;
+        }
+        const body = await response.json() as { document?: { documentNumber?: string } };
+        uploaded += 1;
+        toast.push(`格納しました（${body.document?.documentNumber ?? ""}）`);
+      }
+    } finally {
+      setBusy(false);
+      setProgress("");
+      if (uploaded > 0) onUploaded();
+    }
+  }
+
+  return <div className="attachment-upload">
+    <div className="attachment-upload-row">
+      <select value={kind} onChange={(e) => setKind(e.target.value)} disabled={busy} aria-label="資料の種別">
+        {ATTACHMENT_KIND_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+      <label className={`attachment-upload-button${busy ? " busy" : ""}`}>
+        {busy ? (progress || "アップロード中…") : "＋ 資料をアップロード"}
+        <input type="file" multiple disabled={busy} style={{ display: "none" }}
+          onChange={(e) => { void uploadFiles(e.target.files); e.target.value = ""; }} />
+      </label>
+    </div>
+    <small className="muted-note">Word/PDF 等の生ファイルを Drive に格納し、この案件の文書（ATT 番号）として登録します。複数可・1ファイル 30MB まで。</small>
+  </div>;
 }
 
 function InlineMatterControls({ matter, onChanged }:

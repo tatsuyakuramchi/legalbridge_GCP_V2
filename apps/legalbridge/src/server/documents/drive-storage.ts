@@ -15,6 +15,13 @@ export interface DriveStorage {
   }): Promise<StoredDriveFile>;
   // 既存 Drive ファイルの中身を差し替える（PDF 再生成・Phase 10-3）。リンク/ID は維持。
   updatePdf(input: { fileId: string; pdf: Buffer }): Promise<StoredDriveFile>;
+  // 任意 MIME の生ファイル格納（Phase 16-4・添付アップロード）。optional：
+  // 既存のテスト用スタブ実装を壊さないため。未実装のストレージでは添付機能を無効化する。
+  uploadFile?(input: {
+    filename: string;
+    mimeType: string;
+    data: Buffer;
+  }): Promise<StoredDriveFile>;
 }
 
 // フル drive スコープ。drive.file だと「人が作成して共有しただけの
@@ -119,6 +126,39 @@ export class GoogleDriveStorage implements DriveStorage {
     return { id: file.id, webViewLink: driveViewLink(file.id, file.webViewLink) };
   }
 
+  async uploadFile(input: { filename: string; mimeType: string; data: Buffer }) {
+    const token = await this.accessToken();
+    const boundary = `legalbridge-${crypto.randomUUID()}`;
+    const metadata = {
+      name: input.filename,
+      mimeType: input.mimeType || "application/octet-stream",
+      parents: [this.folderId],
+      appProperties: { legalbridgeEnvironment: this.environmentTag }
+    };
+    const body = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n`),
+      Buffer.from(`--${boundary}\r\nContent-Type: ${metadata.mimeType}\r\n\r\n`),
+      input.data,
+      Buffer.from(`\r\n--${boundary}--\r\n`)
+    ]);
+    const url = new URL("https://www.googleapis.com/upload/drive/v3/files");
+    url.searchParams.set("uploadType", "multipart");
+    url.searchParams.set("supportsAllDrives", "true");
+    url.searchParams.set("fields", "id,webViewLink");
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": `multipart/related; boundary=${boundary}`,
+        "Content-Length": String(body.length)
+      },
+      body
+    });
+    if (!response.ok) throw await driveError("upload", response);
+    const file = await response.json() as StoredDriveFile;
+    return { id: file.id, webViewLink: driveViewLink(file.id, file.webViewLink) };
+  }
+
   async updatePdf(input: { fileId: string; pdf: Buffer }) {
     const token = await this.accessToken();
     // 既存ファイルの中身のみ差し替える（media アップロード・メタデータ据え置き）。
@@ -177,6 +217,13 @@ export class MemoryDriveStorage implements DriveStorage {
   async updatePdf(input: { fileId: string; pdf: Buffer }) {
     this.updates += 1;
     return { id: input.fileId, webViewLink: `https://drive.google.com/file/d/${input.fileId}/view` };
+  }
+
+  fileUploads: Array<{ filename: string; mimeType: string; size: number }> = [];
+  async uploadFile(input: { filename: string; mimeType: string; data: Buffer }) {
+    this.fileUploads.push({ filename: input.filename, mimeType: input.mimeType, size: input.data.length });
+    const id = `drive-file-${this.fileUploads.length}`;
+    return { id, webViewLink: `https://drive.google.com/file/d/${id}/view` };
   }
 }
 

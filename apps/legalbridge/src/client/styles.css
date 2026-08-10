@@ -386,6 +386,13 @@ header input { width: 100%; border: 1px solid var(--border); border-radius: var(
 .doc-link-hit b { font-size: 12px; color: #0f172a; }
 .doc-link-hit span { font-size: 11px; color: #475569; }
 .doc-link-hit small { font-size: 11px; color: #94a3b8; margin-left: auto; }
+/* Phase 16-4: 案件詳細の資料アップロード（関連文書セクション内） */
+.attachment-upload { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #e2e8f0; display: grid; gap: 6px; }
+.attachment-upload-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.attachment-upload-row select { border: 1px solid #cbd5e1; border-radius: 7px; padding: 6px 9px; font: inherit; font-size: 12px; background: white; }
+.attachment-upload-button { display: inline-flex; align-items: center; border: 1px solid #cbd5e1; border-radius: 7px; padding: 6px 12px; font-size: 12px; font-weight: 600; color: #0f172a; background: white; cursor: pointer; }
+.attachment-upload-button:hover:not(.busy) { background: #f1f5f9; }
+.attachment-upload-button.busy { opacity: .6; cursor: progress; }
 .surface-xref { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: -2px 0 14px; font-size: 12px; }
 .surface-xref-here { color: #475569; background: #eef2f7; border-radius: 999px; padding: 3px 10px; font-weight: 600; }
 .surface-xref button { border: 1px solid #cbd5e1; background: white; color: #3d4ea3; border-radius: 999px; padding: 3px 10px; font: inherit; font-size: 12px; cursor: pointer; }

@@ -208,6 +208,7 @@ export function App() {
   const [canEditWorkflowRules, setCanEditWorkflowRules] = useState(false);
   const [canEditContractMaster, setCanEditContractMaster] = useState(false);
   const [canEditSnippets, setCanEditSnippets] = useState(false);
+  const [canUploadAttachments, setCanUploadAttachments] = useState(false);
   const [currentUser, setCurrentUser] = useState<{ email: string; role: "admin" | "legal" | "requester" } | null>(null);
   const [searchSelection, setSearchSelection] = useState<{ target: "matter" | "document" | "vendor" | "work"; id: string; title: string } | null>(null);
   const [draftSelection, setDraftSelection] = useState<{ issueKey: string; templateType: string } | null>(null);
@@ -264,6 +265,7 @@ export function App() {
         setCanEditWorkflowRules(capabilities.includes("workflow-rules"));
         setCanEditContractMaster(capabilities.includes("contract-master"));
         setCanEditSnippets(capabilities.includes("snippets"));
+        setCanUploadAttachments(capabilities.includes("attachments"));
       })
       .catch(() => {
         setReadOnly(true);
@@ -365,6 +367,7 @@ export function App() {
         {view === "matters" && <MatterRegistry templates={templates}
           canEdit={canEditMatters}
           canDelete={canDeleteMatters}
+          canUploadAttachments={canUploadAttachments}
           onCreateDocument={(legalWorkspace || requesterWorkspace)
             ? (issueKey) => { setNewDocIssueKey(issueKey ?? ""); setNewDocSeed({}); setDraftSelection(null); setView("templates"); }
             : undefined}

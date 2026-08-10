@@ -124,6 +124,8 @@ import { PgContractMasterRepository, type ContractMasterRepository } from "./con
 import { PgContractCheckRepository, type ContractCheckRepository } from "./contract-check/repository.js";
 import { PgSnippetsRepository, type SnippetsRepository } from "./snippets/snippets-repository.js";
 import { createSnippetsRouter } from "./snippets/snippets-routes.js";
+import { PgAttachmentsRepository, type AttachmentsRepository } from "./documents/attachments-repository.js";
+import { createAttachmentsRouter } from "./documents/attachments-routes.js";
 import { createContractCheckRouter } from "./contract-check/routes.js";
 import { createContractMasterRouter } from "./contracts/contract-master-routes.js";
 import { createJobsRouter, type JobRunner } from "./internal/jobs-routes.js";
@@ -412,6 +414,7 @@ export interface AppDependencies {
   contractMaster?: ContractMasterRepository;
   contractCheck?: ContractCheckRepository;
   snippets?: SnippetsRepository;
+  attachments?: AttachmentsRepository;
   // Phase 9 自動化基盤：ジョブ本体・Webhook ハンドラの注入口（既定は空＝無効）。
   jobRunners?: Record<string, JobRunner>;
   cloudSignWebhookHandler?: WebhookHandler;
@@ -477,6 +480,7 @@ export interface AppOptions {
   workflowRulesWriteEnabled?: boolean;
   contractMasterWriteEnabled?: boolean;
   snippetsWriteEnabled?: boolean;
+  attachmentUploadEnabled?: boolean;
   backlogCommentWriteEnabled?: boolean;
   auth?: AuthSettings;
 }
@@ -518,6 +522,7 @@ function createDefaultDependencies(): AppDependencies {
     contractMaster: database ? new PgContractMasterRepository(database) : undefined,
     contractCheck: database ? new PgContractCheckRepository(database) : undefined,
     snippets: database ? new PgSnippetsRepository(database) : undefined,
+    attachments: database ? new PgAttachmentsRepository(database) : undefined,
     conditionLines: database
       ? new PgConditionLineRepository(database)
       : new MemoryConditionLineRepository(),
@@ -634,6 +639,7 @@ export function createApp(
     workflowRulesWriteEnabled: config.workflowRulesWriteEnabled,
     contractMasterWriteEnabled: config.contractMasterWriteEnabled,
     snippetsWriteEnabled: config.snippetsWriteEnabled,
+    attachmentUploadEnabled: config.attachmentUploadEnabled,
     backlogCommentWriteEnabled: config.backlogCommentWriteEnabled,
     royaltyEventWritesEnabled: config.royaltyEventWritesEnabled,
     receiptWritesEnabled: config.receiptWritesEnabled,
@@ -854,6 +860,15 @@ export function createApp(
     options.backlogCommentWriteEnabled === true &&
     options.writeScopes?.has("backlog-comment") === true &&
     Boolean(dependencies.backlogWriteClient);
+  // 添付アップロード（Phase 16-4）。DB grant は既存 006 で足りるが、生ファイルの
+  // 格納先（Drive ストレージの uploadFile）が使えることが前提。
+  const attachmentUploadEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.attachmentUploadEnabled === true &&
+    options.writeScopes?.has("attachments") === true &&
+    Boolean(dependencies.attachments) &&
+    typeof dependencies.driveStorage?.uploadFile === "function";
   const royaltyEventWriteEnabled =
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
@@ -931,6 +946,7 @@ export function createApp(
         ...(workflowRulesWriteEnabled ? ["workflow-rules"] : []),
         ...(contractMasterWriteEnabled ? ["contract-master"] : []),
         ...(snippetsWriteEnabled ? ["snippets"] : []),
+        ...(attachmentUploadEnabled ? ["attachments"] : []),
         ...(backlogCommentWriteEnabled ? ["backlog-comment"] : []),
         ...(royaltyEventWriteEnabled ? ["royalty-events"] : []),
         ...(receiptWriteEnabled ? ["receipts"] : []),
@@ -958,7 +974,7 @@ export function createApp(
         driveStorageEnabled || slackApprovalWriteEnabled ||
         outboundConditionWriteEnabled || contractIntakeWriteEnabled ||
         matterWriteEnabled || vendorWriteEnabled || staffWriteEnabled || workWriteEnabled ||
-        materialWriteEnabled || rightsSourceWriteEnabled || vendorMergeEnabled || matterMergeEnabled || matterDeleteEnabled || documentVoidEnabled || documentReissueEnabled || excelBatchEnabled || appSettingsWriteEnabled || workflowRulesWriteEnabled || contractMasterWriteEnabled || snippetsWriteEnabled || backlogCommentWriteEnabled || royaltyEventWriteEnabled || receiptWriteEnabled ||
+        materialWriteEnabled || rightsSourceWriteEnabled || vendorMergeEnabled || matterMergeEnabled || matterDeleteEnabled || documentVoidEnabled || documentReissueEnabled || excelBatchEnabled || appSettingsWriteEnabled || workflowRulesWriteEnabled || contractMasterWriteEnabled || snippetsWriteEnabled || attachmentUploadEnabled || backlogCommentWriteEnabled || royaltyEventWriteEnabled || receiptWriteEnabled ||
         paymentLedgerWriteEnabled || gmailDispatchEnabled || cloudSignDispatchEnabled || gmailInboundEnabled,
       writeCapabilities: [
         ...(draftWriteEnabled ? ["drafts"] : []),
@@ -984,6 +1000,7 @@ export function createApp(
         ...(workflowRulesWriteEnabled ? ["workflow-rules"] : []),
         ...(contractMasterWriteEnabled ? ["contract-master"] : []),
         ...(snippetsWriteEnabled ? ["snippets"] : []),
+        ...(attachmentUploadEnabled ? ["attachments"] : []),
         ...(backlogCommentWriteEnabled ? ["backlog-comment"] : []),
         ...(royaltyEventWriteEnabled ? ["royalty-events"] : []),
         ...(receiptWriteEnabled ? ["receipts"] : []),
@@ -1158,6 +1175,8 @@ export function createApp(
     if (contractMasterWriteEnabled && isContractMasterWrite) return next();
     const isSnippetsWrite = request.method === "POST" && /^\/snippets(\/\d+\/deactivate)?$/.test(request.path);
     if (snippetsWriteEnabled && isSnippetsWrite) return next();
+    const isAttachmentUpload = request.method === "POST" && /^\/matters\/\d+\/attachments$/.test(request.path);
+    if (attachmentUploadEnabled && isAttachmentUpload) return next();
     const isBacklogComment = request.method === "POST" && /^\/backlog\/issues\/[^/]+\/comments$/.test(request.path);
     if (backlogCommentWriteEnabled && isBacklogComment) return next();
     const isRoyaltyEventWrite =
@@ -1320,6 +1339,18 @@ export function createApp(
   app.use("/api/v2", createContractCheckRouter(dependencies.contractCheck));
   // スニペット（Phase 16-1）。読取 全ロール・保存/無効化 guarded（scope 'snippets'・grant 045）。
   app.use("/api/v2", createSnippetsRouter(dependencies.snippets, snippetsWriteEnabled));
+
+  // 案件への資料アップロード（Phase 16-4・guarded scope 'attachments'・grant は既存 006）。
+  // Backlog 課題への気づきコメントは backlog-comment 点火時のみベストエフォート。
+  app.use("/api/v2", createAttachmentsRouter({
+    repository: dependencies.attachments,
+    storage: dependencies.driveStorage ?? null,
+    postComment: backlogCommentWriteEnabled && dependencies.backlogWriteClient
+      ? (issueKey, text) =>
+          dependencies.backlogWriteClient!.addComment(issueKey, text).then(() => undefined)
+      : undefined,
+    writeEnabled: attachmentUploadEnabled
+  }));
 
   // 内部自動化基盤（Phase 9）。ユーザー認証をバイパスし共有シークレットで保護（既定OFF）。
   //   /internal/jobs/:name … Cloud Scheduler 起動口（runners は 9-1 以降で注入）

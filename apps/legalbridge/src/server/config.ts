@@ -58,6 +58,8 @@ export const config = {
     process.env.CONTRACT_MASTER_WRITE_ENABLED === "true",
   snippetsWriteEnabled:
     process.env.SNIPPETS_WRITE_ENABLED === "true",
+  attachmentUploadEnabled:
+    process.env.ATTACHMENT_UPLOAD_ENABLED === "true",
   royaltyEventWritesEnabled:
     process.env.ROYALTY_EVENT_WRITES_ENABLED === "true",
   receiptWritesEnabled:
