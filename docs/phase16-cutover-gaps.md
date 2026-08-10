@@ -64,9 +64,35 @@ DB 書込まで同期（実課題キーを完了ビューに出す）→通知�
   Backlog ステータス付加。tests 5 件＝**681 緑**。
 - 点火は 16-3a と同一（Slack App に `/法務検索` コマンドを追加登録するだけ・新規 secret/grant 不要）。
 
-### 16-3c（残）
-明細行（最大5行・views.update・dispatch_action 動的モーダル）／既存課題への紐付け（candidates＋
-link-trigger）／納期変更モーダル（dispatch_action 依存）／署名URLアップロードリンク（ポータル廃止判断待ち）。
+### 16-3c：動的モーダル群 ✅ 実装済（明細行・紐付け・納期変更）
+V1 slackGateway の dispatch_action／views.update 系を移植。**新規 grant・env 不要**（候補抽出は
+grant 044 の legal_requests/issue_workflows SELECT で足りる）。点火条件は 16-3a と同一。
+
+- `slack-intake/line-items.ts`（純粋）：明細定義 4 種（発注明細・許諾明細・納品明細・計算明細）を
+  **V1 と同一のラベル・placeholder・選択肢**で移植。最大 5 行・増減ボタン（li_add/li_remove）・
+  ブロック構築／パース（空行スキップ）／`formatLineItemsText`（V1 同一書式）。
+- `modal.ts` 動的化：依頼種別 select に `dispatch_action`。種別に応じて再構築＝
+  ①明細対象種別（発注書/個別許諾/検収書/計算書）は明細セクション＋`private_metadata.li_count`、
+  ②検収書・計算書は**候補セレクタ（🆕新規作成=__NEW__ 先頭・申請者の未完了依頼25件）＋
+  対象契約番号ブロック**（相手方手入力の代わり・V1 同様）、③**納期変更依頼**は別フォーム
+  （候補セレクタ＋自由キー入力＋新納期 datepicker(+1日)＋変更理由。V1 と同じ検証：キー形式
+  `^[A-Z][A-Z0-9_]*-\d+$`・日付・理由必須）。
+- handler：block_actions（種別変更・明細増減）→ 候補をベストエフォートで引いて `views.update`
+  （hash 付き）。view_submission 分岐＝
+  1. **納期変更**：新規の作業課題は作らず、承認用課題 `[納期変更依頼] KEY → 日付` を起票→
+     legal_requests（contract_type='deadline_change'・notes は V1 同一構造 `executed:false`）＋
+     台帳＋DM。**V2 差分：実行は法務が承認後**（V1 Phase 22.4 と同じ建付け。自動実行は
+     B 群 U7 の納期変更オペ移植時）。
+  2. **既存課題への紐付け**：新規課題を作らず対象課題へ**フォーム内容（明細含む）をコメント記録**
+     ＋台帳＋DM。V1 の link-trigger-run（文書自動生成）は文書生成パイプライン側の移植と併せて後続。
+  3. **検収書（新規）**：契約番号の必須チェック（明細ごと・空欄は共通番号）＋ contract-check
+     リポジトリ注入時は**実在チェックと取引先自動補完**（単一契約→取引先名、複数→「複数 (n件)」）。
+  4. **計算書（新規）**：番号があれば取引先補完（見つからなくてもブロックしない・V1 同様）。
+  明細テキストは Backlog 説明文に付加し、legal_requests.notes にも lineItems を保存。
+- 非移植（意図的）：署名URLアップロードリンク・取引先検索ポータルリンク（C 群のポータル廃止
+  判断待ち）・支払対象契約検索ページリンク（同）。
+- tests 14 件（明細ブロック構築/5件上限/納期変更フォーム/候補セレクタ/パース整形/検証/
+  views.update 2種/納期変更 live+dry-run/紐付け/新規遷移/番号必須/実在チェック＋補完）＝**728 緑**。
 
 ## 16-2：契約チェック API ✅ 実装済（読取専用・grant 不要）
 

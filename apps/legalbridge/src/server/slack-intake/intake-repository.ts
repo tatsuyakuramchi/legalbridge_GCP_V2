@@ -26,11 +26,19 @@ export interface IntakeLedgerInput {
   payload: unknown;
 }
 
+export interface OpenRequestCandidate {
+  issueKey: string;
+  summary: string | null;
+  counterparty: string | null;
+}
+
 export interface SlackIntakeRepository {
   staffBySlackId(slackUserId: string): Promise<IntakeStaff | null>;
   departmentChannel(department: string | null): Promise<string | null>;
   recordRequest(input: RecordRequestInput): Promise<void>;
   ledger(input: IntakeLedgerInput): Promise<void>;
+  // 申請者の未完了依頼（紐付け・納期変更の候補・16-3c）。requestType 指定で種別を絞る。
+  openRequestCandidates(slackUserId: string, requestType: string | null): Promise<OpenRequestCandidate[]>;
 }
 
 export class PgSlackIntakeRepository implements SlackIntakeRepository {
@@ -85,11 +93,40 @@ export class PgSlackIntakeRepository implements SlackIntakeRepository {
        input.mode, JSON.stringify(input.payload ?? {})]
     );
   }
+
+  // V1 worker /api/management/users/:slackUserId/candidates と同じ抽出条件
+  // （未完了＝ワークフロー状態が 完了/終結/キャンセル 以外）。grant 044 の SELECT で足りる。
+  async openRequestCandidates(slackUserId: string, requestType: string | null): Promise<OpenRequestCandidate[]> {
+    if (!slackUserId) return [];
+    const params: unknown[] = [slackUserId];
+    let typeClause = "";
+    if (requestType) {
+      params.push(requestType);
+      typeClause = "AND lr.contract_type = $2";
+    }
+    const r = await this.database.query(
+      `SELECT lr.backlog_issue_key AS issue_key, lr.summary, lr.counterparty
+         FROM legal_requests lr
+         LEFT JOIN issue_workflows iw ON iw.backlog_issue_key = lr.backlog_issue_key
+        WHERE lr.slack_user_id = $1
+          AND COALESCE(iw.current_status_name, '') NOT IN ('完了', '終結', 'キャンセル')
+          ${typeClause}
+        ORDER BY lr.created_at DESC
+        LIMIT 25`,
+      params);
+    return r.rows.map((row) => ({
+      issueKey: String(row.issue_key),
+      summary: row.summary == null ? null : String(row.summary),
+      counterparty: row.counterparty == null ? null : String(row.counterparty)
+    }));
+  }
 }
 
 export class MemorySlackIntakeRepository implements SlackIntakeRepository {
   readonly requests: RecordRequestInput[] = [];
   readonly ledgerRows: IntakeLedgerInput[] = [];
+  // { slackUserId, requestType, issueKey, summary, counterparty } を積んでおくと候補として返す。
+  candidates: Array<OpenRequestCandidate & { slackUserId: string; requestType: string }> = [];
   constructor(
     private readonly staff = new Map<string, IntakeStaff>(),
     private readonly channels = new Map<string, string>(),
@@ -104,4 +141,9 @@ export class MemorySlackIntakeRepository implements SlackIntakeRepository {
     this.requests.push(input);
   }
   async ledger(input: IntakeLedgerInput) { this.ledgerRows.push(input); }
+  async openRequestCandidates(slackUserId: string, requestType: string | null) {
+    return this.candidates
+      .filter((c) => c.slackUserId === slackUserId && (!requestType || c.requestType === requestType))
+      .map(({ issueKey, summary, counterparty }) => ({ issueKey, summary, counterparty }));
+  }
 }

@@ -19,7 +19,7 @@ V2（本リポジトリ）を本番サービスとして V1（legalbridge_ai_gcp
 
 | # | 内容 | 状態 |
 |---|---|---|
-| 1-1 | **Phase 16-3：Slack インテーク** | ✅ 16-3a＋16-3b 実装済（受信口＋/法務依頼＋起票/記録/通知＋/法務検索・grant 044）。点火は `phase16-cutover-gaps.md`。16-3c（明細行/紐付け/納期変更）残 |
+| 1-1 | **Phase 16-3：Slack インテーク** | ✅ 16-3a〜16-3c 実装済（受信口＋/法務依頼＝明細行・既存課題紐付け・納期変更込み＋/法務検索・grant 044）。点火は `phase16-cutover-gaps.md`（公開 ingress 決定が前提） |
 | 1-2 | Phase 16-1：スニペットのサーバ共有化 | ✅ 実装済（guarded・grant 045＋`_SNIPPETS_WRITE_ENABLED=true`＋WRITE_SCOPES へ `snippets`（contract-master の直後）。点火は `phase16-cutover-gaps.md`） |
 | 1-3 | Phase 16-2：契約チェック API | ✅ 実装済（読取専用・grant 不要・全ロール。/法務検索 16-3b の前提解消） |
 | 1-4 | Phase 16-4：添付アップロード（multipart） | ✅ 実装済（新規 grant 不要。点火＝Drive ストレージ構成＋`_ATTACHMENT_UPLOAD_ENABLED=true`＋WRITE_SCOPES へ `attachments`（snippets の直後）。`phase16-cutover-gaps.md`） |
