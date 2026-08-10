@@ -39,6 +39,9 @@ export interface SlackIntakeRepository {
   ledger(input: IntakeLedgerInput): Promise<void>;
   // 申請者の未完了依頼（紐付け・納期変更の候補・16-3c）。requestType 指定で種別を絞る。
   openRequestCandidates(slackUserId: string, requestType: string | null): Promise<OpenRequestCandidate[]>;
+  // 9-7 Backlog Webhook 自動起票：依頼レコードの存在確認とワークフロー状態の同期。
+  requestExists(issueKey: string): Promise<boolean>;
+  setWorkflowStatus(issueKey: string, status: string): Promise<void>;   // grant 046（UPDATE）
 }
 
 export class PgSlackIntakeRepository implements SlackIntakeRepository {
@@ -120,6 +123,19 @@ export class PgSlackIntakeRepository implements SlackIntakeRepository {
       counterparty: row.counterparty == null ? null : String(row.counterparty)
     }));
   }
+
+  async requestExists(issueKey: string): Promise<boolean> {
+    const r = await this.database.query(
+      `SELECT 1 FROM legal_requests WHERE backlog_issue_key = $1 LIMIT 1`, [issueKey]);
+    return r.rows.length > 0;
+  }
+
+  async setWorkflowStatus(issueKey: string, status: string): Promise<void> {
+    await this.database.query(
+      `UPDATE issue_workflows SET current_status_name = $1, updated_at = now()
+        WHERE backlog_issue_key = $2`,
+      [status, issueKey]);
+  }
 }
 
 export class MemorySlackIntakeRepository implements SlackIntakeRepository {
@@ -145,5 +161,14 @@ export class MemorySlackIntakeRepository implements SlackIntakeRepository {
     return this.candidates
       .filter((c) => c.slackUserId === slackUserId && (!requestType || c.requestType === requestType))
       .map(({ issueKey, summary, counterparty }) => ({ issueKey, summary, counterparty }));
+  }
+  readonly workflowStatuses = new Map<string, string>();
+  async requestExists(issueKey: string) {
+    return this.requests.some((r) => r.backlogIssueKey === issueKey) ||
+      this.candidates.some((c) => c.issueKey === issueKey);
+  }
+  async setWorkflowStatus(issueKey: string, status: string) {
+    if (this.forbidden) { const e = new Error("forbidden"); (e as { code?: string }).code = "42501"; throw e; }
+    this.workflowStatuses.set(issueKey, status);
   }
 }

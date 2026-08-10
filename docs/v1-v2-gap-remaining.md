@@ -21,9 +21,10 @@ V1（`legalbridge_ai_gcp`）と V2（本リポジトリ）を突き合わせ、*
 ~~V2 には Cloud Scheduler / cron・Webhook 受信口が一切存在しない~~ → **Phase 9 で実装済み**：
 `/internal/jobs/:name`（共有シークレット）＋ daily-checks / inspection-digest / cloudsign-sync ランナー、
 `/internal/webhooks/{cloudsign,backlog}` 受信口（冪等・lb_v2_webhook_receipts）。本番点火は未（runbook =
-`docs/phase9-automation-ignition.md`）。**残乖離**：9-7 Backlog Webhook は受信記録＋Slack 通知のみで、
-V1 の自動起票（legal_requests 作成）は未実装（`cutover-readiness-audit.md` P2 参照）。
-また **Slack スラッシュコマンド/インタラクティビティ受信口（U1）は Phase 9 の範囲外のまま未移植**。
+`docs/phase9-automation-ignition.md`）。~~残乖離：9-7 は受信記録＋通知のみ~~ → **9-7 完成形を実装済み**
+（課題追加→legal_requests 自動作成＋Slack 経由は受付済み遷移＋type=2 状態同期・grant 046・
+`BACKLOG_INTAKE_ENABLED`・`phase9-automation-plan.md` 9-7）。
+~~Slack 受信口（U1）未移植~~ → **Phase 16-3 で実装済み**。
 
 ---
 
@@ -38,7 +39,7 @@ V1 の自動起票（legal_requests 作成）は未実装（`cutover-readiness-a
 | 9-4 | 検収待ちダイジェスト | `server.ts:823 /api/management/inspection-digest` | 検収待ち明細を PO 単位に集計し Slack へ定期投稿。V2は読取`/pending-inspections`のみ | 中 | 中 |
 | 9-5 | CloudSign Webhook 受信 | `server.ts:1601 /api/webhooks/cloudsign` | 締結/却下 push 受信→`cloudsign_requests`更新＋締結時に契約を`executed`へ自動遷移 | 中 | 高 |
 | 9-6 | CloudSign 一括ステータス同期 | `server.ts:669 /api/cloudsign/sync-all` | 未確定リクエストを一括照会し後追い取込（バッチ整合）。V2は1件同期のみ | 小〜中 | 中 |
-| 9-7 | Backlog Webhook 自動起票 | `server.ts:2643 /api/webhooks/backlog` | 課題作成イベント→`legal_requests`/`issue_workflows`自動生成（自動インテーク） | 中〜大 | 中 |
+| 9-7 | Backlog Webhook 自動起票 | `server.ts:2643 /api/webhooks/backlog` | ✅ 完成形実装済（課題作成→`legal_requests`/`issue_workflows` 自動生成＋状態同期・grant 046） | 中〜大 | 中 |
 
 ## Phase 10（提案）：文書運用オペレーション（発行後の管理）
 
@@ -124,7 +125,7 @@ V2 は condition-lines の一覧/summary/receipts は移植済み。**書込オ�
 | 16-4 | 添付ファイルアップロード（multipart 基盤＋案件/依頼添付） | U6 | ✅ 実装済（依存フリー multipart＋案件詳細から Drive 格納・ATT 採番・新規 grant 不要・`phase16-cutover-gaps.md`。課題番号ベースの公開ページはポータル判断待ちで非移植） | 中 |
 
 **載せ替え後でよい（B 群・台帳の既存 Phase に留置）**：U7 納期変更／U8 Backlog 課題オペ／U11 DQ トリアージ書込／
-U12 支払ZIP・検収担当一括割当／U13 支払対象契約一覧／U16 条件 auto-link／U21 mark-primary ほか／9-7 自動起票
+U12 支払ZIP・検収担当一括割当／U13 支払対象契約一覧／U16 条件 auto-link／U21 mark-primary ほか
 — V1 併走中は V1 側で運用可能。
 
 **廃止候補（C 群・要確認のまま保留）**：U3/U4/U5 非アプリユーザー向けポータル一式（署名URL 運用の継続可否・未回答）／

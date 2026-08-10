@@ -130,15 +130,28 @@ Webhook 受信口・督促自動化・外部イベント連携** を、既存 gu
   **新規 grant/config/infra なし**（`JOBS_ENABLED` と既存 CloudSign ゲートに従属）。tests 6。
 - 起動：`POST /internal/jobs/cloudsign-sync`（Cloud Scheduler・数時間ごと等）。
 
-### 9-7：Backlog Webhook 自動起票 ✅ 実装済
-- `internal/webhook-parsers.ts`：`parseBacklogIssueCreated`（純関数）。課題追加(type=1)のみを対象化し、
-  `projectKey-key_id` で issueKey を合成。更新(type≠1)や projectKey 欠落は `null`。
-- `integrations/webhook-handlers.ts` `createBacklogWebhookHandler`：`(backlog, issueKey:created)` で
-  べき等化し、Slack live 時のみ法務相談チャンネルへ新規依頼を通知（`notify` 未注入なら記録のみ）。
-  二重は 200 skip。設定：`BACKLOG_WEBHOOK_TOKEN`（9-0 で追加済）。
-- verify/cloudbuild：`_BACKLOG_WEBHOOK_TOKEN_SECRET`（既定 BLOCKED）→ 設定時のみ `BACKLOG_WEBHOOK_TOKEN`
-  をマウント。write-test サービス限定。
-- 注：現時点は「受信＋通知」まで。V2 依頼取込（Phase 3 requests）への自動投入は後続で拡張余地。
+### 9-7：Backlog Webhook 自動起票 ✅ 実装済（完成形＝受信→legal_requests 作成・状態同期）
+- `internal/webhook-parsers.ts`：`parseBacklogIssueCreated`（type=1・issueKey 合成に加え
+  description／issueType.name を抽出）＋`parseBacklogStatusChanged`（type=2・status.name）＋
+  `BACKLOG_ISSUE_TYPE_TO_REQUEST_TYPE`（V1 worker と同一の 18 種マップ・未知は legal_consult）＋
+  `extractSlackMention`（説明文の `<@U…>` から申請者を抽出・V1 同様）。
+- `createBacklogWebhookHandler`（`BACKLOG_INTAKE_ENABLED` で intake リポジトリ注入時）：
+  - **課題追加(type=1)**：legal_requests が既にあれば（Slack 経由の起票）ワークフローを「受付済み」へ
+    （V1 webhook と同じ二重起票防止）。無ければ **Backlog 直接起票とみなし legal_requests＋
+    issue_workflows を INSERT**（notes に details/issueTypeName/source='backlog-webhook'。
+    V1 0103 トリガで matters 自動生成＝V2 案件モデルへ接続）。42501 は forbidden 計上で受信は成功。
+  - **ステータス変更(type=2)**：`issue_workflows.current_status_name` を同期（UPDATE 自体がべき等の
+    ため受信台帳は通さない）。intake 未注入は skip（従来挙動）。
+  - 受信記録（べき等）と Slack live 時の法務相談チャンネル通知は従来どおり。
+- **grant 046**：issue_workflows の列レベル UPDATE（current_status_name/updated_at）のみ追加
+  （INSERT 経路は grant 044 で充足・guard で 044 適用済みを検査）。token
+  `GRANT_PRODUCTION_BACKLOG_INTAKE`。
+- config `BACKLOG_INTAKE_ENABLED`（既定 OFF）・verify ゲート（write-test 限定＋
+  `BACKLOG_WEBHOOK_TOKEN_SECRET` 必須＋IAP/IAM）・cloudbuild `_BACKLOG_INTAKE_ENABLED` 4 箇所。
+- **V1 から意図的に落としたもの**：文書自動生成パイプライン（processLegalRequestSubmission の
+  PDF 生成部・V2 は文書作成 funnel で人が作る）・カスタムフィールド（部署/納期/相手方）の ID
+  マッピング（BACKLOG_FIELD_* env・直接起票では未入力が常のため）・親子課題の自動完了／
+  受動子課題チェーン（Phase 22.2）・納期変更の完了時実行（U7 納期オペ移植時に併せる）。
 
 ## デプロイ（Cloud Scheduler / Webhook 配線・別途）
 

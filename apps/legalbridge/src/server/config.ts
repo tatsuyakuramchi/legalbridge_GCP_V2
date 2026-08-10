@@ -104,6 +104,8 @@ export const config = {
   contractExpiryTransitionEnabled: process.env.CONTRACT_EXPIRY_TRANSITION_ENABLED === "true",
   cloudSignWebhookToken: (process.env.CLOUDSIGN_WEBHOOK_TOKEN ?? "").trim(),
   backlogWebhookToken: (process.env.BACKLOG_WEBHOOK_TOKEN ?? "").trim(),
+  // Backlog Webhook 自動起票（9-7 完成形）。課題追加→legal_requests INSERT・状態同期（grant 044+046）。
+  backlogIntakeEnabled: process.env.BACKLOG_INTAKE_ENABLED === "true",
   // Slack 法務依頼インテーク受信口（Phase 16-3・/内部 slack コマンド＋インタラクティビティ）。
   // 署名検証（signing secret・fail-closed）で保護。既定 OFF。
   slackIntakeEnabled: process.env.SLACK_INTAKE_ENABLED === "true",

@@ -23,7 +23,7 @@ V2（本リポジトリ）を本番サービスとして V1（legalbridge_ai_gcp
 | 1-2 | Phase 16-1：スニペットのサーバ共有化 | ✅ 実装済（guarded・grant 045＋`_SNIPPETS_WRITE_ENABLED=true`＋WRITE_SCOPES へ `snippets`（contract-master の直後）。点火は `phase16-cutover-gaps.md`） |
 | 1-3 | Phase 16-2：契約チェック API | ✅ 実装済（読取専用・grant 不要・全ロール。/法務検索 16-3b の前提解消） |
 | 1-4 | Phase 16-4：添付アップロード（multipart） | ✅ 実装済（新規 grant 不要。点火＝Drive ストレージ構成＋`_ATTACHMENT_UPLOAD_ENABLED=true`＋WRITE_SCOPES へ `attachments`（snippets の直後）。`phase16-cutover-gaps.md`） |
-| 1-5 | 9-7 Backlog Webhook 自動起票（受信→legal_requests 作成） | 部分実装（受信記録＋通知のみ） |
+| 1-5 | 9-7 Backlog Webhook 自動起票（受信→legal_requests 作成） | ✅ 実装済（課題追加→自動取込＋Slack経由は受付済み遷移＋type=2 状態同期。点火＝grant 046＋`_BACKLOG_INTAKE_ENABLED=true`＋`_BACKLOG_WEBHOOK_TOKEN_SECRET`。公開 ingress（2-4）が前提。`phase9-automation-plan.md` 9-7） |
 | 1-6 | V2 帳票への会社プロファイル差込（app_settings 参照。現状ハードコード） | 未着手（小） |
 
 > B 群（納期変更・DQ トリアージ等）は V1 併走中は V1 側で運用＝cutover ブロッカーではない。

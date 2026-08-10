@@ -636,6 +636,29 @@ case "${SLACK_INTAKE_ENABLED}" in
     exit 1
     ;;
 esac
+case "${BACKLOG_INTAKE_ENABLED}" in
+  false)
+    ;;
+  true)
+    # Backlog Webhook 自動起票（9-7 完成形）。受信口の共有シークレット必須・write-test 限定・IAP/IAM 必須。
+    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
+      echo "Backlog intake blocked: limited to the write-test service."
+      exit 1
+    fi
+    if [ -z "${BACKLOG_WEBHOOK_TOKEN_SECRET}" ] || [ "${BACKLOG_WEBHOOK_TOKEN_SECRET}" = "BLOCKED" ]; then
+      echo "Backlog intake blocked: BACKLOG_WEBHOOK_TOKEN_SECRET (webhook shared secret) is required."
+      exit 1
+    fi
+    if [ "${AUTH_MODE}" != "iap" ] && [ "${AUTH_MODE}" != "cloudrun-iam" ]; then
+      echo "Backlog intake blocked: IAP or Cloud Run IAM authentication is required."
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Deployment blocked: BACKLOG_INTAKE_ENABLED must be true or false."
+    exit 1
+    ;;
+esac
 case "${CONTRACT_EXPIRY_TRANSITION_ENABLED}" in
   false)
     ;;

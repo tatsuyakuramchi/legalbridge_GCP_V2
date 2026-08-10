@@ -1426,7 +1426,16 @@ export function createApp(
             .postMessage({ channel: config.slackLegalConsultChannel, text })
             .then(() => true).catch(() => false)
         : undefined;
-      backlogWebhookHandler = createBacklogWebhookHandler({ receipts, notify });
+      // 9-7 完成形：BACKLOG_INTAKE_ENABLED かつ readwrite のときのみ自動起票／状態同期を注入
+      // （legal_requests INSERT=grant 044・issue_workflows UPDATE=grant 046）。
+      const backlogIntake =
+        config.backlogIntakeEnabled && options.accessMode === "readwrite"
+          ? new PgSlackIntakeRepository(jobsDatabase)
+          : null;
+      backlogWebhookHandler = createBacklogWebhookHandler({
+        receipts, notify, intake: backlogIntake,
+        log: (message) => console.warn(`[backlog-webhook] ${message}`)
+      });
     }
   }
   app.use(createWebhooksRouter({
