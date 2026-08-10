@@ -430,6 +430,28 @@ case "${MATTER_DELETE_ENABLED}" in
     exit 1
     ;;
 esac
+case "${DOCUMENT_VOID_ENABLED}" in
+  false)
+    ;;
+  true)
+    if [ "${CONFIRM_DOCUMENT_VOID}" != "DOCUMENT_VOID_LEGALBRIDGE_VALIDATION_ONLY" ]; then
+      echo "Document void deployment blocked: explicit production validation confirmation is missing."
+      exit 1
+    fi
+    if [ "${PRIMARY_DB_MODE}" != "production" ] || [ "${SERVICE}" != "legalbridge-v2-write-test" ] || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
+      echo "Document void deployment blocked: service, database, runtime user, or password secret does not match the approved target."
+      exit 1
+    fi
+    if [ "${AUTH_MODE}" != "iap" ] && [ "${AUTH_MODE}" != "cloudrun-iam" ]; then
+      echo "Document void deployment blocked: IAP or Cloud Run IAM authentication is required."
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Deployment blocked: DOCUMENT_VOID_ENABLED must be true or false."
+    exit 1
+    ;;
+esac
 case "${JOBS_ENABLED}" in
   false)
     ;;
@@ -767,6 +789,9 @@ if [ "${MATTER_MERGE_ENABLED}" = "true" ]; then
 fi
 if [ "${MATTER_DELETE_ENABLED}" = "true" ]; then
   expected_write_scopes="$expected_write_scopes,matter-delete"
+fi
+if [ "${DOCUMENT_VOID_ENABLED}" = "true" ]; then
+  expected_write_scopes="$expected_write_scopes,document-void"
 fi
 if [ "${BACKLOG_COMMENT_WRITE_ENABLED}" = "true" ]; then
   expected_write_scopes="$expected_write_scopes,backlog-comment"

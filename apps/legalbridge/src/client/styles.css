@@ -824,6 +824,24 @@ button.pdf-download-link:disabled {
 }
 .registry-state.complete { background: #e8f7f0; color: #16724e; }
 .registry-state.pending { background: #fff7ed; color: #9a3412; }
+.registry-state.voided { background: #fef2f2; color: #b91c1c; }
+
+/* 文書 void（Phase 10-2）。危険操作ゾーンと無効化バナー。 */
+.void-banner {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+  font-size: 13px;
+}
+.danger-zone { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px; }
+.danger-zone h3 { color: #b91c1c; margin: 0 0 8px; font-size: 13px; }
+.danger-zone .danger-form { display: flex; flex-direction: column; gap: 8px; }
+.danger-zone .danger-form input { width: 100%; }
+button.danger { border: 1px solid #fecaca; color: #b91c1c; background: #fef2f2; border-radius: 6px; padding: 6px 12px; }
+button.danger:disabled { opacity: 0.5; cursor: not-allowed; }
 
 
 .diagnostic-summary {

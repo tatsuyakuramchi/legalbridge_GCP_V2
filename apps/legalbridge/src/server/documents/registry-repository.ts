@@ -11,6 +11,7 @@ export interface RegisteredDocument {
   driveLink: string;
   createdAt: string;
   createdBy: string | null;
+  lifecycleStatus?: string;   // final / voided / draft 等（void 済みの表示に使用・Phase 10-2）
   formData: Record<string, unknown>;
 }
 
@@ -27,7 +28,8 @@ export class PgDocumentRegistryRepository implements DocumentRegistryRepository 
     const keyword = `%${query.trim()}%`;
     const result = await this.database.query(
       `SELECT id, document_number, issue_key, template_type, template_version_id,
-              form_data, drive_link, created_at, created_by
+              form_data, drive_link, created_at, created_by,
+              COALESCE(lifecycle_status, 'final') AS lifecycle_status
          FROM documents
         WHERE ($1 = '%%'
           OR COALESCE(document_number, '') ILIKE $1
@@ -55,7 +57,8 @@ export class PgDocumentRegistryRepository implements DocumentRegistryRepository 
   async find(id: number) {
     const result = await this.database.query(
       `SELECT id, document_number, issue_key, template_type, template_version_id,
-              form_data, drive_link, created_at, created_by
+              form_data, drive_link, created_at, created_by,
+              COALESCE(lifecycle_status, 'final') AS lifecycle_status
          FROM documents
         WHERE id = $1`,
       [id]
@@ -106,6 +109,7 @@ function mapRow(row: Record<string, any>): RegisteredDocument {
     driveLink: row.drive_link ?? "",
     createdAt: row.created_at ? new Date(row.created_at).toISOString() : "",
     createdBy: row.created_by,
+    lifecycleStatus: row.lifecycle_status ?? "final",
     formData
   };
 }

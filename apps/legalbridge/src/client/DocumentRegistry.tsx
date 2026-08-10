@@ -17,6 +17,7 @@ type RegisteredDocument = {
   driveLink: string;
   createdAt: string;
   createdBy: string | null;
+  lifecycleStatus?: string;
   formData?: Record<string, unknown>;
   lifecycle?: {
     state: "finalized" | "registered";
@@ -49,6 +50,7 @@ export function DocumentRegistry({
   canImport = false,
   canGmailNotify = false,
   canCloudSign = false,
+  canVoidDocument = false,
   selectedId,
   initialQuery = ""
 }: {
@@ -59,6 +61,7 @@ export function DocumentRegistry({
   canImport?: boolean;
   canGmailNotify?: boolean;
   canCloudSign?: boolean;
+  canVoidDocument?: boolean;
   selectedId?: number;
   initialQuery?: string;
 }) {
@@ -140,9 +143,11 @@ export function DocumentRegistry({
               <td>{document.counterparty || "—"}</td>
               <td>{formatDate(document.createdAt)}</td>
               <td>
-                <span className={document.lifecycle?.state === "finalized" ? "registry-state complete" : "registry-state pending"}>
-                  {document.lifecycle?.label ?? (document.documentNumber ? "確定済み" : "未発番")}
-                </span>
+                {document.lifecycleStatus === "voided"
+                  ? <span className="registry-state voided">無効化</span>
+                  : <span className={document.lifecycle?.state === "finalized" ? "registry-state complete" : "registry-state pending"}>
+                      {document.lifecycle?.label ?? (document.documentNumber ? "確定済み" : "未発番")}
+                    </span>}
               </td>
             </tr>)}</tbody>
         </table>
@@ -155,7 +160,9 @@ export function DocumentRegistry({
         canSaveToDrive={canSaveToDrive}
         canGmailNotify={canGmailNotify}
         canCloudSign={canCloudSign}
+        canVoidDocument={canVoidDocument}
         onRefresh={() => { if (selected) return selectDocument(selected.id); }}
+        onVoided={() => { setReload((v) => v + 1); if (selected) return selectDocument(selected.id); }}
       />
     </div>
   </section>;
@@ -168,7 +175,9 @@ function DocumentDetail({
   canSaveToDrive,
   canGmailNotify = false,
   canCloudSign = false,
-  onRefresh
+  canVoidDocument = false,
+  onRefresh,
+  onVoided
 }: {
   document: RegisteredDocument | null;
   label?: string;
@@ -176,9 +185,12 @@ function DocumentDetail({
   canSaveToDrive: boolean;
   canGmailNotify?: boolean;
   canCloudSign?: boolean;
+  canVoidDocument?: boolean;
   onRefresh: () => Promise<void> | void;
+  onVoided?: () => Promise<void> | void;
 }) {
   if (!document) return <aside className="panel registry-detail empty-detail">一覧から文書を選択してください。</aside>;
+  const isVoided = document.lifecycleStatus === "voided";
   const entries = Object.entries(document.formData ?? {})
     .filter(([, value]) => value !== null && value !== "" && typeof value !== "object")
     .slice(0, 40);
@@ -203,7 +215,8 @@ function DocumentDetail({
       <dt>作成日時</dt><dd>{formatDate(document.createdAt)}</dd>
       <dt>作成者</dt><dd>{document.createdBy ?? "—"}</dd>
     </dl>
-    <DocumentOutputActions
+    {isVoided && <div className="void-banner">この文書は無効化（void）済みです。紐づく実績は取消されています。</div>}
+    {!isVoided && <DocumentOutputActions
       documentId={document.id}
       documentNumber={document.documentNumber}
       driveLink={document.driveLink || null}
@@ -211,12 +224,66 @@ function DocumentDetail({
       canSaveToDrive={canSaveToDrive}
       canGmailNotify={canGmailNotify}
       canCloudSign={canCloudSign}
-      onSaved={onRefresh} />
+      onSaved={onRefresh} />}
+    {canVoidDocument && !isVoided &&
+      <DocumentVoidZone documentId={document.id} documentNumber={document.documentNumber} onVoided={onVoided} />}
     <h3>登録項目</h3>
     <dl className="form-data-list">
       {entries.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}
     </dl>
   </aside>;
+}
+
+function DocumentVoidZone({ documentId, documentNumber, onVoided }: {
+  documentId: number;
+  documentNumber: string | null;
+  onVoided?: () => Promise<void> | void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [confirmText, setConfirmText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+  const CONFIRM = "COMMIT_DOCUMENT_VOID";
+
+  async function submit() {
+    setBusy(true);
+    try {
+      const response = await fetch(`/api/v2/documents/${documentId}/void`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmation: CONFIRM, reason: reason.trim() || undefined })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) { toast.push(data.error ?? "無効化に失敗しました。", "error"); return; }
+      toast.push(
+        data.alreadyVoided ? "この文書は既に無効化済みです。"
+          : `文書を無効化しました（実績 ${data.voidedEvents ?? 0} 件を取消）。`,
+        "success");
+      setOpen(false); setReason(""); setConfirmText("");
+      await onVoided?.();
+    } catch { toast.push("通信に失敗しました。", "error"); }
+    finally { setBusy(false); }
+  }
+
+  return <div className="danger-zone">
+    <h3>危険な操作</h3>
+    {!open
+      ? <button className="danger" onClick={() => setOpen(true)}>この文書を無効化（void）</button>
+      : <div className="danger-form">
+          <p className="hub-note">
+            文書 <strong>{documentNumber ?? "(未発番)"}</strong> を無効化します。紐づく有効な実績（消化）を取消して残高を復元します。
+            取り消せません。続けるには合言葉 <code>{CONFIRM}</code> を入力してください。
+          </p>
+          <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="理由（任意・Backlogへ記録）" />
+          <input value={confirmText} onChange={(e) => setConfirmText(e.target.value)} placeholder={CONFIRM} />
+          <div className="matter-form-actions">
+            <button onClick={() => { setOpen(false); setConfirmText(""); }}>やめる</button>
+            <button className="danger" disabled={busy || confirmText !== CONFIRM} onClick={submit}>
+              {busy ? "処理中…" : "無効化を実行"}
+            </button>
+          </div>
+        </div>}
+  </div>;
 }
 
 function formatDate(value: string) {

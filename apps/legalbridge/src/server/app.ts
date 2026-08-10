@@ -104,6 +104,8 @@ import {
   type MatterDeleteRepository
 } from "./matters/matter-delete-repository.js";
 import { createMatterDeleteRouter } from "./matters/matter-delete-routes.js";
+import { PgDocumentVoidRepository, type DocumentVoidRepository } from "./documents/document-void-repository.js";
+import { createDocumentVoidRouter } from "./documents/document-void-routes.js";
 import { createJobsRouter, type JobRunner } from "./internal/jobs-routes.js";
 import { PgDailyChecksRepository } from "./jobs/daily-checks-repository.js";
 import { runDailyChecks, DryRunDailyChecksNotifier, jstTodayYmd } from "./jobs/daily-checks-runner.js";
@@ -378,6 +380,7 @@ export interface AppDependencies {
   matterDrive?: MatterDriveRepository;
   matterMerge?: MatterMergeRepository;
   matterDelete?: MatterDeleteRepository;
+  documentVoid?: DocumentVoidRepository;
   // Phase 9 自動化基盤：ジョブ本体・Webhook ハンドラの注入口（既定は空＝無効）。
   jobRunners?: Record<string, JobRunner>;
   cloudSignWebhookHandler?: WebhookHandler;
@@ -436,6 +439,7 @@ export interface AppOptions {
   vendorMergeEnabled?: boolean;
   matterMergeEnabled?: boolean;
   matterDeleteEnabled?: boolean;
+  documentVoidEnabled?: boolean;
   backlogCommentWriteEnabled?: boolean;
   auth?: AuthSettings;
 }
@@ -469,6 +473,7 @@ function createDefaultDependencies(): AppDependencies {
     matterDrive: database ? new PgMatterDriveRepository(database) : undefined,
     matterMerge: database ? new PgMatterMergeRepository(database) : undefined,
     matterDelete: database ? new PgMatterDeleteRepository(database) : undefined,
+    documentVoid: database ? new PgDocumentVoidRepository(database) : undefined,
     conditionLines: database
       ? new PgConditionLineRepository(database)
       : new MemoryConditionLineRepository(),
@@ -578,6 +583,7 @@ export function createApp(
     vendorMergeEnabled: config.vendorMergeEnabled,
     matterMergeEnabled: config.matterMergeEnabled,
     matterDeleteEnabled: config.matterDeleteEnabled,
+    documentVoidEnabled: config.documentVoidEnabled,
     backlogCommentWriteEnabled: config.backlogCommentWriteEnabled,
     royaltyEventWritesEnabled: config.royaltyEventWritesEnabled,
     receiptWritesEnabled: config.receiptWritesEnabled,
@@ -750,6 +756,12 @@ export function createApp(
     options.matterDeleteEnabled === true &&
     options.writeScopes?.has("matter-delete") === true &&
     Boolean(dependencies.matterDelete);
+  const documentVoidEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.documentVoidEnabled === true &&
+    options.writeScopes?.has("document-void") === true &&
+    Boolean(dependencies.documentVoid);
   const backlogCommentWriteEnabled =
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
@@ -826,6 +838,7 @@ export function createApp(
         ...(vendorMergeEnabled ? ["vendor-merge"] : []),
         ...(matterMergeEnabled ? ["matter-merge"] : []),
         ...(matterDeleteEnabled ? ["matter-delete"] : []),
+        ...(documentVoidEnabled ? ["document-void"] : []),
         ...(backlogCommentWriteEnabled ? ["backlog-comment"] : []),
         ...(royaltyEventWriteEnabled ? ["royalty-events"] : []),
         ...(receiptWriteEnabled ? ["receipts"] : []),
@@ -853,7 +866,7 @@ export function createApp(
         driveStorageEnabled || slackApprovalWriteEnabled ||
         outboundConditionWriteEnabled || contractIntakeWriteEnabled ||
         matterWriteEnabled || vendorWriteEnabled || staffWriteEnabled || workWriteEnabled ||
-        materialWriteEnabled || rightsSourceWriteEnabled || vendorMergeEnabled || matterMergeEnabled || matterDeleteEnabled || backlogCommentWriteEnabled || royaltyEventWriteEnabled || receiptWriteEnabled ||
+        materialWriteEnabled || rightsSourceWriteEnabled || vendorMergeEnabled || matterMergeEnabled || matterDeleteEnabled || documentVoidEnabled || backlogCommentWriteEnabled || royaltyEventWriteEnabled || receiptWriteEnabled ||
         paymentLedgerWriteEnabled || gmailDispatchEnabled || cloudSignDispatchEnabled || gmailInboundEnabled,
       writeCapabilities: [
         ...(draftWriteEnabled ? ["drafts"] : []),
@@ -872,6 +885,7 @@ export function createApp(
         ...(vendorMergeEnabled ? ["vendor-merge"] : []),
         ...(matterMergeEnabled ? ["matter-merge"] : []),
         ...(matterDeleteEnabled ? ["matter-delete"] : []),
+        ...(documentVoidEnabled ? ["document-void"] : []),
         ...(backlogCommentWriteEnabled ? ["backlog-comment"] : []),
         ...(royaltyEventWriteEnabled ? ["royalty-events"] : []),
         ...(receiptWriteEnabled ? ["receipts"] : []),
@@ -1031,6 +1045,8 @@ export function createApp(
     const isMatterDelete = request.method === "DELETE" && /^\/matters\/\d+$/.test(request.path);
     const isMatterTaskDelete = request.method === "DELETE" && /^\/matters\/\d+\/tasks\/\d+$/.test(request.path);
     if (matterDeleteEnabled && (isMatterDelete || isMatterTaskDelete)) return next();
+    const isDocumentVoid = request.method === "POST" && /^\/documents\/\d+\/void$/.test(request.path);
+    if (documentVoidEnabled && isDocumentVoid) return next();
     const isBacklogComment = request.method === "POST" && /^\/backlog\/issues\/[^/]+\/comments$/.test(request.path);
     if (backlogCommentWriteEnabled && isBacklogComment) return next();
     const isRoyaltyEventWrite =
@@ -1160,6 +1176,14 @@ export function createApp(
   app.use("/api/v2", createMatterMergeRouter(dependencies.matterMerge, matterMergeEnabled));
   // 案件・タスク削除（破壊的）。プレビュー読取＋guarded-write実行（既定OFF・scope 'matter-delete'・grant 029）。
   app.use("/api/v2", createMatterDeleteRouter(dependencies.matterDelete, matterDeleteEnabled));
+  // 文書 void（破壊的・Phase 10-2）。guarded-write（既定OFF・scope 'document-void'・grant 033）。
+  //   Backlog 書き戻しは backlog-comment 有効時のみ（ベストエフォート）。
+  const documentVoidNotifier =
+    backlogCommentWriteEnabled && dependencies.backlogWriteClient
+      ? (issueKey: string, text: string) =>
+          dependencies.backlogWriteClient!.addComment(issueKey, text).then(() => undefined)
+      : undefined;
+  app.use("/api/v2", createDocumentVoidRouter(dependencies.documentVoid, documentVoidEnabled, documentVoidNotifier));
 
   // 内部自動化基盤（Phase 9）。ユーザー認証をバイパスし共有シークレットで保護（既定OFF）。
   //   /internal/jobs/:name … Cloud Scheduler 起動口（runners は 9-1 以降で注入）
