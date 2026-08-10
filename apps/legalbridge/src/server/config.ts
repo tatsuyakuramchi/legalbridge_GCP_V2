@@ -84,6 +84,8 @@ export const config = {
   // いずれもユーザー認証をバイパスするため共有シークレットで保護し、既定 OFF。
   jobsEnabled: process.env.JOBS_ENABLED === "true",
   jobsTriggerToken: (process.env.JOBS_TRIGGER_TOKEN ?? "").trim(),
+  // 満了ステータス自動遷移（9-3・本番 documents.contract_status UPDATE・既定OFF・grant 031）。
+  contractExpiryTransitionEnabled: process.env.CONTRACT_EXPIRY_TRANSITION_ENABLED === "true",
   cloudSignWebhookToken: (process.env.CLOUDSIGN_WEBHOOK_TOKEN ?? "").trim(),
   backlogWebhookToken: (process.env.BACKLOG_WEBHOOK_TOKEN ?? "").trim(),
   gmailDeliveryMode:

@@ -318,6 +318,10 @@ Phase 7 は全フェーズの受け入れ後
 
 **UI/UX 合理性レビュー（`docs/v2-ux-rationality-review.md`）**：V1 の「迷いの構造」を 5 類型化（作業オブジェクト三重帳簿・暗黙モードの入口乱立・用語不整合・ロール未分岐・巨大マルチ目的画面）し、V2 現状 IA を並列監査して統合。V2 は既に主要な V1 病を治療済み（案件へ正典化・文書作成 funnel 統一・破壊操作トークン型統一・ロール一級市民化・Breadcrumb）＝維持資産として明記。残摩擦 F1〜F9（業務グループ過積載/OFF機能の伝え方3系統/GRANT番号露出/発見→是正断絶/条件・作品の画面分散/ガード重み付け不揃い/空状態2系統/作成→出力4遷移/生ID入力）を洗い出し、実タスクフロー（申請者・法務・管理者）に立脚した設計原則6点と、Quick Wins（Q1発見→是正prop配線・Q2未有効化統一＋GRANT番号除去・Q3空状態一本化・Q4文書検索UI）／構造リファクタ（R1ナビ再編・R2条件集約・R3作品二重解消・R4ガード階層化・R5ロール別ホーム）／大（B1作成→出力1画面化・B2 Phase10/11新規UIへ本指針適用）を優先度・粒度付きで提案。機能ギャップ台帳と対になる体験台帳。
 
+| 2026-08-10 | Phase 9 | 9-3 満了ステータス自動遷移（grant 031・列レベル UPDATE・専用フラグ＋確認・42501は継続） | LegalBridge_AI_GCP | ✅ |
+
+**9-3 満了遷移**：daily-checks の最後に満了契約を expired へ自動遷移（本番 `documents.contract_status` UPDATE）。grant 031＝`documents` 列レベル UPDATE(contract_status) のみ＋preflight（遷移見込み件数を表示）。repo に `loadExpiryCandidates`（満了日超過かつ draft/awaiting_signature/executed）／`transitionExpired`（遷移可能状態を再確認して UPDATE・terminated 除外・**42501=grant未適用は forbidden で返しジョブ継続**）。runner は `CONTRACT_EXPIRY_TRANSITION_ENABLED`（既定OFF）時のみ実行し summary に expiredTransitions/expiryForbidden。verify/cloudbuild に `_CONTRACT_EXPIRY_TRANSITION_ENABLED`／`_CONFIRM_CONTRACT_EXPIRY`＋ゲート（JOBS_ENABLED 必須・production DB・IAP/IAM）。テスト558件緑・typecheck緑・build緑。残 9-4 検収ダイジェスト／9-5・9-7 Webhook／9-6 一括同期。
+
 | 2026-08-10 | Phase 9 | 9-1c 実送信（LiveDailyChecksNotifier＝Slack 法務相談チャンネルへダイジェスト投稿） | LegalBridge_AI_GCP | ✅ |
 
 **9-1c 実送信**：`jobs/daily-checks-live-notifier.ts`＝`LiveDailyChecksNotifier`。督促を法務相談チャンネルへ1通のダイジェスト（`:bell: 本日の督促（N件）` ＋ 箇条書き）として投稿し、既存 `matterSlackChannelAdapter` を再利用。投稿成功で全件 delivered→台帳記録、失敗で全件未達→次回再送（all-or-nothing）。app.ts は Slack live 設定（SLACK_DELIVERY_MODE=live＋xoxb トークン＋法務相談チャンネル）なら Live、それ以外は Dry-run を daily-checks runner へ注入。宛先DM（申請者個別）は email→Slack ID 解決が要るため将来拡張。テスト555件緑・typecheck緑・build緑。残 9-3 満了遷移／9-4 検収ダイジェスト／9-5・9-7 Webhook／9-6 一括同期。

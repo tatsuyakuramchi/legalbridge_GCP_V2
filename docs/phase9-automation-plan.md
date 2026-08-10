@@ -66,10 +66,16 @@ Webhook 受信口・督促自動化・外部イベント連携** を、既存 gu
   （`expiration_date`・`auto_renewal`・`renewal_notice_months`・`alert_lead_months`）。
 - 重複抑止も `lb_v2_job_alert_ledger`（`kind='contract_renewal'`）で行う（`documents` を更新しない）。
 
-### 9-3：満了ステータス自動遷移（本番UPDATE・opt-in）
-- grant 0NN+1：`documents` の列レベル `UPDATE (contract_status)`＋preflight。
-- 別フラグ `CONTRACT_EXPIRY_TRANSITION_ENABLED` を daily-checks 内で確認。
-- `deriveExpiryTransitions` → `UPDATE documents SET contract_status='expired'`。件数返却。
+### 9-3：満了ステータス自動遷移（本番UPDATE・opt-in）✅ 実装済
+- **grant 031**（`031_production_contract_expiry_grants.sql`・トークン `GRANT_PRODUCTION_CONTRACT_EXPIRY`）：
+  `documents` の列レベル `UPDATE (contract_status)` のみ＋preflight（遷移見込み件数と現行列権限を表示）。
+- 別フラグ `CONTRACT_EXPIRY_TRANSITION_ENABLED`（既定OFF）を daily-checks runner が確認。
+- repo：`loadExpiryCandidates`（満了日超過かつ draft/awaiting_signature/executed）／`transitionExpired`
+  （`UPDATE … SET contract_status='expired'`・遷移可能状態を再確認・**42501 は forbidden で返しジョブ継続**）。
+- runner：アラート処理の後に `deriveExpiryTransitions`→`transitionExpired`。summary に
+  `expiredTransitions`/`expiryForbidden`。verify/cloudbuild に `_CONTRACT_EXPIRY_TRANSITION_ENABLED`／
+  `_CONFIRM_CONTRACT_EXPIRY`（=`CONTRACT_EXPIRY_LEGALBRIDGE_VALIDATION_ONLY`）＋ゲート（JOBS_ENABLED 必須・
+  production DB・IAP/IAM）。terminated は触らない。tests 3。
 
 ### 9-4：検収待ちダイジェスト
 - runner `inspection-digest`：`pending-inspections` 読取（既存）を PO 単位集計 → Slack 定期投稿。

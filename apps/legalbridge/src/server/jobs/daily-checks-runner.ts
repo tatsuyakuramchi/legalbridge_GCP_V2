@@ -1,5 +1,5 @@
 import {
-  deriveDeliveryAlerts, deriveContractAlerts, isWeekdayJst,
+  deriveDeliveryAlerts, deriveContractAlerts, deriveExpiryTransitions, isWeekdayJst,
   type DeliveryAlert, type ContractCandidate, type DeliveryAlertKind
 } from "./daily-checks-engine.js";
 import type { DailyChecksRepository, AlertLedgerEntry } from "./daily-checks-repository.js";
@@ -26,6 +26,8 @@ export interface DailyChecksSummary {
   sent: number;
   failed: number;
   recorded: number;
+  expiredTransitions: number;
+  expiryForbidden: boolean;
 }
 
 const DELIVERY_LEDGER_KIND: Record<DeliveryAlertKind, string> = {
@@ -51,6 +53,8 @@ export interface RunDailyChecksDeps {
   notifier: DailyChecksNotifier;
   todayYmd: string;
   nowMs: number;
+  // 満了ステータス自動遷移（9-3・本番 documents.contract_status UPDATE・既定OFF）。
+  expiryTransitionEnabled?: boolean;
 }
 
 export async function runDailyChecks(deps: RunDailyChecksDeps): Promise<DailyChecksSummary> {
@@ -75,20 +79,33 @@ export async function runDailyChecks(deps: RunDailyChecksDeps): Promise<DailyChe
     dryRun: notifier.mode === "dry-run",
     deliveryAlerts: deliveryAlerts.length,
     contractAlerts: contractAlerts.length,
-    sent: 0, failed: 0, recorded: 0
+    sent: 0, failed: 0, recorded: 0,
+    expiredTransitions: 0, expiryForbidden: false
   };
-  if (!notifications.length) return base;
 
-  const { delivered, failed } = await notifier.send(notifications);
-  base.sent = delivered.length;
-  base.failed = failed;
+  if (notifications.length) {
+    const { delivered, failed } = await notifier.send(notifications);
+    base.sent = delivered.length;
+    base.failed = failed;
+    // 実送信できたものだけ台帳へ記録（dry-run は記録せず次回再計算）。
+    if (notifier.mode === "live" && delivered.length) {
+      const entries: AlertLedgerEntry[] = delivered.map((d) => ({
+        kind: d.kind, refType: d.refType, refId: d.refId, alertDate: todayYmd
+      }));
+      base.recorded = await repo.recordAlerts(entries);
+    }
+  }
 
-  // 実送信できたものだけ台帳へ記録（dry-run は記録せず次回再計算）。
-  if (notifier.mode === "live" && delivered.length) {
-    const entries: AlertLedgerEntry[] = delivered.map((d) => ({
-      kind: d.kind, refType: d.refType, refId: d.refId, alertDate: todayYmd
-    }));
-    base.recorded = await repo.recordAlerts(entries);
+  // 満了ステータス自動遷移（9-3・opt-in・本番 UPDATE）。アラート処理の後に実行し、
+  // 権限不足（grant 031 未適用）は forbidden で返してジョブ全体は落とさない。
+  if (deps.expiryTransitionEnabled) {
+    const expiryCandidates = await repo.loadExpiryCandidates(todayYmd);
+    const toTransition = deriveExpiryTransitions(expiryCandidates, todayYmd);
+    if (toTransition.length) {
+      const result = await repo.transitionExpired(toTransition.map((c) => c.id));
+      base.expiredTransitions = result.transitioned;
+      base.expiryForbidden = result.forbidden;
+    }
   }
   return base;
 }

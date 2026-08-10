@@ -1179,7 +1179,8 @@ export function createApp(
       repo: dailyChecksRepo,
       notifier: dailyChecksNotifier,
       todayYmd: jstTodayYmd(Date.now()),
-      nowMs: Date.now()
+      nowMs: Date.now(),
+      expiryTransitionEnabled: config.contractExpiryTransitionEnabled
     });
   }
   app.use(createJobsRouter({ enabled: config.jobsEnabled, token: config.jobsTriggerToken, runners: jobRunners }));

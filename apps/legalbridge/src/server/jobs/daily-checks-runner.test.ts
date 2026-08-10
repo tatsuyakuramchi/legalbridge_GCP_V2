@@ -5,7 +5,7 @@ import {
   type DailyChecksNotifier, type DailyChecksNotification
 } from "./daily-checks-runner.js";
 import { MemoryDailyChecksRepository } from "./daily-checks-repository.js";
-import type { DeliveryCandidate, ContractCandidate } from "./daily-checks-engine.js";
+import type { DeliveryCandidate, ContractCandidate, ExpiryCandidate } from "./daily-checks-engine.js";
 
 const MON = Date.UTC(2026, 7, 10, 3, 0, 0); // 2026-08-10 月曜 JST 昼
 const TODAY = "2026-08-10";
@@ -89,6 +89,33 @@ test("発火なしはゼロ件サマリ", async () => {
   assert.equal(summary.deliveryAlerts, 0);
   assert.equal(summary.contractAlerts, 0);
   assert.equal(summary.sent, 0);
+});
+
+const EXPIRED: ExpiryCandidate[] = [
+  { id: 100, documentNumber: "D-100", expirationDate: "2026-08-01", contractStatus: "executed" },
+  { id: 101, documentNumber: "D-101", expirationDate: "2026-08-01", contractStatus: "terminated" } // 対象外
+];
+
+test("満了遷移: 有効時のみ遷移する", async () => {
+  const repo = new MemoryDailyChecksRepository([], [], EXPIRED);
+  const summary = await runDailyChecks({ repo, notifier: new CaptureNotifier(), todayYmd: TODAY, nowMs: MON, expiryTransitionEnabled: true });
+  assert.equal(summary.expiredTransitions, 1);       // executed のみ・terminated 除外
+  assert.equal(summary.expiryForbidden, false);
+  assert.deepEqual(repo.transitioned, [100]);
+});
+
+test("満了遷移: 無効（既定）なら遷移しない", async () => {
+  const repo = new MemoryDailyChecksRepository([], [], EXPIRED);
+  const summary = await runDailyChecks({ repo, notifier: new CaptureNotifier(), todayYmd: TODAY, nowMs: MON });
+  assert.equal(summary.expiredTransitions, 0);
+  assert.equal(repo.transitioned.length, 0);
+});
+
+test("満了遷移: 権限不足は forbidden で返しジョブは継続", async () => {
+  const repo = new MemoryDailyChecksRepository([], [], EXPIRED, true /* forbidden */);
+  const summary = await runDailyChecks({ repo, notifier: new CaptureNotifier(), todayYmd: TODAY, nowMs: MON, expiryTransitionEnabled: true });
+  assert.equal(summary.expiredTransitions, 0);
+  assert.equal(summary.expiryForbidden, true);
 });
 
 test("compose: 文言に日数・課題・満了日を含む", () => {

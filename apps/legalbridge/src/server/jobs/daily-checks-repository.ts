@@ -1,5 +1,5 @@
 import type { DatabasePool } from "../db/pool.js";
-import type { DeliveryCandidate, ContractCandidate } from "./daily-checks-engine.js";
+import type { DeliveryCandidate, ContractCandidate, ExpiryCandidate } from "./daily-checks-engine.js";
 
 // daily-checks の候補読取と送信済み台帳（lb_v2_job_alert_ledger）への記録（Phase 9-1b/9-2）。
 // 本番の業務テーブルは更新しない。重複抑止は台帳の最新 alert_date を候補の lastAlertAt/
@@ -14,11 +14,18 @@ export interface AlertLedgerEntry {
   detail?: Record<string, unknown>;
 }
 
+export interface ExpiryTransitionResult { transitioned: number; forbidden: boolean }
+
 export interface DailyChecksRepository {
   loadDeliveryCandidates(todayYmd: string): Promise<DeliveryCandidate[]>;
   loadContractCandidates(todayYmd: string): Promise<ContractCandidate[]>;
   recordAlerts(entries: AlertLedgerEntry[]): Promise<number>;
+  // 満了遷移（9-3・本番 documents.contract_status UPDATE・grant 031）。
+  loadExpiryCandidates(todayYmd: string): Promise<ExpiryCandidate[]>;
+  transitionExpired(ids: number[]): Promise<ExpiryTransitionResult>;
 }
+
+const EXPIRY_TRANSITIONABLE = ["draft", "awaiting_signature", "executed"];
 
 function degradable(error: unknown): boolean {
   const code = (error as { code?: string })?.code;
@@ -115,13 +122,60 @@ export class PgDailyChecksRepository implements DailyChecksRepository {
     }
     return recorded;
   }
+
+  async loadExpiryCandidates(_todayYmd: string): Promise<ExpiryCandidate[]> {
+    try {
+      const r = await this.database.query(
+        `SELECT id, document_number, to_char(expiration_date, 'YYYY-MM-DD') AS expiration_date, contract_status
+           FROM documents
+          WHERE expiration_date IS NOT NULL
+            AND expiration_date < CURRENT_DATE
+            AND contract_status = ANY($1)`,
+        [EXPIRY_TRANSITIONABLE]
+      );
+      return r.rows.map((row) => ({
+        id: Number(row.id),
+        documentNumber: row.document_number == null ? null : String(row.document_number),
+        expirationDate: String(row.expiration_date),
+        contractStatus: String(row.contract_status)
+      }));
+    } catch (error) {
+      if (degradable(error)) return [];
+      throw error;
+    }
+  }
+
+  async transitionExpired(ids: number[]): Promise<ExpiryTransitionResult> {
+    if (!ids.length) return { transitioned: 0, forbidden: false };
+    try {
+      // 遷移可能な状態を再確認して更新（読取後の競合に安全）。
+      const r = await this.database.query(
+        `UPDATE documents
+            SET contract_status = 'expired', updated_at = now()
+          WHERE id = ANY($1::int[])
+            AND expiration_date IS NOT NULL
+            AND expiration_date < CURRENT_DATE
+            AND contract_status = ANY($2)
+        RETURNING id`,
+        [ids, EXPIRY_TRANSITIONABLE]
+      );
+      return { transitioned: r.rowCount ?? 0, forbidden: false };
+    } catch (error) {
+      // grant 031 未適用（権限不足）は forbidden で返し、ジョブ全体は落とさない。
+      if ((error as { code?: string })?.code === "42501") return { transitioned: 0, forbidden: true };
+      throw error;
+    }
+  }
 }
 
 export class MemoryDailyChecksRepository implements DailyChecksRepository {
   readonly ledger: AlertLedgerEntry[] = [];
+  readonly transitioned: number[] = [];
   constructor(
     private readonly delivery: DeliveryCandidate[] = [],
-    private readonly contracts: ContractCandidate[] = []
+    private readonly contracts: ContractCandidate[] = [],
+    private readonly expiry: ExpiryCandidate[] = [],
+    private readonly expiryForbidden = false
   ) {}
 
   async loadDeliveryCandidates() { return this.delivery; }
@@ -133,5 +187,11 @@ export class MemoryDailyChecksRepository implements DailyChecksRepository {
       if (!dup) { this.ledger.push(e); recorded++; }
     }
     return recorded;
+  }
+  async loadExpiryCandidates() { return this.expiry; }
+  async transitionExpired(ids: number[]): Promise<ExpiryTransitionResult> {
+    if (this.expiryForbidden) return { transitioned: 0, forbidden: true };
+    this.transitioned.push(...ids);
+    return { transitioned: ids.length, forbidden: false };
   }
 }
