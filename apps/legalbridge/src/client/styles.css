@@ -836,6 +836,15 @@ button.pdf-download-link:disabled {
   color: #b91c1c;
   font-size: 13px;
 }
+/* 一括無効化バー・選択列（Phase 10-4） */
+.bulk-void-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 12px; margin-bottom: 8px;
+  background: #fef2f2; border: 1px solid #fecaca; border-radius: var(--radius-md);
+}
+.bulk-void-bar input { max-width: 220px; }
+.registry-table th.select-col, .registry-table td.select-col { width: 28px; text-align: center; }
+
 /* バージョン履歴（アーカイブ・Phase 10-1） */
 .version-history { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px; }
 .version-history h3 { font-size: 13px; margin: 0 0 8px; }

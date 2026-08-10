@@ -13,3 +13,16 @@ export const documentVoidSchema = z.object({
 });
 
 export type DocumentVoidInput = z.infer<typeof documentVoidSchema>;
+
+// 一括無効化（Phase 10-4）。V1 の bulk-delete（ハード削除）に代わる V2 版＝複数文書を
+// まとめて void（ソフト・実績取消つき）する。既存 document-void ケーパビリティ・grant 033 を
+// 共用（新規権限なし）。件数上限で暴発を防ぐ。
+export const documentVoidBulkSchema = z.object({
+  ids: z.array(z.coerce.number().int().positive()).min(1).max(200),
+  confirmation: z.string(),
+  reason: z.string().trim().max(500).optional()
+}).refine((v) => v.confirmation === DOCUMENT_VOID_CONFIRMATION, {
+  message: `確認トークン ${DOCUMENT_VOID_CONFIRMATION} が必要です`, path: ["confirmation"]
+});
+
+export type DocumentVoidBulkInput = z.infer<typeof documentVoidBulkSchema>;

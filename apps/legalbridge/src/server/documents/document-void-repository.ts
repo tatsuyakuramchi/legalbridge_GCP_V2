@@ -18,8 +18,55 @@ export interface DocumentVoidResult {
   affectedLines: number[];
 }
 
+export interface DocumentVoidBulkItem {
+  documentId: number;
+  status: "voided" | "already" | "not_found" | "error";
+  voidedEvents?: number;
+  error?: string;
+}
+export interface DocumentVoidBulkResult {
+  requested: number;
+  voided: number;
+  already: number;
+  notFound: number;
+  failed: number;
+  items: DocumentVoidBulkItem[];
+}
+
 export interface DocumentVoidRepository {
   void(documentId: number, input: DocumentVoidInput, actor: string): Promise<DocumentVoidResult>;
+  // 一括無効化（10-4）。各 id を個別トランザクションで void し、成否を集計して返す。
+  // 権限未整備(FORDIDDEN_DB)は全体を中断（grant 未適用のため）。
+  voidMany(ids: number[], input: DocumentVoidInput, actor: string): Promise<DocumentVoidBulkResult>;
+}
+
+// 単一 void の結果集約を共通化（Pg/Memory 双方から利用）。
+async function runVoidMany(
+  self: DocumentVoidRepository,
+  ids: number[],
+  input: DocumentVoidInput,
+  actor: string
+): Promise<DocumentVoidBulkResult> {
+  const items: DocumentVoidBulkItem[] = [];
+  const seen = new Set<number>();
+  let voided = 0, already = 0, notFound = 0, failed = 0;
+  for (const id of ids) {
+    if (seen.has(id)) continue;   // 重複 id は1回だけ
+    seen.add(id);
+    try {
+      const r = await self.void(id, input, actor);
+      if (r.alreadyVoided) { already++; items.push({ documentId: id, status: "already" }); }
+      else { voided++; items.push({ documentId: id, status: "voided", voidedEvents: r.voidedEvents }); }
+    } catch (error) {
+      if (error instanceof DocumentVoidError) {
+        if (error.code === "DOCUMENT_VOID_FORBIDDEN_DB") throw error;   // grant 未整備＝全体中断
+        if (error.code === "DOCUMENT_VOID_NOT_FOUND") { notFound++; items.push({ documentId: id, status: "not_found" }); continue; }
+      }
+      failed++;
+      items.push({ documentId: id, status: "error", error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return { requested: seen.size, voided, already, notFound, failed, items };
 }
 
 export class DocumentVoidError extends Error {
@@ -91,6 +138,10 @@ export class PgDocumentVoidRepository implements DocumentVoidRepository {
       client.release();
     }
   }
+
+  voidMany(ids: number[], input: DocumentVoidInput, actor: string) {
+    return runVoidMany(this, ids, input, actor);
+  }
 }
 
 async function lockDocument(client: PoolClient, documentId: number) {
@@ -142,5 +193,9 @@ export class MemoryDocumentVoidRepository implements DocumentVoidRepository {
     const result = { documentId, documentNumber: doc.documentNumber, issueKey: doc.issueKey, alreadyVoided: false, voidedEvents: affected.length, affectedLines };
     this.ledger.push(result);
     return result;
+  }
+
+  voidMany(ids: number[], input: DocumentVoidInput, actor: string) {
+    return runVoidMany(this, ids, input, actor);
   }
 }

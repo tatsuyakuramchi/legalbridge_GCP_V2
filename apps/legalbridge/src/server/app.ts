@@ -1066,7 +1066,8 @@ export function createApp(
     const isMatterDelete = request.method === "DELETE" && /^\/matters\/\d+$/.test(request.path);
     const isMatterTaskDelete = request.method === "DELETE" && /^\/matters\/\d+\/tasks\/\d+$/.test(request.path);
     if (matterDeleteEnabled && (isMatterDelete || isMatterTaskDelete)) return next();
-    const isDocumentVoid = request.method === "POST" && /^\/documents\/\d+\/void$/.test(request.path);
+    const isDocumentVoid = request.method === "POST" &&
+      (/^\/documents\/\d+\/void$/.test(request.path) || request.path === "/documents/void-bulk");
     if (documentVoidEnabled && isDocumentVoid) return next();
     const isDocumentReissue = request.method === "POST" && /^\/documents\/\d+\/reissue$/.test(request.path);
     if (documentReissueEnabled && isDocumentReissue) return next();

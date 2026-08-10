@@ -90,6 +90,8 @@ export function DocumentRegistry({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const toast = useToast();
   useEffect(() => { if (initialQuery) setQuery(initialQuery); }, [initialQuery]);
   const labels = useMemo(
     () => new Map(templates.map((item) => [item.templateKey, item.label])),
@@ -107,7 +109,7 @@ export function DocumentRegistry({
         : `/api/v2/documents?${new URLSearchParams({ q: query, limit: "100", lifecycle, ...(templateType ? { template_type: templateType } : {}) })}`;
       fetch(url, { signal: controller.signal })
         .then((response) => response.ok ? response.json() : Promise.reject())
-        .then((data) => setDocuments(normalizeRows(data, pdfQueue)))
+        .then((data) => { setDocuments(normalizeRows(data, pdfQueue)); setSelectedIds(new Set()); })
         .catch((cause) => { if (cause?.name !== "AbortError") setError("文書一覧を取得できませんでした。"); })
         .finally(() => setLoading(false));
     }, 250);
@@ -124,6 +126,34 @@ export function DocumentRegistry({
     setSelected((await response.json()).document);
   }
   useEffect(() => { if (selectedId) void selectDocument(selectedId); }, [selectedId]);
+
+  function toggleSelect(id: number) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+  const selectableIds = documents.filter((d) => d.lifecycleStatus !== "voided").map((d) => d.id);
+  const allSelected = selectableIds.length > 0 && selectableIds.every((id) => selectedIds.has(id));
+  function toggleSelectAll() {
+    setSelectedIds(allSelected ? new Set() : new Set(selectableIds));
+  }
+  async function runBulkVoid(reason: string) {
+    const ids = [...selectedIds];
+    if (!ids.length) return;
+    const response = await fetch("/api/v2/documents/void-bulk", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids, confirmation: "COMMIT_DOCUMENT_VOID", reason: reason.trim() || undefined })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) { toast.push(data.error ?? "一括無効化に失敗しました。", "error"); return; }
+    toast.push(`一括無効化：${data.voided}件を無効化（既:${data.already} 未検出:${data.notFound} 失敗:${data.failed}）`,
+      data.failed ? "info" : "success");
+    setSelectedIds(new Set());
+    setReload((v) => v + 1);
+    if (selected && ids.includes(selected.id)) void selectDocument(selected.id);
+  }
 
   return <section className="page registry-page">
     <div className="page-title">
@@ -159,13 +189,26 @@ export function DocumentRegistry({
       <span>{loading ? "検索中…" : `${documents.length}件`}</span>
     </div>
     {error && <div className="async-error">{error}<button onClick={() => setReload((value) => value + 1)}>再試行</button></div>}
+    {canVoidDocument && selectedIds.size > 0 &&
+      <BulkVoidBar count={selectedIds.size} onCancel={() => setSelectedIds(new Set())} onRun={runBulkVoid} />}
     <div className="registry-layout">
       <div className="registry-table panel">
         <table>
-          <thead><tr><th>文書番号・件名</th><th>種別</th><th>相手方</th><th>作成日</th><th>状態</th></tr></thead>
+          <thead><tr>
+            {canVoidDocument && <th className="select-col">
+              <input type="checkbox" checked={allSelected} onChange={toggleSelectAll}
+                title="表示中の有効な文書をすべて選択" aria-label="すべて選択" />
+            </th>}
+            <th>文書番号・件名</th><th>種別</th><th>相手方</th><th>作成日</th><th>状態</th>
+          </tr></thead>
           <tbody>{documents.map((document) =>
             <tr key={document.id} className={selected?.id === document.id ? "selected" : ""}
               onClick={() => void selectDocument(document.id)}>
+              {canVoidDocument && <td className="select-col" onClick={(e) => e.stopPropagation()}>
+                {document.lifecycleStatus !== "voided" &&
+                  <input type="checkbox" checked={selectedIds.has(document.id)}
+                    onChange={() => toggleSelect(document.id)} aria-label={`選択 ${document.documentNumber ?? document.id}`} />}
+              </td>}
               <td><b>{document.documentNumber ?? "未発番"}</b><br /><small>{document.title}</small></td>
               <td>{labels.get(document.templateType) ?? document.templateType}<br /><small>{document.issueKey}</small></td>
               <td>{document.counterparty || "—"}</td>
@@ -302,6 +345,35 @@ function VersionHistory({ documentId, onSelect }: { documentId: number; onSelect
         </button>
       </li>)}
     </ul>
+  </div>;
+}
+
+function BulkVoidBar({ count, onCancel, onRun }: {
+  count: number;
+  onCancel: () => void;
+  onRun: (reason: string) => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [confirmText, setConfirmText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const CONFIRM = "COMMIT_DOCUMENT_VOID";
+  return <div className="bulk-void-bar">
+    <span><strong>{count}件</strong> を選択中</span>
+    {!open
+      ? <>
+          <button className="danger" onClick={() => setOpen(true)}>選択を一括無効化</button>
+          <button onClick={onCancel}>選択解除</button>
+        </>
+      : <>
+          <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="理由（任意）" />
+          <input value={confirmText} onChange={(e) => setConfirmText(e.target.value)} placeholder={CONFIRM} />
+          <button className="danger" disabled={busy || confirmText !== CONFIRM}
+            onClick={async () => { setBusy(true); try { await onRun(reason); setOpen(false); setConfirmText(""); setReason(""); } finally { setBusy(false); } }}>
+            {busy ? "処理中…" : `${count}件を無効化`}
+          </button>
+          <button onClick={() => { setOpen(false); setConfirmText(""); }}>やめる</button>
+        </>}
   </div>;
 }
 

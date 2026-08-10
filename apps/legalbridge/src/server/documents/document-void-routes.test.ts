@@ -86,3 +86,35 @@ test("void: 権限未整備(FORBIDDEN_DB)は503", async () => {
   assert.equal(res.status, 503);
   assert.equal(res.body.code, "DOCUMENT_VOID_FORBIDDEN_DB");
 });
+
+test("void-bulk: 混在（voided/already/not_found）を集計する", async () => {
+  const { app } = appFor({ enabled: true });
+  const res = await request(app).post("/api/v2/documents/void-bulk")
+    .send({ ids: [1, 2, 999, 1], confirmation: "COMMIT_DOCUMENT_VOID", reason: "整理" });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.requested, 3);   // 重複 id=1 は1回
+  assert.equal(res.body.voided, 1);      // id=1
+  assert.equal(res.body.already, 1);     // id=2（既 void）
+  assert.equal(res.body.notFound, 1);    // id=999
+});
+
+test("void-bulk: 書込み無効時は503", async () => {
+  const { app } = appFor({ enabled: false });
+  const res = await request(app).post("/api/v2/documents/void-bulk")
+    .send({ ids: [1], confirmation: "COMMIT_DOCUMENT_VOID" });
+  assert.equal(res.status, 503);
+});
+
+test("void-bulk: 確認トークン不正は400", async () => {
+  const { app } = appFor({ enabled: true });
+  const res = await request(app).post("/api/v2/documents/void-bulk").send({ ids: [1], confirmation: "WRONG" });
+  assert.equal(res.status, 400);
+});
+
+test("void-bulk: 権限未整備は503で全体中断", async () => {
+  const { app } = appFor({ enabled: true, forbidden: true });
+  const res = await request(app).post("/api/v2/documents/void-bulk")
+    .send({ ids: [1, 2], confirmation: "COMMIT_DOCUMENT_VOID" });
+  assert.equal(res.status, 503);
+  assert.equal(res.body.code, "DOCUMENT_VOID_FORBIDDEN_DB");
+});

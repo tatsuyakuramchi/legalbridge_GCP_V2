@@ -14,7 +14,7 @@ V2 は draft→finalize→pdf→drive までは移植済みだが、**発行後�
 | 10-1 | 文書アーカイブ（状態フィルタ・PDF未生成キュー・バージョン履歴） | 中 | ✅ 実装済 |
 | 10-1b | 文書再発行（新版採番＋旧版 supersede＋実績取消） | 中 | ✅ 実装済 |
 | 10-6 | 文書ルックアップ（番号検索・次番号・PDF未生成一覧） | 小 | 未 |
-| 10-4 | 一括削除／一括項目更新 | 中 | 未（優先低） |
+| 10-4 | 一括無効化（bulk void） | 中 | ✅ 実装済（一括項目更新は将来拡張） |
 | 10-5 | Excel 一括出力（担当×支払期日×種別集計→Drive保存） | 大 | 未 |
 
 ## 10-2：文書 void（無効化）✅ 実装済
@@ -144,8 +144,27 @@ psql "" -v confirm_document_reissue=GRANT_PRODUCTION_DOCUMENT_REISSUE \
 `|_DOCUMENT_REISSUE_ENABLED=true|_CONFIRM_DOCUMENT_REISSUE=DOCUMENT_REISSUE_LEGALBRIDGE_VALIDATION_ONLY`
 ＋ `_WRITE_SCOPES` の `document-void` の直後に `document-reissue` を追加（正準順）。
 
+## 10-4：一括無効化（bulk void）✅ 実装済
+
+V1 の bulk-delete（ハード削除＋force カスケード）は V2 の方針（ソフト void）と合わないため、
+V2 では **複数文書の一括 void** として実装。**既存 document-void ケーパビリティ・grant 033 を
+共用＝新規 grant/config/scope なし**（現行デプロイで既に有効）。
+
+- `document-void-schema.ts`：`documentVoidBulkSchema`（ids 1..200・確認トークン共通・reason 任意）。
+- `document-void-repository.ts`：`voidMany(ids, input, actor)`＝各 id を個別トランザクションで
+  `void()`→成否集計（voided/already/not_found/error）。**FORBIDDEN_DB（grant 未整備）は全体中断**。
+  重複 id は1回に集約。共通ロジック `runVoidMany` を Pg/Memory で共用。
+- `document-void-routes.ts`：`POST /documents/void-bulk`（admin/legal・既定OFF503・確認トークン）。
+- app.ts：safe-write ガードに `/documents/void-bulk` を追加（document-void 有効時）。
+- UI：`DocumentRegistry` にチェックボックス列（void 済みは対象外）＋全選択＋一括無効化バー
+  （合言葉＋理由・結果トースト集計）。一覧の再取得・状態切替で選択はクリア。
+- tests：混在集計／無効時503／トークン不正／FORBIDDEN_DB 全体中断 の4件。609 緑。
+
+> **一括項目更新（bulk-update-fields）は将来拡張**：form_data の広範な UPDATE 権限が必要で
+> （JSONB 全体・列スコープ不可）、V1 の対象フィールドも発注/検収固有。優先低のため見送り。
+
 ## 次スライス候補
-- **10-4 一括操作**（一括削除／一括項目更新）／**10-5 Excel 一括出力**（大）。
+- **10-5 Excel 一括出力**（大）。
 
 ## 既知の限定（将来拡張）
 - 再発行は旧版の実績を**取消**する（carryover は未実装）。新版で実績が要る場合は再入力する。

@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { documentVoidSchema } from "./document-void-schema.js";
+import { documentVoidSchema, documentVoidBulkSchema } from "./document-void-schema.js";
 import { DocumentVoidError, type DocumentVoidRepository } from "./document-void-repository.js";
 
 // 発行文書の void（破壊的・Phase 10-2）。guarded-write（既定OFF・確認トークン
@@ -51,6 +51,20 @@ export function createDocumentVoidRouter(
           `\n→ 紐づく実績 ${result.voidedEvents} 件を取消しました。`
         ).catch(() => undefined);
       }
+      return response.status(200).json(result);
+    } catch (error) { return handle(error, response, next); }
+  });
+
+  // 一括無効化（Phase 10-4）。同一ケーパビリティ・grant 033 を共用。各 id を個別に void し集計。
+  router.post("/documents/void-bulk", async (request, response, next) => {
+    try {
+      if (!writeEnabled || !repository) {
+        return response.status(503).json({ error: "document void is not enabled", code: "DOCUMENT_VOID_WRITE_UNAVAILABLE" });
+      }
+      if (!editorAllowed(response.locals.currentUser?.role)) return forbidden(response);
+      const input = documentVoidBulkSchema.parse(request.body ?? {});
+      const actor = String(response.locals.currentUser?.email ?? "unknown");
+      const result = await repository.voidMany(input.ids, { confirmation: input.confirmation, reason: input.reason }, actor);
       return response.status(200).json(result);
     } catch (error) { return handle(error, response, next); }
   });
