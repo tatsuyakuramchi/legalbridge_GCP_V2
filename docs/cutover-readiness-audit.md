@@ -35,7 +35,7 @@ V1 = `/workspace/legalbridge_ai_gcp`（migrations 0001〜0164 を正とする）
 - 対処: **grant 039 系で `ALTER TABLE vendors ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE`**
   ＋preflight は `information_schema.columns` で列存在を確認（038 が唯一やっている方式を標準化）。
 
-### P0-3. V2 作成文書の `contract_status` が NULL → 状態機械が永遠に発火しない
+### P0-3. V2 作成文書の `contract_status` が NULL → 状態機械が永遠に発火しない ✅ S-C で修正済み（既存分は 040 バックフィル・本番適用待ち）
 - V1 は保存時に必ず既定 `'executed'` を刻む（`documentSave.ts:298`）。列に DB default は無い。
 - V2 の `finalization-repository.ts:42` / `document-reissue-repository.ts:79` は `contract_status` を書かない。
 - 帰結: CloudSign「executed 遷移」（`contract-status-writer.ts:20` の IN ('draft','awaiting_signature')）も
@@ -43,7 +43,7 @@ V1 = `/workspace/legalbridge_ai_gcp`（migrations 0001〜0164 を正とする）
 - 対処: finalize/reissue の INSERT に `contract_status` を設定（V1 既定に合わせ 'executed'。CloudSign 送信フローを
   作る際に 'awaiting_signature' を導入）。既存 V2 作成分のバックフィル SQL も用意。
 
-### P0-4. 再発行の新版が業務列空 → V1 トリガが不完全 contracts 行を捏造
+### P0-4. 再発行の新版が業務列空 → V1 トリガが不完全 contracts 行を捏造 ✅ S-C で修正済み
 - V2 reissue/finalize の INSERT は 8〜10 列のみ。`vendor_id/record_type/contract_category/contract_title/
   effective_date/expiration_date` 等（0101 で documents に統合された capability 列）を書かない。
 - `tg_doc_autolink_contract`（0129:83）が BEFORE INSERT で発火し、`contract_level='standalone'`・状態 NULL の
@@ -100,11 +100,11 @@ V1 = `/workspace/legalbridge_ai_gcp`（migrations 0001〜0164 を正とする）
 
 | # | 内容 | 根拠 |
 |---|---|---|
-| P1-1 | registry の「有効」フィルタが voided 除外のみ（V1 は reissued/superseded も除外） | `registry-repository.ts:50` vs V1 `server.ts:15076` |
-| P1-2 | 検収ワークリストが lifecycle/is_primary を見ない（void 済み発注が検収待ちに出る） | `inspections/repository.ts:29` |
+| P1-1 | ✅ S-C: 「有効」は voided/reissued/superseded を除外（V1 横断検索と同義に） | registry-repository.ts |
+| P1-2 | ✅ S-C: 発注は現行版＋正本のみ・検収書 EXISTS は voided 除外 | inspections/repository.ts |
 | P1-3 | vendor-merge が `documents.vendor_id` を付替えない（8表中に無い） | `merge-repository.ts:11` vs 0101:36 |
 | P1-4 | V2 のベンダーピッカー/台帳/検索が is_active を無視（自分で無効化した取引先が選べる） | `master-data/repository.ts:31` ほか |
-| P1-5 | reissue の is_primary 降格が系列全体（V1 は template_type 別に正本選定） | `document-reissue-repository.ts:91` vs `server.ts:3379` |
+| P1-5 | ✅ S-C: 降格を template_type 単位に限定（V1 の正本選定と同義） | document-reissue-repository.ts |
 | P1-6 | ExcelBatch だけ FeatureLockedNote 不採用（無効時ボタンが黙って消える） | `ExcelBatchWorkspace.tsx:91` |
 | P1-7 | WorkDetail の private な Degraded() 重複（FeatureLockedNote へ統一） | `WorkDetail.tsx:35` |
 | P1-8 | 内部識別子の end-user 露出（DataQuality「GRANT」、WorkDetail parent_work_id/work_relations、Requests「3-2b」） | `DataQuality.tsx:68` ほか |
@@ -159,7 +159,12 @@ V1 = `/workspace/legalbridge_ai_gcp`（migrations 0001〜0164 を正とする）
    psql "" -v confirm_cutover_fixes=GRANT_PRODUCTION_CUTOVER_FIXES \
      -f infra/gcp/sql/039_production_cutover_fixes_grants.sql
    ```
-3. **S-C 文書ライフサイクル整合**：P0-3 contract_status 刻印＋バックフィル ＋ P0-4 業務列コピー ＋ P1-1/P1-2/P1-5
+3. **S-C 文書ライフサイクル整合** ✅ 完了（2026-08-10）：finalize が record_type（V1 分岐準拠の純関数）・contract_status='executed'・contract_title・vendor_id（相手先名から解決）を刻む／reissue は旧版の業務列23列を INSERT..SELECT で丸ごと継承＋COALESCE(contract_status,'executed')／is_primary 降格は template_type 単位／registry「有効」= voided/reissued/superseded 除外／検収ワークリスト lifecycle+is_primary 整合。既存 V2 作成分の是正は 040 バックフィル（V2 判定 = template_version_id IS NOT NULL・V1 は書かない列）：
+   ```bash
+   psql "" -f infra/gcp/sql/040_production_document_status_backfill_preflight.sql || true
+   psql "" -v confirm_document_backfill=BACKFILL_PRODUCTION_DOCUMENT_STATUS \
+     -f infra/gcp/sql/040_production_document_status_backfill.sql
+   ```
 4. **S-D 再発行再設計**：P0-1 イベント repoint 方式へ（V1 reissueCarryover 準拠）— 完了までスコープ点火禁止
 5. **S-E 案件削除整合**：P0-10
 6. **S-F UX 一括**：P1-6〜P1-14

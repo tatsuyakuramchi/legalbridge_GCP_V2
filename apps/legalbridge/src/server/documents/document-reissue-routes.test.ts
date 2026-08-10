@@ -19,7 +19,10 @@ function appFor(opts: { enabled?: boolean; role?: string; forbidden?: boolean; n
       templateType: "purchase_order", templateVersionId: 10, formData: { PROJECT_TITLE: "旧" },
       lifecycleStatus: "final", isPrimary: true },
     { id: 2, documentNumber: "ARC-PO-2026-0002", baseDocumentNumber: null, issueKey: null as unknown as string,
-      templateType: "purchase_order", templateVersionId: 10, formData: {}, lifecycleStatus: "voided", isPrimary: false }
+      templateType: "purchase_order", templateVersionId: 10, formData: {}, lifecycleStatus: "voided", isPrimary: false },
+    // 同系列だが別種（検収書）。発注書の再発行で正本フラグを巻き込まれないこと（P1-5）。
+    { id: 3, documentNumber: "ARC-INS-2026-0001", baseDocumentNumber: "ARC-PO-2026-0001", issueKey: "LB-1",
+      templateType: "inspection_certificate", templateVersionId: 11, formData: {}, lifecycleStatus: "final", isPrimary: true }
   ];
   const events: MemoryReissueEvent[] = [
     { id: 100, documentId: 1, voidedAt: null, voidReason: null },
@@ -77,6 +80,15 @@ test("reissue: 新版を採番し旧版を reissued に倒して実績を取消�
   await new Promise((r) => setTimeout(r, 5));
   assert.equal(posted.length, 1);
   assert.match(posted[0], /誤記訂正/);
+});
+
+test("reissue: 同系列でも別種の文書は正本のまま（template_type 単位の降格・P1-5）", async () => {
+  const target = appFor({ enabled: true });
+  await request(target.app).post("/api/v2/documents/1/reissue")
+    .send({ confirmation: "COMMIT_DOCUMENT_REISSUE", reason: "誤記訂正" }).expect(200);
+  const inspection = target.docs.find((d) => d.id === 3)!;
+  assert.equal(inspection.isPrimary, true);   // 検収書の正本フラグは維持
+  assert.equal(inspection.lifecycleStatus, "final");
 });
 
 test("reissue: 存在しない文書は404", async () => {

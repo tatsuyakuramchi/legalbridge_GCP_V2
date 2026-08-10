@@ -32,12 +32,15 @@ export class PgPendingInspectionRepository implements PendingInspectionRepositor
               EXISTS (
                 SELECT 1 FROM documents ic
                  WHERE ic.template_type = $2
+                   AND COALESCE(ic.lifecycle_status, 'final') <> 'voided'
                    AND ((po.matter_id IS NOT NULL AND ic.matter_id = po.matter_id)
                         OR (COALESCE(po.issue_key, '') <> '' AND ic.issue_key = po.issue_key))
               ) AS has_inspection
          FROM documents po
          LEFT JOIN matters m ON m.id = po.matter_id
         WHERE po.template_type = $1
+          AND COALESCE(po.lifecycle_status, 'final') NOT IN ('voided', 'reissued', 'superseded')
+          AND COALESCE(po.is_primary, TRUE)
           AND ($3 = '%%'
                OR COALESCE(po.document_number, '') ILIKE $3
                OR COALESCE(po.issue_key, '') ILIKE $3

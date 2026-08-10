@@ -75,22 +75,38 @@ export class PgDocumentReissueRepository implements DocumentReissueRepository {
       const newNumber = nextReissueNumber(base, seriesRes.rows.map((r) => r.document_number));
       const formData = input.formData ?? source.form_data ?? {};
 
+      // 新版は旧版から業務列（vendor/契約種別/表題/有効期間/台帳参照…）を丸ごと引き継ぐ（監査 P0-4）。
+      // 空のまま INSERT すると V1 の tg_doc_autolink_contract が業務列 NULL の contracts 行を捏造し、
+      // V1 の契約一覧に取引先・表題空の行が出る。contract_status は V1 既定 'executed' に倒す（P0-3）。
       const inserted = await client.query(
         `INSERT INTO documents (
            document_number, base_document_number, issue_key, template_type, template_version_id,
-           form_data, drive_link, created_at, created_by, lifecycle_status, is_primary
-         ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, '', now(), $7, 'final', true)
+           form_data, drive_link, created_at, created_by, lifecycle_status, is_primary,
+           vendor_id, record_type, contract_category, contract_type, contract_title, contract_status,
+           effective_date, expiration_date, auto_renewal, original_work, product_name, work_name,
+           media, territory, language, document_url, backlog_issue_key, ledger_code, ledger_ref_id,
+           material_ref_id, template_family, flow_direction, deliverable_ownership
+         )
+         SELECT $1, $2, issue_key, template_type, template_version_id,
+                $3::jsonb, '', now(), $4, 'final', true,
+                vendor_id, record_type, contract_category, contract_type, contract_title,
+                COALESCE(contract_status, 'executed'),
+                effective_date, expiration_date, auto_renewal, original_work, product_name, work_name,
+                media, territory, language, document_url, backlog_issue_key, ledger_code, ledger_ref_id,
+                material_ref_id, template_family, flow_direction, deliverable_ownership
+           FROM documents WHERE id = $5
          RETURNING id`,
-        [newNumber, base, source.issue_key, source.template_type, source.template_version_id,
-         JSON.stringify(formData), actor]
+        [newNumber, base, JSON.stringify(formData), actor, sourceId]
       );
       const newId = Number(inserted.rows[0].id);
 
-      // 系列の他行を正本から降格。
+      // 系列の同種文書だけを正本から降格（監査 P1-5）。V1 は template_type 単位で正本を選ぶため、
+      // 例えば発注書の再発行で同系列の検収書の正本フラグを巻き込まない。
       await client.query(
         `UPDATE documents SET is_primary = false
-          WHERE COALESCE(NULLIF(base_document_number, ''), document_number) = $1 AND id <> $2`,
-        [base, newId]
+          WHERE COALESCE(NULLIF(base_document_number, ''), document_number) = $1
+            AND template_type = $3 AND id <> $2`,
+        [base, newId, source.template_type]
       );
       // 旧版を reissued に倒す。
       await client.query(
@@ -184,7 +200,8 @@ export class MemoryDocumentReissueRepository implements DocumentReissueRepositor
       templateType: source.templateType, templateVersionId: source.templateVersionId,
       formData: input.formData ?? source.formData, lifecycleStatus: "final", isPrimary: true
     });
-    for (const d of series) if (d.id !== newId) d.isPrimary = false;
+    // 同系列でも template_type が異なる文書（例: 検収書）は正本のまま残す（P1-5）。
+    for (const d of series) if (d.id !== newId && d.templateType === source.templateType) d.isPrimary = false;
     source.lifecycleStatus = "reissued";
     source.supersededBy = newNumber;
     const reason = input.reason?.trim() || "reissue";

@@ -46,8 +46,9 @@ export class PgDocumentRegistryRepository implements DocumentRegistryRepository 
 
   async list(query: string, templateType?: string, limit = 100, lifecycle: LifecycleFilter = "all") {
     const keyword = `%${query.trim()}%`;
+    // 「有効」は V1 の横断検索と同じく無効化だけでなく旧版（reissued/superseded）も除外する（監査 P1-1）。
     const lifecycleClause =
-      lifecycle === "active" ? "AND COALESCE(lifecycle_status, 'final') <> 'voided'"
+      lifecycle === "active" ? "AND COALESCE(lifecycle_status, 'final') NOT IN ('voided', 'reissued', 'superseded')"
       : lifecycle === "voided" ? "AND COALESCE(lifecycle_status, 'final') = 'voided'"
       : "";
     const result = await this.database.query(

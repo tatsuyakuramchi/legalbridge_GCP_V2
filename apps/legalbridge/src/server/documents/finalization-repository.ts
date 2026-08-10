@@ -1,6 +1,9 @@
 import type { PoolClient } from "pg";
 import type { DocumentDraft, DocumentFormData } from "../../types.js";
 import type { DatabasePool } from "../db/pool.js";
+import {
+  PARTY_NAME_KEYS, TITLE_KEYS, firstTextValue, deriveRecordType, resolveVendorIdByName
+} from "./document-business-columns.js";
 
 export interface FinalizeDocumentInput {
   issueKey: string;
@@ -38,11 +41,20 @@ export class PgDocumentFinalizationRepository implements DocumentFinalizationRep
       const sequence = await nextSequence(client, prefix, year);
       const documentNumber = formatDocumentNumber(prefix, year, sequence);
 
+      // 業務列も V1 同等に刻む（監査 P0-3/P0-4）：contract_status は V1 既定の 'executed'
+      // （発行済み＝有効。CloudSign 送信フロー導入時に 'awaiting_signature' を追加予定）。
+      // vendor_id は form_data の相手先名から解決（できなければ NULL のまま・作成は止めない）。
+      const contractTitle = firstTextValue(input.formData, TITLE_KEYS);
+      const vendorId = await resolveVendorIdByName(
+        client, firstTextValue(input.formData, PARTY_NAME_KEYS)
+      );
+
       const inserted = await client.query(
         `INSERT INTO documents (
            document_number, issue_key, template_type, template_version_id,
-           form_data, drive_link, created_at, created_by
-         ) VALUES ($1, $2, $3, $4, $5::jsonb, '', now(), $6)
+           form_data, drive_link, created_at, created_by,
+           record_type, contract_status, contract_title, vendor_id
+         ) VALUES ($1, $2, $3, $4, $5::jsonb, '', now(), $6, $7, 'executed', $8, $9)
          RETURNING id, document_number, issue_key, template_type,
                    template_version_id, created_at, created_by`,
         [
@@ -51,7 +63,10 @@ export class PgDocumentFinalizationRepository implements DocumentFinalizationRep
           input.templateType,
           input.templateVersionId,
           JSON.stringify(input.formData),
-          input.createdBy ?? null
+          input.createdBy ?? null,
+          deriveRecordType(input.templateType),
+          contractTitle,
+          vendorId
         ]
       );
 

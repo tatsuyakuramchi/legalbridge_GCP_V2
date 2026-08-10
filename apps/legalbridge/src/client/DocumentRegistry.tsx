@@ -179,7 +179,7 @@ export function DocumentRegistry({
       </select>
       <select value={lifecycle} onChange={(event) => setLifecycle(event.target.value as typeof lifecycle)} disabled={pdfQueue}>
         <option value="all">すべての状態</option>
-        <option value="active">有効のみ</option>
+        <option value="active">有効のみ（旧版・無効化を除く）</option>
         <option value="voided">無効化のみ</option>
       </select>
       <button className={pdfQueue ? "primary" : ""} onClick={() => { setPdfQueue((v) => !v); setSelected(null); }}
