@@ -317,14 +317,17 @@ export function App() {
         <Breadcrumb view={view} onNavigate={setView} />
 
         {view === "home" && (
-          <Dashboard dashboard={dashboard}
-            access={{ legalWorkspace, adminWorkspace, requesterWorkspace }}
-            onNavigate={setView}
-            onOpenMatter={(id, title) => {
-              setSearchSelection({ target: "matter", id: String(id), title });
-              setView("matters");
-            }}
-            onCreateDocument={() => { setNewDocIssueKey(""); setNewDocSeed({}); setView("templates"); }} />
+          requesterWorkspace && !legalWorkspace
+            ? <RequesterHome onNavigate={setView} showDrafts={!readOnly}
+                onCreateDocument={() => { setNewDocIssueKey(""); setNewDocSeed({}); setView("templates"); }} />
+            : <Dashboard dashboard={dashboard}
+                access={{ legalWorkspace, adminWorkspace, requesterWorkspace }}
+                onNavigate={setView}
+                onOpenMatter={(id, title) => {
+                  setSearchSelection({ target: "matter", id: String(id), title });
+                  setView("matters");
+                }}
+                onCreateDocument={() => { setNewDocIssueKey(""); setNewDocSeed({}); setView("templates"); }} />
         )}
         {view === "matters" && <MatterRegistry templates={templates}
           canEdit={canEditMatters}
@@ -496,6 +499,38 @@ function TemplateCatalog({
 }
 
 const matterStatusLabels: Record<string, string> = { open: "未着手", in_progress: "進行中", closed: "完了", archived: "保管" };
+
+// 申請者向けホーム（R5）：法務オペレーションの俯瞰ではなく、自分の文書・下書きと
+// 作成導線に絞る。依頼自体は Backlog 課題として起票する運用のため案内のみ。
+function RequesterHome({ onNavigate, onCreateDocument, showDrafts }:
+  { onNavigate: (view: View) => void; onCreateDocument: () => void; showDrafts: boolean }) {
+  return (
+    <section className="page">
+      <div className="page-title">
+        <div><p>MY PAGE</p><h1>マイページ</h1>
+          <small>自分の文書と下書きを確認します</small></div>
+        <button className="primary" onClick={onCreateDocument}>文書を作成</button>
+      </div>
+      <div className="workflow-rail">
+        <button className="workflow-card" onClick={onCreateDocument}>
+          <span className="wf-step">＋</span><strong>文書を作成</strong>
+          <small>テンプレートから起票</small><span className="wf-metric">開く →</span>
+        </button>
+        <button className="workflow-card" onClick={() => onNavigate("documents")}>
+          <span className="wf-step">▤</span><strong>自分の文書</strong>
+          <small>作成した文書の確認・PDF</small><span className="wf-metric">開く →</span>
+        </button>
+        {showDrafts && <button className="workflow-card" onClick={() => onNavigate("drafts")}>
+          <span className="wf-step">✎</span><strong>自分の下書き</strong>
+          <small>保存中の下書きを再開</small><span className="wf-metric">開く →</span>
+        </button>}
+      </div>
+      <section className="panel">
+        <p className="empty-inline">新しい依頼は Backlog 課題として起票してください。作成済みの文書と下書きはこの画面から確認できます。</p>
+      </section>
+    </section>
+  );
+}
 
 function Dashboard({ dashboard, access, onNavigate, onOpenMatter, onCreateDocument }: {
   dashboard: DashboardSummary;
