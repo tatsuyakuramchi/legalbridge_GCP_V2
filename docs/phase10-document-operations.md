@@ -15,7 +15,7 @@ V2 は draft→finalize→pdf→drive までは移植済みだが、**発行後�
 | 10-1b | 文書再発行（新版採番＋旧版 supersede＋実績取消） | 中 | ✅ 実装済 |
 | 10-6 | 文書ルックアップ（番号検索・次番号・PDF未生成一覧） | 小 | 未 |
 | 10-4 | 一括無効化（bulk void） | 中 | ✅ 実装済（一括項目更新は将来拡張） |
-| 10-5 | Excel 一括出力（担当×支払期日×種別集計→Drive保存） | 大 | 未 |
+| 10-5 | Excel 一括出力（担当×支払期日×種別集計→Excel生成） | 大 | ✅ 実装済 |
 
 ## 10-2：文書 void（無効化）✅ 実装済
 
@@ -163,8 +163,39 @@ V2 では **複数文書の一括 void** として実装。**既存 document-voi
 > **一括項目更新（bulk-update-fields）は将来拡張**：form_data の広範な UPDATE 権限が必要で
 > （JSONB 全体・列スコープ不可）、V1 の対象フィールドも発注/検収固有。優先低のため見送り。
 
-## 次スライス候補
-- **10-5 Excel 一括出力**（大）。
+## 10-5：Excel 一括出力 ✅ 実装済
+
+検収書・利用許諾料計算書を「種別×担当者(検収者)×支払期日」で束ねて Excel 化する。V1 は
+サーバで xlsx 生成→Drive 保存し `documents.excel_issued_at` で発行済みを管理するが、V2 は
+**帳票生成を client（依存ゼロ export-util）で行い、発行済みは隔離台帳で管理**する（本番列を触らない）。
+
+- `excel-batch-engine.ts`（純関数）：`deriveExcelGroupKey`（royalty=paymentDueDate/documentDate、
+  inspection=paymentDate/…）＋`groupExcelBatches`（種別×担当者×支払期日で集計・支払期日昇順）。
+- **grant 035**：`lb_v2_excel_export_ledger`（document_number 一意・append-only・SELECT/INSERT）。
+  token `GRANT_PRODUCTION_EXCEL_EXPORT`。本番 `excel_issued_at` は更新しない（V2 独自管理）。
+- `excel-batch-repository.ts`（Pg/Memory）：`loadPending`（inspection_certificate*/royalty_statement・
+  final・正本・void 除外・台帳に無いもの＝未発行。台帳未整備 42P01 は全件保留に縮退）＋
+  `markExported`（ON CONFLICT DO NOTHING）。
+- `excel-batch-routes.ts`：`GET /documents/excel-batches`（読取・admin/legal・集計を返す）＋
+  `POST /documents/excel-batches/mark`（guarded・capability `excel-batch`・確認トークン不要＝隔離台帳append・
+  42501 は FORBIDDEN_DB）。read は `/documents/:id` より前にマウント。
+- config `EXCEL_BATCH_ENABLED`／app.ts（gating・safe-write scope `excel-batch`・writeCapabilities）／
+  verify（write-test＋IAP/IAM＋WRITE_SCOPES 正準順に `excel-batch`）／cloudbuild 全結線。
+- UI：`ExcelBatchWorkspace`（お金＞Excel一括）＝グループ一覧・グループ単位で **Excel出力**（client 生成）＋
+  「発行済みにする」（capability 有効時）。tests：engine（キー/集計）＋ルート（403/集計/mark 除外/空400）7件。616 緑。
+
+### 点火（本番）
+```bash
+psql "" -v confirm_excel_export=GRANT_PRODUCTION_EXCEL_EXPORT \
+  -f infra/gcp/sql/035_production_excel_export_grants.sql
+```
+Profile D substitutions 末尾へ `|_EXCEL_BATCH_ENABLED=true`、`_WRITE_SCOPES` の `document-reissue`
+直後に `excel-batch` を追加（正準順）。**読取（集計＋client Excel出力）は grant/フラグ不要で即利用可**、
+「発行済み」記録のみ点火が要る。
+
+## Phase 10 完了
+10-1/10-1b/10-2/10-3/10-4/10-5/10-6 実装済。発行後運用（void・再発行・PDF再生成・アーカイブ・
+一括無効化・Excel一括・ルックアップ）が揃った。一括項目更新（10-4 残）と reissue carryover は将来拡張。
 
 ## 既知の限定（将来拡張）
 - 再発行は旧版の実績を**取消**する（carryover は未実装）。新版で実績が要る場合は再入力する。

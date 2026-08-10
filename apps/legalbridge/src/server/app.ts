@@ -114,6 +114,8 @@ import { PgDocumentVoidRepository, type DocumentVoidRepository } from "./documen
 import { createDocumentVoidRouter } from "./documents/document-void-routes.js";
 import { PgDocumentReissueRepository, type DocumentReissueRepository } from "./documents/document-reissue-repository.js";
 import { createDocumentReissueRouter } from "./documents/document-reissue-routes.js";
+import { PgExcelBatchRepository, type ExcelBatchRepository } from "./documents/excel-batch-repository.js";
+import { createExcelBatchRouter } from "./documents/excel-batch-routes.js";
 import { createJobsRouter, type JobRunner } from "./internal/jobs-routes.js";
 import { PgDailyChecksRepository } from "./jobs/daily-checks-repository.js";
 import { runDailyChecks, DryRunDailyChecksNotifier, jstTodayYmd } from "./jobs/daily-checks-runner.js";
@@ -391,6 +393,7 @@ export interface AppDependencies {
   matterDelete?: MatterDeleteRepository;
   documentVoid?: DocumentVoidRepository;
   documentReissue?: DocumentReissueRepository;
+  excelBatch?: ExcelBatchRepository;
   // Phase 9 自動化基盤：ジョブ本体・Webhook ハンドラの注入口（既定は空＝無効）。
   jobRunners?: Record<string, JobRunner>;
   cloudSignWebhookHandler?: WebhookHandler;
@@ -451,6 +454,7 @@ export interface AppOptions {
   matterDeleteEnabled?: boolean;
   documentVoidEnabled?: boolean;
   documentReissueEnabled?: boolean;
+  excelBatchEnabled?: boolean;
   backlogCommentWriteEnabled?: boolean;
   auth?: AuthSettings;
 }
@@ -486,6 +490,7 @@ function createDefaultDependencies(): AppDependencies {
     matterDelete: database ? new PgMatterDeleteRepository(database) : undefined,
     documentVoid: database ? new PgDocumentVoidRepository(database) : undefined,
     documentReissue: database ? new PgDocumentReissueRepository(database) : undefined,
+    excelBatch: database ? new PgExcelBatchRepository(database) : undefined,
     conditionLines: database
       ? new PgConditionLineRepository(database)
       : new MemoryConditionLineRepository(),
@@ -597,6 +602,7 @@ export function createApp(
     matterDeleteEnabled: config.matterDeleteEnabled,
     documentVoidEnabled: config.documentVoidEnabled,
     documentReissueEnabled: config.documentReissueEnabled,
+    excelBatchEnabled: config.excelBatchEnabled,
     backlogCommentWriteEnabled: config.backlogCommentWriteEnabled,
     royaltyEventWritesEnabled: config.royaltyEventWritesEnabled,
     receiptWritesEnabled: config.receiptWritesEnabled,
@@ -781,6 +787,12 @@ export function createApp(
     options.documentReissueEnabled === true &&
     options.writeScopes?.has("document-reissue") === true &&
     Boolean(dependencies.documentReissue);
+  const excelBatchEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.excelBatchEnabled === true &&
+    options.writeScopes?.has("excel-batch") === true &&
+    Boolean(dependencies.excelBatch);
   const backlogCommentWriteEnabled =
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
@@ -859,6 +871,7 @@ export function createApp(
         ...(matterDeleteEnabled ? ["matter-delete"] : []),
         ...(documentVoidEnabled ? ["document-void"] : []),
         ...(documentReissueEnabled ? ["document-reissue"] : []),
+        ...(excelBatchEnabled ? ["excel-batch"] : []),
         ...(backlogCommentWriteEnabled ? ["backlog-comment"] : []),
         ...(royaltyEventWriteEnabled ? ["royalty-events"] : []),
         ...(receiptWriteEnabled ? ["receipts"] : []),
@@ -886,7 +899,7 @@ export function createApp(
         driveStorageEnabled || slackApprovalWriteEnabled ||
         outboundConditionWriteEnabled || contractIntakeWriteEnabled ||
         matterWriteEnabled || vendorWriteEnabled || staffWriteEnabled || workWriteEnabled ||
-        materialWriteEnabled || rightsSourceWriteEnabled || vendorMergeEnabled || matterMergeEnabled || matterDeleteEnabled || documentVoidEnabled || documentReissueEnabled || backlogCommentWriteEnabled || royaltyEventWriteEnabled || receiptWriteEnabled ||
+        materialWriteEnabled || rightsSourceWriteEnabled || vendorMergeEnabled || matterMergeEnabled || matterDeleteEnabled || documentVoidEnabled || documentReissueEnabled || excelBatchEnabled || backlogCommentWriteEnabled || royaltyEventWriteEnabled || receiptWriteEnabled ||
         paymentLedgerWriteEnabled || gmailDispatchEnabled || cloudSignDispatchEnabled || gmailInboundEnabled,
       writeCapabilities: [
         ...(draftWriteEnabled ? ["drafts"] : []),
@@ -907,6 +920,7 @@ export function createApp(
         ...(matterDeleteEnabled ? ["matter-delete"] : []),
         ...(documentVoidEnabled ? ["document-void"] : []),
         ...(documentReissueEnabled ? ["document-reissue"] : []),
+        ...(excelBatchEnabled ? ["excel-batch"] : []),
         ...(backlogCommentWriteEnabled ? ["backlog-comment"] : []),
         ...(royaltyEventWriteEnabled ? ["royalty-events"] : []),
         ...(receiptWriteEnabled ? ["receipts"] : []),
@@ -1071,6 +1085,8 @@ export function createApp(
     if (documentVoidEnabled && isDocumentVoid) return next();
     const isDocumentReissue = request.method === "POST" && /^\/documents\/\d+\/reissue$/.test(request.path);
     if (documentReissueEnabled && isDocumentReissue) return next();
+    const isExcelBatchMark = request.method === "POST" && request.path === "/documents/excel-batches/mark";
+    if (excelBatchEnabled && isExcelBatchMark) return next();
     const isBacklogComment = request.method === "POST" && /^\/backlog\/issues\/[^/]+\/comments$/.test(request.path);
     if (backlogCommentWriteEnabled && isBacklogComment) return next();
     const isRoyaltyEventWrite =
@@ -1106,6 +1122,8 @@ export function createApp(
   const documentLookup = dependencies.documentLookup
     ?? (lookupDatabase ? new PgDocumentLookupRepository(lookupDatabase) : new MemoryDocumentLookupRepository());
   app.use("/api/v2", createDocumentLookupRouter(documentRegistry, documentLookup));
+  // Excel 一括出力（10-5）。/documents/excel-batches は /documents/:id より前に評価させる。
+  app.use("/api/v2", createExcelBatchRouter(dependencies.excelBatch, excelBatchEnabled));
   app.use("/api/v2", createDocumentRegistryRouter(documentRegistry));
   const pdfRenderer = dependencies.pdfRenderer ?? new ChromiumPdfRenderer();
   app.use("/api/v2", createDocumentPdfRouter(

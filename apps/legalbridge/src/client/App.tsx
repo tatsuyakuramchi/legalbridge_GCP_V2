@@ -32,6 +32,7 @@ import { TextSnippets } from "./TextSnippets";
 import { RequestsWorkspace } from "./RequestsWorkspace";
 import { seedFormData } from "./extract-variables";
 import { PaymentReport } from "./PaymentReport";
+import { ExcelBatchWorkspace } from "./ExcelBatchWorkspace";
 import { BillingPrint } from "./BillingPrint";
 
 type CompatibilityReport = { summary: { total: number; ok: number; warning: number; error: number }; reports: Array<{ templateKey: string; status: "ok" | "warning" | "error"; missingHelpers: string[]; missingPartials: string[]; unmappedVariables: string[]; renderError?: string }> };
@@ -53,7 +54,7 @@ const fallback: DashboardSummary = {
   priorities: []
 };
 
-type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview" | "billing" | "receivable-map" | "payment-report" | "billing-print" | "works" | "data-quality" | "vendor-merge" | "matter-merge" | "guide" | "snippets" | "requests";
+type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview" | "billing" | "receivable-map" | "payment-report" | "billing-print" | "works" | "data-quality" | "vendor-merge" | "matter-merge" | "guide" | "snippets" | "requests" | "excel-batch";
 type NavItem = { view: View; label: string; description: string; match: View[] };
 type NavGroup = { label: string; items: NavItem[] };
 
@@ -87,6 +88,7 @@ function navGroups(access: {
       ...(access.legalWorkspace ? [{ view: "receivable-map" as const, label: "債権マップ", description: "作品中心の受領・分配・留保の系譜俯瞰", match: ["receivable-map" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "payment-report" as const, label: "支払報告書", description: "出金台帳の源泉・消費税・振込額とCSV出力", match: ["payment-report" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "billing-print" as const, label: "請求印刷", description: "受領・分配 計算書の印刷/PDF", match: ["billing-print" as const] }] : []),
+      ...(access.legalWorkspace ? [{ view: "excel-batch" as const, label: "Excel一括", description: "検収書・利用許諾料計算書を担当者×支払期日で束ねてExcel出力", match: ["excel-batch" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "royalty-preview" as const, label: "ロイヤリティ試算", description: "確定前のロイヤリティ・源泉のライブ試算（保存なし）", match: ["royalty-preview" as const] }] : [])
     ] },
     { label: "マスタ・設定", items: [
@@ -131,6 +133,7 @@ function breadcrumbFor(view: View): Array<{ label: string; view?: View }> {
     "receivable-map": [home, { label: "債権マップ" }],
     "payment-report": [home, { label: "支払報告書" }],
     "billing-print": [home, { label: "請求印刷" }],
+    "excel-batch": [home, { label: "Excel一括" }],
     staff: [home, { label: "担当者" }],
     "gmail-inbound": [home, { label: "受信取込" }],
     admin: [home, { label: "管理" }]
@@ -185,6 +188,7 @@ export function App() {
   const [canRecordReceipt, setCanRecordReceipt] = useState(false);
   const [canVoidDocument, setCanVoidDocument] = useState(false);
   const [canReissueDocument, setCanReissueDocument] = useState(false);
+  const [canExcelBatch, setCanExcelBatch] = useState(false);
   const [currentUser, setCurrentUser] = useState<{ email: string; role: "admin" | "legal" | "requester" } | null>(null);
   const [searchSelection, setSearchSelection] = useState<{ target: "matter" | "document" | "vendor" | "work"; id: string; title: string } | null>(null);
   const [draftSelection, setDraftSelection] = useState<{ issueKey: string; templateType: string } | null>(null);
@@ -236,6 +240,7 @@ export function App() {
         setCanRecordReceipt(capabilities.includes("receipts"));
         setCanVoidDocument(capabilities.includes("document-void"));
         setCanReissueDocument(capabilities.includes("document-reissue"));
+        setCanExcelBatch(capabilities.includes("excel-batch"));
       })
       .catch(() => {
         setReadOnly(true);
@@ -378,6 +383,7 @@ export function App() {
         {view === "receivable-map" && <ReceivableMap />}
         {view === "payment-report" && <PaymentReport />}
         {view === "billing-print" && <BillingPrint />}
+        {view === "excel-batch" && <ExcelBatchWorkspace canMark={canExcelBatch} />}
         {view === "conditions" && <ConditionLinesWorkspace
           onOpenDocument={(id) => {
             setSearchSelection({ target: "document", id: String(id), title: "" });

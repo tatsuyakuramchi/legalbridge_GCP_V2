@@ -474,6 +474,26 @@ case "${DOCUMENT_REISSUE_ENABLED}" in
     exit 1
     ;;
 esac
+case "${EXCEL_BATCH_ENABLED}" in
+  false)
+    ;;
+  true)
+    # 発行済みマークは隔離台帳(lb_v2_excel_export_ledger)への append のみ＝確認トークン不要。
+    # 書込サービス限定＋IAP/IAM は必須。
+    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
+      echo "Excel batch deployment blocked: limited to the write-test service."
+      exit 1
+    fi
+    if [ "${AUTH_MODE}" != "iap" ] && [ "${AUTH_MODE}" != "cloudrun-iam" ]; then
+      echo "Excel batch deployment blocked: IAP or Cloud Run IAM authentication is required."
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Deployment blocked: EXCEL_BATCH_ENABLED must be true or false."
+    exit 1
+    ;;
+esac
 case "${JOBS_ENABLED}" in
   false)
     ;;
@@ -817,6 +837,9 @@ if [ "${DOCUMENT_VOID_ENABLED}" = "true" ]; then
 fi
 if [ "${DOCUMENT_REISSUE_ENABLED}" = "true" ]; then
   expected_write_scopes="$expected_write_scopes,document-reissue"
+fi
+if [ "${EXCEL_BATCH_ENABLED}" = "true" ]; then
+  expected_write_scopes="$expected_write_scopes,excel-batch"
 fi
 if [ "${BACKLOG_COMMENT_WRITE_ENABLED}" = "true" ]; then
   expected_write_scopes="$expected_write_scopes,backlog-comment"
