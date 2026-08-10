@@ -27,7 +27,7 @@ V1 = `/workspace/legalbridge_ai_gcp`（migrations 0001〜0164 を正とする）
   V1 横断検索（`server.ts:15088`）は「非void イベントが存在する行のみ表示」のため、**条件明細が V1 から消える**。
 - 対処: V1 方式（イベント repoint）へ改修。可視性フィルタとの整合まで含めて再設計（新版の行・イベント帰属）。
 
-### P0-2. `vendors.is_active` が V1 スキーマに存在しない
+### P0-2. `vendors.is_active` が V1 スキーマに存在しない ✅ S-B（grant 039）で整備済み・本番適用待ち
 - V1 の全 164 migration に `vendors` への `is_active` 追加が無い（`is_active` は source_ips/works/documents 等のみ）。
   V1 サーバコードにも vendors.is_active 参照なし。
 - V2 は `vendors/write-repository.ts:54,132` と `merge-repository.ts:104` が参照 → 本番初回実行で **42703**（未翻訳→500）。
@@ -58,7 +58,7 @@ V1 = `/workspace/legalbridge_ai_gcp`（migrations 0001〜0164 を正とする）
 - V1 の void は無述語（`server.ts:14830`）。本番に lifecycle_status NULL は実在（preflight 033 で 1 件確認済み）。
 - 対処: `lifecycle_status IS DISTINCT FROM 'voided'` に変更＋rowCount=0 なら ROLLBACK。
 
-### P0-6. GRANT 列漏れ 2 件（サイレント恒久故障／未翻訳500）
+### P0-6. GRANT 列漏れ 2 件（サイレント恒久故障／未翻訳500）✅ S-B（grant 039）で整備済み・本番適用待ち
 - `documents.updated_at`: `contract-status-writer.ts:18` と `daily-checks-repository.ts:153` が SET するが
   どの grant にも無い → 42501 が「grant 未適用」と同じ見え方で **恒久 forbidden 誤報**（CloudSign executed 遷移・
   満了ジョブが grant 適用後も動かない）。
@@ -114,7 +114,7 @@ V1 = `/workspace/legalbridge_ai_gcp`（migrations 0001〜0164 を正とする）
 | P1-12 | 空状態の第3流派（hub-note 流用）／バッジ語彙の逸脱（有効無効に voided 色・カテゴリに complete 色・契約マスタは無バッジ）／取消ボタン語彙3種 | 新4画面 |
 | P1-13 | マスタ・設定グループが admin 12 項目（F1 過積載の移住）。「マスタ」「設定・運用」分割か契約マスタ↔契約取込 surface-xref | `App.tsx:97` |
 | P1-14 | WorkDetail 派生元IDが生入力（同画面に作品ピッカー既存） | `WorkDetail.tsx:375` |
-| P1-15 | lb_v2_* の append-only 検証 SQL 不足（033/034/035/030/032 に UPDATE revoke 検証が無い）・actor 列規約の揺れ | infra/gcp/sql |
+| P1-15 | ✅ S-B: 039 が実在する台帳へ UPDATE/DELETE/TRUNCATE を明示 REVOKE＋事後検証（actor 列規約の揺れは据え置き） | 039_production_cutover_fixes_grants.sql |
 | P1-16 | `TZ` を Cloud Run に設定すると日付が全て1日ずれる脆さ（DATE→toISOString UTC 前提）。**TZ 未設定を運用ルール化** | `contract-master-repository.ts:40` ほか |
 | P1-17 | document-lookup の by-number / numbering-next に UI 消費者が無い（10-6 の配線残） | `document-lookup-routes.ts` |
 | P1-18 | condition_events.event_no 採番が競合時 23505 頼み（許容範囲だが把握） | `event-repository.ts:70` |
@@ -153,7 +153,12 @@ V1 = `/workspace/legalbridge_ai_gcp`（migrations 0001〜0164 を正とする）
 ## 修正スライス案（推奨順）
 
 1. **S-A 緊急止血** ✅ 完了（2026-08-10）：P0-5 void 述語（IS DISTINCT FROM＋rowCount 検査）／P0-7 setStatus は lifecycle_stage のみ／P0-8 work: プレフィックス解析＋source_ip 行は編集非表示／P0-9 状態変更を2段階確認（破壊的遷移は警告付き）／P0-11 キーを COMPANY_INVOICE_NO に統一。即時緩和（reissue OFF）はデプロイ側の操作（下記）
-2. **S-B grant 039**：P0-2 vendors.is_active 列追加 ＋ P0-6 updated_at/drive_link GRANT ＋ P1-15 検証 SQL（SQL のみ）
+2. **S-B grant 039** ✅ SQL 整備済（2026-08-10・本番適用待ち）：P0-2 列追加＋P0-6 列 GRANT＋P1-15 追記専用 REVOKE＋事後検証。点火：
+   ```bash
+   psql "" -f infra/gcp/sql/039_production_cutover_fixes_preflight.sql || true
+   psql "" -v confirm_cutover_fixes=GRANT_PRODUCTION_CUTOVER_FIXES \
+     -f infra/gcp/sql/039_production_cutover_fixes_grants.sql
+   ```
 3. **S-C 文書ライフサイクル整合**：P0-3 contract_status 刻印＋バックフィル ＋ P0-4 業務列コピー ＋ P1-1/P1-2/P1-5
 4. **S-D 再発行再設計**：P0-1 イベント repoint 方式へ（V1 reissueCarryover 準拠）— 完了までスコープ点火禁止
 5. **S-E 案件削除整合**：P0-10

@@ -59,7 +59,9 @@ Profile D substitutions 末尾へ `|_SETTINGS_WRITE_ENABLED=true`、`_WRITE_SCOP
 唯一の実ギャップは **取引先の論理削除（有効/無効）**（作品は既に有効/無効トグルあり）。本スライスで解消：
 - `vendors/write-schema.ts`：create/update に `isActive`（既定 true）を追加。
 - `vendors/write-repository.ts`：COLUMNS に `isActive→is_active`、`find` が `is_active` を返す。
-  **新規 GRANT 不要**（`vendors.is_active` UPDATE は grant 009 で付与済み・名寄せが既に使用）。
+  ~~新規 GRANT 不要（grant 009 で付与済み）~~ → **訂正（監査 P0-2）**：`vendors.is_active` 列は
+  **V1 スキーマに存在しない**（grant 009 のテーブルレベル UPDATE は列があれば及ぶが、列自体が無い）。
+  **grant 039 で列を追加してから点火すること**（`039_production_cutover_fixes_grants.sql`）。
 - UI：`LedgerWorkspace` の取引先編集フォームに「有効/無効」トグルを追加（作品と同型）。
 - tests：取引先を無効化して再取得で反映される 1 件。624 緑。
 
