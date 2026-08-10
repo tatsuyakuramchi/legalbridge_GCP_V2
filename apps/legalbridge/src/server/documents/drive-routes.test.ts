@@ -80,6 +80,45 @@ test("保存済み文書は再アップロードせず既存リンクを返す",
   assert.equal(target.drive.uploads, 1);
 });
 
+test("PDF再生成: 既存Driveファイルを上書き更新しリンクを維持する", async () => {
+  const target = dependencies();
+  const first = await request(target.app).post("/api/v2/documents/3/drive").expect(201);
+  assert.equal(target.drive.uploads, 1);
+
+  const regen = await request(target.app)
+    .post("/api/v2/documents/3/drive/regenerate")
+    .expect(200);
+  assert.equal(regen.body.regenerated, true);
+  assert.equal(target.drive.updates, 1);      // 上書き更新（新規アップロードではない）
+  assert.equal(target.drive.uploads, 1);
+  assert.equal(regen.body.driveLink, first.body.driveLink); // リンク維持
+});
+
+test("PDF再生成: 未保存文書は新規アップロードする", async () => {
+  const target = dependencies();
+  const regen = await request(target.app)
+    .post("/api/v2/documents/3/drive/regenerate")
+    .expect(201);
+  assert.equal(regen.body.regenerated, true);
+  assert.equal(regen.body.created, true);
+  assert.equal(target.drive.uploads, 1);
+  assert.equal((await target.documents.find(3))?.driveLink, regen.body.driveLink);
+});
+
+test("PDF再生成: drive scopeなしでは拒否する", async () => {
+  const target = dependencies();
+  const blocked = createApp({
+    templates: new MemoryTemplateRepository([schema]),
+    drafts: new MemoryDraftRepository(),
+    integrations: createIntegrationAdapters(),
+    documentRegistry: target.documents,
+    pdfRenderer: new MemoryPdfRenderer(),
+    driveStorage: target.drive
+  }, { accessMode: "readwrite", requireDatabase: false, writeFeaturesEnabled: true, writeScopes: new Set() });
+  const response = await request(blocked).post("/api/v2/documents/3/drive/regenerate").expect(403);
+  assert.equal(response.body.code, "WRITE_SCOPE_DISABLED");
+});
+
 test("drive scopeなしではDrive保存を拒否する", async () => {
   const target = dependencies();
   const blocked = createApp({

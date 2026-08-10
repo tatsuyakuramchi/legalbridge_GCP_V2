@@ -31,6 +31,7 @@ export function DocumentOutputActions({
   const [driveError, setDriveError] = useState("");
   const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [pdfError, setPdfError] = useState("");
+  const [regenerating, setRegenerating] = useState(false);
 
   async function downloadPdf() {
     if (downloadingPdf) return;
@@ -76,6 +77,23 @@ export function DocumentOutputActions({
     }
   }
 
+  async function regeneratePdf() {
+    if (regenerating) return;
+    setRegenerating(true);
+    setDriveError("");
+    try {
+      const response = await fetch(`/api/v2/documents/${documentId}/drive/regenerate`, { method: "POST" });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "PDFの再生成に失敗しました。");
+      setDriveLink(result.driveLink ?? null);
+      await onSaved?.();
+    } catch (error) {
+      setDriveError(error instanceof Error ? error.message : "PDFの再生成に失敗しました。");
+    } finally {
+      setRegenerating(false);
+    }
+  }
+
   return <>
     <div className="document-output-actions">
       {canGeneratePdf && documentNumber && (
@@ -90,6 +108,12 @@ export function DocumentOutputActions({
       )}
       {driveLink && (
         <a className="drive-link" href={driveLink} target="_blank" rel="noreferrer">Drive上の文書を開く</a>
+      )}
+      {canSaveToDrive && driveLink && (
+        <button className="drive-save-button" onClick={() => void regeneratePdf()} disabled={regenerating}
+          title="保存済みデータと現行テンプレートからPDFを作り直し、Drive上のファイルを更新します">
+          {regenerating ? "再生成中…" : "PDFを再生成（Drive更新）"}
+        </button>
       )}
     </div>
     {pdfError && <small className="document-output-error">{pdfError}</small>}

@@ -9,7 +9,7 @@ V2 は draft→finalize→pdf→drive までは移植済みだが、**発行後�
 | # | 機能 | 粒度 | 状態 |
 |---|---|---|---|
 | 10-2 | 文書 void（無効化）＋実績取消（残高復元） | 小 | ✅ 実装済 |
-| 10-3 | PDF 再生成 | 小 | 未 |
+| 10-3 | PDF 再生成（Drive 上書き更新） | 小 | ✅ 実装済 |
 | 10-1 | 文書アーカイブ画面＋再発行 | 中 | 未 |
 | 10-6 | 文書ルックアップ（番号検索・次番号・PDF未生成一覧） | 小 | 未 |
 | 10-4 | 一括削除／一括項目更新 | 中 | 未（優先低） |
@@ -53,7 +53,22 @@ psql "$RUNTIME_ADMIN_DSN" -v confirm_document_void=GRANT_PRODUCTION_DOCUMENT_VOI
 ```
 かつ `_WRITE_SCOPES` の `matter-delete` の直後に `document-void` を追加（正準順）。
 
+## 10-3：PDF 再生成（Drive 上書き更新）✅ 実装済
+
+ダウンロード用 PDF は `GET /documents/:id/pdf` が常に保存データ＋現行テンプレートから
+再レンダリングするため既に「再生成」済み。欠けていたのは **Drive 保存済みコピーの更新**：
+既存 `POST /documents/:id/drive` は driveLink があると再利用し、データ／テンプレート変更後も
+Drive のファイルが古いままになる。10-3 はこれを解消する。
+
+- `drive-storage.ts` に `updatePdf({fileId, pdf})` を追加（Drive v3 media PATCH で**既存
+  ファイルの中身のみ差し替え**・リンク/ID は維持）。Google/Memory 両実装。
+- `drive-routes.ts` に `POST /documents/:id/drive/regenerate`：保存データ＋現行テンプレートから
+  再レンダリング → 既存 Drive ファイルがあれば `updatePdf` で上書き（200・リンク維持）、
+  無ければ新規 `uploadPdf`（201・created:true）。**既存 drive scope に従属・新規 grant/config なし**。
+- app.ts の safe-write ガード正規表現を `/documents/:id/drive(/regenerate)?` に拡張。
+- UI：`DocumentOutputActions` に「PDFを再生成（Drive更新）」ボタン（Drive 保存済みのときのみ表示）。
+- tests：drive-routes に3件追加（上書き更新／未保存は新規／scope なし403）。587 緑。
+
 ## 次スライス候補
-- **10-3 PDF 再生成**：確定文書の PDF を再レンダリング（既存 pdf-renderer 再利用・grant 不要・
-  Drive 保存は drive scope に従属）。小。
+- **10-6 文書ルックアップ**：番号検索・次番号採番・PDF未生成一覧（小・読取中心）。
 - **10-1 アーカイブ画面**：確定文書の一覧・履歴トグル・再編集/再発行導線（読取＋既存 void/再生成の集約）。

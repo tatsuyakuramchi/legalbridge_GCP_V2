@@ -13,6 +13,8 @@ export interface DriveStorage {
     filename: string;
     pdf: Buffer;
   }): Promise<StoredDriveFile>;
+  // 既存 Drive ファイルの中身を差し替える（PDF 再生成・Phase 10-3）。リンク/ID は維持。
+  updatePdf(input: { fileId: string; pdf: Buffer }): Promise<StoredDriveFile>;
 }
 
 // フル drive スコープ。drive.file だと「人が作成して共有しただけの
@@ -117,6 +119,27 @@ export class GoogleDriveStorage implements DriveStorage {
     return { id: file.id, webViewLink: driveViewLink(file.id, file.webViewLink) };
   }
 
+  async updatePdf(input: { fileId: string; pdf: Buffer }) {
+    const token = await this.accessToken();
+    // 既存ファイルの中身のみ差し替える（media アップロード・メタデータ据え置き）。
+    const url = new URL(`https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(input.fileId)}`);
+    url.searchParams.set("uploadType", "media");
+    url.searchParams.set("supportsAllDrives", "true");
+    url.searchParams.set("fields", "id,webViewLink");
+    const response = await fetch(url, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/pdf",
+        "Content-Length": String(input.pdf.length)
+      },
+      body: new Uint8Array(input.pdf)
+    });
+    if (!response.ok) throw await driveError("update", response);
+    const file = await response.json() as StoredDriveFile;
+    return { id: file.id, webViewLink: driveViewLink(file.id, file.webViewLink) };
+  }
+
   private async accessToken() {
     const client = await this.auth.getClient();
     const { token } = await client.getAccessToken();
@@ -148,6 +171,12 @@ export class MemoryDriveStorage implements DriveStorage {
     };
     this.files.set(input.documentId, file);
     return file;
+  }
+
+  updates = 0;
+  async updatePdf(input: { fileId: string; pdf: Buffer }) {
+    this.updates += 1;
+    return { id: input.fileId, webViewLink: `https://drive.google.com/file/d/${input.fileId}/view` };
   }
 }
 

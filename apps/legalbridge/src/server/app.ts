@@ -966,7 +966,7 @@ export function createApp(
       request.method === "POST" && request.path === "/documents/import";
     if (documentFinalizeEnabled && isDocumentImport) return next();
     const isDriveStorage =
-      request.method === "POST" && /^\/documents\/[^/]+\/drive$/.test(request.path);
+      request.method === "POST" && /^\/documents\/[^/]+\/drive(\/regenerate)?$/.test(request.path);
     if (driveStorageEnabled && isDriveStorage) return next();
     const isSlackApproval =
       request.method === "POST" &&
