@@ -294,6 +294,10 @@ Phase 7 は全フェーズの受け入れ後
 
 | 2026-08-07 | Phase 5 | 点火準備：CloudSign 点火 Runbook 新設＋gmail-cloudsign.md を確定仕様へ更新 | — | ✅ |
 
+| 2026-08-10 | UX | V2 UI/UX 合理性レビュー（V1 の迷いの構造監査＋V2 現状 IA 監査を統合・改善指針化） | LegalBridge_AI_GCP | ✅ |
+
+**UI/UX 合理性レビュー（`docs/v2-ux-rationality-review.md`）**：V1 の「迷いの構造」を 5 類型化（作業オブジェクト三重帳簿・暗黙モードの入口乱立・用語不整合・ロール未分岐・巨大マルチ目的画面）し、V2 現状 IA を並列監査して統合。V2 は既に主要な V1 病を治療済み（案件へ正典化・文書作成 funnel 統一・破壊操作トークン型統一・ロール一級市民化・Breadcrumb）＝維持資産として明記。残摩擦 F1〜F9（業務グループ過積載/OFF機能の伝え方3系統/GRANT番号露出/発見→是正断絶/条件・作品の画面分散/ガード重み付け不揃い/空状態2系統/作成→出力4遷移/生ID入力）を洗い出し、実タスクフロー（申請者・法務・管理者）に立脚した設計原則6点と、Quick Wins（Q1発見→是正prop配線・Q2未有効化統一＋GRANT番号除去・Q3空状態一本化・Q4文書検索UI）／構造リファクタ（R1ナビ再編・R2条件集約・R3作品二重解消・R4ガード階層化・R5ロール別ホーム）／大（B1作成→出力1画面化・B2 Phase10/11新規UIへ本指針適用）を優先度・粒度付きで提案。機能ギャップ台帳と対になる体験台帳。
+
 | 2026-08-10 | Phase 9 | 自動化基盤 9-0（スケジューラ/Webhook 受信口・共有シークレット）＋ 9-1 daily-checks 判定エンジン（純関数） | LegalBridge_AI_GCP | ✅ |
 
 **Phase 9 着手（自動化基盤＋督促）**：V2 に欠けていた Cloud Scheduler 起動口・Webhook 受信口を新設。`/internal/jobs/:name`・`/internal/webhooks/{cloudsign,backlog}` をユーザー認証バイパス＋共有シークレット（定数時間比較）で保護し既定OFF、runner/handler は注入式（`internal/{shared-secret,jobs-routes,webhooks-routes}.ts`・tests 10）。daily-checks 判定ロジックを純関数移植（`jobs/daily-checks-engine.ts`＝納期7/3/1/超過・契約更新通告窓・満了遷移・tests 11）。**重要発見**：V1 の納期アラート重複抑止列 `last_alert_at` は互換ビューで NULL 固定＝現行スキーマに実在せず → V2 は本番を更新せず隔離台帳 `lb_v2_job_alert_ledger` で抑止する設計に確定。残スライス（9-1b配信/9-2契約通告/9-3満了遷移(本番UPDATE opt-in)/9-4検収ダイジェスト/9-5,9-7 Webhookハンドラ/9-6一括同期）と grant・verify・Scheduler配線を `docs/phase9-automation-plan.md` に precise plan 化。テスト545件緑。
