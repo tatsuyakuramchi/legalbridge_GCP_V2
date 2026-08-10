@@ -9,7 +9,7 @@ V2 の Admin は読取専用ステータスのみ。設定・承認ルート・�
 |---|---|---|---|
 | 11-1 | システム設定（会社プロファイル） | 中 | ✅ 実装済 |
 | 11-2 | 承認ルート/ワークフロールール設定 | 中 | 未 |
-| 11-3 | 台帳マスタ CRUD 書込 | 中 | 未 |
+| 11-3 | 台帳マスタ CRUD 書込 | 中 | ✅ 実装済（Create/Update は既存・今回 vendor 無効化を追加） |
 | 11-4 | 契約マスタ CRUD | 中 | 未 |
 | 11-5 | 原作マテリアル登録ワークフロー | 中 | 未 |
 | 11-6〜11-9 | PII同意/bulk/テーマ/稟議 | 小〜中 | 優先低・要判断（Ringi 保留） |
@@ -47,7 +47,29 @@ Profile D substitutions 末尾へ `|_SETTINGS_WRITE_ENABLED=true`、`_WRITE_SCOP
 > 将来：V2 の帳票レンダリング（テンプレート）に会社プロファイルを差し込む配線は別スライスで
 > （現状 app_settings は保存されるが V2 レンダリングは未参照＝V1 と共有データの先行整備）。
 
+## 11-3：台帳マスタ CRUD ✅ 実装済
+
+**調査で判明**：gap 台帳の 11-3 は自動監査が読取専用の `/ledgers/:type` ファサードだけを見て
+過大計上していた。実際には **Create/Update は Phase 2/4/8 で実装済み**：
+- 取引先 `vendors/write-*`（create/update）／作品 `works/write-*`（create/update・**有効/無効トグル既存**）／
+  担当者 `staff/*`／原作マテリアル `materials/write-*`。
+- ただしこれらは**現行デプロイの WRITE_SCOPES に含まれておらず未有効**（cutover 時に有効化が必要＝
+  コードでなくデプロイ設定）。
+
+唯一の実ギャップは **取引先の論理削除（有効/無効）**（作品は既に有効/無効トグルあり）。本スライスで解消：
+- `vendors/write-schema.ts`：create/update に `isActive`（既定 true）を追加。
+- `vendors/write-repository.ts`：COLUMNS に `isActive→is_active`、`find` が `is_active` を返す。
+  **新規 GRANT 不要**（`vendors.is_active` UPDATE は grant 009 で付与済み・名寄せが既に使用）。
+- UI：`LedgerWorkspace` の取引先編集フォームに「有効/無効」トグルを追加（作品と同型）。
+- tests：取引先を無効化して再取得で反映される 1 件。624 緑。
+
+### cutover での「マスタ書込」有効化（コード不要・デプロイ設定）
+Create/Update/無効化を本番で使うには WRITE_SCOPES に該当スコープを足す：
+`vendors`（取引先）・`works`（作品）・`materials`（原作マテリアル）・`staff`（担当者）と、
+各 `*_WRITES_ENABLED=true`＋確認トークン＋対応 GRANT（既存の 009〜013/017 等）。
+> 台帳マスタの CRUD 自体は揃っている。cutover 時に「どのマスタ編集を V2 で解禁するか」を選んで有効化する。
+
 ## 次スライス候補
-- **11-3 台帳マスタ CRUD**（作品・取引先などの作成/更新/削除・現状 GET のみ）
-- **11-2 承認ルート**（部門別 承認者/押印/Slack）
-- **11-5 原作マテリアル登録**
+- **11-2 承認ルート**（部門別 承認者/押印/Slack・`workflow_rules`）
+- **11-5 原作マテリアル登録ワークフロー**（原作→素材起点の作成/編集）
+- **11-4 契約マスタ CRUD**

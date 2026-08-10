@@ -112,12 +112,12 @@ function LedgerDetail({ item, canEdit = false, onEdit }:
 type VendorValues = {
   vendorName: string; vendorCode: string; tradeName: string; penName: string; entityType: string;
   email: string; phone: string; contactName: string; contactDepartment: string; address: string;
-  invoiceRegistrationNumber: string; isInvoiceIssuer: boolean; withholdingEnabled: boolean;
+  invoiceRegistrationNumber: string; isInvoiceIssuer: boolean; withholdingEnabled: boolean; isActive: boolean;
 };
 const emptyVendor: VendorValues = {
   vendorName: "", vendorCode: "", tradeName: "", penName: "", entityType: "",
   email: "", phone: "", contactName: "", contactDepartment: "", address: "",
-  invoiceRegistrationNumber: "", isInvoiceIssuer: false, withholdingEnabled: false
+  invoiceRegistrationNumber: "", isInvoiceIssuer: false, withholdingEnabled: false, isActive: true
 };
 
 function VendorForm({ vendorId, onCancel, onSaved }: { vendorId?: number; onCancel: () => void; onSaved: () => void }) {
@@ -139,7 +139,8 @@ function VendorForm({ vendorId, onCancel, onSaved }: { vendorId?: number; onCanc
           penName: v.penName ?? "", entityType: v.entityType ?? "", email: v.email ?? "", phone: v.phone ?? "",
           contactName: v.contactName ?? "", contactDepartment: v.contactDepartment ?? "", address: v.address ?? "",
           invoiceRegistrationNumber: v.invoiceRegistrationNumber ?? "",
-          isInvoiceIssuer: Boolean(v.isInvoiceIssuer), withholdingEnabled: Boolean(v.withholdingEnabled)
+          isInvoiceIssuer: Boolean(v.isInvoiceIssuer), withholdingEnabled: Boolean(v.withholdingEnabled),
+          isActive: v.isActive !== false
         });
       })
       .catch(() => setError("取引先の情報を取得できませんでした。"))
@@ -157,7 +158,8 @@ function VendorForm({ vendorId, onCancel, onSaved }: { vendorId?: number; onCanc
       email: values.email, phone: values.phone, contactName: values.contactName,
       contactDepartment: values.contactDepartment, address: values.address,
       invoiceRegistrationNumber: values.invoiceRegistrationNumber,
-      isInvoiceIssuer: values.isInvoiceIssuer, withholdingEnabled: values.withholdingEnabled
+      isInvoiceIssuer: values.isInvoiceIssuer, withholdingEnabled: values.withholdingEnabled,
+      isActive: values.isActive
     };
     if (values.vendorCode.trim()) body.vendorCode = values.vendorCode.trim();
     try {
@@ -194,6 +196,7 @@ function VendorForm({ vendorId, onCancel, onSaved }: { vendorId?: number; onCanc
     <label>住所<input value={values.address} onChange={(e) => set("address", e.target.value)} /></label>
     <label className="task-primary-toggle"><input type="checkbox" checked={values.isInvoiceIssuer} onChange={(e) => set("isInvoiceIssuer", e.target.checked)} />インボイス発行事業者</label>
     <label className="task-primary-toggle"><input type="checkbox" checked={values.withholdingEnabled} onChange={(e) => set("withholdingEnabled", e.target.checked)} />源泉徴収対象</label>
+    <label className="task-primary-toggle"><input type="checkbox" checked={values.isActive} onChange={(e) => set("isActive", e.target.checked)} />有効（オフで無効化＝台帳の既定検索から除外）</label>
     <div className="matter-form-actions">
       <button className="primary" disabled={saving} onClick={submit}>{saving ? "保存中…" : isEdit ? "保存" : "登録"}</button>
       <button disabled={saving} onClick={onCancel}>キャンセル</button>

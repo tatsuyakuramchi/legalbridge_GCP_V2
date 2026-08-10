@@ -24,7 +24,8 @@ export const vendorCreateSchema = z.object({
   address: nullableText(1000),
   invoiceRegistrationNumber: nullableText(50),
   isInvoiceIssuer: z.boolean().optional().default(false),
-  withholdingEnabled: z.boolean().optional().default(false)
+  withholdingEnabled: z.boolean().optional().default(false),
+  isActive: z.boolean().optional().default(true)
 });
 
 export const vendorUpdateSchema = z.object({
@@ -40,7 +41,8 @@ export const vendorUpdateSchema = z.object({
   address: nullableText(1000).optional(),
   invoiceRegistrationNumber: nullableText(50).optional(),
   isInvoiceIssuer: z.boolean().optional(),
-  withholdingEnabled: z.boolean().optional()
+  withholdingEnabled: z.boolean().optional(),
+  isActive: z.boolean().optional()
 }).refine((value) => Object.keys(value).length > 0, {
   message: "更新するフィールドを1つ以上指定してください"
 });

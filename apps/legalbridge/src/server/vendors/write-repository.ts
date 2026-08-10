@@ -28,6 +28,7 @@ export interface VendorRecord {
   invoiceRegistrationNumber: string | null;
   isInvoiceIssuer: boolean;
   withholdingEnabled: boolean;
+  isActive: boolean;
 }
 
 export interface VendorWriteRepository {
@@ -49,7 +50,8 @@ const COLUMNS: Record<string, string> = {
   address: "address",
   invoiceRegistrationNumber: "invoice_registration_number",
   isInvoiceIssuer: "is_invoice_issuer",
-  withholdingEnabled: "withholding_enabled"
+  withholdingEnabled: "withholding_enabled",
+  isActive: "is_active"
 };
 
 export class PgVendorWriteRepository implements VendorWriteRepository {
@@ -126,7 +128,8 @@ export class PgVendorWriteRepository implements VendorWriteRepository {
     const result = await this.database.query(
       `SELECT id, vendor_name, vendor_code, trade_name, pen_name, entity_type,
               email, phone, contact_name, contact_department, address,
-              invoice_registration_number, is_invoice_issuer, withholding_enabled
+              invoice_registration_number, is_invoice_issuer, withholding_enabled,
+              COALESCE(is_active, true) AS is_active
          FROM vendors WHERE id = $1`,
       [id]
     );
@@ -146,7 +149,8 @@ export class PgVendorWriteRepository implements VendorWriteRepository {
       address: row.address ?? null,
       invoiceRegistrationNumber: row.invoice_registration_number ?? null,
       isInvoiceIssuer: Boolean(row.is_invoice_issuer),
-      withholdingEnabled: Boolean(row.withholding_enabled)
+      withholdingEnabled: Boolean(row.withholding_enabled),
+      isActive: row.is_active !== false
     };
   }
 }
@@ -184,7 +188,8 @@ export class MemoryVendorWriteRepository implements VendorWriteRepository {
       phone: (v.phone as string | null) ?? null, contactName: (v.contactName as string | null) ?? null,
       contactDepartment: (v.contactDepartment as string | null) ?? null, address: (v.address as string | null) ?? null,
       invoiceRegistrationNumber: (v.invoiceRegistrationNumber as string | null) ?? null,
-      isInvoiceIssuer: Boolean(v.isInvoiceIssuer), withholdingEnabled: Boolean(v.withholdingEnabled)
+      isInvoiceIssuer: Boolean(v.isInvoiceIssuer), withholdingEnabled: Boolean(v.withholdingEnabled),
+      isActive: v.isActive !== false
     };
   }
 }

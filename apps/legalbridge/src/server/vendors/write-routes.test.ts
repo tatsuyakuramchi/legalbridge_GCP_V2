@@ -61,6 +61,18 @@ test("取引先を部分更新できる", async () => {
   assert.equal(response.body.id, created.body.id);
 });
 
+test("取引先を無効化（is_active=false）して再取得で反映される（11-3）", async () => {
+  const { app } = appFor({ enabled: true });
+  const created = await request(app).post("/api/v2/vendors").send({ vendorName: "無効化対象" });
+  // 既定は有効
+  const before = await request(app).get(`/api/v2/vendors/${created.body.id}`);
+  assert.equal(before.body.vendor.isActive, true);
+  // 無効化
+  await request(app).patch(`/api/v2/vendors/${created.body.id}`).send({ isActive: false }).expect(200);
+  const after = await request(app).get(`/api/v2/vendors/${created.body.id}`);
+  assert.equal(after.body.vendor.isActive, false);
+});
+
 test("CSV一括取込は有効行を登録し無効行を報告する", async () => {
   const { app } = appFor({ enabled: true });
   const response = await request(app).post("/api/v2/vendors/import").send({
