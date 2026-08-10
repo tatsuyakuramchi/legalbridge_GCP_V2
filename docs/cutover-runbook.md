@@ -67,11 +67,17 @@ programmaticClients に登録し audience に使用・SA へ iap.httpsResourceAc
 - cloudsign-sync：CloudSign 未構成の間はランナー未登録（404）。→ **2-5 CloudSign live 後に resume**。
 
 ### 2-4. 外部 Webhook（CloudSign/Backlog）＋ Slack 受信（Phase 16-3）
-**公開 ingress の判断が前提**（Cloud Run IAM は外部 OIDC 無しの caller を通せない）。選択肢は
-`phase9-automation-ignition.md` §ingress 参照（推奨：受信専用の別 Cloud Run サービスを allUsers＋
-アプリ層トークン/署名検証で公開し、本体は IAM のまま）。決定後：
-`_CLOUDSIGN_WEBHOOK_TOKEN_SECRET`/`_BACKLOG_WEBHOOK_TOKEN_SECRET` を Secret 登録→substitutions 設定。
-Slack（16-3）は Slack App の signing secret 検証で同じ受信サービスに同居させる。
+**ingress 方式は決定・実装済み（2026-08-10）**：受信専用リレー `lb-v2-receiver`（`infra/receiver/`・
+依存ゼロ Node・allUsers 公開・許可4パスのみ・1MB 上限・ヘッダ allowlist）が、メタデータサーバの
+OIDC（audience=IAP `programmaticClients` のクライアント ID＝2-3 と同じ `lb-v2-scheduler`）を付けて
+IAP 越しに本体へ転送する。実認証は本体のアプリ層（X-Webhook-Token／Slack v0 署名・fail-closed）。
+Backlog/CloudSign はカスタムヘッダ不可のため、リレーが `?token=` → `X-Webhook-Token` 変換を行う。
+デプロイ・スモークは `infra/receiver/README.md`。残作業＝
+① リレーのデプロイ（SA 作成＋iap.httpsResourceAccessor＋`gcloud run deploy --source infra/receiver`）
+② secret 登録（`CLOUDSIGN_WEBHOOK_TOKEN`/`BACKLOG_WEBHOOK_TOKEN`/`SLACK_SIGNING_SECRET`）→
+   本体 substitutions（`_CLOUDSIGN_WEBHOOK_TOKEN_SECRET`/`_BACKLOG_WEBHOOK_TOKEN_SECRET`/
+   `_SLACK_INTAKE_ENABLED`+`_SLACK_SIGNING_SECRET_NAME`/`_BACKLOG_INTAKE_ENABLED`）で再デプロイ
+③ 外部登録（Backlog Webhook URL・CloudSign Webhook URL・Slack App コマンド/Interactivity URL）
 
 ### 2-5. 統合 live 化（Drive / Gmail / CloudSign）
 - Drive：`phase5-integration-readiness.md`＋`drive-integration.md`。SA 鍵 Secret・フォルダID →
