@@ -1398,6 +1398,8 @@ export function createApp(
       slack: new FetchSlackWebApiClient(config.slackBotToken),
       backlog: intakeBacklog ?? null,
       backlogHost: config.backlogHost || null,
+      backlogProjectKey: config.backlogProjectKey || null,
+      contractCheck: dependencies.contractCheck ?? null,
       log: (message) => console.warn(`[slack-intake] ${message}`)
     });
     app.use(createSlackIntakeRouter({

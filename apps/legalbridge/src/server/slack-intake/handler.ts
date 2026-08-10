@@ -1,6 +1,15 @@
 import type { SlackWebApiClient } from "../integrations/slack-web-api-adapter.js";
 import type { BacklogWriteClient } from "../integrations/backlog-web-api.js";
 import type { SlackIntakeRepository } from "./intake-repository.js";
+import type { ContractCheckRepository, VendorCandidate } from "../contract-check/repository.js";
+import {
+  findPurpose, buildMasterContractSummary, buildLicenseConditions, buildPublicationConditions,
+  buildPurposeResult, buildSuggestedAction, notFoundResult
+} from "../contract-check/engine.js";
+import {
+  LEGAL_SEARCH_CALLBACK_ID, SEARCH_AGAIN_ACTION_ID, buildLegalSearchModal, parseSearchKeyword,
+  buildSearchResultsModal, backlogSearchUrl, type SearchOutcome
+} from "./search-modal.js";
 import {
   LEGAL_REQUEST_CALLBACK_ID, buildLegalRequestModal, parseLegalRequestSubmission,
   buildCompletionView, buildErrorView, backlogIssueTypeFor, requestTypeLabel,
@@ -17,12 +26,16 @@ export interface SlackIntakeHandlerOptions {
   slack: SlackWebApiClient;
   backlog?: BacklogWriteClient | null;
   backlogHost?: string | null;
+  backlogProjectKey?: string | null;
+  // /法務検索（16-3b）。未注入なら検索コマンドは「利用不可」応答。
+  contractCheck?: ContractCheckRepository | null;
   log?: (message: string) => void;
 }
 
 export interface SlackIntakeResult { status: number; body: unknown; }
 
 export const LEGAL_REQUEST_COMMANDS = new Set(["/法務依頼", "/legal-request"]);
+export const LEGAL_SEARCH_COMMANDS = new Set(["/法務検索", "/legal-search"]);
 
 function issueUrl(host: string | null | undefined, issueKey: string): string | null {
   const h = String(host ?? "").trim();
@@ -90,10 +103,24 @@ export function createSlackIntakeHandler(options: SlackIntakeHandlerOptions) {
   async function handleCommand(body: Record<string, string | undefined>): Promise<SlackIntakeResult> {
     const command = String(body.command ?? "").trim();
     const triggerId = String(body.trigger_id ?? "");
+    if (!triggerId) return { status: 200, body: { response_type: "ephemeral", text: "リクエストが不正です（trigger_id なし）。" } };
+    if (LEGAL_SEARCH_COMMANDS.has(command)) {
+      if (!options.contractCheck) {
+        return { status: 200, body: { response_type: "ephemeral", text: "法務検索は現在利用できません。" } };
+      }
+      try {
+        await options.slack.post("views.open", {
+          trigger_id: triggerId, view: buildLegalSearchModal(String(body.text ?? ""))
+        });
+        return { status: 200, body: "" };
+      } catch (error) {
+        log(`slack-intake: search views.open failed: ${error instanceof Error ? error.message : String(error)}`);
+        return { status: 200, body: { response_type: "ephemeral", text: "検索フォームを開けませんでした。時間をおいて再度お試しください。" } };
+      }
+    }
     if (!LEGAL_REQUEST_COMMANDS.has(command)) {
       return { status: 200, body: { response_type: "ephemeral", text: `未対応のコマンドです: ${command}` } };
     }
-    if (!triggerId) return { status: 200, body: { response_type: "ephemeral", text: "リクエストが不正です（trigger_id なし）。" } };
     try {
       await openModal(triggerId);
       return { status: 200, body: "" };
@@ -103,14 +130,76 @@ export function createSlackIntakeHandler(options: SlackIntakeHandlerOptions) {
     }
   }
 
+  // 契約チェックエンジンで1候補分の表示データを組む（用途未選択＝契約状況のみ表示）。
+  async function searchOne(repo: ContractCheckRepository, vendor: VendorCandidate) {
+    const docs = await repo.findVendorDocuments(vendor.id);
+    const masterContracts = buildMasterContractSummary(docs);
+    const purposeResult = buildPurposeResult({}, masterContracts, findPurpose(""));
+    return {
+      counterparty: {
+        vendorId: vendor.id, vendorCode: vendor.vendorCode ?? "",
+        vendorName: vendor.vendorName ?? "", entityType: vendor.entityType ?? ""
+      },
+      masterContracts,
+      licenseConditions: buildLicenseConditions(docs),
+      publicationConditions: buildPublicationConditions(docs),
+      purposeResult,
+      suggestedAction: buildSuggestedAction(purposeResult)
+    };
+  }
+
+  async function handleSearchSubmission(keyword: string): Promise<SlackIntakeResult> {
+    const repo = options.contractCheck;
+    if (!repo) {
+      return { status: 200, body: { response_action: "update", view: buildErrorView("法務検索は現在利用できません。") } };
+    }
+    if (!keyword) {
+      return { status: 200, body: { response_action: "errors", errors: { keyword_block: "キーワードを入力してください" } } };
+    }
+    try {
+      const candidates = await repo.searchVendors(keyword, 10);
+      const outcome: SearchOutcome = { keyword };
+      if (candidates.length === 0) {
+        outcome.notFound = notFoundResult(null) as unknown as NonNullable<SearchOutcome["notFound"]>;
+      } else if (candidates.length === 1) {
+        outcome.single = await searchOne(repo, candidates[0]);
+      } else {
+        outcome.multiple = {
+          count: candidates.length,
+          results: await Promise.all(candidates.slice(0, 5).map((c) => searchOne(repo, c)))
+        };
+      }
+      const url = backlogSearchUrl(options.backlogHost, options.backlogProjectKey, keyword);
+      return { status: 200, body: { response_action: "update", view: buildSearchResultsModal(outcome, url) } };
+    } catch (error) {
+      log(`slack-intake: search failed: ${error instanceof Error ? error.message : String(error)}`);
+      return { status: 200, body: { response_action: "update", view: buildErrorView("検索処理中にエラーが発生しました。") } };
+    }
+  }
+
   async function handleInteractivity(payload: unknown): Promise<SlackIntakeResult> {
     const p = (payload ?? {}) as {
       type?: string;
       user?: { id?: string };
-      view?: { callback_id?: string; state?: { values?: unknown } };
+      view?: { id?: string; callback_id?: string; state?: { values?: unknown } };
+      actions?: Array<{ action_id?: string }>;
     };
+    // 検索結果モーダルの「検索し直す」→ 入力モーダルへ views.update（16-3b）。
+    if (p.type === "block_actions") {
+      if (p.actions?.some((a) => a.action_id === SEARCH_AGAIN_ACTION_ID) && p.view?.id) {
+        try {
+          await options.slack.post("views.update", { view_id: p.view.id, view: buildLegalSearchModal() });
+        } catch (error) {
+          log(`slack-intake: views.update failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      return { status: 200, body: "" };   // リンクボタン等その他の block_actions は無視
+    }
+    if (p.type === "view_submission" && p.view?.callback_id === LEGAL_SEARCH_CALLBACK_ID) {
+      return handleSearchSubmission(parseSearchKeyword(p.view?.state?.values));
+    }
     if (p.type !== "view_submission" || p.view?.callback_id !== LEGAL_REQUEST_CALLBACK_ID) {
-      return { status: 200, body: "" };   // block_actions 等は 16-3a では無視（静的モーダル）
+      return { status: 200, body: "" };
     }
     const slackUserId = String(p.user?.id ?? "");
     const { submission, errors } = parseLegalRequestSubmission(p.view?.state?.values);

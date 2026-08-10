@@ -52,9 +52,21 @@ DB 書込まで同期（実課題キーを完了ビューに出す）→通知�
    実起票には `_BACKLOG_MODE=live`＋`_BACKLOG_HOST`/`_BACKLOG_PROJECT_KEY`（未設定なら dry-run＝
    隔離台帳のみで安全に E2E 検証できる）。
 
-### 16-3b 以降（残）
-明細行（最大5行・views.update）／既存課題への紐付け（candidates＋link-trigger）／納期変更モーダル／
-`/法務検索`（16-2 契約チェック API に依存）／署名URLアップロードリンク（ポータル廃止判断待ち）。
+### 16-3b：/法務検索 ✅ 実装済
+16-2 の契約チェックエンジンを**同プロセス直呼び**（V1 現行世代と同じ・REST ホップなし）。
+- `slack-intake/search-modal.ts`（純粋）：検索モーダル（キーワード・スラッシュ引数を事前入力）／
+  結果モーダル＝取引先名＋**締結ピル（業務委託／ライセンス／出版 ✅締結済・—未締結）**＋個別許諾/出版条件
+  件数＋推奨アクション。複数候補は5件まで・未検出は再検索の案内。「🔎 検索し直す」（views.update で
+  入力モーダルへ戻る）＋「🔗 Backlogで関連課題を検索」リンク（host/projectKey 設定時のみ）。
+- handler：`/法務検索`（/legal-search）コマンド＋`legal_search_modal` の view_submission＋
+  `legal_search_again` の block_actions。contractCheck 未注入時は「利用不可」応答。
+- 非移植（V1 との差）：チャンネル許可リスト（後続 opt-in）・署名URL「Webで詳細」（ポータル判断待ち）・
+  Backlog ステータス付加。tests 5 件＝**681 緑**。
+- 点火は 16-3a と同一（Slack App に `/法務検索` コマンドを追加登録するだけ・新規 secret/grant 不要）。
+
+### 16-3c（残）
+明細行（最大5行・views.update・dispatch_action 動的モーダル）／既存課題への紐付け（candidates＋
+link-trigger）／納期変更モーダル（dispatch_action 依存）／署名URLアップロードリンク（ポータル廃止判断待ち）。
 
 ## 16-2：契約チェック API ✅ 実装済（読取専用・grant 不要）
 

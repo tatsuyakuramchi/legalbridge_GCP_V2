@@ -318,6 +318,10 @@ Phase 7 は全フェーズの受け入れ後
 
 **UI/UX 合理性レビュー（`docs/v2-ux-rationality-review.md`）**：V1 の「迷いの構造」を 5 類型化（作業オブジェクト三重帳簿・暗黙モードの入口乱立・用語不整合・ロール未分岐・巨大マルチ目的画面）し、V2 現状 IA を並列監査して統合。V2 は既に主要な V1 病を治療済み（案件へ正典化・文書作成 funnel 統一・破壊操作トークン型統一・ロール一級市民化・Breadcrumb）＝維持資産として明記。残摩擦 F1〜F9（業務グループ過積載/OFF機能の伝え方3系統/GRANT番号露出/発見→是正断絶/条件・作品の画面分散/ガード重み付け不揃い/空状態2系統/作成→出力4遷移/生ID入力）を洗い出し、実タスクフロー（申請者・法務・管理者）に立脚した設計原則6点と、Quick Wins（Q1発見→是正prop配線・Q2未有効化統一＋GRANT番号除去・Q3空状態一本化・Q4文書検索UI）／構造リファクタ（R1ナビ再編・R2条件集約・R3作品二重解消・R4ガード階層化・R5ロール別ホーム）／大（B1作成→出力1画面化・B2 Phase10/11新規UIへ本指針適用）を優先度・粒度付きで提案。機能ギャップ台帳と対になる体験台帳。
 
+| 2026-08-10 | Phase 16 | 16-3b /法務検索（契約チェックエンジン同プロセス直呼び・締結ピル・検索し直す） | LegalBridge_AI_GCP | ✅ |
+
+**16-3b /法務検索**：16-2 のエンジン/リポジトリを Slack ハンドラから同プロセス直呼び（V1 現行世代と同じ構成）。search-modal.ts（純粋）＝検索モーダル（スラッシュ引数の事前入力）／結果モーダル（取引先名＋業務委託・ライセンス・出版の締結ピル＋条件件数＋推奨アクション・複数候補≤5・未検出案内・「検索し直す」views.update・Backlog 課題検索リンク）。handler に検索コマンド・legal_search_modal 提出・legal_search_again の block_actions を追加（views.update を Slack method union に追加）。contractCheck 未注入は利用不可応答。非移植＝チャンネル許可リスト（opt-in 後続）・署名URL Web 詳細（ポータル判断待ち）・Backlog ステータス付加。点火は 16-3a と同一で Slack App にコマンド追加のみ（新規 secret/grant 不要）。tests 5件＝681緑・typecheck・build 緑。残 16-3c：明細行・紐付け・納期変更（dispatch_action 動的モーダル群）。
+
 | 2026-08-10 | Phase 16 | 16-2 契約チェック API（用途×スコープ判定・読取専用・判定文字列 V1 同一・grant 不要） | LegalBridge_AI_GCP | ✅ |
 
 **16-2 契約チェック API**：V1 API 世代 contractCheckService の最小移植。純関数 engine（normalizeName／用途マスタ17件 TS 定数化＝contract_purposes grant 不要／master サマリは V1 の「最後の行勝ち」を final・正本優先に改良・void 除外／buildPurposeResult=カテゴリ別基本契約存在×用途接頭辞×再許諾・海外フラグ、判定文字列は一字一句 V1 同一・typo のみ修正／suggestedAction／未検出定型）＋repository（vendors 3段ランキング検索 is_active・vendor 文書一括・番号ルックアップ正本 final のみ＝**documents/vendors SELECT のみで新規 grant 不要**）＋routes（purposes/search 単一・複数≤5・未検出 V1 互換 shape/lookup-number・全ロール）。意図的に非移植：稟議・decision log・Backlog enrich・external_assets/cloudsign 結合・レガシーフォールバック。tests 12件＝676緑。16-3b `/法務検索` の前提解消（同プロセス呼出可）。

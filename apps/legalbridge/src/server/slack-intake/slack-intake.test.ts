@@ -180,3 +180,96 @@ test("説明文: V1 準拠の項目が並ぶ", () => {
   assert.match(text, /■ 希望納期: 2026-08-20/);
   assert.match(text, /■ 依頼者: u@arclight\.co\.jp/);
 });
+
+// ---- /法務検索（16-3b）----
+import { MemoryContractCheckRepository } from "../contract-check/repository.js";
+import { LEGAL_SEARCH_CALLBACK_ID, SEARCH_AGAIN_ACTION_ID } from "./search-modal.js";
+import type { VendorDocumentRow } from "../contract-check/engine.js";
+
+function searchAppFor(opts: { withCheck?: boolean } = {}) {
+  const repository = new MemorySlackIntakeRepository();
+  const slack = new FakeSlack();
+  const masterDoc: VendorDocumentRow = {
+    recordType: "master_contract", contractCategory: "service", contractTitle: "基本契約",
+    documentNumber: "K-1", contractStatus: "executed", effectiveDate: "2024-01-01",
+    expirationDate: null, autoRenewal: false, documentUrl: null, legalonUrl: null,
+    cloudsignUrl: null, driveUrl: null, conditionNumber: null, originalWork: null,
+    workName: null, productName: null, media: null, territory: null, language: null,
+    scope: null, isPrimary: true, lifecycleStatus: "final"
+  };
+  const contractCheck = new MemoryContractCheckRepository(
+    [{ id: 1, vendorCode: "V001", vendorName: "株式会社アークライト", entityType: "corporate", tradeName: null, penName: null }],
+    new Map([[1, [masterDoc]]])
+  );
+  const handler = createSlackIntakeHandler({
+    repository, slack, backlog: null,
+    backlogHost: "example.backlog.jp", backlogProjectKey: "LEGAL",
+    contractCheck: opts.withCheck === false ? null : contractCheck, log: () => undefined
+  });
+  const app = express();
+  app.use(express.json());
+  app.use(createSlackIntakeRouter({
+    signingSecret: SECRET, onCommand: handler.handleCommand, onInteractivity: handler.handleInteractivity
+  }));
+  return { app, slack };
+}
+
+test("法務検索: コマンドで検索モーダルが開く（キーワード事前入力）", async () => {
+  const { app, slack } = searchAppFor();
+  await signedPost(app, "/internal/slack/commands", { command: "/法務検索", trigger_id: "t2", text: "アーク" }).expect(200);
+  const open = slack.calls.find((c) => c.method === "views.open");
+  assert.ok(open);
+  assert.equal((open!.body.view as { callback_id: string }).callback_id, LEGAL_SEARCH_CALLBACK_ID);
+});
+
+test("法務検索: 未注入なら利用不可の ephemeral", async () => {
+  const { app } = searchAppFor({ withCheck: false });
+  const res = await signedPost(app, "/internal/slack/commands", { command: "/法務検索", trigger_id: "t2" }).expect(200);
+  assert.match(res.body.text, /利用できません/);
+});
+
+function searchSubmission(keyword: string) {
+  return {
+    payload: JSON.stringify({
+      type: "view_submission", user: { id: "U001" },
+      view: {
+        callback_id: LEGAL_SEARCH_CALLBACK_ID,
+        state: { values: { keyword_block: { keyword_input: { value: keyword } } } }
+      }
+    })
+  };
+}
+
+test("法務検索: 単一ヒットで結果モーダル（ピル＋Backlogリンク）", async () => {
+  const { app } = searchAppFor();
+  const res = await signedPost(app, "/internal/slack/interactivity", searchSubmission("アークライト")).expect(200);
+  assert.equal(res.body.response_action, "update");
+  const text = JSON.stringify(res.body.view);
+  assert.match(text, /業務委託 ✅締結済/);
+  assert.match(text, /ライセンス —未締結/);
+  assert.match(text, /simpleSearch=true/);
+});
+
+test("法務検索: 未検出・空キーワード", async () => {
+  const { app } = searchAppFor();
+  const miss = await signedPost(app, "/internal/slack/interactivity", searchSubmission("該当なし")).expect(200);
+  assert.match(JSON.stringify(miss.body.view), /見つかりませんでした/);
+  const empty = await signedPost(app, "/internal/slack/interactivity", searchSubmission("")).expect(200);
+  assert.equal(empty.body.response_action, "errors");
+  assert.ok(empty.body.errors.keyword_block);
+});
+
+test("法務検索: 検索し直す block_action で views.update", async () => {
+  const { app, slack } = searchAppFor();
+  const payload = {
+    payload: JSON.stringify({
+      type: "block_actions", user: { id: "U001" },
+      view: { id: "V123", callback_id: LEGAL_SEARCH_CALLBACK_ID },
+      actions: [{ action_id: SEARCH_AGAIN_ACTION_ID }]
+    })
+  };
+  await signedPost(app, "/internal/slack/interactivity", payload).expect(200);
+  const update = slack.calls.find((c) => c.method === "views.update");
+  assert.ok(update);
+  assert.equal(update!.body.view_id, "V123");
+});
