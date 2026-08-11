@@ -14,8 +14,8 @@ V2（本リポジトリ）を本番サービスとして V1（legalbridge_ai_gcp
   **snippets**（同）, slack, slack-dispatch, matter-slack。
   満了自動遷移 CONTRACT_EXPIRY_TRANSITION_ENABLED=true（同・実行は daily-checks ジョブ起動時）。
 - ジョブ基盤 JOBS_ENABLED=true（**Cloud Scheduler は未作成**＝手動/未点火）。
-- 連携：Slack live／Gmail・CloudSign・Drive・Backlog は disabled/dry-run。
-- 認証：cloudrun-iam（admin 1名のみ。legal/requester は未開放）。
+- 連携：Slack live／Drive live（2026-08-10）／**Backlog readonly live（2026-08-11 点火・arclight.backlog.com/LEGAL）**／Gmail・CloudSign は disabled。
+- 認証：cloudrun-iam（admin=tatsuya.kuramochi@arclight.co.jp。**単独運用のため §3 の追加開放は不要と決定**・2026-08-11）。
 
 ## 1. 残実装（コード）— cutover 前に必要
 
