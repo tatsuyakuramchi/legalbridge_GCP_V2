@@ -14,6 +14,16 @@ V2 の Admin は読取専用ステータスのみ。設定・承認ルート・�
 | 11-5 | 原作マテリアル登録ワークフロー | 中 | ✅ 実装済（原作起点の追加/編集 UX。materials write は既存） |
 | 11-6〜11-9 | PII同意/bulk/テーマ/稟議 | 小〜中 | 優先低・要判断（Ringi 保留） |
 
+## 11-1b：連携設定タブ（2026-08-11 追加・2-5 の UI 化）
+
+設定画面に「連携設定」タブを追加し、**非秘密の運用パラメータ 7 項目**を app_settings で編集可能にした
+（BACKLOG_HOST／BACKLOG_PROJECT_KEY／SLACK_LEGAL_CONSULT_CHANNEL／GMAIL_SENDER／
+GMAIL_INBOUND_MAILBOX／GMAIL_INBOUND_QUERY／CLOUDSIGN_ALLOWED_RECIPIENTS。キーは V1 dbSettings 互換
+＝併走中は V1/V2 で共有）。**サーバ起動時に `integration-overrides.ts` が app_settings を env config へ
+上書き**（空欄・DB不通は env フォールバック）＝反映は次回デプロイ/再起動時。UI は各欄に現在の実効値を
+表示し、反映タイミングと「秘密・live/disabled 切替は対象外（Secret Manager／デプロイ管理）」を明記。
+追加 grant なし（036 の app_settings 権限で充足）。
+
 ## 11-1：システム設定（会社プロファイル）✅ 実装済
 
 共有 `app_settings`（`key VARCHAR PK / value JSONB`）を V2 が所有・編集する。V1 も同表を参照するため

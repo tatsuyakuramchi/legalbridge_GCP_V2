@@ -63,3 +63,37 @@ test("settings: 権限未整備(FORBIDDEN_DB)は503", async () => {
   assert.equal(res.status, 503);
   assert.equal(res.body.code, "SETTINGS_FORBIDDEN_DB");
 });
+
+// ---- 連携設定タブ（2-5 UI 化） ----
+test("設定: GET は連携フィールドと実効値を返す", async () => {
+  const repository = new MemoryAppSettingsRepository({ BACKLOG_HOST: "db.backlog.jp" });
+  const app = express();
+  app.use(express.json());
+  app.use((_req, res, next) => {
+    res.locals.currentUser = { email: "a@arclight.co.jp", subject: "t", role: "admin", source: "test" } as never;
+    next();
+  });
+  app.use("/api/v2", createSettingsRouter(repository, true, { BACKLOG_HOST: "env.backlog.jp" }));
+  const res = await request(app).get("/api/v2/settings").expect(200);
+  assert.ok(res.body.integrationFields.some((f: { key: string }) => f.key === "BACKLOG_HOST"));
+  assert.ok(res.body.integrationFields.some((f: { key: string }) => f.key === "CLOUDSIGN_ALLOWED_RECIPIENTS"));
+  assert.equal(res.body.integrationEffective.BACKLOG_HOST, "env.backlog.jp");
+  assert.equal(res.body.values.BACKLOG_HOST, "db.backlog.jp");
+});
+
+test("設定: 連携キーも allowlist 内なので保存できる（秘密系キーは拒否のまま）", async () => {
+  const repository = new MemoryAppSettingsRepository({});
+  const app = express();
+  app.use(express.json());
+  app.use((_req, res, next) => {
+    res.locals.currentUser = { email: "a@arclight.co.jp", subject: "t", role: "admin", source: "test" } as never;
+    next();
+  });
+  app.use("/api/v2", createSettingsRouter(repository, true));
+  const ok = await request(app).post("/api/v2/settings")
+    .send({ settings: { CLOUDSIGN_ALLOWED_RECIPIENTS: "test@example.co.jp" } }).expect(200);
+  assert.equal(ok.body.saved, 1);
+  const bad = await request(app).post("/api/v2/settings")
+    .send({ settings: { SLACK_BOT_TOKEN: "xoxb-nope" } });
+  assert.equal(bad.status, 400);
+});

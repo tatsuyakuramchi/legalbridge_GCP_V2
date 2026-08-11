@@ -1330,7 +1330,16 @@ export function createApp(
     documentVoidNotifier ? async (sourceId) => (await documentRegistry.find(sourceId))?.issueKey ?? null : undefined
   ));
   // システム設定（会社プロファイル・Phase 11-1）。読取 admin・保存 guarded（scope 'settings'・grant 036）。
-  app.use("/api/v2", createSettingsRouter(dependencies.appSettings, appSettingsWriteEnabled));
+  app.use("/api/v2", createSettingsRouter(dependencies.appSettings, appSettingsWriteEnabled, {
+    // 連携設定タブの実効値表示（env/起動時上書き後の値・非秘密のみ）。
+    BACKLOG_HOST: config.backlogHost,
+    BACKLOG_PROJECT_KEY: config.backlogProjectKey,
+    SLACK_LEGAL_CONSULT_CHANNEL: config.slackLegalConsultChannel,
+    GMAIL_SENDER: config.gmailSenderEmail,
+    GMAIL_INBOUND_MAILBOX: config.gmailInboundMailbox,
+    GMAIL_INBOUND_QUERY: config.gmailInboundQuery,
+    CLOUDSIGN_ALLOWED_RECIPIENTS: config.cloudSignAllowedRecipients
+  }));
   // 承認ルート（部門別・Phase 11-2）。読取 admin・保存 guarded（scope 'workflow-rules'・grant 037）。
   app.use("/api/v2", createWorkflowRulesRouter(dependencies.workflowRules, workflowRulesWriteEnabled));
   // 契約マスタ（Phase 11-4）。読取 admin/legal・更新/状態変更 guarded（scope 'contract-master'・grant 038）。

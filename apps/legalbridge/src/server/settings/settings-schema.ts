@@ -21,7 +21,26 @@ export const COMPANY_PROFILE_FIELDS: SettingField[] = [
   { key: "COMPANY_SEAL_NOTE", label: "捺印・備考" }
 ];
 
-export const ALLOWED_SETTING_KEYS = new Set(COMPANY_PROFILE_FIELDS.map((f) => f.key));
+// 連携設定（非秘密の運用パラメータ・2-5 UI 化）。**秘密（APIキー・トークン・署名シークレット・
+// CloudSign クライアントID・SA鍵）と live/disabled のモード切替は対象外**＝Secret Manager／
+// デプロイ substitutions 管理のまま（verify ゲートの統制を迂回しない）。
+// キー名は V1 の dbSettings（app_settings）と互換＝併走中は V1/V2 で同じ値を共有する。
+// 反映タイミング：保存後、インスタンス起動時（再デプロイ/再起動）に環境変数へ上書き適用。
+// 空欄＝デプロイ時の環境変数値を使用。
+export const INTEGRATION_SETTING_FIELDS: SettingField[] = [
+  { key: "BACKLOG_HOST", label: "Backlog ホスト", placeholder: "example.backlog.jp" },
+  { key: "BACKLOG_PROJECT_KEY", label: "Backlog プロジェクトキー", placeholder: "LEGAL" },
+  { key: "SLACK_LEGAL_CONSULT_CHANNEL", label: "Slack 法務相談チャンネルID", placeholder: "C0XXXXXXX" },
+  { key: "GMAIL_SENDER", label: "Gmail 送信元アドレス", placeholder: "legal@example.co.jp" },
+  { key: "GMAIL_INBOUND_MAILBOX", label: "Gmail 受信メールボックス", placeholder: "contracts@example.co.jp" },
+  { key: "GMAIL_INBOUND_QUERY", label: "Gmail 受信検索クエリ", placeholder: "has:attachment filename:pdf newer_than:180d" },
+  { key: "CLOUDSIGN_ALLOWED_RECIPIENTS", label: "CloudSign 宛先許可リスト（カンマ区切り・空=無制限）", placeholder: "test@example.co.jp,legal@example.co.jp" }
+];
+
+export const ALLOWED_SETTING_KEYS = new Set([
+  ...COMPANY_PROFILE_FIELDS.map((f) => f.key),
+  ...INTEGRATION_SETTING_FIELDS.map((f) => f.key)
+]);
 
 // 保存リクエスト。全キーが allowlist 内・値は文字列（≤500）であることを要求する。
 export const settingsSaveSchema = z.object({

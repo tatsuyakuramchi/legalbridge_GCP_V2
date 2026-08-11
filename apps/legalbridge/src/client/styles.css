@@ -885,6 +885,13 @@ button.pdf-download-link:disabled {
 
 /* システム設定（Phase 11-1） */
 .settings-form { padding: 16px; display: flex; flex-direction: column; gap: 12px; max-width: 640px; }
+/* 設定タブ（会社プロファイル / 連携設定・2-5） */
+.settings-tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+.settings-tabs button { border: 1px solid var(--border); background: var(--surface); border-radius: 999px; padding: 7px 16px; font-size: 13px; font-weight: 700; color: var(--ink-soft); cursor: pointer; }
+.settings-tabs button.active { background: var(--accent); border-color: var(--accent); color: white; }
+.settings-note { background: #eef6ff; border: 1px solid #cfe3ff; border-radius: 10px; padding: 12px 16px; margin-bottom: 12px; font-size: 13px; max-width: 640px; }
+.settings-note ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 4px; }
+.settings-effective { color: var(--ink-faint); font-size: 11px; }
 .settings-field { display: flex; flex-direction: column; gap: 4px; }
 .settings-field span { font-size: 12px; font-weight: 700; color: var(--ink); }
 .settings-field input { width: 100%; }

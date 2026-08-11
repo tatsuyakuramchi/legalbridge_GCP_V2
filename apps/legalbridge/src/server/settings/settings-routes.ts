@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { z } from "zod";
-import { settingsSaveSchema, COMPANY_PROFILE_FIELDS, ALLOWED_SETTING_KEYS } from "./settings-schema.js";
+import {
+  settingsSaveSchema, COMPANY_PROFILE_FIELDS, INTEGRATION_SETTING_FIELDS, ALLOWED_SETTING_KEYS
+} from "./settings-schema.js";
 import type { AppSettingsRepository } from "./settings-repository.js";
 
 // システム設定（Phase 11-1）。読取（admin のみ・現在値＋フィールド定義）と保存（guarded-write・
@@ -12,7 +14,9 @@ function forbidden(r: import("express").Response) {
 
 export function createSettingsRouter(
   repository: AppSettingsRepository | undefined,
-  writeEnabled = false
+  writeEnabled = false,
+  // 連携設定の実効値（env 由来・空欄時のフォールバック表示用）。秘密は含めないこと。
+  integrationEffective: Record<string, string> = {}
 ) {
   const router = Router();
   const keys = [...ALLOWED_SETTING_KEYS];
@@ -23,7 +27,13 @@ export function createSettingsRouter(
       if (!repository) return response.status(503).json({ error: "settings is not available", code: "SETTINGS_UNAVAILABLE" });
       if (!adminOnly(response.locals.currentUser?.role)) return forbidden(response);
       const values = await repository.get(keys);
-      return response.status(200).json({ fields: COMPANY_PROFILE_FIELDS, values, writeEnabled });
+      return response.status(200).json({
+        fields: COMPANY_PROFILE_FIELDS,
+        integrationFields: INTEGRATION_SETTING_FIELDS,
+        integrationEffective,
+        values,
+        writeEnabled
+      });
     } catch (error) { return next(error); }
   });
 

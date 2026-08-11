@@ -95,6 +95,9 @@ Backlog/CloudSign はカスタムヘッダ不可のため、リレーが `?token
   `DRIVE_ENVIRONMENT_TAG=validation` のまま＝**§4 正式サービス名化の際に `production` へ切替**。
   ブラウザスモーク（文書確定→Drive保存／案件詳細→資料アップロード）で実ファイル確認のこと。
 - Gmail 送信/受信・CloudSign（残）：`gmail-cloudsign.md`／`phase5-cloudsign-ignition.md`。
+  - **連携の運用パラメータ（宛先 allowlist・送信元・チャンネル等の非秘密 7 項目）は
+    設定画面「連携設定」タブから編集可能**（2026-08-11 UI 化・反映は再デプロイ/再起動時・
+    `phase11-settings-master.md` 11-1b）。秘密と live/disabled 切替は従来どおりデプロイ管理。
   - CloudSign：client_id を Secret Manager へ（リポジトリ厳禁）＋宛先 allowlist 必須＋
     `_CLOUDSIGN_MODE=live`＋`_CONFIRM_CLOUDSIGN_DISPATCH`＋`_CLOUDSIGN_REQUEST_HISTORY_ENABLED`。
     live 後に cloudsign-sync resume＋CloudSign Webhook 登録（token secret 作成済み）で executed 遷移が自動化。
