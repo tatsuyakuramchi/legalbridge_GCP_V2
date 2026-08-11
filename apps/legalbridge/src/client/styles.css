@@ -13,11 +13,19 @@ button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .55; }
 .shell { min-height: 100vh; display: grid; grid-template-columns: 216px 1fr; }
 .readonly-banner { background: var(--warning-bg); border-bottom: 1px solid var(--warning-border); color: var(--warning-ink); padding: 9px 24px; font-size: 13px; font-weight: 700; }
-.rail { background: var(--rail-bg); color: white; padding: 24px 16px; display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh; }
+.rail { background: var(--rail-bg); color: white; padding: 24px 16px; display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.25) transparent; }
+.rail::-webkit-scrollbar { width: 6px; }
+.rail::-webkit-scrollbar-thumb { background: rgba(255,255,255,.22); border-radius: 3px; }
+.rail::-webkit-scrollbar-track { background: transparent; }
 .brand { font-size: 20px; font-weight: 800; padding: 8px 10px 26px; }.brand span { color: var(--accent); font-size: 12px; }
 .rail nav { display: grid; gap: 14px; }.rail nav button { border: 0; color: var(--rail-text); background: transparent; text-align: left; padding: 10px 12px; border-radius: var(--radius); width: 100%; cursor: pointer; }.rail nav button.active, .rail nav button:hover { background: var(--rail-active); color: white; }
 .nav-group { display: grid; gap: 3px; }
 .nav-group-label { color: var(--ink-soft); font-size: 10px; font-weight: 800; letter-spacing: .12em; padding: 0 12px 2px; text-transform: uppercase; }
+/* カテゴリ折りたたみ（現在地を含むグループは自動展開） */
+.rail nav button.nav-group-toggle { display: flex; align-items: center; gap: 6px; color: var(--ink-soft); font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; padding: 4px 6px 2px; border-radius: 6px; }
+.rail nav button.nav-group-toggle:hover { background: transparent; color: white; }
+.nav-caret { display: inline-block; width: 10px; font-size: 9px; line-height: 1; }
+.nav-group.collapsed { gap: 0; }
 .workflow-rail { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px; }
 .workflow-card { text-align: left; background: var(--surface); border: 1px solid var(--border); border-top: 3px solid var(--accent); border-radius: var(--radius-md); padding: 14px; display: grid; gap: 4px; cursor: pointer; transition: transform .08s ease, box-shadow .08s ease; }
 .workflow-card:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(23,42,68,.09); }

@@ -209,6 +209,20 @@ export function App() {
   const [canEditContractMaster, setCanEditContractMaster] = useState(false);
   const [canEditSnippets, setCanEditSnippets] = useState(false);
   const [canUploadAttachments, setCanUploadAttachments] = useState(false);
+  // サイドバーのカテゴリ折りたたみ（この端末に保存）。現在地を含むグループは表示時に自動展開。
+  const [collapsedNav, setCollapsedNav] = useState<Record<string, boolean>>(() => {
+    try {
+      const raw = JSON.parse(window.localStorage.getItem("lb-v2-nav-collapsed") ?? "{}");
+      return raw && typeof raw === "object" ? raw as Record<string, boolean> : {};
+    } catch { return {}; }
+  });
+  function toggleNavGroup(label: string) {
+    setCollapsedNav((prev) => {
+      const next = { ...prev, [label]: !prev[label] };
+      try { window.localStorage.setItem("lb-v2-nav-collapsed", JSON.stringify(next)); } catch { /* quota等は無視 */ }
+      return next;
+    });
+  }
   const [currentUser, setCurrentUser] = useState<{ email: string; role: "admin" | "legal" | "requester" } | null>(null);
   const [searchSelection, setSearchSelection] = useState<{ target: "matter" | "document" | "vendor" | "work"; id: string; title: string } | null>(null);
   const [draftSelection, setDraftSelection] = useState<{ issueKey: string; templateType: string } | null>(null);
@@ -319,18 +333,27 @@ export function App() {
       <aside className="rail">
         <div className="brand">LegalBridge <span>V2</span></div>
         <nav>
-          {navGroups({ legalWorkspace, adminWorkspace, requesterWorkspace, readOnly, gmailInbound: canGmailInbound }).map((group) => (
-            <div className="nav-group" key={group.label}>
-              <span className="nav-group-label">{group.label}</span>
-              {group.items.map((item) => (
-                <button key={item.view}
-                  className={item.match.includes(view) ? "active" : ""}
-                  onClick={() => { setMergeSourceSeed(""); setLedgerSeedType(undefined); setView(item.view); }}
-                  title={item.description}
-                >{item.label}</button>
-              ))}
-            </div>
-          ))}
+          {navGroups({ legalWorkspace, adminWorkspace, requesterWorkspace, readOnly, gmailInbound: canGmailInbound }).map((group) => {
+            // 現在地を含むグループは畳んでいても自動展開（現在地が隠れないように）。
+            const hasActive = group.items.some((item) => item.match.includes(view));
+            const collapsed = Boolean(collapsedNav[group.label]) && !hasActive;
+            return (
+              <div className={`nav-group${collapsed ? " collapsed" : ""}`} key={group.label}>
+                <button type="button" className="nav-group-toggle" aria-expanded={!collapsed}
+                  onClick={() => toggleNavGroup(group.label)}>
+                  <span className="nav-caret" aria-hidden="true">{collapsed ? "▸" : "▾"}</span>
+                  {group.label}
+                </button>
+                {!collapsed && group.items.map((item) => (
+                  <button key={item.view}
+                    className={item.match.includes(view) ? "active" : ""}
+                    onClick={() => { setMergeSourceSeed(""); setLedgerSeedType(undefined); setView(item.view); }}
+                    title={item.description}
+                  >{item.label}</button>
+                ))}
+              </div>
+            );
+          })}
         </nav>
         <div className="backlog"><strong>Backlog連携</strong><small>参照のみ・変更なし</small></div>
       </aside>
