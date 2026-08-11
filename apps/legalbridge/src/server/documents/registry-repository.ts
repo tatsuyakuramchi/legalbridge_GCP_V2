@@ -12,6 +12,7 @@ export interface RegisteredDocument {
   createdAt: string;
   createdBy: string | null;
   lifecycleStatus?: string;   // final / voided / draft 等（void 済みの表示に使用・Phase 10-2）
+  matterId?: number | null;   // 紐付く案件（確定時に自動設定・W2で追加）
   baseDocumentNumber?: string | null;   // バージョン系列の基底番号（アーカイブ履歴・10-1）
   supersededBy?: string | null;         // これを差し替えた文書番号
   isPrimary?: boolean;                  // 系列内の正本フラグ
@@ -53,7 +54,7 @@ export class PgDocumentRegistryRepository implements DocumentRegistryRepository 
       : "";
     const result = await this.database.query(
       `SELECT id, document_number, issue_key, template_type, template_version_id,
-              form_data, drive_link, created_at, created_by,
+              form_data, drive_link, created_at, created_by, matter_id,
               COALESCE(lifecycle_status, 'final') AS lifecycle_status
          FROM documents
         WHERE ($1 = '%%'
@@ -102,7 +103,7 @@ export class PgDocumentRegistryRepository implements DocumentRegistryRepository 
   async find(id: number) {
     const result = await this.database.query(
       `SELECT id, document_number, issue_key, template_type, template_version_id,
-              form_data, drive_link, created_at, created_by,
+              form_data, drive_link, created_at, created_by, matter_id,
               COALESCE(lifecycle_status, 'final') AS lifecycle_status
          FROM documents
         WHERE id = $1`,
@@ -114,7 +115,7 @@ export class PgDocumentRegistryRepository implements DocumentRegistryRepository 
   async findByNumber(documentNumber: string) {
     const result = await this.database.query(
       `SELECT id, document_number, issue_key, template_type, template_version_id,
-              form_data, drive_link, created_at, created_by,
+              form_data, drive_link, created_at, created_by, matter_id,
               COALESCE(lifecycle_status, 'final') AS lifecycle_status
          FROM documents
         WHERE document_number = $1
@@ -194,6 +195,7 @@ function mapRow(row: Record<string, any>): RegisteredDocument {
     createdAt: row.created_at ? new Date(row.created_at).toISOString() : "",
     createdBy: row.created_by,
     lifecycleStatus: row.lifecycle_status ?? "final",
+    matterId: row.matter_id == null ? null : Number(row.matter_id),
     formData
   };
 }

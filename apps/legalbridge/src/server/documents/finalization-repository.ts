@@ -49,12 +49,15 @@ export class PgDocumentFinalizationRepository implements DocumentFinalizationRep
         client, firstTextValue(input.formData, PARTY_NAME_KEYS)
       );
 
+      // 案件への自動紐付け（監査指摘：確定文書が全件 案件から孤児になっていた）。
+      // 受付番号を代表課題キーに持つ案件があれば matter_id を設定する（無ければ NULL＝従来どおり）。
       const inserted = await client.query(
         `INSERT INTO documents (
            document_number, issue_key, template_type, template_version_id,
            form_data, drive_link, created_at, created_by,
-           record_type, contract_status, contract_title, vendor_id
-         ) VALUES ($1, $2, $3, $4, $5::jsonb, '', now(), $6, $7, 'executed', $8, $9)
+           record_type, contract_status, contract_title, vendor_id, matter_id
+         ) VALUES ($1, $2, $3, $4, $5::jsonb, '', now(), $6, $7, 'executed', $8, $9,
+           (SELECT id FROM matters WHERE primary_issue_key = $2 ORDER BY id DESC LIMIT 1))
          RETURNING id, document_number, issue_key, template_type,
                    template_version_id, created_at, created_by`,
         [

@@ -7,7 +7,7 @@ import { MemoryReceiptDashboardRepository, type ReceiptDashboardRow } from "./re
 
 function row(over: Partial<ReceiptDashboardRow>): ReceiptDashboardRow {
   return {
-    id: 1, period: "2026-08", workCode: "W-1", workTitle: "作品A", counterpartyName: "相手方X",
+    id: 1, conditionLineId: 501, period: "2026-08", workCode: "W-1", workTitle: "作品A", counterpartyName: "相手方X",
     conditionName: "再許諾", reportedSales: 100000, computedRoyaltyExTax: 10000,
     receivedAmount: 9000, computedDistributionExTax: 2000,
     hasParentLicense: true, received: true, distributed: true, ...over

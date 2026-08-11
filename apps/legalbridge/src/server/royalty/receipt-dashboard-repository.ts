@@ -7,6 +7,7 @@ import type { DatabasePool } from "../db/pool.js";
 
 export interface ReceiptDashboardRow {
   id: number;
+  conditionLineId: number;
   period: string | null;
   workCode: string | null;
   workTitle: string | null;
@@ -88,7 +89,7 @@ export class PgReceiptDashboardRepository implements ReceiptDashboardRepository 
 
     try {
       const result = await this.database.query(
-        `SELECT cr.id, cr.period, cr.reported_sales, cr.computed_royalty_ex_tax,
+        `SELECT cr.id, cr.condition_line_id, cr.period, cr.reported_sales, cr.computed_royalty_ex_tax,
                 cr.received_amount, cr.computed_distribution_ex_tax,
                 (cr.received_amount IS NOT NULL) AS received,
                 (cr.distribution_payment_id IS NOT NULL) AS distributed,
@@ -106,6 +107,7 @@ export class PgReceiptDashboardRepository implements ReceiptDashboardRepository 
       );
       const rows: ReceiptDashboardRow[] = result.rows.map((row) => ({
         id: Number(row.id),
+        conditionLineId: Number(row.condition_line_id),
         period: row.period ?? null,
         workCode: row.work_code ?? null,
         workTitle: row.work_title ?? null,

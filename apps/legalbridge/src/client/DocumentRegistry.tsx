@@ -18,6 +18,7 @@ type RegisteredDocument = {
   createdAt: string;
   createdBy: string | null;
   lifecycleStatus?: string;
+  matterId?: number | null;
   formData?: Record<string, unknown>;
   lifecycle?: {
     state: "finalized" | "registered";
@@ -66,7 +67,8 @@ export function DocumentRegistry({
   canVoidDocument = false,
   canReissueDocument = false,
   selectedId,
-  initialQuery = ""
+  initialQuery = "",
+  onOpenMatter
 }: {
   templates: DocumentFormSchema[];
   onCreate: () => void;
@@ -79,6 +81,7 @@ export function DocumentRegistry({
   canReissueDocument?: boolean;
   selectedId?: number;
   initialQuery?: string;
+  onOpenMatter?: (matterId: number) => void;
 }) {
   const [importing, setImporting] = useState(false);
   const [query, setQuery] = useState(initialQuery);
@@ -237,6 +240,7 @@ export function DocumentRegistry({
         onVoided={() => { setReload((v) => v + 1); if (selected) return selectDocument(selected.id); }}
         onReissued={(newId) => { setReload((v) => v + 1); return selectDocument(newId); }}
         onSelectVersion={(id) => void selectDocument(id)}
+        onOpenMatter={onOpenMatter}
       />
     </div>
   </section>;
@@ -254,7 +258,8 @@ function DocumentDetail({
   onRefresh,
   onVoided,
   onReissued,
-  onSelectVersion
+  onSelectVersion,
+  onOpenMatter
 }: {
   document: RegisteredDocument | null;
   label?: string;
@@ -265,6 +270,7 @@ function DocumentDetail({
   canVoidDocument?: boolean;
   canReissueDocument?: boolean;
   onRefresh: () => Promise<void> | void;
+  onOpenMatter?: (matterId: number) => void;
   onVoided?: () => Promise<void> | void;
   onReissued?: (newId: number) => Promise<void> | void;
   onSelectVersion?: (id: number) => void;
@@ -294,6 +300,9 @@ function DocumentDetail({
       <dt>受付番号</dt><dd>{document.issueKey}</dd>
       <dt>作成日時</dt><dd>{formatDate(document.createdAt)}</dd>
       <dt>作成者</dt><dd>{document.createdBy ?? "—"}</dd>
+      <dt>案件</dt><dd>{document.matterId != null && onOpenMatter
+        ? <button type="button" className="link-button" onClick={() => onOpenMatter(document.matterId!)}>案件を開く（送付記録へ）</button>
+        : document.matterId != null ? `#${document.matterId}` : "未紐付け（案件詳細から紐付け可能）"}</dd>
     </dl>
     {isVoided && <div className="void-banner">この文書は無効化（void）済みです。紐づく実績は取消されています。</div>}
     {!isVoided && <DocumentOutputActions

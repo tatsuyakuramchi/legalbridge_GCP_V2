@@ -57,9 +57,10 @@ function formatDate(value: string | null) {
   return new Intl.DateTimeFormat("ja-JP", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(value));
 }
 
-export function ConditionLinesWorkspace({ onOpenDocument, onCreateDocument, onNavigate, canRepair = false, initialSelectedId = null }:
+export function ConditionLinesWorkspace({ onOpenDocument, onCreateDocument, onNavigate, canRepair = false, initialSelectedId = null, onRecordReceipt }:
   { onOpenDocument?: (documentId: number) => void; onCreateDocument?: (issueKey: string | null) => void;
-    onNavigate?: (target: string) => void; canRepair?: boolean; initialSelectedId?: number | null }) {
+    onNavigate?: (target: string) => void; canRepair?: boolean; initialSelectedId?: number | null;
+    onRecordReceipt?: (conditionLineId: number) => void }) {
   const [tab, setTab] = useState<"search" | "inspections">("search");
   return <section className="page">
     <div className="page-title"><div><p>CONDITION LINES</p><h1>条件明細</h1>
@@ -75,7 +76,7 @@ export function ConditionLinesWorkspace({ onOpenDocument, onCreateDocument, onNa
     </div>
     {tab === "inspections"
       ? <PendingInspections onOpenDocument={onOpenDocument} onCreateDocument={onCreateDocument} />
-      : <ConditionSearch onOpenDocument={onOpenDocument} canRepair={canRepair} initialSelectedId={initialSelectedId} />}
+      : <ConditionSearch onOpenDocument={onOpenDocument} canRepair={canRepair} initialSelectedId={initialSelectedId} onRecordReceipt={onRecordReceipt} />}
   </section>;
 }
 
@@ -109,7 +110,7 @@ const transactionKindLabels: Record<string, string> = {
   license: "ライセンス", product: "商品取引"
 };
 
-function ConditionSearch({ onOpenDocument, canRepair = false, initialSelectedId = null }: { onOpenDocument?: (documentId: number) => void; canRepair?: boolean; initialSelectedId?: number | null }) {
+function ConditionSearch({ onOpenDocument, canRepair = false, initialSelectedId = null, onRecordReceipt }: { onOpenDocument?: (documentId: number) => void; canRepair?: boolean; initialSelectedId?: number | null; onRecordReceipt?: (conditionLineId: number) => void }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<DirFilter>("all");
   const [selectedId, setSelectedId] = useState<number | null>(initialSelectedId);
@@ -153,7 +154,7 @@ function ConditionSearch({ onOpenDocument, canRepair = false, initialSelectedId 
   const visible = rows.filter((r) => filter === "all" || r.direction === filter);
 
   if (selectedId) {
-    return <ConditionDetail id={selectedId} onBack={() => setSelectedId(null)} onOpenDocument={onOpenDocument} canRepair={canRepair} />;
+    return <ConditionDetail id={selectedId} onBack={() => setSelectedId(null)} onOpenDocument={onOpenDocument} canRepair={canRepair} onRecordReceipt={onRecordReceipt} />;
   }
 
   return <>
@@ -203,8 +204,9 @@ function ConditionSearch({ onOpenDocument, canRepair = false, initialSelectedId 
   </>;
 }
 
-function ConditionDetail({ id, onBack, onOpenDocument, canRepair = false }:
-  { id: number; onBack: () => void; onOpenDocument?: (documentId: number) => void; canRepair?: boolean }) {
+function ConditionDetail({ id, onBack, onOpenDocument, canRepair = false, onRecordReceipt }:
+  { id: number; onBack: () => void; onOpenDocument?: (documentId: number) => void; canRepair?: boolean;
+    onRecordReceipt?: (conditionLineId: number) => void }) {
   const [detail, setDetail] = useState<ConditionDetailData | null>(null);
   const [error, setError] = useState("");
   const [repairOpen, setRepairOpen] = useState(false);
@@ -245,8 +247,10 @@ function ConditionDetail({ id, onBack, onOpenDocument, canRepair = false }:
     {detail && <div className="panel condition-detail">
       <div className="matter-detail-head">
         <div><span className="detail-kicker">CONDITION DETAIL</span><h2>{detail.conditionName || "（無題の条件）"}</h2></div>
+        {detail.direction === "receivable" && onRecordReceipt &&
+          <button className="primary" onClick={() => onRecordReceipt(detail.id)}>受領を記録</button>}
         {detail.documentId && onOpenDocument &&
-          <button className="primary" onClick={() => onOpenDocument(detail.documentId!)}>文書を開く</button>}
+          <button onClick={() => onOpenDocument(detail.documentId!)}>文書を開く</button>}
       </div>
       <div className="matter-summary">
         <span className={`cond-dir ${detail.direction ?? ""}`}>{directionLabels[detail.direction ?? ""] ?? "—"}</span>

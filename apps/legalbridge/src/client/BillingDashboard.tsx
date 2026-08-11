@@ -9,6 +9,7 @@ import type { ExportColumn } from "./export-util";
 
 type Row = {
   id: number;
+  conditionLineId: number;
   period: string | null;
   workCode: string | null;
   workTitle: string | null;
@@ -47,7 +48,7 @@ const billingExportColumns: ExportColumn<Row>[] = [
   { header: "分配", value: (r) => (r.distributed ? "済" : "—") }
 ];
 
-export function BillingDashboard({ canRecord = false }: { canRecord?: boolean }) {
+export function BillingDashboard({ canRecord = false, initialConditionLineId = null }: { canRecord?: boolean; initialConditionLineId?: number | null }) {
   const [rows, setRows] = useState<Row[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [query, setQuery] = useState("");
@@ -57,7 +58,10 @@ export function BillingDashboard({ canRecord = false }: { canRecord?: boolean })
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
-  const [showForm, setShowForm] = useState(false);
+  const [showForm, setShowForm] = useState(initialConditionLineId != null);
+  // 条件明細詳細の「受領を記録」／一覧行の「この条件で記録」から条件行IDを引き継ぐ
+  // （従来は別画面で見た数値IDの手入力が必須だった・監査F1/F2）。
+  const [seedConditionLineId, setSeedConditionLineId] = useState<number | null>(initialConditionLineId);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -105,7 +109,8 @@ export function BillingDashboard({ canRecord = false }: { canRecord?: boolean })
       </div>
 
       {canRecord && showForm && (
-        <ReceiptForm onSaved={() => { setShowForm(false); setReloadKey((k) => k + 1); }} />
+        <ReceiptForm key={seedConditionLineId ?? "blank"} initialConditionLineId={seedConditionLineId}
+          onSaved={() => { setShowForm(false); setSeedConditionLineId(null); setReloadKey((k) => k + 1); }} />
       )}
 
       <div className="billing-kpis">
@@ -116,7 +121,7 @@ export function BillingDashboard({ canRecord = false }: { canRecord?: boolean })
 
       <div className="billing-toolbar">
         <input aria-label="作品・相手方で検索" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="作品名・作品コード・相手方で検索" />
-        <input aria-label="期間" value={period} onChange={(e) => setPeriod(e.target.value)} placeholder="期間 YYYY-MM" />
+        <input aria-label="期間" type="month" value={period} onChange={(e) => setPeriod(e.target.value)} title="期間で絞り込み" />
         <button className={unreceived ? "active" : ""} onClick={() => setUnreceived((v) => !v)}>未受領のみ</button>
         <button className={undistributed ? "active" : ""} onClick={() => setUndistributed((v) => !v)}>未分配のみ</button>
         <span>{summary?.count ?? 0}件{summary?.truncated ? "（上限）" : ""}</span>
@@ -129,7 +134,7 @@ export function BillingDashboard({ canRecord = false }: { canRecord?: boolean })
           <table className="billing-table">
             <thead><tr>
               <th>期間</th><th>作品</th><th>再許諾先</th><th>報告売上</th>
-              <th>受領再許諾料</th><th>実受領</th><th>ライセンサー</th><th>分配</th>
+              <th>受領再許諾料</th><th>実受領</th><th>ライセンサー</th><th>分配</th>{canRecord && <th></th>}
             </tr></thead>
             <tbody>
               {rows.map((r) => (
@@ -142,6 +147,8 @@ export function BillingDashboard({ canRecord = false }: { canRecord?: boolean })
                   <td className={r.received ? "" : "billing-pending"}>{r.received ? yen(r.receivedAmount) : "未受領"}</td>
                   <td>{r.hasParentLicense ? "" : <span className="billing-unlinked">未リンク</span>}</td>
                   <td className={r.distributed ? "" : "billing-pending"}>{r.distributed ? yen(r.computedDistributionExTax) : "未分配"}</td>
+                  {canRecord && <td><button type="button" title="この条件行で別期間の受領を記録"
+                    onClick={() => { setSeedConditionLineId(r.conditionLineId); setShowForm(true); window.scrollTo({ top: 0, behavior: "smooth" }); }}>記録</button></td>}
                 </tr>
               ))}
             </tbody>
@@ -156,9 +163,9 @@ export function BillingDashboard({ canRecord = false }: { canRecord?: boolean })
 
 // 受領記録の登録フォーム。受領再許諾料はサーバが再計算するため、ここでは
 // 条件行・報告値・実受領などの入力のみを送る（確認トークンは自動付与）。
-function ReceiptForm({ onSaved }: { onSaved: () => void }) {
+function ReceiptForm({ onSaved, initialConditionLineId = null }: { onSaved: () => void; initialConditionLineId?: number | null }) {
   const toast = useToast();
-  const [conditionLineId, setConditionLineId] = useState("");
+  const [conditionLineId, setConditionLineId] = useState(initialConditionLineId != null ? String(initialConditionLineId) : "");
   const [qtyBased, setQtyBased] = useState(false);
   const [period, setPeriod] = useState("");
   const [periodDate, setPeriodDate] = useState("");
@@ -221,7 +228,7 @@ function ReceiptForm({ onSaved }: { onSaved: () => void }) {
       </div>
       <div className="receipt-form-grid">
         <label><span>条件行ID<em>必須</em></span><input value={conditionLineId} onChange={(e) => setConditionLineId(e.target.value)} placeholder="例：123" /></label>
-        <label><span>期間</span><input value={period} onChange={(e) => setPeriod(e.target.value)} placeholder="YYYY-MM" /></label>
+        <label><span>期間</span><input type="month" value={period} onChange={(e) => setPeriod(e.target.value)} /></label>
         <label><span>期の代表日</span><input type="date" value={periodDate} onChange={(e) => setPeriodDate(e.target.value)} /></label>
         {qtyBased
           ? <label><span>報告数量</span><input type="number" value={reportedQuantity} onChange={(e) => setReportedQuantity(e.target.value)} /></label>

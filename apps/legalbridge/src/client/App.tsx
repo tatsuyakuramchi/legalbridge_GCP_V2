@@ -194,6 +194,7 @@ export function App() {
   const [mergeSourceSeed, setMergeSourceSeed] = useState("");
   const [drillWorkId, setDrillWorkId] = useState<number | null>(null);
   const [drillConditionId, setDrillConditionId] = useState<number | null>(null);
+  const [drillReceiptConditionId, setDrillReceiptConditionId] = useState<number | null>(null);
   // 条件明細→台帳（金銭条件）/ 作品ビュー→台帳（作品）へのクロスリンクで開くタブを指定（R2/R3）。
   const [ledgerSeedType, setLedgerSeedType] = useState<"conditions" | "works" | undefined>(undefined);
   const [canMergeMatters, setCanMergeMatters] = useState(false);
@@ -419,7 +420,7 @@ export function App() {
         )}
         {view === "outbound" && <OutboundConditionWorkspace onNavigate={(t) => setView(t as View)} />}
         {view === "royalty-preview" && <RoyaltyPreview />}
-        {view === "billing" && <BillingDashboard canRecord={canRecordReceipt} />}
+        {view === "billing" && <BillingDashboard key={drillReceiptConditionId ?? "billing"} canRecord={canRecordReceipt} initialConditionLineId={drillReceiptConditionId} />}
         {view === "works" && <WorkDetail key={drillWorkId ?? "works"} initialWorkId={drillWorkId} canEdit={canEditWorks} canEditRights={canEditRightsSources} canEditMaterials={canEditMaterials}
           onNavigate={(t) => { if (t === "ledgers-works") { setLedgerSeedType("works"); setView("ledgers"); } else setView(t as View); }} />}
         {view === "data-quality" && <DataQuality onNavigate={(v, id) => {
@@ -446,6 +447,7 @@ export function App() {
         {view === "contract-master" && legalWorkspace && <ContractMasterWorkspace canEdit={canEditContractMaster} canIntake={adminWorkspace} onNavigate={(t) => setView(t as View)} />}
         {view === "conditions" && <ConditionLinesWorkspace
           key={drillConditionId ?? "conditions"} initialSelectedId={drillConditionId}
+          onRecordReceipt={canRecordReceipt ? (conditionLineId) => { setDrillReceiptConditionId(conditionLineId); setView("billing"); } : undefined}
           canRepair={canRepairConditions}
           onOpenDocument={(id) => {
             setSearchSelection({ target: "document", id: String(id), title: "" });
@@ -471,6 +473,7 @@ export function App() {
             canVoidDocument={canVoidDocument}
             canReissueDocument={canReissueDocument}
             initialQuery={deepLinkIssue}
+            onOpenMatter={(matterId) => { setSearchSelection({ target: "matter", id: String(matterId), title: "" }); setView("matters"); }}
             selectedId={searchSelection?.target === "document" ? Number(searchSelection.id) : undefined} />
         )}
         {view === "templates" && (
