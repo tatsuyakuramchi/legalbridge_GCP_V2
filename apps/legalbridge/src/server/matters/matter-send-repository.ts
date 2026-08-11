@@ -4,7 +4,7 @@ import { MatterWriteError } from "./write-repository.js";
 // 案件の文書送信履歴（document_sends・append専用）。grant 027 で SELECT/INSERT。
 // email/slack/drive/manual のチャネル別に送信実績を1行ずつ残す。
 
-export const SEND_CHANNELS = ["email", "slack", "drive", "manual"] as const;
+export const SEND_CHANNELS = ["email", "slack", "drive", "cloudsign", "manual"] as const;
 export type SendChannel = typeof SEND_CHANNELS[number];
 export const SEND_STATUSES = ["sent", "failed", "queued"] as const;
 export type SendStatus = typeof SEND_STATUSES[number];

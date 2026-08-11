@@ -73,9 +73,10 @@ function matchesFilter(matter: Matter, filter: FilterKey, today: string) {
   }
 }
 
-export function MatterRegistry({ templates, selectedId, canEdit = false, canDelete = false, canUploadAttachments = false, onCreateDocument }:
+export function MatterRegistry({ templates, selectedId, canEdit = false, canDelete = false, canUploadAttachments = false, onCreateDocument, onOpenDocument }:
   { templates: DocumentFormSchema[]; selectedId?: number; canEdit?: boolean; canDelete?: boolean;
-    canUploadAttachments?: boolean; onCreateDocument?: (issueKey: string | null) => void }) {
+    canUploadAttachments?: boolean; onCreateDocument?: (issueKey: string | null) => void;
+    onOpenDocument?: (documentId: number) => void }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FilterKey>("all");
   const [matters, setMatters] = useState<Matter[]>([]);
@@ -180,14 +181,14 @@ export function MatterRegistry({ templates, selectedId, canEdit = false, canDele
             canUploadAttachments={canUploadAttachments}
             onCreateDocument={onCreateDocument}
             onChanged={() => refreshAll(detail?.matter.id)}
-            onDeleted={() => { setDetail(null); setReload((v) => v + 1); }} />}
+            onDeleted={() => { setDetail(null); setReload((v) => v + 1); }}  onOpenDocument={onOpenDocument} />}
     </div>
   </section>;
 }
 
-function MatterDetail({ detail, labels, canEdit, canDelete = false, canUploadAttachments = false, onChanged, onDeleted, onCreateDocument }:
+function MatterDetail({ detail, labels, canEdit, canDelete = false, canUploadAttachments = false, onChanged, onDeleted, onCreateDocument, onOpenDocument }:
   { detail: Detail | null; labels: Map<string, string>; canEdit: boolean; canDelete?: boolean; canUploadAttachments?: boolean;
-    onChanged: () => void; onDeleted?: () => void; onCreateDocument?: (issueKey: string | null) => void }) {
+    onChanged: () => void; onDeleted?: () => void; onCreateDocument?: (issueKey: string | null) => void; onOpenDocument?: (documentId: number) => void }) {
   const [editing, setEditing] = useState(false);
   const [addingTask, setAddingTask] = useState(false);
   useEffect(() => { setEditing(false); setAddingTask(false); }, [detail?.matter.id]);
@@ -226,7 +227,7 @@ function MatterDetail({ detail, labels, canEdit, canDelete = false, canUploadAtt
         canEdit={canEdit} canDelete={canDelete} onChanged={onChanged} />)}
     </DetailSection>
     <DetailSection title={`関連文書 ${detail.documents.length}`}>
-      <MatterDocumentLinks matterId={matter.id} documents={detail.documents} labels={labels} canEdit={canEdit} onChanged={onChanged} />
+      <MatterDocumentLinks matterId={matter.id} documents={detail.documents} labels={labels} canEdit={canEdit} onChanged={onChanged} onOpenDocument={onOpenDocument} />
       {canUploadAttachments && <MatterAttachmentUpload matterId={matter.id} onUploaded={onChanged} />}
     </DetailSection>
     <DetailSection title="送信履歴"><MatterSends matterId={matter.id} documents={detail.documents} canEdit={canEdit} /></DetailSection>
@@ -462,8 +463,8 @@ function MatterSends({ matterId, documents, canEdit }:
 
 type DocHit = { id: number; documentNumber: string | null; templateType: string; issueKey: string };
 
-function MatterDocumentLinks({ matterId, documents, labels, canEdit, onChanged }:
-  { matterId: number; documents: Detail["documents"]; labels: Map<string, string>; canEdit: boolean; onChanged: () => void }) {
+function MatterDocumentLinks({ matterId, documents, labels, canEdit, onChanged, onOpenDocument }:
+  { matterId: number; documents: Detail["documents"]; labels: Map<string, string>; canEdit: boolean; onChanged: () => void; onOpenDocument?: (documentId: number) => void }) {
   const toast = useToast();
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<DocHit[]>([]);
@@ -502,7 +503,10 @@ function MatterDocumentLinks({ matterId, documents, labels, canEdit, onChanged }
   }
   return <>
     {documents.map((document) => <article key={document.id}>
-      <b>{document.documentNumber ?? "未発番"}</b>
+      <b>{onOpenDocument
+        ? <button type="button" className="link-button" title="文書詳細を開く（メール・CloudSign送信へ）"
+            onClick={() => onOpenDocument(document.id)}>{document.documentNumber ?? "未発番"}</button>
+        : (document.documentNumber ?? "未発番")}</b>
       <span>{labels.get(document.templateType) ?? document.templateType}</span>
       <small>{document.issueKey}・{formatDate(document.createdAt)}</small>
       {document.driveLink && <a href={document.driveLink} target="_blank" rel="noreferrer">開く</a>}

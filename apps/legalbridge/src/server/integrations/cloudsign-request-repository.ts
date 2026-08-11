@@ -35,6 +35,8 @@ export interface CloudSignRequestRepository {
   list(): Promise<CloudSignRequestRecord[]>;
   // 未確定（terminal でない）依頼を古い順に取得（一括ステータス同期 9-6）。
   listPending(limit?: number): Promise<CloudSignRequestRecord[]>;
+  // 文書単位の署名依頼履歴（送信・署名履歴パネル用・W3）。
+  listByDocument(documentId: number): Promise<CloudSignRequestRecord[]>;
 }
 
 // 終端状態（これ以上照会不要）。9-6 の同期対象から除外する。
@@ -97,6 +99,16 @@ export class PgCloudSignRequestRepository implements CloudSignRequestRepository 
     return result.rows.map(mapRow);
   }
 
+  async listByDocument(documentId: number) {
+    const result = await this.database.query(
+      `SELECT ${COLUMNS} FROM lb_v2_cloudsign_requests
+        WHERE document_id = $1
+        ORDER BY recorded_at DESC, id DESC LIMIT 50`,
+      [documentId]
+    );
+    return result.rows.map(mapRow);
+  }
+
   async listPending(limit = 100) {
     const result = await this.database.query(
       `SELECT ${COLUMNS} FROM lb_v2_cloudsign_requests
@@ -136,6 +148,10 @@ export class MemoryCloudSignRequestRepository implements CloudSignRequestReposit
     if (!record) return null;
     record.status = status;
     return record;
+  }
+
+  async listByDocument(documentId: number) {
+    return this.records.filter((r) => r.documentId === documentId);
   }
 
   async list() {

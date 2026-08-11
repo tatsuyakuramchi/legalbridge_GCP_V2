@@ -8,6 +8,7 @@ import {
   evaluateGmailDispatchGate, type GmailDispatchGateSettings
 } from "../integrations/gmail-dispatch-gate.js";
 import type { GmailSendHistoryRepository } from "../integrations/gmail-send-history-repository.js";
+import type { MatterSendRepository } from "../matters/matter-send-repository.js";
 
 const idPath = z.object({ id: z.coerce.number().int().positive() });
 const bodySchema = z.object({ to: z.string().trim().min(1, "宛先が必要です").max(255) });
@@ -38,7 +39,8 @@ export function createGmailNotificationRouter(
   documents: DocumentRegistryRepository | undefined,
   gmail: GmailDeliveryAdapter | undefined,
   gateSettings: GmailDispatchGateSettings,
-  sendHistory?: GmailSendHistoryRepository
+  sendHistory?: GmailSendHistoryRepository,
+  matterSends?: MatterSendRepository
 ) {
   const router = Router();
 
@@ -46,10 +48,19 @@ export function createGmailNotificationRouter(
     const document = await documents!.find(id);
     if (!document) return null;
     const content = buildFinalizeNotification(document, to);
-    const gate = evaluateGmailDispatchGate(
+    let gate = evaluateGmailDispatchGate(
       { to: content.to, subject: content.subject, bodyText: content.bodyText },
       gateSettings
     );
+    // 文書リンクなしの「確定のお知らせ」を送れてしまう問題（監査W3 A2.9）：
+    // Drive 保存前は本文に文書URLが入らないため、送信をブロックして理由を返す。
+    if (!document.driveLink) {
+      gate = {
+        ...gate,
+        dispatchAllowed: false,
+        blockerLabels: [...gate.blockerLabels, "文書がまだDriveに保存されていません（先に「Driveへ保存」を実行してください。メール本文に文書URLが入りません）"]
+      };
+    }
     return { document, content, gate };
   }
 
@@ -115,6 +126,16 @@ export function createGmailNotificationRouter(
           threadId: receipt.threadId,
           recordedBy: response.locals.currentUser?.email ?? "unknown"
         });
+      }
+      // 案件の送信履歴へ自動記録（手動での二重記帳を廃止・監査W3 A3.7）。失敗しても送信自体は成功扱い。
+      if (matterSends && loaded.document.matterId != null) {
+        try {
+          await matterSends.record(loaded.document.matterId, {
+            documentId: loaded.document.id, channel: "email", recipient: loaded.content.to,
+            status: "sent", subject: loaded.content.subject,
+            messageId: receipt.messageId, sentBy: response.locals.currentUser?.email ?? null
+          });
+        } catch { /* 台帳未整備でも送信は成立している */ }
       }
       return response.status(201).json({ receipt, integrations: { gmail: "sent" } });
     } catch (error) {

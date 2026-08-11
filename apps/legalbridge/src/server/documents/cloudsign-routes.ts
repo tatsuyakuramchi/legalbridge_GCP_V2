@@ -43,6 +43,8 @@ export function createCloudSignRouter(
     // 静的 Set か、呼び出し時解決のプロバイダ（連携設定のランタイム反映）。
     allowedRecipients?: Set<string> | (() => Set<string>);
     requestHistory?: CloudSignRequestRepository;
+    // 案件の送信履歴への自動記録（W3・文書に matter_id がある場合のみ）。
+    matterSends?: import("../matters/matter-send-repository.js").MatterSendRepository;
   } = {}
 ) {
   const router = Router();
@@ -129,6 +131,17 @@ export function createCloudSignRouter(
           participantCount: participants.length,
           recordedBy: response.locals.currentUser?.email ?? "unknown"
         });
+      }
+      if (options.matterSends && document.matterId != null) {
+        try {
+          await options.matterSends.record(document.matterId, {
+            documentId: document.id, channel: "cloudsign",
+            recipient: participants.map((p) => p.email).join(", "),
+            status: "sent", subject: title,
+            messageId: receipt.cloudSignDocumentId,
+            sentBy: response.locals.currentUser?.email ?? null
+          });
+        } catch { /* 台帳未整備でも依頼は成立している */ }
       }
       return response.status(201).json({ receipt, integrations: { cloudsign: "requested" } });
     } catch (error) {

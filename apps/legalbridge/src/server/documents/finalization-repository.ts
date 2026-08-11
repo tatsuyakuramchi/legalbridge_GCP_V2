@@ -22,6 +22,7 @@ export interface FinalizedDocument {
   templateVersionId: number;
   createdAt: string;
   createdBy: string | null;
+  matterId?: number | null;   // 受付番号→代表課題キーで自動解決した案件（W3・成功パネルの「案件を開く」用）
 }
 
 export interface DocumentFinalizationRepository {
@@ -59,7 +60,7 @@ export class PgDocumentFinalizationRepository implements DocumentFinalizationRep
          ) VALUES ($1, $2, $3, $4, $5::jsonb, '', now(), $6, $7, 'executed', $8, $9,
            (SELECT id FROM matters WHERE primary_issue_key = $2 ORDER BY id DESC LIMIT 1))
          RETURNING id, document_number, issue_key, template_type,
-                   template_version_id, created_at, created_by`,
+                   template_version_id, created_at, created_by, matter_id`,
         [
           documentNumber,
           input.issueKey,
@@ -200,7 +201,8 @@ function mapFinalizedDocument(row: Record<string, unknown>): FinalizedDocument {
     templateType: String(row.template_type),
     templateVersionId: Number(row.template_version_id),
     createdAt: new Date(String(row.created_at)).toISOString(),
-    createdBy: row.created_by ? String(row.created_by) : null
+    createdBy: row.created_by ? String(row.created_by) : null,
+    matterId: row.matter_id == null ? null : Number(row.matter_id)
   };
 }
 

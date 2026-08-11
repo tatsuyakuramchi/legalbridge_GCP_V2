@@ -20,11 +20,20 @@ export interface GmailSendHistoryRecord {
   recordedAt: string;
 }
 
+export interface GmailSendHistoryDocumentRow {
+  recipient: string;
+  messageId: string;
+  recordedAt: string;
+  recordedBy: string | null;
+}
+
 export interface GmailSendHistoryRepository {
   // 既に送信済みなら受領情報を返す（未送信は null）。
   findByKey(idempotencyKey: string): Promise<GmailSendHistoryRecord | null>;
   // 送信成功を記録する。既存キーは ON CONFLICT DO NOTHING（多重記録しない）。
   record(entry: GmailSendHistoryEntry): Promise<void>;
+  // 文書単位の送信履歴（送信・署名履歴パネル用・W3）。
+  listByDocument(documentId: number): Promise<GmailSendHistoryDocumentRow[]>;
 }
 
 export class PgGmailSendHistoryRepository implements GmailSendHistoryRepository {
@@ -48,6 +57,23 @@ export class PgGmailSendHistoryRepository implements GmailSendHistoryRepository 
     };
   }
 
+  async listByDocument(documentId: number) {
+    const result = await this.database.query(
+      `SELECT recipient, gmail_message_id, recorded_at, recorded_by
+         FROM lb_v2_gmail_send_history
+        WHERE document_id = $1
+        ORDER BY recorded_at DESC
+        LIMIT 50`,
+      [documentId]
+    );
+    return result.rows.map((row) => ({
+      recipient: String(row.recipient ?? ""),
+      messageId: String(row.gmail_message_id ?? ""),
+      recordedAt: new Date(row.recorded_at).toISOString(),
+      recordedBy: row.recorded_by ?? null
+    }));
+  }
+
   async record(entry: GmailSendHistoryEntry) {
     await this.database.query(
       `INSERT INTO lb_v2_gmail_send_history (
@@ -67,7 +93,10 @@ export class PgGmailSendHistoryRepository implements GmailSendHistoryRepository 
 }
 
 export class MemoryGmailSendHistoryRepository implements GmailSendHistoryRepository {
-  constructor(private readonly records: GmailSendHistoryRecord[] = []) {}
+  constructor(
+    private readonly records: GmailSendHistoryRecord[] = [],
+    private readonly entries: GmailSendHistoryEntry[] = []
+  ) {}
 
   async findByKey(idempotencyKey: string) {
     return this.records.find((r) => r.idempotencyKey === idempotencyKey) ?? null;
@@ -75,11 +104,21 @@ export class MemoryGmailSendHistoryRepository implements GmailSendHistoryReposit
 
   async record(entry: GmailSendHistoryEntry) {
     if (this.records.some((r) => r.idempotencyKey === entry.idempotencyKey)) return;
+    this.entries.push(entry);
     this.records.push({
       idempotencyKey: entry.idempotencyKey,
       messageId: entry.messageId,
       threadId: entry.threadId,
       recordedAt: new Date().toISOString()
     });
+  }
+
+  async listByDocument(documentId: number) {
+    return this.entries
+      .filter((entry) => entry.documentId === documentId)
+      .map((entry) => ({
+        recipient: entry.recipient, messageId: entry.messageId,
+        recordedAt: new Date().toISOString(), recordedBy: entry.recordedBy
+      }));
   }
 }

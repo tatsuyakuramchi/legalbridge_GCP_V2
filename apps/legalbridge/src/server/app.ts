@@ -268,6 +268,7 @@ import {
   GmailApiDeliveryAdapter
 } from "./integrations/gmail-api-adapter.js";
 import { createGmailNotificationRouter } from "./documents/gmail-notification-routes.js";
+import { createSendHistoryRouter, PgRecipientSuggestionSource } from "./documents/send-history-routes.js";
 import {
   LocalCloudSignAdapter, parseAllowedRecipients, type CloudSignAdapter
 } from "./integrations/cloudsign-adapter.js";
@@ -1528,12 +1529,19 @@ export function createApp(
     }));
   }
   app.use("/api/v2", createDocumentImportRouter(dependencies.documentImports, documentFinalizeEnabled));
-  app.use("/api/v2", createGmailNotificationRouter(documentRegistry, gmailDeliveryAdapter, gmailGateSettings, dependencies.gmailSendHistory));
+  app.use("/api/v2", createGmailNotificationRouter(
+    documentRegistry, gmailDeliveryAdapter, gmailGateSettings,
+    dependencies.gmailSendHistory, dependencies.matterSends));
+  // 送信・署名履歴＋宛先候補（W3）。リロード後も送信済みかどうか文書詳細から確認できる読み口。
+  app.use("/api/v2", createSendHistoryRouter(
+    dependencies.gmailSendHistory, dependencies.cloudSignRequests,
+    getPool() ? new PgRecipientSuggestionSource(getPool()!) : undefined));
   app.use("/api/v2", createCloudSignRouter(
     documentRegistry, dependencies.templates, pdfRenderer, cloudSignAdapter, cloudSignGateSettings,
     {
       allowedRecipients: () => parseAllowedRecipients(rt().cloudSignAllowedRecipients),
-      requestHistory: dependencies.cloudSignRequests
+      requestHistory: dependencies.cloudSignRequests,
+      matterSends: dependencies.matterSends
     }));
   app.use("/api/v2", createGmailInboundRouter(gmailInboundAdapter, {
     enabled: gmailInboundEnabled,

@@ -310,7 +310,9 @@ export function App() {
     fetch("/api/v2/document-templates/compatibility-report").then((response) => response.ok ? response.json() : Promise.reject()).then(setCompatibility).catch(() => undefined);
   }, []);
 
+  const [formNonce, setFormNonce] = useState(0);
   async function openDocumentForm(templateKey: string) {
+    setFormNonce((v) => v + 1);
     const response = await fetch(
       `/api/v2/document-templates/${encodeURIComponent(templateKey)}/form-schema`
     );
@@ -394,6 +396,7 @@ export function App() {
                 onCreateDocument={() => { setNewDocIssueKey(""); setNewDocSeed({}); setView("templates"); }} />
         )}
         {view === "matters" && <MatterRegistry templates={templates}
+          onOpenDocument={(id) => { setSearchSelection({ target: "document", id: String(id), title: "" }); setView("documents"); }}
           canEdit={canEditMatters}
           canDelete={canDeleteMatters}
           canUploadAttachments={canUploadAttachments}
@@ -482,7 +485,7 @@ export function App() {
         )}
         {view === "document" && (
           <DocumentForm
-            key={`${schema?.templateKey ?? "loading"}:${draftSelection?.issueKey ?? "new"}`}
+            key={`${schema?.templateKey ?? "loading"}:${draftSelection?.issueKey ?? "new"}:${formNonce}`}
             schema={schema}
             readOnly={readOnly}
             canFinalizeDocuments={canFinalizeDocuments}
@@ -495,6 +498,7 @@ export function App() {
             onBack={() => setView(draftSelection ? "drafts" : "templates")}
             onCreateNew={() => setView("templates")}
             onOpenDocuments={() => setView("documents")}
+            onOpenMatter={(matterId) => { setSearchSelection({ target: "matter", id: String(matterId), title: "" }); setView("matters"); }}
           />
         )}
       </main>
@@ -751,7 +755,8 @@ function DocumentForm({
   seedValues,
   onBack,
   onCreateNew,
-  onOpenDocuments
+  onOpenDocuments,
+  onOpenMatter
 }: {
   schema: DocumentFormSchema | null;
   readOnly: boolean;
@@ -765,6 +770,7 @@ function DocumentForm({
   onBack: () => void;
   onCreateNew?: () => void;
   onOpenDocuments?: () => void;
+  onOpenMatter?: (matterId: number) => void;
 }) {
   const [issueKey, setIssueKey] = useState(initialIssueKey);
   // 受付番号はデバウンスして文脈取得する（従来は1キー入力ごとに再取得→フォーム全消去だった）。
@@ -778,6 +784,7 @@ function DocumentForm({
   const [finalizedDocument, setFinalizedDocument] = useState<{
     id: number;
     documentNumber: string;
+    matterId?: number | null;
     integrations: { pdf: string; drive: string; backlog: string };
   } | null>(null);
   const [draftStatus, setDraftStatus] = useState<
@@ -963,6 +970,7 @@ function DocumentForm({
       setFinalizedDocument({
         id: result.document.id,
         documentNumber: result.document.documentNumber,
+        matterId: result.document.matterId ?? null,
         integrations: result.integrations
       });
       setDraft(null);
@@ -1075,11 +1083,6 @@ function DocumentForm({
             <strong>{finalizedDocument.documentNumber}</strong>
             <small>文書ID: {finalizedDocument.id}</small>
           </div>
-          <dl>
-            <div><dt>PDF</dt><dd>{formatIntegrationStatus(finalizedDocument.integrations.pdf)}</dd></div>
-            <div><dt>Drive</dt><dd>{formatIntegrationStatus(finalizedDocument.integrations.drive)}</dd></div>
-            <div><dt>Backlog</dt><dd>{formatIntegrationStatus(finalizedDocument.integrations.backlog)}</dd></div>
-          </dl>
           <p>文書番号の発番とDB確定が完了しました。この画面から PDF 生成・Drive 保存・送信まで行えます。</p>
           <DocumentOutputActions
             documentId={finalizedDocument.id}
@@ -1091,6 +1094,8 @@ function DocumentForm({
           <div className="finalization-next">
             <span className="next-label">次の操作</span>
             {onCreateNew && <button className="primary" onClick={onCreateNew}>新しい文書を作成</button>}
+            {finalizedDocument.matterId != null && onOpenMatter &&
+              <button onClick={() => onOpenMatter(finalizedDocument.matterId!)}>案件を開く（送付記録へ）</button>}
             {onOpenDocuments && <button onClick={onOpenDocuments}>文書一覧へ</button>}
             <button onClick={onBack}>閉じる</button>
           </div>
@@ -1128,11 +1133,6 @@ function DocumentForm({
   );
 }
 
-function formatIntegrationStatus(value: string) {
-  if (value === "pending") return "未実行";
-  if (value === "disabled") return "停止";
-  return value;
-}
 
 function formatDraftTime(value: string) {
   const date = new Date(value);
