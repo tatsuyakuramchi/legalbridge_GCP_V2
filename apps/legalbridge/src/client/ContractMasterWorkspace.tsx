@@ -71,8 +71,8 @@ function toInt(v: string): number | null {
   return Number.isInteger(n) ? n : null;
 }
 
-export function ContractMasterWorkspace({ canEdit = false, onNavigate }: {
-  canEdit?: boolean; onNavigate?: (view: string) => void;
+export function ContractMasterWorkspace({ canEdit = false, canIntake = false, onNavigate }: {
+  canEdit?: boolean; canIntake?: boolean; onNavigate?: (view: string) => void;
 }) {
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [query, setQuery] = useState("");
@@ -88,14 +88,18 @@ export function ContractMasterWorkspace({ canEdit = false, onNavigate }: {
   const toast = useToast();
 
   useEffect(() => {
-    setLoading(true); setError("");
-    const q = query.trim() ? `?q=${encodeURIComponent(query.trim())}` : "";
-    fetch(`/api/v2/contracts${q}`)
-      .then((r) => r.ok ? r.json() : Promise.reject())
-      .then((d) => setContracts(d.contracts ?? []))
-      .catch(() => setError("契約マスタを取得できませんでした（管理者・法務のみ閲覧できます）。"))
-      .finally(() => setLoading(false));
-  }, [reload]);
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      setLoading(true); setError("");
+      const q = query.trim() ? `?q=${encodeURIComponent(query.trim())}` : "";
+      fetch(`/api/v2/contracts${q}`, { signal: controller.signal })
+        .then((r) => r.ok ? r.json() : Promise.reject())
+        .then((d) => setContracts(d.contracts ?? []))
+        .catch((cause) => { if ((cause as { name?: string })?.name !== "AbortError") setError("契約マスタを取得できませんでした（管理者・法務のみ閲覧できます）。"); })
+        .finally(() => setLoading(false));
+    }, 250);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [query, reload]);
 
   function startEdit(c: Contract) { setEditingId(c.id); setDraft(toDraft(c)); }
   function cancel() { setEditingId(null); setDraft(null); }
@@ -150,7 +154,7 @@ export function ContractMasterWorkspace({ canEdit = false, onNavigate }: {
     </div>
     {onNavigate && <div className="surface-xref" role="navigation" aria-label="契約の関連画面">
       <span className="surface-xref-here">既存契約の編集（ここ）</span>
-      <button type="button" onClick={() => onNavigate("contract-intake")}>新規登録 → 契約取込</button>
+      {canIntake && <button type="button" onClick={() => onNavigate("contract-intake")}>新規登録 → 契約取込</button>}
     </div>}
     {!canEdit && <FeatureLockedNote>契約マスタの編集は未有効化です（管理者・法務権限＋有効化が必要）。閲覧のみ可能です。</FeatureLockedNote>}
 

@@ -75,7 +75,9 @@ export function OutboundConditionWorkspace({ onNavigate }: { onNavigate?: (targe
       }
       return next;
     });
-    setPreview(null);
+    // preview は破棄しない（破棄すると 保存 が無効化され「修正→再確認→保存」の無限ループになる・監査G2）。
+    // 保存時にサーバ側で再検証されるため、ここでは注記のみ。
+    setNotice((current) => current && !current.includes("変更") ? `${current}（変更あり・保存時に再検証されます）` : current);
   }
 
   function requestBody() {
@@ -96,6 +98,10 @@ export function OutboundConditionWorkspace({ onNavigate }: { onNavigate?: (targe
   }
 
   async function validate() {
+    if (!form.documentNumber.trim()) {
+      setNotice("根拠文書番号は必須です（実在する文書番号を入力してください）。");
+      return;
+    }
     setNotice("入力内容を確認しています");
     const response = await fetch("/api/v2/outbound-conditions/validate", {
       method: "POST",
@@ -134,7 +140,8 @@ export function OutboundConditionWorkspace({ onNavigate }: { onNavigate?: (targe
       setNotice(messages.join("／") || result.error || "アウト条件を保存できませんでした");
       return;
     }
-    setNotice(`アウト条件を保存しました（ID: ${result.condition.id}）。外部連携は実行されていません。`);
+    setPreview(null);   // 再押下による重複登録を防ぐ（再登録は再度「入力内容を確認」から）
+    setNotice(`アウト条件を保存しました（条件ID: ${result.condition.id}・条件明細画面で確認できます）。外部連携は実行されていません。`);
   }
 
   return <section className="page outbound-condition">
@@ -168,7 +175,7 @@ export function OutboundConditionWorkspace({ onNavigate }: { onNavigate?: (targe
         <label>自社作品<select value={form.workId} onChange={(e) => update("workId", e.target.value)}><option value="">選択してください</option>{works.map((item) => <option key={item.id} value={item.id}>{item.code} {item.title}</option>)}</select></label>
         <label>相手方<select value={form.counterpartyId} onChange={(e) => update("counterpartyId", e.target.value)}><option value="">選択してください</option>{vendors.map((item) => <option key={item.id} value={item.id}>{item.code} {item.title}</option>)}</select></label>
         <label>条件名<input value={form.conditionName} onChange={(e) => update("conditionName", e.target.value)} placeholder={license ? "例：英語版ライセンス条件" : "例：海外卸売条件"} /></label>
-        <label>根拠文書番号<input value={form.documentNumber} onChange={(e) => update("documentNumber", e.target.value)} placeholder="任意" /></label>
+        <label>根拠文書番号 <em>必須</em><input value={form.documentNumber} onChange={(e) => update("documentNumber", e.target.value)} placeholder="例：ARC-2026-0001（実在する文書番号）" /></label>
       </fieldset>
       <fieldset><legend>2. 権利範囲</legend>
         <label>対象地域<input value={form.territory} onChange={(e) => update("territory", e.target.value)} placeholder="例：全世界（日本を除く）" /></label>

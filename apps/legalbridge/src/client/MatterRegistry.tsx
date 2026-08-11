@@ -697,7 +697,7 @@ function MatterForm({ mode, matter, onCancel, onSaved }: {
       <label>目標期限<input type="date" value={values.targetDueDate ?? ""} onChange={(e) => set("targetDueDate", e.target.value)} /></label>
       <StaffSelect label="担当者" value={values.ownerStaffId} onChange={(v) => set("ownerStaffId", v)} />
     </div>
-    <label>停滞理由<input value={values.blockedReason} onChange={(e) => set("blockedReason", e.target.value)} /></label>
+    {mode === "edit" && <label>停滞理由<input value={values.blockedReason} onChange={(e) => set("blockedReason", e.target.value)} /></label>}
     <label>備考<textarea rows={3} value={values.remarks} onChange={(e) => set("remarks", e.target.value)} /></label>
     <div className="matter-form-actions">
       <button className="primary" disabled={saving} onClick={submit}>{saving ? "保存中…" : "保存"}</button>

@@ -171,7 +171,7 @@ const initialCondition = (
 ): ConditionInput => ({
   conditionName: transactionKind === "product" ? "製品化許諾条件" : "原作利用許諾条件",
   transactionKind,
-  materialIndex: "0",
+  materialIndex: "",
   territory: "",
   languages: "日本語",
   exclusivity: "non_exclusive",
@@ -906,7 +906,7 @@ function ConditionEditor({ value, title, materials, inbound, fixedTransactionKin
       <label>開始日<input type="date" value={value.termStart} onChange={(event) => onChange({ termStart: event.target.value })} /></label>
       <label>終了日<input type="date" value={value.termEnd} onChange={(event) => onChange({ termEnd: event.target.value })} /></label>
       <label>通貨<input value={value.currency} maxLength={3} onChange={(event) => onChange({ currency: event.target.value.toUpperCase() })} /></label>
-      <label>金額方式<select value={value.paymentScheme} onChange={(event) => onChange({ paymentScheme: event.target.value as ConditionInput["paymentScheme"], ratePct: "", amountExTax: "", mgAmount: "", advanceAmount: "" })}>
+      <label>金額方式<select value={value.paymentScheme} onChange={(event) => onChange({ paymentScheme: event.target.value as ConditionInput["paymentScheme"] })}>
         <option value="royalty">ロイヤリティ</option><option value="per_unit">単価</option><option value="lump_sum">一括金額</option><option value="installment">分割払い</option><option value="subscription">定額払い</option>
       </select></label>
       {value.paymentScheme === "royalty" ? <>

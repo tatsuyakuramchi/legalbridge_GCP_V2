@@ -22,7 +22,7 @@ export function StaffWorkspace({ canEdit = false }: { canEdit?: boolean }) {
   useEffect(() => {
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      setLoading(true); setError(""); setSelected(null); setCreating(false); setEditing(false); setImporting(false);
+      setLoading(true); setError("");   // 検索で編集中フォームを消さない（監査J1）
       fetch(`/api/v2/staff?${new URLSearchParams({ q: query })}`, { signal: controller.signal })
         .then((response) => response.ok ? response.json() : Promise.reject())
         .then((data) => setItems(data.items ?? []))

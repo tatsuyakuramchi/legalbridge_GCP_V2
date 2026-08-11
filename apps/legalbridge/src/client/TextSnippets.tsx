@@ -187,7 +187,7 @@ export function TextSnippets({ canEdit = false }: { canEdit?: boolean }) {
               title="小さいほど上に表示"
             />
           </div>
-          <textarea rows={4} value={body} onChange={(e) => setBody(e.target.value)} placeholder="本文を入力…" />
+          <textarea rows={10} value={body} onChange={(e) => setBody(e.target.value)} placeholder="本文を入力…" />
           <div className="snippet-editor-actions">
             {editingId !== null && <button onClick={resetForm}>キャンセル</button>}
             <button className="primary" onClick={() => void save()} disabled={saving || !title.trim()}>

@@ -1728,3 +1728,86 @@ button.danger:disabled { opacity: 0.5; cursor: not-allowed; }
 .cm-renewal-fields { display: flex; flex-wrap: wrap; gap: 6px; align-items: end; }
 .cm-renewal-fields label { display: grid; gap: 2px; font-size: 11px; color: var(--ink-faint); }
 .cm-renewal-fields input { width: 90px; }
+
+/* ===== W2 入力エルゴノミクス（2026-08-11 監査対応・全画面底上げ） =====
+   :where で特異性を消してあるため、各画面の既存指定は常に優先される。 */
+
+/* 1) 基本入力スタイル：未スタイルの生ブラウザ入力欄（設定・APIキー・契約マスタ行編集・
+      相手方補修・素材フォーム等）を底上げし、ラベルの 11〜12px を継承して入力文字まで
+      縮む問題を 14px 固定で解消する。 */
+input:where(:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"])) {
+  width: 100%; box-sizing: border-box; font-size: 14px;
+  padding: 8px 11px; border: 1px solid var(--border-strong);
+  border-radius: 8px; background: var(--surface); color: var(--ink-strong);
+}
+select, textarea {
+  box-sizing: border-box; font-size: 14px;
+  padding: 8px 11px; border: 1px solid var(--border-strong);
+  border-radius: 8px; background: var(--surface); color: var(--ink-strong);
+}
+select { width: 100%; }
+textarea { width: 100%; min-height: 90px; resize: vertical; line-height: 1.6; }
+
+/* 2) ヒント・注記（従来は一部画面のみ定義・他画面では素の本文と同化していた） */
+.hint, .muted-note { display: block; color: var(--ink-soft); font-size: 12px; line-height: 1.5; }
+
+/* 3) display:grid のラベルに flex-direction だけ指定され checkbox が縦積みになるバグ */
+.task-primary-toggle, .royalty-check { display: flex; align-items: center; }
+
+/* 4) 詳細ペインの拡幅（編集フォームのセルが 180〜194px に潰れていた） */
+.registry-layout { grid-template-columns: minmax(0, 1fr) minmax(380px, 32%); }
+.matter-layout { grid-template-columns: minmax(0, 1fr) minmax(430px, 38%); }
+.ledger-layout { grid-template-columns: minmax(0, 1fr) minmax(420px, 36%); }
+
+/* 5) ブレークポイント是正：サイドバー216px＋余白を無視していたため
+      1050〜1260px の実利用幅で横はみ出ししていた。早めに1カラムへ畳む。 */
+@media (max-width: 1280px) {
+  .form-layout { grid-template-columns: 160px 1fr; }
+  .preview { display: none; }
+}
+@media (max-width: 1340px) {
+  .registry-layout { grid-template-columns: 1fr; }
+  .registry-detail { position: static; max-height: none; }
+}
+@media (max-width: 1300px) {
+  .matter-layout { grid-template-columns: 1fr; }
+  .matter-detail { position: static; max-height: none; }
+  .ledger-layout { grid-template-columns: 1fr; }
+  .ledger-detail { position: static; max-height: none; }
+}
+
+/* 6) フォームグリッドを実幅追従に（固定2列・4列で1セル200px前後に潰れていた） */
+.field-grid { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.intake-fields { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+.outbound-form { grid-template-columns: 1fr; }
+.outbound-form fieldset { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.matter-form-grid { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+
+/* 7) テーブル：圧縮より横スクロール（相手方・権利者名が3行に折れていた） */
+.registry-table { overflow-x: auto; }
+.condition-table th { white-space: nowrap; }
+.table-scroll { overflow-x: auto; }
+.table-scroll table { min-width: 720px; }
+
+/* 8) ツールバー：文書一覧は5要素あるのに3トラックで2段目に落ちていた／案件は空トラック */
+.registry-toolbar { grid-template-columns: minmax(240px, 1fr) 200px 200px auto auto; align-items: center; }
+.matter-toolbar { grid-template-columns: minmax(300px, 1fr) auto; align-items: center; }
+.rmap-toolbar input { width: auto; flex: 1 1 320px; }
+
+/* 9) 画面別の詰まり解消 */
+.settings-form { max-width: 760px; }
+.doc-integration-grid { grid-template-columns: 1fr; }
+.snippet-editor-fields { grid-template-columns: minmax(180px, 220px) minmax(0, 1fr) 110px; }
+.snippet-editor textarea { min-height: 200px; }
+.condition-repair { max-width: 640px; }
+.cm-renewal-fields label { font-size: 12px; color: var(--ink-soft); }
+.cm-renewal-fields input { width: 110px; }
+.ledger-combobox input { min-height: 42px; }
+.matter-editor textarea, .wd-edit-grid textarea { min-height: 110px; }
+.matter-danger { display: grid; gap: 8px; border: 1px solid var(--danger, #d64545); border-radius: 10px; padding: 12px; }
+.ov-name { font-weight: 700; }
+.ov-amt { margin-left: auto; font-variant-numeric: tabular-nums; }
+
+/* 10) 長い編集フォームでも保存ボタンを見失わない（ネストスクロール対策） */
+.matter-form-actions, .wd-edit-actions { position: sticky; bottom: 0; background: var(--surface); padding-top: 8px; }
+.draft-cleanup-details summary { cursor: pointer; color: var(--ink-soft); font-size: 13px; padding: 6px 0; }

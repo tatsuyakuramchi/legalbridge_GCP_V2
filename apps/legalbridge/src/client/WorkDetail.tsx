@@ -368,7 +368,7 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
                   <SearchableLedgerSelect type="vendors" value={form.rightsHolderVendorId}
                     label="権利者（取引先）" placeholder="名前・コードで検索"
                     onChange={(value) => setForm({ ...form, rightsHolderVendorId: value })} />
-                  <label className="wd-wide">備考<textarea value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} rows={2} /></label>
+                  <label className="wd-wide">備考<textarea value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} rows={4} /></label>
                 </div>
                 {form.parentWorkId && detail.work.id === Number(form.parentWorkId) && <small className="hint">自身を親には設定できません。</small>}
                 <div className="wd-edit-actions">
@@ -441,14 +441,14 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
             {tab === "products" && (detail.lineage ? <>
               <small className="hint">この作品から生まれた製品（派生作品）と構成素材を集約表示します。※製品専用テーブルは未導入のため、派生作品・素材から代替表示しています。</small>
               <h4>製品（派生作品）</h4>
-              {detail.lineage.children.length ? <table>
+              {detail.lineage.children.length ? <div className="table-scroll"><table>
                 <thead><tr><th>コード</th><th>製品名</th><th>区分</th><th>ステータス</th><th></th></tr></thead>
                 <tbody>{detail.lineage.children.map((c) => <tr key={c.workId}>
                   <td>{c.workCode ?? "—"}</td><td>{c.title ?? `作品#${c.workId}`}</td>
                   <td>{kindLabel(c.kind ?? null)}</td><td>{c.status ?? "—"}</td>
                   <td><button onClick={() => setSelectedId(c.workId)}>開く</button></td>
                 </tr>)}</tbody>
-              </table> : <div className="empty-state">この作品を派生元とする製品（派生作品）はありません。</div>}
+              </table></div> : <div className="empty-state">この作品を派生元とする製品（派生作品）はありません。</div>}
               <h4>構成素材</h4>
               {detail.materials == null ? <Degraded /> : (
                 detail.materials.length
@@ -484,7 +484,7 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
                   <button disabled={matSaving} onClick={() => setMatForm(null)}>キャンセル</button>
                 </div>
               </div>}
-              {detail.materials.length ? <table>
+              {detail.materials.length ? <div className="table-scroll"><table>
                 <thead><tr><th>コード</th><th>素材名</th><th>種別</th><th>役割</th><th>取得</th><th>権利</th><th>権利者</th><th>ロイヤリティ</th>{canEditMaterials && <th></th>}</tr></thead>
                 <tbody>{detail.materials.map((m) => <tr key={m.id}>
                   <td>{m.materialCode ?? "—"}</td><td>{m.materialName ?? "—"}</td><td>{m.materialType ?? "—"}</td>
@@ -499,7 +499,7 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
                     rightsHolderLabel: m.rightsHolderLabel ?? "", isRoyaltyBearing: Boolean(m.isRoyaltyBearing), remarks: m.remarks ?? ""
                   }); }}>編集</button></td>}
                 </tr>)}</tbody>
-              </table> : <div className="empty-state">登録された素材はありません。{canEditMaterials && "「素材を追加」から登録できます。"}</div>}
+              </table></div> : <div className="empty-state">登録された素材はありません。{canEditMaterials && "「素材を追加」から登録できます。"}</div>}
             </> : <Degraded />)}
 
             {tab === "conditions" && (detail.conditions ? <>
@@ -509,7 +509,7 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
                 <span>サブライセンス {detail.conditions.totals.sublicenseCount}</span>
                 <span>作品レベル {detail.conditions.totals.workLevelCount}</span>
               </div>
-              {detail.conditions.totals.count ? <table>
+              {detail.conditions.totals.count ? <div className="table-scroll"><table>
                 <thead><tr><th>方向</th><th>条件名</th><th>素材</th><th>料率</th><th>金額</th><th>MG</th><th>サブL</th><th>文書</th></tr></thead>
                 <tbody>{[...detail.conditions.receivable, ...detail.conditions.payable].map((c) => <tr key={c.id}>
                   <td>{c.direction === "receivable" ? "受領" : c.direction === "payable" ? "支払" : "—"}</td>
@@ -517,7 +517,7 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
                   <td>{c.ratePct != null ? `${c.ratePct}%` : "—"}</td><td>{yen(c.amountExTax, c.currency)}</td><td>{yen(c.mgAmount, c.currency)}</td>
                   <td>{c.sublicenseAllowed || c.parentLicenseConditionId != null ? "○" : ""}</td><td>{c.documentNumber ?? "—"}</td>
                 </tr>)}</tbody>
-              </table> : <div className="empty-state">紐づく条件明細はありません。</div>}
+              </table></div> : <div className="empty-state">紐づく条件明細はありません。</div>}
             </> : <Degraded />)}
 
             {tab === "rights" && (detail.rightsSources ? (
@@ -555,7 +555,7 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
                     </div>
                   </div>
                 )}
-                {detail.rightsSources.length ? <table>
+                {detail.rightsSources.length ? <div className="table-scroll"><table>
                   <thead><tr><th>素材</th><th>ソース種別</th><th>ソース作品</th><th>権利者</th><th>役割</th><th>主</th><th>有効期間</th>{canEditRights && <th></th>}</tr></thead>
                   <tbody>{detail.rightsSources.map((r) => <tr key={r.id}>
                     <td>{r.materialName ?? "—"}</td><td>{r.sourceType ?? "—"}</td><td>{r.sourceWorkTitle ?? "—"}</td>
@@ -568,7 +568,7 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
                       sourceDocumentId: r.sourceDocumentId != null ? String(r.sourceDocumentId) : "", sourceContractId: r.sourceContractId != null ? String(r.sourceContractId) : ""
                     }); }}>編集</button></td>}
                   </tr>)}</tbody>
-                </table> : <div className="empty-state">登録された権利ソースはありません。</div>}
+                </table></div> : <div className="empty-state">登録された権利ソースはありません。</div>}
               </>
             ) : <Degraded />)}
 
@@ -583,13 +583,13 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
                 <h4>料率を持つ条件</h4>
                 {detail.conditions == null ? <Degraded /> : (
                   [...detail.conditions.receivable, ...detail.conditions.payable].filter((c) => c.ratePct != null).length
-                    ? <table>
+                    ? <div className="table-scroll"><table>
                       <thead><tr><th>方向</th><th>条件名</th><th>素材</th><th>料率</th><th>ロイヤリティ基礎</th></tr></thead>
                       <tbody>{[...detail.conditions.receivable, ...detail.conditions.payable].filter((c) => c.ratePct != null).map((c) => <tr key={c.id}>
                         <td>{c.direction === "receivable" ? "受領" : "支払"}</td><td>{c.conditionName ?? "—"}</td>
                         <td>{c.materialName ?? "作品レベル"}</td><td>{c.ratePct}%</td><td>{yen(c.amountExTax, c.currency)}</td>
                       </tr>)}</tbody>
-                    </table>
+                    </table></div>
                     : <div className="empty-state">料率を持つ条件はありません。</div>
                 )}
               </>
@@ -604,12 +604,12 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
                 <div className="wd-cond-summary">
                   <span>重大 {sum.high}</span><span>注意 {sum.medium}</span><span>軽微 {sum.low}</span><span>対象 {all.length}件</span>
                 </div>
-                {findings.length ? <table>
+                {findings.length ? <div className="table-scroll"><table>
                   <thead><tr><th>重大度</th><th>条件</th><th>指摘</th></tr></thead>
                   <tbody>{findings.map((f, i) => <tr key={`${f.conditionId}-${i}`}>
                     <td>{sevLabel[f.severity]}</td><td>{f.conditionName}</td><td>{f.message}</td>
                   </tr>)}</tbody>
-                </table> : <div className="empty-state">指摘はありません。条件は整合しています。</div>}
+                </table></div> : <div className="empty-state">指摘はありません。条件は整合しています。</div>}
               </>;
             })())}
           </>}

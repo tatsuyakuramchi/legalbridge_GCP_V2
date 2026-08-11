@@ -121,8 +121,10 @@ export function DraftWorkspace({
         <span>{loading ? "読込中" : `${drafts.length}件`}</span>
       </div>
 
+      <details className="draft-cleanup-details">
+      <summary>古い下書きの一括整理</summary>
       <div className="draft-cleanup">
-        <span>古い下書きの整理：更新から</span>
+        <span>更新から</span>
         <input aria-label="日数" value={staleDays} onChange={(e) => setStaleDays(e.target.value.replace(/[^\d]/g, ""))} inputMode="numeric" />
         <span>日以上</span>
         <button onClick={previewStale}>対象を確認</button>
@@ -132,6 +134,7 @@ export function DraftWorkspace({
         </>}
         {cleanupMsg && <em>{cleanupMsg}</em>}
       </div>
+      </details>
 
       {error && (
         <div className="async-error">
@@ -158,10 +161,10 @@ export function DraftWorkspace({
               <div><dt>文書番号</dt><dd>{draft.documentNumber ?? "確定前"}</dd></div>
             </dl>
             <div className="draft-list-actions">
-              <button onClick={() => removeDraft(draft)}>下書きを削除</button>
               <button className="primary" onClick={() => onResume(draft.issueKey, draft.templateType)}>
                 作業を再開
               </button>
+              <button onClick={() => removeDraft(draft)}>下書きを削除</button>
             </div>
           </article>
         ))}

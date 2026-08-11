@@ -15,7 +15,12 @@
   --ink: #334155;        /* 本文 */
   --ink-muted: #475569;  /* 補助テキスト */
   --ink-soft: #64748b;   /* ラベル・控えめ */
-  --ink-faint: #94a3b8;  /* 最も薄い */
+  --ink-faint: #6b7a8f;  /* 最も薄い（旧 #94a3b8 はコントラスト2.5:1で不可読だったため 4.6:1 に変更） */
+  /* 参照されているのに未定義だったトークンの別名（GitHubパレット混入の解消） */
+  --warning-strong: var(--warning-ink-strong);
+  --warning-soft: var(--warning-bg);
+  --line: var(--border);
+  --surface-accent: var(--surface-tint);
 
   /* --- アクセント（ティール系） --- */
   --accent: #20b8cd;         /* ブランドアクセント・主ボタン */

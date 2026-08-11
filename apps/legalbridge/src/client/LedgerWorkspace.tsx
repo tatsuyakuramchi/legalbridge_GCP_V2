@@ -24,11 +24,16 @@ export function LedgerWorkspace({ initialType, initialQuery, selectedId, canEdit
     if (initialType) setType(initialType);
     if (initialQuery !== undefined) setQuery(initialQuery);
   }, [initialType, initialQuery]);
+  // タブ（台帳種別）切替時のみ選択・編集状態をリセット。検索入力では消さない
+  // （入力中のフォームが検索のたびに消えていたバグ・監査J1）。
+  useEffect(() => {
+    setSelected(null); setCreating(false); setEditingVendorId(null);
+    setEditingWorkId(null); setEditingMaterialId(null); setImporting(false);
+  }, [type]);
   useEffect(() => {
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      setLoading(true); setSelected(null); setCreating(false); setEditingVendorId(null); setEditingWorkId(null); setEditingMaterialId(null); setImporting(false);
-      setError("");
+      setLoading(true); setError("");
       fetch(`/api/v2/ledgers/${type}?q=${encodeURIComponent(query)}&limit=200`, { signal: controller.signal })
         .then((response) => response.ok ? response.json() : Promise.reject())
         .then((data) => setItems(data.items ?? []))

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   DashboardSummary,
   DocumentDraft,
@@ -443,7 +443,7 @@ export function App() {
         {view === "excel-batch" && <ExcelBatchWorkspace canMark={canExcelBatch} />}
         {view === "settings" && adminWorkspace && <SettingsWorkspace canEdit={canEditSettings} />}
         {view === "workflow-rules" && adminWorkspace && <WorkflowRulesWorkspace canEdit={canEditWorkflowRules} />}
-        {view === "contract-master" && legalWorkspace && <ContractMasterWorkspace canEdit={canEditContractMaster} onNavigate={(t) => setView(t as View)} />}
+        {view === "contract-master" && legalWorkspace && <ContractMasterWorkspace canEdit={canEditContractMaster} canIntake={adminWorkspace} onNavigate={(t) => setView(t as View)} />}
         {view === "conditions" && <ConditionLinesWorkspace
           key={drillConditionId ?? "conditions"} initialSelectedId={drillConditionId}
           canRepair={canRepairConditions}
@@ -487,7 +487,7 @@ export function App() {
             canSaveToDrive={canSaveToDrive}
             canGmailNotify={canGmailNotify}
             canCloudSign={canCloudSign}
-            initialIssueKey={draftSelection?.issueKey ?? (newDocIssueKey || "VALIDATION-1")}
+            initialIssueKey={draftSelection?.issueKey ?? newDocIssueKey}
             seedValues={draftSelection ? undefined : newDocSeed}
             onBack={() => setView(draftSelection ? "drafts" : "templates")}
             onCreateNew={() => setView("templates")}
@@ -764,7 +764,11 @@ function DocumentForm({
   onOpenDocuments?: () => void;
 }) {
   const [issueKey, setIssueKey] = useState(initialIssueKey);
+  // 受付番号はデバウンスして文脈取得する（従来は1キー入力ごとに再取得→フォーム全消去だった）。
+  const [debouncedIssueKey, setDebouncedIssueKey] = useState(initialIssueKey);
   const [formData, setFormData] = useState<DocumentFormData>({});
+  // ユーザーが手入力した後は文脈再取得でフォームを上書きしない（非破壊マージ）。
+  const formDirtyRef = useRef(false);
   const [draft, setDraft] = useState<DocumentDraft | null>(null);
   const [notice, setNotice] = useState("");
   const [previewHtml, setPreviewHtml] = useState("");
@@ -778,14 +782,19 @@ function DocumentForm({
   >("loading");
 
   useEffect(() => {
-    if (!schema || !issueKey.trim()) return;
+    const timer = setTimeout(() => setDebouncedIssueKey(issueKey), 500);
+    return () => clearTimeout(timer);
+  }, [issueKey]);
+
+  useEffect(() => {
+    if (!schema || !debouncedIssueKey.trim()) return;
     const controller = new AbortController();
     setDraftStatus("loading");
     setNotice("");
     setFinalizedDocument(null);
 
     fetch(
-      `/api/v2/document-form-context?template_key=${encodeURIComponent(schema.templateKey)}&issue_key=${encodeURIComponent(issueKey.trim())}`,
+      `/api/v2/document-form-context?template_key=${encodeURIComponent(schema.templateKey)}&issue_key=${encodeURIComponent(debouncedIssueKey.trim())}`,
       { signal: controller.signal }
     )
       .then((response) =>
@@ -793,6 +802,17 @@ function DocumentForm({
       )
       .then((context) => {
         const restoredDraft = context.draft ?? null;
+        if (formDirtyRef.current) {
+          // 入力済みの値は保持し、空欄だけ文脈値で補完する（受付番号の後入力・修正でフォームが消えない）。
+          const incoming = restoredDraft ? (context.formData ?? {}) : seedFormData(context.formData ?? {}, seedValues ?? {});
+          setFormData((current) => ({ ...incoming, ...current }));
+          setDraft(restoredDraft);
+          setDraftStatus("dirty");
+          setNotice(restoredDraft
+            ? "この受付番号には下書きがあります。入力中の値を保持しました（復元は下書き一覧から）"
+            : "受付番号の文脈を反映しました（入力中の値は保持）");
+          return;
+        }
         // Backlog抽出変数を非破壊シード（下書き復元時は既存値優先で行わない）。
         setFormData(restoredDraft ? (context.formData ?? {}) : seedFormData(context.formData ?? {}, seedValues ?? {}));
         setDraft(restoredDraft);
@@ -810,7 +830,7 @@ function DocumentForm({
       });
 
     return () => controller.abort();
-  }, [schema, issueKey]);
+  }, [schema, debouncedIssueKey]);
 
   if (!schema) {
     return <section className="page"><h1>文書作成</h1><p>フォーム定義を読み込んでいます。</p></section>;
@@ -822,6 +842,7 @@ function DocumentForm({
 
   function updateValue(name: string, value: unknown) {
     if (finalizedDocument) return;
+    formDirtyRef.current = true;
     setFormData((current) => ({ ...current, [name]: value }));
     setDraftStatus("dirty");
     setNotice("未保存の変更があります");
@@ -1091,7 +1112,7 @@ function DocumentForm({
               setNotice(message);
             }} />
           {groups.map((group, index) => <section id={`group-${index}`} key={group}><h2>{group}</h2>
-            <div className="field-grid">{visibleFields.filter((field) => (field.group ?? "基本情報") === group).map((field) => <label key={field.name}><span>{field.label ?? field.name}{field.required && <em>必須</em>}</span>{field.type === "textarea" ? <textarea value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, event.target.value)} placeholder={field.placeholder} /> : field.type === "select" ? <select value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, event.target.value)}><option value="">選択してください</option>{field.options?.map((option) => <option key={option}>{option}</option>)}</select> : field.type === "boolean" ? <input type="checkbox" checked={Boolean(formData[field.name])} onChange={(event) => updateValue(field.name, event.target.checked)} /> : <input value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, field.type === "number" ? Number(event.target.value) : event.target.value)} type={field.type === "number" ? "number" : field.type === "date" ? "date" : "text"} placeholder={field.placeholder} />}{field.helpText && <small>{field.helpText}</small>}</label>)}</div>
+            <div className="field-grid">{visibleFields.filter((field) => (field.group ?? "基本情報") === group).map((field) => <label key={field.name}><span>{field.label ?? field.name}{field.required && <em>必須</em>}</span>{field.type === "textarea" ? <textarea value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, event.target.value)} placeholder={field.placeholder} /> : field.type === "select" ? <select value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, event.target.value)}><option value="">選択してください</option>{field.options?.map((option) => <option key={option}>{option}</option>)}</select> : field.type === "boolean" ? <input type="checkbox" checked={Boolean(formData[field.name])} onChange={(event) => updateValue(field.name, event.target.checked)} /> : <input value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, field.type === "number" ? (event.target.value === "" ? "" : Number(event.target.value)) : event.target.value)} type={field.type === "number" ? "number" : field.type === "date" ? "date" : "text"} placeholder={field.placeholder} />}{field.helpText && <small>{field.helpText}</small>}</label>)}</div>
           </section>)}
           {schema.templateKey === "individual_license_terms_v3" && (
             <IndividualLicenseV3Form formData={formData} onChange={updateValue} />
