@@ -1201,7 +1201,8 @@ export function createApp(
     if (documentReissueEnabled && isDocumentReissue) return next();
     const isExcelBatchMark = request.method === "POST" && request.path === "/documents/excel-batches/mark";
     if (excelBatchEnabled && isExcelBatchMark) return next();
-    const isSettingsWrite = request.method === "POST" && request.path === "/settings";
+    const isSettingsWrite = request.method === "POST" &&
+      (request.path === "/settings" || request.path === "/settings/secrets");
     if (appSettingsWriteEnabled && isSettingsWrite) return next();
     const isWorkflowRulesWrite = request.method === "POST" && request.path === "/workflow-rules";
     if (workflowRulesWriteEnabled && isWorkflowRulesWrite) return next();

@@ -22,6 +22,8 @@ import { MemoryPdfRenderer } from "./documents/pdf-renderer.js";
 import { MemorySlackNotificationHistoryRepository } from "./integrations/slack-history-repository.js";
 import { MemorySlackNotificationApprovalRepository } from "./integrations/slack-approval-repository.js";
 import { MemoryOutboundConditionRepository } from "./ledgers/outbound-condition-repository.js";
+import { MemoryAppSettingsRepository } from "./settings/settings-repository.js";
+import { MemorySecretStore } from "./settings/secret-store.js";
 
 const schema: DocumentFormSchema = {
   templateKey: "purchase_order",
@@ -1042,4 +1044,49 @@ test("法務担当者でも管理者指定がなければアウト条件を保�
     .expect(403);
   assert.equal(response.body.code, "OUTBOUND_CONDITION_ADMIN_REQUIRED");
   assert.equal(repository.conditions.length, 0);
+});
+
+// APIキー投入（/settings/secrets）がグローバル書込ガードを settings スコープで通過すること
+// （回帰：許可リスト漏れで 403 WRITE_SCOPE_DISABLED になっていた）。
+test("settings/secrets: settings スコープで書込ガードを通過して保存できる", async () => {
+  const store = new MemorySecretStore();
+  const target = createApp({
+    templates: new MemoryTemplateRepository([schema]),
+    drafts: new MemoryDraftRepository(),
+    integrations: createIntegrationAdapters(),
+    appSettings: new MemoryAppSettingsRepository({}),
+    secretStore: store
+  }, {
+    accessMode: "readwrite",
+    requireDatabase: false,
+    writeFeaturesEnabled: true,
+    writeScopes: new Set(["settings"]),
+    appSettingsWriteEnabled: true
+  });
+  const response = await request(target)
+    .post("/api/v2/settings/secrets")
+    .send({ secrets: { BACKLOG_API_KEY: "backlog-key-value-123" } })
+    .expect(200);
+  assert.equal(response.body.saved, 1);
+  assert.equal(await store.access("backlog-api-key"), "backlog-key-value-123");
+});
+
+test("settings/secrets: settings スコープが無ければ書込ガードで403", async () => {
+  const target = createApp({
+    templates: new MemoryTemplateRepository([schema]),
+    drafts: new MemoryDraftRepository(),
+    integrations: createIntegrationAdapters(),
+    appSettings: new MemoryAppSettingsRepository({}),
+    secretStore: new MemorySecretStore()
+  }, {
+    accessMode: "readwrite",
+    requireDatabase: false,
+    writeFeaturesEnabled: true,
+    writeScopes: new Set(["drafts"])
+  });
+  const response = await request(target)
+    .post("/api/v2/settings/secrets")
+    .send({ secrets: { BACKLOG_API_KEY: "backlog-key-value-123" } })
+    .expect(403);
+  assert.equal(response.body.code, "WRITE_SCOPE_DISABLED");
 });
