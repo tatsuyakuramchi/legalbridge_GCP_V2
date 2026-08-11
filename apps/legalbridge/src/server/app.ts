@@ -49,26 +49,12 @@ import {
   type IntegrationAdapter
 } from "./integrations/index.js";
 import {
-  BacklogWebApiClient, type BacklogReadClient, type BacklogWriteClient
+  type BacklogReadClient, type BacklogWriteClient
 } from "./integrations/backlog-web-api.js";
 import { createBacklogRequestRouter, createBacklogCommentRouter } from "./integrations/backlog-routes.js";
 
-function newBacklogClient(): BacklogWebApiClient | undefined {
-  if (!config.backlogHost || !config.backlogProjectKey || !config.backlogApiKey) return undefined;
-  try {
-    return new BacklogWebApiClient({
-      host: config.backlogHost, projectKey: config.backlogProjectKey, apiKey: config.backlogApiKey
-    });
-  } catch { return undefined; }
-}
-// BACKLOG_MODE=readonly＋接続情報がある時のみ読取クライアントを構築（依頼取込・Phase 3）。
-function defaultBacklogClient(): BacklogReadClient | undefined {
-  return config.backlogMode === "readonly" ? newBacklogClient() : undefined;
-}
-// コメント書き戻し用クライアント（capabilityゲートは app 側・BACKLOG_MODE=live には依存しない）。
-function defaultBacklogWriteClient(): BacklogWriteClient | undefined {
-  return newBacklogClient();
-}
+// Backlog クライアントは createApp 内で DynamicBacklogClient として構築する
+// （host/projectKey を連携設定からランタイム解決・apiKey は Secret/env のまま）。
 import { config } from "./config.js";
 import {
   MemoryMasterDataRepository,
@@ -125,6 +111,10 @@ import { PgContractCheckRepository, type ContractCheckRepository } from "./contr
 import { PgSnippetsRepository, type SnippetsRepository } from "./snippets/snippets-repository.js";
 import { createSnippetsRouter } from "./snippets/snippets-routes.js";
 import { PgAttachmentsRepository, type AttachmentsRepository } from "./documents/attachments-repository.js";
+import { RuntimeIntegrationSettings } from "./settings/runtime-settings.js";
+import {
+  DynamicBacklogClient, DynamicGmailApiClient, DynamicGmailInboundClient
+} from "./integrations/dynamic-clients.js";
 import { createAttachmentsRouter } from "./documents/attachments-routes.js";
 import { createContractCheckRouter } from "./contract-check/routes.js";
 import { createContractMasterRouter } from "./contracts/contract-master-routes.js";
@@ -274,7 +264,7 @@ import {
   LocalGmailDeliveryAdapter, type GmailDeliveryAdapter
 } from "./integrations/gmail-delivery-adapter.js";
 import {
-  GmailApiDeliveryAdapter, FetchGmailApiClient
+  GmailApiDeliveryAdapter
 } from "./integrations/gmail-api-adapter.js";
 import { createGmailNotificationRouter } from "./documents/gmail-notification-routes.js";
 import {
@@ -291,7 +281,7 @@ import {
 import {
   LocalGmailInboundAdapter, type GmailInboundAdapter
 } from "./integrations/gmail-inbound-adapter.js";
-import { GmailInboundApiAdapter, FetchGmailInboundApiClient } from "./integrations/gmail-inbound-api-adapter.js";
+import { GmailInboundApiAdapter } from "./integrations/gmail-inbound-api-adapter.js";
 import { createGmailInboundRouter } from "./documents/gmail-inbound-routes.js";
 import {
   PgInboundContractRepository,
@@ -496,8 +486,7 @@ function createDefaultDependencies(): AppDependencies {
       ? new PgDraftRepository(database)
       : new MemoryDraftRepository(),
     integrations: createIntegrationAdapters(),
-    backlogClient: defaultBacklogClient(),
-    backlogWriteClient: defaultBacklogWriteClient(),
+    // Backlog クライアントは createApp 側で動的構築（連携設定のランタイム反映）。
     masterData: database
       ? new PgMasterDataRepository(database, new PgAppSettingsRepository(database))
       : new MemoryMasterDataRepository(),
@@ -648,6 +637,32 @@ export function createApp(
   }
 ) {
   const app = express();
+
+  // 連携設定のランタイム解決（設定画面の保存を再デプロイなしで反映・TTL 60秒＋保存時即時リフレッシュ）。
+  // 初期値は env（index.ts の起動時上書き後）。DB 不通は env のまま。
+  const runtimeSettings = new RuntimeIntegrationSettings({
+    backlogHost: config.backlogHost,
+    backlogProjectKey: config.backlogProjectKey,
+    slackLegalConsultChannel: config.slackLegalConsultChannel,
+    gmailSenderEmail: config.gmailSenderEmail,
+    gmailInboundMailbox: config.gmailInboundMailbox,
+    gmailInboundQuery: config.gmailInboundQuery,
+    cloudSignAllowedRecipients: config.cloudSignAllowedRecipients
+  }, dependencies.appSettings);
+  const rt = () => runtimeSettings.current();
+
+  // Backlog クライアント（動的）。存在条件（＝各機能の有効判定）は起動時 config で固定し、
+  // 接続先の値だけをランタイム解決する（apiKey は Secret/env・設定画面では扱わない）。
+  const backlogConfigured = Boolean(config.backlogHost && config.backlogProjectKey && config.backlogApiKey);
+  const dynamicBacklog = backlogConfigured
+    ? new DynamicBacklogClient(
+        () => ({ host: rt().backlogHost, projectKey: rt().backlogProjectKey }), config.backlogApiKey)
+    : undefined;
+  const backlogReadClient: BacklogReadClient | undefined =
+    dependencies.backlogClient ?? (config.backlogMode === "readonly" ? dynamicBacklog : undefined);
+  const backlogWriteClient: BacklogWriteClient | undefined =
+    dependencies.backlogWriteClient ?? dynamicBacklog;
+
   const draftWriteEnabled =
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
@@ -698,7 +713,7 @@ export function createApp(
   const gmailDeliveryAdapter: GmailDeliveryAdapter =
     config.gmailDeliveryMode === "live" && config.gmailSenderEmail
       ? new GmailApiDeliveryAdapter(
-          new FetchGmailApiClient(config.gmailSenderEmail, { keyFilePath: config.gmailServiceAccountKeyPath }))
+          new DynamicGmailApiClient(() => rt().gmailSenderEmail, { keyFilePath: config.gmailServiceAccountKeyPath }))
       : new LocalGmailDeliveryAdapter();
   const gmailDispatchEnabled =
     options.accessMode === "readwrite" &&
@@ -710,7 +725,7 @@ export function createApp(
     integrationMode: config.integrationMode,
     gmailCapabilityEnabled: options.writeScopes?.has("gmail") === true,
     adapterConfigured: gmailDeliveryAdapter.configured,
-    senderEmail: config.gmailSenderEmail
+    get senderEmail() { return rt().gmailSenderEmail; }
   };
   const cloudSignAdapter: CloudSignAdapter =
     config.cloudSignMode === "live" && config.cloudSignClientId && config.cloudSignBaseUrl
@@ -731,7 +746,7 @@ export function createApp(
   const gmailInboundAdapter: GmailInboundAdapter =
     config.gmailInboundMode === "live" && config.gmailInboundMailbox
       ? new GmailInboundApiAdapter(
-          new FetchGmailInboundApiClient(config.gmailInboundMailbox, { keyFilePath: config.gmailServiceAccountKeyPath }))
+          new DynamicGmailInboundClient(() => rt().gmailInboundMailbox, { keyFilePath: config.gmailServiceAccountKeyPath }))
       : new LocalGmailInboundAdapter();
   const gmailInboundEnabled =
     options.accessMode === "readwrite" &&
@@ -859,7 +874,7 @@ export function createApp(
     options.writeFeaturesEnabled === true &&
     options.backlogCommentWriteEnabled === true &&
     options.writeScopes?.has("backlog-comment") === true &&
-    Boolean(dependencies.backlogWriteClient);
+    Boolean(backlogWriteClient);
   // 添付アップロード（Phase 16-4）。DB grant は既存 006 で足りるが、生ファイルの
   // 格納先（Drive ストレージの uploadFile）が使えることが前提。
   const attachmentUploadEnabled =
@@ -1275,7 +1290,7 @@ export function createApp(
     threads: dependencies.matterSlackThreads,
     mentions: dependencies.matterMentions,
     channel: matterSlackChannelAdapter,
-    settings: { enabled: matterSlackEnabled, legalChannelId: config.slackLegalConsultChannel },
+    settings: { enabled: matterSlackEnabled, get legalChannelId() { return rt().slackLegalConsultChannel; } },
     granter: drivePermissionGranter
   }));
   app.use("/api/v2", createConditionLineRouter(dependencies.conditionLines));
@@ -1300,9 +1315,9 @@ export function createApp(
   // データ品質センター（読み取り・admin/legal限定・Phase 4）。書込みなし。
   app.use("/api/v2", createDataQualityRouter(dependencies.dataQuality));
   // Backlog課題一覧（依頼取込・読み取り・admin/legal限定・Phase 3）。書込みなし。
-  app.use("/api/v2", createBacklogRequestRouter(dependencies.backlogClient));
+  app.use("/api/v2", createBacklogRequestRouter(backlogReadClient));
   // Backlogコメント書き戻し（guarded・既定OFF・確認トークン・scope 'backlog-comment'）。
-  app.use("/api/v2", createBacklogCommentRouter(dependencies.backlogWriteClient, backlogCommentWriteEnabled));
+  app.use("/api/v2", createBacklogCommentRouter(backlogWriteClient, backlogCommentWriteEnabled));
   app.use("/api/v2", createWorkWriteRouter(dependencies.workWrites, workWriteEnabled));
   app.use("/api/v2", createMaterialWriteRouter(dependencies.materialWrites, materialWriteEnabled));
   // 権利ソース書込（guarded-write・既定OFF・scope 'rights-sources'・grant 017）。
@@ -1316,9 +1331,9 @@ export function createApp(
   // 文書 void（破壊的・Phase 10-2）。guarded-write（既定OFF・scope 'document-void'・grant 033）。
   //   Backlog 書き戻しは backlog-comment 有効時のみ（ベストエフォート）。
   const documentVoidNotifier =
-    backlogCommentWriteEnabled && dependencies.backlogWriteClient
+    backlogCommentWriteEnabled && backlogWriteClient
       ? (issueKey: string, text: string) =>
-          dependencies.backlogWriteClient!.addComment(issueKey, text).then(() => undefined)
+          backlogWriteClient.addComment(issueKey, text).then(() => undefined)
       : undefined;
   app.use("/api/v2", createDocumentVoidRouter(dependencies.documentVoid, documentVoidEnabled, documentVoidNotifier));
   // 文書再発行（破壊的・Phase 10-1b）。guarded-write（既定OFF・scope 'document-reissue'・grant 034）。
@@ -1331,15 +1346,15 @@ export function createApp(
   ));
   // システム設定（会社プロファイル・Phase 11-1）。読取 admin・保存 guarded（scope 'settings'・grant 036）。
   app.use("/api/v2", createSettingsRouter(dependencies.appSettings, appSettingsWriteEnabled, {
-    // 連携設定タブの実効値表示（env/起動時上書き後の値・非秘密のみ）。
-    BACKLOG_HOST: config.backlogHost,
-    BACKLOG_PROJECT_KEY: config.backlogProjectKey,
-    SLACK_LEGAL_CONSULT_CHANNEL: config.slackLegalConsultChannel,
-    GMAIL_SENDER: config.gmailSenderEmail,
-    GMAIL_INBOUND_MAILBOX: config.gmailInboundMailbox,
-    GMAIL_INBOUND_QUERY: config.gmailInboundQuery,
-    CLOUDSIGN_ALLOWED_RECIPIENTS: config.cloudSignAllowedRecipients
-  }));
+    // 連携設定タブの実効値表示（ランタイム解決後の現在値・非秘密のみ）。
+    get BACKLOG_HOST() { return rt().backlogHost; },
+    get BACKLOG_PROJECT_KEY() { return rt().backlogProjectKey; },
+    get SLACK_LEGAL_CONSULT_CHANNEL() { return rt().slackLegalConsultChannel; },
+    get GMAIL_SENDER() { return rt().gmailSenderEmail; },
+    get GMAIL_INBOUND_MAILBOX() { return rt().gmailInboundMailbox; },
+    get GMAIL_INBOUND_QUERY() { return rt().gmailInboundQuery; },
+    get CLOUDSIGN_ALLOWED_RECIPIENTS() { return rt().cloudSignAllowedRecipients; }
+  }, () => runtimeSettings.refresh()));
   // 承認ルート（部門別・Phase 11-2）。読取 admin・保存 guarded（scope 'workflow-rules'・grant 037）。
   app.use("/api/v2", createWorkflowRulesRouter(dependencies.workflowRules, workflowRulesWriteEnabled));
   // 契約マスタ（Phase 11-4）。読取 admin/legal・更新/状態変更 guarded（scope 'contract-master'・grant 038）。
@@ -1354,9 +1369,9 @@ export function createApp(
   app.use("/api/v2", createAttachmentsRouter({
     repository: dependencies.attachments,
     storage: dependencies.driveStorage ?? null,
-    postComment: backlogCommentWriteEnabled && dependencies.backlogWriteClient
+    postComment: backlogCommentWriteEnabled && backlogWriteClient
       ? (issueKey, text) =>
-          dependencies.backlogWriteClient!.addComment(issueKey, text).then(() => undefined)
+          backlogWriteClient.addComment(issueKey, text).then(() => undefined)
       : undefined,
     writeEnabled: attachmentUploadEnabled
   }));
@@ -1378,7 +1393,7 @@ export function createApp(
       /^xoxb-[A-Za-z0-9-]+$/.test(config.slackBotToken) &&
       Boolean(config.slackLegalConsultChannel);
     const dailyChecksNotifier = dailyChecksLive
-      ? new LiveDailyChecksNotifier(matterSlackChannelAdapter, config.slackLegalConsultChannel)
+      ? new LiveDailyChecksNotifier(matterSlackChannelAdapter, () => rt().slackLegalConsultChannel)
       : new DryRunDailyChecksNotifier();
     jobRunners["daily-checks"] = () => runDailyChecks({
       repo: dailyChecksRepo,
@@ -1392,7 +1407,7 @@ export function createApp(
       const inspectionsRepo = dependencies.pendingInspections;
       const post = dailyChecksLive
         ? (text: string) => matterSlackChannelAdapter
-            .postMessage({ channel: config.slackLegalConsultChannel, text })
+            .postMessage({ channel: rt().slackLegalConsultChannel, text })
             .then(() => true).catch(() => false)
         : undefined;
       jobRunners["inspection-digest"] = () => runInspectionDigest({ repo: inspectionsRepo, post });
@@ -1432,7 +1447,7 @@ export function createApp(
         Boolean(config.slackLegalConsultChannel);
       const notify = webhookSlackLive
         ? (text: string) => matterSlackChannelAdapter
-            .postMessage({ channel: config.slackLegalConsultChannel, text })
+            .postMessage({ channel: rt().slackLegalConsultChannel, text })
             .then(() => true).catch(() => false)
         : undefined;
       // 9-7 完成形：BACKLOG_INTAKE_ENABLED かつ readwrite のときのみ自動起票／状態同期を注入
@@ -1459,13 +1474,13 @@ export function createApp(
     /^xoxb-[A-Za-z0-9-]+$/.test(config.slackBotToken) &&
     options.accessMode === "readwrite" && jobsDatabase
   ) {
-    const intakeBacklog = config.backlogMode === "live" ? newBacklogClient() : undefined;
+    const intakeBacklog = config.backlogMode === "live" ? dynamicBacklog : undefined;
     const intakeHandler = createSlackIntakeHandler({
       repository: new PgSlackIntakeRepository(jobsDatabase),
       slack: new FetchSlackWebApiClient(config.slackBotToken),
       backlog: intakeBacklog ?? null,
-      backlogHost: config.backlogHost || null,
-      backlogProjectKey: config.backlogProjectKey || null,
+      get backlogHost() { return rt().backlogHost || null; },
+      get backlogProjectKey() { return rt().backlogProjectKey || null; },
       contractCheck: dependencies.contractCheck ?? null,
       log: (message) => console.warn(`[slack-intake] ${message}`)
     });
@@ -1480,11 +1495,13 @@ export function createApp(
   app.use("/api/v2", createCloudSignRouter(
     documentRegistry, dependencies.templates, pdfRenderer, cloudSignAdapter, cloudSignGateSettings,
     {
-      allowedRecipients: parseAllowedRecipients(config.cloudSignAllowedRecipients),
+      allowedRecipients: () => parseAllowedRecipients(rt().cloudSignAllowedRecipients),
       requestHistory: dependencies.cloudSignRequests
     }));
   app.use("/api/v2", createGmailInboundRouter(gmailInboundAdapter, {
-    enabled: gmailInboundEnabled, query: config.gmailInboundQuery, mailbox: config.gmailInboundMailbox
+    enabled: gmailInboundEnabled,
+    get query() { return rt().gmailInboundQuery; },
+    get mailbox() { return rt().gmailInboundMailbox; }
   }, dependencies.inboundContracts));
   app.use("/api/v2", createLedgerRouter(
     dependencies.ledgers ?? new MemoryLedgerRepository()

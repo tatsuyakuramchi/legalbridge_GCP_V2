@@ -39,10 +39,18 @@ export function createCloudSignRouter(
   pdfRenderer: PdfRenderer,
   cloudSign: CloudSignAdapter | undefined,
   gateSettings: CloudSignDispatchGateSettings,
-  options: { allowedRecipients?: Set<string>; requestHistory?: CloudSignRequestRepository } = {}
+  options: {
+    // 静的 Set か、呼び出し時解決のプロバイダ（連携設定のランタイム反映）。
+    allowedRecipients?: Set<string> | (() => Set<string>);
+    requestHistory?: CloudSignRequestRepository;
+  } = {}
 ) {
   const router = Router();
-  const allowedRecipients = options.allowedRecipients ?? new Set<string>();
+  const allowedRecipientsOption = options.allowedRecipients;
+  const allowedRecipients = () =>
+    typeof allowedRecipientsOption === "function"
+      ? allowedRecipientsOption()
+      : allowedRecipientsOption ?? new Set<string>();
   const requestHistory = options.requestHistory;
 
   // 依頼前プレビュー（送信しない）。署名者とゲートのブロック理由を返す。
@@ -80,7 +88,7 @@ export function createCloudSignRouter(
         return response.status(400).json({ error: "署名者のメールアドレスが不正です", code: "CLOUDSIGN_PARTICIPANT_INVALID" });
       }
       // 宛先allowlist（設定時のみ）：検証中の誤送信防止。全宛先が許可集合内であること。
-      const disallowed = findDisallowedRecipient(participants.map((p) => p.email), allowedRecipients);
+      const disallowed = findDisallowedRecipient(participants.map((p) => p.email), allowedRecipients());
       if (disallowed) {
         return response.status(422).json({
           error: `許可されていない宛先です: ${disallowed}`, code: "CLOUDSIGN_RECIPIENT_NOT_ALLOWED"

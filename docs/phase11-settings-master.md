@@ -19,9 +19,16 @@ V2 の Admin は読取専用ステータスのみ。設定・承認ルート・�
 設定画面に「連携設定」タブを追加し、**非秘密の運用パラメータ 7 項目**を app_settings で編集可能にした
 （BACKLOG_HOST／BACKLOG_PROJECT_KEY／SLACK_LEGAL_CONSULT_CHANNEL／GMAIL_SENDER／
 GMAIL_INBOUND_MAILBOX／GMAIL_INBOUND_QUERY／CLOUDSIGN_ALLOWED_RECIPIENTS。キーは V1 dbSettings 互換
-＝併走中は V1/V2 で共有）。**サーバ起動時に `integration-overrides.ts` が app_settings を env config へ
-上書き**（空欄・DB不通は env フォールバック）＝反映は次回デプロイ/再起動時。UI は各欄に現在の実効値を
-表示し、反映タイミングと「秘密・live/disabled 切替は対象外（Secret Manager／デプロイ管理）」を明記。
+＝併走中は V1/V2 で共有）。**反映は即時（デプロイ不要）**：`settings/runtime-settings.ts` の
+`RuntimeIntegrationSettings`（TTL 60秒スナップショット＋保存時 onSaved フックで即時 refresh）を
+全消費箇所が参照する — Backlog クライアント（`integrations/dynamic-clients.ts` の
+DynamicBacklogClient＝呼び出し時に host/projectKey 解決・apiKey は Secret のまま）、Gmail 送信/受信
+クライアント（Dynamic*＝sender/mailbox を呼び出し時解決）、Slack 法務相談チャンネル（matter-slack・
+daily-checks・digest・webhook 通知の全 5 箇所）、CloudSign 宛先 allowlist（cloudsign-routes を
+プロバイダ受け取りに変更）、Gmail inbound query/mailbox（getter 化）。同一インスタンスは保存で即時、
+他インスタンスは TTL で約1分以内に追随。**各連携の有効/無効判定（live 切替・クライアント存在条件）は
+起動時 config のまま**＝値だけがランタイム可変（点火統制は不変）。`integration-overrides.ts` の
+起動時上書きも維持（初期スナップショットの正確性）。空欄・DB不通は env フォールバック。
 追加 grant なし（036 の app_settings 権限で充足）。
 
 ## 11-1：システム設定（会社プロファイル）✅ 実装済

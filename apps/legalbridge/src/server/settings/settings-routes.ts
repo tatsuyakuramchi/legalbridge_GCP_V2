@@ -15,8 +15,10 @@ function forbidden(r: import("express").Response) {
 export function createSettingsRouter(
   repository: AppSettingsRepository | undefined,
   writeEnabled = false,
-  // 連携設定の実効値（env 由来・空欄時のフォールバック表示用）。秘密は含めないこと。
-  integrationEffective: Record<string, string> = {}
+  // 連携設定の実効値（env/ランタイム由来・空欄時のフォールバック表示用）。秘密は含めないこと。
+  integrationEffective: Record<string, string> = {},
+  // 保存成功後フック（ランタイム設定の即時リフレッシュ用）。失敗しても保存応答は成功のまま。
+  onSaved?: () => Promise<void> | void
 ) {
   const router = Router();
   const keys = [...ALLOWED_SETTING_KEYS];
@@ -48,6 +50,7 @@ export function createSettingsRouter(
       const actor = String(response.locals.currentUser?.email ?? "unknown");
       try {
         const saved = await repository.save(input.settings, actor);
+        try { await onSaved?.(); } catch { /* リフレッシュ失敗は保存成功に影響させない */ }
         const values = await repository.get(keys);
         return response.status(200).json({ saved, values });
       } catch (error) {

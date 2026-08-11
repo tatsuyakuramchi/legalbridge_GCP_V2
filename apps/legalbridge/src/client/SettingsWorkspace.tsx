@@ -57,7 +57,7 @@ export function SettingsWorkspace({ canEdit = false }: { canEdit?: boolean }) {
       toast.push(
         tab === "company"
           ? `会社プロファイルを保存しました（${data.saved}件）。`
-          : `連携設定を保存しました（${data.saved}件）。反映は次回デプロイ/再起動時です。`,
+          : `連携設定を保存しました（${data.saved}件）。即時反映されます（全サーバへは約1分以内）。`,
         "success");
     } catch { toast.push("通信に失敗しました。", "error"); }
     finally { setSaving(false); }
@@ -80,7 +80,7 @@ export function SettingsWorkspace({ canEdit = false }: { canEdit?: boolean }) {
       <div className="settings-note" role="note">
         <strong>連携設定について</strong>
         <ul>
-          <li>ここで保存した値は<b>次回のデプロイ/再起動時</b>に反映されます（即時反映ではありません）。</li>
+          <li>保存すると<b>即時に反映</b>されます（複数サーバ構成でも約1分以内に全体へ自動反映。デプロイ不要）。</li>
           <li>空欄の項目は、デプロイ時の環境変数の値（各欄の「現在の実効値」）がそのまま使われます。</li>
           <li>APIキー・トークン・署名シークレット・CloudSign クライアントID・SA鍵などの<b>秘密情報</b>と、
             各連携の <b>live/disabled 切替</b>は、安全のためこの画面では扱いません（Secret Manager とデプロイ設定で管理）。</li>
