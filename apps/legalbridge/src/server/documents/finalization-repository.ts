@@ -163,7 +163,12 @@ export const DOCUMENT_PREFIXES: Record<string, string> = {
   maintenance_spec: "MNT",
   legal_response: "LG",
   notice_consent_personal_info_freelance: "PR",
-  nda: "NDA"
+  nda: "NDA",
+  // 支払通知書・請求書（W4 入口整備）。テンプレート本文は別途投入
+  // （infra/gcp/sql/048_payment_invoice_templates.sql）。投入すれば発番→確定→
+  // PDF→Drive→メール/CloudSign まで既存パイプラインで完結する。
+  payment_notice: "PAY",
+  invoice: "INV"
 };
 
 async function findPrefix(client: PoolClient, templateType: string) {

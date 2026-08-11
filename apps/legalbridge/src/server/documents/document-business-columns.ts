@@ -36,6 +36,8 @@ export function deriveRecordType(templateType: string): string {
   }
   if (t.includes("license") || t.includes("royalty")) return "license_condition";
   if (t.includes("purchase_order") || t.includes("inspection")) return "individual_contract";
+  // 支払通知書・請求書は取引個別文書として扱う（V1既存の record_type 値のみ使用）。
+  if (t.includes("payment") || t.includes("invoice")) return "individual_contract";
   return "master_contract";
 }
 

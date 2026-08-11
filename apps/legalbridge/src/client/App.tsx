@@ -423,7 +423,7 @@ export function App() {
         )}
         {view === "outbound" && <OutboundConditionWorkspace onNavigate={(t) => setView(t as View)} />}
         {view === "royalty-preview" && <RoyaltyPreview />}
-        {view === "billing" && <BillingDashboard key={drillReceiptConditionId ?? "billing"} canRecord={canRecordReceipt} initialConditionLineId={drillReceiptConditionId} />}
+        {view === "billing" && <BillingDashboard key={drillReceiptConditionId ?? "billing"} canRecord={canRecordReceipt} initialConditionLineId={drillReceiptConditionId} onCreatePaymentDocument={(legalWorkspace || requesterWorkspace) ? () => { setNewDocIssueKey(""); setNewDocSeed({}); setDraftSelection(null); setView("templates"); } : undefined} />}
         {view === "works" && <WorkDetail key={drillWorkId ?? "works"} initialWorkId={drillWorkId} canEdit={canEditWorks} canEditRights={canEditRightsSources} canEditMaterials={canEditMaterials}
           onNavigate={(t) => { if (t === "ledgers-works") { setLedgerSeedType("works"); setView("ledgers"); } else setView(t as View); }} />}
         {view === "data-quality" && <DataQuality onNavigate={(v, id) => {
@@ -527,10 +527,16 @@ function TemplateCatalog({
   const visibleTemplates = templates.filter((template) => {
     const matchesCategory =
       category === "すべて" || (template.category ?? "未分類") === category;
+    // 同義語検索（監査W3）：「支払」「請求」で該当テンプレが見つかるように。
+    const synonyms: Record<string, string> = {
+      payment_notice: "支払 支払通知 請求", invoice: "請求 請求書 支払",
+      royalty_statement: "支払 請求 計算書", inspection_certificate: "検収 支払"
+    };
     const matchesQuery =
       !normalizedQuery ||
       template.label.toLowerCase().includes(normalizedQuery) ||
-      template.templateKey.toLowerCase().includes(normalizedQuery);
+      template.templateKey.toLowerCase().includes(normalizedQuery) ||
+      (synonyms[template.templateKey] ?? "").includes(normalizedQuery);
     return matchesCategory && matchesQuery;
   });
 

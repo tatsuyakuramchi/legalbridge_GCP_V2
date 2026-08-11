@@ -48,7 +48,7 @@ const billingExportColumns: ExportColumn<Row>[] = [
   { header: "分配", value: (r) => (r.distributed ? "済" : "—") }
 ];
 
-export function BillingDashboard({ canRecord = false, initialConditionLineId = null }: { canRecord?: boolean; initialConditionLineId?: number | null }) {
+export function BillingDashboard({ canRecord = false, initialConditionLineId = null, onCreatePaymentDocument }: { canRecord?: boolean; initialConditionLineId?: number | null; onCreatePaymentDocument?: () => void }) {
   const [rows, setRows] = useState<Row[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [query, setQuery] = useState("");
@@ -104,6 +104,8 @@ export function BillingDashboard({ canRecord = false, initialConditionLineId = n
         </div>
         <div className="matter-detail-actions">
           <ExportButtons filename="billing" sheetName="請求ダッシュボード" columns={billingExportColumns} rows={rows} />
+          {onCreatePaymentDocument && <button onClick={onCreatePaymentDocument}
+            title="支払通知書・請求書・計算書などの文書を作成（テンプレ一覧で「支払」「請求」で検索）">支払・請求文書を作成</button>}
           {canRecord && <button className="primary" onClick={() => setShowForm((v) => !v)}>{showForm ? "閉じる" : "受領を記録"}</button>}
         </div>
       </div>
