@@ -8,7 +8,8 @@ import { tokensMatch, extractPresentedToken } from "./shared-secret.js";
 export type WebhookHandler = (payload: unknown, headers: Record<string, string | undefined>) => Promise<{ status?: number; body?: unknown }>;
 
 export interface WebhookSource {
-  token?: string;
+  // 関数を渡すとリクエスト毎に解決する（ランタイム秘密情報のローテーション対応・Phase 2-5）。
+  token?: string | (() => string);
   handler?: WebhookHandler;
 }
 
@@ -18,11 +19,12 @@ export interface WebhooksRouterOptions {
 }
 
 function mount(router: Router, path: string, source: WebhookSource | undefined) {
-  const enabled = Boolean(source?.token) && Boolean(source?.handler);
+  const resolveToken = () => typeof source?.token === "function" ? source.token() : source?.token;
   router.post(path, async (request, response) => {
-    if (!enabled || !source) return response.status(404).json({ error: "not found", code: "WEBHOOK_DISABLED" });
+    const token = resolveToken();
+    if (!token || !source?.handler) return response.status(404).json({ error: "not found", code: "WEBHOOK_DISABLED" });
     const presented = extractPresentedToken(request.header("x-webhook-token"), request.header("authorization"));
-    if (!tokensMatch(source.token, presented)) {
+    if (!tokensMatch(token, presented)) {
       return response.status(401).json({ error: "invalid webhook token", code: "WEBHOOK_UNAUTHORIZED" });
     }
     try {

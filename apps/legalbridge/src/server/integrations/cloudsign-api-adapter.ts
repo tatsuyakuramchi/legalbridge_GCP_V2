@@ -26,17 +26,24 @@ export interface CloudSignApiClientOptions {
 //         form-urlencoded / multipart（CloudSign は JSON body を受けない）。
 //   ※ client_secret は使用しない（CloudSign の /token は client_id のみ）。
 export class FetchCloudSignApiClient implements CloudSignApiClient {
-  private cachedToken: { value: string; expiresAt: number } | null = null;
+  private cachedToken: { value: string; expiresAt: number; clientId: string } | null = null;
   private readonly fetchImpl: typeof fetch;
 
   constructor(
     private readonly baseUrl: string,
-    private readonly clientId: string,
+    // 関数を渡すと呼び出し毎に解決する（ランタイム秘密情報のローテーション対応・Phase 2-5）。
+    private readonly clientId: string | (() => string),
     options: CloudSignApiClientOptions = {}
   ) {
     if (!baseUrl.trim()) throw new Error("CloudSign base URL is required");
-    if (!clientId.trim()) throw new Error("CloudSign client id is required");
+    if (typeof clientId === "string" && !clientId.trim()) throw new Error("CloudSign client id is required");
     this.fetchImpl = options.fetchImpl ?? fetch;
+  }
+
+  private resolveClientId(): string {
+    const value = (typeof this.clientId === "function" ? this.clientId() : this.clientId).trim();
+    if (!value) throw new CloudSignError("CloudSign client id is not configured", "config_error");
+    return value;
   }
 
   private base(path: string) {
@@ -47,8 +54,12 @@ export class FetchCloudSignApiClient implements CloudSignApiClient {
   // expires_in（秒・不明時600）を尊重し、30秒前倒しで失効扱いにしてキャッシュする。
   private async token(): Promise<string> {
     const now = Date.now();
-    if (this.cachedToken && this.cachedToken.expiresAt > now) return this.cachedToken.value;
-    const body = new URLSearchParams({ client_id: this.clientId });
+    const clientId = this.resolveClientId();
+    // client_id が差し替わっていたら（ローテーション）キャッシュ済みトークンを破棄する。
+    if (this.cachedToken && this.cachedToken.expiresAt > now && this.cachedToken.clientId === clientId) {
+      return this.cachedToken.value;
+    }
+    const body = new URLSearchParams({ client_id: clientId });
     const response = await this.fetchImpl(this.base("/token"), {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -62,7 +73,8 @@ export class FetchCloudSignApiClient implements CloudSignApiClient {
     const expiresIn = Number(payload.expires_in) || 600;
     this.cachedToken = {
       value: payload.access_token,
-      expiresAt: now + Math.max(60, expiresIn - 30) * 1000
+      expiresAt: now + Math.max(60, expiresIn - 30) * 1000,
+      clientId
     };
     return this.cachedToken.value;
   }

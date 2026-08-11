@@ -98,8 +98,23 @@ Backlog/CloudSign はカスタムヘッダ不可のため、リレーが `?token
   - **連携の運用パラメータ（宛先 allowlist・送信元・チャンネル等の非秘密 7 項目）は
     設定画面「連携設定」タブから編集可能・即時反映（デプロイ不要）**（2026-08-11・同一インスタンス
     即時＋他インスタンス約1分以内・`phase11-settings-master.md` 11-1b）。
-    秘密と live/disabled 切替は従来どおりデプロイ管理（点火統制は不変）。
-  - CloudSign：client_id を Secret Manager へ（リポジトリ厳禁）＋宛先 allowlist 必須＋
+    live/disabled 切替は従来どおりデプロイ管理（点火統制は不変）。
+  - **APIキー・トークン 7 件は設定画面「APIキー」タブから投入可能**（2026-08-11・
+    `phase11-settings-master.md` 11-1c。保存先は Secret Manager のみ・書き込み専用・
+    有効化済み連携のローテーションは即時反映）。対象：Backlog APIキー／Slack Bot トークン／
+    Slack 署名シークレット／CloudSign クライアントID／Webhook トークン2件／ジョブ起動トークン。
+    GWS SA 鍵（JSON）のみ従来どおり Cloud Shell。**初回のみ下の権限付与を実行**：
+    ```bash
+    SA=legalbridge-v2-preview@legalbridge-488506.iam.gserviceaccount.com
+    for S in backlog-api-key SLACK_BOT_TOKEN slack-signing-secret cloudsign-client-id \
+             CLOUDSIGN_WEBHOOK_TOKEN BACKLOG_WEBHOOK_TOKEN JOBS_TRIGGER_TOKEN; do
+      gcloud secrets describe "$S" >/dev/null 2>&1 || gcloud secrets create "$S" --replication-policy=automatic
+      for R in roles/secretmanager.secretVersionAdder roles/secretmanager.viewer roles/secretmanager.secretAccessor; do
+        gcloud secrets add-iam-policy-binding "$S" --member="serviceAccount:$SA" --role="$R" --quiet >/dev/null
+      done; echo "OK: $S"
+    done
+    ```
+  - CloudSign：client_id を画面の APIキータブから `cloudsign-client-id` へ（リポジトリ厳禁）＋宛先 allowlist 必須＋
     `_CLOUDSIGN_MODE=live`＋`_CONFIRM_CLOUDSIGN_DISPATCH`＋`_CLOUDSIGN_REQUEST_HISTORY_ENABLED`。
     live 後に cloudsign-sync resume＋CloudSign Webhook 登録（token secret 作成済み）で executed 遷移が自動化。
   - Gmail：送信元アドレス決定＋Workspace 管理者の DWD 設定＋SA 鍵 Secret（`_GWS_SA_KEY_SECRET`・

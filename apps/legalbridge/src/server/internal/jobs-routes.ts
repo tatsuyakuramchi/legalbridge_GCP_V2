@@ -9,20 +9,22 @@ export type JobRunner = () => Promise<unknown>;
 
 export interface JobsRouterOptions {
   enabled?: boolean;
-  token?: string;
+  // 関数を渡すとリクエスト毎に解決する（ランタイム秘密情報のローテーション対応・Phase 2-5）。
+  token?: string | (() => string);
   runners?: Record<string, JobRunner>;
 }
 
 export function createJobsRouter(options: JobsRouterOptions = {}) {
   const router = Router();
-  const enabled = options.enabled === true && Boolean(options.token);
+  const resolveToken = () => typeof options.token === "function" ? options.token() : options.token;
   const runners = options.runners ?? {};
 
   router.post("/internal/jobs/:name", async (request, response) => {
     // 無効時は存在を秘匿して 404。
-    if (!enabled) return response.status(404).json({ error: "not found", code: "JOBS_DISABLED" });
+    const token = resolveToken();
+    if (options.enabled !== true || !token) return response.status(404).json({ error: "not found", code: "JOBS_DISABLED" });
     const presented = extractPresentedToken(request.header("x-jobs-token"), request.header("authorization"));
-    if (!tokensMatch(options.token, presented)) {
+    if (!tokensMatch(token, presented)) {
       return response.status(401).json({ error: "invalid job token", code: "JOBS_UNAUTHORIZED" });
     }
     const name = String(request.params.name);

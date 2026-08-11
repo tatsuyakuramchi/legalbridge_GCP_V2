@@ -112,8 +112,12 @@ import { PgSnippetsRepository, type SnippetsRepository } from "./snippets/snippe
 import { createSnippetsRouter } from "./snippets/snippets-routes.js";
 import { PgAttachmentsRepository, type AttachmentsRepository } from "./documents/attachments-repository.js";
 import { RuntimeIntegrationSettings } from "./settings/runtime-settings.js";
+import { RuntimeSecrets } from "./settings/runtime-secrets.js";
+import type { SecretKey } from "./settings/secrets-fields.js";
+import { GcpSecretStore, type SecretStore } from "./settings/secret-store.js";
+import { createSecretsRouter } from "./settings/secrets-routes.js";
 import {
-  DynamicBacklogClient, DynamicGmailApiClient, DynamicGmailInboundClient
+  DynamicBacklogClient, DynamicGmailApiClient, DynamicGmailInboundClient, DynamicSlackWebApiClient
 } from "./integrations/dynamic-clients.js";
 import { createAttachmentsRouter } from "./documents/attachments-routes.js";
 import { createContractCheckRouter } from "./contract-check/routes.js";
@@ -239,10 +243,7 @@ import {
   DisabledSlackDeliveryAdapter,
   type SlackDeliveryAdapter
 } from "./integrations/slack-delivery-adapter.js";
-import {
-  SlackWebApiDeliveryAdapter,
-  FetchSlackWebApiClient
-} from "./integrations/slack-web-api-adapter.js";
+import { SlackWebApiDeliveryAdapter } from "./integrations/slack-web-api-adapter.js";
 import {
   WebApiMatterSlackChannelAdapter,
   LocalMatterSlackChannelAdapter,
@@ -400,6 +401,8 @@ export interface AppDependencies {
   documentReissue?: DocumentReissueRepository;
   excelBatch?: ExcelBatchRepository;
   appSettings?: AppSettingsRepository;
+  // APIキー投入画面＋ランタイム秘密情報解決の保存先（Secret Manager）。未設定＝画面は閲覧のみ・env固定。
+  secretStore?: SecretStore;
   workflowRules?: WorkflowRulesRepository;
   contractMaster?: ContractMasterRepository;
   contractCheck?: ContractCheckRepository;
@@ -507,6 +510,8 @@ function createDefaultDependencies(): AppDependencies {
     documentReissue: database ? new PgDocumentReissueRepository(database) : undefined,
     excelBatch: database ? new PgExcelBatchRepository(database) : undefined,
     appSettings: database ? new PgAppSettingsRepository(database) : undefined,
+    // Cloud Run 上（K_SERVICE あり）でのみ Secret Manager に接続。ローカル・テストは未設定。
+    secretStore: process.env.K_SERVICE ? new GcpSecretStore() : undefined,
     workflowRules: database ? new PgWorkflowRulesRepository(database) : undefined,
     contractMaster: database ? new PgContractMasterRepository(database) : undefined,
     contractCheck: database ? new PgContractCheckRepository(database) : undefined,
@@ -651,12 +656,26 @@ export function createApp(
   }, dependencies.appSettings);
   const rt = () => runtimeSettings.current();
 
+  // 秘密情報のランタイム解決（APIキー投入画面の即時反映・TTL 60秒＋保存時即時リフレッシュ）。
+  // Secret Manager に値が無い／ストア未設定のキーは env（起動時の値）のまま。
+  // 有効/無効ゲートは従来どおり起動時 config（差し替わるのは有効な連携が使う値のみ）。
+  const runtimeSecrets = new RuntimeSecrets({
+    BACKLOG_API_KEY: config.backlogApiKey,
+    SLACK_BOT_TOKEN: config.slackBotToken,
+    SLACK_SIGNING_SECRET: config.slackSigningSecret,
+    CLOUDSIGN_CLIENT_ID: config.cloudSignClientId,
+    CLOUDSIGN_WEBHOOK_TOKEN: config.cloudSignWebhookToken,
+    BACKLOG_WEBHOOK_TOKEN: config.backlogWebhookToken,
+    JOBS_TRIGGER_TOKEN: config.jobsTriggerToken
+  }, dependencies.secretStore);
+  const sec = (key: SecretKey) => runtimeSecrets.get(key);
+
   // Backlog クライアント（動的）。存在条件（＝各機能の有効判定）は起動時 config で固定し、
   // 接続先の値だけをランタイム解決する（apiKey は Secret/env・設定画面では扱わない）。
   const backlogConfigured = Boolean(config.backlogHost && config.backlogProjectKey && config.backlogApiKey);
   const dynamicBacklog = backlogConfigured
     ? new DynamicBacklogClient(
-        () => ({ host: rt().backlogHost, projectKey: rt().backlogProjectKey }), config.backlogApiKey)
+        () => ({ host: rt().backlogHost, projectKey: rt().backlogProjectKey }), () => sec("BACKLOG_API_KEY"))
     : undefined;
   const backlogReadClient: BacklogReadClient | undefined =
     dependencies.backlogClient ?? (config.backlogMode === "readonly" ? dynamicBacklog : undefined);
@@ -685,7 +704,7 @@ export function createApp(
     options.writeScopes?.has("slack") === true;
   const slackDeliveryAdapter: SlackDeliveryAdapter =
     config.slackDeliveryMode === "live" && /^xoxb-[A-Za-z0-9-]+$/.test(config.slackBotToken)
-      ? new SlackWebApiDeliveryAdapter(new FetchSlackWebApiClient(config.slackBotToken))
+      ? new SlackWebApiDeliveryAdapter(new DynamicSlackWebApiClient(() => sec("SLACK_BOT_TOKEN")))
       : new DisabledSlackDeliveryAdapter();
   const slackDispatchEnabled =
     options.accessMode === "readwrite" &&
@@ -699,7 +718,7 @@ export function createApp(
   // 案件 Slack スレッド（法務相談・チャンネル投稿＋thread_ts＋<@id>メンション）。
   const matterSlackChannelAdapter: MatterSlackChannelAdapter =
     config.slackDeliveryMode === "live" && /^xoxb-[A-Za-z0-9-]+$/.test(config.slackBotToken)
-      ? new WebApiMatterSlackChannelAdapter(new FetchSlackWebApiClient(config.slackBotToken))
+      ? new WebApiMatterSlackChannelAdapter(new DynamicSlackWebApiClient(() => sec("SLACK_BOT_TOKEN")))
       : new LocalMatterSlackChannelAdapter();
   const matterSlackEnabled =
     options.accessMode === "readwrite" &&
@@ -730,7 +749,7 @@ export function createApp(
   const cloudSignAdapter: CloudSignAdapter =
     config.cloudSignMode === "live" && config.cloudSignClientId && config.cloudSignBaseUrl
       ? new CloudSignApiAdapter(new FetchCloudSignApiClient(
-          config.cloudSignBaseUrl, config.cloudSignClientId))
+          config.cloudSignBaseUrl, () => sec("CLOUDSIGN_CLIENT_ID")))
       : new LocalCloudSignAdapter();
   const cloudSignDispatchEnabled =
     options.accessMode === "readwrite" &&
@@ -1355,6 +1374,9 @@ export function createApp(
     get GMAIL_INBOUND_QUERY() { return rt().gmailInboundQuery; },
     get CLOUDSIGN_ALLOWED_RECIPIENTS() { return rt().cloudSignAllowedRecipients; }
   }, () => runtimeSettings.refresh()));
+  // APIキー投入（Phase 2-5）。読取 admin（登録状況のみ）・保存 guarded（scope 'settings'）。
+  // 値は Secret Manager にのみ保存（DB・応答・ログに出さない）。保存成功で runtimeSecrets を即時リフレッシュ。
+  app.use("/api/v2", createSecretsRouter(dependencies.secretStore, appSettingsWriteEnabled, () => runtimeSecrets.refresh()));
   // 承認ルート（部門別・Phase 11-2）。読取 admin・保存 guarded（scope 'workflow-rules'・grant 037）。
   app.use("/api/v2", createWorkflowRulesRouter(dependencies.workflowRules, workflowRulesWriteEnabled));
   // 契約マスタ（Phase 11-4）。読取 admin/legal・更新/状態変更 guarded（scope 'contract-master'・grant 038）。
@@ -1424,7 +1446,7 @@ export function createApp(
       });
     }
   }
-  app.use(createJobsRouter({ enabled: config.jobsEnabled, token: config.jobsTriggerToken, runners: jobRunners }));
+  app.use(createJobsRouter({ enabled: config.jobsEnabled, token: () => sec("JOBS_TRIGGER_TOKEN"), runners: jobRunners }));
   // 外部 Webhook ハンドラ（9-5 CloudSign / 9-7 Backlog）。DB があり handler 未注入なら既定を構築。
   //   CloudSign 締結→送付履歴 updateStatus＋契約 executed（grant 031 未整備なら forbidden で受信は成功）。
   //   Backlog 課題追加→Slack live 時のみ法務相談チャンネルへ通知。いずれも lb_v2_webhook_receipts でべき等。
@@ -1463,8 +1485,8 @@ export function createApp(
     }
   }
   app.use(createWebhooksRouter({
-    cloudsign: { token: config.cloudSignWebhookToken, handler: cloudSignWebhookHandler },
-    backlog: { token: config.backlogWebhookToken, handler: backlogWebhookHandler }
+    cloudsign: { token: () => sec("CLOUDSIGN_WEBHOOK_TOKEN"), handler: cloudSignWebhookHandler },
+    backlog: { token: () => sec("BACKLOG_WEBHOOK_TOKEN"), handler: backlogWebhookHandler }
   }));
   // Slack 法務依頼インテーク（Phase 16-3a）。署名検証（fail-closed）で保護・既定 OFF。
   //   有効条件：フラグ＋signing secret＋Bot トークン（views.open 用）＋DB＋readwrite。
@@ -1477,7 +1499,7 @@ export function createApp(
     const intakeBacklog = config.backlogMode === "live" ? dynamicBacklog : undefined;
     const intakeHandler = createSlackIntakeHandler({
       repository: new PgSlackIntakeRepository(jobsDatabase),
-      slack: new FetchSlackWebApiClient(config.slackBotToken),
+      slack: new DynamicSlackWebApiClient(() => sec("SLACK_BOT_TOKEN")),
       backlog: intakeBacklog ?? null,
       get backlogHost() { return rt().backlogHost || null; },
       get backlogProjectKey() { return rt().backlogProjectKey || null; },
@@ -1485,7 +1507,7 @@ export function createApp(
       log: (message) => console.warn(`[slack-intake] ${message}`)
     });
     app.use(createSlackIntakeRouter({
-      signingSecret: config.slackSigningSecret,
+      signingSecret: () => sec("SLACK_SIGNING_SECRET"),
       onCommand: intakeHandler.handleCommand,
       onInteractivity: intakeHandler.handleInteractivity
     }));

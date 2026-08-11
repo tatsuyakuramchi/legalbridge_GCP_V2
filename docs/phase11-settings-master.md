@@ -31,6 +31,33 @@ daily-checks・digest・webhook 通知の全 5 箇所）、CloudSign 宛先 allo
 起動時上書きも維持（初期スナップショットの正確性）。空欄・DB不通は env フォールバック。
 追加 grant なし（036 の app_settings 権限で充足）。
 
+## 11-1c：APIキータブ（2026-08-11 追加・秘密情報の画面投入）
+
+設定画面に「APIキー」タブを追加し、**秘密情報 7 件**を画面から Secret Manager に投入できるようにした
+（BACKLOG_API_KEY→`backlog-api-key`／SLACK_BOT_TOKEN→`SLACK_BOT_TOKEN`／
+SLACK_SIGNING_SECRET→`slack-signing-secret`／CLOUDSIGN_CLIENT_ID→`cloudsign-client-id`／
+CLOUDSIGN_WEBHOOK_TOKEN・BACKLOG_WEBHOOK_TOKEN・JOBS_TRIGGER_TOKEN→同名。シークレット名は
+cloudbuild-write-test.yaml の `_*_SECRET` 置換と一致）。安全設計：
+
+- **保存先は Secret Manager のみ**（app_settings/DB には一切入れない。応答・ログにも値を出さない）。
+- **書き込み専用画面**：GET は登録状況（登録済みか・版・更新時刻）のみ。値は二度と表示されない。
+- **ゲート**：admin ロール＋設定書込有効（`settings` スコープ）。allowlist（`secrets-fields.ts`）外は 400。
+  形式チェックあり（xoxb-・UUID 等の貼り間違いガード）。監査ログは actor＋シークレット名＋版のみ。
+- **live/disabled 切替・GWS SA 鍵（JSON）は対象外**（従来どおりデプロイ管理・Cloud Shell 投入）。
+
+**反映**：`settings/runtime-secrets.ts` の `RuntimeSecrets`（TTL 60秒＋保存時 onSaved で即時 refresh・
+env フォールバック）を各消費箇所がプロバイダ経由で参照する — Backlog APIキー（DynamicBacklogClient）、
+Slack Bot トークン（DynamicSlackWebApiClient・配信/matter-slack/intake の 3 箇所）、Slack 署名シークレット
+（slack-intake-routes）、CloudSign client_id（FetchCloudSignApiClient・client_id 変更でトークンキャッシュ破棄）、
+Webhook トークン 2 件（webhooks-routes）、ジョブ起動トークン（jobs-routes）。**有効化済みの連携は
+キーのローテーションが再デプロイなしで約1分以内に反映**。未有効の連携は従来どおり点火デプロイ時に
+env マウントで反映（有効/無効ゲートは起動時 config のまま＝点火統制は不変）。
+
+実装：`settings/secret-store.ts`（GcpSecretStore=Secret Manager REST・ADC／MemorySecretStore）、
+`settings/secrets-routes.ts`（GET/POST /api/v2/settings/secrets）。ストアは Cloud Run 上（K_SERVICE）でのみ
+接続。**初回のみ** 実行SAへの Secret Manager 権限付与が必要（cutover-runbook 2-5 の一括コマンド参照：
+各シークレットに secretVersionAdder＋viewer＋secretAccessor）。
+
 ## 11-1：システム設定（会社プロファイル）✅ 実装済
 
 共有 `app_settings`（`key VARCHAR PK / value JSONB`）を V2 が所有・編集する。V1 も同表を参照するため

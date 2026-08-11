@@ -10,7 +10,8 @@ export type SlackCommandHandler = (body: Record<string, string | undefined>) => 
 export type SlackInteractivityHandler = (payload: unknown) => Promise<{ status: number; body: unknown }>;
 
 export interface SlackIntakeRouterOptions {
-  signingSecret?: string;
+  // 関数を渡すとリクエスト毎に解決する（ランタイム秘密情報のローテーション対応・Phase 2-5）。
+  signingSecret?: string | (() => string);
   onCommand?: SlackCommandHandler;
   onInteractivity?: SlackInteractivityHandler;
   nowSeconds?: () => number;   // テスト用
@@ -20,7 +21,10 @@ interface RawBodyRequest extends Request { rawBody?: Buffer; }
 
 export function createSlackIntakeRouter(options: SlackIntakeRouterOptions = {}) {
   const router = Router();
-  const enabled = Boolean(options.signingSecret) && Boolean(options.onCommand) && Boolean(options.onInteractivity);
+  const resolveSecret = () =>
+    typeof options.signingSecret === "function" ? options.signingSecret() : options.signingSecret;
+  const handlersPresent = Boolean(options.onCommand) && Boolean(options.onInteractivity);
+  const enabled = () => Boolean(resolveSecret()) && handlersPresent;
 
   // Slack は application/x-www-form-urlencoded で送る。署名は生ボディに対して計算されるため
   // verify フックで rawBody を保持する（express.json はこの content-type を素通しする）。
@@ -31,7 +35,7 @@ export function createSlackIntakeRouter(options: SlackIntakeRouterOptions = {}) 
 
   function verify(request: RawBodyRequest): boolean {
     return verifySlackSignature({
-      signingSecret: options.signingSecret,
+      signingSecret: resolveSecret(),
       timestampHeader: request.header("x-slack-request-timestamp"),
       signatureHeader: request.header("x-slack-signature"),
       rawBody: request.rawBody ?? Buffer.alloc(0),
@@ -40,7 +44,7 @@ export function createSlackIntakeRouter(options: SlackIntakeRouterOptions = {}) 
   }
 
   router.post("/internal/slack/commands", parser, async (request: RawBodyRequest, response) => {
-    if (!enabled) return response.status(404).json({ error: "not found", code: "SLACK_INTAKE_DISABLED" });
+    if (!enabled()) return response.status(404).json({ error: "not found", code: "SLACK_INTAKE_DISABLED" });
     if (!verify(request)) return response.status(401).json({ error: "invalid slack signature", code: "SLACK_INTAKE_UNAUTHORIZED" });
     try {
       const out = await options.onCommand!(request.body as Record<string, string | undefined>);
@@ -52,7 +56,7 @@ export function createSlackIntakeRouter(options: SlackIntakeRouterOptions = {}) 
   });
 
   router.post("/internal/slack/interactivity", parser, async (request: RawBodyRequest, response) => {
-    if (!enabled) return response.status(404).json({ error: "not found", code: "SLACK_INTAKE_DISABLED" });
+    if (!enabled()) return response.status(404).json({ error: "not found", code: "SLACK_INTAKE_DISABLED" });
     if (!verify(request)) return response.status(401).json({ error: "invalid slack signature", code: "SLACK_INTAKE_UNAUTHORIZED" });
     try {
       // interactivity は payload=<JSON> の form-encoded。壊れた JSON は 400。
