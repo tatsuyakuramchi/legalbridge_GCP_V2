@@ -8,7 +8,7 @@ import {
   renderStoredDocumentHtml, StoredDocumentTemplateVersionError
 } from "./document-html-renderer.js";
 import type { CloudSignAdapter } from "../integrations/cloudsign-adapter.js";
-import { isValidEmail, findDisallowedRecipient } from "../integrations/cloudsign-adapter.js";
+import { CloudSignError, isValidEmail, findDisallowedRecipient } from "../integrations/cloudsign-adapter.js";
 import {
   evaluateCloudSignDispatchGate, type CloudSignDispatchGateSettings
 } from "../integrations/cloudsign-dispatch-gate.js";
@@ -147,6 +147,13 @@ export function createCloudSignRouter(
     } catch (error) {
       if (error instanceof StoredDocumentTemplateVersionError) {
         return response.status(409).json({ error: error.message, code: "CLOUDSIGN_TEMPLATE_VERSION_MISMATCH" });
+      }
+      if (error instanceof CloudSignError) {
+        // CloudSign API 側の失敗（認証・接続・4xx/5xx）。素の500ではなく理由を返す。
+        return response.status(502).json({
+          error: `CloudSign連携エラー: ${error.message}（クライアントID・宛先・CloudSign側の設定を確認してください）`,
+          code: `CLOUDSIGN_API_${String(error.code ?? "error").toUpperCase()}`
+        });
       }
       if (error instanceof z.ZodError) return response.status(400).json({ error: "invalid request", issues: error.issues });
       return next(error);
