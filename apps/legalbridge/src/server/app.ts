@@ -466,6 +466,7 @@ export interface AppOptions {
   vendorMergeEnabled?: boolean;
   matterMergeEnabled?: boolean;
   matterDeleteEnabled?: boolean;
+  conditionLineRepairEnabled?: boolean;
   documentVoidEnabled?: boolean;
   documentReissueEnabled?: boolean;
   excelBatchEnabled?: boolean;
@@ -626,6 +627,7 @@ export function createApp(
     vendorMergeEnabled: config.vendorMergeEnabled,
     matterMergeEnabled: config.matterMergeEnabled,
     matterDeleteEnabled: config.matterDeleteEnabled,
+    conditionLineRepairEnabled: config.conditionLineRepairEnabled,
     documentVoidEnabled: config.documentVoidEnabled,
     documentReissueEnabled: config.documentReissueEnabled,
     excelBatchEnabled: config.excelBatchEnabled,
@@ -846,6 +848,12 @@ export function createApp(
     options.matterDeleteEnabled === true &&
     options.writeScopes?.has("matter-delete") === true &&
     Boolean(dependencies.matterDelete);
+  const conditionLineRepairEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.conditionLineRepairEnabled === true &&
+    options.writeScopes?.has("condition-repair") === true &&
+    Boolean(dependencies.conditionLines);
   const documentVoidEnabled =
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
@@ -984,6 +992,7 @@ export function createApp(
         ...(backlogCommentWriteEnabled ? ["backlog-comment"] : []),
         ...(royaltyEventWriteEnabled ? ["royalty-events"] : []),
         ...(receiptWriteEnabled ? ["receipts"] : []),
+        ...(conditionLineRepairEnabled ? ["condition-repair"] : []),
         ...(paymentLedgerWriteEnabled ? ["payments"] : []),
         ...(gmailDispatchEnabled ? ["gmail"] : []),
         ...(cloudSignDispatchEnabled ? ["cloudsign"] : []),
@@ -1009,6 +1018,7 @@ export function createApp(
         outboundConditionWriteEnabled || contractIntakeWriteEnabled ||
         matterWriteEnabled || vendorWriteEnabled || staffWriteEnabled || workWriteEnabled ||
         materialWriteEnabled || rightsSourceWriteEnabled || vendorMergeEnabled || matterMergeEnabled || matterDeleteEnabled || documentVoidEnabled || documentReissueEnabled || excelBatchEnabled || appSettingsWriteEnabled || workflowRulesWriteEnabled || contractMasterWriteEnabled || snippetsWriteEnabled || attachmentUploadEnabled || backlogCommentWriteEnabled || royaltyEventWriteEnabled || receiptWriteEnabled ||
+        conditionLineRepairEnabled ||
         paymentLedgerWriteEnabled || gmailDispatchEnabled || cloudSignDispatchEnabled || gmailInboundEnabled,
       writeCapabilities: [
         ...(draftWriteEnabled ? ["drafts"] : []),
@@ -1038,6 +1048,7 @@ export function createApp(
         ...(backlogCommentWriteEnabled ? ["backlog-comment"] : []),
         ...(royaltyEventWriteEnabled ? ["royalty-events"] : []),
         ...(receiptWriteEnabled ? ["receipts"] : []),
+        ...(conditionLineRepairEnabled ? ["condition-repair"] : []),
         ...(paymentLedgerWriteEnabled ? ["payments"] : []),
         ...(gmailDispatchEnabled ? ["gmail"] : []),
         ...(cloudSignDispatchEnabled ? ["cloudsign"] : []),
@@ -1221,6 +1232,9 @@ export function createApp(
       (request.method === "POST" && request.path === "/condition-receipts") ||
       (request.method === "PUT" && /^\/condition-receipts\/\d+$/.test(request.path));
     if (receiptWriteEnabled && isReceiptWrite) return next();
+    const isConditionRepair =
+      request.method === "PATCH" && /^\/condition-lines\/\d+\/counterparty$/.test(request.path);
+    if (conditionLineRepairEnabled && isConditionRepair) return next();
 
     return response.status(403).json({
       error: options.accessMode === "readonly"
@@ -1313,7 +1327,7 @@ export function createApp(
     settings: { enabled: matterSlackEnabled, get legalChannelId() { return rt().slackLegalConsultChannel; } },
     granter: drivePermissionGranter
   }));
-  app.use("/api/v2", createConditionLineRouter(dependencies.conditionLines));
+  app.use("/api/v2", createConditionLineRouter(dependencies.conditionLines, conditionLineRepairEnabled));
   // 計算専用（read-only・DB非依存）のロイヤリティ試算。
   app.use("/api/v2", createRoyaltyRouter());
   // ロイヤリティ消化イベント書込（guarded-write・既定OFF）。

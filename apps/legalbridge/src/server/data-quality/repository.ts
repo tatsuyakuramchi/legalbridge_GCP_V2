@@ -48,7 +48,7 @@ const SCANS: ScanDef[] = [
     toSample: (r) => {
       const missing = [r.no_work ? "作品" : null, r.no_doc ? "文書" : null, r.no_vendor ? "取引先" : null]
         .filter(Boolean).join("・");
-      return { id: num(r.id), label: str(r.condition_name) || `条件#${num(r.id)}`, detail: `未設定: ${missing}`, link: { view: "conditions" } };
+      return { id: num(r.id), label: str(r.condition_name) || `条件#${num(r.id)}`, detail: `未設定: ${missing}`, link: { view: "conditions", id: num(r.id) } };
     }
   },
   {

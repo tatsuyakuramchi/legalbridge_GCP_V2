@@ -9,9 +9,9 @@ export interface MatterSummary {
   requesterEmail?: string | null;
 }
 export interface MatterDetail {
-  matter: MatterSummary & { remarks: string | null; driveFolderUrl: string | null };
+  matter: MatterSummary & { remarks: string | null; driveFolderUrl: string | null; ownerStaffId?: number | null };
   issues: Array<{ issueKey: string; relation: string; summary: string | null; note: string | null }>;
-  tasks: Array<{ id: number; title: string; status: string; assigneeName: string | null; dueAt: string | null; isPrimary: boolean; blockedReason: string | null }>;
+  tasks: Array<{ id: number; title: string; status: string; assigneeName: string | null; assigneeStaffId?: number | null; dueAt: string | null; isPrimary: boolean; blockedReason: string | null }>;
   documents: Array<{ id: number; documentNumber: string | null; templateType: string; issueKey: string; createdAt: string; driveLink: string }>;
 }
 export interface MatterRepository {
@@ -37,14 +37,14 @@ export class PgMatterRepository implements MatterRepository {
   async find(id: number) {
     const [matterResult, issuesResult, tasksResult, documentsResult] = await Promise.all([
       this.database.query(
-        `SELECT v.*, m.remarks, m.drive_folder_url
+        `SELECT v.*, m.remarks, m.drive_folder_url, m.owner_staff_id
            FROM matter_overview_v v JOIN matters m ON m.id = v.id WHERE v.id = $1`, [id]),
       this.database.query(
         `SELECT backlog_issue_key, relation, summary_snapshot, note
            FROM matter_issues WHERE matter_id = $1 ORDER BY relation, backlog_issue_key`, [id]),
       this.database.query(
         `SELECT t.id, t.title, t.status, t.due_at, t.is_primary, t.blocked_reason,
-                s.staff_name AS assignee_name
+                t.assignee_staff_id, s.staff_name AS assignee_name
            FROM matter_tasks t LEFT JOIN staff s ON s.id = t.assignee_staff_id
           WHERE t.matter_id = $1
           ORDER BY t.is_primary DESC, (t.status IN ('open','in_progress')) DESC,
@@ -56,14 +56,17 @@ export class PgMatterRepository implements MatterRepository {
     if (!matterResult.rows[0]) return null;
     const row = matterResult.rows[0];
     return {
-      matter: { ...mapSummary(row), remarks: row.remarks, driveFolderUrl: row.drive_folder_url },
+      matter: { ...mapSummary(row), remarks: row.remarks, driveFolderUrl: row.drive_folder_url,
+        ownerStaffId: row.owner_staff_id == null ? null : Number(row.owner_staff_id) },
       issues: issuesResult.rows.map((issue) => ({
         issueKey: issue.backlog_issue_key, relation: issue.relation,
         summary: issue.summary_snapshot, note: issue.note
       })),
       tasks: tasksResult.rows.map((task) => ({
         id: Number(task.id), title: task.title, status: task.status,
-        assigneeName: task.assignee_name, dueAt: iso(task.due_at),
+        assigneeName: task.assignee_name,
+        assigneeStaffId: task.assignee_staff_id == null ? null : Number(task.assignee_staff_id),
+        dueAt: iso(task.due_at),
         isPrimary: Boolean(task.is_primary), blockedReason: task.blocked_reason
       })),
       documents: documentsResult.rows.map((document) => ({

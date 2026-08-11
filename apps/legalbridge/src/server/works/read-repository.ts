@@ -56,6 +56,7 @@ export interface WorkMaterialRow {
   categoryName: string | null;
   territory: string | null;
   language: string | null;
+  remarks: string | null;
 }
 
 export interface RightsSourceRow {
@@ -222,7 +223,7 @@ export class PgWorkReadRepository implements WorkReadRepository {
       `SELECT wm.id, wm.material_no, wm.material_code, wm.material_name, wm.material_type,
               wm.material_role, wm.acquisition_type, wm.rights_type, wm.rights_holder_vendor_id,
               wm.rights_holder_label, wm.is_royalty_bearing, wm.is_default,
-              mc.name AS category_name, wm.territory, wm.language
+              mc.name AS category_name, wm.territory, wm.language, wm.remarks
          FROM work_materials wm
          LEFT JOIN material_categories mc ON mc.id = wm.category_id
         WHERE wm.work_id = $1
@@ -244,7 +245,8 @@ export class PgWorkReadRepository implements WorkReadRepository {
       isDefault: bool(r.is_default),
       categoryName: str(r.category_name),
       territory: str(r.territory),
-      language: str(r.language)
+      language: str(r.language),
+      remarks: str(r.remarks)
     }));
   }
 

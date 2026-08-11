@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { SearchableLedgerSelect } from "./SearchableLedgerSelect";
 import { checkWorkConditions, summarizeFindings } from "./contract-check";
 import { FeatureLockedNote } from "./FeatureLockedNote";
 
@@ -10,11 +11,11 @@ type Summary = { id: number; workCode: string | null; title: string | null; kind
 type Tier = { workId: number; title: string | null; workCode: string | null; label: string; isSelected: boolean };
 type Node = { workId: number; title: string | null; workCode: string | null; kind?: string | null; status?: string | null };
 type Lineage = { chain: Tier[]; children: Node[]; unlinkedRelationParents: Node[]; depth: number; isDerivative: boolean };
-type Material = { id: number; materialCode: string | null; materialName: string | null; materialType: string | null; materialRole: string | null; acquisitionType: string | null; rightsType: string | null; rightsHolderLabel: string | null; isRoyaltyBearing: boolean | null; categoryName: string | null; territory: string | null; language: string | null };
+type Material = { id: number; materialCode: string | null; materialName: string | null; materialType: string | null; materialRole: string | null; acquisitionType: string | null; rightsType: string | null; rightsHolderLabel: string | null; isRoyaltyBearing: boolean | null; categoryName: string | null; territory: string | null; language: string | null; remarks: string | null };
 type RightsSource = { id: number; materialId: number | null; materialName: string | null; sourceType: string | null; sourceWorkId: number | null; sourceWorkTitle: string | null; rightsHolderVendorId: number | null; rightsHolderName: string | null; sourceDocumentId: number | null; sourceContractId: number | null; sourceRole: string | null; isPrimary: boolean | null; validFrom: string | null; validTo: string | null };
 type Cond = { id: number; conditionName: string | null; direction: string | null; sourceMaterialId: number | null; materialName: string | null; sublicenseAllowed: boolean | null; parentLicenseConditionId: number | null; ratePct: number | null; amountExTax: number | null; mgAmount: number | null; currency: string | null; documentNumber: string | null };
 type Conditions = { receivable: Cond[]; payable: Cond[]; sublicense: Cond[]; workLevel: Cond[]; materialLinked: Cond[]; totals: { count: number; receivableCount: number; payableCount: number; sublicenseCount: number; workLevelCount: number } };
-type Core = Summary & { titleKana: string | null; workType: string | null; status: string | null; derivationType: string | null; rightsHolderName: string | null; creatorName: string | null; publisherName: string | null; ledgerCode: string | null; remarks: string | null };
+type Core = Summary & { titleKana: string | null; workType: string | null; status: string | null; derivationType: string | null; rightsHolderName: string | null; rightsHolderVendorId?: number | null; creatorName: string | null; publisherName: string | null; ledgerCode: string | null; remarks: string | null };
 type Detail = { work: Core; lineage: Lineage | null; materials: Material[] | null; rightsSources: RightsSource[] | null; conditions: Conditions | null };
 
 type Tab = "overview" | "lineage" | "products" | "materials" | "conditions" | "rights" | "rates" | "check";
@@ -39,9 +40,10 @@ function Degraded() {
 }
 
 type EditForm = {
-  title: string; titleKana: string; workType: string; kind: "" | "licensed_in" | "own";
+  title: string; titleKana: string; workType: string; status: string; kind: "" | "licensed_in" | "own";
   derivationType: string; isOriginal: boolean; parentWorkId: string;
   creatorName: string; publisherName: string; ledgerCode: string; remarks: string;
+  rightsHolderVendorId: string;
 };
 
 type RightsForm = {
@@ -64,10 +66,10 @@ const emptyMaterial = (): MaterialForm => ({
   acquisitionType: "license", rightsType: "license", rightsHolderLabel: "", isRoyaltyBearing: false, remarks: ""
 });
 
-export function WorkDetail({ canEdit = false, canEditRights = false, canEditMaterials = false, onNavigate }: { canEdit?: boolean; canEditRights?: boolean; canEditMaterials?: boolean; onNavigate?: (target: string) => void }) {
+export function WorkDetail({ canEdit = false, canEditRights = false, canEditMaterials = false, onNavigate, initialWorkId = null }: { canEdit?: boolean; canEditRights?: boolean; canEditMaterials?: boolean; onNavigate?: (target: string) => void; initialWorkId?: number | null }) {
   const [keyword, setKeyword] = useState("");
   const [results, setResults] = useState<Summary[]>([]);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedId, setSelectedId] = useState<number | null>(initialWorkId);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [tab, setTab] = useState<Tab>("overview");
   const [error, setError] = useState("");
@@ -213,7 +215,9 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
     setMatSaving(true); setMatError("");
     const isNew = matForm.id == null;
     const body: Record<string, unknown> = {
-      materialName: matForm.materialName.trim(), materialType: matForm.materialType,
+      materialName: matForm.materialName.trim(),
+      // 種別（materialType）は更新不可（コード再生成に影響するため作成時のみ）。PATCH では送らない。
+      ...(isNew ? { materialType: matForm.materialType } : {}),
       materialRole: matForm.materialRole, acquisitionType: matForm.acquisitionType,
       rightsType: matForm.rightsType,
       rightsHolderLabel: matForm.rightsHolderLabel.trim() || (isNew ? undefined : null),
@@ -239,11 +243,13 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
     const w = detail.work;
     setForm({
       title: w.title ?? "", titleKana: w.titleKana ?? "", workType: w.workType ?? "",
+      status: ["planning", "in_production", "released"].includes(w.status ?? "") ? (w.status as string) : "",
       kind: (w.kind === "licensed_in" || w.kind === "own") ? w.kind : "",
       derivationType: w.derivationType ?? "", isOriginal: w.isOriginal === true,
       parentWorkId: w.parentWorkId != null ? String(w.parentWorkId) : "",
       creatorName: w.creatorName ?? "", publisherName: w.publisherName ?? "",
-      ledgerCode: w.ledgerCode ?? "", remarks: w.remarks ?? ""
+      ledgerCode: w.ledgerCode ?? "", remarks: w.remarks ?? "",
+      rightsHolderVendorId: w.rightsHolderVendorId != null ? String(w.rightsHolderVendorId) : ""
     });
     setSaveError(""); setEditing(true);
   }
@@ -255,13 +261,15 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
       title: form.title.trim(),
       titleKana: form.titleKana.trim() || null,
       workType: form.workType.trim() || null,
+      status: form.status || null,
       derivationType: form.derivationType.trim() || null,
       isOriginal: form.isOriginal,
       parentWorkId: form.parentWorkId.trim() ? Number(form.parentWorkId.trim()) : null,
       creatorName: form.creatorName.trim() || null,
       publisherName: form.publisherName.trim() || null,
       ledgerCode: form.ledgerCode.trim() || null,
-      remarks: form.remarks.trim() || null
+      remarks: form.remarks.trim() || null,
+      rightsHolderVendorId: form.rightsHolderVendorId ? Number(form.rightsHolderVendorId) : null
     };
     if (form.kind) body.kind = form.kind;
     try {
@@ -338,6 +346,12 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
                   <label>作品名<input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></label>
                   <label>作品名カナ<input value={form.titleKana} onChange={(e) => setForm({ ...form, titleKana: e.target.value })} /></label>
                   <label>作品種別<input value={form.workType} onChange={(e) => setForm({ ...form, workType: e.target.value })} /></label>
+                  <label>ステータス
+                    <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
+                      <option value="">未設定</option><option value="planning">企画中</option>
+                      <option value="in_production">制作中</option><option value="released">発売済み</option>
+                    </select>
+                  </label>
                   <label>区分
                     <select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value as EditForm["kind"] })}>
                       <option value="">未設定</option><option value="licensed_in">ライセンスイン</option><option value="own">自社作品</option>
@@ -351,6 +365,9 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
                   <label>作者<input value={form.creatorName} onChange={(e) => setForm({ ...form, creatorName: e.target.value })} /></label>
                   <label>出版社<input value={form.publisherName} onChange={(e) => setForm({ ...form, publisherName: e.target.value })} /></label>
                   <label>台帳コード<input value={form.ledgerCode} onChange={(e) => setForm({ ...form, ledgerCode: e.target.value })} /></label>
+                  <SearchableLedgerSelect type="vendors" value={form.rightsHolderVendorId}
+                    label="権利者（取引先）" placeholder="名前・コードで検索"
+                    onChange={(value) => setForm({ ...form, rightsHolderVendorId: value })} />
                   <label className="wd-wide">備考<textarea value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} rows={2} /></label>
                 </div>
                 {form.parentWorkId && detail.work.id === Number(form.parentWorkId) && <small className="hint">自身を親には設定できません。</small>}
@@ -448,8 +465,10 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
                 {matError && <div className="async-error">{matError}</div>}
                 <label>素材名 *<input value={matForm.materialName} onChange={(e) => setMatForm({ ...matForm, materialName: e.target.value })} /></label>
                 <div className="matter-form-grid">
-                  <label>種別<select value={matForm.materialType} onChange={(e) => setMatForm({ ...matForm, materialType: e.target.value as MaterialForm["materialType"] })}>
-                    {MATERIAL_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}</select></label>
+                  <label>種別{matForm.id != null ? <><select value={matForm.materialType} disabled>
+                    {MATERIAL_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}</select><small>（変更不可）</small></> :
+                    <select value={matForm.materialType} onChange={(e) => setMatForm({ ...matForm, materialType: e.target.value as MaterialForm["materialType"] })}>
+                    {MATERIAL_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}</select>}</label>
                   <label>役割<select value={matForm.materialRole} onChange={(e) => setMatForm({ ...matForm, materialRole: e.target.value as MaterialForm["materialRole"] })}>
                     {MATERIAL_ROLES.map((t) => <option key={t} value={t}>{t}</option>)}</select></label>
                   <label>取得<select value={matForm.acquisitionType} onChange={(e) => setMatForm({ ...matForm, acquisitionType: e.target.value as MaterialForm["acquisitionType"] })}>
@@ -477,7 +496,7 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
                     materialRole: (MATERIAL_ROLES as readonly string[]).includes(m.materialRole ?? "") ? m.materialRole as MaterialForm["materialRole"] : "sub_component",
                     acquisitionType: (ACQUISITION_TYPES as readonly string[]).includes(m.acquisitionType ?? "") ? m.acquisitionType as MaterialForm["acquisitionType"] : "license",
                     rightsType: (RIGHTS_TYPES as readonly string[]).includes(m.rightsType ?? "") ? m.rightsType as MaterialForm["rightsType"] : "license",
-                    rightsHolderLabel: m.rightsHolderLabel ?? "", isRoyaltyBearing: Boolean(m.isRoyaltyBearing), remarks: ""
+                    rightsHolderLabel: m.rightsHolderLabel ?? "", isRoyaltyBearing: Boolean(m.isRoyaltyBearing), remarks: m.remarks ?? ""
                   }); }}>編集</button></td>}
                 </tr>)}</tbody>
               </table> : <div className="empty-state">登録された素材はありません。{canEditMaterials && "「素材を追加」から登録できます。"}</div>}

@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { EmptyState } from "./EmptyState";
+import { SearchableLedgerSelect } from "./SearchableLedgerSelect";
+import { useToast } from "./Toast";
 import { ExportButtons } from "./ExportButtons";
 import type { ExportColumn } from "./export-util";
 
@@ -55,9 +57,9 @@ function formatDate(value: string | null) {
   return new Intl.DateTimeFormat("ja-JP", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(value));
 }
 
-export function ConditionLinesWorkspace({ onOpenDocument, onCreateDocument, onNavigate }:
+export function ConditionLinesWorkspace({ onOpenDocument, onCreateDocument, onNavigate, canRepair = false, initialSelectedId = null }:
   { onOpenDocument?: (documentId: number) => void; onCreateDocument?: (issueKey: string | null) => void;
-    onNavigate?: (target: string) => void }) {
+    onNavigate?: (target: string) => void; canRepair?: boolean; initialSelectedId?: number | null }) {
   const [tab, setTab] = useState<"search" | "inspections">("search");
   return <section className="page">
     <div className="page-title"><div><p>CONDITION LINES</p><h1>条件明細</h1>
@@ -73,7 +75,7 @@ export function ConditionLinesWorkspace({ onOpenDocument, onCreateDocument, onNa
     </div>
     {tab === "inspections"
       ? <PendingInspections onOpenDocument={onOpenDocument} onCreateDocument={onCreateDocument} />
-      : <ConditionSearch onOpenDocument={onOpenDocument} />}
+      : <ConditionSearch onOpenDocument={onOpenDocument} canRepair={canRepair} initialSelectedId={initialSelectedId} />}
   </section>;
 }
 
@@ -96,11 +98,21 @@ const triggerLabels: Record<string, string> = {
 const eventTypeLabels: Record<string, string> = {
   inspection: "検収", royalty_calc: "計算", payment: "支払"
 };
+// 生コード表示の解消（監査指摘）：既知コードはラベル化し、未知値はそのまま表示する。
+const exclusivityLabels: Record<string, string> = {
+  exclusive: "独占", non_exclusive: "非独占", sole: "独占（単独許諾）"
+};
+const paymentSchemeLabels: Record<string, string> = {
+  royalty: "ロイヤリティ", per_unit: "単価×数量", lump_sum: "一括"
+};
+const transactionKindLabels: Record<string, string> = {
+  license: "ライセンス", product: "商品取引"
+};
 
-function ConditionSearch({ onOpenDocument }: { onOpenDocument?: (documentId: number) => void }) {
+function ConditionSearch({ onOpenDocument, canRepair = false, initialSelectedId = null }: { onOpenDocument?: (documentId: number) => void; canRepair?: boolean; initialSelectedId?: number | null }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<DirFilter>("all");
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedId, setSelectedId] = useState<number | null>(initialSelectedId);
   const [rows, setRows] = useState<ConditionLine[]>([]);
   const [summary, setSummary] = useState<SummaryRow[]>([]);
   const [settlement, setSettlement] = useState<Settlement | null>(null);
@@ -141,7 +153,7 @@ function ConditionSearch({ onOpenDocument }: { onOpenDocument?: (documentId: num
   const visible = rows.filter((r) => filter === "all" || r.direction === filter);
 
   if (selectedId) {
-    return <ConditionDetail id={selectedId} onBack={() => setSelectedId(null)} onOpenDocument={onOpenDocument} />;
+    return <ConditionDetail id={selectedId} onBack={() => setSelectedId(null)} onOpenDocument={onOpenDocument} canRepair={canRepair} />;
   }
 
   return <>
@@ -177,7 +189,7 @@ function ConditionSearch({ onOpenDocument }: { onOpenDocument?: (documentId: num
                   <span className={`cond-dir ${row.direction ?? ""}`}>{directionLabels[row.direction ?? ""] ?? "—"}</span>
                   {row.flowDirection && <small> / {flowLabels[row.flowDirection] ?? row.flowDirection}</small>}
                 </td>
-                <td>{row.vendorName || "—"}</td>
+                <td>{row.vendorName || <span className="cond-missing" title="相手方が未設定です（詳細画面で補修できます）">未設定</span>}</td>
                 <td>{row.workTitle || "—"}</td>
                 <td>{row.territory || "—"}</td>
                 <td>{money(row.currency, row.amountExTax ?? row.mgAmount)}</td>
@@ -191,17 +203,40 @@ function ConditionSearch({ onOpenDocument }: { onOpenDocument?: (documentId: num
   </>;
 }
 
-function ConditionDetail({ id, onBack, onOpenDocument }:
-  { id: number; onBack: () => void; onOpenDocument?: (documentId: number) => void }) {
+function ConditionDetail({ id, onBack, onOpenDocument, canRepair = false }:
+  { id: number; onBack: () => void; onOpenDocument?: (documentId: number) => void; canRepair?: boolean }) {
   const [detail, setDetail] = useState<ConditionDetailData | null>(null);
   const [error, setError] = useState("");
+  const [repairOpen, setRepairOpen] = useState(false);
+  const [repairVendorId, setRepairVendorId] = useState("");
+  const [repairSaving, setRepairSaving] = useState(false);
+  const toast = useToast();
   useEffect(() => {
-    setDetail(null); setError("");
+    setDetail(null); setError(""); setRepairOpen(false); setRepairVendorId("");
     fetch(`/api/v2/condition-lines/${id}`)
       .then((response) => response.ok ? response.json() : Promise.reject())
       .then((data) => setDetail(data.detail))
       .catch(() => setError("条件明細の詳細を取得できませんでした。"));
   }, [id]);
+
+  // 相手方の後付け補修（V1取込データの取引先欠落用・guarded write）。
+  async function saveCounterparty() {
+    const vendorId = Number(repairVendorId);
+    if (!vendorId) return;
+    setRepairSaving(true);
+    try {
+      const response = await fetch(`/api/v2/condition-lines/${id}/counterparty`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ vendorId })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) { toast.push(data.error ?? "相手方を設定できませんでした。", "error"); return; }
+      setDetail((prev) => prev ? { ...prev, vendorName: data.vendorName ?? prev.vendorName } : prev);
+      setRepairOpen(false); setRepairVendorId("");
+      toast.push(`相手方を「${data.vendorName}」に設定しました。`, "success");
+    } catch { toast.push("通信に失敗しました。", "error"); }
+    finally { setRepairSaving(false); }
+  }
 
   return <div>
     <div className="breadcrumb"><button onClick={onBack}>← 条件明細一覧に戻る</button></div>
@@ -221,23 +256,44 @@ function ConditionDetail({ id, onBack, onOpenDocument }:
         {detail.vendorName && <span>{detail.vendorName}</span>}
       </div>
       <dl className="condition-detail-grid">
+        <Field label="条件行ID" value={`#${detail.id}`} />
         <Field label="作品" value={detail.workTitle} />
-        <Field label="相手方" value={detail.vendorName} />
+        <div><dt>相手方</dt><dd>
+          {detail.vendorName
+            ? detail.vendorName
+            : <span className="cond-missing">未設定（取込元データに相手方がありません）</span>}
+          {canRepair && !repairOpen &&
+            <button type="button" className="link-button" onClick={() => setRepairOpen(true)}>
+              {detail.vendorName ? "変更" : "設定する"}
+            </button>}
+        </dd></div>
         <Field label="地域" value={detail.regions.length ? detail.regions.join("、") : detail.territory} />
         <Field label="言語" value={detail.languages.length ? detail.languages.join("、") : null} />
-        <Field label="独占性" value={detail.exclusivity} />
+        <Field label="独占性" value={detail.exclusivity ? (exclusivityLabels[detail.exclusivity] ?? detail.exclusivity) : null} />
         <Field label="再許諾" value={detail.sublicenseAllowed === null ? null : detail.sublicenseAllowed ? "可" : "不可"} />
         <Field label="金額(税抜)" value={detail.amountExTax !== null ? money(detail.currency, detail.amountExTax) : null} />
         <Field label="MG" value={detail.mgAmount !== null ? money(detail.currency, detail.mgAmount) : null} />
         <Field label="AG" value={detail.agAmount !== null ? money(detail.currency, detail.agAmount) : null} />
         <Field label="料率" value={detail.ratePct !== null ? `${detail.ratePct}%` : null} />
-        <Field label="支払方式" value={detail.paymentScheme} />
+        <Field label="支払方式" value={detail.paymentScheme ? (paymentSchemeLabels[detail.paymentScheme] ?? detail.paymentScheme) : null} />
         <Field label="支払条件" value={detail.paymentTerms} />
         <Field label="ロイヤリティ基準" value={detail.royaltyBase} />
         <Field label="控除費用" value={detail.deductibleCosts} />
         <Field label="開始日" value={detail.termStart} />
-        <Field label="取引種別" value={detail.transactionKind} />
+        <Field label="取引種別" value={detail.transactionKind ? (transactionKindLabels[detail.transactionKind] ?? detail.transactionKind) : null} />
       </dl>
+      {canRepair && repairOpen && <div className="condition-repair" role="form">
+        <h3>相手方の設定</h3>
+        <p className="hub-note">取引先マスタから選択して設定します（表示は全画面に即時反映されます）。</p>
+        <SearchableLedgerSelect type="vendors" value={repairVendorId}
+          label="取引先" placeholder="名前・コードで検索"
+          onChange={(value) => setRepairVendorId(value)} />
+        <div className="matter-form-actions">
+          <button className="primary" disabled={repairSaving || !repairVendorId}
+            onClick={() => void saveCounterparty()}>{repairSaving ? "設定中…" : "この取引先に設定"}</button>
+          <button type="button" onClick={() => { setRepairOpen(false); setRepairVendorId(""); }}>キャンセル</button>
+        </div>
+      </div>}
       {detail.consumption && <ConsumptionPanel c={detail.consumption} />}
       {detail.notes && <div className="condition-notes"><h3>備考</h3><p>{detail.notes}</p></div>}
     </div>}

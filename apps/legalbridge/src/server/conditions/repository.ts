@@ -117,6 +117,15 @@ export interface ConditionLineRepository {
   settlement(): Promise<ConditionSettlementSummary | null>;
   find(id: number): Promise<ConditionLineDetail | null>;
   overlap(workId: number): Promise<ConditionOverlap>;
+  // 相手方の後付け補修（Phase 17・V1遺産データの取引先欠落用・guarded write）。
+  updateCounterparty(id: number, vendorId: number): Promise<{ id: number; vendorName: string }>;
+}
+
+export class ConditionRepairError extends Error {
+  constructor(message: string, readonly code: "LINE_NOT_FOUND" | "VENDOR_NOT_FOUND") {
+    super(message);
+    this.name = "ConditionRepairError";
+  }
 }
 
 export class PgConditionLineRepository implements ConditionLineRepository {
@@ -242,6 +251,22 @@ export class PgConditionLineRepository implements ConditionLineRepository {
       regions: regions.rows.map((r) => String(r.country_name)).filter(Boolean),
       languages: languages.rows.map((r) => String(r.language_name)).filter(Boolean)
     };
+  }
+
+  // 相手方の後付け補修（guarded・grant 018 の列レベル UPDATE counterparty_vendor_id を再利用）。
+  // 名前文字列ではなく取引先マスタIDのみを書く（表示は従来どおり vendors JOIN で解決）。
+  async updateCounterparty(id: number, vendorId: number): Promise<{ id: number; vendorName: string }> {
+    const vendor = await this.database.query(
+      "SELECT vendor_name FROM vendors WHERE id = $1", [vendorId]);
+    if (!vendor.rows[0]) {
+      throw new ConditionRepairError(`取引先 ${vendorId} が見つかりません`, "VENDOR_NOT_FOUND");
+    }
+    const updated = await this.database.query(
+      "UPDATE condition_lines SET counterparty_vendor_id = $2 WHERE id = $1 RETURNING id", [id, vendorId]);
+    if (!updated.rows[0]) {
+      throw new ConditionRepairError(`条件明細 ${id} が見つかりません`, "LINE_NOT_FOUND");
+    }
+    return { id, vendorName: String(vendor.rows[0].vendor_name ?? "") };
   }
 
   // Real settlement: planned installments vs non-voided events. Degrades to
@@ -374,7 +399,8 @@ function mapSummary(row: Record<string, any>): ConditionLineSummaryRow {
 export class MemoryConditionLineRepository implements ConditionLineRepository {
   constructor(
     private readonly rows: ConditionLineRow[] = [],
-    private readonly overlapLines: (ConditionOverlapLine & { workId: number })[] = []
+    private readonly overlapLines: (ConditionOverlapLine & { workId: number })[] = [],
+    private readonly vendors: Map<number, string> = new Map()
   ) {}
   async list(query: string, limit = 300) {
     const keyword = query.trim().toLowerCase();
@@ -418,5 +444,15 @@ export class MemoryConditionLineRepository implements ConditionLineRepository {
       paymentScheme: null, paymentTerms: null, royaltyBase: null, deductibleCosts: null,
       agAmount: null, notes: null, regions: [], languages: [], consumption: null
     };
+  }
+  async updateCounterparty(id: number, vendorId: number): Promise<{ id: number; vendorName: string }> {
+    const vendorName = this.vendors.get(vendorId);
+    if (vendorName === undefined) {
+      throw new ConditionRepairError(`取引先 ${vendorId} が見つかりません`, "VENDOR_NOT_FOUND");
+    }
+    const row = this.rows.find((r) => r.id === id);
+    if (!row) throw new ConditionRepairError(`条件明細 ${id} が見つかりません`, "LINE_NOT_FOUND");
+    row.vendorName = vendorName;
+    return { id, vendorName };
   }
 }

@@ -12,12 +12,32 @@ type Matter = {
   nextTaskDueAt: string | null; updatedAt: string;
 };
 type Detail = {
-  matter: Matter & { remarks: string | null; driveFolderUrl: string | null };
+  matter: Matter & { remarks: string | null; driveFolderUrl: string | null; ownerStaffId?: number | null };
   issues: Array<{ issueKey: string; relation: string; summary: string | null; note: string | null }>;
-  tasks: Array<{ id: number; title: string; status: string; assigneeName: string | null; dueAt: string | null; isPrimary: boolean; blockedReason: string | null }>;
+  tasks: Array<{ id: number; title: string; status: string; assigneeName: string | null; assigneeStaffId?: number | null; dueAt: string | null; isPrimary: boolean; blockedReason: string | null }>;
   documents: Array<{ id: number; documentNumber: string | null; templateType: string; issueKey: string; createdAt: string; driveLink: string }>;
 };
 const statusLabels: Record<string, string> = { open: "未着手", in_progress: "進行中", closed: "完了", archived: "保管" };
+
+// 担当者セレクト（担当者マスタから取得・監査で「表示のみで設定不可」だった穴の解消）。
+function StaffSelect({ label, value, onChange }: {
+  label: string; value: string; onChange: (value: string) => void;
+}) {
+  const [options, setOptions] = useState<Array<{ id: string; name: string; department: string | null }>>([]);
+  useEffect(() => {
+    fetch("/api/v2/master-data/search?type=staff&q=")
+      .then((r) => r.ok ? r.json() : Promise.reject())
+      .then((d) => setOptions((d.items ?? []).map((item: { id: string; label: string; values?: { department?: string | null } }) => ({
+        id: String(item.id), name: item.label,
+        department: item.values?.department ?? null
+      }))))
+      .catch(() => setOptions([]));
+  }, []);
+  return <label>{label}<select value={value} onChange={(e) => onChange(e.target.value)}>
+    <option value="">未設定</option>
+    {options.map((o) => <option key={o.id} value={o.id}>{o.name}{o.department ? `（${o.department}）` : ""}</option>)}
+  </select></label>;
+}
 const MATTER_STATUSES = ["open", "in_progress", "closed", "archived"] as const;
 const TASK_STATUSES = ["open", "in_progress", "done", "cancelled"] as const;
 const taskStatusLabels: Record<string, string> = { open: "未着手", in_progress: "進行中", done: "完了", cancelled: "中止" };
@@ -393,6 +413,7 @@ function MatterSends({ matterId, documents, canEdit }:
   const [documentId, setDocumentId] = useState("");
   const [channel, setChannel] = useState("email");
   const [recipient, setRecipient] = useState("");
+  const [subject, setSubject] = useState("");
   const [busy, setBusy] = useState(false);
   const [reload, setReload] = useState(0);
   useEffect(() => {
@@ -410,7 +431,7 @@ function MatterSends({ matterId, documents, canEdit }:
     try {
       await toast.run(fetch(`/api/v2/matters/${matterId}/sends`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ documentId: Number(documentId), channel, recipient: recipient || null })
+        body: JSON.stringify({ documentId: Number(documentId), channel, recipient: recipient || null, subject: subject || null })
       }).then(async (r) => { if (!r.ok) throw new Error("失敗しました"); }), "送信を記録しました");
       setDocumentId(""); setRecipient(""); setReload((v) => v + 1);
     } catch { /* toast shown */ }
@@ -433,6 +454,7 @@ function MatterSends({ matterId, documents, canEdit }:
         {SEND_CHANNELS.map((c) => <option key={c} value={c}>{c}</option>)}
       </select>
       <input value={recipient} placeholder="宛先（任意）" onChange={(e) => setRecipient(e.target.value)} />
+      <input value={subject} placeholder="件名（任意）" onChange={(e) => setSubject(e.target.value)} />
       <button className="primary" disabled={busy || !documentId} onClick={record}>記録</button>
     </div>}
   </>;
@@ -608,6 +630,7 @@ function InlineMatterControls({ matter, onChanged }:
 type MatterFormValues = {
   title: string; status: string; lifecycleStage: string; counterparty: string;
   primaryIssueKey: string; targetDueDate: string; blockedReason: string; remarks: string;
+  ownerStaffId: string;
 };
 function MatterForm({ mode, matter, onCancel, onSaved }: {
   mode: "create" | "edit";
@@ -619,7 +642,8 @@ function MatterForm({ mode, matter, onCancel, onSaved }: {
     title: matter?.title ?? "", status: matter?.status ?? "open",
     lifecycleStage: matter?.lifecycleStage ?? "", counterparty: matter?.counterparty ?? "",
     primaryIssueKey: matter?.primaryIssueKey ?? "", targetDueDate: matter?.targetDueDate ?? "",
-    blockedReason: matter?.blockedReason ?? "", remarks: matter?.remarks ?? ""
+    blockedReason: matter?.blockedReason ?? "", remarks: matter?.remarks ?? "",
+    ownerStaffId: matter?.ownerStaffId != null ? String(matter.ownerStaffId) : ""
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -638,7 +662,8 @@ function MatterForm({ mode, matter, onCancel, onSaved }: {
       primaryIssueKey: values.primaryIssueKey,
       targetDueDate: values.targetDueDate || null,
       blockedReason: values.blockedReason,
-      remarks: values.remarks
+      remarks: values.remarks,
+      ownerStaffId: values.ownerStaffId ? Number(values.ownerStaffId) : null
     };
     const url = mode === "create" ? "/api/v2/matters" : `/api/v2/matters/${matter!.id}`;
     const method = mode === "create" ? "POST" : "PATCH";
@@ -670,6 +695,7 @@ function MatterForm({ mode, matter, onCancel, onSaved }: {
       <label>相手方<input value={values.counterparty} onChange={(e) => set("counterparty", e.target.value)} /></label>
       <label>代表課題キー<input value={values.primaryIssueKey} onChange={(e) => set("primaryIssueKey", e.target.value)} placeholder="LEGAL-123" /></label>
       <label>目標期限<input type="date" value={values.targetDueDate ?? ""} onChange={(e) => set("targetDueDate", e.target.value)} /></label>
+      <StaffSelect label="担当者" value={values.ownerStaffId} onChange={(v) => set("ownerStaffId", v)} />
     </div>
     <label>停滞理由<input value={values.blockedReason} onChange={(e) => set("blockedReason", e.target.value)} /></label>
     <label>備考<textarea rows={3} value={values.remarks} onChange={(e) => set("remarks", e.target.value)} /></label>
@@ -732,6 +758,7 @@ function TaskForm({ matterId, onCancel, onSaved }: {
   const [dueAt, setDueAt] = useState("");
   const [isPrimary, setIsPrimary] = useState(false);
   const [blockedReason, setBlockedReason] = useState("");
+  const [assigneeStaffId, setAssigneeStaffId] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const toast = useToast();
@@ -741,6 +768,7 @@ function TaskForm({ matterId, onCancel, onSaved }: {
     const body = {
       title: title.trim(), status: taskStatus, isPrimary,
       blockedReason,
+      assigneeStaffId: assigneeStaffId ? Number(assigneeStaffId) : null,
       dueAt: dueAt ? new Date(dueAt).toISOString() : null
     };
     try {
@@ -764,6 +792,7 @@ function TaskForm({ matterId, onCancel, onSaved }: {
       <label>状態<select value={taskStatus} onChange={(e) => setTaskStatus(e.target.value)}>
         {TASK_STATUSES.map((s) => <option key={s} value={s}>{taskStatusLabels[s]}</option>)}</select></label>
       <label>期限<input type="datetime-local" value={dueAt} onChange={(e) => setDueAt(e.target.value)} /></label>
+      <StaffSelect label="担当" value={assigneeStaffId} onChange={setAssigneeStaffId} />
     </div>
     <label>停滞理由<input value={blockedReason} onChange={(e) => setBlockedReason(e.target.value)} /></label>
     <label className="task-primary-toggle"><input type="checkbox" checked={isPrimary} onChange={(e) => setIsPrimary(e.target.checked)} />この案件の次アクションにする</label>

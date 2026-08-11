@@ -98,3 +98,49 @@ test("集計サマリを向き・通貨で返す", async () => {
   // settlement is null without the granted settlement tables (grant 011).
   assert.equal(response.body.settlement, null);
 });
+
+// --- 相手方補修（Phase 17・PATCH /condition-lines/:id/counterparty） ---
+
+function repairApp(rows: ConditionLineRow[], opts: { enabled?: boolean; role?: string } = {}) {
+  const repo = new MemoryConditionLineRepository(rows, [], new Map([[7, "新取引先"]]));
+  const app = express();
+  app.use(express.json());
+  app.use((_req, res, next) => {
+    res.locals.currentUser = { email: "u@example.com", subject: "t", role: opts.role ?? "legal", source: "test" } as never;
+    next();
+  });
+  app.use("/api/v2", createConditionLineRouter(repo, opts.enabled ?? true));
+  return { app, repo };
+}
+
+test("相手方補修: 未有効なら503", async () => {
+  const { app } = repairApp([row({ vendorName: "" })], { enabled: false });
+  const res = await request(app).patch("/api/v2/condition-lines/1/counterparty").send({ vendorId: 7 });
+  assert.equal(res.status, 503);
+  assert.equal(res.body.code, "CONDITION_REPAIR_UNAVAILABLE");
+});
+
+test("相手方補修: requester ロールは403", async () => {
+  const { app } = repairApp([row({ vendorName: "" })], { role: "requester" });
+  const res = await request(app).patch("/api/v2/condition-lines/1/counterparty").send({ vendorId: 7 });
+  assert.equal(res.status, 403);
+  assert.equal(res.body.code, "CONDITION_REPAIR_ROLE_REQUIRED");
+});
+
+test("相手方補修: 設定に成功し取引先名を返す", async () => {
+  const { app, repo } = repairApp([row({ vendorName: "" })]);
+  const res = await request(app).patch("/api/v2/condition-lines/1/counterparty").send({ vendorId: 7 });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.vendorName, "新取引先");
+  assert.equal((await repo.find(1))?.vendorName, "新取引先");
+});
+
+test("相手方補修: 存在しない取引先は400・存在しない明細は404", async () => {
+  const { app } = repairApp([row({})]);
+  const bad = await request(app).patch("/api/v2/condition-lines/1/counterparty").send({ vendorId: 99 });
+  assert.equal(bad.status, 400);
+  assert.equal(bad.body.code, "VENDOR_NOT_FOUND");
+  const missing = await request(app).patch("/api/v2/condition-lines/999/counterparty").send({ vendorId: 7 });
+  assert.equal(missing.status, 404);
+  assert.equal(missing.body.code, "LINE_NOT_FOUND");
+});

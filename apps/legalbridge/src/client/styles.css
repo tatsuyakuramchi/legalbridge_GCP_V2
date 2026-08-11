@@ -1719,3 +1719,12 @@ button.danger:disabled { opacity: 0.5; cursor: not-allowed; }
 .matter-drive-head { display: flex; align-items: center; gap: 10px; }
 .matter-drive-files { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
 .matter-drive-files a { font-size: 12px; color: #168ca0; text-decoration: none; }
+
+/* 条件明細：未設定バッジと相手方補修フォーム（Phase 17） */
+.cond-missing { color: var(--warning-strong, #9a6700); background: var(--warning-soft, #fff8c5); padding: 1px 8px; border-radius: 10px; font-size: 12px; }
+.link-button { background: none; border: none; color: var(--accent, #0969da); cursor: pointer; font-size: 12px; margin-left: 8px; padding: 0; text-decoration: underline; }
+.condition-repair { border: 1px solid var(--line, #d0d7de); border-radius: 10px; padding: 12px 16px; margin-top: 12px; display: grid; gap: 8px; max-width: 480px; }
+.condition-repair h3 { margin: 0; font-size: 14px; }
+.cm-renewal-fields { display: flex; flex-wrap: wrap; gap: 6px; align-items: end; }
+.cm-renewal-fields label { display: grid; gap: 2px; font-size: 11px; color: var(--ink-faint); }
+.cm-renewal-fields input { width: 90px; }

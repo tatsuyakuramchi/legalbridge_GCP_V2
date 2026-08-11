@@ -1,5 +1,5 @@
 import type { DatabasePool } from "../db/pool.js";
-import { computeReceiptRoyalty, resolveDistribution } from "./receipt.js";
+import { computeReceiptRoyalty, resolveDistribution, isQtyBased } from "./receipt.js";
 import { planPaymentSync, type PaymentIntent, type PaymentSyncContext } from "./payment-sync.js";
 
 // 再許諾料の受領記録（condition_receipts）の作成・更新。
@@ -47,6 +47,10 @@ export interface ReceiptRepository {
 
 export class ReceiptReferenceError extends Error {}
 
+// 算定に必要な条件明細側の値が欠けているのに計算を続けると ¥0 を黙って記録してしまう
+// （監査で発覚した実データ破壊パターン）。保存前に弾いて理由を返す。
+export class ReceiptComputationError extends Error {}
+
 function statusFor(receivedAmount: number | null | undefined): "reported" | "received" {
   return receivedAmount != null ? "received" : "reported";
 }
@@ -66,6 +70,11 @@ type ConditionTerms = {
 function computeValues(cond: ConditionTerms, input: ReceiptWriteInput) {
   const terms = { calcType: input.calcType ?? null, ratePct: cond.ratePct, unitPrice: cond.unitPrice };
   const report = { reportedSales: input.reportedSales, reportedQuantity: input.reportedQuantity };
+  // 数量ベース算定なのに条件明細に単価が無い場合、そのまま計算すると ¥0 を黙って保存してしまう。
+  if (isQtyBased(terms) && (report.reportedQuantity ?? 0) > 0 && !terms.unitPrice) {
+    throw new ReceiptComputationError(
+      "この条件明細には単価（unit_price）が未設定のため、数量ベースの再許諾料を算定できません。売上ベースで記録するか、条件明細の単価を整備してください。");
+  }
   const royalty = computeReceiptRoyalty(terms, report);
   const dist = resolveDistribution({
     cond: terms, report, computedRoyaltyExTax: royalty, receivedAmount: input.receivedAmount,

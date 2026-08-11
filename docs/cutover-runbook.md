@@ -120,6 +120,13 @@ Backlog/CloudSign はカスタムヘッダ不可のため、リレーが `?token
   - Gmail：送信元アドレス決定＋Workspace 管理者の DWD 設定＋SA 鍵 Secret（`_GWS_SA_KEY_SECRET`・
     Gmail の JWT 署名は鍵必須）→ `_GMAIL_DELIVERY_MODE=live`＋`_CONFIRM_GMAIL_DISPATCH`＋`_GMAIL_SENDER`。
 
+### 2-6. 表示・編集ギャップ第1波（2026-08-11・`display-edit-gap-audit.md`）
+- データ破壊バグ2件（素材編集の備考消失・数量ベース受領の¥0黙殺）とアウト条件の集計漏れを修正（フラグ不要・デプロイのみ）。
+- 担当者・権利者・作品ステータス・契約更新通告等の編集UIを追加（既存スコープで有効）。
+- **条件明細の相手方補修**のみ要点火：グラント不要（018再利用）。デプロイ時に
+  `_CONDITION_LINE_REPAIR_ENABLED=true`＋`_CONFIRM_CONDITION_LINE_REPAIR=CONDITION_LINE_REPAIR_LEGALBRIDGE_VALIDATION_ONLY`
+  ＋`_WRITE_SCOPES` 末尾に `,condition-repair` を追加。
+
 ## 3. 利用者開放（認証・ロール）
 - `_AUTH_LEGAL_EMAILS`（法務メンバー）・`_AUTH_REQUESTER_DOMAINS`（依頼者ドメイン）を実値に。
 - アクセス方式の確定：現 cloudrun-iam（Google アカウントで IAM 付与）か IAP 化（`iap-access.md`）。

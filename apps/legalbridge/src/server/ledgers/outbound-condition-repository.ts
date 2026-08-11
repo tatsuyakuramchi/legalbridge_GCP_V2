@@ -62,7 +62,8 @@ export class PgOutboundConditionRepository implements OutboundConditionRepositor
 
       const inserted = await client.query(
         `INSERT INTO condition_lines (
-           document_id, line_no, work_id, counterparty_vendor_id,
+           document_id, line_no, work_id, source_work_id, is_inbound, flow_direction,
+           counterparty_vendor_id,
            transaction_kind, direction, condition_name,
            region_territory, region_language, exclusivity,
            sublicense_allowed, term_start, term_end, currency,
@@ -71,7 +72,8 @@ export class PgOutboundConditionRepository implements OutboundConditionRepositor
            minimum_quantity, sell_off_months, withholding_tax_treatment,
            notes
          ) VALUES (
-           $1, $2, $3, $4,
+           $1, $2, $3, $3, false, 'out',
+           $4,
            $5, 'receivable', $6,
            $7, $8, $9,
            $10, $11, $12, $13,

@@ -430,6 +430,28 @@ case "${MATTER_DELETE_ENABLED}" in
     exit 1
     ;;
 esac
+case "${CONDITION_LINE_REPAIR_ENABLED:-false}" in
+  false)
+    ;;
+  true)
+    if [ "${CONFIRM_CONDITION_LINE_REPAIR:-}" != "CONDITION_LINE_REPAIR_LEGALBRIDGE_VALIDATION_ONLY" ]; then
+      echo "Condition repair deployment blocked: explicit production validation confirmation is missing."
+      exit 1
+    fi
+    if [ "${PRIMARY_DB_MODE}" != "production" ] || [ "${SERVICE}" != "legalbridge-v2-write-test" ] || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
+      echo "Condition repair deployment blocked: service, database, runtime user, or password secret does not match the approved target."
+      exit 1
+    fi
+    if [ "${AUTH_MODE}" != "iap" ] && [ "${AUTH_MODE}" != "cloudrun-iam" ]; then
+      echo "Condition repair deployment blocked: IAP or Cloud Run IAM authentication is required."
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Deployment blocked: CONDITION_LINE_REPAIR_ENABLED must be true or false."
+    exit 1
+    ;;
+esac
 case "${DOCUMENT_VOID_ENABLED}" in
   false)
     ;;
@@ -1016,6 +1038,9 @@ if [ "${SLACK_DISPATCH_ENABLED}" = "true" ]; then
 fi
 if [ "${MATTER_SLACK_ENABLED}" = "true" ]; then
   expected_write_scopes="$expected_write_scopes,matter-slack"
+fi
+if [ "${CONDITION_LINE_REPAIR_ENABLED:-false}" = "true" ]; then
+  expected_write_scopes="$expected_write_scopes,condition-repair"
 fi
 if [ "${WRITE_SCOPES}" != "$expected_write_scopes" ]; then
   echo "Deployment blocked: WRITE_SCOPES does not exactly match the enabled guarded capabilities."

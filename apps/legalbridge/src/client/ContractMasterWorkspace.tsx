@@ -213,9 +213,21 @@ export function ContractMasterWorkspace({ canEdit = false, onNavigate }: {
                   </span>
                 : `${c.effectiveDate ?? "—"} 〜 ${c.expirationDate ?? "—"}`}</td>
               <td>{isEditing
-                ? <label className="task-primary-toggle"><input type="checkbox" checked={draft!.autoRenewal}
-                    onChange={(e) => set("autoRenewal", e.target.checked)} />自動更新</label>
-                : (c.autoRenewal ? "○" : "—")}</td>
+                ? <span className="cm-inline-fields cm-renewal-fields">
+                    <label className="task-primary-toggle"><input type="checkbox" checked={draft!.autoRenewal}
+                      onChange={(e) => set("autoRenewal", e.target.checked)} />自動更新</label>
+                    <label>更新通告<input inputMode="numeric" placeholder="月" title="更新通告（何か月前）"
+                      value={draft!.renewalNoticeMonths} onChange={(e) => set("renewalNoticeMonths", e.target.value.replace(/[^\d]/g, ""))} /></label>
+                    <label>アラート<input inputMode="numeric" placeholder="月" title="期限アラート（何か月前）"
+                      value={draft!.alertLeadMonths} onChange={(e) => set("alertLeadMonths", e.target.value.replace(/[^\d]/g, ""))} /></label>
+                    <label>見直し期日<input type="date" value={draft!.reviewDueDate}
+                      onChange={(e) => set("reviewDueDate", e.target.value)} /></label>
+                  </span>
+                : <span title={[
+                    c.renewalNoticeMonths != null ? `更新通告 ${c.renewalNoticeMonths}か月前` : null,
+                    c.alertLeadMonths != null ? `アラート ${c.alertLeadMonths}か月前` : null,
+                    c.reviewDueDate ? `見直し ${c.reviewDueDate}` : null
+                  ].filter(Boolean).join("・") || undefined}>{c.autoRenewal ? "○" : "—"}</span>}</td>
               {canEdit && <td>{isEditing
                 ? <span className="cm-inline-fields">
                     <button className="primary" disabled={saving} onClick={() => void saveFields(c.id)}>{saving ? "保存中…" : "保存"}</button>

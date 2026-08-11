@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { ReceiptReferenceError, type ReceiptRepository } from "./receipt-repository.js";
+import { ReceiptComputationError, ReceiptReferenceError, type ReceiptRepository } from "./receipt-repository.js";
 
 // 再許諾料の受領記録（guarded-write）。既定OFF・admin/legal限定・確認トークン必須・
 // DELETEなし。受領再許諾料はサーバが再計算する（フロント金額は使わない）。
@@ -90,6 +90,9 @@ function handleError(error: unknown, response: import("express").Response, next:
   }
   if (error instanceof ReceiptReferenceError) {
     return response.status(404).json({ error: error.message, code: "RECEIPT_REFERENCE_NOT_FOUND" });
+  }
+  if (error instanceof ReceiptComputationError) {
+    return response.status(422).json({ error: error.message, code: "RECEIPT_COMPUTATION_BLOCKED" });
   }
   next(error);
 }

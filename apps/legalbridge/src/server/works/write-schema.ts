@@ -34,6 +34,8 @@ export const workUpdateSchema = z.object({
   workCode: trimmed.min(1).max(40).optional(),
   titleKana: nullableText(1000).optional(),
   workType: nullableText(80).optional(),
+  // ステータス（企画中→制作中→発売済み）。従来は契約取込時のみ設定可で以後変更不可だった（監査指摘）。
+  status: z.enum(["planning", "in_production", "released"]).nullable().optional(),
   kind: workKind.optional(),
   derivationType: nullableText(80).optional(),
   isOriginal: z.boolean().optional(),

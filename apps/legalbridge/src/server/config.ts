@@ -44,6 +44,9 @@ export const config = {
     process.env.MATTER_MERGE_ENABLED === "true",
   matterDeleteEnabled:
     process.env.MATTER_DELETE_ENABLED === "true",
+  // 条件明細の相手方補修（V1遺産データの取引先欠落の後付け設定・Phase 17）。
+  conditionLineRepairEnabled:
+    process.env.CONDITION_LINE_REPAIR_ENABLED === "true",
   documentVoidEnabled:
     process.env.DOCUMENT_VOID_ENABLED === "true",
   documentReissueEnabled:

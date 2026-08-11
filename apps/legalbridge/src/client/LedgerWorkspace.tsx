@@ -118,12 +118,17 @@ function editableWorkId(id: string): number | null {
 function LedgerDetail({ item, canEdit = false, onEdit }:
   { item: Item | null; canEdit?: boolean; onEdit?: (item: Item) => void }) {
   if (!item) return <aside className="panel ledger-detail empty-detail">一覧から項目を選択してください。</aside>;
-  const entries = Object.entries(item.detail).filter(([, value]) => value !== null && value !== "");
+  // null/空も行として残す（「未設定」表示）。以前は行ごと消えて「未設定」と「該当なし」の区別がつかなかった。
+  const entries = Object.entries(item.detail);
   return <aside className="panel ledger-detail">
     <div className="matter-detail-head"><span className="detail-kicker">LEDGER DETAIL</span>
       {canEdit && onEdit && <button onClick={() => onEdit(item)}>編集</button>}</div>
     <h2>{item.title}</h2><p>{item.code}　{item.subtitle}</p>
-    <dl>{entries.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{typeof value === "boolean" ? (value ? "はい" : "いいえ") : String(value)}</dd></div>)}</dl>
+    {String(item.id).startsWith("source_ip:") &&
+      <p className="hub-note">原作IP（V1台帳由来）は読み取り専用です。編集が必要な場合は管理者にご相談ください。</p>}
+    <dl>{entries.map(([key, value]) => <div key={key}><dt>{key}</dt>
+      <dd>{value === null || value === "" ? <span className="cond-missing">未設定</span>
+        : typeof value === "boolean" ? (value ? "はい" : "いいえ") : String(value)}</dd></div>)}</dl>
     <small className="mask-note">口座情報は表示しません。電話番号・メールアドレスはマスキングされています。</small>
   </aside>;
 }

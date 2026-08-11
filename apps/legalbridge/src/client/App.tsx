@@ -192,6 +192,8 @@ export function App() {
   const [canMergeVendors, setCanMergeVendors] = useState(false);
   // データ品質→名寄せのドリル時に統合元IDを引き継ぐ（発見→是正を1動線に・Q1）。
   const [mergeSourceSeed, setMergeSourceSeed] = useState("");
+  const [drillWorkId, setDrillWorkId] = useState<number | null>(null);
+  const [drillConditionId, setDrillConditionId] = useState<number | null>(null);
   // 条件明細→台帳（金銭条件）/ 作品ビュー→台帳（作品）へのクロスリンクで開くタブを指定（R2/R3）。
   const [ledgerSeedType, setLedgerSeedType] = useState<"conditions" | "works" | undefined>(undefined);
   const [canMergeMatters, setCanMergeMatters] = useState(false);
@@ -201,6 +203,7 @@ export function App() {
   const [canCloudSign, setCanCloudSign] = useState(false);
   const [canGmailInbound, setCanGmailInbound] = useState(false);
   const [canRecordReceipt, setCanRecordReceipt] = useState(false);
+  const [canRepairConditions, setCanRepairConditions] = useState(false);
   const [canVoidDocument, setCanVoidDocument] = useState(false);
   const [canReissueDocument, setCanReissueDocument] = useState(false);
   const [canExcelBatch, setCanExcelBatch] = useState(false);
@@ -272,6 +275,7 @@ export function App() {
         setCanCloudSign(capabilities.includes("cloudsign"));
         setCanGmailInbound(capabilities.includes("gmail-inbound"));
         setCanRecordReceipt(capabilities.includes("receipts"));
+        setCanRepairConditions(capabilities.includes("condition-repair"));
         setCanVoidDocument(capabilities.includes("document-void"));
         setCanReissueDocument(capabilities.includes("document-reissue"));
         setCanExcelBatch(capabilities.includes("excel-batch"));
@@ -296,6 +300,7 @@ export function App() {
         setCanCloudSign(false);
         setCanGmailInbound(false);
         setCanRecordReceipt(false);
+        setCanRepairConditions(false);
       });
     fetch("/api/v2/document-templates")
       .then((response) => response.ok ? response.json() : Promise.reject())
@@ -415,10 +420,13 @@ export function App() {
         {view === "outbound" && <OutboundConditionWorkspace onNavigate={(t) => setView(t as View)} />}
         {view === "royalty-preview" && <RoyaltyPreview />}
         {view === "billing" && <BillingDashboard canRecord={canRecordReceipt} />}
-        {view === "works" && <WorkDetail canEdit={canEditWorks} canEditRights={canEditRightsSources} canEditMaterials={canEditMaterials}
+        {view === "works" && <WorkDetail key={drillWorkId ?? "works"} initialWorkId={drillWorkId} canEdit={canEditWorks} canEditRights={canEditRightsSources} canEditMaterials={canEditMaterials}
           onNavigate={(t) => { if (t === "ledgers-works") { setLedgerSeedType("works"); setView("ledgers"); } else setView(t as View); }} />}
         {view === "data-quality" && <DataQuality onNavigate={(v, id) => {
           setMergeSourceSeed((v === "vendor-merge" || v === "matter-merge") && id != null ? String(id) : "");
+          // 監査指摘：works/conditions への「開く」が行 id を捨てていた → 詳細を直接開く。
+          setDrillWorkId(v === "works" && id != null ? id : null);
+          setDrillConditionId(v === "conditions" && id != null ? id : null);
           setView(v as View);
         }} />}
         {view === "vendor-merge" && <VendorMerge canMerge={canMergeVendors} initialSource={mergeSourceSeed} />}
@@ -437,6 +445,8 @@ export function App() {
         {view === "workflow-rules" && adminWorkspace && <WorkflowRulesWorkspace canEdit={canEditWorkflowRules} />}
         {view === "contract-master" && legalWorkspace && <ContractMasterWorkspace canEdit={canEditContractMaster} onNavigate={(t) => setView(t as View)} />}
         {view === "conditions" && <ConditionLinesWorkspace
+          key={drillConditionId ?? "conditions"} initialSelectedId={drillConditionId}
+          canRepair={canRepairConditions}
           onOpenDocument={(id) => {
             setSearchSelection({ target: "document", id: String(id), title: "" });
             setView("documents");

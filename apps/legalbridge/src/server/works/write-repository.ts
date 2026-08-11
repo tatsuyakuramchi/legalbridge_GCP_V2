@@ -26,7 +26,7 @@ export interface WorkWriteRepository {
 const COLUMNS: Record<string, string> = {
   title: "title", workCode: "work_code", ledgerCode: "ledger_code",
   remarks: "remarks", isActive: "is_active",
-  titleKana: "title_kana", workType: "work_type", kind: "kind",
+  titleKana: "title_kana", workType: "work_type", status: "status", kind: "kind",
   derivationType: "derivation_type", isOriginal: "is_original",
   parentWorkId: "parent_work_id", rightsHolderVendorId: "rights_holder_vendor_id",
   creatorName: "creator_name", publisherName: "publisher_name"
