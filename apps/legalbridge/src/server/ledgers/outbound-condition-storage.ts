@@ -81,10 +81,12 @@ function nullable(value: string | undefined) {
   return normalized || null;
 }
 
-function parseSellOffMonths(value: string | undefined) {
+export function parseSellOffMonths(value: string | undefined) {
   const normalized = value?.trim() ?? "";
   if (!normalized) return null;
-  const match = normalized.match(/^(?:終了後)?\s*(\d+)\s*(?:か月|ヶ月|箇月|month|months)$/i);
+  if (normalized === "半年") return 6;
+  // 表記ゆれ（ヶ/ヵ/カ/ケ/箇月・月のみ・N months）を広く受理する（監査：不一致は確認後に500だった）
+  const match = normalized.match(/^(?:終了後)?\s*(\d+)\s*(?:か月|ヶ月|ヵ月|カ月|ケ月|箇月|月|months?)\s*(?:間)?$/i);
   if (!match) throw new Error("Sell-Off period must be expressed in months");
   return Number(match[1]);
 }

@@ -172,7 +172,7 @@ export function SettingsWorkspace({ canEdit = false }: { canEdit?: boolean }) {
       <div className="panel settings-form">
         {tab !== "secrets" && activeFields.map((f) => <label key={f.key} className="settings-field">
           <span>{f.label}</span>
-          <input value={draft[f.key] ?? ""} placeholder={f.placeholder ?? ""} disabled={!canEdit}
+          <input maxLength={500} value={draft[f.key] ?? ""} placeholder={f.placeholder ?? ""} disabled={!canEdit}
             onChange={(e) => setDraft((prev) => ({ ...prev, [f.key]: e.target.value }))} />
           {tab === "integration" && (
             <small className="settings-effective">

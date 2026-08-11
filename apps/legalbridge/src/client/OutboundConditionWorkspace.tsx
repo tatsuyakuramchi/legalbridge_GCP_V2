@@ -184,7 +184,7 @@ export function OutboundConditionWorkspace({ onNavigate }: { onNavigate?: (targe
         <label className="check"><input type="checkbox" checked={form.sublicenseAllowed} onChange={(e) => update("sublicenseAllowed", e.target.checked)} />再許諾を認める</label>
         <label>開始日<input type="date" value={form.termStart} onChange={(e) => update("termStart", e.target.value)} /></label>
         <label>終了日<input type="date" value={form.termEnd} onChange={(e) => update("termEnd", e.target.value)} /></label>
-        <label>Sell-Off期間<input value={form.sellOffPeriod} onChange={(e) => update("sellOffPeriod", e.target.value)} placeholder="例：終了後6か月" /></label>
+        <label>Sell-Off期間<input value={form.sellOffPeriod} onChange={(e) => update("sellOffPeriod", e.target.value)} placeholder="例：6か月（月数で入力）" /></label>
       </fieldset>
       <fieldset><legend>3. 金銭条件</legend>
         <label>通貨<input value={form.currency} maxLength={3} onChange={(e) => update("currency", e.target.value.toUpperCase())} /></label>

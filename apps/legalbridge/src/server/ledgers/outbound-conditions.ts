@@ -32,9 +32,13 @@ export const outboundConditionSchema = z.object({
   reportingCycle: optionalText,
   paymentTerms: optionalText,
   royaltyBase: optionalText,
-  incoterms: optionalText,
+  // DB列は VARCHAR(20)（zod だけ緩いと確認通過後に 22001 で 500 になる・監査スキーマ#5）
+  incoterms: z.string().trim().max(20).optional().default(""),
   minimumQuantity: z.number().int().nonnegative().optional(),
-  sellOffPeriod: optionalText,
+  sellOffPeriod: z.string().trim().max(500).optional().default("").refine(
+    (value) => value === "" || value === "半年" ||
+      /^(?:終了後)?\s*\d+\s*(?:か月|ヶ月|ヵ月|カ月|ケ月|箇月|月|months?)\s*(?:間)?$/i.test(value),
+    { message: "Sell-Off期間は「6か月」のように月数で入力してください" }),
   withholdingTaxTreatment: optionalText,
   notes: z.string().trim().max(4000).optional().default("")
 }).superRefine((value, context) => {

@@ -686,14 +686,14 @@ function MatterForm({ mode, matter, onCancel, onSaved }: {
     <span className="detail-kicker">{mode === "create" ? "NEW MATTER" : "EDIT MATTER"}</span>
     <h2>{mode === "create" ? "新規案件" : values.title || "案件を編集"}</h2>
     {error && <div className="async-error">{error}</div>}
-    <label>案件名 *<input value={values.title} onChange={(e) => set("title", e.target.value)} placeholder="案件名" /></label>
+    <label>案件名 *<input maxLength={500} value={values.title} onChange={(e) => set("title", e.target.value)} placeholder="案件名" /></label>
     <div className="matter-form-grid">
       <label>状態<select value={values.status} onChange={(e) => set("status", e.target.value)}>
         {MATTER_STATUSES.map((s) => <option key={s} value={s}>{statusLabels[s]}</option>)}</select></label>
       <label>工程<select value={values.lifecycleStage} onChange={(e) => set("lifecycleStage", e.target.value)}>
         <option value="">未設定</option>{LIFECYCLE_STAGES.map((s) => <option key={s} value={s}>{stageLabels[s]}</option>)}</select></label>
-      <label>相手方<input value={values.counterparty} onChange={(e) => set("counterparty", e.target.value)} /></label>
-      <label>代表課題キー<input value={values.primaryIssueKey} onChange={(e) => set("primaryIssueKey", e.target.value)} placeholder="LEGAL-123" /></label>
+      <label>相手方<input maxLength={1000} value={values.counterparty} onChange={(e) => set("counterparty", e.target.value)} /></label>
+      <label>代表課題キー<input maxLength={50} value={values.primaryIssueKey} onChange={(e) => set("primaryIssueKey", e.target.value)} placeholder="LEGAL-123" /></label>
       <label>目標期限<input type="date" value={values.targetDueDate ?? ""} onChange={(e) => set("targetDueDate", e.target.value)} /></label>
       <StaffSelect label="担当者" value={values.ownerStaffId} onChange={(v) => set("ownerStaffId", v)} />
     </div>

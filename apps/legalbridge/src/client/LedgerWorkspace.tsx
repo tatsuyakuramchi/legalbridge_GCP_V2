@@ -213,7 +213,14 @@ function VendorForm({ vendorId, onCancel, onSaved }: { vendorId?: number; onCanc
     <label>取引先名 *<input value={values.vendorName} onChange={(e) => set("vendorName", e.target.value)} /></label>
     <div className="matter-form-grid">
       <label>取引先コード<input value={values.vendorCode} onChange={(e) => set("vendorCode", e.target.value)} placeholder="未入力で自動採番" /></label>
-      <label>種別<input value={values.entityType} onChange={(e) => set("entityType", e.target.value)} placeholder="法人 / 個人 等" /></label>
+      <label>種別<select value={["法人", "個人", "団体"].includes(values.entityType) || values.entityType === "" ? values.entityType : "__legacy"}
+        onChange={(e) => { if (e.target.value !== "__legacy") set("entityType", e.target.value); }}>
+        <option value="">未設定</option>
+        <option value="法人">法人</option>
+        <option value="個人">個人（源泉徴収・住所マスキングの対象）</option>
+        <option value="団体">団体・その他</option>
+        {!["法人", "個人", "団体", ""].includes(values.entityType) && <option value="__legacy">{values.entityType}（旧データ）</option>}
+      </select></label>
       <label>屋号<input value={values.tradeName} onChange={(e) => set("tradeName", e.target.value)} /></label>
       <label>ペンネーム<input value={values.penName} onChange={(e) => set("penName", e.target.value)} /></label>
       <label>担当者<input value={values.contactName} onChange={(e) => set("contactName", e.target.value)} /></label>

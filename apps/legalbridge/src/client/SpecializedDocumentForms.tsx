@@ -46,6 +46,8 @@ const conditionFields: FieldDefinition[] = [
     options: [
       { value: "FIXED", label: "固定額" },
       { value: "ROYALTY", label: "料率" },
+      { value: "PER_UNIT", label: "単価×数量" },
+      { value: "INSTALLMENT", label: "分割払い" },
       { value: "SUBSCRIPTION", label: "定期支払" },
       { value: "SUPPLY_QTY", label: "供給価格×数量×料率" }
     ]

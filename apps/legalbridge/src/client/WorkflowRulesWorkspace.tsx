@@ -82,13 +82,13 @@ export function WorkflowRulesWorkspace({ canEdit = false }: { canEdit?: boolean 
       <label className="settings-field"><span>部門 *</span>
         <input value={editing.department} onChange={(e) => set("department", e.target.value)} placeholder="法務部 / 営業部 等" /></label>
       <label className="settings-field"><span>承認者 Slack ID</span>
-        <input value={editing.approverSlackId} onChange={(e) => set("approverSlackId", e.target.value)} placeholder="U01ABCDEFGH（空可）" /></label>
+        <input value={editing.approverSlackId} onChange={(e) => set("approverSlackId", e.target.value.trim().toUpperCase())} placeholder="U01ABCDEFGH（空可）" /><small className="settings-effective">担当者マスタの Slack ID（大文字英数）を貼り付けてください</small></label>
       <label className="settings-field"><span>押印担当 Slack ID</span>
-        <input value={editing.stampOperatorSlackId} onChange={(e) => set("stampOperatorSlackId", e.target.value)} placeholder="U…（空可）" /></label>
+        <input value={editing.stampOperatorSlackId} onChange={(e) => set("stampOperatorSlackId", e.target.value.trim().toUpperCase())} placeholder="U…（空可）" /></label>
       <label className="settings-field"><span>責任者 Slack ID</span>
-        <input value={editing.managerSlackId} onChange={(e) => set("managerSlackId", e.target.value)} placeholder="U…（空可）" /></label>
+        <input value={editing.managerSlackId} onChange={(e) => set("managerSlackId", e.target.value.trim().toUpperCase())} placeholder="U…（空可）" /></label>
       <label className="settings-field"><span>部署チャンネル ID</span>
-        <input value={editing.slackChannelId} onChange={(e) => set("slackChannelId", e.target.value)} placeholder="C…（空可）" /></label>
+        <input value={editing.slackChannelId} onChange={(e) => set("slackChannelId", e.target.value.trim().toUpperCase())} placeholder="C…（空可）" /></label>
       <label className="task-primary-toggle"><input type="checkbox" checked={editing.isActive} onChange={(e) => set("isActive", e.target.checked)} />有効</label>
       <div className="matter-form-actions">
         <button className="primary" disabled={saving} onClick={() => void save()}>{saving ? "保存中…" : "保存"}</button>

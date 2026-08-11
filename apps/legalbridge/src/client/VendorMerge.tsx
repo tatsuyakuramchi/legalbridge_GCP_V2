@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { SearchableLedgerSelect } from "./SearchableLedgerSelect";
 import { FeatureLockedNote } from "./FeatureLockedNote";
 
 // 取引先マージ（名寄せ・Phase 4）。存続先(target)へ統合元(source)を寄せる。
@@ -67,8 +68,12 @@ export function VendorMerge({ canMerge = false, initialSource = "" }: { canMerge
       </div>
 
       <div className="vm-inputs">
-        <label>存続先ID（残す）<input value={targetId} onChange={(e) => setTargetId(e.target.value.replace(/[^\d]/g, ""))} inputMode="numeric" placeholder="target" /></label>
-        <label>統合元ID（寄せる）<input value={sourceId} onChange={(e) => setSourceId(e.target.value.replace(/[^\d]/g, ""))} inputMode="numeric" placeholder="source" /></label>
+        <SearchableLedgerSelect type="vendors" value={targetId}
+          label="存続先（残す）" placeholder="名前・コードで検索"
+          onChange={(value) => setTargetId(value)} />
+        <SearchableLedgerSelect type="vendors" value={sourceId}
+          label="統合元（寄せる・無効化される）" placeholder="名前・コードで検索"
+          onChange={(value) => setSourceId(value)} />
         <button className="primary" onClick={runPreview} disabled={loading}>{loading ? "確認中…" : "プレビュー"}</button>
       </div>
 

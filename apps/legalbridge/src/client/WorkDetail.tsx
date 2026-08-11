@@ -271,7 +271,7 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
       remarks: form.remarks.trim() || null,
       rightsHolderVendorId: form.rightsHolderVendorId ? Number(form.rightsHolderVendorId) : null
     };
-    if (form.kind) body.kind = form.kind;
+    body.kind = form.kind || null;   // 未設定選択で null（クリア）を送る
     try {
       const res = await fetch(`/api/v2/works/${selectedId}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
@@ -544,10 +544,14 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
                       <label className="wd-check"><input type="checkbox" checked={rightsForm.isPrimary} onChange={(e) => setRightsForm({ ...rightsForm, isPrimary: e.target.checked })} />主たるソース</label>
                       <label>有効開始<input type="date" value={rightsForm.validFrom} onChange={(e) => setRightsForm({ ...rightsForm, validFrom: e.target.value })} /></label>
                       <label>有効終了<input type="date" value={rightsForm.validTo} onChange={(e) => setRightsForm({ ...rightsForm, validTo: e.target.value })} /></label>
-                      <label>ソース作品ID<input value={rightsForm.sourceWorkId} onChange={(e) => setRightsForm({ ...rightsForm, sourceWorkId: e.target.value.replace(/[^\d]/g, "") })} inputMode="numeric" /></label>
-                      <label>権利者取引先ID<input value={rightsForm.rightsHolderVendorId} onChange={(e) => setRightsForm({ ...rightsForm, rightsHolderVendorId: e.target.value.replace(/[^\d]/g, "") })} inputMode="numeric" /></label>
-                      <label>ソース文書ID<input value={rightsForm.sourceDocumentId} onChange={(e) => setRightsForm({ ...rightsForm, sourceDocumentId: e.target.value.replace(/[^\d]/g, "") })} inputMode="numeric" /></label>
-                      <label>ソース契約ID<input value={rightsForm.sourceContractId} onChange={(e) => setRightsForm({ ...rightsForm, sourceContractId: e.target.value.replace(/[^\d]/g, "") })} inputMode="numeric" /></label>
+                      <SearchableLedgerSelect type="works" value={rightsForm.sourceWorkId}
+                        label="ソース作品" placeholder="作品名・コードで検索"
+                        onChange={(value) => setRightsForm({ ...rightsForm, sourceWorkId: value })} />
+                      <SearchableLedgerSelect type="vendors" value={rightsForm.rightsHolderVendorId}
+                        label="権利者（取引先）" placeholder="名前・コードで検索"
+                        onChange={(value) => setRightsForm({ ...rightsForm, rightsHolderVendorId: value })} />
+                      <label>ソース文書ID<input value={rightsForm.sourceDocumentId} onChange={(e) => setRightsForm({ ...rightsForm, sourceDocumentId: e.target.value.replace(/[^\d]/g, "") })} inputMode="numeric" placeholder="文書一覧の詳細で確認" /></label>
+                      <label>ソース契約ID<input value={rightsForm.sourceContractId} onChange={(e) => setRightsForm({ ...rightsForm, sourceContractId: e.target.value.replace(/[^\d]/g, "") })} inputMode="numeric" placeholder="契約マスタで確認" /></label>
                     </div>
                     <div className="wd-edit-actions">
                       <button onClick={() => setRightsForm(null)} disabled={rightsSaving}>キャンセル</button>
