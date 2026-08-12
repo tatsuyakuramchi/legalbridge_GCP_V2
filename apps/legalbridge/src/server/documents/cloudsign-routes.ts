@@ -8,7 +8,9 @@ import {
   renderStoredDocumentHtml, StoredDocumentTemplateVersionError
 } from "./document-html-renderer.js";
 import type { CloudSignAdapter } from "../integrations/cloudsign-adapter.js";
-import { CloudSignError, isValidEmail, findDisallowedRecipient } from "../integrations/cloudsign-adapter.js";
+import {
+  CloudSignError, isValidEmail, findDisallowedRecipient, cloudSignConsoleUrl
+} from "../integrations/cloudsign-adapter.js";
 import {
   evaluateCloudSignDispatchGate, type CloudSignDispatchGateSettings
 } from "../integrations/cloudsign-dispatch-gate.js";
@@ -20,8 +22,16 @@ const participantSchema = z.object({
   name: z.string().trim().min(1).max(200),
   organization: z.string().trim().max(200).optional()
 });
+const ccSchema = z.object({
+  email: z.string().trim().min(1).max(255),
+  name: z.string().trim().max(200).optional()
+});
 const bodySchema = z.object({
-  participants: z.array(participantSchema).min(1, "署名者が必要です").max(20)
+  participants: z.array(participantSchema).min(1, "署名者が必要です").max(20),
+  // CC（CloudSign の共有先＝reportees・任意）。
+  cc: z.array(ccSchema).max(20).optional().default([]),
+  // true=即時送信。false/未指定=下書きで作成（CloudSign 画面で印影配置後に送信する運用・既定）。
+  sendNow: z.boolean().optional().default(false)
 });
 
 function editorAllowed(role: string | undefined) { return role === "admin" || role === "legal"; }
@@ -45,6 +55,8 @@ export function createCloudSignRouter(
     requestHistory?: CloudSignRequestRepository;
     // 案件の送信履歴への自動記録（W3・文書に matter_id がある場合のみ）。
     matterSends?: import("../matters/matter-send-repository.js").MatterSendRepository;
+    // CloudSign コンソールURL導出用の API ベースURL（連携設定のランタイム反映のため関数も可）。
+    consoleBaseUrl?: string | (() => string);
   } = {}
 ) {
   const router = Router();
@@ -54,6 +66,11 @@ export function createCloudSignRouter(
       ? allowedRecipientsOption()
       : allowedRecipientsOption ?? new Set<string>();
   const requestHistory = options.requestHistory;
+  const consoleUrl = (cloudSignDocumentId: string) => cloudSignConsoleUrl(
+    (typeof options.consoleBaseUrl === "function" ? options.consoleBaseUrl() : options.consoleBaseUrl)
+      ?? "https://api.cloudsign.jp",
+    cloudSignDocumentId
+  );
 
   // 依頼前プレビュー（送信しない）。署名者とゲートのブロック理由を返す。
   router.post("/documents/:id/cloudsign/preview", async (request, response, next) => {
@@ -85,12 +102,16 @@ export function createCloudSignRouter(
         return response.status(403).json({ error: "管理者のみが依頼できます", code: "CLOUDSIGN_ADMIN_REQUIRED" });
       }
       const { id } = idPath.parse(request.params);
-      const { participants } = bodySchema.parse(request.body);
+      const { participants, cc, sendNow } = bodySchema.parse(request.body);
       if (!participants.every((participant) => isValidEmail(participant.email))) {
         return response.status(400).json({ error: "署名者のメールアドレスが不正です", code: "CLOUDSIGN_PARTICIPANT_INVALID" });
       }
-      // 宛先allowlist（設定時のみ）：検証中の誤送信防止。全宛先が許可集合内であること。
-      const disallowed = findDisallowedRecipient(participants.map((p) => p.email), allowedRecipients());
+      if (!cc.every((entry) => isValidEmail(entry.email))) {
+        return response.status(400).json({ error: "CCのメールアドレスが不正です", code: "CLOUDSIGN_CC_INVALID" });
+      }
+      // 宛先allowlist（設定時のみ）：検証中の誤送信防止。CC 含む全宛先が許可集合内であること。
+      const disallowed = findDisallowedRecipient(
+        [...participants.map((p) => p.email), ...cc.map((c) => c.email)], allowedRecipients());
       if (disallowed) {
         return response.status(422).json({
           error: `許可されていない宛先です: ${disallowed}`, code: "CLOUDSIGN_RECIPIENT_NOT_ALLOWED"
@@ -112,6 +133,7 @@ export function createCloudSignRouter(
         if (prior) {
           return response.status(200).json({
             receipt: { cloudSignDocumentId: prior.cloudSignDocumentId, status: prior.status, participantIds: [] },
+            cloudSignUrl: consoleUrl(prior.cloudSignDocumentId),
             integrations: { cloudsign: "duplicate" }
           });
         }
@@ -122,7 +144,7 @@ export function createCloudSignRouter(
       const receipt = await cloudSign.requestSignature({
         documentTitle: title, note: `案件：${document.issueKey}`,
         filename: `${safeFilename(document.documentNumber ?? `document-${id}`)}.pdf`,
-        pdf, participants, idempotencyKey
+        pdf, participants, cc, sendNow, idempotencyKey
       });
       if (requestHistory) {
         await requestHistory.record({
@@ -137,13 +159,18 @@ export function createCloudSignRouter(
           await options.matterSends.record(document.matterId, {
             documentId: document.id, channel: "cloudsign",
             recipient: participants.map((p) => p.email).join(", "),
-            status: "sent", subject: title,
+            // 下書き作成は queued＝送信待ち（CloudSign 画面から送信した時点で webhook/sync が反映）。
+            status: sendNow ? "sent" : "queued", subject: title,
             messageId: receipt.cloudSignDocumentId,
             sentBy: response.locals.currentUser?.email ?? null
           });
         } catch { /* 台帳未整備でも依頼は成立している */ }
       }
-      return response.status(201).json({ receipt, integrations: { cloudsign: "requested" } });
+      return response.status(201).json({
+        receipt,
+        cloudSignUrl: consoleUrl(receipt.cloudSignDocumentId),
+        integrations: { cloudsign: sendNow ? "requested" : "drafted" }
+      });
     } catch (error) {
       if (error instanceof StoredDocumentTemplateVersionError) {
         return response.status(409).json({ error: error.message, code: "CLOUDSIGN_TEMPLATE_VERSION_MISMATCH" });

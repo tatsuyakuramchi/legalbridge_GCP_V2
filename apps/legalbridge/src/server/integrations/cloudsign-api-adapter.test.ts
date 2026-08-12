@@ -7,6 +7,7 @@ class FakeClient implements CloudSignApiClient {
   async createDocument(input: { title: string }) { this.calls.push(`create:${input.title}`); return { id: "doc-1" }; }
   async addFile(documentId: string, filename: string) { this.calls.push(`file:${documentId}:${filename}`); return { id: "file-1" }; }
   async addParticipant(documentId: string, p: { email: string }) { this.calls.push(`participant:${p.email}`); return { id: `pt-${p.email}` }; }
+  async addReportee(documentId: string, r: { email: string }) { this.calls.push(`cc:${r.email}`); return { id: `cc-${r.email}` }; }
   async send(documentId: string) { this.calls.push(`send:${documentId}`); return { status: "sent" }; }
   async getDocument(documentId: string) {
     this.calls.push(`get:${documentId}`);
@@ -20,10 +21,10 @@ const baseRequest = {
   participants: [{ email: "a@example.com", name: "甲" }, { email: "b@example.com", name: "乙" }]
 };
 
-test("署名依頼はcreate→file→participant→sendの順で発行する", async () => {
+test("即時送信(sendNow)はcreate→file→participant→sendの順で発行する", async () => {
   const client = new FakeClient();
   const adapter = new CloudSignApiAdapter(client);
-  const receipt = await adapter.requestSignature(baseRequest);
+  const receipt = await adapter.requestSignature({ ...baseRequest, sendNow: true });
   assert.equal(receipt.cloudSignDocumentId, "doc-1");
   assert.equal(receipt.status, "sent");
   assert.deepEqual(receipt.participantIds, ["pt-a@example.com", "pt-b@example.com"]);
@@ -31,6 +32,26 @@ test("署名依頼はcreate→file→participant→sendの順で発行する", a
     "create:契約書（DOC-1）", "file:doc-1:doc.pdf",
     "participant:a@example.com", "participant:b@example.com", "send:doc-1"
   ]);
+});
+
+test("既定は下書き作成（send を呼ばず status=draft・CC は reportees へ）", async () => {
+  const client = new FakeClient();
+  const adapter = new CloudSignApiAdapter(client);
+  const receipt = await adapter.requestSignature({
+    ...baseRequest, cc: [{ email: "cc@example.com", name: "共有" }]
+  });
+  assert.equal(receipt.status, "draft");
+  assert.deepEqual(client.calls, [
+    "create:契約書（DOC-1）", "file:doc-1:doc.pdf",
+    "participant:a@example.com", "participant:b@example.com", "cc:cc@example.com"
+  ]);
+});
+
+test("CCのメールが不正なら発行せず失敗する", async () => {
+  const adapter = new CloudSignApiAdapter(new FakeClient());
+  await assert.rejects(
+    () => adapter.requestSignature({ ...baseRequest, cc: [{ email: "bad" }] }),
+    /valid cc email/);
 });
 
 test("署名者が空なら送信せず失敗する", async () => {

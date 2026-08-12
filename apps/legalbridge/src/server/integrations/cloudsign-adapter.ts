@@ -10,12 +10,23 @@ export interface CloudSignParticipant {
   organization?: string;
 }
 
+// CC（CloudSign の共有先＝reportees）。署名はせず、書類の閲覧・完了通知を受け取る。
+export interface CloudSignCc {
+  email: string;
+  name?: string;
+}
+
 export interface CloudSignSignatureRequest {
   documentTitle: string;
   note?: string;
   filename: string;
   pdf: Buffer;
   participants: CloudSignParticipant[];
+  // CC（任意）。V1 の reportees 相当。
+  cc?: CloudSignCc[];
+  // true のときだけ即時送信する。false/未指定は「下書きで作成」＝CloudSign 画面で
+  // 印影・フリーテキストを配置してから送信する運用（V1 の draft 相当・既定）。
+  sendNow?: boolean;
   idempotencyKey: string;
 }
 
@@ -75,6 +86,18 @@ export function parseAllowedRecipients(raw?: string | null): Set<string> {
     if (email) set.add(email);
   }
   return set;
+}
+
+// CloudSign コンソール（Web画面）のURLを API ベースURLから導出する（V1 準拠）。
+// 下書き作成後に印影・フリーテキストを配置して送信する画面へ誘導するために使う。
+//   https://api.cloudsign.jp → https://app.cloudsign.jp
+//   https://api-sandbox.cloudsign.jp → https://sandbox.cloudsign.jp
+export function cloudSignConsoleUrl(apiBaseUrl: string, cloudSignDocumentId: string): string {
+  const base = String(apiBaseUrl || "https://api.cloudsign.jp").replace(/\/+$/, "");
+  const app = /\/\/api-sandbox\./.test(base)
+    ? base.replace(/\/\/api-sandbox\./, "//sandbox.")
+    : base.replace(/\/\/api\./, "//app.");
+  return `${app}/documents/${encodeURIComponent(cloudSignDocumentId)}`;
 }
 
 // allowlist が空なら制限なし（null）。設定時は最初の非許可メールを返す。

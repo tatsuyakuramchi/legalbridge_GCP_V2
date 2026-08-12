@@ -1553,7 +1553,8 @@ export function createApp(
     {
       allowedRecipients: () => parseAllowedRecipients(rt().cloudSignAllowedRecipients),
       requestHistory: dependencies.cloudSignRequests,
-      matterSends: dependencies.matterSends
+      matterSends: dependencies.matterSends,
+      consoleBaseUrl: () => config.cloudSignBaseUrl
     }));
   app.use("/api/v2", createGmailInboundRouter(gmailInboundAdapter, {
     enabled: gmailInboundEnabled,

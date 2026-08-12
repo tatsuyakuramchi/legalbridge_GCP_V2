@@ -10,6 +10,8 @@ export interface CloudSignApiClient {
   createDocument(input: { title: string; note?: string }): Promise<{ id: string }>;
   addFile(documentId: string, filename: string, pdf: Buffer): Promise<{ id: string }>;
   addParticipant(documentId: string, participant: { email: string; name: string; organization?: string }): Promise<{ id: string }>;
+  // CC（共有先）。V1 の reportees 相当（POST /documents/{id}/reportees）。
+  addReportee(documentId: string, reportee: { email: string; name?: string }): Promise<{ id: string }>;
   send(documentId: string): Promise<{ status: string }>;
   getDocument(documentId: string): Promise<Record<string, unknown>>;
 }
@@ -150,6 +152,16 @@ export class FetchCloudSignApiClient implements CloudSignApiClient {
     return { id: payload.id };
   }
 
+  async addReportee(documentId: string, reportee: { email: string; name?: string }) {
+    // reportees（CC・共有先）は form-urlencoded（email/name）。V1 実装準拠。
+    const payload = await this.authed(`/documents/${encodeURIComponent(documentId)}/reportees`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: this.form({ email: reportee.email, name: reportee.name })
+    });
+    return { id: typeof payload.id === "string" ? payload.id : documentId };
+  }
+
   async send(documentId: string) {
     // 送信確定は POST /documents/{id}（本文なし）。
     const payload = await this.authed(`/documents/${encodeURIComponent(documentId)}`, { method: "POST" });
@@ -171,6 +183,9 @@ export class CloudSignApiAdapter implements CloudSignAdapter {
     for (const participant of request.participants) {
       if (!isValidEmail(participant.email)) throw new CloudSignError("A valid participant email is required", "invalid_participant");
     }
+    for (const cc of request.cc ?? []) {
+      if (!isValidEmail(cc.email)) throw new CloudSignError("A valid cc email is required", "invalid_cc");
+    }
     const document = await this.client.createDocument({ title: request.documentTitle, note: request.note });
     await this.client.addFile(document.id, request.filename, request.pdf);
     const participantIds: string[] = [];
@@ -178,8 +193,16 @@ export class CloudSignApiAdapter implements CloudSignAdapter {
       const added = await this.client.addParticipant(document.id, participant);
       participantIds.push(added.id);
     }
-    const sent = await this.client.send(document.id);
-    return { cloudSignDocumentId: document.id, status: sent.status, participantIds };
+    for (const cc of request.cc ?? []) {
+      await this.client.addReportee(document.id, cc);
+    }
+    // 既定は下書きのまま（CloudSign 画面で印影・フリーテキストを配置してから送信する運用）。
+    // sendNow=true のときだけ即時送信する。
+    if (request.sendNow === true) {
+      const sent = await this.client.send(document.id);
+      return { cloudSignDocumentId: document.id, status: sent.status, participantIds };
+    }
+    return { cloudSignDocumentId: document.id, status: "draft", participantIds };
   }
 
   async fetchStatus(cloudSignDocumentId: string): Promise<CloudSignStatus> {

@@ -152,17 +152,25 @@ type Participant = { email: string; name: string };
 
 function CloudSignRequest({ documentId, isAdmin = true, suggestions = [], onSent }: { documentId: number; isAdmin?: boolean; suggestions?: Suggestion[]; onSent?: () => void }) {
   const [participants, setParticipants] = useState<Participant[]>([{ email: "", name: "" }]);
+  const [ccList, setCcList] = useState<Participant[]>([]);
+  const [sendNow, setSendNow] = useState(false);
   const [gate, setGate] = useState<Gate | null>(null);
   const [csId, setCsId] = useState<string | null>(null);
+  const [csUrl, setCsUrl] = useState<string | null>(null);
   const [statusLabel, setStatusLabel] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const toast = useToast();
   const valid = participants.filter((p) => p.email.trim() && p.name.trim());
+  const validCc = ccList.filter((c) => c.email.trim())
+    .map((c) => ({ email: c.email.trim(), ...(c.name.trim() ? { name: c.name.trim() } : {}) }));
 
   function setParticipant(index: number, key: keyof Participant, value: string) {
     setParticipants((prev) => prev.map((p, i) => i === index ? { ...p, [key]: value } : p));
     setGate(null);
+  }
+  function setCc(index: number, key: keyof Participant, value: string) {
+    setCcList((prev) => prev.map((c, i) => i === index ? { ...c, [key]: value } : c));
   }
 
   async function runPreview() {
@@ -180,7 +188,8 @@ function CloudSignRequest({ documentId, isAdmin = true, suggestions = [], onSent
     setBusy(true); setError("");
     try {
       const response = await fetch(`/api/v2/documents/${documentId}/cloudsign/dispatch`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ participants: valid })
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ participants: valid, cc: validCc, sendNow })
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -188,9 +197,13 @@ function CloudSignRequest({ documentId, isAdmin = true, suggestions = [], onSent
         return;
       }
       setCsId(data.receipt.cloudSignDocumentId);
+      setCsUrl(data.cloudSignUrl ?? null);
       setStatusLabel(data.receipt.status);
       toast.push(data.integrations?.cloudsign === "duplicate"
-        ? "この文書は署名依頼済みです（再依頼はしていません）" : "CloudSignへ署名依頼しました", "success");
+        ? "この文書は署名依頼済みです（再依頼はしていません）"
+        : data.integrations?.cloudsign === "drafted"
+          ? "CloudSignに下書きを作成しました。CloudSign画面で印影等を配置して送信してください"
+          : "CloudSignへ署名依頼しました", "success");
       onSent?.();
     } catch { setError("通信に失敗しました。"); } finally { setBusy(false); }
   }
@@ -215,11 +228,23 @@ function CloudSignRequest({ documentId, isAdmin = true, suggestions = [], onSent
       <input value={p.email} onChange={(e) => setParticipant(index, "email", e.target.value)} placeholder="署名者メール" />
       <input value={p.name} onChange={(e) => setParticipant(index, "name", e.target.value)} placeholder="署名者名" />
     </div>)}
+    {ccList.map((c, index) => <div className="doc-integration-grid" key={`cc${index}`}>
+      <input value={c.email} onChange={(e) => setCc(index, "email", e.target.value)} placeholder="CCメール（署名なしで共有）" />
+      <input value={c.name} onChange={(e) => setCc(index, "name", e.target.value)} placeholder="CC名（任意）" />
+    </div>)}
     <div className="doc-integration-actions">
       <button onClick={() => setParticipants((prev) => [...prev, { email: "", name: "" }])}>＋署名者</button>
+      <button onClick={() => setCcList((prev) => [...prev, { email: "", name: "" }])}>＋CC</button>
       <button onClick={runPreview} disabled={busy || !valid.length}>プレビュー</button>
       <button className="primary" onClick={dispatch} disabled={busy || !gate?.dispatchAllowed || !isAdmin}
-        title={!isAdmin ? "署名依頼は管理者のみ" : !gate ? "先にプレビューで依頼条件を確認してください" : undefined}>署名依頼</button>
+        title={!isAdmin ? "署名依頼は管理者のみ" : !gate ? "先にプレビューで依頼条件を確認してください" : undefined}>
+        {sendNow ? "署名依頼（即時送信）" : "下書きを作成"}</button>
+    </div>
+    <div className="doc-integration-actions">
+      <label><input type="radio" name={`cs-mode-${documentId}`} checked={!sendNow} onChange={() => setSendNow(false)} />
+        下書きで作成（CloudSign画面で印影・項目を配置して送信・推奨）</label>
+      <label><input type="radio" name={`cs-mode-${documentId}`} checked={sendNow} onChange={() => setSendNow(true)} />
+        即時送信（印影等なしでそのまま送る）</label>
     </div>
     {error && <div className="async-error">{error}</div>}
     {gate && !gate.dispatchAllowed && <small className="doc-integration-blocked">
@@ -227,6 +252,7 @@ function CloudSignRequest({ documentId, isAdmin = true, suggestions = [], onSent
     </small>}
     {csId && <div className="doc-integration-status">
       <span>CloudSign ID: {csId}／状態: {statusLabel ?? "—"}</span>
+      {csUrl && <a href={csUrl} target="_blank" rel="noreferrer">CloudSignで開く{statusLabel === "draft" ? "（印影配置・送信へ）" : ""}</a>}
       <button onClick={refreshStatus} disabled={busy}>ステータス更新</button>
     </div>}
   </div>;

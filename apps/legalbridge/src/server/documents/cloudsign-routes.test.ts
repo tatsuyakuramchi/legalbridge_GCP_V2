@@ -29,7 +29,7 @@ class CapturingCloudSign implements CloudSignAdapter {
   sendCount = 0;
   async requestSignature(req: CloudSignSignatureRequest) {
     this.sent = req; this.sendCount += 1;
-    return { cloudSignDocumentId: "cs-1", status: "sent", participantIds: ["pt-1"] };
+    return { cloudSignDocumentId: "cs-1", status: req.sendNow ? "sent" : "draft", participantIds: ["pt-1"] };
   }
   async fetchStatus(cloudSignDocumentId: string) {
     return { cloudSignDocumentId, status: "completed", completed: true, participants: [] };
@@ -117,10 +117,32 @@ test("allowlist設定時、全宛先が許可内なら送信する", async () =>
   assert.equal((adapter as CapturingCloudSign).sendCount, 1);
 });
 
+test("既定は下書き作成：drafted＋CloudSign画面URLを返しCCも受け付ける", async () => {
+  const { app, adapter } = appFor({ live: true, role: "admin" });
+  const response = await request(app).post("/api/v2/documents/5/cloudsign/dispatch")
+    .send({ ...body, cc: [{ email: "cc@example.com", name: "共有" }] });
+  assert.equal(response.status, 201);
+  assert.equal(response.body.integrations.cloudsign, "drafted");
+  assert.equal(response.body.receipt.status, "draft");
+  assert.match(String(response.body.cloudSignUrl), /^https:\/\/app\.cloudsign\.jp\/documents\//);
+  const captured = (adapter as CapturingCloudSign).sent!;
+  assert.equal(captured.sendNow, false);
+  assert.deepEqual(captured.cc, [{ email: "cc@example.com", name: "共有" }]);
+});
+
+test("CCがallowlist外なら422で拒否する", async () => {
+  const allowedRecipients = new Set(["a@example.com"]);
+  const { app } = appFor({ live: true, role: "admin", allowedRecipients });
+  const response = await request(app).post("/api/v2/documents/5/cloudsign/dispatch")
+    .send({ ...body, cc: [{ email: "outside@example.com" }] });
+  assert.equal(response.status, 422);
+  assert.equal(response.body.code, "CLOUDSIGN_RECIPIENT_NOT_ALLOWED");
+});
+
 test("履歴有効時、同一文書の再依頼は冪等で再送しない(duplicate)", async () => {
   const requestHistory = new MemoryCloudSignRequestRepository();
   const { app, adapter } = appFor({ live: true, role: "admin", requestHistory });
-  const first = await request(app).post("/api/v2/documents/5/cloudsign/dispatch").send(body);
+  const first = await request(app).post("/api/v2/documents/5/cloudsign/dispatch").send({ ...body, sendNow: true });
   assert.equal(first.status, 201);
   assert.equal(first.body.integrations.cloudsign, "requested");
   const second = await request(app).post("/api/v2/documents/5/cloudsign/dispatch").send(body);
