@@ -92,6 +92,12 @@ GRANT UPDATE (voided_at, void_reason) ON TABLE
   public.condition_events
 TO legalbridge_v2_runtime;
 
+-- UPDATE の WHERE 句（document_id / voided_at の参照）には SELECT 権限も必要。
+-- これが無いと列レベル UPDATE があっても 42501 permission denied for table condition_events になる。
+GRANT SELECT ON TABLE
+  public.condition_events
+TO legalbridge_v2_runtime;
+
 -- 監査台帳（隔離）は SELECT/INSERT のみ。
 REVOKE ALL ON TABLE public.lb_v2_document_void_ledger FROM PUBLIC;
 REVOKE ALL ON SEQUENCE public.lb_v2_document_void_ledger_id_seq FROM PUBLIC;
