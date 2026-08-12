@@ -1071,6 +1071,46 @@ test("settings/secrets: settings スコープで書込ガードを通過して�
   assert.equal(await store.access("backlog-api-key"), "backlog-key-value-123");
 });
 
+// 案件Slack（スレッド作成）が matter-slack スコープで書込ガードを通過すること
+// （回帰：許可リスト漏れで 403 WRITE_SCOPE_DISABLED になっていた）。
+// Slack ライブ設定が無い環境ではルート側の 409 が返る＝ガードの 403 でないことを検証する。
+test("matters/slack/thread: matter-slack スコープで書込ガードを通過する", async () => {
+  const target = createApp({
+    templates: new MemoryTemplateRepository([schema]),
+    drafts: new MemoryDraftRepository(),
+    integrations: createIntegrationAdapters()
+  }, {
+    accessMode: "readwrite",
+    requireDatabase: false,
+    writeFeaturesEnabled: true,
+    writeScopes: new Set(["matter-slack"])
+  });
+  const response = await request(target)
+    .post("/api/v2/matters/1/slack/thread")
+    .send({});
+  assert.notEqual(response.status, 403);
+  assert.equal(response.status, 409);
+  assert.equal(response.body.code, "MATTER_SLACK_DISABLED");
+});
+
+test("matters/slack/thread: matter-slack スコープが無ければ書込ガードで403", async () => {
+  const target = createApp({
+    templates: new MemoryTemplateRepository([schema]),
+    drafts: new MemoryDraftRepository(),
+    integrations: createIntegrationAdapters()
+  }, {
+    accessMode: "readwrite",
+    requireDatabase: false,
+    writeFeaturesEnabled: true,
+    writeScopes: new Set(["drafts"])
+  });
+  const response = await request(target)
+    .post("/api/v2/matters/1/slack/thread")
+    .send({});
+  assert.equal(response.status, 403);
+  assert.equal(response.body.code, "WRITE_SCOPE_DISABLED");
+});
+
 test("settings/secrets: settings スコープが無ければ書込ガードで403", async () => {
   const target = createApp({
     templates: new MemoryTemplateRepository([schema]),

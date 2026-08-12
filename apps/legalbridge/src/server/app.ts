@@ -855,6 +855,13 @@ export function createApp(
     options.conditionLineRepairEnabled === true &&
     options.writeScopes?.has("condition-repair") === true &&
     Boolean(dependencies.conditionLines);
+  // 案件Slack の書込ガード通過はスコープのみで判定する（Slack ライブ設定の有無は
+  // ルート側が 409「Slack連携が有効ではありません」で説明する。ここで matterSlackEnabled を
+  // 使うと未設定時に誤解を招く 403 WRITE_SCOPE_DISABLED になる）。
+  const matterSlackWriteAllowed =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.writeScopes?.has("matter-slack") === true;
   const documentVoidEnabled =
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
@@ -1236,6 +1243,11 @@ export function createApp(
     const isConditionRepair =
       request.method === "PATCH" && /^\/condition-lines\/\d+\/counterparty$/.test(request.path);
     if (conditionLineRepairEnabled && isConditionRepair) return next();
+
+    // 案件Slack（スレッド作成・投稿・定型文）。許可リスト漏れで一律 403 になっていた（回帰修正）。
+    const isMatterSlackWrite = request.method === "POST" &&
+      /^\/matters\/\d+\/slack\/(thread|messages|template)$/.test(request.path);
+    if (matterSlackWriteAllowed && isMatterSlackWrite) return next();
 
     return response.status(403).json({
       error: options.accessMode === "readonly"
