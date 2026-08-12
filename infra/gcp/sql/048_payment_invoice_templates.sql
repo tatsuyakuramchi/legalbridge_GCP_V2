@@ -33,9 +33,9 @@ WITH template AS (
   INSERT INTO document_templates (template_key, kind, label, category, document_prefix)
   VALUES ('payment_notice', 'document', '支払通知書', 'Billing', 'ARC-PAY')
   RETURNING id
-), version AS (
-  INSERT INTO document_template_versions (template_id, version_no, html_source, field_schema)
-  SELECT id, 1,
+)
+INSERT INTO document_template_versions (template_id, version_no, html_source, field_schema)
+SELECT id, 1,
     '<h1>支払通知書</h1><p>{{VENDOR_NAME}} 御中</p><p>発行日：{{ISSUE_DATE}}</p><p>件名：{{PROJECT_TITLE}}</p><p>お支払金額（税込）：{{TOTAL_AMOUNT}} 円</p><p>お支払期日：{{PAYMENT_DUE_DATE}}</p><p>{{REMARKS}}</p>',
     '[
       {"name":"PROJECT_TITLE","label":"件名","group":"I. 概要","required":true,"dbField":"backlog.summary"},
@@ -45,18 +45,20 @@ WITH template AS (
       {"name":"PAYMENT_DUE_DATE","label":"支払期日","type":"date","group":"III. 金額","required":true},
       {"name":"REMARKS","label":"備考","type":"textarea","group":"IV. 備考"}
     ]'::jsonb
-  FROM template RETURNING id, template_id
-)
-UPDATE document_templates SET current_version_id = version.id
-FROM version WHERE document_templates.id = version.template_id;
+FROM template;
+
+-- CTE 内の INSERT 行は同一文の外側 UPDATE から見えないため、差し替えは別文で行う。
+UPDATE document_templates t SET current_version_id = v.id
+  FROM document_template_versions v
+ WHERE t.template_key = 'payment_notice' AND v.template_id = t.id AND v.version_no = 1;
 
 WITH template AS (
   INSERT INTO document_templates (template_key, kind, label, category, document_prefix)
   VALUES ('invoice', 'document', '請求書', 'Billing', 'ARC-INV')
   RETURNING id
-), version AS (
-  INSERT INTO document_template_versions (template_id, version_no, html_source, field_schema)
-  SELECT id, 1,
+)
+INSERT INTO document_template_versions (template_id, version_no, html_source, field_schema)
+SELECT id, 1,
     '<h1>請求書</h1><p>{{VENDOR_NAME}} 御中</p><p>発行日：{{ISSUE_DATE}}</p><p>件名：{{PROJECT_TITLE}}</p><p>ご請求金額（税込）：{{TOTAL_AMOUNT}} 円</p><p>お支払期日：{{PAYMENT_DUE_DATE}}</p><p>振込先：{{BANK_INFO}}</p><p>登録番号：{{COMPANY_INVOICE_NO}}</p><p>{{REMARKS}}</p>',
     '[
       {"name":"PROJECT_TITLE","label":"件名","group":"I. 概要","required":true,"dbField":"backlog.summary"},
@@ -68,10 +70,12 @@ WITH template AS (
       {"name":"COMPANY_INVOICE_NO","label":"適格請求書 登録番号","group":"III. 金額"},
       {"name":"REMARKS","label":"備考","type":"textarea","group":"IV. 備考"}
     ]'::jsonb
-  FROM template RETURNING id, template_id
-)
-UPDATE document_templates SET current_version_id = version.id
-FROM version WHERE document_templates.id = version.template_id;
+FROM template;
+
+-- CTE 内の INSERT 行は同一文の外側 UPDATE から見えないため、差し替えは別文で行う。
+UPDATE document_templates t SET current_version_id = v.id
+  FROM document_template_versions v
+ WHERE t.template_key = 'invoice' AND v.template_id = t.id AND v.version_no = 1;
 
 COMMIT;
 

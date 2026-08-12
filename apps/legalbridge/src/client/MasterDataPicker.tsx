@@ -132,7 +132,9 @@ function buildPatch(schema: DocumentFormSchema, _formData: DocumentFormData, ite
       /自社|当社|弊社|アークライト|Licensee/i,
       [[/電話/, "tel"], [/住所/, "address"], [/代表/, "rep"],
        [/名称|会社名|法人名|氏名/, "name"]],
-      /相手方|取引先|先方|売主|受託者|許諾者|ライセンサ|委託先|発注先/);
+      // ライセンシーを除外：ライセンスアウト英文契約では Licensee＝相手方。
+      // ライセンスイン系の Licensee_名称（自社）は対応表（exact）が先に埋めるため影響なし。
+      /相手方|取引先|先方|売主|受託者|許諾者|ライセンサ|ライセンシー|委託先|発注先/);
   }
   if (item.type === "document") applyDocumentAliases(schema, patch, item.values);
   if (item.type === "work") applyWorkAliases(schema, patch, item.values);
