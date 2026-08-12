@@ -101,6 +101,32 @@ test("Bot TokenはAuthorizationヘッダーだけで送信する", async () => {
   assert.doesNotMatch(String(calls[0].init?.body), /xoxb-test-token/);
 });
 
+test("conversations.replies はGET＋クエリで呼ぶ（JSONボディはinvalid_argumentsになる）", async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const client = new FetchSlackWebApiClient(
+    "xoxb-test-token",
+    (async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), init });
+      return new Response(JSON.stringify({ ok: true, messages: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    }) as typeof fetch
+  );
+  await client.post("conversations.replies", { channel: "C0123456789", ts: "1700000000.000100", limit: 200 });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].init?.method, "GET");
+  assert.equal(calls[0].init?.body, undefined);
+  const url = new URL(calls[0].url);
+  assert.equal(url.searchParams.get("channel"), "C0123456789");
+  assert.equal(url.searchParams.get("ts"), "1700000000.000100");
+  assert.equal(url.searchParams.get("limit"), "200");
+  assert.equal(
+    (calls[0].init?.headers as Record<string, string>).Authorization,
+    "Bearer xoxb-test-token"
+  );
+});
+
 test("Slackのok falseとHTTP制限を明示的なエラーにする", async () => {
   const apiErrorClient = new FetchSlackWebApiClient(
     "xoxb-test-token",
