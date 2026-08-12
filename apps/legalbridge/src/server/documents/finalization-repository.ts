@@ -171,13 +171,16 @@ export const DOCUMENT_PREFIXES: Record<string, string> = {
   invoice: "INV"
 };
 
+// 注意：FOR SHARE を付けてはいけない。行ロックは SELECT 権限では足りず UPDATE 権限を
+// 要求するため、document_templates を SELECT のみ許可された本番ロールでは 42501 で
+// 確定トランザクション全体が失敗する（＝画面は internal server error・文書は作られない）。
+// 採番の直列化は document_sequences の UPSERT が担っており、ここにロックは不要。
 async function findPrefix(client: PoolClient, templateType: string) {
   const result = await client.query(
     `SELECT document_prefix
        FROM document_templates
       WHERE template_key = $1
-        AND is_active = true
-      FOR SHARE`,
+        AND is_active = true`,
     [templateType]
   );
   if (!result.rows[0]) throw new Error("active template is required");
