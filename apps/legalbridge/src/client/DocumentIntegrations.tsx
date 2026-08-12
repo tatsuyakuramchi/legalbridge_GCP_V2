@@ -165,6 +165,50 @@ function CloudSignRequest({ documentId, isAdmin = true, suggestions = [], onSent
   const validCc = ccList.filter((c) => c.email.trim())
     .map((c) => ({ email: c.email.trim(), ...(c.name.trim() ? { name: c.name.trim() } : {}) }));
 
+  // 取引先マスタからの自動補完：文書の相手先メールが解決できていて、署名者がまだ
+  // 空欄なら 1 人目に自動入力する（上書き自由・依頼はプレビュー→ボタンを押すまで行われない）。
+  const [prefilled, setPrefilled] = useState(false);
+  useEffect(() => {
+    if (prefilled || !suggestions.length) return;
+    setParticipants((prev) => {
+      const untouched = prev.length === 1 && !prev[0].email.trim() && !prev[0].name.trim();
+      if (!untouched) return prev;
+      setPrefilled(true);
+      return [{ email: suggestions[0].email, name: suggestions[0].name }];
+    });
+  }, [suggestions, prefilled]);
+
+  // 社内署名者・CC の検索引用（担当者マスタ）。
+  const [staffQuery, setStaffQuery] = useState("");
+  const [staffResults, setStaffResults] = useState<Array<{ id: string; label: string; description?: string; values: { email?: string; staff_name?: string } }>>([]);
+  useEffect(() => {
+    if (!staffQuery.trim()) { setStaffResults([]); return; }
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      fetch(`/api/v2/master-data/search?type=staff&q=${encodeURIComponent(staffQuery)}`, { signal: controller.signal })
+        .then((r) => r.ok ? r.json() : Promise.reject(new Error("search failed")))
+        .then((d) => setStaffResults((d.items ?? []).filter((it: { values: { email?: string } }) => it.values?.email)))
+        .catch((e) => { if (e.name !== "AbortError") setStaffResults([]); });
+    }, 250);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [staffQuery]);
+
+  function addParticipantEntry(entry: Participant) {
+    setParticipants((prev) => {
+      const rows = prev.filter((p) => p.email.trim() || p.name.trim());
+      if (rows.some((p) => p.email.trim().toLowerCase() === entry.email.toLowerCase())) return prev;
+      return [...rows, entry];
+    });
+    setGate(null);
+  }
+  function addCcEntry(entry: Participant) {
+    setCcList((prev) => {
+      const rows = prev.filter((c) => c.email.trim() || c.name.trim());
+      if (rows.some((c) => c.email.trim().toLowerCase() === entry.email.toLowerCase())) return prev;
+      return [...rows, entry];
+    });
+  }
+
   function setParticipant(index: number, key: keyof Participant, value: string) {
     setParticipants((prev) => prev.map((p, i) => i === index ? { ...p, [key]: value } : p));
     setGate(null);
@@ -220,10 +264,32 @@ function CloudSignRequest({ documentId, isAdmin = true, suggestions = [], onSent
 
   return <div className="doc-integration-card">
     <strong>🖋 電子署名依頼（CloudSign）</strong>
-    {suggestions.length > 0 && <small className="settings-effective">候補：
-      {suggestions.map((sug) => <button key={sug.email} type="button" className="link-button"
-        onClick={() => { setParticipants([{ email: sug.email, name: sug.name }]); setGate(null); }}>{sug.name}（{sug.email}）</button>)}
+    {suggestions.length > 0 && <small className="settings-effective">取引先マスタ：
+      {suggestions.map((sug) => <span key={sug.email}>
+        {sug.name}（{sug.email}）
+        <button type="button" className="link-button"
+          onClick={() => addParticipantEntry({ email: sug.email, name: sug.name })}>署名者へ</button>
+        <button type="button" className="link-button"
+          onClick={() => addCcEntry({ email: sug.email, name: sug.name })}>CCへ</button>
+      </span>)}
+      {prefilled && <em>（1人目に自動入力済み・修正可）</em>}
     </small>}
+    <div className="doc-integration-grid">
+      <input value={staffQuery} onChange={(e) => setStaffQuery(e.target.value)}
+        placeholder="社内担当者を検索して引用（氏名・部署・メール）" />
+      <span />
+    </div>
+    {staffResults.length > 0 && <small className="settings-effective">担当者マスタ：
+      {staffResults.map((item) => <span key={item.id}>
+        {item.label}{item.description ? `（${item.description}）` : ""}
+        <button type="button" className="link-button"
+          onClick={() => addParticipantEntry({ email: item.values.email ?? "", name: item.values.staff_name ?? item.label })}>署名者へ</button>
+        <button type="button" className="link-button"
+          onClick={() => addCcEntry({ email: item.values.email ?? "", name: item.values.staff_name ?? item.label })}>CCへ</button>
+      </span>)}
+    </small>}
+    {staffQuery.trim() !== "" && staffResults.length === 0 &&
+      <small className="settings-effective">該当する担当者がいません（台帳→担当者にメール登録が必要です）。</small>}
     {participants.map((p, index) => <div className="doc-integration-grid" key={index}>
       <input value={p.email} onChange={(e) => setParticipant(index, "email", e.target.value)} placeholder="署名者メール" />
       <input value={p.name} onChange={(e) => setParticipant(index, "name", e.target.value)} placeholder="署名者名" />
