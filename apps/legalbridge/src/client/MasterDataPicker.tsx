@@ -59,7 +59,7 @@ export function MasterDataPicker({
 
   return <section className="master-picker">
     <div className="master-picker-head">
-      <div><span>入力補助</span><strong>登録情報を呼び出す</strong></div>
+      <div><span>DBから引用</span><strong>登録済みデータを差し込む</strong></div>
       <small>取引先などを選ぶと、該当する項目だけ入力されます。入力後の修正も可能です。</small>
     </div>
     <div className="master-tabs">
@@ -77,7 +77,13 @@ export function MasterDataPicker({
       {!loading && !items.length && <p>該当するデータがありません。</p>}
       {!loading && items.map((item) =>
         <button type="button" key={item.id}
-          onClick={() => onApply(buildPatch(schema, formData, item), `${item.label}の登録情報を入力しました`)}>
+          onClick={() => {
+            const patch = buildPatch(schema, formData, item);
+            const count = Object.keys(patch).length;
+            onApply(patch, count > 0
+              ? `${item.label}の情報を${count}項目に入力しました`
+              : `${item.label}：この文書に対応する項目が見つかりませんでした（項目名を教えていただければ対応を追加します）`);
+          }}>
           <strong>{item.label}</strong><small>{item.description}</small>
         </button>)}
     </div>
@@ -106,9 +112,22 @@ function buildPatch(schema: DocumentFormSchema, _formData: DocumentFormData, ite
       patch[field.name] = item.values[sourceKey];
     }
   }
-  if (item.type === "vendor") applyVendorAliases(schema, patch, item.values);
+  if (item.type === "vendor") {
+    applyVendorAliases(schema, patch, item.values);
+    applyPatternAliases(schema, patch, item.values,
+      /甲|相手方|取引先|先方|許諾者|ライセンサ|委託先|発注先/,
+      [[/電話/, "phone"], [/メール|mail/i, "email"], [/代表/, "vendor_rep"],
+       [/住所/, "address"], [/担当/, "contact_name"],
+       [/名称|会社名|法人名|氏名/, "vendor_name"]]);
+  }
   if (item.type === "staff") applyStaffAliases(schema, patch, item.values);
-  if (item.type === "company") applyCompanyAliases(schema, patch, item.values);
+  if (item.type === "company") {
+    applyCompanyAliases(schema, patch, item.values);
+    applyPatternAliases(schema, patch, item.values,
+      /乙|自社|当社|弊社|アークライト/,
+      [[/電話/, "tel"], [/住所/, "address"], [/代表/, "rep"],
+       [/名称|会社名|法人名|氏名/, "name"]]);
+  }
   if (item.type === "document") applyDocumentAliases(schema, patch, item.values);
   if (item.type === "work") applyWorkAliases(schema, patch, item.values);
   return patch;
@@ -176,6 +195,30 @@ function applyWorkAliases(schema: DocumentFormSchema, patch: DocumentFormData, v
   const title = values.title;
   for (const name of ["work_id", "WORK_ID", "台帳ID"]) setIfField(schema, patch, name, code);
   for (const name of ["原著作物名", "対象作品予定名", "対象製品予定名"]) setIfField(schema, patch, name, title);
+}
+
+// テンプレ固有の項目名に依存しない汎用対応（W4・NDA等）。
+// グループ名/ラベルに「甲・取引先・許諾者…」を含む項目は相手方側、「乙・自社…」は自社側と判定し、
+// ラベルの種別（名称/住所/代表者/担当/電話/メール）でマスタ値を差し込む。既に対応表で埋まった項目は触らない。
+function applyPatternAliases(
+  schema: DocumentFormSchema,
+  patch: DocumentFormData,
+  values: Record<string, unknown>,
+  contextPattern: RegExp,
+  rules: Array<[RegExp, string]>
+) {
+  for (const field of schema.fields) {
+    if (field.name in patch) continue;
+    const text = `${field.group ?? ""} ${field.name} ${field.label ?? ""}`.replace(/\s+/g, "");
+    if (!contextPattern.test(text)) continue;
+    for (const [labelPattern, sourceKey] of rules) {
+      const value = values[sourceKey];
+      if (labelPattern.test(text) && value !== undefined && value !== null && value !== "") {
+        patch[field.name] = value;
+        break;
+      }
+    }
+  }
 }
 
 function applyExistingFields(
