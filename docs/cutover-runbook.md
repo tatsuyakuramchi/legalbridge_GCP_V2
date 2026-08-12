@@ -34,6 +34,28 @@ V2（本リポジトリ）を本番サービスとして V1（legalbridge_ai_gcp
 
 ## 2. 点火メニュー（実装済み・スイッチ待ち）
 
+### 2-0. デプロイの定石（フラグ据え置きの再デプロイ）
+
+前回のデプロイ設定（substitutions 104キー）を**確実に**引き継ぐには、
+「配信中の Cloud Run リビジョンのイメージタグ＝ビルドID」から逆引きする
+（`gcloud builds list` の最新 SUCCESS を掴む方式は、別サービスのビルドを拾い
+`Write-test deployment blocked: isolated DB confirmation is missing.` で止まる事故があるため使わない）：
+
+```bash
+cd ~/legalbridge_GCP_V2 && git pull origin <ブランチ>
+IMG=$(gcloud run services describe legalbridge-v2-write-test --region asia-northeast1 \
+  --format="value(spec.template.spec.containers[0].image)")
+LAST_BUILD="${IMG##*:}"
+gcloud builds describe "$LAST_BUILD" --format=json | jq '{substitutions}' > /tmp/build-flags.json
+jq -r '.substitutions | keys | length' /tmp/build-flags.json        # 104 前後であること
+jq -r '.substitutions._WRITE_SCOPES' /tmp/build-flags.json          # 末尾 condition-repair
+SUBS=$(jq -r '.substitutions | to_entries | map("\(.key)=\(.value)") | join("|")' /tmp/build-flags.json)
+gcloud builds submit --config infra/gcp/cloudbuild-write-test.yaml --substitutions "^|^${SUBS}" .
+```
+
+フラグを変える点火デプロイは、この `SUBS` 生成の前に `/tmp/build-flags.json` を
+jq で編集してから同じ手順で submit する。
+
 ### 2-1. 満了自動遷移 ✅ 点火済み（2026-08-10・grant 031＋flag true。自動実行は 2-3 Scheduler の daily-checks 作成後）
 ```bash
 psql "" -f infra/gcp/sql/031_production_contract_expiry_preflight.sql || true
