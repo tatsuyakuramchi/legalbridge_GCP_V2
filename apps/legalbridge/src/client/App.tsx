@@ -1093,6 +1093,7 @@ function DocumentForm({
           <DocumentOutputActions
             documentId={finalizedDocument.id}
             documentNumber={finalizedDocument.documentNumber}
+            matterId={finalizedDocument.matterId}
             canGeneratePdf={canGeneratePdf}
             canSaveToDrive={canSaveToDrive}
             canGmailNotify={canGmailNotify}

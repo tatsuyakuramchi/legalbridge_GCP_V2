@@ -30,8 +30,8 @@ function when(iso: string) {
 // 文書詳細の「外部連携」セクション。Gmail確定通知（プレビュー→送信）と
 // CloudSign署名依頼（署名者→依頼→ステータス）をまとめる。いずれも
 // capability が有効なときだけ表示され、実送信はサーバのゲート/ロールで守られる。
-export function DocumentIntegrations({ documentId, canGmailNotify, canCloudSign }: {
-  documentId: number; canGmailNotify: boolean; canCloudSign: boolean;
+export function DocumentIntegrations({ documentId, canGmailNotify, canCloudSign, matterId = null }: {
+  documentId: number; canGmailNotify: boolean; canCloudSign: boolean; matterId?: number | null;
 }) {
   const [historyReload, setHistoryReload] = useState(0);
   const history = useSendHistory(documentId, historyReload);
@@ -57,7 +57,7 @@ export function DocumentIntegrations({ documentId, canGmailNotify, canCloudSign 
     )}
     {canGmailNotify && <GmailNotify documentId={documentId} isAdmin={isAdmin}
       suggestions={history?.suggestions ?? []} onSent={bump} />}
-    {canCloudSign && <CloudSignRequest documentId={documentId} isAdmin={isAdmin}
+    {canCloudSign && <CloudSignRequest documentId={documentId} matterId={matterId} isAdmin={isAdmin}
       suggestions={history?.suggestions ?? []} onSent={bump} />}
   </div>;
 }
@@ -150,7 +150,7 @@ function GmailNotify({ documentId, isAdmin = true, suggestions = [], onSent }: {
 
 type Participant = { email: string; name: string };
 
-function CloudSignRequest({ documentId, isAdmin = true, suggestions = [], onSent }: { documentId: number; isAdmin?: boolean; suggestions?: Suggestion[]; onSent?: () => void }) {
+function CloudSignRequest({ documentId, matterId = null, isAdmin = true, suggestions = [], onSent }: { documentId: number; matterId?: number | null; isAdmin?: boolean; suggestions?: Suggestion[]; onSent?: () => void }) {
   const [participants, setParticipants] = useState<Participant[]>([{ email: "", name: "" }]);
   const [ccList, setCcList] = useState<Participant[]>([]);
   const [sendNow, setSendNow] = useState(false);
@@ -177,6 +177,24 @@ function CloudSignRequest({ documentId, isAdmin = true, suggestions = [], onSent
       return [{ email: suggestions[0].email, name: suggestions[0].name }];
     });
   }, [suggestions, prefilled]);
+
+  // 同じ案件の他の確定文書（一括依頼の添付候補）。
+  type MatterDoc = { id: number; documentNumber: string | null; templateType: string };
+  const [matterDocs, setMatterDocs] = useState<MatterDoc[]>([]);
+  const [attachIds, setAttachIds] = useState<number[]>([]);
+  useEffect(() => {
+    setMatterDocs([]); setAttachIds([]);
+    if (matterId == null) return;
+    const controller = new AbortController();
+    fetch(`/api/v2/matters/${matterId}`, { signal: controller.signal })
+      .then((r) => r.ok ? r.json() : Promise.reject(new Error("matter fetch failed")))
+      .then((d) => setMatterDocs((d.documents ?? []).filter((doc: MatterDoc) => doc.id !== documentId)))
+      .catch(() => { /* 添付候補が取れなくても単独依頼は可能 */ });
+    return () => controller.abort();
+  }, [matterId, documentId]);
+  function toggleAttach(idToToggle: number) {
+    setAttachIds((prev) => prev.includes(idToToggle) ? prev.filter((x) => x !== idToToggle) : [...prev, idToToggle]);
+  }
 
   // 署名者・CC の検索引用（担当者マスタ＋取引先マスタの横断検索）。
   // 取引先の自動補完が効かない文書（相手先未解決・メール未登録）でもここから引ける。
@@ -240,7 +258,7 @@ function CloudSignRequest({ documentId, isAdmin = true, suggestions = [], onSent
     try {
       const response = await fetch(`/api/v2/documents/${documentId}/cloudsign/dispatch`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ participants: valid, cc: validCc, sendNow })
+        body: JSON.stringify({ participants: valid, cc: validCc, sendNow, attachDocumentIds: attachIds })
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -253,8 +271,8 @@ function CloudSignRequest({ documentId, isAdmin = true, suggestions = [], onSent
       toast.push(data.integrations?.cloudsign === "duplicate"
         ? "この文書は署名依頼済みです（再依頼はしていません）"
         : data.integrations?.cloudsign === "drafted"
-          ? "CloudSignに下書きを作成しました。CloudSign画面で印影等を配置して送信してください"
-          : "CloudSignへ署名依頼しました", "success");
+          ? `CloudSignに下書きを作成しました${data.attachedCount ? `（添付${data.attachedCount + 1}件）` : ""}。CloudSign画面で印影等を配置して送信してください`
+          : `CloudSignへ署名依頼しました${data.attachedCount ? `（添付${data.attachedCount + 1}件）` : ""}`, "success");
       onSent?.();
     } catch { setError("通信に失敗しました。"); } finally { setBusy(false); }
   }
@@ -306,6 +324,12 @@ function CloudSignRequest({ documentId, isAdmin = true, suggestions = [], onSent
     </small>}
     {staffQuery.trim() !== "" && staffResults.length === 0 && vendorResults.length === 0 &&
       <small className="settings-effective">該当がありません（担当者・取引先の台帳にメール登録が必要です）。</small>}
+    {matterDocs.length > 0 && <small className="settings-effective">同じ案件の文書をまとめて添付（1つのCloudSign書類として依頼）：
+      {matterDocs.map((doc) => <label key={doc.id} style={{ display: "inline-flex", gap: "0.3em", marginRight: "0.8em" }}>
+        <input type="checkbox" checked={attachIds.includes(doc.id)} onChange={() => toggleAttach(doc.id)} />
+        {doc.documentNumber ?? `#${doc.id}`}（{doc.templateType}）
+      </label>)}
+    </small>}
     {participants.map((p, index) => <div className="doc-integration-grid" key={index}>
       <input value={p.email} onChange={(e) => setParticipant(index, "email", e.target.value)} placeholder="署名者メール" />
       <input value={p.name} onChange={(e) => setParticipant(index, "name", e.target.value)} placeholder="署名者名" />

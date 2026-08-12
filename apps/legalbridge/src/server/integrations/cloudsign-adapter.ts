@@ -21,6 +21,8 @@ export interface CloudSignSignatureRequest {
   note?: string;
   filename: string;
   pdf: Buffer;
+  // 同じ CloudSign 書類に追加で添付するファイル（案件内の複数文書の一括依頼・V1 相当）。
+  extraFiles?: Array<{ filename: string; pdf: Buffer }>;
   participants: CloudSignParticipant[];
   // CC（任意）。V1 の reportees 相当。
   cc?: CloudSignCc[];

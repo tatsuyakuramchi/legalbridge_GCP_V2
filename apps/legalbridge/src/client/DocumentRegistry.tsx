@@ -308,6 +308,7 @@ function DocumentDetail({
     {!isVoided && <DocumentOutputActions
       documentId={document.id}
       documentNumber={document.documentNumber}
+      matterId={document.matterId ?? null}
       driveLink={document.driveLink || null}
       canGeneratePdf={canGeneratePdf}
       canSaveToDrive={canSaveToDrive}

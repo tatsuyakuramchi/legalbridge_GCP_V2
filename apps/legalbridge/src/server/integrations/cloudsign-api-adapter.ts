@@ -188,6 +188,9 @@ export class CloudSignApiAdapter implements CloudSignAdapter {
     }
     const document = await this.client.createDocument({ title: request.documentTitle, note: request.note });
     await this.client.addFile(document.id, request.filename, request.pdf);
+    for (const extra of request.extraFiles ?? []) {
+      await this.client.addFile(document.id, extra.filename, extra.pdf);
+    }
     const participantIds: string[] = [];
     for (const participant of request.participants) {
       const added = await this.client.addParticipant(document.id, participant);

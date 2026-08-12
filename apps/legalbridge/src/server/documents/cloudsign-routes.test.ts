@@ -39,8 +39,9 @@ class CapturingCloudSign implements CloudSignAdapter {
 function appFor(options: {
   role?: "admin" | "legal" | "requester"; live?: boolean; adapter?: CloudSignAdapter;
   allowedRecipients?: Set<string>; requestHistory?: MemoryCloudSignRequestRepository;
+  extraDocs?: RegisteredDocument[];
 }) {
-  const registry = new MemoryDocumentRegistryRepository([doc]);
+  const registry = new MemoryDocumentRegistryRepository([doc, ...(options.extraDocs ?? [])]);
   const adapter = options.adapter ?? new CapturingCloudSign();
   const app = express();
   app.use(express.json());
@@ -138,6 +139,50 @@ test("CCがallowlist外なら422で拒否する", async () => {
   assert.equal(response.status, 422);
   assert.equal(response.body.code, "CLOUDSIGN_RECIPIENT_NOT_ALLOWED");
 });
+
+test("同一案件の文書はまとめて1つのCloudSign書類に添付できる", async () => {
+  const primary = { ...doc, matterId: 77 };
+  const sibling: RegisteredDocument = { ...doc, id: 6, documentNumber: "DOC-2026-0006", matterId: 77 };
+  const requestHistory = new MemoryCloudSignRequestRepository();
+  const { app, adapter } = appForWithDocs([primary, sibling], { requestHistory });
+  const response = await request(app).post("/api/v2/documents/5/cloudsign/dispatch")
+    .send({ ...body, attachDocumentIds: [6] });
+  assert.equal(response.status, 201);
+  assert.equal(response.body.attachedCount, 1);
+  const captured = (adapter as CapturingCloudSign).sent!;
+  assert.equal(captured.extraFiles?.length, 1);
+  assert.match(captured.extraFiles![0].filename, /DOC-2026-0006/);
+  // 添付文書の履歴も記録される（各文書のパネルに表示するため）。
+  assert.equal((await requestHistory.listByDocument(6)).length, 1);
+  assert.equal((await requestHistory.listByDocument(5)).length, 1);
+});
+
+test("別案件の文書を添付しようとすると422で拒否する", async () => {
+  const primary = { ...doc, matterId: 77 };
+  const other: RegisteredDocument = { ...doc, id: 7, documentNumber: "DOC-2026-0007", matterId: 99 };
+  const { app } = appForWithDocs([primary, other], {});
+  const response = await request(app).post("/api/v2/documents/5/cloudsign/dispatch")
+    .send({ ...body, attachDocumentIds: [7] });
+  assert.equal(response.status, 422);
+  assert.equal(response.body.code, "CLOUDSIGN_ATTACH_DIFFERENT_MATTER");
+});
+
+function appForWithDocs(docs: RegisteredDocument[], options: {
+  requestHistory?: MemoryCloudSignRequestRepository;
+}) {
+  const registry = new MemoryDocumentRegistryRepository(docs);
+  const adapter = new CapturingCloudSign();
+  const app = express();
+  app.use(express.json());
+  app.use((_request, response, next) => {
+    response.locals.currentUser = { email: "u@arclight.co.jp", subject: "s", role: "admin", source: "disabled" };
+    next();
+  });
+  app.use("/api/v2", createCloudSignRouter(registry, templatesStub, pdfRenderer, adapter, {
+    integrationMode: "live", cloudSignCapabilityEnabled: true, adapterConfigured: true
+  }, { requestHistory: options.requestHistory }));
+  return { app, adapter };
+}
 
 test("履歴有効時、同一文書の再依頼は冪等で再送しない(duplicate)", async () => {
   const requestHistory = new MemoryCloudSignRequestRepository();

@@ -15,6 +15,7 @@ export function DocumentOutputActions({
   canSaveToDrive,
   canGmailNotify = false,
   canCloudSign = false,
+  matterId = null,
   onSaved
 }: {
   documentId: number;
@@ -23,6 +24,7 @@ export function DocumentOutputActions({
   canGeneratePdf: boolean;
   canSaveToDrive: boolean;
   canGmailNotify?: boolean;
+  matterId?: number | null;
   canCloudSign?: boolean;
   onSaved?: () => Promise<void> | void;
 }) {
@@ -124,7 +126,7 @@ export function DocumentOutputActions({
       </small>
     )}
     {documentNumber && (canGmailNotify || canCloudSign) && (
-      <DocumentIntegrations documentId={documentId} canGmailNotify={canGmailNotify} canCloudSign={canCloudSign} />
+      <DocumentIntegrations documentId={documentId} canGmailNotify={canGmailNotify} canCloudSign={canCloudSign} matterId={matterId} />
     )}
   </>;
 }
