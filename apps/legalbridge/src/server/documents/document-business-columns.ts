@@ -6,8 +6,11 @@ import type { PoolClient } from "pg";
 // ②V1 の tg_doc_autolink_contract トリガが空の contracts 行を捏造する。
 
 // form_data 中の相手先名・表題の候補キー（registry/lookup と同じ語彙）。
+// PARTY_A_NAME は末尾：NDA では甲＝取引先だが、発注書系では発注元（自社）のため、
+// VENDOR_NAME 等の明示キーが存在する場合はそちらが先に採用される（順序が安全性を担保）。
 export const PARTY_NAME_KEYS = [
-  "VENDOR_NAME", "Licensor_氏名会社名", "Licensor_名称", "許諾者", "相手先", "取引先", "counterparty"
+  "VENDOR_NAME", "Licensor_氏名会社名", "Licensor_名称", "許諾者", "相手先", "取引先", "counterparty",
+  "PARTY_A_NAME"
 ];
 export const TITLE_KEYS = [
   "PROJECT_TITLE", "CONTRACT_TITLE", "基本契約名", "件名", "title", "contractTitle"

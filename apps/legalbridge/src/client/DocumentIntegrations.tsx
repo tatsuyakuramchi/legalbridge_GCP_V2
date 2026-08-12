@@ -178,17 +178,24 @@ function CloudSignRequest({ documentId, isAdmin = true, suggestions = [], onSent
     });
   }, [suggestions, prefilled]);
 
-  // 社内署名者・CC の検索引用（担当者マスタ）。
+  // 署名者・CC の検索引用（担当者マスタ＋取引先マスタの横断検索）。
+  // 取引先の自動補完が効かない文書（相手先未解決・メール未登録）でもここから引ける。
+  type SearchHit = { id: string; label: string; description?: string;
+    values: { email?: string; staff_name?: string; contact_name?: string; vendor_name?: string } };
   const [staffQuery, setStaffQuery] = useState("");
-  const [staffResults, setStaffResults] = useState<Array<{ id: string; label: string; description?: string; values: { email?: string; staff_name?: string } }>>([]);
+  const [staffResults, setStaffResults] = useState<SearchHit[]>([]);
+  const [vendorResults, setVendorResults] = useState<SearchHit[]>([]);
   useEffect(() => {
-    if (!staffQuery.trim()) { setStaffResults([]); return; }
+    if (!staffQuery.trim()) { setStaffResults([]); setVendorResults([]); return; }
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      fetch(`/api/v2/master-data/search?type=staff&q=${encodeURIComponent(staffQuery)}`, { signal: controller.signal })
-        .then((r) => r.ok ? r.json() : Promise.reject(new Error("search failed")))
-        .then((d) => setStaffResults((d.items ?? []).filter((it: { values: { email?: string } }) => it.values?.email)))
-        .catch((e) => { if (e.name !== "AbortError") setStaffResults([]); });
+      const search = (type: string) =>
+        fetch(`/api/v2/master-data/search?type=${type}&q=${encodeURIComponent(staffQuery)}`, { signal: controller.signal })
+          .then((r) => r.ok ? r.json() : Promise.reject(new Error("search failed")))
+          .then((d) => (d.items ?? []).filter((it: SearchHit) => it.values?.email));
+      Promise.all([search("staff"), search("vendor")])
+        .then(([staff, vendors]) => { setStaffResults(staff); setVendorResults(vendors); })
+        .catch((e) => { if (e.name !== "AbortError") { setStaffResults([]); setVendorResults([]); } });
     }, 250);
     return () => { window.clearTimeout(timer); controller.abort(); };
   }, [staffQuery]);
@@ -276,11 +283,11 @@ function CloudSignRequest({ documentId, isAdmin = true, suggestions = [], onSent
     </small>}
     <div className="doc-integration-grid">
       <input value={staffQuery} onChange={(e) => setStaffQuery(e.target.value)}
-        placeholder="社内担当者を検索して引用（氏名・部署・メール）" />
+        placeholder="担当者・取引先を検索して引用（氏名・会社名・部署・メール）" />
       <span />
     </div>
     {staffResults.length > 0 && <small className="settings-effective">担当者マスタ：
-      {staffResults.map((item) => <span key={item.id}>
+      {staffResults.map((item) => <span key={`s${item.id}`}>
         {item.label}{item.description ? `（${item.description}）` : ""}
         <button type="button" className="link-button"
           onClick={() => addParticipantEntry({ email: item.values.email ?? "", name: item.values.staff_name ?? item.label })}>署名者へ</button>
@@ -288,8 +295,17 @@ function CloudSignRequest({ documentId, isAdmin = true, suggestions = [], onSent
           onClick={() => addCcEntry({ email: item.values.email ?? "", name: item.values.staff_name ?? item.label })}>CCへ</button>
       </span>)}
     </small>}
-    {staffQuery.trim() !== "" && staffResults.length === 0 &&
-      <small className="settings-effective">該当する担当者がいません（台帳→担当者にメール登録が必要です）。</small>}
+    {vendorResults.length > 0 && <small className="settings-effective">取引先マスタ：
+      {vendorResults.map((item) => <span key={`v${item.id}`}>
+        {item.label}{item.description ? `（${item.description}）` : ""}
+        <button type="button" className="link-button"
+          onClick={() => addParticipantEntry({ email: item.values.email ?? "", name: item.values.contact_name || item.values.vendor_name || item.label })}>署名者へ</button>
+        <button type="button" className="link-button"
+          onClick={() => addCcEntry({ email: item.values.email ?? "", name: item.values.contact_name || item.values.vendor_name || item.label })}>CCへ</button>
+      </span>)}
+    </small>}
+    {staffQuery.trim() !== "" && staffResults.length === 0 && vendorResults.length === 0 &&
+      <small className="settings-effective">該当がありません（担当者・取引先の台帳にメール登録が必要です）。</small>}
     {participants.map((p, index) => <div className="doc-integration-grid" key={index}>
       <input value={p.email} onChange={(e) => setParticipant(index, "email", e.target.value)} placeholder="署名者メール" />
       <input value={p.name} onChange={(e) => setParticipant(index, "name", e.target.value)} placeholder="署名者名" />
