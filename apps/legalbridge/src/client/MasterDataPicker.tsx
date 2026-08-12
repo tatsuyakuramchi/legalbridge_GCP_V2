@@ -114,19 +114,25 @@ function buildPatch(schema: DocumentFormSchema, _formData: DocumentFormData, ite
   }
   if (item.type === "vendor") {
     applyVendorAliases(schema, patch, item.values);
+    // 「甲/乙」はテンプレごとに立場が入れ替わるため、単独では判定に使わない。
+    // 相手方を示す語（取引先・売主・受託者…）がある項目のみ対象。自社を示す語があれば除外。
     applyPatternAliases(schema, patch, item.values,
-      /甲|相手方|取引先|先方|許諾者|ライセンサ|委託先|発注先/,
-      [[/電話/, "phone"], [/メール|mail/i, "email"], [/代表/, "vendor_rep"],
+      /甲|相手方|取引先|先方|許諾者|ライセンサ|委託先|発注先|受託者|売主/,
+      [[/電話|TEL/i, "phone"], [/メール|mail/i, "email"], [/代表/, "vendor_rep"],
        [/住所/, "address"], [/担当/, "contact_name"],
-       [/名称|会社名|法人名|氏名/, "vendor_name"]]);
+       [/名称|会社名|法人名|氏名/, "vendor_name"]],
+      /委託者|発注者|自社|当社|弊社|アークライト|Licensee/i);
   }
   if (item.type === "staff") applyStaffAliases(schema, patch, item.values);
   if (item.type === "company") {
     applyCompanyAliases(schema, patch, item.values);
+    // 「乙」を文脈に含めない：販売・業務委託テンプレでは乙＝相手方（売主・受託者）のため、
+    // 乙だけを根拠に自社情報を入れると誤り。NDA 等の「乙（自社想定）」は「自社」で拾える。
     applyPatternAliases(schema, patch, item.values,
-      /乙|自社|当社|弊社|アークライト/,
+      /自社|当社|弊社|アークライト|Licensee/i,
       [[/電話/, "tel"], [/住所/, "address"], [/代表/, "rep"],
-       [/名称|会社名|法人名|氏名/, "name"]]);
+       [/名称|会社名|法人名|氏名/, "name"]],
+      /相手方|取引先|先方|売主|受託者|許諾者|ライセンサ|委託先|発注先/);
   }
   if (item.type === "document") applyDocumentAliases(schema, patch, item.values);
   if (item.type === "work") applyWorkAliases(schema, patch, item.values);
@@ -150,19 +156,34 @@ function applyVendorAliases(schema: DocumentFormSchema, patch: DocumentFormData,
     担当者電話番号: "phone", 担当者メール: "email",
     振込先銀行名: "bank_name", 支店名: "branch_name", 口座種別: "account_type",
     口座番号: "account_number", 口座名義カナ: "account_holder_kana",
-    インボイス登録番号: "invoice_registration_number"
+    インボイス登録番号: "invoice_registration_number",
+    // 英語ラベルテンプレ（海外委託等）・通知先(乙)・緊急連絡先・インボイス（V1全項目照合で追加）。
+    CONTRACTOR_NAME: "vendor_name", CONTRACTOR_ADDRESS: "address", CONTRACTOR_EMAIL: "email",
+    CONTACT_EMAIL: "email", EMERGENCY_EMAIL: "email", EMERGENCY_PHONE: "phone",
+    NOTICE_CONTACT_NAME: "contact_name", NOTICE_CONTACT_PHONE: "phone",
+    NOTICE_CONTACT_EMAIL: "email",
+    invoiceRegistrationNumber: "invoice_registration_number",
+    invoiceRegistrationDisplay: "invoice_registration_number",
+    VENDOR_PHONE: "phone", licensor: "vendor_name",
+    counterpartyTni: "invoice_registration_number",
+    // camelCase の振込先欄（検収書・報告系テンプレ）。
+    bankName: "bank_name", branchName: "branch_name", accountType: "account_type",
+    accountNo: "account_number", accountHolder: "account_holder_kana"
   };
   applyExistingFields(schema, patch, values, aliases);
   setIfField(schema, patch, "VENDOR_IS_CORPORATION", values.entity_type !== "個人" ? "法人" : "個人");
   setIfField(schema, patch, "LICENSOR_IS_CORPORATION", values.entity_type !== "個人");
+  setIfField(schema, patch, "COUNTERPARTY_IS_CORPORATION", values.entity_type !== "個人" ? "法人" : "個人");
   setIfField(schema, patch, "許諾者種別", values.entity_type !== "個人" ? "法人" : "個人");
+  setIfField(schema, patch, "VENDOR_SUFFIX", values.entity_type !== "個人" ? "御中" : "様");
+  setIfField(schema, patch, "LICENSOR_SUFFIX", values.entity_type !== "個人" ? "御中" : "様");
 }
 
 function applyStaffAliases(schema: DocumentFormSchema, patch: DocumentFormData, values: Record<string, unknown>) {
   applyExistingFields(schema, patch, values, {
     STAFF_NAME: "staff_name", STAFF_DEPARTMENT: "department", STAFF_EMAIL: "email",
     STAFF_PHONE: "phone", 監修者: "staff_name", inspectorName: "staff_name",
-    inspectorDept: "department"
+    inspectorDept: "department", inspectorEmail: "email", RESPONSE_AUTHOR: "staff_name"
   });
 }
 
@@ -205,11 +226,15 @@ function applyPatternAliases(
   patch: DocumentFormData,
   values: Record<string, unknown>,
   contextPattern: RegExp,
-  rules: Array<[RegExp, string]>
+  rules: Array<[RegExp, string]>,
+  excludePattern?: RegExp
 ) {
   for (const field of schema.fields) {
     if (field.name in patch) continue;
     const text = `${field.group ?? ""} ${field.name} ${field.label ?? ""}`.replace(/\s+/g, "");
+    if (excludePattern?.test(text)) continue;
+    // 職名・役職の欄に人名（代表者名）を入れない。
+    if (/職名|役職|肩書/.test(text)) continue;
     if (!contextPattern.test(text)) continue;
     for (const [labelPattern, sourceKey] of rules) {
       const value = values[sourceKey];
