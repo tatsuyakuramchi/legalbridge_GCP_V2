@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { extractVariables } from "./extract-variables";
 import { EmptyState } from "./EmptyState";
+import { CartButton } from "./MergeCart";
 
 // 依頼（Backlog課題取込・Phase 3・読み取り）。Backlog課題を一覧し、課題を起点に
 // リーガル文書の作成へ導く（issueKey を文書作成に引き継ぐ）。書き戻しは別途。
@@ -47,6 +48,9 @@ export function RequestsWorkspace({ onCreateDocument, canComment = false }: { on
 
   const [keyword, setKeyword] = useState("");
   const [issues, setIssues] = useState<Issue[]>([]);
+  const [host, setHost] = useState("");
+  // 概要（Backlog の詳細本文）は既定で3行に畳み、行ごとに全文へ展開できる。
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [enabled, setEnabled] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -92,6 +96,7 @@ export function RequestsWorkspace({ onCreateDocument, canComment = false }: { on
         const data = await res.json();
         setEnabled(data.enabled !== false);
         setIssues(data.issues ?? []);
+        setHost(String(data.host ?? ""));
       } catch (e) {
         if (e instanceof DOMException && e.name === "AbortError") return;
         setIssues([]); setError("通信に失敗しました");
@@ -164,6 +169,16 @@ export function RequestsWorkspace({ onCreateDocument, canComment = false }: { on
                 <div><dt>担当</dt><dd>{issue.assigneeName ?? "—"}</dd></div>
                 <div><dt>更新</dt><dd>{fmt(issue.updated)}</dd></div>
               </dl>
+              {issue.description?.trim()
+                ? <div className="request-description">
+                    <span className="request-vars-label">概要（Backlog本文）</span>
+                    <pre className={expanded[issue.issueKey] ? "" : "clamped"}>{issue.description}</pre>
+                    <button type="button" className="link-button"
+                      onClick={() => setExpanded((prev) => ({ ...prev, [issue.issueKey]: !prev[issue.issueKey] }))}>
+                      {expanded[issue.issueKey] ? "折りたたむ" : "全文を表示"}
+                    </button>
+                  </div>
+                : <p className="muted-note">概要（本文）は未記入です。</p>}
               {varEntries.length > 0 && (
                 <div className="request-vars">
                   <span className="request-vars-label">抽出変数（文書へ引き継ぎ）</span>
@@ -171,6 +186,9 @@ export function RequestsWorkspace({ onCreateDocument, canComment = false }: { on
                 </div>
               )}
               <div className="request-actions">
+                {host && <a className="link-button" href={`https://${host}/view/${encodeURIComponent(issue.issueKey)}`}
+                  target="_blank" rel="noreferrer">Backlogで開く</a>}
+                <CartButton kind="issue" item={{ key: issue.issueKey, label: issue.summary || issue.issueKey }} />
                 {canComment && <button onClick={() => { setCommentFor(commentFor === issue.issueKey ? null : issue.issueKey); setCommentText(""); setCommentMsg(""); }}>コメント書き戻し</button>}
                 <button className="primary" onClick={() => onCreateDocument(issue.issueKey, extracted.variables)}>この課題で文書作成</button>
               </div>

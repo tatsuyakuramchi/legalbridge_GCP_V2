@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { DocumentFormSchema } from "../types";
 import { useToast } from "./Toast";
 import { EmptyState } from "./EmptyState";
+import { CartButton } from "./MergeCart";
 import { MatterSlackPanel } from "./MatterSlackPanel";
 
 type Matter = {
@@ -206,6 +207,9 @@ function MatterDetail({ detail, labels, canEdit, canDelete = false, canUploadAtt
       <div className="matter-detail-actions">
         {onCreateDocument && <button className="primary" onClick={() => onCreateDocument(matter.primaryIssueKey)}>文書を作成</button>}
         {canEdit && <button onClick={() => setEditing(true)}>編集</button>}
+        {canEdit && <CartButton kind="matter"
+          item={{ key: String(matter.id), label: matter.title, note: matter.matterCode ?? `#${matter.id}` }}
+          label="統合カートに入れる" />}
       </div>
     </div>
     <div className="matter-summary"><span>{matter.matterCode ?? `#${matter.id}`}</span>

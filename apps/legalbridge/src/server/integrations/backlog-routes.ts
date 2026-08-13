@@ -13,8 +13,17 @@ const commentSchema = z.object({
 // Backlog 課題一覧（依頼取込・Phase 3・読み取り・admin/legal限定）。
 // BACKLOG_MODE=readonly＋接続情報がある時のみ client が渡る。無ければ enabled:false。
 // 書き戻しは含まない（別スライス・guarded）。
-export function createBacklogRequestRouter(client?: BacklogReadClient) {
+export function createBacklogRequestRouter(
+  client?: BacklogReadClient,
+  // Backlog ホスト（課題リンク組み立て用）。連携設定のランタイム反映のため関数も可。
+  host?: string | (() => string)
+) {
   const router = Router();
+  const resolveHost = () => {
+    const value = (typeof host === "function" ? host() : host) ?? "";
+    // 末尾スラッシュ・スキームの揺れを吸収して host だけにする。
+    return value.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "");
+  };
 
   router.get("/backlog/issues", async (request, response, next) => {
     try {
@@ -23,14 +32,15 @@ export function createBacklogRequestRouter(client?: BacklogReadClient) {
         return response.status(403).json({ error: "legal or administrator access is required", code: "BACKLOG_ROLE_REQUIRED" });
       }
       if (!client) {
-        return response.status(200).json({ enabled: false, issues: [] });
+        return response.status(200).json({ enabled: false, issues: [], host: "" });
       }
       const query = z.object({
         keyword: z.string().max(200).optional(),
         count: z.coerce.number().int().min(1).max(100).optional()
       }).parse(request.query);
       const issues = await client.getIssues(query);
-      return response.status(200).json({ enabled: true, issues });
+      // host は課題本文の「Backlogで開く」リンク用（V1 の /view/<課題キー>）。
+      return response.status(200).json({ enabled: true, issues, host: resolveHost() });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return response.status(400).json({ error: "invalid request", issues: error.issues });

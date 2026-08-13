@@ -5,7 +5,7 @@ import request from "supertest";
 import { createBacklogRequestRouter, createBacklogCommentRouter } from "./backlog-routes.js";
 import { BacklogApiError, type BacklogReadClient, type BacklogWriteClient, type BacklogIssueSummary } from "./backlog-web-api.js";
 
-function app(opts: { role?: string; client?: BacklogReadClient } = {}) {
+function app(opts: { role?: string; client?: BacklogReadClient; host?: string } = {}) {
   const a = express();
   a.use((_req, res, next) => {
     res.locals.currentUser = opts.role
@@ -13,7 +13,7 @@ function app(opts: { role?: string; client?: BacklogReadClient } = {}) {
       : undefined;
     next();
   });
-  a.use("/api/v2", createBacklogRequestRouter(opts.client));
+  a.use("/api/v2", createBacklogRequestRouter(opts.client, opts.host));
   return a;
 }
 
@@ -48,6 +48,19 @@ test("legalは課題一覧を取得できる", async () => {
   assert.equal(res.body.enabled, true);
   assert.equal(res.body.issues.length, 2);
   assert.equal(res.body.issues[0].issueKey, "LEGAL-1");
+});
+
+// 課題の「Backlogで開く」リンク用に host を返す（スキーム・末尾スラッシュは正規化）。
+test("課題一覧はBacklogホストを正規化して返す", async () => {
+  const client: BacklogReadClient = {
+    getProject: async () => ({ id: 1, projectKey: "LEGAL", name: "法務" }),
+    getIssues: async () => [issue({ id: 1 })],
+    getProjectMetadata: emptyMetadata
+  };
+  const res = await request(app({ role: "admin", client, host: "https://arclight.backlog.com/" }))
+    .get("/api/v2/backlog/issues");
+  assert.equal(res.status, 200);
+  assert.equal(res.body.host, "arclight.backlog.com");
 });
 
 test("Backlog APIエラーは502", async () => {

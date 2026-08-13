@@ -23,6 +23,7 @@ import { BillingDashboard } from "./BillingDashboard";
 import { ReceivableMap } from "./ReceivableMap";
 import { WorkDetail } from "./WorkDetail";
 import { EmptyState } from "./EmptyState";
+import { CartPanel } from "./MergeCart";
 import { DocumentOutputActions } from "./DocumentOutputActions";
 import { DataQuality } from "./DataQuality";
 import { VendorMerge } from "./VendorMerge";
@@ -502,6 +503,11 @@ export function App() {
           />
         )}
       </main>
+      {/* 統合カート（課題→案件化／案件の統合）。中身があるときだけ右下に常駐する。 */}
+      <CartPanel onOpenMatter={(matterId) => {
+        setSearchSelection({ target: "matter", id: String(matterId), title: "" });
+        setView("matters");
+      }} />
     </div>
   );
 }
