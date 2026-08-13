@@ -26,6 +26,15 @@ export interface VendorRecord {
   contactDepartment: string | null;
   address: string | null;
   invoiceRegistrationNumber: string | null;
+  vendorRep: string | null;
+  corporateNumber: string | null;
+  // 口座情報は管理者にのみ返す（find の includeBank=false のとき undefined）。
+  bankName?: string | null;
+  branchName?: string | null;
+  accountType?: string | null;
+  accountNumber?: string | null;
+  accountHolderKana?: string | null;
+  bankInfo?: string | null;
   isInvoiceIssuer: boolean;
   withholdingEnabled: boolean;
   isActive: boolean;
@@ -34,7 +43,8 @@ export interface VendorRecord {
 export interface VendorWriteRepository {
   createVendor(input: VendorCreateInput, createdBy: string): Promise<SavedVendor>;
   updateVendor(id: number, input: VendorUpdateInput): Promise<SavedVendor>;
-  find(id: number): Promise<VendorRecord | null>;
+  // includeBank=true のときだけ口座情報を含める（既定は含めない＝機微情報の既定非開示）。
+  find(id: number, options?: { includeBank?: boolean }): Promise<VendorRecord | null>;
 }
 
 const COLUMNS: Record<string, string> = {
@@ -49,6 +59,14 @@ const COLUMNS: Record<string, string> = {
   contactDepartment: "contact_department",
   address: "address",
   invoiceRegistrationNumber: "invoice_registration_number",
+  vendorRep: "vendor_rep",
+  corporateNumber: "corporate_number",
+  bankName: "bank_name",
+  branchName: "branch_name",
+  accountType: "account_type",
+  accountNumber: "account_number",
+  accountHolderKana: "account_holder_kana",
+  bankInfo: "bank_info",
   isInvoiceIssuer: "is_invoice_issuer",
   withholdingEnabled: "withholding_enabled",
   isActive: "is_active"
@@ -124,18 +142,30 @@ export class PgVendorWriteRepository implements VendorWriteRepository {
     }
   }
 
-  async find(id: number) {
+  async find(id: number, options: { includeBank?: boolean } = {}) {
     const result = await this.database.query(
       `SELECT id, vendor_name, vendor_code, trade_name, pen_name, entity_type,
               email, phone, contact_name, contact_department, address,
-              invoice_registration_number, is_invoice_issuer, withholding_enabled,
+              invoice_registration_number, vendor_rep, corporate_number,
+              bank_name, branch_name, account_type, account_number,
+              account_holder_kana, bank_info,
+              is_invoice_issuer, withholding_enabled,
               COALESCE(is_active, true) AS is_active
          FROM vendors WHERE id = $1`,
       [id]
     );
     if (!result.rows[0]) return null;
     const row = result.rows[0];
+    const bank = options.includeBank ? {
+      bankName: row.bank_name ?? null,
+      branchName: row.branch_name ?? null,
+      accountType: row.account_type ?? null,
+      accountNumber: row.account_number ?? null,
+      accountHolderKana: row.account_holder_kana ?? null,
+      bankInfo: row.bank_info ?? null
+    } : {};
     return {
+      ...bank,
       id: Number(row.id),
       vendorName: String(row.vendor_name ?? ""),
       vendorCode: row.vendor_code ?? null,
@@ -148,6 +178,8 @@ export class PgVendorWriteRepository implements VendorWriteRepository {
       contactDepartment: row.contact_department ?? null,
       address: row.address ?? null,
       invoiceRegistrationNumber: row.invoice_registration_number ?? null,
+      vendorRep: row.vendor_rep ?? null,
+      corporateNumber: row.corporate_number ?? null,
       isInvoiceIssuer: Boolean(row.is_invoice_issuer),
       withholdingEnabled: Boolean(row.withholding_enabled),
       isActive: row.is_active !== false
@@ -178,16 +210,27 @@ export class MemoryVendorWriteRepository implements VendorWriteRepository {
     Object.assign(existing, input);
     return { id, vendorCode: (existing.vendorCode as string | null) ?? null };
   }
-  async find(id: number) {
+  async find(id: number, options: { includeBank?: boolean } = {}) {
     const v = this.vendors.get(id);
     if (!v) return null;
+    const bank = options.includeBank ? {
+      bankName: (v.bankName as string | null) ?? null,
+      branchName: (v.branchName as string | null) ?? null,
+      accountType: (v.accountType as string | null) ?? null,
+      accountNumber: (v.accountNumber as string | null) ?? null,
+      accountHolderKana: (v.accountHolderKana as string | null) ?? null,
+      bankInfo: (v.bankInfo as string | null) ?? null
+    } : {};
     return {
+      ...bank,
       id, vendorName: String(v.vendorName ?? ""), vendorCode: (v.vendorCode as string | null) ?? null,
       tradeName: (v.tradeName as string | null) ?? null, penName: (v.penName as string | null) ?? null,
       entityType: (v.entityType as string | null) ?? null, email: (v.email as string | null) ?? null,
       phone: (v.phone as string | null) ?? null, contactName: (v.contactName as string | null) ?? null,
       contactDepartment: (v.contactDepartment as string | null) ?? null, address: (v.address as string | null) ?? null,
       invoiceRegistrationNumber: (v.invoiceRegistrationNumber as string | null) ?? null,
+      vendorRep: (v.vendorRep as string | null) ?? null,
+      corporateNumber: (v.corporateNumber as string | null) ?? null,
       isInvoiceIssuer: Boolean(v.isInvoiceIssuer), withholdingEnabled: Boolean(v.withholdingEnabled),
       isActive: v.isActive !== false
     };

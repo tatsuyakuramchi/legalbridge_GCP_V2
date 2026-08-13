@@ -141,13 +141,22 @@ function LedgerDetail({ item, canEdit = false, onEdit }:
 type VendorValues = {
   vendorName: string; vendorCode: string; tradeName: string; penName: string; entityType: string;
   email: string; phone: string; contactName: string; contactDepartment: string; address: string;
-  invoiceRegistrationNumber: string; isInvoiceIssuer: boolean; withholdingEnabled: boolean; isActive: boolean;
+  invoiceRegistrationNumber: string; vendorRep: string; corporateNumber: string;
+  bankName: string; branchName: string; accountType: string; accountNumber: string;
+  accountHolderKana: string; bankInfo: string;
+  isInvoiceIssuer: boolean; withholdingEnabled: boolean; isActive: boolean;
 };
 const emptyVendor: VendorValues = {
   vendorName: "", vendorCode: "", tradeName: "", penName: "", entityType: "",
   email: "", phone: "", contactName: "", contactDepartment: "", address: "",
-  invoiceRegistrationNumber: "", isInvoiceIssuer: false, withholdingEnabled: false, isActive: true
+  invoiceRegistrationNumber: "", vendorRep: "", corporateNumber: "",
+  bankName: "", branchName: "", accountType: "", accountNumber: "",
+  accountHolderKana: "", bankInfo: "",
+  isInvoiceIssuer: false, withholdingEnabled: false, isActive: true
 };
+// 口座情報は管理者のみ編集可（サーバ側でも 403 で守る）。非管理者は送信対象から外すため、
+// 空文字で上書きして既存値を消す事故が起きない。
+const BANK_KEYS = ["bankName", "branchName", "accountType", "accountNumber", "accountHolderKana", "bankInfo"] as const;
 
 function VendorForm({ vendorId, onCancel, onSaved }: { vendorId?: number; onCancel: () => void; onSaved: () => void }) {
   const isEdit = vendorId !== undefined;
@@ -155,7 +164,13 @@ function VendorForm({ vendorId, onCancel, onSaved }: { vendorId?: number; onCanc
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [canEditBank, setCanEditBank] = useState(false);
   const toast = useToast();
+  // 新規登録時はロールから判定（編集時は GET の canEditBank で上書きされる）。
+  useEffect(() => {
+    fetch("/api/v2/me").then((r) => r.ok ? r.json() : Promise.reject())
+      .then((d) => setCanEditBank(d.user?.role === "admin")).catch(() => setCanEditBank(false));
+  }, []);
   useEffect(() => {
     if (!isEdit) return;
     setLoading(true);
@@ -168,9 +183,14 @@ function VendorForm({ vendorId, onCancel, onSaved }: { vendorId?: number; onCanc
           penName: v.penName ?? "", entityType: v.entityType ?? "", email: v.email ?? "", phone: v.phone ?? "",
           contactName: v.contactName ?? "", contactDepartment: v.contactDepartment ?? "", address: v.address ?? "",
           invoiceRegistrationNumber: v.invoiceRegistrationNumber ?? "",
+          vendorRep: v.vendorRep ?? "", corporateNumber: v.corporateNumber ?? "",
+          bankName: v.bankName ?? "", branchName: v.branchName ?? "",
+          accountType: v.accountType ?? "", accountNumber: v.accountNumber ?? "",
+          accountHolderKana: v.accountHolderKana ?? "", bankInfo: v.bankInfo ?? "",
           isInvoiceIssuer: Boolean(v.isInvoiceIssuer), withholdingEnabled: Boolean(v.withholdingEnabled),
           isActive: v.isActive !== false
         });
+        setCanEditBank(Boolean(data.canEditBank));
       })
       .catch(() => setError("取引先の情報を取得できませんでした。"))
       .finally(() => setLoading(false));
@@ -187,9 +207,13 @@ function VendorForm({ vendorId, onCancel, onSaved }: { vendorId?: number; onCanc
       email: values.email, phone: values.phone, contactName: values.contactName,
       contactDepartment: values.contactDepartment, address: values.address,
       invoiceRegistrationNumber: values.invoiceRegistrationNumber,
+      vendorRep: values.vendorRep, corporateNumber: values.corporateNumber,
       isInvoiceIssuer: values.isInvoiceIssuer, withholdingEnabled: values.withholdingEnabled,
       isActive: values.isActive
     };
+    // 口座情報は管理者のときだけ送る（非管理者には表示もされていないため、
+    // 送ると空文字で既存の口座を消してしまう）。
+    if (canEditBank) for (const key of BANK_KEYS) body[key] = values[key];
     if (values.vendorCode.trim()) body.vendorCode = values.vendorCode.trim();
     try {
       const response = await fetch(isEdit ? `/api/v2/vendors/${vendorId}` : "/api/v2/vendors", {
@@ -228,8 +252,35 @@ function VendorForm({ vendorId, onCancel, onSaved }: { vendorId?: number; onCanc
       <label>メール<input value={values.email} onChange={(e) => set("email", e.target.value)} /></label>
       <label>電話<input value={values.phone} onChange={(e) => set("phone", e.target.value)} /></label>
       <label>インボイス番号<input value={values.invoiceRegistrationNumber} onChange={(e) => set("invoiceRegistrationNumber", e.target.value)} /></label>
+      <label>代表者名<input value={values.vendorRep} onChange={(e) => set("vendorRep", e.target.value)}
+        placeholder="例: 代表取締役 山田 太郎" maxLength={200} />
+        <small className="hint">法人の場合に記入。肩書込みで契約書・発注書・検収書の代表者欄へ差し込まれます。</small></label>
+      <label>法人番号<input value={values.corporateNumber} onChange={(e) => set("corporateNumber", e.target.value)}
+        placeholder="13桁" maxLength={20} /></label>
     </div>
     <label>住所<input value={values.address} onChange={(e) => set("address", e.target.value)} /></label>
+    <h3 className="detail-kicker">振込先（発注書・支払通知書へ差し込み）</h3>
+    {canEditBank ? <>
+      <div className="matter-form-grid">
+        <label>金融機関名<input value={values.bankName} onChange={(e) => set("bankName", e.target.value)}
+          placeholder="例: きらぼし銀行" maxLength={100} /></label>
+        <label>支店名<input value={values.branchName} onChange={(e) => set("branchName", e.target.value)}
+          placeholder="例: 神田中央支店" maxLength={100} /></label>
+        <label>口座種別<select value={["普通", "当座", ""].includes(values.accountType) ? values.accountType : "__legacy"}
+          onChange={(e) => { if (e.target.value !== "__legacy") set("accountType", e.target.value); }}>
+          <option value="">未設定</option>
+          <option value="普通">普通</option>
+          <option value="当座">当座</option>
+          {!["普通", "当座", ""].includes(values.accountType) && <option value="__legacy">{values.accountType}（旧データ）</option>}
+        </select></label>
+        <label>口座番号<input value={values.accountNumber} onChange={(e) => set("accountNumber", e.target.value)}
+          placeholder="7桁" maxLength={50} /></label>
+        <label>口座名義（カナ）<input value={values.accountHolderKana} onChange={(e) => set("accountHolderKana", e.target.value)}
+          placeholder="例: カ)アークライト" maxLength={100} /></label>
+      </div>
+      <label>銀行情報メモ<input value={values.bankInfo} onChange={(e) => set("bankInfo", e.target.value)}
+        placeholder="海外送金のSWIFT/IBAN等、上記に収まらない情報" maxLength={1000} /></label>
+    </> : <p className="muted-note">口座情報の表示・編集は管理者のみです（他の項目はこのまま編集・保存できます）。</p>}
     <label className="task-primary-toggle"><input type="checkbox" checked={values.isInvoiceIssuer} onChange={(e) => set("isInvoiceIssuer", e.target.checked)} />インボイス発行事業者</label>
     <label className="task-primary-toggle"><input type="checkbox" checked={values.withholdingEnabled} onChange={(e) => set("withholdingEnabled", e.target.checked)} />源泉徴収対象</label>
     <label className="task-primary-toggle"><input type="checkbox" checked={values.isActive} onChange={(e) => set("isActive", e.target.checked)} />有効（オフで無効化＝台帳の既定検索から除外）</label>

@@ -1,12 +1,20 @@
 import { Router } from "express";
 import { z } from "zod";
-import { vendorCreateSchema, vendorUpdateSchema } from "./write-schema.js";
+import { vendorCreateSchema, vendorUpdateSchema, BANK_FIELD_KEYS } from "./write-schema.js";
 import { VendorWriteError, type VendorWriteRepository } from "./write-repository.js";
 
 const idPath = z.object({ id: z.coerce.number().int().positive() });
 
 function editorAllowed(role: string | undefined) {
   return role === "admin" || role === "legal";
+}
+// 口座情報は機微情報：参照・更新とも管理者のみ（V1 VendorsPanel の redact と同じ方針）。
+function bankAllowed(role: string | undefined) {
+  return role === "admin";
+}
+function containsBankField(body: unknown) {
+  if (!body || typeof body !== "object") return false;
+  return BANK_FIELD_KEYS.some((key) => key in (body as Record<string, unknown>));
 }
 function statusFor(code: string) {
   if (code === "VENDOR_NOT_FOUND") return 404;
@@ -38,11 +46,14 @@ export function createVendorWriteRouter(
       if (!vendors) return unavailable(response);
       if (!editorAllowed(response.locals.currentUser?.role)) return forbidden(response);
       const { id } = idPath.parse(request.params);
-      const record = await vendors.find(id);
+      const canEditBank = bankAllowed(response.locals.currentUser?.role);
+      const record = await vendors.find(id, { includeBank: canEditBank });
       if (!record) {
         return response.status(404).json({ error: "指定した取引先が見つかりません", code: "VENDOR_NOT_FOUND" });
       }
-      return response.status(200).json({ vendor: record });
+      // canEditBank=false のとき口座情報は含まれない。クライアントは当該キーを
+      // 送らないこと（PATCH は部分更新なので、送らなければ既存値は保持される）。
+      return response.status(200).json({ vendor: record, canEditBank });
     } catch (error) {
       return handle(error, response, next);
     }
@@ -52,6 +63,9 @@ export function createVendorWriteRouter(
     try {
       if (!writeEnabled || !vendors) return unavailable(response);
       if (!editorAllowed(response.locals.currentUser?.role)) return forbidden(response);
+      if (containsBankField(request.body) && !bankAllowed(response.locals.currentUser?.role)) {
+        return bankForbidden(response);
+      }
       const input = vendorCreateSchema.parse(request.body);
       const created = await vendors.createVendor(input, response.locals.currentUser!.email);
       return response.status(201).json(created);
@@ -68,6 +82,9 @@ export function createVendorWriteRouter(
       const body = z.object({
         rows: z.array(z.record(z.string(), z.unknown())).min(1, "取込む行がありません").max(500)
       }).parse(request.body);
+      if (body.rows.some((row) => containsBankField(row)) && !bankAllowed(response.locals.currentUser?.role)) {
+        return bankForbidden(response);
+      }
       const email = response.locals.currentUser!.email;
       const inserted: Array<{ index: number; id: number; vendorCode: string | null }> = [];
       const failed: Array<{ index: number; error: string }> = [];
@@ -98,6 +115,9 @@ export function createVendorWriteRouter(
     try {
       if (!writeEnabled || !vendors) return unavailable(response);
       if (!editorAllowed(response.locals.currentUser?.role)) return forbidden(response);
+      if (containsBankField(request.body) && !bankAllowed(response.locals.currentUser?.role)) {
+        return bankForbidden(response);
+      }
       const { id } = idPath.parse(request.params);
       const input = vendorUpdateSchema.parse(request.body);
       const updated = await vendors.updateVendor(id, input);
@@ -115,6 +135,11 @@ function unavailable(response: import("express").Response) {
 }
 function forbidden(response: import("express").Response) {
   return response.status(403).json({ error: "法務または管理者のみが取引先を編集できます", code: "VENDOR_EDIT_FORBIDDEN" });
+}
+function bankForbidden(response: import("express").Response) {
+  return response.status(403).json({
+    error: "口座情報の登録・変更は管理者のみが行えます", code: "VENDOR_BANK_FORBIDDEN"
+  });
 }
 function handle(error: unknown, response: import("express").Response, next: import("express").NextFunction) {
   if (error instanceof VendorWriteError) {

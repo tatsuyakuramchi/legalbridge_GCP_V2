@@ -110,3 +110,60 @@ test("依頼者ロールは取引先の生値を取得できない", async () =>
   assert.equal(response.status, 403);
   assert.equal(response.body.code, "VENDOR_EDIT_FORBIDDEN");
 });
+
+// 法人登録：代表者・法人番号は法務も編集可、口座情報は管理者のみ（V1 の redact 方針）。
+test("管理者は代表者・法人番号・口座情報を登録し取得できる", async () => {
+  const { app } = appFor({ enabled: true, role: "admin" });
+  const created = await request(app).post("/api/v2/vendors").send({
+    vendorName: "株式会社サンプル", entityType: "法人",
+    vendorRep: "代表取締役 山田 太郎", corporateNumber: "1234567890123",
+    bankName: "きらぼし銀行", branchName: "神田中央支店", accountType: "普通",
+    accountNumber: "7000025", accountHolderKana: "カ)サンプル"
+  });
+  assert.equal(created.status, 201);
+  const fetched = await request(app).get(`/api/v2/vendors/${created.body.id}`);
+  assert.equal(fetched.status, 200);
+  assert.equal(fetched.body.canEditBank, true);
+  assert.equal(fetched.body.vendor.vendorRep, "代表取締役 山田 太郎");
+  assert.equal(fetched.body.vendor.corporateNumber, "1234567890123");
+  assert.equal(fetched.body.vendor.bankName, "きらぼし銀行");
+  assert.equal(fetched.body.vendor.accountNumber, "7000025");
+});
+
+test("法務ロールには口座情報を返さない（canEditBank=false）", async () => {
+  const admin = appFor({ enabled: true, role: "admin" });
+  const created = await request(admin.app).post("/api/v2/vendors").send({
+    vendorName: "株式会社サンプル", bankName: "きらぼし銀行", accountNumber: "7000025"
+  });
+  // 同じリポジトリを法務ロールのアプリに繋いで参照する。
+  const legal = express();
+  legal.use(express.json());
+  legal.use((_request, response, next) => {
+    response.locals.currentUser = { email: "legal@arclight.co.jp", subject: "t", role: "legal", source: "disabled" };
+    next();
+  });
+  legal.use("/api/v2", createVendorWriteRouter(admin.repository, true));
+  const fetched = await request(legal).get(`/api/v2/vendors/${created.body.id}`);
+  assert.equal(fetched.status, 200);
+  assert.equal(fetched.body.canEditBank, false);
+  assert.equal(fetched.body.vendor.bankName, undefined);
+  assert.equal(fetched.body.vendor.accountNumber, undefined);
+  // 代表者など通常項目は見える。
+  assert.equal(fetched.body.vendor.vendorName, "株式会社サンプル");
+});
+
+test("法務ロールが口座情報を送ると403で拒否する", async () => {
+  const { app } = appFor({ enabled: true, role: "legal" });
+  const created = await request(app).post("/api/v2/vendors").send({ vendorName: "取引先" });
+  const patched = await request(app).patch(`/api/v2/vendors/${created.body.id}`).send({ bankName: "他行" });
+  assert.equal(patched.status, 403);
+  assert.equal(patched.body.code, "VENDOR_BANK_FORBIDDEN");
+});
+
+test("法務ロールでも代表者は更新できる（口座キーを含まない部分更新）", async () => {
+  const { app } = appFor({ enabled: true, role: "legal" });
+  const created = await request(app).post("/api/v2/vendors").send({ vendorName: "取引先" });
+  const patched = await request(app).patch(`/api/v2/vendors/${created.body.id}`)
+    .send({ vendorRep: "代表取締役 佐藤 花子" });
+  assert.equal(patched.status, 200);
+});

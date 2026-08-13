@@ -1,8 +1,9 @@
 import { z } from "zod";
 
-// Aligned with the shared production vendors table (V1 schema). Only widely
-// present, low-risk columns are writable here; bank/withholding details stay
-// out of scope for this slice.
+// Aligned with the shared production vendors table (V1 schema).
+// 代表者（vendor_rep）・法人番号は帳票へ差し込むため通常項目として扱う。
+// 口座情報（BANK_FIELD_KEYS）は機微情報：V1 の VendorsPanel と同じく管理者のみ
+// 参照・更新できる（ルート側で判定。非管理者の PATCH は当該キーを含められない）。
 const trimmed = z.string().trim();
 const nullableText = (max: number) =>
   z.string().max(max).optional().nullable()
@@ -23,6 +24,16 @@ export const vendorCreateSchema = z.object({
   contactDepartment: nullableText(100),
   address: nullableText(1000),
   invoiceRegistrationNumber: nullableText(50),
+  // 法人登録で使う項目（帳票の代表者欄・法人番号）。
+  vendorRep: nullableText(200),
+  corporateNumber: nullableText(20),
+  // 振込先（発注書・支払通知書等へ差し込む）。管理者のみ。
+  bankName: nullableText(100),
+  branchName: nullableText(100),
+  accountType: nullableText(50),
+  accountNumber: nullableText(50),
+  accountHolderKana: nullableText(100),
+  bankInfo: nullableText(1000),
   isInvoiceIssuer: z.boolean().optional().default(false),
   withholdingEnabled: z.boolean().optional().default(false),
   isActive: z.boolean().optional().default(true)
@@ -40,12 +51,25 @@ export const vendorUpdateSchema = z.object({
   contactDepartment: nullableText(100).optional(),
   address: nullableText(1000).optional(),
   invoiceRegistrationNumber: nullableText(50).optional(),
+  vendorRep: nullableText(200).optional(),
+  corporateNumber: nullableText(20).optional(),
+  bankName: nullableText(100).optional(),
+  branchName: nullableText(100).optional(),
+  accountType: nullableText(50).optional(),
+  accountNumber: nullableText(50).optional(),
+  accountHolderKana: nullableText(100).optional(),
+  bankInfo: nullableText(1000).optional(),
   isInvoiceIssuer: z.boolean().optional(),
   withholdingEnabled: z.boolean().optional(),
   isActive: z.boolean().optional()
 }).refine((value) => Object.keys(value).length > 0, {
   message: "更新するフィールドを1つ以上指定してください"
 });
+
+// 口座情報のキー（管理者限定の判定に使う。ルート・クライアント双方の単一情報源）。
+export const BANK_FIELD_KEYS = [
+  "bankName", "branchName", "accountType", "accountNumber", "accountHolderKana", "bankInfo"
+] as const;
 
 export type VendorCreateInput = z.infer<typeof vendorCreateSchema>;
 export type VendorUpdateInput = z.infer<typeof vendorUpdateSchema>;

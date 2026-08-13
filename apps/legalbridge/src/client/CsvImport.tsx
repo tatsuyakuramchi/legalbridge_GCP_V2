@@ -127,7 +127,16 @@ export const vendorCsvConfig: CsvImportConfig = {
     { field: "contactName", label: "担当者", headers: ["担当者", "contact_name"] },
     { field: "contactDepartment", label: "担当部署", headers: ["担当部署", "contact_department", "部署"] },
     { field: "address", label: "住所", headers: ["住所", "address"] },
-    { field: "invoiceRegistrationNumber", label: "インボイス番号", headers: ["インボイス番号", "invoice_registration_number"] }
+    { field: "invoiceRegistrationNumber", label: "インボイス番号", headers: ["インボイス番号", "invoice_registration_number"] },
+    // 法人登録項目・振込先（V1 CSV の日本語見出しに合わせる）。
+    // 口座列を含む取込は管理者のみ（サーバが VENDOR_BANK_FORBIDDEN で拒否）。
+    { field: "vendorRep", label: "代表者名", headers: ["代表者名", "代表者", "代表", "vendor_rep", "vendorrep"] },
+    { field: "corporateNumber", label: "法人番号", headers: ["法人番号", "corporate_number"] },
+    { field: "bankName", label: "金融機関名", headers: ["金融機関名", "銀行名", "bank_name", "bankname"] },
+    { field: "branchName", label: "支店名", headers: ["支店名", "branch_name", "branchname"] },
+    { field: "accountType", label: "口座種別", headers: ["口座種別", "預金種別", "account_type", "accounttype"] },
+    { field: "accountNumber", label: "口座番号", headers: ["口座番号", "account_number", "accountnumber"] },
+    { field: "accountHolderKana", label: "口座名義カナ", headers: ["口座名義カナ", "名義人カナ", "account_holder_kana", "accountholderkana"] }
   ]
 };
 
