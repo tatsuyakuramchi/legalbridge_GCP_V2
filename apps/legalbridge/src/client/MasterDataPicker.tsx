@@ -32,6 +32,18 @@ export function MasterDataPicker({
   const [query, setQuery] = useState("");
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(false);
+  // ログイン中ユーザーのメール。担当者タブの「自分」ワンクリック引用に使う
+  // （V1 発注書フォームの Sync Staff 相当。V1 は事前選択が要ったがここでは不要）。
+  const [myEmail, setMyEmail] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/v2/me")
+      .then((response) => response.ok ? response.json() : null)
+      .then((body) => { if (!cancelled) setMyEmail(String(body?.user?.email ?? "")); })
+      .catch(() => { /* 引用の補助機能なので取得失敗は無視 */ });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (!availableTypes.includes(type)) setType(availableTypes[0] ?? "vendor");
@@ -57,6 +69,30 @@ export function MasterDataPicker({
     };
   }, [type, query]);
 
+  // 担当者タブの「自分」：メール完全一致の staff を1件だけ引いて適用する。
+  // 一致が無い＝担当者マスタ未登録なので、その旨を通知して何も書き換えない。
+  async function applySelf() {
+    if (!myEmail) return;
+    try {
+      const response = await fetch(
+        `/api/v2/master-data/search?type=staff&q=${encodeURIComponent(myEmail)}`);
+      if (!response.ok) throw new Error("staff lookup failed");
+      const result = await response.json();
+      const me = findSelfStaff(result.items ?? [], myEmail);
+      if (!me) {
+        onApply({}, `担当者マスタに ${myEmail} が見つかりませんでした（担当者マスタに登録してください）`);
+        return;
+      }
+      const patch = buildPatch(schema, formData, me);
+      const count = Object.keys(patch).length;
+      onApply(patch, count > 0
+        ? `${me.label}（自分）の情報を${count}項目に入力しました`
+        : `${me.label}：この文書に担当者の項目がありません`);
+    } catch {
+      onApply({}, "担当者情報の取得に失敗しました");
+    }
+  }
+
   return <section className="master-picker">
     <div className="master-picker-head">
       <div><span>DBから引用</span><strong>登録済みデータを差し込む</strong></div>
@@ -70,8 +106,14 @@ export function MasterDataPicker({
         </button>)}
     </div>
     {type !== "company" &&
-      <input className="master-search" value={query} onChange={(event) => setQuery(event.target.value)}
-        placeholder={`${labels[type]}の名称または番号を入力`} />}
+      <div className="master-search-row">
+        <input className="master-search" value={query} onChange={(event) => setQuery(event.target.value)}
+          placeholder={`${labels[type]}の名称または番号を入力`} />
+        {type === "staff" && myEmail &&
+          <button type="button" className="master-self" onClick={() => applySelf()}>
+            自分（{myEmail}）を引用
+          </button>}
+      </div>}
     <div className="master-results">
       {loading && <p>検索しています…</p>}
       {!loading && !items.length && <p>該当するデータがありません。</p>}
@@ -88,6 +130,20 @@ export function MasterDataPicker({
         </button>)}
     </div>
   </section>;
+}
+
+// 検索結果から「自分」の担当者行を選ぶ。メール完全一致のみ採用する
+// （部分一致検索の結果に他人が混ざるため、曖昧一致では引用しない）。
+export function findSelfStaff(
+  items: Array<{ values?: Record<string, unknown> }>,
+  email: string
+): Item | null {
+  const target = email.trim().toLowerCase();
+  if (!target) return null;
+  const matched = items.filter((item) =>
+    String(item.values?.email ?? "").trim().toLowerCase() === target);
+  // 同一メールが複数あるのは担当者マスタの異常。曖昧な引用を避けて何もしない。
+  return matched.length === 1 ? matched[0] as Item : null;
 }
 
 function typesForSchema(schema: DocumentFormSchema): MasterType[] {

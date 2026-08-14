@@ -1894,3 +1894,12 @@ textarea { width: 100%; min-height: 90px; resize: vertical; line-height: 1.6; }
 .slack-thread li p { margin: 3px 0 0; font-size: 12.5px; line-height: 1.6; white-space: pre-wrap; }
 .slack-deliveries { list-style: none; margin: 8px 0 0; padding: 0; font-size: 12px; }
 .slack-deliveries li { padding: 3px 0; border-top: 1px solid var(--border-soft, #eef1f5); }
+
+/* 「DBから引用」の検索行：担当者タブの「自分」ワンクリック引用を右に並べる */
+.master-search-row { display: flex; gap: 8px; align-items: center; }
+.master-search-row .master-search { flex: 1 1 auto; }
+.master-self {
+  white-space: nowrap; font-size: 12px; padding: 6px 12px; border-radius: 6px;
+  border: 1px solid var(--border, #cfd4dc); background: #fff; cursor: pointer;
+}
+.master-self:hover { background: #f1f5f9; }
