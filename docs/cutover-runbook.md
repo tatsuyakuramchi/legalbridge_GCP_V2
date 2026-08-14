@@ -149,6 +149,33 @@ Backlog/CloudSign はカスタムヘッダ不可のため、リレーが `?token
   `_CONDITION_LINE_REPAIR_ENABLED=true`＋`_CONFIRM_CONDITION_LINE_REPAIR=CONDITION_LINE_REPAIR_LEGALBRIDGE_VALIDATION_ONLY`
   ＋`_WRITE_SCOPES` 末尾に `,condition-repair` を追加。
 
+### 2-7. 文書テンプレートの投入（DB シード・フラグ不要）
+
+テンプレート本体（Handlebars）とフォーム定義（`field_schema`）は DB の
+`document_templates` / `document_template_versions` に入る。アプリ側のコード変更は不要で、
+適用した時点で「文書作成」の一覧に出る（＝デプロイとは独立）。
+
+適用は 2-0 の proxy＋`RUNTIME_ADMIN_DSN` を用意した上で：
+
+```bash
+psql "$RUNTIME_ADMIN_DSN" -v confirm_nda_revision=REVISE_NDA_TEMPLATE_V2 \
+  -f infra/gcp/sql/049_nda_template_revision.sql
+psql "$RUNTIME_ADMIN_DSN" -v confirm_payment_templates=SEED_PAYMENT_INVOICE_TEMPLATES \
+  -f infra/gcp/sql/048_payment_invoice_templates.sql
+psql "$RUNTIME_ADMIN_DSN" -v confirm_license_out=SEED_LICENSE_OUT_TEMPLATE \
+  -f infra/gcp/sql/050_license_out_template.sql
+```
+
+いずれも二重適用ガード付き（既存なら `already exists` で安全に停止）。
+適用後は各ファイル末尾の確認クエリで **`current_version_id` が NULL でない**ことを見る
+（NULL なら一覧に出ない）。
+
+| SQL | template_key | prefix | 状態 |
+| --- | --- | --- | --- |
+| 048 | `payment_notice` / `invoice` | ARC-PAY / ARC-INV | ✅ 適用済み（2026-08-14） |
+| 049 | `nda`（v2 改訂） | 既存 | ✅ 適用済み（2026-08-13） |
+| 050 | `license_out_en` | ARC-LOUT | ✅ 適用済み（2026-08-14・version 89） |
+
 ## 3. 利用者開放（認証・ロール）
 - `_AUTH_LEGAL_EMAILS`（法務メンバー）・`_AUTH_REQUESTER_DOMAINS`（依頼者ドメイン）を実値に。
 - アクセス方式の確定：現 cloudrun-iam（Google アカウントで IAM 付与）か IAP 化（`iap-access.md`）。
