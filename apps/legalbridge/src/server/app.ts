@@ -10,6 +10,7 @@ import {
   type DraftRepository
 } from "./documents/draft-repository.js";
 import { createDocumentRouter } from "./documents/routes.js";
+import { createTemplateSampleRouter } from "./documents/sample-preview-routes.js";
 import { createTemplateRegressionRouter } from "./documents/template-regression.js";
 import {
   MemoryDocumentFinalizationRepository,
@@ -1262,6 +1263,8 @@ export function createApp(
     dependencies.drafts,
     draftWriteEnabled
   ));
+  // ひな形プレビュー（サンプル値入りのテンプレ出力・読み取り専用・全ロール）。
+  app.use("/api/v2", createTemplateSampleRouter(dependencies.templates));
   app.use("/api/v2", createDocumentFinalizationRouter(
     dependencies.templates,
     dependencies.drafts,

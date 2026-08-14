@@ -31,6 +31,7 @@ import { VendorMerge } from "./VendorMerge";
 import { MatterMerge } from "./MatterMerge";
 import { OperationsGuide } from "./OperationsGuide";
 import { TextSnippets } from "./TextSnippets";
+import { TemplateSamples } from "./TemplateSamples";
 import { RequestsWorkspace } from "./RequestsWorkspace";
 import { seedFormData } from "./extract-variables";
 import { PaymentReport } from "./PaymentReport";
@@ -59,7 +60,7 @@ const fallback: DashboardSummary = {
   priorities: []
 };
 
-type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview" | "billing" | "receivable-map" | "payment-report" | "billing-print" | "works" | "data-quality" | "vendor-merge" | "matter-merge" | "guide" | "snippets" | "requests" | "excel-batch" | "settings" | "workflow-rules" | "contract-master";
+type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview" | "billing" | "receivable-map" | "payment-report" | "billing-print" | "works" | "data-quality" | "vendor-merge" | "matter-merge" | "guide" | "snippets" | "requests" | "excel-batch" | "settings" | "workflow-rules" | "contract-master" | "template-samples";
 type NavItem = { view: View; label: string; description: string; match: View[] };
 type NavGroup = { label: string; items: NavItem[] };
 
@@ -81,7 +82,8 @@ function navGroups(access: {
       ...(access.legalWorkspace ? [{ view: "matters" as const, label: "案件", description: "案件・課題・タスクの管理", match: ["matters" as const] }] : []),
       ...(legalOrRequester ? [{ view: "documents" as const, label: access.requesterWorkspace ? "自分の文書" : "文書", description: "文書の作成・確定・PDF", match: ["documents" as const, "templates" as const, "document" as const] }] : []),
       ...(!access.readOnly && legalOrRequester ? [{ view: "drafts" as const, label: access.requesterWorkspace ? "自分の下書き" : "下書き", description: "保存中の下書きを再開", match: ["drafts" as const] }] : []),
-      ...(legalOrRequester ? [{ view: "snippets" as const, label: "スニペット", description: "定型文の全社共有・コピー", match: ["snippets" as const] }] : [])
+      ...(legalOrRequester ? [{ view: "snippets" as const, label: "スニペット", description: "定型文の全社共有・コピー", match: ["snippets" as const] }] : []),
+      ...(legalOrRequester ? [{ view: "template-samples" as const, label: "ひな形", description: "各テンプレートの完成イメージをサンプル値で閲覧", match: ["template-samples" as const] }] : [])
     ] },
     { label: "権利・条件", items: [
       ...(access.legalWorkspace ? [{ view: "works" as const, label: "作品", description: "作品を起点に系譜・素材・条件・権利ソースを一望", match: ["works" as const] }] : []),
@@ -141,6 +143,7 @@ function breadcrumbFor(view: View): Array<{ label: string; view?: View }> {
     "matter-merge": [home, { label: "案件名寄せ" }],
     guide: [home, { label: "運用ガイド" }],
     snippets: [home, { label: "テキストスニペット" }],
+    "template-samples": [home, { label: "ひな形" }],
     conditions: [home, { label: "条件明細" }],
     "royalty-preview": [home, { label: "ロイヤリティ試算" }],
     billing: [home, { label: "請求" }],
@@ -443,6 +446,7 @@ export function App() {
         )}
         {view === "guide" && <OperationsGuide />}
         {view === "snippets" && <TextSnippets canEdit={canEditSnippets} />}
+        {view === "template-samples" && <TemplateSamples />}
         {view === "receivable-map" && <ReceivableMap />}
         {view === "payment-report" && <PaymentReport />}
         {view === "billing-print" && <BillingPrint />}
