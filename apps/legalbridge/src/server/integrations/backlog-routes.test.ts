@@ -5,7 +5,10 @@ import request from "supertest";
 import { createBacklogRequestRouter, createBacklogCommentRouter } from "./backlog-routes.js";
 import { BacklogApiError, type BacklogReadClient, type BacklogWriteClient, type BacklogIssueSummary } from "./backlog-web-api.js";
 
-function app(opts: { role?: string; client?: BacklogReadClient; host?: string } = {}) {
+function app(opts: {
+  role?: string; client?: BacklogReadClient; host?: string;
+  mentions?: { listCandidates(): Promise<Array<{ id: string; name: string }>> };
+} = {}) {
   const a = express();
   a.use((_req, res, next) => {
     res.locals.currentUser = opts.role
@@ -13,7 +16,7 @@ function app(opts: { role?: string; client?: BacklogReadClient; host?: string } 
       : undefined;
     next();
   });
-  a.use("/api/v2", createBacklogRequestRouter(opts.client, opts.host));
+  a.use("/api/v2", createBacklogRequestRouter(opts.client, opts.host, opts.mentions));
   return a;
 }
 
@@ -61,6 +64,39 @@ test("課題一覧はBacklogホストを正規化して返す", async () => {
     .get("/api/v2/backlog/issues");
   assert.equal(res.status, 200);
   assert.equal(res.body.host, "arclight.backlog.com");
+});
+
+// V1 の worker は課題本文に「依頼者: <@U…>」と Slack ユーザーIDを直接書いていた。
+// 依頼一覧・抽出変数にIDが出ないよう、担当者マスタの氏名へ解決してから返す。
+test("課題本文のSlackメンションを担当者名へ解決して返す", async () => {
+  let calls = 0;
+  const client: BacklogReadClient = {
+    getProject: async () => ({ id: 1, projectKey: "LEGAL", name: "法務" }),
+    getIssues: async () => [issue({ id: 1, description: "依頼タイプ: nda\n依頼者: <@U0ABC123>\n担当: <@U0ZZZ999>" })],
+    getProjectMetadata: emptyMetadata
+  };
+  const mentions = {
+    listCandidates: async () => { calls += 1; return [{ id: "U0ABC123", name: "田中 太郎" }]; }
+  };
+  const a = app({ role: "legal", client, mentions });
+  const res = await request(a).get("/api/v2/backlog/issues");
+  assert.equal(res.status, 200);
+  assert.equal(res.body.issues[0].description, "依頼タイプ: nda\n依頼者: @田中 太郎\n担当: @U0ZZZ999");
+  // 担当者マスタの引き直しは短期キャッシュする（課題一覧のたびには引かない）。
+  await request(a).get("/api/v2/backlog/issues");
+  assert.equal(calls, 1);
+});
+
+test("担当者マスタの取得に失敗しても課題一覧は返る", async () => {
+  const client: BacklogReadClient = {
+    getProject: async () => ({ id: 1, projectKey: "LEGAL", name: "法務" }),
+    getIssues: async () => [issue({ id: 1, description: "依頼者: <@U0ABC123>" })],
+    getProjectMetadata: emptyMetadata
+  };
+  const mentions = { listCandidates: async () => { throw new Error("db down"); } };
+  const res = await request(app({ role: "legal", client, mentions })).get("/api/v2/backlog/issues");
+  assert.equal(res.status, 200);
+  assert.equal(res.body.issues[0].description, "依頼者: @U0ABC123");
 });
 
 test("Backlog APIエラーは502", async () => {

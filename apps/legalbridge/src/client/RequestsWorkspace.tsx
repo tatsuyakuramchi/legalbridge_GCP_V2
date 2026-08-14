@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { extractVariables } from "./extract-variables";
 import { EmptyState } from "./EmptyState";
 import { CartButton } from "./MergeCart";
+import { hasUnresolvedSlackId } from "../slack-mentions";
 
 // 依頼（Backlog課題取込・Phase 3・読み取り）。Backlog課題を一覧し、課題を起点に
 // リーガル文書の作成へ導く（issueKey を文書作成に引き継ぐ）。書き戻しは別途。
@@ -177,6 +178,8 @@ export function RequestsWorkspace({ onCreateDocument, canComment = false }: { on
                       onClick={() => setExpanded((prev) => ({ ...prev, [issue.issueKey]: !prev[issue.issueKey] }))}>
                       {expanded[issue.issueKey] ? "折りたたむ" : "全文を表示"}
                     </button>
+                    {hasUnresolvedSlackId(issue.description) &&
+                      <small className="hint">氏名に変換できないSlackユーザーIDが残っています。担当者マスタにそのSlack IDを登録すると氏名で表示されます。</small>}
                   </div>
                 : <p className="muted-note">概要（本文）は未記入です。</p>}
               {varEntries.length > 0 && (

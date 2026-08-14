@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useToast } from "./Toast";
+import { resolveSlackMentions, slackDisplayName } from "../slack-mentions";
 
 // 案件詳細の Slack「法務相談」パネル。スレッド作成／メンション付き投稿／定型文／会話表示。
 // Slack 連携が無効（未設定）の場合は目立たないヒントのみ表示する。
@@ -47,6 +48,9 @@ export function MatterSlackPanel({ matterId }: { matterId: number }) {
     })();
     return () => { cancelled = true; };
   }, [matterId, reload]);
+
+  // 発言者・本文の Slack ユーザーID（U…／<@U…>）は担当者マスタの氏名で表示する。
+  const names = useMemo(() => new Map(candidates.map((c) => [c.id, c.name])), [candidates]);
 
   function toggle(id: string) {
     setSelected((cur) => cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]);
@@ -97,7 +101,8 @@ export function MatterSlackPanel({ matterId }: { matterId: number }) {
       </div>
       <div className="matter-slack-thread">
         {messages.map((m) => <article key={m.ts} className={m.bot ? "bot" : ""}>
-          <span>{m.bot ? "Bot" : (m.user ?? "—")}</span><p>{m.text}</p></article>)}
+          <span>{m.bot ? "Bot" : (slackDisplayName(m.user, names) || "—")}</span>
+          <p>{resolveSlackMentions(m.text, names)}</p></article>)}
         {!messages.length && <small className="muted-note">まだ投稿はありません。</small>}
       </div>
     </>}

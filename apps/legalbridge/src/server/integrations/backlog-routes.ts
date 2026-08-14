@@ -1,6 +1,14 @@
 import { Router } from "express";
 import { z } from "zod";
 import { BacklogApiError, type BacklogReadClient, type BacklogWriteClient } from "./backlog-web-api.js";
+import { resolveSlackMentions } from "../../slack-mentions.js";
+
+// 担当者マスタ（staff.slack_user_id → staff_name）。案件Slackのメンション候補と同形。
+export interface BacklogMentionDirectory {
+  listCandidates(): Promise<Array<{ id: string; name: string }>>;
+}
+// 名前解決は課題一覧のたびに引く必要がない（担当者マスタの更新頻度は低い）ため短期キャッシュ。
+const MENTION_CACHE_MS = 60_000;
 
 export const BACKLOG_COMMENT_CONFIRMATION = "COMMIT_BACKLOG_COMMENT";
 const commentSchema = z.object({
@@ -16,7 +24,9 @@ const commentSchema = z.object({
 export function createBacklogRequestRouter(
   client?: BacklogReadClient,
   // Backlog ホスト（課題リンク組み立て用）。連携設定のランタイム反映のため関数も可。
-  host?: string | (() => string)
+  host?: string | (() => string),
+  // 課題本文の Slack メンション（V1 が書いた `依頼者: <@U…>`）を氏名へ解決する。
+  mentions?: BacklogMentionDirectory
 ) {
   const router = Router();
   const resolveHost = () => {
@@ -24,6 +34,21 @@ export function createBacklogRequestRouter(
     // 末尾スラッシュ・スキームの揺れを吸収して host だけにする。
     return value.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "");
   };
+
+  let mentionCache: { at: number; names: Map<string, string> } | null = null;
+  async function mentionNames(): Promise<Map<string, string>> {
+    if (!mentions) return new Map();
+    if (mentionCache && Date.now() - mentionCache.at < MENTION_CACHE_MS) return mentionCache.names;
+    try {
+      const candidates = await mentions.listCandidates();
+      const names = new Map(candidates.map((c) => [c.id, c.name]));
+      mentionCache = { at: Date.now(), names };
+      return names;
+    } catch {
+      // 名前解決は表示補助。失敗しても課題一覧そのものは返す（IDのまま表示される）。
+      return mentionCache?.names ?? new Map();
+    }
+  }
 
   router.get("/backlog/issues", async (request, response, next) => {
     try {
@@ -39,8 +64,16 @@ export function createBacklogRequestRouter(
         count: z.coerce.number().int().min(1).max(100).optional()
       }).parse(request.query);
       const issues = await client.getIssues(query);
+      // 本文・件名の Slack メンションを担当者名へ。抽出変数もこの解決後の本文から取るため、
+      // 文書へ引き継がれる値にも Slack ID が残らない。
+      const names = await mentionNames();
+      const resolved = issues.map((issue) => ({
+        ...issue,
+        summary: resolveSlackMentions(issue.summary, names),
+        description: issue.description === null ? null : resolveSlackMentions(issue.description, names)
+      }));
       // host は課題本文の「Backlogで開く」リンク用（V1 の /view/<課題キー>）。
-      return response.status(200).json({ enabled: true, issues, host: resolveHost() });
+      return response.status(200).json({ enabled: true, issues: resolved, host: resolveHost() });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return response.status(400).json({ error: "invalid request", issues: error.issues });

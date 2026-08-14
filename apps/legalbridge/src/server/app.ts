@@ -1362,7 +1362,8 @@ export function createApp(
   // データ品質センター（読み取り・admin/legal限定・Phase 4）。書込みなし。
   app.use("/api/v2", createDataQualityRouter(dependencies.dataQuality));
   // Backlog課題一覧（依頼取込・読み取り・admin/legal限定・Phase 3）。書込みなし。
-  app.use("/api/v2", createBacklogRequestRouter(backlogReadClient, () => rt().backlogHost));
+  // 課題本文の Slack メンション（V1 が書いた `依頼者: <@U…>`）は担当者マスタで氏名へ解決する。
+  app.use("/api/v2", createBacklogRequestRouter(backlogReadClient, () => rt().backlogHost, dependencies.matterMentions));
   // Backlogコメント書き戻し（guarded・既定OFF・確認トークン・scope 'backlog-comment'）。
   app.use("/api/v2", createBacklogCommentRouter(backlogWriteClient, backlogCommentWriteEnabled));
   app.use("/api/v2", createWorkWriteRouter(dependencies.workWrites, workWriteEnabled));
