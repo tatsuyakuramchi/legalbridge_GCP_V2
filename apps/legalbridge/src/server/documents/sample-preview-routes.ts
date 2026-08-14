@@ -5,6 +5,11 @@ import type { TemplateRepository } from "./template-repository.js";
 import { registerLegacyHelpers } from "./rendering.js";
 import { buildTemplateDocumentContext } from "./template-context-adapters.js";
 import { SAMPLE_HIDDEN_KEYS, buildSampleFormData, sampleVariantsFor } from "./sample-preview.js";
+import {
+  INDIVIDUAL_LICENSE_V3_KEY,
+  buildIndividualLicenseV3Context,
+  individualLicenseV3SampleFormData
+} from "./individual-license-v3.js";
 
 // ひな形プレビュー（V1 search-api /templates/preview の V2 版・読み取り専用）。
 // 事業部担当者がフォーム入力なしで各テンプレートの文面をサンプル値入りで確認する。
@@ -67,10 +72,15 @@ export function createTemplateSampleRouter(templates: TemplateRepository) {
         handlebars.registerPartial(name, partial);
       }
       const render = handlebars.compile(source.htmlSource, { strict: false, noEscape: false });
-      const formData = buildSampleFormData(
-        schema.fields, source.htmlSource, schema.label, variant.overrides
-      );
-      const html = render(buildTemplateDocumentContext(params.templateKey, formData));
+      // 個別利用許諾 v3（日本語版ライセンスイン）は conds/lcs マトリクスの専用サンプルで
+      // 描画する（汎用生成では取引形態×構成要素の表が組めない）。本番プレビューと同じ
+      // context builder を通すので出力も実運用と同一系。
+      const context = params.templateKey === INDIVIDUAL_LICENSE_V3_KEY
+        ? buildIndividualLicenseV3Context(individualLicenseV3SampleFormData())
+        : buildTemplateDocumentContext(params.templateKey, buildSampleFormData(
+            schema.fields, source.htmlSource, schema.label, variant.overrides
+          ));
+      const html = render(context);
       return response.status(200).type("html").send(html);
     } catch (error) {
       if (error instanceof z.ZodError) {

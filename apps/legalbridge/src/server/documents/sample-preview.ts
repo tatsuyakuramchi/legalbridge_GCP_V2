@@ -8,13 +8,9 @@ import type { TemplateField } from "../../types.js";
 type Data = Record<string, unknown>;
 
 // 一覧・直リンクとも非表示にするテンプレ（V1 の HIDDEN_PREVIEW_TYPES と同じ考え方）。
-//   individual_license_terms    … v3 に置き換え済みの旧版（V1 でも非表示）
-//   individual_license_terms_v3 … 専用サンプル（conds/lcs マトリクス）が必要で
-//                                 汎用生成では意味のある文面にならないため当面除外。
-export const SAMPLE_HIDDEN_KEYS = new Set([
-  "individual_license_terms",
-  "individual_license_terms_v3"
-]);
+//   individual_license_terms … v3（日本語版ライセンスイン）に置き換え済みの旧版。
+//   v3 自体は専用サンプル（individualLicenseV3SampleFormData）で表示する。
+export const SAMPLE_HIDDEN_KEYS = new Set(["individual_license_terms"]);
 
 export interface SampleVariant {
   id: string;

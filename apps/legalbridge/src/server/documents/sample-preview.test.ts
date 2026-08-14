@@ -47,14 +47,19 @@ const schemas: DocumentFormSchema[] = [
     category: "License", fields: [{ name: "LICENSEE_NAME", placeholder: "例: Sample Licensee Inc." }] },
   { templateKey: "igla_license_en", templateVersionId: 2, label: "IGLA", category: "License",
     fields: [{ name: "TRANSACTION_MODEL", type: "select", options: ["License-Out", "Product-Out", "Both"] }] },
-  { templateKey: "individual_license_terms", templateVersionId: 3, label: "旧個別許諾", category: "License", fields: [] }
+  { templateKey: "individual_license_terms", templateVersionId: 3, label: "旧個別許諾", category: "License", fields: [] },
+  { templateKey: "individual_license_terms_v3", templateVersionId: 4, label: "個別利用許諾条件書（v3）", category: "License", fields: [] }
 ];
 const html = {
   license_out_en: "<h1>LICENSE AGREEMENT</h1><p>Licensee: {{LICENSEE_NAME}}</p>",
   igla_license_en:
     '<h1>IGLA</h1>{{#if (ne TRANSACTION_MODEL "Product-Out")}}<h2>SCHEDULE 1</h2>{{/if}}' +
     '{{#if (ne TRANSACTION_MODEL "License-Out")}}<h2>SCHEDULE 2</h2>{{/if}}',
-  individual_license_terms: "<p>hidden</p>"
+  individual_license_terms: "<p>hidden</p>",
+  individual_license_terms_v3:
+    "<h1>{{contractNo}}</h1><p>{{licensorName}}</p>" +
+    "{{#each conds}}<li>{{condLabel}} {{condName}} {{appliedRate}}</li>{{/each}}" +
+    "{{#each lcs}}<td>{{lcId}} {{lcName}}</td>{{/each}}"
 };
 
 function app(authenticated = true) {
@@ -98,6 +103,24 @@ test("html: IGLA はバリアントで Schedule の出力が切り替わる", as
   // variant 省略時は先頭バリアント（license-out）
   const def = await request(app()).get("/api/v2/template-samples/igla_license_en/html");
   assert.ok(def.text.includes("SCHEDULE 1"));
+});
+
+test("html: v3（日本語版ライセンスイン）は専用サンプルのマトリクスで描画される", async () => {
+  const res = await request(app()).get("/api/v2/template-samples/individual_license_terms_v3/html");
+  assert.equal(res.status, 200);
+  assert.ok(res.text.includes("LIC-LO-2026-0015-ILT-0001"));
+  assert.ok(res.text.includes("株式会社オリジナル（サンプル）"));
+  // 加算型: 構成要素料率の合算（5%+2%）／非加算型: 固定料率
+  assert.ok(res.text.includes("条件1 製造・販売 7%"));
+  assert.ok(res.text.includes("条件2 サブライセンス 50%"));
+  assert.ok(res.text.includes("LO-2026-0015-001 原作ゲーム（A）"));
+});
+
+test("一覧: v3 は表示・旧 individual_license_terms のみ非表示", async () => {
+  const res = await request(app()).get("/api/v2/template-samples");
+  const keys = res.body.templates.map((t: { templateKey: string }) => t.templateKey);
+  assert.ok(keys.includes("individual_license_terms_v3"));
+  assert.ok(!keys.includes("individual_license_terms"));
 });
 
 test("html: 不明バリアントは400・未知テンプレ/非表示テンプレは404", async () => {

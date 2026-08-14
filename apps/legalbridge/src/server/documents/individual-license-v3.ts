@@ -27,6 +27,46 @@ export const individualLicenseV3Fields: TemplateField[] = [
   { name: "監修者", label: "監修者", group: "IV. 許諾概要" }
 ];
 
+// ひな形プレビュー用サンプル（V1 individualLicenseV3Context.ts の v3SampleFormData 移植）。
+// 汎用のサンプル生成では conds/lcs マトリクスを作れないため、跨ぎ原作の
+// 取引形態×構成要素を明示した専用サンプルで描画する。
+export function individualLicenseV3SampleFormData(): Record<string, unknown> {
+  return {
+    契約書番号: "LIC-LO-2026-0015-ILT-0001",
+    発行日: "2026-06-27",
+    許諾開始日: "2026-07-01",
+    Licensor_氏名会社名: "株式会社オリジナル（サンプル）",
+    Licensee_氏名会社名: "株式会社ライセンシー（サンプル）",
+    対象製品予定名: "コラボボードゲーム（サンプル）",
+    独占性: "非独占",
+    監修者: "監修部",
+    Licensor_担当者: "山田", Licensor_電話: "03-1111-2222", Licensor_メール: "yamada@example.co.jp",
+    Licensor_住所: "東京都千代田区サンプル1-2-3", Licensor_代表者名: "代表取締役 鈴木 一郎",
+    Licensee_住所: "大阪府大阪市サンプル4-5-6", Licensee_代表者名: "代表取締役 佐藤 花子",
+    v3_conds: [
+      { id: 1, name: "製造・販売", addon: true, manufacturer: "Licensee", seller: "Licensee",
+        maxReg: "全世界", maxLang: "全言語", basePrice: "上代（MSRP）× 数量",
+        reg: "日本", lang: "日本語", qty: "数量", ag: "0", mg: "100000", cur: "JPY" },
+      { id: 2, name: "サブライセンス", addon: false, fixedRate: "50",
+        reg: "全世界", lang: "全言語", qty: "1", ag: "0", mg: "0", cur: "JPY" }
+    ],
+    v3_lcs: [
+      { material_code: "LO-2026-0015-001", name: "原作ゲーム（A）", holder: "株式会社オリジナル",
+        region: "全世界", language: "全言語", rates: { "1": "5" } },
+      { material_code: "LO-2026-0008-003", name: "過去成果物（B・別原作）", holder: "株式会社クリエイト",
+        region: "日本国内", language: "日本語", rates: { "1": "2" } }
+    ],
+    v3_sublicensees: [
+      { slPartner: "サブA社", slRegion: "北米", slLang: "英語", slCond: "サブライセンス",
+        slRate: "50", slDate: "2026-08-01", slNote: "サンプル" }
+    ],
+    v3_calc_base_rows: [
+      { edition: "初版", trigger: "発売日", note: "" },
+      { edition: "2版以降", trigger: "製造日", note: "" }
+    ]
+  };
+}
+
 type AnyRecord = Record<string, unknown>;
 const stringValue = (value: unknown) => value == null ? "" : String(value);
 const numberValue = (value: unknown) => {
