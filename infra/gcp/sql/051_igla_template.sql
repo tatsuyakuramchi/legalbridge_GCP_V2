@@ -700,7 +700,13 @@ $TPL$,
     "label": "Both を選んだ場合の適用範囲",
     "group": "III. 取引条件（Deal Sheet）",
     "type": "textarea",
-    "helpText": "取引モデルが Both のときだけ出力されます"
+    "helpText": "取引モデルが Both のときだけ出力されます",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "Both"
+      ]
+    }
   },
   {
     "name": "GAME_TITLE",
@@ -776,13 +782,25 @@ $TPL$,
     "name": "RENEWAL_YEARS",
     "label": "自動更新期間（年）",
     "group": "III. 取引条件（Deal Sheet）",
-    "placeholder": "例: 2 (two)"
+    "placeholder": "例: 2 (two)",
+    "showWhen": {
+      "field": "RENEWAL_TYPE",
+      "anyOf": [
+        "Automatic"
+      ]
+    }
   },
   {
     "name": "RENEWAL_NOTICE_MONTHS",
     "label": "不更新通知の期限（満了何か月前）",
     "group": "III. 取引条件（Deal Sheet）",
-    "placeholder": "例: 3"
+    "placeholder": "例: 3",
+    "showWhen": {
+      "field": "RENEWAL_TYPE",
+      "anyOf": [
+        "Automatic"
+      ]
+    }
   },
   {
     "name": "SELL_OFF_DAYS",
@@ -818,7 +836,13 @@ $TPL$,
   {
     "name": "SOURCE_MATERIALS_LANGUAGE_OTHER",
     "label": "提供素材の言語（その他）",
-    "group": "III. 取引条件（Deal Sheet）"
+    "group": "III. 取引条件（Deal Sheet）",
+    "showWhen": {
+      "field": "SOURCE_MATERIALS_LANGUAGE",
+      "anyOf": [
+        "Other"
+      ]
+    }
   },
   {
     "name": "AGREEMENT_CURRENCY",
@@ -835,7 +859,13 @@ $TPL$,
   {
     "name": "AGREEMENT_CURRENCY_OTHER",
     "label": "契約通貨（その他）",
-    "group": "III. 取引条件（Deal Sheet）"
+    "group": "III. 取引条件（Deal Sheet）",
+    "showWhen": {
+      "field": "AGREEMENT_CURRENCY",
+      "anyOf": [
+        "Other"
+      ]
+    }
   },
   {
     "name": "ANNEX_1_INCLUDED",
@@ -885,13 +915,26 @@ $TPL$,
       "one",
       "three"
     ],
-    "helpText": "紛争解決で Arbitration を選んだ場合のみ出力"
+    "helpText": "紛争解決で Arbitration を選んだ場合のみ出力",
+    "showWhen": {
+      "field": "DISPUTE_RESOLUTION",
+      "anyOf": [
+        "Arbitration"
+      ]
+    }
   },
   {
     "name": "ROYALTY_RATE",
     "label": "ロイヤリティ料率（%）",
     "group": "V. Schedule 1（License-Out）",
-    "placeholder": "例: 8"
+    "placeholder": "例: 8",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "License-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "ROYALTY_BASE",
@@ -904,26 +947,53 @@ $TPL$,
       "Wholesale Price",
       "Other"
     ],
-    "helpText": "MSRP＝MSRP×製造部数。Net Sales の控除項目は Schedule 1 第1.1条で限定列挙"
+    "helpText": "MSRP＝MSRP×製造部数。Net Sales の控除項目は Schedule 1 第1.1条で限定列挙",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "License-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "ROYALTY_BASE_OTHER",
     "label": "ロイヤリティ算定基礎（その他）",
-    "group": "V. Schedule 1（License-Out）"
+    "group": "V. Schedule 1（License-Out）",
+    "showWhen": {
+      "field": "ROYALTY_BASE",
+      "anyOf": [
+        "Other"
+      ]
+    }
   },
   {
     "name": "MINIMUM_GUARANTEE",
     "label": "ミニマムギャランティ（MG）",
     "group": "V. Schedule 1（License-Out）",
     "type": "textarea",
-    "placeholder": "金額 / 支払期日 / 充当方法"
+    "placeholder": "金額 / 支払期日 / 充当方法",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "License-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "ADVANCE_ROYALTY",
     "label": "前払ロイヤリティ",
     "group": "V. Schedule 1（License-Out）",
     "type": "textarea",
-    "placeholder": "金額 / 支払期日 / 回収方法"
+    "placeholder": "金額 / 支払期日 / 回収方法",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "License-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "ACCOUNTING_PERIOD",
@@ -933,98 +1003,210 @@ $TPL$,
     "options": [
       "Quarterly",
       "Semi-annually"
-    ]
+    ],
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "License-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "ACCOUNTING_PERIOD_END",
     "label": "計算期間の締め",
     "group": "V. Schedule 1（License-Out）",
-    "placeholder": "例: June and December"
+    "placeholder": "例: June and December",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "License-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "SALES_REPORT_DAYS",
     "label": "売上報告の提出期限（日）",
     "group": "V. Schedule 1（License-Out）",
-    "placeholder": "例: 30"
+    "placeholder": "例: 30",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "License-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "PAYMENT_DAYS",
     "label": "支払期限（請求書受領後・日）",
     "group": "V. Schedule 1（License-Out）",
-    "placeholder": "例: 30"
+    "placeholder": "例: 30",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "License-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "FIRST_PRINT_RUN_MIN",
     "label": "初版最低製造部数",
     "group": "V. Schedule 1（License-Out）",
-    "placeholder": "例: 3,000"
+    "placeholder": "例: 3,000",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "License-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "APPROVED_MANUFACTURERS",
     "label": "承認製造者",
     "group": "V. Schedule 1（License-Out）",
     "type": "textarea",
-    "placeholder": "工場名または承認手続"
+    "placeholder": "工場名または承認手続",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "License-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "COMPLIMENTARY_COPIES",
     "label": "献本部数",
     "group": "V. Schedule 1（License-Out）",
-    "placeholder": "例: 12"
+    "placeholder": "例: 12",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "License-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "CREDIT_WORDING",
     "label": "クレジット表記",
     "group": "V. Schedule 1（License-Out）",
-    "type": "textarea"
+    "type": "textarea",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "License-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "SAMPLE_APPROVAL_PLAN",
     "label": "サンプル・承認計画",
     "group": "V. Schedule 1（License-Out）",
     "type": "textarea",
-    "placeholder": "デジタル校正 / PPC / MPC / 時期 / 修正権 / 費用"
+    "placeholder": "デジタル校正 / PPC / MPC / 時期 / 修正権 / 費用",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "License-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "MARKETING_COMMITMENT",
     "label": "マーケティング義務",
     "group": "V. Schedule 1（License-Out）",
-    "type": "textarea"
+    "type": "textarea",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "License-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "EXCLUSIVITY_PERFORMANCE",
     "label": "独占維持条件",
     "group": "V. Schedule 1（License-Out）",
     "type": "textarea",
-    "placeholder": "最低販売数 / 増刷 / 継続販売の要件"
+    "placeholder": "最低販売数 / 増刷 / 継続販売の要件",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "License-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "FX_RATE_SOURCE",
     "label": "為替レートの出典（第2.2条）",
     "group": "V. Schedule 1（License-Out）",
-    "placeholder": "例: the Bank of Japan published rate"
+    "placeholder": "例: the Bank of Japan published rate",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "License-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "FX_RATE_DATE",
     "label": "為替レートの基準日（第2.2条）",
     "group": "V. Schedule 1（License-Out）",
-    "placeholder": "例: the last Business Day of the period"
+    "placeholder": "例: the last Business Day of the period",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "License-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "PRODUCT_SKU",
     "label": "製品／SKU",
-    "group": "VI. Schedule 2（Product-Out）"
+    "group": "VI. Schedule 2（Product-Out）",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "Product-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "CAMPAIGN_ID",
     "label": "生産キャンペーンID",
-    "group": "VI. Schedule 2（Product-Out）"
+    "group": "VI. Schedule 2（Product-Out）",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "Product-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "APPROVED_SPECIFICATIONS",
     "label": "承認仕様",
     "group": "VI. Schedule 2（Product-Out）",
-    "placeholder": "版 / 日付 / 付属書参照"
+    "placeholder": "版 / 日付 / 付属書参照",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "Product-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "PRICING_METHOD",
@@ -1035,29 +1217,64 @@ $TPL$,
       "Firm",
       "Variable"
     ],
-    "helpText": "Firm＝最低確約数量による確定単価／Variable＝合計生産数連動の暫定単価"
+    "helpText": "Firm＝最低確約数量による確定単価／Variable＝合計生産数連動の暫定単価",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "Product-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "MCQ",
     "label": "最低確約数量（MCQ・units）",
-    "group": "VI. Schedule 2（Product-Out）"
+    "group": "VI. Schedule 2（Product-Out）",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "Product-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "AGGREGATE_PRODUCTION_ASSUMPTION",
     "label": "合計生産想定数（units）",
     "group": "VI. Schedule 2（Product-Out）",
-    "helpText": "明記しない限り拘束力なし"
+    "helpText": "明記しない限り拘束力なし",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "Product-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "PROVISIONAL_UNIT_PRICE",
     "label": "暫定単価",
     "group": "VI. Schedule 2（Product-Out）",
-    "placeholder": "例: USD 6.20"
+    "placeholder": "例: USD 6.20",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "Product-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "PROVISIONAL_ASSUMED_QTY",
     "label": "暫定単価の前提数量",
-    "group": "VI. Schedule 2（Product-Out）"
+    "group": "VI. Schedule 2（Product-Out）",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "Product-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "DOWNWARD_TRUE_UP",
@@ -1067,151 +1284,318 @@ $TPL$,
     "options": [
       "Yes",
       "No"
-    ]
+    ],
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "Product-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "TRUE_UP_FORMULA",
     "label": "下方精算の算式",
     "group": "VI. Schedule 2（Product-Out）",
-    "type": "textarea"
+    "type": "textarea",
+    "showWhen": {
+      "field": "DOWNWARD_TRUE_UP",
+      "anyOf": [
+        "Yes"
+      ]
+    }
   },
   {
     "name": "QUANTITY_TOLERANCE_PCT",
     "label": "数量過不足許容（%）",
     "group": "VI. Schedule 2（Product-Out）",
-    "placeholder": "例: 3"
+    "placeholder": "例: 3",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "Product-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "TOLERANCE_TREATMENT",
     "label": "許容超過・不足の取扱い",
     "group": "VI. Schedule 2（Product-Out）",
-    "type": "textarea"
+    "type": "textarea",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "Product-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "INCLUDED_LOCALIZATION_CHANGES",
     "label": "価格に含まれる版変更",
     "group": "VI. Schedule 2（Product-Out）",
     "type": "textarea",
-    "placeholder": "対象コンポーネントと含まれる改訂回数"
+    "placeholder": "対象コンポーネントと含まれる改訂回数",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "Product-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "ADDITIONAL_CHANGE_CHARGES",
     "label": "追加変更費用",
     "group": "VI. Schedule 2（Product-Out）",
     "type": "textarea",
-    "placeholder": "料率 / 実費 / 手数料"
+    "placeholder": "料率 / 実費 / 手数料",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "Product-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "DEPOSIT_PCT",
     "label": "着手金（%）",
     "group": "VI. Schedule 2（Product-Out）",
-    "placeholder": "例: 30"
+    "placeholder": "例: 30",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "Product-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "DEPOSIT_TIMING",
     "label": "着手金の支払時期",
     "group": "VI. Schedule 2（Product-Out）",
-    "placeholder": "例: upon PO acceptance"
+    "placeholder": "例: upon PO acceptance",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "Product-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "BALANCE_PCT",
     "label": "残金（%）",
     "group": "VI. Schedule 2（Product-Out）",
-    "placeholder": "例: 70"
+    "placeholder": "例: 70",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "Product-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "BALANCE_TIMING",
     "label": "残金の支払時期",
     "group": "VI. Schedule 2（Product-Out）",
-    "placeholder": "例: before shipment"
+    "placeholder": "例: before shipment",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "Product-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "INCOTERMS_RULE",
     "label": "インコタームズ規則（2020）",
     "group": "VI. Schedule 2（Product-Out）",
-    "placeholder": "例: FOB"
+    "placeholder": "例: FOB",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "Product-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "NAMED_PLACE",
     "label": "指定地",
     "group": "VI. Schedule 2（Product-Out）",
-    "placeholder": "例: Port of Yokohama, Japan"
+    "placeholder": "例: Port of Yokohama, Japan",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "Product-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "DESTINATIONS_QUANTITIES",
     "label": "仕向地と数量",
     "group": "VI. Schedule 2（Product-Out）",
     "type": "textarea",
-    "helpText": "詳細は付属書3。ここには概要を記載"
+    "helpText": "詳細は付属書3。ここには概要を記載",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "Product-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "SHIPPING_DOCUMENTS",
     "label": "出荷書類",
     "group": "VI. Schedule 2（Product-Out）",
     "type": "textarea",
-    "placeholder": "パッキングリスト / インボイス / 工場数量報告 / B-L・AWB 等"
+    "placeholder": "パッキングリスト / インボイス / 工場数量報告 / B-L・AWB 等",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "Product-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "SAMPLE_VERIFICATION_METHOD",
     "label": "PPC／MPC・検証方法",
     "group": "VI. Schedule 2（Product-Out）",
     "type": "textarea",
-    "placeholder": "デジタルデータ / 動画 / PPC / MPC・数量・承認の効果・修正可否・費用"
+    "placeholder": "デジタルデータ / 動画 / PPC / MPC・数量・承認の効果・修正可否・費用",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "Product-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "TARGET_SHIPMENT_WINDOW",
     "label": "目標出荷時期",
     "group": "VI. Schedule 2（Product-Out）",
-    "helpText": "見込みであり保証ではない旨が条文に明記されています"
+    "helpText": "見込みであり保証ではない旨が条文に明記されています",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "Product-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "PO_CURRENCY",
     "label": "発注通貨",
     "group": "VI. Schedule 2（Product-Out）",
-    "placeholder": "例: USD"
+    "placeholder": "例: USD",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "Product-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "DEDICATED_TOOLING",
     "label": "専用治工具",
     "group": "VI. Schedule 2（Product-Out）",
     "type": "textarea",
-    "placeholder": "所有 / 保管 / 保守 / 廃棄 / 移管費用"
+    "placeholder": "所有 / 保管 / 保守 / 廃棄 / 移管費用",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "Product-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "REVISED_TERMS_ACCEPT_DAYS",
     "label": "改定条件の受諾期限（営業日・第1.6条）",
     "group": "VI. Schedule 2（Product-Out）",
-    "placeholder": "例: five (5)"
+    "placeholder": "例: five (5)",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "Product-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "SAMPLE_REVIEW_DAYS",
     "label": "サンプル確認期限（営業日・第6.3条）",
     "group": "VI. Schedule 2（Product-Out）",
-    "placeholder": "例: five (5)"
+    "placeholder": "例: five (5)",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "Product-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "MIN_SALES_PCT",
     "label": "最低販売比率（%・第13.1条）",
     "group": "VI. Schedule 2（Product-Out）",
-    "placeholder": "例: 70"
+    "placeholder": "例: 70",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "Product-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "MIN_SALES_MONTHS",
     "label": "最低販売の達成期間（月・第13.1条）",
     "group": "VI. Schedule 2（Product-Out）",
-    "placeholder": "例: 24"
+    "placeholder": "例: 24",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "Product-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "REPRINT_CONSULT_YEARS",
     "label": "増刷協議の対象期間（年・第13.2条）",
     "group": "VI. Schedule 2（Product-Out）",
-    "placeholder": "例: two (2)"
+    "placeholder": "例: two (2)",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "Product-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "REPRINT_INVENTORY_PCT",
     "label": "増刷協議の在庫閾値（%・第13.2条）",
     "group": "VI. Schedule 2（Product-Out）",
-    "placeholder": "例: 10"
+    "placeholder": "例: 10",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "Product-Out",
+        "Both"
+      ]
+    }
   }
 ]$json$::jsonb,
        'ARC-TPL-IGLA-001 初版（IGLA Draft Rev.6 ベース・条文無改変）', 'legalbridge-v2'

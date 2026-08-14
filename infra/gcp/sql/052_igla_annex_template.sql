@@ -279,371 +279,619 @@ $TPL$,
     "name": "A1_RULEBOOK_SOURCE",
     "label": "ルールブック：提供元／原語",
     "group": "II. 付属書1（ローカライズ変更マトリクス）",
-    "placeholder": "例: Licensor / Japanese"
+    "placeholder": "例: Licensor / Japanese",
+    "showWhen": {
+      "field": "ANNEX_1_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A1_RULEBOOK_CHANGE",
     "label": "ルールブック：許容される変更",
     "group": "II. 付属書1（ローカライズ変更マトリクス）",
-    "placeholder": "例: Translation only"
+    "placeholder": "例: Translation only",
+    "showWhen": {
+      "field": "ANNEX_1_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A1_RULEBOOK_APPROVAL",
     "label": "ルールブック：承認／みなし承認",
     "group": "II. 付属書1（ローカライズ変更マトリクス）",
-    "placeholder": "例: Final approval required; no deemed approval"
+    "placeholder": "例: Final approval required; no deemed approval",
+    "showWhen": {
+      "field": "ANNEX_1_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A1_RULEBOOK_COST",
     "label": "ルールブック：費用",
     "group": "II. 付属書1（ローカライズ変更マトリクス）",
-    "placeholder": "例: Included / fee"
+    "placeholder": "例: Included / fee",
+    "showWhen": {
+      "field": "ANNEX_1_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A1_CARDS_SOURCE",
     "label": "カード／タイル：提供元／原語",
     "group": "II. 付属書1（ローカライズ変更マトリクス）",
-    "placeholder": "例: Licensor / Japanese"
+    "placeholder": "例: Licensor / Japanese",
+    "showWhen": {
+      "field": "ANNEX_1_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A1_CARDS_CHANGE",
     "label": "カード／タイル：許容される変更",
     "group": "II. 付属書1（ローカライズ変更マトリクス）",
-    "placeholder": "例: Translation only"
+    "placeholder": "例: Translation only",
+    "showWhen": {
+      "field": "ANNEX_1_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A1_CARDS_APPROVAL",
     "label": "カード／タイル：承認／みなし承認",
     "group": "II. 付属書1（ローカライズ変更マトリクス）",
-    "placeholder": "例: Final approval required; no deemed approval"
+    "placeholder": "例: Final approval required; no deemed approval",
+    "showWhen": {
+      "field": "ANNEX_1_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A1_CARDS_COST",
     "label": "カード／タイル：費用",
     "group": "II. 付属書1（ローカライズ変更マトリクス）",
-    "placeholder": "例: Included / fee"
+    "placeholder": "例: Included / fee",
+    "showWhen": {
+      "field": "ANNEX_1_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A1_BOARDS_SOURCE",
     "label": "ボード／パンチボード：提供元／原語",
     "group": "II. 付属書1（ローカライズ変更マトリクス）",
-    "placeholder": "例: Licensor / Japanese"
+    "placeholder": "例: Licensor / Japanese",
+    "showWhen": {
+      "field": "ANNEX_1_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A1_BOARDS_CHANGE",
     "label": "ボード／パンチボード：許容される変更",
     "group": "II. 付属書1（ローカライズ変更マトリクス）",
-    "placeholder": "例: Translation only"
+    "placeholder": "例: Translation only",
+    "showWhen": {
+      "field": "ANNEX_1_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A1_BOARDS_APPROVAL",
     "label": "ボード／パンチボード：承認／みなし承認",
     "group": "II. 付属書1（ローカライズ変更マトリクス）",
-    "placeholder": "例: Final approval required; no deemed approval"
+    "placeholder": "例: Final approval required; no deemed approval",
+    "showWhen": {
+      "field": "ANNEX_1_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A1_BOARDS_COST",
     "label": "ボード／パンチボード：費用",
     "group": "II. 付属書1（ローカライズ変更マトリクス）",
-    "placeholder": "例: Included / fee"
+    "placeholder": "例: Included / fee",
+    "showWhen": {
+      "field": "ANNEX_1_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A1_BOX_SOURCE",
     "label": "箱／パッケージ：提供元／原語",
     "group": "II. 付属書1（ローカライズ変更マトリクス）",
-    "placeholder": "例: Licensor / Japanese"
+    "placeholder": "例: Licensor / Japanese",
+    "showWhen": {
+      "field": "ANNEX_1_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A1_BOX_CHANGE",
     "label": "箱／パッケージ：許容される変更",
     "group": "II. 付属書1（ローカライズ変更マトリクス）",
-    "placeholder": "例: Translation only"
+    "placeholder": "例: Translation only",
+    "showWhen": {
+      "field": "ANNEX_1_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A1_BOX_APPROVAL",
     "label": "箱／パッケージ：承認／みなし承認",
     "group": "II. 付属書1（ローカライズ変更マトリクス）",
-    "placeholder": "例: Final approval required; no deemed approval"
+    "placeholder": "例: Final approval required; no deemed approval",
+    "showWhen": {
+      "field": "ANNEX_1_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A1_BOX_COST",
     "label": "箱／パッケージ：費用",
     "group": "II. 付属書1（ローカライズ変更マトリクス）",
-    "placeholder": "例: Included / fee"
+    "placeholder": "例: Included / fee",
+    "showWhen": {
+      "field": "ANNEX_1_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A1_ARTWORK_SOURCE",
     "label": "アートワーク／イラスト：提供元／原語",
     "group": "II. 付属書1（ローカライズ変更マトリクス）",
-    "placeholder": "例: Licensor / Japanese"
+    "placeholder": "例: Licensor / Japanese",
+    "showWhen": {
+      "field": "ANNEX_1_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A1_ARTWORK_CHANGE",
     "label": "アートワーク／イラスト：許容される変更",
     "group": "II. 付属書1（ローカライズ変更マトリクス）",
-    "placeholder": "例: Translation only"
+    "placeholder": "例: Translation only",
+    "showWhen": {
+      "field": "ANNEX_1_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A1_ARTWORK_APPROVAL",
     "label": "アートワーク／イラスト：承認／みなし承認",
     "group": "II. 付属書1（ローカライズ変更マトリクス）",
-    "placeholder": "例: Final approval required; no deemed approval"
+    "placeholder": "例: Final approval required; no deemed approval",
+    "showWhen": {
+      "field": "ANNEX_1_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A1_ARTWORK_COST",
     "label": "アートワーク／イラスト：費用",
     "group": "II. 付属書1（ローカライズ変更マトリクス）",
-    "placeholder": "例: Included / fee"
+    "placeholder": "例: Included / fee",
+    "showWhen": {
+      "field": "ANNEX_1_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A1_MARKETING_SOURCE",
     "label": "マーケティング素材：提供元／原語",
     "group": "II. 付属書1（ローカライズ変更マトリクス）",
-    "placeholder": "例: Licensor / Japanese"
+    "placeholder": "例: Licensor / Japanese",
+    "showWhen": {
+      "field": "ANNEX_1_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A1_MARKETING_CHANGE",
     "label": "マーケティング素材：許容される変更",
     "group": "II. 付属書1（ローカライズ変更マトリクス）",
-    "placeholder": "例: Translation only"
+    "placeholder": "例: Translation only",
+    "showWhen": {
+      "field": "ANNEX_1_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A1_MARKETING_APPROVAL",
     "label": "マーケティング素材：承認／みなし承認",
     "group": "II. 付属書1（ローカライズ変更マトリクス）",
-    "placeholder": "例: Final approval required; no deemed approval"
+    "placeholder": "例: Final approval required; no deemed approval",
+    "showWhen": {
+      "field": "ANNEX_1_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A1_MARKETING_COST",
     "label": "マーケティング素材：費用",
     "group": "II. 付属書1（ローカライズ変更マトリクス）",
-    "placeholder": "例: Included / fee"
+    "placeholder": "例: Included / fee",
+    "showWhen": {
+      "field": "ANNEX_1_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A1_WITHHELD_FILES",
     "label": "非提供・改変不可ファイルの一覧",
     "group": "II. 付属書1（ローカライズ変更マトリクス）",
     "type": "textarea",
-    "helpText": "この行の他の列は「要求・改変の権利なし／対象外／費用に含まない」で固定です"
+    "helpText": "この行の他の列は「要求・改変の権利なし／対象外／費用に含まない」で固定です",
+    "showWhen": {
+      "field": "ANNEX_1_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A2_T1_DEADLINE",
     "label": "Tier 1 カットオフ日時",
     "group": "III. 付属書2（カットオフ・価格ティア）",
     "placeholder": "例: 2026/12/15, 17:00 Japan time",
-    "helpText": "この時刻までに価格ロック条件5点がすべて揃わないとTier 1は自動失効します"
+    "helpText": "この時刻までに価格ロック条件5点がすべて揃わないとTier 1は自動失効します",
+    "showWhen": {
+      "field": "ANNEX_2_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A2_T1_CAMPAIGN",
     "label": "Tier 1 の対象生産キャンペーン",
     "group": "III. 付属書2（カットオフ・価格ティア）",
-    "placeholder": "例: First Production Campaign"
+    "placeholder": "例: First Production Campaign",
+    "showWhen": {
+      "field": "ANNEX_2_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A2_T1_PRICE",
     "label": "Tier 1 の単価／価格基準",
     "group": "III. 付属書2（カットオフ・価格ティア）",
-    "placeholder": "例: USD 6.20 per unit"
+    "placeholder": "例: USD 6.20 per unit",
+    "showWhen": {
+      "field": "ANNEX_2_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A2_T1_WINDOW",
     "label": "Tier 1 の目標出荷時期（見込み）",
     "group": "III. 付属書2（カットオフ・価格ティア）",
-    "placeholder": "例: March 2027"
+    "placeholder": "例: March 2027",
+    "showWhen": {
+      "field": "ANNEX_2_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A2_T2_DEADLINE",
     "label": "Tier 2 カットオフ期間",
     "group": "III. 付属書2（カットオフ・価格ティア）",
-    "placeholder": "例: 2026/12/16 - 2027/01/31"
+    "placeholder": "例: 2026/12/16 - 2027/01/31",
+    "showWhen": {
+      "field": "ANNEX_2_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A2_T2_CAMPAIGN",
     "label": "Tier 2 の対象生産キャンペーン",
     "group": "III. 付属書2（カットオフ・価格ティア）",
-    "placeholder": "例: Next Available Production Campaign"
+    "placeholder": "例: Next Available Production Campaign",
+    "showWhen": {
+      "field": "ANNEX_2_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A2_T2_PRICE",
     "label": "Tier 2 の単価／価格基準",
     "group": "III. 付属書2（カットオフ・価格ティア）",
-    "placeholder": "例: USD 6.80 per unit ／ Re-quote"
+    "placeholder": "例: USD 6.80 per unit ／ Re-quote",
+    "showWhen": {
+      "field": "ANNEX_2_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A2_T2_WINDOW",
     "label": "Tier 2 の目標出荷時期（見込み）",
     "group": "III. 付属書2（カットオフ・価格ティア）",
-    "placeholder": "例: June 2027"
+    "placeholder": "例: June 2027",
+    "showWhen": {
+      "field": "ANNEX_2_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A2_FINAL_DEADLINE",
     "label": "最終カットオフ以降の起算日",
     "group": "III. 付属書2（カットオフ・価格ティア）",
-    "placeholder": "例: After 2027/01/31"
+    "placeholder": "例: After 2027/01/31",
+    "showWhen": {
+      "field": "ANNEX_2_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A2_FINAL_CAMPAIGN",
     "label": "最終カットオフ以降の生産枠",
     "group": "III. 付属書2（カットオフ・価格ティア）",
-    "placeholder": "例: Future campaign subject to capacity"
+    "placeholder": "例: Future campaign subject to capacity",
+    "showWhen": {
+      "field": "ANNEX_2_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A2_BINDING_LONG_STOP",
     "label": "拘束力ある最終期日（Binding Long-Stop Date）",
     "group": "III. 付属書2（カットオフ・価格ティア）",
     "type": "textarea",
-    "helpText": "ここに明記した日付だけが保証期日になります。空欄なら出荷日は全て見込み扱いです"
+    "helpText": "ここに明記した日付だけが保証期日になります。空欄なら出荷日は全て見込み扱いです",
+    "showWhen": {
+      "field": "ANNEX_2_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A2_REVIEW_BUFFER",
     "label": "レビュー・バッファ（第5.3条）",
     "group": "III. 付属書2（カットオフ・価格ティア）",
     "placeholder": "例: Two (2) weeks included",
-    "helpText": "明記しない限り自動的なバッファは付きません"
+    "helpText": "明記しない限り自動的なバッファは付きません",
+    "showWhen": {
+      "field": "ANNEX_2_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A2_M_EXECUTION_DUE",
     "label": "契約締結 期日",
     "group": "IV. 付属書2（マイルストーン）",
-    "placeholder": "例: 2026/11/30"
+    "placeholder": "例: 2026/11/30",
+    "showWhen": {
+      "field": "ANNEX_2_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A2_M_SOURCE_DUE",
     "label": "許諾者による素材提供 期日",
     "group": "IV. 付属書2（マイルストーン）",
-    "placeholder": "例: 2026/11/30"
+    "placeholder": "例: 2026/11/30",
+    "showWhen": {
+      "field": "ANNEX_2_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A2_M_COMMITMENT_DUE",
     "label": "キャンペーン参加確約／MCQ 期日",
     "group": "IV. 付属書2（マイルストーン）",
-    "placeholder": "例: 2026/11/30"
+    "placeholder": "例: 2026/11/30",
+    "showWhen": {
+      "field": "ANNEX_2_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A2_M_FILES_DUE",
     "label": "ローカライズデータ提出 期日",
     "group": "IV. 付属書2（マイルストーン）",
-    "placeholder": "例: 2026/11/30"
+    "placeholder": "例: 2026/11/30",
+    "showWhen": {
+      "field": "ANNEX_2_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A2_M_COMPLIANCE_DUE",
     "label": "現地法規要件の提出 期日",
     "group": "IV. 付属書2（マイルストーン）",
-    "placeholder": "例: 2026/11/30"
+    "placeholder": "例: 2026/11/30",
+    "showWhen": {
+      "field": "ANNEX_2_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A2_M_REVIEW_DUE",
     "label": "許諾者レビュー 期日",
     "group": "IV. 付属書2（マイルストーン）",
-    "placeholder": "例: 2026/11/30"
+    "placeholder": "例: 2026/11/30",
+    "showWhen": {
+      "field": "ANNEX_2_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A2_M_PPC_DUE",
     "label": "PPC確認 期日",
     "group": "IV. 付属書2（マイルストーン）",
-    "placeholder": "例: 2026/11/30"
+    "placeholder": "例: 2026/11/30",
+    "showWhen": {
+      "field": "ANNEX_2_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A2_M_PO_DUE",
     "label": "最終PO／残金 期日",
     "group": "IV. 付属書2（マイルストーン）",
-    "placeholder": "例: 2026/11/30"
+    "placeholder": "例: 2026/11/30",
+    "showWhen": {
+      "field": "ANNEX_2_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A2_M_SHIPMENT_DUE",
     "label": "目標出荷時期 期日",
     "group": "IV. 付属書2（マイルストーン）",
-    "placeholder": "例: 2026/11/30"
+    "placeholder": "例: 2026/11/30",
+    "showWhen": {
+      "field": "ANNEX_2_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A2_M_LAUNCH_DUE",
     "label": "発売 期日",
     "group": "IV. 付属書2（マイルストーン）",
-    "placeholder": "例: 2026/11/30"
+    "placeholder": "例: 2026/11/30",
+    "showWhen": {
+      "field": "ANNEX_2_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A3_D1_SKU",
     "label": "宛先1：SKU／製品",
-    "group": "V. 付属書3（出荷指示・数量照合）"
+    "group": "V. 付属書3（出荷指示・数量照合）",
+    "showWhen": {
+      "field": "ANNEX_3_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A3_D1_CONSIGNEE",
     "label": "宛先1：仕向地／荷受人",
     "group": "V. 付属書3（出荷指示・数量照合）",
     "type": "textarea",
-    "placeholder": "社名 / 住所 / 担当 / 税番号"
+    "placeholder": "社名 / 住所 / 担当 / 税番号",
+    "showWhen": {
+      "field": "ANNEX_3_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A3_D1_QTY",
     "label": "宛先1：数量",
-    "group": "V. 付属書3（出荷指示・数量照合）"
+    "group": "V. 付属書3（出荷指示・数量照合）",
+    "showWhen": {
+      "field": "ANNEX_3_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A3_D1_INCOTERMS",
     "label": "宛先1：インコタームズ／指定地",
-    "group": "V. 付属書3（出荷指示・数量照合）"
+    "group": "V. 付属書3（出荷指示・数量照合）",
+    "showWhen": {
+      "field": "ANNEX_3_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A3_D1_DOCS",
     "label": "宛先1：必要書類・特記",
     "group": "V. 付属書3（出荷指示・数量照合）",
-    "type": "textarea"
+    "type": "textarea",
+    "showWhen": {
+      "field": "ANNEX_3_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A3_D2_SKU",
     "label": "宛先2：SKU／製品",
-    "group": "V. 付属書3（出荷指示・数量照合）"
+    "group": "V. 付属書3（出荷指示・数量照合）",
+    "showWhen": {
+      "field": "ANNEX_3_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A3_D2_CONSIGNEE",
     "label": "宛先2：仕向地／荷受人",
     "group": "V. 付属書3（出荷指示・数量照合）",
     "type": "textarea",
-    "placeholder": "社名 / 住所 / 担当 / 税番号"
+    "placeholder": "社名 / 住所 / 担当 / 税番号",
+    "showWhen": {
+      "field": "ANNEX_3_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A3_D2_QTY",
     "label": "宛先2：数量",
-    "group": "V. 付属書3（出荷指示・数量照合）"
+    "group": "V. 付属書3（出荷指示・数量照合）",
+    "showWhen": {
+      "field": "ANNEX_3_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A3_D2_INCOTERMS",
     "label": "宛先2：インコタームズ／指定地",
-    "group": "V. 付属書3（出荷指示・数量照合）"
+    "group": "V. 付属書3（出荷指示・数量照合）",
+    "showWhen": {
+      "field": "ANNEX_3_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A3_D2_DOCS",
     "label": "宛先2：必要書類・特記",
     "group": "V. 付属書3（出荷指示・数量照合）",
-    "type": "textarea"
+    "type": "textarea",
+    "showWhen": {
+      "field": "ANNEX_3_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A3_FACTORY_QTY",
     "label": "工場報告数量",
-    "group": "V. 付属書3（出荷指示・数量照合）"
+    "group": "V. 付属書3（出荷指示・数量照合）",
+    "showWhen": {
+      "field": "ANNEX_3_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A3_CARRIER_QTY",
     "label": "運送人／輸出数量",
-    "group": "V. 付属書3（出荷指示・数量照合）"
+    "group": "V. 付属書3（出荷指示・数量照合）",
+    "showWhen": {
+      "field": "ANNEX_3_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A3_RECEIVED_QTY",
     "label": "仕向地受領数量",
-    "group": "V. 付属書3（出荷指示・数量照合）"
+    "group": "V. 付属書3（出荷指示・数量照合）",
+    "showWhen": {
+      "field": "ANNEX_3_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A3_DISCREPANCY",
     "label": "差異と証跡",
     "group": "V. 付属書3（出荷指示・数量照合）",
-    "type": "textarea"
+    "type": "textarea",
+    "showWhen": {
+      "field": "ANNEX_3_INCLUDED",
+      "truthy": true
+    }
   },
   {
     "name": "A3_RESOLUTION",
     "label": "合意した解決",
     "group": "V. 付属書3（出荷指示・数量照合）",
     "type": "textarea",
-    "placeholder": "Replacement / credit / accepted excess / other"
+    "placeholder": "Replacement / credit / accepted excess / other",
+    "showWhen": {
+      "field": "ANNEX_3_INCLUDED",
+      "truthy": true
+    }
   }
 ]$json$::jsonb,
        'ARC-TPL-IGLA-ANNEX-001 初版（IGLA Draft Rev.6 の Annex 1/2/3）', 'legalbridge-v2'

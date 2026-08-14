@@ -6,6 +6,7 @@ import type {
   DocumentFormSchema
 } from "../types";
 import { SpecializedDocumentForms } from "./SpecializedDocumentForms";
+import { isFieldVisible } from "./field-visibility";
 import { MasterDataPicker } from "./MasterDataPicker";
 import { DocumentRegistry } from "./DocumentRegistry";
 import { MatterRegistry } from "./MatterRegistry";
@@ -857,8 +858,11 @@ function DocumentForm({
   if (!schema) {
     return <section className="page"><h1>文書作成</h1><p>フォーム定義を読み込んでいます。</p></section>;
   }
+  // showWhen（条件表示）: 取引モデル等の選択に応じて使わない項目群を隠す。
+  // 空になったグループはジャンプリンクごと消える（groups が visibleFields 由来のため）。
   const visibleFields = schema.fields.filter((field) =>
-    field.type !== "hidden" && !isSpecializedDataField(schema.templateKey, field.name)
+    field.type !== "hidden" && !isSpecializedDataField(schema.templateKey, field.name) &&
+    isFieldVisible(field, formData)
   );
   const groups = [...new Set(visibleFields.map((field) => field.group ?? "基本情報"))];
 
