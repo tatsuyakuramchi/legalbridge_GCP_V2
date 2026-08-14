@@ -1,12 +1,12 @@
-import type { DocumentFormData, TemplateField } from "../types";
+import type { DocumentFormData, ShowWhenCondition, TemplateField } from "../types";
 
 // showWhen（field_schema の条件表示）の判定。純関数。
 // - anyOf: 参照先の値（文字列化）がいずれかに一致すれば表示
 // - truthy: 参照先のチェック有無と一致すれば表示
+// - 配列: すべての条件を満たしたときだけ表示（AND）
 // - 条件なし・不正な条件は常に表示（テンプレートの書き損じで項目が消えないように）
-export function isFieldVisible(field: TemplateField, formData: DocumentFormData): boolean {
-  const condition = field.showWhen;
-  if (!condition || !condition.field) return true;
+function matches(condition: ShowWhenCondition, formData: DocumentFormData): boolean {
+  if (!condition?.field) return true;
   const value = formData[condition.field];
   if (Array.isArray(condition.anyOf)) {
     return condition.anyOf.includes(String(value ?? ""));
@@ -15,4 +15,11 @@ export function isFieldVisible(field: TemplateField, formData: DocumentFormData)
     return Boolean(value) === condition.truthy;
   }
   return true;
+}
+
+export function isFieldVisible(field: TemplateField, formData: DocumentFormData): boolean {
+  const condition = field.showWhen;
+  if (!condition) return true;
+  if (Array.isArray(condition)) return condition.every((c) => matches(c, formData));
+  return matches(condition, formData);
 }

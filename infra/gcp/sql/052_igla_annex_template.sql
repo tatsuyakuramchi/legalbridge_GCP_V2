@@ -51,7 +51,9 @@ SELECT id, 1, $TPL$<!DOCTYPE html>
   構成           : Annex 1 ローカライズ変更マトリクス（6部材＋非提供ファイル行）
                    Annex 2 カットオフ価格ティア表＋マイルストーン表
                    Annex 3 出荷指示（宛先2件）＋数量照合記録
-  条件分岐       : ANNEX_1/2/3_INCLUDED が true の別紙だけを出力する。
+  条件分岐       : ANNEX_1/2/3_INCLUDED が true の別紙だけを出力する。さらに
+                   TRANSACTION_MODEL=License-Out のときは Product-Out 専用の
+                   Annex 3 全体・Annex 2 のカットオフ価格ティア表・PO系マイルストーン行を出さない。
   対応本体       : igla_license_en（ARC-TPL-IGLA-001）。本体 Deal Sheet 第4節の
                    Incorporated と選択を必ず一致させること。
 -->
@@ -115,6 +117,7 @@ table.sheet .req::after{content:" *"; color:#a4442f; font-weight:700;}
     <tr><th>Licensor</th><td>{{LICENSOR_NAME}}</td></tr>
     <tr><th>Licensee</th><td>{{LICENSEE_NAME}}</td></tr>
     <tr><th>Game Title</th><td>{{GAME_TITLE}}</td></tr>
+    <tr><th>Transaction Model</th><td>{{TRANSACTION_MODEL}}</td></tr>
   </table>
   <p class="note">These Annexes are incorporated into the Agreement only to the extent stated in
     Deal Sheet Section 4. Each Annex below is included only if selected.</p>
@@ -141,6 +144,7 @@ table.sheet .req::after{content:" *"; color:#a4442f; font-weight:700;}
   <h2 class="part">ANNEX 2 &ndash; PROJECT AND PRODUCTION SCHEDULE</h2>
   <p class="note">The consequence column should be completed for all critical Licensee deadlines, particularly campaign commitment, data submission, approvals and payment.</p>
 
+{{#if (ne TRANSACTION_MODEL "License-Out")}}
   <h3>Product-Out Cut-Off, Price Tier and Estimated Shipment Schedule</h3>
   <table class="sheet grid">
     <tr><th>Cut-Off Tier</th><th>All Price-Locking Conditions Complete By</th>
@@ -159,6 +163,7 @@ table.sheet .req::after{content:" *"; color:#a4442f; font-weight:700;}
   </table>
   <p>Cut-off rule: The applicable tier is determined by the date and time on which all Price-Locking Conditions are actually complete. Partial, provisional, defective or later-revised submissions do not preserve a production slot or price. The next tier applies automatically where a fixed price is stated; “Re-quote” means the price will be recalculated under Schedule 2, Article 1.6.</p>
   <p>Illustration: If the Tier 1 cut-off is July 16, a complete submission received by the stated time on July 16 qualifies for the first Production Campaign. A complete submission received on July 17 does not qualify, even if only one day late; it moves to the next available campaign and the next price tier or re-quotation, and the shipment window is re-estimated.</p>
+{{/if}}
 
   <h3>Milestones and Consequences</h3>
   <table class="sheet grid">
@@ -166,13 +171,19 @@ table.sheet .req::after{content:" *"; color:#a4442f; font-weight:700;}
       <th>Dependency / Deliverable</th><th>Consequence if Missed</th></tr>
     <tr><th>Agreement execution</th><td>Both</td><td>{{A2_M_EXECUTION_DUE}}</td><td>Signed Deal Sheet and schedules</td><td>No project commencement</td></tr>
     <tr><th>Licensor source materials</th><td>Licensor</td><td>{{A2_M_SOURCE_DUE}}</td><td>Files listed in Annex 1</td><td>Dependent dates extend</td></tr>
+{{#if (ne TRANSACTION_MODEL "License-Out")}}
     <tr><th>Campaign commitment / MCQ</th><td>Licensee</td><td>{{A2_M_COMMITMENT_DUE}}</td><td>Written commitment and deposit</td><td>Current campaign and price tier lapse; next tier / re-quote</td></tr>
+{{/if}}
     <tr><th>Localization files</th><td>Licensee</td><td>{{A2_M_FILES_DUE}}</td><td>Complete files in required format</td><td>Current campaign and price tier lapse; later run / next tier / re-quote</td></tr>
     <tr><th>Local compliance requirements</th><td>Licensee</td><td>{{A2_M_COMPLIANCE_DUE}}</td><td>Labels, warnings, testing and importer data</td><td>Incomplete for cut-off purposes; later run, reprice and Licensee bears late-change cost</td></tr>
     <tr><th>Licensor review</th><td>Licensor</td><td>{{A2_M_REVIEW_DUE}}</td><td>Complete submission received</td><td>Dependent dates extend</td></tr>
     <tr><th>PPC review</th><td>Licensee</td><td>{{A2_M_PPC_DUE}}</td><td>Approval or consolidated comments</td><td>Current production slot may lapse; next campaign / reprice</td></tr>
+{{#if (ne TRANSACTION_MODEL "License-Out")}}
     <tr><th>Final PO / balance</th><td>Licensee</td><td>{{A2_M_PO_DUE}}</td><td>Accepted PO and cleared funds</td><td>Price-Locking Conditions not met; no slot or price reserved</td></tr>
+{{/if}}
+{{#if (ne TRANSACTION_MODEL "License-Out")}}
     <tr><th>Target shipment window</th><td>Licensor</td><td>{{A2_M_SHIPMENT_DUE}}</td><td>All dependencies met</td><td>Not a guaranteed deadline; re-estimate based on production status and dependencies</td></tr>
+{{/if}}
     <tr><th>Release / launch</th><td>Licensee</td><td>{{A2_M_LAUNCH_DUE}}</td><td>Commercial launch</td><td>Exclusivity review</td></tr>
   </table>
   <table class="sheet">
@@ -181,6 +192,7 @@ table.sheet .req::after{content:" *"; color:#a4442f; font-weight:700;}
   </table>
 {{/if}}
 
+{{#if (ne TRANSACTION_MODEL "License-Out")}}
 {{#if ANNEX_3_INCLUDED}}
   <h2 class="part">ANNEX 3 &ndash; PRODUCT-OUT DELIVERY INSTRUCTIONS</h2>
   <p class="note">Complete before carrier booking. Use one row per destination and SKU. Quantities in this Annex must reconcile with the accepted PO.</p>
@@ -199,6 +211,7 @@ table.sheet .req::after{content:" *"; color:#a4442f; font-weight:700;}
     <tr><th>Discrepancy and Evidence</th><td>{{A3_DISCREPANCY}}</td></tr>
     <tr><th>Agreed Resolution</th><td>{{A3_RESOLUTION}}</td></tr>
   </table>
+{{/if}}
 {{/if}}
 
   <p class="foot">IGLA Annexes &middot; {{AGREEMENT_REVISION}} &middot; Confidential<br>
@@ -258,6 +271,19 @@ $TPL$,
     "dbField": "work.title"
   },
   {
+    "name": "TRANSACTION_MODEL",
+    "label": "取引モデル（本体契約と同じ選択）",
+    "group": "I. 対象契約",
+    "type": "select",
+    "required": true,
+    "options": [
+      "License-Out",
+      "Product-Out",
+      "Both"
+    ],
+    "helpText": "License-Out では Product-Out 専用の付属書3・付属書2のカットオフ価格ティア表は出力されません"
+  },
+  {
     "name": "ANNEX_1_INCLUDED",
     "label": "付属書1を出力する",
     "group": "I. 対象契約",
@@ -273,7 +299,14 @@ $TPL$,
     "name": "ANNEX_3_INCLUDED",
     "label": "付属書3を出力する",
     "group": "I. 対象契約",
-    "type": "boolean"
+    "type": "boolean",
+    "showWhen": {
+      "field": "TRANSACTION_MODEL",
+      "anyOf": [
+        "Product-Out",
+        "Both"
+      ]
+    }
   },
   {
     "name": "A1_RULEBOOK_SOURCE",
@@ -532,100 +565,190 @@ $TPL$,
     "group": "III. 付属書2（カットオフ・価格ティア）",
     "placeholder": "例: 2026/12/15, 17:00 Japan time",
     "helpText": "この時刻までに価格ロック条件5点がすべて揃わないとTier 1は自動失効します",
-    "showWhen": {
-      "field": "ANNEX_2_INCLUDED",
-      "truthy": true
-    }
+    "showWhen": [
+      {
+        "field": "ANNEX_2_INCLUDED",
+        "truthy": true
+      },
+      {
+        "field": "TRANSACTION_MODEL",
+        "anyOf": [
+          "Product-Out",
+          "Both"
+        ]
+      }
+    ]
   },
   {
     "name": "A2_T1_CAMPAIGN",
     "label": "Tier 1 の対象生産キャンペーン",
     "group": "III. 付属書2（カットオフ・価格ティア）",
     "placeholder": "例: First Production Campaign",
-    "showWhen": {
-      "field": "ANNEX_2_INCLUDED",
-      "truthy": true
-    }
+    "showWhen": [
+      {
+        "field": "ANNEX_2_INCLUDED",
+        "truthy": true
+      },
+      {
+        "field": "TRANSACTION_MODEL",
+        "anyOf": [
+          "Product-Out",
+          "Both"
+        ]
+      }
+    ]
   },
   {
     "name": "A2_T1_PRICE",
     "label": "Tier 1 の単価／価格基準",
     "group": "III. 付属書2（カットオフ・価格ティア）",
     "placeholder": "例: USD 6.20 per unit",
-    "showWhen": {
-      "field": "ANNEX_2_INCLUDED",
-      "truthy": true
-    }
+    "showWhen": [
+      {
+        "field": "ANNEX_2_INCLUDED",
+        "truthy": true
+      },
+      {
+        "field": "TRANSACTION_MODEL",
+        "anyOf": [
+          "Product-Out",
+          "Both"
+        ]
+      }
+    ]
   },
   {
     "name": "A2_T1_WINDOW",
     "label": "Tier 1 の目標出荷時期（見込み）",
     "group": "III. 付属書2（カットオフ・価格ティア）",
     "placeholder": "例: March 2027",
-    "showWhen": {
-      "field": "ANNEX_2_INCLUDED",
-      "truthy": true
-    }
+    "showWhen": [
+      {
+        "field": "ANNEX_2_INCLUDED",
+        "truthy": true
+      },
+      {
+        "field": "TRANSACTION_MODEL",
+        "anyOf": [
+          "Product-Out",
+          "Both"
+        ]
+      }
+    ]
   },
   {
     "name": "A2_T2_DEADLINE",
     "label": "Tier 2 カットオフ期間",
     "group": "III. 付属書2（カットオフ・価格ティア）",
     "placeholder": "例: 2026/12/16 - 2027/01/31",
-    "showWhen": {
-      "field": "ANNEX_2_INCLUDED",
-      "truthy": true
-    }
+    "showWhen": [
+      {
+        "field": "ANNEX_2_INCLUDED",
+        "truthy": true
+      },
+      {
+        "field": "TRANSACTION_MODEL",
+        "anyOf": [
+          "Product-Out",
+          "Both"
+        ]
+      }
+    ]
   },
   {
     "name": "A2_T2_CAMPAIGN",
     "label": "Tier 2 の対象生産キャンペーン",
     "group": "III. 付属書2（カットオフ・価格ティア）",
     "placeholder": "例: Next Available Production Campaign",
-    "showWhen": {
-      "field": "ANNEX_2_INCLUDED",
-      "truthy": true
-    }
+    "showWhen": [
+      {
+        "field": "ANNEX_2_INCLUDED",
+        "truthy": true
+      },
+      {
+        "field": "TRANSACTION_MODEL",
+        "anyOf": [
+          "Product-Out",
+          "Both"
+        ]
+      }
+    ]
   },
   {
     "name": "A2_T2_PRICE",
     "label": "Tier 2 の単価／価格基準",
     "group": "III. 付属書2（カットオフ・価格ティア）",
     "placeholder": "例: USD 6.80 per unit ／ Re-quote",
-    "showWhen": {
-      "field": "ANNEX_2_INCLUDED",
-      "truthy": true
-    }
+    "showWhen": [
+      {
+        "field": "ANNEX_2_INCLUDED",
+        "truthy": true
+      },
+      {
+        "field": "TRANSACTION_MODEL",
+        "anyOf": [
+          "Product-Out",
+          "Both"
+        ]
+      }
+    ]
   },
   {
     "name": "A2_T2_WINDOW",
     "label": "Tier 2 の目標出荷時期（見込み）",
     "group": "III. 付属書2（カットオフ・価格ティア）",
     "placeholder": "例: June 2027",
-    "showWhen": {
-      "field": "ANNEX_2_INCLUDED",
-      "truthy": true
-    }
+    "showWhen": [
+      {
+        "field": "ANNEX_2_INCLUDED",
+        "truthy": true
+      },
+      {
+        "field": "TRANSACTION_MODEL",
+        "anyOf": [
+          "Product-Out",
+          "Both"
+        ]
+      }
+    ]
   },
   {
     "name": "A2_FINAL_DEADLINE",
     "label": "最終カットオフ以降の起算日",
     "group": "III. 付属書2（カットオフ・価格ティア）",
     "placeholder": "例: After 2027/01/31",
-    "showWhen": {
-      "field": "ANNEX_2_INCLUDED",
-      "truthy": true
-    }
+    "showWhen": [
+      {
+        "field": "ANNEX_2_INCLUDED",
+        "truthy": true
+      },
+      {
+        "field": "TRANSACTION_MODEL",
+        "anyOf": [
+          "Product-Out",
+          "Both"
+        ]
+      }
+    ]
   },
   {
     "name": "A2_FINAL_CAMPAIGN",
     "label": "最終カットオフ以降の生産枠",
     "group": "III. 付属書2（カットオフ・価格ティア）",
     "placeholder": "例: Future campaign subject to capacity",
-    "showWhen": {
-      "field": "ANNEX_2_INCLUDED",
-      "truthy": true
-    }
+    "showWhen": [
+      {
+        "field": "ANNEX_2_INCLUDED",
+        "truthy": true
+      },
+      {
+        "field": "TRANSACTION_MODEL",
+        "anyOf": [
+          "Product-Out",
+          "Both"
+        ]
+      }
+    ]
   },
   {
     "name": "A2_BINDING_LONG_STOP",
@@ -674,10 +797,19 @@ $TPL$,
     "label": "キャンペーン参加確約／MCQ 期日",
     "group": "IV. 付属書2（マイルストーン）",
     "placeholder": "例: 2026/11/30",
-    "showWhen": {
-      "field": "ANNEX_2_INCLUDED",
-      "truthy": true
-    }
+    "showWhen": [
+      {
+        "field": "ANNEX_2_INCLUDED",
+        "truthy": true
+      },
+      {
+        "field": "TRANSACTION_MODEL",
+        "anyOf": [
+          "Product-Out",
+          "Both"
+        ]
+      }
+    ]
   },
   {
     "name": "A2_M_FILES_DUE",
@@ -724,20 +856,38 @@ $TPL$,
     "label": "最終PO／残金 期日",
     "group": "IV. 付属書2（マイルストーン）",
     "placeholder": "例: 2026/11/30",
-    "showWhen": {
-      "field": "ANNEX_2_INCLUDED",
-      "truthy": true
-    }
+    "showWhen": [
+      {
+        "field": "ANNEX_2_INCLUDED",
+        "truthy": true
+      },
+      {
+        "field": "TRANSACTION_MODEL",
+        "anyOf": [
+          "Product-Out",
+          "Both"
+        ]
+      }
+    ]
   },
   {
     "name": "A2_M_SHIPMENT_DUE",
     "label": "目標出荷時期 期日",
     "group": "IV. 付属書2（マイルストーン）",
     "placeholder": "例: 2026/11/30",
-    "showWhen": {
-      "field": "ANNEX_2_INCLUDED",
-      "truthy": true
-    }
+    "showWhen": [
+      {
+        "field": "ANNEX_2_INCLUDED",
+        "truthy": true
+      },
+      {
+        "field": "TRANSACTION_MODEL",
+        "anyOf": [
+          "Product-Out",
+          "Both"
+        ]
+      }
+    ]
   },
   {
     "name": "A2_M_LAUNCH_DUE",
@@ -753,10 +903,19 @@ $TPL$,
     "name": "A3_D1_SKU",
     "label": "宛先1：SKU／製品",
     "group": "V. 付属書3（出荷指示・数量照合）",
-    "showWhen": {
-      "field": "ANNEX_3_INCLUDED",
-      "truthy": true
-    }
+    "showWhen": [
+      {
+        "field": "ANNEX_3_INCLUDED",
+        "truthy": true
+      },
+      {
+        "field": "TRANSACTION_MODEL",
+        "anyOf": [
+          "Product-Out",
+          "Both"
+        ]
+      }
+    ]
   },
   {
     "name": "A3_D1_CONSIGNEE",
@@ -764,47 +923,92 @@ $TPL$,
     "group": "V. 付属書3（出荷指示・数量照合）",
     "type": "textarea",
     "placeholder": "社名 / 住所 / 担当 / 税番号",
-    "showWhen": {
-      "field": "ANNEX_3_INCLUDED",
-      "truthy": true
-    }
+    "showWhen": [
+      {
+        "field": "ANNEX_3_INCLUDED",
+        "truthy": true
+      },
+      {
+        "field": "TRANSACTION_MODEL",
+        "anyOf": [
+          "Product-Out",
+          "Both"
+        ]
+      }
+    ]
   },
   {
     "name": "A3_D1_QTY",
     "label": "宛先1：数量",
     "group": "V. 付属書3（出荷指示・数量照合）",
-    "showWhen": {
-      "field": "ANNEX_3_INCLUDED",
-      "truthy": true
-    }
+    "showWhen": [
+      {
+        "field": "ANNEX_3_INCLUDED",
+        "truthy": true
+      },
+      {
+        "field": "TRANSACTION_MODEL",
+        "anyOf": [
+          "Product-Out",
+          "Both"
+        ]
+      }
+    ]
   },
   {
     "name": "A3_D1_INCOTERMS",
     "label": "宛先1：インコタームズ／指定地",
     "group": "V. 付属書3（出荷指示・数量照合）",
-    "showWhen": {
-      "field": "ANNEX_3_INCLUDED",
-      "truthy": true
-    }
+    "showWhen": [
+      {
+        "field": "ANNEX_3_INCLUDED",
+        "truthy": true
+      },
+      {
+        "field": "TRANSACTION_MODEL",
+        "anyOf": [
+          "Product-Out",
+          "Both"
+        ]
+      }
+    ]
   },
   {
     "name": "A3_D1_DOCS",
     "label": "宛先1：必要書類・特記",
     "group": "V. 付属書3（出荷指示・数量照合）",
     "type": "textarea",
-    "showWhen": {
-      "field": "ANNEX_3_INCLUDED",
-      "truthy": true
-    }
+    "showWhen": [
+      {
+        "field": "ANNEX_3_INCLUDED",
+        "truthy": true
+      },
+      {
+        "field": "TRANSACTION_MODEL",
+        "anyOf": [
+          "Product-Out",
+          "Both"
+        ]
+      }
+    ]
   },
   {
     "name": "A3_D2_SKU",
     "label": "宛先2：SKU／製品",
     "group": "V. 付属書3（出荷指示・数量照合）",
-    "showWhen": {
-      "field": "ANNEX_3_INCLUDED",
-      "truthy": true
-    }
+    "showWhen": [
+      {
+        "field": "ANNEX_3_INCLUDED",
+        "truthy": true
+      },
+      {
+        "field": "TRANSACTION_MODEL",
+        "anyOf": [
+          "Product-Out",
+          "Both"
+        ]
+      }
+    ]
   },
   {
     "name": "A3_D2_CONSIGNEE",
@@ -812,75 +1016,147 @@ $TPL$,
     "group": "V. 付属書3（出荷指示・数量照合）",
     "type": "textarea",
     "placeholder": "社名 / 住所 / 担当 / 税番号",
-    "showWhen": {
-      "field": "ANNEX_3_INCLUDED",
-      "truthy": true
-    }
+    "showWhen": [
+      {
+        "field": "ANNEX_3_INCLUDED",
+        "truthy": true
+      },
+      {
+        "field": "TRANSACTION_MODEL",
+        "anyOf": [
+          "Product-Out",
+          "Both"
+        ]
+      }
+    ]
   },
   {
     "name": "A3_D2_QTY",
     "label": "宛先2：数量",
     "group": "V. 付属書3（出荷指示・数量照合）",
-    "showWhen": {
-      "field": "ANNEX_3_INCLUDED",
-      "truthy": true
-    }
+    "showWhen": [
+      {
+        "field": "ANNEX_3_INCLUDED",
+        "truthy": true
+      },
+      {
+        "field": "TRANSACTION_MODEL",
+        "anyOf": [
+          "Product-Out",
+          "Both"
+        ]
+      }
+    ]
   },
   {
     "name": "A3_D2_INCOTERMS",
     "label": "宛先2：インコタームズ／指定地",
     "group": "V. 付属書3（出荷指示・数量照合）",
-    "showWhen": {
-      "field": "ANNEX_3_INCLUDED",
-      "truthy": true
-    }
+    "showWhen": [
+      {
+        "field": "ANNEX_3_INCLUDED",
+        "truthy": true
+      },
+      {
+        "field": "TRANSACTION_MODEL",
+        "anyOf": [
+          "Product-Out",
+          "Both"
+        ]
+      }
+    ]
   },
   {
     "name": "A3_D2_DOCS",
     "label": "宛先2：必要書類・特記",
     "group": "V. 付属書3（出荷指示・数量照合）",
     "type": "textarea",
-    "showWhen": {
-      "field": "ANNEX_3_INCLUDED",
-      "truthy": true
-    }
+    "showWhen": [
+      {
+        "field": "ANNEX_3_INCLUDED",
+        "truthy": true
+      },
+      {
+        "field": "TRANSACTION_MODEL",
+        "anyOf": [
+          "Product-Out",
+          "Both"
+        ]
+      }
+    ]
   },
   {
     "name": "A3_FACTORY_QTY",
     "label": "工場報告数量",
     "group": "V. 付属書3（出荷指示・数量照合）",
-    "showWhen": {
-      "field": "ANNEX_3_INCLUDED",
-      "truthy": true
-    }
+    "showWhen": [
+      {
+        "field": "ANNEX_3_INCLUDED",
+        "truthy": true
+      },
+      {
+        "field": "TRANSACTION_MODEL",
+        "anyOf": [
+          "Product-Out",
+          "Both"
+        ]
+      }
+    ]
   },
   {
     "name": "A3_CARRIER_QTY",
     "label": "運送人／輸出数量",
     "group": "V. 付属書3（出荷指示・数量照合）",
-    "showWhen": {
-      "field": "ANNEX_3_INCLUDED",
-      "truthy": true
-    }
+    "showWhen": [
+      {
+        "field": "ANNEX_3_INCLUDED",
+        "truthy": true
+      },
+      {
+        "field": "TRANSACTION_MODEL",
+        "anyOf": [
+          "Product-Out",
+          "Both"
+        ]
+      }
+    ]
   },
   {
     "name": "A3_RECEIVED_QTY",
     "label": "仕向地受領数量",
     "group": "V. 付属書3（出荷指示・数量照合）",
-    "showWhen": {
-      "field": "ANNEX_3_INCLUDED",
-      "truthy": true
-    }
+    "showWhen": [
+      {
+        "field": "ANNEX_3_INCLUDED",
+        "truthy": true
+      },
+      {
+        "field": "TRANSACTION_MODEL",
+        "anyOf": [
+          "Product-Out",
+          "Both"
+        ]
+      }
+    ]
   },
   {
     "name": "A3_DISCREPANCY",
     "label": "差異と証跡",
     "group": "V. 付属書3（出荷指示・数量照合）",
     "type": "textarea",
-    "showWhen": {
-      "field": "ANNEX_3_INCLUDED",
-      "truthy": true
-    }
+    "showWhen": [
+      {
+        "field": "ANNEX_3_INCLUDED",
+        "truthy": true
+      },
+      {
+        "field": "TRANSACTION_MODEL",
+        "anyOf": [
+          "Product-Out",
+          "Both"
+        ]
+      }
+    ]
   },
   {
     "name": "A3_RESOLUTION",
@@ -888,10 +1164,19 @@ $TPL$,
     "group": "V. 付属書3（出荷指示・数量照合）",
     "type": "textarea",
     "placeholder": "Replacement / credit / accepted excess / other",
-    "showWhen": {
-      "field": "ANNEX_3_INCLUDED",
-      "truthy": true
-    }
+    "showWhen": [
+      {
+        "field": "ANNEX_3_INCLUDED",
+        "truthy": true
+      },
+      {
+        "field": "TRANSACTION_MODEL",
+        "anyOf": [
+          "Product-Out",
+          "Both"
+        ]
+      }
+    ]
   }
 ]$json$::jsonb,
        'ARC-TPL-IGLA-ANNEX-001 初版（IGLA Draft Rev.6 の Annex 1/2/3）', 'legalbridge-v2'

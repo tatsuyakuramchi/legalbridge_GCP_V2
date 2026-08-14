@@ -39,3 +39,17 @@ test("anyOf は文字列化して比較する（数値・真偽値でも落ち�
   assert.equal(isFieldVisible(field, { N: 1 }), true);
   assert.equal(isFieldVisible(field, { N: 2 }), false);
 });
+
+test("配列は AND：すべての条件を満たしたときだけ表示", () => {
+  const field: TemplateField = { ...base, showWhen: [
+    { field: "ANNEX_2_INCLUDED", truthy: true },
+    { field: "TRANSACTION_MODEL", anyOf: ["Product-Out", "Both"] }
+  ] };
+  assert.equal(isFieldVisible(field,
+    { ANNEX_2_INCLUDED: true, TRANSACTION_MODEL: "Product-Out" }), true);
+  assert.equal(isFieldVisible(field,
+    { ANNEX_2_INCLUDED: true, TRANSACTION_MODEL: "License-Out" }), false);
+  assert.equal(isFieldVisible(field,
+    { ANNEX_2_INCLUDED: false, TRANSACTION_MODEL: "Both" }), false);
+  assert.equal(isFieldVisible({ ...base, showWhen: [] }, {}), true);
+});
