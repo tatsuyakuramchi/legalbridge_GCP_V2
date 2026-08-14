@@ -175,6 +175,12 @@ psql "$RUNTIME_ADMIN_DSN" -v confirm_license_out=SEED_LICENSE_OUT_TEMPLATE \
 | 048 | `payment_notice` / `invoice` | ARC-PAY / ARC-INV | ✅ 適用済み（2026-08-14） |
 | 049 | `nda`（v2 改訂） | 既存 | ✅ 適用済み（2026-08-13） |
 | 050 | `license_out_en` | ARC-LOUT | ✅ 適用済み（2026-08-14・version 89） |
+| 051 | `igla_license_en`（IGLA 本体） | ARC-IGLA | ⬜ 未適用（`-v confirm_igla=SEED_IGLA_TEMPLATE`） |
+| 052 | `igla_license_annex_en`（IGLA 付属書1/2/3） | ARC-IGLAX | ⬜ 未適用（`-v confirm_igla_annex=SEED_IGLA_ANNEX_TEMPLATE`） |
+
+IGLA（051/052）は Deal Sheet の取引モデルで Schedule 1（License-Out）/ Schedule 2
+（Product-Out）の出力を切り替える2部構成。本体と付属書は別文書なので、付属書を使う
+案件では両方から作成し、Deal Sheet 第4節の Incorporated と付属書側の出力選択をそろえる。
 
 ## 3. 利用者開放（認証・ロール）
 - `_AUTH_LEGAL_EMAILS`（法務メンバー）・`_AUTH_REQUESTER_DOMAINS`（依頼者ドメイン）を実値に。
