@@ -246,6 +246,11 @@ import {
 } from "./integrations/slack-delivery-adapter.js";
 import { SlackWebApiDeliveryAdapter } from "./integrations/slack-web-api-adapter.js";
 import {
+  SlackWebApiConversationReader, DisabledSlackConversationReader,
+  type SlackConversationReader
+} from "./integrations/slack-conversation-reader.js";
+import { createMatterSlackHistoryRouter } from "./matters/matter-slack-history-routes.js";
+import {
   WebApiMatterSlackChannelAdapter,
   LocalMatterSlackChannelAdapter,
   type MatterSlackChannelAdapter
@@ -710,6 +715,15 @@ export function createApp(
     config.slackDeliveryMode === "live" && /^xoxb-[A-Za-z0-9-]+$/.test(config.slackBotToken)
       ? new SlackWebApiDeliveryAdapter(new DynamicSlackWebApiClient(() => sec("SLACK_BOT_TOKEN")))
       : new DisabledSlackDeliveryAdapter();
+  // 案件 Slack 会話読取（読取専用・SLACK_CONVERSATION_READ_MODE=live のときだけ実接続）。
+  // 送信系とは独立させ、read が落ちても送信・案件詳細に波及させない。
+  const slackConversationReader: SlackConversationReader =
+    config.slackConversationReadMode === "live" &&
+    /^xoxb-[A-Za-z0-9-]+$/.test(config.slackBotToken)
+      ? new SlackWebApiConversationReader(
+          new DynamicSlackWebApiClient(() => sec("SLACK_BOT_TOKEN")),
+          config.slackBotUserId || null)
+      : new DisabledSlackConversationReader();
   const slackDispatchEnabled =
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
@@ -1587,6 +1601,12 @@ export function createApp(
     dependencies.contractOutbound,
     contractOutboundWriteEnabled
   ));
+  // 案件の Slack 会話履歴（読取専用・admin/legal・Matter 詳細とは独立）。
+  app.use("/api/v2", createMatterSlackHistoryRouter({
+    history: dependencies.slackHistory,
+    reader: slackConversationReader,
+    mentions: dependencies.matterMentions
+  }));
   app.use("/api/v2", createGlobalSearchRouter(
     dependencies.search ?? new MemoryGlobalSearchRepository()
   ));

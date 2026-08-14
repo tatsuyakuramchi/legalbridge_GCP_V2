@@ -4,6 +4,7 @@ import { useToast } from "./Toast";
 import { EmptyState } from "./EmptyState";
 import { CartButton } from "./MergeCart";
 import { MatterSlackPanel } from "./MatterSlackPanel";
+import { MatterSlackHistory } from "./MatterSlackHistory";
 
 type Matter = {
   id: number; matterCode: string | null; title: string; status: string; counterparty: string;
@@ -235,8 +236,11 @@ function MatterDetail({ detail, labels, canEdit, canDelete = false, canUploadAtt
       {canUploadAttachments && <MatterAttachmentUpload matterId={matter.id} onUploaded={onChanged} />}
     </DetailSection>
     <DetailSection title="送信履歴"><MatterSends matterId={matter.id} documents={detail.documents} canEdit={canEdit} /></DetailSection>
+    {canEdit && <DetailSection title="コミュニケーション">
+      <MatterSlackHistory matterId={matter.id} />
+      <MatterSlackPanel matterId={matter.id} />
+    </DetailSection>}
     {matter.remarks && <DetailSection title="備考"><p>{matter.remarks}</p></DetailSection>}
-    {canEdit && <MatterSlackPanel matterId={matter.id} />}
     {canDelete && <MatterDangerZone matterId={matter.id} title={matter.title} onDeleted={onDeleted} />}
   </aside>;
 }

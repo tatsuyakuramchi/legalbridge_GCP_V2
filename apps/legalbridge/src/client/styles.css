@@ -1880,3 +1880,17 @@ textarea { width: 100%; min-height: 90px; resize: vertical; line-height: 1.6; }
 .sample-viewer-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
 .sample-frame { width: 100%; height: 74vh; border: 1px solid #e5e7eb; border-radius: 6px; background: #fff; }
 @media (max-width: 900px) { .sample-layout { grid-template-columns: 1fr; } .sample-list { max-height: 32vh; } }
+
+/* ── 案件の Slack 会話履歴（コミュニケーション） ───────────────────────── */
+.slack-history { margin-bottom: 10px; }
+.slack-history-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.slack-thread { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.slack-thread li { border-left: 3px solid var(--border, #dbe2ea); padding: 6px 0 6px 10px; }
+.slack-thread li.from-bot { border-left-color: #16324f; }
+.slack-msg-head { display: flex; align-items: baseline; gap: 8px; }
+.slack-msg-head strong { font-size: 12.5px; }
+.slack-msg-head small { color: var(--ink-soft, #6b7280); font-size: 11px; }
+.slack-root-badge { border: 1px solid var(--border, #d6dde6); border-radius: 3px; padding: 0 4px; }
+.slack-thread li p { margin: 3px 0 0; font-size: 12.5px; line-height: 1.6; white-space: pre-wrap; }
+.slack-deliveries { list-style: none; margin: 8px 0 0; padding: 0; font-size: 12px; }
+.slack-deliveries li { padding: 3px 0; border-top: 1px solid var(--border-soft, #eef1f5); }

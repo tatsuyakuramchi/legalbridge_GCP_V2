@@ -182,6 +182,31 @@ IGLA（051/052）は Deal Sheet の取引モデルで Schedule 1（License-Out�
 （Product-Out）の出力を切り替える2部構成。本体と付属書は別文書なので、付属書を使う
 案件では両方から作成し、Deal Sheet 第4節の Incorporated と付属書側の出力選択をそろえる。
 
+### 2-8. 案件 Slack 会話履歴（`slack-matter-thread-history-fix-plan.md`）
+
+案件詳細の「コミュニケーション」に Slack スレッドを時系列表示する。既存の
+`lb_v2_slack_notification_history` の `slack_channel_id` / `slack_message_ts` を
+スレッドアンカーとして再利用するため **DB スキーマ変更・grant 追加は不要**。
+
+読取は既定 OFF。点火はデプロイ時の substitutions のみ：
+
+```bash
+jq '.substitutions._SLACK_CONVERSATION_READ_MODE = "live"' /tmp/build-flags.json > /tmp/bf.json && mv /tmp/bf.json /tmp/build-flags.json
+# 任意：発言者が LegalBridge か依頼者かの判定精度を上げる（省略可）
+jq '.substitutions._SLACK_BOT_USER_ID = "U0XXXXXXXXX"' /tmp/build-flags.json > /tmp/bf.json && mv /tmp/bf.json /tmp/build-flags.json
+```
+
+前提（verify がデプロイ前に検査する）：`_SLACK_BOT_TOKEN_SECRET` 設定済み・
+`_SLACK_NOTIFICATION_HISTORY_ENABLED=true`（アンカーの供給元のため）。
+
+**Slack App 側**：DM スレッドの読取に `im:history` が必要。付与後は再インストール
+（ワークスペース管理者の承認が要る場合あり）。未付与のまま live にしても案件画面は
+壊れず、Slack パネルだけが「参照権限がありません」と表示する。
+
+送信側は同時に「1案件 = 1スレッド」へ統一される（2回目以降の通知は既存 root への
+返信になる）。宛先が変わって既存スレッドの DM と一致しない場合は送信しない
+（fail-closed）。読取 OFF のままでも送信側のスレッド集約は有効。
+
 ## 3. 利用者開放（認証・ロール）
 - `_AUTH_LEGAL_EMAILS`（法務メンバー）・`_AUTH_REQUESTER_DOMAINS`（依頼者ドメイン）を実値に。
 - アクセス方式の確定：現 cloudrun-iam（Google アカウントで IAM 付与）か IAP 化（`iap-access.md`）。

@@ -96,6 +96,13 @@ export const config = {
   slackDeliveryMode:
     process.env.SLACK_DELIVERY_MODE === "live" ? "live" as const : "disabled" as const,
   slackBotToken: (process.env.SLACK_BOT_TOKEN ?? "").trim(),
+  // 案件画面の Slack 会話読取（conversations.replies）。DB上の送信履歴・重複防止
+  // （SLACK_NOTIFICATION_HISTORY_ENABLED）とは別物なので名称を分離する。
+  // DM スレッドの読取には bot token ＋ im:history が必要。既定 disabled。
+  slackConversationReadMode:
+    process.env.SLACK_CONVERSATION_READ_MODE === "live" ? "live" as const : "disabled" as const,
+  // 自bot の user ID（省略可）。発言者が LegalBridge か依頼者かの判定に使う。
+  slackBotUserId: (process.env.SLACK_BOT_USER_ID ?? "").trim(),
   // 案件 Slack スレッド（法務相談）機能。投稿先チャンネルと有効化フラグ。
   slackLegalConsultChannel: (process.env.SLACK_LEGAL_CONSULT_CHANNEL ?? "").trim(),
   matterSlackEnabled: process.env.MATTER_SLACK_ENABLED === "true",

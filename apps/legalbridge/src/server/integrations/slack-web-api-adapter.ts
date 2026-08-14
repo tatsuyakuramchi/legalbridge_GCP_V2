@@ -89,6 +89,13 @@ export class SlackWebApiDeliveryAdapter implements SlackDeliveryAdapter {
       throw new Error("Slack delivery requires a valid user ID");
     }
     const clientMessageId = fingerprintToClientMessageId(request.idempotencyKey);
+    // 既存スレッドがある場合は conversations.open を省く。ただし宛先の DM チャンネルが
+    // 本当にこの相手のものかを必ず確認し、一致しなければ送信しない（fail-closed・§8.4）。
+    // requester 差し替え時に他人のスレッドへ投稿する事故を防ぐ。
+    const anchorChannelId = typeof request.channelId === "string" ? request.channelId : null;
+    const threadTs = typeof request.rootThreadTs === "string" ? request.rootThreadTs : null;
+    const reuseThread = Boolean(anchorChannelId && threadTs);
+
     const opened = await this.client.post("conversations.open", {
       users: request.userId,
       return_im: false
@@ -102,6 +109,12 @@ export class SlackWebApiDeliveryAdapter implements SlackDeliveryAdapter {
         "invalid_dm_channel"
       );
     }
+    if (reuseThread && anchorChannelId !== channelId) {
+      throw new SlackWebApiError(
+        "Slack thread anchor does not belong to the current recipient",
+        "recipient_thread_mismatch"
+      );
+    }
 
     const posted = await this.client.post("chat.postMessage", {
       channel: channelId,
@@ -109,7 +122,9 @@ export class SlackWebApiDeliveryAdapter implements SlackDeliveryAdapter {
       text: fallbackText(request),
       blocks: messageBlocks(request),
       unfurl_links: false,
-      unfurl_media: false
+      unfurl_media: false,
+      // 2回目以降は既存 root へのスレッド返信。初回は thread_ts なし＝新規 root。
+      ...(reuseThread ? { thread_ts: threadTs } : {})
     }) as {
       channel?: unknown;
       ts?: unknown;
@@ -124,7 +139,9 @@ export class SlackWebApiDeliveryAdapter implements SlackDeliveryAdapter {
     }
     return {
       channelId,
-      messageTs: posted.ts
+      messageTs: posted.ts,
+      // 返信のときは root ts を返す（履歴のアンカーを案件で一意に保つため）。
+      threadRootTs: reuseThread ? (threadTs as string) : posted.ts
     };
   }
 }

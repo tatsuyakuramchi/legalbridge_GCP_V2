@@ -14,11 +14,19 @@ export interface SlackDeliveryRequest {
   body: string;
   nextAction: string;
   actions: SlackDryRunEnvelope["message"]["actions"];
+  // 1案件=1スレッド：既存 anchor があれば同じ DM チャンネルのスレッドへ返信する。
+  // 未指定なら従来どおり conversations.open → 新規 root を作る。
+  channelId?: string | null;
+  rootThreadTs?: string | null;
 }
 
 export interface SlackDeliveryReceipt {
   channelId: string;
   messageTs: string;
+  // 投稿先スレッドの root ts。新規 root のときは messageTs と同値、
+  // 既存スレッドへの返信のときは root 側の ts。履歴にはこちらを保存し、
+  // 1案件の全通知が同じアンカーを指すようにする（legacy root の判別に必要）。
+  threadRootTs?: string;
 }
 
 export interface SlackDeliveryAdapter {
@@ -53,6 +61,8 @@ export async function dispatchSlackNotification(options: {
   adapter: SlackDeliveryAdapter;
   history: SlackNotificationHistoryRepository;
   recordedBy: string;
+  // 案件の canonical スレッド解決（省略時は従来どおり毎回新規 root）。
+  threadAnchors?: Pick<SlackNotificationHistoryRepository, "findMatterThreadAnchor">;
 }): Promise<SlackDispatchExecution> {
   const gate = evaluateSlackDispatchGate(options.envelope, {
     ...options.gateSettings,
@@ -85,6 +95,17 @@ export async function dispatchSlackNotification(options: {
   if (!userId) {
     throw new Error("Slack recipient disappeared after dispatch gate evaluation");
   }
+  // 1案件=1スレッド：既存 anchor があれば thread_ts を渡して同一スレッドへ集約する。
+  // anchor 取得の失敗は送信を止めない（新規 root として送る＝従来動作へ縮退）。
+  const matterId = options.envelope.plannedHistoryEntry.matterId;
+  let anchor = null;
+  if (options.threadAnchors && matterId) {
+    try {
+      anchor = await options.threadAnchors.findMatterThreadAnchor(matterId);
+    } catch {
+      anchor = null;
+    }
+  }
   const receipt = await options.adapter.send({
     userId,
     idempotencyKey: options.envelope.fingerprint,
@@ -92,7 +113,9 @@ export async function dispatchSlackNotification(options: {
     headline: options.envelope.message.headline,
     body: options.envelope.message.body,
     nextAction: options.envelope.message.nextAction,
-    actions: options.envelope.message.actions
+    actions: options.envelope.message.actions,
+    channelId: anchor?.channelId ?? null,
+    rootThreadTs: anchor?.rootMessageTs ?? null
   });
   if (!/^[A-Z0-9]+$/.test(receipt.channelId) ||
       !/^\d+\.\d+$/.test(receipt.messageTs)) {
@@ -102,7 +125,8 @@ export async function dispatchSlackNotification(options: {
   await options.history.append({
     ...options.envelope.plannedHistoryEntry,
     slackChannelId: receipt.channelId,
-    slackMessageTs: receipt.messageTs,
+    // スレッド返信のときは root ts を保存する（案件のアンカーを一意に保つため）。
+    slackMessageTs: receipt.threadRootTs ?? receipt.messageTs,
     recordedBy: options.recordedBy
   });
   return {

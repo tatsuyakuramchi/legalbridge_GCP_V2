@@ -167,3 +167,58 @@ test("不正な送信結果は履歴へ記録しない", async () => {
   );
   assert.deepEqual(await history.list(["LEGAL-10"]), []);
 });
+
+// ── 1案件=1スレッド（既存 anchor を送信リクエストへ渡す・方針 §8）──────────────
+test("既存 anchor があれば thread 情報を送信リクエストへ渡す", async () => {
+  const adapter = new MemorySlackDeliveryAdapter();
+  const history = new MemorySlackNotificationHistoryRepository();
+  history.seedRow({
+    matterId: 10, issueKey: "LEGAL-1", fingerprint: "seed", requesterStatus: "intake",
+    outcome: "sent", headline: "受付", slackChannelId: "D0123456789",
+    slackMessageTs: "1785580000.000100", recordedBy: "test"
+  } as never);
+  const result = await dispatchSlackNotification({
+    envelope: envelope(), gateSettings: settings(), adapter, history,
+    threadAnchors: history, recordedBy: "admin@arclight.co.jp"
+  });
+  assert.equal(result.status, "sent");
+  assert.equal(adapter.requests[0].channelId, "D0123456789");
+  assert.equal(adapter.requests[0].rootThreadTs, "1785580000.000100");
+});
+
+test("anchor が無ければ thread 情報は null（新規 root）", async () => {
+  const adapter = new MemorySlackDeliveryAdapter();
+  const history = new MemorySlackNotificationHistoryRepository();
+  await dispatchSlackNotification({
+    envelope: envelope(), gateSettings: settings(), adapter, history,
+    threadAnchors: history, recordedBy: "admin@arclight.co.jp"
+  });
+  assert.equal(adapter.requests[0].channelId, null);
+  assert.equal(adapter.requests[0].rootThreadTs, null);
+});
+
+test("anchor 取得失敗でも送信は止めない（新規 root へ縮退）", async () => {
+  const adapter = new MemorySlackDeliveryAdapter();
+  const history = new MemorySlackNotificationHistoryRepository();
+  const result = await dispatchSlackNotification({
+    envelope: envelope(), gateSettings: settings(), adapter, history,
+    threadAnchors: { findMatterThreadAnchor: async () => { throw new Error("db down"); } },
+    recordedBy: "admin@arclight.co.jp"
+  });
+  assert.equal(result.status, "sent");
+  assert.equal(adapter.requests[0].rootThreadTs, null);
+});
+
+test("スレッド返信の履歴には root ts を保存する（アンカーを一意に保つ）", async () => {
+  const adapter = new MemorySlackDeliveryAdapter({
+    channelId: "D0123456789",
+    messageTs: "1785589999.000900",
+    threadRootTs: "1785580000.000100"
+  });
+  const history = new MemorySlackNotificationHistoryRepository();
+  await dispatchSlackNotification({
+    envelope: envelope(), gateSettings: settings(), adapter, history,
+    recordedBy: "admin@arclight.co.jp"
+  });
+  assert.equal(history.rows.at(-1)?.slackMessageTs, "1785580000.000100");
+});

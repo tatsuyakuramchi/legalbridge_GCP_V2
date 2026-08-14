@@ -931,6 +931,27 @@ case "${SLACK_APPROVAL_WRITES_ENABLED}" in
     exit 1
     ;;
 esac
+
+# 案件 Slack 会話読取（読取専用）。live にするには bot token と送信履歴が必要。
+# DM スレッドの参照には Slack App 側の im:history が要る（付与漏れは実行時に
+# missing_scope として UI へ出るため、ここではデプロイ前提条件だけを検査する）。
+case "${SLACK_CONVERSATION_READ_MODE:-disabled}" in
+  disabled) ;;
+  live)
+    if [ -z "${SLACK_BOT_TOKEN_SECRET}" ]; then
+      echo "Slack conversation read blocked: a bot token secret is required."
+      exit 1
+    fi
+    if [ "${SLACK_NOTIFICATION_HISTORY_ENABLED}" != "true" ]; then
+      echo "Slack conversation read blocked: notification history must be enabled (thread anchors come from it)."
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Deployment blocked: SLACK_CONVERSATION_READ_MODE must be disabled or live."
+    exit 1
+    ;;
+esac
 case "${DRIVE_STORAGE_ENABLED}" in
   false)
     ;;

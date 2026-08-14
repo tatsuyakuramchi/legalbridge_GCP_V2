@@ -42,7 +42,9 @@ test("DMを開いて現在地・次の行動・確認ボタンを送信する", 
 
   assert.deepEqual(receipt, {
     channelId: "D0123456789",
-    messageTs: "1785580000.000100"
+    messageTs: "1785580000.000100",
+    // 新規 root なので root ts は自身の ts と同値。
+    threadRootTs: "1785580000.000100"
   });
   assert.equal(client.calls[0].method, "conversations.open");
   assert.equal(client.calls[0].body.users, "U08217X0A07");
@@ -185,4 +187,58 @@ test("不正な宛先と通知指紋はAPI呼出し前に拒否する", async ()
     /SHA-256 fingerprint/
   );
   assert.deepEqual(client.calls, []);
+});
+
+// ── 1案件=1スレッド（thread_ts の付与と recipient mismatch の fail-closed）─────
+test("初回送信は thread_ts なし・receipt の threadRootTs は自身の ts", async () => {
+  const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
+  const adapter = new SlackWebApiDeliveryAdapter({
+    post: async (method, body) => {
+      calls.push({ method, body });
+      if (method === "conversations.open") return { channel: { id: "D0123456789" } };
+      return { channel: "D0123456789", ts: "1785580000.000100" };
+    }
+  });
+  const receipt = await adapter.send(deliveryRequest);
+  const posted = calls.find((call) => call.method === "chat.postMessage")!;
+  assert.equal("thread_ts" in posted.body, false);
+  assert.equal(receipt.messageTs, "1785580000.000100");
+  assert.equal(receipt.threadRootTs, "1785580000.000100");
+});
+
+test("既存 anchor があれば thread_ts を付けて返信し、root ts を receipt に返す", async () => {
+  const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
+  const adapter = new SlackWebApiDeliveryAdapter({
+    post: async (method, body) => {
+      calls.push({ method, body });
+      if (method === "conversations.open") return { channel: { id: "D0123456789" } };
+      return { channel: "D0123456789", ts: "1785589999.000900" };
+    }
+  });
+  const receipt = await adapter.send({
+    ...deliveryRequest, channelId: "D0123456789", rootThreadTs: "1785580000.000100"
+  });
+  const posted = calls.find((call) => call.method === "chat.postMessage")!;
+  assert.equal(posted.body.thread_ts, "1785580000.000100");
+  assert.equal(receipt.messageTs, "1785589999.000900");
+  // 履歴に保存されるのは root 側（案件のアンカーを一意に保つ）。
+  assert.equal(receipt.threadRootTs, "1785580000.000100");
+});
+
+test("anchor のチャンネルが現在の宛先と違えば送信しない（fail-closed）", async () => {
+  let postedMessage = false;
+  const adapter = new SlackWebApiDeliveryAdapter({
+    post: async (method) => {
+      if (method === "conversations.open") return { channel: { id: "D9999999999" } };
+      postedMessage = true;
+      return { channel: "D9999999999", ts: "1785580000.000100" };
+    }
+  });
+  await assert.rejects(
+    () => adapter.send({
+      ...deliveryRequest, channelId: "D0123456789", rootThreadTs: "1785580000.000100"
+    }),
+    (error: unknown) => error instanceof SlackWebApiError &&
+      error.code === "recipient_thread_mismatch");
+  assert.equal(postedMessage, false);
 });

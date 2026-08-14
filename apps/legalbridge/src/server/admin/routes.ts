@@ -274,6 +274,8 @@ export function createAdminRouter(
         },
         adapter: slackDelivery.adapter,
         history,
+        // 1案件=1スレッド：既存 anchor があれば同じスレッドへ返信する。
+        threadAnchors: history,
         recordedBy: response.locals.currentUser!.email
       });
       const status = execution.status === "sent"
