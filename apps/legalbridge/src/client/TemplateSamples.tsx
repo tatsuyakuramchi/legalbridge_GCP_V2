@@ -69,11 +69,13 @@ export function TemplateSamples() {
                 onClick={() => setSelected({ key: t.templateKey, variant: t.variants[0].id })}>
                 {t.label}
               </button>
-              {t.variants.length > 1 && selected?.key === t.templateKey &&
+              {/* 複数バリアント（IGLA の取引モデル別）は選択前から常時見せる。
+                  一覧を眺めるだけで「二通りある」ことが分かるように。 */}
+              {t.variants.length > 1 &&
                 <div className="sample-variants">
                   {t.variants.map((v) =>
                     <button key={v.id} type="button"
-                      className={`variant-chip ${selected?.variant === v.id ? "active" : ""}`}
+                      className={`variant-chip ${selected?.key === t.templateKey && selected?.variant === v.id ? "active" : ""}`}
                       onClick={() => setSelected({ key: t.templateKey, variant: v.id })}>
                       {v.label}
                     </button>)}
