@@ -192,7 +192,17 @@ Backlog/CloudSign はカスタムヘッダ不可のため、リレーが `?token
      （scopes: commands, chat:write。**案件 Slack パネルの会話取得には `channels:history` も必要**
      ＝法務相談チャンネルの `conversations.replies`。依頼者DM の履歴を読むなら `im:history` も。
      Backlog 未 live の間は dry-run＝隔離台帳のみで安全に検証可）。
-   - CloudSign Webhook は 2-5 の CloudSign live と同時に（secret は作成済み）
+   - CloudSign Webhook：**受け口の疎通確認済み（2026-08-17）**。
+     URL は `<RECV_URL>/internal/webhooks/cloudsign?token=<CLOUDSIGN_WEBHOOK_TOKEN>`
+     （`RECV_URL` は `lb-v2-receiver` の Cloud Run URL）。CloudSign はカスタムヘッダーを
+     送れないため、リレーが `?token=` → `X-Webhook-Token` に変換する。
+     スモーク結果＝不正トークン **401** ／ 正トークン **200**
+     `{"ok":true,"skipped":"unknown document","status":"sent"}`（存在しない書類IDなので更新なし）。
+     テスト行は `lb_v2_webhook_receipts` から削除済み。
+     CloudSign が送る `status` は **1=送信済 / 2=締結 / 3=却下**。`(documentID, status)` で
+     べき等化しているため再送は `skipped:"duplicate"`。締結時は
+     `lb_v2_cloudsign_requests.status` 更新＋契約を `executed`（grant 022 / 031）。
+     取りこぼしは 3 時間毎の cloudsign-sync が拾う（二重経路）。
 
 ### 2-5. 統合 live 化（Drive / Gmail / CloudSign）
 - **Drive ✅ 点火済み（2026-08-10）**：ADC 方式（鍵 Secret 不要・V1 本番と同じ）・保存先 V2_FOLD
