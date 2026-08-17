@@ -11,6 +11,10 @@ export interface MatterSlackThreadRecord {
   rootText: string;
   createdBy: string;
   createdAt: string;
+  // アンカーの出所。"v1" は V1（matter_slack_threads）で立てられ、まだ V2 に
+  // 引き継いでいないスレッド。V2 で作ったものは "v2"。
+  // 画面で「V1 から継続中」と示し、二重 root を作っていないことを確認できるようにする。
+  source?: "v1" | "v2";
 }
 
 export interface MatterSlackThreadCreate {
@@ -29,29 +33,66 @@ export interface MatterSlackThreadRepository {
 
 const COLUMNS = `matter_id, channel_id, thread_ts, root_text, created_by, created_at`;
 
-function mapRow(row: Record<string, any>): MatterSlackThreadRecord {
+function mapRow(row: Record<string, any>, source: "v1" | "v2" = "v2"): MatterSlackThreadRecord {
   return {
     matterId: Number(row.matter_id),
     channelId: row.channel_id,
     threadTs: row.thread_ts,
-    rootText: row.root_text,
-    createdBy: row.created_by,
-    createdAt: new Date(row.created_at).toISOString()
+    // V1 側は root_text / created_by が NULL 可。画面の型を崩さないよう空文字へ寄せる。
+    rootText: row.root_text ?? "",
+    createdBy: row.created_by ?? "",
+    createdAt: new Date(row.created_at).toISOString(),
+    source
   };
 }
 
 export class PgMatterSlackThreadRepository implements MatterSlackThreadRepository {
   constructor(private readonly database: DatabasePool) {}
 
+  // V1 テーブルの読取を1度だけ試し、権限が無い環境では以後スキップする
+  // （grant 054 未適用でも案件スレッド機能を止めないため）。
+  private v1Readable: boolean | null = null;
+
   async findByMatter(matterId: number) {
     const result = await this.database.query(
       `SELECT ${COLUMNS} FROM lb_v2_matter_slack_threads WHERE matter_id = $1 LIMIT 1`,
       [matterId]
     );
-    return result.rows[0] ? mapRow(result.rows[0]) : null;
+    if (result.rows[0]) return mapRow(result.rows[0], "v2");
+    // V2 に無ければ V1 のスレッドを探す。V1 で立てたスレッドを「未作成」と見て
+    // しまうと、同じ案件に2本目の root を立ててしまう（1案件=1スレッドが崩れる）。
+    return this.findV1Thread(matterId);
+  }
+
+  private async findV1Thread(matterId: number): Promise<MatterSlackThreadRecord | null> {
+    if (this.v1Readable === false) return null;
+    try {
+      const result = await this.database.query(
+        `SELECT matter_id, channel_id, thread_ts, root_text, created_by, created_at
+           FROM matter_slack_threads WHERE matter_id = $1 LIMIT 1`,
+        [matterId]
+      );
+      this.v1Readable = true;
+      return result.rows[0] ? mapRow(result.rows[0], "v1") : null;
+    } catch (error) {
+      // テーブルが無い（42P01）／権限が無い（42501）環境では V1 参照を諦める。
+      // それ以外のエラーは握り潰さない（DB 障害を「スレッド未作成」に見せない）。
+      const code = (error as { code?: string }).code;
+      if (code === "42P01" || code === "42501") {
+        this.v1Readable = false;
+        console.warn("[matter-slack] V1 matter_slack_threads is not readable; " +
+          "threads created in V1 will look unlinked (apply grant 054 to fix)");
+        return null;
+      }
+      throw error;
+    }
   }
 
   async create(entry: MatterSlackThreadCreate) {
+    // V1 に既にスレッドがある案件では新規作成しない。ルートは create の前に
+    // findByMatter を見るのでここへは来ないが、競合時の最後の砦として残す。
+    const v1 = await this.findV1Thread(entry.matterId);
+    if (v1) return v1;
     await this.database.query(
       `INSERT INTO lb_v2_matter_slack_threads (matter_id, channel_id, thread_ts, root_text, created_by)
        VALUES ($1,$2,$3,$4,$5)
@@ -80,7 +121,8 @@ export class MemoryMatterSlackThreadRepository implements MatterSlackThreadRepos
       threadTs: entry.threadTs,
       rootText: entry.rootText,
       createdBy: entry.createdBy,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      source: "v2"
     };
     this.records.push(record);
     return record;

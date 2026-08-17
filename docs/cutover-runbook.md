@@ -205,7 +205,18 @@ psql "$RUNTIME_ADMIN_DSN" -v confirm_license_out=SEED_LICENSE_OUT_TEMPLATE \
 | 050 | `license_out_en` | ARC-LOUT | ✅ 適用済み（2026-08-14・version 89） |
 | 051 | `igla_license_en`（IGLA 本体） | ARC-IGLA | ✅ 適用済み（91項目・version 1） |
 | 052 | `igla_license_annex_en`（IGLA 付属書1/2/3） | ARC-IGLAX | ✅ 適用済み（72項目・version 1） |
-| 053 | `purchase_order` / `intl_purchase_order`（単一明細フォールバックの出し分け） | 既存 | ⬜ 未適用（`-v confirm_po_fallback=HIDE_PO_SINGLE_LINE_FIELDS`） |
+| 053 | `purchase_order` / `intl_purchase_order`（単一明細フォールバックの出し分け） | 既存 | ✅ 適用済み（2026-08-17） |
+
+**054**（テンプレートではなく grant）：V1 の `matter_slack_threads` に **SELECT のみ**を付与し、
+V1 で立てた案件スレッドを V2 が引き継げるようにする。未適用のままだと、V1 でスレッドを
+立てた案件が V2 では「未作成」に見え、作成すると同じ案件に2本目の root が立つ
+（V1 21件／V2 3件／重複0件・2026-08-17 時点）。V1 データは書き換えない。
+
+```bash
+psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
+  -v confirm_matter_slack_thread=GRANT_PRODUCTION_MATTER_SLACK_THREAD_READ \
+  -f infra/gcp/sql/054_production_matter_slack_thread_grants.sql
+```
 
 053 だけは新規テンプレートではなく **現行版の `field_schema` の書き換え**（`html_source` は
 無変更）。明細が0件のときだけ単一明細フォールバック項目を出すようにし、発注書からは

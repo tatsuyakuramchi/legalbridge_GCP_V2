@@ -868,9 +868,47 @@ participant の任意項目2つだった。
 `IPアドレス` のように IP が明示され、かつ宛先語（宛先・署名者・メールアドレス等）が
 併記されていない場合にのみ `CLOUDSIGN_IP_RESTRICTED` を返す。
 
+## 27. Slice 3 の実施結果（2026-08-17）
+
+### §7.2〜§7.4 は既に実装済みだった
+
+案件 Slack スレッド機能そのものは Phase 7（`37573ac`）で V1 から移植済みで、
+以下がすべて存在する。計画の「V1 から移植する」は不要だった。
+
+| 計画の項目 | V2 の実装 |
+|---|---|
+| §7.1 read/write 両対応 | `slack-matter-channel.ts`（書込）＋ `slack-conversation-reader.ts`（読取） |
+| §7.2 thread repository | `matter-slack-thread-repository.ts` |
+| §7.3 thread 作成 / 会話取得 / 投稿 | `matter-slack-routes.ts`（`/thread` `/messages` `/replies` `/template`） |
+| §7.4 Matter UI | 案件詳細の Slack パネル |
+
+### 実際の欠落は保存先テーブルの不一致
+
+```text
+V1: matter_slack_threads          21件（2026-07: 14 / 2026-08: 7）＝現役
+V2: lb_v2_matter_slack_threads     3件（grant 024・隔離方針）
+重複（同一 matter_id）              0件
+```
+
+V2 は既存業務テーブルに触れない方針で別テーブルを使っており、**V1 の 21件が
+V2 から見えない**。V1 でスレッドを立てた案件を V2 で開くと「未作成」と表示され、
+作成すると同じ案件に2本目の root が立つ。V1 は当月も使われているため実害がある。
+
+### 実装（読取フォールバックのみ）
+
+`PgMatterSlackThreadRepository.findByMatter` は、`lb_v2_matter_slack_threads` に
+行が無いときだけ V1 の `matter_slack_threads` を読み、見つかればそれをアンカーとして
+返す（`source: "v1" | "v2"`）。`create` も V1 側を先に確認し、既存があれば
+lb_v2 へ書かずにそれを返す＝2本目の root を作らない。
+
+- V1 テーブルへは **SELECT のみ**（grant 054）。V1 のデータは書き換えない
+- 新規スレッドは従来どおり `lb_v2_matter_slack_threads` へ保存
+- grant 054 未適用（`42501`）／テーブル無し（`42P01`）は null へ縮退し、
+  案件スレッド機能自体は止めない。それ以外の DB エラーは握り潰さない
+  （障害を「スレッド未作成」に見せない）
+- 計画 §8 のとおり、過去の DM 通知を Matter thread へ再構成することはしない
+
 ### 未着手
 
-- Slice 3 / 4（Matter Slack backend の V1 移植・`matter_slack_threads`）
-  §6.1 のとおり本番 DB の存在確認が先。現行 V2 は
-  `lb_v2_slack_notification_history` を canonical thread として運用中（`6dfe5c0`）。
 - Slice 5 の実地試験（CloudSign 実送信・Slack `im:history` 付与後の確認）
+- grant 054 の本番適用
