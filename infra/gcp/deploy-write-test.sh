@@ -28,6 +28,14 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 [ -f "${CONFIG}" ] || die "${CONFIG} が見つかりません（リポジトリのルートで実行してください）"
 command -v jq >/dev/null || die "jq が必要です"
 
+# cloudbuild の inline シェルを送信前に検査する。ビルドは 1 回数分かかり、
+# 失敗しても "step exited with non-zero status: 127" しか出ないため、
+# シェル構文の事故はここで止める（実際に 1 回無駄にした）。
+CHECKER="$(dirname "$0")/check-cloudbuild.py"
+if [ -f "${CHECKER}" ] && command -v python3 >/dev/null; then
+  python3 "${CHECKER}" "${CONFIG}" || die "${CONFIG} のシェルスクリプトに問題があります（上の ERROR を修正してください）"
+fi
+
 # ── 1. 認証（切れていると proxy もビルドも落ちるので最初に止める）──────────────
 if ! gcloud auth list --filter=status:ACTIVE --format="value(account)" 2>/dev/null | grep -q .; then
   die "gcloud の認証が切れています。先に 'gcloud auth login' を実行してください。"
