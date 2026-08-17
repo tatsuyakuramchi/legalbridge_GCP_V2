@@ -750,7 +750,10 @@ test("共通文書番号・担当者・再発行情報を互換キーへ展開�
   assert.equal(context.BASE_DOC_NO, "ARC-LIC-2025-0001");
   assert.equal(context.REVISION, 2);
   assert.equal(context.isReissue, true);
-  assert.equal(context.VENDOR_IS_CORPORATION, true);
+  // 発注書テンプレートが eq VENDOR_IS_CORPORATION "法人" で比較するため、
+  // boolean ではなく法人="法人" / 個人=空文字を返す（個人は falsy のまま）。
+  assert.equal(context.VENDOR_IS_CORPORATION, "法人");
+  assert.equal(context.VENDOR_SUFFIX, "御中");
 });
 
 test("共通生成キーとtemplate説明記号を未マッピング扱いしない", () => {

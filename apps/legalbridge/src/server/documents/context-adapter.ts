@@ -6,8 +6,18 @@ export const COMMON_GENERATED_VARIABLES = new Set([
   "CONTRACT_NO", "DOC_NO", "ORDER_NO", "SIGN_DATE",
   "STAFF_NAME", "STAFF_DEPARTMENT", "STAFF_EMAIL", "STAFF_PHONE",
   "BASE_DOC_NO", "REVISION", "isReissue", "showReissueBanner",
-  "VENDOR_IS_CORPORATION"
+  "VENDOR_IS_CORPORATION", "VENDOR_SUFFIX", "LICENSOR_SUFFIX"
 ]);
+
+// 「個人」かどうか。区分は文字列（法人／個人）で持つ画面と boolean で持つ画面があり、
+// 取引先マスタからの自動入力・手入力・旧データが混在するため両方を受ける。
+// 未入力は個人と断定できないので法人扱い（相手方は法人が大多数で、テンプレートの
+// 既定も御中）。
+function isIndividual(value: unknown): boolean {
+  if (value === false) return true;
+  const text = String(value ?? "").trim();
+  return text === "個人" || text === "false";
+}
 
 export function buildCommonDocumentContext(formData: FormData) {
   const details = isRecord(formData.details) ? formData.details : {};
@@ -32,6 +42,14 @@ export function buildCommonDocumentContext(formData: FormData) {
   const isReissue = toBoolean(pick("isReissue", "再発行フラグ")) ||
     Boolean(baseDocumentNumber) || revisionNumber > 0;
 
+  // 敬称は区分から導出する。テンプレートは敬称が空だと「御中」を既定にするため、
+  // 区分だけ個人にしても敬称欄が空なら法人宛の「御中」で出てしまっていた。
+  // 手入力の敬称（殿など）があればそれを優先する。
+  const vendorIndividual = isIndividual(
+    pick("VENDOR_IS_CORPORATION", "取引先種別", "vendorEntityType"));
+  const licensorIndividual = isIndividual(
+    pick("LICENSOR_IS_CORPORATION", "許諾者種別", "licensorEntityType"));
+
   return {
     ...buildRenderContext({ ...details, ...formData }),
     CONTRACT_NO: pick("CONTRACT_NO", "契約書番号", "contractNumber") || documentNumber,
@@ -47,8 +65,13 @@ export function buildCommonDocumentContext(formData: FormData) {
     isReissue,
     showReissueBanner:
       source.showReissueBanner === undefined ? isReissue : toBoolean(source.showReissueBanner),
-    VENDOR_IS_CORPORATION:
-      pick("VENDOR_IS_CORPORATION", "取引先種別", "vendorEntityType") !== "個人"
+    // テンプレートは `eq VENDOR_IS_CORPORATION "法人"`（発注書）と
+    // `or VENDOR_IS_CORPORATION VENDOR_REP`（契約マスタ）の両方で使う。boolean を
+    // 渡していたため前者が常に偽になり、法人でも「会社名（受注者）」欄が出なかった。
+    // 法人は "法人"、個人は空文字にすると、文字列比較にも真偽判定にも正しく働く。
+    VENDOR_IS_CORPORATION: vendorIndividual ? "" : "法人",
+    VENDOR_SUFFIX: pick("VENDOR_SUFFIX", "取引先敬称") || (vendorIndividual ? "様" : "御中"),
+    LICENSOR_SUFFIX: pick("LICENSOR_SUFFIX", "許諾者敬称") || (licensorIndividual ? "様" : "御中")
   };
 }
 
