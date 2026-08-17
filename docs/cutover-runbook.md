@@ -165,6 +165,8 @@ Backlog/CloudSign はカスタムヘッダ不可のため、リレーが `?token
   - CloudSign：client_id を画面の APIキータブから `cloudsign-client-id` へ（リポジトリ厳禁）＋宛先 allowlist（任意・空=無制限）＋
     `_CLOUDSIGN_MODE=live`＋`_CONFIRM_CLOUDSIGN_DISPATCH`＋`_CLOUDSIGN_REQUEST_HISTORY_ENABLED`。
     live 後に cloudsign-sync resume＋CloudSign Webhook 登録（token secret 作成済み）で executed 遷移が自動化。
+    システム外で作った契約書は案件に **PDF で添付**すれば、その添付から直接依頼できる
+    （テンプレート不要・Drive の実体をそのまま送る）。PDF 以外は依頼時に理由付きで止まる。
   - Gmail：送信元アドレス決定＋Workspace 管理者の DWD 設定＋SA 鍵 Secret（`_GWS_SA_KEY_SECRET`・
     Gmail の JWT 署名は鍵必須）→ `_GMAIL_DELIVERY_MODE=live`＋`_CONFIRM_GMAIL_DISPATCH`＋`_GMAIL_SENDER`。
 

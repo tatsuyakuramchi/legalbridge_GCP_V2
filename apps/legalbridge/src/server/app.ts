@@ -1572,7 +1572,9 @@ export function createApp(
       allowedRecipients: () => parseAllowedRecipients(rt().cloudSignAllowedRecipients),
       requestHistory: dependencies.cloudSignRequests,
       matterSends: dependencies.matterSends,
-      consoleBaseUrl: () => config.cloudSignBaseUrl
+      consoleBaseUrl: () => config.cloudSignBaseUrl,
+      // 添付（テンプレートを持たない文書）を送るために Drive の実体を読む。
+      driveStorage: dependencies.driveStorage ?? undefined
     }));
   app.use("/api/v2", createGmailInboundRouter(gmailInboundAdapter, {
     enabled: gmailInboundEnabled,

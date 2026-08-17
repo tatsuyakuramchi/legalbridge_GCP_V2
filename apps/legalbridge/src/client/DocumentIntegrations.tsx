@@ -2,6 +2,14 @@ import { useEffect, useState } from "react";
 import { useToast } from "./Toast";
 
 type Gate = { dispatchAllowed: boolean; statusLabel: string; blockerLabels: string[] };
+
+// 案件添付の種別（attachments-repository の ATTACHMENT_KINDS と対応）。
+// 添付候補の一覧に生のキーが出ると、どれが相手方ドラフトか読み取れない。
+const ATTACHMENT_KIND_LABELS: Record<string, string> = {
+  counterparty_draft: "相手方ドラフト",
+  own_draft: "自社ドラフト",
+  reference: "参考資料"
+};
 type SendHistory = {
   gmail: Array<{ recipient: string; messageId: string; recordedAt: string; recordedBy: string | null }>;
   cloudsign: Array<{ cloudSignDocumentId: string; status: string; participantCount: number; recordedAt: string; recordedBy: string | null }>;
@@ -155,6 +163,9 @@ function CloudSignRequest({ documentId, matterId = null, isAdmin = true, suggest
   const [ccList, setCcList] = useState<Participant[]>([]);
   const [sendNow, setSendNow] = useState(false);
   const [gate, setGate] = useState<Gate | null>(null);
+  // 送る実体がテンプレート描画か、案件に添付したPDFか（プレビューで判明する）。
+  type Source = { kind: "template" | "attachment"; ready: boolean; reason?: string };
+  const [source, setSource] = useState<Source | null>(null);
   const [csId, setCsId] = useState<string | null>(null);
   const [csUrl, setCsUrl] = useState<string | null>(null);
   const [statusLabel, setStatusLabel] = useState<string | null>(null);
@@ -251,6 +262,7 @@ function CloudSignRequest({ documentId, matterId = null, isAdmin = true, suggest
       const data = await response.json().catch(() => ({}));
       if (!response.ok) { setError(data.error ?? "プレビューに失敗しました。"); return; }
       setGate(data.gate);
+      setSource(data.source ?? null);
     } catch { setError("通信に失敗しました。"); } finally { setBusy(false); }
   }
   async function dispatch() {
@@ -324,10 +336,12 @@ function CloudSignRequest({ documentId, matterId = null, isAdmin = true, suggest
     </small>}
     {staffQuery.trim() !== "" && staffResults.length === 0 && vendorResults.length === 0 &&
       <small className="settings-effective">該当がありません（担当者・取引先の台帳にメール登録が必要です）。</small>}
-    {matterDocs.length > 0 && <small className="settings-effective">同じ案件の文書をまとめて添付（1つのCloudSign書類として依頼）：
+    {matterDocs.length > 0 && <small className="settings-effective">
+      同じ案件の文書をまとめて添付（1つのCloudSign書類として依頼）。
+      案件に添付したPDF（相手方ドラフト等）も選べます：
       {matterDocs.map((doc) => <label key={doc.id} style={{ display: "inline-flex", gap: "0.3em", marginRight: "0.8em" }}>
         <input type="checkbox" checked={attachIds.includes(doc.id)} onChange={() => toggleAttach(doc.id)} />
-        {doc.documentNumber ?? `#${doc.id}`}（{doc.templateType}）
+        {doc.documentNumber ?? `#${doc.id}`}（{ATTACHMENT_KIND_LABELS[doc.templateType] ?? doc.templateType}）
       </label>)}
     </small>}
     {participants.map((p, index) => <div className="doc-integration-grid" key={index}>
@@ -356,6 +370,13 @@ function CloudSignRequest({ documentId, matterId = null, isAdmin = true, suggest
     {gate && !gate.dispatchAllowed && <small className="doc-integration-blocked">
       依頼ブロック中：{gate.blockerLabels.join("／")}
     </small>}
+    {source?.kind === "attachment" && (source.ready
+      ? <small className="settings-effective">
+        テンプレートを持たない文書のため、案件に添付したPDFをそのまま送ります。
+      </small>
+      : <small className="doc-integration-blocked">
+        添付から依頼できません：{source.reason ?? "送信できるファイルがありません"}
+      </small>)}
     {csId && <div className="doc-integration-status">
       <span>CloudSign ID: {csId}／状態: {statusLabel ?? "—"}</span>
       {csUrl && <a href={csUrl} target="_blank" rel="noreferrer">CloudSignで開く{statusLabel === "draft" ? "（印影配置・送信へ）" : ""}</a>}

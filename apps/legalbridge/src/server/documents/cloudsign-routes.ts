@@ -4,9 +4,12 @@ import { z } from "zod";
 import type { DocumentRegistryRepository, RegisteredDocument } from "./registry-repository.js";
 import type { TemplateRepository } from "./template-repository.js";
 import type { PdfRenderer } from "./pdf-renderer.js";
+import { StoredDocumentTemplateVersionError } from "./document-html-renderer.js";
+import type { DriveStorage } from "./drive-storage.js";
+import { driveFileIdFromLink } from "./drive-storage.js";
 import {
-  renderStoredDocumentHtml, StoredDocumentTemplateVersionError
-} from "./document-html-renderer.js";
+  CloudSignSourceError, looksLikePdf, resolveCloudSignSourcePdf
+} from "./cloudsign-source-pdf.js";
 import type { CloudSignAdapter } from "../integrations/cloudsign-adapter.js";
 import {
   CloudSignError, isValidEmail, findDisallowedRecipient, cloudSignConsoleUrl
@@ -59,9 +62,13 @@ export function createCloudSignRouter(
     matterSends?: import("../matters/matter-send-repository.js").MatterSendRepository;
     // CloudSign コンソールURL導出用の API ベースURL（連携設定のランタイム反映のため関数も可）。
     consoleBaseUrl?: string | (() => string);
+    // 添付（テンプレートを持たない文書）を送るための Drive 取得元。
+    // 未設定なら添付からの依頼だけが 503 になり、テンプレート文書の依頼は従来どおり。
+    driveStorage?: DriveStorage;
   } = {}
 ) {
   const router = Router();
+  const driveStorage = options.driveStorage;
   const allowedRecipientsOption = options.allowedRecipients;
   const allowedRecipients = () =>
     typeof allowedRecipientsOption === "function"
@@ -86,8 +93,22 @@ export function createCloudSignRouter(
       const document = await documents.find(id);
       if (!document) return response.status(404).json({ error: "文書が見つかりません", code: "CLOUDSIGN_DOCUMENT_NOT_FOUND" });
       const gate = evaluateCloudSignDispatchGate({ documentTitle: documentTitle(document), participants }, gateSettings);
+      // 送信前に「何を送ることになるか」を返す。添付を選んだときに PDF 以外だと
+      // 気づけないまま依頼して 422 になるのを避ける。
+      const template = await templates.findCurrent(document.templateType);
+      const source = template
+        ? { kind: "template" as const, ready: true }
+        : {
+          kind: "attachment" as const,
+          ready: Boolean(driveFileIdFromLink(document.driveLink)) && looksLikePdf(document)
+            && typeof driveStorage?.downloadFile === "function",
+          reason: !driveFileIdFromLink(document.driveLink) ? "Drive上のファイルが見つかりません"
+            : !looksLikePdf(document) ? "CloudSignへ送れるのはPDFのみです"
+            : typeof driveStorage?.downloadFile !== "function" ? "Drive連携が有効ではありません"
+            : undefined
+        };
       return response.status(200).json({
-        preview: { documentTitle: documentTitle(document), participants }, gate
+        preview: { documentTitle: documentTitle(document), participants }, gate, source
       });
     } catch (error) {
       if (error instanceof z.ZodError) return response.status(400).json({ error: "invalid request", issues: error.issues });
@@ -158,21 +179,15 @@ export function createCloudSignRouter(
           });
         }
       }
-      const html = await renderStoredDocumentHtml(templates, document);
-      if (!html) return response.status(404).json({ error: "テンプレートが見つかりません", code: "CLOUDSIGN_TEMPLATE_NOT_FOUND" });
-      const pdf = await pdfRenderer.render(html);
+      // テンプレート文書は描画、添付文書は Drive の実体をそのまま使う。
+      const source = await resolveCloudSignSourcePdf(document, { templates, pdfRenderer, driveStorage });
+      const pdf = source.pdf;
       const extraFiles: Array<{ filename: string; pdf: Buffer }> = [];
       for (const attached of attachedDocuments) {
-        const attachedHtml = await renderStoredDocumentHtml(templates, attached);
-        if (!attachedHtml) {
-          return response.status(404).json({
-            error: `添付文書のテンプレートが見つかりません（${attached.documentNumber ?? attached.id}）`,
-            code: "CLOUDSIGN_ATTACH_TEMPLATE_NOT_FOUND"
-          });
-        }
+        const attachedSource = await resolveCloudSignSourcePdf(attached, { templates, pdfRenderer, driveStorage });
         extraFiles.push({
           filename: `${safeFilename(attached.documentNumber ?? `document-${attached.id}`)}.pdf`,
-          pdf: await pdfRenderer.render(attachedHtml)
+          pdf: attachedSource.pdf
         });
       }
       const receipt = await cloudSign.requestSignature({
@@ -221,6 +236,9 @@ export function createCloudSignRouter(
     } catch (error) {
       if (error instanceof StoredDocumentTemplateVersionError) {
         return response.status(409).json({ error: error.message, code: "CLOUDSIGN_TEMPLATE_VERSION_MISMATCH" });
+      }
+      if (error instanceof CloudSignSourceError) {
+        return response.status(error.status).json({ error: error.message, code: error.code });
       }
       if (error instanceof CloudSignError) {
         // CloudSign API 側の失敗（認証・接続・4xx/5xx）。素の500ではなく理由を返す。

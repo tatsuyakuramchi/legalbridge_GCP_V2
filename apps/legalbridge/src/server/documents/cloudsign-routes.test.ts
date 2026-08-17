@@ -8,6 +8,7 @@ import type { TemplateRepository } from "./template-repository.js";
 import type { PdfRenderer } from "./pdf-renderer.js";
 import type { CloudSignAdapter, CloudSignSignatureRequest } from "../integrations/cloudsign-adapter.js";
 import { MemoryCloudSignRequestRepository } from "../integrations/cloudsign-request-repository.js";
+import { MemoryDriveStorage } from "./drive-storage.js";
 
 const doc: RegisteredDocument = {
   id: 5, documentNumber: "DOC-2026-0005", issueKey: "LB-5", templateType: "license",
@@ -15,12 +16,29 @@ const doc: RegisteredDocument = {
   driveLink: "", createdAt: "2026-08-04T00:00:00.000Z", createdBy: "legal@arclight.co.jp", formData: {}
 };
 
-// renderStoredDocumentHtml が使うのは findRenderSource / findPartials のみ。
+// renderStoredDocumentHtml が使うのは findRenderSource / findPartials。
+// プレビューは findCurrent で「テンプレートを持つ文書か」を見る。
 // document.templateVersionId(1) と一致させて版ズレ例外を避ける。
 const templatesStub = {
   async findRenderSource() { return { templateVersionId: 1, htmlSource: "<h1>{{TITLE}}</h1>" }; },
-  async findPartials() { return {}; }
+  async findPartials() { return {}; },
+  async findCurrent() { return { templateKey: "license", label: "license", templateVersionId: 1, fields: [] }; }
 } as unknown as TemplateRepository;
+
+// 添付（ATT-…）はテンプレートを持たない。Drive の実体から送る経路の確認用。
+const noTemplateStub = {
+  async findRenderSource() { return null; },
+  async findPartials() { return {}; },
+  async findCurrent() { return null; }
+} as unknown as TemplateRepository;
+
+const attachment: RegisteredDocument = {
+  id: 9, documentNumber: "ATT-2026-00009", issueKey: "LB-5", templateType: "counterparty_draft",
+  templateVersionId: null, title: "先方ドラフト", counterparty: "株式会社甲",
+  driveLink: "https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrSt/view",
+  createdAt: "2026-08-17T00:00:00.000Z", createdBy: "legal@arclight.co.jp",
+  formData: { original_file_name: "先方ドラフト.pdf", source_mime_type: "application/pdf" }
+};
 const pdfRenderer: PdfRenderer = { async render() { return Buffer.from("%PDF-1.4 test"); } };
 
 class CapturingCloudSign implements CloudSignAdapter {
@@ -40,6 +58,7 @@ function appFor(options: {
   role?: "admin" | "legal" | "requester"; live?: boolean; adapter?: CloudSignAdapter;
   allowedRecipients?: Set<string>; requestHistory?: MemoryCloudSignRequestRepository;
   extraDocs?: RegisteredDocument[];
+  templates?: TemplateRepository; driveStorage?: MemoryDriveStorage;
 }) {
   const registry = new MemoryDocumentRegistryRepository([doc, ...(options.extraDocs ?? [])]);
   const adapter = options.adapter ?? new CapturingCloudSign();
@@ -49,11 +68,14 @@ function appFor(options: {
     response.locals.currentUser = { email: "u@arclight.co.jp", subject: "s", role: options.role ?? "admin", source: "disabled" };
     next();
   });
-  app.use("/api/v2", createCloudSignRouter(registry, templatesStub, pdfRenderer, adapter, {
+  app.use("/api/v2", createCloudSignRouter(registry, options.templates ?? templatesStub, pdfRenderer, adapter, {
     integrationMode: options.live ? "live" : "local",
     cloudSignCapabilityEnabled: options.live ?? false,
     adapterConfigured: adapter.configured
-  }, { allowedRecipients: options.allowedRecipients, requestHistory: options.requestHistory }));
+  }, {
+    allowedRecipients: options.allowedRecipients, requestHistory: options.requestHistory,
+    driveStorage: options.driveStorage
+  }));
   return { app, adapter };
 }
 
@@ -216,4 +238,99 @@ test("履歴無効なら従来通り毎回送信する（後方互換）", async
   await request(app).post("/api/v2/documents/5/cloudsign/dispatch").send(body);
   await request(app).post("/api/v2/documents/5/cloudsign/dispatch").send(body);
   assert.equal((adapter as CapturingCloudSign).sendCount, 2);
+});
+
+// ── システム外で作った契約書を送る（テンプレートを持たない添付から依頼）─────
+function attachmentApp(options: { drive?: MemoryDriveStorage; attachmentDoc?: RegisteredDocument } = {}) {
+  const drive = options.drive ?? new MemoryDriveStorage();
+  return {
+    drive,
+    ...appFor({
+      live: true, role: "admin", templates: noTemplateStub, driveStorage: drive,
+      extraDocs: [options.attachmentDoc ?? attachment]
+    })
+  };
+}
+
+test("案件に添付したPDFをそのまま CloudSign へ送れる", async () => {
+  const drive = new MemoryDriveStorage();
+  drive.seedFile("1AbCdEfGhIjKlMnOpQrSt", Buffer.from("%PDF-1.7 counterparty draft"), "application/pdf");
+  const { app, adapter } = attachmentApp({ drive });
+  const response = await request(app).post("/api/v2/documents/9/cloudsign/dispatch").send(body);
+  assert.equal(response.status, 201);
+  const sent = (adapter as CapturingCloudSign).sent!;
+  // 描画したPDFではなく Drive の実体が渡る。
+  assert.equal(sent.pdf.toString(), "%PDF-1.7 counterparty draft");
+  assert.equal(sent.filename, "ATT-2026-00009.pdf");
+  assert.deepEqual(drive.downloads, ["1AbCdEfGhIjKlMnOpQrSt"]);
+});
+
+test("PDF以外の添付は理由が分かるエラーで止まる", async () => {
+  const { app, adapter } = attachmentApp({
+    attachmentDoc: { ...attachment,
+      formData: { original_file_name: "先方ドラフト.docx", source_mime_type: "application/msword" } }
+  });
+  const response = await request(app).post("/api/v2/documents/9/cloudsign/dispatch").send(body);
+  assert.equal(response.status, 422);
+  assert.equal(response.body.code, "CLOUDSIGN_SOURCE_NOT_PDF");
+  assert.match(response.body.error, /PDFのみ/);
+  assert.equal((adapter as CapturingCloudSign).sendCount, 0);
+});
+
+test("Drive連携が無いと添付からは依頼できない（テンプレート文書の依頼は従来どおり）", async () => {
+  const { app } = appFor({
+    live: true, role: "admin", templates: noTemplateStub, extraDocs: [attachment]
+  });
+  const response = await request(app).post("/api/v2/documents/9/cloudsign/dispatch").send(body);
+  assert.equal(response.status, 503);
+  assert.equal(response.body.code, "CLOUDSIGN_DRIVE_UNAVAILABLE");
+});
+
+test("プレビューは送信前に「添付から送る」ことと不可の理由を返す", async () => {
+  const drive = new MemoryDriveStorage();
+  drive.seedFile("1AbCdEfGhIjKlMnOpQrSt", Buffer.from("%PDF-1.7"), "application/pdf");
+  const ready = await request(attachmentApp({ drive }).app)
+    .post("/api/v2/documents/9/cloudsign/preview").send(body);
+  assert.equal(ready.body.source.kind, "attachment");
+  assert.equal(ready.body.source.ready, true);
+
+  const notPdf = await request(attachmentApp({
+    drive,
+    attachmentDoc: { ...attachment, formData: { original_file_name: "d.docx", source_mime_type: "application/msword" } }
+  }).app).post("/api/v2/documents/9/cloudsign/preview").send(body);
+  assert.equal(notPdf.body.source.ready, false);
+  assert.match(notPdf.body.source.reason, /PDFのみ/);
+});
+
+test("テンプレート文書のプレビューは source.kind=template", async () => {
+  const { app } = appFor({ live: true, role: "admin" });
+  const response = await request(app).post("/api/v2/documents/5/cloudsign/preview").send(body);
+  assert.equal(response.body.source.kind, "template");
+  assert.equal(response.body.source.ready, true);
+});
+
+test("テンプレート文書に添付PDFを束ねて1件のCloudSign書類にできる", async () => {
+  const drive = new MemoryDriveStorage();
+  drive.seedFile("1AbCdEfGhIjKlMnOpQrSt", Buffer.from("%PDF-1.7 counterparty draft"), "application/pdf");
+  // 本体はテンプレート、添付は Drive 実体という混在。案件が一致している必要がある。
+  const mixedTemplates = {
+    async findRenderSource(key: string) {
+      return key === "license" ? { templateVersionId: 1, htmlSource: "<h1>{{TITLE}}</h1>" } : null;
+    },
+    async findPartials() { return {}; },
+    async findCurrent(key: string) {
+      return key === "license" ? { templateKey: key, label: key, templateVersionId: 1, fields: [] } : null;
+    }
+  } as unknown as TemplateRepository;
+  const { app, adapter } = appFor({
+    live: true, role: "admin", templates: mixedTemplates, driveStorage: drive,
+    extraDocs: [{ ...attachment, matterId: 77 }]
+  });
+  const response = await request(app)
+    .post("/api/v2/documents/5/cloudsign/dispatch")
+    .send({ ...body, attachDocumentIds: [9] });
+  // doc 側に matterId が無いので同案件チェックで弾かれる＝誤添付ガードは維持。
+  assert.equal(response.status, 422);
+  assert.equal(response.body.code, "CLOUDSIGN_ATTACH_DIFFERENT_MATTER");
+  assert.equal((adapter as CapturingCloudSign).sendCount, 0);
 });

@@ -22,6 +22,26 @@ export interface DriveStorage {
     mimeType: string;
     data: Buffer;
   }): Promise<StoredDriveFile>;
+  // Drive 上の実体を取り出す（システム外で作った契約書を CloudSign へ送るため）。
+  // uploadFile と同じく optional：未実装なら添付からの送信だけが無効になる。
+  downloadFile?(fileId: string): Promise<{ data: Buffer; mimeType: string }>;
+}
+
+// Drive の閲覧リンクからファイル ID を取り出す。documents.drive_link は
+// webViewLink をそのまま持っており、形式が数種類あるので純関数にして固定する。
+//   https://drive.google.com/file/d/<id>/view?usp=drivesdk
+//   https://drive.google.com/open?id=<id>
+//   https://docs.google.com/document/d/<id>/edit
+export function driveFileIdFromLink(link: string | null | undefined): string | null {
+  const value = String(link ?? "").trim();
+  if (!value) return null;
+  const path = value.match(/\/d\/([A-Za-z0-9_-]{10,})/);
+  if (path) return path[1];
+  const query = value.match(/[?&]id=([A-Za-z0-9_-]{10,})/);
+  if (query) return query[1];
+  // リンクではなく ID がそのまま入っている場合。
+  if (/^[A-Za-z0-9_-]{10,}$/.test(value)) return value;
+  return null;
 }
 
 // フル drive スコープ。drive.file だと「人が作成して共有しただけの
@@ -159,6 +179,28 @@ export class GoogleDriveStorage implements DriveStorage {
     return { id: file.id, webViewLink: driveViewLink(file.id, file.webViewLink) };
   }
 
+  async downloadFile(fileId: string) {
+    const token = await this.accessToken();
+    // MIME はメタデータ側から取る（alt=media の Content-Type は Drive 側の
+    // 変換で変わることがあり、添付時に記録した種別と食い違うため）。
+    const metaUrl = new URL(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`);
+    metaUrl.searchParams.set("supportsAllDrives", "true");
+    metaUrl.searchParams.set("fields", "mimeType");
+    const meta = await fetch(metaUrl, { headers: { Authorization: `Bearer ${token}` } });
+    if (!meta.ok) throw await driveError("download", meta);
+    const { mimeType } = await meta.json() as { mimeType?: string };
+
+    const url = new URL(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`);
+    url.searchParams.set("alt", "media");
+    url.searchParams.set("supportsAllDrives", "true");
+    const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!response.ok) throw await driveError("download", response);
+    return {
+      data: Buffer.from(await response.arrayBuffer()),
+      mimeType: String(mimeType ?? "application/octet-stream")
+    };
+  }
+
   async updatePdf(input: { fileId: string; pdf: Buffer }) {
     const token = await this.accessToken();
     // 既存ファイルの中身のみ差し替える（media アップロード・メタデータ据え置き）。
@@ -223,7 +265,21 @@ export class MemoryDriveStorage implements DriveStorage {
   async uploadFile(input: { filename: string; mimeType: string; data: Buffer }) {
     this.fileUploads.push({ filename: input.filename, mimeType: input.mimeType, size: input.data.length });
     const id = `drive-file-${this.fileUploads.length}`;
+    this.contents.set(id, { data: input.data, mimeType: input.mimeType });
     return { id, webViewLink: `https://drive.google.com/file/d/${id}/view` };
+  }
+
+  // downloadFile 用の中身。テストからは seedFile で直接置ける。
+  readonly contents = new Map<string, { data: Buffer; mimeType: string }>();
+  seedFile(fileId: string, data: Buffer, mimeType: string) {
+    this.contents.set(fileId, { data, mimeType });
+  }
+  downloads: string[] = [];
+  async downloadFile(fileId: string) {
+    this.downloads.push(fileId);
+    const found = this.contents.get(fileId);
+    if (!found) throw new Error(`Google Drive download failed: ${fileId} not found`);
+    return found;
   }
 }
 
