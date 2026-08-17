@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { DocumentFormData, DocumentFormSchema } from "../types";
+import { isIndividualEntity } from "../honorific";
 
 type MasterType = "vendor" | "staff" | "document" | "work" | "company";
 type Item = {
@@ -161,17 +162,18 @@ function typesForSchema(schema: DocumentFormSchema): MasterType[] {
 
 export function buildPatch(schema: DocumentFormSchema, _formData: DocumentFormData, item: Item) {
   const patch: DocumentFormData = {};
+  const values = item.type === "vendor" ? vendorSourceValues(item.values) : item.values;
   for (const field of schema.fields) {
     if (!field.dbField?.startsWith(`${item.type}.`)) continue;
     const sourceKey = field.dbField.slice(item.type.length + 1);
     // 対応表と同じ規則：null は空にする（前の相手の値を残さない）。
-    setIfField(schema, patch, field.name, item.values[sourceKey]);
+    setIfField(schema, patch, field.name, values[sourceKey]);
   }
   if (item.type === "vendor") {
-    applyVendorAliases(schema, patch, item.values);
+    applyVendorAliases(schema, patch, values);
     // 「甲/乙」はテンプレごとに立場が入れ替わるため、単独では判定に使わない。
     // 相手方を示す語（取引先・売主・受託者…）がある項目のみ対象。自社を示す語があれば除外。
-    applyPatternAliases(schema, patch, item.values,
+    applyPatternAliases(schema, patch, values,
       /甲|相手方|取引先|先方|許諾者|ライセンサ|委託先|発注先|受託者|売主/,
       [[/電話|TEL/i, "phone"], [/メール|mail/i, "email"], [/代表/, "vendor_rep"],
        [/住所/, "address"], [/担当/, "contact_name"],
@@ -194,6 +196,16 @@ export function buildPatch(schema: DocumentFormSchema, _formData: DocumentFormDa
   if (item.type === "document") applyDocumentAliases(schema, patch, item.values);
   if (item.type === "work") applyWorkAliases(schema, patch, item.values);
   return patch;
+}
+
+// 個人の取引先に「担当者」「担当部署」「代表者」は無い。V1 も個人では空にしている
+// （purchaseOrder.tsx「担当者・部署は法人の概念。個人取引先では空にする」）。
+// V2 はマスタの値をそのまま引いていたため、担当者名に口座名義カナが入っている
+// 取引先で、宛名の下に「<カナ>　<カナ> 様」が出ていた（ARC-PO-2026-0117 ほか11件）。
+// 値を無かったものとして渡す（null＝空にする指示。undefined だと「触らない」になる）。
+function vendorSourceValues(values: Record<string, unknown>): Record<string, unknown> {
+  if (!isIndividualEntity(values.entity_type)) return values;
+  return { ...values, contact_name: null, contact_department: null, vendor_rep: null };
 }
 
 function applyVendorAliases(schema: DocumentFormSchema, patch: DocumentFormData, values: Record<string, unknown>) {
@@ -234,6 +246,10 @@ function applyVendorAliases(schema: DocumentFormSchema, patch: DocumentFormData,
   setIfField(schema, patch, "許諾者種別", values.entity_type !== "個人" ? "法人" : "個人");
   setIfField(schema, patch, "VENDOR_SUFFIX", values.entity_type !== "個人" ? "御中" : "様");
   setIfField(schema, patch, "LICENSOR_SUFFIX", values.entity_type !== "個人" ? "御中" : "様");
+  // 「代表者名 (＋様)」欄は敬称込みで持つ（V1 と同じ）。ラベル推定に任せると
+  // 敬称なしの氏名が入る。個人は上で空にしているのでこの欄も空になる。
+  const repName = `${values.vendor_rep || values.contact_name || ""}`.trim();
+  setIfField(schema, patch, "VENDOR_REPRESENTATIVE_SAMA", repName ? `${repName} 様` : "");
 }
 
 function applyStaffAliases(schema: DocumentFormSchema, patch: DocumentFormData, values: Record<string, unknown>) {

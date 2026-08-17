@@ -83,3 +83,88 @@ test("敬称と区分はマスタから導出したままにする", () => {
   assert.equal(patch.VENDOR_IS_CORPORATION, "個人");
   assert.equal(patch.VENDOR_SUFFIX, "様");
 });
+
+// ── 個人の取引先に担当者・部署・代表者は無い（V1 と同じ規則）─────────────
+// V1: purchaseOrder.tsx「担当者・部署は法人の概念。個人取引先では空にする」
+// V2 はマスタの値をそのまま引いていたため、担当者名に口座名義カナが入っている
+// 取引先で宛名の下に「<カナ>　<カナ> 様」が出ていた（実データ11件）。
+const CONTACT_FIELDS = schemaOf(
+  { name: "VENDOR_NAME", label: "発注先 名称" },
+  { name: "VENDOR_CONTACT_DEPARTMENT", label: "担当部署", group: "II. 発注先 (取引先)" },
+  { name: "VENDOR_CONTACT_NAME", label: "担当者名", group: "II. 発注先 (取引先)" },
+  { name: "VENDOR_REPRESENTATIVE_SAMA", label: "代表者名 (＋様)", group: "II. 発注先 (取引先)" },
+  { name: "VENDOR_CONTACT_PHONE", label: "TEL", group: "II. 発注先 (取引先)" }
+);
+
+const individual = (extra: Record<string, unknown> = {}) => ({
+  id: "1", type: "vendor" as const, label: "斎田明也", description: "",
+  values: {
+    vendor_name: "斎田明也", entity_type: "個人", phone: "090-7254-6167",
+    account_holder_kana: "サイタ　アキヤ", ...extra
+  }
+});
+
+test("個人ではマスタに担当者名があっても空にする", () => {
+  const patch = buildPatch(CONTACT_FIELDS, {},
+    individual({ contact_name: "サイタ　アキヤ", contact_department: "サイタ　アキヤ" }));
+  assert.equal(patch.VENDOR_CONTACT_NAME, "");
+  assert.equal(patch.VENDOR_CONTACT_DEPARTMENT, "");
+});
+
+test("個人では代表者欄も空にする", () => {
+  const patch = buildPatch(CONTACT_FIELDS, {}, individual({ vendor_rep: "斎田明也" }));
+  assert.equal(patch.VENDOR_REPRESENTATIVE_SAMA, "");
+});
+
+test("個人でも電話・宛名は引く（連絡先は個人にもある）", () => {
+  const patch = buildPatch(CONTACT_FIELDS, {}, individual({ contact_name: "サイタ　アキヤ" }));
+  assert.equal(patch.VENDOR_NAME, "斎田明也");
+  assert.equal(patch.VENDOR_CONTACT_PHONE, "090-7254-6167");
+});
+
+test("法人では担当者・部署を従来どおり引く", () => {
+  const patch = buildPatch(CONTACT_FIELDS, {}, {
+    id: "2", type: "vendor", label: "株式会社ビー", description: "",
+    values: {
+      vendor_name: "株式会社ビー", entity_type: "法人",
+      contact_name: "田中 一郎", contact_department: "経理部", vendor_rep: "山田 花子"
+    }
+  });
+  assert.equal(patch.VENDOR_CONTACT_NAME, "田中 一郎");
+  assert.equal(patch.VENDOR_CONTACT_DEPARTMENT, "経理部");
+});
+
+test("代表者欄は敬称込みで入れる（項目名が「代表者名 (＋様)」）", () => {
+  // ラベル推定に任せると敬称なしの氏名が入り、テンプレートは敬称を足さない。
+  const patch = buildPatch(CONTACT_FIELDS, {}, {
+    id: "2", type: "vendor", label: "株式会社ビー", description: "",
+    values: { vendor_name: "株式会社ビー", entity_type: "法人", vendor_rep: "山田 花子" }
+  });
+  assert.equal(patch.VENDOR_REPRESENTATIVE_SAMA, "山田 花子 様");
+});
+
+test("代表者が未登録なら担当者名を代表者として使う（V1 と同じ）", () => {
+  const patch = buildPatch(CONTACT_FIELDS, {}, {
+    id: "2", type: "vendor", label: "株式会社ビー", description: "",
+    values: { vendor_name: "株式会社ビー", entity_type: "法人", contact_name: "田中 一郎" }
+  });
+  assert.equal(patch.VENDOR_REPRESENTATIVE_SAMA, "田中 一郎 様");
+});
+
+test("代表者も担当者も無い法人では代表者欄を空にする（「null 様」を出さない）", () => {
+  const patch = buildPatch(CONTACT_FIELDS, {}, {
+    id: "2", type: "vendor", label: "株式会社ビー", description: "",
+    values: { vendor_name: "株式会社ビー", entity_type: "法人" }
+  });
+  assert.equal(patch.VENDOR_REPRESENTATIVE_SAMA, "");
+});
+
+test("個人ではラベル推定の担当者欄も空にする", () => {
+  const schema = schemaOf({ name: "受託者担当者", label: "担当者", group: "受託者" });
+  assert.equal(buildPatch(schema, {}, individual({ contact_name: "サイタ　アキヤ" })).受託者担当者, "");
+});
+
+test("個人では dbField 対応の担当者欄も空にする", () => {
+  const schema = schemaOf({ name: "先方担当", label: "担当", dbField: "vendor.contact_name" });
+  assert.equal(buildPatch(schema, {}, individual({ contact_name: "サイタ　アキヤ" })).先方担当, "");
+});
