@@ -3,6 +3,7 @@ import {
   type CloudSignAdapter, type CloudSignSignatureReceipt, type CloudSignSignatureRequest,
   type CloudSignStatus
 } from "./cloudsign-adapter.js";
+import { buildUpstreamDetail, toLogLine } from "./cloudsign-upstream-error.js";
 
 // CloudSign REST クライアント（テストで差し替え可能）。実HTTP実装は
 // FetchCloudSignApiClient。orchestration は CloudSignApiAdapter 側に置く。
@@ -67,9 +68,22 @@ export class FetchCloudSignApiClient implements CloudSignApiClient {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: body.toString()
     });
+    if (!response.ok) {
+      // client_id 不一致・IP 制限はここで落ちる。本文を残さないと区別できない。
+      const detail = buildUpstreamDetail({
+        status: response.status, method: "POST", path: "/token",
+        body: await response.text().catch(() => "")
+      });
+      console.warn(toLogLine(detail));
+      throw new CloudSignError(
+        detail.upstreamMessage
+          ? `CloudSign token acquisition failed: ${detail.upstreamMessage}`
+          : "CloudSign token acquisition failed",
+        "token_error", response.status, detail);
+    }
     const payload = await response.json().catch(() => null) as
       { access_token?: unknown; expires_in?: unknown } | null;
-    if (!response.ok || typeof payload?.access_token !== "string") {
+    if (typeof payload?.access_token !== "string") {
       throw new CloudSignError("CloudSign token acquisition failed", "token_error", response.status);
     }
     const expiresIn = Number(payload.expires_in) || 600;
@@ -101,10 +115,21 @@ export class FetchCloudSignApiClient implements CloudSignApiClient {
         ...init,
         headers: { Authorization: `Bearer ${token}`, ...(init.headers ?? {}) }
       });
-      const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
+      // 失敗時は本文をテキストで読む。JSON とは限らない（HTML のエラーページが返る）ため、
+      // ここで json() に失敗して本文を捨てると原因が永久に分からなくなる。
       if (!response.ok) {
-        throw new CloudSignError(`CloudSign API HTTP error: ${response.status}`, "http_error", response.status);
+        const body = await response.text().catch(() => "");
+        const detail = buildUpstreamDetail({
+          status: response.status, method: String(init.method ?? "GET"), path, body
+        });
+        console.warn(toLogLine(detail));
+        throw new CloudSignError(
+          detail.upstreamMessage
+            ? `CloudSign API ${response.status}: ${detail.upstreamMessage}`
+            : `CloudSign API HTTP error: ${response.status}`,
+          "http_error", response.status, detail);
       }
+      const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
       if (!payload) throw new CloudSignError("CloudSign API returned no body", "invalid_response");
       return payload;
     });
@@ -141,12 +166,20 @@ export class FetchCloudSignApiClient implements CloudSignApiClient {
     return { id: typeof payload.id === "string" ? payload.id : documentId };
   }
 
-  async addParticipant(participantDocumentId: string, participant: { email: string; name: string; organization?: string }) {
-    // participants は form-urlencoded（email/name/organization）。
+  async addParticipant(
+    participantDocumentId: string,
+    participant: { email: string; name: string; organization?: string; order?: number; languageCode?: string }
+  ) {
+    // participants は form-urlencoded（email/name/organization/order/language_code）。
+    // order / language_code は V1 が送っている項目。未指定なら送らず、CloudSign 既定に任せる。
     const payload = await this.authed(`/documents/${encodeURIComponent(participantDocumentId)}/participants`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: this.form({ email: participant.email, name: participant.name, organization: participant.organization })
+      body: this.form({
+        email: participant.email, name: participant.name, organization: participant.organization,
+        order: participant.order === undefined ? undefined : String(participant.order),
+        language_code: participant.languageCode
+      })
     });
     if (typeof payload.id !== "string") throw new CloudSignError("CloudSign addParticipant returned no id", "invalid_response");
     return { id: payload.id };

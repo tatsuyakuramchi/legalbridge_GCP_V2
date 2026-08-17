@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { CloudSignApiAdapter, FetchCloudSignApiClient, type CloudSignApiClient } from "./cloudsign-api-adapter.js";
+import type { CloudSignError } from "./cloudsign-adapter.js";
 
 class FakeClient implements CloudSignApiClient {
   calls: string[] = [];
@@ -89,7 +90,13 @@ function recordingFetch(seen: SeenRequest[], responder: (url: string) => { statu
     else if (init?.body) body = "[multipart]";
     seen.push({ url, method: String(init?.method ?? "GET"), contentType: headers["Content-Type"] ?? "", body });
     const { status = 200, json } = responder(url);
-    return { ok: status >= 200 && status < 300, status, json: async () => json } as Response;
+    // 失敗時は text() で本文を読む実装なので、モックも両方を返す。
+    const raw = typeof json === "string" ? json : JSON.stringify(json);
+    return {
+      ok: status >= 200 && status < 300, status,
+      json: async () => (typeof json === "string" ? JSON.parse(json) : json),
+      text: async () => raw
+    } as Response;
   }) as unknown as typeof fetch;
 }
 
@@ -156,4 +163,78 @@ test("401 のときトークンを捨てて 1 回だけ再取得する", async (
   assert.equal((doc as any).id, "doc-1");
   // 初回トークン + 401後の再取得 = 2 回。
   assert.equal(seen.filter((r) => r.url.endsWith("/token")).length, 2);
+});
+
+// ── upstream error を捨てない（v1-reference 計画 §13）─────────────────────────
+test("API エラーは CloudSign の応答本文を detail に残す", async () => {
+  const seen: SeenRequest[] = [];
+  const responder = (url: string) => url.endsWith("/token")
+    ? { json: { access_token: "tok", expires_in: 600 } }
+    : { status: 400, json: { code: "invalid_participant", message: "許可されていない宛先です: x@example.com" } };
+  const client = new FetchCloudSignApiClient("https://api.cloudsign.jp", "cid-1",
+    { fetchImpl: recordingFetch(seen, responder) });
+  await assert.rejects(
+    () => client.addParticipant("doc-1", { email: "x@example.com", name: "甲" }),
+    (error: unknown) => {
+      const detail = (error as CloudSignError).detail!;
+      assert.equal(detail.status, 400);
+      assert.equal(detail.method, "POST");
+      assert.equal(detail.path, "/documents/doc-1/participants");
+      assert.equal(detail.upstreamCode, "invalid_participant");
+      assert.match(String(detail.upstreamMessage), /x@example.com/);
+      assert.equal(detail.kind, "CLOUDSIGN_PARTICIPANT_REJECTED");
+      return true;
+    });
+});
+
+test("JSON で無い応答（HTMLエラーページ）でも本文を失わない", async () => {
+  const seen: SeenRequest[] = [];
+  const responder = (url: string) => url.endsWith("/token")
+    ? { json: { access_token: "tok", expires_in: 600 } }
+    : { status: 502, json: "<html><body>Bad Gateway</body></html>" };
+  const client = new FetchCloudSignApiClient("https://api.cloudsign.jp", "cid-1",
+    { fetchImpl: recordingFetch(seen, responder) });
+  await assert.rejects(
+    () => client.getDocument("doc-1"),
+    (error: unknown) => {
+      const detail = (error as CloudSignError).detail!;
+      assert.match(String(detail.upstreamMessage), /Bad Gateway/);
+      // 5xx は再試行の価値がある。
+      assert.equal(detail.retryable, true);
+      return true;
+    });
+});
+
+test("/token 失敗も本文を残す（client_id と IP 制限を切り分けるため）", async () => {
+  const seen: SeenRequest[] = [];
+  const responder = () => ({
+    status: 401, json: { error: "invalid_client", error_description: "client_id is unknown" }
+  });
+  const client = new FetchCloudSignApiClient("https://api.cloudsign.jp", "cid-1",
+    { fetchImpl: recordingFetch(seen, responder) });
+  await assert.rejects(
+    () => client.getDocument("doc-1"),
+    (error: unknown) => {
+      const detail = (error as CloudSignError).detail!;
+      assert.equal(detail.path, "/token");
+      assert.equal(detail.upstreamCode, "invalid_client");
+      assert.equal(detail.kind, "CLOUDSIGN_AUTHENTICATION_FAILED");
+      return true;
+    });
+});
+
+test("participant の order / language_code は指定時だけ送る", async () => {
+  const seen: SeenRequest[] = [];
+  const client = new FetchCloudSignApiClient("https://api.cloudsign.jp", "cid-1",
+    { fetchImpl: recordingFetch(seen, okResponder) });
+  await client.addParticipant("doc-1", { email: "a@example.com", name: "甲" });
+  const plain = seen.find((r) => r.url.includes("/participants"))!;
+  assert.doesNotMatch(plain.body, /order/);
+  assert.doesNotMatch(plain.body, /language_code/);
+
+  seen.length = 0;
+  await client.addParticipant("doc-1", { email: "a@example.com", name: "甲", order: 1, languageCode: "ja" });
+  const full = seen.find((r) => r.url.includes("/participants"))!;
+  assert.match(full.body, /order=1/);
+  assert.match(full.body, /language_code=ja/);
 });

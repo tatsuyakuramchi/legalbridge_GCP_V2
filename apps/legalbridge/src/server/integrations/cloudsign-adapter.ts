@@ -68,7 +68,12 @@ export function normalizeCloudSignStatus(raw: unknown): { status: string; comple
 }
 
 export class CloudSignError extends Error {
-  constructor(message: string, readonly code: string, readonly status: number | null = null) {
+  constructor(
+    message: string, readonly code: string, readonly status: number | null = null,
+    // CloudSign が返した内容（method/path/upstream code・message/分類）。
+    // HTTP 由来の失敗のときだけ入る。UI へは正規化してから渡すこと。
+    readonly detail?: import("./cloudsign-upstream-error.js").CloudSignUpstreamDetail
+  ) {
     super(message);
     this.name = "CloudSignError";
   }

@@ -274,7 +274,14 @@ function CloudSignRequest({ documentId, matterId = null, isAdmin = true, suggest
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        setError((data.error ?? "依頼に失敗しました。") + (data.blockers ? `（${data.blockers.join("／")}）` : ""));
+        // CloudSign が返した一文（宛先名など）と再試行可否まで見せる。
+        // 原因が分からないまま同じ操作を繰り返すのを避ける。
+        setError([
+          data.error ?? "依頼に失敗しました。",
+          data.blockers ? `（${data.blockers.join("／")}）` : "",
+          data.upstreamMessage ? `\nCloudSignの応答：${data.upstreamMessage}` : "",
+          data.retryable ? "\n時間をおいて再実行してください。" : ""
+        ].join(""));
         return;
       }
       setCsId(data.receipt.cloudSignDocumentId);

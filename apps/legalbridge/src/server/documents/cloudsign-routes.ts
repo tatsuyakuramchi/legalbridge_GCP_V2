@@ -17,6 +17,7 @@ import {
 import {
   evaluateCloudSignDispatchGate, type CloudSignDispatchGateSettings
 } from "../integrations/cloudsign-dispatch-gate.js";
+import { toClientError } from "../integrations/cloudsign-upstream-error.js";
 import type { CloudSignRequestRepository } from "../integrations/cloudsign-request-repository.js";
 
 const idPath = z.object({ id: z.coerce.number().int().positive() });
@@ -241,10 +242,15 @@ export function createCloudSignRouter(
         return response.status(error.status).json({ error: error.message, code: error.code });
       }
       if (error instanceof CloudSignError) {
-        // CloudSign API 側の失敗（認証・接続・4xx/5xx）。素の500ではなく理由を返す。
+        // CloudSign が理由を返していれば、原因別のコードと対処を返す（旧来は
+        // 「クライアントID・宛先・設定のどれかを確認」としか言えなかった）。
+        if (error.detail) {
+          return response.status(error.detail.retryable ? 503 : 502).json(toClientError(error.detail));
+        }
         return response.status(502).json({
           error: `CloudSign連携エラー: ${error.message}（クライアントID・宛先・CloudSign側の設定を確認してください）`,
-          code: `CLOUDSIGN_API_${String(error.code ?? "error").toUpperCase()}`
+          code: `CLOUDSIGN_API_${String(error.code ?? "error").toUpperCase()}`,
+          retryable: false
         });
       }
       if (error instanceof z.ZodError) return response.status(400).json({ error: "invalid request", issues: error.issues });

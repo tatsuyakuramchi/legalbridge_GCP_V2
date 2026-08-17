@@ -7,6 +7,8 @@ import { MemoryDocumentRegistryRepository, type RegisteredDocument } from "./reg
 import type { TemplateRepository } from "./template-repository.js";
 import type { PdfRenderer } from "./pdf-renderer.js";
 import type { CloudSignAdapter, CloudSignSignatureRequest } from "../integrations/cloudsign-adapter.js";
+import { CloudSignError } from "../integrations/cloudsign-adapter.js";
+import { buildUpstreamDetail } from "../integrations/cloudsign-upstream-error.js";
 import { MemoryCloudSignRequestRepository } from "../integrations/cloudsign-request-repository.js";
 import { MemoryDriveStorage } from "./drive-storage.js";
 
@@ -333,4 +335,75 @@ test("テンプレート文書に添付PDFを束ねて1件のCloudSign書類に�
   assert.equal(response.status, 422);
   assert.equal(response.body.code, "CLOUDSIGN_ATTACH_DIFFERENT_MATTER");
   assert.equal((adapter as CapturingCloudSign).sendCount, 0);
+});
+
+// ── CloudSign の失敗を原因別に返す（v1-reference 計画 Slice 2）─────────────
+class FailingCloudSign implements CloudSignAdapter {
+  readonly configured = true;
+  constructor(private readonly error: CloudSignError) {}
+  async requestSignature(): Promise<never> { throw this.error; }
+  async fetchStatus(cloudSignDocumentId: string) {
+    return { cloudSignDocumentId, status: "draft", completed: false, participants: [] };
+  }
+}
+
+function failWith(status: number, body: string) {
+  const detail = buildUpstreamDetail({ status, method: "POST", path: "/documents/x/participants", body });
+  return new CloudSignError("boom", "http_error", status, detail);
+}
+
+test("宛先拒否は原因コードと CloudSign の応答を返す", async () => {
+  const { app } = appFor({
+    live: true, role: "admin",
+    adapter: new FailingCloudSign(failWith(400,
+      '{"code":"invalid_participant","message":"許可されていない宛先です: x@example.com"}'))
+  });
+  const response = await request(app).post("/api/v2/documents/5/cloudsign/dispatch").send(body);
+  assert.equal(response.status, 502);
+  assert.equal(response.body.code, "CLOUDSIGN_PARTICIPANT_REJECTED");
+  assert.match(response.body.error, /メールアドレスを確認/);
+  assert.match(response.body.upstreamMessage, /x@example.com/);
+  assert.equal(response.body.retryable, false);
+});
+
+test("再試行できる失敗は 503 と retryable:true で返す", async () => {
+  const { app } = appFor({
+    live: true, role: "admin",
+    adapter: new FailingCloudSign(failWith(429, '{"message":"too many requests"}'))
+  });
+  const response = await request(app).post("/api/v2/documents/5/cloudsign/dispatch").send(body);
+  assert.equal(response.status, 503);
+  assert.equal(response.body.code, "CLOUDSIGN_RATE_LIMITED");
+  assert.equal(response.body.retryable, true);
+});
+
+test("認証失敗はクライアントIDの確認を促す", async () => {
+  const { app } = appFor({
+    live: true, role: "admin",
+    adapter: new FailingCloudSign(failWith(401, '{"error":"invalid_client"}'))
+  });
+  const response = await request(app).post("/api/v2/documents/5/cloudsign/dispatch").send(body);
+  assert.equal(response.body.code, "CLOUDSIGN_AUTHENTICATION_FAILED");
+  assert.match(response.body.error, /クライアントID/);
+});
+
+test("応答に detail が無い失敗は従来どおりの汎用メッセージ", async () => {
+  const { app } = appFor({
+    live: true, role: "admin",
+    adapter: new FailingCloudSign(new CloudSignError("connection refused", "network_error"))
+  });
+  const response = await request(app).post("/api/v2/documents/5/cloudsign/dispatch").send(body);
+  assert.equal(response.status, 502);
+  assert.equal(response.body.code, "CLOUDSIGN_API_NETWORK_ERROR");
+});
+
+test("UI へ path / status など内部情報を返さない", async () => {
+  const { app } = appFor({
+    live: true, role: "admin",
+    adapter: new FailingCloudSign(failWith(400, '{"message":"client_id=SECRETVALUE rejected"}'))
+  });
+  const response = await request(app).post("/api/v2/documents/5/cloudsign/dispatch").send(body);
+  assert.equal("path" in response.body, false);
+  assert.equal("status" in response.body, false);
+  assert.doesNotMatch(JSON.stringify(response.body), /SECRETVALUE/);
 });

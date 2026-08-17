@@ -641,6 +641,9 @@ header input { width: 100%; border: 1px solid var(--border); border-radius: var(
 .global-results .search-error { color: #b42318; background: #fff4f2; border-radius: 6px; }
 .async-error { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 14px; border: 1px solid #fecaca; border-radius: 8px; background: #fff7f7; color: #b42318; padding: 10px 12px; font-size: 13px; }
 .async-error button { border: 1px solid #efb5b5; border-radius: 6px; background: white; color: #9f2d2d; padding: 6px 10px; }
+/* CloudSign の失敗は「分類＋CloudSignの応答＋再試行可否」を複数行で出すため、
+   改行を保って左寄せにする（flex の中央寄せだと1行に潰れて読めない）。 */
+.doc-integration .async-error { display: block; white-space: pre-line; }
 .draft-key { display: flex; align-items: center; gap: 8px; margin-top: 9px; color: #64748b; font-size: 11px; }
 .draft-key input { width: 180px; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px 8px; background: white; }
 .admin-status-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
