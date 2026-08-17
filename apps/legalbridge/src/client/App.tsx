@@ -40,6 +40,7 @@ import { SettingsWorkspace } from "./SettingsWorkspace";
 import { WorkflowRulesWorkspace } from "./WorkflowRulesWorkspace";
 import { ContractMasterWorkspace } from "./ContractMasterWorkspace";
 import { BillingPrint } from "./BillingPrint";
+import { isPurchaseOrderTemplate, purchaseOrderTotals, withPurchaseOrderTotals } from "../purchase-order-totals";
 
 type CompatibilityReport = { summary: { total: number; ok: number; warning: number; error: number }; reports: Array<{ templateKey: string; status: "ok" | "warning" | "error"; missingHelpers: string[]; missingPartials: string[]; unmappedVariables: string[]; renderError?: string }> };
 
@@ -882,11 +883,16 @@ function DocumentForm({
     isFieldVisible(field, formData)
   );
   const groups = [...new Set(visibleFields.map((field) => field.group ?? "基本情報"))];
+  // 関数宣言の中では上の null ガードの絞り込みが効かないので、ここで確定させる。
+  const templateKey = schema.templateKey;
 
   function updateValue(name: string, value: unknown) {
     if (finalizedDocument) return;
     formDirtyRef.current = true;
-    setFormData((current) => ({ ...current, [name]: value }));
+    // 発注書の合計金額・納期・支払日は明細から自動集計する（V1 と同じ）。
+    // 集計せずに保存すると、手入力欄が空のまま PDF の合計が ¥0 になる。
+    setFormData((current) =>
+      withPurchaseOrderTotals(templateKey, { ...current, [name]: value }));
     setDraftStatus("dirty");
     setNotice("未保存の変更があります");
   }
@@ -1156,6 +1162,8 @@ function DocumentForm({
               setNotice(message);
             }} />
           {groups.map((group, index) => <section id={`group-${index}`} key={group}><h2>{group}</h2>
+            {isPurchaseOrderTemplate(schema.templateKey) && group.startsWith("IV. ") &&
+              <PurchaseOrderTotals formData={formData} />}
             <div className="field-grid">{visibleFields.filter((field) => (field.group ?? "基本情報") === group).map((field) => <label key={field.name}><span>{field.label ?? field.name}{field.required && <em>必須</em>}</span>{field.type === "textarea" ? <textarea value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, event.target.value)} placeholder={field.placeholder} /> : field.type === "select" ? <select value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, event.target.value)}><option value="">選択してください</option>{field.options?.map((option) => <option key={option}>{option}</option>)}</select> : field.type === "boolean" ? <input type="checkbox" checked={Boolean(formData[field.name])} onChange={(event) => updateValue(field.name, event.target.checked)} /> : <input value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, field.type === "number" ? (event.target.value === "" ? "" : Number(event.target.value)) : event.target.value)} type={field.type === "number" ? "number" : field.type === "date" ? "date" : "text"} placeholder={field.placeholder} />}{field.helpText && <small>{field.helpText}</small>}</label>)}</div>
           </section>)}
           {schema.templateKey === "individual_license_terms_v3" && (
@@ -1175,6 +1183,30 @@ function DocumentForm({
   );
 }
 
+
+// 発注書の自動集計を入力中に見せる。合計金額の欄は「明細から自動集計」と書いてあるのに
+// ただの空の数値入力で、明細を何行入れても 0 のままだった（PDF も同様）。
+// 集計は updateValue が formData へ書き戻すので、ここは同じ値を読むだけにする。
+function PurchaseOrderTotals({ formData }: { formData: DocumentFormData }) {
+  const totals = purchaseOrderTotals(formData);
+  const rows = Array.isArray(formData.items) ? formData.items.length : 0;
+  const fees = Array.isArray(formData.other_fees) ? formData.other_fees.length : 0;
+  if (!rows && !fees) {
+    return <p className="muted-note">
+      明細を追加すると、合計金額・納期・支払日を自動集計します。
+      明細を使わない場合だけ、下の合計金額に直接入力してください。
+    </p>;
+  }
+  const yen = (value: number) => `¥ ${value.toLocaleString("ja-JP")}`;
+  const dateOrDash = (value: unknown) => String(value ?? "").trim() || "明細の日付が未入力";
+  return <dl className="po-totals">
+    <div><dt>確定額 小計（税抜）</dt><dd>{yen(totals.itemsSubtotalExTax)}<small>明細 {rows} 件</small></dd></div>
+    <div><dt>手数料 小計（税抜）</dt><dd>{yen(totals.otherFeesTotal)}<small>その他手数料 {fees} 件</small></dd></div>
+    <div><dt>合計金額（税抜）</dt><dd><strong>{yen(totals.grandTotalExTax)}</strong><small>業務委託＋手数料</small></dd></div>
+    <div><dt>納期</dt><dd>{dateOrDash(formData.summaryDeliveryDate)}<small>明細の納期から集約</small></dd></div>
+    <div><dt>支払日</dt><dd>{dateOrDash(formData.summaryPaymentDate)}<small>明細の支払日から集約</small></dd></div>
+  </dl>;
+}
 
 function formatDraftTime(value: string) {
   const date = new Date(value);

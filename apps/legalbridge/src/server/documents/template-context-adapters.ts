@@ -1,4 +1,5 @@
 import { buildCommonDocumentContext } from "./context-adapter.js";
+import { aggregateItemDates, purchaseOrderTotals } from "../../purchase-order-totals.js";
 
 type Data = Record<string, unknown>;
 
@@ -6,7 +7,8 @@ const GENERATED_VARIABLES: Record<string, string[]> = {
   purchase_order: [
     "BANK_INFO", "DELIVERY_DATE", "REMARKS", "expenses", "expensesTotalIncTax",
     "financial_conditions", "has_license_conditions", "has_performance_incentive",
-    "has_seller_owned_license", "items", "order_date", "発行日"
+    "has_seller_owned_license", "items", "order_date", "発行日",
+    "other_fees", "otherFeesTotal", "summaryDeliveryDate", "summaryPaymentDate"
   ],
   intl_purchase_order: [
     "CALC_METHOD", "PAYMENT_TERMS", "REMARKS_FIXED", "REMARKS_FREE",
@@ -62,13 +64,9 @@ function buildPurchaseOrderContext(source: Data) {
   const financialConditions = records(pick(
     source, "financial_conditions", "license_financial_conditions"
   ));
-  const itemsSubtotalExTax = items.reduce((sum, item) => {
-    const amount = number(pick(item, "amount_ex_tax", "amount", "subtotal"));
-    return sum + (amount || (
-      number(pick(item, "unit_price", "unitPrice")) *
-      number(pick(item, "quantity", "qty"), 1)
-    ));
-  }, 0);
+  const otherFees = records(pick(source, "other_fees", "otherFees"));
+  // 合計はクライアントと同じ純関数で出す（画面の合計と PDF の合計を必ず一致させる）。
+  const totals = purchaseOrderTotals({ items, other_fees: otherFees });
   const expensesTotalIncTax = expenses.reduce((sum, expense) =>
     sum + number(pick(expense, "amount_inc_tax", "amount", "total")), 0);
   const bankInfo = [
@@ -91,10 +89,20 @@ function buildPurchaseOrderContext(source: Data) {
     items,
     expenses,
     financial_conditions: financialConditions,
-    itemsSubtotalExTax: valueOr(source.itemsSubtotalExTax, itemsSubtotalExTax),
+    other_fees: otherFees,
+    itemsSubtotalExTax: totals.itemsSubtotalExTax,
+    otherFeesTotal: totals.otherFeesTotal,
+    // 明細も手数料も無い発注書は合計金額を手入力する運用が残っているので、
+    // 行が1つも無いときだけ入力値を尊重する（行があるのに手入力が勝つと画面とずれる）。
+    grandTotalExTax: items.length || otherFees.length
+      ? totals.grandTotalExTax
+      : number(pick(source, "grandTotalExTax")),
     expensesTotalIncTax: valueOr(source.expensesTotalIncTax, expensesTotalIncTax),
     BANK_INFO: valueOr(source.BANK_INFO, bankInfo),
-    DELIVERY_DATE: pick(source, "DELIVERY_DATE", "summaryDeliveryDate", "delivery_date"),
+    summaryDeliveryDate: valueOr(source.summaryDeliveryDate, aggregateItemDates(items, "delivery_date")),
+    summaryPaymentDate: valueOr(source.summaryPaymentDate, aggregateItemDates(items, "payment_date")),
+    DELIVERY_DATE: pick(source, "DELIVERY_DATE", "summaryDeliveryDate", "delivery_date")
+      || aggregateItemDates(items, "delivery_date"),
     order_date: pick(source, "order_date", "ORDER_DATE", "発注日"),
     発行日: pick(source, "発行日", "ORDER_DATE", "OF_DATE"),
     REMARKS: pick(source, "REMARKS", "REMARKS_FREE", "SPECIAL_TERMS"),

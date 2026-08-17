@@ -676,6 +676,16 @@ header input { width: 100%; border: 1px solid var(--border); border-radius: var(
   background: var(--surface); color: var(--ink); text-decoration: none; font-size: inherit;
 }
 .actions .button-link:hover { border-color: var(--border-strong); }
+/* 発注書の自動集計サマリ（IV. 金額・納期の先頭）。入力欄ではなく結果の表示。 */
+.po-totals {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px; margin: 0 0 16px; padding: 12px;
+  background: var(--surface-subtle); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.po-totals dt { font-size: 11px; color: var(--ink-soft); letter-spacing: 0.06em; }
+.po-totals dd { margin: 2px 0 0; font-size: 14px; font-weight: 700; }
+.po-totals dd strong { font-size: 17px; }
+.po-totals dd small { display: block; font-weight: 400; font-size: 11px; color: var(--ink-soft); }
 .form-readonly-note { margin: -8px 0 16px; border: 1px solid #fed7aa; border-radius: 8px; background: #fff7ed; color: #9a3412; padding: 10px 12px; font-size: 12px; }
 @media (max-width: 760px) {
   .document-form-title { display: grid; gap: 14px; }

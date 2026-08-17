@@ -8,5 +8,5 @@
     "allowImportingTsExtensions": true,
     "types": ["vite/client"]
   },
-  "include": ["src/client", "src/types.ts", "src/slack-mentions.ts", "vite.config.ts"]
+  "include": ["src/client", "src/types.ts", "src/slack-mentions.ts", "src/purchase-order-totals.ts", "vite.config.ts"]
 }

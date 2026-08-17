@@ -73,3 +73,43 @@ test("定期支払の明細でも条件表は増えない", () => {
   assert.equal(result.has_license_conditions, false);
   assert.equal(result.has_performance_incentive, false);
 });
+
+// ── 自動集計（画面の合計と PDF の合計を一致させる）─────────────────────────
+test("合計金額は明細と手数料から算出する（手入力欄は当てにしない）", () => {
+  const result = context({
+    items: [{ amount_ex_tax: 100000 }, { unit_price: 20000, quantity: 2 }],
+    other_fees: [{ fee_name: "振込手数料", amount: 880 }]
+  });
+  assert.equal(result.itemsSubtotalExTax, 140000);
+  assert.equal(result.otherFeesTotal, 880);
+  assert.equal(result.grandTotalExTax, 140880);
+});
+
+test("明細があるときは手入力の合計金額より集計値を採る", () => {
+  const result = context({ grandTotalExTax: 999999, items: [{ amount_ex_tax: 100000 }] });
+  assert.equal(result.grandTotalExTax, 100000);
+});
+
+test("明細が無ければ手入力の合計金額をそのまま使う（単一明細フォールバック）", () => {
+  const result = context({ grandTotalExTax: 250000, ITEM_NAME: "監修一式" });
+  assert.equal(result.grandTotalExTax, 250000);
+});
+
+test("納期・支払日を明細から集約し DELIVERY_DATE にも渡す", () => {
+  const result = context({
+    items: [
+      { delivery_date: "2026-09-30", payment_date: "2026-10-31" },
+      { delivery_date: "2026-10-31", payment_date: "2026-10-31" }
+    ]
+  });
+  assert.equal(result.summaryDeliveryDate, "2026-09-30 〜 2026-10-31 (明細参照)");
+  assert.equal(result.summaryPaymentDate, "2026-10-31");
+  assert.equal(result.DELIVERY_DATE, "2026-09-30 〜 2026-10-31 (明細参照)");
+});
+
+test("納期が明示入力されていれば集約より優先する", () => {
+  const result = context({
+    DELIVERY_DATE: "2026-12-01", items: [{ delivery_date: "2026-09-30" }]
+  });
+  assert.equal(result.DELIVERY_DATE, "2026-12-01");
+});
