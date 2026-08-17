@@ -98,7 +98,7 @@ export function TemplateSamples() {
               </span>}
             <a className="link-button" target="_blank" rel="noreferrer"
               href={`/api/v2/template-samples/${encodeURIComponent(selected.key)}/html?variant=${encodeURIComponent(selected.variant)}`}>
-              別タブで開く
+              別タブで大きく表示
             </a>
           </div>
           {loading

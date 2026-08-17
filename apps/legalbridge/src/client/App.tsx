@@ -82,7 +82,9 @@ function navGroups(access: {
       ...(access.legalWorkspace ? [{ view: "matters" as const, label: "案件", description: "案件・課題・タスクの管理", match: ["matters" as const] }] : []),
       ...(legalOrRequester ? [{ view: "documents" as const, label: access.requesterWorkspace ? "自分の文書" : "文書", description: "文書の作成・確定・PDF", match: ["documents" as const, "templates" as const, "document" as const] }] : []),
       ...(!access.readOnly && legalOrRequester ? [{ view: "drafts" as const, label: access.requesterWorkspace ? "自分の下書き" : "下書き", description: "保存中の下書きを再開", match: ["drafts" as const] }] : []),
-      ...(legalOrRequester ? [{ view: "snippets" as const, label: "スニペット", description: "定型文の全社共有・コピー", match: ["snippets" as const] }] : []),
+      // 「スニペット」だと探せないという指摘があったため、実際に呼ばれている
+      // 「定型文」を表に出す（機能は Phase 16-1 の text_snippets のまま）。
+      ...(legalOrRequester ? [{ view: "snippets" as const, label: "定型文", description: "よく使う文言を全社で共有してコピー", match: ["snippets" as const] }] : []),
       ...(legalOrRequester ? [{ view: "template-samples" as const, label: "ひな形", description: "各テンプレートの完成イメージをサンプル値で閲覧", match: ["template-samples" as const] }] : [])
     ] },
     { label: "権利・条件", items: [
@@ -142,7 +144,7 @@ function breadcrumbFor(view: View): Array<{ label: string; view?: View }> {
     "vendor-merge": [home, { label: "取引先名寄せ" }],
     "matter-merge": [home, { label: "案件名寄せ" }],
     guide: [home, { label: "運用ガイド" }],
-    snippets: [home, { label: "テキストスニペット" }],
+    snippets: [home, { label: "定型文" }],
     "template-samples": [home, { label: "ひな形" }],
     conditions: [home, { label: "条件明細" }],
     "royalty-preview": [home, { label: "ロイヤリティ試算" }],
@@ -798,6 +800,17 @@ function DocumentForm({
   const [draft, setDraft] = useState<DocumentDraft | null>(null);
   const [notice, setNotice] = useState("");
   const [previewHtml, setPreviewHtml] = useState("");
+  // 別タブ表示用の Blob URL。サイドの枠は 300px しかなく、A4 の文書を読むには
+  // 小さすぎるため、同じ HTML をそのままタブで開けるようにする。
+  // アンカーの href に載せる（window.open だとポップアップブロックに当たる）。
+  const [previewUrl, setPreviewUrl] = useState("");
+  useEffect(() => {
+    if (!previewHtml) { setPreviewUrl(""); return; }
+    const url = URL.createObjectURL(new Blob([previewHtml], { type: "text/html;charset=utf-8" }));
+    setPreviewUrl(url);
+    // プレビューを取り直すたびに前の URL を解放する（開いたままのタブは維持される）。
+    return () => URL.revokeObjectURL(url);
+  }, [previewHtml]);
   const [finalizedDocument, setFinalizedDocument] = useState<{
     id: number;
     documentNumber: string;
@@ -1064,6 +1077,8 @@ function DocumentForm({
         </div>
         <div className="actions">
           <button onClick={validate}>内容をプレビュー</button>
+          {/* 横の枠は 300px、狭い画面では非表示になるので、拡大導線はボタン側に置く。 */}
+          {previewUrl && <a className="button-link" href={previewUrl} target="_blank" rel="noreferrer">別タブで大きく表示</a>}
           {!readOnly && (
             <>
               {draft && (
@@ -1148,7 +1163,13 @@ function DocumentForm({
           )}
           <SpecializedDocumentForms templateKey={schema.templateKey} formData={formData} onChange={updateValue} />
         </form>
-        <aside className="preview"><strong>文書プレビュー</strong>{previewHtml ? <iframe title="文書プレビュー" sandbox="" srcDoc={previewHtml} /> : <div>「内容をプレビュー」を押すと、現在の入力内容を文書形式で確認できます。</div>}<small>Template version: {schema.templateVersionId}</small></aside>
+        <aside className="preview">
+          <strong>文書プレビュー</strong>
+          {previewHtml
+            ? <iframe title="文書プレビュー" sandbox="" srcDoc={previewHtml} />
+            : <div>「内容をプレビュー」を押すと、現在の入力内容を文書形式で確認できます。</div>}
+          <small>Template version: {schema.templateVersionId}</small>
+        </aside>
       </div>
     </section>
   );

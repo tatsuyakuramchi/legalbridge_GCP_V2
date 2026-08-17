@@ -668,6 +668,14 @@ header input { width: 100%; border: 1px solid var(--border); border-radius: var(
 .draft-status.saved { background: #e8f7f0; color: #16724e; }
 .draft-status.error { background: #feeceb; color: #b42318; }
 .actions .danger-button { border-color: #efb5b5; color: #9f2d2d; background: #fff8f8; }
+/* .actions の中でボタンと並ぶリンク（プレビューを別タブで開く等）。
+   実体はアンカーなのでポップアップブロックに当たらない。 */
+.actions .button-link {
+  display: inline-flex; align-items: center;
+  border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 16px;
+  background: var(--surface); color: var(--ink); text-decoration: none; font-size: inherit;
+}
+.actions .button-link:hover { border-color: var(--border-strong); }
 .form-readonly-note { margin: -8px 0 16px; border: 1px solid #fed7aa; border-radius: 8px; background: #fff7ed; color: #9a3412; padding: 10px 12px; font-size: 12px; }
 @media (max-width: 760px) {
   .document-form-title { display: grid; gap: 14px; }

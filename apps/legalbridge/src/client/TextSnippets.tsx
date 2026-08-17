@@ -169,7 +169,7 @@ export function TextSnippets({ canEdit = false }: { canEdit?: boolean }) {
       <div className="page-title">
         <div>
           <p>TEXT SNIPPETS</p>
-          <h1>テキストスニペット</h1>
+          <h1>定型文</h1>
           <small>よく使う定型文を全社で共有し、ワンクリックでコピーして文書作成に貼り付け</small>
         </div>
       </div>
