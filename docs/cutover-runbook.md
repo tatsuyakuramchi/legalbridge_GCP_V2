@@ -82,6 +82,26 @@ gcloud builds submit --config infra/gcp/cloudbuild-write-test.yaml --substitutio
 フラグを変える点火デプロイは、この `SUBS` 生成の前に `/tmp/build-flags.json` を
 jq で編集してから同じ手順で submit する。
 
+### 2-0b. Cloud SQL への接続（psql を使う前に）
+
+SQL の適用・確認は Cloud SQL Auth Proxy 経由で行う。毎回同じところで詰まるので
+スクリプトにまとめた:
+
+```bash
+infra/gcp/start-sql-proxy.sh          # 5432 で貼り直す（PORT= で変更可）
+```
+
+踏みやすい失敗:
+- **`Error 401 … ACCESS_TOKEN_TYPE_UNSUPPORTED`／`Invalid Credentials`**
+  … アクセストークンの失効（寿命は約1時間）。スクリプトを再実行する。
+- **`invalid token JSON from metadata: EOF`**
+  … ADC（メタデータサーバ）では認証できない。`--token` を明示する（スクリプトは常に明示）。
+- **`address already in use`** … 前のプロセスが残っている。スクリプトが先に停止する。
+- `~/cloud-sql-proxy` は**ファイル**（ディレクトリではない）。`Bus error` はダウンロード途中で
+  切れた壊れたバイナリ。サイズ（約 32MB）を確認して取り直す。
+
+成功時のログには `Authorizing with OAuth2 token` が出る。
+
 ### 2-1. 満了自動遷移 ✅ 点火済み（2026-08-10・grant 031＋flag true。自動実行は 2-3 Scheduler の daily-checks 作成後）
 ```bash
 psql "" -f infra/gcp/sql/031_production_contract_expiry_preflight.sql || true
