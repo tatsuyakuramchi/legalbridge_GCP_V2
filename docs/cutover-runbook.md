@@ -168,7 +168,9 @@ Backlog/CloudSign はカスタムヘッダ不可のため、リレーが `?token
    - Slack App：作成 → signing secret を `SLACK_SIGNING_SECRET` secret へ →
      `_SLACK_INTAKE_ENABLED=true`＋`_SLACK_SIGNING_SECRET_NAME=SLACK_SIGNING_SECRET` で再デプロイ →
      slash `/法務依頼`・`/法務検索`＋Interactivity の Request URL を `<RECV_URL>/internal/slack/…` に設定
-     （scopes: commands, chat:write。Backlog 未 live の間は dry-run＝隔離台帳のみで安全に検証可）。
+     （scopes: commands, chat:write。**案件 Slack パネルの会話取得には `channels:history` も必要**
+     ＝法務相談チャンネルの `conversations.replies`。依頼者DM の履歴を読むなら `im:history` も。
+     Backlog 未 live の間は dry-run＝隔離台帳のみで安全に検証可）。
    - CloudSign Webhook は 2-5 の CloudSign live と同時に（secret は作成済み）
 
 ### 2-5. 統合 live 化（Drive / Gmail / CloudSign）
@@ -363,6 +365,20 @@ jq '.substitutions._SLACK_BOT_USER_ID = "U0XXXXXXXXX"' /tmp/build-flags.json > /
 **Slack App 側**：DM スレッドの読取に `im:history` が必要。付与後は再インストール
 （ワークスペース管理者の承認が要る場合あり）。未付与のまま live にしても案件画面は
 壊れず、Slack パネルだけが「参照権限がありません」と表示する。
+
+**scope は機能ごとに別**（混同しやすい。2026-08-17 に実地で確認）：
+
+| 機能 | 読む場所 | 必要な scope |
+|---|---|---|
+| 依頼者DM のスレッド履歴（`_SLACK_CONVERSATION_READ_MODE`） | DM | `im:history` |
+| **案件 Slack パネル**（`matter_slack_threads`・`SLACK_LEGAL_CONSULT_CHANNEL`） | **公開チャンネル** | **`channels:history`** |
+
+案件スレッドは V1 が法務相談チャンネルへルート投稿しているため、実データは全件
+チャンネル（`channel_id` が `C` 始まり・V1 21件／V2 3件＝24件すべて）。`im:history` では
+読めない。**未付与のため `conversations.replies` が `missing_scope` で失敗中**
+（`matter-slack-routes.ts` の `getReplies`。grant 054 でデータは読めるが本文が出ない）。
+付与後は**再インストール**が必要で、**bot が当該チャンネルのメンバーである**ことも条件。
+
 
 送信側は同時に「1案件 = 1スレッド」へ統一される（2回目以降の通知は既存 root への
 返信になる）。宛先が変わって既存スレッドの DM と一致しない場合は送信しない
