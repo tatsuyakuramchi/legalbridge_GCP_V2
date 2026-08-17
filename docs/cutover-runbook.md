@@ -274,6 +274,32 @@ psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
   -f infra/gcp/sql/056_purchase_order_base_contract_fields.sql
 ```
 
+**057 / 058**：個人取引先の「担当者名／担当部署」に**口座名義カナ**が入っていた分の後始末。
+発注書テンプレートは宛先ブロックに
+`{{#if VENDOR_CONTACT_NAME}}{{VENDOR_CONTACT_DEPARTMENT}}　{{VENDOR_CONTACT_NAME}} 様{{/if}}`
+を出すため、「斎田明也 様」の下に「サイタ　アキヤ　サイタ　アキヤ 様」が並んでいた。
+個人の取引先に「担当者」は無く、カナは口座名義欄が持つ値なので担当者欄から外す。
+対象は**担当者名（または担当部署）が口座名義カナと完全一致する行のみ**（前後・全角空白差は無視）。
+本当の担当者名には触らない。
+
+- **057（取引先マスタ）**＝今後作成する文書への対策。安全。まずこれを流す。
+- **058（確定済み文書の form_data）**＝既存文書の修正。**確定済みデータの改変**なので業務判断のうえで。
+  再発行では直らない（`document-reissue` は form_data を引き継ぐ。ARC-PO-2026-0117-R1 が
+  同じ値を持っていたことで確認済み）。適用後は対象文書の PDF を再生成すると反映される。
+
+```bash
+psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
+  -v confirm_vendor_contact_kana=CLEAR_VENDOR_CONTACT_KANA \
+  -f infra/gcp/sql/057_vendor_contact_kana_cleanup.sql
+
+psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
+  -v confirm_document_contact_kana=REPAIR_DOCUMENT_CONTACT_KANA \
+  -f infra/gcp/sql/058_repair_document_contact_kana.sql
+```
+
+どちらも冪等。ローカル DB に本番同形のデータ（汚染2件＋法人の正しい担当者1件）を仕込んで
+検証済み：汚染のみ消え、法人の担当者・口座名義・金額・特約は無傷。
+
 **敬称（御中／様）は SQL 不要**。`vendors.entity_type` を正として描画時に解決するよう
 コード側で直した（`registry-repository` の `find`/`findByNumber` が `vendors` を LEFT JOIN し、
 宛名がマスタの名称（`vendor_name`/`trade_name`/`pen_name`）と一致するときだけ区分を採用する）。
