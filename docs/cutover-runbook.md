@@ -17,6 +17,21 @@ V2（本リポジトリ）を本番サービスとして V1（legalbridge_ai_gcp
 - 連携：Slack live／Drive live（2026-08-10）／**Backlog readonly live（2026-08-11 点火・arclight.backlog.com/LEGAL）**／Gmail・CloudSign は disabled。
 - 認証：cloudrun-iam（admin=tatsuya.kuramochi@arclight.co.jp。**単独運用のため §3 の追加開放は不要と決定**・2026-08-11）。
 
+### 0-1. 2026-08-17 の反映内容（build c1a3df50・revision 00105-wkx）
+
+- **メモリ 2Gi**（`--memory=1Gi` からの引き上げ）。PDF 生成の Chromium が 1Gi・同時2件で
+  OOM（実測 1057 MiB）になり、Drive 保存が HTTP 503 で落ちていた。
+- 帳票の出方：敬称（区分優先＋取引先マスタ優先）／個人取引先では担当者・部署・代表者を
+  引かない（V1 と同規則）／「代表者名 (＋様)」に敬称／A4 と改ページ制御／特約の重複出力／
+  発注書の合計・納期・支払日の自動集計。
+- フォーム：マスタで消した項目をフォームからも消す／定型文リンク／基本契約ピッカーの修正
+  （`HAS_BASE_CONTRACT` を立てる・発注番号を壊さない）／複製2種（相手先違い・内容違い）。
+- 案件 Slack：V1 の `matter_slack_threads` を読むフォールバック（grant 054 と対）。
+  **ただし `conversations.replies` が missing_scope で失敗中**（下の §2-4 ③ を参照）。
+- 失敗表示：JSON でない応答（Cloud Run の 503 など）を実際の失敗内容として出す。
+
+適用済み SQL（この日）：053 / 054 / 055 / 056 / 057（対象0件）/ 058（11件修正）。
+
 ## 1. 残実装（コード）— cutover 前に必要
 
 > **2026-08-10：本節の残実装はすべて完了**（1-1〜1-6 ✅）。以降は §2 点火メニューと業務判断のみ。
