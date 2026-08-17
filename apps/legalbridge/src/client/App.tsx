@@ -34,7 +34,7 @@ import { TextSnippets } from "./TextSnippets";
 import { TemplateSamples } from "./TemplateSamples";
 import { RequestsWorkspace } from "./RequestsWorkspace";
 import { seedFormData } from "./extract-variables";
-import { duplicateFormData } from "./duplicate-document";
+import { duplicateFormData, type DuplicateMode } from "./duplicate-document";
 import { PaymentReport } from "./PaymentReport";
 import { ExcelBatchWorkspace } from "./ExcelBatchWorkspace";
 import { SettingsWorkspace } from "./SettingsWorkspace";
@@ -247,6 +247,7 @@ export function App() {
   // Backlog 抽出値のシードは「空欄だけ補完」なので、明細を含む複製には使えない。
   const [duplicateValues, setDuplicateValues] = useState<DocumentFormData | null>(null);
   const [duplicateFrom, setDuplicateFrom] = useState<string | null>(null);
+  const [duplicateMode, setDuplicateMode] = useState<DuplicateMode>("vendor");
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -330,7 +331,7 @@ export function App() {
   // 確定済み文書を複製して新しい入力を開く。相手先だけ差し替えて2通目を出す運用
   // （同一内容の発注書を取引先A・Bへ、など）。1通目の下書きは確定時に消えているので、
   // 下書きの一意制約（受付番号×テンプレート）とは競合しない。
-  async function duplicateDocument(document: RegisteredDocument) {
+  async function duplicateDocument(document: RegisteredDocument, mode: DuplicateMode) {
     const response = await fetch(
       `/api/v2/document-templates/${encodeURIComponent(document.templateType)}/form-schema`);
     if (!response.ok) return;
@@ -338,9 +339,10 @@ export function App() {
     setDraftSelection(null);
     setNewDocSeed({});
     setNewDocIssueKey(document.issueKey ?? "");
-    setDuplicateValues(duplicateFormData(document.formData ?? {}));
+    setDuplicateValues(duplicateFormData(document.formData ?? {}, mode));
     setSchema(await response.json());
     setDuplicateFrom(document.documentNumber ?? null);
+    setDuplicateMode(mode);
     setView("document");
   }
 
@@ -514,7 +516,7 @@ export function App() {
             initialQuery={deepLinkIssue}
             onOpenMatter={(matterId) => { setSearchSelection({ target: "matter", id: String(matterId), title: "" }); setView("matters"); }}
             selectedId={searchSelection?.target === "document" ? Number(searchSelection.id) : undefined}
-            onDuplicate={(document) => void duplicateDocument(document)} />
+            onDuplicate={(document, mode) => void duplicateDocument(document, mode)} />
         )}
         {view === "templates" && (
           <TemplateCatalog templates={templates} compatibility={compatibility} onSelect={openDocumentForm}
@@ -534,6 +536,7 @@ export function App() {
             seedValues={draftSelection ? undefined : newDocSeed}
             duplicateValues={draftSelection ? undefined : duplicateValues ?? undefined}
             duplicateFrom={draftSelection ? undefined : duplicateFrom ?? undefined}
+            duplicateMode={duplicateMode}
             onBack={() => setView(draftSelection ? "drafts" : "templates")}
             onCreateNew={() => setView("templates")}
             onOpenDocuments={() => setView("documents")}
@@ -805,6 +808,7 @@ function DocumentForm({
   seedValues,
   duplicateValues,
   duplicateFrom,
+  duplicateMode,
   onBack,
   onCreateNew,
   onOpenDocuments,
@@ -823,6 +827,7 @@ function DocumentForm({
   duplicateValues?: DocumentFormData;
   // 複製元の文書番号（案内文に出す）。
   duplicateFrom?: string;
+  duplicateMode?: DuplicateMode;
   onBack: () => void;
   onCreateNew?: () => void;
   onOpenDocuments?: () => void;
@@ -907,8 +912,10 @@ function DocumentForm({
           restoredDraft
             ? `保存済みの下書きを復元しました（${formatDraftTime(restoredDraft.updatedAt)}）`
             : duplicateValues
-              ? `${duplicateFrom ?? "元の文書"} の内容を引き継ぎました。`
-                + "相手先・振込先・承諾欄は空です — 新しい相手先を選び直してください。"
+              ? `${duplicateFrom ?? "元の文書"} を下敷きにしました。`
+                + (duplicateMode === "content"
+                  ? "相手先・振込先は引き継いでいます — 明細・金額を入れ直してください。"
+                  : "明細・金額は引き継いでいます — 相手先・振込先を選び直してください。")
               : "新しい文書として入力できます"
         );
       })

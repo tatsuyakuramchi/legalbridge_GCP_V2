@@ -83,8 +83,9 @@ export function DocumentRegistry({
   selectedId?: number;
   initialQuery?: string;
   onOpenMatter?: (matterId: number) => void;
-  // 同じ内容で相手先だけ違う文書を続けて作る（取引先A・Bの2通など）。
-  onDuplicate?: (document: RegisteredDocument) => void;
+  // 確定済み文書を下敷きに次を作る。"vendor"=同じ内容を別の相手先へ、
+  // "content"=同じ相手先へ別の内容を。
+  onDuplicate?: (document: RegisteredDocument, mode: "vendor" | "content") => void;
 }) {
   const [importing, setImporting] = useState(false);
   const [query, setQuery] = useState(initialQuery);
@@ -276,7 +277,7 @@ function DocumentDetail({
   canReissueDocument?: boolean;
   onRefresh: () => Promise<void> | void;
   onOpenMatter?: (matterId: number) => void;
-  onDuplicate?: (document: RegisteredDocument) => void;
+  onDuplicate?: (document: RegisteredDocument, mode: "vendor" | "content") => void;
   onVoided?: () => Promise<void> | void;
   onReissued?: (newId: number) => Promise<void> | void;
   onSelectVersion?: (id: number) => void;
@@ -311,14 +312,23 @@ function DocumentDetail({
         : document.matterId != null ? `#${document.matterId}` : "未紐付け（案件詳細から紐付け可能）"}</dd>
     </dl>
     {isVoided && <div className="void-banner">この文書は無効化（void）済みです。紐づく実績は取消されています。</div>}
-    {!isVoided && onDuplicate && <p className="hub-note">
-      同じ内容で相手先だけ違う文書を続けて作れます（例：同一内容の発注書を取引先A・Bへ）。
-      明細・金額・特約はそのまま引き継ぎ、相手先・振込先・承諾欄は空にして開きます。
-      {" "}
-      <button type="button" className="link-button" onClick={() => onDuplicate(document)}>
-        この内容で新規作成（複製）
-      </button>
-    </p>}
+    {!isVoided && onDuplicate && <div className="duplicate-zone">
+      <h3>この文書を下敷きに次を作る</h3>
+      <p className="hub-note">
+        1つの依頼に複数の文書を出すときに使います。どちらも新しい文書番号で採番され、
+        元の文書はそのまま有効なまま残ります（訂正したい場合は「再発行」を使ってください）。
+      </p>
+      <div className="duplicate-actions">
+        <button type="button" onClick={() => onDuplicate(document, "vendor")}>
+          相手先を変えて作成
+          <small>明細・金額・特約を引き継ぐ／相手先・振込先は選び直し</small>
+        </button>
+        <button type="button" onClick={() => onDuplicate(document, "content")}>
+          内容を変えて作成
+          <small>相手先・振込先を引き継ぐ／明細・金額は入れ直し</small>
+        </button>
+      </div>
+    </div>}
     {!isVoided && <DocumentOutputActions
       documentId={document.id}
       documentNumber={document.documentNumber}

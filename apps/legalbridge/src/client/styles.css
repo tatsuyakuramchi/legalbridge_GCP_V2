@@ -697,6 +697,18 @@ header input { width: 100%; border: 1px solid var(--border); border-radius: var(
   color: var(--ink-soft); text-decoration: none; border-bottom: 1px dotted currentColor;
 }
 .field-snippets:hover { color: var(--accent); }
+/* 確定済み文書を下敷きに次を作る（相手先違い／内容違い）。危険操作ではないので
+   danger-zone とは別の見た目にし、どちらを引き継ぐかをボタン内に書く。 */
+.duplicate-zone { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
+.duplicate-zone h3 { margin: 0 0 6px; font-size: 13px; }
+.duplicate-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.duplicate-actions button {
+  display: grid; gap: 3px; text-align: left; flex: 1 1 220px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius);
+  background: var(--surface); padding: 10px 12px; font-weight: 700;
+}
+.duplicate-actions button small { font-weight: 400; font-size: 11px; color: var(--ink-soft); }
+.duplicate-actions button:hover { border-color: var(--accent); }
 .form-readonly-note { margin: -8px 0 16px; border: 1px solid #fed7aa; border-radius: 8px; background: #fff7ed; color: #9a3412; padding: 10px 12px; font-size: 12px; }
 @media (max-width: 760px) {
   .document-form-title { display: grid; gap: 14px; }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  DUPLICATE_CLEARED_KEYS, describeDuplicate, duplicateFormData
+  DUPLICATE_CLEARED_KEYS, clearedKeysFor, describeDuplicate, duplicateFormData
 } from "./duplicate-document.js";
 
 // 「同じ内容の発注書を取引先A・Bの2通」への対応。1通目を確定したあと、
@@ -98,4 +98,69 @@ test("許諾側の文書でも許諾者を選び直させる", () => {
   assert.equal("LICENSOR_NAME" in next, false);
   assert.equal("許諾者種別" in next, false);
   assert.equal(next.対象作品, "作品X");
+});
+
+// ── 同じ相手先へ別の内容を出す（取引先Aへ2件目の別発注）─────────────────
+test("内容違いの複製では相手先と振込先を引き継ぐ", () => {
+  const next = duplicateFormData(ORDER_FOR_A, "content");
+  assert.equal(next.VENDOR_NAME, "株式会社A");
+  assert.equal(next.VENDOR_IS_CORPORATION, "法人");
+  assert.equal(next.VENDOR_SUFFIX, "御中");
+  assert.equal(next.VENDOR_ADDRESS, "東京都千代田区…");
+  assert.equal(next.BANK_NAME, "みずほ銀行");
+  assert.equal(next.ACCOUNT_NUMBER, "1234567");
+});
+
+test("内容違いの複製では明細・金額・集計を空にする", () => {
+  // 前の明細が残ったまま別の発注を出すと、金額だけ直したつもりで別品目が紛れる。
+  const next = duplicateFormData(ORDER_FOR_A, "content");
+  for (const key of ["items", "other_fees", "financial_conditions",
+    "grandTotalExTax", "itemsSubtotalExTax", "otherFeesTotal"]) {
+    assert.equal(key in next, false, `${key} を引き継がない`);
+  }
+});
+
+test("内容違いの複製でも文書番号と承諾記録は落とす", () => {
+  const next = duplicateFormData(ORDER_FOR_A, "content");
+  assert.equal("documentNumber" in next, false);
+  assert.equal("VENDOR_ACCEPT_NAME" in next, false);
+  assert.equal("VENDOR_ACCEPT_DATE" in next, false);
+});
+
+test("内容違いでも特約・備考・担当者は引き継ぐ（定型文の再利用）", () => {
+  const next = duplicateFormData(ORDER_FOR_A, "content");
+  assert.equal(next.SPECIAL_TERMS, "本件の権利は発注者に帰属する。");
+  assert.equal(next.REMARKS_FREE, "納品はギガファイル便で。");
+  assert.equal(next.STAFF_NAME, "法務担当");
+});
+
+test("2つの複製は消す対象が逆になっている", () => {
+  const vendor = new Set(clearedKeysFor("vendor"));
+  const content = new Set(clearedKeysFor("content"));
+  // 相手先違い: 相手先を消して明細は残す
+  assert.ok(vendor.has("VENDOR_NAME"));
+  assert.ok(!vendor.has("items"));
+  // 内容違い: 明細を消して相手先は残す
+  assert.ok(content.has("items"));
+  assert.ok(!content.has("VENDOR_NAME"));
+  // どちらでも必ず消すもの
+  for (const key of ["documentNumber", "VENDOR_ACCEPT_DATE"]) {
+    assert.ok(vendor.has(key) && content.has(key), `${key} は両方で消す`);
+  }
+});
+
+test("既定は相手先違い（引数なしの呼び出しは従来動作）", () => {
+  assert.deepEqual(duplicateFormData(ORDER_FOR_A), duplicateFormData(ORDER_FOR_A, "vendor"));
+  assert.deepEqual(clearedKeysFor("vendor"), DUPLICATE_CLEARED_KEYS);
+});
+
+test("空配列の明細は「消した」に数えない", () => {
+  const summary = describeDuplicate({ items: [], VENDOR_NAME: "株式会社A" }, "content");
+  assert.equal(summary.cleared.includes("items"), false);
+});
+
+test("内容違いの要約は明細を消したことを示す", () => {
+  const summary = describeDuplicate(ORDER_FOR_A, "content");
+  assert.ok(summary.cleared.includes("items"));
+  assert.equal(summary.cleared.includes("VENDOR_NAME"), false);
 });
