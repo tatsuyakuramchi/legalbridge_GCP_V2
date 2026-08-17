@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { DocumentIntegrations } from "./DocumentIntegrations";
+import { describeHttpFailure, readJsonResponse } from "./http";
 
 // 文書の出力アクション（PDF生成・Drive保存・Gmail/CloudSign 送信）をまとめた再利用部品。
 // 文書一覧の詳細ペインと、確定直後の結果パネル（作成→出力の1画面化・B1）の双方で使う。
@@ -42,8 +43,9 @@ export function DocumentOutputActions({
     try {
       const response = await fetch(`/api/v2/documents/${documentId}/pdf`, { headers: { Accept: "application/pdf" } });
       if (!response.ok) {
-        const message = await response.json().then((body) => body.error as string | undefined).catch(() => undefined);
-        throw new Error(message ?? "PDFの生成に失敗しました。");
+        // 失敗時の本文は JSON とは限らない（Cloud Run の 503 は素のテキスト）。
+        const body = await response.text().catch(() => "");
+        throw new Error(describeHttpFailure(response.status, body, "PDFの生成に失敗しました。"));
       }
       const blob = await response.blob();
       const objectUrl = URL.createObjectURL(blob);
@@ -67,8 +69,10 @@ export function DocumentOutputActions({
     setDriveError("");
     try {
       const response = await fetch(`/api/v2/documents/${documentId}/drive`, { method: "POST" });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error ?? "Driveへの保存に失敗しました。");
+      const parsed = await readJsonResponse<{ driveLink?: string | null }>(
+        response, "Driveへの保存に失敗しました。");
+      if (!parsed.ok) throw new Error(parsed.message);
+      const result = parsed.data;
       setDriveLink(result.driveLink ?? null);
       await onSaved?.();
       if (result.driveLink) window.open(result.driveLink, "_blank", "noopener,noreferrer");
@@ -85,9 +89,10 @@ export function DocumentOutputActions({
     setDriveError("");
     try {
       const response = await fetch(`/api/v2/documents/${documentId}/drive/regenerate`, { method: "POST" });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error ?? "PDFの再生成に失敗しました。");
-      setDriveLink(result.driveLink ?? null);
+      const parsed = await readJsonResponse<{ driveLink?: string | null }>(
+        response, "PDFの再生成に失敗しました。");
+      if (!parsed.ok) throw new Error(parsed.message);
+      setDriveLink(parsed.data.driveLink ?? null);
       await onSaved?.();
     } catch (error) {
       setDriveError(error instanceof Error ? error.message : "PDFの再生成に失敗しました。");

@@ -164,9 +164,8 @@ export function buildPatch(schema: DocumentFormSchema, _formData: DocumentFormDa
   for (const field of schema.fields) {
     if (!field.dbField?.startsWith(`${item.type}.`)) continue;
     const sourceKey = field.dbField.slice(item.type.length + 1);
-    if (item.values[sourceKey] !== undefined && item.values[sourceKey] !== null) {
-      patch[field.name] = item.values[sourceKey];
-    }
+    // 対応表と同じ規則：null は空にする（前の相手の値を残さない）。
+    setIfField(schema, patch, field.name, item.values[sourceKey]);
   }
   if (item.type === "vendor") {
     applyVendorAliases(schema, patch, item.values);
@@ -277,7 +276,7 @@ function applyDocumentAliases(schema: DocumentFormSchema, patch: DocumentFormDat
   // 発注書は「基本契約あり」フラグで準拠契約の条項とスポット約款を出し分ける。
   // 契約を選んだのにフラグが立たないと、基本契約名だけ入って条項はスポット約款の
   // まま出ていた。フラグは表示項目なので、違っていれば外して確定できる。
-  if ("MASTER_CONTRACT_REF" in patch) setIfField(schema, patch, "HAS_BASE_CONTRACT", true);
+  if (patch.MASTER_CONTRACT_REF) setIfField(schema, patch, "HAS_BASE_CONTRACT", true);
 }
 
 function applyWorkAliases(schema: DocumentFormSchema, patch: DocumentFormData, values: Record<string, unknown>) {
@@ -305,13 +304,11 @@ function applyPatternAliases(
     // 職名・役職の欄に人名（代表者名）を入れない。
     if (/職名|役職|肩書/.test(text)) continue;
     if (!contextPattern.test(text)) continue;
-    for (const [labelPattern, sourceKey] of rules) {
-      const value = values[sourceKey];
-      if (labelPattern.test(text) && value !== undefined && value !== null && value !== "") {
-        patch[field.name] = value;
-        break;
-      }
-    }
+    // ラベルに最初に当たった規則だけを使う。以前は「値が空なら次の規則へ」だったため、
+    // 「代表者名称」のような欄で代表者名が空だと会社名が入っていた。役割はラベルで
+    // 決まる。値が空ならその欄も空にする（前に引いた相手の値を残さない）。
+    const rule = rules.find(([labelPattern]) => labelPattern.test(text));
+    if (rule) setIfField(schema, patch, field.name, values[rule[1]]);
   }
 }
 
@@ -326,8 +323,14 @@ function applyExistingFields(
   }
 }
 
+// マスタの値をフォーム項目へ。
+//   null（マスタに列はあるが空）は **空にする**。ここを「触らない」にしていたため、
+//   マスタで担当部署・担当者名を消しても、フォームには前に引いた値が残り続けていた
+//   （消したのに直らない、という報告の原因）。
+//   undefined（マスタがその列を返していない）は触らない。口座情報のように権限で
+//   返らない項目や、種別違いのマスタでは、消してよいか判断できない。
 function setIfField(schema: DocumentFormSchema, patch: DocumentFormData, name: string, value: unknown) {
-  if (schema.fields.some((field) => field.name === name) && value !== undefined && value !== null) {
-    patch[name] = value;
-  }
+  if (value === undefined) return;
+  if (!schema.fields.some((field) => field.name === name)) return;
+  patch[name] = value === null ? "" : value;
 }
