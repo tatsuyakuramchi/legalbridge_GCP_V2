@@ -53,3 +53,15 @@ test("配列は AND：すべての条件を満たしたときだけ表示", () =
     { ANNEX_2_INCLUDED: false, TRANSACTION_MODEL: "Both" }), false);
   assert.equal(isFieldVisible({ ...base, showWhen: [] }, {}), true);
 });
+
+test("truthy は配列を件数で見る（明細0件を「明細あり」にしない）", () => {
+  const noItems: TemplateField = { ...base, showWhen: { field: "items", truthy: false } };
+  // 単一明細フォールバックの項目は、明細が1行も無いときだけ出す。
+  assert.equal(isFieldVisible(noItems, {}), true);
+  assert.equal(isFieldVisible(noItems, { items: [] }), true);
+  assert.equal(isFieldVisible(noItems, { items: [{ item_name: "デザイン" }] }), false);
+
+  const hasItems: TemplateField = { ...base, showWhen: { field: "items", truthy: true } };
+  assert.equal(isFieldVisible(hasItems, { items: [] }), false);
+  assert.equal(isFieldVisible(hasItems, { items: [{}] }), true);
+});

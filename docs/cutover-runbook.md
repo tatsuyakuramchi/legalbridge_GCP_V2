@@ -203,8 +203,16 @@ psql "$RUNTIME_ADMIN_DSN" -v confirm_license_out=SEED_LICENSE_OUT_TEMPLATE \
 | 048 | `payment_notice` / `invoice` | ARC-PAY / ARC-INV | ✅ 適用済み（2026-08-14） |
 | 049 | `nda`（v2 改訂） | 既存 | ✅ 適用済み（2026-08-13） |
 | 050 | `license_out_en` | ARC-LOUT | ✅ 適用済み（2026-08-14・version 89） |
-| 051 | `igla_license_en`（IGLA 本体） | ARC-IGLA | ⬜ 未適用（`-v confirm_igla=SEED_IGLA_TEMPLATE`） |
-| 052 | `igla_license_annex_en`（IGLA 付属書1/2/3） | ARC-IGLAX | ⬜ 未適用（`-v confirm_igla_annex=SEED_IGLA_ANNEX_TEMPLATE`） |
+| 051 | `igla_license_en`（IGLA 本体） | ARC-IGLA | ✅ 適用済み（91項目・version 1） |
+| 052 | `igla_license_annex_en`（IGLA 付属書1/2/3） | ARC-IGLAX | ✅ 適用済み（72項目・version 1） |
+| 053 | `purchase_order` / `intl_purchase_order`（単一明細フォールバックの出し分け） | 既存 | ⬜ 未適用（`-v confirm_po_fallback=HIDE_PO_SINGLE_LINE_FIELDS`） |
+
+053 だけは新規テンプレートではなく **現行版の `field_schema` の書き換え**（`html_source` は
+無変更）。明細が0件のときだけ単一明細フォールバック項目を出すようにし、発注書からは
+未使用の `PAYMENT_METHOD` を落とす。**版は上げない**：新版を作って `current_version_id` を
+差し替えると、既存文書の `template_version_id` と食い違って PDF 再発行・CloudSign 依頼が
+`StoredDocumentTemplateVersionError` で全滅する。出力が変わる改訂のときだけ新版を作ること。
+何度流しても結果は同じ（冪等）。
 
 IGLA（051/052）は Deal Sheet の取引モデルで Schedule 1（License-Out）/ Schedule 2
 （Product-Out）の出力を切り替える2部構成。本体と付属書は別文書なので、付属書を使う
