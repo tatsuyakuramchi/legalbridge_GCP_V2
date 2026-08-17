@@ -233,6 +233,27 @@ psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
   -f infra/gcp/sql/055_remove_orphan_form_fields.sql
 ```
 
+**056**：発注書の「基本契約あり」「基本契約名 / 番号」をフォームに出す。この2項目は
+`type='hidden'` で画面に出ないまま、テンプレートの条項を出し分けていた
+（真＝準拠契約「締結済みの基本契約（〇〇）に基づき発行される」／偽＝適用約款
+「別紙スポット契約用約款が適用される」）。つまり法的な前提が変わる分岐を画面から
+設定できなかった。`HAS_BASE_CONTRACT` を boolean、`MASTER_CONTRACT_REF` を text＋
+`showWhen`（チェック時のみ表示）にする。053・055 と同じく現行版の `field_schema` のみ
+書き換え・`html_source` 無変更・版据え置き・冪等。既存文書の出方は変わらない
+（`form_data` 無変更＝過去の発注書は従来どおりスポット約款側）。
+
+あわせて**コード側**も直した：「DBから引用 → 契約・文書」で契約を選んでも
+`HAS_BASE_CONTRACT` が立たず、契約名だけ入って条項はスポット約款のままだった。
+同じ処理が契約番号を `ORDER_NO` にも書いており、発注書では `ORDER_NO` が自分の
+発注番号なので **PDF の発注番号が契約番号に化けていた**（`ORDER_NO` への書き込みは
+ラベルが「親…」「基本契約…」のテンプレートに限定）。
+
+```bash
+psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
+  -v confirm_base_contract_fields=SHOW_PURCHASE_ORDER_BASE_CONTRACT \
+  -f infra/gcp/sql/056_purchase_order_base_contract_fields.sql
+```
+
 **敬称（御中／様）は SQL 不要**。`vendors.entity_type` を正として描画時に解決するよう
 コード側で直した（`registry-repository` の `find`/`findByNumber` が `vendors` を LEFT JOIN し、
 宛名がマスタの名称（`vendor_name`/`trade_name`/`pen_name`）と一致するときだけ区分を採用する）。

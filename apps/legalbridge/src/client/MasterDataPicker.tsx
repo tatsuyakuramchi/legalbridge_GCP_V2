@@ -159,7 +159,7 @@ function typesForSchema(schema: DocumentFormSchema): MasterType[] {
   return [...types];
 }
 
-function buildPatch(schema: DocumentFormSchema, _formData: DocumentFormData, item: Item) {
+export function buildPatch(schema: DocumentFormSchema, _formData: DocumentFormData, item: Item) {
   const patch: DocumentFormData = {};
   for (const field of schema.fields) {
     if (!field.dbField?.startsWith(`${item.type}.`)) continue;
@@ -264,9 +264,20 @@ function applyDocumentAliases(schema: DocumentFormSchema, patch: DocumentFormDat
   const number = values.document_number;
   const title = values.CONTRACT_TITLE ?? values.基本契約名 ?? values.PROJECT_TITLE ?? number;
   for (const name of ["MASTER_CONTRACT_REF", "基本契約名"]) setIfField(schema, patch, name, title);
-  for (const name of ["基本契約番号", "linked_contract_number", "parent_po_number", "ORDER_NO"]) {
+  for (const name of ["基本契約番号", "linked_contract_number", "parent_po_number"]) {
     setIfField(schema, patch, name, number);
   }
+  // ORDER_NO は「親発注書番号」の意味で持つテンプレート（maintenance_spec）だけに書く。
+  // 発注書の ORDER_NO は自分の発注番号なので、基本契約の番号を入れると PDF の
+  // 発注番号がその契約番号に化ける。ラベルで役割を見分ける。
+  const orderNo = schema.fields.find((field) => field.name === "ORDER_NO");
+  if (orderNo && /親|基本契約/.test(`${orderNo.label ?? ""}`)) {
+    setIfField(schema, patch, "ORDER_NO", number);
+  }
+  // 発注書は「基本契約あり」フラグで準拠契約の条項とスポット約款を出し分ける。
+  // 契約を選んだのにフラグが立たないと、基本契約名だけ入って条項はスポット約款の
+  // まま出ていた。フラグは表示項目なので、違っていれば外して確定できる。
+  if ("MASTER_CONTRACT_REF" in patch) setIfField(schema, patch, "HAS_BASE_CONTRACT", true);
 }
 
 function applyWorkAliases(schema: DocumentFormSchema, patch: DocumentFormData, values: Record<string, unknown>) {
