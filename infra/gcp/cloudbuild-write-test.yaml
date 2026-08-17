@@ -293,7 +293,11 @@ steps:
           --image="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPOSITORY}/${_IMAGE}:${BUILD_ID}" \
           --region="${_REGION}" \
           --platform=managed \
-          --memory=1Gi \
+          # PDF 生成は Chromium を起動する。1Gi・同時2件では実測 1057 MiB に達して
+          # コンテナが OOM で終了し、Drive 保存が HTTP 503（本文は素の
+          # "Service Unavailable"）で落ちていた（2026-08-17 のログで確認）。
+          # Chromium 1本ぶんの余裕を確保する。
+          --memory=2Gi \
           --cpu=1 \
           --concurrency=2 \
           --no-allow-unauthenticated \
