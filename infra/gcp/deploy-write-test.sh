@@ -12,9 +12,12 @@
 #   infra/gcp/deploy-write-test.sh KEY=VALUE [KEY=VALUE]  # 一部フラグだけ変えて再デプロイ
 #     例) infra/gcp/deploy-write-test.sh _SLACK_CONVERSATION_READ_MODE=live
 #   DRY_RUN=1 infra/gcp/deploy-write-test.sh ...          # 送信せず差分だけ確認
+#   PROJECT=... で対象プロジェクトを上書き（既定 legalbridge-488506）。
+#   Cloud Shell がリセットされて core/project が消えても動くよう常に --project を渡す。
 
 set -euo pipefail
 
+PROJECT="${PROJECT:-legalbridge-488506}"
 SERVICE="${SERVICE:-legalbridge-v2-write-test}"
 REGION="${REGION:-asia-northeast1}"
 CONFIG="${CONFIG:-infra/gcp/cloudbuild-write-test.yaml}"
@@ -31,16 +34,22 @@ if ! gcloud auth list --filter=status:ACTIVE --format="value(account)" 2>/dev/nu
 fi
 echo "認証: $(gcloud auth list --filter=status:ACTIVE --format='value(account)' | head -1)"
 
+# Cloud Shell がリセットされると core/project が消える。毎回 --project を明示して
+# 「resource is not properly specified」で止まらないようにする。
+echo "プロジェクト: ${PROJECT}"
+
 # ── 2. 配信中リビジョンのイメージタグ＝ビルドID から現行設定を取得 ────────────
 #     （'gcloud builds list' の最新 SUCCESS は別サービスのビルドを掴む事故がある）
 echo "配信中リビジョンから現行設定を取得しています…"
-IMAGE="$(gcloud run services describe "${SERVICE}" --region "${REGION}" \
+IMAGE="$(gcloud run services describe "${SERVICE}" --project "${PROJECT}" --region "${REGION}" \
   --format='value(spec.template.spec.containers[0].image)')"
 [ -n "${IMAGE}" ] || die "${SERVICE} の配信中イメージを取得できませんでした"
 LAST_BUILD="${IMAGE##*:}"
 echo "採用ビルド: ${LAST_BUILD}"
 
-gcloud builds describe "${LAST_BUILD}" --format=json | jq '{substitutions}' > "${FLAGS_FILE}"
+# ビルドは global。--region を付けると別プールを見に行って not found になる。
+gcloud builds describe "${LAST_BUILD}" --project "${PROJECT}" \
+  --format=json | jq '{substitutions}' > "${FLAGS_FILE}"
 
 KEY_COUNT="$(jq -r '.substitutions | keys | length' "${FLAGS_FILE}")"
 [ "${KEY_COUNT}" -ge 100 ] || die "substitutions が ${KEY_COUNT} 件しかありません（引き継ぎ失敗の疑い）"
@@ -84,4 +93,4 @@ if [ "${DRY_RUN:-}" = "1" ]; then
   exit 0
 fi
 echo "ビルドを送信します…"
-gcloud builds submit --config "${CONFIG}" --substitutions "^|^${SUBS}" .
+gcloud builds submit --project "${PROJECT}" --config "${CONFIG}" --substitutions "^|^${SUBS}" .
