@@ -169,7 +169,13 @@ function DynamicField({
 }) {
   const inputValue = String(value ?? "");
   return <label>
-    <span>{definition.label}</span>
+    <span>
+      {definition.label}
+      {/* 長文欄は定型文からの貼り付けが多いので、別タブで開く導線を見出し横に置く。 */}
+      {definition.type === "textarea" &&
+        <a className="field-snippets" href="/?view=snippets" target="_blank" rel="noreferrer"
+          title="定型文を別タブで開く">定型文</a>}
+    </span>
     {definition.type === "textarea"
       ? <textarea value={inputValue} onChange={(event) => onChange(event.target.value)} />
       : definition.type === "select"

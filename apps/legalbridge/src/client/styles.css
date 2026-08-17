@@ -689,6 +689,14 @@ header input { width: 100%; border: 1px solid var(--border); border-radius: var(
 .po-totals dd { margin: 2px 0 0; font-size: 14px; font-weight: 700; }
 .po-totals dd strong { font-size: 17px; }
 .po-totals dd small { display: block; font-weight: 400; font-size: 11px; color: var(--ink-soft); }
+/* 長文欄の見出し横に出す「定型文」リンク（別タブ）。項目名を押しのけないよう
+   右端へ寄せ、通常時は控えめにする。 */
+.field-grid label > span { display: flex; align-items: baseline; gap: 6px; }
+.field-snippets {
+  margin-left: auto; font-weight: 400; font-size: 11px;
+  color: var(--ink-soft); text-decoration: none; border-bottom: 1px dotted currentColor;
+}
+.field-snippets:hover { color: var(--accent); }
 .form-readonly-note { margin: -8px 0 16px; border: 1px solid #fed7aa; border-radius: 8px; background: #fff7ed; color: #9a3412; padding: 10px 12px; font-size: 12px; }
 @media (max-width: 760px) {
   .document-form-title { display: grid; gap: 14px; }

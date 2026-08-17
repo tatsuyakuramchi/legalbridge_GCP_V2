@@ -113,3 +113,36 @@ test("納期が明示入力されていれば集約より優先する", () => {
   });
   assert.equal(result.DELIVERY_DATE, "2026-12-01");
 });
+
+// ── 特約事項は備考へ流さない ─────────────────────────────────────────────
+test("特約事項だけ入力しても備考枠は出さない", () => {
+  // テンプレートは「特約事項」と「備考」を別枠で出す。SPECIAL_TERMS を REMARKS 系の
+  // フォールバックに混ぜていたため、特約だけ入れると同じ文が両方に出ていた。
+  const result = context({ SPECIAL_TERMS: "本件の権利は発注者に帰属する。" });
+  assert.equal(result.SPECIAL_TERMS, "本件の権利は発注者に帰属する。");
+  assert.equal(result.REMARKS, "");
+  assert.equal(result.REMARKS_FREE, "");
+  assert.equal(result.REMARKS_FIXED, "");
+});
+
+test("備考を入力すれば備考枠が出る（特約は空のまま）", () => {
+  const result = context({ REMARKS_FREE: "納品はギガファイル便で。" });
+  assert.equal(result.REMARKS_FREE, "納品はギガファイル便で。");
+  assert.equal(result.REMARKS, "納品はギガファイル便で。", "備考枠の表示判定に使われる");
+  assert.equal(result.SPECIAL_TERMS, "");
+});
+
+test("特約と備考を両方入力すればそれぞれの枠に入る", () => {
+  const result = context({
+    SPECIAL_TERMS: "特約の文", REMARKS_FIXED: "定型の文", REMARKS_FREE: "自由の文"
+  });
+  assert.equal(result.SPECIAL_TERMS, "特約の文");
+  assert.equal(result.REMARKS_FIXED, "定型の文");
+  assert.equal(result.REMARKS_FREE, "自由の文");
+});
+
+test("REMARKS だけの旧データは定型備考として表示する（後方互換）", () => {
+  const result = context({ REMARKS: "旧テンプレの備考" });
+  assert.equal(result.REMARKS_FIXED, "旧テンプレの備考");
+  assert.equal(result.SPECIAL_TERMS, "");
+});

@@ -105,9 +105,14 @@ function buildPurchaseOrderContext(source: Data) {
       || aggregateItemDates(items, "delivery_date"),
     order_date: pick(source, "order_date", "ORDER_DATE", "発注日"),
     発行日: pick(source, "発行日", "ORDER_DATE", "OF_DATE"),
-    REMARKS: pick(source, "REMARKS", "REMARKS_FREE", "SPECIAL_TERMS"),
+    // 特約事項は備考へ流さない。テンプレートは「特約事項」と「備考」を別の枠で
+    // 出しているので、SPECIAL_TERMS を REMARKS 系のフォールバックに混ぜると
+    // 特約だけ入力したときに同じ文が両方の枠に出る（＝特約欄が二重表示になる）。
+    // REMARKS は「備考枠を出すか」の判定にも使われるため、備考系の値だけで決める。
+    REMARKS: pick(source, "REMARKS", "REMARKS_FIXED", "REMARKS_FREE"),
     REMARKS_FIXED: pick(source, "REMARKS_FIXED", "REMARKS"),
-    REMARKS_FREE: pick(source, "REMARKS_FREE", "SPECIAL_TERMS"),
+    REMARKS_FREE: pick(source, "REMARKS_FREE"),
+    SPECIAL_TERMS: pick(source, "SPECIAL_TERMS"),
     CALC_METHOD: pick(source, "CALC_METHOD", "calc_method") || calcMethods[0] || "",
     PAYMENT_TERMS: pick(source, "PAYMENT_TERMS", "summaryPaymentTerms", "payment_terms"),
     has_license_conditions: financialConditions.length > 0 || royaltyItems.length > 0,

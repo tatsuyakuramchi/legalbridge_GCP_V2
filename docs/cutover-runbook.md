@@ -218,6 +218,23 @@ psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
   -f infra/gcp/sql/054_production_matter_slack_thread_grants.sql
 ```
 
+**055**：入力しても出力に反映されない項目をフォームから外す（053 と同じく現行版の
+`field_schema` のみ書き換え・`html_source` 無変更・冪等）。対象は
+`inspection_certificate`（発注日/総明細数/総予定回数/紐付け発注番号）・
+`purchase_order` と `license_master`（番号の手動上書き）・`service_master`（契約開始日）。
+`documents.form_data` には触れないので既存データの値は残る。
+
+```bash
+psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
+  -v confirm_orphan_fields=REMOVE_ORPHAN_FORM_FIELDS \
+  -f infra/gcp/sql/055_remove_orphan_form_fields.sql
+```
+
+未対応として残しているのは `pub_license_terms` の5項目（翻訳版・海外版の許諾有無／
+対象地域言語／販売形態／計算式／料率）と `service_master` の乙種別。これらは
+「項目が余っている」のではなく **テンプレート側に出力が無い**ため、消すと入力手段が
+失われる。出力を追加する＝テンプレート改訂（新版）になるので別途対応する。
+
 053 だけは新規テンプレートではなく **現行版の `field_schema` の書き換え**（`html_source` は
 無変更）。明細が0件のときだけ単一明細フォールバック項目を出すようにし、発注書からは
 未使用の `PAYMENT_METHOD` を落とす。**版は上げない**：新版を作って `current_version_id` を

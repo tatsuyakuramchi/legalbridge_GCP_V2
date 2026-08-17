@@ -248,9 +248,12 @@ export function App() {
     const issueKey = params.get("issue")?.trim().slice(0, 100) ?? "";
     const requestedView = params.get("view");
     if (issueKey) setDeepLinkIssue(issueKey);
-    if (requestedView === "drafts") setView("drafts");
-    else if (requestedView === "documents") setView("documents");
-    else if (requestedView === "home") setView("home");
+    // 別タブで開くリンク（作成フォーム横の「定型文」等）から到達できる画面。
+    // 任意の view を通すと未実装・権限外の画面へ飛べてしまうので、明示的に列挙する。
+    const deepLinkable: View[] = ["home", "documents", "drafts", "snippets", "template-samples", "guide"];
+    if (requestedView && (deepLinkable as string[]).includes(requestedView)) {
+      setView(requestedView as View);
+    }
   }, []);
 
   useEffect(() => {
@@ -1164,7 +1167,7 @@ function DocumentForm({
           {groups.map((group, index) => <section id={`group-${index}`} key={group}><h2>{group}</h2>
             {isPurchaseOrderTemplate(schema.templateKey) && group.startsWith("IV. ") &&
               <PurchaseOrderTotals formData={formData} />}
-            <div className="field-grid">{visibleFields.filter((field) => (field.group ?? "基本情報") === group).map((field) => <label key={field.name}><span>{field.label ?? field.name}{field.required && <em>必須</em>}</span>{field.type === "textarea" ? <textarea value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, event.target.value)} placeholder={field.placeholder} /> : field.type === "select" ? <select value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, event.target.value)}><option value="">選択してください</option>{field.options?.map((option) => <option key={option}>{option}</option>)}</select> : field.type === "boolean" ? <input type="checkbox" checked={Boolean(formData[field.name])} onChange={(event) => updateValue(field.name, event.target.checked)} /> : <input value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, field.type === "number" ? (event.target.value === "" ? "" : Number(event.target.value)) : event.target.value)} type={field.type === "number" ? "number" : field.type === "date" ? "date" : "text"} placeholder={field.placeholder} />}{field.helpText && <small>{field.helpText}</small>}</label>)}</div>
+            <div className="field-grid">{visibleFields.filter((field) => (field.group ?? "基本情報") === group).map((field) => <label key={field.name}><span>{field.label ?? field.name}{field.required && <em>必須</em>}{field.type === "textarea" && <a className="field-snippets" href="/?view=snippets" target="_blank" rel="noreferrer" title="定型文を別タブで開く">定型文</a>}</span>{field.type === "textarea" ? <textarea value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, event.target.value)} placeholder={field.placeholder} /> : field.type === "select" ? <select value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, event.target.value)}><option value="">選択してください</option>{field.options?.map((option) => <option key={option}>{option}</option>)}</select> : field.type === "boolean" ? <input type="checkbox" checked={Boolean(formData[field.name])} onChange={(event) => updateValue(field.name, event.target.checked)} /> : <input value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, field.type === "number" ? (event.target.value === "" ? "" : Number(event.target.value)) : event.target.value)} type={field.type === "number" ? "number" : field.type === "date" ? "date" : "text"} placeholder={field.placeholder} />}{field.helpText && <small>{field.helpText}</small>}</label>)}</div>
           </section>)}
           {schema.templateKey === "individual_license_terms_v3" && (
             <IndividualLicenseV3Form formData={formData} onChange={updateValue} />
