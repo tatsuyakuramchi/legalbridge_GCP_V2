@@ -71,10 +71,18 @@ done
 # ── 4. verify が落とす条件をローカルで先に弾く（ビルド待ちの無駄をなくす）────
 sub() { jq -r --arg k "$1" '.substitutions[$k] // ""' "${FLAGS_FILE}"; }
 
-if [ "$(sub _CLOUDSIGN_MODE)" = "live" ] && [ -z "$(sub _CLOUDSIGN_ALLOWED_RECIPIENTS)" ]; then
-  die "CloudSign が live のときは _CLOUDSIGN_ALLOWED_RECIPIENTS が必須です（検証中の誤送信防止）。
-     送信先を追加する場合は宛先を並べて指定してください:
-     $0 '_CLOUDSIGN_ALLOWED_RECIPIENTS=a@example.co.jp,b@example.co.jp'"
+if [ "$(sub _CLOUDSIGN_MODE)" = "live" ]; then
+  recipients="$(sub _CLOUDSIGN_ALLOWED_RECIPIENTS)"
+  if [ -z "${recipients}" ]; then
+    echo "CloudSign 宛先許可リスト: 空（無制限＝V1 と同じ）"
+  elif printf '%s' "${recipients}" | tr ',' '\n' | grep -qv '@'; then
+    # 説明文をそのまま値にしてしまう事故があったため、@ を含まない要素は弾く。
+    die "_CLOUDSIGN_ALLOWED_RECIPIENTS にメールアドレスでない要素があります: ${recipients}
+     無制限にする場合は空を指定してください:
+     $0 '_CLOUDSIGN_ALLOWED_RECIPIENTS='"
+  else
+    echo "CloudSign 宛先許可リスト: ${recipients}"
+  fi
 fi
 if [ "$(sub _SLACK_CONVERSATION_READ_MODE)" = "live" ]; then
   [ -n "$(sub _SLACK_BOT_TOKEN_SECRET)" ] || die "Slack 会話読取 live には _SLACK_BOT_TOKEN_SECRET が必要です"

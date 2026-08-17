@@ -48,7 +48,17 @@ DRY_RUN=1 infra/gcp/deploy-write-test.sh ...                     # 送信せず�
 ```
 
 事前チェックで止まる主な条件：gcloud 未認証／substitutions が 100 未満（引き継ぎ失敗）
-／CloudSign live なのに宛先許可リストが空／Slack 読取 live なのに bot token・通知履歴が未設定。
+／CloudSign 宛先許可リストにメールアドレスでない要素が混ざっている／Slack 読取 live なのに
+bot token・通知履歴が未設定。
+
+宛先許可リストは **空＝無制限**（V1 と同じ）。社内宛だけで検証したい間はアドレスを列挙し、
+本番運用では空にする。空にできるのはデプロイ時だけで、設定画面の空欄保存は「env を使う」
+意味になり解除にはならない点に注意。
+
+```bash
+infra/gcp/deploy-write-test.sh '_CLOUDSIGN_ALLOWED_RECIPIENTS='                    # 無制限へ
+infra/gcp/deploy-write-test.sh '_CLOUDSIGN_ALLOWED_RECIPIENTS=a@x.co.jp,b@x.co.jp' # 限定へ
+```
 
 以下は同じことを手で行う場合の内訳（スクリプトが使えないときの参照用）。
 
@@ -152,7 +162,7 @@ Backlog/CloudSign はカスタムヘッダ不可のため、リレーが `?token
       done; echo "OK: $S"
     done
     ```
-  - CloudSign：client_id を画面の APIキータブから `cloudsign-client-id` へ（リポジトリ厳禁）＋宛先 allowlist 必須＋
+  - CloudSign：client_id を画面の APIキータブから `cloudsign-client-id` へ（リポジトリ厳禁）＋宛先 allowlist（任意・空=無制限）＋
     `_CLOUDSIGN_MODE=live`＋`_CONFIRM_CLOUDSIGN_DISPATCH`＋`_CLOUDSIGN_REQUEST_HISTORY_ENABLED`。
     live 後に cloudsign-sync resume＋CloudSign Webhook 登録（token secret 作成済み）で executed 遷移が自動化。
   - Gmail：送信元アドレス決定＋Workspace 管理者の DWD 設定＋SA 鍵 Secret（`_GWS_SA_KEY_SECRET`・
@@ -251,7 +261,7 @@ jq '.substitutions._SLACK_BOT_USER_ID = "U0XXXXXXXXX"' /tmp/build-flags.json > /
 - [x] Scheduler 3 ジョブ作成・疎通済み（2-3・2026-08-10。resume は 5-2／CloudSign live 時）
 - [x] Webhook 受信 live（2-4・Backlog 分＝リレー＋自動起票スモーク成功。Backlog コンソール登録と Slack App 設定が残）
 - [x] Drive live＋添付アップロード解禁（2-5・2026-08-10。タグは §4 で production へ）
-- [ ] CloudSign/Gmail live（2-5 残・外部準備待ち：client_id secret＋allowlist／DWD＋SA鍵）
+- [ ] CloudSign/Gmail live（2-5 残・外部準備待ち：client_id secret／DWD＋SA鍵）
 - [ ] legal/requester 開放＋スモーク合格（3）
 - [ ] 正式サービス名で稼働（4）
 - [ ] V1 読み取り専用化→停止（5）

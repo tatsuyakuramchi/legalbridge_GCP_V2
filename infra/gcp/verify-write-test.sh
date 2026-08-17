@@ -786,10 +786,17 @@ case "${CLOUDSIGN_MODE}" in
       echo "CloudSign dispatch deployment blocked: a CloudSign client id secret (Secret Manager name) is required."
       exit 1
     fi
-    # 検証中の誤送信防止：live 点火時は宛先allowlistを必須にする（V1 テストガード相当）。
-    if [ -z "${CLOUDSIGN_ALLOWED_RECIPIENTS}" ] || [ "${CLOUDSIGN_ALLOWED_RECIPIENTS}" = "BLOCKED" ]; then
-      echo "CloudSign dispatch deployment blocked: CLOUDSIGN_ALLOWED_RECIPIENTS (recipient allowlist) is required for validation."
+    # 宛先allowlistは任意（V1 と同じく空＝無制限）。検証期間はアドレスを列挙して
+    # 社内宛だけに絞れるが、本番運用では実取引先へ送るため空で通す。
+    # BLOCKED は「値の取り違え」なので通さない。
+    if [ "${CLOUDSIGN_ALLOWED_RECIPIENTS}" = "BLOCKED" ]; then
+      echo "CloudSign dispatch deployment blocked: CLOUDSIGN_ALLOWED_RECIPIENTS must be a recipient list or empty."
       exit 1
+    fi
+    if [ -z "${CLOUDSIGN_ALLOWED_RECIPIENTS}" ]; then
+      echo "CloudSign dispatch: recipient allowlist is empty; sending is unrestricted."
+    else
+      echo "CloudSign dispatch: recipient allowlist is active; only listed addresses can be sent to."
     fi
     ;;
   *)
