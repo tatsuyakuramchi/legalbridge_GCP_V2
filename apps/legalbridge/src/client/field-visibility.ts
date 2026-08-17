@@ -1,4 +1,7 @@
-import type { DocumentFormData, ShowWhenCondition, TemplateField } from "../types";
+import type { DocumentFormData, ShowWhenCondition } from "../types";
+
+// showWhen を持つものなら何でも判定できる（テンプレート項目でも、明細1行の列でも）。
+type ConditionallyVisible = { showWhen?: ShowWhenCondition | ShowWhenCondition[] };
 
 // showWhen（field_schema の条件表示）の判定。純関数。
 // - anyOf: 参照先の値（文字列化）がいずれかに一致すれば表示
@@ -17,7 +20,7 @@ function matches(condition: ShowWhenCondition, formData: DocumentFormData): bool
   return true;
 }
 
-export function isFieldVisible(field: TemplateField, formData: DocumentFormData): boolean {
+export function isFieldVisible(field: ConditionallyVisible, formData: DocumentFormData): boolean {
   const condition = field.showWhen;
   if (!condition) return true;
   if (Array.isArray(condition)) return condition.every((c) => matches(c, formData));

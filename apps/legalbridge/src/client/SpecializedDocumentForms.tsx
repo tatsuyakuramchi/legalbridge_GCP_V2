@@ -1,72 +1,16 @@
 import type { DocumentFormData } from "../types";
+import { isFieldVisible } from "./field-visibility";
+import {
+  type FieldDefinition, itemFields, expenseFields, feeFields, conditionFields
+} from "./document-line-fields";
 
 type Row = Record<string, unknown>;
-type FieldDefinition = {
-  name: string;
-  label: string;
-  type?: "text" | "number" | "date" | "textarea" | "select";
-  options?: Array<{ value: string; label: string }>;
-};
 
 type Props = {
   templateKey: string;
   formData: DocumentFormData;
   onChange: (name: string, value: unknown) => void;
 };
-
-const itemFields: FieldDefinition[] = [
-  { name: "item_name", label: "品目・業務名" },
-  { name: "spec", label: "仕様・成果物", type: "textarea" },
-  { name: "quantity", label: "数量", type: "number" },
-  { name: "unit_price", label: "単価（税抜）", type: "number" },
-  { name: "amount_ex_tax", label: "金額（税抜）", type: "number" },
-  { name: "delivery_date", label: "納期", type: "date" },
-  { name: "payment_date", label: "支払日", type: "date" },
-  { name: "payment_terms", label: "支払条件" }
-];
-
-const expenseFields: FieldDefinition[] = [
-  { name: "expense_name", label: "経費名" },
-  { name: "spent_date", label: "利用日", type: "date" },
-  { name: "amount_inc_tax", label: "金額（税込）", type: "number" },
-  { name: "remarks", label: "備考", type: "textarea" }
-];
-
-const feeFields: FieldDefinition[] = [
-  { name: "fee_name", label: "手数料名" },
-  { name: "amount", label: "金額（税抜）", type: "number" },
-  { name: "remarks", label: "備考", type: "textarea" }
-];
-
-const conditionFields: FieldDefinition[] = [
-  { name: "condition_name", label: "条件名" },
-  { name: "region_language_label", label: "地域・言語" },
-  {
-    name: "calc_method", label: "計算方式", type: "select",
-    options: [
-      { value: "FIXED", label: "固定額" },
-      { value: "ROYALTY", label: "料率" },
-      { value: "PER_UNIT", label: "単価×数量" },
-      { value: "INSTALLMENT", label: "分割払い" },
-      { value: "SUBSCRIPTION", label: "定期支払" },
-      { value: "SUPPLY_QTY", label: "供給価格×数量×料率" }
-    ]
-  },
-  { name: "base_price_label", label: "基準価格" },
-  { name: "rate_pct", label: "料率（%）", type: "number" },
-  { name: "mg_amount", label: "MG", type: "number" },
-  { name: "ag_amount", label: "AG", type: "number" },
-  { name: "currency", label: "通貨" },
-  { name: "formula_text", label: "計算式", type: "textarea" },
-  { name: "payment_terms", label: "支払条件", type: "textarea" },
-  {
-    name: "rights_holder", label: "権利帰属", type: "select",
-    options: [
-      { value: "発注者", label: "発注者・ライセンシー" },
-      { value: "受注者", label: "受注者・ライセンサー" }
-    ]
-  }
-];
 
 export function SpecializedDocumentForms({ templateKey, formData, onChange }: Props) {
   if (templateKey === "purchase_order" || templateKey === "intl_purchase_order") {
@@ -204,8 +148,11 @@ function ArrayEditor({
         </div>
       </div>
       <div className="field-grid">
-        {fields.map((field) => <DynamicField key={field.name} definition={field}
-          value={row[field.name]} onChange={(value) => replace(index, { [field.name]: value })} />)}
+        {/* 出し分けは行ごと。判定対象は同じ行の値なので、明細1でROYALTYを選んでも
+            明細2の列は変わらない。 */}
+        {fields.filter((field) => isFieldVisible(field, row)).map((field) =>
+          <DynamicField key={field.name} definition={field}
+            value={row[field.name]} onChange={(value) => replace(index, { [field.name]: value })} />)}
       </div>
     </article>)}
   </div>;
@@ -235,6 +182,7 @@ function DynamicField({
           onChange={(event) => onChange(definition.type === "number" && event.target.value !== ""
             ? Number(event.target.value)
             : event.target.value)} />}
+    {definition.helpText && <small>{definition.helpText}</small>}
   </label>;
 }
 

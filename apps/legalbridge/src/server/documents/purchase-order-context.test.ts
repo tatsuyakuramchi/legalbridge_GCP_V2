@@ -1,0 +1,75 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { buildTemplateDocumentContext } from "./template-context-adapters.js";
+
+function context(formData: Record<string, unknown>) {
+  return buildTemplateDocumentContext("purchase_order", formData);
+}
+
+test("金銭条件が空でも、業績連動の明細があれば利用許諾条件表を出す", () => {
+  // テンプレートは financial_conditions が空のとき ROYALTY 明細を条件表へ流し込む
+  // 分岐を持つ。has_license_conditions が条件表の件数しか見ていないと、その分岐へ
+  // 到達できず入力が丸ごと消える。
+  const result = context({
+    items: [{ item_name: "イラスト", calc_method: "ROYALTY", rate_pct: 5 }]
+  });
+  assert.equal(result.has_license_conditions, true);
+  assert.equal(result.has_performance_incentive, true);
+});
+
+test("固定額の明細だけなら条件表は出さない", () => {
+  const result = context({
+    items: [{ item_name: "デザイン", calc_method: "FIXED", amount_ex_tax: 100000 }]
+  });
+  assert.equal(result.has_license_conditions, false);
+  assert.equal(result.has_performance_incentive, false);
+});
+
+test("支払方法未設定の明細は固定額として扱う", () => {
+  const result = context({ items: [{ item_name: "校正", amount_ex_tax: 50000 }] });
+  assert.equal(result.has_license_conditions, false);
+  assert.equal(result.has_performance_incentive, false);
+});
+
+test("明細の帰属先が受注者なら利用許諾料として表記する", () => {
+  const seller = context({
+    items: [{ item_name: "原稿", calc_method: "ROYALTY", deliverable_ownership: "受注者" }]
+  });
+  assert.equal(seller.has_seller_owned_license, true);
+  const buyer = context({
+    items: [{ item_name: "原稿", calc_method: "ROYALTY", deliverable_ownership: "発注者" }]
+  });
+  // 発注者帰属はインセンティブ報酬。利用許諾料の見出しにはしない。
+  assert.equal(buyer.has_seller_owned_license, false);
+  assert.equal(buyer.has_performance_incentive, true);
+});
+
+test("金銭条件表がある従来の入力はそのまま動く", () => {
+  const result = context({
+    items: [{ item_name: "デザイン", calc_method: "FIXED" }],
+    financial_conditions: [{ condition_name: "国内販売", calc_method: "ROYALTY", rate_pct: 8 }]
+  });
+  assert.equal(result.has_license_conditions, true);
+  assert.equal(result.has_performance_incentive, true);
+  assert.equal(result.CALC_METHOD, "ROYALTY");
+});
+
+test("小計は業績連動の明細でも金額欄をそのまま集計する", () => {
+  // ROYALTY 明細の金額0は「報酬は利用許諾料に含む」の意味で、確定額には乗らない。
+  const result = context({
+    items: [
+      { item_name: "執筆", calc_method: "ROYALTY", amount_ex_tax: 30000 },
+      { item_name: "監修", calc_method: "ROYALTY", amount_ex_tax: 0 },
+      { item_name: "デザイン", calc_method: "FIXED", amount_ex_tax: 100000 }
+    ]
+  });
+  assert.equal(result.itemsSubtotalExTax, 130000);
+});
+
+test("定期支払の明細でも条件表は増えない", () => {
+  const result = context({
+    items: [{ item_name: "顧問料", calc_method: "SUBSCRIPTION", cycle: "MONTHLY", billing_day: 31 }]
+  });
+  assert.equal(result.has_license_conditions, false);
+  assert.equal(result.has_performance_incentive, false);
+});

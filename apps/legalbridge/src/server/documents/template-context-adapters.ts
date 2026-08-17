@@ -80,6 +80,11 @@ function buildPurchaseOrderContext(source: Data) {
   ].filter(Boolean).join(" / ");
   const calcMethods = financialConditions.map((row) =>
     String(pick(row, "calc_method", "CALC_METHOD"))).filter(Boolean);
+  // 明細に業績連動行があれば、金銭条件表が空でも条件表を出す。テンプレートは
+  // financial_conditions が空のとき ROYALTY 明細を条件表へ流し込む分岐を持つが、
+  // has_license_conditions が条件表の件数だけを見ていたためその分岐に入れなかった。
+  const royaltyItems = items.filter((item) =>
+    String(pick(item, "calc_method", "CALC_METHOD")).toUpperCase() === "ROYALTY");
 
   return {
     ...source,
@@ -97,12 +102,14 @@ function buildPurchaseOrderContext(source: Data) {
     REMARKS_FREE: pick(source, "REMARKS_FREE", "SPECIAL_TERMS"),
     CALC_METHOD: pick(source, "CALC_METHOD", "calc_method") || calcMethods[0] || "",
     PAYMENT_TERMS: pick(source, "PAYMENT_TERMS", "summaryPaymentTerms", "payment_terms"),
-    has_license_conditions: financialConditions.length > 0,
-    has_performance_incentive: calcMethods.includes("ROYALTY"),
+    has_license_conditions: financialConditions.length > 0 || royaltyItems.length > 0,
+    has_performance_incentive: calcMethods.includes("ROYALTY") || royaltyItems.length > 0,
     has_seller_owned_license:
       toBoolean(source.has_seller_owned_license) ||
       financialConditions.some((row) =>
-        ["受注者", "seller", "vendor"].includes(String(pick(row, "rights_holder", "owner")).toLowerCase()))
+        ["受注者", "seller", "vendor"].includes(String(pick(row, "rights_holder", "owner")).toLowerCase())) ||
+      royaltyItems.some((item) =>
+        String(pick(item, "deliverable_ownership", "rights_holder")) === "受注者")
   };
 }
 
