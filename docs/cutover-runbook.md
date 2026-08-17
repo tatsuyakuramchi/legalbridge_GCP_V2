@@ -36,6 +36,22 @@ V2（本リポジトリ）を本番サービスとして V1（legalbridge_ai_gcp
 
 ### 2-0. デプロイの定石（フラグ据え置きの再デプロイ）
 
+**通常はこのスクリプト1本で足りる**（下の手順を1本化し、認証切れ・引き継ぎ失敗・
+必須フラグ欠落を送信前に検出する）：
+
+```bash
+cd ~/legalbridge_GCP_V2 && git pull origin <ブランチ>
+
+infra/gcp/deploy-write-test.sh                                   # 現行フラグのまま再デプロイ
+infra/gcp/deploy-write-test.sh _SLACK_CONVERSATION_READ_MODE=live  # 一部だけ変更
+DRY_RUN=1 infra/gcp/deploy-write-test.sh ...                     # 送信せず内容確認
+```
+
+事前チェックで止まる主な条件：gcloud 未認証／substitutions が 100 未満（引き継ぎ失敗）
+／CloudSign live なのに宛先許可リストが空／Slack 読取 live なのに bot token・通知履歴が未設定。
+
+以下は同じことを手で行う場合の内訳（スクリプトが使えないときの参照用）。
+
 前回のデプロイ設定（substitutions 104キー）を**確実に**引き継ぐには、
 「配信中の Cloud Run リビジョンのイメージタグ＝ビルドID」から逆引きする
 （`gcloud builds list` の最新 SUCCESS を掴む方式は、別サービスのビルドを拾い

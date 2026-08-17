@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# write-test の再デプロイ（フラグ据え置き）。runbook §2-0 の手順を1本にまとめ、
+# 繰り返し踏んでいた事故を事前に止める:
+#   - gcloud の認証切れ（プロキシ/ビルドが途中で落ちる）
+#   - /tmp が消えて build-flags.json が無い
+#   - 配信中リビジョンではなく無関係なビルドから設定を引き継ぐ
+#   - 末尾の "." 忘れ（ソース未指定）
+#   - 必須 substitution（例: CloudSign 宛先許可リスト）を空にして verify で弾かれる
+#
+# 使い方:
+#   infra/gcp/deploy-write-test.sh                        # 現行設定のまま再デプロイ
+#   infra/gcp/deploy-write-test.sh KEY=VALUE [KEY=VALUE]  # 一部フラグだけ変えて再デプロイ
+#     例) infra/gcp/deploy-write-test.sh _SLACK_CONVERSATION_READ_MODE=live
+#   DRY_RUN=1 infra/gcp/deploy-write-test.sh ...          # 送信せず差分だけ確認
+
+set -euo pipefail
+
+SERVICE="${SERVICE:-legalbridge-v2-write-test}"
+REGION="${REGION:-asia-northeast1}"
+CONFIG="${CONFIG:-infra/gcp/cloudbuild-write-test.yaml}"
+FLAGS_FILE="${FLAGS_FILE:-/tmp/build-flags.json}"
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+
+[ -f "${CONFIG}" ] || die "${CONFIG} が見つかりません（リポジトリのルートで実行してください）"
+command -v jq >/dev/null || die "jq が必要です"
+
+# ── 1. 認証（切れていると proxy もビルドも落ちるので最初に止める）──────────────
+if ! gcloud auth list --filter=status:ACTIVE --format="value(account)" 2>/dev/null | grep -q .; then
+  die "gcloud の認証が切れています。先に 'gcloud auth login' を実行してください。"
+fi
+echo "認証: $(gcloud auth list --filter=status:ACTIVE --format='value(account)' | head -1)"
+
+# ── 2. 配信中リビジョンのイメージタグ＝ビルドID から現行設定を取得 ────────────
+#     （'gcloud builds list' の最新 SUCCESS は別サービスのビルドを掴む事故がある）
+echo "配信中リビジョンから現行設定を取得しています…"
+IMAGE="$(gcloud run services describe "${SERVICE}" --region "${REGION}" \
+  --format='value(spec.template.spec.containers[0].image)')"
+[ -n "${IMAGE}" ] || die "${SERVICE} の配信中イメージを取得できませんでした"
+LAST_BUILD="${IMAGE##*:}"
+echo "採用ビルド: ${LAST_BUILD}"
+
+gcloud builds describe "${LAST_BUILD}" --format=json | jq '{substitutions}' > "${FLAGS_FILE}"
+
+KEY_COUNT="$(jq -r '.substitutions | keys | length' "${FLAGS_FILE}")"
+[ "${KEY_COUNT}" -ge 100 ] || die "substitutions が ${KEY_COUNT} 件しかありません（引き継ぎ失敗の疑い）"
+echo "substitutions: ${KEY_COUNT} キー"
+
+# ── 3. 引数で指定されたフラグだけ差し替える ──────────────────────────────────
+for override in "$@"; do
+  case "${override}" in
+    _*=*) ;;
+    *) die "指定は _KEY=VALUE 形式です: ${override}" ;;
+  esac
+  key="${override%%=*}"
+  value="${override#*=}"
+  jq --arg k "${key}" --arg v "${value}" '.substitutions[$k] = $v' \
+    "${FLAGS_FILE}" > "${FLAGS_FILE}.tmp" && mv "${FLAGS_FILE}.tmp" "${FLAGS_FILE}"
+  echo "変更: ${key} = ${value}"
+done
+
+# ── 4. verify が落とす条件をローカルで先に弾く（ビルド待ちの無駄をなくす）────
+sub() { jq -r --arg k "$1" '.substitutions[$k] // ""' "${FLAGS_FILE}"; }
+
+if [ "$(sub _CLOUDSIGN_MODE)" = "live" ] && [ -z "$(sub _CLOUDSIGN_ALLOWED_RECIPIENTS)" ]; then
+  die "CloudSign が live のときは _CLOUDSIGN_ALLOWED_RECIPIENTS が必須です（検証中の誤送信防止）。
+     送信先を追加する場合は宛先を並べて指定してください:
+     $0 '_CLOUDSIGN_ALLOWED_RECIPIENTS=a@example.co.jp,b@example.co.jp'"
+fi
+if [ "$(sub _SLACK_CONVERSATION_READ_MODE)" = "live" ]; then
+  [ -n "$(sub _SLACK_BOT_TOKEN_SECRET)" ] || die "Slack 会話読取 live には _SLACK_BOT_TOKEN_SECRET が必要です"
+  [ "$(sub _SLACK_NOTIFICATION_HISTORY_ENABLED)" = "true" ] ||
+    die "Slack 会話読取 live には _SLACK_NOTIFICATION_HISTORY_ENABLED=true が必要です（スレッドアンカーの供給元）"
+fi
+
+echo "主要フラグ:"
+jq -r '.substitutions | {_INTEGRATION_MODE, _WRITE_SCOPES, _CLOUDSIGN_MODE, _CLOUDSIGN_ALLOWED_RECIPIENTS,
+  _SLACK_DELIVERY_MODE, _SLACK_NOTIFICATION_HISTORY_ENABLED, _SLACK_CONVERSATION_READ_MODE}' "${FLAGS_FILE}"
+
+# ── 5. 送信（"^|^" 区切り＋末尾の "." までを固定）───────────────────────────
+SUBS="$(jq -r '.substitutions | to_entries | map("\(.key)=\(.value)") | join("|")' "${FLAGS_FILE}")"
+if [ "${DRY_RUN:-}" = "1" ]; then
+  echo "DRY_RUN=1 のため送信しません。"
+  exit 0
+fi
+echo "ビルドを送信します…"
+gcloud builds submit --config "${CONFIG}" --substitutions "^|^${SUBS}" .
