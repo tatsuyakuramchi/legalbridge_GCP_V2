@@ -6,7 +6,7 @@ import { DocumentOutputActions } from "./DocumentOutputActions";
 import { ExportButtons } from "./ExportButtons";
 import type { ExportColumn } from "./export-util";
 
-type RegisteredDocument = {
+export type RegisteredDocument = {
   id: number;
   documentNumber: string | null;
   issueKey: string;
@@ -68,7 +68,8 @@ export function DocumentRegistry({
   canReissueDocument = false,
   selectedId,
   initialQuery = "",
-  onOpenMatter
+  onOpenMatter,
+  onDuplicate
 }: {
   templates: DocumentFormSchema[];
   onCreate: () => void;
@@ -82,6 +83,8 @@ export function DocumentRegistry({
   selectedId?: number;
   initialQuery?: string;
   onOpenMatter?: (matterId: number) => void;
+  // 同じ内容で相手先だけ違う文書を続けて作る（取引先A・Bの2通など）。
+  onDuplicate?: (document: RegisteredDocument) => void;
 }) {
   const [importing, setImporting] = useState(false);
   const [query, setQuery] = useState(initialQuery);
@@ -241,6 +244,7 @@ export function DocumentRegistry({
         onReissued={(newId) => { setReload((v) => v + 1); return selectDocument(newId); }}
         onSelectVersion={(id) => void selectDocument(id)}
         onOpenMatter={onOpenMatter}
+        onDuplicate={onDuplicate}
       />
     </div>
   </section>;
@@ -259,7 +263,8 @@ function DocumentDetail({
   onVoided,
   onReissued,
   onSelectVersion,
-  onOpenMatter
+  onOpenMatter,
+  onDuplicate
 }: {
   document: RegisteredDocument | null;
   label?: string;
@@ -271,6 +276,7 @@ function DocumentDetail({
   canReissueDocument?: boolean;
   onRefresh: () => Promise<void> | void;
   onOpenMatter?: (matterId: number) => void;
+  onDuplicate?: (document: RegisteredDocument) => void;
   onVoided?: () => Promise<void> | void;
   onReissued?: (newId: number) => Promise<void> | void;
   onSelectVersion?: (id: number) => void;
@@ -305,6 +311,14 @@ function DocumentDetail({
         : document.matterId != null ? `#${document.matterId}` : "未紐付け（案件詳細から紐付け可能）"}</dd>
     </dl>
     {isVoided && <div className="void-banner">この文書は無効化（void）済みです。紐づく実績は取消されています。</div>}
+    {!isVoided && onDuplicate && <p className="hub-note">
+      同じ内容で相手先だけ違う文書を続けて作れます（例：同一内容の発注書を取引先A・Bへ）。
+      明細・金額・特約はそのまま引き継ぎ、相手先・振込先・承諾欄は空にして開きます。
+      {" "}
+      <button type="button" className="link-button" onClick={() => onDuplicate(document)}>
+        この内容で新規作成（複製）
+      </button>
+    </p>}
     {!isVoided && <DocumentOutputActions
       documentId={document.id}
       documentNumber={document.documentNumber}

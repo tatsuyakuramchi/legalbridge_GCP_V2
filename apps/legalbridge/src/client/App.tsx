@@ -8,7 +8,7 @@ import type {
 import { SpecializedDocumentForms } from "./SpecializedDocumentForms";
 import { isFieldVisible } from "./field-visibility";
 import { MasterDataPicker } from "./MasterDataPicker";
-import { DocumentRegistry } from "./DocumentRegistry";
+import { DocumentRegistry, type RegisteredDocument } from "./DocumentRegistry";
 import { MatterRegistry } from "./MatterRegistry";
 import { LedgerWorkspace } from "./LedgerWorkspace";
 import { GlobalSearch } from "./GlobalSearch";
@@ -34,6 +34,7 @@ import { TextSnippets } from "./TextSnippets";
 import { TemplateSamples } from "./TemplateSamples";
 import { RequestsWorkspace } from "./RequestsWorkspace";
 import { seedFormData } from "./extract-variables";
+import { duplicateFormData } from "./duplicate-document";
 import { PaymentReport } from "./PaymentReport";
 import { ExcelBatchWorkspace } from "./ExcelBatchWorkspace";
 import { SettingsWorkspace } from "./SettingsWorkspace";
@@ -242,6 +243,10 @@ export function App() {
   // Issue key seeded when 文書を作成 is launched from a matter (LB-F01 導線).
   const [newDocIssueKey, setNewDocIssueKey] = useState("");
   const [newDocSeed, setNewDocSeed] = useState<Record<string, string>>({});
+  // 確定済み文書の内容を丸ごと引き継いだ新規入力（相手先だけ差し替えて2通目を出す）。
+  // Backlog 抽出値のシードは「空欄だけ補完」なので、明細を含む複製には使えない。
+  const [duplicateValues, setDuplicateValues] = useState<DocumentFormData | null>(null);
+  const [duplicateFrom, setDuplicateFrom] = useState<string | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -322,8 +327,27 @@ export function App() {
   }, []);
 
   const [formNonce, setFormNonce] = useState(0);
+  // 確定済み文書を複製して新しい入力を開く。相手先だけ差し替えて2通目を出す運用
+  // （同一内容の発注書を取引先A・Bへ、など）。1通目の下書きは確定時に消えているので、
+  // 下書きの一意制約（受付番号×テンプレート）とは競合しない。
+  async function duplicateDocument(document: RegisteredDocument) {
+    const response = await fetch(
+      `/api/v2/document-templates/${encodeURIComponent(document.templateType)}/form-schema`);
+    if (!response.ok) return;
+    setFormNonce((v) => v + 1);
+    setDraftSelection(null);
+    setNewDocSeed({});
+    setNewDocIssueKey(document.issueKey ?? "");
+    setDuplicateValues(duplicateFormData(document.formData ?? {}));
+    setSchema(await response.json());
+    setDuplicateFrom(document.documentNumber ?? null);
+    setView("document");
+  }
+
   async function openDocumentForm(templateKey: string) {
     setFormNonce((v) => v + 1);
+    setDuplicateValues(null);
+    setDuplicateFrom(null);
     const response = await fetch(
       `/api/v2/document-templates/${encodeURIComponent(templateKey)}/form-schema`
     );
@@ -489,7 +513,8 @@ export function App() {
             canReissueDocument={canReissueDocument}
             initialQuery={deepLinkIssue}
             onOpenMatter={(matterId) => { setSearchSelection({ target: "matter", id: String(matterId), title: "" }); setView("matters"); }}
-            selectedId={searchSelection?.target === "document" ? Number(searchSelection.id) : undefined} />
+            selectedId={searchSelection?.target === "document" ? Number(searchSelection.id) : undefined}
+            onDuplicate={(document) => void duplicateDocument(document)} />
         )}
         {view === "templates" && (
           <TemplateCatalog templates={templates} compatibility={compatibility} onSelect={openDocumentForm}
@@ -507,6 +532,8 @@ export function App() {
             canCloudSign={canCloudSign}
             initialIssueKey={draftSelection?.issueKey ?? newDocIssueKey}
             seedValues={draftSelection ? undefined : newDocSeed}
+            duplicateValues={draftSelection ? undefined : duplicateValues ?? undefined}
+            duplicateFrom={draftSelection ? undefined : duplicateFrom ?? undefined}
             onBack={() => setView(draftSelection ? "drafts" : "templates")}
             onCreateNew={() => setView("templates")}
             onOpenDocuments={() => setView("documents")}
@@ -776,6 +803,8 @@ function DocumentForm({
   canCloudSign = false,
   initialIssueKey,
   seedValues,
+  duplicateValues,
+  duplicateFrom,
   onBack,
   onCreateNew,
   onOpenDocuments,
@@ -790,6 +819,10 @@ function DocumentForm({
   canCloudSign?: boolean;
   initialIssueKey: string;
   seedValues?: Record<string, string>;
+  // 複製元の入力内容。空欄補完ではなく丸ごと初期値にする（明細・条件も引き継ぐ）。
+  duplicateValues?: DocumentFormData;
+  // 複製元の文書番号（案内文に出す）。
+  duplicateFrom?: string;
   onBack: () => void;
   onCreateNew?: () => void;
   onOpenDocuments?: () => void;
@@ -848,7 +881,11 @@ function DocumentForm({
         const restoredDraft = context.draft ?? null;
         if (formDirtyRef.current) {
           // 入力済みの値は保持し、空欄だけ文脈値で補完する（受付番号の後入力・修正でフォームが消えない）。
-          const incoming = restoredDraft ? (context.formData ?? {}) : seedFormData(context.formData ?? {}, seedValues ?? {});
+          const incoming = restoredDraft
+            ? (context.formData ?? {})
+            : duplicateValues
+              ? { ...(context.formData ?? {}), ...duplicateValues }
+              : seedFormData(context.formData ?? {}, seedValues ?? {});
           setFormData((current) => ({ ...incoming, ...current }));
           setDraft(restoredDraft);
           setDraftStatus("dirty");
@@ -858,13 +895,21 @@ function DocumentForm({
           return;
         }
         // Backlog抽出変数を非破壊シード（下書き復元時は既存値優先で行わない）。
-        setFormData(restoredDraft ? (context.formData ?? {}) : seedFormData(context.formData ?? {}, seedValues ?? {}));
+        setFormData(restoredDraft
+          ? (context.formData ?? {})
+          : duplicateValues
+            // 複製は「同じ内容」が目的なので、文脈値より複製元を優先する。
+            ? { ...(context.formData ?? {}), ...duplicateValues }
+            : seedFormData(context.formData ?? {}, seedValues ?? {}));
         setDraft(restoredDraft);
         setDraftStatus(restoredDraft ? "saved" : "clean");
         setNotice(
           restoredDraft
             ? `保存済みの下書きを復元しました（${formatDraftTime(restoredDraft.updatedAt)}）`
-            : "新しい文書として入力できます"
+            : duplicateValues
+              ? `${duplicateFrom ?? "元の文書"} の内容を引き継ぎました。`
+                + "相手先・振込先・承諾欄は空です — 新しい相手先を選び直してください。"
+              : "新しい文書として入力できます"
         );
       })
       .catch((error) => {
