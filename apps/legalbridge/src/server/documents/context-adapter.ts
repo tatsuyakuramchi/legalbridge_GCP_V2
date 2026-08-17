@@ -37,8 +37,14 @@ export function buildCommonDocumentContext(formData: FormData) {
 
   // 敬称は区分から導出する。テンプレートは敬称が空だと「御中」を既定にするため、
   // 区分だけ個人にしても敬称欄が空なら法人宛の「御中」で出てしまっていた。
-  const vendorEntityType = pick("VENDOR_IS_CORPORATION", "取引先種別", "vendorEntityType");
-  const licensorEntityType = pick("LICENSOR_IS_CORPORATION", "許諾者種別", "licensorEntityType");
+  // 取引先マスタの区分（VENDOR_MASTER_ENTITY_TYPE）が付いていればそれを最優先にする。
+  // 描画時に documents.vendor_id から解決したもので、宛名がマスタと一致した場合だけ入る。
+  const vendorEntityType = pick(
+    "VENDOR_MASTER_ENTITY_TYPE", "VENDOR_IS_CORPORATION", "取引先種別", "vendorEntityType"
+  );
+  const licensorEntityType = pick(
+    "LICENSOR_MASTER_ENTITY_TYPE", "LICENSOR_IS_CORPORATION", "許諾者種別", "licensorEntityType"
+  );
   const vendorIndividual = isIndividualEntity(vendorEntityType);
 
   return {

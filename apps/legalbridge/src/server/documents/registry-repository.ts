@@ -17,6 +17,15 @@ export interface RegisteredDocument {
   supersededBy?: string | null;         // これを差し替えた文書番号
   isPrimary?: boolean;                  // 系列内の正本フラグ
   formData: Record<string, unknown>;
+  // 確定時に解決した documents.vendor_id の取引先マスタ（find / findByNumber のみ）。
+  // form_data の区分は前に選んだ取引先の値が残ることがあるため、描画時の敬称は
+  // マスタを優先する。names は宛名との突き合わせ用（別人のマスタで上書きしない）。
+  vendorMaster?: VendorMasterEntity | null;
+}
+
+export interface VendorMasterEntity {
+  entityType: string;
+  names: string[];
 }
 
 // アーカイブのバージョン履歴 1 件（同一 base_document_number の系列・10-1）。
@@ -41,6 +50,17 @@ export interface DocumentRegistryRepository {
   versionHistory(id: number): Promise<DocumentVersion[]>;
   setDriveLink(id: number, driveLink: string): Promise<void>;
 }
+
+// 1件取得（find / findByNumber）は取引先マスタも一緒に読む。区分は form_data より
+// マスタが正しいため（宛名だけ書き換えると form_data 側に前の取引先の区分が残る）。
+const DOCUMENT_SELECT = `d.id, d.document_number, d.issue_key, d.template_type,
+              d.template_version_id, d.form_data, d.drive_link, d.created_at,
+              d.created_by, d.matter_id,
+              COALESCE(d.lifecycle_status, 'final') AS lifecycle_status,
+              v.entity_type AS vendor_entity_type,
+              v.vendor_name AS vendor_master_name,
+              v.trade_name AS vendor_master_trade_name,
+              v.pen_name AS vendor_master_pen_name`;
 
 export class PgDocumentRegistryRepository implements DocumentRegistryRepository {
   constructor(private readonly database: DatabasePool) {}
@@ -102,11 +122,10 @@ export class PgDocumentRegistryRepository implements DocumentRegistryRepository 
 
   async find(id: number) {
     const result = await this.database.query(
-      `SELECT id, document_number, issue_key, template_type, template_version_id,
-              form_data, drive_link, created_at, created_by, matter_id,
-              COALESCE(lifecycle_status, 'final') AS lifecycle_status
-         FROM documents
-        WHERE id = $1`,
+      `SELECT ${DOCUMENT_SELECT}
+         FROM documents d
+         LEFT JOIN vendors v ON v.id = d.vendor_id
+        WHERE d.id = $1`,
       [id]
     );
     return result.rows[0] ? mapRow(result.rows[0]) : null;
@@ -114,12 +133,11 @@ export class PgDocumentRegistryRepository implements DocumentRegistryRepository 
 
   async findByNumber(documentNumber: string) {
     const result = await this.database.query(
-      `SELECT id, document_number, issue_key, template_type, template_version_id,
-              form_data, drive_link, created_at, created_by, matter_id,
-              COALESCE(lifecycle_status, 'final') AS lifecycle_status
-         FROM documents
-        WHERE document_number = $1
-        ORDER BY id DESC
+      `SELECT ${DOCUMENT_SELECT}
+         FROM documents d
+         LEFT JOIN vendors v ON v.id = d.vendor_id
+        WHERE d.document_number = $1
+        ORDER BY d.id DESC
         LIMIT 1`,
       [documentNumber]
     );
@@ -196,8 +214,19 @@ function mapRow(row: Record<string, any>): RegisteredDocument {
     createdBy: row.created_by,
     lifecycleStatus: row.lifecycle_status ?? "final",
     matterId: row.matter_id == null ? null : Number(row.matter_id),
-    formData
+    formData,
+    vendorMaster: mapVendorMaster(row)
   };
+}
+
+// 一覧（list）は取引先を結合しないので、列が無ければ null を返す。
+function mapVendorMaster(row: Record<string, any>): VendorMasterEntity | null {
+  const entityType = String(row.vendor_entity_type ?? "").trim();
+  if (!entityType) return null;
+  const names = [row.vendor_master_name, row.vendor_master_trade_name, row.vendor_master_pen_name]
+    .map((value) => String(value ?? "").trim())
+    .filter((value) => value !== "");
+  return { entityType, names };
 }
 
 function mapVersion(row: Record<string, any>): DocumentVersion {

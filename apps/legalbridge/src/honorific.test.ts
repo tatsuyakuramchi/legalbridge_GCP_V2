@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   contradictsEntityType, expectedHonorific, honorificWarnings,
-  isIndividualEntity, resolveHonorific
+  isIndividualEntity, masterEntityTypeFor, resolveHonorific
 } from "./honorific.js";
 
 test("区分の判定は文字列でも boolean でも通る", () => {
@@ -84,4 +84,33 @@ test("取引先と許諾者は別々に警告する", () => {
     許諾者種別: "法人", LICENSOR_SUFFIX: "様"
   });
   assert.deepEqual(warnings.map((w) => w.label), ["取引先", "許諾者"]);
+});
+
+// ── 取引先マスタの区分を使えるか（宛名との突き合わせ）───────────────────
+const INDIVIDUAL_MASTER = { entityType: "個人", names: ["大神貴寛", "オオガミ工房"] };
+
+test("宛名がマスタの名称と一致すればマスタの区分を使う", () => {
+  assert.equal(masterEntityTypeFor("大神貴寛", INDIVIDUAL_MASTER), "個人");
+  // 屋号・筆名でも一致とみなす（vendor_id の解決も同じ3列を見ている）。
+  assert.equal(masterEntityTypeFor("オオガミ工房", INDIVIDUAL_MASTER), "個人");
+});
+
+test("宛名が別人ならマスタの区分は使わない", () => {
+  // vendor_id は確定時の宛名から引くので、あとで宛名を書き換えた文書では
+  // マスタが別人を指す。ここで上書きすると逆に間違える。
+  assert.equal(masterEntityTypeFor("株式会社ビー", INDIVIDUAL_MASTER), "");
+});
+
+test("空白の違いは同一視する", () => {
+  assert.equal(masterEntityTypeFor(" 大神貴寛 ", INDIVIDUAL_MASTER), "個人");
+  assert.equal(masterEntityTypeFor("大神貴寛", { entityType: "個人", names: ["大神　貴寛"] }), "");
+  assert.equal(masterEntityTypeFor("大神 貴寛", { entityType: "個人", names: ["大神　貴寛"] }), "個人");
+});
+
+test("マスタが無い・区分が空・宛名が空なら何も返さない", () => {
+  assert.equal(masterEntityTypeFor("大神貴寛", null), "");
+  assert.equal(masterEntityTypeFor("大神貴寛", undefined), "");
+  assert.equal(masterEntityTypeFor("大神貴寛", { entityType: "", names: ["大神貴寛"] }), "");
+  assert.equal(masterEntityTypeFor("", INDIVIDUAL_MASTER), "");
+  assert.equal(masterEntityTypeFor("大神貴寛", { entityType: "個人" }), "");
 });

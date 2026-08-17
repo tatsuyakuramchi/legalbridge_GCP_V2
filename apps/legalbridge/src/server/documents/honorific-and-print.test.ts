@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildCommonDocumentContext } from "./context-adapter.js";
-import { wrapPrintableHtml, PRINT_STYLESHEET } from "./document-html-renderer.js";
+import {
+  masterEntityTypeOverrides, wrapPrintableHtml, PRINT_STYLESHEET
+} from "./document-html-renderer.js";
+import type { RegisteredDocument } from "./registry-repository.js";
 
 // ── 敬称（個人に「御中」を付けない）─────────────────────────────────────
 test("発注先区分が個人なら敬称は「様」", () => {
@@ -142,4 +145,64 @@ test("boolean の区分でも矛盾を解消する（マスタ自動入力の形
   assert.equal(buildCommonDocumentContext({
     VENDOR_IS_CORPORATION: true, VENDOR_SUFFIX: "様"
   }).VENDOR_SUFFIX, "御中");
+});
+
+// ── 取引先マスタの区分を正とする（フォームの区分が古くても直る）─────────
+const PURCHASE_ORDER: RegisteredDocument = {
+  id: 1, documentNumber: "ARC-PO-2026-0115", issueKey: "LEGAL-1",
+  templateType: "purchase_order", templateVersionId: 22,
+  title: "発注書", counterparty: "大神貴寛", driveLink: "", createdAt: "", createdBy: null,
+  // 法人を引いたあと宛名だけ書き換えた状態。区分と敬称に前の法人の値が残っている。
+  formData: { VENDOR_NAME: "大神貴寛", VENDOR_IS_CORPORATION: "法人", VENDOR_SUFFIX: "御中" },
+  vendorMaster: { entityType: "個人", names: ["大神貴寛"] }
+};
+
+test("宛名がマスタと一致すれば、マスタの区分で描画する", () => {
+  const overrides = masterEntityTypeOverrides(PURCHASE_ORDER);
+  assert.equal(overrides.VENDOR_MASTER_ENTITY_TYPE, "個人");
+  // これが form_data より前に効いて、区分＝個人・敬称＝様になる。
+  const context = buildCommonDocumentContext({ ...PURCHASE_ORDER.formData, ...overrides });
+  assert.equal(context.VENDOR_SUFFIX, "様");
+  assert.equal(context.VENDOR_IS_CORPORATION, "");
+});
+
+test("マスタが無い文書は従来どおりフォームの区分で描画する", () => {
+  assert.deepEqual(masterEntityTypeOverrides({ ...PURCHASE_ORDER, vendorMaster: null }), {});
+  assert.deepEqual(masterEntityTypeOverrides({ ...PURCHASE_ORDER, vendorMaster: undefined }), {});
+});
+
+test("宛名を別の相手に書き換えた文書ではマスタで上書きしない", () => {
+  // vendor_id は確定時の宛名から引いているので、別人へ変えた文書のマスタは他人。
+  const overrides = masterEntityTypeOverrides({
+    ...PURCHASE_ORDER,
+    formData: { ...PURCHASE_ORDER.formData, VENDOR_NAME: "株式会社ビー" }
+  });
+  assert.deepEqual(overrides, {});
+});
+
+test("許諾側の文書でも許諾者の区分をマスタから当てる", () => {
+  const overrides = masterEntityTypeOverrides({
+    ...PURCHASE_ORDER,
+    templateType: "individual_license",
+    formData: { Licensor_氏名会社名: "大神貴寛", LICENSOR_SUFFIX: "御中" }
+  });
+  assert.equal(overrides.LICENSOR_MASTER_ENTITY_TYPE, "個人");
+  assert.equal(overrides.VENDOR_MASTER_ENTITY_TYPE, undefined);
+  const context = buildCommonDocumentContext({
+    Licensor_氏名会社名: "大神貴寛", LICENSOR_SUFFIX: "御中", ...overrides
+  });
+  assert.equal(context.LICENSOR_SUFFIX, "様");
+});
+
+test("マスタが法人なら、フォームに個人が残っていても御中で出す", () => {
+  const context = buildCommonDocumentContext({
+    VENDOR_NAME: "株式会社エー", VENDOR_IS_CORPORATION: "個人", VENDOR_SUFFIX: "様",
+    ...masterEntityTypeOverrides({
+      ...PURCHASE_ORDER,
+      formData: { VENDOR_NAME: "株式会社エー" },
+      vendorMaster: { entityType: "法人", names: ["株式会社エー"] }
+    })
+  });
+  assert.equal(context.VENDOR_SUFFIX, "御中");
+  assert.equal(context.VENDOR_IS_CORPORATION, "法人");
 });

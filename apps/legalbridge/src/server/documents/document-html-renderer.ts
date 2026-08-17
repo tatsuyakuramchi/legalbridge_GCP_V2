@@ -1,4 +1,5 @@
 import Handlebars from "handlebars";
+import { masterEntityTypeFor } from "../../honorific.js";
 import type { TemplateRepository } from "./template-repository.js";
 import type { RegisteredDocument } from "./registry-repository.js";
 import { registerLegacyHelpers } from "./rendering.js";
@@ -45,6 +46,7 @@ export async function renderStoredDocumentHtml(
   });
   const numberedFormData = {
     ...document.formData,
+    ...masterEntityTypeOverrides(document),
     契約書番号: document.documentNumber,
     文書番号: document.documentNumber,
     CONTRACT_NO: document.documentNumber,
@@ -61,6 +63,35 @@ export async function renderStoredDocumentHtml(
     issue_key: document.issueKey
   });
   return wrapPrintableHtml(rendered);
+}
+
+// 相手先の宛名に使う名前（区分の突き合わせ対象）。documents.vendor_id を引くときと
+// 同じ順序で見る（finalization の PARTY_NAME_KEYS と揃える）。
+const VENDOR_NAME_KEYS = ["VENDOR_NAME", "取引先", "相手先", "counterparty", "PARTY_A_NAME"];
+const LICENSOR_NAME_KEYS = ["LICENSOR_NAME", "Licensor_氏名会社名", "Licensor_名称", "許諾者名", "許諾者"];
+
+// 区分（法人／個人）は取引先マスタを正とする。form_data の区分は、取引先ボタンで
+// 引いた値がそのまま残るため、宛名だけ書き換えた文書では前の相手の区分が残る
+// （ARC-PO-2026-0115 は 宛名=個人・区分=法人 で保存されていた）。
+// マスタの名称と宛名が一致するときだけ上書きする（別人のマスタでは触らない）。
+export function masterEntityTypeOverrides(document: RegisteredDocument): Record<string, string> {
+  const master = document.vendorMaster;
+  if (!master) return {};
+  const formData = document.formData ?? {};
+  const overrides: Record<string, string> = {};
+  const vendor = masterEntityTypeFor(firstText(formData, VENDOR_NAME_KEYS), master);
+  if (vendor) overrides.VENDOR_MASTER_ENTITY_TYPE = vendor;
+  const licensor = masterEntityTypeFor(firstText(formData, LICENSOR_NAME_KEYS), master);
+  if (licensor) overrides.LICENSOR_MASTER_ENTITY_TYPE = licensor;
+  return overrides;
+}
+
+function firstText(source: Record<string, unknown>, keys: readonly string[]): string {
+  for (const key of keys) {
+    const value = source[key];
+    if (value !== undefined && value !== null && String(value).trim() !== "") return String(value);
+  }
+  return "";
 }
 
 // 印刷レイアウト。テンプレート本体には @page も改ページ制御も無く、

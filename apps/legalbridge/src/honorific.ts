@@ -45,6 +45,32 @@ export function contradictsEntityType(entityType: unknown, suffix: unknown): boo
   return isIndividualEntity(entityType) ? explicit === "御中" : explicit === "様";
 }
 
+// 宛名の突き合わせ用の正規化。全角空白・連続空白・前後の空白だけを均す。
+// 「株式会社」の有無などは同一視しない（別法人を同じ扱いにしてしまう）。
+function normalizeName(value: unknown): string {
+  return String(value ?? "").replace(/[\s　]+/g, " ").trim();
+}
+
+/**
+ * 取引先マスタの区分を、その文書の宛名に対して使えるかどうか判定して返す。
+ * 使えない（宛名がマスタのどの名称とも一致しない）ときは空文字。
+ *
+ * documents.vendor_id は確定時に「宛名から」引くので、名称が一致する限りマスタは
+ * 同じ相手を指す。逆に、後から宛名を別人へ書き換えた文書では一致しないため、
+ * 前の取引先の区分で上書きしてしまう事故を防げる。
+ */
+export function masterEntityTypeFor(
+  partyName: unknown,
+  master: { entityType?: string | null; names?: readonly (string | null | undefined)[] } | null | undefined
+): string {
+  const entityType = String(master?.entityType ?? "").trim();
+  if (!entityType) return "";
+  const name = normalizeName(partyName);
+  if (!name) return "";
+  const matches = (master?.names ?? []).some((candidate) => normalizeName(candidate) === name);
+  return matches ? entityType : "";
+}
+
 type HonorificParty = {
   label: string;
   entityKeys: readonly string[];
