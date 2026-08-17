@@ -208,9 +208,9 @@ psql "$RUNTIME_ADMIN_DSN" -v confirm_license_out=SEED_LICENSE_OUT_TEMPLATE \
 | 053 | `purchase_order` / `intl_purchase_order`（単一明細フォールバックの出し分け） | 既存 | ✅ 適用済み（2026-08-17） |
 
 **054**（テンプレートではなく grant）：V1 の `matter_slack_threads` に **SELECT のみ**を付与し、
-V1 で立てた案件スレッドを V2 が引き継げるようにする。未適用のままだと、V1 でスレッドを
-立てた案件が V2 では「未作成」に見え、作成すると同じ案件に2本目の root が立つ
-（V1 21件／V2 3件／重複0件・2026-08-17 時点）。V1 データは書き換えない。
+V1 で立てた案件スレッドを V2 が引き継げるようにする。V1 データは書き換えない。
+**✅ 適用済み（2026-08-17）** — 適用時点で V1 21件／V2 3件／重複0件。未適用のままだと、
+V1 でスレッドを立てた案件が V2 では「未作成」に見え、作成すると同じ案件に2本目の root が立つ。
 
 ```bash
 psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
@@ -223,6 +223,9 @@ psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
 `inspection_certificate`（発注日/総明細数/総予定回数/紐付け発注番号）・
 `purchase_order` と `license_master`（番号の手動上書き）・`service_master`（契約開始日）。
 `documents.form_data` には触れないので既存データの値は残る。
+**✅ 適用済み（2026-08-17）** — 7項目を除去して残存0件。版は据え置き
+（`inspection_certificate` 12／34項目・`license_master` 5／22項目・
+`purchase_order` 22／50項目・`service_master` 8／22項目）。
 
 ```bash
 psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
