@@ -42,6 +42,7 @@ import { WorkflowRulesWorkspace } from "./WorkflowRulesWorkspace";
 import { ContractMasterWorkspace } from "./ContractMasterWorkspace";
 import { BillingPrint } from "./BillingPrint";
 import { isPurchaseOrderTemplate, purchaseOrderTotals, withPurchaseOrderTotals } from "../purchase-order-totals";
+import { honorificWarnings } from "../honorific";
 
 type CompatibilityReport = { summary: { total: number; ok: number; warning: number; error: number }; reports: Array<{ templateKey: string; status: "ok" | "warning" | "error"; missingHelpers: string[]; missingPartials: string[]; unmappedVariables: string[]; renderError?: string }> };
 
@@ -940,6 +941,7 @@ function DocumentForm({
   const groups = [...new Set(visibleFields.map((field) => field.group ?? "基本情報"))];
   // 関数宣言の中では上の null ガードの絞り込みが効かないので、ここで確定させる。
   const templateKey = schema.templateKey;
+  const honorificMismatches = honorificWarnings(formData);
 
   function updateValue(name: string, value: unknown) {
     if (finalizedDocument) return;
@@ -1201,6 +1203,15 @@ function DocumentForm({
       {readOnly && (
         <div className="form-readonly-note">
           読取専用環境では入力確認とプレビューのみ利用できます。下書きは保存されません。
+        </div>
+      )}
+      {/* 区分と敬称の食い違いはフォームでは見えにくい（別のグループに並ぶ）。
+          PDF 側は区分を優先して出すが、入力自体を直せるようここで知らせる。 */}
+      {honorificMismatches.length > 0 && (
+        <div className="form-mismatch-note" role="status">
+          {honorificMismatches.map((warning) => (
+            <p key={warning.label}>{warning.message}敬称欄を直すか、区分を選び直してください。</p>
+          ))}
         </div>
       )}
       <div className="form-layout">

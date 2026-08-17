@@ -710,6 +710,9 @@ header input { width: 100%; border: 1px solid var(--border); border-radius: var(
 .duplicate-actions button small { font-weight: 400; font-size: 11px; color: var(--ink-soft); }
 .duplicate-actions button:hover { border-color: var(--accent); }
 .form-readonly-note { margin: -8px 0 16px; border: 1px solid #fed7aa; border-radius: 8px; background: #fff7ed; color: #9a3412; padding: 10px 12px; font-size: 12px; }
+.form-mismatch-note { margin: -8px 0 16px; border: 1px solid #fcd34d; border-left-width: 4px; border-radius: 8px; background: #fffbeb; color: #92400e; padding: 10px 12px; font-size: 12px; }
+.form-mismatch-note p { margin: 0; }
+.form-mismatch-note p + p { margin-top: 6px; }
 @media (max-width: 760px) {
   .document-form-title { display: grid; gap: 14px; }
   .document-form-title .actions { flex-wrap: wrap; }

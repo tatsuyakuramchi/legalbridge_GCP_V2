@@ -95,3 +95,51 @@ test("長い明細表そのものは分割を許す（丸ごと次ページへ�
   assert.doesNotMatch(PRINT_STYLESHEET, /(^|[\s,{])table\s*[,{]/m);
   assert.match(PRINT_STYLESHEET, /tr,/);
 });
+
+// ── 区分と敬称が食い違うとき（実データで発生：法人取引先を引いた後に個人名へ変更）─
+test("区分=個人・敬称=御中 なら区分を優先して「様」にする", () => {
+  const context = buildCommonDocumentContext({
+    VENDOR_NAME: "大神貴寛", VENDOR_IS_CORPORATION: "個人", VENDOR_SUFFIX: "御中"
+  });
+  assert.equal(context.VENDOR_SUFFIX, "様");
+});
+
+test("区分=法人・敬称=様 なら「御中」にする", () => {
+  const context = buildCommonDocumentContext({
+    VENDOR_IS_CORPORATION: "法人", VENDOR_SUFFIX: "様"
+  });
+  assert.equal(context.VENDOR_SUFFIX, "御中");
+});
+
+test("「殿」は区分と矛盾とみなさず尊重する", () => {
+  // 殿は法人・個人どちらにも使う。手入力を潰すと運用を壊す。
+  assert.equal(buildCommonDocumentContext({
+    VENDOR_IS_CORPORATION: "個人", VENDOR_SUFFIX: "殿"
+  }).VENDOR_SUFFIX, "殿");
+  assert.equal(buildCommonDocumentContext({
+    VENDOR_IS_CORPORATION: "法人", VENDOR_SUFFIX: "殿"
+  }).VENDOR_SUFFIX, "殿");
+});
+
+test("区分が未入力なら手入力の敬称に従う", () => {
+  assert.equal(buildCommonDocumentContext({ VENDOR_SUFFIX: "御中" }).VENDOR_SUFFIX, "御中");
+  assert.equal(buildCommonDocumentContext({ VENDOR_SUFFIX: "様" }).VENDOR_SUFFIX, "様");
+});
+
+test("許諾者側も同じ規則で矛盾を解消する", () => {
+  assert.equal(buildCommonDocumentContext({
+    許諾者種別: "個人", LICENSOR_SUFFIX: "御中"
+  }).LICENSOR_SUFFIX, "様");
+  assert.equal(buildCommonDocumentContext({
+    LICENSOR_IS_CORPORATION: false, LICENSOR_SUFFIX: "御中"
+  }).LICENSOR_SUFFIX, "様");
+});
+
+test("boolean の区分でも矛盾を解消する（マスタ自動入力の形）", () => {
+  assert.equal(buildCommonDocumentContext({
+    VENDOR_IS_CORPORATION: false, VENDOR_SUFFIX: "御中"
+  }).VENDOR_SUFFIX, "様");
+  assert.equal(buildCommonDocumentContext({
+    VENDOR_IS_CORPORATION: true, VENDOR_SUFFIX: "様"
+  }).VENDOR_SUFFIX, "御中");
+});
