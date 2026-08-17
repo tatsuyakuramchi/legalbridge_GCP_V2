@@ -147,7 +147,28 @@ programmaticClients に登録し audience に使用・SA へ iap.httpsResourceAc
 - daily-checks／inspection-digest：V1 cron（`daily-checks`・`legalbridge-daily-scheduler`）併走中の
   **二重通知防止**。→ **5-2（V1 cron 停止）と同時に `gcloud scheduler jobs resume` で起動**。
   満了自動遷移（2-1）も daily-checks resume まで実行されない。
-- cloudsign-sync：CloudSign 未構成の間はランナー未登録（404）。→ **2-5 CloudSign live 後に resume**。
+- cloudsign-sync：**✅ 2026-08-17 resume 済み**（ENABLED・3時間毎 JST）。強制実行で
+  Cloud Run が **HTTP 200** を返すことを確認（ランナー登録済み＝CloudSign live 構成を認識）。
+  Slack 投稿をしないジョブなので V1 併走中でも二重通知にならない。
+
+**このサービスは IAP の背後にあるため、`curl` に `gcloud auth print-identity-token` を付けても
+ジョブ起動口は叩けない**（`401 Invalid IAP credentials: Audience doesn't match the allowlisted
+oauth clients`）。ユーザー資格情報では audience を指定できないため、動作確認は
+`gcloud scheduler jobs run` で本番と同じ経路（Scheduler の OIDC → IAP）を通すこと。
+なお `jobs run` は **ENABLED でないと使えない**（`Job.state must be ENABLED for RunJob`）ので、
+「resume する前に試す」ことはできない。順序は **resume → 強制実行 → 確認 →（失敗なら pause に戻す）**。
+結果は Cloud Run のリクエストログで見る（アプリ側の応答コードが出る）:
+
+```bash
+gcloud logging read \
+  'resource.type="cloud_run_revision"
+   AND resource.labels.service_name="legalbridge-v2-write-test"
+   AND httpRequest.requestUrl:"/internal/jobs/<job>"' \
+  --project legalbridge-488506 --limit 3 --freshness 10m \
+  --format='value(timestamp, httpRequest.status, httpRequest.userAgent)'
+```
+
+`200`＝成功／`404`＝ランナー未登録（`JOB_NOT_FOUND`）／`401`＝`X-Jobs-Token` 不一致。
 
 ### 2-4. 外部 Webhook（CloudSign/Backlog）＋ Slack 受信（Phase 16-3）
 **ingress 方式は決定・実装済み（2026-08-10）**：受信専用リレー `lb-v2-receiver`（`infra/receiver/`・
