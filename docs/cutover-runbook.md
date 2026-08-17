@@ -230,6 +230,13 @@ psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
   -f infra/gcp/sql/055_remove_orphan_form_fields.sql
 ```
 
+**敬称（御中／様）は SQL 不要**。`vendors.entity_type` を正として描画時に解決するよう
+コード側で直した（`registry-repository` の `find`/`findByNumber` が `vendors` を LEFT JOIN し、
+宛名がマスタの名称（`vendor_name`/`trade_name`/`pen_name`）と一致するときだけ区分を採用する）。
+`legalbridge_v2_runtime` の `vendors` SELECT は 006 で付与済みなので追加の grant も要らない。
+既存文書は**再デプロイだけで直る**（`documents.form_data` は書き換えない）。マスタ側の区分が
+間違っている場合はマスタを直せば全文書に効く。
+
 未対応として残しているのは `pub_license_terms` の5項目（翻訳版・海外版の許諾有無／
 対象地域言語／販売形態／計算式／料率）と `service_master` の乙種別。これらは
 「項目が余っている」のではなく **テンプレート側に出力が無い**ため、消すと入力手段が
