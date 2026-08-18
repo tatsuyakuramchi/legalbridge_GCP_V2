@@ -746,7 +746,13 @@ LEGAL-284 → matters 1 行（id 218 / MTR-2026-00218）
 V1 の `daily-checks` は期日チェックであって Backlog 取込ではない（取込は V1 の別経路）。
 5-2 で `daily-checks` を pause する時点で V1 側の日次通知は止まる。
 
-### 5-3. Slack スラッシュコマンドを V2 へ向ける（**V1 との切替**）
+### 5-3. Slack スラッシュコマンドを V2 へ向ける ✅ 完了（2026-08-18・build efe0bd41）
+
+**実施済み**：`_BACKLOG_MODE=live`（合言葉付き）＋`_SLACK_INTAKE_ENABLED=true`＋
+署名シークレット注入でデプロイ → Slack App の Request URL 3か所をリレー
+（`https://lb-v2-receiver-lkyrgniooa-an.a.run.app/internal/slack/…`）へ切替。
+スモーク合格：`/法務依頼` モーダル→Backlog LEGAL 起票→`legal_requests` 取込、`/法務検索` 応答。
+以降 V1 の slackGateway は呼ばれない。切り戻しは URL を V1 に戻すだけ（下記手順は記録として残す）。
 
 `/法務依頼`・`/法務検索` は現在 **V1 が受けている**
 （`services/api/src/routes/slackGateway.ts` → V1 search-api の `/slack/commands`）。
@@ -832,7 +838,7 @@ Slack App の Request URL を V1 の `https://<V1 search-api>/slack/commands`
 ／`/slack/interactivity` に戻す。V2 側のフラグはそのままでよい（受け口が呼ばれなくなるだけ）。
 
 ## 6. cutover 判定チェックリスト
-- [ ] Phase 16-3（Slack インテーク）実装・点火済み
+- [x] Phase 16-3（Slack インテーク）実装・点火済み（5-3・2026-08-18。/法務依頼→Backlog 起票まで確認）
 - [x] Phase 16-1/2/4 実装済み（点火は 16-1＝grant 045、16-4＝Drive 構成が前提）
 - [x] grant 031・043・044・045・046 適用済み（2026-08-10・6項目検証済み）
 - [x] マスタ書込スコープ点火済み（2-2・2026-08-10。snippets・満了遷移も同時点火）
