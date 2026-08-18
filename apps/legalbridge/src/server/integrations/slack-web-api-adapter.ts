@@ -8,6 +8,7 @@ export type SlackWebApiMethod =
   | "conversations.open"
   | "chat.postMessage"
   | "conversations.replies"
+  | "conversations.list"
   | "views.open"
   | "views.update";
 
@@ -41,7 +42,7 @@ export class FetchSlackWebApiClient implements SlackWebApiClient {
     // 読み取り系メソッド（conversations.replies 等）は JSON ボディ非対応で、
     // JSON で呼ぶと引数が無視され invalid_arguments になる（実地で確認）。
     // GET＋クエリパラメータで呼ぶ。書込系（chat.postMessage 等）は JSON のまま。
-    const isReadMethod = method === "conversations.replies";
+    const isReadMethod = method === "conversations.replies" || method === "conversations.list";
     const response = isReadMethod
       ? await this.fetchImpl(
           `https://slack.com/api/${method}?${new URLSearchParams(

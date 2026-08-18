@@ -97,3 +97,65 @@ test("設定: 連携キーも allowlist 内なので保存できる（秘密系�
     .send({ settings: { SLACK_BOT_TOKEN: "xoxb-nope" } });
   assert.equal(bad.status, 400);
 });
+
+// ── 定期通知（宛先・ON/OFF）─────────────────────────────────────────
+function notificationApp(opts: {
+  role?: string; enabled?: boolean; fallback?: string;
+  channels?: { list: () => Promise<unknown> };
+} = {}) {
+  const repository = new MemoryAppSettingsRepository({}, false);
+  const app = express();
+  app.use(express.json());
+  app.use((_req, res, next) => {
+    res.locals.currentUser = { email: "u@arclight.co.jp", subject: "t", role: opts.role ?? "admin", source: "test" } as never;
+    next();
+  });
+  app.use("/api/v2", createSettingsRouter(repository, opts.enabled ?? true, {}, undefined, {
+    fallbackChannel: () => opts.fallback ?? "C0LEGAL",
+    channels: opts.channels as never
+  }));
+  return { app, repository };
+}
+
+test("settings: 通知の定義と既定の宛先を返す", async () => {
+  const res = await request(notificationApp().app).get("/api/v2/settings").expect(200);
+  assert.deepEqual(res.body.notificationDefinitions.map((d: { id: string }) => d.id),
+    ["delivery_alert", "contract_alert", "inspection_digest"]);
+  assert.equal(res.body.notificationFallbackChannel, "C0LEGAL");
+});
+
+test("settings: 通知の宛先と ON/OFF を保存できる", async () => {
+  const target = notificationApp();
+  const res = await request(target.app).post("/api/v2/settings").send({
+    settings: { NOTIFY_DELIVERY_ALERT_CHANNEL: "C0DELIV", NOTIFY_CONTRACT_ALERT_ENABLED: "false" }
+  }).expect(200);
+  assert.equal(res.body.saved, 2);
+  assert.equal(res.body.values.NOTIFY_DELIVERY_ALERT_CHANNEL, "C0DELIV");
+  assert.equal(res.body.values.NOTIFY_CONTRACT_ALERT_ENABLED, "false");
+});
+
+test("settings: 通知キーの綴り違いは保存させない", async () => {
+  const res = await request(notificationApp().app)
+    .post("/api/v2/settings").send({ settings: { NOTIFY_DELIVERY_CHANNEL: "C0DELIV" } });
+  assert.equal(res.status, 400);
+});
+
+test("slack-channels: 一覧をそのまま返す", async () => {
+  const listing = { available: true, channels: [{ id: "C0AAAAAAAA1", name: "legal", isPrivate: false, isMember: true }], truncated: false };
+  const res = await request(notificationApp({ channels: { list: async () => listing } }).app)
+    .get("/api/v2/settings/slack-channels").expect(200);
+  assert.deepEqual(res.body, listing);
+});
+
+// 一覧が取れない環境でも設定はできる必要がある（画面はチャンネルID直接入力へ落ちる）。
+test("slack-channels: Slack 未設定でも200で理由を返す", async () => {
+  const res = await request(notificationApp().app).get("/api/v2/settings/slack-channels").expect(200);
+  assert.equal(res.body.available, false);
+  assert.deepEqual(res.body.channels, []);
+  assert.match(res.body.reason, /Slack/);
+});
+
+test("slack-channels: admin 以外は403", async () => {
+  const res = await request(notificationApp({ role: "legal" }).app).get("/api/v2/settings/slack-channels");
+  assert.equal(res.status, 403);
+});

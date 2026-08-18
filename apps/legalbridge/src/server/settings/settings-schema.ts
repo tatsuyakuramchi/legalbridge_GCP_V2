@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { NOTIFICATION_SETTING_KEYS } from "../../notification-settings.js";
 
 // システム設定（Phase 11-1）。共有 app_settings（key/value JSONB）を V2 が所有・編集する。
 // 安全のため編集可能キーは会社プロファイル（表示用・非機密の業務設定）に allowlist する。
@@ -37,9 +38,12 @@ export const INTEGRATION_SETTING_FIELDS: SettingField[] = [
   { key: "CLOUDSIGN_ALLOWED_RECIPIENTS", label: "CloudSign 宛先許可リスト（カンマ区切り・空=無制限）", placeholder: "test@example.co.jp,legal@example.co.jp" }
 ];
 
+// 定期通知の宛先・ON/OFF（通知ごと）。定義は client と共有する notification-settings.ts が持ち、
+// ここでは「保存を許すキー」としてだけ扱う（値は "true"/"false" とチャンネルID）。
 export const ALLOWED_SETTING_KEYS = new Set([
   ...COMPANY_PROFILE_FIELDS.map((f) => f.key),
-  ...INTEGRATION_SETTING_FIELDS.map((f) => f.key)
+  ...INTEGRATION_SETTING_FIELDS.map((f) => f.key),
+  ...NOTIFICATION_SETTING_KEYS
 ]);
 
 // 保存リクエスト。全キーが allowlist 内・値は文字列（≤500）であることを要求する。

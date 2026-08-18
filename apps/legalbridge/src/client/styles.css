@@ -956,6 +956,16 @@ button.pdf-download-link:disabled {
 .settings-field { display: flex; flex-direction: column; gap: 4px; }
 .settings-field span { font-size: 12px; font-weight: 700; color: var(--ink); }
 .settings-field input { width: 100%; }
+/* 定期通知の宛先・ON/OFF（通知ごとのカード） */
+.settings-notification { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; display: grid; gap: 8px; }
+.settings-notification-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.settings-notification-head small { color: var(--ink-faint); font-size: 11px; }
+.settings-notification-desc { margin: 0; font-size: 12px; color: var(--ink-soft); }
+.settings-toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.settings-toggle input { width: auto; margin: 0; }
+.settings-channel-picker { display: grid; gap: 4px; }
+.settings-channel-filter { font-size: 12px; }
+.settings-notification select { width: 100%; }
 
 /* Excel 一括出力（Phase 10-5） */
 .batch-groups { display: flex; flex-direction: column; gap: 12px; }

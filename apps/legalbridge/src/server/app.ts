@@ -245,6 +245,7 @@ import {
   type SlackDeliveryAdapter
 } from "./integrations/slack-delivery-adapter.js";
 import { SlackWebApiDeliveryAdapter } from "./integrations/slack-web-api-adapter.js";
+import { SlackChannelDirectory } from "./integrations/slack-channel-directory.js";
 import {
   SlackWebApiConversationReader, DisabledSlackConversationReader,
   type SlackConversationReader
@@ -738,6 +739,12 @@ export function createApp(
     config.slackDeliveryMode === "live" && /^xoxb-[A-Za-z0-9-]+$/.test(config.slackBotToken)
       ? new WebApiMatterSlackChannelAdapter(new DynamicSlackWebApiClient(() => sec("SLACK_BOT_TOKEN")))
       : new LocalMatterSlackChannelAdapter();
+  // 通知の宛先チャンネル選択UI用の一覧（conversations.list・要 channels:read）。
+  // Slack が live でなければ未提供＝設定画面はチャンネルID直接入力になる。
+  const slackChannelDirectory =
+    config.slackDeliveryMode === "live" && /^xoxb-[A-Za-z0-9-]+$/.test(config.slackBotToken)
+      ? new SlackChannelDirectory(new DynamicSlackWebApiClient(() => sec("SLACK_BOT_TOKEN")))
+      : undefined;
   const matterSlackEnabled =
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
@@ -1419,7 +1426,10 @@ export function createApp(
     get GMAIL_INBOUND_MAILBOX() { return rt().gmailInboundMailbox; },
     get GMAIL_INBOUND_QUERY() { return rt().gmailInboundQuery; },
     get CLOUDSIGN_ALLOWED_RECIPIENTS() { return rt().cloudSignAllowedRecipients; }
-  }, () => runtimeSettings.refresh()));
+  }, () => runtimeSettings.refresh(), {
+    fallbackChannel: () => rt().slackLegalConsultChannel,
+    channels: slackChannelDirectory
+  }));
   // APIキー投入（Phase 2-5）。読取 admin（登録状況のみ）・保存 guarded（scope 'settings'）。
   // 値は Secret Manager にのみ保存（DB・応答・ログに出さない）。保存成功で runtimeSecrets を即時リフレッシュ。
   app.use("/api/v2", createSecretsRouter(dependencies.secretStore, appSettingsWriteEnabled, () => runtimeSecrets.refresh()));
@@ -1460,8 +1470,9 @@ export function createApp(
       config.slackDeliveryMode === "live" &&
       /^xoxb-[A-Za-z0-9-]+$/.test(config.slackBotToken) &&
       Boolean(config.slackLegalConsultChannel);
+    // 宛先・ON/OFF は設定画面（通知ごと）から実行時に解決する。未設定は「ON・法務相談チャンネル」＝従来どおり。
     const dailyChecksNotifier = dailyChecksLive
-      ? new LiveDailyChecksNotifier(matterSlackChannelAdapter, () => rt().slackLegalConsultChannel)
+      ? new LiveDailyChecksNotifier(matterSlackChannelAdapter, (id) => runtimeSettings.notification(id))
       : new DryRunDailyChecksNotifier();
     jobRunners["daily-checks"] = () => runDailyChecks({
       repo: dailyChecksRepo,
@@ -1473,12 +1484,16 @@ export function createApp(
     // 検収待ちダイジェスト（9-4）。Slack live なら投稿、それ以外は dry-run（件数のみ）。
     if (dependencies.pendingInspections && !jobRunners["inspection-digest"]) {
       const inspectionsRepo = dependencies.pendingInspections;
-      const post = dailyChecksLive
-        ? (text: string) => matterSlackChannelAdapter
-            .postMessage({ channel: rt().slackLegalConsultChannel, text })
-            .then(() => true).catch(() => false)
-        : undefined;
-      jobRunners["inspection-digest"] = () => runInspectionDigest({ repo: inspectionsRepo, post });
+      // 宛先・ON/OFF は実行のたびに解決する。OFF／宛先未設定なら dry-run（件数のみ・投稿しない）。
+      jobRunners["inspection-digest"] = () => {
+        const setting = runtimeSettings.notification("inspection_digest");
+        const post = dailyChecksLive && setting.enabled && setting.channelId
+          ? (text: string) => matterSlackChannelAdapter
+              .postMessage({ channel: setting.channelId, text })
+              .then(() => true).catch(() => false)
+          : undefined;
+        return runInspectionDigest({ repo: inspectionsRepo, post });
+      };
     }
     // CloudSign 一括ステータス同期（9-6）。live 構成かつ送信履歴台帳がある時のみ登録。
     // Webhook(9-5)の取りこぼし・遅延の保険。締結判明時は契約 executed（grant 031 再利用）。

@@ -57,3 +57,37 @@ test("ランタイム設定: repository なしなら常に env", async () => {
   await rt.refresh();
   assert.deepEqual(rt.current(), env());
 });
+
+// ── 定期通知の宛先・ON/OFF ──────────────────────────────────────────
+test("ランタイム設定: 通知の既定は ON・法務相談チャンネル", async () => {
+  const rt = new RuntimeIntegrationSettings(env(), new MemoryAppSettingsRepository({}));
+  await rt.refresh();
+  assert.deepEqual(rt.notification("delivery_alert"), { enabled: true, channelId: "C0ENV" });
+});
+
+test("ランタイム設定: 通知ごとの宛先・OFF が反映される", async () => {
+  const repo = new MemoryAppSettingsRepository({});
+  const rt = new RuntimeIntegrationSettings(env(), repo);
+  await repo.save({ NOTIFY_INSPECTION_DIGEST_CHANNEL: "C0KENSHU", NOTIFY_DELIVERY_ALERT_ENABLED: "false" });
+  await rt.refresh();
+  assert.deepEqual(rt.notification("inspection_digest"), { enabled: true, channelId: "C0KENSHU" });
+  assert.equal(rt.notification("delivery_alert").enabled, false);
+  // 触っていない通知は既定のまま。
+  assert.deepEqual(rt.notification("contract_alert"), { enabled: true, channelId: "C0ENV" });
+});
+
+test("ランタイム設定: 宛先未設定の通知は連携設定の法務相談チャンネル変更に追随する", async () => {
+  const repo = new MemoryAppSettingsRepository({});
+  const rt = new RuntimeIntegrationSettings(env(), repo);
+  await repo.save({ SLACK_LEGAL_CONSULT_CHANNEL: "C0NEWLEGAL" });
+  await rt.refresh();
+  assert.equal(rt.notification("contract_alert").channelId, "C0NEWLEGAL");
+});
+
+test("ランタイム設定: 通知の保存値スナップショットは空値を持たない", async () => {
+  const repo = new MemoryAppSettingsRepository({});
+  const rt = new RuntimeIntegrationSettings(env(), repo);
+  await repo.save({ NOTIFY_CONTRACT_ALERT_CHANNEL: "  ", NOTIFY_DELIVERY_ALERT_CHANNEL: "C0DELIV" });
+  await rt.refresh();
+  assert.deepEqual(rt.notificationValuesSnapshot(), { NOTIFY_DELIVERY_ALERT_CHANNEL: "C0DELIV" });
+});
