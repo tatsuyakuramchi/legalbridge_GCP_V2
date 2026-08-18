@@ -1,4 +1,5 @@
 import type { SlackWebApiClient } from "./slack-web-api-adapter.js";
+import { composeTemplateText, type MatterSlackTemplateId } from "../../matter-slack-message.js";
 
 // 案件ごとの「法務相談スレッド」用 Slack 連携（V1 の matter Slack パネル相当）。
 // 既存の DM 通知パイプライン（slack-delivery-adapter）とは別能力：固定チャンネルへ
@@ -120,22 +121,17 @@ export function buildThreadRootText(input: {
 //   1: クラウドサイン送信済（TO を「→」で結び相手方を末尾に・任意で CC）
 //   2: 文書作成完了（メンション＋閲覧リンク）
 //   3: 評価完了（メンション＋閲覧リンク）
-export type MatterSlackTemplate = 1 | 2 | 3;
+// 本文の組み立ては共有モジュールに置き、画面の送信前プレビューと同じ関数を通す
+// （別実装だと、片方だけ直したときに黙ってズレる）。
+export type MatterSlackTemplate = MatterSlackTemplateId;
 
 export function buildTemplateMessage(
   template: MatterSlackTemplate,
   input: { toIds: string[]; ccIds?: string[]; driveLink?: string | null }
 ): string {
-  const to = mentionTokens(input.toIds);
-  const cc = mentionTokens(input.ccIds ?? []);
-  if (template === 1) {
-    const chain = [...to, "相手方"].join(" → ");
-    const ccPart = cc.length ? `  CC: ${cc.join(" ")}` : "";
-    return `クラウドサインで送信しました。 ${chain}${ccPart}`.trim();
-  }
-  const lead = template === 2 ? "文書作成が完了しました。" : "評価が完了しました。";
-  const mentions = to.join(" ");
-  const head = [lead, mentions].filter((p) => p.length > 0).join(" ");
-  const link = input.driveLink?.trim() ? `\n閲覧リンク: ${input.driveLink.trim()}` : "";
-  return `${head}${link}`;
+  return composeTemplateText(template, {
+    to: mentionTokens(input.toIds),
+    cc: mentionTokens(input.ccIds ?? []),
+    driveLink: input.driveLink
+  });
 }

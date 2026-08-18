@@ -417,6 +417,23 @@ header input { width: 100%; border: 1px solid var(--border); border-radius: var(
 .matter-slack-compose textarea { flex: 1; border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px; font: inherit; font-size: 12px; resize: vertical; }
 .matter-slack-templates { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .matter-slack-templates button { border: 1px solid #cbd5e1; background: white; color: #334155; border-radius: 7px; padding: 5px 10px; font-size: 11px; cursor: pointer; }
+/* 送信の種類（自由入力／定型文）。押した瞬間に投稿せず、宛先を選んでから送信する。 */
+.matter-slack-modes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.matter-slack-modes button { border: 1px solid #cbd5e1; background: white; color: #334155; border-radius: 7px; padding: 5px 10px; font-size: 11px; cursor: pointer; }
+.matter-slack-modes button.active { background: #0f172a; border-color: #0f172a; color: white; }
+/* メンション選択：開いて名前で検索。選んだ相手は閉じてもチップとして残る。 */
+.mention-picker { margin-top: 8px; }
+.mention-picker-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.mention-open { border: 1px dashed #94a3b8; background: white; color: #475569; border-radius: 999px; padding: 4px 10px; font-size: 11px; cursor: pointer; }
+.mention-chip button { border: none; background: none; color: inherit; cursor: pointer; padding: 0 0 0 4px; font-size: 11px; line-height: 1; }
+.mention-picker-body { margin-top: 6px; border: 1px solid #e2e8f0; border-radius: 8px; background: white; padding: 8px; }
+.mention-picker-body input { width: 100%; border: 1px solid #cbd5e1; border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 12px; }
+.mention-picker-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; max-height: 132px; overflow-y: auto; }
+.matter-slack-doc { display: block; margin-top: 8px; font-size: 11px; color: #475569; }
+.matter-slack-doc select { display: block; margin-top: 4px; border: 1px solid #cbd5e1; border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 12px; }
+.matter-slack > textarea { width: 100%; margin-top: 8px; border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px; font: inherit; font-size: 12px; resize: vertical; box-sizing: border-box; }
+/* 送信前プレビュー。実際の投稿では @氏名 が Slack のメンションに変わる。 */
+.matter-slack-preview { flex: 1; margin: 0; border: 1px solid #e2e8f0; border-radius: 8px; background: white; padding: 8px; font: inherit; font-size: 12px; color: #334155; white-space: pre-wrap; word-break: break-word; min-height: 20px; }
 .matter-slack-thread { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow-y: auto; }
 .matter-slack-thread article { background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 6px 9px; }
 .matter-slack-thread article.bot { background: #eef6f8; }

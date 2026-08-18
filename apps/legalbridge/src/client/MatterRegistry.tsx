@@ -238,7 +238,7 @@ function MatterDetail({ detail, labels, canEdit, canDelete = false, canUploadAtt
     <DetailSection title="送信履歴"><MatterSends matterId={matter.id} documents={detail.documents} canEdit={canEdit} /></DetailSection>
     {canEdit && <DetailSection title="コミュニケーション">
       <MatterSlackHistory matterId={matter.id} />
-      <MatterSlackPanel matterId={matter.id} />
+      <MatterSlackPanel matterId={matter.id} documents={detail.documents} />
     </DetailSection>}
     {matter.remarks && <DetailSection title="備考"><p>{matter.remarks}</p></DetailSection>}
     {canDelete && <MatterDangerZone matterId={matter.id} title={matter.title} onDeleted={onDeleted} />}
