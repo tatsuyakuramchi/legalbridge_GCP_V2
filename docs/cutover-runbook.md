@@ -62,6 +62,17 @@ infra/gcp/deploy-write-test.sh _SLACK_CONVERSATION_READ_MODE=live  # 一部だ�
 DRY_RUN=1 infra/gcp/deploy-write-test.sh ...                     # 送信せず内容確認
 ```
 
+**デプロイ先の既定は正式名 `legalbridge-v2`**（§4 の載せ替え後・2026-08-18 に変更）。
+旧 `legalbridge-v2-write-test` へ出すときだけ明示する:
+
+```bash
+SERVICE=legalbridge-v2-write-test infra/gcp/deploy-write-test.sh
+```
+
+出力の `主要フラグ` に `_SERVICE` が出るので、**送信前に必ずデプロイ先を確認する**。
+ファイル名が `deploy-write-test.sh` のままなのは参照している文書が多いため。改名は
+§5 の旧サービス撤去とあわせて行う。
+
 事前チェックで止まる主な条件：gcloud 未認証／substitutions が 100 未満（引き継ぎ失敗）
 ／CloudSign 宛先許可リストにメールアドレスでない要素が混ざっている／Slack 読取 live なのに
 bot token・通知履歴が未設定。

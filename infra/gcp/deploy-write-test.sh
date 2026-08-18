@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# write-test の再デプロイ（フラグ据え置き）。runbook §2-0 の手順を1本にまとめ、
+# 本番サービスの再デプロイ（フラグ据え置き）。runbook §2-0 の手順を1本にまとめ、
 # 繰り返し踏んでいた事故を事前に止める:
 #   - gcloud の認証切れ（プロキシ/ビルドが途中で落ちる）
 #   - /tmp が消えて build-flags.json が無い
@@ -12,20 +12,26 @@
 #   infra/gcp/deploy-write-test.sh KEY=VALUE [KEY=VALUE]  # 一部フラグだけ変えて再デプロイ
 #     例) infra/gcp/deploy-write-test.sh _SLACK_CONVERSATION_READ_MODE=live
 #   DRY_RUN=1 infra/gcp/deploy-write-test.sh ...          # 送信せず差分だけ確認
-#   SERVICE=... でデプロイ先を上書き（既定 legalbridge-v2-write-test）。
+#   SERVICE=... でデプロイ先を上書き（既定は正式名 legalbridge-v2）。
+#     旧サービスへ出す場合のみ: SERVICE=legalbridge-v2-write-test ...
 #   FLAGS_FROM=... で設定の引き継ぎ元を上書き（既定はデプロイ先自身）。
-#     まだ存在しないサービスへ初めて出すとき（§4 の正式名への載せ替え）に使う:
-#       SERVICE=legalbridge-v2 FLAGS_FROM=legalbridge-v2-write-test infra/gcp/deploy-write-test.sh
+#     まだ存在しないサービスへ初めて出すときに使う（§4 の載せ替えで使用済み）:
+#       SERVICE=<新> FLAGS_FROM=<稼働中> infra/gcp/deploy-write-test.sh
 #   PROJECT=... で対象プロジェクトを上書き（既定 legalbridge-488506）。
 #   Cloud Shell がリセットされて core/project が消えても動くよう常に --project を渡す。
+#
+# ファイル名は write-test のままだが、§4（2026-08-18）で正式名 legalbridge-v2 へ
+# 載せ替え済み。参照している文書が多いため改名は §5 の旧サービス撤去とあわせて行う。
 
 set -euo pipefail
 
 PROJECT="${PROJECT:-legalbridge-488506}"
-SERVICE="${SERVICE:-legalbridge-v2-write-test}"
-# フラグの引き継ぎ元。既定はデプロイ先そのもの。まだ存在しないサービスへ初めて出すとき
-# （runbook §4 の正式名への載せ替え）だけ、稼働中のサービスを指定する:
-#   SERVICE=legalbridge-v2 FLAGS_FROM=legalbridge-v2-write-test infra/gcp/deploy-write-test.sh
+# 既定は正式名（§4 で載せ替え済み・2026-08-18）。旧 write-test へ出すときだけ
+# SERVICE=legalbridge-v2-write-test を明示する。
+SERVICE="${SERVICE:-legalbridge-v2}"
+# フラグの引き継ぎ元。既定はデプロイ先そのもの。まだ存在しないサービスへ初めて出すときだけ、
+# 稼働中のサービスを指定する:
+#   SERVICE=<新> FLAGS_FROM=<稼働中> infra/gcp/deploy-write-test.sh
 FLAGS_FROM="${FLAGS_FROM:-${SERVICE}}"
 REGION="${REGION:-asia-northeast1}"
 CONFIG="${CONFIG:-infra/gcp/cloudbuild-write-test.yaml}"

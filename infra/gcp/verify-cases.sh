@@ -40,6 +40,8 @@ AUTH_ADMIN_EMAILS=tatsuya.kuramochi@arclight.co.jp
 CONFIRM_CLOUDRUN_IAM=CLOUDRUN_IAM_PROXY_VALIDATION_ONLY
 INTEGRATION_MODE=live
 '
+# 土台は正式名（§4 で載せ替え済み）。旧 write-test は下の明示ケースで押さえる。
+PRODUCTION_ENV="${PRODUCTION_ENV/SERVICE=legalbridge-v2-write-test/SERVICE=legalbridge-v2}"
 
 # 検証プロファイル（隔離DB）。本番ゲートを先に踏まずに、個別の解禁ゲートまで到達させる。
 VALIDATION_ENV='
@@ -49,7 +51,7 @@ CONFIRM_DOCUMENT_TABLES=EMPTY_DOCUMENT_TABLES_CONFIRMED
 AUTH_MODE=cloudrun-iam
 AUTH_ADMIN_EMAILS=tatsuya.kuramochi@arclight.co.jp
 CONFIRM_CLOUDRUN_IAM=CLOUDRUN_IAM_PROXY_VALIDATION_ONLY
-SERVICE=legalbridge-v2-write-test
+SERVICE=legalbridge-v2
 '
 
 # PROFILE=validation を指定すると隔離DB構成で走る（既定は本番構成）。
@@ -81,8 +83,10 @@ run_case() {
 }
 
 FAILED=0
-echo "── 現行の承認済みサービス（write-test）─────────────────────────────"
-run_case "本番プロファイルはそのまま通る" allow || FAILED=1
+echo "── 承認済みサービス─────────────────────────────────────────────"
+run_case "正式名で本番プロファイルが通る" allow || FAILED=1
+run_case "旧 write-test でも通る（観察期間中は両方生きている）" allow \
+  "SERVICE=legalbridge-v2-write-test" || FAILED=1
 run_case "サービス名が違えば本番DBを拒む" block "SERVICE=legalbridge-v2-preview" || FAILED=1
 run_case "未知のサービス名は拒む" block "SERVICE=some-other-service" || FAILED=1
 
@@ -96,10 +100,11 @@ run_case "PRIMARY_DB_MODE が不正なら拒む" block "PRIMARY_DB_MODE=whatever
 run_case "管理者メールが違えば拒む" block "AUTH_ADMIN_EMAILS=someone@example.com" || FAILED=1
 
 echo
-echo "── 正式サービス名（§4 の載せ替え先）────────────────────────────────"
-run_case "正式名でも本番プロファイルが通る" allow "SERVICE=legalbridge-v2" || FAILED=1
-run_case "正式名でも確認トークンは要る" block "SERVICE=legalbridge-v2" "CONFIRM_PRODUCTION_PRIMARY=" || FAILED=1
-run_case "正式名でもDB利用者は検証する" block "SERVICE=legalbridge-v2" "DB_USER=postgres" || FAILED=1
+echo "── 旧サービスでもゲートは同じに効く────────────────────────────────"
+run_case "旧名でも確認トークンは要る" block \
+  "SERVICE=legalbridge-v2-write-test" "CONFIRM_PRODUCTION_PRIMARY=" || FAILED=1
+run_case "旧名でもDB利用者は検証する" block \
+  "SERVICE=legalbridge-v2-write-test" "DB_USER=postgres" || FAILED=1
 
 echo
 # ここは隔離DB構成で走らせる。本番ゲートで先に止まると、個別の解禁ゲートを
@@ -118,8 +123,9 @@ for pair in "EXCEL_BATCH_ENABLED:excel-batch" "SETTINGS_WRITE_ENABLED:settings" 
     "AUTH_LEGAL_EMAILS=legal@arclight.co.jp" "AUTH_REQUESTER_DOMAINS=arclight.co.jp"
     "${key}=true" "WRITE_SCOPES=drafts,documents,pdf,${scope}"
   )
-  PROFILE=validation run_case "${key}: write-test なら通る" allow "${common[@]}" || FAILED=1
-  PROFILE=validation run_case "${key}: 正式名でも通る" allow "SERVICE=legalbridge-v2" "${common[@]}" || FAILED=1
+  PROFILE=validation run_case "${key}: 正式名なら通る" allow "${common[@]}" || FAILED=1
+  PROFILE=validation run_case "${key}: 旧名でも通る" allow \
+    "SERVICE=legalbridge-v2-write-test" "${common[@]}" || FAILED=1
   PROFILE=validation run_case "${key}: 未承認名なら止まる" block "SERVICE=some-other-service" "${common[@]}" || FAILED=1
 done
 
