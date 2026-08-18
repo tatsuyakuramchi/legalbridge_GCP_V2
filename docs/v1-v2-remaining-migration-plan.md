@@ -97,7 +97,7 @@ R1 のあと、業務側の準備ができたものから順に。**一度に全
 | 順 | 対象 | 渡すフラグ |
 |---|---|---|
 | 1 | Backlog 書戻し（コメント投稿） | `_BACKLOG_COMMENT_WRITE_ENABLED=true`＋`_CONFIRM_BACKLOG_COMMENT_WRITE=BACKLOG_COMMENT_WRITEBACK_VALIDATION_ONLY`＋`_WRITE_SCOPES` へ `backlog-comment` |
-| 2 | サブライセンス（アウト）条件 | `_OUTBOUND_CONDITION_WRITES_ENABLED=true`＋`_CONFIRM_OUTBOUND_WRITES`＋スコープ `outbound-conditions`（既に入っていれば不要） |
+| 2 | サブライセンス（アウト）条件 | `_OUTBOUND_CONDITION_WRITES_ENABLED=true`＋`_CONFIRM_OUTBOUND_WRITES`＋スコープ `outbound-conditions`＋**接続先3点**（`_OUTBOUND_DB_NAME=legalbridge`／`_OUTBOUND_DB_USER=legalbridge_v2_runtime`／`_OUTBOUND_DB_PASSWORD_SECRET=legalbridge-v2-runtime-db-password`。既定 BLOCKED のままだとゲートで落ちる——build 64792c41 で実証） |
 | 3 | ロイヤリティ実績の記録 | `_ROYALTY_EVENT_WRITES_ENABLED=true`＋`_CONFIRM_ROYALTY_EVENT_WRITES=ROYALTY_EVENT_WRITES_LEGALBRIDGE_VALIDATION_ONLY`＋スコープ `royalty-events` |
 | 4 | 受領の記録（請求ダッシュボード） | `_RECEIPT_WRITES_ENABLED=true`＋`_CONFIRM_RECEIPT_WRITES=RECEIPT_WRITES_LEGALBRIDGE_VALIDATION_ONLY`＋スコープ `receipts` |
 | 5 | 支払台帳の同期 | `_PAYMENT_LEDGER_WRITES_ENABLED=true`＋`_CONFIRM_PAYMENT_LEDGER_WRITES=PAYMENT_LEDGER_WRITES_LEGALBRIDGE_VALIDATION_ONLY`＋スコープ `payments`（**4 とセットでのみ**） |

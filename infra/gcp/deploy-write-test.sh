@@ -133,6 +133,26 @@ echo "主要フラグ:"
 jq -r '.substitutions | {_SERVICE, _INTEGRATION_MODE, _WRITE_SCOPES, _CLOUDSIGN_MODE, _CLOUDSIGN_ALLOWED_RECIPIENTS,
   _SLACK_DELIVERY_MODE, _SLACK_NOTIFICATION_HISTORY_ENABLED, _SLACK_CONVERSATION_READ_MODE}' "${FLAGS_FILE}"
 
+# ── 4b. 安全ゲートを「実際に送る値」で流す ──────────────────────────────────
+# verify-cases.sh は代表ケース（ゲートのロジック）しか見ない。今回送る substitutions で
+# ビルド内の verify-isolation ステップと同じ判定を先に行い、5分のビルド待ちを無駄にしない
+# （実際に一度、OUTBOUND_DB_* が BLOCKED のままでビルドが落ちた）。
+VERIFY="$(dirname "$0")/verify-write-test.sh"
+if [ -f "${VERIFY}" ]; then
+  echo "安全ゲートを実値で確認しています…"
+  if ! VERIFY_OUT="$(
+    set -a
+    eval "$(jq -r '.substitutions | to_entries[]
+      | select(.key | startswith("_"))
+      | "\(.key[1:])=\(.value | @sh)"' "${FLAGS_FILE}")"
+    set +a
+    bash "${VERIFY}" 2>&1
+  )"; then
+    echo "${VERIFY_OUT}" | tail -5
+    die "この設定はビルド内の安全ゲートで拒否されます（上の理由を解消してください）"
+  fi
+fi
+
 # ── 5. 送信（"^|^" 区切り＋末尾の "." までを固定）───────────────────────────
 SUBS="$(jq -r '.substitutions | to_entries | map("\(.key)=\(.value)") | join("|")' "${FLAGS_FILE}")"
 if [ "${DRY_RUN:-}" = "1" ]; then
