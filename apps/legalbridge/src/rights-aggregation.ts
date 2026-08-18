@@ -23,6 +23,11 @@ export interface RightsLine {
   territory: string | null;
   language: string | null;
   documentNumber: string | null;
+  /** 独占区分（exclusive/sole/non_exclusive）。V1 由来の行や未設定は null。 */
+  exclusivity?: string | null;
+  /** 許諾期間。開始/終了とも null は無期限扱い。 */
+  termStart?: string | null;
+  termEnd?: string | null;
   // マトリクス（横断）用。単一作品のツリーでは未使用。
   workId?: number;
   workTitle?: string;
@@ -252,6 +257,39 @@ export interface GrantCell {
   party: string;
   documentNumber: string | null;
   lineId: number;
+  exclusivity: string | null;
+  termStart: string | null;
+  termEnd: string | null;
+}
+
+export function exclusivityLabel(value: string | null | undefined): string | null {
+  if (value === "exclusive") return "独占";
+  if (value === "sole") return "独占（自社実施可）";
+  if (value === "non_exclusive") return "非独占";
+  return null;   // 未設定（V1 由来など）
+}
+
+// 期間の重なり判定。null は無期限（開始なし＝過去から／終了なし＝将来まで）として扱う。
+// 期間が重ならない許諾同士（例: 2024年で終了→2026年から別社）は被りではない。
+export function termsOverlap(
+  a: { termStart?: string | null; termEnd?: string | null },
+  b: { termStart?: string | null; termEnd?: string | null }
+): boolean {
+  const aStart = a.termStart ?? "";        // "" はどの日付よりも小さい＝無期限開始
+  const bStart = b.termStart ?? "";
+  const aEnd = a.termEnd ?? "9999-12-31";  // 無期限終了
+  const bEnd = b.termEnd ?? "9999-12-31";
+  return aStart <= bEnd && bStart <= aEnd;
+}
+
+// 独占区分から見た「同じセルに複数許諾があってよいか」。
+//   - 双方が非独占＝正常な併存（衝突にしない）
+//   - どちらかが独占/独占(自社実施可)＝衝突（error）
+//   - どちらかが未設定＝判定できない＝疑いとして衝突（error・区分の入力を促す）
+function pairConflicts(a: GrantCell, b: GrantCell): boolean {
+  if (!termsOverlap(a, b)) return false;
+  if (a.exclusivity === "non_exclusive" && b.exclusivity === "non_exclusive") return false;
+  return true;
 }
 
 export interface GrantCoverageRow {
@@ -298,7 +336,10 @@ export function buildGrantCoverage(granted: RightsLine[]): GrantCoverage {
           right: grant.name,
           party: grant.party || "(取引先未設定)",
           documentNumber: grant.documentNumber,
-          lineId: grant.id
+          lineId: grant.id,
+          exclusivity: grant.exclusivity ?? null,
+          termStart: grant.termStart ?? null,
+          termEnd: grant.termEnd ?? null
         });
       }
     }
@@ -323,11 +364,17 @@ export function buildGrantCoverage(granted: RightsLine[]): GrantCoverage {
       for (const cell of cells) (byRight.get(cell.right) ?? byRight.set(cell.right, []).get(cell.right)!).push(cell);
       for (const [right, group] of byRight) {
         if (group.length < 2) continue;
+        // ペア単位で判定：非独占同士の併存・期間が重ならない許諾は正常。
+        const conflicted = group.filter((cell, index) =>
+          group.some((other, otherIndex) => otherIndex !== index && pairConflicts(cell, other)));
+        if (conflicted.length < 2) continue;
+        const unknown = conflicted.some((cell) => exclusivityLabel(cell.exclusivity) == null);
         push({
           severity: "error", territory: row.territory, language, right,
-          parties: [...new Set(group.map((cell) => cell.party))],
-          documentNumbers: [...new Set(group.map((cell) => cell.documentNumber).filter((n): n is string => !!n))],
-          message: `${row.territory}（${language}）の「${right}」を複数の明細で許諾しています`
+          parties: [...new Set(conflicted.map((cell) => cell.party))],
+          documentNumbers: [...new Set(conflicted.map((cell) => cell.documentNumber).filter((n): n is string => !!n))],
+          message: `${row.territory}（${language}）の「${right}」を複数の明細で許諾しています` +
+            (unknown ? "（独占区分が未設定の明細があるため要確認）" : "（独占許諾を含む）")
         });
       }
       // (2) 広域行との突き合わせ（個別地域側から見る）。
@@ -336,7 +383,8 @@ export function buildGrantCoverage(granted: RightsLine[]): GrantCoverage {
           const worldCells = world.languages[language] ?? [];
           if (!worldCells.length) continue;
           for (const cell of cells) {
-            const sameRight = worldCells.filter((worldCell) => worldCell.right === cell.right);
+            const sameRight = worldCells.filter((worldCell) =>
+              worldCell.right === cell.right && pairConflicts(cell, worldCell));
             if (sameRight.length) {
               push({
                 severity: "error", territory: row.territory, language, right: cell.right,

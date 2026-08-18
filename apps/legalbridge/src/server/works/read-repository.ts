@@ -97,6 +97,8 @@ export interface WorkListResult {
 export interface WorkReadRepository {
   list(options: { keyword?: string; limit?: number }): Promise<WorkListResult>;
   detail(workId: number): Promise<WorkDetail | null>;
+  // ライセンスマトリクス（R4・横断）。許諾側（receivable）で作品に紐付く明細のみ。
+  rightsMatrixLines?(): Promise<RightsLine[]>;
 }
 
 function num(value: unknown): number | null {
@@ -292,6 +294,59 @@ export class PgWorkReadRepository implements WorkReadRepository {
     }));
   }
 
+  // ライセンスマトリクス（R4）。全作品の許諾側明細を作品情報付きで返す。
+  // 集計はクライアントが共通モジュールで行う（権利ツリーと同じ判定・同じ語彙）。
+  async rightsMatrixLines(): Promise<RightsLine[]> {
+    const result = await this.database.query(
+      `SELECT cl.id, cl.direction, cl.rate_pct, cl.amount_ex_tax, cl.mg_amount, cl.currency,
+              cl.payment_scheme, cl.calc_method, cl.formula_text, cl.subject, cl.condition_name,
+              cl.exclusivity, cl.term_start, cl.term_end,
+              w.id AS work_id, w.title AS work_title, w.work_code,
+              COALESCE(
+                (SELECT string_agg(rr.country_name, '・' ORDER BY rr.sort_order, rr.id)
+                   FROM condition_line_regions rr WHERE rr.condition_line_id = cl.id),
+                cl.region_territory
+              ) AS region_territory,
+              COALESCE(
+                (SELECT string_agg(ll.language_name, '・' ORDER BY ll.sort_order, ll.id)
+                   FROM condition_line_languages ll WHERE ll.condition_line_id = cl.id),
+                cl.region_language
+              ) AS region_language,
+              COALESCE(cv.vendor_name, dv.vendor_name) AS party_name,
+              d.document_number
+         FROM condition_lines cl
+         JOIN works w ON w.id = cl.work_id
+         LEFT JOIN documents d ON d.id = cl.document_id
+         LEFT JOIN vendors cv ON cv.id = cl.counterparty_vendor_id
+         LEFT JOIN vendors dv ON dv.id = d.vendor_id
+        WHERE cl.direction = 'receivable'
+          AND COALESCE(w.is_active, true) = true
+        ORDER BY w.work_code NULLS LAST, w.id, cl.id
+        LIMIT 2000`
+    );
+    return result.rows.map((r) => ({
+      id: Number(r.id),
+      direction: "receivable" as const,
+      name: str(r.condition_name) || str(r.subject) || "(無題)",
+      party: str(r.party_name),
+      paymentScheme: str(r.payment_scheme),
+      calcMethod: str(r.calc_method),
+      ratePct: num(r.rate_pct),
+      mgAmount: num(r.mg_amount),
+      amountExTax: num(r.amount_ex_tax),
+      currency: str(r.currency),
+      formulaText: str(r.formula_text),
+      territory: str(r.region_territory),
+      language: str(r.region_language),
+      documentNumber: str(r.document_number),
+      exclusivity: str(r.exclusivity),
+      termStart: str(r.term_start),
+      termEnd: str(r.term_end),
+      workId: Number(r.work_id),
+      workTitle: [str(r.work_code), str(r.work_title)].filter(Boolean).join(" ") || `#${r.work_id}`
+    }));
+  }
+
   private async conditions(workId: number): Promise<{ grouped: GroupedWorkConditions; rights: RightsLine[] }> {
     // 地域・言語は 1対N 子テーブルを集約し、無ければ旧列（V1 0133 と同じ COALESCE）。
     // 相手方は明細の counterparty を優先し、無ければ文書の取引先へフォールバック。
@@ -301,6 +356,7 @@ export class PgWorkReadRepository implements WorkReadRepository {
               cl.parent_license_condition_id, cl.rate_pct, cl.amount_ex_tax,
               cl.mg_amount, cl.currency, d.document_number,
               cl.payment_scheme, cl.calc_method, cl.formula_text, cl.subject,
+              cl.exclusivity, cl.term_start, cl.term_end,
               COALESCE(
                 (SELECT string_agg(rr.country_name, '・' ORDER BY rr.sort_order, rr.id)
                    FROM condition_line_regions rr WHERE rr.condition_line_id = cl.id),
@@ -336,7 +392,10 @@ export class PgWorkReadRepository implements WorkReadRepository {
       formulaText: str(r.formula_text),
       territory: str(r.region_territory),
       language: str(r.region_language),
-      documentNumber: str(r.document_number)
+      documentNumber: str(r.document_number),
+      exclusivity: str(r.exclusivity),
+      termStart: str(r.term_start),
+      termEnd: str(r.term_end)
     }));
     const lines: WorkConditionLine[] = result.rows.map((r) => ({
       id: Number(r.id),

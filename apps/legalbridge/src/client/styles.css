@@ -2010,3 +2010,30 @@ textarea { width: 100%; min-height: 90px; resize: vertical; line-height: 1.6; }
 .kind-badge.kind-buyout { background: #e7f0ff; color: #1c4f9c; }
 .kind-badge.kind-running { background: #e8f7ee; color: #157347; }
 .kind-badge.kind-free { background: #f1f1f3; color: #666; }
+
+/* ライセンスマトリクス（R4）＋独占区分バッジ */
+.matrix-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.matrix-filters input[type="search"] { flex: 1 1 220px; max-width: 320px; }
+.matrix-spacer { flex: 1; }
+.matter-chip.conflict-chip.active { background: #c62a2f; border-color: #c62a2f; color: #fff; }
+.matrix-wrap { padding: 0; }
+.rights-matrix { min-width: 720px; }
+.rights-matrix thead th { white-space: nowrap; }
+.rights-matrix thead th.world { background: #eef6ff; }
+.rights-matrix tbody th { text-align: left; vertical-align: top; min-width: 180px; }
+.rights-matrix tbody td { vertical-align: top; min-width: 150px; }
+.rights-matrix td.cell-open { background: var(--surface-subtle, #f8fafc); }
+.rights-matrix td.cell-open::after { content: "未許諾"; font-size: 11px; color: #b3bfcd; }
+.rights-matrix td.cell-conflict { outline: 2px solid #e5484d; outline-offset: -2px; background: #fff5f5; }
+.matrix-work { border: none; background: none; padding: 0; font: inherit; font-weight: 700;
+  color: var(--accent-strong); cursor: pointer; text-align: left; }
+.matrix-work:hover { text-decoration: underline; }
+.rights-matrix .row-flag { display: inline-block; margin-top: 4px; font-size: 11px; font-weight: 700;
+  color: #c62a2f; background: #fff5f5; border: 1px solid #f2b8ba; border-radius: 999px; padding: 1px 10px; }
+.grant-chip.clickable { cursor: pointer; text-align: left; font: inherit; width: 100%; }
+.grant-chip.clickable:hover { border-color: var(--accent); background: var(--surface-tint, #f0fbfc); }
+.excl { font-style: normal; font-size: 10px; font-weight: 700; border-radius: 4px; padding: 0 6px; margin-left: 6px; vertical-align: 1px; }
+.excl-exclusive { background: #fdebec; color: #c62a2f; }
+.excl-sole { background: #fff3df; color: #9a6700; }
+.excl-non_exclusive { background: #eef2f6; color: #55657a; }
+.rights-add-grant { align-self: center; }

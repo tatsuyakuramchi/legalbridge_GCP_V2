@@ -38,6 +38,19 @@ export function createWorkReadRouter(repository?: WorkReadRepository) {
     }
   });
 
+  // ライセンスマトリクス（R4・横断読取）。/works/:id より先に定義（:id に食われないように）。
+  router.get("/works/rights-matrix", async (_request, response, next) => {
+    try {
+      if (!requireLegal(response)) return;
+      const lines = repository?.rightsMatrixLines
+        ? await repository.rightsMatrixLines()
+        : [];
+      return response.status(200).json({ lines });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
   router.get("/works/:id/detail", async (request, response, next) => {
     try {
       if (!requireLegal(response)) return;

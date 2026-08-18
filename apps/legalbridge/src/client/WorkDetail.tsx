@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  buildGrantCoverage, buildRightsTree, type RightsLine
+  buildGrantCoverage, buildRightsTree, exclusivityLabel, type RightsLine
 } from "../rights-aggregation";
 import { SearchableLedgerSelect } from "./SearchableLedgerSelect";
 import { checkWorkConditions, summarizeFindings } from "./contract-check";
@@ -70,7 +70,7 @@ const emptyMaterial = (): MaterialForm => ({
   acquisitionType: "license", rightsType: "license", rightsHolderLabel: "", isRoyaltyBearing: false, remarks: ""
 });
 
-export function WorkDetail({ canEdit = false, canEditRights = false, canEditMaterials = false, onNavigate, initialWorkId = null }: { canEdit?: boolean; canEditRights?: boolean; canEditMaterials?: boolean; onNavigate?: (target: string) => void; initialWorkId?: number | null }) {
+export function WorkDetail({ canEdit = false, canEditRights = false, canEditMaterials = false, onNavigate, onAddGrant, initialWorkId = null }: { canEdit?: boolean; canEditRights?: boolean; canEditMaterials?: boolean; onNavigate?: (target: string) => void; onAddGrant?: (workId: number) => void; initialWorkId?: number | null }) {
   const [keyword, setKeyword] = useState("");
   const [results, setResults] = useState<Summary[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(initialWorkId);
@@ -524,7 +524,8 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
               </table></div> : <div className="empty-state">紐づく条件明細はありません。</div>}
             </> : <Degraded />)}
 
-            {tab === "tree" && <RightsTreeTab lines={detail.rightsLines ?? null} />}
+            {tab === "tree" && <RightsTreeTab lines={detail.rightsLines ?? null}
+              onAddGrant={onAddGrant ? () => onAddGrant(detail.work.id) : undefined} />}
 
             {tab === "rights" && (detail.rightsSources ? (
               <>
@@ -634,7 +635,7 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
 // 金銭の in/out を左右対称に置き、アウト側は「地域×言語の格子」で許諾状況を出す。
 // 許諾地域の被り＝二重許諾は致命的（利用者要件）なので、衝突を最上段に昇格し、
 // 該当セルを赤枠で示す。判定は共通集計層（rights-aggregation・V1 ルール継承＋強化）。
-function RightsTreeTab({ lines }: { lines: RightsLine[] | null }) {
+function RightsTreeTab({ lines, onAddGrant }: { lines: RightsLine[] | null; onAddGrant?: () => void }) {
   const tree = useMemo(() => lines ? buildRightsTree(lines) : null, [lines]);
   const coverage = useMemo(
     () => tree ? buildGrantCoverage(tree.granted) : null, [tree]);
@@ -655,6 +656,9 @@ function RightsTreeTab({ lines }: { lines: RightsLine[] | null }) {
         <span>許諾の被り</span>
         <strong>{errors.length ? `⚠ ${errors.length}件` : warnings.length ? `注意 ${warnings.length}件` : "なし"}</strong>
       </article>
+      {onAddGrant && <button type="button" className="primary rights-add-grant" onClick={onAddGrant}>
+        ＋ 許諾条件を追加
+      </button>}
     </div>
 
     {coverage.conflicts.length > 0 && <div className="rights-conflicts">
@@ -680,8 +684,13 @@ function RightsTreeTab({ lines }: { lines: RightsLine[] | null }) {
             const conflicted = conflictCells.has(`${row.territory}|${lang}`);
             return <td key={lang} className={conflicted ? "cell-conflict" : cells.length ? "cell-granted" : "cell-open"}>
               {cells.map((cell, i) => <div key={i} className="grant-chip">
-                <strong>{cell.right}</strong>
+                <strong>{cell.right}
+                  {exclusivityLabel(cell.exclusivity) &&
+                    <em className={`excl excl-${cell.exclusivity}`}>{exclusivityLabel(cell.exclusivity)}</em>}
+                </strong>
                 <span>→ {cell.party}</span>
+                {(cell.termStart || cell.termEnd) &&
+                  <small>{[cell.termStart, cell.termEnd].filter(Boolean).join(" 〜 ")}</small>}
                 {cell.documentNumber && <small>{cell.documentNumber}</small>}
               </div>)}
             </td>;
@@ -711,7 +720,10 @@ function RightsTreeTab({ lines }: { lines: RightsLine[] | null }) {
             <span className={`kind-badge kind-${r.kind}`}>{r.kind === "buyout" ? "買い切り" : r.kind === "running" ? "ランニング" : "無償"}</span>
           </div>
           <span>{r.party}</span>
-          <span>{[r.territory, r.language].filter(Boolean).join("・") || "地域・言語未設定"}</span>
+          <span>{[r.territory, r.language].filter(Boolean).join("・") || "地域・言語未設定"}
+            {exclusivityLabel(r.exclusivity) && <em className={`excl excl-${r.exclusivity}`}> {exclusivityLabel(r.exclusivity)}</em>}
+          </span>
+          {(r.termStart || r.termEnd) && <span>{[r.termStart, r.termEnd].filter(Boolean).join(" 〜 ")}</span>}
           <span>{r.kind === "running" ? r.calcLabel : r.amountLabel}</span>
           {r.documentNumber && <small>{r.documentNumber}</small>}
         </div>) : <div className="empty-state">許諾側の条件はありません。</div>}

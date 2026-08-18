@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildGrantCoverage, buildLicenseMatrix, buildRightsTree, buildTerritorySummary,
-  classifyRight, findWideGrantOverlaps, isRunningRight, runningCalcLabel, splitTerms,
+  classifyRight, exclusivityLabel, findWideGrantOverlaps, isRunningRight,
+  runningCalcLabel, splitTerms, termsOverlap,
   type RightsLine
 } from "./rights-aggregation.js";
 
@@ -241,4 +242,75 @@ test("error が warning より先に並ぶ", () => {
   ]);
   assert.ok(coverage.conflicts.length >= 2);
   assert.equal(coverage.conflicts[0].severity, "error");
+});
+
+// ── 独占区分・期間を踏まえた被り判定（利用許諾フォームの構造に合わせた再編成）──
+// アウト条件フォームは exclusivity（独占/独占(自社実施可)/非独占）と許諾期間を
+// 持っている。非独占同士の併存や期間が重ならない許諾は正常であり、警告を出すと
+// 「オオカミ少年」になって本物の被りが埋もれる。
+
+test("非独占同士の併存は被りにしない", () => {
+  const coverage = buildGrantCoverage([
+    line({ id: 1, direction: "receivable", name: "出版権", territory: "韓国", language: "韓国語",
+      party: "A社", exclusivity: "non_exclusive" }),
+    line({ id: 2, direction: "receivable", name: "出版権", territory: "韓国", language: "韓国語",
+      party: "B社", exclusivity: "non_exclusive" })
+  ]);
+  assert.deepEqual(coverage.conflicts, []);
+});
+
+test("独占許諾が絡む重複は error（独占許諾を含む、と明記）", () => {
+  const coverage = buildGrantCoverage([
+    line({ id: 1, direction: "receivable", name: "出版権", territory: "韓国", language: "韓国語",
+      party: "A社", exclusivity: "exclusive" }),
+    line({ id: 2, direction: "receivable", name: "出版権", territory: "韓国", language: "韓国語",
+      party: "B社", exclusivity: "non_exclusive" })
+  ]);
+  assert.equal(coverage.conflicts.length, 1);
+  assert.equal(coverage.conflicts[0].severity, "error");
+  assert.match(coverage.conflicts[0].message, /独占許諾を含む/);
+});
+
+test("区分未設定（V1 由来）が絡む重複は要確認として error", () => {
+  const coverage = buildGrantCoverage([
+    line({ id: 1, direction: "receivable", name: "出版権", territory: "韓国", language: "韓国語", party: "A社" }),
+    line({ id: 2, direction: "receivable", name: "出版権", territory: "韓国", language: "韓国語",
+      party: "B社", exclusivity: "non_exclusive" })
+  ]);
+  assert.equal(coverage.conflicts.length, 1);
+  assert.match(coverage.conflicts[0].message, /独占区分が未設定/);
+});
+
+test("期間が重ならない許諾は被りにしない（前任契約の終了→新契約）", () => {
+  const coverage = buildGrantCoverage([
+    line({ id: 1, direction: "receivable", name: "出版権", territory: "韓国", language: "韓国語",
+      party: "A社", exclusivity: "exclusive", termStart: "2023-01-01", termEnd: "2024-12-31" }),
+    line({ id: 2, direction: "receivable", name: "出版権", territory: "韓国", language: "韓国語",
+      party: "B社", exclusivity: "exclusive", termStart: "2026-01-01" })
+  ]);
+  assert.deepEqual(coverage.conflicts, []);
+});
+
+test("期間が一部でも重なれば被り（無期限は常に重なる）", () => {
+  assert.equal(termsOverlap({ termStart: "2024-01-01", termEnd: "2026-06-30" },
+    { termStart: "2026-06-30" }), true);
+  assert.equal(termsOverlap({}, { termStart: "2030-01-01" }), true);
+  assert.equal(termsOverlap({ termEnd: "2024-12-31" }, { termStart: "2025-01-01" }), false);
+});
+
+test("全世界×個別も非独占同士なら被りにしない", () => {
+  const coverage = buildGrantCoverage([
+    line({ id: 1, direction: "receivable", name: "出版権", territory: "全世界", language: "英語",
+      party: "海外社", exclusivity: "non_exclusive" }),
+    line({ id: 2, direction: "receivable", name: "出版権", territory: "韓国", language: "英語",
+      party: "韓国社", exclusivity: "non_exclusive" })
+  ]);
+  assert.deepEqual(coverage.conflicts.filter((c) => c.severity === "error"), []);
+});
+
+test("独占区分の表示ラベル", () => {
+  assert.equal(exclusivityLabel("exclusive"), "独占");
+  assert.equal(exclusivityLabel("sole"), "独占（自社実施可）");
+  assert.equal(exclusivityLabel("non_exclusive"), "非独占");
+  assert.equal(exclusivityLabel(null), null);
 });

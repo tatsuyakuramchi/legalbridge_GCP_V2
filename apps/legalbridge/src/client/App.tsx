@@ -15,6 +15,7 @@ import { GlobalSearch } from "./GlobalSearch";
 import { AdminOverview } from "./AdminOverview";
 import { DraftWorkspace } from "./DraftWorkspace";
 import { OutboundConditionWorkspace } from "./OutboundConditionWorkspace";
+import { LicenseMatrixWorkspace } from "./LicenseMatrixWorkspace";
 import { ContractChainWizard } from "./ContractChainWizard";
 import { ConditionLinesWorkspace } from "./ConditionLinesWorkspace";
 import { StaffWorkspace } from "./StaffWorkspace";
@@ -63,7 +64,7 @@ const fallback: DashboardSummary = {
   priorities: []
 };
 
-type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview" | "billing" | "receivable-map" | "payment-report" | "billing-print" | "works" | "data-quality" | "vendor-merge" | "matter-merge" | "guide" | "snippets" | "requests" | "excel-batch" | "settings" | "workflow-rules" | "contract-master" | "template-samples";
+type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview" | "billing" | "receivable-map" | "payment-report" | "billing-print" | "works" | "license-matrix" | "data-quality" | "vendor-merge" | "matter-merge" | "guide" | "snippets" | "requests" | "excel-batch" | "settings" | "workflow-rules" | "contract-master" | "template-samples";
 type NavItem = { view: View; label: string; description: string; match: View[] };
 type NavGroup = { label: string; items: NavItem[] };
 
@@ -98,6 +99,7 @@ function navGroups(access: {
     { label: "お金", items: [
       ...(access.legalWorkspace ? [{ view: "billing" as const, label: "請求", description: "再許諾料の受領・分配の横断俯瞰", match: ["billing" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "receivable-map" as const, label: "債権マップ", description: "作品中心の受領・分配・留保の系譜俯瞰", match: ["receivable-map" as const] }] : []),
+      ...(access.legalWorkspace ? [{ view: "license-matrix" as const, label: "ライセンスマトリクス", description: "作品×許諾地域の一望・被り検知", match: ["license-matrix" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "payment-report" as const, label: "支払報告書", description: "出金台帳の源泉・消費税・振込額とCSV出力", match: ["payment-report" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "billing-print" as const, label: "請求印刷", description: "受領・分配 計算書の印刷/PDF", match: ["billing-print" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "excel-batch" as const, label: "Excel一括", description: "検収書・利用許諾料計算書を担当者×支払期日で束ねてExcel出力", match: ["excel-batch" as const] }] : []),
@@ -153,6 +155,7 @@ function breadcrumbFor(view: View): Array<{ label: string; view?: View }> {
     "royalty-preview": [home, { label: "ロイヤリティ試算" }],
     billing: [home, { label: "請求" }],
     "receivable-map": [home, { label: "債権マップ" }],
+    "license-matrix": [home, { label: "ライセンスマトリクス" }],
     "payment-report": [home, { label: "支払報告書" }],
     "billing-print": [home, { label: "請求印刷" }],
     "excel-batch": [home, { label: "Excel一括" }],
@@ -203,6 +206,8 @@ export function App() {
   // データ品質→名寄せのドリル時に統合元IDを引き継ぐ（発見→是正を1動線に・Q1）。
   const [mergeSourceSeed, setMergeSourceSeed] = useState("");
   const [drillWorkId, setDrillWorkId] = useState<number | null>(null);
+  // 権利ツリーから「＋許諾条件を追加」で飛んだときの作品プリセット。
+  const [drillOutboundWorkId, setDrillOutboundWorkId] = useState<number | null>(null);
   const [drillConditionId, setDrillConditionId] = useState<number | null>(null);
   const [drillReceiptConditionId, setDrillReceiptConditionId] = useState<number | null>(null);
   // 条件明細→台帳（金銭条件）/ 作品ビュー→台帳（作品）へのクロスリンクで開くタブを指定（R2/R3）。
@@ -459,10 +464,12 @@ export function App() {
             onOpenDraft={resumeDraft}
           />
         )}
-        {view === "outbound" && <OutboundConditionWorkspace onNavigate={(t) => setView(t as View)} />}
+        {view === "outbound" && <OutboundConditionWorkspace onNavigate={(t) => setView(t as View)} initialWorkId={drillOutboundWorkId} />}
+        {view === "license-matrix" && <LicenseMatrixWorkspace onOpenWork={(workId) => { setDrillWorkId(workId); setView("works"); }} />}
         {view === "royalty-preview" && <RoyaltyPreview />}
         {view === "billing" && <BillingDashboard key={drillReceiptConditionId ?? "billing"} canRecord={canRecordReceipt} initialConditionLineId={drillReceiptConditionId} onCreatePaymentDocument={(legalWorkspace || requesterWorkspace) ? () => { setNewDocIssueKey(""); setNewDocSeed({}); setDraftSelection(null); setView("templates"); } : undefined} />}
         {view === "works" && <WorkDetail key={drillWorkId ?? "works"} initialWorkId={drillWorkId} canEdit={canEditWorks} canEditRights={canEditRightsSources} canEditMaterials={canEditMaterials}
+          onAddGrant={(workId) => { setDrillOutboundWorkId(workId); setView("outbound"); }}
           onNavigate={(t) => { if (t === "ledgers-works") { setLedgerSeedType("works"); setView("ledgers"); } else setView(t as View); }} />}
         {view === "data-quality" && <DataQuality onNavigate={(v, id) => {
           setMergeSourceSeed((v === "vendor-merge" || v === "matter-merge") && id != null ? String(id) : "");

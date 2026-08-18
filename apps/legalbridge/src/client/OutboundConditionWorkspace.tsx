@@ -27,8 +27,9 @@ const initial: FormState = {
   withholdingTaxTreatment: "", documentNumber: "", notes: ""
 };
 
-export function OutboundConditionWorkspace({ onNavigate }: { onNavigate?: (target: string) => void } = {}) {
-  const [form, setForm] = useState(initial);
+export function OutboundConditionWorkspace({ onNavigate, initialWorkId = null }: { onNavigate?: (target: string) => void; initialWorkId?: number | null } = {}) {
+  // 権利ツリーの「＋許諾条件を追加」から来たときは作品を選択済みにする。
+  const [form, setForm] = useState(initialWorkId != null ? { ...initial, workId: String(initialWorkId) } : initial);
   const [works, setWorks] = useState<LedgerItem[]>([]);
   const [vendors, setVendors] = useState<LedgerItem[]>([]);
   const [notice, setNotice] = useState("入力内容を確認後、管理者だけが保存できます。");
