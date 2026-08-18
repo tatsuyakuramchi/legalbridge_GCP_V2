@@ -487,7 +487,36 @@ revision `legalbridge-v2-00001-h7g` / メモリ 2Gi。安全ゲート（`verify-
 詳細な制約は `phase9-automation-ignition.md` §5 の実地知見を参照
 （IAP はサービス URL を audience にした OIDC を受け付けない、等）。
 
-**推測でコマンドを打たず、現行サービスの設定を読んでから合わせること。**
+**✅ 2026-08-18 実施済み**（programmaticClients の登録を除く）。実地でやったことは以下。
+**推測でコマンドを打たず、現行サービスの設定を読んで合わせる**のが確実だった。
+
+```bash
+# ① IAP 有効化（gcloud 580 には --iap がある。無ければコンソール）
+gcloud run services update legalbridge-v2 --project legalbridge-488506 \
+  --region asia-northeast1 --iap
+```
+
+注釈が現行と揃うことを確認（`iap-enabled: 'true'` と `ingress: all`）。
+
+**権限は2層あり、別物**。ここが最も間違えやすい:
+
+| 層 | ロール | 誰に |
+|---|---|---|
+| Cloud Run の入口 | `roles/run.invoker` | Scheduler SA `legalbridge-v2-preview@`／IAP サービスエージェント `service-988056987352@gcp-sa-iap`／管理者 |
+| IAP の入口 | `roles/iap.httpsResourceAccessor` | リレー SA `lb-v2-receiver@`／Scheduler SA `legalbridge-v2-preview@`／管理者 |
+
+**リレー SA は `run.invoker` に入っていない**（IAP 側だけで許可される）。逆に IAP
+サービスエージェントは `run.invoker` にだけ入る（`--iap` が自動で付ける）。
+両方を現行サービスから読んで差分を埋める:
+
+```bash
+gcloud run services get-iam-policy legalbridge-v2-write-test --project legalbridge-488506 \
+  --region asia-northeast1 --format='value(bindings.role, bindings.members)'
+gcloud beta iap web get-iam-policy --resource-type=cloud-run \
+  --service=legalbridge-v2-write-test --region=asia-northeast1 --project legalbridge-488506
+```
+
+新サービス側が空（`etag: ACAB`）なら、そのメンバーをそのまま付与する。
 
 ```bash
 # 現行サービスの IAP 注釈（これと同じ状態を新サービスにも作る）
