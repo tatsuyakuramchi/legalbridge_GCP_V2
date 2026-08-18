@@ -94,6 +94,10 @@ R2 に足す。使わないなら明示的に「使わない」と決めて記�
 
 R1 のあと、業務側の準備ができたものから順に。**一度に全部点けない**（切り分けができなくなる）。
 
+> **1〜2 は 2026-08-18 点火済み**（backlog-comment・outbound-conditions＋接続先3点。
+> 初回は OUTBOUND_DB_* が既定 BLOCKED のまま送ってゲートで落ちた＝build 64792c41。
+> 以後は deploy スクリプトが実値プリフライトで送信前に止める）。残りは 3〜5（金額系）のみ。
+
 | 順 | 対象 | 渡すフラグ |
 |---|---|---|
 | 1 | Backlog 書戻し（コメント投稿） | `_BACKLOG_COMMENT_WRITE_ENABLED=true`＋`_CONFIRM_BACKLOG_COMMENT_WRITE=BACKLOG_COMMENT_WRITEBACK_VALIDATION_ONLY`＋`_WRITE_SCOPES` へ `backlog-comment` |
