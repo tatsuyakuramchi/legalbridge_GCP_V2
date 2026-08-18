@@ -27,6 +27,23 @@ function matches(condition: ShowWhenCondition, formData: DocumentFormData): bool
   return true;
 }
 
+// 検収書の単票フォールバック項目（IV. 納品明細の成果物・仕様・金額3欄）。
+// テンプレートは検収明細（delivery_line_items）が1行でもあればそちらを描画し、
+// 金額もサーバ側で明細から計算する。そのため明細があるときにこれらを出すと
+// 「入力しても使われない項目」になる（必須マーク付きで混乱を招いていた）。
+// 税率（taxRate）と軽減税率（isReducedTax）は明細モードでも使うので残す。
+const INSPECTION_FALLBACK_FIELDS = new Set(
+  ["description", "spec", "deliveredAmountStr", "taxAmountStr", "totalAmountStr"]);
+
+export function isInspectionFallbackFieldHidden(
+  templateKey: string, fieldName: string, formData: DocumentFormData
+): boolean {
+  if (templateKey !== "inspection_certificate") return false;
+  if (!INSPECTION_FALLBACK_FIELDS.has(fieldName)) return false;
+  const lines = formData.delivery_line_items;
+  return Array.isArray(lines) && lines.length > 0;
+}
+
 export function isFieldVisible(field: ConditionallyVisible, formData: DocumentFormData): boolean {
   const condition = field.showWhen;
   if (!condition) return true;

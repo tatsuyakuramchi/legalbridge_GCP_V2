@@ -213,8 +213,18 @@ function buildInspectionContext(source: Data) {
   const taxableTotal = taxableSubtotal + combinedTax;
   const performanceRoyaltyLines = deliveryLines.filter((line) =>
     String(pick(line, "calc_method", "CALC_METHOD")).toUpperCase() === "ROYALTY");
+  // 納品額・消費税額・合計額は、明細があれば明細から計算して**手入力より優先**する
+  // （発注書と同じ規則：行があるのに手入力が勝つと画面と PDF がずれる）。
+  // 明細0件は従来どおり単票フォールバック＝手入力値をそのまま使う。
+  const deliveredTax = Math.ceil(deliveredExTax * taxRate / 100);
+  const lineTotals = deliveryLines.length ? {
+    deliveredAmountStr: yen(deliveredExTax),
+    taxAmountStr: yen(deliveredTax),
+    totalAmountStr: yen(deliveredExTax + deliveredTax)
+  } : {};
   return {
     ...source,
+    ...lineTotals,
     delivery_line_items: deliveryLines,
     expenses,
     other_fees: otherFees,

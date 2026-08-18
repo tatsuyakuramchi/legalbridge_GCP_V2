@@ -6,7 +6,7 @@ import type {
   DocumentFormSchema
 } from "../types";
 import { SpecializedDocumentForms } from "./SpecializedDocumentForms";
-import { isFieldVisible } from "./field-visibility";
+import { isFieldVisible, isInspectionFallbackFieldHidden } from "./field-visibility";
 import { MasterDataPicker } from "./MasterDataPicker";
 import { DocumentRegistry, type RegisteredDocument } from "./DocumentRegistry";
 import { MatterRegistry } from "./MatterRegistry";
@@ -936,6 +936,7 @@ function DocumentForm({
   // 空になったグループはジャンプリンクごと消える（groups が visibleFields 由来のため）。
   const visibleFields = schema.fields.filter((field) =>
     field.type !== "hidden" && !isSpecializedDataField(schema.templateKey, field.name) &&
+    !isInspectionFallbackFieldHidden(schema.templateKey, field.name, formData) &&
     isFieldVisible(field, formData)
   );
   const groups = [...new Set(visibleFields.map((field) => field.group ?? "基本情報"))];

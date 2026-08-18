@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isFieldVisible } from "./field-visibility.js";
+import { isFieldVisible, isInspectionFallbackFieldHidden } from "./field-visibility.js";
 import type { TemplateField } from "../types.js";
 
 const base: TemplateField = { name: "X", label: "X" };
@@ -64,4 +64,30 @@ test("truthy は配列を件数で見る（明細0件を「明細あり」にし
   const hasItems: TemplateField = { ...base, showWhen: { field: "items", truthy: true } };
   assert.equal(isFieldVisible(hasItems, { items: [] }), false);
   assert.equal(isFieldVisible(hasItems, { items: [{}] }), true);
+});
+
+// ── 検収書の単票フォールバック項目の出し分け ─────────────────────────
+test("検収明細があれば単票の成果物・金額欄を隠す", () => {
+  const withLines = { delivery_line_items: [{ item_name: "A" }] };
+  for (const name of ["description", "spec", "deliveredAmountStr", "taxAmountStr", "totalAmountStr"]) {
+    assert.equal(isInspectionFallbackFieldHidden("inspection_certificate", name, withLines), true, name);
+  }
+});
+
+test("税率・軽減税率は明細モードでも使うので隠さない", () => {
+  const withLines = { delivery_line_items: [{ item_name: "A" }] };
+  assert.equal(isInspectionFallbackFieldHidden("inspection_certificate", "taxRate", withLines), false);
+  assert.equal(isInspectionFallbackFieldHidden("inspection_certificate", "isReducedTax", withLines), false);
+});
+
+test("明細が無ければ単票フォールバックとして表示する", () => {
+  assert.equal(isInspectionFallbackFieldHidden("inspection_certificate", "description", {}), false);
+  assert.equal(
+    isInspectionFallbackFieldHidden("inspection_certificate", "description", { delivery_line_items: [] }),
+    false);
+});
+
+test("検収書以外のテンプレートでは何も隠さない", () => {
+  assert.equal(isInspectionFallbackFieldHidden("purchase_order", "description",
+    { delivery_line_items: [{ item_name: "A" }] }), false);
 });
