@@ -100,11 +100,23 @@ case "${BACKLOG_MODE}" in
     fi
     ;;
   live)
-    echo "Backlog live writes remain blocked while the existing worker is authoritative."
-    exit 1
+    # 起票（createIssue）を許す。V1 の worker が権威である間はここを通してはいけないため、
+    # 合言葉は「V2 が権威になった」という宣言そのものにしてある（runbook §5-1／§5-3）。
+    if [ "${CONFIRM_BACKLOG_LIVE}" != "BACKLOG_LIVE_CUTOVER_V2_AUTHORITATIVE" ]; then
+      echo "Backlog live blocked: explicit cutover confirmation is missing (V1 worker must no longer be authoritative)."
+      exit 1
+    fi
+    if service_not_approved || [ "${BACKLOG_HOST}" != "arclight.backlog.com" ] || [ "${BACKLOG_PROJECT_KEY}" != "LEGAL" ]; then
+      echo "Backlog live blocked: service, host, or project does not match the approved target."
+      exit 1
+    fi
+    if [ "${AUTH_MODE}" != "iap" ] && [ "${AUTH_MODE}" != "cloudrun-iam" ]; then
+      echo "Backlog live blocked: IAP or Cloud Run IAM authentication is required."
+      exit 1
+    fi
     ;;
   *)
-    echo "Deployment blocked: BACKLOG_MODE must be disabled or readonly."
+    echo "Deployment blocked: BACKLOG_MODE must be disabled, readonly, or live."
     exit 1
     ;;
 esac
@@ -118,7 +130,7 @@ case "${BACKLOG_COMMENT_WRITE_ENABLED}" in
       echo "Backlog comment write-back blocked: explicit validation confirmation is missing."
       exit 1
     fi
-    if service_not_approved || [ "${BACKLOG_MODE}" != "readonly" ] || [ "${BACKLOG_HOST}" != "arclight.backlog.com" ] || [ "${BACKLOG_PROJECT_KEY}" != "LEGAL" ]; then
+    if service_not_approved || [ "${BACKLOG_MODE}" = "disabled" ] || [ "${BACKLOG_HOST}" != "arclight.backlog.com" ] || [ "${BACKLOG_PROJECT_KEY}" != "LEGAL" ]; then
       echo "Backlog comment write-back blocked: service, mode, host, or project does not match the approved target."
       exit 1
     fi

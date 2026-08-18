@@ -47,6 +47,7 @@ import {
 } from "./documents/template-repository.js";
 import {
   createIntegrationAdapters,
+  backlogReadEnabled,
   type IntegrationAdapter
 } from "./integrations/index.js";
 import {
@@ -687,8 +688,10 @@ export function createApp(
     ? new DynamicBacklogClient(
         () => ({ host: rt().backlogHost, projectKey: rt().backlogProjectKey }), () => sec("BACKLOG_API_KEY"))
     : undefined;
+  // 課題一覧の読取は readonly でも live でも使う。live を「書けるモード」としか扱わないと、
+  // live へ上げた瞬間に依頼画面の課題一覧が黙って空になる。
   const backlogReadClient: BacklogReadClient | undefined =
-    dependencies.backlogClient ?? (config.backlogMode === "readonly" ? dynamicBacklog : undefined);
+    dependencies.backlogClient ?? (backlogReadEnabled(config.backlogMode) ? dynamicBacklog : undefined);
   const backlogWriteClient: BacklogWriteClient | undefined =
     dependencies.backlogWriteClient ?? dynamicBacklog;
 

@@ -746,6 +746,91 @@ LEGAL-284 → matters 1 行（id 218 / MTR-2026-00218）
 V1 の `daily-checks` は期日チェックであって Backlog 取込ではない（取込は V1 の別経路）。
 5-2 で `daily-checks` を pause する時点で V1 側の日次通知は止まる。
 
+### 5-3. Slack スラッシュコマンドを V2 へ向ける（**V1 との切替**）
+
+`/法務依頼`・`/法務検索` は現在 **V1 が受けている**
+（`services/api/src/routes/slackGateway.ts` → V1 search-api の `/slack/commands`）。
+V1 と V2 は**同じ Slack App**（同じ署名シークレット・同じ Bot トークン）を使っているため、
+Request URL を書き換えた瞬間に **V1 の受付は止まり V2 に移る**。並行受付はできない。
+
+したがって順番を守ること。**先に V2 側を起票できる状態にしてから URL を切り替える**。
+
+#### 前提の確認（切替前に必ず）
+
+```bash
+# ① 署名シークレットが Secret Manager に入っているか（無ければ Slack App の
+#    Basic Information → App Credentials → Signing Secret を設定画面「APIキー」タブから登録）
+gcloud secrets versions list slack-signing-secret --project legalbridge-488506 --limit 1
+
+# ② 現在の配信フラグ（_BACKLOG_MODE / _SLACK_INTAKE_ENABLED / _SLACK_SIGNING_SECRET_NAME）
+IMG=$(gcloud run services describe legalbridge-v2 --project legalbridge-488506 \
+  --region asia-northeast1 --format='value(spec.template.spec.containers[0].image)')
+gcloud builds describe "${IMG##*:}" --project legalbridge-488506 --format=json \
+  | jq '.substitutions | {_BACKLOG_MODE, _SLACK_INTAKE_ENABLED, _SLACK_SIGNING_SECRET_NAME, _BACKLOG_INTAKE_ENABLED}'
+
+# ③ 受信リレーの URL（Slack に登録する先）
+gcloud run services describe lb-v2-receiver --project legalbridge-488506 \
+  --region asia-northeast1 --format='value(status.url)'
+```
+
+#### `_BACKLOG_MODE=live` が要る理由
+
+V2 の `/法務依頼` は **`BACKLOG_MODE=live` のときだけ Backlog へ起票する**
+（`app.ts`：`config.backlogMode === "live" ? dynamicBacklog : undefined`）。
+`readonly` のまま URL を切り替えると、依頼は隔離台帳に入るだけで**課題が立たない**——
+業務としては依頼が消えたのと同じになる。現状は `readonly`。
+
+`live` は「V1 の worker が権威である間は塞ぐ」ため verify で拒否していた。V1 を畳む前提が
+整ったので、**合言葉付きで解禁できるように変更した**（2026-08-18）:
+
+- 合言葉 `_CONFIRM_BACKLOG_LIVE=BACKLOG_LIVE_CUTOVER_V2_AUTHORITATIVE`
+  （＝「V2 が権威になった」という宣言そのもの）
+- 承認済みサービス・`arclight.backlog.com`/`LEGAL`・IAP/IAM を併せて要求
+- コメント書き戻しのゲートは `readonly` 固定をやめ、`disabled` 以外なら通す
+  （live へ上げただけでデプロイが落ちないようにするため）
+
+あわせて**読取が live で死ぬ不具合**を直した。`backlogReadClient` と接続確認アダプタが
+`readonly` 限定だったため、live へ上げると依頼画面の Backlog 課題一覧が黙って空になっていた。
+`backlogReadEnabled()`（`disabled` 以外なら true）に統一。
+
+#### 手順
+
+```bash
+# 1) V2 を起票できる状態にする（Slack 受信口の解禁と同時でよい）
+infra/gcp/deploy-write-test.sh \
+  _BACKLOG_MODE=live \
+  _CONFIRM_BACKLOG_LIVE=BACKLOG_LIVE_CUTOVER_V2_AUTHORITATIVE \
+  _SLACK_INTAKE_ENABLED=true \
+  _SLACK_SIGNING_SECRET_NAME=slack-signing-secret
+```
+
+2) Slack App（api.slack.com/apps → 対象アプリ）で Request URL を差し替える。
+   `RECV_URL` は上の③で得た受信リレーの URL:
+
+   | 設定箇所 | Request URL |
+   |---|---|
+   | Slash Commands `/法務依頼` | `<RECV_URL>/internal/slack/commands` |
+   | Slash Commands `/法務検索` | `<RECV_URL>/internal/slack/commands` |
+   | Interactivity & Shortcuts | `<RECV_URL>/internal/slack/interactivity` |
+
+   必要スコープ `commands` は付与済み。`chat:write` も既にある。
+
+3) スモーク（本番の Backlog に課題が立つので、テスト課題は後で消すこと）:
+   - Slack で `/法務依頼` → モーダルが開く（開かなければ署名か bot トークン）
+   - 送信 → Backlog LEGAL に課題が立つ／`legal_requests` に 1 行／`matters` に 1 行
+   - `/法務検索` → 契約検索が返る
+
+```sql
+-- 直近の取込を確認（受信記録＋起票結果）
+SELECT id, backlog_issue_key, title, created_at
+  FROM legal_requests ORDER BY id DESC LIMIT 5;
+```
+
+#### 切り戻し
+
+Slack App の Request URL を V1 の `https://<V1 search-api>/slack/commands`
+／`/slack/interactivity` に戻す。V2 側のフラグはそのままでよい（受け口が呼ばれなくなるだけ）。
+
 ## 6. cutover 判定チェックリスト
 - [ ] Phase 16-3（Slack インテーク）実装・点火済み
 - [x] Phase 16-1/2/4 実装済み（点火は 16-1＝grant 045、16-4＝Drive 構成が前提）

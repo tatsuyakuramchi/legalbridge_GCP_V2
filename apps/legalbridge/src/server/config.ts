@@ -2,8 +2,8 @@ function emailSet(value: string | undefined) {
   return new Set(String(value ?? "").split(",").map((item) => item.trim().toLowerCase()).filter(Boolean));
 }
 
-function backlogMode(value: string | undefined) {
-  return value === "readonly" || value === "live" ? value : "disabled" as const;
+function backlogMode(value: string | undefined): "disabled" | "readonly" | "live" {
+  return value === "readonly" || value === "live" ? value : "disabled";
 }
 
 export const config = {

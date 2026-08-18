@@ -130,6 +130,37 @@ for pair in "EXCEL_BATCH_ENABLED:excel-batch" "SETTINGS_WRITE_ENABLED:settings" 
 done
 
 echo
+echo "── Backlog live（起票解禁・§5-3）──────────────────────────────────"
+BACKLOG_LIVE=(
+  "BACKLOG_MODE=live" "BACKLOG_HOST=arclight.backlog.com" "BACKLOG_PROJECT_KEY=LEGAL"
+  "CONFIRM_BACKLOG_LIVE=BACKLOG_LIVE_CUTOVER_V2_AUTHORITATIVE"
+)
+run_case "合言葉が揃えば live を通す" allow "${BACKLOG_LIVE[@]}" || FAILED=1
+run_case "合言葉が無ければ live を拒む（V1 が権威の間は塞ぐ）" block \
+  "BACKLOG_MODE=live" "BACKLOG_HOST=arclight.backlog.com" "BACKLOG_PROJECT_KEY=LEGAL" || FAILED=1
+run_case "live でもプロジェクトが違えば拒む" block "${BACKLOG_LIVE[@]}" "BACKLOG_PROJECT_KEY=OTHER" || FAILED=1
+# 未承認名は本番プロファイルだと先に別のゲートで落ちる。どのゲートが効いたかを見るため
+# 隔離DB＋IAP で走らせる（他の解禁ゲートと同じ扱い）。
+PROFILE=validation run_case "live でも未承認サービスなら拒む" block \
+  "${BACKLOG_LIVE[@]}" "SERVICE=some-other-service" \
+  "AUTH_MODE=iap" "CONFIRM_IAP_BACKEND=IAP_BACKEND_READY" \
+  "AUTH_LEGAL_EMAILS=legal@arclight.co.jp" "AUTH_REQUESTER_DOMAINS=arclight.co.jp" || FAILED=1
+run_case "BACKLOG_MODE が不正なら拒む" block "BACKLOG_MODE=whatever" || FAILED=1
+# コメント書き戻しは readonly 専用ではない（live へ上げた途端にデプロイが落ちないこと）。
+BACKLOG_COMMENT=(
+  "BACKLOG_COMMENT_WRITE_ENABLED=true"
+  "CONFIRM_BACKLOG_COMMENT_WRITE=BACKLOG_COMMENT_WRITEBACK_VALIDATION_ONLY"
+  "BACKLOG_HOST=arclight.backlog.com" "BACKLOG_PROJECT_KEY=LEGAL"
+  "WRITE_SCOPES=drafts,documents,pdf,backlog-comment"
+)
+run_case "コメント書き戻し: readonly で通る" allow \
+  "BACKLOG_MODE=readonly" "CONFIRM_BACKLOG_READONLY=BACKLOG_READONLY_VALIDATION_ONLY" \
+  "${BACKLOG_COMMENT[@]}" || FAILED=1
+run_case "コメント書き戻し: live でも通る" allow "${BACKLOG_LIVE[@]}" "${BACKLOG_COMMENT[@]}" || FAILED=1
+run_case "コメント書き戻し: Backlog 未接続なら拒む" block \
+  "BACKLOG_MODE=disabled" "${BACKLOG_COMMENT[@]}" || FAILED=1
+
+echo
 echo "── 承認リストは実行時に広げられない──────────────────────────────"
 PROFILE=validation run_case "環境変数 APPROVED_SERVICES では広げられない" block \
   "SERVICE=some-other-service" "AUTH_MODE=iap" "CONFIRM_IAP_BACKEND=IAP_BACKEND_READY" \
