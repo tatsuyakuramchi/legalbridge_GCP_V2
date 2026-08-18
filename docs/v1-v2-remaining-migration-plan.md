@@ -113,6 +113,9 @@ R1 のあと、業務側の準備ができたものから順に。**一度に全
 点火コマンド（例：3〜5 を一括。V1 読み取り専用化の後に）:
 
 ```bash
+# R2-1/2 点火済みの前提（outbound-conditions は slack-approvals の直後、
+# backlog-comment は attachments の直後に既に入っている）。verify は厳密一致なので
+# 既存スコープを落とさないこと。
 infra/gcp/deploy-write-test.sh \
   _ROYALTY_EVENT_WRITES_ENABLED=true \
   _CONFIRM_ROYALTY_EVENT_WRITES=ROYALTY_EVENT_WRITES_LEGALBRIDGE_VALIDATION_ONLY \
@@ -120,7 +123,7 @@ infra/gcp/deploy-write-test.sh \
   _CONFIRM_RECEIPT_WRITES=RECEIPT_WRITES_LEGALBRIDGE_VALIDATION_ONLY \
   _PAYMENT_LEDGER_WRITES_ENABLED=true \
   _CONFIRM_PAYMENT_LEDGER_WRITES=PAYMENT_LEDGER_WRITES_LEGALBRIDGE_VALIDATION_ONLY \
-  '_WRITE_SCOPES=drafts,documents,pdf,drive,slack-approvals,matters,vendors,staff,works,materials,rights-sources,vendor-merge,matter-merge,matter-delete,document-void,document-reissue,excel-batch,settings,workflow-rules,contract-master,snippets,attachments,royalty-events,receipts,payments,cloudsign,slack,slack-dispatch,matter-slack,condition-repair'
+  '_WRITE_SCOPES=drafts,documents,pdf,drive,slack-approvals,outbound-conditions,matters,vendors,staff,works,materials,rights-sources,vendor-merge,matter-merge,matter-delete,document-void,document-reissue,excel-batch,settings,workflow-rules,contract-master,snippets,attachments,backlog-comment,royalty-events,receipts,payments,cloudsign,slack,slack-dispatch,matter-slack,condition-repair'
 ```
 
 3〜5 は共有 DB の金額データを書くため、**V1 併走中は二重入力の危険がある**。
