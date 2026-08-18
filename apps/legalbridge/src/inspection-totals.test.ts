@@ -62,3 +62,32 @@ test("精算なしなら総支払額＝税込合計で hasSettlement=false", () 
   assert.equal(totals.hasSettlement, false);
   assert.equal(totals.grandTotalPayable, totals.totalIncTax);
 });
+
+// 明細ごとの検収状態（ロジック再構成）: 支払額は今回検収（now）のみ。
+// 検収済み（paid）は過去に支払済みなので今回の支払額に足さない。未検収（skip）は載らない。
+
+test("状態別: 支払額は今回検収のみ・skip は行数にも入らない", () => {
+  const totals = computeInspectionTotals({
+    taxRate: "10",
+    delivery_line_items: [
+      { item_name: "今回", inspection_status: "now", inspected_amount_ex_tax: 25000 },
+      { item_name: "過去分", inspection_status: "paid", inspected_amount_ex_tax: 100000, paid_date: "2026-08-31" },
+      { item_name: "未検収", inspection_status: "skip", inspected_amount_ex_tax: 50000 }
+    ]
+  });
+  assert.equal(totals.deliveredExTax, 25000);
+  assert.equal(totals.tax, 2500);
+  assert.equal(totals.totalIncTax, 27500);
+  assert.equal(totals.lineCount, 2); // now + paid（PDFに載る行）
+});
+
+test("状態なしの旧下書きは全行 now 扱い（後方互換）", () => {
+  const totals = computeInspectionTotals({
+    taxRate: "10",
+    delivery_line_items: [
+      { item_name: "A", inspected_amount_ex_tax: 10000 },
+      { item_name: "B", inspected_amount_ex_tax: 20000 }
+    ]
+  });
+  assert.equal(totals.deliveredExTax, 30000);
+});

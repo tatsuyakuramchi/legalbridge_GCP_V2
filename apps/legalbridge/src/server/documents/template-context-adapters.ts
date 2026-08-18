@@ -1,5 +1,5 @@
 import { buildCommonDocumentContext } from "./context-adapter.js";
-import { computeInspectionTotals } from "../../inspection-totals.js";
+import { computeInspectionTotals, inspectionLineStatus } from "../../inspection-totals.js";
 import { aggregateItemDates, purchaseOrderTotals } from "../../purchase-order-totals.js";
 import { buildMultiStatementPatch, buildSingleStatementPatch } from "../../royalty-statement.js";
 
@@ -259,13 +259,47 @@ function buildRoyaltyStatementContext(rawSource: Data) {
   };
 }
 
+// 明細ごとの発注額との差分（金額変更）。理由付きで PDF に注記する。
+function inspectionLineChange(line: Data): { hasChange: boolean; changeLabel: string; changeNote: string } {
+  const ordered = number(line.ordered_amount_ex_tax, Number.NaN);
+  const inspected = number(pick(line, "inspected_amount_ex_tax", "amount_ex_tax", "amount"));
+  const reason = String(line.change_reason ?? "").trim();
+  const differs = Number.isFinite(ordered) && ordered !== inspected;
+  if (!differs && !reason) return { hasChange: false, changeLabel: "", changeNote: "" };
+  return {
+    hasChange: true,
+    changeLabel: differs ? `支払対価 ¥${yen(ordered)} → ¥${yen(inspected)}` : "",
+    changeNote: reason
+  };
+}
+
 function buildInspectionContext(source: Data) {
-  const deliveryLines = records(pick(source, "delivery_line_items", "items", "line_items"));
+  const allLines = records(pick(source, "delivery_line_items", "items", "line_items"));
+  // 明細ごとの検収状態: skip（未検収）は PDF に載せない。paid（検収済み・過去分）が
+  // あるときは「支払日ごとのグループ表示」（配信中テンプレの useGroupedInspection）へ。
+  const visibleLines = allLines.filter((line) => inspectionLineStatus(line) !== "skip");
+  const nowLines = visibleLines.filter((line) => inspectionLineStatus(line) === "now");
+  const paidLines = visibleLines.filter((line) => inspectionLineStatus(line) === "paid");
+  const deliveryLines = nowLines;
   const expenses = records(source.expenses);
   const otherFees = records(source.other_fees);
-  const changeLogs = records(source.changeLogs).length
+  const manualChangeLogs = records(source.changeLogs).length
     ? records(source.changeLogs)
     : parseChangeLogs(source.CHANGE_RECORDS);
+  // 金額変更（発注額との差）を明細から自動で変更履歴へ起こす（詳細表モードの注記）。
+  // グループ表示モードでは各行の直下に hasChange 注記として出るので二重にはしない。
+  const autoChangeLogs = paidLines.length ? [] : nowLines.flatMap((line) => {
+    const change = inspectionLineChange(line);
+    if (!change.hasChange) return [];
+    return [{
+      changedAt: String(pick(source, "inspectionCompletedAt", "documentDate")),
+      fieldLabel: `${String(pick(line, "item_name", "description")) || "明細"} 支払対価`,
+      beforeValue: `¥${yen(number(line.ordered_amount_ex_tax))}`,
+      afterValue: `¥${yen(number(pick(line, "inspected_amount_ex_tax", "amount_ex_tax", "amount")))}`,
+      reason: change.changeNote || "（理由未記入）"
+    }];
+  });
+  const changeLogs = [...manualChangeLogs, ...autoChangeLogs];
   const deliveredExTax = deliveryLines.reduce((sum, line) =>
     sum + number(pick(line, "inspected_amount_ex_tax", "amount_ex_tax", "amount")), 0);
   const otherFeesExTax = otherFees.reduce((sum, fee) =>
@@ -288,9 +322,44 @@ function buildInspectionContext(source: Data) {
     taxAmountStr: yen(shared.tax),
     totalAmountStr: yen(shared.totalIncTax)
   } : {};
+  // 検収済み（過去分）が混ざるときは支払日ごとのグループ表示（配信中テンプレの
+  // useGroupedInspection）。グループ別に消費税を端数処理（課税仕入れの時期ごと）。
+  const groupTaxRate = shared.taxRate;
+  const buildPaymentGroup = (date: string, isPaid: boolean, lines: Data[]) => {
+    const subtotal = lines.reduce((sum, line) =>
+      sum + number(pick(line, "inspected_amount_ex_tax", "amount_ex_tax", "amount")), 0);
+    const taxAmount = Math.ceil(subtotal * groupTaxRate / 100);
+    return {
+      date, isPaid, taxRate: groupTaxRate,
+      lines: lines.map((line) => ({
+        item_name: pick(line, "item_name", "description"),
+        spec: line.spec ?? "",
+        delivery_date: pick(line, "delivery_date", "deliveredAt") || pick(source, "deliveredAt"),
+        amount_ex_tax: number(pick(line, "inspected_amount_ex_tax", "amount_ex_tax", "amount")),
+        ...inspectionLineChange(line)
+      })),
+      subtotalStr: yen(subtotal),
+      taxAmountStr: yen(taxAmount),
+      totalIncTaxStr: yen(subtotal + taxAmount)
+    };
+  };
+  const paidByDate = new Map<string, Data[]>();
+  for (const line of paidLines) {
+    const date = String(line.paid_date ?? "").trim() || "（支払日未入力）";
+    paidByDate.set(date, [...(paidByDate.get(date) ?? []), line]);
+  }
+  const paymentGroups = paidLines.length ? [
+    ...[...paidByDate.entries()].sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, lines]) => buildPaymentGroup(date, true, lines)),
+    ...(nowLines.length
+      ? [buildPaymentGroup(String(pick(source, "paymentDueDate", "PAYMENT_DATE")), false, nowLines)]
+      : [])
+  ] : [];
   return {
     ...source,
     ...lineTotals,
+    useGroupedInspection: paidLines.length > 0,
+    paymentGroups,
     delivery_line_items: deliveryLines,
     expenses,
     other_fees: otherFees,

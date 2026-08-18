@@ -7,7 +7,7 @@ import type {
   TemplateField
 } from "../types";
 import { SpecializedDocumentForms } from "./SpecializedDocumentForms";
-import { computeInspectionTotals, formatYen } from "../inspection-totals";
+import { computeInspectionTotals, formatYen, inspectionLineStatus, inspectionLines } from "../inspection-totals";
 import {
   buildMultiStatementPatch, buildSingleStatementPatch, statementPaymentInfo, toNumber,
   type StatementReceiptRow
@@ -1655,21 +1655,32 @@ function InspectionRail({ formData, steps, onPreview, onSaveDraft, saveDisabled,
   saveDisabled: boolean; saveLabel: string; readOnly: boolean;
 }) {
   const totals = computeInspectionTotals(formData as Record<string, unknown>);
+  const lineAmount = (line: Record<string, unknown>) =>
+    Number(String(line.inspected_amount_ex_tax ?? line.amount_ex_tax ?? 0).replace(/,/g, "")) || 0;
+  const statusSum = (status: "paid" | "skip") => inspectionLines(formData as Record<string, unknown>)
+    .filter((line) => inspectionLineStatus(line) === status)
+    .reduce((sum, line) => sum + lineAmount(line), 0);
+  const paidSum = statusSum("paid");
+  const skipSum = statusSum("skip");
   return <div className="inspection-rail">
     <div className="rail-card">
       <h3>支払額（ライブ計算）</h3>
       {!totals.lineCount
         ? <p className="hub-note">明細を入力すると自動計算します（明細を使わない場合は単票入力の金額欄がそのまま使われます）。</p>
         : <>
-          <div className="calc-row"><span>検収金額（税抜）</span><span>¥{formatYen(totals.deliveredExTax)}</span></div>
+          <div className="calc-row"><span>今回検収（税抜）</span><span>¥{formatYen(totals.deliveredExTax)}</span></div>
           <div className="calc-row"><span>消費税（{totals.taxRate}%・切上）</span><span>¥{formatYen(totals.tax)}</span></div>
           {totals.otherFeesExTax > 0 &&
             <div className="calc-row"><span>手数料（税抜・合算課税）</span><span>¥{formatYen(totals.otherFeesExTax)}</span></div>}
           {totals.expensesIncTax > 0 &&
             <div className="calc-row"><span>経費（税込）</span><span>¥{formatYen(totals.expensesIncTax)}</span></div>}
-          <div className="calc-row total"><span>総支払額</span>
+          <div className="calc-row total"><span>今回の支払予定（税込）</span>
             <strong>¥{formatYen(totals.hasSettlement ? totals.grandTotalPayable : totals.totalIncTax)}</strong></div>
-          <small>源泉徴収前・PDF と同一の計算式（明細があるときは手入力の金額欄より優先）</small>
+          {paidSum > 0 &&
+            <div className="calc-row muted"><span>検収済み（過去分・支払済）</span><span>¥{formatYen(paidSum)}</span></div>}
+          {skipSum > 0 &&
+            <div className="calc-row muted"><span>未検収の残額（この検収書には載らない）</span><span>¥{formatYen(skipSum)}</span></div>}
+          <small>源泉徴収前・PDF と同一の計算式。{paidSum > 0 ? "検収済み行が混ざるため、PDF は支払日ごとのグループ表示（支払済/支払予定バッジ）になります。" : ""}</small>
         </>}
     </div>
     <div className="rail-card">

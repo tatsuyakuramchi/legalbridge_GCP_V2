@@ -310,8 +310,11 @@ export function applyParentPurchaseOrderQuote(
     patch.delivery_line_items = items.map((line) => ({
       item_name: line.item_name ?? "",
       spec: line.spec ?? "",
-      // 発注数量は分納時の「発注 n / 今回検収 m」表示に使う（PDF には出ない）。
+      // 発注数量・発注額は「発注 n点 ¥X」表示と金額変更（差分→理由）の判定に使う。
       ordered_quantity: line.quantity ?? 1,
+      ordered_amount_ex_tax: line.amount_ex_tax ?? amountFromUnit(line),
+      // 検収状態の初期値は「今回検収」。過去分は行で「検収済み」に、対象外は「未検収」に切り替える。
+      inspection_status: "now",
       inspected_quantity: line.quantity ?? 1,
       acceptance_ratio: 1,
       inspected_amount_ex_tax: line.amount_ex_tax ?? amountFromUnit(line),
@@ -339,6 +342,18 @@ export function applyParentPurchaseOrderQuote(
   for (const name of ["counterparty", "COUNTERPARTY_NAME", "相手方名称"]) {
     setIfField(schema, patch, name, values.vendor_name ?? values.VENDOR_NAME);
   }
+  // 支払予定日・支払条件・振込先は発注書から補完する（検収書フォームでは入力させない方針。
+  // 変更があるときだけ支払予定日を上書きしてもらう）。
+  setIfField(schema, patch, "paymentDueDate",
+    values.summaryPaymentDate ?? values.PAYMENT_DATE ?? values.payment_date);
+  setIfField(schema, patch, "paymentConditionSummary",
+    values.PAYMENT_TERMS ?? values.summaryPaymentTerms ?? values.payment_terms);
+  setIfField(schema, patch, "bankName", values.BANK_NAME ?? values.bank_name);
+  setIfField(schema, patch, "branchName", values.BRANCH_NAME ?? values.branch_name);
+  setIfField(schema, patch, "accountType", values.ACCOUNT_TYPE ?? values.account_type);
+  setIfField(schema, patch, "accountNo", values.ACCOUNT_NUMBER ?? values.account_number);
+  setIfField(schema, patch, "accountHolder",
+    values.ACCOUNT_HOLDER_KANA ?? values.ACCOUNT_HOLDER ?? values.account_holder_kana);
 }
 
 function amountFromUnit(line: Record<string, unknown>): number {

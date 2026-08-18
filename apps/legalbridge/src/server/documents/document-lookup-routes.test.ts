@@ -115,3 +115,65 @@ test("lifecycle フィルタ: voided のみ／active のみを切り分ける", 
   assert.ok(!active.body.documents.some((d: any) => d.id === 3));
   assert.ok(active.body.documents.some((d: any) => d.id === 1));
 });
+
+// 同じ親POの確定済み検収書の明細履歴（検収済み行の支払日・金額の補完）。
+
+function appWithInspectionHistory() {
+  const registry = new MemoryDocumentRegistryRepository([]);
+  const lookupDocs: MemoryLookupDoc[] = [
+    {
+      id: 10, documentNumber: "ARC-INS-2026-0201", issueKey: "LB-9",
+      templateType: "inspection_certificate", driveLink: "",
+      formData: {
+        parent_po_number: "ARC-PO-2026-0117", paymentDueDate: "2026-08-31",
+        inspectionCompletedAt: "2026-07-31",
+        delivery_line_items: [
+          { item_name: "キービジュアル", inspection_status: "now", inspected_amount_ex_tax: 100000, delivery_date: "2026-07-31" },
+          { item_name: "対象外", inspection_status: "skip", inspected_amount_ex_tax: 1 }
+        ]
+      }
+    },
+    {
+      id: 11, documentNumber: "ARC-INS-2026-0300", issueKey: "LB-10",
+      templateType: "inspection_certificate", driveLink: "", lifecycleStatus: "reissued",
+      formData: {
+        parent_po_number: "ARC-PO-2026-0117",
+        delivery_line_items: [{ item_name: "旧版の行", inspected_amount_ex_tax: 5 }]
+      }
+    },
+    {
+      id: 12, documentNumber: "ARC-INS-2026-0400", issueKey: "LB-11",
+      templateType: "inspection_certificate", driveLink: "",
+      formData: {
+        parent_po_number: "ARC-PO-2099-9999",
+        delivery_line_items: [{ item_name: "別POの行", inspected_amount_ex_tax: 7 }]
+      }
+    }
+  ];
+  const lookup = new MemoryDocumentLookupRepository(lookupDocs);
+  return createApp({
+    templates: new MemoryTemplateRepository([schema]),
+    drafts: new MemoryDraftRepository(),
+    integrations: createIntegrationAdapters(),
+    documentRegistry: registry,
+    documentLookup: lookup
+  }, { accessMode: "readonly", requireDatabase: false });
+}
+
+test("inspection-history: 同じ親POの確定済み検収書から明細履歴を返す（skip・旧版・別POは除外）", async () => {
+  const res = await request(appWithInspectionHistory())
+    .get("/api/v2/documents/inspection-history?po=ARC-PO-2026-0117").expect(200);
+  assert.equal(res.body.entries.length, 1);
+  const entry = res.body.entries[0];
+  assert.equal(entry.itemName, "キービジュアル");
+  assert.equal(entry.amountExTax, 100000);
+  assert.equal(entry.paidDate, "2026-08-31");            // 行に支払日が無いので文書の支払予定日
+  assert.equal(entry.inspectionCompletedAt, "2026-07-31");
+  assert.equal(entry.documentNumber, "ARC-INS-2026-0201");
+});
+
+test("inspection-history: po が無ければ400", async () => {
+  const res = await request(appWithInspectionHistory())
+    .get("/api/v2/documents/inspection-history").expect(400);
+  assert.equal(res.body.code, "INSPECTION_HISTORY_PO_REQUIRED");
+});

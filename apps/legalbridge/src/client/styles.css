@@ -2070,6 +2070,40 @@ textarea { width: 100%; min-height: 90px; resize: vertical; line-height: 1.6; }
 .step-subgroup { border-top: 1px dashed var(--border); padding-top: 12px; display: grid; gap: 8px; }
 .step-subgroup h3 { margin: 0; font-size: 13px; color: var(--ink-soft); }
 
+/* 明細ごとの検収カード（状態: 今回検収/検収済み/未検収） */
+.line-card { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.line-card.skip { opacity: .55; }
+.line-card .line-head { display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+  background: var(--surface-subtle); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.line-card .line-name { flex: 1; min-width: 160px; font-weight: 700; border: 1px solid transparent;
+  background: transparent; border-radius: 6px; padding: 4px 8px; }
+.line-card .line-name:hover, .line-card .line-name:focus { border-color: var(--border-strong); background: var(--surface); }
+.line-card .order-info { font-size: 12px; color: var(--ink-soft); white-space: nowrap; }
+.paid-badge { font-size: 10.5px; font-weight: 700; border-radius: 4px; padding: 1px 8px;
+  background: #e8f7ee; color: #157347; }
+.plan-badge { font-size: 10.5px; font-weight: 700; border-radius: 4px; padding: 1px 8px;
+  background: #fffaeb; color: #8a6d0b; }
+.seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 999px; overflow: hidden; }
+.seg button { border: none; background: var(--surface); padding: 4px 12px; font-size: 12px;
+  font-weight: 700; color: var(--ink-soft); cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--border-strong); }
+.seg button.on-now { background: var(--accent); color: #fff; }
+.seg button.on-paid { background: #e8f7ee; color: #157347; }
+.seg button.on-skip { background: #eef2f6; color: var(--ink-faint); }
+.line-card .line-body { padding: 10px 12px; display: grid; gap: 8px; }
+.line-card .line-grid { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; }
+.line-card .line-grid label { display: grid; gap: 3px; font-size: 11.5px; color: var(--ink-soft); }
+.line-card .line-grid input { width: 140px; }
+.line-card .line-grid input.num { width: 120px; text-align: right; }
+.line-card .line-grid select { width: auto; font-size: 12.5px; }
+.line-card .line-spec { font-size: 12px; }
+.line-card .skip-note { font-size: 12px; color: var(--ink-faint); }
+.diff-note { background: #fffaeb; border: 1px solid #eed9a0; border-radius: 8px;
+  padding: 6px 10px; font-size: 12px; color: #8a6d0b; display: grid; gap: 6px; }
+.diff-note input { width: 100%; border: 1px solid #eed9a0; border-radius: 6px; padding: 6px 10px; }
+.line-card .line-royalty { display: grid; gap: 2px; font-size: 12px; color: var(--ink-soft); }
+.line-card .line-royalty small { color: var(--ink-faint); }
+
 /* 検収明細テーブル（発注数量と今回検収を並べて分納を明示） */
 .inspection-lines { display: grid; gap: 8px; }
 .partial-hint { margin: 0; font-size: 12px; color: var(--accent-ink);
@@ -2157,3 +2191,4 @@ textarea { width: 100%; min-height: 90px; resize: vertical; line-height: 1.6; }
 .settlement-table .right { text-align: right; font-variant-numeric: tabular-nums; }
 .settlement-table input[type="checkbox"] { width: auto; }
 .inspection-totals-grid article.grand strong { color: var(--accent-deep, #137689); font-size: 18px; }
+.rail-card .calc-row.muted span { color: var(--ink-faint); font-size: 12px; }

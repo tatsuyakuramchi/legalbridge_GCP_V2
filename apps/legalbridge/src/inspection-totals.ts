@@ -22,10 +22,30 @@ function toNumber(value: unknown, fallback = 0): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-export function computeInspectionTotals(formData: Record<string, unknown>): InspectionTotals {
-  const lines = Array.isArray(formData.delivery_line_items)
+// 明細ごとの検収状態（ロジック再構成・2026-08-18）。
+//   now  = 今回検収（この検収書の支払対象）
+//   paid = 検収済み（過去分・支払日ごとのグループ表示に載るが今回の支払額には含めない）
+//   skip = 未検収（この検収書に載せない・後続の検収書で拾う）
+// 旧下書き（inspection_status なし）は従来どおり全行 now 扱い。
+export type InspectionLineStatus = "now" | "paid" | "skip";
+
+export function inspectionLineStatus(line: Record<string, unknown>): InspectionLineStatus {
+  const status = String(line.inspection_status ?? "").trim();
+  return status === "paid" || status === "skip" ? status : "now";
+}
+
+export function inspectionLines(formData: Record<string, unknown>): Array<Record<string, unknown>> {
+  return Array.isArray(formData.delivery_line_items)
     ? formData.delivery_line_items as Array<Record<string, unknown>> : [];
-  const deliveredExTax = lines.reduce((sum, line) =>
+}
+
+export function computeInspectionTotals(formData: Record<string, unknown>): InspectionTotals {
+  const allLines = inspectionLines(formData);
+  // PDF・合計に載るのは未検収（skip）以外。支払額（delivered）は今回検収（now）のみ
+  // ＝検収済み（paid）の過去分は既に支払われているので今回の支払額に足さない。
+  const lines = allLines.filter((line) => inspectionLineStatus(line) !== "skip");
+  const payable = lines.filter((line) => inspectionLineStatus(line) === "now");
+  const deliveredExTax = payable.reduce((sum, line) =>
     sum + toNumber(line.inspected_amount_ex_tax ?? line.amount_ex_tax ?? line.amount), 0);
   const taxRate = toNumber(formData.taxRate ?? formData.tax_rate, 10) || 10;
   const tax = Math.ceil(deliveredExTax * taxRate / 100);

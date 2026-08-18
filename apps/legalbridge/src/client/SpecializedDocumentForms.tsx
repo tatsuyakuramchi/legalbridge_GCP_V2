@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import type { DocumentFormData } from "../types";
 import { isFieldVisible } from "./field-visibility";
 import {
@@ -62,7 +63,7 @@ export function SpecializedDocumentForms({ templateKey, formData, onChange }: Pr
 
   if (templateKey === "inspection_certificate") {
     return <SpecializedSection title="検収・支払明細" description="検収した成果物を入力し、必要な場合だけ手数料・経費・変更履歴を追加します。">
-      <InspectionLinesTable formData={formData} onChange={onChange} />
+      <InspectionLineCards formData={formData} onChange={onChange} />
       {rows(formData.po_expenses).length || rows(formData.po_other_fees).length
         ? <InspectionSettlement formData={formData} onChange={onChange} />
         : <>
@@ -335,91 +336,155 @@ function RoyaltyStatementEditor({ formData, onChange }: {
   </div>;
 }
 
-// ── 検収明細テーブル（再設計：1行=1明細の表形式）─────────────────────
-// カード型（1行=1カード）だと分納で「発注数量に対して今回いくつ検収したか」が
-// 見えない。V1 と同じ表形式で「発注」「今回検収」を並べ、業績連動行は金額入力の
-// 代わりに出し分けの注記（発注者帰属=別途算定 / 受注者帰属=利用許諾料に含む）を出す。
-// PDF の表記と同じ判定（calc_method × deliverable_ownership × 金額0）。
-function InspectionLinesTable({ formData, onChange }: {
+// ── 明細ごとの検収（ロジック再構成 2026-08-18・承認済みモック準拠）──────────
+// 軸は明細ごとの検収状態:
+//   今回検収(now)  = この検収書で検収する。金額が発注額と違えば理由を書く（PDFに注記）。
+//   検収済み(paid) = 過去に検収・支払済みの分をこの検収書にまとめて記載。支払日は
+//                    同じ親POの確定済み検収書履歴から補完。PDFは支払日ごとのグループ表示。
+//   未検収(skip)   = この検収書に載せない（後続の検収書で拾う）。
+type HistoryEntry = {
+  documentNumber: string | null; itemName: string; deliveryDate: string;
+  paidDate: string; amountExTax: number; inspectionCompletedAt: string;
+};
+
+function InspectionLineCards({ formData, onChange }: {
   formData: DocumentFormData;
   onChange: (name: string, value: unknown) => void;
 }) {
   const lines = rows(formData.delivery_line_items);
+  const parentPo = String(formData.parent_po_number ?? "").trim();
+  // 同じ親POの確定済み検収書の明細履歴（検収済み行の支払日・金額の補完に使う）。
+  const [history, setHistory] = useState<HistoryEntry[] | null>(null);
+  useEffect(() => {
+    if (!parentPo) { setHistory(null); return; }
+    let cancelled = false;
+    fetch(`/api/v2/documents/inspection-history?po=${encodeURIComponent(parentPo)}`)
+      .then((response) => response.ok ? response.json() : { entries: [] })
+      .then((data) => { if (!cancelled) setHistory(Array.isArray(data.entries) ? data.entries : []); })
+      .catch(() => { if (!cancelled) setHistory([]); });
+    return () => { cancelled = true; };
+  }, [parentPo]);
+
   const replace = (index: number, patch: Row) =>
     onChange("delivery_line_items", lines.map((row, i) => i === index ? { ...row, ...patch } : row));
   const remove = (index: number) =>
     onChange("delivery_line_items", lines.filter((_, i) => i !== index));
   const add = () => onChange("delivery_line_items",
-    [...lines, { item_name: "", inspected_quantity: 1, acceptance_ratio: 1, calc_method: "FIXED" }]);
-  const numberOr = (value: unknown): number | "" => {
-    if (value === "" || value == null) return "";
-    const parsed = Number(String(value).replace(/,/g, ""));
-    return Number.isFinite(parsed) ? parsed : "";
+    [...lines, { item_name: "", inspection_status: "now", inspected_quantity: 1, acceptance_ratio: 1, calc_method: "FIXED" }]);
+  const toNum = (value: unknown): number => {
+    const parsed = Number(String(value ?? "").replace(/,/g, ""));
+    return Number.isFinite(parsed) ? parsed : 0;
   };
+  const statusOf = (row: Row): "now" | "paid" | "skip" => {
+    const status = String(row.inspection_status ?? "");
+    return status === "paid" || status === "skip" ? status : "now";
+  };
+  const setStatus = (index: number, status: "now" | "paid" | "skip") => {
+    const row = lines[index];
+    const patch: Row = { inspection_status: status };
+    if (status === "paid" && !String(row.paid_date ?? "").trim()) {
+      // 同じ品目の過去実績（最新）から支払日・金額を補完する。
+      const match = (history ?? [])
+        .filter((entry) => entry.itemName && entry.itemName === String(row.item_name ?? "").trim())
+        .at(-1);
+      if (match) {
+        patch.paid_date = match.paidDate;
+        patch.inspected_on = match.inspectionCompletedAt;
+        if (!toNum(row.inspected_amount_ex_tax)) patch.inspected_amount_ex_tax = match.amountExTax;
+        patch.history_source = match.documentNumber ?? "";
+      }
+    }
+    replace(index, patch);
+  };
+  const counts = {
+    now: lines.filter((row) => statusOf(row) === "now").length,
+    paid: lines.filter((row) => statusOf(row) === "paid").length,
+    skip: lines.filter((row) => statusOf(row) === "skip").length
+  };
+
   return <div className="inspection-lines">
     <div className="repeater-title">
-      <div><h3>検収明細</h3><small>{lines.length}件</small></div>
+      <div><h3>明細ごとの検収</h3>
+        <small>今回{counts.now}件・済{counts.paid}件・未検収{counts.skip}件</small></div>
       <button type="button" onClick={add}>＋ 明細を追加</button>
     </div>
     {!lines.length && <p className="inline-empty">
       親の発注書から引用するか、「＋ 明細を追加」で入力してください（明細を使わない場合は下の単票入力に金額を直接入力します）。
     </p>}
-    {lines.length > 0 && <>
-      <p className="partial-hint">分納の場合は数量・金額を実際に検収した分へ減らしてください（残りは同じ親POから第2回以降の検収書として作れます）。</p>
-      <div className="table-scroll"><table className="inspection-lines-table">
-        <thead><tr>
-          <th>品目・成果物</th>
-          <th className="right" title="親の発注書の数量">発注</th>
-          <th className="right">今回検収</th>
-          <th>納品日</th>
-          <th title="行ごとの実支払日。未入力なら文書全体の支払期日がPDFに出ます">支払日</th>
-          <th className="right">金額（税抜）</th>
-          <th aria-label="操作"></th>
-        </tr></thead>
-        <tbody>
-          {lines.map((row, index) => {
-            const isRoyalty = String(row.calc_method ?? "") === "ROYALTY";
-            const amount = numberOr(row.inspected_amount_ex_tax);
-            const ordered = numberOr(row.ordered_quantity);
-            const rateNote = [String(row.royalty_calc_basis ?? "").trim(), row.rate_pct !== "" && row.rate_pct != null ? `${row.rate_pct}%` : ""]
-              .filter(Boolean).join(" × ");
-            return <tr key={index}>
-              <td className="line-main">
-                <input value={String(row.item_name ?? "")} placeholder="品目・成果物"
-                  onChange={(event) => replace(index, { item_name: event.target.value })} />
-                <input className="line-spec" value={String(row.spec ?? "")} placeholder="仕様（PDFに補足として印字）"
-                  onChange={(event) => replace(index, { spec: event.target.value })} />
-                <label className="line-method"><span>報酬方式</span>
-                  <select value={String(row.calc_method ?? "FIXED")}
-                    onChange={(event) => replace(index, { calc_method: event.target.value })}>
-                    <option value="FIXED">固定額</option>
-                    <option value="ROYALTY">業績連動</option>
-                  </select>
-                </label>
-              </td>
-              <td className="right ordered">{ordered === "" ? "—" : ordered.toLocaleString("ja-JP")}</td>
-              <td className="right"><input type="number" value={String(row.inspected_quantity ?? "")}
-                onChange={(event) => replace(index, { inspected_quantity: event.target.value === "" ? "" : Number(event.target.value) })} /></td>
-              <td><input type="date" value={String(row.delivery_date ?? "")}
-                onChange={(event) => replace(index, { delivery_date: event.target.value })} /></td>
-              {/* 行ごとの実支払日（本番テンプレ v12 の paid_date）。未入力は支払期日にフォールバック。 */}
-              <td><input type="date" value={String(row.paid_date ?? "")}
-                onChange={(event) => replace(index, { paid_date: event.target.value })} /></td>
-              <td className="right">
-                {isRoyalty && !amount
-                  ? <span className="line-royalty"><span className="tag-royalty">業績連動</span>
-                    {String(row.deliverable_ownership ?? "") === "発注者" ? "別途算定" : "利用許諾料に含む"}
-                    {rateNote && <small>{rateNote}</small>}
-                    <small>支払額に含めない</small></span>
-                  : <input type="number" value={String(row.inspected_amount_ex_tax ?? "")}
-                    onChange={(event) => replace(index, { inspected_amount_ex_tax: event.target.value === "" ? "" : Number(event.target.value) })} />}
-              </td>
-              <td><button type="button" className="line-remove" onClick={() => remove(index)}>削除</button></td>
-            </tr>;
-          })}
-        </tbody>
-      </table></div>
-    </>}
+    {lines.length > 0 &&
+      <p className="partial-hint"><b>今回検収</b>＝この検収書で検収（発注額と違えば理由を記載）／<b>検収済み</b>＝過去分をまとめて記載（支払日は履歴から補完・PDFは支払日ごとのグループ表示）／<b>未検収</b>＝今回は載せない（後続の検収書で）。</p>}
+    {lines.map((row, index) => {
+      const status = statusOf(row);
+      const isRoyalty = String(row.calc_method ?? "") === "ROYALTY";
+      const ordered = toNum(row.ordered_amount_ex_tax);
+      const orderedQty = toNum(row.ordered_quantity);
+      const amount = toNum(row.inspected_amount_ex_tax);
+      const differs = status !== "skip" && ordered > 0 && amount !== ordered && !(isRoyalty && !amount);
+      return <article className={`line-card${status === "skip" ? " skip" : ""}`} key={index}>
+        <div className="line-head">
+          <input className="line-name" value={String(row.item_name ?? "")} placeholder="品目・成果物"
+            onChange={(event) => replace(index, { item_name: event.target.value })} />
+          <span className="order-info">
+            {orderedQty ? `発注: ${orderedQty.toLocaleString("ja-JP")}点` : ""}
+            {ordered ? ` ¥${ordered.toLocaleString("ja-JP")}` : ""}
+          </span>
+          {status === "paid" && <span className="paid-badge">支払済</span>}
+          {status === "now" && !isRoyalty && <span className="plan-badge">支払予定</span>}
+          <span className="seg">
+            <button type="button" className={status === "now" ? "on-now" : ""}
+              onClick={() => setStatus(index, "now")}>今回検収</button>
+            <button type="button" className={status === "paid" ? "on-paid" : ""}
+              onClick={() => setStatus(index, "paid")}>検収済み</button>
+            <button type="button" className={status === "skip" ? "on-skip" : ""}
+              onClick={() => setStatus(index, "skip")}>未検収</button>
+          </span>
+          <button type="button" className="line-remove" onClick={() => remove(index)}>削除</button>
+        </div>
+        {status === "skip"
+          ? <div className="line-body">
+            <span className="skip-note">この検収書には載りません。後続の検収書で同じ親POから検収できます。</span>
+          </div>
+          : <div className="line-body">
+            <div className="line-grid">
+              {status === "paid" && <>
+                <label><span>検収日（過去分）</span><input type="date" value={String(row.inspected_on ?? "")}
+                  onChange={(event) => replace(index, { inspected_on: event.target.value })} /></label>
+                <label><span>支払日</span><input type="date" value={String(row.paid_date ?? "")}
+                  onChange={(event) => replace(index, { paid_date: event.target.value })} /></label>
+              </>}
+              {status === "now" && <>
+                <label><span>今回数量</span><input type="number" className="num" value={String(row.inspected_quantity ?? "")}
+                  onChange={(event) => replace(index, { inspected_quantity: event.target.value === "" ? "" : Number(event.target.value) })} /></label>
+                <label><span>納品日</span><input type="date" value={String(row.delivery_date ?? "")}
+                  onChange={(event) => replace(index, { delivery_date: event.target.value })} /></label>
+              </>}
+              {isRoyalty && !amount
+                ? <span className="line-royalty"><span className="tag-royalty">業績連動</span>
+                  {String(row.deliverable_ownership ?? "") === "発注者" ? "別途算定" : "利用許諾料に含む"}
+                  <small>支払額に含めない</small></span>
+                : <label><span>金額（税抜）</span><input type="number" className="num" value={String(row.inspected_amount_ex_tax ?? "")}
+                  onChange={(event) => replace(index, { inspected_amount_ex_tax: event.target.value === "" ? "" : Number(event.target.value) })} /></label>}
+              <label><span>報酬方式</span>
+                <select value={String(row.calc_method ?? "FIXED")}
+                  onChange={(event) => replace(index, { calc_method: event.target.value })}>
+                  <option value="FIXED">固定額</option>
+                  <option value="ROYALTY">業績連動</option>
+                </select></label>
+            </div>
+            <input className="line-spec" value={String(row.spec ?? "")} placeholder="仕様（PDFに補足として印字）"
+              onChange={(event) => replace(index, { spec: event.target.value })} />
+            {status === "paid" && Boolean(row.history_source) &&
+              <span className="skip-note">✓ 履歴（{String(row.history_source)}）から補完しました。</span>}
+            {differs && <div className="diff-note">
+              ⚠ 発注額 ¥{ordered.toLocaleString("ja-JP")} と違います
+              （{amount > ordered ? "+" : "−"}¥{Math.abs(amount - ordered).toLocaleString("ja-JP")}）。
+              変更理由を記載してください（PDF に注記されます）:
+              <input value={String(row.change_reason ?? "")} placeholder="例: 仕様変更による減額合意"
+                onChange={(event) => replace(index, { change_reason: event.target.value })} />
+            </div>}
+          </div>}
+      </article>;
+    })}
   </div>;
 }
 

@@ -35,6 +35,17 @@ export function createDocumentLookupRouter(
     } catch (error) { return next(error); }
   });
 
+  // 同じ親POの確定済み検収書の明細履歴（検収済み行の支払日・金額の補完）。
+  // 注意: /documents/:id/history より前に登録する（:id が "inspection-history" を掴むため）。
+  router.get("/documents/inspection-history", async (request, response, next) => {
+    try {
+      const po = String(request.query.po ?? "").trim();
+      if (!po) return response.status(400).json({ error: "po is required", code: "INSPECTION_HISTORY_PO_REQUIRED" });
+      const entries = await lookup.inspectionHistory(po.slice(0, 120));
+      return response.status(200).json({ entries });
+    } catch (error) { return next(error); }
+  });
+
   // バージョン履歴（同一系列・アーカイブ履歴トグル 10-1）。/documents/:id/history。
   const idPath = z.object({ id: z.coerce.number().int().positive() });
   router.get("/documents/:id/history", async (request, response, next) => {
