@@ -32,8 +32,12 @@ function matches(condition: ShowWhenCondition, formData: DocumentFormData): bool
 // 金額もサーバ側で明細から計算する。そのため明細があるときにこれらを出すと
 // 「入力しても使われない項目」になる（必須マーク付きで混乱を招いていた）。
 // 税率（taxRate）と軽減税率（isReducedTax）は明細モードでも使うので残す。
-const INSPECTION_FALLBACK_FIELDS = new Set(
-  ["description", "spec", "deliveredAmountStr", "taxAmountStr", "totalAmountStr"]);
+const INSPECTION_FALLBACK_FIELDS = new Set([
+  "description", "spec", "deliveredAmountStr", "taxAmountStr", "totalAmountStr",
+  // 進捗（検収率・検収済額・発注総額・未検収額）は明細の状態から自動計算する
+  // （V. 進捗・財務の手入力欄は旧フォームの名残。明細があるときは計算値が優先）。
+  "inspectedPct", "inspectedAmountStr", "totalOrderAmountStr", "pendingAmountStr"
+]);
 
 export function isInspectionFallbackFieldHidden(
   templateKey: string, fieldName: string, formData: DocumentFormData

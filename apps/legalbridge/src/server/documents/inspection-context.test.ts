@@ -115,3 +115,25 @@ test("未検収だけ外れる（状態なしの旧下書きは全行そのま�
   assert.equal((context.delivery_line_items as unknown[]).length, 1);
   assert.equal(context.deliveredAmountStr, "10,000");
 });
+
+// 進捗（検収率・検収済額・発注総額・未検収額）は明細の状態から自動計算する。
+// V. 進捗・財務の手入力欄は旧フォームの名残＝明細があるときは計算値が優先。
+
+test("進捗は明細の状態から自動計算（検収済み＋今回検収 vs 発注総額）", () => {
+  const context = buildTemplateDocumentContext("inspection_certificate", {
+    taxRate: "10", paymentDueDate: "2026-09-30",
+    // 手入力の古い値が残っていても計算値が勝つ
+    inspectedPct: "1", inspectedAmountStr: "9", totalOrderAmountStr: "9", pendingAmountStr: "9",
+    delivery_line_items: [
+      { item_name: "済", inspection_status: "paid", inspected_amount_ex_tax: 100000,
+        ordered_amount_ex_tax: 100000, paid_date: "2026-08-31" },
+      { item_name: "今回", inspection_status: "now", inspected_amount_ex_tax: 25000,
+        ordered_amount_ex_tax: 30000 },
+      { item_name: "未", inspection_status: "skip", ordered_amount_ex_tax: 50000 }
+    ]
+  });
+  assert.equal(context.totalOrderAmountStr, "180,000");   // 発注総額（未検収も含む）
+  assert.equal(context.inspectedAmountStr, "125,000");    // 済 100,000 + 今回 25,000
+  assert.equal(context.pendingAmountStr, "55,000");       // 180,000 − 125,000
+  assert.equal(context.inspectedPct, 69);
+});

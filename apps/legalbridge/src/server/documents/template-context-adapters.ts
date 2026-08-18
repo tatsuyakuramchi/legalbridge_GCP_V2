@@ -343,6 +343,21 @@ function buildInspectionContext(source: Data) {
       totalIncTaxStr: yen(subtotal + taxAmount)
     };
   };
+  // 進捗（検収率・検収済額・発注総額・未検収額）は明細の状態から自動計算する。
+  // 手入力欄は旧フォームの名残＝明細があるときは計算値が手入力より優先（合計と同じ規則）。
+  const lineAmount = (line: Data) =>
+    number(pick(line, "inspected_amount_ex_tax", "amount_ex_tax", "amount"));
+  const orderedTotal = allLines.reduce((sum, line) => {
+    const ordered = number(line.ordered_amount_ex_tax, Number.NaN);
+    return sum + (Number.isFinite(ordered) ? ordered : lineAmount(line));
+  }, 0);
+  const inspectedSoFar = [...paidLines, ...nowLines].reduce((sum, line) => sum + lineAmount(line), 0);
+  const progress = allLines.length && orderedTotal > 0 ? {
+    totalOrderAmountStr: yen(orderedTotal),
+    inspectedAmountStr: yen(inspectedSoFar),
+    pendingAmountStr: yen(Math.max(0, orderedTotal - inspectedSoFar)),
+    inspectedPct: Math.min(100, Math.round((inspectedSoFar / orderedTotal) * 100))
+  } : {};
   const paidByDate = new Map<string, Data[]>();
   for (const line of paidLines) {
     const date = String(line.paid_date ?? "").trim() || "（支払日未入力）";
@@ -358,6 +373,7 @@ function buildInspectionContext(source: Data) {
   return {
     ...source,
     ...lineTotals,
+    ...progress,
     useGroupedInspection: paidLines.length > 0,
     paymentGroups,
     delivery_line_items: deliveryLines,
