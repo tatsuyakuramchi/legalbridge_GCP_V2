@@ -240,3 +240,125 @@ export function buildLicenseMatrix(lines: RightsLine[]): LicenseMatrix {
   ];
   return { territories, rows };
 }
+
+// ── アウト側の許諾地域カバレッジ（R3 強化・2026-08-18）─────────────────
+// 許諾地域の被りは二重許諾＝致命的。V1 の警告（全世界×個別地域の同一言語）に加えて、
+// 「同一地域×同一言語×同一権利を複数明細で出している」ケースを衝突として検知する。
+// 独占/非独占の区分が condition_lines に無いため、機械判定は「要確認」までとし、
+// 相手先と文書番号を並べて人が判断できる形で返す。
+
+export interface GrantCell {
+  right: string;
+  party: string;
+  documentNumber: string | null;
+  lineId: number;
+}
+
+export interface GrantCoverageRow {
+  territory: string;
+  isWorldwide: boolean;
+  /** 言語 → その地域・言語で出している許諾の一覧。 */
+  languages: Record<string, GrantCell[]>;
+}
+
+export interface GrantConflict {
+  /** error=同一権利の重複許諾（致命的の疑い） / warning=同一言語圏の広域×個別（V1 相当） */
+  severity: "error" | "warning";
+  territory: string;
+  language: string;
+  right: string | null;
+  parties: string[];
+  documentNumbers: string[];
+  message: string;
+}
+
+export interface GrantCoverage {
+  rows: GrantCoverageRow[];       // 全世界を先頭に、あとは出現順
+  languages: string[];            // 全行の言語（列見出し用・出現順）
+  conflicts: GrantConflict[];     // error を先に
+}
+
+export function buildGrantCoverage(granted: RightsLine[]): GrantCoverage {
+  const rowMap = new Map<string, GrantCoverageRow>();
+  const languageOrder: string[] = [];
+  for (const grant of granted) {
+    const territories = splitTerms(grant.territory);
+    const territoryList = territories.length ? territories : ["（地域未設定）"];
+    const languages = splitTerms(grant.language);
+    const languageList = languages.length ? languages : ["（言語未設定）"];
+    for (const territory of territoryList) {
+      let row = rowMap.get(territory);
+      if (!row) {
+        row = { territory, isWorldwide: isWorldwideTerritory(territory), languages: {} };
+        rowMap.set(territory, row);
+      }
+      for (const language of languageList) {
+        if (!languageOrder.includes(language)) languageOrder.push(language);
+        (row.languages[language] ??= []).push({
+          right: grant.name,
+          party: grant.party || "(取引先未設定)",
+          documentNumber: grant.documentNumber,
+          lineId: grant.id
+        });
+      }
+    }
+  }
+
+  const rows = [...rowMap.values()].sort((a, b) =>
+    Number(b.isWorldwide) - Number(a.isWorldwide));
+
+  const conflicts: GrantConflict[] = [];
+  const seen = new Set<string>();
+  const push = (conflict: GrantConflict) => {
+    const key = `${conflict.severity}|${conflict.territory}|${conflict.language}|${conflict.right ?? ""}`;
+    if (!seen.has(key)) { seen.add(key); conflicts.push(conflict); }
+  };
+
+  const worldRows = rows.filter((row) => row.isWorldwide);
+  for (const row of rows) {
+    for (const [language, cells] of Object.entries(row.languages)) {
+      // (1) 同一地域×同一言語×同一権利が複数明細 → 重複許諾の疑い（error）。
+      //     同じ文書の中での重複行は運用上あり得る（改定・分割）ため、明細IDが違えば数える。
+      const byRight = new Map<string, GrantCell[]>();
+      for (const cell of cells) (byRight.get(cell.right) ?? byRight.set(cell.right, []).get(cell.right)!).push(cell);
+      for (const [right, group] of byRight) {
+        if (group.length < 2) continue;
+        push({
+          severity: "error", territory: row.territory, language, right,
+          parties: [...new Set(group.map((cell) => cell.party))],
+          documentNumbers: [...new Set(group.map((cell) => cell.documentNumber).filter((n): n is string => !!n))],
+          message: `${row.territory}（${language}）の「${right}」を複数の明細で許諾しています`
+        });
+      }
+      // (2) 広域行との突き合わせ（個別地域側から見る）。
+      if (!row.isWorldwide) {
+        for (const world of worldRows) {
+          const worldCells = world.languages[language] ?? [];
+          if (!worldCells.length) continue;
+          for (const cell of cells) {
+            const sameRight = worldCells.filter((worldCell) => worldCell.right === cell.right);
+            if (sameRight.length) {
+              push({
+                severity: "error", territory: row.territory, language, right: cell.right,
+                parties: [...new Set([cell.party, ...sameRight.map((worldCell) => worldCell.party)])],
+                documentNumbers: [...new Set([cell.documentNumber, ...sameRight.map((worldCell) => worldCell.documentNumber)]
+                  .filter((n): n is string => !!n))],
+                message: `「${cell.right}」（${language}）は${world.territory}許諾と${row.territory}許諾が重なっています`
+              });
+            } else {
+              // 権利名は違うが同一言語圏が広域と重なる＝V1 相当の注意喚起。
+              push({
+                severity: "warning", territory: row.territory, language, right: null,
+                parties: [...new Set([cell.party, ...worldCells.map((worldCell) => worldCell.party)])],
+                documentNumbers: [],
+                message: `${row.territory}（${language}）は${world.territory}許諾と言語圏が重なっています（権利は別）`
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+  conflicts.sort((a, b) => Number(a.severity === "warning") - Number(b.severity === "warning"));
+  return { rows, languages: languageOrder, conflicts };
+}

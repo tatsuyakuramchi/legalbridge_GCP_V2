@@ -1974,3 +1974,39 @@ textarea { width: 100%; min-height: 90px; resize: vertical; line-height: 1.6; }
   border: 1px solid var(--border, #cfd4dc); background: #fff; cursor: pointer;
 }
 .master-self:hover { background: #f1f5f9; }
+
+/* 権利ツリー（R3 再設計）。アウト側の許諾被りを最上段＋赤枠セルで可視化する */
+.rights-tree { display: flex; flex-direction: column; gap: 16px; }
+.rights-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.rights-summary article { border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; display: grid; gap: 2px; background: var(--surface); }
+.rights-summary article span { font-size: 11px; color: var(--ink-faint); }
+.rights-summary article strong { font-size: 18px; }
+.rights-summary article.conflict-error { border-color: #e5484d; background: #fff5f5; }
+.rights-summary article.conflict-error strong { color: #c62a2f; }
+.rights-summary article.conflict-warning { border-color: #d9a514; background: #fffaeb; }
+.rights-conflicts { display: grid; gap: 8px; }
+.rights-conflicts p { margin: 0; border-radius: 8px; padding: 10px 14px; font-size: 13px; display: grid; gap: 2px; }
+.rights-conflicts p.conflict-error { background: #fff5f5; border: 1px solid #f2b8ba; }
+.rights-conflicts p.conflict-error strong { color: #c62a2f; }
+.rights-conflicts p.conflict-warning { background: #fffaeb; border: 1px solid #eed9a0; }
+.rights-conflicts p small { color: var(--ink-soft); }
+.rights-section-title { margin: 4px 0 0; font-size: 14px; }
+.rights-coverage th, .rights-coverage td { vertical-align: top; min-width: 120px; }
+.rights-coverage tbody th { white-space: nowrap; }
+.rights-coverage tr.worldwide { background: #f4f8ff; }
+.rights-coverage td.cell-open { background: var(--surface-soft, #fafafa); }
+.rights-coverage td.cell-conflict { outline: 2px solid #e5484d; outline-offset: -2px; background: #fff5f5; }
+.grant-chip { display: grid; gap: 1px; padding: 4px 6px; border-radius: 6px; background: var(--surface); border: 1px solid var(--border); margin-bottom: 4px; font-size: 12px; }
+.grant-chip span { color: var(--ink-soft); }
+.grant-chip small { color: var(--ink-faint); font-size: 10px; }
+.rights-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 900px) { .rights-columns { grid-template-columns: 1fr; } }
+.rights-columns section { display: flex; flex-direction: column; gap: 8px; }
+.rights-row { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; display: grid; gap: 2px; font-size: 13px; }
+.rights-row span { color: var(--ink-soft); }
+.rights-row small { color: var(--ink-faint); }
+.rights-row-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.kind-badge { font-size: 10px; font-weight: 700; border-radius: 999px; padding: 2px 8px; white-space: nowrap; }
+.kind-badge.kind-buyout { background: #e7f0ff; color: #1c4f9c; }
+.kind-badge.kind-running { background: #e8f7ee; color: #157347; }
+.kind-badge.kind-free { background: #f1f1f3; color: #666; }

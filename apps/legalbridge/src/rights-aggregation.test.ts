@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  buildLicenseMatrix, buildRightsTree, buildTerritorySummary, classifyRight,
-  findWideGrantOverlaps, isRunningRight, runningCalcLabel, splitTerms,
+  buildGrantCoverage, buildLicenseMatrix, buildRightsTree, buildTerritorySummary,
+  classifyRight, findWideGrantOverlaps, isRunningRight, runningCalcLabel, splitTerms,
   type RightsLine
 } from "./rights-aggregation.js";
 
@@ -159,4 +159,86 @@ test("取得側（payable）の行はマトリクスに含めない", () => {
   const workB = matrix.rows.find((row) => row.workId === 20)!;
   assert.equal("原作使用" in workB.cells, false);
   assert.ok(!Object.values(workB.cells).some((cell) => cell.rights.includes("原作使用")));
+});
+
+// ── アウト側の許諾地域カバレッジ（被り検知の強化）──────────────────────
+// 許諾地域の被りは二重許諾＝致命的、という運用要件（2026-08-18）。
+// V1 の「広域×個別の同一言語」に加えて、同一地域×同一言語×同一権利の
+// 複数許諾を error として検知する。
+
+test("カバレッジは地域×言語の格子に許諾を集約し、全世界を先頭にする", () => {
+  const coverage = buildGrantCoverage([
+    line({ id: 1, direction: "receivable", name: "出版権", territory: "韓国", language: "韓国語", party: "韓国社" }),
+    line({ id: 2, direction: "receivable", name: "出版権", territory: "全世界", language: "英語", party: "海外社",
+      documentNumber: "ARC-LIC-001" })
+  ]);
+  assert.equal(coverage.rows[0].territory, "全世界");
+  assert.equal(coverage.rows[0].isWorldwide, true);
+  assert.deepEqual(coverage.rows[1].languages["韓国語"].map((c) => c.party), ["韓国社"]);
+  assert.deepEqual(coverage.languages, ["韓国語", "英語"]);
+  assert.deepEqual(coverage.conflicts, []);
+});
+
+test("同一地域×同一言語×同一権利を複数の相手に出していれば error", () => {
+  const coverage = buildGrantCoverage([
+    line({ id: 1, direction: "receivable", name: "出版権", territory: "韓国", language: "韓国語",
+      party: "A社", documentNumber: "ARC-LIC-001" }),
+    line({ id: 2, direction: "receivable", name: "出版権", territory: "韓国", language: "韓国語",
+      party: "B社", documentNumber: "ARC-LIC-002" })
+  ]);
+  assert.equal(coverage.conflicts.length, 1);
+  const conflict = coverage.conflicts[0];
+  assert.equal(conflict.severity, "error");
+  assert.deepEqual(conflict.parties.sort(), ["A社", "B社"]);
+  assert.deepEqual(conflict.documentNumbers.sort(), ["ARC-LIC-001", "ARC-LIC-002"]);
+  assert.match(conflict.message, /複数の明細で許諾/);
+});
+
+test("全世界許諾と個別地域で同一権利×同一言語なら error（相手先を並べる）", () => {
+  const coverage = buildGrantCoverage([
+    line({ id: 1, direction: "receivable", name: "出版権", territory: "全世界", language: "英語", party: "海外社" }),
+    line({ id: 2, direction: "receivable", name: "出版権", territory: "韓国", language: "英語", party: "韓国社" })
+  ]);
+  const errors = coverage.conflicts.filter((c) => c.severity === "error");
+  assert.equal(errors.length, 1);
+  assert.deepEqual(errors[0].parties.sort(), ["海外社", "韓国社"]);
+  assert.match(errors[0].message, /全世界許諾と韓国許諾が重なっています/);
+});
+
+test("広域と言語圏だけ重なり権利が別なら warning（V1 相当の注意喚起）", () => {
+  const coverage = buildGrantCoverage([
+    line({ id: 1, direction: "receivable", name: "出版権", territory: "全世界", language: "英語", party: "海外社" }),
+    line({ id: 2, direction: "receivable", name: "映像化権", territory: "韓国", language: "英語", party: "韓国社" })
+  ]);
+  assert.equal(coverage.conflicts.length, 1);
+  assert.equal(coverage.conflicts[0].severity, "warning");
+  assert.match(coverage.conflicts[0].message, /言語圏が重なっています（権利は別）/);
+});
+
+test("言語が違えば被りではない", () => {
+  const coverage = buildGrantCoverage([
+    line({ id: 1, direction: "receivable", name: "出版権", territory: "全世界", language: "英語" }),
+    line({ id: 2, direction: "receivable", name: "出版権", territory: "韓国", language: "韓国語" })
+  ]);
+  assert.deepEqual(coverage.conflicts, []);
+});
+
+test("連結地域は分解してから突き合わせる（日本・韓国 と 韓国 は被る）", () => {
+  const coverage = buildGrantCoverage([
+    line({ id: 1, direction: "receivable", name: "出版権", territory: "日本・韓国", language: "日本語", party: "A社" }),
+    line({ id: 2, direction: "receivable", name: "出版権", territory: "韓国", language: "日本語", party: "B社" })
+  ]);
+  const errors = coverage.conflicts.filter((c) => c.severity === "error");
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0].territory, "韓国");
+});
+
+test("error が warning より先に並ぶ", () => {
+  const coverage = buildGrantCoverage([
+    line({ id: 1, direction: "receivable", name: "出版権", territory: "全世界", language: "英語", party: "海外社" }),
+    line({ id: 2, direction: "receivable", name: "映像化権", territory: "韓国", language: "英語", party: "韓国社" }),
+    line({ id: 3, direction: "receivable", name: "出版権", territory: "台湾", language: "英語", party: "台湾社" })
+  ]);
+  assert.ok(coverage.conflicts.length >= 2);
+  assert.equal(coverage.conflicts[0].severity, "error");
 });

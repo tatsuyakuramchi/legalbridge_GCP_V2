@@ -1,4 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  buildGrantCoverage, buildRightsTree, type RightsLine
+} from "../rights-aggregation";
 import { SearchableLedgerSelect } from "./SearchableLedgerSelect";
 import { checkWorkConditions, summarizeFindings } from "./contract-check";
 import { FeatureLockedNote } from "./FeatureLockedNote";
@@ -16,15 +19,16 @@ type RightsSource = { id: number; materialId: number | null; materialName: strin
 type Cond = { id: number; conditionName: string | null; direction: string | null; sourceMaterialId: number | null; materialName: string | null; sublicenseAllowed: boolean | null; parentLicenseConditionId: number | null; ratePct: number | null; amountExTax: number | null; mgAmount: number | null; currency: string | null; documentNumber: string | null };
 type Conditions = { receivable: Cond[]; payable: Cond[]; sublicense: Cond[]; workLevel: Cond[]; materialLinked: Cond[]; totals: { count: number; receivableCount: number; payableCount: number; sublicenseCount: number; workLevelCount: number } };
 type Core = Summary & { titleKana: string | null; workType: string | null; status: string | null; derivationType: string | null; rightsHolderName: string | null; rightsHolderVendorId?: number | null; creatorName: string | null; publisherName: string | null; ledgerCode: string | null; remarks: string | null };
-type Detail = { work: Core; lineage: Lineage | null; materials: Material[] | null; rightsSources: RightsSource[] | null; conditions: Conditions | null };
+type Detail = { work: Core; lineage: Lineage | null; materials: Material[] | null; rightsSources: RightsSource[] | null; conditions: Conditions | null; rightsLines?: RightsLine[] | null };
 
-type Tab = "overview" | "lineage" | "products" | "materials" | "conditions" | "rights" | "rates" | "check";
+type Tab = "overview" | "lineage" | "products" | "materials" | "conditions" | "tree" | "rights" | "rates" | "check";
 const TABS: { key: Tab; label: string }[] = [
   { key: "overview", label: "概要" },
   { key: "lineage", label: "系譜" },
   { key: "products", label: "製品" },
   { key: "materials", label: "素材" },
   { key: "conditions", label: "条件" },
+  { key: "tree", label: "権利ツリー" },
   { key: "rights", label: "権利ソース" },
   { key: "rates", label: "料率対象" },
   { key: "check", label: "契約チェック" }
@@ -520,6 +524,8 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
               </table></div> : <div className="empty-state">紐づく条件明細はありません。</div>}
             </> : <Degraded />)}
 
+            {tab === "tree" && <RightsTreeTab lines={detail.rightsLines ?? null} />}
+
             {tab === "rights" && (detail.rightsSources ? (
               <>
                 {canEditRights && !rightsForm && (
@@ -621,4 +627,95 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
       </div>
     </section>
   );
+}
+
+
+// ── 権利ツリー（R3 再設計・2026-08-18）──────────────────────────────
+// 金銭の in/out を左右対称に置き、アウト側は「地域×言語の格子」で許諾状況を出す。
+// 許諾地域の被り＝二重許諾は致命的（利用者要件）なので、衝突を最上段に昇格し、
+// 該当セルを赤枠で示す。判定は共通集計層（rights-aggregation・V1 ルール継承＋強化）。
+function RightsTreeTab({ lines }: { lines: RightsLine[] | null }) {
+  const tree = useMemo(() => lines ? buildRightsTree(lines) : null, [lines]);
+  const coverage = useMemo(
+    () => tree ? buildGrantCoverage(tree.granted) : null, [tree]);
+  if (!lines || !tree || !coverage) return <Degraded />;
+  if (!lines.length) return <div className="empty-state">紐づく条件明細はありません。条件明細に作品を紐付けると、ここに権利の取得・許諾状況が表示されます。</div>;
+
+  const errors = coverage.conflicts.filter((c) => c.severity === "error");
+  const warnings = coverage.conflicts.filter((c) => c.severity === "warning");
+  // 衝突セル（地域×言語）を赤枠にするための索引。
+  const conflictCells = new Set(coverage.conflicts.map((c) => `${c.territory}|${c.language}`));
+
+  return <div className="rights-tree">
+    <div className="rights-summary">
+      <article><span>取得（支払）</span><strong>{tree.totals.acquiredCount}件</strong></article>
+      <article><span>買い切り合計</span><strong>{tree.totals.buyoutCount ? `¥${new Intl.NumberFormat("ja-JP").format(tree.totals.buyoutAmount)}` : "—"}</strong></article>
+      <article><span>許諾（受領）</span><strong>{tree.totals.grantedCount}件</strong></article>
+      <article className={errors.length ? "conflict-error" : warnings.length ? "conflict-warning" : ""}>
+        <span>許諾の被り</span>
+        <strong>{errors.length ? `⚠ ${errors.length}件` : warnings.length ? `注意 ${warnings.length}件` : "なし"}</strong>
+      </article>
+    </div>
+
+    {coverage.conflicts.length > 0 && <div className="rights-conflicts">
+      {errors.map((c, i) => <p key={`e${i}`} className="conflict-error">
+        <strong>⚠ 二重許諾の疑い</strong> {c.message}
+        <small>相手先: {c.parties.join(" / ")}{c.documentNumbers.length ? `　文書: ${c.documentNumbers.join(", ")}` : ""}</small>
+      </p>)}
+      {warnings.map((c, i) => <p key={`w${i}`} className="conflict-warning">
+        <strong>注意</strong> {c.message}
+        <small>相手先: {c.parties.join(" / ")}</small>
+      </p>)}
+    </div>}
+
+    {coverage.rows.length > 0 && <>
+      <h3 className="rights-section-title">許諾マップ（アウト側）— 地域 × 言語</h3>
+      <p className="hub-note">セル＝その地域・言語で出している許諾（権利 → 相手先）。空欄＝未許諾。赤枠＝被りあり。</p>
+      <div className="table-scroll"><table className="rights-coverage">
+        <thead><tr><th>地域</th>{coverage.languages.map((lang) => <th key={lang}>{lang}</th>)}</tr></thead>
+        <tbody>{coverage.rows.map((row) => <tr key={row.territory} className={row.isWorldwide ? "worldwide" : ""}>
+          <th>{row.isWorldwide ? "🌐 " : ""}{row.territory}</th>
+          {coverage.languages.map((lang) => {
+            const cells = row.languages[lang] ?? [];
+            const conflicted = conflictCells.has(`${row.territory}|${lang}`);
+            return <td key={lang} className={conflicted ? "cell-conflict" : cells.length ? "cell-granted" : "cell-open"}>
+              {cells.map((cell, i) => <div key={i} className="grant-chip">
+                <strong>{cell.right}</strong>
+                <span>→ {cell.party}</span>
+                {cell.documentNumber && <small>{cell.documentNumber}</small>}
+              </div>)}
+            </td>;
+          })}
+        </tr>)}</tbody>
+      </table></div>
+    </>}
+
+    <div className="rights-columns">
+      <section>
+        <h3 className="rights-section-title">◀ 取得した権利（当社が支払）</h3>
+        {tree.acquired.length ? tree.acquired.map((r) => <div key={r.id} className="rights-row">
+          <div className="rights-row-head">
+            <strong>{r.name}</strong>
+            <span className={`kind-badge kind-${r.kind}`}>{r.kind === "buyout" ? "買い切り" : r.kind === "running" ? "ランニング" : "無償"}</span>
+          </div>
+          <span>{r.party}</span>
+          <span>{r.kind === "buyout" ? r.amountLabel : r.calcLabel}</span>
+          {r.documentNumber && <small>{r.documentNumber}</small>}
+        </div>) : <div className="empty-state">取得側の条件はありません。</div>}
+      </section>
+      <section>
+        <h3 className="rights-section-title">許諾した権利（当社が受領）▶</h3>
+        {tree.granted.length ? tree.granted.map((r) => <div key={r.id} className="rights-row">
+          <div className="rights-row-head">
+            <strong>{r.name}</strong>
+            <span className={`kind-badge kind-${r.kind}`}>{r.kind === "buyout" ? "買い切り" : r.kind === "running" ? "ランニング" : "無償"}</span>
+          </div>
+          <span>{r.party}</span>
+          <span>{[r.territory, r.language].filter(Boolean).join("・") || "地域・言語未設定"}</span>
+          <span>{r.kind === "running" ? r.calcLabel : r.amountLabel}</span>
+          {r.documentNumber && <small>{r.documentNumber}</small>}
+        </div>) : <div className="empty-state">許諾側の条件はありません。</div>}
+      </section>
+    </div>
+  </div>;
 }
