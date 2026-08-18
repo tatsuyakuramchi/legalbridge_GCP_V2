@@ -1015,6 +1015,82 @@ case "${DRIVE_STORAGE_ENABLED}" in
     exit 1
     ;;
 esac
+
+# 金額系の書込（Phase R1・2026-08-18 配線）。condition_events / condition_receipts /
+# payments は本番の金額データそのものなので、案件管理と同じ強度で守る
+# （確認トークン＋本番DB照合＋承認済みサービス＋IAP/IAM）。grant 014/015/016 が前提。
+case "${ROYALTY_EVENT_WRITES_ENABLED:-false}" in
+  false)
+    ;;
+  true)
+    if [ "${CONFIRM_ROYALTY_EVENT_WRITES}" != "ROYALTY_EVENT_WRITES_LEGALBRIDGE_VALIDATION_ONLY" ]; then
+      echo "Royalty event writes blocked: explicit production validation confirmation is missing."
+      exit 1
+    fi
+    if [ "${PRIMARY_DB_MODE}" != "production" ] || service_not_approved || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
+      echo "Royalty event writes blocked: service, database, runtime user, or password secret does not match the approved target."
+      exit 1
+    fi
+    if [ "${AUTH_MODE}" != "iap" ] && [ "${AUTH_MODE}" != "cloudrun-iam" ]; then
+      echo "Royalty event writes blocked: IAP or Cloud Run IAM authentication is required."
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Deployment blocked: ROYALTY_EVENT_WRITES_ENABLED must be true or false."
+    exit 1
+    ;;
+esac
+case "${RECEIPT_WRITES_ENABLED:-false}" in
+  false)
+    ;;
+  true)
+    if [ "${CONFIRM_RECEIPT_WRITES}" != "RECEIPT_WRITES_LEGALBRIDGE_VALIDATION_ONLY" ]; then
+      echo "Receipt writes blocked: explicit production validation confirmation is missing."
+      exit 1
+    fi
+    if [ "${PRIMARY_DB_MODE}" != "production" ] || service_not_approved || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
+      echo "Receipt writes blocked: service, database, runtime user, or password secret does not match the approved target."
+      exit 1
+    fi
+    if [ "${AUTH_MODE}" != "iap" ] && [ "${AUTH_MODE}" != "cloudrun-iam" ]; then
+      echo "Receipt writes blocked: IAP or Cloud Run IAM authentication is required."
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Deployment blocked: RECEIPT_WRITES_ENABLED must be true or false."
+    exit 1
+    ;;
+esac
+# 支払台帳の同期は受領記録から派生する（receipt-repository が payments へ同期）。
+# 受領記録なしで payments だけ点けても書き手がいない＝受領とセットを要求する。
+case "${PAYMENT_LEDGER_WRITES_ENABLED:-false}" in
+  false)
+    ;;
+  true)
+    if [ "${CONFIRM_PAYMENT_LEDGER_WRITES}" != "PAYMENT_LEDGER_WRITES_LEGALBRIDGE_VALIDATION_ONLY" ]; then
+      echo "Payment ledger writes blocked: explicit production validation confirmation is missing."
+      exit 1
+    fi
+    if [ "${RECEIPT_WRITES_ENABLED:-false}" != "true" ]; then
+      echo "Payment ledger writes blocked: receipt writes must be enabled (payments sync is driven by receipts)."
+      exit 1
+    fi
+    if [ "${PRIMARY_DB_MODE}" != "production" ] || service_not_approved || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
+      echo "Payment ledger writes blocked: service, database, runtime user, or password secret does not match the approved target."
+      exit 1
+    fi
+    if [ "${AUTH_MODE}" != "iap" ] && [ "${AUTH_MODE}" != "cloudrun-iam" ]; then
+      echo "Payment ledger writes blocked: IAP or Cloud Run IAM authentication is required."
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Deployment blocked: PAYMENT_LEDGER_WRITES_ENABLED must be true or false."
+    exit 1
+    ;;
+esac
 expected_write_scopes="drafts,documents,pdf"
 if [ "${DRIVE_STORAGE_ENABLED}" = "true" ]; then
   expected_write_scopes="$expected_write_scopes,drive"
@@ -1081,6 +1157,15 @@ if [ "${ATTACHMENT_UPLOAD_ENABLED}" = "true" ]; then
 fi
 if [ "${BACKLOG_COMMENT_WRITE_ENABLED}" = "true" ]; then
   expected_write_scopes="$expected_write_scopes,backlog-comment"
+fi
+if [ "${ROYALTY_EVENT_WRITES_ENABLED:-false}" = "true" ]; then
+  expected_write_scopes="$expected_write_scopes,royalty-events"
+fi
+if [ "${RECEIPT_WRITES_ENABLED:-false}" = "true" ]; then
+  expected_write_scopes="$expected_write_scopes,receipts"
+fi
+if [ "${PAYMENT_LEDGER_WRITES_ENABLED:-false}" = "true" ]; then
+  expected_write_scopes="$expected_write_scopes,payments"
 fi
 if [ "${GMAIL_DELIVERY_MODE}" = "live" ]; then
   expected_write_scopes="$expected_write_scopes,gmail"

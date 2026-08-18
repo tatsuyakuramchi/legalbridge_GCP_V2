@@ -53,7 +53,7 @@ _BACKLOG_COMMENT_WRITE_ENABLED     = false
 ＋`_CONTRACT_INTAKE_WRITES_ENABLED` は実装済み）。契約インテークの書込を使う予定があるなら
 R2 に足す。使わないなら明示的に「使わない」と決めて記録する。
 
-## 2. Phase R1 — 点火経路の配線（コード・0.5日）
+## 2. Phase R1 — 点火経路の配線 ✅ 完了（2026-08-18）
 
 **問題**：`royaltyEventWritesEnabled` / `receiptWritesEnabled` / `paymentLedgerWritesEnabled` は
 `config.ts` が読むのに、`cloudbuild-write-test.yaml` が対応する env を**一度も渡していない**
@@ -75,7 +75,20 @@ R2 に足す。使わないなら明示的に「使わない」と決めて記�
 3. `verify-cases.sh` に「正式名なら通る／未承認名なら止まる／合言葉が無ければ止まる」を追加
 4. grant は **014／015／016 が適用済み**（runbook §0「001〜046 すべて適用済み」）。DB 作業なし
 
-成果物：フラグを渡せば点火できる状態。この時点では既定 false のままなので挙動は変わらない。
+**実施済み**。cloudbuild に `_ROYALTY_EVENT_WRITES_ENABLED` / `_RECEIPT_WRITES_ENABLED` /
+`_PAYMENT_LEDGER_WRITES_ENABLED`（＋各 `_CONFIRM_*`）を配線し、verify に3ゲートを追加した。
+骨格は MATTER_WRITES と同じ（確認トークン＋本番DB照合＋承認済みサービス＋IAP/IAM）。
+追加の判断2点：
+
+- **金額系は本番DB限定**（隔離DBの検証プロファイルでは点火できない。書く先の
+  condition_events 等は本番にしか意味がないため）。
+- **支払台帳は受領記録とセットでのみ点火可**。payments への書込は受領記録
+  （receipt-repository の同期）が唯一の書き手なので、単独で点けても動かない構成を
+  ゲートで拒否する。
+
+期待スコープへの挿入位置は app.ts の宣言順どおり `backlog-comment` の直後
+（`royalty-events` → `receipts` → `payments`）。verify-cases.sh に8ケースを固定済み。
+既定はすべて false＝この配線だけでは挙動は変わらない。
 
 ## 3. Phase R2 — 点火（デプロイのみ・DB 作業なし）
 
@@ -85,9 +98,26 @@ R1 のあと、業務側の準備ができたものから順に。**一度に全
 |---|---|---|
 | 1 | Backlog 書戻し（コメント投稿） | `_BACKLOG_COMMENT_WRITE_ENABLED=true`＋`_CONFIRM_BACKLOG_COMMENT_WRITE=BACKLOG_COMMENT_WRITEBACK_VALIDATION_ONLY`＋`_WRITE_SCOPES` へ `backlog-comment` |
 | 2 | サブライセンス（アウト）条件 | `_OUTBOUND_CONDITION_WRITES_ENABLED=true`＋`_CONFIRM_OUTBOUND_WRITES`＋スコープ `outbound-conditions`（既に入っていれば不要） |
-| 3 | ロイヤリティ実績の記録 | `_ROYALTY_EVENT_WRITES_ENABLED=true`＋`_CONFIRM_*`＋スコープ `royalty-events` |
-| 4 | 受領の記録（請求ダッシュボード） | `_RECEIPT_WRITES_ENABLED=true`＋`_CONFIRM_*`＋スコープ `receipts` |
-| 5 | 支払台帳の同期 | `_PAYMENT_LEDGER_WRITES_ENABLED=true`＋`_CONFIRM_*`＋スコープ `payments` |
+| 3 | ロイヤリティ実績の記録 | `_ROYALTY_EVENT_WRITES_ENABLED=true`＋`_CONFIRM_ROYALTY_EVENT_WRITES=ROYALTY_EVENT_WRITES_LEGALBRIDGE_VALIDATION_ONLY`＋スコープ `royalty-events` |
+| 4 | 受領の記録（請求ダッシュボード） | `_RECEIPT_WRITES_ENABLED=true`＋`_CONFIRM_RECEIPT_WRITES=RECEIPT_WRITES_LEGALBRIDGE_VALIDATION_ONLY`＋スコープ `receipts` |
+| 5 | 支払台帳の同期 | `_PAYMENT_LEDGER_WRITES_ENABLED=true`＋`_CONFIRM_PAYMENT_LEDGER_WRITES=PAYMENT_LEDGER_WRITES_LEGALBRIDGE_VALIDATION_ONLY`＋スコープ `payments`（**4 とセットでのみ**） |
+
+スコープの挿入位置：現行の本番 `_WRITE_SCOPES` では `attachments` と `cloudsign` の間
+（`backlog-comment` を点火する場合はその後ろ）。verify が厳密一致で見るので、
+位置を間違えるとデプロイが止まる＝止まったら verify の期待順に合わせる。
+
+点火コマンド（例：3〜5 を一括。V1 読み取り専用化の後に）:
+
+```bash
+infra/gcp/deploy-write-test.sh \
+  _ROYALTY_EVENT_WRITES_ENABLED=true \
+  _CONFIRM_ROYALTY_EVENT_WRITES=ROYALTY_EVENT_WRITES_LEGALBRIDGE_VALIDATION_ONLY \
+  _RECEIPT_WRITES_ENABLED=true \
+  _CONFIRM_RECEIPT_WRITES=RECEIPT_WRITES_LEGALBRIDGE_VALIDATION_ONLY \
+  _PAYMENT_LEDGER_WRITES_ENABLED=true \
+  _CONFIRM_PAYMENT_LEDGER_WRITES=PAYMENT_LEDGER_WRITES_LEGALBRIDGE_VALIDATION_ONLY \
+  '_WRITE_SCOPES=drafts,documents,pdf,drive,slack-approvals,matters,vendors,staff,works,materials,rights-sources,vendor-merge,matter-merge,matter-delete,document-void,document-reissue,excel-batch,settings,workflow-rules,contract-master,snippets,attachments,royalty-events,receipts,payments,cloudsign,slack,slack-dispatch,matter-slack,condition-repair'
+```
 
 3〜5 は共有 DB の金額データを書くため、**V1 併走中は二重入力の危険がある**。
 V1 側で同じ入力をしていないことを確認してから点ける（§5-1 の読み取り専用化とセットが安全）。
@@ -97,20 +127,22 @@ V1 側で同じ入力をしていないことを確認してから点ける（§
 - 4：請求ダッシュボード → 受領を1件記録 → `condition_receipts` に1行＋消込表示
 - 5：受領記録に対する支払が `payments` へ同期されること
 
-## 4. Phase R3 — 権利ツリーの不足分（1〜2日）
+## 4. Phase R3 — 権利ツリー（**UIデザインごと再設計**・2026-08-18 決定）
 
-V1 `src/pages/master/RightsTreePanel.tsx`（245行）＋ `GET /api/v3/works/:id/rights-tree`。
-V2 は `work-detail.ts` で条件明細を `receivable`／`payable` に分けるところまで出来ている。
-**足りないのは集計と警告**：
+V1 の移植ではなく**再設計**する（利用者判断）。V1 `RightsTreePanel.tsx`（245行）＋
+`GET /api/v3/works/:id/rights-tree` は**参照実装**として扱い、そのまま写さない。
 
-1. 地域サマリー（地域 → 言語 → 対象権利）
-2. 広域許諾との**重複警告**（例：ワールドワイド許諾と国別許諾の二重付与）
-3. 買い切り（固定額）の件数・合計、ランニングの計算条件表示
+再設計の入力として調査しておくもの（デザイン前に確定させる）：
 
-実装方針：集計は純関数（`works/rights-tree.ts`）に切り出して単体テストで固める。
-重複判定はルールが業務判断そのものなので、**V1 の判定条件をそのまま写して**テストで固定する
-（勝手に一般化しない）。UI は作品詳細の「権利」タブに節を足す＝新規画面は作らない。
-新規 grant 不要（既存の読取のみ）。
+1. V1 が出していた情報の棚卸し：取得（payable）／許諾（receivable）の分類、
+   買い切り金額と件数・合計、ランニングの計算条件、許諾地域・言語、
+   地域サマリー（地域→言語→権利）、**広域許諾と個別許諾の重複警告**
+2. 重複警告の判定ルール（`workModel.ts` の rights-tree 集計）。UI は変えても
+   **この業務ルールは引き継ぐ**——警告が消えると二重許諾の検知手段が無くなる
+3. V2 側の土台：`works/work-detail.ts` が receivable/payable 分類まで済ませており、
+   データ源（condition_lines）は同じ。集計は純関数に切り出してテストで固める方針は維持
+
+新規 grant 不要（読取のみ）。デザイン案が決まり次第、別スライスとして計画する。
 
 ## 5. Phase R4 — ライセンスマトリクス（要否判断待ち）
 
@@ -122,10 +154,10 @@ V2 に相当画面は無い。**実運用されているかどうかの確認が
 
 | Phase | 内容 | 規模 | 前提 |
 |---|---|---|---|
-| R1 | 点火経路の配線 | 0.5日 | なし |
-| R2 | 点火（5段階） | デプロイのみ | R1／3〜5 は V1 併走の整理 |
-| R3 | 権利ツリーの集計・警告 | 1〜2日 | V1 の判定条件の確認 |
-| R4 | ライセンスマトリクス | 2〜3日 | **要否の業務判断** |
+| R1 | 点火経路の配線 | ✅ 完了（2026-08-18） | — |
+| R2 | 点火（5段階） | デプロイのみ | 1〜2 は即可。3〜5 は V1 併走の整理（§5-1 とセット推奨） |
+| R3 | 権利ツリー（再設計） | デザイン決定後に見積り | V1 の表示項目・重複判定ルールの棚卸し |
+| R4 | ライセンスマトリクス | 2〜3日 | **要否の業務判断**（R3 の再設計に吸収する選択肢もある） |
 
 ## 7. この計画で確認していないこと
 

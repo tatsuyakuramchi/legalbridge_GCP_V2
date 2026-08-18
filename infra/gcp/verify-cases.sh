@@ -161,6 +161,38 @@ run_case "コメント書き戻し: Backlog 未接続なら拒む" block \
   "BACKLOG_MODE=disabled" "${BACKLOG_COMMENT[@]}" || FAILED=1
 
 echo
+echo "── 金額系の書込（R1 配線・grant 014/015/016 前提）───────────────────"
+ROYALTY_ON=(
+  "ROYALTY_EVENT_WRITES_ENABLED=true"
+  "CONFIRM_ROYALTY_EVENT_WRITES=ROYALTY_EVENT_WRITES_LEGALBRIDGE_VALIDATION_ONLY"
+  "WRITE_SCOPES=drafts,documents,pdf,royalty-events"
+)
+RECEIPT_ON=(
+  "RECEIPT_WRITES_ENABLED=true"
+  "CONFIRM_RECEIPT_WRITES=RECEIPT_WRITES_LEGALBRIDGE_VALIDATION_ONLY"
+)
+run_case "ロイヤリティ実績: 合言葉＋スコープで通る" allow "${ROYALTY_ON[@]}" || FAILED=1
+run_case "ロイヤリティ実績: 合言葉が無ければ止まる" block \
+  "ROYALTY_EVENT_WRITES_ENABLED=true" "WRITE_SCOPES=drafts,documents,pdf,royalty-events" || FAILED=1
+run_case "ロイヤリティ実績: スコープだけ足すのも止まる（フラグと厳密一致）" block \
+  "WRITE_SCOPES=drafts,documents,pdf,royalty-events" || FAILED=1
+run_case "ロイヤリティ実績: 未承認サービスなら止まる" block \
+  "${ROYALTY_ON[@]}" "SERVICE=some-other-service" || FAILED=1
+# 金額系は本番DB限定（隔離DBの検証プロファイルでは点けられない）
+PROFILE=validation run_case "ロイヤリティ実績: 隔離DBでは点かない" block "${ROYALTY_ON[@]}" || FAILED=1
+run_case "受領記録: 合言葉＋スコープで通る" allow \
+  "${RECEIPT_ON[@]}" "WRITE_SCOPES=drafts,documents,pdf,receipts" || FAILED=1
+run_case "支払台帳: 受領記録なしの単独点火は止まる" block \
+  "PAYMENT_LEDGER_WRITES_ENABLED=true" \
+  "CONFIRM_PAYMENT_LEDGER_WRITES=PAYMENT_LEDGER_WRITES_LEGALBRIDGE_VALIDATION_ONLY" \
+  "WRITE_SCOPES=drafts,documents,pdf,payments" || FAILED=1
+run_case "支払台帳: 受領記録とセットなら通る" allow \
+  "${RECEIPT_ON[@]}" \
+  "PAYMENT_LEDGER_WRITES_ENABLED=true" \
+  "CONFIRM_PAYMENT_LEDGER_WRITES=PAYMENT_LEDGER_WRITES_LEGALBRIDGE_VALIDATION_ONLY" \
+  "WRITE_SCOPES=drafts,documents,pdf,receipts,payments" || FAILED=1
+
+echo
 echo "── 承認リストは実行時に広げられない──────────────────────────────"
 PROFILE=validation run_case "環境変数 APPROVED_SERVICES では広げられない" block \
   "SERVICE=some-other-service" "AUTH_MODE=iap" "CONFIRM_IAP_BACKEND=IAP_BACKEND_READY" \
