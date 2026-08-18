@@ -2037,3 +2037,20 @@ textarea { width: 100%; min-height: 90px; resize: vertical; line-height: 1.6; }
 .excl-sole { background: #fff3df; color: #9a6700; }
 .excl-non_exclusive { background: #eef2f6; color: #55657a; }
 .rights-add-grant { align-self: center; }
+
+/* 検収書のステップ動線と合計パネル（V1 の4ステップ動線を1画面に写した） */
+.inspection-steps { display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  background: var(--surface-tint); border: 1px solid var(--accent); border-radius: 10px;
+  padding: 10px 14px; margin-bottom: 4px; }
+.inspection-steps span { font-size: 12.5px; font-weight: 700; color: var(--ink-faint);
+  padding: 3px 10px; border-radius: 999px; background: var(--surface); border: 1px solid var(--border); }
+.inspection-steps span.done { color: #157347; border-color: #bfe3cd; background: #e8f7ee; }
+.inspection-steps span.next { color: var(--accent-ink); border-color: var(--accent); }
+.inspection-steps small { flex-basis: 100%; color: var(--ink-soft); }
+.inspection-totals { margin-top: 12px; padding: 12px; background: var(--surface-subtle);
+  border: 1px solid var(--border); border-radius: 10px; display: grid; gap: 6px; }
+.inspection-totals-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+.inspection-totals-grid article { display: grid; gap: 2px; }
+.inspection-totals-grid span { font-size: 11px; color: var(--ink-soft); }
+.inspection-totals-grid strong { font-size: 17px; font-variant-numeric: tabular-nums; }
+.inspection-totals > small { color: var(--ink-faint); }

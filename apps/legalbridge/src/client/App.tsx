@@ -6,6 +6,7 @@ import type {
   DocumentFormSchema
 } from "../types";
 import { SpecializedDocumentForms } from "./SpecializedDocumentForms";
+import { computeInspectionTotals, formatYen } from "../inspection-totals";
 import { isFieldVisible, isInspectionFallbackFieldHidden } from "./field-visibility";
 import { MasterDataPicker } from "./MasterDataPicker";
 import { DocumentRegistry, type RegisteredDocument } from "./DocumentRegistry";
@@ -1235,6 +1236,13 @@ function DocumentForm({
               setDraftStatus("dirty");
               setNotice(message);
             }} />
+          {templateKey === "inspection_certificate" && <>
+            <InspectionStepBanner formData={formData} />
+            <section id="specialized-fields"><h2>検収明細</h2>
+              <SpecializedDocumentForms templateKey={templateKey} formData={formData} onChange={updateValue} />
+              <InspectionTotalsPanel formData={formData} />
+            </section>
+          </>}
           {groups.map((group, index) => <section id={`group-${index}`} key={group}><h2>{group}</h2>
             {isPurchaseOrderTemplate(schema.templateKey) && group.startsWith("IV. ") &&
               <PurchaseOrderTotals formData={formData} />}
@@ -1243,7 +1251,8 @@ function DocumentForm({
           {schema.templateKey === "individual_license_terms_v3" && (
             <IndividualLicenseV3Form formData={formData} onChange={updateValue} />
           )}
-          <SpecializedDocumentForms templateKey={schema.templateKey} formData={formData} onChange={updateValue} />
+          {schema.templateKey !== "inspection_certificate" &&
+            <SpecializedDocumentForms templateKey={schema.templateKey} formData={formData} onChange={updateValue} />}
         </form>
         <aside className="preview">
           <strong>文書プレビュー</strong>
@@ -1386,4 +1395,47 @@ function roleLabel(role: "admin" | "legal" | "requester") {
   if (role === "admin") return "管理者";
   if (role === "legal") return "法務担当";
   return "依頼者";
+}
+
+
+// ── 検収書のステップ動線（V1 の4ステップを V2 の1画面に写した進行表示）──────
+// V1 inspectionCertificate.tsx は 1)親契約 2)検収内容 3)自社・相手確認 4)検収情報 の
+// ウィザードだった。V2 は1画面のまま、いま何が済んでいて次に何をするかを出す。
+function InspectionStepBanner({ formData }: { formData: DocumentFormData }) {
+  const lines = Array.isArray(formData.delivery_line_items) ? formData.delivery_line_items as unknown[] : [];
+  const steps = [
+    { label: "① 親の発注書を選ぶ", done: lines.length > 0 || Boolean(formData.parent_po_number),
+      hint: "上の「DBから引用」→「親の発注書」タブから。明細・件名が自動入力されます" },
+    { label: "② 検収明細を確認", done: lines.length > 0,
+      hint: "全量検収が初期値。分割検収は数量・金額を行ごとに調整" },
+    { label: "③ 相手方・自社を確認", done: Boolean(formData.counterparty || formData.COUNTERPARTY_NAME),
+      hint: "取引先タブから引用できます" },
+    { label: "④ 検収情報を入力", done: Boolean(formData.documentDate || formData.deliveredAt),
+      hint: "検収日・納品日など" }
+  ];
+  const next = steps.find((step) => !step.done);
+  return <div className="inspection-steps" role="note">
+    {steps.map((step) => <span key={step.label} className={step.done ? "done" : step === next ? "next" : ""}>
+      {step.done ? "✓ " : ""}{step.label}
+    </span>)}
+    {next && <small>{next.hint}</small>}
+    {!next && <small>入力が揃いました。プレビューで確認して確定してください。</small>}
+  </div>;
+}
+
+// 検収の合計を入力中に見せる（PDF と同じ共有関数＝必ず一致する）。
+// 明細が無い間は単票フォールバック（IV. 納品明細）の入力値が使われる旨を出す。
+function InspectionTotalsPanel({ formData }: { formData: DocumentFormData }) {
+  const totals = computeInspectionTotals(formData as Record<string, unknown>);
+  if (!totals.lineCount) {
+    return <p className="hub-note">明細がありません。親の発注書から引用するか、明細を追加してください（明細を使わない場合は下の「IV. 納品明細」に単票で入力します）。</p>;
+  }
+  return <div className="inspection-totals">
+    <div className="inspection-totals-grid">
+      <article><span>検収金額（税抜）</span><strong>¥{formatYen(totals.deliveredExTax)}</strong></article>
+      <article><span>消費税（{totals.taxRate}%・切り上げ）</span><strong>¥{formatYen(totals.tax)}</strong></article>
+      <article><span>合計（税込）</span><strong>¥{formatYen(totals.totalIncTax)}</strong></article>
+    </div>
+    <small>PDF の合計はこの計算と同じ式で出ます（明細があるときは手入力の金額欄より優先されます）。</small>
+  </div>;
 }
