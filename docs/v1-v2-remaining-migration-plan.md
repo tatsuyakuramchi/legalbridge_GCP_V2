@@ -36,8 +36,22 @@ gcloud builds describe "${IMG##*:}" --project legalbridge-488506 --format=json \
        _BACKLOG_COMMENT_WRITE_ENABLED, _CONTRACT_INTAKE_WRITES_ENABLED}'
 ```
 
-`_WRITE_SCOPES` に `outbound-conditions` があればサブライセンス条件の編集は既に可能。
-無ければ Phase R2 で足す。
+**実測（2026-08-18）**：
+
+```
+_WRITE_SCOPES = drafts,documents,pdf,drive,slack-approvals,matters,vendors,staff,works,
+  materials,rights-sources,vendor-merge,matter-merge,matter-delete,document-void,
+  document-reissue,excel-batch,settings,workflow-rules,contract-master,snippets,
+  attachments,cloudsign,slack,slack-dispatch,matter-slack,condition-repair
+_OUTBOUND_CONDITION_WRITES_ENABLED = false
+_BACKLOG_COMMENT_WRITE_ENABLED     = false
+```
+
+→ `outbound-conditions` は**入っていない**ので R2-2 は必要。`backlog-comment` も無いので R2-1 も必要。
+
+**ついでに見つかった未点火**：`contract-intake` もスコープに無い（`ContractIntakeWorkspace.tsx`
+＋`_CONTRACT_INTAKE_WRITES_ENABLED` は実装済み）。契約インテークの書込を使う予定があるなら
+R2 に足す。使わないなら明示的に「使わない」と決めて記録する。
 
 ## 2. Phase R1 — 点火経路の配線（コード・0.5日）
 
@@ -115,7 +129,6 @@ V2 に相当画面は無い。**実運用されているかどうかの確認が
 
 ## 7. この計画で確認していないこと
 
-- 本番の `_WRITE_SCOPES` の実値（§1 のコマンドで確認する。`outbound-conditions` の有無で
-  R2-2 の要否が変わる）
+- 契約インテーク書込（`contract-intake`）を使うのかどうか（未点火であることは確認済み）
 - V1 の権利ツリーの重複判定の正確なルール（`workModel.ts` の `rights-tree` を読んで写す）
 - ライセンスマトリクスの利用実態
