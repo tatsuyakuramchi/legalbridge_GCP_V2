@@ -524,8 +524,29 @@ gcloud run services describe legalbridge-v2-write-test --project legalbridge-488
   --region asia-northeast1 --format=yaml | grep -i -B2 -A2 iap
 ```
 
-IAP OAuth Admin API は廃止済みのため、programmaticClients への登録はコンソール作業
-（Security → Identity-Aware Proxy → 対象サービス → 設定）。IAM の付与はコマンドで足りる:
+**programmaticClients の登録もコマンドで足りる**（2026-08-18 実地確認）。既存の知見は
+「IAP OAuth Admin API は廃止済み→コンソール」だったが、廃止されたのは**クライアントの
+作成**だけで、設定の読み書きは `gcloud iap settings get/set` で完結する。現行から読んで
+そのまま新サービスへ流す:
+
+```bash
+gcloud iap settings get --resource-type=cloud-run \
+  --service=legalbridge-v2-write-test --region=asia-northeast1 --project legalbridge-488506
+
+cat > /tmp/iap-settings.yaml <<'YAML'
+accessSettings:
+  oauthSettings:
+    programmaticClients:
+    - 988056987352-k521jsfnimvejpt9tj5doe2k6mcgdvu6.apps.googleusercontent.com
+YAML
+gcloud iap settings set /tmp/iap-settings.yaml --resource-type=cloud-run \
+  --service=legalbridge-v2 --region=asia-northeast1 --project legalbridge-488506
+```
+
+これが無いと Scheduler の OIDC が `Invalid JWT audience` で弾かれる。ブラウザからの
+アクセスは登録前でも通る（人の認証は OAuth クライアントではなく IAP のログインで行うため）。
+
+IAM の付与はコマンドで足りる:
 
 ```bash
 gcloud beta iap web add-iam-policy-binding --resource-type=cloud-run \
@@ -534,8 +555,12 @@ gcloud beta iap web add-iam-policy-binding --resource-type=cloud-run \
   --role=roles/iap.httpsResourceAccessor
 ```
 
-**4-2 が終わったかどうかの見分け方**：未認証で叩いたときの応答が
-Cloud Run の 403 から **IAP の 401**（`x-goog-iap-generated-response: true`）に変わる。
+**4-2 が終わったかどうかの見分け方**：未認証で叩いたときの応答が Cloud Run の 403 から
+**IAP の応答**（`x-goog-iap-generated-response: true`）に変わる。ブラウザ相当のリクエストでは
+401 ではなく `302` で `accounts.google.com` へのリダイレクトになる。
+
+**✅ 2026-08-18 完了**（`legalbridge-v2`・IAP 有効／2層の IAM を現行と一致／
+programmaticClients 登録／302 リダイレクトを確認）。
 
 ```bash
 curl -s -o /dev/null -D- https://legalbridge-v2-lkyrgniooa-an.a.run.app/ | head -5
