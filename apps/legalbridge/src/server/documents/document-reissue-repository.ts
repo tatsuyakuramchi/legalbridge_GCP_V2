@@ -33,6 +33,21 @@ export class DocumentReissueError extends Error {
   }
 }
 
+// 新版番号 <base>-R<n> から版数 n を取り出す（PDF の「修正版 Rev. n」バッジ用）。
+export function reissueRevisionOf(newNumber: string, base: string): number {
+  const rest = newNumber.slice(`${base}-R`.length);
+  return /^\d+$/.test(rest) ? Number(rest) : 1;
+}
+
+// 再発行する form_data に版数（REVISION）をスタンプする。テンプレートは
+// REVISION > 0 のとき「修正版 Rev. n」バッジを出す（検収書ほか）。呼び出し側が
+// REVISION を含めていても新版の版数で上書きする（枝番と表示を必ず一致させる）。
+export function stampReissueRevision(
+  formData: Record<string, unknown>, newNumber: string, base: string
+): Record<string, unknown> {
+  return { ...formData, REVISION: reissueRevisionOf(newNumber, base) };
+}
+
 // 系列の既存番号から次の版番号 <base>-R<n> を決める（純関数・テスト可能）。
 export function nextReissueNumber(base: string, existing: Array<string | null | undefined>): string {
   let max = 0;
@@ -78,7 +93,7 @@ export class PgDocumentReissueRepository implements DocumentReissueRepository {
         [base]
       );
       const newNumber = nextReissueNumber(base, seriesRes.rows.map((r) => r.document_number));
-      const formData = input.formData ?? source.form_data ?? {};
+      const formData = stampReissueRevision(input.formData ?? source.form_data ?? {}, newNumber, base);
 
       // 新版は旧版から業務列（vendor/契約種別/表題/有効期間/台帳参照…）を丸ごと引き継ぐ（監査 P0-4）。
       // 空のまま INSERT すると V1 の tg_doc_autolink_contract が業務列 NULL の contracts 行を捏造し、
@@ -211,7 +226,8 @@ export class MemoryDocumentReissueRepository implements DocumentReissueRepositor
     this.docs.push({
       id: newId, documentNumber: newNumber, baseDocumentNumber: base, issueKey: source.issueKey,
       templateType: source.templateType, templateVersionId: source.templateVersionId,
-      formData: input.formData ?? source.formData, lifecycleStatus: "final", isPrimary: true
+      formData: stampReissueRevision(input.formData ?? source.formData, newNumber, base),
+      lifecycleStatus: "final", isPrimary: true
     });
     // 同系列でも template_type が異なる文書（例: 検収書）は正本のまま残す（P1-5）。
     for (const d of series) if (d.id !== newId && d.templateType === source.templateType) d.isPrimary = false;

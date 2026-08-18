@@ -69,7 +69,8 @@ export function DocumentRegistry({
   selectedId,
   initialQuery = "",
   onOpenMatter,
-  onDuplicate
+  onDuplicate,
+  onEditReissue
 }: {
   templates: DocumentFormSchema[];
   onCreate: () => void;
@@ -86,6 +87,8 @@ export function DocumentRegistry({
   // 確定済み文書を下敷きに次を作る。"vendor"=同じ内容を別の相手先へ、
   // "content"=同じ相手先へ別の内容を。
   onDuplicate?: (document: RegisteredDocument, mode: "vendor" | "content") => void;
+  // 確定済み文書の特例編集（編集→再発行で枝番 -R<n> を採番）。
+  onEditReissue?: (document: RegisteredDocument) => void;
 }) {
   const [importing, setImporting] = useState(false);
   const [query, setQuery] = useState(initialQuery);
@@ -246,6 +249,7 @@ export function DocumentRegistry({
         onSelectVersion={(id) => void selectDocument(id)}
         onOpenMatter={onOpenMatter}
         onDuplicate={onDuplicate}
+        onEditReissue={onEditReissue}
       />
     </div>
   </section>;
@@ -265,7 +269,8 @@ function DocumentDetail({
   onReissued,
   onSelectVersion,
   onOpenMatter,
-  onDuplicate
+  onDuplicate,
+  onEditReissue
 }: {
   document: RegisteredDocument | null;
   label?: string;
@@ -278,6 +283,7 @@ function DocumentDetail({
   onRefresh: () => Promise<void> | void;
   onOpenMatter?: (matterId: number) => void;
   onDuplicate?: (document: RegisteredDocument, mode: "vendor" | "content") => void;
+  onEditReissue?: (document: RegisteredDocument) => void;
   onVoided?: () => Promise<void> | void;
   onReissued?: (newId: number) => Promise<void> | void;
   onSelectVersion?: (id: number) => void;
@@ -340,7 +346,8 @@ function DocumentDetail({
       canCloudSign={canCloudSign}
       onSaved={onRefresh} />}
     {canReissueDocument && !isVoided && document.documentNumber &&
-      <DocumentReissueZone documentId={document.id} documentNumber={document.documentNumber} onReissued={onReissued} />}
+      <DocumentReissueZone documentId={document.id} documentNumber={document.documentNumber} onReissued={onReissued}
+        onEditReissue={onEditReissue ? () => onEditReissue(document) : undefined} />}
     {canVoidDocument && !isVoided &&
       <DocumentVoidZone documentId={document.id} documentNumber={document.documentNumber} onVoided={onVoided} />}
     <VersionHistory documentId={document.id} onSelect={onSelectVersion} />
@@ -412,10 +419,12 @@ function BulkVoidBar({ count, onCancel, onRun }: {
   </div>;
 }
 
-function DocumentReissueZone({ documentId, documentNumber, onReissued }: {
+function DocumentReissueZone({ documentId, documentNumber, onReissued, onEditReissue }: {
   documentId: number;
   documentNumber: string;
   onReissued?: (newId: number) => Promise<void> | void;
+  // 特例編集: 内容を修正してから新版を発行する（作成フォームで編集→「編集内容で再発行」）。
+  onEditReissue?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
@@ -443,7 +452,11 @@ function DocumentReissueZone({ documentId, documentNumber, onReissued }: {
   return <div className="danger-zone">
     <h3>再発行</h3>
     {!open
-      ? <button onClick={() => setOpen(true)}>この文書を再発行（新版を作成）</button>
+      ? <div className="reissue-buttons">
+          <button onClick={() => setOpen(true)}>この文書を再発行（同じ内容で新版）</button>
+          {onEditReissue &&
+            <button onClick={onEditReissue}>特例編集して再発行（内容を修正して新版 -R…）</button>}
+        </div>
       : <div className="danger-form">
           <p className="hub-note">
             <strong>{documentNumber}</strong> を基に新版（<code>{documentNumber}-R…</code>）を採番して発行します。

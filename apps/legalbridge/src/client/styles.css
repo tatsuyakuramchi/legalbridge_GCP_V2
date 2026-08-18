@@ -2054,6 +2054,18 @@ textarea { width: 100%; min-height: 90px; resize: vertical; line-height: 1.6; }
 .step-card .step-body { padding: 14px 16px; display: grid; gap: 10px; }
 .po-selected-note { margin: 0; font-size: 12.5px; color: var(--accent-ink);
   background: var(--surface-tint); border-radius: 8px; padding: 6px 10px; }
+/* 確定済み文書の特例編集（編集→再発行で枝番 -R<n>） */
+.reissue-edit-panel { border: 1.5px solid var(--accent); background: var(--surface-tint);
+  border-radius: 12px; padding: 14px 16px; display: grid; gap: 8px; margin-bottom: 12px; }
+.reissue-edit-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.reissue-edit-head strong { color: var(--accent-ink); }
+.reissue-edit-head span { font-size: 12px; color: var(--ink-soft); }
+.reissue-edit-panel p { margin: 0; font-size: 13px; }
+.reissue-edit-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.reissue-edit-actions input { flex: 1; min-width: 180px; border: 1px solid var(--border-strong);
+  border-radius: 8px; padding: 8px 10px; }
+.reissue-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+
 /* 検収明細カードに畳み込んだグループ（IV. 納品明細 / V. 進捗・財務） */
 .step-subgroup { border-top: 1px dashed var(--border); padding-top: 12px; display: grid; gap: 8px; }
 .step-subgroup h3 { margin: 0; font-size: 13px; color: var(--ink-soft); }

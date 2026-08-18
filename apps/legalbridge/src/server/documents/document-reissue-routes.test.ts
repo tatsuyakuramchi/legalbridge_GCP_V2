@@ -117,3 +117,33 @@ test("reissue: 権限未整備(FORBIDDEN_DB)は503", async () => {
   assert.equal(res.status, 503);
   assert.equal(res.body.code, "DOCUMENT_REISSUE_FORBIDDEN_DB");
 });
+
+// 特例編集（編集→再発行）: 編集後の formData で新版を作り、版数 REVISION を
+// スタンプする（PDF の「修正版 Rev. n」バッジ＝枝番と必ず一致させる）。
+
+test("reissue: 編集後の formData で新版を作り REVISION を版数でスタンプする", async () => {
+  const target = appFor({ enabled: true });
+  const res = await request(target.app).post("/api/v2/documents/1/reissue")
+    .send({
+      confirmation: "COMMIT_DOCUMENT_REISSUE", reason: "金額修正",
+      formData: { PROJECT_TITLE: "修正後", REVISION: 99 }
+    }).expect(200);
+  const created = target.docs.find((d) => d.documentNumber === res.body.newNumber)!;
+  assert.equal(created.formData.PROJECT_TITLE, "修正後");
+  // 呼び出し側が REVISION を持っていても枝番の版数で上書きされる
+  assert.equal(created.formData.REVISION, 1);
+  assert.match(String(res.body.newNumber), /-R1$/);
+});
+
+test("reissue: formData 省略時も REVISION がスタンプされる（2版目は Rev.2）", async () => {
+  const target = appFor({ enabled: true });
+  await request(target.app).post("/api/v2/documents/1/reissue")
+    .send({ confirmation: "COMMIT_DOCUMENT_REISSUE" }).expect(200);
+  const first = target.docs.find((d) => d.documentNumber?.endsWith("-R1"))!;
+  assert.equal(first.formData.REVISION, 1);
+  const res2 = await request(target.app).post(`/api/v2/documents/${first.id}/reissue`)
+    .send({ confirmation: "COMMIT_DOCUMENT_REISSUE" }).expect(200);
+  const second = target.docs.find((d) => d.documentNumber === res2.body.newNumber)!;
+  assert.equal(second.formData.REVISION, 2);
+  assert.match(String(res2.body.newNumber), /-R2$/);
+});

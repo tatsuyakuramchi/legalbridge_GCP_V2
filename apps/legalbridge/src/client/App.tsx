@@ -263,6 +263,8 @@ export function App() {
   const [duplicateValues, setDuplicateValues] = useState<DocumentFormData | null>(null);
   const [duplicateFrom, setDuplicateFrom] = useState<string | null>(null);
   const [duplicateMode, setDuplicateMode] = useState<DuplicateMode>("vendor");
+  // 確定済み文書の特例編集（編集→再発行で枝番 -R<n> を採番）。編集元の文書。
+  const [reissueSource, setReissueSource] = useState<{ id: number; number: string } | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -352,6 +354,7 @@ export function App() {
     if (!response.ok) return;
     setFormNonce((v) => v + 1);
     setDraftSelection(null);
+    setReissueSource(null);
     setNewDocSeed({});
     setNewDocIssueKey(document.issueKey ?? "");
     setDuplicateValues(duplicateFormData(document.formData ?? {}, mode));
@@ -361,10 +364,29 @@ export function App() {
     setView("document");
   }
 
+  // 確定済み文書の特例編集。内容を丸ごとフォームへ読み込み、確定の代わりに
+  // 「編集内容で再発行」を実行して枝番 <番号>-R<n> の新版を発番する。
+  async function editReissueDocument(document: RegisteredDocument) {
+    if (!document.documentNumber) return;
+    const response = await fetch(
+      `/api/v2/document-templates/${encodeURIComponent(document.templateType)}/form-schema`);
+    if (!response.ok) return;
+    setFormNonce((v) => v + 1);
+    setDraftSelection(null);
+    setNewDocSeed({});
+    setNewDocIssueKey(document.issueKey ?? "");
+    setDuplicateValues((document.formData ?? {}) as DocumentFormData);
+    setDuplicateFrom(null);
+    setReissueSource({ id: document.id, number: document.documentNumber });
+    setSchema(await response.json());
+    setView("document");
+  }
+
   async function openDocumentForm(templateKey: string) {
     setFormNonce((v) => v + 1);
     setDuplicateValues(null);
     setDuplicateFrom(null);
+    setReissueSource(null);
     const response = await fetch(
       `/api/v2/document-templates/${encodeURIComponent(templateKey)}/form-schema`
     );
@@ -379,6 +401,7 @@ export function App() {
       `/api/v2/document-templates/${encodeURIComponent(templateType)}/form-schema`
     );
     if (!response.ok) return;
+    setReissueSource(null);
     setDraftSelection({ issueKey, templateType });
     setSchema(await response.json());
     setView("document");
@@ -533,7 +556,8 @@ export function App() {
             initialQuery={deepLinkIssue}
             onOpenMatter={(matterId) => { setSearchSelection({ target: "matter", id: String(matterId), title: "" }); setView("matters"); }}
             selectedId={searchSelection?.target === "document" ? Number(searchSelection.id) : undefined}
-            onDuplicate={(document, mode) => void duplicateDocument(document, mode)} />
+            onDuplicate={(document, mode) => void duplicateDocument(document, mode)}
+            onEditReissue={(document) => void editReissueDocument(document)} />
         )}
         {view === "templates" && (
           <TemplateCatalog templates={templates} compatibility={compatibility} onSelect={openDocumentForm}
@@ -554,6 +578,8 @@ export function App() {
             duplicateValues={draftSelection ? undefined : duplicateValues ?? undefined}
             duplicateFrom={draftSelection ? undefined : duplicateFrom ?? undefined}
             duplicateMode={duplicateMode}
+            reissueSource={draftSelection ? undefined : reissueSource ?? undefined}
+            canReissueDocument={canReissueDocument}
             onBack={() => setView(draftSelection ? "drafts" : "templates")}
             onCreateNew={() => setView("templates")}
             onOpenDocuments={() => setView("documents")}
@@ -826,6 +852,8 @@ function DocumentForm({
   duplicateValues,
   duplicateFrom,
   duplicateMode,
+  reissueSource,
+  canReissueDocument = false,
   onBack,
   onCreateNew,
   onOpenDocuments,
@@ -845,6 +873,10 @@ function DocumentForm({
   // 複製元の文書番号（案内文に出す）。
   duplicateFrom?: string;
   duplicateMode?: DuplicateMode;
+  // 特例編集（確定済み文書の編集→再発行）。設定時は下書き・確定の代わりに
+  // 「編集内容で再発行」（枝番 -R<n> 採番）だけが実行できる。
+  reissueSource?: { id: number; number: string };
+  canReissueDocument?: boolean;
   onBack: () => void;
   onCreateNew?: () => void;
   onOpenDocuments?: () => void;
@@ -914,6 +946,15 @@ function DocumentForm({
           setNotice(restoredDraft
             ? "この受付番号には下書きがあります。入力中の値を保持しました（復元は下書き一覧から）"
             : "受付番号の文脈を反映しました（入力中の値は保持）");
+          return;
+        }
+        // 特例編集: 下書きより確定済みの内容（duplicateValues）を優先して読み込む。
+        // 同じ受付番号に古い下書きが残っていても、編集元は確定版でなければならない。
+        if (reissueSource) {
+          setFormData({ ...(context.formData ?? {}), ...(duplicateValues ?? {}) });
+          setDraft(null);
+          setDraftStatus("clean");
+          setNotice(`特例編集: ${reissueSource.number} の確定内容を読み込みました。修正後、下の「編集内容で再発行」を実行してください（新版 ${reissueSource.number}-R… が発番されます）`);
           return;
         }
         // Backlog抽出変数を非破壊シード（下書き復元時は既存値優先で行わない）。
@@ -1188,7 +1229,7 @@ function DocumentForm({
           <button onClick={validate}>内容をプレビュー</button>
           {/* 横の枠は 300px、狭い画面では非表示になるので、拡大導線はボタン側に置く。 */}
           {previewUrl && <a className="button-link" href={previewUrl} target="_blank" rel="noreferrer">別タブで大きく表示</a>}
-          {!readOnly && (
+          {!readOnly && !reissueSource && (
             <>
               {draft && (
                 <button
@@ -1220,6 +1261,18 @@ function DocumentForm({
           )}
         </div>
       </div>
+      {reissueSource && !finalizedDocument && !readOnly && (
+        <ReissueEditPanel sourceId={reissueSource.id} sourceNumber={reissueSource.number}
+          canReissue={canReissueDocument} formData={formData}
+          onDone={(result) => {
+            setFinalizedDocument({
+              id: result.newId, documentNumber: result.newNumber, matterId: null,
+              integrations: { pdf: "", drive: "", backlog: "" }
+            });
+            setNotice(`編集内容で再発行しました: ${result.newNumber}（旧版の実績 ${result.carriedEvents} 件を引き継ぎ）`);
+          }}
+          onError={(message) => setNotice(message)} />
+      )}
       {finalizedDocument && (
         <div className="finalization-result" role="status">
           <div>
@@ -1335,6 +1388,63 @@ function DocumentForm({
   );
 }
 
+
+// ── 確定済み文書の特例編集（編集→再発行で枝番 -R<n> を採番）─────────────
+// 通常の確定・下書きは使えない。修正した formData をそのまま reissue API へ渡し、
+// サーバが <番号>-R<n> を採番・旧版を「再発行済み」に倒し・実績（消化）を新版へ
+// 引き継ぐ（残高不変）。PDF には「修正版 Rev. n」バッジが自動で付く（REVISION スタンプ）。
+function ReissueEditPanel({ sourceId, sourceNumber, canReissue, formData, onDone, onError }: {
+  sourceId: number;
+  sourceNumber: string;
+  canReissue: boolean;
+  formData: DocumentFormData;
+  onDone: (result: { newId: number; newNumber: string; carriedEvents: number }) => void;
+  onError: (message: string) => void;
+}) {
+  const [reason, setReason] = useState("");
+  const [confirmText, setConfirmText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const CONFIRM = "COMMIT_DOCUMENT_REISSUE";
+
+  async function submit() {
+    setBusy(true);
+    try {
+      const response = await fetch(`/api/v2/documents/${sourceId}/reissue`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmation: CONFIRM, reason: reason.trim() || undefined, formData })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) { onError(data.error ?? "再発行に失敗しました"); return; }
+      onDone({ newId: Number(data.newId), newNumber: String(data.newNumber), carriedEvents: Number(data.carriedEvents ?? 0) });
+    } catch {
+      onError("通信に失敗しました");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <div className="reissue-edit-panel" role="note">
+    <div className="reissue-edit-head">
+      <strong>特例編集モード — {sourceNumber}</strong>
+      <span>確定済み文書を修正しています。通常の下書き・確定は使えません。</span>
+    </div>
+    <p>実行すると新版 <code>{sourceNumber}-R…</code> が発番され、旧版は「再発行済み」になります。
+      旧版に紐づく実績（消化）は新版へ引き継がれ（残高は変わりません）、
+      PDF には「修正版 Rev. n」バッジが付きます。プレビューで内容を確認してから実行してください。</p>
+    {canReissue
+      ? <div className="reissue-edit-actions">
+        <input value={reason} onChange={(event) => setReason(event.target.value)}
+          placeholder="修正理由（任意・台帳へ記録）" />
+        <input value={confirmText} onChange={(event) => setConfirmText(event.target.value)}
+          placeholder={CONFIRM} />
+        <button className="primary" disabled={busy || confirmText !== CONFIRM} onClick={submit}
+          title={confirmText !== CONFIRM ? `合言葉 ${CONFIRM} を入力してください` : undefined}>
+          {busy ? "処理中…" : "編集内容で再発行"}
+        </button>
+      </div>
+      : <p className="hub-note">この環境では文書再発行（document-reissue）が有効になっていません。</p>}
+  </div>;
+}
 
 // 発注書の自動集計を入力中に見せる。合計金額の欄は「明細から自動集計」と書いてあるのに
 // ただの空の数値入力で、明細を何行入れても 0 のままだった（PDF も同様）。
