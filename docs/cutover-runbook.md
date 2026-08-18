@@ -571,9 +571,10 @@ curl -s -o /dev/null -D- https://legalbridge-v2-lkyrgniooa-an.a.run.app/ | head 
 
 ### 4-3. Scheduler 3 ジョブの向き先を変える
 
-**コマンド例を写さないこと。** `phase9-automation-ignition.md` の作成コマンドは
-`--oidc-token-audience "$SVC_URL"` のままだが、実地では audience は IAP クライアント ID。
-現行ジョブの設定を読んで引き継ぐ:
+**✅ 2026-08-18 実施済み。** 3ジョブとも audience は **IAP クライアント ID**
+（`988056987352-k521js…`）で、サービス非依存だったため **`--uri` だけ**の差し替えで済んだ。
+`phase9-automation-ignition.md` の作成コマンド例は `--oidc-token-audience "$SVC_URL"` のままで
+実態と食い違っている（冒頭の実地知見の方が正しい）。**例を写さず、現行ジョブを読むこと**:
 
 ```bash
 for job in lb-v2-daily-checks lb-v2-inspection-digest lb-v2-cloudsign-sync; do
@@ -622,6 +623,15 @@ gcloud logging read \
 ```
 
 `200` が新サービス側のログに出れば、Scheduler → IAP → 新サービスが通っている。
+**旧サービス側に同時刻のログが出ないこと**も併せて見る（切替漏れの検出）。
+
+**✅ 2026-08-18 確認済み**：新サービスに 200／旧サービスに記録なし／webhook はリレー経由で
+新サービスのハンドラが応答（`{"ok":true,"skipped":"unknown document","status":"sent"}`）。
+
+なお `gcloud run services update` が表示する Service URL は
+`https://lb-v2-receiver-988056987352.asia-northeast1.run.app` 形式になることがあるが、
+CloudSign に登録済みの `https://lb-v2-receiver-lkyrgniooa-an.a.run.app` と**同じサービスを指す**
+（Cloud Run の新旧2形式）。外部登録の変更は不要。
 
 ### 4-6. 利用者の向き先と旧サービスの扱い
 
