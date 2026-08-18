@@ -5,5 +5,5 @@
     "rootDir": "src",
     "types": ["node"]
   },
-  "include": ["src/server", "src/types.ts", "src/slack-mentions.ts", "src/purchase-order-totals.ts", "src/honorific.ts", "src/matter-slack-message.ts", "src/notification-settings.ts"]
+  "include": ["src/server", "src/types.ts", "src/slack-mentions.ts", "src/purchase-order-totals.ts", "src/honorific.ts", "src/matter-slack-message.ts", "src/notification-settings.ts", "src/rights-aggregation.ts"]
 }
