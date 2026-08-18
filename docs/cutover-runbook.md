@@ -419,6 +419,15 @@ jq '.substitutions._SLACK_BOT_USER_ID = "U0XXXXXXXXX"' /tmp/build-flags.json > /
 `channels:read` は未付与でも構わない。その場合は選択UIの代わりに**チャンネルIDの直接入力**に
 なるだけで、通知設定そのものは行える（一覧取得の失敗はエラーにせず理由を画面に出す）。
 
+**2026-08-18 時点の実トークンのスコープ**（`auth.test` のレスポンスヘッダより）:
+`chat:write, im:write, users:read, commands, files:read, im:history, groups:read,
+channels:history, groups:history, groups:write, incoming-webhook`
+→ `groups:read` はあるが **`channels:read` が無い**。法務相談チャンネルは公開（`C…`）なので、
+一覧を出したければ `channels:read` を追加して**再インストール**する（スコープ追加だけでは
+トークンに付かない。再発行された Bot トークンは設定画面「APIキー」タブから入れ直す）。
+`conversations.list` は公開＋非公開をまとめて要求すると片方のスコープ不足で全体が
+`missing_scope` になるため、その場合は種別ごとに取り直して**取れる方だけ**を出す。
+
 案件スレッドは V1 が法務相談チャンネルへルート投稿しているため、実データは全件
 チャンネル（`channel_id` が `C` 始まり・V1 21件／V2 3件＝24件すべて）。`im:history` では
 読めない。**✅ 2026-08-18 解決**（`channels:history` 付与＋再インストール → V1 由来の

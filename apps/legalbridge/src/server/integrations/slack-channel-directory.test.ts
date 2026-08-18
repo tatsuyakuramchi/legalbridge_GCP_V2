@@ -42,15 +42,35 @@ test("next_cursor を辿って全ページ集める", async () => {
 });
 
 // スコープが無いのは「設定できない」ではなく「一覧が出せない」だけ。画面は直接入力へ落とす。
-test("missing_scope は available:false と理由を返す（例外にしない）", async () => {
-  const client = new StubClient([new SlackWebApiError("nope", "missing_scope")]);
+test("どちらのスコープも無ければ available:false と理由を返す（例外にしない）", async () => {
+  const client = new StubClient([
+    new SlackWebApiError("nope", "missing_scope"),   // 両方まとめて
+    new SlackWebApiError("nope", "missing_scope"),   // 公開のみ
+    new SlackWebApiError("nope", "missing_scope")    // 非公開のみ
+  ]);
   const listing = await new SlackChannelDirectory(client).list();
   assert.equal(listing.available, false);
   assert.deepEqual(listing.channels, []);
   assert.match(listing.reason ?? "", /channels:read/);
 });
 
-test("その他の失敗も available:false（設定画面を落とさない）", async () => {
+// 実地で見た構成：groups:read だけ付いていて channels:read が無い。
+// 両方まとめての要求は missing_scope で落ちるが、非公開だけなら取れる。
+test("片方のスコープしか無ければ、取れる方だけを返す", async () => {
+  const client = new StubClient([
+    new SlackWebApiError("nope", "missing_scope"),
+    new SlackWebApiError("nope", "missing_scope"),
+    { channels: [{ id: "C0PRIVATE01", name: "legal-private", is_private: true, is_member: true }] }
+  ]);
+  const listing = await new SlackChannelDirectory(client).list();
+  assert.equal(listing.available, true);
+  assert.deepEqual(listing.channels.map((c) => c.id), ["C0PRIVATE01"]);
+  assert.match(listing.reason ?? "", /公開チャンネル/);
+  assert.deepEqual(client.calls.map((c) => c.types),
+    ["public_channel,private_channel", "public_channel", "private_channel"]);
+});
+
+test("その他の失敗は再試行せず available:false（設定画面を落とさない）", async () => {
   const client = new StubClient([new SlackWebApiError("boom", "ratelimited")]);
   const listing = await new SlackChannelDirectory(client).list();
   assert.equal(listing.available, false);

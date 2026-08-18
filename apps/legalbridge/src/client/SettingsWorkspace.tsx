@@ -202,6 +202,11 @@ export function SettingsWorkspace({ canEdit = false }: { canEdit?: boolean }) {
           <p><b>チャンネルの一覧を取得できないため、チャンネルIDを直接入力してください。</b>
             {channelListing.reason ? ` ${channelListing.reason}` : ""}</p>
         )}
+        {/* 一覧は出せたが一部だけ（片方のスコープしか無い等）のときも、その旨を出す。 */}
+        {channelListing?.available && channelListing.reason && <p>{channelListing.reason}</p>}
+        {channelListing?.available && channelListing.truncated && (
+          <p>チャンネルが多いため一覧は途中までです。見つからない場合はチャンネルIDを直接入力してください。</p>
+        )}
       </div>
     )}
     {tab === "secrets" && !error && (

@@ -70,6 +70,41 @@ export class SlackChannelDirectory {
   }
 
   private async load(): Promise<SlackChannelListing> {
+    // まず両方まとめて要求する。片方のスコープしか無いと Slack は missing_scope を返して
+    // 全部落ちるため、その場合は種別ごとに取り直して「取れる方だけ」出す。
+    // （実地：channels:read 無し・groups:read 有りのインストールがあった）
+    const both = await this.loadTypes("public_channel,private_channel");
+    if (both.ok) return { available: true, channels: sortByName(both.channels), truncated: both.truncated };
+    if (both.code !== "missing_scope") {
+      return {
+        available: false, channels: [], truncated: false,
+        reason: `Slack からチャンネル一覧を取得できませんでした（${both.code}）。`
+      };
+    }
+    const publicChannels = await this.loadTypes("public_channel");
+    const privateChannels = await this.loadTypes("private_channel");
+    if (!publicChannels.ok && !privateChannels.ok) {
+      return {
+        available: false, channels: [], truncated: false,
+        reason: "Slack アプリに channels:read（非公開チャンネルも選ぶ場合は groups:read）が付与されていません。"
+      };
+    }
+    const channels = sortByName([
+      ...(publicChannels.ok ? publicChannels.channels : []),
+      ...(privateChannels.ok ? privateChannels.channels : [])
+    ]);
+    // 片方だけ取れた状態を黙って通すと「あるはずのチャンネルが出ない」と見える。理由を残す。
+    const missing = !publicChannels.ok ? "公開チャンネル（channels:read）" : "非公開チャンネル（groups:read）";
+    return {
+      available: true, channels,
+      truncated: (publicChannels.ok && publicChannels.truncated) || (privateChannels.ok && privateChannels.truncated),
+      reason: `${missing}は一覧に出ません（スコープ未付与）。その場合はチャンネルIDを直接入力してください。`
+    };
+  }
+
+  private async loadTypes(types: string): Promise<
+    { ok: true; channels: SlackChannelSummary[]; truncated: boolean } | { ok: false; code: string }
+  > {
     const channels: SlackChannelSummary[] = [];
     let cursor = "";
     let truncated = false;
@@ -77,23 +112,13 @@ export class SlackChannelDirectory {
       let payload: { channels?: unknown; response_metadata?: { next_cursor?: unknown } };
       try {
         payload = await this.client.post("conversations.list", {
-          types: "public_channel,private_channel",
+          types,
           exclude_archived: true,
           limit: PAGE_SIZE,
           ...(cursor ? { cursor } : {})
         }) as typeof payload;
       } catch (error) {
-        if (error instanceof SlackWebApiError && error.code === "missing_scope") {
-          return {
-            available: false, channels: [], truncated: false,
-            reason: "Slack アプリに channels:read（非公開チャンネルも選ぶ場合は groups:read）が付与されていません。"
-          };
-        }
-        return {
-          available: false, channels: [], truncated: false,
-          reason: `Slack からチャンネル一覧を取得できませんでした（${
-            error instanceof SlackWebApiError ? error.code : "unknown_error"}）。`
-        };
+        return { ok: false, code: error instanceof SlackWebApiError ? error.code : "unknown_error" };
       }
       for (const raw of Array.isArray(payload.channels) ? payload.channels : []) {
         const summary = toSummary(raw);
@@ -104,7 +129,10 @@ export class SlackChannelDirectory {
       if (!cursor) break;
       if (page === MAX_PAGES - 1) truncated = true;
     }
-    channels.sort((a, b) => a.name.localeCompare(b.name, "ja"));
-    return { available: true, channels, truncated };
+    return { ok: true, channels, truncated };
   }
+}
+
+function sortByName(channels: SlackChannelSummary[]): SlackChannelSummary[] {
+  return [...channels].sort((a, b) => a.name.localeCompare(b.name, "ja"));
 }
