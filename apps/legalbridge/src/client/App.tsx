@@ -8,7 +8,14 @@ import type {
 } from "../types";
 import { SpecializedDocumentForms } from "./SpecializedDocumentForms";
 import { computeInspectionTotals, formatYen } from "../inspection-totals";
-import { isFieldVisible, isInspectionFallbackFieldHidden } from "./field-visibility";
+import {
+  buildMultiStatementPatch, buildSingleStatementPatch, statementPaymentInfo, toNumber,
+  type StatementReceiptRow
+} from "../royalty-statement";
+import {
+  isFieldVisible, isInspectionFallbackFieldHidden,
+  isRoyaltyComputedFieldHidden, isRoyaltyStructuredActive
+} from "./field-visibility";
 import { MasterDataPicker } from "./MasterDataPicker";
 import { DocumentRegistry, type RegisteredDocument } from "./DocumentRegistry";
 import { MatterRegistry } from "./MatterRegistry";
@@ -946,6 +953,7 @@ function DocumentForm({
   const visibleFields = schema.fields.filter((field) =>
     field.type !== "hidden" && !isSpecializedDataField(schema.templateKey, field.name) &&
     !isInspectionFallbackFieldHidden(schema.templateKey, field.name, formData) &&
+    !isRoyaltyComputedFieldHidden(schema.templateKey, field.name, formData) &&
     isFieldVisible(field, formData)
   );
   const groups = [...new Set(visibleFields.map((field) => field.group ?? "基本情報"))];
@@ -958,6 +966,11 @@ function DocumentForm({
     ? buildInspectionSteps(formData, groups, visibleFields)
     : null;
   const activeInspectionStep = inspectionSteps?.find((step) => !step.done) ?? null;
+  // 利用許諾料計算書も同じステップカード＋右レールで組む（1 契約と条件 2 実績 3〜 グループ）。
+  const royaltySteps = templateKey === "royalty_statement"
+    ? buildRoyaltySteps(formData, groups, visibleFields)
+    : null;
+  const activeRoyaltyStep = royaltySteps?.find((step) => !step.done) ?? null;
 
   const applyPickerPatch = (patch: DocumentFormData, message: string) => {
     if (finalizedDocument) return;
@@ -1262,6 +1275,22 @@ function DocumentForm({
                 step={inspectionSteps[index + 2]} active={activeInspectionStep === inspectionSteps[index + 2]}>
                 {renderGroupFields(group)}
               </InspectionStepCard>)}
+          </> : royaltySteps ? <>
+            <InspectionStepCard no={1} title="契約と条件" step={royaltySteps[0]}
+              active={activeRoyaltyStep === royaltySteps[0]}>
+              <MasterDataPicker schema={schema} formData={formData} onApply={applyPickerPatch} />
+              {Boolean(formData.linked_contract_number) &&
+                <p className="po-selected-note">契約番号 <strong>{String(formData.linked_contract_number)}</strong> を対象契約として引用済みです。</p>}
+            </InspectionStepCard>
+            <InspectionStepCard no={2} title={String(formData.statementMode) === "multi" ? "受領明細（サブライセンシー入金）" : "実績"}
+              step={royaltySteps[1]} active={activeRoyaltyStep === royaltySteps[1]}>
+              <SpecializedDocumentForms templateKey={templateKey} formData={formData} onChange={updateValue} />
+            </InspectionStepCard>
+            {groups.map((group, index) =>
+              <InspectionStepCard key={group} id={`group-${index}`} no={index + 3} title={group}
+                step={royaltySteps[index + 2]} active={activeRoyaltyStep === royaltySteps[index + 2]}>
+                {renderGroupFields(group)}
+              </InspectionStepCard>)}
           </> : <>
             <MasterDataPicker schema={schema} formData={formData} onApply={applyPickerPatch} />
             {groups.map((group, index) => <section id={`group-${index}`} key={group}><h2>{group}</h2>
@@ -1275,8 +1304,12 @@ function DocumentForm({
             <SpecializedDocumentForms templateKey={schema.templateKey} formData={formData} onChange={updateValue} />
           </>}
         </form>
-        <aside className={inspectionSteps ? "preview with-rail" : "preview"}>
+        <aside className={inspectionSteps || royaltySteps ? "preview with-rail" : "preview"}>
           {inspectionSteps && <InspectionRail formData={formData} steps={inspectionSteps}
+            onPreview={validate} onSaveDraft={saveDraft} readOnly={readOnly}
+            saveDisabled={draftStatus === "saving" || draftStatus === "loading" || !issueKey.trim() || Boolean(finalizedDocument)}
+            saveLabel={draftStatus === "saving" ? "処理中…" : draft ? "下書きを更新" : "下書きを保存"} />}
+          {royaltySteps && <RoyaltyRail formData={formData} steps={royaltySteps} onToggleWithholding={(next) => updateValue("rsWithholding", next)}
             onPreview={validate} onSaveDraft={saveDraft} readOnly={readOnly}
             saveDisabled={draftStatus === "saving" || draftStatus === "loading" || !issueKey.trim() || Boolean(finalizedDocument)}
             saveLabel={draftStatus === "saving" ? "処理中…" : draft ? "下書きを更新" : "下書きを保存"} />}
@@ -1334,7 +1367,7 @@ function isSpecializedDataField(templateKey: string, fieldName: string) {
     intl_purchase_order: ["items", "expenses", "other_fees", "financial_conditions"],
     individual_license_terms: ["financial_conditions", "サブライセンシー一覧"],
     individual_license_terms_v3: ["v3_conds", "v3_lcs", "v3_sublicensees", "v3_calc_base_rows", "v3_special_extras"],
-    royalty_statement: ["lines"],
+    royalty_statement: ["lines", "rs_receipts", "lineGroups", "receiptRows"],
     inspection_certificate: ["delivery_line_items", "other_fees", "expenses", "changeLogs"]
   };
   return specializedFields[templateKey]?.includes(fieldName) ?? false;
@@ -1429,25 +1462,53 @@ function roleLabel(role: "admin" | "legal" | "requester") {
 // 3以降はスキーマのグループがそのままステップになる（グループ名は DB 定義に従う）。
 type InspectionStep = { title: string; done: boolean; state: string };
 
-function buildInspectionSteps(
+function buildGroupSteps(
   formData: DocumentFormData, groups: string[], visibleFields: TemplateField[]
 ): InspectionStep[] {
-  const lines = Array.isArray(formData.delivery_line_items) ? formData.delivery_line_items as unknown[] : [];
   const filled = (value: unknown) =>
     value !== "" && value != null && value !== false;
-  const poDone = lines.length > 0 || Boolean(formData.parent_po_number);
-  const groupSteps = groups.map((group) => {
+  return groups.map((group) => {
     const fields = visibleFields.filter((field) => (field.group ?? "基本情報") === group);
     const required = fields.filter((field) => field.required);
     const done = fields.some((field) => filled(formData[field.name])) &&
       required.every((field) => filled(formData[field.name]));
     return { title: group, done, state: done ? "入力済み" : "未入力" };
   });
+}
+
+function buildInspectionSteps(
+  formData: DocumentFormData, groups: string[], visibleFields: TemplateField[]
+): InspectionStep[] {
+  const lines = Array.isArray(formData.delivery_line_items) ? formData.delivery_line_items as unknown[] : [];
+  const poDone = lines.length > 0 || Boolean(formData.parent_po_number);
   return [
     { title: "親の発注書", done: poDone, state: poDone ? "選択済み" : "「DBから引用」で検索" },
     { title: "検収明細", done: lines.length > 0,
       state: lines.length > 0 ? `${lines.length}件` : "未入力（単票入力も可）" },
-    ...groupSteps
+    ...buildGroupSteps(formData, groups, visibleFields)
+  ];
+}
+
+// 利用許諾料計算書のステップ（1 契約と条件 2 実績/受領明細 3〜 スキーマグループ）。
+function buildRoyaltySteps(
+  formData: DocumentFormData, groups: string[], visibleFields: TemplateField[]
+): InspectionStep[] {
+  const contractDone = Boolean(
+    formData.linked_contract_number || formData.CONTRACT_NO ||
+    formData.licensor || formData.originalWork
+  );
+  const multi = String(formData.statementMode) === "multi";
+  const receipts = Array.isArray(formData.rs_receipts) ? (formData.rs_receipts as unknown[]).length : 0;
+  const legacyLines = Array.isArray(formData.lines) && (formData.lines as unknown[]).length > 0;
+  const structured = isRoyaltyStructuredActive(formData);
+  return [
+    { title: "契約と条件", done: contractDone,
+      state: contractDone ? "引用済み" : "「DBから引用」で契約・取引先を選択" },
+    { title: multi ? "受領明細" : "実績", done: structured || legacyLines,
+      state: multi
+        ? (receipts ? `${receipts}件` : "入金行を追加")
+        : structured ? "自動計算中" : legacyLines ? "旧形式の明細あり" : "実績を入力" },
+    ...buildGroupSteps(formData, groups, visibleFields)
   ];
 }
 
@@ -1490,6 +1551,117 @@ function InspectionRail({ formData, steps, onPreview, onSaveDraft, saveDisabled,
           <small>源泉徴収前・PDF と同一の計算式（明細があるときは手入力の金額欄より優先）</small>
         </>}
     </div>
+    <div className="rail-card">
+      <h3>進行状況</h3>
+      <div className="rail-progress">
+        {steps.map((step) => <span key={step.title} className={step.done ? "done" : ""}>{step.title}</span>)}
+      </div>
+    </div>
+    <div className="rail-card rail-actions">
+      <button type="button" className="primary" onClick={onPreview}>プレビュー</button>
+      {!readOnly &&
+        <button type="button" onClick={onSaveDraft} disabled={saveDisabled}>{saveLabel}</button>}
+    </div>
+  </div>;
+}
+
+// 利用許諾料計算書の右レール: 計算の滝（共有エンジン＝PDF と同一の計算式）。
+// 源泉徴収はテンプレートに出ない（支払処理側で控除）ため、参考表示のみ。
+function RoyaltyRail({ formData, steps, onPreview, onSaveDraft, onToggleWithholding, saveDisabled, saveLabel, readOnly }: {
+  formData: DocumentFormData; steps: InspectionStep[];
+  onPreview: () => void; onSaveDraft: () => void;
+  onToggleWithholding: (next: boolean) => void;
+  saveDisabled: boolean; saveLabel: string; readOnly: boolean;
+}) {
+  const multi = String(formData.statementMode) === "multi";
+  const taxRate = toNumber(formData.taxRate) || 10;
+  const withholding = Boolean(formData.rsWithholding);
+  const yen = (value: number) => `¥${value.toLocaleString("ja-JP")}`;
+
+  let body: React.ReactNode;
+  let subtotalExTax = 0;
+  let mgNote: string | null = null;
+  if (multi) {
+    const receipts = (Array.isArray(formData.rs_receipts) ? formData.rs_receipts as Array<Record<string, unknown>> : [])
+      .map((row): StatementReceiptRow => ({
+        sublicensee: String(row.sublicensee ?? ""),
+        currency: String(row.currency ?? "JPY"),
+        amount: toNumber(row.amount),
+        fxMode: String(row.fxMode) === "post" ? "post" : "pre",
+        fxRate: toNumber(row.fxRate) || undefined
+      }))
+      .filter((row) => row.sublicensee !== "" || row.amount > 0);
+    if (!receipts.length) {
+      body = <p className="hub-note">入金行を追加すると自動計算します。</p>;
+    } else {
+      const ratePct = toNumber(formData.rsInRatePct) || toNumber(formData.rsRatePct);
+      const result = buildMultiStatementPatch({ receipts, ratePct, taxRatePct: taxRate });
+      subtotalExTax = result.totalPaymentJpy;
+      body = <>
+        <div className="calc-row"><span>円 base 合計</span><span>{yen(result.totalSalesJpy)}</span></div>
+        <div className="calc-row"><span>支払合計（税抜・{ratePct || 0}%）</span><span>{yen(result.totalPaymentJpy)}</span></div>
+        <div className="calc-row"><span>消費税（{taxRate}%）</span><span>{yen(result.tax)}</span></div>
+        <div className="calc-row total"><span>源泉前合計（税込）</span><strong>{yen(result.totalIncTax)}</strong></div>
+      </>;
+    }
+  } else if (isRoyaltyStructuredActive(formData)) {
+    const calcBasis = String(formData.rsCalcType ?? "");
+    const { fee, patch } = buildSingleStatementPatch({
+      calcType: calcBasis === "event"
+        ? "manufacturing"
+        : String(formData.rsBasisKind) === "sublicense" ? "sublicense" : "sales",
+      msrp: toNumber(formData.rsMsrp),
+      quantity: toNumber(formData.rsQuantity),
+      sampleQuantity: toNumber(formData.rsSampleQuantity),
+      ratePct: toNumber(formData.rsRatePct),
+      mgAmount: toNumber(formData.rsMgAmount),
+      agAmount: toNumber(formData.rsAgAmount),
+      agConsumedBefore: toNumber(formData.rsAgConsumedBefore),
+      taxRatePct: taxRate
+    });
+    subtotalExTax = fee.actual_ex_tax;
+    if (fee.mg_floor_applied) mgNote = `グロスが MG を下回ったため MG を採用しました（+${yen(fee.mg_topup_this_time)}）。`;
+    if (fee.ag_offset_this_time > 0) {
+      mgNote = `${mgNote ? `${mgNote} ` : ""}AG から ${yen(fee.ag_offset_this_time)} を充当${fee.ag_fully_consumed ? "（消化完了・次回からは充当なし）" : `（残 ${yen(fee.ag_remaining_after)}）`}。`;
+    }
+    body = <>
+      {calcBasis === "event" &&
+        <div className="calc-row note"><span>{String(patch.billableQuantity)}個 × 基準価格 × {String(patch.royaltyRatePct)}%</span><span></span></div>}
+      <div className="calc-row"><span>当期利用許諾料（グロス）</span><span>¥{String(patch.grossRoyaltyStr)}</span></div>
+      {fee.mg_floor_applied &&
+        <div className="calc-row"><span>MG 適用（floor）</span><span>＋{yen(fee.mg_topup_this_time)}</span></div>}
+      {fee.ag_offset_this_time > 0 &&
+        <div className="calc-row minus"><span>AG 充当</span><span>− {yen(fee.ag_offset_this_time)}</span></div>}
+      <div className="calc-row"><span>実支払利用許諾料（税抜）</span><span>{yen(fee.actual_ex_tax)}</span></div>
+      <div className="calc-row"><span>消費税（{taxRate}%）</span><span>＋{yen(fee.tax_amount)}</span></div>
+      <div className="calc-row total"><span>源泉前合計（税込）</span><strong>{yen(fee.total_inc_tax)}</strong></div>
+    </>;
+  } else {
+    body = <p className="hub-note">ステップ2で算定タイプを選んで実績を入力すると自動計算します（旧形式の下書きは従来どおり手入力欄で編集できます）。</p>;
+  }
+
+  const paymentInfo = subtotalExTax > 0
+    ? statementPaymentInfo({ subtotalExTax, taxRatePct: taxRate, withholdingEnabled: withholding })
+    : null;
+
+  return <div className="inspection-rail">
+    <div className="rail-card">
+      <h3>計算結果（自動・入力に追従）</h3>
+      {body}
+      {paymentInfo && <>
+        <label className="rail-check">
+          <input type="checkbox" checked={withholding} disabled={readOnly}
+            onChange={(event) => onToggleWithholding(event.target.checked)} />
+          源泉徴収の参考額を表示（個人など対象のとき）
+        </label>
+        {withholding && <>
+          <div className="calc-row minus"><span>源泉徴収（参考）</span><span>− {yen(paymentInfo.withholdingTax)}</span></div>
+          <div className="calc-row"><span>差引振込見込み</span><span>{yen(paymentInfo.netTransfer)}</span></div>
+          <small>源泉は PDF には出ません（テンプレートどおり源泉前まで・控除は支払処理側）。</small>
+        </>}
+      </>}
+    </div>
+    {mgNote && <div className="rail-card mg-note">{mgNote}</div>}
     <div className="rail-card">
       <h3>進行状況</h3>
       <div className="rail-progress">

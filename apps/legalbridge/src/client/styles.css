@@ -2080,6 +2080,25 @@ textarea { width: 100%; min-height: 90px; resize: vertical; line-height: 1.6; }
   background: #e8f7ee; color: #157347; }
 .inspection-lines-table .line-remove { font-size: 12px; }
 
+/* 利用許諾料計算書の構造化入力（計算書タイプ・算定タイプ・受領明細） */
+.royalty-editor { display: grid; gap: 12px; }
+.mode-inline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mode-inline .mode-label { font-size: 12px; color: var(--ink-faint); font-weight: 700; }
+.mode-inline small { flex-basis: 100%; color: var(--ink-faint); }
+.hint-note { margin: 0; font-size: 12px; color: var(--accent-ink); background: var(--surface-tint);
+  border-radius: 8px; padding: 6px 10px; }
+.receipt-lines-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.receipt-lines-table th { text-align: left; font-size: 11.5px; color: var(--ink-soft);
+  padding: 6px 8px; border-bottom: 2px solid var(--border); }
+.receipt-lines-table th.right { text-align: right; }
+.receipt-lines-table td { padding: 7px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.receipt-lines-table td.right { text-align: right; font-variant-numeric: tabular-nums; }
+.receipt-lines-table td input[type="number"] { width: 110px; text-align: right; }
+.receipt-lines-table td input[type="date"] { width: 145px; }
+.receipt-lines-table td input.currency { width: 64px; text-transform: uppercase; }
+.receipt-lines-table td.base { white-space: nowrap; font-weight: 700; }
+.receipt-lines-table .fx-warn { display: block; color: var(--danger); font-weight: 400; font-size: 10.5px; }
+
 /* 検収書の右レール（ライブ計算・進行状況・操作） */
 .preview.with-rail { display: grid; gap: 12px; align-content: start; }
 /* .preview div は「プレビュー枠」用の破線ボックス。レール内の div には効かせない。 */
@@ -2106,6 +2125,13 @@ textarea { width: 100%; min-height: 90px; resize: vertical; line-height: 1.6; }
 .rail-progress span.done { color: #157347; }
 .rail-actions { display: grid; gap: 8px; }
 .rail-actions button { width: 100%; }
+.rail-check { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-soft);
+  margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); }
+.rail-check input { width: auto; }
+.rail-card .calc-row.minus span:last-child { color: #b3423a; }
+.rail-card .calc-row.note { font-size: 11.5px; color: var(--ink-faint); }
+.preview.with-rail .inspection-rail .rail-card.mg-note {
+  background: #fffaeb; border-color: #eed9a0; color: #8a6d0b; font-size: 12px; }
 
 /* 経費・手数料の精算（検収書・V1 ステップ2-b/2-c 相当） */
 .inspection-settlement { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; display: grid; gap: 8px; margin-top: 12px; }

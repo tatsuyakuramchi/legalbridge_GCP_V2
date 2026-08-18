@@ -409,6 +409,31 @@ psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
 適用後の確認: 最後の SELECT で `yield_visible_pos = 0`・`colspan4_count >= 3` が出ればOK。
 新しい下書きは新版で作られる（フォーム画面の「Template version」が上がる）。
 
+### 2-7d. 利用許諾料計算書テンプレ改訂（060・受領情報の明細表化）
+
+計算書フォーム再設計（単票/多明細切替・算定タイプ・サブライセンシー入金行）に合わせ、
+多明細モードの「■ 受領情報」を**サブライセンシーごとの明細表**（受領日・入金額・換算方法・
+円換算base）に拡張する新版。**行ごとに通貨と換算方法**を持てる（交換前＝入金日レートで
+円換算 round／交換後＝円転済み円額を base に、適用レートは記録として印字）。
+
+- `receiptRows`（再設計フォームの受領行）があるときだけ明細表を描画。無い旧下書き・
+  確定済み文書は**従来の label テーブルのまま**（後方互換・同一版内の分岐）。
+- 現行版への置換ベース＋出現回数ガード（見つからなければ中断）。適用済みなら
+  `receiptRows は既に存在します` で中断（冪等）。
+- グロス・MG/AG・合計などのテンプレート変数は、フォームの生値（rs* フィールド）から
+  サーバが共有エンジン（royalty/calc・tax・fx）で組み立てる＝右レールの表示と PDF は必ず一致。
+  旧下書き（手入力の *Str）はそのまま通る。
+
+```bash
+psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
+  -v confirm_royalty_receipts=ADD_ROYALTY_RECEIPT_ROWS \
+  -f infra/gcp/sql/060_royalty_statement_receipt_rows.sql
+```
+
+適用後の確認: 最後の SELECT で `has_receipt_rows = t`。ローカルでは置換後テンプレートを
+実レンダラ（Handlebars＋registerLegacyHelpers）に通し、構造化多明細＝明細表／旧下書き＝
+label テーブル／単票＝AG カスケードの3系を検証済み。
+
 ### 2-8. 案件 Slack 会話履歴（`slack-matter-thread-history-fix-plan.md`）
 
 案件詳細の「コミュニケーション」に Slack スレッドを時系列表示する。既存の

@@ -1,6 +1,7 @@
 import { buildCommonDocumentContext } from "./context-adapter.js";
 import { computeInspectionTotals } from "../../inspection-totals.js";
 import { aggregateItemDates, purchaseOrderTotals } from "../../purchase-order-totals.js";
+import { buildMultiStatementPatch, buildSingleStatementPatch } from "../../royalty-statement.js";
 
 type Data = Record<string, unknown>;
 
@@ -26,7 +27,13 @@ const GENERATED_VARIABLES: Record<string, string[]> = {
   royalty_statement: [
     "designerName", "desiredDeadline", "fxRate", "intakeCurrency", "lineGroups",
     "linesTaxStr", "linesTotalIncTaxStr", "linesTotalPaymentStr",
-    "linesTotalSalesStr", "payerCompany", "royaltyCategory", "statementMode"
+    "linesTotalSalesStr", "payerCompany", "royaltyCategory", "statementMode",
+    // 構造化入力（rs*）から計算エンジンで組み立てる変数（V1 onPreview パッチ相当）
+    "actualRoyalty", "actualRoyaltyStr", "agAmountStr", "agApplied",
+    "agConsumedAfterStr", "agConsumedBeforeStr", "agConsumedThisTimeStr",
+    "agFullyConsumed", "agProgressPct", "agRemainingStr", "billableQuantity",
+    "calcType", "grossRoyaltyStr", "mgAmountStr", "mgTopupApplied",
+    "mgTopupThisTimeStr", "msrpStr", "receiptRows", "taxAmount", "totalPaymentStr"
   ],
   inspection_certificate: [
     "changeLogs", "combinedTaxStr", "delivery_line_items", "expenses",
@@ -162,7 +169,64 @@ function buildLicenseTermsContext(source: Data) {
   return result;
 }
 
-function buildRoyaltyStatementContext(source: Data) {
+// 構造化入力（フォーム再設計の rs* フィールド）が入っているときは、共有エンジンで
+// テンプレート変数（grossRoyaltyStr / mg・ag* / lineGroups 等）を組み立てる。
+// 旧下書き（手入力の *Str フィールド）は構造化入力が無いのでそのまま通る。
+function structuredStatementPatch(source: Data): Data | null {
+  const receipts = records(source.rs_receipts)
+    .filter((row) => String(pick(row, "sublicensee", "productName")).trim() !== "" || number(row.amount) > 0);
+  if (String(source.statementMode) === "multi" && receipts.length) {
+    const ratePct = number(pick(source, "rsInRatePct", "rsRatePct", "royaltyRatePct"));
+    return buildMultiStatementPatch({
+      receipts: receipts.map((row) => ({
+        sublicensee: String(pick(row, "sublicensee", "productName")),
+        receivedOn: String(row.receivedOn ?? ""),
+        currency: String(row.currency ?? "JPY"),
+        amount: number(row.amount),
+        fxMode: String(row.fxMode) === "post" ? "post" : "pre",
+        fxRate: number(row.fxRate) || undefined,
+        productName: row.productName == null ? undefined : String(row.productName)
+      })),
+      ratePct,
+      taxRatePct: number(pick(source, "taxRate", "tax_rate"), 10),
+      contractTitle: String(pick(source, "contractTitle", "CONTRACT_TITLE", "originalWork")),
+      contractNumber: String(pick(source, "linked_contract_number", "CONTRACT_NO")),
+      methodLabel: String(pick(source, "methodLabel", "royaltyCategory")) || "サブライセンス受領ベース"
+    }).patch;
+  }
+  const calcBasis = String(source.rsCalcType ?? "");
+  const msrp = number(source.rsMsrp);
+  if (String(source.statementMode) !== "multi" && calcBasis && msrp > 0) {
+    const calcType = calcBasis === "event"
+      ? "manufacturing"
+      : String(source.rsBasisKind) === "sublicense" ? "sublicense" : "sales";
+    const patch = buildSingleStatementPatch({
+      calcType,
+      msrp,
+      quantity: number(source.rsQuantity),
+      sampleQuantity: number(source.rsSampleQuantity),
+      ratePct: number(pick(source, "rsRatePct", "royaltyRatePct")),
+      mgAmount: number(source.rsMgAmount),
+      agAmount: number(source.rsAgAmount),
+      agConsumedBefore: number(source.rsAgConsumedBefore),
+      taxRatePct: number(pick(source, "taxRate", "tax_rate"), 10)
+    }).patch;
+    // 時限式は算定期間を備考の先頭に載せる（テンプレートに専用欄が無いため）。
+    const from = String(source.rsPeriodFrom ?? "").trim();
+    const to = String(source.rsPeriodTo ?? "").trim();
+    if (calcBasis === "period" && (from || to)) {
+      const periodNote = `算定期間: ${from || "—"} 〜 ${to || "—"}`;
+      const notes = String(source.notes ?? "").trim();
+      patch.notes = notes.startsWith("算定期間:") ? notes : [periodNote, notes].filter(Boolean).join("\n");
+    }
+    return patch;
+  }
+  return null;
+}
+
+function buildRoyaltyStatementContext(rawSource: Data) {
+  const structured = structuredStatementPatch(rawSource);
+  const source: Data = structured ? { ...rawSource, ...structured } : rawSource;
   const groups = records(source.lineGroups);
   const lines = records(pick(source, "lines", "royalty_lines"));
   const lineGroups = groups.length ? groups : lines.length ? [{

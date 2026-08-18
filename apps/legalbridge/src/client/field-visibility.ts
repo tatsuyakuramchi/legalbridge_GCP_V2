@@ -44,6 +44,38 @@ export function isInspectionFallbackFieldHidden(
   return Array.isArray(lines) && lines.length > 0;
 }
 
+// 利用許諾料計算書: 構造化入力（rs*）が有効なあいだは、エンジンが組み立てる
+// 計算系フィールド（グロス・MG/AG・合計等）と実績の生値をスキーマ側から隠す。
+// 入力しても構造化入力の計算で上書きされる＝「入力しても使われない項目」になるため。
+// 旧下書き（構造化入力なし）ではそのまま出て、従来どおり手で直せる。
+const ROYALTY_COMPUTED_FIELDS = new Set([
+  "calcType", "statementMode", "msrpStr", "quantity", "sampleQuantity",
+  "billableQuantity", "royaltyRatePct", "grossRoyaltyStr",
+  "mgAmount", "mgAmountStr", "mgTopupApplied", "mgTopupThisTime", "mgTopupThisTimeStr",
+  "mgRemaining", "mgConsumedBefore", "mgConsumedThisTime", "mgConsumedAfter", "mgFullyConsumed",
+  "agAmount", "agAmountStr", "agApplied", "agConsumedBefore", "agConsumedBeforeStr",
+  "agConsumedThisTime", "agConsumedThisTimeStr", "agConsumedAfter", "agConsumedAfterStr",
+  "agRemaining", "agRemainingStr", "agFullyConsumed", "agProgressPct",
+  "actualRoyalty", "actualRoyaltyStr", "taxAmount", "totalPaymentStr",
+  "intakeCurrency", "fxRate", "linesTotalSalesStr", "linesTotalPaymentStr",
+  "linesTaxStr", "linesTotalIncTaxStr"
+]);
+
+export function isRoyaltyStructuredActive(formData: DocumentFormData): boolean {
+  const receipts = formData.rs_receipts;
+  if (String(formData.statementMode) === "multi" && Array.isArray(receipts) && receipts.length > 0) return true;
+  const msrp = Number(String(formData.rsMsrp ?? "").replace(/,/g, ""));
+  return Boolean(formData.rsCalcType) && Number.isFinite(msrp) && msrp > 0;
+}
+
+export function isRoyaltyComputedFieldHidden(
+  templateKey: string, fieldName: string, formData: DocumentFormData
+): boolean {
+  if (templateKey !== "royalty_statement") return false;
+  if (!ROYALTY_COMPUTED_FIELDS.has(fieldName)) return false;
+  return isRoyaltyStructuredActive(formData);
+}
+
 export function isFieldVisible(field: ConditionallyVisible, formData: DocumentFormData): boolean {
   const condition = field.showWhen;
   if (!condition) return true;

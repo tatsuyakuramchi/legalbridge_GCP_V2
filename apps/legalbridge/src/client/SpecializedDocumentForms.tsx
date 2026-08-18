@@ -46,15 +46,17 @@ export function SpecializedDocumentForms({ templateKey, formData, onChange }: Pr
   }
 
   if (templateKey === "royalty_statement") {
-    return <SpecializedSection title="利用許諾料明細" description="計算対象ごとに売上額・料率・利用許諾料を入力します。合計額は自動計算されます。">
-      <ArrayEditor title="計算明細" itemLabel="計算明細" dataKey="lines" rows={rows(formData.lines)}
-        fields={[
-          { name: "productName", label: "対象商品・契約" },
-          { name: "sales_amount", label: "基準売上額", type: "number" },
-          { name: "rate_pct", label: "料率（%）", type: "number" },
-          { name: "royalty_amount", label: "利用許諾料", type: "number" },
-          { name: "basisNote", label: "計算根拠・控除", type: "textarea" }
-        ]} onChange={onChange} />
+    return <SpecializedSection title="実績と計算" description="実績を入力すると、グロス→MG/AG→消費税→源泉前合計まで自動計算されます（PDFと同一の計算式）。">
+      <RoyaltyStatementEditor formData={formData} onChange={onChange} />
+      {rows(formData.lines).length > 0 &&
+        <ArrayEditor title="計算明細（旧形式・この下書きが使用中）" itemLabel="計算明細" dataKey="lines" rows={rows(formData.lines)}
+          fields={[
+            { name: "productName", label: "対象商品・契約" },
+            { name: "sales_amount", label: "基準売上額", type: "number" },
+            { name: "rate_pct", label: "料率（%）", type: "number" },
+            { name: "royalty_amount", label: "利用許諾料", type: "number" },
+            { name: "basisNote", label: "計算根拠・控除", type: "textarea" }
+          ]} onChange={onChange} />}
     </SpecializedSection>;
   }
 
@@ -201,6 +203,137 @@ function rows(value: unknown): Row[] {
     : [];
 }
 
+
+// ── 利用許諾料計算書の構造化入力（再設計）───────────────────────────
+// 計算書タイプ（単票/多明細）と算定タイプ（イベント式/時限式）を切り替え、
+// 生の実績値（rs* フィールド）だけを入力してもらう。グロス・MG/AG・合計などの
+// テンプレート変数はサーバ（template-context-adapters）が共有エンジンで組み立てる。
+// 多明細はサブライセンシーごとの入金行＝行ごとに通貨・換算方法を持てる
+// （交換前=入金日レートで円換算 / 交換後=円転済み額＋適用レートは記録として印字）。
+function RoyaltyStatementEditor({ formData, onChange }: {
+  formData: DocumentFormData;
+  onChange: (name: string, value: unknown) => void;
+}) {
+  const mode = String(formData.statementMode ?? "") === "multi" ? "multi" : "single";
+  const basis = String(formData.rsCalcType ?? "") === "period" ? "period" : "event";
+  const basisKind = String(formData.rsBasisKind ?? "") === "sublicense" ? "sublicense" : "sales";
+  const receipts = rows(formData.rs_receipts);
+  const numField = (name: string, label: string, helpText?: string) =>
+    <label key={name}><span>{label}</span>
+      <input type="number" value={String(formData[name] ?? "")}
+        onChange={(event) => onChange(name, event.target.value === "" ? "" : Number(event.target.value))} />
+      {helpText && <small>{helpText}</small>}
+    </label>;
+  const replaceReceipt = (index: number, patch: Row) =>
+    onChange("rs_receipts", receipts.map((row, i) => i === index ? { ...row, ...patch } : row));
+  const jpyBase = (row: Row): number => {
+    const amount = Number(String(row.amount ?? "").replace(/,/g, "")) || 0;
+    const isPre = String(row.fxMode ?? "pre") !== "post";
+    const foreign = String(row.currency ?? "JPY").toUpperCase() !== "JPY";
+    if (isPre && foreign) return Math.round(amount * (Number(row.fxRate) || 0));
+    return Math.round(amount);
+  };
+
+  return <div className="royalty-editor">
+    <div className="mode-inline">
+      <span className="mode-label">計算書タイプ:</span>
+      <button type="button" className={`matter-chip ${mode === "single" ? "active" : ""}`}
+        onClick={() => onChange("statementMode", "single")}>単票（1件計算）</button>
+      <button type="button" className={`matter-chip ${mode === "multi" ? "active" : ""}`}
+        onClick={() => onChange("statementMode", "multi")}>多明細（受領→支払）</button>
+      <small>単票＝製造/売上ベースの1件計算。多明細＝サブライセンス受領額を基に支払を明細ごとに計算</small>
+    </div>
+
+    {mode === "single" && <>
+      <div className="mode-inline">
+        <span className="mode-label">算定タイプ:</span>
+        <button type="button" className={`matter-chip ${String(formData.rsCalcType ?? "") === "period" ? "active" : ""}`}
+          onClick={() => onChange("rsCalcType", "period")}>期間（時限式）</button>
+        <button type="button" className={`matter-chip ${String(formData.rsCalcType ?? "") === "event" ? "active" : ""}`}
+          onClick={() => onChange("rsCalcType", "event")}>イベント（製造時等）</button>
+        <small>期間＝算定期間内の売上報告ベース／イベント＝製造・出荷等の発生時に数量×単価で算定</small>
+      </div>
+      {!formData.rsCalcType &&
+        <p className="hint-note">算定タイプを選ぶと実績入力が始まります（グロス・MG/AG・合計は自動計算になり、手入力の計算欄は隠れます）。</p>}
+      {Boolean(formData.rsCalcType) && (basis === "event"
+        ? <div className="field-grid">
+          {numField("rsMsrp", "基準価格・上代（税抜）")}
+          {numField("rsQuantity", "製造数量（総数）")}
+          {numField("rsSampleQuantity", "販促サンプル数", "計算対象外として控除")}
+          {numField("rsRatePct", "料率（%）")}
+          {numField("rsMgAmount", "MG・最低保証（円）", "グロスが下回ったら MG を採用（floor）")}
+          {numField("rsAgAmount", "AG・前払保証金（円）", "累積消化で支払から充当")}
+          {numField("rsAgConsumedBefore", "AG消化済み累計（円）", "これまでの計算書で充当した合計")}
+        </div>
+        : <>
+          <div className="field-grid">
+            <label><span>基準額の種類</span>
+              <select value={basisKind} onChange={(event) => onChange("rsBasisKind", event.target.value)}>
+                <option value="sales">報告売上高（売上報告ベース）</option>
+                <option value="sublicense">被許諾者受領額（サブライセンス）</option>
+              </select></label>
+            <label><span>算定期間 From</span>
+              <input type="date" value={String(formData.rsPeriodFrom ?? "")}
+                onChange={(event) => onChange("rsPeriodFrom", event.target.value)} /></label>
+            <label><span>算定期間 To</span>
+              <input type="date" value={String(formData.rsPeriodTo ?? "")}
+                onChange={(event) => onChange("rsPeriodTo", event.target.value)} /></label>
+            {numField("rsMsrp", basisKind === "sublicense" ? "被許諾者受領額（税抜）" : "報告売上高（税抜）")}
+            {numField("rsRatePct", "料率（%）")}
+            {numField("rsMgAmount", "MG・最低保証（円）", "グロスが下回ったら MG を採用（floor）")}
+            {numField("rsAgAmount", "AG・前払保証金（円）", "累積消化で支払から充当")}
+            {numField("rsAgConsumedBefore", "AG消化済み累計（円）")}
+          </div>
+          <p className="hint-note">算定期間は PDF の備考に「算定期間: From〜To」として印字されます。</p>
+        </>)}
+    </>}
+
+    {mode === "multi" && <>
+      <div className="repeater-title">
+        <div><h3>サブライセンシー入金（受領明細）</h3><small>{receipts.length}件</small></div>
+        <button type="button" onClick={() => onChange("rs_receipts",
+          [...receipts, { sublicensee: "", currency: "JPY", fxMode: "pre" }])}>＋ 入金行を追加</button>
+      </div>
+      <p className="hint-note">行ごとに通貨・換算方法を持てます。<b>交換前</b>＝外貨入金→入金日レートで円換算（round）／<b>交換後</b>＝円転済みの円額を base に、適用レートは記録として PDF に印字。</p>
+      {receipts.length > 0 && <div className="table-scroll"><table className="receipt-lines-table">
+        <thead><tr>
+          <th>サブライセンシー</th><th>受領日</th><th>通貨</th><th className="right">入金額</th>
+          <th>換算</th><th className="right">レート</th><th className="right">円換算 base</th><th aria-label="操作"></th>
+        </tr></thead>
+        <tbody>
+          {receipts.map((row, index) => {
+            const isPost = String(row.fxMode ?? "pre") === "post";
+            const foreign = String(row.currency ?? "JPY").toUpperCase() !== "JPY";
+            return <tr key={index}>
+              <td><input value={String(row.sublicensee ?? "")}
+                onChange={(event) => replaceReceipt(index, { sublicensee: event.target.value })} /></td>
+              <td><input type="date" value={String(row.receivedOn ?? "")}
+                onChange={(event) => replaceReceipt(index, { receivedOn: event.target.value })} /></td>
+              <td><input className="currency" value={String(row.currency ?? "JPY")}
+                onChange={(event) => replaceReceipt(index, { currency: event.target.value.toUpperCase() })} /></td>
+              <td className="right"><input type="number" value={String(row.amount ?? "")}
+                onChange={(event) => replaceReceipt(index, { amount: event.target.value === "" ? "" : Number(event.target.value) })} /></td>
+              <td><select value={isPost ? "post" : "pre"}
+                onChange={(event) => replaceReceipt(index, { fxMode: event.target.value })}>
+                <option value="pre">交換前（外貨入金）</option>
+                <option value="post">交換後（円転済み）</option>
+              </select></td>
+              <td className="right"><input type="number" step="0.0001" value={String(row.fxRate ?? "")}
+                placeholder={!isPost && foreign ? "必須" : "記録用"}
+                onChange={(event) => replaceReceipt(index, { fxRate: event.target.value === "" ? "" : Number(event.target.value) })} /></td>
+              <td className="right base">¥{jpyBase(row).toLocaleString("ja-JP")}
+                {!isPost && foreign && !Number(row.fxRate) && <small className="fx-warn">レート未入力</small>}</td>
+              <td><button type="button" onClick={() => onChange("rs_receipts", receipts.filter((_, i) => i !== index))}>削除</button></td>
+            </tr>;
+          })}
+        </tbody>
+      </table></div>}
+      <div className="field-grid">
+        {numField("rsInRatePct", "イン側料率（%）", "円 base 合計 × この料率 = 支払額（行ごとに ceil）")}
+      </div>
+    </>}
+  </div>;
+}
 
 // ── 検収明細テーブル（再設計：1行=1明細の表形式）─────────────────────
 // カード型（1行=1カード）だと分納で「発注数量に対して今回いくつ検収したか」が
