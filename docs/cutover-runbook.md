@@ -387,6 +387,28 @@ IGLA（051/052）は Deal Sheet の取引モデルで Schedule 1（License-Out�
 （Product-Out）の出力を切り替える2部構成。本体と付属書は別文書なので、付属書を使う
 案件では両方から作成し、Deal Sheet 第4節の Incorporated と付属書側の出力選択をそろえる。
 
+### 2-7c. 検収書テンプレ改訂（059・歩留率列の削除）
+
+検収書フォーム再設計（ステップカード＋右レール）に合わせて、PDF の「■ 今回の納品内容」
+から**歩留率列を削除**する新版を作る。出力が変わる改訂なので**新版 INSERT ＋
+`current_version_id` 差し替え**（053 のような同版書き換えではない）。既存の確定済み検収書は
+自分の版の html で再生成されるため影響なし。
+
+- 全文差し替えではなく**現行版への文字列置換**で新版を作る＝本番側に未知の改訂があっても温存。
+  置換対象（歩留率の見出し1・セル1・`colspan="5"`×3・単票行の「—」対・列幅45%/14%）が
+  想定どおり見つからないときは何もせず中断する。
+- `acceptance_ratio` はデータ・計算（単価×数量×歩留率）では温存し、**表示だけ**落とす。
+  フォーム側も歩留率入力は出さない（引用時は既定 1.0）。
+
+```bash
+psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
+  -v confirm_inspection_yield=DROP_INSPECTION_YIELD_COLUMN \
+  -f infra/gcp/sql/059_inspection_certificate_drop_yield.sql
+```
+
+適用後の確認: 最後の SELECT で `yield_visible_pos = 0`・`colspan4_count >= 3` が出ればOK。
+新しい下書きは新版で作られる（フォーム画面の「Template version」が上がる）。
+
 ### 2-8. 案件 Slack 会話履歴（`slack-matter-thread-history-fix-plan.md`）
 
 案件詳細の「コミュニケーション」に Slack スレッドを時系列表示する。既存の

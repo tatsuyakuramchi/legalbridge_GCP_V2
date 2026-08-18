@@ -2038,22 +2038,74 @@ textarea { width: 100%; min-height: 90px; resize: vertical; line-height: 1.6; }
 .excl-non_exclusive { background: #eef2f6; color: #55657a; }
 .rights-add-grant { align-self: center; }
 
-/* 検収書のステップ動線と合計パネル（V1 の4ステップ動線を1画面に写した） */
-.inspection-steps { display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
-  background: var(--surface-tint); border: 1px solid var(--accent); border-radius: 10px;
-  padding: 10px 14px; margin-bottom: 4px; }
-.inspection-steps span { font-size: 12.5px; font-weight: 700; color: var(--ink-faint);
-  padding: 3px 10px; border-radius: 999px; background: var(--surface); border: 1px solid var(--border); }
-.inspection-steps span.done { color: #157347; border-color: #bfe3cd; background: #e8f7ee; }
-.inspection-steps span.next { color: var(--accent-ink); border-color: var(--accent); }
-.inspection-steps small { flex-basis: 100%; color: var(--ink-soft); }
-.inspection-totals { margin-top: 12px; padding: 12px; background: var(--surface-subtle);
-  border: 1px solid var(--border); border-radius: 10px; display: grid; gap: 6px; }
-.inspection-totals-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
-.inspection-totals-grid article { display: grid; gap: 2px; }
-.inspection-totals-grid span { font-size: 11px; color: var(--ink-soft); }
-.inspection-totals-grid strong { font-size: 17px; font-variant-numeric: tabular-nums; }
-.inspection-totals > small { color: var(--ink-faint); }
+/* 検収書のステップカード（再設計モック準拠: 完了✓/入力中/未着手を縦に並べる） */
+.step-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  overflow: hidden; margin-bottom: 14px; }
+.step-card .step-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px;
+  background: var(--surface-subtle); border-bottom: 1px solid var(--border); }
+.step-card .step-no { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
+  font-weight: 700; font-size: 13px; background: var(--border); color: var(--ink-soft); flex: none; }
+.step-card.done .step-no { background: #e8f7ee; color: #157347; }
+.step-card.active .step-no { background: var(--accent); color: #fff; }
+.step-card .step-head h2 { margin: 0; font-size: 14.5px; color: var(--ink-strong); flex: 1; border: none; padding: 0; }
+.step-card .step-head .state { font-size: 11.5px; font-weight: 700; color: var(--ink-faint); }
+.step-card.done .step-head .state { color: #157347; }
+.step-card.active .step-head .state { color: var(--accent-strong); }
+.step-card .step-body { padding: 14px 16px; display: grid; gap: 10px; }
+.po-selected-note { margin: 0; font-size: 12.5px; color: var(--accent-ink);
+  background: var(--surface-tint); border-radius: 8px; padding: 6px 10px; }
+
+/* 検収明細テーブル（発注数量と今回検収を並べて分納を明示） */
+.inspection-lines { display: grid; gap: 8px; }
+.partial-hint { margin: 0; font-size: 12px; color: var(--accent-ink);
+  background: var(--surface-tint); border-radius: 8px; padding: 6px 10px; }
+.inspection-lines-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.inspection-lines-table th { text-align: left; font-size: 11.5px; color: var(--ink-soft);
+  padding: 6px 8px; border-bottom: 2px solid var(--border); }
+.inspection-lines-table th.right { text-align: right; }
+.inspection-lines-table td { padding: 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.inspection-lines-table td.right { text-align: right; font-variant-numeric: tabular-nums; }
+.inspection-lines-table td.ordered { color: var(--ink-soft); padding-top: 14px; }
+.inspection-lines-table td input[type="number"] { width: 110px; text-align: right; }
+.inspection-lines-table td input[type="date"] { width: 150px; }
+.inspection-lines-table td.line-main { min-width: 220px; display: grid; gap: 6px; }
+.inspection-lines-table .line-spec { font-size: 12px; }
+.inspection-lines-table .line-method { display: flex; align-items: center; gap: 6px;
+  font-size: 11.5px; color: var(--ink-soft); }
+.inspection-lines-table .line-method select { width: auto; font-size: 12px; padding: 3px 6px; }
+.inspection-lines-table .line-royalty { display: grid; gap: 2px; justify-items: end;
+  font-size: 12px; color: var(--ink-soft); }
+.inspection-lines-table .line-royalty small { color: var(--ink-faint); }
+.tag-royalty { font-size: 10px; font-weight: 700; border-radius: 4px; padding: 1px 6px;
+  background: #e8f7ee; color: #157347; }
+.inspection-lines-table .line-remove { font-size: 12px; }
+
+/* 検収書の右レール（ライブ計算・進行状況・操作） */
+.preview.with-rail { display: grid; gap: 12px; align-content: start; }
+/* .preview div は「プレビュー枠」用の破線ボックス。レール内の div には効かせない。 */
+.preview.with-rail .inspection-rail,
+.preview.with-rail .inspection-rail div {
+  border: none; background: transparent; min-height: 0; padding: 0; color: inherit; }
+.preview.with-rail .inspection-rail .rail-card {
+  border: 1px solid var(--border); background: var(--surface); border-radius: 12px; padding: 14px 16px; }
+/* .form-panel section + section の 24px 区切りはカード型では過剰。カード間は 14px。 */
+.form-panel section.step-card + section.step-card { margin-top: 14px; padding-top: 0; border-top: none; }
+.inspection-rail { display: grid; gap: 12px; }
+.rail-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 14px 16px; }
+.rail-card h3 { margin: 0 0 8px; font-size: 12px; letter-spacing: .08em; color: var(--ink-faint); }
+.rail-card .calc-row { display: flex; justify-content: space-between; gap: 8px; font-size: 13px;
+  padding: 3px 0; font-variant-numeric: tabular-nums; }
+.rail-card .calc-row.total { border-top: 2px solid var(--border); margin-top: 6px; padding-top: 8px;
+  font-weight: 700; }
+.rail-card .calc-row.total strong { color: var(--accent-deep); font-size: 16px; }
+.rail-card > small { display: block; margin-top: 6px; color: var(--ink-faint); font-size: 11px; }
+.rail-progress { display: grid; gap: 5px; font-size: 12.5px; }
+.rail-progress span::before { content: "○ "; color: var(--border-strong); }
+.rail-progress span.done::before { content: "✓ "; color: #157347; }
+.rail-progress span.done { color: #157347; }
+.rail-actions { display: grid; gap: 8px; }
+.rail-actions button { width: 100%; }
 
 /* 経費・手数料の精算（検収書・V1 ステップ2-b/2-c 相当） */
 .inspection-settlement { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; display: grid; gap: 8px; margin-top: 12px; }

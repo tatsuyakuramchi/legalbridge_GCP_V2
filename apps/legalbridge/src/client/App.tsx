@@ -3,7 +3,8 @@ import type {
   DashboardSummary,
   DocumentDraft,
   DocumentFormData,
-  DocumentFormSchema
+  DocumentFormSchema,
+  TemplateField
 } from "../types";
 import { SpecializedDocumentForms } from "./SpecializedDocumentForms";
 import { computeInspectionTotals, formatYen } from "../inspection-totals";
@@ -951,6 +952,22 @@ function DocumentForm({
   // 関数宣言の中では上の null ガードの絞り込みが効かないので、ここで確定させる。
   const templateKey = schema.templateKey;
   const honorificMismatches = honorificWarnings(formData);
+  // 検収書はステップカード＋右レール（ライブ計算）で組む。ステップの並びは
+  // 1) 親の発注書 2) 検収明細 3〜) スキーマのグループ（相手方・検収情報など）。
+  const inspectionSteps = templateKey === "inspection_certificate"
+    ? buildInspectionSteps(formData, groups, visibleFields)
+    : null;
+  const activeInspectionStep = inspectionSteps?.find((step) => !step.done) ?? null;
+
+  const applyPickerPatch = (patch: DocumentFormData, message: string) => {
+    if (finalizedDocument) return;
+    setFormData((current) => ({ ...current, ...patch }));
+    setDraftStatus("dirty");
+    setNotice(message);
+  };
+
+  const renderGroupFields = (group: string) =>
+    <div className="field-grid">{visibleFields.filter((field) => (field.group ?? "基本情報") === group).map((field) => <label key={field.name}><span>{field.label ?? field.name}{field.required && <em>必須</em>}{field.type === "textarea" && <a className="field-snippets" href="/?view=snippets" target="_blank" rel="noreferrer" title="定型文を別タブで開く">定型文</a>}</span>{field.type === "textarea" ? <textarea value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, event.target.value)} placeholder={field.placeholder} /> : field.type === "select" ? <select value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, event.target.value)}><option value="">選択してください</option>{field.options?.map((option) => <option key={option}>{option}</option>)}</select> : field.type === "boolean" ? <input type="checkbox" checked={Boolean(formData[field.name])} onChange={(event) => updateValue(field.name, event.target.checked)} /> : <input value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, field.type === "number" ? (event.target.value === "" ? "" : Number(event.target.value)) : event.target.value)} type={field.type === "number" ? "number" : field.type === "date" ? "date" : "text"} placeholder={field.placeholder} />}{field.helpText && <small>{field.helpText}</small>}</label>)}</div>;
 
   function updateValue(name: string, value: unknown) {
     if (finalizedDocument) return;
@@ -1229,32 +1246,40 @@ function DocumentForm({
           {hasSpecializedForm(schema.templateKey) && <a href="#specialized-fields">明細・条件</a>}
         </nav>
         <form className="form-panel">
-          <MasterDataPicker schema={schema} formData={formData}
-            onApply={(patch, message) => {
-              if (finalizedDocument) return;
-              setFormData((current) => ({ ...current, ...patch }));
-              setDraftStatus("dirty");
-              setNotice(message);
-            }} />
-          {templateKey === "inspection_certificate" && <>
-            <InspectionStepBanner formData={formData} />
-            <section id="specialized-fields"><h2>検収明細</h2>
+          {inspectionSteps ? <>
+            <InspectionStepCard no={1} title="親の発注書" step={inspectionSteps[0]}
+              active={activeInspectionStep === inspectionSteps[0]}>
+              <MasterDataPicker schema={schema} formData={formData} onApply={applyPickerPatch} />
+              {Boolean(formData.parent_po_number) &&
+                <p className="po-selected-note">発注番号 <strong>{String(formData.parent_po_number)}</strong> から明細・件名・相手方を引用済みです。選び直すと上書きされます。</p>}
+            </InspectionStepCard>
+            <InspectionStepCard no={2} title="検収明細" step={inspectionSteps[1]}
+              active={activeInspectionStep === inspectionSteps[1]}>
               <SpecializedDocumentForms templateKey={templateKey} formData={formData} onChange={updateValue} />
-              <InspectionTotalsPanel formData={formData} />
-            </section>
+            </InspectionStepCard>
+            {groups.map((group, index) =>
+              <InspectionStepCard key={group} id={`group-${index}`} no={index + 3} title={group}
+                step={inspectionSteps[index + 2]} active={activeInspectionStep === inspectionSteps[index + 2]}>
+                {renderGroupFields(group)}
+              </InspectionStepCard>)}
+          </> : <>
+            <MasterDataPicker schema={schema} formData={formData} onApply={applyPickerPatch} />
+            {groups.map((group, index) => <section id={`group-${index}`} key={group}><h2>{group}</h2>
+              {isPurchaseOrderTemplate(schema.templateKey) && group.startsWith("IV. ") &&
+                <PurchaseOrderTotals formData={formData} />}
+              {renderGroupFields(group)}
+            </section>)}
+            {schema.templateKey === "individual_license_terms_v3" && (
+              <IndividualLicenseV3Form formData={formData} onChange={updateValue} />
+            )}
+            <SpecializedDocumentForms templateKey={schema.templateKey} formData={formData} onChange={updateValue} />
           </>}
-          {groups.map((group, index) => <section id={`group-${index}`} key={group}><h2>{group}</h2>
-            {isPurchaseOrderTemplate(schema.templateKey) && group.startsWith("IV. ") &&
-              <PurchaseOrderTotals formData={formData} />}
-            <div className="field-grid">{visibleFields.filter((field) => (field.group ?? "基本情報") === group).map((field) => <label key={field.name}><span>{field.label ?? field.name}{field.required && <em>必須</em>}{field.type === "textarea" && <a className="field-snippets" href="/?view=snippets" target="_blank" rel="noreferrer" title="定型文を別タブで開く">定型文</a>}</span>{field.type === "textarea" ? <textarea value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, event.target.value)} placeholder={field.placeholder} /> : field.type === "select" ? <select value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, event.target.value)}><option value="">選択してください</option>{field.options?.map((option) => <option key={option}>{option}</option>)}</select> : field.type === "boolean" ? <input type="checkbox" checked={Boolean(formData[field.name])} onChange={(event) => updateValue(field.name, event.target.checked)} /> : <input value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, field.type === "number" ? (event.target.value === "" ? "" : Number(event.target.value)) : event.target.value)} type={field.type === "number" ? "number" : field.type === "date" ? "date" : "text"} placeholder={field.placeholder} />}{field.helpText && <small>{field.helpText}</small>}</label>)}</div>
-          </section>)}
-          {schema.templateKey === "individual_license_terms_v3" && (
-            <IndividualLicenseV3Form formData={formData} onChange={updateValue} />
-          )}
-          {schema.templateKey !== "inspection_certificate" &&
-            <SpecializedDocumentForms templateKey={schema.templateKey} formData={formData} onChange={updateValue} />}
         </form>
-        <aside className="preview">
+        <aside className={inspectionSteps ? "preview with-rail" : "preview"}>
+          {inspectionSteps && <InspectionRail formData={formData} steps={inspectionSteps}
+            onPreview={validate} onSaveDraft={saveDraft} readOnly={readOnly}
+            saveDisabled={draftStatus === "saving" || draftStatus === "loading" || !issueKey.trim() || Boolean(finalizedDocument)}
+            saveLabel={draftStatus === "saving" ? "処理中…" : draft ? "下書きを更新" : "下書きを保存"} />}
           <strong>文書プレビュー</strong>
           {previewHtml
             ? <iframe title="文書プレビュー" sandbox="" srcDoc={previewHtml} />
@@ -1398,51 +1423,83 @@ function roleLabel(role: "admin" | "legal" | "requester") {
 }
 
 
-// ── 検収書のステップ動線（V1 の4ステップを V2 の1画面に写した進行表示）──────
+// ── 検収書のステップカード（再設計モック準拠）─────────────────────────
 // V1 inspectionCertificate.tsx は 1)親契約 2)検収内容 3)自社・相手確認 4)検収情報 の
-// ウィザードだった。V2 は1画面のまま、いま何が済んでいて次に何をするかを出す。
-function InspectionStepBanner({ formData }: { formData: DocumentFormData }) {
+// ウィザードだった。V2 はステップカードを縦に並べ、強制遷移なしでジャンプ自由にする。
+// 3以降はスキーマのグループがそのままステップになる（グループ名は DB 定義に従う）。
+type InspectionStep = { title: string; done: boolean; state: string };
+
+function buildInspectionSteps(
+  formData: DocumentFormData, groups: string[], visibleFields: TemplateField[]
+): InspectionStep[] {
   const lines = Array.isArray(formData.delivery_line_items) ? formData.delivery_line_items as unknown[] : [];
-  const steps = [
-    { label: "① 親の発注書を選ぶ", done: lines.length > 0 || Boolean(formData.parent_po_number),
-      hint: "上の「DBから引用」→「親の発注書」タブから。明細・件名が自動入力されます" },
-    { label: "② 検収明細を確認", done: lines.length > 0,
-      hint: "全量検収が初期値。分割検収は数量・金額を行ごとに調整" },
-    { label: "③ 相手方・自社を確認", done: Boolean(formData.counterparty || formData.COUNTERPARTY_NAME),
-      hint: "取引先タブから引用できます" },
-    { label: "④ 検収情報を入力", done: Boolean(formData.documentDate || formData.deliveredAt),
-      hint: "検収日・納品日など" }
+  const filled = (value: unknown) =>
+    value !== "" && value != null && value !== false;
+  const poDone = lines.length > 0 || Boolean(formData.parent_po_number);
+  const groupSteps = groups.map((group) => {
+    const fields = visibleFields.filter((field) => (field.group ?? "基本情報") === group);
+    const required = fields.filter((field) => field.required);
+    const done = fields.some((field) => filled(formData[field.name])) &&
+      required.every((field) => filled(formData[field.name]));
+    return { title: group, done, state: done ? "入力済み" : "未入力" };
+  });
+  return [
+    { title: "親の発注書", done: poDone, state: poDone ? "選択済み" : "「DBから引用」で検索" },
+    { title: "検収明細", done: lines.length > 0,
+      state: lines.length > 0 ? `${lines.length}件` : "未入力（単票入力も可）" },
+    ...groupSteps
   ];
-  const next = steps.find((step) => !step.done);
-  return <div className="inspection-steps" role="note">
-    {steps.map((step) => <span key={step.label} className={step.done ? "done" : step === next ? "next" : ""}>
-      {step.done ? "✓ " : ""}{step.label}
-    </span>)}
-    {next && <small>{next.hint}</small>}
-    {!next && <small>入力が揃いました。プレビューで確認して確定してください。</small>}
-  </div>;
 }
 
-// 検収の合計を入力中に見せる（PDF と同じ共有関数＝必ず一致する）。
-// 明細が無い間は単票フォールバック（IV. 納品明細）の入力値が使われる旨を出す。
-function InspectionTotalsPanel({ formData }: { formData: DocumentFormData }) {
-  const totals = computeInspectionTotals(formData as Record<string, unknown>);
-  if (!totals.lineCount) {
-    return <p className="hub-note">明細がありません。親の発注書から引用するか、明細を追加してください（明細を使わない場合は下の「IV. 納品明細」に単票で入力します）。</p>;
-  }
-  return <div className="inspection-totals">
-    <div className="inspection-totals-grid">
-      <article><span>検収金額（税抜）</span><strong>¥{formatYen(totals.deliveredExTax)}</strong></article>
-      <article><span>消費税（{totals.taxRate}%・切り上げ）</span><strong>¥{formatYen(totals.tax)}</strong></article>
-      <article><span>合計（税込）</span><strong>¥{formatYen(totals.totalIncTax)}</strong></article>
-      {totals.hasSettlement && <>
-        {totals.otherFeesExTax > 0 &&
-          <article><span>手数料（税抜・合算課税）</span><strong>¥{formatYen(totals.otherFeesExTax)}</strong></article>}
-        {totals.expensesIncTax > 0 &&
-          <article><span>経費（税込）</span><strong>¥{formatYen(totals.expensesIncTax)}</strong></article>}
-        <article className="grand"><span>総支払額（源泉徴収前）</span><strong>¥{formatYen(totals.grandTotalPayable)}</strong></article>
-      </>}
+function InspectionStepCard({ no, title, step, active, id, children }: {
+  no: number; title: string; step: InspectionStep; active: boolean;
+  id?: string; children: React.ReactNode;
+}) {
+  return <section id={id} className={`step-card${step.done ? " done" : ""}${active ? " active" : ""}`}>
+    <div className="step-head">
+      <span className="step-no">{step.done ? "✓" : no}</span>
+      <h2>{title}</h2>
+      <span className="state">{step.state}</span>
     </div>
-    <small>PDF の合計はこの計算と同じ式で出ます（明細があるときは手入力の金額欄より優先されます）。</small>
+    <div className="step-body">{children}</div>
+  </section>;
+}
+
+// 右レール: 総支払額のライブ計算（PDF と同じ共有関数＝必ず一致する）・進行状況・
+// プレビュー / 下書き保存。スクロールしても常に見える位置に固定する。
+function InspectionRail({ formData, steps, onPreview, onSaveDraft, saveDisabled, saveLabel, readOnly }: {
+  formData: DocumentFormData; steps: InspectionStep[];
+  onPreview: () => void; onSaveDraft: () => void;
+  saveDisabled: boolean; saveLabel: string; readOnly: boolean;
+}) {
+  const totals = computeInspectionTotals(formData as Record<string, unknown>);
+  return <div className="inspection-rail">
+    <div className="rail-card">
+      <h3>支払額（ライブ計算）</h3>
+      {!totals.lineCount
+        ? <p className="hub-note">明細を入力すると自動計算します（明細を使わない場合は単票入力の金額欄がそのまま使われます）。</p>
+        : <>
+          <div className="calc-row"><span>検収金額（税抜）</span><span>¥{formatYen(totals.deliveredExTax)}</span></div>
+          <div className="calc-row"><span>消費税（{totals.taxRate}%・切上）</span><span>¥{formatYen(totals.tax)}</span></div>
+          {totals.otherFeesExTax > 0 &&
+            <div className="calc-row"><span>手数料（税抜・合算課税）</span><span>¥{formatYen(totals.otherFeesExTax)}</span></div>}
+          {totals.expensesIncTax > 0 &&
+            <div className="calc-row"><span>経費（税込）</span><span>¥{formatYen(totals.expensesIncTax)}</span></div>}
+          <div className="calc-row total"><span>総支払額</span>
+            <strong>¥{formatYen(totals.hasSettlement ? totals.grandTotalPayable : totals.totalIncTax)}</strong></div>
+          <small>源泉徴収前・PDF と同一の計算式（明細があるときは手入力の金額欄より優先）</small>
+        </>}
+    </div>
+    <div className="rail-card">
+      <h3>進行状況</h3>
+      <div className="rail-progress">
+        {steps.map((step) => <span key={step.title} className={step.done ? "done" : ""}>{step.title}</span>)}
+      </div>
+    </div>
+    <div className="rail-card rail-actions">
+      <button type="button" className="primary" onClick={onPreview}>プレビュー</button>
+      {!readOnly &&
+        <button type="button" onClick={onSaveDraft} disabled={saveDisabled}>{saveLabel}</button>}
+    </div>
   </div>;
 }

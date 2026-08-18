@@ -310,6 +310,8 @@ export function applyParentPurchaseOrderQuote(
     patch.delivery_line_items = items.map((line) => ({
       item_name: line.item_name ?? "",
       spec: line.spec ?? "",
+      // 発注数量は分納時の「発注 n / 今回検収 m」表示に使う（PDF には出ない）。
+      ordered_quantity: line.quantity ?? 1,
       inspected_quantity: line.quantity ?? 1,
       acceptance_ratio: 1,
       inspected_amount_ex_tax: line.amount_ex_tax ?? amountFromUnit(line),

@@ -60,22 +60,7 @@ export function SpecializedDocumentForms({ templateKey, formData, onChange }: Pr
 
   if (templateKey === "inspection_certificate") {
     return <SpecializedSection title="検収・支払明細" description="検収した成果物を入力し、必要な場合だけ手数料・経費・変更履歴を追加します。">
-      <ArrayEditor title="検収明細" itemLabel="検収明細" dataKey="delivery_line_items"
-        rows={rows(formData.delivery_line_items)}
-        fields={[
-          { name: "item_name", label: "品目・成果物" },
-          { name: "spec", label: "仕様", type: "textarea" },
-          { name: "delivery_date", label: "納品日", type: "date" },
-          { name: "inspected_quantity", label: "検収数量", type: "number" },
-          { name: "inspected_amount_ex_tax", label: "検収金額（税抜）", type: "number" },
-          {
-            name: "calc_method", label: "報酬方式", type: "select",
-            options: [
-              { value: "FIXED", label: "固定額" },
-              { value: "ROYALTY", label: "業績連動" }
-            ]
-          }
-        ]} onChange={onChange} />
+      <InspectionLinesTable formData={formData} onChange={onChange} />
       {rows(formData.po_expenses).length || rows(formData.po_other_fees).length
         ? <InspectionSettlement formData={formData} onChange={onChange} />
         : <>
@@ -216,6 +201,90 @@ function rows(value: unknown): Row[] {
     : [];
 }
 
+
+// ── 検収明細テーブル（再設計：1行=1明細の表形式）─────────────────────
+// カード型（1行=1カード）だと分納で「発注数量に対して今回いくつ検収したか」が
+// 見えない。V1 と同じ表形式で「発注」「今回検収」を並べ、業績連動行は金額入力の
+// 代わりに出し分けの注記（発注者帰属=別途算定 / 受注者帰属=利用許諾料に含む）を出す。
+// PDF の表記と同じ判定（calc_method × deliverable_ownership × 金額0）。
+function InspectionLinesTable({ formData, onChange }: {
+  formData: DocumentFormData;
+  onChange: (name: string, value: unknown) => void;
+}) {
+  const lines = rows(formData.delivery_line_items);
+  const replace = (index: number, patch: Row) =>
+    onChange("delivery_line_items", lines.map((row, i) => i === index ? { ...row, ...patch } : row));
+  const remove = (index: number) =>
+    onChange("delivery_line_items", lines.filter((_, i) => i !== index));
+  const add = () => onChange("delivery_line_items",
+    [...lines, { item_name: "", inspected_quantity: 1, acceptance_ratio: 1, calc_method: "FIXED" }]);
+  const numberOr = (value: unknown): number | "" => {
+    if (value === "" || value == null) return "";
+    const parsed = Number(String(value).replace(/,/g, ""));
+    return Number.isFinite(parsed) ? parsed : "";
+  };
+  return <div className="inspection-lines">
+    <div className="repeater-title">
+      <div><h3>検収明細</h3><small>{lines.length}件</small></div>
+      <button type="button" onClick={add}>＋ 明細を追加</button>
+    </div>
+    {!lines.length && <p className="inline-empty">
+      親の発注書から引用するか、「＋ 明細を追加」で入力してください（明細を使わない場合は下の単票入力に金額を直接入力します）。
+    </p>}
+    {lines.length > 0 && <>
+      <p className="partial-hint">分納の場合は数量・金額を実際に検収した分へ減らしてください（残りは同じ親POから第2回以降の検収書として作れます）。</p>
+      <div className="table-scroll"><table className="inspection-lines-table">
+        <thead><tr>
+          <th>品目・成果物</th>
+          <th className="right" title="親の発注書の数量">発注</th>
+          <th className="right">今回検収</th>
+          <th>納品日</th>
+          <th className="right">金額（税抜）</th>
+          <th aria-label="操作"></th>
+        </tr></thead>
+        <tbody>
+          {lines.map((row, index) => {
+            const isRoyalty = String(row.calc_method ?? "") === "ROYALTY";
+            const amount = numberOr(row.inspected_amount_ex_tax);
+            const ordered = numberOr(row.ordered_quantity);
+            const rateNote = [String(row.royalty_calc_basis ?? "").trim(), row.rate_pct !== "" && row.rate_pct != null ? `${row.rate_pct}%` : ""]
+              .filter(Boolean).join(" × ");
+            return <tr key={index}>
+              <td className="line-main">
+                <input value={String(row.item_name ?? "")} placeholder="品目・成果物"
+                  onChange={(event) => replace(index, { item_name: event.target.value })} />
+                <input className="line-spec" value={String(row.spec ?? "")} placeholder="仕様（PDFに補足として印字）"
+                  onChange={(event) => replace(index, { spec: event.target.value })} />
+                <label className="line-method"><span>報酬方式</span>
+                  <select value={String(row.calc_method ?? "FIXED")}
+                    onChange={(event) => replace(index, { calc_method: event.target.value })}>
+                    <option value="FIXED">固定額</option>
+                    <option value="ROYALTY">業績連動</option>
+                  </select>
+                </label>
+              </td>
+              <td className="right ordered">{ordered === "" ? "—" : ordered.toLocaleString("ja-JP")}</td>
+              <td className="right"><input type="number" value={String(row.inspected_quantity ?? "")}
+                onChange={(event) => replace(index, { inspected_quantity: event.target.value === "" ? "" : Number(event.target.value) })} /></td>
+              <td><input type="date" value={String(row.delivery_date ?? "")}
+                onChange={(event) => replace(index, { delivery_date: event.target.value })} /></td>
+              <td className="right">
+                {isRoyalty && !amount
+                  ? <span className="line-royalty"><span className="tag-royalty">業績連動</span>
+                    {String(row.deliverable_ownership ?? "") === "発注者" ? "別途算定" : "利用許諾料に含む"}
+                    {rateNote && <small>{rateNote}</small>}
+                    <small>支払額に含めない</small></span>
+                  : <input type="number" value={String(row.inspected_amount_ex_tax ?? "")}
+                    onChange={(event) => replace(index, { inspected_amount_ex_tax: event.target.value === "" ? "" : Number(event.target.value) })} />}
+              </td>
+              <td><button type="button" className="line-remove" onClick={() => remove(index)}>削除</button></td>
+            </tr>;
+          })}
+        </tbody>
+      </table></div>
+    </>}
+  </div>;
+}
 
 // ── 経費・手数料の精算（V1 ステップ2-b/2-c の移植）──────────────────────
 // 親POから引用した経費・手数料の一覧から「今回の支払に含める」行をチェックで選ぶ。
