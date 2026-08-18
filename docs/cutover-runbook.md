@@ -466,6 +466,12 @@ SERVICE=legalbridge-v2 FLAGS_FROM=legalbridge-v2-write-test \
 確認してから `DRY_RUN=1` を外す。この時点では**誰も新サービスを見ていない**ので、
 失敗しても現行運用に影響はない。
 
+**✅ 2026-08-18 実施済み**：`https://legalbridge-v2-lkyrgniooa-an.a.run.app` /
+revision `legalbridge-v2-00001-h7g` / メモリ 2Gi。安全ゲート（`verify-isolation` ステップ）が
+本番ビルドで `legalbridge-v2` を承認済みサービスとして受け入れることを確認。
+ビルドは IAP を設定しない（`--no-allow-unauthenticated` のみ）ため、この時点で
+ブラウザから開くと 403。**それが正常**で、到達できるようになるのは 4-2 のあと。
+
 ### 4-2. IAP を新サービスにも通す
 
 新サービスは IAP の背後に置く（`run.googleapis.com/iap-enabled: true`）。必要なのは:
@@ -480,6 +486,34 @@ SERVICE=legalbridge-v2 FLAGS_FROM=legalbridge-v2-write-test \
 
 詳細な制約は `phase9-automation-ignition.md` §5 の実地知見を参照
 （IAP はサービス URL を audience にした OIDC を受け付けない、等）。
+
+**推測でコマンドを打たず、現行サービスの設定を読んでから合わせること。**
+
+```bash
+# 現行サービスの IAP 注釈（これと同じ状態を新サービスにも作る）
+gcloud run services describe legalbridge-v2-write-test --project legalbridge-488506 \
+  --region asia-northeast1 --format=yaml | grep -i -B2 -A2 iap
+```
+
+IAP OAuth Admin API は廃止済みのため、programmaticClients への登録はコンソール作業
+（Security → Identity-Aware Proxy → 対象サービス → 設定）。IAM の付与はコマンドで足りる:
+
+```bash
+gcloud beta iap web add-iam-policy-binding --resource-type=cloud-run \
+  --service=legalbridge-v2 --region=asia-northeast1 \
+  --member="serviceAccount:legalbridge-v2-preview@legalbridge-488506.iam.gserviceaccount.com" \
+  --role=roles/iap.httpsResourceAccessor
+```
+
+**4-2 が終わったかどうかの見分け方**：未認証で叩いたときの応答が
+Cloud Run の 403 から **IAP の 401**（`x-goog-iap-generated-response: true`）に変わる。
+
+```bash
+curl -s -o /dev/null -D- https://legalbridge-v2-lkyrgniooa-an.a.run.app/ | head -5
+```
+
+**4-2 が済むまで 4-3・4-4 に進まないこと。** 先に向き先を移すと、IAP を通っていない
+新サービスへジョブと webhook が飛んで全部失敗する（切り戻しは可能だが無駄な失敗が残る）。
 
 ### 4-3. Scheduler 3 ジョブの向き先を変える
 
