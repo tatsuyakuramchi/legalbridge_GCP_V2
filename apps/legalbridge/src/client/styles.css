@@ -2054,6 +2054,9 @@ textarea { width: 100%; min-height: 90px; resize: vertical; line-height: 1.6; }
 .step-card .step-body { padding: 14px 16px; display: grid; gap: 10px; }
 .po-selected-note { margin: 0; font-size: 12.5px; color: var(--accent-ink);
   background: var(--surface-tint); border-radius: 8px; padding: 6px 10px; }
+/* 検収明細カードに畳み込んだグループ（IV. 納品明細 / V. 進捗・財務） */
+.step-subgroup { border-top: 1px dashed var(--border); padding-top: 12px; display: grid; gap: 8px; }
+.step-subgroup h3 { margin: 0; font-size: 13px; color: var(--ink-soft); }
 
 /* 検収明細テーブル（発注数量と今回検収を並べて分納を明示） */
 .inspection-lines { display: grid; gap: 8px; }

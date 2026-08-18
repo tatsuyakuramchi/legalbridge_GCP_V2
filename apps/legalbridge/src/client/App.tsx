@@ -962,8 +962,15 @@ function DocumentForm({
   const honorificMismatches = honorificWarnings(formData);
   // 検収書はステップカード＋右レール（ライブ計算）で組む。ステップの並びは
   // 1) 親の発注書 2) 検収明細 3〜) スキーマのグループ（相手方・検収情報など）。
+  // 「IV. 納品明細」（単票フォールバック）と「V. 進捗・財務」は独立ステップにせず、
+  // 「検収明細」カードの中に畳み込む（明細と同じ文脈で入力するため・利用者要望）。
+  const isInspectionInlineGroup = (group: string) => /納品明細|進捗・財務/.test(group);
+  const inspectionInlineGroups = templateKey === "inspection_certificate"
+    ? groups.filter(isInspectionInlineGroup) : [];
+  const stepGroups = templateKey === "inspection_certificate"
+    ? groups.filter((group) => !isInspectionInlineGroup(group)) : groups;
   const inspectionSteps = templateKey === "inspection_certificate"
-    ? buildInspectionSteps(formData, groups, visibleFields)
+    ? buildInspectionSteps(formData, stepGroups, visibleFields)
     : null;
   const activeInspectionStep = inspectionSteps?.find((step) => !step.done) ?? null;
   // 利用許諾料計算書も同じステップカード＋右レールで組む（1 契約と条件 2 実績 3〜 グループ）。
@@ -1255,7 +1262,7 @@ function DocumentForm({
       )}
       <div className="form-layout">
         <nav className="form-nav">
-          {groups.map((group, index) => <a key={group} href={`#group-${index}`}>{group}</a>)}
+          {stepGroups.map((group, index) => <a key={group} href={`#group-${index}`}>{group}</a>)}
           {hasSpecializedForm(schema.templateKey) && <a href="#specialized-fields">明細・条件</a>}
         </nav>
         <form className="form-panel">
@@ -1269,8 +1276,12 @@ function DocumentForm({
             <InspectionStepCard no={2} title="検収明細" step={inspectionSteps[1]}
               active={activeInspectionStep === inspectionSteps[1]}>
               <SpecializedDocumentForms templateKey={templateKey} formData={formData} onChange={updateValue} />
+              {inspectionInlineGroups.map((group) => <div key={group} className="step-subgroup">
+                <h3>{group}</h3>
+                {renderGroupFields(group)}
+              </div>)}
             </InspectionStepCard>
-            {groups.map((group, index) =>
+            {stepGroups.map((group, index) =>
               <InspectionStepCard key={group} id={`group-${index}`} no={index + 3} title={group}
                 step={inspectionSteps[index + 2]} active={activeInspectionStep === inspectionSteps[index + 2]}>
                 {renderGroupFields(group)}
