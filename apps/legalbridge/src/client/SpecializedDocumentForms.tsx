@@ -372,6 +372,7 @@ function InspectionLinesTable({ formData, onChange }: {
           <th className="right" title="親の発注書の数量">発注</th>
           <th className="right">今回検収</th>
           <th>納品日</th>
+          <th title="行ごとの実支払日。未入力なら文書全体の支払期日がPDFに出ます">支払日</th>
           <th className="right">金額（税抜）</th>
           <th aria-label="操作"></th>
         </tr></thead>
@@ -401,6 +402,9 @@ function InspectionLinesTable({ formData, onChange }: {
                 onChange={(event) => replace(index, { inspected_quantity: event.target.value === "" ? "" : Number(event.target.value) })} /></td>
               <td><input type="date" value={String(row.delivery_date ?? "")}
                 onChange={(event) => replace(index, { delivery_date: event.target.value })} /></td>
+              {/* 行ごとの実支払日（本番テンプレ v12 の paid_date）。未入力は支払期日にフォールバック。 */}
+              <td><input type="date" value={String(row.paid_date ?? "")}
+                onChange={(event) => replace(index, { paid_date: event.target.value })} /></td>
               <td className="right">
                 {isRoyalty && !amount
                   ? <span className="line-royalty"><span className="tag-royalty">業績連動</span>

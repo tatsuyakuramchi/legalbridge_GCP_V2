@@ -1,14 +1,15 @@
 \set ON_ERROR_STOP on
 \pset pager off
 
--- 059_inspection_certificate_drop_yield.sql
--- 検収書テンプレ改訂: 「■ 今回の納品内容」から歩留率列を削除する（フォーム再設計に合わせる）。
+-- 059_inspection_certificate_drop_yield.sql（v12 対応版）
+-- 検収書テンプレ改訂: 「■ 今回の納品内容」（詳細表・7列）から歩留率列を削除する。
+--   本番の現行版は v12（0120 のあとに PR #478 の支払日グループ化と 0153 の¥表示修正が入り、
+--   詳細表は No./成果物/今回数量/歩留率/納品日/支払日/支払対価 の7列・合計行 colspan="6"）。
+--   支払日ごとグループ化フォーマット（useGroupedInspection）はもともと歩留率を出さないため触らない。
 --   ・現行版 html_source への文字列置換で新版を作り、current_version_id を差し替える。
---     全文差し替えではなく置換ベース＝本番側に他の改訂があっても温存される。
 --     置換対象が想定どおりの回数で見つからない場合は何もせず中断する。
 --   ・acceptance_ratio（歩留率）はデータと計算（単価×数量×歩留率）では温存し、表示だけ落とす。
---   ・field_schema は現行版をそのまま引き継ぐ。
---   ・確定済み文書は自分の版の html で再生成されるため影響なし。
+--   ・field_schema は現行版をそのまま引き継ぐ。確定済み文書は自分の版で再生成されるため影響なし。
 --
 -- 実行: psql "$RUNTIME_ADMIN_DSN" -v confirm_inspection_yield=DROP_INSPECTION_YIELD_COLUMN \
 --         -f infra/gcp/sql/059_inspection_certificate_drop_yield.sql
@@ -35,15 +36,21 @@ DECLARE
   next_no int;
   new_id bigint;
 
-  th_yield constant text := $q$<th style="width:10%">歩留率</th>$q$;
-  th_item_old constant text := $q$<th style="width:45%">成果物・業務内容</th>$q$;
-  th_item_new constant text := $q$<th style="width:50%">成果物・業務内容</th>$q$;
-  th_date_old constant text := $q$<th style="width:14%">納品日</th>$q$;
-  th_date_new constant text := $q$<th style="width:19%">納品日</th>$q$;
+  th_yield constant text := $q$<th style="width:9%">歩留率</th>$q$;
+  th_item_old constant text := $q$<th style="width:38%">成果物・業務内容</th>$q$;
+  th_item_new constant text := $q$<th style="width:47%">成果物・業務内容</th>$q$;
   cell_yield constant text := $q$<td class="center">{{#if (gt acceptance_ratio 0)}}{{formatPct (multiply acceptance_ratio 100)}}{{else}}—{{/if}}</td>$q$;
   dash_pair constant text := $q$<td class="center">—</td>
           <td class="center">—</td>$q$;
   dash_single constant text := $q$<td class="center">—</td>$q$;
+  total_sub_old constant text := $q$<td colspan="6" class="right">検収 小計（税抜）</td>$q$;
+  total_sub_new constant text := $q$<td colspan="5" class="right">検収 小計（税抜）</td>$q$;
+  total_tax_old constant text := $q$<td colspan="6" class="right">
+          消費税($q$;
+  total_tax_new constant text := $q$<td colspan="5" class="right">
+          消費税($q$;
+  total_inc_old constant text := $q$<td colspan="6" class="right">源泉徴収税計算前　検収金額(税込)</td>$q$;
+  total_inc_new constant text := $q$<td colspan="5" class="right">源泉徴収税計算前　検収金額(税込)</td>$q$;
 BEGIN
   SELECT t.id, v.html_source INTO tpl_id, src
     FROM document_templates t
@@ -55,27 +62,28 @@ BEGIN
 
   -- ガード: 置換対象が想定どおりの回数で存在するか（違えば本番の版が想定と異なる）。
   IF (length(src) - length(replace(src, th_yield, ''))) / length(th_yield) <> 1 THEN
-    RAISE EXCEPTION '歩留率の列見出しが 1 箇所ではありません。現行版の内容を確認してください';
+    RAISE EXCEPTION '歩留率の列見出し（width:9%%）が 1 箇所ではありません。現行版の内容を確認してください';
   END IF;
   IF (length(src) - length(replace(src, cell_yield, ''))) / length(cell_yield) <> 1 THEN
     RAISE EXCEPTION '歩留率のセル（acceptance_ratio）が想定と異なります。現行版の内容を確認してください';
   END IF;
-  IF (length(src) - length(replace(src, 'colspan="5"', ''))) / length('colspan="5"') <> 3 THEN
-    RAISE EXCEPTION 'colspan="5" が 3 箇所ではありません。現行版の内容を確認してください';
+  IF (length(src) - length(replace(src, th_item_old, ''))) / length(th_item_old) <> 1 THEN
+    RAISE EXCEPTION '成果物列（width:38%%）の見出しが 1 箇所ではありません。現行版の内容を確認してください';
   END IF;
   IF strpos(src, dash_pair) = 0 THEN
     RAISE EXCEPTION '単票フォールバック行の「—」セル対が見つかりません。現行版の内容を確認してください';
   END IF;
-  IF strpos(src, th_item_old) = 0 OR strpos(src, th_date_old) = 0 THEN
-    RAISE EXCEPTION '列幅（45%% / 14%%）の見出しが見つかりません。現行版の内容を確認してください';
+  IF strpos(src, total_sub_old) = 0 OR strpos(src, total_tax_old) = 0 OR strpos(src, total_inc_old) = 0 THEN
+    RAISE EXCEPTION '合計行（colspan="6"）が想定どおり見つかりません。現行版の内容を確認してください';
   END IF;
 
   new_html := replace(src, th_yield, '');
   new_html := replace(new_html, th_item_old, th_item_new);
-  new_html := replace(new_html, th_date_old, th_date_new);
   new_html := replace(new_html, cell_yield, '');
   new_html := replace(new_html, dash_pair, dash_single);
-  new_html := replace(new_html, 'colspan="5"', 'colspan="4"');
+  new_html := replace(new_html, total_sub_old, total_sub_new);
+  new_html := replace(new_html, total_tax_old, total_tax_new);
+  new_html := replace(new_html, total_inc_old, total_inc_new);
 
   IF strpos(new_html, '>歩留率<') > 0 THEN
     RAISE EXCEPTION '置換後も歩留率の表示が残っています。中断しました';
@@ -99,7 +107,7 @@ $do$;
 
 SELECT t.template_key, t.current_version_id, v.version_no,
        strpos(v.html_source, '>歩留率<') AS yield_visible_pos,
-       (length(v.html_source) - length(replace(v.html_source, 'colspan="4"', ''))) / length('colspan="4"') AS colspan4_count
+       (length(v.html_source) - length(replace(v.html_source, 'colspan="5"', ''))) / length('colspan="5"') AS colspan5_count
   FROM document_templates t
   JOIN document_template_versions v ON v.id = t.current_version_id
  WHERE t.template_key = 'inspection_certificate';
