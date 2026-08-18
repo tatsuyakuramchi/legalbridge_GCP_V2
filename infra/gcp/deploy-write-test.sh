@@ -12,6 +12,10 @@
 #   infra/gcp/deploy-write-test.sh KEY=VALUE [KEY=VALUE]  # 一部フラグだけ変えて再デプロイ
 #     例) infra/gcp/deploy-write-test.sh _SLACK_CONVERSATION_READ_MODE=live
 #   DRY_RUN=1 infra/gcp/deploy-write-test.sh ...          # 送信せず差分だけ確認
+#   SERVICE=... でデプロイ先を上書き（既定 legalbridge-v2-write-test）。
+#   FLAGS_FROM=... で設定の引き継ぎ元を上書き（既定はデプロイ先自身）。
+#     まだ存在しないサービスへ初めて出すとき（§4 の正式名への載せ替え）に使う:
+#       SERVICE=legalbridge-v2 FLAGS_FROM=legalbridge-v2-write-test infra/gcp/deploy-write-test.sh
 #   PROJECT=... で対象プロジェクトを上書き（既定 legalbridge-488506）。
 #   Cloud Shell がリセットされて core/project が消えても動くよう常に --project を渡す。
 
@@ -19,6 +23,10 @@ set -euo pipefail
 
 PROJECT="${PROJECT:-legalbridge-488506}"
 SERVICE="${SERVICE:-legalbridge-v2-write-test}"
+# フラグの引き継ぎ元。既定はデプロイ先そのもの。まだ存在しないサービスへ初めて出すとき
+# （runbook §4 の正式名への載せ替え）だけ、稼働中のサービスを指定する:
+#   SERVICE=legalbridge-v2 FLAGS_FROM=legalbridge-v2-write-test infra/gcp/deploy-write-test.sh
+FLAGS_FROM="${FLAGS_FROM:-${SERVICE}}"
 REGION="${REGION:-asia-northeast1}"
 CONFIG="${CONFIG:-infra/gcp/cloudbuild-write-test.yaml}"
 FLAGS_FILE="${FLAGS_FILE:-/tmp/build-flags.json}"
@@ -36,6 +44,13 @@ if [ -f "${CHECKER}" ] && command -v python3 >/dev/null; then
   python3 "${CHECKER}" "${CONFIG}" || die "${CONFIG} のシェルスクリプトに問題があります（上の ERROR を修正してください）"
 fi
 
+# 安全ゲート（verify-write-test.sh）の判定が変わっていないことを確認する。0.2 秒。
+# 分岐が多く、緩めた変更は「ビルドが通ってしまう」形で表面化するため、送信前に見る。
+CASES="$(dirname "$0")/verify-cases.sh"
+if [ -f "${CASES}" ]; then
+  bash "${CASES}" >/dev/null || die "安全ゲートの判定が期待と違います（infra/gcp/verify-cases.sh を実行して確認してください）"
+fi
+
 # ── 1. 認証（切れていると proxy もビルドも落ちるので最初に止める）──────────────
 if ! gcloud auth list --filter=status:ACTIVE --format="value(account)" 2>/dev/null | grep -q .; then
   die "gcloud の認証が切れています。先に 'gcloud auth login' を実行してください。"
@@ -48,10 +63,14 @@ echo "プロジェクト: ${PROJECT}"
 
 # ── 2. 配信中リビジョンのイメージタグ＝ビルドID から現行設定を取得 ────────────
 #     （'gcloud builds list' の最新 SUCCESS は別サービスのビルドを掴む事故がある）
-echo "配信中リビジョンから現行設定を取得しています…"
-IMAGE="$(gcloud run services describe "${SERVICE}" --project "${PROJECT}" --region "${REGION}" \
+if [ "${FLAGS_FROM}" = "${SERVICE}" ]; then
+  echo "配信中リビジョンから現行設定を取得しています…"
+else
+  echo "デプロイ先: ${SERVICE}（設定の引き継ぎ元: ${FLAGS_FROM}）"
+fi
+IMAGE="$(gcloud run services describe "${FLAGS_FROM}" --project "${PROJECT}" --region "${REGION}" \
   --format='value(spec.template.spec.containers[0].image)')"
-[ -n "${IMAGE}" ] || die "${SERVICE} の配信中イメージを取得できませんでした"
+[ -n "${IMAGE}" ] || die "${FLAGS_FROM} の配信中イメージを取得できませんでした"
 LAST_BUILD="${IMAGE##*:}"
 echo "採用ビルド: ${LAST_BUILD}"
 
@@ -66,6 +85,7 @@ echo "substitutions: ${KEY_COUNT} キー"
 # ── 3. 引数で指定されたフラグだけ差し替える ──────────────────────────────────
 for override in "$@"; do
   case "${override}" in
+    _SERVICE=*) die "サービス名は SERVICE=... で指定してください（引き継ぎ元と食い違うと別サービスへ出ます）" ;;
     _*=*) ;;
     *) die "指定は _KEY=VALUE 形式です: ${override}" ;;
   esac
@@ -75,6 +95,11 @@ for override in "$@"; do
     "${FLAGS_FILE}" > "${FLAGS_FILE}.tmp" && mv "${FLAGS_FILE}.tmp" "${FLAGS_FILE}"
   echo "変更: ${key} = ${value}"
 done
+
+# デプロイ先は SERVICE を正とする（引き継ぎ元の _SERVICE をそのまま使うと、
+# 載せ替え時に旧サービスへ上書きしてしまう）。
+jq --arg s "${SERVICE}" '.substitutions._SERVICE = $s' \
+  "${FLAGS_FILE}" > "${FLAGS_FILE}.tmp" && mv "${FLAGS_FILE}.tmp" "${FLAGS_FILE}"
 
 # ── 4. verify が落とす条件をローカルで先に弾く（ビルド待ちの無駄をなくす）────
 sub() { jq -r --arg k "$1" '.substitutions[$k] // ""' "${FLAGS_FILE}"; }
@@ -99,7 +124,7 @@ if [ "$(sub _SLACK_CONVERSATION_READ_MODE)" = "live" ]; then
 fi
 
 echo "主要フラグ:"
-jq -r '.substitutions | {_INTEGRATION_MODE, _WRITE_SCOPES, _CLOUDSIGN_MODE, _CLOUDSIGN_ALLOWED_RECIPIENTS,
+jq -r '.substitutions | {_SERVICE, _INTEGRATION_MODE, _WRITE_SCOPES, _CLOUDSIGN_MODE, _CLOUDSIGN_ALLOWED_RECIPIENTS,
   _SLACK_DELIVERY_MODE, _SLACK_NOTIFICATION_HISTORY_ENABLED, _SLACK_CONVERSATION_READ_MODE}' "${FLAGS_FILE}"
 
 # ── 5. 送信（"^|^" 区切り＋末尾の "." までを固定）───────────────────────────

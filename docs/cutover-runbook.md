@@ -421,11 +421,120 @@ jq '.substitutions._SLACK_BOT_USER_ID = "U0XXXXXXXXX"' /tmp/build-flags.json > /
   利用者全員に roles/run.invoker（または IAP アクセス）を付与。
 - スモーク：legal 1名・requester 1名で主要導線（依頼→作成→出力→検収→請求）を通す。
 
-## 4. サービス名の正式化
-現サービスは `legalbridge-v2-write-test`。載せ替え時に：
-1. 同構成で `legalbridge-v2`（正式名）を新規デプロイ（cloudbuild の `_SERVICE`/`_IMAGE` 差替え。
-   verify の write-test 限定ゲートは正式サービス名を許可するよう更新が必要）。
-2. DNS/ブックマーク/Slack リンクの向き先を切替。write-test は検証用として残すか停止。
+## 4. サービス名の正式化（`legalbridge-v2-write-test` → `legalbridge-v2`）
+
+**Cloud Run のサービス名は変更できない。** 新しい名前でサービスを作り、向き先を移し、
+旧サービスを畳む、という手順になる。旧サービスは削除するまで動き続けるので、
+各段階で切り戻せる。
+
+### 4-0. 前提（コード側・2026-08-18 対応済み）
+
+- `verify-write-test.sh` の安全ゲートは**承認済みサービス名を1箇所で持つ**ようになった
+  （`APPROVED_SERVICES="legalbridge-v2-write-test legalbridge-v2"`）。以前は 40 箇所に
+  直書きされており、名前を変えると全ゲートで弾かれてデプロイできなかった。
+  環境変数では上書きできない（安全ゲートを実行時に広げる手段を残さない）。
+- 判定は `infra/gcp/verify-cases.sh` で固定してある（31 ケース・0.2 秒）。
+  `deploy-write-test.sh` の事前検査で毎回走るので、ゲートを緩める変更は送信前に止まる。
+- `deploy-write-test.sh` に `FLAGS_FROM` を追加した。**まだ存在しないサービスへ初めて出す**
+  ときに、稼働中のサービスから 106 キーの substitutions を引き継げる。
+  デプロイ先は `SERVICE` を正とする（`_SERVICE=` を引数で渡すとエラーにする＝
+  引き継ぎ元と食い違って旧サービスへ上書きする事故を防ぐ）。
+
+### 4-1. 新サービスをデプロイ
+
+```bash
+SERVICE=legalbridge-v2 FLAGS_FROM=legalbridge-v2-write-test \
+  DRY_RUN=1 infra/gcp/deploy-write-test.sh
+```
+
+`_SERVICE` が `legalbridge-v2`、`substitutions: 106 キー`、他のフラグが現行と同じことを
+確認してから `DRY_RUN=1` を外す。この時点では**誰も新サービスを見ていない**ので、
+失敗しても現行運用に影響はない。
+
+### 4-2. IAP を新サービスにも通す
+
+新サービスは IAP の背後に置く（`run.googleapis.com/iap-enabled: true`）。必要なのは:
+
+- IAP OAuth クライアント `lb-v2-scheduler`
+  （`988056987352-k521jsfnimvejpt9tj5doe2k6mcgdvu6.apps.googleusercontent.com`）を
+  新サービスの IAP 設定 `accessSettings.oauthSettings.programmaticClients` に登録
+- Scheduler の SA（`legalbridge-v2-preview@legalbridge-488506.iam.gserviceaccount.com`）に
+  `roles/iap.httpsResourceAccessor`
+  （`gcloud beta iap web add-iam-policy-binding --resource-type=cloud-run --service=legalbridge-v2 --region=asia-northeast1`）
+- 利用者（admin）のアクセス権
+
+詳細な制約は `phase9-automation-ignition.md` §5 の実地知見を参照
+（IAP はサービス URL を audience にした OIDC を受け付けない、等）。
+
+### 4-3. Scheduler 3 ジョブの向き先を変える
+
+**コマンド例を写さないこと。** `phase9-automation-ignition.md` の作成コマンドは
+`--oidc-token-audience "$SVC_URL"` のままだが、実地では audience は IAP クライアント ID。
+現行ジョブの設定を読んで引き継ぐ:
+
+```bash
+for job in lb-v2-daily-checks lb-v2-inspection-digest lb-v2-cloudsign-sync; do
+  gcloud scheduler jobs describe "$job" --project legalbridge-488506 \
+    --location asia-northeast1 \
+    --format='value(name, httpTarget.uri, httpTarget.oidcToken.audience, httpTarget.oidcToken.serviceAccountEmail, state)'
+done
+```
+
+`uri` のホスト部分だけを新サービスの URL に差し替える（audience・SA・ヘッダは据え置き）:
+
+```bash
+NEW_URL=$(gcloud run services describe legalbridge-v2 --project legalbridge-488506 \
+  --region asia-northeast1 --format='value(status.url)')
+for pair in "lb-v2-daily-checks:daily-checks" "lb-v2-inspection-digest:inspection-digest" \
+            "lb-v2-cloudsign-sync:cloudsign-sync"; do
+  gcloud scheduler jobs update http "${pair%%:*}" --project legalbridge-488506 \
+    --location asia-northeast1 --uri "$NEW_URL/internal/jobs/${pair##*:}"
+done
+```
+
+### 4-4. 受信リレーの転送先を変える
+
+```bash
+gcloud run services update lb-v2-receiver --project legalbridge-488506 \
+  --region asia-northeast1 --update-env-vars UPSTREAM="$NEW_URL"
+```
+
+**外部サービス（CloudSign／Backlog／Slack）に登録した URL は変更不要。** 登録先は
+すべてリレー（`lb-v2-receiver`）で、リレーの URL は変わらない。これが「webhook は
+リレー宛に登録する」設計の効きどころ。
+
+### 4-5. 動作確認
+
+```bash
+# ジョブ（ENABLED のものだけ。PAUSED では jobs run が使えない）
+gcloud scheduler jobs run lb-v2-cloudsign-sync --project legalbridge-488506 --location asia-northeast1
+sleep 20
+gcloud logging read \
+  'resource.type="cloud_run_revision" AND resource.labels.service_name="legalbridge-v2"
+   AND httpRequest.requestUrl:"/internal/jobs/cloudsign-sync"' \
+  --project legalbridge-488506 --limit 3 --freshness 10m \
+  --format='value(timestamp, httpRequest.status)'
+
+# webhook（リレー経由・不正トークンで 401、正トークンで 200）
+```
+
+`200` が新サービス側のログに出れば、Scheduler → IAP → 新サービスが通っている。
+
+### 4-6. 利用者の向き先と旧サービスの扱い
+
+ブックマーク・Slack のリンク・ドキュメントを新 URL へ。旧サービスは**すぐ削除しない**。
+観察期間（§5-4 と同じ 2 週間目安）を置き、問題が出れば 4-3／4-4 を旧 URL に戻すだけで
+切り戻せる。畳むときは Cloud Run サービスを削除する（`APPROVED_SERVICES` から
+`legalbridge-v2-write-test` を外すかどうかは、検証用として残すか次第）。
+
+### 切り戻し
+
+| 段階 | 戻し方 |
+|---|---|
+| 4-1 まで | 何もしない（新サービスは誰も見ていない） |
+| 4-3 後 | Scheduler の `--uri` を旧 URL へ戻す |
+| 4-4 後 | リレーの `UPSTREAM` を旧 URL へ戻す |
+| 4-6 後 | 利用者へ旧 URL を案内（旧サービスが生きている限り即時） |
 
 ## 5. V1 停止（段階的）
 | 段階 | 内容 |

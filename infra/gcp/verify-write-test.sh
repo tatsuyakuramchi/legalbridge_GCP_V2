@@ -1,6 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# 書込・外部送信を許可するサービス名。ここに無い名前では、本番DBへの書込も
+# 外部送信（Slack/Gmail/CloudSign/Drive）も各ゲートで止まる。
+#   legalbridge-v2-write-test … 検証を積んできたサービス（現行）
+#   legalbridge-v2            … 正式名（runbook §4 の載せ替え先）
+# 名前を1箇所で持つのは、以前ここに 40 箇所の直書きがあり、載せ替えのたびに
+# 全部を書き換える必要があった（書き漏らすとデプロイが止まり、緩めすぎると
+# 検証していない構成が本番DBに触れる）ため。
+# 環境変数で上書きできないようにする（安全ゲートを実行時に広げる手段を残さない）。
+APPROVED_SERVICES="legalbridge-v2-write-test legalbridge-v2"
+
+# 承認済みでなければ真（＝ゲートを立てる）。`if service_not_approved || ...` で使う。
+service_not_approved() {
+  case " ${APPROVED_SERVICES} " in
+    *" ${SERVICE} "*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 test "${SERVICE}" != "legalbridge-v2-preview"
 case "${PRIMARY_DB_MODE}" in
   validation)
@@ -20,7 +38,7 @@ case "${PRIMARY_DB_MODE}" in
       echo "Production primary deployment blocked: explicit cutover confirmation is missing."
       exit 1
     fi
-    if [ "${SERVICE}" != "legalbridge-v2-write-test" ] || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
+    if service_not_approved || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
       echo "Production primary deployment blocked: service, database, runtime user, or password secret does not match the approved target."
       exit 1
     fi
@@ -46,7 +64,7 @@ case "${AUTH_MODE}" in
       echo "Cloud Run IAM deployment blocked: explicit proxy-validation confirmation is missing."
       exit 1
     fi
-    if [ "${SERVICE}" != "legalbridge-v2-write-test" ] || [ "${AUTH_ADMIN_EMAILS}" != "tatsuya.kuramochi@arclight.co.jp" ]; then
+    if service_not_approved || [ "${AUTH_ADMIN_EMAILS}" != "tatsuya.kuramochi@arclight.co.jp" ]; then
       echo "Cloud Run IAM deployment blocked: service or sole administrator does not match the approved validation target."
       exit 1
     fi
@@ -76,7 +94,7 @@ case "${BACKLOG_MODE}" in
       echo "Backlog deployment blocked: explicit read-only validation confirmation is missing."
       exit 1
     fi
-    if [ "${SERVICE}" != "legalbridge-v2-write-test" ] || [ "${BACKLOG_HOST}" != "arclight.backlog.com" ] || [ "${BACKLOG_PROJECT_KEY}" != "LEGAL" ]; then
+    if service_not_approved || [ "${BACKLOG_HOST}" != "arclight.backlog.com" ] || [ "${BACKLOG_PROJECT_KEY}" != "LEGAL" ]; then
       echo "Backlog deployment blocked: validation service, host, or project does not match the approved target."
       exit 1
     fi
@@ -100,7 +118,7 @@ case "${BACKLOG_COMMENT_WRITE_ENABLED}" in
       echo "Backlog comment write-back blocked: explicit validation confirmation is missing."
       exit 1
     fi
-    if [ "${SERVICE}" != "legalbridge-v2-write-test" ] || [ "${BACKLOG_MODE}" != "readonly" ] || [ "${BACKLOG_HOST}" != "arclight.backlog.com" ] || [ "${BACKLOG_PROJECT_KEY}" != "LEGAL" ]; then
+    if service_not_approved || [ "${BACKLOG_MODE}" != "readonly" ] || [ "${BACKLOG_HOST}" != "arclight.backlog.com" ] || [ "${BACKLOG_PROJECT_KEY}" != "LEGAL" ]; then
       echo "Backlog comment write-back blocked: service, mode, host, or project does not match the approved target."
       exit 1
     fi
@@ -120,8 +138,8 @@ case "${INTEGRATION_MODE}" in
   local)
     ;;
   live)
-    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
-      echo "Integration live blocked: external sends require the write-test service."
+    if service_not_approved; then
+      echo "Integration live blocked: external sends require an approved service."
       exit 1
     fi
     if [ "${AUTH_MODE}" != "iap" ] && [ "${AUTH_MODE}" != "cloudrun-iam" ]; then
@@ -156,7 +174,7 @@ case "${SLACK_DISPATCH_ENABLED}" in
       echo "Slack dispatch deployment blocked: explicit validation confirmation is missing."
       exit 1
     fi
-    if [ "${SERVICE}" != "legalbridge-v2-write-test" ] || [ "${SLACK_DELIVERY_MODE}" != "live" ]; then
+    if service_not_approved || [ "${SLACK_DELIVERY_MODE}" != "live" ]; then
       echo "Slack dispatch deployment blocked: service or delivery mode does not match the approved target."
       exit 1
     fi
@@ -196,7 +214,7 @@ case "${OUTBOUND_CONDITION_WRITES_ENABLED}" in
       expected_outbound_user="legalbridge_v2_runtime"
       expected_outbound_secret="legalbridge-v2-runtime-db-password"
     fi
-    if [ "${SERVICE}" != "legalbridge-v2-write-test" ] || [ "${OUTBOUND_DB_NAME}" != "legalbridge" ] || [ "${OUTBOUND_DB_USER}" != "$expected_outbound_user" ] || [ "${OUTBOUND_DB_PASSWORD_SECRET}" != "$expected_outbound_secret" ]; then
+    if service_not_approved || [ "${OUTBOUND_DB_NAME}" != "legalbridge" ] || [ "${OUTBOUND_DB_USER}" != "$expected_outbound_user" ] || [ "${OUTBOUND_DB_PASSWORD_SECRET}" != "$expected_outbound_secret" ]; then
       echo "Outbound deployment blocked: service, database, dedicated user, or password secret does not match the approved target."
       exit 1
     fi
@@ -218,7 +236,7 @@ case "${CONTRACT_INTAKE_WRITES_ENABLED}" in
       echo "Contract intake deployment blocked: explicit production validation confirmation is missing."
       exit 1
     fi
-    if [ "${PRIMARY_DB_MODE}" != "production" ] || [ "${SERVICE}" != "legalbridge-v2-write-test" ] || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
+    if [ "${PRIMARY_DB_MODE}" != "production" ] || service_not_approved || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
       echo "Contract intake deployment blocked: service, database, runtime user, or password secret does not match the approved target."
       exit 1
     fi
@@ -240,7 +258,7 @@ case "${MATTER_WRITES_ENABLED}" in
       echo "Matter management deployment blocked: explicit production validation confirmation is missing."
       exit 1
     fi
-    if [ "${PRIMARY_DB_MODE}" != "production" ] || [ "${SERVICE}" != "legalbridge-v2-write-test" ] || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
+    if [ "${PRIMARY_DB_MODE}" != "production" ] || service_not_approved || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
       echo "Matter management deployment blocked: service, database, runtime user, or password secret does not match the approved target."
       exit 1
     fi
@@ -262,7 +280,7 @@ case "${VENDOR_WRITES_ENABLED}" in
       echo "Vendor master deployment blocked: explicit production validation confirmation is missing."
       exit 1
     fi
-    if [ "${PRIMARY_DB_MODE}" != "production" ] || [ "${SERVICE}" != "legalbridge-v2-write-test" ] || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
+    if [ "${PRIMARY_DB_MODE}" != "production" ] || service_not_approved || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
       echo "Vendor master deployment blocked: service, database, runtime user, or password secret does not match the approved target."
       exit 1
     fi
@@ -284,7 +302,7 @@ case "${STAFF_WRITES_ENABLED}" in
       echo "Staff master deployment blocked: explicit production validation confirmation is missing."
       exit 1
     fi
-    if [ "${PRIMARY_DB_MODE}" != "production" ] || [ "${SERVICE}" != "legalbridge-v2-write-test" ] || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
+    if [ "${PRIMARY_DB_MODE}" != "production" ] || service_not_approved || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
       echo "Staff master deployment blocked: service, database, runtime user, or password secret does not match the approved target."
       exit 1
     fi
@@ -306,7 +324,7 @@ case "${WORK_WRITES_ENABLED}" in
       echo "Work master deployment blocked: explicit production validation confirmation is missing."
       exit 1
     fi
-    if [ "${PRIMARY_DB_MODE}" != "production" ] || [ "${SERVICE}" != "legalbridge-v2-write-test" ] || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
+    if [ "${PRIMARY_DB_MODE}" != "production" ] || service_not_approved || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
       echo "Work master deployment blocked: service, database, runtime user, or password secret does not match the approved target."
       exit 1
     fi
@@ -328,7 +346,7 @@ case "${MATERIAL_WRITES_ENABLED}" in
       echo "Material master deployment blocked: explicit production validation confirmation is missing."
       exit 1
     fi
-    if [ "${PRIMARY_DB_MODE}" != "production" ] || [ "${SERVICE}" != "legalbridge-v2-write-test" ] || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
+    if [ "${PRIMARY_DB_MODE}" != "production" ] || service_not_approved || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
       echo "Material master deployment blocked: service, database, runtime user, or password secret does not match the approved target."
       exit 1
     fi
@@ -350,7 +368,7 @@ case "${RIGHTS_SOURCE_WRITES_ENABLED}" in
       echo "Rights source deployment blocked: explicit production validation confirmation is missing."
       exit 1
     fi
-    if [ "${PRIMARY_DB_MODE}" != "production" ] || [ "${SERVICE}" != "legalbridge-v2-write-test" ] || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
+    if [ "${PRIMARY_DB_MODE}" != "production" ] || service_not_approved || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
       echo "Rights source deployment blocked: service, database, runtime user, or password secret does not match the approved target."
       exit 1
     fi
@@ -372,7 +390,7 @@ case "${VENDOR_MERGE_ENABLED}" in
       echo "Vendor merge deployment blocked: explicit production validation confirmation is missing."
       exit 1
     fi
-    if [ "${PRIMARY_DB_MODE}" != "production" ] || [ "${SERVICE}" != "legalbridge-v2-write-test" ] || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
+    if [ "${PRIMARY_DB_MODE}" != "production" ] || service_not_approved || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
       echo "Vendor merge deployment blocked: service, database, runtime user, or password secret does not match the approved target."
       exit 1
     fi
@@ -394,7 +412,7 @@ case "${MATTER_MERGE_ENABLED}" in
       echo "Matter merge deployment blocked: explicit production validation confirmation is missing."
       exit 1
     fi
-    if [ "${PRIMARY_DB_MODE}" != "production" ] || [ "${SERVICE}" != "legalbridge-v2-write-test" ] || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
+    if [ "${PRIMARY_DB_MODE}" != "production" ] || service_not_approved || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
       echo "Matter merge deployment blocked: service, database, runtime user, or password secret does not match the approved target."
       exit 1
     fi
@@ -416,7 +434,7 @@ case "${MATTER_DELETE_ENABLED}" in
       echo "Matter delete deployment blocked: explicit production validation confirmation is missing."
       exit 1
     fi
-    if [ "${PRIMARY_DB_MODE}" != "production" ] || [ "${SERVICE}" != "legalbridge-v2-write-test" ] || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
+    if [ "${PRIMARY_DB_MODE}" != "production" ] || service_not_approved || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
       echo "Matter delete deployment blocked: service, database, runtime user, or password secret does not match the approved target."
       exit 1
     fi
@@ -438,7 +456,7 @@ case "${CONDITION_LINE_REPAIR_ENABLED:-false}" in
       echo "Condition repair deployment blocked: explicit production validation confirmation is missing."
       exit 1
     fi
-    if [ "${PRIMARY_DB_MODE}" != "production" ] || [ "${SERVICE}" != "legalbridge-v2-write-test" ] || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
+    if [ "${PRIMARY_DB_MODE}" != "production" ] || service_not_approved || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
       echo "Condition repair deployment blocked: service, database, runtime user, or password secret does not match the approved target."
       exit 1
     fi
@@ -460,7 +478,7 @@ case "${DOCUMENT_VOID_ENABLED}" in
       echo "Document void deployment blocked: explicit production validation confirmation is missing."
       exit 1
     fi
-    if [ "${PRIMARY_DB_MODE}" != "production" ] || [ "${SERVICE}" != "legalbridge-v2-write-test" ] || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
+    if [ "${PRIMARY_DB_MODE}" != "production" ] || service_not_approved || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
       echo "Document void deployment blocked: service, database, runtime user, or password secret does not match the approved target."
       exit 1
     fi
@@ -482,7 +500,7 @@ case "${DOCUMENT_REISSUE_ENABLED}" in
       echo "Document reissue deployment blocked: explicit production validation confirmation is missing."
       exit 1
     fi
-    if [ "${PRIMARY_DB_MODE}" != "production" ] || [ "${SERVICE}" != "legalbridge-v2-write-test" ] || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
+    if [ "${PRIMARY_DB_MODE}" != "production" ] || service_not_approved || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
       echo "Document reissue deployment blocked: service, database, runtime user, or password secret does not match the approved target."
       exit 1
     fi
@@ -502,8 +520,8 @@ case "${EXCEL_BATCH_ENABLED}" in
   true)
     # 発行済みマークは隔離台帳(lb_v2_excel_export_ledger)への append のみ＝確認トークン不要。
     # 書込サービス限定＋IAP/IAM は必須。
-    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
-      echo "Excel batch deployment blocked: limited to the write-test service."
+    if service_not_approved; then
+      echo "Excel batch deployment blocked: limited to an approved service."
       exit 1
     fi
     if [ "${AUTH_MODE}" != "iap" ] && [ "${AUTH_MODE}" != "cloudrun-iam" ]; then
@@ -521,8 +539,8 @@ case "${SETTINGS_WRITE_ENABLED}" in
     ;;
   true)
     # 会社プロファイル（app_settings・allowlist キー）編集。書込サービス限定＋IAP/IAM 必須。
-    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
-      echo "Settings write deployment blocked: limited to the write-test service."
+    if service_not_approved; then
+      echo "Settings write deployment blocked: limited to an approved service."
       exit 1
     fi
     if [ "${AUTH_MODE}" != "iap" ] && [ "${AUTH_MODE}" != "cloudrun-iam" ]; then
@@ -540,8 +558,8 @@ case "${WORKFLOW_RULES_WRITE_ENABLED}" in
     ;;
   true)
     # 承認ルート（department_workflow_rules）編集。書込サービス限定＋IAP/IAM 必須。
-    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
-      echo "Workflow rules deployment blocked: limited to the write-test service."
+    if service_not_approved; then
+      echo "Workflow rules deployment blocked: limited to an approved service."
       exit 1
     fi
     if [ "${AUTH_MODE}" != "iap" ] && [ "${AUTH_MODE}" != "cloudrun-iam" ]; then
@@ -559,8 +577,8 @@ case "${CONTRACT_MASTER_WRITE_ENABLED}" in
     ;;
   true)
     # 契約マスタ（contracts 列 UPDATE）編集。書込サービス限定＋IAP/IAM 必須。
-    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
-      echo "Contract master deployment blocked: limited to the write-test service."
+    if service_not_approved; then
+      echo "Contract master deployment blocked: limited to an approved service."
       exit 1
     fi
     if [ "${AUTH_MODE}" != "iap" ] && [ "${AUTH_MODE}" != "cloudrun-iam" ]; then
@@ -577,8 +595,8 @@ case "${SNIPPETS_WRITE_ENABLED}" in
   false)
     ;;
   true)
-    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
-      echo "Snippets deployment blocked: limited to the write-test service."
+    if service_not_approved; then
+      echo "Snippets deployment blocked: limited to an approved service."
       exit 1
     fi
     if [ "${AUTH_MODE}" != "iap" ] && [ "${AUTH_MODE}" != "cloudrun-iam" ]; then
@@ -595,8 +613,8 @@ case "${ATTACHMENT_UPLOAD_ENABLED}" in
   false)
     ;;
   true)
-    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
-      echo "Attachment upload deployment blocked: limited to the write-test service."
+    if service_not_approved; then
+      echo "Attachment upload deployment blocked: limited to an approved service."
       exit 1
     fi
     if [ "${AUTH_MODE}" != "iap" ] && [ "${AUTH_MODE}" != "cloudrun-iam" ]; then
@@ -613,8 +631,8 @@ case "${JOBS_ENABLED}" in
   false)
     ;;
   true)
-    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
-      echo "Jobs endpoint blocked: limited to the write-test service."
+    if service_not_approved; then
+      echo "Jobs endpoint blocked: limited to an approved service."
       exit 1
     fi
     if [ -z "${JOBS_TRIGGER_TOKEN_SECRET}" ] || [ "${JOBS_TRIGGER_TOKEN_SECRET}" = "BLOCKED" ]; then
@@ -636,8 +654,8 @@ case "${SLACK_INTAKE_ENABLED}" in
     ;;
   true)
     # Slack 法務依頼インテーク受信口（16-3a）。署名シークレット必須・write-test 限定・IAP/IAM 必須。
-    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
-      echo "Slack intake blocked: limited to the write-test service."
+    if service_not_approved; then
+      echo "Slack intake blocked: limited to an approved service."
       exit 1
     fi
     if [ -z "${SLACK_SIGNING_SECRET_NAME}" ] || [ "${SLACK_SIGNING_SECRET_NAME}" = "BLOCKED" ]; then
@@ -663,8 +681,8 @@ case "${BACKLOG_INTAKE_ENABLED}" in
     ;;
   true)
     # Backlog Webhook 自動起票（9-7 完成形）。受信口の共有シークレット必須・write-test 限定・IAP/IAM 必須。
-    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
-      echo "Backlog intake blocked: limited to the write-test service."
+    if service_not_approved; then
+      echo "Backlog intake blocked: limited to an approved service."
       exit 1
     fi
     if [ -z "${BACKLOG_WEBHOOK_TOKEN_SECRET}" ] || [ "${BACKLOG_WEBHOOK_TOKEN_SECRET}" = "BLOCKED" ]; then
@@ -693,7 +711,7 @@ case "${CONTRACT_EXPIRY_TRANSITION_ENABLED}" in
       echo "Contract expiry transition blocked: JOBS_ENABLED=true is required (runs inside daily-checks)."
       exit 1
     fi
-    if [ "${PRIMARY_DB_MODE}" != "production" ] || [ "${SERVICE}" != "legalbridge-v2-write-test" ] || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
+    if [ "${PRIMARY_DB_MODE}" != "production" ] || service_not_approved || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
       echo "Contract expiry transition blocked: service, database, runtime user, or password secret does not match the approved target."
       exit 1
     fi
@@ -714,8 +732,8 @@ for webhook_secret in "CLOUDSIGN_WEBHOOK_TOKEN_SECRET:${CLOUDSIGN_WEBHOOK_TOKEN_
   webhook_name="${webhook_secret%%:*}"
   webhook_value="${webhook_secret#*:}"
   if [ -n "${webhook_value}" ] && [ "${webhook_value}" != "BLOCKED" ]; then
-    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
-      echo "Webhook endpoint blocked: ${webhook_name} is limited to the write-test service."
+    if service_not_approved; then
+      echo "Webhook endpoint blocked: ${webhook_name} is limited to an approved service."
       exit 1
     fi
   fi
@@ -728,7 +746,7 @@ case "${GMAIL_DELIVERY_MODE}" in
       echo "Gmail dispatch deployment blocked: explicit validation confirmation is missing."
       exit 1
     fi
-    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
+    if service_not_approved; then
       echo "Gmail dispatch deployment blocked: service does not match the approved target."
       exit 1
     fi
@@ -752,8 +770,8 @@ case "${GMAIL_SEND_HISTORY_ENABLED}" in
   false)
     ;;
   true)
-    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
-      echo "Gmail send-history blocked: append-only history is limited to the write-test service."
+    if service_not_approved; then
+      echo "Gmail send-history blocked: append-only history is limited to an approved service."
       exit 1
     fi
     if [ "${DB_NAME}" != "legalbridge_v2_validation" ] && [ "${DB_NAME}" != "legalbridge" ]; then
@@ -774,7 +792,7 @@ case "${CLOUDSIGN_MODE}" in
       echo "CloudSign dispatch deployment blocked: explicit validation confirmation is missing."
       exit 1
     fi
-    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
+    if service_not_approved; then
       echo "CloudSign dispatch deployment blocked: service does not match the approved target."
       exit 1
     fi
@@ -810,8 +828,8 @@ case "${CLOUDSIGN_REQUEST_HISTORY_ENABLED}" in
   false)
     ;;
   true)
-    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
-      echo "CloudSign request-history blocked: append-only history is limited to the write-test service."
+    if service_not_approved; then
+      echo "CloudSign request-history blocked: append-only history is limited to an approved service."
       exit 1
     fi
     if [ "${DB_NAME}" != "legalbridge_v2_validation" ] && [ "${DB_NAME}" != "legalbridge" ]; then
@@ -830,8 +848,8 @@ case "${MATTER_SLACK_ENABLED}" in
   false)
     ;;
   true)
-    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
-      echo "Matter Slack blocked: limited to the write-test service."
+    if service_not_approved; then
+      echo "Matter Slack blocked: limited to an approved service."
       exit 1
     fi
     if [ "${INTEGRATION_MODE}" != "live" ]; then
@@ -864,7 +882,7 @@ case "${GMAIL_INBOUND_MODE}" in
       echo "Gmail inbound deployment blocked: explicit validation confirmation is missing."
       exit 1
     fi
-    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
+    if service_not_approved; then
       echo "Gmail inbound deployment blocked: service does not match the approved target."
       exit 1
     fi
@@ -888,8 +906,8 @@ case "${GMAIL_INBOUND_INTAKE_ENABLED}" in
   false)
     ;;
   true)
-    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
-      echo "Gmail inbound intake blocked: append-only intake ledger is limited to the write-test service."
+    if service_not_approved; then
+      echo "Gmail inbound intake blocked: append-only intake ledger is limited to an approved service."
       exit 1
     fi
     if [ "${DB_NAME}" != "legalbridge_v2_validation" ] && [ "${DB_NAME}" != "legalbridge" ]; then
@@ -912,7 +930,7 @@ case "${SLACK_APPROVAL_WRITES_ENABLED}" in
     fi
     # 隔離検証DB、または本番runtime（006がlegalbridgeにSlack履歴/承認
     # テーブルを作成しruntimeへ権限付与済み）のいずれかを許可する。
-    if [ "${SERVICE}" != "legalbridge-v2-write-test" ]; then
+    if service_not_approved; then
       echo "Slack approval deployment blocked: target service is not the write-test environment."
       exit 1
     fi
@@ -967,7 +985,7 @@ case "${DRIVE_STORAGE_ENABLED}" in
       echo "Drive deployment blocked: explicit validation confirmation is missing."
       exit 1
     fi
-    if [ "${SERVICE}" != "legalbridge-v2-write-test" ] || [ "${GOOGLE_DRIVE_FOLDER_ID}" = "BLOCKED" ] || [ -z "${GOOGLE_DRIVE_FOLDER_ID}" ]; then
+    if service_not_approved || [ "${GOOGLE_DRIVE_FOLDER_ID}" = "BLOCKED" ] || [ -z "${GOOGLE_DRIVE_FOLDER_ID}" ]; then
       echo "Drive deployment blocked: service or Shared Drive folder is not set."
       exit 1
     fi
