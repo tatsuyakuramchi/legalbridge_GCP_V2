@@ -668,6 +668,49 @@ CloudSign に登録済みの `https://lb-v2-receiver-lkyrgniooa-an.a.run.app` �
 | 5-3 | V1 Slack コマンドの向き先を V2 受信口へ切替（16-3 完了後） |
 | 5-4 | 観察期間（2週間目安）後、V1 サービス停止・インフラ縮退 |
 
+### 5-2a. Scheduler の棚卸し（2026-08-18 調査）
+
+`gcloud scheduler jobs list` に 6 ジョブ。うち 2 つは **転送先の Cloud Run サービス
+`legalbridge-work-service` が既に存在しない**（`gcloud run services list` に無し）。
+`legalbridge-backlog-poller` は 10 分ごとに `NOT_FOUND` を出し続けており、
+`legalbridge-daily-scheduler` も同様に無効。つまり work-service 由来の通知
+（ロイヤリティ支払期日・製造イベント・承認/押印の滞留）は**既に配信されていない**。
+
+| ジョブ | 向き先 | 判定 |
+|---|---|---|
+| `legalbridge-backlog-poller` | work-service（不在） | 削除 |
+| `legalbridge-daily-scheduler` | work-service（不在） | 削除 |
+| `daily-checks` | V1 | pause（V2 の lb-v2-daily-checks と入れ替え） |
+| `lb-v2-daily-checks` | V2 | resume |
+| `lb-v2-inspection-digest` | V2 | resume |
+| `lb-v2-cloudsign-sync` | V2 | 既に resume 済み（2-4） |
+
+work-service 通知の V2 移植は**不要**と判断した。根拠（同日実測）:
+
+- `RoyaltyPayment` 0 件（V2 が使う `royalty_payments` は 26 件で別系統）
+- `ManufacturingEvent` 0 件 / `manufacturing_events` 0 件
+- `IssueWorkflow` 2 件・承認者 0・押印担当 0・最終更新 2026-04-15
+- 転送先サービス自体が不在（ログも空）
+
+つまり移植しても空テーブルを読むだけのコードが増える。設定画面（通知ごとの宛先・
+ON/OFF・チャンネル選択 UI）は、**実データのある V2 側の通知**——`lb-v2-daily-checks`
+の納品/契約アラートと `lb-v2-inspection-digest`——に対して作る。
+
+### 5-2b. Backlog 取込の二重化が無いことの確認（2026-08-18）
+
+Backlog Webhook を V2 受信リレーへ登録した日に、V1 の `daily-checks` も生きている
+（日次 INFO・`legal_requests` は 8月17件/7月75件/6月59件/5月75件）。両方が起票すると
+二重登録になるため確認した。結果は重複なし:
+
+```
+直近1日で backlog_issue_key の重複 → (0 rows)
+LEGAL-284 → legal_requests 1 行（id 466）
+LEGAL-284 → matters 1 行（id 218 / MTR-2026-00218）
+```
+
+V1 の `daily-checks` は期日チェックであって Backlog 取込ではない（取込は V1 の別経路）。
+5-2 で `daily-checks` を pause する時点で V1 側の日次通知は止まる。
+
 ## 6. cutover 判定チェックリスト
 - [ ] Phase 16-3（Slack インテーク）実装・点火済み
 - [x] Phase 16-1/2/4 実装済み（点火は 16-1＝grant 045、16-4＝Drive 構成が前提）
