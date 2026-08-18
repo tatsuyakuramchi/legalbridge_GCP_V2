@@ -76,10 +76,14 @@ export function SpecializedDocumentForms({ templateKey, formData, onChange }: Pr
             ]
           }
         ]} onChange={onChange} />
-      <ArrayEditor title="その他手数料" itemLabel="手数料" dataKey="other_fees"
-        rows={rows(formData.other_fees)} fields={feeFields} onChange={onChange} />
-      <ArrayEditor title="経費" itemLabel="経費" dataKey="expenses" rows={rows(formData.expenses)}
-        fields={expenseFields} onChange={onChange} />
+      {rows(formData.po_expenses).length || rows(formData.po_other_fees).length
+        ? <InspectionSettlement formData={formData} onChange={onChange} />
+        : <>
+          <ArrayEditor title="その他手数料" itemLabel="手数料" dataKey="other_fees"
+            rows={rows(formData.other_fees)} fields={feeFields} onChange={onChange} />
+          <ArrayEditor title="経費" itemLabel="経費" dataKey="expenses" rows={rows(formData.expenses)}
+            fields={expenseFields} onChange={onChange} />
+        </>}
       <ArrayEditor title="変更履歴" itemLabel="変更" dataKey="changeLogs" rows={rows(formData.changeLogs)}
         fields={[
           { name: "changedAt", label: "変更日", type: "date" },
@@ -210,4 +214,79 @@ function rows(value: unknown): Row[] {
   return Array.isArray(value)
     ? value.filter((item): item is Row => !!item && typeof item === "object" && !Array.isArray(item))
     : [];
+}
+
+
+// ── 経費・手数料の精算（V1 ステップ2-b/2-c の移植）──────────────────────
+// 親POから引用した経費・手数料の一覧から「今回の支払に含める」行をチェックで選ぶ。
+// 「最終検収」を ON にすると全行を一括で含める（V1 の isFinalInspection と同じ）。
+// 選んだ行だけを expenses / other_fees に書く＝PDF と総支払額はそこから計算される。
+function InspectionSettlement({ formData, onChange }: {
+  formData: Record<string, unknown>;
+  onChange: (key: string, value: unknown) => void;
+}) {
+  const poExpenses = Array.isArray(formData.po_expenses) ? formData.po_expenses as Array<Record<string, unknown>> : [];
+  const poFees = Array.isArray(formData.po_other_fees) ? formData.po_other_fees as Array<Record<string, unknown>> : [];
+  const isFinal = Boolean(formData.isFinalInspection);
+  const selectedExpenses = new Set((Array.isArray(formData.selectedExpenseLineNos) ? formData.selectedExpenseLineNos : []) as number[]);
+  const selectedFees = new Set((Array.isArray(formData.selectedOtherFeeLineNos) ? formData.selectedOtherFeeLineNos : []) as number[]);
+
+  const apply = (nextExpenseNos: number[], nextFeeNos: number[], nextFinal: boolean) => {
+    onChange("isFinalInspection", nextFinal);
+    onChange("selectedExpenseLineNos", nextExpenseNos);
+    onChange("selectedOtherFeeLineNos", nextFeeNos);
+    const expenseSet = new Set(nextExpenseNos);
+    const feeSet = new Set(nextFeeNos);
+    onChange("expenses", poExpenses.filter((row) => expenseSet.has(Number(row.line_no))));
+    onChange("other_fees", poFees.filter((row) => feeSet.has(Number(row.line_no))));
+  };
+  const toggleFinal = () => {
+    const next = !isFinal;
+    apply(next ? poExpenses.map((row) => Number(row.line_no)) : [...selectedExpenses],
+      next ? poFees.map((row) => Number(row.line_no)) : [...selectedFees], next);
+  };
+  const toggleRow = (kind: "expense" | "fee", lineNo: number) => {
+    if (isFinal) return;
+    const set = new Set(kind === "expense" ? selectedExpenses : selectedFees);
+    if (set.has(lineNo)) set.delete(lineNo); else set.add(lineNo);
+    apply(kind === "expense" ? [...set] : [...selectedExpenses],
+      kind === "fee" ? [...set] : [...selectedFees], isFinal);
+  };
+  const amountOf = (row: Record<string, unknown>) =>
+    Number(String(row.amount_inc_tax ?? row.amount_ex_tax ?? row.amount ?? 0).replace(/,/g, "")) || 0;
+
+  return <div className="inspection-settlement">
+    <div className="inspection-settlement-head">
+      <h4>経費・手数料の精算（親PO連動）</h4>
+      <button type="button" className={`matter-chip ${isFinal ? "active" : ""}`} onClick={toggleFinal}
+        title="ON にすると全行を「今回含める」にします">
+        {isFinal ? "✓ 最終検収（全行を含む）" : "最終検収にする"}
+      </button>
+    </div>
+    <p className="hub-note">チェックした行だけが今回の総支払額に加算され PDF に載ります。チェックしない行は今回の検収では精算しません（後続の検収書で精算できます）。</p>
+    {poExpenses.length > 0 && <table className="settlement-table"><thead>
+      <tr><th></th><th>経費</th><th className="right">金額（税込）</th></tr></thead><tbody>
+      {poExpenses.map((row) => {
+        const lineNo = Number(row.line_no);
+        return <tr key={`e${lineNo}`}>
+          <td><input type="checkbox" checked={isFinal || selectedExpenses.has(lineNo)}
+            disabled={isFinal} onChange={() => toggleRow("expense", lineNo)} /></td>
+          <td>{String(row.expense_name ?? row.item_name ?? row.name ?? `経費 ${lineNo}`)}</td>
+          <td className="right">¥{amountOf(row).toLocaleString("ja-JP")}</td>
+        </tr>;
+      })}
+    </tbody></table>}
+    {poFees.length > 0 && <table className="settlement-table"><thead>
+      <tr><th></th><th>その他手数料</th><th className="right">金額（税抜）</th></tr></thead><tbody>
+      {poFees.map((row) => {
+        const lineNo = Number(row.line_no);
+        return <tr key={`f${lineNo}`}>
+          <td><input type="checkbox" checked={isFinal || selectedFees.has(lineNo)}
+            disabled={isFinal} onChange={() => toggleRow("fee", lineNo)} /></td>
+          <td>{String(row.fee_name ?? row.item_name ?? row.name ?? `手数料 ${lineNo}`)}</td>
+          <td className="right">¥{amountOf(row).toLocaleString("ja-JP")}</td>
+        </tr>;
+      })}
+    </tbody></table>}
+  </div>;
 }

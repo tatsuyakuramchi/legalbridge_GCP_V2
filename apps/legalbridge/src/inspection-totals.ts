@@ -8,6 +8,13 @@ export interface InspectionTotals {
   totalIncTax: number;
   taxRate: number;
   lineCount: number;
+  /** 精算に含めた手数料（税抜）。検収額と合算して一括課税（サーバと同じ）。 */
+  otherFeesExTax: number;
+  /** 精算に含めた経費（税込）。課税済みなのでそのまま加算。 */
+  expensesIncTax: number;
+  /** 検収＋手数料の一括課税後＋経費＝総支払額（源泉徴収前）。 */
+  grandTotalPayable: number;
+  hasSettlement: boolean;
 }
 
 function toNumber(value: unknown, fallback = 0): number {
@@ -22,7 +29,24 @@ export function computeInspectionTotals(formData: Record<string, unknown>): Insp
     sum + toNumber(line.inspected_amount_ex_tax ?? line.amount_ex_tax ?? line.amount), 0);
   const taxRate = toNumber(formData.taxRate ?? formData.tax_rate, 10) || 10;
   const tax = Math.ceil(deliveredExTax * taxRate / 100);
-  return { deliveredExTax, tax, totalIncTax: deliveredExTax + tax, taxRate, lineCount: lines.length };
+  // 経費・手数料（精算で選んだ行）。式はサーバの buildInspectionContext と同じ：
+  // 手数料は税抜＝検収額と合算して一括課税（二重計上しない）、経費は税込のまま加算。
+  const otherFees = Array.isArray(formData.other_fees)
+    ? formData.other_fees as Array<Record<string, unknown>> : [];
+  const otherFeesExTax = otherFees.reduce((sum, fee) =>
+    sum + toNumber(fee.amount_ex_tax ?? fee.amount), 0);
+  const expenses = Array.isArray(formData.expenses)
+    ? formData.expenses as Array<Record<string, unknown>> : [];
+  const expensesIncTax = expenses.reduce((sum, expense) =>
+    sum + toNumber(expense.amount_inc_tax ?? expense.amount), 0);
+  const taxableSubtotal = deliveredExTax + otherFeesExTax;
+  const combinedTax = Math.ceil(taxableSubtotal * taxRate / 100);
+  return {
+    deliveredExTax, tax, totalIncTax: deliveredExTax + tax, taxRate, lineCount: lines.length,
+    otherFeesExTax, expensesIncTax,
+    grandTotalPayable: taxableSubtotal + combinedTax + expensesIncTax,
+    hasSettlement: otherFeesExTax > 0 || expensesIncTax > 0
+  };
 }
 
 export function formatYen(value: number): string {

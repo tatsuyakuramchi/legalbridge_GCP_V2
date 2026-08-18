@@ -132,3 +132,22 @@ test("明細が空の発注書では検収明細を空配列で上書きしな�
   const patch = buildPatch(inspectionSchema(), {}, item);
   assert.equal("delivery_line_items" in patch, false);
 });
+
+test("経費・手数料は精算候補（po_*）として持ち込み、支払額には自動で含めない", () => {
+  const item = {
+    ...PO_ITEM,
+    values: {
+      ...PO_ITEM.values,
+      expenses: [{ expense_name: "取材交通費", amount_inc_tax: 5500 }],
+      other_fees: [{ fee_name: "振込手数料", amount_ex_tax: 440 }]
+    }
+  };
+  const patch = buildPatch(inspectionSchema(), {}, item);
+  const poExpenses = patch.po_expenses as Array<Record<string, unknown>>;
+  assert.equal(poExpenses.length, 1);
+  assert.equal(poExpenses[0].line_no, 1);
+  assert.equal((patch.po_other_fees as unknown[]).length, 1);
+  // 「今回含める」チェック（または最終検収トグル）で初めて expenses/other_fees に入る。
+  assert.equal("expenses" in patch, false);
+  assert.equal("other_fees" in patch, false);
+});

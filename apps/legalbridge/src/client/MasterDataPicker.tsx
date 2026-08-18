@@ -320,6 +320,14 @@ export function applyParentPurchaseOrderQuote(
       rate_pct: line.rate_pct ?? ""
     }));
   }
+  // 経費・手数料は「精算候補」として持ち込む（自動では支払額に含めない）。
+  // V1 ステップ2-b/2-c と同じ：行ごとの「今回含める」チェックか最終検収トグルで
+  // 選んだ行だけが expenses / other_fees（＝PDF と総支払額の入力）へ入る。
+  const expenses = Array.isArray(values.expenses) ? values.expenses as Array<Record<string, unknown>> : [];
+  if (expenses.length) patch.po_expenses = expenses.map((row, i) => ({ line_no: i + 1, ...row }));
+  const otherFees = Array.isArray(values.other_fees) ? values.other_fees as Array<Record<string, unknown>> : [];
+  if (otherFees.length) patch.po_other_fees = otherFees.map((row, i) => ({ line_no: i + 1, ...row }));
+
   // 件名・発注日・税率・相手方。項目がテンプレートに無ければ何もしない（setIfField）。
   setIfField(schema, patch, "projectTitle",
     values.PROJECT_TITLE ?? values.project_title ?? values.CONTRACT_TITLE);

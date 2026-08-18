@@ -1435,6 +1435,13 @@ function InspectionTotalsPanel({ formData }: { formData: DocumentFormData }) {
       <article><span>検収金額（税抜）</span><strong>¥{formatYen(totals.deliveredExTax)}</strong></article>
       <article><span>消費税（{totals.taxRate}%・切り上げ）</span><strong>¥{formatYen(totals.tax)}</strong></article>
       <article><span>合計（税込）</span><strong>¥{formatYen(totals.totalIncTax)}</strong></article>
+      {totals.hasSettlement && <>
+        {totals.otherFeesExTax > 0 &&
+          <article><span>手数料（税抜・合算課税）</span><strong>¥{formatYen(totals.otherFeesExTax)}</strong></article>}
+        {totals.expensesIncTax > 0 &&
+          <article><span>経費（税込）</span><strong>¥{formatYen(totals.expensesIncTax)}</strong></article>}
+        <article className="grand"><span>総支払額（源泉徴収前）</span><strong>¥{formatYen(totals.grandTotalPayable)}</strong></article>
+      </>}
     </div>
     <small>PDF の合計はこの計算と同じ式で出ます（明細があるときは手入力の金額欄より優先されます）。</small>
   </div>;

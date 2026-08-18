@@ -2054,3 +2054,13 @@ textarea { width: 100%; min-height: 90px; resize: vertical; line-height: 1.6; }
 .inspection-totals-grid span { font-size: 11px; color: var(--ink-soft); }
 .inspection-totals-grid strong { font-size: 17px; font-variant-numeric: tabular-nums; }
 .inspection-totals > small { color: var(--ink-faint); }
+
+/* 経費・手数料の精算（検収書・V1 ステップ2-b/2-c 相当） */
+.inspection-settlement { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; display: grid; gap: 8px; margin-top: 12px; }
+.inspection-settlement-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.inspection-settlement-head h4 { margin: 0; font-size: 13.5px; }
+.settlement-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.settlement-table th, .settlement-table td { padding: 6px 8px; border-bottom: 1px solid var(--divider); text-align: left; }
+.settlement-table .right { text-align: right; font-variant-numeric: tabular-nums; }
+.settlement-table input[type="checkbox"] { width: auto; }
+.inspection-totals-grid article.grand strong { color: var(--accent-deep, #137689); font-size: 18px; }

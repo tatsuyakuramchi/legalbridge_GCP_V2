@@ -39,3 +39,26 @@ test("税率未入力は10%・明細なしは0件", () => {
 test("表示整形は日本語ロケールの桁区切り", () => {
   assert.equal(formatYen(1234567), "1,234,567");
 });
+
+// ── 経費・手数料の精算込み（V1 の総支払額と同じ式）───────────────────
+test("手数料は検収額と合算して一括課税、経費は税込のまま加算", () => {
+  const totals = computeInspectionTotals({
+    taxRate: "10",
+    delivery_line_items: [{ inspected_amount_ex_tax: 100000 }],
+    other_fees: [{ amount_ex_tax: 10000 }],
+    expenses: [{ amount_inc_tax: 5500 }]
+  });
+  // (100,000 + 10,000) × 1.1 = 121,000 ＋ 経費 5,500 = 126,500
+  assert.equal(totals.otherFeesExTax, 10000);
+  assert.equal(totals.expensesIncTax, 5500);
+  assert.equal(totals.grandTotalPayable, 126500);
+  assert.equal(totals.hasSettlement, true);
+});
+
+test("精算なしなら総支払額＝税込合計で hasSettlement=false", () => {
+  const totals = computeInspectionTotals({
+    taxRate: "10", delivery_line_items: [{ inspected_amount_ex_tax: 100000 }]
+  });
+  assert.equal(totals.hasSettlement, false);
+  assert.equal(totals.grandTotalPayable, totals.totalIncTax);
+});
