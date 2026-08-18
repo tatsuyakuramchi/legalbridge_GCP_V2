@@ -27,7 +27,7 @@ V2（本リポジトリ）を本番サービスとして V1（legalbridge_ai_gcp
 - フォーム：マスタで消した項目をフォームからも消す／定型文リンク／基本契約ピッカーの修正
   （`HAS_BASE_CONTRACT` を立てる・発注番号を壊さない）／複製2種（相手先違い・内容違い）。
 - 案件 Slack：V1 の `matter_slack_threads` を読むフォールバック（grant 054 と対）。
-  **ただし `conversations.replies` が missing_scope で失敗中**（下の §2-4 ③ を参照）。
+  **✅ 2026-08-18 に会話表示まで確認**（Slack App へ `channels:history` を付与し再インストール）。
 - 失敗表示：JSON でない応答（Cloud Run の 503 など）を実際の失敗内容として出す。
 
 適用済み SQL（この日）：053 / 054 / 055 / 056 / 057（対象0件）/ 058（11件修正）。
@@ -406,9 +406,24 @@ jq '.substitutions._SLACK_BOT_USER_ID = "U0XXXXXXXXX"' /tmp/build-flags.json > /
 
 案件スレッドは V1 が法務相談チャンネルへルート投稿しているため、実データは全件
 チャンネル（`channel_id` が `C` 始まり・V1 21件／V2 3件＝24件すべて）。`im:history` では
-読めない。**未付与のため `conversations.replies` が `missing_scope` で失敗中**
-（`matter-slack-routes.ts` の `getReplies`。grant 054 でデータは読めるが本文が出ない）。
-付与後は**再インストール**が必要で、**bot が当該チャンネルのメンバーである**ことも条件。
+読めない。**✅ 2026-08-18 解決**（`channels:history` 付与＋再インストール → V1 由来の
+スレッドも本文表示を確認）。
+
+踏んだ落とし穴：**アプリ設定に scope を足しただけでは効かない**。トークンに付くのは
+インストール時点の scope で、再インストールするまで古いままになる。設定画面を見ても
+判別できないので、トークン自身に何が付いているかを Slack に聞く:
+
+```bash
+TOKEN=$(gcloud secrets versions access latest --secret=SLACK_BOT_TOKEN --project legalbridge-488506)
+curl -sS -D- -o /dev/null -H "Authorization: Bearer $TOKEN" \
+  https://slack.com/api/auth.test | grep -i '^x-oauth-scopes'
+unset TOKEN
+```
+
+再インストールでトークン文字列は変わらなかったため、Secret 更新も再デプロイも不要だった。
+変わった場合は Secret に新版を足し、`gcloud run services update --update-secrets=...` で
+新リビジョンを作る（`:latest` はインスタンス起動時に解決されるため）。
+`missing_scope` が消えたのに本文が出ないときは `not_in_channel`＝bot がチャンネル未参加。
 
 
 送信側は同時に「1案件 = 1スレッド」へ統一される（2回目以降の通知は既存 root への
