@@ -13,7 +13,11 @@ export interface MasterDataItem {
 }
 
 export interface MasterDataRepository {
-  search(type: MasterDataType, query: string, limit?: number): Promise<MasterDataItem[]>;
+  search(
+    type: MasterDataType, query: string, limit?: number,
+    // 文書検索のみ有効：template_type の前方一致で絞る（空＝全文書）。
+    templatePrefixes?: string[]
+  ): Promise<MasterDataItem[]>;
 }
 
 export class PgMasterDataRepository implements MasterDataRepository {
@@ -23,7 +27,7 @@ export class PgMasterDataRepository implements MasterDataRepository {
     private readonly settings?: AppSettingsRepository
   ) {}
 
-  async search(type: MasterDataType, query: string, limit = 20) {
+  async search(type: MasterDataType, query: string, limit = 20, templatePrefixes: string[] = []) {
     if (type === "company") return companyProfile(await loadCompanyProfile(this.settings));
     const keyword = `%${query.trim()}%`;
     const boundedLimit = Math.min(Math.max(limit, 1), 50);
@@ -74,11 +78,13 @@ export class PgMasterDataRepository implements MasterDataRepository {
       }));
     }
     if (type === "document") {
+      const prefixPatterns = templatePrefixes.map((prefix) => `${prefix}%`);
       const result = await this.database.query(
         `SELECT id, document_number, template_type, issue_key, vendor_name_snapshot,
                 created_at, form_data
            FROM documents
           WHERE document_number IS NOT NULL
+            AND ($3::text[] = '{}' OR template_type LIKE ANY($3))
             AND ($1 = '%%'
               OR document_number ILIKE $1
               OR template_type ILIKE $1
@@ -86,7 +92,7 @@ export class PgMasterDataRepository implements MasterDataRepository {
               OR COALESCE(form_data->>'CONTRACT_TITLE', form_data->>'基本契約名', '') ILIKE $1)
           ORDER BY created_at DESC
           LIMIT $2`,
-        [keyword, boundedLimit]
+        [keyword, boundedLimit, prefixPatterns]
       );
       return result.rows.map((row) => ({
         id: String(row.id),
@@ -136,10 +142,12 @@ export class PgMasterDataRepository implements MasterDataRepository {
 export class MemoryMasterDataRepository implements MasterDataRepository {
   constructor(private readonly items: MasterDataItem[] = companyProfile()) {}
 
-  async search(type: MasterDataType, query: string, limit = 20) {
+  async search(type: MasterDataType, query: string, limit = 20, templatePrefixes: string[] = []) {
     const keyword = query.trim().toLowerCase();
     return this.items
       .filter((item) => item.type === type)
+      .filter((item) => !templatePrefixes.length ||
+        templatePrefixes.some((prefix) => String(item.values.template_type ?? "").startsWith(prefix)))
       .filter((item) => !keyword || `${item.label} ${item.description ?? ""}`.toLowerCase().includes(keyword))
       .slice(0, limit);
   }

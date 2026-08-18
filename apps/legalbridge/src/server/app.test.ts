@@ -1133,3 +1133,28 @@ test("settings/secrets: settings スコープが無ければ書込ガードで40
     .expect(403);
   assert.equal(response.body.code, "WRITE_SCOPE_DISABLED");
 });
+
+test("文書検索は template で発注書だけに絞れる（検収書の親PO検索）", async () => {
+  const target = createApp({
+    templates: new MemoryTemplateRepository([schema]),
+    drafts: new MemoryDraftRepository(),
+    integrations: createIntegrationAdapters(),
+    masterData: new MemoryMasterDataRepository([
+      { id: "1", type: "document", label: "ARC-PO-2026-0117",
+        values: { document_number: "ARC-PO-2026-0117", template_type: "purchase_order" } },
+      { id: "2", type: "document", label: "ARC-OUT-2025-0007",
+        values: { document_number: "ARC-OUT-2025-0007", template_type: "outsourcing" } }
+    ])
+  });
+  const filtered = await request(target)
+    .get("/api/v2/master-data/search")
+    .query({ type: "document", q: "", template: "purchase_order,intl_purchase_order" })
+    .expect(200);
+  assert.deepEqual(filtered.body.items.map((i: { id: string }) => i.id), ["1"]);
+  // 絞り込み指定なしは従来どおり全文書。
+  const all = await request(target)
+    .get("/api/v2/master-data/search")
+    .query({ type: "document", q: "" })
+    .expect(200);
+  assert.equal(all.body.items.length, 2);
+});

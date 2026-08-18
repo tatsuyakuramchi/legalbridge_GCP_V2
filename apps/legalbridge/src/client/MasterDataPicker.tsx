@@ -29,6 +29,8 @@ export function MasterDataPicker({
   onApply: (patch: DocumentFormData, message: string) => void;
 }) {
   const availableTypes = useMemo(() => typesForSchema(schema), [schema]);
+  // 検収書の文書タブは「親の発注書を選ぶ」専用（検索対象を発注書に絞る）。
+  const parentPoMode = isInspectionSchema(schema);
   const [type, setType] = useState<MasterType>(availableTypes[0] ?? "vendor");
   const [query, setQuery] = useState("");
   const [items, setItems] = useState<Item[]>([]);
@@ -54,7 +56,9 @@ export function MasterDataPicker({
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       setLoading(true);
-      fetch(`/api/v2/master-data/search?type=${type}&q=${encodeURIComponent(query)}`, {
+      const templateFilter = type === "document" && parentPoMode
+        ? "&template=purchase_order,intl_purchase_order" : "";
+      fetch(`/api/v2/master-data/search?type=${type}&q=${encodeURIComponent(query)}${templateFilter}`, {
         signal: controller.signal
       })
         .then((response) => response.ok ? response.json() : Promise.reject(new Error("master search failed")))
@@ -68,7 +72,7 @@ export function MasterDataPicker({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [type, query]);
+  }, [type, query, parentPoMode]);
 
   // 担当者タブの「自分」：メール完全一致の staff を1件だけ引いて適用する。
   // 一致が無い＝担当者マスタ未登録なので、その旨を通知して何も書き換えない。
@@ -103,13 +107,15 @@ export function MasterDataPicker({
       {availableTypes.map((candidate) =>
         <button type="button" className={candidate === type ? "active" : ""}
           key={candidate} onClick={() => { setType(candidate); setQuery(""); }}>
-          {labels[candidate]}
+          {candidate === "document" && parentPoMode ? "親の発注書" : labels[candidate]}
         </button>)}
     </div>
     {type !== "company" &&
       <div className="master-search-row">
         <input className="master-search" value={query} onChange={(event) => setQuery(event.target.value)}
-          placeholder={`${labels[type]}の名称または番号を入力`} />
+          placeholder={type === "document" && parentPoMode
+            ? "発注番号・件名・取引先名で発注書を検索"
+            : `${labels[type]}の名称または番号を入力`} />
         {type === "staff" && myEmail &&
           <button type="button" className="master-self" onClick={() => applySelf()}>
             自分（{myEmail}）を引用
@@ -153,6 +159,10 @@ function typesForSchema(schema: DocumentFormSchema): MasterType[] {
     /基本契約|契約番号|発注番号|親 PO|親発注/.test(`${field.name} ${field.label ?? ""}`))) {
     types.add("document");
   }
+  // 検収書は親の発注書から明細・件名を引用する（V1 のステップ1相当）。
+  // 以前は「発注番号」ラベルの項目の有無で出していたが、055 で孤児項目として
+  // 削除された際に文書タブごと消えていた。テンプレート種別で常に出す。
+  if (isInspectionSchema(schema)) types.add("document");
   if (schema.fields.some((field) =>
     /作品|原著作物|素材|work_id|台帳ID/.test(`${field.name} ${field.label ?? ""}`))) {
     types.add("work");
@@ -193,7 +203,12 @@ export function buildPatch(schema: DocumentFormSchema, _formData: DocumentFormDa
       // ライセンスイン系の Licensee_名称（自社）は対応表（exact）が先に埋めるため影響なし。
       /相手方|取引先|先方|売主|受託者|許諾者|ライセンサ|ライセンシー|委託先|発注先/);
   }
-  if (item.type === "document") applyDocumentAliases(schema, patch, item.values);
+  if (item.type === "document") {
+    applyDocumentAliases(schema, patch, item.values);
+    if (isInspectionSchema(schema) && isPurchaseOrderDocument(item.values)) {
+      applyParentPurchaseOrderQuote(schema, patch, item.values);
+    }
+  }
   if (item.type === "work") applyWorkAliases(schema, patch, item.values);
   return patch;
 }
@@ -273,6 +288,54 @@ function applyCompanyAliases(schema: DocumentFormSchema, patch: DocumentFormData
     COMPANY_INVOICE_NO: "invoice_no", 適格請求書発行事業者番号: "invoice_no",
     COMPANY_BANK_INFO: "bank_info", COMPANY_SEAL_NOTE: "seal_note"
   });
+}
+
+export function isInspectionSchema(schema: DocumentFormSchema): boolean {
+  return schema.templateKey === "inspection_certificate";
+}
+
+export function isPurchaseOrderDocument(values: Record<string, unknown>): boolean {
+  return /^(intl_)?purchase_order/.test(String(values.template_type ?? ""));
+}
+
+// 親の発注書 → 検収書の引用（V1 inspectionCertificate.tsx ステップ1相当）。
+// 発注明細を検収明細に写す。数量・金額は「全量検収」を初期値にして、分割検収は
+// 行の編集・削除で調整してもらう（明細エディタは編集可能）。0円の業績連動・
+// 利用許諾行は V1 と同じく金額0のまま取り込む（表記の出し分けに使う列も写す）。
+export function applyParentPurchaseOrderQuote(
+  schema: DocumentFormSchema, patch: DocumentFormData, values: Record<string, unknown>
+) {
+  const items = Array.isArray(values.items) ? values.items as Array<Record<string, unknown>> : [];
+  if (items.length) {
+    patch.delivery_line_items = items.map((line) => ({
+      item_name: line.item_name ?? "",
+      spec: line.spec ?? "",
+      inspected_quantity: line.quantity ?? 1,
+      acceptance_ratio: 1,
+      inspected_amount_ex_tax: line.amount_ex_tax ?? amountFromUnit(line),
+      delivery_date: line.delivery_date ?? "",
+      deliverable_ownership: line.deliverable_ownership ?? "発注者",
+      calc_method: line.calc_method ?? "FIXED",
+      royalty_calc_basis: line.royalty_calc_basis ?? "",
+      rate_pct: line.rate_pct ?? ""
+    }));
+  }
+  // 件名・発注日・税率・相手方。項目がテンプレートに無ければ何もしない（setIfField）。
+  setIfField(schema, patch, "projectTitle",
+    values.PROJECT_TITLE ?? values.project_title ?? values.CONTRACT_TITLE);
+  setIfField(schema, patch, "orderDate",
+    values.ORDER_DATE ?? values.order_date ?? values.issue_date ?? values.DOCUMENT_DATE);
+  setIfField(schema, patch, "taxRate", values.taxRate ?? values.tax_rate);
+  for (const name of ["counterparty", "COUNTERPARTY_NAME", "相手方名称"]) {
+    setIfField(schema, patch, name, values.vendor_name ?? values.VENDOR_NAME);
+  }
+}
+
+function amountFromUnit(line: Record<string, unknown>): number {
+  const quantity = Number(line.quantity ?? 0);
+  const unitPrice = Number(line.unit_price ?? 0);
+  if (!Number.isFinite(quantity) || !Number.isFinite(unitPrice)) return 0;
+  return quantity * unitPrice;
 }
 
 function applyDocumentAliases(schema: DocumentFormSchema, patch: DocumentFormData, values: Record<string, unknown>) {
