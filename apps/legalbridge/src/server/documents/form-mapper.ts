@@ -1,3 +1,6 @@
+import {
+  isFieldVisible, isInspectionFallbackFieldHidden, isRoyaltyComputedFieldHidden
+} from "../../field-visibility.js";
 import type {
   DocumentFormData,
   DocumentFormSchema,
@@ -35,12 +38,20 @@ export function buildDocumentFormContext(
   return { ...data, ...draft };
 }
 
+// 必須チェックは「画面に出ている項目」だけに掛ける。クライアントと同じ可視性ルール
+// （showWhen・検収書の単票フォールバック・計算書の自動計算欄）で判定しないと、
+// 明細モードで隠れた必須項目（納品額など）が空のまま検証に落ち、プレビュー・確定が
+// 「入力しようのない項目が必須です」で塞がる（検収書プレビュー不出の原因）。
 export function validateDocumentForm(
+  templateKey: string,
   fields: TemplateField[],
   data: DocumentFormData
 ): Array<{ field: string; message: string }> {
   return fields.flatMap((field) => {
     if (!field.required) return [];
+    if (!isFieldVisible(field, data)) return [];
+    if (isInspectionFallbackFieldHidden(templateKey, field.name, data)) return [];
+    if (isRoyaltyComputedFieldHidden(templateKey, field.name, data)) return [];
     const value = data[field.name];
     const empty = value === undefined || value === null || value === "";
     return empty ? [{ field: field.name, message: `${field.label ?? field.name}は必須です` }] : [];

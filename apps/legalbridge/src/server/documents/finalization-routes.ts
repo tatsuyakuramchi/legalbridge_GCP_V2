@@ -36,7 +36,7 @@ export function createDocumentFinalizationRouter(
         });
       }
 
-      const errors = validateDocumentForm(schema.fields, input.formData);
+      const errors = validateDocumentForm(schema.templateKey, schema.fields, input.formData);
       if (errors.length) return response.status(422).json({ error: "validation failed", errors });
 
       const draft = await drafts.find(input.issueKey, input.templateType);

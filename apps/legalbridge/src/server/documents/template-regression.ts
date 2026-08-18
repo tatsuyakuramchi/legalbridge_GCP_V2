@@ -93,7 +93,7 @@ async function inspectOne(
     const formData = Object.fromEntries(
       schema.fields.map((field) => [field.name, sampleValue(field)])
     ) as DocumentFormData;
-    const validationErrors = validateDocumentForm(schema.fields, formData);
+    const validationErrors = validateDocumentForm(schema.templateKey, schema.fields, formData);
     const compatibility = inspectTemplateCompatibility(schema, source.htmlSource, partials);
     const rendered = await renderStoredDocumentHtml(
       repository,

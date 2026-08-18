@@ -232,7 +232,7 @@ export function createDocumentRouter(
           currentTemplateVersionId: schema.templateVersionId
         });
       }
-      const errors = validateDocumentForm(schema.fields, input.formData);
+      const errors = validateDocumentForm(schema.templateKey, schema.fields, input.formData);
       response.status(errors.length ? 422 : 200).json({ ok: errors.length === 0, errors });
     } catch (error) {
       if (error instanceof z.ZodError) {
