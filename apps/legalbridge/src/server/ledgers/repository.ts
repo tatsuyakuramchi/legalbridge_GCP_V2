@@ -19,7 +19,8 @@ export class PgLedgerRepository implements LedgerRepository {
         `SELECT id, vendor_code, vendor_name, trade_name, pen_name, entity_type,
                 address, phone, email, contact_department, contact_name,
                 vendor_rep, is_invoice_issuer, invoice_registration_number,
-                withholding_enabled, is_active
+                withholding_enabled, is_active,
+                bank_name, branch_name, account_type, account_number, account_holder_kana
            FROM vendors
           WHERE $1 = '%%' OR vendor_code ILIKE $1 OR vendor_name ILIKE $1
              OR COALESCE(trade_name, '') ILIKE $1 OR COALESCE(pen_name, '') ILIKE $1
@@ -29,14 +30,20 @@ export class PgLedgerRepository implements LedgerRepository {
         // 台帳は無効も表示する（再有効化の導線を残す）。ピッカー/横断検索は有効のみ（P1-4）。
         subtitle: [row.is_active === false ? "【無効】" : null, row.trade_name, row.pen_name, row.entity_type]
           .filter(Boolean).join("・"),
+        // マスキング撤廃（2026-08-19 利用者決定）: 台帳は住所・電話・メールを実値で表示し、
+        // 口座情報も出す（PDF出力・印刷でも実値のまま）。
         detail: {
           状態: row.is_active === false ? "無効" : "有効",
-          取引先区分: row.entity_type, 住所: maskLedgerAddress(row.address, row.entity_type),
-          電話番号: maskPhone(row.phone), メール: maskEmail(row.email),
+          取引先区分: row.entity_type, 住所: row.address,
+          電話番号: row.phone, メール: row.email,
           担当部署: row.contact_department, 担当者: row.contact_name,
           代表者: row.vendor_rep, インボイス登録: Boolean(row.is_invoice_issuer),
           インボイス番号: row.invoice_registration_number,
-          源泉徴収対象: Boolean(row.withholding_enabled)
+          源泉徴収対象: Boolean(row.withholding_enabled),
+          振込先: [row.bank_name, row.branch_name,
+            [row.account_type, row.account_number].filter(Boolean).join(" ")]
+            .filter(Boolean).join(" ") || null,
+          口座名義カナ: row.account_holder_kana
         }
       }));
     }
@@ -139,21 +146,7 @@ export class MemoryLedgerRepository implements LedgerRepository {
       .slice(0, limit);
   }
 }
-function maskEmail(value: unknown) {
-  if (!value) return null; const [name, domain] = String(value).split("@");
-  return domain ? `${name.slice(0, 2)}***@${domain}` : "***";
-}
-function maskPhone(value: unknown) {
-  if (!value) return null; const text = String(value); return text.length > 4 ? `${"*".repeat(Math.max(4, text.length - 4))}${text.slice(-4)}` : "****";
-}
 function iso(value: unknown) { return value ? new Date(String(value)).toISOString() : undefined; }
-export function maskLedgerAddress(address: unknown, entityType: unknown) {
-  if (!address) return null;
-  if (!String(entityType ?? "").includes("個人")) return String(address);
-  const text = String(address);
-  const prefecture = text.match(/^(東京都|北海道|大阪府|京都府|.{2,3}県)/)?.[1];
-  return prefecture ? `${prefecture}（詳細非表示）` : "住所詳細非表示";
-}
 export function formatLedgerDate(value: unknown) {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(String(value));

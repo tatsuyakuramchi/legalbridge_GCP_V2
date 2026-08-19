@@ -134,7 +134,7 @@ function LedgerDetail({ item, canEdit = false, onEdit }:
     <dl>{entries.map(([key, value]) => <div key={key}><dt>{key}</dt>
       <dd>{value === null || value === "" ? <span className="cond-missing">未設定</span>
         : typeof value === "boolean" ? (value ? "はい" : "いいえ") : String(value)}</dd></div>)}</dl>
-    <small className="mask-note">口座情報は表示しません。電話番号・メールアドレスはマスキングされています。</small>
+    <small className="mask-note">口座情報・連絡先を含む全項目を実値で表示します（印刷・PDF出力にもそのまま出ます）。</small>
   </aside>;
 }
 

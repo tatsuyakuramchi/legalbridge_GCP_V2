@@ -15,7 +15,7 @@ import { MemoryMasterDataRepository } from "./master-data/repository.js";
 import { MemoryDocumentRegistryRepository } from "./documents/registry-repository.js";
 import { MemoryMatterRepository } from "./matters/repository.js";
 import { MemoryLedgerRepository } from "./ledgers/repository.js";
-import { formatLedgerDate, maskLedgerAddress } from "./ledgers/repository.js";
+import { formatLedgerDate } from "./ledgers/repository.js";
 import { MemoryGlobalSearchRepository } from "./search/repository.js";
 import { MemoryAdminRepository } from "./admin/repository.js";
 import { MemoryPdfRenderer } from "./documents/pdf-renderer.js";
@@ -425,7 +425,8 @@ test("登録文書の一覧検索と詳細を読取専用で返す", async () =>
 
   const detail = await request(target).get("/api/v2/documents/101").expect(200);
   assert.equal(detail.body.document.formData.PROJECT_TITLE, "新商品制作");
-  assert.equal(detail.body.document.formData.ACCOUNT_NUMBER, "****5678");
+  // マスキング撤廃（2026-08-19 利用者決定）: 口座番号等も実値で返す（PDF・帳票と一致させる）。
+  assert.equal(detail.body.document.formData.ACCOUNT_NUMBER, "12345678");
   assert.equal(detail.body.document.lifecycle.label, "確定済み");
   assert.equal(detail.body.document.lifecycle.driveLabel, "Drive保存済み");
 });
@@ -498,10 +499,7 @@ test("取引先・作品・金銭条件台帳を検索する", async () => {
   await request(target).get("/api/v2/ledgers/unknown").expect(404);
 });
 
-test("個人住所を都道府県単位にマスクしDB日付をISO形式へ揃える", () => {
-  assert.equal(maskLedgerAddress("東京都港区台場2-2-2", "個人"), "東京都（詳細非表示）");
-  assert.equal(maskLedgerAddress("Seoul, Korea", "個人"), "住所詳細非表示");
-  assert.equal(maskLedgerAddress("東京都千代田区", "法人"), "東京都千代田区");
+test("DB日付をISO形式へ揃える（住所等のマスキングは2026-08-19に撤廃）", () => {
   assert.equal(formatLedgerDate(new Date("2026-08-23T00:00:00.000Z")), "2026-08-23");
   assert.equal(formatLedgerDate("2026-09-20"), "2026-09-20");
 });

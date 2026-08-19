@@ -40,7 +40,9 @@ export function createDocumentRegistryRouter(repository: DocumentRegistryReposit
         document: {
           ...document,
           lifecycle: documentLifecycle(document),
-          formData: maskSensitiveFields(document.formData)
+          // マスキング撤廃（2026-08-19 利用者決定）: 口座・メール等も実値で返す
+          // （PDF・帳票と表示が食い違い、確認に使えなかったため）。
+          formData: document.formData
         }
       });
     } catch (error) {
@@ -59,16 +61,6 @@ function requesterEmail(response: Response) {
 function owns(recordEmail: string | null | undefined, requiredOwner: string) {
   return !requiredOwner || recordEmail?.toLowerCase() === requiredOwner;
 }
-
-function maskSensitiveFields(formData: Record<string, unknown>) {
-  const sensitive = /account|口座|bank|銀行|email|メール|phone|電話/i;
-  return Object.fromEntries(Object.entries(formData).map(([key, value]) => {
-    if (!sensitive.test(key) || value == null || value === "") return [key, value];
-    const text = String(value);
-    return [key, text.length > 4 ? `${"*".repeat(Math.min(8, text.length - 4))}${text.slice(-4)}` : "****"];
-  }));
-}
-
 
 function documentLifecycle(document: {
   documentNumber: string | null;
