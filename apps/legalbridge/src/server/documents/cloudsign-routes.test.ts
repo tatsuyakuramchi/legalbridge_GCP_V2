@@ -407,3 +407,39 @@ test("UI へ path / status など内部情報を返さない", async () => {
   assert.equal("status" in response.body, false);
   assert.doesNotMatch(JSON.stringify(response.body), /SECRETVALUE/);
 });
+
+// キャンセル→再送: CloudSign 側で取り下げた（canceled）依頼は冪等ガードを塞がない。
+// 取り下げ済みIDから新キーを導出して新しい依頼として送る（V1 は毎回新規行で暗黙に再送可だった）。
+
+test("キャンセル済みの依頼は再送できる（新しい依頼として送信・履歴は2件）", async () => {
+  const requestHistory = new MemoryCloudSignRequestRepository();
+  const { app, adapter } = appFor({ live: true, role: "admin", requestHistory });
+  const first = await request(app).post("/api/v2/documents/5/cloudsign/dispatch").send({ ...body, sendNow: true });
+  assert.equal(first.status, 201);
+  // 9-6 同期 / webhook が canceled を書き戻した状態を再現
+  await requestHistory.updateStatus(first.body.receipt.cloudSignDocumentId, "canceled");
+  const second = await request(app).post("/api/v2/documents/5/cloudsign/dispatch").send({ ...body, sendNow: true });
+  assert.equal(second.status, 201);
+  assert.equal(second.body.integrations.cloudsign, "requested");
+  assert.equal((adapter as CapturingCloudSign).sendCount, 2);
+  assert.equal((await requestHistory.listByDocument(5)).length, 2);
+  // 2回目もキャンセルすれば3回目も送れる（連鎖キー）。テストのアダプタは常に同じ
+  // cloudSignDocumentId を返すため、2件目の履歴レコードを直接 canceled にする
+  // （実CloudSignは依頼ごとに別IDを発行するので updateStatus で届く）。
+  const records = await requestHistory.listByDocument(5);
+  records[records.length - 1].status = "canceled";
+  const third = await request(app).post("/api/v2/documents/5/cloudsign/dispatch").send({ ...body, sendNow: true });
+  assert.equal(third.status, 201);
+  assert.equal((adapter as CapturingCloudSign).sendCount, 3);
+});
+
+test("キャンセルではない既依頼（sent/draft/completed）は従来どおり duplicate", async () => {
+  const requestHistory = new MemoryCloudSignRequestRepository();
+  const { app, adapter } = appFor({ live: true, role: "admin", requestHistory });
+  const first = await request(app).post("/api/v2/documents/5/cloudsign/dispatch").send({ ...body, sendNow: true });
+  await requestHistory.updateStatus(first.body.receipt.cloudSignDocumentId, "completed");
+  const second = await request(app).post("/api/v2/documents/5/cloudsign/dispatch").send({ ...body, sendNow: true });
+  assert.equal(second.status, 200);
+  assert.equal(second.body.integrations.cloudsign, "duplicate");
+  assert.equal((adapter as CapturingCloudSign).sendCount, 1);
+});

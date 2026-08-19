@@ -165,19 +165,29 @@ export function createCloudSignRouter(
         return response.status(409).json({ error: "依頼条件が整っていません", code: "CLOUDSIGN_DISPATCH_BLOCKED", blockers: gate.blockerLabels });
       }
       // 添付構成が違えば別依頼として扱う（単独依頼の既存キーとは互換維持のため、束ねのときのみ拡張）。
-      const idempotencyKey = createHash("sha256")
+      let idempotencyKey = createHash("sha256")
         .update(`cloudsign:${document.id}:${document.documentNumber ?? document.issueKey}` +
           (attachedDocuments.length ? `:bundle:${[...attachIds].sort((a, b) => a - b).join("-")}` : ""))
         .digest("hex");
       // 冪等強制：履歴が有効なら、同一文書の既依頼は再送せず既存受領を返す。
+      // ただし **キャンセル済み（canceled）の依頼は再送を塞がない**：CloudSign 側で
+      // 取り下げた依頼の後継として、取り下げた依頼IDから新しいキーを導出して進む
+      // （何度キャンセルしても連鎖で新キーになる。9-6 の状態同期 or webhook が
+      // canceled を書き戻していることが前提＝同期前は従来どおり duplicate を返す）。
       if (requestHistory) {
-        const prior = await requestHistory.findByKey(idempotencyKey);
-        if (prior) {
-          return response.status(200).json({
-            receipt: { cloudSignDocumentId: prior.cloudSignDocumentId, status: prior.status, participantIds: [] },
-            cloudSignUrl: consoleUrl(prior.cloudSignDocumentId),
-            integrations: { cloudsign: "duplicate" }
-          });
+        for (;;) {
+          const prior = await requestHistory.findByKey(idempotencyKey);
+          if (!prior) break;
+          if (String(prior.status).toLowerCase() !== "canceled") {
+            return response.status(200).json({
+              receipt: { cloudSignDocumentId: prior.cloudSignDocumentId, status: prior.status, participantIds: [] },
+              cloudSignUrl: consoleUrl(prior.cloudSignDocumentId),
+              integrations: { cloudsign: "duplicate" }
+            });
+          }
+          idempotencyKey = createHash("sha256")
+            .update(`${idempotencyKey}:after-canceled:${prior.cloudSignDocumentId}`)
+            .digest("hex");
         }
       }
       // テンプレート文書は描画、添付文書は Drive の実体をそのまま使う。
