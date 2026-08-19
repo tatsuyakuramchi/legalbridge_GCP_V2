@@ -127,6 +127,20 @@ export const itemFields: FieldDefinition[] = [
   }
 ];
 
+// 海外発注書（intl_purchase_order）専用: サブスク支払日の任意設定。
+// 入力した英文が PDF の Payment Date にそのまま印字され、自動の支払日表記
+// （day N of each month 等）より優先される（テンプレ 061 の billing_note 分岐）。
+// 国内発注書のテンプレートはこの列を読まないため、海外版のフォームだけに出す。
+export const intlItemFields: FieldDefinition[] = itemFields.flatMap((field) =>
+  field.name === "billing_timing"
+    ? [field, {
+      name: "billing_note",
+      label: "支払日の任意設定（英文・そのまま印字）",
+      showWhen: subscriptionOnly,
+      helpText: "例: within 30 days after receipt of invoice。入力すると上の周期・支払日からの自動表記より優先されます"
+    } satisfies FieldDefinition]
+    : [field]);
+
 export const expenseFields: FieldDefinition[] = [
   { name: "expense_name", label: "経費名" },
   { name: "spent_date", label: "利用日", type: "date" },

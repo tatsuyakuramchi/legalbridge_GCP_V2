@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { DocumentFormData } from "../types";
 import { isFieldVisible } from "./field-visibility";
 import {
-  type FieldDefinition, itemFields, expenseFields, feeFields, conditionFields
+  type FieldDefinition, itemFields, intlItemFields, expenseFields, feeFields, conditionFields
 } from "./document-line-fields";
 
 type Row = Record<string, unknown>;
@@ -17,7 +17,8 @@ export function SpecializedDocumentForms({ templateKey, formData, onChange }: Pr
   if (templateKey === "purchase_order" || templateKey === "intl_purchase_order") {
     return <SpecializedSection title="明細・金銭条件" description="発注明細と、必要な場合だけ経費・手数料・利用許諾条件を追加します。">
       <ArrayEditor title="発注明細" itemLabel="明細" dataKey="items" rows={rows(formData.items)}
-        fields={itemFields} onChange={onChange} defaultRow={{ quantity: 1 }} />
+        fields={templateKey === "intl_purchase_order" ? intlItemFields : itemFields}
+        onChange={onChange} defaultRow={{ quantity: 1 }} />
       <ArrayEditor title="経費" itemLabel="経費" dataKey="expenses" rows={rows(formData.expenses)}
         fields={expenseFields} onChange={onChange} />
       <ArrayEditor title="その他手数料" itemLabel="手数料" dataKey="other_fees" rows={rows(formData.other_fees)}

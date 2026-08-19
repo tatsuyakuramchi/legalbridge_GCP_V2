@@ -440,6 +440,26 @@ psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
 実レンダラ（Handlebars＋registerLegacyHelpers）に通し、構造化多明細＝明細表／旧下書き＝
 label テーブル／単票＝AG カスケードの3系を検証済み。
 
+### 2-7e. 海外発注書テンプレ改訂（061・サブスク支払日の任意設定）
+
+海外発注書（intl_purchase_order）のサブスク明細の Payment Date に**任意設定
+（billing_note・英文自由記述）**を追加。billing_note があればそのまま印字し、無ければ
+従来どおり自動表記（`billingDayLabelEn`: day N of each month 等）、それも無ければ TBD
+（既存文書・旧下書きは無変更）。フォーム側は海外発注書の明細だけに
+「支払日の任意設定（英文・そのまま印字）」欄が出る（国内テンプレはこの列を読まないため出さない）。
+
+置換ベース＋ガード（Payment Date のサブスク分岐が1箇所で見つからなければ中断・適用済みなら
+`billing_note は既に存在します` で中断＝冪等）。改訂後テンプレ全文を V2 レンダラで検証済み
+（任意設定の優先／自動表記／TBD／非サブスク行に漏れない、の4系）。
+
+```bash
+psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
+  -v confirm_intl_billing_note=ADD_INTL_PO_BILLING_NOTE \
+  -f infra/gcp/sql/061_intl_po_subscription_billing_note.sql
+```
+
+適用後の確認: 最後の SELECT で `has_billing_note = t`。
+
 ### 2-8. 案件 Slack 会話履歴（`slack-matter-thread-history-fix-plan.md`）
 
 案件詳細の「コミュニケーション」に Slack スレッドを時系列表示する。既存の

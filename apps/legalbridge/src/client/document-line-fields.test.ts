@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { itemFields, conditionFields, type FieldDefinition } from "./document-line-fields.js";
+import { itemFields, intlItemFields, conditionFields, type FieldDefinition } from "./document-line-fields.js";
 import { isFieldVisible } from "./field-visibility.js";
 
 // 明細1行に実際に出る列名（ArrayEditor と同じ絞り込み）。
@@ -102,4 +102,16 @@ test("金銭条件表はテンプレートが読む calc_type / guarantee_type �
 test("金銭条件でも最低保証の金額欄は選んだ側だけ出す", () => {
   assert.ok(visibleNames(conditionFields, { guarantee_type: "MG" }).includes("mg_amount"));
   assert.ok(!visibleNames(conditionFields, { guarantee_type: "MG" }).includes("ag_amount"));
+});
+
+// 海外発注書のサブスク支払日の任意設定（billing_note・英文自由記述）。
+
+test("intlItemFields: billing_note が billing_timing の直後にサブスク限定で入る", () => {
+  const names = intlItemFields.map((field) => field.name);
+  const timingIndex = names.indexOf("billing_timing");
+  assert.equal(names[timingIndex + 1], "billing_note");
+  // 国内の itemFields には入れない（国内テンプレートはこの列を読まない）
+  assert.equal(itemFields.some((field) => field.name === "billing_note"), false);
+  const note = intlItemFields.find((field) => field.name === "billing_note")!;
+  assert.deepEqual(note.showWhen, { field: "calc_method", anyOf: ["SUBSCRIPTION"] });
 });
