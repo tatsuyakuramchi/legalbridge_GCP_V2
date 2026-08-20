@@ -78,12 +78,17 @@ UPDATE document_drafts d
      || CASE WHEN d.form_data->>'ACCOUNT_TYPE'        ~ '^\*+' AND COALESCE(v.account_type, '') <> ''        THEN jsonb_build_object('ACCOUNT_TYPE', v.account_type) ELSE '{}'::jsonb END
      || CASE WHEN d.form_data->>'ACCOUNT_NUMBER'      ~ '^\*+' AND COALESCE(v.account_number, '') <> ''      THEN jsonb_build_object('ACCOUNT_NUMBER', v.account_number) ELSE '{}'::jsonb END
      || CASE WHEN d.form_data->>'ACCOUNT_HOLDER_KANA' ~ '^\*+' AND COALESCE(v.account_holder_kana, '') <> '' THEN jsonb_build_object('ACCOUNT_HOLDER_KANA', v.account_holder_kana) ELSE '{}'::jsonb END
-  FROM LATERAL (
-    SELECT * FROM vendors vv
-     WHERE vv.vendor_name = d.form_data->>'VENDOR_NAME'
-     ORDER BY vv.is_active DESC, vv.id LIMIT 1
+  FROM (
+    -- UPDATE の FROM では対象テーブルを LATERAL 参照できないため、
+    -- 同名取引先の重複排除は DISTINCT ON（有効を優先・次に id 順）で行う。
+    SELECT DISTINCT ON (vendor_name)
+           vendor_name, email, phone, bank_name, branch_name,
+           account_type, account_number, account_holder_kana
+      FROM vendors
+     ORDER BY vendor_name, is_active DESC, id
   ) v
- WHERE jsonb_typeof(d.form_data) = 'object'
+ WHERE v.vendor_name = d.form_data->>'VENDOR_NAME'
+   AND jsonb_typeof(d.form_data) = 'object'
    AND EXISTS (
      SELECT 1 FROM jsonb_each_text(d.form_data) kv
       WHERE kv.key IN ('VENDOR_EMAIL','VENDOR_PHONE','VENDOR_CONTACT_PHONE','BANK_NAME',
