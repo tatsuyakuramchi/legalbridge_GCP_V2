@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { GoogleAuth } from "google-auth-library";
 import {
-  buildRawMessage, isValidEmail,
+  buildRawMessage, isValidEmail, parseRecipientList,
   type GmailDeliveryAdapter, type GmailDeliveryReceipt, type GmailDeliveryRequest
 } from "./gmail-delivery-adapter.js";
 
@@ -69,7 +69,12 @@ export class GmailApiDeliveryAdapter implements GmailDeliveryAdapter {
   constructor(private readonly client: GmailApiClient) {}
 
   async send(request: GmailDeliveryRequest): Promise<GmailDeliveryReceipt> {
-    if (!isValidEmail(request.to)) throw new GmailApiError("A valid recipient address is required", "invalid_recipient");
+    // 宛先・CC はカンマ区切りで複数を許す。1件でも不正なら送らない。
+    const recipients = parseRecipientList(request.to);
+    const ccRecipients = parseRecipientList(request.cc ?? "");
+    if (!recipients.length || recipients.some((email) => !isValidEmail(email)) || ccRecipients.some((email) => !isValidEmail(email))) {
+      throw new GmailApiError("A valid recipient address is required", "invalid_recipient");
+    }
     if (!isValidEmail(request.fromEmail)) throw new GmailApiError("A valid sender address is required", "invalid_sender");
     const raw = buildRawMessage(request);
     const receipt = await this.client.send(request.fromEmail, raw, request.idempotencyKey);

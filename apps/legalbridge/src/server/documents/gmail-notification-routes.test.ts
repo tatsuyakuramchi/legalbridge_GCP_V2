@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import express from "express";
 import request from "supertest";
-import { createGmailNotificationRouter, buildFinalizeNotification } from "./gmail-notification-routes.js";
+import { createGmailNotificationRouter, buildFinalizeNotification, type GmailAttachmentDeps } from "./gmail-notification-routes.js";
 import { MemoryDocumentRegistryRepository, type RegisteredDocument } from "./registry-repository.js";
-import type { GmailDeliveryAdapter } from "../integrations/gmail-delivery-adapter.js";
+import type { GmailDeliveryAdapter, GmailDeliveryRequest } from "../integrations/gmail-delivery-adapter.js";
 import { MemoryGmailSendHistoryRepository } from "../integrations/gmail-send-history-repository.js";
+import type { TemplateRepository } from "./template-repository.js";
+import type { PdfRenderer } from "./pdf-renderer.js";
 
 const doc: RegisteredDocument = {
   id: 7, documentNumber: "DOC-2026-0007", issueKey: "LB-7", templateType: "license",
@@ -14,18 +16,31 @@ const doc: RegisteredDocument = {
   createdBy: "legal@arclight.co.jp", formData: {}
 };
 
+const inspectionDoc: RegisteredDocument = {
+  ...doc, id: 8, documentNumber: "ARC-AC-2026-0008", templateType: "inspection_certificate",
+  title: "検収書"
+};
+
 class CapturingGmailAdapter implements GmailDeliveryAdapter {
   readonly configured = true;
-  sent: unknown = null;
+  sent: GmailDeliveryRequest | null = null;
   sendCount = 0;
-  async send(req: unknown) { this.sent = req; this.sendCount += 1; return { messageId: "m1", threadId: "t1" }; }
+  async send(req: GmailDeliveryRequest) { this.sent = req; this.sendCount += 1; return { messageId: "m1", threadId: "t1" }; }
 }
+
+// 版ズレ例外を避けるため templateVersionId は文書側(1)と一致させる。
+const templatesStub = {
+  async findRenderSource() { return { templateVersionId: 1, htmlSource: "<h1>{{TITLE}}</h1>" }; },
+  async findPartials() { return {}; },
+  async findCurrent() { return { templateKey: "license", label: "license", templateVersionId: 1, fields: [] }; }
+} as unknown as TemplateRepository;
+const pdfRenderer: PdfRenderer = { async render() { return Buffer.from("%PDF-1.4 test"); } };
 
 function appFor(options: {
   role?: "admin" | "legal" | "requester"; live?: boolean; adapter?: GmailDeliveryAdapter;
-  history?: MemoryGmailSendHistoryRepository;
+  history?: MemoryGmailSendHistoryRepository; attachmentDeps?: GmailAttachmentDeps;
 }) {
-  const registry = new MemoryDocumentRegistryRepository([doc]);
+  const registry = new MemoryDocumentRegistryRepository([doc, inspectionDoc]);
   const adapter = options.adapter ?? new CapturingGmailAdapter();
   const app = express();
   app.use(express.json());
@@ -38,15 +53,33 @@ function appFor(options: {
     gmailCapabilityEnabled: options.live ?? false,
     adapterConfigured: adapter.configured,
     senderEmail: "legal@arclight.co.jp"
-  }, options.history));
+  }, options.history, undefined, options.attachmentDeps ?? {}));
   return { app, adapter };
 }
 
 test("確定通知の件名・本文・冪等キーを組み立てる", () => {
   const content = buildFinalizeNotification(doc, "to@example.com");
   assert.match(content.subject, /DOC-2026-0007/);
+  assert.match(content.subject, /確定のお知らせ/);
   assert.match(content.bodyText, /株式会社サンプル 御中/);
   assert.match(content.idempotencyKey, /^[a-f0-9]{64}$/);
+});
+
+test("検収書は「検収書のご送付」文面になり、添付ありの断りが入る", () => {
+  const content = buildFinalizeNotification(inspectionDoc, "to@example.com", { attached: true });
+  assert.match(content.subject, /検収書のご送付/);
+  assert.match(content.bodyText, /検収書をお送りします/);
+  assert.match(content.bodyText, /ARC-AC-2026-0008\.pdf/);
+});
+
+test("冪等キーは宛先の順序・大文字小文字に依存しない（単一宛先は従来と互換）", () => {
+  const single = buildFinalizeNotification(doc, "to@example.com");
+  const singleUpper = buildFinalizeNotification(doc, "TO@example.com ");
+  assert.equal(single.idempotencyKey, singleUpper.idempotencyKey);
+  const pair = buildFinalizeNotification(doc, "a@example.com, b@example.com");
+  const pairReversed = buildFinalizeNotification(doc, "b@example.com,a@example.com");
+  assert.equal(pair.idempotencyKey, pairReversed.idempotencyKey);
+  assert.notEqual(single.idempotencyKey, pair.idempotencyKey);
 });
 
 test("プレビューはローカルでも本文とブロック理由を返す", async () => {
@@ -56,6 +89,8 @@ test("プレビューはローカルでも本文とブロック理由を返す",
   assert.match(response.body.preview.subject, /確定のお知らせ/);
   assert.equal(response.body.gate.dispatchAllowed, false);
   assert.ok(response.body.gate.blockerLabels.length > 0);
+  // 添付の見込みも返す（描画依存が無いので planned=false）。
+  assert.equal(response.body.attachment.planned, false);
 });
 
 test("依頼者ロールはプレビューできない", async () => {
@@ -79,6 +114,70 @@ test("ライブモードかつ管理者は実送信し受領を返す", async ()
   assert.equal(response.status, 201);
   assert.equal(response.body.receipt.messageId, "m1");
   assert.notEqual((adapter as CapturingGmailAdapter).sent, null);
+});
+
+test("複数宛先（カンマ区切り）とCCがアダプタへそのまま渡る", async () => {
+  const { app, adapter } = appFor({ live: true, role: "admin" });
+  const response = await request(app).post("/api/v2/documents/7/gmail-notification/dispatch")
+    .send({ to: "a@example.com, b@example.com", cc: "cc@example.com" });
+  assert.equal(response.status, 201);
+  const sent = (adapter as CapturingGmailAdapter).sent!;
+  assert.equal(sent.to, "a@example.com, b@example.com");
+  assert.equal(sent.cc, "cc@example.com");
+});
+
+test("不正なCCは400で止める", async () => {
+  const { app, adapter } = appFor({ live: true, role: "admin" });
+  const response = await request(app).post("/api/v2/documents/7/gmail-notification/dispatch")
+    .send({ to: "a@example.com", cc: "not-an-email" });
+  assert.equal(response.status, 400);
+  assert.equal(response.body.code, "GMAIL_RECIPIENT_INVALID");
+  assert.equal((adapter as CapturingGmailAdapter).sent, null);
+});
+
+test("attachPdf=true でテンプレート文書はPDFを添付して送る", async () => {
+  const { app, adapter } = appFor({
+    live: true, role: "admin",
+    attachmentDeps: { templates: templatesStub, pdfRenderer }
+  });
+  const response = await request(app).post("/api/v2/documents/8/gmail-notification/dispatch")
+    .send({ to: "to@example.com", attachPdf: true });
+  assert.equal(response.status, 201);
+  assert.equal(response.body.attached, true);
+  const sent = (adapter as CapturingGmailAdapter).sent!;
+  assert.equal(sent.attachments?.length, 1);
+  assert.equal(sent.attachments?.[0].filename, "ARC-AC-2026-0008.pdf");
+  assert.equal(sent.attachments?.[0].mimeType, "application/pdf");
+  assert.match(sent.bodyText, /添付しています/);
+});
+
+test("PDF生成に失敗してもDriveリンクがあればリンクのみで送る（best-effort）", async () => {
+  const failingRenderer: PdfRenderer = { async render() { throw new Error("chromium down"); } };
+  const { app, adapter } = appFor({
+    live: true, role: "admin",
+    attachmentDeps: { templates: templatesStub, pdfRenderer: failingRenderer }
+  });
+  const response = await request(app).post("/api/v2/documents/8/gmail-notification/dispatch")
+    .send({ to: "to@example.com", attachPdf: true });
+  assert.equal(response.status, 201);
+  assert.equal(response.body.attached, false);
+  assert.match(String(response.body.attachmentNote ?? ""), /リンクのみで送信/);
+  const sent = (adapter as CapturingGmailAdapter).sent!;
+  assert.equal(sent.attachments, undefined);
+  // 本文は添付結果で組み直す＝「添付しています」と書かない。
+  assert.doesNotMatch(sent.bodyText, /添付しています/);
+});
+
+test("attachPdf=false なら従来どおりリンクのみで送る", async () => {
+  const { app, adapter } = appFor({
+    live: true, role: "admin",
+    attachmentDeps: { templates: templatesStub, pdfRenderer }
+  });
+  const response = await request(app).post("/api/v2/documents/8/gmail-notification/dispatch")
+    .send({ to: "to@example.com", attachPdf: false });
+  assert.equal(response.status, 201);
+  assert.equal(response.body.attached, false);
+  assert.equal((adapter as CapturingGmailAdapter).sent!.attachments, undefined);
 });
 
 test("法務ロールは実送信できない（管理者限定）", async () => {

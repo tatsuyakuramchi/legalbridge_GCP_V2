@@ -1,4 +1,4 @@
-import { isValidEmail } from "./gmail-delivery-adapter.js";
+import { isValidEmail, parseRecipientList } from "./gmail-delivery-adapter.js";
 
 // Gmail 送信の実発火ゲート。Slack と同じく、既定OFF・多重ブロックを重ねて
 // 「設定が全て揃ったときだけ」dispatchAllowed=true にする。
@@ -47,7 +47,9 @@ export function evaluateGmailDispatchGate(
   if (settings.integrationMode !== "live") blockers.push("integration_local");
   if (!settings.gmailCapabilityEnabled) blockers.push("capability_disabled");
   if (!settings.adapterConfigured) blockers.push("adapter_unavailable");
-  if (!isValidEmail(preview.to)) blockers.push("recipient_invalid");
+  // 宛先はカンマ区切りで複数可。1件以上あり、全てが有効なアドレスであること。
+  const recipients = parseRecipientList(preview.to);
+  if (!recipients.length || recipients.some((email) => !isValidEmail(email))) blockers.push("recipient_invalid");
   if (!preview.subject.trim() || !preview.bodyText.trim()) blockers.push("content_incomplete");
 
   const dispatchAllowed = blockers.length === 0;

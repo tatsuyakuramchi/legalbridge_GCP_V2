@@ -1579,7 +1579,9 @@ export function createApp(
   app.use("/api/v2", createDocumentImportRouter(dependencies.documentImports, documentFinalizeEnabled));
   app.use("/api/v2", createGmailNotificationRouter(
     documentRegistry, gmailDeliveryAdapter, gmailGateSettings,
-    dependencies.gmailSendHistory, dependencies.matterSends));
+    dependencies.gmailSendHistory, dependencies.matterSends,
+    // PDF添付（V1同等）：CloudSign送信と同じ調達経路（テンプレート描画 or Drive実体）を使う。
+    { templates: dependencies.templates, pdfRenderer, driveStorage: dependencies.driveStorage ?? undefined }));
   // 送信・署名履歴＋宛先候補（W3）。リロード後も送信済みかどうか文書詳細から確認できる読み口。
   app.use("/api/v2", createSendHistoryRouter(
     dependencies.gmailSendHistory, dependencies.cloudSignRequests,

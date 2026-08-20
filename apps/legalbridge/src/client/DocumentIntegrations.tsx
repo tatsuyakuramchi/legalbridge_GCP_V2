@@ -95,28 +95,41 @@ function CloudSignHistoryRow({ row, onRefreshed }: {
 type Suggestion = { email: string; name: string; source: string };
 function GmailNotify({ documentId, isAdmin = true, suggestions = [], onSent }: { documentId: number; isAdmin?: boolean; suggestions?: Suggestion[]; onSent?: () => void }) {
   const [to, setTo] = useState("");
-  const [preview, setPreview] = useState<{ subject: string; bodyText: string } | null>(null);
+  const [cc, setCc] = useState("");
+  const [attachPdf, setAttachPdf] = useState(true);
+  const [preview, setPreview] = useState<{ subject: string; bodyText: string; cc?: string } | null>(null);
+  const [attachment, setAttachment] = useState<{ planned: boolean; note: string } | null>(null);
   const [gate, setGate] = useState<Gate | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const toast = useToast();
+  const resetPreview = () => { setPreview(null); setGate(null); setAttachment(null); };
+  // 候補は「置き換え」ではなく「追記」：複数宛先（カンマ区切り）を組み立てられるように。
+  const appendTo = (email: string) => {
+    setTo((prev) => {
+      const list = prev.split(",").map((s) => s.trim()).filter(Boolean);
+      if (list.some((e) => e.toLowerCase() === email.toLowerCase())) return prev;
+      return [...list, email].join(", ");
+    });
+    resetPreview();
+  };
 
   async function runPreview() {
-    setBusy(true); setError(""); setPreview(null); setGate(null);
+    setBusy(true); setError(""); resetPreview();
     try {
       const response = await fetch(`/api/v2/documents/${documentId}/gmail-notification/preview`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to })
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to, cc, attachPdf })
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) { setError(data.error ?? "プレビューに失敗しました。"); return; }
-      setPreview(data.preview); setGate(data.gate);
+      setPreview(data.preview); setGate(data.gate); setAttachment(data.attachment ?? null);
     } catch { setError("通信に失敗しました。"); } finally { setBusy(false); }
   }
   async function dispatch() {
     setBusy(true); setError("");
     try {
       const response = await fetch(`/api/v2/documents/${documentId}/gmail-notification/dispatch`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to })
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to, cc, attachPdf })
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -125,18 +138,26 @@ function GmailNotify({ documentId, isAdmin = true, suggestions = [], onSent }: {
       }
       // duplicate（既送信・冪等スキップ）と今回送信を区別して知らせる（監査A4.8）。
       toast.push(data.integrations?.gmail === "duplicate"
-        ? "この宛先へは送信済みです（再送はしていません）" : "確定通知メールを送信しました", "success");
+        ? "この宛先へは送信済みです（再送はしていません）"
+        : `メールを送信しました${data.attached ? "（PDF添付）" : "（リンクのみ）"}`, "success");
+      if (data.attachmentNote) toast.push(data.attachmentNote, "error");
       onSent?.();
     } catch { setError("通信に失敗しました。"); } finally { setBusy(false); }
   }
 
   return <div className="doc-integration-card">
-    <strong>📧 確定通知メール</strong>
-    <label>宛先<input value={to} onChange={(e) => { setTo(e.target.value); setPreview(null); setGate(null); }}
-      placeholder="counterparty@example.com" /></label>
-    {suggestions.length > 0 && <small className="settings-effective">候補：
+    <strong>📧 文書メール送信</strong>
+    <label>宛先<input value={to} onChange={(e) => { setTo(e.target.value); resetPreview(); }}
+      placeholder="counterparty@example.com（複数はカンマ区切り）" /></label>
+    <label>CC（任意）<input value={cc} onChange={(e) => { setCc(e.target.value); resetPreview(); }}
+      placeholder="cc@example.com（複数はカンマ区切り）" /></label>
+    <label style={{ display: "inline-flex", gap: "0.4em", alignItems: "center" }}>
+      <input type="checkbox" checked={attachPdf} onChange={(e) => { setAttachPdf(e.target.checked); resetPreview(); }} />
+      文書PDFを添付する（検収書・計算書の送付はこちらを推奨）
+    </label>
+    {suggestions.length > 0 && <small className="settings-effective">候補（クリックで宛先に追加）：
       {suggestions.map((sug) => <button key={sug.email} type="button" className="link-button"
-        onClick={() => { setTo(sug.email); setPreview(null); setGate(null); }}>{sug.name}（{sug.email}）</button>)}
+        onClick={() => appendTo(sug.email)}>{sug.name}（{sug.email}）</button>)}
     </small>}
     <div className="doc-integration-actions">
       <button onClick={runPreview} disabled={busy || !to.trim()}>プレビュー</button>
@@ -148,6 +169,8 @@ function GmailNotify({ documentId, isAdmin = true, suggestions = [], onSent }: {
     {error && <div className="async-error">{error}</div>}
     {preview && <div className="doc-integration-preview">
       <div><b>件名：</b>{preview.subject}</div>
+      {preview.cc ? <div><b>CC：</b>{preview.cc}</div> : null}
+      {attachment && <div><b>添付：</b>{attachment.note}</div>}
       <pre>{preview.bodyText}</pre>
     </div>}
     {gate && !gate.dispatchAllowed && <small className="doc-integration-blocked">
