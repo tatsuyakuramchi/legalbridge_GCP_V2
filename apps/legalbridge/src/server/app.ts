@@ -105,6 +105,7 @@ import { createDocumentReissueRouter } from "./documents/document-reissue-routes
 import { PgExcelBatchRepository, type ExcelBatchRepository } from "./documents/excel-batch-repository.js";
 import { createExcelBatchRouter } from "./documents/excel-batch-routes.js";
 import { PgAppSettingsRepository, type AppSettingsRepository } from "./settings/settings-repository.js";
+import { loadCompanyProfile } from "./settings/company-profile.js";
 import { createSettingsRouter } from "./settings/settings-routes.js";
 import { PgWorkflowRulesRepository, type WorkflowRulesRepository } from "./settings/workflow-rules-repository.js";
 import { createWorkflowRulesRouter } from "./settings/workflow-rules-routes.js";
@@ -1581,7 +1582,11 @@ export function createApp(
     documentRegistry, gmailDeliveryAdapter, gmailGateSettings,
     dependencies.gmailSendHistory, dependencies.matterSends,
     // PDF添付（V1同等）：CloudSign送信と同じ調達経路（テンプレート描画 or Drive実体）を使う。
-    { templates: dependencies.templates, pdfRenderer, driveStorage: dependencies.driveStorage ?? undefined }));
+    // 文面の会社名・住所は会社プロフィール設定から差し込む（未整備なら既定へ縮退）。
+    {
+      templates: dependencies.templates, pdfRenderer, driveStorage: dependencies.driveStorage ?? undefined,
+      companyProfile: () => loadCompanyProfile(dependencies.appSettings)
+    }));
   // 送信・署名履歴＋宛先候補（W3）。リロード後も送信済みかどうか文書詳細から確認できる読み口。
   app.use("/api/v2", createSendHistoryRouter(
     dependencies.gmailSendHistory, dependencies.cloudSignRequests,

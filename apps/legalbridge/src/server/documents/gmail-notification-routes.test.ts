@@ -57,19 +57,44 @@ function appFor(options: {
   return { app, adapter };
 }
 
-test("確定通知の件名・本文・冪等キーを組み立てる", () => {
+test("汎用文書は「書類のご送付」文面（確認のお願い＋会社署名）になる", () => {
   const content = buildFinalizeNotification(doc, "to@example.com");
-  assert.match(content.subject, /DOC-2026-0007/);
-  assert.match(content.subject, /確定のお知らせ/);
+  assert.match(content.subject, /^【株式会社アークライト】書類のご送付（DOC-2026-0007）$/);
   assert.match(content.bodyText, /株式会社サンプル 御中/);
+  assert.match(content.bodyText, /内容をご確認のうえ、相違等がございましたら/);
+  assert.match(content.bodyText, /株式会社アークライト/);
   assert.match(content.idempotencyKey, /^[a-f0-9]{64}$/);
 });
 
-test("検収書は「検収書のご送付」文面になり、添付ありの断りが入る", () => {
-  const content = buildFinalizeNotification(inspectionDoc, "to@example.com", { attached: true });
-  assert.match(content.subject, /検収書のご送付/);
-  assert.match(content.bodyText, /検収書をお送りします/);
-  assert.match(content.bodyText, /ARC-AC-2026-0008\.pdf/);
+test("検収書は「検収書のご送付」文面になり、添付ありは「添付のとおり」と書く", () => {
+  const content = buildFinalizeNotification(
+    { ...inspectionDoc, formData: { grandTotalPayableStr: "¥110,000" } },
+    "to@example.com", { attached: true }
+  );
+  assert.match(content.subject, /検収書のご送付（ARC-AC-2026-0008）/);
+  assert.match(content.bodyText, /検収が完了いたしましたので/);
+  assert.match(content.bodyText, /検収書を添付のとおりお送りいたします/);
+  assert.match(content.bodyText, /■ 検収金額：¥110,000/);
+});
+
+test("利用許諾料計算書は専用文面＋利用許諾料額（生値は桁区切りへ整形）", () => {
+  const royaltyDoc: RegisteredDocument = { ...doc, id: 9, templateType: "royalty_statement", formData: { totalPayment: 0, totalAmount: 123456 } };
+  const content = buildFinalizeNotification(royaltyDoc, "to@example.com", { attached: true });
+  assert.match(content.subject, /利用許諾料計算書のご送付/);
+  assert.match(content.bodyText, /利用許諾料が確定いたしましたので/);
+  assert.match(content.bodyText, /■ 利用許諾料額：¥123,456/);
+});
+
+test("会社プロフィールを渡すと件名・署名に反映される", () => {
+  const content = buildFinalizeNotification(doc, "to@example.com", {
+    company: {
+      name: "テスト商事株式会社", nameKana: "", postalCode: "", address: "東京都テスト区1-2-3",
+      tel: "03-0000-0000", fax: "", rep: "", invoiceNo: "", bankInfo: "", sealNote: ""
+    }
+  });
+  assert.match(content.subject, /^【テスト商事株式会社】/);
+  assert.match(content.bodyText, /東京都テスト区1-2-3/);
+  assert.match(content.bodyText, /TEL：03-0000-0000/);
 });
 
 test("冪等キーは宛先の順序・大文字小文字に依存しない（単一宛先は従来と互換）", () => {
@@ -86,7 +111,7 @@ test("プレビューはローカルでも本文とブロック理由を返す",
   const { app } = appFor({ live: false });
   const response = await request(app).post("/api/v2/documents/7/gmail-notification/preview").send({ to: "to@example.com" });
   assert.equal(response.status, 200);
-  assert.match(response.body.preview.subject, /確定のお知らせ/);
+  assert.match(response.body.preview.subject, /書類のご送付/);
   assert.equal(response.body.gate.dispatchAllowed, false);
   assert.ok(response.body.gate.blockerLabels.length > 0);
   // 添付の見込みも返す（描画依存が無いので planned=false）。
@@ -148,7 +173,7 @@ test("attachPdf=true でテンプレート文書はPDFを添付して送る", as
   assert.equal(sent.attachments?.length, 1);
   assert.equal(sent.attachments?.[0].filename, "ARC-AC-2026-0008.pdf");
   assert.equal(sent.attachments?.[0].mimeType, "application/pdf");
-  assert.match(sent.bodyText, /添付しています/);
+  assert.match(sent.bodyText, /添付のとおり/);
 });
 
 test("PDF生成に失敗してもDriveリンクがあればリンクのみで送る（best-effort）", async () => {
@@ -164,8 +189,9 @@ test("PDF生成に失敗してもDriveリンクがあればリンクのみで送
   assert.match(String(response.body.attachmentNote ?? ""), /リンクのみで送信/);
   const sent = (adapter as CapturingGmailAdapter).sent!;
   assert.equal(sent.attachments, undefined);
-  // 本文は添付結果で組み直す＝「添付しています」と書かない。
-  assert.doesNotMatch(sent.bodyText, /添付しています/);
+  // 本文は添付結果で組み直す＝「添付のとおり」ではなくURL案内になる。
+  assert.doesNotMatch(sent.bodyText, /添付のとおり/);
+  assert.match(sent.bodyText, /下記URLのとおり/);
 });
 
 test("attachPdf=false なら従来どおりリンクのみで送る", async () => {

@@ -15,6 +15,8 @@ import type { DriveStorage } from "./drive-storage.js";
 import { resolveCloudSignSourcePdf, looksLikePdf } from "./cloudsign-source-pdf.js";
 import { driveFileIdFromLink } from "./drive-storage.js";
 
+import { DEFAULT_COMPANY_PROFILE, type CompanyProfile } from "../settings/company-profile.js";
+
 const idPath = z.object({ id: z.coerce.number().int().positive() });
 const bodySchema = z.object({
   to: z.string().trim().min(1, "宛先が必要です").max(500),
@@ -25,39 +27,93 @@ const bodySchema = z.object({
 
 function editorAllowed(role: string | undefined) { return role === "admin" || role === "legal"; }
 
-// 文書種別ごとの件名・本文の言い回し。検収書・利用許諾料計算書は取引先への
-// 「送付」文面（V1の運用）、それ以外は従来の確定のお知らせ。
-function wordingFor(templateType: string): { subjectSuffix: string; action: string } {
-  if (templateType === "inspection_certificate" || templateType.startsWith("inspection")) {
-    return { subjectSuffix: "検収書のご送付", action: "検収書をお送りします" };
-  }
-  if (templateType === "royalty_statement" || templateType.includes("license_calculation")) {
-    return { subjectSuffix: "利用許諾料計算書のご送付", action: "利用許諾料計算書をお送りします" };
-  }
-  return { subjectSuffix: "確定のお知らせ", action: "" };
+// 金額（V1と同じ優先順位）。整形済み（…Str）を優先し、生値しか無ければ桁区切りに整形する。
+function amountOf(formData: Record<string, unknown>): string {
+  const raw = formData.grandTotalPayableStr ?? formData.totalPaymentStr ?? formData.totalAmountStr
+    ?? formData.grandTotalPayable ?? formData.totalAmount ?? formData.GRAND_TOTAL ?? formData.TOTAL_AMOUNT ?? "";
+  const text = String(raw).trim();
+  if (!text) return "";
+  const numeric = Number(text);
+  return Number.isFinite(numeric) ? `¥${numeric.toLocaleString("ja-JP")}` : text;
 }
 
-// 文書確定・成立通知（または検収書・計算書の送付）の件名/本文。テンプレートは
-// 変更せず、確定済み文書のメタ情報（文書番号・件名・相手方・Driveリンク）から組み立てる。
+type MailKind = "inspection" | "royalty" | "general";
+function mailKindOf(templateType: string): MailKind {
+  if (templateType === "inspection_certificate" || templateType.startsWith("inspection")) return "inspection";
+  if (templateType === "royalty_statement" || templateType.includes("license_calculation")) return "royalty";
+  return "general";
+}
+
+// 文書送付メールの件名/本文（V1の既定テンプレートを移植）。検収書・利用許諾料
+// 計算書は専用文面、その他の文書は「書類のご送付＋内容ご確認のお願い」の汎用文面。
+// 会社名・住所は会社プロフィール設定（app_settings・未整備なら既定へ縮退）から差し込む。
 export function buildFinalizeNotification(
   document: RegisteredDocument,
   to: string,
-  options: { cc?: string; attached?: boolean } = {}
+  options: { cc?: string; attached?: boolean; company?: CompanyProfile } = {}
 ) {
   const label = document.documentNumber ?? document.issueKey;
-  const wording = wordingFor(document.templateType);
-  const subject = `【LegalBridge】${label} ${wording.action ? wording.subjectSuffix : `${document.title} ${wording.subjectSuffix}`}`;
+  const company = options.company ?? DEFAULT_COMPANY_PROFILE;
+  const kind = mailKindOf(document.templateType);
+  const amount = amountOf(document.formData ?? {});
+  const issuedOn = new Date().toLocaleDateString("ja-JP");
+  const delivery = options.attached ? "添付のとおり" : "下記URLのとおり";
+  const subject = `【${company.name}】${
+    kind === "inspection" ? "検収書のご送付" : kind === "royalty" ? "利用許諾料計算書のご送付" : "書類のご送付"
+  }（${label}）`;
+  const signature = [
+    "──────────────────────",
+    company.name,
+    company.address,
+    ...(company.tel ? [`TEL：${company.tel}`] : []),
+    "──────────────────────"
+  ];
+  const opening = kind === "royalty"
+    ? ["いつも大変お世話になっております。", `${company.name}でございます。`]
+    : ["いつもお世話になっております。", `${company.name}でございます。`];
+  const lead = kind === "inspection"
+    ? ["このたび納品いただきました内容につきまして検収が完了いたしましたので、", `検収書を${delivery}お送りいたします。`]
+    : kind === "royalty"
+      ? ["このたび、利用許諾契約に基づく利用許諾料が確定いたしましたので、", `利用許諾料計算書を${delivery}お送りいたします。`]
+      : [`書類（${document.title}）を${delivery}お送りいたします。`];
+  const facts = [
+    `■ 文書番号：${label}`,
+    ...(kind === "inspection" && amount ? [`■ 検収金額：${amount}`] : []),
+    ...(kind === "royalty" && amount ? [`■ 利用許諾料額：${amount}`] : []),
+    `■ 発行日　：${issuedOn}`
+  ];
+  const closing = kind === "royalty"
+    ? [
+      "計算の内訳につきましては、計算書をご確認ください。",
+      "お支払いは、契約に定める支払条件に基づきお手続きいたします。",
+      "",
+      "なお、計算内容にご不明な点や相違等がございましたら、",
+      "お手数ですが本メールへご返信のうえお知らせくださいますよう",
+      "お願い申し上げます。",
+      "",
+      "引き続きどうぞよろしくお願い申し上げます。"
+    ]
+    : [
+      "内容をご確認のうえ、相違等がございましたら、お手数ですが",
+      "本メールへのご返信にてご連絡ください。",
+      ...(kind === "inspection" ? ["お支払いは、契約に定める支払条件に基づきお手続きいたします。"] : []),
+      "",
+      "今後ともどうぞよろしくお願い申し上げます。"
+    ];
   const lines = [
     `${document.counterparty || "ご担当者"} 御中`,
     "",
-    wording.action
-      ? `${document.title}（文書番号：${document.documentNumber ?? "未採番"} / 案件：${document.issueKey}）の${wording.action}。ご確認をお願いいたします。`
-      : `${document.title}（文書番号：${document.documentNumber ?? "未採番"} / 案件：${document.issueKey}）を確定しました。`,
-    options.attached ? `本メールに文書PDF（${label}.pdf）を添付しています。` : "",
-    document.driveLink ? `文書URL：${document.driveLink}` : "",
+    ...opening,
     "",
-    "本メールはLegalBridgeから自動送信されています。"
-  ].filter((line) => line !== "" || true);
+    ...lead,
+    "",
+    ...facts,
+    ...(document.driveLink ? ["", `文書URL：${document.driveLink}`] : []),
+    "",
+    ...closing,
+    "",
+    ...signature
+  ];
   const bodyText = lines.join("\n");
   // 冪等キー: 宛先集合を正規化（小文字化・整列）して指紋を取る。単一宛先なら
   // 従来のキーと一致する＝過去の送信履歴と互換。CC・添付有無はキーに含めない
@@ -69,11 +125,12 @@ export function buildFinalizeNotification(
   return { to: parseRecipientList(to).join(", "), cc: parseRecipientList(options.cc ?? "").join(", "), subject, bodyText, idempotencyKey };
 }
 
-// PDF添付に使う描画依存（CloudSign送信と同じ調達経路を再利用する）。
+// PDF添付に使う描画依存（CloudSign送信と同じ調達経路を再利用する）＋文面の会社差込。
 export interface GmailAttachmentDeps {
   templates?: TemplateRepository;
   pdfRenderer?: PdfRenderer;
   driveStorage?: DriveStorage;
+  companyProfile?: () => Promise<CompanyProfile>;
 }
 
 export function createGmailNotificationRouter(
@@ -109,7 +166,11 @@ export function createGmailNotificationRouter(
     const attachment = attachPdf
       ? await planAttachment(document)
       : { planned: false, note: "添付なし（リンクのみ）を選択中" };
-    const content = buildFinalizeNotification(document, to, { cc, attached: attachment.planned });
+    let company = DEFAULT_COMPANY_PROFILE;
+    try {
+      company = attachmentDeps.companyProfile ? await attachmentDeps.companyProfile() : DEFAULT_COMPANY_PROFILE;
+    } catch { /* 設定未整備は既定の会社情報で送る */ }
+    const content = buildFinalizeNotification(document, to, { cc, attached: attachment.planned, company });
     let gate = evaluateGmailDispatchGate(
       { to: content.to, subject: content.subject, bodyText: content.bodyText },
       gateSettings
@@ -128,7 +189,7 @@ export function createGmailNotificationRouter(
         blockerLabels: [...gate.blockerLabels, "文書がまだDriveに保存されていません（先に「Driveへ保存」を実行するか、PDF添付を有効にしてください）"]
       };
     }
-    return { document, content, gate, attachment };
+    return { document, content, gate, attachment, company };
   }
 
   // 送信前プレビュー（送信しない）。ゲートのブロック理由と添付の見込みも返す。
@@ -216,8 +277,8 @@ export function createGmailNotificationRouter(
           blockers: [attachmentError ?? "PDFを生成できませんでした"]
         });
       }
-      // 本文は実際の添付結果で組み直す（「添付しています」と書いて添付が無い事故を防ぐ）。
-      const content = buildFinalizeNotification(loaded.document, to, { cc, attached });
+      // 本文は実際の添付結果で組み直す（「添付のとおり」と書いて添付が無い事故を防ぐ）。
+      const content = buildFinalizeNotification(loaded.document, to, { cc, attached, company: loaded.company });
       const receipt = await gmail.send({
         to: content.to, cc: content.cc || undefined,
         subject: content.subject, bodyText: content.bodyText,
