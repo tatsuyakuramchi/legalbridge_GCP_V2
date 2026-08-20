@@ -460,6 +460,24 @@ psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
 
 適用後の確認: 最後の SELECT で `has_billing_note = t`。
 
+### 2-7f. マスク値の保存事故の修復（062）【適用済み 2026-08-20】
+
+表示時マスキング（2026-08-19 撤廃）が有効な間に特例編集・複製を確定した文書・下書きに、
+マスク済み文字列（`********o.jp` / `**住友銀行` 等）が実データとして保存された事故の修復。
+値が `*` で始まるキーだけを取引先・担当者マスタの実値で上書きする（正常値には触れない・冪等）。
+
+- 対象: documents（vendor_id 照合＋STAFF_NAME 照合）／document_drafts（VENDOR_NAME 照合・
+  同名は有効優先の DISTINCT ON）
+- **適用結果: 汚染 9 文書 → 残存 0 件（完全復旧）**。文書の再出力でもマスク解除を確認済み。
+- Cloud SQL Studio で流す場合は psql メタコマンド抜きでブロック単位に実行
+  （`UPDATE ... FROM LATERAL` は更新対象を参照できないため DISTINCT ON 版を使うこと）。
+
+```bash
+psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
+  -v confirm_masked_repair=REPAIR_MASKED_FORM_DATA \
+  -f infra/gcp/sql/062_repair_masked_form_data.sql
+```
+
 ### 2-8. 案件 Slack 会話履歴（`slack-matter-thread-history-fix-plan.md`）
 
 案件詳細の「コミュニケーション」に Slack スレッドを時系列表示する。既存の
