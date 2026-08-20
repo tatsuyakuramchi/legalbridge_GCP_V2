@@ -70,8 +70,9 @@ function matchesFilter(matter: Matter, filter: FilterKey, today: string) {
     case "overdue": return isActive(matter) && isOverdue(matter.targetDueDate, today);
     case "done": return matter.status === "closed";
     case "archived": return matter.status === "archived";
-    // 「すべて」は保管(archived)を除外し、通常運用の案件だけを表示する。
-    default: return matter.status !== "archived";
+    // 「すべて」は完了(closed)・保管(archived)を除外し、動いている案件だけを表示する。
+    // 完了案件が溜まると一覧が読めなくなるため（完了・保管チップからいつでも見られる）。
+    default: return matter.status !== "archived" && matter.status !== "closed";
   }
 }
 
@@ -119,7 +120,7 @@ export function MatterRegistry({ templates, selectedId, canEdit = false, canDele
 
   const today = matterTodayKey();
   const counts = {
-    all: matters.filter((m) => m.status !== "archived").length,
+    all: matters.filter((m) => m.status !== "archived" && m.status !== "closed").length,
     active: matters.filter(isActive).length,
     blocked: matters.filter((m) => isActive(m) && Boolean(m.blockedReason)).length,
     overdue: matters.filter((m) => isActive(m) && isOverdue(m.targetDueDate, today)).length,
@@ -170,7 +171,10 @@ export function MatterRegistry({ templates, selectedId, canEdit = false, canDele
         </button>;
       })}
         {!loading && !visible.length && (matters.length
-          ? <EmptyState icon="⛃" title="この絞り込みに該当する案件はありません" description="別のチップやキーワードをお試しください。" compact />
+          ? <EmptyState icon="⛃" title="この絞り込みに該当する案件はありません"
+              description={filter === "all" && (counts.done > 0 || counts.archived > 0)
+                ? "動いている案件はありません。完了・保管した案件は「完了」「保管」チップから表示できます。"
+                : "別のチップやキーワードをお試しください。"} compact />
           : <EmptyState icon="⛃" title="案件がありません"
               description={canEdit ? "最初の案件を作成しましょう。" : "該当する案件がありません。"}
               actionLabel={canEdit ? "＋ 新規案件" : undefined}
