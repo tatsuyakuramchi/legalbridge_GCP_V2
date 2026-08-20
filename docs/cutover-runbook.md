@@ -943,3 +943,18 @@ Slack App の Request URL を V1 の `https://<V1 search-api>/slack/commands`
 
 > 未決の業務判断（保留中）：非アプリユーザー向けポータル（U3/4/5）の廃止可否／LegalOn（U9）・RPT（Phase 14）の
 > 実利用有無／Ringi（11-9）。回答があり次第このチェックリストに反映する。
+
+## 7. 監視・バックアップ基線【適用済み 2026-08-20】
+
+保守体制説明書（内部監査資料）§0-3／§5 の値を `infra/gcp/apply-monitoring-baseline.sh` で
+GCP へ実適用した（冪等・再実行可。PITR 新規有効化時のみ再起動を伴うため `ACK_DB_RESTART=yes` が必要）。
+
+- Cloud SQL `legalbridge-db`：自動バックアップ 日次 18:00 UTC（=03:00 JST）開始・14世代保持、
+  PITR 有効・トランザクションログ7日（保管先 CLOUD_STORAGE）。適用前は 03:00 UTC・7世代・PITR無効だった。
+- uptime check：`LB-PROD-health-legalbridge-v2`（`/health`・5分間隔）。読み取り側サービスへ広げるときは
+  `UPTIME_SERVICES="legalbridge-v2 <サービス名>"` で再実行。
+- アラートポリシー5本（全て有効）：`LB-PROD-CloudRun-5xx`（5分3件超）／`-Latency`（p95>5秒）／
+  `-Revision`（health失敗5分）／`-CloudSQL-Connection`（down＋メトリクス途絶）／`-CloudSQL-Storage`（80%超15分）。
+- 通知チャンネル：`LegalBridge Ops メール` → tatsuya.kuramochi@arclight.co.jp（作成時にプレースホルダの
+  まま登録した事故を `channels update --update-channel-labels` で修正済み。describe で確認済み）。
+- 残タスク：Slack `#legalbridge-ops` チャンネルの手動作成／コンソールからのテスト通知確認。
