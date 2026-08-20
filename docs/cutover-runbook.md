@@ -957,4 +957,6 @@ GCP へ実適用した（冪等・再実行可。PITR 新規有効化時のみ�
   `-Revision`（health失敗5分）／`-CloudSQL-Connection`（down＋メトリクス途絶）／`-CloudSQL-Storage`（80%超15分）。
 - 通知チャンネル：`LegalBridge Ops メール` → tatsuya.kuramochi@arclight.co.jp（作成時にプレースホルダの
   まま登録した事故を `channels update --update-channel-labels` で修正済み。describe で確認済み）。
-- 残タスク：Slack `#legalbridge-ops` チャンネルの手動作成／コンソールからのテスト通知確認。
+- アラート通知は**メールのみ**とする（2026-08-20 利用者決定。Slack への自動通知連携は行わない。
+  `#legalbridge-ops` は障害時に人が集まる連絡用チャンネルであり、通知の宛先ではない）。
+- 残タスク：Slack `#legalbridge-ops` チャンネルの手動作成（連絡用）／コンソールからのテスト通知確認。
