@@ -42,6 +42,11 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 note() { echo "── $*"; }
 
 [ -n "${NOTIFY_EMAIL:-}" ] || die "NOTIFY_EMAIL を指定してください（例: NOTIFY_EMAIL=ops@example.com bash $0）"
+# プレースホルダをそのまま貼った事故を止める（実在のメールアドレス形式のみ許可）
+case "${NOTIFY_EMAIL}" in
+  *@*.*) : ;;
+  *) die "NOTIFY_EMAIL がメールアドレスの形式ではありません: ${NOTIFY_EMAIL}（実際の通知先アドレスに置き換えてください）" ;;
+esac
 command -v gcloud >/dev/null || die "gcloud が必要です"
 command -v python3 >/dev/null || die "python3 が必要です"
 
@@ -51,13 +56,13 @@ echo
 
 # ── 1. Cloud SQL バックアップ／PITR ─────────────────────────────────────────
 note "1/4 Cloud SQL バックアップ／PITR"
+# csv形式で取得する。value() + awk だと未設定の空フィールド（PITR無効時の
+# pointInTimeRecoveryEnabled 等）が読み飛ばされて後続の値がずれる。
 CUR="$(gcloud sql instances describe "${INSTANCE}" --project "${PROJECT}" \
-  --format='value(settings.backupConfiguration.enabled,settings.backupConfiguration.startTime,settings.backupConfiguration.backupRetentionSettings.retainedBackups,settings.backupConfiguration.pointInTimeRecoveryEnabled,settings.backupConfiguration.transactionLogRetentionDays)')"
-CUR_ENABLED="$(echo "${CUR}" | awk '{print $1}')"
-CUR_START="$(echo "${CUR}"   | awk '{print $2}')"
-CUR_KEEP="$(echo "${CUR}"    | awk '{print $3}')"
-CUR_PITR="$(echo "${CUR}"    | awk '{print $4}')"
-CUR_LOGDAYS="$(echo "${CUR}" | awk '{print $5}')"
+  --format='csv[no-heading](settings.backupConfiguration.enabled,settings.backupConfiguration.startTime,settings.backupConfiguration.backupRetentionSettings.retainedBackups,settings.backupConfiguration.pointInTimeRecoveryEnabled,settings.backupConfiguration.transactionLogRetentionDays)')"
+IFS=',' read -r CUR_ENABLED CUR_START CUR_KEEP CUR_PITR CUR_LOGDAYS <<< "${CUR}"
+# 未設定（空）は無効として扱う
+CUR_PITR="${CUR_PITR:-False}"
 echo "  現状: backup=${CUR_ENABLED:-None} start=${CUR_START:-None}(UTC) 世代=${CUR_KEEP:-None} PITR=${CUR_PITR:-None} log保持=${CUR_LOGDAYS:-None}日"
 echo "  目標: backup=True start=${BACKUP_START_UTC}(UTC=03:00 JST) 世代=${RETAINED_BACKUPS} PITR=True log保持=${PITR_LOG_DAYS}日"
 
