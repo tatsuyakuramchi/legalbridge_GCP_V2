@@ -440,7 +440,7 @@ psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
 実レンダラ（Handlebars＋registerLegacyHelpers）に通し、構造化多明細＝明細表／旧下書き＝
 label テーブル／単票＝AG カスケードの3系を検証済み。
 
-### 2-7e. 海外発注書テンプレ改訂（061・サブスク支払日の任意設定）
+### 2-7e. 海外発注書テンプレ改訂（061・サブスク支払日の任意設定）【適用済み 2026-08-20】
 
 海外発注書（intl_purchase_order）のサブスク明細の Payment Date に**任意設定
 （billing_note・英文自由記述）**を追加。billing_note があればそのまま印字し、無ければ
