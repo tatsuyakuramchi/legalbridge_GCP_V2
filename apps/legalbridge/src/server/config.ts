@@ -123,6 +123,8 @@ export const config = {
   // 法務相談の資料アップロードページURL（V1ポータル互換）。設定時はモーダルと
   // 起票後DMに課題番号付きリンクを出す。未設定ならDM返信での受け渡し案内に切替。
   slackIntakeUploadUrl: (process.env.SLACK_INTAKE_UPLOAD_URL ?? "").trim(),
+  // 取引先マスタ検索ページURL（モーダルの相手方入力の補助リンク）。
+  slackIntakeVendorSearchUrl: (process.env.SLACK_INTAKE_VENDOR_SEARCH_URL ?? "").trim(),
   gmailDeliveryMode:
     process.env.GMAIL_DELIVERY_MODE === "live" ? "live" as const : "disabled" as const,
   gmailSenderEmail: (process.env.GMAIL_SENDER ?? "").trim(),

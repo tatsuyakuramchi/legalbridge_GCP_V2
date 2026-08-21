@@ -1570,6 +1570,7 @@ export function createApp(
       get backlogProjectKey() { return rt().backlogProjectKey || null; },
       contractCheck: dependencies.contractCheck ?? null,
       uploadPageUrl: config.slackIntakeUploadUrl || null,
+      vendorSearchUrl: config.slackIntakeVendorSearchUrl || null,
       log: (message) => console.warn(`[slack-intake] ${message}`)
     });
     app.use(createSlackIntakeRouter({

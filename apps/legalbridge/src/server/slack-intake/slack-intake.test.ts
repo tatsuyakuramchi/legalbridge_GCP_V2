@@ -194,6 +194,28 @@ test("modal: 法務相談は添付案内ブロックが出る（URL設定時は�
   assert.equal(helpOf(nda), undefined);
 });
 
+test("modal: 取引先マスタ検索リンク（URL設定時のみ・相手方入力のある種別に表示）", () => {
+  type View = { blocks: Array<{ block_id?: string; elements?: Array<{ text?: string }> }> };
+  const searchOf = (view: View) => view.blocks.find((b) => b.block_id === "vendor_search_help_block");
+
+  // URL設定時: 相手方入力のある種別（nda）に表示
+  const withUrl = buildLegalRequestModal({
+    selectedType: "nda", vendorSearchUrl: "https://legalbridge.example/search/vendor"
+  }) as View;
+  assert.match(String(searchOf(withUrl)?.elements?.[0]?.text),
+    /<https:\/\/legalbridge\.example\/search\/vendor\|取引先マスタを検索>/);
+
+  // URL未設定: 出ない
+  const noUrl = buildLegalRequestModal({ selectedType: "nda" }) as View;
+  assert.equal(searchOf(noUrl), undefined);
+
+  // 相手方入力の無い種別（検収書＝契約番号で特定）には出ない
+  const inspec = buildLegalRequestModal({
+    selectedType: "delivery_inspec", vendorSearchUrl: "https://legalbridge.example/search/vendor"
+  }) as View;
+  assert.equal(searchOf(inspec), undefined);
+});
+
 test("説明文: V1 準拠の項目が並ぶ", () => {
   const text = buildIssueDescription({
     requestType: "nda", summary: "A社とのNDA", deadline: "2026-08-20", details: "詳細",

@@ -67,6 +67,8 @@ export interface LegalRequestModalOptions {
   now?: Date;
   // 資料アップロードページのURL（V1ポータル互換・設定時のみリンクを出す）。
   uploadPageUrl?: string | null;
+  // 取引先マスタ検索ページのURL（相手方入力の補助・設定時のみリンクを出す）。
+  vendorSearchUrl?: string | null;
 }
 
 // Slack Block Kit のモーダル定義（views.open / views.update へそのまま渡す）。
@@ -270,6 +272,18 @@ export function buildLegalRequestModal(options: LegalRequestModalOptions = {}): 
         element: { type: "plain_text_input", action_id: "entity_id_input", max_length: 50 }
       }
     );
+    // 相手方の検索補助（V1 の取引先マスタ検索リンクを復元・URL設定時のみ）。
+    const vendorSearchUrl = String(options.vendorSearchUrl ?? "").trim();
+    if (vendorSearchUrl) {
+      blocks.push({
+        type: "context", block_id: "vendor_search_help_block",
+        elements: [{
+          type: "mrkdwn",
+          text:
+            `🔎 相手方の登録有無・正式名称・取引先コードは <${vendorSearchUrl}|取引先マスタを検索> で確認できます。`
+        }]
+      });
+    }
   }
 
   blocks.push({

@@ -37,6 +37,8 @@ export interface SlackIntakeHandlerOptions {
   // 資料アップロードページのURL（V1ポータル互換）。設定時はモーダルと起票後DMに
   // 課題番号付きリンクを出す。未設定時は法務相談のみDM返信での受け渡しを案内。
   uploadPageUrl?: string | null;
+  // 取引先マスタ検索ページのURL。設定時はモーダルの相手方入力に検索リンクを出す。
+  vendorSearchUrl?: string | null;
   log?: (message: string) => void;
 }
 
@@ -82,7 +84,9 @@ export function createSlackIntakeHandler(options: SlackIntakeHandlerOptions) {
   async function openModal(triggerId: string): Promise<void> {
     await options.slack.post("views.open", {
       trigger_id: triggerId,
-      view: buildLegalRequestModal({ uploadPageUrl: options.uploadPageUrl })
+      view: buildLegalRequestModal({
+        uploadPageUrl: options.uploadPageUrl, vendorSearchUrl: options.vendorSearchUrl
+      })
     });
   }
 
@@ -267,7 +271,10 @@ export function createSlackIntakeHandler(options: SlackIntakeHandlerOptions) {
       await options.slack.post("views.update", {
         view_id: viewId,
         ...(p.view?.hash ? { hash: p.view.hash } : {}),
-        view: buildLegalRequestModal({ selectedType, candidates, liCount, uploadPageUrl: options.uploadPageUrl })
+        view: buildLegalRequestModal({
+          selectedType, candidates, liCount,
+          uploadPageUrl: options.uploadPageUrl, vendorSearchUrl: options.vendorSearchUrl
+        })
       });
     } catch (error) {
       log(`slack-intake: request modal views.update failed: ${error instanceof Error ? error.message : String(error)}`);
