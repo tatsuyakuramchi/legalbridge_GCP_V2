@@ -81,6 +81,8 @@ substitutions:
   _SLACK_INTAKE_VENDOR_SEARCH_URL: "https://legalbridge.arclight.co.jp/search/vendor"
   _BACKLOG_INTAKE_ENABLED: "false"
   _SLACK_SIGNING_SECRET_NAME: BLOCKED
+  # 検索ポータル（資料アップロード中継）との共有シークレット名。空＝受け口無効。
+  _LB_PORTAL_SECRET_NAME: ""
   _JOBS_ENABLED: "false"
   _JOBS_TRIGGER_TOKEN_SECRET: BLOCKED
   _CLOUDSIGN_WEBHOOK_TOKEN_SECRET: BLOCKED
@@ -304,6 +306,11 @@ steps:
         fi
         if [ -n "${_BACKLOG_WEBHOOK_TOKEN_SECRET}" ] && [ "${_BACKLOG_WEBHOOK_TOKEN_SECRET}" != "BLOCKED" ]; then
           SECRETS="$$SECRETS,BACKLOG_WEBHOOK_TOKEN=${_BACKLOG_WEBHOOK_TOKEN_SECRET}:latest"
+        fi
+        # 検索ポータルの資料アップロード中継の共有シークレット（V1停止・案A）。
+        # 設定時のみマウント（未設定＝/api/attachments/by-issue が 404 で自動無効）。
+        if [ -n "${_LB_PORTAL_SECRET_NAME}" ] && [ "${_LB_PORTAL_SECRET_NAME}" != "BLOCKED" ]; then
+          SECRETS="$$SECRETS,LB_PORTAL_SECRET=${_LB_PORTAL_SECRET_NAME}:latest"
         fi
         # CloudSign client_id は Secret Manager から CLOUDSIGN_CLIENT_ID env として注入する
         # （平文 substitution にしない）。live かつシークレット名が設定されたときのみ。

@@ -125,6 +125,8 @@ export const config = {
   slackIntakeUploadUrl: (process.env.SLACK_INTAKE_UPLOAD_URL ?? "").trim(),
   // 取引先マスタ検索ページURL（モーダルの相手方入力の補助リンク）。
   slackIntakeVendorSearchUrl: (process.env.SLACK_INTAKE_VENDOR_SEARCH_URL ?? "").trim(),
+  // 検索ポータル（資料アップロード中継）との共有シークレット。未設定なら受け口は404（fail-closed）。
+  lbPortalSecret: (process.env.LB_PORTAL_SECRET ?? "").trim(),
   gmailDeliveryMode:
     process.env.GMAIL_DELIVERY_MODE === "live" ? "live" as const : "disabled" as const,
   gmailSenderEmail: (process.env.GMAIL_SENDER ?? "").trim(),

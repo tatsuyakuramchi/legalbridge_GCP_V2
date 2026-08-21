@@ -123,6 +123,7 @@ import {
   DynamicBacklogClient, DynamicGmailApiClient, DynamicGmailInboundClient, DynamicSlackWebApiClient
 } from "./integrations/dynamic-clients.js";
 import { createAttachmentsRouter } from "./documents/attachments-routes.js";
+import { createPortalAttachmentRouter, PgPortalIssueResolver } from "./documents/portal-attachment-routes.js";
 import { createContractCheckRouter } from "./contract-check/routes.js";
 import { createContractMasterRouter } from "./contracts/contract-master-routes.js";
 import { createJobsRouter, type JobRunner } from "./internal/jobs-routes.js";
@@ -678,7 +679,8 @@ export function createApp(
     CLOUDSIGN_CLIENT_ID: config.cloudSignClientId,
     CLOUDSIGN_WEBHOOK_TOKEN: config.cloudSignWebhookToken,
     BACKLOG_WEBHOOK_TOKEN: config.backlogWebhookToken,
-    JOBS_TRIGGER_TOKEN: config.jobsTriggerToken
+    JOBS_TRIGGER_TOKEN: config.jobsTriggerToken,
+    LB_PORTAL_SECRET: config.lbPortalSecret
   }, dependencies.secretStore);
   const sec = (key: SecretKey) => runtimeSecrets.get(key);
 
@@ -1456,6 +1458,21 @@ export function createApp(
           backlogWriteClient.addComment(issueKey, text).then(() => undefined)
       : undefined,
     writeEnabled: attachmentUploadEnabled
+  }));
+
+  // 検索ポータル互換の資料アップロード受け口（V1停止・案A）。search-api の
+  // DOCUMENT_WORKER_URL をこのサービスへ向けると、ポータルの資料アップロードページが
+  // V2 経由で Drive 格納＋ATT 登録される。LB_PORTAL_SECRET 未設定なら 404（fail-closed）。
+  app.use(createPortalAttachmentRouter({
+    repository: dependencies.attachments,
+    resolver: getPool() ? new PgPortalIssueResolver(getPool()!) : undefined,
+    storage: dependencies.driveStorage ?? null,
+    postComment: backlogCommentWriteEnabled && backlogWriteClient
+      ? (issueKey, text) =>
+          backlogWriteClient.addComment(issueKey, text).then(() => undefined)
+      : undefined,
+    writeEnabled: attachmentUploadEnabled,
+    portalSecret: () => sec("LB_PORTAL_SECRET")
   }));
 
   // 内部自動化基盤（Phase 9）。ユーザー認証をバイパスし共有シークレットで保護（既定OFF）。

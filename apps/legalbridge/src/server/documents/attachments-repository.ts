@@ -19,7 +19,8 @@ export interface AttachmentTargetMatter {
 }
 
 export interface RegisterAttachmentInput {
-  matterId: number;
+  // null = 案件未解決（ポータル経由・課題番号のみ判明）。autolink／案件同期に委ねる（V1 同様）。
+  matterId: number | null;
   issueKey: string | null;
   templateType: string;          // ATTACHMENT_KINDS のキー
   driveLink: string;
@@ -98,9 +99,11 @@ export class PgAttachmentsRepository implements AttachmentsRepository {
 
     // 案件の更新時刻を触る（一覧の並び/鮮度用・V1 同様）。matters UPDATE 権限が
     // 未付与でも添付自体は成功扱い（ベストエフォート）。
-    try {
-      await this.database.query(`UPDATE matters SET updated_at = now() WHERE id = $1`, [input.matterId]);
-    } catch { /* 非致命 */ }
+    if (input.matterId != null) {
+      try {
+        await this.database.query(`UPDATE matters SET updated_at = now() WHERE id = $1`, [input.matterId]);
+      } catch { /* 非致命 */ }
+    }
 
     return {
       id: Number(row.id),
@@ -115,7 +118,7 @@ export class PgAttachmentsRepository implements AttachmentsRepository {
 
 export class MemoryAttachmentsRepository implements AttachmentsRepository {
   private sequence = 0;
-  readonly registered: Array<RegisteredAttachment & { matterId: number; issueKey: string | null }> = [];
+  readonly registered: Array<RegisteredAttachment & { matterId: number | null; issueKey: string | null }> = [];
 
   constructor(
     readonly matters: AttachmentTargetMatter[] = [],

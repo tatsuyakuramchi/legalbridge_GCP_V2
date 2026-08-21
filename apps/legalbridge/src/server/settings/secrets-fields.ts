@@ -20,7 +20,8 @@ export type SecretKey =
   | "CLOUDSIGN_CLIENT_ID"
   | "CLOUDSIGN_WEBHOOK_TOKEN"
   | "BACKLOG_WEBHOOK_TOKEN"
-  | "JOBS_TRIGGER_TOKEN";
+  | "JOBS_TRIGGER_TOKEN"
+  | "LB_PORTAL_SECRET";
 
 export const SECRET_FIELDS: SecretFieldDefinition[] = [
   {
@@ -61,6 +62,11 @@ export const SECRET_FIELDS: SecretFieldDefinition[] = [
     key: "JOBS_TRIGGER_TOKEN", secretName: "JOBS_TRIGGER_TOKEN",
     label: "ジョブ起動トークン",
     hint: "Cloud Scheduler からのジョブ起動を保護する共有トークン（ローテーション用・Scheduler 側ヘッダも更新すること)"
+  },
+  {
+    key: "LB_PORTAL_SECRET", secretName: "lb-portal-secret",
+    label: "ポータル連携シークレット",
+    hint: "検索ポータル（資料アップロード中継）との共有シークレット。ポータル側 LB_PORTAL_SECRET と同じ値にすること"
   }
 ];
 

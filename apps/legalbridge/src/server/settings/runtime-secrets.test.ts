@@ -12,7 +12,8 @@ const ENV = {
   CLOUDSIGN_CLIENT_ID: "env-client-id",
   CLOUDSIGN_WEBHOOK_TOKEN: "env-cs-token",
   BACKLOG_WEBHOOK_TOKEN: "env-bl-token",
-  JOBS_TRIGGER_TOKEN: "env-jobs-token"
+  JOBS_TRIGGER_TOKEN: "env-jobs-token",
+  LB_PORTAL_SECRET: "env-portal-secret"
 };
 
 test("runtime-secrets: ストア未設定なら常に env の値", async () => {

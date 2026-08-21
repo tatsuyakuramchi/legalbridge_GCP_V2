@@ -30,6 +30,9 @@ export function createAuthentication(settings: AuthSettings) {
     // 内部エンドポイント（スケジューラ起動口・外部Webhook受信口）はユーザー認証を通さず、
     // 各ルータが自前の共有シークレットで保護する（Phase 9）。
     if (request.path.startsWith("/internal/")) return next();
+    // 検索ポータルの資料アップロード中継（V1停止・案A）。ポータル互換のためパス固定。
+    // x-lb-portal-secret（LB_PORTAL_SECRET）で保護され、未設定時は受け口自体が404。
+    if (request.path === "/api/attachments/by-issue") return next();
 
     if (settings.mode === "disabled") {
       response.locals.currentUser = {
