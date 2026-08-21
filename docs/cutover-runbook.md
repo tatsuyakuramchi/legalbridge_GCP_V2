@@ -478,7 +478,7 @@ psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
   -f infra/gcp/sql/062_repair_masked_form_data.sql
 ```
 
-### 2-7g. 海外発注書テンプレ改訂（063・Payment Schedule 表の削除）【適用待ち】
+### 2-7g. 海外発注書テンプレ改訂（063・Payment Schedule 表の削除）【適用済み 2026-08-21】
 
 海外発注書（intl_purchase_order）の明細ごとの **Payment Schedule 表を削除**し、支払条件の
 記載を Payment Date 欄（billing_note または自動表記・061）に一本化する。表は明細の
@@ -500,6 +500,11 @@ psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
 ```
 
 適用後の確認: 最後の SELECT で `schedule_removed = t` かつ `keeps_billing_note = t`。
+
+**適用結果（2026-08-21）**: `current_version_id = 97` / `version_no = 6` /
+`schedule_removed = t` / `keeps_billing_note = t`。Cloud SQL Studio から `postgres`
+ユーザーで適用（`legalbridge_app` 等の絞った権限のユーザーでは
+`permission denied for table document_templates` になるので注意）。
 
 ### 2-8. 案件 Slack 会話履歴（`slack-matter-thread-history-fix-plan.md`）
 
