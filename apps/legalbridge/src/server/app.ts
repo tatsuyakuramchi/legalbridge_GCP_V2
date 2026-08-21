@@ -106,6 +106,8 @@ import { PgExcelBatchRepository, type ExcelBatchRepository } from "./documents/e
 import { createExcelBatchRouter } from "./documents/excel-batch-routes.js";
 import { PgAppSettingsRepository, type AppSettingsRepository } from "./settings/settings-repository.js";
 import { loadCompanyProfile } from "./settings/company-profile.js";
+import { loadEmailSettings } from "./settings/email-settings.js";
+import { createEmailSettingsRouter } from "./settings/email-settings-routes.js";
 import { createSettingsRouter } from "./settings/settings-routes.js";
 import { PgWorkflowRulesRepository, type WorkflowRulesRepository } from "./settings/workflow-rules-repository.js";
 import { createWorkflowRulesRouter } from "./settings/workflow-rules-routes.js";
@@ -1604,8 +1606,18 @@ export function createApp(
     // 文面の会社名・住所は会社プロフィール設定から差し込む（未整備なら既定へ縮退）。
     {
       templates: dependencies.templates, pdfRenderer, driveStorage: dependencies.driveStorage ?? undefined,
-      companyProfile: () => loadCompanyProfile(dependencies.appSettings)
+      companyProfile: () => loadCompanyProfile(dependencies.appSettings),
+      emailSettings: () => loadEmailSettings(dependencies.appSettings)
     }));
+  // メール設定（文面テンプレート・既定CC・テスト送信）。保存は app_settings（grant 036）と
+  // 同じゲート（SETTINGS_WRITE_ENABLED）。テスト送信は gmail ゲート・admin のみ。
+  app.use("/api/v2", createEmailSettingsRouter({
+    repository: dependencies.appSettings,
+    writeEnabled: appSettingsWriteEnabled,
+    gmail: gmailDeliveryAdapter,
+    gateSettings: gmailGateSettings,
+    companyProfile: () => loadCompanyProfile(dependencies.appSettings)
+  }));
   // 送信・署名履歴＋宛先候補（W3）。リロード後も送信済みかどうか文書詳細から確認できる読み口。
   app.use("/api/v2", createSendHistoryRouter(
     dependencies.gmailSendHistory, dependencies.cloudSignRequests,

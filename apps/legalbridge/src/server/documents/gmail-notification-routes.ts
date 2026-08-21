@@ -16,6 +16,10 @@ import { resolveCloudSignSourcePdf, looksLikePdf } from "./cloudsign-source-pdf.
 import { driveFileIdFromLink } from "./drive-storage.js";
 
 import { DEFAULT_COMPANY_PROFILE, type CompanyProfile } from "../settings/company-profile.js";
+import {
+  DEFAULT_EMAIL_TEMPLATES, DEFAULT_EMAIL_SETTINGS, applyEmailTokens, cleanupRenderedBody, mergeCc,
+  type EmailKind, type EmailTemplate, type EmailSettings
+} from "../settings/email-settings.js";
 
 const idPath = z.object({ id: z.coerce.number().int().positive() });
 const bodySchema = z.object({
@@ -44,77 +48,35 @@ function mailKindOf(templateType: string): MailKind {
   return "general";
 }
 
-// 文書送付メールの件名/本文（V1の既定テンプレートを移植）。検収書・利用許諾料
-// 計算書は専用文面、その他の文書は「書類のご送付＋内容ご確認のお願い」の汎用文面。
-// 会社名・住所は会社プロフィール設定（app_settings・未整備なら既定へ縮退）から差し込む。
+// 文書送付メールの件名/本文。文面はテンプレート（システム設定「メール設定」で編集可・
+// 空欄なら V1 由来の既定文面）から {{token}} 置換で組み立てる。会社名・住所は
+// 会社プロフィール設定から、金額・番号・URLは文書から差し込む。
 export function buildFinalizeNotification(
   document: RegisteredDocument,
   to: string,
-  options: { cc?: string; attached?: boolean; company?: CompanyProfile } = {}
+  options: {
+    cc?: string; attached?: boolean; company?: CompanyProfile;
+    templates?: Record<EmailKind, EmailTemplate>;
+  } = {}
 ) {
   const label = document.documentNumber ?? document.issueKey;
   const company = options.company ?? DEFAULT_COMPANY_PROFILE;
   const kind = mailKindOf(document.templateType);
-  const amount = amountOf(document.formData ?? {});
-  const issuedOn = new Date().toLocaleDateString("ja-JP");
-  const delivery = options.attached ? "添付のとおり" : "下記URLのとおり";
-  const subject = `【${company.name}】${
-    kind === "inspection" ? "検収書のご送付" : kind === "royalty" ? "利用許諾料計算書のご送付" : "書類のご送付"
-  }（${label}）`;
-  const signature = [
-    "──────────────────────",
-    company.name,
-    company.address,
-    ...(company.tel ? [`TEL：${company.tel}`] : []),
-    "──────────────────────"
-  ];
-  const opening = kind === "royalty"
-    ? ["いつも大変お世話になっております。", `${company.name}でございます。`]
-    : ["いつもお世話になっております。", `${company.name}でございます。`];
-  const lead = kind === "inspection"
-    ? ["このたび納品いただきました内容につきまして検収が完了いたしましたので、", `検収書を${delivery}お送りいたします。`]
-    : kind === "royalty"
-      ? ["このたび、利用許諾契約に基づく利用許諾料が確定いたしましたので、", `利用許諾料計算書を${delivery}お送りいたします。`]
-      : [`書類（${document.title}）を${delivery}お送りいたします。`];
-  const facts = [
-    `■ 文書番号：${label}`,
-    ...(kind === "inspection" && amount ? [`■ 検収金額：${amount}`] : []),
-    ...(kind === "royalty" && amount ? [`■ 利用許諾料額：${amount}`] : []),
-    `■ 発行日　：${issuedOn}`
-  ];
-  const closing = kind === "royalty"
-    ? [
-      "計算の内訳につきましては、計算書をご確認ください。",
-      "お支払いは、契約に定める支払条件に基づきお手続きいたします。",
-      "",
-      "なお、計算内容にご不明な点や相違等がございましたら、",
-      "お手数ですが本メールへご返信のうえお知らせくださいますよう",
-      "お願い申し上げます。",
-      "",
-      "引き続きどうぞよろしくお願い申し上げます。"
-    ]
-    : [
-      "内容をご確認のうえ、相違等がございましたら、お手数ですが",
-      "本メールへのご返信にてご連絡ください。",
-      ...(kind === "inspection" ? ["お支払いは、契約に定める支払条件に基づきお手続きいたします。"] : []),
-      "",
-      "今後ともどうぞよろしくお願い申し上げます。"
-    ];
-  const lines = [
-    `${document.counterparty || "ご担当者"} 御中`,
-    "",
-    ...opening,
-    "",
-    ...lead,
-    "",
-    ...facts,
-    ...(document.driveLink ? ["", `文書URL：${document.driveLink}`] : []),
-    "",
-    ...closing,
-    "",
-    ...signature
-  ];
-  const bodyText = lines.join("\n");
+  const template = (options.templates ?? DEFAULT_EMAIL_TEMPLATES)[kind];
+  const vars: Record<string, string> = {
+    vendorName: document.counterparty || "ご担当者",
+    documentNumber: label,
+    title: document.title,
+    amount: amountOf(document.formData ?? {}),
+    date: new Date().toLocaleDateString("ja-JP"),
+    link: document.driveLink ?? "",
+    deliveryMethod: options.attached ? "添付のとおり" : "下記URLのとおり",
+    companyName: company.name,
+    companyAddress: company.address,
+    companyTel: company.tel
+  };
+  const subject = applyEmailTokens(template.subject, vars);
+  const bodyText = cleanupRenderedBody(applyEmailTokens(template.body, vars));
   // 冪等キー: 宛先集合を正規化（小文字化・整列）して指紋を取る。単一宛先なら
   // 従来のキーと一致する＝過去の送信履歴と互換。CC・添付有無はキーに含めない
   // （同じ文書×同じ宛先はCCだけ変えても再送しない。再送したければ宛先を変える）。
@@ -131,6 +93,8 @@ export interface GmailAttachmentDeps {
   pdfRenderer?: PdfRenderer;
   driveStorage?: DriveStorage;
   companyProfile?: () => Promise<CompanyProfile>;
+  // メール設定（文面テンプレート＋既定CC）。未注入なら既定文面・既定CCなし。
+  emailSettings?: () => Promise<EmailSettings>;
 }
 
 export function createGmailNotificationRouter(
@@ -170,13 +134,21 @@ export function createGmailNotificationRouter(
     try {
       company = attachmentDeps.companyProfile ? await attachmentDeps.companyProfile() : DEFAULT_COMPANY_PROFILE;
     } catch { /* 設定未整備は既定の会社情報で送る */ }
-    const content = buildFinalizeNotification(document, to, { cc, attached: attachment.planned, company });
+    let emailSettings = DEFAULT_EMAIL_SETTINGS;
+    try {
+      emailSettings = attachmentDeps.emailSettings ? await attachmentDeps.emailSettings() : DEFAULT_EMAIL_SETTINGS;
+    } catch { /* 設定未整備は既定文面・既定CCなしで送る */ }
+    // 既定CC（メール設定）＋都度入力CCをマージ。宛先と重なるCCは除外（V1と同じ規則）。
+    const mergedCc = mergeCc(emailSettings.cc, cc, parseRecipientList(to)).join(", ");
+    const content = buildFinalizeNotification(document, to, {
+      cc: mergedCc, attached: attachment.planned, company, templates: emailSettings.templates
+    });
     let gate = evaluateGmailDispatchGate(
       { to: content.to, subject: content.subject, bodyText: content.bodyText },
       gateSettings
     );
     // CC も宛先と同じ基準で検査する（不正CCで Gmail API がまるごと失敗するのを防ぐ）。
-    const ccList = parseRecipientList(cc);
+    const ccList = parseRecipientList(mergedCc);
     if (ccList.some((email) => !isValidEmail(email))) {
       gate = { ...gate, dispatchAllowed: false, blockerLabels: [...gate.blockerLabels, "CCのメールアドレスが不正です"] };
     }
@@ -189,7 +161,7 @@ export function createGmailNotificationRouter(
         blockerLabels: [...gate.blockerLabels, "文書がまだDriveに保存されていません（先に「Driveへ保存」を実行するか、PDF添付を有効にしてください）"]
       };
     }
-    return { document, content, gate, attachment, company };
+    return { document, content, gate, attachment, company, emailTemplates: emailSettings.templates, mergedCc };
   }
 
   // 送信前プレビュー（送信しない）。ゲートのブロック理由と添付の見込みも返す。
@@ -230,7 +202,7 @@ export function createGmailNotificationRouter(
       if (parseRecipientList(cc).some((email) => !isValidEmail(email))) {
         return response.status(400).json({ error: "CCのメールアドレスが不正です", code: "GMAIL_RECIPIENT_INVALID" });
       }
-      const loaded = await load(id, to, cc, attachPdf);
+      const loaded = await load(id, to, cc, attachPdf);   // 既定CCのマージ・文面テンプレートもここで解決
       if (!loaded) return response.status(404).json({ error: "文書が見つかりません", code: "GMAIL_DOCUMENT_NOT_FOUND" });
       if (!loaded.gate.dispatchAllowed) {
         return response.status(409).json({
@@ -278,7 +250,9 @@ export function createGmailNotificationRouter(
         });
       }
       // 本文は実際の添付結果で組み直す（「添付のとおり」と書いて添付が無い事故を防ぐ）。
-      const content = buildFinalizeNotification(loaded.document, to, { cc, attached, company: loaded.company });
+      const content = buildFinalizeNotification(loaded.document, to, {
+        cc: loaded.mergedCc, attached, company: loaded.company, templates: loaded.emailTemplates
+      });
       const receipt = await gmail.send({
         to: content.to, cc: content.cc || undefined,
         subject: content.subject, bodyText: content.bodyText,

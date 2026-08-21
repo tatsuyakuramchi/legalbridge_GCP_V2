@@ -48,6 +48,7 @@ import { duplicateFormData, type DuplicateMode } from "./duplicate-document";
 import { PaymentReport } from "./PaymentReport";
 import { ExcelBatchWorkspace } from "./ExcelBatchWorkspace";
 import { SettingsWorkspace } from "./SettingsWorkspace";
+import { EmailSettings } from "./EmailSettings";
 import { WorkflowRulesWorkspace } from "./WorkflowRulesWorkspace";
 import { ContractMasterWorkspace } from "./ContractMasterWorkspace";
 import { BillingPrint } from "./BillingPrint";
@@ -73,7 +74,7 @@ const fallback: DashboardSummary = {
   priorities: []
 };
 
-type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview" | "billing" | "receivable-map" | "payment-report" | "billing-print" | "works" | "license-matrix" | "data-quality" | "vendor-merge" | "matter-merge" | "guide" | "snippets" | "requests" | "excel-batch" | "settings" | "workflow-rules" | "contract-master" | "template-samples";
+type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview" | "billing" | "receivable-map" | "payment-report" | "billing-print" | "works" | "license-matrix" | "data-quality" | "vendor-merge" | "matter-merge" | "guide" | "snippets" | "requests" | "excel-batch" | "settings" | "email-settings" | "workflow-rules" | "contract-master" | "template-samples";
 type NavItem = { view: View; label: string; description: string; match: View[] };
 type NavGroup = { label: string; items: NavItem[] };
 
@@ -130,6 +131,7 @@ function navGroups(access: {
     ] },
     { label: "設定・運用", items: [
       ...(access.adminWorkspace ? [{ view: "settings" as const, label: "システム設定", description: "会社プロファイル（自社情報）の編集", match: ["settings" as const] }] : []),
+      ...(access.adminWorkspace ? [{ view: "email-settings" as const, label: "メール設定", description: "送付メールの文面・既定CC・テスト送信", match: ["email-settings" as const] }] : []),
       ...(access.adminWorkspace ? [{ view: "workflow-rules" as const, label: "承認ルート", description: "部門別の承認者・押印担当・責任者・Slackチャンネル", match: ["workflow-rules" as const] }] : []),
       ...(access.adminWorkspace ? [{ view: "admin" as const, label: "管理", description: "通知・運用の管理", match: ["admin" as const] }] : []),
       ...(access.adminWorkspace ? [{ view: "guide" as const, label: "運用ガイド", description: "権限・有効化・デプロイの要点", match: ["guide" as const] }] : [])
@@ -169,6 +171,7 @@ function breadcrumbFor(view: View): Array<{ label: string; view?: View }> {
     "billing-print": [home, { label: "請求印刷" }],
     "excel-batch": [home, { label: "Excel一括" }],
     settings: [home, { label: "システム設定" }],
+    "email-settings": [home, { label: "メール設定" }],
     "workflow-rules": [home, { label: "承認ルート" }],
     "contract-master": [home, { label: "契約マスタ" }],
     staff: [home, { label: "担当者" }],
@@ -524,6 +527,7 @@ export function App() {
         {view === "billing-print" && <BillingPrint />}
         {view === "excel-batch" && <ExcelBatchWorkspace canMark={canExcelBatch} />}
         {view === "settings" && adminWorkspace && <SettingsWorkspace canEdit={canEditSettings} />}
+        {view === "email-settings" && adminWorkspace && <EmailSettings />}
         {view === "workflow-rules" && adminWorkspace && <WorkflowRulesWorkspace canEdit={canEditWorkflowRules} />}
         {view === "contract-master" && legalWorkspace && <ContractMasterWorkspace canEdit={canEditContractMaster} canIntake={adminWorkspace} onNavigate={(t) => setView(t as View)} />}
         {view === "conditions" && <ConditionLinesWorkspace
