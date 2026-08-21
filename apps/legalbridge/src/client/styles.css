@@ -2190,5 +2190,16 @@ textarea { width: 100%; min-height: 90px; resize: vertical; line-height: 1.6; }
 .settlement-table th, .settlement-table td { padding: 6px 8px; border-bottom: 1px solid var(--divider); text-align: left; }
 .settlement-table .right { text-align: right; font-variant-numeric: tabular-nums; }
 .settlement-table input[type="checkbox"] { width: auto; }
+/* サブスク明細の支払予定日（payment_schedule）編集（発注書・明細カード内） */
+.payment-schedule-editor { border-top: 1px dashed var(--border); margin-top: 12px; padding-top: 12px; display: grid; gap: 8px; }
+.payment-schedule-editor .repeater-title { margin-bottom: 0; align-items: center; }
+.payment-schedule-editor .repeater-title h3 { font-size: 13.5px; }
+.payment-schedule-editor .row-actions { align-items: center; flex-wrap: wrap; }
+.payment-schedule-editor .schedule-periods { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--ink-faint); }
+.payment-schedule-editor .schedule-periods input { width: 64px; }
+.payment-schedule-editor .table-scroll table { min-width: 0; }
+.payment-schedule-editor .settlement-table input { width: 100%; max-width: 180px; }
+.payment-schedule-editor .settlement-table td:first-child { color: var(--ink-faint); }
+
 .inspection-totals-grid article.grand strong { color: var(--accent-deep, #137689); font-size: 18px; }
 .rail-card .calc-row.muted span { color: var(--ink-faint); font-size: 12px; }

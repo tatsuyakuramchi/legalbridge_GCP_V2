@@ -1,9 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { DocumentFormData } from "../types";
 import { isFieldVisible } from "./field-visibility";
 import {
   type FieldDefinition, itemFields, intlItemFields, expenseFields, feeFields, conditionFields
 } from "./document-line-fields";
+import {
+  generatePaymentSchedule, normalizePaymentSchedule, type PaymentScheduleRow
+} from "./payment-schedule";
 
 type Row = Record<string, unknown>;
 
@@ -18,7 +21,14 @@ export function SpecializedDocumentForms({ templateKey, formData, onChange }: Pr
     return <SpecializedSection title="明細・金銭条件" description="発注明細と、必要な場合だけ経費・手数料・利用許諾条件を追加します。">
       <ArrayEditor title="発注明細" itemLabel="明細" dataKey="items" rows={rows(formData.items)}
         fields={templateKey === "intl_purchase_order" ? intlItemFields : itemFields}
-        onChange={onChange} defaultRow={{ quantity: 1 }} />
+        onChange={onChange} defaultRow={{ quantity: 1 }}
+        renderRowExtra={(row, replace) => String(row.calc_method ?? "") === "SUBSCRIPTION"
+          ? <PaymentScheduleEditor row={row}
+              currency={templateKey === "intl_purchase_order"
+                ? String(formData.CURRENCY ?? formData.currency ?? "").trim() || "JPY" : ""}
+              intl={templateKey === "intl_purchase_order"}
+              onRows={(schedule) => replace({ payment_schedule: schedule })} />
+          : null} />
       <ArrayEditor title="経費" itemLabel="経費" dataKey="expenses" rows={rows(formData.expenses)}
         fields={expenseFields} onChange={onChange} />
       <ArrayEditor title="その他手数料" itemLabel="手数料" dataKey="other_fees" rows={rows(formData.other_fees)}
@@ -111,7 +121,8 @@ function ArrayEditor({
   rows: currentRows,
   fields,
   onChange,
-  defaultRow = {}
+  defaultRow = {},
+  renderRowExtra
 }: {
   title: string;
   itemLabel: string;
@@ -120,6 +131,9 @@ function ArrayEditor({
   fields: FieldDefinition[];
   onChange: (name: string, value: unknown) => void;
   defaultRow?: Row;
+  // 行の列グリッドに収まらない入れ子の編集UI（サブスクの支払予定日表など）を
+  // 行カードの末尾に差し込む。replace はその行への部分更新。
+  renderRowExtra?: (row: Row, replace: (patch: Row) => void, index: number) => ReactNode;
 }) {
   const replace = (index: number, patch: Row) =>
     onChange(dataKey, currentRows.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row));
@@ -147,7 +161,72 @@ function ArrayEditor({
           <DynamicField key={field.name} definition={field}
             value={row[field.name]} onChange={(value) => replace(index, { [field.name]: value })} />)}
       </div>
+      {renderRowExtra?.(row, (patch) => replace(index, patch), index)}
     </article>)}
+  </div>;
+}
+
+// ── サブスク明細の支払予定日（payment_schedule）編集 ─────────────────────
+// 発注書テンプレート（国内・海外）は明細ごとの payment_schedule 配列を
+// 「支払スケジュール / Payment Schedule」表としてそのまま印字する。V1 では
+// 周期からの自動生成＋行編集ができたが V2 のフォームに editor が無く、
+// 支払条件（周期・支払日・任意設定 billing_note）を変えても表が古いまま残っていた。
+function PaymentScheduleEditor({ row, currency, intl, onRows }: {
+  row: Row;
+  currency: string;   // 海外発注書は通貨コード（例 USD）、国内は "" で円表示
+  intl: boolean;
+  onRows: (schedule: PaymentScheduleRow[]) => void;
+}) {
+  const schedule = normalizePaymentSchedule(row.payment_schedule);
+  // 終了日が空のときに自動生成する回数。
+  const [periods, setPeriods] = useState(12);
+  const money = (value: number) =>
+    currency ? `${currency} ${value.toLocaleString("en-US")}` : `¥${value.toLocaleString("ja-JP")}`;
+  const replaceRow = (index: number, patch: Partial<PaymentScheduleRow>) =>
+    onRows(schedule.map((entry, i) => i === index ? { ...entry, ...patch } : entry));
+  const total = schedule.reduce((sum, entry) => sum + (Number(entry.amount) || 0), 0);
+  const hasNote = intl && String(row.billing_note ?? "").trim() !== "";
+
+  return <div className="payment-schedule-editor">
+    <div className="repeater-title">
+      <div><h3>支払予定日（各回の支払日）</h3><small>{schedule.length}回</small></div>
+      <div className="row-actions">
+        <label className="schedule-periods">回数
+          <input type="number" min={1} max={600} value={periods}
+            title="終了日が空のときに生成する回数"
+            onChange={(event) => setPeriods(Math.max(1, Number(event.target.value) || 1))} />
+        </label>
+        <button type="button" title="周期・期間・支払日から支払予定日を自動生成（既存リストは置換）"
+          onClick={() => onRows(generatePaymentSchedule(row, periods))}>⟳ 自動生成</button>
+      </div>
+    </div>
+    {hasNote && <p className="hint-note">
+      Payment Date 列には任意設定（{String(row.billing_note)}）が印字されます。下の表も同じ内容になるよう更新してください（不要なら全行削除で表ごと消えます）。
+    </p>}
+    {!schedule.length
+      ? <p className="inline-empty">「⟳ 自動生成」で周期から展開するか、「＋ 行追加」で支払日を個別に列挙できます（空のままなら PDF に支払スケジュール表は出ません）。</p>
+      : <div className="table-scroll"><table className="settlement-table">
+        <thead><tr><th>#</th><th>支払予定日</th><th className="right">金額</th><th aria-label="操作"></th></tr></thead>
+        <tbody>
+          {schedule.map((entry, index) => <tr key={index}>
+            <td>{index + 1}</td>
+            <td><input type="date" value={entry.date}
+              onChange={(event) => replaceRow(index, { date: event.target.value })} /></td>
+            <td className="right"><input type="number" value={String(entry.amount ?? "")}
+              onChange={(event) => replaceRow(index,
+                { amount: event.target.value === "" ? undefined : Number(event.target.value) })} /></td>
+            <td><button type="button" onClick={() => onRows(schedule.filter((_, i) => i !== index))}>削除</button></td>
+          </tr>)}
+        </tbody>
+        <tfoot><tr>
+          <td colSpan={2} className="right">合計（{schedule.length}回）</td>
+          <td className="right"><b>{money(total)}</b></td><td></td>
+        </tr></tfoot>
+      </table></div>}
+    <div className="row-actions">
+      <button type="button" onClick={() =>
+        onRows([...schedule, { date: "", amount: Number(row.unit_price) || 0 }])}>＋ 行追加</button>
+    </div>
   </div>;
 }
 
