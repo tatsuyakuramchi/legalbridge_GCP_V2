@@ -21,6 +21,11 @@ const AUDIENCE = process.env.AUDIENCE ?? "";
 const PORT = Number(process.env.PORT ?? 8080);
 const MAX_BODY_BYTES = 1024 * 1024;
 const UPSTREAM_TIMEOUT_MS = 30_000;
+// 資料アップロード中継（V1停止・案A）はファイルを運ぶため、このパスだけ上限と
+// タイムアウトを引き上げる（本体側の上限 30MB + multipart 封筒分）。
+const UPLOAD_PATH = "/api/attachments/by-issue";
+const UPLOAD_MAX_BODY_BYTES = 35 * 1024 * 1024;
+const UPLOAD_TIMEOUT_MS = 120_000;
 
 if (!UPSTREAM || !AUDIENCE) {
   console.error("UPSTREAM and AUDIENCE env vars are required");
@@ -31,14 +36,18 @@ export const ALLOWED_PATHS = new Set([
   "/internal/webhooks/cloudsign",
   "/internal/webhooks/backlog",
   "/internal/slack/commands",
-  "/internal/slack/interactivity"
+  "/internal/slack/interactivity",
+  // 検索ポータルの資料アップロード中継（search-api → 本体・x-lb-portal-secret で本体が検証）
+  UPLOAD_PATH
 ]);
 
 const FORWARD_HEADERS = [
   "content-type",
   "x-webhook-token",
   "x-slack-signature",
-  "x-slack-request-timestamp"
+  "x-slack-request-timestamp",
+  "x-lb-portal-secret",
+  "x-lb-uploader-email"
 ];
 
 // メタデータサーバの ID トークン（audience 指定）。有効期限 1h なので 50 分キャッシュ。
@@ -56,13 +65,13 @@ async function identityToken() {
   return value;
 }
 
-function readBody(request) {
+function readBody(request, maxBytes = MAX_BODY_BYTES) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
     request.on("data", (chunk) => {
       size += chunk.length;
-      if (size > MAX_BODY_BYTES) {
+      if (size > maxBytes) {
         reject(Object.assign(new Error("payload too large"), { statusCode: 413 }));
         request.destroy();
         return;
@@ -89,7 +98,8 @@ const server = http.createServer(async (request, response) => {
   }
 
   try {
-    const body = await readBody(request);
+    const isUpload = path === UPLOAD_PATH;
+    const body = await readBody(request, isUpload ? UPLOAD_MAX_BODY_BYTES : MAX_BODY_BYTES);
     const headers = { authorization: `Bearer ${await identityToken()}` };
     for (const name of FORWARD_HEADERS) {
       const value = request.headers[name];
@@ -106,7 +116,7 @@ const server = http.createServer(async (request, response) => {
       method: "POST",
       headers,
       body,
-      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS)
+      signal: AbortSignal.timeout(isUpload ? UPLOAD_TIMEOUT_MS : UPSTREAM_TIMEOUT_MS)
     });
     const responseBody = Buffer.from(await upstream.arrayBuffer());
     response.writeHead(upstream.status, {
