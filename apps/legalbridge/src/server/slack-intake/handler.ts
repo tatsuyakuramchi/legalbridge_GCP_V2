@@ -34,6 +34,9 @@ export interface SlackIntakeHandlerOptions {
   backlogProjectKey?: string | null;
   // /法務検索（16-3b）＋検収書の契約番号実在チェック（16-3c・未注入なら実在チェックはスキップ）。
   contractCheck?: ContractCheckRepository | null;
+  // 資料アップロードページのURL（V1ポータル互換）。設定時はモーダルと起票後DMに
+  // 課題番号付きリンクを出す。未設定時は法務相談のみDM返信での受け渡しを案内。
+  uploadPageUrl?: string | null;
   log?: (message: string) => void;
 }
 
@@ -77,7 +80,18 @@ export function createSlackIntakeHandler(options: SlackIntakeHandlerOptions) {
   const log = options.log ?? (() => undefined);
 
   async function openModal(triggerId: string): Promise<void> {
-    await options.slack.post("views.open", { trigger_id: triggerId, view: buildLegalRequestModal() });
+    await options.slack.post("views.open", {
+      trigger_id: triggerId,
+      view: buildLegalRequestModal({ uploadPageUrl: options.uploadPageUrl })
+    });
+  }
+
+  // 課題番号を引き継いだアップロードページURL（V1 と同じ ?issue= / &issue= の出し分け）。
+  function uploadUrlFor(issueKey: string | null): string | null {
+    const base = String(options.uploadPageUrl ?? "").trim().replace(/\/+$/, "");
+    if (!base) return null;
+    if (!issueKey) return base;
+    return `${base}${base.includes("?") ? "&" : "?"}issue=${encodeURIComponent(issueKey)}`;
   }
 
   // 申請者の未完了依頼候補（ベストエフォート・失敗は空扱い）。
@@ -113,12 +127,22 @@ export function createSlackIntakeHandler(options: SlackIntakeHandlerOptions) {
   async function notify(slackUserId: string, issueKey: string | null, s: LegalRequestSubmission): Promise<void> {
     const link = issueKey ? issueUrl(options.backlogHost, issueKey) : null;
     const keyText = issueKey ? (link ? `<${link}|${issueKey}>` : issueKey) : "（採番なし）";
+    // 資料の受け渡し導線（V1 の起票後DM相当）。URL設定時は課題番号入りリンク、
+    // 未設定時は法務相談のみDM返信での添付を案内する。
+    const uploadTarget = uploadUrlFor(issueKey);
+    const attachmentLine = uploadTarget
+      ? `📎 レビュー対象文書・参考資料の添付は <${uploadTarget}|資料アップロードページ> からお願いします` +
+        (issueKey ? "（課題番号は入力済みで開きます）。" : "。")
+      : s.requestType === "legal_consult"
+        ? "📎 レビューしてほしい文書・参考資料は、このDMへの返信で添付してください（法務担当が案件へ登録します）。"
+        : null;
     const text = [
       "🆕 *新規依頼を受け付けました*",
       `*課題:* ${keyText}`,
       `*種別:* ${requestTypeLabel(s.requestType)}`,
       s.counterparty ? `*相手方:* ${s.counterparty}` : null,
-      `*概要:* ${s.summary}`
+      `*概要:* ${s.summary}`,
+      attachmentLine
     ].filter(Boolean).join("\n");
     await dm(slackUserId, text);
     try {
@@ -243,7 +267,7 @@ export function createSlackIntakeHandler(options: SlackIntakeHandlerOptions) {
       await options.slack.post("views.update", {
         view_id: viewId,
         ...(p.view?.hash ? { hash: p.view.hash } : {}),
-        view: buildLegalRequestModal({ selectedType, candidates, liCount })
+        view: buildLegalRequestModal({ selectedType, candidates, liCount, uploadPageUrl: options.uploadPageUrl })
       });
     } catch (error) {
       log(`slack-intake: request modal views.update failed: ${error instanceof Error ? error.message : String(error)}`);

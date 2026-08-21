@@ -120,6 +120,9 @@ export const config = {
   // 署名検証（signing secret・fail-closed）で保護。既定 OFF。
   slackIntakeEnabled: process.env.SLACK_INTAKE_ENABLED === "true",
   slackSigningSecret: (process.env.SLACK_SIGNING_SECRET ?? "").trim(),
+  // 法務相談の資料アップロードページURL（V1ポータル互換）。設定時はモーダルと
+  // 起票後DMに課題番号付きリンクを出す。未設定ならDM返信での受け渡し案内に切替。
+  slackIntakeUploadUrl: (process.env.SLACK_INTAKE_UPLOAD_URL ?? "").trim(),
   gmailDeliveryMode:
     process.env.GMAIL_DELIVERY_MODE === "live" ? "live" as const : "disabled" as const,
   gmailSenderEmail: (process.env.GMAIL_SENDER ?? "").trim(),

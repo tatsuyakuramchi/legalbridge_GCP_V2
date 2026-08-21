@@ -1,7 +1,8 @@
 // /法務依頼 モーダル（Phase 16-3a → 16-3c で動的化・純粋モジュール）。V1 slackGateway の
 // getLegalRequestModal を移植。依頼種別の dispatch_action で views.update による再構築を行い、
 // 明細行（最大5行）・既存課題への紐付け候補・納期変更フォームを種別に応じて出し分ける。
-// 署名URLアップロードリンク（ポータル）は非移植（廃止判断待ち）。
+// 資料アップロード案内（V1 review_upload_help_block）は uploadPageUrl 設定時にリンク付きで復元、
+// 未設定時はDM返信での受け渡し案内に切り替わる（ポータル廃止後も案内が消えない）。
 
 import {
   LINE_ITEM_FIELDS, LINE_ITEM_MAX, buildLineItemSectionBlocks, parseLineItems,
@@ -64,6 +65,8 @@ export interface LegalRequestModalOptions {
   candidates?: IntakeCandidate[];
   liCount?: number;
   now?: Date;
+  // 資料アップロードページのURL（V1ポータル互換・設定時のみリンクを出す）。
+  uploadPageUrl?: string | null;
 }
 
 // Slack Block Kit のモーダル定義（views.open / views.update へそのまま渡す）。
@@ -154,6 +157,24 @@ export function buildLegalRequestModal(options: LegalRequestModalOptions = {}): 
 
   // ── 通常（新規依頼）フォーム ──
   const blocks: Array<Record<string, unknown>> = [typeBlock];
+
+  // 法務相談: レビュー対象文書・参考資料の添付案内（V1 の review_upload_help_block を復元）。
+  // アップロードページURLが設定されていればリンク付き、無ければDM返信での受け渡しを案内する。
+  if (selectedType === "legal_consult") {
+    const uploadPageUrl = String(options.uploadPageUrl ?? "").trim();
+    blocks.push({
+      type: "context", block_id: "review_upload_help_block",
+      elements: [{
+        type: "mrkdwn",
+        text: uploadPageUrl
+          ? "📎 *レビューしてほしい文書の添付方法*: " +
+            `<${uploadPageUrl}|資料アップロードページ> からアップロードしてください。` +
+            "依頼の送信後に届くDMのリンクからも開けます（課題番号はDMでお知らせします）。"
+          : "📎 *レビューしてほしい文書の添付方法*: 依頼の送信後に届くDMへ、" +
+            "返信でファイルを添付してください（法務担当が案件へ登録します）。"
+      }]
+    });
+  }
 
   // 検収書・計算書は既存の未完了依頼へ紐付けられる（候補があるときのみセレクタを出す・V1 同様）。
   const linkable = selectedType === "delivery_inspec" || selectedType === "license_calc";

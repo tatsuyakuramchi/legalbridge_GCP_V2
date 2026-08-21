@@ -1569,6 +1569,7 @@ export function createApp(
       get backlogHost() { return rt().backlogHost || null; },
       get backlogProjectKey() { return rt().backlogProjectKey || null; },
       contractCheck: dependencies.contractCheck ?? null,
+      uploadPageUrl: config.slackIntakeUploadUrl || null,
       log: (message) => console.warn(`[slack-intake] ${message}`)
     });
     app.use(createSlackIntakeRouter({

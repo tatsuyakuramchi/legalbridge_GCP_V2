@@ -171,6 +171,29 @@ test("modal: モーダル定義に必須ブロックが揃う", () => {
   }
 });
 
+test("modal: 法務相談は添付案内ブロックが出る（URL設定時はリンク付き・V1復元）", () => {
+  type View = { blocks: Array<{ block_id?: string; elements?: Array<{ text?: string }> }> };
+  const helpOf = (view: View) => view.blocks.find((b) => b.block_id === "review_upload_help_block");
+
+  // 既定（legal_consult）・URLなし → DM返信での受け渡し案内
+  const noUrl = buildLegalRequestModal({ now: new Date("2026-08-10T00:00:00Z") }) as View;
+  const helpNoUrl = helpOf(noUrl);
+  assert.ok(helpNoUrl, "legal_consult に添付案内ブロックが無い");
+  assert.match(String(helpNoUrl?.elements?.[0]?.text), /DMへ、返信でファイルを添付/);
+
+  // URL設定時 → アップロードページへのリンク（V1 の文言）
+  const withUrl = buildLegalRequestModal({
+    selectedType: "legal_consult", uploadPageUrl: "https://portal.example/upload?sig=x",
+    now: new Date("2026-08-10T00:00:00Z")
+  }) as View;
+  const helpWithUrl = helpOf(withUrl);
+  assert.match(String(helpWithUrl?.elements?.[0]?.text), /<https:\/\/portal\.example\/upload\?sig=x\|資料アップロードページ>/);
+
+  // 他種別（nda）には出ない
+  const nda = buildLegalRequestModal({ selectedType: "nda", uploadPageUrl: "https://portal.example/upload" }) as View;
+  assert.equal(helpOf(nda), undefined);
+});
+
 test("説明文: V1 準拠の項目が並ぶ", () => {
   const text = buildIssueDescription({
     requestType: "nda", summary: "A社とのNDA", deadline: "2026-08-20", details: "詳細",
