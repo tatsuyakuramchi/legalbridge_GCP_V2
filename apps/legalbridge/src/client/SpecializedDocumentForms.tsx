@@ -22,13 +22,13 @@ export function SpecializedDocumentForms({ templateKey, formData, onChange }: Pr
       <ArrayEditor title="発注明細" itemLabel="明細" dataKey="items" rows={rows(formData.items)}
         fields={templateKey === "intl_purchase_order" ? intlItemFields : itemFields}
         onChange={onChange} defaultRow={{ quantity: 1 }}
-        renderRowExtra={(row, replace) => String(row.calc_method ?? "") === "SUBSCRIPTION"
-          ? <PaymentScheduleEditor row={row}
-              currency={templateKey === "intl_purchase_order"
-                ? String(formData.CURRENCY ?? formData.currency ?? "").trim() || "JPY" : ""}
-              intl={templateKey === "intl_purchase_order"}
-              onRows={(schedule) => replace({ payment_schedule: schedule })} />
-          : null} />
+        renderRowExtra={(row, replace) =>
+          // 支払スケジュール表を印字するのは国内発注書のみ（海外は 063 で表を廃止し
+          // Payment Date 欄＝billing_note に一本化）。編集UIも国内だけに出す。
+          templateKey === "purchase_order" && String(row.calc_method ?? "") === "SUBSCRIPTION"
+            ? <PaymentScheduleEditor row={row}
+                onRows={(schedule) => replace({ payment_schedule: schedule })} />
+            : null} />
       <ArrayEditor title="経費" itemLabel="経費" dataKey="expenses" rows={rows(formData.expenses)}
         fields={expenseFields} onChange={onChange} />
       <ArrayEditor title="その他手数料" itemLabel="手数料" dataKey="other_fees" rows={rows(formData.other_fees)}
@@ -167,25 +167,21 @@ function ArrayEditor({
 }
 
 // ── サブスク明細の支払予定日（payment_schedule）編集 ─────────────────────
-// 発注書テンプレート（国内・海外）は明細ごとの payment_schedule 配列を
-// 「支払スケジュール / Payment Schedule」表としてそのまま印字する。V1 では
-// 周期からの自動生成＋行編集ができたが V2 のフォームに editor が無く、
-// 支払条件（周期・支払日・任意設定 billing_note）を変えても表が古いまま残っていた。
-function PaymentScheduleEditor({ row, currency, intl, onRows }: {
+// 国内発注書テンプレートは明細ごとの payment_schedule 配列を「支払スケジュール」表
+// としてそのまま印字する。V1 では周期からの自動生成＋行編集ができたが V2 の
+// フォームに editor が無く、支払条件を変えても表が古いまま残っていた。
+// 海外発注書は 063 で表を廃止したため対象外（Payment Date 欄に一本化）。
+function PaymentScheduleEditor({ row, onRows }: {
   row: Row;
-  currency: string;   // 海外発注書は通貨コード（例 USD）、国内は "" で円表示
-  intl: boolean;
   onRows: (schedule: PaymentScheduleRow[]) => void;
 }) {
   const schedule = normalizePaymentSchedule(row.payment_schedule);
   // 終了日が空のときに自動生成する回数。
   const [periods, setPeriods] = useState(12);
-  const money = (value: number) =>
-    currency ? `${currency} ${value.toLocaleString("en-US")}` : `¥${value.toLocaleString("ja-JP")}`;
+  const money = (value: number) => `¥${value.toLocaleString("ja-JP")}`;
   const replaceRow = (index: number, patch: Partial<PaymentScheduleRow>) =>
     onRows(schedule.map((entry, i) => i === index ? { ...entry, ...patch } : entry));
   const total = schedule.reduce((sum, entry) => sum + (Number(entry.amount) || 0), 0);
-  const hasNote = intl && String(row.billing_note ?? "").trim() !== "";
 
   return <div className="payment-schedule-editor">
     <div className="repeater-title">
@@ -200,9 +196,6 @@ function PaymentScheduleEditor({ row, currency, intl, onRows }: {
           onClick={() => onRows(generatePaymentSchedule(row, periods))}>⟳ 自動生成</button>
       </div>
     </div>
-    {hasNote && <p className="hint-note">
-      Payment Date 列には任意設定（{String(row.billing_note)}）が印字されます。下の表も同じ内容になるよう更新してください（不要なら全行削除で表ごと消えます）。
-    </p>}
     {!schedule.length
       ? <p className="inline-empty">「⟳ 自動生成」で周期から展開するか、「＋ 行追加」で支払日を個別に列挙できます（空のままなら PDF に支払スケジュール表は出ません）。</p>
       : <div className="table-scroll"><table className="settlement-table">

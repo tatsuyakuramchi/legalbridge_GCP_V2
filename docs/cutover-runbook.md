@@ -478,6 +478,29 @@ psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
   -f infra/gcp/sql/062_repair_masked_form_data.sql
 ```
 
+### 2-7g. 海外発注書テンプレ改訂（063・Payment Schedule 表の削除）【適用待ち】
+
+海外発注書（intl_purchase_order）の明細ごとの **Payment Schedule 表を削除**し、支払条件の
+記載を Payment Date 欄（billing_note または自動表記・061）に一本化する。表は明細の
+`payment_schedule` 配列をそのまま印字するが、V2 は配列を自動生成せず鮮度を保つ仕組みが
+ないため、Payment Date と食い違う事故が起きていた（2026-08-21 報告）。
+
+- 国内発注書の「支払スケジュール」表は**残す**（フォームに支払予定日エディタを追加済み。
+  周期からの自動生成＋行編集で管理）
+- 確定済み文書は自分の版で再生成されるため影響なし。明細に残っている `payment_schedule`
+  データも印字されなくなるだけで無害
+- 位置計算ベース＋ガード（開始マーカーが1箇所でない・除去範囲が想定外・除去後に参照残存の
+  いずれも中断＝冪等）。除去後テンプレ全文を V2 レンダラで検証済み
+  （billing_note 印字・自動表記・固定額行の3系で表が出ないこと）
+
+```bash
+psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
+  -v confirm_drop_schedule=DROP_INTL_PO_PAYMENT_SCHEDULE \
+  -f infra/gcp/sql/063_intl_po_drop_payment_schedule.sql
+```
+
+適用後の確認: 最後の SELECT で `schedule_removed = t` かつ `keeps_billing_note = t`。
+
 ### 2-8. 案件 Slack 会話履歴（`slack-matter-thread-history-fix-plan.md`）
 
 案件詳細の「コミュニケーション」に Slack スレッドを時系列表示する。既存の
