@@ -538,7 +538,7 @@ SELECT count(*) AS granted FROM information_schema.role_column_grants
    AND privilege_type = 'UPDATE' AND column_name = 'form_data';  -- 1 ならOK
 ```
 
-### 2-7i. 作品詳細500の修復（065・works スキーマドリフト）【適用待ち】
+### 2-7i. 作品詳細500の修復（065・works スキーマドリフト）【適用済み 2026-08-25】
 
 作品詳細・編集が参照する `works.ledger_code` / `works.remarks` を作る DDL が
 どのマイグレーションにも存在せず、本番で列欠落（42703）→ 一覧は開けるのに
@@ -554,6 +554,9 @@ psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
 
 適用後の確認: 最後の SELECT で `ledger_code` と `remarks` の2行が返ること。
 画面では 作品一覧 → 任意の作品 → 詳細が開けること。
+
+**適用結果（2026-08-25）**: Cloud SQL Studio（postgres）で適用し、
+`ledger_code` / `remarks` の2行を確認済み。
 
 ### 2-8. 案件 Slack 会話履歴（`slack-matter-thread-history-fix-plan.md`）
 
