@@ -132,6 +132,8 @@ export const config = {
   gmailSenderEmail: (process.env.GMAIL_SENDER ?? "").trim(),
   gmailServiceAccountKeyPath:
     (process.env.GMAIL_SA_KEY_PATH ?? process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH ?? "").trim(),
+  // 鍵レス送信で署名を委ねる SA（委任済みクライアントIDを持つ SA）。空＝ランタイムSA自身。
+  gmailDelegateServiceAccount: (process.env.GMAIL_DELEGATE_SA ?? "").trim(),
   // 送信履歴による冪等強制（Slack 001 相当・append専用・既定OFF）。
   gmailSendHistoryEnabled:
     process.env.GMAIL_SEND_HISTORY_ENABLED === "true",

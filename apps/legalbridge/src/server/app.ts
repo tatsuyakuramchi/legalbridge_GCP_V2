@@ -765,7 +765,10 @@ export function createApp(
   const gmailDeliveryAdapter: GmailDeliveryAdapter =
     config.gmailDeliveryMode === "live" && config.gmailSenderEmail
       ? new GmailApiDeliveryAdapter(
-          new DynamicGmailApiClient(() => rt().gmailSenderEmail, { keyFilePath: config.gmailServiceAccountKeyPath }))
+          new DynamicGmailApiClient(() => rt().gmailSenderEmail, {
+            keyFilePath: config.gmailServiceAccountKeyPath,
+            delegateSa: config.gmailDelegateServiceAccount
+          }))
       : new LocalGmailDeliveryAdapter();
   const gmailDispatchEnabled =
     options.accessMode === "readwrite" &&

@@ -3,7 +3,8 @@ import {
   type BacklogReadClient, type BacklogWriteClient,
   type BacklogIssueSummary, type BacklogProjectSummary, type BacklogProjectMetadata
 } from "./backlog-web-api.js";
-import { FetchGmailApiClient, type GmailApiClient } from "./gmail-api-adapter.js";
+import fs from "node:fs";
+import { FetchGmailApiClient, KeylessGmailApiClient, type GmailApiClient } from "./gmail-api-adapter.js";
 import { FetchGmailInboundApiClient, type GmailInboundApiClient } from "./gmail-inbound-api-adapter.js";
 import {
   FetchSlackWebApiClient, type SlackWebApiClient, type SlackWebApiMethod
@@ -57,17 +58,24 @@ export class DynamicBacklogClient implements BacklogReadClient, BacklogWriteClie
 }
 
 export class DynamicGmailApiClient implements GmailApiClient {
-  private cached: { sender: string; client: FetchGmailApiClient } | null = null;
+  private cached: { sender: string; client: GmailApiClient } | null = null;
 
   constructor(
     private readonly sender: () => string,
-    private readonly options: { keyFilePath?: string } = {}
+    private readonly options: { keyFilePath?: string; delegateSa?: string } = {}
   ) {}
 
-  private client(): FetchGmailApiClient {
+  private client(): GmailApiClient {
     const sender = this.sender();
     if (this.cached?.sender !== sender) {
-      this.cached = { sender, client: new FetchGmailApiClient(sender, this.options) };
+      // 鍵ファイルが実在するときだけ鍵あり経路。無ければ鍵レス（signJwt によるドメイン
+      // 委任・V1 と同じ）。ADC のまま FetchGmailApiClient を使うと SA 自身の名義になり
+      // Gmail が「Precondition check failed」で拒否するため、ここで確実に分岐する。
+      const keyFile = this.options.keyFilePath?.trim();
+      const client: GmailApiClient = keyFile && fs.existsSync(keyFile)
+        ? new FetchGmailApiClient(sender, this.options)
+        : new KeylessGmailApiClient(sender, this.options.delegateSa ?? "");
+      this.cached = { sender, client };
     }
     return this.cached.client;
   }
