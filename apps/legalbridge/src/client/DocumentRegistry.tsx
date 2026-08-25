@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import type { DocumentFormSchema } from "../types";
 import { useToast } from "./Toast";
 import { EmptyState } from "./EmptyState";
 import { DocumentOutputActions } from "./DocumentOutputActions";
 import { ExportButtons } from "./ExportButtons";
-import type { ExportColumn } from "./export-util";
+import { download, type ExportColumn } from "./export-util";
 
 export type RegisteredDocument = {
   id: number;
@@ -540,8 +540,30 @@ const DOC_HEADER_MAP: Record<string, string> = {
   "テンプレート種別": "templateType", template_type: "templateType", templatetype: "templateType", "種別": "templateType", template: "templateType",
   "課題キー": "issueKey", issue_key: "issueKey", issuekey: "issueKey", "backlog": "issueKey",
   "driveリンク": "driveLink", drive_link: "driveLink", drivelink: "driveLink", "drive": "driveLink", url: "driveLink",
-  "案件id": "matterId", matter_id: "matterId", matterid: "matterId"
+  "案件id": "matterId", matter_id: "matterId", matterid: "matterId",
+  "件名": "title", title: "title",
+  "相手先": "counterparty", counterparty: "counterparty", "取引先": "counterparty",
+  "日付": "documentDate", document_date: "documentDate", documentdate: "documentDate", date: "documentDate",
+  "ファイル名": "fileName", file_name: "fileName", filename: "fileName", "ファイル": "fileName"
 };
+
+// フォームの種別候補（datalist・自由入力も可）。過去文書はテンプレが様々なので縛らない。
+const IMPORT_TEMPLATE_TYPES = [
+  { value: "purchase_order", label: "発注書" },
+  { value: "intl_purchase_order", label: "海外発注書" },
+  { value: "inspection_certificate", label: "検収書" },
+  { value: "royalty_statement", label: "利用許諾料計算書" },
+  { value: "individual_license_terms", label: "個別利用許諾条件" },
+  { value: "contract", label: "契約書" },
+  { value: "nda", label: "秘密保持契約" },
+  { value: "reference", label: "参考資料・その他" }
+];
+
+const IMPORT_CSV_HEADER = "文書番号,テンプレート種別,件名,相手先,日付,課題キー,Driveリンク,ファイル名";
+const IMPORT_CSV_SAMPLE =
+  `${IMPORT_CSV_HEADER}\n` +
+  "PO-2019-0001,purchase_order,業務委託発注書,株式会社サンプル,2019-03-05,LEGAL-12,,発注書_サンプル社.pdf\n" +
+  "CT-2018-0009,contract,取引基本契約書,株式会社サンプル,2018-04-01,,https://drive.google.com/file/d/xxxx/view,\n";
 
 function parseDocCsv(text: string): { rows: Record<string, string>[]; unmapped: string[] } {
   const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
@@ -559,55 +581,224 @@ function parseDocCsv(text: string): { rows: Record<string, string>[]; unmapped: 
 }
 
 function PastDocumentImport({ onClose }: { onClose: () => void }) {
-  const [text, setText] = useState("");
-  const [result, setResult] = useState<{ insertedCount: number; failedCount: number; failed: Array<{ index: number; error: string }> } | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const toast = useToast();
-  const parsed = parseDocCsv(text);
-  const valid = parsed.rows.filter((r) => (r.documentNumber ?? "").trim() && (r.templateType ?? "").trim());
-
-  async function submit() {
-    if (!valid.length) { setError("取込む文書がありません（文書番号とテンプレート種別が必要です）。"); return; }
-    setSaving(true); setError(""); setResult(null);
-    try {
-      const response = await fetch("/api/v2/documents/import", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rows: valid })
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok && response.status !== 422 && response.status !== 201) {
-        setError(data.error ?? "取込に失敗しました。"); setSaving(false); return;
-      }
-      setResult(data);
-      toast.push(`${data.insertedCount}件を取込みました${data.failedCount ? `（${data.failedCount}件失敗）` : ""}`,
-        data.failedCount ? "info" : "success");
-    } catch {
-      setError("通信に失敗しました。");
-    } finally { setSaving(false); }
-  }
-
+  const [mode, setMode] = useState<"single" | "bulk">("single");
   return <div className="panel past-doc-import">
     <div className="matter-detail-head"><div><span className="detail-kicker">IMPORT PAST DOCUMENTS</span><h2>過去文書取込</h2></div>
       <button onClick={onClose}>閉じる</button></div>
-    <p className="hub-note">既存の文書番号を持つ過去文書を、文書番号・テンプレート種別・課題キー・Driveリンクで一括登録します（生成は行いません）。1行目にヘッダ。文書番号とテンプレート種別は必須。テンプレート版・本文は空で登録されます。</p>
+    <p className="hub-note">
+      既存の文書番号を持つ過去文書を登録します（生成は行いません）。ファイルを添えると
+      <b> Drive に格納され、メールのPDF添付・CloudSign送信にそのまま使えます</b>。
+      件名・相手先は一覧・検索・メール文面に使われます。
+    </p>
+    <div style={{ margin: "6px 0" }}>
+      <button type="button" className={`matter-chip ${mode === "single" ? "active" : ""}`}
+        onClick={() => setMode("single")}>1件ずつ（ファイル添付）</button>
+      <button type="button" className={`matter-chip ${mode === "bulk" ? "active" : ""}`}
+        onClick={() => setMode("bulk")}>CSV一括（複数ファイル）</button>
+    </div>
+    {mode === "single" ? <SinglePastDocumentImport /> : <BulkPastDocumentImport />}
+  </div>;
+}
+
+// ── 1件ずつの取込：フォーム入力＋ファイル選択（→Drive格納）または Driveリンク ──
+function SinglePastDocumentImport() {
+  const toast = useToast();
+  const empty = { documentNumber: "", templateType: "", title: "", counterparty: "",
+    documentDate: "", issueKey: "", driveLink: "" };
+  const [values, setValues] = useState(empty);
+  const [file, setFile] = useState<File | null>(null);
+  const [fileKey, setFileKey] = useState(0);   // input[type=file] のリセット用
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const set = (key: keyof typeof empty) => (e: ChangeEvent<HTMLInputElement>) =>
+    setValues((prev) => ({ ...prev, [key]: e.target.value }));
+
+  async function submit() {
+    setError("");
+    if (!values.documentNumber.trim() || !values.templateType.trim()) {
+      setError("文書番号とテンプレート種別は必須です。"); return;
+    }
+    setSaving(true);
+    try {
+      let response: Response;
+      if (file) {
+        const form = new FormData();
+        form.append("documentNumber", values.documentNumber.trim());
+        form.append("templateType", values.templateType.trim());
+        form.append("title", values.title.trim());
+        form.append("counterparty", values.counterparty.trim());
+        form.append("documentDate", values.documentDate.trim());
+        form.append("issueKey", values.issueKey.trim());
+        form.append("originalName", file.name);
+        form.append("file", file);
+        response = await fetch("/api/v2/documents/import/upload", { method: "POST", body: form });
+      } else {
+        response = await fetch("/api/v2/documents/import", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rows: [values] })
+        });
+      }
+      const data = await response.json().catch(() => ({}));
+      if (file) {
+        if (!response.ok) { setError(data.error ?? "取込に失敗しました。"); return; }
+        toast.push(`${data.document.documentNumber} を取込みました（Drive格納済み）`, "success");
+      } else {
+        if (!response.ok || data.failedCount > 0) {
+          setError(data.failed?.[0]?.error ?? data.error ?? "取込に失敗しました。"); return;
+        }
+        toast.push(`${values.documentNumber} を取込みました`, "success");
+      }
+      setValues(empty); setFile(null); setFileKey((k) => k + 1);
+    } catch { setError("通信に失敗しました。"); } finally { setSaving(false); }
+  }
+
+  return <div className="past-doc-single">
     {error && <div className="async-error">{error}</div>}
-    <textarea rows={7} value={text} onChange={(e) => { setText(e.target.value); setResult(null); }}
-      placeholder={"文書番号,テンプレート種別,課題キー,Driveリンク\nPO-2024-0001,purchase_order,LEGAL-12,https://drive.google.com/..."} />
+    <div className="field-grid">
+      <label><span>文書番号 *</span>
+        <input value={values.documentNumber} onChange={set("documentNumber")} placeholder="PO-2019-0001" /></label>
+      <label><span>テンプレート種別 *</span>
+        <input value={values.templateType} onChange={set("templateType")} list="import-template-types"
+          placeholder="purchase_order / contract など" />
+        <datalist id="import-template-types">
+          {IMPORT_TEMPLATE_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+        </datalist></label>
+      <label><span>件名</span>
+        <input value={values.title} onChange={set("title")} placeholder="業務委託発注書" /></label>
+      <label><span>相手先</span>
+        <input value={values.counterparty} onChange={set("counterparty")} placeholder="株式会社〇〇" /></label>
+      <label><span>日付（締結日・発行日）</span>
+        <input type="date" value={values.documentDate} onChange={set("documentDate")} /></label>
+      <label><span>課題キー</span>
+        <input value={values.issueKey} onChange={set("issueKey")} placeholder="LEGAL-12（任意）" /></label>
+    </div>
+    <label className="past-doc-file"><span>ファイル（選ぶと Drive に格納されます）</span>
+      <input key={fileKey} type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label>
+    {!file && <label><span>Driveリンク（ファイルを選ばない場合・既に Drive にあるとき）</span>
+      <input value={values.driveLink} onChange={set("driveLink")}
+        placeholder="https://drive.google.com/file/d/…" /></label>}
+    <p className="import-preview-note">
+      PDF を添えて取り込むと、その文書はメールのPDF添付・CloudSign送信にそのまま使えます（Word等は格納のみ・送信はリンク案内）。
+    </p>
+    <div className="matter-form-actions">
+      <button className="primary" disabled={saving} onClick={submit}>
+        {saving ? "取込中…" : file ? "ファイルを格納して取込" : "取込"}</button>
+    </div>
+  </div>;
+}
+
+// ── CSV一括取込：リンク行は一括登録、ファイル名列がある行は選択ファイルと照合して
+//    1件ずつアップロード（進捗表示）。──────────────────────────────
+function BulkPastDocumentImport() {
+  const toast = useToast();
+  const [text, setText] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [progress, setProgress] = useState("");
+  const [error, setError] = useState("");
+  const [results, setResults] = useState<Array<{ documentNumber: string; ok: boolean; message: string }>>([]);
+  const parsed = parseDocCsv(text);
+  const valid = parsed.rows.filter((r) => (r.documentNumber ?? "").trim() && (r.templateType ?? "").trim());
+  const fileByName = new Map(files.map((f) => [f.name, f]));
+  const withFile = valid.filter((r) => (r.fileName ?? "").trim());
+  const missingFiles = withFile.filter((r) => !fileByName.has(r.fileName!.trim()));
+  const linkRows = valid.filter((r) => !(r.fileName ?? "").trim());
+
+  async function submit() {
+    if (!valid.length) { setError("取込む文書がありません（文書番号とテンプレート種別が必要です）。"); return; }
+    if (missingFiles.length) {
+      setError(`ファイルが選択されていません: ${missingFiles.slice(0, 5).map((r) => r.fileName).join(", ")}${missingFiles.length > 5 ? " ほか" : ""}`);
+      return;
+    }
+    setSaving(true); setError(""); setResults([]);
+    const outcome: Array<{ documentNumber: string; ok: boolean; message: string }> = [];
+    try {
+      // 1) リンク行（ファイルなし）は一括で登録
+      if (linkRows.length) {
+        setProgress(`リンク行を登録中…（${linkRows.length}件）`);
+        const response = await fetch("/api/v2/documents/import", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rows: linkRows })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok && response.status !== 422) {
+          setError(data.error ?? "取込に失敗しました。"); setSaving(false); setProgress(""); return;
+        }
+        for (const row of data.inserted ?? []) {
+          outcome.push({ documentNumber: row.documentNumber, ok: true, message: "登録" });
+        }
+        for (const row of data.failed ?? []) {
+          outcome.push({ documentNumber: String(linkRows[row.index]?.documentNumber ?? "?"), ok: false, message: row.error });
+        }
+      }
+      // 2) ファイル行は1件ずつアップロード（30MB/件・Drive格納）
+      for (let i = 0; i < withFile.length; i += 1) {
+        const row = withFile[i];
+        const attached = fileByName.get(row.fileName!.trim())!;
+        setProgress(`ファイルを格納中… ${i + 1}/${withFile.length}（${row.documentNumber}）`);
+        const form = new FormData();
+        form.append("documentNumber", (row.documentNumber ?? "").trim());
+        form.append("templateType", (row.templateType ?? "").trim());
+        form.append("title", (row.title ?? "").trim());
+        form.append("counterparty", (row.counterparty ?? "").trim());
+        form.append("documentDate", (row.documentDate ?? "").trim());
+        form.append("issueKey", (row.issueKey ?? "").trim());
+        form.append("originalName", attached.name);
+        form.append("file", attached);
+        try {
+          const response = await fetch("/api/v2/documents/import/upload", { method: "POST", body: form });
+          const data = await response.json().catch(() => ({}));
+          outcome.push(response.ok
+            ? { documentNumber: String(row.documentNumber), ok: true, message: "登録＋Drive格納" }
+            : { documentNumber: String(row.documentNumber), ok: false, message: data.error ?? "取込に失敗しました" });
+        } catch {
+          outcome.push({ documentNumber: String(row.documentNumber), ok: false, message: "通信に失敗しました" });
+        }
+      }
+      setResults(outcome);
+      const okCount = outcome.filter((r) => r.ok).length;
+      const ngCount = outcome.length - okCount;
+      toast.push(`${okCount}件を取込みました${ngCount ? `（${ngCount}件失敗）` : ""}`, ngCount ? "info" : "success");
+    } finally { setSaving(false); setProgress(""); }
+  }
+
+  return <div className="past-doc-bulk">
+    <p className="hub-note">
+      1行目にヘッダ。文書番号・テンプレート種別は必須。<b>ファイル名</b>列に書いた行は、下で選択した
+      ファイルと名前で照合して Drive に格納します（それ以外の行は Driveリンクのみで登録）。
+      <button type="button" className="link-button"
+        onClick={() => download(IMPORT_CSV_SAMPLE, "過去文書取込テンプレート.csv", "text/csv;charset=utf-8")}>
+        CSVテンプレートをダウンロード</button>
+    </p>
+    {error && <div className="async-error">{error}</div>}
+    <textarea rows={7} value={text} onChange={(e) => { setText(e.target.value); setResults([]); }}
+      placeholder={IMPORT_CSV_SAMPLE} />
+    <label className="past-doc-file"><span>ファイル（複数選択可・CSVの「ファイル名」列と照合）</span>
+      <input type="file" multiple onChange={(e) => setFiles(Array.from(e.target.files ?? []))} /></label>
     {parsed.rows.length > 0 && <p className="import-preview-note">
       解析 {parsed.rows.length}行 / 登録対象 {valid.length}行
+      （ファイル格納 {withFile.length}行・リンクのみ {linkRows.length}行）
+      {missingFiles.length > 0 && <b>・未選択ファイル {missingFiles.length}件</b>}
       {parsed.unmapped.length > 0 && `・未対応列: ${parsed.unmapped.join(", ")}`}
     </p>}
     {valid.length > 0 && <div className="condition-table-wrap"><table className="condition-table">
-      <thead><tr><th>文書番号</th><th>種別</th><th>課題</th></tr></thead>
+      <thead><tr><th>文書番号</th><th>種別</th><th>件名</th><th>相手先</th><th>ファイル</th></tr></thead>
       <tbody>{valid.slice(0, 20).map((r, i) => <tr key={i}>
-        <td><b>{r.documentNumber}</b></td><td>{r.templateType}</td><td>{r.issueKey || "—"}</td>
+        <td><b>{r.documentNumber}</b></td><td>{r.templateType}</td>
+        <td>{r.title || "—"}</td><td>{r.counterparty || "—"}</td>
+        <td>{(r.fileName ?? "").trim()
+          ? (fileByName.has(r.fileName!.trim()) ? `✓ ${r.fileName}` : `✗ ${r.fileName}（未選択）`)
+          : (r.driveLink ? "リンク" : "—")}</td>
       </tr>)}</tbody></table>{valid.length > 20 && <p className="import-preview-note">ほか {valid.length - 20}行…</p>}</div>}
-    {result && <div className="import-result">
-      <strong>{result.insertedCount}件 取込完了</strong>{result.failedCount > 0 && <span>・{result.failedCount}件 失敗</span>}
-      {result.failed.slice(0, 10).map((f) => <small key={f.index}>行{f.index + 2}: {f.error}</small>)}
+    {progress && <p className="import-preview-note">{progress}</p>}
+    {results.length > 0 && <div className="import-result">
+      <strong>{results.filter((r) => r.ok).length}件 取込完了</strong>
+      {results.filter((r) => !r.ok).length > 0 && <span>・{results.filter((r) => !r.ok).length}件 失敗</span>}
+      {results.filter((r) => !r.ok).slice(0, 10).map((r, i) =>
+        <small key={i}>{r.documentNumber}: {r.message}</small>)}
     </div>}
     <div className="matter-form-actions">
-      <button className="primary" disabled={saving || !valid.length} onClick={submit}>{saving ? "取込中…" : `${valid.length}件を取込`}</button>
+      <button className="primary" disabled={saving || !valid.length} onClick={submit}>
+        {saving ? "取込中…" : `${valid.length}件を取込`}</button>
     </div>
   </div>;
 }

@@ -1598,7 +1598,8 @@ export function createApp(
       onInteractivity: intakeHandler.handleInteractivity
     }));
   }
-  app.use("/api/v2", createDocumentImportRouter(dependencies.documentImports, documentFinalizeEnabled));
+  app.use("/api/v2", createDocumentImportRouter(
+    dependencies.documentImports, documentFinalizeEnabled, dependencies.driveStorage ?? null));
   app.use("/api/v2", createGmailNotificationRouter(
     documentRegistry, gmailDeliveryAdapter, gmailGateSettings,
     dependencies.gmailSendHistory, dependencies.matterSends,

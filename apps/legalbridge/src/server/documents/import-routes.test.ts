@@ -3,35 +3,43 @@ import test from "node:test";
 import express from "express";
 import request from "supertest";
 import { createDocumentImportRouter } from "./import-routes.js";
-import { MemoryDocumentImportRepository } from "./import-repository.js";
+import {
+  MemoryDocumentImportRepository, normalizeDate, inferMimeType, buildImportFormData,
+  documentImportRowSchema
+} from "./import-repository.js";
+import { MemoryDriveStorage } from "./drive-storage.js";
+import { looksLikePdf } from "./cloudsign-source-pdf.js";
+import type { RegisteredDocument } from "./registry-repository.js";
 
-function appFor(options: { enabled: boolean; role?: "admin" | "legal" | "requester" }) {
+function appFor(options: { enabled: boolean; role?: "admin" | "legal" | "requester"; drive?: boolean }) {
+  const repository = new MemoryDocumentImportRepository();
+  const storage = options.drive === false ? null : new MemoryDriveStorage();
   const app = express();
   app.use(express.json());
   app.use((_request, response, next) => {
     response.locals.currentUser = { email: "admin@arclight.co.jp", subject: "t", role: options.role ?? "admin", source: "disabled" };
     next();
   });
-  app.use("/api/v2", createDocumentImportRouter(new MemoryDocumentImportRepository(), options.enabled));
-  return app;
+  app.use("/api/v2", createDocumentImportRouter(repository, options.enabled, storage));
+  return { app, repository, storage };
 }
 
 test("取込無効時は過去文書取込を拒否する", async () => {
-  const response = await request(appFor({ enabled: false }))
+  const response = await request(appFor({ enabled: false }).app)
     .post("/api/v2/documents/import").send({ rows: [{ documentNumber: "PO-1", templateType: "purchase_order" }] });
   assert.equal(response.status, 503);
   assert.equal(response.body.code, "DOCUMENT_IMPORT_UNAVAILABLE");
 });
 
 test("依頼者ロールは過去文書取込できない", async () => {
-  const response = await request(appFor({ enabled: true, role: "requester" }))
+  const response = await request(appFor({ enabled: true, role: "requester" }).app)
     .post("/api/v2/documents/import").send({ rows: [{ documentNumber: "PO-1", templateType: "purchase_order" }] });
   assert.equal(response.status, 403);
   assert.equal(response.body.code, "DOCUMENT_IMPORT_FORBIDDEN");
 });
 
 test("有効行を取込み無効行・重複を報告する", async () => {
-  const response = await request(appFor({ enabled: true })).post("/api/v2/documents/import").send({
+  const response = await request(appFor({ enabled: true }).app).post("/api/v2/documents/import").send({
     rows: [
       { documentNumber: "PO-1", templateType: "purchase_order", issueKey: "LEGAL-1" },
       { documentNumber: "", templateType: "purchase_order" },
@@ -44,10 +52,107 @@ test("有効行を取込み無効行・重複を報告する", async () => {
 });
 
 test("validate は不正行を報告する", async () => {
-  const response = await request(appFor({ enabled: true })).post("/api/v2/documents/import/validate").send({
+  const response = await request(appFor({ enabled: true }).app).post("/api/v2/documents/import/validate").send({
     rows: [{ documentNumber: "PO-1", templateType: "purchase_order" }, { documentNumber: "" }]
   });
   assert.equal(response.status, 200);
   assert.equal(response.body.ok, false);
   assert.equal(response.body.errors[0].index, 1);
+});
+
+test("件名・相手先・日付・ファイル名を form_data に格納しMIMEを推定する", async () => {
+  const { app, repository } = appFor({ enabled: true });
+  const response = await request(app).post("/api/v2/documents/import").send({
+    rows: [{
+      documentNumber: "PO-2019-0001", templateType: "purchase_order",
+      title: "業務委託発注書", counterparty: "甲社", documentDate: "2019/3/5",
+      originalFileName: "発注書_甲社.pdf", driveLink: "https://drive.google.com/file/d/abcdefghij123/view"
+    }]
+  });
+  assert.equal(response.status, 201);
+  const stored = repository.inputs[0];
+  assert.deepEqual(stored.formData, {
+    title: "業務委託発注書", counterparty: "甲社", document_date: "2019-03-05",
+    original_file_name: "発注書_甲社.pdf", source_mime_type: "application/pdf"
+  });
+  // メールPDF添付・CloudSign送信のPDF判定がこの記録で通ること（＝送信可能な取込）。
+  const doc = {
+    id: 1, documentNumber: "PO-2019-0001", issueKey: "", templateType: "purchase_order",
+    templateVersionId: null, title: "業務委託発注書", counterparty: "甲社",
+    driveLink: "https://drive.google.com/file/d/abcdefghij123/view",
+    createdAt: "", createdBy: null, formData: stored.formData
+  } as unknown as RegisteredDocument;
+  assert.equal(looksLikePdf(doc), true);
+});
+
+test("不正な日付は行エラーになる", async () => {
+  const response = await request(appFor({ enabled: true }).app).post("/api/v2/documents/import/validate").send({
+    rows: [{ documentNumber: "PO-1", templateType: "purchase_order", documentDate: "2024年3月" }]
+  });
+  assert.equal(response.body.ok, false);
+  assert.match(response.body.errors[0].error, /YYYY-MM-DD/);
+});
+
+function uploadRequest(app: express.Express, fields: Record<string, string>) {
+  const req = request(app).post("/api/v2/documents/import/upload");
+  for (const [key, value] of Object.entries(fields)) req.field(key, value);
+  return req.attach("file", Buffer.from("%PDF-1.7 test"), { filename: "past.pdf", contentType: "application/pdf" });
+}
+
+test("upload: ファイルをDriveへ格納し drive_link つきで登録する", async () => {
+  const { app, repository, storage } = appFor({ enabled: true });
+  const response = await uploadRequest(app, {
+    documentNumber: "CT-2018-0009", templateType: "contract",
+    title: "旧取引基本契約", counterparty: "乙社", documentDate: "2018-04-01",
+    originalName: "取引基本契約書.pdf"
+  });
+  assert.equal(response.status, 201);
+  assert.equal(response.body.document.documentNumber, "CT-2018-0009");
+  assert.ok(response.body.driveLink.includes("drive.google.com"));
+  // Drive 上のファイル名は「文書番号_元ファイル名」
+  assert.equal(storage!.fileUploads[0].filename, "CT-2018-0009_取引基本契約書.pdf");
+  assert.equal(storage!.fileUploads[0].mimeType, "application/pdf");
+  const stored = repository.inputs[0];
+  assert.equal(stored.row.driveLink, response.body.driveLink);
+  assert.equal(stored.formData.original_file_name, "取引基本契約書.pdf");
+  assert.equal(stored.formData.source_mime_type, "application/pdf");
+  assert.equal(stored.formData.document_date, "2018-04-01");
+});
+
+test("upload: 既存の文書番号は Drive 格納前に 409 で弾く", async () => {
+  const { app, repository, storage } = appFor({ enabled: true });
+  await repository.importOne(documentImportRowSchema.parse({ documentNumber: "CT-1", templateType: "contract" }));
+  const response = await uploadRequest(app, { documentNumber: "CT-1", templateType: "contract" });
+  assert.equal(response.status, 409);
+  assert.equal(response.body.code, "DOCUMENT_CONFLICT");
+  assert.equal(storage!.fileUploads.length, 0);   // 孤児ファイルを作らない
+});
+
+test("upload: Drive 連携が無効なら 503（リンク取込は案内）", async () => {
+  const { app } = appFor({ enabled: true, drive: false });
+  const response = await uploadRequest(app, { documentNumber: "CT-2", templateType: "contract" });
+  assert.equal(response.status, 503);
+  assert.equal(response.body.code, "DOCUMENT_IMPORT_DRIVE_UNAVAILABLE");
+});
+
+test("upload: 依頼者ロールは 403", async () => {
+  const { app } = appFor({ enabled: true, role: "requester" });
+  const response = await uploadRequest(app, { documentNumber: "CT-3", templateType: "contract" });
+  assert.equal(response.status, 403);
+});
+
+test("純関数: normalizeDate / inferMimeType / buildImportFormData", () => {
+  assert.equal(normalizeDate(""), "");
+  assert.equal(normalizeDate("2024/3/5"), "2024-03-05");
+  assert.equal(normalizeDate("2024-12-31"), "2024-12-31");
+  assert.equal(normalizeDate("2024/13/01"), null);
+  assert.equal(normalizeDate("あとで"), null);
+  assert.equal(inferMimeType("契約書.PDF"), "application/pdf");
+  assert.equal(inferMimeType("見積.xlsx"), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  assert.equal(inferMimeType("拡張子なし"), "");
+  // 明示 MIME があれば推定より優先
+  const row = documentImportRowSchema.parse({
+    documentNumber: "X-1", templateType: "contract", originalFileName: "a.bin", mimeType: "application/pdf"
+  });
+  assert.equal(buildImportFormData(row).source_mime_type, "application/pdf");
 });
