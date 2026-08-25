@@ -141,6 +141,34 @@ test("upload: 依頼者ロールは 403", async () => {
   assert.equal(response.status, 403);
 });
 
+test("import-details: 取込文書の form_data を差し替える（存在しない/生成文書は404）", async () => {
+  const { app, repository } = appFor({ enabled: true });
+  await repository.importOne(documentImportRowSchema.parse({
+    documentNumber: "PO-2019-0001", templateType: "purchase_order", title: "旧発注書"
+  }));
+  const formData = {
+    title: "旧発注書", counterparty: "甲社",
+    items: [{ item_name: "イラスト制作", quantity: 10, unit_price: 30000, amount_ex_tax: 300000, calc_method: "FIXED" }],
+    expenses: [{ expense_name: "送料", amount_inc_tax: 1100 }]
+  };
+  const ok = await request(app).put("/api/v2/documents/1/import-details").send({ formData });
+  assert.equal(ok.status, 200);
+  assert.deepEqual(repository.details.get(1), formData);
+
+  const missing = await request(app).put("/api/v2/documents/999/import-details").send({ formData });
+  assert.equal(missing.status, 404);
+  assert.equal(missing.body.code, "DOCUMENT_IMPORT_DETAILS_NOT_FOUND");
+});
+
+test("import-details: 依頼者ロールは403・無効時は503", async () => {
+  const denied = await request(appFor({ enabled: true, role: "requester" }).app)
+    .put("/api/v2/documents/1/import-details").send({ formData: {} });
+  assert.equal(denied.status, 403);
+  const disabled = await request(appFor({ enabled: false }).app)
+    .put("/api/v2/documents/1/import-details").send({ formData: {} });
+  assert.equal(disabled.status, 503);
+});
+
 test("純関数: normalizeDate / inferMimeType / buildImportFormData", () => {
   assert.equal(normalizeDate(""), "");
   assert.equal(normalizeDate("2024/3/5"), "2024-03-05");

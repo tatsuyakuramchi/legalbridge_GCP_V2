@@ -167,6 +167,51 @@ export function createDocumentImportRouter(
     }
   );
 
+  // 取込文書の詳細編集（過去文書ベースの検収書・利用許諾料計算書作成のための後入力）。
+  // 生成された文書（template_version_id あり）は対象外＝再発行（特例編集）を使う。
+  // form_data を丸ごと差し替える（クライアントは現状の formData に編集を重ねて送る）。
+  const detailsSchema = z.object({ formData: z.record(z.string(), z.unknown()) });
+  router.put("/documents/:id/import-details", async (request, response, next) => {
+    try {
+      if (!writeEnabled || !documents) {
+        return response.status(503).json({ error: "document import is not enabled", code: "DOCUMENT_IMPORT_UNAVAILABLE" });
+      }
+      if (!canImport(response.locals.currentUser?.role)) {
+        return response.status(403).json({ error: "法務または管理者のみが編集できます", code: "DOCUMENT_IMPORT_FORBIDDEN" });
+      }
+      const id = Number(request.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return response.status(400).json({ error: "invalid document id" });
+      }
+      const input = detailsSchema.parse(request.body ?? {});
+      if (JSON.stringify(input.formData).length > 200_000) {
+        return response.status(413).json({ error: "登録内容が大きすぎます", code: "DOCUMENT_IMPORT_DETAILS_TOO_LARGE" });
+      }
+      let updated: boolean;
+      try {
+        updated = await documents.updateDetails(id, input.formData);
+      } catch (error) {
+        if ((error as { code?: string })?.code === "42501") {
+          return response.status(503).json({
+            error: "取込文書の編集権限が付与されていません（grant 064 を適用してください）",
+            code: "DOCUMENT_IMPORT_DETAILS_FORBIDDEN_DB"
+          });
+        }
+        throw error;
+      }
+      if (!updated) {
+        return response.status(404).json({
+          error: "取込文書が見つかりません（テンプレートから生成した文書は再発行で編集してください）",
+          code: "DOCUMENT_IMPORT_DETAILS_NOT_FOUND"
+        });
+      }
+      return response.status(200).json({ updated: true });
+    } catch (error) {
+      if (error instanceof z.ZodError) return response.status(400).json({ error: "invalid request", issues: error.issues });
+      return next(error);
+    }
+  });
+
   // express.raw の limit 超過（PayloadTooLarge）をこのルータ内で 413 に変換する。
   router.use((error: unknown, _request: Request, response: Response, next: NextFunction) => {
     if ((error as { type?: string })?.type === "entity.too.large") {

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
-import type { DocumentFormSchema } from "../types";
+import type { DocumentFormData, DocumentFormSchema } from "../types";
+import { SpecializedDocumentForms } from "./SpecializedDocumentForms";
 import { useToast } from "./Toast";
 import { EmptyState } from "./EmptyState";
 import { DocumentOutputActions } from "./DocumentOutputActions";
@@ -91,6 +92,8 @@ export function DocumentRegistry({
   onEditReissue?: (document: RegisteredDocument) => void;
 }) {
   const [importing, setImporting] = useState(false);
+  // 取込文書（template_version_id 無し）の詳細編集パネル。
+  const [editingDetails, setEditingDetails] = useState<RegisteredDocument | null>(null);
   const [query, setQuery] = useState(initialQuery);
   const [templateType, setTemplateType] = useState("");
   const [lifecycle, setLifecycle] = useState<"all" | "active" | "voided">("all");
@@ -175,6 +178,9 @@ export function DocumentRegistry({
       </div>
     </div>
     {importing && <PastDocumentImport onClose={() => { setImporting(false); setReload((v) => v + 1); }} />}
+    {editingDetails && <ImportedDetailsEditor document={editingDetails}
+      onClose={() => setEditingDetails(null)}
+      onSaved={() => { setEditingDetails(null); setReload((v) => v + 1); void selectDocument(editingDetails.id); }} />}
     {initialQuery && (
       <div className="deep-link-notice">
         Slackで案内された受付番号 <strong>{initialQuery}</strong> の文書を表示しています。
@@ -250,6 +256,8 @@ export function DocumentRegistry({
         onOpenMatter={onOpenMatter}
         onDuplicate={onDuplicate}
         onEditReissue={onEditReissue}
+        canEditImported={canImport}
+        onEditDetails={(doc) => setEditingDetails(doc)}
       />
     </div>
   </section>;
@@ -270,7 +278,9 @@ function DocumentDetail({
   onSelectVersion,
   onOpenMatter,
   onDuplicate,
-  onEditReissue
+  onEditReissue,
+  canEditImported = false,
+  onEditDetails
 }: {
   document: RegisteredDocument | null;
   label?: string;
@@ -287,6 +297,9 @@ function DocumentDetail({
   onVoided?: () => Promise<void> | void;
   onReissued?: (newId: number) => Promise<void> | void;
   onSelectVersion?: (id: number) => void;
+  // 取込文書（テンプレート版なし）の詳細編集。admin/legal のみ。
+  canEditImported?: boolean;
+  onEditDetails?: (document: RegisteredDocument) => void;
 }) {
   if (!document) return <aside className="panel registry-detail empty-detail">一覧から文書を選択してください。</aside>;
   const isVoided = document.lifecycleStatus === "voided";
@@ -318,6 +331,17 @@ function DocumentDetail({
         : document.matterId != null ? `#${document.matterId}` : "未紐付け（案件詳細から紐付け可能）"}</dd>
     </dl>
     {isVoided && <div className="void-banner">この文書は無効化（void）済みです。紐づく実績は取消されています。</div>}
+    {!isVoided && canEditImported && onEditDetails && document.templateVersionId === null && (
+      <div className="duplicate-zone">
+        <h3>取込文書の詳細</h3>
+        <p className="hub-note">
+          過去文書取込で登録された文書です。発注明細・経費・金銭条件・振込先を入力しておくと、
+          検収書作成の「親の発注書から引用」や利用許諾料計算書の下敷きに使えます
+          （Drive上のPDFはそのまま・変わりません）。
+        </p>
+        <button type="button" onClick={() => onEditDetails(document)}>詳細を編集</button>
+      </div>
+    )}
     {!isVoided && onDuplicate && <div className="duplicate-zone">
       <h3>この文書を下敷きに次を作る</h3>
       <p className="hub-note">
@@ -683,6 +707,79 @@ function SinglePastDocumentImport() {
     <div className="matter-form-actions">
       <button className="primary" disabled={saving} onClick={submit}>
         {saving ? "取込中…" : file ? "ファイルを格納して取込" : "取込"}</button>
+    </div>
+  </div>;
+}
+
+// ── 取込文書の詳細編集 ───────────────────────────────────────────
+// 過去文書取込で登録した文書（template_version_id 無し）の form_data を後から
+// 入力・編集する。発注明細・経費・手数料・金銭条件は文書作成と同じエディタ
+// （SpecializedDocumentForms）を使い、検収書の「親の発注書から引用」がそのまま
+// 効く形（items / expenses / other_fees / financial_conditions / 振込先キー）で保存する。
+// Drive 上の PDF（実体）には触れない＝記録の補完のみ。
+function ImportedDetailsEditor({ document: doc, onClose, onSaved }: {
+  document: RegisteredDocument;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const toast = useToast();
+  const [formData, setFormData] = useState<DocumentFormData>({ ...(doc.formData ?? {}) } as DocumentFormData);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const onChange = (name: string, value: unknown) => setFormData((prev) => ({ ...prev, [name]: value }));
+  const text = (key: string) => String(formData[key] ?? "");
+  const field = (key: string, label: string, type: "text" | "date" | "number" = "text", placeholder = "") =>
+    <label key={key}><span>{label}</span>
+      <input type={type} value={text(key)} placeholder={placeholder}
+        onChange={(e) => onChange(key, type === "number" && e.target.value !== "" ? Number(e.target.value) : e.target.value)} />
+    </label>;
+
+  async function save() {
+    setSaving(true); setError("");
+    try {
+      const response = await fetch(`/api/v2/documents/${doc.id}/import-details`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ formData })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) { setError(data.error ?? "保存に失敗しました。"); return; }
+      toast.push(`${doc.documentNumber ?? doc.id} の詳細を保存しました`, "success");
+      onSaved();
+    } catch { setError("通信に失敗しました。"); } finally { setSaving(false); }
+  }
+
+  return <div className="panel past-doc-import">
+    <div className="matter-detail-head">
+      <div><span className="detail-kicker">EDIT IMPORTED DOCUMENT</span>
+        <h2>取込文書の詳細編集 — {doc.documentNumber ?? "未発番"}</h2></div>
+      <button onClick={onClose}>閉じる</button>
+    </div>
+    <p className="hub-note">
+      ここで入力した明細・経費・金銭条件・振込先は、<b>検収書作成の「親の発注書から引用」</b>や
+      利用許諾料計算書の下敷きに使われます。Drive上のPDF（取り込んだ実ファイル）は変わりません。
+    </p>
+    {error && <div className="async-error">{error}</div>}
+    <div className="field-grid">
+      {field("title", "件名")}
+      {field("counterparty", "相手先")}
+      {field("document_date", "日付（締結日・発行日）", "date")}
+      {field("tax_rate", "税率（%）", "number", "10")}
+    </div>
+    <details className="imported-bank-details">
+      <summary>振込先（検収書へ引用されます・任意）</summary>
+      <div className="field-grid">
+        {field("bank_name", "銀行名")}
+        {field("branch_name", "支店名")}
+        {field("account_type", "口座種別", "text", "普通 / 当座")}
+        {field("account_number", "口座番号")}
+        {field("account_holder_kana", "口座名義（カナ）")}
+      </div>
+    </details>
+    <SpecializedDocumentForms templateKey={doc.templateType} formData={formData} onChange={onChange} />
+    <div className="matter-form-actions">
+      <button onClick={onClose}>キャンセル</button>
+      <button className="primary" disabled={saving} onClick={() => void save()}>
+        {saving ? "保存中…" : "詳細を保存"}</button>
     </div>
   </div>;
 }

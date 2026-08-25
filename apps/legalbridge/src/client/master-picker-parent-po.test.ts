@@ -103,6 +103,26 @@ test("件名・税率・相手方も引用される", () => {
   assert.equal(patch.counterparty, "株式会社エー");
 });
 
+test("取込文書の発注書（title/counterparty/document_date キー）からも件名・相手方・発注日が引用される", () => {
+  // 過去文書取込は form_data に title / counterparty / document_date を記録する。
+  // V1 由来のキー（PROJECT_TITLE / vendor_name / ORDER_DATE）が無くても引用が効くこと。
+  const imported = {
+    id: "500", type: "document" as const, label: "PO-2019-0001",
+    values: {
+      document_number: "PO-2019-0001", template_type: "purchase_order",
+      title: "旧・業務委託発注書", counterparty: "株式会社ビー", document_date: "2019-03-05",
+      items: [{ item_name: "イラスト制作", quantity: 10, unit_price: 30000 }]
+    }
+  };
+  const schema = inspectionSchema({ name: "orderDate", label: "発注日", type: "date" } as TemplateField);
+  const patch = buildPatch(schema, {}, imported);
+  assert.equal(patch.projectTitle, "旧・業務委託発注書");
+  assert.equal(patch.counterparty, "株式会社ビー");
+  assert.equal(patch.orderDate, "2019-03-05");
+  const lines = patch.delivery_line_items as Array<Record<string, unknown>>;
+  assert.equal(lines[0].inspected_amount_ex_tax, 300000);
+});
+
 test("発注書以外の文書（基本契約など）では検収明細を触らない", () => {
   const contract = {
     id: "12", type: "document" as const, label: "ARC-OUT-2025-0007",

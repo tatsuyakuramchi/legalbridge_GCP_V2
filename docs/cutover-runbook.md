@@ -506,6 +506,33 @@ psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
 ユーザーで適用（`legalbridge_app` 等の絞った権限のユーザーでは
 `permission denied for table document_templates` になるので注意）。
 
+### 2-7h. 取込文書の詳細編集（grant 064）【適用待ち】
+
+過去文書取込で登録した文書（`template_version_id IS NULL`）の form_data を後から
+編集できるようにする（発注明細・経費・手数料・金銭条件・振込先など）。
+**過去文書をベースに検収書・利用許諾料計算書を作る**ための後入力で、入力した明細は
+検収書作成の「親の発注書から引用」がそのまま読む。Drive 上の PDF（実体）は変更しない。
+
+- 必要 grant: `UPDATE (form_data) ON documents`（064）。updated_at は 039 で付与済み
+- アプリ層で `template_version_id IS NULL` の行だけ更新（生成された文書は再発行で編集）
+- 画面: 文書一覧 → 取込文書を選択 → 「詳細を編集」（admin/legal のみ）
+- **grant 未適用のままでも他機能に影響なし**（編集保存時に 503 で案内が出るだけ）
+
+```bash
+psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
+  -v confirm_import_details=GRANT_PRODUCTION_IMPORT_DETAILS \
+  -f infra/gcp/sql/064_production_import_details_grants.sql
+```
+
+Cloud SQL Studio（postgres ユーザー）で流す場合は次の2文のみ：
+
+```sql
+GRANT UPDATE (form_data) ON TABLE public.documents TO legalbridge_v2_runtime;
+SELECT count(*) AS granted FROM information_schema.role_column_grants
+ WHERE grantee = 'legalbridge_v2_runtime' AND table_name = 'documents'
+   AND privilege_type = 'UPDATE' AND column_name = 'form_data';  -- 1 ならOK
+```
+
 ### 2-8. 案件 Slack 会話履歴（`slack-matter-thread-history-fix-plan.md`）
 
 案件詳細の「コミュニケーション」に Slack スレッドを時系列表示する。既存の

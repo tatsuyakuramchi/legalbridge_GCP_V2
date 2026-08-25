@@ -86,6 +86,10 @@ export interface DocumentImportRepository {
   importOne(input: DocumentImportRow, createdBy: string): Promise<ImportedDocument>;
   // アップロード取込の事前重複チェック（Drive へ上げる前に番号衝突を弾く）。
   exists(documentNumber: string): Promise<boolean>;
+  // 取込文書の詳細編集（過去文書ベースの検収書・計算書作成のための後入力）。
+  // 生成された文書は対象外＝ template_version_id IS NULL の行だけ更新する。
+  // 更新できたら true、対象外（存在しない or 生成文書）なら false。
+  updateDetails(id: number, formData: Record<string, unknown>): Promise<boolean>;
 }
 
 export class PgDocumentImportRepository implements DocumentImportRepository {
@@ -120,6 +124,16 @@ export class PgDocumentImportRepository implements DocumentImportRepository {
     );
     return result.rows.length > 0;
   }
+
+  async updateDetails(id: number, formData: Record<string, unknown>) {
+    const result = await this.database.query(
+      `UPDATE documents SET form_data = $2::jsonb, updated_at = now()
+        WHERE id = $1 AND template_version_id IS NULL
+        RETURNING id`,
+      [id, JSON.stringify(formData)]
+    );
+    return result.rows.length > 0;
+  }
 }
 
 function translate(error: unknown): Error {
@@ -147,5 +161,11 @@ export class MemoryDocumentImportRepository implements DocumentImportRepository 
   }
   async exists(documentNumber: string) {
     return this.documents.some((d) => d.documentNumber === documentNumber);
+  }
+  readonly details = new Map<number, Record<string, unknown>>();
+  async updateDetails(id: number, formData: Record<string, unknown>) {
+    if (!this.documents.some((d) => d.id === id)) return false;
+    this.details.set(id, formData);
+    return true;
   }
 }

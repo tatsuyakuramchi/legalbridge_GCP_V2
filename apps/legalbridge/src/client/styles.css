@@ -350,6 +350,9 @@ header input { width: 100%; border: 1px solid var(--border); border-radius: var(
 .past-doc-file { display: grid; gap: 4px; }
 .past-doc-file span { font-size: 12px; color: #64748b; }
 .past-doc-file input[type="file"] { border: 1px dashed #cbd5e1; border-radius: 8px; padding: 10px 12px; background: #f8fafc; }
+.imported-bank-details { border: 1px solid var(--border, #e2e8f0); border-radius: 8px; padding: 8px 12px; }
+.imported-bank-details summary { cursor: pointer; font-size: 13px; color: #334155; }
+.imported-bank-details .field-grid { margin-top: 8px; }
 .condition-detail { padding: 18px 20px; }
 .condition-detail .matter-summary { margin: 6px 0 14px; }
 .condition-detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 20px; margin: 0; }

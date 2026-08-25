@@ -89,7 +89,9 @@ export class PgMasterDataRepository implements MasterDataRepository {
               OR document_number ILIKE $1
               OR template_type ILIKE $1
               OR COALESCE(vendor_name_snapshot, '') ILIKE $1
-              OR COALESCE(form_data->>'CONTRACT_TITLE', form_data->>'基本契約名', '') ILIKE $1)
+              OR COALESCE(form_data->>'CONTRACT_TITLE', form_data->>'基本契約名', '') ILIKE $1
+              OR COALESCE(form_data->>'title', '') ILIKE $1
+              OR COALESCE(form_data->>'counterparty', '') ILIKE $1)
           ORDER BY created_at DESC
           LIMIT $2`,
         [keyword, boundedLimit, prefixPatterns]
@@ -99,8 +101,9 @@ export class PgMasterDataRepository implements MasterDataRepository {
         type,
         label: row.document_number,
         description: [
-          row.form_data?.CONTRACT_TITLE ?? row.form_data?.基本契約名 ?? row.template_type,
-          row.vendor_name_snapshot
+          // title / counterparty は過去文書取込が form_data に記録するキー。
+          row.form_data?.CONTRACT_TITLE ?? row.form_data?.基本契約名 ?? row.form_data?.title ?? row.template_type,
+          row.vendor_name_snapshot ?? row.form_data?.counterparty
         ].filter(Boolean).join("・"),
         values: {
           id: row.id,

@@ -334,13 +334,15 @@ export function applyParentPurchaseOrderQuote(
   if (otherFees.length) patch.po_other_fees = otherFees.map((row, i) => ({ line_no: i + 1, ...row }));
 
   // 件名・発注日・税率・相手方。項目がテンプレートに無ければ何もしない（setIfField）。
+  // title / counterparty / document_date は過去文書取込（import）が form_data に
+  // 記録するキー。取り込んだ旧発注書からの引用でも件名・相手方・日付が入るようにする。
   setIfField(schema, patch, "projectTitle",
-    values.PROJECT_TITLE ?? values.project_title ?? values.CONTRACT_TITLE);
+    values.PROJECT_TITLE ?? values.project_title ?? values.CONTRACT_TITLE ?? values.title);
   setIfField(schema, patch, "orderDate",
-    values.ORDER_DATE ?? values.order_date ?? values.issue_date ?? values.DOCUMENT_DATE);
+    values.ORDER_DATE ?? values.order_date ?? values.issue_date ?? values.DOCUMENT_DATE ?? values.document_date);
   setIfField(schema, patch, "taxRate", values.taxRate ?? values.tax_rate);
   for (const name of ["counterparty", "COUNTERPARTY_NAME", "相手方名称"]) {
-    setIfField(schema, patch, name, values.vendor_name ?? values.VENDOR_NAME);
+    setIfField(schema, patch, name, values.vendor_name ?? values.VENDOR_NAME ?? values.counterparty);
   }
   // 支払予定日・支払条件・振込先は発注書から補完する（検収書フォームでは入力させない方針。
   // 変更があるときだけ支払予定日を上書きしてもらう）。
