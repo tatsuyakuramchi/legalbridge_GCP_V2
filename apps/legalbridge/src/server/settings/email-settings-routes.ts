@@ -7,6 +7,7 @@ import {
 } from "./email-settings.js";
 import type { GmailDeliveryAdapter } from "../integrations/gmail-delivery-adapter.js";
 import { isValidEmail } from "../integrations/gmail-delivery-adapter.js";
+import { GmailApiError } from "../integrations/gmail-api-adapter.js";
 import {
   evaluateGmailDispatchGate, type GmailDispatchGateSettings
 } from "../integrations/gmail-dispatch-gate.js";
@@ -157,6 +158,12 @@ export function createEmailSettingsRouter(dependencies: {
       return response.status(201).json({ receipt, preview: { subject, bodyText } });
     } catch (error) {
       if (error instanceof z.ZodError) return response.status(400).json({ error: "invalid request", issues: error.issues });
+      // Gmail API の失敗は理由文つきで返す（テスト送信は疎通確認が目的なので特に重要）。
+      if (error instanceof GmailApiError) {
+        return response.status(502).json({
+          error: `Gmail送信に失敗しました（${error.message}）`, code: "EMAIL_TEST_SEND_FAILED"
+        });
+      }
       return next(error);
     }
   });

@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { DocumentRegistryRepository, RegisteredDocument } from "./registry-repository.js";
 import type { GmailDeliveryAdapter, GmailAttachment } from "../integrations/gmail-delivery-adapter.js";
 import { isValidEmail, parseRecipientList } from "../integrations/gmail-delivery-adapter.js";
+import { GmailApiError } from "../integrations/gmail-api-adapter.js";
 import {
   evaluateGmailDispatchGate, type GmailDispatchGateSettings
 } from "../integrations/gmail-dispatch-gate.js";
@@ -288,6 +289,12 @@ export function createGmailNotificationRouter(
       });
     } catch (error) {
       if (error instanceof z.ZodError) return response.status(400).json({ error: "invalid request", issues: error.issues });
+      // Gmail API の失敗は理由文つきで返す（internal server error に潰さない）。
+      if (error instanceof GmailApiError) {
+        return response.status(502).json({
+          error: `Gmail送信に失敗しました（${error.message}）`, code: "GMAIL_SEND_FAILED"
+        });
+      }
       return next(error);
     }
   });

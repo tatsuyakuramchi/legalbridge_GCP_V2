@@ -8,6 +8,7 @@ import {
 import { createEmailSettingsRouter } from "./email-settings-routes.js";
 import { MemoryAppSettingsRepository } from "./settings-repository.js";
 import type { GmailDeliveryAdapter, GmailDeliveryRequest } from "../integrations/gmail-delivery-adapter.js";
+import { GmailApiError } from "../integrations/gmail-api-adapter.js";
 import { buildFinalizeNotification } from "../documents/gmail-notification-routes.js";
 import type { RegisteredDocument } from "../documents/registry-repository.js";
 
@@ -111,6 +112,33 @@ test("email-settings routes: 保存は既定と同じ内容を空欄として格
   assert.equal(stored.email_subject_inspection, "");           // 既定と同じ＝空欄
   assert.equal(stored.email_subject_general, "カスタム（{{documentNumber}}）");
   assert.equal(stored.email_body_general, "本文 {{vendorName}}");
+});
+
+test("email-settings routes: Gmail API の失敗は理由文つきの502で返す", async () => {
+  class FailingAdapter implements GmailDeliveryAdapter {
+    readonly configured = true;
+    async send(): Promise<never> {
+      throw new GmailApiError("Gmail API HTTP error: 400 — Invalid To header", "http_error", 400);
+    }
+  }
+  const repository = new MemoryAppSettingsRepository({});
+  const app = express();
+  app.use(express.json());
+  app.use((_req, res, next) => {
+    res.locals.currentUser = { email: "a@x.jp", subject: "s", role: "admin", source: "disabled" } as never;
+    next();
+  });
+  app.use("/api/v2", createEmailSettingsRouter({
+    repository, writeEnabled: true, gmail: new FailingAdapter(),
+    gateSettings: {
+      integrationMode: "live", gmailCapabilityEnabled: true,
+      adapterConfigured: true, senderEmail: "legal@x.jp"
+    }
+  }));
+  const response = await request(app).post("/api/v2/email-settings/test")
+    .send({ to: "me@x.jp", kind: "general" });
+  assert.equal(response.status, 502);
+  assert.match(response.body.error, /Invalid To header/);
 });
 
 test("email-settings routes: テスト送信は件名に【テスト送信】・ローカルは409", async () => {

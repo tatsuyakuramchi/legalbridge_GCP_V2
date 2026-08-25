@@ -40,21 +40,45 @@ export class FetchGmailApiClient implements GmailApiClient {
     });
   }
 
+  // JSON エンドポイントは raw が大きいと 400 で拒否するため、このサイズを超えたら
+  // メディアアップロード（message/rfc822・35MBまで）へ自動で切り替える。
+  static readonly MEDIA_UPLOAD_THRESHOLD = 4 * 1024 * 1024;
+
   async send(userEmail: string, raw: string, _idempotencyKey: string) {
     const client = await this.auth.getClient();
     const { token } = await client.getAccessToken();
     if (!token) throw new GmailApiError("Gmail access token could not be obtained", "no_token");
-    const response = await this.fetchImpl(
-      `https://gmail.googleapis.com/gmail/v1/users/${encodeURIComponent(userEmail)}/messages/send`,
-      {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ raw })
-      }
-    );
-    const payload = await response.json().catch(() => null) as { id?: unknown; threadId?: unknown } | null;
+    let response: Response;
+    if (raw.length > FetchGmailApiClient.MEDIA_UPLOAD_THRESHOLD) {
+      // base64url を RFC822 の生バイト列へ戻してメディアアップロードで送る。
+      const rfc822 = Buffer.from(raw.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+      response = await this.fetchImpl(
+        `https://gmail.googleapis.com/upload/gmail/v1/users/${encodeURIComponent(userEmail)}/messages/send?uploadType=media`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "message/rfc822" },
+          body: new Uint8Array(rfc822)
+        }
+      );
+    } else {
+      response = await this.fetchImpl(
+        `https://gmail.googleapis.com/gmail/v1/users/${encodeURIComponent(userEmail)}/messages/send`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ raw })
+        }
+      );
+    }
+    const payload = await response.json().catch(() => null) as
+      { id?: unknown; threadId?: unknown; error?: { message?: unknown } } | null;
     if (!response.ok) {
-      throw new GmailApiError(`Gmail API HTTP error: ${response.status}`, "http_error", response.status);
+      // Gmail の理由文（Invalid To header / size exceeds 等）を運用者が読めるように残す。
+      const detail = String(payload?.error?.message ?? "").slice(0, 300);
+      throw new GmailApiError(
+        `Gmail API HTTP error: ${response.status}${detail ? ` — ${detail}` : ""}`,
+        "http_error", response.status
+      );
     }
     if (!payload || typeof payload.id !== "string") {
       throw new GmailApiError("Gmail API returned no message id", "invalid_response");
