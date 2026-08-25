@@ -1164,7 +1164,12 @@ export function createApp(
       request.method === "POST" && request.path === "/documents/finalize";
     if (documentFinalizeEnabled && isDocumentFinalize) return next();
     const isDocumentImport =
-      request.method === "POST" && request.path === "/documents/import";
+      // 過去文書取込（一括・ファイルつき）と、その後入力（取込文書の詳細編集・
+      // 確定文書の表示情報の特例修正）。いずれも import ルータ内で admin/legal に限定。
+      (request.method === "POST" &&
+        (request.path === "/documents/import" || request.path === "/documents/import/upload")) ||
+      (request.method === "PUT" &&
+        /^\/documents\/\d+\/(import-details|display-fields)$/.test(request.path));
     if (documentFinalizeEnabled && isDocumentImport) return next();
     const isDriveStorage =
       request.method === "POST" && /^\/documents\/[^/]+\/drive(\/regenerate)?$/.test(request.path);

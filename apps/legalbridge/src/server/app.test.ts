@@ -275,6 +275,34 @@ test("documentsスコープなしでは文書確定を拒否する", async () =>
   assert.equal(response.body.code, "WRITE_SCOPE_DISABLED");
 });
 
+test("過去文書取込の後入力パスは documents スコープでゲートを通す", async () => {
+  const target = createApp({
+    templates: new MemoryTemplateRepository([schema]),
+    drafts: new MemoryDraftRepository(),
+    integrations: createIntegrationAdapters()
+  }, {
+    accessMode: "readwrite",
+    requireDatabase: false,
+    writeFeaturesEnabled: true,
+    writeScopes: new Set(["documents"])
+  });
+  // ゲートを通過してルータ側の判定（リポジトリ未構成=503）に到達すること。
+  // 403 WRITE_SCOPE_DISABLED になったらゲートの許可リスト漏れ（本番で取込が全滅する）。
+  for (const call of [
+    request(target).post("/api/v2/documents/import/upload").send({}),
+    request(target).put("/api/v2/documents/1/import-details").send({ formData: {} }),
+    request(target).put("/api/v2/documents/1/display-fields").send({ title: "x" })
+  ]) {
+    const response = await call;
+    assert.equal(response.status, 503);
+    assert.equal(response.body.code, "DOCUMENT_IMPORT_UNAVAILABLE");
+  }
+  // documents スコープが無ければ従来どおり 403。
+  const denied = await request(app()).put("/api/v2/documents/1/import-details").send({ formData: {} });
+  assert.equal(denied.status, 403);
+  assert.equal(denied.body.code, "WRITE_SCOPE_DISABLED");
+});
+
 test("文書確定は検証済み下書きを発番し外部連携を停止したまま削除する", async () => {
   const drafts = new MemoryDraftRepository();
   const finalizations = new MemoryDocumentFinalizationRepository();
