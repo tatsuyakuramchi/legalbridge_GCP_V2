@@ -663,14 +663,14 @@ function SinglePastDocumentImport() {
         <datalist id="import-template-types">
           {IMPORT_TEMPLATE_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
         </datalist></label>
-      <label><span>件名</span>
+      <label><span>件名（任意）</span>
         <input value={values.title} onChange={set("title")} placeholder="業務委託発注書" /></label>
-      <label><span>相手先</span>
+      <label><span>相手先（任意）</span>
         <input value={values.counterparty} onChange={set("counterparty")} placeholder="株式会社〇〇" /></label>
-      <label><span>日付（締結日・発行日）</span>
+      <label><span>日付（締結日・発行日／任意）</span>
         <input type="date" value={values.documentDate} onChange={set("documentDate")} /></label>
-      <label><span>課題キー</span>
-        <input value={values.issueKey} onChange={set("issueKey")} placeholder="LEGAL-12（任意）" /></label>
+      <label><span>課題キー（任意・Backlog課題がある場合のみ）</span>
+        <input value={values.issueKey} onChange={set("issueKey")} placeholder="LEGAL-12" /></label>
     </div>
     <label className="past-doc-file"><span>ファイル（選ぶと Drive に格納されます）</span>
       <input key={fileKey} type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label>
@@ -763,7 +763,8 @@ function BulkPastDocumentImport() {
 
   return <div className="past-doc-bulk">
     <p className="hub-note">
-      1行目にヘッダ。文書番号・テンプレート種別は必須。<b>ファイル名</b>列に書いた行は、下で選択した
+      1行目にヘッダ。<b>必須は文書番号とテンプレート種別だけ</b>（件名・相手先・日付・課題キーは
+      空欄可・列ごと省略も可）。<b>ファイル名</b>列に書いた行は、下で選択した
       ファイルと名前で照合して Drive に格納します（それ以外の行は Driveリンクのみで登録）。
       <button type="button" className="link-button"
         onClick={() => download(IMPORT_CSV_SAMPLE, "過去文書取込テンプレート.csv", "text/csv;charset=utf-8")}>
