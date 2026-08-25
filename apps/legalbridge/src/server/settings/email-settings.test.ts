@@ -34,6 +34,13 @@ test("email-settings: 設定が空なら既定テンプレート・カスタム�
   assert.equal(custom.templates.general.subject, "カスタム件名（{{documentNumber}}）");
   assert.equal(custom.templates.general.body, DEFAULT_EMAIL_TEMPLATES.general.body);
   assert.equal(custom.cc, "cc@x.jp");
+  // V1 の既定CCは大文字キー（EMAIL_CC）。email_cc 未保存の間はこれを読む。
+  const v1 = await loadEmailSettings(new MemoryAppSettingsRepository({ EMAIL_CC: "keiri@x.jp" }));
+  assert.equal(v1.cc, "keiri@x.jp");
+  const both = await loadEmailSettings(new MemoryAppSettingsRepository({
+    EMAIL_CC: "keiri@x.jp", email_cc: "new@x.jp"
+  }));
+  assert.equal(both.cc, "new@x.jp");
 });
 
 test("email-settings: カスタム文面が送付メールに反映される", () => {

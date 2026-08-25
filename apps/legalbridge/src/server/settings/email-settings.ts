@@ -10,6 +10,9 @@ export type EmailKind = "inspection" | "royalty" | "general";
 
 export const EMAIL_SETTING_KEYS = [
   "email_cc",
+  // V1 の既定CCは大文字キー（EMAIL_CC）に保存されている。V2 で保存し直すまでは
+  // これを既定CCとして読む（email_cc が入れば以後はそちらを優先）。
+  "EMAIL_CC",
   "email_subject_inspection", "email_body_inspection",
   "email_subject_royalty", "email_body_royalty",
   "email_subject_general", "email_body_general"
@@ -153,7 +156,7 @@ export async function loadEmailSettings(
       body: pick(`email_body_${kind}`) || DEFAULT_EMAIL_TEMPLATES[kind].body
     });
     return {
-      cc: pick("email_cc"),
+      cc: pick("email_cc") || pick("EMAIL_CC"),
       templates: { inspection: tpl("inspection"), royalty: tpl("royalty"), general: tpl("general") },
       custom: values
     };
