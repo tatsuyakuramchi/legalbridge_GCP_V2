@@ -169,6 +169,34 @@ test("import-details: 依頼者ロールは403・無効時は503", async () => {
   assert.equal(disabled.status, 503);
 });
 
+test("display-fields: 件名・相手先だけをマージ追記する（他キーは触らない設計）", async () => {
+  const { app, repository } = appFor({ enabled: true });
+  await repository.importOne(documentImportRowSchema.parse({
+    documentNumber: "IC-2025-0003", templateType: "inspection_certificate"
+  }));
+  const one = await request(app).put("/api/v2/documents/1/display-fields")
+    .send({ counterparty: "株式会社シー" });
+  assert.equal(one.status, 200);
+  assert.deepEqual(one.body.patch, { counterparty: "株式会社シー" });
+  const two = await request(app).put("/api/v2/documents/1/display-fields")
+    .send({ title: "検収書（2025年3月分）" });
+  assert.equal(two.status, 200);
+  // マージ＝先の相手先は保持されたまま件名が追記される
+  assert.deepEqual(repository.displayFields.get(1),
+    { counterparty: "株式会社シー", title: "検収書（2025年3月分）" });
+
+  const empty = await request(app).put("/api/v2/documents/1/display-fields").send({});
+  assert.equal(empty.status, 400);
+  const missing = await request(app).put("/api/v2/documents/99/display-fields").send({ title: "x" });
+  assert.equal(missing.status, 404);
+});
+
+test("display-fields: 依頼者ロールは403", async () => {
+  const denied = await request(appFor({ enabled: true, role: "requester" }).app)
+    .put("/api/v2/documents/1/display-fields").send({ title: "x" });
+  assert.equal(denied.status, 403);
+});
+
 test("純関数: normalizeDate / inferMimeType / buildImportFormData", () => {
   assert.equal(normalizeDate(""), "");
   assert.equal(normalizeDate("2024/3/5"), "2024-03-05");

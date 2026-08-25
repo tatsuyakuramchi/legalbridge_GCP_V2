@@ -517,6 +517,11 @@ psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
 - アプリ層で `template_version_id IS NULL` の行だけ更新（生成された文書は再発行で編集）
 - 画面: 文書一覧 → 取込文書を選択 → 「詳細を編集」（admin/legal のみ）
 - **grant 未適用のままでも他機能に影響なし**（編集保存時に 503 で案内が出るだけ）
+- 同じ grant で**確定文書の表示情報の特例修正**も動く（2026-08-21 追加）:
+  文書上は相手先名が入っているのに一覧でブランクになるケースの補正。
+  一覧・検索が読む `title` / `counterparty` キーだけをマージ追記し、PDF の中身に
+  なる他のキーには触れない（内容の訂正は従来どおり再発行）。
+  画面: 文書一覧 → 文書を選択 → 「表示情報の修正」（admin/legal のみ）
 
 ```bash
 psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \

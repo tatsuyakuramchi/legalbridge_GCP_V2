@@ -90,6 +90,10 @@ export interface DocumentImportRepository {
   // 生成された文書は対象外＝ template_version_id IS NULL の行だけ更新する。
   // 更新できたら true、対象外（存在しない or 生成文書）なら false。
   updateDetails(id: number, formData: Record<string, unknown>): Promise<boolean>;
+  // 確定文書の表示情報の特例修正（一覧・検索で読む title / counterparty キーのみを
+  // マージ追記）。form_data の他のキー＝PDF の中身になるデータには触れない。
+  // 内容そのものの訂正は再発行（特例編集）を使う。
+  mergeDisplayFields(id: number, patch: Record<string, string>): Promise<boolean>;
 }
 
 export class PgDocumentImportRepository implements DocumentImportRepository {
@@ -134,6 +138,18 @@ export class PgDocumentImportRepository implements DocumentImportRepository {
     );
     return result.rows.length > 0;
   }
+
+  async mergeDisplayFields(id: number, patch: Record<string, string>) {
+    // || によるマージ＝渡したキーだけ追記・上書き。既存の form_data は保持する。
+    const result = await this.database.query(
+      `UPDATE documents
+          SET form_data = COALESCE(form_data, '{}'::jsonb) || $2::jsonb, updated_at = now()
+        WHERE id = $1
+        RETURNING id`,
+      [id, JSON.stringify(patch)]
+    );
+    return result.rows.length > 0;
+  }
 }
 
 function translate(error: unknown): Error {
@@ -166,6 +182,12 @@ export class MemoryDocumentImportRepository implements DocumentImportRepository 
   async updateDetails(id: number, formData: Record<string, unknown>) {
     if (!this.documents.some((d) => d.id === id)) return false;
     this.details.set(id, formData);
+    return true;
+  }
+  readonly displayFields = new Map<number, Record<string, string>>();
+  async mergeDisplayFields(id: number, patch: Record<string, string>) {
+    if (!this.documents.some((d) => d.id === id)) return false;
+    this.displayFields.set(id, { ...(this.displayFields.get(id) ?? {}), ...patch });
     return true;
   }
 }

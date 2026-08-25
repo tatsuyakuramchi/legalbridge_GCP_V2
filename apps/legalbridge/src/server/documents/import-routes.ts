@@ -212,6 +212,54 @@ export function createDocumentImportRouter(
     }
   });
 
+  // 確定文書の表示情報の特例修正。文書上は相手先名が入っているのに一覧・検索で
+  // ブランクになる（V1由来のキーで保存されていて表示側が読めない）ケースの補正。
+  // 一覧・検索・引用が読む title / counterparty キーだけをマージ追記し、
+  // form_data の他のキー（＝PDF の中身になるデータ）には触れない。
+  // 文書内容そのものの訂正はここでは行わず、再発行（特例編集）を使う。
+  const displaySchema = z.object({
+    title: z.string().trim().max(300).optional(),
+    counterparty: z.string().trim().max(300).optional()
+  }).refine((v) => v.title !== undefined || v.counterparty !== undefined,
+    { message: "件名または相手先のどちらかを指定してください" });
+  router.put("/documents/:id/display-fields", async (request, response, next) => {
+    try {
+      if (!writeEnabled || !documents) {
+        return response.status(503).json({ error: "document import is not enabled", code: "DOCUMENT_IMPORT_UNAVAILABLE" });
+      }
+      if (!canImport(response.locals.currentUser?.role)) {
+        return response.status(403).json({ error: "法務または管理者のみが修正できます", code: "DOCUMENT_IMPORT_FORBIDDEN" });
+      }
+      const id = Number(request.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return response.status(400).json({ error: "invalid document id" });
+      }
+      const input = displaySchema.parse(request.body ?? {});
+      const patch: Record<string, string> = {};
+      if (input.title !== undefined) patch.title = input.title;
+      if (input.counterparty !== undefined) patch.counterparty = input.counterparty;
+      let updated: boolean;
+      try {
+        updated = await documents.mergeDisplayFields(id, patch);
+      } catch (error) {
+        if ((error as { code?: string })?.code === "42501") {
+          return response.status(503).json({
+            error: "表示情報の修正権限が付与されていません（grant 064 を適用してください）",
+            code: "DOCUMENT_DISPLAY_FIELDS_FORBIDDEN_DB"
+          });
+        }
+        throw error;
+      }
+      if (!updated) {
+        return response.status(404).json({ error: "文書が見つかりません", code: "DOCUMENT_NOT_FOUND" });
+      }
+      return response.status(200).json({ updated: true, patch });
+    } catch (error) {
+      if (error instanceof z.ZodError) return response.status(400).json({ error: "invalid request", issues: error.issues });
+      return next(error);
+    }
+  });
+
   // express.raw の limit 超過（PayloadTooLarge）をこのルータ内で 413 に変換する。
   router.use((error: unknown, _request: Request, response: Response, next: NextFunction) => {
     if ((error as { type?: string })?.type === "entity.too.large") {

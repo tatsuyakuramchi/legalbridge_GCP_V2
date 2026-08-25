@@ -342,6 +342,9 @@ function DocumentDetail({
         <button type="button" onClick={() => onEditDetails(document)}>詳細を編集</button>
       </div>
     )}
+    {!isVoided && canEditImported && document.templateVersionId !== null && (
+      <DisplayFieldFix document={document} onSaved={onRefresh} />
+    )}
     {!isVoided && onDuplicate && <div className="duplicate-zone">
       <h3>この文書を下敷きに次を作る</h3>
       <p className="hub-note">
@@ -380,6 +383,73 @@ function DocumentDetail({
       {entries.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}
     </dl>
   </aside>;
+}
+
+// ── 確定文書の表示情報の特例修正 ─────────────────────────────────
+// 文書上は相手先名が入っているのに一覧・検索でブランクになるケース（V1由来キーで
+// 保存されていて表示側が読めない）の補正。一覧・検索が読む title / counterparty
+// キーだけをサーバでマージ追記する＝PDFの中身になる他のデータには触れない。
+// 内容そのものの訂正は再発行（特例編集）を使う。
+function DisplayFieldFix({ document: doc, onSaved }: {
+  document: RegisteredDocument;
+  onSaved: () => Promise<void> | void;
+}) {
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const [title, setTitle] = useState("");
+  const [counterparty, setCounterparty] = useState("");
+  const [saving, setSaving] = useState(false);
+  // 開いたときに現在の表示値を初期値にする（文書が切り替わったら閉じる）。
+  useEffect(() => { setOpen(false); }, [doc.id]);
+
+  function openForm() {
+    setTitle(doc.title === (doc.documentNumber ?? "") || doc.title === doc.issueKey ? "" : doc.title);
+    setCounterparty(doc.counterparty ?? "");
+    setOpen(true);
+  }
+
+  async function save() {
+    setSaving(true);
+    try {
+      // 空欄の項目は送らない（誤って空文字で上書きしないため）。
+      const response = await fetch(`/api/v2/documents/${doc.id}/display-fields`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...(title.trim() ? { title: title.trim() } : {}),
+          ...(counterparty.trim() ? { counterparty: counterparty.trim() } : {})
+        })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) { toast.push(data.error ?? "修正に失敗しました", "error"); return; }
+      toast.push("表示情報を修正しました", "success");
+      setOpen(false);
+      await onSaved();
+    } catch { toast.push("通信に失敗しました", "error"); } finally { setSaving(false); }
+  }
+
+  if (!open) {
+    return <div className="display-field-fix">
+      <button type="button" className="link-button" onClick={openForm}>
+        表示情報の修正（一覧の件名・相手先ブランクを補正）
+      </button>
+    </div>;
+  }
+  return <div className="duplicate-zone display-field-fix">
+    <h3>表示情報の修正（特例）</h3>
+    <p className="hub-note">
+      一覧・検索に表示される<b>件名・相手先だけ</b>を補正します。文書のPDF・登録済みの
+      他の内容には触れません。内容そのものの訂正は「再発行」を使ってください。
+    </p>
+    <label><span>件名</span>
+      <input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={300} /></label>
+    <label><span>相手先</span>
+      <input value={counterparty} onChange={(e) => setCounterparty(e.target.value)} maxLength={300} /></label>
+    <div className="matter-form-actions">
+      <button type="button" onClick={() => setOpen(false)}>キャンセル</button>
+      <button type="button" className="primary" disabled={saving || (!title.trim() && !counterparty.trim())}
+        onClick={() => void save()}>{saving ? "保存中…" : "修正を保存"}</button>
+    </div>
+  </div>;
 }
 
 type VersionRow = {
