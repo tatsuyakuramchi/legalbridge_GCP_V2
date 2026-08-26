@@ -1648,7 +1648,8 @@ export function createApp(
     }));
   }
   app.use("/api/v2", createDocumentImportRouter(
-    dependencies.documentImports, documentFinalizeEnabled, dependencies.driveStorage ?? null));
+    dependencies.documentImports, documentFinalizeEnabled, dependencies.driveStorage ?? null,
+    conditionSync));
   app.use("/api/v2", createGmailNotificationRouter(
     documentRegistry, gmailDeliveryAdapter, gmailGateSettings,
     dependencies.gmailSendHistory, dependencies.matterSends,

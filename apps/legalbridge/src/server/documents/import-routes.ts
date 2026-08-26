@@ -5,6 +5,8 @@ import {
 } from "./import-repository.js";
 import { MultipartError, parseMultipart } from "./multipart.js";
 import type { DriveStorage } from "./drive-storage.js";
+import { buildDocumentConditionInputs, hasConditionSyncData } from "./condition-sync.js";
+import type { ConditionSyncRepository } from "./condition-sync-repository.js";
 
 // Bulk register legacy/past documents. Reuses the `documents` write capability.
 // 取込強化（2026-08-21）: ファイルを添えた取込（multipart → Drive 格納 → 登録）を
@@ -17,7 +19,10 @@ function canImport(role: string | undefined) { return role === "admin" || role =
 export function createDocumentImportRouter(
   documents: DocumentImportRepository | undefined,
   writeEnabled = false,
-  storage?: DriveStorage | null
+  storage?: DriveStorage | null,
+  // 取込文書の詳細編集で金銭条件を保存したとき、条件明細台帳へ自動同期する
+  // （取込文書は確定フローを通らないため、確定時同期の代わりにここで行う）。
+  conditionSync?: ConditionSyncRepository
 ) {
   const router = Router();
 
@@ -205,7 +210,27 @@ export function createDocumentImportRouter(
           code: "DOCUMENT_IMPORT_DETAILS_NOT_FOUND"
         });
       }
-      return response.status(200).json({ updated: true });
+      // 金銭条件を含む保存なら台帳（condition_lines）へ自動同期（確定時同期と同じ
+      // ベストエフォート）。失敗しても保存は成立＝「条件明細を台帳へ同期」で回復できる。
+      let conditionSyncResult: { written: number; deleted: number } | null = null;
+      let conditionSyncWarning: string | undefined;
+      if (conditionSync && hasConditionSyncData(input.formData)) {
+        try {
+          const synced = await conditionSync.upsertDocumentConditions(
+            id, buildDocumentConditionInputs(input.formData)
+          );
+          conditionSyncResult = { written: synced.written, deleted: synced.deleted };
+        } catch (error) {
+          conditionSyncWarning = (error as { code?: string })?.code === "42501"
+            ? "条件明細の台帳同期権限が未付与です（grant 066）。適用後「条件明細を台帳へ同期」で反映できます"
+            : `条件明細の台帳同期に失敗しました（「条件明細を台帳へ同期」で再実行できます）: ${String((error as Error)?.message ?? error).slice(0, 200)}`;
+        }
+      }
+      return response.status(200).json({
+        updated: true,
+        ...(conditionSyncResult ? { conditionSync: conditionSyncResult } : {}),
+        ...(conditionSyncWarning ? { conditionSyncWarning } : {})
+      });
     } catch (error) {
       if (error instanceof z.ZodError) return response.status(400).json({ error: "invalid request", issues: error.issues });
       return next(error);

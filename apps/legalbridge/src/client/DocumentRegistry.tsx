@@ -848,7 +848,14 @@ function ImportedDetailsEditor({ document: doc, onClose, onSaved }: {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) { setError(data.error ?? "保存に失敗しました。"); return; }
-      toast.push(`${doc.documentNumber ?? doc.id} の詳細を保存しました`, "success");
+      // 金銭条件を含む保存は条件明細台帳へも自動同期される（結果・警告をそのまま伝える）。
+      if (data.conditionSyncWarning) {
+        toast.push(`詳細を保存しました。⚠ ${data.conditionSyncWarning}`, "info");
+      } else if (data.conditionSync) {
+        toast.push(`${doc.documentNumber ?? doc.id} の詳細を保存し、条件明細 ${data.conditionSync.written}件を台帳へ同期しました`, "success");
+      } else {
+        toast.push(`${doc.documentNumber ?? doc.id} の詳細を保存しました`, "success");
+      }
       onSaved();
     } catch { setError("通信に失敗しました。"); } finally { setSaving(false); }
   }

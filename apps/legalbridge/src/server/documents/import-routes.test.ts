@@ -8,6 +8,7 @@ import {
   documentImportRowSchema
 } from "./import-repository.js";
 import { MemoryDriveStorage } from "./drive-storage.js";
+import { MemoryConditionSyncRepository } from "./condition-sync-repository.js";
 import { looksLikePdf } from "./cloudsign-source-pdf.js";
 import type { RegisteredDocument } from "./registry-repository.js";
 
@@ -195,6 +196,30 @@ test("display-fields: 依頼者ロールは403", async () => {
   const denied = await request(appFor({ enabled: true, role: "requester" }).app)
     .put("/api/v2/documents/1/display-fields").send({ title: "x" });
   assert.equal(denied.status, 403);
+});
+
+test("import-details: 金銭条件を含む保存は条件明細台帳へ自動同期される", async () => {
+  const repository = new MemoryDocumentImportRepository();
+  const conditionSync = new MemoryConditionSyncRepository();
+  const app = express();
+  app.use(express.json());
+  app.use((_req, res, next) => {
+    res.locals.currentUser = { email: "a@x.jp", subject: "t", role: "admin", source: "disabled" };
+    next();
+  });
+  app.use("/api/v2", createDocumentImportRouter(repository, true, null, conditionSync));
+  await repository.importOne(documentImportRowSchema.parse({
+    documentNumber: "ILT-2019-0001", templateType: "individual_license_terms"
+  }));
+  const response = await request(app).put("/api/v2/documents/1/import-details").send({
+    formData: {
+      title: "旧利用許諾条件書",
+      financial_conditions: [{ condition_no: 1, condition_name: "利用許諾料", rate_pct: 10, mg_amount: 100000 }]
+    }
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body.conditionSync, { written: 1, deleted: 0 });
+  assert.equal(conditionSync.documents.get(1)!.get(1)!.condition_name, "利用許諾料");
 });
 
 test("純関数: normalizeDate / inferMimeType / buildImportFormData", () => {
