@@ -43,7 +43,7 @@ import { OperationsGuide } from "./OperationsGuide";
 import { TextSnippets } from "./TextSnippets";
 import { TemplateSamples } from "./TemplateSamples";
 import { RequestsWorkspace } from "./RequestsWorkspace";
-import { seedFormData } from "./extract-variables";
+import { extractVariables, seedFormData } from "./extract-variables";
 import { duplicateFormData, type DuplicateMode } from "./duplicate-document";
 import { PaymentReport } from "./PaymentReport";
 import { ExcelBatchWorkspace } from "./ExcelBatchWorkspace";
@@ -261,6 +261,22 @@ export function App() {
   // Issue key seeded when 文書を作成 is launched from a matter (LB-F01 導線).
   const [newDocIssueKey, setNewDocIssueKey] = useState("");
   const [newDocSeed, setNewDocSeed] = useState<Record<string, string>>({});
+
+  // 案件（または検索）から文書作成を開始する。依頼（Backlog課題）の本文から変数を
+  // 抽出してフォーム初期値にする＝依頼画面の「この課題で文書作成」と同じ体験。
+  function startDocumentFromIssue(issueKey: string | null) {
+    setNewDocIssueKey(issueKey ?? ""); setNewDocSeed({}); setDraftSelection(null); setView("templates");
+    const key = (issueKey ?? "").trim().toUpperCase();
+    if (!/^[A-Z0-9_]+-\d+$/.test(key)) return;
+    void fetch(`/api/v2/backlog/issues?keyword=${encodeURIComponent(key)}&count=20`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        const hit = (data?.issues ?? []).find(
+          (issue: { issueKey?: string }) => String(issue.issueKey ?? "").toUpperCase() === key);
+        if (hit?.description) setNewDocSeed(extractVariables(hit.description).variables);
+      })
+      .catch(() => undefined);
+  }
   // 確定済み文書の内容を丸ごと引き継いだ新規入力（相手先だけ差し替えて2通目を出す）。
   // Backlog 抽出値のシードは「空欄だけ補完」なので、明細を含む複製には使えない。
   const [duplicateValues, setDuplicateValues] = useState<DocumentFormData | null>(null);
@@ -478,9 +494,7 @@ export function App() {
           canEdit={canEditMatters}
           canDelete={canDeleteMatters}
           canUploadAttachments={canUploadAttachments}
-          onCreateDocument={(legalWorkspace || requesterWorkspace)
-            ? (issueKey) => { setNewDocIssueKey(issueKey ?? ""); setNewDocSeed({}); setDraftSelection(null); setView("templates"); }
-            : undefined}
+          onCreateDocument={(legalWorkspace || requesterWorkspace) ? startDocumentFromIssue : undefined}
           selectedId={searchSelection?.target === "matter" ? Number(searchSelection.id) : undefined} />}
         {view === "drafts" && !readOnly && (
           <DraftWorkspace templates={templates} onResume={resumeDraft} initialQuery={deepLinkIssue} />
@@ -538,9 +552,7 @@ export function App() {
             setSearchSelection({ target: "document", id: String(id), title: "" });
             setView("documents");
           }}
-          onCreateDocument={(legalWorkspace || requesterWorkspace)
-            ? (issueKey) => { setNewDocIssueKey(issueKey ?? ""); setNewDocSeed({}); setDraftSelection(null); setView("templates"); }
-            : undefined}
+          onCreateDocument={(legalWorkspace || requesterWorkspace) ? startDocumentFromIssue : undefined}
           onNavigate={(target) => {
             if (target === "ledgers-conditions") { setLedgerSeedType("conditions"); setView("ledgers"); }
             else setView(target as View);
@@ -1376,6 +1388,7 @@ function DocumentForm({
           </>}
         </form>
         <aside className={inspectionSteps || royaltySteps ? "preview with-rail" : "preview"}>
+          <RequestBriefRail issueKey={issueKey} />
           {inspectionSteps && <InspectionRail formData={formData} steps={inspectionSteps}
             onPreview={validate} onSaveDraft={saveDraft} readOnly={readOnly}
             saveDisabled={draftStatus === "saving" || draftStatus === "loading" || !issueKey.trim() || Boolean(finalizedDocument)}
@@ -1652,6 +1665,66 @@ function InspectionStepCard({ no, title, step, active, id, children }: {
     </div>
     <div className="step-body">{children}</div>
   </section>;
+}
+
+// ── 依頼内容（Backlog課題の概要）の右パネル ─────────────────────────
+// 文書作成中に、受付番号の課題の件名・本文を右側に常時表示する。転記は
+// コピーで行える（依頼画面と作成画面を往復してコピペしていた動線の解消）。
+// 受付番号が課題キー形式でない・該当なし・権限なしのときは何も出さない。
+function RequestBriefRail({ issueKey }: { issueKey: string }) {
+  type Brief = { summary: string; description: string | null; host: string };
+  const [brief, setBrief] = useState<Brief | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied] = useState("");
+  const key = issueKey.trim().toUpperCase();
+
+  useEffect(() => {
+    setBrief(null); setExpanded(false); setCopied("");
+    if (!/^[A-Z0-9_]+-\d+$/.test(key)) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      fetch(`/api/v2/backlog/issues?keyword=${encodeURIComponent(key)}&count=20`)
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error("fetch failed"))))
+        .then((data) => {
+          if (cancelled) return;
+          const hit = (data.issues ?? []).find(
+            (issue: { issueKey?: string }) => String(issue.issueKey ?? "").toUpperCase() === key);
+          setBrief(hit ? { summary: hit.summary ?? "", description: hit.description ?? null, host: data.host ?? "" } : null);
+        })
+        .catch(() => { if (!cancelled) setBrief(null); });
+    }, 300);   // 受付番号の入力中に連打しない
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [key]);
+
+  if (!brief) return null;
+
+  async function copy(label: string, text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(label);
+      window.setTimeout(() => setCopied(""), 2000);
+    } catch { setCopied(""); }
+  }
+
+  return <div className="rail-card request-brief">
+    <h3>依頼内容（{key}）</h3>
+    <strong className="request-brief-summary">{brief.summary || "（件名なし）"}</strong>
+    {brief.description?.trim()
+      ? <div className="request-description">
+          <pre className={expanded ? "" : "clamped"}>{brief.description}</pre>
+          <button type="button" className="link-button" onClick={() => setExpanded((v) => !v)}>
+            {expanded ? "たたむ" : "全文を表示"}</button>
+        </div>
+      : <small className="hub-note">本文はありません。</small>}
+    <div className="request-brief-actions">
+      {brief.description?.trim() &&
+        <button type="button" onClick={() => void copy("本文", String(brief.description))}>本文をコピー</button>}
+      <button type="button" onClick={() => void copy("件名", brief.summary)}>件名をコピー</button>
+      {brief.host &&
+        <a href={`https://${brief.host}/view/${key}`} target="_blank" rel="noreferrer">Backlogで開く</a>}
+      {copied && <small className="settings-effective">✓ {copied}をコピーしました</small>}
+    </div>
+  </div>;
 }
 
 // 右レール: 総支払額のライブ計算（PDF と同じ共有関数＝必ず一致する）・進行状況・

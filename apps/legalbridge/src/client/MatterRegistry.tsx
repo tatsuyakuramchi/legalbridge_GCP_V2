@@ -136,6 +136,11 @@ export function MatterRegistry({ templates, selectedId, canEdit = false, canDele
     { key: "archived", label: "保管", count: counts.archived }
   ];
   const visible = matters.filter((m) => matchesFilter(m, filter, today));
+  // 新着依頼帯: 起票から自動生成されたまま文書が1件も無い進行中案件（依頼の受信箱）。
+  // 依頼画面を見なくても、案件一覧の先頭で「まだ手を付けていない依頼」が分かる。
+  const freshRequests = matters
+    .filter((m) => isActive(m) && m.documentCount === 0)
+    .sort((a, b) => b.id - a.id);
 
   return <section className="page matter-page">
     <div className="page-title"><div><p>MATTER MANAGEMENT</p><h1>案件一覧</h1>
@@ -157,6 +162,21 @@ export function MatterRegistry({ templates, selectedId, canEdit = false, canDele
       ))}
     </div>
     {error && <div className="async-error">{error}<button onClick={() => setReload((value) => value + 1)}>再試行</button></div>}
+    {freshRequests.length > 0 && filter !== "done" && filter !== "archived" && (
+      <div className="fresh-requests-band">
+        <strong>📥 新着依頼（文書未作成 {freshRequests.length}件）</strong>
+        <div className="fresh-requests-list">
+          {freshRequests.slice(0, 8).map((m) => (
+            <button key={m.id} type="button" onClick={() => { setCreating(false); selectMatter(m.id); }}>
+              <span>{m.primaryIssueKey ?? m.matterCode ?? `#${m.id}`}</span>
+              <b>{m.title}</b>
+              {m.counterparty && <small>{m.counterparty}</small>}
+            </button>
+          ))}
+          {freshRequests.length > 8 && <small className="fresh-more">ほか {freshRequests.length - 8}件</small>}
+        </div>
+      </div>
+    )}
     <div className="matter-layout">
       <div className="matter-list">{visible.map((matter) => {
         const overdue = isActive(matter) && isOverdue(matter.targetDueDate, today);
@@ -210,7 +230,8 @@ function MatterDetail({ detail, labels, canEdit, canDelete = false, canUploadAtt
     <div className="matter-detail-head">
       <div><span className="detail-kicker">MATTER DETAIL</span><h2>{matter.title}</h2></div>
       <div className="matter-detail-actions">
-        {onCreateDocument && <button className="primary" onClick={() => onCreateDocument(matter.primaryIssueKey)}>文書を作成</button>}
+        {onCreateDocument && <button className="primary" onClick={() => onCreateDocument(matter.primaryIssueKey)}>
+          {matter.primaryIssueKey ? "この依頼から文書作成" : "文書を作成"}</button>}
         {canEdit && <button onClick={() => setEditing(true)}>編集</button>}
         {canEdit && <CartButton kind="matter"
           item={{ key: String(matter.id), label: matter.title, note: matter.matterCode ?? `#${matter.id}` }}

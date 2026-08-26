@@ -353,6 +353,25 @@ header input { width: 100%; border: 1px solid var(--border); border-radius: var(
 .imported-bank-details { border: 1px solid var(--border, #e2e8f0); border-radius: 8px; padding: 8px 12px; }
 .imported-bank-details summary { cursor: pointer; font-size: 13px; color: #334155; }
 .imported-bank-details .field-grid { margin-top: 8px; }
+/* 新着依頼帯（案件一覧・文書未作成の進行中案件＝依頼の受信箱） */
+.fresh-requests-band { border: 1px solid #f0c674; background: #fffaf0; border-radius: 10px; padding: 10px 14px; margin-bottom: 12px; display: grid; gap: 8px; }
+.fresh-requests-band > strong { font-size: 13px; color: #92400e; }
+.fresh-requests-list { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.fresh-requests-list button { display: grid; gap: 1px; text-align: left; border: 1px solid #e7d4a6; background: #fff; border-radius: 8px; padding: 6px 10px; max-width: 260px; }
+.fresh-requests-list button span { font-size: 11px; color: #92400e; }
+.fresh-requests-list button b { font-size: 12.5px; color: #172a44; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fresh-requests-list button small { font-size: 11px; color: #64748b; }
+.fresh-more { color: #92400e; }
+
+/* 依頼内容（Backlog概要）の右パネル（文書作成画面） */
+.request-brief { display: grid; gap: 6px; }
+.request-brief-summary { font-size: 13px; color: #172a44; }
+.request-brief .request-description pre { max-height: 320px; overflow: auto; user-select: text; }
+.request-brief .request-description pre.clamped { max-height: 140px; overflow: hidden; }
+.request-brief-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.request-brief-actions button { border: 1px solid #9bb5ad; background: #f5faf8; color: #185c4a; border-radius: 6px; padding: 4px 10px; font-size: 12px; }
+.request-brief-actions a { font-size: 12px; }
+
 .display-field-fix { margin-top: 8px; }
 .display-field-fix label { display: grid; gap: 3px; margin-bottom: 8px; }
 .display-field-fix label span { font-size: 12px; color: #64748b; }
