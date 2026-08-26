@@ -1295,3 +1295,9 @@ button.pdf-download-link:disabled {
   .wizard-navigation { position: static; align-items: stretch; flex-direction: column; }
   .wizard-navigation button { width: 100%; }
 }
+
+/* サイドバー最下部：外部サイトへの導線（SPLL公開サイト） */
+.rail-link { display: block; margin-top: 12px; padding: 10px 12px; border: 1px solid #334b68; border-radius: 8px; color: white; text-decoration: none; }
+.rail-link:hover, .rail-link:focus-visible { background: #1d3557; }
+.rail-link strong { display: block; font-size: 13px; font-weight: 700; }
+.rail-link small { display: block; margin-top: 3px; color: #94a3b8; font-size: 11px; line-height: 1.45; }

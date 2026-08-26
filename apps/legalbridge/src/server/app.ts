@@ -109,6 +109,7 @@ import {
 import { MemoryGlobalSearchRepository, PgGlobalSearchRepository, type GlobalSearchRepository } from "./search/repository.js";
 import { createGlobalSearchRouter } from "./search/routes.js";
 import { MemoryAdminRepository, PgAdminRepository, type AdminRepository } from "./admin/repository.js";
+import { createSpllSiteRouter, normalizeBasePath } from "./spll/routes.js";
 import { createAdminRouter } from "./admin/routes.js";
 import { createOperationalDiagnosticsRouter } from "./admin/diagnostics.js";
 import { createSlackRecipientDirectory } from "./integrations/slack-recipient-resolver.js";
@@ -493,10 +494,22 @@ export function createApp(
     options.writeFeaturesEnabled === true &&
     options.writeScopes?.has("drive") === true &&
     Boolean(config.googleDriveFolderId || dependencies.driveStorage);
+  // SPLL 公開サイト（クリエーター向け）。ルート直下へは載せない――載せるとSPA・APIまで
+  // このルーターの404が拾ってしまうため、必ずサブパスへぶら下げる。
+  const spllBasePath = normalizeBasePath(config.spllSite.basePath) || "/spll";
+  const spllEnabled = config.spllSite.enabled;
+
   app.use(cors());
   app.use(express.json({ limit: "5mb" }));
-  app.use(createAuthentication(options.auth ?? config.auth));
+  app.use(createAuthentication(
+    options.auth ?? config.auth,
+    spllEnabled && config.spllSite.public ? [spllBasePath] : []
+  ));
   app.use(createApiAuthorization());
+
+  if (spllEnabled) {
+    app.use(spllBasePath, createSpllSiteRouter({ basePath: spllBasePath }));
+  }
 
   app.get("/health", async (_request, response) => {
     const [database, outboundDatabase] = await Promise.all([
@@ -583,7 +596,10 @@ export function createApp(
       integrations: config.integrationMode,
       authMode: (options.auth ?? config.auth).mode,
       slackNotificationHistory: Boolean(dependencies.slackHistory),
-      slackNotificationApprovals: Boolean(dependencies.slackApprovals)
+      slackNotificationApprovals: Boolean(dependencies.slackApprovals),
+      spllSite: spllEnabled
+        ? { enabled: true, basePath: spllBasePath, public: config.spllSite.public }
+        : { enabled: false, basePath: spllBasePath, public: false }
     });
   });
 

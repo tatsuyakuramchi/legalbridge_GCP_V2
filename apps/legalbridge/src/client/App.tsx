@@ -128,6 +128,8 @@ export function App() {
   const [canGmailNotify, setCanGmailNotify] = useState(false);
   const [canCloudSign, setCanCloudSign] = useState(false);
   const [canGmailInbound, setCanGmailInbound] = useState(false);
+  // SPLL公開サイト（クリエーター向け）へのリンク。サーバー側で無効なら出さない。
+  const [spllSitePath, setSpllSitePath] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<{ email: string; role: "admin" | "legal" | "requester" } | null>(null);
   const [searchSelection, setSearchSelection] = useState<{ target: "matter" | "document" | "vendor" | "work"; id: string; title: string } | null>(null);
   const [draftSelection, setDraftSelection] = useState<{ issueKey: string; templateType: string } | null>(null);
@@ -170,6 +172,8 @@ export function App() {
         setCanGmailNotify(capabilities.includes("gmail"));
         setCanCloudSign(capabilities.includes("cloudsign"));
         setCanGmailInbound(capabilities.includes("gmail-inbound"));
+        const spll = runtime.spllSite as { enabled?: boolean; basePath?: string } | undefined;
+        setSpllSitePath(spll?.enabled && spll.basePath ? spll.basePath : null);
       })
       .catch(() => {
         setReadOnly(true);
@@ -236,6 +240,12 @@ export function App() {
           ))}
         </nav>
         <div className="backlog"><strong>Backlog連携</strong><small>参照のみ・変更なし</small></div>
+        {spllSitePath && (
+          <a className="rail-link" href={spllSitePath} target="_blank" rel="noreferrer">
+            <strong>SPLL 公開サイト<span aria-hidden="true"> ↗</span></strong>
+            <small>クリエーター向けの申込・認証確認（デモ）</small>
+          </a>
+        )}
       </aside>
 
       <main>

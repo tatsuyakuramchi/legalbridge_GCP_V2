@@ -24,9 +24,20 @@ declare global {
   }
 }
 
-export function createAuthentication(settings: AuthSettings) {
+/**
+ * 認証ミドルウェア。
+ * publicPathPrefixes に挙げたパス配下は認証を通さずに公開する（社外向けページ用）。
+ * 既定は空で、従来どおり /health 以外はすべて認証対象。
+ */
+export function createAuthentication(settings: AuthSettings, publicPathPrefixes: string[] = []) {
+  const publicPrefixes = publicPathPrefixes
+    .map((prefix) => String(prefix ?? "").trim())
+    .filter((prefix) => prefix.length > 1 && prefix.startsWith("/"));
   return (request: Request, response: Response, next: NextFunction) => {
     if (request.path === "/health") return next();
+    if (publicPrefixes.some((prefix) =>
+      request.path === prefix || request.path.startsWith(prefix + "/")
+    )) return next();
 
     if (settings.mode === "disabled") {
       response.locals.currentUser = {
