@@ -345,6 +345,9 @@ function DocumentDetail({
     {!isVoided && canEditImported && document.templateVersionId !== null && (
       <DisplayFieldFix document={document} onSaved={onRefresh} />
     )}
+    {!isVoided && canEditImported && hasConditionData(document.formData) && (
+      <ConditionSyncButton documentId={document.id} documentNumber={document.documentNumber} />
+    )}
     {!isVoided && onDuplicate && <div className="duplicate-zone">
       <h3>この文書を下敷きに次を作る</h3>
       <p className="hub-note">
@@ -449,6 +452,38 @@ function DisplayFieldFix({ document: doc, onSaved }: {
       <button type="button" className="primary" disabled={saving || (!title.trim() && !counterparty.trim())}
         onClick={() => void save()}>{saving ? "保存中…" : "修正を保存"}</button>
     </div>
+  </div>;
+}
+
+// ── 条件明細の台帳同期 ─────────────────────────────────────────────
+// form_data の金銭条件・v3マトリクスを condition_lines（条件明細一覧・マトリクス・
+// 消化管理が読む台帳）へ反映する。確定時の自動同期が失敗した文書のリカバリと、
+// 同期機能の導入前に確定した既存文書のバックフィルに使う。冪等（何度押しても同じ結果）。
+function hasConditionData(formData: Record<string, unknown> | undefined): boolean {
+  const has = (v: unknown) => Array.isArray(v) && v.length > 0;
+  return has(formData?.financial_conditions) || has(formData?.v3_conds);
+}
+
+function ConditionSyncButton({ documentId, documentNumber }: {
+  documentId: number;
+  documentNumber: string | null;
+}) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  async function run() {
+    setBusy(true);
+    try {
+      const response = await fetch(`/api/v2/documents/${documentId}/conditions/sync`, { method: "POST" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) { toast.push(data.error ?? "同期に失敗しました", "error"); return; }
+      toast.push(`${documentNumber ?? documentId} の条件明細を台帳へ同期しました（${data.written}件反映${data.deleted ? `・${data.deleted}件整理` : ""}）`, "success");
+    } catch { toast.push("通信に失敗しました", "error"); } finally { setBusy(false); }
+  }
+  return <div className="display-field-fix">
+    <button type="button" className="link-button" disabled={busy} onClick={() => void run()}
+      title="金銭条件・v3マトリクスを条件明細台帳（マトリクス・消化管理）へ反映します">
+      {busy ? "同期中…" : "条件明細を台帳へ同期"}
+    </button>
   </div>;
 }
 

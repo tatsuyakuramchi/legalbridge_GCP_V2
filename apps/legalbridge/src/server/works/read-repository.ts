@@ -321,6 +321,8 @@ export class PgWorkReadRepository implements WorkReadRepository {
          LEFT JOIN vendors dv ON dv.id = d.vendor_id
         WHERE cl.direction = 'receivable'
           AND COALESCE(w.is_active, true) = true
+          -- 無効化（void）された文書のグラントはマトリクスに出さない（監査2026-08-25 ギャップ3）
+          AND (d.id IS NULL OR d.lifecycle_status IS NULL OR d.lifecycle_status <> 'voided')
         ORDER BY w.work_code NULLS LAST, w.id, cl.id
         LIMIT 2000`
     );
@@ -374,6 +376,7 @@ export class PgWorkReadRepository implements WorkReadRepository {
          LEFT JOIN vendors cv ON cv.id = cl.counterparty_vendor_id
          LEFT JOIN vendors dv ON dv.id = d.vendor_id
         WHERE cl.work_id = $1
+          AND (d.id IS NULL OR d.lifecycle_status IS NULL OR d.lifecycle_status <> 'voided')
         ORDER BY cl.direction NULLS LAST, cl.source_material_id NULLS FIRST, cl.id DESC
         LIMIT 500`,
       [workId]

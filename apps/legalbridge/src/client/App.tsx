@@ -1162,7 +1162,10 @@ function DocumentForm({
       });
       setDraft(null);
       setDraftStatus("clean");
-      setNotice(`文書 ${result.document.documentNumber} を確定しました`);
+      // 条件明細の台帳同期が失敗した場合は警告として案内する（確定自体は成立している）。
+      setNotice(result.conditionSyncWarning
+        ? `文書 ${result.document.documentNumber} を確定しました。⚠ ${result.conditionSyncWarning}`
+        : `文書 ${result.document.documentNumber} を確定しました`);
     } catch {
       setDraftStatus("error");
       setNotice("通信エラーにより文書を確定できませんでした");

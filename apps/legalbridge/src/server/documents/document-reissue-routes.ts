@@ -2,6 +2,8 @@ import { Router } from "express";
 import { z } from "zod";
 import { documentReissueSchema } from "./document-reissue-schema.js";
 import { DocumentReissueError, type DocumentReissueRepository } from "./document-reissue-repository.js";
+import { buildDocumentConditionInputs, hasConditionSyncData } from "./condition-sync.js";
+import type { ConditionSyncRepository } from "./condition-sync-repository.js";
 
 // 文書の再発行（破壊的・Phase 10-1b）。guarded-write（既定OFF・確認トークン
 // COMMIT_DOCUMENT_REISSUE・admin/legal のみ）。オプションで Backlog へ再発行を書き戻す。
@@ -31,7 +33,10 @@ export function createDocumentReissueRouter(
   repository: DocumentReissueRepository | undefined,
   writeEnabled = false,
   notify?: DocumentReissueNotifier,
-  issueKeyOf?: (sourceId: number) => Promise<string | null>
+  issueKeyOf?: (sourceId: number) => Promise<string | null>,
+  // 条件明細の追従: 旧版の condition_lines を新版へ移設（実績の参照を保全）し、
+  // 特例編集で formData が変わっていれば新版の内容で upsert し直す。
+  conditionSync?: ConditionSyncRepository
 ) {
   const router = Router();
 
@@ -45,6 +50,26 @@ export function createDocumentReissueRouter(
       const input = documentReissueSchema.parse(request.body ?? {});
       const actor = String(response.locals.currentUser?.email ?? "unknown");
       const result = await repository.reissue(id, input, actor);
+
+      // 条件明細の追従（ベストエフォート・失敗しても再発行は成立済み）。
+      //   1) 旧版の行を新版文書へ移設＝condition_events の condition_line_id 参照を壊さない。
+      //   2) 特例編集で formData が渡っていれば、新版の内容で置換 upsert（料率等の訂正を反映）。
+      let conditionSyncWarning: string | undefined;
+      let movedConditions = 0;
+      if (conditionSync) {
+        try {
+          movedConditions = await conditionSync.moveConditions(id, result.newId);
+          if (input.formData && hasConditionSyncData(input.formData)) {
+            await conditionSync.upsertDocumentConditions(
+              result.newId, buildDocumentConditionInputs(input.formData)
+            );
+          }
+        } catch (error) {
+          conditionSyncWarning = (error as { code?: string })?.code === "42501"
+            ? "条件明細の追従権限が未付与です（grant 066）。適用後、新版の「条件明細を台帳へ同期」で反映できます"
+            : `条件明細の追従に失敗しました（新版から手動同期できます）: ${String((error as Error)?.message ?? error).slice(0, 200)}`;
+        }
+      }
       // Backlog 書き戻しはベストエフォート（失敗しても再発行は成立済み）。
       if (notify && issueKeyOf) {
         void issueKeyOf(id).then((issueKey) => {
@@ -56,7 +81,11 @@ export function createDocumentReissueRouter(
           );
         }).catch(() => undefined);
       }
-      return response.status(200).json(result);
+      return response.status(200).json({
+        ...result,
+        movedConditions,
+        ...(conditionSyncWarning ? { conditionSyncWarning } : {})
+      });
     } catch (error) { return handle(error, response, next); }
   });
 

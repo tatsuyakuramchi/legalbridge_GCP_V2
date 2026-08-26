@@ -149,6 +149,8 @@ export class PgConditionLineRepository implements ConditionLineRepository {
                OR COALESCE(d.document_number, '') ILIKE $1
                OR COALESCE(v.vendor_name, '') ILIKE $1
                OR COALESCE(w.title, '') ILIKE $1)
+          -- 無効化（void）された文書の条件は一覧に出さない（監査2026-08-25 ギャップ3）
+          AND (d.id IS NULL OR d.lifecycle_status IS NULL OR d.lifecycle_status <> 'voided')
         ORDER BY cl.id DESC
         LIMIT $2`,
       [keyword, Math.min(Math.max(limit, 1), 1000)]
@@ -164,6 +166,8 @@ export class PgConditionLineRepository implements ConditionLineRepository {
               COALESCE(SUM(cl.amount_ex_tax), 0)            AS total_amount,
               COALESCE(SUM(cl.mg_amount), 0)                AS total_mg
          FROM condition_lines cl
+         LEFT JOIN documents d ON d.id = cl.document_id
+        WHERE d.id IS NULL OR d.lifecycle_status IS NULL OR d.lifecycle_status <> 'voided'
         GROUP BY 1, 2
         ORDER BY 1, 2`
     );
@@ -331,6 +335,7 @@ export class PgConditionLineRepository implements ConditionLineRepository {
          LEFT JOIN work_materials wm ON wm.id = cl.source_material_id
          LEFT JOIN documents d ON d.id = cl.document_id
         WHERE cl.work_id = $1
+          AND (d.id IS NULL OR d.lifecycle_status IS NULL OR d.lifecycle_status <> 'voided')
         ORDER BY cl.direction NULLS LAST, cl.source_material_id NULLS FIRST, cl.id DESC
         LIMIT 200`,
       [workId]

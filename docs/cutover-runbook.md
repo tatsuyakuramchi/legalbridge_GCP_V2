@@ -558,6 +558,31 @@ psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
 **適用結果（2026-08-25）**: Cloud SQL Studio（postgres）で適用し、
 `ledger_code` / `remarks` の2行を確認済み。
 
+### 2-7j. 条件明細の台帳同期（grant 066）【適用待ち】
+
+監査（2026-08-25）ギャップ1〜3の解消。V2 の文書作成画面から発行した
+利用許諾条件書・発注書の経済条件（料率・MG/AG・地域言語）を、V1 と同じく
+condition_lines へ upsert し、条件明細一覧・ライセンスマトリクス・消化管理へ反映する。
+
+- **確定時に自動同期**（失敗しても確定は成立・警告表示→文書詳細から手動同期で回復）
+- **手動同期** POST /documents/:id/conditions/sync（admin/legal・冪等）＝
+  既存文書のバックフィルにも使う（文書詳細の「条件明細を台帳へ同期」ボタン）
+- **再発行時**は旧版の条件行を新版へ移設（実績 condition_events の参照を保全）し、
+  特例編集の内容で upsert し直す
+- **読取側**は無効化（voided）文書の条件を一覧・マトリクスから除外するようになった
+- 置換セマンティクスは V1 と同じ安全側：実績（condition_events）・作品参照
+  （work_material_uses）を持つ行は削除しない
+
+```bash
+psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
+  -v confirm_condition_sync=GRANT_PRODUCTION_CONDITION_SYNC \
+  -f infra/gcp/sql/066_production_condition_sync_grants.sql
+```
+
+適用順: grant 066 → デプロイ → 既存の条件書・発注書は文書詳細の
+「条件明細を台帳へ同期」で必要な分だけバックフィル。
+grant 未適用のままでも確定は動く（同期だけ警告でスキップ）。
+
 ### 2-8. 案件 Slack 会話履歴（`slack-matter-thread-history-fix-plan.md`）
 
 案件詳細の「コミュニケーション」に Slack スレッドを時系列表示する。既存の

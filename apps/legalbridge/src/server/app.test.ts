@@ -24,6 +24,9 @@ import { MemorySlackNotificationApprovalRepository } from "./integrations/slack-
 import { MemoryOutboundConditionRepository } from "./ledgers/outbound-condition-repository.js";
 import { MemoryAppSettingsRepository } from "./settings/settings-repository.js";
 import { MemorySecretStore } from "./settings/secret-store.js";
+import {
+  MemoryConditionSyncRepository, type ConditionSyncRepository
+} from "./documents/condition-sync-repository.js";
 
 const schema: DocumentFormSchema = {
   templateKey: "purchase_order",
@@ -352,6 +355,60 @@ test("文書確定は検証済み下書きを発番し外部連携を停止し�
 
   const runtime = await request(target).get("/api/v2/runtime").expect(200);
   assert.deepEqual(runtime.body.writeCapabilities, ["drafts", "documents"]);
+});
+
+test("確定時に金銭条件が条件明細台帳へ同期される（同期失敗でも確定は成立し警告）", async () => {
+  const makeApp = (conditionSync: ConditionSyncRepository) => createApp({
+    templates: new MemoryTemplateRepository([schema]),
+    drafts: new MemoryDraftRepository(),
+    finalizations: new MemoryDocumentFinalizationRepository(),
+    conditionSync,
+    integrations: createIntegrationAdapters()
+  }, {
+    accessMode: "readwrite",
+    requireDatabase: false,
+    writeFeaturesEnabled: true,
+    writeScopes: new Set(["drafts", "documents"])
+  });
+  const finalizeVia = async (target: ReturnType<typeof createApp>) => {
+    const saved = await request(target)
+      .put("/api/v2/document-drafts/VALIDATION-CSYNC-1")
+      .send({
+        templateType: "purchase_order",
+        formData: {
+          PROJECT_TITLE: "条件同期テスト", ORDER_DATE: "2026-08-25",
+          financial_conditions: [{ condition_no: 1, condition_name: "利用許諾料", rate_pct: 10 }]
+        }
+      })
+      .expect(200);
+    return request(target).post("/api/v2/documents/finalize").send({
+      issueKey: "VALIDATION-CSYNC-1", templateType: "purchase_order", templateVersionId: 10,
+      formData: saved.body.draft.formData,
+      expectedDraftUpdatedAt: saved.body.draft.updatedAt
+    });
+  };
+
+  const memory = new MemoryConditionSyncRepository();
+  const ok = await finalizeVia(makeApp(memory)).then((r) => r);
+  assert.equal(ok.status, 201);
+  assert.equal(ok.body.integrations.conditions, "synced");
+  assert.deepEqual(ok.body.conditionSync, { written: 1, deleted: 0 });
+  const docLines = memory.documents.get(ok.body.document.id);
+  assert.equal(docLines?.get(1)?.condition_name, "利用許諾料");
+
+  // 権限未付与（42501）でも確定は成立し、grant 066 の案内が警告として返る。
+  const failing: ConditionSyncRepository = {
+    async upsertDocumentConditions() {
+      const error = new Error("permission denied") as Error & { code?: string };
+      error.code = "42501";
+      throw error;
+    },
+    async moveConditions() { return 0; }
+  };
+  const warned = await finalizeVia(makeApp(failing)).then((r) => r);
+  assert.equal(warned.status, 201);
+  assert.equal(warned.body.integrations.conditions, "warning");
+  assert.match(warned.body.conditionSyncWarning, /grant 066/);
 });
 
 test("読取専用環境でも入力検証とプレビューを許可する", async () => {

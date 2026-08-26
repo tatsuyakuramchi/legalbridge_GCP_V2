@@ -217,6 +217,10 @@ import {
   MemoryDocumentImportRepository, PgDocumentImportRepository, type DocumentImportRepository
 } from "./documents/import-repository.js";
 import { createDocumentImportRouter } from "./documents/import-routes.js";
+import {
+  MemoryConditionSyncRepository, PgConditionSyncRepository, type ConditionSyncRepository
+} from "./documents/condition-sync-repository.js";
+import { createConditionSyncRouter } from "./documents/condition-sync-routes.js";
 import { MemoryLedgerRepository, PgLedgerRepository, type LedgerRepository } from "./ledgers/repository.js";
 import { createLedgerRouter } from "./ledgers/routes.js";
 import { createOutboundConditionRouter } from "./ledgers/outbound-conditions.js";
@@ -421,6 +425,8 @@ export interface AppDependencies {
   contractCheck?: ContractCheckRepository;
   snippets?: SnippetsRepository;
   attachments?: AttachmentsRepository;
+  // 条件明細（condition_lines）の台帳同期（確定時・再発行時・手動）。
+  conditionSync?: ConditionSyncRepository;
   // Phase 9 自動化基盤：ジョブ本体・Webhook ハンドラの注入口（既定は空＝無効）。
   jobRunners?: Record<string, JobRunner>;
   cloudSignWebhookHandler?: WebhookHandler;
@@ -1171,6 +1177,10 @@ export function createApp(
       (request.method === "PUT" &&
         /^\/documents\/\d+\/(import-details|display-fields)$/.test(request.path));
     if (documentFinalizeEnabled && isDocumentImport) return next();
+    // 条件明細の手動同期（確定時同期のリカバリ・バックフィル）。ルータ内で admin/legal 限定。
+    const isConditionSync =
+      request.method === "POST" && /^\/documents\/\d+\/conditions\/sync$/.test(request.path);
+    if (documentFinalizeEnabled && isConditionSync) return next();
     const isDriveStorage =
       request.method === "POST" && /^\/documents\/[^/]+\/drive(\/regenerate)?$/.test(request.path);
     if (driveStorageEnabled && isDriveStorage) return next();
@@ -1302,13 +1312,27 @@ export function createApp(
   ));
   // ひな形プレビュー（サンプル値入りのテンプレ出力・読み取り専用・全ロール）。
   app.use("/api/v2", createTemplateSampleRouter(dependencies.templates));
+  // 条件明細（condition_lines）の台帳同期（V1 の確定時 upsert 相当・grant 066）。
+  // DB が無いテスト環境では Memory（route 検証用）。
+  const conditionSyncDatabase = getPool();
+  const conditionSync = dependencies.conditionSync
+    ?? (conditionSyncDatabase
+      ? new PgConditionSyncRepository(conditionSyncDatabase)
+      : new MemoryConditionSyncRepository());
   app.use("/api/v2", createDocumentFinalizationRouter(
     dependencies.templates,
     dependencies.drafts,
-    dependencies.finalizations ?? new MemoryDocumentFinalizationRepository()
+    dependencies.finalizations ?? new MemoryDocumentFinalizationRepository(),
+    conditionSync
   ));
   const documentRegistry =
     dependencies.documentRegistry ?? new MemoryDocumentRegistryRepository();
+  // 手動同期（確定時同期の失敗リカバリ・既存文書のバックフィル）。確定と同じゲート。
+  app.use("/api/v2", createConditionSyncRouter({
+    registry: documentRegistry,
+    conditionSync,
+    writeEnabled: documentFinalizeEnabled
+  }));
   // 文書ルックアップ（読取・10-6）。/documents/:id より前に評価させるため registry より先にマウント。
   const lookupDatabase = getPool();
   const documentLookup = dependencies.documentLookup
@@ -1430,7 +1454,8 @@ export function createApp(
     dependencies.documentReissue,
     documentReissueEnabled,
     documentVoidNotifier,
-    documentVoidNotifier ? async (sourceId) => (await documentRegistry.find(sourceId))?.issueKey ?? null : undefined
+    documentVoidNotifier ? async (sourceId) => (await documentRegistry.find(sourceId))?.issueKey ?? null : undefined,
+    conditionSync
   ));
   // システム設定（会社プロファイル・Phase 11-1）。読取 admin・保存 guarded（scope 'settings'・grant 036）。
   app.use("/api/v2", createSettingsRouter(dependencies.appSettings, appSettingsWriteEnabled, {

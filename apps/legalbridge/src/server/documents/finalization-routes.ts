@@ -7,6 +7,8 @@ import {
 } from "./finalization-repository.js";
 import { validateDocumentForm } from "./form-mapper.js";
 import type { TemplateRepository } from "./template-repository.js";
+import { buildDocumentConditionInputs, hasConditionSyncData } from "./condition-sync.js";
+import type { ConditionSyncRepository } from "./condition-sync-repository.js";
 
 const finalizeSchema = z.object({
   issueKey: z.string().trim().min(1).max(100),
@@ -20,7 +22,9 @@ const finalizeSchema = z.object({
 export function createDocumentFinalizationRouter(
   templates: TemplateRepository,
   drafts: DraftRepository,
-  finalizations: DocumentFinalizationRepository
+  finalizations: DocumentFinalizationRepository,
+  // 条件明細（condition_lines）の台帳同期。未指定なら従来どおり documents 行のみ。
+  conditionSync?: ConditionSyncRepository
 ) {
   const router = Router();
 
@@ -51,13 +55,34 @@ export function createDocumentFinalizationRouter(
         createdBy: actor.source === "iap" ? actor.email : input.createdBy
       }, draft);
       await drafts.remove(input.issueKey, input.templateType);
+
+      // 条件明細の台帳同期（V1 の確定時 upsert 相当）。文書の確定自体は成立させ、
+      // 同期失敗は警告として返す＝手動同期（/documents/:id/conditions/sync）で回復できる。
+      let conditionSyncResult: { written: number; deleted: number } | null = null;
+      let conditionSyncWarning: string | undefined;
+      if (conditionSync && hasConditionSyncData(input.formData)) {
+        try {
+          const synced = await conditionSync.upsertDocumentConditions(
+            document.id, buildDocumentConditionInputs(input.formData)
+          );
+          conditionSyncResult = { written: synced.written, deleted: synced.deleted };
+        } catch (error) {
+          conditionSyncWarning = (error as { code?: string })?.code === "42501"
+            ? "条件明細の台帳同期権限が未付与です（grant 066）。適用後、文書詳細の「条件明細を台帳へ同期」で反映できます"
+            : `条件明細の台帳同期に失敗しました（文書詳細から再同期できます）: ${String((error as Error)?.message ?? error).slice(0, 200)}`;
+        }
+      }
+
       response.status(201).json({
         document,
         integrations: {
           pdf: "pending",
           drive: "disabled",
-          backlog: "disabled"
-        }
+          backlog: "disabled",
+          conditions: conditionSyncResult ? "synced" : conditionSyncWarning ? "warning" : "none"
+        },
+        ...(conditionSyncResult ? { conditionSync: conditionSyncResult } : {}),
+        ...(conditionSyncWarning ? { conditionSyncWarning } : {})
       });
     } catch (error) {
       if (error instanceof DocumentFinalizationConflictError) {
