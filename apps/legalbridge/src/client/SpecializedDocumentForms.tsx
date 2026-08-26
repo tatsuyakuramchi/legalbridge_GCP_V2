@@ -319,6 +319,7 @@ function RoyaltyStatementEditor({ formData, onChange }: {
     </div>
 
     {mode === "single" && <>
+      <ConditionEconomicsFetch formData={formData} onChange={onChange} />
       <div className="mode-inline">
         <span className="mode-label">算定タイプ:</span>
         <button type="button" className={`matter-chip ${String(formData.rsCalcType ?? "") === "period" ? "active" : ""}`}
@@ -406,6 +407,52 @@ function RoyaltyStatementEditor({ formData, onChange }: {
         {numField("rsInRatePct", "イン側料率（%）", "円 base 合計 × この料率 = 支払額（行ごとに ceil）")}
       </div>
     </>}
+  </div>;
+}
+
+// ── 条件明細とのひも付け（計算書 → 消化管理の連動）──────────────────────
+// 条件明細ID を入れて「条件から取得」すると、料率・MG/AG・AG消化済み累計を
+// DB（condition_lines / condition_events）から取得してプリフィルする＝手入力による
+// 契約条件とのズレ・AG充当の過大過少を防ぐ（V1 getRoyaltyConditionEconomics 相当）。
+// ひも付けたまま確定すると、消化イベント（royalty_calc）がサーバ再計算値で自動記帳される。
+function ConditionEconomicsFetch({ formData, onChange }: {
+  formData: DocumentFormData;
+  onChange: (name: string, value: unknown) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState("");
+  const idValue = String(formData.rsConditionLineId ?? "");
+  const yen = (v: number) => `¥${Number(v || 0).toLocaleString("ja-JP")}`;
+
+  async function fetchEconomics() {
+    setBusy(true); setNote("");
+    try {
+      const response = await fetch(`/api/v2/royalty/condition-economics/${Number(idValue)}`);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) { setNote(`✗ ${data.error ?? "取得に失敗しました"}`); return; }
+      const economics = data.economics;
+      onChange("rsRatePct", economics.ratePct);
+      onChange("rsMgAmount", economics.mgAmount);
+      onChange("rsAgAmount", economics.agAmount);
+      onChange("rsAgConsumedBefore", economics.agConsumed);
+      // 加算型でセル行のIDを入れた場合は、記帳先を代表行へ正規化する。
+      if (economics.representativeLineId && economics.representativeLineId !== Number(idValue)) {
+        onChange("rsConditionLineId", economics.representativeLineId);
+      }
+      setNote(`✓ ${economics.conditionName ?? "条件"}: 料率${economics.ratePct}%・MG${yen(economics.mgAmount)}・AG${yen(economics.agAmount)}`
+        + `（消化済み${yen(economics.agConsumed)}・残${yen(economics.agRemaining)}）を反映しました`);
+    } catch { setNote("✗ 通信に失敗しました"); } finally { setBusy(false); }
+  }
+
+  return <div className="mode-inline">
+    <span className="mode-label">条件明細:</span>
+    <input type="number" style={{ width: "110px" }} placeholder="条件明細ID"
+      value={idValue}
+      onChange={(e) => onChange("rsConditionLineId", e.target.value === "" ? "" : Number(e.target.value))} />
+    <button type="button" className="matter-chip" disabled={busy || !Number(idValue)}
+      onClick={() => void fetchEconomics()}>{busy ? "取得中…" : "条件から取得"}</button>
+    <small>「お金 → 条件明細」のIDを入れて取得すると、料率・MG/AG・<b>AG消化済み累計</b>が台帳から自動で入ります。ひも付けたまま確定すると消化イベントも自動記帳されます（空欄なら従来どおり手動）</small>
+    {note && <small className={note.startsWith("✓") ? "settings-effective" : "fx-warn"}>{note}</small>}
   </div>;
 }
 

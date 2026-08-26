@@ -27,6 +27,7 @@ import { MemorySecretStore } from "./settings/secret-store.js";
 import {
   MemoryConditionSyncRepository, type ConditionSyncRepository
 } from "./documents/condition-sync-repository.js";
+import { MemoryRoyaltyEventRepository } from "./royalty/event-repository.js";
 
 const schema: DocumentFormSchema = {
   templateKey: "purchase_order",
@@ -409,6 +410,48 @@ test("確定時に金銭条件が条件明細台帳へ同期される（同期�
   assert.equal(warned.status, 201);
   assert.equal(warned.body.integrations.conditions, "warning");
   assert.match(warned.body.conditionSyncWarning, /grant 066/);
+});
+
+test("計算書の確定で消化イベントが自動記帳される（条件明細ひも付け時・サーバ再計算値）", async () => {
+  const royaltySchema: DocumentFormSchema = {
+    templateKey: "royalty_statement", templateVersionId: 20, label: "利用許諾料計算書", fields: []
+  } as DocumentFormSchema;
+  const royaltyEvents = new MemoryRoyaltyEventRepository(new Set([1]), new Set([1]));
+  const target = createApp({
+    templates: new MemoryTemplateRepository([royaltySchema]),
+    drafts: new MemoryDraftRepository(),
+    finalizations: new MemoryDocumentFinalizationRepository(),
+    royaltyEvents,
+    integrations: createIntegrationAdapters()
+  }, {
+    accessMode: "readwrite",
+    requireDatabase: false,
+    writeFeaturesEnabled: true,
+    royaltyEventWritesEnabled: true,
+    writeScopes: new Set(["drafts", "documents", "royalty-events"])
+  });
+  const saved = await request(target)
+    .put("/api/v2/document-drafts/VALIDATION-ROY-1")
+    .send({
+      templateType: "royalty_statement",
+      formData: {
+        statementMode: "single", rsConditionLineId: 1, rsCalcType: "period", rsBasisKind: "sales",
+        rsMsrp: 2000000, rsRatePct: 8, rsPeriodFrom: "2026-04-01", rsPeriodTo: "2026-06-30"
+      }
+    })
+    .expect(200);
+  const finalized = await request(target).post("/api/v2/documents/finalize").send({
+    issueKey: "VALIDATION-ROY-1", templateType: "royalty_statement", templateVersionId: 20,
+    formData: saved.body.draft.formData,
+    expectedDraftUpdatedAt: saved.body.draft.updatedAt
+  }).expect(201);
+  assert.equal(finalized.body.integrations.royaltyEvent, "recorded");
+  assert.equal(royaltyEvents.events.length, 1);
+  // サーバ再計算: ceil(2,000,000 × 8%) = 160,000（MG/AG なし）
+  assert.equal(royaltyEvents.events[0].amountExTax, 160000);
+  assert.equal(royaltyEvents.events[0].conditionLineId, 1);
+  assert.equal(royaltyEvents.events[0].documentId, finalized.body.document.id);
+  assert.equal(royaltyEvents.events[0].period, "2026-06");
 });
 
 test("読取専用環境でも入力検証とプレビューを許可する", async () => {

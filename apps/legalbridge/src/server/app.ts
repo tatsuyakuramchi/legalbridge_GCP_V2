@@ -221,6 +221,10 @@ import {
   MemoryConditionSyncRepository, PgConditionSyncRepository, type ConditionSyncRepository
 } from "./documents/condition-sync-repository.js";
 import { createConditionSyncRouter } from "./documents/condition-sync-routes.js";
+import {
+  createConditionEconomicsRouter, PgConditionEconomicsRepository,
+  type ConditionEconomicsRepository
+} from "./royalty/condition-economics.js";
 import { MemoryLedgerRepository, PgLedgerRepository, type LedgerRepository } from "./ledgers/repository.js";
 import { createLedgerRouter } from "./ledgers/routes.js";
 import { createOutboundConditionRouter } from "./ledgers/outbound-conditions.js";
@@ -427,6 +431,8 @@ export interface AppDependencies {
   attachments?: AttachmentsRepository;
   // 条件明細（condition_lines）の台帳同期（確定時・再発行時・手動）。
   conditionSync?: ConditionSyncRepository;
+  // 条件明細の経済条件＋AG消化累計の読取（計算書プリフィル用）。
+  conditionEconomics?: ConditionEconomicsRepository;
   // Phase 9 自動化基盤：ジョブ本体・Webhook ハンドラの注入口（既定は空＝無効）。
   jobRunners?: Record<string, JobRunner>;
   cloudSignWebhookHandler?: WebhookHandler;
@@ -1323,7 +1329,17 @@ export function createApp(
     dependencies.templates,
     dependencies.drafts,
     dependencies.finalizations ?? new MemoryDocumentFinalizationRepository(),
-    conditionSync
+    conditionSync,
+    // 計算書確定時の消化イベント自動記帳（royalty-events スコープが有効なときのみ）。
+    dependencies.royaltyEvents
+      ? { repository: dependencies.royaltyEvents, enabled: royaltyEventWriteEnabled }
+      : undefined
+  ));
+  // 条件明細の経済条件＋AG消化累計（計算書フォームのプリフィル用・読み取り専用）。
+  const conditionEconomicsDatabase = getPool();
+  app.use("/api/v2", createConditionEconomicsRouter(
+    dependencies.conditionEconomics
+      ?? (conditionEconomicsDatabase ? new PgConditionEconomicsRepository(conditionEconomicsDatabase) : undefined)
   ));
   const documentRegistry =
     dependencies.documentRegistry ?? new MemoryDocumentRegistryRepository();

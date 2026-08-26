@@ -9,6 +9,9 @@ import { validateDocumentForm } from "./form-mapper.js";
 import type { TemplateRepository } from "./template-repository.js";
 import { buildDocumentConditionInputs, hasConditionSyncData } from "./condition-sync.js";
 import type { ConditionSyncRepository } from "./condition-sync-repository.js";
+import { royaltyEventInputFromStatement } from "../royalty/statement-event.js";
+import { calculateFee } from "../../royalty/calc.js";
+import type { RoyaltyEventRepository } from "../royalty/event-repository.js";
 
 const finalizeSchema = z.object({
   issueKey: z.string().trim().min(1).max(100),
@@ -24,7 +27,10 @@ export function createDocumentFinalizationRouter(
   drafts: DraftRepository,
   finalizations: DocumentFinalizationRepository,
   // 条件明細（condition_lines）の台帳同期。未指定なら従来どおり documents 行のみ。
-  conditionSync?: ConditionSyncRepository
+  conditionSync?: ConditionSyncRepository,
+  // 利用許諾料計算書の確定時の消化イベント自動記帳（V1 syncRoyaltyCalcEvent 相当）。
+  // royalty-events スコープが有効なときだけ渡される。
+  royaltyEvents?: { repository: RoyaltyEventRepository; enabled: boolean }
 ) {
   const router = Router();
 
@@ -73,16 +79,45 @@ export function createDocumentFinalizationRouter(
         }
       }
 
+      // 計算書の消化イベント自動記帳（単票＋条件明細ひも付けありのみ・サーバ再計算値）。
+      // 失敗しても確定は成立＝警告を返し、/royalty/events から手動記帳で回復できる。
+      let royaltyEventRecorded = false;
+      let royaltyEventWarning: string | undefined;
+      if (royaltyEvents?.enabled && input.templateType === "royalty_statement") {
+        const eventInput = royaltyEventInputFromStatement(input.formData);
+        if (eventInput) {
+          try {
+            const fee = calculateFee(eventInput.terms, eventInput.adjustments, eventInput.taxRatePct);
+            await royaltyEvents.repository.appendRoyaltyCalcEvent({
+              conditionLineId: eventInput.conditionLineId,
+              documentId: document.id,
+              period: eventInput.period,
+              backlogIssueKey: input.issueKey,
+              amountExTax: fee.actual_ex_tax,
+              mgConsumedThisTime: 0,
+              agConsumedThisTime: fee.ag_offset_this_time
+            });
+            royaltyEventRecorded = true;
+          } catch (error) {
+            royaltyEventWarning =
+              `消化イベントの自動記帳に失敗しました（実績入力から手動記帳できます）: ` +
+              String((error as Error)?.message ?? error).slice(0, 200);
+          }
+        }
+      }
+
       response.status(201).json({
         document,
         integrations: {
           pdf: "pending",
           drive: "disabled",
           backlog: "disabled",
-          conditions: conditionSyncResult ? "synced" : conditionSyncWarning ? "warning" : "none"
+          conditions: conditionSyncResult ? "synced" : conditionSyncWarning ? "warning" : "none",
+          royaltyEvent: royaltyEventRecorded ? "recorded" : royaltyEventWarning ? "warning" : "none"
         },
         ...(conditionSyncResult ? { conditionSync: conditionSyncResult } : {}),
-        ...(conditionSyncWarning ? { conditionSyncWarning } : {})
+        ...(conditionSyncWarning ? { conditionSyncWarning } : {}),
+        ...(royaltyEventWarning ? { royaltyEventWarning } : {})
       });
     } catch (error) {
       if (error instanceof DocumentFinalizationConflictError) {
