@@ -51,6 +51,13 @@ export const config = {
     legalEmails: emailSet(process.env.AUTH_LEGAL_EMAILS),
     requesterDomains: emailSet(process.env.AUTH_REQUESTER_DOMAINS)
   },
+  // SPLL 公開サイト（クリエーター向け）。デモとしてこのサービス上へ相乗りさせる。
+  //   public=true にすると IAP を通さず誰でも閲覧できる。既定は false（社内認証の内側）。
+  spllSite: {
+    enabled: process.env.SPLL_SITE_ENABLED !== "false",
+    basePath: process.env.SPLL_SITE_BASE_PATH ?? "/spll",
+    public: process.env.SPLL_SITE_PUBLIC === "true"
+  },
   googleDriveFolderId: process.env.GOOGLE_DRIVE_FOLDER_ID ?? "",
   googleServiceAccountKeyPath: process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH ?? "",
   driveEnvironmentTag: process.env.DRIVE_ENVIRONMENT_TAG ?? "validation",
