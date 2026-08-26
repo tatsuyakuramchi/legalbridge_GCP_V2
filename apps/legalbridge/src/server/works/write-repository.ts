@@ -77,11 +77,15 @@ export class PgWorkWriteRepository implements WorkWriteRepository {
     if (parentWorkId === id) {
       throw new WorkWriteError("WORK_LINEAGE_CYCLE", "作品を自身の親に設定できません");
     }
+    // 深さ上限つき（読取側と同じ防御・監査④）：V1時代に混入済みの parent_work_id
+    // 循環データが系譜上にあると、無制限の再帰は保存リクエストをハングさせる。
     const result = await this.database.query(
       `WITH RECURSIVE up AS (
-         SELECT id, parent_work_id FROM works WHERE id = $1
+         SELECT id, parent_work_id, 1 AS depth FROM works WHERE id = $1
          UNION ALL
-         SELECT w.id, w.parent_work_id FROM works w JOIN up ON w.id = up.parent_work_id
+         SELECT w.id, w.parent_work_id, up.depth + 1
+           FROM works w JOIN up ON w.id = up.parent_work_id
+          WHERE up.depth < 50
        )
        SELECT 1 FROM up WHERE id = $2 LIMIT 1`,
       [parentWorkId, id]
@@ -98,7 +102,16 @@ export class PgWorkWriteRepository implements WorkWriteRepository {
     for (const [key, column] of Object.entries(COLUMNS)) {
       const value = (input as Record<string, unknown>)[key];
       if (value === undefined) continue;
+      // works.kind は NOT NULL DEFAULT 'own'。null は「変更しない」として無視する
+      // （従来は 23502 →「必須項目が不足しています」で保存不能になっていた・監査④）。
+      if (key === "kind" && value === null) continue;
       values.push(value); assignments.push(`${column} = $${values.length}`);
+    }
+    if (!assignments.length) {
+      // kind: null 単独などで更新対象が消えた場合は現状返し（no-op）。
+      const current = await this.find(id);
+      if (!current) throw new WorkWriteError("WORK_NOT_FOUND", "指定した作品が見つかりません");
+      return { id: current.id, workCode: current.workCode ?? null };
     }
     values.push(id);
     try {
@@ -185,7 +198,10 @@ export class MemoryWorkWriteRepository implements WorkWriteRepository {
         cursor = this.works.get(cursor)?.parentWorkId ?? null;
       }
     }
-    Object.assign(existing, input);
+    // Pg 実装と同じく kind: null は「変更しない」（works.kind は NOT NULL DEFAULT 'own'）。
+    const patch: Record<string, unknown> = { ...input };
+    if (patch.kind === null) delete patch.kind;
+    Object.assign(existing, patch);
     return { id, workCode: existing.workCode };
   }
   async find(id: number) { return this.works.get(id) ?? null; }

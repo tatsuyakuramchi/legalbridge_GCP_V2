@@ -61,6 +61,17 @@ test("作品を部分更新できる", async () => {
   assert.equal(response.body.id, created.body.id);
 });
 
+test("kind: null は「変更しない」＝既存の区分を保持したまま保存できる（監査④）", async () => {
+  const { app, repository } = appFor({ enabled: true });
+  const created = await request(app).post("/api/v2/works").send({ title: "区分保持", kind: "licensed_in" });
+  // 旧クライアント互換: kind: null を送っても 23502 で落とさず、区分は保持される。
+  const response = await request(app).patch(`/api/v2/works/${created.body.id}`)
+    .send({ title: "区分保持（改題）", kind: null });
+  assert.equal(response.status, 200);
+  assert.equal(repository.works.get(created.body.id)!.kind, "licensed_in");
+  assert.equal(repository.works.get(created.body.id)!.title, "区分保持（改題）");
+});
+
 test("編集用に作品の生値を返す", async () => {
   const { app } = appFor({ enabled: true });
   const created = await request(app).post("/api/v2/works").send({ title: "生値作品", ledgerCode: "LG-1" });

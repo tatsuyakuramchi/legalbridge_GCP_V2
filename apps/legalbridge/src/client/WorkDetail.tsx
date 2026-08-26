@@ -44,11 +44,16 @@ function Degraded() {
 }
 
 type EditForm = {
-  title: string; titleKana: string; workType: string; status: string; kind: "" | "licensed_in" | "own";
+  title: string; titleKana: string; workType: string; status: string; kind: string;
   derivationType: string; isOriginal: boolean; parentWorkId: string;
   creatorName: string; publisherName: string; ledgerCode: string; remarks: string;
   rightsHolderVendorId: string;
+  // 編集開始時のステータス・区分（未変更なら送らない＝旧語彙のレガシー値を黙って消さない）。
+  statusInitial: string; kindInitial: string;
 };
+
+const KNOWN_WORK_STATUSES = ["planning", "in_production", "released"];
+const KNOWN_WORK_KINDS = ["licensed_in", "own"];
 
 type RightsForm = {
   id: number | null; materialId: string; sourceType: string; sourceRole: string;
@@ -247,8 +252,10 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
     const w = detail.work;
     setForm({
       title: w.title ?? "", titleKana: w.titleKana ?? "", workType: w.workType ?? "",
-      status: ["planning", "in_production", "released"].includes(w.status ?? "") ? (w.status as string) : "",
-      kind: (w.kind === "licensed_in" || w.kind === "own") ? w.kind : "",
+      // 旧語彙（suspended 等）はそのまま保持して「（旧データ）」として表示する。
+      // "" に丸めると保存時に status:null が送られてレガシー値が黙って消える（監査④）。
+      status: w.status ?? "", statusInitial: w.status ?? "",
+      kind: w.kind ?? "", kindInitial: w.kind ?? "",
       derivationType: w.derivationType ?? "", isOriginal: w.isOriginal === true,
       parentWorkId: w.parentWorkId != null ? String(w.parentWorkId) : "",
       creatorName: w.creatorName ?? "", publisherName: w.publisherName ?? "",
@@ -265,7 +272,6 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
       title: form.title.trim(),
       titleKana: form.titleKana.trim() || null,
       workType: form.workType.trim() || null,
-      status: form.status || null,
       derivationType: form.derivationType.trim() || null,
       isOriginal: form.isOriginal,
       parentWorkId: form.parentWorkId.trim() ? Number(form.parentWorkId.trim()) : null,
@@ -275,7 +281,11 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
       remarks: form.remarks.trim() || null,
       rightsHolderVendorId: form.rightsHolderVendorId ? Number(form.rightsHolderVendorId) : null
     };
-    body.kind = form.kind || null;   // 未設定選択で null（クリア）を送る
+    // ステータス・区分は「変更したときだけ」送る（監査④）：
+    //   - 旧語彙（suspended 等）のまま無関係な項目を編集しても消えない
+    //   - 区分は works.kind が NOT NULL のため未変更で null を送ると保存不能だった
+    if (form.status !== form.statusInitial) body.status = form.status || null;
+    if (form.kind !== form.kindInitial && KNOWN_WORK_KINDS.includes(form.kind)) body.kind = form.kind;
     try {
       const res = await fetch(`/api/v2/works/${selectedId}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
@@ -354,11 +364,15 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
                     <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
                       <option value="">未設定</option><option value="planning">企画中</option>
                       <option value="in_production">制作中</option><option value="released">発売済み</option>
+                      {form.status !== "" && !KNOWN_WORK_STATUSES.includes(form.status) &&
+                        <option value={form.status}>{form.status}（旧データ）</option>}
                     </select>
                   </label>
                   <label>区分
-                    <select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value as EditForm["kind"] })}>
-                      <option value="">未設定</option><option value="licensed_in">ライセンスイン</option><option value="own">自社作品</option>
+                    <select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })}>
+                      <option value="licensed_in">ライセンスイン</option><option value="own">自社作品</option>
+                      {!KNOWN_WORK_KINDS.includes(form.kind) &&
+                        <option value={form.kind}>{form.kind ? `${form.kind}（旧データ）` : "（未設定・変更しない）"}</option>}
                     </select>
                   </label>
                   <label>派生種別<input value={form.derivationType} onChange={(e) => setForm({ ...form, derivationType: e.target.value })} placeholder="licensed_derivative 等" /></label>
