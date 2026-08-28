@@ -17,13 +17,24 @@ export function templateUsesDocument(template: MatterSlackTemplateId): boolean {
   return template === 2 || template === 3;
 }
 
+/** 閲覧リンク1件。label は文書番号など（複数載せるときの見出しに使う）。 */
+export interface TemplateLink {
+  url: string;
+  label?: string | null;
+}
+
 /**
  * 定型文の本文。to / cc は表示用に整形済みの文字列を渡す
  * （サーバ: `<@U0ABC123>` ／ 画面のプレビュー: `@山田 太郎`）。
+ * 閲覧リンクは複数可（driveLinks）。1件なら従来と同じ1行、複数なら箇条書きで
+ * 文書番号を添える。旧 driveLink（単数）も受ける（呼び出し側の移行を強制しない）。
  */
 export function composeTemplateText(
   template: MatterSlackTemplateId,
-  input: { to: readonly string[]; cc?: readonly string[]; driveLink?: string | null }
+  input: {
+    to: readonly string[]; cc?: readonly string[];
+    driveLink?: string | null; driveLinks?: ReadonlyArray<TemplateLink>;
+  }
 ): string {
   const to = [...input.to];
   const cc = [...(input.cc ?? [])];
@@ -35,8 +46,13 @@ export function composeTemplateText(
   }
   const lead = template === 2 ? "文書作成が完了しました。" : "評価が完了しました。";
   const head = [lead, to.join(" ")].filter((part) => part.length > 0).join(" ");
-  const link = input.driveLink?.trim() ? `\n閲覧リンク: ${input.driveLink.trim()}` : "";
-  return `${head}${link}`;
+  const links = (input.driveLinks ?? (input.driveLink ? [{ url: input.driveLink }] : []))
+    .map((l) => ({ url: l.url.trim(), label: l.label?.trim() || "" }))
+    .filter((l) => l.url.length > 0);
+  if (!links.length) return head;
+  if (links.length === 1) return `${head}\n閲覧リンク: ${links[0].url}`;
+  const list = links.map((l) => `・${l.label ? `${l.label}: ` : ""}${l.url}`).join("\n");
+  return `${head}\n閲覧リンク:\n${list}`;
 }
 
 // ── メンション候補の絞り込み ─────────────────────────────────────────

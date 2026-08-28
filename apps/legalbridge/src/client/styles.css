@@ -463,6 +463,11 @@ header input { width: 100%; border: 1px solid var(--border); border-radius: var(
 .mention-picker-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; max-height: 132px; overflow-y: auto; }
 .matter-slack-doc { display: block; margin-top: 8px; font-size: 11px; color: #475569; }
 .matter-slack-doc select { display: block; margin-top: 4px; border: 1px solid #cbd5e1; border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 12px; }
+/* 閲覧リンクの複数選択（チェックボックス列） */
+.matter-slack-doc-list { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 4px; max-height: 96px; overflow-y: auto; }
+.matter-slack-doc-item { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: #334155;
+  border: 1px solid #e2e8f0; border-radius: 6px; padding: 3px 8px; background: white; cursor: pointer; }
+.matter-slack-doc-item input { margin: 0; }
 .matter-slack > textarea { width: 100%; margin-top: 8px; border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px; font: inherit; font-size: 12px; resize: vertical; box-sizing: border-box; }
 /* 送信前プレビュー。実際の投稿では @氏名 が Slack のメンションに変わる。 */
 .matter-slack-preview { flex: 1; margin: 0; border: 1px solid #e2e8f0; border-radius: 8px; background: white; padding: 8px; font: inherit; font-size: 12px; color: #334155; white-space: pre-wrap; word-break: break-word; min-height: 20px; }

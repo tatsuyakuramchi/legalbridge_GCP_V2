@@ -71,6 +71,30 @@ test("閲覧リンクが無ければリンク行を出さない", () => {
     "文書作成が完了しました。 @山田 太郎");
 });
 
+test("閲覧リンクは複数載せられる（箇条書き・文書番号を見出しに）", () => {
+  const text = composeTemplateText(2, {
+    to: ["@山田 太郎"],
+    driveLinks: [
+      { url: "https://drive/x", label: "ARC-PO-2026-0001" },
+      { url: "https://drive/y", label: "ARC-IC-2026-0002" }
+    ]
+  });
+  assert.equal(text,
+    "文書作成が完了しました。 @山田 太郎\n閲覧リンク:\n・ARC-PO-2026-0001: https://drive/x\n・ARC-IC-2026-0002: https://drive/y");
+});
+
+test("複数指定でも1件なら従来と同じ1行の形（ラベルは出さない）", () => {
+  assert.equal(
+    composeTemplateText(2, { to: ["@山田 太郎"], driveLinks: [{ url: "https://drive/x", label: "DOC-1" }] }),
+    "文書作成が完了しました。 @山田 太郎\n閲覧リンク: https://drive/x");
+});
+
+test("driveLinks の空URLは除外し、全滅ならリンク行を出さない", () => {
+  assert.equal(
+    composeTemplateText(2, { to: ["@山田 太郎"], driveLinks: [{ url: "  " }, { url: "" }] }),
+    "文書作成が完了しました。 @山田 太郎");
+});
+
 test("リンクを載せるのは 2 と 3 だけ", () => {
   assert.equal(templateUsesDocument(1), false);
   assert.equal(templateUsesDocument(2), true);

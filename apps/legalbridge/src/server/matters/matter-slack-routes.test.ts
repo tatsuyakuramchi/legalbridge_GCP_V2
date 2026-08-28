@@ -39,6 +39,7 @@ function appFor(options: {
   channel?: MatterSlackChannelAdapter; threads?: MemoryMatterSlackThreadRepository;
   mentions?: MemoryMatterMentionRepository; legalChannelId?: string;
   granter?: MemoryDrivePermissionGranter; withDocument?: boolean;
+  documents?: MatterDetail["documents"];
 }) {
   const channel = options.channel ?? new FakeChannel();
   const threads = options.threads ?? new MemoryMatterSlackThreadRepository();
@@ -48,9 +49,11 @@ function appFor(options: {
     enabled: options.enabled ?? true,
     legalChannelId: options.legalChannelId ?? "C0LEGAL"
   };
-  const matterDetail: MatterDetail = options.withDocument
-    ? { ...detail, documents: [{ id: 9, documentNumber: "DOC-1", templateType: "license", issueKey: "LB-5", createdAt: "2026-08-07T00:00:00.000Z", driveLink: "https://drive.google.com/file/d/1Abc_def-GHI23456789/view" }] }
-    : detail;
+  const matterDetail: MatterDetail = options.documents
+    ? { ...detail, documents: options.documents }
+    : options.withDocument
+      ? { ...detail, documents: [{ id: 9, documentNumber: "DOC-1", templateType: "license", issueKey: "LB-5", createdAt: "2026-08-07T00:00:00.000Z", driveLink: "https://drive.google.com/file/d/1Abc_def-GHI23456789/view" }] }
+      : detail;
   const app = express();
   app.use(express.json());
   app.use((_req, res, next) => {
@@ -139,6 +142,40 @@ test("テンプレ2は閲覧リンク（最新文書）を載せ、メンショ�
   assert.equal(res.body.grant.skipped, false);
   assert.deepEqual(res.body.grant.granted, ["kono@example.com"]);
   assert.deepEqual(granter.grants, [{ fileId: "1Abc_def-GHI23456789", email: "kono@example.com" }]);
+});
+
+const TWO_DOCUMENTS: MatterDetail["documents"] = [
+  { id: 9, documentNumber: "DOC-1", templateType: "license", issueKey: "LB-5",
+    createdAt: "2026-08-07T00:00:00.000Z", driveLink: "https://drive.google.com/file/d/1Abc_def-GHI23456789/view" },
+  { id: 10, documentNumber: "DOC-2", templateType: "inspection_certificate", issueKey: "LB-5",
+    createdAt: "2026-08-08T00:00:00.000Z", driveLink: "https://drive.google.com/file/d/2Xyz_uvw-QRS98765432/view" }
+];
+
+test("テンプレ2は documentIds で複数リンクを箇条書きし、全ファイルへDrive権限を付与する", async () => {
+  const threads = new MemoryMatterSlackThreadRepository();
+  const granter = new MemoryDrivePermissionGranter();
+  const { app } = appFor({ enabled: true, threads, granter, documents: TWO_DOCUMENTS });
+  await request(app).post("/api/v2/matters/5/slack/thread").send({});
+  const res = await request(app).post("/api/v2/matters/5/slack/template")
+    .send({ template: 2, mentions: ["U01ABCDEFGH"], documentIds: [9, 10] });
+  assert.equal(res.status, 201);
+  assert.match(res.body.text, /閲覧リンク:\n・DOC-1: https:\/\/drive\.google\.com.*\n・DOC-2: https:\/\/drive\.google\.com/);
+  assert.deepEqual(res.body.grant.granted, ["kono@example.com"]);
+  assert.deepEqual(granter.grants.map((g) => g.fileId),
+    ["1Abc_def-GHI23456789", "2Xyz_uvw-QRS98765432"]);
+});
+
+test("documentIds: [] は「リンクなし」の明示＝最新文書へフォールバックしない", async () => {
+  const threads = new MemoryMatterSlackThreadRepository();
+  const granter = new MemoryDrivePermissionGranter();
+  const { app } = appFor({ enabled: true, threads, granter, documents: TWO_DOCUMENTS });
+  await request(app).post("/api/v2/matters/5/slack/thread").send({});
+  const res = await request(app).post("/api/v2/matters/5/slack/template")
+    .send({ template: 2, mentions: ["U01ABCDEFGH"], documentIds: [] });
+  assert.equal(res.status, 201);
+  assert.doesNotMatch(res.body.text, /閲覧リンク/);
+  assert.equal(res.body.grant.skipped, true);
+  assert.equal(granter.grants.length, 0);
 });
 
 test("テンプレ1(CloudSign送信済)はDrive付与せず相手方チェーンを投稿", async () => {

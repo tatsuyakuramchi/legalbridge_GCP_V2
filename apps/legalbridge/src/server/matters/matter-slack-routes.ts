@@ -39,6 +39,8 @@ const templateBody = z.object({
   mentions: z.array(z.string().trim()).max(20).default([]),
   cc: z.array(z.string().trim()).max(20).optional(),
   documentId: z.coerce.number().int().positive().optional(),
+  // 閲覧リンクを複数載せる（documentId の複数版・両方来たら結合して重複除去）。
+  documentIds: z.array(z.coerce.number().int().positive()).max(10).optional(),
   driveLink: z.string().trim().max(1000).optional()
 });
 
@@ -159,30 +161,46 @@ export function createMatterSlackRouter(deps: MatterSlackDeps) {
       const ccIds = (body.cc ?? []).filter(isSlackUserId);
       const template = body.template as MatterSlackTemplate;
 
-      // 閲覧リンク解決：documentId > driveLink > 案件の最新文書。
-      let driveLink: string | null = null;
+      // 閲覧リンク解決：documentIds/documentId（複数可・指定順） > driveLink > 案件の最新文書。
+      let driveLinks: Array<{ url: string; label: string | null }> = [];
       if (template !== 1) {
-        if (body.documentId) {
-          driveLink = detail.documents.find((d) => d.id === body.documentId)?.driveLink || null;
+        const requestedIds = [...new Set([...(body.documentIds ?? []),
+          ...(body.documentId ? [body.documentId] : [])])];
+        driveLinks = requestedIds
+          .map((docId) => detail.documents.find((d) => d.id === docId))
+          .filter((d): d is NonNullable<typeof d> => Boolean(d?.driveLink))
+          .map((d) => ({ url: d.driveLink, label: d.documentNumber }));
+        if (!driveLinks.length && body.driveLink) driveLinks = [{ url: body.driveLink, label: null }];
+        // 最新文書へのフォールバックは「文書の指定が無い」ときだけ。documentIds: [] は
+        // 「リンクを載せない」という明示なので尊重する（旧UIの「添付しない」が
+        // 最新文書に化けていた問題の修正）。
+        if (!driveLinks.length && body.documentIds === undefined && body.documentId === undefined) {
+          const latest = detail.documents.find((d) => d.driveLink);
+          if (latest) driveLinks = [{ url: latest.driveLink, label: latest.documentNumber }];
         }
-        driveLink = driveLink || body.driveLink || detail.documents.find((d) => d.driveLink)?.driveLink || null;
       }
 
-      // Drive 閲覧権限付与（best-effort・granter 有効かつリンク有時のみ）。
+      // Drive 閲覧権限付与（best-effort・granter 有効かつリンク有時のみ・全リンク×宛先）。
       let grant: { granted: string[]; failed: string[]; skipped: boolean } = { granted: [], failed: [], skipped: true };
-      if (template !== 1 && driveLink && deps.granter?.configured) {
-        const fileId = extractDriveFileId(driveLink);
+      if (template !== 1 && driveLinks.length && deps.granter?.configured) {
+        const fileIds = [...new Set(driveLinks
+          .map((l) => extractDriveFileId(l.url))
+          .filter((fileId): fileId is string => Boolean(fileId)))];
         const recipients = await deps.mentions.emailsForSlackIds(toIds);
-        if (fileId && recipients.length) {
+        if (fileIds.length && recipients.length) {
           grant = { granted: [], failed: [], skipped: false };
           for (const r of recipients) {
-            try { await deps.granter.grantView(fileId, r.email); grant.granted.push(r.email); }
-            catch { grant.failed.push(r.email); }
+            let ok = true;
+            for (const fileId of fileIds) {
+              try { await deps.granter.grantView(fileId, r.email); }
+              catch { ok = false; }
+            }
+            (ok ? grant.granted : grant.failed).push(r.email);
           }
         }
       }
 
-      const text = buildTemplateMessage(template, { toIds, ccIds, driveLink });
+      const text = buildTemplateMessage(template, { toIds, ccIds, driveLinks });
       const posted = await deps.channel.postMessage({
         channel: thread.channelId, text, threadTs: thread.threadTs
       });

@@ -127,11 +127,15 @@ export type MatterSlackTemplate = MatterSlackTemplateId;
 
 export function buildTemplateMessage(
   template: MatterSlackTemplate,
-  input: { toIds: string[]; ccIds?: string[]; driveLink?: string | null }
+  input: {
+    toIds: string[]; ccIds?: string[]; driveLink?: string | null;
+    driveLinks?: ReadonlyArray<{ url: string; label?: string | null }>;
+  }
 ): string {
   return composeTemplateText(template, {
     to: mentionTokens(input.toIds),
     cc: mentionTokens(input.ccIds ?? []),
-    driveLink: input.driveLink
+    driveLink: input.driveLink,
+    driveLinks: input.driveLinks
   });
 }

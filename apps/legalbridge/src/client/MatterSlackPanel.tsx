@@ -68,7 +68,7 @@ export function MatterSlackPanel({ matterId, documents = [] }: {
   const [to, setTo] = useState<MentionCandidate[]>([]);
   const [cc, setCc] = useState<MentionCandidate[]>([]);
   const [mode, setMode] = useState<Mode>(0);
-  const [documentId, setDocumentId] = useState<number | null>(null);
+  const [documentIds, setDocumentIds] = useState<number[]>([]);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [reload, setReload] = useState(0);
@@ -78,7 +78,7 @@ export function MatterSlackPanel({ matterId, documents = [] }: {
 
   useEffect(() => {
     let cancelled = false;
-    setTo([]); setCc([]); setText(""); setMode(0); setDocumentId(null);
+    setTo([]); setCc([]); setText(""); setMode(0); setDocumentIds([]);
     void (async () => {
       const [cRes, rRes] = await Promise.all([
         fetch("/api/v2/matters/slack/mention-candidates"),
@@ -101,10 +101,15 @@ export function MatterSlackPanel({ matterId, documents = [] }: {
 
   // 閲覧リンクを載せる定型文へ切り替えたら、未選択なら先頭の文書を既定にする。
   useEffect(() => {
-    if (mode !== 0 && templateUsesDocument(mode) && documentId === null && linkedDocuments.length) {
-      setDocumentId(linkedDocuments[0].id);
+    if (mode !== 0 && templateUsesDocument(mode) && !documentIds.length && linkedDocuments.length) {
+      setDocumentIds([linkedDocuments[0].id]);
     }
-  }, [mode, documentId, linkedDocuments]);
+  }, [mode, documentIds, linkedDocuments]);
+
+  const toggleDocument = (id: number) =>
+    setDocumentIds((current) => current.includes(id)
+      ? current.filter((v) => v !== id)
+      : [...current, id]);
 
   // 発言者・本文の Slack ユーザーID（U…／<@U…>）は担当者マスタの氏名で表示する。
   const names = useMemo(() => new Map(candidates.map((c) => [c.id, c.name])), [candidates]);
@@ -120,15 +125,18 @@ export function MatterSlackPanel({ matterId, documents = [] }: {
       const prefix = to.map((m) => `@${m.name}`).join(" ");
       return [prefix, text.trim()].filter(Boolean).join(" ");
     }
-    const link = templateUsesDocument(mode)
-      ? linkedDocuments.find((d) => d.id === documentId)?.driveLink ?? null
-      : null;
+    const links = templateUsesDocument(mode)
+      ? documentIds
+        .map((id) => linkedDocuments.find((d) => d.id === id))
+        .filter((d): d is SlackDocument => Boolean(d))
+        .map((d) => ({ url: d.driveLink, label: d.documentNumber }))
+      : [];
     return composeTemplateText(mode, {
       to: to.map((m) => `@${m.name}`),
       cc: cc.map((m) => `@${m.name}`),
-      driveLink: link
+      driveLinks: links
     });
-  }, [mode, to, cc, text, documentId, linkedDocuments]);
+  }, [mode, to, cc, text, documentIds, linkedDocuments]);
 
   async function run(request: Promise<Response>, ok: string) {
     setBusy(true);
@@ -159,10 +167,12 @@ export function MatterSlackPanel({ matterId, documents = [] }: {
         template: mode,
         mentions: to.map((m) => m.id),
         cc: cc.map((m) => m.id),
-        ...(templateUsesDocument(mode) && documentId !== null ? { documentId } : {})
+        // documentIds は空でも常に送る（空＝リンクを載せない意思表示。
+        // 送らないとサーバが最新文書へフォールバックする）。
+        ...(templateUsesDocument(mode) ? { documentIds } : {})
       })
     }), `定型文（${label}）を投稿しました`);
-    if (done) { setTo([]); setCc([]); setMode(0); setDocumentId(null); }
+    if (done) { setTo([]); setCc([]); setMode(0); setDocumentIds([]); }
   }
 
   if (enabled === false) {
@@ -189,14 +199,19 @@ export function MatterSlackPanel({ matterId, documents = [] }: {
       {!candidates.length &&
         <small className="muted-note">メンション候補がありません（担当者マスタに Slack ID を登録してください）。</small>}
 
-      {mode !== 0 && templateUsesDocument(mode) && <label className="matter-slack-doc">閲覧リンク
-        <select value={documentId ?? ""} onChange={(event) =>
-          setDocumentId(event.target.value ? Number(event.target.value) : null)}>
-          <option value="">添付しない</option>
-          {linkedDocuments.map((d) => <option key={d.id} value={d.id}>{d.documentNumber ?? `#${d.id}`}</option>)}
-        </select>
+      {mode !== 0 && templateUsesDocument(mode) && <div className="matter-slack-doc">
+        <span>閲覧リンク（複数選択可）</span>
+        <div className="matter-slack-doc-list">
+          {linkedDocuments.map((d) => <label key={d.id} className="matter-slack-doc-item">
+            <input type="checkbox" checked={documentIds.includes(d.id)}
+              onChange={() => toggleDocument(d.id)} />
+            {d.documentNumber ?? `#${d.id}`}
+          </label>)}
+        </div>
         {!linkedDocuments.length && <small className="muted-note">Drive 保存済みの文書がありません。</small>}
-      </label>}
+        {linkedDocuments.length > 0 && !documentIds.length &&
+          <small className="muted-note">未選択＝リンクなしで投稿します。</small>}
+      </div>}
 
       {mode === 0 && <textarea value={text} rows={2}
         placeholder="メッセージ（選択した宛先が先頭に付きます）"
