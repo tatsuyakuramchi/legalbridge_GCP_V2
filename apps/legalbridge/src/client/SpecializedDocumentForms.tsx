@@ -573,8 +573,20 @@ function InspectionLineCards({ formData, onChange }: {
                   onChange={(event) => replace(index, { paid_date: event.target.value })} /></label>
               </>}
               {status === "now" && <>
-                <label><span>今回数量</span><input type="number" className="num" value={String(row.inspected_quantity ?? "")}
-                  onChange={(event) => replace(index, { inspected_quantity: event.target.value === "" ? "" : Number(event.target.value) })} /></label>
+                <label><span>{String(row.calc_method ?? "") === "SUBSCRIPTION" ? "今回周期数" : "今回数量"}</span>
+                  <input type="number" className="num" value={String(row.inspected_quantity ?? "")}
+                  onChange={(event) => {
+                    const quantity = event.target.value === "" ? "" : Number(event.target.value);
+                    const unit = toNum(row.unit_price);
+                    // 単価がある明細は 金額 = 単価 × 数量 を自動再計算（V1 DeliverableCards と同じ）。
+                    // 定期支払は「1周期の金額 × 周期数」。単価が無い明細は金額を手入力のまま維持。
+                    replace(index, {
+                      inspected_quantity: quantity,
+                      ...(unit > 0 && quantity !== "" && !isRoyalty
+                        ? { inspected_amount_ex_tax: Math.round(unit * Number(quantity)) }
+                        : {})
+                    });
+                  }} /></label>
                 <label><span>納品日</span><input type="date" value={String(row.delivery_date ?? "")}
                   onChange={(event) => replace(index, { delivery_date: event.target.value })} /></label>
               </>}
@@ -589,7 +601,14 @@ function InspectionLineCards({ formData, onChange }: {
                   onChange={(event) => replace(index, { calc_method: event.target.value })}>
                   <option value="FIXED">固定額</option>
                   <option value="ROYALTY">業績連動</option>
+                  <option value="SUBSCRIPTION">定期支払（サブスク）</option>
                 </select></label>
+              {toNum(row.unit_price) > 0 && !isRoyalty && status === "now" &&
+                <small className="unit-calc-note">
+                  金額（税抜）＝ {String(row.calc_method ?? "") === "SUBSCRIPTION" ? "1周期" : "単価"}
+                  ¥{toNum(row.unit_price).toLocaleString("ja-JP")} × {String(row.calc_method ?? "") === "SUBSCRIPTION" ? "周期数" : "数量"}
+                  {" "}{toNum(row.inspected_quantity) || 0}（自動計算・金額の直接修正も可能）
+                </small>}
             </div>
             <input className="line-spec" value={String(row.spec ?? "")} placeholder="仕様（PDFに補足として印字）"
               onChange={(event) => replace(index, { spec: event.target.value })} />

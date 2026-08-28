@@ -313,6 +313,9 @@ export function applyParentPurchaseOrderQuote(
       // 発注数量・発注額は「発注 n点 ¥X」表示と金額変更（差分→理由）の判定に使う。
       ordered_quantity: line.quantity ?? 1,
       ordered_amount_ex_tax: line.amount_ex_tax ?? amountFromUnit(line),
+      // 単価は今回数量の変更時の自動再計算（単価×数量）に使う（V1 DeliverableCards 相当）。
+      // 定期支払（SUBSCRIPTION）は「1周期の金額×周期数」の周期額にあたる。
+      unit_price: line.unit_price ?? "",
       // 検収状態の初期値は「今回検収」。過去分は行で「検収済み」に、対象外は「未検収」に切り替える。
       inspection_status: "now",
       inspected_quantity: line.quantity ?? 1,

@@ -69,6 +69,27 @@ test("発注明細が検収明細として引用される（全量検収が初�
   assert.equal(lines[0].inspected_quantity, 2);
   assert.equal(lines[0].inspected_amount_ex_tax, 100000);
   assert.equal(lines[0].delivery_date, "2026-09-30");
+  // 単価は今回数量変更時の自動再計算（単価×数量）に使う。
+  assert.equal(lines[0].unit_price, 50000);
+});
+
+test("定期支払（SUBSCRIPTION）明細も報酬方式・周期額を保って引用される", () => {
+  const item = {
+    ...PO_ITEM,
+    values: {
+      ...PO_ITEM.values,
+      items: [{
+        item_name: "保守サブスク", quantity: 12, unit_price: 100000, amount_ex_tax: 1200000,
+        calc_method: "SUBSCRIPTION", deliverable_ownership: "発注者"
+      }]
+    }
+  };
+  const patch = buildPatch(inspectionSchema(), {}, item);
+  const line = (patch.delivery_line_items as Array<Record<string, unknown>>)[0];
+  assert.equal(line.calc_method, "SUBSCRIPTION");
+  assert.equal(line.unit_price, 100000);          // 1周期の金額
+  assert.equal(line.inspected_quantity, 12);      // 周期数
+  assert.equal(line.inspected_amount_ex_tax, 1200000);
 });
 
 test("0円の業績連動行は金額0のまま取り込み、出し分け用の列も写す", () => {
