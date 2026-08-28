@@ -240,6 +240,8 @@ function IssueCart({ cart, onOpenMatter }: {
 }
 
 // 案件カート：残す1件（👑）へ他をまとめて統合する（既存の /matter-merge を順に実行）。
+const MATTER_MERGE_TOKEN = "COMMIT_MATTER_MERGE";
+
 function MatterCart({ cart, onOpenMatter }: {
   cart: ReturnType<typeof useCart>; onOpenMatter?: (matterId: number) => void;
 }) {
@@ -248,26 +250,37 @@ function MatterCart({ cart, onOpenMatter }: {
   const [busy, setBusy] = useState(false);
   const target = cart.targetKey ?? cart.items[0]?.key ?? null;
   const sources = cart.items.filter((i) => i.key !== target);
+  // 合言葉のスペル違いのまま実行して「理由の分からない全件失敗」になった実績があるため、
+  // 一致するまでボタンを無効化し、入力中は不一致を明示する。
+  const tokenOk = confirmation.trim() === MATTER_MERGE_TOKEN;
 
   async function merge() {
-    if (!target || !sources.length) return;
+    if (!target || !sources.length || !tokenOk) return;
     if (!window.confirm(
       `${sources.map((s) => s.label).join("、")} を「${cart.items.find((i) => i.key === target)?.label}」へ統合します。統合元はアーカイブされます。よろしいですか？`
     )) return;
     setBusy(true);
     try {
       const failed: string[] = [];
+      let reason = "";
       for (const source of sources) {
         const response = await fetch("/api/v2/matter-merge", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ targetId: Number(target), sourceId: Number(source.key), confirmation })
+          body: JSON.stringify({ targetId: Number(target), sourceId: Number(source.key), confirmation: confirmation.trim() })
         });
-        if (!response.ok) failed.push(source.label);
-        else cart.remove(source.key);
+        if (!response.ok) {
+          failed.push(source.label);
+          if (!reason) {
+            const data = await response.json().catch(() => ({} as Record<string, unknown>));
+            reason = String(data.error ?? "") === "invalid request"
+              ? String((data.issues as Array<{ message?: string }> | undefined)?.[0]?.message ?? "invalid request")
+              : String(data.error ?? `HTTP ${response.status}`);
+          }
+        } else cart.remove(source.key);
       }
       toast.push(
         `${sources.length - failed.length}/${sources.length}件を統合しました` +
-        (failed.length ? `（失敗：${failed.join("、")}）` : ""),
+        (failed.length ? `（失敗：${failed.join("、")}／理由: ${reason}）` : ""),
         failed.length ? "error" : "success");
       if (!failed.length) { cart.clear(); setConfirmation(""); onOpenMatter?.(Number(target)); }
     } catch { toast.push("通信に失敗しました。", "error"); }
@@ -288,9 +301,11 @@ function MatterCart({ cart, onOpenMatter }: {
       </li>)}
     </ul>
     <label>合言葉<input value={confirmation} onChange={(e) => setConfirmation(e.target.value)}
-      placeholder="COMMIT_MATTER_MERGE" /></label>
+      placeholder={MATTER_MERGE_TOKEN} /></label>
+    {confirmation.trim() !== "" && !tokenOk &&
+      <p className="muted-note">合言葉が一致していません（{MATTER_MERGE_TOKEN} を入力してください）。</p>}
     <div className="cart-actions">
-      <button className="primary" disabled={busy || sources.length === 0 || !confirmation.trim()}
+      <button className="primary" disabled={busy || sources.length === 0 || !tokenOk}
         onClick={() => void merge()}>{busy ? "統合中…" : `${sources.length}件を統合`}</button>
       <button disabled={busy} onClick={() => cart.clear()}>カートを空にする</button>
     </div>
