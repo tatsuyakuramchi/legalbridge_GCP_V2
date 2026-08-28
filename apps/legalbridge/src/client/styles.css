@@ -2135,6 +2135,12 @@ textarea { width: 100%; min-height: 90px; resize: vertical; line-height: 1.6; }
 .diff-note input { width: 100%; border: 1px solid #eed9a0; border-radius: 6px; padding: 6px 10px; }
 .line-card .line-royalty { display: grid; gap: 2px; font-size: 12px; color: var(--ink-soft); }
 .line-card .line-royalty small { color: var(--ink-faint); }
+/* 定期支払（サブスク）明細の周期分割バンド */
+.line-card .split-band { display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  padding: 6px 12px; background: var(--surface-tint); border-bottom: 1px solid var(--border); }
+.line-card .split-band button { font-size: 12px; padding: 4px 10px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--surface); cursor: pointer; white-space: nowrap; }
+.line-card .split-band small { font-size: 11.5px; color: var(--ink-faint); flex: 1; min-width: 200px; }
 
 /* 検収明細テーブル（発注数量と今回検収を並べて分納を明示） */
 .inspection-lines { display: grid; gap: 8px; }

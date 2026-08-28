@@ -316,6 +316,9 @@ export function applyParentPurchaseOrderQuote(
       // 単価は今回数量の変更時の自動再計算（単価×数量）に使う（V1 DeliverableCards 相当）。
       // 定期支払（SUBSCRIPTION）は「1周期の金額×周期数」の周期額にあたる。
       unit_price: line.unit_price ?? "",
+      // 支払予定日は定期支払の「周期ごとに分割」の情報源（各期の日付・金額）。
+      ...(Array.isArray(line.payment_schedule) && line.payment_schedule.length
+        ? { payment_schedule: line.payment_schedule } : {}),
       // 検収状態の初期値は「今回検収」。過去分は行で「検収済み」に、対象外は「未検収」に切り替える。
       inspection_status: "now",
       inspected_quantity: line.quantity ?? 1,

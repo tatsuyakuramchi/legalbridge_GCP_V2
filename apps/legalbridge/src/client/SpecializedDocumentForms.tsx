@@ -7,6 +7,7 @@ import {
 import {
   generatePaymentSchedule, normalizePaymentSchedule, type PaymentScheduleRow
 } from "./payment-schedule";
+import { canSplitSubscription, splitCount, splitSubscriptionLine } from "./subscription-split";
 
 type Row = Record<string, unknown>;
 
@@ -560,6 +561,14 @@ function InspectionLineCards({ formData, onChange }: {
           </span>
           <button type="button" className="line-remove" onClick={() => remove(index)}>削除</button>
         </div>
+        {canSplitSubscription(row) && <div className="split-band">
+          <button type="button" onClick={() => onChange("delivery_line_items",
+            [...lines.slice(0, index), ...(splitSubscriptionLine(row) ?? [row]), ...lines.slice(index + 1)])}>
+            ⑃ 周期ごとに分割（{splitCount(row)}期）
+          </button>
+          <small>1周期＝1明細に分けます（支払予定日があれば各期の日付・金額を引き継ぎます）。
+            分割後は全期が「未検収」で始まるので、支払済みの期を「検収済み」、今期分を「今回検収」に切り替えてください。</small>
+        </div>}
         {status === "skip"
           ? <div className="line-body">
             <span className="skip-note">この検収書には載りません。後続の検収書で同じ親POから検収できます。</span>
