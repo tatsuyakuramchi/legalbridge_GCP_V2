@@ -558,7 +558,7 @@ psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
 **適用結果（2026-08-25）**: Cloud SQL Studio（postgres）で適用し、
 `ledger_code` / `remarks` の2行を確認済み。
 
-### 2-7j. 条件明細の台帳同期（grant 066）【適用待ち】
+### 2-7j. 条件明細の台帳同期（grant 066）✅ 適用済み（2026-08-28）
 
 監査（2026-08-25）ギャップ1〜3の解消。V2 の文書作成画面から発行した
 利用許諾条件書・発注書の経済条件（料率・MG/AG・地域言語）を、V1 と同じく
@@ -582,6 +582,12 @@ psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
 適用順: grant 066 → デプロイ → 既存の条件書・発注書は文書詳細の
 「条件明細を台帳へ同期」で必要な分だけバックフィル。
 grant 未適用のままでも確定は動く（同期だけ警告でスキップ）。
+
+**適用結果（2026-08-28）**: Cloud SQL Studio（postgres）で確認変数を除いた本体を適用。
+role_table_grants で condition_lines＝SELECT/INSERT/UPDATE/DELETE、
+regions/languages＝SELECT/INSERT/DELETE、document_sequences＝SELECT/INSERT/UPDATE を確認済み
+（work_materials の INSERT/UPDATE は既存の素材マスタ点火由来で問題なし）。
+同日、_GMAIL_DELEGATE_SA=988056987352-compute@… を含むデプロイも完了。
 
 ### 2-8. 案件 Slack 会話履歴（`slack-matter-thread-history-fix-plan.md`）
 
