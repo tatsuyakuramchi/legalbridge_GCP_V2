@@ -93,6 +93,14 @@ export function WorkIntake({ canRegister, onOpenWork, onCreateLicenseTerms }: {
       toast.push("条件書を作成するには、ロイヤリティ対象の素材を1件以上入れてください（イン条件が空の条件書になるため）", "error");
       return;
     }
+    // イン条件（料率・MG/AG）の保存先は条件書→条件台帳。「登録のみ」では保存されない
+    // ため、入力済みなら破棄になることを確認する（利用許諾計算書は条件明細を参照する）。
+    const hasRates = named.some((m) => m.royalty &&
+      [m.r1, m.r2, m.r3, m.mg, m.ag].some((value) => rateOf(value) != null));
+    if (!createTerms && hasRates && !window.confirm(
+      "入力したイン条件（料率・MG/AG）は、条件書を作成しないと保存されません（保存先は条件書→条件台帳です）。\n"
+      + "このまま「登録のみ」で進めると料率は破棄され、あとで作品詳細から条件書を作る際に入力し直しになります。\n\n登録のみで進めますか？"
+    )) return;
     setBusy(true);
     try {
       const workResponse = await fetch("/api/v2/works", {
