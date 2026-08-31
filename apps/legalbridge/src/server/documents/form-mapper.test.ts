@@ -64,3 +64,21 @@ test("計算書: 構造化入力中は自動計算欄の必須を検証しない
   assert.equal(validateDocumentForm("royalty_statement", fields, {}).length, 1);
 });
 
+
+test("license_master: 許諾者が個人ならライセンサー代表者（必須）を検証しない", () => {
+  const fields = [
+    { name: "VENDOR_NAME", label: "ライセンサー名称", required: true },
+    { name: "VENDOR_REP", label: "ライセンサー代表者", required: true }
+  ];
+  // 個人（マスタ引用が vendorEntityType を記録）→ 代表者は空でも通る。
+  const individual = validateDocumentForm("license_master", fields,
+    { VENDOR_NAME: "山田 太郎", vendorEntityType: "個人" });
+  assert.equal(individual.length, 0);
+  // 法人 → 従来どおり必須。
+  const corporate = validateDocumentForm("license_master", fields,
+    { VENDOR_NAME: "株式会社エー", vendorEntityType: "法人" });
+  assert.deepEqual(corporate.map((e) => e.field), ["VENDOR_REP"]);
+  // 区分未記録（手入力）→ 従来どおり必須のまま。
+  const unknown = validateDocumentForm("license_master", fields, { VENDOR_NAME: "山田 太郎" });
+  assert.deepEqual(unknown.map((e) => e.field), ["VENDOR_REP"]);
+});

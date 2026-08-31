@@ -255,6 +255,13 @@ function applyVendorAliases(schema: DocumentFormSchema, patch: DocumentFormData,
     accountNo: "account_number", accountHolder: "account_holder_kana"
   };
   applyExistingFields(schema, patch, values, aliases);
+  // 区分（法人/個人）はスキーマに入力欄が無くても formData に記録する。
+  // license_master などは区分の欄を持たないが、法人専用項目（代表者）の必須解除
+  // （isCorporateOnlyFieldHidden）と PDF の出し分け（context-adapter が
+  // vendorEntityType を読む）に使う。マスタに区分が無い取引先では記録しない。
+  if (values.entity_type != null && String(values.entity_type).trim() !== "") {
+    patch.vendorEntityType = isIndividualEntity(values.entity_type) ? "個人" : "法人";
+  }
   setIfField(schema, patch, "VENDOR_IS_CORPORATION", values.entity_type !== "個人" ? "法人" : "個人");
   setIfField(schema, patch, "LICENSOR_IS_CORPORATION", values.entity_type !== "個人");
   setIfField(schema, patch, "COUNTERPARTY_IS_CORPORATION", values.entity_type !== "個人" ? "法人" : "個人");

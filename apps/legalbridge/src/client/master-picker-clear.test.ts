@@ -168,3 +168,26 @@ test("個人では dbField 対応の担当者欄も空にする", () => {
   const schema = schemaOf({ name: "先方担当", label: "担当", dbField: "vendor.contact_name" });
   assert.equal(buildPatch(schema, {}, individual({ contact_name: "サイタ　アキヤ" })).先方担当, "");
 });
+
+test("区分（法人/個人）はスキーマに欄が無くても vendorEntityType として記録する", () => {
+  // license_master には区分の入力欄が無い。法人専用項目（代表者）の必須解除と
+  // PDF の法人/個人出し分けのため、マスタ引用時に formData へ区分を記録する。
+  const licenseMaster = schemaOf(
+    { name: "VENDOR_NAME", label: "ライセンサー名称" },
+    { name: "VENDOR_REP", label: "ライセンサー代表者" }
+  );
+  const individual = buildPatch(licenseMaster, {}, vendorWithClearedContact);
+  assert.equal(individual.vendorEntityType, "個人");
+  const corporate = buildPatch(licenseMaster, {}, {
+    id: "1", type: "vendor" as const, label: "株式会社エー", description: "",
+    values: { vendor_name: "株式会社エー", entity_type: "法人", vendor_rep: "代表 太郎" }
+  });
+  assert.equal(corporate.vendorEntityType, "法人");
+  assert.equal(corporate.VENDOR_REP, "代表 太郎");
+  // 区分がマスタに無い取引先では記録しない（誤った必須解除を防ぐ）。
+  const unknown = buildPatch(licenseMaster, {}, {
+    id: "2", type: "vendor" as const, label: "区分未設定商店", description: "",
+    values: { vendor_name: "区分未設定商店" }
+  });
+  assert.equal("vendorEntityType" in unknown, false);
+});

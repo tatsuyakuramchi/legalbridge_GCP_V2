@@ -13,10 +13,10 @@ import {
   type StatementReceiptRow
 } from "../royalty-statement";
 import {
-  isFieldVisible, isInspectionFallbackFieldHidden,
+  isCorporateOnlyFieldHidden, isFieldVisible, isInspectionFallbackFieldHidden,
   isRoyaltyComputedFieldHidden, isRoyaltyStructuredActive
 } from "./field-visibility";
-import { MasterDataPicker } from "./MasterDataPicker";
+import { MasterDataPicker, findSelfStaff } from "./MasterDataPicker";
 import { DocumentRegistry, type RegisteredDocument } from "./DocumentRegistry";
 import { MatterRegistry } from "./MatterRegistry";
 import { LedgerWorkspace } from "./LedgerWorkspace";
@@ -855,6 +855,12 @@ function SettlementBand({ settlement }: { settlement: NonNullable<DashboardSumma
   );
 }
 
+// 通知条項に当社側担当者（STAFF_*）を印字する基本契約系テンプレート（V1 と同じ集合）。
+const NOTICE_STAFF_TEMPLATES = new Set([
+  "license_master", "service_master", "pub_master_individual", "pub_master_corporate",
+  "individual_license_terms_v3", "pub_license_terms", "pub_additional_terms"
+]);
+
 function DocumentForm({
   schema,
   readOnly,
@@ -1002,6 +1008,44 @@ function DocumentForm({
     return () => controller.abort();
   }, [schema, debouncedIssueKey]);
 
+  // 基本契約（通知条項を持つテンプレ）: 当社側の通知先担当者（STAFF_NAME/PHONE/EMAIL）を
+  // ログイン中の担当者から自動補完する（V1 DocumentForm の Sync Staff 相当）。
+  // STAFF_* は入力欄ではなくテンプレ変数（通知条項の乙側 担当者・電話・メール）。
+  // 下書き・複製で値が入っているときは触らない。担当者マスタ未登録なら何もしない。
+  const staffAutoFillRef = useRef("");
+  useEffect(() => {
+    const templateId = schema?.templateKey ?? "";
+    if (!NOTICE_STAFF_TEMPLATES.has(templateId) || readOnly || finalizedDocument) return;
+    if (draftStatus === "loading") return;   // 文脈・下書きの読込前に走らせない
+    const guardKey = `${templateId}:${debouncedIssueKey}`;
+    if (staffAutoFillRef.current === guardKey) return;
+    staffAutoFillRef.current = guardKey;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const meResponse = await fetch("/api/v2/me");
+        if (!meResponse.ok) return;
+        const email = String((await meResponse.json())?.user?.email ?? "");
+        if (!email || cancelled) return;
+        const search = await fetch(`/api/v2/master-data/search?type=staff&q=${encodeURIComponent(email)}`);
+        if (!search.ok) return;
+        const me = findSelfStaff((await search.json()).items ?? [], email);
+        if (!me || cancelled) return;
+        const values = me.values ?? {};
+        setFormData((current) => {
+          if (current.STAFF_NAME || current.STAFF_EMAIL) return current;
+          return {
+            ...current,
+            STAFF_NAME: String(values.staff_name ?? ""),
+            STAFF_PHONE: String(values.phone ?? ""),
+            STAFF_EMAIL: String(values.email ?? "")
+          };
+        });
+      } catch { /* 通知先の補完は best-effort（失敗しても入力は続けられる） */ }
+    })();
+    return () => { cancelled = true; };
+  }, [schema?.templateKey, debouncedIssueKey, draftStatus, readOnly, finalizedDocument]);
+
   if (!schema) {
     return <section className="page"><h1>文書作成</h1><p>フォーム定義を読み込んでいます。</p></section>;
   }
@@ -1011,6 +1055,7 @@ function DocumentForm({
     field.type !== "hidden" && !isSpecializedDataField(schema.templateKey, field.name) &&
     !isInspectionFallbackFieldHidden(schema.templateKey, field.name, formData) &&
     !isRoyaltyComputedFieldHidden(schema.templateKey, field.name, formData) &&
+    !isCorporateOnlyFieldHidden(schema.templateKey, field.name, formData) &&
     isFieldVisible(field, formData)
   );
   const groups = [...new Set(visibleFields.map((field) => field.group ?? "基本情報"))];

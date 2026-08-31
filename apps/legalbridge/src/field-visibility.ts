@@ -1,4 +1,5 @@
 import type { DocumentFormData, ShowWhenCondition } from "./types.js";
+import { hasEntityType, isIndividualEntity } from "./honorific.js";
 
 // showWhen を持つものなら何でも判定できる（テンプレート項目でも、明細1行の列でも）。
 type ConditionallyVisible = { showWhen?: ShowWhenCondition | ShowWhenCondition[] };
@@ -78,6 +79,30 @@ export function isRoyaltyComputedFieldHidden(
   if (templateKey !== "royalty_statement") return false;
   if (!ROYALTY_COMPUTED_FIELDS.has(fieldName)) return false;
   return isRoyaltyStructuredActive(formData);
+}
+
+// 基本契約の「法人にしか無い項目」。相手方（許諾者）が個人のときは非表示にし、
+// 必須チェックからも外す。license_master は VENDOR_REP（ライセンサー代表者）が
+// スキーマ上必須のため、個人ライセンサーだと入力しようのない必須項目で確定が
+// 塞がっていた。区分はマスタ引用が formData に記録する（vendorEntityType 等）。
+// 区分が未入力（マスタを使わず手入力）のときは従来どおり必須のまま。
+const CORPORATE_ONLY_FIELDS: Record<string, ReadonlySet<string>> = {
+  license_master: new Set(["VENDOR_REP", "VENDOR_REPRESENTATIVE_SAMA"])
+};
+const VENDOR_ENTITY_KEYS = [
+  "VENDOR_MASTER_ENTITY_TYPE", "VENDOR_IS_CORPORATION", "取引先種別", "vendorEntityType"
+] as const;
+
+export function isCorporateOnlyFieldHidden(
+  templateKey: string, fieldName: string, formData: DocumentFormData
+): boolean {
+  const fields = CORPORATE_ONLY_FIELDS[templateKey];
+  if (!fields?.has(fieldName)) return false;
+  for (const key of VENDOR_ENTITY_KEYS) {
+    const value = formData[key];
+    if (hasEntityType(value)) return isIndividualEntity(value);
+  }
+  return false;
 }
 
 export function isFieldVisible(field: ConditionallyVisible, formData: DocumentFormData): boolean {

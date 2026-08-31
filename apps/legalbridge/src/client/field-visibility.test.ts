@@ -91,3 +91,25 @@ test("検収書以外のテンプレートでは何も隠さない", () => {
   assert.equal(isInspectionFallbackFieldHidden("purchase_order", "description",
     { delivery_line_items: [{ item_name: "A" }] }), false);
 });
+
+// ── 基本契約の法人専用項目（個人ライセンサーで代表者を必須にしない）──────────
+test("license_master: 許諾者が個人なら代表者欄を隠す（必須からも外れる）", async () => {
+  const { isCorporateOnlyFieldHidden } = await import("./field-visibility.js");
+  assert.equal(isCorporateOnlyFieldHidden("license_master", "VENDOR_REP", { vendorEntityType: "個人" }), true);
+  assert.equal(isCorporateOnlyFieldHidden("license_master", "VENDOR_REPRESENTATIVE_SAMA", { vendorEntityType: "個人" }), true);
+  assert.equal(isCorporateOnlyFieldHidden("license_master", "VENDOR_REP", { vendorEntityType: "法人" }), false);
+  assert.equal(isCorporateOnlyFieldHidden("license_master", "VENDOR_NAME", { vendorEntityType: "個人" }), false);
+});
+
+test("license_master: 区分キーは複数を許容し、未入力なら従来どおり必須のまま", async () => {
+  const { isCorporateOnlyFieldHidden } = await import("./field-visibility.js");
+  assert.equal(isCorporateOnlyFieldHidden("license_master", "VENDOR_REP", { VENDOR_IS_CORPORATION: "個人" }), true);
+  assert.equal(isCorporateOnlyFieldHidden("license_master", "VENDOR_REP", { VENDOR_MASTER_ENTITY_TYPE: "individual" }), false);
+  // 区分が無い（マスタを使わない手入力）は隠さない＝必須は生きる。
+  assert.equal(isCorporateOnlyFieldHidden("license_master", "VENDOR_REP", {}), false);
+});
+
+test("license_master 以外のテンプレートでは何も隠さない", async () => {
+  const { isCorporateOnlyFieldHidden } = await import("./field-visibility.js");
+  assert.equal(isCorporateOnlyFieldHidden("service_master", "VENDOR_REP", { vendorEntityType: "個人" }), false);
+});

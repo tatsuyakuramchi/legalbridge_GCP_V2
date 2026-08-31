@@ -1,5 +1,6 @@
 import {
-  isFieldVisible, isInspectionFallbackFieldHidden, isRoyaltyComputedFieldHidden
+  isCorporateOnlyFieldHidden, isFieldVisible, isInspectionFallbackFieldHidden,
+  isRoyaltyComputedFieldHidden
 } from "../../field-visibility.js";
 import type {
   DocumentFormData,
@@ -52,6 +53,7 @@ export function validateDocumentForm(
     if (!isFieldVisible(field, data)) return [];
     if (isInspectionFallbackFieldHidden(templateKey, field.name, data)) return [];
     if (isRoyaltyComputedFieldHidden(templateKey, field.name, data)) return [];
+    if (isCorporateOnlyFieldHidden(templateKey, field.name, data)) return [];
     const value = data[field.name];
     const empty = value === undefined || value === null || value === "";
     return empty ? [{ field: field.name, message: `${field.label ?? field.name}は必須です` }] : [];
