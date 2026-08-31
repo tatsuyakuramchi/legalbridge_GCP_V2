@@ -222,6 +222,40 @@ test("import-details: 金銭条件を含む保存は条件明細台帳へ自動�
   assert.equal(conditionSync.documents.get(1)!.get(1)!.condition_name, "利用許諾料");
 });
 
+test("import-details: テンプレート外の文書でも条件同期される（flow_direction out=受領側）", async () => {
+  // 条件同期はデータ駆動（financial_conditions があれば動く）＝テンプレ種別に依存しない。
+  // 旧・独自様式の取込文書からの条件登録の受け皿（詳細編集の条件明細エディタ）。
+  const repository = new MemoryDocumentImportRepository();
+  const conditionSync = new MemoryConditionSyncRepository();
+  const app = express();
+  app.use(express.json());
+  app.use((_req, res, next) => {
+    res.locals.currentUser = { email: "a@x.jp", subject: "t", role: "admin", source: "disabled" };
+    next();
+  });
+  app.use("/api/v2", createDocumentImportRouter(repository, true, null, conditionSync));
+  await repository.importOne(documentImportRowSchema.parse({
+    documentNumber: "OLD-LIC-2015-07", templateType: "legacy_license_agreement"
+  }));
+  const response = await request(app).put("/api/v2/documents/1/import-details").send({
+    formData: {
+      title: "旧様式の許諾契約",
+      flow_direction: "out",
+      financial_conditions: [{
+        condition_no: 1, condition_name: "再許諾料", calc_type: "BASE_RATE", rate_pct: 5,
+        guarantee_type: "MG", mg_amount: 200000, currency: "JPY",
+        material_code: "WRK-00001-001", region_territory: "日本・北米", region_language: "日本語"
+      }]
+    }
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body.conditionSync, { written: 1, deleted: 0 });
+  const line = conditionSync.documents.get(1)!.get(1)!;
+  assert.equal(line.direction, "receivable");          // out＝当社が受け取る側
+  assert.equal(line.material_code, "WRK-00001-001");   // 素材結線
+  assert.equal(line.calc_type, "BASE_RATE");
+});
+
 test("純関数: normalizeDate / inferMimeType / buildImportFormData", () => {
   assert.equal(normalizeDate(""), "");
   assert.equal(normalizeDate("2024/3/5"), "2024-03-05");

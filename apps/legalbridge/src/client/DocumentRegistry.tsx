@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import type { DocumentFormData, DocumentFormSchema } from "../types";
-import { SpecializedDocumentForms } from "./SpecializedDocumentForms";
+import { ArrayEditor, SpecializedDocumentForms } from "./SpecializedDocumentForms";
+import type { FieldDefinition } from "./document-line-fields";
 import { useToast } from "./Toast";
 import { EmptyState } from "./EmptyState";
 import { DocumentOutputActions } from "./DocumentOutputActions";
@@ -816,6 +817,47 @@ function SinglePastDocumentImport() {
   </div>;
 }
 
+// テンプレート外の取込文書（旧・利用許諾条件書など）用の条件明細エディタの列。
+// mapFinancialConditions（条件同期）が読むキーに合わせる：
+// region_territory / region_language は「日本・北米」区切りで子テーブルへ分解され、
+// material_code は work_materials と結線されて料率対象・消化管理に載る。
+const importedConditionFields: FieldDefinition[] = [
+  { name: "condition_name", label: "条件名" },
+  { name: "material_code", label: "素材コード（作品の素材と結線・任意）" },
+  {
+    name: "calc_type", label: "計算式", type: "select",
+    options: [
+      { value: "BASE_QTY_RATE", label: "基準価格 × 個数 × 料率" },
+      { value: "BASE_RATE", label: "基準価格 × 料率" },
+      { value: "SUPPLY_QTY", label: "供給価格 × 個数 × 料率" },
+      { value: "FIXED", label: "固定値" },
+      { value: "SUBSCRIPTION", label: "サブスク" }
+    ]
+  },
+  { name: "base_price_label", label: "基準価格" },
+  { name: "rate_pct", label: "料率（%）", type: "number" },
+  {
+    name: "guarantee_type", label: "最低保証", type: "select",
+    options: [
+      { value: "NONE", label: "なし" },
+      { value: "MG", label: "MG（ミニマムギャランティ）" },
+      { value: "AG", label: "AG（アドバンスギャランティ）" }
+    ]
+  },
+  { name: "mg_amount", label: "MG 金額", type: "number", showWhen: { field: "guarantee_type", anyOf: ["MG"] } },
+  { name: "ag_amount", label: "AG 金額", type: "number", showWhen: { field: "guarantee_type", anyOf: ["AG"] } },
+  { name: "currency", label: "通貨" },
+  { name: "region_territory", label: "許諾地域（「日本・北米」区切り可）" },
+  { name: "region_language", label: "許諾言語（「日本語・英語」区切り可）" },
+  { name: "applies_scope", label: "適用範囲", type: "textarea" },
+  { name: "payment_terms", label: "支払条件", type: "textarea" }
+];
+
+// SpecializedDocumentForms 側に金銭条件エディタを持つテンプレ種別（重複表示を避ける）。
+const TEMPLATES_WITH_CONDITION_EDITOR = new Set([
+  "purchase_order", "intl_purchase_order", "individual_license_terms"
+]);
+
 // ── 取込文書の詳細編集 ───────────────────────────────────────────
 // 過去文書取込で登録した文書（template_version_id 無し）の form_data を後から
 // 入力・編集する。発注明細・経費・手数料・金銭条件は文書作成と同じエディタ
@@ -888,6 +930,25 @@ function ImportedDetailsEditor({ document: doc, onClose, onSaved }: {
       </div>
     </details>
     <SpecializedDocumentForms templateKey={doc.templateType} formData={formData} onChange={onChange} />
+    {!TEMPLATES_WITH_CONDITION_EDITOR.has(doc.templateType) && <section className="imported-conditions">
+      <div className="repeater-title"><div>
+        <h3>条件明細（条件台帳へ同期）</h3>
+        <small>テンプレート外の文書（旧・利用許諾条件書など）の経済条件をここで登録します。保存すると条件台帳へ自動同期され、条件明細一覧・利用許諾計算書・消化管理から参照できます。</small>
+      </div></div>
+      <label className="imported-flow">
+        <span>この契約の向き</span>
+        <select value={String(formData.flow_direction ?? "in")}
+          onChange={(e) => onChange("flow_direction", e.target.value)}>
+          <option value="in">イン（許諾を受ける＝当社が支払う側）</option>
+          <option value="out">アウト（許諾する＝当社が受け取る側）</option>
+        </select>
+      </label>
+      <ArrayEditor title="条件" itemLabel="条件" dataKey="financial_conditions"
+        rows={Array.isArray(formData.financial_conditions) ? formData.financial_conditions as Array<Record<string, unknown>> : []}
+        fields={importedConditionFields} onChange={onChange}
+        defaultRow={{ currency: "JPY", guarantee_type: "NONE" }} />
+      <p className="hub-note">素材コードを入れると作品の素材（work_materials）と結線され、料率対象・債権マップに載ります（作品詳細の素材タブでコードを確認できます）。</p>
+    </section>}
     <div className="matter-form-actions">
       <button onClick={onClose}>キャンセル</button>
       <button className="primary" disabled={saving} onClick={() => void save()}>

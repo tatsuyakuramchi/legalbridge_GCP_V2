@@ -115,7 +115,7 @@ function SpecializedSection({
   </section>;
 }
 
-function ArrayEditor({
+export function ArrayEditor({
   title,
   itemLabel,
   dataKey,
