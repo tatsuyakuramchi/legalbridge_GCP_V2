@@ -2140,6 +2140,70 @@ textarea { width: 100%; min-height: 90px; resize: vertical; line-height: 1.6; }
 .diff-note input { width: 100%; border: 1px solid #eed9a0; border-radius: 6px; padding: 6px 10px; }
 .line-card .line-royalty { display: grid; gap: 2px; font-size: 12px; color: var(--ink-soft); }
 .line-card .line-royalty small { color: var(--ink-faint); }
+
+/* ── 作品登録（イン条件つき・work-intake）────────────────────────────── */
+.work-intake .wi-card { margin-bottom: 16px; padding: 0; overflow: hidden; }
+.wi-head { display: flex; align-items: baseline; gap: 10px; padding: 12px 18px 10px; border-bottom: 1px solid var(--divider); }
+.wi-head h2 { font-size: 15px; margin: 0; color: var(--ink-strong); }
+.wi-head small { color: var(--ink-soft); font-size: 11.5px; }
+.wi-step { background: var(--accent-ink); color: var(--surface); border-radius: 6px; font-size: 12px; font-weight: 700; padding: 1px 8px; flex: none; }
+.wi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px 14px; padding: 12px 18px; }
+.wi-grid label { display: grid; gap: 3px; font-size: 11.5px; color: var(--ink-soft); }
+.wi-span2 { grid-column: span 2; }
+.wi-num { text-align: right; font-variant-numeric: tabular-nums; }
+.wi-mat { border: 1px solid var(--border); border-radius: 10px; margin: 10px 18px; }
+.wi-mat-head { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: var(--surface-subtle);
+  border-bottom: 1px solid var(--divider); border-radius: 10px 10px 0 0; flex-wrap: wrap; }
+.wi-quote { font-size: 10.5px; font-weight: 700; color: var(--success); background: var(--success-bg);
+  border: 1px solid var(--success-border); border-radius: 4px; padding: 0 6px; }
+.wi-spacer { flex: 1; }
+.wi-check { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--ink-muted); cursor: pointer; }
+.wi-incond { border-top: 2px solid var(--surface-tint); margin: 0 18px 12px; padding-top: 8px; }
+.wi-mat .wi-incond { margin: 0 0 4px; }
+.wi-mat .wi-grid { padding: 12px 14px; }
+.wi-incond-head { display: flex; gap: 8px; align-items: baseline; padding: 4px 14px 0; flex-wrap: wrap; }
+.wi-incond-head strong { color: var(--accent-ink); font-size: 12.5px; }
+.wi-incond-head small { color: var(--ink-faint); font-size: 11px; }
+.wi-rates { width: calc(100% - 28px); margin: 4px 14px 12px; border-collapse: collapse; font-size: 12.5px; }
+.wi-rates th { text-align: left; font-size: 10.5px; color: var(--ink-soft); font-weight: 500; padding: 4px 8px; border-bottom: 1px solid var(--divider); }
+.wi-rates td { padding: 5px 8px; border-bottom: 1px solid var(--divider); }
+.wi-rates .r, .wi-preview .r { text-align: right; font-variant-numeric: tabular-nums; }
+.wi-deal { white-space: nowrap; color: var(--ink-strong); font-weight: 500; }
+.wi-addon { font-size: 9.5px; background: var(--surface-tint); color: var(--accent-ink); border-radius: 4px; padding: 0 4px; margin-left: 6px; }
+.wi-model { color: var(--ink-faint); font-size: 11px; }
+.wi-rate { display: inline-flex; align-items: center; gap: 4px; }
+.wi-rate input { width: 84px; }
+.wi-hint { color: var(--ink-faint); font-size: 11.5px; margin: 4px 18px 12px; }
+.wi-mat .wi-hint { margin: 0 14px 12px; }
+.wi-add-row { display: flex; gap: 8px; flex-wrap: wrap; padding: 4px 18px 14px; }
+.wi-add { background: var(--surface-tint); color: var(--accent-ink); border: 1px dashed var(--accent-strong);
+  border-radius: 8px; padding: 7px 14px; font: inherit; font-size: 12.5px; cursor: pointer; }
+.wi-docsearch { margin: 0 18px 14px; border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface-subtle); }
+.wi-docsearch > label { display: grid; gap: 4px; font-size: 11.5px; color: var(--ink-soft); }
+.wi-dochits { display: grid; gap: 6px; margin-top: 8px; }
+.wi-dochits button { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; text-align: left;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 7px 12px;
+  font: inherit; font-size: 12.5px; cursor: pointer; color: var(--ink); }
+.wi-dochits button:hover { border-color: var(--accent-strong); background: var(--surface-tint); }
+.wi-dochits strong { color: var(--accent-ink); font-variant-numeric: tabular-nums; }
+.wi-dochits small { color: var(--ink-faint); }
+.wi-preview { width: calc(100% - 36px); margin: 12px 18px 16px; border-collapse: collapse; font-size: 12.5px; }
+.wi-preview th { text-align: left; font-size: 10.5px; color: var(--ink-soft); font-weight: 500; padding: 5px 9px; border-bottom: 2px solid var(--divider); }
+.wi-preview td { padding: 6px 9px; border-bottom: 1px solid var(--divider); }
+.wi-preview .wi-sum td { font-weight: 700; color: var(--ink-strong); background: var(--surface-subtle); border-top: 2px solid var(--border-strong); }
+.wi-actions { position: sticky; bottom: 12px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 -2px 12px rgba(23, 42, 68, .10); padding: 12px 18px; }
+.wi-actions span { flex: 1; min-width: 240px; font-size: 11.5px; color: var(--ink-soft); }
+
+/* 個別利用許諾条件書V3: 固定3種の取引形態と素材ピッカー */
+.v3-preset .repeater-card-head { flex-wrap: wrap; gap: 6px; }
+.v3-preset-meta { font-size: 11px; color: var(--ink-soft); }
+.v3-lcs-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.v3-material-picker { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 10px; }
+.v3-material-picker button { background: var(--surface-tint); color: var(--accent-ink); border: 1px solid var(--border);
+  border-radius: 6px; padding: 4px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+.v3-material-picker button:disabled { opacity: .55; cursor: default; }
 /* 定期支払（サブスク）明細の周期分割バンド */
 .line-card .split-band { display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
   padding: 6px 12px; background: var(--surface-tint); border-bottom: 1px solid var(--border); }

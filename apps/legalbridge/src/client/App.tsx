@@ -17,6 +17,8 @@ import {
   isRoyaltyComputedFieldHidden, isRoyaltyStructuredActive
 } from "./field-visibility";
 import { MasterDataPicker, findSelfStaff } from "./MasterDataPicker";
+import { WorkIntake } from "./WorkIntake";
+import { LANGUAGE_PRESETS, REGION_PRESETS, fixedDealRows } from "./work-intake";
 import { DocumentRegistry, type RegisteredDocument } from "./DocumentRegistry";
 import { MatterRegistry } from "./MatterRegistry";
 import { LedgerWorkspace } from "./LedgerWorkspace";
@@ -74,7 +76,7 @@ const fallback: DashboardSummary = {
   priorities: []
 };
 
-type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview" | "billing" | "receivable-map" | "payment-report" | "billing-print" | "works" | "license-matrix" | "data-quality" | "vendor-merge" | "matter-merge" | "guide" | "snippets" | "requests" | "excel-batch" | "settings" | "email-settings" | "workflow-rules" | "contract-master" | "template-samples";
+type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview" | "billing" | "receivable-map" | "payment-report" | "billing-print" | "works" | "work-intake" | "license-matrix" | "data-quality" | "vendor-merge" | "matter-merge" | "guide" | "snippets" | "requests" | "excel-batch" | "settings" | "email-settings" | "workflow-rules" | "contract-master" | "template-samples";
 type NavItem = { view: View; label: string; description: string; match: View[] };
 type NavGroup = { label: string; items: NavItem[] };
 
@@ -102,6 +104,7 @@ function navGroups(access: {
       ...(legalOrRequester ? [{ view: "template-samples" as const, label: "ひな形", description: "各テンプレートの完成イメージをサンプル値で閲覧", match: ["template-samples" as const] }] : [])
     ] },
     { label: "権利・条件", items: [
+      ...(access.legalWorkspace ? [{ view: "work-intake" as const, label: "作品登録", description: "作品・素材・イン条件を登録して個別条件書へ", match: ["work-intake" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "works" as const, label: "作品", description: "作品を起点に系譜・素材・条件・権利ソースを一望", match: ["works" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "conditions" as const, label: "条件明細", description: "契約条件の横断検索・消化・検収", match: ["conditions" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "outbound" as const, label: "アウト条件", description: "許諾先へのアウト条件追記", match: ["outbound" as const] }] : [])
@@ -156,6 +159,7 @@ function breadcrumbFor(view: View): Array<{ label: string; view?: View }> {
     outbound: [home, { label: "アウト条件" }],
     requests: [home, { label: "依頼" }],
     works: [home, { label: "作品" }],
+    "work-intake": [home, { label: "作品登録" }],
     "data-quality": [home, { label: "データ品質" }],
     "vendor-merge": [home, { label: "取引先名寄せ" }],
     "matter-merge": [home, { label: "案件名寄せ" }],
@@ -376,6 +380,7 @@ export function App() {
     setReissueSource(null);
     setNewDocSeed({});
     setNewDocIssueKey(document.issueKey ?? "");
+    setSeedNotice(null);
     setDuplicateValues(duplicateFormData(document.formData ?? {}, mode));
     setSchema(await response.json());
     setDuplicateFrom(document.documentNumber ?? null);
@@ -394,9 +399,29 @@ export function App() {
     setDraftSelection(null);
     setNewDocSeed({});
     setNewDocIssueKey(document.issueKey ?? "");
+    setSeedNotice(null);
     setDuplicateValues((document.formData ?? {}) as DocumentFormData);
     setDuplicateFrom(null);
     setReissueSource({ id: document.id, number: document.documentNumber });
+    setSchema(await response.json());
+    setView("document");
+  }
+
+  // 作品登録から個別利用許諾条件書を開く。素材と料率をマトリクス（v3_lcs）へ、
+  // 取引形態は固定3種をシードする。空欄補完（seedValues）では配列を渡せないため
+  // 複製と同じ「丸ごと初期値」機構（duplicateValues）を使う。
+  const [seedNotice, setSeedNotice] = useState<string | null>(null);
+  async function startLicenseTermsFromWork(seed: DocumentFormData, workCode: string | null) {
+    const response = await fetch("/api/v2/document-templates/individual_license_terms_v3/form-schema");
+    if (!response.ok) return;
+    setFormNonce((v) => v + 1);
+    setDraftSelection(null);
+    setReissueSource(null);
+    setNewDocSeed({});
+    setNewDocIssueKey("");
+    setDuplicateValues(seed);
+    setDuplicateFrom(null);
+    setSeedNotice(`作品 ${workCode ?? ""} の素材と料率をマトリクスへ展開しました。受付番号を入れ、各構成要素の料率と MG/AG を確認して確定してください`.trim());
     setSchema(await response.json());
     setView("document");
   }
@@ -405,6 +430,7 @@ export function App() {
     setFormNonce((v) => v + 1);
     setDuplicateValues(null);
     setDuplicateFrom(null);
+    setSeedNotice(null);
     setReissueSource(null);
     const response = await fetch(
       `/api/v2/document-templates/${encodeURIComponent(templateKey)}/form-schema`
@@ -517,6 +543,10 @@ export function App() {
         {view === "license-matrix" && <LicenseMatrixWorkspace onOpenWork={(workId) => { setDrillWorkId(workId); setView("works"); }} />}
         {view === "royalty-preview" && <RoyaltyPreview />}
         {view === "billing" && <BillingDashboard key={drillReceiptConditionId ?? "billing"} canRecord={canRecordReceipt} initialConditionLineId={drillReceiptConditionId} onCreatePaymentDocument={(legalWorkspace || requesterWorkspace) ? () => { setNewDocIssueKey(""); setNewDocSeed({}); setDraftSelection(null); setView("templates"); } : undefined} />}
+        {view === "work-intake" && legalWorkspace && <WorkIntake
+          canRegister={canEditWorks && canEditMaterials}
+          onOpenWork={(workId) => { setDrillWorkId(workId); setView("works"); }}
+          onCreateLicenseTerms={(seed, workCode) => void startLicenseTermsFromWork(seed, workCode)} />}
         {view === "works" && <WorkDetail key={drillWorkId ?? "works"} initialWorkId={drillWorkId} canEdit={canEditWorks} canEditRights={canEditRightsSources} canEditMaterials={canEditMaterials}
           onAddGrant={(workId) => { setDrillOutboundWorkId(workId); setView("outbound"); }}
           onNavigate={(t) => { if (t === "ledgers-works") { setLedgerSeedType("works"); setView("ledgers"); } else setView(t as View); }} />}
@@ -594,6 +624,7 @@ export function App() {
             duplicateValues={draftSelection ? undefined : duplicateValues ?? undefined}
             duplicateFrom={draftSelection ? undefined : duplicateFrom ?? undefined}
             duplicateMode={duplicateMode}
+            seedNotice={draftSelection ? undefined : seedNotice ?? undefined}
             reissueSource={draftSelection ? undefined : reissueSource ?? undefined}
             canReissueDocument={canReissueDocument}
             onBack={() => setView(draftSelection ? "drafts" : "templates")}
@@ -874,6 +905,7 @@ function DocumentForm({
   duplicateValues,
   duplicateFrom,
   duplicateMode,
+  seedNotice,
   reissueSource,
   canReissueDocument = false,
   onBack,
@@ -895,6 +927,8 @@ function DocumentForm({
   // 複製元の文書番号（案内文に出す）。
   duplicateFrom?: string;
   duplicateMode?: DuplicateMode;
+  // 複製以外のシード（作品登録→条件書など）で使う案内文。設定時は複製の定型文の代わりに出す。
+  seedNotice?: string;
   // 特例編集（確定済み文書の編集→再発行）。設定時は下書き・確定の代わりに
   // 「編集内容で再発行」（枝番 -R<n> 採番）だけが実行できる。
   reissueSource?: { id: number; number: string };
@@ -907,11 +941,13 @@ function DocumentForm({
   const [issueKey, setIssueKey] = useState(initialIssueKey);
   // 受付番号はデバウンスして文脈取得する（従来は1キー入力ごとに再取得→フォーム全消去だった）。
   const [debouncedIssueKey, setDebouncedIssueKey] = useState(initialIssueKey);
-  const [formData, setFormData] = useState<DocumentFormData>({});
+  // 受付番号の入力前でもシード（複製・作品登録→条件書）を見せるため、初期値に採用する。
+  // 受付番号を入れると文脈取得が走り、同じ duplicateValues を優先して再構成する（挙動同一）。
+  const [formData, setFormData] = useState<DocumentFormData>(duplicateValues ?? {});
   // ユーザーが手入力した後は文脈再取得でフォームを上書きしない（非破壊マージ）。
   const formDirtyRef = useRef(false);
   const [draft, setDraft] = useState<DocumentDraft | null>(null);
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState(seedNotice ?? "");
   const [previewHtml, setPreviewHtml] = useState("");
   // 別タブ表示用の Blob URL。サイドの枠は 300px しかなく、A4 の文書を読むには
   // 小さすぎるため、同じ HTML をそのままタブで開けるようにする。
@@ -932,7 +968,7 @@ function DocumentForm({
   } | null>(null);
   const [draftStatus, setDraftStatus] = useState<
     "loading" | "clean" | "dirty" | "saving" | "saved" | "error"
-  >("loading");
+  >(initialIssueKey.trim() ? "loading" : "clean");   // 受付番号が空だと文脈取得が走らないため
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedIssueKey(issueKey), 500);
@@ -992,10 +1028,10 @@ function DocumentForm({
           restoredDraft
             ? `保存済みの下書きを復元しました（${formatDraftTime(restoredDraft.updatedAt)}）`
             : duplicateValues
-              ? `${duplicateFrom ?? "元の文書"} を下敷きにしました。`
+              ? seedNotice ?? (`${duplicateFrom ?? "元の文書"} を下敷きにしました。`
                 + (duplicateMode === "content"
                   ? "相手先・振込先は引き継いでいます — 明細・金額を入れ直してください。"
-                  : "明細・金額は引き継いでいます — 相手先・振込先を選び直してください。")
+                  : "明細・金額は引き継いでいます — 相手先・振込先を選び直してください。"))
               : "新しい文書として入力できます"
         );
       })
@@ -1572,6 +1608,12 @@ function hasSpecializedForm(templateKey: string) {
 
 type V3Row = Record<string, unknown>;
 
+// 取引形態の計算モデル表示（プリセットに紐づく・変更不可）。
+const V3_CALC_LABELS: Record<string, string> = {
+  BASE_QTY_RATE: "上代（MSRP）× 個数 × 料率", BASE_RATE: "実効料率",
+  FIXED: "固定額", SUBSCRIPTION: "サブスク", SUPPLY_QTY: "供給価格 × 個数 × 料率"
+};
+
 function IndividualLicenseV3Form({ formData, onChange }: { formData: DocumentFormData; onChange: (name: string, value: unknown) => void }) {
   const rows = (key: string): V3Row[] => Array.isArray(formData[key]) ? formData[key] as V3Row[] : [];
   const conditions = rows("v3_conds");
@@ -1581,32 +1623,111 @@ function IndividualLicenseV3Form({ formData, onChange }: { formData: DocumentFor
   const removeRow = (key: string, index: number) => onChange(key, rows(key).filter((_, i) => i !== index));
   const field = (label: string, value: unknown, set: (value: string) => void, type: "text" | "number" = "text") =>
     <label><span>{label}</span><input type={type} value={String(value ?? "")} onChange={(event) => set(event.target.value)} /></label>;
+  const presetField = (label: string, value: unknown, set: (value: string) => void, list?: string) =>
+    <label><span>{label}</span><input list={list} value={String(value ?? "")} onChange={(event) => set(event.target.value)} /></label>;
+
+  // 取引形態は固定3種（V1 V3LicenseMatrix 準拠）。共通の固定軸にすることで構成要素の
+  // 料率合算（加算型）と利用許諾計算が成立する。自由記載は計算モデル不明の行を台帳に
+  // 入れてしまうため廃止。未設定なら既定プリセットで初期化（既存下書きの行は尊重）。
+  useEffect(() => {
+    if (!conditions.length) onChange("v3_conds", fixedDealRows());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conditions.length]);
+  const isPreset = (condition: V3Row) => [1, 2, 3].includes(Number(condition.id));
+
+  // 作品の素材から構成要素を追加する（work_id＝作品台帳コードで素材マスタを引く）。
+  const workCode = String(formData.work_id ?? "").trim();
+  const [workMaterials, setWorkMaterials] = useState<Array<{ code: string; title: string; subtitle: string }> | null>(null);
+  async function loadWorkMaterials() {
+    if (!workCode) return;
+    try {
+      const response = await fetch(`/api/v2/ledgers/materials?q=${encodeURIComponent(workCode)}&limit=60`);
+      if (!response.ok) { setWorkMaterials([]); return; }
+      const result = await response.json();
+      setWorkMaterials((result.items ?? [])
+        .filter((item: { subtitle?: string }) => String(item.subtitle ?? "").includes(workCode))
+        .map((item: { code?: string; title?: string; subtitle?: string }) => ({
+          code: String(item.code ?? ""), title: String(item.title ?? ""), subtitle: String(item.subtitle ?? "")
+        })));
+    } catch { setWorkMaterials([]); }
+  }
+
+  // 確定前ガード：計算モデルの無い取引形態・素材コードの無い料率行は、
+  // 利用許諾計算と条件台帳への同期が欠ける。黙って弱いデータを入れない。
+  const guardWarnings: string[] = [];
+  conditions.forEach((condition, i) => {
+    if (!String(condition.calc_type ?? "").trim()) {
+      guardWarnings.push(`取引形態${i + 1}（${String(condition.name || "名称未設定")}）に計算モデルがありません — 利用許諾計算ができません`);
+    }
+  });
+  materials.forEach((material, i) => {
+    const rates = material.rates && typeof material.rates === "object" ? material.rates as V3Row : {};
+    const hasRates = Object.values(rates).some((v) => String(v ?? "").trim() !== "");
+    if (hasRates && !String(material.material_code ?? "").trim()) {
+      guardWarnings.push(`構成要素${i + 1}（${String(material.name || "名称未設定")}）に素材コードがありません — 台帳（素材・消化管理）と結線されません`);
+    }
+  });
+
   return <div id="specialized-fields" className="v3-editor">
+    {guardWarnings.length > 0 && <div className="diff-note">
+      ⚠ 確定前に解消してください：
+      {guardWarnings.map((warning) => <div key={warning}>・{warning}</div>)}
+    </div>}
     <section>
-      <div className="repeater-title"><div><h2>V. 取引形態</h2><small>製造販売、サブライセンス等の条件を追加します。</small></div><button type="button" onClick={() => addRow("v3_conds", { id: String(Date.now()), addon: true, cur: "JPY", qty: "1", ag: "0", mg: "0" })}>＋ 取引形態</button></div>
-      {!conditions.length && <p className="inline-empty">取引形態を追加してください。</p>}
-      {conditions.map((condition, index) => <article className="repeater-card" key={String(condition.id ?? index)}>
-        <div className="repeater-card-head"><strong>条件{index + 1}</strong><button type="button" onClick={() => removeRow("v3_conds", index)}>削除</button></div>
-        <div className="field-grid">
-          {field("取引形態名", condition.name, (value) => replaceRow("v3_conds", index, { name: value }))}
-          <label><span>料率方式</span><select value={condition.addon ? "addon" : "fixed"} onChange={(event) => replaceRow("v3_conds", index, { addon: event.target.value === "addon" })}><option value="addon">加算型（構成要素の料率合計）</option><option value="fixed">非加算型（実効料率）</option></select></label>
-          {!condition.addon && field("実効料率（%）", condition.fixedRate, (value) => replaceRow("v3_conds", index, { fixedRate: value }), "number")}
-          <label><span>計算モデル</span><select value={String(condition.calc_type ?? "")} onChange={(event) => replaceRow("v3_conds", index, { calc_type: event.target.value })}><option value="">選択してください</option><option value="BASE_QTY_RATE">基準価格×個数×料率</option><option value="BASE_RATE">実効料率</option><option value="FIXED">固定額</option><option value="SUBSCRIPTION">サブスク</option><option value="SUPPLY_QTY">供給価格×個数×料率</option></select></label>
-          {field("製造者", condition.manufacturer, (v) => replaceRow("v3_conds", index, { manufacturer: v }))}
-          {field("販売者", condition.seller, (v) => replaceRow("v3_conds", index, { seller: v }))}
-          {field("基準価格", condition.basePrice, (v) => replaceRow("v3_conds", index, { basePrice: v }))}
-          {field("今回地域", condition.reg, (v) => replaceRow("v3_conds", index, { reg: v }))}
-          {field("今回言語", condition.lang, (v) => replaceRow("v3_conds", index, { lang: v }))}
-          {field("数量", condition.qty, (v) => replaceRow("v3_conds", index, { qty: v }))}
-          {field("AG", condition.ag, (v) => replaceRow("v3_conds", index, { ag: v }), "number")}
-          {field("MG", condition.mg, (v) => replaceRow("v3_conds", index, { mg: v }), "number")}
-          {field("通貨", condition.cur, (v) => replaceRow("v3_conds", index, { cur: v }))}
-        </div>
-      </article>)}
+      <div className="repeater-title"><div><h2>V. 取引形態（固定3種）</h2><small>① 自社製造・自社販売 ／ ② 権利許諾（サブライセンス）／ ③ 自社製造・他社販売。計算モデルは各形態に紐づきます（加算型は構成要素の料率を合算）。</small></div></div>
+      {!conditions.length && <p className="inline-empty">固定3種を初期化しています…</p>}
+      {conditions.map((condition, index) => isPreset(condition)
+        ? <article className="repeater-card v3-preset" key={String(condition.id)}>
+          <div className="repeater-card-head">
+            <strong>{Number(condition.id) === 1 ? "①" : Number(condition.id) === 2 ? "②" : "③"} {String(condition.name ?? "")}</strong>
+            <span className="v3-preset-meta">{condition.addon ? "加算型" : "非加算型（実効料率）"}・{V3_CALC_LABELS[String(condition.calc_type ?? "")] ?? "—"}・基準: {String(condition.basePrice ?? "")}</span>
+          </div>
+          <div className="field-grid">
+            {!condition.addon && field("実効料率（%）", condition.fixedRate, (v) => replaceRow("v3_conds", index, { fixedRate: v }), "number")}
+            {presetField("今回地域", condition.reg, (v) => replaceRow("v3_conds", index, { reg: v }), "v3-region-presets")}
+            {presetField("今回言語", condition.lang, (v) => replaceRow("v3_conds", index, { lang: v }), "v3-lang-presets")}
+            {field("数量", condition.qty, (v) => replaceRow("v3_conds", index, { qty: v }))}
+            {field("AG", condition.ag, (v) => replaceRow("v3_conds", index, { ag: v }), "number")}
+            {field("MG", condition.mg, (v) => replaceRow("v3_conds", index, { mg: v }), "number")}
+            {field("通貨", condition.cur, (v) => replaceRow("v3_conds", index, { cur: v }))}
+          </div>
+        </article>
+        : <article className="repeater-card" key={String(condition.id ?? index)}>
+          <div className="repeater-card-head"><strong>条件{index + 1}（旧データ・自由記載）</strong><button type="button" onClick={() => removeRow("v3_conds", index)}>削除</button></div>
+          <div className="field-grid">
+            {field("取引形態名", condition.name, (value) => replaceRow("v3_conds", index, { name: value }))}
+            <label><span>料率方式</span><select value={condition.addon ? "addon" : "fixed"} onChange={(event) => replaceRow("v3_conds", index, { addon: event.target.value === "addon" })}><option value="addon">加算型（構成要素の料率合計）</option><option value="fixed">非加算型（実効料率）</option></select></label>
+            {!condition.addon && field("実効料率（%）", condition.fixedRate, (value) => replaceRow("v3_conds", index, { fixedRate: value }), "number")}
+            <label><span>計算モデル</span><select value={String(condition.calc_type ?? "")} onChange={(event) => replaceRow("v3_conds", index, { calc_type: event.target.value })}><option value="">選択してください</option><option value="BASE_QTY_RATE">基準価格×個数×料率</option><option value="BASE_RATE">実効料率</option><option value="FIXED">固定額</option><option value="SUBSCRIPTION">サブスク</option><option value="SUPPLY_QTY">供給価格×個数×料率</option></select></label>
+            {field("製造者", condition.manufacturer, (v) => replaceRow("v3_conds", index, { manufacturer: v }))}
+            {field("販売者", condition.seller, (v) => replaceRow("v3_conds", index, { seller: v }))}
+            {field("基準価格", condition.basePrice, (v) => replaceRow("v3_conds", index, { basePrice: v }))}
+            {presetField("今回地域", condition.reg, (v) => replaceRow("v3_conds", index, { reg: v }), "v3-region-presets")}
+            {presetField("今回言語", condition.lang, (v) => replaceRow("v3_conds", index, { lang: v }), "v3-lang-presets")}
+            {field("数量", condition.qty, (v) => replaceRow("v3_conds", index, { qty: v }))}
+            {field("AG", condition.ag, (v) => replaceRow("v3_conds", index, { ag: v }), "number")}
+            {field("MG", condition.mg, (v) => replaceRow("v3_conds", index, { mg: v }), "number")}
+            {field("通貨", condition.cur, (v) => replaceRow("v3_conds", index, { cur: v }))}
+          </div>
+        </article>)}
     </section>
     <section>
-      <div className="repeater-title"><div><h2>VI. 構成要素・料率マトリクス</h2><small>権利台帳の構成要素と取引形態別料率を入力します。</small></div><button type="button" onClick={() => addRow("v3_lcs", { rates: {} })}>＋ 構成要素</button></div>
-      {!materials.length && <p className="inline-empty">構成要素を追加してください。</p>}
+      <div className="repeater-title"><div><h2>VI. 構成要素・料率マトリクス</h2><small>作品の素材マスタから追加します（素材コードで台帳と結線され、料率対象・消化管理へ反映）。</small></div>
+        <div className="v3-lcs-actions">
+          {workCode && <button type="button" onClick={() => void loadWorkMaterials()}>＋ 作品（{workCode}）の素材から追加</button>}
+          <button type="button" onClick={() => addRow("v3_lcs", { rates: {} })}>＋ 手入力で追加</button>
+        </div></div>
+      {workMaterials !== null && <div className="v3-material-picker">
+        {!workMaterials.length && <small className="muted-note">この作品の素材が見つかりません（作品登録画面で素材を登録してください）。</small>}
+        {workMaterials.map((candidate) => {
+          const added = materials.some((m) => String(m.material_code ?? "") === candidate.code);
+          return <button type="button" key={candidate.code} disabled={added}
+            onClick={() => addRow("v3_lcs", { material_code: candidate.code, name: candidate.title, rates: {} })}>
+            {added ? "✓ " : "＋ "}{candidate.code} {candidate.title}
+          </button>;
+        })}
+      </div>}
+      {!materials.length && <p className="inline-empty">{workCode ? "「作品の素材から追加」で構成要素を選んでください。" : "作品を選ぶ（「DBから引用」→作品・原作）と素材から追加できます。手入力も可能です。"}</p>}
       {materials.map((material, index) => {
         const rates = material.rates && typeof material.rates === "object" ? material.rates as V3Row : {};
         return <article className="repeater-card" key={index}>
@@ -1616,8 +1737,8 @@ function IndividualLicenseV3Form({ formData, onChange }: { formData: DocumentFor
             {field("構成要素名", material.name, (v) => replaceRow("v3_lcs", index, { name: v }))}
             {field("権利元", material.holder, (v) => replaceRow("v3_lcs", index, { holder: v }))}
             {field("根拠文書番号", material.source_doc, (v) => replaceRow("v3_lcs", index, { source_doc: v }))}
-            {field("許諾地域", material.region, (v) => replaceRow("v3_lcs", index, { region: v }))}
-            {field("許諾言語", material.language, (v) => replaceRow("v3_lcs", index, { language: v }))}
+            {presetField("許諾地域", material.region, (v) => replaceRow("v3_lcs", index, { region: v }), "v3-region-presets")}
+            {presetField("許諾言語", material.language, (v) => replaceRow("v3_lcs", index, { language: v }), "v3-lang-presets")}
             {conditions.filter((condition) => Boolean(condition.addon)).map((condition, ci) => {
               const key = String(condition.id ?? ci);
               return field(`${String(condition.name || `条件${ci + 1}`)} 料率（%）`, rates[key], (v) => replaceRow("v3_lcs", index, { rates: { ...rates, [key]: v } }), "number");
@@ -1625,6 +1746,8 @@ function IndividualLicenseV3Form({ formData, onChange }: { formData: DocumentFor
           </div>
         </article>;
       })}
+      <datalist id="v3-region-presets">{REGION_PRESETS.map((r) => <option key={r} value={r} />)}</datalist>
+      <datalist id="v3-lang-presets">{LANGUAGE_PRESETS.map((l) => <option key={l} value={l} />)}</datalist>
     </section>
     <SimpleRepeater title="VII. サブライセンシー" itemLabel="サブライセンシー" rows={rows("v3_sublicensees")} fields={[["slPartner","相手方"],["slRegion","地域"],["slLang","言語"],["slCond","条件"],["slRate","料率"],["slDate","開始日"],["slNote","備考"]]} onAdd={() => addRow("v3_sublicensees", {})} onChange={(i,p) => replaceRow("v3_sublicensees",i,p)} onRemove={(i) => removeRow("v3_sublicensees",i)} />
     <SimpleRepeater title="VIII. 計算基準日" itemLabel="基準日" rows={rows("v3_calc_base_rows")} fields={[["edition","版"],["trigger","起点事由"],["note","備考"]]} onAdd={() => addRow("v3_calc_base_rows", {})} onChange={(i,p) => replaceRow("v3_calc_base_rows",i,p)} onRemove={(i) => removeRow("v3_calc_base_rows",i)} />
