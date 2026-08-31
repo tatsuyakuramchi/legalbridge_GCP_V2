@@ -548,6 +548,7 @@ export function App() {
           onOpenWork={(workId) => { setDrillWorkId(workId); setView("works"); }}
           onCreateLicenseTerms={(seed, workCode) => void startLicenseTermsFromWork(seed, workCode)} />}
         {view === "works" && <WorkDetail key={drillWorkId ?? "works"} initialWorkId={drillWorkId} canEdit={canEditWorks} canEditRights={canEditRightsSources} canEditMaterials={canEditMaterials}
+          onCreateLicenseTerms={(seed, workCode) => void startLicenseTermsFromWork(seed, workCode)}
           onAddGrant={(workId) => { setDrillOutboundWorkId(workId); setView("outbound"); }}
           onNavigate={(t) => { if (t === "ledgers-works") { setLedgerSeedType("works"); setView("ledgers"); } else setView(t as View); }} />}
         {view === "data-quality" && <DataQuality onNavigate={(v, id) => {

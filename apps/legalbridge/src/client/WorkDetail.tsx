@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
+import type { DocumentFormData } from "../types";
 import {
   buildGrantCoverage, buildRightsTree, exclusivityLabel, type RightsLine
 } from "../rights-aggregation";
 import { SearchableLedgerSelect } from "./SearchableLedgerSelect";
 import { checkWorkConditions, summarizeFindings } from "./contract-check";
 import { FeatureLockedNote } from "./FeatureLockedNote";
+import { buildLicenseTermsSeed, emptyIntakeMaterial } from "./work-intake";
 
 // 作品詳細（Phase 2・読み取り専用）。作品を起点に 概要/系譜/素材/条件/権利ソース/
 // 料率対象 を一望する。作品ピッカー（検索）で選択 → GET /works/:id/detail を集約表示。
@@ -75,7 +77,7 @@ const emptyMaterial = (): MaterialForm => ({
   acquisitionType: "license", rightsType: "license", rightsHolderLabel: "", isRoyaltyBearing: false, remarks: ""
 });
 
-export function WorkDetail({ canEdit = false, canEditRights = false, canEditMaterials = false, onNavigate, onAddGrant, initialWorkId = null }: { canEdit?: boolean; canEditRights?: boolean; canEditMaterials?: boolean; onNavigate?: (target: string) => void; onAddGrant?: (workId: number) => void; initialWorkId?: number | null }) {
+export function WorkDetail({ canEdit = false, canEditRights = false, canEditMaterials = false, onNavigate, onAddGrant, onCreateLicenseTerms, initialWorkId = null }: { canEdit?: boolean; canEditRights?: boolean; canEditMaterials?: boolean; onNavigate?: (target: string) => void; onAddGrant?: (workId: number) => void; onCreateLicenseTerms?: (seed: DocumentFormData, workCode: string | null) => void; initialWorkId?: number | null }) {
   const [keyword, setKeyword] = useState("");
   const [results, setResults] = useState<Summary[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(initialWorkId);
@@ -344,6 +346,26 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
                 {detail.lineage?.isDerivative && <span className="status">派生{detail.lineage.depth}段</span>}
                 <span className="status">{kindLabel(detail.work.kind)}</span>
                 {canEdit && !editing && <button onClick={startEdit}>編集</button>}
+                {onCreateLicenseTerms && <button className="primary"
+                  title="登録済みの素材（コード・権利者・地域言語）をマトリクスへ展開した条件書フォームを開きます"
+                  onClick={() => {
+                    // 既存作品から条件書を作る（作品登録と同じ橋渡し）。イン料率は
+                    // 既存の条件文書側にあるためここでは展開せず、条件書側で入力する。
+                    const seed = buildLicenseTermsSeed(
+                      { workCode: detail.work.workCode, title: detail.work.title ?? "",
+                        holderLabel: detail.work.rightsHolderName ?? "" },
+                      (detail.materials ?? []).map((m) => ({
+                        material: {
+                          ...emptyIntakeMaterial(m.rightsHolderLabel ?? detail.work.rightsHolderName ?? ""),
+                          name: m.materialName ?? m.materialCode ?? "",
+                          royalty: Boolean(m.isRoyaltyBearing),
+                          region: m.territory ?? "全世界",
+                          language: m.language ?? "全言語"
+                        },
+                        materialCode: m.materialCode
+                      })));
+                    onCreateLicenseTerms(seed, detail.work.workCode);
+                  }}>この作品から個別条件書を作成</button>}
               </div>
             </div>
 
