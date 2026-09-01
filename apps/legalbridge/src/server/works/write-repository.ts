@@ -87,8 +87,11 @@ export class PgWorkWriteRepository implements WorkWriteRepository {
       const id = Number(inserted.rows[0].id);
       let workCode: string | null = inserted.rows[0].work_code ?? null;
       if (!hasCode) {
+        // lpad は対象が桁数より長いと「先頭で切り詰める」。本番の id は移行時の
+        // setval で10億番台のため、固定5桁だと全行が 'WRK-10000' に潰れて2件目
+        // 以降が一意制約違反になっていた（実障害）。桁数は id の長さと5の大きい方。
         const numbered = await client.query(
-          `UPDATE works SET work_code = 'WRK-' || lpad(id::text, 5, '0')
+          `UPDATE works SET work_code = 'WRK-' || lpad(id::text, GREATEST(length(id::text), 5), '0')
             WHERE id = $1 RETURNING work_code`, [id]);
         workCode = numbered.rows[0]?.work_code ?? workCode;
       }

@@ -100,7 +100,7 @@ export class PgVendorWriteRepository implements VendorWriteRepository {
       let vendorCode: string | null = inserted.rows[0].vendor_code ?? null;
       if (!hasCode) {
         const numbered = await client.query(
-          `UPDATE vendors SET vendor_code = 'VEN-' || lpad(id::text, 5, '0')
+          `UPDATE vendors SET vendor_code = 'VEN-' || lpad(id::text, GREATEST(length(id::text), 5), '0')
             WHERE id = $1 RETURNING vendor_code`,
           [id]
         );

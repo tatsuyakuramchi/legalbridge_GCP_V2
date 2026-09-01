@@ -78,3 +78,18 @@ test("自動採番の仮コードは毎回ユニーク（固定 PENDING を使�
   assert.notEqual(captured[0], captured[1]);
   assert.match(captured[0], /^PENDING-/);
 });
+
+test("自動採番は桁あふれで切り詰めない（lpad固定5桁で全行 WRK-10000 に潰れた実障害）", async () => {
+  // 本番の works.id は移行時 setval で10億番台。lpad(id, 5) は先頭5文字に
+  // 切り詰めるため全行 'WRK-10000' になり、2件目以降が一意制約違反だった。
+  let updateSql = "";
+  const { pool } = poolWith((sql) => {
+    if (sql.startsWith("INSERT INTO works")) return { rows: [{ id: 1000000113, work_code: "PENDING-x" }] };
+    if (sql.includes("UPDATE works SET work_code")) { updateSql = sql; return { rows: [{ work_code: "WRK-1000000113" }] }; }
+    return { rows: [] };
+  });
+  const repository = new PgWorkWriteRepository(pool);
+  const saved = await repository.create({ title: "新作" } as Parameters<typeof repository.create>[0]);
+  assert.equal(saved.workCode, "WRK-1000000113");
+  assert.match(updateSql, /GREATEST\(length\(id::text\), 5\)/);
+});

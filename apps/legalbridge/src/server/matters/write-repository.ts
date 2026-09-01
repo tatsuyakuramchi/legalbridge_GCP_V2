@@ -80,7 +80,7 @@ export class PgMatterWriteRepository implements MatterWriteRepository {
       if (!matterCode) {
         const numbered = await client.query(
           `UPDATE matters
-              SET matter_code = 'MTR-' || to_char(created_at, 'YYYY') || '-' || lpad(id::text, 5, '0')
+              SET matter_code = 'MTR-' || to_char(created_at, 'YYYY') || '-' || lpad(id::text, GREATEST(length(id::text), 5), '0')
             WHERE id = $1 AND matter_code IS NULL
             RETURNING matter_code`,
           [id]
