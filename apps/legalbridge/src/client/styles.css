@@ -2196,6 +2196,13 @@ textarea { width: 100%; min-height: 90px; resize: vertical; line-height: 1.6; }
   box-shadow: 0 -2px 12px rgba(23, 42, 68, .10); padding: 12px 18px; }
 .wi-actions span { flex: 1; min-width: 240px; font-size: 11.5px; color: var(--ink-soft); }
 
+/* 作品詳細: 条件タブの入口ガイド（条件は文書から登録される、の行程説明） */
+.wd-guide { background: var(--surface-tint); border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 14px; margin-bottom: 12px; font-size: 12.5px; color: var(--ink); }
+.wd-guide strong { color: var(--accent-ink); display: block; margin-bottom: 4px; }
+.wd-guide ol { margin: 0; padding-left: 20px; display: grid; gap: 3px; }
+.wd-guide .link-button { padding: 0 2px; }
+
 /* 個別利用許諾条件書V3: 固定3種の取引形態と素材ピッカー */
 .v3-preset .repeater-card-head { flex-wrap: wrap; gap: 6px; }
 .v3-preset-meta { font-size: 11px; color: var(--ink-soft); }

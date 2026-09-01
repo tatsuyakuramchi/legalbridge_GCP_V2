@@ -23,16 +23,16 @@ type Conditions = { receivable: Cond[]; payable: Cond[]; sublicense: Cond[]; wor
 type Core = Summary & { titleKana: string | null; workType: string | null; status: string | null; derivationType: string | null; rightsHolderName: string | null; rightsHolderVendorId?: number | null; creatorName: string | null; publisherName: string | null; ledgerCode: string | null; remarks: string | null };
 type Detail = { work: Core; lineage: Lineage | null; materials: Material[] | null; rightsSources: RightsSource[] | null; conditions: Conditions | null; rightsLines?: RightsLine[] | null };
 
-type Tab = "overview" | "lineage" | "products" | "materials" | "conditions" | "tree" | "rights" | "rates" | "check";
+// タブは4つに統合（2026-09-01 利用者指摘「行程と項目の意味が分かりにくい」）。
+// 旧: 概要/系譜/製品/素材/条件/権利ツリー/権利ソース/料率対象/契約チェック の9タブは
+// 概念が重複していた（製品≒系譜の派生作品、料率対象≒条件の絞り込み、
+// 権利ツリー≒条件の地図表示）。基本情報（＋系譜）/素材と権利元（＋権利ソース）/
+// 条件・料率（＋権利ツリー）/契約チェック に束ねる。
+type Tab = "overview" | "materials" | "conditions" | "check";
 const TABS: { key: Tab; label: string }[] = [
-  { key: "overview", label: "概要" },
-  { key: "lineage", label: "系譜" },
-  { key: "products", label: "製品" },
-  { key: "materials", label: "素材" },
-  { key: "conditions", label: "条件" },
-  { key: "tree", label: "権利ツリー" },
-  { key: "rights", label: "権利ソース" },
-  { key: "rates", label: "料率対象" },
+  { key: "overview", label: "基本情報" },
+  { key: "materials", label: "素材と権利元" },
+  { key: "conditions", label: "条件・料率" },
   { key: "check", label: "契約チェック" }
 ];
 const sevLabel: Record<"high" | "medium" | "low", string> = { high: "重大", medium: "注意", low: "軽微" };
@@ -431,7 +431,8 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
               </dl>
             ))}
 
-            {tab === "lineage" && (detail.lineage ? <>
+            {tab === "overview" && !editing && (detail.lineage ? <>
+              <h4>系譜（原作 → この作品 → 派生）</h4>
               <div className="wd-chain">
                 {detail.lineage.chain.map((t) => (
                   <div key={t.workId} className={`wd-node${t.isSelected ? " current" : ""}`}>
@@ -476,25 +477,6 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
                 </div>
                 <small className="hint">「この作品の派生元」の関連付けを追加します（既に登録済みなら重複しません・循環する指定は拒否されます）。</small>
               </>}
-            </> : <Degraded />)}
-
-            {tab === "products" && (detail.lineage ? <>
-              <small className="hint">この作品から生まれた製品（派生作品）と構成素材を集約表示します。※製品専用テーブルは未導入のため、派生作品・素材から代替表示しています。</small>
-              <h4>製品（派生作品）</h4>
-              {detail.lineage.children.length ? <div className="table-scroll"><table>
-                <thead><tr><th>コード</th><th>製品名</th><th>区分</th><th>ステータス</th><th></th></tr></thead>
-                <tbody>{detail.lineage.children.map((c) => <tr key={c.workId}>
-                  <td>{c.workCode ?? "—"}</td><td>{c.title ?? `作品#${c.workId}`}</td>
-                  <td>{kindLabel(c.kind ?? null)}</td><td>{c.status ?? "—"}</td>
-                  <td><button onClick={() => setSelectedId(c.workId)}>開く</button></td>
-                </tr>)}</tbody>
-              </table></div> : <div className="empty-state">この作品を派生元とする製品（派生作品）はありません。</div>}
-              <h4>構成素材</h4>
-              {detail.materials == null ? <Degraded /> : (
-                detail.materials.length
-                  ? <ul className="wd-list">{detail.materials.map((m) => <li key={m.id}>{m.materialCode ? m.materialCode + " " : ""}{m.materialName}{m.materialType ? `（${m.materialType}）` : ""}</li>)}</ul>
-                  : <div className="empty-state">登録された素材はありません。</div>
-              )}
             </> : <Degraded />)}
 
             {tab === "materials" && (detail.materials ? <>
@@ -542,29 +524,50 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
               </table></div> : <div className="empty-state">登録された素材はありません。{canEditMaterials && "「素材を追加」から登録できます。"}</div>}
             </> : <Degraded />)}
 
-            {tab === "conditions" && (detail.conditions ? <>
-              <div className="wd-cond-summary">
-                <span>受領 {detail.conditions.totals.receivableCount}</span>
-                <span>支払 {detail.conditions.totals.payableCount}</span>
-                <span>サブライセンス {detail.conditions.totals.sublicenseCount}</span>
-                <span>作品レベル {detail.conditions.totals.workLevelCount}</span>
+            {tab === "conditions" && <>
+              {/* 条件は手入力の一覧ではなく「文書から自動で登録される」。この行程が
+                  画面から読めず「どこで入力するのか分からない」となっていたため、
+                  入口をボタン付きで明示する。 */}
+              <div className="wd-guide">
+                <strong>条件はここで直接入力せず、文書から自動で登録されます。</strong>
+                <ol>
+                  <li><b>支払う条件（イン）</b>＝ 権利元から許諾を受ける条件。右上の<b>「この作品から個別条件書を作成」</b>で条件書を作り、確定すると載ります。</li>
+                  <li><b>受け取る条件（アウト）</b>＝ 他社へ許諾する条件。{onAddGrant ? <button type="button" className="link-button" onClick={() => onAddGrant(detail.work.id)}>アウト条件を追記</button> : "「アウト条件」画面"}から登録します。</li>
+                  <li>紙・過去の契約は、文書一覧で取り込んで<b>「詳細編集 → 条件明細」</b>から登録できます。</li>
+                </ol>
               </div>
-              {detail.conditions.totals.count ? <div className="table-scroll"><table>
-                <thead><tr><th>方向</th><th>条件名</th><th>素材</th><th>料率</th><th>金額</th><th>MG</th><th>サブL</th><th>文書</th></tr></thead>
-                <tbody>{[...detail.conditions.receivable, ...detail.conditions.payable].map((c) => <tr key={c.id}>
-                  <td>{c.direction === "receivable" ? "受領" : c.direction === "payable" ? "支払" : "—"}</td>
-                  <td>{c.conditionName ?? "—"}</td><td>{c.materialName ?? (c.sourceMaterialId ? `#${c.sourceMaterialId}` : "作品レベル")}</td>
-                  <td>{c.ratePct != null ? `${c.ratePct}%` : "—"}</td><td>{yen(c.amountExTax, c.currency)}</td><td>{yen(c.mgAmount, c.currency)}</td>
-                  <td>{c.sublicenseAllowed || c.parentLicenseConditionId != null ? "○" : ""}</td><td>{c.documentNumber ?? "—"}</td>
-                </tr>)}</tbody>
-              </table></div> : <div className="empty-state">紐づく条件明細はありません。</div>}
-            </> : <Degraded />)}
+              {detail.conditions == null ? <Degraded /> : <>
+                <div className="wd-cond-summary">
+                  <span>支払う（イン） {detail.conditions.totals.payableCount}</span>
+                  <span>受け取る（アウト） {detail.conditions.totals.receivableCount}</span>
+                  <span>再許諾 {detail.conditions.totals.sublicenseCount}</span>
+                  <span title="特定の素材ではなく文書全体に付いた条件">文書全体 {detail.conditions.totals.workLevelCount}</span>
+                </div>
+                {detail.conditions.totals.count ? <div className="table-scroll"><table>
+                  <thead><tr><th>向き</th><th>条件名</th><th>対象素材</th><th>料率</th><th>金額</th><th>MG</th><th>再許諾</th><th>根拠文書</th></tr></thead>
+                  <tbody>{[...detail.conditions.receivable, ...detail.conditions.payable].map((c) => <tr key={c.id}>
+                    <td>{c.direction === "receivable" ? "受け取る" : c.direction === "payable" ? "支払う" : "—"}</td>
+                    <td>{c.conditionName ?? "—"}</td><td>{c.materialName ?? (c.sourceMaterialId ? `#${c.sourceMaterialId}` : "文書全体")}</td>
+                    <td>{c.ratePct != null ? `${c.ratePct}%` : "—"}</td><td>{yen(c.amountExTax, c.currency)}</td><td>{yen(c.mgAmount, c.currency)}</td>
+                    <td>{c.sublicenseAllowed || c.parentLicenseConditionId != null ? "○" : ""}</td><td>{c.documentNumber ?? "—"}</td>
+                  </tr>)}</tbody>
+                </table></div> : <div className="empty-state">まだ条件がありません。上の1〜3のいずれかで登録してください。</div>}
+              </>}
+              <h4>ロイヤリティ対象の素材</h4>
+              {detail.materials == null ? <Degraded /> : (
+                detail.materials.filter((m) => m.isRoyaltyBearing).length
+                  ? <ul className="wd-list">{detail.materials.filter((m) => m.isRoyaltyBearing).map((m) => <li key={m.id}>{m.materialCode ? m.materialCode + " " : ""}{m.materialName}</li>)}</ul>
+                  : <div className="empty-state">ロイヤリティ対象の素材はありません（「素材と権利元」タブでON/OFFできます）。</div>
+              )}
+              <h4>許諾の地図（地域×言語の重なりチェック）</h4>
+              <RightsTreeTab lines={detail.rightsLines ?? null}
+                onAddGrant={onAddGrant ? () => onAddGrant(detail.work.id) : undefined} />
+            </>}
 
-            {tab === "tree" && <RightsTreeTab lines={detail.rightsLines ?? null}
-              onAddGrant={onAddGrant ? () => onAddGrant(detail.work.id) : undefined} />}
-
-            {tab === "rights" && (detail.rightsSources ? (
+            {tab === "materials" && (detail.rightsSources ? (
               <>
+                <h4>権利元・根拠（権利ソース）</h4>
+                <small className="hint">素材ごとに「誰から・どの契約（文書）で」権利を得ているかの記録です。契約書から素材を引用して登録した場合は自動で付きます。</small>
                 {canEditRights && !rightsForm && (
                   <div className="wd-edit-actions">
                     <button className="primary" onClick={() => { setRightsError(""); setRightsForm(emptyRights(detail.materials?.[0]?.id ?? null)); }}
@@ -618,29 +621,6 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
                 </table></div> : <div className="empty-state">登録された権利ソースはありません。</div>}
               </>
             ) : <Degraded />)}
-
-            {tab === "rates" && (
-              <>
-                <h4>ロイヤリティ対象素材</h4>
-                {detail.materials == null ? <Degraded /> : (
-                  detail.materials.filter((m) => m.isRoyaltyBearing).length
-                    ? <ul className="wd-list">{detail.materials.filter((m) => m.isRoyaltyBearing).map((m) => <li key={m.id}>{m.materialCode ? m.materialCode + " " : ""}{m.materialName}</li>)}</ul>
-                    : <div className="empty-state">ロイヤリティ対象の素材はありません。</div>
-                )}
-                <h4>料率を持つ条件</h4>
-                {detail.conditions == null ? <Degraded /> : (
-                  [...detail.conditions.receivable, ...detail.conditions.payable].filter((c) => c.ratePct != null).length
-                    ? <div className="table-scroll"><table>
-                      <thead><tr><th>方向</th><th>条件名</th><th>素材</th><th>料率</th><th>ロイヤリティ基礎</th></tr></thead>
-                      <tbody>{[...detail.conditions.receivable, ...detail.conditions.payable].filter((c) => c.ratePct != null).map((c) => <tr key={c.id}>
-                        <td>{c.direction === "receivable" ? "受領" : "支払"}</td><td>{c.conditionName ?? "—"}</td>
-                        <td>{c.materialName ?? "作品レベル"}</td><td>{c.ratePct}%</td><td>{yen(c.amountExTax, c.currency)}</td>
-                      </tr>)}</tbody>
-                    </table></div>
-                    : <div className="empty-state">料率を持つ条件はありません。</div>
-                )}
-              </>
-            )}
 
             {tab === "check" && (detail.conditions == null ? <Degraded /> : (() => {
               const all = [...detail.conditions.receivable, ...detail.conditions.payable];
