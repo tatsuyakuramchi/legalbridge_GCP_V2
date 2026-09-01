@@ -289,6 +289,11 @@ function applyStaffAliases(schema: DocumentFormSchema, patch: DocumentFormData, 
   patch.STAFF_DEPARTMENT = String(values.department ?? "");
   patch.STAFF_EMAIL = String(values.email ?? "");
   patch.STAFF_PHONE = String(values.phone ?? "");
+  // 個別利用許諾条件書の Licensee（自社）側通知先は1欄のため、V1 と同じく
+  // 「氏名 ／ 電話 ／ メール」を連結して入れる（欄があるテンプレのみ）。
+  setIfField(schema, patch, "Licensee_連絡先",
+    [values.staff_name, values.phone, values.email]
+      .filter((v) => v != null && String(v).trim()).join(" ／ "));
 }
 
 function applyCompanyAliases(schema: DocumentFormSchema, patch: DocumentFormData, values: Record<string, unknown>) {

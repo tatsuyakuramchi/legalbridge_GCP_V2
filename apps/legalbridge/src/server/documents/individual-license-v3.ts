@@ -107,7 +107,11 @@ export function buildIndividualLicenseV3Context(formData: AnyRecord) {
     issueDate: pick("発行日", "issueDate"), contractNo: pick("契約書番号", "contractNo"), workId: pick("work_id", "台帳ID", "workId"), masterAgreement: pick("基本契約名", "masterAgreement"),
     licensorName: pick("Licensor_氏名会社名", "Licensor_名称", "licensorName"), licenseeName: pick("Licensee_氏名会社名", "Licensee_名称", "licenseeName"), startDate: pick("許諾開始日", "startDate"),
     licensorContact: [formData["Licensor_担当者"], formData["Licensor_電話"], formData["Licensor_メール"]].filter((value) => value != null && String(value).trim()).join(" ／ "),
-    licenseeContact: pick("Licensee_連絡先", "licenseeContact"),
+    // Licensee（自社）側の通知先。欄が空なら当社担当者（STAFF_*・ログイン担当者の
+    // 自動補完または「DBから引用→担当者」の選択）から V1 と同じ連結形で組み立てる。
+    licenseeContact: pick("Licensee_連絡先", "licenseeContact")
+      || [formData.STAFF_NAME, formData.STAFF_PHONE, formData.STAFF_EMAIL]
+        .filter((value) => value != null && String(value).trim()).join(" ／ "),
     productDefinition: pick("v3_productDefinition", "対象製品の定義", "productDefinition") || "被許諾者（Licensee）が本契約に基づき対象作品を利用して企画・開発・製造・販売するボードゲーム製品（以下「対象製品」という。）",
     productName: pick("対象製品予定名", "productName"), exclusivity: pick("独占性", "exclusivity"), maxRegion: pick("v3_maxRegion", "許諾地域", "maxRegion"), maxLanguage: pick("v3_maxLanguage", "許諾言語", "maxLanguage"), scope: pick("v3_scope", "許諾範囲", "scope"),
     conds: renderedConditions,

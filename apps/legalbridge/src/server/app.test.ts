@@ -1284,3 +1284,20 @@ test("文書検索は template で発注書だけに絞れる（検収書の親P
     .expect(200);
   assert.equal(all.body.items.length, 2);
 });
+
+test("V3条件書: Licensee通知先が空なら当社担当者（STAFF_*）から連結して補完する", () => {
+  // 通知先欄（別紙頭書の Licensee：）が空で出ていた実障害。V1 は選択中担当者から
+  // 「氏名 ／ 電話 ／ メール」を連結していた。STAFF_* はログイン担当者の自動補完
+  // または「DBから引用→担当者」で入る。
+  const filled = buildIndividualLicenseV3Context({
+    STAFF_NAME: "山田 太郎", STAFF_PHONE: "03-1111-2222", STAFF_EMAIL: "yamada@example.co.jp"
+  });
+  assert.equal(filled.licenseeContact, "山田 太郎 ／ 03-1111-2222 ／ yamada@example.co.jp");
+  // 欄への手入力・引用値があればそちらを優先する。
+  const explicit = buildIndividualLicenseV3Context({
+    Licensee_連絡先: "法務部 直通 03-9999-0000", STAFF_NAME: "山田 太郎"
+  });
+  assert.equal(explicit.licenseeContact, "法務部 直通 03-9999-0000");
+  // どちらも無ければ空のまま。
+  assert.equal(buildIndividualLicenseV3Context({}).licenseeContact, "");
+});
