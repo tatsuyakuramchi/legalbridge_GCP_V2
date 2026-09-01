@@ -1,6 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-
-type LedgerItem = { id: string; code: string; title: string; subtitle: string };
+import { useEffect, useState } from "react";
+import { SearchableLedgerSelect } from "./SearchableLedgerSelect";
 type OverlapLine = {
   id: number; conditionName: string; direction: string | null; flowDirection: string | null;
   sourceMaterialId: number | null; materialName: string | null;
@@ -30,25 +29,31 @@ const initial: FormState = {
 export function OutboundConditionWorkspace({ onNavigate, initialWorkId = null }: { onNavigate?: (target: string) => void; initialWorkId?: number | null } = {}) {
   // 権利ツリーの「＋許諾条件を追加」から来たときは作品を選択済みにする。
   const [form, setForm] = useState(initialWorkId != null ? { ...initial, workId: String(initialWorkId) } : initial);
-  const [works, setWorks] = useState<LedgerItem[]>([]);
-  const [vendors, setVendors] = useState<LedgerItem[]>([]);
+  // 作品・相手方は検索ピッカーで選ぶ。以前は先頭500件のプルダウンで、
+  //   (a) 500件を超えると新しい作品が候補から落ちる
+  //   (b) 「自社作品」だけに絞っていたため、ライセンスイン作品（他社原作）の
+  //       再許諾＝主要なアウト条件のケースが選べなかった
+  // の2つで「登録したばかりの作品が出てこない」となっていた。区分では絞らない。
+  const [workLabel, setWorkLabel] = useState("");
+  const [counterpartyLabel, setCounterpartyLabel] = useState("");
   const [notice, setNotice] = useState("入力内容を確認後、管理者だけが保存できます。");
   const [preview, setPreview] = useState<Record<string, unknown> | null>(null);
   const [overlap, setOverlap] = useState<Overlap | null>(null);
   const license = form.transactionKind === "license";
 
+  // 権利ツリーから遷移してきたときの選択中表示（ラベルだけ取得）。
   useEffect(() => {
-    Promise.all([
-      fetch("/api/v2/ledgers/works?limit=500").then((response) => response.json()),
-      fetch("/api/v2/ledgers/vendors?limit=500").then((response) => response.json())
-    ]).then(([workData, vendorData]) => {
-      setWorks((workData.items ?? []).filter((item: LedgerItem) => item.subtitle.includes("自社作品")));
-      setVendors(vendorData.items ?? []);
-    }).catch(() => setNotice("作品または相手方の候補を取得できませんでした"));
-  }, []);
-
-  const work = useMemo(() => works.find((item) => item.id === form.workId), [works, form.workId]);
-  const vendor = useMemo(() => vendors.find((item) => item.id === form.counterpartyId), [vendors, form.counterpartyId]);
+    if (initialWorkId == null) return;
+    let cancelled = false;
+    fetch(`/api/v2/works/${initialWorkId}`)
+      .then((response) => response.ok ? response.json() : null)
+      .then((data) => {
+        if (cancelled || !data?.work) return;
+        setWorkLabel([data.work.workCode, data.work.title].filter(Boolean).join(" "));
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [initialWorkId]);
 
   // 作品を選ぶと、その作品に既に紐づく条件を取得して重複警告を出す（導線ガード）。
   // 包括条件と個別（マテリアル由来）条件は別建てで消化実績に合算されるため、
@@ -85,8 +90,8 @@ export function OutboundConditionWorkspace({ onNavigate, initialWorkId = null }:
     const number = (value: string) => value === "" ? undefined : Number(value);
     return {
       ...form,
-      workLabel: work ? `${work.code} ${work.title}` : "",
-      counterpartyLabel: vendor ? `${vendor.code} ${vendor.title}` : "",
+      workLabel,
+      counterpartyLabel,
       languages: form.languages.split(/[,、]/).map((value) => value.trim()).filter(Boolean),
       termStart: form.termStart || undefined,
       termEnd: form.termEnd || undefined,
@@ -173,8 +178,20 @@ export function OutboundConditionWorkspace({ onNavigate, initialWorkId = null }:
     </div>}
     <div className="outbound-form">
       <fieldset><legend>1. 対象と相手方</legend>
-        <label>自社作品<select value={form.workId} onChange={(e) => update("workId", e.target.value)}><option value="">選択してください</option>{works.map((item) => <option key={item.id} value={item.id}>{item.code} {item.title}</option>)}</select></label>
-        <label>相手方<select value={form.counterpartyId} onChange={(e) => update("counterpartyId", e.target.value)}><option value="">選択してください</option>{vendors.map((item) => <option key={item.id} value={item.id}>{item.code} {item.title}</option>)}</select></label>
+        <SearchableLedgerSelect type="works" value={form.workId}
+          label="対象作品" placeholder="作品名・台帳コードで検索…"
+          helper={workLabel ? `選択中: ${workLabel}` : "自社作品もライセンスイン作品（再許諾）も選べます"}
+          filter={(item) => !item.id.startsWith("source_ip:")}
+          onChange={(value, item) => {
+            update("workId", value);
+            setWorkLabel(item ? [item.code, item.title].filter(Boolean).join(" ") : "");
+          }} />
+        <SearchableLedgerSelect type="vendors" value={form.counterpartyId}
+          label="相手方（取引先マスタ）" placeholder="名称・コードで検索…"
+          onChange={(value, item) => {
+            update("counterpartyId", value);
+            setCounterpartyLabel(item ? [item.code, item.title].filter(Boolean).join(" ") : "");
+          }} />
         <label>条件名<input value={form.conditionName} onChange={(e) => update("conditionName", e.target.value)} placeholder={license ? "例：英語版ライセンス条件" : "例：海外卸売条件"} /></label>
         <label>根拠文書番号 <em>必須</em><input value={form.documentNumber} onChange={(e) => update("documentNumber", e.target.value)} placeholder="例：ARC-2026-0001（実在する文書番号）" /></label>
       </fieldset>
