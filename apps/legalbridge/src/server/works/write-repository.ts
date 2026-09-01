@@ -36,6 +36,30 @@ export class PgWorkWriteRepository implements WorkWriteRepository {
   constructor(private readonly database: DatabasePool) {}
 
   async create(input: WorkCreateInput) {
+    // 23505（一意制約違反）は2系統ある：
+    //   works_pkey … id 連番が既存データより後ろ（V1移行が明示idでINSERTした行など）。
+    //                連番を MAX(id) に合わせて1回だけ自動再試行（自己修復）。
+    //   work_code … コードの重複。利用者に返す。
+    let retriedAfterSequenceFix = false;
+    for (;;) {
+      try {
+        return await this.insertOnce(input);
+      } catch (error) {
+        const pgError = error as { code?: string; constraint?: string };
+        if (!retriedAfterSequenceFix && pgError?.code === "23505" &&
+            String(pgError.constraint ?? "").includes("pkey")) {
+          retriedAfterSequenceFix = true;
+          await this.database.query(
+            `SELECT setval(pg_get_serial_sequence('works','id'),
+                           GREATEST((SELECT COALESCE(MAX(id), 1) FROM works), 1))`);
+          continue;
+        }
+        throw translate(error);
+      }
+    }
+  }
+
+  private async insertOnce(input: WorkCreateInput): Promise<SavedWork> {
     const client = await this.database.connect();
     try {
       await client.query("BEGIN");
@@ -47,10 +71,16 @@ export class PgWorkWriteRepository implements WorkWriteRepository {
         columns.push(column); values.push(value);
       }
       const hasCode = columns.includes("work_code");
+      if (!hasCode) {
+        // 仮コードは毎回ユニークにする。固定 'PENDING' だと同時作成や過去の残骸と
+        // 衝突し「作品コードが既に存在します」で新規登録が塞がる。
+        columns.push("work_code");
+        values.push(`PENDING-${Date.now().toString(36)}-${Math.floor(Math.random() * 1679616).toString(36)}`);
+      }
       const placeholders = values.map((_, index) => `$${index + 1}`);
       const inserted = await client.query(
-        `INSERT INTO works (${columns.join(", ")}${hasCode ? "" : ", work_code"})
-         VALUES (${placeholders.join(", ")}${hasCode ? "" : ", 'PENDING'"})
+        `INSERT INTO works (${columns.join(", ")})
+         VALUES (${placeholders.join(", ")})
          RETURNING id, work_code`,
         values
       );
@@ -66,7 +96,7 @@ export class PgWorkWriteRepository implements WorkWriteRepository {
       return { id, workCode };
     } catch (error) {
       await client.query("ROLLBACK");
-      throw translate(error);
+      throw error;
     } finally {
       client.release();
     }
@@ -162,7 +192,13 @@ export class PgWorkWriteRepository implements WorkWriteRepository {
 function translate(error: unknown): Error {
   if (error instanceof WorkWriteError) return error;
   const code = (error as { code?: string })?.code;
-  if (code === "23505") return new WorkWriteError("WORK_CONFLICT", "作品コードが既に存在します");
+  const constraint = String((error as { constraint?: string })?.constraint ?? "");
+  if (code === "23505") {
+    // どの一意制約かで意味が違う。id（自動再試行後も衝突）は採番異常として区別する。
+    return constraint.includes("pkey")
+      ? new WorkWriteError("WORK_ID_CONFLICT", "作品IDの採番が既存データと衝突しました。もう一度お試しください（続く場合は管理者へ）")
+      : new WorkWriteError("WORK_CONFLICT", "作品コードが既に存在します");
+  }
   if (code === "23502") return new WorkWriteError("WORK_REQUIRED", "必須項目が不足しています");
   if (code === "23503") return new WorkWriteError("WORK_INVALID_REF", "指定した作品が存在しません");
   return error instanceof Error ? error : new Error(String(error));
