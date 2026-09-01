@@ -394,7 +394,11 @@ export function App() {
     if (!document.documentNumber) return;
     const response = await fetch(
       `/api/v2/document-templates/${encodeURIComponent(document.templateType)}/form-schema`);
-    if (!response.ok) return;
+    if (!response.ok) {
+      // 黙って何も起きないと「ボタンが壊れた」ように見える。理由を明示する。
+      window.alert(`このテンプレート（${document.templateType}）の入力フォームが見つからないため特例編集できません。取込文書の場合は「詳細を編集」を使ってください。`);
+      return;
+    }
     setFormNonce((v) => v + 1);
     setDraftSelection(null);
     setNewDocSeed({});

@@ -376,9 +376,13 @@ function DocumentDetail({
       canGmailNotify={canGmailNotify}
       canCloudSign={canCloudSign}
       onSaved={onRefresh} />}
-    {canReissueDocument && !isVoided && document.documentNumber &&
+    {/* 再発行・特例編集はテンプレートから生成した文書のみ（取込文書は入力フォームが
+        無く、押しても何も起きない状態だった）。取込文書の修正は「詳細を編集」で行う。 */}
+    {canReissueDocument && !isVoided && document.documentNumber && document.templateVersionId !== null &&
       <DocumentReissueZone documentId={document.id} documentNumber={document.documentNumber} onReissued={onReissued}
         onEditReissue={onEditReissue ? () => onEditReissue(document) : undefined} />}
+    {canReissueDocument && !isVoided && document.templateVersionId === null &&
+      <p className="hub-note">再発行・特例編集はテンプレートから生成した文書のみ対象です。取込文書の内容修正は上の「詳細を編集」を使ってください。</p>}
     {canVoidDocument && !isVoided &&
       <DocumentVoidZone documentId={document.id} documentNumber={document.documentNumber} onVoided={onVoided} />}
     <VersionHistory documentId={document.id} onSelect={onSelectVersion} />
