@@ -178,7 +178,16 @@ export function DocumentRegistry({
         <button className="primary" onClick={onCreate}>文書を作成</button>
       </div>
     </div>
-    {importing && <PastDocumentImport onClose={() => { setImporting(false); setReload((v) => v + 1); }} />}
+    {importing && <PastDocumentImport onClose={() => { setImporting(false); setReload((v) => v + 1); }}
+      onRegisterDetails={async (id) => {
+        // 取込直後に「続けて条件明細・詳細を登録」— 文書一覧から探し直さずに
+        // そのまま詳細編集（条件明細エディタ付き）を開く。
+        const response = await fetch(`/api/v2/documents/${id}`);
+        if (!response.ok) return;
+        setImporting(false);
+        setReload((v) => v + 1);
+        setEditingDetails((await response.json()).document);
+      }} />}
     {editingDetails && <ImportedDetailsEditor document={editingDetails}
       onClose={() => setEditingDetails(null)}
       onSaved={() => { setEditingDetails(null); setReload((v) => v + 1); void selectDocument(editingDetails.id); }} />}
@@ -714,7 +723,11 @@ function parseDocCsv(text: string): { rows: Record<string, string>[]; unmapped: 
   return { rows, unmapped };
 }
 
-function PastDocumentImport({ onClose }: { onClose: () => void }) {
+function PastDocumentImport({ onClose, onRegisterDetails }: {
+  onClose: () => void;
+  // 取込直後に詳細編集（条件明細エディタ付き）を開く。id は登録された文書のもの。
+  onRegisterDetails?: (id: number) => void;
+}) {
   const [mode, setMode] = useState<"single" | "bulk">("single");
   return <div className="panel past-doc-import">
     <div className="matter-detail-head"><div><span className="detail-kicker">IMPORT PAST DOCUMENTS</span><h2>過去文書取込</h2></div>
@@ -730,12 +743,12 @@ function PastDocumentImport({ onClose }: { onClose: () => void }) {
       <button type="button" className={`matter-chip ${mode === "bulk" ? "active" : ""}`}
         onClick={() => setMode("bulk")}>CSV一括（複数ファイル）</button>
     </div>
-    {mode === "single" ? <SinglePastDocumentImport /> : <BulkPastDocumentImport />}
+    {mode === "single" ? <SinglePastDocumentImport onRegisterDetails={onRegisterDetails} /> : <BulkPastDocumentImport />}
   </div>;
 }
 
 // ── 1件ずつの取込：フォーム入力＋ファイル選択（→Drive格納）または Driveリンク ──
-function SinglePastDocumentImport() {
+function SinglePastDocumentImport({ onRegisterDetails }: { onRegisterDetails?: (id: number) => void }) {
   const toast = useToast();
   const empty = { documentNumber: "", templateType: "", title: "", counterparty: "",
     documentDate: "", issueKey: "", driveLink: "" };
@@ -744,6 +757,8 @@ function SinglePastDocumentImport() {
   const [fileKey, setFileKey] = useState(0);   // input[type=file] のリセット用
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  // 直前に取込んだ文書。「続けて条件明細・詳細を登録」の導線に使う。
+  const [lastImported, setLastImported] = useState<{ id: number; documentNumber: string } | null>(null);
   const set = (key: keyof typeof empty) => (e: ChangeEvent<HTMLInputElement>) =>
     setValues((prev) => ({ ...prev, [key]: e.target.value }));
 
@@ -776,11 +791,14 @@ function SinglePastDocumentImport() {
       if (file) {
         if (!response.ok) { setError(data.error ?? "取込に失敗しました。"); return; }
         toast.push(`${data.document.documentNumber} を取込みました（Drive格納済み）`, "success");
+        setLastImported({ id: Number(data.document.id), documentNumber: String(data.document.documentNumber) });
       } else {
         if (!response.ok || data.failedCount > 0) {
           setError(data.failed?.[0]?.error ?? data.error ?? "取込に失敗しました。"); return;
         }
         toast.push(`${values.documentNumber} を取込みました`, "success");
+        const inserted = data.inserted?.[0];
+        setLastImported(inserted ? { id: Number(inserted.id), documentNumber: String(inserted.documentNumber) } : null);
       }
       setValues(empty); setFile(null); setFileKey((k) => k + 1);
     } catch { setError("通信に失敗しました。"); } finally { setSaving(false); }
@@ -818,6 +836,16 @@ function SinglePastDocumentImport() {
       <button className="primary" disabled={saving} onClick={submit}>
         {saving ? "取込中…" : file ? "ファイルを格納して取込" : "取込"}</button>
     </div>
+    {lastImported && <div className="import-continue">
+      <strong>✓ {lastImported.documentNumber} を取込みました。</strong>
+      {onRegisterDetails
+        ? <>
+          <span>続けて、この文書の経済条件（料率・MG/AG・素材結線）を登録できます。保存すると条件台帳へ自動同期され、利用許諾計算・消化管理から参照できます。</span>
+          <button type="button" className="primary" onClick={() => onRegisterDetails(lastImported.id)}>
+            続けて条件明細・詳細を登録 →</button>
+        </>
+        : <span>条件明細は文書一覧でこの文書を開き「詳細を編集」から登録できます。</span>}
+    </div>}
   </div>;
 }
 
