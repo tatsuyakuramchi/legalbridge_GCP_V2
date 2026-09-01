@@ -130,6 +130,10 @@ function toSummary(row: Record<string, unknown>): WorkSummary {
 
 const SUMMARY_COLUMNS =
   "id, work_code, title, title_kana, kind, is_original, work_type, status, parent_work_id, is_active";
+// JOIN を含むクエリ用（全列を w. で修飾）。`w.${SUMMARY_COLUMNS}` と書くと先頭の
+// 1列にしか w. が付かず、vendors にも存在する is_active が曖昧参照（42702）で
+// コアクエリごと落ちる（作品詳細500・065適用後に表面化した実障害）。
+const SUMMARY_COLUMNS_W = SUMMARY_COLUMNS.split(", ").map((c) => `w.${c}`).join(", ");
 
 export class PgWorkReadRepository implements WorkReadRepository {
   constructor(private readonly database: DatabasePool) {}
@@ -156,7 +160,7 @@ export class PgWorkReadRepository implements WorkReadRepository {
   async detail(workId: number): Promise<WorkDetail | null> {
     // コア（works は 006 で必ず読める）。無ければ 404 相当の null。
     const core = await this.database.query(
-      `SELECT w.${SUMMARY_COLUMNS}, w.derivation_type, w.rights_holder_vendor_id,
+      `SELECT ${SUMMARY_COLUMNS_W}, w.derivation_type, w.rights_holder_vendor_id,
               v.vendor_name AS rights_holder_name, w.creator_name, w.publisher_name,
               w.ledger_code, w.remarks
          FROM works w
