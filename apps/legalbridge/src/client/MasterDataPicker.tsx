@@ -280,6 +280,15 @@ function applyStaffAliases(schema: DocumentFormSchema, patch: DocumentFormData, 
     STAFF_PHONE: "phone", 監修者: "staff_name", inspectorName: "staff_name",
     inspectorDept: "department", inspectorEmail: "email", RESPONSE_AUTHOR: "staff_name"
   });
+  // 通知先（STAFF_*）はスキーマに入力欄が無くても常に書く。基本契約の通知条項が
+  // 参照するテンプレ変数で、license_master などは欄を持たないため上の setIfField
+  // では反映されず「担当者を選んでも通知人がログインユーザーのまま」になっていた。
+  // 選択した担当者が、ログインユーザーからの自動補完（App の NOTICE_STAFF 補完・
+  // 空欄時のみ）を上書きする。
+  patch.STAFF_NAME = String(values.staff_name ?? "");
+  patch.STAFF_DEPARTMENT = String(values.department ?? "");
+  patch.STAFF_EMAIL = String(values.email ?? "");
+  patch.STAFF_PHONE = String(values.phone ?? "");
 }
 
 function applyCompanyAliases(schema: DocumentFormSchema, patch: DocumentFormData, values: Record<string, unknown>) {

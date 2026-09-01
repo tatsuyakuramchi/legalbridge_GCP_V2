@@ -191,3 +191,17 @@ test("区分（法人/個人）はスキーマに欄が無くても vendorEntity
   });
   assert.equal("vendorEntityType" in unknown, false);
 });
+
+test("担当者の引用はスキーマに欄が無くても通知先（STAFF_*）へ常に反映する", () => {
+  // license_master などは STAFF_* の入力欄を持たないが、通知条項が参照する。
+  // 担当者タブで選んだ人が、ログインユーザーの自動補完を上書きできること。
+  const licenseMaster = schemaOf({ name: "VENDOR_NAME", label: "ライセンサー名称" });
+  const patch = buildPatch(licenseMaster, {}, {
+    id: "7", type: "staff" as const, label: "山田 太郎", description: "",
+    values: { staff_name: "山田 太郎", department: "編集部", email: "yamada@example.co.jp", phone: "03-1111-2222" }
+  });
+  assert.equal(patch.STAFF_NAME, "山田 太郎");
+  assert.equal(patch.STAFF_DEPARTMENT, "編集部");
+  assert.equal(patch.STAFF_EMAIL, "yamada@example.co.jp");
+  assert.equal(patch.STAFF_PHONE, "03-1111-2222");
+});
