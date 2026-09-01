@@ -868,6 +868,18 @@ const importedConditionFields: FieldDefinition[] = [
   },
   { name: "base_price_label", label: "基準価格" },
   { name: "rate_pct", label: "料率（%）", type: "number" },
+  // 利用許諾条件書の加算構造（素材料率のΣ＝適用料率）を旧文書でも表現する。
+  // 同じグループ番号の加算行が計算書の「条件から取得」でΣ合算される。
+  {
+    name: "is_addon", label: "料率方式", type: "select",
+    options: [
+      { value: "", label: "単独（この行の料率のみ）" },
+      { value: "1", label: "加算型（同じグループ番号の行を合算）" }
+    ]
+  },
+  { name: "group_no", label: "加算グループ番号", type: "number",
+    showWhen: { field: "is_addon", anyOf: ["1"] },
+    helpText: "例: 原作5%とイラスト2%を同じ番号にすると適用料率Σ7%として扱われます" },
   {
     name: "guarantee_type", label: "最低保証", type: "select",
     options: [
