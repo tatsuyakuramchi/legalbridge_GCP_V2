@@ -20,6 +20,9 @@ export const documentImportRowSchema = z.object({
   issueKey: optionalText(100),
   driveLink: optionalText(1000),
   matterId: z.coerce.number().int().positive().optional().nullable().transform((v) => v ?? null),
+  // 相手先の取引先マスタ結線（documents.vendor_id）。名称のフリー入力に加えて
+  // 検索で選んだときに付く。条件明細の相手方表示（文書の取引先へフォールバック）に効く。
+  counterpartyVendorId: z.coerce.number().int().positive().optional().nullable().transform((v) => v ?? null),
   title: optionalText(300),
   counterparty: optionalText(300),
   documentDate: optionalText(20).transform((v, ctx) => {
@@ -89,7 +92,8 @@ export interface DocumentImportRepository {
   // 取込文書の詳細編集（過去文書ベースの検収書・計算書作成のための後入力）。
   // 生成された文書は対象外＝ template_version_id IS NULL の行だけ更新する。
   // 更新できたら true、対象外（存在しない or 生成文書）なら false。
-  updateDetails(id: number, formData: Record<string, unknown>): Promise<boolean>;
+  // counterpartyVendorId: undefined=変更しない / number=結線 / null=結線を外す。
+  updateDetails(id: number, formData: Record<string, unknown>, counterpartyVendorId?: number | null): Promise<boolean>;
   // 確定文書の表示情報の特例修正（一覧・検索で読む title / counterparty キーのみを
   // マージ追記）。form_data の他のキー＝PDF の中身になるデータには触れない。
   // 内容そのものの訂正は再発行（特例編集）を使う。
@@ -105,12 +109,17 @@ export class PgDocumentImportRepository implements DocumentImportRepository {
         input.documentNumber, input.issueKey, input.templateType,
         JSON.stringify(buildImportFormData(input)), input.driveLink, createdBy
       ];
-      // $6 is created_by; created_at is now(); append matter_id when provided.
+      // $6 is created_by; created_at is now(); append optional columns when provided.
       let valueSql = "$1, $2, $3, $4::jsonb, $5, now(), $6";
       if (input.matterId !== null) {
         columns.push("matter_id");
         values.push(input.matterId);
-        valueSql += ", $7";
+        valueSql += `, $${values.length}`;
+      }
+      if (input.counterpartyVendorId !== null) {
+        columns.push("vendor_id");
+        values.push(input.counterpartyVendorId);
+        valueSql += `, $${values.length}`;
       }
       const result = await this.database.query(
         `INSERT INTO documents (${columns.join(", ")}) VALUES (${valueSql})
@@ -129,13 +138,18 @@ export class PgDocumentImportRepository implements DocumentImportRepository {
     return result.rows.length > 0;
   }
 
-  async updateDetails(id: number, formData: Record<string, unknown>) {
-    const result = await this.database.query(
-      `UPDATE documents SET form_data = $2::jsonb, updated_at = now()
-        WHERE id = $1 AND template_version_id IS NULL
-        RETURNING id`,
-      [id, JSON.stringify(formData)]
-    );
+  async updateDetails(id: number, formData: Record<string, unknown>, counterpartyVendorId?: number | null) {
+    const result = counterpartyVendorId === undefined
+      ? await this.database.query(
+        `UPDATE documents SET form_data = $2::jsonb, updated_at = now()
+          WHERE id = $1 AND template_version_id IS NULL
+          RETURNING id`,
+        [id, JSON.stringify(formData)])
+      : await this.database.query(
+        `UPDATE documents SET form_data = $2::jsonb, vendor_id = $3, updated_at = now()
+          WHERE id = $1 AND template_version_id IS NULL
+          RETURNING id`,
+        [id, JSON.stringify(formData), counterpartyVendorId]);
     return result.rows.length > 0;
   }
 
@@ -179,9 +193,11 @@ export class MemoryDocumentImportRepository implements DocumentImportRepository 
     return this.documents.some((d) => d.documentNumber === documentNumber);
   }
   readonly details = new Map<number, Record<string, unknown>>();
-  async updateDetails(id: number, formData: Record<string, unknown>) {
+  readonly vendors = new Map<number, number | null>();
+  async updateDetails(id: number, formData: Record<string, unknown>, counterpartyVendorId?: number | null) {
     if (!this.documents.some((d) => d.id === id)) return false;
     this.details.set(id, formData);
+    if (counterpartyVendorId !== undefined) this.vendors.set(id, counterpartyVendorId);
     return true;
   }
   readonly displayFields = new Map<number, Record<string, string>>();

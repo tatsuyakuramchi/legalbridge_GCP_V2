@@ -125,6 +125,7 @@ export function createDocumentImportRouter(
           templateType: payload.fields.templateType,
           issueKey: payload.fields.issueKey,
           matterId: String(payload.fields.matterId ?? "").trim() || undefined,
+          counterpartyVendorId: String(payload.fields.counterpartyVendorId ?? "").trim() || undefined,
           title: payload.fields.title,
           counterparty: payload.fields.counterparty,
           documentDate: payload.fields.documentDate,
@@ -175,7 +176,11 @@ export function createDocumentImportRouter(
   // 取込文書の詳細編集（過去文書ベースの検収書・利用許諾料計算書作成のための後入力）。
   // 生成された文書（template_version_id あり）は対象外＝再発行（特例編集）を使う。
   // form_data を丸ごと差し替える（クライアントは現状の formData に編集を重ねて送る）。
-  const detailsSchema = z.object({ formData: z.record(z.string(), z.unknown()) });
+  const detailsSchema = z.object({
+    formData: z.record(z.string(), z.unknown()),
+    // 相手先の取引先マスタ結線（documents.vendor_id）。省略=変更しない / null=外す。
+    counterpartyVendorId: z.union([z.coerce.number().int().positive(), z.null()]).optional()
+  });
   router.put("/documents/:id/import-details", async (request, response, next) => {
     try {
       if (!writeEnabled || !documents) {
@@ -194,7 +199,7 @@ export function createDocumentImportRouter(
       }
       let updated: boolean;
       try {
-        updated = await documents.updateDetails(id, input.formData);
+        updated = await documents.updateDetails(id, input.formData, input.counterpartyVendorId);
       } catch (error) {
         if ((error as { code?: string })?.code === "42501") {
           return response.status(503).json({

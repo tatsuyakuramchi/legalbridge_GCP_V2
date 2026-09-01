@@ -271,3 +271,23 @@ test("純関数: normalizeDate / inferMimeType / buildImportFormData", () => {
   });
   assert.equal(buildImportFormData(row).source_mime_type, "application/pdf");
 });
+
+test("取込・詳細編集で相手先の取引先マスタ結線（vendor_id）を受け付ける", async () => {
+  const { app, repository } = appFor({ enabled: true });
+  // 取込時: counterpartyVendorId が行スキーマを通る（documents.vendor_id へ）。
+  const imported = await request(app).post("/api/v2/documents/import").send({
+    rows: [{ documentNumber: "OLD-1", templateType: "legacy_license",
+      counterparty: "株式会社オリジナル", counterpartyVendorId: 55 }]
+  });
+  assert.equal(imported.status, 201);
+  assert.equal(repository.inputs[0].row.counterpartyVendorId, 55);
+  // 詳細編集時: 指定すれば結線を更新、省略すれば触らない。
+  const withVendor = await request(app).put("/api/v2/documents/1/import-details")
+    .send({ formData: { title: "旧許諾" }, counterpartyVendorId: 77 });
+  assert.equal(withVendor.status, 200);
+  assert.equal(repository.vendors.get(1), 77);
+  const untouched = await request(app).put("/api/v2/documents/1/import-details")
+    .send({ formData: { title: "旧許諾2" } });
+  assert.equal(untouched.status, 200);
+  assert.equal(repository.vendors.get(1), 77);   // 省略＝変更しない
+});

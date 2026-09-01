@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import type { DocumentFormData, DocumentFormSchema } from "../types";
 import { ArrayEditor, SpecializedDocumentForms } from "./SpecializedDocumentForms";
+import { SearchableLedgerSelect } from "./SearchableLedgerSelect";
 import type { FieldDefinition } from "./document-line-fields";
 import { useToast } from "./Toast";
 import { EmptyState } from "./EmptyState";
@@ -759,6 +760,8 @@ function SinglePastDocumentImport({ onRegisterDetails }: { onRegisterDetails?: (
   const [error, setError] = useState("");
   // 直前に取込んだ文書。「続けて条件明細・詳細を登録」の導線に使う。
   const [lastImported, setLastImported] = useState<{ id: number; documentNumber: string } | null>(null);
+  // 相手先の取引先マスタ結線（documents.vendor_id）。名称の自由入力とは独立に持つ。
+  const [counterpartyVendorId, setCounterpartyVendorId] = useState<number | null>(null);
   const set = (key: keyof typeof empty) => (e: ChangeEvent<HTMLInputElement>) =>
     setValues((prev) => ({ ...prev, [key]: e.target.value }));
 
@@ -778,13 +781,14 @@ function SinglePastDocumentImport({ onRegisterDetails }: { onRegisterDetails?: (
         form.append("counterparty", values.counterparty.trim());
         form.append("documentDate", values.documentDate.trim());
         form.append("issueKey", values.issueKey.trim());
+        if (counterpartyVendorId != null) form.append("counterpartyVendorId", String(counterpartyVendorId));
         form.append("originalName", file.name);
         form.append("file", file);
         response = await fetch("/api/v2/documents/import/upload", { method: "POST", body: form });
       } else {
         response = await fetch("/api/v2/documents/import", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ rows: [values] })
+          body: JSON.stringify({ rows: [{ ...values, ...(counterpartyVendorId != null ? { counterpartyVendorId } : {}) }] })
         });
       }
       const data = await response.json().catch(() => ({}));
@@ -800,7 +804,7 @@ function SinglePastDocumentImport({ onRegisterDetails }: { onRegisterDetails?: (
         const inserted = data.inserted?.[0];
         setLastImported(inserted ? { id: Number(inserted.id), documentNumber: String(inserted.documentNumber) } : null);
       }
-      setValues(empty); setFile(null); setFileKey((k) => k + 1);
+      setValues(empty); setFile(null); setFileKey((k) => k + 1); setCounterpartyVendorId(null);
     } catch { setError("通信に失敗しました。"); } finally { setSaving(false); }
   }
 
@@ -817,8 +821,20 @@ function SinglePastDocumentImport({ onRegisterDetails }: { onRegisterDetails?: (
         </datalist></label>
       <label><span>件名（任意）</span>
         <input value={values.title} onChange={set("title")} placeholder="業務委託発注書" /></label>
-      <label><span>相手先（任意）</span>
-        <input value={values.counterparty} onChange={set("counterparty")} placeholder="株式会社〇〇" /></label>
+      <SearchableLedgerSelect type="vendors" value={counterpartyVendorId != null ? String(counterpartyVendorId) : ""}
+        label="相手先（取引先マスタから検索・任意）" placeholder="名称・コードで検索…"
+        helper="選ぶと相手先名が入り、台帳と結線されます（条件明細の相手方表示に使われます）"
+        onChange={(value, item) => {
+          setCounterpartyVendorId(value ? Number(value) : null);
+          if (item) setValues((prev) => ({ ...prev, counterparty: item.title }));
+        }} />
+      <label><span>相手先名（自由入力可・検索で自動入力）</span>
+        <input value={values.counterparty} placeholder="株式会社〇〇"
+          onChange={(e) => {
+            // 手で書き換えたらマスタ結線は外す（別名の相手に付け替わったまま残さない）。
+            setCounterpartyVendorId(null);
+            set("counterparty")(e);
+          }} /></label>
       <label><span>日付（締結日・発行日／任意）</span>
         <input type="date" value={values.documentDate} onChange={set("documentDate")} /></label>
       <label><span>課題キー（任意・Backlog課題がある場合のみ）</span>
@@ -917,6 +933,10 @@ function ImportedDetailsEditor({ document: doc, onClose, onSaved }: {
   const [formData, setFormData] = useState<DocumentFormData>({ ...(doc.formData ?? {}) } as DocumentFormData);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  // 相手先の取引先マスタ結線（documents.vendor_id）。undefined=変更しない。
+  // 検索で選ぶと相手先名も更新し、条件明細の相手方表示（文書の取引先への
+  // フォールバック）が効くようになる。
+  const [counterpartyVendorId, setCounterpartyVendorId] = useState<number | undefined>(undefined);
   const onChange = (name: string, value: unknown) => setFormData((prev) => ({ ...prev, [name]: value }));
   const text = (key: string) => String(formData[key] ?? "");
   const field = (key: string, label: string, type: "text" | "date" | "number" = "text", placeholder = "") =>
@@ -930,7 +950,10 @@ function ImportedDetailsEditor({ document: doc, onClose, onSaved }: {
     try {
       const response = await fetch(`/api/v2/documents/${doc.id}/import-details`, {
         method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ formData })
+        body: JSON.stringify({
+          formData,
+          ...(counterpartyVendorId !== undefined ? { counterpartyVendorId } : {})
+        })
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) { setError(data.error ?? "保存に失敗しました。"); return; }
@@ -959,7 +982,14 @@ function ImportedDetailsEditor({ document: doc, onClose, onSaved }: {
     {error && <div className="async-error">{error}</div>}
     <div className="field-grid">
       {field("title", "件名")}
-      {field("counterparty", "相手先")}
+      <SearchableLedgerSelect type="vendors" value={counterpartyVendorId != null ? String(counterpartyVendorId) : ""}
+        label="相手先（取引先マスタから検索）" placeholder="名称・コードで検索…"
+        helper={`現在の相手先名: ${text("counterparty") || "未設定"}（選ぶと名称も更新・台帳と結線）`}
+        onChange={(value, item) => {
+          setCounterpartyVendorId(value ? Number(value) : undefined);
+          if (item) onChange("counterparty", item.title);
+        }} />
+      {field("counterparty", "相手先名（自由入力可）")}
       {field("document_date", "日付（締結日・発行日）", "date")}
       {field("tax_rate", "税率（%）", "number", "10")}
     </div>
