@@ -1692,6 +1692,19 @@ function IndividualLicenseV3Form({ formData, onChange }: { formData: DocumentFor
             {field("MG", condition.mg, (v) => replaceRow("v3_conds", index, { mg: v }), "number")}
             {field("通貨", condition.cur, (v) => replaceRow("v3_conds", index, { cur: v }))}
           </div>
+          {Boolean(condition.addon) && <p className="v3-rate-where">
+            この形態の<b>料率は下の「VI. 構成要素・料率マトリクス」で素材ごとに入力</b>します
+            （素材料率の合計Σがこの形態の適用料率になります）。
+            {(() => {
+              const key = String(condition.id ?? "");
+              const total = materials.reduce((sum, m) => {
+                const rates = m.rates && typeof m.rates === "object" ? m.rates as V3Row : {};
+                const parsed = Number.parseFloat(String(rates[key] ?? ""));
+                return sum + (Number.isFinite(parsed) ? parsed : 0);
+              }, 0);
+              return total > 0 ? <b> 現在の適用料率: Σ {+total.toFixed(2)}%</b> : null;
+            })()}
+          </p>}
         </article>
         : <article className="repeater-card" key={String(condition.id ?? index)}>
           <div className="repeater-card-head"><strong>条件{index + 1}（旧データ・自由記載）</strong><button type="button" onClick={() => removeRow("v3_conds", index)}>削除</button></div>
