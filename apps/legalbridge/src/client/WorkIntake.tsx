@@ -3,9 +3,11 @@ import type { DocumentFormData } from "../types";
 import { useToast } from "./Toast";
 import { SearchableLedgerSelect } from "./SearchableLedgerSelect";
 import {
-  INTAKE_DOC_KINDS, buildLicenseTermsSeed, emptyIntakeMaterial, planDocumentUploads,
-  type IntakeMaterial
+  BUSINESS_LINE_OPTIONS, INTAKE_DOC_KINDS, buildLicenseTermsSeed, businessLineLabel,
+  emptyIntakeMaterial, planDocumentUploads,
+  type BusinessLine, type IntakeMaterial, type WorkDocumentChoice
 } from "./work-intake";
+import { WorkDocumentLauncher } from "./WorkDocumentLauncher";
 
 // 作品の登録・編集（2026-09-02 再構築・承認済みモック準拠）。
 // 1画面の縦ステッパーで「①基本情報 → ②原作 → ③素材 → ④既存文書 → ⑤確認」を
@@ -134,11 +136,16 @@ function DocQuotePicker({ note, quoteNumber, onPick }: {
   </div>;
 }
 
-export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreateLicenseTerms, onOpenImport, onRegisterDocDetails }: {
+export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreateLicenseTerms, onCreateDocumentFromWork, onOpenImport, onRegisterDocDetails }: {
   canRegister: boolean;
   editWorkId?: number | null;
   onOpenWork?: (workId: number) => void;
   onCreateLicenseTerms: (seed: DocumentFormData, workCode: string | null) => void;
+  // 出版個別条件書・出版基本契約・発注書を作品から起こす（初期値は App 側で取引先・作品を差し込む）。
+  onCreateDocumentFromWork?: (
+    choice: "pub_license_terms" | "pub_master" | "purchase_order",
+    work: { workId: number; workCode: string | null; title: string; vendorId: number | null }
+  ) => void;
   // 過去文書取込（条件明細の登録）画面へ移動する導線（任意）。
   onOpenImport?: () => void;
   // アップロードした文書の詳細編集（条件明細エディタ付き）を直接開く。
@@ -155,10 +162,13 @@ export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreat
   // ① 基本情報
   const [title, setTitle] = useState("");
   const [kindChoice, setKindChoice] = useState<KindChoice>("own");
+  const [businessLine, setBusinessLine] = useState<BusinessLine | null>(null);
   const [parentWorkId, setParentWorkId] = useState("");
   const [remarks, setRemarks] = useState("");
   // 編集モードの変更検知用（未変更の区分・派生元は送らない）。
-  const [initial, setInitial] = useState<{ kind: KindChoice; parent: string; derivation: string | null } | null>(null);
+  const [initial, setInitial] = useState<{
+    kind: KindChoice; parent: string; derivation: string | null; businessLine: BusinessLine | null;
+  } | null>(null);
 
   // ② 原作　③ 素材　④ 文書
   const [core, setCore] = useState<CoreRow>(emptyCore());
@@ -177,7 +187,12 @@ export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreat
   } | null>(null);
 
   // ── 編集モード：既存作品を読み込んで各ステップへ展開 ─────────────────
-  const [loaded, setLoaded] = useState<{ workCode: string | null; title: string } | null>(null);
+  const [loaded, setLoaded] = useState<{
+    workCode: string | null; title: string; rightsHolderVendorId: number | null; rightsHolderName: string;
+    // 編集モードで個別条件書V3を起こすときのマトリクス展開用（サーバ採番の素材コードつき）。
+    materials: Array<{ materialCode: string | null; materialName: string; rightsHolderLabel: string;
+      isRoyaltyBearing: boolean; territory: string | null; language: string | null }>;
+  } | null>(null);
   const [workDocs, setWorkDocs] = useState<WorkDoc[]>([]);
   useEffect(() => {
     if (!editMode) return;
@@ -200,13 +215,28 @@ export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreat
         const work = detail.work ?? {};
         const kind: KindChoice = work.derivationType === "co_development" ? "co_dev"
           : work.kind === "own" ? "own" : "licensed_in";
+        const line: BusinessLine | null = ["game", "publishing", "both"].includes(String(work.businessLine ?? ""))
+          ? work.businessLine as BusinessLine : null;
         setTitle(String(work.title ?? ""));
         setKindChoice(kind);
+        setBusinessLine(line);
         setParentWorkId(work.parentWorkId != null ? String(work.parentWorkId) : "");
         setRemarks(String(work.remarks ?? ""));
-        setInitial({ kind, parent: work.parentWorkId != null ? String(work.parentWorkId) : "", derivation: work.derivationType ?? null });
-        setLoaded({ workCode: work.workCode ?? null, title: String(work.title ?? "") });
+        setInitial({ kind, parent: work.parentWorkId != null ? String(work.parentWorkId) : "", derivation: work.derivationType ?? null, businessLine: line });
         const materials: Array<Record<string, unknown>> = detail.materials ?? [];
+        setLoaded({
+          workCode: work.workCode ?? null, title: String(work.title ?? ""),
+          rightsHolderVendorId: work.rightsHolderVendorId != null ? Number(work.rightsHolderVendorId) : null,
+          rightsHolderName: String(work.rightsHolderName ?? ""),
+          materials: materials.map((m) => ({
+            materialCode: (m.materialCode as string | null) ?? null,
+            materialName: String(m.materialName ?? m.materialCode ?? ""),
+            rightsHolderLabel: String(m.rightsHolderLabel ?? work.rightsHolderName ?? ""),
+            isRoyaltyBearing: Boolean(m.isRoyaltyBearing),
+            territory: (m.territory as string | null) ?? null,
+            language: (m.language as string | null) ?? null
+          }))
+        });
         const coreMaterial = materials.find((m) => m.materialRole === "core_logic") ?? null;
         if (coreMaterial) {
           setCore({
@@ -256,6 +286,7 @@ export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreat
   // ── ステップ検証 ──────────────────────────────────────────────────
   function validateStep(n: number): string | null {
     if (n === 1 && !title.trim()) return "作品名を入力してください";
+    if (n === 1 && !editMode && !businessLine) return "展開区分（ゲーム／出版／両方）を選んでください";
     if (n === 2) {
       // 編集モード：原作素材が無い旧作品は空のまま保存できる（入れたら新規作成）。
       if (!core.name.trim()) {
@@ -383,6 +414,7 @@ export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreat
       const work = await postJson("/api/v2/works", {
         title: title.trim(),
         kind: kindChoice === "own" ? "own" : "licensed_in",
+        ...(businessLine ? { businessLine } : {}),
         ...(kindChoice === "own" ? { isOriginal: true } : {}),
         ...(kindChoice === "co_dev" ? { derivationType: "co_development" } : {}),
         ...(core.vendorId ? { rightsHolderVendorId: core.vendorId } : {}),
@@ -450,6 +482,7 @@ export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreat
       if (initial && parentWorkId !== initial.parent) {
         patch.parentWorkId = parentWorkId ? Number(parentWorkId) : null;
       }
+      if (initial && businessLine !== initial.businessLine) patch.businessLine = businessLine;
       if (core.vendorId) patch.rightsHolderVendorId = core.vendorId;
       const workSaved = await postJson(`/api/v2/works/${editWorkId}`, patch, "PATCH");
       if (!workSaved.ok) { toast.push(workSaved.data.error ?? "作品を保存できませんでした", "error"); return; }
@@ -505,14 +538,34 @@ export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreat
     } finally { setBusy(false); }
   }
 
-  // ── 完了帯からの導線 ─────────────────────────────────────────────
-  function createLicenseTerms() {
-    if (!doneInfo) return;
-    onCreateLicenseTerms(
-      buildLicenseTermsSeed(
-        { workCode: doneInfo.workCode, title: title.trim(), holderLabel: core.vendorLabel },
-        doneInfo.saved),
-      doneInfo.workCode);
+  // ── 「この作品から作る文書」（完了帯・編集モード共通）──────────────────
+  // 個別条件書V3は素材マトリクスの展開が必要なので既存の橋（buildLicenseTermsSeed）、
+  // 出版条件書・出版基本契約・発注書は App 側で取引先・作品の対応表から初期値を作る。
+  function pickDocument(choice: WorkDocumentChoice) {
+    const workId = doneInfo?.workId ?? editWorkId;
+    const workCode = doneInfo?.workCode ?? loaded?.workCode ?? null;
+    if (workId == null) return;
+    if (choice.templateKey === "individual_license_terms_v3") {
+      const materials = doneInfo
+        ? doneInfo.saved
+        : (loaded?.materials ?? []).map((m) => ({
+          material: {
+            ...emptyIntakeMaterial(m.rightsHolderLabel), name: m.materialName, royalty: m.isRoyaltyBearing,
+            region: m.territory ?? "全世界", language: m.language ?? "全言語"
+          },
+          materialCode: m.materialCode
+        }));
+      onCreateLicenseTerms(
+        buildLicenseTermsSeed(
+          { workCode, title: title.trim(), holderLabel: core.vendorLabel || loaded?.rightsHolderName || "" },
+          materials),
+        workCode);
+      return;
+    }
+    onCreateDocumentFromWork?.(choice.templateKey, {
+      workId, workCode, title: title.trim(),
+      vendorId: core.vendorId ?? loaded?.rightsHolderVendorId ?? null
+    });
   }
 
   if (!canRegister) {
@@ -557,7 +610,7 @@ export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreat
 
     <div className="wz-flow">
       {stepCard(1, "① 作品の基本情報",
-        [title || "未入力", kindLabel].filter(Boolean).join("｜"),
+        [title || "未入力", kindLabel, businessLine ? `展開: ${businessLineLabel(businessLine)}` : ""].filter(Boolean).join("｜"),
         <>
           <div className="wi-grid">
             <label className="wi-span2">作品名（製品1つ＝作品1行）*<input value={title}
@@ -572,6 +625,15 @@ export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreat
                 <input type="radio" name="wz-kind" checked={kindChoice === value}
                   onChange={() => setKindChoice(value)} />
                 <b>{label}</b><small>{hint}</small>
+              </label>)}
+          </div>
+          <p className="wz-hint">この作品の展開区分 *（作品から作れる文書の種類が決まります）</p>
+          <div className="wz-line">
+            {BUSINESS_LINE_OPTIONS.map((option) =>
+              <label key={option.value} className={`wz-choice-item${businessLine === option.value ? " on" : ""}`}>
+                <input type="radio" name="wz-line" checked={businessLine === option.value}
+                  onChange={() => setBusinessLine(option.value)} />
+                <b>{option.label}</b><small>{option.hint}</small>
               </label>)}
           </div>
           <div className="wi-grid">
@@ -753,12 +815,15 @@ export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreat
               {doc.documentNumber} に条件明細を登録 →</button>)}
         </div>
       </>}
-      <p>これから条件書や発注書を<b>新しく発行する</b>場合はこちら（既に締結済みの文書があるなら上の条件明細登録を使ってください — 同じ文書が二重にできます）。</p>
+      <WorkDocumentLauncher businessLine={businessLine} onPick={pickDocument} />
       <div className="wz-next">
-        <button type="button" onClick={createLicenseTerms}>個別条件書を新規発行（確定時に条件が台帳へ載ります）</button>
         {onOpenImport && <button type="button" onClick={onOpenImport}>過去文書を取込む</button>}
         <button type="button" onClick={() => onOpenWork?.(doneInfo.workId)}>作品詳細を開く</button>
       </div>
+    </div>}
+
+    {editMode && loaded && <div className="panel wd-launcher">
+      <WorkDocumentLauncher businessLine={businessLine} onPick={pickDocument} compact />
     </div>}
 
     {editMode && <div className="wz-savebar">

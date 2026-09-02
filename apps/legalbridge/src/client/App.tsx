@@ -16,9 +16,11 @@ import {
   isCorporateOnlyFieldHidden, isFieldVisible, isInspectionFallbackFieldHidden,
   isRoyaltyComputedFieldHidden, isRoyaltyStructuredActive
 } from "./field-visibility";
-import { MasterDataPicker, findSelfStaff } from "./MasterDataPicker";
+import { MasterDataPicker, buildPatch, findSelfStaff } from "./MasterDataPicker";
 import { WorkIntake } from "./WorkIntake";
-import { LANGUAGE_PRESETS, REGION_PRESETS, fixedDealRows } from "./work-intake";
+import {
+  LANGUAGE_PRESETS, REGION_PRESETS, fixedDealRows, resolvePubMasterTemplate, vendorRecordToPickerValues
+} from "./work-intake";
 import { DocumentRegistry, type RegisteredDocument } from "./DocumentRegistry";
 import { MatterRegistry } from "./MatterRegistry";
 import { LedgerWorkspace } from "./LedgerWorkspace";
@@ -434,6 +436,50 @@ export function App() {
     setView("document");
   }
 
+  // 作品から任意のテンプレートの文書を起こす（出版個別条件書・出版基本契約・発注書）。
+  // 初期値は「DBから引用」と同じ対応表（buildPatch）で作る＝取引先（許諾者・振込口座・
+  // 担当者連絡先）と作品（原著作物名・作品ID）がテンプレの欄名に合わせて入る。
+  // 出版基本契約は許諾者の区分（法人/個人）で書式を選ぶ。
+  async function startDocumentFromWork(
+    choice: "pub_license_terms" | "pub_master" | "purchase_order",
+    work: { workId: number; workCode: string | null; title: string; vendorId: number | null }
+  ) {
+    let vendor: Record<string, unknown> | null = null;
+    if (work.vendorId) {
+      try {
+        const response = await fetch(`/api/v2/vendors/${work.vendorId}`);
+        if (response.ok) vendor = (await response.json()).vendor ?? null;
+      } catch { /* 取引先が引けなくても作品情報だけで開く */ }
+    }
+    const templateKey = choice === "pub_master" ? resolvePubMasterTemplate(vendor?.entityType) : choice;
+    const response = await fetch(`/api/v2/document-templates/${encodeURIComponent(templateKey)}/form-schema`);
+    if (!response.ok) {
+      window.alert(`テンプレート ${templateKey} の定義を取得できませんでした`);
+      return;
+    }
+    const nextSchema: DocumentFormSchema = await response.json();
+    const seed: DocumentFormData = {
+      ...buildPatch(nextSchema, {}, {
+        id: `work:${work.workId}`, type: "work", label: work.title,
+        values: { code: work.workCode ?? "", title: work.title }
+      }),
+      ...(vendor ? buildPatch(nextSchema, {}, {
+        id: `vendor:${work.vendorId}`, type: "vendor", label: String(vendor.vendorName ?? ""),
+        values: vendorRecordToPickerValues(vendor)
+      }) : {})
+    };
+    setFormNonce((v) => v + 1);
+    setDraftSelection(null);
+    setReissueSource(null);
+    setNewDocSeed({});
+    setNewDocIssueKey("");
+    setDuplicateValues(seed);
+    setDuplicateFrom(null);
+    setSeedNotice(`作品 ${work.workCode ?? ""} ${vendor ? "と権利元の取引先情報" : ""}を差し込みました。受付番号を入れ、条件（料率・支払）を確認して確定してください`.replace(/\s+/g, " ").trim());
+    setSchema(nextSchema);
+    setView("document");
+  }
+
   async function openDocumentForm(templateKey: string) {
     setFormNonce((v) => v + 1);
     setDuplicateValues(null);
@@ -558,9 +604,11 @@ export function App() {
           onOpenWork={(workId) => { setEditIntakeWorkId(null); setDrillWorkId(workId); setView("works"); }}
           onOpenImport={() => setView("documents")}
           onRegisterDocDetails={(id) => { setDrillDetailsDocId(id); setView("documents"); }}
-          onCreateLicenseTerms={(seed, workCode) => void startLicenseTermsFromWork(seed, workCode)} />}
+          onCreateLicenseTerms={(seed, workCode) => void startLicenseTermsFromWork(seed, workCode)}
+          onCreateDocumentFromWork={(choice, work) => void startDocumentFromWork(choice, work)} />}
         {view === "works" && <WorkDetail key={drillWorkId ?? "works"} initialWorkId={drillWorkId} canEdit={canEditWorks} canEditRights={canEditRightsSources} canEditMaterials={canEditMaterials}
           onCreateLicenseTerms={(seed, workCode) => void startLicenseTermsFromWork(seed, workCode)}
+          onCreateDocumentFromWork={(choice, work) => void startDocumentFromWork(choice, work)}
           onAddGrant={(workId) => { setDrillOutboundWorkId(workId); setView("outbound"); }}
           onEditWork={(workId) => { setEditIntakeWorkId(workId); setView("work-intake"); }}
           onNavigate={(t) => { if (t === "ledgers-works") { setLedgerSeedType("works"); setView("ledgers"); } else setView(t as View); }} />}

@@ -10,7 +10,7 @@ import {
 const work = (over: Partial<WorkCore> & { id: number }): WorkCore => ({
   workCode: `W-${over.id}`, title: `作品${over.id}`, titleKana: null, kind: null,
   isOriginal: null, workType: null, status: null, parentWorkId: null, isActive: true,
-  derivationType: null, rightsHolderVendorId: null, rightsHolderName: null,
+  businessLine: null, derivationType: null, rightsHolderVendorId: null, rightsHolderName: null,
   creatorName: null, publisherName: null, ledgerCode: null, remarks: null, ...over
 });
 

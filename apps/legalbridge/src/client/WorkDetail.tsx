@@ -6,7 +6,8 @@ import {
 import { SearchableLedgerSelect } from "./SearchableLedgerSelect";
 import { checkWorkConditions, summarizeFindings } from "./contract-check";
 import { FeatureLockedNote } from "./FeatureLockedNote";
-import { buildLicenseTermsSeed, emptyIntakeMaterial } from "./work-intake";
+import { buildLicenseTermsSeed, businessLineLabel, emptyIntakeMaterial } from "./work-intake";
+import { WorkDocumentLauncher } from "./WorkDocumentLauncher";
 
 // 作品詳細（Phase 2・読み取り専用）。作品を起点に 概要/系譜/素材/条件/権利ソース/
 // 料率対象 を一望する。作品ピッカー（検索）で選択 → GET /works/:id/detail を集約表示。
@@ -20,7 +21,7 @@ type Material = { id: number; materialCode: string | null; materialName: string 
 type RightsSource = { id: number; materialId: number | null; materialName: string | null; sourceType: string | null; sourceWorkId: number | null; sourceWorkTitle: string | null; rightsHolderVendorId: number | null; rightsHolderName: string | null; sourceDocumentId: number | null; sourceContractId: number | null; sourceRole: string | null; isPrimary: boolean | null; validFrom: string | null; validTo: string | null };
 type Cond = { id: number; conditionName: string | null; direction: string | null; sourceMaterialId: number | null; materialName: string | null; sublicenseAllowed: boolean | null; parentLicenseConditionId: number | null; ratePct: number | null; amountExTax: number | null; mgAmount: number | null; currency: string | null; documentNumber: string | null };
 type Conditions = { receivable: Cond[]; payable: Cond[]; sublicense: Cond[]; workLevel: Cond[]; materialLinked: Cond[]; totals: { count: number; receivableCount: number; payableCount: number; sublicenseCount: number; workLevelCount: number } };
-type Core = Summary & { titleKana: string | null; workType: string | null; status: string | null; derivationType: string | null; rightsHolderName: string | null; rightsHolderVendorId?: number | null; creatorName: string | null; publisherName: string | null; ledgerCode: string | null; remarks: string | null };
+type Core = Summary & { titleKana: string | null; workType: string | null; status: string | null; businessLine?: string | null; derivationType: string | null; rightsHolderName: string | null; rightsHolderVendorId?: number | null; creatorName: string | null; publisherName: string | null; ledgerCode: string | null; remarks: string | null };
 type Detail = { work: Core; lineage: Lineage | null; materials: Material[] | null; rightsSources: RightsSource[] | null; conditions: Conditions | null; rightsLines?: RightsLine[] | null };
 
 // タブは4つに統合（2026-09-01 利用者指摘「行程と項目の意味が分かりにくい」）。
@@ -77,7 +78,16 @@ const emptyMaterial = (): MaterialForm => ({
   acquisitionType: "license", rightsType: "license", rightsHolderLabel: "", isRoyaltyBearing: false, remarks: ""
 });
 
-export function WorkDetail({ canEdit = false, canEditRights = false, canEditMaterials = false, onNavigate, onAddGrant, onCreateLicenseTerms, onEditWork, initialWorkId = null }: { canEdit?: boolean; canEditRights?: boolean; canEditMaterials?: boolean; onNavigate?: (target: string) => void; onAddGrant?: (workId: number) => void; onCreateLicenseTerms?: (seed: DocumentFormData, workCode: string | null) => void; onEditWork?: (workId: number) => void; initialWorkId?: number | null }) {
+export function WorkDetail({ canEdit = false, canEditRights = false, canEditMaterials = false, onNavigate, onAddGrant, onCreateLicenseTerms, onCreateDocumentFromWork, onEditWork, initialWorkId = null }: {
+  canEdit?: boolean; canEditRights?: boolean; canEditMaterials?: boolean; onNavigate?: (target: string) => void; onAddGrant?: (workId: number) => void;
+  onCreateLicenseTerms?: (seed: DocumentFormData, workCode: string | null) => void;
+  // 出版個別条件書・出版基本契約・発注書を作品から起こす（初期値は App 側で差し込む）。
+  onCreateDocumentFromWork?: (
+    choice: "pub_license_terms" | "pub_master" | "purchase_order",
+    work: { workId: number; workCode: string | null; title: string; vendorId: number | null }
+  ) => void;
+  onEditWork?: (workId: number) => void; initialWorkId?: number | null;
+}) {
   const [keyword, setKeyword] = useState("");
   const [results, setResults] = useState<Summary[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(initialWorkId);
@@ -349,9 +359,13 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
                   title="登録画面と同じ流れ（基本情報→原作→素材→既存文書）で一括編集します"
                   onClick={() => onEditWork(detail.work.id)}>一括編集</button>}
                 {canEdit && !editing && <button onClick={startEdit} title="この画面のまま基本情報だけ修正します">詳細項目の編集</button>}
-                {onCreateLicenseTerms && <button className="primary"
-                  title="登録済みの素材（コード・権利者・地域言語）をマトリクスへ展開した条件書フォームを開きます"
-                  onClick={() => {
+              </div>
+            </div>
+
+            {(onCreateLicenseTerms || onCreateDocumentFromWork) && <div className="wd-launcher">
+              <WorkDocumentLauncher businessLine={detail.work.businessLine ?? null} compact
+                onPick={(choice) => {
+                  if (choice.templateKey === "individual_license_terms_v3") {
                     // 既存作品から条件書を作る（作品登録と同じ橋渡し）。イン料率は
                     // 既存の条件文書側にあるためここでは展開せず、条件書側で入力する。
                     const seed = buildLicenseTermsSeed(
@@ -367,10 +381,15 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
                         },
                         materialCode: m.materialCode
                       })));
-                    onCreateLicenseTerms(seed, detail.work.workCode);
-                  }}>この作品から個別条件書を作成</button>}
-              </div>
-            </div>
+                    onCreateLicenseTerms?.(seed, detail.work.workCode);
+                    return;
+                  }
+                  onCreateDocumentFromWork?.(choice.templateKey, {
+                    workId: detail.work.id, workCode: detail.work.workCode, title: detail.work.title ?? "",
+                    vendorId: detail.work.rightsHolderVendorId ?? null
+                  });
+                }} />
+            </div>}
 
             <div className="ledger-tabs">
               {TABS.map((t) => (
@@ -429,6 +448,7 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
                 <div><dt>作者</dt><dd>{detail.work.creatorName ?? "—"}</dd></div>
                 <div><dt>出版社</dt><dd>{detail.work.publisherName ?? "—"}</dd></div>
                 <div><dt>台帳コード</dt><dd>{detail.work.ledgerCode ?? "—"}</dd></div>
+                <div><dt>展開区分</dt><dd>{businessLineLabel(detail.work.businessLine)}{!detail.work.businessLine && canEdit ? "（一括編集で設定）" : ""}</dd></div>
                 <div><dt>作品ID</dt><dd>{detail.work.id}</dd></div>
                 <div className="wide"><dt>備考</dt><dd>{detail.work.remarks ?? "—"}</dd></div>
               </dl>

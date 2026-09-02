@@ -140,3 +140,37 @@ test("stripFileExtension: 拡張子だけ落とす（ドット入りファイル
   assert.equal(stripFileExtension("契約 v2.1 最終.docx"), "契約 v2.1 最終");
   assert.equal(stripFileExtension("拡張子なし"), "拡張子なし");
 });
+
+// ── 展開区分と「この作品から作る文書」──────────────────────────────────
+
+test("documentChoicesForWork: 展開区分で文書の選択肢が絞られる（未設定は全部）", async () => {
+  const { documentChoicesForWork } = await import("./work-intake.js");
+  const keys = (line: string | null) => documentChoicesForWork(line).map((c) => c.templateKey);
+  assert.deepEqual(keys("game"), ["individual_license_terms_v3", "purchase_order"]);
+  assert.deepEqual(keys("publishing"), ["pub_license_terms", "pub_master", "purchase_order"]);
+  assert.deepEqual(keys("both"), ["individual_license_terms_v3", "pub_license_terms", "pub_master", "purchase_order"]);
+  assert.deepEqual(keys(null), ["individual_license_terms_v3", "pub_license_terms", "pub_master", "purchase_order"]);
+});
+
+test("vendorRecordToPickerValues: camelCase→マスタ行・担当者メール優先・未取得の口座は undefined", async () => {
+  const { vendorRecordToPickerValues } = await import("./work-intake.js");
+  const values = vendorRecordToPickerValues({
+    id: 12, vendorName: "スタジオ雨宿り", entityType: "法人", email: "info@amayadori.example",
+    contactEmail: "tantou@amayadori.example", phone: "03-0000-0000", contactName: "雨宿 花子",
+    address: "東京都…", vendorRep: "代表取締役 雨宿 太郎", invoiceRegistrationNumber: "T1234567890123"
+  });
+  assert.equal(values.vendor_name, "スタジオ雨宿り");
+  assert.equal(values.entity_type, "法人");
+  assert.equal(values.email, "tantou@amayadori.example");   // 担当者メールが優先
+  assert.equal(values.vendor_rep, "代表取締役 雨宿 太郎");
+  assert.equal(values.bank_name, undefined);                  // 管理者以外には届かない＝触らない
+  // 担当者メールが空なら代表メール
+  assert.equal(vendorRecordToPickerValues({ email: "info@x.example", contactEmail: "" }).email, "info@x.example");
+});
+
+test("resolvePubMasterTemplate: 個人なら個人書式・それ以外は法人書式", async () => {
+  const { resolvePubMasterTemplate } = await import("./work-intake.js");
+  assert.equal(resolvePubMasterTemplate("個人"), "pub_master_individual");
+  assert.equal(resolvePubMasterTemplate("法人"), "pub_master_corporate");
+  assert.equal(resolvePubMasterTemplate(null), "pub_master_corporate");
+});

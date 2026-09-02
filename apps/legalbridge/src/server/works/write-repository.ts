@@ -6,6 +6,7 @@ export interface WorkRecord {
   id: number; title: string; workCode: string | null;
   ledgerCode: string | null; remarks: string | null; isActive: boolean;
   titleKana: string | null; workType: string | null; kind: string | null;
+  businessLine: string | null;
   derivationType: string | null; isOriginal: boolean | null;
   parentWorkId: number | null; rightsHolderVendorId: number | null;
   creatorName: string | null; publisherName: string | null;
@@ -27,6 +28,7 @@ const COLUMNS: Record<string, string> = {
   title: "title", workCode: "work_code", ledgerCode: "ledger_code",
   remarks: "remarks", isActive: "is_active",
   titleKana: "title_kana", workType: "work_type", status: "status", kind: "kind",
+  businessLine: "business_line",
   derivationType: "derivation_type", isOriginal: "is_original",
   parentWorkId: "parent_work_id", rightsHolderVendorId: "rights_holder_vendor_id",
   creatorName: "creator_name", publisherName: "publisher_name"
@@ -159,7 +161,7 @@ export class PgWorkWriteRepository implements WorkWriteRepository {
   async find(id: number) {
     const result = await this.database.query(
       `SELECT id, title, work_code, ledger_code, remarks, is_active, title_kana, work_type,
-              kind, derivation_type, is_original, parent_work_id, rights_holder_vendor_id,
+              kind, business_line, derivation_type, is_original, parent_work_id, rights_holder_vendor_id,
               creator_name, publisher_name
          FROM works WHERE id = $1`, [id]);
     if (!result.rows[0]) return null;
@@ -168,6 +170,7 @@ export class PgWorkWriteRepository implements WorkWriteRepository {
       id: Number(row.id), title: String(row.title ?? ""), workCode: row.work_code ?? null,
       ledgerCode: row.ledger_code ?? null, remarks: row.remarks ?? null, isActive: Boolean(row.is_active),
       titleKana: row.title_kana ?? null, workType: row.work_type ?? null, kind: row.kind ?? null,
+      businessLine: row.business_line ?? null,
       derivationType: row.derivation_type ?? null,
       isOriginal: row.is_original === null || row.is_original === undefined ? null : Boolean(row.is_original),
       parentWorkId: row.parent_work_id === null || row.parent_work_id === undefined ? null : Number(row.parent_work_id),
@@ -217,6 +220,7 @@ export class MemoryWorkWriteRepository implements WorkWriteRepository {
       id, title: input.title, workCode, ledgerCode: input.ledgerCode ?? null,
       remarks: input.remarks ?? null, isActive: input.isActive,
       titleKana: input.titleKana ?? null, workType: input.workType ?? null, kind: input.kind ?? null,
+      businessLine: input.businessLine ?? null,
       derivationType: input.derivationType ?? null, isOriginal: input.isOriginal ?? null,
       parentWorkId: input.parentWorkId ?? null, rightsHolderVendorId: input.rightsHolderVendorId ?? null,
       creatorName: input.creatorName ?? null, publisherName: input.publisherName ?? null

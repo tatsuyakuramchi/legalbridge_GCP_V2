@@ -32,6 +32,7 @@ export interface WorkSummary {
 }
 
 export interface WorkCore extends WorkSummary {
+  businessLine: string | null;   // game / publishing / both（070）
   derivationType: string | null;
   rightsHolderVendorId: number | null;
   rightsHolderName: string | null;
@@ -177,7 +178,7 @@ export class PgWorkReadRepository implements WorkReadRepository {
   async detail(workId: number): Promise<WorkDetail | null> {
     // コア（works は 006 で必ず読める）。無ければ 404 相当の null。
     const core = await this.database.query(
-      `SELECT ${SUMMARY_COLUMNS_W}, w.derivation_type, w.rights_holder_vendor_id,
+      `SELECT ${SUMMARY_COLUMNS_W}, w.business_line, w.derivation_type, w.rights_holder_vendor_id,
               v.vendor_name AS rights_holder_name, w.creator_name, w.publisher_name,
               w.ledger_code, w.remarks
          FROM works w
@@ -189,6 +190,7 @@ export class PgWorkReadRepository implements WorkReadRepository {
     const row = core.rows[0];
     const work: WorkCore = {
       ...toSummary(row),
+      businessLine: str(row.business_line),
       derivationType: str(row.derivation_type),
       rightsHolderVendorId: num(row.rights_holder_vendor_id),
       rightsHolderName: str(row.rights_holder_name),

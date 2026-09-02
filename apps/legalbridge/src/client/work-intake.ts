@@ -150,6 +150,86 @@ export function planDocumentUploads(input: { docNumber: string; fileNames: strin
     });
 }
 
+// ── 展開区分と「この作品から作る文書」────────────────────────────────
+// 作品の business_line（070）で、作品から起こせる文書の種類を絞る。
+export type BusinessLine = "game" | "publishing" | "both";
+export const BUSINESS_LINE_OPTIONS: Array<{ value: BusinessLine; label: string; hint: string }> = [
+  { value: "game", label: "ゲーム", hint: "個別利用許諾条件書（V3）・発注書" },
+  { value: "publishing", label: "出版", hint: "出版個別利用許諾条件書・出版基本契約・発注書" },
+  { value: "both", label: "両方", hint: "ゲームと出版の文書をどちらも作る" }
+];
+export function businessLineLabel(value: string | null | undefined): string {
+  return BUSINESS_LINE_OPTIONS.find((o) => o.value === value)?.label ?? "未設定";
+}
+
+export interface WorkDocumentChoice {
+  // "pub_master" は取引先の区分（法人/個人）で pub_master_corporate / pub_master_individual に解決する。
+  templateKey: "individual_license_terms_v3" | "pub_license_terms" | "pub_master" | "purchase_order";
+  label: string;
+  hint: string;
+  primary: boolean;
+}
+
+export function documentChoicesForWork(businessLine: string | null | undefined): WorkDocumentChoice[] {
+  const game: WorkDocumentChoice = {
+    templateKey: "individual_license_terms_v3", label: "個別利用許諾条件書（ゲーム）",
+    hint: "素材と料率マトリクスを展開。アウト条件の新規発行", primary: true
+  };
+  const pub: WorkDocumentChoice = {
+    templateKey: "pub_license_terms", label: "出版個別利用許諾条件書",
+    hint: "原著作物名・許諾者・振込口座を差し込み。印税率・支払基準日は条件書で入力", primary: true
+  };
+  const pubMaster: WorkDocumentChoice = {
+    templateKey: "pub_master", label: "出版基本契約",
+    hint: "許諾者が法人か個人かで書式を自動選択", primary: false
+  };
+  const po: WorkDocumentChoice = {
+    templateKey: "purchase_order", label: "発注書",
+    hint: "素材の制作委託（イン条件）", primary: false
+  };
+  if (businessLine === "publishing") return [pub, pubMaster, po];
+  if (businessLine === "both") return [game, pub, pubMaster, po];
+  if (businessLine === "game") return [game, po];
+  // 未設定（旧作品）は全部見せて選ばせる。
+  return [game, pub, pubMaster, po];
+}
+
+// GET /api/v2/vendors/:id（camelCase）を、DBから引用（MasterDataPicker.buildPatch）が
+// 期待する取引先マスタ行（snake_case）の形に直す。担当者メール（067）があれば
+// メール欄に優先して入れる（通知先は担当者宛が自然）。口座は管理者のときだけ届く。
+export function vendorRecordToPickerValues(record: Record<string, unknown>): Record<string, unknown> {
+  const pick = (key: string) => (record[key] === undefined ? undefined : record[key]);
+  const contactEmail = String(record.contactEmail ?? "").trim();
+  return {
+    id: record.id,
+    vendor_name: pick("vendorName"),
+    vendor_code: pick("vendorCode"),
+    trade_name: pick("tradeName"),
+    pen_name: pick("penName"),
+    entity_type: pick("entityType"),
+    email: contactEmail || pick("email"),
+    phone: pick("phone"),
+    contact_name: pick("contactName"),
+    contact_department: pick("contactDepartment"),
+    address: pick("address"),
+    invoice_registration_number: pick("invoiceRegistrationNumber"),
+    vendor_rep: pick("vendorRep"),
+    corporate_number: pick("corporateNumber"),
+    bank_name: pick("bankName"),
+    branch_name: pick("branchName"),
+    account_type: pick("accountType"),
+    account_number: pick("accountNumber"),
+    account_holder_kana: pick("accountHolderKana"),
+    is_invoice_issuer: pick("isInvoiceIssuer"),
+    withholding_enabled: pick("withholdingEnabled")
+  };
+}
+
+/** pub_master の法人/個人書式を取引先の区分で決める（不明なら法人）。 */
+export function resolvePubMasterTemplate(entityType: unknown): "pub_master_individual" | "pub_master_corporate" {
+  return String(entityType ?? "").trim() === "個人" ? "pub_master_individual" : "pub_master_corporate";
+}
+
 // ── 個別利用許諾条件書V3 へのシード ───────────────────────────────────
 const rate = (value: string): string => {
   const parsed = Number.parseFloat(String(value ?? "").replace(/,/g, ""));

@@ -7,6 +7,10 @@ const nullableText = (max: number) =>
 
 // 作品種別（kind）：ライセンスイン / 自社。派生種別は自由記述（licensed_derivative 等）。
 const workKind = z.enum(["licensed_in", "own"]);
+// 展開区分（070）：ゲーム / 出版 / 両方。作品から作る条件書の種類（個別条件書V3 /
+// 出版個別条件書・出版基本契約）を絞る軸。将来の計算書（ロイヤリティ/印税）分岐にも使う。
+export const WORK_BUSINESS_LINES = ["game", "publishing", "both"] as const;
+const businessLine = z.enum(WORK_BUSINESS_LINES);
 // 正の整数 or null（親クリア・権利者クリア）。空/未指定は undefined（無変更）。
 const nullablePositiveId = z.union([z.coerce.number().int().positive(), z.null()]).optional();
 
@@ -19,6 +23,7 @@ export const workCreateSchema = z.object({
   titleKana: nullableText(1000),
   workType: nullableText(80),
   kind: workKind.optional(),
+  businessLine: businessLine.nullable().optional(),
   derivationType: nullableText(80),
   isOriginal: z.boolean().optional(),
   parentWorkId: nullablePositiveId,
@@ -38,6 +43,7 @@ export const workUpdateSchema = z.object({
   status: z.enum(["planning", "in_production", "released"]).nullable().optional(),
   // 「未設定」への戻し（null）を許容（従来は選んでも黙って無視されていた）。
   kind: workKind.nullable().optional(),
+  businessLine: businessLine.nullable().optional(),
   derivationType: nullableText(80).optional(),
   isOriginal: z.boolean().optional(),
   parentWorkId: nullablePositiveId,
