@@ -2419,3 +2419,17 @@ textarea { width: 100%; min-height: 90px; resize: vertical; line-height: 1.6; }
 .wz-doctitle { color: var(--ink-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 30ch; }
 .wz-tag.warn { background: var(--warning-bg); color: var(--warning-accent); }
 .wz-docstatus > small.wz-hint { margin: 0; }
+
+/* 担当者メール検索（CC追記用・文書メール送信とメール設定で共用） */
+.staff-email-search { display: grid; gap: 4px; }
+.staff-email-search > label { display: grid; gap: 3px; font-size: 11.5px; color: var(--ink-soft); }
+.staff-email-search > label input { max-width: 360px; }
+.staff-email-search > small { color: var(--ink-faint); font-size: 11px; }
+.staff-email-hits { display: grid; gap: 4px; max-width: 460px; }
+.staff-email-hits > button { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; text-align: left;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 5px 10px;
+  cursor: pointer; font: inherit; font-size: 12.5px; }
+.staff-email-hits > button:hover { border-color: var(--accent-strong); background: var(--surface-tint); }
+.staff-email-hits strong { color: var(--accent-ink); }
+.staff-email-hits span { color: var(--ink-soft); }
+.staff-email-hits small { color: var(--ink-faint); }

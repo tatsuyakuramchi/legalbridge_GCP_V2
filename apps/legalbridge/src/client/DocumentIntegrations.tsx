@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useToast } from "./Toast";
+import { StaffEmailSearch } from "./StaffEmailSearch";
 
 type Gate = { dispatchAllowed: boolean; statusLabel: string; blockerLabels: string[] };
 
@@ -113,6 +114,15 @@ function GmailNotify({ documentId, isAdmin = true, suggestions = [], onSent }: {
     });
     resetPreview();
   };
+  // 担当者検索からのCC追記（重複は足さない）。
+  const appendCc = (email: string) => {
+    setCc((prev) => {
+      const list = prev.split(",").map((s) => s.trim()).filter(Boolean);
+      if (list.some((e) => e.toLowerCase() === email.toLowerCase())) return prev;
+      return [...list, email].join(", ");
+    });
+    resetPreview();
+  };
 
   async function runPreview() {
     setBusy(true); setError(""); resetPreview();
@@ -151,6 +161,8 @@ function GmailNotify({ documentId, isAdmin = true, suggestions = [], onSent }: {
       placeholder="counterparty@example.com（複数はカンマ区切り）" /></label>
     <label>CC（任意）<input value={cc} onChange={(e) => { setCc(e.target.value); resetPreview(); }}
       placeholder="cc@example.com（複数はカンマ区切り）" /></label>
+    <StaffEmailSearch label="当社担当者を検索してCCに追加" onPick={(email) => appendCc(email)} />
+    <small className="settings-effective">システム設定「メール設定」の既定CCは自動で追加されます（最終的なCCはプレビューで確認できます）。</small>
     <label style={{ display: "inline-flex", gap: "0.4em", alignItems: "center" }}>
       <input type="checkbox" checked={attachPdf} onChange={(e) => { setAttachPdf(e.target.checked); resetPreview(); }} />
       文書PDFを添付する（検収書・計算書の送付はこちらを推奨）

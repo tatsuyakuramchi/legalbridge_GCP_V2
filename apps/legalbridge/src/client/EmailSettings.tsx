@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useToast } from "./Toast";
+import { StaffEmailSearch } from "./StaffEmailSearch";
 
 // メール設定（文面テンプレート・既定CC・テスト送信）。V1 の loadEmailCfg 設定群の編集画面。
 // プレースホルダーは手打ちさせず「挿入」ボタンから入れる（トークン名間違い防止）。
@@ -138,6 +139,14 @@ export function EmailSettings() {
       <strong>既定CC（全送信に自動で追加）</strong>
       <label>CCアドレス<input value={cc} onChange={(e) => { setCc(e.target.value); setDirty(true); }}
         placeholder="keiri@example.co.jp（複数はカンマ区切り・空欄=なし）" /></label>
+      <StaffEmailSearch label="当社担当者を検索して既定CCに追加" onPick={(email) => {
+        setCc((prev) => {
+          const list = prev.split(",").map((s) => s.trim()).filter(Boolean);
+          if (list.some((e) => e.toLowerCase() === email.toLowerCase())) return prev;
+          return [...list, email].join(", ");
+        });
+        setDirty(true);
+      }} />
       <small className="settings-effective">送信のたびに都度入力するCCとマージされ、重複と宛先かぶりは自動で除外されます。</small>
     </div>
 
