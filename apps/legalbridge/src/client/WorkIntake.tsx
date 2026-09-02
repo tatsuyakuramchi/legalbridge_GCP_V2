@@ -44,6 +44,21 @@ type MatRow = {
   dirty: boolean;              // 既存行の変更検知（PATCH の要否）
 };
 
+// 作品に紐づく既存文書（GET /works/:id/documents）。編集モードで
+// 「未登録の過去文書がないか」を確認し、条件明細の登録へ直行する入口になる。
+type WorkDoc = {
+  id: number; documentNumber: string | null; templateType: string | null;
+  templateVersionId: number | null; title: string | null; counterparty: string | null;
+  supersededBy: string | null; conditionCount: number;
+};
+
+const DOC_KIND_LABELS: Record<string, string> = {
+  ...Object.fromEntries(INTAKE_DOC_KINDS.map((k) => [k.value, k.label])),
+  individual_license_terms_v3: "個別利用許諾条件書",
+  royalty_statement: "利用許諾料計算書",
+  inspection_certificate: "検収書"
+};
+
 type DocSeries = {
   key: number;
   files: File[];               // [初版, 巻き直し…] 最後が有効版
@@ -163,9 +178,19 @@ export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreat
 
   // ── 編集モード：既存作品を読み込んで各ステップへ展開 ─────────────────
   const [loaded, setLoaded] = useState<{ workCode: string | null; title: string } | null>(null);
+  const [workDocs, setWorkDocs] = useState<WorkDoc[]>([]);
   useEffect(() => {
     if (!editMode) return;
     let aborted = false;
+    // 紐づく文書と条件明細の登録状況（失敗しても編集自体は続けられる）。
+    (async () => {
+      try {
+        const response = await fetch(`/api/v2/works/${editWorkId}/documents`);
+        if (!response.ok || aborted) return;
+        const data = await response.json();
+        if (!aborted) setWorkDocs(data.documents ?? []);
+      } catch { /* 縮退表示 */ }
+    })();
     (async () => {
       try {
         const response = await fetch(`/api/v2/works/${editWorkId}/detail`);
@@ -633,9 +658,30 @@ export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreat
           </div>}
         </>)}
 
-      {stepCard(4, "④ 既存文書のアップロード",
+      {stepCard(4, editMode ? "④ 既存文書と条件明細" : "④ 既存文書のアップロード",
         docCount ? `${docCount} 件の文書${rewrapCount ? `（巻き直し ${rewrapCount} 組）` : ""}` : "文書なし",
         <>
+          {editMode && <div className="wz-docstatus">
+            <strong>この作品に紐づく文書（条件明細の登録状況）</strong>
+            {workDocs.length === 0 && <p className="wz-hint">まだ文書が紐づいていません。下からアップロードするか、文書一覧の「過去文書取込」で登録してください。</p>}
+            {workDocs.length > 0 && <ul>
+              {workDocs.map((doc) => <li key={doc.id} className={doc.supersededBy ? "old" : ""}>
+                <b>{doc.documentNumber ?? `#${doc.id}`}</b>
+                <span>{DOC_KIND_LABELS[doc.templateType ?? ""] ?? doc.templateType ?? "—"}</span>
+                <span className="wz-doctitle">{doc.title ?? ""}</span>
+                {doc.supersededBy
+                  ? <span className="wz-tag">旧版（→ {doc.supersededBy}）</span>
+                  : doc.conditionCount > 0
+                    ? <span className="wz-tag eff">条件明細 {doc.conditionCount}件</span>
+                    : <span className="wz-tag warn">条件未登録</span>}
+                {!doc.supersededBy && doc.templateVersionId == null && onRegisterDocDetails &&
+                  <button type="button" className="link-button"
+                    onClick={() => onRegisterDocDetails(doc.id)}>
+                    {doc.conditionCount > 0 ? "条件明細を編集 →" : "条件明細を登録 →"}</button>}
+              </li>)}
+            </ul>}
+            <small className="wz-hint">「条件未登録」の取込文書は「条件明細を登録 →」から入れます（文書は新しく作られません・保存で台帳へ同期）。システムで発行した文書の条件は確定時に同期済みです。</small>
+          </div>}
           <p className="wz-hint">この作品に関係する契約書・発注書などをまとめて登録します（Drive格納・<b>複数可・0件でも進めます</b>）。
             同じ契約を締結し直した<b>巻き直し文書</b>は、元の文書の「＋巻き直し版を追加」から版として積んでください — 最後に追加した版が有効になります。</p>
           <div className="wz-drop">

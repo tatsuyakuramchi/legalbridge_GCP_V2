@@ -2407,3 +2407,15 @@ textarea { width: 100%; min-height: 90px; resize: vertical; line-height: 1.6; }
 .confirm-missing { margin: 4px 0 8px; padding-left: 20px; display: grid; gap: 4px; font-size: 12.5px; }
 .confirm-missing a { color: var(--accent-ink); font-weight: 600; }
 .confirm-missing small { color: var(--ink-faint); }
+
+/* 作品編集ステップ④：紐づく文書と条件明細の登録状況 */
+.wz-docstatus { margin: 10px 18px 0; border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 14px; background: var(--surface-subtle); display: grid; gap: 6px; }
+.wz-docstatus > strong { font-size: 12.5px; color: var(--ink-strong); }
+.wz-docstatus ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.wz-docstatus li { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; font-size: 12.5px; }
+.wz-docstatus li b { font-variant-numeric: tabular-nums; color: var(--accent-ink); }
+.wz-docstatus li.old { opacity: .6; }
+.wz-doctitle { color: var(--ink-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 30ch; }
+.wz-tag.warn { background: var(--warning-bg); color: var(--warning-accent); }
+.wz-docstatus > small.wz-hint { margin: 0; }

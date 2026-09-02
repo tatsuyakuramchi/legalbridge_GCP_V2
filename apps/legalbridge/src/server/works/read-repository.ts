@@ -94,11 +94,28 @@ export interface WorkListResult {
   total: number;
 }
 
+// 作品に紐づく文書と条件明細の登録状況（作品編集画面の「未登録の過去文書」確認用）。
+// 紐づけの根拠は 2系統: form_data.work_code（作品登録④のアップロード）と、
+// 条件明細（condition_lines.work_id）が既に張られている文書。
+export interface WorkDocumentRow {
+  id: number;
+  documentNumber: string | null;
+  templateType: string | null;
+  templateVersionId: number | null;   // null = 取込文書（詳細編集で条件を登録できる）
+  title: string | null;
+  counterparty: string | null;
+  supersededBy: string | null;        // 巻き直しの旧版（有効版の文書番号）
+  createdAt: string | null;
+  conditionCount: number;             // 0 = 条件明細が未登録
+}
+
 export interface WorkReadRepository {
   list(options: { keyword?: string; limit?: number }): Promise<WorkListResult>;
   detail(workId: number): Promise<WorkDetail | null>;
   // ライセンスマトリクス（R4・横断）。許諾側（receivable）で作品に紐付く明細のみ。
   rightsMatrixLines?(): Promise<RightsLine[]>;
+  // 作品に紐づく文書一覧（条件明細の登録状況つき）。未実装リポジトリは空扱い。
+  documents?(workId: number): Promise<WorkDocumentRow[]>;
 }
 
 function num(value: unknown): number | null {
@@ -296,6 +313,46 @@ export class PgWorkReadRepository implements WorkReadRepository {
       validFrom: str(r.valid_from),
       validTo: str(r.valid_to)
     }));
+  }
+
+  // 作品に紐づく文書一覧（条件明細の登録状況つき）。無効化（voided）文書は除外。
+  // 巻き直しの旧版（superseded_by あり）も返し、クライアント側で旧版表示にする。
+  async documents(workId: number): Promise<WorkDocumentRow[]> {
+    try {
+      const result = await this.database.query(
+        `SELECT d.id, d.document_number, d.template_type, d.template_version_id,
+                d.form_data->>'title' AS title,
+                COALESCE(v.vendor_name, d.form_data->>'counterparty') AS counterparty,
+                d.form_data->>'superseded_by' AS superseded_by,
+                d.created_at,
+                (SELECT COUNT(*) FROM condition_lines cl WHERE cl.document_id = d.id) AS condition_count
+           FROM documents d
+           LEFT JOIN vendors v ON v.id = d.vendor_id
+          WHERE (d.lifecycle_status IS NULL OR d.lifecycle_status <> 'voided')
+            AND (
+              d.form_data->>'work_code' = (SELECT work_code FROM works WHERE id = $1)
+              OR EXISTS (SELECT 1 FROM condition_lines cl2
+                          WHERE cl2.document_id = d.id AND cl2.work_id = $1)
+            )
+          ORDER BY d.created_at DESC NULLS LAST, d.id DESC
+          LIMIT 100`,
+        [workId]
+      );
+      return result.rows.map((r) => ({
+        id: Number(r.id),
+        documentNumber: str(r.document_number),
+        templateType: str(r.template_type),
+        templateVersionId: num(r.template_version_id),
+        title: str(r.title),
+        counterparty: str(r.counterparty),
+        supersededBy: str(r.superseded_by),
+        createdAt: str(r.created_at),
+        conditionCount: num(r.condition_count) ?? 0
+      }));
+    } catch (error) {
+      if (degradable(error)) return [];
+      throw error;
+    }
   }
 
   // ライセンスマトリクス（R4）。全作品の許諾側明細を作品情報付きで返す。

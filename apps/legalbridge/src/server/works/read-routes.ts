@@ -51,6 +51,21 @@ export function createWorkReadRouter(repository?: WorkReadRepository) {
     }
   });
 
+  // 作品に紐づく文書と条件明細の登録状況（作品編集画面の入口用）。
+  router.get("/works/:id/documents", async (request, response, next) => {
+    try {
+      if (!requireLegal(response)) return;
+      const { id } = z.object({ id: z.coerce.number().int().positive() }).parse(request.params);
+      const documents = repository?.documents ? await repository.documents(id) : [];
+      return response.status(200).json({ documents });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return response.status(400).json({ error: "invalid request", issues: error.issues });
+      }
+      next(error);
+    }
+  });
+
   router.get("/works/:id/detail", async (request, response, next) => {
     try {
       if (!requireLegal(response)) return;

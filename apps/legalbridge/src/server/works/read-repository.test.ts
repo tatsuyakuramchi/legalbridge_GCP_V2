@@ -35,3 +35,39 @@ test("作品詳細のコアクエリは JOIN 下で全列を w. 修飾する（i
     assert.doesNotMatch(selectClause, new RegExp(`[^.\\w]${column}`), `${column} の未修飾参照が無いこと`);
   }
 });
+
+test("作品の文書一覧: voided を除外し work_code/条件明細の両経路で紐づけ、登録状況を返す", async () => {
+  const queries: string[] = [];
+  const pool = {
+    query: async (sql: string) => {
+      queries.push(sql);
+      return {
+        rows: [{
+          id: 42, document_number: "LIC-2024-0012", template_type: "individual_license_terms",
+          template_version_id: null, title: "利用許諾契約", counterparty: "北山",
+          superseded_by: null, created_at: "2026-05-19", condition_count: "3"
+        }]
+      } as { rows: Array<Record<string, unknown>> };
+    }
+  } as unknown as import("../db/pool.js").DatabasePool;
+  const repository = new PgWorkReadRepository(pool);
+  const documents = await repository.documents(7);
+  assert.equal(documents.length, 1);
+  assert.deepEqual(documents[0], {
+    id: 42, documentNumber: "LIC-2024-0012", templateType: "individual_license_terms",
+    templateVersionId: null, title: "利用許諾契約", counterparty: "北山",
+    supersededBy: null, createdAt: "2026-05-19", conditionCount: 3
+  });
+  const sql = queries[0];
+  assert.match(sql, /lifecycle_status <> 'voided'/);
+  assert.match(sql, /work_code/);
+  assert.match(sql, /condition_lines cl2/);
+});
+
+test("作品の文書一覧: 権限未整備（42501）は空配列に縮退する", async () => {
+  const pool = {
+    query: async () => { throw Object.assign(new Error("permission denied"), { code: "42501" }); }
+  } as unknown as import("../db/pool.js").DatabasePool;
+  const repository = new PgWorkReadRepository(pool);
+  assert.deepEqual(await repository.documents(7), []);
+});
