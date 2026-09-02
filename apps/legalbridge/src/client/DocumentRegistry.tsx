@@ -71,6 +71,7 @@ export function DocumentRegistry({
   canReissueDocument = false,
   selectedId,
   initialQuery = "",
+  initialDetailsId,
   onOpenMatter,
   onDuplicate,
   onEditReissue
@@ -86,6 +87,9 @@ export function DocumentRegistry({
   canReissueDocument?: boolean;
   selectedId?: number;
   initialQuery?: string;
+  // 画面を開いた直後にこの取込文書の詳細編集（条件明細エディタ）を開く。
+  // 作品登録の完了帯「条件明細を登録 →」からの直行導線（利用者要望 2026-09-02）。
+  initialDetailsId?: number;
   onOpenMatter?: (matterId: number) => void;
   // 確定済み文書を下敷きに次を作る。"vendor"=同じ内容を別の相手先へ、
   // "content"=同じ相手先へ別の内容を。
@@ -141,6 +145,13 @@ export function DocumentRegistry({
     setSelected((await response.json()).document);
   }
   useEffect(() => { if (selectedId) void selectDocument(selectedId); }, [selectedId]);
+  useEffect(() => {
+    if (!initialDetailsId) return;
+    void (async () => {
+      const response = await fetch(`/api/v2/documents/${initialDetailsId}`);
+      if (response.ok) setEditingDetails((await response.json()).document);
+    })();
+  }, [initialDetailsId]);
 
   function toggleSelect(id: number) {
     setSelectedIds((prev) => {

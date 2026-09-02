@@ -119,13 +119,16 @@ function DocQuotePicker({ note, quoteNumber, onPick }: {
   </div>;
 }
 
-export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreateLicenseTerms, onOpenImport }: {
+export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreateLicenseTerms, onOpenImport, onRegisterDocDetails }: {
   canRegister: boolean;
   editWorkId?: number | null;
   onOpenWork?: (workId: number) => void;
   onCreateLicenseTerms: (seed: DocumentFormData, workCode: string | null) => void;
   // 過去文書取込（条件明細の登録）画面へ移動する導線（任意）。
   onOpenImport?: () => void;
+  // アップロードした文書の詳細編集（条件明細エディタ付き）を直接開く。
+  // 締結済み契約の条件は文書を新規発行せずここから登録する（利用者要望 2026-09-02）。
+  onRegisterDocDetails?: (id: number) => void;
 }) {
   const toast = useToast();
   const editMode = editWorkId != null;
@@ -155,6 +158,7 @@ export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreat
   const [doneInfo, setDoneInfo] = useState<{
     workId: number; workCode: string | null;
     saved: Array<{ material: IntakeMaterial; materialCode: string | null }>;
+    uploadedDocs: Array<{ id: number; documentNumber: string }>;
   } | null>(null);
 
   // ── 編集モード：既存作品を読み込んで各ステップへ展開 ─────────────────
@@ -299,9 +303,12 @@ export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreat
     return Boolean(response?.ok);
   }
 
-  // 巻き直しの版を順にアップロード（旧版→有効版）。失敗した版の番号を返す。
-  async function uploadDocs(workCode: string | null): Promise<{ uploaded: number; failed: string[] }> {
-    let uploaded = 0;
+  // 巻き直しの版を順にアップロード（旧版→有効版）。有効版の文書ID一覧と
+  // 失敗した版の番号を返す（有効版IDは完了帯の「条件明細を登録」導線に使う）。
+  async function uploadDocs(workCode: string | null): Promise<{
+    uploaded: Array<{ id: number; documentNumber: string }>; failed: string[];
+  }> {
+    const uploaded: Array<{ id: number; documentNumber: string }> = [];
     const failed: string[] = [];
     for (const series of docs) {
       if (!series.files.length) continue;
@@ -320,8 +327,13 @@ export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreat
         if (plan.supersededBy) form.append("supersededBy", plan.supersededBy);
         try {
           const response = await fetch("/api/v2/documents/import/upload", { method: "POST", body: form });
-          if (response.ok) uploaded += 1;
-          else {
+          if (response.ok) {
+            const data = await response.json().catch(() => ({}));
+            // 有効版（supersededBy 無し）だけを控える＝件数も条件明細の導線も有効版単位。
+            if (!plan.supersededBy && data.document?.id) {
+              uploaded.push({ id: Number(data.document.id), documentNumber: plan.documentNumber });
+            }
+          } else {
             const data = await response.json().catch(() => ({}));
             failed.push(`${plan.documentNumber}（${data.error ?? "登録失敗"}）`);
           }
@@ -383,12 +395,12 @@ export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreat
 
       const documents = await uploadDocs(workCode);
 
-      const summary = `作品 ${workCode ?? `#${workId}`} を登録しました（素材${saved.length}件・文書${documents.uploaded}件）`
+      const summary = `作品 ${workCode ?? `#${workId}`} を登録しました（素材${saved.length}件・文書${documents.uploaded.length}件）`
         + (failedMats.length ? `／素材の失敗: ${failedMats.join("、")}` : "")
         + (rightsFailed ? `／根拠文書の紐づけ失敗: ${rightsFailed}件` : "")
         + (documents.failed.length ? `／文書の失敗: ${documents.failed.join("、")}` : "");
       toast.push(summary, failedMats.length || documents.failed.length ? "info" : "success");
-      setDoneInfo({ workId, workCode, saved });
+      setDoneInfo({ workId, workCode, saved, uploadedDocs: documents.uploaded });
       setStep(6); setMaxStep(6);
     } catch {
       toast.push("通信に失敗しました。", "error");
@@ -457,7 +469,7 @@ export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreat
 
       const documents = await uploadDocs(loaded?.workCode ?? null);
       const summary = `作品 ${loaded?.workCode ?? `#${editWorkId}`} を保存しました`
-        + (documents.uploaded ? `（文書${documents.uploaded}件を追加）` : "")
+        + (documents.uploaded.length ? `（文書${documents.uploaded.length}件を追加）` : "")
         + (failures.length ? `／素材の失敗: ${failures.join("、")}` : "")
         + (rightsFailed ? `／根拠文書の紐づけ失敗: ${rightsFailed}件` : "")
         + (documents.failed.length ? `／文書の失敗: ${documents.failed.join("、")}` : "");
@@ -687,10 +699,18 @@ export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreat
 
     {doneInfo && <div className="panel wz-doneband">
       <h2>✔ 作品を登録しました（{doneInfo.workCode ?? `#${doneInfo.workId}`}）</h2>
-      <p>続けて条件を入れる場合は、ここから文書作成へ進みます。</p>
+      {doneInfo.uploadedDocs.length > 0 && onRegisterDocDetails && <>
+        <p><b>アップロードした文書の条件は、文書を新しく作らずここから登録します</b>（条件台帳へ自動同期されます）。</p>
+        <div className="wz-next">
+          {doneInfo.uploadedDocs.map((doc) =>
+            <button type="button" className="primary" key={doc.id} onClick={() => onRegisterDocDetails(doc.id)}>
+              {doc.documentNumber} に条件明細を登録 →</button>)}
+        </div>
+      </>}
+      <p>これから条件書や発注書を<b>新しく発行する</b>場合はこちら（既に締結済みの文書があるなら上の条件明細登録を使ってください — 同じ文書が二重にできます）。</p>
       <div className="wz-next">
-        <button type="button" className="primary" onClick={createLicenseTerms}>個別条件書を作成（アウト条件を入力）</button>
-        {onOpenImport && <button type="button" onClick={onOpenImport}>過去文書を取込んで条件明細を登録</button>}
+        <button type="button" onClick={createLicenseTerms}>個別条件書を新規発行（確定時に条件が台帳へ載ります）</button>
+        {onOpenImport && <button type="button" onClick={onOpenImport}>過去文書を取込む</button>}
         <button type="button" onClick={() => onOpenWork?.(doneInfo.workId)}>作品詳細を開く</button>
       </div>
     </div>}

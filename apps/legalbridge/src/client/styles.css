@@ -2401,3 +2401,9 @@ textarea { width: 100%; min-height: 90px; resize: vertical; line-height: 1.6; }
   background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
   padding: 10px 16px; margin-top: 14px; box-shadow: 0 -2px 12px rgba(0,0,0,.08); }
 .wz-savebar span { color: var(--ink-faint); font-size: 11.5px; margin-right: auto; }
+
+/* ── 汎用テンプレートのステップ化（2026-09-02）────────────────────── */
+.step-picker-note { color: var(--ink-soft); font-size: 12px; margin: 8px 0 0; }
+.confirm-missing { margin: 4px 0 8px; padding-left: 20px; display: grid; gap: 4px; font-size: 12.5px; }
+.confirm-missing a { color: var(--accent-ink); font-weight: 600; }
+.confirm-missing small { color: var(--ink-faint); }

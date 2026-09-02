@@ -534,9 +534,9 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
               <div className="wd-guide">
                 <strong>条件はここで直接入力せず、文書から自動で登録されます。</strong>
                 <ol>
-                  <li><b>支払う条件（イン）</b>＝ 権利元から許諾を受ける条件。右上の<b>「この作品から個別条件書を作成」</b>で条件書を作り、確定すると載ります。</li>
-                  <li><b>受け取る条件（アウト）</b>＝ 他社へ許諾する条件。{onAddGrant ? <button type="button" className="link-button" onClick={() => onAddGrant(detail.work.id)}>アウト条件を追記</button> : "「アウト条件」画面"}から登録します。</li>
-                  <li>紙・過去の契約は、文書一覧で取り込んで<b>「詳細編集 → 条件明細」</b>から登録できます。</li>
+                  <li><b>締結済みの契約の条件</b>（発注書・条件書・紙の契約）＝ 文書一覧の<b>「過去文書取込」→「詳細を編集」→ 条件明細</b>で登録します。保存した時点で条件台帳へ同期され、ここに載ります。<b>文書は新しく作りません</b>（作品登録の④でアップロードした文書もこの経路です）。</li>
+                  <li><b>受け取る条件（アウト）</b>＝ 他社へ許諾する条件。{onAddGrant ? <button type="button" className="link-button" onClick={() => onAddGrant(detail.work.id)}>アウト条件を追記</button> : "「アウト条件」画面"}から登録します（こちらも文書は作りません）。</li>
+                  <li><b>これから条件書を新しく発行する</b>ときだけ、右上の<b>「この作品から個別条件書を作成」</b>を使います。新しい文書が発番され、<b>確定した時点</b>で条件が載ります（下書きのままでは載りません）。既に同じ内容の文書があるときに使うと二重登録になるので注意。</li>
                 </ol>
               </div>
               {detail.conditions == null ? <Degraded /> : <>

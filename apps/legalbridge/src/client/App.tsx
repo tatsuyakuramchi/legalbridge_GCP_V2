@@ -224,6 +224,8 @@ export function App() {
   const [drillWorkId, setDrillWorkId] = useState<number | null>(null);
   // 作品の一括編集（作品登録と同じウィザード画面を編集モードで開く）。
   const [editIntakeWorkId, setEditIntakeWorkId] = useState<number | null>(null);
+  // 作品登録の完了帯から、アップロードした文書の詳細編集（条件明細）を直接開く。
+  const [drillDetailsDocId, setDrillDetailsDocId] = useState<number | null>(null);
   // 権利ツリーから「＋許諾条件を追加」で飛んだときの作品プリセット。
   const [drillOutboundWorkId, setDrillOutboundWorkId] = useState<number | null>(null);
   const [drillConditionId, setDrillConditionId] = useState<number | null>(null);
@@ -481,7 +483,7 @@ export function App() {
                 {!collapsed && group.items.map((item) => (
                   <button key={item.view}
                     className={item.match.includes(view) ? "active" : ""}
-                    onClick={() => { setMergeSourceSeed(""); setLedgerSeedType(undefined); setEditIntakeWorkId(null); setView(item.view); }}
+                    onClick={() => { setMergeSourceSeed(""); setLedgerSeedType(undefined); setEditIntakeWorkId(null); setDrillDetailsDocId(null); setView(item.view); }}
                     title={item.description}
                   >{item.label}</button>
                 ))}
@@ -555,6 +557,7 @@ export function App() {
           editWorkId={editIntakeWorkId}
           onOpenWork={(workId) => { setEditIntakeWorkId(null); setDrillWorkId(workId); setView("works"); }}
           onOpenImport={() => setView("documents")}
+          onRegisterDocDetails={(id) => { setDrillDetailsDocId(id); setView("documents"); }}
           onCreateLicenseTerms={(seed, workCode) => void startLicenseTermsFromWork(seed, workCode)} />}
         {view === "works" && <WorkDetail key={drillWorkId ?? "works"} initialWorkId={drillWorkId} canEdit={canEditWorks} canEditRights={canEditRightsSources} canEditMaterials={canEditMaterials}
           onCreateLicenseTerms={(seed, workCode) => void startLicenseTermsFromWork(seed, workCode)}
@@ -611,6 +614,7 @@ export function App() {
             canVoidDocument={canVoidDocument}
             canReissueDocument={canReissueDocument}
             initialQuery={deepLinkIssue}
+            initialDetailsId={drillDetailsDocId ?? undefined}
             onOpenMatter={(matterId) => { setSearchSelection({ target: "matter", id: String(matterId), title: "" }); setView("matters"); }}
             selectedId={searchSelection?.target === "document" ? Number(searchSelection.id) : undefined}
             onDuplicate={(document, mode) => void duplicateDocument(document, mode)}
@@ -1127,6 +1131,19 @@ function DocumentForm({
     ? buildRoyaltySteps(formData, groups, visibleFields)
     : null;
   const activeRoyaltyStep = royaltySteps?.find((step) => !step.done) ?? null;
+  // 残りの全テンプレートも同じステップカードで組む（2026-09-02 承認モック準拠）。
+  // 1) DBから引用 2〜) スキーマのグループ 3) 専用エディタ（明細・条件 or V3マトリクス）
+  // 4) 確認して作成。検収書・計算書と同じく強制遷移なし＝ジャンプ自由
+  // （下書きを開き直したとき途中のステップだけ直せる必要があるため、ロックはしない）。
+  const specializedEditorStep = ["purchase_order", "intl_purchase_order", "individual_license_terms"].includes(templateKey);
+  const missingRequired = visibleFields.filter((field) => {
+    const value = formData[field.name];
+    return field.required && (value === "" || value == null || value === false);
+  });
+  const genericSteps = !inspectionSteps && !royaltySteps
+    ? buildGenericSteps(templateKey, formData, groups, visibleFields, specializedEditorStep, missingRequired.length)
+    : null;
+  const activeGenericStep = genericSteps?.find((step) => !step.done) ?? null;
 
   const applyPickerPatch = (patch: DocumentFormData, message: string) => {
     if (finalizedDocument) return;
@@ -1466,18 +1483,66 @@ function DocumentForm({
                 step={royaltySteps[index + 2]} active={activeRoyaltyStep === royaltySteps[index + 2]}>
                 {renderGroupFields(group)}
               </InspectionStepCard>)}
-          </> : <>
-            <MasterDataPicker schema={schema} formData={formData} onApply={applyPickerPatch} />
-            {groups.map((group, index) => <section id={`group-${index}`} key={group}><h2>{group}</h2>
-              {isPurchaseOrderTemplate(schema.templateKey) && group.startsWith("IV. ") &&
-                <PurchaseOrderTotals formData={formData} />}
-              {renderGroupFields(group)}
-            </section>)}
+          </> : genericSteps ? <>
+            <InspectionStepCard no={1} title="DBから引用" step={genericSteps[0]}
+              active={activeGenericStep === genericSteps[0]}>
+              <MasterDataPicker schema={schema} formData={formData} onApply={applyPickerPatch} />
+              <p className="step-picker-note">ここで選んだ担当者・取引先・作品・契約は、下のステップの該当欄に自動で入ります（あとから上書きできます）。</p>
+            </InspectionStepCard>
+            {groups.map((group, index) => (
+              <InspectionStepCard key={group} id={`group-${index}`} no={index + 2} title={group}
+                step={genericSteps[index + 1]} active={activeGenericStep === genericSteps[index + 1]}>
+                {isPurchaseOrderTemplate(schema.templateKey) && group.startsWith("IV. ") &&
+                  <PurchaseOrderTotals formData={formData} />}
+                {renderGroupFields(group)}
+              </InspectionStepCard>
+            ))}
             {schema.templateKey === "individual_license_terms_v3" && (
-              <IndividualLicenseV3Form formData={formData} onChange={updateValue} />
+              <InspectionStepCard no={groups.length + 2} title="取引形態と構成要素（料率マトリクス）"
+                step={genericSteps[groups.length + 1]} active={activeGenericStep === genericSteps[groups.length + 1]}>
+                <IndividualLicenseV3Form formData={formData} onChange={updateValue} />
+              </InspectionStepCard>
             )}
-            <SpecializedDocumentForms templateKey={schema.templateKey} formData={formData} onChange={updateValue} />
-          </>}
+            {specializedEditorStep && (
+              <InspectionStepCard no={groups.length + 2} id="specialized-fields" title="明細・金銭条件"
+                step={genericSteps[groups.length + 1]} active={activeGenericStep === genericSteps[groups.length + 1]}>
+                <SpecializedDocumentForms templateKey={schema.templateKey} formData={formData} onChange={updateValue} />
+              </InspectionStepCard>
+            )}
+            <InspectionStepCard no={genericSteps.length} title="確認して作成"
+              step={genericSteps[genericSteps.length - 1]} active={activeGenericStep === genericSteps[genericSteps.length - 1]}>
+              {missingRequired.length > 0 ? <>
+                <p className="hub-note">必須項目が残っています。クリックすると該当のステップへ移動します。</p>
+                <ul className="confirm-missing">
+                  {missingRequired.map((field) => {
+                    const group = field.group ?? "基本情報";
+                    const index = groups.indexOf(group);
+                    return <li key={field.name}>
+                      <a href={index >= 0 ? `#group-${index}` : "#"}>{field.label ?? field.name}</a>
+                      <small>（{group}）</small>
+                    </li>;
+                  })}
+                </ul>
+              </> : <p className="hub-note">必須項目はすべて入力済みです。「内容をプレビュー」で文書の形を確認し、下書き保存 → 確定へ進んでください。</p>}
+              {(templateKey === "individual_license_terms_v3" || templateKey === "individual_license_terms") &&
+                <p className="hub-note">条件（料率・MG/AG）が作品の「条件・料率」や利用許諾計算に載るのは<b>文書を確定したとき</b>です（下書き保存だけでは同期されません）。
+                  またこの画面は<b>新しい文書を発行します</b> — 締結済みの条件書がすでにある場合は、文書を作らず「過去文書の取込 → 詳細を編集 → 条件明細」で条件だけ登録してください。</p>}
+              <div className="matter-form-actions">
+                <button type="button" onClick={validate}>内容をプレビュー</button>
+                {!readOnly && !reissueSource && <>
+                  <button type="button" className="primary" onClick={saveDraft}
+                    disabled={draftStatus === "saving" || draftStatus === "loading" || !issueKey.trim() || Boolean(finalizedDocument)}>
+                    {draftStatus === "saving" ? "処理中…" : draft ? "下書きを更新" : "下書きを保存"}</button>
+                  {canFinalizeDocuments && (
+                    <button type="button" className="finalize-button" onClick={finalizeDocument}
+                      disabled={!draft || draftStatus !== "saved"}
+                      title={!draft || draftStatus !== "saved" ? "保存済みで未変更の下書きが必要です" : undefined}>
+                      文書を確定</button>
+                  )}
+                </>}
+              </div>
+            </InspectionStepCard>
+          </> : null}
         </form>
         <aside className={inspectionSteps || royaltySteps ? "preview with-rail" : "preview"}>
           <RequestBriefRail issueKey={issueKey} />
@@ -1843,6 +1908,35 @@ function buildRoyaltySteps(
         : structured ? "自動計算中" : legacyLines ? "旧形式の明細あり" : "実績を入力" },
     ...buildGroupSteps(formData, groups, visibleFields)
   ];
+}
+
+// 汎用テンプレートのステップ（1 DBから引用 2〜 グループ 3 専用エディタ 4 確認）。
+// 検収書・計算書以外の全テンプレートがこの並びになる（2026-09-02 承認モック）。
+function buildGenericSteps(
+  templateKey: string, formData: DocumentFormData, groups: string[], visibleFields: TemplateField[],
+  hasEditorStep: boolean, missingRequiredCount: number
+): InspectionStep[] {
+  const filled = (value: unknown) => value !== "" && value != null && value !== false;
+  const anyFilled = visibleFields.some((field) => filled(formData[field.name]));
+  const steps: InspectionStep[] = [
+    { title: "DBから引用", done: anyFilled, state: anyFilled ? "入力あり" : "検索して引用（任意）" },
+    ...buildGroupSteps(formData, groups, visibleFields)
+  ];
+  if (templateKey === "individual_license_terms_v3") {
+    const lcs = Array.isArray(formData.v3_lcs) ? formData.v3_lcs as Array<Record<string, unknown>> : [];
+    const rated = lcs.filter((row) =>
+      row.rates && typeof row.rates === "object" && Object.keys(row.rates as Record<string, unknown>).length > 0).length;
+    steps.push({ title: "取引形態と構成要素", done: rated > 0, state: rated ? `料率入力済み ${rated}素材` : "料率マトリクスを入力" });
+  } else if (hasEditorStep) {
+    const rows = ["items", "financial_conditions"].reduce((count, key) =>
+      count + (Array.isArray(formData[key]) ? (formData[key] as unknown[]).length : 0), 0);
+    steps.push({ title: "明細・金銭条件", done: rows > 0, state: rows ? `${rows}行` : "明細・条件を追加" });
+  }
+  steps.push({
+    title: "確認して作成", done: missingRequiredCount === 0,
+    state: missingRequiredCount ? `必須の残り ${missingRequiredCount}件` : "作成できます"
+  });
+  return steps;
 }
 
 function InspectionStepCard({ no, title, step, active, id, children }: {
