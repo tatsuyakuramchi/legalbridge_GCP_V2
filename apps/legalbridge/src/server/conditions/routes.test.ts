@@ -11,6 +11,7 @@ function row(overrides: Partial<ConditionLineRow>): ConditionLineRow {
     direction: "receivable", flowDirection: "out", transactionKind: "license", conditionName: "許諾A",
     vendorName: "取引先X", workTitle: "作品Y", territory: "日本", currency: "JPY",
     amountExTax: 100000, mgAmount: null, ratePct: 10, termStart: "2026-01-01",
+    effective: true, supersededBy: null,
     ...overrides
   };
 }

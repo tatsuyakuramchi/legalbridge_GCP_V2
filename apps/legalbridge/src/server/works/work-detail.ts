@@ -18,6 +18,10 @@ export interface WorkConditionLine {
   mgAmount: number | null;
   currency: string | null;
   documentNumber: string | null;
+  // 有効性（巻き直しで旧版になった文書の条件は無効＝計算書の下地にしない）。
+  // 省略時は有効扱い（インメモリ実装・旧フィクスチャ互換）。
+  effective?: boolean;
+  supersededBy?: string | null;
 }
 
 export interface GroupedWorkConditions {

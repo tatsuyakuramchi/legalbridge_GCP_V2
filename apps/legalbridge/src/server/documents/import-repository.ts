@@ -104,6 +104,12 @@ export interface DocumentImportRepository {
   // マージ追記）。form_data の他のキー＝PDF の中身になるデータには触れない。
   // 内容そのものの訂正は再発行（特例編集）を使う。
   mergeDisplayFields(id: number, patch: Record<string, string>): Promise<boolean>;
+  // 作品との紐づけ（form_data.work_code）と巻き直しの旧版指定（form_data.superseded_by）を
+  // 取込・確定を問わず任意の文書に付け外しする（作品一括編集の「既存文書を紐づける」）。
+  //   workCode: string=紐づけ / null=外す / undefined=触らない
+  //   supersededBy: string=旧版として有効版の番号を記録 / null=解除 / undefined=触らない
+  // form_data の他のキー（PDFの中身）には触れない。存在しなければ false。
+  setWorkLink(id: number, link: { workCode?: string | null; supersededBy?: string | null }): Promise<boolean>;
 }
 
 export class PgDocumentImportRepository implements DocumentImportRepository {
@@ -170,6 +176,30 @@ export class PgDocumentImportRepository implements DocumentImportRepository {
     );
     return result.rows.length > 0;
   }
+
+  async setWorkLink(id: number, link: { workCode?: string | null; supersededBy?: string | null }) {
+    const adds: Record<string, string> = {};
+    const removes: string[] = [];
+    if (link.workCode !== undefined) {
+      if (link.workCode) adds.work_code = link.workCode; else removes.push("work_code");
+    }
+    if (link.supersededBy !== undefined) {
+      if (link.supersededBy) adds.superseded_by = link.supersededBy; else removes.push("superseded_by");
+    }
+    if (!Object.keys(adds).length && !removes.length) {
+      const exists = await this.database.query(`SELECT 1 FROM documents WHERE id = $1`, [id]);
+      return exists.rows.length > 0;
+    }
+    const result = await this.database.query(
+      `UPDATE documents
+          SET form_data = (COALESCE(form_data, '{}'::jsonb) - $3::text[]) || $2::jsonb,
+              updated_at = now()
+        WHERE id = $1
+        RETURNING id`,
+      [id, JSON.stringify(adds), removes]
+    );
+    return result.rows.length > 0;
+  }
 }
 
 function translate(error: unknown): Error {
@@ -210,6 +240,19 @@ export class MemoryDocumentImportRepository implements DocumentImportRepository 
   async mergeDisplayFields(id: number, patch: Record<string, string>) {
     if (!this.documents.some((d) => d.id === id)) return false;
     this.displayFields.set(id, { ...(this.displayFields.get(id) ?? {}), ...patch });
+    return true;
+  }
+  readonly workLinks = new Map<number, { workCode?: string; supersededBy?: string }>();
+  async setWorkLink(id: number, link: { workCode?: string | null; supersededBy?: string | null }) {
+    if (!this.documents.some((d) => d.id === id)) return false;
+    const current = { ...(this.workLinks.get(id) ?? {}) };
+    if (link.workCode !== undefined) {
+      if (link.workCode) current.workCode = link.workCode; else delete current.workCode;
+    }
+    if (link.supersededBy !== undefined) {
+      if (link.supersededBy) current.supersededBy = link.supersededBy; else delete current.supersededBy;
+    }
+    this.workLinks.set(id, current);
     return true;
   }
 }

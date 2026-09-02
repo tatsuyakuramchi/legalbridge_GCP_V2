@@ -136,7 +136,7 @@ function DocQuotePicker({ note, quoteNumber, onPick }: {
   </div>;
 }
 
-export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreateLicenseTerms, onCreateDocumentFromWork, onOpenImport, onRegisterDocDetails }: {
+export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreateLicenseTerms, onCreateDocumentFromWork, onOpenImport, onRegisterDocDetails, onAddGrant }: {
   canRegister: boolean;
   editWorkId?: number | null;
   onOpenWork?: (workId: number) => void;
@@ -151,6 +151,8 @@ export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreat
   // アップロードした文書の詳細編集（条件明細エディタ付き）を直接開く。
   // 締結済み契約の条件は文書を新規発行せずここから登録する（利用者要望 2026-09-02）。
   onRegisterDocDetails?: (id: number) => void;
+  // 確定済み文書に条件が無いとき、アウト条件ワークスペースで台帳へ直接追記する導線。
+  onAddGrant?: (workId: number) => void;
 }) {
   const toast = useToast();
   const editMode = editWorkId != null;
@@ -194,18 +196,32 @@ export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreat
       isRoyaltyBearing: boolean; territory: string | null; language: string | null }>;
   } | null>(null);
   const [workDocs, setWorkDocs] = useState<WorkDoc[]>([]);
+  // 紐づく文書と条件明細の登録状況（失敗しても編集自体は続けられる）。
+  async function loadWorkDocs() {
+    if (editWorkId == null) return;
+    try {
+      const response = await fetch(`/api/v2/works/${editWorkId}/documents`);
+      if (!response.ok) return;
+      const data = await response.json();
+      setWorkDocs(data.documents ?? []);
+    } catch { /* 縮退表示 */ }
+  }
+  // 既存文書の作品紐づけ／巻き直しの旧版指定（取込・確定を問わず form_data のキーだけ触る）。
+  async function postWorkLink(documentId: number, body: { workCode?: string | null; supersededBy?: string | null }, done: string) {
+    try {
+      const response = await fetch(`/api/v2/documents/${documentId}/work-link`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) { toast.push(data.error ?? "文書の紐づけに失敗しました", "error"); return; }
+      toast.push(done, "success");
+      await loadWorkDocs();
+    } catch { toast.push("通信に失敗しました。", "error"); }
+  }
   useEffect(() => {
     if (!editMode) return;
     let aborted = false;
-    // 紐づく文書と条件明細の登録状況（失敗しても編集自体は続けられる）。
-    (async () => {
-      try {
-        const response = await fetch(`/api/v2/works/${editWorkId}/documents`);
-        if (!response.ok || aborted) return;
-        const data = await response.json();
-        if (!aborted) setWorkDocs(data.documents ?? []);
-      } catch { /* 縮退表示 */ }
-    })();
+    void loadWorkDocs();
     (async () => {
       try {
         const response = await fetch(`/api/v2/works/${editWorkId}/detail`);
@@ -740,9 +756,35 @@ export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreat
                   <button type="button" className="link-button"
                     onClick={() => onRegisterDocDetails(doc.id)}>
                     {doc.conditionCount > 0 ? "条件明細を編集 →" : "条件明細を登録 →"}</button>}
+                {!doc.supersededBy && doc.templateVersionId != null && doc.conditionCount === 0 && onAddGrant && editWorkId != null &&
+                  <button type="button" className="link-button" title="確定済み文書の条件は確定時に同期されます。無い場合はアウト条件として台帳へ直接追記します"
+                    onClick={() => onAddGrant(editWorkId)}>アウト条件を追記 →</button>}
+                {doc.supersededBy
+                  ? <button type="button" className="link-button"
+                    onClick={() => void postWorkLink(doc.id, { supersededBy: null }, `${doc.documentNumber ?? doc.id} の旧版指定を解除しました`)}>旧版指定を解除</button>
+                  : <button type="button" className="link-button"
+                    onClick={() => {
+                      const effective = window.prompt(`「${doc.documentNumber ?? doc.id}」を巻き直しの旧版にします。\n有効版（新しい契約）の文書番号を入力してください:`);
+                      if (effective == null) return;
+                      if (!effective.trim()) { toast.push("有効版の文書番号を入力してください", "error"); return; }
+                      void postWorkLink(doc.id, { supersededBy: effective.trim() },
+                        `${doc.documentNumber ?? doc.id} を旧版にしました（有効版: ${effective.trim()}）。この文書の条件明細は無効になります`);
+                    }}>旧版にする</button>}
+                {doc.conditionCount === 0 &&
+                  <button type="button" className="link-button"
+                    onClick={() => void postWorkLink(doc.id, { workCode: null }, `${doc.documentNumber ?? doc.id} の紐づけを外しました`)}>紐づけを外す</button>}
               </li>)}
             </ul>}
-            <small className="wz-hint">「条件未登録」の取込文書は「条件明細を登録 →」から入れます（文書は新しく作られません・保存で台帳へ同期）。システムで発行した文書の条件は確定時に同期済みです。</small>
+            <small className="wz-hint">「条件未登録」の取込文書は「条件明細を登録 →」から入れます（文書は新しく作られません・保存で台帳へ同期）。システムで発行した文書の条件は確定時に同期済みです。「旧版にする」と、その文書の条件明細は無効になり計算書の下地から外れます。</small>
+            <div className="wz-doclink">
+              <strong>システム内の文書をこの作品に紐づける</strong>
+              <DocQuotePicker note="確定済み文書・取込済みの過去文書を検索して紐づける（発注書・条件書・契約書など全文書）"
+                quoteNumber=""
+                onPick={(hit) => {
+                  if (!hit || !loaded?.workCode) return;
+                  void postWorkLink(hit.id, { workCode: loaded.workCode }, `${hit.documentNumber} をこの作品に紐づけました`);
+                }} />
+            </div>
           </div>}
           <p className="wz-hint">この作品に関係する契約書・発注書などをまとめて登録します（Drive格納・<b>複数可・0件でも進めます</b>）。
             同じ契約を締結し直した<b>巻き直し文書</b>は、元の文書の「＋巻き直し版を追加」から版として積んでください — 最後に追加した版が有効になります。</p>

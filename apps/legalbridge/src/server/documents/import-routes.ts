@@ -300,5 +300,37 @@ export function createDocumentImportRouter(
     return next(error);
   });
 
+  // 作品との紐づけ・巻き直しの旧版指定（作品一括編集「既存文書と条件明細」）。
+  // 取込文書・確定文書を問わず form_data の work_code / superseded_by だけを付け外しする。
+  //   { workCode: "WRK-10013" }            … 作品に紐づける
+  //   { workCode: null }                   … 紐づけを外す
+  //   { supersededBy: "LIC-2024-0012" }    … 旧版にする（有効版の文書番号）
+  //   { supersededBy: null }               … 旧版指定を解除
+  const workLinkSchema = z.object({
+    workCode: z.string().trim().max(40).nullable().optional(),
+    supersededBy: z.string().trim().max(100).nullable().optional()
+  }).refine((v) => v.workCode !== undefined || v.supersededBy !== undefined, { message: "変更する項目がありません" });
+  router.post("/documents/:id/work-link", async (request, response, next) => {
+    try {
+      if (!writeEnabled || !documents) {
+        return response.status(503).json({ error: "document import is not enabled", code: "DOCUMENT_IMPORT_UNAVAILABLE" });
+      }
+      if (!canImport(response.locals.currentUser?.role)) {
+        return response.status(403).json({ error: "法務または管理者のみが操作できます", code: "DOCUMENT_IMPORT_FORBIDDEN" });
+      }
+      const { id } = z.object({ id: z.coerce.number().int().positive() }).parse(request.params);
+      const link = workLinkSchema.parse(request.body ?? {});
+      const updated = await documents.setWorkLink(id, {
+        ...(link.workCode !== undefined ? { workCode: link.workCode || null } : {}),
+        ...(link.supersededBy !== undefined ? { supersededBy: link.supersededBy || null } : {})
+      });
+      if (!updated) return response.status(404).json({ error: "文書が見つかりません", code: "DOCUMENT_NOT_FOUND" });
+      return response.status(200).json({ ok: true });
+    } catch (error) {
+      if (error instanceof z.ZodError) return response.status(400).json({ error: "invalid request", issues: error.issues });
+      return next(error);
+    }
+  });
+
   return router;
 }

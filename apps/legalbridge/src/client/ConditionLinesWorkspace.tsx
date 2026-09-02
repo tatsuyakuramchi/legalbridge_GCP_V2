@@ -33,6 +33,8 @@ type ConditionLine = {
   flowDirection: string | null; transactionKind: string | null; conditionName: string;
   vendorName: string; workTitle: string; territory: string | null; currency: string | null;
   amountExTax: number | null; mgAmount: number | null; ratePct: number | null; termStart: string | null;
+  // 有効性（巻き直しの旧版・無効化文書の条件は無効＝計算書の下地にならない）。
+  effective?: boolean; supersededBy?: string | null;
 };
 type SummaryRow = { direction: string; currency: string; lineCount: number; totalAmount: number; totalMg: number };
 type Settlement = {
@@ -195,7 +197,10 @@ function ConditionSearch({ onOpenDocument, canRepair = false, initialSelectedId 
                 <td>{row.territory || "—"}</td>
                 <td>{money(row.currency, row.amountExTax ?? row.mgAmount)}</td>
                 <td>{row.ratePct !== null ? `${row.ratePct}%` : "—"}</td>
-                <td>{row.documentNumber ?? "未発番"}</td>
+                <td>{row.documentNumber ?? "未発番"}
+                  {row.effective === false && <><br /><span className="cond-ineffective"
+                    title={row.supersededBy ? `巻き直し済み。有効版は ${row.supersededBy}` : "無効化された文書の条件"}>
+                    無効{row.supersededBy ? `（旧版 → ${row.supersededBy}）` : ""}</span></>}</td>
               </tr>
             ))}
           </tbody>
@@ -256,6 +261,8 @@ function ConditionDetail({ id, onBack, onOpenDocument, canRepair = false, onReco
         <span className={`cond-dir ${detail.direction ?? ""}`}>{directionLabels[detail.direction ?? ""] ?? "—"}</span>
         {detail.flowDirection && <span>{flowLabels[detail.flowDirection] ?? detail.flowDirection}</span>}
         <span>{detail.documentNumber ?? "未発番"}</span>
+        {detail.effective === false && <span className="cond-ineffective">
+          無効{detail.supersededBy ? `（巻き直し済み・有効版 ${detail.supersededBy}）` : "（無効化文書）"}— 計算書の下地には使えません</span>}
         {detail.matterCode && <span>{detail.matterCode}</span>}
         {detail.vendorName && <span>{detail.vendorName}</span>}
       </div>

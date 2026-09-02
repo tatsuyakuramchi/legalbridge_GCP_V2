@@ -22,6 +22,10 @@ export interface ConditionLineRow {
   mgAmount: number | null;
   ratePct: number | null;
   termStart: string | null;
+  // 有効性（2026-09-02）：巻き直しで旧版になった文書（form_data.superseded_by）の
+  // 条件は無効。一覧・詳細に旗を出し、計算書の下地（condition-economics）では弾く。
+  effective: boolean;
+  supersededBy: string | null;
 }
 
 // Grant-free rollup over condition_lines only (installments/events are not
@@ -138,6 +142,7 @@ export class PgConditionLineRepository implements ConditionLineRepository {
               cl.amount_ex_tax, cl.mg_amount, cl.rate_pct, cl.term_start,
               cl.region_territory,
               d.document_number, d.matter_id, d.template_type,
+              d.lifecycle_status, d.form_data->>'superseded_by' AS superseded_by,
               COALESCE(v.vendor_name, '') AS vendor_name,
               COALESCE(w.title, '')       AS work_title
          FROM condition_lines cl
@@ -217,6 +222,7 @@ export class PgConditionLineRepository implements ConditionLineRepository {
               cl.payment_scheme, cl.payment_terms, cl.royalty_base,
               cl.deductible_costs, cl.notes,
               d.document_number, d.matter_id, d.template_type,
+              d.lifecycle_status, d.form_data->>'superseded_by' AS superseded_by,
               m.matter_code, m.title AS matter_title,
               COALESCE(v.vendor_name, '') AS vendor_name,
               COALESCE(w.title, '')       AS work_title
@@ -387,7 +393,9 @@ function mapRow(row: Record<string, any>): ConditionLineRow {
     amountExTax: num(row.amount_ex_tax),
     mgAmount: num(row.mg_amount),
     ratePct: num(row.rate_pct),
-    termStart: row.term_start ? String(row.term_start).slice(0, 10) : null
+    termStart: row.term_start ? String(row.term_start).slice(0, 10) : null,
+    supersededBy: String(row.superseded_by ?? "").trim() || null,
+    effective: String(row.lifecycle_status ?? "") !== "voided" && !String(row.superseded_by ?? "").trim()
   };
 }
 

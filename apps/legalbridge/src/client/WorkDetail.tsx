@@ -19,7 +19,7 @@ type Node = { workId: number; title: string | null; workCode: string | null; kin
 type Lineage = { chain: Tier[]; children: Node[]; unlinkedRelationParents: Node[]; depth: number; isDerivative: boolean };
 type Material = { id: number; materialCode: string | null; materialName: string | null; materialType: string | null; materialRole: string | null; acquisitionType: string | null; rightsType: string | null; rightsHolderLabel: string | null; isRoyaltyBearing: boolean | null; categoryName: string | null; territory: string | null; language: string | null; remarks: string | null };
 type RightsSource = { id: number; materialId: number | null; materialName: string | null; sourceType: string | null; sourceWorkId: number | null; sourceWorkTitle: string | null; rightsHolderVendorId: number | null; rightsHolderName: string | null; sourceDocumentId: number | null; sourceContractId: number | null; sourceRole: string | null; isPrimary: boolean | null; validFrom: string | null; validTo: string | null };
-type Cond = { id: number; conditionName: string | null; direction: string | null; sourceMaterialId: number | null; materialName: string | null; sublicenseAllowed: boolean | null; parentLicenseConditionId: number | null; ratePct: number | null; amountExTax: number | null; mgAmount: number | null; currency: string | null; documentNumber: string | null };
+type Cond = { id: number; conditionName: string | null; direction: string | null; sourceMaterialId: number | null; materialName: string | null; sublicenseAllowed: boolean | null; parentLicenseConditionId: number | null; ratePct: number | null; amountExTax: number | null; mgAmount: number | null; currency: string | null; documentNumber: string | null; effective?: boolean; supersededBy?: string | null };
 type Conditions = { receivable: Cond[]; payable: Cond[]; sublicense: Cond[]; workLevel: Cond[]; materialLinked: Cond[]; totals: { count: number; receivableCount: number; payableCount: number; sublicenseCount: number; workLevelCount: number } };
 type Core = Summary & { titleKana: string | null; workType: string | null; status: string | null; businessLine?: string | null; derivationType: string | null; rightsHolderName: string | null; rightsHolderVendorId?: number | null; creatorName: string | null; publisherName: string | null; ledgerCode: string | null; remarks: string | null };
 type Detail = { work: Core; lineage: Lineage | null; materials: Material[] | null; rightsSources: RightsSource[] | null; conditions: Conditions | null; rightsLines?: RightsLine[] | null };
@@ -572,7 +572,11 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
                     <td>{c.direction === "receivable" ? "受け取る" : c.direction === "payable" ? "支払う" : "—"}</td>
                     <td>{c.conditionName ?? "—"}</td><td>{c.materialName ?? (c.sourceMaterialId ? `#${c.sourceMaterialId}` : "文書全体")}</td>
                     <td>{c.ratePct != null ? `${c.ratePct}%` : "—"}</td><td>{yen(c.amountExTax, c.currency)}</td><td>{yen(c.mgAmount, c.currency)}</td>
-                    <td>{c.sublicenseAllowed || c.parentLicenseConditionId != null ? "○" : ""}</td><td>{c.documentNumber ?? "—"}</td>
+                    <td>{c.sublicenseAllowed || c.parentLicenseConditionId != null ? "○" : ""}</td>
+                    <td>{c.documentNumber ?? "—"}
+                      {c.effective === false && <><br /><span className="cond-ineffective"
+                        title={c.supersededBy ? `巻き直し済み。有効版は ${c.supersededBy}` : "無効"}>
+                        無効{c.supersededBy ? `（旧版 → ${c.supersededBy}）` : ""}</span></>}</td>
                   </tr>)}</tbody>
                 </table></div> : <div className="empty-state">まだ条件がありません。上の1〜3のいずれかで登録してください。</div>}
               </>}

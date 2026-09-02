@@ -420,6 +420,7 @@ export class PgWorkReadRepository implements WorkReadRepository {
               cl.source_material_id, wm.material_name, cl.sublicense_allowed,
               cl.parent_license_condition_id, cl.rate_pct, cl.amount_ex_tax,
               cl.mg_amount, cl.currency, d.document_number,
+              d.form_data->>'superseded_by' AS superseded_by,
               cl.payment_scheme, cl.calc_method, cl.formula_text, cl.subject,
               cl.exclusivity, cl.term_start, cl.term_end,
               COALESCE(
@@ -476,7 +477,9 @@ export class PgWorkReadRepository implements WorkReadRepository {
       amountExTax: num(r.amount_ex_tax),
       mgAmount: num(r.mg_amount),
       currency: str(r.currency),
-      documentNumber: str(r.document_number)
+      documentNumber: str(r.document_number),
+      supersededBy: String(r.superseded_by ?? "").trim() || null,
+      effective: !String(r.superseded_by ?? "").trim()
     }));
     return { grouped: groupWorkConditions(lines), rights };
   }

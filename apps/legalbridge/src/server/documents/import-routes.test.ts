@@ -134,6 +134,24 @@ test("upload: 作品コードと巻き直しの後継番号を form_data に記�
   assert.equal(stored.formData.superseded_by, "LIC-2024-0012");
 });
 
+test("work-link: 既存文書を作品に紐づけ・旧版指定・解除ができる（取込/確定を問わない）", async () => {
+  const { app, repository } = appFor({ enabled: true });
+  await repository.importOne(documentImportRowSchema.parse({ documentNumber: "LIC-2024-0012", templateType: "contract" }));
+  const id = repository.documents[0].id;
+  let response = await request(app).post(`/api/v2/documents/${id}/work-link`).send({ workCode: "WRK-10013" });
+  assert.equal(response.status, 200);
+  assert.deepEqual(repository.workLinks.get(id), { workCode: "WRK-10013" });
+  response = await request(app).post(`/api/v2/documents/${id}/work-link`).send({ supersededBy: "LIC-2026-0001" });
+  assert.equal(response.status, 200);
+  assert.deepEqual(repository.workLinks.get(id), { workCode: "WRK-10013", supersededBy: "LIC-2026-0001" });
+  response = await request(app).post(`/api/v2/documents/${id}/work-link`).send({ supersededBy: null, workCode: null });
+  assert.equal(response.status, 200);
+  assert.deepEqual(repository.workLinks.get(id), {});
+  // 変更項目なし → 400、存在しない文書 → 404
+  assert.equal((await request(app).post(`/api/v2/documents/${id}/work-link`).send({})).status, 400);
+  assert.equal((await request(app).post(`/api/v2/documents/999/work-link`).send({ workCode: "WRK-1" })).status, 404);
+});
+
 test("upload: 既存の文書番号は Drive 格納前に 409 で弾く", async () => {
   const { app, repository, storage } = appFor({ enabled: true });
   await repository.importOne(documentImportRowSchema.parse({ documentNumber: "CT-1", templateType: "contract" }));

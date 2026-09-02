@@ -604,6 +604,7 @@ export function App() {
           onOpenWork={(workId) => { setEditIntakeWorkId(null); setDrillWorkId(workId); setView("works"); }}
           onOpenImport={() => setView("documents")}
           onRegisterDocDetails={(id) => { setDrillDetailsDocId(id); setView("documents"); }}
+          onAddGrant={(workId) => { setDrillOutboundWorkId(workId); setView("outbound"); }}
           onCreateLicenseTerms={(seed, workCode) => void startLicenseTermsFromWork(seed, workCode)}
           onCreateDocumentFromWork={(choice, work) => void startDocumentFromWork(choice, work)} />}
         {view === "works" && <WorkDetail key={drillWorkId ?? "works"} initialWorkId={drillWorkId} canEdit={canEditWorks} canEditRights={canEditRightsSources} canEditMaterials={canEditMaterials}

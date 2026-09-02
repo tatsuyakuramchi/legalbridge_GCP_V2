@@ -23,6 +23,11 @@ export interface ConditionEconomics {
   eventCount: number;
   agRemaining: number;              // max(0, agAmount - agConsumed)
   groupSize: number;                // 加算型の行数（1=単独）
+  // 有効性（2026-09-02）：巻き直しで旧版になった文書（form_data.superseded_by）や
+  // 無効化（voided）された文書の条件は計算書の下地にしない。ルートは 409 で止める。
+  effective: boolean;
+  ineffectiveReason: "superseded" | "voided" | null;
+  supersededBy: string | null;      // 旧版のとき有効版の文書番号
 }
 
 export interface ConditionEconomicsRepository {
@@ -39,12 +44,20 @@ export class PgConditionEconomicsRepository implements ConditionEconomicsReposit
 
   async find(conditionLineId: number) {
     const base = await this.database.query(
-      `SELECT id, document_id, group_no, line_no, rate_pct, mg_amount, ag_amount, currency, condition_name
-         FROM condition_lines WHERE id = $1`,
+      `SELECT cl.id, cl.document_id, cl.group_no, cl.line_no, cl.rate_pct, cl.mg_amount, cl.ag_amount,
+              cl.currency, cl.condition_name,
+              d.lifecycle_status, d.form_data->>'superseded_by' AS superseded_by
+         FROM condition_lines cl
+         LEFT JOIN documents d ON d.id = cl.document_id
+        WHERE cl.id = $1`,
       [conditionLineId]
     );
     if (!base.rows[0]) return null;
     const row = base.rows[0];
+    const supersededBy = String(row.superseded_by ?? "").trim() || null;
+    const voided = String(row.lifecycle_status ?? "") === "voided";
+    const ineffectiveReason: ConditionEconomics["ineffectiveReason"] =
+      voided ? "voided" : supersededBy ? "superseded" : null;
 
     // 加算型: 同一文書・同一 group の全セルを1条件として集計。
     let group = [row];
@@ -83,7 +96,10 @@ export class PgConditionEconomicsRepository implements ConditionEconomicsReposit
       mgConsumed: num(consumed.rows[0]?.mg),
       eventCount: num(consumed.rows[0]?.n),
       agRemaining: Math.max(0, agAmount - agConsumed),
-      groupSize: group.length
+      groupSize: group.length,
+      effective: ineffectiveReason === null,
+      ineffectiveReason,
+      supersededBy
     };
   }
 }
@@ -106,6 +122,16 @@ export function createConditionEconomicsRouter(repository?: ConditionEconomicsRe
       const economics = await repository.find(id);
       if (!economics) {
         return response.status(404).json({ error: "条件明細が見つかりません", code: "CONDITION_LINE_NOT_FOUND" });
+      }
+      // 有効でない条件（巻き直しの旧版・無効化文書）は計算書の下地にしない。
+      if (!economics.effective) {
+        return response.status(409).json({
+          error: economics.ineffectiveReason === "superseded"
+            ? `この条件明細は巻き直し済み（旧版）の文書のものです。有効版 ${economics.supersededBy ?? ""} の条件明細を使ってください`.trim()
+            : "この条件明細は無効化された文書のものです。計算書の下地にはできません",
+          code: "CONDITION_LINE_INEFFECTIVE",
+          economics
+        });
       }
       return response.status(200).json({ economics });
     } catch (error) {
