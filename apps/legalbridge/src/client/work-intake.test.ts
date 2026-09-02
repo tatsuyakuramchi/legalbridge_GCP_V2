@@ -112,3 +112,31 @@ test("条件書シード: 名前が空の素材行は載せない・MG無しな�
   assert.equal((seed.v3_conds as Array<Record<string, unknown>>)[0].mg, "0");
   assert.equal(seed.work_id, "");
 });
+
+// ── 既存文書の一括アップロード計画（巻き直し＝版の系列）──────────────────
+
+test("planDocumentUploads: 1ファイルなら本番号・件名は拡張子なしファイル名", async () => {
+  const { planDocumentUploads } = await import("./work-intake.js");
+  assert.deepEqual(
+    planDocumentUploads({ docNumber: "PO-2025-0083", fileNames: ["発注書_イラスト一式.pdf"] }),
+    [{ documentNumber: "PO-2025-0083", title: "発注書_イラスト一式", supersededBy: "" }]);
+});
+
+test("planDocumentUploads: 巻き直しは旧版に枝番と旧版マーク・最後だけ有効版", async () => {
+  const { planDocumentUploads } = await import("./work-intake.js");
+  const plans = planDocumentUploads({
+    docNumber: " LIC-2024-0012 ",
+    fileNames: ["利用許諾契約.pdf", "利用許諾契約_巻き直し2025.pdf", "利用許諾契約_巻き直し2026.pdf"]
+  });
+  assert.deepEqual(plans, [
+    { documentNumber: "LIC-2024-0012-v1", title: "利用許諾契約（旧版・巻き直し済）", supersededBy: "LIC-2024-0012" },
+    { documentNumber: "LIC-2024-0012-v2", title: "利用許諾契約_巻き直し2025（旧版・巻き直し済）", supersededBy: "LIC-2024-0012" },
+    { documentNumber: "LIC-2024-0012", title: "利用許諾契約_巻き直し2026", supersededBy: "" }
+  ]);
+});
+
+test("stripFileExtension: 拡張子だけ落とす（ドット入りファイル名は保持）", async () => {
+  const { stripFileExtension } = await import("./work-intake.js");
+  assert.equal(stripFileExtension("契約 v2.1 最終.docx"), "契約 v2.1 最終");
+  assert.equal(stripFileExtension("拡張子なし"), "拡張子なし");
+});

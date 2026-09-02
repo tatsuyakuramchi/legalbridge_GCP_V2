@@ -1,63 +1,86 @@
-import { useMemo, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { DocumentFormData } from "../types";
 import { useToast } from "./Toast";
 import { SearchableLedgerSelect } from "./SearchableLedgerSelect";
 import {
-  LANGUAGE_PRESETS, REGION_PRESETS, V3_FIXED_DEALS, buildLicenseTermsSeed,
-  emptyIntakeMaterial, materialCreatePayload, materialFromDocument,
-  rightsSourceCreatePayload, type IntakeMaterial
+  INTAKE_DOC_KINDS, buildLicenseTermsSeed, emptyIntakeMaterial, planDocumentUploads,
+  type IntakeMaterial
 } from "./work-intake";
 
-// 作品登録（作品＋素材＋イン条件）。承認済みモック（2026-08-31）の実装。
-// ここを起点に個別利用許諾条件書（アウト文書）を作成する：
-//   作品登録＋イン条件 → 条件書（素材と料率がマトリクスへ自動展開） → 利用許諾計算。
-// アウト条件が決まったら作品詳細の「アウト条件」から随時追記する（既存機能）。
+// 作品の登録・編集（2026-09-02 再構築・承認済みモック準拠）。
+// 1画面の縦ステッパーで「①基本情報 → ②原作 → ③素材 → ④既存文書 → ⑤確認」を
+// 順に埋めると完成する。原作＝コアロジック素材（作品につき1件・必須）。
+// 条件（料率・MG/AG・地域言語）はこの画面では扱わず、登録後に文書作成
+// （個別条件書・発注書）または過去文書の取込で入力する。
+// editWorkId を渡すと同じ画面が編集モードになる（全ステップ展開＋保存バー）。
 
 const MATERIAL_TYPES = [
   ["game_design", "ゲームデザイン"], ["illustration", "イラスト"], ["scenario", "シナリオ"],
   ["manuscript", "原稿"], ["other", "その他"]
 ] as const;
-const MATERIAL_ROLES = [["core_logic", "中核（コアロジック）"], ["sub_component", "従属（構成部品）"]] as const;
-const ACQUISITIONS = [
-  ["license", "ライセンス（イン条件あり）"], ["buyout_commission", "買切・委託"], ["in_house", "自社制作"]
-] as const;
 
-type DocHit = {
-  id: number; documentNumber: string; templateType: string; title: string; counterparty: string;
+type KindChoice = "own" | "licensed_in" | "co_dev";
+
+type DocHit = { id: number; documentNumber: string; templateType: string; title: string; counterparty: string };
+
+type CoreRow = {
+  materialId: number | null;
+  name: string;
+  vendorId: number | null;
+  vendorLabel: string;
+  quoteDocId: number | null;
+  quoteDocNumber: string;
 };
 
-export function WorkIntake({ canRegister, onOpenWork, onCreateLicenseTerms }: {
-  canRegister: boolean;
-  onOpenWork?: (workId: number) => void;
-  onCreateLicenseTerms: (seed: DocumentFormData, workCode: string | null) => void;
+type MatRow = {
+  materialId: number | null;   // null = 新規行
+  name: string;
+  materialType: string;
+  rights: "license" | "owned"; // 許諾を受けて使用 / 買取・自社保有
+  vendorId: number | null;
+  vendorLabel: string;
+  quoteDocId: number | null;
+  quoteDocNumber: string;
+  dirty: boolean;              // 既存行の変更検知（PATCH の要否）
+};
+
+type DocSeries = {
+  key: number;
+  files: File[];               // [初版, 巻き直し…] 最後が有効版
+  templateType: string;
+  docNumber: string;
+  vendorId: number | null;
+  vendorLabel: string;
+  date: string;
+};
+
+const emptyCore = (): CoreRow =>
+  ({ materialId: null, name: "", vendorId: null, vendorLabel: "", quoteDocId: null, quoteDocNumber: "" });
+const emptyMat = (): MatRow => ({
+  materialId: null, name: "", materialType: "illustration", rights: "owned",
+  vendorId: null, vendorLabel: "", quoteDocId: null, quoteDocNumber: "", dirty: false
+});
+
+// 既存契約書（発注書・利用許諾・取込文書すべて）からの引用検索。
+function DocQuotePicker({ note, quoteNumber, onPick }: {
+  note: string;
+  quoteNumber: string;
+  onPick: (hit: DocHit | null) => void;
 }) {
-  const toast = useToast();
-  const [title, setTitle] = useState("");
-  const [kindChoice, setKindChoice] = useState<"licensed_in" | "own" | "co_dev">("licensed_in");
-  const [holder, setHolder] = useState<{ id: number | null; label: string }>({ id: null, label: "" });
-  const [parentWorkId, setParentWorkId] = useState("");
-  const [remarks, setRemarks] = useState("");
-  const [materials, setMaterials] = useState<IntakeMaterial[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [docSearchOpen, setDocSearchOpen] = useState(false);
-  const [docQuery, setDocQuery] = useState("");
-  const [docHits, setDocHits] = useState<DocHit[]>([]);
-  const [docLoading, setDocLoading] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [hits, setHits] = useState<DocHit[]>([]);
+  const [loading, setLoading] = useState(false);
 
-  const replace = (index: number, patch: Partial<IntakeMaterial>) =>
-    setMaterials((current) => current.map((m, i) => i === index ? { ...m, ...patch } : m));
-  const remove = (index: number) => setMaterials((current) => current.filter((_, i) => i !== index));
-  const addBlank = () => setMaterials((current) => [...current, emptyIntakeMaterial(holder.label, holder.id)]);
-
-  async function searchDocuments(query: string) {
-    setDocQuery(query);
-    if (!query.trim()) { setDocHits([]); return; }
-    setDocLoading(true);
+  async function search(q: string) {
+    setQuery(q);
+    if (!q.trim()) { setHits([]); return; }
+    setLoading(true);
     try {
-      const response = await fetch(`/api/v2/master-data/search?type=document&q=${encodeURIComponent(query)}`);
-      if (!response.ok) { setDocHits([]); return; }
+      const response = await fetch(`/api/v2/master-data/search?type=document&q=${encodeURIComponent(q)}`);
+      if (!response.ok) { setHits([]); return; }
       const result = await response.json();
-      setDocHits((result.items ?? []).map((item: { values?: Record<string, unknown> }) => {
+      setHits((result.items ?? []).map((item: { values?: Record<string, unknown> }) => {
         const values = item.values ?? {};
         return {
           id: Number(values.id),
@@ -67,98 +90,392 @@ export function WorkIntake({ canRegister, onOpenWork, onCreateLicenseTerms }: {
           counterparty: String(values.vendor_name ?? values.counterparty ?? "")
         };
       }).filter((hit: DocHit) => Number.isFinite(hit.id) && hit.documentNumber));
-    } catch { setDocHits([]); }
-    finally { setDocLoading(false); }
+    } catch { setHits([]); }
+    finally { setLoading(false); }
   }
 
-  function addFromDocument(hit: DocHit) {
-    setMaterials((current) => [...current, materialFromDocument(hit)]);
-    setDocSearchOpen(false); setDocQuery(""); setDocHits([]);
-    toast.push(`${hit.documentNumber} から素材を引用しました（権利者・取得形態・根拠文書を自動設定）`, "success");
+  if (quoteNumber) {
+    return <div className="wz-quote">
+      <span className="wz-quote-chip">引用元: {quoteNumber}
+        <button type="button" onClick={() => onPick(null)} title="引用を解除">×</button></span>
+    </div>;
   }
+  return <div className="wz-quote">
+    {!open && <button type="button" className="link-button" onClick={() => setOpen(true)}>🔍 {note}</button>}
+    {open && <>
+      <input autoFocus value={query} onChange={(e) => void search(e.target.value)}
+        placeholder="文書番号・件名・相手先で検索…" />
+      <div className="wz-quote-hits">
+        {loading && <small>検索しています…</small>}
+        {!loading && query.trim() !== "" && !hits.length && <small>該当する文書がありません。</small>}
+        {hits.slice(0, 8).map((hit) => <button type="button" key={hit.id}
+          onClick={() => { onPick(hit); setOpen(false); setQuery(""); setHits([]); }}>
+          <strong>{hit.documentNumber}</strong>
+          <span>{hit.title || hit.templateType}</span>
+          <small>{hit.counterparty}</small>
+        </button>)}
+      </div>
+    </>}
+  </div>;
+}
 
-  const rateOf = (value: string) => {
-    const parsed = Number.parseFloat(String(value ?? "").replace(/,/g, ""));
-    return Number.isFinite(parsed) && parsed !== 0 ? parsed : null;
-  };
-  const named = useMemo(() => materials.filter((m) => m.name.trim()), [materials]);
-  const sums = useMemo(() => ({
-    r1: named.reduce((s, m) => s + (m.royalty ? (rateOf(m.r1) ?? 0) : 0), 0),
-    r3: named.reduce((s, m) => s + (m.royalty ? (rateOf(m.r3) ?? 0) : 0), 0)
-  }), [named]);
+export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreateLicenseTerms, onOpenImport }: {
+  canRegister: boolean;
+  editWorkId?: number | null;
+  onOpenWork?: (workId: number) => void;
+  onCreateLicenseTerms: (seed: DocumentFormData, workCode: string | null) => void;
+  // 過去文書取込（条件明細の登録）画面へ移動する導線（任意）。
+  onOpenImport?: () => void;
+}) {
+  const toast = useToast();
+  const editMode = editWorkId != null;
 
-  async function submit(createTerms: boolean) {
-    if (!title.trim()) { toast.push("作品名を入力してください", "error"); return; }
-    if (createTerms && !named.some((m) => m.royalty)) {
-      toast.push("条件書を作成するには、ロイヤリティ対象の素材を1件以上入れてください（イン条件が空の条件書になるため）", "error");
-      return;
+  // ステップ制御（新規モードのみ。編集モードは全ステップ展開）。
+  const [step, setStep] = useState(1);
+  const [maxStep, setMaxStep] = useState(1);
+
+  // ① 基本情報
+  const [title, setTitle] = useState("");
+  const [kindChoice, setKindChoice] = useState<KindChoice>("own");
+  const [parentWorkId, setParentWorkId] = useState("");
+  const [remarks, setRemarks] = useState("");
+  // 編集モードの変更検知用（未変更の区分・派生元は送らない）。
+  const [initial, setInitial] = useState<{ kind: KindChoice; parent: string; derivation: string | null } | null>(null);
+
+  // ② 原作　③ 素材　④ 文書
+  const [core, setCore] = useState<CoreRow>(emptyCore());
+  const [mats, setMats] = useState<MatRow[]>([]);
+  const [docs, setDocs] = useState<DocSeries[]>([]);
+  const docSeq = useRef(0);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const fileTarget = useRef<number | null>(null); // null=新しい系列 / key=巻き直し版の追加先
+
+  const [busy, setBusy] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [doneInfo, setDoneInfo] = useState<{
+    workId: number; workCode: string | null;
+    saved: Array<{ material: IntakeMaterial; materialCode: string | null }>;
+  } | null>(null);
+
+  // ── 編集モード：既存作品を読み込んで各ステップへ展開 ─────────────────
+  const [loaded, setLoaded] = useState<{ workCode: string | null; title: string } | null>(null);
+  useEffect(() => {
+    if (!editMode) return;
+    let aborted = false;
+    (async () => {
+      try {
+        const response = await fetch(`/api/v2/works/${editWorkId}/detail`);
+        if (!response.ok) { if (!aborted) setLoadError("作品を読み込めませんでした"); return; }
+        const detail = await response.json();
+        if (aborted) return;
+        const work = detail.work ?? {};
+        const kind: KindChoice = work.derivationType === "co_development" ? "co_dev"
+          : work.kind === "own" ? "own" : "licensed_in";
+        setTitle(String(work.title ?? ""));
+        setKindChoice(kind);
+        setParentWorkId(work.parentWorkId != null ? String(work.parentWorkId) : "");
+        setRemarks(String(work.remarks ?? ""));
+        setInitial({ kind, parent: work.parentWorkId != null ? String(work.parentWorkId) : "", derivation: work.derivationType ?? null });
+        setLoaded({ workCode: work.workCode ?? null, title: String(work.title ?? "") });
+        const materials: Array<Record<string, unknown>> = detail.materials ?? [];
+        const coreMaterial = materials.find((m) => m.materialRole === "core_logic") ?? null;
+        if (coreMaterial) {
+          setCore({
+            materialId: Number(coreMaterial.id), name: String(coreMaterial.materialName ?? ""),
+            vendorId: null, vendorLabel: String(coreMaterial.rightsHolderLabel ?? work.rightsHolderName ?? ""),
+            quoteDocId: null, quoteDocNumber: ""
+          });
+        }
+        setMats(materials.filter((m) => m !== coreMaterial).map((m) => ({
+          materialId: Number(m.id), name: String(m.materialName ?? ""),
+          materialType: String(m.materialType ?? "other"),
+          rights: m.rightsType === "license" ? "license" : "owned",
+          vendorId: null, vendorLabel: String(m.rightsHolderLabel ?? ""),
+          quoteDocId: null, quoteDocNumber: "", dirty: false
+        })));
+      } catch { if (!aborted) setLoadError("通信に失敗しました"); }
+    })();
+    return () => { aborted = true; };
+  }, [editMode, editWorkId]);
+
+  // ── 文書ファイルの追加 ────────────────────────────────────────────
+  function pickFiles(targetKey: number | null) {
+    fileTarget.current = targetKey;
+    fileInput.current?.click();
+  }
+  function onFilesChosen(list: FileList | null) {
+    const files = Array.from(list ?? []);
+    if (!files.length) return;
+    const target = fileTarget.current;
+    fileTarget.current = null;
+    if (target == null) {
+      setDocs((current) => [...current, ...files.map((file) => ({
+        key: ++docSeq.current, files: [file], templateType: "contract",
+        docNumber: "", vendorId: null, vendorLabel: "", date: ""
+      }))]);
+    } else {
+      setDocs((current) => current.map((d) => d.key === target ? { ...d, files: [...d.files, ...files] } : d));
     }
-    // イン条件（料率・MG/AG）の保存先は条件書→条件台帳。「登録のみ」では保存されない
-    // ため、入力済みなら破棄になることを確認する（利用許諾計算書は条件明細を参照する）。
-    const hasRates = named.some((m) => m.royalty &&
-      [m.r1, m.r2, m.r3, m.mg, m.ag].some((value) => rateOf(value) != null));
-    if (!createTerms && hasRates && !window.confirm(
-      "入力したイン条件（料率・MG/AG）は、条件書を作成しないと保存されません（保存先は条件書→条件台帳です）。\n"
-      + "このまま「登録のみ」で進めると料率は破棄され、あとで作品詳細から条件書を作る際に入力し直しになります。\n\n登録のみで進めますか？"
-    )) return;
+    if (fileInput.current) fileInput.current.value = "";
+  }
+
+  const updateMat = (index: number, patch: Partial<MatRow>) =>
+    setMats((current) => current.map((m, i) => i === index ? { ...m, ...patch, dirty: m.materialId != null ? true : m.dirty } : m));
+  const updateDoc = (key: number, patch: Partial<DocSeries>) =>
+    setDocs((current) => current.map((d) => d.key === key ? { ...d, ...patch } : d));
+
+  // ── ステップ検証 ──────────────────────────────────────────────────
+  function validateStep(n: number): string | null {
+    if (n === 1 && !title.trim()) return "作品名を入力してください";
+    if (n === 2) {
+      // 編集モード：原作素材が無い旧作品は空のまま保存できる（入れたら新規作成）。
+      if (!core.name.trim()) {
+        return editMode && core.materialId == null ? null : "原作（コアロジック）の名称を入力してください";
+      }
+      if (kindChoice !== "own" && core.vendorId == null && !core.vendorLabel.trim()) {
+        return kindChoice === "licensed_in" ? "原作の権利元（許諾元）を選んでください" : "共同開発の相手方を選んでください";
+      }
+    }
+    if (n === 4) {
+      for (const d of docs) {
+        if (!d.files.length) continue;
+        if (!d.docNumber.trim()) return `文書「${d.files[0].name}」の文書番号を入力してください`;
+      }
+      const numbers = docs.filter((d) => d.files.length).map((d) => d.docNumber.trim());
+      if (new Set(numbers).size !== numbers.length) return "文書番号が重複しています";
+    }
+    return null;
+  }
+  function next(from: number) {
+    const problem = validateStep(from);
+    if (problem) { toast.push(problem, "error"); return; }
+    const to = from + 1;
+    setStep(to);
+    setMaxStep((m) => Math.max(m, to));
+  }
+
+  // ── 保存処理（共通部品）─────────────────────────────────────────
+  async function postJson(url: string, body: unknown, method: "POST" | "PATCH" = "POST") {
+    const response = await fetch(url, {
+      method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+    });
+    const data = await response.json().catch(() => ({}));
+    return { ok: response.ok, data };
+  }
+
+  function coreCreatePayload(workId: number) {
+    const own = kindChoice === "own";
+    return {
+      workId, materialName: core.name.trim(),
+      materialType: "game_design", materialRole: "core_logic",
+      acquisitionType: own ? "in_house" : "license",
+      rightsType: own ? "owned" : "license",
+      ...(core.vendorId ? { rightsHolderVendorId: core.vendorId } : {}),
+      ...(core.vendorLabel.trim() ? { rightsHolderLabel: core.vendorLabel.trim() } : own ? { rightsHolderLabel: "当社" } : {}),
+      isDefault: true, isRoyaltyBearing: !own
+    };
+  }
+  function matCreatePayload(workId: number, m: MatRow) {
+    return {
+      workId, materialName: m.name.trim(), materialType: m.materialType, materialRole: "sub_component",
+      acquisitionType: m.rights === "license" ? "license" : "buyout_commission",
+      rightsType: m.rights,
+      ...(m.vendorId ? { rightsHolderVendorId: m.vendorId } : {}),
+      ...(m.vendorLabel.trim() ? { rightsHolderLabel: m.vendorLabel.trim() } : {}),
+      isDefault: false, isRoyaltyBearing: m.rights === "license"
+    };
+  }
+  async function addRightsSource(materialId: number, quoteDocId: number, license: boolean, vendorId: number | null) {
+    const response = await fetch("/api/v2/rights-sources", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        materialId,
+        sourceType: license ? "upstream_license" : "direct_contract",
+        sourceDocumentId: quoteDocId,
+        ...(vendorId ? { rightsHolderVendorId: vendorId } : {}),
+        isPrimary: true
+      })
+    }).catch(() => null);
+    return Boolean(response?.ok);
+  }
+
+  // 巻き直しの版を順にアップロード（旧版→有効版）。失敗した版の番号を返す。
+  async function uploadDocs(workCode: string | null): Promise<{ uploaded: number; failed: string[] }> {
+    let uploaded = 0;
+    const failed: string[] = [];
+    for (const series of docs) {
+      if (!series.files.length) continue;
+      const plans = planDocumentUploads({ docNumber: series.docNumber, fileNames: series.files.map((f) => f.name) });
+      for (const [index, plan] of plans.entries()) {
+        const form = new FormData();
+        form.append("file", series.files[index]);
+        form.append("originalName", series.files[index].name);
+        form.append("documentNumber", plan.documentNumber);
+        form.append("templateType", series.templateType);
+        form.append("title", plan.title);
+        if (series.vendorLabel.trim()) form.append("counterparty", series.vendorLabel.trim());
+        if (series.vendorId) form.append("counterpartyVendorId", String(series.vendorId));
+        if (series.date.trim()) form.append("documentDate", series.date.trim());
+        if (workCode) form.append("workCode", workCode);
+        if (plan.supersededBy) form.append("supersededBy", plan.supersededBy);
+        try {
+          const response = await fetch("/api/v2/documents/import/upload", { method: "POST", body: form });
+          if (response.ok) uploaded += 1;
+          else {
+            const data = await response.json().catch(() => ({}));
+            failed.push(`${plan.documentNumber}（${data.error ?? "登録失敗"}）`);
+          }
+        } catch { failed.push(`${plan.documentNumber}（通信失敗）`); }
+      }
+    }
+    return { uploaded, failed };
+  }
+
+  function toIntakeMaterial(name: string, holderLabel: string, royalty: boolean, sourceDocNumber: string): IntakeMaterial {
+    return { ...emptyIntakeMaterial(holderLabel), name, royalty, sourceDocNumber };
+  }
+
+  // ── 新規登録 ─────────────────────────────────────────────────────
+  async function submitNew() {
+    for (const n of [1, 2, 4]) {
+      const problem = validateStep(n);
+      if (problem) { toast.push(problem, "error"); setStep(n); return; }
+    }
     setBusy(true);
     try {
-      const workResponse = await fetch("/api/v2/works", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: title.trim(),
-          kind: kindChoice === "own" ? "own" : "licensed_in",
-          ...(kindChoice === "own" ? { isOriginal: true } : {}),
-          ...(kindChoice === "co_dev" ? { derivationType: "co_development" } : {}),
-          ...(holder.id ? { rightsHolderVendorId: holder.id } : {}),
-          ...(parentWorkId ? { parentWorkId: Number(parentWorkId) } : {}),
-          ...(remarks.trim() ? { remarks: remarks.trim() } : {})
-        })
+      const work = await postJson("/api/v2/works", {
+        title: title.trim(),
+        kind: kindChoice === "own" ? "own" : "licensed_in",
+        ...(kindChoice === "own" ? { isOriginal: true } : {}),
+        ...(kindChoice === "co_dev" ? { derivationType: "co_development" } : {}),
+        ...(core.vendorId ? { rightsHolderVendorId: core.vendorId } : {}),
+        ...(parentWorkId ? { parentWorkId: Number(parentWorkId) } : {}),
+        ...(remarks.trim() ? { remarks: remarks.trim() } : {})
       });
-      const work = await workResponse.json().catch(() => ({}));
-      if (!workResponse.ok) {
-        toast.push(work.error ?? "作品を登録できませんでした", "error");
-        return;
-      }
-      const workId = Number(work.id);
-      const workCode: string | null = work.workCode ?? null;
+      if (!work.ok) { toast.push(work.data.error ?? "作品を登録できませんでした", "error"); return; }
+      const workId = Number(work.data.id);
+      const workCode: string | null = work.data.workCode ?? null;
 
-      // 素材を順に登録（コードはサーバ採番）。権利ソース（根拠文書）は best-effort。
       const saved: Array<{ material: IntakeMaterial; materialCode: string | null }> = [];
-      const failed: string[] = [];
+      const failedMats: string[] = [];
       let rightsFailed = 0;
-      for (const [index, material] of named.entries()) {
-        const response = await fetch("/api/v2/materials", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(materialCreatePayload(workId, material, index === 0))
-        });
-        const body = await response.json().catch(() => ({}));
-        if (!response.ok) { failed.push(material.name.trim()); continue; }
-        saved.push({ material, materialCode: body.materialCode ?? null });
-        const rightsPayload = rightsSourceCreatePayload(Number(body.id), material);
-        if (rightsPayload) {
-          const rightsResponse = await fetch("/api/v2/rights-sources", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(rightsPayload)
-          }).catch(() => null);
-          if (!rightsResponse?.ok) rightsFailed += 1;
-        }
-      }
-      const summary = `作品 ${workCode ?? `#${workId}`} と素材${saved.length}件を登録しました`
-        + (failed.length ? `（素材の失敗: ${failed.join("、")}）` : "")
-        + (rightsFailed ? `（根拠文書の紐づけ失敗: ${rightsFailed}件 — 作品詳細から追加できます）` : "");
-      toast.push(summary, failed.length ? "info" : "success");
 
-      if (createTerms) {
-        onCreateLicenseTerms(
-          buildLicenseTermsSeed({ workCode, title: title.trim(), holderLabel: holder.label }, saved),
-          workCode);
-      } else {
-        onOpenWork?.(workId);
+      // 原作（コアロジック）
+      const coreCreated = await postJson("/api/v2/materials", coreCreatePayload(workId));
+      if (coreCreated.ok) {
+        saved.push({
+          material: toIntakeMaterial(core.name.trim(), core.vendorLabel || (kindChoice === "own" ? "当社" : ""), kindChoice !== "own", core.quoteDocNumber),
+          materialCode: coreCreated.data.materialCode ?? null
+        });
+        if (core.quoteDocId && !(await addRightsSource(Number(coreCreated.data.id), core.quoteDocId, kindChoice !== "own", core.vendorId))) rightsFailed += 1;
+      } else failedMats.push(`原作: ${core.name.trim()}`);
+
+      // 素材
+      for (const m of mats.filter((row) => row.name.trim())) {
+        const created = await postJson("/api/v2/materials", matCreatePayload(workId, m));
+        if (!created.ok) { failedMats.push(m.name.trim()); continue; }
+        saved.push({
+          material: toIntakeMaterial(m.name.trim(), m.vendorLabel, m.rights === "license", m.quoteDocNumber),
+          materialCode: created.data.materialCode ?? null
+        });
+        if (m.quoteDocId && !(await addRightsSource(Number(created.data.id), m.quoteDocId, m.rights === "license", m.vendorId))) rightsFailed += 1;
       }
+
+      const documents = await uploadDocs(workCode);
+
+      const summary = `作品 ${workCode ?? `#${workId}`} を登録しました（素材${saved.length}件・文書${documents.uploaded}件）`
+        + (failedMats.length ? `／素材の失敗: ${failedMats.join("、")}` : "")
+        + (rightsFailed ? `／根拠文書の紐づけ失敗: ${rightsFailed}件` : "")
+        + (documents.failed.length ? `／文書の失敗: ${documents.failed.join("、")}` : "");
+      toast.push(summary, failedMats.length || documents.failed.length ? "info" : "success");
+      setDoneInfo({ workId, workCode, saved });
+      setStep(6); setMaxStep(6);
     } catch {
       toast.push("通信に失敗しました。", "error");
     } finally { setBusy(false); }
+  }
+
+  // ── 編集の保存 ───────────────────────────────────────────────────
+  async function saveEdit() {
+    if (editWorkId == null) return;
+    const problem = validateStep(1) ?? validateStep(2) ?? validateStep(4);
+    if (problem) { toast.push(problem, "error"); return; }
+    setBusy(true);
+    try {
+      const patch: Record<string, unknown> = { title: title.trim(), remarks: remarks.trim() || null };
+      if (initial && kindChoice !== initial.kind) {
+        patch.kind = kindChoice === "own" ? "own" : "licensed_in";
+        patch.isOriginal = kindChoice === "own";
+        // co_development の付け外しのみ操作（他の派生種別のレガシー値は温存）。
+        if (kindChoice === "co_dev") patch.derivationType = "co_development";
+        else if (initial.derivation === "co_development") patch.derivationType = null;
+      }
+      if (initial && parentWorkId !== initial.parent) {
+        patch.parentWorkId = parentWorkId ? Number(parentWorkId) : null;
+      }
+      if (core.vendorId) patch.rightsHolderVendorId = core.vendorId;
+      const workSaved = await postJson(`/api/v2/works/${editWorkId}`, patch, "PATCH");
+      if (!workSaved.ok) { toast.push(workSaved.data.error ?? "作品を保存できませんでした", "error"); return; }
+
+      const failures: string[] = [];
+      let rightsFailed = 0;
+
+      // 原作：既存は PATCH・無ければ新規作成。
+      if (core.materialId != null) {
+        const patchCore: Record<string, unknown> = { materialName: core.name.trim(), materialRole: "core_logic" };
+        if (core.vendorId) { patchCore.rightsHolderVendorId = core.vendorId; patchCore.rightsHolderLabel = core.vendorLabel.trim() || null; }
+        const saved = await postJson(`/api/v2/materials/${core.materialId}`, patchCore, "PATCH");
+        if (!saved.ok) failures.push(`原作: ${core.name.trim()}`);
+        else if (core.quoteDocId && !(await addRightsSource(core.materialId, core.quoteDocId, kindChoice !== "own", core.vendorId))) rightsFailed += 1;
+      } else if (core.name.trim()) {
+        const created = await postJson("/api/v2/materials", coreCreatePayload(editWorkId));
+        if (!created.ok) failures.push(`原作: ${core.name.trim()}`);
+        else if (core.quoteDocId && !(await addRightsSource(Number(created.data.id), core.quoteDocId, kindChoice !== "own", core.vendorId))) rightsFailed += 1;
+      }
+
+      // 素材：新規行は POST・変更のあった既存行は PATCH。
+      for (const m of mats.filter((row) => row.name.trim())) {
+        if (m.materialId == null) {
+          const created = await postJson("/api/v2/materials", matCreatePayload(editWorkId, m));
+          if (!created.ok) { failures.push(m.name.trim()); continue; }
+          if (m.quoteDocId && !(await addRightsSource(Number(created.data.id), m.quoteDocId, m.rights === "license", m.vendorId))) rightsFailed += 1;
+        } else {
+          if (m.dirty) {
+            const patchMat: Record<string, unknown> = {
+              materialName: m.name.trim(),
+              rightsType: m.rights,
+              acquisitionType: m.rights === "license" ? "license" : "buyout_commission",
+              isRoyaltyBearing: m.rights === "license"
+            };
+            if (m.vendorId) { patchMat.rightsHolderVendorId = m.vendorId; patchMat.rightsHolderLabel = m.vendorLabel.trim() || null; }
+            const saved = await postJson(`/api/v2/materials/${m.materialId}`, patchMat, "PATCH");
+            if (!saved.ok) { failures.push(m.name.trim()); continue; }
+          }
+          if (m.quoteDocId && !(await addRightsSource(m.materialId, m.quoteDocId, m.rights === "license", m.vendorId))) rightsFailed += 1;
+        }
+      }
+
+      const documents = await uploadDocs(loaded?.workCode ?? null);
+      const summary = `作品 ${loaded?.workCode ?? `#${editWorkId}`} を保存しました`
+        + (documents.uploaded ? `（文書${documents.uploaded}件を追加）` : "")
+        + (failures.length ? `／素材の失敗: ${failures.join("、")}` : "")
+        + (rightsFailed ? `／根拠文書の紐づけ失敗: ${rightsFailed}件` : "")
+        + (documents.failed.length ? `／文書の失敗: ${documents.failed.join("、")}` : "");
+      toast.push(summary, failures.length || documents.failed.length ? "info" : "success");
+      onOpenWork?.(editWorkId);
+    } catch {
+      toast.push("通信に失敗しました。", "error");
+    } finally { setBusy(false); }
+  }
+
+  // ── 完了帯からの導線 ─────────────────────────────────────────────
+  function createLicenseTerms() {
+    if (!doneInfo) return;
+    onCreateLicenseTerms(
+      buildLicenseTermsSeed(
+        { workCode: doneInfo.workCode, title: title.trim(), holderLabel: core.vendorLabel },
+        doneInfo.saved),
+      doneInfo.workCode);
   }
 
   if (!canRegister) {
@@ -168,152 +485,221 @@ export function WorkIntake({ canRegister, onOpenWork, onCreateLicenseTerms }: {
     </div></div></section>;
   }
 
+  const kindLabel = kindChoice === "own" ? "自社オリジナル" : kindChoice === "licensed_in" ? "ライセンスイン" : "共同開発";
+  const namedMats = mats.filter((m) => m.name.trim());
+  const docCount = docs.filter((d) => d.files.length).length;
+  const rewrapCount = docs.filter((d) => d.files.length > 1).length;
+
+  // ステップ枠：新規は順番制御・編集は全展開。
+  function stepCard(n: number, heading: string, summary: string, body: ReactNode) {
+    const state = editMode || step === 6 ? "done" : n === step ? "current" : n <= maxStep ? "done" : "locked";
+    const open = editMode || n === step;
+    return <section className={`wz-step ${state}${open ? " open" : ""}`}>
+      <div className="wz-dot">{state === "done" && !open ? "✓" : n}</div>
+      <div className="panel wz-card">
+        <button type="button" className="wz-head" disabled={state === "locked"}
+          onClick={() => { if (!editMode && n <= maxStep) setStep(n); }}>
+          <span className="wz-title">{heading}</span>
+          {!open && <span className="wz-summary">{summary}</span>}
+          <span className="wz-state">{state === "done" && !open ? "完了 ✔" : state === "locked" ? "未入力" : ""}</span>
+        </button>
+        {open && <div className="wz-body">{body}</div>}
+      </div>
+    </section>;
+  }
+
   return <section className="page work-intake">
     <div className="page-title"><div>
       <p>WORK INTAKE</p>
-      <h1>作品登録（イン条件つき）</h1>
-      <small>作品と素材（構成要素）を登録し、権利元から許諾を受ける条件（イン条件）まで入力します。ここを起点に個別利用許諾条件書を作成します。アウト条件は確定し次第、作品詳細から追記します。</small>
+      <h1>{editMode ? `作品の編集${loaded ? ` — ${loaded.workCode ?? ""} ${loaded.title}` : ""}` : "作品の登録"}</h1>
+      <small>原作と素材をこの画面で一括登録します。条件（料率・MG/AG・地域言語）はここでは扱いません — 登録後に文書作成（個別条件書・発注書）または過去文書の取込で入力します。</small>
     </div></div>
+    {loadError && <div className="async-error">{loadError}</div>}
+    <input ref={fileInput} type="file" multiple style={{ display: "none" }}
+      onChange={(e) => onFilesChosen(e.target.files)} />
 
-    <div className="panel wi-card">
-      <div className="wi-head"><span className="wi-step">①</span><h2>作品基本情報</h2><small>作品台帳（works）に登録・台帳コードは自動採番</small></div>
-      <div className="wi-grid">
-        <label className="wi-span2">作品名 *<input value={title} onChange={(e) => setTitle(e.target.value)}
-          placeholder="例: コラボボードゲーム（仮）" maxLength={1000} /></label>
-        <label>作品種別
-          <select value={kindChoice} onChange={(e) => setKindChoice(e.target.value as typeof kindChoice)}>
-            <option value="licensed_in">ライセンスイン（他社原作）</option>
-            <option value="own">自社オリジナル</option>
-            <option value="co_dev">共同開発</option>
-          </select></label>
-        <SearchableLedgerSelect type="vendors" value={holder.id != null ? String(holder.id) : ""}
-          label="主権利者（取引先マスタ）" placeholder="名称で検索…"
-          onChange={(value, item) => setHolder({ id: value ? Number(value) : null, label: item?.title ?? "" })} />
-        <SearchableLedgerSelect type="works" value={parentWorkId}
-          label="原作（派生元・任意）" placeholder="作品名・台帳コードで検索…"
-          helper="この作品が別の登録済み作品の派生ならその原作"
-          onChange={(value) => setParentWorkId(value)} />
-        <label className="wi-span2">備考（社内メモ）<textarea rows={2} value={remarks}
-          onChange={(e) => setRemarks(e.target.value)} maxLength={4000} /></label>
-      </div>
-    </div>
-
-    <div className="panel wi-card">
-      <div className="wi-head"><span className="wi-step">②</span><h2>素材（構成要素）</h2><small>条件書のマトリクス行になります。コードは登録時に自動採番</small></div>
-      {materials.map((material, index) => <article className="wi-mat" key={index}>
-        <div className="wi-mat-head">
-          <strong>素材{index + 1}</strong>
-          {material.sourceDocNumber && <span className="wi-quote">引用: {material.sourceDocNumber}</span>}
-          <span className="wi-spacer"></span>
-          <label className="wi-check"><input type="checkbox" checked={material.royalty}
-            onChange={(e) => replace(index, { royalty: e.target.checked })} />ロイヤリティ対象（イン条件を入力）</label>
-          <button type="button" className="link-button" onClick={() => remove(index)}>削除</button>
-        </div>
-        <div className="wi-grid">
-          <label className="wi-span2">素材名 *<input value={material.name}
-            onChange={(e) => replace(index, { name: e.target.value })} maxLength={300} /></label>
-          <label>素材区分<select value={material.materialType}
-            onChange={(e) => replace(index, { materialType: e.target.value })}>
-            {MATERIAL_TYPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-          </select></label>
-          <label>役割<select value={material.materialRole}
-            onChange={(e) => replace(index, { materialRole: e.target.value })}>
-            {MATERIAL_ROLES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-          </select></label>
-          <label>取得形態<select value={material.acquisitionType}
-            onChange={(e) => replace(index, { acquisitionType: e.target.value })}>
-            {ACQUISITIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-          </select></label>
-          <SearchableLedgerSelect type="vendors" value={material.holderVendorId != null ? String(material.holderVendorId) : ""}
-            label="権利元（取引先マスタ）" placeholder={holder.label ? `既定: ${holder.label}` : "名称で検索…"}
-            onChange={(value, item) => replace(index, {
-              holderVendorId: value ? Number(value) : null, holderLabel: item?.title ?? material.holderLabel })} />
-          <label>許諾地域（上限枠）<input list="wi-regions" value={material.region}
-            onChange={(e) => replace(index, { region: e.target.value })} /></label>
-          <label>許諾言語（上限枠）<input list="wi-langs" value={material.language}
-            onChange={(e) => replace(index, { language: e.target.value })} /></label>
-        </div>
-        {material.royalty && <div className="wi-incond">
-          <div className="wi-incond-head"><strong>イン条件（この素材について許諾を受ける条件）</strong>
-            <small>＝権利元へ支払う料率。条件書の加算料率の内訳になります</small></div>
+    <div className="wz-flow">
+      {stepCard(1, "① 作品の基本情報",
+        [title || "未入力", kindLabel].filter(Boolean).join("｜"),
+        <>
           <div className="wi-grid">
-            <label className="wi-span2">根拠文書（任意・未締結なら空のまま）
-              <input value={material.sourceDocNumber} readOnly={material.sourceDocId != null}
-                placeholder="「既存の契約書から引用して追加」で紐づくか、番号を控えとして記入"
-                onChange={(e) => replace(index, { sourceDocNumber: e.target.value })} /></label>
-            <label>MG（ミニマム）<input inputMode="numeric" className="wi-num" value={material.mg}
-              onChange={(e) => replace(index, { mg: e.target.value })} /></label>
-            <label>AG（アドバンス）<input inputMode="numeric" className="wi-num" value={material.ag}
-              onChange={(e) => replace(index, { ag: e.target.value })} /></label>
-            <label>通貨<select value={material.cur} onChange={(e) => replace(index, { cur: e.target.value })}>
-              {["JPY", "USD", "EUR"].map((c) => <option key={c}>{c}</option>)}</select></label>
+            <label className="wi-span2">作品名（製品1つ＝作品1行）*<input value={title}
+              onChange={(e) => setTitle(e.target.value)} maxLength={1000}
+              placeholder="例: このエピローグは終わらない" /></label>
           </div>
-          <table className="wi-rates">
-            <thead><tr><th>取引形態（固定3種）</th><th>計算モデル</th><th className="r">この素材の料率</th></tr></thead>
-            <tbody>
-              {V3_FIXED_DEALS.map((deal) => {
-                const key = (`r${deal.id}`) as "r1" | "r2" | "r3";
-                return <tr key={deal.id}>
-                  <td className="wi-deal">{deal.id === 1 ? "①" : deal.id === 2 ? "②" : "③"} {deal.name}
-                    {deal.addon && <span className="wi-addon">加算型</span>}</td>
-                  <td className="wi-model">{deal.basePrice}{deal.addon ? " × 料率" : " × 実効料率"}</td>
-                  <td className="r"><span className="wi-rate"><input inputMode="decimal" className="wi-num"
-                    value={material[key]} onChange={(e) => replace(index, { [key]: e.target.value } as Partial<IntakeMaterial>)} />%</span></td>
-                </tr>;
-              })}
-            </tbody>
-          </table>
-        </div>}
-        {!material.royalty && <p className="wi-hint">ロイヤリティ対象外（買切・自社制作など）。条件書には行として載りますが料率は持ちません。</p>}
-      </article>)}
-      <div className="wi-add-row">
-        <button type="button" className="wi-add" onClick={addBlank}>＋ 素材を追加</button>
-        <button type="button" className="wi-add" onClick={() => setDocSearchOpen((v) => !v)}>🔍 既存の契約書から引用して追加</button>
-      </div>
-      {docSearchOpen && <div className="wi-docsearch">
-        <label>契約書・文書を検索（発注書・利用許諾条件書・基本契約など全文書）
-          <input autoFocus value={docQuery} onChange={(e) => void searchDocuments(e.target.value)}
-            placeholder="文書番号・件名・取引先名で検索…" /></label>
-        <div className="wi-dochits">
-          {docLoading && <small className="wi-hint">検索しています…</small>}
-          {!docLoading && docQuery.trim() !== "" && !docHits.length && <small className="wi-hint">該当する文書がありません。</small>}
-          {docHits.map((hit) => <button type="button" key={hit.id} onClick={() => addFromDocument(hit)}>
-            <strong>{hit.documentNumber}</strong>
-            <span>{hit.title || hit.templateType}</span>
-            <small>{hit.counterparty}</small>
-          </button>)}
+          <div className="wz-choice">
+            {([["own", "自社オリジナル", "権利は当社。原作の権利元は当社になります"],
+              ["licensed_in", "ライセンスイン", "他社の原作を許諾を受けて使う"],
+              ["co_dev", "共同開発", "他社と共同で権利を持つ"]] as const).map(([value, label, hint]) =>
+              <label key={value} className={kindChoice === value ? "on" : ""}>
+                <input type="radio" name="wz-kind" checked={kindChoice === value}
+                  onChange={() => setKindChoice(value)} />
+                <b>{label}</b><small>{hint}</small>
+              </label>)}
+          </div>
+          <div className="wi-grid">
+            <SearchableLedgerSelect type="works" value={parentWorkId}
+              label="派生元の作品（任意）" placeholder="続編・移植のときだけ、登録済み作品から検索…"
+              helper={editMode && initial?.parent && parentWorkId === initial.parent ? `現在の派生元 ID: ${initial.parent}` : "新規タイトルなら空のまま"}
+              filter={(item) => !item.id.startsWith("source_ip:")}
+              onChange={(value) => setParentWorkId(value)} />
+            <label>メモ（社内向け・任意）<input value={remarks} maxLength={4000}
+              onChange={(e) => setRemarks(e.target.value)} /></label>
+          </div>
+          {!editMode && <div className="wz-next">
+            <button type="button" className="primary" onClick={() => next(1)}>次へ：原作を登録</button>
+            <small>作品コードは登録時に自動採番されます</small>
+          </div>}
+        </>)}
+
+      {stepCard(2, "② 原作の登録",
+        [core.name || "未入力", core.vendorLabel ? `権利元: ${core.vendorLabel}` : kindChoice === "own" ? "権利元: 当社" : ""].filter(Boolean).join("｜"),
+        <>
+          <p className="wz-hint">原作＝この作品の<b>コアロジック素材</b>です。作品につき1件、必ず登録します。
+            {kindChoice === "own" ? "自社オリジナルのため、権利元は当社になります。"
+              : kindChoice === "licensed_in" ? "ライセンスインのため、権利元（許諾元）を指定してください。"
+                : "共同開発のため、相手方の取引先を指定してください。"}</p>
+          <div className="wi-grid">
+            <label className="wi-span2">原作（コアロジック）の名称 *<input value={core.name} maxLength={300}
+              onChange={(e) => setCore({ ...core, name: e.target.value })}
+              placeholder="例: コアロジック「エピローグ」" /></label>
+            {kindChoice !== "own" && <SearchableLedgerSelect type="vendors"
+              value={core.vendorId != null ? String(core.vendorId) : ""}
+              label="権利元（取引先を検索）*" placeholder="名称・コードで検索…"
+              helper={editMode && !core.vendorId && core.vendorLabel ? `現在の権利元: ${core.vendorLabel}` : undefined}
+              onChange={(value, item) => setCore({ ...core, vendorId: value ? Number(value) : null, vendorLabel: item?.title ?? core.vendorLabel })} />}
+          </div>
+          <DocQuotePicker note="根拠文書を既存契約書から引用（任意・発注書/利用許諾/取込文書すべて対象）"
+            quoteNumber={core.quoteDocNumber}
+            onPick={(hit) => setCore({ ...core, quoteDocId: hit?.id ?? null, quoteDocNumber: hit?.documentNumber ?? "" })} />
+          {!editMode && <div className="wz-next">
+            <button type="button" className="primary" onClick={() => next(2)}>次へ：素材を登録</button>
+            <button type="button" onClick={() => setStep(1)}>戻る</button>
+          </div>}
+        </>)}
+
+      {stepCard(3, "③ 素材の登録",
+        namedMats.length ? `${namedMats.length} 件の素材` : "素材なし",
+        <>
+          <p className="wz-hint">イラスト・シナリオ・音楽など、原作以外の素材を必要な数だけ。<b>0件でも進めます</b>（あとから追加できます）。</p>
+          {mats.map((m, index) => <article className="wz-mat" key={m.materialId ?? `new-${index}`}>
+            <div className="wz-mat-head">
+              <span className="wz-tag">素材</span>
+              {m.materialId != null && <small>登録済み #{m.materialId}</small>}
+              <span className="wi-spacer"></span>
+              {m.materialId == null &&
+                <button type="button" className="link-button" onClick={() => setMats((c) => c.filter((_, i) => i !== index))}>削除</button>}
+            </div>
+            <div className="wi-grid">
+              <label className="wi-span2">素材名 *<input value={m.name} maxLength={300}
+                onChange={(e) => updateMat(index, { name: e.target.value })}
+                placeholder="例: メインビジュアルイラスト" /></label>
+              <label>種別<select value={m.materialType} disabled={m.materialId != null}
+                onChange={(e) => updateMat(index, { materialType: e.target.value })}>
+                {MATERIAL_TYPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select></label>
+              <label>権利形態<select value={m.rights}
+                onChange={(e) => updateMat(index, { rights: e.target.value as MatRow["rights"] })}>
+                <option value="owned">買取・自社保有</option>
+                <option value="license">許諾を受けて使用</option>
+              </select></label>
+              <SearchableLedgerSelect type="vendors" value={m.vendorId != null ? String(m.vendorId) : ""}
+                label="権利元（取引先を検索）" placeholder="空欄＝当社"
+                helper={m.materialId != null && !m.vendorId && m.vendorLabel ? `現在の権利元: ${m.vendorLabel}` : undefined}
+                onChange={(value, item) => updateMat(index, { vendorId: value ? Number(value) : null, vendorLabel: item?.title ?? m.vendorLabel })} />
+            </div>
+            <DocQuotePicker note="既存契約書から引用（発注書・利用許諾・取込文書すべて対象）"
+              quoteNumber={m.quoteDocNumber}
+              onPick={(hit) => updateMat(index, { quoteDocId: hit?.id ?? null, quoteDocNumber: hit?.documentNumber ?? "" })} />
+          </article>)}
+          <div className="wi-add-row">
+            <button type="button" className="wi-add" onClick={() => setMats((c) => [...c, emptyMat()])}>＋ 素材を追加</button>
+          </div>
+          {!editMode && <div className="wz-next">
+            <button type="button" className="primary" onClick={() => next(3)}>次へ：既存文書をアップロード</button>
+            <button type="button" onClick={() => setStep(2)}>戻る</button>
+          </div>}
+        </>)}
+
+      {stepCard(4, "④ 既存文書のアップロード",
+        docCount ? `${docCount} 件の文書${rewrapCount ? `（巻き直し ${rewrapCount} 組）` : ""}` : "文書なし",
+        <>
+          <p className="wz-hint">この作品に関係する契約書・発注書などをまとめて登録します（Drive格納・<b>複数可・0件でも進めます</b>）。
+            同じ契約を締結し直した<b>巻き直し文書</b>は、元の文書の「＋巻き直し版を追加」から版として積んでください — 最後に追加した版が有効になります。</p>
+          <div className="wz-drop">
+            <button type="button" onClick={() => pickFiles(null)}>ファイルを選択（複数可）</button>
+            <small>1ファイル30MBまで。条件明細の登録は、登録後に文書一覧の「詳細を編集」から行えます。</small>
+          </div>
+          {docs.map((d) => <article className="wz-doc" key={d.key}>
+            <div className="wz-doc-file">
+              <span className="wz-tag eff">{d.files.length > 1 ? `有効版: ${d.files[d.files.length - 1].name}` : d.files[0]?.name ?? ""}</span>
+              <span className="wi-spacer"></span>
+              <button type="button" className="link-button" onClick={() => setDocs((c) => c.filter((x) => x.key !== d.key))}>この文書を削除</button>
+            </div>
+            {d.files.length > 1 && <ul className="wz-vers">
+              {d.files.slice(0, -1).map((f, i) => <li key={i}>
+                第{i + 1}版（旧版・{`${d.docNumber || "番号"}-v${i + 1}`} で登録）: {f.name}
+                <button type="button" className="link-button"
+                  onClick={() => updateDoc(d.key, { files: d.files.filter((_, j) => j !== i) })}>削除</button>
+              </li>)}
+            </ul>}
+            <div className="wi-grid">
+              <label>種別<select value={d.templateType} onChange={(e) => updateDoc(d.key, { templateType: e.target.value })}>
+                {INTAKE_DOC_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
+              </select></label>
+              <label>文書番号 *<input value={d.docNumber} maxLength={100}
+                onChange={(e) => updateDoc(d.key, { docNumber: e.target.value })} placeholder="例: PO-2025-0083" /></label>
+              <SearchableLedgerSelect type="vendors" value={d.vendorId != null ? String(d.vendorId) : ""}
+                label="相手先（取引先を検索）" placeholder="名称・コードで検索…"
+                onChange={(value, item) => updateDoc(d.key, { vendorId: value ? Number(value) : null, vendorLabel: item?.title ?? "" })} />
+              <label>締結日<input type="date" value={d.date} onChange={(e) => updateDoc(d.key, { date: e.target.value })} /></label>
+            </div>
+            <button type="button" className="link-button" onClick={() => pickFiles(d.key)}>＋ 巻き直し版を追加（同じ契約の締結し直し）</button>
+          </article>)}
+          {!editMode && <div className="wz-next">
+            <button type="button" className="primary" onClick={() => next(4)}>次へ：内容を確認</button>
+            <button type="button" onClick={() => setStep(3)}>戻る</button>
+          </div>}
+        </>)}
+
+      {!editMode && stepCard(5, "⑤ 確認して登録", "", <>
+        <dl className="wz-confirm">
+          <dt>作品名</dt><dd>{title || "—"}</dd>
+          <dt>区分</dt><dd>{kindLabel}</dd>
+          <dt>派生元</dt><dd>{parentWorkId ? `作品 #${parentWorkId}` : "なし（新規タイトル）"}</dd>
+          <dt>原作</dt><dd>{core.name || "—"}／権利元: {core.vendorLabel || (kindChoice === "own" ? "当社" : "未指定")}
+            {core.quoteDocNumber ? `／根拠: ${core.quoteDocNumber}` : ""}</dd>
+          <dt>素材</dt><dd>{namedMats.length
+            ? namedMats.map((m) => `${m.name}（${m.rights === "license" ? "許諾" : "買取"}・${m.vendorLabel || "当社"}）`).join("、")
+            : "なし（あとから追加可）"}</dd>
+          <dt>既存文書</dt><dd>{docCount
+            ? docs.filter((d) => d.files.length).map((d) => `${d.docNumber || d.files[0].name}${d.files.length > 1 ? `（巻き直し${d.files.length}版）` : ""}`).join("、")
+            : "なし（あとから取込可）"}</dd>
+        </dl>
+        <div className="wz-warn">条件（料率・MG/AG・地域言語）はまだ入っていません。登録後に「個別条件書を作成」または「過去文書の取込 → 詳細を編集」で入力します。</div>
+        <div className="wz-next">
+          <button type="button" className="primary" disabled={busy} onClick={() => void submitNew()}>
+            {busy ? "登録中…" : "この内容で作品を登録"}</button>
+          <button type="button" onClick={() => setStep(4)}>戻る</button>
         </div>
-        <small className="wi-hint">選ぶと素材行が追加され、素材名・権利者・取得形態（発注書＝買切・委託／利用許諾＝ライセンス）・根拠文書が引用されます。</small>
-      </div>}
-      <datalist id="wi-regions">{REGION_PRESETS.map((r) => <option key={r} value={r} />)}</datalist>
-      <datalist id="wi-langs">{LANGUAGE_PRESETS.map((l) => <option key={l} value={l} />)}</datalist>
+      </>)}
     </div>
 
-    {named.length > 0 && <div className="panel wi-card">
-      <div className="wi-head"><span className="wi-step">③</span><h2>条件書マトリクスのプレビュー</h2><small>個別利用許諾条件書に自動展開される内容</small></div>
-      <div className="table-scroll"><table className="wi-preview">
-        <thead><tr><th>構成要素</th><th>権利元</th><th>許諾地域</th><th>許諾言語</th>
-          <th className="r">① 自社製造・自社販売</th><th className="r">② 権利許諾</th><th className="r">③ 自社製造・他社販売</th></tr></thead>
-        <tbody>
-          {named.map((m, i) => <tr key={i}>
-            <td>{m.name}</td><td>{m.holderLabel || "—"}</td><td>{m.region}</td><td>{m.language}</td>
-            <td className="r">{m.royalty && rateOf(m.r1) != null ? `${rateOf(m.r1)}%` : "—"}</td>
-            <td className="r">{m.royalty && rateOf(m.r2) != null ? `${rateOf(m.r2)}%` : "—"}</td>
-            <td className="r">{m.royalty && rateOf(m.r3) != null ? `${rateOf(m.r3)}%` : "—"}</td>
-          </tr>)}
-          <tr className="wi-sum"><td colSpan={4}>適用料率（加算型はΣ）</td>
-            <td className="r">Σ {+sums.r1.toFixed(2)}%</td><td className="r">条件書で確定</td>
-            <td className="r">Σ {+sums.r3.toFixed(2)}%</td></tr>
-        </tbody>
-      </table></div>
+    {doneInfo && <div className="panel wz-doneband">
+      <h2>✔ 作品を登録しました（{doneInfo.workCode ?? `#${doneInfo.workId}`}）</h2>
+      <p>続けて条件を入れる場合は、ここから文書作成へ進みます。</p>
+      <div className="wz-next">
+        <button type="button" className="primary" onClick={createLicenseTerms}>個別条件書を作成（アウト条件を入力）</button>
+        {onOpenImport && <button type="button" onClick={onOpenImport}>過去文書を取込んで条件明細を登録</button>}
+        <button type="button" onClick={() => onOpenWork?.(doneInfo.workId)}>作品詳細を開く</button>
+      </div>
     </div>}
 
-    <div className="wi-actions">
-      <span>保存すると作品＋素材＋根拠文書の紐づけが台帳に登録されます。料率・MG/AG は条件書に展開され、確定時に条件台帳へ同期されます。</span>
-      <button type="button" disabled={busy || !title.trim()} onClick={() => void submit(false)}>
-        {busy ? "処理中…" : "登録のみ（条件書はあとで）"}</button>
-      <button type="button" className="primary" disabled={busy || !title.trim()} onClick={() => void submit(true)}>
-        {busy ? "処理中…" : "登録して個別利用許諾条件書を作成 →"}</button>
-    </div>
+    {editMode && <div className="wz-savebar">
+      <span>全ステップをその場で修正できます。素材の種別変更と削除はできません（付け替えは新しい素材として追加してください）。</span>
+      <button type="button" onClick={() => onOpenWork?.(editWorkId!)}>キャンセル</button>
+      <button type="button" className="primary" disabled={busy} onClick={() => void saveEdit()}>
+        {busy ? "保存中…" : "変更を保存"}</button>
+    </div>}
   </section>;
 }

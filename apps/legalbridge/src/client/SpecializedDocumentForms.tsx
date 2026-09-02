@@ -15,9 +15,12 @@ type Props = {
   templateKey: string;
   formData: DocumentFormData;
   onChange: (name: string, value: unknown) => void;
+  // 取込文書の詳細編集が汎用の条件明細エディタ（素材コード・加算型・向きあり）を
+  // 別途出すとき、こちらの金銭条件エディタを畳んで二重表示を避ける。
+  hideLicenseConditionEditor?: boolean;
 };
 
-export function SpecializedDocumentForms({ templateKey, formData, onChange }: Props) {
+export function SpecializedDocumentForms({ templateKey, formData, onChange, hideLicenseConditionEditor = false }: Props) {
   if (templateKey === "purchase_order" || templateKey === "intl_purchase_order") {
     return <SpecializedSection title="明細・金銭条件" description="発注明細と、必要な場合だけ経費・手数料・利用許諾条件を追加します。">
       <ArrayEditor title="発注明細" itemLabel="明細" dataKey="items" rows={rows(formData.items)}
@@ -42,9 +45,9 @@ export function SpecializedDocumentForms({ templateKey, formData, onChange }: Pr
 
   if (templateKey === "individual_license_terms") {
     return <SpecializedSection title="利用許諾の詳細条件" description="利用許諾の金銭条件と、再許諾先がある場合の情報を入力します。">
-      <ArrayEditor title="金銭条件" itemLabel="条件" dataKey="financial_conditions"
+      {!hideLicenseConditionEditor && <ArrayEditor title="金銭条件" itemLabel="条件" dataKey="financial_conditions"
         rows={rows(formData.financial_conditions)} fields={conditionFields} onChange={onChange}
-        defaultRow={{ currency: "JPY" }} />
+        defaultRow={{ currency: "JPY" }} />}
       <ArrayEditor title="サブライセンシー" itemLabel="サブライセンシー" dataKey="サブライセンシー一覧"
         rows={rows(formData["サブライセンシー一覧"])}
         fields={[

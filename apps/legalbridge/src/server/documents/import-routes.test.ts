@@ -120,6 +120,20 @@ test("upload: ファイルをDriveへ格納し drive_link つきで登録する"
   assert.equal(stored.formData.document_date, "2018-04-01");
 });
 
+test("upload: 作品コードと巻き直しの後継番号を form_data に記録する", async () => {
+  // 作品登録ウィザードの一括アップロード：workCode で作品と結び付け、
+  // 旧版は supersededBy に有効版の番号を持つ（有効版は supersededBy なし）。
+  const { app, repository } = appFor({ enabled: true });
+  const response = await uploadRequest(app, {
+    documentNumber: "LIC-2024-0012-v1", templateType: "individual_license_terms",
+    title: "利用許諾契約（旧版・巻き直し済）", workCode: "WRK-10013", supersededBy: "LIC-2024-0012"
+  });
+  assert.equal(response.status, 201);
+  const stored = repository.inputs[0];
+  assert.equal(stored.formData.work_code, "WRK-10013");
+  assert.equal(stored.formData.superseded_by, "LIC-2024-0012");
+});
+
 test("upload: 既存の文書番号は Drive 格納前に 409 で弾く", async () => {
   const { app, repository, storage } = appFor({ enabled: true });
   await repository.importOne(documentImportRowSchema.parse({ documentNumber: "CT-1", templateType: "contract" }));

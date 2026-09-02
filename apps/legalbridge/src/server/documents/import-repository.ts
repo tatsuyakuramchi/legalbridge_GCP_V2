@@ -34,7 +34,11 @@ export const documentImportRowSchema = z.object({
     return normalized;
   }),
   originalFileName: optionalText(300),
-  mimeType: optionalText(150)
+  mimeType: optionalText(150),
+  // 作品登録ウィザードの一括アップロードで作品と結び付ける（form_data.work_code）。
+  workCode: optionalText(40),
+  // 巻き直し（再締結）の旧版に、後継＝有効版の文書番号を記録する（form_data.superseded_by）。
+  supersededBy: optionalText(100)
 });
 export type DocumentImportRow = z.infer<typeof documentImportRowSchema>;
 
@@ -76,6 +80,8 @@ export function buildImportFormData(input: DocumentImportRow): Record<string, st
   if (input.originalFileName) formData.original_file_name = input.originalFileName;
   const mime = input.mimeType || inferMimeType(input.originalFileName);
   if (mime) formData.source_mime_type = mime;
+  if (input.workCode) formData.work_code = input.workCode;
+  if (input.supersededBy) formData.superseded_by = input.supersededBy;
   return formData;
 }
 

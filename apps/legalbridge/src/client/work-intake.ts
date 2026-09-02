@@ -113,6 +113,43 @@ export function rightsSourceCreatePayload(materialId: number, material: IntakeMa
   };
 }
 
+// ── 既存文書の一括アップロード（作品登録ウィザード ステップ④）────────────
+// 巻き直し（同じ契約の締結し直し）は1つの文書系列として扱う：
+//   files = [初版, 第2版, …] の順で、最後のファイルだけが「有効版」。
+//   有効版が入力された文書番号をそのまま使い、旧版は「-v1, -v2…」の枝番で登録して
+//   件名に旧版マークを付け、superseded_by に有効版の番号を記録する。
+// 条件明細・検索は原則として有効版（本番号）へ紐づける運用。
+export const INTAKE_DOC_KINDS = [
+  { value: "purchase_order", label: "発注書" },
+  { value: "intl_purchase_order", label: "海外発注書" },
+  { value: "individual_license_terms", label: "個別利用許諾条件" },
+  { value: "contract", label: "契約書" },
+  { value: "nda", label: "秘密保持契約" },
+  { value: "reference", label: "参考資料・その他" }
+] as const;
+
+export function stripFileExtension(name: string): string {
+  return name.replace(/\.[A-Za-z0-9]{1,8}$/, "");
+}
+
+export interface DocumentUploadPlan {
+  documentNumber: string;
+  title: string;
+  supersededBy: string; // 空＝有効版
+}
+
+export function planDocumentUploads(input: { docNumber: string; fileNames: string[] }): DocumentUploadPlan[] {
+  const docNumber = input.docNumber.trim();
+  const last = input.fileNames.length - 1;
+  return input.fileNames.map((name, index) => index === last
+    ? { documentNumber: docNumber, title: stripFileExtension(name), supersededBy: "" }
+    : {
+      documentNumber: `${docNumber}-v${index + 1}`,
+      title: `${stripFileExtension(name)}（旧版・巻き直し済）`,
+      supersededBy: docNumber
+    });
+}
+
 // ── 個別利用許諾条件書V3 へのシード ───────────────────────────────────
 const rate = (value: string): string => {
   const parsed = Number.parseFloat(String(value ?? "").replace(/,/g, ""));

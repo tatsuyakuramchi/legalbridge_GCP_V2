@@ -882,6 +882,16 @@ const importedConditionFields: FieldDefinition[] = [
       { value: "SUBSCRIPTION", label: "サブスク" }
     ]
   },
+  {
+    name: "fixed_kind", label: "固定値の支払", type: "select",
+    showWhen: { field: "calc_type", anyOf: ["FIXED"] },
+    options: [{ value: "LUMP", label: "一括" }, { value: "INSTALLMENT", label: "分割" }]
+  },
+  {
+    name: "subscription_cycle", label: "サブスクの周期", type: "select",
+    showWhen: { field: "calc_type", anyOf: ["SUBSCRIPTION"] },
+    options: [{ value: "MONTHLY", label: "月払い" }, { value: "ANNUAL", label: "年払い" }]
+  },
   { name: "base_price_label", label: "基準価格" },
   { name: "rate_pct", label: "料率（%）", type: "number" },
   // 利用許諾条件書の加算構造（素材料率のΣ＝適用料率）を旧文書でも表現する。
@@ -914,8 +924,13 @@ const importedConditionFields: FieldDefinition[] = [
 ];
 
 // SpecializedDocumentForms 側に金銭条件エディタを持つテンプレ種別（重複表示を避ける）。
+// individual_license_terms は 2026-09-02 に汎用エディタ側へ移した：素材コード結線・
+// 加算型/グループ番号・地域言語の分割列・向き（既定アウト）が旧エディタに無く、
+// 過去の利用許諾条件書を取り込んでも素材結線と加算Σが表現できなかったため。
+// SpecializedDocumentForms には hideLicenseConditionEditor を渡してサブライセンシー
+// エディタだけ残す。
 const TEMPLATES_WITH_CONDITION_EDITOR = new Set([
-  "purchase_order", "intl_purchase_order", "individual_license_terms"
+  "purchase_order", "intl_purchase_order"
 ]);
 
 // ── 取込文書の詳細編集 ───────────────────────────────────────────
@@ -930,7 +945,13 @@ function ImportedDetailsEditor({ document: doc, onClose, onSaved }: {
   onSaved: () => void;
 }) {
   const toast = useToast();
-  const [formData, setFormData] = useState<DocumentFormData>({ ...(doc.formData ?? {}) } as DocumentFormData);
+  // 利用許諾条件書（当社が許諾する側）は条件の向きを既定でアウトにする。
+  // flow_direction 未設定のまま保存すると条件同期が支払側（イン）に載ってしまうため。
+  const [formData, setFormData] = useState<DocumentFormData>({
+    ...(doc.formData ?? {}),
+    ...(doc.templateType === "individual_license_terms" && (doc.formData as Record<string, unknown> | null)?.flow_direction == null
+      ? { flow_direction: "out" } : {})
+  } as DocumentFormData);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   // 相手先の取引先マスタ結線（documents.vendor_id）。undefined=変更しない。
@@ -1003,11 +1024,12 @@ function ImportedDetailsEditor({ document: doc, onClose, onSaved }: {
         {field("account_holder_kana", "口座名義（カナ）")}
       </div>
     </details>
-    <SpecializedDocumentForms templateKey={doc.templateType} formData={formData} onChange={onChange} />
+    <SpecializedDocumentForms templateKey={doc.templateType} formData={formData} onChange={onChange}
+      hideLicenseConditionEditor={doc.templateType === "individual_license_terms"} />
     {!TEMPLATES_WITH_CONDITION_EDITOR.has(doc.templateType) && <section className="imported-conditions">
       <div className="repeater-title"><div>
         <h3>条件明細（条件台帳へ同期）</h3>
-        <small>テンプレート外の文書（旧・利用許諾条件書など）の経済条件をここで登録します。保存すると条件台帳へ自動同期され、条件明細一覧・利用許諾計算書・消化管理から参照できます。</small>
+        <small>取り込んだ文書の経済条件をここで登録します（利用許諾条件書・テンプレート外の契約書とも共通）。素材コードで作品の素材と結線でき、加算型はグループ番号でΣ合算されます。保存すると条件台帳へ自動同期され、条件明細一覧・利用許諾計算書・消化管理から参照できます。</small>
       </div></div>
       <label className="imported-flow">
         <span>この契約の向き</span>

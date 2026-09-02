@@ -129,6 +129,8 @@ export function createDocumentImportRouter(
           title: payload.fields.title,
           counterparty: payload.fields.counterparty,
           documentDate: payload.fields.documentDate,
+          workCode: payload.fields.workCode,
+          supersededBy: payload.fields.supersededBy,
           originalFileName: safeName,
           mimeType: file.contentType && file.contentType !== "application/octet-stream" ? file.contentType : undefined
         });

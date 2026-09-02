@@ -104,7 +104,7 @@ function navGroups(access: {
       ...(legalOrRequester ? [{ view: "template-samples" as const, label: "ひな形", description: "各テンプレートの完成イメージをサンプル値で閲覧", match: ["template-samples" as const] }] : [])
     ] },
     { label: "権利・条件", items: [
-      ...(access.legalWorkspace ? [{ view: "work-intake" as const, label: "作品登録", description: "作品・素材・イン条件を登録して個別条件書へ", match: ["work-intake" as const] }] : []),
+      ...(access.legalWorkspace ? [{ view: "work-intake" as const, label: "作品登録", description: "原作・素材・既存文書まで一括登録（条件は文書作成で入力）", match: ["work-intake" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "works" as const, label: "作品", description: "作品を起点に系譜・素材・条件・権利ソースを一望", match: ["works" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "conditions" as const, label: "条件明細", description: "契約条件の横断検索・消化・検収", match: ["conditions" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "outbound" as const, label: "アウト条件", description: "許諾先へのアウト条件追記", match: ["outbound" as const] }] : [])
@@ -222,6 +222,8 @@ export function App() {
   // データ品質→名寄せのドリル時に統合元IDを引き継ぐ（発見→是正を1動線に・Q1）。
   const [mergeSourceSeed, setMergeSourceSeed] = useState("");
   const [drillWorkId, setDrillWorkId] = useState<number | null>(null);
+  // 作品の一括編集（作品登録と同じウィザード画面を編集モードで開く）。
+  const [editIntakeWorkId, setEditIntakeWorkId] = useState<number | null>(null);
   // 権利ツリーから「＋許諾条件を追加」で飛んだときの作品プリセット。
   const [drillOutboundWorkId, setDrillOutboundWorkId] = useState<number | null>(null);
   const [drillConditionId, setDrillConditionId] = useState<number | null>(null);
@@ -479,7 +481,7 @@ export function App() {
                 {!collapsed && group.items.map((item) => (
                   <button key={item.view}
                     className={item.match.includes(view) ? "active" : ""}
-                    onClick={() => { setMergeSourceSeed(""); setLedgerSeedType(undefined); setView(item.view); }}
+                    onClick={() => { setMergeSourceSeed(""); setLedgerSeedType(undefined); setEditIntakeWorkId(null); setView(item.view); }}
                     title={item.description}
                   >{item.label}</button>
                 ))}
@@ -548,12 +550,16 @@ export function App() {
         {view === "royalty-preview" && <RoyaltyPreview />}
         {view === "billing" && <BillingDashboard key={drillReceiptConditionId ?? "billing"} canRecord={canRecordReceipt} initialConditionLineId={drillReceiptConditionId} onCreatePaymentDocument={(legalWorkspace || requesterWorkspace) ? () => { setNewDocIssueKey(""); setNewDocSeed({}); setDraftSelection(null); setView("templates"); } : undefined} />}
         {view === "work-intake" && legalWorkspace && <WorkIntake
+          key={editIntakeWorkId ?? "intake"}
           canRegister={canEditWorks && canEditMaterials}
-          onOpenWork={(workId) => { setDrillWorkId(workId); setView("works"); }}
+          editWorkId={editIntakeWorkId}
+          onOpenWork={(workId) => { setEditIntakeWorkId(null); setDrillWorkId(workId); setView("works"); }}
+          onOpenImport={() => setView("documents")}
           onCreateLicenseTerms={(seed, workCode) => void startLicenseTermsFromWork(seed, workCode)} />}
         {view === "works" && <WorkDetail key={drillWorkId ?? "works"} initialWorkId={drillWorkId} canEdit={canEditWorks} canEditRights={canEditRightsSources} canEditMaterials={canEditMaterials}
           onCreateLicenseTerms={(seed, workCode) => void startLicenseTermsFromWork(seed, workCode)}
           onAddGrant={(workId) => { setDrillOutboundWorkId(workId); setView("outbound"); }}
+          onEditWork={(workId) => { setEditIntakeWorkId(workId); setView("work-intake"); }}
           onNavigate={(t) => { if (t === "ledgers-works") { setLedgerSeedType("works"); setView("ledgers"); } else setView(t as View); }} />}
         {view === "data-quality" && <DataQuality onNavigate={(v, id) => {
           setMergeSourceSeed((v === "vendor-merge" || v === "matter-merge") && id != null ? String(id) : "");

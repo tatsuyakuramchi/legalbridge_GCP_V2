@@ -77,7 +77,7 @@ const emptyMaterial = (): MaterialForm => ({
   acquisitionType: "license", rightsType: "license", rightsHolderLabel: "", isRoyaltyBearing: false, remarks: ""
 });
 
-export function WorkDetail({ canEdit = false, canEditRights = false, canEditMaterials = false, onNavigate, onAddGrant, onCreateLicenseTerms, initialWorkId = null }: { canEdit?: boolean; canEditRights?: boolean; canEditMaterials?: boolean; onNavigate?: (target: string) => void; onAddGrant?: (workId: number) => void; onCreateLicenseTerms?: (seed: DocumentFormData, workCode: string | null) => void; initialWorkId?: number | null }) {
+export function WorkDetail({ canEdit = false, canEditRights = false, canEditMaterials = false, onNavigate, onAddGrant, onCreateLicenseTerms, onEditWork, initialWorkId = null }: { canEdit?: boolean; canEditRights?: boolean; canEditMaterials?: boolean; onNavigate?: (target: string) => void; onAddGrant?: (workId: number) => void; onCreateLicenseTerms?: (seed: DocumentFormData, workCode: string | null) => void; onEditWork?: (workId: number) => void; initialWorkId?: number | null }) {
   const [keyword, setKeyword] = useState("");
   const [results, setResults] = useState<Summary[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(initialWorkId);
@@ -345,7 +345,10 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
                 {detail.work.isOriginal && <span className="status">原作</span>}
                 {detail.lineage?.isDerivative && <span className="status">派生{detail.lineage.depth}段</span>}
                 <span className="status">{kindLabel(detail.work.kind)}</span>
-                {canEdit && !editing && <button onClick={startEdit}>編集</button>}
+                {canEdit && !editing && onEditWork && <button className="primary"
+                  title="登録画面と同じ流れ（基本情報→原作→素材→既存文書）で一括編集します"
+                  onClick={() => onEditWork(detail.work.id)}>一括編集</button>}
+                {canEdit && !editing && <button onClick={startEdit} title="この画面のまま基本情報だけ修正します">詳細項目の編集</button>}
                 {onCreateLicenseTerms && <button className="primary"
                   title="登録済みの素材（コード・権利者・地域言語）をマトリクスへ展開した条件書フォームを開きます"
                   onClick={() => {
