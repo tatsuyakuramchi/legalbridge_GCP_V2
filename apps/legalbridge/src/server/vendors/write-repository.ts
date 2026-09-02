@@ -24,6 +24,8 @@ export interface VendorRecord {
   phone: string | null;
   contactName: string | null;
   contactDepartment: string | null;
+  contactEmail: string | null;
+  signerEmail: string | null;
   address: string | null;
   invoiceRegistrationNumber: string | null;
   vendorRep: string | null;
@@ -57,6 +59,8 @@ const COLUMNS: Record<string, string> = {
   phone: "phone",
   contactName: "contact_name",
   contactDepartment: "contact_department",
+  contactEmail: "contact_email",
+  signerEmail: "signer_email",
   address: "address",
   invoiceRegistrationNumber: "invoice_registration_number",
   vendorRep: "vendor_rep",
@@ -145,7 +149,8 @@ export class PgVendorWriteRepository implements VendorWriteRepository {
   async find(id: number, options: { includeBank?: boolean } = {}) {
     const result = await this.database.query(
       `SELECT id, vendor_name, vendor_code, trade_name, pen_name, entity_type,
-              email, phone, contact_name, contact_department, address,
+              email, phone, contact_name, contact_department,
+              contact_email, signer_email, address,
               invoice_registration_number, vendor_rep, corporate_number,
               bank_name, branch_name, account_type, account_number,
               account_holder_kana, bank_info,
@@ -176,6 +181,8 @@ export class PgVendorWriteRepository implements VendorWriteRepository {
       phone: row.phone ?? null,
       contactName: row.contact_name ?? null,
       contactDepartment: row.contact_department ?? null,
+      contactEmail: row.contact_email ?? null,
+      signerEmail: row.signer_email ?? null,
       address: row.address ?? null,
       invoiceRegistrationNumber: row.invoice_registration_number ?? null,
       vendorRep: row.vendor_rep ?? null,
@@ -227,7 +234,10 @@ export class MemoryVendorWriteRepository implements VendorWriteRepository {
       tradeName: (v.tradeName as string | null) ?? null, penName: (v.penName as string | null) ?? null,
       entityType: (v.entityType as string | null) ?? null, email: (v.email as string | null) ?? null,
       phone: (v.phone as string | null) ?? null, contactName: (v.contactName as string | null) ?? null,
-      contactDepartment: (v.contactDepartment as string | null) ?? null, address: (v.address as string | null) ?? null,
+      contactDepartment: (v.contactDepartment as string | null) ?? null,
+      contactEmail: (v.contactEmail as string | null) ?? null,
+      signerEmail: (v.signerEmail as string | null) ?? null,
+      address: (v.address as string | null) ?? null,
       invoiceRegistrationNumber: (v.invoiceRegistrationNumber as string | null) ?? null,
       vendorRep: (v.vendorRep as string | null) ?? null,
       corporateNumber: (v.corporateNumber as string | null) ?? null,

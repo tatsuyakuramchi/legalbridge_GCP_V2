@@ -140,7 +140,8 @@ function LedgerDetail({ item, canEdit = false, onEdit }:
 
 type VendorValues = {
   vendorName: string; vendorCode: string; tradeName: string; penName: string; entityType: string;
-  email: string; phone: string; contactName: string; contactDepartment: string; address: string;
+  email: string; phone: string; contactName: string; contactDepartment: string;
+  contactEmail: string; signerEmail: string; address: string;
   invoiceRegistrationNumber: string; vendorRep: string; corporateNumber: string;
   bankName: string; branchName: string; accountType: string; accountNumber: string;
   accountHolderKana: string; bankInfo: string;
@@ -148,7 +149,8 @@ type VendorValues = {
 };
 const emptyVendor: VendorValues = {
   vendorName: "", vendorCode: "", tradeName: "", penName: "", entityType: "",
-  email: "", phone: "", contactName: "", contactDepartment: "", address: "",
+  email: "", phone: "", contactName: "", contactDepartment: "",
+  contactEmail: "", signerEmail: "", address: "",
   invoiceRegistrationNumber: "", vendorRep: "", corporateNumber: "",
   bankName: "", branchName: "", accountType: "", accountNumber: "",
   accountHolderKana: "", bankInfo: "",
@@ -181,7 +183,8 @@ function VendorForm({ vendorId, onCancel, onSaved }: { vendorId?: number; onCanc
         setValues({
           vendorName: v.vendorName ?? "", vendorCode: v.vendorCode ?? "", tradeName: v.tradeName ?? "",
           penName: v.penName ?? "", entityType: v.entityType ?? "", email: v.email ?? "", phone: v.phone ?? "",
-          contactName: v.contactName ?? "", contactDepartment: v.contactDepartment ?? "", address: v.address ?? "",
+          contactName: v.contactName ?? "", contactDepartment: v.contactDepartment ?? "",
+          contactEmail: v.contactEmail ?? "", signerEmail: v.signerEmail ?? "", address: v.address ?? "",
           invoiceRegistrationNumber: v.invoiceRegistrationNumber ?? "",
           vendorRep: v.vendorRep ?? "", corporateNumber: v.corporateNumber ?? "",
           bankName: v.bankName ?? "", branchName: v.branchName ?? "",
@@ -205,7 +208,8 @@ function VendorForm({ vendorId, onCancel, onSaved }: { vendorId?: number; onCanc
       vendorName: values.vendorName.trim(),
       tradeName: values.tradeName, penName: values.penName, entityType: values.entityType,
       email: values.email, phone: values.phone, contactName: values.contactName,
-      contactDepartment: values.contactDepartment, address: values.address,
+      contactDepartment: values.contactDepartment,
+      contactEmail: values.contactEmail, signerEmail: values.signerEmail, address: values.address,
       invoiceRegistrationNumber: values.invoiceRegistrationNumber,
       vendorRep: values.vendorRep, corporateNumber: values.corporateNumber,
       isInvoiceIssuer: values.isInvoiceIssuer, withholdingEnabled: values.withholdingEnabled,
@@ -249,8 +253,14 @@ function VendorForm({ vendorId, onCancel, onSaved }: { vendorId?: number; onCanc
       <label>ペンネーム<input value={values.penName} onChange={(e) => set("penName", e.target.value)} /></label>
       <label>担当者<input value={values.contactName} onChange={(e) => set("contactName", e.target.value)} /></label>
       <label>担当部署<input value={values.contactDepartment} onChange={(e) => set("contactDepartment", e.target.value)} /></label>
-      <label>メール<input value={values.email} onChange={(e) => set("email", e.target.value)} /></label>
+      <label>メール（代表）<input value={values.email} onChange={(e) => set("email", e.target.value)} /></label>
       <label>電話<input value={values.phone} onChange={(e) => set("phone", e.target.value)} /></label>
+      <label>担当者メール<input type="email" value={values.contactEmail}
+        onChange={(e) => set("contactEmail", e.target.value)} placeholder="tantou@example.co.jp" />
+        <small className="hint">確定通知メールの宛先候補に出ます。</small></label>
+      <label>署名者メール（電子契約）<input type="email" value={values.signerEmail}
+        onChange={(e) => set("signerEmail", e.target.value)} placeholder="sign@example.co.jp" />
+        <small className="hint">CloudSign署名依頼の宛先候補に出ます。担当者と同じなら同じアドレスで構いません。</small></label>
       <label>インボイス番号<input value={values.invoiceRegistrationNumber} onChange={(e) => set("invoiceRegistrationNumber", e.target.value)} /></label>
       <label>代表者名<input value={values.vendorRep} onChange={(e) => set("vendorRep", e.target.value)}
         placeholder="例: 代表取締役 山田 太郎" maxLength={200} />

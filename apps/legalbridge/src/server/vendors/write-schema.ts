@@ -22,6 +22,10 @@ export const vendorCreateSchema = z.object({
   phone: nullableText(50),
   contactName: nullableText(100),
   contactDepartment: nullableText(100),
+  // 送信用メール2欄（2026-09-02）: 担当者宛の通知メールと CloudSign 署名者。
+  // どちらも文書詳細「外部連携」の宛先候補に引用される。
+  contactEmail: nullableText(255),
+  signerEmail: nullableText(255),
   address: nullableText(1000),
   invoiceRegistrationNumber: nullableText(50),
   // 法人登録で使う項目（帳票の代表者欄・法人番号）。
@@ -49,6 +53,8 @@ export const vendorUpdateSchema = z.object({
   phone: nullableText(50).optional(),
   contactName: nullableText(100).optional(),
   contactDepartment: nullableText(100).optional(),
+  contactEmail: nullableText(255).optional(),
+  signerEmail: nullableText(255).optional(),
   address: nullableText(1000).optional(),
   invoiceRegistrationNumber: nullableText(50).optional(),
   vendorRep: nullableText(200).optional(),

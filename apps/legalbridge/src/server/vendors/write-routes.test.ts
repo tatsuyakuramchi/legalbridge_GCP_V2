@@ -167,3 +167,24 @@ test("法務ロールでも代表者は更新できる（口座キーを含ま�
     .send({ vendorRep: "代表取締役 佐藤 花子" });
   assert.equal(patched.status, 200);
 });
+
+test("担当者メール・署名者メールを登録し編集用取得で返す（067）", async () => {
+  const { app } = appFor({ enabled: true });
+  const created = await request(app).post("/api/v2/vendors").send({
+    vendorName: "スタジオ雨宿り",
+    contactEmail: "tantou@amayadori.example",
+    signerEmail: "sign@amayadori.example"
+  });
+  assert.equal(created.status, 201);
+  const fetched = await request(app).get(`/api/v2/vendors/${created.body.id}`);
+  assert.equal(fetched.status, 200);
+  assert.equal(fetched.body.vendor.contactEmail, "tantou@amayadori.example");
+  assert.equal(fetched.body.vendor.signerEmail, "sign@amayadori.example");
+  // 部分更新（署名者だけ変更・空文字は null 化）
+  const patched = await request(app).patch(`/api/v2/vendors/${created.body.id}`)
+    .send({ signerEmail: "legal-sign@amayadori.example", contactEmail: "" });
+  assert.equal(patched.status, 200);
+  const after = await request(app).get(`/api/v2/vendors/${created.body.id}`);
+  assert.equal(after.body.vendor.signerEmail, "legal-sign@amayadori.example");
+  assert.equal(after.body.vendor.contactEmail, null);
+});

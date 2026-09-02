@@ -25,20 +25,31 @@ export class PgRecipientSuggestionSource implements RecipientSuggestionSource {
   constructor(private readonly database: DatabasePool) {}
 
   async suggest(documentId: number) {
+    // 署名者用（CloudSign）→ 担当者 → 代表メールの順で候補にする（067 で2欄追加）。
+    // 同じアドレスが複数欄に入っている場合は先勝ちで1件に寄せる。
     const result = await this.database.query(
-      `SELECT v.email, COALESCE(NULLIF(v.contact_name, ''), v.vendor_name) AS name
+      `SELECT v.email, v.contact_email, v.signer_email,
+              COALESCE(NULLIF(v.contact_name, ''), v.vendor_name) AS name
          FROM documents d
          JOIN vendors v ON v.id = d.vendor_id
-        WHERE d.id = $1 AND COALESCE(v.email, '') <> ''`,
+        WHERE d.id = $1`,
       [documentId]
     );
-    return result.rows
-      .map((row) => ({
-        email: String(row.email ?? "").trim(),
-        name: String(row.name ?? "").trim(),
-        source: "取引先マスタ"
-      }))
-      .filter((row) => row.email.includes("@"));
+    const suggestions: RecipientSuggestion[] = [];
+    const seen = new Set<string>();
+    for (const row of result.rows) {
+      const name = String(row.name ?? "").trim();
+      const push = (value: unknown, source: string) => {
+        const email = String(value ?? "").trim();
+        if (!email.includes("@") || seen.has(email.toLowerCase())) return;
+        seen.add(email.toLowerCase());
+        suggestions.push({ email, name, source });
+      };
+      push(row.signer_email, "署名者用（電子契約）");
+      push(row.contact_email, "取引先担当者");
+      push(row.email, "取引先マスタ");
+    }
+    return suggestions;
   }
 }
 

@@ -18,6 +18,7 @@ export class PgLedgerRepository implements LedgerRepository {
       const result = await this.database.query(
         `SELECT id, vendor_code, vendor_name, trade_name, pen_name, entity_type,
                 address, phone, email, contact_department, contact_name,
+                contact_email, signer_email,
                 vendor_rep, is_invoice_issuer, invoice_registration_number,
                 withholding_enabled, is_active,
                 bank_name, branch_name, account_type, account_number, account_holder_kana
@@ -37,6 +38,7 @@ export class PgLedgerRepository implements LedgerRepository {
           取引先区分: row.entity_type, 住所: row.address,
           電話番号: row.phone, メール: row.email,
           担当部署: row.contact_department, 担当者: row.contact_name,
+          担当者メール: row.contact_email, "署名者メール（電子契約）": row.signer_email,
           代表者: row.vendor_rep, インボイス登録: Boolean(row.is_invoice_issuer),
           インボイス番号: row.invoice_registration_number,
           源泉徴収対象: Boolean(row.withholding_enabled),
