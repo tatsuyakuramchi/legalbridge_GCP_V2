@@ -706,6 +706,9 @@ export function App() {
   );
 }
 
+// 新規作成の一覧に出さない旧書式（後継: individual_license_terms → individual_license_terms_v3）。
+const RETIRED_TEMPLATE_KEYS = new Set(["individual_license_terms"]);
+
 function TemplateCatalog({
   templates,
   compatibility,
@@ -725,6 +728,11 @@ function TemplateCatalog({
   ];
   const normalizedQuery = query.trim().toLowerCase();
   const visibleTemplates = templates.filter((template) => {
+    // 後継テンプレに置き換わった旧書式は新規作成の候補から外す（2026-09-02 レガシー整理）。
+    // DB の is_active は落とさない：落とすと旧書式で確定済みの文書の PDF 再生成・
+    // CloudSign 依頼（findRenderSource が is_active を見る）が全滅するため。
+    // 下書きの再開・取込文書の種別としては引き続き使える。
+    if (RETIRED_TEMPLATE_KEYS.has(template.templateKey)) return false;
     const matchesCategory =
       category === "すべて" || (template.category ?? "未分類") === category;
     // 同義語検索（監査W3）：「支払」「請求」で該当テンプレが見つかるように。
