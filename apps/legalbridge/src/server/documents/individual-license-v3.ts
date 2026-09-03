@@ -8,6 +8,11 @@ export const individualLicenseV3Fields: TemplateField[] = [
   { name: "許諾開始日", label: "許諾開始日", type: "date", group: "I. 基本情報", required: true },
   { name: "基本契約名", label: "基本契約名", group: "I. 基本情報" },
   { name: "work_id", label: "作品ID", group: "I. 基本情報", helpText: "作品台帳との参照キー" },
+  // 署名欄のオン/オフ（2026-09-02）。基本契約と個別条件書を CloudSign の1書類で一括締結する
+  // とき、末尾の記名押印欄が文書ごとに並ぶと使いにくいため、条件書側を非表示にできる。
+  // 空欄＝表示する（既存文書の見え方を変えない）。テンプレは {{#unless (eq 署名欄 "表示しない")}} で判定。
+  { name: "署名欄", label: "署名欄（末尾の記名押印欄）", type: "select", options: ["表示する", "表示しない"],
+    group: "I. 基本情報", helpText: "基本契約と一括で電子署名する場合は「表示しない」にすると、基本契約側の署名欄だけになります。" },
   { name: "Licensor_氏名会社名", label: "Licensor 名称", group: "II. Licensor", required: true, dbField: "vendor.vendor_name" },
   { name: "許諾者種別", label: "Licensor 種別", type: "select", options: ["法人", "個人"], group: "II. Licensor", required: true },
   { name: "Licensor_住所", label: "Licensor 住所", type: "textarea", group: "II. Licensor", dbField: "vendor.address" },
