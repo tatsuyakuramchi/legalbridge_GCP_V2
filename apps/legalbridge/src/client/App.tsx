@@ -9,8 +9,8 @@ import type {
 import { SpecializedDocumentForms } from "./SpecializedDocumentForms";
 import { computeInspectionTotals, formatYen, inspectionLineStatus, inspectionLines } from "../inspection-totals";
 import {
-  buildMultiStatementPatch, buildSingleStatementPatch, statementPaymentInfo, toNumber,
-  type StatementReceiptRow
+  buildBundleStatementPatch, buildMultiStatementPatch, buildSingleStatementPatch, bundleEntriesFrom, bundleEntryActive,
+  statementPaymentInfo, toNumber, type StatementReceiptRow
 } from "../royalty-statement";
 import {
   isCorporateOnlyFieldHidden, isFieldVisible, isInspectionFallbackFieldHidden,
@@ -588,6 +588,38 @@ export function App() {
     setView("document");
   }
 
+  // 後続文書③：複数の条件明細（契約）を 1 枚の計算書に束ねる（statementMode: bundle）。
+  // 条件明細ごとに経済条件（料率・MG/AG・AG消化累計）を台帳から入れ、実績は契約ごとに入力してもらう。
+  async function startStatementFromConditions(conditionLineIds: number[]) {
+    const entries: Array<Record<string, unknown>> = [];
+    const skipped: string[] = [];
+    for (const id of conditionLineIds) {
+      const response = await fetch(`/api/v2/royalty/condition-economics/${id}`);
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) { skipped.push(`#${id}: ${body.error ?? "取得できません"}`); continue; }
+      const e = body.economics as { representativeLineId: number; conditionName: string | null; ratePct: number; mgAmount: number; agAmount: number; agConsumed: number };
+      if (entries.some((x) => x.conditionLineId === e.representativeLineId)) continue;   // 加算型の同一グループは1件に
+      entries.push({
+        conditionLineId: e.representativeLineId, conditionName: e.conditionName ?? "", contractTitle: "", contractNumber: "",
+        calcType: "period", basisKind: "sales", ratePct: e.ratePct, mgAmount: e.mgAmount, agAmount: e.agAmount, agConsumedBefore: e.agConsumed
+      });
+    }
+    if (!entries.length) { window.alert(`束ねられる条件明細がありません。\n${skipped.join("\n")}`); return; }
+    const schemaResponse = await fetch(`/api/v2/document-templates/royalty_statement/form-schema`);
+    if (!schemaResponse.ok) { window.alert("利用許諾料計算書テンプレートの定義を取得できませんでした"); return; }
+    const nextSchema: DocumentFormSchema = await schemaResponse.json();
+    setFormNonce((v) => v + 1);
+    setDraftSelection(null);
+    setReissueSource(null);
+    setNewDocSeed({});
+    setNewDocIssueKey("");
+    setDuplicateValues({ statementMode: "bundle", rs_bundle: entries });
+    setDuplicateFrom(null);
+    setSeedNotice(`条件明細 ${entries.length} 件を束ねました（料率・MG/AG・AG消化済み累計は台帳から）。契約ごとに算定期間と売上・数量を入れて確定してください。確定で条件明細ごとに消化イベントを記帳します${skipped.length ? `。対象外: ${skipped.join("／")}` : ""}`);
+    setSchema(nextSchema);
+    setView("document");
+  }
+
   async function openDocumentForm(templateKey: string) {
     setFormNonce((v) => v + 1);
     setDuplicateValues(null);
@@ -727,6 +759,7 @@ export function App() {
           seed={followUpSeed}
           onCreateInspection={(po) => void startInspectionFromPurchaseOrder(po)}
           onCreateStatement={(lineId) => void startStatementFromCondition(lineId)}
+          onCreateBundleStatement={(ids) => void startStatementFromConditions(ids)}
           onOpenConditionLine={(lineId) => { setDrillConditionId(lineId); setView("conditions"); }} />}
         {view === "works" && <WorkDetail key={drillWorkId ?? "works"} initialWorkId={drillWorkId} canEdit={canEditWorks} canEditRights={canEditRightsSources} canEditMaterials={canEditMaterials}
           onCreateDocumentFromWork={(choice, work) => void startDocumentFromWork(choice, work)}
@@ -2268,6 +2301,7 @@ function RoyaltyRail({ formData, steps, onPreview, onSaveDraft, onToggleWithhold
   saveDisabled: boolean; saveLabel: string; readOnly: boolean;
 }) {
   const multi = String(formData.statementMode) === "multi";
+  const bundleMode = String(formData.statementMode) === "bundle";
   const taxRate = toNumber(formData.taxRate) || 10;
   const withholding = Boolean(formData.rsWithholding);
   const yen = (value: number) => `¥${value.toLocaleString("ja-JP")}`;
@@ -2275,7 +2309,25 @@ function RoyaltyRail({ formData, steps, onPreview, onSaveDraft, onToggleWithhold
   let body: React.ReactNode;
   let subtotalExTax = 0;
   let mgNote: string | null = null;
-  if (multi) {
+  if (bundleMode) {
+    // 束ね（複数契約）: 契約ごとに単票と同じ計算をして合計（共有エンジン＝PDF と同一）。
+    const entries = bundleEntriesFrom(formData).filter(bundleEntryActive);
+    if (!entries.length) {
+      body = <p className="hub-note">契約（条件明細）を追加し、基準額を入れると契約ごとに自動計算します。</p>;
+    } else {
+      const result = buildBundleStatementPatch({ entries, taxRatePct: taxRate });
+      subtotalExTax = result.totalPaymentJpy;
+      body = <>
+        {result.entries.map(({ entry, fee }, i) => <div className="calc-row" key={i}>
+          <span>{entry.conditionName || entry.contractTitle || `契約 ${i + 1}`}（{entry.ratePct}%{fee.mg_floor_applied ? "・MG適用" : ""}{fee.ag_offset_this_time > 0 ? `・AG充当 −${yen(fee.ag_offset_this_time)}` : ""}）</span>
+          <span>{yen(fee.actual_ex_tax)}</span>
+        </div>)}
+        <div className="calc-row"><span>支払合計（税抜・{result.entries.length}契約）</span><span>{yen(result.totalPaymentJpy)}</span></div>
+        <div className="calc-row"><span>消費税（{taxRate}%）</span><span>{yen(result.tax)}</span></div>
+        <div className="calc-row total"><span>源泉前合計（税込）</span><strong>{yen(result.totalIncTax)}</strong></div>
+      </>;
+    }
+  } else if (multi) {
     const receipts = (Array.isArray(formData.rs_receipts) ? formData.rs_receipts as Array<Record<string, unknown>> : [])
       .map((row): StatementReceiptRow => ({
         sublicensee: String(row.sublicensee ?? ""),

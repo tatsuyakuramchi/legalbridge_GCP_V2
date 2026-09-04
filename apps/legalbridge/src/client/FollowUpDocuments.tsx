@@ -20,10 +20,12 @@ type ConditionLine = {
 
 export type FollowUpTab = "inspection" | "statement";
 
-export function FollowUpDocuments({ seed, onCreateInspection, onCreateStatement, onOpenConditionLine }: {
+export function FollowUpDocuments({ seed, onCreateInspection, onCreateStatement, onCreateBundleStatement, onOpenConditionLine }: {
   seed: { tab?: FollowUpTab; q?: string };
   onCreateInspection: (purchaseOrder: { id: number; documentNumber: string | null }) => void;
   onCreateStatement: (conditionLineId: number) => void;
+  // 複数の条件明細（契約）を 1 枚の計算書に束ねる（statementMode: bundle・2026-09-04）。
+  onCreateBundleStatement?: (conditionLineIds: number[]) => void;
   onOpenConditionLine?: (conditionLineId: number) => void;
 }) {
   const [tab, setTab] = useState<FollowUpTab>(seed.tab ?? "inspection");
@@ -31,6 +33,8 @@ export function FollowUpDocuments({ seed, onCreateInspection, onCreateStatement,
   const [direction, setDirection] = useState<"in" | "out">("in");
   const [orders, setOrders] = useState<PurchaseOrder[] | null>(null);
   const [lines, setLines] = useState<ConditionLine[] | null>(null);
+  const [picked, setPicked] = useState<number[]>([]);
+  const togglePick = (id: number) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -99,12 +103,18 @@ export function FollowUpDocuments({ seed, onCreateInspection, onCreateStatement,
 
       {tab === "statement" && lines && <>
         {visibleLines.length === 0 && <p className="wz-hint">該当する料率の条件明細がありません。条件は「条件を登録する」の利用許諾（イン／アウト）から登録します。</p>}
+        {onCreateBundleStatement && visibleLines.some((l) => l.effective) && <div className="wz-next" style={{ margin: "6px 18px 0" }}>
+          <button type="button" className="primary" disabled={picked.length < 2}
+            onClick={() => onCreateBundleStatement(picked)}>選んだ {picked.length} 件を 1 枚の計算書に束ねる →</button>
+          <small>複数契約（条件明細）をまとめて 1 枚にするときはチェックして束ねる。1 件だけなら行の「計算書を作る」。同じ相手先への支払を 1 枚にする用途。</small>
+        </div>}
         {visibleLines.length > 0 && <div className="table-scroll"><table className="cf-table fu-table">
-          <thead><tr><th>契約・文書</th><th>条件名</th><th>相手先</th><th>作品</th><th>料率</th><th>MG</th><th>許諾地域</th><th>状態</th><th></th></tr></thead>
+          <thead><tr>{onCreateBundleStatement && <th style={{ width: 30 }}></th>}<th>契約・文書</th><th>条件名</th><th>相手先</th><th>作品</th><th>料率</th><th>MG</th><th>許諾地域</th><th>状態</th><th></th></tr></thead>
           <tbody>{visibleLines.map((l) => {
             const blocked = !l.effective;
             const state = l.ledgerStatus === "draft" ? "下書き（未確定）" : l.supersededBy ? `無効（旧版 → ${l.supersededBy}）` : l.effective ? "有効" : "無効";
             return <tr key={l.id} className={blocked ? "old" : ""}>
+              {onCreateBundleStatement && <td><input type="checkbox" disabled={blocked} checked={picked.includes(l.id)} onChange={() => togglePick(l.id)} aria-label={`${l.conditionName} を束ねる`} /></td>}
               <td className="mono">{l.documentNumber ?? "—"}</td><td>{l.conditionName || "—"}</td><td>{l.vendorName || "—"}</td><td>{l.workTitle || "—"}</td>
               <td>{l.ratePct != null ? `${l.ratePct}%` : "—"}</td><td>{yen(l.mgAmount, l.currency)}</td><td>{l.territory ?? "—"}</td>
               <td>{blocked ? <span className="wz-tag warn">{state}</span> : <span className="wz-tag eff">{state}</span>}</td>

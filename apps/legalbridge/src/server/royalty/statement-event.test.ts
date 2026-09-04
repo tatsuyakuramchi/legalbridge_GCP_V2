@@ -43,3 +43,27 @@ test("対象外: ひも付け無し・多明細・実績未入力は null", () =
   assert.equal(royaltyEventInputFromStatement({ rsConditionLineId: 42 }), null);
   assert.equal(royaltyEventInputFromStatement({ rsConditionLineId: 42, rsCalcType: "event", rsMsrp: 0 }), null);
 });
+
+test("束ね: 条件明細ひも付けのある契約ごとに記帳入力を作る（ひも付け無し・基準額無しは除く）", async () => {
+  const { royaltyEventInputsFromStatement } = await import("./statement-event.js");
+  const inputs = royaltyEventInputsFromStatement({
+    statementMode: "bundle", taxRate: 10,
+    rs_bundle: [
+      { conditionLineId: 501, calcType: "period", basisKind: "sales", msrp: 1000000, ratePct: 3, mgAmount: 50000, periodTo: "2026-06-30" },
+      { conditionLineId: 620, calcType: "event", msrp: 6000, quantity: 3000, sampleQuantity: 100, ratePct: 5, agAmount: 300000, agConsumedBefore: 180000 },
+      { conditionLineId: "", calcType: "period", msrp: 500000, ratePct: 5 },
+      { conditionLineId: 700, calcType: "period", msrp: 0, ratePct: 5 }
+    ]
+  });
+  assert.equal(inputs.length, 2);
+  assert.equal(inputs[0].conditionLineId, 501);
+  assert.deepEqual(inputs[0].terms, { type: "revenue", base_amount: 1000000, rate_pct: 3 });
+  assert.equal(inputs[0].period, "2026-06");
+  assert.deepEqual(inputs[1].terms, { type: "performance", base_price: 6000, rate_pct: 5, quantity: 3000 });
+  assert.equal(inputs[1].adjustments.sample_quantity, 100);
+  assert.equal(inputs[1].adjustments.ag_consumed_before, 180000);
+  // 単票は従来どおり 0〜1 件、多明細は 0 件
+  assert.equal(royaltyEventInputsFromStatement(EVENT_FORM).length, 1);
+  assert.equal(royaltyEventInputsFromStatement({ ...EVENT_FORM, statementMode: "multi" }).length, 0);
+  assert.equal(royaltyEventInputFromStatement({ ...EVENT_FORM, statementMode: "bundle" }), null);
+});

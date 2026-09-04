@@ -30,6 +30,35 @@ test("groupExcelBatches: 種別×担当者×支払期日で束ね支払期日昇
   assert.deepEqual(groups[1].documentNumbers, ["INS-1", "INS-2"]);
 });
 
+test("groupExcelBatches: 文書ごとの税区分内訳とグループ合計（経理提出用）が付く", () => {
+  const docs: RawExcelDoc[] = [
+    { documentNumber: "INS-1", templateType: "inspection_certificate", formData: {
+      inspectorEmail: "a@x", paymentDate: "2026-09-30", taxRate: 10,
+      delivery_line_items: [{ inspected_amount_ex_tax: 300000 }],
+      other_fees: [{ amount: 440, tax_category: "taxable" }],
+      expenses: [{ amount_ex_tax: 20000, tax_category: "exempt" }]
+    } },
+    { documentNumber: "INS-2", templateType: "inspection_certificate", formData: {
+      inspectorEmail: "a@x", paymentDate: "2026-09-30", taxRate: 10,
+      delivery_line_items: [{ inspected_amount_ex_tax: 100000 }]
+    } },
+    { documentNumber: "ROY-1", templateType: "royalty_statement", formData: {
+      paymentDueDate: "2026-08-31", statementMode: "single", rsCalcType: "period", rsBasisKind: "sales", rsMsrp: 1000000, rsRatePct: 3, taxRate: 10
+    } }
+  ];
+  const groups = groupExcelBatches(docs);
+  const royalty = groups.find((g) => g.category === "royalty_statement")!;
+  assert.equal(royalty.items[0].taxable10, 30000);
+  assert.equal(royalty.totals.totalIncTax, 33000);
+  const inspection = groups.find((g) => g.category === "inspection_certificate")!;
+  assert.equal(inspection.items[0].taxable10, 300440);
+  assert.equal(inspection.items[0].exempt, 20000);
+  assert.equal(inspection.totals.taxable10, 400440);
+  assert.equal(inspection.totals.exempt, 20000);
+  assert.equal(inspection.totals.tax, 40044);
+  assert.equal(inspection.totals.totalIncTax, 400440 + 20000 + 40044);
+});
+
 function appFor(opts: { enabled?: boolean; role?: string } = {}) {
   const docs: RawExcelDoc[] = [
     { documentNumber: "INS-1", templateType: "inspection_certificate", formData: { inspectorEmail: "a@x", paymentDate: "2026-09-30" } },

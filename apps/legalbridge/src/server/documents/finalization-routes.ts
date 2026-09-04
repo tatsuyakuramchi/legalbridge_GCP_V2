@@ -9,7 +9,7 @@ import { validateDocumentForm } from "./form-mapper.js";
 import type { TemplateRepository } from "./template-repository.js";
 import { buildDocumentConditionInputs, hasConditionSyncData } from "./condition-sync.js";
 import type { ConditionSyncRepository } from "./condition-sync-repository.js";
-import { royaltyEventInputFromStatement } from "../royalty/statement-event.js";
+import { royaltyEventInputsFromStatement } from "../royalty/statement-event.js";
 import { calculateFee } from "../../royalty/calc.js";
 import type { RoyaltyEventRepository } from "../royalty/event-repository.js";
 import type { ConditionLedgerRepository } from "../conditions/ledger-repository.js";
@@ -98,10 +98,11 @@ export function createDocumentFinalizationRouter(
       // 計算書の消化イベント自動記帳（単票＋条件明細ひも付けありのみ・サーバ再計算値）。
       // 失敗しても確定は成立＝警告を返し、/royalty/events から手動記帳で回復できる。
       let royaltyEventRecorded = false;
+      let royaltyEventCount = 0;
       let royaltyEventWarning: string | undefined;
       if (royaltyEvents?.enabled && input.templateType === "royalty_statement") {
-        const eventInput = royaltyEventInputFromStatement(input.formData);
-        if (eventInput) {
+        // 単票は 1 件、束ね（複数契約）は条件明細ごとに 1 件ずつ記帳する。
+        for (const eventInput of royaltyEventInputsFromStatement(input.formData)) {
           try {
             const fee = calculateFee(eventInput.terms, eventInput.adjustments, eventInput.taxRatePct);
             await royaltyEvents.repository.appendRoyaltyCalcEvent({
@@ -114,9 +115,10 @@ export function createDocumentFinalizationRouter(
               agConsumedThisTime: fee.ag_offset_this_time
             });
             royaltyEventRecorded = true;
+            royaltyEventCount += 1;
           } catch (error) {
             royaltyEventWarning =
-              `消化イベントの自動記帳に失敗しました（実績入力から手動記帳できます）: ` +
+              `消化イベントの自動記帳に失敗しました（条件明細 #${eventInput.conditionLineId}・実績入力から手動記帳できます）: ` +
               String((error as Error)?.message ?? error).slice(0, 200);
           }
         }
@@ -133,6 +135,7 @@ export function createDocumentFinalizationRouter(
         },
         ...(conditionSyncResult ? { conditionSync: conditionSyncResult } : {}),
         ...(ledgerLinked ? { conditionLedger: ledgerLinked } : {}),
+        ...(royaltyEventCount ? { royaltyEvents: { recorded: royaltyEventCount } } : {}),
         ...(conditionSyncWarning ? { conditionSyncWarning } : {}),
         ...(royaltyEventWarning ? { royaltyEventWarning } : {})
       });

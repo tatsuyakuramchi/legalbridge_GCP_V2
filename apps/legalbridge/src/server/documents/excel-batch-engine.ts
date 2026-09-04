@@ -1,6 +1,9 @@
 // Excel 一括出力の集計（純関数・Phase 10-5）。V1（services/worker/server.ts の
 // excel-batches/pending）の deriveExcelGroupKey / グルーピングを移植。検収書・利用許諾料計算書を
-// 「種別 × 担当者(検収者) × 支払期日」で束ねる。金額計算は含まない（帳票化は client 側の export-util）。
+// 「種別 × 担当者(検収者) × 支払期日」で束ねる。帳票化は client 側の export-util。
+// 2026-09-04: 経理提出用の税区分内訳（課税10%／8%／非課税／消費税／税込）を文書ごと・グループ合計で付ける。
+
+import { sumTaxBreakdown, taxBreakdownFor, type TaxBreakdown } from "../../document-tax-breakdown.js";
 
 export interface RawExcelDoc {
   documentNumber: string;
@@ -9,7 +12,7 @@ export interface RawExcelDoc {
   createdAt?: string;
 }
 
-export interface ExcelBatchItem {
+export interface ExcelBatchItem extends TaxBreakdown {
   documentNumber: string;
   inspectionDate: string;
   title: string;
@@ -25,6 +28,8 @@ export interface ExcelBatchGroup {
   count: number;
   documentNumbers: string[];
   items: ExcelBatchItem[];
+  // 経理提出用の税区分内訳（グループ合計・2026-09-04）。
+  totals: TaxBreakdown;
 }
 
 function str(value: unknown): string {
@@ -57,7 +62,7 @@ export function groupExcelBatches(docs: RawExcelDoc[]): ExcelBatchGroup[] {
     const key = `${category}||${inspectorEmail}||${paymentDate}`;
     let g = groups.get(key);
     if (!g) {
-      g = { key, category, inspectorEmail, inspectorName, paymentDate, count: 0, documentNumbers: [], items: [] };
+      g = { key, category, inspectorEmail, inspectorName, paymentDate, count: 0, documentNumbers: [], items: [], totals: sumTaxBreakdown([]) };
       groups.set(key, g);
     }
     g.count += 1;
@@ -66,9 +71,11 @@ export function groupExcelBatches(docs: RawExcelDoc[]): ExcelBatchGroup[] {
       documentNumber: row.documentNumber,
       inspectionDate: firstNonEmpty(fd, ["inspectionCompletedAt", "documentDate", "deliveredAt"]),
       title: firstNonEmpty(fd, ["description", "PROJECT_TITLE", "CONTRACT_TITLE", "contract_title", "件名"]),
-      counterparty: firstNonEmpty(fd, ["counterparty", "VENDOR_NAME", "取引先"])
+      counterparty: firstNonEmpty(fd, ["counterparty", "VENDOR_NAME", "取引先"]),
+      ...taxBreakdownFor(row.templateType, fd)
     });
   }
+  for (const g of groups.values()) g.totals = sumTaxBreakdown(g.items);
   // 支払期日の昇順（空は末尾）→ 担当者名で安定化。
   return Array.from(groups.values()).sort((a, b) => {
     const ad = a.paymentDate || "9999-12-31";

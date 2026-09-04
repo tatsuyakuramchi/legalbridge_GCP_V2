@@ -69,6 +69,10 @@ const ROYALTY_COMPUTED_FIELDS = new Set([
 export function isRoyaltyStructuredActive(formData: DocumentFormData): boolean {
   const receipts = formData.rs_receipts;
   if (String(formData.statementMode) === "multi" && Array.isArray(receipts) && receipts.length > 0) return true;
+  // 束ね（複数契約）: 基準額の入った契約が1件でもあれば計算欄は自動（手入力欄を隠す）。
+  const bundle = formData.rs_bundle;
+  if (String(formData.statementMode) === "bundle" && Array.isArray(bundle)
+    && bundle.some((row) => Number(String((row as Record<string, unknown>)?.msrp ?? "").replace(/,/g, "")) > 0)) return true;
   const msrp = Number(String(formData.rsMsrp ?? "").replace(/,/g, ""));
   return Boolean(formData.rsCalcType) && Number.isFinite(msrp) && msrp > 0;
 }

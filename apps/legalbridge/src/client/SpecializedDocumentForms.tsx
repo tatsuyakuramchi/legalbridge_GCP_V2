@@ -312,10 +312,14 @@ function RoyaltyStatementEditor({ formData, onChange }: {
   formData: DocumentFormData;
   onChange: (name: string, value: unknown) => void;
 }) {
-  const mode = String(formData.statementMode ?? "") === "multi" ? "multi" : "single";
+  const modeRaw = String(formData.statementMode ?? "");
+  const mode = modeRaw === "multi" ? "multi" : modeRaw === "bundle" ? "bundle" : "single";
   const basis = String(formData.rsCalcType ?? "") === "period" ? "period" : "event";
   const basisKind = String(formData.rsBasisKind ?? "") === "sublicense" ? "sublicense" : "sales";
   const receipts = rows(formData.rs_receipts);
+  const bundle = rows(formData.rs_bundle);
+  const replaceBundle = (index: number, patch: Row) =>
+    onChange("rs_bundle", bundle.map((row, i) => i === index ? { ...row, ...patch } : row));
   const numField = (name: string, label: string, helpText?: string) =>
     <label key={name}><span>{label}</span>
       <input type="number" value={String(formData[name] ?? "")}
@@ -339,8 +343,22 @@ function RoyaltyStatementEditor({ formData, onChange }: {
         onClick={() => onChange("statementMode", "single")}>単票（1件計算）</button>
       <button type="button" className={`matter-chip ${mode === "multi" ? "active" : ""}`}
         onClick={() => onChange("statementMode", "multi")}>多明細（受領→支払）</button>
-      <small>単票＝製造/売上ベースの1件計算。多明細＝サブライセンス受領額を基に支払を明細ごとに計算</small>
+      <button type="button" className={`matter-chip ${mode === "bundle" ? "active" : ""}`}
+        onClick={() => onChange("statementMode", "bundle")}>束ね（複数契約を1枚）</button>
+      <small>単票＝製造/売上ベースの1件計算。多明細＝サブライセンス受領額を基に支払を明細ごとに計算。束ね＝複数の条件明細（契約）を契約ごとに計算して1枚にまとめる</small>
     </div>
+
+    {mode === "bundle" && <>
+      <div className="repeater-title">
+        <div><h3>束ねる契約（条件明細）</h3><small>{bundle.length}件・契約ごとに単票と同じ計算（グロス→MG→AG充当）をして合計します</small></div>
+        <button type="button" onClick={() => onChange("rs_bundle",
+          [...bundle, { conditionLineId: "", contractTitle: "", contractNumber: "", conditionName: "", calcType: "period", basisKind: "sales" }])}>＋ 契約を追加</button>
+      </div>
+      <p className="hint-note">「後続文書 → 利用許諾料計算書」で複数の条件明細にチェックして開くと、条件明細ID・料率・MG/AG・AG消化済み累計が入った状態で始まります。確定すると条件明細ごとに消化イベントが自動記帳されます。</p>
+      {bundle.map((row, index) => <BundleEntryCard key={index} row={row} index={index}
+        onPatch={(patch) => replaceBundle(index, patch)}
+        onRemove={() => onChange("rs_bundle", bundle.filter((_, i) => i !== index))} />)}
+    </>}
 
     {mode === "single" && <>
       <ConditionEconomicsFetch formData={formData} onChange={onChange} />
@@ -431,6 +449,75 @@ function RoyaltyStatementEditor({ formData, onChange }: {
         {numField("rsInRatePct", "イン側料率（%）", "円 base 合計 × この料率 = 支払額（行ごとに ceil）")}
       </div>
     </>}
+  </div>;
+}
+
+// ── 束ね（複数契約）の 1 契約分の入力カード ─────────────────────────────
+// 条件明細IDから料率・MG/AG・AG消化済み累計を取得し、実績（基準額・数量）を入れる。
+// 計算は共有エンジン（buildBundleStatementPatch）＝右レール・PDF と同じ。
+function BundleEntryCard({ row, index, onPatch, onRemove }: {
+  row: Row; index: number; onPatch: (patch: Row) => void; onRemove: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState("");
+  const calcType = String(row.calcType) === "event" ? "event" : "period";
+  const basisKind = String(row.basisKind) === "sublicense" ? "sublicense" : "sales";
+  const numInput = (key: string, label: string, help?: string) =>
+    <label key={key}><span>{label}</span>
+      <input type="number" value={String(row[key] ?? "")}
+        onChange={(e) => onPatch({ [key]: e.target.value === "" ? "" : Number(e.target.value) })} />
+      {help && <small>{help}</small>}
+    </label>;
+  async function fetchEconomics() {
+    const id = Number(row.conditionLineId);
+    if (!id) return;
+    setBusy(true); setNote("");
+    try {
+      const response = await fetch(`/api/v2/royalty/condition-economics/${id}`);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) { setNote(`✗ ${data.error ?? "取得に失敗しました"}`); return; }
+      const e = data.economics;
+      onPatch({
+        conditionLineId: e.representativeLineId ?? id, conditionName: String(row.conditionName ?? "") || String(e.conditionName ?? ""),
+        ratePct: e.ratePct, mgAmount: e.mgAmount, agAmount: e.agAmount, agConsumedBefore: e.agConsumed
+      });
+      setNote(`✓ ${e.conditionName ?? "条件"}: 料率${e.ratePct}%・MG¥${Number(e.mgAmount || 0).toLocaleString("ja-JP")}・AG消化済み¥${Number(e.agConsumed || 0).toLocaleString("ja-JP")} を反映しました`);
+    } catch { setNote("✗ 通信に失敗しました"); } finally { setBusy(false); }
+  }
+  return <div className="bundle-entry">
+    <div className="mode-inline">
+      <span className="mode-label">契約 {index + 1}</span>
+      <input type="number" style={{ width: "110px" }} placeholder="条件明細ID" value={String(row.conditionLineId ?? "")}
+        onChange={(e) => onPatch({ conditionLineId: e.target.value === "" ? "" : Number(e.target.value) })} />
+      <button type="button" className="matter-chip" disabled={busy || !Number(row.conditionLineId)} onClick={() => void fetchEconomics()}>{busy ? "取得中…" : "条件から取得"}</button>
+      <button type="button" className={`matter-chip ${calcType === "period" ? "active" : ""}`} onClick={() => onPatch({ calcType: "period" })}>期間（時限式）</button>
+      <button type="button" className={`matter-chip ${calcType === "event" ? "active" : ""}`} onClick={() => onPatch({ calcType: "event" })}>イベント（製造時等）</button>
+      <button type="button" className="link-button" onClick={onRemove}>この契約を外す</button>
+      {note && <small className={note.startsWith("✓") ? "settings-effective" : "fx-warn"}>{note}</small>}
+    </div>
+    <div className="field-grid">
+      <label><span>契約名・作品</span><input value={String(row.contractTitle ?? "")} onChange={(e) => onPatch({ contractTitle: e.target.value })} placeholder="例: 「エピローグ」原作許諾" /></label>
+      <label><span>契約番号</span><input value={String(row.contractNumber ?? "")} onChange={(e) => onPatch({ contractNumber: e.target.value })} placeholder="例: CT-2026-00042" /></label>
+      <label><span>条件名（明細の見出し）</span><input value={String(row.conditionName ?? "")} onChange={(e) => onPatch({ conditionName: e.target.value })} /></label>
+      {calcType === "event" ? <>
+        {numInput("msrp", "基準価格・上代（税抜）")}
+        {numInput("quantity", "製造数量（総数）")}
+        {numInput("sampleQuantity", "販促サンプル数", "計算対象外として控除")}
+      </> : <>
+        <label><span>基準額の種類</span>
+          <select value={basisKind} onChange={(e) => onPatch({ basisKind: e.target.value })}>
+            <option value="sales">報告売上高（売上報告ベース）</option>
+            <option value="sublicense">被許諾者受領額（サブライセンス）</option>
+          </select></label>
+        <label><span>算定期間 From</span><input type="date" value={String(row.periodFrom ?? "")} onChange={(e) => onPatch({ periodFrom: e.target.value })} /></label>
+        <label><span>算定期間 To</span><input type="date" value={String(row.periodTo ?? "")} onChange={(e) => onPatch({ periodTo: e.target.value })} /></label>
+        {numInput("msrp", basisKind === "sublicense" ? "被許諾者受領額（税抜）" : "報告売上高（税抜）")}
+      </>}
+      {numInput("ratePct", "料率（%）")}
+      {numInput("mgAmount", "MG・最低保証（円）", "グロスが下回ったら MG を採用（floor）")}
+      {numInput("agAmount", "AG・前払保証金（円）", "累積消化で支払から充当")}
+      {numInput("agConsumedBefore", "AG消化済み累計（円）")}
+    </div>
   </div>;
 }
 

@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildMultiStatementPatch, buildSingleStatementPatch,
-  receiptAmountLabel, receiptConversionLabel, receiptJpyBase, toNumber
+  buildBundleStatementPatch, receiptAmountLabel, receiptConversionLabel, receiptJpyBase, statementMoney,
+  structuredStatementPatch, toNumber
 } from "./royalty-statement.js";
 
 // 単票（イベント式・製造）: V1 onPreview パッチと同じフィールド・同じ 0=空文字規約。
@@ -99,4 +100,65 @@ test("toNumber はカンマ・円記号・空白を除いて数値化する", ()
   assert.equal(toNumber("¥6,000"), 6000);
   assert.equal(toNumber(""), 0);
   assert.equal(toNumber("abc"), 0);
+});
+
+// ── 束ね（複数契約を1枚）─────────────────────────────────────────────
+
+test("束ね: 契約ごとに単票と同じ計算（MG floor・AG充当）をして契約ごとの lineGroup と合計にする", () => {
+  const { entries, patch, totalPaymentJpy, tax, totalIncTax } = buildBundleStatementPatch({
+    taxRatePct: 10,
+    entries: [
+      { conditionLineId: 501, contractTitle: "原作許諾", contractNumber: "CT-2026-00042", conditionName: "原作ロイヤリティ",
+        calcType: "period", basisKind: "sales", msrp: 1000000, quantity: 0, sampleQuantity: 0, ratePct: 3, mgAmount: 50000, agAmount: 0, agConsumedBefore: 0,
+        periodFrom: "2026-01-01", periodTo: "2026-06-30" },
+      { conditionLineId: 620, contractTitle: "イラスト許諾", contractNumber: "CT-2026-00043", conditionName: "イラスト加算",
+        calcType: "event", basisKind: "sales", msrp: 6000, quantity: 3000, sampleQuantity: 100, ratePct: 5, mgAmount: 0, agAmount: 300000, agConsumedBefore: 180000,
+        periodFrom: "", periodTo: "" },
+      // 基準額が無い行は計算対象外
+      { conditionLineId: null, contractTitle: "未入力", contractNumber: "", conditionName: "", calcType: "period", basisKind: "sales",
+        msrp: 0, quantity: 0, sampleQuantity: 0, ratePct: 5, mgAmount: 0, agAmount: 0, agConsumedBefore: 0, periodFrom: "", periodTo: "" }
+    ]
+  });
+  assert.equal(entries.length, 2);
+  // 契約1: 30,000 < MG 50,000 → 50,000 ／ 契約2: 2900×6000×5% = 870,000 − AG残120,000 = 750,000
+  assert.equal(entries[0].fee.actual_ex_tax, 50000);
+  assert.equal(entries[1].fee.actual_ex_tax, 750000);
+  assert.equal(totalPaymentJpy, 800000);
+  assert.equal(tax, 80000);
+  assert.equal(totalIncTax, 880000);
+  // PDF は多明細レイアウト（lineGroups）で描く
+  assert.equal(patch.statementMode, "multi");
+  const groups = patch.lineGroups as Array<Record<string, unknown>>;
+  assert.equal(groups.length, 2);
+  assert.equal(groups[0].contractNumber, "CT-2026-00042");
+  assert.equal(groups[0].methodLabel, "売上報告ベース");
+  const line0 = (groups[0].lines as Array<Record<string, unknown>>)[0];
+  assert.equal(line0.productName, "原作ロイヤリティ");
+  assert.equal(line0.salesJpyStr, "1,000,000");
+  assert.equal(line0.paymentJpyStr, "50,000");
+  assert.match(String(line0.basisNote), /算定期間 2026-01-01〜2026-06-30/);
+  assert.match(String(line0.basisNote), /MG適用 \+20,000/);
+  const line1 = (groups[1].lines as Array<Record<string, unknown>>)[0];
+  assert.equal(line1.salesJpyStr, "17,400,000");
+  assert.match(String(line1.basisNote), /AG充当 −120,000/);
+  assert.equal(patch.linesTotalPaymentStr, "800,000");
+  assert.equal(patch.linesTotalIncTaxStr, "880,000");
+});
+
+test("structuredStatementPatch / statementMoney: 単票・多明細・束ね・旧下書きを同じ判定で読む", () => {
+  const bundle = structuredStatementPatch({
+    statementMode: "bundle", taxRate: "10",
+    rs_bundle: [{ conditionLineId: 1, calcType: "period", basisKind: "sales", msrp: "1,000,000", ratePct: 3 }]
+  });
+  assert.equal(bundle?.linesTotalPaymentStr, "30,000");
+  assert.deepEqual(statementMoney({
+    statementMode: "bundle", taxRate: "10",
+    rs_bundle: [{ conditionLineId: 1, calcType: "period", basisKind: "sales", msrp: 1000000, ratePct: 3 }]
+  }), { paymentExTax: 30000, tax: 3000, totalIncTax: 33000 });
+  assert.deepEqual(statementMoney({ statementMode: "single", rsCalcType: "period", rsBasisKind: "sales", rsMsrp: 1000000, rsRatePct: 3, taxRate: 10 }),
+    { paymentExTax: 30000, tax: 3000, totalIncTax: 33000 });
+  // 旧下書き（rs* なし）は印字値から読む
+  assert.deepEqual(statementMoney({ actualRoyaltyStr: "999,999", taxAmount: "99,999", totalPaymentStr: "1,099,998" }),
+    { paymentExTax: 999999, tax: 99999, totalIncTax: 1099998 });
+  assert.equal(structuredStatementPatch({ statementMode: "bundle", rs_bundle: [] }), null);
 });

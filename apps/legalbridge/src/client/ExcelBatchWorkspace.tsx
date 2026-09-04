@@ -7,7 +7,9 @@ import { exportExcel, type ExportColumn } from "./export-util";
 // Excel 一括出力（Phase 10-5）。検収書・利用許諾料計算書を「種別×担当者×支払期日」で束ねて表示し、
 // グループ単位で Excel（client 生成・依存ゼロ）を出力。任意で「発行済み」にして保留から外す。
 
-type BatchItem = { documentNumber: string; inspectionDate: string; title: string; counterparty: string };
+// 税区分内訳（経理提出用・2026-09-04）。サーバ（document-tax-breakdown）が文書ごとに算出。
+type TaxCols = { taxable10: number; reduced8: number; exempt: number; legacyIncTax: number; tax: number; totalIncTax: number };
+type BatchItem = TaxCols & { documentNumber: string; inspectionDate: string; title: string; counterparty: string };
 type BatchGroup = {
   key: string;
   category: "inspection_certificate" | "royalty_statement";
@@ -17,6 +19,7 @@ type BatchGroup = {
   count: number;
   documentNumbers: string[];
   items: BatchItem[];
+  totals?: TaxCols;
 };
 
 const CATEGORY_LABEL: Record<BatchGroup["category"], string> = {
@@ -24,12 +27,28 @@ const CATEGORY_LABEL: Record<BatchGroup["category"], string> = {
   royalty_statement: "利用許諾料計算書"
 };
 
+const money = (v: number | undefined) => Math.round(v || 0);
+const yen = (v: number | undefined) => `¥${money(v).toLocaleString("ja-JP")}`;
+
+// 出力列。合計行は documentNumber="合計" で末尾に付ける（CSV/Excel 共通）。
 const itemColumns: ExportColumn<BatchItem>[] = [
   { header: "文書番号", value: (r) => r.documentNumber },
   { header: "検収日/発行日", value: (r) => r.inspectionDate },
   { header: "件名", value: (r) => r.title },
-  { header: "取引先", value: (r) => r.counterparty }
+  { header: "取引先", value: (r) => r.counterparty },
+  { header: "課税対象（10%）税抜", value: (r) => money(r.taxable10) },
+  { header: "課税対象（8%）税抜", value: (r) => money(r.reduced8) },
+  { header: "非課税・不課税", value: (r) => money(r.exempt) },
+  { header: "経費（税込・区分未設定）", value: (r) => money(r.legacyIncTax) },
+  { header: "消費税", value: (r) => money(r.tax) },
+  { header: "税込合計", value: (r) => money(r.totalIncTax) }
 ];
+
+function withTotals(g: BatchGroup): BatchItem[] {
+  const t = g.totals;
+  if (!t) return g.items;
+  return [...g.items, { documentNumber: "合計", inspectionDate: "", title: `${g.count}件`, counterparty: "", ...t }];
+}
 
 export function ExcelBatchWorkspace({ canMark = false }: { canMark?: boolean }) {
   const [groups, setGroups] = useState<BatchGroup[]>([]);
@@ -51,7 +70,7 @@ export function ExcelBatchWorkspace({ canMark = false }: { canMark?: boolean }) 
   function downloadGroup(g: BatchGroup) {
     const date = g.paymentDate || "no-date";
     const name = `${CATEGORY_LABEL[g.category]}_${g.inspectorName}_${date}`.replace(/[^\w.\-一-龥ぁ-んァ-ン]/g, "_");
-    exportExcel(name, CATEGORY_LABEL[g.category], itemColumns, g.items);
+    exportExcel(name, CATEGORY_LABEL[g.category], itemColumns, withTotals(g));
   }
 
   async function markGroup(g: BatchGroup) {
@@ -87,6 +106,11 @@ export function ExcelBatchWorkspace({ canMark = false }: { canMark?: boolean }) 
             <span className="registry-state neutral">{CATEGORY_LABEL[g.category]}</span>
             <strong> {g.inspectorName}</strong>
             <span className="muted"> ｜支払期日 {g.paymentDate || "未設定"} ｜{g.count}件</span>
+            {g.totals && <span className="muted"> ｜課税10% {yen(g.totals.taxable10)}
+              {g.totals.reduced8 ? ` ｜課税8% ${yen(g.totals.reduced8)}` : ""}
+              {g.totals.exempt ? ` ｜非課税 ${yen(g.totals.exempt)}` : ""}
+              {g.totals.legacyIncTax ? ` ｜経費（区分未設定）${yen(g.totals.legacyIncTax)}` : ""}
+              ｜消費税 {yen(g.totals.tax)} ｜税込 <b>{yen(g.totals.totalIncTax)}</b></span>}
           </div>
           <div className="batch-group-actions">
             <button className="primary" onClick={() => downloadGroup(g)}>Excel出力（{g.count}件）</button>
@@ -96,10 +120,14 @@ export function ExcelBatchWorkspace({ canMark = false }: { canMark?: boolean }) 
           </div>
         </div>
         <div className="condition-table-wrap"><table className="condition-table">
-          <thead><tr><th>文書番号</th><th>検収日/発行日</th><th>件名</th><th>取引先</th></tr></thead>
+          <thead><tr><th>文書番号</th><th>検収日/発行日</th><th>件名</th><th>取引先</th>
+            <th className="right">課税10%</th><th className="right">課税8%</th><th className="right">非課税</th><th className="right">消費税</th><th className="right">税込</th></tr></thead>
           <tbody>{g.items.slice(0, 50).map((it) => <tr key={it.documentNumber}>
             <td><b>{it.documentNumber}</b></td><td>{it.inspectionDate || "—"}</td>
             <td>{it.title || "—"}</td><td>{it.counterparty || "—"}</td>
+            <td className="right">{yen(it.taxable10)}</td><td className="right">{it.reduced8 ? yen(it.reduced8) : "—"}</td>
+            <td className="right">{it.exempt ? yen(it.exempt) : "—"}{it.legacyIncTax ? <small title="税区分の無い旧データの経費（税込）">＋経費 {yen(it.legacyIncTax)}</small> : null}</td>
+            <td className="right">{yen(it.tax)}</td><td className="right"><b>{yen(it.totalIncTax)}</b></td>
           </tr>)}</tbody>
         </table>{g.items.length > 50 && <p className="import-preview-note">ほか {g.items.length - 50}件…</p>}</div>
       </div>)}

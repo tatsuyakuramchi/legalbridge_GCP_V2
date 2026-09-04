@@ -244,3 +244,220 @@ export function statementPaymentInfo(input: {
 }
 
 export const formatStatementYen = fmtYen;
+
+// ── 束ね（statementMode: bundle・2026-09-04）────────────────────────────
+// 複数の契約（条件明細）を 1 枚の計算書に束ねる。条件明細ごとに単票と同じ計算
+// （グロス → MG floor → AG 充当）を行い、契約ごとの lineGroup にして印字する。
+// テンプレートの描画は多明細（lineGroups）と同じ形にするため、PDF 文脈では
+// statementMode を "multi" として渡す（フォーム側の保存値は "bundle" のまま）。
+
+export type BundleEntry = {
+  conditionLineId: number | null;   // 条件明細（記帳先）。無ければ手動記帳
+  contractTitle: string;
+  contractNumber: string;
+  conditionName: string;
+  calcType: "period" | "event";     // period=時限式（売上／受領額）・event=製造時等（数量×基準価格）
+  basisKind: "sales" | "sublicense";
+  msrp: number;                     // event: 基準価格（税抜）／period: 報告売上高・受領額
+  quantity: number;
+  sampleQuantity: number;
+  ratePct: number;
+  mgAmount: number;
+  agAmount: number;
+  agConsumedBefore: number;
+  periodFrom: string;
+  periodTo: string;
+};
+
+export function bundleEntriesFrom(formData: Record<string, unknown>): BundleEntry[] {
+  const rows = Array.isArray(formData.rs_bundle) ? formData.rs_bundle as Array<Record<string, unknown>> : [];
+  return rows.map((row) => ({
+    conditionLineId: Math.trunc(toNumber(row.conditionLineId)) || null,
+    contractTitle: String(row.contractTitle ?? ""),
+    contractNumber: String(row.contractNumber ?? ""),
+    conditionName: String(row.conditionName ?? ""),
+    calcType: String(row.calcType) === "event" ? "event" : "period",
+    basisKind: String(row.basisKind) === "sublicense" ? "sublicense" : "sales",
+    msrp: toNumber(row.msrp),
+    quantity: toNumber(row.quantity),
+    sampleQuantity: toNumber(row.sampleQuantity),
+    ratePct: toNumber(row.ratePct),
+    mgAmount: toNumber(row.mgAmount),
+    agAmount: toNumber(row.agAmount),
+    agConsumedBefore: toNumber(row.agConsumedBefore),
+    periodFrom: String(row.periodFrom ?? ""),
+    periodTo: String(row.periodTo ?? "")
+  }));
+}
+
+/** 束ねの1件が計算できる状態か（基準額が入っている）。 */
+export function bundleEntryActive(entry: BundleEntry): boolean {
+  return entry.msrp > 0;
+}
+
+export type BundleStatementResult = {
+  entries: Array<{ entry: BundleEntry; fee: FeeResult; salesJpy: number }>;
+  totalSalesJpy: number;
+  totalPaymentJpy: number;
+  tax: number;
+  totalIncTax: number;
+  patch: StatementPatch;
+};
+
+export function buildBundleStatementPatch(input: { entries: BundleEntry[]; taxRatePct?: number }): BundleStatementResult {
+  const taxRate = Number(input.taxRatePct) || 10;
+  const entries = input.entries.filter(bundleEntryActive).map((entry) => {
+    const { fee } = buildSingleStatementPatch({
+      calcType: entry.calcType === "event" ? "manufacturing" : entry.basisKind,
+      msrp: entry.msrp, quantity: entry.quantity, sampleQuantity: entry.sampleQuantity,
+      ratePct: entry.ratePct, mgAmount: entry.mgAmount, agAmount: entry.agAmount,
+      agConsumedBefore: entry.agConsumedBefore, taxRatePct: taxRate
+    });
+    const salesJpy = entry.calcType === "event"
+      ? Math.max(0, entry.quantity - entry.sampleQuantity) * entry.msrp
+      : entry.msrp;
+    return { entry, fee, salesJpy };
+  });
+  const lineGroups = entries.map(({ entry, fee, salesJpy }) => {
+    const notes: string[] = [];
+    if (entry.calcType === "period" && (entry.periodFrom || entry.periodTo)) {
+      notes.push(`算定期間 ${entry.periodFrom || "—"}〜${entry.periodTo || "—"}`);
+    }
+    if (entry.calcType === "event") notes.push(`${Math.max(0, entry.quantity - entry.sampleQuantity)}個 × 基準価格`);
+    if (fee.mg_floor_applied) notes.push(`MG適用 +${fmtYen(fee.mg_topup_this_time)}`);
+    if (fee.ag_offset_this_time > 0) notes.push(`AG充当 −${fmtYen(fee.ag_offset_this_time)}`);
+    return {
+      contractTitle: entry.contractTitle,
+      contractNumber: entry.contractNumber,
+      methodLabel: entry.calcType === "event" ? "製造数量ベース"
+        : entry.basisKind === "sublicense" ? "サブライセンス受領ベース" : "売上報告ベース",
+      conditionLineId: entry.conditionLineId ?? "",
+      lines: [{
+        productName: entry.conditionName || entry.contractTitle || entry.contractNumber,
+        salesJpy,
+        salesJpyStr: fmtYen(salesJpy),
+        ratePctResolved: String(entry.ratePct),
+        paymentJpy: fee.actual_ex_tax,
+        paymentJpyStr: fmtYen(fee.actual_ex_tax),
+        basisNote: notes.join("・")
+      }],
+      subtotalSales: salesJpy,
+      subtotalSalesStr: fmtYen(salesJpy),
+      subtotalPayment: fee.actual_ex_tax,
+      subtotalPaymentStr: fmtYen(fee.actual_ex_tax)
+    };
+  });
+  const totalSalesJpy = entries.reduce((sum, e) => sum + e.salesJpy, 0);
+  const totalPaymentJpy = entries.reduce((sum, e) => sum + e.fee.actual_ex_tax, 0);
+  const tax = Math.ceil((totalPaymentJpy * taxRate) / 100);
+  const patch: StatementPatch = {
+    // PDF は多明細（lineGroups）と同じレイアウトで描く。
+    statementMode: "multi",
+    lineGroups,
+    taxRate: String(taxRate),
+    linesTotalSalesJpy: totalSalesJpy,
+    linesTotalSalesStr: fmtYen(totalSalesJpy),
+    linesTotalPaymentJpy: totalPaymentJpy,
+    linesTotalPaymentStr: fmtYen(totalPaymentJpy),
+    linesTaxStr: fmtYen(tax),
+    linesTotalIncTaxStr: fmtYen(totalPaymentJpy + tax)
+  };
+  return { entries, totalSalesJpy, totalPaymentJpy, tax, totalIncTax: totalPaymentJpy + tax, patch };
+}
+
+// ── 構造化入力（rs*）→ テンプレート変数（単票・多明細・束ね共通）─────────────
+// サーバの PDF 文脈（template-context-adapters）と Excel 一括の金額列が同じ判定を使う。
+
+type Data = Record<string, unknown>;
+const records = (value: unknown): Data[] =>
+  Array.isArray(value) ? value.filter((x): x is Data => !!x && typeof x === "object" && !Array.isArray(x)) : [];
+const pick = (source: Data, ...keys: string[]): unknown => {
+  for (const key of keys) {
+    const value = source[key];
+    if (value !== undefined && value !== null && String(value).trim() !== "") return value;
+  }
+  return "";
+};
+const num = (value: unknown, fallback = 0): number => {
+  const parsed = Number.parseFloat(String(value ?? "").replace(/[^0-9.-]/g, ""));
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+export function statementModeOf(source: Data): "single" | "multi" | "bundle" {
+  const mode = String(source.statementMode ?? "");
+  return mode === "multi" || mode === "bundle" ? mode : "single";
+}
+
+/**
+ * rs* の構造化入力が入っているときだけ、共有エンジンでテンプレート変数を組み立てる。
+ * 旧下書き（手入力の *Str）は null を返し、そのまま通す。
+ */
+export function structuredStatementPatch(source: Data): StatementPatch | null {
+  const mode = statementModeOf(source);
+  const taxRatePct = num(pick(source, "taxRate", "tax_rate"), 10);
+  if (mode === "bundle") {
+    const entries = bundleEntriesFrom(source).filter(bundleEntryActive);
+    return entries.length ? buildBundleStatementPatch({ entries, taxRatePct }).patch : null;
+  }
+  const receipts = records(source.rs_receipts)
+    .filter((row) => String(pick(row, "sublicensee", "productName")).trim() !== "" || num(row.amount) > 0);
+  if (mode === "multi" && receipts.length) {
+    const ratePct = num(pick(source, "rsInRatePct", "rsRatePct", "royaltyRatePct"));
+    return buildMultiStatementPatch({
+      receipts: receipts.map((row) => ({
+        sublicensee: String(pick(row, "sublicensee", "productName")),
+        receivedOn: String(row.receivedOn ?? ""),
+        currency: String(row.currency ?? "JPY"),
+        amount: num(row.amount),
+        fxMode: String(row.fxMode) === "post" ? "post" : "pre",
+        fxRate: num(row.fxRate) || undefined,
+        productName: row.productName == null ? undefined : String(row.productName)
+      })),
+      ratePct,
+      taxRatePct,
+      contractTitle: String(pick(source, "contractTitle", "CONTRACT_TITLE", "originalWork")),
+      contractNumber: String(pick(source, "linked_contract_number", "CONTRACT_NO")),
+      methodLabel: String(pick(source, "methodLabel", "royaltyCategory")) || "サブライセンス受領ベース"
+    }).patch;
+  }
+  const calcBasis = String(source.rsCalcType ?? "");
+  const msrp = num(source.rsMsrp);
+  if (mode === "single" && calcBasis && msrp > 0) {
+    const calcType = calcBasis === "event"
+      ? "manufacturing"
+      : String(source.rsBasisKind) === "sublicense" ? "sublicense" : "sales";
+    const patch = buildSingleStatementPatch({
+      calcType,
+      msrp,
+      quantity: num(source.rsQuantity),
+      sampleQuantity: num(source.rsSampleQuantity),
+      ratePct: num(pick(source, "rsRatePct", "royaltyRatePct")),
+      mgAmount: num(source.rsMgAmount),
+      agAmount: num(source.rsAgAmount),
+      agConsumedBefore: num(source.rsAgConsumedBefore),
+      taxRatePct
+    }).patch;
+    // 時限式は算定期間を備考の先頭に載せる（テンプレートに専用欄が無いため）。
+    const from = String(source.rsPeriodFrom ?? "").trim();
+    const to = String(source.rsPeriodTo ?? "").trim();
+    if (calcBasis === "period" && (from || to)) {
+      const periodNote = `算定期間: ${from || "—"} 〜 ${to || "—"}`;
+      const notes = String(source.notes ?? "").trim();
+      patch.notes = notes.startsWith("算定期間:") ? notes : [periodNote, notes].filter(Boolean).join("\n");
+    }
+    return patch;
+  }
+  return null;
+}
+
+/** 計算書の支払額（税抜）・消費税・税込（Excel 一括の金額列用）。旧下書きは印字値を読む。 */
+export function statementMoney(source: Data): { paymentExTax: number; tax: number; totalIncTax: number } {
+  const patch = structuredStatementPatch(source);
+  const merged: Data = patch ? { ...source, ...patch } : source;
+  const paymentExTax = patch && statementModeOf(source) === "single"
+    ? num(merged.actualRoyalty)
+    : num(pick(merged, "linesTotalPaymentJpy", "linesTotalPaymentStr", "actualRoyalty", "actualRoyaltyStr"));
+  const tax = num(pick(merged, statementModeOf(source) === "single" ? "taxAmount" : "linesTaxStr", "taxAmount", "linesTaxStr"));
+  const totalIncTax = num(pick(merged, statementModeOf(source) === "single" ? "totalPaymentStr" : "linesTotalIncTaxStr", "totalPaymentStr", "linesTotalIncTaxStr"));
+  return { paymentExTax, tax, totalIncTax: totalIncTax || paymentExTax + tax };
+}
