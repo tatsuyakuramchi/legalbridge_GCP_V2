@@ -23,7 +23,8 @@ export type FollowUpTab = "inspection" | "statement";
 export function FollowUpDocuments({ seed, onCreateInspection, onCreateStatement, onCreateBundleStatement, onOpenConditionLine }: {
   seed: { tab?: FollowUpTab; q?: string };
   onCreateInspection: (purchaseOrder: { id: number; documentNumber: string | null }) => void;
-  onCreateStatement: (conditionLineId: number) => void;
+  // direction "out"（当社が受け取る条件）で開くと、計算書は「かんたん受領入力」から始める。
+  onCreateStatement: (conditionLineId: number, direction: "in" | "out") => void;
   // 複数の条件明細（契約）を 1 枚の計算書に束ねる（statementMode: bundle・2026-09-04）。
   onCreateBundleStatement?: (conditionLineIds: number[]) => void;
   onOpenConditionLine?: (conditionLineId: number) => void;
@@ -120,12 +121,12 @@ export function FollowUpDocuments({ seed, onCreateInspection, onCreateStatement,
               <td>{blocked ? <span className="wz-tag warn">{state}</span> : <span className="wz-tag eff">{state}</span>}</td>
               <td className="fu-actions">
                 <button type="button" className="primary small" disabled={blocked} title={blocked ? "無効・下書きの条件は計算書の下地にできません" : undefined}
-                  onClick={() => onCreateStatement(l.id)}>計算書を作る →</button>
+                  onClick={() => onCreateStatement(l.id, l.direction === "receivable" ? "out" : "in")}>計算書を作る →</button>
                 {onOpenConditionLine && <button type="button" className="link-button" onClick={() => onOpenConditionLine(l.id)}>条件明細</button>}
               </td>
             </tr>;
           })}</tbody></table></div>}
-        <p className="wz-hint">計算書フォームは選んだ条件明細をひも付けた状態で開き、料率・MG/AG・AG消化済み累計が台帳から入ります。ひも付けたまま確定すると消化イベントが自動記帳されます。加算型（同じグループ）の行はどれを選んでも代表行に正規化されます。</p>
+        <p className="wz-hint">イン（当社が支払う）の条件を選ぶと、料率・MG/AG・AG消化済み累計が台帳から入った単票の計算書が開きます。アウト（当社が受け取る）の条件を選ぶと「かんたん受領入力」から始まり、入金元にその相手先が入った状態で、支払先（イン条件）と入金額を入れるだけで計算書ができます。ひも付けたまま確定すると消化イベントが自動記帳されます。</p>
       </>}
     </div>
   </section>;

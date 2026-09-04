@@ -20,6 +20,7 @@ import { MasterDataPicker, buildPatch, findSelfStaff } from "./MasterDataPicker"
 import { WorkIntake } from "./WorkIntake";
 import { ConditionFirstFlow, type LedgerHandoff } from "./ConditionFirstFlow";
 import { FollowUpDocuments, type FollowUpTab } from "./FollowUpDocuments";
+import { RoyaltyQuickReceipt } from "./RoyaltyQuickReceipt";
 import { ledgerToFormSeed, purchaseOrderValuesForInspection } from "./condition-ledger-seed";
 import type { ConditionLedgerPayload } from "../condition-ledger";
 import {
@@ -570,14 +571,39 @@ export function App() {
 
   // 後続文書②：条件明細から利用許諾料計算書を起こす。料率・MG/AG・AG消化累計を台帳から入れ、
   // 条件明細をひも付けた状態（確定で消化イベント自動記帳）でフォームを開く。
-  async function startStatementFromCondition(conditionLineId: number) {
+  async function startStatementFromCondition(conditionLineId: number, direction: "in" | "out" = "in") {
+    const schemaResponse = await fetch(`/api/v2/document-templates/royalty_statement/form-schema`);
+    if (!schemaResponse.ok) { window.alert("利用許諾料計算書テンプレートの定義を取得できませんでした"); return; }
+    const nextSchema: DocumentFormSchema = await schemaResponse.json();
+    if (direction === "out") {
+      // アウト（当社が受け取る）条件から: 入金元をその相手先にした「かんたん受領入力」から始める。
+      // 支払先（イン条件）と入金額はフォームで選ぶ。
+      const lineResponse = await fetch(`/api/v2/condition-lines/${conditionLineId}`);
+      const detail = lineResponse.ok ? (await lineResponse.json()).detail as { vendorName?: string; conditionName?: string; workTitle?: string; currency?: string | null } : null;
+      const seed: DocumentFormData = {
+        statementMode: "multi",
+        payerCompany: detail?.vendorName ?? "",
+        royaltyCategory: "サブライセンス受領ベース",
+        ...(detail?.workTitle ? { originalWork: detail.workTitle } : {}),
+        ...(detail?.conditionName ? { productName: detail.conditionName } : {}),
+        rs_receipts: detail?.vendorName ? [{ sublicensee: detail.vendorName, currency: detail.currency ?? "JPY", fxMode: "post" }] : []
+      };
+      setFormNonce((v) => v + 1);
+      setDraftSelection(null);
+      setReissueSource(null);
+      setNewDocSeed({});
+      setNewDocIssueKey("");
+      setDuplicateValues(seed);
+      setDuplicateFrom(null);
+      setSeedNotice(`入金元「${detail?.vendorName ?? ""}」のライセンスアウト条件から計算書を始めます。ステップ1の「かんたん受領入力」で支払先（利用許諾インの条件明細）を選び、入金額を入れて「計算書の欄を埋める」を押してください`);
+      setSchema(nextSchema);
+      setView("document");
+      return;
+    }
     const economicsResponse = await fetch(`/api/v2/royalty/condition-economics/${conditionLineId}`);
     const economicsBody = await economicsResponse.json().catch(() => ({}));
     if (!economicsResponse.ok) { window.alert(economicsBody.error ?? "条件明細の経済条件を取得できませんでした"); return; }
     const economics = economicsBody.economics as { representativeLineId: number; conditionName: string | null; ratePct: number; mgAmount: number; agAmount: number; agConsumed: number };
-    const schemaResponse = await fetch(`/api/v2/document-templates/royalty_statement/form-schema`);
-    if (!schemaResponse.ok) { window.alert("利用許諾料計算書テンプレートの定義を取得できませんでした"); return; }
-    const nextSchema: DocumentFormSchema = await schemaResponse.json();
     const seed: DocumentFormData = {
       statementMode: "single",
       rsConditionLineId: economics.representativeLineId,
@@ -766,7 +792,7 @@ export function App() {
           key={`fu:${followUpSeed.nonce}`}
           seed={followUpSeed}
           onCreateInspection={(po) => void startInspectionFromPurchaseOrder(po)}
-          onCreateStatement={(lineId) => void startStatementFromCondition(lineId)}
+          onCreateStatement={(lineId, direction) => void startStatementFromCondition(lineId, direction)}
           onCreateBundleStatement={(ids) => void startStatementFromConditions(ids)}
           onOpenConditionLine={(lineId) => { setDrillConditionId(lineId); setView("conditions"); }} />}
         {view === "works" && <WorkDetail key={`${drillWorkId ?? "works"}:${worksNonce}`} initialWorkId={drillWorkId} canEdit={canEditWorks} canEditRights={canEditRightsSources} canEditMaterials={canEditMaterials}
@@ -1707,6 +1733,7 @@ function DocumentForm({
           </> : royaltySteps ? <>
             <InspectionStepCard no={1} title="契約と条件" step={royaltySteps[0]}
               active={activeRoyaltyStep === royaltySteps[0]}>
+              {!finalizedDocument && <RoyaltyQuickReceipt formData={formData} onApply={applyPickerPatch} />}
               <MasterDataPicker schema={schema} formData={formData} onApply={applyPickerPatch} />
               {Boolean(formData.linked_contract_number) &&
                 <p className="po-selected-note">契約番号 <strong>{String(formData.linked_contract_number)}</strong> を対象契約として引用済みです。</p>}
@@ -2130,7 +2157,7 @@ function buildRoyaltySteps(
 ): InspectionStep[] {
   const contractDone = Boolean(
     formData.linked_contract_number || formData.CONTRACT_NO ||
-    formData.licensor || formData.originalWork
+    formData.licensor || formData.originalWork || formData.rsConditionLineId
   );
   const multi = String(formData.statementMode) === "multi";
   const receipts = Array.isArray(formData.rs_receipts) ? (formData.rs_receipts as unknown[]).length : 0;
@@ -2138,7 +2165,7 @@ function buildRoyaltySteps(
   const structured = isRoyaltyStructuredActive(formData);
   return [
     { title: "契約と条件", done: contractDone,
-      state: contractDone ? "引用済み" : "「DBから引用」で契約・取引先を選択" },
+      state: contractDone ? "引用済み" : "「かんたん受領入力」か「DBから引用」で契約・取引先を選択" },
     { title: multi ? "受領明細" : "実績", done: structured || legacyLines,
       state: multi
         ? (receipts ? `${receipts}件` : "入金行を追加")

@@ -62,8 +62,26 @@ test("束ね: 条件明細ひも付けのある契約ごとに記帳入力を作
   assert.deepEqual(inputs[1].terms, { type: "performance", base_price: 6000, rate_pct: 5, quantity: 3000 });
   assert.equal(inputs[1].adjustments.sample_quantity, 100);
   assert.equal(inputs[1].adjustments.ag_consumed_before, 180000);
-  // 単票は従来どおり 0〜1 件、多明細は 0 件
+  // 単票は従来どおり 0〜1 件、多明細（受領行なし）は 0 件
   assert.equal(royaltyEventInputsFromStatement(EVENT_FORM).length, 1);
   assert.equal(royaltyEventInputsFromStatement({ ...EVENT_FORM, statementMode: "multi" }).length, 0);
   assert.equal(royaltyEventInputFromStatement({ ...EVENT_FORM, statementMode: "bundle" }), null);
+});
+
+test("多明細（かんたん受領入力）: 受領行の円換算 base 合計 × イン側料率をイン条件へ記帳する（MG/AG は掛けない）", async () => {
+  const { royaltyEventInputsFromStatement } = await import("./statement-event.js");
+  const inputs = royaltyEventInputsFromStatement({
+    statementMode: "multi", rsConditionLineId: 501, rsInRatePct: 5, rsMgAmount: 100000, taxRate: 10,
+    rs_receipts: [
+      { sublicensee: "Meridian Games", currency: "USD", amount: 12000, fxMode: "pre", fxRate: 148.2, receivedOn: "2026-05-10" },
+      { sublicensee: "Seoul Tabletop", currency: "JPY", amount: 890000, fxMode: "post", receivedOn: "2026-06-20" }
+    ]
+  });
+  assert.equal(inputs.length, 1);
+  assert.equal(inputs[0].conditionLineId, 501);
+  assert.deepEqual(inputs[0].terms, { type: "revenue", base_amount: 1778400 + 890000, rate_pct: 5 });
+  assert.equal(inputs[0].adjustments.mg_amount, 0);
+  assert.equal(inputs[0].period, "2026-06");
+  // ひも付け無しは記帳しない
+  assert.equal(royaltyEventInputsFromStatement({ statementMode: "multi", rsInRatePct: 5, rs_receipts: [{ sublicensee: "A", amount: 100 }] }).length, 0);
 });

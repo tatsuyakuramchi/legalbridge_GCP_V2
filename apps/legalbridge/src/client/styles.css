@@ -2548,3 +2548,7 @@ table.cf-table input, table.cf-table select { width: 100%; padding: 5px 7px; fon
 .bundle-entry { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin: 8px 0; display: grid; gap: 8px; background: var(--surface); }
 .bundle-entry .mode-inline { flex-wrap: wrap; }
 .batch-group-head .muted b { color: var(--ink-strong); }
+/* 利用許諾料計算書「かんたん受領入力」（2026-09-04） */
+.quick-receipt { border: 1px solid var(--accent-strong); border-radius: 10px; padding: 10px 12px; margin: 0 0 12px; background: var(--surface-tint); display: grid; gap: 8px; }
+.quick-receipt .mode-inline { flex-wrap: wrap; }
+.quick-receipt .field-grid { padding: 0; }

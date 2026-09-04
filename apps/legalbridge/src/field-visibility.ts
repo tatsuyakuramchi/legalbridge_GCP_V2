@@ -57,7 +57,7 @@ const ROYALTY_COMPUTED_FIELDS = new Set([
   "calcType", "statementMode", "msrpStr", "quantity", "sampleQuantity",
   "billableQuantity", "royaltyRatePct", "grossRoyaltyStr",
   "mgAmount", "mgAmountStr", "mgTopupApplied", "mgTopupThisTime", "mgTopupThisTimeStr",
-  "mgRemaining", "mgConsumedBefore", "mgConsumedThisTime", "mgConsumedAfter", "mgFullyConsumed",
+  "mgRemaining", "mgConsumedBefore", "mgConsumedThisTime", "mgConsumedAfter", "mgFullyConsumed", "mgProgressPct",
   "agAmount", "agAmountStr", "agApplied", "agConsumedBefore", "agConsumedBeforeStr",
   "agConsumedThisTime", "agConsumedThisTimeStr", "agConsumedAfter", "agConsumedAfterStr",
   "agRemaining", "agRemainingStr", "agFullyConsumed", "agProgressPct",

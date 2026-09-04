@@ -8,7 +8,7 @@
 
 import type { DocumentFormData } from "../../types.js";
 import type { Adjustments, FeeTerms } from "../../royalty/calc.js";
-import { bundleEntriesFrom, bundleEntryActive } from "../../royalty-statement.js";
+import { bundleEntriesFrom, bundleEntryActive, receiptJpyBase } from "../../royalty-statement.js";
 
 export interface StatementEventInput {
   conditionLineId: number;
@@ -56,13 +56,34 @@ export function royaltyEventInputFromStatement(formData: DocumentFormData): Stat
   return { conditionLineId, terms, adjustments, taxRatePct, period: periodOf(formData.rsPeriodTo, formData.rsPeriodFrom) };
 }
 
-/** 確定時に記帳する入力の全量。単票は 0〜1 件、束ねは条件明細ひも付けのある行ごとに 1 件。 */
+/** 確定時に記帳する入力の全量。単票は 0〜1 件、多明細（受領→支払）はイン条件へ 0〜1 件、束ねは行ごとに 1 件。 */
 export function royaltyEventInputsFromStatement(formData: DocumentFormData): StatementEventInput[] {
-  if (String(formData.statementMode ?? "") !== "bundle") {
+  const mode = String(formData.statementMode ?? "");
+  const taxRatePct = toNumber(formData.taxRate ?? formData.tax_rate) || 10;
+  if (mode === "multi") {
+    // かんたん受領入力（ライセンスアウト入金 → 許諾者支払）: 受領行の円換算 base 合計 × イン側料率を
+    // イン条件明細へ記帳する。PDF（buildMultiStatementPatch）と同じく MG/AG は掛けない。
+    const conditionLineId = Math.trunc(toNumber(formData.rsConditionLineId));
+    const receipts = Array.isArray(formData.rs_receipts) ? formData.rs_receipts as Array<Record<string, unknown>> : [];
+    const base = receipts.reduce((sum, row) => sum + receiptJpyBase({
+      sublicensee: String(row.sublicensee ?? ""), currency: String(row.currency ?? "JPY"), amount: toNumber(row.amount),
+      fxMode: String(row.fxMode) === "post" ? "post" : "pre", fxRate: toNumber(row.fxRate) || undefined
+    }), 0);
+    const ratePct = toNumber(formData.rsInRatePct) || toNumber(formData.rsRatePct);
+    if (conditionLineId <= 0 || base <= 0) return [];
+    const periods = receipts.map((row) => row.receivedOn).filter(Boolean).sort();
+    return [{
+      conditionLineId,
+      terms: { type: "revenue", base_amount: base, rate_pct: ratePct },
+      adjustments: { sample_quantity: 0, mg_amount: 0, ag_amount: 0, ag_consumed_before: 0 },
+      taxRatePct,
+      period: periodOf(periods.at(-1), formData.rsPeriodTo, formData.paymentDueDate, formData.documentDate)
+    }];
+  }
+  if (mode !== "bundle") {
     const single = royaltyEventInputFromStatement(formData);
     return single ? [single] : [];
   }
-  const taxRatePct = toNumber(formData.taxRate ?? formData.tax_rate) || 10;
   return bundleEntriesFrom(formData)
     .filter((entry) => bundleEntryActive(entry) && entry.conditionLineId != null && entry.conditionLineId > 0)
     .map((entry) => ({
