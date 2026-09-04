@@ -22,7 +22,10 @@ export async function renderStoredDocumentHtml(
   templates: TemplateRepository,
   document: RegisteredDocument
 ) {
-  const template = await templates.findRenderSource(document.templateType);
+  // 確定済み文書は自分の版（templateVersionId）で描く。テンプレ改訂（現行版の差し替え）後も、
+  // 過去の版の html_source が残っていればそのまま再描画できる。版の行が消えていて
+  // 現行版しか無いときだけ、下の不一致エラーになる。
+  const template = await templates.findRenderSource(document.templateType, document.templateVersionId);
   if (!template) return null;
   if (
     document.templateVersionId !== null &&
