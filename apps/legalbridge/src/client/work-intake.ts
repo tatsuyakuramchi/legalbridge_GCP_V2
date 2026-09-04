@@ -171,13 +171,14 @@ export interface WorkDocumentChoice {
 }
 
 export function documentChoicesForWork(businessLine: string | null | undefined): WorkDocumentChoice[] {
+  // 個別条件書（V3・出版）は 許諾者＝取引先／被許諾者＝当社 ＝ 当社が支払うイン条件の文書。
   const game: WorkDocumentChoice = {
     templateKey: "individual_license_terms_v3", label: "個別利用許諾条件書（ゲーム）",
-    hint: "素材と料率マトリクスを展開。アウト条件の新規発行", primary: true
+    hint: "権利元へ支払う料率（イン条件）を素材マトリクスで定める新規発行", primary: true
   };
   const pub: WorkDocumentChoice = {
     templateKey: "pub_license_terms", label: "出版個別利用許諾条件書",
-    hint: "原著作物名・許諾者・振込口座を差し込み。印税率・支払基準日は条件書で入力", primary: true
+    hint: "許諾者へ支払う印税（イン条件）。原著作物名・許諾者・振込口座を差し込み", primary: true
   };
   const pubMaster: WorkDocumentChoice = {
     templateKey: "pub_master", label: "出版基本契約",

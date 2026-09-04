@@ -45,6 +45,12 @@ export class PgConditionSyncRepository implements ConditionSyncRepository {
       const keptLineNos: number[] = [];
       const lineIds: number[] = [];
 
+      // この文書が属する作品（work_id の第一候補）。作品登録④のアップロード（form_data.work_code）、
+      // 作品から起こした条件書（work_id）、作品への手動紐づけ（work-link）が同じキーに入る。
+      // 2026-09-03: 従来は work_id を書かず source_work_id だけだったため、作品詳細・
+      // マトリクス・一括編集（すべて cl.work_id で絞る）に条件が一切出なかった。
+      const documentWorkId = await this.resolveDocumentWork(client, documentId);
+
       for (const c of inputs) {
         const lineNo = Number(c.line_no);
         keptLineNos.push(lineNo);
@@ -52,6 +58,7 @@ export class PgConditionSyncRepository implements ConditionSyncRepository {
         // 素材結線（material_code → work_materials）。無ければ明示 source_work_id を採用。
         let materialId: number | null = null;
         let sourceWorkId: number | null = null;
+        let materialWorkId: number | null = null;
         const code = str(c.material_code);
         if (code) {
           const found = await client.query(
@@ -59,12 +66,15 @@ export class PgConditionSyncRepository implements ConditionSyncRepository {
           );
           if (found.rows[0]) {
             materialId = Number(found.rows[0].id);
-            sourceWorkId = Number(found.rows[0].work_id);
+            materialWorkId = Number(found.rows[0].work_id);
+            sourceWorkId = materialWorkId;
           }
         }
         if (sourceWorkId == null && c.source_work_id != null) {
           sourceWorkId = Number(c.source_work_id);
         }
+        // 条件が属する作品: 文書の作品 ＞ 素材の作品（跨ぎ原作では素材の作品は別）＞ 明示値。
+        const workId = documentWorkId ?? materialWorkId ?? sourceWorkId;
 
         const scheme = derivePaymentScheme(c);
         const isRoyalty = scheme === "royalty";
@@ -94,9 +104,12 @@ export class PgConditionSyncRepository implements ConditionSyncRepository {
           line_no: lineNo,
           line_code: lineCode,
           group_no: c.group_no ?? null,
+          work_id: workId,
           source_material_id: materialId,
           source_work_id: sourceWorkId,
           direction: c.direction === "receivable" ? "receivable" : "payable",
+          // 向きの明示フラグ（契約取込・アウト条件と同じ語彙）: イン＝当社が支払う（payable）。
+          flow_direction: c.direction === "receivable" ? "out" : "in",
           payment_scheme: scheme,
           transaction_kind: "license",
           currency: str(c.currency) ?? "JPY",
@@ -122,7 +135,7 @@ export class PgConditionSyncRepository implements ConditionSyncRepository {
           max_region: str(c.max_region),
           max_language: str(c.max_language),
           status_flags: "{}",
-          is_inbound: false
+          is_inbound: c.direction !== "receivable"
         };
         const cols = Object.keys(row);
         const values = cols.map((k) => row[k]);
@@ -170,6 +183,22 @@ export class PgConditionSyncRepository implements ConditionSyncRepository {
     } finally {
       client.release();
     }
+  }
+
+  // 文書の作品紐づけ（form_data.work_code＝作品コード、または work_id＝V3条件書の作品ID欄。
+  // 数字なら作品ID・それ以外は作品コードとして解決）。無ければ null。
+  private async resolveDocumentWork(client: ConditionSyncClient, documentId: number): Promise<number | null> {
+    const doc = await client.query(
+      `SELECT form_data->>'work_code' AS work_code, form_data->>'work_id' AS work_ref
+         FROM documents WHERE id = $1`,
+      [documentId]
+    );
+    const ref = str(doc.rows[0]?.work_code) ?? str(doc.rows[0]?.work_ref);
+    if (!ref) return null;
+    const found = /^\d+$/.test(ref)
+      ? await client.query(`SELECT id FROM works WHERE id = $1 LIMIT 1`, [Number(ref)])
+      : await client.query(`SELECT id FROM works WHERE work_code = $1 LIMIT 1`, [ref]);
+    return found.rows[0] ? Number(found.rows[0].id) : null;
   }
 
   private async writeChildren(

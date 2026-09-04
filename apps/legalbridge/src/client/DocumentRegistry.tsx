@@ -956,12 +956,12 @@ function ImportedDetailsEditor({ document: doc, onClose, onSaved }: {
   onSaved: () => void;
 }) {
   const toast = useToast();
-  // 利用許諾条件書（当社が許諾する側）は条件の向きを既定でアウトにする。
-  // flow_direction 未設定のまま保存すると条件同期が支払側（イン）に載ってしまうため。
+  // 向きの既定はイン（当社が支払う）。個別利用許諾条件書（V3・出版）は 許諾者＝取引先／
+  // 被許諾者＝アークライト の文書で、当社が支払う料率を定めるものだった（2026-09-03 棚卸しで
+  // 確認。先日「既定アウト」にした変更は誤りだったので戻す）。アウトは明示的に選ぶ。
   const [formData, setFormData] = useState<DocumentFormData>({
     ...(doc.formData ?? {}),
-    ...(doc.templateType === "individual_license_terms" && (doc.formData as Record<string, unknown> | null)?.flow_direction == null
-      ? { flow_direction: "out" } : {})
+    ...((doc.formData as Record<string, unknown> | null)?.flow_direction == null ? { flow_direction: "in" } : {})
   } as DocumentFormData);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");

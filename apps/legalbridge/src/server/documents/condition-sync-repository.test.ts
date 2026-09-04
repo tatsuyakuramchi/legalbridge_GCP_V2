@@ -10,7 +10,11 @@ import { buildDocumentConditionInputs } from "./condition-sync.js";
 
 type Issued = { text: string; params: unknown[] };
 
-function fakeClient(options: { existingLineCodes?: Record<string, string>; materialWorkId?: number } = {}) {
+function fakeClient(options: {
+  existingLineCodes?: Record<string, string>; materialWorkId?: number;
+  // 文書の作品紐づけ（form_data.work_code）と、それが指す作品ID。
+  documentWorkCode?: string; documentWorkId?: number;
+} = {}) {
   const issued: Issued[] = [];
   let seq = 0;
   let lineId = 100;
@@ -18,6 +22,13 @@ function fakeClient(options: { existingLineCodes?: Record<string, string>; mater
     async query(text: string, params: unknown[] = []) {
       issued.push({ text, params });
       if (/^(BEGIN|COMMIT|ROLLBACK)/.test(text)) return { rows: [] };
+      if (text.includes("FROM documents WHERE id")) {
+        return { rows: [{ work_code: options.documentWorkCode ?? null, work_ref: null }] };
+      }
+      if (text.includes("FROM works WHERE")) {
+        return options.documentWorkId && params[0] === options.documentWorkCode
+          ? { rows: [{ id: options.documentWorkId }] } : { rows: [] };
+      }
       if (text.includes("FROM work_materials")) {
         return options.materialWorkId
           ? { rows: [{ id: 77, work_id: options.materialWorkId }] }
@@ -99,6 +110,45 @@ test("Pg: upsert は (document_id,line_no) 競合更新・素材結線・CHECK�
   assert.ok(cleanup!.text.includes("NOT EXISTS (SELECT 1 FROM condition_events"));
   assert.ok(cleanup!.text.includes("NOT EXISTS (SELECT 1 FROM work_material_uses"));
   assert.deepEqual(cleanup!.params, [10, [1, 2]]);
+});
+
+test("Pg: work_id は 文書の作品 ＞ 素材の作品 の順で決まり、向きフラグ（in/out・is_inbound）も書く", async () => {
+  // 文書は WRK-10013（作品ID 9）に紐づき、素材は別作品（55）＝跨ぎ原作。条件が属するのは文書の作品。
+  const fake = fakeClient({ materialWorkId: 55, documentWorkCode: "WRK-10013", documentWorkId: 9 });
+  await repositoryFor(fake).upsertDocumentConditions(10, buildDocumentConditionInputs({
+    flow_direction: "in",
+    financial_conditions: [
+      { condition_no: 1, condition_name: "原作料率", rate_pct: 5, material_code: "MAT-001" },
+      { condition_no: 2, condition_name: "一時金", unit_amount: 50000 }
+    ]
+  }));
+  const inserts = fake.issued.filter((q) => q.text.includes("INSERT INTO condition_lines"));
+  const cols = inserts[0].text.match(/INSERT INTO condition_lines \(([^)]+)\)/)![1].split(",").map((c) => c.trim());
+  const rowOf = (issued: Issued) => Object.fromEntries(cols.map((c, i) => [c, issued.params[i]]));
+  const withMaterial = rowOf(inserts[0]);
+  assert.equal(withMaterial.work_id, 9);            // 文書の作品が優先
+  assert.equal(withMaterial.source_work_id, 55);    // 出どころの作品は素材側
+  assert.equal(withMaterial.flow_direction, "in");
+  assert.equal(withMaterial.is_inbound, true);
+  const withoutMaterial = rowOf(inserts[1]);
+  assert.equal(withoutMaterial.work_id, 9);         // 素材が無くても文書の作品に付く
+  // 作品を解決する問い合わせは文書ごとに1回（行ごとに繰り返さない）
+  assert.equal(fake.issued.filter((q) => q.text.includes("FROM documents WHERE id")).length, 1);
+});
+
+test("Pg: 文書に作品紐づけが無ければ素材の作品を work_id にし、アウト（out）は is_inbound=false", async () => {
+  const fake = fakeClient({ materialWorkId: 55 });
+  await repositoryFor(fake).upsertDocumentConditions(10, buildDocumentConditionInputs({
+    flow_direction: "out",
+    financial_conditions: [{ condition_no: 1, rate_pct: 8, material_code: "MAT-001" }]
+  }));
+  const insert = fake.issued.find((q) => q.text.includes("INSERT INTO condition_lines"))!;
+  const cols = insert.text.match(/INSERT INTO condition_lines \(([^)]+)\)/)![1].split(",").map((c) => c.trim());
+  const row = Object.fromEntries(cols.map((c, i) => [c, insert.params[i]]));
+  assert.equal(row.work_id, 55);
+  assert.equal(row.direction, "receivable");
+  assert.equal(row.flow_direction, "out");
+  assert.equal(row.is_inbound, false);
 });
 
 test("Pg: 既存 line_code は再利用し採番しない", async () => {
