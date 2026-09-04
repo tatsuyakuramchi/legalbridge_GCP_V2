@@ -229,6 +229,14 @@ export function App() {
   // データ品質→名寄せのドリル時に統合元IDを引き継ぐ（発見→是正を1動線に・Q1）。
   const [mergeSourceSeed, setMergeSourceSeed] = useState("");
   const [drillWorkId, setDrillWorkId] = useState<number | null>(null);
+  // 作品詳細を開き直すたびに再取得させる（同じ作品IDで戻ると key が変わらず、条件登録後の
+  // 台帳の変化が画面に出なかった＝2026-09-04 の指摘）。
+  const [worksNonce, setWorksNonce] = useState(0);
+  const openWork = (workId: number | null) => {
+    setDrillWorkId(workId);
+    setWorksNonce((n) => n + 1);
+    setView("works");
+  };
   // 作品の一括編集（作品登録と同じウィザード画面を編集モードで開く）。
   const [editIntakeWorkId, setEditIntakeWorkId] = useState<number | null>(null);
   // 作品登録の完了帯から、アップロードした文書の詳細編集（条件明細）を直接開く。
@@ -733,14 +741,14 @@ export function App() {
             onOpenDraft={resumeDraft}
           />
         )}
-        {view === "license-matrix" && <LicenseMatrixWorkspace onOpenWork={(workId) => { setDrillWorkId(workId); setView("works"); }} />}
+        {view === "license-matrix" && <LicenseMatrixWorkspace onOpenWork={(workId) => openWork(workId)} />}
         {view === "royalty-preview" && <RoyaltyPreview />}
         {view === "billing" && <BillingDashboard key={drillReceiptConditionId ?? "billing"} canRecord={canRecordReceipt} initialConditionLineId={drillReceiptConditionId} onCreatePaymentDocument={(legalWorkspace || requesterWorkspace) ? () => { setNewDocIssueKey(""); setNewDocSeed({}); setDraftSelection(null); setView("templates"); } : undefined} />}
         {view === "work-intake" && legalWorkspace && <WorkIntake
           key={editIntakeWorkId ?? "intake"}
           canRegister={canEditWorks && canEditMaterials}
           editWorkId={editIntakeWorkId}
-          onOpenWork={(workId) => { setEditIntakeWorkId(null); setDrillWorkId(workId); setView("works"); }}
+          onOpenWork={(workId) => { setEditIntakeWorkId(null); openWork(workId); }}
           onOpenImport={() => setView("documents")}
           onEnterConditions={enterConditions}
           onCreateDocumentFromWork={(choice, work) => void startDocumentFromWork(choice, work)} />}
@@ -749,7 +757,7 @@ export function App() {
           seed={conditionFlowSeed}
           canWrite={canFinalizeDocuments}
           onBack={() => setView("home")}
-          onOpenWork={(workId) => { setDrillWorkId(workId); setView("works"); }}
+          onOpenWork={(workId) => openWork(workId)}
           onRegisterWork={() => { setEditIntakeWorkId(null); setView("work-intake"); }}
           onOpenTemplates={() => { setNewDocIssueKey(""); setNewDocSeed({}); setDraftSelection(null); setView("templates"); }}
           onCreateDocument={(templateKey, payload, ledger) => void startDocumentFromLedger(templateKey, payload, ledger)}
@@ -761,7 +769,7 @@ export function App() {
           onCreateStatement={(lineId) => void startStatementFromCondition(lineId)}
           onCreateBundleStatement={(ids) => void startStatementFromConditions(ids)}
           onOpenConditionLine={(lineId) => { setDrillConditionId(lineId); setView("conditions"); }} />}
-        {view === "works" && <WorkDetail key={drillWorkId ?? "works"} initialWorkId={drillWorkId} canEdit={canEditWorks} canEditRights={canEditRightsSources} canEditMaterials={canEditMaterials}
+        {view === "works" && <WorkDetail key={`${drillWorkId ?? "works"}:${worksNonce}`} initialWorkId={drillWorkId} canEdit={canEditWorks} canEditRights={canEditRightsSources} canEditMaterials={canEditMaterials}
           onCreateDocumentFromWork={(choice, work) => void startDocumentFromWork(choice, work)}
           onEnterConditions={enterConditions}
           onFollowUp={(_workId, title) => openFollowUp(title)}
