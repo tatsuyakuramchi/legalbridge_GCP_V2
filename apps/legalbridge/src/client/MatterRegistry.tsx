@@ -12,7 +12,10 @@ type Matter = {
 };
 type Detail = {
   matter: Matter & { remarks: string | null; driveFolderUrl: string | null };
-  issues: Array<{ issueKey: string; relation: string; summary: string | null; note: string | null }>;
+  issues: Array<{
+    issueKey: string; relation: string; summary: string | null; note: string | null;
+    requestId: number | null; requestType: string | null; requestCounterparty: string | null;
+  }>;
   tasks: Array<{ id: number; title: string; status: string; assigneeName: string | null; dueAt: string | null; isPrimary: boolean; blockedReason: string | null }>;
   documents: Array<{ id: number; documentNumber: string | null; templateType: string; issueKey: string; createdAt: string; driveLink: string }>;
 };
@@ -188,8 +191,12 @@ function MatterDetail({ detail, labels, canEdit, onChanged, onCreateDocument }:
     {canEdit && <InlineMatterControls matter={matter} onChanged={onChanged} />}
     {matter.blockedReason && <p className="matter-blocked">停滞理由：{matter.blockedReason}</p>}
     {matter.driveFolderUrl && <a className="drive-link" href={matter.driveFolderUrl} target="_blank" rel="noreferrer">案件フォルダを開く</a>}
-    <DetailSection title={`関連課題 ${detail.issues.length}`}>
-      {detail.issues.map((issue) => <article key={issue.issueKey}><b>{issue.issueKey}</b><span>{issue.summary ?? issue.relation}</span><small>{issue.note}</small></article>)}
+    <DetailSection title={`依頼・関連課題 ${detail.issues.length}`}>
+      {detail.issues.map((issue) => <article key={issue.issueKey}>
+        <b>{issue.issueKey}{issue.requestId ? " ・ 法務依頼" : ""}</b>
+        <span>{issue.summary ?? issue.relation}</span>
+        <small>{[issue.requestType, issue.requestCounterparty, issue.note].filter(Boolean).join(" ・ ")}</small>
+      </article>)}
     </DetailSection>
     <DetailSection title={`次アクション・タスク ${detail.tasks.length}`}
       action={canEdit && !addingTask ? <button onClick={() => setAddingTask(true)}>＋ タスク追加</button> : undefined}>
