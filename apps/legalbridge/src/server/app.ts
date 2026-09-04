@@ -61,6 +61,18 @@ import {
 } from "./conditions/repository.js";
 import { createConditionLineRouter } from "./conditions/routes.js";
 import {
+  MemoryRequestRepository, PgRequestRepository, type RequestRepository
+} from "./requests/repository.js";
+import { createRequestRouter } from "./requests/routes.js";
+import {
+  MemoryWorkRightsRepository, PgWorkRightsRepository, type WorkRightsRepository
+} from "./work-rights/repository.js";
+import { createWorkRightsRouter } from "./work-rights/routes.js";
+import {
+  MemoryLicenseSettlementRepository, PgLicenseSettlementRepository, type LicenseSettlementRepository
+} from "./license-settlements/repository.js";
+import { createLicenseSettlementRouter } from "./license-settlements/routes.js";
+import {
   MemoryPendingInspectionRepository, PgPendingInspectionRepository, type PendingInspectionRepository
 } from "./inspections/repository.js";
 import { createPendingInspectionRouter } from "./inspections/routes.js";
@@ -237,6 +249,9 @@ export interface AppDependencies {
   matters?: MatterRepository;
   matterWrites?: MatterWriteRepository;
   conditionLines?: ConditionLineRepository;
+  requests?: RequestRepository;
+  workRights?: WorkRightsRepository;
+  licenseSettlements?: LicenseSettlementRepository;
   pendingInspections?: PendingInspectionRepository;
   vendorWrites?: VendorWriteRepository;
   staff?: StaffRepository;
@@ -296,6 +311,15 @@ function createDefaultDependencies(): AppDependencies {
     conditionLines: database
       ? new PgConditionLineRepository(database)
       : new MemoryConditionLineRepository(),
+    requests: database
+      ? new PgRequestRepository(database)
+      : new MemoryRequestRepository(),
+    workRights: database
+      ? new PgWorkRightsRepository(database)
+      : new MemoryWorkRightsRepository(),
+    licenseSettlements: database
+      ? new PgLicenseSettlementRepository(database)
+      : new MemoryLicenseSettlementRepository(),
     pendingInspections: database
       ? new PgPendingInspectionRepository(database)
       : new MemoryPendingInspectionRepository(),
@@ -642,7 +666,8 @@ export function createApp(
       "/outbound-conditions/validate",
       "/contract-intakes/validate",
       "/contract-intakes/preflight",
-      "/contract-intakes/outbound-conditions/validate"
+      "/contract-intakes/outbound-conditions/validate",
+      "/license-settlements/preview"
     ]);
     if (safeMethods.has(request.method)) return next();
     if (request.method === "POST" && safePostPaths.has(request.path)) return next();
@@ -702,6 +727,13 @@ export function createApp(
       (request.method === "POST" && /^\/matters\/\d+\/tasks$/.test(request.path)) ||
       (request.method === "PATCH" && /^\/matters\/\d+\/tasks\/\d+$/.test(request.path));
     if (matterWriteEnabled && isMatterWrite) return next();
+    const isRequestMatterLink =
+      request.method === "POST" &&
+      /^\/requests\/\d+\/link-matter$/.test(request.path);
+    if (matterWriteEnabled && isRequestMatterLink) return next();
+    const isSettlementDraft =
+      request.method === "POST" && request.path === "/license-settlements/draft";
+    if (draftWriteEnabled && isSettlementDraft) return next();
     const isVendorWrite =
       (request.method === "POST" && (request.path === "/vendors" || request.path === "/vendors/import")) ||
       (request.method === "PATCH" && /^\/vendors\/\d+$/.test(request.path));
@@ -759,6 +791,19 @@ export function createApp(
   app.use("/api/v2", createMatterWriteRouter(
     dependencies.matterWrites,
     matterWriteEnabled
+  ));
+  app.use("/api/v2", createRequestRouter(
+    dependencies.requests ?? new MemoryRequestRepository(),
+    matterWriteEnabled
+  ));
+  app.use("/api/v2", createWorkRightsRouter(
+    dependencies.workRights ?? new MemoryWorkRightsRepository()
+  ));
+  app.use("/api/v2", createLicenseSettlementRouter(
+    dependencies.licenseSettlements ?? new MemoryLicenseSettlementRepository(),
+    dependencies.templates,
+    dependencies.drafts,
+    draftWriteEnabled
   ));
   app.use("/api/v2", createConditionLineRouter(dependencies.conditionLines));
   app.use("/api/v2", createPendingInspectionRouter(dependencies.pendingInspections));
