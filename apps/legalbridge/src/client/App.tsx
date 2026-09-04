@@ -18,6 +18,10 @@ import { ContractChainWizard } from "./ContractChainWizard";
 import { ConditionLinesWorkspace } from "./ConditionLinesWorkspace";
 import { StaffWorkspace } from "./StaffWorkspace";
 import { GmailInboundWorkspace } from "./GmailInboundWorkspace";
+import { RequestWorkspace } from "./RequestWorkspace";
+import { WorkRightsWorkspace } from "./WorkRightsWorkspace";
+import { LicenseContractWorkspace } from "./LicenseContractWorkspace";
+import { LicenseSettlementWorkspace } from "./LicenseSettlementWorkspace";
 
 type CompatibilityReport = { summary: { total: number; ok: number; warning: number; error: number }; reports: Array<{ templateKey: string; status: "ok" | "warning" | "error"; missingHelpers: string[]; missingPartials: string[]; unmappedVariables: string[]; renderError?: string }> };
 
@@ -38,7 +42,7 @@ const fallback: DashboardSummary = {
   priorities: []
 };
 
-type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound";
+type View = "home" | "requests" | "matters" | "works-rights" | "license-contract" | "license-settlements" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound";
 type NavItem = { view: View; label: string; description: string; match: View[] };
 type NavGroup = { label: string; items: NavItem[] };
 
@@ -52,7 +56,10 @@ function navGroups(access: {
       { view: "home", label: "ホーム", description: "業務の全体状況と次アクション", match: ["home"] }
     ] },
     { label: "業務", items: [
-      ...(access.legalWorkspace ? [{ view: "matters" as const, label: "案件", description: "案件・課題・タスクの管理", match: ["matters" as const] }] : []),
+      ...(access.legalWorkspace ? [{ view: "requests" as const, label: "依頼", description: "法務依頼の受付・単発完結・案件化", match: ["requests" as const] }] : []),
+      ...(access.legalWorkspace ? [{ view: "matters" as const, label: "案件", description: "継続案件・課題・タスクの管理", match: ["matters" as const] }] : []),
+      ...(access.legalWorkspace ? [{ view: "works-rights" as const, label: "作品・権利", description: "作品・素材・権利ソース・IN/OUT条件", match: ["works-rights" as const, "license-contract" as const] }] : []),
+      ...(access.legalWorkspace ? [{ view: "license-settlements" as const, label: "利用許諾料精算", description: "製造・販売・入金イベントから計算書作成", match: ["license-settlements" as const] }] : []),
       ...(legalOrRequester ? [{ view: "documents" as const, label: access.requesterWorkspace ? "自分の文書" : "文書", description: "文書の作成・確定・PDF", match: ["documents" as const, "templates" as const, "document" as const] }] : []),
       ...(!access.readOnly && legalOrRequester ? [{ view: "drafts" as const, label: access.requesterWorkspace ? "自分の下書き" : "下書き", description: "保存中の下書きを再開", match: ["drafts" as const] }] : [])
     ] },
@@ -77,7 +84,11 @@ function breadcrumbFor(view: View): Array<{ label: string; view?: View }> {
   const home = { label: "ホーム", view: "home" as View };
   const trails: Record<View, Array<{ label: string; view?: View }>> = {
     home: [{ label: "ホーム" }],
+    requests: [home, { label: "依頼" }],
     matters: [home, { label: "案件" }],
+    "works-rights": [home, { label: "作品・権利" }],
+    "license-contract": [home, { label: "作品・権利", view: "works-rights" }, { label: "新規ライセンス契約" }],
+    "license-settlements": [home, { label: "利用許諾料精算" }],
     documents: [home, { label: "文書" }],
     templates: [home, { label: "文書", view: "documents" }, { label: "テンプレート選択" }],
     document: [home, { label: "文書", view: "documents" }, { label: "文書作成" }],
@@ -134,8 +145,12 @@ export function App() {
   const [searchSelection, setSearchSelection] = useState<{ target: "matter" | "document" | "vendor" | "work"; id: string; title: string } | null>(null);
   const [draftSelection, setDraftSelection] = useState<{ issueKey: string; templateType: string } | null>(null);
   const [deepLinkIssue, setDeepLinkIssue] = useState("");
-  // Issue key seeded when 文書を作成 is launched from a matter (LB-F01 導線).
+  // Issue key seeded when 文書を作成 is launched from a matter / request.
   const [newDocIssueKey, setNewDocIssueKey] = useState("");
+  const [licenseRequestIssueKey, setLicenseRequestIssueKey] = useState("");
+  const [licenseWorkId, setLicenseWorkId] = useState<number | undefined>(undefined);
+  const [settlementIssueKey, setSettlementIssueKey] = useState("");
+  const [settlementWorkId, setSettlementWorkId] = useState<number | undefined>(undefined);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -144,6 +159,9 @@ export function App() {
     if (issueKey) setDeepLinkIssue(issueKey);
     if (requestedView === "drafts") setView("drafts");
     else if (requestedView === "documents") setView("documents");
+    else if (requestedView === "requests") setView("requests");
+    else if (requestedView === "works-rights") setView("works-rights");
+    else if (requestedView === "license-settlements") setView("license-settlements");
     else if (requestedView === "home") setView("home");
   }, []);
 
@@ -197,12 +215,13 @@ export function App() {
     fetch("/api/v2/document-templates/compatibility-report").then((response) => response.ok ? response.json() : Promise.reject()).then(setCompatibility).catch(() => undefined);
   }, []);
 
-  async function openDocumentForm(templateKey: string) {
+  async function openDocumentForm(templateKey: string, seededIssueKey = "") {
     const response = await fetch(
       `/api/v2/document-templates/${encodeURIComponent(templateKey)}/form-schema`
     );
     if (!response.ok) return;
     setDraftSelection(null);
+    setNewDocIssueKey(seededIssueKey);
     setSchema(await response.json());
     setView("document");
   }
@@ -274,12 +293,45 @@ export function App() {
             }}
             onCreateDocument={() => { setNewDocIssueKey(""); setView("templates"); }} />
         )}
+        {view === "requests" && legalWorkspace && <RequestWorkspace
+          canEditMatters={canEditMatters}
+          onLegalResponse={(issueKey) => openDocumentForm("legal_response", issueKey)}
+          onStandaloneDocument={(issueKey) => { setNewDocIssueKey(issueKey); setView("templates"); }}
+          onLicenseContract={(issueKey) => {
+            setLicenseRequestIssueKey(issueKey); setLicenseWorkId(undefined); setView("license-contract");
+          }}
+          onLicenseSettlement={(issueKey) => {
+            setSettlementIssueKey(issueKey); setSettlementWorkId(undefined); setView("license-settlements");
+          }}
+          onOpenMatter={(id, title) => {
+            setSearchSelection({ target: "matter", id: String(id), title }); setView("matters");
+          }}
+        />}
         {view === "matters" && <MatterRegistry templates={templates}
           canEdit={canEditMatters}
           onCreateDocument={(legalWorkspace || requesterWorkspace)
             ? (issueKey) => { setNewDocIssueKey(issueKey ?? ""); setDraftSelection(null); setView("templates"); }
             : undefined}
           selectedId={searchSelection?.target === "matter" ? Number(searchSelection.id) : undefined} />}
+        {view === "works-rights" && legalWorkspace && <WorkRightsWorkspace
+          onStartLicenseContract={(workId) => {
+            setLicenseRequestIssueKey(""); setLicenseWorkId(workId); setView("license-contract");
+          }}
+          onStartSettlement={(workId) => {
+            setSettlementIssueKey(""); setSettlementWorkId(workId); setView("license-settlements");
+          }}
+        />}
+        {view === "license-contract" && legalWorkspace && <LicenseContractWorkspace
+          initialIssueKey={licenseRequestIssueKey}
+          initialWorkId={licenseWorkId}
+          canSaveDraft={!readOnly}
+          onOpenDraft={resumeDraft}
+        />}
+        {view === "license-settlements" && legalWorkspace && <LicenseSettlementWorkspace
+          initialIssueKey={settlementIssueKey}
+          initialWorkId={settlementWorkId}
+          onOpenDraft={resumeDraft}
+        />}
         {view === "drafts" && !readOnly && (
           <DraftWorkspace templates={templates} onResume={resumeDraft} initialQuery={deepLinkIssue} />
         )}
