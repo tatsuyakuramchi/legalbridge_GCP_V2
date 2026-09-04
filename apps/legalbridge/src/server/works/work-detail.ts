@@ -22,6 +22,8 @@ export interface WorkConditionLine {
   // 省略時は有効扱い（インメモリ実装・旧フィクスチャ互換）。
   effective?: boolean;
   supersededBy?: string | null;
+  // 条件台帳（condition_ledger）由来の行の状態。下書きは effective=false で載る。
+  ledgerStatus?: "draft" | "final" | null;
 }
 
 export interface GroupedWorkConditions {

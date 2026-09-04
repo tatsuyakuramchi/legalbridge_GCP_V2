@@ -59,7 +59,8 @@ export function createDocumentReissueRouter(
       if (conditionSync) {
         try {
           movedConditions = await conditionSync.moveConditions(id, result.newId);
-          if (input.formData && hasConditionSyncData(input.formData)) {
+          // 条件台帳に紐づく文書の条件は台帳側が正＝再発行で作り直さない（二重防止）。
+          if (input.formData && !input.formData.condition_ledger_id && hasConditionSyncData(input.formData)) {
             await conditionSync.upsertDocumentConditions(
               result.newId, buildDocumentConditionInputs(input.formData)
             );

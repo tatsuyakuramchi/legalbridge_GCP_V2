@@ -111,9 +111,10 @@ export class PgConditionSyncRepository implements ConditionSyncRepository {
           // 向きの明示フラグ（契約取込・アウト条件と同じ語彙）: イン＝当社が支払う（payable）。
           flow_direction: c.direction === "receivable" ? "out" : "in",
           payment_scheme: scheme,
-          transaction_kind: "license",
+          transaction_kind: str(c.transaction_kind) ?? "license",
           currency: str(c.currency) ?? "JPY",
-          amount_ex_tax: isDepletable ? 0 : null,
+          // 消化型は金額（税抜）を持つ（条件台帳の固定額・経費・手数料）。無ければ既定0。
+          amount_ex_tax: isDepletable ? (num(c.amount_ex_tax) ?? 0) : null,
           unit_amount: num(c.unit_amount),
           rate_pct: isRoyalty ? num(c.rate_pct) : null,
           base_price_label: str(c.base_price_label),
@@ -137,6 +138,13 @@ export class PgConditionSyncRepository implements ConditionSyncRepository {
           status_flags: "{}",
           is_inbound: c.direction !== "receivable"
         };
+        // 条件台帳からの直接書込みだけが持つ列（省略時は書かない＝従来経路・075 未適用でも不変）。
+        if (c.counterparty_vendor_id != null) row.counterparty_vendor_id = Number(c.counterparty_vendor_id);
+        if (c.notes !== undefined) row.notes = str(c.notes);
+        if (c.term_start !== undefined) row.term_start = str(c.term_start);
+        if (c.term_end !== undefined) row.term_end = str(c.term_end);
+        if (c.line_kind && c.line_kind !== "payment") row.line_kind = c.line_kind;
+        if (c.tax_category) row.tax_category = c.tax_category;
         const cols = Object.keys(row);
         const values = cols.map((k) => row[k]);
         const placeholders = cols.map((_, i) => `$${i + 1}`);

@@ -57,8 +57,11 @@ type WorkDoc = {
 const DOC_KIND_LABELS: Record<string, string> = {
   ...Object.fromEntries(INTAKE_DOC_KINDS.map((k) => [k.value, k.label])),
   individual_license_terms_v3: "個別利用許諾条件書",
+  pub_license_terms: "出版個別利用許諾条件書",
   royalty_statement: "利用許諾料計算書",
-  inspection_certificate: "検収書"
+  inspection_certificate: "検収書",
+  license_out_en: "ライセンスアウト契約（英文）",
+  condition_ledger: "条件台帳（条件明細）"
 };
 
 type DocSeries = {
@@ -752,10 +755,6 @@ export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreat
                   : doc.conditionCount > 0
                     ? <span className="wz-tag eff">条件明細 {doc.conditionCount}件</span>
                     : <span className="wz-tag warn">条件未登録</span>}
-                {!doc.supersededBy && doc.templateVersionId == null && onEnterConditions && editWorkId != null &&
-                  <button type="button" className="link-button"
-                    onClick={() => onEnterConditions(editWorkId, doc.id)}>
-                    {doc.conditionCount > 0 ? "条件を編集 →" : "条件を入力 →"}</button>}
                 {!doc.supersededBy && doc.templateVersionId != null && doc.conditionCount === 0 && onAddGrant && editWorkId != null &&
                   <button type="button" className="link-button" title="確定済み文書の条件は確定時に同期されます。無い場合はアウト条件として台帳へ直接追記します"
                     onClick={() => onAddGrant(editWorkId)}>アウト条件を追記 →</button>}
@@ -775,9 +774,9 @@ export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreat
                     onClick={() => void postWorkLink(doc.id, { workCode: null }, `${doc.documentNumber ?? doc.id} の紐づけを外しました`)}>紐づけを外す</button>}
               </li>)}
             </ul>}
-            <small className="wz-hint">「条件未登録」の文書は「条件を入力 →」から。文書は新しく作られず、保存で条件台帳へ同期されて作品の条件・料率に載ります。「旧版にする」と、その文書の条件は無効になり計算書の下地から外れます。</small>
+            <small className="wz-hint">条件は「条件を登録する」画面で条件明細（業務委託・利用許諾イン／アウト）として入力し、最後にこれらの文書へ紐づけます（条件台帳 CT-… が正・文書の確定で作り直さない）。「旧版にする」と、その文書の条件は無効になり計算書の下地から外れます。</small>
             {onEnterConditions && editWorkId != null && <div className="wz-next">
-              <button type="button" className="primary" onClick={() => onEnterConditions(editWorkId)}>条件登録画面を開く（文書の紐づけ・アップロードもここから）→</button>
+              <button type="button" className="primary" onClick={() => onEnterConditions(editWorkId)}>この作品の条件を登録する（文書の紐づけ・アップロードもここから）→</button>
             </div>}
           </div>}
           <p className="wz-hint">この作品に関係する契約書・発注書などをまとめて登録します（Drive格納・<b>複数可・0件でも進めます</b>）。
@@ -844,13 +843,9 @@ export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreat
     {doneInfo && <div className="panel wz-doneband">
       <h2>✔ 作品を登録しました（{doneInfo.workCode ?? `#${doneInfo.workId}`}）</h2>
       {onEnterConditions && <>
-        <p><b>締結済みの契約の条件（料率・MG/AG・支払）は、文書を新しく作らずここから登録します</b>（保存で台帳へ同期され、作品の条件・料率に載ります）。</p>
+        <p><b>条件（支払・経費・料率・MG/AG・許諾地域）は「条件を登録する」画面で条件明細として入力します</b>（条件台帳へ直接登録され、作品の条件・料率に載ります。最後に{doneInfo.uploadedDocs.length ? `アップロードした ${doneInfo.uploadedDocs.map((d) => d.documentNumber).join("・")} や` : ""}新規文書へ紐づけます）。</p>
         <div className="wz-next">
-          {doneInfo.uploadedDocs.map((doc) =>
-            <button type="button" className="primary" key={doc.id} onClick={() => onEnterConditions(doneInfo.workId, doc.id)}>
-              {doc.documentNumber} の条件を入力 →</button>)}
-          <button type="button" className={doneInfo.uploadedDocs.length ? "" : "primary"} onClick={() => onEnterConditions(doneInfo.workId)}>
-            条件登録画面を開く →</button>
+          <button type="button" className="primary" onClick={() => onEnterConditions(doneInfo.workId)}>この作品の条件を登録する →</button>
         </div>
       </>}
       <WorkDocumentLauncher businessLine={businessLine} onPick={pickDocument} />

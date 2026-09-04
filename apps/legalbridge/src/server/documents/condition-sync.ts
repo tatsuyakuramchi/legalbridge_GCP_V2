@@ -30,6 +30,17 @@ export interface ConditionSyncInput {
   is_addon: boolean;
   manufacturer?: string | null; seller?: string | null;
   max_region?: string | null; max_language?: string | null;
+  // ── 条件台帳（condition_ledger・2026-09-04）からの直接書込みで使う拡張 ──
+  // line_kind: payment（既定）/ expense（経費）/ fee（その他手数料）。
+  // tax_category: taxable（課税10%）/ reduced（課税8%）/ exempt（非課税・不課税）。
+  // どちらも 075 で追加した列。未指定（payment・null）のときは列を書かない＝075 未適用でも従来行は通る。
+  line_kind?: "payment" | "expense" | "fee";
+  tax_category?: "taxable" | "reduced" | "exempt" | null;
+  amount_ex_tax?: unknown;                 // 消化型（固定額・経費・手数料）の金額（税抜）
+  transaction_kind?: string | null;        // license（既定）/ service / product
+  counterparty_vendor_id?: number | null;  // 相手先（取引先マスタ）
+  notes?: string | null;
+  term_start?: string | null; term_end?: string | null;
 }
 
 const s = (v: unknown): string | null =>

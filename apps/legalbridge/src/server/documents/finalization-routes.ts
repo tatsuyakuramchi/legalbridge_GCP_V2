@@ -12,6 +12,7 @@ import type { ConditionSyncRepository } from "./condition-sync-repository.js";
 import { royaltyEventInputFromStatement } from "../royalty/statement-event.js";
 import { calculateFee } from "../../royalty/calc.js";
 import type { RoyaltyEventRepository } from "../royalty/event-repository.js";
+import type { ConditionLedgerRepository } from "../conditions/ledger-repository.js";
 
 const finalizeSchema = z.object({
   issueKey: z.string().trim().min(1).max(100),
@@ -30,7 +31,10 @@ export function createDocumentFinalizationRouter(
   conditionSync?: ConditionSyncRepository,
   // 利用許諾料計算書の確定時の消化イベント自動記帳（V1 syncRoyaltyCalcEvent 相当）。
   // royalty-events スコープが有効なときだけ渡される。
-  royaltyEvents?: { repository: RoyaltyEventRepository; enabled: boolean }
+  royaltyEvents?: { repository: RoyaltyEventRepository; enabled: boolean },
+  // 条件台帳（condition_ledger）。form_data.condition_ledger_id を持つ文書は台帳から起こした
+  // 文書＝確定時に条件を作り直さず、台帳へ文書を紐づけるだけ（二重防止・2026-09-04）。
+  conditionLedgers?: ConditionLedgerRepository
 ) {
   const router = Router();
 
@@ -66,7 +70,19 @@ export function createDocumentFinalizationRouter(
       // 同期失敗は警告として返す＝手動同期（/documents/:id/conditions/sync）で回復できる。
       let conditionSyncResult: { written: number; deleted: number } | null = null;
       let conditionSyncWarning: string | undefined;
-      if (conditionSync && hasConditionSyncData(input.formData)) {
+      let ledgerLinked: { id: number; documentNumber: string | null } | null = null;
+      const ledgerId = Number(input.formData.condition_ledger_id);
+      if (Number.isInteger(ledgerId) && ledgerId > 0) {
+        // 台帳起点の文書：条件明細は台帳（CT-…）に既にある。文書番号を台帳へ結び付けるだけ。
+        if (conditionLedgers) {
+          try {
+            const linked = await conditionLedgers.attach(ledgerId, document.id);
+            ledgerLinked = { id: ledgerId, documentNumber: linked.documentNumber };
+          } catch (error) {
+            conditionSyncWarning = `条件台帳への紐づけに失敗しました（条件台帳の画面から「過去文書に紐づける」で回復できます）: ${String((error as Error)?.message ?? error).slice(0, 200)}`;
+          }
+        }
+      } else if (conditionSync && hasConditionSyncData(input.formData)) {
         try {
           const synced = await conditionSync.upsertDocumentConditions(
             document.id, buildDocumentConditionInputs(input.formData)
@@ -112,10 +128,11 @@ export function createDocumentFinalizationRouter(
           pdf: "pending",
           drive: "disabled",
           backlog: "disabled",
-          conditions: conditionSyncResult ? "synced" : conditionSyncWarning ? "warning" : "none",
+          conditions: conditionSyncResult ? "synced" : ledgerLinked ? "ledger" : conditionSyncWarning ? "warning" : "none",
           royaltyEvent: royaltyEventRecorded ? "recorded" : royaltyEventWarning ? "warning" : "none"
         },
         ...(conditionSyncResult ? { conditionSync: conditionSyncResult } : {}),
+        ...(ledgerLinked ? { conditionLedger: ledgerLinked } : {}),
         ...(conditionSyncWarning ? { conditionSyncWarning } : {}),
         ...(royaltyEventWarning ? { royaltyEventWarning } : {})
       });

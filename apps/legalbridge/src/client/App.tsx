@@ -18,7 +18,9 @@ import {
 } from "./field-visibility";
 import { MasterDataPicker, buildPatch, findSelfStaff } from "./MasterDataPicker";
 import { WorkIntake } from "./WorkIntake";
-import { WorkConditionEntry } from "./WorkConditionEntry";
+import { ConditionFirstFlow, type LedgerHandoff } from "./ConditionFirstFlow";
+import { ledgerToFormSeed } from "./condition-ledger-seed";
+import type { ConditionLedgerPayload } from "../condition-ledger";
 import {
   LANGUAGE_PRESETS, REGION_PRESETS, fixedDealRows, resolvePubMasterTemplate, vendorRecordToPickerValues
 } from "./work-intake";
@@ -79,7 +81,7 @@ const fallback: DashboardSummary = {
   priorities: []
 };
 
-type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview" | "billing" | "receivable-map" | "payment-report" | "billing-print" | "works" | "work-intake" | "work-conditions" | "license-matrix" | "data-quality" | "vendor-merge" | "matter-merge" | "guide" | "snippets" | "requests" | "excel-batch" | "settings" | "email-settings" | "workflow-rules" | "contract-master" | "template-samples";
+type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview" | "billing" | "receivable-map" | "payment-report" | "billing-print" | "works" | "work-intake" | "condition-first" | "license-matrix" | "data-quality" | "vendor-merge" | "matter-merge" | "guide" | "snippets" | "requests" | "excel-batch" | "settings" | "email-settings" | "workflow-rules" | "contract-master" | "template-samples";
 type NavItem = { view: View; label: string; description: string; match: View[] };
 type NavGroup = { label: string; items: NavItem[] };
 
@@ -107,7 +109,8 @@ function navGroups(access: {
       ...(legalOrRequester ? [{ view: "template-samples" as const, label: "ひな形", description: "各テンプレートの完成イメージをサンプル値で閲覧", match: ["template-samples" as const] }] : [])
     ] },
     { label: "権利・条件", items: [
-      ...(access.legalWorkspace ? [{ view: "work-intake" as const, label: "作品登録", description: "原作・素材・既存文書まで一括登録（条件は文書作成で入力）", match: ["work-intake" as const] }] : []),
+      ...(access.legalWorkspace ? [{ view: "condition-first" as const, label: "条件を登録する", description: "業務委託・利用許諾の条件明細を作り、最後に文書へ紐づける（条件明細が正）", match: ["condition-first" as const] }] : []),
+      ...(access.legalWorkspace ? [{ view: "work-intake" as const, label: "作品登録", description: "原作・素材・既存文書まで一括登録（条件は「条件を登録する」で入力）", match: ["work-intake" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "works" as const, label: "作品", description: "作品を起点に系譜・素材・条件・権利ソースを一望", match: ["works" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "conditions" as const, label: "条件明細", description: "契約条件の横断検索・消化・検収", match: ["conditions" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "outbound" as const, label: "アウト条件", description: "許諾先へのアウト条件追記", match: ["outbound" as const] }] : [])
@@ -163,7 +166,7 @@ function breadcrumbFor(view: View): Array<{ label: string; view?: View }> {
     requests: [home, { label: "依頼" }],
     works: [home, { label: "作品" }],
     "work-intake": [home, { label: "作品登録" }],
-    "work-conditions": [home, { label: "作品" }, { label: "条件登録" }],
+    "condition-first": [home, { label: "条件を登録する" }],
     "data-quality": [home, { label: "データ品質" }],
     "vendor-merge": [home, { label: "取引先名寄せ" }],
     "matter-merge": [home, { label: "案件名寄せ" }],
@@ -230,11 +233,11 @@ export function App() {
   const [editIntakeWorkId, setEditIntakeWorkId] = useState<number | null>(null);
   // 作品登録の完了帯から、アップロードした文書の詳細編集（条件明細）を直接開く。
   const [drillDetailsDocId, setDrillDetailsDocId] = useState<number | null>(null);
-  // 作品の条件登録（正の動線）。作品IDと、指定があれば最初に開く文書。
-  const [conditionEntry, setConditionEntry] = useState<{ workId: number; documentId: number | null } | null>(null);
-  const enterConditions = (workId: number, documentId?: number) => {
-    setConditionEntry({ workId, documentId: documentId ?? null });
-    setView("work-conditions");
+  // 条件を登録する（条件起点の新フロー・条件台帳）。作品から入るときは workId、続きからは ledgerId。
+  const [conditionFlowSeed, setConditionFlowSeed] = useState<{ workId?: number | null; ledgerId?: number | null; nonce: number }>({ nonce: 0 });
+  const enterConditions = (workId: number, _documentId?: number) => {
+    setConditionFlowSeed((s) => ({ workId, ledgerId: null, nonce: s.nonce + 1 }));
+    setView("condition-first");
   };
   // 権利ツリーから「＋許諾条件を追加」で飛んだときの作品プリセット。
   const [drillOutboundWorkId, setDrillOutboundWorkId] = useState<number | null>(null);
@@ -488,6 +491,46 @@ export function App() {
     setView("document");
   }
 
+  // 条件台帳（CT-…）から文書を起こす。条件部分は台帳の行を引用（条件明細キー付き）、相手先・作品の欄は
+  // 「DBから引用」と同じ対応表（buildPatch）で埋める。確定時はサーバが condition_ledger_id を見て
+  // 条件同期をスキップし、文書番号を台帳へ紐づけるだけ＝条件明細は二重にならない。
+  async function startDocumentFromLedger(templateKey: string, payload: ConditionLedgerPayload, ledger: LedgerHandoff) {
+    const response = await fetch(`/api/v2/document-templates/${encodeURIComponent(templateKey)}/form-schema`);
+    if (!response.ok) {
+      window.alert(`テンプレート ${templateKey} の定義を取得できませんでした`);
+      return;
+    }
+    const nextSchema: DocumentFormSchema = await response.json();
+    let vendor: Record<string, unknown> | null = null;
+    if (payload.vendorId) {
+      try {
+        const vendorResponse = await fetch(`/api/v2/vendors/${payload.vendorId}`);
+        if (vendorResponse.ok) vendor = (await vendorResponse.json()).vendor ?? null;
+      } catch { /* 取引先が引けなくても台帳の内容だけで開く */ }
+    }
+    const seed: DocumentFormData = {
+      ...(payload.workId ? buildPatch(nextSchema, {}, {
+        id: `work:${payload.workId}`, type: "work", label: payload.workTitle,
+        values: { code: payload.workCode ?? "", title: payload.workTitle }
+      }) : {}),
+      ...(vendor ? buildPatch(nextSchema, {}, {
+        id: `vendor:${payload.vendorId}`, type: "vendor", label: String(vendor.vendorName ?? ""),
+        values: vendorRecordToPickerValues(vendor)
+      }) : {}),
+      ...ledgerToFormSeed(payload, templateKey, ledger)
+    };
+    setFormNonce((v) => v + 1);
+    setDraftSelection(null);
+    setReissueSource(null);
+    setNewDocSeed({});
+    setNewDocIssueKey("");
+    setDuplicateValues(seed);
+    setDuplicateFrom(null);
+    setSeedNotice(`条件台帳 ${ledger.documentNumber} の条件（条件明細キー付き）${vendor ? "と相手先情報" : ""}を差し込みました。文書固有の欄（受付番号・納期・特約・署名欄など）を入れて確定してください。確定時は台帳へ紐づけるだけで、条件明細は作り直しません`);
+    setSchema(nextSchema);
+    setView("document");
+  }
+
   async function openDocumentForm(templateKey: string) {
     setFormNonce((v) => v + 1);
     setDuplicateValues(null);
@@ -615,11 +658,15 @@ export function App() {
           onAddGrant={(workId) => { setDrillOutboundWorkId(workId); setView("outbound"); }}
           onCreateLicenseTerms={(seed, workCode) => void startLicenseTermsFromWork(seed, workCode)}
           onCreateDocumentFromWork={(choice, work) => void startDocumentFromWork(choice, work)} />}
-        {view === "work-conditions" && legalWorkspace && conditionEntry && <WorkConditionEntry
-          key={`${conditionEntry.workId}:${conditionEntry.documentId ?? ""}`}
-          workId={conditionEntry.workId} initialDocumentId={conditionEntry.documentId}
-          onBack={() => { setDrillWorkId(conditionEntry.workId); setView("works"); }}
-          onAddGrant={(workId) => { setDrillOutboundWorkId(workId); setView("outbound"); }} />}
+        {view === "condition-first" && legalWorkspace && <ConditionFirstFlow
+          key={`cf:${conditionFlowSeed.nonce}`}
+          seed={conditionFlowSeed}
+          canWrite={canFinalizeDocuments}
+          onBack={() => setView("home")}
+          onOpenWork={(workId) => { setDrillWorkId(workId); setView("works"); }}
+          onRegisterWork={() => { setEditIntakeWorkId(null); setView("work-intake"); }}
+          onOpenTemplates={() => { setNewDocIssueKey(""); setNewDocSeed({}); setDraftSelection(null); setView("templates"); }}
+          onCreateDocument={(templateKey, payload, ledger) => void startDocumentFromLedger(templateKey, payload, ledger)} />}
         {view === "works" && <WorkDetail key={drillWorkId ?? "works"} initialWorkId={drillWorkId} canEdit={canEditWorks} canEditRights={canEditRightsSources} canEditMaterials={canEditMaterials}
           onCreateLicenseTerms={(seed, workCode) => void startLicenseTermsFromWork(seed, workCode)}
           onCreateDocumentFromWork={(choice, work) => void startDocumentFromWork(choice, work)}

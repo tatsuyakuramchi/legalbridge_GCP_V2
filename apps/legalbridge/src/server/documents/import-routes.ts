@@ -221,7 +221,8 @@ export function createDocumentImportRouter(
       // ベストエフォート）。失敗しても保存は成立＝「条件明細を台帳へ同期」で回復できる。
       let conditionSyncResult: { written: number; deleted: number } | null = null;
       let conditionSyncWarning: string | undefined;
-      if (conditionSync && hasConditionSyncData(input.formData)) {
+      // 条件台帳（condition_ledger）に紐づく文書は条件を台帳側に持つ＝ここでは作り直さない（二重防止）。
+      if (conditionSync && !input.formData.condition_ledger_id && hasConditionSyncData(input.formData)) {
         try {
           const synced = await conditionSync.upsertDocumentConditions(
             id, buildDocumentConditionInputs(input.formData)

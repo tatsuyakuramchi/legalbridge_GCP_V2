@@ -421,6 +421,7 @@ export class PgWorkReadRepository implements WorkReadRepository {
               cl.parent_license_condition_id, cl.rate_pct, cl.amount_ex_tax,
               cl.mg_amount, cl.currency, d.document_number,
               d.form_data->>'superseded_by' AS superseded_by,
+              d.form_data->>'ledger_status' AS ledger_status,
               cl.payment_scheme, cl.calc_method, cl.formula_text, cl.subject,
               cl.exclusivity, cl.term_start, cl.term_end,
               COALESCE(
@@ -479,7 +480,9 @@ export class PgWorkReadRepository implements WorkReadRepository {
       currency: str(r.currency),
       documentNumber: str(r.document_number),
       supersededBy: String(r.superseded_by ?? "").trim() || null,
-      effective: !String(r.superseded_by ?? "").trim()
+      ledgerStatus: r.ledger_status === "draft" ? "draft" : r.ledger_status === "final" ? "final" : null,
+      // 下書きの条件台帳（ledger_status='draft'）の条件は、載せるが「有効」にはしない。
+      effective: !String(r.superseded_by ?? "").trim() && r.ledger_status !== "draft"
     }));
     return { grouped: groupWorkConditions(lines), rights };
   }

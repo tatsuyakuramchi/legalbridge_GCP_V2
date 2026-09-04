@@ -19,7 +19,7 @@ type Node = { workId: number; title: string | null; workCode: string | null; kin
 type Lineage = { chain: Tier[]; children: Node[]; unlinkedRelationParents: Node[]; depth: number; isDerivative: boolean };
 type Material = { id: number; materialCode: string | null; materialName: string | null; materialType: string | null; materialRole: string | null; acquisitionType: string | null; rightsType: string | null; rightsHolderLabel: string | null; isRoyaltyBearing: boolean | null; categoryName: string | null; territory: string | null; language: string | null; remarks: string | null };
 type RightsSource = { id: number; materialId: number | null; materialName: string | null; sourceType: string | null; sourceWorkId: number | null; sourceWorkTitle: string | null; rightsHolderVendorId: number | null; rightsHolderName: string | null; sourceDocumentId: number | null; sourceContractId: number | null; sourceRole: string | null; isPrimary: boolean | null; validFrom: string | null; validTo: string | null };
-type Cond = { id: number; conditionName: string | null; direction: string | null; sourceMaterialId: number | null; materialName: string | null; sublicenseAllowed: boolean | null; parentLicenseConditionId: number | null; ratePct: number | null; amountExTax: number | null; mgAmount: number | null; currency: string | null; documentNumber: string | null; effective?: boolean; supersededBy?: string | null };
+type Cond = { id: number; conditionName: string | null; direction: string | null; sourceMaterialId: number | null; materialName: string | null; sublicenseAllowed: boolean | null; parentLicenseConditionId: number | null; ratePct: number | null; amountExTax: number | null; mgAmount: number | null; currency: string | null; documentNumber: string | null; effective?: boolean; supersededBy?: string | null; ledgerStatus?: "draft" | "final" | null };
 type Conditions = { receivable: Cond[]; payable: Cond[]; sublicense: Cond[]; workLevel: Cond[]; materialLinked: Cond[]; totals: { count: number; receivableCount: number; payableCount: number; sublicenseCount: number; workLevelCount: number } };
 type Core = Summary & { titleKana: string | null; workType: string | null; status: string | null; businessLine?: string | null; derivationType: string | null; rightsHolderName: string | null; rightsHolderVendorId?: number | null; creatorName: string | null; publisherName: string | null; ledgerCode: string | null; remarks: string | null };
 type Detail = { work: Core; lineage: Lineage | null; materials: Material[] | null; rightsSources: RightsSource[] | null; conditions: Conditions | null; rightsLines?: RightsLine[] | null };
@@ -479,8 +479,8 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
                   画面から読めず「どこで入力するのか分からない」となっていたため、
                   入口をボタン付きで明示する。 */}
               <div className="wd-guide">
-                <strong>条件の登録・編集は「作品の条件登録」画面で行います。</strong>
-                <p>文書（発注書・条件書・契約書）を選び、この作品の素材から対象を選んで料率・MG/AG・支払を入れると、保存で条件台帳へ同期されここに載ります。締結済みの契約は文書を新しく作りません。これから条件書を新規発行する場合は上の「この作品から作る文書」から（確定時に載ります）。</p>
+                <strong>条件の登録・編集は「条件を登録する」画面で行います（条件明細が正）。</strong>
+                <p>業務委託（支払・経費・手数料）／利用許諾イン／利用許諾アウトの条件明細を選んで入力し、保存すると条件台帳（CT-…）に登録されてここに載ります。文書は最後に「新規文書に紐づける（従来フォームで作成）／過去文書に紐づける／アップロード文書に紐づける」から選びます。下書きは「下書き」印で載り、確定するまで計算書の下地にはなりません。</p>
                 <div className="wz-next">
                   {onEnterConditions && <button type="button" className="primary" onClick={() => onEnterConditions(detail.work.id)}>条件を登録・編集する →</button>}
                   {onAddGrant && <button type="button" onClick={() => onAddGrant(detail.work.id)}>アウト条件を追記（当社が許諾して受け取る側）</button>}
@@ -501,7 +501,8 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
                     <td>{c.ratePct != null ? `${c.ratePct}%` : "—"}</td><td>{yen(c.amountExTax, c.currency)}</td><td>{yen(c.mgAmount, c.currency)}</td>
                     <td>{c.sublicenseAllowed || c.parentLicenseConditionId != null ? "○" : ""}</td>
                     <td>{c.documentNumber ?? "—"}
-                      {c.effective === false && <><br /><span className="cond-ineffective"
+                      {c.ledgerStatus === "draft" && <><br /><span className="wz-tag warn" title="条件台帳の下書き。確定するまで計算書の下地にはなりません">下書き</span></>}
+                      {c.effective === false && c.ledgerStatus !== "draft" && <><br /><span className="cond-ineffective"
                         title={c.supersededBy ? `巻き直し済み。有効版は ${c.supersededBy}` : "無効"}>
                         無効{c.supersededBy ? `（旧版 → ${c.supersededBy}）` : ""}</span></>}</td>
                   </tr>)}</tbody>

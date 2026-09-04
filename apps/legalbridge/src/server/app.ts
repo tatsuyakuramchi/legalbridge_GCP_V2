@@ -222,6 +222,10 @@ import {
 } from "./documents/condition-sync-repository.js";
 import { createConditionSyncRouter } from "./documents/condition-sync-routes.js";
 import {
+  MemoryConditionLedgerRepository, PgConditionLedgerRepository, type ConditionLedgerRepository
+} from "./conditions/ledger-repository.js";
+import { createConditionLedgerRouter } from "./conditions/ledger-routes.js";
+import {
   createConditionEconomicsRouter, PgConditionEconomicsRepository,
   type ConditionEconomicsRepository
 } from "./royalty/condition-economics.js";
@@ -431,6 +435,8 @@ export interface AppDependencies {
   attachments?: AttachmentsRepository;
   // 条件明細（condition_lines）の台帳同期（確定時・再発行時・手動）。
   conditionSync?: ConditionSyncRepository;
+  // 条件台帳（condition_ledger）：条件明細を正にする新フローの保存先・文書紐づけ。
+  conditionLedgers?: ConditionLedgerRepository;
   // 条件明細の経済条件＋AG消化累計の読取（計算書プリフィル用）。
   conditionEconomics?: ConditionEconomicsRepository;
   // Phase 9 自動化基盤：ジョブ本体・Webhook ハンドラの注入口（既定は空＝無効）。
@@ -1187,6 +1193,12 @@ export function createApp(
     const isConditionSync =
       request.method === "POST" && /^\/documents\/\d+\/conditions\/sync$/.test(request.path);
     if (documentFinalizeEnabled && isConditionSync) return next();
+    // 条件台帳（condition_ledger）の作成・更新・文書紐づけ。ルータ内で admin/legal 限定。
+    const isConditionLedgerWrite =
+      (request.method === "POST" && request.path === "/condition-ledgers") ||
+      (request.method === "PUT" && /^\/condition-ledgers\/\d+$/.test(request.path)) ||
+      (request.method === "POST" && /^\/condition-ledgers\/\d+\/(attach|detach)$/.test(request.path));
+    if (documentFinalizeEnabled && isConditionLedgerWrite) return next();
     const isDriveStorage =
       request.method === "POST" && /^\/documents\/[^/]+\/drive(\/regenerate)?$/.test(request.path);
     if (driveStorageEnabled && isDriveStorage) return next();
@@ -1325,6 +1337,17 @@ export function createApp(
     ?? (conditionSyncDatabase
       ? new PgConditionSyncRepository(conditionSyncDatabase)
       : new MemoryConditionSyncRepository());
+  // 条件台帳（condition_ledger・2026-09-04）。台帳の入れ物は documents 行＋ condition_lines。
+  // 書込みは文書確定と同じゲート（documents スコープ）。
+  const conditionLedgers = dependencies.conditionLedgers
+    ?? (conditionSyncDatabase
+      ? new PgConditionLedgerRepository(conditionSyncDatabase)
+      : new MemoryConditionLedgerRepository());
+  app.use("/api/v2", createConditionLedgerRouter({
+    ledgers: conditionLedgers,
+    conditionSync,
+    writeEnabled: documentFinalizeEnabled
+  }));
   app.use("/api/v2", createDocumentFinalizationRouter(
     dependencies.templates,
     dependencies.drafts,
@@ -1333,7 +1356,8 @@ export function createApp(
     // 計算書確定時の消化イベント自動記帳（royalty-events スコープが有効なときのみ）。
     dependencies.royaltyEvents
       ? { repository: dependencies.royaltyEvents, enabled: royaltyEventWriteEnabled }
-      : undefined
+      : undefined,
+    conditionLedgers
   ));
   // 条件明細の経済条件＋AG消化累計（計算書フォームのプリフィル用・読み取り専用）。
   const conditionEconomicsDatabase = getPool();

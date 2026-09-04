@@ -28,6 +28,7 @@ import {
   MemoryConditionSyncRepository, type ConditionSyncRepository
 } from "./documents/condition-sync-repository.js";
 import { MemoryRoyaltyEventRepository } from "./royalty/event-repository.js";
+import { MemoryConditionLedgerRepository } from "./conditions/ledger-repository.js";
 
 const schema: DocumentFormSchema = {
   templateKey: "purchase_order",
@@ -410,6 +411,48 @@ test("確定時に金銭条件が条件明細台帳へ同期される（同期�
   assert.equal(warned.status, 201);
   assert.equal(warned.body.integrations.conditions, "warning");
   assert.match(warned.body.conditionSyncWarning, /grant 066/);
+});
+
+test("条件台帳（condition_ledger_id）から起こした文書の確定は条件を作り直さず台帳へ紐づけるだけ（二重防止）", async () => {
+  const conditionSync = new MemoryConditionSyncRepository();
+  const conditionLedgers = new MemoryConditionLedgerRepository(false);
+  const ledgerInput = {
+    entry: "new" as const, workId: null, workCode: null, workTitle: "", vendorId: 7, vendorName: "雨宿り", title: "別件",
+    termStart: "", termEnd: "", kinds: ["service" as const], payments: [], expenses: [], fees: [], licenseIn: [], licenseOut: [],
+    status: "final" as const, notes: ""
+  };
+  await conditionLedgers.create(ledgerInput, null);   // id=1 は別件（確定文書の id=1 と区別するため）
+  const ledger = await conditionLedgers.create({
+    entry: "new", workId: null, workCode: null, workTitle: "", vendorId: 7, vendorName: "雨宿り", title: "制作",
+    termStart: "", termEnd: "", kinds: ["service"], payments: [], expenses: [], fees: [], licenseIn: [], licenseOut: [],
+    status: "final", notes: ""
+  }, "legal@example.com");
+  const target = createApp({
+    templates: new MemoryTemplateRepository([schema]),
+    drafts: new MemoryDraftRepository(),
+    finalizations: new MemoryDocumentFinalizationRepository(),
+    conditionSync, conditionLedgers,
+    integrations: createIntegrationAdapters()
+  }, {
+    accessMode: "readwrite", requireDatabase: false, writeFeaturesEnabled: true,
+    writeScopes: new Set(["drafts", "documents"])
+  });
+  const saved = await request(target).put("/api/v2/document-drafts/VALIDATION-LEDGER-1").send({
+    templateType: "purchase_order",
+    formData: {
+      PROJECT_TITLE: "台帳起点", ORDER_DATE: "2026-09-04", condition_ledger_id: String(ledger.id),
+      // 台帳から引用した条件が form_data に入っていても、確定で同期しない
+      financial_conditions: [{ condition_no: 1, condition_name: "原作", rate_pct: 5 }]
+    }
+  }).expect(200);
+  const finalized = await request(target).post("/api/v2/documents/finalize").send({
+    issueKey: "VALIDATION-LEDGER-1", templateType: "purchase_order", templateVersionId: 10,
+    formData: saved.body.draft.formData, expectedDraftUpdatedAt: saved.body.draft.updatedAt
+  }).expect(201);
+  assert.equal(finalized.body.integrations.conditions, "ledger");
+  assert.equal(finalized.body.conditionLedger.id, ledger.id);
+  assert.equal(conditionSync.documents.size, 0);
+  assert.equal(conditionLedgers.links.get(finalized.body.document.id), ledger.id);
 });
 
 test("計算書の確定で消化イベントが自動記帳される（条件明細ひも付け時・サーバ再計算値）", async () => {

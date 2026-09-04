@@ -26,7 +26,8 @@ export interface ConditionEconomics {
   // 有効性（2026-09-02）：巻き直しで旧版になった文書（form_data.superseded_by）や
   // 無効化（voided）された文書の条件は計算書の下地にしない。ルートは 409 で止める。
   effective: boolean;
-  ineffectiveReason: "superseded" | "voided" | null;
+  // draft: 条件台帳（condition_ledger）の下書き＝まだ確定していない条件（2026-09-04）。
+  ineffectiveReason: "superseded" | "voided" | "draft" | null;
   supersededBy: string | null;      // 旧版のとき有効版の文書番号
 }
 
@@ -46,7 +47,8 @@ export class PgConditionEconomicsRepository implements ConditionEconomicsReposit
     const base = await this.database.query(
       `SELECT cl.id, cl.document_id, cl.group_no, cl.line_no, cl.rate_pct, cl.mg_amount, cl.ag_amount,
               cl.currency, cl.condition_name,
-              d.lifecycle_status, d.form_data->>'superseded_by' AS superseded_by
+              d.lifecycle_status, d.form_data->>'superseded_by' AS superseded_by,
+              d.form_data->>'ledger_status' AS ledger_status
          FROM condition_lines cl
          LEFT JOIN documents d ON d.id = cl.document_id
         WHERE cl.id = $1`,
@@ -56,8 +58,9 @@ export class PgConditionEconomicsRepository implements ConditionEconomicsReposit
     const row = base.rows[0];
     const supersededBy = String(row.superseded_by ?? "").trim() || null;
     const voided = String(row.lifecycle_status ?? "") === "voided";
+    const draft = String(row.ledger_status ?? "") === "draft";
     const ineffectiveReason: ConditionEconomics["ineffectiveReason"] =
-      voided ? "voided" : supersededBy ? "superseded" : null;
+      voided ? "voided" : supersededBy ? "superseded" : draft ? "draft" : null;
 
     // 加算型: 同一文書・同一 group の全セルを1条件として集計。
     let group = [row];
@@ -128,7 +131,9 @@ export function createConditionEconomicsRouter(repository?: ConditionEconomicsRe
         return response.status(409).json({
           error: economics.ineffectiveReason === "superseded"
             ? `この条件明細は巻き直し済み（旧版）の文書のものです。有効版 ${economics.supersededBy ?? ""} の条件明細を使ってください`.trim()
-            : "この条件明細は無効化された文書のものです。計算書の下地にはできません",
+            : economics.ineffectiveReason === "draft"
+              ? "この条件明細は下書きの条件台帳のものです。条件台帳を確定してから計算書の下地にしてください"
+              : "この条件明細は無効化された文書のものです。計算書の下地にはできません",
           code: "CONDITION_LINE_INEFFECTIVE",
           economics
         });
