@@ -107,11 +107,13 @@ export function emptyLedgerPayload(): ConditionLedgerPayload {
 export function emptyPaymentRow(): LedgerPaymentRow {
   return { scheme: "lump_sum", materialCode: "", name: "", amountExTax: null, paymentTerms: "" };
 }
+// 既定の税区分（2026-09-04 利用者確認）: 経費＝非課税・不課税（立替・実費）、その他手数料＝課税対象。
+// 行ごとに変更できる。
 export function emptyExpenseRow(): LedgerExpenseRow {
-  return { name: "", amountExTax: null, taxCategory: "taxable", settlement: "実費精算（領収書）" };
+  return { name: "", amountExTax: null, taxCategory: "exempt", settlement: "実費精算（領収書）" };
 }
 export function emptyFeeRow(): LedgerFeeRow {
-  return { name: "", amountExTax: null, taxCategory: "exempt", notes: "" };
+  return { name: "", amountExTax: null, taxCategory: "taxable", notes: "" };
 }
 export function emptyLicenseRow(): LedgerLicenseRow {
   return {

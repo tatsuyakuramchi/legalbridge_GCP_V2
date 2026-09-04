@@ -375,17 +375,17 @@ export function ConditionFirstFlow({ seed, canWrite, onBack, onOpenWork, onRegis
         <h4>支払（成果物）</h4>
         {paymentsTable}
         <div><button type="button" className="small" onClick={() => setRows("payments", [...payload.payments, emptyPaymentRow()])}>＋ 支払行</button></div>
-        <h4>経費（実費精算）</h4>
+        <h4>経費（実費精算・既定は非課税・不課税＝立替）</h4>
         {expensesTable}
         <div><button type="button" className="small" onClick={() => setRows("expenses", [...payload.expenses, emptyExpenseRow()])}>＋ 経費行</button></div>
-        <h4>その他手数料</h4>
+        <h4>その他手数料（既定は課税対象）</h4>
         {feesTable}
         <div><button type="button" className="small" onClick={() => setRows("fees", [...payload.fees, emptyFeeRow()])}>＋ 手数料行</button></div>
         <div className="cf-taxbox">
           <div>課税対象（10%）<b>{yen(tax.taxable)}</b></div><div>課税対象（8%）<b>{yen(tax.reduced)}</b></div>
           <div>非課税・不課税<b>{yen(tax.exempt)}</b></div><div>消費税<b>{yen(tax.tax)}</b></div><div>合計（税込）<b>{yen(tax.total)}</b></div>
         </div>
-        <p className="wz-hint">課税対象と非課税（立替・印紙等）を分けて持つので、発注書の税計算と経理提出用エクセル（課税／非課税列）が条件明細から直接出ます。</p>
+        <p className="wz-hint">経費は立替（非課税・不課税）、手数料は課税対象を既定にし、行ごとに税区分を変えられます。課税と非課税を分けて持つので、発注書の税計算と経理提出用エクセル（課税／非課税列）が条件明細から直接出ます。</p>
       </div>}
 
       {hasKind("license_in") && <div className="cf-block lic-in">

@@ -40,11 +40,12 @@ export const ledgerPayloadSchema = z.object({
     materialCode: text(60), name: text(300), amountExTax: money, paymentTerms: text(300),
     deliverableOwnership: text(20)
   })).max(200).default([]),
+  // 既定の税区分: 経費＝非課税・不課税（立替・実費）／その他手数料＝課税対象（2026-09-04 利用者確認）。
   expenses: z.array(z.object({
-    name: text(300), amountExTax: money, taxCategory: taxCategory.default("taxable"), settlement: text(100)
+    name: text(300), amountExTax: money, taxCategory: taxCategory.default("exempt"), settlement: text(100)
   })).max(200).default([]),
   fees: z.array(z.object({
-    name: text(300), amountExTax: money, taxCategory: taxCategory.default("exempt"), notes: text(300)
+    name: text(300), amountExTax: money, taxCategory: taxCategory.default("taxable"), notes: text(300)
   })).max(200).default([]),
   licenseIn: z.array(z.object({
     materialCode: text(60), name: text(300), ratePct: money, mgAmount: money, agAmount: money,
