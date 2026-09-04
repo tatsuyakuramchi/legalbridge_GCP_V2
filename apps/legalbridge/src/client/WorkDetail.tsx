@@ -64,21 +64,8 @@ type RightsForm = {
   sourceWorkId: string; rightsHolderVendorId: string; sourceDocumentId: string; sourceContractId: string;
 };
 
-const MATERIAL_TYPES = ["game_design", "illustration", "scenario", "manuscript", "other"] as const;
-const MATERIAL_ROLES = ["core_logic", "sub_component"] as const;
-const ACQUISITION_TYPES = ["license", "buyout_commission", "in_house"] as const;
-const RIGHTS_TYPES = ["owned", "license"] as const;
-type MaterialForm = {
-  id: number | null; materialName: string; materialType: typeof MATERIAL_TYPES[number];
-  materialRole: typeof MATERIAL_ROLES[number]; acquisitionType: typeof ACQUISITION_TYPES[number];
-  rightsType: typeof RIGHTS_TYPES[number]; rightsHolderLabel: string; isRoyaltyBearing: boolean; remarks: string;
-};
-const emptyMaterial = (): MaterialForm => ({
-  id: null, materialName: "", materialType: "other", materialRole: "sub_component",
-  acquisitionType: "license", rightsType: "license", rightsHolderLabel: "", isRoyaltyBearing: false, remarks: ""
-});
 
-export function WorkDetail({ canEdit = false, canEditRights = false, canEditMaterials = false, onNavigate, onAddGrant, onCreateLicenseTerms, onCreateDocumentFromWork, onEditWork, initialWorkId = null }: {
+export function WorkDetail({ canEdit = false, canEditRights = false, canEditMaterials = false, onNavigate, onAddGrant, onCreateLicenseTerms, onCreateDocumentFromWork, onEditWork, onEnterConditions, initialWorkId = null }: {
   canEdit?: boolean; canEditRights?: boolean; canEditMaterials?: boolean; onNavigate?: (target: string) => void; onAddGrant?: (workId: number) => void;
   onCreateLicenseTerms?: (seed: DocumentFormData, workCode: string | null) => void;
   // 出版個別条件書・出版基本契約・発注書を作品から起こす（初期値は App 側で差し込む）。
@@ -87,6 +74,8 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
     work: { workId: number; workCode: string | null; title: string; vendorId: number | null }
   ) => void;
   onEditWork?: (workId: number) => void; initialWorkId?: number | null;
+  // 作品の条件登録（正の動線）。旧「取込→詳細編集→条件明細」の案内はこれに置き換えた。
+  onEnterConditions?: (workId: number, documentId?: number) => void;
 }) {
   const [keyword, setKeyword] = useState("");
   const [results, setResults] = useState<Summary[]>([]);
@@ -109,9 +98,6 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
   const [relParent, setRelParent] = useState<Summary | null>(null);
   const [relSaving, setRelSaving] = useState(false);
   const [relError, setRelError] = useState("");
-  const [matForm, setMatForm] = useState<MaterialForm | null>(null);
-  const [matSaving, setMatSaving] = useState(false);
-  const [matError, setMatError] = useState("");
 
   // 作品検索（デバウンス）。
   useEffect(() => {
@@ -228,35 +214,6 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
       setRightsForm(null); setReload((n) => n + 1);
     } catch { setRightsError("通信に失敗しました"); }
     finally { setRightsSaving(false); }
-  }
-
-  async function saveMaterial() {
-    if (!matForm || selectedId == null) return;
-    if (!matForm.materialName.trim()) { setMatError("素材名は必須です"); return; }
-    setMatSaving(true); setMatError("");
-    const isNew = matForm.id == null;
-    const body: Record<string, unknown> = {
-      materialName: matForm.materialName.trim(),
-      // 種別（materialType）は更新不可（コード再生成に影響するため作成時のみ）。PATCH では送らない。
-      ...(isNew ? { materialType: matForm.materialType } : {}),
-      materialRole: matForm.materialRole, acquisitionType: matForm.acquisitionType,
-      rightsType: matForm.rightsType,
-      rightsHolderLabel: matForm.rightsHolderLabel.trim() || (isNew ? undefined : null),
-      isRoyaltyBearing: matForm.isRoyaltyBearing,
-      remarks: matForm.remarks.trim() || (isNew ? undefined : null)
-    };
-    if (isNew) body.workId = selectedId;
-    try {
-      const res = await fetch(isNew ? "/api/v2/materials" : `/api/v2/materials/${matForm.id}`, {
-        method: isNew ? "POST" : "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
-      });
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({}));
-        setMatError(d.error ?? "保存に失敗しました"); setMatSaving(false); return;
-      }
-      setMatForm(null); setReload((n) => n + 1);
-    } catch { setMatError("通信に失敗しました"); }
-    finally { setMatSaving(false); }
   }
 
   function startEdit() {
@@ -503,48 +460,18 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
             </> : <Degraded />)}
 
             {tab === "materials" && (detail.materials ? <>
-              {canEditMaterials && !matForm &&
-                <div className="wd-actions"><button className="primary" onClick={() => { setMatError(""); setMatForm(emptyMaterial()); }}>素材を追加</button></div>}
-              {matForm && <div className="wd-edit-form">
-                <h4>{matForm.id == null ? "この作品に素材を追加" : "素材を編集"}</h4>
-                {matError && <div className="async-error">{matError}</div>}
-                <label>素材名 *<input value={matForm.materialName} onChange={(e) => setMatForm({ ...matForm, materialName: e.target.value })} /></label>
-                <div className="matter-form-grid">
-                  <label>種別{matForm.id != null ? <><select value={matForm.materialType} disabled>
-                    {MATERIAL_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}</select><small>（変更不可）</small></> :
-                    <select value={matForm.materialType} onChange={(e) => setMatForm({ ...matForm, materialType: e.target.value as MaterialForm["materialType"] })}>
-                    {MATERIAL_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}</select>}</label>
-                  <label>役割<select value={matForm.materialRole} onChange={(e) => setMatForm({ ...matForm, materialRole: e.target.value as MaterialForm["materialRole"] })}>
-                    {MATERIAL_ROLES.map((t) => <option key={t} value={t}>{t}</option>)}</select></label>
-                  <label>取得<select value={matForm.acquisitionType} onChange={(e) => setMatForm({ ...matForm, acquisitionType: e.target.value as MaterialForm["acquisitionType"] })}>
-                    {ACQUISITION_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}</select></label>
-                  <label>権利<select value={matForm.rightsType} onChange={(e) => setMatForm({ ...matForm, rightsType: e.target.value as MaterialForm["rightsType"] })}>
-                    {RIGHTS_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}</select></label>
-                  <label>権利者<input value={matForm.rightsHolderLabel} onChange={(e) => setMatForm({ ...matForm, rightsHolderLabel: e.target.value })} /></label>
-                </div>
-                <label>備考<input value={matForm.remarks} onChange={(e) => setMatForm({ ...matForm, remarks: e.target.value })} /></label>
-                <label className="task-primary-toggle"><input type="checkbox" checked={matForm.isRoyaltyBearing} onChange={(e) => setMatForm({ ...matForm, isRoyaltyBearing: e.target.checked })} />ロイヤリティ対象（金銭条件を付帯）</label>
-                <div className="matter-form-actions">
-                  <button className="primary" disabled={matSaving} onClick={() => void saveMaterial()}>{matSaving ? "保存中…" : "保存"}</button>
-                  <button disabled={matSaving} onClick={() => setMatForm(null)}>キャンセル</button>
-                </div>
-              </div>}
+              {/* 素材の追加・編集は一括編集（作品登録と同じ流れ）に一本化（2026-09-03 レガシー整理）。
+                  旧・インライン編集フォームは廃止。 */}
+              {canEditMaterials && onEditWork &&
+                <div className="wd-actions"><button className="primary" onClick={() => onEditWork(detail.work.id)}>一括編集で素材を追加・編集</button></div>}
               {detail.materials.length ? <div className="table-scroll"><table>
-                <thead><tr><th>コード</th><th>素材名</th><th>種別</th><th>役割</th><th>取得</th><th>権利</th><th>権利者</th><th>ロイヤリティ</th>{canEditMaterials && <th></th>}</tr></thead>
+                <thead><tr><th>コード</th><th>素材名</th><th>種別</th><th>役割</th><th>取得</th><th>権利</th><th>権利者</th><th>ロイヤリティ</th></tr></thead>
                 <tbody>{detail.materials.map((m) => <tr key={m.id}>
                   <td>{m.materialCode ?? "—"}</td><td>{m.materialName ?? "—"}</td><td>{m.materialType ?? "—"}</td>
                   <td>{m.materialRole ?? "—"}</td><td>{m.acquisitionType ?? "—"}</td><td>{m.rightsType ?? "—"}</td>
                   <td>{m.rightsHolderLabel ?? "—"}</td><td>{m.isRoyaltyBearing ? "対象" : "—"}</td>
-                  {canEditMaterials && <td><button onClick={() => { setMatError(""); setMatForm({
-                    id: m.id, materialName: m.materialName ?? "",
-                    materialType: (MATERIAL_TYPES as readonly string[]).includes(m.materialType ?? "") ? m.materialType as MaterialForm["materialType"] : "other",
-                    materialRole: (MATERIAL_ROLES as readonly string[]).includes(m.materialRole ?? "") ? m.materialRole as MaterialForm["materialRole"] : "sub_component",
-                    acquisitionType: (ACQUISITION_TYPES as readonly string[]).includes(m.acquisitionType ?? "") ? m.acquisitionType as MaterialForm["acquisitionType"] : "license",
-                    rightsType: (RIGHTS_TYPES as readonly string[]).includes(m.rightsType ?? "") ? m.rightsType as MaterialForm["rightsType"] : "license",
-                    rightsHolderLabel: m.rightsHolderLabel ?? "", isRoyaltyBearing: Boolean(m.isRoyaltyBearing), remarks: m.remarks ?? ""
-                  }); }}>編集</button></td>}
                 </tr>)}</tbody>
-              </table></div> : <div className="empty-state">登録された素材はありません。{canEditMaterials && "「素材を追加」から登録できます。"}</div>}
+              </table></div> : <div className="empty-state">登録された素材はありません。{canEditMaterials && "「一括編集」の②③から登録できます。"}</div>}
             </> : <Degraded />)}
 
             {tab === "conditions" && <>
@@ -552,12 +479,12 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
                   画面から読めず「どこで入力するのか分からない」となっていたため、
                   入口をボタン付きで明示する。 */}
               <div className="wd-guide">
-                <strong>条件はここで直接入力せず、文書から自動で登録されます。</strong>
-                <ol>
-                  <li><b>締結済みの契約の条件</b>（発注書・条件書・紙の契約）＝ 文書一覧の<b>「過去文書取込」→「詳細を編集」→ 条件明細</b>で登録します。保存した時点で条件台帳へ同期され、ここに載ります。<b>文書は新しく作りません</b>（作品登録の④でアップロードした文書もこの経路です）。</li>
-                  <li><b>受け取る条件（アウト）</b>＝ 他社へ許諾する条件。{onAddGrant ? <button type="button" className="link-button" onClick={() => onAddGrant(detail.work.id)}>アウト条件を追記</button> : "「アウト条件」画面"}から登録します（こちらも文書は作りません）。</li>
-                  <li><b>これから条件書を新しく発行する</b>ときだけ、右上の<b>「この作品から個別条件書を作成」</b>を使います。新しい文書が発番され、<b>確定した時点</b>で条件が載ります（下書きのままでは載りません）。既に同じ内容の文書があるときに使うと二重登録になるので注意。</li>
-                </ol>
+                <strong>条件の登録・編集は「作品の条件登録」画面で行います。</strong>
+                <p>文書（発注書・条件書・契約書）を選び、この作品の素材から対象を選んで料率・MG/AG・支払を入れると、保存で条件台帳へ同期されここに載ります。締結済みの契約は文書を新しく作りません。これから条件書を新規発行する場合は上の「この作品から作る文書」から（確定時に載ります）。</p>
+                <div className="wz-next">
+                  {onEnterConditions && <button type="button" className="primary" onClick={() => onEnterConditions(detail.work.id)}>条件を登録・編集する →</button>}
+                  {onAddGrant && <button type="button" onClick={() => onAddGrant(detail.work.id)}>アウト条件を追記（当社が許諾して受け取る側）</button>}
+                </div>
               </div>
               {detail.conditions == null ? <Degraded /> : <>
                 <div className="wd-cond-summary">

@@ -880,7 +880,7 @@ function SinglePastDocumentImport({ onRegisterDetails }: { onRegisterDetails?: (
 // mapFinancialConditions（条件同期）が読むキーに合わせる：
 // region_territory / region_language は「日本・北米」区切りで子テーブルへ分解され、
 // material_code は work_materials と結線されて料率対象・消化管理に載る。
-const importedConditionFields: FieldDefinition[] = [
+export const importedConditionFields: FieldDefinition[] = [
   { name: "condition_name", label: "条件名" },
   { name: "material_code", label: "素材コード（作品の素材と結線・任意）" },
   {

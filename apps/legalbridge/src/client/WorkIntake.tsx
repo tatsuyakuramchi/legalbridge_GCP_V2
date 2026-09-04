@@ -23,7 +23,7 @@ const MATERIAL_TYPES = [
 
 type KindChoice = "own" | "licensed_in" | "co_dev";
 
-type DocHit = { id: number; documentNumber: string; templateType: string; title: string; counterparty: string };
+export type DocHit = { id: number; documentNumber: string; templateType: string; title: string; counterparty: string };
 
 type CoreRow = {
   materialId: number | null;
@@ -79,7 +79,7 @@ const emptyMat = (): MatRow => ({
 });
 
 // 既存契約書（発注書・利用許諾・取込文書すべて）からの引用検索。
-function DocQuotePicker({ note, quoteNumber, onPick }: {
+export function DocQuotePicker({ note, quoteNumber, onPick }: {
   note: string;
   quoteNumber: string;
   onPick: (hit: DocHit | null) => void;
@@ -136,7 +136,7 @@ function DocQuotePicker({ note, quoteNumber, onPick }: {
   </div>;
 }
 
-export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreateLicenseTerms, onCreateDocumentFromWork, onOpenImport, onRegisterDocDetails, onAddGrant }: {
+export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreateLicenseTerms, onCreateDocumentFromWork, onOpenImport, onEnterConditions, onAddGrant }: {
   canRegister: boolean;
   editWorkId?: number | null;
   onOpenWork?: (workId: number) => void;
@@ -148,9 +148,9 @@ export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreat
   ) => void;
   // 過去文書取込（条件明細の登録）画面へ移動する導線（任意）。
   onOpenImport?: () => void;
-  // アップロードした文書の詳細編集（条件明細エディタ付き）を直接開く。
-  // 締結済み契約の条件は文書を新規発行せずここから登録する（利用者要望 2026-09-02）。
-  onRegisterDocDetails?: (id: number) => void;
+  // 作品の条件登録（正の動線）へ。文書IDを渡すとその文書の入力から始まる。
+  // 締結済み契約の条件は文書を新規発行せずここから登録する（利用者要望 2026-09-02/03）。
+  onEnterConditions?: (workId: number, documentId?: number) => void;
   // 確定済み文書に条件が無いとき、アウト条件ワークスペースで台帳へ直接追記する導線。
   onAddGrant?: (workId: number) => void;
 }) {
@@ -752,10 +752,10 @@ export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreat
                   : doc.conditionCount > 0
                     ? <span className="wz-tag eff">条件明細 {doc.conditionCount}件</span>
                     : <span className="wz-tag warn">条件未登録</span>}
-                {!doc.supersededBy && doc.templateVersionId == null && onRegisterDocDetails &&
+                {!doc.supersededBy && doc.templateVersionId == null && onEnterConditions && editWorkId != null &&
                   <button type="button" className="link-button"
-                    onClick={() => onRegisterDocDetails(doc.id)}>
-                    {doc.conditionCount > 0 ? "条件明細を編集 →" : "条件明細を登録 →"}</button>}
+                    onClick={() => onEnterConditions(editWorkId, doc.id)}>
+                    {doc.conditionCount > 0 ? "条件を編集 →" : "条件を入力 →"}</button>}
                 {!doc.supersededBy && doc.templateVersionId != null && doc.conditionCount === 0 && onAddGrant && editWorkId != null &&
                   <button type="button" className="link-button" title="確定済み文書の条件は確定時に同期されます。無い場合はアウト条件として台帳へ直接追記します"
                     onClick={() => onAddGrant(editWorkId)}>アウト条件を追記 →</button>}
@@ -775,16 +775,10 @@ export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreat
                     onClick={() => void postWorkLink(doc.id, { workCode: null }, `${doc.documentNumber ?? doc.id} の紐づけを外しました`)}>紐づけを外す</button>}
               </li>)}
             </ul>}
-            <small className="wz-hint">「条件未登録」の取込文書は「条件明細を登録 →」から入れます（文書は新しく作られません・保存で台帳へ同期）。システムで発行した文書の条件は確定時に同期済みです。「旧版にする」と、その文書の条件明細は無効になり計算書の下地から外れます。</small>
-            <div className="wz-doclink">
-              <strong>システム内の文書をこの作品に紐づける</strong>
-              <DocQuotePicker note="確定済み文書・取込済みの過去文書を検索して紐づける（発注書・条件書・契約書など全文書）"
-                quoteNumber=""
-                onPick={(hit) => {
-                  if (!hit || !loaded?.workCode) return;
-                  void postWorkLink(hit.id, { workCode: loaded.workCode }, `${hit.documentNumber} をこの作品に紐づけました`);
-                }} />
-            </div>
+            <small className="wz-hint">「条件未登録」の文書は「条件を入力 →」から。文書は新しく作られず、保存で条件台帳へ同期されて作品の条件・料率に載ります。「旧版にする」と、その文書の条件は無効になり計算書の下地から外れます。</small>
+            {onEnterConditions && editWorkId != null && <div className="wz-next">
+              <button type="button" className="primary" onClick={() => onEnterConditions(editWorkId)}>条件登録画面を開く（文書の紐づけ・アップロードもここから）→</button>
+            </div>}
           </div>}
           <p className="wz-hint">この作品に関係する契約書・発注書などをまとめて登録します（Drive格納・<b>複数可・0件でも進めます</b>）。
             同じ契約を締結し直した<b>巻き直し文書</b>は、元の文書の「＋巻き直し版を追加」から版として積んでください — 最後に追加した版が有効になります。</p>
@@ -849,12 +843,14 @@ export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreat
 
     {doneInfo && <div className="panel wz-doneband">
       <h2>✔ 作品を登録しました（{doneInfo.workCode ?? `#${doneInfo.workId}`}）</h2>
-      {doneInfo.uploadedDocs.length > 0 && onRegisterDocDetails && <>
-        <p><b>アップロードした文書の条件は、文書を新しく作らずここから登録します</b>（条件台帳へ自動同期されます）。</p>
+      {onEnterConditions && <>
+        <p><b>締結済みの契約の条件（料率・MG/AG・支払）は、文書を新しく作らずここから登録します</b>（保存で台帳へ同期され、作品の条件・料率に載ります）。</p>
         <div className="wz-next">
           {doneInfo.uploadedDocs.map((doc) =>
-            <button type="button" className="primary" key={doc.id} onClick={() => onRegisterDocDetails(doc.id)}>
-              {doc.documentNumber} に条件明細を登録 →</button>)}
+            <button type="button" className="primary" key={doc.id} onClick={() => onEnterConditions(doneInfo.workId, doc.id)}>
+              {doc.documentNumber} の条件を入力 →</button>)}
+          <button type="button" className={doneInfo.uploadedDocs.length ? "" : "primary"} onClick={() => onEnterConditions(doneInfo.workId)}>
+            条件登録画面を開く →</button>
         </div>
       </>}
       <WorkDocumentLauncher businessLine={businessLine} onPick={pickDocument} />

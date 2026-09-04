@@ -18,6 +18,7 @@ import {
 } from "./field-visibility";
 import { MasterDataPicker, buildPatch, findSelfStaff } from "./MasterDataPicker";
 import { WorkIntake } from "./WorkIntake";
+import { WorkConditionEntry } from "./WorkConditionEntry";
 import {
   LANGUAGE_PRESETS, REGION_PRESETS, fixedDealRows, resolvePubMasterTemplate, vendorRecordToPickerValues
 } from "./work-intake";
@@ -78,7 +79,7 @@ const fallback: DashboardSummary = {
   priorities: []
 };
 
-type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview" | "billing" | "receivable-map" | "payment-report" | "billing-print" | "works" | "work-intake" | "license-matrix" | "data-quality" | "vendor-merge" | "matter-merge" | "guide" | "snippets" | "requests" | "excel-batch" | "settings" | "email-settings" | "workflow-rules" | "contract-master" | "template-samples";
+type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview" | "billing" | "receivable-map" | "payment-report" | "billing-print" | "works" | "work-intake" | "work-conditions" | "license-matrix" | "data-quality" | "vendor-merge" | "matter-merge" | "guide" | "snippets" | "requests" | "excel-batch" | "settings" | "email-settings" | "workflow-rules" | "contract-master" | "template-samples";
 type NavItem = { view: View; label: string; description: string; match: View[] };
 type NavGroup = { label: string; items: NavItem[] };
 
@@ -162,6 +163,7 @@ function breadcrumbFor(view: View): Array<{ label: string; view?: View }> {
     requests: [home, { label: "依頼" }],
     works: [home, { label: "作品" }],
     "work-intake": [home, { label: "作品登録" }],
+    "work-conditions": [home, { label: "作品" }, { label: "条件登録" }],
     "data-quality": [home, { label: "データ品質" }],
     "vendor-merge": [home, { label: "取引先名寄せ" }],
     "matter-merge": [home, { label: "案件名寄せ" }],
@@ -228,6 +230,12 @@ export function App() {
   const [editIntakeWorkId, setEditIntakeWorkId] = useState<number | null>(null);
   // 作品登録の完了帯から、アップロードした文書の詳細編集（条件明細）を直接開く。
   const [drillDetailsDocId, setDrillDetailsDocId] = useState<number | null>(null);
+  // 作品の条件登録（正の動線）。作品IDと、指定があれば最初に開く文書。
+  const [conditionEntry, setConditionEntry] = useState<{ workId: number; documentId: number | null } | null>(null);
+  const enterConditions = (workId: number, documentId?: number) => {
+    setConditionEntry({ workId, documentId: documentId ?? null });
+    setView("work-conditions");
+  };
   // 権利ツリーから「＋許諾条件を追加」で飛んだときの作品プリセット。
   const [drillOutboundWorkId, setDrillOutboundWorkId] = useState<number | null>(null);
   const [drillConditionId, setDrillConditionId] = useState<number | null>(null);
@@ -603,13 +611,19 @@ export function App() {
           editWorkId={editIntakeWorkId}
           onOpenWork={(workId) => { setEditIntakeWorkId(null); setDrillWorkId(workId); setView("works"); }}
           onOpenImport={() => setView("documents")}
-          onRegisterDocDetails={(id) => { setDrillDetailsDocId(id); setView("documents"); }}
+          onEnterConditions={enterConditions}
           onAddGrant={(workId) => { setDrillOutboundWorkId(workId); setView("outbound"); }}
           onCreateLicenseTerms={(seed, workCode) => void startLicenseTermsFromWork(seed, workCode)}
           onCreateDocumentFromWork={(choice, work) => void startDocumentFromWork(choice, work)} />}
+        {view === "work-conditions" && legalWorkspace && conditionEntry && <WorkConditionEntry
+          key={`${conditionEntry.workId}:${conditionEntry.documentId ?? ""}`}
+          workId={conditionEntry.workId} initialDocumentId={conditionEntry.documentId}
+          onBack={() => { setDrillWorkId(conditionEntry.workId); setView("works"); }}
+          onAddGrant={(workId) => { setDrillOutboundWorkId(workId); setView("outbound"); }} />}
         {view === "works" && <WorkDetail key={drillWorkId ?? "works"} initialWorkId={drillWorkId} canEdit={canEditWorks} canEditRights={canEditRightsSources} canEditMaterials={canEditMaterials}
           onCreateLicenseTerms={(seed, workCode) => void startLicenseTermsFromWork(seed, workCode)}
           onCreateDocumentFromWork={(choice, work) => void startDocumentFromWork(choice, work)}
+          onEnterConditions={enterConditions}
           onAddGrant={(workId) => { setDrillOutboundWorkId(workId); setView("outbound"); }}
           onEditWork={(workId) => { setEditIntakeWorkId(workId); setView("work-intake"); }}
           onNavigate={(t) => { if (t === "ledgers-works") { setLedgerSeedType("works"); setView("ledgers"); } else setView(t as View); }} />}
