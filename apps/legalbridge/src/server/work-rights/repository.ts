@@ -138,7 +138,7 @@ export class PgWorkRightsRepository implements WorkRightsRepository {
         [id]
       ),
       this.database.query(
-        `SELECT cl.id, cl.condition_name, cl.direction, cl.flow_direction,
+        `SELECT cl.id, cl.condition_name, cl.direction, cl.flow_direction, cl.is_inbound,
                 cl.transaction_kind, cl.payment_scheme, cl.calc_type,
                 cl.rate_pct, cl.amount_ex_tax, cl.mg_amount, cl.ag_amount,
                 cl.currency, cl.region_territory, cl.region_language,
