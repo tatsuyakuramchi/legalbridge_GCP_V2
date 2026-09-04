@@ -10,7 +10,10 @@ export interface MatterSummary {
 }
 export interface MatterDetail {
   matter: MatterSummary & { remarks: string | null; driveFolderUrl: string | null };
-  issues: Array<{ issueKey: string; relation: string; summary: string | null; note: string | null }>;
+  issues: Array<{
+    issueKey: string; relation: string; summary: string | null; note: string | null;
+    requestId: number | null; requestType: string | null; requestCounterparty: string | null;
+  }>;
   tasks: Array<{ id: number; title: string; status: string; assigneeName: string | null; dueAt: string | null; isPrimary: boolean; blockedReason: string | null }>;
   documents: Array<{ id: number; documentNumber: string | null; templateType: string; issueKey: string; createdAt: string; driveLink: string }>;
 }
@@ -40,8 +43,15 @@ export class PgMatterRepository implements MatterRepository {
         `SELECT v.*, m.remarks, m.drive_folder_url
            FROM matter_overview_v v JOIN matters m ON m.id = v.id WHERE v.id = $1`, [id]),
       this.database.query(
-        `SELECT backlog_issue_key, relation, summary_snapshot, note
-           FROM matter_issues WHERE matter_id = $1 ORDER BY relation, backlog_issue_key`, [id]),
+        `SELECT mi.backlog_issue_key, mi.relation, mi.summary_snapshot, mi.note,
+                lr.id AS request_id, lr.contract_type AS request_type,
+                lr.counterparty AS request_counterparty
+           FROM matter_issues mi
+           LEFT JOIN legal_requests lr ON lr.backlog_issue_key = mi.backlog_issue_key
+          WHERE mi.matter_id = $1
+          ORDER BY (m.primary_issue_key = mi.backlog_issue_key) DESC NULLS LAST,
+                   mi.relation, mi.backlog_issue_key`
+          .replace("m.primary_issue_key", "(SELECT primary_issue_key FROM matters WHERE id = $1)"), [id]),
       this.database.query(
         `SELECT t.id, t.title, t.status, t.due_at, t.is_primary, t.blocked_reason,
                 s.staff_name AS assignee_name
@@ -59,7 +69,10 @@ export class PgMatterRepository implements MatterRepository {
       matter: { ...mapSummary(row), remarks: row.remarks, driveFolderUrl: row.drive_folder_url },
       issues: issuesResult.rows.map((issue) => ({
         issueKey: issue.backlog_issue_key, relation: issue.relation,
-        summary: issue.summary_snapshot, note: issue.note
+        summary: issue.summary_snapshot, note: issue.note,
+        requestId: issue.request_id === null ? null : Number(issue.request_id),
+        requestType: issue.request_type ?? null,
+        requestCounterparty: issue.request_counterparty ?? null
       })),
       tasks: tasksResult.rows.map((task) => ({
         id: Number(task.id), title: task.title, status: task.status,
