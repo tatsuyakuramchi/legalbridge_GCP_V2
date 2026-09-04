@@ -70,8 +70,11 @@ export function groupExcelBatches(docs: RawExcelDoc[]): ExcelBatchGroup[] {
     g.items.push({
       documentNumber: row.documentNumber,
       inspectionDate: firstNonEmpty(fd, ["inspectionCompletedAt", "documentDate", "deliveredAt"]),
-      title: firstNonEmpty(fd, ["description", "PROJECT_TITLE", "CONTRACT_TITLE", "contract_title", "件名"]),
-      counterparty: firstNonEmpty(fd, ["counterparty", "VENDOR_NAME", "取引先"]),
+      // 計算書は件名・相手先のキーが検収書と違う（原著作物名・製品名／ライセンサー）。空欄で出ないよう
+      // 計算書側のキーもたどる（2026-09-04）。
+      title: firstNonEmpty(fd, ["description", "PROJECT_TITLE", "CONTRACT_TITLE", "contract_title", "件名",
+        "contractTitle", "originalWork", "productName"]),
+      counterparty: firstNonEmpty(fd, ["counterparty", "VENDOR_NAME", "取引先", "licensor", "designerName", "payerCompany"]),
       ...taxBreakdownFor(row.templateType, fd)
     });
   }
