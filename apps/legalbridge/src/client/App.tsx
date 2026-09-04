@@ -221,7 +221,7 @@ export function App() {
     );
     if (!response.ok) return;
     setDraftSelection(null);
-    setNewDocIssueKey(seededIssueKey);
+    if (seededIssueKey) setNewDocIssueKey(seededIssueKey);
     setSchema(await response.json());
     setView("document");
   }
@@ -479,12 +479,13 @@ function Dashboard({ dashboard, access, onNavigate, onOpenMatter, onCreateDocume
   onCreateDocument: () => void;
 }) {
   const kpiByLabel = new Map(dashboard.kpis.map((k) => [k.label, k.value]));
-  // 業務動線レール（V1準拠）：その日の作業順を①→④で明示する。
+  // 日々の操作入口。RequestはMatter化せず完了でき、作品・権利はMatterとは別の主軸。
   const railCards: Array<{ step: string; label: string; hint: string; view: View; metric?: number; show: boolean }> = [
-    { step: "①", label: "案件を確認", hint: "対応中・停滞を把握", view: "matters", metric: kpiByLabel.get("対応中"), show: access.legalWorkspace },
-    { step: "②", label: "文書を作成", hint: "テンプレートから起票", view: "templates", metric: undefined, show: access.legalWorkspace || access.requesterWorkspace },
-    { step: "③", label: "下書きを再開", hint: "保存中の下書き", view: "drafts", metric: undefined, show: access.legalWorkspace || access.requesterWorkspace },
-    { step: "④", label: "アウト条件を追記", hint: "許諾先ごとの条件", view: "outbound", metric: undefined, show: access.legalWorkspace }
+    { step: "①", label: "依頼を確認", hint: "相談・単発文書・案件化を振り分け", view: "requests", metric: kpiByLabel.get("対応待ち"), show: access.legalWorkspace },
+    { step: "②", label: "案件を確認", hint: "継続案件・期限・タスク", view: "matters", metric: kpiByLabel.get("対応中"), show: access.legalWorkspace },
+    { step: "③", label: "作品・権利", hint: "素材・権利ソース・IN/OUT条件", view: "works-rights", metric: undefined, show: access.legalWorkspace },
+    { step: "④", label: "文書を作成", hint: "テンプレートから起票", view: "templates", metric: undefined, show: access.legalWorkspace || access.requesterWorkspace },
+    { step: "⑤", label: "利用許諾料精算", hint: "製造・販売・入金イベント", view: "license-settlements", metric: undefined, show: access.legalWorkspace }
   ];
   const rail = railCards.filter((card) => card.show);
 
