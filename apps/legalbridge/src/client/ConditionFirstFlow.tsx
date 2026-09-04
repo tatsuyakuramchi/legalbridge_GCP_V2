@@ -91,9 +91,11 @@ export function ConditionFirstFlow({ seed, canWrite, onBack, onOpenWork, onRegis
     setWork(info);
     return info;
   }
+  // 作品が決まっているときはその作品の条件台帳を全部（下書き・確定）出して開き直せるようにする。
+  // 作品なしのときは下書きだけ（続きから）。
   async function loadDrafts(workId: number | null) {
-    const params = new URLSearchParams({ status: "draft", limit: "30" });
-    if (workId) params.set("workId", String(workId));
+    const params = new URLSearchParams({ limit: "30" });
+    if (workId) params.set("workId", String(workId)); else params.set("status", "draft");
     const response = await fetch(`/api/v2/condition-ledgers?${params}`);
     if (response.ok) setDrafts((await response.json()).ledgers ?? []);
   }
@@ -339,13 +341,16 @@ export function ConditionFirstFlow({ seed, canWrite, onBack, onOpenWork, onRegis
       </div>}
       <p className="wz-hint">{entryNote[payload.entry]}</p>
       {drafts.length > 0 && !ledger && <div className="cf-drafts">
-        <strong>下書き（続きから）</strong>
+        <strong>{payload.workId ? "この作品の条件台帳（開いて直す・続きから）" : "下書き（続きから）"}</strong>
         <ul>{drafts.map((d) => <li key={d.id}>
-          <b>{d.documentNumber}</b><span>{d.title || "無題"}</span><span>{d.vendorName}</span>
+          <b>{d.documentNumber}</b>
+          {d.status === "draft" ? <span className="wz-tag warn">下書き</span> : <span className="wz-tag eff">確定</span>}
+          <span>{d.title || "無題"}</span><span>{d.vendorName}</span>
           {d.workCode && <span className="wz-tag">{d.workCode}</span>}
-          <small>{d.kinds.map((k) => LEDGER_KIND_OPTIONS.find((o) => o.value === k)?.label ?? k).join("・")}／{d.lineCount}行／{fmtDate(d.updatedAt)}</small>
+          <small>{d.kinds.map((k) => LEDGER_KIND_OPTIONS.find((o) => o.value === k)?.label ?? k).join("・")}／条件明細 {d.lineCount}行／{fmtDate(d.updatedAt)}</small>
+          {d.lineCount === 0 && <span className="wz-tag warn" title="保存はされたが条件明細が台帳に入っていません。開いて保存し直すと再同期します">条件明細なし</span>}
           <span className="wi-spacer"></span>
-          <button type="button" className="primary" onClick={() => void resume(d.id)}>続きから</button>
+          <button type="button" className="primary" onClick={() => void resume(d.id)}>{d.status === "draft" ? "続きから" : "開く"}</button>
         </li>)}</ul>
       </div>}
       <div className="wz-next">

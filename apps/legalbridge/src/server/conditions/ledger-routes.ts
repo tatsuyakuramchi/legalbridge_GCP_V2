@@ -96,12 +96,18 @@ export function createConditionLedgerRouter(dependencies: {
       const result = await conditionSync.upsertDocumentConditions(ledger.id, ledgerToConditionInputs(payload));
       return { conditionSync: { written: result.written, deleted: result.deleted }, conditionSyncWarning: undefined };
     } catch (error) {
-      const code = (error as { code?: string })?.code;
-      const warning = code === "42501"
+      const pg = error as { code?: string; message?: string; detail?: string; constraint?: string; column?: string };
+      // 原因が画面のトーストだけに残ると追えないため、ログにも出す（Cloud Run のログで確認できる）。
+      console.error("[condition-ledger] sync failed", {
+        ledgerId: ledger.id, documentNumber: ledger.documentNumber, code: pg.code, constraint: pg.constraint,
+        column: pg.column, message: pg.message, detail: pg.detail
+      });
+      const where = [pg.code, pg.constraint, pg.column].filter(Boolean).join(" ");
+      const warning = pg.code === "42501"
         ? "条件明細の台帳同期権限が未付与です（grant 066）"
-        : code === "42703"
-          ? "経費・手数料の税区分列が未追加です（infra/gcp/sql/075 を適用してください）。支払・料率行以外は保存されていません"
-          : `条件明細の台帳同期に失敗しました（もう一度保存すると再試行します）: ${String((error as Error)?.message ?? error).slice(0, 200)}`;
+        : pg.code === "42703"
+          ? `列が未追加です（${pg.message ?? ""}）。infra/gcp/sql/075 を適用してください`
+          : `条件明細の台帳同期に失敗しました（もう一度保存すると再試行します）[${where}]: ${String(pg.message ?? error).slice(0, 200)}${pg.detail ? ` / ${String(pg.detail).slice(0, 200)}` : ""}`;
       return { conditionSync: null, conditionSyncWarning: warning };
     }
   }
