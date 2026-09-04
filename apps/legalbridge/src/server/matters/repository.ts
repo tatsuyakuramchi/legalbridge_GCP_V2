@@ -49,9 +49,8 @@ export class PgMatterRepository implements MatterRepository {
            FROM matter_issues mi
            LEFT JOIN legal_requests lr ON lr.backlog_issue_key = mi.backlog_issue_key
           WHERE mi.matter_id = $1
-          ORDER BY (m.primary_issue_key = mi.backlog_issue_key) DESC NULLS LAST,
-                   mi.relation, mi.backlog_issue_key`
-          .replace("m.primary_issue_key", "(SELECT primary_issue_key FROM matters WHERE id = $1)"), [id]),
+          ORDER BY ((SELECT primary_issue_key FROM matters WHERE id = $1) = mi.backlog_issue_key) DESC NULLS LAST,
+                   mi.relation, mi.backlog_issue_key`, [id]),
       this.database.query(
         `SELECT t.id, t.title, t.status, t.due_at, t.is_primary, t.blocked_reason,
                 s.staff_name AS assignee_name
