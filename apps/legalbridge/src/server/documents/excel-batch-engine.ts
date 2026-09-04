@@ -4,12 +4,15 @@
 // 2026-09-04: 経理提出用の税区分内訳（課税10%／8%／非課税／消費税／税込）を文書ごと・グループ合計で付ける。
 
 import { sumTaxBreakdown, taxBreakdownFor, type TaxBreakdown } from "../../document-tax-breakdown.js";
+import { buildAccountingRow, type AccountingRow, type AccountingVendor } from "../../accounting-row.js";
 
 export interface RawExcelDoc {
   documentNumber: string;
   templateType: string;
   formData: Record<string, unknown>;
   createdAt?: string;
+  // 相手先（documents.vendor_id）の取引先マスタ。経理提出用レイアウトの取引先コード・カナ・源泉・T番号に使う。
+  vendor?: AccountingVendor | null;
 }
 
 export interface ExcelBatchItem extends TaxBreakdown {
@@ -17,6 +20,8 @@ export interface ExcelBatchItem extends TaxBreakdown {
   inspectionDate: string;
   title: string;
   counterparty: string;
+  // 経理提出用エクセル（V1 互換の 8 スロットレイアウト）の 1 行。
+  accounting: AccountingRow;
 }
 
 export interface ExcelBatchGroup {
@@ -75,7 +80,8 @@ export function groupExcelBatches(docs: RawExcelDoc[]): ExcelBatchGroup[] {
       title: firstNonEmpty(fd, ["description", "PROJECT_TITLE", "CONTRACT_TITLE", "contract_title", "件名",
         "contractTitle", "originalWork", "productName"]),
       counterparty: firstNonEmpty(fd, ["counterparty", "VENDOR_NAME", "取引先", "licensor", "designerName", "payerCompany"]),
-      ...taxBreakdownFor(row.templateType, fd)
+      ...taxBreakdownFor(row.templateType, fd),
+      accounting: buildAccountingRow(row.templateType, fd, row.vendor ?? null, paymentDate)
     });
   }
   for (const g of groups.values()) g.totals = sumTaxBreakdown(g.items);

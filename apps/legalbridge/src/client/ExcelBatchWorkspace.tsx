@@ -9,7 +9,14 @@ import { exportExcel, type ExportColumn } from "./export-util";
 
 // 税区分内訳（経理提出用・2026-09-04）。サーバ（document-tax-breakdown）が文書ごとに算出。
 type TaxCols = { taxable10: number; reduced8: number; exempt: number; legacyIncTax: number; tax: number; totalIncTax: number };
-type BatchItem = TaxCols & { documentNumber: string; inspectionDate: string; title: string; counterparty: string };
+// 経理提出用エクセル（V1 互換の 8 スロットレイアウト）。サーバ（accounting-row）が文書ごとに組む。
+type Slot = { content: string; unitPrice: number | ""; quantity: number | ""; amount: number | ""; deliveryDate: string };
+type Accounting = {
+  title: string; paymentDate: string; department: string; vendorCode: string; vendorName: string; vendorNameKana: string;
+  slots: Slot[]; reimbursement: number; subtotal: number; consumptionTax: number; withholdingTax: number;
+  afterTax: number; netTransfer: number; withholdingEnabled: boolean; invoiceRegistration: string;
+};
+type BatchItem = TaxCols & { documentNumber: string; inspectionDate: string; title: string; counterparty: string; accounting?: Accounting };
 type BatchGroup = {
   key: string;
   category: "inspection_certificate" | "royalty_statement";
@@ -50,6 +57,37 @@ function withTotals(g: BatchGroup): BatchItem[] {
   return [...g.items, { documentNumber: "合計", inspectionDate: "", title: `${g.count}件`, counterparty: "", ...t }];
 }
 
+// 経理提出用（V1 互換）: 件名／支払日／部署／取引先コード／氏名／氏名（カナ）／支払内容・単価・数量・金額・納品日×8／
+// 立替金／小計／消費税／源泉税／税引後／差引振込額／インボイス登録。末尾に V2 の税区分内訳と文書番号を足す。
+const a = (r: BatchItem) => r.accounting;
+const slot = (r: BatchItem, i: number): Slot => a(r)?.slots?.[i] ?? { content: "", unitPrice: "", quantity: "", amount: "", deliveryDate: "" };
+const accountingColumns: ExportColumn<BatchItem>[] = [
+  { header: "件名", value: (r) => a(r)?.title ?? r.title },
+  { header: "支払日", value: (r) => a(r)?.paymentDate ?? "" },
+  { header: "部署", value: (r) => a(r)?.department ?? "" },
+  { header: "取引先コード", value: (r) => a(r)?.vendorCode ?? "" },
+  { header: "氏名", value: (r) => a(r)?.vendorName ?? r.counterparty },
+  { header: "氏名（カナ）", value: (r) => a(r)?.vendorNameKana ?? "" },
+  ...Array.from({ length: 8 }, (_, i) => [
+    { header: `支払内容（${i + 1}）`, value: (r: BatchItem) => slot(r, i).content },
+    { header: `単価（${i + 1}）`, value: (r: BatchItem) => slot(r, i).unitPrice },
+    { header: `数量（${i + 1}）`, value: (r: BatchItem) => slot(r, i).quantity },
+    { header: `金額（${i + 1}）`, value: (r: BatchItem) => slot(r, i).amount },
+    { header: `納品日(${i + 1})`, value: (r: BatchItem) => slot(r, i).deliveryDate }
+  ]).flat(),
+  { header: "立替金", value: (r) => money(a(r)?.reimbursement) },
+  { header: "小計", value: (r) => money(a(r)?.subtotal) },
+  { header: "消費税", value: (r) => money(a(r)?.consumptionTax) },
+  { header: "源泉税", value: (r) => money(a(r)?.withholdingTax) },
+  { header: "税引後", value: (r) => money(a(r)?.afterTax) },
+  { header: "差引振込額", value: (r) => money(a(r)?.netTransfer) },
+  { header: "インボイス登録", value: (r) => a(r)?.invoiceRegistration ?? "" },
+  { header: "課税対象（10%）税抜", value: (r) => money(r.taxable10) },
+  { header: "課税対象（8%）税抜", value: (r) => money(r.reduced8) },
+  { header: "非課税・不課税", value: (r) => money(r.exempt) },
+  { header: "文書番号", value: (r) => r.documentNumber }
+];
+
 export function ExcelBatchWorkspace({ canMark = false }: { canMark?: boolean }) {
   const [groups, setGroups] = useState<BatchGroup[]>([]);
   const [loading, setLoading] = useState(false);
@@ -67,9 +105,16 @@ export function ExcelBatchWorkspace({ canMark = false }: { canMark?: boolean }) 
       .finally(() => setLoading(false));
   }, [reload]);
 
+  // 経理提出用（V1 互換の 8 スロット・源泉列）。1 文書 = 1 行。
   function downloadGroup(g: BatchGroup) {
     const date = g.paymentDate || "no-date";
     const name = `${CATEGORY_LABEL[g.category]}_${g.inspectorName}_${date}`.replace(/[^\w.\-一-龥ぁ-んァ-ン]/g, "_");
+    exportExcel(name, CATEGORY_LABEL[g.category], accountingColumns, g.items);
+  }
+  // 内訳一覧（文書番号・税区分内訳・合計行）。
+  function downloadBreakdown(g: BatchGroup) {
+    const date = g.paymentDate || "no-date";
+    const name = `${CATEGORY_LABEL[g.category]}_内訳_${g.inspectorName}_${date}`.replace(/[^\w.\-一-龥ぁ-んァ-ン]/g, "_");
     exportExcel(name, CATEGORY_LABEL[g.category], itemColumns, withTotals(g));
   }
 
@@ -91,7 +136,7 @@ export function ExcelBatchWorkspace({ canMark = false }: { canMark?: boolean }) 
   return <section className="page">
     <div className="page-title">
       <div><p>EXCEL BATCH</p><h1>Excel一括出力</h1>
-        <small>未出力の検収書・利用許諾料計算書を担当者×支払期日でまとめてExcel化します</small></div>
+        <small>未出力の検収書・利用許諾料計算書を担当者×支払期日でまとめてExcel化します。「経理提出用Excel」は旧システムと同じ列並び（支払内容×8・立替金・小計・消費税・源泉税・税引後・差引振込額・インボイス登録）で、金額は V2 の計算書・検収書から出ます</small></div>
       <button onClick={() => setReload((v) => v + 1)}>再読込</button>
     </div>
     {!canMark && <FeatureLockedNote>「発行済みにする」の記録は未有効化です。Excel出力（ダウンロード）は利用できます。</FeatureLockedNote>}
@@ -113,7 +158,8 @@ export function ExcelBatchWorkspace({ canMark = false }: { canMark?: boolean }) 
               ｜消費税 {yen(g.totals.tax)} ｜税込 <b>{yen(g.totals.totalIncTax)}</b></span>}
           </div>
           <div className="batch-group-actions">
-            <button className="primary" onClick={() => downloadGroup(g)}>Excel出力（{g.count}件）</button>
+            <button className="primary" onClick={() => downloadGroup(g)} title="経理提出用（支払スロット×8・立替金・小計・消費税・源泉税・税引後・差引振込額・インボイス登録）">経理提出用Excel（{g.count}件）</button>
+            <button onClick={() => downloadBreakdown(g)} title="文書番号・税区分内訳・合計行の一覧">内訳一覧</button>
             {canMark && <button disabled={busyKey === g.key} onClick={() => void markGroup(g)}>
               {busyKey === g.key ? "記録中…" : "発行済みにする"}
             </button>}

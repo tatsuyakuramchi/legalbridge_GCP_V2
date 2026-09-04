@@ -11,10 +11,16 @@ export interface ExcelBatchRepository {
   markExported(documentNumbers: string[], batchKey: string, actor: string): Promise<number>;
 }
 
+// 相手先の取引先マスタ（経理提出用レイアウトの取引先コード・カナ・源泉・T番号）。
+const VENDOR_COLUMNS = `
+         v.vendor_code, v.vendor_name, v.account_holder_kana, v.entity_type,
+         v.withholding_enabled, v.invoice_registration_number`;
+
 const PENDING_SQL = `
-  SELECT d.document_number, d.template_type, d.form_data, d.created_at
+  SELECT d.document_number, d.template_type, d.form_data, d.created_at, ${VENDOR_COLUMNS}
     FROM documents d
     LEFT JOIN lb_v2_excel_export_ledger l ON l.document_number = d.document_number
+    LEFT JOIN vendors v ON v.id = d.vendor_id
    WHERE l.document_number IS NULL
      AND COALESCE(d.is_primary, true) = true
      AND COALESCE(d.lifecycle_status, 'final') = 'final'
@@ -25,8 +31,9 @@ const PENDING_SQL = `
 
 // 台帳がまだ無い環境向けフォールバック（発行済み除外なし・全件を保留として返す）。
 const PENDING_SQL_NO_LEDGER = `
-  SELECT d.document_number, d.template_type, d.form_data, d.created_at
+  SELECT d.document_number, d.template_type, d.form_data, d.created_at, ${VENDOR_COLUMNS}
     FROM documents d
+    LEFT JOIN vendors v ON v.id = d.vendor_id
    WHERE COALESCE(d.is_primary, true) = true
      AND COALESCE(d.lifecycle_status, 'final') = 'final'
      AND d.document_number IS NOT NULL
@@ -39,7 +46,15 @@ function mapRow(row: Record<string, any>): RawExcelDoc {
     documentNumber: String(row.document_number),
     templateType: String(row.template_type),
     formData: (row.form_data ?? {}) as Record<string, unknown>,
-    createdAt: row.created_at ? new Date(row.created_at).toISOString() : undefined
+    createdAt: row.created_at ? new Date(row.created_at).toISOString() : undefined,
+    vendor: row.vendor_code == null && row.vendor_name == null ? null : {
+      vendorCode: row.vendor_code ?? null,
+      vendorName: row.vendor_name ?? null,
+      vendorNameKana: row.account_holder_kana ?? null,
+      entityType: row.entity_type ?? null,
+      withholdingEnabled: row.withholding_enabled == null ? null : Boolean(row.withholding_enabled),
+      invoiceRegistrationNumber: row.invoice_registration_number ?? null
+    }
   };
 }
 
