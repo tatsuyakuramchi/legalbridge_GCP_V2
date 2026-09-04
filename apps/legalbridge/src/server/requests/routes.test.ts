@@ -28,7 +28,12 @@ function app(write = false) {
   const app = express();
   app.use(express.json());
   app.use((_req, res, next) => {
-    res.locals.currentUser = { role: "legal", email: "legal@example.com" };
+    res.locals.currentUser = {
+      role: "legal",
+      email: "legal@example.com",
+      subject: "test-user",
+      source: "disabled"
+    };
     next();
   });
   app.use("/api/v2", createRequestRouter(new MemoryRequestRepository([seed()]), write));
