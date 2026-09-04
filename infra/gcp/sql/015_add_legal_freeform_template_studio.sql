@@ -82,7 +82,7 @@ $html$,
   {"name":"INTRODUCTION","type":"textarea","group":"III. 本文","label":"前文","placeholder":"必要な場合のみ入力"},
   {"name":"BODY","type":"textarea","group":"III. 本文","label":"本文","required":true,"placeholder":"条項・通知内容・確認事項等を入力"},
   {"name":"CLOSING","type":"textarea","group":"III. 本文","label":"末文","placeholder":"必要な場合のみ入力"},
-  {"name":"SHOW_SIGNATURES","type":"checkbox","group":"IV. 署名","label":"署名欄を表示"},
+  {"name":"SHOW_SIGNATURES","type":"boolean","group":"IV. 署名","label":"署名欄を表示"},
   {"name":"SIGNATURE_A","type":"textarea","group":"IV. 署名","label":"署名欄A","placeholder":"住所\n会社名\n代表者"},
   {"name":"SIGNATURE_B","type":"textarea","group":"IV. 署名","label":"署名欄B","placeholder":"住所\n会社名\n代表者"}
 ]
