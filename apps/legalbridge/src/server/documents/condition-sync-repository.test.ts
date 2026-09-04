@@ -14,6 +14,8 @@ function fakeClient(options: {
   existingLineCodes?: Record<string, string>; materialWorkId?: number;
   // 文書の作品紐づけ（form_data.work_code）と、それが指す作品ID。
   documentWorkCode?: string; documentWorkId?: number;
+  // 契約取込が form_data.work_id に入れる参照（契約番号-作品コードの連結）と、実在する作品コード。
+  documentWorkRef?: string; worksCode?: string;
 } = {}) {
   const issued: Issued[] = [];
   let seq = 0;
@@ -23,10 +25,11 @@ function fakeClient(options: {
       issued.push({ text, params });
       if (/^(BEGIN|COMMIT|ROLLBACK)/.test(text)) return { rows: [] };
       if (text.includes("FROM documents WHERE id")) {
-        return { rows: [{ work_code: options.documentWorkCode ?? null, work_ref: null }] };
+        return { rows: [{ work_code: options.documentWorkCode ?? null, work_ref: options.documentWorkRef ?? null }] };
       }
       if (text.includes("FROM works WHERE")) {
-        return options.documentWorkId && params[0] === options.documentWorkCode
+        const match = options.worksCode ?? options.documentWorkCode;
+        return options.documentWorkId && params[0] === match
           ? { rows: [{ id: options.documentWorkId }] } : { rows: [] };
       }
       if (text.includes("FROM work_materials")) {
@@ -134,6 +137,19 @@ test("Pg: work_id は 文書の作品 ＞ 素材の作品 の順で決まり、�
   assert.equal(withoutMaterial.work_id, 9);         // 素材が無くても文書の作品に付く
   // 作品を解決する問い合わせは文書ごとに1回（行ごとに繰り返さない）
   assert.equal(fake.issued.filter((q) => q.text.includes("FROM documents WHERE id")).length, 1);
+});
+
+test("Pg: 契約取込の連結参照（契約番号-作品コード）は末尾の作品コードで作品を解決する", async () => {
+  const fake = fakeClient({ documentWorkRef: "LIC-LO-2026-0015-W-2026-0001", worksCode: "W-2026-0001", documentWorkId: 1000000017 });
+  await repositoryFor(fake).upsertDocumentConditions(328, buildDocumentConditionInputs({
+    v3_conds: [{ id: "1", name: "自社製造・自社販売", fixedRate: 5, mg: 0, ag: 0 }]
+  }));
+  const insert = fake.issued.find((q) => q.text.includes("INSERT INTO condition_lines"))!;
+  const cols = insert.text.match(/INSERT INTO condition_lines \(([^)]+)\)/)![1].split(",").map((c) => c.trim());
+  assert.equal(insert.params[cols.indexOf("work_id")], 1000000017);
+  // 連結参照そのまま → 末尾コード の順に問い合わせる
+  const lookups = fake.issued.filter((q) => q.text.includes("FROM works WHERE")).map((q) => q.params[0]);
+  assert.deepEqual(lookups, ["LIC-LO-2026-0015-W-2026-0001", "W-2026-0001"]);
 });
 
 test("Pg: 文書に作品紐づけが無ければ素材の作品を work_id にし、アウト（out）は is_inbound=false", async () => {

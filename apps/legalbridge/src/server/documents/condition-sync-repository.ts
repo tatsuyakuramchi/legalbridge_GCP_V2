@@ -203,10 +203,18 @@ export class PgConditionSyncRepository implements ConditionSyncRepository {
     );
     const ref = str(doc.rows[0]?.work_code) ?? str(doc.rows[0]?.work_ref);
     if (!ref) return null;
-    const found = /^\d+$/.test(ref)
-      ? await client.query(`SELECT id FROM works WHERE id = $1 LIMIT 1`, [Number(ref)])
-      : await client.query(`SELECT id FROM works WHERE work_code = $1 LIMIT 1`, [ref]);
-    return found.rows[0] ? Number(found.rows[0].id) : null;
+    if (/^\d+$/.test(ref)) {
+      const byId = await client.query(`SELECT id FROM works WHERE id = $1 LIMIT 1`, [Number(ref)]);
+      return byId.rows[0] ? Number(byId.rows[0].id) : null;
+    }
+    const byCode = await client.query(`SELECT id FROM works WHERE work_code = $1 LIMIT 1`, [ref]);
+    if (byCode.rows[0]) return Number(byCode.rows[0].id);
+    // 契約取込が付ける参照は「契約番号-作品コード」の連結（例: LIC-LO-2026-0015-W-2026-0001）。
+    // 末尾の作品コード（W-YYYY-NNNN）で解決する（2026-09-04・ARC-ILT-2026-0019 の手当てで判明）。
+    const suffix = /-(W-\d{4}-\d+)$/.exec(ref)?.[1];
+    if (!suffix) return null;
+    const bySuffix = await client.query(`SELECT id FROM works WHERE work_code = $1 LIMIT 1`, [suffix]);
+    return bySuffix.rows[0] ? Number(bySuffix.rows[0].id) : null;
   }
 
   private async writeChildren(
