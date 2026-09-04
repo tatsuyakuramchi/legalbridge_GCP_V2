@@ -37,15 +37,47 @@ export function emptyQuickReceipt(): QuickReceipt {
   return { sublicensee: "", receivedOn: "", currency: "JPY", amount: "", fxMode: "pre", fxRate: "" };
 }
 
+/** 自社プロファイル（マスタ・設定＞システム設定）。master-data/search type=company の values と同じキー。 */
+export interface QuickCompany {
+  name?: unknown; postal_code?: unknown; address?: unknown; tel?: unknown; invoice_no?: unknown; rep?: unknown;
+}
+/** ログイン中の担当者（担当者マスタ）。master-data/search type=staff の values と同じキー。 */
+export interface QuickStaff { staff_name?: unknown; department?: unknown; email?: unknown; phone?: unknown }
+
+const text = (v: unknown) => String(v ?? "").trim();
+
+/** 発行元（ライセンシー＝自社）ボックス用の変数。テンプレ 076 が COMPANY_* を描く。 */
+export function issuerPatch(company: QuickCompany | null, staff: QuickStaff | null): DocumentFormData {
+  const patch: DocumentFormData = {};
+  if (company) {
+    if (text(company.name)) patch.licensee = text(company.name);
+    if (text(company.postal_code)) patch.COMPANY_POSTAL_CODE = text(company.postal_code);
+    if (text(company.address)) patch.COMPANY_ADDRESS = text(company.address);
+    if (text(company.tel)) patch.COMPANY_TEL = text(company.tel);
+    if (text(company.invoice_no)) patch.COMPANY_INVOICE_NO = text(company.invoice_no);
+    if (text(company.rep)) patch.COMPANY_REP = text(company.rep);
+  }
+  if (staff && text(staff.staff_name)) {
+    patch.STAFF_NAME = text(staff.staff_name);
+    patch.STAFF_DEPARTMENT = text(staff.department);
+    patch.STAFF_EMAIL = text(staff.email);
+    patch.STAFF_PHONE = text(staff.phone);
+  }
+  return patch;
+}
+
 export function buildQuickReceiptPatch(input: {
   inLine: QuickLine;
   economics: QuickEconomics;
   outLine: QuickLine | null;
   receipt: QuickReceipt;
   companyName: string;
+  company?: QuickCompany | null;
+  staff?: QuickStaff | null;
   existing?: DocumentFormData;
 }): DocumentFormData {
-  const { inLine, economics, outLine, receipt, companyName } = input;
+  const { inLine, economics, outLine, receipt } = input;
+  const companyName = input.companyName || text(input.company?.name);
   const sublicensee = receipt.sublicensee.trim() || outLine?.vendorName || "";
   const currency = (receipt.currency || "JPY").toUpperCase();
   const foreign = currency !== "JPY";
@@ -77,7 +109,8 @@ export function buildQuickReceiptPatch(input: {
     royaltyCategory: "サブライセンス受領ベース",
     intakeCurrency: currency,
     ...(foreign && receipt.fxRate !== "" ? { fxRate: receipt.fxRate } : {}),
-    // 自社・通貨
+    // 自社（発行元＝ライセンシー）・担当者・通貨
+    ...issuerPatch(input.company ?? null, input.staff ?? null),
     ...(companyName ? { licensee: companyName } : {}),
     currency: "JPY",
     // 受領行（既存の行があれば末尾に足す）

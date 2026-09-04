@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import type { DocumentFormData } from "../types";
 import {
-  buildQuickReceiptPatch, emptyQuickReceipt, quickReceiptJpy, type QuickEconomics, type QuickLine, type QuickReceipt
+  buildQuickReceiptPatch, emptyQuickReceipt, quickReceiptJpy,
+  type QuickCompany, type QuickEconomics, type QuickLine, type QuickReceipt, type QuickStaff
 } from "./royalty-quick-receipt";
+import { findSelfStaff } from "./MasterDataPicker";
 
 // 利用許諾料計算書「かんたん受領入力」（ライセンスアウト入金 → 許諾者への支払・2026-09-04）。
 // 計算書の欄が多くて作れない、という指摘への対応。入力は ①支払先（イン条件）②入金元（アウト条件）
@@ -74,15 +76,29 @@ export function RoyaltyQuickReceipt({ formData, onApply }: {
   const [economics, setEconomics] = useState<QuickEconomics | null>(null);
   const [economicsNote, setEconomicsNote] = useState("");
   const [receipt, setReceipt] = useState<QuickReceipt>(emptyQuickReceipt());
-  const [companyName, setCompanyName] = useState("");
+  const [company, setCompany] = useState<QuickCompany | null>(null);
+  const [staff, setStaff] = useState<QuickStaff | null>(null);
   const [open, setOpen] = useState(!formData.rsConditionLineId);
 
+  // 発行元（ライセンシー＝自社）と担当者（ログイン中の自分）を先に引いておく。
   useEffect(() => {
     fetch("/api/v2/master-data/search?type=company&q=")
       .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { const item = d?.items?.[0]; if (item?.values?.name) setCompanyName(String(item.values.name)); })
+      .then((d) => { const item = d?.items?.[0]; if (item?.values) setCompany(item.values as QuickCompany); })
+      .catch(() => undefined);
+    fetch("/api/v2/me")
+      .then((r) => (r.ok ? r.json() : null))
+      .then(async (me) => {
+        const email = String(me?.user?.email ?? "");
+        if (!email) return;
+        const r = await fetch(`/api/v2/master-data/search?type=staff&q=${encodeURIComponent(email)}`);
+        if (!r.ok) return;
+        const self = findSelfStaff(((await r.json()).items ?? []) as Array<{ values?: Record<string, unknown> }>, email);
+        if (self?.values) setStaff(self.values as QuickStaff);
+      })
       .catch(() => undefined);
   }, []);
+  const companyName = String(company?.name ?? "");
 
   async function pickIn(line: LineRow | null) {
     setInLine(line); setEconomics(null); setEconomicsNote("");
@@ -105,8 +121,8 @@ export function RoyaltyQuickReceipt({ formData, onApply }: {
 
   function apply() {
     if (!inLine || !economics) return;
-    const patch = buildQuickReceiptPatch({ inLine, economics, outLine, receipt, companyName, existing: formData });
-    onApply(patch, `かんたん受領入力を反映しました: ${receipt.sublicensee.trim() || outLine?.vendorName} からの入金 ¥${jpy.toLocaleString("ja-JP")} × ${economics.ratePct}% → ${inLine.vendorName} への支払。契約・当事者・製品名も埋めました（右の計算結果と下の欄を確認して確定）`);
+    const patch = buildQuickReceiptPatch({ inLine, economics, outLine, receipt, companyName, company, staff, existing: formData });
+    onApply(patch, `かんたん受領入力を反映しました: ${receipt.sublicensee.trim() || outLine?.vendorName} からの入金 ¥${jpy.toLocaleString("ja-JP")} × ${economics.ratePct}% → ${inLine.vendorName} への支払。契約・当事者・発行元（自社${staff ? "・担当者" : ""}）・製品名も埋めました（右の計算結果と下の欄を確認して確定）`);
     setReceipt(emptyQuickReceipt());
     setOpen(false);
   }

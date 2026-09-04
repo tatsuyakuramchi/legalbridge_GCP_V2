@@ -1150,7 +1150,9 @@ function SettlementBand({ settlement }: { settlement: NonNullable<DashboardSumma
 // 通知条項に当社側担当者（STAFF_*）を印字する基本契約系テンプレート（V1 と同じ集合）。
 const NOTICE_STAFF_TEMPLATES = new Set([
   "license_master", "service_master", "pub_master_individual", "pub_master_corporate",
-  "individual_license_terms_v3", "pub_license_terms", "pub_additional_terms"
+  "individual_license_terms_v3", "pub_license_terms", "pub_additional_terms",
+  // 計算書の発行元（ライセンシー）ボックスは STAFF_* で担当者を印字する（2026-09-04）。
+  "royalty_statement"
 ]);
 
 // 条件（料率・MG/AG・支払・許諾地域）を持つテンプレート。条件は条件台帳から引用する（段階3）。
@@ -1342,6 +1344,7 @@ function DocumentForm({
           return {
             ...current,
             STAFF_NAME: String(values.staff_name ?? ""),
+            STAFF_DEPARTMENT: String(values.department ?? ""),
             STAFF_PHONE: String(values.phone ?? ""),
             STAFF_EMAIL: String(values.email ?? "")
           };

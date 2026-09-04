@@ -46,3 +46,22 @@ test("かんたん受領入力: 円入金は換算なし、既存の受領行に
   assert.equal(quickReceiptJpy({ ...emptyQuickReceipt(), currency: "USD", amount: 12000, fxMode: "pre", fxRate: 148.2 }), 1778400);
   assert.equal(quickReceiptJpy({ ...emptyQuickReceipt(), amount: 890000 }), 890000);
 });
+
+test("発行元（自社）と担当者: 会社プロファイルと担当者マスタから COMPANY_* / STAFF_* を埋める（空は書かない）", () => {
+  const patch = buildQuickReceiptPatch({
+    inLine, economics, outLine, companyName: "",
+    company: { name: "株式会社アークライト", postal_code: "101-0021", address: "東京都千代田区外神田…", tel: "03-0000-0000", invoice_no: "T1234567890123", rep: "" },
+    staff: { staff_name: "倉持 達也", department: "法務", email: "k@example.com", phone: "" },
+    receipt: { ...emptyQuickReceipt(), amount: 100000 }
+  });
+  assert.equal(patch.licensee, "株式会社アークライト");
+  assert.equal(patch.COMPANY_POSTAL_CODE, "101-0021");
+  assert.equal(patch.COMPANY_ADDRESS, "東京都千代田区外神田…");
+  assert.equal(patch.COMPANY_TEL, "03-0000-0000");
+  assert.equal(patch.COMPANY_INVOICE_NO, "T1234567890123");
+  assert.equal("COMPANY_REP" in patch, false);
+  assert.equal(patch.STAFF_NAME, "倉持 達也");
+  assert.equal(patch.STAFF_DEPARTMENT, "法務");
+  assert.equal(patch.STAFF_EMAIL, "k@example.com");
+  assert.equal(patch.STAFF_PHONE, "");
+});
