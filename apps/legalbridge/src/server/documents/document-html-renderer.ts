@@ -71,7 +71,7 @@ export async function renderStoredDocumentHtml(
 // 相手先の宛名に使う名前（区分の突き合わせ対象）。documents.vendor_id を引くときと
 // 同じ順序で見る（finalization の PARTY_NAME_KEYS と揃える）。
 const VENDOR_NAME_KEYS = ["VENDOR_NAME", "取引先", "相手先", "counterparty", "PARTY_A_NAME"];
-const LICENSOR_NAME_KEYS = ["LICENSOR_NAME", "Licensor_氏名会社名", "Licensor_名称", "許諾者名", "許諾者"];
+const LICENSOR_NAME_KEYS = ["LICENSOR_NAME", "Licensor_氏名会社名", "Licensor_名称", "許諾者名", "許諾者", "licensor", "designerName"];
 
 // 区分（法人／個人）は取引先マスタを正とする。form_data の区分は、取引先ボタンで
 // 引いた値がそのまま残るため、宛名だけ書き換えた文書では前の相手の区分が残る

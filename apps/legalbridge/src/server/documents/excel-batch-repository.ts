@@ -16,11 +16,36 @@ const VENDOR_COLUMNS = `
          v.vendor_code, v.vendor_name, v.account_holder_kana, v.entity_type,
          v.withholding_enabled, v.invoice_registration_number`;
 
+// documents.vendor_id が無い文書（確定時に相手先名から解決できなかった旧文書・licensor キーしか
+// 無かった計算書）は、form_data の相手先名でマスタを引く（finalization の resolveVendorIdByName と
+// 同じ vendor_name → trade_name → pen_name の順）。
+const VENDOR_JOIN = `
+    LEFT JOIN LATERAL (
+      SELECT v.vendor_code, v.vendor_name, v.account_holder_kana, v.entity_type,
+             v.withholding_enabled, v.invoice_registration_number
+        FROM vendors v
+       WHERE (d.vendor_id IS NOT NULL AND v.id = d.vendor_id)
+          OR (d.vendor_id IS NULL AND n.party_name IS NOT NULL
+              AND (v.vendor_name = n.party_name OR v.trade_name = n.party_name OR v.pen_name = n.party_name))
+       ORDER BY (v.id = d.vendor_id) DESC NULLS LAST, (v.vendor_name = n.party_name) DESC NULLS LAST, v.id
+       LIMIT 1
+    ) v ON true`;
+const PARTY_NAME_SQL = `
+    CROSS JOIN LATERAL (
+      SELECT COALESCE(
+        NULLIF(btrim(d.form_data->>'VENDOR_NAME'), ''), NULLIF(btrim(d.form_data->>'counterparty'), ''),
+        NULLIF(btrim(d.form_data->>'取引先'), ''), NULLIF(btrim(d.form_data->>'相手先'), ''),
+        NULLIF(btrim(d.form_data->>'LICENSOR_NAME'), ''), NULLIF(btrim(d.form_data->>'licensor'), ''),
+        NULLIF(btrim(d.form_data->>'designerName'), '')
+      ) AS party_name
+    ) n`;
+
 const PENDING_SQL = `
   SELECT d.document_number, d.template_type, d.form_data, d.created_at, ${VENDOR_COLUMNS}
     FROM documents d
     LEFT JOIN lb_v2_excel_export_ledger l ON l.document_number = d.document_number
-    LEFT JOIN vendors v ON v.id = d.vendor_id
+    ${PARTY_NAME_SQL}
+    ${VENDOR_JOIN}
    WHERE l.document_number IS NULL
      AND COALESCE(d.is_primary, true) = true
      AND COALESCE(d.lifecycle_status, 'final') = 'final'
@@ -33,7 +58,8 @@ const PENDING_SQL = `
 const PENDING_SQL_NO_LEDGER = `
   SELECT d.document_number, d.template_type, d.form_data, d.created_at, ${VENDOR_COLUMNS}
     FROM documents d
-    LEFT JOIN vendors v ON v.id = d.vendor_id
+    ${PARTY_NAME_SQL}
+    ${VENDOR_JOIN}
    WHERE COALESCE(d.is_primary, true) = true
      AND COALESCE(d.lifecycle_status, 'final') = 'final'
      AND d.document_number IS NOT NULL
