@@ -349,7 +349,9 @@ export function applyParentPurchaseOrderQuote(
       deliverable_ownership: line.deliverable_ownership ?? "発注者",
       calc_method: line.calc_method ?? "FIXED",
       royalty_calc_basis: line.royalty_calc_basis ?? "",
-      rate_pct: line.rate_pct ?? ""
+      rate_pct: line.rate_pct ?? "",
+      // 条件台帳から起こした発注書の明細は条件明細キー（CL-…）を持つ。検収の消化記帳先になるため写す。
+      ...(line.condition_line_code ? { condition_line_code: line.condition_line_code } : {})
     }));
   }
   // 経費・手数料は「精算候補」として持ち込む（自動では支払額に含めない）。

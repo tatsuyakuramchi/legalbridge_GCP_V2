@@ -65,7 +65,7 @@ type RightsForm = {
 };
 
 
-export function WorkDetail({ canEdit = false, canEditRights = false, canEditMaterials = false, onNavigate, onAddGrant, onCreateLicenseTerms, onCreateDocumentFromWork, onEditWork, onEnterConditions, initialWorkId = null }: {
+export function WorkDetail({ canEdit = false, canEditRights = false, canEditMaterials = false, onNavigate, onAddGrant, onCreateLicenseTerms, onCreateDocumentFromWork, onEditWork, onEnterConditions, onFollowUp, initialWorkId = null }: {
   canEdit?: boolean; canEditRights?: boolean; canEditMaterials?: boolean; onNavigate?: (target: string) => void; onAddGrant?: (workId: number) => void;
   onCreateLicenseTerms?: (seed: DocumentFormData, workCode: string | null) => void;
   // 出版個別条件書・出版基本契約・発注書を作品から起こす（初期値は App 側で差し込む）。
@@ -76,6 +76,8 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
   onEditWork?: (workId: number) => void; initialWorkId?: number | null;
   // 作品の条件登録（正の動線）。旧「取込→詳細編集→条件明細」の案内はこれに置き換えた。
   onEnterConditions?: (workId: number, documentId?: number) => void;
+  // 後続文書（検収書・利用許諾料計算書）の入口を、この作品の検索語つきで開く。
+  onFollowUp?: (workId: number, title: string) => void;
 }) {
   const [keyword, setKeyword] = useState("");
   const [results, setResults] = useState<Summary[]>([]);
@@ -483,6 +485,8 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
                 <p>業務委託（支払・経費・手数料）／利用許諾イン／利用許諾アウトの条件明細を選んで入力し、保存すると条件台帳（CT-…）に登録されてここに載ります。文書は最後に「新規文書に紐づける（従来フォームで作成）／過去文書に紐づける／アップロード文書に紐づける」から選びます。下書きは「下書き」印で載り、確定するまで計算書の下地にはなりません。</p>
                 <div className="wz-next">
                   {onEnterConditions && <button type="button" className="primary" onClick={() => onEnterConditions(detail.work.id)}>条件を登録・編集する →</button>}
+                  {onFollowUp && <button type="button" onClick={() => onFollowUp(detail.work.id, detail.work.title ?? detail.work.workCode ?? "")}
+                    title="検収書・利用許諾料計算書は時間差で依頼が来るため、登録済みの発注書・条件明細を呼び出して作ります">この作品の後続文書（検収書・計算書）→</button>}
                   {onAddGrant && <button type="button" onClick={() => onAddGrant(detail.work.id)}>アウト条件を追記（当社が許諾して受け取る側）</button>}
                 </div>
               </div>

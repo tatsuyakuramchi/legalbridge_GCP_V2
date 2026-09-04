@@ -49,7 +49,7 @@ const toNum = (v: string): number | null => {
 const yen = (n: number) => `¥${n.toLocaleString("ja-JP")}`;
 const fmtDate = (v: string | null) => (v ? v.slice(0, 10) : "");
 
-export function ConditionFirstFlow({ seed, canWrite, onBack, onOpenWork, onRegisterWork, onOpenTemplates, onCreateDocument }: {
+export function ConditionFirstFlow({ seed, canWrite, onBack, onOpenWork, onRegisterWork, onOpenTemplates, onCreateDocument, onFollowUp }: {
   seed: { workId?: number | null; ledgerId?: number | null };
   canWrite: boolean;
   onBack: () => void;
@@ -57,6 +57,8 @@ export function ConditionFirstFlow({ seed, canWrite, onBack, onOpenWork, onRegis
   onRegisterWork: () => void;
   onOpenTemplates: () => void;
   onCreateDocument: (templateKey: string, payload: ConditionLedgerPayload, ledger: LedgerHandoff) => void;
+  // 後続文書（検収書・計算書）の入口を、この契約の番号で検索した状態で開く。
+  onFollowUp?: (query: string) => void;
 }) {
   const toast = useToast();
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -462,6 +464,7 @@ export function ConditionFirstFlow({ seed, canWrite, onBack, onOpenWork, onRegis
       <div className="wz-next">
         <button type="button" className="primary" onClick={() => (work ? onOpenWork(work.id) : onBack())}>完了（{work ? "作品を開く" : "戻る"}）</button>
         <button type="button" onClick={() => setStep(2)}>条件明細を直す</button>
+        {onFollowUp && <button type="button" onClick={() => onFollowUp(ledger.documentNumber)}>後続文書（検収書・計算書）へ →</button>}
         <small>検収書・利用許諾料計算書は時間差で依頼が来るため、ここでは作りません。あとで「後続文書」から契約 {ledger.documentNumber} を呼び出して作ります。</small>
       </div>
     </> : <p className="wz-hint">②で条件明細を保存すると開きます。</p>, stateOf(3))}

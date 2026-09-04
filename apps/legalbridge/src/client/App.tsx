@@ -19,7 +19,8 @@ import {
 import { MasterDataPicker, buildPatch, findSelfStaff } from "./MasterDataPicker";
 import { WorkIntake } from "./WorkIntake";
 import { ConditionFirstFlow, type LedgerHandoff } from "./ConditionFirstFlow";
-import { ledgerToFormSeed } from "./condition-ledger-seed";
+import { FollowUpDocuments, type FollowUpTab } from "./FollowUpDocuments";
+import { ledgerToFormSeed, purchaseOrderValuesForInspection } from "./condition-ledger-seed";
 import type { ConditionLedgerPayload } from "../condition-ledger";
 import {
   LANGUAGE_PRESETS, REGION_PRESETS, fixedDealRows, resolvePubMasterTemplate, vendorRecordToPickerValues
@@ -81,7 +82,7 @@ const fallback: DashboardSummary = {
   priorities: []
 };
 
-type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview" | "billing" | "receivable-map" | "payment-report" | "billing-print" | "works" | "work-intake" | "condition-first" | "license-matrix" | "data-quality" | "vendor-merge" | "matter-merge" | "guide" | "snippets" | "requests" | "excel-batch" | "settings" | "email-settings" | "workflow-rules" | "contract-master" | "template-samples";
+type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview" | "billing" | "receivable-map" | "payment-report" | "billing-print" | "works" | "work-intake" | "condition-first" | "follow-up" | "license-matrix" | "data-quality" | "vendor-merge" | "matter-merge" | "guide" | "snippets" | "requests" | "excel-batch" | "settings" | "email-settings" | "workflow-rules" | "contract-master" | "template-samples";
 type NavItem = { view: View; label: string; description: string; match: View[] };
 type NavGroup = { label: string; items: NavItem[] };
 
@@ -110,6 +111,7 @@ function navGroups(access: {
     ] },
     { label: "権利・条件", items: [
       ...(access.legalWorkspace ? [{ view: "condition-first" as const, label: "条件を登録する", description: "業務委託・利用許諾の条件明細を作り、最後に文書へ紐づける（条件明細が正）", match: ["condition-first" as const] }] : []),
+      ...(access.legalWorkspace ? [{ view: "follow-up" as const, label: "後続文書", description: "検収書・利用許諾料計算書を、登録済みの発注書・条件明細から作る", match: ["follow-up" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "work-intake" as const, label: "作品登録", description: "原作・素材・既存文書まで一括登録（条件は「条件を登録する」で入力）", match: ["work-intake" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "works" as const, label: "作品", description: "作品を起点に系譜・素材・条件・権利ソースを一望", match: ["works" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "conditions" as const, label: "条件明細", description: "契約条件の横断検索・消化・検収", match: ["conditions" as const] }] : []),
@@ -167,6 +169,7 @@ function breadcrumbFor(view: View): Array<{ label: string; view?: View }> {
     works: [home, { label: "作品" }],
     "work-intake": [home, { label: "作品登録" }],
     "condition-first": [home, { label: "条件を登録する" }],
+    "follow-up": [home, { label: "後続文書" }],
     "data-quality": [home, { label: "データ品質" }],
     "vendor-merge": [home, { label: "取引先名寄せ" }],
     "matter-merge": [home, { label: "案件名寄せ" }],
@@ -238,6 +241,12 @@ export function App() {
   const enterConditions = (workId: number, _documentId?: number) => {
     setConditionFlowSeed((s) => ({ workId, ledgerId: null, nonce: s.nonce + 1 }));
     setView("condition-first");
+  };
+  // 後続文書（検収書・利用許諾料計算書）の入口。作品・条件台帳から来たときは検索語を引き継ぐ。
+  const [followUpSeed, setFollowUpSeed] = useState<{ tab?: FollowUpTab; q?: string; nonce: number }>({ nonce: 0 });
+  const openFollowUp = (q?: string, tab?: FollowUpTab) => {
+    setFollowUpSeed((s) => ({ q, tab, nonce: s.nonce + 1 }));
+    setView("follow-up");
   };
   // 権利ツリーから「＋許諾条件を追加」で飛んだときの作品プリセット。
   const [drillOutboundWorkId, setDrillOutboundWorkId] = useState<number | null>(null);
@@ -531,6 +540,74 @@ export function App() {
     setView("document");
   }
 
+  // 後続文書①：発注書から検収書を起こす（「親の発注書から引用」と同じ対応表）。取込んだ過去の
+  // 発注書に明細が無ければ、紐づく条件台帳の支払・経費・手数料から明細を補う。
+  async function startInspectionFromPurchaseOrder(purchaseOrder: { id: number; documentNumber: string | null }) {
+    const docResponse = await fetch(`/api/v2/documents/${purchaseOrder.id}`);
+    if (!docResponse.ok) { window.alert("発注書を読み込めませんでした"); return; }
+    const document = (await docResponse.json()).document as { id: number; documentNumber: string | null; templateType: string; formData?: Record<string, unknown> };
+    const formData = document.formData ?? {};
+    let ledger: { payload: ConditionLedgerPayload; id: number; documentNumber: string; lineCodes: Record<number, string> } | null = null;
+    const ledgerId = Number(formData.condition_ledger_id);
+    if (Number.isInteger(ledgerId) && ledgerId > 0) {
+      try {
+        const ledgerResponse = await fetch(`/api/v2/condition-ledgers/${ledgerId}`);
+        if (ledgerResponse.ok) {
+          const detail = (await ledgerResponse.json()).ledger as { id: number; documentNumber: string; payload: ConditionLedgerPayload; lines: Array<{ lineNo: number | null; lineCode: string | null }> };
+          const lineCodes: Record<number, string> = {};
+          detail.lines.forEach((l) => { if (l.lineNo != null && l.lineCode) lineCodes[l.lineNo] = l.lineCode; });
+          ledger = { payload: detail.payload, id: detail.id, documentNumber: detail.documentNumber, lineCodes };
+        }
+      } catch { /* 台帳が引けなくても発注書の内容だけで開く */ }
+    }
+    const schemaResponse = await fetch(`/api/v2/document-templates/inspection_certificate/form-schema`);
+    if (!schemaResponse.ok) { window.alert("検収書テンプレートの定義を取得できませんでした"); return; }
+    const nextSchema: DocumentFormSchema = await schemaResponse.json();
+    const values = purchaseOrderValuesForInspection(
+      { id: document.id, documentNumber: document.documentNumber, templateType: document.templateType, formData }, ledger);
+    const seed: DocumentFormData = buildPatch(nextSchema, {}, {
+      id: `document:${document.id}`, type: "document", label: document.documentNumber ?? `#${document.id}`, values
+    });
+    setFormNonce((v) => v + 1);
+    setDraftSelection(null);
+    setReissueSource(null);
+    setNewDocSeed({});
+    setNewDocIssueKey("");
+    setDuplicateValues(seed);
+    setDuplicateFrom(null);
+    setSeedNotice(`発注書 ${document.documentNumber ?? ""} の明細・経費・手数料を引用しました${ledger ? `（条件台帳 ${ledger.documentNumber} から補完）` : ""}。今回検収する行と数量・金額を確認し、受付番号を入れて確定してください`);
+    setSchema(nextSchema);
+    setView("document");
+  }
+
+  // 後続文書②：条件明細から利用許諾料計算書を起こす。料率・MG/AG・AG消化累計を台帳から入れ、
+  // 条件明細をひも付けた状態（確定で消化イベント自動記帳）でフォームを開く。
+  async function startStatementFromCondition(conditionLineId: number) {
+    const economicsResponse = await fetch(`/api/v2/royalty/condition-economics/${conditionLineId}`);
+    const economicsBody = await economicsResponse.json().catch(() => ({}));
+    if (!economicsResponse.ok) { window.alert(economicsBody.error ?? "条件明細の経済条件を取得できませんでした"); return; }
+    const economics = economicsBody.economics as { representativeLineId: number; conditionName: string | null; ratePct: number; mgAmount: number; agAmount: number; agConsumed: number };
+    const schemaResponse = await fetch(`/api/v2/document-templates/royalty_statement/form-schema`);
+    if (!schemaResponse.ok) { window.alert("利用許諾料計算書テンプレートの定義を取得できませんでした"); return; }
+    const nextSchema: DocumentFormSchema = await schemaResponse.json();
+    const seed: DocumentFormData = {
+      statementMode: "single",
+      rsConditionLineId: economics.representativeLineId,
+      rsRatePct: economics.ratePct, rsMgAmount: economics.mgAmount, rsAgAmount: economics.agAmount,
+      rsAgConsumedBefore: economics.agConsumed
+    };
+    setFormNonce((v) => v + 1);
+    setDraftSelection(null);
+    setReissueSource(null);
+    setNewDocSeed({});
+    setNewDocIssueKey("");
+    setDuplicateValues(seed);
+    setDuplicateFrom(null);
+    setSeedNotice(`条件明細 #${economics.representativeLineId}${economics.conditionName ? `（${economics.conditionName}）` : ""} をひも付けました。料率 ${economics.ratePct}%・MG ¥${Number(economics.mgAmount || 0).toLocaleString("ja-JP")}・AG消化済み ¥${Number(economics.agConsumed || 0).toLocaleString("ja-JP")} を台帳から入れています。対象期間と売上・数量を入れて確定してください`);
+    setSchema(nextSchema);
+    setView("document");
+  }
+
   async function openDocumentForm(templateKey: string) {
     setFormNonce((v) => v + 1);
     setDuplicateValues(null);
@@ -666,11 +743,19 @@ export function App() {
           onOpenWork={(workId) => { setDrillWorkId(workId); setView("works"); }}
           onRegisterWork={() => { setEditIntakeWorkId(null); setView("work-intake"); }}
           onOpenTemplates={() => { setNewDocIssueKey(""); setNewDocSeed({}); setDraftSelection(null); setView("templates"); }}
-          onCreateDocument={(templateKey, payload, ledger) => void startDocumentFromLedger(templateKey, payload, ledger)} />}
+          onCreateDocument={(templateKey, payload, ledger) => void startDocumentFromLedger(templateKey, payload, ledger)}
+          onFollowUp={(q) => openFollowUp(q)} />}
+        {view === "follow-up" && legalWorkspace && <FollowUpDocuments
+          key={`fu:${followUpSeed.nonce}`}
+          seed={followUpSeed}
+          onCreateInspection={(po) => void startInspectionFromPurchaseOrder(po)}
+          onCreateStatement={(lineId) => void startStatementFromCondition(lineId)}
+          onOpenConditionLine={(lineId) => { setDrillConditionId(lineId); setView("conditions"); }} />}
         {view === "works" && <WorkDetail key={drillWorkId ?? "works"} initialWorkId={drillWorkId} canEdit={canEditWorks} canEditRights={canEditRightsSources} canEditMaterials={canEditMaterials}
           onCreateLicenseTerms={(seed, workCode) => void startLicenseTermsFromWork(seed, workCode)}
           onCreateDocumentFromWork={(choice, work) => void startDocumentFromWork(choice, work)}
           onEnterConditions={enterConditions}
+          onFollowUp={(_workId, title) => openFollowUp(title)}
           onAddGrant={(workId) => { setDrillOutboundWorkId(workId); setView("outbound"); }}
           onEditWork={(workId) => { setEditIntakeWorkId(workId); setView("work-intake"); }}
           onNavigate={(t) => { if (t === "ledgers-works") { setLedgerSeedType("works"); setView("ledgers"); } else setView(t as View); }} />}

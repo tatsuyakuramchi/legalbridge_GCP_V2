@@ -114,25 +114,58 @@ export function ledgerToFormSeed(payload: ConditionLedgerPayload, templateKey: s
   }
 
   if (templateKey === "license_out_en") {
+    // テンプレ 050 の変数名: GAME_TITLE（原題）/ TERRITORIES（A.2）/ LANGUAGE_VERSIONS（A.3）/
+    // LICENSE_FEE（A.6・料率と基準を英文で）/ ADVANCE_PAYMENT（A.7・前払金＝MG/AG）/ LICENSEE_NAME。
     const rows = lout ? payload.licenseOut : [];
     const sums = groupRateSums(rows);
+    const first = rows[0];
+    const rate = first ? (first.ratePct ?? Object.values(sums)[0] ?? null) : null;
+    const advance = first ? (first.agAmount || first.mgAmount || null) : null;
     return {
       ...common,
       ...(payload.vendorName ? { LICENSEE_NAME: payload.vendorName } : {}),
-      ...(rows[0] ? {
-        TERRITORY: joinNames(rows[0].regions, " / "), LANGUAGE: joinNames(rows[0].languages, " / "),
-        ROYALTY_RATE: String(rows[0].ratePct ?? Object.values(sums)[0] ?? ""),
-        MINIMUM_GUARANTEE: yen(rows[0].mgAmount), ADVANCE: yen(rows[0].agAmount)
+      ...(payload.workTitle ? { GAME_TITLE: payload.workTitle } : {}),
+      ...(first ? {
+        TERRITORIES: joinNames(first.regions, " / "),
+        LANGUAGE_VERSIONS: joinNames(first.languages, " / "),
+        ...(rate != null ? { LICENSE_FEE: `${rate}% of the ${first.basePriceLabel || "net sales"}` } : {}),
+        ...(advance != null ? { ADVANCE_PAYMENT: `JPY ${advance.toLocaleString("en-US")}` } : {})
       } : {}),
       ...(rows.length ? { financial_conditions: licenseFinancialConditions(rows, 1, codes, 6000) } : {})
     };
   }
 
-  // 出版個別条件書ほか：条件は金銭条件（financial_conditions）として渡し、テンプレ固有の欄は
-  // フォーム側で確認して埋める。
+  // 出版個別利用許諾条件書（pub_license_terms）ほか：原著作物名・紙書籍印税率は料率行の先頭から。
+  // 条件の全量は金銭条件（financial_conditions）として渡し、テンプレ固有の欄はフォーム側で確認して埋める。
+  const firstIn = lin ? payload.licenseIn[0] : undefined;
   return {
     ...common,
     ...(payload.workTitle ? { 原著作物名: payload.workTitle } : {}),
+    ...(templateKey === "pub_license_terms" && firstIn?.ratePct != null ? { 紙書籍印税率: String(firstIn.ratePct) } : {}),
     ...(lin && payload.licenseIn.length ? { financial_conditions: licenseFinancialConditions(payload.licenseIn, 1, codes, 5000) } : {})
   };
+}
+
+/**
+ * 検収書の「親の発注書から引用」に渡す発注書の値。フォームで作った発注書は items/expenses/other_fees
+ * を持つが、アップロードした過去の発注書（取込）は持たない。条件台帳に紐づいていれば、台帳の
+ * 支払・経費・手数料から同じ形の明細を組み立てて補う（条件明細キー・税区分付き）。
+ */
+export function purchaseOrderValuesForInspection(
+  document: { id: number; documentNumber: string | null; templateType: string; formData: Record<string, unknown> },
+  ledger: { payload: ConditionLedgerPayload; id: number; documentNumber: string; lineCodes?: Record<number, string> } | null
+): Record<string, unknown> {
+  const values: Record<string, unknown> = {
+    ...document.formData, template_type: document.templateType, document_number: document.documentNumber ?? ""
+  };
+  const hasItems = Array.isArray(values.items) && (values.items as unknown[]).length > 0;
+  if (!hasItems && ledger) {
+    const seed = ledgerToFormSeed(ledger.payload, "purchase_order", ledger);
+    if (seed.items) values.items = seed.items;
+    if (!Array.isArray(values.expenses) || !(values.expenses as unknown[]).length) { if (seed.expenses) values.expenses = seed.expenses; }
+    if (!Array.isArray(values.other_fees) || !(values.other_fees as unknown[]).length) { if (seed.other_fees) values.other_fees = seed.other_fees; }
+    if (!values.counterparty && ledger.payload.vendorName) values.counterparty = ledger.payload.vendorName;
+    if (!values.PROJECT_TITLE && !values.title && ledger.payload.title) values.title = ledger.payload.title;
+  }
+  return values;
 }
