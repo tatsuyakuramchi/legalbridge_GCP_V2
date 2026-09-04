@@ -108,7 +108,9 @@ export function createLicenseSettlementRouter(
         sampleQuantity: preview.sampleQuantity,
         billableQuantity: preview.billableQuantity,
         msrpStr: preview.unitBase ? formatMoney(preview.unitBase, preview.currency) : "",
-        calcType: preview.trigger === "sublicense_receipt" ? "sublicense" : preview.trigger,
+        calcType: preview.trigger === "sublicense_receipt"
+          ? "sublicense"
+          : preview.trigger === "sale" ? "sales" : "manufacturing",
         royaltyRatePct: preview.ratePct ?? "",
         grossRoyaltyStr: formatMoney(preview.grossRoyalty, preview.currency),
         mgAmount: c.mgAmount ?? 0,
