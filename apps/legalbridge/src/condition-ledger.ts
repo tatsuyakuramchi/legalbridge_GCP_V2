@@ -149,6 +149,17 @@ export function joinNames(items: CodedName[], separator = "・"): string {
   return items.map((i) => i.name.trim()).filter(Boolean).join(separator);
 }
 
+// 子テーブル（condition_line_regions / languages）へ書くコードは ISO の 2〜3 文字（JP・ja など）に限る。
+// まとめ（WW・R-ASIA・ALL）や地域バリアント（zh-Hans・pt-BR）は列幅を超える恐れがあるため
+// コード無し（名前のみ）で保存する。印字は名前を使うので表現は変わらない（2026-09-04）。
+export function storableCode(code: string | null | undefined): string | null {
+  const value = String(code ?? "").trim();
+  return /^[A-Za-z]{2,3}$/.test(value) ? value : null;
+}
+export function storableCodedNames(items: CodedName[]): CodedName[] {
+  return items.filter((i) => i.name.trim()).map((i) => ({ code: storableCode(i.code), name: i.name.trim() }));
+}
+
 /** 加算型（同じグループ番号）の適用料率Σ。 */
 export function groupRateSums(rows: LedgerLicenseRow[]): Record<string, number> {
   const sums: Record<string, number> = {};
@@ -214,8 +225,8 @@ export function ledgerToConditionInputs(payload: ConditionLedgerPayload): Condit
         currency: "JPY", base_price_label: row.basePriceLabel || null,
         payment_terms: row.paymentTerms || null,
         region_territory: joinNames(row.regions) || null, region_language: joinNames(row.languages) || null,
-        regions: row.regions.filter((r) => r.name.trim()),
-        languages: row.languages.filter((l) => l.name.trim()),
+        regions: storableCodedNames(row.regions),
+        languages: storableCodedNames(row.languages),
         counterparty_vendor_id: vendor, ...term
       });
     });

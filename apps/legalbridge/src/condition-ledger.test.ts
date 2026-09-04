@@ -57,6 +57,13 @@ test("利用許諾: イン＝payable・アウト＝receivable、地域・言語�
   assert.equal(lin.region_language, "日本語");
   assert.deepEqual(lin.regions, [{ code: "JP", name: "日本" }, { code: "TW", name: "台湾" }]);
   assert.deepEqual(lin.languages, [{ code: "ja", name: "日本語" }]);   // 空名は落とす
+  // まとめ・バリアント付きコードは列幅を超えないよう名前のみで保存
+  const wide = ledgerToConditionInputs(payload({ kinds: ["license_in"], licenseIn: [{ ...lic,
+    regions: [{ code: "WW-XJP", name: "全世界（日本を除く）" }, { code: "R-ASIA", name: "アジア" }, { code: "US", name: "アメリカ合衆国" }],
+    languages: [{ code: "zh-Hans", name: "中国語（簡体字）" }, { code: "ALL", name: "全言語" }] }] }))[0];
+  assert.deepEqual(wide.regions, [{ code: null, name: "全世界（日本を除く）" }, { code: null, name: "アジア" }, { code: "US", name: "アメリカ合衆国" }]);
+  assert.deepEqual(wide.languages, [{ code: null, name: "中国語（簡体字）" }, { code: "ALL", name: "全言語" }]);
+  assert.equal(wide.region_territory, "全世界（日本を除く）・アジア・アメリカ合衆国");
   assert.equal(lout.line_no, 6001);
   assert.equal(lout.direction, "receivable");
   assert.equal(lout.is_addon, false);
