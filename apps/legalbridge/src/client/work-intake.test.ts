@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  V3_FIXED_DEALS, acquisitionFromTemplateType, buildLicenseTermsSeed,
+  V3_FIXED_DEALS, acquisitionFromTemplateType,
   emptyIntakeMaterial, fixedDealRows, materialCreatePayload, materialFromDocument,
   rightsSourceCreatePayload
 } from "./work-intake.js";
@@ -73,46 +73,6 @@ test("権利ソースpayloadは引用元文書がある素材だけ（種別は�
   assert.equal(rightsSourceCreatePayload(9, bought)?.sourceType, "direct_contract");
 });
 
-test("条件書シード: 素材コードはサーバ採番を使い、料率はロイヤリティ対象だけ", () => {
-  const original = { ...emptyIntakeMaterial("株式会社オリジナル", 55),
-    name: "原作ゲーム", royalty: true, r1: "5", r2: "50", r3: "3", mg: "300000",
-    sourceDocNumber: "LIC-2026-0015" };
-  const illustration = { ...emptyIntakeMaterial("株式会社クリエイト"),
-    name: "キャラクターイラスト", acquisitionType: "buyout_commission",
-    region: "日本", language: "日本語", r1: "9" };   // 対象外なので r1 は無視される
-  const seed = buildLicenseTermsSeed(
-    { workCode: "WRK-00021", title: "コラボゲーム", holderLabel: "株式会社オリジナル" },
-    [
-      { material: original, materialCode: "WRK-00021-001" },
-      { material: illustration, materialCode: "WRK-00021-002" }
-    ]);
-  assert.equal(seed.work_id, "WRK-00021");
-  assert.equal(seed.対象製品予定名, "コラボゲーム");
-  assert.equal(seed.Licensor_氏名会社名, "株式会社オリジナル");
-  const conds = seed.v3_conds as Array<Record<string, unknown>>;
-  assert.equal(conds.length, 3);
-  assert.equal(conds[0].calc_type, "BASE_QTY_RATE");
-  assert.equal(conds[0].mg, "300000");   // 素材MGの合算が代表（取引形態1）へ
-  const lcs = seed.v3_lcs as Array<Record<string, unknown>>;
-  assert.equal(lcs.length, 2);
-  assert.deepEqual(lcs[0], {
-    material_code: "WRK-00021-001", name: "原作ゲーム", holder: "株式会社オリジナル",
-    region: "全世界", language: "全言語", source_doc: "LIC-2026-0015",
-    rates: { "1": "5", "2": "50", "3": "3" }
-  });
-  assert.deepEqual(lcs[1].rates, {});     // ロイヤリティ対象外は料率なし
-  assert.equal(lcs[1].material_code, "WRK-00021-002");
-});
-
-test("条件書シード: 名前が空の素材行は載せない・MG無しなら既定の0のまま", () => {
-  const seed = buildLicenseTermsSeed(
-    { workCode: null, title: "作品X", holderLabel: "" },
-    [{ material: emptyIntakeMaterial(), materialCode: "WRK-1-001" }]);
-  assert.deepEqual(seed.v3_lcs, []);
-  assert.equal((seed.v3_conds as Array<Record<string, unknown>>)[0].mg, "0");
-  assert.equal(seed.work_id, "");
-});
-
 // ── 既存文書の一括アップロード計画（巻き直し＝版の系列）──────────────────
 
 test("planDocumentUploads: 1ファイルなら本番号・件名は拡張子なしファイル名", async () => {
@@ -143,13 +103,13 @@ test("stripFileExtension: 拡張子だけ落とす（ドット入りファイル
 
 // ── 展開区分と「この作品から作る文書」──────────────────────────────────
 
-test("documentChoicesForWork: 展開区分で文書の選択肢が絞られる（未設定は全部）", async () => {
+test("documentChoicesForWork: 作品から直接起こせるのは条件を持たない出版基本契約だけ（ゲームは無し）", async () => {
   const { documentChoicesForWork } = await import("./work-intake.js");
   const keys = (line: string | null) => documentChoicesForWork(line).map((c) => c.templateKey);
-  assert.deepEqual(keys("game"), ["individual_license_terms_v3", "purchase_order"]);
-  assert.deepEqual(keys("publishing"), ["pub_license_terms", "pub_master", "purchase_order"]);
-  assert.deepEqual(keys("both"), ["individual_license_terms_v3", "pub_license_terms", "pub_master", "purchase_order"]);
-  assert.deepEqual(keys(null), ["individual_license_terms_v3", "pub_license_terms", "pub_master", "purchase_order"]);
+  assert.deepEqual(keys("game"), []);
+  assert.deepEqual(keys("publishing"), ["pub_master"]);
+  assert.deepEqual(keys("both"), ["pub_master"]);
+  assert.deepEqual(keys(null), ["pub_master"]);
 });
 
 test("vendorRecordToPickerValues: camelCase→マスタ行・担当者メール優先・未取得の口座は undefined", async () => {

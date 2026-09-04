@@ -164,35 +164,22 @@ export function businessLineLabel(value: string | null | undefined): string {
 
 export interface WorkDocumentChoice {
   // "pub_master" は取引先の区分（法人/個人）で pub_master_corporate / pub_master_individual に解決する。
-  templateKey: "individual_license_terms_v3" | "pub_license_terms" | "pub_master" | "purchase_order";
+  templateKey: "pub_master";
   label: string;
   hint: string;
   primary: boolean;
 }
 
+// 作品から直接起こせる文書＝条件（料率・MG/AG・支払）を持たない文書だけ（2026-09-04 段階3）。
+// 個別条件書・発注書・ライセンスアウト契約は「条件を登録する」→③新規文書に紐づける で起こす。
 export function documentChoicesForWork(businessLine: string | null | undefined): WorkDocumentChoice[] {
-  // 個別条件書（V3・出版）は 許諾者＝取引先／被許諾者＝当社 ＝ 当社が支払うイン条件の文書。
-  const game: WorkDocumentChoice = {
-    templateKey: "individual_license_terms_v3", label: "個別利用許諾条件書（ゲーム）",
-    hint: "権利元へ支払う料率（イン条件）を素材マトリクスで定める新規発行", primary: true
-  };
-  const pub: WorkDocumentChoice = {
-    templateKey: "pub_license_terms", label: "出版個別利用許諾条件書",
-    hint: "許諾者へ支払う印税（イン条件）。原著作物名・許諾者・振込口座を差し込み", primary: true
-  };
   const pubMaster: WorkDocumentChoice = {
     templateKey: "pub_master", label: "出版基本契約",
-    hint: "許諾者が法人か個人かで書式を自動選択", primary: false
+    hint: "条件を持たない基本契約。許諾者が法人か個人かで書式を自動選択", primary: false
   };
-  const po: WorkDocumentChoice = {
-    templateKey: "purchase_order", label: "発注書",
-    hint: "素材の制作委託（イン条件）", primary: false
-  };
-  if (businessLine === "publishing") return [pub, pubMaster, po];
-  if (businessLine === "both") return [game, pub, pubMaster, po];
-  if (businessLine === "game") return [game, po];
-  // 未設定（旧作品）は全部見せて選ばせる。
-  return [game, pub, pubMaster, po];
+  if (businessLine === "game") return [];
+  // 出版・両方・未設定（旧作品）は出版基本契約を出す。
+  return [pubMaster];
 }
 
 // GET /api/v2/vendors/:id（camelCase）を、DBから引用（MasterDataPicker.buildPatch）が
@@ -231,53 +218,5 @@ export function resolvePubMasterTemplate(entityType: unknown): "pub_master_indiv
   return String(entityType ?? "").trim() === "個人" ? "pub_master_individual" : "pub_master_corporate";
 }
 
-// ── 個別利用許諾条件書V3 へのシード ───────────────────────────────────
-const rate = (value: string): string => {
-  const parsed = Number.parseFloat(String(value ?? "").replace(/,/g, ""));
-  return Number.isFinite(parsed) && parsed !== 0 ? String(parsed) : "";
-};
-
-/**
- * 作品登録の内容から条件書フォームの初期値を組み立てる。
- * 素材コードは登録時にサーバが採番したもの（saved[].materialCode）を使う＝
- * 条件同期（material_code → work_materials）が必ず結線される。
- */
-export function buildLicenseTermsSeed(
-  work: { workCode: string | null; title: string; holderLabel: string },
-  materials: Array<{ material: IntakeMaterial; materialCode: string | null }>
-): DocumentFormData {
-  const lcs = materials
-    .filter(({ material }) => material.name.trim())
-    .map(({ material, materialCode }) => {
-      const rates: Record<string, string> = {};
-      if (material.royalty) {
-        const r1 = rate(material.r1); if (r1) rates["1"] = r1;
-        const r2 = rate(material.r2); if (r2) rates["2"] = r2;
-        const r3 = rate(material.r3); if (r3) rates["3"] = r3;
-      }
-      return {
-        material_code: materialCode ?? "",
-        name: material.name.trim(),
-        holder: material.holderLabel.trim(),
-        region: material.region.trim(),
-        language: material.language.trim(),
-        ...(material.sourceDocNumber ? { source_doc: material.sourceDocNumber } : {}),
-        rates
-      };
-    });
-  // MG/AG は取引形態別ではなく条件行（代表＝取引形態1）に持つ（V1 の 2-1 と同じ）。
-  // 素材ごとの MG は合算せず、代表の1本目に最大値を入れて条件書側で確定してもらう。
-  const royaltyMaterials = materials.filter(({ material }) => material.royalty);
-  const mgTotal = royaltyMaterials.reduce((sum, { material }) => sum + (Number(rate(material.mg)) || 0), 0);
-  const agTotal = royaltyMaterials.reduce((sum, { material }) => sum + (Number(rate(material.ag)) || 0), 0);
-  const deals = fixedDealRows();
-  if (mgTotal > 0) deals[0].mg = String(mgTotal);
-  if (agTotal > 0) deals[0].ag = String(agTotal);
-  return {
-    work_id: work.workCode ?? "",
-    対象製品予定名: work.title,
-    Licensor_氏名会社名: work.holderLabel,
-    v3_conds: deals,
-    v3_lcs: lcs
-  };
-}
+// 個別利用許諾条件書V3 へのシード（buildLicenseTermsSeed）は 2026-09-04 段階3 で撤去。
+// 条件書は「条件を登録する」→③新規文書に紐づける（condition-ledger-seed.ts）で起こす。

@@ -113,7 +113,7 @@ export function LicenseMatrixWorkspace({ onOpenWork }: { onOpenWork?: (workId: n
     {lines === null ? <p className="hub-note">読み込んでいます…</p> :
       !rows.length ? <div className="empty-state">
         {onlyConflicts ? "被りのある作品はありません。" :
-          "許諾側の条件明細（作品に紐付くもの）がまだありません。アウト条件の追記から登録すると、ここに一覧されます。"}
+          "許諾側の条件明細（作品に紐付くもの）がまだありません。「条件を登録する」の利用許諾アウトで登録すると、ここに一覧されます。"}
       </div> :
       <div className="panel matrix-wrap"><div className="table-scroll"><table className="rights-matrix">
         <thead><tr>

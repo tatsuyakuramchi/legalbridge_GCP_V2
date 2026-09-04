@@ -3,7 +3,7 @@ import type { DocumentFormData } from "../types";
 import { useToast } from "./Toast";
 import { SearchableLedgerSelect } from "./SearchableLedgerSelect";
 import {
-  BUSINESS_LINE_OPTIONS, INTAKE_DOC_KINDS, buildLicenseTermsSeed, businessLineLabel,
+  BUSINESS_LINE_OPTIONS, INTAKE_DOC_KINDS, businessLineLabel,
   emptyIntakeMaterial, planDocumentUploads,
   type BusinessLine, type IntakeMaterial, type WorkDocumentChoice
 } from "./work-intake";
@@ -139,23 +139,20 @@ export function DocQuotePicker({ note, quoteNumber, onPick }: {
   </div>;
 }
 
-export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreateLicenseTerms, onCreateDocumentFromWork, onOpenImport, onEnterConditions, onAddGrant }: {
+export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreateDocumentFromWork, onOpenImport, onEnterConditions }: {
   canRegister: boolean;
   editWorkId?: number | null;
   onOpenWork?: (workId: number) => void;
-  onCreateLicenseTerms: (seed: DocumentFormData, workCode: string | null) => void;
-  // 出版個別条件書・出版基本契約・発注書を作品から起こす（初期値は App 側で取引先・作品を差し込む）。
+  // 条件を持たない文書（出版基本契約）を作品から起こす（初期値は App 側で取引先・作品を差し込む）。
   onCreateDocumentFromWork?: (
     choice: "pub_license_terms" | "pub_master" | "purchase_order",
     work: { workId: number; workCode: string | null; title: string; vendorId: number | null }
   ) => void;
-  // 過去文書取込（条件明細の登録）画面へ移動する導線（任意）。
+  // 過去文書取込画面へ移動する導線（任意）。
   onOpenImport?: () => void;
-  // 作品の条件登録（正の動線）へ。文書IDを渡すとその文書の入力から始まる。
-  // 締結済み契約の条件は文書を新規発行せずここから登録する（利用者要望 2026-09-02/03）。
+  // 「条件を登録する」（条件台帳）へ。条件を持つ文書（個別条件書・発注書・ライセンスアウト）も
+  // ここから条件明細を作って起こす（条件台帳が正・2026-09-04 段階3）。
   onEnterConditions?: (workId: number, documentId?: number) => void;
-  // 確定済み文書に条件が無いとき、アウト条件ワークスペースで台帳へ直接追記する導線。
-  onAddGrant?: (workId: number) => void;
 }) {
   const toast = useToast();
   const editMode = editWorkId != null;
@@ -558,29 +555,11 @@ export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreat
   }
 
   // ── 「この作品から作る文書」（完了帯・編集モード共通）──────────────────
-  // 個別条件書V3は素材マトリクスの展開が必要なので既存の橋（buildLicenseTermsSeed）、
-  // 出版条件書・出版基本契約・発注書は App 側で取引先・作品の対応表から初期値を作る。
+  // 条件を持たない文書（出版基本契約）だけ。条件を持つ文書は「条件を登録する」から起こす。
   function pickDocument(choice: WorkDocumentChoice) {
     const workId = doneInfo?.workId ?? editWorkId;
     const workCode = doneInfo?.workCode ?? loaded?.workCode ?? null;
     if (workId == null) return;
-    if (choice.templateKey === "individual_license_terms_v3") {
-      const materials = doneInfo
-        ? doneInfo.saved
-        : (loaded?.materials ?? []).map((m) => ({
-          material: {
-            ...emptyIntakeMaterial(m.rightsHolderLabel), name: m.materialName, royalty: m.isRoyaltyBearing,
-            region: m.territory ?? "全世界", language: m.language ?? "全言語"
-          },
-          materialCode: m.materialCode
-        }));
-      onCreateLicenseTerms(
-        buildLicenseTermsSeed(
-          { workCode, title: title.trim(), holderLabel: core.vendorLabel || loaded?.rightsHolderName || "" },
-          materials),
-        workCode);
-      return;
-    }
     onCreateDocumentFromWork?.(choice.templateKey, {
       workId, workCode, title: title.trim(),
       vendorId: core.vendorId ?? loaded?.rightsHolderVendorId ?? null
@@ -755,9 +734,6 @@ export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreat
                   : doc.conditionCount > 0
                     ? <span className="wz-tag eff">条件明細 {doc.conditionCount}件</span>
                     : <span className="wz-tag warn">条件未登録</span>}
-                {!doc.supersededBy && doc.templateVersionId != null && doc.conditionCount === 0 && onAddGrant && editWorkId != null &&
-                  <button type="button" className="link-button" title="確定済み文書の条件は確定時に同期されます。無い場合はアウト条件として台帳へ直接追記します"
-                    onClick={() => onAddGrant(editWorkId)}>アウト条件を追記 →</button>}
                 {doc.supersededBy
                   ? <button type="button" className="link-button"
                     onClick={() => void postWorkLink(doc.id, { supersededBy: null }, `${doc.documentNumber ?? doc.id} の旧版指定を解除しました`)}>旧版指定を解除</button>
@@ -848,7 +824,8 @@ export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreat
           <button type="button" className="primary" onClick={() => onEnterConditions(doneInfo.workId)}>この作品の条件を登録する →</button>
         </div>
       </>}
-      <WorkDocumentLauncher businessLine={businessLine} onPick={pickDocument} />
+      <WorkDocumentLauncher businessLine={businessLine} onPick={pickDocument}
+        onEnterConditions={onEnterConditions ? () => onEnterConditions(doneInfo.workId) : undefined} />
       <div className="wz-next">
         {onOpenImport && <button type="button" onClick={onOpenImport}>過去文書を取込む</button>}
         <button type="button" onClick={() => onOpenWork?.(doneInfo.workId)}>作品詳細を開く</button>
@@ -856,7 +833,8 @@ export function WorkIntake({ canRegister, editWorkId = null, onOpenWork, onCreat
     </div>}
 
     {editMode && loaded && <div className="panel wd-launcher">
-      <WorkDocumentLauncher businessLine={businessLine} onPick={pickDocument} compact />
+      <WorkDocumentLauncher businessLine={businessLine} onPick={pickDocument} compact
+        onEnterConditions={onEnterConditions && editWorkId != null ? () => onEnterConditions(editWorkId) : undefined} />
     </div>}
 
     {editMode && <div className="wz-savebar">

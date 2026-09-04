@@ -6,7 +6,7 @@ import {
 import { SearchableLedgerSelect } from "./SearchableLedgerSelect";
 import { checkWorkConditions, summarizeFindings } from "./contract-check";
 import { FeatureLockedNote } from "./FeatureLockedNote";
-import { buildLicenseTermsSeed, businessLineLabel, emptyIntakeMaterial } from "./work-intake";
+import { businessLineLabel } from "./work-intake";
 import { WorkDocumentLauncher } from "./WorkDocumentLauncher";
 
 // 作品詳細（Phase 2・読み取り専用）。作品を起点に 概要/系譜/素材/条件/権利ソース/
@@ -65,10 +65,9 @@ type RightsForm = {
 };
 
 
-export function WorkDetail({ canEdit = false, canEditRights = false, canEditMaterials = false, onNavigate, onAddGrant, onCreateLicenseTerms, onCreateDocumentFromWork, onEditWork, onEnterConditions, onFollowUp, initialWorkId = null }: {
-  canEdit?: boolean; canEditRights?: boolean; canEditMaterials?: boolean; onNavigate?: (target: string) => void; onAddGrant?: (workId: number) => void;
-  onCreateLicenseTerms?: (seed: DocumentFormData, workCode: string | null) => void;
-  // 出版個別条件書・出版基本契約・発注書を作品から起こす（初期値は App 側で差し込む）。
+export function WorkDetail({ canEdit = false, canEditRights = false, canEditMaterials = false, onNavigate, onCreateDocumentFromWork, onEditWork, onEnterConditions, onFollowUp, initialWorkId = null }: {
+  canEdit?: boolean; canEditRights?: boolean; canEditMaterials?: boolean; onNavigate?: (target: string) => void;
+  // 条件を持たない文書（出版基本契約）を作品から起こす（初期値は App 側で差し込む）。
   onCreateDocumentFromWork?: (
     choice: "pub_license_terms" | "pub_master" | "purchase_order",
     work: { workId: number; workCode: string | null; title: string; vendorId: number | null }
@@ -321,28 +320,10 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
               </div>
             </div>
 
-            {(onCreateLicenseTerms || onCreateDocumentFromWork) && <div className="wd-launcher">
+            {(onEnterConditions || onCreateDocumentFromWork) && <div className="wd-launcher">
               <WorkDocumentLauncher businessLine={detail.work.businessLine ?? null} compact
+                onEnterConditions={onEnterConditions ? () => onEnterConditions(detail.work.id) : undefined}
                 onPick={(choice) => {
-                  if (choice.templateKey === "individual_license_terms_v3") {
-                    // 既存作品から条件書を作る（作品登録と同じ橋渡し）。イン料率は
-                    // 既存の条件文書側にあるためここでは展開せず、条件書側で入力する。
-                    const seed = buildLicenseTermsSeed(
-                      { workCode: detail.work.workCode, title: detail.work.title ?? "",
-                        holderLabel: detail.work.rightsHolderName ?? "" },
-                      (detail.materials ?? []).map((m) => ({
-                        material: {
-                          ...emptyIntakeMaterial(m.rightsHolderLabel ?? detail.work.rightsHolderName ?? ""),
-                          name: m.materialName ?? m.materialCode ?? "",
-                          royalty: Boolean(m.isRoyaltyBearing),
-                          region: m.territory ?? "全世界",
-                          language: m.language ?? "全言語"
-                        },
-                        materialCode: m.materialCode
-                      })));
-                    onCreateLicenseTerms?.(seed, detail.work.workCode);
-                    return;
-                  }
                   onCreateDocumentFromWork?.(choice.templateKey, {
                     workId: detail.work.id, workCode: detail.work.workCode, title: detail.work.title ?? "",
                     vendorId: detail.work.rightsHolderVendorId ?? null
@@ -487,7 +468,6 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
                   {onEnterConditions && <button type="button" className="primary" onClick={() => onEnterConditions(detail.work.id)}>条件を登録・編集する →</button>}
                   {onFollowUp && <button type="button" onClick={() => onFollowUp(detail.work.id, detail.work.title ?? detail.work.workCode ?? "")}
                     title="検収書・利用許諾料計算書は時間差で依頼が来るため、登録済みの発注書・条件明細を呼び出して作ります">この作品の後続文書（検収書・計算書）→</button>}
-                  {onAddGrant && <button type="button" onClick={() => onAddGrant(detail.work.id)}>アウト条件を追記（当社が許諾して受け取る側）</button>}
                 </div>
               </div>
               {detail.conditions == null ? <Degraded /> : <>
@@ -520,7 +500,7 @@ export function WorkDetail({ canEdit = false, canEditRights = false, canEditMate
               )}
               <h4>許諾の地図（地域×言語の重なりチェック）</h4>
               <RightsTreeTab lines={detail.rightsLines ?? null}
-                onAddGrant={onAddGrant ? () => onAddGrant(detail.work.id) : undefined} />
+                onAddGrant={onEnterConditions ? () => onEnterConditions(detail.work.id) : undefined} />
             </>}
 
             {tab === "materials" && (detail.rightsSources ? (
@@ -631,8 +611,9 @@ function RightsTreeTab({ lines, onAddGrant }: { lines: RightsLine[] | null; onAd
         <span>許諾の被り</span>
         <strong>{errors.length ? `⚠ ${errors.length}件` : warnings.length ? `注意 ${warnings.length}件` : "なし"}</strong>
       </article>
-      {onAddGrant && <button type="button" className="primary rights-add-grant" onClick={onAddGrant}>
-        ＋ 許諾条件を追加
+      {onAddGrant && <button type="button" className="primary rights-add-grant" onClick={onAddGrant}
+        title="「条件を登録する」の利用許諾アウト（当社が許諾して受け取る側）で条件明細を作ります">
+        ＋ 許諾条件を追加（条件を登録する）
       </button>}
     </div>
 

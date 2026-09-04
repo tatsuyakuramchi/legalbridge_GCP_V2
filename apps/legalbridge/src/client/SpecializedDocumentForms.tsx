@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import type { DocumentFormData } from "../types";
 import { isFieldVisible } from "./field-visibility";
 import {
-  type FieldDefinition, itemFields, intlItemFields, expenseFields, feeFields, conditionFields
+  type FieldDefinition, itemFields, intlItemFields, expenseFields, feeFields
 } from "./document-line-fields";
 import {
   generatePaymentSchedule, normalizePaymentSchedule, type PaymentScheduleRow
@@ -15,14 +15,11 @@ type Props = {
   templateKey: string;
   formData: DocumentFormData;
   onChange: (name: string, value: unknown) => void;
-  // 取込文書の詳細編集が汎用の条件明細エディタ（素材コード・加算型・向きあり）を
-  // 別途出すとき、こちらの金銭条件エディタを畳んで二重表示を避ける。
-  hideLicenseConditionEditor?: boolean;
 };
 
-export function SpecializedDocumentForms({ templateKey, formData, onChange, hideLicenseConditionEditor = false }: Props) {
+export function SpecializedDocumentForms({ templateKey, formData, onChange }: Props) {
   if (templateKey === "purchase_order" || templateKey === "intl_purchase_order") {
-    return <SpecializedSection title="明細・金銭条件" description="発注明細と、必要な場合だけ経費・手数料・利用許諾条件を追加します。">
+    return <SpecializedSection title="明細・金銭条件" description="発注明細と、必要な場合だけ経費・手数料を追加します。利用許諾・業績連動条件は条件台帳から引用されます（ここでは編集しません）。">
       <ArrayEditor title="発注明細" itemLabel="明細" dataKey="items" rows={rows(formData.items)}
         fields={templateKey === "intl_purchase_order" ? intlItemFields : itemFields}
         onChange={onChange} defaultRow={{ quantity: 1 }}
@@ -37,17 +34,13 @@ export function SpecializedDocumentForms({ templateKey, formData, onChange, hide
         fields={expenseFields} onChange={onChange} />
       <ArrayEditor title="その他手数料" itemLabel="手数料" dataKey="other_fees" rows={rows(formData.other_fees)}
         fields={feeFields} onChange={onChange} />
-      <ArrayEditor title="利用許諾・業績連動条件" itemLabel="金銭条件" dataKey="financial_conditions"
-        rows={rows(formData.financial_conditions)} fields={conditionFields} onChange={onChange}
-        defaultRow={{ currency: "JPY" }} />
+      <ConditionQuoteTable formData={formData} />
     </SpecializedSection>;
   }
 
   if (templateKey === "individual_license_terms") {
-    return <SpecializedSection title="利用許諾の詳細条件" description="利用許諾の金銭条件と、再許諾先がある場合の情報を入力します。">
-      {!hideLicenseConditionEditor && <ArrayEditor title="金銭条件" itemLabel="条件" dataKey="financial_conditions"
-        rows={rows(formData.financial_conditions)} fields={conditionFields} onChange={onChange}
-        defaultRow={{ currency: "JPY" }} />}
+    return <SpecializedSection title="利用許諾の詳細条件" description="金銭条件は条件台帳から引用されます。再許諾先がある場合の情報を入力します。">
+      <ConditionQuoteTable formData={formData} />
       <ArrayEditor title="サブライセンシー" itemLabel="サブライセンシー" dataKey="サブライセンシー一覧"
         rows={rows(formData["サブライセンシー一覧"])}
         fields={[
@@ -99,6 +92,33 @@ export function SpecializedDocumentForms({ templateKey, formData, onChange, hide
   }
 
   return null;
+}
+
+// 条件台帳から引用した利用許諾・業績連動条件（読み取り専用・2026-09-04 段階3）。
+// 条件明細は「条件を登録する」で作り、文書は引用するだけ。ここで編集できると台帳と
+// 文書がずれて二重の正になるため、フォーム側の条件エディタは撤去した。
+function ConditionQuoteTable({ formData }: { formData: DocumentFormData }) {
+  const conditions = rows(formData.financial_conditions);
+  const ledgerNumber = String(formData.condition_ledger_number ?? "").trim();
+  const text = (v: unknown) => (v == null || v === "" ? "—" : String(v));
+  const money = (v: unknown) => { const n = Number(String(v ?? "").replace(/[^0-9.\-]/g, "")); return v == null || v === "" || !Number.isFinite(n) ? "—" : `¥${n.toLocaleString("ja-JP")}`; };
+  return <section className="repeater condition-quote">
+    <div className="repeater-title"><div>
+      <h3>利用許諾・業績連動条件{ledgerNumber ? `（条件台帳 ${ledgerNumber} から引用）` : ""}</h3>
+      <small>{conditions.length
+        ? "台帳の条件明細をそのまま印字します。料率・MG/AG・地域を直すときは条件台帳側で直し、文書を再度起こしてください。"
+        : "この文書は条件台帳に紐づいていません。料率・MG/AG などの条件は「権利・条件 → 条件を登録する」で条件明細として登録し、③「新規文書に紐づける」からこの文書を起こすと引用されます。"}</small>
+    </div></div>
+    {conditions.length > 0 && <div className="table-scroll"><table className="cf-table">
+      <thead><tr><th>条件名</th><th>対象素材</th><th>料率</th><th>MG</th><th>AG</th><th>許諾地域・言語</th><th>条件明細キー</th></tr></thead>
+      <tbody>{conditions.map((c, i) => <tr key={i}>
+        <td>{text(c.condition_name)}</td><td>{text(c.material_code)}</td>
+        <td>{c.rate_pct == null || c.rate_pct === "" ? "—" : `${c.rate_pct}%`}</td><td>{money(c.mg_amount)}</td><td>{money(c.ag_amount)}</td>
+        <td>{[c.region_territory, c.region_language].filter(Boolean).join("／") || "—"}</td>
+        <td className="mono">{text(c.condition_line_code)}</td>
+      </tr>)}</tbody>
+    </table></div>}
+  </section>;
 }
 
 function SpecializedSection({

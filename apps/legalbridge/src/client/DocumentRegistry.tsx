@@ -357,9 +357,10 @@ function DocumentDetail({
       <div className="duplicate-zone">
         <h3>取込文書の詳細</h3>
         <p className="hub-note">
-          過去文書取込で登録された文書です。発注明細・経費・金銭条件・振込先を入力しておくと、
-          検収書作成の「親の発注書から引用」や利用許諾料計算書の下敷きに使えます
-          （Drive上のPDFはそのまま・変わりません）。
+          過去文書取込で登録された文書です。発注明細・経費・手数料・振込先を入力しておくと、
+          検収書作成の「親の発注書から引用」に使えます（Drive上のPDFはそのまま・変わりません）。
+          料率・MG/AG などの条件は「権利・条件 → 条件を登録する」で条件明細として登録し、
+          「過去文書に紐づける」でこの文書と結びます。
         </p>
         <button type="button" onClick={() => onEditDetails(document)}>詳細を編集</button>
       </div>
@@ -367,7 +368,9 @@ function DocumentDetail({
     {!isVoided && canEditImported && document.templateVersionId !== null && (
       <DisplayFieldFix document={document} onSaved={onRefresh} />
     )}
-    {!isVoided && canEditImported && hasConditionData(document.formData) && (
+    {/* 手動同期は旧経路（フォーム内の条件・v3マトリクス）で確定した文書のリカバリ用。
+        条件台帳に紐づく文書は条件を台帳側に持つので出さない（二重防止・2026-09-04）。 */}
+    {!isVoided && canEditImported && hasConditionData(document.formData) && !document.formData?.condition_ledger_id && (
       <ConditionSyncButton documentId={document.id} documentNumber={document.documentNumber} />
     )}
     {!isVoided && onDuplicate && <div className="duplicate-zone">
@@ -876,93 +879,21 @@ function SinglePastDocumentImport({ onRegisterDetails }: { onRegisterDetails?: (
   </div>;
 }
 
-// テンプレート外の取込文書（旧・利用許諾条件書など）用の条件明細エディタの列。
-// mapFinancialConditions（条件同期）が読むキーに合わせる：
-// region_territory / region_language は「日本・北米」区切りで子テーブルへ分解され、
-// material_code は work_materials と結線されて料率対象・消化管理に載る。
-export const importedConditionFields: FieldDefinition[] = [
-  { name: "condition_name", label: "条件名" },
-  { name: "material_code", label: "素材コード（作品の素材と結線・任意）" },
-  {
-    name: "calc_type", label: "計算式", type: "select",
-    options: [
-      { value: "BASE_QTY_RATE", label: "基準価格 × 個数 × 料率" },
-      { value: "BASE_RATE", label: "基準価格 × 料率" },
-      { value: "SUPPLY_QTY", label: "供給価格 × 個数 × 料率" },
-      { value: "FIXED", label: "固定値" },
-      { value: "SUBSCRIPTION", label: "サブスク" }
-    ]
-  },
-  {
-    name: "fixed_kind", label: "固定値の支払", type: "select",
-    showWhen: { field: "calc_type", anyOf: ["FIXED"] },
-    options: [{ value: "LUMP", label: "一括" }, { value: "INSTALLMENT", label: "分割" }]
-  },
-  {
-    name: "subscription_cycle", label: "サブスクの周期", type: "select",
-    showWhen: { field: "calc_type", anyOf: ["SUBSCRIPTION"] },
-    options: [{ value: "MONTHLY", label: "月払い" }, { value: "ANNUAL", label: "年払い" }]
-  },
-  { name: "base_price_label", label: "基準価格" },
-  { name: "rate_pct", label: "料率（%）", type: "number" },
-  // 利用許諾条件書の加算構造（素材料率のΣ＝適用料率）を旧文書でも表現する。
-  // 同じグループ番号の加算行が計算書の「条件から取得」でΣ合算される。
-  {
-    name: "is_addon", label: "料率方式", type: "select",
-    options: [
-      { value: "", label: "単独（この行の料率のみ）" },
-      { value: "1", label: "加算型（同じグループ番号の行を合算）" }
-    ]
-  },
-  { name: "group_no", label: "加算グループ番号", type: "number",
-    showWhen: { field: "is_addon", anyOf: ["1"] },
-    helpText: "例: 原作5%とイラスト2%を同じ番号にすると適用料率Σ7%として扱われます" },
-  {
-    name: "guarantee_type", label: "最低保証", type: "select",
-    options: [
-      { value: "NONE", label: "なし" },
-      { value: "MG", label: "MG（ミニマムギャランティ）" },
-      { value: "AG", label: "AG（アドバンスギャランティ）" }
-    ]
-  },
-  { name: "mg_amount", label: "MG 金額", type: "number", showWhen: { field: "guarantee_type", anyOf: ["MG"] } },
-  { name: "ag_amount", label: "AG 金額", type: "number", showWhen: { field: "guarantee_type", anyOf: ["AG"] } },
-  { name: "currency", label: "通貨" },
-  { name: "region_territory", label: "許諾地域（「日本・北米」区切り可）" },
-  { name: "region_language", label: "許諾言語（「日本語・英語」区切り可）" },
-  { name: "applies_scope", label: "適用範囲", type: "textarea" },
-  { name: "payment_terms", label: "支払条件", type: "textarea" }
-];
-
-// SpecializedDocumentForms 側に金銭条件エディタを持つテンプレ種別（重複表示を避ける）。
-// individual_license_terms は 2026-09-02 に汎用エディタ側へ移した：素材コード結線・
-// 加算型/グループ番号・地域言語の分割列・向き（既定アウト）が旧エディタに無く、
-// 過去の利用許諾条件書を取り込んでも素材結線と加算Σが表現できなかったため。
-// SpecializedDocumentForms には hideLicenseConditionEditor を渡してサブライセンシー
-// エディタだけ残す。
-const TEMPLATES_WITH_CONDITION_EDITOR = new Set([
-  "purchase_order", "intl_purchase_order"
-]);
-
 // ── 取込文書の詳細編集 ───────────────────────────────────────────
 // 過去文書取込で登録した文書（template_version_id 無し）の form_data を後から
-// 入力・編集する。発注明細・経費・手数料・金銭条件は文書作成と同じエディタ
-// （SpecializedDocumentForms）を使い、検収書の「親の発注書から引用」がそのまま
-// 効く形（items / expenses / other_fees / financial_conditions / 振込先キー）で保存する。
-// Drive 上の PDF（実体）には触れない＝記録の補完のみ。
+// 入力・編集する。発注明細・経費・手数料は文書作成と同じエディタ（SpecializedDocumentForms）
+// を使い、検収書の「親の発注書から引用」がそのまま効く形（items / expenses / other_fees /
+// 振込先キー）で保存する。Drive 上の PDF（実体）には触れない＝記録の補完のみ。
+// 条件明細（料率・MG/AG・地域）の編集は 2026-09-04 段階3 で撤去した。条件は「条件を登録する」
+// で条件台帳に作り、「過去文書に紐づける」でこの文書と結ぶ（条件台帳が正・二重防止）。
 function ImportedDetailsEditor({ document: doc, onClose, onSaved }: {
   document: RegisteredDocument;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const toast = useToast();
-  // 向きの既定はイン（当社が支払う）。個別利用許諾条件書（V3・出版）は 許諾者＝取引先／
-  // 被許諾者＝アークライト の文書で、当社が支払う料率を定めるものだった（2026-09-03 棚卸しで
-  // 確認。先日「既定アウト」にした変更は誤りだったので戻す）。アウトは明示的に選ぶ。
-  const [formData, setFormData] = useState<DocumentFormData>({
-    ...(doc.formData ?? {}),
-    ...((doc.formData as Record<string, unknown> | null)?.flow_direction == null ? { flow_direction: "in" } : {})
-  } as DocumentFormData);
+  const [formData, setFormData] = useState<DocumentFormData>({ ...(doc.formData ?? {}) } as DocumentFormData);
+  const ledgerNumber = String(formData.condition_ledger_number ?? "").trim();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   // 相手先の取引先マスタ結線（documents.vendor_id）。undefined=変更しない。
@@ -989,11 +920,11 @@ function ImportedDetailsEditor({ document: doc, onClose, onSaved }: {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) { setError(data.error ?? "保存に失敗しました。"); return; }
-      // 金銭条件を含む保存は条件明細台帳へも自動同期される（結果・警告をそのまま伝える）。
+      // 旧経路で入っていた金銭条件が残る文書は、保存で台帳へ再同期される（結果・警告をそのまま伝える）。
       if (data.conditionSyncWarning) {
         toast.push(`詳細を保存しました。⚠ ${data.conditionSyncWarning}`, "info");
       } else if (data.conditionSync) {
-        toast.push(`${doc.documentNumber ?? doc.id} の詳細を保存し、条件明細 ${data.conditionSync.written}件を台帳へ同期しました`, "success");
+        toast.push(`${doc.documentNumber ?? doc.id} の詳細を保存し、既存の条件明細 ${data.conditionSync.written}件を台帳へ再同期しました`, "success");
       } else {
         toast.push(`${doc.documentNumber ?? doc.id} の詳細を保存しました`, "success");
       }
@@ -1008,8 +939,10 @@ function ImportedDetailsEditor({ document: doc, onClose, onSaved }: {
       <button onClick={onClose}>閉じる</button>
     </div>
     <p className="hub-note">
-      ここで入力した明細・経費・金銭条件・振込先は、<b>検収書作成の「親の発注書から引用」</b>や
-      利用許諾料計算書の下敷きに使われます。Drive上のPDF（取り込んだ実ファイル）は変わりません。
+      ここで入力した明細・経費・手数料・振込先は、<b>検収書作成の「親の発注書から引用」</b>に使われます。
+      Drive上のPDF（取り込んだ実ファイル）は変わりません。
+      料率・MG/AG などの条件は<b>「権利・条件 → 条件を登録する」</b>で条件明細として登録し、「過去文書に紐づける」でこの文書と結びます
+      {ledgerNumber ? <>（この文書は条件台帳 <b>{ledgerNumber}</b> に紐づいています）</> : null}。
     </p>
     {error && <div className="async-error">{error}</div>}
     <div className="field-grid">
@@ -1035,27 +968,7 @@ function ImportedDetailsEditor({ document: doc, onClose, onSaved }: {
         {field("account_holder_kana", "口座名義（カナ）")}
       </div>
     </details>
-    <SpecializedDocumentForms templateKey={doc.templateType} formData={formData} onChange={onChange}
-      hideLicenseConditionEditor={doc.templateType === "individual_license_terms"} />
-    {!TEMPLATES_WITH_CONDITION_EDITOR.has(doc.templateType) && <section className="imported-conditions">
-      <div className="repeater-title"><div>
-        <h3>条件明細（条件台帳へ同期）</h3>
-        <small>取り込んだ文書の経済条件をここで登録します（利用許諾条件書・テンプレート外の契約書とも共通）。素材コードで作品の素材と結線でき、加算型はグループ番号でΣ合算されます。保存すると条件台帳へ自動同期され、条件明細一覧・利用許諾計算書・消化管理から参照できます。</small>
-      </div></div>
-      <label className="imported-flow">
-        <span>この契約の向き</span>
-        <select value={String(formData.flow_direction ?? "in")}
-          onChange={(e) => onChange("flow_direction", e.target.value)}>
-          <option value="in">イン（許諾を受ける＝当社が支払う側）</option>
-          <option value="out">アウト（許諾する＝当社が受け取る側）</option>
-        </select>
-      </label>
-      <ArrayEditor title="条件" itemLabel="条件" dataKey="financial_conditions"
-        rows={Array.isArray(formData.financial_conditions) ? formData.financial_conditions as Array<Record<string, unknown>> : []}
-        fields={importedConditionFields} onChange={onChange}
-        defaultRow={{ currency: "JPY", guarantee_type: "NONE" }} />
-      <p className="hub-note">素材コードを入れると作品の素材（work_materials）と結線され、料率対象・債権マップに載ります（作品詳細の素材タブでコードを確認できます）。</p>
-    </section>}
+    {/^(intl_)?purchase_order$/.test(doc.templateType) && <SpecializedDocumentForms templateKey={doc.templateType} formData={formData} onChange={onChange} />}
     <div className="matter-form-actions">
       <button onClick={onClose}>キャンセル</button>
       <button className="primary" disabled={saving} onClick={() => void save()}>

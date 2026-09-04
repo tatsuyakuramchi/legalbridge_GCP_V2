@@ -69,7 +69,7 @@ export function ConditionLinesWorkspace({ onOpenDocument, onCreateDocument, onNa
       <small>契約条件の横断検索と、発注書の検収状況を確認します</small></div></div>
     {onNavigate && <div className="surface-xref" role="navigation" aria-label="条件の関連画面">
       <span className="surface-xref-here">閲覧・検収（ここ）</span>
-      <button type="button" onClick={() => onNavigate("outbound")}>作成 → アウト条件</button>
+      <button type="button" onClick={() => onNavigate("condition-first")}>作成 → 条件を登録する</button>
       <button type="button" onClick={() => onNavigate("ledgers-conditions")}>マスタ → 台帳（金銭条件）</button>
     </div>}
     <div className="hub-tabs">
@@ -177,7 +177,7 @@ function ConditionSearch({ onOpenDocument, canRepair = false, initialSelectedId 
     {error && <div className="async-error">{error}<button onClick={() => setReload((v) => v + 1)}>再試行</button></div>}
     {!loading && !visible.length
       ? <EmptyState icon="≣" title={rows.length ? "この絞り込みに該当する条件明細はありません" : "条件明細がありません"}
-          description={rows.length ? "別の向き・キーワードをお試しください。" : "契約取込・アウト条件追記で登録された条件がここに表示されます。"} />
+          description={rows.length ? "別の向き・キーワードをお試しください。" : "「条件を登録する」（条件台帳）や契約取込で登録された条件がここに表示されます。"} />
       : <div className="panel condition-table-wrap">
         <table className="condition-table">
           <thead><tr>

@@ -31,7 +31,6 @@ import { LedgerWorkspace } from "./LedgerWorkspace";
 import { GlobalSearch } from "./GlobalSearch";
 import { AdminOverview } from "./AdminOverview";
 import { DraftWorkspace } from "./DraftWorkspace";
-import { OutboundConditionWorkspace } from "./OutboundConditionWorkspace";
 import { LicenseMatrixWorkspace } from "./LicenseMatrixWorkspace";
 import { ContractChainWizard } from "./ContractChainWizard";
 import { ConditionLinesWorkspace } from "./ConditionLinesWorkspace";
@@ -82,7 +81,7 @@ const fallback: DashboardSummary = {
   priorities: []
 };
 
-type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview" | "billing" | "receivable-map" | "payment-report" | "billing-print" | "works" | "work-intake" | "condition-first" | "follow-up" | "license-matrix" | "data-quality" | "vendor-merge" | "matter-merge" | "guide" | "snippets" | "requests" | "excel-batch" | "settings" | "email-settings" | "workflow-rules" | "contract-master" | "template-samples";
+type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview" | "billing" | "receivable-map" | "payment-report" | "billing-print" | "works" | "work-intake" | "condition-first" | "follow-up" | "license-matrix" | "data-quality" | "vendor-merge" | "matter-merge" | "guide" | "snippets" | "requests" | "excel-batch" | "settings" | "email-settings" | "workflow-rules" | "contract-master" | "template-samples";
 type NavItem = { view: View; label: string; description: string; match: View[] };
 type NavGroup = { label: string; items: NavItem[] };
 
@@ -114,8 +113,7 @@ function navGroups(access: {
       ...(access.legalWorkspace ? [{ view: "follow-up" as const, label: "後続文書", description: "検収書・利用許諾料計算書を、登録済みの発注書・条件明細から作る", match: ["follow-up" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "work-intake" as const, label: "作品登録", description: "原作・素材・既存文書まで一括登録（条件は「条件を登録する」で入力）", match: ["work-intake" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "works" as const, label: "作品", description: "作品を起点に系譜・素材・条件・権利ソースを一望", match: ["works" as const] }] : []),
-      ...(access.legalWorkspace ? [{ view: "conditions" as const, label: "条件明細", description: "契約条件の横断検索・消化・検収", match: ["conditions" as const] }] : []),
-      ...(access.legalWorkspace ? [{ view: "outbound" as const, label: "アウト条件", description: "許諾先へのアウト条件追記", match: ["outbound" as const] }] : [])
+      ...(access.legalWorkspace ? [{ view: "conditions" as const, label: "条件明細", description: "契約条件の横断検索・消化・検収", match: ["conditions" as const] }] : [])
     ] },
     { label: "お金", items: [
       ...(access.legalWorkspace ? [{ view: "billing" as const, label: "請求", description: "再許諾料の受領・分配の横断俯瞰", match: ["billing" as const] }] : []),
@@ -164,7 +162,6 @@ function breadcrumbFor(view: View): Array<{ label: string; view?: View }> {
     drafts: [home, { label: "下書き" }],
     ledgers: [home, { label: "台帳" }],
     "contract-intake": [home, { label: "契約取込" }],
-    outbound: [home, { label: "アウト条件" }],
     requests: [home, { label: "依頼" }],
     works: [home, { label: "作品" }],
     "work-intake": [home, { label: "作品登録" }],
@@ -248,8 +245,6 @@ export function App() {
     setFollowUpSeed((s) => ({ q, tab, nonce: s.nonce + 1 }));
     setView("follow-up");
   };
-  // 権利ツリーから「＋許諾条件を追加」で飛んだときの作品プリセット。
-  const [drillOutboundWorkId, setDrillOutboundWorkId] = useState<number | null>(null);
   const [drillConditionId, setDrillConditionId] = useState<number | null>(null);
   const [drillReceiptConditionId, setDrillReceiptConditionId] = useState<number | null>(null);
   // 条件明細→台帳（金銭条件）/ 作品ビュー→台帳（作品）へのクロスリンクで開くタブを指定（R2/R3）。
@@ -437,26 +432,11 @@ export function App() {
     setView("document");
   }
 
-  // 作品登録から個別利用許諾条件書を開く。素材と料率をマトリクス（v3_lcs）へ、
-  // 取引形態は固定3種をシードする。空欄補完（seedValues）では配列を渡せないため
-  // 複製と同じ「丸ごと初期値」機構（duplicateValues）を使う。
+  // 複製以外のシード（条件台帳→文書・後続文書など）で出す案内文。空欄補完（seedValues）では
+  // 配列を渡せないため、複製と同じ「丸ごと初期値」機構（duplicateValues）と組で使う。
   const [seedNotice, setSeedNotice] = useState<string | null>(null);
-  async function startLicenseTermsFromWork(seed: DocumentFormData, workCode: string | null) {
-    const response = await fetch("/api/v2/document-templates/individual_license_terms_v3/form-schema");
-    if (!response.ok) return;
-    setFormNonce((v) => v + 1);
-    setDraftSelection(null);
-    setReissueSource(null);
-    setNewDocSeed({});
-    setNewDocIssueKey("");
-    setDuplicateValues(seed);
-    setDuplicateFrom(null);
-    setSeedNotice(`作品 ${workCode ?? ""} の素材と料率をマトリクスへ展開しました。受付番号を入れ、各構成要素の料率と MG/AG を確認して確定してください`.trim());
-    setSchema(await response.json());
-    setView("document");
-  }
 
-  // 作品から任意のテンプレートの文書を起こす（出版個別条件書・出版基本契約・発注書）。
+  // 作品から条件を持たない文書（出版基本契約）を起こす。
   // 初期値は「DBから引用」と同じ対応表（buildPatch）で作る＝取引先（許諾者・振込口座・
   // 担当者連絡先）と作品（原著作物名・作品ID）がテンプレの欄名に合わせて入る。
   // 出版基本契約は許諾者の区分（法人/個人）で書式を選ぶ。
@@ -721,7 +701,6 @@ export function App() {
             onOpenDraft={resumeDraft}
           />
         )}
-        {view === "outbound" && <OutboundConditionWorkspace onNavigate={(t) => setView(t as View)} initialWorkId={drillOutboundWorkId} />}
         {view === "license-matrix" && <LicenseMatrixWorkspace onOpenWork={(workId) => { setDrillWorkId(workId); setView("works"); }} />}
         {view === "royalty-preview" && <RoyaltyPreview />}
         {view === "billing" && <BillingDashboard key={drillReceiptConditionId ?? "billing"} canRecord={canRecordReceipt} initialConditionLineId={drillReceiptConditionId} onCreatePaymentDocument={(legalWorkspace || requesterWorkspace) ? () => { setNewDocIssueKey(""); setNewDocSeed({}); setDraftSelection(null); setView("templates"); } : undefined} />}
@@ -732,8 +711,6 @@ export function App() {
           onOpenWork={(workId) => { setEditIntakeWorkId(null); setDrillWorkId(workId); setView("works"); }}
           onOpenImport={() => setView("documents")}
           onEnterConditions={enterConditions}
-          onAddGrant={(workId) => { setDrillOutboundWorkId(workId); setView("outbound"); }}
-          onCreateLicenseTerms={(seed, workCode) => void startLicenseTermsFromWork(seed, workCode)}
           onCreateDocumentFromWork={(choice, work) => void startDocumentFromWork(choice, work)} />}
         {view === "condition-first" && legalWorkspace && <ConditionFirstFlow
           key={`cf:${conditionFlowSeed.nonce}`}
@@ -752,11 +729,9 @@ export function App() {
           onCreateStatement={(lineId) => void startStatementFromCondition(lineId)}
           onOpenConditionLine={(lineId) => { setDrillConditionId(lineId); setView("conditions"); }} />}
         {view === "works" && <WorkDetail key={drillWorkId ?? "works"} initialWorkId={drillWorkId} canEdit={canEditWorks} canEditRights={canEditRightsSources} canEditMaterials={canEditMaterials}
-          onCreateLicenseTerms={(seed, workCode) => void startLicenseTermsFromWork(seed, workCode)}
           onCreateDocumentFromWork={(choice, work) => void startDocumentFromWork(choice, work)}
           onEnterConditions={enterConditions}
           onFollowUp={(_workId, title) => openFollowUp(title)}
-          onAddGrant={(workId) => { setDrillOutboundWorkId(workId); setView("outbound"); }}
           onEditWork={(workId) => { setEditIntakeWorkId(workId); setView("work-intake"); }}
           onNavigate={(t) => { if (t === "ledgers-works") { setLedgerSeedType("works"); setView("ledgers"); } else setView(t as View); }} />}
         {view === "data-quality" && <DataQuality onNavigate={(v, id) => {
@@ -841,6 +816,7 @@ export function App() {
             onCreateNew={() => setView("templates")}
             onOpenDocuments={() => setView("documents")}
             onOpenMatter={(matterId) => { setSearchSelection({ target: "matter", id: String(matterId), title: "" }); setView("matters"); }}
+            onOpenConditionFlow={legalWorkspace ? () => { setConditionFlowSeed((s) => ({ nonce: s.nonce + 1 })); setView("condition-first"); } : undefined}
           />
         )}
       </main>
@@ -992,7 +968,7 @@ function Dashboard({ dashboard, access, onNavigate, onOpenMatter, onCreateDocume
     { step: "①", label: "案件を確認", hint: "対応中・停滞を把握", view: "matters", metric: kpiByLabel.get("対応中"), show: access.legalWorkspace },
     { step: "②", label: "文書を作成", hint: "テンプレートから起票", view: "templates", metric: undefined, show: access.legalWorkspace || access.requesterWorkspace },
     { step: "③", label: "下書きを再開", hint: "保存中の下書き", view: "drafts", metric: undefined, show: access.legalWorkspace || access.requesterWorkspace },
-    { step: "④", label: "アウト条件を追記", hint: "許諾先ごとの条件", view: "outbound", metric: undefined, show: access.legalWorkspace }
+    { step: "④", label: "条件を登録する", hint: "業務委託・利用許諾の条件明細（条件台帳）", view: "condition-first", metric: undefined, show: access.legalWorkspace }
   ];
   const rail = railCards.filter((card) => card.show);
 
@@ -1110,6 +1086,11 @@ const NOTICE_STAFF_TEMPLATES = new Set([
   "individual_license_terms_v3", "pub_license_terms", "pub_additional_terms"
 ]);
 
+// 条件（料率・MG/AG・支払・許諾地域）を持つテンプレート。条件は条件台帳から引用する（段階3）。
+const CONDITION_BEARING_TEMPLATES = new Set([
+  "purchase_order", "intl_purchase_order", "individual_license_terms_v3", "pub_license_terms", "license_out_en"
+]);
+
 function DocumentForm({
   schema,
   readOnly,
@@ -1129,7 +1110,8 @@ function DocumentForm({
   onBack,
   onCreateNew,
   onOpenDocuments,
-  onOpenMatter
+  onOpenMatter,
+  onOpenConditionFlow
 }: {
   schema: DocumentFormSchema | null;
   readOnly: boolean;
@@ -1155,6 +1137,8 @@ function DocumentForm({
   onCreateNew?: () => void;
   onOpenDocuments?: () => void;
   onOpenMatter?: (matterId: number) => void;
+  // 条件を持つ文書を台帳に紐づけずに開いたとき、「条件を登録する」へ誘導する。
+  onOpenConditionFlow?: () => void;
 }) {
   const [issueKey, setIssueKey] = useState(initialIssueKey);
   // 受付番号はデバウンスして文脈取得する（従来は1キー入力ごとに再取得→フォーム全消去だった）。
@@ -1542,6 +1526,15 @@ function DocumentForm({
             </span>
             <small>テンプレート：{schema.templateKey}</small>
             {notice && <small>{notice}</small>}
+            {/* 条件を持つ文書で条件台帳に紐づいていないとき（2026-09-04 段階3）：フォーム側の条件
+                エディタは撤去したので、条件は「条件を登録する」から入れて起こし直す案内を出す。 */}
+            {!reissueSource && !formData.condition_ledger_id && CONDITION_BEARING_TEMPLATES.has(schema.templateKey) && (
+              <div className="wd-guide form-ledger-guide">
+                <strong>この文書は条件台帳に紐づいていません。</strong>
+                <p>料率・MG/AG・支払・許諾地域などの条件は「権利・条件 → 条件を登録する」で条件明細として登録し、③「新規文書に紐づける」からこの文書を起こすと条件が引用されます（確定時に条件明細を作り直さない＝二重にならない）。
+                  {onOpenConditionFlow && <> <button type="button" className="link-button" onClick={onOpenConditionFlow}>条件を登録する →</button></>}</p>
+              </div>
+            )}
           </div>
           <label className="draft-key">受付番号（Backlog課題キー）
             <input
