@@ -118,9 +118,13 @@ implements DocumentConditionAttachmentRepository {
       await client.query("SELECT pg_advisory_xact_lock(922102, $1)", [documentId]);
 
       const document = await lockDocument(client, documentId);
+      const inferredSourceWorkId = input.transactionKind === "license" && !input.sourceWorkId
+        ? await findParentWorkId(client, input.workId)
+        : undefined;
       const effectiveInput: ConditionAttachmentInput = {
         ...input,
-        contractId: input.contractId ?? nullableInt(document.contract_id) ?? undefined
+        contractId: input.contractId ?? nullableInt(document.contract_id) ?? undefined,
+        sourceWorkId: input.sourceWorkId ?? inferredSourceWorkId
       };
 
       await assertWork(client, effectiveInput.workId);
@@ -178,6 +182,11 @@ async function lockDocument(client: PoolClient, id: number) {
   );
   if (!result.rows[0]) throw new ConditionAttachmentError("DOCUMENT_NOT_FOUND","文書が見つかりません");
   return result.rows[0];
+}
+
+async function findParentWorkId(client: PoolClient, id: number) {
+  const r=await client.query("SELECT parent_work_id FROM works WHERE id=$1",[id]);
+  return nullableInt(r.rows[0]?.parent_work_id) ?? undefined;
 }
 
 async function assertWork(client: PoolClient, id: number) {
@@ -374,7 +383,7 @@ async function linkExistingCondition(
     throw new ConditionAttachmentError("CONDITION_ID_REQUIRED","既存条件IDが必要です");
   }
   const row=await client.query(
-    `SELECT id,document_id,capability_id,work_id,source_work_id,source_material_id,
+    `SELECT id,document_id,capability_id,line_no,work_id,source_work_id,source_material_id,
             parent_license_condition_id
        FROM condition_lines WHERE id=$1 FOR UPDATE`,
     [input.existingConditionLineId]
@@ -390,7 +399,9 @@ async function linkExistingCondition(
   if (c.work_id !== null && Number(c.work_id)!==input.workId) {
     throw new ConditionAttachmentError("CONDITION_WORK_CONFLICT","既存条件は別作品に紐付いています");
   }
-  const lineNo=await nextLineNo(client,documentId);
+  const lineNo=c.document_id !== null && Number(c.document_id)===documentId
+    ? Number(c.line_no)
+    : await nextLineNo(client,documentId);
   await client.query(
     `UPDATE condition_lines SET
        document_id=$2,capability_id=COALESCE(capability_id,$2),line_no=$3,
