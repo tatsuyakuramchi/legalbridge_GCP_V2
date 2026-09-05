@@ -624,7 +624,8 @@ function DocumentForm({
     return <section className="page"><h1>文書作成</h1><p>フォーム定義を読み込んでいます。</p></section>;
   }
   const visibleFields = schema.fields.filter((field) =>
-    field.type !== "hidden" && !isSpecializedDataField(schema.templateKey, field.name)
+    field.type !== "hidden" && !field.hidden &&
+    !isSpecializedDataField(schema.templateKey, field.name, formData)
   );
   const groups = [...new Set(visibleFields.map((field) => field.group ?? "基本情報"))];
 
@@ -894,7 +895,26 @@ function DocumentForm({
               setNotice(message);
             }} />
           {groups.map((group, index) => <section id={`group-${index}`} key={group}><h2>{group}</h2>
-            <div className="field-grid">{visibleFields.filter((field) => (field.group ?? "基本情報") === group).map((field) => <label key={field.name}><span>{field.label ?? field.name}{field.required && <em>必須</em>}</span>{field.type === "textarea" ? <textarea value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, event.target.value)} placeholder={field.placeholder} /> : field.type === "select" ? <select value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, event.target.value)}><option value="">選択してください</option>{field.options?.map((option) => <option key={option}>{option}</option>)}</select> : field.type === "boolean" ? <input type="checkbox" checked={Boolean(formData[field.name])} onChange={(event) => updateValue(field.name, event.target.checked)} /> : <input value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, field.type === "number" ? Number(event.target.value) : event.target.value)} type={field.type === "number" ? "number" : field.type === "date" ? "date" : "text"} placeholder={field.placeholder} />}{field.helpText && <small>{field.helpText}</small>}</label>)}</div>
+            <div className="field-grid">{visibleFields.filter((field) => (field.group ?? "基本情報") === group).map((field) => <label key={field.name}><span>{field.label ?? field.name}{field.required && <em>必須</em>}</span>{field.type === "textarea"
+              ? <textarea value={String(formData[field.name] ?? "")}
+                  onChange={(event) => updateValue(field.name, event.target.value)}
+                  placeholder={field.placeholder} readOnly={field.readonly || Boolean(finalizedDocument)} />
+              : field.type === "select"
+                ? <select value={String(formData[field.name] ?? "")}
+                    onChange={(event) => updateValue(field.name, event.target.value)}
+                    disabled={field.readonly || Boolean(finalizedDocument)}>
+                    <option value="">選択してください</option>
+                    {field.options?.map((option) => <option key={option}>{option}</option>)}
+                  </select>
+                : field.type === "boolean"
+                  ? <input type="checkbox" checked={Boolean(formData[field.name])}
+                      onChange={(event) => updateValue(field.name, event.target.checked)}
+                      disabled={field.readonly || Boolean(finalizedDocument)} />
+                  : <input value={String(formData[field.name] ?? "")}
+                      onChange={(event) => updateValue(field.name, field.type === "number" ? Number(event.target.value) : event.target.value)}
+                      type={field.type === "number" ? "number" : field.type === "date" ? "date" : "text"}
+                      placeholder={field.placeholder}
+                      readOnly={field.readonly || Boolean(finalizedDocument)} />}{field.helpText && <small>{field.helpText}</small>}</label>)}</div>
           </section>)}
           {schema.templateKey === "individual_license_terms_v3" && (
             <IndividualLicenseV3Form formData={formData} onChange={updateValue} />
@@ -925,7 +945,11 @@ function formatDraftTime(value: string) {
   }).format(date);
 }
 
-function isSpecializedDataField(templateKey: string, fieldName: string) {
+function isSpecializedDataField(
+  templateKey: string,
+  fieldName: string,
+  formData: DocumentFormData = {}
+) {
   const specializedFields: Record<string, string[]> = {
     purchase_order: ["items", "expenses", "other_fees", "financial_conditions"],
     intl_purchase_order: ["items", "expenses", "other_fees", "financial_conditions"],
@@ -934,6 +958,24 @@ function isSpecializedDataField(templateKey: string, fieldName: string) {
     royalty_statement: ["lines"],
     inspection_certificate: ["delivery_line_items", "other_fees", "expenses", "changeLogs"]
   };
+  if (templateKey === "royalty_statement" && formData.settlement_trigger) {
+    const settlementManaged = new Set([
+      "linked_contract_number","ledgerId","licensor","LICENSOR_SUFFIX",
+      "LICENSOR_IS_CORPORATION","VENDOR_REPRESENTATIVE_SAMA","licensor_t_number",
+      "licensee","originalWork","productName","edition","completionDate","quantity",
+      "sampleQuantity","billableQuantity","msrpStr","calcType","royaltyRatePct",
+      "grossRoyaltyStr","mgAmount","mgAmountStr","mgTopupApplied","mgTopupThisTime",
+      "mgTopupThisTimeStr","agAmount","agAmountStr","agApplied","agConsumedBefore",
+      "agConsumedBeforeStr","agConsumedThisTime","agConsumedThisTimeStr",
+      "agConsumedAfter","agConsumedAfterStr","agRemaining","agRemainingStr",
+      "agProgressPct","agFullyConsumed","mgConsumedBefore","mgConsumedThisTime",
+      "mgConsumedAfter","mgRemaining","mgProgressPct","mgFullyConsumed",
+      "actualRoyalty","actualRoyaltyStr","currency","paymentConditionSummary",
+      "bankName","branchName","accountType","accountNo","accountHolder",
+      "invoiceRegistrationNumber"
+    ]);
+    if (settlementManaged.has(fieldName)) return true;
+  }
   return specializedFields[templateKey]?.includes(fieldName) ?? false;
 }
 
