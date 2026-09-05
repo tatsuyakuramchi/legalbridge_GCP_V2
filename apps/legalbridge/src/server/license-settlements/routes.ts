@@ -107,18 +107,23 @@ export function createLicenseSettlementRouter(
         quantity: preview.quantity,
         sampleQuantity: preview.sampleQuantity,
         billableQuantity: preview.billableQuantity,
-        msrpStr: preview.unitBase ? formatMoney(preview.unitBase, preview.currency) : "",
+        msrpStr: formatAmount(
+          preview.trigger === "manufacturing" ? preview.unitBase : preview.basisAmount
+        ),
         calcType: preview.trigger === "sublicense_receipt"
           ? "sublicense"
           : preview.trigger === "sale" ? "sales" : "manufacturing",
         royaltyRatePct: preview.ratePct ?? "",
-        grossRoyaltyStr: formatMoney(preview.grossRoyalty, preview.currency),
+        grossRoyaltyStr: formatAmount(preview.grossRoyalty),
         mgAmount: c.mgAmount ?? 0,
         agAmount: c.agAmount ?? 0,
         actualRoyalty: preview.actualRoyalty,
-        actualRoyaltyStr: formatMoney(preview.actualRoyalty, preview.currency),
+        actualRoyaltyStr: formatAmount(preview.actualRoyalty),
         currency: preview.currency,
         paymentConditionSummary: c.paymentTerms ?? "",
+        taxRate: "",
+        taxAmount: "",
+        totalPaymentStr: formatAmount(preview.actualRoyalty),
         notes: basisNote,
         lines: [{
           productName: preview.productName,
@@ -166,5 +171,8 @@ function triggerLabel(value: "manufacturing" | "sale" | "sublicense_receipt") {
   return "サブライセンス料入金";
 }
 function formatMoney(value: number, currency: string) {
-  return `${currency} ${new Intl.NumberFormat("ja-JP", { maximumFractionDigits: 2 }).format(value)}`;
+  return `${currency} ${formatAmount(value)}`;
+}
+function formatAmount(value: number) {
+  return new Intl.NumberFormat("ja-JP", { maximumFractionDigits: 2 }).format(value);
 }
