@@ -359,3 +359,13 @@ The guarded outbound-condition write smoke passed against production schema via 
 - remaining document 1033 condition lines are 600/601/602 with line numbers 5001/5002/5003, confirming the transient smoke line 5004 followed the existing `MAX(line_no)+1` convention and cleanup completed.
 
 Normalized territory/language read and guarded write paths are now verified. Browser/UI smoke and remaining request-detail enrichment remain before production readiness.
+
+
+### Browser scope smoke navigation
+
+Before browser smoke, UI reachability was corrected:
+
+- `＋ 作成・関連付け` now exposes `ライセンス契約` and `アウト条件`;
+- query deep links `?view=license-contract` and `?view=outbound` are recognized;
+- the outbound workspace is restricted to legal/admin users in the client;
+- browser smoke should verify WORLD/ALL exclusivity, presets, individual country/language search, source-IN summary, in-scope success, and out-of-scope NG display.
