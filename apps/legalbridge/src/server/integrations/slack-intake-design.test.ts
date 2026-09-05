@@ -66,6 +66,38 @@ test("license contract modal collects IN/OUT but leaves detailed rights terms to
   assert.equal(ids.includes("territory_block"),false);
 });
 
+test("every workflow keeps substantive Slack inputs to five or fewer",()=>{
+  const workflows=[
+    "legal_review","document_create","license_contract","purchase_order",
+    "delivery_inspection","license_settlement","deadline_change"
+  ] as const;
+  for(const workflow of workflows){
+    const modal:any=buildSlackIntakeModal({
+      workflow,
+      templates,
+      uploadUrl:"https://legal.example/attachments/upload"
+    });
+    const inputCount=modal.blocks.filter((block:any)=>
+      block.type==="input" && block.block_id!=="workflow_block"
+    ).length;
+    assert.ok(
+      inputCount<=5,
+      workflow+" has "+inputCount+" substantive input blocks"
+    );
+  }
+});
+
+test("every workflow shows a common material upload link",()=>{
+  const modal:any=buildSlackIntakeModal({
+    workflow:"purchase_order",
+    templates,
+    uploadUrl:"https://legal.example/attachments/upload"
+  });
+  const block=modal.blocks.find((item:any)=>item.block_id==="attachment_upload_block");
+  assert.ok(block);
+  assert.match(block.elements[0].text,/https:\/\/legal\.example\/attachments\/upload/);
+});
+
 test("submission parser preserves workflow handoff facts",()=>{
   const parsed=parseSlackIntakeSubmission({
     view:{
