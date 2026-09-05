@@ -545,8 +545,8 @@ async function upsertManufacturingEvent(client: PoolClient, value: any) {
        unit_price=EXCLUDED.unit_price,sample_quantity=EXCLUDED.sample_quantity,
        billable_quantity=EXCLUDED.billable_quantity,edition=EXCLUDED.edition,
        product_id=COALESCE(EXCLUDED.product_id,manufacturing_events.product_id),
-       source_document_id=EXCLUDED.source_document_id,
-       source_condition_line_id=EXCLUDED.source_condition_line_id
+       source_document_id=COALESCE(manufacturing_events.source_document_id,EXCLUDED.source_document_id),
+       source_condition_line_id=COALESCE(manufacturing_events.source_condition_line_id,EXCLUDED.source_condition_line_id)
      RETURNING id`,
     [
       value.issueKey, value.contractId, value.productName, value.occurredAt.slice(0,10),
