@@ -4,6 +4,7 @@ import { displayScope, normalizeLanguageOption, normalizeRegionOption, type Scop
 import {
   OutboundConditionConflictError,
   OutboundConditionReferenceError,
+  OutboundConditionScopeError,
   type OutboundConditionRepository
 } from "./outbound-condition-repository.js";
 
@@ -181,6 +182,12 @@ export function createOutboundConditionRouter(
         return response.status(404).json({
           error: error.message,
           code: "OUTBOUND_REFERENCE_NOT_FOUND"
+        });
+      }
+      if (error instanceof OutboundConditionScopeError) {
+        return response.status(422).json({
+          error: error.message,
+          code: "OUTBOUND_SCOPE_EXCEEDS_SOURCE"
         });
       }
       if (error instanceof OutboundConditionConflictError) {
