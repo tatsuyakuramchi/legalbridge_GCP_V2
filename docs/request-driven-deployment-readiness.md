@@ -451,3 +451,30 @@ Remaining Request work is only regression fallout, not planned feature enrichmen
 - condition-attachment context on existing document 1033.
 
 The smoke intentionally avoids creating persistent test documents, contracts, works, vendors, staff, materials, or condition lines.
+
+
+### Consolidated regression smoke passed
+
+The non-destructive production-schema regression gate passed:
+
+- PASS: 21
+- WARN: 2
+- FAIL: 0
+
+Confirmed: health/write capabilities, Tokyo deadlines, previous-number API shape, draft round-trip and cleanup, safe finalize conflict path, PDF generation using compatible document 1038, contract-intake validation/preflight, vendor/staff/work master reads, and condition-attachment round-trip.
+
+The two warnings are non-blocking sample-data gaps: no populated previous-number sample in the first 200 documents, and work 1000000043 has no material sample.
+
+### Backlog document delivery implementation
+
+Backlog integration is now implemented behind staged gates:
+
+1. readonly connection and project check;
+2. document-to-issue preview (`GET /documents/:id/backlog`);
+3. exact configured-project enforcement;
+4. duplicate prevention by exact PDF attachment filename;
+5. live dispatch (`POST /documents/:id/backlog/dispatch`) only for legal/admin users;
+6. current document render -> PDF -> Backlog temporary attachment -> issue comment with attachment;
+7. write-test live deployment requires explicit `BACKLOG_LIVE_LEGALBRIDGE_VALIDATION_ONLY` confirmation, authenticated access, host `arclight.backlog.com`, project `LEGAL`, and `backlog` write scope.
+
+Backlog remains not signed off until readonly connectivity and one controlled live attachment smoke pass.
