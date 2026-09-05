@@ -1,4 +1,5 @@
 import type { DatabasePool } from "../db/pool.js";
+import type { ScopeOption } from "../../rights-scope.js";
 
 export interface WorkRightsSummary {
   id: number;
@@ -51,6 +52,8 @@ export interface WorkRightsDetail {
     currency: string | null;
     territory: string | null;
     language: string | null;
+    regions: ScopeOption[];
+    languages: ScopeOption[];
     exclusivity: string | null;
     sublicenseAllowed: boolean | null;
     termStart: string | null;
@@ -142,6 +145,22 @@ export class PgWorkRightsRepository implements WorkRightsRepository {
                 cl.transaction_kind, cl.payment_scheme, cl.calc_type,
                 cl.rate_pct, cl.amount_ex_tax, cl.mg_amount, cl.ag_amount,
                 cl.currency, cl.region_territory, cl.region_language,
+                COALESCE((
+                  SELECT json_agg(
+                    json_build_object('code', r.country_code, 'name', r.country_name)
+                    ORDER BY r.sort_order, r.id
+                  )
+                  FROM condition_line_regions r
+                  WHERE r.condition_line_id = cl.id
+                ), '[]'::json) AS regions,
+                COALESCE((
+                  SELECT json_agg(
+                    json_build_object('code', l.language_code, 'name', l.language_name)
+                    ORDER BY l.sort_order, l.id
+                  )
+                  FROM condition_line_languages l
+                  WHERE l.condition_line_id = cl.id
+                ), '[]'::json) AS languages,
                 cl.exclusivity, cl.sublicense_allowed, cl.term_start, cl.term_end,
                 cl.parent_license_condition_id, cl.source_material_id,
                 wm.material_name AS source_material_name,
@@ -240,6 +259,8 @@ export class PgWorkRightsRepository implements WorkRightsRepository {
         currency: row.currency ?? null,
         territory: row.region_territory ?? null,
         language: row.region_language ?? null,
+        regions: scopeRows(row.regions, row.region_territory, "region"),
+        languages: scopeRows(row.languages, row.region_language, "language"),
         exclusivity: row.exclusivity ?? null,
         sublicenseAllowed: row.sublicense_allowed === null ? null : Boolean(row.sublicense_allowed),
         termStart: dateOnly(row.term_start),
@@ -263,6 +284,28 @@ export class PgWorkRightsRepository implements WorkRightsRepository {
       }))
     };
   }
+}
+
+function scopeRows(
+  value: unknown,
+  fallback: unknown,
+  kind: "region" | "language"
+): ScopeOption[] {
+  if (Array.isArray(value) && value.length) {
+    return value.map((item: any) => ({
+      code: String(item?.code ?? ""),
+      name: String(item?.name ?? "")
+    })).filter((item) => item.code && item.name);
+  }
+  const text = String(fallback ?? "").trim();
+  if (!text) return [];
+  if (kind === "region" && /全世界|world/i.test(text)) {
+    return [{ code: "WORLD", name: "全世界" }];
+  }
+  if (kind === "language" && /全言語|all languages?/i.test(text)) {
+    return [{ code: "ALL", name: "全言語" }];
+  }
+  return [{ code: kind === "region" ? "LEGACY-R" : "LEGACY-L", name: text }];
 }
 
 function mapSummary(row: Record<string, any>): WorkRightsSummary {
