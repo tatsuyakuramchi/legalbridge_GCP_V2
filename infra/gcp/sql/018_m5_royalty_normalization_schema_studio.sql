@@ -188,28 +188,28 @@ INSERT INTO data_quality_rules (
 )
 VALUES
   (
-    'ROYALTY_STATEMENT_CONDITION_UNRESOLVED','document','M5','warning',
+    'ROYALTY_STATEMENT_CONDITION_UNRESOLVED','document','M5','WARNING',
     'royalty_statement_condition_unresolved',1,'manual_link',
     '利用許諾料計算書の根拠条件が未特定',
     'royalty_statement文書を正規化したがsource_condition_line_idを特定できない。契約・作品・IN条件を確認して紐付ける。',
     true
   ),
   (
-    'ROYALTY_STATEMENT_AMOUNT_UNRESOLVED','document','M5','error',
+    'ROYALTY_STATEMENT_AMOUNT_UNRESOLVED','document','M5','ERROR',
     'royalty_statement_amount_unresolved',1,'manual_fix',
     '利用許諾料計算書の精算額が未特定',
     'royalty_statement文書からactual_royalty_ex_taxを安全に復元できない。',
     true
   ),
   (
-    'ROYALTY_PAYMENT_LINK_UNRESOLVED','royalty_payment','M5','warning',
+    'ROYALTY_PAYMENT_LINK_UNRESOLVED','royalty_payment','M5','WARNING',
     'royalty_payment_link_unresolved',1,'manual_link',
     '旧ロイヤリティ支払とpaymentsの対応未確定',
     'royalty_paymentsは削除せず、支払事実を確認してpaymentsへリンクする。',
     true
   ),
   (
-    'ROYALTY_MANUFACTURING_EVENT_AMBIGUOUS','document','M5','warning',
+    'ROYALTY_MANUFACTURING_EVENT_AMBIGUOUS','document','M5','WARNING',
     'royalty_manufacturing_event_ambiguous',1,'manual_review',
     '同一Backlog課題に複数の製造計算書',
     'manufacturing_eventsの既存一意キーはbacklog_issue_keyのため、複数計算書を同一製造イベントへ安全に統合できるか確認が必要。',
