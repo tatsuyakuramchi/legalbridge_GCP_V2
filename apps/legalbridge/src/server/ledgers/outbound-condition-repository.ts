@@ -63,7 +63,7 @@ export class PgOutboundConditionRepository implements OutboundConditionRepositor
       const inserted = await client.query(
         `INSERT INTO condition_lines (
            document_id, line_no, work_id, counterparty_vendor_id,
-           transaction_kind, direction, condition_name,
+           transaction_kind, direction, flow_direction, condition_name,
            region_territory, region_language, exclusivity,
            sublicense_allowed, term_start, term_end, currency,
            payment_scheme, rate_pct, amount_ex_tax, mg_amount, ag_amount,
@@ -72,7 +72,7 @@ export class PgOutboundConditionRepository implements OutboundConditionRepositor
            notes
          ) VALUES (
            $1, $2, $3, $4,
-           $5, 'receivable', $6,
+           $5, 'receivable', 'out', $6,
            $7, $8, $9,
            $10, $11, $12, $13,
            $14, $15, $16, $17, $18,
@@ -110,6 +110,29 @@ export class PgOutboundConditionRepository implements OutboundConditionRepositor
           value.notes
         ]
       );
+
+      const conditionLineId = Number(inserted.rows[0].id);
+      const canonicalRegions = value.regions.filter((item) => !item.code.startsWith("LEGACY-"));
+      const canonicalLanguages = value.languages.filter((item) => !item.code.startsWith("LEGACY-"));
+
+      for (let index = 0; index < canonicalRegions.length; index += 1) {
+        const region = canonicalRegions[index];
+        await client.query(
+          `INSERT INTO condition_line_regions (
+             condition_line_id, country_code, country_name, sort_order
+           ) VALUES ($1, $2, $3, $4)`,
+          [conditionLineId, region.code, region.name, index + 1]
+        );
+      }
+      for (let index = 0; index < canonicalLanguages.length; index += 1) {
+        const language = canonicalLanguages[index];
+        await client.query(
+          `INSERT INTO condition_line_languages (
+             condition_line_id, language_code, language_name, sort_order
+           ) VALUES ($1, $2, $3, $4)`,
+          [conditionLineId, language.code, language.name, index + 1]
+        );
+      }
 
       await client.query("COMMIT");
       return {
