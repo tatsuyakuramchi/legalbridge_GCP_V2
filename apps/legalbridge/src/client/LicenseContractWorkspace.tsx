@@ -82,7 +82,7 @@ export function LicenseContractWorkspace({
         if(!scopeContains(normalizedSourceRegions,regions,"WORLD")) {
           rows.push({label:"地域",ok:false,message:"OUT地域がIN地域の許諾範囲を超えています"});
         }
-      } else if(source.territory&&!legacyScopeIncludes(source.territory,territory)) {
+      } else if(source.territory&&!legacyScopeIncludes(source.territory,territory,"region")) {
         rows.push({label:"地域",ok:false,message:"根拠IN条件が旧形式です。OUT地域がIN地域の範囲内か確認してください"});
       }
     }
@@ -93,7 +93,7 @@ export function LicenseContractWorkspace({
         if(!scopeContains(normalizedSourceLanguages,languages,"ALL")) {
           rows.push({label:"言語",ok:false,message:"OUT言語がIN言語の許諾範囲を超えています"});
         }
-      } else if(source.language&&!legacyScopeIncludes(source.language,language)) {
+      } else if(source.language&&!legacyScopeIncludes(source.language,language,"language")) {
         rows.push({label:"言語",ok:false,message:"根拠IN条件が旧形式です。OUT言語がIN言語の範囲内か確認してください"});
       }
     }
@@ -227,9 +227,17 @@ export function LicenseContractWorkspace({
     </div>
   </section>;
 }
-function legacyScopeIncludes(source:string,target:string){
-  const s=source.toLowerCase();const t=target.toLowerCase();
-  return s.includes("全")||s.includes("world")||s.includes(t)||t.includes(s);
+function legacyScopeIncludes(
+  source:string,
+  target:string,
+  kind:"region"|"language"
+){
+  const s=source.trim().toLowerCase();
+  const t=target.trim().toLowerCase();
+  if(!s||!t) return false;
+  if(kind==="region"&&(s.includes("全世界")||s.includes("world"))) return true;
+  if(kind==="language"&&(s.includes("全言語")||s.includes("all language"))) return true;
+  return s.includes(t)||t.includes(s);
 }
 function scopeLabel(values:ScopeOption[]|undefined,fallback:string|null){
   return values?.length ? displayScope(values) : fallback||"—";
