@@ -7,6 +7,7 @@ import { DocumentConditionAttachment } from "./DocumentConditionAttachment";
 type RegisteredDocument = {
   id: number;
   documentNumber: string | null;
+  previousDocumentNumber?: string | null;
   issueKey: string;
   templateType: string;
   templateVersionId: number | null;
@@ -121,7 +122,7 @@ export function DocumentRegistry({
           <tbody>{documents.map((document) =>
             <tr key={document.id} className={selected?.id === document.id ? "selected" : ""}
               onClick={() => void selectDocument(document.id)}>
-              <td><b>{document.documentNumber ?? "未発番"}</b><br /><small>{document.title}</small></td>
+              <td><b>{document.documentNumber ?? "未発番"}</b>{document.previousDocumentNumber && <><br /><small>旧番号: {document.previousDocumentNumber}</small></>}<br /><small>{document.title}</small></td>
               <td>{labels.get(document.templateType) ?? document.templateType}<br /><small>{document.issueKey}</small></td>
               <td>{document.counterparty || "—"}</td>
               <td>{formatDate(document.createdAt)}</td>
@@ -225,6 +226,7 @@ function DocumentDetail({
   return <aside className="panel registry-detail">
     <span className="detail-kicker">DOCUMENT DETAIL</span>
     <h2>{document.documentNumber ?? "未発番"}</h2>
+    {document.previousDocumentNumber && <p className="previous-document-number">旧文書番号：<strong>{document.previousDocumentNumber}</strong></p>}
     <p className="detail-title">{document.title}</p>
     <div className="document-lifecycle">
       <span className={document.lifecycle?.state === "finalized" ? "complete" : "pending"}>
@@ -239,6 +241,7 @@ function DocumentDetail({
     </div>
     <dl>
       <dt>種別</dt><dd>{label ?? document.templateType}</dd>
+      {document.previousDocumentNumber && <><dt>旧文書番号</dt><dd>{document.previousDocumentNumber}</dd></>}
       <dt>受付番号</dt><dd>{document.issueKey}</dd>
       <dt>作成日時</dt><dd>{formatDate(document.createdAt)}</dd>
       <dt>作成者</dt><dd>{document.createdBy ?? "—"}</dd>
