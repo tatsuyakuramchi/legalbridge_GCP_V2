@@ -11,9 +11,10 @@ function licenseCondition() {
     counterpartyLabel: "V-0018 Licensee",
     transactionKind: "license",
     conditionName: "英語版ライセンス",
+    sourceConditionId: 7,
     documentNumber: "ARC-LC-2026-001",
-    territory: "全世界（日本を除く）",
-    languages: ["英語", "フランス語"],
+    regions: [{ code: "US", name: "アメリカ合衆国" }, { code: "CA", name: "カナダ" }],
+    languages: [{ code: "en", name: "英語" }, { code: "fr", name: "フランス語" }],
     exclusivity: "exclusive",
     sublicenseAllowed: true,
     termStart: "2026-09-01",
@@ -38,7 +39,11 @@ test("検証済みアウト条件をcondition_lines用の値へ変換する", ()
   assert.equal(value.workId, 42);
   assert.equal(value.counterpartyVendorId, 18);
   assert.equal(value.transactionKind, "license");
-  assert.equal(value.language, "英語,フランス語");
+  assert.equal(value.territory, "アメリカ合衆国、カナダ");
+  assert.equal(value.language, "英語、フランス語");
+  assert.deepEqual(value.regions.map((item) => item.code), ["US","CA"]);
+  assert.deepEqual(value.languages.map((item) => item.code), ["en","fr"]);
+  assert.equal(value.sourceConditionId, 7);
   assert.equal(value.agAmount, 2000);
   assert.equal(value.sellOffMonths, 6);
   assert.equal(value.notes, null);
