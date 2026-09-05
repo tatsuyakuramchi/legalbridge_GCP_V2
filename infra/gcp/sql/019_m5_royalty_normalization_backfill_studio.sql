@@ -253,6 +253,13 @@ SELECT
 FROM lb_m5_royalty_source s
 WHERE s.event_type='manufacturing'
   AND NULLIF(s.backlog_issue_key,'') IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1
+    FROM lb_m5_royalty_source duplicate
+    WHERE duplicate.event_type='manufacturing'
+      AND duplicate.backlog_issue_key=s.backlog_issue_key
+      AND duplicate.document_id<>s.document_id
+  )
 ON CONFLICT (backlog_issue_key) DO UPDATE SET
   license_contract_id=COALESCE(EXCLUDED.license_contract_id,manufacturing_events.license_contract_id),
   product_name=EXCLUDED.product_name,
@@ -266,7 +273,7 @@ ON CONFLICT (backlog_issue_key) DO UPDATE SET
   edition=COALESCE(EXCLUDED.edition,manufacturing_events.edition),
   product_id=COALESCE(EXCLUDED.product_id,manufacturing_events.product_id),
   source_document_id=COALESCE(manufacturing_events.source_document_id,EXCLUDED.source_document_id),
-  source_condition_line_id=COALESCE(EXCLUDED.source_condition_line_id,manufacturing_events.source_condition_line_id);
+  source_condition_line_id=COALESCE(manufacturing_events.source_condition_line_id,EXCLUDED.source_condition_line_id);
 
 -- B. Sales event evidence.
 INSERT INTO sales_events (
@@ -625,13 +632,14 @@ SELECT
   )
 FROM lb_m5_royalty_source s
 WHERE s.condition_line_id IS NULL
-  AND NOT EXISTS (
-    SELECT 1 FROM data_quality_issues q
-    WHERE q.entity_type='document'
-      AND q.entity_id=s.document_id
-      AND q.rule_code='ROYALTY_STATEMENT_CONDITION_UNRESOLVED'
-      AND q.status='open'
-  );
+ON CONFLICT (entity_type,entity_id,rule_code) DO UPDATE SET
+  severity=EXCLUDED.severity,
+  status='open',
+  last_detected_at=now(),
+  resolved_at=NULL,
+  resolution_type=NULL,
+  resolution_note=NULL,
+  detail=EXCLUDED.detail;
 
 INSERT INTO data_quality_issues (
   entity_type,entity_id,rule_code,severity,status,detected_at,last_detected_at,detail
@@ -647,13 +655,14 @@ SELECT
   )
 FROM lb_m5_royalty_source s
 WHERE s.actual_royalty IS NULL
-  AND NOT EXISTS (
-    SELECT 1 FROM data_quality_issues q
-    WHERE q.entity_type='document'
-      AND q.entity_id=s.document_id
-      AND q.rule_code='ROYALTY_STATEMENT_AMOUNT_UNRESOLVED'
-      AND q.status='open'
-  );
+ON CONFLICT (entity_type,entity_id,rule_code) DO UPDATE SET
+  severity=EXCLUDED.severity,
+  status='open',
+  last_detected_at=now(),
+  resolved_at=NULL,
+  resolution_type=NULL,
+  resolution_note=NULL,
+  detail=EXCLUDED.detail;
 
 INSERT INTO data_quality_issues (
   entity_type,entity_id,rule_code,severity,status,detected_at,last_detected_at,detail
@@ -670,13 +679,50 @@ SELECT
   )
 FROM royalty_payments rp
 WHERE rp.payment_id IS NULL
-  AND NOT EXISTS (
-    SELECT 1 FROM data_quality_issues q
-    WHERE q.entity_type='royalty_payment'
-      AND q.entity_id=rp.id
-      AND q.rule_code='ROYALTY_PAYMENT_LINK_UNRESOLVED'
-      AND q.status='open'
-  );
+ON CONFLICT (entity_type,entity_id,rule_code) DO UPDATE SET
+  severity=EXCLUDED.severity,
+  status='open',
+  last_detected_at=now(),
+  resolved_at=NULL,
+  resolution_type=NULL,
+  resolution_note=NULL,
+  detail=EXCLUDED.detail;
+
+INSERT INTO data_quality_issues (
+  entity_type,entity_id,rule_code,severity,status,detected_at,last_detected_at,detail
+)
+SELECT
+  'document',s.document_id,'ROYALTY_MANUFACTURING_EVENT_AMBIGUOUS','warning','open',
+  now(),now(),
+  jsonb_build_object(
+    'document_number',s.document_number,
+    'issue_key',s.issue_key,
+    'backlog_issue_key',s.backlog_issue_key,
+    'same_issue_document_count',(
+      SELECT COUNT(*)
+      FROM lb_m5_royalty_source x
+      WHERE x.event_type='manufacturing'
+        AND x.backlog_issue_key=s.backlog_issue_key
+    )
+  )
+FROM lb_m5_royalty_source s
+WHERE s.event_type='manufacturing'
+  AND s.backlog_issue_key IS NOT NULL
+  AND EXISTS (
+    SELECT 1
+    FROM lb_m5_royalty_source duplicate
+    WHERE duplicate.event_type='manufacturing'
+      AND duplicate.backlog_issue_key=s.backlog_issue_key
+      AND duplicate.document_id<>s.document_id
+  )
+ON CONFLICT (entity_type,entity_id,rule_code) DO UPDATE SET
+  severity=EXCLUDED.severity,
+  status='open',
+  last_detected_at=now(),
+  resolved_at=NULL,
+  resolution_type=NULL,
+  resolution_note=NULL,
+  detail=EXCLUDED.detail;
 
 -- Resolve issues automatically when backfill later becomes complete.
 UPDATE data_quality_issues q
