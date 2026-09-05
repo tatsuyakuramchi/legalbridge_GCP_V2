@@ -384,7 +384,7 @@ export function App() {
             onOpenDraft={resumeDraft}
           />
         )}
-        {view === "outbound" && <OutboundConditionWorkspace />}
+        {view === "outbound" && legalWorkspace && <OutboundConditionWorkspace />}
         {view === "conditions" && <ConditionLinesWorkspace
           onOpenDocument={(id) => {
             setSearchSelection({ target: "document", id: String(id), title: "" });
