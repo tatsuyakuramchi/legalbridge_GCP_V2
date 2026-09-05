@@ -10,11 +10,15 @@ import {
 
 const optionalText = z.string().trim().max(500).optional().default("");
 const optionalNumber = z.number().nonnegative().optional();
-const scopeOptionSchema = z.object({
-  code: z.string().trim().min(1).max(20),
+const regionOptionSchema = z.object({
+  code: z.string().trim().regex(/^(?:WORLD|[A-Za-z]{2})$/, "地域コードはWORLDまたはISO alpha-2で指定してください"),
   name: z.string().trim().min(1).max(120)
 });
-const languageInputSchema = z.union([scopeOptionSchema, z.string().trim().min(1).max(100)]);
+const languageOptionSchema = z.object({
+  code: z.string().trim().regex(/^(?:ALL|[A-Za-z]{2,3})$/, "言語コードはALLまたは2〜3文字コードで指定してください"),
+  name: z.string().trim().min(1).max(120)
+});
+const languageInputSchema = z.union([languageOptionSchema, z.string().trim().min(1).max(100)]);
 
 export const outboundConditionSchema = z.object({
   workId: z.string().trim().min(1, "作品を選択してください").max(100),
@@ -26,7 +30,7 @@ export const outboundConditionSchema = z.object({
   sourceConditionId: z.number().int().positive().optional(),
   documentNumber: optionalText,
   territory: z.string().trim().max(300).optional().default(""),
-  regions: z.array(scopeOptionSchema).max(250).optional().default([]),
+  regions: z.array(regionOptionSchema).max(250).optional().default([]),
   languages: z.array(languageInputSchema).min(1, "対象言語を入力してください").max(200),
   exclusivity: z.enum(["exclusive", "non_exclusive", "sole"]),
   sublicenseAllowed: z.boolean().default(false),
