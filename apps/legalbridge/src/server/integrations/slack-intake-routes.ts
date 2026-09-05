@@ -13,7 +13,10 @@ const workflowSchema=z.enum([
   "delivery_inspection","license_settlement","deadline_change"
 ]);
 
-export function createSlackIntakeDesignRouter(templates:TemplateRepository){
+export function createSlackIntakeDesignRouter(
+  templates:TemplateRepository,
+  options:{uploadUrl?:string}={}
+){
   const router=Router();
 
   router.get("/slack-intake/catalog",async(_req,res,next)=>{
@@ -32,7 +35,8 @@ export function createSlackIntakeDesignRouter(templates:TemplateRepository){
         view:buildSlackIntakeModal({
           workflow:workflow as SlackIntakeWorkflowId,
           templates:allTemplates,
-          initialTemplateKey:templateKey
+          initialTemplateKey:templateKey,
+          uploadUrl:options.uploadUrl
         })
       });
     }catch(error){next(error);}
