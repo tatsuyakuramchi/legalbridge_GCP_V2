@@ -154,3 +154,25 @@ JOIN payments p
      )
 WHERE COALESCE(p.payment_kind,'') ILIKE '%royalty%'
    OR COALESCE(p.payment_kind,'') ILIKE '%license%';
+
+
+-- 9. Manufacturing-event ambiguity caused by the existing UNIQUE(backlog_issue_key).
+WITH mfg_docs AS (
+  SELECT
+    COALESCE(NULLIF(d.backlog_issue_key,''), NULLIF(d.issue_key,'')) AS issue_key,
+    d.id,
+    d.document_number
+  FROM documents d
+  WHERE d.template_type='royalty_statement'
+    AND jsonb_typeof(d.form_data)='object'
+    AND (
+      lower(COALESCE(d.form_data->>'settlement_trigger',d.form_data->>'calcType',d.form_data->>'rsCalcType','')) LIKE '%manufact%'
+      OR COALESCE(d.form_data->>'settlement_trigger',d.form_data->>'calcType',d.form_data->>'rsCalcType','') LIKE '%製造%'
+    )
+)
+SELECT issue_key,COUNT(*) AS document_count,array_agg(document_number ORDER BY id) AS documents
+FROM mfg_docs
+WHERE issue_key IS NOT NULL
+GROUP BY issue_key
+HAVING COUNT(*)>1
+ORDER BY document_count DESC,issue_key;
