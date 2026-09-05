@@ -399,3 +399,14 @@ Request detail now aggregates directly linked legal context without inferring re
 - document rows open the document registry entry directly.
 
 The next gate is typecheck/test/build followed by a write-test deployment and production-schema request-detail API smoke. Browser verification remains required before marking the Request Driven UI complete.
+
+
+### Matter-linked request context
+
+Production-schema smoke on request `LEGAL-330` / request id `512` passed for the enriched request-detail response shape. The request had a primary matter but no request-key-direct documents, exposing a navigation gap: related legal context stopped at the Matter boundary.
+
+Request context resolution now also follows:
+
+`Request -> Matter -> Documents -> Contracts / Works / Vendors`
+
+and includes matter-linked document and contract deadlines. The request-detail related-document KPI uses the resolved detail context rather than only direct request-key document count. Re-deploy and repeat request 512 smoke before browser sign-off.
