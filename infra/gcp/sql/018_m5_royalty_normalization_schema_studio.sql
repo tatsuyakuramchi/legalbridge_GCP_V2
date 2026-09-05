@@ -68,32 +68,25 @@ ALTER TABLE payments
 
 -- Idempotent canonical links.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_royalty_calculations_document
-  ON royalty_calculations(document_id)
-  WHERE document_id IS NOT NULL;
+  ON royalty_calculations(document_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_royalty_statements_document
-  ON royalty_statements(document_id)
-  WHERE document_id IS NOT NULL;
+  ON royalty_statements(document_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_royalty_statement_lines_statement_line
-  ON royalty_statement_lines(royalty_statement_id, line_no)
-  WHERE royalty_statement_id IS NOT NULL;
+  ON royalty_statement_lines(royalty_statement_id, line_no);
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_manufacturing_events_source_document
-  ON manufacturing_events(source_document_id)
-  WHERE source_document_id IS NOT NULL;
+  ON manufacturing_events(source_document_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_sales_events_source_document
-  ON sales_events(source_document_id)
-  WHERE source_document_id IS NOT NULL;
+  ON sales_events(source_document_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_condition_receipts_source_document
-  ON condition_receipts(source_document_id)
-  WHERE source_document_id IS NOT NULL;
+  ON condition_receipts(source_document_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_payments_legacy_royalty_payment
-  ON payments(legacy_royalty_payment_id)
-  WHERE legacy_royalty_payment_id IS NOT NULL;
+  ON payments(legacy_royalty_payment_id);
 
 -- FK helpers; NOT VALID avoids blocking on unrelated legacy rows.
 DO $constraints$
