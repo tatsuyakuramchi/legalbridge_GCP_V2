@@ -298,6 +298,28 @@ case "${MATERIAL_WRITES_ENABLED}" in
     exit 1
     ;;
 esac
+case "${CONDITION_ATTACHMENT_WRITES_ENABLED}" in
+  false)
+    ;;
+  true)
+    if [ "${CONFIRM_CONDITION_ATTACHMENT_WRITES}" != "CONDITION_ATTACHMENT_LEGALBRIDGE_VALIDATION_ONLY" ]; then
+      echo "Condition attachment deployment blocked: explicit production validation confirmation is missing."
+      exit 1
+    fi
+    if [ "${PRIMARY_DB_MODE}" != "production" ] || [ "${SERVICE}" != "legalbridge-v2-write-test" ] || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
+      echo "Condition attachment deployment blocked: service, database, runtime user, or password secret does not match the approved target."
+      exit 1
+    fi
+    if [ "${AUTH_MODE}" != "iap" ] && [ "${AUTH_MODE}" != "cloudrun-iam" ]; then
+      echo "Condition attachment deployment blocked: IAP or Cloud Run IAM authentication is required."
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Deployment blocked: CONDITION_ATTACHMENT_WRITES_ENABLED must be true or false."
+    exit 1
+    ;;
+esac
 case "${GMAIL_DELIVERY_MODE}" in
   disabled)
     ;;
@@ -465,6 +487,9 @@ if [ "${WORK_WRITES_ENABLED}" = "true" ]; then
 fi
 if [ "${MATERIAL_WRITES_ENABLED}" = "true" ]; then
   expected_write_scopes="$expected_write_scopes,materials"
+fi
+if [ "${CONDITION_ATTACHMENT_WRITES_ENABLED}" = "true" ]; then
+  expected_write_scopes="$expected_write_scopes,condition-attachments"
 fi
 if [ "${GMAIL_DELIVERY_MODE}" = "live" ]; then
   expected_write_scopes="$expected_write_scopes,gmail"
