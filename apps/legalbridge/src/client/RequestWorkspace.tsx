@@ -34,7 +34,8 @@ export function RequestWorkspace({
   onStandaloneDocument,
   onLicenseContract,
   onLicenseSettlement,
-  onOpenMatter
+  onOpenMatter,
+  onOpenDocument
 }: {
   canEditMatters: boolean;
   onLegalResponse: (issueKey: string) => void;
@@ -42,6 +43,7 @@ export function RequestWorkspace({
   onLicenseContract: (issueKey: string) => void;
   onLicenseSettlement: (issueKey: string) => void;
   onOpenMatter: (id: number, title: string) => void;
+  onOpenDocument: (id: number) => void;
 }) {
   const [query, setQuery] = useState("");
   const [requests, setRequests] = useState<RequestSummary[]>([]);
@@ -102,6 +104,21 @@ export function RequestWorkspace({
     const hay = `${selected?.contractType ?? ""} ${selected?.summary ?? ""}`.toLowerCase();
     return hay.includes("license") || hay.includes("ライセンス") || hay.includes("利用許諾") || hay.includes("sublicense") || hay.includes("サブライセンス");
   }, [selected]);
+
+  const primaryActionKind = useMemo(() => {
+    if (!selected) return "none" as const;
+    if (
+      (selected.disposition === "completed" || selected.disposition === "document_created") &&
+      detail?.documents?.length
+    ) return "document" as const;
+    if (selected.disposition === "matter_linked" && detail?.matters?.length) return "matter" as const;
+    if (licenseLike) return "license" as const;
+    if (selected.contractType === "legal_consult") return "legal_response" as const;
+    return "standalone_document" as const;
+  }, [selected, detail, licenseLike]);
+
+  const primaryMatter = detail?.matters?.find((matter) => matter.primary) ?? detail?.matters?.[0] ?? null;
+  const primaryDocument = detail?.documents?.[0] ?? null;
 
   async function linkMatter(matterId: number, primary = false) {
     if (!detail) return;
@@ -212,33 +229,69 @@ export function RequestWorkspace({
           {selected.notes && <div className="request-notes">{selected.notes}</div>}
 
           <section className="request-action-section">
-            <h3>この依頼を処理</h3>
-            <div className="request-action-grid">
-              <button onClick={() => onLegalResponse(selected.issueKey)}>
-                <span>単発完結</span><strong>法務相談 → 評価書/回答書</strong>
-                <small>legal_responseを作成し、Drive・Slack/Email共有後に終了</small>
-              </button>
-              <button onClick={() => onStandaloneDocument(selected.issueKey)}>
-                <span>単発完結</span><strong>覚書・通知書等を作成</strong>
-                <small>Templateを選択。継続管理が不要ならMatterを作らない</small>
-              </button>
-              {licenseLike && <button onClick={() => onLicenseContract(selected.issueKey)}>
-                <span>ライセンス</span><strong>新規ライセンス契約</strong>
+            <h3>次にやること</h3>
+            <div className="request-primary-action">
+              {primaryActionKind === "document" && primaryDocument && <button
+                className="primary-action"
+                onClick={() => onOpenDocument(primaryDocument.id)}>
+                <span>次の操作</span><strong>関連文書を確認する</strong>
+                <small>{primaryDocument.documentNumber || primaryDocument.templateType} を開いてPDF・共有・後続処理を確認</small>
+              </button>}
+              {primaryActionKind === "matter" && primaryMatter && <button
+                className="primary-action"
+                onClick={() => onOpenMatter(primaryMatter.id, primaryMatter.title)}>
+                <span>次の操作</span><strong>案件を開いて次タスクを処理する</strong>
+                <small>{primaryMatter.matterCode || `Matter #${primaryMatter.id}`} ・ {primaryMatter.title}</small>
+              </button>}
+              {primaryActionKind === "license" && <button
+                className="primary-action"
+                onClick={() => onLicenseContract(selected.issueKey)}>
+                <span>推奨</span><strong>ライセンス契約を処理する</strong>
                 <small>作品 → 権利ソース → IN/OUT条件 → 契約書作成</small>
               </button>}
-              {licenseLike && <button onClick={() => onLicenseSettlement(selected.issueKey)}>
-                <span>ライセンス精算</span><strong>利用許諾計算書を作成</strong>
-                <small>製造・販売・サブライセンス料入金をトリガーに自動計算</small>
+              {primaryActionKind === "legal_response" && <button
+                className="primary-action"
+                onClick={() => onLegalResponse(selected.issueKey)}>
+                <span>推奨</span><strong>評価書・回答書を作成する</strong>
+                <small>単発の法務相談として回答文書を作成し、この依頼を完了</small>
               </button>}
-              <button className="primary-action" onClick={() => setMatterPicker(true)}>
-                <span>継続管理</span><strong>既存案件へ紐付け</strong>
-                <small>契約・期限・履行が続く場合に利用</small>
-              </button>
-              {canEditMatters && <button onClick={() => setNewMatter(true)}>
-                <span>継続管理</span><strong>新規案件を作成</strong>
-                <small>依頼を主依頼としてMatterを作成</small>
+              {primaryActionKind === "standalone_document" && <button
+                className="primary-action"
+                onClick={() => onStandaloneDocument(selected.issueKey)}>
+                <span>推奨</span><strong>必要な文書を作成する</strong>
+                <small>テンプレートを選択し、DB引用後に不足項目だけ入力</small>
               </button>}
             </div>
+
+            <details className="request-secondary-actions">
+              <summary>その他の処理</summary>
+              <div className="request-action-grid">
+                <button onClick={() => onLegalResponse(selected.issueKey)}>
+                  <span>単発完結</span><strong>法務相談 → 評価書/回答書</strong>
+                  <small>legal_responseを作成</small>
+                </button>
+                <button onClick={() => onStandaloneDocument(selected.issueKey)}>
+                  <span>単発文書</span><strong>覚書・通知書等を作成</strong>
+                  <small>Templateを選択</small>
+                </button>
+                {licenseLike && <button onClick={() => onLicenseContract(selected.issueKey)}>
+                  <span>ライセンス</span><strong>新規ライセンス契約</strong>
+                  <small>作品・権利条件から作成</small>
+                </button>}
+                {licenseLike && <button onClick={() => onLicenseSettlement(selected.issueKey)}>
+                  <span>ライセンス精算</span><strong>利用許諾計算書を作成</strong>
+                  <small>製造・販売・入金イベントから計算</small>
+                </button>}
+                <button onClick={() => setMatterPicker(true)}>
+                  <span>継続管理</span><strong>既存案件へ紐付け</strong>
+                  <small>既存Matterに接続</small>
+                </button>
+                {canEditMatters && <button onClick={() => setNewMatter(true)}>
+                  <span>継続管理</span><strong>新規案件を作成</strong>
+                  <small>この依頼を主依頼として作成</small>
+                </button>}
+              </div>
+            </details>
           </section>
 
           {detail?.matters?.length ? <section className="request-related">
