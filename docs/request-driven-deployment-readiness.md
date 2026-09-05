@@ -422,3 +422,32 @@ Production-data request detail smoke passed on:
 For request 511, `contracts`, `works`, and `vendors` remain empty because the resolved documents are reference/counterparty-draft attachment records without structured contract/work/vendor foreign-key relations. The UI intentionally does not infer master relationships from titles or free-form snapshots.
 
 Request-detail related-context API is therefore considered production-schema smoke passed. Browser rendering/navigation smoke remains required before marking Request Driven UI complete.
+
+
+### Request Driven detail sign-off
+
+Request detail is considered implementation-complete after browser sign-off and production-data API smoke:
+
+- one dominant next action;
+- related Matter and document navigation;
+- related vendor / work-rights / contract / deadline context;
+- Request -> Matter -> Documents -> Contracts / Works / Vendors resolution;
+- no inference of master relationships from free-form attachment titles.
+
+Remaining Request work is only regression fallout, not planned feature enrichment.
+
+### Consolidated non-destructive regression smoke
+
+`infra/gcp/smoke-regression.sh` is the next deployment gate. It validates:
+
+- guarded write-test health and capabilities;
+- Tokyo deadline date mapping for known requests;
+- document registry and previous-number compatibility;
+- temporary draft create/read/delete;
+- document-finalization conflict guard without creating a document;
+- PDF generation on existing finalized document 1033;
+- contract-intake validation and DB preflight without commit;
+- vendor / staff / work / material master reads;
+- condition-attachment context on existing document 1033.
+
+The smoke intentionally avoids creating persistent test documents, contracts, works, vendors, staff, materials, or condition lines.
