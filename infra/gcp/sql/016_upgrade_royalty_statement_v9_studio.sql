@@ -104,6 +104,13 @@ $newtax$
             jsonb_set(item, '{readonly}', 'true'::jsonb, true)
           WHEN 'paymentConditionSummary' THEN
             jsonb_set(item, '{readonly}', 'true'::jsonb, true)
+          WHEN 'taxRate' THEN
+            jsonb_set(
+              jsonb_set(item, '{options}', '["10","8","0"]'::jsonb, true),
+              '{helpText}',
+              to_jsonb('計算書へ反映する税率。0% / 対象外の場合は0を選択。'::text),
+              true
+            )
           WHEN 'bankName' THEN
             jsonb_set(item, '{readonly}', 'true'::jsonb, true)
           WHEN 'branchName' THEN
@@ -160,6 +167,8 @@ SELECT
   v.version_no,
   jsonb_array_length(v.field_schema) AS field_count,
   position('{{moneyUnit}}' in v.html_source) > 0 AS currency_unit_enabled,
+  position('¥' in v.html_source) = 0 AS hardcoded_yen_removed,
+  position('入金日{{else}}発生日' in v.html_source) > 0 AS trigger_date_label_enabled,
   position('quantity}} 個' in v.html_source) > 0 AS manufacturing_layout_preserved
 FROM document_templates dt
 JOIN document_template_versions v ON v.id = dt.current_version_id
