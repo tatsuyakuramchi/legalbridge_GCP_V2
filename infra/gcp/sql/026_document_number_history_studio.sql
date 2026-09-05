@@ -58,7 +58,7 @@ INSERT INTO document_number_history (
 )
 SELECT
   d.id,
-  previous.previous_number,
+  prev.previous_number,
   d.document_number,
   COALESCE(d.created_at, now()),
   COALESCE(d.created_by, current_user),
@@ -76,15 +76,15 @@ CROSS JOIN LATERAL (
     NULLIF(BTRIM(d.form_data->>'baseDocumentNumber'), ''),
     NULLIF(BTRIM(d.form_data->>'originalDocumentNumber'), '')
   ) AS previous_number
-) previous
-WHERE previous.previous_number IS NOT NULL
+) prev
+WHERE prev.previous_number IS NOT NULL
   AND d.document_number IS NOT NULL
-  AND previous.previous_number IS DISTINCT FROM d.document_number
+  AND prev.previous_number IS DISTINCT FROM d.document_number
   AND NOT EXISTS (
     SELECT 1
     FROM document_number_history h
     WHERE h.document_id = d.id
-      AND h.previous_document_number = previous.previous_number
+      AND h.previous_document_number = prev.previous_number
       AND h.new_document_number = d.document_number
   );
 
