@@ -21,7 +21,11 @@ function seed(): LegalRequestDetail {
     legalResponseCount: 0,
     disposition: "received",
     matters: [],
-    documents: []
+    documents: [],
+    contracts: [],
+    works: [],
+    vendors: [],
+    deadlines: []
   };
 }
 function app(write = false) {
