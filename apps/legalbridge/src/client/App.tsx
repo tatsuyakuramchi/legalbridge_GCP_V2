@@ -152,6 +152,7 @@ export function App() {
   const [newDocIssueKey, setNewDocIssueKey] = useState("");
   const [licenseRequestIssueKey, setLicenseRequestIssueKey] = useState("");
   const [licenseWorkId, setLicenseWorkId] = useState<number | undefined>(undefined);
+  const [workRightsInitialId, setWorkRightsInitialId] = useState<number | undefined>(undefined);
   const [settlementIssueKey, setSettlementIssueKey] = useState("");
   const [settlementWorkId, setSettlementWorkId] = useState<number | undefined>(undefined);
   const [globalCreateOpen, setGlobalCreateOpen] = useState(false);
@@ -336,6 +337,10 @@ export function App() {
           onOpenDocument={(id) => {
             setSearchSelection({ target: "document", id: String(id), title: "" }); setView("documents");
           }}
+          onOpenWork={(id) => {
+            setWorkRightsInitialId(id);
+            setView("works-rights");
+          }}
         />}
         {view === "deadlines" && legalWorkspace && <DeadlineWorkspace
           onOpenMatter={(id, title) => {
@@ -350,6 +355,7 @@ export function App() {
             : undefined}
           selectedId={searchSelection?.target === "matter" ? Number(searchSelection.id) : undefined} />}
         {view === "works-rights" && legalWorkspace && <WorkRightsWorkspace
+          initialWorkId={workRightsInitialId}
           onStartLicenseContract={(workId) => {
             setLicenseRequestIssueKey(""); setLicenseWorkId(workId); setView("license-contract");
           }}
