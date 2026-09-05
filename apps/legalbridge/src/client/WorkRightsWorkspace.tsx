@@ -41,7 +41,7 @@ export function WorkRightsWorkspace({
   onStartSettlement
 }: {
   initialWorkId?: number;
-  onStartLicenseContract: (workId: number, workTitle: string) => void;
+  onStartLicenseContract: (workId: number, workTitle: string, sourceConditionId?: number) => void;
   onStartSettlement: (workId: number, workTitle: string) => void;
 }) {
   const [query, setQuery] = useState("");
@@ -187,7 +187,12 @@ export function WorkRightsWorkspace({
             {!inbound.length && <div className="empty-state">IN権利条件が登録されていません。</div>}
           </div>}
 
-          {tab === "conditions" && <ConditionMatrix inbound={inbound} outbound={outbound} />}
+          {tab === "conditions" && <ConditionMatrix
+            inbound={inbound}
+            outbound={outbound}
+            onStartOutContract={(sourceConditionId) =>
+              onStartLicenseContract(detail.work.id, detail.work.title, sourceConditionId)}
+          />}
 
           {tab === "contracts" && <div className="work-rights-body table-scroll"><table>
             <thead><tr><th>契約番号</th><th>役割</th><th>契約名</th><th>相手方</th><th>期間</th><th>状態</th></tr></thead>
@@ -211,12 +216,41 @@ export function WorkRightsWorkspace({
 
 function ConditionMatrix({
   inbound,
-  outbound
+  outbound,
+  onStartOutContract
 }: {
   inbound: WorkDetail["conditions"];
   outbound: WorkDetail["conditions"];
+  onStartOutContract: (sourceConditionId: number) => void;
 }) {
-  const base = inbound[0] ?? null;
+  const firstPair = useMemo(() => {
+    for (const source of inbound) {
+      const target = outbound.find((condition) => condition.parentLicenseConditionId === source.id);
+      if (target) return { inboundId: source.id, outboundId: target.id };
+    }
+    return inbound[0] ? { inboundId: inbound[0].id, outboundId: null } : null;
+  }, [inbound, outbound]);
+  const [selection, setSelection] = useState<{ inboundId: number; outboundId: number | null } | null>(firstPair);
+
+  useEffect(() => {
+    setSelection((current) => {
+      if (current && inbound.some((condition) => condition.id === current.inboundId)) {
+        const outboundStillExists = current.outboundId === null
+          ? !outbound.some((condition) => condition.parentLicenseConditionId === current.inboundId)
+          : outbound.some((condition) =>
+            condition.id === current.outboundId
+            && condition.parentLicenseConditionId === current.inboundId);
+        if (outboundStillExists) return current;
+      }
+      return firstPair;
+    });
+  }, [firstPair, inbound, outbound]);
+
+  const selectedInbound = inbound.find((condition) => condition.id === selection?.inboundId) ?? null;
+  const selectedOutbound = outbound.find((condition) => condition.id === selection?.outboundId) ?? null;
+  const inboundIds = useMemo(() => new Set(inbound.map((condition) => condition.id)), [inbound]);
+  const unlinkedOutbound = outbound.filter((condition) =>
+    condition.parentLicenseConditionId === null || !inboundIds.has(condition.parentLicenseConditionId));
   const fields: Array<[string,(c: WorkDetail["conditions"][number]) => string]> = [
     ["地域", (c) => c.territory || "—"],
     ["言語", (c) => c.language || "—"],
@@ -229,13 +263,82 @@ function ConditionMatrix({
     ["AG", (c) => c.agAmount === null ? "—" : `${c.currency || ""} ${c.agAmount}`]
   ];
   return <div className="work-rights-body">
-    <div className="context-banner">IN条件を基準にOUT条件を横並びで確認します。parent_license_condition_idがあるOUTは根拠IN条件との関係を保持します。</div>
-    <div className="table-scroll"><table className="rights-matrix">
-      <thead><tr><th>条件</th><th>{base ? `IN #${base.id}` : "IN"}</th>
-        {outbound.map((c) => <th key={c.id}>OUT #{c.id}<small>{c.counterparty || c.name}</small></th>)}</tr></thead>
-      <tbody>{fields.map(([label, read]) => <tr key={label}><th>{label}</th><td>{base ? read(base) : "—"}</td>
-        {outbound.map((c) => <td key={c.id} className={matrixClass(base, c, label)}>{read(c)}</td>)}</tr>)}</tbody>
-    </table></div>
+    <div className="context-banner">元契約の取引モデルごとに、対応するOUT契約と条件を確認します。</div>
+    <div className="condition-model-heading">
+      <div><h3>取引モデル別 IN → OUT</h3><small>IN条件を起点に契約の展開先を表示</small></div>
+      <span>IN {inbound.length}件 ・ OUT {outbound.length}件</span>
+    </div>
+    <div className="condition-model-list">
+      {inbound.map((source, index) => {
+        const targets = outbound.filter((condition) => condition.parentLicenseConditionId === source.id);
+        const sourceSelected = selectedInbound?.id === source.id;
+        return <article key={source.id} className={`condition-model${sourceSelected ? " selected" : ""}`}>
+          <header>
+            <div><span>取引モデル {index + 1}</span><strong>{source.name || source.transactionKind || `IN #${source.id}`}</strong></div>
+            <button onClick={() => setSelection({ inboundId: source.id, outboundId: targets[0]?.id ?? null })}>
+              {sourceSelected ? "表示中" : "条件を見る"}
+            </button>
+          </header>
+          <div className="condition-model-route">
+            <ConditionSummary condition={source} label={`IN CONDITION #${source.id}`} />
+            <i aria-hidden="true">→</i>
+            <div className="condition-outbound-column">
+              {targets.length ? <div className="condition-outbound-list">
+                {targets.map((target) => <button key={target.id}
+                  className={selectedOutbound?.id === target.id ? "selected" : ""}
+                  onClick={() => setSelection({ inboundId: source.id, outboundId: target.id })}>
+                  <span>OUT CONDITION #{target.id}</span>
+                  <strong>{target.counterparty || target.name}</strong>
+                  <small>{target.territory || "地域未設定"} ・ {target.language || "言語未設定"} ・ {target.ratePct === null ? "料率未設定" : `${target.ratePct}%`}</small>
+                </button>)}
+              </div> : <div className="condition-outbound-empty">対応するOUT契約はありません</div>}
+              <button className="condition-add-out" onClick={() => onStartOutContract(source.id)}>
+                ＋ {targets.length ? "OUT契約を追加" : "このモデルからOUT契約を作成"}
+              </button>
+            </div>
+          </div>
+        </article>;
+      })}
+      {!inbound.length && <div className="empty-state">IN権利条件が登録されていません。</div>}
+    </div>
+
+    {unlinkedOutbound.length > 0 && <section className="unlinked-outbound">
+      <h3>根拠IN未設定のOUT条件</h3>
+      <p>次のOUT条件は取引モデルとの紐付けを確認してください。</p>
+      {unlinkedOutbound.map((condition) => <span key={condition.id}>OUT #{condition.id} {condition.counterparty || condition.name}</span>)}
+    </section>}
+
+    {selectedInbound && <section className="condition-comparison">
+      <h3>{selectedOutbound
+        ? `IN #${selectedInbound.id} と OUT #${selectedOutbound.id} の条件比較`
+        : `IN #${selectedInbound.id} ${selectedInbound.name}`}</h3>
+      {selectedOutbound ? <div className="table-scroll"><table className="rights-matrix">
+        <thead><tr><th>条件</th><th>IN #{selectedInbound.id}</th>
+          <th>OUT #{selectedOutbound.id}<small>{selectedOutbound.counterparty || selectedOutbound.name}</small></th></tr></thead>
+        <tbody>{fields.map(([label, read]) => <tr key={label}><th>{label}</th><td>{read(selectedInbound)}</td>
+          <td className={matrixClass(selectedInbound, selectedOutbound, label)}>{read(selectedOutbound)}</td></tr>)}</tbody>
+      </table></div> : <div className="condition-comparison-empty">比較対象となるOUT契約はありません。</div>}
+    </section>}
+  </div>;
+}
+
+function ConditionSummary({
+  condition,
+  label
+}: {
+  condition: WorkDetail["conditions"][number];
+  label: string;
+}) {
+  return <div className="condition-summary">
+    <span>{label}</span>
+    <strong>{condition.name}</strong>
+    <small>{condition.counterparty || "権利元未設定"}</small>
+    <dl>
+      <div><dt>地域</dt><dd>{condition.territory || "—"}</dd></div>
+      <div><dt>言語</dt><dd>{condition.language || "—"}</dd></div>
+      <div><dt>期間</dt><dd>{condition.termStart || "—"} ～ {condition.termEnd || "—"}</dd></div>
+      <div><dt>根拠文書</dt><dd>{condition.documentNumber || "—"}</dd></div>
+    </dl>
   </div>;
 }
 

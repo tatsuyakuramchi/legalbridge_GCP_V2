@@ -15,11 +15,13 @@ type WorkDetail = { work: WorkSummary & Record<string,unknown>; conditions: Cond
 export function LicenseContractWorkspace({
   initialIssueKey = "",
   initialWorkId,
+  initialSourceConditionId,
   canSaveDraft,
   onOpenDraft
 }: {
   initialIssueKey?: string;
   initialWorkId?: number;
+  initialSourceConditionId?: number;
   canSaveDraft: boolean;
   onOpenDraft: (issueKey:string, templateType:string) => void;
 }) {
@@ -28,7 +30,7 @@ export function LicenseContractWorkspace({
   const [workId,setWorkId]=useState<number|null>(initialWorkId ?? null);
   const [detail,setDetail]=useState<WorkDetail|null>(null);
   const [direction,setDirection]=useState<"in"|"out">("out");
-  const [sourceConditionId,setSourceConditionId]=useState<number|null>(null);
+  const [sourceConditionId,setSourceConditionId]=useState<number|null>(initialSourceConditionId ?? null);
   const [counterparty,setCounterparty]=useState("");
   const [regions,setRegions]=useState<ScopeOption[]>([]);
   const [languages,setLanguages]=useState<ScopeOption[]>([]);
@@ -62,9 +64,15 @@ export function LicenseContractWorkspace({
       .then(data=>{
         setDetail(data);
         const inbound=(data.conditions??[]).find((c:Condition)=>c.flowDirection==="in"||c.direction==="payable");
-        setSourceConditionId(current=>current??inbound?.id??null);
+        setSourceConditionId(current=>{
+          if(initialSourceConditionId && inbound.some((condition:Condition)=>condition.id===initialSourceConditionId)) {
+            return initialSourceConditionId;
+          }
+          if(current && inbound.some((condition:Condition)=>condition.id===current)) return current;
+          return inbound?.id??null;
+        });
       }).catch(()=>setNotice("作品の権利条件を取得できませんでした。"));
-  },[workId]);
+  },[initialSourceConditionId,workId]);
 
   const inbound=useMemo(()=>detail?.conditions.filter(c=>c.flowDirection==="in"||c.direction==="payable")??[],[detail]);
   const source=useMemo(()=>inbound.find(c=>c.id===sourceConditionId)??null,[inbound,sourceConditionId]);

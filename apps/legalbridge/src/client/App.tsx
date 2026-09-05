@@ -153,6 +153,7 @@ export function App() {
   const [newDocIssueKey, setNewDocIssueKey] = useState("");
   const [licenseRequestIssueKey, setLicenseRequestIssueKey] = useState("");
   const [licenseWorkId, setLicenseWorkId] = useState<number | undefined>(undefined);
+  const [licenseSourceConditionId, setLicenseSourceConditionId] = useState<number | undefined>(undefined);
   const [workRightsInitialId, setWorkRightsInitialId] = useState<number | undefined>(undefined);
   const [settlementIssueKey, setSettlementIssueKey] = useState("");
   const [settlementWorkId, setSettlementWorkId] = useState<number | undefined>(undefined);
@@ -313,7 +314,7 @@ export function App() {
                 <button onClick={() => { setGlobalCreateOpen(false); setView("matters"); }}>案件</button>
                 <button onClick={() => { setGlobalCreateOpen(false); setNewDocIssueKey(""); setView("templates"); }}>文書</button>
                 <button onClick={() => { setGlobalCreateOpen(false); setView("works-rights"); }}>作品・権利</button>
-                <button onClick={() => { setGlobalCreateOpen(false); setLicenseRequestIssueKey(""); setLicenseWorkId(undefined); setView("license-contract"); }}>ライセンス契約</button>
+                <button onClick={() => { setGlobalCreateOpen(false); setLicenseRequestIssueKey(""); setLicenseWorkId(undefined); setLicenseSourceConditionId(undefined); setView("license-contract"); }}>ライセンス契約</button>
                 <button onClick={() => { setGlobalCreateOpen(false); setView("outbound"); }}>アウト条件</button>
                 <button onClick={() => { setGlobalCreateOpen(false); setView("conditions"); }}>条件</button>
                 <button onClick={() => { setGlobalCreateOpen(false); setView("ledgers"); }}>取引先</button>
@@ -341,7 +342,7 @@ export function App() {
           onLegalResponse={(issueKey) => openDocumentForm("legal_response", issueKey)}
           onStandaloneDocument={(issueKey) => { setNewDocIssueKey(issueKey); setView("templates"); }}
           onLicenseContract={(issueKey) => {
-            setLicenseRequestIssueKey(issueKey); setLicenseWorkId(undefined); setView("license-contract");
+            setLicenseRequestIssueKey(issueKey); setLicenseWorkId(undefined); setLicenseSourceConditionId(undefined); setView("license-contract");
           }}
           onLicenseSettlement={(issueKey) => {
             setSettlementIssueKey(issueKey); setSettlementWorkId(undefined); setView("license-settlements");
@@ -371,8 +372,8 @@ export function App() {
           selectedId={searchSelection?.target === "matter" ? Number(searchSelection.id) : undefined} />}
         {view === "works-rights" && legalWorkspace && <WorkRightsWorkspace
           initialWorkId={workRightsInitialId}
-          onStartLicenseContract={(workId) => {
-            setLicenseRequestIssueKey(""); setLicenseWorkId(workId); setView("license-contract");
+          onStartLicenseContract={(workId, _workTitle, sourceConditionId) => {
+            setLicenseRequestIssueKey(""); setLicenseWorkId(workId); setLicenseSourceConditionId(sourceConditionId); setView("license-contract");
           }}
           onStartSettlement={(workId) => {
             setSettlementIssueKey(""); setSettlementWorkId(workId); setView("license-settlements");
@@ -381,6 +382,7 @@ export function App() {
         {view === "license-contract" && legalWorkspace && <LicenseContractWorkspace
           initialIssueKey={licenseRequestIssueKey}
           initialWorkId={licenseWorkId}
+          initialSourceConditionId={licenseSourceConditionId}
           canSaveDraft={!readOnly}
           onOpenDraft={resumeDraft}
         />}
