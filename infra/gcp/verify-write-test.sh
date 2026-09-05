@@ -82,8 +82,18 @@ case "${BACKLOG_MODE}" in
     fi
     ;;
   live)
-    echo "Backlog live writes remain blocked while the existing worker is authoritative."
-    exit 1
+    if [ "${CONFIRM_BACKLOG_LIVE:-}" != "BACKLOG_LIVE_LEGALBRIDGE_VALIDATION_ONLY" ]; then
+      echo "Backlog live deployment blocked: explicit validation confirmation is missing."
+      exit 1
+    fi
+    if [ "${SERVICE}" != "legalbridge-v2-write-test" ] || [ "${BACKLOG_HOST}" != "arclight.backlog.com" ] || [ "${BACKLOG_PROJECT_KEY}" != "LEGAL" ]; then
+      echo "Backlog live deployment blocked: validation service, host, or project does not match the approved target."
+      exit 1
+    fi
+    if [ "${AUTH_MODE}" != "iap" ] && [ "${AUTH_MODE}" != "cloudrun-iam" ]; then
+      echo "Backlog live deployment blocked: IAP or Cloud Run IAM authentication is required."
+      exit 1
+    fi
     ;;
   *)
     echo "Deployment blocked: BACKLOG_MODE must be disabled or readonly."
@@ -463,6 +473,9 @@ esac
 expected_write_scopes="drafts,documents,pdf"
 if [ "${DRIVE_STORAGE_ENABLED}" = "true" ]; then
   expected_write_scopes="$expected_write_scopes,drive"
+fi
+if [ "${BACKLOG_MODE}" = "live" ]; then
+  expected_write_scopes="$expected_write_scopes,backlog"
 fi
 if [ "${SLACK_APPROVAL_WRITES_ENABLED}" = "true" ]; then
   expected_write_scopes="$expected_write_scopes,slack-approvals"
