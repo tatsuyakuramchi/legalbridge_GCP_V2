@@ -26,6 +26,11 @@ import {
 import { createDocumentRegistryRouter } from "./documents/registry-routes.js";
 import { createDocumentPdfRouter } from "./documents/pdf-routes.js";
 import { createDocumentDriveRouter } from "./documents/drive-routes.js";
+import { createDocumentBacklogRouter } from "./documents/backlog-routes.js";
+import {
+  BacklogWebApiClient,
+  type BacklogWriteClient
+} from "./integrations/backlog-web-api.js";
 import {
   GoogleDriveStorage,
   type DriveStorage
@@ -277,6 +282,7 @@ export interface AppDependencies {
   finalizations?: DocumentFinalizationRepository;
   pdfRenderer?: PdfRenderer;
   driveStorage?: DriveStorage | null;
+  backlog?: BacklogWriteClient | null;
   slackHistory?: SlackNotificationHistoryRepository;
   slackApprovals?: SlackNotificationApprovalRepository;
   outboundConditions?: OutboundConditionRepository;
@@ -312,6 +318,17 @@ function createDefaultDependencies(): AppDependencies {
       ? new PgDraftRepository(database)
       : new MemoryDraftRepository(),
     integrations: createIntegrationAdapters(),
+    backlog:
+      config.backlogMode !== "disabled" &&
+      config.backlogHost &&
+      config.backlogProjectKey &&
+      config.backlogApiKey
+        ? new BacklogWebApiClient({
+            host: config.backlogHost,
+            projectKey: config.backlogProjectKey,
+            apiKey: config.backlogApiKey
+          })
+        : null,
     masterData: database
       ? new PgMasterDataRepository(database)
       : new MemoryMasterDataRepository(),
@@ -545,6 +562,12 @@ export function createApp(
     options.writeFeaturesEnabled === true &&
     options.writeScopes?.has("drive") === true &&
     Boolean(config.googleDriveFolderId || dependencies.driveStorage);
+  const backlogLiveEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.writeScopes?.has("backlog") === true &&
+    config.backlogMode === "live" &&
+    Boolean(dependencies.backlog);
   // SPLL 公開サイト（クリエーター向け）。ルート直下へは載せない――載せるとSPA・APIまで
   // このルーターの404が拾ってしまうため、必ずサブパスへぶら下げる。
   const spllBasePath = normalizeBasePath(config.spllSite.basePath) || "/spll";
@@ -594,6 +617,7 @@ export function createApp(
         ...(documentFinalizeEnabled ? ["documents"] : []),
         ...(pdfGenerationEnabled ? ["pdf"] : []),
         ...(driveStorageEnabled ? ["drive"] : []),
+        ...(backlogLiveEnabled ? ["backlog"] : []),
         ...(slackApprovalWriteEnabled ? ["slack-approvals"] : []),
         ...(outboundConditionWriteEnabled ? ["outbound-conditions"] : []),
         ...(contractIntakeWriteEnabled ? ["contract-intake"] : []),
@@ -623,7 +647,7 @@ export function createApp(
       accessMode: options.accessMode,
       writeFeaturesEnabled:
         draftWriteEnabled || documentFinalizeEnabled || pdfGenerationEnabled ||
-        driveStorageEnabled || slackApprovalWriteEnabled ||
+        driveStorageEnabled || backlogLiveEnabled || slackApprovalWriteEnabled ||
         outboundConditionWriteEnabled || contractIntakeWriteEnabled ||
         matterWriteEnabled || vendorWriteEnabled || staffWriteEnabled || workWriteEnabled ||
         materialWriteEnabled || conditionAttachmentWriteEnabled ||
@@ -634,6 +658,7 @@ export function createApp(
         ...(documentFinalizeEnabled ? ["documents"] : []),
         ...(pdfGenerationEnabled ? ["pdf"] : []),
         ...(driveStorageEnabled ? ["drive"] : []),
+        ...(backlogLiveEnabled ? ["backlog"] : []),
         ...(slackApprovalWriteEnabled ? ["slack-approvals"] : []),
         ...(outboundConditionWriteEnabled ? ["outbound-conditions"] : []),
         ...(contractIntakeWriteEnabled ? ["contract-intake"] : []),
@@ -715,6 +740,10 @@ export function createApp(
     const isDriveStorage =
       request.method === "POST" && /^\/documents\/[^/]+\/drive$/.test(request.path);
     if (driveStorageEnabled && isDriveStorage) return next();
+    const isBacklogDispatch =
+      request.method === "POST" &&
+      /^\/documents\/\d+\/backlog\/dispatch$/.test(request.path);
+    if (backlogLiveEnabled && isBacklogDispatch) return next();
     const isSlackApproval =
       request.method === "POST" &&
       request.path === "/admin/slack-notification-approvals";
@@ -820,6 +849,13 @@ export function createApp(
     pdfRenderer,
     dependencies.driveStorage ?? null,
     driveStorageEnabled
+  ));
+  app.use("/api/v2", createDocumentBacklogRouter(
+    documentRegistry,
+    dependencies.templates,
+    pdfRenderer,
+    dependencies.backlog ?? null,
+    backlogLiveEnabled
   ));
   const matterRepository = dependencies.matters ?? new MemoryMatterRepository();
   app.use("/api/v2", createMatterRouter(matterRepository));
