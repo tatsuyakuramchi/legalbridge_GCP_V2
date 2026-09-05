@@ -40,6 +40,7 @@ export function LicenseSettlementWorkspace({
   const [grossAmount, setGrossAmount] = useState("0");
   const [deductions, setDeductions] = useState("0");
   const [useNetBasis, setUseNetBasis] = useState(true);
+  const [taxRate, setTaxRate] = useState("");
   const [preview, setPreview] = useState<Preview | null>(null);
   const [notice, setNotice] = useState("");
   const [working, setWorking] = useState(false);
@@ -80,7 +81,8 @@ export function LicenseSettlementWorkspace({
       unitBase: numberValue(unitBase),
       grossAmount: numberValue(grossAmount),
       deductions: numberValue(deductions),
-      useNetBasis
+      useNetBasis,
+      taxRate: taxRate === "" ? undefined : Number(taxRate)
     };
   }
 
@@ -106,6 +108,7 @@ export function LicenseSettlementWorkspace({
   async function createDraft() {
     if (!issueKey.trim()) { setNotice("Backlog課題キー / Request番号を入力してください。"); return; }
     if (!conditionId) { setNotice("対象条件を選択してください。"); return; }
+    if (taxRate === "") { setNotice("計算書へ反映する消費税率を確認してください。"); return; }
     setWorking(true); setNotice("利用許諾料計算書のドラフトを作成しています…");
     try {
       const response = await fetch("/api/v2/license-settlements/draft", {
@@ -191,6 +194,14 @@ export function LicenseSettlementWorkspace({
               <label className="settlement-check"><input type="checkbox" checked={useNetBasis} onChange={(event) => setUseNetBasis(event.target.checked)} />
                 控除後の実受領額を算定基礎にする</label>
             </>}
+            <label>消費税率（計算書反映）
+              <select value={taxRate} onChange={(event) => setTaxRate(event.target.value)}>
+                <option value="">確認してください</option>
+                <option value="10">10%</option>
+                <option value="8">8%</option>
+                <option value="0">0% / 対象外</option>
+              </select>
+            </label>
           </div>
           <div className="settlement-actions"><button className="primary" disabled={working || !conditionId} onClick={calculate}>
             {working ? "計算中…" : "精算額を計算"}</button></div>
@@ -216,7 +227,7 @@ export function LicenseSettlementWorkspace({
           {preview.warnings.length > 0 && <div className="settlement-warnings">
             {preview.warnings.map((warning, index) => <p key={index}>{warning}</p>)}
           </div>}
-          <button className="primary settlement-draft-button" disabled={working || !issueKey.trim()} onClick={createDraft}>
+          <button className="primary settlement-draft-button" disabled={working || !issueKey.trim() || taxRate === ""} onClick={createDraft}>
             利用許諾料計算書を作成
           </button>
           <small className="settlement-note">royalty_statement の下書きを自動作成し、計算根拠・OUT→IN条件・イベント情報を保存します。</small>
