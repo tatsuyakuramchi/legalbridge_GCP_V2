@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { DocumentFormSchema } from "../types";
 import { useToast } from "./Toast";
 import { DocumentIntegrations } from "./DocumentIntegrations";
+import { DocumentConditionAttachment } from "./DocumentConditionAttachment";
 
 type RegisteredDocument = {
   id: number;
@@ -33,6 +34,7 @@ export function DocumentRegistry({
   canImport = false,
   canGmailNotify = false,
   canCloudSign = false,
+  canAttachConditions = false,
   selectedId,
   initialQuery = ""
 }: {
@@ -43,6 +45,7 @@ export function DocumentRegistry({
   canImport?: boolean;
   canGmailNotify?: boolean;
   canCloudSign?: boolean;
+  canAttachConditions?: boolean;
   selectedId?: number;
   initialQuery?: string;
 }) {
@@ -138,6 +141,7 @@ export function DocumentRegistry({
         canSaveToDrive={canSaveToDrive}
         canGmailNotify={canGmailNotify}
         canCloudSign={canCloudSign}
+        canAttachConditions={canAttachConditions}
         onRefresh={() => { if (selected) return selectDocument(selected.id); }}
       />
     </div>
@@ -151,6 +155,7 @@ function DocumentDetail({
   canSaveToDrive,
   canGmailNotify = false,
   canCloudSign = false,
+  canAttachConditions = false,
   onRefresh
 }: {
   document: RegisteredDocument | null;
@@ -159,6 +164,7 @@ function DocumentDetail({
   canSaveToDrive: boolean;
   canGmailNotify?: boolean;
   canCloudSign?: boolean;
+  canAttachConditions?: boolean;
   onRefresh: () => Promise<void> | void;
 }) {
   const [savingDrive, setSavingDrive] = useState(false);
@@ -269,6 +275,7 @@ function DocumentDetail({
     {document.documentNumber && (canGmailNotify || canCloudSign) && (
       <DocumentIntegrations documentId={document.id} canGmailNotify={canGmailNotify} canCloudSign={canCloudSign} />
     )}
+    <DocumentConditionAttachment documentId={document.id} canAttach={canAttachConditions} />
     <h3>登録項目</h3>
     <dl className="form-data-list">
       {entries.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}
