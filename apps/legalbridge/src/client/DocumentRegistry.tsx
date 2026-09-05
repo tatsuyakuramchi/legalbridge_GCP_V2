@@ -35,6 +35,7 @@ export function DocumentRegistry({
   canImport = false,
   canGmailNotify = false,
   canCloudSign = false,
+  backlogMode = "disabled",
   canAttachConditions = false,
   selectedId,
   initialQuery = ""
@@ -46,6 +47,7 @@ export function DocumentRegistry({
   canImport?: boolean;
   canGmailNotify?: boolean;
   canCloudSign?: boolean;
+  backlogMode?: "disabled" | "readonly" | "live";
   canAttachConditions?: boolean;
   selectedId?: number;
   initialQuery?: string;
@@ -142,6 +144,7 @@ export function DocumentRegistry({
         canSaveToDrive={canSaveToDrive}
         canGmailNotify={canGmailNotify}
         canCloudSign={canCloudSign}
+        backlogMode={backlogMode}
         canAttachConditions={canAttachConditions}
         onRefresh={() => { if (selected) return selectDocument(selected.id); }}
       />
@@ -156,6 +159,7 @@ function DocumentDetail({
   canSaveToDrive,
   canGmailNotify = false,
   canCloudSign = false,
+  backlogMode = "disabled",
   canAttachConditions = false,
   onRefresh
 }: {
@@ -165,6 +169,7 @@ function DocumentDetail({
   canSaveToDrive: boolean;
   canGmailNotify?: boolean;
   canCloudSign?: boolean;
+  backlogMode?: "disabled" | "readonly" | "live";
   canAttachConditions?: boolean;
   onRefresh: () => Promise<void> | void;
 }) {
@@ -275,8 +280,13 @@ function DocumentDetail({
         {canSaveToDrive && " Driveへの保存先は検証用フォルダに限定されます。"}
       </small>
     )}
-    {document.documentNumber && (canGmailNotify || canCloudSign) && (
-      <DocumentIntegrations documentId={document.id} canGmailNotify={canGmailNotify} canCloudSign={canCloudSign} />
+    {document.documentNumber && (canGmailNotify || canCloudSign || backlogMode !== "disabled") && (
+      <DocumentIntegrations
+        documentId={document.id}
+        canGmailNotify={canGmailNotify}
+        canCloudSign={canCloudSign}
+        backlogMode={backlogMode}
+      />
     )}
     <DocumentConditionAttachment documentId={document.id} canAttach={canAttachConditions} />
     <h3>登録項目</h3>
