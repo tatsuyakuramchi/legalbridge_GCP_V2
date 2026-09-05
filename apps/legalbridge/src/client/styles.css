@@ -108,6 +108,8 @@ header input { width: 100%; border: 1px solid #d9e2ec; border-radius: 8px; paddi
 .registry-table small { color: #64748b; }
 .registry-detail { position: sticky; top: 80px; max-height: calc(100vh - 104px); overflow-y: auto; }
 .registry-detail h2 { margin-top: 5px; font-size: 22px; }
+.previous-document-number { margin: -4px 0 10px; color: #64748b; font-size: 12px; }
+.previous-document-number strong { color: #172a44; }
 .detail-kicker { color: #168ca0; font-size: 10px; font-weight: 800; letter-spacing: .12em; }
 .detail-title { color: #475569; font-weight: 700; }
 .registry-detail dl { display: grid; grid-template-columns: 92px 1fr; gap: 8px 12px; font-size: 13px; }
