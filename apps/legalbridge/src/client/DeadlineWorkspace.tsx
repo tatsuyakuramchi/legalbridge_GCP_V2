@@ -27,7 +27,8 @@ const typeLabels: Record<string, string> = {
   installment_due: "支払・精算",
   inspection_due: "検収期限",
   payment_due: "支払期限",
-  document_due: "文書期限"
+  document_due: "文書期限",
+  request_due: "法務依頼"
 };
 
 export function DeadlineWorkspace({
