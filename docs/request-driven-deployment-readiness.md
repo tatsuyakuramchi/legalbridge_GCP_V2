@@ -55,6 +55,8 @@ Existing domain APIs and repositories should be reused; this is primarily an int
 
 ### B. Restore normalized region/language selection in V2
 
+Status: **IMPLEMENTED IN MAIN / DB preflight + write-test smoke pending**.
+
 Production data model and legacy implementation already support normalized 1:N values:
 
 ```
@@ -144,6 +146,7 @@ Run only after code parity is complete.
 14. 025 request deadline / condition flow-direction backfill
 15. 026 document number history / previous-number rendering support
 16. 027 unified deadline runtime grants
+17. 028 normalized territory/language preflight (read-only)
 
 Region/language child tables already exist in the production lineage; deployment preflight must verify the relations and runtime privileges rather than recreate or reinterpret them.
 
