@@ -27,7 +27,24 @@ Do not deploy the new `royalty_statement` finalization writer before steps 3 and
 
 The backfill does not fabricate `payments` rows. Legacy `royalty_payments` are linked only to already-existing payments when the relation is sufficiently clear; unmatched rows remain visible as data-quality issues.
 
-## 3. Build gate
+## 3. Retroactive condition / work-rights attachment
+
+For historical documents that have no `condition_lines`, enable the repair workflow only after running:
+
+1. `022_condition_attachment_preflight_studio.sql` — READ ONLY
+2. Review license-like documents with no condition lines, unattached existing condition lines, and OUT conditions with no parent IN.
+3. `023_condition_attachment_grants_studio.sql`
+4. `024_condition_attachment_verify_studio.sql`
+
+Deployment settings:
+
+- `CONDITION_ATTACHMENT_WRITES_ENABLED=true`
+- `CONFIRM_CONDITION_ATTACHMENT_WRITES=CONDITION_ATTACHMENT_LEGALBRIDGE_VALIDATION_ONLY`
+- add `condition-attachments` to `WRITE_SCOPES` in the exact capability order enforced by `verify-write-test.sh`.
+
+The document detail UI then supports: past document → condition line → target work. For license conditions it also supports source/original work, material, material rights source and OUT → parent IN linkage. The target `condition_lines.work_id` is canonical; `documents.ledger_ref_id` is only a primary-work hint for legacy compatibility.
+
+## 4. Build gate
 
 The existing `infra/gcp/cloudbuild-write-test.yaml` runs:
 
@@ -40,7 +57,7 @@ npm run build
 
 before image build and deployment. Do not bypass this step.
 
-## 4. Minimum production write-test capability
+## 5. Minimum production write-test capability
 
 The new workflows require:
 
@@ -60,7 +77,7 @@ drafts,documents,pdf[,drive][,slack-approvals][,outbound-conditions],contract-in
 
 Only include optional entries when the matching guarded feature is enabled.
 
-## 5. Safe core command example
+## 6. Safe core command example
 
 This example keeps external live send adapters disabled and enables the commonly used production write-test capabilities. Adjust only to preserve already-enabled capabilities.
 
@@ -73,7 +90,7 @@ gcloud builds submit \
 
 If Drive / Slack / Gmail / CloudSign are already enabled in the current revision, carry their current substitutions into the new build rather than using this minimal example.
 
-## 6. Post-deploy smoke tests
+## 7. Post-deploy smoke tests
 
 ```bash
 SERVICE_URL=$(gcloud run services describe legalbridge-v2-write-test \
@@ -94,7 +111,7 @@ Expected:
 - Request, Work/Rights and settlement condition APIs return JSON, not SPA HTML.
 - No external message is sent by these smoke tests.
 
-## 7. UI verification
+## 8. UI verification
 
 Proxy:
 
@@ -126,7 +143,7 @@ Verify:
    - manufacturing event example
    - create royalty_statement draft
 
-## 8. Rollback
+## 9. Rollback
 
 Do not delete DB rows automatically.
 
