@@ -166,7 +166,9 @@ export function App() {
     else if (requestedView === "requests") setView("requests");
     else if (requestedView === "deadlines") setView("deadlines");
     else if (requestedView === "works-rights") setView("works-rights");
+    else if (requestedView === "license-contract") setView("license-contract");
     else if (requestedView === "license-settlements") setView("license-settlements");
+    else if (requestedView === "outbound") setView("outbound");
     else if (requestedView === "home") setView("home");
   }, []);
 
@@ -295,6 +297,8 @@ export function App() {
                 <button onClick={() => { setGlobalCreateOpen(false); setView("matters"); }}>案件</button>
                 <button onClick={() => { setGlobalCreateOpen(false); setNewDocIssueKey(""); setView("templates"); }}>文書</button>
                 <button onClick={() => { setGlobalCreateOpen(false); setView("works-rights"); }}>作品・権利</button>
+                <button onClick={() => { setGlobalCreateOpen(false); setLicenseRequestIssueKey(""); setLicenseWorkId(undefined); setView("license-contract"); }}>ライセンス契約</button>
+                <button onClick={() => { setGlobalCreateOpen(false); setView("outbound"); }}>アウト条件</button>
                 <button onClick={() => { setGlobalCreateOpen(false); setView("conditions"); }}>条件</button>
                 <button onClick={() => { setGlobalCreateOpen(false); setView("ledgers"); }}>取引先</button>
                 {adminWorkspace && <button onClick={() => { setGlobalCreateOpen(false); setView("staff"); }}>担当者</button>}
