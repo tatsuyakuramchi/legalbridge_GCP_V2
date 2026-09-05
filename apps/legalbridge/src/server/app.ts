@@ -11,6 +11,7 @@ import {
 } from "./documents/draft-repository.js";
 import { createDocumentRouter } from "./documents/routes.js";
 import { createTemplateRegressionRouter } from "./documents/template-regression.js";
+import { createSlackIntakeDesignRouter } from "./integrations/slack-intake-routes.js";
 import {
   MemoryDocumentFinalizationRepository,
   PgDocumentFinalizationRepository,
@@ -887,6 +888,7 @@ export function createApp(
     { adapter: slackDeliveryAdapter, enabled: slackDispatchEnabled }
   ));
   app.use("/api/v2", createTemplateRegressionRouter(dependencies.templates));
+  app.use("/api/v2", createSlackIntakeDesignRouter(dependencies.templates));
   app.use("/api/v2", createOperationalDiagnosticsRouter(
     getPool(),
     dependencies.templates,
