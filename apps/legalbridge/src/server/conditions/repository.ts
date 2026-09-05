@@ -200,7 +200,7 @@ export class PgConditionLineRepository implements ConditionLineRepository {
       `SELECT cl.id, cl.line_no, cl.document_id, cl.direction, cl.flow_direction,
               cl.transaction_kind, cl.condition_name, cl.currency,
               cl.amount_ex_tax, cl.mg_amount, cl.ag_amount, cl.rate_pct, cl.term_start,
-              cl.region_territory, cl.exclusivity, cl.sublicense_allowed,
+              cl.region_territory, cl.region_language, cl.exclusivity, cl.sublicense_allowed,
               cl.payment_scheme, cl.payment_terms, cl.royalty_base,
               cl.deductible_costs, cl.notes,
               d.document_number, d.matter_id, d.template_type,
@@ -239,8 +239,12 @@ export class PgConditionLineRepository implements ConditionLineRepository {
       deductibleCosts: row.deductible_costs ?? null,
       agAmount: num(row.ag_amount),
       notes: row.notes ?? null,
-      regions: regions.rows.map((r) => String(r.country_name)).filter(Boolean),
-      languages: languages.rows.map((r) => String(r.language_name)).filter(Boolean)
+      regions: regions.rows.length
+        ? regions.rows.map((r) => String(r.country_name)).filter(Boolean)
+        : legacyScopeNames(row.region_territory),
+      languages: languages.rows.length
+        ? languages.rows.map((r) => String(r.language_name)).filter(Boolean)
+        : legacyScopeNames(row.region_language)
     };
   }
 
@@ -330,6 +334,11 @@ export class PgConditionLineRepository implements ConditionLineRepository {
       lines
     };
   }
+}
+
+function legacyScopeNames(value: unknown) {
+  const text = String(value ?? "").trim();
+  return text ? text.split(/[,、/]/).map((item) => item.trim()).filter(Boolean) : [];
 }
 
 function num(value: unknown): number | null {
