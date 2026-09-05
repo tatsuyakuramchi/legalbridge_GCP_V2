@@ -43,13 +43,27 @@ export async function renderStoredDocumentHtml(
     strict: false,
     noEscape: false
   });
+  const previousDocumentNumber =
+    document.previousDocumentNumber ??
+    firstText(document.formData, [
+      "PREVIOUS_DOCUMENT_NUMBER", "旧文書番号", "旧契約書番号",
+      "BASE_DOC_NO", "元文書番号", "元契約番号",
+      "previousDocumentNumber", "baseDocumentNumber", "originalDocumentNumber"
+    ]) ??
+    null;
   const numberedFormData = {
     ...document.formData,
     契約書番号: document.documentNumber,
     文書番号: document.documentNumber,
     CONTRACT_NO: document.documentNumber,
     DOC_NO: document.documentNumber,
-    document_number: document.documentNumber
+    document_number: document.documentNumber,
+    PREVIOUS_DOCUMENT_NUMBER: previousDocumentNumber,
+    旧文書番号: previousDocumentNumber,
+    旧契約書番号: previousDocumentNumber,
+    BASE_DOC_NO: document.formData.BASE_DOC_NO ?? previousDocumentNumber,
+    isReissue: document.formData.isReissue ?? Boolean(previousDocumentNumber),
+    showReissueBanner: document.formData.showReissueBanner ?? Boolean(previousDocumentNumber)
   };
   const context = document.templateType === INDIVIDUAL_LICENSE_V3_KEY
     ? buildIndividualLicenseV3Context(numberedFormData)
@@ -57,10 +71,40 @@ export async function renderStoredDocumentHtml(
   const rendered = render({
     ...context,
     DOCUMENT_NUMBER: document.documentNumber,
+    PREVIOUS_DOCUMENT_NUMBER: previousDocumentNumber,
+    previous_document_number: previousDocumentNumber,
     document_number: document.documentNumber,
     issue_key: document.issueKey
   });
-  return wrapPrintableHtml(rendered);
+  return wrapPrintableHtml(injectPreviousNumberNotice(rendered, previousDocumentNumber));
+}
+
+function firstText(values: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = values[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+
+function injectPreviousNumberNotice(source: string, previousDocumentNumber: string | null) {
+  if (!previousDocumentNumber || source.includes(previousDocumentNumber)) return source;
+  const escaped = escapeHtml(previousDocumentNumber);
+  const notice =
+    `<div class="lb-previous-document-number" style="text-align:right;font-size:9pt;margin:0 0 4mm;color:#475569;">旧文書番号：${escaped}</div>`;
+  if (/<body[^>]*>/i.test(source)) {
+    return source.replace(/<body([^>]*)>/i, (match) => `${match}${notice}`);
+  }
+  return `${notice}${source}`;
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 function wrapPrintableHtml(source: string) {
