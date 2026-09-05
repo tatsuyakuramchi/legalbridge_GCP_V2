@@ -120,7 +120,7 @@ implements DocumentConditionAttachmentRepository {
       const document = await lockDocument(client, documentId);
       const effectiveInput: ConditionAttachmentInput = {
         ...input,
-        contractId: effectiveInput.contractId ?? nullableInt(document.contract_id) ?? undefined
+        contractId: input.contractId ?? nullableInt(document.contract_id) ?? undefined
       };
 
       await assertWork(client, effectiveInput.workId);
@@ -243,7 +243,7 @@ async function linkDocumentContext(
       Number(document.id),
       input.contractId ?? null,
       input.workId,
-      currentMaterialId ?? effectiveInput.sourceMaterialId ?? null,
+      currentMaterialId ?? input.sourceMaterialId ?? null,
       input.flowDirection
     ]
   );
