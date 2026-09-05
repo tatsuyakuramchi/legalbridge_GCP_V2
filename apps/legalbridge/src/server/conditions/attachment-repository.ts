@@ -282,7 +282,7 @@ async function ensureMaterialRightsSource(
   documentId: number,
   input: ConditionAttachmentInput
 ) {
-  const materialId=effectiveInput.sourceMaterialId!;
+  const materialId=input.sourceMaterialId!;
   const existing=await client.query(
     `SELECT id FROM material_rights_sources
       WHERE material_id=$1
@@ -290,7 +290,7 @@ async function ensureMaterialRightsSource(
         AND source_contract_id IS NOT DISTINCT FROM $3
       ORDER BY is_primary DESC,id
       LIMIT 1`,
-    [materialId,documentId,effectiveInput.contractId ?? null]
+    [materialId,documentId,input.contractId ?? null]
   );
   if (existing.rows[0]) return Number(existing.rows[0].id);
 
@@ -306,8 +306,8 @@ async function ensureMaterialRightsSource(
      ) VALUES($1,'legacy_document',$2,$3,$4,$5,'license_in',$6,$7::date,$8::date)
      RETURNING id`,
     [
-      materialId,input.sourceWorkId ?? effectiveInput.workId,
-      effectiveInput.counterpartyVendorId ?? null,documentId,effectiveInput.contractId ?? null,
+      materialId,input.sourceWorkId ?? input.workId,
+      input.counterpartyVendorId ?? null,documentId,input.contractId ?? null,
       !hasPrimary.rows[0],input.termStart ?? null,input.termEnd ?? null
     ]
   );
@@ -344,21 +344,21 @@ async function createCondition(
        $30,$31,$32
      ) RETURNING id`,
     [
-      documentId,lineNo,effectiveInput.workId,
-      effectiveInput.flowDirection==="in" ? "payable" : "receivable",
+      documentId,lineNo,input.workId,
+      input.flowDirection==="in" ? "payable" : "receivable",
       input.paymentScheme ?? "royalty",
-      effectiveInput.transactionKind==="license" ? "license_only" : null,
+      input.transactionKind==="license" ? "license_only" : null,
       input.currency ?? "JPY",input.notes ?? null,input.amountExTax ?? null,
       input.termStart ?? null,input.termEnd ?? null,input.ratePct ?? null,
-      input.mgAmount ?? null,input.agAmount ?? null,effectiveInput.flowDirection==="in",
-      effectiveInput.flowDirection,effectiveInput.transactionKind,input.sourceWorkId ?? null,
-      effectiveInput.sourceMaterialId ?? null,effectiveInput.counterpartyVendorId ?? null,
+      input.mgAmount ?? null,input.agAmount ?? null,input.flowDirection==="in",
+      input.flowDirection,input.transactionKind,input.sourceWorkId ?? null,
+      input.sourceMaterialId ?? null,input.counterpartyVendorId ?? null,
       input.conditionName ?? "後付け条件",input.calcType ?? null,
       input.territory ?? null,(input.languages ?? []).join(", ") || null,
       materialRightsSourceId,input.exclusivity ?? null,
       input.sublicenseAllowed ?? null,input.royaltyBase ?? null,
-      input.deductibleCosts ?? null,effectiveInput.parentLicenseConditionId ?? null,
-      effectiveInput.transactionKind,effectiveInput.transactionKind==="license" ? "rights" : "payment"
+      input.deductibleCosts ?? null,input.parentLicenseConditionId ?? null,
+      input.transactionKind,input.transactionKind==="license" ? "rights" : "payment"
     ]
   );
   return Number(result.rows[0].id);
@@ -387,7 +387,7 @@ async function linkExistingCondition(
   if (c.capability_id !== null && Number(c.capability_id)!==documentId) {
     throw new ConditionAttachmentError("CONDITION_CAPABILITY_CONFLICT","既存条件は別の元データに紐付いています");
   }
-  if (c.work_id !== null && Number(c.work_id)!==effectiveInput.workId) {
+  if (c.work_id !== null && Number(c.work_id)!==input.workId) {
     throw new ConditionAttachmentError("CONDITION_WORK_CONFLICT","既存条件は別作品に紐付いています");
   }
   const lineNo=await nextLineNo(client,documentId);
@@ -405,11 +405,11 @@ async function linkExistingCondition(
        updated_at=now()
      WHERE id=$1`,
     [
-      input.existingConditionLineId,documentId,lineNo,effectiveInput.workId,
-      input.sourceWorkId ?? null,effectiveInput.sourceMaterialId ?? null,
-      materialRightsSourceId,effectiveInput.parentLicenseConditionId ?? null,
-      effectiveInput.counterpartyVendorId ?? null,effectiveInput.flowDirection,
-      effectiveInput.flowDirection==="in"
+      input.existingConditionLineId,documentId,lineNo,input.workId,
+      input.sourceWorkId ?? null,input.sourceMaterialId ?? null,
+      materialRightsSourceId,input.parentLicenseConditionId ?? null,
+      input.counterpartyVendorId ?? null,input.flowDirection,
+      input.flowDirection==="in"
     ]
   );
   return input.existingConditionLineId;
@@ -514,13 +514,13 @@ implements DocumentConditionAttachmentRepository {
       ? input.existingConditionLineId : ++this.seq;
     const condition:AttachedCondition={
       id,lineNo:context.conditions.length+1,conditionName:input.conditionName ?? "後付け条件",
-      workId:effectiveInput.workId,workTitle:null,sourceWorkId:input.sourceWorkId ?? null,
-      sourceWorkTitle:null,sourceMaterialId:effectiveInput.sourceMaterialId ?? null,
-      sourceMaterialName:null,flowDirection:effectiveInput.flowDirection,
-      direction:effectiveInput.flowDirection==="in"?"payable":"receivable",
-      transactionKind:effectiveInput.transactionKind,paymentScheme:input.paymentScheme ?? null,
+      workId:input.workId,workTitle:null,sourceWorkId:input.sourceWorkId ?? null,
+      sourceWorkTitle:null,sourceMaterialId:input.sourceMaterialId ?? null,
+      sourceMaterialName:null,flowDirection:input.flowDirection,
+      direction:input.flowDirection==="in"?"payable":"receivable",
+      transactionKind:input.transactionKind,paymentScheme:input.paymentScheme ?? null,
       ratePct:input.ratePct ?? null,currency:input.currency ?? "JPY",
-      parentLicenseConditionId:effectiveInput.parentLicenseConditionId ?? null
+      parentLicenseConditionId:input.parentLicenseConditionId ?? null
     };
     context.conditions.push(condition);
     return {condition,createdMaterialRightsSourceId:null,warnings:[]};
