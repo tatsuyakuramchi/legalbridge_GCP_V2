@@ -10,6 +10,7 @@ export interface OutboundConditionStorageValues {
   transactionKind: "license" | "product";
   direction: "receivable";
   conditionName: string;
+  sourceConditionId: number | null;
   documentNumber: string | null;
   territory: string;
   language: string;
@@ -44,6 +45,7 @@ export function mapOutboundConditionForStorage(
     transactionKind: condition.transactionKind,
     direction: "receivable",
     conditionName: condition.conditionName,
+    sourceConditionId: condition.sourceConditionId ?? null,
     documentNumber: nullable(condition.documentNumber),
     territory: displayScope(condition.regions),
     language: displayScope(condition.languages),
