@@ -128,7 +128,7 @@ export class PgWorkRightsRepository implements WorkRightsRepository {
     );
     if (!workResult.rows[0]) return null;
 
-    const [materials, conditions, contracts, parent, children] = await Promise.all([
+    const [materials, conditions, contracts, parent, children, regionRows, languageRows] = await Promise.all([
       this.database.query(
         `SELECT wm.id, wm.material_code, wm.material_name, wm.material_type,
                 wm.material_role, wm.acquisition_type, wm.rights_type,
@@ -145,22 +145,6 @@ export class PgWorkRightsRepository implements WorkRightsRepository {
                 cl.transaction_kind, cl.payment_scheme, cl.calc_type,
                 cl.rate_pct, cl.amount_ex_tax, cl.mg_amount, cl.ag_amount,
                 cl.currency, cl.region_territory, cl.region_language,
-                COALESCE((
-                  SELECT json_agg(
-                    json_build_object('code', r.country_code, 'name', r.country_name)
-                    ORDER BY r.sort_order, r.id
-                  )
-                  FROM condition_line_regions r
-                  WHERE r.condition_line_id = cl.id
-                ), '[]'::json) AS regions,
-                COALESCE((
-                  SELECT json_agg(
-                    json_build_object('code', l.language_code, 'name', l.language_name)
-                    ORDER BY l.sort_order, l.id
-                  )
-                  FROM condition_line_languages l
-                  WHERE l.condition_line_id = cl.id
-                ), '[]'::json) AS languages,
                 cl.exclusivity, cl.sublicense_allowed, cl.term_start, cl.term_end,
                 cl.parent_license_condition_id, cl.source_material_id,
                 wm.material_name AS source_material_name,
@@ -205,10 +189,36 @@ export class PgWorkRightsRepository implements WorkRightsRepository {
           WHERE c.parent_work_id = $1 OR wr.parent_work_id = $1
           ORDER BY c.title, c.id`,
         [id]
+      ),
+      this.database.query(
+        `SELECT r.condition_line_id, r.country_code, r.country_name
+           FROM condition_line_regions r
+           JOIN condition_lines cl ON cl.id = r.condition_line_id
+          WHERE cl.work_id = $1
+          ORDER BY r.condition_line_id, r.sort_order, r.id`,
+        [id]
+      ),
+      this.database.query(
+        `SELECT l.condition_line_id, l.language_code, l.language_name
+           FROM condition_line_languages l
+           JOIN condition_lines cl ON cl.id = l.condition_line_id
+          WHERE cl.work_id = $1
+          ORDER BY l.condition_line_id, l.sort_order, l.id`,
+        [id]
       )
     ]);
 
     const w = workResult.rows[0];
+    const regionsByCondition = groupScopeRows(
+      regionRows.rows,
+      "country_code",
+      "country_name"
+    );
+    const languagesByCondition = groupScopeRows(
+      languageRows.rows,
+      "language_code",
+      "language_name"
+    );
     return {
       work: {
         ...mapSummary(w),
@@ -259,8 +269,16 @@ export class PgWorkRightsRepository implements WorkRightsRepository {
         currency: row.currency ?? null,
         territory: row.region_territory ?? null,
         language: row.region_language ?? null,
-        regions: scopeRows(row.regions, row.region_territory, "region"),
-        languages: scopeRows(row.languages, row.region_language, "language"),
+        regions: scopeRows(
+          regionsByCondition.get(Number(row.id)) ?? [],
+          row.region_territory,
+          "region"
+        ),
+        languages: scopeRows(
+          languagesByCondition.get(Number(row.id)) ?? [],
+          row.region_language,
+          "language"
+        ),
         exclusivity: row.exclusivity ?? null,
         sublicenseAllowed: row.sublicense_allowed === null ? null : Boolean(row.sublicense_allowed),
         termStart: dateOnly(row.term_start),
@@ -286,17 +304,31 @@ export class PgWorkRightsRepository implements WorkRightsRepository {
   }
 }
 
+function groupScopeRows(
+  rows: Record<string, unknown>[],
+  codeKey: string,
+  nameKey: string
+) {
+  const grouped = new Map<number, ScopeOption[]>();
+  for (const row of rows) {
+    const conditionId = Number(row.condition_line_id);
+    if (!Number.isSafeInteger(conditionId)) continue;
+    const code = String(row[codeKey] ?? "").trim();
+    const name = String(row[nameKey] ?? "").trim();
+    if (!code || !name) continue;
+    const current = grouped.get(conditionId) ?? [];
+    current.push({ code, name });
+    grouped.set(conditionId, current);
+  }
+  return grouped;
+}
+
 function scopeRows(
-  value: unknown,
+  value: ScopeOption[],
   fallback: unknown,
   kind: "region" | "language"
 ): ScopeOption[] {
-  if (Array.isArray(value) && value.length) {
-    return value.map((item: any) => ({
-      code: String(item?.code ?? ""),
-      name: String(item?.name ?? "")
-    })).filter((item) => item.code && item.name);
-  }
+  if (value.length) return value;
   const text = String(fallback ?? "").trim();
   if (!text) return [];
   if (kind === "region" && /全世界|world/i.test(text)) {
@@ -327,7 +359,28 @@ function num(value: unknown) {
   return Number.isFinite(n) ? n : null;
 }
 function dateOnly(value: unknown) {
-  return value ? String(value).slice(0, 10) : null;
+  if (value === null || value === undefined || value === "") return null;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Tokyo",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).format(value);
+  }
+  const text = String(value);
+  const iso = text.match(/^\d{4}-\d{2}-\d{2}/)?.[0];
+  if (iso) return iso;
+  const parsed = new Date(text);
+  if (!Number.isNaN(parsed.getTime())) {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Tokyo",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).format(parsed);
+  }
+  return null;
 }
 
 export class MemoryWorkRightsRepository implements WorkRightsRepository {
