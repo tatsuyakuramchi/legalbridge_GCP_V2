@@ -309,6 +309,9 @@ export function App() {
           onOpenMatter={(id, title) => {
             setSearchSelection({ target: "matter", id: String(id), title }); setView("matters");
           }}
+          onOpenDocument={(id) => {
+            setSearchSelection({ target: "document", id: String(id), title: "" }); setView("documents");
+          }}
         />}
         {view === "matters" && <MatterRegistry templates={templates}
           canEdit={canEditMatters}
