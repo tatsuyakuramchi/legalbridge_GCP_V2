@@ -1425,3 +1425,15 @@ button.pdf-download-link:disabled {
   .work-rights-head { display:grid; }.work-rights-kpis { justify-content:flex-start; }
   .request-document-row { grid-template-columns:1fr; }
 }
+
+.settlement-review-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:10px; }
+.settlement-review-grid article { border:1px solid #d9e2ec; border-radius:8px; background:#f8fafc; padding:10px; display:grid; gap:3px; }
+.settlement-review-grid article > span { color:#64748b; font-size:10px; }
+.settlement-review-grid article > strong { color:#172a44; overflow-wrap:anywhere; }
+.settlement-review-grid .settlement-review-total { background:#f0fbfc; border-color:#9bdbe5; }
+.settlement-review-grid .settlement-review-total strong { color:#0e7182; font-size:18px; }
+.settlement-review-warnings { margin-top:10px; border:1px solid #fed7aa; background:#fff7ed; border-radius:8px; padding:9px 11px; }
+.settlement-review-warnings p { margin:3px 0; color:#9a5a00; font-size:12px; }
+.settlement-review-note { margin-top:10px; border-top:1px solid #e2e8f0; padding-top:10px; }
+.settlement-review-note pre { white-space:pre-wrap; margin:6px 0 0; font:inherit; color:#475569; }
+@media(max-width:760px){ .settlement-review-grid { grid-template-columns:1fr; } }
