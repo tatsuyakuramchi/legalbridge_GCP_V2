@@ -61,15 +61,15 @@ export function LicenseContractWorkspace({
     if(!workId){setDetail(null);return;}
     fetch(`/api/v2/work-rights/${workId}`)
       .then(r=>r.ok?r.json():Promise.reject())
-      .then(data=>{
+      .then((data:WorkDetail)=>{
         setDetail(data);
-        const inbound=(data.conditions??[]).find((c:Condition)=>c.flowDirection==="in"||c.direction==="payable");
+        const inbound=(data.conditions??[]).filter((c:Condition)=>c.flowDirection==="in"||c.direction==="payable");
         setSourceConditionId(current=>{
           if(initialSourceConditionId && inbound.some((condition:Condition)=>condition.id===initialSourceConditionId)) {
             return initialSourceConditionId;
           }
           if(current && inbound.some((condition:Condition)=>condition.id===current)) return current;
-          return inbound?.id??null;
+          return inbound[0]?.id??null;
         });
       }).catch(()=>setNotice("作品の権利条件を取得できませんでした。"));
   },[initialSourceConditionId,workId]);
