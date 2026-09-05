@@ -121,7 +121,7 @@ export function createLicenseSettlementRouter(
         actualRoyaltyStr: formatAmount(preview.actualRoyalty),
         currency: preview.currency,
         paymentConditionSummary: c.paymentTerms ?? "",
-        taxRate: "",
+        taxRate: 0,
         taxAmount: "",
         totalPaymentStr: formatAmount(preview.actualRoyalty),
         notes: basisNote,
