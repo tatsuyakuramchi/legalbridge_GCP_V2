@@ -19,18 +19,20 @@ class LocalIntegrationAdapter implements IntegrationAdapter {
   }
 }
 
-class BacklogReadOnlyIntegrationAdapter implements IntegrationAdapter {
+class BacklogIntegrationAdapter implements IntegrationAdapter {
   readonly name = "backlog" as const;
-  readonly mode = "readonly" as const;
 
-  constructor(private readonly client: BacklogWebApiClient) {}
+  constructor(
+    readonly mode: "readonly" | "live",
+    private readonly client: BacklogWebApiClient
+  ) {}
 
   async check() {
     try {
       const project = await this.client.getProject();
       return {
         ok: true,
-        detail: `read-only connection: project ${project.projectKey} (${project.name})`
+        detail: `${this.mode} connection: project ${project.projectKey} (${project.name})`
       };
     } catch (error) {
       return {
@@ -64,12 +66,12 @@ export function createIntegrationAdapters(): IntegrationAdapter[] {
   return names.map((name) => {
     if (
       name === "backlog" &&
-      config.backlogMode === "readonly" &&
+      (config.backlogMode === "readonly" || config.backlogMode === "live") &&
       config.backlogHost &&
       config.backlogProjectKey &&
       config.backlogApiKey
     ) {
-      return new BacklogReadOnlyIntegrationAdapter(new BacklogWebApiClient({
+      return new BacklogIntegrationAdapter(config.backlogMode, new BacklogWebApiClient({
         host: config.backlogHost,
         projectKey: config.backlogProjectKey,
         apiKey: config.backlogApiKey
