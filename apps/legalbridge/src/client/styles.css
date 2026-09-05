@@ -1437,3 +1437,32 @@ button.pdf-download-link:disabled {
 .settlement-review-note { margin-top:10px; border-top:1px solid #e2e8f0; padding-top:10px; }
 .settlement-review-note pre { white-space:pre-wrap; margin:6px 0 0; font:inherit; color:#475569; }
 @media(max-width:760px){ .settlement-review-grid { grid-template-columns:1fr; } }
+
+.document-condition-attachment { margin-top:18px; border-top:1px solid #e2e8f0; padding-top:14px; }
+.condition-attachment-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; }
+.condition-attachment-head > div { display:grid; gap:2px; }
+.condition-attachment-head span { color:#64748b; font-size:10px; letter-spacing:.08em; }
+.condition-attachment-head strong { color:#172a44; font-size:14px; }
+.attached-condition-list { display:grid; gap:8px; }
+.attached-condition-list article { border:1px solid #dbe5ee; border-radius:9px; padding:9px 10px; background:#fbfdff; display:grid; gap:3px; }
+.attached-condition-list article > span { font-size:10px; color:#64748b; }
+.attached-condition-list article > strong { font-size:12px; color:#172a44; }
+.attached-condition-list article > small { font-size:10px; color:#64748b; }
+.condition-attachment-form { margin-top:12px; display:grid; gap:10px; }
+.condition-attachment-form label { display:grid; gap:4px; font-size:11px; color:#475569; }
+.condition-attachment-form input,
+.condition-attachment-form select,
+.condition-attachment-form textarea { width:100%; }
+.condition-attachment-form textarea { min-height:64px; resize:vertical; }
+.form-grid { display:grid; gap:10px; }
+.form-grid.two { grid-template-columns:repeat(2,minmax(0,1fr)); }
+.form-grid.three { grid-template-columns:repeat(3,minmax(0,1fr)); }
+.attachment-pick-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; max-height:190px; overflow:auto; }
+.attachment-pick-list.compact { max-height:150px; }
+.attachment-pick-list button { text-align:left; border:1px solid #dbe5ee; border-radius:8px; background:#fff; padding:8px; display:grid; gap:2px; }
+.attachment-pick-list button.selected { border-color:#7dd3fc; background:#f0f9ff; }
+.attachment-pick-list strong { font-size:11px; color:#172a44; }
+.attachment-pick-list small { font-size:9px; color:#64748b; }
+@media(max-width:760px){
+  .form-grid.two,.form-grid.three,.attachment-pick-list { grid-template-columns:1fr; }
+}
