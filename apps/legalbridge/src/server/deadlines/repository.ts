@@ -44,7 +44,7 @@ export class PgDeadlineRepository implements DeadlineRepository {
           'request:' || lr.id AS event_id,
           'request_due'::text AS event_type,
           COALESCE(NULLIF(lr.summary,''), lr.backlog_issue_key, '法務依頼') AS title,
-          lr.deadline::date::text AS due_date,
+          (lr.deadline AT TIME ZONE 'Asia/Tokyo')::date::text AS due_date,
           CASE WHEN EXISTS (
             SELECT 1 FROM documents rd
             WHERE (rd.issue_key = lr.backlog_issue_key OR rd.backlog_issue_key = lr.backlog_issue_key)
