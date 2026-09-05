@@ -1359,10 +1359,27 @@ button.pdf-download-link:disabled {
 .request-detail-head { display:flex; justify-content:space-between; align-items:flex-start; gap:14px; }
 .request-detail-head h2 { font-size:22px; margin:4px 0; }
 .request-detail-head p { margin:0; color:#64748b; }
-.request-facts { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin:16px 0; }
+.request-facts { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin:16px 0; }
 .request-facts > div { background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px; display:grid; gap:3px; }
 .request-facts span { color:#64748b; font-size:10px; }.request-facts strong { color:#172a44; }
 .request-notes { white-space:pre-wrap; border-left:3px solid #94a3b8; background:#f8fafc; padding:10px 12px; margin:12px 0; }
+.request-context-section { border-top:1px solid #e2e8f0; margin-top:18px; padding-top:14px; }
+.request-context-section h3 { margin:0 0 10px; font-size:14px; }
+.request-context-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+.request-context-grid > article { border:1px solid #e2e8f0; background:#fbfdff; border-radius:9px; padding:11px; min-width:0; }
+.request-context-grid > article > span { display:block; color:#64748b; font-size:10px; font-weight:800; letter-spacing:.06em; margin-bottom:7px; }
+.request-chip-list { display:flex; flex-wrap:wrap; gap:6px; }
+.request-chip { display:inline-flex; align-items:center; gap:5px; border:1px solid #d9e2ec; background:white; border-radius:999px; padding:6px 9px; color:#172a44; font-size:11px; font-style:normal; }
+.request-chip small { color:#64748b; font-size:9px; }
+.request-chip i { color:#64748b; font-size:9px; font-style:normal; }
+button.request-chip.interactive { cursor:pointer; }
+button.request-chip.interactive:hover { border-color:#20b8cd; background:#f0fbfc; }
+.request-context-grid em,.request-deadline-list em { color:#94a3b8; font-size:11px; font-style:normal; }
+.request-deadline-list { display:grid; gap:5px; }
+.request-deadline-list > div { display:grid; grid-template-columns:82px 1fr auto; gap:7px; align-items:center; border-bottom:1px solid #eef2f7; padding:4px 0; }
+.request-deadline-list strong { font-size:11px; color:#172a44; }
+.request-deadline-list span { font-size:11px; color:#475569; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.request-deadline-list small { font-size:9px; color:#64748b; }
 .request-action-section,.request-related { border-top:1px solid #e2e8f0; margin-top:18px; padding-top:14px; }
 .request-action-section h3,.request-related h3 { margin:0 0 10px; font-size:14px; }
 .request-action-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; }
@@ -1381,7 +1398,10 @@ button.pdf-download-link:disabled {
 .request-secondary-actions[open] > summary { margin-bottom:10px; }
 .request-related > button { width:100%; text-align:left; border:1px solid #e2e8f0; border-radius:8px; background:white; padding:10px; display:grid; gap:2px; margin:6px 0; }
 .request-related > button span,.request-related > button small { color:#64748b; font-size:11px; }
-.request-document-row { display:grid; grid-template-columns:170px 1fr auto; gap:10px; align-items:center; border-bottom:1px solid #eef2f7; padding:8px 0; font-size:12px; }
+.request-document-row { display:grid; grid-template-columns:1fr auto; gap:10px; align-items:center; border-bottom:1px solid #eef2f7; padding:5px 0; font-size:12px; }
+.request-document-row > button { border:0; background:transparent; padding:5px 0; display:grid; grid-template-columns:170px 1fr; gap:10px; text-align:left; cursor:pointer; }
+.request-document-row > button:hover strong { color:#168ca0; }
+.request-document-row > button span { color:#64748b; }
 .request-document-row a { color:#168ca0; }
 .request-modal-backdrop { position:fixed; inset:0; z-index:90; background:rgba(15,23,42,.45); display:grid; place-items:center; padding:24px; }
 .request-modal { width:min(720px,95vw); max-height:85vh; overflow:auto; background:white; border-radius:12px; padding:18px; box-shadow:0 24px 70px rgba(15,23,42,.28); }
