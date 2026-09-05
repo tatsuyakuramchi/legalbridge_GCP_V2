@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { displayScope, normalizeLanguageOption, normalizeRegionOption, type ScopeOption } from "../../rights-scope.js";
 import {
   OutboundConditionConflictError,
   OutboundConditionReferenceError,
@@ -8,6 +9,11 @@ import {
 
 const optionalText = z.string().trim().max(500).optional().default("");
 const optionalNumber = z.number().nonnegative().optional();
+const scopeOptionSchema = z.object({
+  code: z.string().trim().min(1).max(20),
+  name: z.string().trim().min(1).max(120)
+});
+const languageInputSchema = z.union([scopeOptionSchema, z.string().trim().min(1).max(100)]);
 
 export const outboundConditionSchema = z.object({
   workId: z.string().trim().min(1, "作品を選択してください").max(100),
@@ -17,8 +23,9 @@ export const outboundConditionSchema = z.object({
   transactionKind: z.enum(["license", "product"]),
   conditionName: z.string().trim().min(1, "条件名を入力してください").max(300),
   documentNumber: optionalText,
-  territory: z.string().trim().min(1, "対象地域を入力してください").max(300),
-  languages: z.array(z.string().trim().min(1).max(100)).min(1, "対象言語を入力してください").max(30),
+  territory: z.string().trim().max(300).optional().default(""),
+  regions: z.array(scopeOptionSchema).max(250).optional().default([]),
+  languages: z.array(languageInputSchema).min(1, "対象言語を入力してください").max(200),
   exclusivity: z.enum(["exclusive", "non_exclusive", "sole"]),
   sublicenseAllowed: z.boolean().default(false),
   termStart: z.iso.date().optional(),
@@ -56,7 +63,43 @@ export const outboundConditionSchema = z.object({
   if (value.paymentScheme !== "royalty" && value.amountExTax === undefined) {
     context.addIssue({ code: "custom", path: ["amountExTax"], message: "税抜金額を入力してください" });
   }
+  if (!value.regions.length && !value.territory.trim()) {
+    context.addIssue({ code: "custom", path: ["regions"], message: "対象地域を選択してください" });
+  }
+}).transform((value) => {
+  const regions = value.regions.length
+    ? dedupe(value.regions.map(normalizeRegionOption))
+    : legacyRegionOptions(value.territory);
+  const languages = dedupe(value.languages.map((item) =>
+    typeof item === "string"
+      ? legacyLanguageOption(item)
+      : normalizeLanguageOption(item)
+  ));
+  return {
+    ...value,
+    regions,
+    languages,
+    territory: displayScope(regions)
+  };
 });
+
+function dedupe(values: ScopeOption[]) {
+  return [...new Map(values.filter((value) => value.code).map((value) => [value.code, value])).values()];
+}
+
+function legacyRegionOptions(value: string): ScopeOption[] {
+  const text = value.trim();
+  if (!text) return [];
+  if (/全世界|world/i.test(text)) return [{ code: "WORLD", name: "全世界" }];
+  return text.split(/[,、/]/).map((name) => name.trim()).filter(Boolean)
+    .map((name, index) => ({ code: `LEGACY-R${index + 1}`, name }));
+}
+
+function legacyLanguageOption(value: string): ScopeOption {
+  const text = value.trim();
+  if (/全言語|all languages?/i.test(text)) return { code: "ALL", name: "全言語" };
+  return { code: `LEGACY-L-${text.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 12) || "value"}`, name: text };
+}
 
 export type OutboundConditionInput = z.input<typeof outboundConditionSchema>;
 
