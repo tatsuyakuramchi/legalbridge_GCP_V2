@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { RightsScopePicker } from "./RightsScopePicker";
+import { displayScope, type ScopeOption } from "../rights-scope";
 
 type LedgerItem = { id: string; code: string; title: string; subtitle: string };
 type OverlapLine = {
@@ -10,7 +12,7 @@ type Overlap = { workId: number; total: number; receivableCount: number; payable
 type Kind = "license" | "product";
 type FormState = {
   workId: string; counterpartyId: string; conditionName: string; transactionKind: Kind;
-  territory: string; languages: string; exclusivity: "exclusive" | "non_exclusive" | "sole";
+  regions: ScopeOption[]; languages: ScopeOption[]; exclusivity: "exclusive" | "non_exclusive" | "sole";
   sublicenseAllowed: boolean; termStart: string; termEnd: string; currency: string;
   paymentScheme: "royalty" | "per_unit" | "lump_sum"; ratePct: string;
   amountExTax: string; mgAmount: string; advanceAmount: string; reportingCycle: string;
@@ -20,7 +22,7 @@ type FormState = {
 
 const initial: FormState = {
   workId: "", counterpartyId: "", conditionName: "", transactionKind: "license",
-  territory: "", languages: "", exclusivity: "non_exclusive", sublicenseAllowed: false,
+  regions: [], languages: [], exclusivity: "non_exclusive", sublicenseAllowed: false,
   termStart: "", termEnd: "", currency: "JPY", paymentScheme: "royalty", ratePct: "",
   amountExTax: "", mgAmount: "", advanceAmount: "", reportingCycle: "", paymentTerms: "",
   royaltyBase: "", incoterms: "", minimumQuantity: "", sellOffPeriod: "",
@@ -82,9 +84,9 @@ export function OutboundConditionWorkspace() {
     const number = (value: string) => value === "" ? undefined : Number(value);
     return {
       ...form,
+      territory: displayScope(form.regions),
       workLabel: work ? `${work.code} ${work.title}` : "",
       counterpartyLabel: vendor ? `${vendor.code} ${vendor.title}` : "",
-      languages: form.languages.split(/[,、]/).map((value) => value.trim()).filter(Boolean),
       termStart: form.termStart || undefined,
       termEnd: form.termEnd || undefined,
       ratePct: number(form.ratePct),
@@ -167,8 +169,14 @@ export function OutboundConditionWorkspace() {
         <label>根拠文書番号<input value={form.documentNumber} onChange={(e) => update("documentNumber", e.target.value)} placeholder="任意" /></label>
       </fieldset>
       <fieldset><legend>2. 権利範囲</legend>
-        <label>対象地域<input value={form.territory} onChange={(e) => update("territory", e.target.value)} placeholder="例：全世界（日本を除く）" /></label>
-        <label>対象言語<input value={form.languages} onChange={(e) => update("languages", e.target.value)} placeholder="カンマ区切り" /></label>
+        <div className="wide">
+          <RightsScopePicker
+            regions={form.regions}
+            languages={form.languages}
+            onRegionsChange={(regions) => { update("regions", regions); }}
+            onLanguagesChange={(languages) => { update("languages", languages); }}
+          />
+        </div>
         <label>独占性<select value={form.exclusivity} onChange={(e) => update("exclusivity", e.target.value as FormState["exclusivity"])}><option value="non_exclusive">非独占</option><option value="exclusive">独占</option><option value="sole">ソール</option></select></label>
         <label className="check"><input type="checkbox" checked={form.sublicenseAllowed} onChange={(e) => update("sublicenseAllowed", e.target.checked)} />再許諾を認める</label>
         <label>開始日<input type="date" value={form.termStart} onChange={(e) => update("termStart", e.target.value)} /></label>
@@ -201,6 +209,6 @@ export function OutboundConditionWorkspace() {
       <button onClick={save} disabled={!preview}>確認済み内容を保存</button>
       <span>{notice}</span>
     </div>
-    {preview && <section className="panel outbound-preview"><h2>登録予定内容</h2><dl><dt>作品</dt><dd>{String(preview.workLabel)}</dd><dt>相手方</dt><dd>{String(preview.counterpartyLabel)}</dd><dt>取引</dt><dd>{preview.transactionKind === "license" ? "ライセンスアウト" : "プロダクトアウト"}</dd><dt>方向</dt><dd>受取</dd><dt>地域・言語</dt><dd>{String(preview.territory)}／{(preview.languages as string[]).join("、")}</dd><dt>通貨</dt><dd>{String(preview.currency)}</dd></dl></section>}
+    {preview && <section className="panel outbound-preview"><h2>登録予定内容</h2><dl><dt>作品</dt><dd>{String(preview.workLabel)}</dd><dt>相手方</dt><dd>{String(preview.counterpartyLabel)}</dd><dt>取引</dt><dd>{preview.transactionKind === "license" ? "ライセンスアウト" : "プロダクトアウト"}</dd><dt>方向</dt><dd>受取</dd><dt>地域・言語</dt><dd>{String(preview.territory)}／{Array.isArray(preview.languages) ? (preview.languages as ScopeOption[]).map((item) => item.name).join("、") : ""}</dd><dt>通貨</dt><dd>{String(preview.currency)}</dd></dl></section>}
   </section>;
 }
