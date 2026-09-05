@@ -84,6 +84,10 @@ import {
 } from "./inspections/repository.js";
 import { createPendingInspectionRouter } from "./inspections/routes.js";
 import {
+  MemoryDeadlineRepository, PgDeadlineRepository, type DeadlineRepository
+} from "./deadlines/repository.js";
+import { createDeadlineRouter } from "./deadlines/routes.js";
+import {
   MemoryVendorWriteRepository, PgVendorWriteRepository, type VendorWriteRepository
 } from "./vendors/write-repository.js";
 import { createVendorWriteRouter } from "./vendors/write-routes.js";
@@ -261,6 +265,7 @@ export interface AppDependencies {
   workRights?: WorkRightsRepository;
   licenseSettlements?: LicenseSettlementRepository;
   pendingInspections?: PendingInspectionRepository;
+  deadlines?: DeadlineRepository;
   vendorWrites?: VendorWriteRepository;
   staff?: StaffRepository;
   documentImports?: DocumentImportRepository;
@@ -335,6 +340,9 @@ function createDefaultDependencies(): AppDependencies {
     pendingInspections: database
       ? new PgPendingInspectionRepository(database)
       : new MemoryPendingInspectionRepository(),
+    deadlines: database
+      ? new PgDeadlineRepository(database)
+      : new MemoryDeadlineRepository(),
     vendorWrites: database
       ? new PgVendorWriteRepository(database)
       : new MemoryVendorWriteRepository(),
@@ -838,6 +846,7 @@ export function createApp(
     conditionAttachmentWriteEnabled
   ));
   app.use("/api/v2", createPendingInspectionRouter(dependencies.pendingInspections));
+  app.use("/api/v2", createDeadlineRouter(dependencies.deadlines ?? new MemoryDeadlineRepository()));
   app.use("/api/v2", createVendorWriteRouter(dependencies.vendorWrites, vendorWriteEnabled));
   app.use("/api/v2", createStaffRouter(dependencies.staff, staffWriteEnabled));
   app.use("/api/v2", createWorkWriteRouter(dependencies.workWrites, workWriteEnabled));
