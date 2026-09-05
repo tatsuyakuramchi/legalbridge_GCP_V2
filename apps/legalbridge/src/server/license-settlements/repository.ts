@@ -27,6 +27,14 @@ export interface SettlementCondition {
   parentLicenseConditionId: number | null;
   counterpartyVendorId: number | null;
   counterparty: string | null;
+  counterpartyEntityType: string | null;
+  counterpartyRepresentative: string | null;
+  bankName: string | null;
+  branchName: string | null;
+  accountType: string | null;
+  accountNo: string | null;
+  accountHolder: string | null;
+  invoiceRegistrationNumber: string | null;
   documentNumber: string | null;
   contractId: number | null;
   contractTitle: string | null;
@@ -195,6 +203,10 @@ const CONDITION_SELECT = `
          cl.parent_license_condition_id, cl.counterparty_vendor_id,
          w.work_code, w.title AS work_title,
          v.vendor_name AS counterparty,
+         v.entity_type AS counterparty_entity_type,
+         v.vendor_rep AS counterparty_representative,
+         v.bank_name, v.branch_name, v.account_type, v.account_number,
+         v.account_holder_kana, v.invoice_registration_number,
          d.document_number, d.contract_id,
          c.contract_title
     FROM condition_lines cl
@@ -229,6 +241,14 @@ function mapCondition(row: Record<string, any>): SettlementCondition {
     counterpartyVendorId: row.counterparty_vendor_id === null
       ? null : Number(row.counterparty_vendor_id),
     counterparty: row.counterparty ?? null,
+    counterpartyEntityType: row.counterparty_entity_type ?? null,
+    counterpartyRepresentative: row.counterparty_representative ?? null,
+    bankName: row.bank_name ?? null,
+    branchName: row.branch_name ?? null,
+    accountType: row.account_type ?? null,
+    accountNo: row.account_number ?? null,
+    accountHolder: row.account_holder_kana ?? null,
+    invoiceRegistrationNumber: row.invoice_registration_number ?? null,
     documentNumber: row.document_number ?? null,
     contractId: row.contract_id === null ? null : Number(row.contract_id),
     contractTitle: row.contract_title ?? null
