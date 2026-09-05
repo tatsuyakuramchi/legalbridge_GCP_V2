@@ -8,7 +8,8 @@ export type DeadlineEventType =
   | "installment_due"
   | "inspection_due"
   | "payment_due"
-  | "document_due";
+  | "document_due"
+  | "request_due";
 
 export interface DeadlineEvent {
   id: string;
@@ -39,6 +40,40 @@ export class PgDeadlineRepository implements DeadlineRepository {
   async list(from: string, to: string) {
     const result = await this.database.query(
       `WITH deadline_events AS (
+        SELECT
+          'request:' || lr.id AS event_id,
+          'request_due'::text AS event_type,
+          COALESCE(NULLIF(lr.summary,''), lr.backlog_issue_key, '法務依頼') AS title,
+          lr.deadline::date::text AS due_date,
+          CASE WHEN EXISTS (
+            SELECT 1 FROM documents rd
+            WHERE (rd.issue_key = lr.backlog_issue_key OR rd.backlog_issue_key = lr.backlog_issue_key)
+              AND rd.template_type = 'legal_response'
+          ) THEN 'completed' ELSE 'open' END AS status,
+          'legal_request'::text AS source_type,
+          lr.id AS source_id,
+          linked.matter_id,
+          linked.matter_code,
+          linked.matter_title,
+          lr.counterparty,
+          NULL::text AS work_title,
+          NULL::text AS document_number,
+          NULL::numeric AS amount,
+          NULL::text AS currency,
+          NULL::text AS owner_name
+        FROM legal_requests lr
+        LEFT JOIN LATERAL (
+          SELECT m.id AS matter_id, m.matter_code, m.title AS matter_title
+          FROM matter_issues mi
+          JOIN matters m ON m.id = mi.matter_id
+          WHERE mi.backlog_issue_key = lr.backlog_issue_key
+          ORDER BY (mi.relation = 'primary') DESC, mi.id
+          LIMIT 1
+        ) linked ON true
+        WHERE lr.deadline IS NOT NULL
+
+        UNION ALL
+
         SELECT
           'matter:' || m.id AS event_id,
           'matter_due'::text AS event_type,
