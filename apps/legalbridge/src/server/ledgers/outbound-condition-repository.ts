@@ -84,8 +84,12 @@ export class PgOutboundConditionRepository implements OutboundConditionRepositor
             [value.sourceConditionId]
           )
         ]);
-        const sourceRegionScope = sourceRegions.rows.map(scopeRow);
-        const sourceLanguageScope = sourceLanguages.rows.map(scopeRow);
+        const sourceRegionScope = sourceRegions.rows
+          .map(scopeRow)
+          .filter((item) => item.code && item.name);
+        const sourceLanguageScope = sourceLanguages.rows
+          .map(scopeRow)
+          .filter((item) => item.code && item.name);
         if (!scopeAllowed(
           sourceRegionScope,
           String(source.rows[0].region_territory ?? ""),
@@ -256,7 +260,7 @@ function scopeRow(row: Record<string, unknown>): ScopeOption {
   return { code: String(row.code ?? ""), name: String(row.name ?? "") };
 }
 
-function scopeAllowed(
+export function scopeAllowed(
   source: ScopeOption[],
   legacySource: string,
   target: ScopeOption[],
