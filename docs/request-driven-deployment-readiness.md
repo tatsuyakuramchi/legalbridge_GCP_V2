@@ -329,3 +329,15 @@ Normalized scope read smoke passed on Cloud Run revision `legalbridge-v2-write-t
 - outbound-condition writes remained disabled during this read smoke.
 
 Next gate: enable only the guarded `outbound-conditions` capability and perform one reversible parent-IN/child-scope round-trip smoke while all external integrations remain disabled.
+
+
+### Outbound write smoke first attempt
+
+The first guarded outbound write smoke was safely rejected with HTTP 422 before any insert:
+
+- validation accepted the normalized US/en payload;
+- persistence rejected it with `OUTBOUND_SCOPE_EXCEEDS_SOURCE`;
+- root cause was legacy source child rows whose code values are missing: the work-rights reader already falls back to compatibility text, while the outbound persistence path treated any child row as canonical;
+- persistence now ignores incomplete child scope rows and falls back to the source compatibility text. This preserves fail-safe behavior when neither canonical rows nor usable legacy text exists.
+
+Repeat typecheck/test/build, redeploy with the guarded outbound capability enabled, then retry the same reversible smoke payload.
