@@ -23,6 +23,16 @@ type RequestDetail = RequestSummary & {
     id: number; documentNumber: string | null; templateType: string;
     driveLink: string; createdAt: string | null;
   }>;
+  contracts: Array<{
+    id: number; documentNumber: string | null; title: string; contractType: string | null;
+    status: string | null; expirationDate: string | null;
+  }>;
+  works: Array<{ id: number; workCode: string | null; title: string }>;
+  vendors: Array<{ id: number; vendorCode: string | null; name: string }>;
+  deadlines: Array<{
+    id: string; kind: "request" | "matter" | "task" | "document" | "contract";
+    title: string; dueDate: string; status: string;
+  }>;
 };
 type MatterOption = {
   id: number; matterCode: string | null; title: string; status: string; counterparty: string;
@@ -35,7 +45,8 @@ export function RequestWorkspace({
   onLicenseContract,
   onLicenseSettlement,
   onOpenMatter,
-  onOpenDocument
+  onOpenDocument,
+  onOpenWork
 }: {
   canEditMatters: boolean;
   onLegalResponse: (issueKey: string) => void;
@@ -44,6 +55,7 @@ export function RequestWorkspace({
   onLicenseSettlement: (issueKey: string) => void;
   onOpenMatter: (id: number, title: string) => void;
   onOpenDocument: (id: number) => void;
+  onOpenWork: (id: number) => void;
 }) {
   const [query, setQuery] = useState("");
   const [requests, setRequests] = useState<RequestSummary[]>([]);
@@ -225,8 +237,60 @@ export function RequestWorkspace({
             <div><span>依頼種別</span><strong>{selected.contractType || "未分類"}</strong></div>
             <div><span>案件</span><strong>{selected.matterCount}件</strong></div>
             <div><span>関連文書</span><strong>{selected.documentCount}件</strong></div>
+            <div><span>作品・権利</span><strong>{detail?.works?.length ?? 0}件</strong></div>
           </div>
           {selected.notes && <div className="request-notes">{selected.notes}</div>}
+
+          {detail && (detail.vendors.length || detail.works.length || detail.contracts.length || detail.deadlines.length) ? <section className="request-context-section">
+            <h3>関連情報</h3>
+            <div className="request-context-grid">
+              <article>
+                <span>取引先</span>
+                <div className="request-chip-list">
+                  {detail.vendors.length
+                    ? detail.vendors.map((vendor) => <span key={vendor.id} className="request-chip">
+                        {vendor.vendorCode && <small>{vendor.vendorCode}</small>}{vendor.name}
+                      </span>)
+                    : <em>{selected.counterparty || "未紐付け"}</em>}
+                </div>
+              </article>
+              <article>
+                <span>作品・権利</span>
+                <div className="request-chip-list">
+                  {detail.works.length
+                    ? detail.works.map((work) => <button key={work.id} className="request-chip interactive"
+                        onClick={() => onOpenWork(work.id)}>
+                        {work.workCode && <small>{work.workCode}</small>}{work.title}
+                      </button>)
+                    : <em>未紐付け</em>}
+                </div>
+              </article>
+              <article>
+                <span>契約</span>
+                <div className="request-chip-list">
+                  {detail.contracts.length
+                    ? detail.contracts.map((contract) => <span key={contract.id} className="request-chip">
+                        {contract.documentNumber && <small>{contract.documentNumber}</small>}
+                        {contract.title}
+                        {contract.expirationDate && <i>～{contract.expirationDate}</i>}
+                      </span>)
+                    : <em>未紐付け</em>}
+                </div>
+              </article>
+              <article>
+                <span>期限</span>
+                <div className="request-deadline-list">
+                  {detail.deadlines.length
+                    ? detail.deadlines.slice(0, 6).map((deadline) => <div key={deadline.id}>
+                        <strong>{deadline.dueDate}</strong>
+                        <span>{deadline.title}</span>
+                        <small>{requestDeadlineKindLabel(deadline.kind)}</small>
+                      </div>)
+                    : <em>期限未設定</em>}
+                </div>
+              </article>
+            </div>
+          </section> : null}
 
           <section className="request-action-section">
             <h3>次にやること</h3>
@@ -307,8 +371,10 @@ export function RequestWorkspace({
           {detail?.documents?.length ? <section className="request-related">
             <h3>関連文書</h3>
             {detail.documents.slice(0, 8).map((document) => <div key={document.id} className="request-document-row">
-              <span>{document.documentNumber || `Document #${document.id}`}</span>
-              <strong>{document.templateType}</strong>
+              <button onClick={() => onOpenDocument(document.id)}>
+                <span>{document.documentNumber || `Document #${document.id}`}</span>
+                <strong>{document.templateType}</strong>
+              </button>
               {document.driveLink && <a href={document.driveLink} target="_blank" rel="noreferrer">Drive ↗</a>}
             </div>)}
           </section> : null}
@@ -359,4 +425,12 @@ function deadlineLabel(value: string | null) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return `期限 ${new Intl.DateTimeFormat("ja-JP", { month: "2-digit", day: "2-digit" }).format(date)}`;
+}
+
+function requestDeadlineKindLabel(kind: RequestDetail["deadlines"][number]["kind"]) {
+  if (kind === "request") return "依頼期限";
+  if (kind === "matter") return "案件期限";
+  if (kind === "task") return "タスク期限";
+  if (kind === "document") return "文書期限";
+  return "契約終了";
 }
