@@ -306,3 +306,13 @@ Implementation:
 - 68 condition lines already have canonical region child rows and 68 have canonical language child rows.
 - Only 2 region values and 2 language values remain legacy-text-only; runtime fallback remains active until those rows are explicitly reviewed.
 - Existing production data already uses `WORLD / 全世界` and `ALL / 全言語`.
+
+
+### Work-rights normalized scope smoke
+
+The first write-test API smoke exposed two repository serialization defects:
+
+- canonical region/language child rows existed in production but `work-rights/:id` returned empty arrays;
+- PostgreSQL date values were rendered from JavaScript `Date` strings, producing values such as `Mon May 13`.
+
+Main now reads scope child rows explicitly and groups them by `condition_line_id`, with legacy text only as fallback. Work-rights contract and condition dates are serialized as Asia/Tokyo calendar dates. Regression tests cover both behaviors. Re-deploy and repeat the read smoke before enabling outbound-condition writes.
