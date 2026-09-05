@@ -2,6 +2,7 @@ import type { DatabasePool } from "../db/pool.js";
 import type { outboundConditionSchema } from "./outbound-conditions.js";
 import { mapOutboundConditionForStorage } from "./outbound-condition-storage.js";
 import type { z } from "zod";
+import { scopeContains, type ScopeOption } from "../../rights-scope.js";
 
 type ValidatedOutboundCondition = z.output<typeof outboundConditionSchema>;
 
@@ -51,6 +52,58 @@ export class PgOutboundConditionRepository implements OutboundConditionRepositor
       if (!work.rows[0]) throw new OutboundConditionReferenceError("work not found");
       if (!vendor.rows[0]) throw new OutboundConditionReferenceError("counterparty not found");
 
+      if (value.transactionKind === "license") {
+        if (!value.sourceConditionId) {
+          throw new OutboundConditionReferenceError("source IN condition is required");
+        }
+        const source = await client.query(
+          `SELECT id, work_id, direction, flow_direction, region_territory, region_language
+             FROM condition_lines
+            WHERE id = $1
+              AND work_id = $2
+              AND (flow_direction = 'in' OR direction = 'payable')
+            FOR SHARE`,
+          [value.sourceConditionId, value.workId]
+        );
+        if (!source.rows[0]) {
+          throw new OutboundConditionReferenceError("source IN condition not found for work");
+        }
+        const [sourceRegions, sourceLanguages] = await Promise.all([
+          client.query(
+            `SELECT country_code AS code, country_name AS name
+               FROM condition_line_regions
+              WHERE condition_line_id = $1
+              ORDER BY sort_order, id`,
+            [value.sourceConditionId]
+          ),
+          client.query(
+            `SELECT language_code AS code, language_name AS name
+               FROM condition_line_languages
+              WHERE condition_line_id = $1
+              ORDER BY sort_order, id`,
+            [value.sourceConditionId]
+          )
+        ]);
+        const sourceRegionScope = sourceRegions.rows.map(scopeRow);
+        const sourceLanguageScope = sourceLanguages.rows.map(scopeRow);
+        if (!scopeAllowed(
+          sourceRegionScope,
+          String(source.rows[0].region_territory ?? ""),
+          value.regions,
+          "WORLD"
+        )) {
+          throw new OutboundConditionScopeError("OUT territory exceeds source IN territory");
+        }
+        if (!scopeAllowed(
+          sourceLanguageScope,
+          String(source.rows[0].region_language ?? ""),
+          value.languages,
+          "ALL"
+        )) {
+          throw new OutboundConditionScopeError("OUT language exceeds source IN language");
+        }
+      }
+
       const documentId = Number(document.rows[0].id);
       const line = await client.query(
         `SELECT COALESCE(MAX(line_no), 0) + 1 AS line_no
@@ -69,7 +122,7 @@ export class PgOutboundConditionRepository implements OutboundConditionRepositor
            payment_scheme, rate_pct, amount_ex_tax, mg_amount, ag_amount,
            cycle, payment_terms, royalty_base, incoterms,
            minimum_quantity, sell_off_months, withholding_tax_treatment,
-           notes
+           notes, parent_license_condition_id
          ) VALUES (
            $1, $2, $3, $4,
            $5, 'receivable', 'out', $6,
@@ -78,7 +131,7 @@ export class PgOutboundConditionRepository implements OutboundConditionRepositor
            $14, $15, $16, $17, $18,
            $19, $20, $21, $22,
            $23, $24, $25,
-           $26
+           $26, $27
          )
          RETURNING id`,
         [
@@ -107,7 +160,8 @@ export class PgOutboundConditionRepository implements OutboundConditionRepositor
           value.minimumQuantity,
           value.sellOffMonths,
           value.withholdingTaxTreatment,
-          value.notes
+          value.notes,
+          value.sourceConditionId
         ]
       );
 
@@ -198,7 +252,26 @@ export class MemoryOutboundConditionRepository implements OutboundConditionRepos
   }
 }
 
+function scopeRow(row: Record<string, unknown>): ScopeOption {
+  return { code: String(row.code ?? ""), name: String(row.name ?? "") };
+}
+
+function scopeAllowed(
+  source: ScopeOption[],
+  legacySource: string,
+  target: ScopeOption[],
+  universalCode: "WORLD" | "ALL"
+) {
+  if (source.length) return scopeContains(source, target, universalCode);
+  const normalized = legacySource.toLowerCase();
+  if (!normalized) return false;
+  if (universalCode === "WORLD" && (normalized.includes("全世界") || normalized.includes("world"))) return true;
+  if (universalCode === "ALL" && (normalized.includes("全言語") || normalized.includes("all language"))) return true;
+  return target.every((item) => normalized.includes(item.name.toLowerCase()) || normalized.includes(item.code.toLowerCase()));
+}
+
 export class OutboundConditionReferenceError extends Error {}
+export class OutboundConditionScopeError extends Error {}
 export class OutboundConditionConflictError extends Error {
   constructor() {
     super("outbound condition changed before it could be saved");
