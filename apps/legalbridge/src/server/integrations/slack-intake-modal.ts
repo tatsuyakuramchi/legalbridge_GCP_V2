@@ -44,6 +44,7 @@ export function buildSlackIntakeModal(options: SlackModalOptions = {}) {
 
   if (workflow.id === "deadline_change") {
     blocks.push(...deadlineChangeBlocks(options.issueCandidates ?? []));
+    blocks.push(uploadLinkBlock(options.uploadUrl));
     return modal(workflow.label, blocks, { workflow: workflow.id });
   }
 
