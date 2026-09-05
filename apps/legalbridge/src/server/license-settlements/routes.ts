@@ -20,7 +20,8 @@ const previewSchema = z.object({
   unitBase: z.coerce.number().nonnegative().optional(),
   grossAmount: z.coerce.number().nonnegative().optional(),
   deductions: z.coerce.number().nonnegative().optional(),
-  useNetBasis: z.boolean().optional().default(false)
+  useNetBasis: z.boolean().optional().default(false),
+  taxRate: z.coerce.number().min(0).max(100).optional()
 });
 
 const draftSchema = previewSchema.extend({
@@ -79,6 +80,11 @@ export function createLicenseSettlementRouter(
       }
 
       const c = preview.settlementCondition;
+      const taxRate = input.taxRate ?? 0;
+      const taxAmount = taxRate > 0
+        ? Math.ceil(preview.actualRoyalty * taxRate / 100)
+        : 0;
+      const totalPayment = preview.actualRoyalty + taxAmount;
       const today = new Intl.DateTimeFormat("en-CA", {
         timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit"
       }).format(new Date());
@@ -98,6 +104,11 @@ export function createLicenseSettlementRouter(
         documentDate: today,
         linked_contract_number: c.documentNumber ?? "",
         licensor: c.counterparty ?? "",
+        LICENSOR_SUFFIX: isIndividual(c.counterpartyEntityType) ? "様" : "御中",
+        LICENSOR_IS_CORPORATION: !isIndividual(c.counterpartyEntityType),
+        VENDOR_REPRESENTATIVE_SAMA: c.counterpartyRepresentative
+          ? `${c.counterpartyRepresentative} 様`
+          : "",
         licensor_t_number: input.issueKey,
         licensee: "株式会社アークライト",
         originalWork: c.workTitle ?? preview.sourceCondition.workTitle ?? "",
@@ -121,9 +132,15 @@ export function createLicenseSettlementRouter(
         actualRoyaltyStr: formatAmount(preview.actualRoyalty),
         currency: preview.currency,
         paymentConditionSummary: c.paymentTerms ?? "",
-        taxRate: 0,
-        taxAmount: "",
-        totalPaymentStr: formatAmount(preview.actualRoyalty),
+        taxRate,
+        taxAmount: formatAmount(taxAmount),
+        totalPaymentStr: formatAmount(totalPayment),
+        bankName: c.bankName ?? "",
+        branchName: c.branchName ?? "",
+        accountType: c.accountType ?? "",
+        accountNo: c.accountNo ?? "",
+        accountHolder: c.accountHolder ?? "",
+        invoiceRegistrationNumber: c.invoiceRegistrationNumber ?? "",
         notes: basisNote,
         lines: [{
           productName: preview.productName,
@@ -165,6 +182,10 @@ export function createLicenseSettlementRouter(
   return router;
 }
 
+function isIndividual(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return normalized.includes("個人") || normalized.includes("individual") || normalized === "person";
+}
 function triggerLabel(value: "manufacturing" | "sale" | "sublicense_receipt") {
   if (value === "manufacturing") return "製造";
   if (value === "sale") return "販売";
