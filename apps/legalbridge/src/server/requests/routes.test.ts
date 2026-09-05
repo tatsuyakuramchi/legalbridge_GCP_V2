@@ -53,6 +53,10 @@ test("RequestはMatterなしでも一覧・詳細を返せる", async () => {
   const detail = await request(app()).get("/api/v2/requests/1");
   assert.equal(detail.status, 200);
   assert.equal(detail.body.matters.length, 0);
+  assert.deepEqual(detail.body.contracts, []);
+  assert.deepEqual(detail.body.works, []);
+  assert.deepEqual(detail.body.vendors, []);
+  assert.deepEqual(detail.body.deadlines, []);
 });
 
 test("書込有効時はRequestを既存Matterへ紐付けられる", async () => {
