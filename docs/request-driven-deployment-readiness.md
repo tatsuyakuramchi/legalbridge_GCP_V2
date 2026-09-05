@@ -143,6 +143,7 @@ Run only after code parity is complete.
 13. 024 condition attachment verify
 14. 025 request deadline / condition flow-direction backfill
 15. 026 document number history / previous-number rendering support
+16. 027 unified deadline runtime grants
 
 Region/language child tables already exist in the production lineage; deployment preflight must verify the relations and runtime privileges rather than recreate or reinterpret them.
 
