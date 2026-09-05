@@ -176,3 +176,11 @@ WHERE issue_key IS NOT NULL
 GROUP BY issue_key
 HAVING COUNT(*)>1
 ORDER BY document_count DESC,issue_key;
+
+
+-- 10. Legacy royalty payment rows for manual migration review.
+SELECT
+  id,backlog_issue_key,manufacturing_event_id,license_contract_id,
+  payment_due_date,reporting_deadline,total_amount,status,period,created_at
+FROM royalty_payments
+ORDER BY created_at,id;
