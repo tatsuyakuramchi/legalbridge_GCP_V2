@@ -567,7 +567,8 @@ export function createApp(
       database.readOnly !== true;
     const writeModeMismatch =
       (draftWriteEnabled || documentFinalizeEnabled || driveStorageEnabled ||
-        slackApprovalWriteEnabled || contractIntakeWriteEnabled) &&
+        slackApprovalWriteEnabled || contractIntakeWriteEnabled ||
+        conditionAttachmentWriteEnabled) &&
       database.reachable && database.readOnly === true;
     const outboundDatabaseMismatch =
       outboundConditionWriteEnabled &&
