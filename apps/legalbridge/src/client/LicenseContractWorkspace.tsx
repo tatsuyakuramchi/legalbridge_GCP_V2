@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
+import { RightsScopePicker } from "./RightsScopePicker";
+import { displayScope, scopeContains, type ScopeOption } from "../rights-scope";
 
 type WorkSummary = { id:number; workCode:string; title:string; materialCount:number; conditionCount:number; contractCount:number };
 type Condition = {
   id:number; name:string; direction:string|null; flowDirection:string|null; paymentScheme:string|null;
   ratePct:number|null; mgAmount:number|null; currency:string|null; territory:string|null; language:string|null;
+  regions:ScopeOption[]; languages:ScopeOption[];
   exclusivity:string|null; sublicenseAllowed:boolean|null; termStart:string|null; termEnd:string|null;
   parentLicenseConditionId:number|null; counterparty:string|null; documentNumber:string|null;
 };
@@ -27,8 +30,8 @@ export function LicenseContractWorkspace({
   const [direction,setDirection]=useState<"in"|"out">("out");
   const [sourceConditionId,setSourceConditionId]=useState<number|null>(null);
   const [counterparty,setCounterparty]=useState("");
-  const [territory,setTerritory]=useState("");
-  const [language,setLanguage]=useState("");
+  const [regions,setRegions]=useState<ScopeOption[]>([]);
+  const [languages,setLanguages]=useState<ScopeOption[]>([]);
   const [exclusivity,setExclusivity]=useState("non_exclusive");
   const [sublicenseAllowed,setSublicenseAllowed]=useState(false);
   const [termStart,setTermStart]=useState("");
@@ -40,6 +43,8 @@ export function LicenseContractWorkspace({
   const [templateType,setTemplateType]=useState("individual_license_terms");
   const [notice,setNotice]=useState("");
   const [working,setWorking]=useState(false);
+  const territory=useMemo(()=>displayScope(regions),[regions]);
+  const language=useMemo(()=>displayScope(languages),[languages]);
 
   useEffect(()=>{
     fetch("/api/v2/work-rights?limit=300")
@@ -67,15 +72,39 @@ export function LicenseContractWorkspace({
     if(direction!=="out"||!source) return [];
     const rows:Array<{label:string;ok:boolean;message:string}>=[];
     if(source.sublicenseAllowed===false) rows.push({label:"再許諾",ok:false,message:"根拠IN条件が再許諾不可です"});
-    if(source.termEnd&&termEnd&&termEnd>source.termEnd) rows.push({label:"期間",ok:false,message:`OUT終了日がIN終了日 ${source.termEnd} を超えています`});
-    if(source.territory&&territory&&!scopeIncludes(source.territory,territory)) rows.push({label:"地域",ok:false,message:"OUT地域がIN地域の範囲内か確認してください"});
-    if(source.language&&language&&!scopeIncludes(source.language,language)) rows.push({label:"言語",ok:false,message:"OUT言語がIN言語の範囲内か確認してください"});
-    if(!rows.length) rows.push({label:"権利範囲",ok:true,message:"現在の入力では明確な逸脱を検出していません"});
+    if(source.termEnd&&termEnd&&termEnd>source.termEnd) {
+      rows.push({label:"期間",ok:false,message:`OUT終了日がIN終了日 ${source.termEnd} を超えています`});
+    }
+
+    if(regions.length) {
+      const normalizedSourceRegions=(source.regions??[]).filter((item)=>!item.code.startsWith("LEGACY-"));
+      if(normalizedSourceRegions.length) {
+        if(!scopeContains(normalizedSourceRegions,regions,"WORLD")) {
+          rows.push({label:"地域",ok:false,message:"OUT地域がIN地域の許諾範囲を超えています"});
+        }
+      } else if(source.territory&&!legacyScopeIncludes(source.territory,territory)) {
+        rows.push({label:"地域",ok:false,message:"根拠IN条件が旧形式です。OUT地域がIN地域の範囲内か確認してください"});
+      }
+    }
+
+    if(languages.length) {
+      const normalizedSourceLanguages=(source.languages??[]).filter((item)=>!item.code.startsWith("LEGACY-"));
+      if(normalizedSourceLanguages.length) {
+        if(!scopeContains(normalizedSourceLanguages,languages,"ALL")) {
+          rows.push({label:"言語",ok:false,message:"OUT言語がIN言語の許諾範囲を超えています"});
+        }
+      } else if(source.language&&!legacyScopeIncludes(source.language,language)) {
+        rows.push({label:"言語",ok:false,message:"根拠IN条件が旧形式です。OUT言語がIN言語の範囲内か確認してください"});
+      }
+    }
+
+    if(!rows.length) rows.push({label:"権利範囲",ok:true,message:"地域・言語・期間・再許諾の範囲内です"});
     return rows;
-  },[direction,source,termEnd,territory,language]);
+  },[direction,source,termEnd,regions,languages,territory,language]);
 
   async function createDraft(){
     if(!issueKey.trim()||!detail||!counterparty.trim()){setNotice("Request番号・作品・相手方を入力してください。");return;}
+    if(!regions.length||!languages.length){setNotice("対象地域・対象言語を選択してください。");return;}
     if(direction==="out"&&!source){setNotice("OUT契約では根拠IN条件を選択してください。");return;}
     if(checks.some(c=>!c.ok)){setNotice("権利範囲チェックにNGがあります。修正してから進めてください。");return;}
     if(!canSaveDraft){setNotice("現在の環境では下書き保存が無効です。");return;}
@@ -100,7 +129,7 @@ export function LicenseContractWorkspace({
       request_issue_key:issueKey.trim(),work_id:detail?.work.id,work_code:detail?.work.workCode,
       license_direction:direction,source_in_condition_id:source?.id??null,
       proposed_condition:{
-        territory,language,exclusivity,sublicenseAllowed,termStart,termEnd,
+        territory,language,regions,languages,exclusivity,sublicenseAllowed,termStart,termEnd,
         ratePct:Number(ratePct)||null,mgAmount:Number(mgAmount)||null,
         sellOffMonths:Number(sellOffMonths)||null,currency
       }
@@ -153,12 +182,18 @@ export function LicenseContractWorkspace({
         </div></section>
         <section><h2>作品</h2><select value={workId??""} onChange={e=>setWorkId(Number(e.target.value)||null)}><option value="">作品を選択</option>{works.map(w=><option key={w.id} value={w.id}>{w.workCode} {w.title}</option>)}</select></section>
         {direction==="out"&&<section><h2>根拠IN条件</h2><select value={sourceConditionId??""} onChange={e=>setSourceConditionId(Number(e.target.value)||null)}><option value="">IN条件を選択</option>{inbound.map(c=><option key={c.id} value={c.id}>#{c.id} {c.name} / {c.counterparty||""}</option>)}</select>
-          {source&&<div className="source-condition-card"><b>#{source.id} {source.name}</b><span>{source.territory||"—"} / {source.language||"—"} / 再許諾 {source.sublicenseAllowed?"可":"要確認"} / ～{source.termEnd||"—"}</span></div>}
+          {source&&<div className="source-condition-card"><b>#{source.id} {source.name}</b><span>{scopeLabel(source.regions,source.territory)} / {scopeLabel(source.languages,source.language)} / 再許諾 {source.sublicenseAllowed?"可":"要確認"} / ～{source.termEnd||"—"}</span></div>}
         </section>}
         <section><h2>今回の取引条件</h2><div className="field-grid">
           <label><span>相手方</span><input value={counterparty} onChange={e=>setCounterparty(e.target.value)}/></label>
-          <label><span>地域</span><input value={territory} onChange={e=>setTerritory(e.target.value)} placeholder="Germany / 全世界等"/></label>
-          <label><span>言語</span><input value={language} onChange={e=>setLanguage(e.target.value)} placeholder="German / 日本語等"/></label>
+          <div className="wide">
+            <RightsScopePicker
+              regions={regions}
+              languages={languages}
+              onRegionsChange={setRegions}
+              onLanguagesChange={setLanguages}
+            />
+          </div>
           <label><span>独占性</span><select value={exclusivity} onChange={e=>setExclusivity(e.target.value)}><option value="non_exclusive">非独占</option><option value="exclusive">独占</option><option value="sole">Sole</option></select></label>
           <label><span>開始日</span><input type="date" value={termStart} onChange={e=>setTermStart(e.target.value)}/></label>
           <label><span>終了日</span><input type="date" value={termEnd} onChange={e=>setTermEnd(e.target.value)}/></label>
@@ -174,8 +209,8 @@ export function LicenseContractWorkspace({
         {direction==="in"?<div className="context-banner">IN契約として新しい権利ソースを取得します。締結後に作品・素材の権利ソースへ登録します。</div>:<>
           {!source&&<div className="empty-detail">根拠IN条件を選択してください。</div>}
           {source&&<table className="rights-matrix"><thead><tr><th>条件</th><th>IN</th><th>今回OUT</th></tr></thead><tbody>
-            <tr><th>地域</th><td>{source.territory||"—"}</td><td>{territory||"—"}</td></tr>
-            <tr><th>言語</th><td>{source.language||"—"}</td><td>{language||"—"}</td></tr>
+            <tr><th>地域</th><td>{scopeLabel(source.regions,source.territory)}</td><td>{territory||"—"}</td></tr>
+            <tr><th>言語</th><td>{scopeLabel(source.languages,source.language)}</td><td>{language||"—"}</td></tr>
             <tr><th>再許諾</th><td>{source.sublicenseAllowed?"可":"不可/要確認"}</td><td>{sublicenseAllowed?"可":"不可"}</td></tr>
             <tr><th>期間</th><td>{source.termStart||"—"} ～ {source.termEnd||"—"}</td><td>{termStart||"—"} ～ {termEnd||"—"}</td></tr>
           </tbody></table>}
@@ -192,7 +227,10 @@ export function LicenseContractWorkspace({
     </div>
   </section>;
 }
-function scopeIncludes(source:string,target:string){
+function legacyScopeIncludes(source:string,target:string){
   const s=source.toLowerCase();const t=target.toLowerCase();
   return s.includes("全")||s.includes("world")||s.includes(t)||t.includes(s);
+}
+function scopeLabel(values:ScopeOption[]|undefined,fallback:string|null){
+  return values?.length ? displayScope(values) : fallback||"—";
 }
