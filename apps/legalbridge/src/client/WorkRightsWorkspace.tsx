@@ -36,19 +36,27 @@ type WorkDetail = {
 type Tab = "overview" | "materials" | "rights" | "conditions" | "contracts" | "lineage";
 
 export function WorkRightsWorkspace({
+  initialWorkId,
   onStartLicenseContract,
   onStartSettlement
 }: {
+  initialWorkId?: number;
   onStartLicenseContract: (workId: number, workTitle: string) => void;
   onStartSettlement: (workId: number, workTitle: string) => void;
 }) {
   const [query, setQuery] = useState("");
   const [works, setWorks] = useState<WorkSummary[]>([]);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedId, setSelectedId] = useState<number | null>(initialWorkId ?? null);
   const [detail, setDetail] = useState<WorkDetail | null>(null);
   const [tab, setTab] = useState<Tab>("overview");
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!initialWorkId) return;
+    setSelectedId(initialWorkId);
+    setTab("overview");
+  }, [initialWorkId]);
 
   useEffect(() => {
     const controller = new AbortController();
