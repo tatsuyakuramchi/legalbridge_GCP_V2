@@ -141,6 +141,7 @@ Run only after code parity is complete.
 11. 022 condition attachment preflight
 12. 023 condition attachment grants
 13. 024 condition attachment verify
+14. 025 request deadline / condition flow-direction backfill
 
 Region/language child tables already exist in the production lineage; deployment preflight must verify the relations and runtime privileges rather than recreate or reinterpret them.
 
