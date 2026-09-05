@@ -142,6 +142,7 @@ export function App() {
   const [canGmailNotify, setCanGmailNotify] = useState(false);
   const [canCloudSign, setCanCloudSign] = useState(false);
   const [canGmailInbound, setCanGmailInbound] = useState(false);
+  const [backlogMode, setBacklogMode] = useState<"disabled" | "readonly" | "live">("disabled");
   // SPLL公開サイト（クリエーター向け）へのリンク。サーバー側で無効なら出さない。
   const [spllSitePath, setSpllSitePath] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<{ email: string; role: "admin" | "legal" | "requester" } | null>(null);
@@ -199,6 +200,13 @@ export function App() {
         setCanGmailNotify(capabilities.includes("gmail"));
         setCanCloudSign(capabilities.includes("cloudsign"));
         setCanGmailInbound(capabilities.includes("gmail-inbound"));
+        setBacklogMode(
+          runtime.backlogMode === "live"
+            ? "live"
+            : runtime.backlogMode === "readonly"
+              ? "readonly"
+              : "disabled"
+        );
         const spll = runtime.spllSite as { enabled?: boolean; basePath?: string } | undefined;
         setSpllSitePath(spll?.enabled && spll.basePath ? spll.basePath : null);
       })
@@ -217,6 +225,7 @@ export function App() {
         setCanGmailNotify(false);
         setCanCloudSign(false);
         setCanGmailInbound(false);
+        setBacklogMode("disabled");
       });
     fetch("/api/v2/document-templates")
       .then((response) => response.ok ? response.json() : Promise.reject())
@@ -268,7 +277,13 @@ export function App() {
             </div>
           ))}
         </nav>
-        <div className="backlog"><strong>Backlog連携</strong><small>参照のみ・変更なし</small></div>
+        <div className="backlog"><strong>Backlog連携</strong><small>{
+          backlogMode === "live"
+            ? "実連携・文書添付可"
+            : backlogMode === "readonly"
+              ? "参照のみ・変更なし"
+              : "未接続"
+        }</small></div>
         {spllSitePath && (
           <a className="rail-link" href={spllSitePath} target="_blank" rel="noreferrer">
             <strong>SPLL 公開サイト<span aria-hidden="true"> ↗</span></strong>
@@ -409,6 +424,7 @@ export function App() {
             canImport={canFinalizeDocuments}
             canGmailNotify={canGmailNotify}
             canCloudSign={canCloudSign}
+            backlogMode={backlogMode}
             canAttachConditions={canAttachConditions}
             initialQuery={deepLinkIssue}
             selectedId={searchSelection?.target === "document" ? Number(searchSelection.id) : undefined} />
