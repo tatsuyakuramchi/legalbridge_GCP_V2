@@ -152,6 +152,7 @@ export function App() {
   const [licenseWorkId, setLicenseWorkId] = useState<number | undefined>(undefined);
   const [settlementIssueKey, setSettlementIssueKey] = useState("");
   const [settlementWorkId, setSettlementWorkId] = useState<number | undefined>(undefined);
+  const [globalCreateOpen, setGlobalCreateOpen] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -281,7 +282,23 @@ export function App() {
             setSearchSelection({ target, id, title });
             setView(target === "matter" ? "matters" : target === "document" ? "documents" : "ledgers");
           }} />}
-          <div className="profile">{currentUser ? `${roleLabel(currentUser.role)}・${currentUser.email}` : "認証確認中"}</div>
+          <div className="header-actions">
+            {legalWorkspace && <div className="global-create-wrap">
+              <button className="global-create-button" onClick={() => setGlobalCreateOpen((value) => !value)}>
+                ＋ 作成・関連付け
+              </button>
+              {globalCreateOpen && <div className="global-create-menu">
+                <strong>作成・関連付け</strong>
+                <button onClick={() => { setGlobalCreateOpen(false); setView("matters"); }}>案件</button>
+                <button onClick={() => { setGlobalCreateOpen(false); setNewDocIssueKey(""); setView("templates"); }}>文書</button>
+                <button onClick={() => { setGlobalCreateOpen(false); setView("works-rights"); }}>作品・権利</button>
+                <button onClick={() => { setGlobalCreateOpen(false); setView("conditions"); }}>条件</button>
+                <button onClick={() => { setGlobalCreateOpen(false); setView("ledgers"); }}>取引先</button>
+                {adminWorkspace && <button onClick={() => { setGlobalCreateOpen(false); setView("staff"); }}>担当者</button>}
+              </div>}
+            </div>}
+            <div className="profile">{currentUser ? `${roleLabel(currentUser.role)}・${currentUser.email}` : "認証確認中"}</div>
+          </div>
         </header>
 
         <Breadcrumb view={view} onNavigate={setView} />
@@ -485,66 +502,61 @@ function Dashboard({ dashboard, access, onNavigate, onOpenMatter, onCreateDocume
   onOpenMatter: (id: number, title: string) => void;
   onCreateDocument: () => void;
 }) {
-  const kpiByLabel = new Map(dashboard.kpis.map((k) => [k.label, k.value]));
-  // 日々の操作入口。RequestはMatter化せず完了でき、作品・権利はMatterとは別の主軸。
-  const railCards: Array<{ step: string; label: string; hint: string; view: View; metric?: number; show: boolean }> = [
-    { step: "①", label: "依頼を確認", hint: "相談・単発文書・案件化を振り分け", view: "requests", metric: kpiByLabel.get("対応待ち"), show: access.legalWorkspace },
-    { step: "②", label: "案件を確認", hint: "継続案件・期限・タスク", view: "matters", metric: kpiByLabel.get("対応中"), show: access.legalWorkspace },
-    { step: "③", label: "作品・権利", hint: "素材・権利ソース・IN/OUT条件", view: "works-rights", metric: undefined, show: access.legalWorkspace },
-    { step: "④", label: "文書を作成", hint: "テンプレートから起票", view: "templates", metric: undefined, show: access.legalWorkspace || access.requesterWorkspace },
-    { step: "⑤", label: "利用許諾料精算", hint: "製造・販売・入金イベント", view: "license-settlements", metric: undefined, show: access.legalWorkspace }
-  ];
-  const rail = railCards.filter((card) => card.show);
+  const [requests, setRequests] = useState<Array<{
+    id: number; issueKey: string; summary: string; counterparty: string | null;
+    deadline: string | null; createdAt: string | null;
+    disposition: "received" | "matter_linked" | "document_created" | "completed";
+  }>>([]);
+
+  useEffect(() => {
+    if (!access.legalWorkspace) { setRequests([]); return; }
+    const controller = new AbortController();
+    fetch("/api/v2/requests?limit=200", { signal: controller.signal })
+      .then((response) => response.ok ? response.json() : Promise.reject())
+      .then((data) => setRequests(data.requests ?? []))
+      .catch((error) => { if (error?.name !== "AbortError") setRequests([]); });
+    return () => controller.abort();
+  }, [access.legalWorkspace]);
+
+  const today = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit"
+  }).format(new Date());
+  const requestActions = requests
+    .filter((request) => request.disposition !== "completed")
+    .sort((left, right) => {
+      const leftDue = left.deadline?.slice(0, 10) ?? "9999-99-99";
+      const rightDue = right.deadline?.slice(0, 10) ?? "9999-99-99";
+      if (leftDue !== rightDue) return leftDue.localeCompare(rightDue);
+      return (right.createdAt ?? "").localeCompare(left.createdAt ?? "");
+    })
+    .slice(0, 6);
 
   return (
     <section className="page">
       <div className="page-title">
-        <div><p>LEGAL OPERATIONS</p><h1>法務オペレーション</h1>
-          <small>{dashboard.source === "sample" ? "サンプル表示（本番データ未接続）" : "本番データに基づく現在状況"}</small></div>
-        <button className="primary" onClick={onCreateDocument}>文書を作成</button>
+        <div><p>TODAY</p><h1>今日やること</h1>
+          <small>{dashboard.source === "sample" ? "サンプル表示（本番データ未接続）" : "期限・依頼・案件タスクから優先順に確認"}</small></div>
+        {access.legalWorkspace
+          ? <button className="primary" onClick={() => onNavigate("requests")}>依頼を見る</button>
+          : <button className="primary" onClick={onCreateDocument}>文書を作成</button>}
       </div>
 
-      {rail.length > 0 && <div className="workflow-rail">
-        {rail.map((card) => (
-          <button key={card.view} className="workflow-card" onClick={() => onNavigate(card.view)}>
-            <span className="wf-step">{card.step}</span>
-            <strong>{card.label}</strong>
-            <small>{card.hint}</small>
-            <span className="wf-metric">{card.metric !== undefined ? `${card.metric}件` : "開く"} →</span>
-          </button>
-        ))}
-      </div>}
+      <div className="today-grid">
+        {access.legalWorkspace && <section className="panel today-requests">
+          <div className="panel-head"><h2>処理する依頼</h2><span>{requestActions.length}件</span></div>
+          {requestActions.length ? requestActions.map((request) => {
+            const due = request.deadline?.slice(0, 10) ?? null;
+            return <button key={request.id} className="today-request" onClick={() => onNavigate("requests")}>
+              <b>{request.summary || request.issueKey}</b>
+              <small>{request.issueKey}・{request.counterparty || "相手方未設定"}</small>
+              <em className={due && due <= today ? "overdue" : ""}>{due ? `期限 ${formatShortDate(due)}` : "期限未設定"}</em>
+            </button>;
+          }) : <p className="empty-inline">未完了の法務依頼はありません。</p>}
+        </section>}
 
-      <div className="kpis">
-        {dashboard.kpis.map((kpi) => <article key={kpi.label} className={kpi.tone ?? ""}><span>{kpi.label}</span><strong>{kpi.value}</strong></article>)}
-      </div>
-      <section className="panel">
-        <div className="panel-head"><h2>案件工程</h2>
-          <span>全案件 {dashboard.stages.reduce((sum, s) => sum + s.count, 0)}</span></div>
-        <div className="stages">
-          {dashboard.stages.map((stage, index) => <article key={stage.label}><small>0{index + 1}</small><strong>{stage.count}</strong><span>{stage.label}</span></article>)}
-        </div>
-      </section>
-      <div className="content-grid">
-        <section className="panel">
-          <div className="panel-head"><h2>優先対応案件</h2>
-            {access.legalWorkspace && <button onClick={() => onNavigate("matters")}>すべて表示</button>}</div>
-          {dashboard.priorities.length ? (
-            <table><thead><tr><th>案件</th><th>相手方</th><th>工程</th><th>期限</th><th>状態</th></tr></thead>
-              <tbody>
-                {dashboard.priorities.map((matter) => <tr key={matter.id}
-                  className={matter.matterId ? "row-link" : ""}
-                  onClick={() => matter.matterId && onOpenMatter(matter.matterId, matter.title)}>
-                  <td><b>{matter.id}</b><br />{matter.title}</td>
-                  <td>{matter.counterparty}</td><td>{matter.stage}</td>
-                  <td className={matter.overdue ? "overdue" : ""}>{matter.dueDate || "—"}</td>
-                  <td><span className="status">{matterStatusLabels[matter.status] ?? matter.status}</span></td></tr>)}
-              </tbody>
-            </table>
-          ) : <div className="empty-state">対応中の案件はありません。</div>}
-        </section>
-        <aside className="panel alerts"><div className="panel-head"><h2>本日の次アクション</h2>
-          <span>{dashboard.nextActions?.length ?? 0}件</span></div>
+        <section className="panel alerts">
+          <div className="panel-head"><h2>案件の次アクション</h2>
+            <span>{dashboard.nextActions?.length ?? 0}件</span></div>
           {dashboard.nextActions?.length ? dashboard.nextActions.map((action) => (
             <button key={action.matterId} className="next-action" onClick={() => onOpenMatter(action.matterId, action.title)}>
               <b>{action.taskTitle}</b>
@@ -552,8 +564,30 @@ function Dashboard({ dashboard, access, onNavigate, onOpenMatter, onCreateDocume
               <em className={action.overdue ? "overdue" : ""}>{action.dueAt ? formatShortDate(action.dueAt) : "期限未設定"}</em>
             </button>
           )) : <p className="empty-inline">次アクションに設定されたタスクはありません。</p>}
-        </aside>
+        </section>
       </div>
+
+      <div className="kpis">
+        {dashboard.kpis.map((kpi) => <article key={kpi.label} className={kpi.tone ?? ""}><span>{kpi.label}</span><strong>{kpi.value}</strong></article>)}
+      </div>
+
+      <section className="panel">
+        <div className="panel-head"><h2>優先対応案件</h2>
+          {access.legalWorkspace && <button onClick={() => onNavigate("matters")}>すべて表示</button>}</div>
+        {dashboard.priorities.length ? (
+          <table><thead><tr><th>案件</th><th>相手方</th><th>工程</th><th>期限</th><th>状態</th></tr></thead>
+            <tbody>
+              {dashboard.priorities.map((matter) => <tr key={matter.id}
+                className={matter.matterId ? "row-link" : ""}
+                onClick={() => matter.matterId && onOpenMatter(matter.matterId, matter.title)}>
+                <td><b>{matter.id}</b><br />{matter.title}</td>
+                <td>{matter.counterparty}</td><td>{matter.stage}</td>
+                <td className={matter.overdue ? "overdue" : ""}>{matter.dueDate || "—"}</td>
+                <td><span className="status">{matterStatusLabels[matter.status] ?? matter.status}</span></td></tr>)}
+            </tbody>
+          </table>
+        ) : <div className="empty-state">対応中の案件はありません。</div>}
+      </section>
     </section>
   );
 }
