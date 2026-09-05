@@ -62,7 +62,7 @@ export const slackIntakeWorkflowDefinitions: SlackIntakeWorkflowDefinition[] = [
     completionMode: "request_then_workspace",
     workspaceView: "license-contract",
     templateSelection: "none",
-    slackFields: ["license_direction","summary","deadline","counterparty","work_hint","details"]
+    slackFields: ["license_direction","summary","counterparty","work_hint","details"]
   },
   {
     id: "purchase_order",
@@ -94,7 +94,7 @@ export const slackIntakeWorkflowDefinitions: SlackIntakeWorkflowDefinition[] = [
     workspaceView: "license-settlements",
     outputTemplateKey: "royalty_statement",
     templateSelection: "none",
-    slackFields: ["settlement_trigger","target_document_number","event_date","work_hint","summary","details"]
+    slackFields: ["settlement_trigger","target_document_number","event_date","work_hint","details"]
   },
   {
     id: "deadline_change",
