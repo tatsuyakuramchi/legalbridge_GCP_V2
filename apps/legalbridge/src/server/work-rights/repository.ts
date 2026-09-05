@@ -323,7 +323,7 @@ function groupScopeRows(
   return grouped;
 }
 
-function scopeRows(
+export function scopeRows(
   value: ScopeOption[],
   fallback: unknown,
   kind: "region" | "language"
@@ -358,7 +358,7 @@ function num(value: unknown) {
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 }
-function dateOnly(value: unknown) {
+export function dateOnly(value: unknown) {
   if (value === null || value === undefined || value === "") return null;
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
     return new Intl.DateTimeFormat("en-CA", {
