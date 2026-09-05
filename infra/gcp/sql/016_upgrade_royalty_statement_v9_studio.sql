@@ -151,12 +151,11 @@ inserted AS (
   RETURNING id, template_id
 )
 UPDATE document_templates dt
-SET current_version_id = v.id,
+SET current_version_id = i.id,
     updated_at = now()
-FROM document_template_versions v
+FROM inserted i
 WHERE dt.template_key = 'royalty_statement'
-  AND v.template_id = dt.id
-  AND v.version_no = 9;
+  AND i.template_id = dt.id;
 
 COMMIT;
 
