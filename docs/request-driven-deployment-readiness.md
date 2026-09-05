@@ -384,3 +384,18 @@ Candidate `work 1000000039 / condition 341` provides WORLD region with legacy Ja
 ### Legacy language UI smoke passed
 
 Browser smoke confirmed client-side language overreach detection on work `1000000039` / source IN condition `341`: the legacy Japanese-only IN language rejected an English OUT selection and displayed the expected scope NG before save.
+
+
+### Request detail related-context enrichment
+
+Request detail now aggregates directly linked legal context without inferring relationships from free-form snapshots:
+
+- related matters and documents;
+- contracts reached through request-linked documents;
+- works reached through condition lines or contract-work relations;
+- vendor masters reached through document, condition, or contract foreign keys;
+- request, matter, open task, document, and contract-expiration deadlines;
+- work chips deep-link into Work & Rights;
+- document rows open the document registry entry directly.
+
+The next gate is typecheck/test/build followed by a write-test deployment and production-schema request-detail API smoke. Browser verification remains required before marking the Request Driven UI complete.
