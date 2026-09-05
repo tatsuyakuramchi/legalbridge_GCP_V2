@@ -3,7 +3,8 @@ import test from "node:test";
 import { outboundConditionSchema } from "./outbound-conditions.js";
 import {
   MemoryOutboundConditionRepository,
-  OutboundConditionReferenceError
+  OutboundConditionReferenceError,
+  scopeAllowed
 } from "./outbound-condition-repository.js";
 
 function condition(overrides: Record<string, unknown> = {}) {
@@ -61,4 +62,16 @@ test("存在しない作品または相手方を保存しない", async () => {
     /counterparty not found/
   );
   assert.equal(repository.conditions.length, 0);
+});
+
+
+test("code欠落の旧child rowはcompatibility textへfallbackしてscope判定する", () => {
+  assert.equal(
+    scopeAllowed([], "全世界", [{ code: "US", name: "アメリカ合衆国" }], "WORLD"),
+    true
+  );
+  assert.equal(
+    scopeAllowed([], "全言語", [{ code: "en", name: "英語" }], "ALL"),
+    true
+  );
 });
