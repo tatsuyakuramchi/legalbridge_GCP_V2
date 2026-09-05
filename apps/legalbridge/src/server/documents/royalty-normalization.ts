@@ -48,15 +48,29 @@ export async function persistRoyaltyNormalization(
     ?? (quantity === null ? null : Math.max(0, quantity - sampleQuantity));
   const unitPrice = numberValue(pick(source, "unit_price", "MSRP", "rsMsrp"))
     ?? (eventType === "manufacturing" ? numberValue(pick(source, "msrpStr", "基準価格")) : null);
-  const basisAmount = numberValue(pick(source, "settlement_basis_amount"))
+  const explicitBasisAmount = numberValue(pick(source, "settlement_basis_amount"))
     ?? numberValue(pick(source, "sales_amount", "salesInput"));
   const grossEventAmount = numberValue(pick(source, "settlement_gross_event_amount"));
   const deductions = numberValue(pick(source, "settlement_deductions")) ?? 0;
   const ratePct = numberValue(pick(source, "royaltyRatePct", "rsRatePct", "rsInRatePct", "料率"));
-  const grossRoyalty = numberValue(pick(source, "grossRoyaltyStr"))
+  const explicitGrossRoyalty = numberValue(pick(source, "grossRoyaltyStr"))
     ?? numberValue(pick(source, "gross_royalty_ex_tax"));
-  const actualRoyalty = numberValue(pick(source, "actualRoyalty", "actualRoyaltyStr", "royalty_amount"))
-    ?? grossRoyalty;
+  const explicitActualRoyalty = numberValue(
+    pick(source, "actualRoyalty", "actualRoyaltyStr", "royalty_amount")
+  );
+  const basisAmount = explicitBasisAmount
+    ?? (
+      eventType === "manufacturing" && unitPrice !== null && billableQuantity !== null
+        ? unitPrice * billableQuantity
+        : explicitActualRoyalty !== null && ratePct !== null && ratePct !== 0
+          ? explicitActualRoyalty / (ratePct / 100)
+          : explicitGrossRoyalty !== null && ratePct !== null && ratePct !== 0
+            ? explicitGrossRoyalty / (ratePct / 100)
+            : null
+    );
+  const grossRoyalty = explicitGrossRoyalty
+    ?? (basisAmount !== null && ratePct !== null ? basisAmount * ratePct / 100 : null);
+  const actualRoyalty = explicitActualRoyalty ?? grossRoyalty;
   const taxRate = numberValue(pick(source, "taxRate"));
   const taxAmount = numberValue(pick(source, "taxAmount"));
   const totalPayment = numberValue(pick(source, "totalPaymentStr"));
