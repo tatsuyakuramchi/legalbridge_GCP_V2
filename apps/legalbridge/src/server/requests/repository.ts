@@ -127,7 +127,13 @@ export class PgRequestRepository implements RequestRepository {
       this.database.query(
         `SELECT id, document_number, template_type, drive_link, created_at
            FROM documents
-          WHERE issue_key = $1 OR backlog_issue_key = $1
+          WHERE issue_key = $1
+             OR backlog_issue_key = $1
+             OR matter_id IN (
+               SELECT mi.matter_id
+                 FROM matter_issues mi
+                WHERE mi.backlog_issue_key = $1
+             )
           ORDER BY created_at DESC NULLS LAST, id DESC`,
         [issueKey]
       ),
@@ -136,7 +142,13 @@ export class PgRequestRepository implements RequestRepository {
                 c.contract_status, c.expiration_date
            FROM documents d
            JOIN contracts c ON c.id = d.contract_id
-          WHERE d.issue_key = $1 OR d.backlog_issue_key = $1
+          WHERE d.issue_key = $1
+             OR d.backlog_issue_key = $1
+             OR d.matter_id IN (
+               SELECT mi.matter_id
+                 FROM matter_issues mi
+                WHERE mi.backlog_issue_key = $1
+             )
           ORDER BY c.expiration_date NULLS LAST, c.id DESC`,
         [issueKey]
       ),
@@ -147,13 +159,29 @@ export class PgRequestRepository implements RequestRepository {
              SELECT cl.work_id
                FROM documents d
                JOIN condition_lines cl ON cl.document_id = d.id
-              WHERE (d.issue_key = $1 OR d.backlog_issue_key = $1)
+              WHERE (
+                      d.issue_key = $1
+                      OR d.backlog_issue_key = $1
+                      OR d.matter_id IN (
+                        SELECT mi.matter_id
+                          FROM matter_issues mi
+                         WHERE mi.backlog_issue_key = $1
+                      )
+                    )
                 AND cl.work_id IS NOT NULL
              UNION
              SELECT cw.work_id
                FROM documents d
                JOIN contract_works cw ON cw.contract_id = d.contract_id
-              WHERE (d.issue_key = $1 OR d.backlog_issue_key = $1)
+              WHERE (
+                      d.issue_key = $1
+                      OR d.backlog_issue_key = $1
+                      OR d.matter_id IN (
+                        SELECT mi.matter_id
+                          FROM matter_issues mi
+                         WHERE mi.backlog_issue_key = $1
+                      )
+                    )
                 AND cw.work_id IS NOT NULL
            ) linked ON linked.work_id = w.id
           ORDER BY w.title, w.id`,
@@ -165,19 +193,43 @@ export class PgRequestRepository implements RequestRepository {
            JOIN (
              SELECT d.vendor_id
                FROM documents d
-              WHERE (d.issue_key = $1 OR d.backlog_issue_key = $1)
+              WHERE (
+                      d.issue_key = $1
+                      OR d.backlog_issue_key = $1
+                      OR d.matter_id IN (
+                        SELECT mi.matter_id
+                          FROM matter_issues mi
+                         WHERE mi.backlog_issue_key = $1
+                      )
+                    )
                 AND d.vendor_id IS NOT NULL
              UNION
              SELECT cl.counterparty_vendor_id
                FROM documents d
                JOIN condition_lines cl ON cl.document_id = d.id
-              WHERE (d.issue_key = $1 OR d.backlog_issue_key = $1)
+              WHERE (
+                      d.issue_key = $1
+                      OR d.backlog_issue_key = $1
+                      OR d.matter_id IN (
+                        SELECT mi.matter_id
+                          FROM matter_issues mi
+                         WHERE mi.backlog_issue_key = $1
+                      )
+                    )
                 AND cl.counterparty_vendor_id IS NOT NULL
              UNION
              SELECT c.primary_vendor_id
                FROM documents d
                JOIN contracts c ON c.id = d.contract_id
-              WHERE (d.issue_key = $1 OR d.backlog_issue_key = $1)
+              WHERE (
+                      d.issue_key = $1
+                      OR d.backlog_issue_key = $1
+                      OR d.matter_id IN (
+                        SELECT mi.matter_id
+                          FROM matter_issues mi
+                         WHERE mi.backlog_issue_key = $1
+                      )
+                    )
                 AND c.primary_vendor_id IS NOT NULL
            ) linked ON linked.vendor_id = v.id
           ORDER BY v.vendor_name, v.id`,
@@ -217,17 +269,25 @@ export class PgRequestRepository implements RequestRepository {
                     d.due_date::text,
                     COALESCE(d.lifecycle_status,d.contract_status,'active')::text
                FROM documents d
-              WHERE (d.issue_key = $1 OR d.backlog_issue_key = $1)
+              WHERE (
+                      d.issue_key = $1
+                      OR d.backlog_issue_key = $1
+                      OR d.matter_id IN (SELECT id FROM linked_matters)
+                    )
                 AND d.due_date IS NOT NULL
                 AND d.is_active = true
-             UNION ALL
+             UNION
              SELECT 'contract:' || c.id, 'contract',
                     COALESCE(NULLIF(c.contract_title,''), c.document_number, '契約') || ' 契約終了',
                     c.expiration_date::text,
                     COALESCE(c.contract_status,'active')::text
                FROM documents d
                JOIN contracts c ON c.id = d.contract_id
-              WHERE (d.issue_key = $1 OR d.backlog_issue_key = $1)
+              WHERE (
+                      d.issue_key = $1
+                      OR d.backlog_issue_key = $1
+                      OR d.matter_id IN (SELECT id FROM linked_matters)
+                    )
                 AND c.expiration_date IS NOT NULL
                 AND COALESCE(c.contract_status,'') NOT IN ('cancelled','terminated','expired')
            ) x
