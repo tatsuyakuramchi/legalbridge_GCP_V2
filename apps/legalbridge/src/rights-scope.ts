@@ -74,8 +74,11 @@ export function displayScope(values: ScopeOption[]) {
 
 export function scopeContains(source: ScopeOption[], target: ScopeOption[], universalCode: "WORLD" | "ALL") {
   if (!target.length) return true;
-  const sourceCodes = new Set(source.map((value) => value.code));
+  const normalize = (code: string) => universalCode === "WORLD"
+    ? code.toUpperCase()
+    : (code.toUpperCase() === "ALL" ? "ALL" : code.toLowerCase());
+  const sourceCodes = new Set(source.map((value) => normalize(value.code)));
   if (sourceCodes.has(universalCode)) return true;
-  if (target.some((value) => value.code === universalCode)) return false;
-  return target.every((value) => sourceCodes.has(value.code));
+  if (target.some((value) => normalize(value.code) === universalCode)) return false;
+  return target.every((value) => sourceCodes.has(normalize(value.code)));
 }
