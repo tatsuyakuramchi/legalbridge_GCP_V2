@@ -22,6 +22,8 @@ Slack
 
 > Slack asks business facts needed to route the request. LegalBridge owns template-specific, contract-specific, financial and rights-specific fields.
 
+Each selected workflow has at most five substantive input blocks, excluding the common workflow selector. The material-upload link is a shared context link and is not counted as an input field.
+
 The active DB template catalog is loaded through \`TemplateRepository\`. Slack must not maintain copies of the 25+ template field schemas.
 
 ## Workflows
@@ -33,7 +35,7 @@ The active DB template catalog is loaded through \`TemplateRepository\`. Slack m
 | ライセンス契約を新規作成 | IN/OUT、件名、相手方、作品ヒント、概要 | LicenseContractWorkspace | selected license template |
 | 発注書を作成 | 発注Template、件名、相手方、概要 | Order/Document workspace | purchase_order / intl_purchase_order |
 | 納品・検収 | 対象発注/契約番号、納品日、概要 | Delivery/Inspection | inspection_certificate |
-| 利用許諾料を精算 | 発生事由、対象契約、発生日、作品ヒント、概要 | LicenseSettlementWorkspace | royalty_statement |
+| 利用許諾料を精算 | 発生事由、対象契約、発生日、作品ヒント、補足 | LicenseSettlementWorkspace | royalty_statement |
 | 納期変更 | 対象課題、新納期、理由 | Slack inline | no document |
 
 ## Template routing
@@ -199,3 +201,23 @@ The legacy gateway stays available as rollback until then.
 - Generic document creation can end without a Matter.
 - License/order/settlement requests deep-link into the appropriate V2 workspace.
 - Deadline change remains Slack-inline.
+
+
+## Material upload link
+
+Every workflow displays the same Slack context link:
+
+```
+📎 資料添付
+[資料アップロードページを開く]
+```
+
+Configure it with:
+
+```
+SLACK_INTAKE_UPLOAD_URL=https://<current-legal-gateway>/attachments/upload
+```
+
+During the gateway transition this points to the existing upload page. After the V2 upload route is available, only this environment value needs to change; the modal definitions do not change.
+
+If the URL is temporarily unavailable, the modal states that the request-completion DM will contain the upload link instead of rendering a broken URL.
