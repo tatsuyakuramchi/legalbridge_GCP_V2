@@ -180,7 +180,7 @@ function buildRoyaltyStatementPlan(
   return {
     issueKey: `INTAKE-${source.documentId}-ROY`,
     templateType: "royalty_statement",
-    label: "利用許諾料明細書",
+    label: "利用許諾料計算書",
     counterpartyVendorId: vendorId,
     counterpartyName: vendor.vendorName,
     formData: {
