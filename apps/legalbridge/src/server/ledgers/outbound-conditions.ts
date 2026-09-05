@@ -22,6 +22,7 @@ export const outboundConditionSchema = z.object({
   counterpartyLabel: z.string().trim().min(1).max(300),
   transactionKind: z.enum(["license", "product"]),
   conditionName: z.string().trim().min(1, "条件名を入力してください").max(300),
+  sourceConditionId: z.number().int().positive().optional(),
   documentNumber: optionalText,
   territory: z.string().trim().max(300).optional().default(""),
   regions: z.array(scopeOptionSchema).max(250).optional().default([]),
@@ -51,6 +52,9 @@ export const outboundConditionSchema = z.object({
   if (value.transactionKind === "license" && value.paymentScheme !== "royalty") {
     context.addIssue({ code: "custom", path: ["paymentScheme"], message: "ライセンスアウトはロイヤリティ方式を選択してください" });
   }
+  if (value.transactionKind === "license" && !value.sourceConditionId) {
+    context.addIssue({ code: "custom", path: ["sourceConditionId"], message: "根拠IN条件を選択してください" });
+  }
   if (value.paymentScheme === "royalty" && value.ratePct === undefined) {
     context.addIssue({ code: "custom", path: ["ratePct"], message: "ロイヤリティ率を入力してください" });
   }
@@ -65,6 +69,15 @@ export const outboundConditionSchema = z.object({
   }
   if (!value.regions.length && !value.territory.trim()) {
     context.addIssue({ code: "custom", path: ["regions"], message: "対象地域を選択してください" });
+  }
+  if (value.regions.some((item) => item.code.toUpperCase() === "WORLD") && value.regions.length > 1) {
+    context.addIssue({ code: "custom", path: ["regions"], message: "WORLDと個別国は同時に選択できません" });
+  }
+  const allLanguageCount = value.languages.filter((item) =>
+    typeof item !== "string" && item.code.toUpperCase() === "ALL"
+  ).length;
+  if (allLanguageCount && value.languages.length > 1) {
+    context.addIssue({ code: "custom", path: ["languages"], message: "ALLと個別言語は同時に選択できません" });
   }
 }).transform((value) => {
   const regions = value.regions.length
