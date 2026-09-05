@@ -86,6 +86,7 @@ export async function persistRoyaltyNormalization(
     ? await upsertManufacturingEvent(client, {
         documentId: document.id,
         issueKey: document.issueKey,
+        conditionLineId,
         contractId,
         productId,
         productName,
