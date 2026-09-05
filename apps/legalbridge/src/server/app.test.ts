@@ -449,7 +449,7 @@ test("案件一覧と関連課題・タスク・文書を返す", async () => {
     integrations: createIntegrationAdapters(),
     matters: new MemoryMatterRepository([{
       matter,
-      issues: [{ issueKey: "LEGAL-22", relation: "primary", summary: "契約更新", note: null }],
+      issues: [{ issueKey: "LEGAL-22", relation: "primary", summary: "契約更新", note: null, requestId: null, requestType: null, requestCounterparty: null }],
       tasks: [{ id: 1, title: "修正版を確認", status: "open", assigneeName: "法務 田中", dueAt: "2026-08-01T00:00:00.000Z", isPrimary: true, blockedReason: null }],
       documents: [{ id: 10, documentNumber: "LIC-2026-022", templateType: "license_master", issueKey: "LEGAL-22", createdAt: "2026-07-30T00:00:00.000Z", driveLink: "https://drive.google.com/document" }]
     }])
