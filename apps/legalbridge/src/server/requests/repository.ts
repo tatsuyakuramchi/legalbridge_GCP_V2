@@ -34,6 +34,31 @@ export interface LegalRequestDetail extends LegalRequestRow {
     driveLink: string;
     createdAt: string | null;
   }>;
+  contracts: Array<{
+    id: number;
+    documentNumber: string | null;
+    title: string;
+    contractType: string | null;
+    status: string | null;
+    expirationDate: string | null;
+  }>;
+  works: Array<{
+    id: number;
+    workCode: string | null;
+    title: string;
+  }>;
+  vendors: Array<{
+    id: number;
+    vendorCode: string | null;
+    name: string;
+  }>;
+  deadlines: Array<{
+    id: string;
+    kind: "request" | "matter" | "task" | "document" | "contract";
+    title: string;
+    dueDate: string;
+    status: string;
+  }>;
 }
 
 export interface RequestRepository {
@@ -89,7 +114,7 @@ export class PgRequestRepository implements RequestRepository {
     );
     if (!base.rows[0]) return null;
     const issueKey = String(base.rows[0].backlog_issue_key);
-    const [matters, documents] = await Promise.all([
+    const [matters, documents, contracts, works, vendors, deadlines] = await Promise.all([
       this.database.query(
         `SELECT m.id, m.matter_code, m.title, m.status, mi.relation,
                 (m.primary_issue_key = mi.backlog_issue_key) AS is_primary
@@ -104,6 +129,109 @@ export class PgRequestRepository implements RequestRepository {
            FROM documents
           WHERE issue_key = $1 OR backlog_issue_key = $1
           ORDER BY created_at DESC NULLS LAST, id DESC`,
+        [issueKey]
+      ),
+      this.database.query(
+        `SELECT DISTINCT c.id, c.document_number, c.contract_title, c.contract_type,
+                c.contract_status, c.expiration_date
+           FROM documents d
+           JOIN contracts c ON c.id = d.contract_id
+          WHERE d.issue_key = $1 OR d.backlog_issue_key = $1
+          ORDER BY c.expiration_date NULLS LAST, c.id DESC`,
+        [issueKey]
+      ),
+      this.database.query(
+        `SELECT DISTINCT w.id, w.work_code, w.title
+           FROM works w
+           JOIN (
+             SELECT cl.work_id
+               FROM documents d
+               JOIN condition_lines cl ON cl.document_id = d.id
+              WHERE (d.issue_key = $1 OR d.backlog_issue_key = $1)
+                AND cl.work_id IS NOT NULL
+             UNION
+             SELECT cw.work_id
+               FROM documents d
+               JOIN contract_works cw ON cw.contract_id = d.contract_id
+              WHERE (d.issue_key = $1 OR d.backlog_issue_key = $1)
+                AND cw.work_id IS NOT NULL
+           ) linked ON linked.work_id = w.id
+          ORDER BY w.title, w.id`,
+        [issueKey]
+      ),
+      this.database.query(
+        `SELECT DISTINCT v.id, v.vendor_code, v.vendor_name
+           FROM vendors v
+           JOIN (
+             SELECT d.vendor_id
+               FROM documents d
+              WHERE (d.issue_key = $1 OR d.backlog_issue_key = $1)
+                AND d.vendor_id IS NOT NULL
+             UNION
+             SELECT cl.counterparty_vendor_id
+               FROM documents d
+               JOIN condition_lines cl ON cl.document_id = d.id
+              WHERE (d.issue_key = $1 OR d.backlog_issue_key = $1)
+                AND cl.counterparty_vendor_id IS NOT NULL
+             UNION
+             SELECT c.primary_vendor_id
+               FROM documents d
+               JOIN contracts c ON c.id = d.contract_id
+              WHERE (d.issue_key = $1 OR d.backlog_issue_key = $1)
+                AND c.primary_vendor_id IS NOT NULL
+           ) linked ON linked.vendor_id = v.id
+          ORDER BY v.vendor_name, v.id`,
+        [issueKey]
+      ),
+      this.database.query(
+        `WITH linked_matters AS (
+           SELECT m.id, m.matter_code, m.title, m.status, m.target_due_date
+             FROM matter_issues mi
+             JOIN matters m ON m.id = mi.matter_id
+            WHERE mi.backlog_issue_key = $1
+         )
+         SELECT *
+           FROM (
+             SELECT 'request:' || lr.id AS id, 'request'::text AS kind,
+                    COALESCE(NULLIF(lr.summary,''), lr.backlog_issue_key, '法務依頼') AS title,
+                    (lr.deadline AT TIME ZONE 'Asia/Tokyo')::date::text AS due_date,
+                    'open'::text AS status
+               FROM legal_requests lr
+              WHERE lr.backlog_issue_key = $1 AND lr.deadline IS NOT NULL
+             UNION ALL
+             SELECT 'matter:' || m.id, 'matter',
+                    COALESCE(NULLIF(m.matter_code,''), m.title) || ' 案件期限',
+                    m.target_due_date::text, m.status::text
+               FROM linked_matters m
+              WHERE m.target_due_date IS NOT NULL
+             UNION ALL
+             SELECT 'task:' || t.id, 'task', t.title,
+                    (t.due_at AT TIME ZONE 'Asia/Tokyo')::date::text, t.status::text
+               FROM matter_tasks t
+               JOIN linked_matters m ON m.id = t.matter_id
+              WHERE t.due_at IS NOT NULL
+                AND t.status IN ('open','in_progress')
+             UNION ALL
+             SELECT 'document:' || d.id, 'document',
+                    COALESCE(NULLIF(d.contract_title,''), d.document_number, d.template_type) || ' 期日',
+                    d.due_date::text,
+                    COALESCE(d.lifecycle_status,d.contract_status,'active')::text
+               FROM documents d
+              WHERE (d.issue_key = $1 OR d.backlog_issue_key = $1)
+                AND d.due_date IS NOT NULL
+                AND d.is_active = true
+             UNION ALL
+             SELECT 'contract:' || c.id, 'contract',
+                    COALESCE(NULLIF(c.contract_title,''), c.document_number, '契約') || ' 契約終了',
+                    c.expiration_date::text,
+                    COALESCE(c.contract_status,'active')::text
+               FROM documents d
+               JOIN contracts c ON c.id = d.contract_id
+              WHERE (d.issue_key = $1 OR d.backlog_issue_key = $1)
+                AND c.expiration_date IS NOT NULL
+                AND COALESCE(c.contract_status,'') NOT IN ('cancelled','terminated','expired')
+           ) x
+          ORDER BY due_date, kind, id`,
         [issueKey]
       )
     ]);
@@ -123,6 +251,31 @@ export class PgRequestRepository implements RequestRepository {
         templateType: String(row.template_type ?? ""),
         driveLink: String(row.drive_link ?? ""),
         createdAt: row.created_at ? new Date(row.created_at).toISOString() : null
+      })),
+      contracts: contracts.rows.map((row) => ({
+        id: Number(row.id),
+        documentNumber: row.document_number ?? null,
+        title: String(row.contract_title ?? row.document_number ?? `Contract #${row.id}`),
+        contractType: row.contract_type ?? null,
+        status: row.contract_status ?? null,
+        expirationDate: row.expiration_date ? String(row.expiration_date).slice(0, 10) : null
+      })),
+      works: works.rows.map((row) => ({
+        id: Number(row.id),
+        workCode: row.work_code ?? null,
+        title: String(row.title ?? `Work #${row.id}`)
+      })),
+      vendors: vendors.rows.map((row) => ({
+        id: Number(row.id),
+        vendorCode: row.vendor_code ?? null,
+        name: String(row.vendor_name ?? `Vendor #${row.id}`)
+      })),
+      deadlines: deadlines.rows.map((row) => ({
+        id: String(row.id),
+        kind: String(row.kind) as LegalRequestDetail["deadlines"][number]["kind"],
+        title: String(row.title ?? ""),
+        dueDate: String(row.due_date ?? "").slice(0, 10),
+        status: String(row.status ?? "open")
       }))
     };
   }
@@ -220,7 +373,7 @@ export class MemoryRequestRepository implements RequestRepository {
       .filter((row) => !keyword || [row.issueKey, row.summary, row.counterparty ?? ""]
         .some((value) => value.toLowerCase().includes(keyword)))
       .slice(0, limit)
-      .map(({ matters: _m, documents: _d, ...row }) => row);
+      .map(({ matters: _m, documents: _d, contracts: _c, works: _w, vendors: _v, deadlines: _dl, ...row }) => row);
   }
   async find(id: number) {
     return this.rows.find((row) => row.id === id) ?? null;
