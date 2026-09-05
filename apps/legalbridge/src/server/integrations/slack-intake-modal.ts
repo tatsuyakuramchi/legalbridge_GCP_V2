@@ -47,7 +47,15 @@ export function buildSlackIntakeModal(options: SlackModalOptions = {}) {
   }
 
   if (workflow.templateSelection !== "none") {
-    blocks.push(templateSelect(templates, options.initialTemplateKey));
+    if (templates.length) {
+      blocks.push(templateSelect(templates, options.initialTemplateKey));
+    } else {
+      blocks.push({
+        type:"context",
+        block_id:"template_unavailable_block",
+        elements:[{type:"mrkdwn",text:"⚠️ 利用可能なTemplateを取得できません。Template設定を確認してください。"}]
+      });
+    }
   }
 
   blocks.push(
@@ -201,8 +209,8 @@ export function parseSlackIntakeSubmission(payload:any):SlackIntakeSubmission {
         ? trigger : null,
     targetIssueKey:
       option("target_issue_select_block","target_issue_select_input")
-      ?? text("target_issue_block","target_issue_input")
-      ?? null,
+      || text("target_issue_block","target_issue_input")
+      || null,
     newDeadline:date("new_deadline_block","new_deadline_input"),
     changeReason:text("change_reason_block","change_reason_input") || null
   };
