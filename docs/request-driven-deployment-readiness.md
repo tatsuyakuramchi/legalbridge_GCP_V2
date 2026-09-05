@@ -39,17 +39,17 @@ The normal workflow stays simple; legal/admin users can repair or supplement dat
 
 ## 2. MUST FIX before deployment
 
-### A. Implement the Request Driven shell in the React application
+### A. Request Driven shell in the React application
 
-The approved mock is not yet the live React UI.
+Status: **IMPLEMENTED IN MAIN / write-test smoke pending**.
 
-Required behavior:
+Implemented behavior:
 
-- Home = 今日やること / next actions, not a feature catalog.
-- Request detail shows exactly one primary next action.
+- Home = 今日やること / next actions, not a feature catalog. **Implemented.**
+- Request detail shows exactly one primary next action. **Implemented.**
 - Related-data chips show Matter / Work / Document / Condition / Vendor / Staff.
-- The universal **＋ 作成・関連付け** entry point is available globally.
-- Domain screens remain available as management/repair screens, not the main day-to-day navigation.
+- The universal **＋ 作成・関連付け** entry point is available globally. **Implemented.**
+- Domain screens remain available as management/repair screens, not the main day-to-day navigation. **Implemented via reduced nav + contextual/global entry points.**
 
 Existing domain APIs and repositories should be reused; this is primarily an interaction-layer change.
 
@@ -142,6 +142,7 @@ Run only after code parity is complete.
 12. 023 condition attachment grants
 13. 024 condition attachment verify
 14. 025 request deadline / condition flow-direction backfill
+15. 026 document number history / previous-number rendering support
 
 Region/language child tables already exist in the production lineage; deployment preflight must verify the relations and runtime privileges rather than recreate or reinterpret them.
 
@@ -271,10 +272,22 @@ code parity
 
 Do not deploy production when any of these remain true:
 
-- final Request Driven UI exists only as HTML mock
+- Request Driven UI write-test smoke has not passed
 - region/language is still free-text in V2
 - child region/language rows are not written transactionally
 - Slack attachment URL is not bound to a real Backlog issue
 - Cloud Build/typecheck/test/build has not passed
 - DB verification SQL has not passed
 - write-test smoke has not passed
+
+## 9. Document number continuity
+
+Number reassignment must preserve the immediately previous number.
+
+Implementation:
+
+- `document_number_history` captures every `documents.document_number` change by DB trigger.
+- Legacy `BASE_DOC_NO` / old-number form fields are backfilled when available.
+- Document registry search/detail exposes the latest previous number.
+- Template/PDF rendering injects `PREVIOUS_DOCUMENT_NUMBER`, `旧文書番号`, and compatible `BASE_DOC_NO` values.
+- When the template itself does not render the previous number, the renderer adds a compact `旧文書番号：...` notice automatically.
