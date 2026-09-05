@@ -61,6 +61,12 @@ import {
 } from "./conditions/repository.js";
 import { createConditionLineRouter } from "./conditions/routes.js";
 import {
+  MemoryDocumentConditionAttachmentRepository,
+  PgDocumentConditionAttachmentRepository,
+  type DocumentConditionAttachmentRepository
+} from "./conditions/attachment-repository.js";
+import { createDocumentConditionAttachmentRouter } from "./conditions/attachment-routes.js";
+import {
   MemoryRequestRepository, PgRequestRepository, type RequestRepository
 } from "./requests/repository.js";
 import { createRequestRouter } from "./requests/routes.js";
@@ -249,6 +255,7 @@ export interface AppDependencies {
   matters?: MatterRepository;
   matterWrites?: MatterWriteRepository;
   conditionLines?: ConditionLineRepository;
+  conditionAttachments?: DocumentConditionAttachmentRepository;
   requests?: RequestRepository;
   workRights?: WorkRightsRepository;
   licenseSettlements?: LicenseSettlementRepository;
@@ -284,6 +291,7 @@ export interface AppOptions {
   staffWritesEnabled?: boolean;
   workWritesEnabled?: boolean;
   materialWritesEnabled?: boolean;
+  conditionAttachmentWritesEnabled?: boolean;
   auth?: AuthSettings;
 }
 
@@ -311,6 +319,9 @@ function createDefaultDependencies(): AppDependencies {
     conditionLines: database
       ? new PgConditionLineRepository(database)
       : new MemoryConditionLineRepository(),
+    conditionAttachments: database
+      ? new PgDocumentConditionAttachmentRepository(database)
+      : new MemoryDocumentConditionAttachmentRepository(),
     requests: database
       ? new PgRequestRepository(database)
       : new MemoryRequestRepository(),
@@ -384,6 +395,7 @@ export function createApp(
     staffWritesEnabled: config.staffWritesEnabled,
     workWritesEnabled: config.workWritesEnabled,
     materialWritesEnabled: config.materialWritesEnabled,
+    conditionAttachmentWritesEnabled: config.conditionAttachmentWritesEnabled,
     auth: config.auth
   }
 ) {
@@ -513,6 +525,12 @@ export function createApp(
     options.materialWritesEnabled === true &&
     options.writeScopes?.has("materials") === true &&
     Boolean(dependencies.materialWrites);
+  const conditionAttachmentWriteEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.conditionAttachmentWritesEnabled === true &&
+    options.writeScopes?.has("condition-attachments") === true &&
+    Boolean(dependencies.conditionAttachments);
   const driveStorageEnabled =
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
@@ -574,6 +592,7 @@ export function createApp(
         ...(staffWriteEnabled ? ["staff"] : []),
         ...(workWriteEnabled ? ["works"] : []),
         ...(materialWriteEnabled ? ["materials"] : []),
+        ...(conditionAttachmentWriteEnabled ? ["condition-attachments"] : []),
         ...(gmailDispatchEnabled ? ["gmail"] : []),
         ...(cloudSignDispatchEnabled ? ["cloudsign"] : []),
         ...(gmailInboundEnabled ? ["gmail-inbound"] : []),
@@ -597,7 +616,8 @@ export function createApp(
         driveStorageEnabled || slackApprovalWriteEnabled ||
         outboundConditionWriteEnabled || contractIntakeWriteEnabled ||
         matterWriteEnabled || vendorWriteEnabled || staffWriteEnabled || workWriteEnabled ||
-        materialWriteEnabled || gmailDispatchEnabled || cloudSignDispatchEnabled ||
+        materialWriteEnabled || conditionAttachmentWriteEnabled ||
+        gmailDispatchEnabled || cloudSignDispatchEnabled ||
         gmailInboundEnabled,
       writeCapabilities: [
         ...(draftWriteEnabled ? ["drafts"] : []),
@@ -612,6 +632,7 @@ export function createApp(
         ...(staffWriteEnabled ? ["staff"] : []),
         ...(workWriteEnabled ? ["works"] : []),
         ...(materialWriteEnabled ? ["materials"] : []),
+        ...(conditionAttachmentWriteEnabled ? ["condition-attachments"] : []),
         ...(gmailDispatchEnabled ? ["gmail"] : []),
         ...(cloudSignDispatchEnabled ? ["cloudsign"] : []),
         ...(gmailInboundEnabled ? ["gmail-inbound"] : []),
@@ -750,6 +771,10 @@ export function createApp(
       (request.method === "POST" && request.path === "/materials") ||
       (request.method === "PATCH" && /^\/materials\/\d+$/.test(request.path));
     if (materialWriteEnabled && isMaterialWrite) return next();
+    const isConditionAttachmentWrite =
+      request.method === "POST" &&
+      /^\/documents\/\d+\/condition-attachments$/.test(request.path);
+    if (conditionAttachmentWriteEnabled && isConditionAttachmentWrite) return next();
 
     return response.status(403).json({
       error: options.accessMode === "readonly"
@@ -806,6 +831,10 @@ export function createApp(
     draftWriteEnabled
   ));
   app.use("/api/v2", createConditionLineRouter(dependencies.conditionLines));
+  app.use("/api/v2", createDocumentConditionAttachmentRouter(
+    dependencies.conditionAttachments,
+    conditionAttachmentWriteEnabled
+  ));
   app.use("/api/v2", createPendingInspectionRouter(dependencies.pendingInspections));
   app.use("/api/v2", createVendorWriteRouter(dependencies.vendorWrites, vendorWriteEnabled));
   app.use("/api/v2", createStaffRouter(dependencies.staff, staffWriteEnabled));
