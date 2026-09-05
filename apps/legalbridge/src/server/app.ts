@@ -888,7 +888,10 @@ export function createApp(
     { adapter: slackDeliveryAdapter, enabled: slackDispatchEnabled }
   ));
   app.use("/api/v2", createTemplateRegressionRouter(dependencies.templates));
-  app.use("/api/v2", createSlackIntakeDesignRouter(dependencies.templates));
+  app.use("/api/v2", createSlackIntakeDesignRouter(
+    dependencies.templates,
+    { uploadUrl: config.slackIntakeUploadUrl }
+  ));
   app.use("/api/v2", createOperationalDiagnosticsRouter(
     getPool(),
     dependencies.templates,
