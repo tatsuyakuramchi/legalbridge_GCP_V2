@@ -11,6 +11,7 @@ export interface SlackModalOptions {
   templates?: DocumentFormSchema[];
   issueCandidates?: Array<{ issueKey: string; summary: string; counterparty?: string | null }>;
   initialTemplateKey?: string;
+  uploadUrl?: string;
 }
 
 export interface SlackIntakeSubmission {
@@ -58,16 +59,22 @@ export function buildSlackIntakeModal(options: SlackModalOptions = {}) {
     }
   }
 
-  blocks.push(
-    inputText("summary_block","summary_input","件名","例：〇〇社との契約書を新規作成",false),
-    {
+  if (workflow.slackFields.includes("summary")) {
+    blocks.push(inputText(
+      "summary_block","summary_input","件名",
+      "例：〇〇社との契約書を新規作成",false
+    ));
+  }
+
+  if (workflow.slackFields.includes("deadline")) {
+    blocks.push({
       type:"input",
       block_id:"deadline_block",
       optional:true,
       label:{type:"plain_text",text:"希望納期"},
       element:{type:"datepicker",action_id:"deadline_input"}
-    }
-  );
+    });
+  }
 
   if (workflow.slackFields.includes("counterparty")) {
     blocks.push(inputText(
@@ -134,26 +141,22 @@ export function buildSlackIntakeModal(options: SlackModalOptions = {}) {
     ));
   }
 
-  if (workflow.slackFields.includes("attachment")) {
+  blocks.push(uploadLinkBlock(options.uploadUrl));
+
+  if (workflow.slackFields.includes("details")) {
     blocks.push({
-      type:"context",
-      block_id:"attachment_help_block",
-      elements:[{type:"mrkdwn",text:"📎 レビュー対象文書・参考資料は、依頼受付後の資料アップロード導線から登録してください。"}]
+      type:"input",
+      block_id:"details_block",
+      optional: workflow.id !== "legal_review",
+      label:{type:"plain_text",text:workflow.id === "legal_review" ? "相談・レビュー内容" : "依頼概要・補足"},
+      element:{
+        type:"plain_text_input",
+        action_id:"details_input",
+        multiline:true,
+        placeholder:{type:"plain_text",text:detailPlaceholder(workflow.id)}
+      }
     });
   }
-
-  blocks.push({
-    type:"input",
-    block_id:"details_block",
-    optional: workflow.id !== "legal_review",
-    label:{type:"plain_text",text:workflow.id === "legal_review" ? "相談・レビュー内容" : "依頼概要・補足"},
-    element:{
-      type:"plain_text_input",
-      action_id:"details_input",
-      multiline:true,
-      placeholder:{type:"plain_text",text:detailPlaceholder(workflow.id)}
-    }
-  });
 
   if (workflow.completionMode === "request_then_workspace") {
     blocks.push({
@@ -316,6 +319,20 @@ function deadlineChangeBlocks(candidates:Array<{issueKey:string;summary:string;c
     }
   );
   return blocks;
+}
+
+function uploadLinkBlock(uploadUrl?:string){
+  const safeUrl=String(uploadUrl ?? "").trim();
+  return {
+    type:"context",
+    block_id:"attachment_upload_block",
+    elements:[{
+      type:"mrkdwn",
+      text:safeUrl
+        ? "📎 *資料添付*: <"+safeUrl+"|資料アップロードページを開く>\n契約書・見積書・メールPDF・参考資料などをここから追加できます。"
+        : "📎 *資料添付*: 受付後のDMに表示される「資料アップロード」リンクから追加できます。"
+    }]
+  };
 }
 
 function inputText(
