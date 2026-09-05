@@ -236,7 +236,7 @@ export function RequestWorkspace({
           <div className="request-facts">
             <div><span>依頼種別</span><strong>{selected.contractType || "未分類"}</strong></div>
             <div><span>案件</span><strong>{selected.matterCount}件</strong></div>
-            <div><span>関連文書</span><strong>{selected.documentCount}件</strong></div>
+            <div><span>関連文書</span><strong>{detail?.documents?.length ?? selected.documentCount}件</strong></div>
             <div><span>作品・権利</span><strong>{detail?.works?.length ?? 0}件</strong></div>
           </div>
           {selected.notes && <div className="request-notes">{selected.notes}</div>}
