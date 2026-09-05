@@ -157,7 +157,7 @@ function buildRoyaltyStatementContext(source: Data) {
     sum + number(pick(line, "salesJpy", "sales", "sales_amount", "base_amount")), 0);
   const totalPayment = flatLines.reduce((sum, line) =>
     sum + number(pick(line, "paymentJpy", "payment", "payment_amount", "royalty_amount")), 0);
-  const taxRate = number(pick(source, "taxRate", "tax_rate"), 0);
+  const taxRate = number(pick(source, "taxRate", "tax_rate"), 10);
   const tax = taxRate > 0 ? Math.ceil(totalPayment * taxRate / 100) : 0;
   const statementMode = String(valueOr(source.statementMode, lineGroups.length > 1 ? "multi" : "single"));
   const currency = String(pick(source, "currency", "intakeCurrency", "CURRENCY") || "JPY");
