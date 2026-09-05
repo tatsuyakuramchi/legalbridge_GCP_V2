@@ -280,7 +280,7 @@ SELECT
   s.occurred_date,s.document_id,s.condition_line_id
 FROM lb_m5_royalty_source s
 WHERE s.event_type='sale'
-ON CONFLICT (source_document_id) WHERE source_document_id IS NOT NULL
+ON CONFLICT (source_document_id)
 DO UPDATE SET
   product_id=EXCLUDED.product_id,
   backlog_issue_key=EXCLUDED.backlog_issue_key,
@@ -304,7 +304,7 @@ SELECT
   1,s.rate_pct,s.actual_royalty,s.document_id
 FROM lb_m5_royalty_source s
 WHERE s.event_type='sublicense_receipt'
-ON CONFLICT (source_document_id) WHERE source_document_id IS NOT NULL
+ON CONFLICT (source_document_id)
 DO UPDATE SET
   condition_line_id=EXCLUDED.condition_line_id,
   period=EXCLUDED.period,
@@ -347,7 +347,7 @@ SELECT
   s.event_type,s.occurred_date::timestamptz,s.f,now()
 FROM lb_m5_royalty_source s
 LEFT JOIN manufacturing_events me ON me.source_document_id=s.document_id
-ON CONFLICT (document_id) WHERE document_id IS NOT NULL
+ON CONFLICT (document_id)
 DO UPDATE SET
   backlog_issue_key=EXCLUDED.backlog_issue_key,
   license_contract_id=EXCLUDED.license_contract_id,
@@ -453,7 +453,7 @@ SELECT
 FROM lb_m5_royalty_source s
 LEFT JOIN manufacturing_events me ON me.source_document_id=s.document_id
 LEFT JOIN sales_events se ON se.source_document_id=s.document_id
-ON CONFLICT (document_id) WHERE document_id IS NOT NULL
+ON CONFLICT (document_id)
 DO UPDATE SET
   backlog_issue_key=EXCLUDED.backlog_issue_key,contract_id=EXCLUDED.contract_id,
   product_id=EXCLUDED.product_id,work_material_id=EXCLUDED.work_material_id,
@@ -554,7 +554,7 @@ SELECT
   e.condition_line_id,e.source_out_condition_line_id,e.gross_event_amount,e.deductions,
   e.line_json
 FROM expanded e
-ON CONFLICT (royalty_statement_id,line_no) WHERE royalty_statement_id IS NOT NULL
+ON CONFLICT (royalty_statement_id,line_no)
 DO UPDATE SET
   document_id=EXCLUDED.document_id,document_number=EXCLUDED.document_number,
   backlog_issue_key=EXCLUDED.backlog_issue_key,group_no=EXCLUDED.group_no,
