@@ -55,7 +55,7 @@ Existing domain APIs and repositories should be reused; this is primarily an int
 
 ### B. Restore normalized region/language selection in V2
 
-Status: **IMPLEMENTED IN MAIN / DB preflight passed; normalized read smoke passed; outbound write smoke pending**.
+Status: **IMPLEMENTED IN MAIN / DB preflight + normalized read/write smoke passed; browser/UI smoke pending**.
 
 Production data model and legacy implementation already support normalized 1:N values:
 
@@ -341,3 +341,21 @@ The first guarded outbound write smoke was safely rejected with HTTP 422 before 
 - persistence now ignores incomplete child scope rows and falls back to the source compatibility text. This preserves fail-safe behavior when neither canonical rows nor usable legacy text exists.
 
 Repeat typecheck/test/build, redeploy with the guarded outbound capability enabled, then retry the same reversible smoke payload.
+
+
+### Normalized outbound write round-trip passed
+
+The guarded outbound-condition write smoke passed against production schema via the Cloud Run write-test service:
+
+- source work: `1000000043`;
+- source IN condition: `601`;
+- document: `CT-2026-00008` / document id `1033`;
+- counterparty vendor id: `36`;
+- target scope: `US / en`;
+- POST returned HTTP 201 and created condition id `603`;
+- API round-trip returned `direction=receivable`, `flowDirection=out`, `parentLicenseConditionId=601`, canonical region `US`, canonical language `en`, and ISO dates;
+- external integrations remained disabled/local;
+- smoke row `603` was deleted after verification;
+- remaining document 1033 condition lines are 600/601/602 with line numbers 5001/5002/5003, confirming the transient smoke line 5004 followed the existing `MAX(line_no)+1` convention and cleanup completed.
+
+Normalized territory/language read and guarded write paths are now verified. Browser/UI smoke and remaining request-detail enrichment remain before production readiness.
