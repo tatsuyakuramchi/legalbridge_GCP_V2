@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { displayScope, normalizeLanguageOption, normalizeRegionOption, type ScopeOption } from "../../rights-scope.js";
+import { COUNTRY_CODES, LANGUAGE_CODES, displayScope, normalizeLanguageOption, normalizeRegionOption, type ScopeOption } from "../../rights-scope.js";
 import {
   OutboundConditionConflictError,
   OutboundConditionReferenceError,
@@ -11,11 +11,17 @@ import {
 const optionalText = z.string().trim().max(500).optional().default("");
 const optionalNumber = z.number().nonnegative().optional();
 const regionOptionSchema = z.object({
-  code: z.string().trim().regex(/^(?:WORLD|[A-Za-z]{2})$/, "地域コードはWORLDまたはISO alpha-2で指定してください"),
+  code: z.string().trim().refine((value) =>
+    value.toUpperCase() === "WORLD" || (COUNTRY_CODES as readonly string[]).includes(value.toUpperCase()),
+    "地域コードはWORLDまたはISO 3166-1 alpha-2で指定してください"
+  ),
   name: z.string().trim().min(1).max(120)
 });
 const languageOptionSchema = z.object({
-  code: z.string().trim().regex(/^(?:ALL|[A-Za-z]{2,3})$/, "言語コードはALLまたは2〜3文字コードで指定してください"),
+  code: z.string().trim().refine((value) =>
+    value.toUpperCase() === "ALL" || (LANGUAGE_CODES as readonly string[]).includes(value.toLowerCase()),
+    "言語コードはALLまたはISO 639-1で指定してください"
+  ),
   name: z.string().trim().min(1).max(120)
 });
 const languageInputSchema = z.union([languageOptionSchema, z.string().trim().min(1).max(100)]);
