@@ -494,9 +494,10 @@ async function upsertConditionEvent(client: PoolClient, value: any) {
     );
     return Number(existing.rows[0].id);
   }
+  await client.query("SELECT pg_advisory_xact_lock(922001, $1)", [value.conditionLineId]);
   const next = await client.query(
     `SELECT COALESCE(MAX(event_no),0)+1 AS event_no
-       FROM condition_events WHERE condition_line_id=$1 FOR UPDATE`,
+       FROM condition_events WHERE condition_line_id=$1`,
     [value.conditionLineId]
   );
   const result = await client.query(
