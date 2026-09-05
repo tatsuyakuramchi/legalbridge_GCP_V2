@@ -190,7 +190,7 @@ steps:
           --image="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPOSITORY}/${_IMAGE}:${BUILD_ID}" \
           --region="${_REGION}" \
           --platform=managed \
-          "$IAP_FLAG" \
+          "$$IAP_FLAG" \
           --memory=1Gi \
           --cpu=1 \
           --concurrency=2 \
