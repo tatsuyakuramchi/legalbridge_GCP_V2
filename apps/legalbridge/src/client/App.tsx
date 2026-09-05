@@ -18,6 +18,10 @@ import { ContractChainWizard } from "./ContractChainWizard";
 import { ConditionLinesWorkspace } from "./ConditionLinesWorkspace";
 import { StaffWorkspace } from "./StaffWorkspace";
 import { GmailInboundWorkspace } from "./GmailInboundWorkspace";
+import { RequestWorkspace } from "./RequestWorkspace";
+import { WorkRightsWorkspace } from "./WorkRightsWorkspace";
+import { LicenseContractWorkspace } from "./LicenseContractWorkspace";
+import { LicenseSettlementWorkspace } from "./LicenseSettlementWorkspace";
 
 type CompatibilityReport = { summary: { total: number; ok: number; warning: number; error: number }; reports: Array<{ templateKey: string; status: "ok" | "warning" | "error"; missingHelpers: string[]; missingPartials: string[]; unmappedVariables: string[]; renderError?: string }> };
 
@@ -38,7 +42,7 @@ const fallback: DashboardSummary = {
   priorities: []
 };
 
-type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound";
+type View = "home" | "requests" | "matters" | "works-rights" | "license-contract" | "license-settlements" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound";
 type NavItem = { view: View; label: string; description: string; match: View[] };
 type NavGroup = { label: string; items: NavItem[] };
 
@@ -52,7 +56,10 @@ function navGroups(access: {
       { view: "home", label: "ホーム", description: "業務の全体状況と次アクション", match: ["home"] }
     ] },
     { label: "業務", items: [
-      ...(access.legalWorkspace ? [{ view: "matters" as const, label: "案件", description: "案件・課題・タスクの管理", match: ["matters" as const] }] : []),
+      ...(access.legalWorkspace ? [{ view: "requests" as const, label: "依頼", description: "法務依頼の受付・単発完結・案件化", match: ["requests" as const] }] : []),
+      ...(access.legalWorkspace ? [{ view: "matters" as const, label: "案件", description: "継続案件・課題・タスクの管理", match: ["matters" as const] }] : []),
+      ...(access.legalWorkspace ? [{ view: "works-rights" as const, label: "作品・権利", description: "作品・素材・権利ソース・IN/OUT条件", match: ["works-rights" as const, "license-contract" as const] }] : []),
+      ...(access.legalWorkspace ? [{ view: "license-settlements" as const, label: "利用許諾料精算", description: "製造・販売・入金イベントから計算書作成", match: ["license-settlements" as const] }] : []),
       ...(legalOrRequester ? [{ view: "documents" as const, label: access.requesterWorkspace ? "自分の文書" : "文書", description: "文書の作成・確定・PDF", match: ["documents" as const, "templates" as const, "document" as const] }] : []),
       ...(!access.readOnly && legalOrRequester ? [{ view: "drafts" as const, label: access.requesterWorkspace ? "自分の下書き" : "下書き", description: "保存中の下書きを再開", match: ["drafts" as const] }] : [])
     ] },
@@ -77,7 +84,11 @@ function breadcrumbFor(view: View): Array<{ label: string; view?: View }> {
   const home = { label: "ホーム", view: "home" as View };
   const trails: Record<View, Array<{ label: string; view?: View }>> = {
     home: [{ label: "ホーム" }],
+    requests: [home, { label: "依頼" }],
     matters: [home, { label: "案件" }],
+    "works-rights": [home, { label: "作品・権利" }],
+    "license-contract": [home, { label: "作品・権利", view: "works-rights" }, { label: "新規ライセンス契約" }],
+    "license-settlements": [home, { label: "利用許諾料精算" }],
     documents: [home, { label: "文書" }],
     templates: [home, { label: "文書", view: "documents" }, { label: "テンプレート選択" }],
     document: [home, { label: "文書", view: "documents" }, { label: "文書作成" }],
@@ -125,6 +136,7 @@ export function App() {
   const [canEditWorks, setCanEditWorks] = useState(false);
   const [canEditMaterials, setCanEditMaterials] = useState(false);
   const [canEditStaff, setCanEditStaff] = useState(false);
+  const [canAttachConditions, setCanAttachConditions] = useState(false);
   const [canGmailNotify, setCanGmailNotify] = useState(false);
   const [canCloudSign, setCanCloudSign] = useState(false);
   const [canGmailInbound, setCanGmailInbound] = useState(false);
@@ -134,8 +146,12 @@ export function App() {
   const [searchSelection, setSearchSelection] = useState<{ target: "matter" | "document" | "vendor" | "work"; id: string; title: string } | null>(null);
   const [draftSelection, setDraftSelection] = useState<{ issueKey: string; templateType: string } | null>(null);
   const [deepLinkIssue, setDeepLinkIssue] = useState("");
-  // Issue key seeded when 文書を作成 is launched from a matter (LB-F01 導線).
+  // Issue key seeded when 文書を作成 is launched from a matter / request.
   const [newDocIssueKey, setNewDocIssueKey] = useState("");
+  const [licenseRequestIssueKey, setLicenseRequestIssueKey] = useState("");
+  const [licenseWorkId, setLicenseWorkId] = useState<number | undefined>(undefined);
+  const [settlementIssueKey, setSettlementIssueKey] = useState("");
+  const [settlementWorkId, setSettlementWorkId] = useState<number | undefined>(undefined);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -144,6 +160,9 @@ export function App() {
     if (issueKey) setDeepLinkIssue(issueKey);
     if (requestedView === "drafts") setView("drafts");
     else if (requestedView === "documents") setView("documents");
+    else if (requestedView === "requests") setView("requests");
+    else if (requestedView === "works-rights") setView("works-rights");
+    else if (requestedView === "license-settlements") setView("license-settlements");
     else if (requestedView === "home") setView("home");
   }, []);
 
@@ -169,6 +188,7 @@ export function App() {
         setCanEditWorks(capabilities.includes("works"));
         setCanEditMaterials(capabilities.includes("materials"));
         setCanEditStaff(capabilities.includes("staff"));
+        setCanAttachConditions(capabilities.includes("condition-attachments"));
         setCanGmailNotify(capabilities.includes("gmail"));
         setCanCloudSign(capabilities.includes("cloudsign"));
         setCanGmailInbound(capabilities.includes("gmail-inbound"));
@@ -186,6 +206,7 @@ export function App() {
         setCanEditWorks(false);
         setCanEditMaterials(false);
         setCanEditStaff(false);
+        setCanAttachConditions(false);
         setCanGmailNotify(false);
         setCanCloudSign(false);
         setCanGmailInbound(false);
@@ -197,12 +218,13 @@ export function App() {
     fetch("/api/v2/document-templates/compatibility-report").then((response) => response.ok ? response.json() : Promise.reject()).then(setCompatibility).catch(() => undefined);
   }, []);
 
-  async function openDocumentForm(templateKey: string) {
+  async function openDocumentForm(templateKey: string, seededIssueKey = "") {
     const response = await fetch(
       `/api/v2/document-templates/${encodeURIComponent(templateKey)}/form-schema`
     );
     if (!response.ok) return;
     setDraftSelection(null);
+    if (seededIssueKey) setNewDocIssueKey(seededIssueKey);
     setSchema(await response.json());
     setView("document");
   }
@@ -274,12 +296,45 @@ export function App() {
             }}
             onCreateDocument={() => { setNewDocIssueKey(""); setView("templates"); }} />
         )}
+        {view === "requests" && legalWorkspace && <RequestWorkspace
+          canEditMatters={canEditMatters}
+          onLegalResponse={(issueKey) => openDocumentForm("legal_response", issueKey)}
+          onStandaloneDocument={(issueKey) => { setNewDocIssueKey(issueKey); setView("templates"); }}
+          onLicenseContract={(issueKey) => {
+            setLicenseRequestIssueKey(issueKey); setLicenseWorkId(undefined); setView("license-contract");
+          }}
+          onLicenseSettlement={(issueKey) => {
+            setSettlementIssueKey(issueKey); setSettlementWorkId(undefined); setView("license-settlements");
+          }}
+          onOpenMatter={(id, title) => {
+            setSearchSelection({ target: "matter", id: String(id), title }); setView("matters");
+          }}
+        />}
         {view === "matters" && <MatterRegistry templates={templates}
           canEdit={canEditMatters}
           onCreateDocument={(legalWorkspace || requesterWorkspace)
             ? (issueKey) => { setNewDocIssueKey(issueKey ?? ""); setDraftSelection(null); setView("templates"); }
             : undefined}
           selectedId={searchSelection?.target === "matter" ? Number(searchSelection.id) : undefined} />}
+        {view === "works-rights" && legalWorkspace && <WorkRightsWorkspace
+          onStartLicenseContract={(workId) => {
+            setLicenseRequestIssueKey(""); setLicenseWorkId(workId); setView("license-contract");
+          }}
+          onStartSettlement={(workId) => {
+            setSettlementIssueKey(""); setSettlementWorkId(workId); setView("license-settlements");
+          }}
+        />}
+        {view === "license-contract" && legalWorkspace && <LicenseContractWorkspace
+          initialIssueKey={licenseRequestIssueKey}
+          initialWorkId={licenseWorkId}
+          canSaveDraft={!readOnly}
+          onOpenDraft={resumeDraft}
+        />}
+        {view === "license-settlements" && legalWorkspace && <LicenseSettlementWorkspace
+          initialIssueKey={settlementIssueKey}
+          initialWorkId={settlementWorkId}
+          onOpenDraft={resumeDraft}
+        />}
         {view === "drafts" && !readOnly && (
           <DraftWorkspace templates={templates} onResume={resumeDraft} initialQuery={deepLinkIssue} />
         )}
@@ -315,6 +370,7 @@ export function App() {
             canImport={canFinalizeDocuments}
             canGmailNotify={canGmailNotify}
             canCloudSign={canCloudSign}
+            canAttachConditions={canAttachConditions}
             initialQuery={deepLinkIssue}
             selectedId={searchSelection?.target === "document" ? Number(searchSelection.id) : undefined} />
         )}
@@ -427,12 +483,13 @@ function Dashboard({ dashboard, access, onNavigate, onOpenMatter, onCreateDocume
   onCreateDocument: () => void;
 }) {
   const kpiByLabel = new Map(dashboard.kpis.map((k) => [k.label, k.value]));
-  // 業務動線レール（V1準拠）：その日の作業順を①→④で明示する。
+  // 日々の操作入口。RequestはMatter化せず完了でき、作品・権利はMatterとは別の主軸。
   const railCards: Array<{ step: string; label: string; hint: string; view: View; metric?: number; show: boolean }> = [
-    { step: "①", label: "案件を確認", hint: "対応中・停滞を把握", view: "matters", metric: kpiByLabel.get("対応中"), show: access.legalWorkspace },
-    { step: "②", label: "文書を作成", hint: "テンプレートから起票", view: "templates", metric: undefined, show: access.legalWorkspace || access.requesterWorkspace },
-    { step: "③", label: "下書きを再開", hint: "保存中の下書き", view: "drafts", metric: undefined, show: access.legalWorkspace || access.requesterWorkspace },
-    { step: "④", label: "アウト条件を追記", hint: "許諾先ごとの条件", view: "outbound", metric: undefined, show: access.legalWorkspace }
+    { step: "①", label: "依頼を確認", hint: "相談・単発文書・案件化を振り分け", view: "requests", metric: kpiByLabel.get("対応待ち"), show: access.legalWorkspace },
+    { step: "②", label: "案件を確認", hint: "継続案件・期限・タスク", view: "matters", metric: kpiByLabel.get("対応中"), show: access.legalWorkspace },
+    { step: "③", label: "作品・権利", hint: "素材・権利ソース・IN/OUT条件", view: "works-rights", metric: undefined, show: access.legalWorkspace },
+    { step: "④", label: "文書を作成", hint: "テンプレートから起票", view: "templates", metric: undefined, show: access.legalWorkspace || access.requesterWorkspace },
+    { step: "⑤", label: "利用許諾料精算", hint: "製造・販売・入金イベント", view: "license-settlements", metric: undefined, show: access.legalWorkspace }
   ];
   const rail = railCards.filter((card) => card.show);
 
@@ -571,7 +628,8 @@ function DocumentForm({
     return <section className="page"><h1>文書作成</h1><p>フォーム定義を読み込んでいます。</p></section>;
   }
   const visibleFields = schema.fields.filter((field) =>
-    field.type !== "hidden" && !isSpecializedDataField(schema.templateKey, field.name)
+    field.type !== "hidden" && !field.hidden &&
+    !isSpecializedDataField(schema.templateKey, field.name, formData)
   );
   const groups = [...new Set(visibleFields.map((field) => field.group ?? "基本情報"))];
 
@@ -841,7 +899,26 @@ function DocumentForm({
               setNotice(message);
             }} />
           {groups.map((group, index) => <section id={`group-${index}`} key={group}><h2>{group}</h2>
-            <div className="field-grid">{visibleFields.filter((field) => (field.group ?? "基本情報") === group).map((field) => <label key={field.name}><span>{field.label ?? field.name}{field.required && <em>必須</em>}</span>{field.type === "textarea" ? <textarea value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, event.target.value)} placeholder={field.placeholder} /> : field.type === "select" ? <select value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, event.target.value)}><option value="">選択してください</option>{field.options?.map((option) => <option key={option}>{option}</option>)}</select> : field.type === "boolean" ? <input type="checkbox" checked={Boolean(formData[field.name])} onChange={(event) => updateValue(field.name, event.target.checked)} /> : <input value={String(formData[field.name] ?? "")} onChange={(event) => updateValue(field.name, field.type === "number" ? Number(event.target.value) : event.target.value)} type={field.type === "number" ? "number" : field.type === "date" ? "date" : "text"} placeholder={field.placeholder} />}{field.helpText && <small>{field.helpText}</small>}</label>)}</div>
+            <div className="field-grid">{visibleFields.filter((field) => (field.group ?? "基本情報") === group).map((field) => <label key={field.name}><span>{field.label ?? field.name}{field.required && <em>必須</em>}</span>{field.type === "textarea"
+              ? <textarea value={String(formData[field.name] ?? "")}
+                  onChange={(event) => updateValue(field.name, event.target.value)}
+                  placeholder={field.placeholder} readOnly={field.readonly || Boolean(finalizedDocument)} />
+              : field.type === "select"
+                ? <select value={String(formData[field.name] ?? "")}
+                    onChange={(event) => updateValue(field.name, event.target.value)}
+                    disabled={field.readonly || Boolean(finalizedDocument)}>
+                    <option value="">選択してください</option>
+                    {field.options?.map((option) => <option key={option}>{option}</option>)}
+                  </select>
+                : field.type === "boolean"
+                  ? <input type="checkbox" checked={Boolean(formData[field.name])}
+                      onChange={(event) => updateValue(field.name, event.target.checked)}
+                      disabled={field.readonly || Boolean(finalizedDocument)} />
+                  : <input value={String(formData[field.name] ?? "")}
+                      onChange={(event) => updateValue(field.name, field.type === "number" ? Number(event.target.value) : event.target.value)}
+                      type={field.type === "number" ? "number" : field.type === "date" ? "date" : "text"}
+                      placeholder={field.placeholder}
+                      readOnly={field.readonly || Boolean(finalizedDocument)} />}{field.helpText && <small>{field.helpText}</small>}</label>)}</div>
           </section>)}
           {schema.templateKey === "individual_license_terms_v3" && (
             <IndividualLicenseV3Form formData={formData} onChange={updateValue} />
@@ -872,7 +949,11 @@ function formatDraftTime(value: string) {
   }).format(date);
 }
 
-function isSpecializedDataField(templateKey: string, fieldName: string) {
+function isSpecializedDataField(
+  templateKey: string,
+  fieldName: string,
+  formData: DocumentFormData = {}
+) {
   const specializedFields: Record<string, string[]> = {
     purchase_order: ["items", "expenses", "other_fees", "financial_conditions"],
     intl_purchase_order: ["items", "expenses", "other_fees", "financial_conditions"],
@@ -881,6 +962,24 @@ function isSpecializedDataField(templateKey: string, fieldName: string) {
     royalty_statement: ["lines"],
     inspection_certificate: ["delivery_line_items", "other_fees", "expenses", "changeLogs"]
   };
+  if (templateKey === "royalty_statement" && formData.settlement_trigger) {
+    const settlementManaged = new Set([
+      "linked_contract_number","ledgerId","licensor","LICENSOR_SUFFIX",
+      "LICENSOR_IS_CORPORATION","VENDOR_REPRESENTATIVE_SAMA","licensor_t_number",
+      "licensee","originalWork","productName","edition","completionDate","quantity",
+      "sampleQuantity","billableQuantity","msrpStr","calcType","royaltyRatePct",
+      "grossRoyaltyStr","mgAmount","mgAmountStr","mgTopupApplied","mgTopupThisTime",
+      "mgTopupThisTimeStr","agAmount","agAmountStr","agApplied","agConsumedBefore",
+      "agConsumedBeforeStr","agConsumedThisTime","agConsumedThisTimeStr",
+      "agConsumedAfter","agConsumedAfterStr","agRemaining","agRemainingStr",
+      "agProgressPct","agFullyConsumed","mgConsumedBefore","mgConsumedThisTime",
+      "mgConsumedAfter","mgRemaining","mgProgressPct","mgFullyConsumed",
+      "actualRoyalty","actualRoyaltyStr","currency","paymentConditionSummary",
+      "bankName","branchName","accountType","accountNo","accountHolder",
+      "invoiceRegistrationNumber"
+    ]);
+    if (settlementManaged.has(fieldName)) return true;
+  }
   return specializedFields[templateKey]?.includes(fieldName) ?? false;
 }
 

@@ -17,6 +17,8 @@ export interface TemplateField {
   placeholder?: string;
   helpText?: string;
   dbField?: string;
+  readonly?: boolean;
+  hidden?: boolean;
 }
 
 export interface DocumentFormSchema {

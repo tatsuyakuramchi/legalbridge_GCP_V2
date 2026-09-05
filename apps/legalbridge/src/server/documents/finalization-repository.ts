@@ -1,6 +1,7 @@
 import type { PoolClient } from "pg";
 import type { DocumentDraft, DocumentFormData } from "../../types.js";
 import type { DatabasePool } from "../db/pool.js";
+import { persistRoyaltyNormalization } from "./royalty-normalization.js";
 
 export interface FinalizeDocumentInput {
   issueKey: string;
@@ -55,6 +56,16 @@ export class PgDocumentFinalizationRepository implements DocumentFinalizationRep
           input.createdBy ?? null
         ]
       );
+
+      if (input.templateType === "royalty_statement") {
+        const row = inserted.rows[0];
+        await persistRoyaltyNormalization(client, {
+          id: Number(row.id),
+          documentNumber: String(row.document_number),
+          issueKey: String(row.issue_key),
+          createdAt: new Date(row.created_at).toISOString()
+        }, input.formData);
+      }
 
       const removed = await client.query(
         `DELETE FROM document_drafts

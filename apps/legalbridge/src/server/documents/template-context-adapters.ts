@@ -23,7 +23,8 @@ const GENERATED_VARIABLES: Record<string, string[]> = {
   royalty_statement: [
     "designerName", "desiredDeadline", "fxRate", "intakeCurrency", "lineGroups",
     "linesTaxStr", "linesTotalIncTaxStr", "linesTotalPaymentStr",
-    "linesTotalSalesStr", "payerCompany", "royaltyCategory", "statementMode"
+    "linesTotalSalesStr", "payerCompany", "royaltyCategory", "statementMode",
+    "receiptRows", "moneyUnit"
   ],
   inspection_certificate: [
     "changeLogs", "combinedTaxStr", "delivery_line_items", "expenses",
@@ -144,6 +145,7 @@ function buildLicenseTermsContext(source: Data) {
 function buildRoyaltyStatementContext(source: Data) {
   const groups = records(source.lineGroups);
   const lines = records(pick(source, "lines", "royalty_lines"));
+  const receiptRows = records(pick(source, "receiptRows", "rs_receipts"));
   const lineGroups = groups.length ? groups : lines.length ? [{
     contractTitle: pick(source, "contractTitle", "CONTRACT_TITLE"),
     contractNumber: pick(source, "linked_contract_number", "CONTRACT_NO"),
@@ -156,11 +158,18 @@ function buildRoyaltyStatementContext(source: Data) {
   const totalPayment = flatLines.reduce((sum, line) =>
     sum + number(pick(line, "paymentJpy", "payment", "payment_amount", "royalty_amount")), 0);
   const taxRate = number(pick(source, "taxRate", "tax_rate"), 10);
-  const tax = Math.ceil(totalPayment * taxRate / 100);
+  const tax = taxRate > 0 ? Math.ceil(totalPayment * taxRate / 100) : 0;
+  const statementMode = String(valueOr(source.statementMode, lineGroups.length > 1 ? "multi" : "single"));
+  const currency = String(pick(source, "currency", "intakeCurrency", "CURRENCY") || "JPY");
+  const moneyUnit = statementMode === "multi"
+    ? "¥"
+    : ({ JPY: "¥", USD: "$", EUR: "€", CNY: "CNY " } as Record<string,string>)[currency] ?? `${currency} `;
   return {
     ...source,
-    statementMode: valueOr(source.statementMode, lineGroups.length > 1 ? "multi" : "single"),
+    statementMode,
     lineGroups,
+    receiptRows,
+    moneyUnit,
     payerCompany: pick(source, "payerCompany", "licensee", "PARTY_A_NAME"),
     royaltyCategory: pick(source, "royaltyCategory", "CALC_METHOD", "category"),
     designerName: pick(source, "designerName", "licensor", "VENDOR_NAME"),

@@ -36,6 +36,8 @@ export const config = {
     process.env.WORK_WRITES_ENABLED === "true",
   materialWritesEnabled:
     process.env.MATERIAL_WRITES_ENABLED === "true",
+  conditionAttachmentWritesEnabled:
+    process.env.CONDITION_ATTACHMENT_WRITES_ENABLED === "true",
   writeScopes: new Set(
     String(process.env.WRITE_SCOPES ?? "")
       .split(",").map((value) => value.trim()).filter(Boolean)
@@ -70,6 +72,8 @@ export const config = {
   slackDeliveryMode:
     process.env.SLACK_DELIVERY_MODE === "live" ? "live" as const : "disabled" as const,
   slackBotToken: (process.env.SLACK_BOT_TOKEN ?? "").trim(),
+  slackIntakeUploadUrl:
+    (process.env.SLACK_INTAKE_UPLOAD_URL ?? "").trim(),
   gmailDeliveryMode:
     process.env.GMAIL_DELIVERY_MODE === "live" ? "live" as const : "disabled" as const,
   gmailSenderEmail: (process.env.GMAIL_SENDER ?? "").trim(),

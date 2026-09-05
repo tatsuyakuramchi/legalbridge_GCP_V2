@@ -11,6 +11,7 @@ import {
 } from "./documents/draft-repository.js";
 import { createDocumentRouter } from "./documents/routes.js";
 import { createTemplateRegressionRouter } from "./documents/template-regression.js";
+import { createSlackIntakeDesignRouter } from "./integrations/slack-intake-routes.js";
 import {
   MemoryDocumentFinalizationRepository,
   PgDocumentFinalizationRepository,
@@ -60,6 +61,24 @@ import {
   MemoryConditionLineRepository, PgConditionLineRepository, type ConditionLineRepository
 } from "./conditions/repository.js";
 import { createConditionLineRouter } from "./conditions/routes.js";
+import {
+  MemoryDocumentConditionAttachmentRepository,
+  PgDocumentConditionAttachmentRepository,
+  type DocumentConditionAttachmentRepository
+} from "./conditions/attachment-repository.js";
+import { createDocumentConditionAttachmentRouter } from "./conditions/attachment-routes.js";
+import {
+  MemoryRequestRepository, PgRequestRepository, type RequestRepository
+} from "./requests/repository.js";
+import { createRequestRouter } from "./requests/routes.js";
+import {
+  MemoryWorkRightsRepository, PgWorkRightsRepository, type WorkRightsRepository
+} from "./work-rights/repository.js";
+import { createWorkRightsRouter } from "./work-rights/routes.js";
+import {
+  MemoryLicenseSettlementRepository, PgLicenseSettlementRepository, type LicenseSettlementRepository
+} from "./license-settlements/repository.js";
+import { createLicenseSettlementRouter } from "./license-settlements/routes.js";
 import {
   MemoryPendingInspectionRepository, PgPendingInspectionRepository, type PendingInspectionRepository
 } from "./inspections/repository.js";
@@ -237,6 +256,10 @@ export interface AppDependencies {
   matters?: MatterRepository;
   matterWrites?: MatterWriteRepository;
   conditionLines?: ConditionLineRepository;
+  conditionAttachments?: DocumentConditionAttachmentRepository;
+  requests?: RequestRepository;
+  workRights?: WorkRightsRepository;
+  licenseSettlements?: LicenseSettlementRepository;
   pendingInspections?: PendingInspectionRepository;
   vendorWrites?: VendorWriteRepository;
   staff?: StaffRepository;
@@ -269,6 +292,7 @@ export interface AppOptions {
   staffWritesEnabled?: boolean;
   workWritesEnabled?: boolean;
   materialWritesEnabled?: boolean;
+  conditionAttachmentWritesEnabled?: boolean;
   auth?: AuthSettings;
 }
 
@@ -296,6 +320,18 @@ function createDefaultDependencies(): AppDependencies {
     conditionLines: database
       ? new PgConditionLineRepository(database)
       : new MemoryConditionLineRepository(),
+    conditionAttachments: database
+      ? new PgDocumentConditionAttachmentRepository(database)
+      : new MemoryDocumentConditionAttachmentRepository(),
+    requests: database
+      ? new PgRequestRepository(database)
+      : new MemoryRequestRepository(),
+    workRights: database
+      ? new PgWorkRightsRepository(database)
+      : new MemoryWorkRightsRepository(),
+    licenseSettlements: database
+      ? new PgLicenseSettlementRepository(database)
+      : new MemoryLicenseSettlementRepository(),
     pendingInspections: database
       ? new PgPendingInspectionRepository(database)
       : new MemoryPendingInspectionRepository(),
@@ -360,6 +396,7 @@ export function createApp(
     staffWritesEnabled: config.staffWritesEnabled,
     workWritesEnabled: config.workWritesEnabled,
     materialWritesEnabled: config.materialWritesEnabled,
+    conditionAttachmentWritesEnabled: config.conditionAttachmentWritesEnabled,
     auth: config.auth
   }
 ) {
@@ -489,6 +526,12 @@ export function createApp(
     options.materialWritesEnabled === true &&
     options.writeScopes?.has("materials") === true &&
     Boolean(dependencies.materialWrites);
+  const conditionAttachmentWriteEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.conditionAttachmentWritesEnabled === true &&
+    options.writeScopes?.has("condition-attachments") === true &&
+    Boolean(dependencies.conditionAttachments);
   const driveStorageEnabled =
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
@@ -525,7 +568,8 @@ export function createApp(
       database.readOnly !== true;
     const writeModeMismatch =
       (draftWriteEnabled || documentFinalizeEnabled || driveStorageEnabled ||
-        slackApprovalWriteEnabled || contractIntakeWriteEnabled) &&
+        slackApprovalWriteEnabled || contractIntakeWriteEnabled ||
+        conditionAttachmentWriteEnabled) &&
       database.reachable && database.readOnly === true;
     const outboundDatabaseMismatch =
       outboundConditionWriteEnabled &&
@@ -550,6 +594,7 @@ export function createApp(
         ...(staffWriteEnabled ? ["staff"] : []),
         ...(workWriteEnabled ? ["works"] : []),
         ...(materialWriteEnabled ? ["materials"] : []),
+        ...(conditionAttachmentWriteEnabled ? ["condition-attachments"] : []),
         ...(gmailDispatchEnabled ? ["gmail"] : []),
         ...(cloudSignDispatchEnabled ? ["cloudsign"] : []),
         ...(gmailInboundEnabled ? ["gmail-inbound"] : []),
@@ -573,7 +618,8 @@ export function createApp(
         driveStorageEnabled || slackApprovalWriteEnabled ||
         outboundConditionWriteEnabled || contractIntakeWriteEnabled ||
         matterWriteEnabled || vendorWriteEnabled || staffWriteEnabled || workWriteEnabled ||
-        materialWriteEnabled || gmailDispatchEnabled || cloudSignDispatchEnabled ||
+        materialWriteEnabled || conditionAttachmentWriteEnabled ||
+        gmailDispatchEnabled || cloudSignDispatchEnabled ||
         gmailInboundEnabled,
       writeCapabilities: [
         ...(draftWriteEnabled ? ["drafts"] : []),
@@ -588,6 +634,7 @@ export function createApp(
         ...(staffWriteEnabled ? ["staff"] : []),
         ...(workWriteEnabled ? ["works"] : []),
         ...(materialWriteEnabled ? ["materials"] : []),
+        ...(conditionAttachmentWriteEnabled ? ["condition-attachments"] : []),
         ...(gmailDispatchEnabled ? ["gmail"] : []),
         ...(cloudSignDispatchEnabled ? ["cloudsign"] : []),
         ...(gmailInboundEnabled ? ["gmail-inbound"] : []),
@@ -642,7 +689,8 @@ export function createApp(
       "/outbound-conditions/validate",
       "/contract-intakes/validate",
       "/contract-intakes/preflight",
-      "/contract-intakes/outbound-conditions/validate"
+      "/contract-intakes/outbound-conditions/validate",
+      "/license-settlements/preview"
     ]);
     if (safeMethods.has(request.method)) return next();
     if (request.method === "POST" && safePostPaths.has(request.path)) return next();
@@ -702,6 +750,13 @@ export function createApp(
       (request.method === "POST" && /^\/matters\/\d+\/tasks$/.test(request.path)) ||
       (request.method === "PATCH" && /^\/matters\/\d+\/tasks\/\d+$/.test(request.path));
     if (matterWriteEnabled && isMatterWrite) return next();
+    const isRequestMatterLink =
+      request.method === "POST" &&
+      /^\/requests\/\d+\/link-matter$/.test(request.path);
+    if (matterWriteEnabled && isRequestMatterLink) return next();
+    const isSettlementDraft =
+      request.method === "POST" && request.path === "/license-settlements/draft";
+    if (draftWriteEnabled && isSettlementDraft) return next();
     const isVendorWrite =
       (request.method === "POST" && (request.path === "/vendors" || request.path === "/vendors/import")) ||
       (request.method === "PATCH" && /^\/vendors\/\d+$/.test(request.path));
@@ -718,6 +773,10 @@ export function createApp(
       (request.method === "POST" && request.path === "/materials") ||
       (request.method === "PATCH" && /^\/materials\/\d+$/.test(request.path));
     if (materialWriteEnabled && isMaterialWrite) return next();
+    const isConditionAttachmentWrite =
+      request.method === "POST" &&
+      /^\/documents\/\d+\/condition-attachments$/.test(request.path);
+    if (conditionAttachmentWriteEnabled && isConditionAttachmentWrite) return next();
 
     return response.status(403).json({
       error: options.accessMode === "readonly"
@@ -760,7 +819,24 @@ export function createApp(
     dependencies.matterWrites,
     matterWriteEnabled
   ));
+  app.use("/api/v2", createRequestRouter(
+    dependencies.requests ?? new MemoryRequestRepository(),
+    matterWriteEnabled
+  ));
+  app.use("/api/v2", createWorkRightsRouter(
+    dependencies.workRights ?? new MemoryWorkRightsRepository()
+  ));
+  app.use("/api/v2", createLicenseSettlementRouter(
+    dependencies.licenseSettlements ?? new MemoryLicenseSettlementRepository(),
+    dependencies.templates,
+    dependencies.drafts,
+    draftWriteEnabled
+  ));
   app.use("/api/v2", createConditionLineRouter(dependencies.conditionLines));
+  app.use("/api/v2", createDocumentConditionAttachmentRouter(
+    dependencies.conditionAttachments,
+    conditionAttachmentWriteEnabled
+  ));
   app.use("/api/v2", createPendingInspectionRouter(dependencies.pendingInspections));
   app.use("/api/v2", createVendorWriteRouter(dependencies.vendorWrites, vendorWriteEnabled));
   app.use("/api/v2", createStaffRouter(dependencies.staff, staffWriteEnabled));
@@ -812,6 +888,10 @@ export function createApp(
     { adapter: slackDeliveryAdapter, enabled: slackDispatchEnabled }
   ));
   app.use("/api/v2", createTemplateRegressionRouter(dependencies.templates));
+  app.use("/api/v2", createSlackIntakeDesignRouter(
+    dependencies.templates,
+    { uploadUrl: config.slackIntakeUploadUrl }
+  ));
   app.use("/api/v2", createOperationalDiagnosticsRouter(
     getPool(),
     dependencies.templates,
