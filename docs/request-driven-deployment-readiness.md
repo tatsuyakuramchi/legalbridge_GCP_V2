@@ -55,7 +55,7 @@ Existing domain APIs and repositories should be reused; this is primarily an int
 
 ### B. Restore normalized region/language selection in V2
 
-Status: **IMPLEMENTED IN MAIN / DB preflight passed; build + write-test smoke pending**.
+Status: **IMPLEMENTED IN MAIN / DB preflight passed; normalized read smoke passed; outbound write smoke pending**.
 
 Production data model and legacy implementation already support normalized 1:N values:
 
@@ -316,3 +316,16 @@ The first write-test API smoke exposed two repository serialization defects:
 - PostgreSQL date values were rendered from JavaScript `Date` strings, producing values such as `Mon May 13`.
 
 Main now reads scope child rows explicitly and groups them by `condition_line_id`, with legacy text only as fallback. Work-rights contract and condition dates are serialized as Asia/Tokyo calendar dates. Regression tests cover both behaviors. Re-deploy and repeat the read smoke before enabling outbound-condition writes.
+
+
+### Normalized read smoke passed
+
+Normalized scope read smoke passed on Cloud Run revision `legalbridge-v2-write-test-00114-ntx` through the authenticated Cloud Run proxy:
+
+- work `1000000043` returned canonical `WORLD / 全世界` region child rows for IN conditions 600, 601, and 602;
+- the same conditions returned canonical `ALL / 全言語` language child rows;
+- condition and contract dates were serialized as `YYYY-MM-DD` Tokyo calendar dates;
+- `/health` remained healthy against production `legalbridge`;
+- outbound-condition writes remained disabled during this read smoke.
+
+Next gate: enable only the guarded `outbound-conditions` capability and perform one reversible parent-IN/child-scope round-trip smoke while all external integrations remain disabled.
