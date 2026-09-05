@@ -410,3 +410,15 @@ Request context resolution now also follows:
 `Request -> Matter -> Documents -> Contracts / Works / Vendors`
 
 and includes matter-linked document and contract deadlines. The request-detail related-document KPI uses the resolved detail context rather than only direct request-key document count. Re-deploy and repeat request 512 smoke before browser sign-off.
+
+
+### Request detail production-data smoke passed
+
+Production-data request detail smoke passed on:
+
+- request `512 / LEGAL-330`: primary Matter `MTR-2026-00264`, no linked documents, matching the Matter detail where `documentCount = 0`;
+- request `511 / LEGAL-329`: primary Matter `MTR-2026-00263` plus three linked documents (`ATT-2026-00070` through `ATT-2026-00072`) were resolved correctly through the enriched Request detail API.
+
+For request 511, `contracts`, `works`, and `vendors` remain empty because the resolved documents are reference/counterparty-draft attachment records without structured contract/work/vendor foreign-key relations. The UI intentionally does not infer master relationships from titles or free-form snapshots.
+
+Request-detail related-context API is therefore considered production-schema smoke passed. Browser rendering/navigation smoke remains required before marking Request Driven UI complete.
