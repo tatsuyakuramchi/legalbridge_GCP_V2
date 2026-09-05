@@ -118,39 +118,44 @@ implements DocumentConditionAttachmentRepository {
       await client.query("SELECT pg_advisory_xact_lock(922102, $1)", [documentId]);
 
       const document = await lockDocument(client, documentId);
-      await assertWork(client, input.workId);
-      if (input.sourceWorkId) await assertWork(client, input.sourceWorkId);
-      if (input.sourceMaterialId) {
-        await assertMaterial(client, input.sourceMaterialId, input.workId);
+      const effectiveInput: ConditionAttachmentInput = {
+        ...input,
+        contractId: effectiveInput.contractId ?? nullableInt(document.contract_id) ?? undefined
+      };
+
+      await assertWork(client, effectiveInput.workId);
+      if (effectiveInput.sourceWorkId) await assertWork(client, effectiveInput.sourceWorkId);
+      if (effectiveInput.sourceMaterialId) {
+        await assertMaterial(client, effectiveInput.sourceMaterialId, effectiveInput.workId);
       }
-      if (input.counterpartyVendorId) await assertVendor(client, input.counterpartyVendorId);
-      if (input.contractId) await assertContract(client, input.contractId);
+      if (effectiveInput.counterpartyVendorId) await assertVendor(client, effectiveInput.counterpartyVendorId);
+      if (effectiveInput.contractId) await assertContract(client, effectiveInput.contractId);
 
       const warnings: string[] = [];
-      if (input.transactionKind === "license" && input.flowDirection === "out") {
-        if (input.parentLicenseConditionId) {
+      if (effectiveInput.transactionKind === "license" && effectiveInput.flowDirection === "out") {
+        if (effectiveInput.parentLicenseConditionId) {
           await assertParentInboundCondition(
-            client, input.parentLicenseConditionId, input.workId
+            client, effectiveInput.parentLicenseConditionId, effectiveInput.workId
           );
         } else {
           warnings.push("OUT利用許諾条件に根拠IN条件が未設定です。後から設定できますが、利用許諾料精算前に紐付けてください。");
         }
       }
 
-      await linkDocumentContext(client, document, input);
+      await linkDocumentContext(client, document, effectiveInput);
 
       const materialRightsSourceId =
-        input.transactionKind === "license" &&
-        input.flowDirection === "in" &&
-        input.sourceMaterialId
-          ? await ensureMaterialRightsSource(client, documentId, input)
+        effectiveInput.transactionKind === "license" &&
+        effectiveInput.flowDirection === "in" &&
+        effectiveInput.sourceMaterialId
+          ? await ensureMaterialRightsSource(client, documentId, effectiveInput)
           : null;
 
       const conditionId = input.mode === "link_existing"
-        ? await linkExistingCondition(client, documentId, input, materialRightsSourceId)
-        : await createCondition(client, documentId, input, materialRightsSourceId);
+        ? await linkExistingCondition(client, documentId, effectiveInput, materialRightsSourceId)
+        : await createCondition(client, documentId, effectiveInput, materialRightsSourceId);
 
-      await replaceRegionsAndLanguages(client, conditionId, input);
+      await replaceRegionsAndLanguages(client, conditionId, effectiveInput);
       await client.query("COMMIT");
 
       const condition = await findAttachedCondition(this.database, documentId, conditionId);
@@ -238,7 +243,7 @@ async function linkDocumentContext(
       Number(document.id),
       input.contractId ?? null,
       input.workId,
-      currentMaterialId ?? input.sourceMaterialId ?? null,
+      currentMaterialId ?? effectiveInput.sourceMaterialId ?? null,
       input.flowDirection
     ]
   );
@@ -277,7 +282,7 @@ async function ensureMaterialRightsSource(
   documentId: number,
   input: ConditionAttachmentInput
 ) {
-  const materialId=input.sourceMaterialId!;
+  const materialId=effectiveInput.sourceMaterialId!;
   const existing=await client.query(
     `SELECT id FROM material_rights_sources
       WHERE material_id=$1
@@ -285,7 +290,7 @@ async function ensureMaterialRightsSource(
         AND source_contract_id IS NOT DISTINCT FROM $3
       ORDER BY is_primary DESC,id
       LIMIT 1`,
-    [materialId,documentId,input.contractId ?? null]
+    [materialId,documentId,effectiveInput.contractId ?? null]
   );
   if (existing.rows[0]) return Number(existing.rows[0].id);
 
@@ -301,8 +306,8 @@ async function ensureMaterialRightsSource(
      ) VALUES($1,'legacy_document',$2,$3,$4,$5,'license_in',$6,$7::date,$8::date)
      RETURNING id`,
     [
-      materialId,input.sourceWorkId ?? input.workId,
-      input.counterpartyVendorId ?? null,documentId,input.contractId ?? null,
+      materialId,input.sourceWorkId ?? effectiveInput.workId,
+      effectiveInput.counterpartyVendorId ?? null,documentId,effectiveInput.contractId ?? null,
       !hasPrimary.rows[0],input.termStart ?? null,input.termEnd ?? null
     ]
   );
@@ -339,21 +344,21 @@ async function createCondition(
        $30,$31,$32
      ) RETURNING id`,
     [
-      documentId,lineNo,input.workId,
-      input.flowDirection==="in" ? "payable" : "receivable",
+      documentId,lineNo,effectiveInput.workId,
+      effectiveInput.flowDirection==="in" ? "payable" : "receivable",
       input.paymentScheme ?? "royalty",
-      input.transactionKind==="license" ? "license_only" : null,
+      effectiveInput.transactionKind==="license" ? "license_only" : null,
       input.currency ?? "JPY",input.notes ?? null,input.amountExTax ?? null,
       input.termStart ?? null,input.termEnd ?? null,input.ratePct ?? null,
-      input.mgAmount ?? null,input.agAmount ?? null,input.flowDirection==="in",
-      input.flowDirection,input.transactionKind,input.sourceWorkId ?? null,
-      input.sourceMaterialId ?? null,input.counterpartyVendorId ?? null,
+      input.mgAmount ?? null,input.agAmount ?? null,effectiveInput.flowDirection==="in",
+      effectiveInput.flowDirection,effectiveInput.transactionKind,input.sourceWorkId ?? null,
+      effectiveInput.sourceMaterialId ?? null,effectiveInput.counterpartyVendorId ?? null,
       input.conditionName ?? "後付け条件",input.calcType ?? null,
       input.territory ?? null,(input.languages ?? []).join(", ") || null,
       materialRightsSourceId,input.exclusivity ?? null,
       input.sublicenseAllowed ?? null,input.royaltyBase ?? null,
-      input.deductibleCosts ?? null,input.parentLicenseConditionId ?? null,
-      input.transactionKind,input.transactionKind==="license" ? "rights" : "payment"
+      input.deductibleCosts ?? null,effectiveInput.parentLicenseConditionId ?? null,
+      effectiveInput.transactionKind,effectiveInput.transactionKind==="license" ? "rights" : "payment"
     ]
   );
   return Number(result.rows[0].id);
@@ -369,7 +374,7 @@ async function linkExistingCondition(
     throw new ConditionAttachmentError("CONDITION_ID_REQUIRED","既存条件IDが必要です");
   }
   const row=await client.query(
-    `SELECT id,document_id,work_id,source_work_id,source_material_id,
+    `SELECT id,document_id,capability_id,work_id,source_work_id,source_material_id,
             parent_license_condition_id
        FROM condition_lines WHERE id=$1 FOR UPDATE`,
     [input.existingConditionLineId]
@@ -379,7 +384,10 @@ async function linkExistingCondition(
   if (c.document_id !== null && Number(c.document_id)!==documentId) {
     throw new ConditionAttachmentError("CONDITION_DOCUMENT_CONFLICT","既存条件は別文書に紐付いています");
   }
-  if (c.work_id !== null && Number(c.work_id)!==input.workId) {
+  if (c.capability_id !== null && Number(c.capability_id)!==documentId) {
+    throw new ConditionAttachmentError("CONDITION_CAPABILITY_CONFLICT","既存条件は別の元データに紐付いています");
+  }
+  if (c.work_id !== null && Number(c.work_id)!==effectiveInput.workId) {
     throw new ConditionAttachmentError("CONDITION_WORK_CONFLICT","既存条件は別作品に紐付いています");
   }
   const lineNo=await nextLineNo(client,documentId);
@@ -397,11 +405,11 @@ async function linkExistingCondition(
        updated_at=now()
      WHERE id=$1`,
     [
-      input.existingConditionLineId,documentId,lineNo,input.workId,
-      input.sourceWorkId ?? null,input.sourceMaterialId ?? null,
-      materialRightsSourceId,input.parentLicenseConditionId ?? null,
-      input.counterpartyVendorId ?? null,input.flowDirection,
-      input.flowDirection==="in"
+      input.existingConditionLineId,documentId,lineNo,effectiveInput.workId,
+      input.sourceWorkId ?? null,effectiveInput.sourceMaterialId ?? null,
+      materialRightsSourceId,effectiveInput.parentLicenseConditionId ?? null,
+      effectiveInput.counterpartyVendorId ?? null,effectiveInput.flowDirection,
+      effectiveInput.flowDirection==="in"
     ]
   );
   return input.existingConditionLineId;
@@ -506,13 +514,13 @@ implements DocumentConditionAttachmentRepository {
       ? input.existingConditionLineId : ++this.seq;
     const condition:AttachedCondition={
       id,lineNo:context.conditions.length+1,conditionName:input.conditionName ?? "後付け条件",
-      workId:input.workId,workTitle:null,sourceWorkId:input.sourceWorkId ?? null,
-      sourceWorkTitle:null,sourceMaterialId:input.sourceMaterialId ?? null,
-      sourceMaterialName:null,flowDirection:input.flowDirection,
-      direction:input.flowDirection==="in"?"payable":"receivable",
-      transactionKind:input.transactionKind,paymentScheme:input.paymentScheme ?? null,
+      workId:effectiveInput.workId,workTitle:null,sourceWorkId:input.sourceWorkId ?? null,
+      sourceWorkTitle:null,sourceMaterialId:effectiveInput.sourceMaterialId ?? null,
+      sourceMaterialName:null,flowDirection:effectiveInput.flowDirection,
+      direction:effectiveInput.flowDirection==="in"?"payable":"receivable",
+      transactionKind:effectiveInput.transactionKind,paymentScheme:input.paymentScheme ?? null,
       ratePct:input.ratePct ?? null,currency:input.currency ?? "JPY",
-      parentLicenseConditionId:input.parentLicenseConditionId ?? null
+      parentLicenseConditionId:effectiveInput.parentLicenseConditionId ?? null
     };
     context.conditions.push(condition);
     return {condition,createdMaterialRightsSourceId:null,warnings:[]};
