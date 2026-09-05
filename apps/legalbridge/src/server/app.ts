@@ -674,6 +674,7 @@ export function createApp(
         ...(slackDispatchEnabled ? ["slack-dispatch"] : [])
       ],
       integrations: config.integrationMode,
+      backlogMode: config.backlogMode,
       authMode: (options.auth ?? config.auth).mode,
       slackNotificationHistory: Boolean(dependencies.slackHistory),
       slackNotificationApprovals: Boolean(dependencies.slackApprovals),
