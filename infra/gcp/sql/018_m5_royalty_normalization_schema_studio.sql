@@ -207,6 +207,13 @@ VALUES
     '旧ロイヤリティ支払とpaymentsの対応未確定',
     'royalty_paymentsは削除せず、支払事実を確認してpaymentsへリンクする。',
     true
+  ),
+  (
+    'ROYALTY_MANUFACTURING_EVENT_AMBIGUOUS','document','M5','warning',
+    'royalty_manufacturing_event_ambiguous',1,'manual_review',
+    '同一Backlog課題に複数の製造計算書',
+    'manufacturing_eventsの既存一意キーはbacklog_issue_keyのため、複数計算書を同一製造イベントへ安全に統合できるか確認が必要。',
+    true
   )
 ON CONFLICT (rule_code) DO UPDATE SET
   title=EXCLUDED.title,
