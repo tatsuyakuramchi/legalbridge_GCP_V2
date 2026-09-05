@@ -379,3 +379,8 @@ Browser-smoke preparation found and fixed two client-side legacy-scope issues:
 - LicenseContractWorkspace no longer treats any legacy text containing the character `全` as universal. Only explicit `全世界/world` (region) and `全言語/all language` (language) are universal.
 
 Candidate `work 1000000039 / condition 341` provides WORLD region with legacy Japanese-only language and can be used to verify client-side language overreach with an English OUT selection.
+
+
+### Legacy language UI smoke passed
+
+Browser smoke confirmed client-side language overreach detection on work `1000000039` / source IN condition `341`: the legacy Japanese-only IN language rejected an English OUT selection and displayed the expected scope NG before save.
