@@ -403,7 +403,6 @@ async function replaceRoyaltyStatementLines(
     royalty_amount: fallback.actualRoyalty,
     basisNote: fallback.notes
   }];
-  await client.query("DELETE FROM royalty_statement_lines WHERE royalty_statement_id = $1", [statementId]);
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
     const lineCurrency = stringValue(pick(line, "currency", "intake_currency")) || fallback.currency;
@@ -422,7 +421,32 @@ async function replaceRoyaltyStatementLines(
        ) VALUES (
          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
          $21,$22,$23,$24,$25,$26::jsonb
-       )`,
+       )
+       ON CONFLICT (royalty_statement_id, line_no) DO UPDATE SET
+         document_id=EXCLUDED.document_id,
+         document_number=EXCLUDED.document_number,
+         backlog_issue_key=EXCLUDED.backlog_issue_key,
+         group_no=EXCLUDED.group_no,
+         contract_id=EXCLUDED.contract_id,
+         contract_title=EXCLUDED.contract_title,
+         contract_number=EXCLUDED.contract_number,
+         calc_method=EXCLUDED.calc_method,
+         product_name=EXCLUDED.product_name,
+         intake_currency=EXCLUDED.intake_currency,
+         fx_rate=EXCLUDED.fx_rate,
+         sales_input=EXCLUDED.sales_input,
+         unit_price=EXCLUDED.unit_price,
+         quantity=EXCLUDED.quantity,
+         sample_quantity=EXCLUDED.sample_quantity,
+         sales_jpy=EXCLUDED.sales_jpy,
+         rate_pct=EXCLUDED.rate_pct,
+         payment_jpy=EXCLUDED.payment_jpy,
+         basis_note=EXCLUDED.basis_note,
+         source_condition_line_id=EXCLUDED.source_condition_line_id,
+         source_out_condition_line_id=EXCLUDED.source_out_condition_line_id,
+         gross_event_amount=EXCLUDED.gross_event_amount,
+         deductions=EXCLUDED.deductions,
+         source_json=EXCLUDED.source_json`,
       [
         statementId, document.id, document.documentNumber, document.issueKey, index + 1,
         numberValue(pick(line, "group_no")) ?? 1, fallback.contractId,
