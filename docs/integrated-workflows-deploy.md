@@ -11,7 +11,23 @@ Run in Cloud SQL Studio as an administrative DB user:
 
 Every boolean in the final verification query required by this slice should be `true`.
 
-## 2. Build gate
+## 2. Royalty canonical data migration
+
+Before deploying the application revision that atomically writes royalty canonical data, run in Cloud SQL Studio:
+
+1. `017_m5_royalty_normalization_preflight_studio.sql` — READ ONLY
+2. Review unresolved condition references and duplicate manufacturing-event sources.
+3. `018_m5_royalty_normalization_schema_studio.sql` — additive schema/link columns only
+4. `019_m5_royalty_normalization_backfill_studio.sql` — idempotent historical backfill
+5. `020_m5_royalty_normalization_runtime_grants_studio.sql`
+6. `021_m5_royalty_normalization_verify_studio.sql`
+7. `016_upgrade_royalty_statement_v9_studio.sql` if royalty_statement v9 is not already current.
+
+Do not deploy the new `royalty_statement` finalization writer before steps 3 and 5 are complete. It intentionally rolls back document finalization when canonical royalty persistence fails.
+
+The backfill does not fabricate `payments` rows. Legacy `royalty_payments` are linked only to already-existing payments when the relation is sufficiently clear; unmatched rows remain visible as data-quality issues.
+
+## 3. Build gate
 
 The existing `infra/gcp/cloudbuild-write-test.yaml` runs:
 
@@ -24,7 +40,7 @@ npm run build
 
 before image build and deployment. Do not bypass this step.
 
-## 3. Minimum production write-test capability
+## 4. Minimum production write-test capability
 
 The new workflows require:
 
@@ -44,7 +60,7 @@ drafts,documents,pdf[,drive][,slack-approvals][,outbound-conditions],contract-in
 
 Only include optional entries when the matching guarded feature is enabled.
 
-## 4. Safe core command example
+## 5. Safe core command example
 
 This example keeps external live send adapters disabled and enables the commonly used production write-test capabilities. Adjust only to preserve already-enabled capabilities.
 
@@ -57,7 +73,7 @@ gcloud builds submit \
 
 If Drive / Slack / Gmail / CloudSign are already enabled in the current revision, carry their current substitutions into the new build rather than using this minimal example.
 
-## 5. Post-deploy smoke tests
+## 6. Post-deploy smoke tests
 
 ```bash
 SERVICE_URL=$(gcloud run services describe legalbridge-v2-write-test \
@@ -78,7 +94,7 @@ Expected:
 - Request, Work/Rights and settlement condition APIs return JSON, not SPA HTML.
 - No external message is sent by these smoke tests.
 
-## 6. UI verification
+## 7. UI verification
 
 Proxy:
 
@@ -110,7 +126,7 @@ Verify:
    - manufacturing event example
    - create royalty_statement draft
 
-## 7. Rollback
+## 8. Rollback
 
 Do not delete DB rows automatically.
 
