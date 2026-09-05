@@ -99,11 +99,29 @@ export function OutboundConditionWorkspace() {
     const issues: string[] = [];
     const sourceRegions = (sourceCondition.regions ?? []).filter((item) => !item.code.startsWith("LEGACY-"));
     const sourceLanguages = (sourceCondition.languages ?? []).filter((item) => !item.code.startsWith("LEGACY-"));
-    if (sourceRegions.length && form.regions.length && !scopeContains(sourceRegions, form.regions, "WORLD")) {
-      issues.push("対象地域が根拠IN条件の範囲を超えています");
+    if (form.regions.length) {
+      if (sourceRegions.length) {
+        if (!scopeContains(sourceRegions, form.regions, "WORLD")) {
+          issues.push("対象地域が根拠IN条件の範囲を超えています");
+        }
+      } else if (
+        sourceCondition.territory &&
+        !legacyScopeIncludes(sourceCondition.territory, displayScope(form.regions), "region")
+      ) {
+        issues.push("対象地域が根拠IN条件の範囲を超えています");
+      }
     }
-    if (sourceLanguages.length && form.languages.length && !scopeContains(sourceLanguages, form.languages, "ALL")) {
-      issues.push("対象言語が根拠IN条件の範囲を超えています");
+    if (form.languages.length) {
+      if (sourceLanguages.length) {
+        if (!scopeContains(sourceLanguages, form.languages, "ALL")) {
+          issues.push("対象言語が根拠IN条件の範囲を超えています");
+        }
+      } else if (
+        sourceCondition.language &&
+        !legacyScopeIncludes(sourceCondition.language, displayScope(form.languages), "language")
+      ) {
+        issues.push("対象言語が根拠IN条件の範囲を超えています");
+      }
     }
     return issues;
   }, [license, sourceCondition, form.regions, form.languages]);
@@ -269,4 +287,18 @@ export function OutboundConditionWorkspace() {
     </div>
     {preview && <section className="panel outbound-preview"><h2>登録予定内容</h2><dl><dt>作品</dt><dd>{String(preview.workLabel)}</dd><dt>相手方</dt><dd>{String(preview.counterpartyLabel)}</dd><dt>取引</dt><dd>{preview.transactionKind === "license" ? "ライセンスアウト" : "プロダクトアウト"}</dd><dt>方向</dt><dd>受取</dd><dt>地域・言語</dt><dd>{String(preview.territory)}／{Array.isArray(preview.languages) ? (preview.languages as ScopeOption[]).map((item) => item.name).join("、") : ""}</dd><dt>通貨</dt><dd>{String(preview.currency)}</dd></dl></section>}
   </section>;
+}
+
+
+function legacyScopeIncludes(
+  source: string,
+  target: string,
+  kind: "region" | "language"
+) {
+  const s = source.trim().toLowerCase();
+  const t = target.trim().toLowerCase();
+  if (!s || !t) return false;
+  if (kind === "region" && (s.includes("全世界") || s.includes("world"))) return true;
+  if (kind === "language" && (s.includes("全言語") || s.includes("all language"))) return true;
+  return s.includes(t) || t.includes(s);
 }
