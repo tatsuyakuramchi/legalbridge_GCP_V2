@@ -577,18 +577,15 @@ DO UPDATE SET
   gross_event_amount=EXCLUDED.gross_event_amount,deductions=EXCLUDED.deductions,
   source_json=EXCLUDED.source_json;
 
--- H. Link legacy royalty_payments only to payments that already clearly exist.
-WITH matches AS (
+-- H. Link legacy royalty_payments only when the relation is bijectively unique.
+-- A candidate is safe only when:
+--   1) the royalty_payment has exactly one payment candidate, and
+--   2) that payment is a candidate for exactly one royalty_payment.
+-- This intentionally leaves ambiguous historical rows unresolved.
+WITH candidate_pairs AS (
   SELECT
     rp.id AS royalty_payment_id,
-    p.id AS payment_id,
-    ROW_NUMBER() OVER (
-      PARTITION BY rp.id
-      ORDER BY
-        CASE WHEN NULLIF(p.backlog_issue_key,'')=NULLIF(rp.backlog_issue_key,'') THEN 0 ELSE 1 END,
-        CASE WHEN p.due_date IS NOT DISTINCT FROM rp.payment_due_date THEN 0 ELSE 1 END,
-        p.id
-    ) AS rn
+    p.id AS payment_id
   FROM royalty_payments rp
   JOIN payments p
     ON (
@@ -603,12 +600,30 @@ WITH matches AS (
         COALESCE(p.payment_kind,'') ILIKE '%royalty%'
         OR COALESCE(p.payment_kind,'') ILIKE '%license%'
        )
+),
+rp_unique AS (
+  SELECT royalty_payment_id, MIN(payment_id) AS payment_id
+  FROM candidate_pairs
+  GROUP BY royalty_payment_id
+  HAVING COUNT(*) = 1
+),
+payment_unique AS (
+  SELECT payment_id, MIN(royalty_payment_id) AS royalty_payment_id
+  FROM candidate_pairs
+  GROUP BY payment_id
+  HAVING COUNT(*) = 1
+),
+safe_matches AS (
+  SELECT r.royalty_payment_id, r.payment_id
+  FROM rp_unique r
+  JOIN payment_unique p
+    ON p.payment_id=r.payment_id
+   AND p.royalty_payment_id=r.royalty_payment_id
 )
 UPDATE royalty_payments rp
 SET payment_id=m.payment_id
-FROM matches m
+FROM safe_matches m
 WHERE m.royalty_payment_id=rp.id
-  AND m.rn=1
   AND rp.payment_id IS NULL;
 
 UPDATE payments p
