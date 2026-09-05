@@ -193,7 +193,7 @@ function mapRow(row: Record<string, any>): LegalRequestRow {
     contractType: row.contract_type ?? null,
     counterparty: row.counterparty ?? null,
     slackUserId: row.slack_user_id ?? null,
-    deadline: row.deadline ? new Date(row.deadline).toISOString() : null,
+    deadline: row.deadline ? formatTokyoDate(row.deadline) : null,
     notes: row.notes ?? null,
     createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
     matterCount,
@@ -201,6 +201,15 @@ function mapRow(row: Record<string, any>): LegalRequestRow {
     legalResponseCount,
     disposition
   };
+}
+
+function formatTokyoDate(value: Date | string) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(new Date(value));
 }
 
 export class MemoryRequestRepository implements RequestRepository {
