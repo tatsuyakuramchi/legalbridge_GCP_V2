@@ -126,8 +126,7 @@ normalized AS (
     COALESCE(
       pg_temp.lb_int(f->>'source_condition_line_id'),
       pg_temp.lb_int(f->>'rsConditionLineId'),
-      pg_temp.lb_int(f->>'condition_line_id'),
-      pg_temp.lb_int(f->>'capability_financial_condition_id')
+      pg_temp.lb_int(f->>'condition_line_id')
     ) AS candidate_condition_line_id,
     pg_temp.lb_int(f->>'source_out_condition_line_id') AS candidate_out_condition_line_id,
     COALESCE(
