@@ -1,3 +1,5 @@
+> UI / cutover freeze: see `docs/request-driven-deployment-readiness.md` before running any production deployment.
+
 # Integrated workflows deployment runbook
 
 ## 1. Database privilege preflight
