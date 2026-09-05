@@ -136,6 +136,7 @@ export function App() {
   const [canEditWorks, setCanEditWorks] = useState(false);
   const [canEditMaterials, setCanEditMaterials] = useState(false);
   const [canEditStaff, setCanEditStaff] = useState(false);
+  const [canAttachConditions, setCanAttachConditions] = useState(false);
   const [canGmailNotify, setCanGmailNotify] = useState(false);
   const [canCloudSign, setCanCloudSign] = useState(false);
   const [canGmailInbound, setCanGmailInbound] = useState(false);
@@ -187,6 +188,7 @@ export function App() {
         setCanEditWorks(capabilities.includes("works"));
         setCanEditMaterials(capabilities.includes("materials"));
         setCanEditStaff(capabilities.includes("staff"));
+        setCanAttachConditions(capabilities.includes("condition-attachments"));
         setCanGmailNotify(capabilities.includes("gmail"));
         setCanCloudSign(capabilities.includes("cloudsign"));
         setCanGmailInbound(capabilities.includes("gmail-inbound"));
@@ -204,6 +206,7 @@ export function App() {
         setCanEditWorks(false);
         setCanEditMaterials(false);
         setCanEditStaff(false);
+        setCanAttachConditions(false);
         setCanGmailNotify(false);
         setCanCloudSign(false);
         setCanGmailInbound(false);
@@ -367,6 +370,7 @@ export function App() {
             canImport={canFinalizeDocuments}
             canGmailNotify={canGmailNotify}
             canCloudSign={canCloudSign}
+            canAttachConditions={canAttachConditions}
             initialQuery={deepLinkIssue}
             selectedId={searchSelection?.target === "document" ? Number(searchSelection.id) : undefined} />
         )}
