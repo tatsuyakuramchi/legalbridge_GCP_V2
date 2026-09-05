@@ -3,6 +3,7 @@ import type { DatabasePool } from "../db/pool.js";
 export interface RegisteredDocument {
   id: number;
   documentNumber: string | null;
+  previousDocumentNumber?: string | null;
   issueKey: string;
   templateType: string;
   templateVersionId: number | null;
@@ -26,18 +27,26 @@ export class PgDocumentRegistryRepository implements DocumentRegistryRepository 
   async list(query: string, templateType?: string, limit = 100) {
     const keyword = `%${query.trim()}%`;
     const result = await this.database.query(
-      `SELECT id, document_number, issue_key, template_type, template_version_id,
-              form_data, drive_link, created_at, created_by
-         FROM documents
+      `SELECT d.id, d.document_number, h.previous_document_number, d.issue_key, d.template_type, d.template_version_id,
+              d.form_data, d.drive_link, d.created_at, d.created_by
+         FROM documents d
+         LEFT JOIN LATERAL (
+           SELECT previous_document_number
+             FROM document_number_history
+            WHERE document_id = d.id
+            ORDER BY changed_at DESC, id DESC
+            LIMIT 1
+         ) h ON true
         WHERE ($1 = '%%'
-          OR COALESCE(document_number, '') ILIKE $1
-          OR issue_key ILIKE $1
-          OR template_type ILIKE $1
-          OR COALESCE(form_data->>'PROJECT_TITLE', form_data->>'CONTRACT_TITLE',
-                      form_data->>'基本契約名', form_data->>'VENDOR_NAME',
-                      form_data->>'Licensor_氏名会社名', '') ILIKE $1)
-          AND ($2 = '' OR template_type = $2)
-        ORDER BY created_at DESC NULLS LAST, id DESC
+          OR COALESCE(d.document_number, '') ILIKE $1
+          OR d.issue_key ILIKE $1
+          OR d.template_type ILIKE $1
+          OR COALESCE(d.form_data->>'PROJECT_TITLE', d.form_data->>'CONTRACT_TITLE',
+                      d.form_data->>'基本契約名', d.form_data->>'VENDOR_NAME',
+                      d.form_data->>'Licensor_氏名会社名', '') ILIKE $1
+          OR COALESCE(h.previous_document_number, '') ILIKE $1)
+          AND ($2 = '' OR d.template_type = $2)
+        ORDER BY d.created_at DESC NULLS LAST, d.id DESC
         LIMIT $3`,
       [keyword, templateType ?? "", Math.min(Math.max(limit, 1), 200)]
     );
@@ -54,10 +63,17 @@ export class PgDocumentRegistryRepository implements DocumentRegistryRepository 
 
   async find(id: number) {
     const result = await this.database.query(
-      `SELECT id, document_number, issue_key, template_type, template_version_id,
-              form_data, drive_link, created_at, created_by
-         FROM documents
-        WHERE id = $1`,
+      `SELECT d.id, d.document_number, h.previous_document_number, d.issue_key, d.template_type, d.template_version_id,
+              d.form_data, d.drive_link, d.created_at, d.created_by
+         FROM documents d
+         LEFT JOIN LATERAL (
+           SELECT previous_document_number
+             FROM document_number_history
+            WHERE document_id = d.id
+            ORDER BY changed_at DESC, id DESC
+            LIMIT 1
+         ) h ON true
+        WHERE d.id = $1`,
       [id]
     );
     return result.rows[0] ? mapRow(result.rows[0]) : null;
@@ -93,6 +109,7 @@ function mapRow(row: Record<string, any>): RegisteredDocument {
   return {
     id: Number(row.id),
     documentNumber: row.document_number,
+    previousDocumentNumber: row.previous_document_number ?? legacyPreviousNumber(formData),
     issueKey: row.issue_key,
     templateType: row.template_type,
     templateVersionId: row.template_version_id,
@@ -108,6 +125,14 @@ function mapRow(row: Record<string, any>): RegisteredDocument {
     createdBy: row.created_by,
     formData
   };
+}
+
+function legacyPreviousNumber(values: Record<string, unknown>) {
+  return firstText(values, [
+    "PREVIOUS_DOCUMENT_NUMBER", "旧文書番号", "旧契約書番号",
+    "BASE_DOC_NO", "元文書番号", "元契約番号",
+    "previousDocumentNumber", "baseDocumentNumber", "originalDocumentNumber"
+  ]) || null;
 }
 
 function firstText(values: Record<string, unknown>, keys: string[]) {
