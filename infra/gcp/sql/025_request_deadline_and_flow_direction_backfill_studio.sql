@@ -36,11 +36,11 @@ WHERE flow_direction IS NULL
 --    Store midnight in Asia/Tokyo; the API exposes this field as YYYY-MM-DD.
 UPDATE legal_requests
 SET deadline = (
-  substring(notes FROM '"deadline"\\s*:\\s*"(\\d{4}-\\d{2}-\\d{2})"')::date::timestamp
+  substring(notes FROM '"deadline"\s*:\s*"(\d{4}-\d{2}-\d{2})"')::date::timestamp
   AT TIME ZONE 'Asia/Tokyo'
 )
 WHERE deadline IS NULL
-  AND notes ~ '"deadline"\\s*:\\s*"\\d{4}-\\d{2}-\\d{2}"';
+  AND notes ~ '"deadline"\s*:\s*"\d{4}-\d{2}-\d{2}"';
 
 COMMIT;
 
