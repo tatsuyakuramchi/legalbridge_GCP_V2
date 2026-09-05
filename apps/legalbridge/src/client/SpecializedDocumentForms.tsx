@@ -100,11 +100,44 @@ export function SpecializedDocumentForms({ templateKey, formData, onChange }: Pr
   }
 
   if (templateKey === "royalty_statement") {
-    return <SpecializedSection title="利用許諾料明細" description="計算対象ごとに売上額・料率・利用許諾料を入力します。合計額は自動計算されます。">
+    if (formData.settlement_trigger) {
+      const trigger = String(formData.settlement_trigger);
+      const label = trigger === "manufacturing"
+        ? "製造"
+        : trigger === "sale" ? "販売" : "サブライセンス料入金";
+      const money = (value: unknown) =>
+        `${String(formData.currency ?? "JPY")} ${Number(value ?? 0).toLocaleString("ja-JP", { maximumFractionDigits: 2 })}`;
+      return <SpecializedSection title="利用許諾料計算書・確認"
+        description="契約条件と発生イベントから自動計算した内容です。計算値は文書画面では変更せず、誤りがある場合は精算画面へ戻って再計算します。">
+        <div className="settlement-review-grid">
+          <article><span>精算トリガー</span><strong>{label}</strong></article>
+          <article><span>発生日</span><strong>{String(formData.settlement_occurred_at ?? "").slice(0, 10) || "—"}</strong></article>
+          <article><span>作品</span><strong>{String(formData.originalWork ?? "—")}</strong></article>
+          <article><span>相手方</span><strong>{String(formData.licensor ?? "—")}</strong></article>
+          <article><span>根拠契約</span><strong>{String(formData.linked_contract_number ?? "—")}</strong></article>
+          <article><span>起点OUT条件</span><strong>#{String(formData.source_out_condition_line_id ?? "—")}</strong></article>
+          <article><span>支払根拠IN条件</span><strong>#{String(formData.source_condition_line_id ?? "—")}</strong></article>
+          <article><span>算定基礎</span><strong>{money(formData.settlement_basis_amount)}</strong></article>
+          <article><span>料率</span><strong>{String(formData.royaltyRatePct ?? "—")}%</strong></article>
+          <article className="settlement-review-total"><span>利用許諾料（税抜）</span><strong>{money(formData.actualRoyalty)}</strong></article>
+        </div>
+        {Array.isArray(formData.settlement_warnings) && formData.settlement_warnings.length > 0 &&
+          <div className="settlement-review-warnings">
+            {(formData.settlement_warnings as unknown[]).map((warning, index) =>
+              <p key={index}>{String(warning)}</p>)}
+          </div>}
+        <div className="settlement-review-note">
+          <strong>計算根拠</strong>
+          <pre>{String(formData.notes ?? "")}</pre>
+        </div>
+      </SpecializedSection>;
+    }
+    return <SpecializedSection title="利用許諾料計算書（Legacy入力）"
+      description="旧下書き互換モードです。新規作成は「利用許諾料精算」画面から行ってください。">
       <ArrayEditor title="計算明細" itemLabel="計算明細" dataKey="lines" rows={rows(formData.lines)}
         fields={[
           { name: "productName", label: "対象商品・契約" },
-          { name: "sales_amount", label: "基準売上額", type: "number" },
+          { name: "sales_amount", label: "算定基礎額", type: "number" },
           { name: "rate_pct", label: "料率（%）", type: "number" },
           { name: "royalty_amount", label: "利用許諾料", type: "number" },
           { name: "basisNote", label: "計算根拠・控除", type: "textarea" }
