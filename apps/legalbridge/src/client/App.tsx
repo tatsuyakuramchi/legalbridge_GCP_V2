@@ -22,6 +22,7 @@ import { RequestWorkspace } from "./RequestWorkspace";
 import { WorkRightsWorkspace } from "./WorkRightsWorkspace";
 import { LicenseContractWorkspace } from "./LicenseContractWorkspace";
 import { LicenseSettlementWorkspace } from "./LicenseSettlementWorkspace";
+import { DeadlineWorkspace } from "./DeadlineWorkspace";
 
 type CompatibilityReport = { summary: { total: number; ok: number; warning: number; error: number }; reports: Array<{ templateKey: string; status: "ok" | "warning" | "error"; missingHelpers: string[]; missingPartials: string[]; unmappedVariables: string[]; renderError?: string }> };
 
@@ -42,7 +43,7 @@ const fallback: DashboardSummary = {
   priorities: []
 };
 
-type View = "home" | "requests" | "matters" | "works-rights" | "license-contract" | "license-settlements" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound";
+type View = "home" | "requests" | "deadlines" | "matters" | "works-rights" | "license-contract" | "license-settlements" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "outbound" | "conditions" | "staff" | "admin" | "gmail-inbound";
 type NavItem = { view: View; label: string; description: string; match: View[] };
 type NavGroup = { label: string; items: NavItem[] };
 
@@ -51,31 +52,31 @@ function navGroups(access: {
   gmailInbound?: boolean;
 }): NavGroup[] {
   const legalOrRequester = access.legalWorkspace || access.requesterWorkspace;
-  const groups: NavGroup[] = [
-    { label: "概要", items: [
-      { view: "home", label: "ホーム", description: "業務の全体状況と次アクション", match: ["home"] }
-    ] },
-    { label: "業務", items: [
-      ...(access.legalWorkspace ? [{ view: "requests" as const, label: "依頼", description: "法務依頼の受付・単発完結・案件化", match: ["requests" as const] }] : []),
-      ...(access.legalWorkspace ? [{ view: "matters" as const, label: "案件", description: "継続案件・課題・タスクの管理", match: ["matters" as const] }] : []),
-      ...(access.legalWorkspace ? [{ view: "works-rights" as const, label: "作品・権利", description: "作品・素材・権利ソース・IN/OUT条件", match: ["works-rights" as const, "license-contract" as const] }] : []),
-      ...(access.legalWorkspace ? [{ view: "license-settlements" as const, label: "利用許諾料精算", description: "製造・販売・入金イベントから計算書作成", match: ["license-settlements" as const] }] : []),
-      ...(legalOrRequester ? [{ view: "documents" as const, label: access.requesterWorkspace ? "自分の文書" : "文書", description: "文書の作成・確定・PDF", match: ["documents" as const, "templates" as const, "document" as const] }] : []),
-      ...(!access.readOnly && legalOrRequester ? [{ view: "drafts" as const, label: access.requesterWorkspace ? "自分の下書き" : "下書き", description: "保存中の下書きを再開", match: ["drafts" as const] }] : [])
-    ] },
-    { label: "登録・条件", items: [
-      ...(access.adminWorkspace ? [{ view: "contract-intake" as const, label: "契約取込", description: "締結済イン契約の登録", match: ["contract-intake" as const] }] : []),
-      ...(access.legalWorkspace ? [{ view: "outbound" as const, label: "アウト条件", description: "許諾先へのアウト条件追記", match: ["outbound" as const] }] : []),
-      ...(access.legalWorkspace ? [{ view: "conditions" as const, label: "条件明細", description: "契約条件の横断検索・確認", match: ["conditions" as const] }] : []),
-      ...(access.legalWorkspace ? [{ view: "ledgers" as const, label: "台帳", description: "作品・取引先などのマスタ", match: ["ledgers" as const] }] : [])
-    ] },
-    { label: "管理", items: [
-      ...(access.adminWorkspace ? [{ view: "staff" as const, label: "担当者", description: "担当者マスタの管理", match: ["staff" as const] }] : []),
-      ...(access.adminWorkspace && access.gmailInbound ? [{ view: "gmail-inbound" as const, label: "受信取込", description: "受信メールの契約PDF取込", match: ["gmail-inbound" as const] }] : []),
-      ...(access.adminWorkspace ? [{ view: "admin" as const, label: "管理", description: "通知・運用の管理", match: ["admin" as const] }] : [])
-    ] }
+  const items: NavItem[] = [
+    { view: "home", label: "ホーム", description: "今日やること", match: ["home"] },
+    ...(access.legalWorkspace ? [{
+      view: "requests" as const, label: "依頼", description: "法務依頼と次アクション", match: ["requests" as const]
+    }] : []),
+    ...(access.legalWorkspace ? [{
+      view: "deadlines" as const, label: "期限", description: "案件・契約・検収・支払・依頼の期限", match: ["deadlines" as const]
+    }] : []),
+    ...(legalOrRequester ? [{
+      view: "documents" as const, label: access.requesterWorkspace ? "自分の文書" : "文書",
+      description: "文書の作成・確定・PDF", match: ["documents" as const, "templates" as const, "document" as const]
+    }] : []),
+    ...(access.legalWorkspace ? [{
+      view: "works-rights" as const, label: "作品・権利", description: "作品・素材・権利ソース・条件",
+      match: ["works-rights" as const, "license-contract" as const, "license-settlements" as const]
+    }] : []),
+    ...(access.legalWorkspace ? [{
+      view: "ledgers" as const, label: "取引先", description: "取引先マスタ・関連台帳", match: ["ledgers" as const]
+    }] : []),
+    ...(access.adminWorkspace ? [{
+      view: "admin" as const, label: "管理", description: "担当者・連携・運用管理",
+      match: ["admin" as const, "staff" as const, "gmail-inbound" as const, "contract-intake" as const, "outbound" as const, "conditions" as const]
+    }] : [])
   ];
-  return groups.filter((group) => group.items.length > 0);
+  return [{ label: "LegalBridge", items }];
 }
 
 // URL-less breadcrumb: derive the trail from the current view so every screen
@@ -85,6 +86,7 @@ function breadcrumbFor(view: View): Array<{ label: string; view?: View }> {
   const trails: Record<View, Array<{ label: string; view?: View }>> = {
     home: [{ label: "ホーム" }],
     requests: [home, { label: "依頼" }],
+    deadlines: [home, { label: "期限" }],
     matters: [home, { label: "案件" }],
     "works-rights": [home, { label: "作品・権利" }],
     "license-contract": [home, { label: "作品・権利", view: "works-rights" }, { label: "新規ライセンス契約" }],
@@ -162,6 +164,7 @@ export function App() {
     if (requestedView === "drafts") setView("drafts");
     else if (requestedView === "documents") setView("documents");
     else if (requestedView === "requests") setView("requests");
+    else if (requestedView === "deadlines") setView("deadlines");
     else if (requestedView === "works-rights") setView("works-rights");
     else if (requestedView === "license-settlements") setView("license-settlements");
     else if (requestedView === "home") setView("home");
@@ -328,6 +331,12 @@ export function App() {
           }}
           onOpenDocument={(id) => {
             setSearchSelection({ target: "document", id: String(id), title: "" }); setView("documents");
+          }}
+        />}
+        {view === "deadlines" && legalWorkspace && <DeadlineWorkspace
+          onOpenMatter={(id, title) => {
+            setSearchSelection({ target: "matter", id: String(id), title });
+            setView("matters");
           }}
         />}
         {view === "matters" && <MatterRegistry templates={templates}
