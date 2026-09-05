@@ -55,7 +55,7 @@ Existing domain APIs and repositories should be reused; this is primarily an int
 
 ### B. Restore normalized region/language selection in V2
 
-Status: **IMPLEMENTED IN MAIN / DB preflight + write-test smoke pending**.
+Status: **IMPLEMENTED IN MAIN / DB preflight passed; build + write-test smoke pending**.
 
 Production data model and legacy implementation already support normalized 1:N values:
 
@@ -295,3 +295,14 @@ Implementation:
 - Document registry search/detail exposes the latest previous number.
 - Template/PDF rendering injects `PREVIOUS_DOCUMENT_NUMBER`, `旧文書番号`, and compatible `BASE_DOC_NO` values.
 - When the template itself does not render the previous number, the renderer adds a compact `旧文書番号：...` notice automatically.
+
+
+### 028 preflight result
+
+028 passed against production `legalbridge`:
+
+- `condition_line_regions.country_code` and `condition_line_languages.language_code` are `varchar(16)`; `WORLD` / `ALL` fit without schema change.
+- Runtime SELECT/INSERT/DELETE/UPDATE privileges required by normalized scope persistence are present.
+- 68 condition lines already have canonical region child rows and 68 have canonical language child rows.
+- Only 2 region values and 2 language values remain legacy-text-only; runtime fallback remains active until those rows are explicitly reviewed.
+- Existing production data already uses `WORLD / 全世界` and `ALL / 全言語`.
