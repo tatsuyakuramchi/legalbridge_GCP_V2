@@ -369,3 +369,13 @@ Before browser smoke, UI reachability was corrected:
 - query deep links `?view=license-contract` and `?view=outbound` are recognized;
 - the outbound workspace is restricted to legal/admin users in the client;
 - browser smoke should verify WORLD/ALL exclusivity, presets, individual country/language search, source-IN summary, in-scope success, and out-of-scope NG display.
+
+
+### Legacy scope UI containment
+
+Browser-smoke preparation found and fixed two client-side legacy-scope issues:
+
+- OutboundConditionWorkspace now evaluates legacy IN territory/language compatibility text when canonical child codes are unavailable, instead of deferring the first visible rejection to the server;
+- LicenseContractWorkspace no longer treats any legacy text containing the character `全` as universal. Only explicit `全世界/world` (region) and `全言語/all language` (language) are universal.
+
+Candidate `work 1000000039 / condition 341` provides WORLD region with legacy Japanese-only language and can be used to verify client-side language overreach with an English OUT selection.
