@@ -61,7 +61,11 @@ normalized AS (
     replace(
       replace(
         replace(
-          html_source,
+          replace(
+            html_source,
+            '<td class="label" style="width:120px;">製造完了日</td>',
+            '<td class="label" style="width:120px;">{{#if (eq calcType "manufacturing")}}製造完了日{{else if (eq calcType "sales")}}売上発生日{{else if (eq calcType "sublicense")}}入金日{{else}}発生日{{/if}}</td>'
+          ),
           $oldtax$
       <tr>
         <td colspan="2" class="right">消費税（{{taxRate}}%）</td>
