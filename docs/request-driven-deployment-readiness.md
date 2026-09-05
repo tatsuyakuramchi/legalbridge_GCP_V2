@@ -41,7 +41,7 @@ The normal workflow stays simple; legal/admin users can repair or supplement dat
 
 ### A. Request Driven shell in the React application
 
-Status: **IMPLEMENTED IN MAIN / write-test smoke pending**.
+Status: **CORE IMPLEMENTED IN MAIN / related-data chip enrichment and write-test smoke pending**.
 
 Implemented behavior:
 
