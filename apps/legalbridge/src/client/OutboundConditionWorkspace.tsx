@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { RightsScopePicker } from "./RightsScopePicker";
-import { displayScope, type ScopeOption } from "../rights-scope";
+import { displayScope, scopeContains, type ScopeOption } from "../rights-scope";
 
 type LedgerItem = { id: string; code: string; title: string; subtitle: string };
 type OverlapLine = {
@@ -10,8 +10,13 @@ type OverlapLine = {
 };
 type Overlap = { workId: number; total: number; receivableCount: number; payableCount: number; lines: OverlapLine[] };
 type Kind = "license" | "product";
+type SourceCondition = {
+  id:number; name:string; direction:string|null; flowDirection:string|null;
+  territory:string|null; language:string|null; regions:ScopeOption[]; languages:ScopeOption[];
+  counterparty:string|null; documentNumber:string|null;
+};
 type FormState = {
-  workId: string; counterpartyId: string; conditionName: string; transactionKind: Kind;
+  workId: string; counterpartyId: string; conditionName: string; transactionKind: Kind; sourceConditionId: string;
   regions: ScopeOption[]; languages: ScopeOption[]; exclusivity: "exclusive" | "non_exclusive" | "sole";
   sublicenseAllowed: boolean; termStart: string; termEnd: string; currency: string;
   paymentScheme: "royalty" | "per_unit" | "lump_sum"; ratePct: string;
@@ -21,7 +26,7 @@ type FormState = {
 };
 
 const initial: FormState = {
-  workId: "", counterpartyId: "", conditionName: "", transactionKind: "license",
+  workId: "", counterpartyId: "", conditionName: "", transactionKind: "license", sourceConditionId: "",
   regions: [], languages: [], exclusivity: "non_exclusive", sublicenseAllowed: false,
   termStart: "", termEnd: "", currency: "JPY", paymentScheme: "royalty", ratePct: "",
   amountExTax: "", mgAmount: "", advanceAmount: "", reportingCycle: "", paymentTerms: "",
@@ -36,6 +41,7 @@ export function OutboundConditionWorkspace() {
   const [notice, setNotice] = useState("入力内容を確認後、管理者だけが保存できます。");
   const [preview, setPreview] = useState<Record<string, unknown> | null>(null);
   const [overlap, setOverlap] = useState<Overlap | null>(null);
+  const [sourceConditions, setSourceConditions] = useState<SourceCondition[]>([]);
   const license = form.transactionKind === "license";
 
   useEffect(() => {
@@ -50,6 +56,7 @@ export function OutboundConditionWorkspace() {
 
   const work = useMemo(() => works.find((item) => item.id === form.workId), [works, form.workId]);
   const vendor = useMemo(() => vendors.find((item) => item.id === form.counterpartyId), [vendors, form.counterpartyId]);
+  const sourceCondition = useMemo(() => sourceConditions.find((item) => String(item.id) === form.sourceConditionId) ?? null, [sourceConditions, form.sourceConditionId]);
 
   // 作品を選ぶと、その作品に既に紐づく条件を取得して重複警告を出す（導線ガード）。
   // 包括条件と個別（マテリアル由来）条件は別建てで消化実績に合算されるため、
@@ -64,6 +71,43 @@ export function OutboundConditionWorkspace() {
       .catch(() => setOverlap(null));
     return () => controller.abort();
   }, [form.workId]);
+
+  useEffect(() => {
+    const numericId = form.workId.includes(":") ? form.workId.split(":").pop() : form.workId;
+    if (!numericId || !/^\d+$/.test(numericId)) { setSourceConditions([]); return; }
+    const controller = new AbortController();
+    fetch(`/api/v2/work-rights/${numericId}`, { signal: controller.signal })
+      .then((response) => response.ok ? response.json() : Promise.reject())
+      .then((data) => {
+        const inbound = (data.conditions ?? []).filter((item: SourceCondition) =>
+          item.flowDirection === "in" || item.direction === "payable"
+        );
+        setSourceConditions(inbound);
+        setForm((current) => ({
+          ...current,
+          sourceConditionId: inbound.some((item: SourceCondition) => String(item.id) === current.sourceConditionId)
+            ? current.sourceConditionId
+            : String(inbound[0]?.id ?? "")
+        }));
+      })
+      .catch(() => setSourceConditions([]));
+    return () => controller.abort();
+  }, [form.workId]);
+
+  const scopeIssues = useMemo(() => {
+    if (!license || !sourceCondition) return [] as string[];
+    const issues: string[] = [];
+    const sourceRegions = (sourceCondition.regions ?? []).filter((item) => !item.code.startsWith("LEGACY-"));
+    const sourceLanguages = (sourceCondition.languages ?? []).filter((item) => !item.code.startsWith("LEGACY-"));
+    if (sourceRegions.length && form.regions.length && !scopeContains(sourceRegions, form.regions, "WORLD")) {
+      issues.push("対象地域が根拠IN条件の範囲を超えています");
+    }
+    if (sourceLanguages.length && form.languages.length && !scopeContains(sourceLanguages, form.languages, "ALL")) {
+      issues.push("対象言語が根拠IN条件の範囲を超えています");
+    }
+    return issues;
+  }, [license, sourceCondition, form.regions, form.languages]);
+
   const sameDirectionCount = overlap?.receivableCount ?? 0;
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
@@ -74,6 +118,7 @@ export function OutboundConditionWorkspace() {
         next.paymentScheme = nextLicense ? "royalty" : "per_unit";
         next.ratePct = "";
         next.amountExTax = "";
+        if (!nextLicense) next.sourceConditionId = "";
       }
       return next;
     });
@@ -85,6 +130,7 @@ export function OutboundConditionWorkspace() {
     return {
       ...form,
       territory: displayScope(form.regions),
+      sourceConditionId: form.sourceConditionId ? Number(form.sourceConditionId) : undefined,
       workLabel: work ? `${work.code} ${work.title}` : "",
       counterpartyLabel: vendor ? `${vendor.code} ${vendor.title}` : "",
       termStart: form.termStart || undefined,
@@ -98,6 +144,8 @@ export function OutboundConditionWorkspace() {
   }
 
   async function validate() {
+    if (license && !form.sourceConditionId) { setNotice("ライセンスアウトでは根拠IN条件を選択してください"); return; }
+    if (scopeIssues.length) { setNotice(scopeIssues.join("／")); return; }
     setNotice("入力内容を確認しています");
     const response = await fetch("/api/v2/outbound-conditions/validate", {
       method: "POST",
@@ -167,6 +215,10 @@ export function OutboundConditionWorkspace() {
         <label>相手方<select value={form.counterpartyId} onChange={(e) => update("counterpartyId", e.target.value)}><option value="">選択してください</option>{vendors.map((item) => <option key={item.id} value={item.id}>{item.code} {item.title}</option>)}</select></label>
         <label>条件名<input value={form.conditionName} onChange={(e) => update("conditionName", e.target.value)} placeholder={license ? "例：英語版ライセンス条件" : "例：海外卸売条件"} /></label>
         <label>根拠文書番号<input value={form.documentNumber} onChange={(e) => update("documentNumber", e.target.value)} placeholder="任意" /></label>
+        {license && <label>根拠IN条件<select value={form.sourceConditionId} onChange={(e) => update("sourceConditionId", e.target.value)}>
+          <option value="">選択してください</option>
+          {sourceConditions.map((item) => <option key={item.id} value={item.id}>#{item.id} {item.name} / {item.counterparty || ""}</option>)}
+        </select></label>}
       </fieldset>
       <fieldset><legend>2. 権利範囲</legend>
         <div className="wide">
@@ -176,6 +228,12 @@ export function OutboundConditionWorkspace() {
             onRegionsChange={(regions) => { update("regions", regions); }}
             onLanguagesChange={(languages) => { update("languages", languages); }}
           />
+          {license && sourceCondition && <div className="scope-source-summary">
+            <span>根拠IN</span>
+            <strong>{displayScope(sourceCondition.regions?.length ? sourceCondition.regions : [{ code:"LEGACY-R", name:sourceCondition.territory || "—" }])}</strong>
+            <strong>{displayScope(sourceCondition.languages?.length ? sourceCondition.languages : [{ code:"LEGACY-L", name:sourceCondition.language || "—" }])}</strong>
+          </div>}
+          {scopeIssues.map((issue) => <div key={issue} className="rights-check-ng">! {issue}</div>)}
         </div>
         <label>独占性<select value={form.exclusivity} onChange={(e) => update("exclusivity", e.target.value as FormState["exclusivity"])}><option value="non_exclusive">非独占</option><option value="exclusive">独占</option><option value="sole">ソール</option></select></label>
         <label className="check"><input type="checkbox" checked={form.sublicenseAllowed} onChange={(e) => update("sublicenseAllowed", e.target.checked)} />再許諾を認める</label>
