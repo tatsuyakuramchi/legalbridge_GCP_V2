@@ -74,6 +74,7 @@ fi
 # 3. Document registry + previous number compatibility field.
 code=$(http_json GET "$BASE_URL/api/v2/documents?limit=200") || code=000
 if [[ "$code" == "200" ]] && jq -e '.documents | type == "array"' "$TMP_DIR/response.json" >/dev/null; then
+  cp "$TMP_DIR/response.json" "$TMP_DIR/documents.json"
   pass "document registry list"
   if jq -e '.documents | length > 0 and all(.[]; has("previousDocumentNumber"))' "$TMP_DIR/response.json" >/dev/null; then
     pass "previousDocumentNumber compatibility field present"
@@ -151,6 +152,10 @@ else
 fi
 
 # 5. Existing finalized document + PDF.
+# Document 1033 is retained as the historical condition-attachment sample, but it
+# may use an attachment/legacy template with no current render source. For PDF,
+# select a finalized document whose template key and version match an active
+# current document template, then try compatible candidates until one renders.
 code=$(http_json GET "$BASE_URL/api/v2/documents/1033") || code=000
 if [[ "$code" == "200" ]] && jq -e '.document.id == 1033 and .document.lifecycle.pdfState == "ready"' "$TMP_DIR/response.json" >/dev/null; then
   pass "finalized document 1033 registry read"
@@ -158,15 +163,63 @@ else
   fail "document 1033 registry read (HTTP $code)"
 fi
 
-pdf_file="$TMP_DIR/document-1033.pdf"
-headers="$TMP_DIR/pdf-headers.txt"
-pdf_code=$(curl -sS -D "$headers" -o "$pdf_file" -w '%{http_code}' "$BASE_URL/api/v2/documents/1033/pdf") || pdf_code=000
-if [[ "$pdf_code" == "200" ]] &&
-   grep -qi '^content-type: application/pdf' "$headers" &&
-   head -c 5 "$pdf_file" | grep -q '%PDF-'; then
-  pass "PDF generation document 1033"
+code=$(http_json GET "$BASE_URL/api/v2/document-templates") || code=000
+if [[ "$code" == "200" ]] && jq -e '.templates | type == "array"' "$TMP_DIR/response.json" >/dev/null; then
+  cp "$TMP_DIR/response.json" "$TMP_DIR/templates.json"
+  pass "document template registry for PDF candidate selection"
 else
-  fail "PDF generation document 1033 (HTTP $pdf_code)"
+  fail "document template registry (HTTP $code)"
+fi
+
+pdf_candidate_ids=$(
+  jq -nr \
+    --slurpfile docs "$TMP_DIR/documents.json" \
+    --slurpfile templates "$TMP_DIR/templates.json" '
+      ($templates[0].templates
+        | map({key:.templateKey,value:.templateVersionId})
+        | from_entries) as $versions
+      | $docs[0].documents[]
+      | select(.documentNumber != null and .documentNumber != "")
+      | select($versions[.templateType] != null)
+      | select(
+          .templateVersionId == null
+          or .templateVersionId == $versions[.templateType]
+        )
+      | .id
+    ' 2>/dev/null || true
+)
+
+pdf_ok=false
+pdf_attempts=0
+pdf_last_code=""
+pdf_last_body=""
+for pdf_id in $pdf_candidate_ids; do
+  pdf_attempts=$((pdf_attempts+1))
+  [[ "$pdf_attempts" -gt 20 ]] && break
+  pdf_file="$TMP_DIR/document-$pdf_id.pdf"
+  headers="$TMP_DIR/pdf-headers.txt"
+  pdf_code=$(curl -sS -D "$headers" -o "$pdf_file" -w '%{http_code}' \
+    "$BASE_URL/api/v2/documents/$pdf_id/pdf") || pdf_code=000
+  pdf_last_code="$pdf_code"
+  if [[ "$pdf_code" == "200" ]] &&
+     grep -qi '^content-type: application/pdf' "$headers" &&
+     head -c 5 "$pdf_file" | grep -q '%PDF-'; then
+    pass "PDF generation compatible document $pdf_id"
+    pdf_ok=true
+    break
+  fi
+  if [[ -s "$pdf_file" ]]; then
+    pdf_last_body=$(head -c 500 "$pdf_file" | tr '\n' ' ')
+  fi
+done
+
+if [[ "$pdf_ok" != "true" ]]; then
+  if [[ -z "$pdf_candidate_ids" ]]; then
+    fail "PDF generation: no finalized document matches an active template/version"
+  else
+    fail "PDF generation: no compatible candidate rendered (last HTTP ${pdf_last_code:-none})"
+    [[ -n "$pdf_last_body" ]] && printf '      last response: %s\n' "$pdf_last_body"
+  fi
 fi
 
 # 6. Contract intake validation + DB preflight only; never commit.
