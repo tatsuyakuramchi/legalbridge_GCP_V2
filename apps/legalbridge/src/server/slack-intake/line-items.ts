@@ -18,6 +18,30 @@ export interface LineItemField {
 }
 
 export const LINE_ITEM_FIELDS: Record<string, { label: string; fields: LineItemField[] }> = {
+  document_create: {
+    label: "文書作成要件",
+    fields: [
+      {
+        key: "document_type", label: "作成する文書", kind: "select",
+        options: [
+          { value: "memorandum", text: "覚書・変更合意書" },
+          { value: "notice", text: "通知書・回答書" },
+          { value: "consent", text: "同意書・承諾書" },
+          { value: "terms", text: "規約・ポリシー" },
+          { value: "other", text: "その他（テンプレート外）" }
+        ]
+      },
+      { key: "purpose", label: "文書の目的", kind: "multiline", placeholder: "誰に、何を合意・通知する文書かを記載" },
+      {
+        key: "desired_format", label: "希望する完成形式", kind: "select", optional: true,
+        options: [
+          { value: "word", text: "Word（編集用）" },
+          { value: "pdf", text: "PDF（確定・送付用）" },
+          { value: "both", text: "Word＋PDF" }
+        ]
+      }
+    ]
+  },
   purchase_order: {
     label: "発注明細",
     fields: [
@@ -60,7 +84,7 @@ export const LINE_ITEM_FIELDS: Record<string, { label: string; fields: LineItemF
           { value: "other", text: "その他" }
         ]
       },
-      { key: "product_name", label: "対象製品（予定）名", kind: "text", placeholder: "例: ボードゲーム「〇〇」/ 書籍『〇〇』" },
+      { key: "product_name", label: "対象製品（予定）名", kind: "text", optional: true, placeholder: "未定の場合は空欄（作品・契約DBから後で補完）" },
       {
         key: "exclusivity", label: "独占性", kind: "radio",
         options: [
@@ -71,16 +95,18 @@ export const LINE_ITEM_FIELDS: Record<string, { label: string; fields: LineItemF
       { key: "license_start", label: "許諾開始日", kind: "date", initialDays: 30 },
       { key: "license_term", label: "許諾期間", kind: "text", placeholder: "例: 基本契約の満了日まで / 発売日から3年間" },
       {
-        key: "money_own", label: "金銭条件① 自社製造・自社販売", kind: "multiline", optional: true,
-        placeholder: "例: 国内・日本語 / ロイヤリティ5% × 上代(MSRP) / MG 100,000円 / 四半期締め翌月末払い"
+        key: "transaction_model", label: "取引モデル", kind: "select",
+        options: [
+          { value: "own_manufacture_own_sales", text: "自社製造・自社販売" },
+          { value: "sublicense", text: "再許諾（ライセンスアウト）" },
+          { value: "own_manufacture_third_party_sales", text: "自社製造・他社販売" }
+        ]
       },
+      { key: "territory", label: "許諾地域", kind: "text", placeholder: "例: 日本 / 北米 / 全世界" },
+      { key: "language", label: "許諾言語", kind: "text", placeholder: "例: 日本語 / 英語 / 全言語" },
       {
-        key: "money_sublicense", label: "金銭条件② サブライセンス（ライセンスアウト）", kind: "multiline", optional: true,
-        placeholder: "例: 北米・英語 / サブライセンス収入の50% / 半期締め翌月末払い"
-      },
-      {
-        key: "money_product_out", label: "金銭条件③ 自社製造・他社販売（プロダクトアウト）", kind: "multiline", optional: true,
-        placeholder: "例: 国内・日本語 / 卸価格 × 5% × 出荷数 / 四半期締め翌月末払い"
+        key: "commercial_terms", label: "金銭条件（料率・基準価格・MG/AG・支払時期）", kind: "multiline", optional: true,
+        placeholder: "例: 受領額の50% / 半期締め翌月末払い（確定済みの項目だけ入力）"
       },
       { key: "supervision_credit", label: "監修・クレジット表示", kind: "text", optional: true, placeholder: "例: 要監修（発売前確認） / © 表記「〇〇」" },
       { key: "remarks", label: "特記事項", kind: "text", optional: true, placeholder: "無ければ「無し」" }
@@ -103,12 +129,19 @@ export const LINE_ITEM_FIELDS: Record<string, { label: string; fields: LineItemF
   },
   license_calc: {
     label: "計算明細",
-    // V1 同様、すべて任意で送信可能（必須ゲートなし）。
+    // 製品表示・地域・言語・料率は対象契約の IN/OUT 条件から後続画面で補完する。
     fields: [
-      { key: "product_name", label: "対象製品・作品", kind: "text", placeholder: "例: ボードゲーム「〇〇」", optional: true },
       { key: "period", label: "対象期間", kind: "text", placeholder: "例: 2026年4月〜2026年6月", optional: true },
-      { key: "sales", label: "販売数・売上高", kind: "text", placeholder: "例: 1,200個 / ¥1,980,000", optional: true },
-      { key: "royalty_terms", label: "料率・単価", kind: "text", placeholder: "例: 料率5% / 単価100円", optional: true },
+      {
+        key: "settlement_basis", label: "計算の基礎", kind: "select", optional: true,
+        options: [
+          { value: "manufacturing", text: "自社製造数" },
+          { value: "sales", text: "販売数・売上高" },
+          { value: "sublicense_receipt", text: "サブライセンス受領額" }
+        ]
+      },
+      { key: "quantity_or_amount", label: "数量・売上高・受領額", kind: "text", placeholder: "例: 1,200個 / ¥1,980,000", optional: true },
+      { key: "received_at", label: "売上・受領日", kind: "date", optional: true },
       { key: "remarks", label: "備考", kind: "text", optional: true }
     ]
   }

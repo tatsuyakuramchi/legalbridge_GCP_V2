@@ -13,7 +13,7 @@ import {
 import {
   LEGAL_REQUEST_CALLBACK_ID, REQUEST_TYPE_ACTION_ID, DEADLINE_CHANGE_TYPE, NEW_ISSUE_VALUE,
   buildLegalRequestModal, parseLegalRequestSubmission,
-  buildCompletionView, buildErrorView, backlogIssueTypeFor, requestTypeLabel,
+  buildCompletionView, buildErrorView, backlogIssueTypeFor, requestTypeLabel, matterKindForRequestType,
   type LegalRequestSubmission, type IntakeCandidate
 } from "./modal.js";
 import {
@@ -137,7 +137,7 @@ export function createSlackIntakeHandler(options: SlackIntakeHandlerOptions) {
     const attachmentLine = uploadTarget
       ? `📎 レビュー対象文書・参考資料の添付は <${uploadTarget}|資料アップロードページ> からお願いします` +
         (issueKey ? "（課題番号は入力済みで開きます）。" : "。")
-      : s.requestType === "legal_consult"
+      : s.requestType === "legal_consult" || s.requestType === "contract_review"
         ? "📎 レビューしてほしい文書・参考資料は、このDMへの返信で添付してください（法務担当が案件へ登録します）。"
         : null;
     const text = [
@@ -322,6 +322,7 @@ export function createSlackIntakeHandler(options: SlackIntakeHandlerOptions) {
         backlogIssueKey: created.issueKey,
         slackUserId,
         requestType: DEADLINE_CHANGE_TYPE,
+        matterKind: matterKindForRequestType(DEADLINE_CHANGE_TYPE),
         counterparty: null,
         summary,
         // V1 と同じ notes 構造（executed:false）。admin 側の後続処理が判別に使う。
@@ -587,6 +588,7 @@ export function createSlackIntakeHandler(options: SlackIntakeHandlerOptions) {
         backlogIssueKey: created.issueKey,
         slackUserId,
         requestType: submission.requestType,
+        matterKind: matterKindForRequestType(submission.requestType),
         counterparty: submission.counterparty || null,
         summary: submission.summary,
         notes: notesBody

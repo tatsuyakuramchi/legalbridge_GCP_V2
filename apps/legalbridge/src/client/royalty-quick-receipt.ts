@@ -104,6 +104,8 @@ export function buildQuickReceiptPatch(input: {
     statementMode: "multi",
     // 支払先（イン条件）: 記帳先・料率・MG/AG
     rsConditionLineId: economics.representativeLineId,
+    source_condition_line_id: economics.representativeLineId,
+    ...(outLine ? { source_out_condition_line_id: outLine.id } : {}),
     rsInRatePct: economics.ratePct,
     rsRatePct: economics.ratePct,
     rsMgAmount: economics.mgAmount,

@@ -6,7 +6,10 @@ import { createHmac } from "node:crypto";
 import { createSlackIntakeRouter } from "../internal/slack-intake-routes.js";
 import { createSlackIntakeHandler, buildIssueDescription } from "./handler.js";
 import { MemorySlackIntakeRepository } from "./intake-repository.js";
-import { parseLegalRequestSubmission, buildLegalRequestModal, LEGAL_REQUEST_CALLBACK_ID } from "./modal.js";
+import {
+  parseLegalRequestSubmission, buildLegalRequestModal, LEGAL_REQUEST_CALLBACK_ID,
+  matterKindForRequestType
+} from "./modal.js";
 import type { SlackWebApiClient, SlackWebApiMethod } from "../integrations/slack-web-api-adapter.js";
 import type { BacklogWriteClient } from "../integrations/backlog-web-api.js";
 
@@ -122,6 +125,7 @@ test("intake: 提出→Backlog起票＋依頼記録＋台帳＋完了ビュー",
   assert.equal(repository.requests.length, 1);
   assert.equal(repository.requests[0].backlogIssueKey, "LEGAL-101");
   assert.equal(repository.requests[0].requestType, "nda");
+  assert.equal(repository.requests[0].matterKind, "nda");
   assert.equal(repository.requests[0].counterparty, "A社");
   assert.equal(repository.ledgerRows.length, 1);
   assert.equal(repository.ledgerRows[0].mode, "live");
@@ -169,6 +173,20 @@ test("modal: モーダル定義に必須ブロックが揃う", () => {
   for (const id of ["request_type_block", "summary_block", "deadline_block", "details_block", "counterparty_block"]) {
     assert.ok(ids.includes(id), id);
   }
+});
+
+test("modal: 新型依頼種別と案件タイプを表示する", () => {
+  const review = buildLegalRequestModal({ selectedType: "contract_review" }) as {
+    blocks: Array<{ block_id?: string; elements?: Array<{ text?: string }> }>;
+  };
+  assert.match(JSON.stringify(review), /契約レビュー（受領文書）/);
+  assert.match(String(review.blocks.find((b) => b.block_id === "request_workflow_help_block")?.elements?.[0]?.text),
+    /案件タイプ: 契約レビュー/);
+  const generic = buildLegalRequestModal({ selectedType: "document_create" });
+  assert.match(JSON.stringify(generic), /その他の文書作成/);
+  assert.equal(matterKindForRequestType("outsourcing"), "service");
+  assert.equal(matterKindForRequestType("license_calc"), "license");
+  assert.equal(matterKindForRequestType("document_create"), "document_creation");
 });
 
 test("modal: 法務相談は添付案内ブロックが出る（URL設定時はリンク付き・V1復元）", () => {
@@ -525,7 +543,9 @@ function licenseCalcLinkSubmission(select: string): Record<string, string> {
         deadline_block: { deadline_input: { selected_date: "2026-08-31" } },
         details_block: { details_input: { value: "Q2分" } },
         target_issue_key_select_block: { target_issue_key_select_input: { selected_option: { value: select } } },
-        li_1_product_name_block: { li_1_product_name_input: { value: "ボードゲーム「〇〇」" } }
+        li_1_period_block: { li_1_period_input: { value: "2026年4月〜2026年6月" } },
+        li_1_settlement_basis_block: { li_1_settlement_basis_input: { selected_option: { value: "sublicense_receipt" } } },
+        li_1_quantity_or_amount_block: { li_1_quantity_or_amount_input: { value: "¥1,980,000" } }
       } }
     }
   });
@@ -558,7 +578,8 @@ test("16-3c: __NEW__ 選択は通常の新規起票へ（明細テキストが�
   assert.equal(res.body.response_action, "update");
   assert.equal(backlog.created.length, 1);
   assert.match(backlog.created[0].description, /【計算明細】\(1 件\)/);
-  assert.match(backlog.created[0].description, /対象製品・作品: ボードゲーム「〇〇」/);
+  assert.match(backlog.created[0].description, /計算の基礎: サブライセンス受領額/);
+  assert.doesNotMatch(backlog.created[0].description, /対象製品・作品/);
   assert.equal(repository.requests.length, 1);
   const notes = JSON.parse(repository.requests[0].notes ?? "{}");
   assert.equal(notes.lineItems.length, 1);

@@ -16,16 +16,24 @@ export const DEADLINE_CHANGE_TYPE = "deadline_change";
 export const NEW_ISSUE_VALUE = "__NEW__";
 
 // 依頼種別（V1 と同一の値・表示名）。deadline_change は新規課題を起こさない別フォーム。
-export const REQUEST_TYPES: Array<{ value: string; label: string; backlogIssueType: string }> = [
-  { value: "legal_consult", label: "法務相談", backlogIssueType: "法務相談" },
-  { value: "nda", label: "NDA（秘密保持契約）", backlogIssueType: "NDA" },
-  { value: "outsourcing", label: "業務委託基本契約", backlogIssueType: "業務委託基本契約" },
-  { value: "license_master", label: "ライセンス契約", backlogIssueType: "ライセンス契約" },
-  { value: "lic_individual", label: "個別利用許諾条件", backlogIssueType: "個別利用許諾条件" },
-  { value: "sales_master", label: "売買契約（当社買手）", backlogIssueType: "売買契約（当社買手）" },
-  { value: "purchase_order", label: "発注書", backlogIssueType: "発注書" },
-  { value: "delivery_inspec", label: "納品・検収", backlogIssueType: "納品リクエスト" },
-  { value: "license_calc", label: "利用許諾料計算（売上報告）", backlogIssueType: "売上報告案件" }
+export type IntakeMatterKind =
+  | "unclassified" | "contract_review" | "legal_consultation" | "license"
+  | "service" | "sales_purchase" | "nda" | "document_creation" | "other";
+
+export const REQUEST_TYPES: Array<{
+  value: string; label: string; backlogIssueType: string; matterKind: IntakeMatterKind;
+}> = [
+  { value: "contract_review", label: "契約レビュー（受領文書）", backlogIssueType: "法務相談", matterKind: "contract_review" },
+  { value: "legal_consult", label: "法務相談", backlogIssueType: "法務相談", matterKind: "legal_consultation" },
+  { value: "nda", label: "NDA（秘密保持契約）", backlogIssueType: "NDA", matterKind: "nda" },
+  { value: "outsourcing", label: "業務委託基本契約", backlogIssueType: "業務委託基本契約", matterKind: "service" },
+  { value: "license_master", label: "ライセンス契約", backlogIssueType: "ライセンス契約", matterKind: "license" },
+  { value: "lic_individual", label: "個別利用許諾条件", backlogIssueType: "個別利用許諾条件", matterKind: "license" },
+  { value: "sales_master", label: "売買契約（当社買手）", backlogIssueType: "売買契約（当社買手）", matterKind: "sales_purchase" },
+  { value: "purchase_order", label: "発注書", backlogIssueType: "発注書", matterKind: "service" },
+  { value: "delivery_inspec", label: "納品・検収", backlogIssueType: "納品リクエスト", matterKind: "service" },
+  { value: "license_calc", label: "利用許諾料計算（売上・受領報告）", backlogIssueType: "売上報告案件", matterKind: "license" },
+  { value: "document_create", label: "その他の文書作成（テンプレート外を含む）", backlogIssueType: "法務相談", matterKind: "document_creation" }
 ];
 
 // セレクタに出す選択肢（依頼種別＋納期変更依頼）。
@@ -36,6 +44,19 @@ const TYPE_OPTIONS: Array<{ value: string; label: string }> = [
 
 export function backlogIssueTypeFor(requestType: string): string {
   return REQUEST_TYPES.find((t) => t.value === requestType)?.backlogIssueType ?? "法務相談";
+}
+
+export function matterKindForRequestType(requestType: string): IntakeMatterKind {
+  if (requestType === DEADLINE_CHANGE_TYPE) return "unclassified";
+  return REQUEST_TYPES.find((t) => t.value === requestType)?.matterKind ?? "unclassified";
+}
+
+function matterKindLabel(kind: IntakeMatterKind): string {
+  return ({
+    unclassified: "未分類", contract_review: "契約レビュー", legal_consultation: "法務相談",
+    license: "ライセンス", service: "業務委託", sales_purchase: "売買",
+    nda: "NDA", document_creation: "文書作成", other: "その他"
+  } as Record<IntakeMatterKind, string>)[kind];
 }
 
 export function requestTypeLabel(value: string): string {
@@ -158,11 +179,27 @@ export function buildLegalRequestModal(options: LegalRequestModalOptions = {}): 
   }
 
   // ── 通常（新規依頼）フォーム ──
-  const blocks: Array<Record<string, unknown>> = [typeBlock];
+  const matterKind = matterKindForRequestType(selectedType);
+  const workflowMessage: Record<string, string> = {
+    contract_review: "受領文書を案件へ添付し、レビュー履歴と修正依頼をまとめて管理します。",
+    legal_consult: "相談内容を案件化し、回答・判断履歴を一か所で管理します。",
+    document_create: "用途と必要事項を受け付け、テンプレートの有無にかかわらず文書作成画面へ引き継ぎます。",
+    license_calc: "対象契約を特定すると、取引モデル・製品表示・地域・言語・料率をDBから自動補完します。"
+  };
+  const blocks: Array<Record<string, unknown>> = [
+    typeBlock,
+    {
+      type: "context", block_id: "request_workflow_help_block",
+      elements: [{
+        type: "mrkdwn",
+        text: `🧭 *案件タイプ: ${matterKindLabel(matterKind)}* — ${workflowMessage[selectedType] ?? "受付内容を案件へ引き継ぎ、DB情報を利用して後続画面を補完します。"}`
+      }]
+    }
+  ];
 
   // 法務相談: レビュー対象文書・参考資料の添付案内（V1 の review_upload_help_block を復元）。
   // アップロードページURLが設定されていればリンク付き、無ければDM返信での受け渡しを案内する。
-  if (selectedType === "legal_consult") {
+  if (selectedType === "legal_consult" || selectedType === "contract_review") {
     const uploadPageUrl = String(options.uploadPageUrl ?? "").trim();
     blocks.push({
       type: "context", block_id: "review_upload_help_block",

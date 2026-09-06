@@ -1,4 +1,5 @@
 import type { DatabasePool } from "../db/pool.js";
+import type { IntakeMatterKind } from "./modal.js";
 
 // 法務依頼インテークの書込（Phase 16-3a・grant 044）。V1 processLegalRequestSubmission の
 // DB 書込サブセット：legal_requests INSERT ＋ issue_workflows INSERT（'文書生成依頼'）。
@@ -12,6 +13,7 @@ export interface RecordRequestInput {
   backlogIssueKey: string;
   slackUserId: string;
   requestType: string;
+  matterKind?: IntakeMatterKind;
   counterparty: string | null;
   summary: string;
   notes: string | null;
@@ -78,6 +80,20 @@ export class PgSlackIntakeRepository implements SlackIntakeRepository {
          ON CONFLICT (backlog_issue_key) DO NOTHING`,
         [input.backlogIssueKey, input.requestType]
       );
+      // legal_requests の AFTER INSERT トリガが作成した案件へ、受付時に確定した分類を反映する。
+      // 080_matter_kind.sql 適用後の環境を対象とする。
+      if (input.matterKind && input.matterKind !== "unclassified") {
+        await client.query(
+          `UPDATE matters m
+              SET matter_kind = $2, updated_at = now()
+            WHERE m.primary_issue_key = $1
+               OR EXISTS (
+                 SELECT 1 FROM matter_issues mi
+                  WHERE mi.matter_id = m.id AND mi.backlog_issue_key = $1
+               )`,
+          [input.backlogIssueKey, input.matterKind]
+        );
+      }
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK").catch(() => {});

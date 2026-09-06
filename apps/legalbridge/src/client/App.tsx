@@ -21,6 +21,7 @@ import { WorkIntake } from "./WorkIntake";
 import { ConditionFirstFlow, type LedgerHandoff } from "./ConditionFirstFlow";
 import { FollowUpDocuments, type FollowUpTab } from "./FollowUpDocuments";
 import { RoyaltyQuickReceipt } from "./RoyaltyQuickReceipt";
+import { refreshRoyaltyProductForEdit } from "./royalty-edit-refresh";
 import { ledgerToFormSeed, purchaseOrderValuesForInspection } from "./condition-ledger-seed";
 import type { ConditionLedgerPayload } from "../condition-ledger";
 import {
@@ -1448,7 +1449,7 @@ function DocumentForm({
       .then((response) =>
         response.ok ? response.json() : Promise.reject(new Error("context load failed"))
       )
-      .then((context) => {
+      .then(async (context) => {
         const restoredDraft = context.draft ?? null;
         if (formDirtyRef.current) {
           // 入力済みの値は保持し、空欄だけ文脈値で補完する（受付番号の後入力・修正でフォームが消えない）。
@@ -1468,24 +1469,32 @@ function DocumentForm({
         // 特例編集: 下書きより確定済みの内容（duplicateValues）を優先して読み込む。
         // 同じ受付番号に古い下書きが残っていても、編集元は確定版でなければならない。
         if (reissueSource) {
-          setFormData({ ...(context.formData ?? {}), ...(duplicateValues ?? {}) });
+          const loaded = { ...(context.formData ?? {}), ...(duplicateValues ?? {}) };
+          const refreshed = schema.templateKey === "royalty_statement"
+            ? await refreshRoyaltyProductForEdit(loaded)
+            : { formData: loaded, changed: false, message: "" };
+          setFormData(refreshed.formData);
           setDraft(null);
-          setDraftStatus("clean");
-          setNotice(`特例編集: ${reissueSource.number} の確定内容を読み込みました。修正後、下の「編集内容で再発行」を実行してください（新版 ${reissueSource.number}-R… が発番されます）`);
+          setDraftStatus(refreshed.changed ? "dirty" : "clean");
+          setNotice(`特例編集: ${reissueSource.number} の確定内容を読み込みました。修正後、下の「編集内容で再発行」を実行してください（新版 ${reissueSource.number}-R… が発番されます）${refreshed.message ? `\n${refreshed.message}` : ""}`);
           return;
         }
         // Backlog抽出変数を非破壊シード（下書き復元時は既存値優先で行わない）。
-        setFormData(restoredDraft
+        const loaded = restoredDraft
           ? (context.formData ?? {})
           : duplicateValues
             // 複製は「同じ内容」が目的なので、文脈値より複製元を優先する。
             ? { ...(context.formData ?? {}), ...duplicateValues }
-            : seedFormData(context.formData ?? {}, seedValues ?? {}));
+            : seedFormData(context.formData ?? {}, seedValues ?? {});
+        const refreshed = restoredDraft && schema.templateKey === "royalty_statement"
+          ? await refreshRoyaltyProductForEdit(loaded)
+          : { formData: loaded, changed: false, message: "" };
+        setFormData(refreshed.formData);
         setDraft(restoredDraft);
-        setDraftStatus(restoredDraft ? "saved" : "clean");
+        setDraftStatus(restoredDraft ? (refreshed.changed ? "dirty" : "saved") : "clean");
         setNotice(
           restoredDraft
-            ? `保存済みの下書きを復元しました（${formatDraftTime(restoredDraft.updatedAt)}）`
+            ? `保存済みの下書きを復元しました（${formatDraftTime(restoredDraft.updatedAt)}）${refreshed.message ? `\n${refreshed.message}` : ""}`
             : duplicateValues
               ? seedNotice ?? (`${duplicateFrom ?? "元の文書"} を下敷きにしました。`
                 + (duplicateMode === "content"

@@ -7,6 +7,7 @@ import {
 import type { CloudSignRequestRepository } from "./cloudsign-request-repository.js";
 import type { ContractStatusWriter } from "../documents/contract-status-writer.js";
 import type { SlackIntakeRepository } from "../slack-intake/intake-repository.js";
+import { matterKindForRequestType } from "../slack-intake/modal.js";
 
 // 外部 Webhook ハンドラ（Phase 9-5 CloudSign / 9-7 Backlog）。共通方針：
 //   - untrusted ペイロードは純関数パーサで型安全に抽出。判別不能は 200 skip（再送を誘発しない）。
@@ -87,6 +88,7 @@ export function createBacklogWebhookHandler(deps: {
             backlogIssueKey: ev.issueKey,
             slackUserId: extractSlackMention(ev.description),
             requestType,
+            matterKind: matterKindForRequestType(requestType),
             counterparty: null,
             summary: ev.summary,
             notes: JSON.stringify({
