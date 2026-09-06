@@ -25,8 +25,11 @@ type Detail = {
   contracts?: Array<{ id: number; documentNumber: string | null; title: string; contractType: string | null; status: string | null; expirationDate: string | null }>;
   works?: Array<{ id: number; workCode: string | null; title: string }>;
   vendors?: Array<{ id: number; vendorCode: string | null; name: string }>;
-  deliveryEvents?: Array<{ id: number; status: string; inspectionDeadline: string | null; deliveredAmount: number | null }>;
-  payments?: Array<{ id: number; status: string; dueDate: string | null; amount: number | null; currency: string; sourceDocumentNumber: string | null }>;
+  deliveryEvents?: Array<{ id: number; status: string; inspectionDeadline: string | null; deliveredAmount: number | null; backlogIssueKey?: string | null }>;
+  payments?: Array<{
+    id: number; status: string; dueDate: string | null; paidDate?: string | null; amount: number | null; currency: string;
+    sourceDocumentNumber: string | null; paymentKind?: string | null; backlogIssueKey?: string | null;
+  }>;
   deadlines?: Array<{ id: string; kind: "matter" | "task" | "document" | "contract"; title: string; dueDate: string; status: string }>;
 };
 const statusLabels: Record<string, string> = { open: "未着手", in_progress: "進行中", closed: "完了", archived: "保管" };
@@ -86,9 +89,11 @@ function matchesFilter(matter: Matter, filter: FilterKey, today: string) {
   }
 }
 
-export function MatterRegistry({ templates, selectedId, canEdit = false, canDelete = false, canUploadAttachments = false, onCreateDocument, onOpenDocument, onOpenWork }:
+export function MatterRegistry({ templates, selectedId, canEdit = false, canDelete = false, canUploadAttachments = false, canRegisterPayments = false, onCreateDocument, onOpenDocument, onOpenWork }:
   { templates: DocumentFormSchema[]; selectedId?: number; canEdit?: boolean; canDelete?: boolean;
     canUploadAttachments?: boolean;
+    // 支払（payments 台帳）の登録可否＝scope 'payments'。納品実績は canEdit（scope 'matters'）で登録できる。
+    canRegisterPayments?: boolean;
     // templateKey 付きは案件の業務委託フロー（基本契約→発注→検収）から種別を指定して起こす。
     onCreateDocument?: (issueKey: string | null, templateKey?: string) => void;
     onOpenDocument?: (documentId: number) => void; onOpenWork?: (id: number) => void }) {
@@ -220,7 +225,7 @@ export function MatterRegistry({ templates, selectedId, canEdit = false, canDele
         ? <MatterForm mode="create" onCancel={() => setCreating(false)}
             onSaved={(id) => { setCreating(false); refreshAll(id); }} />
         : <MatterDetail detail={detail} labels={labels} canEdit={canEdit} canDelete={canDelete}
-            canUploadAttachments={canUploadAttachments}
+            canUploadAttachments={canUploadAttachments} canRegisterPayments={canRegisterPayments}
             onCreateDocument={onCreateDocument}
             onChanged={() => refreshAll(detail?.matter.id)}
             onDeleted={() => { setDetail(null); setReload((v) => v + 1); }}
@@ -230,8 +235,9 @@ export function MatterRegistry({ templates, selectedId, canEdit = false, canDele
   </section>;
 }
 
-function MatterDetail({ detail, labels, canEdit, canDelete = false, canUploadAttachments = false, onChanged, onDeleted, onCreateDocument, onOpenDocument, onOpenWork }:
+function MatterDetail({ detail, labels, canEdit, canDelete = false, canUploadAttachments = false, canRegisterPayments = false, onChanged, onDeleted, onCreateDocument, onOpenDocument, onOpenWork }:
   { detail: Detail | null; labels: Map<string, string>; canEdit: boolean; canDelete?: boolean; canUploadAttachments?: boolean;
+    canRegisterPayments?: boolean;
     onChanged: () => void; onDeleted?: () => void; onCreateDocument?: (issueKey: string | null, templateKey?: string) => void;
     onOpenDocument?: (documentId: number) => void; onOpenWork?: (id: number) => void }) {
   const [editing, setEditing] = useState(false);
@@ -287,6 +293,8 @@ function MatterDetail({ detail, labels, canEdit, canDelete = false, canUploadAtt
         <small>{nextTask.assigneeName ?? "担当未設定"} ・ {nextTask.dueAt ? formatDate(nextTask.dueAt) : "期限未設定"}</small></section>}
       <ServiceOutsourcingFlow matter={matter} documents={detail.documents} contracts={contracts}
         deliveryEvents={detail.deliveryEvents ?? []} payments={detail.payments ?? []}
+        issueKeys={[matter.primaryIssueKey, ...detail.issues.map((issue) => issue.issueKey)].filter((key, index, all): key is string => Boolean(key) && all.indexOf(key) === index)}
+        canRegisterDelivery={canEdit} canRegisterPayment={canRegisterPayments} onChanged={onChanged}
         labels={labels} onCreateDocument={onCreateDocument} />
       <div className="matter-relation-grid">
         <RelationCard title="依頼・Backlog" count={detail.issues.length} empty="依頼未紐付け">
@@ -343,41 +351,229 @@ function MatterDetail({ detail, labels, canEdit, canDelete = false, canUploadAtt
   </section>;
 }
 
-function ServiceOutsourcingFlow({ matter, documents, contracts, deliveryEvents, payments, labels, onCreateDocument }: {
+const DELIVERY_STATUS_LABELS: Record<string, string> = {
+  delivered: "納品済（検収待ち）", inspected: "検収済", completed: "完了", cancelled: "取消"
+};
+const PAYMENT_STATUS_LABELS: Record<string, string> = {
+  planned: "支払予定", approved: "承認済", paid: "支払済", received: "入金済", calculated: "計算済", completed: "完了"
+};
+const yen = (value: number | null | undefined, currency = "JPY") =>
+  value == null ? "—" : currency === "JPY" ? `¥${Math.round(value).toLocaleString("ja-JP")}` : `${currency} ${value.toLocaleString("ja-JP")}`;
+const todayIso = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+
+// 業務委託フロー（基本契約→発注→納品・報告→検収→支払）。①②④は文書作成、③⑤は実績の登録
+// （delivery_events / payments・2026-09-06）。納品は案件編集権限、支払は payments 台帳の権限で出す。
+function ServiceOutsourcingFlow({
+  matter, documents, contracts, deliveryEvents, payments, labels, issueKeys = [],
+  canRegisterDelivery = false, canRegisterPayment = false, onChanged, onCreateDocument
+}: {
   matter: Detail["matter"];
   documents: Detail["documents"];
   contracts: NonNullable<Detail["contracts"]>;
   deliveryEvents: NonNullable<Detail["deliveryEvents"]>;
   payments: NonNullable<Detail["payments"]>;
   labels: Map<string, string>;
+  issueKeys?: string[];
+  canRegisterDelivery?: boolean;
+  canRegisterPayment?: boolean;
+  onChanged?: () => void;
   onCreateDocument?: (issueKey: string | null, templateKey?: string) => void;
 }) {
+  const [form, setForm] = useState<"delivery" | "payment" | null>(null);
+  const [busy, setBusy] = useState<string>("");
+  const [error, setError] = useState("");
+  useEffect(() => { setForm(null); setError(""); }, [matter.id]);
   const hasServiceContract = documents.some((document) => document.templateType === "service_master") ||
     contracts.some((contract) => /業務委託|請負|準委任/.test(`${contract.contractType ?? ""} ${contract.title}`));
   const hasOrder = documents.some((document) => ["purchase_order", "intl_purchase_order"].includes(document.templateType));
   const hasInspection = documents.some((document) => document.templateType === "inspection_certificate");
   const hasDelivery = deliveryEvents.length > 0 || hasInspection;
-  const hasPaid = payments.some((payment) => ["paid", "completed"].includes(payment.status));
+  const hasPaid = payments.some((payment) => ["paid", "completed", "received"].includes(payment.status));
   const stages = [
     { key: "service_master", number: 1, label: "基本契約", complete: hasServiceContract, action: "基本契約を作成" },
     { key: "purchase_order", number: 2, label: "発注", complete: hasOrder, action: "発注書を作成" },
-    { key: "delivery", number: 3, label: "納品・報告", complete: hasDelivery, action: "" },
+    { key: "delivery", number: 3, label: "納品・報告", complete: hasDelivery, action: canRegisterDelivery ? "納品を登録" : "" },
     { key: "inspection_certificate", number: 4, label: "検収", complete: hasInspection, action: "検収書を作成" },
-    { key: "payment", number: 5, label: "支払", complete: hasPaid, action: "" }
+    { key: "payment", number: 5, label: "支払", complete: hasPaid, action: canRegisterPayment ? "支払を登録" : "" }
   ];
+  const stageNote = (key: string, complete: boolean) => {
+    if (complete) return "登録済み";
+    if (key === "delivery") return canRegisterDelivery ? "納品を登録してください" : "納品登録待ち";
+    if (key === "payment") return payments.length ? "支払処理中" : canRegisterPayment ? "支払を登録してください" : "支払登録待ち";
+    return "未作成";
+  };
+  async function patchStatus(kind: "deliveries" | "payments", id: number, body: Record<string, unknown>) {
+    setBusy(`${kind}:${id}`); setError("");
+    try {
+      const response = await fetch(`/api/v2/matters/${matter.id}/${kind}/${id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) { setError(data.error ?? "更新に失敗しました。"); return; }
+      onChanged?.();
+    } catch { setError("通信に失敗しました。"); }
+    finally { setBusy(""); }
+  }
+  const documentNumbers = documents.map((document) => document.documentNumber).filter((n): n is string => Boolean(n));
   return <section className="service-matter-flow">
     <header><div><span>SERVICE OUTSOURCING</span><h3>業務委託フロー</h3></div>
       <small>契約・発注・納品・検収・支払をこの案件で追跡します</small></header>
     <div className="service-matter-steps">
       {stages.map((stage) => <article key={stage.key} className={stage.complete ? "complete" : "pending"}>
         <b>{stage.complete ? "✓" : stage.number}</b><div><strong>{stage.label}</strong>
-          <small>{stage.complete ? "登録済み" : stage.key === "delivery" ? "納品登録待ち" : stage.key === "payment" ? payments.length ? "支払処理中" : "支払登録待ち" : "未作成"}</small></div>
-        {stage.action && onCreateDocument && labels.has(stage.key) &&
+          <small>{stageNote(stage.key, stage.complete)}</small></div>
+        {stage.key === "delivery" && stage.action &&
+          <button onClick={() => setForm(form === "delivery" ? null : "delivery")}>{form === "delivery" ? "閉じる" : stage.action}</button>}
+        {stage.key === "payment" && stage.action &&
+          <button onClick={() => setForm(form === "payment" ? null : "payment")}>{form === "payment" ? "閉じる" : stage.action}</button>}
+        {stage.key !== "delivery" && stage.key !== "payment" && stage.action && onCreateDocument && labels.has(stage.key) &&
           <button onClick={() => onCreateDocument(matter.primaryIssueKey, stage.key)}>{stage.complete ? "追加作成" : stage.action}</button>}
       </article>)}
     </div>
     {!labels.has("service_master") && <p className="service-flow-warning">業務委託基本契約テンプレートが無効です。管理者にテンプレート設定を確認してください。</p>}
+    {!issueKeys.length && (canRegisterDelivery || canRegisterPayment) &&
+      <p className="service-flow-warning">納品・支払は Backlog 課題キーで案件に結びます。案件の「代表依頼（Backlog）」か関連課題を先に登録してください。</p>}
+    {form === "delivery" && <DeliveryRegisterForm matterId={matter.id} issueKeys={issueKeys} documentNumbers={documentNumbers}
+      onDone={() => { setForm(null); onChanged?.(); }} onCancel={() => setForm(null)} />}
+    {form === "payment" && <PaymentRegisterForm matterId={matter.id} issueKeys={issueKeys} documentNumbers={documentNumbers}
+      onDone={() => { setForm(null); onChanged?.(); }} onCancel={() => setForm(null)} />}
+    {error && <p className="service-flow-warning">{error}</p>}
+    {(deliveryEvents.length > 0 || payments.length > 0) && <div className="service-flow-records">
+      {deliveryEvents.length > 0 && <div>
+        <h4>納品実績 {deliveryEvents.length}件</h4>
+        {deliveryEvents.map((event) => <div key={event.id} className={`record ${["inspected", "completed"].includes(event.status) ? "done" : ""}`}>
+          <b>{DELIVERY_STATUS_LABELS[event.status] ?? event.status}</b>
+          <span>{yen(event.deliveredAmount)}</span>
+          <span>検収期限 {event.inspectionDeadline ?? "—"}</span>
+          {event.backlogIssueKey && <small>{event.backlogIssueKey}</small>}
+          {canRegisterDelivery && event.status === "delivered" &&
+            <button disabled={busy === `deliveries:${event.id}`} onClick={() => void patchStatus("deliveries", event.id, { status: "inspected" })}>検収済にする</button>}
+        </div>)}
+      </div>}
+      {payments.length > 0 && <div>
+        <h4>支払 {payments.length}件</h4>
+        {payments.map((payment) => <div key={payment.id} className={`record ${["paid", "completed", "received"].includes(payment.status) ? "done" : ""}`}>
+          <b>{PAYMENT_STATUS_LABELS[payment.status] ?? payment.status}</b>
+          <span>{yen(payment.amount, payment.currency)}</span>
+          <span>{payment.paidDate ? `支払日 ${payment.paidDate}` : `支払予定 ${payment.dueDate ?? "—"}`}</span>
+          {payment.sourceDocumentNumber && <small>{payment.sourceDocumentNumber}</small>}
+          {canRegisterPayment && !["paid", "completed", "received"].includes(payment.status) &&
+            <button disabled={busy === `payments:${payment.id}`}
+              onClick={() => void patchStatus("payments", payment.id, { status: "paid", paidDate: todayIso() })}>支払済にする</button>}
+        </div>)}
+      </div>}
+    </div>}
   </section>;
+}
+
+function DeliveryRegisterForm({ matterId, issueKeys, documentNumbers, onDone, onCancel }: {
+  matterId: number; issueKeys: string[]; documentNumbers: string[]; onDone: () => void; onCancel: () => void;
+}) {
+  const [values, setValues] = useState({
+    backlogIssueKey: issueKeys[0] ?? "", deliveredOn: todayIso(), deliveredAmount: "", inspectionDeadline: "",
+    documentNumber: "", note: ""
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const set = (key: keyof typeof values, value: string) => setValues((prev) => ({ ...prev, [key]: value }));
+  async function submit() {
+    setSaving(true); setError("");
+    try {
+      const response = await fetch(`/api/v2/matters/${matterId}/deliveries`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          backlogIssueKey: values.backlogIssueKey || null,
+          deliveredOn: values.deliveredOn || null,
+          deliveredAmount: values.deliveredAmount === "" ? null : Number(values.deliveredAmount.replace(/[,¥\s]/g, "")),
+          inspectionDeadline: values.inspectionDeadline || null,
+          documentNumber: values.documentNumber || null,
+          note: values.note || null
+        })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) { setError(data.error ?? "登録に失敗しました。"); return; }
+      onDone();
+    } catch { setError("通信に失敗しました。"); }
+    finally { setSaving(false); }
+  }
+  return <div className="service-flow-form">
+    <strong>納品実績を登録</strong>
+    <div className="grid">
+      {issueKeys.length > 1 && <label>課題キー<select value={values.backlogIssueKey} onChange={(e) => set("backlogIssueKey", e.target.value)}>
+        {issueKeys.map((key) => <option key={key} value={key}>{key}</option>)}</select></label>}
+      <label>納品日<input type="date" value={values.deliveredOn} onChange={(e) => set("deliveredOn", e.target.value)} /></label>
+      <label>納品額（税抜）<input inputMode="numeric" placeholder="150000" value={values.deliveredAmount} onChange={(e) => set("deliveredAmount", e.target.value)} /></label>
+      <label>検収期限<input type="date" value={values.inspectionDeadline} onChange={(e) => set("inspectionDeadline", e.target.value)} /></label>
+      <label>対象文書（発注書など）<input list={`delivery-docs-${matterId}`} value={values.documentNumber} onChange={(e) => set("documentNumber", e.target.value)} placeholder="ARC-PO-2026-0001" />
+        <datalist id={`delivery-docs-${matterId}`}>{documentNumbers.map((n) => <option key={n} value={n} />)}</datalist></label>
+      <label>メモ<input value={values.note} onChange={(e) => set("note", e.target.value)} placeholder="初回納品・第2回など" /></label>
+    </div>
+    {error && <p className="error">{error}</p>}
+    <div className="actions">
+      <button type="button" onClick={onCancel} disabled={saving}>キャンセル</button>
+      <button type="button" className="primary" onClick={() => void submit()} disabled={saving || !issueKeys.length}>{saving ? "登録中…" : "納品を登録"}</button>
+    </div>
+  </div>;
+}
+
+function PaymentRegisterForm({ matterId, issueKeys, documentNumbers, onDone, onCancel }: {
+  matterId: number; issueKeys: string[]; documentNumbers: string[]; onDone: () => void; onCancel: () => void;
+}) {
+  const [values, setValues] = useState({
+    backlogIssueKey: issueKeys[0] ?? "", amountExTax: "", totalAmount: "", currency: "JPY", dueDate: "", paidDate: "",
+    status: "planned", sourceDocumentNumber: "", note: ""
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const set = (key: keyof typeof values, value: string) => setValues((prev) => ({ ...prev, [key]: value }));
+  const money = (value: string) => value === "" ? null : Number(value.replace(/[,¥\s]/g, ""));
+  async function submit() {
+    const amount = money(values.amountExTax);
+    if (amount == null || !Number.isFinite(amount)) { setError("金額（税抜）を入力してください。"); return; }
+    setSaving(true); setError("");
+    try {
+      const response = await fetch(`/api/v2/matters/${matterId}/payments`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          backlogIssueKey: values.backlogIssueKey || null,
+          amountExTax: amount,
+          totalAmount: money(values.totalAmount),
+          currency: values.currency || "JPY",
+          dueDate: values.dueDate || null,
+          paidDate: values.paidDate || null,
+          status: values.paidDate ? "paid" : values.status,
+          sourceDocumentNumber: values.sourceDocumentNumber || null,
+          note: values.note || null
+        })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) { setError(data.error ?? "登録に失敗しました。"); return; }
+      onDone();
+    } catch { setError("通信に失敗しました。"); }
+    finally { setSaving(false); }
+  }
+  return <div className="service-flow-form">
+    <strong>支払を登録</strong>
+    <div className="grid">
+      {issueKeys.length > 1 && <label>課題キー<select value={values.backlogIssueKey} onChange={(e) => set("backlogIssueKey", e.target.value)}>
+        {issueKeys.map((key) => <option key={key} value={key}>{key}</option>)}</select></label>}
+      <label>金額（税抜）<input inputMode="numeric" placeholder="100000" value={values.amountExTax} onChange={(e) => set("amountExTax", e.target.value)} /></label>
+      <label>税込（省略時は税抜と同額）<input inputMode="numeric" placeholder="110000" value={values.totalAmount} onChange={(e) => set("totalAmount", e.target.value)} /></label>
+      <label>通貨<input maxLength={3} value={values.currency} onChange={(e) => set("currency", e.target.value.toUpperCase())} /></label>
+      <label>支払予定日<input type="date" value={values.dueDate} onChange={(e) => set("dueDate", e.target.value)} /></label>
+      <label>支払日（支払済のとき）<input type="date" value={values.paidDate} onChange={(e) => set("paidDate", e.target.value)} /></label>
+      <label>状態<select value={values.paidDate ? "paid" : values.status} onChange={(e) => set("status", e.target.value)} disabled={Boolean(values.paidDate)}>
+        <option value="planned">支払予定</option><option value="approved">承認済</option><option value="paid">支払済</option></select></label>
+      <label>対象文書（検収書・発注書）<input list={`payment-docs-${matterId}`} value={values.sourceDocumentNumber} onChange={(e) => set("sourceDocumentNumber", e.target.value)} placeholder="ARC-INS-2026-0001" />
+        <datalist id={`payment-docs-${matterId}`}>{documentNumbers.map((n) => <option key={n} value={n} />)}</datalist></label>
+      <label>メモ<input value={values.note} onChange={(e) => set("note", e.target.value)} /></label>
+    </div>
+    {error && <p className="error">{error}</p>}
+    <div className="actions">
+      <button type="button" onClick={onCancel} disabled={saving}>キャンセル</button>
+      <button type="button" className="primary" onClick={() => void submit()} disabled={saving || !issueKeys.length}>{saving ? "登録中…" : "支払を登録"}</button>
+    </div>
+  </div>;
 }
 
 function RelationCard({ title, count, empty, children }: { title: string; count: number; empty: string; children: React.ReactNode }) {

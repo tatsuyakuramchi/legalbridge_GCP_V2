@@ -159,3 +159,19 @@ gcloud run services update-traffic legalbridge-v2-write-test \
   --region=asia-northeast1 --project=legalbridge-488506 \
   --to-revisions=KNOWN_GOOD_REVISION=100
 ```
+
+## 10. 納品実績・支払の登録（案件画面・業務委託フロー③⑤）
+
+案件詳細の「業務委託フロー」から、文書を作らずに納品実績（`delivery_events`）と支払（`payments`）を
+登録できる（2026-09-06）。どちらも案件の Backlog 課題キー（代表依頼または関連課題）で結ぶ。
+
+1. `infra/gcp/sql/077_delivery_registration_preflight.sql` — READ ONLY。`delivery_events` / `payments` の列一覧と
+   現在の権限を確認する。アプリは実列を見て「ある列だけ」に書くため、NOT NULL かつ既定値なしの列が
+   想定外にあると登録時に 422（`DELIVERY_SCHEMA_UNSUPPORTED`）で列名が返る。
+2. `infra/gcp/sql/078_delivery_registration_grants.sql` — `delivery_events` の INSERT/UPDATE とシーケンスを
+   実行ロールへ付与（冪等）。支払は grant 016（`payments`）が前提。
+3. デプロイ設定：納品は既存の `matters` scope（`MATTER_WRITES_ENABLED=true`）で有効。支払は
+   `PAYMENT_LEDGER_WRITES_ENABLED=true` ＋ `WRITE_SCOPES` に `payments`（verify-write-test.sh の順序どおり）。
+
+API: `POST/PATCH /api/v2/matters/:id/deliveries(/:deliveryId)`、`POST/PATCH /api/v2/matters/:id/payments(/:paymentId)`。
+状態値は納品 `delivered → inspected → completed`（`cancelled`）、支払 `planned → approved → paid`。

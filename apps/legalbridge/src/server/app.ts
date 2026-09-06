@@ -78,6 +78,11 @@ import {
 } from "./matters/write-repository.js";
 import { createMatterWriteRouter } from "./matters/write-routes.js";
 import {
+  MemoryMatterDeliveryPaymentRepository, PgMatterDeliveryPaymentRepository,
+  type MatterDeliveryPaymentRepository
+} from "./matters/delivery-payment-repository.js";
+import { createMatterDeliveryPaymentRouter } from "./matters/delivery-payment-routes.js";
+import {
   PgMatterIssueWriteRepository,
   type MatterIssueWriteRepository
 } from "./matters/matter-issue-write-repository.js";
@@ -446,6 +451,8 @@ export interface AppDependencies {
   documentLookup?: DocumentLookupRepository;
   matters?: MatterRepository;
   matterWrites?: MatterWriteRepository;
+  // 案件画面からの納品実績（delivery_events）・支払（payments）登録（2026-09-06）。
+  matterDeliveryPayments?: MatterDeliveryPaymentRepository;
   matterIssueWrites?: MatterIssueWriteRepository;
   matterDocumentWrites?: MatterDocumentWriteRepository;
   matterSends?: MatterSendRepository;
@@ -572,6 +579,9 @@ function createDefaultDependencies(): AppDependencies {
     matterWrites: database
       ? new PgMatterWriteRepository(database)
       : new MemoryMatterWriteRepository(),
+    matterDeliveryPayments: database
+      ? new PgMatterDeliveryPaymentRepository(database)
+      : new MemoryMatterDeliveryPaymentRepository(),
     matterIssueWrites: database ? new PgMatterIssueWriteRepository(database) : undefined,
     matterDocumentWrites: database ? new PgMatterDocumentWriteRepository(database) : undefined,
     matterSends: database ? new PgMatterSendRepository(database) : undefined,
@@ -1346,8 +1356,16 @@ export function createApp(
       (request.method === "POST" && /^\/matters\/\d+\/documents\/from-drive$/.test(request.path)) ||
       (request.method === "DELETE" && /^\/matters\/\d+\/documents\/\d+$/.test(request.path)) ||
       (request.method === "POST" && /^\/matters\/\d+\/sends$/.test(request.path)) ||
-      (request.method === "POST" && /^\/matters\/\d+\/drive-folder$/.test(request.path));
+      (request.method === "POST" && /^\/matters\/\d+\/drive-folder$/.test(request.path)) ||
+      // 納品実績（業務委託フロー③）。案件編集の一部として scope 'matters' で守る。
+      (request.method === "POST" && /^\/matters\/\d+\/deliveries$/.test(request.path)) ||
+      (request.method === "PATCH" && /^\/matters\/\d+\/deliveries\/\d+$/.test(request.path));
     if (matterWriteEnabled && isMatterWrite) return next();
+    // 支払（業務委託フロー⑤）は payments 台帳への書込＝scope 'payments'（grant 016）で守る。
+    const isMatterPaymentWrite =
+      (request.method === "POST" && /^\/matters\/\d+\/payments$/.test(request.path)) ||
+      (request.method === "PATCH" && /^\/matters\/\d+\/payments\/\d+$/.test(request.path));
+    if (paymentLedgerWriteEnabled && isMatterPaymentWrite) return next();
     const isRequestMatterLink =
       request.method === "POST" &&
       /^\/requests\/\d+\/link-matter$/.test(request.path);
@@ -1522,6 +1540,11 @@ export function createApp(
           channel: matterSlackChannelAdapter
         })
       : new NoopMatterSlackNotifier();
+  // 納品実績・支払の登録（業務委託フロー③⑤）。
+  app.use("/api/v2", createMatterDeliveryPaymentRouter(dependencies.matterDeliveryPayments, {
+    deliveryWriteEnabled: matterWriteEnabled,
+    paymentWriteEnabled: paymentLedgerWriteEnabled
+  }));
   app.use("/api/v2", createMatterWriteRouter(
     dependencies.matterWrites,
     matterWriteEnabled,

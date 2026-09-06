@@ -2931,3 +2931,19 @@ button.request-chip.interactive:hover { border-color:#20b8cd; background:#f0fbfc
 @media (max-width: 760px) { .deadline-toolbar { align-items:stretch; flex-direction:column; }.deadline-toolbar > span { margin-left:0; }.deadline-row { grid-template-columns:1fr; gap:4px; } }
 
 @media(max-width:760px){ .rights-scope-picker,.scope-option-grid { grid-template-columns:1fr; } }
+
+/* 業務委託フロー ③納品・⑤支払 の登録フォームと実績一覧（2026-09-06） */
+.service-flow-form { margin-top: 12px; padding: 12px 14px; border: 1px solid #dbe3ee; border-radius: 10px; background: #f8fafc; display: grid; gap: 10px; }
+.service-flow-form > strong { font-size: 13px; color: #172a44; }
+.service-flow-form .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px 12px; }
+.service-flow-form label { display: grid; gap: 3px; font-size: 11px; color: #64748b; }
+.service-flow-form input, .service-flow-form select { padding: 6px 8px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13px; background: #fff; }
+.service-flow-form .actions { display: flex; gap: 8px; justify-content: flex-end; }
+.service-flow-form .error { margin: 0; color: #b91c1c; font-size: 12px; }
+.service-flow-records { margin-top: 12px; display: grid; gap: 10px; }
+.service-flow-records h4 { margin: 0 0 4px; font-size: 12px; color: #64748b; font-weight: 600; }
+.service-flow-records .record { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; font-size: 12px; padding: 6px 10px; margin-bottom: 4px; border-left: 3px solid #cbd5e1; background: #fff; border-radius: 0 6px 6px 0; }
+.service-flow-records .record.done { border-left-color: #16a34a; }
+.service-flow-records .record b { color: #172a44; }
+.service-flow-records .record small { color: #64748b; }
+.service-flow-records .record button { margin-left: auto; font-size: 12px; padding: 4px 10px; }

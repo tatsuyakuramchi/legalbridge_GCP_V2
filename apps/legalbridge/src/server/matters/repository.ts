@@ -20,8 +20,11 @@ export interface MatterDetail {
   contracts?: Array<{ id: number; documentNumber: string | null; title: string; contractType: string | null; status: string | null; expirationDate: string | null }>;
   works?: Array<{ id: number; workCode: string | null; title: string }>;
   vendors?: Array<{ id: number; vendorCode: string | null; name: string }>;
-  deliveryEvents?: Array<{ id: number; status: string; inspectionDeadline: string | null; deliveredAmount: number | null }>;
-  payments?: Array<{ id: number; status: string; dueDate: string | null; amount: number | null; currency: string; sourceDocumentNumber: string | null }>;
+  deliveryEvents?: Array<{ id: number; status: string; inspectionDeadline: string | null; deliveredAmount: number | null; backlogIssueKey?: string | null }>;
+  payments?: Array<{
+    id: number; status: string; dueDate: string | null; paidDate?: string | null; amount: number | null; currency: string;
+    sourceDocumentNumber: string | null; paymentKind?: string | null; backlogIssueKey?: string | null;
+  }>;
   deadlines?: Array<{ id: string; kind: "matter" | "task" | "document" | "contract"; title: string; dueDate: string; status: string }>;
 }
 export interface MatterRepository {
@@ -107,14 +110,14 @@ export class PgMatterRepository implements MatterRepository {
            ) linked ON linked.vendor_id = v.id
           ORDER BY v.vendor_name, v.id`, [id]),
       this.database.query(
-        `SELECT de.id, de.status, de.inspection_deadline, de.delivered_amount
+        `SELECT de.id, de.status, de.inspection_deadline, de.delivered_amount, de.backlog_issue_key
            FROM delivery_events de
           WHERE de.backlog_issue_key = (SELECT primary_issue_key FROM matters WHERE id = $1)
              OR de.backlog_issue_key IN (SELECT backlog_issue_key FROM matter_issues WHERE matter_id = $1)
           ORDER BY de.id DESC`, [id]),
       this.database.query(
-        `SELECT p.id, p.status, p.due_date, COALESCE(p.total_amount,p.amount_ex_tax) AS amount,
-                p.currency, p.source_document_number
+        `SELECT p.id, p.status, p.due_date, p.paid_date, COALESCE(p.total_amount,p.amount_ex_tax) AS amount,
+                p.currency, p.source_document_number, p.payment_kind, p.backlog_issue_key
            FROM payments p
           WHERE p.backlog_issue_key = (SELECT primary_issue_key FROM matters WHERE id = $1)
              OR p.backlog_issue_key IN (SELECT backlog_issue_key FROM matter_issues WHERE matter_id = $1)
@@ -180,12 +183,15 @@ export class PgMatterRepository implements MatterRepository {
       deliveryEvents: deliveryResult.rows.map((event) => ({
         id: Number(event.id), status: String(event.status ?? ""),
         inspectionDeadline: dateOnly(event.inspection_deadline),
-        deliveredAmount: event.delivered_amount === null ? null : Number(event.delivered_amount)
+        deliveredAmount: event.delivered_amount === null ? null : Number(event.delivered_amount),
+        backlogIssueKey: event.backlog_issue_key ?? null
       })),
       payments: paymentResult.rows.map((payment) => ({
         id: Number(payment.id), status: String(payment.status ?? ""), dueDate: dateOnly(payment.due_date),
+        paidDate: dateOnly(payment.paid_date),
         amount: payment.amount === null ? null : Number(payment.amount), currency: String(payment.currency ?? "JPY"),
-        sourceDocumentNumber: payment.source_document_number ?? null
+        sourceDocumentNumber: payment.source_document_number ?? null,
+        paymentKind: payment.payment_kind ?? null, backlogIssueKey: payment.backlog_issue_key ?? null
       })),
       deadlines: deadlinesResult.rows.map((deadline) => ({
         id: String(deadline.id), kind: deadline.kind, title: String(deadline.title ?? ""),

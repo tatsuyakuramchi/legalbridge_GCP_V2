@@ -287,6 +287,8 @@ export function App() {
   const [canGmailInbound, setCanGmailInbound] = useState(false);
   const [canRecordReceipt, setCanRecordReceipt] = useState(false);
   const [canRepairConditions, setCanRepairConditions] = useState(false);
+  // 案件画面の支払登録（payments 台帳・scope 'payments'）。納品実績は案件編集権限で登録できる。
+  const [canRegisterPayments, setCanRegisterPayments] = useState(false);
   const [canVoidDocument, setCanVoidDocument] = useState(false);
   const [canReissueDocument, setCanReissueDocument] = useState(false);
   const [canExcelBatch, setCanExcelBatch] = useState(false);
@@ -397,6 +399,7 @@ export function App() {
         setCanGmailInbound(capabilities.includes("gmail-inbound"));
         setCanRecordReceipt(capabilities.includes("receipts"));
         setCanRepairConditions(capabilities.includes("condition-repair"));
+        setCanRegisterPayments(capabilities.includes("payments"));
         setCanVoidDocument(capabilities.includes("document-void"));
         setCanReissueDocument(capabilities.includes("document-reissue"));
         setCanExcelBatch(capabilities.includes("excel-batch"));
@@ -432,6 +435,7 @@ export function App() {
         setCanGmailInbound(false);
         setCanRecordReceipt(false);
         setCanRepairConditions(false);
+        setCanRegisterPayments(false);
         setBacklogMode("disabled");
       });
     fetch("/api/v2/document-templates")
@@ -851,6 +855,7 @@ export function App() {
           canEdit={canEditMatters}
           canDelete={canDeleteMatters}
           canUploadAttachments={canUploadAttachments}
+          canRegisterPayments={canRegisterPayments}
           onCreateDocument={(legalWorkspace || requesterWorkspace)
             ? (issueKey, templateKey) => {
               // 案件の業務委託フローから種別指定で起こす（基本契約・発注書・検収書）。
