@@ -82,8 +82,72 @@ export function buildDocumentFormContext(
     対象作品予定名: "title", 対象製品予定名: "title"
   });
 
+  applyServiceFlowDefaults(schema.templateKey, data, sources);
+
   // 下書きを最後に適用する。field_schemaにない互換キーも削除しない。
   return { ...data, ...draft };
+}
+
+function applyServiceFlowDefaults(
+  templateKey: string,
+  data: DocumentFormData,
+  sources: FormContextSources
+) {
+  if (!["service_master", "purchase_order", "intl_purchase_order", "inspection_certificate"].includes(templateKey)) return;
+  const backlog = sources.backlog ?? {};
+  const matter = sources.matter ?? {};
+  const document = sources.document ?? {};
+  const vendor = sources.vendor ?? {};
+  const seed = (name: string, ...values: unknown[]) => {
+    if (data[name] !== undefined && data[name] !== "") return;
+    const value = values.find((candidate) => candidate !== undefined && candidate !== null && candidate !== "");
+    if (value !== undefined) data[name] = value;
+  };
+
+  seed("DETAILS", backlog.details, backlog.DETAILS, matter.remarks);
+  seed("SERVICE_ENGAGEMENT_TYPE", backlog.engagement_type, backlog.service_type,
+    backlog["契約類型"], document.SERVICE_ENGAGEMENT_TYPE, document.CONTRACT_TYPE);
+  seed("CONTRACT_TYPE", data.SERVICE_ENGAGEMENT_TYPE, backlog.contract_type);
+  seed("SERVICE_CATEGORY", backlog.service_category, backlog["業務区分"], document.SERVICE_CATEGORY);
+  seed("COMPENSATION_TYPE", backlog.compensation_type, backlog["報酬方式"], document.COMPENSATION_TYPE);
+  seed("DELIVERABLE_REQUIRED", backlog.deliverable_required, backlog["成果物"], document.DELIVERABLE_REQUIRED);
+  seed("INSPECTION_REQUIRED", backlog.inspection_required, backlog["検収"], document.INSPECTION_REQUIRED);
+  seed("IP_OWNERSHIP", backlog.ip_ownership, backlog["知的財産権"], document.IP_OWNERSHIP);
+  seed("SUBCONTRACTING_POLICY", backlog.subcontracting_policy, backlog["再委託"], document.SUBCONTRACTING_POLICY);
+  seed("PERSONAL_DATA_HANDLING", backlog.personal_data_handling, backlog["個人情報"], document.PERSONAL_DATA_HANDLING);
+  seed("RENEWAL_TYPE", backlog.renewal_type, backlog["契約更新"], document.RENEWAL_TYPE);
+  seed("SPECIAL_TERMS", backlog.special_terms, backlog["特約"], document.SPECIAL_TERMS);
+  seed("WITHHOLDING_TAX", vendor.withholding_enabled === true ? "対象" :
+    vendor.withholding_enabled === false ? "対象外" : undefined);
+
+  if (data.SERVICE_ENGAGEMENT_TYPE === "請負") {
+    seed("DELIVERABLE_REQUIRED", "必要");
+    seed("INSPECTION_REQUIRED", "必要");
+    seed("COMPENSATION_TYPE", "固定額");
+  } else if (data.SERVICE_ENGAGEMENT_TYPE === "準委任") {
+    seed("DELIVERABLE_REQUIRED", "不要（業務報告のみ）");
+    seed("INSPECTION_REQUIRED", "不要（履行確認）");
+    seed("COMPENSATION_TYPE", "月額");
+  } else if (data.SERVICE_ENGAGEMENT_TYPE === "レベニューシェア") {
+    seed("DELIVERABLE_REQUIRED", "案件に応じて選択");
+    seed("INSPECTION_REQUIRED", "案件に応じて選択");
+    seed("COMPENSATION_TYPE", "売上連動");
+  }
+
+  if ((templateKey === "purchase_order" || templateKey === "intl_purchase_order") && !Array.isArray(data.items)) {
+    const summary = backlog.summary ?? matter.title;
+    const details = backlog.details ?? matter.remarks;
+    if (summary || details) {
+      data.items = [{
+        item_name: data.SERVICE_CATEGORY ?? "その他",
+        spec: details ?? summary,
+        engagement_type: data.SERVICE_ENGAGEMENT_TYPE ?? "",
+        inspection_method: data.INSPECTION_REQUIRED === "不要（履行確認）" ? "完了報告確認" : "成果物検収",
+        quantity: 1,
+        delivery_date: backlog.deadline ?? matter.target_due_date ?? ""
+      }];
+    }
+  }
 }
 
 function applyAliases(

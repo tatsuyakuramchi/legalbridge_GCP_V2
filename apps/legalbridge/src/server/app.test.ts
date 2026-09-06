@@ -807,6 +807,25 @@ test("発注書の明細・経費・金銭条件をプレビュー用に集計�
   assert.equal(context.has_seller_owned_license, true);
 });
 
+test("業務委託の選択値を既存テンプレートの互換キーへ展開する", () => {
+  const context = buildTemplateDocumentContext("service_master", {
+    SERVICE_ENGAGEMENT_TYPE: "準委任",
+    SERVICE_CATEGORY: "PMO業務",
+    COMPENSATION_TYPE: "月額",
+    DELIVERABLE_REQUIRED: "不要（業務報告のみ）",
+    INSPECTION_REQUIRED: "不要（履行確認）",
+    IP_OWNERSHIP: "受注者帰属・利用許諾",
+    SUBCONTRACTING_POLICY: "事前書面承諾",
+    PERSONAL_DATA_HANDLING: "取扱いあり",
+    RENEWAL_TYPE: "1年自動更新"
+  });
+  assert.equal(context.契約類型, "準委任");
+  assert.equal(context.業務区分, "PMO業務");
+  assert.equal(context.成果物有無, "不要（業務報告のみ）");
+  assert.equal(context.知的財産権帰属, "受注者帰属・利用許諾");
+  assert.equal(context.再委託条件, "事前書面承諾");
+});
+
 test("個別利用許諾条件書の旧金銭条件を配列へ変換する", () => {
   const context = buildTemplateDocumentContext("individual_license_terms", {
     金銭条件1_地域言語ラベル: "国内・日本語",
@@ -846,8 +865,9 @@ test("利用許諾料計算書と検収書の合計額を再構築する", () =>
   assert.equal(inspection.hasPerformanceRoyalty, true);
 });
 
-test("残る6テンプレートの生成変数を互換性警告にしない", () => {
+test("各専用テンプレートの生成変数を互換性警告にしない", () => {
   const cases = [
+    ["service_master", "{{契約類型}}{{業務区分}}{{成果物有無}}{{知的財産権帰属}}"],
     ["purchase_order", "{{items}}{{expensesTotalIncTax}}{{BANK_INFO}}"],
     ["intl_purchase_order", "{{itemsSubtotalExTax}}{{PAYMENT_TERMS}}"],
     ["individual_license_terms", "{{financial_conditions}}{{サブライセンシー一覧}}"],

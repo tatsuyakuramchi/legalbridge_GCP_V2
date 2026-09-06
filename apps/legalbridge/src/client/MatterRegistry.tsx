@@ -22,6 +22,8 @@ type Detail = {
   contracts?: Array<{ id: number; documentNumber: string | null; title: string; contractType: string | null; status: string | null; expirationDate: string | null }>;
   works?: Array<{ id: number; workCode: string | null; title: string }>;
   vendors?: Array<{ id: number; vendorCode: string | null; name: string }>;
+  deliveryEvents?: Array<{ id: number; status: string; inspectionDeadline: string | null; deliveredAmount: number | null }>;
+  payments?: Array<{ id: number; status: string; dueDate: string | null; amount: number | null; currency: string; sourceDocumentNumber: string | null }>;
   deadlines?: Array<{ id: string; kind: "matter" | "task" | "document" | "contract"; title: string; dueDate: string; status: string }>;
 };
 const statusLabels: Record<string, string> = { open: "未着手", in_progress: "進行中", closed: "完了", archived: "保管" };
@@ -60,7 +62,7 @@ function matchesFilter(matter: Matter, filter: FilterKey, today: string) {
 
 export function MatterRegistry({ templates, selectedId, canEdit = false, onCreateDocument, onOpenDocument, onOpenWork }:
   { templates: DocumentFormSchema[]; selectedId?: number; canEdit?: boolean;
-    onCreateDocument?: (issueKey: string | null) => void;
+    onCreateDocument?: (issueKey: string | null, templateKey?: string) => void;
     onOpenDocument?: (id: number) => void; onOpenWork?: (id: number) => void }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FilterKey>("all");
@@ -175,7 +177,7 @@ export function MatterRegistry({ templates, selectedId, canEdit = false, onCreat
 
 function MatterDetail({ detail, labels, canEdit, onChanged, onCreateDocument, onOpenDocument, onOpenWork }:
   { detail: Detail | null; labels: Map<string, string>; canEdit: boolean; onChanged: () => void;
-    onCreateDocument?: (issueKey: string | null) => void;
+    onCreateDocument?: (issueKey: string | null, templateKey?: string) => void;
     onOpenDocument?: (id: number) => void; onOpenWork?: (id: number) => void }) {
   const [editing, setEditing] = useState(false);
   const [addingTask, setAddingTask] = useState(false);
@@ -223,6 +225,9 @@ function MatterDetail({ detail, labels, canEdit, onChanged, onCreateDocument, on
     {tab === "overview" && <div className="matter-workspace-body">
       {nextTask && <section className="matter-next-action"><span>NEXT ACTION</span><strong>{nextTask.title}</strong>
         <small>{nextTask.assigneeName ?? "担当未設定"} ・ {nextTask.dueAt ? formatDate(nextTask.dueAt) : "期限未設定"}</small></section>}
+      <ServiceOutsourcingFlow matter={matter} documents={detail.documents} contracts={contracts}
+        deliveryEvents={detail.deliveryEvents ?? []} payments={detail.payments ?? []}
+        labels={labels} onCreateDocument={onCreateDocument} />
       <div className="matter-relation-grid">
         <RelationCard title="依頼・Backlog" count={detail.issues.length} empty="依頼未紐付け">
           {detail.issues.slice(0, 4).map((issue) => <div key={issue.issueKey}><b>{issue.issueKey}</b><span>{issue.summary ?? issue.relation}</span></div>)}
@@ -258,6 +263,43 @@ function MatterDetail({ detail, labels, canEdit, onChanged, onCreateDocument, on
     </div>}
 
     {tab === "requests" && <div className="matter-workspace-body"><DetailSection title={`依頼・関連課題 ${detail.issues.length}`}>{detail.issues.map((issue) => <article key={issue.issueKey}><b>{issue.issueKey}{issue.requestId ? " ・ 法務依頼" : ""}</b><span>{issue.summary ?? issue.relation}</span><small>{[issue.requestType, issue.requestCounterparty, issue.note].filter(Boolean).join(" ・ ")}</small></article>)}</DetailSection></div>}
+  </section>;
+}
+
+function ServiceOutsourcingFlow({ matter, documents, contracts, deliveryEvents, payments, labels, onCreateDocument }: {
+  matter: Detail["matter"];
+  documents: Detail["documents"];
+  contracts: NonNullable<Detail["contracts"]>;
+  deliveryEvents: NonNullable<Detail["deliveryEvents"]>;
+  payments: NonNullable<Detail["payments"]>;
+  labels: Map<string, string>;
+  onCreateDocument?: (issueKey: string | null, templateKey?: string) => void;
+}) {
+  const hasServiceContract = documents.some((document) => document.templateType === "service_master") ||
+    contracts.some((contract) => /業務委託|請負|準委任/.test(`${contract.contractType ?? ""} ${contract.title}`));
+  const hasOrder = documents.some((document) => ["purchase_order", "intl_purchase_order"].includes(document.templateType));
+  const hasInspection = documents.some((document) => document.templateType === "inspection_certificate");
+  const hasDelivery = deliveryEvents.length > 0 || hasInspection;
+  const hasPaid = payments.some((payment) => ["paid", "completed"].includes(payment.status));
+  const stages = [
+    { key: "service_master", number: 1, label: "基本契約", complete: hasServiceContract, action: "基本契約を作成" },
+    { key: "purchase_order", number: 2, label: "発注", complete: hasOrder, action: "発注書を作成" },
+    { key: "delivery", number: 3, label: "納品・報告", complete: hasDelivery, action: "" },
+    { key: "inspection_certificate", number: 4, label: "検収", complete: hasInspection, action: "検収書を作成" },
+    { key: "payment", number: 5, label: "支払", complete: hasPaid, action: "" }
+  ];
+  return <section className="service-matter-flow">
+    <header><div><span>SERVICE OUTSOURCING</span><h3>業務委託フロー</h3></div>
+      <small>契約・発注・納品・検収・支払をこの案件で追跡します</small></header>
+    <div className="service-matter-steps">
+      {stages.map((stage) => <article key={stage.key} className={stage.complete ? "complete" : "pending"}>
+        <b>{stage.complete ? "✓" : stage.number}</b><div><strong>{stage.label}</strong>
+          <small>{stage.complete ? "登録済み" : stage.key === "delivery" ? "納品登録待ち" : stage.key === "payment" ? payments.length ? "支払処理中" : "支払登録待ち" : "未作成"}</small></div>
+        {stage.action && onCreateDocument && labels.has(stage.key) &&
+          <button onClick={() => onCreateDocument(matter.primaryIssueKey, stage.key)}>{stage.complete ? "追加作成" : stage.action}</button>}
+      </article>)}
+    </div>
+    {!labels.has("service_master") && <p className="service-flow-warning">業務委託基本契約テンプレートが無効です。管理者にテンプレート設定を確認してください。</p>}
   </section>;
 }
 

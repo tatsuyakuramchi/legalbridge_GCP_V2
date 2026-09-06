@@ -20,6 +20,8 @@ export interface MatterDetail {
   contracts?: Array<{ id: number; documentNumber: string | null; title: string; contractType: string | null; status: string | null; expirationDate: string | null }>;
   works?: Array<{ id: number; workCode: string | null; title: string }>;
   vendors?: Array<{ id: number; vendorCode: string | null; name: string }>;
+  deliveryEvents?: Array<{ id: number; status: string; inspectionDeadline: string | null; deliveredAmount: number | null }>;
+  payments?: Array<{ id: number; status: string; dueDate: string | null; amount: number | null; currency: string; sourceDocumentNumber: string | null }>;
   deadlines?: Array<{ id: string; kind: "matter" | "task" | "document" | "contract"; title: string; dueDate: string; status: string }>;
 }
 export interface MatterRepository {
@@ -43,7 +45,7 @@ export class PgMatterRepository implements MatterRepository {
     return result.rows.map(mapSummary);
   }
   async find(id: number) {
-    const [matterResult, issuesResult, tasksResult, documentsResult, contractsResult, worksResult, vendorsResult, deadlinesResult] = await Promise.all([
+    const [matterResult, issuesResult, tasksResult, documentsResult, contractsResult, worksResult, vendorsResult, deliveryResult, paymentResult, deadlinesResult] = await Promise.all([
       this.database.query(
         `SELECT v.*, m.remarks, m.drive_folder_url
            FROM matter_overview_v v JOIN matters m ON m.id = v.id WHERE v.id = $1`, [id]),
@@ -105,6 +107,19 @@ export class PgMatterRepository implements MatterRepository {
            ) linked ON linked.vendor_id = v.id
           ORDER BY v.vendor_name, v.id`, [id]),
       this.database.query(
+        `SELECT de.id, de.status, de.inspection_deadline, de.delivered_amount
+           FROM delivery_events de
+          WHERE de.backlog_issue_key = (SELECT primary_issue_key FROM matters WHERE id = $1)
+             OR de.backlog_issue_key IN (SELECT backlog_issue_key FROM matter_issues WHERE matter_id = $1)
+          ORDER BY de.id DESC`, [id]),
+      this.database.query(
+        `SELECT p.id, p.status, p.due_date, COALESCE(p.total_amount,p.amount_ex_tax) AS amount,
+                p.currency, p.source_document_number
+           FROM payments p
+          WHERE p.backlog_issue_key = (SELECT primary_issue_key FROM matters WHERE id = $1)
+             OR p.backlog_issue_key IN (SELECT backlog_issue_key FROM matter_issues WHERE matter_id = $1)
+          ORDER BY p.due_date DESC NULLS LAST, p.id DESC`, [id]),
+      this.database.query(
         `SELECT * FROM (
            SELECT 'matter:' || m.id AS id, 'matter'::text AS kind, m.title,
                   m.target_due_date::text AS due_date, m.status::text AS status
@@ -158,6 +173,16 @@ export class PgMatterRepository implements MatterRepository {
       })),
       vendors: vendorsResult.rows.map((vendor) => ({
         id: Number(vendor.id), vendorCode: vendor.vendor_code ?? null, name: String(vendor.vendor_name ?? "")
+      })),
+      deliveryEvents: deliveryResult.rows.map((event) => ({
+        id: Number(event.id), status: String(event.status ?? ""),
+        inspectionDeadline: dateOnly(event.inspection_deadline),
+        deliveredAmount: event.delivered_amount === null ? null : Number(event.delivered_amount)
+      })),
+      payments: paymentResult.rows.map((payment) => ({
+        id: Number(payment.id), status: String(payment.status ?? ""), dueDate: dateOnly(payment.due_date),
+        amount: payment.amount === null ? null : Number(payment.amount), currency: String(payment.currency ?? "JPY"),
+        sourceDocumentNumber: payment.source_document_number ?? null
       })),
       deadlines: deadlinesResult.rows.map((deadline) => ({
         id: String(deadline.id), kind: deadline.kind, title: String(deadline.title ?? ""),

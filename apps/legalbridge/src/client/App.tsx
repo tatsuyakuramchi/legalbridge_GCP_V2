@@ -368,7 +368,10 @@ export function App() {
         {view === "matters" && <MatterRegistry templates={templates}
           canEdit={canEditMatters}
           onCreateDocument={(legalWorkspace || requesterWorkspace)
-            ? (issueKey) => { setNewDocIssueKey(issueKey ?? ""); setDraftSelection(null); setView("templates"); }
+            ? (issueKey, templateKey) => {
+              if (templateKey) void openDocumentForm(templateKey, issueKey ?? "");
+              else { setNewDocIssueKey(issueKey ?? ""); setDraftSelection(null); setView("templates"); }
+            }
             : undefined}
           onOpenDocument={(id) => { setSearchSelection({ target: "document", id: String(id), title: "" }); setView("documents"); }}
           onOpenWork={(id) => { setWorkRightsInitialId(id); setView("works-rights"); }}
@@ -1082,12 +1085,20 @@ function isSpecializedDataField(
   formData: DocumentFormData = {}
 ) {
   const specializedFields: Record<string, string[]> = {
-    purchase_order: ["items", "expenses", "other_fees", "financial_conditions"],
-    intl_purchase_order: ["items", "expenses", "other_fees", "financial_conditions"],
+    service_master: [
+      "SERVICE_ENGAGEMENT_TYPE", "CONTRACT_TYPE", "SERVICE_CATEGORY", "COMPENSATION_TYPE",
+      "DELIVERABLE_REQUIRED", "INSPECTION_REQUIRED", "IP_OWNERSHIP",
+      "SUBCONTRACTING_POLICY", "PERSONAL_DATA_HANDLING", "RENEWAL_TYPE", "SPECIAL_TERMS", "DETAILS"
+    ],
+    purchase_order: ["items", "expenses", "other_fees", "financial_conditions", "SERVICE_ENGAGEMENT_TYPE",
+      "DELIVERABLE_REQUIRED", "IP_OWNERSHIP", "WITHHOLDING_TAX", "DETAILS"],
+    intl_purchase_order: ["items", "expenses", "other_fees", "financial_conditions", "SERVICE_ENGAGEMENT_TYPE",
+      "DELIVERABLE_REQUIRED", "IP_OWNERSHIP", "WITHHOLDING_TAX", "DETAILS"],
     individual_license_terms: ["financial_conditions", "サブライセンシー一覧"],
     individual_license_terms_v3: ["v3_conds", "v3_lcs", "v3_sublicensees", "v3_calc_base_rows", "v3_special_extras"],
     royalty_statement: ["lines"],
-    inspection_certificate: ["delivery_line_items", "other_fees", "expenses", "changeLogs"]
+    inspection_certificate: ["delivery_line_items", "other_fees", "expenses", "changeLogs",
+      "INSPECTION_METHOD", "INSPECTION_RESULT", "PAYMENT_STATUS"]
   };
   if (templateKey === "royalty_statement" && formData.settlement_trigger) {
     const settlementManaged = new Set([
@@ -1112,6 +1123,7 @@ function isSpecializedDataField(
 
 function hasSpecializedForm(templateKey: string) {
   return [
+    "service_master",
     "purchase_order",
     "intl_purchase_order",
     "individual_license_terms",

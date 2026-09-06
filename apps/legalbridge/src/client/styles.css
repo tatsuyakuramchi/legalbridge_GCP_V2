@@ -118,6 +118,35 @@ header input { width: 100%; border: 1px solid #d9e2ec; border-radius: 8px; paddi
 .master-results { display: grid; gap: 6px; max-height: 210px; overflow-y: auto; margin-top: 9px; }
 .master-results button em { justify-self:end; color:#168ca0; font-size:10px; font-style:normal; font-weight:800; }
 .document-prefill-summary { display:grid; grid-template-columns:180px 180px 1fr; gap:10px; align-items:stretch; margin:0 0 14px; }
+
+.service-flow-banner { display:flex; align-items:center; justify-content:center; gap:10px; flex-wrap:wrap; margin:16px 0 20px; padding:12px; border-radius:9px; background:#eef9fb; color:#176f7f; }
+.service-flow-banner span { padding:6px 10px; border:1px solid #b8e1e7; border-radius:999px; background:#fff; font-size:12px; font-weight:700; }
+.service-flow-banner i { color:#24a6ba; font-style:normal; }
+.service-choice-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin:16px 0; }
+.service-choice-grid label { display:grid; gap:6px; }
+.service-choice-grid label > span,.service-exception-note > span { color:#536579; font-size:12px; font-weight:700; }
+.service-choice-grid select { width:100%; min-height:42px; border:1px solid #c8d8df; border-radius:7px; background:#fff; padding:8px; }
+.service-derived-summary,.db-source-preview { margin:14px 0; padding:13px 15px; border-left:4px solid #22a9bd; background:#f5fafb; }
+.service-derived-summary p,.db-source-preview p { margin:5px 0 0; color:#435a6e; white-space:pre-wrap; }
+.db-source-preview span { color:#168ca0; font-size:11px; font-weight:800; }
+.service-exception-note { display:grid; gap:6px; margin-top:14px; }
+.service-exception-note textarea { min-height:84px; }
+.service-matter-flow { border:1px solid #b9dfe5; border-radius:10px; padding:15px; background:linear-gradient(135deg,#f7fcfd,#fff); }
+.service-matter-flow > header { display:flex; justify-content:space-between; align-items:end; gap:12px; margin-bottom:12px; }
+.service-matter-flow > header span { color:#168ca0; font-size:10px; font-weight:800; letter-spacing:.11em; }
+.service-matter-flow > header h3 { margin:3px 0 0; color:#172a44; }
+.service-matter-flow > header small { color:#64748b; }
+.service-matter-steps { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:8px; }
+.service-matter-steps article { display:grid; grid-template-columns:28px 1fr; gap:8px; align-items:center; min-height:72px; padding:9px; border:1px solid #d9e4e8; border-radius:8px; background:#fff; }
+.service-matter-steps article > b { display:grid; place-items:center; width:27px; height:27px; border-radius:50%; background:#e7edf0; color:#687c86; }
+.service-matter-steps article.complete > b { background:#168ca0; color:#fff; }
+.service-matter-steps article div { display:grid; gap:2px; min-width:0; }
+.service-matter-steps article strong { color:#20344d; font-size:13px; }
+.service-matter-steps article small { color:#71838d; font-size:10px; }
+.service-matter-steps article button { grid-column:1/-1; padding:6px; border-color:#9ed7df; color:#087d91; background:#f7fdfe; font-size:11px; }
+.service-flow-warning { margin:10px 0 0; color:#a65b00; font-size:12px; }
+@media (max-width:1000px) { .service-choice-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .service-matter-steps { grid-template-columns:1fr; } }
+@media (max-width:640px) { .service-choice-grid { grid-template-columns:1fr; } .service-matter-flow > header { align-items:start; flex-direction:column; } }
 .document-prefill-summary > div { border:1px solid #b9dfe5; border-radius:9px; background:#f0fbfc; padding:10px 12px; display:grid; gap:3px; }.document-prefill-summary > div.warning { border-color:#fed7aa; background:#fff7ed; }.document-prefill-summary > div.complete { border-color:#bbebd4; background:#eefbf5; }
 .document-prefill-summary span { color:#64748b; font-size:10px; }.document-prefill-summary strong { color:#172a44; font-size:20px; }.document-prefill-summary strong small { font-size:10px; color:#64748b; }.document-prefill-summary p { margin:0; border-radius:9px; background:#f8fafc; padding:12px; color:#475569; display:flex; align-items:center; }
 .field-grid label.db-prefilled { border-left:3px solid #20b8cd; padding-left:8px; }.field-grid label > span i { margin-left:6px; border-radius:999px; background:#e8f7f9; padding:2px 6px; color:#168ca0; font-size:9px; font-style:normal; }

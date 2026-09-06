@@ -58,3 +58,44 @@ test("案件・取引先・作品のDB情報を旧フィールド名へ自動補
   assert.equal(result.linked_contract_number, "CT-2026-0001");
   assert.equal(result.COMPANY_NAME, "株式会社アークライト");
 });
+
+test("業務委託の依頼情報を発注明細と選択項目へ自動補完する", () => {
+  const schema = {
+    templateKey: "purchase_order",
+    templateVersionId: 1,
+    label: "発注書",
+    fields: []
+  };
+  const result = buildDocumentFormContext(schema, {
+    backlog: {
+      summary: "イベント運営業務",
+      details: "会場進行と当日スタッフ管理",
+      engagement_type: "準委任",
+      service_category: "イベント企画立案運営業務",
+      deadline: "2026-10-31"
+    },
+    vendor: { withholding_enabled: true }
+  });
+
+  assert.equal(result.SERVICE_ENGAGEMENT_TYPE, "準委任");
+  assert.equal(result.SERVICE_CATEGORY, "イベント企画立案運営業務");
+  assert.equal(result.WITHHOLDING_TAX, "対象");
+  assert.deepEqual(result.items, [{
+    item_name: "イベント企画立案運営業務",
+    spec: "会場進行と当日スタッフ管理",
+    engagement_type: "準委任",
+    inspection_method: "完了報告確認",
+    quantity: 1,
+    delivery_date: "2026-10-31"
+  }]);
+});
+
+test("業務委託の保存済み下書きをDB自動補完より優先する", () => {
+  const schema = { templateKey: "service_master", templateVersionId: 1, label: "業務委託基本契約", fields: [] };
+  const result = buildDocumentFormContext(schema, {
+    backlog: { engagement_type: "準委任" },
+    document: { SERVICE_ENGAGEMENT_TYPE: "請負" }
+  }, { SERVICE_ENGAGEMENT_TYPE: "レベニューシェア" });
+
+  assert.equal(result.SERVICE_ENGAGEMENT_TYPE, "レベニューシェア");
+});
