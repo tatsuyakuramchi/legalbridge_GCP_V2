@@ -42,6 +42,17 @@ test("実在する文書・作品・相手方だけを受取条件として保�
   assert.equal(repository.conditions.length, 2);
 });
 
+test("既存OUT条件を同じ作品のIN条件へ紐付ける", async () => {
+  const repository = new MemoryOutboundConditionRepository();
+  const saved = await repository.save(condition({ sourceConditionId: 7 }));
+
+  const linked = await repository.linkSource(saved.id, 7);
+
+  assert.equal(linked.parentLicenseConditionId, 7);
+  await assert.rejects(repository.linkSource(saved.id, 999), /source IN condition not found for work/);
+  await assert.rejects(repository.linkSource(999, 7), /OUT condition not found/);
+});
+
 test("根拠文書番号がない条件を保存しない", async () => {
   const repository = new MemoryOutboundConditionRepository();
   await assert.rejects(

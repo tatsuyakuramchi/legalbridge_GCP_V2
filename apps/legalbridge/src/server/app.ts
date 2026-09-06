@@ -767,7 +767,8 @@ export function createApp(
       request.method === "POST" && /^\/documents\/\d+\/cloudsign\/dispatch$/.test(request.path);
     if (cloudSignDispatchEnabled && isCloudSignDispatch) return next();
     const isOutboundConditionWrite =
-      request.method === "POST" && request.path === "/outbound-conditions";
+      (request.method === "POST" && request.path === "/outbound-conditions") ||
+      (request.method === "PATCH" && /^\/outbound-conditions\/\d+\/source$/.test(request.path));
     if (outboundConditionWriteEnabled && isOutboundConditionWrite) return next();
     const isContractIntakeWrite =
       request.method === "POST" && request.path === "/contract-intakes";

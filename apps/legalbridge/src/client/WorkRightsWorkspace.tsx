@@ -192,6 +192,15 @@ export function WorkRightsWorkspace({
             outbound={outbound}
             onStartOutContract={(sourceConditionId) =>
               onStartLicenseContract(detail.work.id, detail.work.title, sourceConditionId)}
+            onLinked={(outboundId, sourceConditionId) => {
+              setDetail((current) => current ? {
+                ...current,
+                conditions: current.conditions.map((condition) => condition.id === outboundId
+                  ? { ...condition, parentLicenseConditionId: sourceConditionId }
+                  : condition)
+              } : current);
+              setNotice(`OUT #${outboundId} を IN #${sourceConditionId} に紐付けました。`);
+            }}
           />}
 
           {tab === "contracts" && <div className="work-rights-body table-scroll"><table>
@@ -217,11 +226,13 @@ export function WorkRightsWorkspace({
 function ConditionMatrix({
   inbound,
   outbound,
-  onStartOutContract
+  onStartOutContract,
+  onLinked
 }: {
   inbound: WorkDetail["conditions"];
   outbound: WorkDetail["conditions"];
   onStartOutContract: (sourceConditionId: number) => void;
+  onLinked: (outboundId: number, sourceConditionId: number) => void;
 }) {
   const firstPair = useMemo(() => {
     for (const source of inbound) {
@@ -231,6 +242,9 @@ function ConditionMatrix({
     return inbound[0] ? { inboundId: inbound[0].id, outboundId: null } : null;
   }, [inbound, outbound]);
   const [selection, setSelection] = useState<{ inboundId: number; outboundId: number | null } | null>(firstPair);
+  const [linkTargets, setLinkTargets] = useState<Record<number, number>>({});
+  const [linkingId, setLinkingId] = useState<number | null>(null);
+  const [linkError, setLinkError] = useState("");
 
   useEffect(() => {
     setSelection((current) => {
@@ -250,7 +264,30 @@ function ConditionMatrix({
   const selectedOutbound = outbound.find((condition) => condition.id === selection?.outboundId) ?? null;
   const inboundIds = useMemo(() => new Set(inbound.map((condition) => condition.id)), [inbound]);
   const unlinkedOutbound = outbound.filter((condition) =>
-    condition.parentLicenseConditionId === null || !inboundIds.has(condition.parentLicenseConditionId));
+    condition.transactionKind === "license" &&
+    (condition.parentLicenseConditionId === null || !inboundIds.has(condition.parentLicenseConditionId)));
+  const linkTargetFor = (conditionId: number) => linkTargets[conditionId] ?? inbound[0]?.id ?? 0;
+  async function linkOutbound(conditionId: number) {
+    const sourceConditionId = linkTargetFor(conditionId);
+    if (!sourceConditionId) return;
+    setLinkingId(conditionId);
+    setLinkError("");
+    try {
+      const response = await fetch(`/api/v2/outbound-conditions/${conditionId}/source`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sourceConditionId })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "OUT条件を紐付けできませんでした。");
+      onLinked(conditionId, sourceConditionId);
+      setSelection({ inboundId: sourceConditionId, outboundId: conditionId });
+    } catch (error) {
+      setLinkError(error instanceof Error ? error.message : "OUT条件を紐付けできませんでした。");
+    } finally {
+      setLinkingId(null);
+    }
+  }
   const fields: Array<[string,(c: WorkDetail["conditions"][number]) => string]> = [
     ["地域", (c) => c.territory || "—"],
     ["言語", (c) => c.language || "—"],
@@ -304,8 +341,27 @@ function ConditionMatrix({
 
     {unlinkedOutbound.length > 0 && <section className="unlinked-outbound">
       <h3>根拠IN未設定のOUT条件</h3>
-      <p>次のOUT条件は取引モデルとの紐付けを確認してください。</p>
-      {unlinkedOutbound.map((condition) => <span key={condition.id}>OUT #{condition.id} {condition.counterparty || condition.name}</span>)}
+      <p>既存のOUT条件ごとに、対応する取引モデル（IN条件）を選んで紐付けてください。</p>
+      {linkError && <div className="unlinked-outbound-error">{linkError}</div>}
+      <div className="unlinked-outbound-list">
+        {unlinkedOutbound.map((condition) => <div className="unlinked-outbound-row" key={condition.id}>
+          <div><span>未紐付け</span><strong>OUT #{condition.id} {condition.counterparty || condition.name}</strong></div>
+          <label>
+            <small>紐付け先の取引モデル</small>
+            <select value={linkTargetFor(condition.id)} onChange={(event) => setLinkTargets((current) => ({
+              ...current,
+              [condition.id]: Number(event.target.value)
+            }))}>
+              {inbound.map((source, index) => <option key={source.id} value={source.id}>
+                取引モデル {index + 1}：IN #{source.id} {source.name}
+              </option>)}
+            </select>
+          </label>
+          <button disabled={linkingId === condition.id || !inbound.length} onClick={() => linkOutbound(condition.id)}>
+            {linkingId === condition.id ? "紐付け中…" : "このINに紐付ける"}
+          </button>
+        </div>)}
+      </div>
     </section>}
 
     {selectedInbound && <section className="condition-comparison">

@@ -112,6 +112,7 @@ export function RequestWorkspace({
   }, [matterPicker, matterQuery]);
 
   const selected = detail ?? requests.find((row) => row.id === selectedId) ?? null;
+  const requestOverview = useMemo(() => formatRequestOverview(selected?.notes), [selected?.notes]);
   const licenseLike = useMemo(() => {
     const hay = `${selected?.contractType ?? ""} ${selected?.summary ?? ""}`.toLowerCase();
     return hay.includes("license") || hay.includes("ライセンス") || hay.includes("利用許諾") || hay.includes("sublicense") || hay.includes("サブライセンス");
@@ -239,7 +240,11 @@ export function RequestWorkspace({
             <div><span>関連文書</span><strong>{detail?.documents?.length ?? selected.documentCount}件</strong></div>
             <div><span>作品・権利</span><strong>{detail?.works?.length ?? 0}件</strong></div>
           </div>
-          {selected.notes && <div className="request-notes">{selected.notes}</div>}
+          {requestOverview && <section className="request-notes">
+            <span>BACKLOG 概要</span>
+            {requestOverview.deadline && <small>希望期限：{requestOverview.deadline}</small>}
+            <p>{requestOverview.details}</p>
+          </section>}
 
           {detail && (detail.vendors.length || detail.works.length || detail.contracts.length || detail.deadlines.length) ? <section className="request-context-section">
             <h3>関連情報</h3>
@@ -409,6 +414,31 @@ export function RequestWorkspace({
       </div>
     </div>}
   </section>;
+}
+
+type RequestOverview = { details: string; deadline: string | null };
+
+export function formatRequestOverview(notes: string | null | undefined): RequestOverview | null {
+  const raw = notes?.trim();
+  if (!raw) return null;
+  const normalizeLines = (value: string) => value
+    .replace(/\\n/g, "\n")
+    .replace(/¥n/g, "\n")
+    .trim();
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const value = parsed as Record<string, unknown>;
+      const details = typeof value.details === "string" ? normalizeLines(value.details) : "";
+      const deadline = typeof value.deadline === "string" && value.deadline.trim()
+        ? value.deadline.trim()
+        : null;
+      if (details) return { details, deadline };
+    }
+  } catch {
+    // Backlog以外から登録された従来の自由記述は、そのまま概要として表示する。
+  }
+  return { details: normalizeLines(raw), deadline: null };
 }
 
 function Status({ value }: { value: RequestSummary["disposition"] }) {

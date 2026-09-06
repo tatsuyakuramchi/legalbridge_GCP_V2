@@ -127,6 +127,10 @@ function legacyLanguageOption(value: string): ScopeOption {
 
 export type OutboundConditionInput = z.input<typeof outboundConditionSchema>;
 
+const linkSourceSchema = z.object({
+  sourceConditionId: z.number().int().positive()
+});
+
 export function validateOutboundCondition(input: unknown) {
   const result = outboundConditionSchema.safeParse(input);
   if (!result.success) {
@@ -204,6 +208,38 @@ export function createOutboundConditionRouter(
         return response.status(409).json({
           error: error.message,
           code: "OUTBOUND_CONDITION_CONFLICT"
+        });
+      }
+      next(error);
+    }
+  });
+
+  router.patch("/outbound-conditions/:conditionId/source", async (request, response, next) => {
+    try {
+      if (!writeEnabled || !repository) {
+        return response.status(503).json({
+          error: "outbound condition storage is unavailable",
+          code: "OUTBOUND_CONDITION_STORAGE_UNAVAILABLE"
+        });
+      }
+      if (response.locals.currentUser?.role !== "admin") {
+        return response.status(403).json({
+          error: "administrator approval is required",
+          code: "OUTBOUND_CONDITION_ADMIN_REQUIRED"
+        });
+      }
+      const conditionId = z.coerce.number().int().positive().parse(request.params.conditionId);
+      const { sourceConditionId } = linkSourceSchema.parse(request.body);
+      const condition = await repository.linkSource(conditionId, sourceConditionId);
+      return response.json({ condition });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return response.status(400).json({ error: "invalid request", issues: error.issues });
+      }
+      if (error instanceof OutboundConditionReferenceError) {
+        return response.status(404).json({
+          error: error.message,
+          code: "OUTBOUND_REFERENCE_NOT_FOUND"
         });
       }
       next(error);

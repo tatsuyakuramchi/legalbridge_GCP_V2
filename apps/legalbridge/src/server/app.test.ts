@@ -1014,6 +1014,34 @@ test("管理者は専用ゲート経由でアウト条件を保存し外部連�
   assert.deepEqual(runtime.body.writeCapabilities, ["outbound-conditions"]);
 });
 
+test("管理者は既存OUT条件を同じ作品のIN条件へ紐付けられる", async () => {
+  const repository = new MemoryOutboundConditionRepository();
+  const target = createApp({
+    templates: new MemoryTemplateRepository([schema]),
+    drafts: new MemoryDraftRepository(),
+    integrations: createIntegrationAdapters(),
+    outboundConditions: repository
+  }, {
+    accessMode: "readwrite",
+    requireDatabase: false,
+    writeFeaturesEnabled: true,
+    writeScopes: new Set(["outbound-conditions"]),
+    outboundConditionWritesEnabled: true
+  });
+  const created = await request(target)
+    .post("/api/v2/outbound-conditions")
+    .send(outboundConditionPayload())
+    .expect(201);
+
+  const response = await request(target)
+    .patch(`/api/v2/outbound-conditions/${created.body.condition.id}/source`)
+    .send({ sourceConditionId: 8 })
+    .expect(200);
+
+  assert.equal(response.body.condition.parentLicenseConditionId, 8);
+  assert.equal(repository.conditions[0].parentLicenseConditionId, 8);
+});
+
 test("法務担当者でも管理者指定がなければアウト条件を保存しない", async () => {
   const repository = new MemoryOutboundConditionRepository();
   const target = createApp({

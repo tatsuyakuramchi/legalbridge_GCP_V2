@@ -16,10 +16,12 @@ export interface SavedOutboundCondition {
   transactionKind: "license" | "product";
   direction: "receivable";
   conditionName: string;
+  parentLicenseConditionId: number | null;
 }
 
 export interface OutboundConditionRepository {
   save(condition: ValidatedOutboundCondition): Promise<SavedOutboundCondition>;
+  linkSource(conditionId: number, sourceConditionId: number): Promise<SavedOutboundCondition>;
 }
 
 export class PgOutboundConditionRepository implements OutboundConditionRepository {
@@ -202,13 +204,72 @@ export class PgOutboundConditionRepository implements OutboundConditionRepositor
         counterpartyVendorId: value.counterpartyVendorId,
         transactionKind: value.transactionKind,
         direction: "receivable" as const,
-        conditionName: value.conditionName
+        conditionName: value.conditionName,
+        parentLicenseConditionId: value.sourceConditionId ?? null
       };
     } catch (error) {
       await client.query("ROLLBACK");
       if ((error as { code?: string }).code === "23505") {
         throw new OutboundConditionConflictError();
       }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async linkSource(conditionId: number, sourceConditionId: number) {
+    const client = await this.database.connect();
+    try {
+      await client.query("BEGIN");
+      const target = await client.query(
+        `SELECT cl.id, cl.document_id, d.document_number, cl.line_no, cl.work_id,
+                cl.counterparty_vendor_id, cl.transaction_kind, cl.condition_name
+           FROM condition_lines cl
+           JOIN documents d ON d.id = cl.document_id
+          WHERE cl.id = $1
+            AND (cl.flow_direction = 'out' OR cl.direction = 'receivable')
+            AND cl.transaction_kind = 'license'
+          FOR UPDATE OF cl`,
+        [conditionId]
+      );
+      if (!target.rows[0]) {
+        throw new OutboundConditionReferenceError("OUT condition not found");
+      }
+      const row = target.rows[0];
+      const source = await client.query(
+        `SELECT id
+           FROM condition_lines
+          WHERE id = $1
+            AND work_id = $2
+            AND (flow_direction = 'in' OR direction = 'payable')
+          FOR SHARE`,
+        [sourceConditionId, row.work_id]
+      );
+      if (!source.rows[0]) {
+        throw new OutboundConditionReferenceError("source IN condition not found for work");
+      }
+      await client.query(
+        `UPDATE condition_lines
+            SET parent_license_condition_id = $2
+          WHERE id = $1`,
+        [conditionId, sourceConditionId]
+      );
+      await client.query("COMMIT");
+      return {
+        id: Number(row.id),
+        documentId: Number(row.document_id),
+        documentNumber: String(row.document_number),
+        lineNo: Number(row.line_no),
+        workId: Number(row.work_id),
+        counterpartyVendorId: Number(row.counterparty_vendor_id),
+        transactionKind: row.transaction_kind === "product" ? "product" as const : "license" as const,
+        direction: "receivable" as const,
+        conditionName: String(row.condition_name ?? ""),
+        parentLicenseConditionId: sourceConditionId
+      };
+    } catch (error) {
+      await client.query("ROLLBACK");
       throw error;
     } finally {
       client.release();
@@ -223,7 +284,8 @@ export class MemoryOutboundConditionRepository implements OutboundConditionRepos
   constructor(
     private readonly documents = new Map([["ARC-LIC-2026-0001", 1]]),
     private readonly workIds = new Set([42]),
-    private readonly vendorIds = new Set([18])
+    private readonly vendorIds = new Set([18]),
+    private readonly sourceConditions = new Map([[7, 42], [8, 42]])
   ) {}
 
   async save(condition: ValidatedOutboundCondition) {
@@ -248,11 +310,22 @@ export class MemoryOutboundConditionRepository implements OutboundConditionRepos
       counterpartyVendorId: value.counterpartyVendorId,
       transactionKind: value.transactionKind,
       direction: "receivable",
-      conditionName: value.conditionName
+      conditionName: value.conditionName,
+      parentLicenseConditionId: value.sourceConditionId ?? null
     };
     this.sequence += 1;
     this.conditions.push(saved);
     return saved;
+  }
+
+  async linkSource(conditionId: number, sourceConditionId: number) {
+    const target = this.conditions.find((condition) => condition.id === conditionId);
+    if (!target) throw new OutboundConditionReferenceError("OUT condition not found");
+    if (this.sourceConditions.get(sourceConditionId) !== target.workId) {
+      throw new OutboundConditionReferenceError("source IN condition not found for work");
+    }
+    target.parentLicenseConditionId = sourceConditionId;
+    return target;
   }
 }
 
