@@ -81,8 +81,20 @@ LAST_BUILD="${IMAGE##*:}"
 echo "採用ビルド: ${LAST_BUILD}"
 
 # ビルドは global。--region を付けると別プールを見に行って not found になる。
-gcloud builds describe "${LAST_BUILD}" --project "${PROJECT}" \
-  --format=json | jq '{substitutions}' > "${FLAGS_FILE}"
+# 配信中イメージのタグが Cloud Build の ID でないことがある（別経路＝コミット SHA タグで
+# デプロイされた版。2026-09-06 に main 側の runbook で 206e5d6 が出ていた）。その場合は
+# 同じサービス向けの直近の成功ビルドから設定を引き継ぐ（フラグが消えて verify に落ちるのを防ぐ）。
+if ! gcloud builds describe "${LAST_BUILD}" --project "${PROJECT}" --format=json > "${FLAGS_FILE}.raw" 2>/dev/null; then
+  echo "配信中イメージのタグ ${LAST_BUILD} は Cloud Build の ID ではありません（別経路でデプロイされた版）。"
+  echo "同じサービス（${FLAGS_FROM}）向けの直近の成功ビルドから設定を引き継ぎます…"
+  LAST_BUILD="$(gcloud builds list --project "${PROJECT}" --limit=50 --sort-by=~createTime --format=json \
+    | jq -r --arg s "${FLAGS_FROM}" '[.[] | select(.status == "SUCCESS" and .substitutions._SERVICE == $s)][0].id // empty')"
+  [ -n "${LAST_BUILD}" ] || die "${FLAGS_FROM} 向けの成功ビルドが見つかりません。FLAGS_FROM=<設定を引き継ぐサービス名> を指定してください"
+  echo "採用ビルド（代替）: ${LAST_BUILD}"
+  gcloud builds describe "${LAST_BUILD}" --project "${PROJECT}" --format=json > "${FLAGS_FILE}.raw"
+fi
+jq '{substitutions}' "${FLAGS_FILE}.raw" > "${FLAGS_FILE}"
+rm -f "${FLAGS_FILE}.raw"
 
 KEY_COUNT="$(jq -r '.substitutions | keys | length' "${FLAGS_FILE}")"
 [ "${KEY_COUNT}" -ge 100 ] || die "substitutions が ${KEY_COUNT} 件しかありません（引き継ぎ失敗の疑い）"
