@@ -8,8 +8,9 @@ const base = {
   counterpartyId: "20",
   counterpartyLabel: "海外ライセンシー",
   conditionName: "英語版ライセンス",
-  territory: "全世界",
-  languages: ["英語"],
+  sourceConditionId: 7,
+  regions: [{ code: "WORLD", name: "全世界" }],
+  languages: [{ code: "en", name: "英語" }],
   exclusivity: "non_exclusive",
   sublicenseAllowed: false,
   currency: "usd",
@@ -30,6 +31,8 @@ test("ライセンスアウト条件を受取方向として検証する", () =>
     assert.equal(result.condition.direction, "receivable");
     assert.equal(result.condition.currency, "USD");
     assert.equal(result.condition.ratePct, 5);
+    assert.deepEqual(result.condition.regions, [{ code: "WORLD", name: "全世界" }]);
+    assert.deepEqual(result.condition.languages, [{ code: "en", name: "英語" }]);
   }
 });
 
@@ -73,5 +76,23 @@ test("契約期間と料率の不正値を拒否する", () => {
   if (!result.ok) {
     assert.ok(result.errors.some((error) => error.field === "ratePct"));
     assert.ok(result.errors.some((error) => error.field === "termEnd"));
+  }
+});
+
+
+test("旧形式の地域・言語payloadも互換入力として正規化する", () => {
+  const result = validateOutboundCondition({
+    ...base,
+    territory: "全世界",
+    regions: undefined,
+    languages: ["英語"],
+    transactionKind: "license",
+    paymentScheme: "royalty",
+    ratePct: 5
+  });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.condition.regions[0]?.code, "WORLD");
+    assert.equal(result.condition.languages[0]?.name, "英語");
   }
 });

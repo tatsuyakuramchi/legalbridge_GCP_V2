@@ -131,9 +131,11 @@ done
 
 echo
 echo "── Backlog live（起票解禁・§5-3）──────────────────────────────────"
+# live は Backlog 文書連携（課題への PDF 添付）の書込 scope 'backlog' を伴う（main 統合 2026-09-06）。
 BACKLOG_LIVE=(
   "BACKLOG_MODE=live" "BACKLOG_HOST=arclight.backlog.com" "BACKLOG_PROJECT_KEY=LEGAL"
   "CONFIRM_BACKLOG_LIVE=BACKLOG_LIVE_CUTOVER_V2_AUTHORITATIVE"
+  "WRITE_SCOPES=drafts,documents,pdf,backlog"
 )
 run_case "合言葉が揃えば live を通す" allow "${BACKLOG_LIVE[@]}" || FAILED=1
 run_case "合言葉が無ければ live を拒む（V1 が権威の間は塞ぐ）" block \
@@ -156,7 +158,8 @@ BACKLOG_COMMENT=(
 run_case "コメント書き戻し: readonly で通る" allow \
   "BACKLOG_MODE=readonly" "CONFIRM_BACKLOG_READONLY=BACKLOG_READONLY_VALIDATION_ONLY" \
   "${BACKLOG_COMMENT[@]}" || FAILED=1
-run_case "コメント書き戻し: live でも通る" allow "${BACKLOG_LIVE[@]}" "${BACKLOG_COMMENT[@]}" || FAILED=1
+run_case "コメント書き戻し: live でも通る" allow "${BACKLOG_LIVE[@]}" "${BACKLOG_COMMENT[@]}" \
+  "WRITE_SCOPES=drafts,documents,pdf,backlog,backlog-comment" || FAILED=1
 run_case "コメント書き戻し: Backlog 未接続なら拒む" block \
   "BACKLOG_MODE=disabled" "${BACKLOG_COMMENT[@]}" || FAILED=1
 

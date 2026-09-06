@@ -63,6 +63,10 @@ WHERE grantee = 'legalbridge_v2_runtime'
       'work_relations',
       'condition_line_regions',
       'condition_line_languages',
+      'condition_line_installments',
+      'condition_events',
+      'delivery_events',
+      'payments',
       'lb_v2_slack_notification_history',
       'lb_v2_slack_notification_approvals'
     )
@@ -74,6 +78,10 @@ WHERE grantee = 'legalbridge_v2_runtime'
         'vendors',
         'staff',
         'source_ips',
+        'condition_line_installments',
+        'condition_events',
+        'delivery_events',
+        'payments',
         'matters',
         'matter_issues',
         'matter_tasks',

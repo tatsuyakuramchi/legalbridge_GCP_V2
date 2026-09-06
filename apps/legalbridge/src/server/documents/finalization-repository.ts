@@ -4,6 +4,8 @@ import type { DatabasePool } from "../db/pool.js";
 import {
   PARTY_NAME_KEYS, TITLE_KEYS, firstTextValue, deriveRecordType, resolveVendorIdByName
 } from "./document-business-columns.js";
+import { persistRoyaltyNormalization } from "./royalty-normalization.js";
+import { structuredStatementPatch } from "../../royalty-statement.js";
 
 export interface FinalizeDocumentInput {
   issueKey: string;
@@ -77,6 +79,22 @@ export class PgDocumentFinalizationRepository implements DocumentFinalizationRep
           input.issueKey
         ]
       );
+
+      if (input.templateType === "royalty_statement") {
+        // 正規化テーブル（royalty_statements / royalty_calculations 等・M5）へ同時に書く。
+        // 構造化入力（rs*）の計算書は、共有エンジンの計算結果（actualRoyaltyStr 等）を補ってから渡す。
+        // 消化イベント（condition_events）は finalization-routes 側が束ね・多明細も含めて記帳するため、
+        // 構造化入力のときはここでは書かない（二重記帳防止）。
+        const row = inserted.rows[0];
+        const structured = structuredStatementPatch(input.formData as Record<string, unknown>);
+        await persistRoyaltyNormalization(client, {
+          id: Number(row.id),
+          documentNumber: String(row.document_number),
+          issueKey: String(row.issue_key),
+          createdAt: new Date(row.created_at).toISOString()
+        }, structured ? { ...input.formData, ...structured } : input.formData,
+        { recordConditionEvent: !structured });
+      }
 
       const removed = await client.query(
         `DELETE FROM document_drafts

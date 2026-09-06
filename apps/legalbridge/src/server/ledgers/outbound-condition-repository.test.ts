@@ -3,7 +3,8 @@ import test from "node:test";
 import { outboundConditionSchema } from "./outbound-conditions.js";
 import {
   MemoryOutboundConditionRepository,
-  OutboundConditionReferenceError
+  OutboundConditionReferenceError,
+  scopeAllowed
 } from "./outbound-condition-repository.js";
 
 function condition(overrides: Record<string, unknown> = {}) {
@@ -14,9 +15,10 @@ function condition(overrides: Record<string, unknown> = {}) {
     counterpartyLabel: "V-18 相手方",
     transactionKind: "license",
     conditionName: "英語版ライセンス",
+    sourceConditionId: 7,
     documentNumber: "ARC-LIC-2026-0001",
-    territory: "全世界",
-    languages: ["英語"],
+    regions: [{ code: "WORLD", name: "全世界" }],
+    languages: [{ code: "en", name: "英語" }],
     exclusivity: "non_exclusive",
     sublicenseAllowed: false,
     currency: "USD",
@@ -40,6 +42,17 @@ test("実在する文書・作品・相手方だけを受取条件として保�
   assert.equal(repository.conditions.length, 2);
 });
 
+test("既存OUT条件を同じ作品のIN条件へ紐付ける", async () => {
+  const repository = new MemoryOutboundConditionRepository();
+  const saved = await repository.save(condition({ sourceConditionId: 7 }));
+
+  const linked = await repository.linkSource(saved.id, 7);
+
+  assert.equal(linked.parentLicenseConditionId, 7);
+  await assert.rejects(repository.linkSource(saved.id, 999), /source IN condition not found for work/);
+  await assert.rejects(repository.linkSource(999, 7), /OUT condition not found/);
+});
+
 test("根拠文書番号がない条件を保存しない", async () => {
   const repository = new MemoryOutboundConditionRepository();
   await assert.rejects(
@@ -60,4 +73,16 @@ test("存在しない作品または相手方を保存しない", async () => {
     /counterparty not found/
   );
   assert.equal(repository.conditions.length, 0);
+});
+
+
+test("code欠落の旧child rowはcompatibility textへfallbackしてscope判定する", () => {
+  assert.equal(
+    scopeAllowed([], "全世界", [{ code: "US", name: "アメリカ合衆国" }], "WORLD"),
+    true
+  );
+  assert.equal(
+    scopeAllowed([], "全言語", [{ code: "en", name: "英語" }], "ALL"),
+    true
+  );
 });

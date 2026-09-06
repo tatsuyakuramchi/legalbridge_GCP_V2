@@ -37,6 +37,7 @@ import { ContractChainWizard } from "./ContractChainWizard";
 import { ConditionLinesWorkspace } from "./ConditionLinesWorkspace";
 import { StaffWorkspace } from "./StaffWorkspace";
 import { GmailInboundWorkspace } from "./GmailInboundWorkspace";
+import { OutboundConditionWorkspace } from "./OutboundConditionWorkspace";
 import { RoyaltyPreview } from "./RoyaltyPreview";
 import { BillingDashboard } from "./BillingDashboard";
 import { ReceivableMap } from "./ReceivableMap";
@@ -62,6 +63,11 @@ import { ContractMasterWorkspace } from "./ContractMasterWorkspace";
 import { BillingPrint } from "./BillingPrint";
 import { isPurchaseOrderTemplate, purchaseOrderTotals, withPurchaseOrderTotals } from "../purchase-order-totals";
 import { honorificWarnings } from "../honorific";
+import { RequestWorkspace } from "./RequestWorkspace";
+import { WorkRightsWorkspace } from "./WorkRightsWorkspace";
+import { LicenseContractWorkspace } from "./LicenseContractWorkspace";
+import { LicenseSettlementWorkspace } from "./LicenseSettlementWorkspace";
+import { DeadlineWorkspace } from "./DeadlineWorkspace";
 
 type CompatibilityReport = { summary: { total: number; ok: number; warning: number; error: number }; reports: Array<{ templateKey: string; status: "ok" | "warning" | "error"; missingHelpers: string[]; missingPartials: string[]; unmappedVariables: string[]; renderError?: string }> };
 
@@ -82,7 +88,9 @@ const fallback: DashboardSummary = {
   priorities: []
 };
 
-type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview" | "billing" | "receivable-map" | "payment-report" | "billing-print" | "works" | "work-intake" | "condition-first" | "follow-up" | "license-matrix" | "data-quality" | "vendor-merge" | "matter-merge" | "guide" | "snippets" | "requests" | "excel-batch" | "settings" | "email-settings" | "workflow-rules" | "contract-master" | "template-samples";
+type View = "home" | "matters" | "documents" | "templates" | "document" | "drafts" | "ledgers" | "contract-intake" | "conditions" | "staff" | "admin" | "gmail-inbound" | "royalty-preview" | "billing" | "receivable-map" | "payment-report" | "billing-print" | "works" | "work-intake" | "condition-first" | "follow-up" | "license-matrix" | "data-quality" | "vendor-merge" | "matter-merge" | "guide" | "snippets" | "requests" | "excel-batch" | "settings" | "email-settings" | "workflow-rules" | "contract-master" | "template-samples"
+  // main 系（依頼駆動・作品/権利・ライセンス契約・精算・期限・アウト条件）2026-09-06 統合
+  | "legal-requests" | "deadlines" | "works-rights" | "license-contract" | "license-settlements" | "outbound";
 type NavItem = { view: View; label: string; description: string; match: View[] };
 type NavGroup = { label: string; items: NavItem[] };
 
@@ -100,7 +108,9 @@ function navGroups(access: {
       { view: "home", label: "ホーム", description: "業務の全体状況と次アクション", match: ["home"] }
     ] },
     { label: "しごと", items: [
+      ...(access.legalWorkspace ? [{ view: "legal-requests" as const, label: "法務依頼", description: "法務依頼（legal_requests）と次アクション・関連する案件・文書・作品", match: ["legal-requests" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "requests" as const, label: "依頼", description: "Backlog課題を起点に文書作成（読み取り）", match: ["requests" as const] }] : []),
+      ...(access.legalWorkspace ? [{ view: "deadlines" as const, label: "期限", description: "案件・契約・検収・支払・依頼の期限を一望", match: ["deadlines" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "matters" as const, label: "案件", description: "案件・課題・タスクの管理", match: ["matters" as const] }] : []),
       ...(legalOrRequester ? [{ view: "documents" as const, label: access.requesterWorkspace ? "自分の文書" : "文書", description: "文書の作成・確定・PDF", match: ["documents" as const, "templates" as const, "document" as const] }] : []),
       ...(!access.readOnly && legalOrRequester ? [{ view: "drafts" as const, label: access.requesterWorkspace ? "自分の下書き" : "下書き", description: "保存中の下書きを再開", match: ["drafts" as const] }] : []),
@@ -114,7 +124,10 @@ function navGroups(access: {
       ...(access.legalWorkspace ? [{ view: "follow-up" as const, label: "後続文書", description: "検収書・利用許諾料計算書を、登録済みの発注書・条件明細から作る", match: ["follow-up" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "work-intake" as const, label: "作品登録", description: "原作・素材・既存文書まで一括登録（条件は「条件を登録する」で入力）", match: ["work-intake" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "works" as const, label: "作品", description: "作品を起点に系譜・素材・条件・権利ソースを一望", match: ["works" as const] }] : []),
-      ...(access.legalWorkspace ? [{ view: "conditions" as const, label: "条件明細", description: "契約条件の横断検索・消化・検収", match: ["conditions" as const] }] : [])
+      ...(access.legalWorkspace ? [{ view: "conditions" as const, label: "条件明細", description: "契約条件の横断検索・消化・検収", match: ["conditions" as const] }] : []),
+      ...(access.legalWorkspace ? [{ view: "works-rights" as const, label: "作品・権利", description: "作品・素材・権利ソース・IN/OUT条件のマトリクスと系譜", match: ["works-rights" as const, "license-contract" as const] }] : []),
+      ...(access.legalWorkspace ? [{ view: "license-contract" as const, label: "ライセンス契約", description: "作品と元IN条件を選んで新規ライセンス契約の下書きを作る（許諾範囲チェック付き）", match: ["license-contract" as const] }] : []),
+      ...(access.legalWorkspace ? [{ view: "outbound" as const, label: "アウト条件", description: "サブライセンス（アウト）条件の登録・元IN条件との許諾範囲照合", match: ["outbound" as const] }] : [])
     ] },
     { label: "お金", items: [
       ...(access.legalWorkspace ? [{ view: "billing" as const, label: "請求", description: "再許諾料の受領・分配の横断俯瞰", match: ["billing" as const] }] : []),
@@ -123,7 +136,8 @@ function navGroups(access: {
       ...(access.legalWorkspace ? [{ view: "payment-report" as const, label: "支払報告書", description: "出金台帳の源泉・消費税・振込額とCSV出力", match: ["payment-report" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "billing-print" as const, label: "請求印刷", description: "受領・分配 計算書の印刷/PDF", match: ["billing-print" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "excel-batch" as const, label: "Excel一括", description: "検収書・利用許諾料計算書を担当者×支払期日で束ねてExcel出力", match: ["excel-batch" as const] }] : []),
-      ...(access.legalWorkspace ? [{ view: "royalty-preview" as const, label: "ロイヤリティ試算", description: "確定前のロイヤリティ・源泉のライブ試算（保存なし）", match: ["royalty-preview" as const] }] : [])
+      ...(access.legalWorkspace ? [{ view: "royalty-preview" as const, label: "ロイヤリティ試算", description: "確定前のロイヤリティ・源泉のライブ試算（保存なし）", match: ["royalty-preview" as const] }] : []),
+      ...(access.legalWorkspace ? [{ view: "license-settlements" as const, label: "利用許諾料精算", description: "製造・販売・サブライセンス入金の精算イベントから計算書の下書きを作る", match: ["license-settlements" as const] }] : [])
     ] },
     // 旧「マスタ・設定」は admin で12項目に肥大していた（F1 過積載の再発・監査 P1-13）。
     // マスタ／データ整備／設定・運用の3グループに分割する。
@@ -156,7 +170,13 @@ function breadcrumbFor(view: View): Array<{ label: string; view?: View }> {
   const home = { label: "ホーム", view: "home" as View };
   const trails: Record<View, Array<{ label: string; view?: View }>> = {
     home: [{ label: "ホーム" }],
+    "legal-requests": [home, { label: "法務依頼" }],
+    deadlines: [home, { label: "期限" }],
     matters: [home, { label: "案件" }],
+    "works-rights": [home, { label: "作品・権利" }],
+    "license-contract": [home, { label: "作品・権利", view: "works-rights" }, { label: "新規ライセンス契約" }],
+    "license-settlements": [home, { label: "利用許諾料精算" }],
+    outbound: [home, { label: "アウト条件" }],
     documents: [home, { label: "文書" }],
     templates: [home, { label: "文書", view: "documents" }, { label: "テンプレート選択" }],
     document: [home, { label: "文書", view: "documents" }, { label: "文書作成" }],
@@ -261,6 +281,7 @@ export function App() {
   const [canMergeMatters, setCanMergeMatters] = useState(false);
   const [canBacklogComment, setCanBacklogComment] = useState(false);
   const [canEditStaff, setCanEditStaff] = useState(false);
+  const [canAttachConditions, setCanAttachConditions] = useState(false);
   const [canGmailNotify, setCanGmailNotify] = useState(false);
   const [canCloudSign, setCanCloudSign] = useState(false);
   const [canGmailInbound, setCanGmailInbound] = useState(false);
@@ -288,11 +309,14 @@ export function App() {
       return next;
     });
   }
+  const [backlogMode, setBacklogMode] = useState<"disabled" | "readonly" | "live">("disabled");
+  // SPLL公開サイト（クリエーター向け）へのリンク。サーバー側で無効なら出さない。
+  const [spllSitePath, setSpllSitePath] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<{ email: string; role: "admin" | "legal" | "requester" } | null>(null);
   const [searchSelection, setSearchSelection] = useState<{ target: "matter" | "document" | "vendor" | "work"; id: string; title: string } | null>(null);
   const [draftSelection, setDraftSelection] = useState<{ issueKey: string; templateType: string } | null>(null);
   const [deepLinkIssue, setDeepLinkIssue] = useState("");
-  // Issue key seeded when 文書を作成 is launched from a matter (LB-F01 導線).
+  // Issue key seeded when 文書を作成 is launched from a matter / request.
   const [newDocIssueKey, setNewDocIssueKey] = useState("");
   const [newDocSeed, setNewDocSeed] = useState<Record<string, string>>({});
 
@@ -318,6 +342,13 @@ export function App() {
   const [duplicateMode, setDuplicateMode] = useState<DuplicateMode>("vendor");
   // 確定済み文書の特例編集（編集→再発行で枝番 -R<n> を採番）。編集元の文書。
   const [reissueSource, setReissueSource] = useState<{ id: number; number: string } | null>(null);
+  const [licenseRequestIssueKey, setLicenseRequestIssueKey] = useState("");
+  const [licenseWorkId, setLicenseWorkId] = useState<number | undefined>(undefined);
+  const [licenseSourceConditionId, setLicenseSourceConditionId] = useState<number | undefined>(undefined);
+  const [workRightsInitialId, setWorkRightsInitialId] = useState<number | undefined>(undefined);
+  const [settlementIssueKey, setSettlementIssueKey] = useState("");
+  const [settlementWorkId, setSettlementWorkId] = useState<number | undefined>(undefined);
+  const [globalCreateOpen, setGlobalCreateOpen] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -326,7 +357,8 @@ export function App() {
     if (issueKey) setDeepLinkIssue(issueKey);
     // 別タブで開くリンク（作成フォーム横の「定型文」等）から到達できる画面。
     // 任意の view を通すと未実装・権限外の画面へ飛べてしまうので、明示的に列挙する。
-    const deepLinkable: View[] = ["home", "documents", "drafts", "snippets", "template-samples", "guide"];
+    const deepLinkable: View[] = ["home", "documents", "drafts", "snippets", "template-samples", "guide",
+      "legal-requests", "deadlines", "works-rights", "license-contract", "license-settlements", "outbound"];
     if (requestedView && (deepLinkable as string[]).includes(requestedView)) {
       setView(requestedView as View);
     }
@@ -359,6 +391,7 @@ export function App() {
         setCanMergeMatters(capabilities.includes("matter-merge"));
         setCanBacklogComment(capabilities.includes("backlog-comment"));
         setCanEditStaff(capabilities.includes("staff"));
+        setCanAttachConditions(capabilities.includes("condition-attachments"));
         setCanGmailNotify(capabilities.includes("gmail"));
         setCanCloudSign(capabilities.includes("cloudsign"));
         setCanGmailInbound(capabilities.includes("gmail-inbound"));
@@ -372,6 +405,15 @@ export function App() {
         setCanEditContractMaster(capabilities.includes("contract-master"));
         setCanEditSnippets(capabilities.includes("snippets"));
         setCanUploadAttachments(capabilities.includes("attachments"));
+        setBacklogMode(
+          runtime.backlogMode === "live"
+            ? "live"
+            : runtime.backlogMode === "readonly"
+              ? "readonly"
+              : "disabled"
+        );
+        const spll = runtime.spllSite as { enabled?: boolean; basePath?: string } | undefined;
+        setSpllSitePath(spll?.enabled && spll.basePath ? spll.basePath : null);
       })
       .catch(() => {
         setReadOnly(true);
@@ -384,11 +426,13 @@ export function App() {
         setCanEditWorks(false);
         setCanEditMaterials(false);
         setCanEditStaff(false);
+        setCanAttachConditions(false);
         setCanGmailNotify(false);
         setCanCloudSign(false);
         setCanGmailInbound(false);
         setCanRecordReceipt(false);
         setCanRepairConditions(false);
+        setBacklogMode("disabled");
       });
     fetch("/api/v2/document-templates")
       .then((response) => response.ok ? response.json() : Promise.reject())
@@ -654,7 +698,8 @@ export function App() {
     setView("document");
   }
 
-  async function openDocumentForm(templateKey: string) {
+  // seededIssueKey: 案件・法務依頼から種別を指定して起こすときの受付番号（main 統合）。
+  async function openDocumentForm(templateKey: string, seededIssueKey = "") {
     setFormNonce((v) => v + 1);
     setDuplicateValues(null);
     setDuplicateFrom(null);
@@ -665,6 +710,7 @@ export function App() {
     );
     if (!response.ok) return;
     setDraftSelection(null);
+    if (seededIssueKey) setNewDocIssueKey(seededIssueKey);
     setSchema(await response.json());
     setView("document");
   }
@@ -711,7 +757,19 @@ export function App() {
             );
           })}
         </nav>
-        <div className="backlog"><strong>Backlog連携</strong><small>参照のみ・変更なし</small></div>
+        <div className="backlog"><strong>Backlog連携</strong><small>{
+          backlogMode === "live"
+            ? "実連携・文書添付可"
+            : backlogMode === "readonly"
+              ? "参照のみ・変更なし"
+              : "未接続"
+        }</small></div>
+        {spllSitePath && (
+          <a className="rail-link" href={spllSitePath} target="_blank" rel="noreferrer">
+            <strong>SPLL 公開サイト<span aria-hidden="true"> ↗</span></strong>
+            <small>クリエーター向けの申込・認証確認（デモ）</small>
+          </a>
+        )}
       </aside>
 
       <main>
@@ -725,7 +783,25 @@ export function App() {
             setSearchSelection({ target, id, title });
             setView(target === "matter" ? "matters" : target === "document" ? "documents" : "ledgers");
           }} />}
-          <div className="profile">{currentUser ? `${roleLabel(currentUser.role)}・${currentUser.email}` : "認証確認中"}</div>
+          <div className="header-actions">
+            {legalWorkspace && <div className="global-create-wrap">
+              <button className="global-create-button" onClick={() => setGlobalCreateOpen((value) => !value)}>
+                ＋ 作成・関連付け
+              </button>
+              {globalCreateOpen && <div className="global-create-menu">
+                <strong>作成・関連付け</strong>
+                <button onClick={() => { setGlobalCreateOpen(false); setView("matters"); }}>案件</button>
+                <button onClick={() => { setGlobalCreateOpen(false); setNewDocIssueKey(""); setView("templates"); }}>文書</button>
+                <button onClick={() => { setGlobalCreateOpen(false); setView("works-rights"); }}>作品・権利</button>
+                <button onClick={() => { setGlobalCreateOpen(false); setLicenseRequestIssueKey(""); setLicenseWorkId(undefined); setLicenseSourceConditionId(undefined); setView("license-contract"); }}>ライセンス契約</button>
+                <button onClick={() => { setGlobalCreateOpen(false); setView("outbound"); }}>アウト条件</button>
+                <button onClick={() => { setGlobalCreateOpen(false); setView("conditions"); }}>条件</button>
+                <button onClick={() => { setGlobalCreateOpen(false); setView("ledgers"); }}>取引先</button>
+                {adminWorkspace && <button onClick={() => { setGlobalCreateOpen(false); setView("staff"); }}>担当者</button>}
+              </div>}
+            </div>}
+            <div className="profile">{currentUser ? `${roleLabel(currentUser.role)}・${currentUser.email}` : "認証確認中"}</div>
+          </div>
         </header>
 
         <Breadcrumb view={view} onNavigate={setView} />
@@ -743,13 +819,68 @@ export function App() {
                 }}
                 onCreateDocument={() => { setNewDocIssueKey(""); setNewDocSeed({}); setView("templates"); }} />
         )}
+        {view === "legal-requests" && legalWorkspace && <RequestWorkspace
+          canEditMatters={canEditMatters}
+          onLegalResponse={(issueKey) => openDocumentForm("legal_response", issueKey)}
+          onStandaloneDocument={(issueKey) => { setNewDocIssueKey(issueKey); setView("templates"); }}
+          onLicenseContract={(issueKey) => {
+            setLicenseRequestIssueKey(issueKey); setLicenseWorkId(undefined); setLicenseSourceConditionId(undefined); setView("license-contract");
+          }}
+          onLicenseSettlement={(issueKey) => {
+            setSettlementIssueKey(issueKey); setSettlementWorkId(undefined); setView("license-settlements");
+          }}
+          onOpenMatter={(id, title) => {
+            setSearchSelection({ target: "matter", id: String(id), title }); setView("matters");
+          }}
+          onOpenDocument={(id) => {
+            setSearchSelection({ target: "document", id: String(id), title: "" }); setView("documents");
+          }}
+          onOpenWork={(id) => {
+            setWorkRightsInitialId(id);
+            setView("works-rights");
+          }}
+        />}
+        {view === "deadlines" && legalWorkspace && <DeadlineWorkspace
+          onOpenMatter={(id, title) => {
+            setSearchSelection({ target: "matter", id: String(id), title });
+            setView("matters");
+          }}
+        />}
         {view === "matters" && <MatterRegistry templates={templates}
           onOpenDocument={(id) => { setSearchSelection({ target: "document", id: String(id), title: "" }); setView("documents"); }}
           canEdit={canEditMatters}
           canDelete={canDeleteMatters}
           canUploadAttachments={canUploadAttachments}
-          onCreateDocument={(legalWorkspace || requesterWorkspace) ? startDocumentFromIssue : undefined}
+          onCreateDocument={(legalWorkspace || requesterWorkspace)
+            ? (issueKey, templateKey) => {
+              // 案件の業務委託フローから種別指定で起こす（基本契約・発注書・検収書）。
+              if (templateKey) void openDocumentForm(templateKey, issueKey ?? "");
+              else startDocumentFromIssue(issueKey);
+            }
+            : undefined}
+          onOpenWork={(id) => openWork(id)}
           selectedId={searchSelection?.target === "matter" ? Number(searchSelection.id) : undefined} />}
+        {view === "works-rights" && legalWorkspace && <WorkRightsWorkspace
+          initialWorkId={workRightsInitialId}
+          onStartLicenseContract={(workId, _workTitle, sourceConditionId) => {
+            setLicenseRequestIssueKey(""); setLicenseWorkId(workId); setLicenseSourceConditionId(sourceConditionId); setView("license-contract");
+          }}
+          onStartSettlement={(workId) => {
+            setSettlementIssueKey(""); setSettlementWorkId(workId); setView("license-settlements");
+          }}
+        />}
+        {view === "license-contract" && legalWorkspace && <LicenseContractWorkspace
+          initialIssueKey={licenseRequestIssueKey}
+          initialWorkId={licenseWorkId}
+          initialSourceConditionId={licenseSourceConditionId}
+          canSaveDraft={!readOnly}
+          onOpenDraft={resumeDraft}
+        />}
+        {view === "license-settlements" && legalWorkspace && <LicenseSettlementWorkspace
+          initialIssueKey={settlementIssueKey}
+          initialWorkId={settlementWorkId}
+          onOpenDraft={resumeDraft}
+        />}
         {view === "drafts" && !readOnly && (
           <DraftWorkspace templates={templates} onResume={resumeDraft} initialQuery={deepLinkIssue} />
         )}
@@ -825,6 +956,7 @@ export function App() {
         {view === "email-settings" && adminWorkspace && <EmailSettings />}
         {view === "workflow-rules" && adminWorkspace && <WorkflowRulesWorkspace canEdit={canEditWorkflowRules} />}
         {view === "contract-master" && legalWorkspace && <ContractMasterWorkspace canEdit={canEditContractMaster} canIntake={adminWorkspace} onNavigate={(t) => setView(t as View)} />}
+        {view === "outbound" && legalWorkspace && <OutboundConditionWorkspace />}
         {view === "conditions" && <ConditionLinesWorkspace
           key={drillConditionId ?? "conditions"} initialSelectedId={drillConditionId}
           onRecordReceipt={canRecordReceipt ? (conditionLineId) => { setDrillReceiptConditionId(conditionLineId); setView("billing"); } : undefined}
@@ -850,6 +982,8 @@ export function App() {
             canCloudSign={canCloudSign}
             canVoidDocument={canVoidDocument}
             canReissueDocument={canReissueDocument}
+            backlogMode={backlogMode}
+            canAttachConditions={canAttachConditions}
             initialQuery={deepLinkIssue}
             initialDetailsId={drillDetailsDocId ?? undefined}
             onOpenMatter={(matterId) => { setSearchSelection({ target: "matter", id: String(matterId), title: "" }); setView("matters"); }}
@@ -1038,25 +1172,77 @@ function Dashboard({ dashboard, access, onNavigate, onOpenMatter, onCreateDocume
     { step: "④", label: "条件を登録する", hint: "業務委託・利用許諾の条件明細（条件台帳）", view: "condition-first", metric: undefined, show: access.legalWorkspace }
   ];
   const rail = railCards.filter((card) => card.show);
+  const [requests, setRequests] = useState<Array<{
+    id: number; issueKey: string; summary: string; counterparty: string | null;
+    deadline: string | null; createdAt: string | null;
+    disposition: "received" | "matter_linked" | "document_created" | "completed";
+  }>>([]);
+
+  useEffect(() => {
+    if (!access.legalWorkspace) { setRequests([]); return; }
+    const controller = new AbortController();
+    fetch("/api/v2/requests?limit=200", { signal: controller.signal })
+      .then((response) => response.ok ? response.json() : Promise.reject())
+      .then((data) => setRequests(data.requests ?? []))
+      .catch((error) => { if (error?.name !== "AbortError") setRequests([]); });
+    return () => controller.abort();
+  }, [access.legalWorkspace]);
+
+  const today = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit"
+  }).format(new Date());
+  const requestActions = requests
+    .filter((request) => request.disposition !== "completed")
+    .sort((left, right) => {
+      const leftDue = left.deadline?.slice(0, 10) ?? "9999-99-99";
+      const rightDue = right.deadline?.slice(0, 10) ?? "9999-99-99";
+      if (leftDue !== rightDue) return leftDue.localeCompare(rightDue);
+      return (right.createdAt ?? "").localeCompare(left.createdAt ?? "");
+    })
+    .slice(0, 6);
 
   return (
     <section className="page">
       <div className="page-title">
-        <div><p>LEGAL OPERATIONS</p><h1>法務オペレーション</h1>
-          <small>{dashboard.source === "sample" ? "サンプル表示（本番データ未接続）" : "本番データに基づく現在状況"}</small></div>
-        <button className="primary" onClick={onCreateDocument}>文書を作成</button>
+        <div><p>TODAY</p><h1>今日やること</h1>
+          <small>{dashboard.source === "sample" ? "サンプル表示（本番データ未接続）" : "期限・依頼・案件タスクから優先順に確認"}</small></div>
+        {access.legalWorkspace
+          ? <button className="primary" onClick={() => onNavigate("legal-requests")}>法務依頼を見る</button>
+          : <button className="primary" onClick={onCreateDocument}>文書を作成</button>}
       </div>
 
+      {/* 業務動線レール（V1準拠）：その日の作業順を①→④で明示する。 */}
       {rail.length > 0 && <div className="workflow-rail">
-        {rail.map((card) => (
-          <button key={card.view} className="workflow-card" onClick={() => onNavigate(card.view)}>
-            <span className="wf-step">{card.step}</span>
-            <strong>{card.label}</strong>
-            <small>{card.hint}</small>
-            <span className="wf-metric">{card.metric !== undefined ? `${card.metric}件` : "開く"} →</span>
-          </button>
-        ))}
+        {rail.map((card) => <button key={card.view} type="button" className="workflow-card" onClick={() => onNavigate(card.view)}>
+          <span className="wf-step">{card.step}</span><strong>{card.label}</strong>
+          <small>{card.hint}</small><span className="wf-metric">{card.metric !== undefined ? `${card.metric}件` : "開く →"}</span>
+        </button>)}
       </div>}
+
+      <div className="today-grid">
+        {access.legalWorkspace && <section className="panel today-requests">
+          <div className="panel-head"><h2>処理する法務依頼</h2><span>{requestActions.length}件</span></div>
+          {requestActions.length ? requestActions.map((request) => {
+            const due = request.deadline?.slice(0, 10) ?? null;
+            return <button key={request.id} className="today-request" onClick={() => onNavigate("legal-requests")}>
+              <b>{request.summary || request.issueKey}</b>
+              <small>{request.issueKey}・{request.counterparty || "相手方未設定"}</small>
+              <em className={due && due <= today ? "overdue" : ""}>{due ? `期限 ${formatShortDate(due)}` : "期限未設定"}</em>
+            </button>;
+          }) : <p className="empty-inline">未完了の法務依頼はありません。</p>}
+        </section>}
+        <section className="panel alerts">
+          <div className="panel-head"><h2>本日の次アクション</h2>
+            <span>{dashboard.nextActions?.length ?? 0}件</span></div>
+          {dashboard.nextActions?.length ? dashboard.nextActions.map((action) => (
+            <button key={action.matterId} className="next-action" onClick={() => onOpenMatter(action.matterId, action.title)}>
+              <b>{action.taskTitle}</b>
+              <small>{action.matterCode}・{action.title}</small>
+              <em className={action.overdue ? "overdue" : ""}>{action.dueAt ? formatShortDate(action.dueAt) : "期限未設定"}</em>
+            </button>
+          )) : <p className="empty-inline">次アクションに設定されたタスクはありません。</p>}
+        </section>
+      </div>
 
       <div className="kpis">
         {dashboard.kpis.map((kpi) => <article key={kpi.label} className={kpi.tone ?? ""}><span>{kpi.label}</span><strong>{kpi.value}</strong></article>)}
@@ -1071,35 +1257,23 @@ function Dashboard({ dashboard, access, onNavigate, onOpenMatter, onCreateDocume
           {dashboard.stages.map((stage, index) => <article key={stage.label}><small>0{index + 1}</small><strong>{stage.count}</strong><span>{stage.label}</span></article>)}
         </div>
       </section>
-      <div className="content-grid">
-        <section className="panel">
-          <div className="panel-head"><h2>優先対応案件</h2>
-            {access.legalWorkspace && <button onClick={() => onNavigate("matters")}>すべて表示</button>}</div>
-          {dashboard.priorities.length ? (
-            <table><thead><tr><th>案件</th><th>相手方</th><th>工程</th><th>期限</th><th>状態</th></tr></thead>
-              <tbody>
-                {dashboard.priorities.map((matter) => <tr key={matter.id}
-                  className={matter.matterId ? "row-link" : ""}
-                  onClick={() => matter.matterId && onOpenMatter(matter.matterId, matter.title)}>
-                  <td><b>{matter.id}</b><br />{matter.title}</td>
-                  <td>{matter.counterparty}</td><td>{matter.stage}</td>
-                  <td className={matter.overdue ? "overdue" : ""}>{matter.dueDate || "—"}</td>
-                  <td><span className="status">{matterStatusLabels[matter.status] ?? matter.status}</span></td></tr>)}
-              </tbody>
-            </table>
-          ) : <div className="empty-state">対応中の案件はありません。</div>}
-        </section>
-        <aside className="panel alerts"><div className="panel-head"><h2>本日の次アクション</h2>
-          <span>{dashboard.nextActions?.length ?? 0}件</span></div>
-          {dashboard.nextActions?.length ? dashboard.nextActions.map((action) => (
-            <button key={action.matterId} className="next-action" onClick={() => onOpenMatter(action.matterId, action.title)}>
-              <b>{action.taskTitle}</b>
-              <small>{action.matterCode}・{action.title}</small>
-              <em className={action.overdue ? "overdue" : ""}>{action.dueAt ? formatShortDate(action.dueAt) : "期限未設定"}</em>
-            </button>
-          )) : <p className="empty-inline">次アクションに設定されたタスクはありません。</p>}
-        </aside>
-      </div>
+      <section className="panel">
+        <div className="panel-head"><h2>優先対応案件</h2>
+          {access.legalWorkspace && <button onClick={() => onNavigate("matters")}>すべて表示</button>}</div>
+        {dashboard.priorities.length ? (
+          <table><thead><tr><th>案件</th><th>相手方</th><th>工程</th><th>期限</th><th>状態</th></tr></thead>
+            <tbody>
+              {dashboard.priorities.map((matter) => <tr key={matter.id}
+                className={matter.matterId ? "row-link" : ""}
+                onClick={() => matter.matterId && onOpenMatter(matter.matterId, matter.title)}>
+                <td><b>{matter.id}</b><br />{matter.title}</td>
+                <td>{matter.counterparty}</td><td>{matter.stage}</td>
+                <td className={matter.overdue ? "overdue" : ""}>{matter.dueDate || "—"}</td>
+                <td><span className="status">{matterStatusLabels[matter.status] ?? matter.status}</span></td></tr>)}
+            </tbody>
+          </table>
+        ) : <div className="empty-state">対応中の案件はありません。</div>}
+      </section>
     </section>
   );
 }
@@ -1240,6 +1414,16 @@ function DocumentForm({
   const [draftStatus, setDraftStatus] = useState<
     "loading" | "clean" | "dirty" | "saving" | "saved" | "error"
   >(initialIssueKey.trim() ? "loading" : "clean");   // 受付番号が空だと文脈取得が走らないため
+  // 受付番号欄の候補（登録済みの法務依頼）。main の依頼駆動 UI から統合（2026-09-06）。
+  const [requestCandidates, setRequestCandidates] = useState<Array<{ issueKey: string; summary: string }>>([]);
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/v2/requests?limit=200", { signal: controller.signal })
+      .then((response) => response.ok ? response.json() : Promise.reject())
+      .then((result) => setRequestCandidates(result.requests ?? []))
+      .catch(() => setRequestCandidates([]));
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedIssueKey(issueKey), 500);
@@ -1608,6 +1792,7 @@ function DocumentForm({
           </div>
           <label className="draft-key">受付番号（Backlog課題キー）
             <input
+              list="document-request-candidates"
               value={issueKey}
               onChange={(event) => {
                 setIssueKey(event.target.value);
@@ -1617,6 +1802,10 @@ function DocumentForm({
               disabled={draftStatus === "saving" || Boolean(finalizedDocument)}
               placeholder="例：LEGAL-123"
             />
+            <datalist id="document-request-candidates">
+              {requestCandidates.map((request) => <option key={request.issueKey} value={request.issueKey}>{request.summary}</option>)}
+            </datalist>
+            <small>登録済みの依頼を選択すると、案件・取引先・担当者・作品・既存契約を自動引用します。</small>
           </label>
         </div>
         <div className="actions">
@@ -1707,6 +1896,14 @@ function DocumentForm({
           ))}
         </div>
       )}
+      {/* DB引用・自動補完の状況（main の prefill 相当をクライアントで算出）。 */}
+      <div className="document-prefill-summary">
+        <div><span>入力済み</span><strong>{visibleFields.filter((field) => { const v = formData[field.name]; return v !== undefined && v !== null && v !== ""; }).length}<small> / {visibleFields.length}項目</small></strong></div>
+        <div className={missingRequired.length ? "warning" : "complete"}><span>必須の未入力</span><strong>{missingRequired.length}<small>項目</small></strong></div>
+        <p>{missingRequired.length
+          ? "DBにない必須項目だけを確認・入力してください。"
+          : "必須項目は入力済みです。内容を確認してプレビューへ進めます。"}</p>
+      </div>
       <div className="form-layout">
         <nav className="form-nav">
           {stepGroups.map((group, index) => <a key={group} href={`#group-${index}`}>{group}</a>)}
@@ -1914,6 +2111,17 @@ function PurchaseOrderTotals({ formData }: { formData: DocumentFormData }) {
   </dl>;
 }
 
+function smartFieldOptions(field: TemplateField): string[] | null {
+  const key = `${field.name} ${field.label ?? ""}`.toLowerCase();
+  if (/currency|通貨/.test(key)) return ["JPY", "USD", "EUR", "GBP", "CNY", "KRW"];
+  if (/支払方式|payment.?scheme|算定方式|calc.?method/.test(key)) return ["royalty", "per_unit", "lump_sum"];
+  if (/独占|exclusiv/.test(key)) return ["非独占", "独占", "共同独占"];
+  if (/契約類型|契約種別|contract.?type/.test(key)) return ["業務委託", "売買", "ライセンス", "NDA", "覚書", "法務相談"];
+  if (/法人.?個人|entity.?type|当事者区分/.test(key)) return ["法人", "個人"];
+  if (/更新方法|renewal/.test(key) && field.type !== "date") return ["自動更新なし", "1年自動更新", "協議更新"];
+  return null;
+}
+
 function formatDraftTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
@@ -1926,20 +2134,51 @@ function formatDraftTime(value: string) {
   }).format(date);
 }
 
-function isSpecializedDataField(templateKey: string, fieldName: string) {
+function isSpecializedDataField(
+  templateKey: string,
+  fieldName: string,
+  formData: DocumentFormData = {}
+) {
   const specializedFields: Record<string, string[]> = {
-    purchase_order: ["items", "expenses", "other_fees", "financial_conditions"],
-    intl_purchase_order: ["items", "expenses", "other_fees", "financial_conditions"],
+    service_master: [
+      "SERVICE_ENGAGEMENT_TYPE", "CONTRACT_TYPE", "SERVICE_CATEGORY", "COMPENSATION_TYPE",
+      "DELIVERABLE_REQUIRED", "INSPECTION_REQUIRED", "IP_OWNERSHIP",
+      "SUBCONTRACTING_POLICY", "PERSONAL_DATA_HANDLING", "RENEWAL_TYPE", "SPECIAL_TERMS", "DETAILS"
+    ],
+    purchase_order: ["items", "expenses", "other_fees", "financial_conditions", "SERVICE_ENGAGEMENT_TYPE",
+      "DELIVERABLE_REQUIRED", "IP_OWNERSHIP", "WITHHOLDING_TAX", "DETAILS"],
+    intl_purchase_order: ["items", "expenses", "other_fees", "financial_conditions", "SERVICE_ENGAGEMENT_TYPE",
+      "DELIVERABLE_REQUIRED", "IP_OWNERSHIP", "WITHHOLDING_TAX", "DETAILS"],
     individual_license_terms: ["financial_conditions", "サブライセンシー一覧"],
     individual_license_terms_v3: ["v3_conds", "v3_lcs", "v3_sublicensees", "v3_calc_base_rows", "v3_special_extras"],
     royalty_statement: ["lines", "rs_receipts", "lineGroups", "receiptRows"],
-    inspection_certificate: ["delivery_line_items", "other_fees", "expenses", "changeLogs"]
+    inspection_certificate: ["delivery_line_items", "other_fees", "expenses", "changeLogs",
+      "INSPECTION_METHOD", "INSPECTION_RESULT", "PAYMENT_STATUS"]
   };
+  if (templateKey === "royalty_statement" && formData.settlement_trigger) {
+    const settlementManaged = new Set([
+      "linked_contract_number","ledgerId","licensor","LICENSOR_SUFFIX",
+      "LICENSOR_IS_CORPORATION","VENDOR_REPRESENTATIVE_SAMA","licensor_t_number",
+      "licensee","originalWork","productName","edition","completionDate","quantity",
+      "sampleQuantity","billableQuantity","msrpStr","calcType","royaltyRatePct",
+      "grossRoyaltyStr","mgAmount","mgAmountStr","mgTopupApplied","mgTopupThisTime",
+      "mgTopupThisTimeStr","agAmount","agAmountStr","agApplied","agConsumedBefore",
+      "agConsumedBeforeStr","agConsumedThisTime","agConsumedThisTimeStr",
+      "agConsumedAfter","agConsumedAfterStr","agRemaining","agRemainingStr",
+      "agProgressPct","agFullyConsumed","mgConsumedBefore","mgConsumedThisTime",
+      "mgConsumedAfter","mgRemaining","mgProgressPct","mgFullyConsumed",
+      "actualRoyalty","actualRoyaltyStr","currency","paymentConditionSummary",
+      "bankName","branchName","accountType","accountNo","accountHolder",
+      "invoiceRegistrationNumber"
+    ]);
+    if (settlementManaged.has(fieldName)) return true;
+  }
   return specializedFields[templateKey]?.includes(fieldName) ?? false;
 }
 
 function hasSpecializedForm(templateKey: string) {
   return [
+    "service_master",
     "purchase_order",
     "intl_purchase_order",
     "individual_license_terms",

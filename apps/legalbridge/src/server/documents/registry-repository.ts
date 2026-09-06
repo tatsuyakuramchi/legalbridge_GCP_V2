@@ -3,6 +3,7 @@ import type { DatabasePool } from "../db/pool.js";
 export interface RegisteredDocument {
   id: number;
   documentNumber: string | null;
+  previousDocumentNumber?: string | null;
   issueKey: string;
   templateType: string;
   templateVersionId: number | null;
@@ -53,7 +54,7 @@ export interface DocumentRegistryRepository {
 
 // 1件取得（find / findByNumber）は取引先マスタも一緒に読む。区分は form_data より
 // マスタが正しいため（宛名だけ書き換えると form_data 側に前の取引先の区分が残る）。
-const DOCUMENT_SELECT = `d.id, d.document_number, d.issue_key, d.template_type,
+const DOCUMENT_SELECT = `d.id, d.document_number, h.previous_document_number, d.issue_key, d.template_type,
               d.template_version_id, d.form_data, d.drive_link, d.created_at,
               d.created_by, d.matter_id,
               COALESCE(d.lifecycle_status, 'final') AS lifecycle_status,
@@ -61,6 +62,16 @@ const DOCUMENT_SELECT = `d.id, d.document_number, d.issue_key, d.template_type,
               v.vendor_name AS vendor_master_name,
               v.trade_name AS vendor_master_trade_name,
               v.pen_name AS vendor_master_pen_name`;
+
+// 文書番号の振替履歴（026・document_number_history）から直近の旧番号を引く。
+// 一覧の検索対象にも含める（旧番号で探せる）。
+const PREVIOUS_NUMBER_JOIN = `LEFT JOIN LATERAL (
+           SELECT previous_document_number
+             FROM document_number_history
+            WHERE document_id = d.id
+            ORDER BY changed_at DESC, id DESC
+            LIMIT 1
+         ) h ON true`;
 
 export class PgDocumentRegistryRepository implements DocumentRegistryRepository {
   constructor(private readonly database: DatabasePool) {}
@@ -73,20 +84,22 @@ export class PgDocumentRegistryRepository implements DocumentRegistryRepository 
       : lifecycle === "voided" ? "AND COALESCE(lifecycle_status, 'final') = 'voided'"
       : "";
     const result = await this.database.query(
-      `SELECT id, document_number, issue_key, template_type, template_version_id,
-              form_data, drive_link, created_at, created_by, matter_id,
-              COALESCE(lifecycle_status, 'final') AS lifecycle_status
-         FROM documents
+      `SELECT d.id, d.document_number, h.previous_document_number, d.issue_key, d.template_type,
+              d.template_version_id, d.form_data, d.drive_link, d.created_at, d.created_by, d.matter_id,
+              COALESCE(d.lifecycle_status, 'final') AS lifecycle_status
+         FROM documents d
+         ${PREVIOUS_NUMBER_JOIN}
         WHERE ($1 = '%%'
-          OR COALESCE(document_number, '') ILIKE $1
-          OR issue_key ILIKE $1
-          OR template_type ILIKE $1
-          OR COALESCE(form_data->>'PROJECT_TITLE', form_data->>'CONTRACT_TITLE',
-                      form_data->>'基本契約名', form_data->>'VENDOR_NAME',
-                      form_data->>'Licensor_氏名会社名', '') ILIKE $1)
-          AND ($2 = '' OR template_type = $2)
-          ${lifecycleClause}
-        ORDER BY created_at DESC NULLS LAST, id DESC
+          OR COALESCE(d.document_number, '') ILIKE $1
+          OR d.issue_key ILIKE $1
+          OR d.template_type ILIKE $1
+          OR COALESCE(d.form_data->>'PROJECT_TITLE', d.form_data->>'CONTRACT_TITLE',
+                      d.form_data->>'基本契約名', d.form_data->>'VENDOR_NAME',
+                      d.form_data->>'Licensor_氏名会社名', '') ILIKE $1
+          OR COALESCE(h.previous_document_number, '') ILIKE $1)
+          AND ($2 = '' OR d.template_type = $2)
+          ${lifecycleClause.replace(/COALESCE\(lifecycle_status/g, "COALESCE(d.lifecycle_status")}
+        ORDER BY d.created_at DESC NULLS LAST, d.id DESC
         LIMIT $3`,
       [keyword, templateType ?? "", Math.min(Math.max(limit, 1), 200)]
     );
@@ -125,6 +138,7 @@ export class PgDocumentRegistryRepository implements DocumentRegistryRepository 
       `SELECT ${DOCUMENT_SELECT}
          FROM documents d
          LEFT JOIN vendors v ON v.id = d.vendor_id
+         ${PREVIOUS_NUMBER_JOIN}
         WHERE d.id = $1`,
       [id]
     );
@@ -136,6 +150,7 @@ export class PgDocumentRegistryRepository implements DocumentRegistryRepository 
       `SELECT ${DOCUMENT_SELECT}
          FROM documents d
          LEFT JOIN vendors v ON v.id = d.vendor_id
+         ${PREVIOUS_NUMBER_JOIN}
         WHERE d.document_number = $1
         ORDER BY d.id DESC
         LIMIT 1`,
@@ -199,6 +214,7 @@ function mapRow(row: Record<string, any>): RegisteredDocument {
   return {
     id: Number(row.id),
     documentNumber: row.document_number,
+    previousDocumentNumber: row.previous_document_number ?? legacyPreviousNumber(formData),
     issueKey: row.issue_key,
     templateType: row.template_type,
     templateVersionId: row.template_version_id,
@@ -239,6 +255,14 @@ function mapVersion(row: Record<string, any>): DocumentVersion {
     supersededBy: row.superseded_by ?? null,
     createdAt: row.created_at ? new Date(row.created_at).toISOString() : ""
   };
+}
+
+function legacyPreviousNumber(values: Record<string, unknown>) {
+  return firstText(values, [
+    "PREVIOUS_DOCUMENT_NUMBER", "旧文書番号", "旧契約書番号",
+    "BASE_DOC_NO", "元文書番号", "元契約番号",
+    "previousDocumentNumber", "baseDocumentNumber", "originalDocumentNumber"
+  ]) || null;
 }
 
 function firstText(values: Record<string, unknown>, keys: string[]) {

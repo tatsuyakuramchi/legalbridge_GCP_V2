@@ -17,6 +17,9 @@ export interface TemplateField {
   placeholder?: string;
   helpText?: string;
   dbField?: string;
+  // DB引用で埋まる読取専用項目／画面に出さない項目（main の DB自動補完・2026-09-06 統合）。
+  readonly?: boolean;
+  hidden?: boolean;
   // 条件表示：他項目の値により表示/非表示を切り替える（IGLA のような
   // モデル選択型テンプレートで、使わない側の項目群をフォームから隠す）。
   // anyOf は select 値の一致、truthy は boolean 項目のチェック有無で判定。

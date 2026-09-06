@@ -12,12 +12,22 @@ type Matter = {
   targetDueDate: string | null; blockedReason: string | null; issueCount: number;
   documentCount: number; openTaskCount: number; nextTaskTitle: string | null;
   nextTaskDueAt: string | null; updatedAt: string;
+  ownerStaffId?: number | null;
 };
 type Detail = {
   matter: Matter & { remarks: string | null; driveFolderUrl: string | null; ownerStaffId?: number | null };
-  issues: Array<{ issueKey: string; relation: string; summary: string | null; note: string | null }>;
+  issues: Array<{
+    issueKey: string; relation: string; summary: string | null; note: string | null;
+    requestId?: number | null; requestType?: string | null; requestCounterparty?: string | null;
+  }>;
   tasks: Array<{ id: number; title: string; status: string; assigneeName: string | null; assigneeStaffId?: number | null; dueAt: string | null; isPrimary: boolean; blockedReason: string | null }>;
   documents: Array<{ id: number; documentNumber: string | null; templateType: string; issueKey: string; createdAt: string; driveLink: string }>;
+  contracts?: Array<{ id: number; documentNumber: string | null; title: string; contractType: string | null; status: string | null; expirationDate: string | null }>;
+  works?: Array<{ id: number; workCode: string | null; title: string }>;
+  vendors?: Array<{ id: number; vendorCode: string | null; name: string }>;
+  deliveryEvents?: Array<{ id: number; status: string; inspectionDeadline: string | null; deliveredAmount: number | null }>;
+  payments?: Array<{ id: number; status: string; dueDate: string | null; amount: number | null; currency: string; sourceDocumentNumber: string | null }>;
+  deadlines?: Array<{ id: string; kind: "matter" | "task" | "document" | "contract"; title: string; dueDate: string; status: string }>;
 };
 const statusLabels: Record<string, string> = { open: "未着手", in_progress: "進行中", closed: "完了", archived: "保管" };
 
@@ -76,10 +86,12 @@ function matchesFilter(matter: Matter, filter: FilterKey, today: string) {
   }
 }
 
-export function MatterRegistry({ templates, selectedId, canEdit = false, canDelete = false, canUploadAttachments = false, onCreateDocument, onOpenDocument }:
+export function MatterRegistry({ templates, selectedId, canEdit = false, canDelete = false, canUploadAttachments = false, onCreateDocument, onOpenDocument, onOpenWork }:
   { templates: DocumentFormSchema[]; selectedId?: number; canEdit?: boolean; canDelete?: boolean;
-    canUploadAttachments?: boolean; onCreateDocument?: (issueKey: string | null) => void;
-    onOpenDocument?: (documentId: number) => void }) {
+    canUploadAttachments?: boolean;
+    // templateKey 付きは案件の業務委託フロー（基本契約→発注→検収）から種別を指定して起こす。
+    onCreateDocument?: (issueKey: string | null, templateKey?: string) => void;
+    onOpenDocument?: (documentId: number) => void; onOpenWork?: (id: number) => void }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FilterKey>("all");
   const [matters, setMatters] = useState<Matter[]>([]);
@@ -100,7 +112,11 @@ export function MatterRegistry({ templates, selectedId, canEdit = false, canDele
       setError("");
       fetch(`/api/v2/matters?${params}`, { signal: controller.signal })
         .then((response) => response.ok ? response.json() : Promise.reject())
-        .then((data) => setMatters(data.matters ?? []))
+        .then((data) => {
+          const rows = data.matters ?? [];
+          setMatters(rows);
+          if (!detail && !creating && rows[0]) void selectMatter(rows[0].id);
+        })
         .catch((cause) => { if (cause?.name !== "AbortError") setError("案件一覧を取得できませんでした。"); }).finally(() => setLoading(false));
     }, 250);
     return () => { window.clearTimeout(timer); controller.abort(); };
@@ -143,8 +159,8 @@ export function MatterRegistry({ templates, selectedId, canEdit = false, canDele
     .sort((a, b) => b.id - a.id);
 
   return <section className="page matter-page">
-    <div className="page-title"><div><p>MATTER MANAGEMENT</p><h1>案件一覧</h1>
-      <small>案件・課題・タスク・関連文書を一つの画面で確認します</small></div>
+    <div className="page-title"><div><p>MATTER WORKSPACE</p><h1>案件</h1>
+      <small>依頼から作品・契約・文書・期限・次アクションまでを案件単位で管理します</small></div>
       {canEdit && <button className="primary" onClick={() => { setCreating(true); setDetail(null); }}>＋ 新規案件</button>}
     </div>
     <div className="matter-toolbar">
@@ -207,28 +223,39 @@ export function MatterRegistry({ templates, selectedId, canEdit = false, canDele
             canUploadAttachments={canUploadAttachments}
             onCreateDocument={onCreateDocument}
             onChanged={() => refreshAll(detail?.matter.id)}
-            onDeleted={() => { setDetail(null); setReload((v) => v + 1); }}  onOpenDocument={onOpenDocument} />}
+            onDeleted={() => { setDetail(null); setReload((v) => v + 1); }}
+            onOpenDocument={onOpenDocument}
+            onOpenWork={onOpenWork} />}
     </div>
   </section>;
 }
 
-function MatterDetail({ detail, labels, canEdit, canDelete = false, canUploadAttachments = false, onChanged, onDeleted, onCreateDocument, onOpenDocument }:
+function MatterDetail({ detail, labels, canEdit, canDelete = false, canUploadAttachments = false, onChanged, onDeleted, onCreateDocument, onOpenDocument, onOpenWork }:
   { detail: Detail | null; labels: Map<string, string>; canEdit: boolean; canDelete?: boolean; canUploadAttachments?: boolean;
-    onChanged: () => void; onDeleted?: () => void; onCreateDocument?: (issueKey: string | null) => void; onOpenDocument?: (documentId: number) => void }) {
+    onChanged: () => void; onDeleted?: () => void; onCreateDocument?: (issueKey: string | null, templateKey?: string) => void;
+    onOpenDocument?: (documentId: number) => void; onOpenWork?: (id: number) => void }) {
   const [editing, setEditing] = useState(false);
   const [addingTask, setAddingTask] = useState(false);
-  useEffect(() => { setEditing(false); setAddingTask(false); }, [detail?.matter.id]);
-  if (!detail) return <aside className="panel matter-detail empty-detail">
+  const [tab, setTab] = useState<"overview" | "tasks" | "documents" | "requests" | "communication">("overview");
+  useEffect(() => { setEditing(false); setAddingTask(false); setTab("overview"); }, [detail?.matter.id]);
+  if (!detail) return <section className="panel matter-detail empty-detail">
     <EmptyState icon="◧" title="案件を選択してください" description="左の一覧から案件を選ぶと、課題・タスク・関連文書が表示されます。" compact />
-  </aside>;
+  </section>;
   const { matter } = detail;
   if (editing) {
     return <MatterForm mode="edit" matter={matter} onCancel={() => setEditing(false)}
       onSaved={() => { setEditing(false); onChanged(); }} />;
   }
-  return <aside className="panel matter-detail">
+  const contracts = detail.contracts ?? [];
+  const works = detail.works ?? [];
+  const vendors = detail.vendors ?? [];
+  const deadlines = detail.deadlines ?? [];
+  const nextTask = detail.tasks.find((task) => task.isPrimary && task.status !== "done" && task.status !== "cancelled")
+    ?? detail.tasks.find((task) => task.status === "open" || task.status === "in_progress");
+  return <section className="panel matter-detail matter-workspace-detail">
     <div className="matter-detail-head">
-      <div><span className="detail-kicker">MATTER DETAIL</span><h2>{matter.title}</h2></div>
+      <div><span className="detail-kicker">{matter.matterCode ?? `MATTER #${matter.id}`}</span><h2>{matter.title}</h2>
+        <p>{matter.counterparty || "相手方未設定"} ・ {matter.ownerName ?? "担当者未設定"}</p></div>
       <div className="matter-detail-actions">
         {onCreateDocument && <button className="primary" onClick={() => onCreateDocument(matter.primaryIssueKey)}>
           {matter.primaryIssueKey ? "この依頼から文書作成" : "文書を作成"}</button>}
@@ -238,36 +265,130 @@ function MatterDetail({ detail, labels, canEdit, canDelete = false, canUploadAtt
           label="統合カートに入れる" />}
       </div>
     </div>
-    <div className="matter-summary"><span>{matter.matterCode ?? `#${matter.id}`}</span>
-      <span className={`matter-status ${matter.status}`}>{statusLabels[matter.status] ?? matter.status}</span>
-      <span>{stageLabels[matter.lifecycleStage ?? ""] ?? "工程未設定"}</span>
-      <span>{matter.counterparty || "相手方未設定"}</span><span>{matter.ownerName ?? "担当者未設定"}</span>
-      {matter.targetDueDate && <span>期限 {matter.targetDueDate}</span>}</div>
+    <div className="matter-progress">
+      <div><span>現在の工程</span><strong>{stageLabels[matter.lifecycleStage ?? ""] ?? "工程未設定"}</strong></div>
+      <div><span>状態</span><strong className={`matter-status ${matter.status}`}>{statusLabels[matter.status] ?? matter.status}</strong></div>
+      <div><span>期限</span><strong>{matter.targetDueDate || "未設定"}</strong></div>
+      <div><span>次アクション</span><strong>{nextTask?.title || "未設定"}</strong></div>
+    </div>
     {canEdit && <InlineMatterControls matter={matter} onChanged={onChanged} />}
     {matter.blockedReason && <p className="matter-blocked">停滞理由：{matter.blockedReason}</p>}
     <MatterDriveFolder matterId={matter.id} canEdit={canEdit} onRegistered={onChanged} />
-    <DetailSection title={`関連課題 ${detail.issues.length}`}>
-      <MatterIssueLinks matterId={matter.id} issues={detail.issues} canEdit={canEdit} onChanged={onChanged} />
-    </DetailSection>
-    <DetailSection title={`次アクション・タスク ${detail.tasks.length}`}
+    <nav className="matter-workspace-tabs">
+      <button className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>全体像</button>
+      <button className={tab === "tasks" ? "active" : ""} onClick={() => setTab("tasks")}>タスク {detail.tasks.length}</button>
+      <button className={tab === "documents" ? "active" : ""} onClick={() => setTab("documents")}>契約・文書 {contracts.length + detail.documents.length}</button>
+      <button className={tab === "requests" ? "active" : ""} onClick={() => setTab("requests")}>依頼 {detail.issues.length}</button>
+      {canEdit && <button className={tab === "communication" ? "active" : ""} onClick={() => setTab("communication")}>連絡・送信</button>}
+    </nav>
+
+    {tab === "overview" && <div className="matter-workspace-body">
+      {nextTask && <section className="matter-next-action"><span>NEXT ACTION</span><strong>{nextTask.title}</strong>
+        <small>{nextTask.assigneeName ?? "担当未設定"} ・ {nextTask.dueAt ? formatDate(nextTask.dueAt) : "期限未設定"}</small></section>}
+      <ServiceOutsourcingFlow matter={matter} documents={detail.documents} contracts={contracts}
+        deliveryEvents={detail.deliveryEvents ?? []} payments={detail.payments ?? []}
+        labels={labels} onCreateDocument={onCreateDocument} />
+      <div className="matter-relation-grid">
+        <RelationCard title="依頼・Backlog" count={detail.issues.length} empty="依頼未紐付け">
+          {detail.issues.slice(0, 4).map((issue) => <div key={issue.issueKey}><b>{issue.issueKey}</b><span>{issue.summary ?? issue.relation}</span></div>)}
+        </RelationCard>
+        <RelationCard title="取引先" count={vendors.length || (matter.counterparty ? 1 : 0)} empty="取引先未設定">
+          {vendors.length ? vendors.map((vendor) => <div key={vendor.id}><b>{vendor.name}</b><span>{vendor.vendorCode || "コード未設定"}</span></div>)
+            : matter.counterparty && <div><b>{matter.counterparty}</b><span>案件登録値</span></div>}
+        </RelationCard>
+        <RelationCard title="作品・権利" count={works.length} empty="作品未紐付け">
+          {works.map((work) => <button key={work.id} onClick={() => onOpenWork?.(work.id)}><b>{work.title}</b><span>{work.workCode || `#${work.id}`}</span></button>)}
+        </RelationCard>
+        <RelationCard title="契約" count={contracts.length} empty="契約未紐付け">
+          {contracts.map((contract) => <div key={contract.id}><b>{contract.title}</b><span>{contract.documentNumber || contract.contractType || `#${contract.id}`}</span></div>)}
+        </RelationCard>
+      </div>
+      <section className="matter-deadlines"><h3>期限・更新管理</h3>
+        {deadlines.length ? deadlines.slice(0, 8).map((deadline) => <div key={deadline.id}><strong>{deadline.dueDate}</strong><span>{deadline.title}</span><small>{deadlineKindLabel(deadline.kind)}</small></div>)
+          : <p>期限は登録されていません。</p>}
+      </section>
+      {matter.remarks && <section className="matter-remarks"><h3>案件メモ</h3><p>{matter.remarks}</p></section>}
+      {canDelete && <MatterDangerZone matterId={matter.id} title={matter.title} onDeleted={onDeleted} />}
+    </div>}
+
+    {tab === "tasks" && <div className="matter-workspace-body"><DetailSection title={`次アクション・タスク ${detail.tasks.length}`}
       action={canEdit && !addingTask ? <button onClick={() => setAddingTask(true)}>＋ タスク追加</button> : undefined}>
-      {addingTask && <TaskForm matterId={matter.id} onCancel={() => setAddingTask(false)}
-        onSaved={() => { setAddingTask(false); onChanged(); }} />}
+      {addingTask && <TaskForm matterId={matter.id} onCancel={() => setAddingTask(false)} onSaved={() => { setAddingTask(false); onChanged(); }} />}
       {detail.tasks.map((task) => <TaskRow key={task.id} matterId={matter.id} task={task}
         canEdit={canEdit} canDelete={canDelete} onChanged={onChanged} />)}
-    </DetailSection>
-    <DetailSection title={`関連文書 ${detail.documents.length}`}>
-      <MatterDocumentLinks matterId={matter.id} documents={detail.documents} labels={labels} canEdit={canEdit} onChanged={onChanged} onOpenDocument={onOpenDocument} />
-      {canUploadAttachments && <MatterAttachmentUpload matterId={matter.id} onUploaded={onChanged} />}
-    </DetailSection>
-    <DetailSection title="送信履歴"><MatterSends matterId={matter.id} documents={detail.documents} canEdit={canEdit} /></DetailSection>
-    {canEdit && <DetailSection title="コミュニケーション">
+      {!detail.tasks.length && <p>タスクは登録されていません。</p>}
+    </DetailSection></div>}
+
+    {tab === "documents" && <div className="matter-workspace-body">
+      <DetailSection title={`契約 ${contracts.length}`}>{contracts.map((contract) => <article key={contract.id}><b>{contract.documentNumber || `#${contract.id}`}</b><span>{contract.title}</span><small>{[contract.contractType, contract.status, contract.expirationDate && `終了 ${contract.expirationDate}`].filter(Boolean).join(" ・ ")}</small></article>)}
+        {!contracts.length && <p>契約は紐づいていません。</p>}</DetailSection>
+      <DetailSection title={`関連文書 ${detail.documents.length}`}>
+        <MatterDocumentLinks matterId={matter.id} documents={detail.documents} labels={labels} canEdit={canEdit} onChanged={onChanged} onOpenDocument={onOpenDocument} />
+        {canUploadAttachments && <MatterAttachmentUpload matterId={matter.id} onUploaded={onChanged} />}
+      </DetailSection>
+      <DetailSection title="送信履歴"><MatterSends matterId={matter.id} documents={detail.documents} canEdit={canEdit} /></DetailSection>
+    </div>}
+
+    {tab === "requests" && <div className="matter-workspace-body">
+      <DetailSection title={`依頼・関連課題 ${detail.issues.length}`}>
+        {detail.issues.filter((issue) => issue.requestId).map((issue) => <article key={issue.issueKey}><b>{issue.issueKey} ・ 法務依頼</b><span>{issue.summary ?? issue.relation}</span><small>{[issue.requestType, issue.requestCounterparty, issue.note].filter(Boolean).join(" ・ ")}</small></article>)}
+        <MatterIssueLinks matterId={matter.id} issues={detail.issues} canEdit={canEdit} onChanged={onChanged} />
+      </DetailSection>
+    </div>}
+
+    {tab === "communication" && canEdit && <div className="matter-workspace-body"><DetailSection title="コミュニケーション">
       <MatterSlackHistory matterId={matter.id} />
       <MatterSlackPanel matterId={matter.id} documents={detail.documents} />
-    </DetailSection>}
-    {matter.remarks && <DetailSection title="備考"><p>{matter.remarks}</p></DetailSection>}
-    {canDelete && <MatterDangerZone matterId={matter.id} title={matter.title} onDeleted={onDeleted} />}
-  </aside>;
+    </DetailSection></div>}
+  </section>;
+}
+
+function ServiceOutsourcingFlow({ matter, documents, contracts, deliveryEvents, payments, labels, onCreateDocument }: {
+  matter: Detail["matter"];
+  documents: Detail["documents"];
+  contracts: NonNullable<Detail["contracts"]>;
+  deliveryEvents: NonNullable<Detail["deliveryEvents"]>;
+  payments: NonNullable<Detail["payments"]>;
+  labels: Map<string, string>;
+  onCreateDocument?: (issueKey: string | null, templateKey?: string) => void;
+}) {
+  const hasServiceContract = documents.some((document) => document.templateType === "service_master") ||
+    contracts.some((contract) => /業務委託|請負|準委任/.test(`${contract.contractType ?? ""} ${contract.title}`));
+  const hasOrder = documents.some((document) => ["purchase_order", "intl_purchase_order"].includes(document.templateType));
+  const hasInspection = documents.some((document) => document.templateType === "inspection_certificate");
+  const hasDelivery = deliveryEvents.length > 0 || hasInspection;
+  const hasPaid = payments.some((payment) => ["paid", "completed"].includes(payment.status));
+  const stages = [
+    { key: "service_master", number: 1, label: "基本契約", complete: hasServiceContract, action: "基本契約を作成" },
+    { key: "purchase_order", number: 2, label: "発注", complete: hasOrder, action: "発注書を作成" },
+    { key: "delivery", number: 3, label: "納品・報告", complete: hasDelivery, action: "" },
+    { key: "inspection_certificate", number: 4, label: "検収", complete: hasInspection, action: "検収書を作成" },
+    { key: "payment", number: 5, label: "支払", complete: hasPaid, action: "" }
+  ];
+  return <section className="service-matter-flow">
+    <header><div><span>SERVICE OUTSOURCING</span><h3>業務委託フロー</h3></div>
+      <small>契約・発注・納品・検収・支払をこの案件で追跡します</small></header>
+    <div className="service-matter-steps">
+      {stages.map((stage) => <article key={stage.key} className={stage.complete ? "complete" : "pending"}>
+        <b>{stage.complete ? "✓" : stage.number}</b><div><strong>{stage.label}</strong>
+          <small>{stage.complete ? "登録済み" : stage.key === "delivery" ? "納品登録待ち" : stage.key === "payment" ? payments.length ? "支払処理中" : "支払登録待ち" : "未作成"}</small></div>
+        {stage.action && onCreateDocument && labels.has(stage.key) &&
+          <button onClick={() => onCreateDocument(matter.primaryIssueKey, stage.key)}>{stage.complete ? "追加作成" : stage.action}</button>}
+      </article>)}
+    </div>
+    {!labels.has("service_master") && <p className="service-flow-warning">業務委託基本契約テンプレートが無効です。管理者にテンプレート設定を確認してください。</p>}
+  </section>;
+}
+
+function RelationCard({ title, count, empty, children }: { title: string; count: number; empty: string; children: React.ReactNode }) {
+  return <section className="matter-relation-card"><header><h3>{title}</h3><span>{count}件</span></header><div>{count ? children : <p>{empty}</p>}</div></section>;
+}
+
+function deadlineKindLabel(kind: NonNullable<Detail["deadlines"]>[number]["kind"]) {
+  if (kind === "matter") return "案件期限";
+  if (kind === "task") return "タスク";
+  if (kind === "document") return "文書";
+  return "契約終了";
 }
 
 const MATTER_DELETE_TOKEN = "COMMIT_MATTER_DELETE";
@@ -682,9 +803,23 @@ function MatterForm({ mode, matter, onCancel, onSaved }: {
     blockedReason: matter?.blockedReason ?? "", remarks: matter?.remarks ?? "",
     ownerStaffId: matter?.ownerStaffId != null ? String(matter.ownerStaffId) : ""
   });
+  const [vendors, setVendors] = useState<Array<{ id: string; label: string }>>([]);
+  const [staff, setStaff] = useState<Array<{ id: string; label: string }>>([]);
+  const [requests, setRequests] = useState<Array<{ issueKey: string; summary: string }>>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const toast = useToast();
+  useEffect(() => {
+    const controller = new AbortController();
+    Promise.all([
+      fetch("/api/v2/master-data/search?type=vendor&q=&limit=50", { signal: controller.signal }).then((response) => response.ok ? response.json() : { items: [] }),
+      fetch("/api/v2/master-data/search?type=staff&q=&limit=50", { signal: controller.signal }).then((response) => response.ok ? response.json() : { items: [] }),
+      fetch("/api/v2/requests?limit=200", { signal: controller.signal }).then((response) => response.ok ? response.json() : { requests: [] })
+    ]).then(([vendorResult, staffResult, requestResult]) => {
+      setVendors(vendorResult.items ?? []); setStaff(staffResult.items ?? []); setRequests(requestResult.requests ?? []);
+    }).catch(() => undefined);
+    return () => controller.abort();
+  }, []);
   function set<K extends keyof MatterFormValues>(key: K, value: string) {
     setValues((prev) => ({ ...prev, [key]: value }));
   }
@@ -698,9 +833,9 @@ function MatterForm({ mode, matter, onCancel, onSaved }: {
       counterparty: values.counterparty,
       primaryIssueKey: values.primaryIssueKey,
       targetDueDate: values.targetDueDate || null,
+      ownerStaffId: values.ownerStaffId ? Number(values.ownerStaffId) : null,
       blockedReason: values.blockedReason,
-      remarks: values.remarks,
-      ownerStaffId: values.ownerStaffId ? Number(values.ownerStaffId) : null
+      remarks: values.remarks
     };
     const url = mode === "create" ? "/api/v2/matters" : `/api/v2/matters/${matter!.id}`;
     const method = mode === "create" ? "POST" : "PATCH";
@@ -729,8 +864,8 @@ function MatterForm({ mode, matter, onCancel, onSaved }: {
         {MATTER_STATUSES.map((s) => <option key={s} value={s}>{statusLabels[s]}</option>)}</select></label>
       <label>工程<select value={values.lifecycleStage} onChange={(e) => set("lifecycleStage", e.target.value)}>
         <option value="">未設定</option>{LIFECYCLE_STAGES.map((s) => <option key={s} value={s}>{stageLabels[s]}</option>)}</select></label>
-      <label>相手方<input maxLength={1000} value={values.counterparty} onChange={(e) => set("counterparty", e.target.value)} /></label>
-      <label>代表課題キー<input maxLength={50} value={values.primaryIssueKey} onChange={(e) => set("primaryIssueKey", e.target.value)} placeholder="LEGAL-123" /></label>
+      <label>相手方（DBから選択）<input maxLength={1000} list={`matter-vendors-${mode}`} value={values.counterparty} onChange={(e) => set("counterparty", e.target.value)} /><datalist id={`matter-vendors-${mode}`}>{vendors.map((vendor) => <option key={vendor.id} value={vendor.label} />)}</datalist></label>
+      <label>代表依頼（Backlog）<input maxLength={50} list={`matter-requests-${mode}`} value={values.primaryIssueKey} onChange={(e) => set("primaryIssueKey", e.target.value)} placeholder="LEGAL-123" /><datalist id={`matter-requests-${mode}`}>{requests.map((request) => <option key={request.issueKey} value={request.issueKey}>{request.summary}</option>)}</datalist></label>
       <label>目標期限<input type="date" value={values.targetDueDate ?? ""} onChange={(e) => set("targetDueDate", e.target.value)} /></label>
       <StaffSelect label="担当者" value={values.ownerStaffId} onChange={(v) => set("ownerStaffId", v)} />
     </div>

@@ -1,5 +1,6 @@
 import type { z } from "zod";
 import type { outboundConditionSchema } from "./outbound-conditions.js";
+import { displayScope, type ScopeOption } from "../../rights-scope.js";
 
 type ValidatedOutboundCondition = z.output<typeof outboundConditionSchema>;
 
@@ -9,9 +10,12 @@ export interface OutboundConditionStorageValues {
   transactionKind: "license" | "product";
   direction: "receivable";
   conditionName: string;
+  sourceConditionId: number | null;
   documentNumber: string | null;
   territory: string;
   language: string;
+  regions: ScopeOption[];
+  languages: ScopeOption[];
   exclusivity: "exclusive" | "non_exclusive" | "sole";
   sublicenseAllowed: boolean;
   termStart: string | null;
@@ -41,9 +45,12 @@ export function mapOutboundConditionForStorage(
     transactionKind: condition.transactionKind,
     direction: "receivable",
     conditionName: condition.conditionName,
+    sourceConditionId: condition.sourceConditionId ?? null,
     documentNumber: nullable(condition.documentNumber),
-    territory: condition.territory,
-    language: condition.languages.join(","),
+    territory: displayScope(condition.regions),
+    language: displayScope(condition.languages),
+    regions: condition.regions,
+    languages: condition.languages,
     exclusivity: condition.exclusivity,
     sublicenseAllowed: condition.sublicenseAllowed,
     termStart: condition.termStart ?? null,

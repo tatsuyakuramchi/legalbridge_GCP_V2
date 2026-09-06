@@ -1,7 +1,8 @@
 import {
   BacklogWebApiClient,
-  type BacklogReadClient, type BacklogWriteClient,
-  type BacklogIssueSummary, type BacklogProjectSummary, type BacklogProjectMetadata
+  type BacklogReadClient, type BacklogWriteClient, type BacklogDocumentClient,
+  type BacklogIssueSummary, type BacklogProjectSummary, type BacklogProjectMetadata,
+  type BacklogAttachmentSummary, type BacklogCommentSummary
 } from "./backlog-web-api.js";
 import fs from "node:fs";
 import { FetchGmailApiClient, KeylessGmailApiClient, type GmailApiClient } from "./gmail-api-adapter.js";
@@ -15,7 +16,7 @@ import {
 // ここでは値プロバイダ（RuntimeIntegrationSettings.current() 由来）を受け取り、
 // **メソッド呼び出し時**に実クライアントを解決して委譲する（値が変われば作り直す）。
 
-export class DynamicBacklogClient implements BacklogReadClient, BacklogWriteClient {
+export class DynamicBacklogClient implements BacklogReadClient, BacklogWriteClient, BacklogDocumentClient {
   private cached: { key: string; client: BacklogWebApiClient } | null = null;
 
   constructor(
@@ -54,6 +55,17 @@ export class DynamicBacklogClient implements BacklogReadClient, BacklogWriteClie
   }
   createIssue(input: { summary: string; description: string; issueTypeName: string }): Promise<{ issueKey: string }> {
     return this.client().createIssue(input);
+  }
+  // 文書→課題の添付連携（BacklogDocumentClient）。
+  getIssue(issueIdOrKey: string): Promise<BacklogIssueSummary> { return this.client().getIssue(issueIdOrKey); }
+  listIssueAttachments(issueIdOrKey: string): Promise<BacklogAttachmentSummary[]> {
+    return this.client().listIssueAttachments(issueIdOrKey);
+  }
+  uploadAttachment(input: { filename: string; contentType: string; data: Uint8Array }): Promise<BacklogAttachmentSummary> {
+    return this.client().uploadAttachment(input);
+  }
+  addIssueComment(input: { issueIdOrKey: string; content: string; attachmentIds?: number[] }): Promise<BacklogCommentSummary> {
+    return this.client().addIssueComment(input);
   }
 }
 

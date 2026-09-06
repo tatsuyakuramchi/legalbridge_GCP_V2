@@ -69,6 +69,8 @@ export const config = {
     process.env.RECEIPT_WRITES_ENABLED === "true",
   paymentLedgerWritesEnabled:
     process.env.PAYMENT_LEDGER_WRITES_ENABLED === "true",
+  conditionAttachmentWritesEnabled:
+    process.env.CONDITION_ATTACHMENT_WRITES_ENABLED === "true",
   writeScopes: new Set(
     String(process.env.WRITE_SCOPES ?? "")
       .split(",").map((value) => value.trim()).filter(Boolean)
@@ -83,6 +85,13 @@ export const config = {
     adminEmails: emailSet(process.env.AUTH_ADMIN_EMAILS),
     legalEmails: emailSet(process.env.AUTH_LEGAL_EMAILS),
     requesterDomains: emailSet(process.env.AUTH_REQUESTER_DOMAINS)
+  },
+  // SPLL 公開サイト（クリエーター向け）。デモとしてこのサービス上へ相乗りさせる。
+  //   public=true にすると IAP を通さず誰でも閲覧できる。既定は false（社内認証の内側）。
+  spllSite: {
+    enabled: process.env.SPLL_SITE_ENABLED !== "false",
+    basePath: process.env.SPLL_SITE_BASE_PATH ?? "/spll",
+    public: process.env.SPLL_SITE_PUBLIC === "true"
   },
   googleDriveFolderId: process.env.GOOGLE_DRIVE_FOLDER_ID ?? "",
   googleServiceAccountKeyPath: process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH ?? "",

@@ -47,6 +47,14 @@ export async function renderStoredDocumentHtml(
     strict: false,
     noEscape: false
   });
+  const previousDocumentNumber =
+    document.previousDocumentNumber ||
+    firstText(document.formData, [
+      "PREVIOUS_DOCUMENT_NUMBER", "旧文書番号", "旧契約書番号",
+      "BASE_DOC_NO", "元文書番号", "元契約番号",
+      "previousDocumentNumber", "baseDocumentNumber", "originalDocumentNumber"
+    ]) ||
+    null;
   const numberedFormData = {
     ...document.formData,
     ...masterEntityTypeOverrides(document),
@@ -54,7 +62,13 @@ export async function renderStoredDocumentHtml(
     文書番号: document.documentNumber,
     CONTRACT_NO: document.documentNumber,
     DOC_NO: document.documentNumber,
-    document_number: document.documentNumber
+    document_number: document.documentNumber,
+    PREVIOUS_DOCUMENT_NUMBER: previousDocumentNumber,
+    旧文書番号: previousDocumentNumber,
+    旧契約書番号: previousDocumentNumber,
+    BASE_DOC_NO: document.formData.BASE_DOC_NO ?? previousDocumentNumber,
+    isReissue: document.formData.isReissue ?? Boolean(previousDocumentNumber),
+    showReissueBanner: document.formData.showReissueBanner ?? Boolean(previousDocumentNumber)
   };
   const context = document.templateType === INDIVIDUAL_LICENSE_V3_KEY
     ? buildIndividualLicenseV3Context(numberedFormData)
@@ -62,10 +76,32 @@ export async function renderStoredDocumentHtml(
   const rendered = render({
     ...context,
     DOCUMENT_NUMBER: document.documentNumber,
+    PREVIOUS_DOCUMENT_NUMBER: previousDocumentNumber,
+    previous_document_number: previousDocumentNumber,
     document_number: document.documentNumber,
     issue_key: document.issueKey
   });
-  return wrapPrintableHtml(rendered);
+  return wrapPrintableHtml(injectPreviousNumberNotice(rendered, previousDocumentNumber));
+}
+
+function injectPreviousNumberNotice(source: string, previousDocumentNumber: string | null) {
+  if (!previousDocumentNumber || source.includes(previousDocumentNumber)) return source;
+  const escaped = escapeHtml(previousDocumentNumber);
+  const notice =
+    `<div class="lb-previous-document-number" style="text-align:right;font-size:9pt;margin:0 0 4mm;color:#475569;">旧文書番号：${escaped}</div>`;
+  if (/<body[^>]*>/i.test(source)) {
+    return source.replace(/<body([^>]*)>/i, (match) => `${match}${notice}`);
+  }
+  return `${notice}${source}`;
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 // 相手先の宛名に使う名前（区分の突き合わせ対象）。documents.vendor_id を引くときと
@@ -92,7 +128,7 @@ export function masterEntityTypeOverrides(document: RegisteredDocument): Record<
 function firstText(source: Record<string, unknown>, keys: readonly string[]): string {
   for (const key of keys) {
     const value = source[key];
-    if (value !== undefined && value !== null && String(value).trim() !== "") return String(value);
+    if (value !== undefined && value !== null && String(value).trim() !== "") return String(value).trim();
   }
   return "";
 }

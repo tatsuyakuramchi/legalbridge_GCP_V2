@@ -750,6 +750,29 @@ for webhook_secret in "CLOUDSIGN_WEBHOOK_TOKEN_SECRET:${CLOUDSIGN_WEBHOOK_TOKEN_
     fi
   fi
 done
+# 過去文書→条件明細→対象作品の後付け紐づけ（main 統合・grant 023）。承認サービス限定＋IAP/IAM 必須。
+case "${CONDITION_ATTACHMENT_WRITES_ENABLED:-false}" in
+  false)
+    ;;
+  true)
+    if [ "${CONFIRM_CONDITION_ATTACHMENT_WRITES:-}" != "CONDITION_ATTACHMENT_LEGALBRIDGE_VALIDATION_ONLY" ]; then
+      echo "Condition attachment deployment blocked: explicit production validation confirmation is missing."
+      exit 1
+    fi
+    if [ "${PRIMARY_DB_MODE}" != "production" ] || service_not_approved || [ "${DB_NAME}" != "legalbridge" ] || [ "${DB_USER}" != "legalbridge_v2_runtime" ] || [ "${DB_PASSWORD_SECRET}" != "legalbridge-v2-runtime-db-password" ]; then
+      echo "Condition attachment deployment blocked: service, database, runtime user, or password secret does not match the approved target."
+      exit 1
+    fi
+    if [ "${AUTH_MODE}" != "iap" ] && [ "${AUTH_MODE}" != "cloudrun-iam" ]; then
+      echo "Condition attachment deployment blocked: IAP or Cloud Run IAM authentication is required."
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Deployment blocked: CONDITION_ATTACHMENT_WRITES_ENABLED must be true or false."
+    exit 1
+    ;;
+esac
 case "${GMAIL_DELIVERY_MODE}" in
   disabled)
     ;;
@@ -1095,6 +1118,9 @@ expected_write_scopes="drafts,documents,pdf"
 if [ "${DRIVE_STORAGE_ENABLED}" = "true" ]; then
   expected_write_scopes="$expected_write_scopes,drive"
 fi
+if [ "${BACKLOG_MODE}" = "live" ]; then
+  expected_write_scopes="$expected_write_scopes,backlog"
+fi
 if [ "${SLACK_APPROVAL_WRITES_ENABLED}" = "true" ]; then
   expected_write_scopes="$expected_write_scopes,slack-approvals"
 fi
@@ -1166,6 +1192,9 @@ if [ "${RECEIPT_WRITES_ENABLED:-false}" = "true" ]; then
 fi
 if [ "${PAYMENT_LEDGER_WRITES_ENABLED:-false}" = "true" ]; then
   expected_write_scopes="$expected_write_scopes,payments"
+fi
+if [ "${CONDITION_ATTACHMENT_WRITES_ENABLED:-false}" = "true" ]; then
+  expected_write_scopes="$expected_write_scopes,condition-attachments"
 fi
 if [ "${GMAIL_DELIVERY_MODE}" = "live" ]; then
   expected_write_scopes="$expected_write_scopes,gmail"

@@ -29,6 +29,7 @@ import {
 } from "./documents/condition-sync-repository.js";
 import { MemoryRoyaltyEventRepository } from "./royalty/event-repository.js";
 import { MemoryConditionLedgerRepository } from "./conditions/ledger-repository.js";
+import { MemoryDocumentFormContextRepository } from "./documents/form-context-repository.js";
 
 const schema: DocumentFormSchema = {
   templateKey: "purchase_order",
@@ -81,6 +82,28 @@ test("DB template由来のフォーム定義を返す", async () => {
     .expect(200);
   assert.equal(response.body.templateVersionId, 10);
   assert.equal(response.body.fields[0].name, "PROJECT_TITLE");
+});
+
+test("文書フォームは依頼から案件・取引先情報を自動引用する", async () => {
+  const target = createApp({
+    templates: new MemoryTemplateRepository([schema]),
+    drafts: new MemoryDraftRepository(),
+    integrations: createIntegrationAdapters(),
+    documentFormContexts: new MemoryDocumentFormContextRepository({
+      backlog: { summary: "利用許諾契約の作成" },
+      vendor: { vendor_name: "Example GmbH" }
+    })
+  }, {
+    accessMode: "readwrite", requireDatabase: false,
+    writeFeaturesEnabled: true, writeScopes: new Set(["drafts"])
+  });
+
+  const response = await request(target)
+    .get("/api/v2/document-form-context?template_key=purchase_order&issue_key=LEGAL-500")
+    .expect(200);
+  assert.equal(response.body.formData.PROJECT_TITLE, "利用許諾契約の作成");
+  assert.equal(response.body.formData.ORDER_DATE.length, 10);
+  assert.equal(response.body.prefill.filled, 2);
 });
 
 test("下書きを保存して復元する", async () => {
@@ -623,7 +646,7 @@ test("案件一覧と関連課題・タスク・文書を返す", async () => {
     integrations: createIntegrationAdapters(),
     matters: new MemoryMatterRepository([{
       matter,
-      issues: [{ issueKey: "LEGAL-22", relation: "primary", summary: "契約更新", note: null }],
+      issues: [{ issueKey: "LEGAL-22", relation: "primary", summary: "契約更新", note: null, requestId: null, requestType: null, requestCounterparty: null }],
       tasks: [{ id: 1, title: "修正版を確認", status: "open", assigneeName: "法務 田中", dueAt: "2026-08-01T00:00:00.000Z", isPrimary: true, blockedReason: null }],
       documents: [{ id: 10, documentNumber: "LIC-2026-022", templateType: "license_master", issueKey: "LEGAL-22", createdAt: "2026-07-30T00:00:00.000Z", driveLink: "https://drive.google.com/document" }]
     }])
@@ -958,6 +981,25 @@ test("発注書の明細・経費・金銭条件をプレビュー用に集計�
   assert.equal(context.has_seller_owned_license, true);
 });
 
+test("業務委託の選択値を既存テンプレートの互換キーへ展開する", () => {
+  const context = buildTemplateDocumentContext("service_master", {
+    SERVICE_ENGAGEMENT_TYPE: "準委任",
+    SERVICE_CATEGORY: "PMO業務",
+    COMPENSATION_TYPE: "月額",
+    DELIVERABLE_REQUIRED: "不要（業務報告のみ）",
+    INSPECTION_REQUIRED: "不要（履行確認）",
+    IP_OWNERSHIP: "受注者帰属・利用許諾",
+    SUBCONTRACTING_POLICY: "事前書面承諾",
+    PERSONAL_DATA_HANDLING: "取扱いあり",
+    RENEWAL_TYPE: "1年自動更新"
+  });
+  assert.equal(context.契約類型, "準委任");
+  assert.equal(context.業務区分, "PMO業務");
+  assert.equal(context.成果物有無, "不要（業務報告のみ）");
+  assert.equal(context.知的財産権帰属, "受注者帰属・利用許諾");
+  assert.equal(context.再委託条件, "事前書面承諾");
+});
+
 test("個別利用許諾条件書の旧金銭条件を配列へ変換する", () => {
   const context = buildTemplateDocumentContext("individual_license_terms", {
     金銭条件1_地域言語ラベル: "国内・日本語",
@@ -997,8 +1039,9 @@ test("利用許諾料計算書と検収書の合計額を再構築する", () =>
   assert.equal(inspection.hasPerformanceRoyalty, true);
 });
 
-test("残る6テンプレートの生成変数を互換性警告にしない", () => {
+test("各専用テンプレートの生成変数を互換性警告にしない", () => {
   const cases = [
+    ["service_master", "{{契約類型}}{{業務区分}}{{成果物有無}}{{知的財産権帰属}}"],
     ["purchase_order", "{{items}}{{expensesTotalIncTax}}{{BANK_INFO}}"],
     ["intl_purchase_order", "{{itemsSubtotalExTax}}{{PAYMENT_TERMS}}"],
     ["individual_license_terms", "{{financial_conditions}}{{サブライセンシー一覧}}"],
@@ -1122,9 +1165,10 @@ function outboundConditionPayload() {
     counterpartyLabel: "V-18 相手方",
     transactionKind: "license",
     conditionName: "英語版ライセンス",
+    sourceConditionId: 7,
     documentNumber: "ARC-LIC-2026-0001",
-    territory: "全世界",
-    languages: ["英語"],
+    regions: [{ code: "WORLD", name: "全世界" }],
+    languages: [{ code: "en", name: "英語" }],
     exclusivity: "non_exclusive",
     sublicenseAllowed: false,
     currency: "USD",
@@ -1185,6 +1229,34 @@ test("管理者は専用ゲート経由でアウト条件を保存し外部連�
 
   const runtime = await request(target).get("/api/v2/runtime").expect(200);
   assert.deepEqual(runtime.body.writeCapabilities, ["outbound-conditions"]);
+});
+
+test("管理者は既存OUT条件を同じ作品のIN条件へ紐付けられる", async () => {
+  const repository = new MemoryOutboundConditionRepository();
+  const target = createApp({
+    templates: new MemoryTemplateRepository([schema]),
+    drafts: new MemoryDraftRepository(),
+    integrations: createIntegrationAdapters(),
+    outboundConditions: repository
+  }, {
+    accessMode: "readwrite",
+    requireDatabase: false,
+    writeFeaturesEnabled: true,
+    writeScopes: new Set(["outbound-conditions"]),
+    outboundConditionWritesEnabled: true
+  });
+  const created = await request(target)
+    .post("/api/v2/outbound-conditions")
+    .send(outboundConditionPayload())
+    .expect(201);
+
+  const response = await request(target)
+    .patch(`/api/v2/outbound-conditions/${created.body.condition.id}/source`)
+    .send({ sourceConditionId: 8 })
+    .expect(200);
+
+  assert.equal(response.body.condition.parentLicenseConditionId, 8);
+  assert.equal(repository.conditions[0].parentLicenseConditionId, 8);
 });
 
 test("法務担当者でも管理者指定がなければアウト条件を保存しない", async () => {

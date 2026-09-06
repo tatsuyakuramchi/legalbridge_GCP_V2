@@ -8,10 +8,13 @@ import { EmptyState } from "./EmptyState";
 import { DocumentOutputActions } from "./DocumentOutputActions";
 import { ExportButtons } from "./ExportButtons";
 import { download, type ExportColumn } from "./export-util";
+import { DocumentIntegrations } from "./DocumentIntegrations";
+import { DocumentConditionAttachment } from "./DocumentConditionAttachment";
 
 export type RegisteredDocument = {
   id: number;
   documentNumber: string | null;
+  previousDocumentNumber?: string | null;
   issueKey: string;
   templateType: string;
   templateVersionId: number | null;
@@ -69,6 +72,8 @@ export function DocumentRegistry({
   canCloudSign = false,
   canVoidDocument = false,
   canReissueDocument = false,
+  backlogMode = "disabled",
+  canAttachConditions = false,
   selectedId,
   initialQuery = "",
   initialDetailsId,
@@ -85,6 +90,8 @@ export function DocumentRegistry({
   canCloudSign?: boolean;
   canVoidDocument?: boolean;
   canReissueDocument?: boolean;
+  backlogMode?: "disabled" | "readonly" | "live";
+  canAttachConditions?: boolean;
   selectedId?: number;
   initialQuery?: string;
   // 画面を開いた直後にこの取込文書の詳細編集（条件明細エディタ）を開く。
@@ -247,7 +254,7 @@ export function DocumentRegistry({
                   <input type="checkbox" checked={selectedIds.has(document.id)}
                     onChange={() => toggleSelect(document.id)} aria-label={`選択 ${document.documentNumber ?? document.id}`} />}
               </td>}
-              <td><b>{document.documentNumber ?? "未発番"}</b><br /><small>{document.title}</small></td>
+              <td><b>{document.documentNumber ?? "未発番"}</b>{document.previousDocumentNumber && <><br /><small>旧番号: {document.previousDocumentNumber}</small></>}<br /><small>{document.title}</small></td>
               <td>{labels.get(document.templateType) ?? document.templateType}<br /><small>{document.issueKey}</small></td>
               <td>{document.counterparty || "—"}</td>
               <td>{formatDate(document.createdAt)}</td>
@@ -271,6 +278,8 @@ export function DocumentRegistry({
         canCloudSign={canCloudSign}
         canVoidDocument={canVoidDocument}
         canReissueDocument={canReissueDocument}
+        backlogMode={backlogMode}
+        canAttachConditions={canAttachConditions}
         onRefresh={() => { if (selected) return selectDocument(selected.id); }}
         onVoided={() => { setReload((v) => v + 1); if (selected) return selectDocument(selected.id); }}
         onReissued={(newId) => { setReload((v) => v + 1); return selectDocument(newId); }}
@@ -294,6 +303,8 @@ function DocumentDetail({
   canCloudSign = false,
   canVoidDocument = false,
   canReissueDocument = false,
+  backlogMode = "disabled",
+  canAttachConditions = false,
   onRefresh,
   onVoided,
   onReissued,
@@ -312,6 +323,8 @@ function DocumentDetail({
   canCloudSign?: boolean;
   canVoidDocument?: boolean;
   canReissueDocument?: boolean;
+  backlogMode?: "disabled" | "readonly" | "live";
+  canAttachConditions?: boolean;
   onRefresh: () => Promise<void> | void;
   onOpenMatter?: (matterId: number) => void;
   onDuplicate?: (document: RegisteredDocument, mode: "vendor" | "content") => void;
@@ -331,6 +344,7 @@ function DocumentDetail({
   return <aside className="panel registry-detail">
     <span className="detail-kicker">DOCUMENT DETAIL</span>
     <h2>{document.documentNumber ?? "未発番"}</h2>
+    {document.previousDocumentNumber && <p className="previous-document-number">旧文書番号：<strong>{document.previousDocumentNumber}</strong></p>}
     <p className="detail-title">{document.title}</p>
     <div className="document-lifecycle">
       <span className={document.lifecycle?.state === "finalized" ? "complete" : "pending"}>
@@ -345,6 +359,7 @@ function DocumentDetail({
     </div>
     <dl>
       <dt>種別</dt><dd>{label ?? document.templateType}</dd>
+      {document.previousDocumentNumber && <><dt>旧文書番号</dt><dd>{document.previousDocumentNumber}</dd></>}
       <dt>受付番号</dt><dd>{document.issueKey}</dd>
       <dt>作成日時</dt><dd>{formatDate(document.createdAt)}</dd>
       <dt>作成者</dt><dd>{document.createdBy ?? "—"}</dd>
@@ -410,6 +425,13 @@ function DocumentDetail({
     {canVoidDocument && !isVoided &&
       <DocumentVoidZone documentId={document.id} documentNumber={document.documentNumber} onVoided={onVoided} />}
     <VersionHistory documentId={document.id} onSelect={onSelectVersion} />
+    {/* Backlog 文書連携（課題へ PDF 添付）。Gmail/CloudSign は上の出力アクション側にあるのでここでは出さない。 */}
+    {!isVoided && document.documentNumber && backlogMode !== "disabled" && (
+      <DocumentIntegrations documentId={document.id} canGmailNotify={false} canCloudSign={false}
+        matterId={document.matterId ?? null} backlogMode={backlogMode} />
+    )}
+    {/* 過去文書 → 条件明細 → 対象作品の後付け紐づけ（condition-attachments・guarded）。 */}
+    {!isVoided && <DocumentConditionAttachment documentId={document.id} canAttach={canAttachConditions} />}
     <h3>登録項目</h3>
     <dl className="form-data-list">
       {entries.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}

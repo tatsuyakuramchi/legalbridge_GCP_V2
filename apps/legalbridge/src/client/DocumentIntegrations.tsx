@@ -39,8 +39,10 @@ function when(iso: string) {
 // 文書詳細の「外部連携」セクション。Gmail確定通知（プレビュー→送信）と
 // CloudSign署名依頼（署名者→依頼→ステータス）をまとめる。いずれも
 // capability が有効なときだけ表示され、実送信はサーバのゲート/ロールで守られる。
-export function DocumentIntegrations({ documentId, canGmailNotify, canCloudSign, matterId = null }: {
+export function DocumentIntegrations({ documentId, canGmailNotify, canCloudSign, matterId = null, backlogMode = "disabled" }: {
   documentId: number; canGmailNotify: boolean; canCloudSign: boolean; matterId?: number | null;
+  // Backlog 文書連携（課題へ PDF 添付＋コメント）。readonly はプレビューのみ・live で実送信。
+  backlogMode?: "disabled" | "readonly" | "live";
 }) {
   const [historyReload, setHistoryReload] = useState(0);
   const history = useSendHistory(documentId, historyReload);
@@ -51,10 +53,11 @@ export function DocumentIntegrations({ documentId, canGmailNotify, canCloudSign,
     fetch("/api/v2/me").then((r) => r.ok ? r.json() : Promise.reject())
       .then((d) => setIsAdmin(d.user?.role === "admin")).catch(() => setIsAdmin(true));
   }, []);
-  if (!canGmailNotify && !canCloudSign) return null;
+  if (!canGmailNotify && !canCloudSign && backlogMode === "disabled") return null;
   const bump = () => setHistoryReload((v) => v + 1);
   return <div className="doc-integrations">
     <h3>外部連携</h3>
+    {backlogMode !== "disabled" && <BacklogDispatch documentId={documentId} mode={backlogMode} />}
     {history && (history.gmail.length > 0 || history.cloudsign.length > 0) && (
       <div className="doc-integration-card">
         <strong>送信・署名履歴</strong>
@@ -423,6 +426,95 @@ function CloudSignRequest({ documentId, matterId = null, isAdmin = true, suggest
       <span>CloudSign ID: {csId}／状態: {statusLabel ?? "—"}</span>
       {csUrl && <a href={csUrl} target="_blank" rel="noreferrer">CloudSignで開く{statusLabel === "draft" ? "（印影配置・送信へ）" : ""}</a>}
       <button onClick={refreshStatus} disabled={busy}>ステータス更新</button>
+    </div>}
+  </div>;
+}
+
+
+function BacklogDispatch({
+  documentId,
+  mode
+}: {
+  documentId: number;
+  mode: "readonly" | "live";
+}) {
+  const [preview, setPreview] = useState<{
+    issue: { issueKey: string; summary: string; statusName: string | null };
+    attachmentFilename: string;
+    existingAttachment: { id: number; name: string; size: number } | null;
+  } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const toast = useToast();
+
+  async function inspect() {
+    setBusy(true); setError("");
+    try {
+      const response = await fetch(`/api/v2/documents/${documentId}/backlog`);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setPreview(null);
+        setError(data.error ?? "Backlog課題を確認できませんでした。");
+        return;
+      }
+      setPreview(data);
+    } catch {
+      setPreview(null);
+      setError("Backlogへの接続に失敗しました。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function dispatch() {
+    if (mode !== "live" || busy) return;
+    if (!preview) {
+      setError("先に接続確認を実行してください。");
+      return;
+    }
+    if (preview.existingAttachment) {
+      toast.push("同名PDFはBacklogへ登録済みです", "info");
+      return;
+    }
+    if (!window.confirm(`${preview.issue.issueKey} に ${preview.attachmentFilename} を添付してコメントを追加します。実行しますか？`)) {
+      return;
+    }
+    setBusy(true); setError("");
+    try {
+      const response = await fetch(`/api/v2/documents/${documentId}/backlog/dispatch`, { method: "POST" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setError(data.error ?? "Backlogへの登録に失敗しました。");
+        return;
+      }
+      toast.push(data.reused ? "Backlog登録済みのPDFを確認しました" : "BacklogへPDFを登録しました", "success");
+      await inspect();
+    } catch {
+      setError("Backlogへの登録に失敗しました。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <div className="doc-integration-card">
+    <strong>📎 Backlog課題へPDF登録</strong>
+    <small>{mode === "live"
+      ? "課題を確認後、確定PDFを同じ課題のコメントへ添付します。"
+      : "参照モードです。課題・既存添付のみ確認し、Backlogは変更しません。"}</small>
+    <div className="doc-integration-actions">
+      <button onClick={inspect} disabled={busy}>{busy ? "確認中…" : "接続確認"}</button>
+      {mode === "live" && <button className="primary"
+        onClick={dispatch}
+        disabled={busy || !preview || Boolean(preview.existingAttachment)}>
+        {preview?.existingAttachment ? "登録済み" : "Backlogへ登録"}
+      </button>}
+    </div>
+    {error && <div className="async-error">{error}</div>}
+    {preview && <div className="doc-integration-preview">
+      <div><b>課題：</b>{preview.issue.issueKey} {preview.issue.summary}</div>
+      <div><b>状態：</b>{preview.issue.statusName ?? "—"}</div>
+      <div><b>PDF：</b>{preview.attachmentFilename}</div>
+      <div><b>既存添付：</b>{preview.existingAttachment ? `あり（${preview.existingAttachment.name}）` : "なし"}</div>
     </div>}
   </div>;
 }

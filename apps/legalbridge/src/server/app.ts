@@ -11,7 +11,12 @@ import {
 } from "./documents/draft-repository.js";
 import { createDocumentRouter } from "./documents/routes.js";
 import { createTemplateSampleRouter } from "./documents/sample-preview-routes.js";
+import {
+  PgDocumentFormContextRepository,
+  type DocumentFormContextRepository
+} from "./documents/form-context-repository.js";
 import { createTemplateRegressionRouter } from "./documents/template-regression.js";
+import { createSlackIntakeDesignRouter } from "./integrations/slack-intake-routes.js";
 import {
   MemoryDocumentFinalizationRepository,
   PgDocumentFinalizationRepository,
@@ -32,6 +37,11 @@ import {
 } from "./documents/document-lookup-repository.js";
 import { createDocumentPdfRouter } from "./documents/pdf-routes.js";
 import { createDocumentDriveRouter } from "./documents/drive-routes.js";
+import { createDocumentBacklogRouter } from "./documents/backlog-routes.js";
+import {
+  BacklogWebApiClient,
+  type BacklogReadClient, type BacklogWriteClient, type BacklogDocumentClient
+} from "./integrations/backlog-web-api.js";
 import {
   GoogleDriveStorage,
   type DriveStorage
@@ -50,9 +60,6 @@ import {
   backlogReadEnabled,
   type IntegrationAdapter
 } from "./integrations/index.js";
-import {
-  type BacklogReadClient, type BacklogWriteClient
-} from "./integrations/backlog-web-api.js";
 import { createBacklogRequestRouter, createBacklogCommentRouter } from "./integrations/backlog-routes.js";
 
 // Backlog クライアントは createApp 内で DynamicBacklogClient として構築する
@@ -158,9 +165,31 @@ import {
 import { createConditionLineRouter } from "./conditions/routes.js";
 import { createRoyaltyRouter } from "./royalty/routes.js";
 import {
+  MemoryDocumentConditionAttachmentRepository,
+  PgDocumentConditionAttachmentRepository,
+  type DocumentConditionAttachmentRepository
+} from "./conditions/attachment-repository.js";
+import { createDocumentConditionAttachmentRouter } from "./conditions/attachment-routes.js";
+import {
+  MemoryRequestRepository, PgRequestRepository, type RequestRepository
+} from "./requests/repository.js";
+import { createRequestRouter } from "./requests/routes.js";
+import {
+  MemoryWorkRightsRepository, PgWorkRightsRepository, type WorkRightsRepository
+} from "./work-rights/repository.js";
+import { createWorkRightsRouter } from "./work-rights/routes.js";
+import {
+  MemoryLicenseSettlementRepository, PgLicenseSettlementRepository, type LicenseSettlementRepository
+} from "./license-settlements/repository.js";
+import { createLicenseSettlementRouter } from "./license-settlements/routes.js";
+import {
   MemoryPendingInspectionRepository, PgPendingInspectionRepository, type PendingInspectionRepository
 } from "./inspections/repository.js";
 import { createPendingInspectionRouter } from "./inspections/routes.js";
+import {
+  MemoryDeadlineRepository, PgDeadlineRepository, type DeadlineRepository
+} from "./deadlines/repository.js";
+import { createDeadlineRouter } from "./deadlines/routes.js";
 import {
   MemoryVendorWriteRepository, PgVendorWriteRepository, type VendorWriteRepository
 } from "./vendors/write-repository.js";
@@ -254,6 +283,7 @@ import {
 import { MemoryGlobalSearchRepository, PgGlobalSearchRepository, type GlobalSearchRepository } from "./search/repository.js";
 import { createGlobalSearchRouter } from "./search/routes.js";
 import { MemoryAdminRepository, PgAdminRepository, type AdminRepository } from "./admin/repository.js";
+import { createSpllSiteRouter, normalizeBasePath } from "./spll/routes.js";
 import { createAdminRouter } from "./admin/routes.js";
 import { createOperationalDiagnosticsRouter } from "./admin/diagnostics.js";
 import { createSlackRecipientDirectory } from "./integrations/slack-recipient-resolver.js";
@@ -444,7 +474,12 @@ export interface AppDependencies {
   cloudSignWebhookHandler?: WebhookHandler;
   backlogWebhookHandler?: WebhookHandler;
   conditionLines?: ConditionLineRepository;
+  conditionAttachments?: DocumentConditionAttachmentRepository;
+  requests?: RequestRepository;
+  workRights?: WorkRightsRepository;
+  licenseSettlements?: LicenseSettlementRepository;
   pendingInspections?: PendingInspectionRepository;
+  deadlines?: DeadlineRepository;
   vendorWrites?: VendorWriteRepository;
   staff?: StaffRepository;
   documentImports?: DocumentImportRepository;
@@ -460,6 +495,8 @@ export interface AppDependencies {
   finalizations?: DocumentFinalizationRepository;
   pdfRenderer?: PdfRenderer;
   driveStorage?: DriveStorage | null;
+  // Backlog 文書連携（課題へ PDF 添付＋コメント）。未指定なら連携設定から動的クライアントを使う。
+  backlog?: BacklogDocumentClient | null;
   slackHistory?: SlackNotificationHistoryRepository;
   slackApprovals?: SlackNotificationApprovalRepository;
   gmailSendHistory?: GmailSendHistoryRepository;
@@ -476,6 +513,7 @@ export interface AppDependencies {
   receiptDashboard?: ReceiptDashboardRepository;
   receivableMap?: ReceivableMapRepository;
   paymentReport?: PaymentReportRepository;
+  documentFormContexts?: DocumentFormContextRepository;
 }
 
 export interface AppOptions {
@@ -507,6 +545,7 @@ export interface AppOptions {
   snippetsWriteEnabled?: boolean;
   attachmentUploadEnabled?: boolean;
   backlogCommentWriteEnabled?: boolean;
+  conditionAttachmentWritesEnabled?: boolean;
   auth?: AuthSettings;
 }
 
@@ -528,6 +567,7 @@ function createDefaultDependencies(): AppDependencies {
     documentRegistry: database
       ? new PgDocumentRegistryRepository(database)
       : new MemoryDocumentRegistryRepository(),
+    documentFormContexts: database ? new PgDocumentFormContextRepository(database) : undefined,
     matters: database ? new PgMatterRepository(database) : new MemoryMatterRepository(),
     matterWrites: database
       ? new PgMatterWriteRepository(database)
@@ -552,9 +592,24 @@ function createDefaultDependencies(): AppDependencies {
     conditionLines: database
       ? new PgConditionLineRepository(database)
       : new MemoryConditionLineRepository(),
+    conditionAttachments: database
+      ? new PgDocumentConditionAttachmentRepository(database)
+      : new MemoryDocumentConditionAttachmentRepository(),
+    requests: database
+      ? new PgRequestRepository(database)
+      : new MemoryRequestRepository(),
+    workRights: database
+      ? new PgWorkRightsRepository(database)
+      : new MemoryWorkRightsRepository(),
+    licenseSettlements: database
+      ? new PgLicenseSettlementRepository(database)
+      : new MemoryLicenseSettlementRepository(),
     pendingInspections: database
       ? new PgPendingInspectionRepository(database)
       : new MemoryPendingInspectionRepository(),
+    deadlines: database
+      ? new PgDeadlineRepository(database)
+      : new MemoryDeadlineRepository(),
     vendorWrites: database
       ? new PgVendorWriteRepository(database)
       : new MemoryVendorWriteRepository(),
@@ -671,6 +726,7 @@ export function createApp(
     royaltyEventWritesEnabled: config.royaltyEventWritesEnabled,
     receiptWritesEnabled: config.receiptWritesEnabled,
     paymentLedgerWritesEnabled: config.paymentLedgerWritesEnabled,
+    conditionAttachmentWritesEnabled: config.conditionAttachmentWritesEnabled,
     auth: config.auth
   }
 ) {
@@ -987,15 +1043,39 @@ export function createApp(
     options.writeFeaturesEnabled === true &&
     options.paymentLedgerWritesEnabled === true &&
     options.writeScopes?.has("payments") === true;
+  const conditionAttachmentWriteEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.conditionAttachmentWritesEnabled === true &&
+    options.writeScopes?.has("condition-attachments") === true &&
+    Boolean(dependencies.conditionAttachments);
   const driveStorageEnabled =
     options.accessMode === "readwrite" &&
     options.writeFeaturesEnabled === true &&
     options.writeScopes?.has("drive") === true &&
     Boolean(config.googleDriveFolderId || dependencies.driveStorage);
+  const backlogLiveEnabled =
+    options.accessMode === "readwrite" &&
+    options.writeFeaturesEnabled === true &&
+    options.writeScopes?.has("backlog") === true &&
+    config.backlogMode === "live" &&
+    Boolean(dependencies.backlog);
+  // SPLL 公開サイト（クリエーター向け）。ルート直下へは載せない――載せるとSPA・APIまで
+  // このルーターの404が拾ってしまうため、必ずサブパスへぶら下げる。
+  const spllBasePath = normalizeBasePath(config.spllSite.basePath) || "/spll";
+  const spllEnabled = config.spllSite.enabled;
+
   app.use(cors());
   app.use(express.json({ limit: "5mb" }));
-  app.use(createAuthentication(options.auth ?? config.auth));
+  app.use(createAuthentication(
+    options.auth ?? config.auth,
+    spllEnabled && config.spllSite.public ? [spllBasePath] : []
+  ));
   app.use(createApiAuthorization());
+
+  if (spllEnabled) {
+    app.use(spllBasePath, createSpllSiteRouter({ basePath: spllBasePath }));
+  }
 
   app.get("/health", async (_request, response) => {
     const [database, outboundDatabase] = await Promise.all([
@@ -1011,7 +1091,8 @@ export function createApp(
       database.readOnly !== true;
     const writeModeMismatch =
       (draftWriteEnabled || documentFinalizeEnabled || driveStorageEnabled ||
-        slackApprovalWriteEnabled || contractIntakeWriteEnabled) &&
+        slackApprovalWriteEnabled || contractIntakeWriteEnabled ||
+        conditionAttachmentWriteEnabled) &&
       database.reachable && database.readOnly === true;
     const outboundDatabaseMismatch =
       outboundConditionWriteEnabled &&
@@ -1028,6 +1109,7 @@ export function createApp(
         ...(documentFinalizeEnabled ? ["documents"] : []),
         ...(pdfGenerationEnabled ? ["pdf"] : []),
         ...(driveStorageEnabled ? ["drive"] : []),
+        ...(backlogLiveEnabled ? ["backlog"] : []),
         ...(slackApprovalWriteEnabled ? ["slack-approvals"] : []),
         ...(outboundConditionWriteEnabled ? ["outbound-conditions"] : []),
         ...(contractIntakeWriteEnabled ? ["contract-intake"] : []),
@@ -1053,6 +1135,7 @@ export function createApp(
         ...(receiptWriteEnabled ? ["receipts"] : []),
         ...(conditionLineRepairEnabled ? ["condition-repair"] : []),
         ...(paymentLedgerWriteEnabled ? ["payments"] : []),
+        ...(conditionAttachmentWriteEnabled ? ["condition-attachments"] : []),
         ...(gmailDispatchEnabled ? ["gmail"] : []),
         ...(cloudSignDispatchEnabled ? ["cloudsign"] : []),
         ...(gmailInboundEnabled ? ["gmail-inbound"] : []),
@@ -1073,17 +1156,19 @@ export function createApp(
       accessMode: options.accessMode,
       writeFeaturesEnabled:
         draftWriteEnabled || documentFinalizeEnabled || pdfGenerationEnabled ||
-        driveStorageEnabled || slackApprovalWriteEnabled ||
+        driveStorageEnabled || backlogLiveEnabled || slackApprovalWriteEnabled ||
         outboundConditionWriteEnabled || contractIntakeWriteEnabled ||
         matterWriteEnabled || vendorWriteEnabled || staffWriteEnabled || workWriteEnabled ||
         materialWriteEnabled || rightsSourceWriteEnabled || vendorMergeEnabled || matterMergeEnabled || matterDeleteEnabled || documentVoidEnabled || documentReissueEnabled || excelBatchEnabled || appSettingsWriteEnabled || workflowRulesWriteEnabled || contractMasterWriteEnabled || snippetsWriteEnabled || attachmentUploadEnabled || backlogCommentWriteEnabled || royaltyEventWriteEnabled || receiptWriteEnabled ||
         conditionLineRepairEnabled ||
-        paymentLedgerWriteEnabled || gmailDispatchEnabled || cloudSignDispatchEnabled || gmailInboundEnabled,
+        paymentLedgerWriteEnabled || conditionAttachmentWriteEnabled ||
+        gmailDispatchEnabled || cloudSignDispatchEnabled || gmailInboundEnabled,
       writeCapabilities: [
         ...(draftWriteEnabled ? ["drafts"] : []),
         ...(documentFinalizeEnabled ? ["documents"] : []),
         ...(pdfGenerationEnabled ? ["pdf"] : []),
         ...(driveStorageEnabled ? ["drive"] : []),
+        ...(backlogLiveEnabled ? ["backlog"] : []),
         ...(slackApprovalWriteEnabled ? ["slack-approvals"] : []),
         ...(outboundConditionWriteEnabled ? ["outbound-conditions"] : []),
         ...(contractIntakeWriteEnabled ? ["contract-intake"] : []),
@@ -1109,15 +1194,20 @@ export function createApp(
         ...(receiptWriteEnabled ? ["receipts"] : []),
         ...(conditionLineRepairEnabled ? ["condition-repair"] : []),
         ...(paymentLedgerWriteEnabled ? ["payments"] : []),
+        ...(conditionAttachmentWriteEnabled ? ["condition-attachments"] : []),
         ...(gmailDispatchEnabled ? ["gmail"] : []),
         ...(cloudSignDispatchEnabled ? ["cloudsign"] : []),
         ...(gmailInboundEnabled ? ["gmail-inbound"] : []),
         ...(slackDispatchEnabled ? ["slack-dispatch"] : [])
       ],
       integrations: config.integrationMode,
+      backlogMode: config.backlogMode,
       authMode: (options.auth ?? config.auth).mode,
       slackNotificationHistory: Boolean(dependencies.slackHistory),
-      slackNotificationApprovals: Boolean(dependencies.slackApprovals)
+      slackNotificationApprovals: Boolean(dependencies.slackApprovals),
+      spllSite: spllEnabled
+        ? { enabled: true, basePath: spllBasePath, public: config.spllSite.public }
+        : { enabled: false, basePath: spllBasePath, public: false }
     });
   });
 
@@ -1170,7 +1260,8 @@ export function createApp(
       "/contract-intakes/preflight",
       "/contract-intakes/outbound-conditions/validate",
       // 計算専用（DB書込みなし）のロイヤリティ試算。
-      "/royalty/preview"
+      "/royalty/preview",
+      "/license-settlements/preview"
     ]);
     if (safeMethods.has(request.method)) return next();
     if (request.method === "POST" && safePostPaths.has(request.path)) return next();
@@ -1202,6 +1293,10 @@ export function createApp(
     const isDriveStorage =
       request.method === "POST" && /^\/documents\/[^/]+\/drive(\/regenerate)?$/.test(request.path);
     if (driveStorageEnabled && isDriveStorage) return next();
+    const isBacklogDispatch =
+      request.method === "POST" &&
+      /^\/documents\/\d+\/backlog\/dispatch$/.test(request.path);
+    if (backlogLiveEnabled && isBacklogDispatch) return next();
     const isSlackApproval =
       request.method === "POST" &&
       request.path === "/admin/slack-notification-approvals";
@@ -1224,7 +1319,8 @@ export function createApp(
       request.method === "POST" && /^\/documents\/\d+\/cloudsign\/dispatch$/.test(request.path);
     if (cloudSignDispatchEnabled && isCloudSignDispatch) return next();
     const isOutboundConditionWrite =
-      request.method === "POST" && request.path === "/outbound-conditions";
+      (request.method === "POST" && request.path === "/outbound-conditions") ||
+      (request.method === "PATCH" && /^\/outbound-conditions\/\d+\/source$/.test(request.path));
     if (outboundConditionWriteEnabled && isOutboundConditionWrite) return next();
     const isContractIntakeWrite =
       request.method === "POST" && request.path === "/contract-intakes";
@@ -1252,6 +1348,13 @@ export function createApp(
       (request.method === "POST" && /^\/matters\/\d+\/sends$/.test(request.path)) ||
       (request.method === "POST" && /^\/matters\/\d+\/drive-folder$/.test(request.path));
     if (matterWriteEnabled && isMatterWrite) return next();
+    const isRequestMatterLink =
+      request.method === "POST" &&
+      /^\/requests\/\d+\/link-matter$/.test(request.path);
+    if (matterWriteEnabled && isRequestMatterLink) return next();
+    const isSettlementDraft =
+      request.method === "POST" && request.path === "/license-settlements/draft";
+    if (draftWriteEnabled && isSettlementDraft) return next();
     const isVendorWrite =
       (request.method === "POST" && (request.path === "/vendors" || request.path === "/vendors/import")) ||
       (request.method === "PATCH" && /^\/vendors\/\d+$/.test(request.path));
@@ -1314,6 +1417,10 @@ export function createApp(
     const isMatterSlackWrite = request.method === "POST" &&
       /^\/matters\/\d+\/slack\/(thread|messages|template)$/.test(request.path);
     if (matterSlackWriteAllowed && isMatterSlackWrite) return next();
+    const isConditionAttachmentWrite =
+      request.method === "POST" &&
+      /^\/documents\/\d+\/condition-attachments$/.test(request.path);
+    if (conditionAttachmentWriteEnabled && isConditionAttachmentWrite) return next();
 
     return response.status(403).json({
       error: options.accessMode === "readonly"
@@ -1326,7 +1433,8 @@ export function createApp(
   app.use("/api/v2", createDocumentRouter(
     dependencies.templates,
     dependencies.drafts,
-    draftWriteEnabled
+    draftWriteEnabled,
+    dependencies.documentFormContexts
   ));
   // ひな形プレビュー（サンプル値入りのテンプレ出力・読み取り専用・全ロール）。
   app.use("/api/v2", createTemplateSampleRouter(dependencies.templates));
@@ -1395,6 +1503,13 @@ export function createApp(
     dependencies.driveStorage ?? null,
     driveStorageEnabled
   ));
+  app.use("/api/v2", createDocumentBacklogRouter(
+    documentRegistry,
+    dependencies.templates,
+    pdfRenderer,
+    dependencies.backlog ?? dynamicBacklog ?? null,
+    backlogLiveEnabled
+  ));
   const matterRepository = dependencies.matters ?? new MemoryMatterRepository();
   app.use("/api/v2", createMatterRouter(matterRepository));
   // 案件イベント連動の自動 Slack 通知（案件Slack有効時のみ・best-effort）。
@@ -1458,7 +1573,26 @@ export function createApp(
   app.use("/api/v2", createReceivableMapRouter(dependencies.receivableMap));
   // 支払報告書（読み取り・admin/legal限定）。
   app.use("/api/v2", createPaymentReportRouter(dependencies.paymentReport));
+  app.use("/api/v2", createRequestRouter(
+    dependencies.requests ?? new MemoryRequestRepository(),
+    matterWriteEnabled
+  ));
+  app.use("/api/v2", createWorkRightsRouter(
+    dependencies.workRights ?? new MemoryWorkRightsRepository()
+  ));
+  app.use("/api/v2", createLicenseSettlementRouter(
+    dependencies.licenseSettlements ?? new MemoryLicenseSettlementRepository(),
+    dependencies.templates,
+    dependencies.drafts,
+    draftWriteEnabled
+  ));
+  app.use("/api/v2", createConditionLineRouter(dependencies.conditionLines));
+  app.use("/api/v2", createDocumentConditionAttachmentRouter(
+    dependencies.conditionAttachments,
+    conditionAttachmentWriteEnabled
+  ));
   app.use("/api/v2", createPendingInspectionRouter(dependencies.pendingInspections));
+  app.use("/api/v2", createDeadlineRouter(dependencies.deadlines ?? new MemoryDeadlineRepository()));
   app.use("/api/v2", createVendorWriteRouter(dependencies.vendorWrites, vendorWriteEnabled));
   app.use("/api/v2", createStaffRouter(dependencies.staff, staffWriteEnabled));
   // 作品集約リード（読み取り・admin/legal限定・Phase 2）。書込みなし。
@@ -1758,6 +1892,10 @@ export function createApp(
     { adapter: slackDeliveryAdapter, enabled: slackDispatchEnabled }
   ));
   app.use("/api/v2", createTemplateRegressionRouter(dependencies.templates));
+  app.use("/api/v2", createSlackIntakeDesignRouter(
+    dependencies.templates,
+    { uploadUrl: config.slackIntakeUploadUrl }
+  ));
   app.use("/api/v2", createOperationalDiagnosticsRouter(
     getPool(),
     dependencies.templates,

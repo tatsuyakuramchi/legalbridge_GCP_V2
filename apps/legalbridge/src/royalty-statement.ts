@@ -401,7 +401,11 @@ export function structuredStatementPatch(source: Data): StatementPatch | null {
   }
   const receipts = records(source.rs_receipts)
     .filter((row) => String(pick(row, "sublicensee", "productName")).trim() !== "" || num(row.amount) > 0);
-  if (mode === "multi" && receipts.length) {
+  // 旧形式の rs_receipts（amountStr / jpyBaseStr など印字済み文字列だけで、数値 amount を持たない）は
+  // 構造化入力ではない＝計算し直さず、テンプレ側の receiptRows パススルーに任せる（main 統合 2026-09-06）。
+  const legacyReceiptsOnly = receipts.length > 0 &&
+    receipts.every((row) => row.amount == null && (row.amountStr != null || row.jpyBaseStr != null));
+  if (mode === "multi" && receipts.length && !legacyReceiptsOnly) {
     const ratePct = num(pick(source, "rsInRatePct", "rsRatePct", "royaltyRatePct"));
     return buildMultiStatementPatch({
       receipts: receipts.map((row) => ({

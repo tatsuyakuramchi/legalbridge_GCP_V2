@@ -1,13 +1,30 @@
 import { Router } from "express";
 import { z } from "zod";
+import { COUNTRY_CODES, LANGUAGE_CODES, displayScope, normalizeLanguageOption, normalizeRegionOption, type ScopeOption } from "../../rights-scope.js";
 import {
   OutboundConditionConflictError,
   OutboundConditionReferenceError,
+  OutboundConditionScopeError,
   type OutboundConditionRepository
 } from "./outbound-condition-repository.js";
 
 const optionalText = z.string().trim().max(500).optional().default("");
 const optionalNumber = z.number().nonnegative().optional();
+const regionOptionSchema = z.object({
+  code: z.string().trim().refine((value) =>
+    value.toUpperCase() === "WORLD" || (COUNTRY_CODES as readonly string[]).includes(value.toUpperCase()),
+    "地域コードはWORLDまたはISO 3166-1 alpha-2で指定してください"
+  ),
+  name: z.string().trim().min(1).max(120)
+});
+const languageOptionSchema = z.object({
+  code: z.string().trim().refine((value) =>
+    value.toUpperCase() === "ALL" || (LANGUAGE_CODES as readonly string[]).includes(value.toLowerCase()),
+    "言語コードはALLまたはISO 639-1で指定してください"
+  ),
+  name: z.string().trim().min(1).max(120)
+});
+const languageInputSchema = z.union([languageOptionSchema, z.string().trim().min(1).max(100)]);
 
 export const outboundConditionSchema = z.object({
   workId: z.string().trim().min(1, "作品を選択してください").max(100),
@@ -16,9 +33,11 @@ export const outboundConditionSchema = z.object({
   counterpartyLabel: z.string().trim().min(1).max(300),
   transactionKind: z.enum(["license", "product"]),
   conditionName: z.string().trim().min(1, "条件名を入力してください").max(300),
+  sourceConditionId: z.number().int().positive().optional(),
   documentNumber: optionalText,
-  territory: z.string().trim().min(1, "対象地域を入力してください").max(300),
-  languages: z.array(z.string().trim().min(1).max(100)).min(1, "対象言語を入力してください").max(30),
+  territory: z.string().trim().max(300).optional().default(""),
+  regions: z.array(regionOptionSchema).max(250).optional().default([]),
+  languages: z.array(languageInputSchema).min(1, "対象言語を入力してください").max(200),
   exclusivity: z.enum(["exclusive", "non_exclusive", "sole"]),
   sublicenseAllowed: z.boolean().default(false),
   termStart: z.iso.date().optional(),
@@ -48,6 +67,9 @@ export const outboundConditionSchema = z.object({
   if (value.transactionKind === "license" && value.paymentScheme !== "royalty") {
     context.addIssue({ code: "custom", path: ["paymentScheme"], message: "ライセンスアウトはロイヤリティ方式を選択してください" });
   }
+  if (value.transactionKind === "license" && !value.sourceConditionId) {
+    context.addIssue({ code: "custom", path: ["sourceConditionId"], message: "根拠IN条件を選択してください" });
+  }
   if (value.paymentScheme === "royalty" && value.ratePct === undefined) {
     context.addIssue({ code: "custom", path: ["ratePct"], message: "ロイヤリティ率を入力してください" });
   }
@@ -60,9 +82,58 @@ export const outboundConditionSchema = z.object({
   if (value.paymentScheme !== "royalty" && value.amountExTax === undefined) {
     context.addIssue({ code: "custom", path: ["amountExTax"], message: "税抜金額を入力してください" });
   }
+  if (!value.regions.length && !value.territory.trim()) {
+    context.addIssue({ code: "custom", path: ["regions"], message: "対象地域を選択してください" });
+  }
+  if (value.regions.some((item) => item.code.toUpperCase() === "WORLD") && value.regions.length > 1) {
+    context.addIssue({ code: "custom", path: ["regions"], message: "WORLDと個別国は同時に選択できません" });
+  }
+  const allLanguageCount = value.languages.filter((item) =>
+    typeof item !== "string" && item.code.toUpperCase() === "ALL"
+  ).length;
+  if (allLanguageCount && value.languages.length > 1) {
+    context.addIssue({ code: "custom", path: ["languages"], message: "ALLと個別言語は同時に選択できません" });
+  }
+}).transform((value) => {
+  const regions = value.regions.length
+    ? dedupe(value.regions.map(normalizeRegionOption))
+    : legacyRegionOptions(value.territory);
+  const languages = dedupe(value.languages.map((item) =>
+    typeof item === "string"
+      ? legacyLanguageOption(item)
+      : normalizeLanguageOption(item)
+  ));
+  return {
+    ...value,
+    regions,
+    languages,
+    territory: displayScope(regions)
+  };
 });
 
+function dedupe(values: ScopeOption[]) {
+  return [...new Map(values.filter((value) => value.code).map((value) => [value.code, value])).values()];
+}
+
+function legacyRegionOptions(value: string): ScopeOption[] {
+  const text = value.trim();
+  if (!text) return [];
+  if (/全世界|world/i.test(text)) return [{ code: "WORLD", name: "全世界" }];
+  return text.split(/[,、/]/).map((name) => name.trim()).filter(Boolean)
+    .map((name, index) => ({ code: `LEGACY-R${index + 1}`, name }));
+}
+
+function legacyLanguageOption(value: string): ScopeOption {
+  const text = value.trim();
+  if (/全言語|all languages?/i.test(text)) return { code: "ALL", name: "全言語" };
+  return { code: `LEGACY-L-${text.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 12) || "value"}`, name: text };
+}
+
 export type OutboundConditionInput = z.input<typeof outboundConditionSchema>;
+
+const linkSourceSchema = z.object({
+  sourceConditionId: z.number().int().positive()
+});
 
 export function validateOutboundCondition(input: unknown) {
   const result = outboundConditionSchema.safeParse(input);
@@ -131,10 +202,48 @@ export function createOutboundConditionRouter(
           code: "OUTBOUND_REFERENCE_NOT_FOUND"
         });
       }
+      if (error instanceof OutboundConditionScopeError) {
+        return response.status(422).json({
+          error: error.message,
+          code: "OUTBOUND_SCOPE_EXCEEDS_SOURCE"
+        });
+      }
       if (error instanceof OutboundConditionConflictError) {
         return response.status(409).json({
           error: error.message,
           code: "OUTBOUND_CONDITION_CONFLICT"
+        });
+      }
+      next(error);
+    }
+  });
+
+  router.patch("/outbound-conditions/:conditionId/source", async (request, response, next) => {
+    try {
+      if (!writeEnabled || !repository) {
+        return response.status(503).json({
+          error: "outbound condition storage is unavailable",
+          code: "OUTBOUND_CONDITION_STORAGE_UNAVAILABLE"
+        });
+      }
+      if (response.locals.currentUser?.role !== "admin") {
+        return response.status(403).json({
+          error: "administrator approval is required",
+          code: "OUTBOUND_CONDITION_ADMIN_REQUIRED"
+        });
+      }
+      const conditionId = z.coerce.number().int().positive().parse(request.params.conditionId);
+      const { sourceConditionId } = linkSourceSchema.parse(request.body);
+      const condition = await repository.linkSource(conditionId, sourceConditionId);
+      return response.json({ condition });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return response.status(400).json({ error: "invalid request", issues: error.issues });
+      }
+      if (error instanceof OutboundConditionReferenceError) {
+        return response.status(404).json({
+          error: error.message,
+          code: "OUTBOUND_REFERENCE_NOT_FOUND"
         });
       }
       next(error);

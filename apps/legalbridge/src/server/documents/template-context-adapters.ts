@@ -6,6 +6,13 @@ import { structuredStatementPatch } from "../../royalty-statement.js";
 type Data = Record<string, unknown>;
 
 const GENERATED_VARIABLES: Record<string, string[]> = {
+  service_master: [
+    "SERVICE_ENGAGEMENT_TYPE", "CONTRACT_TYPE", "契約類型", "業務類型",
+    "SERVICE_CATEGORY", "業務区分", "COMPENSATION_TYPE", "報酬方式",
+    "DELIVERABLE_REQUIRED", "成果物有無", "INSPECTION_REQUIRED", "検収要否",
+    "IP_OWNERSHIP", "知的財産権帰属", "SUBCONTRACTING_POLICY", "再委託条件",
+    "PERSONAL_DATA_HANDLING", "個人情報取扱い", "RENEWAL_TYPE", "更新方法"
+  ],
   purchase_order: [
     "BANK_INFO", "DELIVERY_DATE", "REMARKS", "expenses", "expensesTotalIncTax",
     "financial_conditions", "has_license_conditions", "has_performance_incentive",
@@ -33,7 +40,9 @@ const GENERATED_VARIABLES: Record<string, string[]> = {
     "agConsumedAfterStr", "agConsumedBeforeStr", "agConsumedThisTimeStr",
     "agFullyConsumed", "agProgressPct", "agRemainingStr", "billableQuantity",
     "calcType", "grossRoyaltyStr", "mgAmountStr", "mgTopupApplied",
-    "mgTopupThisTimeStr", "msrpStr", "receiptRows", "taxAmount", "totalPaymentStr"
+    "mgTopupThisTimeStr", "msrpStr", "receiptRows", "taxAmount", "totalPaymentStr",
+    // テンプレ v9（016）の通貨表示
+    "moneyUnit"
   ],
   inspection_certificate: [
     "changeLogs", "combinedTaxStr", "delivery_line_items", "expenses",
@@ -51,6 +60,9 @@ export function isTemplateGeneratedVariable(templateKey: string, variable: strin
 
 export function buildTemplateDocumentContext(templateKey: string, formData: Data): Data {
   const common: Data = buildCommonDocumentContext(formData);
+  if (templateKey === "service_master") {
+    return buildServiceMasterContext(common);
+  }
   if (templateKey === "purchase_order" || templateKey === "intl_purchase_order") {
     return buildPurchaseOrderContext(common);
   }
@@ -64,6 +76,30 @@ export function buildTemplateDocumentContext(templateKey: string, formData: Data
     return buildInspectionContext(common);
   }
   return common;
+}
+
+function buildServiceMasterContext(source: Data) {
+  const engagement = pick(source, "SERVICE_ENGAGEMENT_TYPE", "CONTRACT_TYPE", "契約類型", "業務類型");
+  const category = pick(source, "SERVICE_CATEGORY", "業務区分");
+  const compensation = pick(source, "COMPENSATION_TYPE", "報酬方式");
+  const deliverable = pick(source, "DELIVERABLE_REQUIRED", "成果物有無");
+  const inspection = pick(source, "INSPECTION_REQUIRED", "検収要否");
+  const ip = pick(source, "IP_OWNERSHIP", "知的財産権帰属");
+  const subcontracting = pick(source, "SUBCONTRACTING_POLICY", "再委託条件");
+  const personalData = pick(source, "PERSONAL_DATA_HANDLING", "個人情報取扱い");
+  const renewal = pick(source, "RENEWAL_TYPE", "更新方法");
+  return {
+    ...source,
+    SERVICE_ENGAGEMENT_TYPE: engagement, CONTRACT_TYPE: engagement, 契約類型: engagement, 業務類型: engagement,
+    SERVICE_CATEGORY: category, 業務区分: category,
+    COMPENSATION_TYPE: compensation, 報酬方式: compensation,
+    DELIVERABLE_REQUIRED: deliverable, 成果物有無: deliverable,
+    INSPECTION_REQUIRED: inspection, 検収要否: inspection,
+    IP_OWNERSHIP: ip, 知的財産権帰属: ip,
+    SUBCONTRACTING_POLICY: subcontracting, 再委託条件: subcontracting,
+    PERSONAL_DATA_HANDLING: personalData, 個人情報取扱い: personalData,
+    RENEWAL_TYPE: renewal, 更新方法: renewal
+  };
 }
 
 function buildPurchaseOrderContext(source: Data) {
@@ -94,6 +130,11 @@ function buildPurchaseOrderContext(source: Data) {
 
   return {
     ...source,
+    契約類型: pick(source, "SERVICE_ENGAGEMENT_TYPE", "CONTRACT_TYPE", "契約類型"),
+    業務区分: pick(source, "SERVICE_CATEGORY", "業務区分"),
+    成果物有無: pick(source, "DELIVERABLE_REQUIRED", "成果物有無"),
+    検収要否: pick(source, "INSPECTION_REQUIRED", "検収要否"),
+    知的財産権帰属: pick(source, "IP_OWNERSHIP", "知的財産権帰属"),
     items,
     expenses,
     financial_conditions: financialConditions,
@@ -178,6 +219,7 @@ function buildRoyaltyStatementContext(rawSource: Data) {
   const source: Data = structured ? { ...rawSource, ...structured } : rawSource;
   const groups = records(source.lineGroups);
   const lines = records(pick(source, "lines", "royalty_lines"));
+  const receiptRows = records(pick(source, "receiptRows", "rs_receipts"));
   const lineGroups = groups.length ? groups : lines.length ? [{
     contractTitle: pick(source, "contractTitle", "CONTRACT_TITLE"),
     contractNumber: pick(source, "linked_contract_number", "CONTRACT_NO"),
@@ -190,11 +232,18 @@ function buildRoyaltyStatementContext(rawSource: Data) {
   const totalPayment = flatLines.reduce((sum, line) =>
     sum + number(pick(line, "paymentJpy", "payment", "payment_amount", "royalty_amount")), 0);
   const taxRate = number(pick(source, "taxRate", "tax_rate"), 10);
-  const tax = Math.ceil(totalPayment * taxRate / 100);
+  const tax = taxRate > 0 ? Math.ceil(totalPayment * taxRate / 100) : 0;
+  const statementMode = String(valueOr(source.statementMode, lineGroups.length > 1 ? "multi" : "single"));
+  const currency = String(pick(source, "currency", "intakeCurrency", "CURRENCY") || "JPY");
+  const moneyUnit = statementMode === "multi"
+    ? "¥"
+    : ({ JPY: "¥", USD: "$", EUR: "€", CNY: "CNY " } as Record<string,string>)[currency] ?? `${currency} `;
   return {
     ...source,
-    statementMode: valueOr(source.statementMode, lineGroups.length > 1 ? "multi" : "single"),
+    statementMode,
     lineGroups,
+    receiptRows,
+    moneyUnit,
     payerCompany: pick(source, "payerCompany", "licensee", "PARTY_A_NAME"),
     royaltyCategory: pick(source, "royaltyCategory", "CALC_METHOD", "category"),
     designerName: pick(source, "designerName", "licensor", "VENDOR_NAME"),

@@ -134,6 +134,7 @@ export function MasterDataPicker({
               : `${item.label}：この文書に対応する項目が見つかりませんでした（項目名を教えていただければ対応を追加します）`);
           }}>
           <strong>{item.label}</strong><small>{item.description}</small>
+          <em>この情報を引用</em>
         </button>)}
     </div>
   </section>;

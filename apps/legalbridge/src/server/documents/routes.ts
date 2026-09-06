@@ -9,6 +9,7 @@ import { registerLegacyHelpers } from "./rendering.js";
 import { buildIndividualLicenseV3Context, INDIVIDUAL_LICENSE_V3_KEY } from "./individual-license-v3.js";
 import { inspectTemplateCompatibility } from "./compatibility.js";
 import { buildTemplateDocumentContext } from "./template-context-adapters.js";
+import type { DocumentFormContextRepository } from "./form-context-repository.js";
 
 const saveDraftSchema = z.object({
   templateType: z.string().min(1),
@@ -34,7 +35,8 @@ const previewSchema = validateSchema;
 export function createDocumentRouter(
   templates: TemplateRepository,
   drafts: DraftRepository,
-  draftListingEnabled = false
+  draftListingEnabled = false,
+  contexts?: DocumentFormContextRepository
 ) {
   const router = Router();
 
@@ -98,12 +100,17 @@ export function createDocumentRouter(
         month: "2-digit",
         day: "2-digit"
       }).format(new Date());
+      const sources = contexts ? await contexts.findSources(issueKey) : {};
       const formData = buildDocumentFormContext(
         schema,
-        { auto: { today }, backlog: { issueKey } },
+        { ...sources, auto: { ...(sources.auto ?? {}), today }, backlog: { issueKey, ...(sources.backlog ?? {}) } },
         draft?.formData ?? {}
       );
-      response.json({ schema, draft, formData });
+      const visible = schema.fields.filter((field) => field.type !== "hidden" && !field.hidden);
+      const filled = visible.filter((field) => formData[field.name] !== undefined && formData[field.name] !== "").length;
+      const requiredMissing = visible.filter((field) => field.required &&
+        (formData[field.name] === undefined || formData[field.name] === "")).map((field) => field.name);
+      response.json({ schema, draft, formData, prefill: { filled, total: visible.length, requiredMissing } });
     } catch (error) {
       next(error);
     }

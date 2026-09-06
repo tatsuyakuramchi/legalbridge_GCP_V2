@@ -6,13 +6,23 @@ export interface MatterSummary {
   ownerName: string | null; targetDueDate: string | null; blockedReason: string | null;
   issueCount: number; documentCount: number; openTaskCount: number;
   nextTaskTitle: string | null; nextTaskDueAt: string | null; updatedAt: string;
+  ownerStaffId?: number | null;
   requesterEmail?: string | null;
 }
 export interface MatterDetail {
   matter: MatterSummary & { remarks: string | null; driveFolderUrl: string | null; ownerStaffId?: number | null };
-  issues: Array<{ issueKey: string; relation: string; summary: string | null; note: string | null }>;
+  issues: Array<{
+    issueKey: string; relation: string; summary: string | null; note: string | null;
+    requestId?: number | null; requestType?: string | null; requestCounterparty?: string | null;
+  }>;
   tasks: Array<{ id: number; title: string; status: string; assigneeName: string | null; assigneeStaffId?: number | null; dueAt: string | null; isPrimary: boolean; blockedReason: string | null }>;
   documents: Array<{ id: number; documentNumber: string | null; templateType: string; issueKey: string; createdAt: string; driveLink: string }>;
+  contracts?: Array<{ id: number; documentNumber: string | null; title: string; contractType: string | null; status: string | null; expirationDate: string | null }>;
+  works?: Array<{ id: number; workCode: string | null; title: string }>;
+  vendors?: Array<{ id: number; vendorCode: string | null; name: string }>;
+  deliveryEvents?: Array<{ id: number; status: string; inspectionDeadline: string | null; deliveredAmount: number | null }>;
+  payments?: Array<{ id: number; status: string; dueDate: string | null; amount: number | null; currency: string; sourceDocumentNumber: string | null }>;
+  deadlines?: Array<{ id: string; kind: "matter" | "task" | "document" | "contract"; title: string; dueDate: string; status: string }>;
 }
 export interface MatterRepository {
   list(query: string, status?: string, limit?: number): Promise<MatterSummary[]>;
@@ -35,13 +45,19 @@ export class PgMatterRepository implements MatterRepository {
     return result.rows.map(mapSummary);
   }
   async find(id: number) {
-    const [matterResult, issuesResult, tasksResult, documentsResult] = await Promise.all([
+    const [matterResult, issuesResult, tasksResult, documentsResult, contractsResult, worksResult, vendorsResult, deliveryResult, paymentResult, deadlinesResult] = await Promise.all([
       this.database.query(
         `SELECT v.*, m.remarks, m.drive_folder_url, m.owner_staff_id
            FROM matter_overview_v v JOIN matters m ON m.id = v.id WHERE v.id = $1`, [id]),
       this.database.query(
-        `SELECT backlog_issue_key, relation, summary_snapshot, note
-           FROM matter_issues WHERE matter_id = $1 ORDER BY relation, backlog_issue_key`, [id]),
+        `SELECT mi.backlog_issue_key, mi.relation, mi.summary_snapshot, mi.note,
+                lr.id AS request_id, lr.contract_type AS request_type,
+                lr.counterparty AS request_counterparty
+           FROM matter_issues mi
+           LEFT JOIN legal_requests lr ON lr.backlog_issue_key = mi.backlog_issue_key
+          WHERE mi.matter_id = $1
+          ORDER BY ((SELECT primary_issue_key FROM matters WHERE id = $1) = mi.backlog_issue_key) DESC NULLS LAST,
+                   mi.relation, mi.backlog_issue_key`, [id]),
       this.database.query(
         `SELECT t.id, t.title, t.status, t.due_at, t.is_primary, t.blocked_reason,
                 t.assignee_staff_id, s.staff_name AS assignee_name
@@ -51,7 +67,79 @@ export class PgMatterRepository implements MatterRepository {
                    t.due_at NULLS LAST, t.id`, [id]),
       this.database.query(
         `SELECT id, document_number, template_type, issue_key, created_at, drive_link
-           FROM documents WHERE matter_id = $1 ORDER BY created_at DESC NULLS LAST, id DESC`, [id])
+           FROM documents WHERE matter_id = $1 ORDER BY created_at DESC NULLS LAST, id DESC`, [id]),
+      this.database.query(
+        `SELECT DISTINCT c.id, c.document_number, c.contract_title, c.contract_type,
+                c.contract_status, c.expiration_date
+           FROM contracts c
+           JOIN documents d ON d.contract_id = c.id
+          WHERE d.matter_id = $1
+             OR d.issue_key IN (SELECT backlog_issue_key FROM matter_issues WHERE matter_id = $1)
+             OR d.backlog_issue_key IN (SELECT backlog_issue_key FROM matter_issues WHERE matter_id = $1)
+          ORDER BY c.expiration_date NULLS LAST, c.id DESC`, [id]),
+      this.database.query(
+        `SELECT DISTINCT w.id, w.work_code, w.title
+           FROM works w
+           JOIN (
+             SELECT cl.work_id FROM documents d JOIN condition_lines cl ON cl.document_id = d.id
+              WHERE (d.matter_id = $1 OR d.issue_key IN (SELECT backlog_issue_key FROM matter_issues WHERE matter_id = $1)
+                     OR d.backlog_issue_key IN (SELECT backlog_issue_key FROM matter_issues WHERE matter_id = $1))
+                AND cl.work_id IS NOT NULL
+             UNION
+             SELECT cw.work_id FROM documents d JOIN contract_works cw ON cw.contract_id = d.contract_id
+              WHERE d.matter_id = $1 OR d.issue_key IN (SELECT backlog_issue_key FROM matter_issues WHERE matter_id = $1)
+                     OR d.backlog_issue_key IN (SELECT backlog_issue_key FROM matter_issues WHERE matter_id = $1)
+           ) linked ON linked.work_id = w.id
+          ORDER BY w.title, w.id`, [id]),
+      this.database.query(
+        `SELECT DISTINCT v.id, v.vendor_code, v.vendor_name
+           FROM vendors v
+           JOIN (
+             SELECT d.vendor_id FROM documents d
+              WHERE (d.matter_id = $1 OR d.issue_key IN (SELECT backlog_issue_key FROM matter_issues WHERE matter_id = $1)
+                     OR d.backlog_issue_key IN (SELECT backlog_issue_key FROM matter_issues WHERE matter_id = $1))
+                AND d.vendor_id IS NOT NULL
+             UNION
+             SELECT c.primary_vendor_id FROM documents d JOIN contracts c ON c.id = d.contract_id
+              WHERE (d.matter_id = $1 OR d.issue_key IN (SELECT backlog_issue_key FROM matter_issues WHERE matter_id = $1)
+                     OR d.backlog_issue_key IN (SELECT backlog_issue_key FROM matter_issues WHERE matter_id = $1))
+                AND c.primary_vendor_id IS NOT NULL
+           ) linked ON linked.vendor_id = v.id
+          ORDER BY v.vendor_name, v.id`, [id]),
+      this.database.query(
+        `SELECT de.id, de.status, de.inspection_deadline, de.delivered_amount
+           FROM delivery_events de
+          WHERE de.backlog_issue_key = (SELECT primary_issue_key FROM matters WHERE id = $1)
+             OR de.backlog_issue_key IN (SELECT backlog_issue_key FROM matter_issues WHERE matter_id = $1)
+          ORDER BY de.id DESC`, [id]),
+      this.database.query(
+        `SELECT p.id, p.status, p.due_date, COALESCE(p.total_amount,p.amount_ex_tax) AS amount,
+                p.currency, p.source_document_number
+           FROM payments p
+          WHERE p.backlog_issue_key = (SELECT primary_issue_key FROM matters WHERE id = $1)
+             OR p.backlog_issue_key IN (SELECT backlog_issue_key FROM matter_issues WHERE matter_id = $1)
+          ORDER BY p.due_date DESC NULLS LAST, p.id DESC`, [id]),
+      this.database.query(
+        `SELECT * FROM (
+           SELECT 'matter:' || m.id AS id, 'matter'::text AS kind, m.title,
+                  m.target_due_date::text AS due_date, m.status::text AS status
+             FROM matters m WHERE m.id = $1 AND m.target_due_date IS NOT NULL
+           UNION ALL
+           SELECT 'task:' || t.id, 'task', t.title,
+                  (t.due_at AT TIME ZONE 'Asia/Tokyo')::date::text, t.status::text
+             FROM matter_tasks t WHERE t.matter_id = $1 AND t.due_at IS NOT NULL
+           UNION ALL
+           SELECT 'document:' || d.id, 'document',
+                  COALESCE(NULLIF(d.contract_title,''), d.document_number, d.template_type),
+                  d.due_date::text, COALESCE(d.lifecycle_status,d.contract_status,'active')::text
+             FROM documents d WHERE d.matter_id = $1 AND d.due_date IS NOT NULL
+           UNION
+           SELECT 'contract:' || c.id, 'contract',
+                  COALESCE(NULLIF(c.contract_title,''), c.document_number, '契約'),
+                  c.expiration_date::text, COALESCE(c.contract_status,'active')::text
+             FROM documents d JOIN contracts c ON c.id = d.contract_id
+            WHERE d.matter_id = $1 AND c.expiration_date IS NOT NULL
+         ) deadlines ORDER BY due_date, kind, id`, [id])
     ]);
     if (!matterResult.rows[0]) return null;
     const row = matterResult.rows[0];
@@ -60,7 +148,10 @@ export class PgMatterRepository implements MatterRepository {
         ownerStaffId: row.owner_staff_id == null ? null : Number(row.owner_staff_id) },
       issues: issuesResult.rows.map((issue) => ({
         issueKey: issue.backlog_issue_key, relation: issue.relation,
-        summary: issue.summary_snapshot, note: issue.note
+        summary: issue.summary_snapshot, note: issue.note,
+        requestId: issue.request_id === null ? null : Number(issue.request_id),
+        requestType: issue.request_type ?? null,
+        requestCounterparty: issue.request_counterparty ?? null
       })),
       tasks: tasksResult.rows.map((task) => ({
         id: Number(task.id), title: task.title, status: task.status,
@@ -73,6 +164,32 @@ export class PgMatterRepository implements MatterRepository {
         id: Number(document.id), documentNumber: document.document_number,
         templateType: document.template_type, issueKey: document.issue_key,
         createdAt: iso(document.created_at) ?? "", driveLink: document.drive_link ?? ""
+      })),
+      contracts: contractsResult.rows.map((contract) => ({
+        id: Number(contract.id), documentNumber: contract.document_number ?? null,
+        title: String(contract.contract_title ?? contract.document_number ?? `Contract #${contract.id}`),
+        contractType: contract.contract_type ?? null, status: contract.contract_status ?? null,
+        expirationDate: dateOnly(contract.expiration_date)
+      })),
+      works: worksResult.rows.map((work) => ({
+        id: Number(work.id), workCode: work.work_code ?? null, title: String(work.title ?? `Work #${work.id}`)
+      })),
+      vendors: vendorsResult.rows.map((vendor) => ({
+        id: Number(vendor.id), vendorCode: vendor.vendor_code ?? null, name: String(vendor.vendor_name ?? "")
+      })),
+      deliveryEvents: deliveryResult.rows.map((event) => ({
+        id: Number(event.id), status: String(event.status ?? ""),
+        inspectionDeadline: dateOnly(event.inspection_deadline),
+        deliveredAmount: event.delivered_amount === null ? null : Number(event.delivered_amount)
+      })),
+      payments: paymentResult.rows.map((payment) => ({
+        id: Number(payment.id), status: String(payment.status ?? ""), dueDate: dateOnly(payment.due_date),
+        amount: payment.amount === null ? null : Number(payment.amount), currency: String(payment.currency ?? "JPY"),
+        sourceDocumentNumber: payment.source_document_number ?? null
+      })),
+      deadlines: deadlinesResult.rows.map((deadline) => ({
+        id: String(deadline.id), kind: deadline.kind, title: String(deadline.title ?? ""),
+        dueDate: String(deadline.due_date), status: String(deadline.status ?? "")
       }))
     };
   }
@@ -100,6 +217,7 @@ function mapSummary(row: Record<string, any>): MatterSummary {
     documentCount: Number(row.document_count ?? 0), openTaskCount: Number(row.open_task_count ?? 0),
     nextTaskTitle: row.next_task_title, nextTaskDueAt: iso(row.next_task_due_at),
     updatedAt: iso(row.updated_at) ?? "",
+    ownerStaffId: row.owner_staff_id === null || row.owner_staff_id === undefined ? null : Number(row.owner_staff_id),
     requesterEmail: optionalEmail(
       row.requester_email ?? row.created_by ?? row.requester
     )
