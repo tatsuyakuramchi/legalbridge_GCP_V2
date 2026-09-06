@@ -10,6 +10,10 @@ import {
   type DraftRepository
 } from "./documents/draft-repository.js";
 import { createDocumentRouter } from "./documents/routes.js";
+import {
+  PgDocumentFormContextRepository,
+  type DocumentFormContextRepository
+} from "./documents/form-context-repository.js";
 import { createTemplateRegressionRouter } from "./documents/template-regression.js";
 import { createSlackIntakeDesignRouter } from "./integrations/slack-intake-routes.js";
 import {
@@ -289,6 +293,7 @@ export interface AppDependencies {
   contractIntakes?: ContractIntakeRepository;
   contractIntakeDocuments?: ContractIntakeDocumentSourceRepository;
   contractOutbound?: ContractOutboundRepository;
+  documentFormContexts?: DocumentFormContextRepository;
 }
 
 export interface AppOptions {
@@ -335,6 +340,7 @@ function createDefaultDependencies(): AppDependencies {
     documentRegistry: database
       ? new PgDocumentRegistryRepository(database)
       : new MemoryDocumentRegistryRepository(),
+    documentFormContexts: database ? new PgDocumentFormContextRepository(database) : undefined,
     matters: database ? new PgMatterRepository(database) : new MemoryMatterRepository(),
     matterWrites: database
       ? new PgMatterWriteRepository(database)
@@ -828,7 +834,8 @@ export function createApp(
   app.use("/api/v2", createDocumentRouter(
     dependencies.templates,
     dependencies.drafts,
-    draftWriteEnabled
+    draftWriteEnabled,
+    dependencies.documentFormContexts
   ));
   app.use("/api/v2", createDocumentFinalizationRouter(
     dependencies.templates,

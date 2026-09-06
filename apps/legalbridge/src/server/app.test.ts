@@ -22,6 +22,7 @@ import { MemoryPdfRenderer } from "./documents/pdf-renderer.js";
 import { MemorySlackNotificationHistoryRepository } from "./integrations/slack-history-repository.js";
 import { MemorySlackNotificationApprovalRepository } from "./integrations/slack-approval-repository.js";
 import { MemoryOutboundConditionRepository } from "./ledgers/outbound-condition-repository.js";
+import { MemoryDocumentFormContextRepository } from "./documents/form-context-repository.js";
 
 const schema: DocumentFormSchema = {
   templateKey: "purchase_order",
@@ -74,6 +75,28 @@ test("DB template由来のフォーム定義を返す", async () => {
     .expect(200);
   assert.equal(response.body.templateVersionId, 10);
   assert.equal(response.body.fields[0].name, "PROJECT_TITLE");
+});
+
+test("文書フォームは依頼から案件・取引先情報を自動引用する", async () => {
+  const target = createApp({
+    templates: new MemoryTemplateRepository([schema]),
+    drafts: new MemoryDraftRepository(),
+    integrations: createIntegrationAdapters(),
+    documentFormContexts: new MemoryDocumentFormContextRepository({
+      backlog: { summary: "利用許諾契約の作成" },
+      vendor: { vendor_name: "Example GmbH" }
+    })
+  }, {
+    accessMode: "readwrite", requireDatabase: false,
+    writeFeaturesEnabled: true, writeScopes: new Set(["drafts"])
+  });
+
+  const response = await request(target)
+    .get("/api/v2/document-form-context?template_key=purchase_order&issue_key=LEGAL-500")
+    .expect(200);
+  assert.equal(response.body.formData.PROJECT_TITLE, "利用許諾契約の作成");
+  assert.equal(response.body.formData.ORDER_DATE.length, 10);
+  assert.equal(response.body.prefill.filled, 2);
 });
 
 test("下書きを保存して復元する", async () => {

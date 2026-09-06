@@ -59,8 +59,8 @@ export function MasterDataPicker({
 
   return <section className="master-picker">
     <div className="master-picker-head">
-      <div><span>入力補助</span><strong>登録情報を呼び出す</strong></div>
-      <small>取引先などを選ぶと、該当する項目だけ入力されます。入力後の修正も可能です。</small>
+      <div><span>DB引用・補完</span><strong>登録済みデータから選択</strong></div>
+      <small>自由入力する前に、取引先・担当者・既存契約・作品を選択してください。対応項目をまとめて補完します。</small>
     </div>
     <div className="master-tabs">
       {availableTypes.map((candidate) =>
@@ -77,8 +77,9 @@ export function MasterDataPicker({
       {!loading && !items.length && <p>該当するデータがありません。</p>}
       {!loading && items.map((item) =>
         <button type="button" key={item.id}
-          onClick={() => onApply(buildPatch(schema, formData, item), `${item.label}の登録情報を入力しました`)}>
+          onClick={() => onApply(buildPatch(schema, formData, item), `${item.label}のDB情報を引用・補完しました`)}>
           <strong>{item.label}</strong><small>{item.description}</small>
+          <em>この情報を引用</em>
         </button>)}
     </div>
   </section>;

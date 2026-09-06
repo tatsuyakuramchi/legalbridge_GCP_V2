@@ -3,7 +3,8 @@ import type {
   DashboardSummary,
   DocumentDraft,
   DocumentFormData,
-  DocumentFormSchema
+  DocumentFormSchema,
+  TemplateField
 } from "../types";
 import { SpecializedDocumentForms } from "./SpecializedDocumentForms";
 import { MasterDataPicker } from "./MasterDataPicker";
@@ -369,6 +370,8 @@ export function App() {
           onCreateDocument={(legalWorkspace || requesterWorkspace)
             ? (issueKey) => { setNewDocIssueKey(issueKey ?? ""); setDraftSelection(null); setView("templates"); }
             : undefined}
+          onOpenDocument={(id) => { setSearchSelection({ target: "document", id: String(id), title: "" }); setView("documents"); }}
+          onOpenWork={(id) => { setWorkRightsInitialId(id); setView("works-rights"); }}
           selectedId={searchSelection?.target === "matter" ? Number(searchSelection.id) : undefined} />}
         {view === "works-rights" && legalWorkspace && <WorkRightsWorkspace
           initialWorkId={workRightsInitialId}
@@ -441,7 +444,7 @@ export function App() {
             schema={schema}
             readOnly={readOnly}
             canFinalizeDocuments={canFinalizeDocuments}
-            initialIssueKey={draftSelection?.issueKey ?? (newDocIssueKey || "VALIDATION-1")}
+            initialIssueKey={draftSelection?.issueKey ?? newDocIssueKey}
             onBack={() => setView(draftSelection ? "drafts" : "templates")}
             onCreateNew={() => setView("templates")}
             onOpenDocuments={() => setView("documents")}
@@ -663,9 +666,28 @@ function DocumentForm({
   const [draftStatus, setDraftStatus] = useState<
     "loading" | "clean" | "dirty" | "saving" | "saved" | "error"
   >("loading");
+  const [prefill, setPrefill] = useState<{ filled: number; total: number; requiredMissing: string[] }>({
+    filled: 0, total: 0, requiredMissing: []
+  });
+  const [requestCandidates, setRequestCandidates] = useState<Array<{ issueKey: string; summary: string }>>([]);
 
   useEffect(() => {
-    if (!schema || !issueKey.trim()) return;
+    const controller = new AbortController();
+    fetch("/api/v2/requests?limit=200", { signal: controller.signal })
+      .then((response) => response.ok ? response.json() : Promise.reject())
+      .then((result) => setRequestCandidates(result.requests ?? []))
+      .catch(() => setRequestCandidates([]));
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    if (!schema || !issueKey.trim()) {
+      setFormData({});
+      setDraft(null);
+      setDraftStatus("clean");
+      setNotice("引用元の依頼を選択してください");
+      return;
+    }
     const controller = new AbortController();
     setDraftStatus("loading");
     setNotice("");
@@ -681,6 +703,7 @@ function DocumentForm({
       .then((context) => {
         const restoredDraft = context.draft ?? null;
         setFormData(context.formData ?? {});
+        setPrefill(context.prefill ?? { filled: 0, total: schema.fields.length, requiredMissing: [] });
         setDraft(restoredDraft);
         setDraftStatus(restoredDraft ? "saved" : "clean");
         setNotice(
@@ -706,6 +729,8 @@ function DocumentForm({
     !isSpecializedDataField(schema.templateKey, field.name, formData)
   );
   const groups = [...new Set(visibleFields.map((field) => field.group ?? "基本情報"))];
+  const requiredMissing = visibleFields.filter((field) => field.required &&
+    (formData[field.name] === undefined || formData[field.name] === null || formData[field.name] === ""));
 
   function updateValue(name: string, value: unknown) {
     if (finalizedDocument) return;
@@ -886,6 +911,7 @@ function DocumentForm({
           </div>
           <label className="draft-key">受付番号（Backlog課題キー）
             <input
+              list="document-request-candidates"
               value={issueKey}
               onChange={(event) => {
                 setIssueKey(event.target.value);
@@ -895,6 +921,10 @@ function DocumentForm({
               disabled={draftStatus === "saving" || Boolean(finalizedDocument)}
               placeholder="例：LEGAL-123"
             />
+            <datalist id="document-request-candidates">
+              {requestCandidates.map((request) => <option key={request.issueKey} value={request.issueKey}>{request.summary}</option>)}
+            </datalist>
+            <small>登録済みの依頼を選択すると、案件・取引先・担当者・作品・既存契約を自動引用します。</small>
           </label>
         </div>
         <div className="actions">
@@ -959,6 +989,13 @@ function DocumentForm({
           読取専用環境では入力確認とプレビューのみ利用できます。下書きは保存されません。
         </div>
       )}
+      <div className="document-prefill-summary">
+        <div><span>DB引用・自動補完</span><strong>{prefill.filled}<small> / {prefill.total}項目</small></strong></div>
+        <div className={requiredMissing.length ? "warning" : "complete"}><span>必須の未入力</span><strong>{requiredMissing.length}<small>項目</small></strong></div>
+        <p>{requiredMissing.length
+          ? "DBにない必須項目だけを確認・入力してください。"
+          : "必須項目はDB情報で補完されています。内容を確認してプレビューへ進めます。"}</p>
+      </div>
       <div className="form-layout">
         <nav className="form-nav">
           {groups.map((group, index) => <a key={group} href={`#group-${index}`}>{group}</a>)}
@@ -973,16 +1010,20 @@ function DocumentForm({
               setNotice(message);
             }} />
           {groups.map((group, index) => <section id={`group-${index}`} key={group}><h2>{group}</h2>
-            <div className="field-grid">{visibleFields.filter((field) => (field.group ?? "基本情報") === group).map((field) => <label key={field.name}><span>{field.label ?? field.name}{field.required && <em>必須</em>}</span>{field.type === "textarea"
+            <div className="field-grid">{visibleFields.filter((field) => (field.group ?? "基本情報") === group).map((field) => {
+              const suggested = smartFieldOptions(field);
+              const current = String(formData[field.name] ?? "");
+              const options = current && suggested && !suggested.includes(current) ? [current, ...suggested] : suggested;
+              return <label key={field.name} className={field.dbField && current ? "db-prefilled" : ""}><span>{field.label ?? field.name}{field.required && <em>必須</em>}{field.dbField && current && <i>DB引用</i>}</span>{field.type === "textarea"
               ? <textarea value={String(formData[field.name] ?? "")}
                   onChange={(event) => updateValue(field.name, event.target.value)}
                   placeholder={field.placeholder} readOnly={field.readonly || Boolean(finalizedDocument)} />
-              : field.type === "select"
+              : field.type === "select" || options
                 ? <select value={String(formData[field.name] ?? "")}
                     onChange={(event) => updateValue(field.name, event.target.value)}
                     disabled={field.readonly || Boolean(finalizedDocument)}>
                     <option value="">選択してください</option>
-                    {field.options?.map((option) => <option key={option}>{option}</option>)}
+                    {(options ?? field.options)?.map((option) => <option key={option}>{option}</option>)}
                   </select>
                 : field.type === "boolean"
                   ? <input type="checkbox" checked={Boolean(formData[field.name])}
@@ -992,7 +1033,8 @@ function DocumentForm({
                       onChange={(event) => updateValue(field.name, field.type === "number" ? Number(event.target.value) : event.target.value)}
                       type={field.type === "number" ? "number" : field.type === "date" ? "date" : "text"}
                       placeholder={field.placeholder}
-                      readOnly={field.readonly || Boolean(finalizedDocument)} />}{field.helpText && <small>{field.helpText}</small>}</label>)}</div>
+                      readOnly={field.readonly || Boolean(finalizedDocument)} />}{field.helpText && <small>{field.helpText}</small>}</label>;
+            })}</div>
           </section>)}
           {schema.templateKey === "individual_license_terms_v3" && (
             <IndividualLicenseV3Form formData={formData} onChange={updateValue} />
@@ -1009,6 +1051,17 @@ function formatIntegrationStatus(value: string) {
   if (value === "pending") return "未実行";
   if (value === "disabled") return "停止";
   return value;
+}
+
+function smartFieldOptions(field: TemplateField): string[] | null {
+  const key = `${field.name} ${field.label ?? ""}`.toLowerCase();
+  if (/currency|通貨/.test(key)) return ["JPY", "USD", "EUR", "GBP", "CNY", "KRW"];
+  if (/支払方式|payment.?scheme|算定方式|calc.?method/.test(key)) return ["royalty", "per_unit", "lump_sum"];
+  if (/独占|exclusiv/.test(key)) return ["非独占", "独占", "共同独占"];
+  if (/契約類型|契約種別|contract.?type/.test(key)) return ["業務委託", "売買", "ライセンス", "NDA", "覚書", "法務相談"];
+  if (/法人.?個人|entity.?type|当事者区分/.test(key)) return ["法人", "個人"];
+  if (/更新方法|renewal/.test(key) && field.type !== "date") return ["自動更新なし", "1年自動更新", "協議更新"];
+  return null;
 }
 
 function formatDraftTime(value: string) {
