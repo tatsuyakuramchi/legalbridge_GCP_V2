@@ -2,6 +2,7 @@ import type { DatabasePool } from "../db/pool.js";
 
 export interface MatterSummary {
   id: number; matterCode: string | null; title: string; status: string;
+  matterKind?: string;
   counterparty: string; primaryIssueKey: string | null; lifecycleStage: string | null;
   ownerName: string | null; targetDueDate: string | null; blockedReason: string | null;
   issueCount: number; documentCount: number; openTaskCount: number;
@@ -216,7 +217,7 @@ export class MemoryMatterRepository implements MatterRepository {
 function mapSummary(row: Record<string, any>): MatterSummary {
   return {
     id: Number(row.id), matterCode: row.matter_code, title: row.title,
-    status: row.status, counterparty: row.counterparty ?? "",
+    status: row.status, matterKind: String(row.matter_kind ?? "unclassified"), counterparty: row.counterparty ?? "",
     primaryIssueKey: row.primary_issue_key, lifecycleStage: row.lifecycle_stage,
     ownerName: row.owner_name, targetDueDate: dateOnly(row.target_due_date),
     blockedReason: row.blocked_reason, issueCount: Number(row.issue_count ?? 0),

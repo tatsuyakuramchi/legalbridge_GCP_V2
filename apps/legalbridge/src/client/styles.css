@@ -254,6 +254,12 @@ header input { width: 100%; border: 1px solid #d9e2ec; border-radius: 8px; paddi
 .matter-list > button p { color: #475569; padding-top: 8px; border-top: 1px solid #eef2f7; }
 .matter-list > button em { color: #b42318; background: #fff4f2; padding: 6px 8px; border-radius: 5px; }
 .matter-detail { position: sticky; top: 80px; max-height: calc(100vh - 104px); overflow-y: auto; }
+.matter-layout.matter-layout-list, .matter-layout.matter-layout-full { grid-template-columns: minmax(0, 1fr); }
+.matter-layout-full .matter-detail { position: static; top: auto; width: 100%; max-height: none; overflow: visible; }
+.matter-back-button { border: 0; background: transparent; color: #168ca0; padding: 0 0 10px; font-weight: 800; cursor: pointer; }
+.matter-back-button:hover { text-decoration: underline; }
+.searchable-field { align-content: start; }
+.searchable-field input { margin-bottom: 5px; }
 .matter-detail > h2 { margin: 5px 0 10px; font-size: 21px; }
 .matter-summary { display: flex; flex-wrap: wrap; gap: 6px; }.matter-summary span { background: #f1f5f9; border-radius: 999px; padding: 5px 9px; font-size: 11px; }
 .matter-detail-section { border-top: 1px solid #e2e8f0; margin-top: 16px; padding-top: 13px; }

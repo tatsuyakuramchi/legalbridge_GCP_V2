@@ -9,7 +9,7 @@ function row(overrides: Partial<ConditionLineRow>): ConditionLineRow {
   return {
     id: 1, lineNo: 1, documentId: 10, documentNumber: "DOC-1", matterId: 5, templateType: "license",
     direction: "receivable", flowDirection: "out", transactionKind: "license", conditionName: "許諾A",
-    vendorName: "取引先X", workTitle: "作品Y", territory: "日本", currency: "JPY",
+    vendorName: "取引先X", workTitle: "作品Y", territory: "日本", language: "日本語", currency: "JPY",
     amountExTax: 100000, mgAmount: null, ratePct: 10, termStart: "2026-01-01",
     effective: true, supersededBy: null,
     ...overrides

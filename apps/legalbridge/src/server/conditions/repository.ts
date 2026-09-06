@@ -17,6 +17,7 @@ export interface ConditionLineRow {
   vendorName: string;
   workTitle: string;
   territory: string | null;
+  language: string | null;
   currency: string | null;
   amountExTax: number | null;
   mgAmount: number | null;
@@ -142,7 +143,16 @@ export class PgConditionLineRepository implements ConditionLineRepository {
       `SELECT cl.id, cl.line_no, cl.document_id, cl.direction, cl.flow_direction,
               cl.transaction_kind, cl.condition_name, cl.currency,
               cl.amount_ex_tax, cl.mg_amount, cl.rate_pct, cl.term_start,
-              cl.region_territory,
+              COALESCE(
+                (SELECT string_agg(r.country_name, '・' ORDER BY r.sort_order, r.id)
+                   FROM condition_line_regions r WHERE r.condition_line_id = cl.id),
+                cl.region_territory
+              ) AS region_territory,
+              COALESCE(
+                (SELECT string_agg(l.language_name, '・' ORDER BY l.sort_order, l.id)
+                   FROM condition_line_languages l WHERE l.condition_line_id = cl.id),
+                cl.region_language
+              ) AS region_language,
               d.document_number, d.matter_id, d.template_type,
               d.lifecycle_status, d.form_data->>'superseded_by' AS superseded_by,
               d.form_data->>'ledger_status' AS ledger_status,
@@ -156,7 +166,11 @@ export class PgConditionLineRepository implements ConditionLineRepository {
                OR cl.condition_name ILIKE $1
                OR COALESCE(d.document_number, '') ILIKE $1
                OR COALESCE(v.vendor_name, '') ILIKE $1
-               OR COALESCE(w.title, '') ILIKE $1)
+               OR COALESCE(w.title, '') ILIKE $1
+               OR COALESCE(cl.region_territory, '') ILIKE $1
+               OR COALESCE(cl.region_language, '') ILIKE $1
+               OR EXISTS (SELECT 1 FROM condition_line_regions sr WHERE sr.condition_line_id = cl.id AND sr.country_name ILIKE $1)
+               OR EXISTS (SELECT 1 FROM condition_line_languages sl WHERE sl.condition_line_id = cl.id AND sl.language_name ILIKE $1))
           -- 無効化（void）された文書の条件は一覧に出さない（監査2026-08-25 ギャップ3）
           AND (d.id IS NULL OR d.lifecycle_status IS NULL OR d.lifecycle_status <> 'voided')
         ORDER BY cl.id DESC
@@ -402,6 +416,7 @@ function mapRow(row: Record<string, any>): ConditionLineRow {
     vendorName: String(row.vendor_name ?? ""),
     workTitle: String(row.work_title ?? ""),
     territory: row.region_territory ?? null,
+    language: row.region_language ?? null,
     currency: row.currency ?? null,
     amountExTax: num(row.amount_ex_tax),
     mgAmount: num(row.mg_amount),
@@ -433,7 +448,7 @@ export class MemoryConditionLineRepository implements ConditionLineRepository {
   async list(query: string, limit = 300) {
     const keyword = query.trim().toLowerCase();
     return this.rows
-      .filter((row) => !keyword || [row.conditionName, row.documentNumber, row.vendorName, row.workTitle]
+      .filter((row) => !keyword || [row.conditionName, row.documentNumber, row.vendorName, row.workTitle, row.territory, row.language]
         .some((value) => value?.toLowerCase().includes(keyword)))
       .slice(0, limit);
   }

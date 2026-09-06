@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { buildQuickReceiptPatch, emptyQuickReceipt, quickReceiptJpy } from "./royalty-quick-receipt.js";
 
-const inLine = { id: 501, documentNumber: "CT-2026-00042", conditionName: "原作ロイヤリティ", vendorName: "スタジオ雨宿り", workTitle: "エピローグ", currency: "JPY" };
-const outLine = { id: 620, documentNumber: "CT-2026-00043", conditionName: "英語版ライセンス", vendorName: "Meridian Games", workTitle: "エピローグ", currency: "USD" };
+const inLine = { id: 501, documentNumber: "CT-2026-00042", conditionName: "再許諾", vendorName: "スタジオ雨宿り", workTitle: "エピローグ", currency: "JPY", territory: "全世界", language: "全言語" };
+const outLine = { id: 620, documentNumber: "CT-2026-00043", conditionName: "英語版ライセンス", vendorName: "Meridian Games", workTitle: "エピローグ", currency: "USD", territory: "北米", language: "英語" };
 const economics = { representativeLineId: 501, conditionName: "原作ロイヤリティ", ratePct: 5, mgAmount: 100000, agAmount: 0, agConsumed: 0 };
 
 test("かんたん受領入力: 3 つの入力から計算書の欄（当事者・契約・製品・受領行・イン側料率）を一括で埋める", () => {
@@ -20,7 +20,8 @@ test("かんたん受領入力: 3 つの入力から計算書の欄（当事者�
   assert.equal(patch.licensee, "株式会社アークライト");
   assert.equal(patch.linked_contract_number, "CT-2026-00042");
   assert.equal(patch.originalWork, "エピローグ");
-  assert.equal(patch.productName, "英語版ライセンス");
+  assert.equal(patch.productName, "再許諾 ／ 許諾地域：北米 ／ 許諾言語：英語");
+  assert.equal(patch.licenseScopeSource, "out");
   assert.equal(patch.payerCompany, "Meridian Games");     // 名称未入力ならアウト条件の相手先
   assert.equal(patch.intakeCurrency, "USD");
   assert.equal(patch.fxRate, 148.2);
@@ -41,7 +42,7 @@ test("かんたん受領入力: 円入金は換算なし、既存の受領行に
   assert.equal(receipts[1].fxMode, "post");
   assert.equal(receipts[1].fxRate, "");
   assert.equal(patch.payerCompany, "Seoul Tabletop");
-  assert.equal(patch.productName, "エピローグ（サブライセンス受領分）");
+  assert.equal(patch.productName, "再許諾 ／ 許諾地域：全世界 ／ 許諾言語：全言語");
   assert.equal("licensee" in patch, false);                // 自社名が取れないときは触らない
   assert.equal(quickReceiptJpy({ ...emptyQuickReceipt(), currency: "USD", amount: 12000, fxMode: "pre", fxRate: 148.2 }), 1778400);
   assert.equal(quickReceiptJpy({ ...emptyQuickReceipt(), amount: 890000 }), 890000);

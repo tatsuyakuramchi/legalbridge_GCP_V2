@@ -5,13 +5,16 @@ type Condition = {
   direction: string | null; flowDirection: string | null; paymentScheme: string | null; calcType: string | null;
   ratePct: number | null; amountExTax: number | null; unitAmount: number | null;
   mgAmount: number | null; agAmount: number | null; currency: string; paymentTerms: string | null;
-  royaltyBase: string | null; deductibleCosts: string | null; parentLicenseConditionId: number | null;
+  royaltyBase: string | null; deductibleCosts: string | null; territory: string | null; language: string | null;
+  parentLicenseConditionId: number | null;
   counterparty: string | null; documentNumber: string | null; contractTitle: string | null;
 };
 type Trigger = "manufacturing" | "sale" | "sublicense_receipt";
 type Preview = {
   sourceCondition: Condition; settlementCondition: Condition; trigger: Trigger; occurredAt: string;
   productName: string; edition: string; quantity: number; sampleQuantity: number; billableQuantity: number;
+  transactionModelName: string; licenseTerritory: string; licenseLanguage: string;
+  licenseScopeSource: "in" | "out";
   unitBase: number; grossEventAmount: number; deductions: number; basisAmount: number;
   ratePct: number | null; grossRoyalty: number; actualRoyalty: number; currency: string;
   formula: string; warnings: string[];
@@ -32,7 +35,6 @@ export function LicenseSettlementWorkspace({
   const [trigger, setTrigger] = useState<Trigger>("sublicense_receipt");
   const [issueKey, setIssueKey] = useState(initialIssueKey);
   const [occurredAt, setOccurredAt] = useState(today());
-  const [productName, setProductName] = useState("");
   const [edition, setEdition] = useState("");
   const [quantity, setQuantity] = useState("0");
   const [sampleQuantity, setSampleQuantity] = useState("0");
@@ -62,11 +64,12 @@ export function LicenseSettlementWorkspace({
   }, [query, initialWorkId]);
 
   const selected = useMemo(() => conditions.find((row) => row.id === conditionId) ?? null, [conditions, conditionId]);
-
-  useEffect(() => {
-    if (!selected) return;
-    if (!productName) setProductName(selected.workTitle || selected.name);
-  }, [selected]);
+  const inbound = useMemo(() => selected?.parentLicenseConditionId
+    ? conditions.find((row) => row.id === selected.parentLicenseConditionId) ?? selected
+    : selected, [conditions, selected]);
+  const product = useMemo(() => selected && inbound
+    ? productContext(selected, inbound)
+    : null, [selected, inbound]);
 
   function body() {
     return {
@@ -74,7 +77,6 @@ export function LicenseSettlementWorkspace({
       conditionLineId: conditionId,
       trigger,
       occurredAt: new Date(`${occurredAt}T00:00:00+09:00`).toISOString(),
-      productName: productName.trim(),
       edition: edition.trim(),
       quantity: numberValue(quantity),
       sampleQuantity: numberValue(sampleQuantity),
@@ -171,6 +173,9 @@ export function LicenseSettlementWorkspace({
             <div><span>方向</span><strong>{selected.flowDirection || "—"} / {selected.direction || "—"}</strong></div>
             <div><span>料率</span><strong>{selected.ratePct === null ? "—" : `${selected.ratePct}%`}</strong></div>
             <div><span>根拠IN条件</span><strong>{selected.parentLicenseConditionId ? `#${selected.parentLicenseConditionId}` : "自己条件"}</strong></div>
+            <div><span>取引モデル</span><strong>{product?.transactionModelName || "—"}</strong></div>
+            <div><span>許諾範囲</span><strong>{[product?.territory, product?.language].filter(Boolean).join("／") || "未設定"}</strong></div>
+            <div><span>範囲の引用元</span><strong>{product?.scopeSource === "out" ? "OUT条件" : "IN条件"}</strong></div>
             <div><span>支払条件</span><strong>{selected.paymentTerms || "—"}</strong></div>
           </div>}
         </section>
@@ -180,7 +185,8 @@ export function LicenseSettlementWorkspace({
           <div className="settlement-fields">
             <label>Request / Backlog課題キー<input value={issueKey} onChange={(event) => setIssueKey(event.target.value)} placeholder="LEGAL-1234" /></label>
             <label>発生日<input type="date" value={occurredAt} onChange={(event) => setOccurredAt(event.target.value)} /></label>
-            <label>対象商品・契約<input value={productName} onChange={(event) => setProductName(event.target.value)} /></label>
+            <label>製品名（条件から自動生成）<input value={product?.productName ?? "条件を選択してください"} readOnly />
+              <small>取引モデル・許諾地域・許諾言語をDBから引用します。</small></label>
             <label>版<input value={edition} onChange={(event) => setEdition(event.target.value)} placeholder="通常版等" /></label>
             {trigger !== "sublicense_receipt" && <>
               <label>数量<input type="number" min="0" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
@@ -215,6 +221,9 @@ export function LicenseSettlementWorkspace({
           <dl className="settlement-summary">
             <div><dt>トリガー</dt><dd>{triggerLabel(preview.trigger)}</dd></div>
             <div><dt>作品</dt><dd>{preview.settlementCondition.workTitle || preview.productName}</dd></div>
+            <div><dt>製品名</dt><dd>{preview.productName}</dd></div>
+            <div><dt>許諾範囲</dt><dd>{[preview.licenseTerritory, preview.licenseLanguage].filter(Boolean).join("／") || "未設定"}</dd></div>
+            <div><dt>範囲の引用元</dt><dd>{preview.licenseScopeSource === "out" ? "OUT条件" : "IN条件"}</dd></div>
             <div><dt>起点条件</dt><dd>#{preview.sourceCondition.id} {preview.sourceCondition.name}</dd></div>
             <div><dt>支払根拠条件</dt><dd>#{preview.settlementCondition.id} {preview.settlementCondition.name}</dd></div>
             <div><dt>イベント総額</dt><dd>{money(preview.grossEventAmount, preview.currency)}</dd></div>
@@ -241,6 +250,20 @@ function preferredCondition(rows: Condition[]) {
   return rows.find((c) => c.direction === "receivable" && c.parentLicenseConditionId)
     ?? rows.find((c) => c.direction === "payable")
     ?? rows[0];
+}
+function productContext(source: Condition, inbound: Condition) {
+  const transactionModelName = inbound.name.trim() || source.name.trim() || "取引モデル未設定";
+  const useInbound = transactionModelName.includes("自社製造") || source.id === inbound.id;
+  const scope = useInbound ? inbound : source;
+  const territory = scope.territory?.trim() ?? "";
+  const language = scope.language?.trim() ?? "";
+  return {
+    transactionModelName,
+    territory,
+    language,
+    scopeSource: (useInbound ? "in" : "out") as "in" | "out",
+    productName: [transactionModelName, `許諾地域：${territory || "未設定"}`, `許諾言語：${language || "未設定"}`].join(" ／ ")
+  };
 }
 function numberValue(value: string) {
   const n = Number(value);

@@ -8,6 +8,7 @@ import { MatterSlackHistory } from "./MatterSlackHistory";
 
 type Matter = {
   id: number; matterCode: string | null; title: string; status: string; counterparty: string;
+  matterKind: string;
   primaryIssueKey: string | null; lifecycleStage: string | null; ownerName: string | null;
   targetDueDate: string | null; blockedReason: string | null; issueCount: number;
   documentCount: number; openTaskCount: number; nextTaskTitle: string | null;
@@ -33,22 +34,35 @@ type Detail = {
   deadlines?: Array<{ id: string; kind: "matter" | "task" | "document" | "contract"; title: string; dueDate: string; status: string }>;
 };
 const statusLabels: Record<string, string> = { open: "未着手", in_progress: "進行中", closed: "完了", archived: "保管" };
+const matterKindLabels: Record<string, string> = {
+  unclassified: "未分類", contract_review: "契約レビュー", legal_consultation: "法務相談",
+  license: "ライセンス", service: "業務委託", sales_purchase: "売買・仕入",
+  nda: "秘密保持", document_creation: "その他文書作成", other: "その他"
+};
+const MATTER_KINDS = Object.keys(matterKindLabels);
 
 // 担当者セレクト（担当者マスタから取得・監査で「表示のみで設定不可」だった穴の解消）。
 function StaffSelect({ label, value, onChange }: {
   label: string; value: string; onChange: (value: string) => void;
 }) {
   const [options, setOptions] = useState<Array<{ id: string; name: string; department: string | null }>>([]);
+  const [query, setQuery] = useState("");
   useEffect(() => {
-    fetch("/api/v2/master-data/search?type=staff&q=")
-      .then((r) => r.ok ? r.json() : Promise.reject())
-      .then((d) => setOptions((d.items ?? []).map((item: { id: string; label: string; values?: { department?: string | null } }) => ({
-        id: String(item.id), name: item.label,
-        department: item.values?.department ?? null
-      }))))
-      .catch(() => setOptions([]));
-  }, []);
-  return <label>{label}<select value={value} onChange={(e) => onChange(e.target.value)}>
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      fetch(`/api/v2/master-data/search?type=staff&q=${encodeURIComponent(query)}&limit=60`, { signal: controller.signal })
+        .then((r) => r.ok ? r.json() : Promise.reject())
+        .then((d) => setOptions((d.items ?? []).map((item: { id: string; label: string; values?: { department?: string | null } }) => ({
+          id: String(item.id), name: item.label,
+          department: item.values?.department ?? null
+        }))))
+        .catch((error) => { if (error?.name !== "AbortError") setOptions([]); });
+    }, 200);
+    return () => { controller.abort(); window.clearTimeout(timer); };
+  }, [query]);
+  return <label className="searchable-field">{label}
+    <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="氏名・部署・メールで候補を検索" />
+    <select value={value} onChange={(e) => onChange(e.target.value)}>
     <option value="">未設定</option>
     {options.map((o) => <option key={o.id} value={o.id}>{o.name}{o.department ? `（${o.department}）` : ""}</option>)}
   </select></label>;
@@ -105,6 +119,7 @@ export function MatterRegistry({ templates, selectedId, canEdit = false, canDele
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
   const [creating, setCreating] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(Boolean(selectedId));
   const labels = new Map(templates.map((item) => [item.templateKey, item.label]));
 
   useEffect(() => {
@@ -120,7 +135,6 @@ export function MatterRegistry({ templates, selectedId, canEdit = false, canDele
         .then((data) => {
           const rows = data.matters ?? [];
           setMatters(rows);
-          if (!detail && !creating && rows[0]) void selectMatter(rows[0].id);
         })
         .catch((cause) => { if (cause?.name !== "AbortError") setError("案件一覧を取得できませんでした。"); }).finally(() => setLoading(false));
     }, 250);
@@ -132,7 +146,12 @@ export function MatterRegistry({ templates, selectedId, canEdit = false, canDele
     if (response.ok) setDetail(await response.json());
     else setError("案件詳細を取得できませんでした。");
   }
-  useEffect(() => { if (selectedId) void selectMatter(selectedId); }, [selectedId]);
+  function openMatter(id: number) {
+    setCreating(false);
+    setDetailOpen(true);
+    void selectMatter(id);
+  }
+  useEffect(() => { if (selectedId) openMatter(selectedId); }, [selectedId]);
 
   function refreshAll(selected?: number) {
     setReload((value) => value + 1);
@@ -164,11 +183,13 @@ export function MatterRegistry({ templates, selectedId, canEdit = false, canDele
     .sort((a, b) => b.id - a.id);
 
   return <section className="page matter-page">
+    {(detailOpen || creating) && <button type="button" className="matter-back-button"
+      onClick={() => { setDetailOpen(false); setCreating(false); setDetail(null); }}>← 案件一覧へ戻る</button>}
     <div className="page-title"><div><p>MATTER WORKSPACE</p><h1>案件</h1>
       <small>依頼から作品・契約・文書・期限・次アクションまでを案件単位で管理します</small></div>
-      {canEdit && <button className="primary" onClick={() => { setCreating(true); setDetail(null); }}>＋ 新規案件</button>}
+      {canEdit && !detailOpen && !creating && <button className="primary" onClick={() => { setCreating(true); setDetailOpen(false); setDetail(null); }}>＋ 新規案件</button>}
     </div>
-    <div className="matter-toolbar">
+    {!detailOpen && !creating && <><div className="matter-toolbar">
       <input value={query} onChange={(event) => setQuery(event.target.value)}
         placeholder="案件番号、案件名、相手方、Backlogキーで検索" />
       <span>{loading ? "検索中…" : `${visible.length}件`}</span>
@@ -182,13 +203,14 @@ export function MatterRegistry({ templates, selectedId, canEdit = false, canDele
         </button>
       ))}
     </div>
+    </>}
     {error && <div className="async-error">{error}<button onClick={() => setReload((value) => value + 1)}>再試行</button></div>}
-    {freshRequests.length > 0 && filter !== "done" && filter !== "archived" && (
+    {!detailOpen && !creating && freshRequests.length > 0 && filter !== "done" && filter !== "archived" && (
       <div className="fresh-requests-band">
         <strong>📥 新着依頼（文書未作成 {freshRequests.length}件）</strong>
         <div className="fresh-requests-list">
           {freshRequests.slice(0, 8).map((m) => (
-            <button key={m.id} type="button" onClick={() => { setCreating(false); selectMatter(m.id); }}>
+            <button key={m.id} type="button" onClick={() => openMatter(m.id)}>
               <span>{m.primaryIssueKey ?? m.matterCode ?? `#${m.id}`}</span>
               <b>{m.title}</b>
               {m.counterparty && <small>{m.counterparty}</small>}
@@ -198,11 +220,11 @@ export function MatterRegistry({ templates, selectedId, canEdit = false, canDele
         </div>
       </div>
     )}
-    <div className="matter-layout">
-      <div className="matter-list">{visible.map((matter) => {
+    <div className={`matter-layout ${detailOpen || creating ? "matter-layout-full" : "matter-layout-list"}`}>
+      {!detailOpen && !creating && <div className="matter-list">{visible.map((matter) => {
         const overdue = isActive(matter) && isOverdue(matter.targetDueDate, today);
-        return <button key={matter.id} className={detail?.matter.id === matter.id ? "selected" : ""} onClick={() => { setCreating(false); selectMatter(matter.id); }}>
-          <div><span>{matter.matterCode ?? `#${matter.id}`}</span><strong>{matter.title}</strong><small>{matter.counterparty || "相手方未設定"}</small></div>
+        return <button key={matter.id} className={detail?.matter.id === matter.id ? "selected" : ""} onClick={() => openMatter(matter.id)}>
+          <div><span>{matter.matterCode ?? `#${matter.id}`} ・ {matterKindLabels[matter.matterKind] ?? matter.matterKind}</span><strong>{matter.title}</strong><small>{matter.counterparty || "相手方未設定"}</small></div>
           <div className="matter-card-meta"><span className={`matter-status ${matter.status}`}>{statusLabels[matter.status] ?? matter.status}</span>
             <small>{stageLabels[matter.lifecycleStage ?? ""] ?? "工程未設定"}</small>
             <small>文書 {matter.documentCount}・タスク {matter.openTaskCount}</small>
@@ -220,15 +242,15 @@ export function MatterRegistry({ templates, selectedId, canEdit = false, canDele
               description={canEdit ? "最初の案件を作成しましょう。" : "該当する案件がありません。"}
               actionLabel={canEdit ? "＋ 新規案件" : undefined}
               onAction={canEdit ? () => { setCreating(true); setDetail(null); } : undefined} />)}
-      </div>
+      </div>}
       {creating
         ? <MatterForm mode="create" onCancel={() => setCreating(false)}
-            onSaved={(id) => { setCreating(false); refreshAll(id); }} />
-        : <MatterDetail detail={detail} labels={labels} canEdit={canEdit} canDelete={canDelete}
+            onSaved={(id) => { setCreating(false); setDetailOpen(true); refreshAll(id); }} />
+        : detailOpen && <MatterDetail detail={detail} labels={labels} canEdit={canEdit} canDelete={canDelete}
             canUploadAttachments={canUploadAttachments} canRegisterPayments={canRegisterPayments}
             onCreateDocument={onCreateDocument}
             onChanged={() => refreshAll(detail?.matter.id)}
-            onDeleted={() => { setDetail(null); setReload((v) => v + 1); }}
+            onDeleted={() => { setDetail(null); setDetailOpen(false); setReload((v) => v + 1); }}
             onOpenDocument={onOpenDocument}
             onOpenWork={onOpenWork} />}
     </div>
@@ -261,7 +283,7 @@ function MatterDetail({ detail, labels, canEdit, canDelete = false, canUploadAtt
   return <section className="panel matter-detail matter-workspace-detail">
     <div className="matter-detail-head">
       <div><span className="detail-kicker">{matter.matterCode ?? `MATTER #${matter.id}`}</span><h2>{matter.title}</h2>
-        <p>{matter.counterparty || "相手方未設定"} ・ {matter.ownerName ?? "担当者未設定"}</p></div>
+        <p>{matterKindLabels[matter.matterKind] ?? matter.matterKind} ・ {matter.counterparty || "相手方未設定"} ・ {matter.ownerName ?? "担当者未設定"}</p></div>
       <div className="matter-detail-actions">
         {onCreateDocument && <button className="primary" onClick={() => onCreateDocument(matter.primaryIssueKey)}>
           {matter.primaryIssueKey ? "この依頼から文書作成" : "文書を作成"}</button>}
@@ -965,6 +987,12 @@ function InlineMatterControls({ matter, onChanged }:
     finally { setBusy(false); }
   }
   return <div className="matter-inline-controls">
+    <label>案件タイプ
+      <select value={matter.matterKind || "unclassified"} disabled={busy}
+        onChange={(e) => patch({ matterKind: e.target.value }, "案件タイプを更新しました")}>
+        {MATTER_KINDS.map((kind) => <option key={kind} value={kind}>{matterKindLabels[kind]}</option>)}
+      </select>
+    </label>
     <label>状態
       <select value={matter.status} disabled={busy}
         onChange={(e) => patch({ status: e.target.value }, "状態を更新しました")}>
@@ -983,6 +1011,7 @@ function InlineMatterControls({ matter, onChanged }:
 
 type MatterFormValues = {
   title: string; status: string; lifecycleStage: string; counterparty: string;
+  matterKind: string;
   primaryIssueKey: string; targetDueDate: string; blockedReason: string; remarks: string;
   ownerStaffId: string;
 };
@@ -993,29 +1022,34 @@ function MatterForm({ mode, matter, onCancel, onSaved }: {
   onSaved: (id: number) => void;
 }) {
   const [values, setValues] = useState<MatterFormValues>({
-    title: matter?.title ?? "", status: matter?.status ?? "open",
+    title: matter?.title ?? "", status: matter?.status ?? "open", matterKind: matter?.matterKind ?? "unclassified",
     lifecycleStage: matter?.lifecycleStage ?? "", counterparty: matter?.counterparty ?? "",
     primaryIssueKey: matter?.primaryIssueKey ?? "", targetDueDate: matter?.targetDueDate ?? "",
     blockedReason: matter?.blockedReason ?? "", remarks: matter?.remarks ?? "",
     ownerStaffId: matter?.ownerStaffId != null ? String(matter.ownerStaffId) : ""
   });
   const [vendors, setVendors] = useState<Array<{ id: string; label: string }>>([]);
-  const [staff, setStaff] = useState<Array<{ id: string; label: string }>>([]);
   const [requests, setRequests] = useState<Array<{ issueKey: string; summary: string }>>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const toast = useToast();
   useEffect(() => {
     const controller = new AbortController();
-    Promise.all([
-      fetch("/api/v2/master-data/search?type=vendor&q=&limit=50", { signal: controller.signal }).then((response) => response.ok ? response.json() : { items: [] }),
-      fetch("/api/v2/master-data/search?type=staff&q=&limit=50", { signal: controller.signal }).then((response) => response.ok ? response.json() : { items: [] }),
-      fetch("/api/v2/requests?limit=200", { signal: controller.signal }).then((response) => response.ok ? response.json() : { requests: [] })
-    ]).then(([vendorResult, staffResult, requestResult]) => {
-      setVendors(vendorResult.items ?? []); setStaff(staffResult.items ?? []); setRequests(requestResult.requests ?? []);
-    }).catch(() => undefined);
+    fetch("/api/v2/requests?limit=200", { signal: controller.signal })
+      .then((response) => response.ok ? response.json() : { requests: [] })
+      .then((result) => setRequests(result.requests ?? [])).catch(() => undefined);
     return () => controller.abort();
   }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      fetch(`/api/v2/master-data/search?type=vendor&q=${encodeURIComponent(values.counterparty)}&limit=60`, { signal: controller.signal })
+        .then((response) => response.ok ? response.json() : { items: [] })
+        .then((result) => setVendors(result.items ?? []))
+        .catch((cause) => { if (cause?.name !== "AbortError") setVendors([]); });
+    }, 200);
+    return () => { controller.abort(); window.clearTimeout(timer); };
+  }, [values.counterparty]);
   function set<K extends keyof MatterFormValues>(key: K, value: string) {
     setValues((prev) => ({ ...prev, [key]: value }));
   }
@@ -1025,6 +1059,7 @@ function MatterForm({ mode, matter, onCancel, onSaved }: {
     const body = {
       title: values.title.trim(),
       status: values.status,
+      matterKind: values.matterKind,
       lifecycleStage: values.lifecycleStage || null,
       counterparty: values.counterparty,
       primaryIssueKey: values.primaryIssueKey,
@@ -1056,6 +1091,8 @@ function MatterForm({ mode, matter, onCancel, onSaved }: {
     {error && <div className="async-error">{error}</div>}
     <label>案件名 *<input maxLength={500} value={values.title} onChange={(e) => set("title", e.target.value)} placeholder="案件名" /></label>
     <div className="matter-form-grid">
+      <label>案件タイプ<select value={values.matterKind} onChange={(e) => set("matterKind", e.target.value)}>
+        {MATTER_KINDS.map((kind) => <option key={kind} value={kind}>{matterKindLabels[kind]}</option>)}</select></label>
       <label>状態<select value={values.status} onChange={(e) => set("status", e.target.value)}>
         {MATTER_STATUSES.map((s) => <option key={s} value={s}>{statusLabels[s]}</option>)}</select></label>
       <label>工程<select value={values.lifecycleStage} onChange={(e) => set("lifecycleStage", e.target.value)}>

@@ -15,6 +15,8 @@ export interface QuickLine {
   vendorName: string;
   workTitle: string;
   currency: string | null;
+  territory?: string | null;
+  language?: string | null;
 }
 export interface QuickEconomics {
   representativeLineId: number;
@@ -82,6 +84,15 @@ export function buildQuickReceiptPatch(input: {
   const currency = (receipt.currency || "JPY").toUpperCase();
   const foreign = currency !== "JPY";
   const work = inLine.workTitle || outLine?.workTitle || "";
+  const transactionModelName = inLine.conditionName || economics.conditionName || "取引モデル未設定";
+  const scopeLine = transactionModelName.includes("自社製造") ? inLine : (outLine ?? inLine);
+  const territory = text(scopeLine.territory);
+  const language = text(scopeLine.language);
+  const productName = [
+    transactionModelName,
+    `許諾地域：${territory || "未設定"}`,
+    `許諾言語：${language || "未設定"}`
+  ].join(" ／ ");
   const existingReceipts = Array.isArray(input.existing?.rs_receipts)
     ? (input.existing!.rs_receipts as Array<Record<string, unknown>>).filter((r) => String(r.sublicensee ?? "").trim() || Number(r.amount) > 0)
     : [];
@@ -103,7 +114,12 @@ export function buildQuickReceiptPatch(input: {
     linked_contract_number: inLine.documentNumber ?? "",
     contractTitle: inLine.conditionName || economics.conditionName || "",
     originalWork: work,
-    productName: outLine?.conditionName || (work ? `${work}（サブライセンス受領分）` : "サブライセンス受領分"),
+    productName,
+    transactionModelName,
+    licenseTerritory: territory,
+    licenseLanguage: language,
+    licenseScopeSource: transactionModelName.includes("自社製造") || !outLine ? "in" : "out",
+    region_language_label: [territory, language].filter(Boolean).join("／"),
     // 入金元（アウト条件・サブライセンシー）
     payerCompany: sublicensee,
     royaltyCategory: "サブライセンス受領ベース",

@@ -24,6 +24,8 @@ export interface SettlementCondition {
   paymentTerms: string | null;
   royaltyBase: string | null;
   deductibleCosts: string | null;
+  territory: string | null;
+  language: string | null;
   parentLicenseConditionId: number | null;
   counterpartyVendorId: number | null;
   counterparty: string | null;
@@ -60,6 +62,10 @@ export interface SettlementPreview {
   trigger: SettlementTrigger;
   occurredAt: string;
   productName: string;
+  transactionModelName: string;
+  licenseTerritory: string;
+  licenseLanguage: string;
+  licenseScopeSource: "in" | "out";
   edition: string;
   quantity: number;
   sampleQuantity: number;
@@ -97,7 +103,11 @@ export class PgLicenseSettlementRepository implements LicenseSettlementRepositor
             OR COALESCE(cl.condition_name, '') ILIKE $1
             OR COALESCE(w.title, '') ILIKE $1
             OR COALESCE(v.vendor_name, '') ILIKE $1
-            OR COALESCE(d.document_number, '') ILIKE $1)
+            OR COALESCE(d.document_number, '') ILIKE $1
+            OR COALESCE(cl.region_territory, '') ILIKE $1
+            OR COALESCE(cl.region_language, '') ILIKE $1
+            OR EXISTS (SELECT 1 FROM condition_line_regions sr WHERE sr.condition_line_id = cl.id AND sr.country_name ILIKE $1)
+            OR EXISTS (SELECT 1 FROM condition_line_languages sl WHERE sl.condition_line_id = cl.id AND sl.language_name ILIKE $1))
         ORDER BY w.title NULLS LAST, cl.flow_direction NULLS LAST, cl.id DESC
         LIMIT $2`,
       [keyword, Math.min(Math.max(limit, 1), 500)]
@@ -148,6 +158,9 @@ export class PgLicenseSettlementRepository implements LicenseSettlementRepositor
     if (source.id !== target.id) {
       warnings.push(`OUT条件 #${source.id} を起点に、根拠IN条件 #${target.id} で支払額を計算しています。`);
     }
+    const product = settlementProductContext(source, target);
+    if (!product.licenseTerritory) warnings.push("製品名へ反映する許諾地域が条件に設定されていません。");
+    if (!product.licenseLanguage) warnings.push("製品名へ反映する許諾言語が条件に設定されていません。");
 
     const scheme = String(target.calcType ?? target.paymentScheme ?? "").toLowerCase();
     const rate = target.ratePct;
@@ -176,7 +189,11 @@ export class PgLicenseSettlementRepository implements LicenseSettlementRepositor
       settlementCondition: target,
       trigger: input.trigger,
       occurredAt: input.occurredAt,
-      productName: input.productName?.trim() || source.workTitle || target.workTitle || "対象取引",
+      productName: product.productName,
+      transactionModelName: product.transactionModelName,
+      licenseTerritory: product.licenseTerritory,
+      licenseLanguage: product.licenseLanguage,
+      licenseScopeSource: product.licenseScopeSource,
       edition: input.edition?.trim() || "",
       quantity,
       sampleQuantity,
@@ -200,6 +217,16 @@ const CONDITION_SELECT = `
          cl.payment_scheme, cl.calc_type, cl.rate_pct, cl.amount_ex_tax,
          cl.unit_amount, cl.mg_amount, cl.ag_amount, cl.currency,
          cl.payment_terms, cl.royalty_base, cl.deductible_costs,
+         COALESCE(
+           (SELECT string_agg(r.country_name, '・' ORDER BY r.sort_order, r.id)
+              FROM condition_line_regions r WHERE r.condition_line_id = cl.id),
+           NULLIF(cl.region_territory, '')
+         ) AS region_territory,
+         COALESCE(
+           (SELECT string_agg(l.language_name, '・' ORDER BY l.sort_order, l.id)
+              FROM condition_line_languages l WHERE l.condition_line_id = cl.id),
+           NULLIF(cl.region_language, '')
+         ) AS region_language,
          cl.parent_license_condition_id, cl.counterparty_vendor_id,
          w.work_code, w.title AS work_title,
          v.vendor_name AS counterparty,
@@ -236,6 +263,8 @@ function mapCondition(row: Record<string, any>): SettlementCondition {
     paymentTerms: row.payment_terms ?? null,
     royaltyBase: row.royalty_base ?? null,
     deductibleCosts: row.deductible_costs ?? null,
+    territory: row.region_territory ?? null,
+    language: row.region_language ?? null,
     parentLicenseConditionId: row.parent_license_condition_id === null
       ? null : Number(row.parent_license_condition_id),
     counterpartyVendorId: row.counterparty_vendor_id === null
@@ -264,6 +293,29 @@ function nonNegative(value: unknown) {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
+export function settlementProductContext(
+  source: SettlementCondition,
+  inbound: SettlementCondition
+) {
+  const transactionModelName = inbound.name.trim() || source.name.trim() || "取引モデル未設定";
+  const usesInboundScope = transactionModelName.includes("自社製造");
+  const scope = usesInboundScope ? inbound : source;
+  const licenseTerritory = String(scope.territory ?? "").trim();
+  const licenseLanguage = String(scope.language ?? "").trim();
+  const productName = [
+    transactionModelName,
+    `許諾地域：${licenseTerritory || "未設定"}`,
+    `許諾言語：${licenseLanguage || "未設定"}`
+  ].join(" ／ ");
+  return {
+    productName,
+    transactionModelName,
+    licenseTerritory,
+    licenseLanguage,
+    licenseScopeSource: (usesInboundScope || source.id === inbound.id ? "in" : "out") as "in" | "out"
+  };
+}
+
 export class SettlementError extends Error {
   constructor(readonly code: string, message: string) {
     super(message);
@@ -275,7 +327,7 @@ export class MemoryLicenseSettlementRepository implements LicenseSettlementRepos
   async listConditions(query = "", limit = 200) {
     const keyword = query.trim().toLowerCase();
     return this.conditions
-      .filter((c) => !keyword || [c.name, c.workTitle ?? "", c.counterparty ?? ""]
+      .filter((c) => !keyword || [c.name, c.workTitle ?? "", c.counterparty ?? "", c.territory ?? "", c.language ?? ""]
         .some((v) => v.toLowerCase().includes(keyword)))
       .slice(0, limit);
   }
@@ -297,13 +349,21 @@ export class MemoryLicenseSettlementRepository implements LicenseSettlementRepos
     const basisAmount = input.useNetBasis ? grossEventAmount - deductions : grossEventAmount;
     const rate = target.ratePct;
     const grossRoyalty = rate === null ? nonNegative(target.amountExTax) : basisAmount * rate / 100;
+    const product = settlementProductContext(source, target);
+    const warnings: string[] = [];
+    if (!product.licenseTerritory) warnings.push("製品名へ反映する許諾地域が条件に設定されていません。");
+    if (!product.licenseLanguage) warnings.push("製品名へ反映する許諾言語が条件に設定されていません。");
     return {
       sourceCondition: source, settlementCondition: target, trigger: input.trigger,
-      occurredAt: input.occurredAt, productName: input.productName ?? target.workTitle ?? "対象取引",
+      occurredAt: input.occurredAt, productName: product.productName,
+      transactionModelName: product.transactionModelName,
+      licenseTerritory: product.licenseTerritory,
+      licenseLanguage: product.licenseLanguage,
+      licenseScopeSource: product.licenseScopeSource,
       edition: input.edition ?? "", quantity, sampleQuantity, billableQuantity, unitBase,
       grossEventAmount, deductions, basisAmount, ratePct: rate, grossRoyalty,
       actualRoyalty: grossRoyalty, currency: target.currency, formula: rate === null
-        ? `条件金額 ${grossRoyalty}` : `${basisAmount} × ${rate}%`, warnings: []
+        ? `条件金額 ${grossRoyalty}` : `${basisAmount} × ${rate}%`, warnings
     };
   }
 }

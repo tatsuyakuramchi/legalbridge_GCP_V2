@@ -30,6 +30,8 @@ function condition(overrides: Partial<SettlementCondition>): SettlementCondition
     paymentTerms: "入金後30日",
     royaltyBase: "当社実受領額",
     deductibleCosts: "海外源泉税・送金手数料",
+    territory: "全世界",
+    language: "全言語",
     parentLicenseConditionId: null,
     counterpartyVendorId: 5,
     counterparty: "Creator A",
@@ -49,14 +51,16 @@ function condition(overrides: Partial<SettlementCondition>): SettlementCondition
 }
 
 test("sublicense receipt draft stores basis amount, currency-neutral display numbers and vendor bank data", async () => {
-  const inbound = condition({ id: 10 });
+  const inbound = condition({ id: 10, name: "再許諾" });
   const outbound = condition({
     id: 20,
     direction: "receivable",
     flowDirection: "out",
     parentLicenseConditionId: 10,
     counterparty: "Spiel GmbH",
-    ratePct: 8
+    ratePct: 8,
+    territory: "北欧",
+    language: "英語"
   });
   const drafts = new MemoryDraftRepository();
   const templates = new MemoryTemplateRepository([{
@@ -104,4 +108,11 @@ test("sublicense receipt draft stores basis amount, currency-neutral display num
   assert.equal(form.LICENSOR_SUFFIX, "様");
   assert.equal(form.source_out_condition_line_id, 20);
   assert.equal(form.source_condition_line_id, 10);
+  assert.equal(form.productName, "再許諾 ／ 許諾地域：北欧 ／ 許諾言語：英語");
+  assert.equal(form.transactionModelName, "再許諾");
+  assert.equal(form.licenseTerritory, "北欧");
+  assert.equal(form.licenseLanguage, "英語");
+  assert.equal(form.licenseScopeSource, "out");
+  assert.equal(form.region_language_label, "北欧／英語");
+  assert.equal(form.lines[0].region_language_label, "北欧／英語");
 });

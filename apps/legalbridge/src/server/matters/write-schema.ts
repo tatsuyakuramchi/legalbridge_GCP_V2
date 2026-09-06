@@ -11,6 +11,10 @@ export const LIFECYCLE_STAGES = [
   "completion_check", "completed", "cancelled"
 ] as const;
 export const TASK_STATUSES = ["open", "in_progress", "done", "cancelled"] as const;
+export const MATTER_KINDS = [
+  "unclassified", "contract_review", "legal_consultation", "license", "service",
+  "sales_purchase", "nda", "document_creation", "other"
+] as const;
 
 const trimmed = z.string().trim();
 const optionalText = (max: number) =>
@@ -32,6 +36,7 @@ const optionalTimestamp = z.string().trim().datetime({ offset: true })
 export const matterCreateSchema = z.object({
   title: trimmed.min(1, "案件名は必須です").max(500),
   status: z.enum(MATTER_STATUSES).default("open"),
+  matterKind: z.enum(MATTER_KINDS).default("unclassified"),
   lifecycleStage: z.enum(LIFECYCLE_STAGES).optional().nullable()
     .transform((value) => value ?? null),
   ownerStaffId: optionalStaffId,
@@ -51,6 +56,7 @@ export const matterCreateSchema = z.object({
 export const matterUpdateSchema = z.object({
   title: trimmed.min(1).max(500).optional(),
   status: z.enum(MATTER_STATUSES).optional(),
+  matterKind: z.enum(MATTER_KINDS).optional(),
   lifecycleStage: z.enum(LIFECYCLE_STAGES).nullable().optional(),
   ownerStaffId: z.coerce.number().int().positive().nullable().optional(),
   counterparty: nullableText(1000).optional(),

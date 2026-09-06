@@ -52,12 +52,23 @@ test("依頼者ロールは案件を編集できない", async () => {
 });
 
 test("案件を作成し自動採番の案件番号を返す", async () => {
-  const { app } = appFor({ enabled: true });
+  const { app, repository } = appFor({ enabled: true });
   const response = await request(app).post("/api/v2/matters")
-    .send({ title: "許諾案件A", counterparty: "取引先X", lifecycleStage: "drafting" });
+    .send({ title: "許諾案件A", matterKind: "license", counterparty: "取引先X", lifecycleStage: "drafting" });
   assert.equal(response.status, 201);
   assert.equal(typeof response.body.id, "number");
   assert.match(response.body.matterCode, /^MTR-\d{4}-\d{5}$/);
+  assert.equal(repository.matters.get(response.body.id)?.matterKind, "license");
+});
+
+test("案件タイプを編集でき、不正なタイプは拒否する", async () => {
+  const { app, repository } = appFor({ enabled: true });
+  const created = await request(app).post("/api/v2/matters").send({ title: "案件タイプ編集" });
+  const updated = await request(app).patch(`/api/v2/matters/${created.body.id}`).send({ matterKind: "service" });
+  assert.equal(updated.status, 200);
+  assert.equal(repository.matters.get(created.body.id)?.matterKind, "service");
+  const invalid = await request(app).patch(`/api/v2/matters/${created.body.id}`).send({ matterKind: "unknown" });
+  assert.equal(invalid.status, 400);
 });
 
 test("案件の不正な工程値を拒否する", async () => {

@@ -25,6 +25,8 @@ function condition(overrides: Partial<SettlementCondition>): SettlementCondition
     paymentTerms: "入金後30日",
     royaltyBase: "当社実受領額",
     deductibleCosts: "海外源泉税・送金手数料",
+    territory: "全世界",
+    language: "全言語",
     parentLicenseConditionId: null,
     counterpartyVendorId: 5,
     counterparty: "Creator A",
@@ -43,8 +45,8 @@ function condition(overrides: Partial<SettlementCondition>): SettlementCondition
   };
 }
 
-test("サブライセンス料入金はOUT条件から親IN条件を辿って精算する", async () => {
-  const inbound = condition({ id: 10, direction: "payable", flowDirection: "in", ratePct: 25 });
+test("再許諾は取引モデルをIN、地域と言語をOUTから引用して製品名を作る", async () => {
+  const inbound = condition({ id: 10, name: "再許諾", direction: "payable", flowDirection: "in", ratePct: 25 });
   const outbound = condition({
     id: 20,
     name: "Germany sublicense",
@@ -52,7 +54,9 @@ test("サブライセンス料入金はOUT条件から親IN条件を辿って精
     flowDirection: "out",
     ratePct: 8,
     parentLicenseConditionId: 10,
-    counterparty: "Spiel GmbH"
+    counterparty: "Spiel GmbH",
+    territory: "デンマーク・ノルウェー",
+    language: "デンマーク語・ノルウェー語"
   });
   const repo = new MemoryLicenseSettlementRepository([inbound, outbound]);
   const result = await repo.preview({
@@ -69,10 +73,12 @@ test("サブライセンス料入金はOUT条件から親IN条件を辿って精
   assert.equal(result.basisAmount, 7150);
   assert.equal(result.ratePct, 25);
   assert.equal(result.actualRoyalty, 1787.5);
+  assert.equal(result.productName, "再許諾 ／ 許諾地域：デンマーク・ノルウェー ／ 許諾言語：デンマーク語・ノルウェー語");
+  assert.equal(result.licenseScopeSource, "out");
 });
 
-test("製造イベントはサンプル数を除いた数量×基準単価×料率で計算する", async () => {
-  const inbound = condition({ id: 11, ratePct: 5, currency: "JPY" });
+test("自社製造・自社販売はIN条件の地域と言語を使う", async () => {
+  const inbound = condition({ id: 11, name: "自社製造・自社販売", ratePct: 5, currency: "JPY", territory: "日本", language: "日本語" });
   const repo = new MemoryLicenseSettlementRepository([inbound]);
   const result = await repo.preview({
     conditionLineId: 11,
@@ -86,6 +92,19 @@ test("製造イベントはサンプル数を除いた数量×基準単価×料�
   assert.equal(result.billableQuantity, 9900);
   assert.equal(result.grossEventAmount, 19800000);
   assert.equal(result.actualRoyalty, 990000);
+  assert.equal(result.productName, "自社製造・自社販売 ／ 許諾地域：日本 ／ 許諾言語：日本語");
+  assert.equal(result.licenseScopeSource, "in");
+});
+
+test("自社製造・他社販売もOUTではなくIN条件の地域と言語を使う", async () => {
+  const inbound = condition({ id: 13, name: "自社製造・他社販売", territory: "全世界", language: "全言語" });
+  const outbound = condition({ id: 14, name: "販売委託先", direction: "receivable", flowDirection: "out",
+    parentLicenseConditionId: 13, territory: "ドイツ", language: "ドイツ語" });
+  const result = await new MemoryLicenseSettlementRepository([inbound, outbound]).preview({
+    conditionLineId: 14, trigger: "sale", occurredAt: "2026-09-02T00:00:00+09:00", grossAmount: 1000
+  });
+  assert.equal(result.productName, "自社製造・他社販売 ／ 許諾地域：全世界 ／ 許諾言語：全言語");
+  assert.equal(result.licenseScopeSource, "in");
 });
 
 test("MG/AGをイベントごとに自動上乗せしない", async () => {

@@ -31,6 +31,7 @@ export interface MatterWriteRepository {
 const MATTER_COLUMNS: Record<string, string> = {
   title: "title",
   status: "status",
+  matterKind: "matter_kind",
   lifecycleStage: "lifecycle_stage",
   ownerStaffId: "owner_staff_id",
   counterparty: "counterparty",

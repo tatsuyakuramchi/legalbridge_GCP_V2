@@ -627,13 +627,12 @@ export function App() {
       // アウト（当社が受け取る）条件から: 入金元をその相手先にした「かんたん受領入力」から始める。
       // 支払先（イン条件）と入金額はフォームで選ぶ。
       const lineResponse = await fetch(`/api/v2/condition-lines/${conditionLineId}`);
-      const detail = lineResponse.ok ? (await lineResponse.json()).detail as { vendorName?: string; conditionName?: string; workTitle?: string; currency?: string | null } : null;
+      const detail = lineResponse.ok ? (await lineResponse.json()).detail as { vendorName?: string; conditionName?: string; workTitle?: string; currency?: string | null; territory?: string | null; language?: string | null } : null;
       const seed: DocumentFormData = {
         statementMode: "multi",
         payerCompany: detail?.vendorName ?? "",
         royaltyCategory: "サブライセンス受領ベース",
         ...(detail?.workTitle ? { originalWork: detail.workTitle } : {}),
-        ...(detail?.conditionName ? { productName: detail.conditionName } : {}),
         rs_receipts: detail?.vendorName ? [{ sublicensee: detail.vendorName, currency: detail.currency ?? "JPY", fxMode: "post" }] : []
       };
       setFormNonce((v) => v + 1);
