@@ -44,3 +44,19 @@ test("royalty statement compatibility knows receiptRows and moneyUnit are genera
   assert.equal(isTemplateGeneratedVariable("royalty_statement", "receiptRows"), true);
   assert.equal(isTemplateGeneratedVariable("royalty_statement", "moneyUnit"), true);
 });
+
+// テンプレ 079（業務委託条件・検収の選択値ブロック）の表示フラグ。値が無ければ描かない＝旧文書の出力は不変。
+test("service flow blocks: hasServiceTerms / hasInspectionChoices are set only when a selection exists", () => {
+  const master = buildTemplateDocumentContext("service_master", { SERVICE_ENGAGEMENT_TYPE: "請負" });
+  assert.equal(master.hasServiceTerms, true);
+  assert.equal(buildTemplateDocumentContext("service_master", { PROJECT_TITLE: "x" }).hasServiceTerms, false);
+  const po = buildTemplateDocumentContext("purchase_order", { WITHHOLDING_TAX: "対象", items: [] });
+  assert.equal(po.hasServiceTerms, true);
+  assert.equal(buildTemplateDocumentContext("purchase_order", { items: [] }).hasServiceTerms, false);
+  const inspection = buildTemplateDocumentContext("inspection_certificate", { INSPECTION_RESULT: "合格", delivery_line_items: [] });
+  assert.equal(inspection.hasInspectionChoices, true);
+  assert.equal(buildTemplateDocumentContext("inspection_certificate", { delivery_line_items: [] }).hasInspectionChoices, false);
+  for (const [key, variable] of [["purchase_order", "hasServiceTerms"], ["intl_purchase_order", "WITHHOLDING_TAX"], ["inspection_certificate", "hasInspectionChoices"]]) {
+    assert.equal(isTemplateGeneratedVariable(key, variable), true, `${key}.${variable}`);
+  }
+});

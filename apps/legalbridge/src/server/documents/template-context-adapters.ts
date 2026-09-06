@@ -11,18 +11,24 @@ const GENERATED_VARIABLES: Record<string, string[]> = {
     "SERVICE_CATEGORY", "業務区分", "COMPENSATION_TYPE", "報酬方式",
     "DELIVERABLE_REQUIRED", "成果物有無", "INSPECTION_REQUIRED", "検収要否",
     "IP_OWNERSHIP", "知的財産権帰属", "SUBCONTRACTING_POLICY", "再委託条件",
-    "PERSONAL_DATA_HANDLING", "個人情報取扱い", "RENEWAL_TYPE", "更新方法"
+    "PERSONAL_DATA_HANDLING", "個人情報取扱い", "RENEWAL_TYPE", "更新方法",
+    "hasServiceTerms"
   ],
   purchase_order: [
     "BANK_INFO", "DELIVERY_DATE", "REMARKS", "expenses", "expensesTotalIncTax",
     "financial_conditions", "has_license_conditions", "has_performance_incentive",
     "has_seller_owned_license", "items", "order_date", "発行日",
-    "other_fees", "otherFeesTotal", "summaryDeliveryDate", "summaryPaymentDate"
+    "other_fees", "otherFeesTotal", "summaryDeliveryDate", "summaryPaymentDate",
+    // 業務委託の選択値（発注書フォームの ServiceOrderControls・テンプレ 079 のブロック）
+    "SERVICE_ENGAGEMENT_TYPE", "SERVICE_CATEGORY", "DELIVERABLE_REQUIRED", "IP_OWNERSHIP", "WITHHOLDING_TAX",
+    "契約類型", "業務区分", "成果物有無", "検収要否", "知的財産権帰属", "hasServiceTerms"
   ],
   intl_purchase_order: [
     "CALC_METHOD", "PAYMENT_TERMS", "REMARKS_FIXED", "REMARKS_FREE",
     "financial_conditions", "has_license_conditions", "has_seller_owned_license",
-    "items", "itemsSubtotalExTax"
+    "items", "itemsSubtotalExTax",
+    "SERVICE_ENGAGEMENT_TYPE", "SERVICE_CATEGORY", "DELIVERABLE_REQUIRED", "IP_OWNERSHIP", "WITHHOLDING_TAX",
+    "契約類型", "業務区分", "成果物有無", "検収要否", "知的財産権帰属", "hasServiceTerms"
   ],
   individual_license_terms: [
     "financial_conditions", "work_id", "サブライセンシー一覧", "ライセンス種別名",
@@ -49,7 +55,9 @@ const GENERATED_VARIABLES: Record<string, string[]> = {
     "expensesTotalIncTaxStr", "grandTotalPayableStr", "hasChangeLogs",
     "hasPerformanceRoyalty", "otherFeesTaxable", "otherFeesTotalStr",
     "other_fees", "performanceRoyaltyLines", "projectTitle",
-    "taxableSubtotalExTaxStr", "taxableTotalIncTaxStr"
+    "taxableSubtotalExTaxStr", "taxableTotalIncTaxStr",
+    // 検収の確認方法・判定・支払処理（検収書フォームの選択項目・テンプレ 079 のブロック）
+    "INSPECTION_METHOD", "INSPECTION_RESULT", "PAYMENT_STATUS", "hasInspectionChoices"
   ],
   individual_license_terms_v3: ["xxx"]
 };
@@ -90,6 +98,8 @@ function buildServiceMasterContext(source: Data) {
   const renewal = pick(source, "RENEWAL_TYPE", "更新方法");
   return {
     ...source,
+    // テンプレ 079 の「業務委託条件の概要」ブロックを描くか（選択値が 1 つでもあるとき）。
+    hasServiceTerms: Boolean(engagement || category || compensation || deliverable || inspection || ip || subcontracting || personalData || renewal),
     SERVICE_ENGAGEMENT_TYPE: engagement, CONTRACT_TYPE: engagement, 契約類型: engagement, 業務類型: engagement,
     SERVICE_CATEGORY: category, 業務区分: category,
     COMPENSATION_TYPE: compensation, 報酬方式: compensation,
@@ -135,6 +145,8 @@ function buildPurchaseOrderContext(source: Data) {
     成果物有無: pick(source, "DELIVERABLE_REQUIRED", "成果物有無"),
     検収要否: pick(source, "INSPECTION_REQUIRED", "検収要否"),
     知的財産権帰属: pick(source, "IP_OWNERSHIP", "知的財産権帰属"),
+    // テンプレ 079 の「業務委託の条件」ブロックを描くか（選択値が 1 つでもあるとき）。
+    hasServiceTerms: Boolean(pick(source, "SERVICE_ENGAGEMENT_TYPE", "SERVICE_CATEGORY", "DELIVERABLE_REQUIRED", "IP_OWNERSHIP", "WITHHOLDING_TAX")),
     items,
     expenses,
     financial_conditions: financialConditions,
@@ -380,6 +392,8 @@ function buildInspectionContext(source: Data) {
     changeLogs,
     hasChangeLogs: changeLogs.length > 0,
     hasPerformanceRoyalty: performanceRoyaltyLines.length > 0,
+    // テンプレ 079 の「確認方法・判定・支払処理」ブロックを描くか（選択値が 1 つでもあるとき）。
+    hasInspectionChoices: Boolean(pick(source, "INSPECTION_METHOD", "INSPECTION_RESULT", "PAYMENT_STATUS")),
     performanceRoyaltyLines,
     otherFeesTaxable: otherFeesExTax > 0,
     projectTitle: pick(source, "projectTitle", "PROJECT_TITLE", "subject"),
