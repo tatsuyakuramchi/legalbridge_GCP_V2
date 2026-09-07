@@ -8,6 +8,9 @@ import { ConditionWriteService } from "./conditions/write-service.js";
 import { MatterRepository } from "./matters/repository.js";
 import { WorkRepository } from "./works/repository.js";
 import { checkAgainstEnvelope } from "./works/envelope.js";
+import { DocumentRepository } from "./documents/repository.js";
+import { DocumentIssueService } from "./documents/issue-service.js";
+import { ChromiumPdfRenderer, MemoryPdfRenderer, type PdfRenderer } from "./documents/pdf-renderer.js";
 
 const asyncRoute =
   (handler: (req: Request, res: Response) => Promise<unknown>) =>
@@ -19,6 +22,10 @@ export function createRoutes(database: Transactable) {
   const conditionWrites = new ConditionWriteService(database);
   const matters = new MatterRepository(database);
   const works = new WorkRepository(database);
+  const documents = new DocumentRepository(database);
+  const issues = new DocumentIssueService(database);
+  const pdf: PdfRenderer = process.env.PDF_RENDERER === "memory"
+    ? new MemoryPdfRenderer() : new ChromiumPdfRenderer();
   const actor = (res: Response) => res.locals.currentUser?.email ?? "unknown";
 
   // ---- 案件（制御レイヤー） ----
@@ -115,6 +122,75 @@ export function createRoutes(database: Transactable) {
     const envelope = await works.envelope(id);
     if (!envelope) return res.status(404).json({ error: "作品が見つかりません" });
     res.json({ envelope, parts: await works.parts(id) });
+  }));
+
+  // ---- 文書 ----
+  router.get("/document-templates", asyncRoute(async (_req, res) => {
+    res.json({ templates: await documents.listTemplates() });
+  }));
+
+  router.get("/documents", asyncRoute(async (req, res) => {
+    res.json({ documents: await documents.list({
+      keyword: String(req.query.q ?? ""),
+      status: req.query.status ? String(req.query.status) : undefined,
+      matterId: req.query.matterId ? Number(req.query.matterId) : undefined
+    }) });
+  }));
+
+  router.get("/documents/:id", asyncRoute(async (req, res) => {
+    const detail = await documents.find(Number(req.params.id));
+    if (!detail) return res.status(404).json({ error: "文書が見つかりません" });
+    res.json(detail);
+  }));
+
+  const draftSchema = z.object({
+    templateKey: z.string().trim().min(1).max(60),
+    conditionIds: z.array(z.coerce.number().int().positive()).max(200).default([]),
+    matterId: z.coerce.number().int().positive().nullable().optional(),
+    agreementId: z.coerce.number().int().positive().nullable().optional(),
+    manualInputs: z.record(z.string(), z.unknown()).default({})
+  });
+
+  // 発行せずに中身と未入力を確認する。
+  router.post("/documents/preview",
+    requireRole("admin", "legal"),
+    asyncRoute(async (req, res) => {
+      const input = draftSchema.parse(req.body ?? {});
+      const result = await issues.preview(input);
+      res.json({
+        html: result.html,
+        templateLabel: result.templateLabel,
+        missing: result.binding.missing,
+        derived: result.binding.derived,
+        values: result.binding.values
+      });
+    }));
+
+  router.post("/documents",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = draftSchema.parse(req.body ?? {});
+      res.status(201).json(await issues.createDraft(input, actor(res)));
+    }));
+
+  router.post("/documents/:id/issue",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await issues.issue(Number(req.params.id), actor(res)));
+    }));
+
+  router.get("/documents/:id/html", asyncRoute(async (req, res) => {
+    const rendered = await issues.renderIssued(Number(req.params.id));
+    res.type("html").send(rendered.html);
+  }));
+
+  router.get("/documents/:id/pdf", asyncRoute(async (req, res) => {
+    const rendered = await issues.renderIssued(Number(req.params.id));
+    const buffer = await pdf.render(rendered.html);
+    res.type("application/pdf")
+       .setHeader("content-disposition",
+         `attachment; filename="${rendered.documentNo ?? `document-${req.params.id}`}.pdf"`);
+    res.send(buffer);
   }));
 
   return router;

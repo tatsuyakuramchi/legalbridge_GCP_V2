@@ -111,9 +111,12 @@ ON CONFLICT (matter_id, target_type, target_ref) DO NOTHING;
 -- ---------------------------------------------------------------------
 -- 採番（prefix は kind をそのまま引き継ぐ）
 -- ---------------------------------------------------------------------
+-- prefix は基底（ARC- を除いた部分）で持つ。アプリの採番も基底で引くため、
+-- 移行時に正規化しないと連番が振り出しに戻る。
 INSERT INTO v3.document_sequences (prefix, year, current_value)
-SELECT s.kind, s.year, COALESCE(s.current_value, 0)
+SELECT regexp_replace(upper(btrim(s.kind)), '^ARC-', ''), s.year, COALESCE(s.current_value, 0)
   FROM public.document_sequences s
+ WHERE btrim(COALESCE(s.kind, '')) <> ''
 ON CONFLICT (prefix, year) DO UPDATE SET
   current_value = GREATEST(v3.document_sequences.current_value, EXCLUDED.current_value);
 
