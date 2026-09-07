@@ -96,15 +96,15 @@ test("自社製造・自社販売はIN条件の地域と言語を使う", async 
   assert.equal(result.licenseScopeSource, "in");
 });
 
-test("自社製造・他社販売もOUTではなくIN条件の地域と言語を使う", async () => {
+test("自社製造・他社販売はOUT条件（販売先）の地域と言語を使う（イン側は自社製造・自社販売だけ）", async () => {
   const inbound = condition({ id: 13, name: "自社製造・他社販売", territory: "全世界", language: "全言語" });
   const outbound = condition({ id: 14, name: "販売委託先", direction: "receivable", flowDirection: "out",
     parentLicenseConditionId: 13, territory: "ドイツ", language: "ドイツ語" });
   const result = await new MemoryLicenseSettlementRepository([inbound, outbound]).preview({
     conditionLineId: 14, trigger: "sale", occurredAt: "2026-09-02T00:00:00+09:00", grossAmount: 1000
   });
-  assert.equal(result.productName, "自社製造・他社販売 ／ 許諾地域：全世界 ／ 許諾言語：全言語");
-  assert.equal(result.licenseScopeSource, "in");
+  assert.equal(result.productName, "自社製造・他社販売 ／ 許諾地域：ドイツ ／ 許諾言語：ドイツ語");
+  assert.equal(result.licenseScopeSource, "out");
 });
 
 test("MG/AGをイベントごとに自動上乗せしない", async () => {

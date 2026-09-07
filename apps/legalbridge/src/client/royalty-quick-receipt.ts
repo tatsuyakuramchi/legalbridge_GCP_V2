@@ -7,6 +7,7 @@
 // （statementMode: multi）で共有エンジンが行う。
 
 import type { DocumentFormData } from "../types";
+import { usesInboundLicenseScope } from "../license-scope";
 
 export interface QuickLine {
   id: number;
@@ -85,7 +86,7 @@ export function buildQuickReceiptPatch(input: {
   const foreign = currency !== "JPY";
   const work = inLine.workTitle || outLine?.workTitle || "";
   const transactionModelName = inLine.conditionName || economics.conditionName || "取引モデル未設定";
-  const scopeLine = transactionModelName.includes("自社製造") ? inLine : (outLine ?? inLine);
+  const scopeLine = usesInboundLicenseScope(transactionModelName) ? inLine : (outLine ?? inLine);
   const territory = text(scopeLine.territory);
   const language = text(scopeLine.language);
   const productName = [
@@ -121,7 +122,7 @@ export function buildQuickReceiptPatch(input: {
     transactionModelName,
     licenseTerritory: territory,
     licenseLanguage: language,
-    licenseScopeSource: transactionModelName.includes("自社製造") || !outLine ? "in" : "out",
+    licenseScopeSource: usesInboundLicenseScope(transactionModelName) || !outLine ? "in" : "out",
     region_language_label: [territory, language].filter(Boolean).join("／"),
     // 入金元（アウト条件・サブライセンシー）
     payerCompany: sublicensee,

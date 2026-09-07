@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { usesInboundLicenseScope } from "../license-scope";
 
 type Condition = {
   id: number; name: string; workId: number | null; workCode: string | null; workTitle: string | null;
@@ -253,7 +254,7 @@ function preferredCondition(rows: Condition[]) {
 }
 function productContext(source: Condition, inbound: Condition) {
   const transactionModelName = inbound.name.trim() || source.name.trim() || "取引モデル未設定";
-  const useInbound = transactionModelName.includes("自社製造") || source.id === inbound.id;
+  const useInbound = usesInboundLicenseScope(transactionModelName) || source.id === inbound.id;
   const scope = useInbound ? inbound : source;
   const territory = scope.territory?.trim() ?? "";
   const language = scope.language?.trim() ?? "";

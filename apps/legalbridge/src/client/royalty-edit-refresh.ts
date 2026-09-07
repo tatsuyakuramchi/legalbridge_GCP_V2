@@ -1,4 +1,5 @@
 import type { DocumentFormData } from "../types";
+import { usesInboundLicenseScope } from "../license-scope";
 
 type ProductPreview = {
   productName: string;
@@ -66,7 +67,7 @@ export async function refreshRoyaltyProductForEdit(
       if (!inboundPreview) {
         return { formData, changed: false, message: "IN条件から製品名を再取得できませんでした。" };
       }
-      if (inboundPreview.transactionModelName.includes("自社製造")) {
+      if (usesInboundLicenseScope(inboundPreview.transactionModelName)) {
         return refreshed(formData, inboundPreview);
       }
       return await refreshReceiptProducts(
@@ -85,7 +86,7 @@ export async function refreshRoyaltyProductForEdit(
     if (!inboundPreview) {
       return { formData, changed: false, message: "IN条件から製品名を再取得できませんでした。" };
     }
-    if (inboundPreview.transactionModelName.includes("自社製造")) {
+    if (usesInboundLicenseScope(inboundPreview.transactionModelName)) {
       return refreshed(formData, inboundPreview);
     }
 

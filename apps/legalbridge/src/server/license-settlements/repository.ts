@@ -1,4 +1,5 @@
 import type { DatabasePool } from "../db/pool.js";
+import { usesInboundLicenseScope } from "../../license-scope.js";
 
 export type SettlementTrigger =
   | "manufacturing"
@@ -298,7 +299,8 @@ export function settlementProductContext(
   inbound: SettlementCondition
 ) {
   const transactionModelName = inbound.name.trim() || source.name.trim() || "取引モデル未設定";
-  const usesInboundScope = transactionModelName.includes("自社製造");
+  // 自社製造・自社販売だけイン側の許諾範囲（license-scope.ts）。アウト条件が無い（source==inbound）ときもイン側。
+  const usesInboundScope = usesInboundLicenseScope(transactionModelName) || source.id === inbound.id;
   const scope = usesInboundScope ? inbound : source;
   const licenseTerritory = String(scope.territory ?? "").trim();
   const licenseLanguage = String(scope.language ?? "").trim();
