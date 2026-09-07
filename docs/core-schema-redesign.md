@@ -21,6 +21,8 @@
 | 5 | **自由キーのJSONを業務データにしない** | `form_data` の10種の相手先キー |
 | 6 | **金額は最小通貨単位の整数、料率は百万分率の整数** | numeric混在と `Math.ceil` の散在 |
 | 7 | **監査は1表に集約、append-only** | `lb_v2_*` 12表 |
+| 8 | **案件は制御であって所有ではない** | 案件が終わると条件・作品も追えなくなる運用 |
+| 9 | **合意・条件・実績を3層に分ける** | 契約情報が `documents` と `contracts` に二重に載る構造 |
 
 ---
 
@@ -356,7 +358,9 @@ CREATE TABLE document_sequences (
 CREATE TABLE matters (
   id bigserial PRIMARY KEY, matter_no text UNIQUE,
   title text NOT NULL,
-  kind text NOT NULL DEFAULT 'unclassified',
+  -- フロー種別＝制御列。必須項目・検査・使えるテンプレートをこれが決める（§2.9）。
+  kind text NOT NULL DEFAULT 'single'
+       CHECK (kind IN ('work', 'outsourcing', 'single')),
   status text NOT NULL CHECK (status IN ('open','waiting','blocked','done','canceled')),
   owner_staff_id bigint REFERENCES staff(id),
   counterparty_id bigint REFERENCES parties(id),
@@ -432,7 +436,91 @@ CREATE VIEW v_condition_balance AS   -- MG/AG消化・残高・消化率
 CREATE VIEW v_document_display AS    -- 件名・相手先の解決を1箇所に（キー乱立の代替）
 CREATE VIEW v_deadlines AS           -- 依頼・契約満了・納品・支払を統合
 CREATE VIEW v_rights_sources AS      -- conditions WHERE direction='in'（現 material_rights_sources）
+CREATE VIEW v_work_rights_envelope AS -- 作品ごとに「許諾できる上限」（§2.9）
 ```
+
+### 2.9 運用モデル（案件の位置づけと3層）
+
+物理の軸は条件だが、**運用の軸は別**である。この二つを混同すると画面も権限も破綻する。
+
+#### 案件は制御レイヤー、所有レイヤーではない
+
+作業はすべて案件から入る。案件の `kind`（フロー種別）が、必須項目・検査・使えるテンプレートを決める。
+
+| フロー種別 | 対象 | 段階 |
+|---|---|---|
+| `work` 作品フロー | 権利の取得と展開 | 上限確認 → 条件合意 → 契約書 → 実績 → 計算書と分配 |
+| `outsourcing` 業務委託フロー | 制作の発注 | 基本契約 → 発注 → 納品 → 検収 → 支払 |
+| `single` 単発フロー | NDA・通知書・法務相談 | 受付 → ひな形選定 → 締結 → 完了 |
+
+`single` は**条件を持たない案件**である。金銭条件も権利の移動も伴わない案件が実運用の1〜2割を占めるため、
+条件を必須にしない設計が要る。
+
+ただし**案件は条件・作品・取引先を所有しない**。これらは案件より寿命が長いからである。
+
+| | 案件 | 条件・作品・取引先 |
+|---|---|---|
+| 役割 | 制御（入口・種別・必須項目・検査） | 実体 |
+| 関係 | `matter_links` で束ねる（参照） | 束ねられる |
+| 案件完了後 | 閉じる | 残る |
+
+所有にできない理由は具体的である。ある作品の挿絵の取得は案件A、繁体字許諾は案件B、
+グッズ許諾は案件Cで起きる。**「この作品で許諾できる上限」はこの3案件を横断しないと計算できない**。
+支払も同様で、1回の振込が複数案件の実績をまとめることがある。
+
+#### 合意・条件・実績の3層
+
+```
+agreements   合意（器）      … 相手先・契約期間・自動更新・更新通告・契約書
+  conditions 条件（中身）    … 金額・範囲・税区分・支払サイクル・有効期間
+    condition_events 実績    … 期間経過・納品・販売・入金
+```
+
+分ける理由は**変わる頻度が違う**こと。契約は続いたまま金額だけが改定されるのが普通で、
+そのとき合意はそのまま、条件だけが `superseded_by_id` で世代交代する。
+
+```
+AGR-2024-0117  顧問契約書（自動更新・3か月前通告）2024-04 〜
+├ CL-2024-00050  月額10万                2024-04 〜 2026-03  [改訂済]
+├ CL-2026-00077  月額12万                2026-04 〜          [有効]
+└ CL-2026-00078  実費精算（kind=expense）2026-04 〜          [有効]
+```
+
+1つの合意に複数の条件がぶら下がるのも普通である（顧問料・スポット単価・実費は税区分も支払サイクルも違う）。
+個別の相談は案件として起こし、`matter_links` から**条件**を参照する（合意ではない。
+どの世代の条件を消化したのかが要るため）。
+
+#### 作品の権利包絡
+
+OUT条件の照合は、個々のIN条件ではなく**構成パート全部のIN条件の積**に対して行う。
+
+```sql
+CREATE VIEW v_work_rights_envelope AS ...
+-- 作品ごとに、地域・言語・媒体・期間・独占・再許諾の各次元について
+-- 取得済みIN条件の積（＝許諾できる上限）と、その次元を狭めている条件IDを返す。
+```
+
+個々のIN条件と照合すると誤判定する。本文の取得条件が商品化まで含んでいても、
+挿絵の取得条件が出版・電子配信までなら、**作品としては商品化できない**。
+「本文の範囲内だから通す」を防ぐには積で見る必要がある。
+
+#### 成果物を伴わない役務（顧問・コンサル・保守）
+
+追加の列も種別も要らない。`kind='service'` の条件を1行持ち、
+**支払の起点だけを `condition_schedules.trigger_kind` で区別する**。
+
+| | trigger_kind | 支払の起点 |
+|---|---|---|
+| 成果物ありの業務委託 | `on_inspection` | 検収 |
+| 顧問・コンサル・保守 | `periodic` | 期間の経過 |
+
+案件のフロー種別は `outsourcing` を流用し、`periodic` のときは納品・検収の段階を出さない。
+相手先が個人のときの支払期日の検査は、条件として持っている以上そのまま効く（追加実装は不要）。
+
+込み枠と超過（月5時間まで、超過は時間単価）および業務範囲の照合は**現段階では対象外**とする。
+必要になった時点で `conditions` に `included_quantity` と `recurrence` を足し、
+`condition_scopes.scope_type` に `service` を加えれば足りる。
+
 
 ---
 
@@ -457,7 +545,7 @@ CREATE VIEW v_rights_sources AS      -- conditions WHERE direction='in'（現 ma
 | **`documents`(36列)** | **`documents`(12列)** ＋ `document_conditions` | 契約業務列12・スナップショット9を廃止 |
 | `document_drafts` | `documents`(status='draft') | 別表をやめる |
 | `document_number_history` / `document_sends` | `audit_events` | 統合 |
-| `matters` / `matter_issues` / `matter_tasks` / `legal_requests` / `issue_workflows` | `matters` / `matter_links` / `tasks` | **5表→3表**。トリガ廃止 |
+| `matters` / `matter_issues` / `matter_tasks` / `legal_requests` / `issue_workflows` | `matters` / `matter_links` / `tasks` | **5表→3表**。トリガ廃止。`matters.kind` が制御列になる（§2.9） |
 | `lb_v2_*` 12表 | `audit_events` | **12表→1表** |
 | `app_settings` / `department_workflow_rules` | `settings` | 統合 |
 
@@ -469,6 +557,8 @@ CREATE VIEW v_rights_sources AS      -- conditions WHERE direction='in'（現 ma
 
 | 現行の問題 | 新設計での解消理由 |
 |---|---|
+| 許諾範囲の判定が甘い | 個々のIN条件ではなく作品の権利包絡（積）と照合する |
+| 条件を持たない案件の居場所がない | `matters.kind='single'` として種別のひとつになる |
 | 編集が一部にしか効かない | 事実の保存先が1箇所。ファンアウトが存在しない |
 | `documents.contract_title` を直せない | 列自体が無い。件名は `agreements.title` の1箇所 |
 | 相手先が10種のキーで散る | `conditions.counterparty_id` の1箇所。テンプレ変数は出力時のバインドのみ |
