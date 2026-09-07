@@ -124,9 +124,10 @@ function navGroups(access: {
       ...(access.legalWorkspace ? [{ view: "condition-first" as const, label: "条件を登録する", description: "業務委託・利用許諾の条件明細を作り、最後に文書へ紐づける（条件明細が正）", match: ["condition-first" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "follow-up" as const, label: "後続文書", description: "検収書・利用許諾料計算書を、登録済みの発注書・条件明細から作る", match: ["follow-up" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "work-intake" as const, label: "作品登録", description: "原作・素材・既存文書まで一括登録（条件は「条件を登録する」で入力）", match: ["work-intake" as const] }] : []),
-      ...(access.legalWorkspace ? [{ view: "works" as const, label: "作品", description: "作品を起点に系譜・素材・条件・権利ソースを一望", match: ["works" as const] }] : []),
+      // 作品画面は main（作品・権利）の新画面に統一（2026-09-07）。旧「作品」詳細（権利ソース・素材の
+      // 編集）は新画面の「詳細編集（旧）」からだけ開く。
+      ...(access.legalWorkspace ? [{ view: "works-rights" as const, label: "作品", description: "作品を起点に素材・権利ソース・IN/OUT条件・関連契約・系譜を一望", match: ["works-rights" as const, "license-contract" as const, "works" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "conditions" as const, label: "条件明細", description: "契約条件の横断検索・消化・検収", match: ["conditions" as const] }] : []),
-      ...(access.legalWorkspace ? [{ view: "works-rights" as const, label: "作品・権利", description: "作品・素材・権利ソース・IN/OUT条件のマトリクスと系譜", match: ["works-rights" as const, "license-contract" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "license-contract" as const, label: "ライセンス契約", description: "作品と元IN条件を選んで新規ライセンス契約の下書きを作る（許諾範囲チェック付き）", match: ["license-contract" as const] }] : []),
       ...(access.legalWorkspace ? [{ view: "outbound" as const, label: "アウト条件", description: "サブライセンス（アウト）条件の登録・元IN条件との許諾範囲照合", match: ["outbound" as const] }] : [])
     ] },
@@ -174,8 +175,8 @@ function breadcrumbFor(view: View): Array<{ label: string; view?: View }> {
     "legal-requests": [home, { label: "法務依頼" }],
     deadlines: [home, { label: "期限" }],
     matters: [home, { label: "案件" }],
-    "works-rights": [home, { label: "作品・権利" }],
-    "license-contract": [home, { label: "作品・権利", view: "works-rights" }, { label: "新規ライセンス契約" }],
+    "works-rights": [home, { label: "作品" }],
+    "license-contract": [home, { label: "作品", view: "works-rights" }, { label: "新規ライセンス契約" }],
     "license-settlements": [home, { label: "利用許諾料精算" }],
     outbound: [home, { label: "アウト条件" }],
     documents: [home, { label: "文書" }],
@@ -185,7 +186,7 @@ function breadcrumbFor(view: View): Array<{ label: string; view?: View }> {
     ledgers: [home, { label: "台帳" }],
     "contract-intake": [home, { label: "契約取込" }],
     requests: [home, { label: "依頼" }],
-    works: [home, { label: "作品" }],
+    works: [home, { label: "作品", view: "works-rights" }, { label: "詳細編集（旧）" }],
     "work-intake": [home, { label: "作品登録" }],
     "condition-first": [home, { label: "条件を登録する" }],
     "follow-up": [home, { label: "後続文書" }],
@@ -254,7 +255,14 @@ export function App() {
   // 作品詳細を開き直すたびに再取得させる（同じ作品IDで戻ると key が変わらず、条件登録後の
   // 台帳の変化が画面に出なかった＝2026-09-04 の指摘）。
   const [worksNonce, setWorksNonce] = useState(0);
+  // 作品を開く＝新画面（作品・権利）。旧詳細（WorkDetail）は openLegacyWork でだけ開く。
   const openWork = (workId: number | null) => {
+    setDrillWorkId(workId);
+    setWorkRightsInitialId(workId ?? undefined);
+    setWorksNonce((n) => n + 1);
+    setView("works-rights");
+  };
+  const openLegacyWork = (workId: number | null) => {
     setDrillWorkId(workId);
     setWorksNonce((n) => n + 1);
     setView("works");
@@ -803,7 +811,7 @@ export function App() {
                 <strong>作成・関連付け</strong>
                 <button onClick={() => { setGlobalCreateOpen(false); setView("matters"); }}>案件</button>
                 <button onClick={() => { setGlobalCreateOpen(false); setNewDocIssueKey(""); setView("templates"); }}>文書</button>
-                <button onClick={() => { setGlobalCreateOpen(false); setView("works-rights"); }}>作品・権利</button>
+                <button onClick={() => { setGlobalCreateOpen(false); setView("works-rights"); }}>作品</button>
                 <button onClick={() => { setGlobalCreateOpen(false); setLicenseRequestIssueKey(""); setLicenseWorkId(undefined); setLicenseSourceConditionId(undefined); setView("license-contract"); }}>ライセンス契約</button>
                 <button onClick={() => { setGlobalCreateOpen(false); setView("outbound"); }}>アウト条件</button>
                 <button onClick={() => { setGlobalCreateOpen(false); setView("conditions"); }}>条件</button>
@@ -873,7 +881,13 @@ export function App() {
           onOpenWork={(id) => openWork(id)}
           selectedId={searchSelection?.target === "matter" ? Number(searchSelection.id) : undefined} />}
         {view === "works-rights" && legalWorkspace && <WorkRightsWorkspace
+          key={`wr:${workRightsInitialId ?? ""}:${worksNonce}`}
           initialWorkId={workRightsInitialId}
+          canEdit={canEditWorks}
+          onEditWork={(workId) => { setEditIntakeWorkId(workId); setView("work-intake"); }}
+          onEnterConditions={(workId) => enterConditions(workId)}
+          onFollowUp={(_workId, title) => openFollowUp(title)}
+          onOpenLegacyDetail={(workId) => openLegacyWork(workId)}
           onStartLicenseContract={(workId, _workTitle, sourceConditionId) => {
             setLicenseRequestIssueKey(""); setLicenseWorkId(workId); setLicenseSourceConditionId(sourceConditionId); setView("license-contract");
           }}
@@ -903,7 +917,7 @@ export function App() {
           initialType={ledgerSeedType ?? (searchSelection?.target === "work" ? "works" : searchSelection?.target === "vendor" ? "vendors" : undefined)}
           initialQuery={searchSelection?.target === "work" || searchSelection?.target === "vendor" ? searchSelection.title : undefined}
           selectedId={searchSelection?.target === "work" || searchSelection?.target === "vendor" ? searchSelection.id : undefined}
-          onNavigate={(t) => setView(t as View)} />}
+          onNavigate={(t) => { if (t === "works") openWork(null); else setView(t as View); }} />}
         {view === "contract-intake" && adminWorkspace && (
           <ContractChainWizard
             canCommit={canCommitContractIntake}
@@ -947,7 +961,7 @@ export function App() {
         {view === "data-quality" && <DataQuality onNavigate={(v, id) => {
           setMergeSourceSeed((v === "vendor-merge" || v === "matter-merge") && id != null ? String(id) : "");
           // 監査指摘：works/conditions への「開く」が行 id を捨てていた → 詳細を直接開く。
-          setDrillWorkId(v === "works" && id != null ? id : null);
+          if (v === "works") { openWork(id ?? null); return; }
           setDrillConditionId(v === "conditions" && id != null ? id : null);
           setView(v as View);
         }} />}

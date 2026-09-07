@@ -38,11 +38,22 @@ type Tab = "overview" | "materials" | "rights" | "conditions" | "contracts" | "l
 export function WorkRightsWorkspace({
   initialWorkId,
   onStartLicenseContract,
-  onStartSettlement
+  onStartSettlement,
+  canEdit = false,
+  onEditWork,
+  onEnterConditions,
+  onFollowUp,
+  onOpenLegacyDetail
 }: {
   initialWorkId?: number;
   onStartLicenseContract: (workId: number, workTitle: string, sourceConditionId?: number) => void;
   onStartSettlement: (workId: number, workTitle: string) => void;
+  // 旧「作品」画面（WorkDetail）から引き継いだ操作（作品画面の統一 2026-09-07）。
+  canEdit?: boolean;
+  onEditWork?: (workId: number) => void;                 // 作品登録と同じウィザードで一括編集
+  onEnterConditions?: (workId: number) => void;          // 条件を登録する（条件明細が正）
+  onFollowUp?: (workId: number, workTitle: string) => void; // 後続文書（検収書・計算書）
+  onOpenLegacyDetail?: (workId: number) => void;         // 権利ソース・素材の編集（旧詳細）
 }) {
   const [query, setQuery] = useState("");
   const [works, setWorks] = useState<WorkSummary[]>([]);
@@ -100,6 +111,14 @@ export function WorkRightsWorkspace({
         <small>原作・自社作品・派生作品と素材、権利ソース、IN/OUT条件を作品起点で管理します。</small>
       </div>
       {detail && <div className="actions">
+        {canEdit && onEditWork && <button onClick={() => onEditWork(detail.work.id)}
+          title="登録画面と同じ流れ（基本情報→原作→素材→既存文書）で一括編集します">一括編集</button>}
+        {onEnterConditions && <button onClick={() => onEnterConditions(detail.work.id)}
+          title="業務委託・利用許諾の条件明細を作り、最後に文書へ紐づけます（条件明細が正）">条件を登録する</button>}
+        {onFollowUp && <button onClick={() => onFollowUp(detail.work.id, detail.work.title)}
+          title="登録済みの発注書・条件明細から検収書・利用許諾料計算書を作ります">後続文書</button>}
+        {onOpenLegacyDetail && <button onClick={() => onOpenLegacyDetail(detail.work.id)}
+          title="権利ソース・素材の追加/編集は旧詳細画面で行います">詳細編集（旧）</button>}
         <button onClick={() => onStartSettlement(detail.work.id, detail.work.title)}>利用許諾料を精算</button>
         <button className="primary" onClick={() => onStartLicenseContract(detail.work.id, detail.work.title)}>＋ ライセンス契約</button>
       </div>}
