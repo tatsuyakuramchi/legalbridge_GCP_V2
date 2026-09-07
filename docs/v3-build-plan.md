@@ -24,7 +24,7 @@
 | 1-6 | `infra/v3/040_migrate_documents.sql` — テンプレ・文書・文書条件・採番 | **完了**（同上） |
 | 1-7 | `infra/v3/090_verify.sql` — 件数・整合・欠落の検算 | **完了**（同上） |
 | 1-8 | `infra/v3/005_preflight.sql` — 移行元の列の実在確認 | **完了** |
-| 1-9 | `infra/v3/003_grants.sql` — `legalbridge_v3_runtime` の権限 | 未 |
+| 1-9 | `infra/v3/003_grants.sql` — `legalbridge_v3_runtime` の権限 | **完了**（付与結果を検証） |
 
 ### 検証の状況
 
@@ -179,7 +179,34 @@ V3 で足したのは単位の橋渡しと、確定の手続き。
 新規に書くのは**書込層だけ**。事実単位のサービスが `v3` の保存先を1トランザクションで更新する
 （`docs/edit-fanout-audit.md` の対処B）。
 
+### 支払（着手済み）
+
+計算書から支払を起こす経路を作り、**条件と実績への割当を必須**にした。
+V2 には割当の表が無く、根拠のない支払行が宙に浮いていた。
+
+取適法の期日検査（`payments/compliance.ts`）を純関数で置き、受領日から60日以内を
+上限として判定する。超過したら `data_quality_issues` に残し、支払を記録したら閉じる。
+対象（特定受託事業者＝個人）と社内基準としての参考値（法人）は verdict で区別する。
+
+### 権限（`003_grants.sql`）
+
+`legalbridge_v3_runtime` は **`v3` スキーマだけ**を触る。`public` には USAGE すら与えない。
+これが V1 と並行稼働するあいだの安全境界になる。
+
+| 対象 | 権限 |
+|---|---|
+| ビュー | SELECT のみ |
+| `audit_events` | SELECT / INSERT のみ（追記専用） |
+| `party_bank_accounts` | 権限なし（経理出力を開けるときだけ別途付与） |
+| `document_templates` / `_versions` | SELECT のみ（本文は互換境界） |
+| その他の実テーブル | SELECT / INSERT / UPDATE / DELETE |
+| TRUNCATE | どの表にも与えない |
+
+スクリプトの末尾で付与結果を出し、想定外が0件であることを確認する。
+
 ## Step 3 — Cloud Run へのデプロイ
+
+成果物は `Dockerfile.v3` と `infra/v3/cloudbuild.yaml`。
 
 - 既存の `legalbridge` サービスとは別に `legalbridge-v3` を作成
 - 接続先は同一Cloud SQLインスタンス、`search_path=v3`
