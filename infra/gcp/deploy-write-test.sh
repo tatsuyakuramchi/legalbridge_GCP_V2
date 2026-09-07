@@ -87,8 +87,10 @@ echo "採用ビルド: ${LAST_BUILD}"
 if ! gcloud builds describe "${LAST_BUILD}" --project "${PROJECT}" --format=json > "${FLAGS_FILE}.raw" 2>/dev/null; then
   echo "配信中イメージのタグ ${LAST_BUILD} は Cloud Build の ID ではありません（別経路でデプロイされた版）。"
   echo "同じサービス（${FLAGS_FROM}）向けの直近の成功ビルドから設定を引き継ぎます…"
-  LAST_BUILD="$(gcloud builds list --project "${PROJECT}" --limit=50 --sort-by=~createTime --format=json \
-    | jq -r --arg s "${FLAGS_FROM}" '[.[] | select(.status == "SUCCESS" and .substitutions._SERVICE == $s)][0].id // empty')"
+  # 50 件分の全 JSON を取って jq で絞ると数分かかる（2026-09-07 に 2 回足踏み）。
+  # サーバー側フィルタで 1 件だけ取る。
+  LAST_BUILD="$(gcloud builds list --project "${PROJECT}" --limit=1 --sort-by=~createTime \
+    --filter="status=SUCCESS AND substitutions._SERVICE=${FLAGS_FROM}" --format='value(id)')"
   [ -n "${LAST_BUILD}" ] || die "${FLAGS_FROM} 向けの成功ビルドが見つかりません。FLAGS_FROM=<設定を引き継ぐサービス名> を指定してください"
   echo "採用ビルド（代替）: ${LAST_BUILD}"
   gcloud builds describe "${LAST_BUILD}" --project "${PROJECT}" --format=json > "${FLAGS_FILE}.raw"
