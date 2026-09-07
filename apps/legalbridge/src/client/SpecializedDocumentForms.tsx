@@ -462,6 +462,11 @@ function rows(value: unknown): Row[] {
 // テンプレート変数はサーバ（template-context-adapters）が共有エンジンで組み立てる。
 // 多明細はサブライセンシーごとの入金行＝行ごとに通貨・換算方法を持てる
 // （交換前=入金日レートで円換算 / 交換後=円転済み額＋適用レートは記録として印字）。
+type OutCandidate = {
+  id: number; name: string; direction: string | null; parentLicenseConditionId: number | null;
+  counterparty: string | null; territory: string | null; language: string | null; workTitle: string | null;
+};
+
 function RoyaltyStatementEditor({ formData, onChange }: {
   formData: DocumentFormData;
   onChange: (name: string, value: unknown) => void;
@@ -482,6 +487,73 @@ function RoyaltyStatementEditor({ formData, onChange }: {
     </label>;
   const replaceReceipt = (index: number, patch: Row) =>
     onChange("rs_receipts", receipts.map((row, i) => i === index ? { ...row, ...patch } : row));
+
+  // 受領行ごとの製品名（取引形態 ／ 許諾地域 ／ 許諾言語）は、その入金元のアウト条件から決める。
+  // 同じ入金元に複数のアウト条件（地域・言語違い）があると自動では特定できず、明細名が
+  // サブライセンシー名のまま出ていた（2026-09-07 の指摘）ので、行ごとに候補から選べるようにする。
+  const inboundId = Number(formData.rsConditionLineId ?? formData.source_condition_line_id) || null;
+  const [outCandidates, setOutCandidates] = useState<Record<string, OutCandidate[]>>({});
+  const payers = mode === "multi"
+    ? [...new Set(receipts.map((row) => String(row.sublicensee ?? "").trim()).filter(Boolean))]
+    : [];
+  const payersKey = payers.join(" ");
+  useEffect(() => {
+    let cancelled = false;
+    for (const payer of payers) {
+      if (outCandidates[payer]) continue;
+      fetch(`/api/v2/license-settlements/conditions?q=${encodeURIComponent(payer)}&limit=300`)
+        .then((response) => response.ok ? response.json() : { conditions: [] })
+        .then((data: { conditions?: OutCandidate[] }) => {
+          if (cancelled) return;
+          const mine = (data.conditions ?? []).filter((c) =>
+            c.direction === "receivable" && String(c.counterparty ?? "").trim() === payer);
+          // 親がこの計算書のイン条件のものを優先。無ければ相手先一致のアウト条件すべて。
+          const strict = inboundId ? mine.filter((c) => c.parentLicenseConditionId === inboundId) : [];
+          setOutCandidates((prev) => ({ ...prev, [payer]: strict.length ? strict : mine }));
+        })
+        .catch(() => { if (!cancelled) setOutCandidates((prev) => ({ ...prev, [payer]: [] })); });
+    }
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [payersKey, inboundId]);
+  async function applyOutCondition(index: number, conditionLineId: number) {
+    const row = receipts[index];
+    const occurredAt = String(row?.receivedOn ?? "").trim() || new Date().toISOString().slice(0, 10);
+    const response = await fetch("/api/v2/license-settlements/preview", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ conditionLineId, trigger: "sublicense_receipt", occurredAt })
+    });
+    const data = await response.json().catch(() => ({})) as {
+      error?: string;
+      preview?: { productName?: string; transactionModelName?: string; licenseTerritory?: string; licenseLanguage?: string; licenseScopeSource?: string };
+    };
+    if (!response.ok || !data.preview?.productName) {
+      window.alert(data.error ?? "アウト条件から製品名を取得できませんでした");
+      return;
+    }
+    const p = data.preview;
+    replaceReceipt(index, {
+      source_out_condition_line_id: conditionLineId,
+      productName: p.productName,
+      transactionModelName: p.transactionModelName ?? "",
+      licenseTerritory: p.licenseTerritory ?? "",
+      licenseLanguage: p.licenseLanguage ?? "",
+      licenseScopeSource: p.licenseScopeSource ?? "out",
+      region_language_label: [p.licenseTerritory, p.licenseLanguage].filter(Boolean).join("／")
+    });
+  }
+  // 候補が 1 つだけで製品名も未設定の行は自動で当てる（複数候補は利用者が選ぶ）。
+  useEffect(() => {
+    if (mode !== "multi") return;
+    receipts.forEach((row, index) => {
+      const payer = String(row.sublicensee ?? "").trim();
+      const list = payer ? outCandidates[payer] : undefined;
+      if (list?.length === 1 && !String(row.productName ?? "").trim() && !row.source_out_condition_line_id) {
+        void applyOutCondition(index, list[0].id);
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [outCandidates, payersKey]);
   const jpyBase = (row: Row): number => {
     const amount = Number(String(row.amount ?? "").replace(/,/g, "")) || 0;
     const isPre = String(row.fxMode ?? "pre") !== "post";
@@ -568,16 +640,32 @@ function RoyaltyStatementEditor({ formData, onChange }: {
       <p className="hint-note">行ごとに通貨・換算方法を持てます。<b>交換前</b>＝外貨入金→入金日レートで円換算（round）／<b>交換後</b>＝円転済みの円額を base に、適用レートは記録として PDF に印字。</p>
       {receipts.length > 0 && <div className="table-scroll"><table className="receipt-lines-table">
         <thead><tr>
-          <th>サブライセンシー</th><th>受領日</th><th>通貨</th><th className="right">入金額</th>
+          <th>サブライセンシー</th><th>対象製品（アウト条件）</th><th>受領日</th><th>通貨</th><th className="right">入金額</th>
           <th>換算</th><th className="right">レート</th><th className="right">円換算 base</th><th aria-label="操作"></th>
         </tr></thead>
         <tbody>
           {receipts.map((row, index) => {
             const isPost = String(row.fxMode ?? "pre") === "post";
             const foreign = String(row.currency ?? "JPY").toUpperCase() !== "JPY";
+            const payer = String(row.sublicensee ?? "").trim();
+            const candidates = payer ? (outCandidates[payer] ?? []) : [];
             return <tr key={index}>
               <td><input value={String(row.sublicensee ?? "")}
                 onChange={(event) => replaceReceipt(index, { sublicensee: event.target.value })} /></td>
+              <td className="product-cell">
+                <input value={String(row.productName ?? "")} placeholder="未設定＝サブライセンシー名で印字"
+                  title="PDF の明細「製品名」。アウト条件を選ぶと 取引形態／許諾地域／許諾言語 で自動生成（手修正可）"
+                  onChange={(event) => replaceReceipt(index, { productName: event.target.value })} />
+                {candidates.length > 0 && <select value={String(row.source_out_condition_line_id ?? "")}
+                  onChange={(event) => { const id = Number(event.target.value); if (id) void applyOutCondition(index, id); }}>
+                  <option value="">アウト条件から選ぶ…</option>
+                  {candidates.map((c) => <option key={c.id} value={c.id}>
+                    {`#${c.id} ${c.name}｜${c.territory || "地域未設定"}｜${c.language || "言語未設定"}`}
+                  </option>)}
+                </select>}
+                {payer && candidates.length === 0 && outCandidates[payer] &&
+                  <small className="fx-warn">この入金元のアウト条件が見つかりません（製品名は手入力）</small>}
+              </td>
               <td><input type="date" value={String(row.receivedOn ?? "")}
                 onChange={(event) => replaceReceipt(index, { receivedOn: event.target.value })} /></td>
               <td><input className="currency" value={String(row.currency ?? "JPY")}

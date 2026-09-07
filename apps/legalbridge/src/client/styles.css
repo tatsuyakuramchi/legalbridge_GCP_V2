@@ -2953,3 +2953,9 @@ button.request-chip.interactive:hover { border-color:#20b8cd; background:#f0fbfc
 .service-flow-records .record b { color: #172a44; }
 .service-flow-records .record small { color: #64748b; }
 .service-flow-records .record button { margin-left: auto; font-size: 12px; padding: 4px 10px; }
+
+/* 計算書（多明細）の受領行: 対象製品（アウト条件から選ぶ／手修正）列 */
+.receipt-lines-table td.product-cell { min-width: 260px; }
+.receipt-lines-table td.product-cell input { width: 100%; box-sizing: border-box; }
+.receipt-lines-table td.product-cell select { width: 100%; margin-top: 4px; font-size: 12px; }
+.receipt-lines-table td.product-cell small { display: block; margin-top: 2px; }
