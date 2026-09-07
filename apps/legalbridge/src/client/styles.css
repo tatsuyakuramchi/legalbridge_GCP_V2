@@ -2959,3 +2959,23 @@ button.request-chip.interactive:hover { border-color:#20b8cd; background:#f0fbfc
 .receipt-lines-table td.product-cell input { width: 100%; box-sizing: border-box; }
 .receipt-lines-table td.product-cell select { width: 100%; margin-top: 4px; font-size: 12px; }
 .receipt-lines-table td.product-cell small { display: block; margin-top: 2px; }
+
+/* 条件明細の編集（項目単位）・文書の紐づけ */
+.condition-edit { margin: 12px 0; padding: 12px 14px; border: 1px solid var(--line, #d9d9d9); border-radius: 8px; background: var(--surface-soft, #fafafa); }
+.condition-edit h3 { margin: 0 0 6px; font-size: 15px; }
+.condition-edit h4 { margin: 10px 0 4px; font-size: 13px; }
+.condition-edit .field-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px 12px; margin-bottom: 8px; }
+.condition-edit label { display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; }
+.condition-edit label > span { color: var(--ink-soft, #666); font-size: 11.5px; }
+.condition-edit input, .condition-edit select, .condition-edit textarea { font-size: 13px; }
+.condition-edit-doc { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line, #d9d9d9); }
+.document-picker { margin-top: 6px; }
+.document-picker label { display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; }
+.document-picker-hits { list-style: none; margin: 4px 0 0; padding: 0; max-height: 220px; overflow: auto; border: 1px solid var(--line, #d9d9d9); border-radius: 6px; background: #fff; }
+.document-picker-hits li button { width: 100%; text-align: left; padding: 6px 8px; border: 0; background: transparent; cursor: pointer; font-size: 13px; }
+.document-picker-hits li button:hover { background: var(--surface-soft, #f2f4f7); }
+.condition-linked-docs { margin-top: 14px; }
+.condition-linked-docs h3 { margin: 0 0 4px; font-size: 15px; }
+.linked-doc-list { list-style: none; margin: 6px 0; padding: 0; }
+.linked-doc-list li { padding: 5px 0; border-bottom: 1px solid var(--line, #eee); font-size: 13px; }
+.linked-doc-list li .link-button { margin-left: 8px; }

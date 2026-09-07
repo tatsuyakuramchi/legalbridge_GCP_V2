@@ -1428,7 +1428,7 @@ export function createApp(
       (request.method === "PUT" && /^\/condition-receipts\/\d+$/.test(request.path));
     if (receiptWriteEnabled && isReceiptWrite) return next();
     const isConditionRepair =
-      request.method === "PATCH" && /^\/condition-lines\/\d+\/counterparty$/.test(request.path);
+      request.method === "PATCH" && /^\/condition-lines\/\d+(\/counterparty)?$/.test(request.path);
     if (conditionLineRepairEnabled && isConditionRepair) return next();
 
     // 案件Slack（スレッド作成・投稿・定型文）。許可リスト漏れで一律 403 になっていた（回帰修正）。

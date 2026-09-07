@@ -118,6 +118,33 @@ export interface ConditionOverlap {
   lines: ConditionOverlapLine[];
 }
 
+// 条件明細の詳細編集（2026-09-07）。画面（条件明細 → 詳細 → 編集）から項目単位で直す。
+// undefined の項目は触らない。regions / languages は名前の配列（コードは任意）で丸ごと置き換え。
+// documentId は「元文書（この条件明細が属する文書）」の付け替え＝紐づけ。null で外す。
+export interface ConditionLineUpdate {
+  conditionName?: string;
+  currency?: string | null;
+  amountExTax?: number | null;
+  mgAmount?: number | null;
+  agAmount?: number | null;
+  ratePct?: number | null;
+  termStart?: string | null;
+  termEnd?: string | null;
+  exclusivity?: string | null;
+  sublicenseAllowed?: boolean | null;
+  paymentScheme?: string | null;
+  paymentTerms?: string | null;
+  royaltyBase?: string | null;
+  deductibleCosts?: string | null;
+  notes?: string | null;
+  transactionKind?: string | null;
+  workId?: number | null;
+  documentId?: number | null;
+  parentLicenseConditionId?: number | null;
+  regions?: Array<{ code: string | null; name: string }>;
+  languages?: Array<{ code: string | null; name: string }>;
+}
+
 export interface ConditionLineRepository {
   list(query: string, limit?: number): Promise<ConditionLineRow[]>;
   summary(): Promise<ConditionLineSummaryRow[]>;
@@ -126,10 +153,35 @@ export interface ConditionLineRepository {
   overlap(workId: number): Promise<ConditionOverlap>;
   // 相手方の後付け補修（Phase 17・V1遺産データの取引先欠落用・guarded write）。
   updateCounterparty(id: number, vendorId: number): Promise<{ id: number; vendorName: string }>;
+  // 項目単位の編集（guarded write・同じ condition-repair スコープ）。
+  update(id: number, patch: ConditionLineUpdate): Promise<{ id: number }>;
 }
 
+// 編集可能な列（画面の項目 → 列名）。ここに無い項目は書かない。
+const UPDATABLE_COLUMNS: Record<keyof Omit<ConditionLineUpdate, "regions" | "languages">, string> = {
+  conditionName: "condition_name",
+  currency: "currency",
+  amountExTax: "amount_ex_tax",
+  mgAmount: "mg_amount",
+  agAmount: "ag_amount",
+  ratePct: "rate_pct",
+  termStart: "term_start",
+  termEnd: "term_end",
+  exclusivity: "exclusivity",
+  sublicenseAllowed: "sublicense_allowed",
+  paymentScheme: "payment_scheme",
+  paymentTerms: "payment_terms",
+  royaltyBase: "royalty_base",
+  deductibleCosts: "deductible_costs",
+  notes: "notes",
+  transactionKind: "transaction_kind",
+  workId: "work_id",
+  documentId: "document_id",
+  parentLicenseConditionId: "parent_license_condition_id"
+};
+
 export class ConditionRepairError extends Error {
-  constructor(message: string, readonly code: "LINE_NOT_FOUND" | "VENDOR_NOT_FOUND") {
+  constructor(message: string, readonly code: "LINE_NOT_FOUND" | "VENDOR_NOT_FOUND" | "WORK_NOT_FOUND" | "DOCUMENT_NOT_FOUND") {
     super(message);
     this.name = "ConditionRepairError";
   }
@@ -283,6 +335,64 @@ export class PgConditionLineRepository implements ConditionLineRepository {
         ? languages.rows.map((r) => String(r.language_name)).filter(Boolean)
         : legacyScopeNames(row.region_language)
     };
+  }
+
+  // 項目単位の編集（grant 066: condition_lines の UPDATE・regions/languages の INSERT/DELETE）。
+  // 1 トランザクション。document_id を付け替えるときは capability_id も揃える（moveConditions と同じ）。
+  async update(id: number, patch: ConditionLineUpdate): Promise<{ id: number }> {
+    const sets: string[] = [];
+    const values: unknown[] = [id];
+    for (const [key, column] of Object.entries(UPDATABLE_COLUMNS) as Array<[keyof typeof UPDATABLE_COLUMNS, string]>) {
+      if (patch[key] === undefined) continue;
+      values.push(patch[key]);
+      sets.push(`${column} = $${values.length}`);
+      if (key === "documentId") sets.push(`capability_id = $${values.length}`);
+    }
+    if (patch.regions !== undefined) {
+      values.push(patch.regions.map((r) => r.name).join("・") || null);
+      sets.push(`region_territory = $${values.length}`);
+    }
+    if (patch.languages !== undefined) {
+      values.push(patch.languages.map((l) => l.name).join("・") || null);
+      sets.push(`region_language = $${values.length}`);
+    }
+    if (patch.workId !== undefined && patch.workId !== null) {
+      const work = await this.database.query("SELECT id FROM works WHERE id = $1", [patch.workId]);
+      if (!work.rows[0]) throw new ConditionRepairError(`作品 ${patch.workId} が見つかりません`, "WORK_NOT_FOUND");
+    }
+    if (patch.documentId !== undefined && patch.documentId !== null) {
+      const doc = await this.database.query("SELECT id FROM documents WHERE id = $1", [patch.documentId]);
+      if (!doc.rows[0]) throw new ConditionRepairError(`文書 ${patch.documentId} が見つかりません`, "DOCUMENT_NOT_FOUND");
+    }
+    const client = await this.database.connect();
+    try {
+      await client.query("BEGIN");
+      const updated = await client.query(
+        `UPDATE condition_lines SET ${[...sets, "updated_at = now()"].join(", ")} WHERE id = $1 RETURNING id`,
+        values
+      );
+      if (!updated.rows[0]) throw new ConditionRepairError(`条件明細 ${id} が見つかりません`, "LINE_NOT_FOUND");
+      for (const [table, prefix, items] of [
+        ["condition_line_regions", "country", patch.regions],
+        ["condition_line_languages", "language", patch.languages]
+      ] as Array<[string, string, ConditionLineUpdate["regions"]]>) {
+        if (items === undefined) continue;
+        await client.query(`DELETE FROM ${table} WHERE condition_line_id = $1`, [id]);
+        for (let i = 0; i < items.length; i += 1) {
+          await client.query(
+            `INSERT INTO ${table} (condition_line_id, ${prefix}_code, ${prefix}_name, sort_order) VALUES ($1, $2, $3, $4)`,
+            [id, items[i].code, items[i].name, i]
+          );
+        }
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+    return { id };
   }
 
   // 相手方の後付け補修（guarded・grant 018 の列レベル UPDATE counterparty_vendor_id を再利用）。
@@ -487,6 +597,21 @@ export class MemoryConditionLineRepository implements ConditionLineRepository {
       paymentScheme: null, paymentTerms: null, royaltyBase: null, deductibleCosts: null,
       agAmount: null, notes: null, regions: [], languages: [], consumption: null
     };
+  }
+  async update(id: number, patch: ConditionLineUpdate): Promise<{ id: number }> {
+    const row = this.rows.find((r) => r.id === id);
+    if (!row) throw new ConditionRepairError(`条件明細 ${id} が見つかりません`, "LINE_NOT_FOUND");
+    if (patch.conditionName !== undefined) row.conditionName = patch.conditionName;
+    if (patch.currency !== undefined) row.currency = patch.currency;
+    if (patch.amountExTax !== undefined) row.amountExTax = patch.amountExTax;
+    if (patch.mgAmount !== undefined) row.mgAmount = patch.mgAmount;
+    if (patch.ratePct !== undefined) row.ratePct = patch.ratePct;
+    if (patch.termStart !== undefined) row.termStart = patch.termStart;
+    if (patch.transactionKind !== undefined) row.transactionKind = patch.transactionKind;
+    if (patch.documentId !== undefined) row.documentId = patch.documentId;
+    if (patch.regions !== undefined) row.territory = patch.regions.map((r) => r.name).join("・") || null;
+    if (patch.languages !== undefined) row.language = patch.languages.map((l) => l.name).join("・") || null;
+    return { id };
   }
   async updateCounterparty(id: number, vendorId: number): Promise<{ id: number; vendorName: string }> {
     const vendorName = this.vendors.get(vendorId);

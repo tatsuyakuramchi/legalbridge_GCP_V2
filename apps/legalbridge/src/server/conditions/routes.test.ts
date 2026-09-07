@@ -145,3 +145,32 @@ test("相手方補修: 存在しない取引先は400・存在しない明細は
   assert.equal(missing.status, 404);
   assert.equal(missing.body.code, "LINE_NOT_FOUND");
 });
+
+// --- 項目単位の編集（2026-09-07・PATCH /condition-lines/:id） ---
+test("条件明細の編集: 金額・地域・言語・元文書を更新し、更新後の詳細を返す", async () => {
+  const { app } = repairApp([row({ id: 1 })], { enabled: true, role: "legal" });
+  const res = await request(app).patch("/api/v2/condition-lines/1").send({
+    conditionName: "許諾A（改）", amountExTax: "120,000", ratePct: 12, termStart: "2026-04-01",
+    regions: [{ code: "US", name: "アメリカ" }, { name: "カナダ" }], languages: [{ code: "en", name: "英語" }],
+    documentId: 22, sublicenseAllowed: true, notes: "更新メモ"
+  });
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.equal(res.body.detail.conditionName, "許諾A（改）");
+  assert.equal(res.body.detail.amountExTax, 120000);
+  assert.equal(res.body.detail.ratePct, 12);
+  assert.equal(res.body.detail.termStart, "2026-04-01");
+  assert.equal(res.body.detail.territory, "アメリカ・カナダ");
+  assert.equal(res.body.detail.language, "英語");
+  assert.equal(res.body.detail.documentId, 22);
+});
+
+test("条件明細の編集: 未有効・権限なし・空パッチ・不明IDを弾く", async () => {
+  const disabled = repairApp([row({ id: 1 })], { enabled: false, role: "legal" });
+  assert.equal((await request(disabled.app).patch("/api/v2/condition-lines/1").send({ notes: "x" })).status, 503);
+  const requester = repairApp([row({ id: 1 })], { enabled: true, role: "requester" });
+  assert.equal((await request(requester.app).patch("/api/v2/condition-lines/1").send({ notes: "x" })).status, 403);
+  const { app } = repairApp([row({ id: 1 })], { enabled: true, role: "admin" });
+  assert.equal((await request(app).patch("/api/v2/condition-lines/1").send({})).status, 400);
+  assert.equal((await request(app).patch("/api/v2/condition-lines/1").send({ unknownField: 1 })).status, 400);
+  assert.equal((await request(app).patch("/api/v2/condition-lines/999").send({ notes: "x" })).status, 404);
+});

@@ -987,6 +987,7 @@ export function App() {
           key={drillConditionId ?? "conditions"} initialSelectedId={drillConditionId}
           onRecordReceipt={canRecordReceipt ? (conditionLineId) => { setDrillReceiptConditionId(conditionLineId); setView("billing"); } : undefined}
           canRepair={canRepairConditions}
+          onEditLedger={(ledgerId) => { setConditionFlowSeed((s) => ({ workId: null, ledgerId, nonce: s.nonce + 1 })); setView("condition-first"); }}
           onOpenDocument={(id) => {
             setSearchSelection({ target: "document", id: String(id), title: "" });
             setView("documents");

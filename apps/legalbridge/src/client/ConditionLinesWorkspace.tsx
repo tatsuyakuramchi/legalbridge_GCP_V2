@@ -4,6 +4,9 @@ import { SearchableLedgerSelect } from "./SearchableLedgerSelect";
 import { useToast } from "./Toast";
 import { ExportButtons } from "./ExportButtons";
 import type { ExportColumn } from "./export-util";
+import { MultiSelectChips } from "./MultiSelectChips";
+import { LANGUAGE_GROUPS, TERRITORY_GROUPS } from "./territory-master";
+import type { CodedName } from "../condition-ledger";
 
 const conditionExportColumns: ExportColumn<ConditionLine>[] = [
   { header: "条件名", value: (c) => c.conditionName },
@@ -59,9 +62,9 @@ function formatDate(value: string | null) {
   return new Intl.DateTimeFormat("ja-JP", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(value));
 }
 
-export function ConditionLinesWorkspace({ onOpenDocument, onCreateDocument, onNavigate, canRepair = false, initialSelectedId = null, onRecordReceipt }:
+export function ConditionLinesWorkspace({ onOpenDocument, onCreateDocument, onNavigate, canRepair = false, initialSelectedId = null, onRecordReceipt, onEditLedger }:
   { onOpenDocument?: (documentId: number) => void; onCreateDocument?: (issueKey: string | null) => void;
-    onNavigate?: (target: string) => void; canRepair?: boolean; initialSelectedId?: number | null;
+    onNavigate?: (target: string) => void; canRepair?: boolean; initialSelectedId?: number | null; onEditLedger?: (ledgerId: number) => void;
     onRecordReceipt?: (conditionLineId: number) => void }) {
   const [tab, setTab] = useState<"search" | "inspections">("search");
   return <section className="page">
@@ -78,7 +81,7 @@ export function ConditionLinesWorkspace({ onOpenDocument, onCreateDocument, onNa
     </div>
     {tab === "inspections"
       ? <PendingInspections onOpenDocument={onOpenDocument} onCreateDocument={onCreateDocument} />
-      : <ConditionSearch onOpenDocument={onOpenDocument} canRepair={canRepair} initialSelectedId={initialSelectedId} onRecordReceipt={onRecordReceipt} />}
+      : <ConditionSearch onOpenDocument={onOpenDocument} canRepair={canRepair} initialSelectedId={initialSelectedId} onRecordReceipt={onRecordReceipt} onEditLedger={onEditLedger} />}
   </section>;
 }
 
@@ -112,7 +115,7 @@ const transactionKindLabels: Record<string, string> = {
   license: "ライセンス", product: "商品取引"
 };
 
-function ConditionSearch({ onOpenDocument, canRepair = false, initialSelectedId = null, onRecordReceipt }: { onOpenDocument?: (documentId: number) => void; canRepair?: boolean; initialSelectedId?: number | null; onRecordReceipt?: (conditionLineId: number) => void }) {
+function ConditionSearch({ onOpenDocument, canRepair = false, initialSelectedId = null, onRecordReceipt, onEditLedger }: { onOpenDocument?: (documentId: number) => void; canRepair?: boolean; initialSelectedId?: number | null; onRecordReceipt?: (conditionLineId: number) => void; onEditLedger?: (ledgerId: number) => void }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<DirFilter>("all");
   const [selectedId, setSelectedId] = useState<number | null>(initialSelectedId);
@@ -156,7 +159,7 @@ function ConditionSearch({ onOpenDocument, canRepair = false, initialSelectedId 
   const visible = rows.filter((r) => filter === "all" || r.direction === filter);
 
   if (selectedId) {
-    return <ConditionDetail id={selectedId} onBack={() => setSelectedId(null)} onOpenDocument={onOpenDocument} canRepair={canRepair} onRecordReceipt={onRecordReceipt} />;
+    return <ConditionDetail id={selectedId} onBack={() => setSelectedId(null)} onOpenDocument={onOpenDocument} canRepair={canRepair} onRecordReceipt={onRecordReceipt} onEditLedger={onEditLedger} />;
   }
 
   return <>
@@ -209,22 +212,100 @@ function ConditionSearch({ onOpenDocument, canRepair = false, initialSelectedId 
   </>;
 }
 
-function ConditionDetail({ id, onBack, onOpenDocument, canRepair = false, onRecordReceipt }:
+type LinkedDoc = { id: number; documentNumber: string | null; templateType: string | null; lifecycleStatus: string | null; title: string | null };
+type DocHit = { id: number; documentNumber: string | null; templateType: string | null; title?: string | null; counterparty?: string | null; lifecycleStatus?: string | null };
+
+// 文書の検索・選択（元文書の付け替え／台帳への紐づけ）。登録文書一覧 API を使う。
+function DocumentPicker({ label, excludeIds = [], onPick }: { label: string; excludeIds?: number[]; onPick: (doc: DocHit) => void }) {
+  const [query, setQuery] = useState("");
+  const [hits, setHits] = useState<DocHit[]>([]);
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    if (query.trim().length < 2) { setHits([]); return; }
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      setLoading(true);
+      fetch(`/api/v2/documents?q=${encodeURIComponent(query.trim())}&limit=20&lifecycle=active`, { signal: controller.signal })
+        .then((response) => response.ok ? response.json() : { documents: [] })
+        .then((data: { documents?: DocHit[] }) => setHits((data.documents ?? []).filter((d) => !excludeIds.includes(d.id))))
+        .catch(() => undefined)
+        .finally(() => setLoading(false));
+    }, 250);
+    return () => { controller.abort(); window.clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query]);
+  return <div className="document-picker">
+    <label><span>{label}</span>
+      <input value={query} placeholder="文書番号・件名・相手先で検索（2文字以上）" onChange={(event) => setQuery(event.target.value)} /></label>
+    {loading && <small className="muted">検索中…</small>}
+    {hits.length > 0 && <ul className="document-picker-hits">
+      {hits.map((doc) => <li key={doc.id}>
+        <button type="button" onClick={() => { onPick(doc); setQuery(""); setHits([]); }}>
+          <b>{doc.documentNumber ?? `#${doc.id}`}</b> {doc.title || ""}{doc.counterparty ? `（${doc.counterparty}）` : ""}
+          <small> {doc.templateType ?? ""}</small>
+        </button>
+      </li>)}
+    </ul>}
+  </div>;
+}
+
+type EditForm = {
+  conditionName: string; currency: string; amountExTax: string; mgAmount: string; agAmount: string; ratePct: string;
+  termStart: string; exclusivity: string; sublicenseAllowed: "" | "true" | "false"; paymentScheme: string;
+  paymentTerms: string; royaltyBase: string; deductibleCosts: string; notes: string; transactionKind: string;
+  regions: CodedName[]; languages: CodedName[];
+  documentId: number | null; documentNumber: string | null;
+};
+const toForm = (d: ConditionDetailData): EditForm => ({
+  conditionName: d.conditionName ?? "", currency: d.currency ?? "JPY",
+  amountExTax: d.amountExTax == null ? "" : String(d.amountExTax),
+  mgAmount: d.mgAmount == null ? "" : String(d.mgAmount),
+  agAmount: d.agAmount == null ? "" : String(d.agAmount),
+  ratePct: d.ratePct == null ? "" : String(d.ratePct),
+  termStart: d.termStart ?? "", exclusivity: d.exclusivity ?? "",
+  sublicenseAllowed: d.sublicenseAllowed == null ? "" : d.sublicenseAllowed ? "true" : "false",
+  paymentScheme: d.paymentScheme ?? "", paymentTerms: d.paymentTerms ?? "", royaltyBase: d.royaltyBase ?? "",
+  deductibleCosts: d.deductibleCosts ?? "", notes: d.notes ?? "", transactionKind: d.transactionKind ?? "",
+  regions: (d.regions.length ? d.regions : legacyNames(d.territory)).map((name) => ({ code: null, name })),
+  languages: d.languages.map((name) => ({ code: null, name })),
+  documentId: d.documentId, documentNumber: d.documentNumber
+});
+const legacyNames = (value: string | null | undefined) =>
+  String(value ?? "").split(/[,、/・]/).map((s) => s.trim()).filter(Boolean);
+
+function ConditionDetail({ id, onBack, onOpenDocument, canRepair = false, onRecordReceipt, onEditLedger }:
   { id: number; onBack: () => void; onOpenDocument?: (documentId: number) => void; canRepair?: boolean;
-    onRecordReceipt?: (conditionLineId: number) => void }) {
+    onRecordReceipt?: (conditionLineId: number) => void; onEditLedger?: (ledgerId: number) => void }) {
   const [detail, setDetail] = useState<ConditionDetailData | null>(null);
   const [error, setError] = useState("");
   const [repairOpen, setRepairOpen] = useState(false);
   const [repairVendorId, setRepairVendorId] = useState("");
   const [repairSaving, setRepairSaving] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState<EditForm | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [linked, setLinked] = useState<LinkedDoc[] | null>(null);
+  const [linkBusy, setLinkBusy] = useState(false);
   const toast = useToast();
+  const isLedger = detail?.templateType === "condition_ledger";
+
+  const load = () => fetch(`/api/v2/condition-lines/${id}`)
+    .then((response) => response.ok ? response.json() : Promise.reject())
+    .then((data) => setDetail(data.detail))
+    .catch(() => setError("条件明細の詳細を取得できませんでした。"));
   useEffect(() => {
-    setDetail(null); setError(""); setRepairOpen(false); setRepairVendorId("");
-    fetch(`/api/v2/condition-lines/${id}`)
-      .then((response) => response.ok ? response.json() : Promise.reject())
-      .then((data) => setDetail(data.detail))
-      .catch(() => setError("条件明細の詳細を取得できませんでした。"));
+    setDetail(null); setError(""); setRepairOpen(false); setRepairVendorId(""); setEditing(false); setForm(null); setLinked(null);
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+  // 条件台帳（CT-…）の条件明細なら、台帳に紐づく文書（過去文書・アップロード・確定文書）も出す。
+  const loadLinked = (ledgerId: number) => fetch(`/api/v2/condition-ledgers/${ledgerId}`)
+    .then((response) => response.ok ? response.json() : Promise.reject())
+    .then((data) => setLinked(data.ledger?.linkedDocuments ?? []))
+    .catch(() => setLinked([]));
+  useEffect(() => {
+    if (isLedger && detail?.documentId) void loadLinked(detail.documentId);
+  }, [isLedger, detail?.documentId]);
 
   // 相手方の後付け補修（V1取込データの取引先欠落用・guarded write）。
   async function saveCounterparty() {
@@ -245,6 +326,72 @@ function ConditionDetail({ id, onBack, onOpenDocument, canRepair = false, onReco
     finally { setRepairSaving(false); }
   }
 
+  // 項目単位の編集（PATCH /condition-lines/:id・guarded write）。
+  async function saveEdit() {
+    if (!form || !detail) return;
+    const num = (v: string) => (v.trim() === "" ? null : Number(v.replace(/,/g, "")));
+    const text = (v: string) => (v.trim() === "" ? null : v.trim());
+    const body = {
+      conditionName: form.conditionName.trim(),
+      currency: text(form.currency), amountExTax: num(form.amountExTax), mgAmount: num(form.mgAmount),
+      agAmount: num(form.agAmount), ratePct: num(form.ratePct), termStart: form.termStart || null,
+      exclusivity: text(form.exclusivity),
+      sublicenseAllowed: form.sublicenseAllowed === "" ? null : form.sublicenseAllowed === "true",
+      paymentScheme: text(form.paymentScheme), paymentTerms: text(form.paymentTerms), royaltyBase: text(form.royaltyBase),
+      deductibleCosts: text(form.deductibleCosts), notes: text(form.notes), transactionKind: text(form.transactionKind),
+      regions: form.regions, languages: form.languages,
+      ...(form.documentId !== detail.documentId ? { documentId: form.documentId } : {})
+    };
+    setSaving(true);
+    try {
+      const response = await fetch(`/api/v2/condition-lines/${id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) { toast.push(data.error ?? "保存できませんでした。", "error"); return; }
+      if (data.detail) setDetail(data.detail); else await load();
+      setEditing(false); setForm(null);
+      toast.push("条件明細を更新しました。", "success");
+    } catch { toast.push("通信に失敗しました。", "error"); }
+    finally { setSaving(false); }
+  }
+
+  async function attach(doc: DocHit) {
+    if (!detail?.documentId) return;
+    setLinkBusy(true);
+    try {
+      const response = await fetch(`/api/v2/condition-ledgers/${detail.documentId}/attach`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ documentId: doc.id })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) { toast.push(data.error ?? "紐づけできませんでした。", "error"); return; }
+      await loadLinked(detail.documentId);
+      toast.push(`${doc.documentNumber ?? `#${doc.id}`} を台帳に紐づけました。`, "success");
+    } catch { toast.push("通信に失敗しました。", "error"); }
+    finally { setLinkBusy(false); }
+  }
+  async function detach(doc: LinkedDoc) {
+    if (!detail?.documentId) return;
+    if (!window.confirm(`${doc.documentNumber ?? `#${doc.id}`} の紐づけを解除しますか？（文書自体は消えません）`)) return;
+    setLinkBusy(true);
+    try {
+      const response = await fetch(`/api/v2/condition-ledgers/${detail.documentId}/detach`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ documentId: doc.id })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) { toast.push(data.error ?? "解除できませんでした。", "error"); return; }
+      await loadLinked(detail.documentId);
+      toast.push("紐づけを解除しました。", "success");
+    } catch { toast.push("通信に失敗しました。", "error"); }
+    finally { setLinkBusy(false); }
+  }
+
+  const set = (patch: Partial<EditForm>) => setForm((prev) => (prev ? { ...prev, ...patch } : prev));
+  const textField = (key: keyof EditForm, label: string, opts: { type?: string; placeholder?: string } = {}) =>
+    <label key={String(key)}><span>{label}</span>
+      <input type={opts.type ?? "text"} value={String(form?.[key] ?? "")} placeholder={opts.placeholder}
+        onChange={(event) => set({ [key]: event.target.value } as Partial<EditForm>)} /></label>;
+
   return <div>
     <div className="breadcrumb"><button onClick={onBack}>← 条件明細一覧に戻る</button></div>
     {error && <div className="async-error">{error}</div>}
@@ -252,10 +399,16 @@ function ConditionDetail({ id, onBack, onOpenDocument, canRepair = false, onReco
     {detail && <div className="panel condition-detail">
       <div className="matter-detail-head">
         <div><span className="detail-kicker">CONDITION DETAIL</span><h2>{detail.conditionName || "（無題の条件）"}</h2></div>
-        {detail.direction === "receivable" && onRecordReceipt &&
-          <button className="primary" onClick={() => onRecordReceipt(detail.id)}>受領を記録</button>}
-        {detail.documentId && onOpenDocument &&
-          <button onClick={() => onOpenDocument(detail.documentId!)}>文書を開く</button>}
+        <div className="actions">
+          {canRepair && !editing &&
+            <button onClick={() => { setForm(toForm(detail)); setEditing(true); }}>編集</button>}
+          {isLedger && detail.documentId && onEditLedger &&
+            <button onClick={() => onEditLedger(detail.documentId!)} title="条件台帳（条件を登録する）を編集モードで開く。行の追加・削除や文書の扱いはこちら">台帳で編集</button>}
+          {detail.direction === "receivable" && onRecordReceipt &&
+            <button className="primary" onClick={() => onRecordReceipt(detail.id)}>受領を記録</button>}
+          {detail.documentId && onOpenDocument &&
+            <button onClick={() => onOpenDocument(detail.documentId!)}>文書を開く</button>}
+        </div>
       </div>
       <div className="matter-summary">
         <span className={`cond-dir ${detail.direction ?? ""}`}>{directionLabels[detail.direction ?? ""] ?? "—"}</span>
@@ -266,7 +419,65 @@ function ConditionDetail({ id, onBack, onOpenDocument, canRepair = false, onReco
         {detail.matterCode && <span>{detail.matterCode}</span>}
         {detail.vendorName && <span>{detail.vendorName}</span>}
       </div>
-      <dl className="condition-detail-grid">
+
+      {editing && form && <div className="condition-edit" role="form">
+        <h3>条件明細の編集</h3>
+        <p className="hub-note">保存すると条件台帳・計算書・作品画面のすべてに反映されます。金額は税抜。地域・言語は候補から追加（自由入力も可）。</p>
+        <div className="field-grid">
+          {textField("conditionName", "条件名")}
+          <label><span>取引種別</span>
+            <select value={form.transactionKind} onChange={(event) => set({ transactionKind: event.target.value })}>
+              <option value="">—</option><option value="license">ライセンス</option><option value="product">商品取引</option>
+            </select></label>
+          {textField("currency", "通貨", { placeholder: "JPY" })}
+          {textField("amountExTax", "金額（税抜）", { type: "number" })}
+          {textField("ratePct", "料率（%）", { type: "number" })}
+          {textField("mgAmount", "MG", { type: "number" })}
+          {textField("agAmount", "AG", { type: "number" })}
+          {textField("termStart", "開始日", { type: "date" })}
+          <label><span>独占性</span>
+            <select value={form.exclusivity} onChange={(event) => set({ exclusivity: event.target.value })}>
+              <option value="">—</option>
+              {Object.entries(exclusivityLabels).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select></label>
+          <label><span>再許諾</span>
+            <select value={form.sublicenseAllowed} onChange={(event) => set({ sublicenseAllowed: event.target.value as EditForm["sublicenseAllowed"] })}>
+              <option value="">—</option><option value="true">可</option><option value="false">不可</option>
+            </select></label>
+          <label><span>支払方式</span>
+            <select value={form.paymentScheme} onChange={(event) => set({ paymentScheme: event.target.value })}>
+              <option value="">—</option>
+              {Object.entries(paymentSchemeLabels).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select></label>
+          {textField("paymentTerms", "支払条件")}
+          {textField("royaltyBase", "ロイヤリティ基準")}
+          {textField("deductibleCosts", "控除費用")}
+        </div>
+        <div className="field-grid">
+          <label><span>許諾地域</span>
+            <MultiSelectChips value={form.regions} groups={TERRITORY_GROUPS} placeholder="国・地域を検索して追加"
+              onChange={(next) => set({ regions: next })} /></label>
+          <label><span>許諾言語</span>
+            <MultiSelectChips value={form.languages} groups={LANGUAGE_GROUPS} placeholder="言語を検索して追加"
+              onChange={(next) => set({ languages: next })} /></label>
+        </div>
+        <label><span>備考</span>
+          <textarea rows={3} value={form.notes} onChange={(event) => set({ notes: event.target.value })} /></label>
+        {!isLedger && <div className="condition-edit-doc">
+          <h4>元文書（この条件明細が属する文書）</h4>
+          <p className="hub-note">現在: <b>{form.documentNumber ?? (form.documentId ? `#${form.documentId}` : "未紐づけ")}</b>
+            {form.documentId !== detail.documentId && <em>（変更あり・保存で反映）</em>}</p>
+          <DocumentPicker label="別の文書に付け替える" excludeIds={form.documentId ? [form.documentId] : []}
+            onPick={(doc) => set({ documentId: doc.id, documentNumber: doc.documentNumber })} />
+          {form.documentId && <button type="button" className="link-button" onClick={() => set({ documentId: null, documentNumber: null })}>紐づけを外す（元文書なし）</button>}
+        </div>}
+        <div className="matter-form-actions">
+          <button className="primary" disabled={saving || !form.conditionName.trim()} onClick={() => void saveEdit()}>{saving ? "保存中…" : "保存"}</button>
+          <button type="button" disabled={saving} onClick={() => { setEditing(false); setForm(null); }}>キャンセル</button>
+        </div>
+      </div>}
+
+      {!editing && <dl className="condition-detail-grid">
         <Field label="条件行ID" value={`#${detail.id}`} />
         <Field label="作品" value={detail.workTitle} />
         <div><dt>相手方</dt><dd>
@@ -292,7 +503,8 @@ function ConditionDetail({ id, onBack, onOpenDocument, canRepair = false, onReco
         <Field label="控除費用" value={detail.deductibleCosts} />
         <Field label="開始日" value={detail.termStart} />
         <Field label="取引種別" value={detail.transactionKind ? (transactionKindLabels[detail.transactionKind] ?? detail.transactionKind) : null} />
-      </dl>
+        <Field label="元文書" value={detail.documentNumber ?? (detail.documentId ? `#${detail.documentId}` : null)} />
+      </dl>}
       {canRepair && repairOpen && <div className="condition-repair" role="form">
         <h3>相手方の設定</h3>
         <p className="hub-note">取引先マスタから選択して設定します（表示は全画面に即時反映されます）。</p>
@@ -305,8 +517,24 @@ function ConditionDetail({ id, onBack, onOpenDocument, canRepair = false, onReco
           <button type="button" onClick={() => { setRepairOpen(false); setRepairVendorId(""); }}>キャンセル</button>
         </div>
       </div>}
+
+      {isLedger && detail.documentId && <div className="condition-linked-docs">
+        <h3>台帳に紐づく文書</h3>
+        <p className="hub-note">この条件明細の台帳（{detail.documentNumber}）に紐づく契約書・発注書・アップロード文書。紐づけると文書側に台帳番号が記録され、後続文書や作品画面から辿れます。</p>
+        {linked === null && <div className="empty-inline">読み込み中…</div>}
+        {linked && !linked.length && <p className="inline-empty">紐づく文書はまだありません。</p>}
+        {linked && linked.length > 0 && <ul className="linked-doc-list">
+          {linked.map((doc) => <li key={doc.id}>
+            <b>{doc.documentNumber ?? `#${doc.id}`}</b> {doc.title || ""} <small>{doc.templateType ?? ""}{doc.lifecycleStatus ? `・${doc.lifecycleStatus}` : ""}</small>
+            {onOpenDocument && <button type="button" className="link-button" onClick={() => onOpenDocument(doc.id)}>開く</button>}
+            {canRepair && <button type="button" className="link-button" disabled={linkBusy} onClick={() => void detach(doc)}>解除</button>}
+          </li>)}
+        </ul>}
+        {canRepair && <DocumentPicker label="文書を紐づける" excludeIds={[detail.documentId, ...(linked ?? []).map((d) => d.id)]} onPick={(doc) => void attach(doc)} />}
+      </div>}
+
       {detail.consumption && <ConsumptionPanel c={detail.consumption} />}
-      {detail.notes && <div className="condition-notes"><h3>備考</h3><p>{detail.notes}</p></div>}
+      {!editing && detail.notes && <div className="condition-notes"><h3>備考</h3><p>{detail.notes}</p></div>}
     </div>}
   </div>;
 }
