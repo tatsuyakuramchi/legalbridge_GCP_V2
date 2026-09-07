@@ -1216,5 +1216,8 @@ if [ "${CONDITION_LINE_REPAIR_ENABLED:-false}" = "true" ]; then
 fi
 if [ "${WRITE_SCOPES}" != "$expected_write_scopes" ]; then
   echo "Deployment blocked: WRITE_SCOPES does not exactly match the enabled guarded capabilities."
+  # 期待値を出す（統合でスコープが増えたとき、引き継いだ旧ビルドの値との差が一目で分かるように）。
+  echo "  expected: ${expected_write_scopes}"
+  echo "  actual:   ${WRITE_SCOPES}"
   exit 1
 fi
