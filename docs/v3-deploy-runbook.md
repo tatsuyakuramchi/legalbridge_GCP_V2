@@ -251,10 +251,43 @@ psql "$ADMIN_DSN" -c "DROP SCHEMA v3 CASCADE;"   # V1・V2 は無傷
 
 ## 6. ビルドとデプロイ
 
+### 6.0 どのブランチから実行するか
+
+**`main` では実行できない。** V3 のファイルは `main` に1つも入っていない
+（`Dockerfile.v3` も `infra/v3/` も無い）。必ず `claude/v3` に切り替えてから submit する。
+
+```bash
+git fetch origin claude/v3
+git checkout claude/v3
+git status --short        # 空であること。中途半端な変更を載せない
+git log --oneline -1      # 載せるコミットを控える
+```
+
+V3 が V2 に何も足し引きしていないことは、いつでもここで確認できる:
+
+```bash
+git diff --name-status v3-base...claude/v3 | grep -v '^A'
+# → package.json と package-lock.json の2行だけが正常。
+#   apps/legalbridge/ が出てきたら V2 に手が入っている。
+```
+
+`v3-base` は V3 の分岐点を固定したブランチ。`main` が force push されても
+この比較は壊れない。GitHub 上では PR #129（Draft・マージしない）が同じ差分を表示する。
+
+### 6.1 submit
+
 ```bash
 gcloud builds submit --config infra/v3/cloudbuild.yaml \
+  --substitutions=_GIT_SHA="$(git rev-parse --short HEAD)" \
   --project=legalbridge-488506 .
 ```
+
+`_GIT_SHA` は Cloud Run のリビジョンにラベルとして刻まれる。**渡さないと
+`unknown` になり、動いているコードがどのコミットか後から追えなくなる。**
+手動 submit では Cloud Build の `$SHORT_SHA` が空になるため、ここで明示する。
+
+`.gcloudignore` は置いていないので、gcloud は `.gitignore` を流用する。
+`node_modules/`（122MB）は除外されるのでアップロードは軽い。
 
 ビルドは4段階。**`test` 段で型検査とテストが通らなければ image も作られない**。
 
@@ -276,7 +309,8 @@ gcloud builds submit --config infra/v3/cloudbuild.yaml \
 
 ```bash
 gcloud builds submit --config infra/v3/cloudbuild.yaml \
-  --substitutions=_READ_ONLY=true --project=legalbridge-488506 .
+  --substitutions=_READ_ONLY=true,_GIT_SHA="$(git rev-parse --short HEAD)" \
+  --project=legalbridge-488506 .
 ```
 
 ---
@@ -306,6 +340,28 @@ curl -sS -H "Authorization: Bearer $TOKEN" "$URL/health" | jq .
 いたら接続設定が間違っている（`DB_SCHEMA` を確認する）。`reachable: false` は
 Cloud SQL 接続かパスワードの問題なので、Cloud Run のログで
 `db health check failed` の `code` を見る。
+
+### 動いているのがどのコミットか
+
+```bash
+gcloud run services describe legalbridge-v3 --region=asia-northeast1 \
+  --format='value(spec.template.metadata.labels.git-sha)'
+```
+
+手順6で `_GIT_SHA` を渡していれば短縮SHAが返る。`unknown` が返ったら、
+そのリビジョンは**どのコードが載っているか追えない状態**。次回の submit で
+必ず `_GIT_SHA` を渡し直す。
+
+リビジョンごとに見るなら:
+
+```bash
+gcloud run revisions list --service=legalbridge-v3 --region=asia-northeast1 \
+  --format='table(metadata.name, metadata.labels.git-sha, metadata.creationTimestamp)'
+```
+
+返ってきたSHAは `git show <SHA>` でそのまま辿れる。V2 側と混同しないよう、
+**`git branch -a --contains <SHA>` に `claude/v3` だけが出ること**も確認しておく
+（`main` が出たらそれは V2 のコミットで、V3 のイメージではない）。
 
 ### 画面の確認（ブラウザ）
 
