@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { refreshRoyaltyProductForEdit } from "./royalty-edit-refresh.js";
+import { looseNameMatch, refreshRoyaltyProductForEdit } from "./royalty-edit-refresh.js";
 
 function response(body: unknown) {
   return { ok: true, json: async () => body } as Response;
@@ -98,4 +98,12 @@ test("複数サブライセンシーの受領明細は行ごとに対応するOU
   assert.equal(receipts[2].productName, receipts[1].productName);
   assert.equal(conditionSearches.length, 2);
   assert.deepEqual(previewIds.sort(), [590, 601, 602]);
+});
+
+test("looseNameMatch: 法人格・スペース・大文字小文字のゆれを許し、別名は弾く", () => {
+  assert.equal(looseNameMatch("Maldito Games SLU", "Maldito Games"), true);
+  assert.equal(looseNameMatch("Broadway Toys Limited", "broadway toys"), true);
+  assert.equal(looseNameMatch("株式会社アークライト", "アークライト"), true);
+  assert.equal(looseNameMatch("Maldito Games SLU", "Meridian Games"), false);
+  assert.equal(looseNameMatch("", "Maldito Games"), false);
 });

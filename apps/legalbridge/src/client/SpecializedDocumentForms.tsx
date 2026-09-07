@@ -9,6 +9,7 @@ import {
 } from "./payment-schedule";
 import { canSplitSubscription, splitCount, splitSubscriptionLine } from "./subscription-split";
 import { inspectionLineStatus } from "../inspection-totals";
+import { looseNameMatch } from "./royalty-edit-refresh";
 
 type Row = Record<string, unknown>;
 
@@ -465,6 +466,7 @@ function rows(value: unknown): Row[] {
 type OutCandidate = {
   id: number; name: string; direction: string | null; parentLicenseConditionId: number | null;
   counterparty: string | null; territory: string | null; language: string | null; workTitle: string | null;
+  nameMatch?: boolean;   // 行のサブライセンシー名と（ゆるく）一致した候補
 };
 
 function RoyaltyStatementEditor({ formData, onChange }: {
@@ -499,17 +501,31 @@ function RoyaltyStatementEditor({ formData, onChange }: {
   const payersKey = payers.join(" ");
   useEffect(() => {
     let cancelled = false;
+    // 同じイン条件にぶら下がるアウト条件は名前に関係なく候補に出す（相手先名の表記ゆれ対策）。
+    const siblings: Promise<OutCandidate[]> = inboundId
+      ? fetch(`/api/v2/license-settlements/conditions?q=&limit=500`)
+        .then((response) => response.ok ? response.json() : { conditions: [] })
+        .then((data: { conditions?: OutCandidate[] }) => (data.conditions ?? []).filter((c) =>
+          c.direction === "receivable" && c.parentLicenseConditionId === inboundId))
+        .catch(() => [])
+      : Promise.resolve([]);
     for (const payer of payers) {
       if (outCandidates[payer]) continue;
-      fetch(`/api/v2/license-settlements/conditions?q=${encodeURIComponent(payer)}&limit=300`)
-        .then((response) => response.ok ? response.json() : { conditions: [] })
-        .then((data: { conditions?: OutCandidate[] }) => {
+      Promise.all([
+        fetch(`/api/v2/license-settlements/conditions?q=${encodeURIComponent(payer)}&limit=300`)
+          .then((response) => response.ok ? response.json() : { conditions: [] })
+          .then((data: { conditions?: OutCandidate[] }) => data.conditions ?? []),
+        siblings
+      ])
+        .then(([found, related]) => {
           if (cancelled) return;
-          const mine = (data.conditions ?? []).filter((c) =>
-            c.direction === "receivable" && String(c.counterparty ?? "").trim() === payer);
-          // 親がこの計算書のイン条件のものを優先。無ければ相手先一致のアウト条件すべて。
-          const strict = inboundId ? mine.filter((c) => c.parentLicenseConditionId === inboundId) : [];
-          setOutCandidates((prev) => ({ ...prev, [payer]: strict.length ? strict : mine }));
+          // 名前は「Maldito Games」と「Maldito Games SLU」のようなゆれを許す（正規化して包含）。
+          const byName = found
+            .filter((c) => c.direction === "receivable" && looseNameMatch(c.counterparty, payer))
+            .map((c) => ({ ...c, nameMatch: true }));
+          const merged = [...byName, ...related.filter((c) => !byName.some((b) => b.id === c.id))
+            .map((c) => ({ ...c, nameMatch: false }))];
+          setOutCandidates((prev) => ({ ...prev, [payer]: merged }));
         })
         .catch(() => { if (!cancelled) setOutCandidates((prev) => ({ ...prev, [payer]: [] })); });
     }
@@ -548,8 +564,9 @@ function RoyaltyStatementEditor({ formData, onChange }: {
     receipts.forEach((row, index) => {
       const payer = String(row.sublicensee ?? "").trim();
       const list = payer ? outCandidates[payer] : undefined;
-      if (list?.length === 1 && !String(row.productName ?? "").trim() && !row.source_out_condition_line_id) {
-        void applyOutCondition(index, list[0].id);
+      const matched = (list ?? []).filter((c) => c.nameMatch);
+      if (matched.length === 1 && !String(row.productName ?? "").trim() && !row.source_out_condition_line_id) {
+        void applyOutCondition(index, matched[0].id);
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -660,7 +677,7 @@ function RoyaltyStatementEditor({ formData, onChange }: {
                   onChange={(event) => { const id = Number(event.target.value); if (id) void applyOutCondition(index, id); }}>
                   <option value="">アウト条件から選ぶ…</option>
                   {candidates.map((c) => <option key={c.id} value={c.id}>
-                    {`#${c.id} ${c.name}｜${c.territory || "地域未設定"}｜${c.language || "言語未設定"}`}
+                    {`#${c.id} ${c.counterparty || "相手先未設定"}｜${c.name}｜${c.territory || "地域未設定"}｜${c.language || "言語未設定"}${c.nameMatch ? "" : "（同じIN条件の他の相手先）"}`}
                   </option>)}
                 </select>}
                 {payer && candidates.length === 0 && outCandidates[payer] &&

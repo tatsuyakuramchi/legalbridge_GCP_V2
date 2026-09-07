@@ -21,6 +21,20 @@ export type RoyaltyEditRefreshResult = {
   message: string;
 };
 
+/**
+ * 相手先名のゆるい一致。「Maldito Games」と「Maldito Games SLU」、全角/半角スペース、大文字小文字、
+ * 株式会社の有無程度のゆれを許す（正規化して片方がもう片方を含む）。
+ */
+export function looseNameMatch(a: unknown, b: unknown): boolean {
+  const norm = (v: unknown) => String(v ?? "")
+    .toLowerCase()
+    .replace(/株式会社|有限会社|合同会社|\(株\)|（株）|co\.,?\s*ltd\.?|inc\.?|llc|ltd\.?|limited|s\.?l\.?u\.?|gmbh|s\.?a\.?/g, "")
+    .replace(/[\s　,.、。・'"()（）\-_/]/g, "");
+  const x = norm(a); const y = norm(b);
+  if (!x || !y) return false;
+  return x === y || x.includes(y) || y.includes(x);
+}
+
 const positiveId = (value: unknown) => {
   const id = Number(value);
   return Number.isInteger(id) && id > 0 ? id : null;
@@ -88,7 +102,7 @@ export async function refreshRoyaltyProductForEdit(
     const candidates = (body.conditions ?? []).filter((condition) =>
       condition.direction === "receivable"
       && condition.parentLicenseConditionId === inboundId
-      && String(condition.counterparty ?? "").trim() === payer
+      && looseNameMatch(condition.counterparty, payer)
     );
     if (candidates.length !== 1) {
       return {
@@ -153,7 +167,7 @@ async function refreshReceiptProducts(
     const candidates = (body.conditions ?? []).filter((condition) =>
       condition.direction === "receivable"
       && condition.parentLicenseConditionId === inboundId
-      && String(condition.counterparty ?? "").trim() === payer
+      && looseNameMatch(condition.counterparty, payer)
     );
     const id = candidates.length === 1 ? candidates[0].id : null;
     outboundByPayer.set(payer, id);
