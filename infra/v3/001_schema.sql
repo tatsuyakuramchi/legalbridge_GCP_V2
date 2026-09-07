@@ -409,7 +409,8 @@ ALTER TABLE v3.document_templates
 CREATE TABLE IF NOT EXISTS v3.documents (
   id                  bigserial PRIMARY KEY,
   document_no         text UNIQUE,
-  template_version_id bigint NOT NULL REFERENCES v3.document_template_versions(id),
+  -- 取込文書（既存契約書のPDF登録）はテンプレートを持たないため NULL を許す。
+  template_version_id bigint REFERENCES v3.document_template_versions(id),
   matter_id           bigint REFERENCES v3.matters(id),
   agreement_id        bigint REFERENCES v3.agreements(id),
   status              text NOT NULL DEFAULT 'draft'
@@ -541,5 +542,23 @@ CREATE TABLE IF NOT EXISTS v3.data_quality_issues (
   detail      jsonb NOT NULL DEFAULT '{}'::jsonb,
   UNIQUE (rule_code, target_type, target_id)
 );
+
+-- ---------------------------------------------------------------------
+-- 10. 移行キー
+--   各表の legacy_id は移行スクリプトの冪等キー（ON CONFLICT の対象）。
+--   切替が完了し public を落とす際にまとめて削除できる。
+-- ---------------------------------------------------------------------
+CREATE UNIQUE INDEX IF NOT EXISTS staff_legacy_uq        ON v3.staff (legacy_id)               WHERE legacy_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS work_parts_legacy_uq   ON v3.work_parts (legacy_id)          WHERE legacy_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS matters_legacy_uq      ON v3.matters (legacy_id)             WHERE legacy_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS tasks_legacy_uq        ON v3.tasks (legacy_id)               WHERE legacy_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS agreements_legacy_uq   ON v3.agreements (legacy_id)          WHERE legacy_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS cond_sched_legacy_uq   ON v3.condition_schedules (legacy_id) WHERE legacy_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS cond_events_legacy_uq  ON v3.condition_events (legacy_id)    WHERE legacy_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS payments_legacy_uq     ON v3.payments (legacy_id)            WHERE legacy_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS doc_templates_legacy_uq ON v3.document_templates (legacy_id) WHERE legacy_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS doc_tpl_ver_legacy_uq  ON v3.document_template_versions (legacy_id) WHERE legacy_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS statements_legacy_uq   ON v3.statements (legacy_id)          WHERE legacy_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS stmt_lines_legacy_uq   ON v3.statement_lines (legacy_id)     WHERE legacy_id IS NOT NULL;
 
 COMMIT;
