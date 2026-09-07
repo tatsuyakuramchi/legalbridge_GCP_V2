@@ -174,3 +174,16 @@ test("条件明細の編集: 未有効・権限なし・空パッチ・不明ID�
   assert.equal((await request(app).patch("/api/v2/condition-lines/1").send({ unknownField: 1 })).status, 400);
   assert.equal((await request(app).patch("/api/v2/condition-lines/999").send({ notes: "x" })).status, 404);
 });
+
+test("条件明細の編集: 業務委託の行種別・税区分・支払方式・対象素材・相手方も受け付ける（選択肢外は弾く）", async () => {
+  const { app } = repairApp([row({ id: 1, transactionKind: "service" })], { enabled: true, role: "legal" });
+  const ok = await request(app).patch("/api/v2/condition-lines/1").send({
+    lineKind: "expense", taxCategory: "exempt", paymentScheme: "lump_sum", materialCode: "M-001", sourceMaterialId: 5,
+    counterpartyVendorId: 7, workId: 3, amountExTax: 12000, termEnd: "2026-12-31"
+  });
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  const bad = await request(app).patch("/api/v2/condition-lines/1").send({ lineKind: "gift" });
+  assert.equal(bad.status, 400);
+  const badTax = await request(app).patch("/api/v2/condition-lines/1").send({ taxCategory: "zero" });
+  assert.equal(badTax.status, 400);
+});

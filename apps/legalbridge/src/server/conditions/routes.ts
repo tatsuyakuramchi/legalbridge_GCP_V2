@@ -133,6 +133,14 @@ export function createConditionLineRouter(
     workId: nullableId,
     documentId: nullableId,
     parentLicenseConditionId: nullableId,
+    // 業務委託: 行種別・税区分・支払方式は作成フォームと同じ選択肢に限定
+    lineKind: z.enum(["payment", "expense", "fee"]).nullable().optional(),
+    taxCategory: z.enum(["taxable", "reduced", "exempt"]).nullable().optional(),
+    materialCode: nullableText(60),
+    sourceMaterialId: nullableId,
+    counterpartyVendorId: nullableId,
+    groupNo: nullableId,
+    basePriceLabel: nullableText(200),
     regions: codedNames,
     languages: codedNames
   }).strict();

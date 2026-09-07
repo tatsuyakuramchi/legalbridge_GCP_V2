@@ -2979,3 +2979,6 @@ button.request-chip.interactive:hover { border-color:#20b8cd; background:#f0fbfc
 .linked-doc-list { list-style: none; margin: 6px 0; padding: 0; }
 .linked-doc-list li { padding: 5px 0; border-bottom: 1px solid var(--line, #eee); font-size: 13px; }
 .linked-doc-list li .link-button { margin-left: 8px; }
+.condition-doc-terms { margin-top: 14px; }
+.condition-doc-terms h3 { margin: 0 0 4px; font-size: 15px; }
+.condition-edit .searchable-select, .condition-edit .ledger-select { min-width: 0; }

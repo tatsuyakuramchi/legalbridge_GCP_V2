@@ -83,6 +83,18 @@ export interface ConditionLineDetail extends ConditionLineRow {
   notes: string | null;
   regions: string[];
   languages: string[];
+  // 業務委託の行種別・税区分・対象素材・期間・親条件（編集フォーム用・2026-09-07）
+  lineKind: string | null;              // payment / expense / fee（利用許諾行は payment）
+  taxCategory: string | null;           // taxable / reduced / exempt
+  materialCode: string | null;
+  sourceMaterialId: number | null;
+  sourceMaterialName: string | null;
+  workId: number | null;
+  termEnd: string | null;
+  counterpartyVendorId: number | null;
+  parentLicenseConditionId: number | null;
+  groupNo: number | null;
+  basePriceLabel: string | null;
 }
 
 // Portfolio-wide settlement KPIs (grant 011); null when not readable.
@@ -141,6 +153,14 @@ export interface ConditionLineUpdate {
   workId?: number | null;
   documentId?: number | null;
   parentLicenseConditionId?: number | null;
+  // 業務委託（行種別・税区分・対象素材・相手方・加算グループ・基準価格）
+  lineKind?: string | null;
+  taxCategory?: string | null;
+  materialCode?: string | null;
+  sourceMaterialId?: number | null;
+  counterpartyVendorId?: number | null;
+  groupNo?: number | null;
+  basePriceLabel?: string | null;
   regions?: Array<{ code: string | null; name: string }>;
   languages?: Array<{ code: string | null; name: string }>;
 }
@@ -177,7 +197,14 @@ const UPDATABLE_COLUMNS: Record<keyof Omit<ConditionLineUpdate, "regions" | "lan
   transactionKind: "transaction_kind",
   workId: "work_id",
   documentId: "document_id",
-  parentLicenseConditionId: "parent_license_condition_id"
+  parentLicenseConditionId: "parent_license_condition_id",
+  lineKind: "line_kind",
+  taxCategory: "tax_category",
+  materialCode: "material_code",
+  sourceMaterialId: "source_material_id",
+  counterpartyVendorId: "counterparty_vendor_id",
+  groupNo: "group_no",
+  basePriceLabel: "base_price_label"
 };
 
 export class ConditionRepairError extends Error {
@@ -290,6 +317,9 @@ export class PgConditionLineRepository implements ConditionLineRepository {
               cl.region_territory, cl.region_language, cl.exclusivity, cl.sublicense_allowed,
               cl.payment_scheme, cl.payment_terms, cl.royalty_base,
               cl.deductible_costs, cl.notes,
+              cl.line_kind, cl.tax_category, cl.material_code, cl.source_material_id, cl.work_id, cl.term_end,
+              cl.counterparty_vendor_id, cl.parent_license_condition_id, cl.group_no, cl.base_price_label,
+              wm.material_name AS source_material_name,
               d.document_number, d.matter_id, d.template_type,
               d.lifecycle_status, d.form_data->>'superseded_by' AS superseded_by,
               d.form_data->>'ledger_status' AS ledger_status,
@@ -301,6 +331,7 @@ export class PgConditionLineRepository implements ConditionLineRepository {
          LEFT JOIN matters m ON m.id = d.matter_id
          LEFT JOIN vendors v ON v.id = cl.counterparty_vendor_id
          LEFT JOIN works w ON w.id = cl.work_id
+         LEFT JOIN work_materials wm ON wm.id = cl.source_material_id
         WHERE cl.id = $1`,
       [id]
     );
@@ -328,6 +359,18 @@ export class PgConditionLineRepository implements ConditionLineRepository {
       deductibleCosts: row.deductible_costs ?? null,
       agAmount: num(row.ag_amount),
       notes: row.notes ?? null,
+      // 業務委託・素材・期間・親条件（2026-09-07 の編集フォーム用）
+      lineKind: row.line_kind ?? null,
+      taxCategory: row.tax_category ?? null,
+      materialCode: row.material_code ?? null,
+      sourceMaterialId: row.source_material_id == null ? null : Number(row.source_material_id),
+      sourceMaterialName: row.source_material_name ?? null,
+      workId: row.work_id == null ? null : Number(row.work_id),
+      termEnd: row.term_end ? String(row.term_end).slice(0, 10) : null,
+      counterpartyVendorId: row.counterparty_vendor_id == null ? null : Number(row.counterparty_vendor_id),
+      parentLicenseConditionId: row.parent_license_condition_id == null ? null : Number(row.parent_license_condition_id),
+      groupNo: row.group_no == null ? null : Number(row.group_no),
+      basePriceLabel: row.base_price_label ?? null,
       regions: regions.rows.length
         ? regions.rows.map((r) => String(r.country_name)).filter(Boolean)
         : legacyScopeNames(row.region_territory),
@@ -595,7 +638,9 @@ export class MemoryConditionLineRepository implements ConditionLineRepository {
     return {
       ...row, matterCode: null, matterTitle: null, exclusivity: null, sublicenseAllowed: null,
       paymentScheme: null, paymentTerms: null, royaltyBase: null, deductibleCosts: null,
-      agAmount: null, notes: null, regions: [], languages: [], consumption: null
+      agAmount: null, notes: null, regions: [], languages: [], consumption: null,
+      lineKind: null, taxCategory: null, materialCode: null, sourceMaterialId: null, sourceMaterialName: null,
+      workId: null, termEnd: null, counterpartyVendorId: null, parentLicenseConditionId: null, groupNo: null, basePriceLabel: null
     };
   }
   async update(id: number, patch: ConditionLineUpdate): Promise<{ id: number }> {

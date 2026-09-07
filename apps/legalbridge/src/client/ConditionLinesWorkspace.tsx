@@ -6,7 +6,7 @@ import { ExportButtons } from "./ExportButtons";
 import type { ExportColumn } from "./export-util";
 import { MultiSelectChips } from "./MultiSelectChips";
 import { LANGUAGE_GROUPS, TERRITORY_GROUPS } from "./territory-master";
-import type { CodedName } from "../condition-ledger";
+import { PAYMENT_SCHEME_OPTIONS, TAX_CATEGORY_OPTIONS, type CodedName } from "../condition-ledger";
 
 const conditionExportColumns: ExportColumn<ConditionLine>[] = [
   { header: "条件名", value: (c) => c.conditionName },
@@ -96,6 +96,9 @@ type ConditionDetailData = ConditionLine & {
   sublicenseAllowed: boolean | null; paymentScheme: string | null; paymentTerms: string | null;
   royaltyBase: string | null; deductibleCosts: string | null; agAmount: number | null;
   notes: string | null; regions: string[]; languages: string[]; consumption: Consumption | null;
+  lineKind: string | null; taxCategory: string | null; materialCode: string | null; sourceMaterialId: number | null;
+  sourceMaterialName: string | null; workId: number | null; termEnd: string | null; counterpartyVendorId: number | null;
+  parentLicenseConditionId: number | null; groupNo: number | null; basePriceLabel: string | null;
 };
 
 const triggerLabels: Record<string, string> = {
@@ -251,21 +254,42 @@ function DocumentPicker({ label, excludeIds = [], onPick }: { label: string; exc
 
 type EditForm = {
   conditionName: string; currency: string; amountExTax: string; mgAmount: string; agAmount: string; ratePct: string;
-  termStart: string; exclusivity: string; sublicenseAllowed: "" | "true" | "false"; paymentScheme: string;
+  termStart: string; termEnd: string; exclusivity: string; sublicenseAllowed: "" | "true" | "false"; paymentScheme: string;
   paymentTerms: string; royaltyBase: string; deductibleCosts: string; notes: string; transactionKind: string;
+  lineKind: string; taxCategory: string; groupNo: string; basePriceLabel: string;
+  materialCode: string; sourceMaterialId: number | null;
+  workId: string; counterpartyVendorId: string;
   regions: CodedName[]; languages: CodedName[];
   documentId: number | null; documentNumber: string | null;
 };
+// 業務委託（支払・経費・手数料）か利用許諾か。作成フォーム（条件を登録する）の分け方と同じ。
+const isServiceLine = (d: { transactionKind: string | null; lineKind: string | null; paymentScheme: string | null }) =>
+  d.transactionKind === "service" || d.lineKind === "expense" || d.lineKind === "fee"
+  || (d.transactionKind !== "license" && d.paymentScheme !== "royalty" && d.paymentScheme !== null);
+const LINE_KIND_OPTIONS = [
+  { value: "payment", label: "支払（成果物・業務の対価）" },
+  { value: "expense", label: "経費（立替・実費）" },
+  { value: "fee", label: "その他手数料" }
+];
+const SERVICE_TERM_FIELDS: Array<[string, string]> = [
+  ["SERVICE_ENGAGEMENT_TYPE", "契約類型"], ["SERVICE_CATEGORY", "業務区分"], ["COMPENSATION_TYPE", "報酬方式"],
+  ["DELIVERABLE_REQUIRED", "成果物・報告"], ["INSPECTION_REQUIRED", "検収"], ["IP_OWNERSHIP", "知的財産権"],
+  ["SUBCONTRACTING_POLICY", "再委託"], ["PERSONAL_DATA_HANDLING", "個人情報"], ["RENEWAL_TYPE", "契約更新"],
+  ["WITHHOLDING_TAX", "源泉徴収"]
+];
 const toForm = (d: ConditionDetailData): EditForm => ({
   conditionName: d.conditionName ?? "", currency: d.currency ?? "JPY",
   amountExTax: d.amountExTax == null ? "" : String(d.amountExTax),
   mgAmount: d.mgAmount == null ? "" : String(d.mgAmount),
   agAmount: d.agAmount == null ? "" : String(d.agAmount),
   ratePct: d.ratePct == null ? "" : String(d.ratePct),
-  termStart: d.termStart ?? "", exclusivity: d.exclusivity ?? "",
+  termStart: d.termStart ?? "", termEnd: d.termEnd ?? "", exclusivity: d.exclusivity ?? "",
   sublicenseAllowed: d.sublicenseAllowed == null ? "" : d.sublicenseAllowed ? "true" : "false",
   paymentScheme: d.paymentScheme ?? "", paymentTerms: d.paymentTerms ?? "", royaltyBase: d.royaltyBase ?? "",
   deductibleCosts: d.deductibleCosts ?? "", notes: d.notes ?? "", transactionKind: d.transactionKind ?? "",
+  lineKind: d.lineKind ?? "payment", taxCategory: d.taxCategory ?? "", groupNo: d.groupNo == null ? "" : String(d.groupNo),
+  basePriceLabel: d.basePriceLabel ?? "", materialCode: d.materialCode ?? "", sourceMaterialId: d.sourceMaterialId,
+  workId: d.workId == null ? "" : String(d.workId), counterpartyVendorId: d.counterpartyVendorId == null ? "" : String(d.counterpartyVendorId),
   regions: (d.regions.length ? d.regions : legacyNames(d.territory)).map((name) => ({ code: null, name })),
   languages: d.languages.map((name) => ({ code: null, name })),
   documentId: d.documentId, documentNumber: d.documentNumber
@@ -286,8 +310,35 @@ function ConditionDetail({ id, onBack, onOpenDocument, canRepair = false, onReco
   const [saving, setSaving] = useState(false);
   const [linked, setLinked] = useState<LinkedDoc[] | null>(null);
   const [linkBusy, setLinkBusy] = useState(false);
+  const [materials, setMaterials] = useState<Array<{ id: number; materialCode: string | null; materialName: string | null }>>([]);
+  const [docTerms, setDocTerms] = useState<Record<string, string> | null>(null);
   const toast = useToast();
   const isLedger = detail?.templateType === "condition_ledger";
+  const service = detail ? isServiceLine(detail) : false;
+  // 対象素材の候補は作品の素材（作成フォームと同じ /works/:id/detail）。
+  const workIdForMaterials = form ? Number(form.workId) || null : detail?.workId ?? null;
+  useEffect(() => {
+    if (!workIdForMaterials) { setMaterials([]); return; }
+    fetch(`/api/v2/works/${workIdForMaterials}/detail`)
+      .then((response) => response.ok ? response.json() : { materials: [] })
+      .then((data) => setMaterials((data.materials ?? []).map((m: Record<string, unknown>) => ({
+        id: Number(m.id), materialCode: (m.materialCode as string | null) ?? null, materialName: (m.materialName as string | null) ?? null
+      }))))
+      .catch(() => setMaterials([]));
+  }, [workIdForMaterials]);
+  // 業務委託の文書側の選択値（契約類型・業務区分…）は文書フォームの項目。ここでは参照し、編集は文書側で。
+  useEffect(() => {
+    if (!detail?.documentId || !service || isLedger) { setDocTerms(null); return; }
+    fetch(`/api/v2/documents/${detail.documentId}`)
+      .then((response) => response.ok ? response.json() : null)
+      .then((data) => {
+        const fd = (data?.document?.formData ?? data?.formData ?? {}) as Record<string, unknown>;
+        const terms: Record<string, string> = {};
+        for (const [key] of SERVICE_TERM_FIELDS) { const v = fd[key]; if (v != null && String(v).trim()) terms[key] = String(v); }
+        setDocTerms(terms);
+      })
+      .catch(() => setDocTerms(null));
+  }, [detail?.documentId, service, isLedger]);
 
   const load = () => fetch(`/api/v2/condition-lines/${id}`)
     .then((response) => response.ok ? response.json() : Promise.reject())
@@ -339,6 +390,12 @@ function ConditionDetail({ id, onBack, onOpenDocument, canRepair = false, onReco
       sublicenseAllowed: form.sublicenseAllowed === "" ? null : form.sublicenseAllowed === "true",
       paymentScheme: text(form.paymentScheme), paymentTerms: text(form.paymentTerms), royaltyBase: text(form.royaltyBase),
       deductibleCosts: text(form.deductibleCosts), notes: text(form.notes), transactionKind: text(form.transactionKind),
+      termEnd: form.termEnd || null,
+      lineKind: form.lineKind || null, taxCategory: form.taxCategory || null,
+      groupNo: num(form.groupNo), basePriceLabel: text(form.basePriceLabel),
+      materialCode: text(form.materialCode), sourceMaterialId: form.sourceMaterialId,
+      workId: form.workId ? Number(form.workId) : null,
+      counterpartyVendorId: form.counterpartyVendorId ? Number(form.counterpartyVendorId) : null,
       regions: form.regions, languages: form.languages,
       ...(form.documentId !== detail.documentId ? { documentId: form.documentId } : {})
     };
@@ -422,19 +479,55 @@ function ConditionDetail({ id, onBack, onOpenDocument, canRepair = false, onReco
 
       {editing && form && <div className="condition-edit" role="form">
         <h3>条件明細の編集</h3>
-        <p className="hub-note">保存すると条件台帳・計算書・作品画面のすべてに反映されます。金額は税抜。地域・言語は候補から追加（自由入力も可）。</p>
+        <p className="hub-note">保存すると条件台帳・計算書・作品画面のすべてに反映されます。金額は税抜。相手方・作品・対象素材はマスタから検索、選択肢は「条件を登録する」と同じです。</p>
         <div className="field-grid">
-          {textField("conditionName", "条件名")}
+          {textField("conditionName", service ? "内容（品目・業務）" : "条件名")}
+          <SearchableLedgerSelect type="vendors" value={form.counterpartyVendorId} label="相手方（取引先マスタ）" placeholder="名前・コードで検索"
+            helper={detail.vendorName || undefined} onChange={(value) => set({ counterpartyVendorId: value })} />
+          <SearchableLedgerSelect type="works" value={form.workId} label="作品（作品マスタ）" placeholder="作品名・コードで検索"
+            helper={detail.workTitle || undefined} onChange={(value) => set({ workId: value, materialCode: "", sourceMaterialId: null })} />
+          <label><span>対象（成果物・素材）</span>
+            <select value={form.sourceMaterialId == null ? "" : String(form.sourceMaterialId)}
+              onChange={(event) => {
+                const picked = materials.find((m) => String(m.id) === event.target.value) ?? null;
+                set({ sourceMaterialId: picked?.id ?? null, materialCode: picked?.materialCode ?? "" });
+              }}>
+              <option value="">{form.workId ? "文書全体（素材を特定しない）" : "（作品を選ぶと素材が出ます）"}</option>
+              {materials.map((m) => <option key={m.id} value={m.id}>{m.materialCode ? `${m.materialCode} ` : ""}{m.materialName ?? `素材#${m.id}`}</option>)}
+            </select></label>
+          {textField("termStart", "開始日", { type: "date" })}
+          {textField("termEnd", "終了日", { type: "date" })}
+        </div>
+        {service ? <div className="field-grid">
+          <label><span>行種別</span>
+            <select value={form.lineKind} onChange={(event) => set({ lineKind: event.target.value })}>
+              {LINE_KIND_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select></label>
+          <label><span>支払方式</span>
+            <select value={form.paymentScheme} onChange={(event) => set({ paymentScheme: event.target.value })}>
+              <option value="">—</option>
+              {PAYMENT_SCHEME_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select></label>
+          {textField("amountExTax", "金額（税抜）", { type: "number" })}
+          <label><span>税区分</span>
+            <select value={form.taxCategory} onChange={(event) => set({ taxCategory: event.target.value })}>
+              <option value="">—</option>
+              {TAX_CATEGORY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select></label>
+          {textField("currency", "通貨", { placeholder: "JPY" })}
+          {textField("paymentTerms", "支払時期・条件")}
+        </div> : <div className="field-grid">
           <label><span>取引種別</span>
             <select value={form.transactionKind} onChange={(event) => set({ transactionKind: event.target.value })}>
               <option value="">—</option><option value="license">ライセンス</option><option value="product">商品取引</option>
             </select></label>
-          {textField("currency", "通貨", { placeholder: "JPY" })}
-          {textField("amountExTax", "金額（税抜）", { type: "number" })}
           {textField("ratePct", "料率（%）", { type: "number" })}
           {textField("mgAmount", "MG", { type: "number" })}
           {textField("agAmount", "AG", { type: "number" })}
-          {textField("termStart", "開始日", { type: "date" })}
+          {textField("groupNo", "加算グループ", { type: "number", placeholder: "加算型のとき" })}
+          {textField("basePriceLabel", "基準価格（表示）")}
+          {textField("amountExTax", "金額（税抜）", { type: "number" })}
+          {textField("currency", "通貨", { placeholder: "JPY" })}
           <label><span>独占性</span>
             <select value={form.exclusivity} onChange={(event) => set({ exclusivity: event.target.value })}>
               <option value="">—</option>
@@ -444,23 +537,18 @@ function ConditionDetail({ id, onBack, onOpenDocument, canRepair = false, onReco
             <select value={form.sublicenseAllowed} onChange={(event) => set({ sublicenseAllowed: event.target.value as EditForm["sublicenseAllowed"] })}>
               <option value="">—</option><option value="true">可</option><option value="false">不可</option>
             </select></label>
-          <label><span>支払方式</span>
-            <select value={form.paymentScheme} onChange={(event) => set({ paymentScheme: event.target.value })}>
-              <option value="">—</option>
-              {Object.entries(paymentSchemeLabels).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-            </select></label>
           {textField("paymentTerms", "支払条件")}
           {textField("royaltyBase", "ロイヤリティ基準")}
           {textField("deductibleCosts", "控除費用")}
-        </div>
-        <div className="field-grid">
+        </div>}
+        {!service && <div className="field-grid">
           <label><span>許諾地域</span>
             <MultiSelectChips value={form.regions} groups={TERRITORY_GROUPS} placeholder="国・地域を検索して追加"
               onChange={(next) => set({ regions: next })} /></label>
           <label><span>許諾言語</span>
             <MultiSelectChips value={form.languages} groups={LANGUAGE_GROUPS} placeholder="言語を検索して追加"
               onChange={(next) => set({ languages: next })} /></label>
-        </div>
+        </div>}
         <label><span>備考</span>
           <textarea rows={3} value={form.notes} onChange={(event) => set({ notes: event.target.value })} /></label>
         {!isLedger && <div className="condition-edit-doc">
@@ -503,8 +591,19 @@ function ConditionDetail({ id, onBack, onOpenDocument, canRepair = false, onReco
         <Field label="控除費用" value={detail.deductibleCosts} />
         <Field label="開始日" value={detail.termStart} />
         <Field label="取引種別" value={detail.transactionKind ? (transactionKindLabels[detail.transactionKind] ?? detail.transactionKind) : null} />
+        {service && <Field label="行種別" value={LINE_KIND_OPTIONS.find((o) => o.value === detail.lineKind)?.label ?? detail.lineKind} />}
+        {service && <Field label="税区分" value={TAX_CATEGORY_OPTIONS.find((o) => o.value === detail.taxCategory)?.label ?? detail.taxCategory} />}
+        <Field label="対象素材" value={detail.sourceMaterialName ? `${detail.materialCode ? `${detail.materialCode} ` : ""}${detail.sourceMaterialName}` : detail.materialCode} />
+        <Field label="終了日" value={detail.termEnd} />
         <Field label="元文書" value={detail.documentNumber ?? (detail.documentId ? `#${detail.documentId}` : null)} />
       </dl>}
+      {!editing && service && docTerms && <div className="condition-doc-terms">
+        <h3>文書の業務委託条件（{detail.documentNumber ?? "元文書"}）</h3>
+        <p className="hub-note">契約類型などの選択値は文書フォームの項目です。変更は「文書を開く」→ 編集・再発行で行います（確定文書を直接書き換えない）。</p>
+        {Object.keys(docTerms).length
+          ? <dl className="condition-detail-grid">{SERVICE_TERM_FIELDS.filter(([k]) => docTerms[k]).map(([k, label]) => <Field key={k} label={label} value={docTerms[k]} />)}</dl>
+          : <p className="inline-empty">選択値は未入力です。</p>}
+      </div>}
       {canRepair && repairOpen && <div className="condition-repair" role="form">
         <h3>相手方の設定</h3>
         <p className="hub-note">取引先マスタから選択して設定します（表示は全画面に即時反映されます）。</p>
