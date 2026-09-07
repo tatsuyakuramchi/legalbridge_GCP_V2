@@ -7,8 +7,10 @@ interface TemplateRow {
 }
 interface DocumentRow {
   id: number; documentNo: string | null; status: string; templateLabel: string | null;
-  title: string | null; counterparty: string | null; conditionCount: number; issuedAt: string | null;
+  title: string | null; counterparty: string | null; conditionCount: number;
+  issuedAt: string | null; storageUrl: string | null;
 }
+interface Integrations { drive: { documents: boolean; matterFolders: boolean } }
 interface PreviewResponse {
   html: string; templateLabel: string;
   missing: Array<{ name: string; label: string }>; derived: string[];
@@ -26,18 +28,22 @@ export function DocumentsWorkspace() {
   const [issued, setIssued] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [integrations, setIntegrations] = useState<Integrations | null>(null);
+  const [stored, setStored] = useState<string | null>(null);
 
   useEffect(() => { void reload(); }, []);
   async function reload() {
     try {
-      const [t, d, c] = await Promise.all([
+      const [t, d, c, i] = await Promise.all([
         api.get<{ templates: TemplateRow[] }>("/document-templates"),
         api.get<{ documents: DocumentRow[] }>("/documents"),
-        api.get<{ conditions: ConditionSummary[] }>("/conditions")
+        api.get<{ conditions: ConditionSummary[] }>("/conditions"),
+        api.get<Integrations>("/integrations")
       ]);
       setTemplates(t.templates);
       setDocuments(d.documents);
       setConditions(c.conditions);
+      setIntegrations(i);
       if (!templateKey && t.templates[0]) setTemplateKey(t.templates[0].templateKey);
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
   }
@@ -67,6 +73,19 @@ export function DocumentsWorkspace() {
     finally { setBusy(false); }
   }
 
+  // Drive へ保存する。既存ファイルがあれば中身だけ差し替わり、リンクは変わらない。
+  async function store(id: number) {
+    setError(null); setStored(null); setBusy(true);
+    try {
+      const result = await api.post<{ storageUrl: string; mode: string }>(`/documents/${id}/store`);
+      setStored(result.mode === "unchanged" ? "すでに保存済みです"
+        : result.mode === "replaced" ? "Drive のファイルを差し替えました（リンクは変わりません）"
+        : "Drive に保存しました");
+      await reload();
+    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
+    finally { setBusy(false); }
+  }
+
   const ready = Boolean(templateKey) && picked.length > 0 && preview !== null && preview.missing.length === 0;
 
   return (
@@ -78,6 +97,10 @@ export function DocumentsWorkspace() {
 
       {error && <div className="alert">{error}</div>}
       {issued && <div className="note">発行しました：<b className="code">{issued}</b></div>}
+      {stored && <div className="note">{stored}</div>}
+      {integrations && !integrations.drive.documents && (
+        <div className="note">Drive 保存は未設定です（<span className="code">GOOGLE_DRIVE_FOLDER_ID</span>）。文書の作成と発行はそのまま使えます。</div>
+      )}
 
       <div className="split">
         <div className="stack">
@@ -161,11 +184,16 @@ export function DocumentsWorkspace() {
                     <td><span className="tag">{d.status}</span></td>
                     <td>
                       {d.status === "issued" && (
-                        <>
+                        <span className="row">
                           <a href={`/api/v3/documents/${d.id}/html`} target="_blank" rel="noreferrer">HTML</a>
-                          {" ／ "}
                           <a href={`/api/v3/documents/${d.id}/pdf`}>PDF</a>
-                        </>
+                          {d.storageUrl
+                            ? <a href={d.storageUrl} target="_blank" rel="noreferrer">Drive</a>
+                            : integrations?.drive.documents
+                              ? <button className="btn btn-sm" disabled={busy}
+                                        onClick={() => store(d.id)}>Driveに保存</button>
+                              : null}
+                        </span>
                       )}
                     </td>
                   </tr>

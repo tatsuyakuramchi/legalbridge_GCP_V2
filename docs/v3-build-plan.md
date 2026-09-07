@@ -103,6 +103,25 @@ V2 は `form_data` の自由なキーが業務データの参照元で、相手�
 無効・旧版の条件からは文書を出さない。文書は条件を参照する側なので、
 発行しても条件は動かない。
 
+### Drive 保存（移植済み）
+
+`drive-storage.ts` と `drive-folder.ts` は V2 からそのまま移植した
+（フル drive スコープ、専用 Workspace SA 鍵の優先、共有ドライブ対応、
+webViewLink が空で返るときのリンク合成まで含めて V1 準拠の挙動）。
+
+V3 で足したのは保存の運用面。
+
+- **冪等**：Drive 側で同じ文書IDのファイルを探し、あれば中身だけ差し替える。
+  再保存でリンクが変わると、送付済みメールや CloudSign の参照が切れるため
+- 保存済みの文書は何度呼んでも `unchanged`。やり直しは `?force=1`
+- 発行済みの文書だけを保存する（下書きは 409）
+- Drive 側の失敗は文書の状態を変えない。理由を返して再実行できる
+- `GOOGLE_DRIVE_FOLDER_ID` 未設定でも起動する。保存を呼んだときだけ 503 で理由を返し、
+  画面は保存ボタンを出さない
+- 案件フォルダ（`DRIVE_MATTER_PARENT_FOLDER_ID`）は同名があれば作らず使い回す
+
+環境変数は `apps/legalbridge-v3/.env.example` にまとめた。
+
 ### 残り
 
 画面（モックの残り）：
@@ -116,7 +135,7 @@ V2 は `form_data` の自由なキーが業務データの参照元で、相手�
 | 領域 | 移植元 |
 |---|---|
 | ~~文書生成（Handlebars → HTML → Chromium PDF）~~ | **移植済み** |
-| Drive 保存 | `documents/drive-storage.ts` |
+| ~~Drive 保存~~ | **移植済み** |
 | Slack（受付・通知・スレッド） | `slack-intake/` `integrations/slack-*` |
 | Gmail（送信・受信取込） | `integrations/gmail-*` |
 | CloudSign | `integrations/cloudsign-*` |

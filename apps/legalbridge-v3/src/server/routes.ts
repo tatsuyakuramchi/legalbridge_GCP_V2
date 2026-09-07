@@ -11,6 +11,11 @@ import { checkAgainstEnvelope } from "./works/envelope.js";
 import { DocumentRepository } from "./documents/repository.js";
 import { DocumentIssueService } from "./documents/issue-service.js";
 import { ChromiumPdfRenderer, MemoryPdfRenderer, type PdfRenderer } from "./documents/pdf-renderer.js";
+import { DocumentStorageService } from "./documents/storage-service.js";
+import { GoogleDriveStorage, MemoryDriveStorage, type DriveStorage } from "./documents/drive-storage.js";
+import { GoogleMatterDriveFolderService, LocalMatterDriveFolderService } from "./documents/drive-folder.js";
+import { MatterFolderStorageService } from "./matters/drive-folder-service.js";
+import { config } from "./config.js";
 
 const asyncRoute =
   (handler: (req: Request, res: Response) => Promise<unknown>) =>
@@ -26,6 +31,24 @@ export function createRoutes(database: Transactable) {
   const issues = new DocumentIssueService(database);
   const pdf: PdfRenderer = process.env.PDF_RENDERER === "memory"
     ? new MemoryPdfRenderer() : new ChromiumPdfRenderer();
+
+  // Drive は未設定でも起動する。保存を呼んだときだけ 503 で理由を返す。
+  const drive: DriveStorage | null =
+    process.env.DRIVE_STORAGE === "memory" ? new MemoryDriveStorage()
+    : config.driveFolderId
+      ? new GoogleDriveStorage(config.driveFolderId, {
+          keyFilePath: config.driveKeyFilePath || undefined,
+          environmentTag: config.driveEnvironmentTag
+        })
+      : null;
+  const storage = new DocumentStorageService(database, drive, pdf);
+  const matterFolders = new MatterFolderStorageService(
+    database,
+    config.driveMatterParentFolderId
+      ? new GoogleMatterDriveFolderService({ keyFilePath: config.driveKeyFilePath || undefined })
+      : new LocalMatterDriveFolderService(),
+    config.driveMatterParentFolderId
+  );
   const actor = (res: Response) => res.locals.currentUser?.email ?? "unknown";
 
   // ---- 案件（制御レイヤー） ----
@@ -42,6 +65,16 @@ export function createRoutes(database: Transactable) {
     const matter = await matters.find(Number(req.params.id));
     if (!matter) return res.status(404).json({ error: "案件が見つかりません" });
     res.json(matter);
+  }));
+
+  router.post("/matters/:id/drive-folder",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await matterFolders.ensure(Number(req.params.id), actor(res)));
+    }));
+
+  router.get("/matters/:id/drive-files", asyncRoute(async (req, res) => {
+    res.json({ files: await matterFolders.listFiles(Number(req.params.id)) });
   }));
 
   // ---- 条件 ----
@@ -124,6 +157,12 @@ export function createRoutes(database: Transactable) {
     res.json({ envelope, parts: await works.parts(id) });
   }));
 
+  router.get("/integrations", (_req, res) => {
+    res.json({
+      drive: { documents: storage.configured, matterFolders: matterFolders.configured }
+    });
+  });
+
   // ---- 文書 ----
   router.get("/document-templates", asyncRoute(async (_req, res) => {
     res.json({ templates: await documents.listTemplates() });
@@ -183,6 +222,14 @@ export function createRoutes(database: Transactable) {
     const rendered = await issues.renderIssued(Number(req.params.id));
     res.type("html").send(rendered.html);
   }));
+
+  // Drive への保存。発行済みの文書だけ。既存ファイルがあれば中身を差し替えてリンクを保つ。
+  router.post("/documents/:id/store",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const force = String(req.query.force ?? "") === "1";
+      res.json(await storage.store(Number(req.params.id), actor(res), { force }));
+    }));
 
   router.get("/documents/:id/pdf", asyncRoute(async (req, res) => {
     const rendered = await issues.renderIssued(Number(req.params.id));

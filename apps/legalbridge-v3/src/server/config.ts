@@ -21,6 +21,11 @@ export interface Config {
   adminEmails: string[];
   legalEmails: string[];
   requesterDomains: string[];
+  /** Drive 保存。フォルダIDが空なら機能ごと無効（未設定で落ちない）。 */
+  driveFolderId: string;
+  driveKeyFilePath: string;
+  driveEnvironmentTag: string;
+  driveMatterParentFolderId: string;
 }
 
 const list = (v: string | undefined) =>
@@ -39,5 +44,9 @@ export const config: Config = {
   authMode: process.env.AUTH_MODE === "iap" ? "iap" : "disabled",
   adminEmails: list(process.env.ADMIN_EMAILS),
   legalEmails: list(process.env.LEGAL_EMAILS),
-  requesterDomains: list(process.env.REQUESTER_DOMAINS)
+  requesterDomains: list(process.env.REQUESTER_DOMAINS),
+  driveFolderId: (process.env.GOOGLE_DRIVE_FOLDER_ID ?? "").trim(),
+  driveKeyFilePath: (process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH ?? "").trim(),
+  driveEnvironmentTag: (process.env.DRIVE_ENVIRONMENT_TAG ?? "validation").trim(),
+  driveMatterParentFolderId: (process.env.DRIVE_MATTER_PARENT_FOLDER_ID ?? "").trim()
 };

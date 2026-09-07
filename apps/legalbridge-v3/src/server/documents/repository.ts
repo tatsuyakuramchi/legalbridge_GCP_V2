@@ -14,6 +14,7 @@ export interface DocumentSummary {
   matterId: number | null;
   conditionCount: number;
   issuedAt: string | null;
+  storageUrl: string | null;
 }
 
 export interface DocumentDetail extends DocumentSummary {
@@ -22,7 +23,6 @@ export interface DocumentDetail extends DocumentSummary {
   supersedesId: number | null;
   renderedValues: Record<string, unknown>;
   manualInputs: Record<string, unknown>;
-  storageUrl: string | null;
   conditions: Array<{ id: number; conditionNo: string | null; name: string; lineNo: number }>;
 }
 
@@ -37,7 +37,7 @@ export interface TemplateSource {
 }
 
 const LIST_SELECT = `
-  d.id, d.document_no, d.status, d.matter_id, d.issued_at,
+  d.id, d.document_no, d.status, d.matter_id, d.issued_at, d.storage_url,
   v.title, v.counterparty, v.template_label, v.condition_count,
   t.template_key`;
 
@@ -58,7 +58,8 @@ function mapSummary(row: Record<string, any>): DocumentSummary {
     counterparty: str(row.counterparty),
     matterId: int(row.matter_id),
     conditionCount: Number(row.condition_count ?? 0),
-    issuedAt: row.issued_at ? new Date(String(row.issued_at)).toISOString() : null
+    issuedAt: row.issued_at ? new Date(String(row.issued_at)).toISOString() : null,
+    storageUrl: str(row.storage_url)
   };
 }
 
@@ -90,7 +91,7 @@ export class DocumentRepository {
   async find(id: number): Promise<DocumentDetail | null> {
     const r = await this.database.query(
       `SELECT ${LIST_SELECT}, d.template_version_id, d.agreement_id, d.supersedes_id,
-              d.rendered_values, d.manual_inputs, d.storage_url
+              d.rendered_values, d.manual_inputs
          ${LIST_FROM}
         WHERE d.id = $1`, [id]);
     const row = r.rows[0] as Record<string, any> | undefined;
@@ -106,7 +107,6 @@ export class DocumentRepository {
       supersedesId: int(row.supersedes_id),
       renderedValues: (row.rendered_values as Record<string, unknown>) ?? {},
       manualInputs: (row.manual_inputs as Record<string, unknown>) ?? {},
-      storageUrl: str(row.storage_url),
       conditions: conditions.rows.map((c: Record<string, any>) => ({
         id: Number(c.id), conditionNo: str(c.condition_no),
         name: String(c.name), lineNo: Number(c.line_no)

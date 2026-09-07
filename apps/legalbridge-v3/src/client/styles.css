@@ -116,3 +116,4 @@ tbody tr.sel{background:var(--accent-soft)}
 .pick{display:flex;gap:7px;align-items:center;font-size:12px;cursor:pointer}
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .preview{width:100%;height:420px;border:0;border-top:1px solid var(--line);background:#fff}
+.btn-sm{padding:2px 8px;font-size:11.5px}
