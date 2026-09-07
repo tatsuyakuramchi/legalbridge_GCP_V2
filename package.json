@@ -3,12 +3,18 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "workspaces": ["apps/*"],
+  "workspaces": [
+    "apps/*"
+  ],
   "scripts": {
     "dev": "npm run dev -w @legalbridge/app",
     "build": "npm run build -w @legalbridge/app",
     "typecheck": "npm run typecheck -w @legalbridge/app",
-    "test": "npm run test -w @legalbridge/app"
+    "test": "npm run test -w @legalbridge/app",
+    "dev:v3": "npm run dev -w @legalbridge/v3",
+    "build:v3": "npm run build -w @legalbridge/v3",
+    "typecheck:v3": "npm run typecheck -w @legalbridge/v3",
+    "test:v3": "npm run test -w @legalbridge/v3"
   },
   "devDependencies": {
     "typescript": "^5.9.3"
