@@ -16,6 +16,7 @@ import { GoogleDriveStorage, MemoryDriveStorage, type DriveStorage } from "./doc
 import { GoogleMatterDriveFolderService, LocalMatterDriveFolderService } from "./documents/drive-folder.js";
 import { MatterFolderStorageService } from "./matters/drive-folder-service.js";
 import { config } from "./config.js";
+import { RoyaltyStatementService } from "./royalty/statement-service.js";
 
 const asyncRoute =
   (handler: (req: Request, res: Response) => Promise<unknown>) =>
@@ -42,6 +43,7 @@ export function createRoutes(database: Transactable) {
         })
       : null;
   const storage = new DocumentStorageService(database, drive, pdf);
+  const royalty = new RoyaltyStatementService(database);
   const matterFolders = new MatterFolderStorageService(
     database,
     config.driveMatterParentFolderId
@@ -238,6 +240,49 @@ export function createRoutes(database: Transactable) {
        .setHeader("content-disposition",
          `attachment; filename="${rendered.documentNo ?? `document-${req.params.id}`}.pdf"`);
     res.send(buffer);
+  }));
+
+  // ---- ロイヤリティ ----
+  const reportedSchema = z.object({
+    salesInput: z.coerce.number().int().nullable().optional(),
+    intakeCurrency: z.string().trim().length(3).nullable().optional(),
+    fxRate: z.coerce.number().positive().nullable().optional(),
+    quantity: z.coerce.number().nonnegative().nullable().optional(),
+    sampleQuantity: z.coerce.number().nonnegative().nullable().optional(),
+    acceptanceRatio: z.coerce.number().min(0).max(1).nullable().optional(),
+    periodCount: z.coerce.number().int().positive().nullable().optional(),
+    initialFee: z.coerce.number().int().nullable().optional()
+  }).default({});
+
+  const calculationSchema = z.object({
+    period: z.string().trim().min(1).max(60),
+    occurredOn: z.string().date().nullable().optional(),
+    eventType: z.enum(["manufacturing", "sales", "sublicense_receipt", "service_period", "adjustment"]).optional(),
+    reported: reportedSchema
+  });
+
+  // 試算。保存しない。
+  router.post("/conditions/:id/royalty-preview",
+    requireRole("admin", "legal"),
+    asyncRoute(async (req, res) => {
+      const input = calculationSchema.parse(req.body ?? {});
+      res.json(await royalty.preview({ conditionId: Number(req.params.id), ...input }));
+    }));
+
+  // 確定。発行済みの計算書（文書）に結び付ける。金額は必ず計算し直す。
+  router.post("/conditions/:id/statements",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = calculationSchema.extend({
+        documentId: z.coerce.number().int().positive()
+      }).parse(req.body ?? {});
+      res.status(201).json(await royalty.finalize({ conditionId: Number(req.params.id), ...input }, actor(res)));
+    }));
+
+  router.get("/statements", asyncRoute(async (req, res) => {
+    res.json({ statements: await royalty.list({
+      conditionId: req.query.conditionId ? Number(req.query.conditionId) : undefined
+    }) });
   }));
 
   return router;

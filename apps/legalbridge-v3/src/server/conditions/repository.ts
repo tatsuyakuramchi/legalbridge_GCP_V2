@@ -142,7 +142,8 @@ export class ConditionRepository {
 
   private async balance(id: number) {
     const r = await this.database.query(
-      `SELECT mg_amount, ag_amount, planned_total, consumed_total, ag_remaining, ag_consumption_rate
+      `SELECT mg_amount, ag_amount, planned_total, consumed_total,
+              ag_consumed, ag_remaining, ag_consumption_rate
          FROM v_condition_balance WHERE condition_id = $1`, [id]);
     const b = r.rows[0] as Record<string, any> | undefined;
     if (!b) return null;
@@ -151,6 +152,7 @@ export class ConditionRepository {
       agAmount: Number(b.ag_amount ?? 0),
       plannedTotal: Number(b.planned_total ?? 0),
       consumedTotal: Number(b.consumed_total ?? 0),
+      agConsumed: Number(b.ag_consumed ?? 0),
       agRemaining: Number(b.ag_remaining ?? 0),
       agConsumptionRate: num(b.ag_consumption_rate)
     };

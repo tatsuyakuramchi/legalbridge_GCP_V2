@@ -5,6 +5,17 @@ import { api, ApiError, money, rate } from "./api.js";
 type DetailResponse = ConditionDetail & {
   envelopeCheck: { envelope: RightsEnvelope; check: EnvelopeCheck } | null;
 };
+type RoyaltyPreview = {
+  fee: {
+    gross_ex_tax: number; after_acceptance: number;
+    mg_topup_this_time: number; mg_floor_applied: boolean;
+    ag_offset_this_time: number; ag_remaining_after: number;
+    actual_ex_tax: number; tax_amount: number; total_inc_tax: number;
+    formula_breakdown: string;
+  };
+  payment: { withholdingEnabled: boolean; withholdingTax: number; netTransfer: number };
+  agConsumedBefore: number;
+};
 type WriteResult = {
   changed: Array<{ target: string; rows: number }>;
   resolvesThrough: Array<{ target: string; rows: number }>;
@@ -18,6 +29,8 @@ export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
   const [filter, setFilter] = useState<"all" | "in" | "out">("all");
   const [result, setResult] = useState<WriteResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sales, setSales] = useState("");
+  const [royalty, setRoyalty] = useState<RoyaltyPreview | null>(null);
 
   useEffect(() => {
     const query = filter === "all" ? "" : `?direction=${filter}`;
@@ -36,6 +49,18 @@ export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
       .then(setDetail)
       .catch((e: ApiError) => setError(e.message));
   }, [selected]);
+
+  // ロイヤリティの試算。保存しないので何度でも押せる。
+  async function previewRoyalty() {
+    if (!detail) return;
+    setError(null);
+    try {
+      setRoyalty(await api.post<RoyaltyPreview>(`/conditions/${detail.id}/royalty-preview`, {
+        period: "試算",
+        reported: { salesInput: Number(sales.replace(/[^0-9]/g, "")) || 0 }
+      }));
+    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
+  }
 
   async function raiseMg() {
     if (!detail) return;
@@ -167,6 +192,39 @@ export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
                   </table>
                 </div>
               </div>
+
+              {detail.direction === "out" && detail.pricingModel === "revenue_rate" && (
+                <div className="panel">
+                  <div className="panel-hd"><h2>ロイヤリティ試算</h2><span className="faint">保存しません</span></div>
+                  <div className="panel-bd stack">
+                    <label className="field">
+                      <span>報告売上</span>
+                      <input value={sales} onChange={(e) => setSales(e.target.value)} placeholder="例: 4896000" />
+                    </label>
+                    <div className="row">
+                      <button className="btn" onClick={previewRoyalty} disabled={!sales}>試算する</button>
+                    </div>
+                    {royalty && (
+                      <table>
+                        <tbody>
+                          <tr><td>グロス</td><td className="num">{money(royalty.fee.gross_ex_tax, detail.currency)}</td>
+                              <td className="faint">{royalty.fee.formula_breakdown}</td></tr>
+                          <tr><td>MG下限の上乗せ</td><td className="num">{money(royalty.fee.mg_topup_this_time, detail.currency)}</td>
+                              <td className="faint">{royalty.fee.mg_floor_applied ? "下限が適用された" : "—"}</td></tr>
+                          <tr><td>AG相殺</td><td className="num">{money(royalty.fee.ag_offset_this_time, detail.currency)}</td>
+                              <td className="faint">消化済み {money(royalty.agConsumedBefore, detail.currency)} ／ 残 {money(royalty.fee.ag_remaining_after, detail.currency)}</td></tr>
+                          <tr><td><b>税抜実額</b></td><td className="num"><b>{money(royalty.fee.actual_ex_tax, detail.currency)}</b></td>
+                              <td className="faint">消費税 {money(royalty.fee.tax_amount, detail.currency)}</td></tr>
+                          {royalty.payment.withholdingEnabled && (
+                            <tr><td>源泉</td><td className="num">{money(royalty.payment.withholdingTax, detail.currency)}</td>
+                                <td className="faint">振込 {money(royalty.payment.netTransfer, detail.currency)}</td></tr>
+                          )}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                </div>
+              )}
 
               <div className="panel">
                 <div className="panel-hd"><h2>金額を変更する</h2><span className="faint">保存先はひとつ</span></div>

@@ -61,7 +61,10 @@ export interface ConditionBalance {
   mgAmount: number;
   agAmount: number;
   plannedTotal: number;
+  /** 実績の合計（相殺後の実額）。AG の消化量とは別物。 */
   consumedTotal: number;
+  /** AG の消化累計（相殺額）。 */
+  agConsumed: number;
   agRemaining: number;
   agConsumptionRate: number | null;
 }

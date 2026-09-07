@@ -9,6 +9,15 @@
 BEGIN;
 SET LOCAL search_path = v3, public;
 
+-- ビューは派生物なので毎回作り直す。CREATE OR REPLACE は列の増減ができないため、
+-- 定義を変えたときに再実行で落ちるのを避ける。
+DROP VIEW IF EXISTS v3.v_condition_balance;
+DROP VIEW IF EXISTS v3.v_work_rights_envelope;
+DROP VIEW IF EXISTS v3.v_work_scope_envelope;
+DROP VIEW IF EXISTS v3.v_document_display;
+DROP VIEW IF EXISTS v3.v_deadlines;
+DROP VIEW IF EXISTS v3.v_rights_sources;
+
 -- ---------------------------------------------------------------------
 -- 条件の残高（MG下限・AG充当）
 --   MG は毎期独立の下限で消化しない。AG は累積で充当する。
@@ -22,10 +31,13 @@ SELECT
   COALESCE(c.mg_amount, 0)                        AS mg_amount,
   COALESCE(c.ag_amount, 0)                        AS ag_amount,
   COALESCE(s.planned_total, 0)                    AS planned_total,
-  COALESCE(e.consumed_total, 0)                   AS consumed_total,
-  GREATEST(COALESCE(c.ag_amount, 0) - COALESCE(e.consumed_total, 0), 0) AS ag_remaining,
+  -- 実績の合計（実際に発生した額）。AG の消化量とは別物なので混ぜない。
+  COALESCE(e.actual_total, 0)                     AS consumed_total,
+  -- AG の消化は相殺額（deductions）の累計。amount は相殺後の実額なので使えない。
+  COALESCE(e.ag_consumed, 0)                      AS ag_consumed,
+  GREATEST(COALESCE(c.ag_amount, 0) - COALESCE(e.ag_consumed, 0), 0) AS ag_remaining,
   CASE WHEN COALESCE(c.ag_amount, 0) > 0
-       THEN LEAST(COALESCE(e.consumed_total, 0)::numeric / c.ag_amount, 1)
+       THEN LEAST(COALESCE(e.ag_consumed, 0)::numeric / c.ag_amount, 1)
   END                                             AS ag_consumption_rate
 FROM v3.conditions c
 LEFT JOIN LATERAL (
@@ -33,12 +45,15 @@ LEFT JOIN LATERAL (
     FROM v3.condition_schedules WHERE condition_id = c.id
 ) s ON true
 LEFT JOIN LATERAL (
-  SELECT SUM(amount) AS consumed_total
+  SELECT SUM(amount)     AS actual_total,
+         SUM(deductions) AS ag_consumed
     FROM v3.condition_events WHERE condition_id = c.id AND status = 'active'
 ) e ON true;
 
 COMMENT ON VIEW v3.v_condition_balance IS
-  '条件ごとの予定と実績。AG は累積充当のため残高を出す。MG は下限なので残高の概念を持たない。';
+  '条件ごとの予定と実績。AG は累積充当なので、消化量は相殺額（condition_events.deductions）
+   の累計で数える。実額（amount）は相殺後の値なので AG 残の計算には使えない。
+   MG は下限であって消化されないため、残高の概念を持たない。';
 
 -- ---------------------------------------------------------------------
 -- 作品の権利包絡：スカラー次元
