@@ -103,7 +103,8 @@ test("宛名が別人ならマスタの区分は使わない", () => {
 
 test("空白の違いは同一視する", () => {
   assert.equal(masterEntityTypeFor(" 大神貴寛 ", INDIVIDUAL_MASTER), "個人");
-  assert.equal(masterEntityTypeFor("大神貴寛", { entityType: "個人", names: ["大神　貴寛"] }), "");
+  // 空白の有無だけの違いは同じ相手（2026-09-07: 個人宛の検収書が御中で出た原因の一つ）
+  assert.equal(masterEntityTypeFor("大神貴寛", { entityType: "個人", names: ["大神　貴寛"] }), "個人");
   assert.equal(masterEntityTypeFor("大神 貴寛", { entityType: "個人", names: ["大神　貴寛"] }), "個人");
 });
 
@@ -113,4 +114,13 @@ test("マスタが無い・区分が空・宛名が空なら何も返さない",
   assert.equal(masterEntityTypeFor("大神貴寛", { entityType: "", names: ["大神貴寛"] }), "");
   assert.equal(masterEntityTypeFor("", INDIVIDUAL_MASTER), "");
   assert.equal(masterEntityTypeFor("大神貴寛", { entityType: "個人" }), "");
+});
+
+test("マスタ名との突き合わせは空白と宛名の敬称を無視する（個人宛が御中で出ない）", () => {
+  const master = { entityType: "個人", names: ["佐野篤"] };
+  assert.equal(masterEntityTypeFor("佐野 篤", master), "個人");
+  assert.equal(masterEntityTypeFor("佐野篤 様", master), "個人");
+  assert.equal(masterEntityTypeFor("佐野　篤", master), "個人");
+  assert.equal(masterEntityTypeFor("佐野花", master), "");
+  assert.equal(masterEntityTypeFor("株式会社佐野篤", master), "");
 });

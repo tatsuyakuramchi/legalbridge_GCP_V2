@@ -45,10 +45,13 @@ export function contradictsEntityType(entityType: unknown, suffix: unknown): boo
   return isIndividualEntity(entityType) ? explicit === "御中" : explicit === "様";
 }
 
-// 宛名の突き合わせ用の正規化。全角空白・連続空白・前後の空白だけを均す。
-// 「株式会社」の有無などは同一視しない（別法人を同じ扱いにしてしまう）。
+// 宛名の突き合わせ用の正規化。空白（全角含む）は無視し、宛名に付けた敬称（様／御中／殿）は外す。
+// 「佐野 篤」と「佐野篤」、「佐野篤 様」を同じ相手とみなす（2026-09-07: 空白違いで一致せず
+// 個人宛の検収書が既定の「御中」で出ていた）。「株式会社」の有無などは同一視しない（別法人を同じ扱いにしてしまう）。
 function normalizeName(value: unknown): string {
-  return String(value ?? "").replace(/[\s　]+/g, " ").trim();
+  return String(value ?? "")
+    .replace(/[\s　]+/g, "")
+    .replace(/(様|御中|殿)$/, "");
 }
 
 /**

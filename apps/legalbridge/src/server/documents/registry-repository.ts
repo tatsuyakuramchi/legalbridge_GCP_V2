@@ -63,6 +63,29 @@ const DOCUMENT_SELECT = `d.id, d.document_number, h.previous_document_number, d.
               v.trade_name AS vendor_master_trade_name,
               v.pen_name AS vendor_master_pen_name`;
 
+// 取引先マスタの結合。documents.vendor_id があればそれを、無い旧文書（確定時に名前から解決
+// できなかったもの）は宛名（form_data の相手先名）でマスタを引く（excel-batch と同じ順序:
+// vendor_name → trade_name → pen_name）。宛名一致でしか引かないので別人のマスタは付かない。
+// これが無いと vendor_id の無い検収書は区分不明＝敬称が既定の「御中」になり、個人宛でも御中で出ていた。
+const VENDOR_MASTER_JOIN = `CROSS JOIN LATERAL (
+           SELECT COALESCE(
+             NULLIF(btrim(d.form_data->>'VENDOR_NAME'), ''), NULLIF(btrim(d.form_data->>'counterparty'), ''),
+             NULLIF(btrim(d.form_data->>'取引先'), ''), NULLIF(btrim(d.form_data->>'相手先'), ''),
+             NULLIF(btrim(d.form_data->>'LICENSOR_NAME'), ''), NULLIF(btrim(d.form_data->>'licensor'), ''),
+             NULLIF(btrim(d.form_data->>'designerName'), '')
+           ) AS party_name
+         ) n
+         LEFT JOIN LATERAL (
+           SELECT v.entity_type, v.vendor_name, v.trade_name, v.pen_name
+             FROM vendors v
+            WHERE (d.vendor_id IS NOT NULL AND v.id = d.vendor_id)
+               OR (d.vendor_id IS NULL AND n.party_name IS NOT NULL
+                   AND (v.vendor_name = n.party_name OR v.trade_name = n.party_name OR v.pen_name = n.party_name
+                        OR replace(replace(v.vendor_name, ' ', ''), '　', '') = replace(replace(n.party_name, ' ', ''), '　', '')))
+            ORDER BY (v.id = d.vendor_id) DESC NULLS LAST, (v.vendor_name = n.party_name) DESC NULLS LAST, v.id
+            LIMIT 1
+         ) v ON true`;
+
 // 文書番号の振替履歴（026・document_number_history）から直近の旧番号を引く。
 // 一覧の検索対象にも含める（旧番号で探せる）。
 const PREVIOUS_NUMBER_JOIN = `LEFT JOIN LATERAL (
@@ -137,7 +160,7 @@ export class PgDocumentRegistryRepository implements DocumentRegistryRepository 
     const result = await this.database.query(
       `SELECT ${DOCUMENT_SELECT}
          FROM documents d
-         LEFT JOIN vendors v ON v.id = d.vendor_id
+         ${VENDOR_MASTER_JOIN}
          ${PREVIOUS_NUMBER_JOIN}
         WHERE d.id = $1`,
       [id]
@@ -149,7 +172,7 @@ export class PgDocumentRegistryRepository implements DocumentRegistryRepository 
     const result = await this.database.query(
       `SELECT ${DOCUMENT_SELECT}
          FROM documents d
-         LEFT JOIN vendors v ON v.id = d.vendor_id
+         ${VENDOR_MASTER_JOIN}
          ${PREVIOUS_NUMBER_JOIN}
         WHERE d.document_number = $1
         ORDER BY d.id DESC
