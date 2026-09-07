@@ -89,8 +89,11 @@ if ! gcloud builds describe "${LAST_BUILD}" --project "${PROJECT}" --format=json
   echo "同じサービス（${FLAGS_FROM}）向けの直近の成功ビルドから設定を引き継ぎます…"
   # 50 件分の全 JSON を取って jq で絞ると数分かかる（2026-09-07 に 2 回足踏み）。
   # サーバー側フィルタで 1 件だけ取る。
-  LAST_BUILD="$(gcloud builds list --project "${PROJECT}" --limit=1 --sort-by=~createTime \
-    --filter="status=SUCCESS AND substitutions._SERVICE=${FLAGS_FROM}" --format='value(id)')"
+  # substitutions._SERVICE= のフィルタは gcloud の演算子仕様変更で「現状マッチしない」警告が
+  # 出て空になるため、status だけサーバー側で絞り、サービス名は value 出力（軽い）から選ぶ。
+  LAST_BUILD="$(gcloud builds list --project "${PROJECT}" --limit=30 --sort-by=~createTime \
+    --filter="status=SUCCESS" --format='value(id,substitutions._SERVICE)' \
+    | awk -v s="${FLAGS_FROM}" '$2 == s { print $1; exit }')"
   [ -n "${LAST_BUILD}" ] || die "${FLAGS_FROM} 向けの成功ビルドが見つかりません。FLAGS_FROM=<設定を引き継ぐサービス名> を指定してください"
   echo "採用ビルド（代替）: ${LAST_BUILD}"
   gcloud builds describe "${LAST_BUILD}" --project "${PROJECT}" --format=json > "${FLAGS_FILE}.raw"
