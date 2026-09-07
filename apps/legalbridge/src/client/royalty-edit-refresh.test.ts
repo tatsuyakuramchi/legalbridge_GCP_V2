@@ -56,3 +56,46 @@ test("旧下書きは入金元と親IN条件からOUT条件を一意に特定す
   assert.equal(result.formData.source_out_condition_line_id, 592);
   assert.equal(result.formData.licenseScopeSource, "out");
 });
+
+test("複数サブライセンシーの受領明細は行ごとに対応するOUT条件で製品名を再補完する", async () => {
+  const conditionSearches: string[] = [];
+  const previewIds: number[] = [];
+  const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.includes("conditions?")) {
+      conditionSearches.push(url);
+      const payer = decodeURIComponent(url.match(/q=([^&]+)/)?.[1] ?? "");
+      return response({ conditions: [{
+        id: payer === "Broadway Toys Limited" ? 601 : 602,
+        direction: "receivable", parentLicenseConditionId: 590, counterparty: payer
+      }] });
+    }
+    const conditionLineId = Number(JSON.parse(String(init?.body)).conditionLineId);
+    previewIds.push(conditionLineId);
+    const scope = conditionLineId === 601
+      ? ["英国", "英語"]
+      : conditionLineId === 602 ? ["スペイン", "スペイン語"] : ["全世界", "全言語"];
+    return response({ preview: {
+      productName: `再許諾 ／ 許諾地域：${scope[0]} ／ 許諾言語：${scope[1]}`,
+      transactionModelName: "再許諾", licenseTerritory: scope[0], licenseLanguage: scope[1],
+      licenseScopeSource: conditionLineId === 590 ? "in" : "out"
+    } });
+  }) as typeof fetch;
+  const result = await refreshRoyaltyProductForEdit({
+    source_condition_line_id: 590,
+    source_out_condition_line_id: 999, // 旧文書全体キーは複数相手先へ流用しない
+    rs_receipts: [
+      { sublicensee: "Broadway Toys Limited", amount: 221804 },
+      { sublicensee: "Maldito Games", amount: 302442 },
+      { sublicensee: "Maldito Games", amount: 1384866 }
+    ]
+  }, fetcher);
+  const receipts = result.formData.rs_receipts as Array<Record<string, unknown>>;
+  assert.equal(receipts[0].productName, "再許諾 ／ 許諾地域：英国 ／ 許諾言語：英語");
+  assert.equal(receipts[0].source_out_condition_line_id, 601);
+  assert.equal(receipts[1].productName, "再許諾 ／ 許諾地域：スペイン ／ 許諾言語：スペイン語");
+  assert.equal(receipts[1].source_out_condition_line_id, 602);
+  assert.equal(receipts[2].productName, receipts[1].productName);
+  assert.equal(conditionSearches.length, 2);
+  assert.deepEqual(previewIds.sort(), [590, 601, 602]);
+});

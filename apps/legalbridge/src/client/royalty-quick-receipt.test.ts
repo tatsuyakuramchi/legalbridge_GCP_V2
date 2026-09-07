@@ -31,7 +31,8 @@ test("かんたん受領入力: 3 つの入力から計算書の欄（当事者�
   assert.deepEqual(receipts[0], {
     sublicensee: "Meridian Games",
     productName: "再許諾 ／ 許諾地域：北米 ／ 許諾言語：英語",
-    receivedOn: "2026-05-10", currency: "USD", amount: 12000, fxMode: "pre", fxRate: 148.2
+    receivedOn: "2026-05-10", currency: "USD", amount: 12000, fxMode: "pre", fxRate: 148.2,
+    source_out_condition_line_id: 620
   });
 });
 

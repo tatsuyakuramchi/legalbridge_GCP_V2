@@ -41,6 +41,25 @@ export async function refreshRoyaltyProductForEdit(
   }
 
   try {
+    const receipts = Array.isArray(formData.rs_receipts)
+      ? formData.rs_receipts as Array<Record<string, unknown>>
+      : [];
+
+    // 複数サブライセンシーを含む計算書は、文書全体のOUT条件IDを全行へ流用できない。
+    // 各受領行に保存したOUT条件ID、または相手先＋親IN条件で行ごとに復元する。
+    if (inboundId && receipts.length > 0) {
+      const inboundPreview = await loadPreview(inboundId, formData, fetcher);
+      if (!inboundPreview) {
+        return { formData, changed: false, message: "IN条件から製品名を再取得できませんでした。" };
+      }
+      if (inboundPreview.transactionModelName.includes("自社製造")) {
+        return refreshed(formData, inboundPreview);
+      }
+      return await refreshReceiptProducts(
+        formData, receipts, inboundId, explicitOutboundId, fetcher
+      );
+    }
+
     if (explicitOutboundId) {
       const preview = await loadPreview(explicitOutboundId, formData, fetcher);
       return preview
@@ -92,9 +111,11 @@ export async function refreshRoyaltyProductForEdit(
 async function loadPreview(
   conditionLineId: number,
   formData: DocumentFormData,
-  fetcher: typeof fetch
+  fetcher: typeof fetch,
+  occurredAtOverride?: unknown
 ): Promise<ProductPreview | null> {
-  const occurredAt = String(formData.settlement_occurred_at ?? "").trim() || new Date().toISOString();
+  const occurredAt = String(occurredAtOverride ?? formData.settlement_occurred_at ?? "").trim()
+    || new Date().toISOString();
   const response = await fetcher("/api/v2/license-settlements/preview", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -102,6 +123,121 @@ async function loadPreview(
   });
   if (!response.ok) return null;
   return (await response.json() as { preview?: ProductPreview }).preview ?? null;
+}
+
+async function refreshReceiptProducts(
+  formData: DocumentFormData,
+  receipts: Array<Record<string, unknown>>,
+  inboundId: number,
+  documentOutboundId: number | null,
+  fetcher: typeof fetch
+): Promise<RoyaltyEditRefreshResult> {
+  const uniquePayers = new Set(receipts.map((row) => String(row.sublicensee ?? "").trim()).filter(Boolean));
+  const previewById = new Map<number, ProductPreview | null>();
+  const outboundByPayer = new Map<string, number | null>();
+  const unresolved = new Set<string>();
+
+  const previewFor = async (id: number, row: Record<string, unknown>) => {
+    if (!previewById.has(id)) {
+      previewById.set(id, await loadPreview(id, formData, fetcher, row.receivedOn));
+    }
+    return previewById.get(id) ?? null;
+  };
+  const outboundFor = async (payer: string) => {
+    if (outboundByPayer.has(payer)) return outboundByPayer.get(payer) ?? null;
+    const response = await fetcher(
+      `/api/v2/license-settlements/conditions?q=${encodeURIComponent(payer)}&limit=300`
+    );
+    if (!response.ok) throw new Error("condition search failed");
+    const body = await response.json() as { conditions?: ConditionCandidate[] };
+    const candidates = (body.conditions ?? []).filter((condition) =>
+      condition.direction === "receivable"
+      && condition.parentLicenseConditionId === inboundId
+      && String(condition.counterparty ?? "").trim() === payer
+    );
+    const id = candidates.length === 1 ? candidates[0].id : null;
+    outboundByPayer.set(payer, id);
+    return id;
+  };
+
+  const refreshedReceipts: Array<Record<string, unknown>> = [];
+  const previewByPayer = new Map<string, ProductPreview>();
+  for (const row of receipts) {
+    const payer = String(row.sublicensee ?? "").trim();
+    let outboundId = positiveId(row.source_out_condition_line_id);
+    // 旧単一相手先文書だけは、文書全体に保存されたOUT条件IDを引き継げる。
+    if (!outboundId && uniquePayers.size === 1) outboundId = documentOutboundId;
+    if (!outboundId && payer) outboundId = await outboundFor(payer);
+    const preview = outboundId ? await previewFor(outboundId, row) : null;
+    if (!preview) {
+      if (payer) unresolved.add(payer);
+      refreshedReceipts.push(row);
+      continue;
+    }
+    previewByPayer.set(payer, preview);
+    refreshedReceipts.push({
+      ...row,
+      productName: preview.productName,
+      source_out_condition_line_id: outboundId,
+      transactionModelName: preview.transactionModelName,
+      licenseTerritory: preview.licenseTerritory,
+      licenseLanguage: preview.licenseLanguage,
+      licenseScopeSource: preview.licenseScopeSource,
+      region_language_label: [preview.licenseTerritory, preview.licenseLanguage].filter(Boolean).join("／")
+    });
+  }
+
+  if (previewByPayer.size === 0) {
+    return {
+      formData, changed: false,
+      message: "受領明細に対応するOUT条件を特定できません。各明細のOUT条件を選び直してください。"
+    };
+  }
+  const firstPreview = previewByPayer.values().next().value as ProductPreview;
+  const lines = Array.isArray(formData.lines)
+    ? (formData.lines as Array<Record<string, unknown>>).map((line, index) => {
+        const receipt = refreshedReceipts[index];
+        return receipt?.productName ? {
+          ...line,
+          productName: receipt.productName,
+          region_language_label: receipt.region_language_label
+        } : line;
+      })
+    : formData.lines;
+  let lineIndex = 0;
+  const lineGroups = Array.isArray(formData.lineGroups)
+    ? (formData.lineGroups as Array<Record<string, unknown>>).map((group) => ({
+        ...group,
+        lines: Array.isArray(group.lines)
+          ? (group.lines as Array<Record<string, unknown>>).map((line) => {
+              const receipt = refreshedReceipts[lineIndex++];
+              return receipt?.productName ? {
+                ...line,
+                productName: receipt.productName,
+                region_language_label: receipt.region_language_label
+              } : line;
+            })
+          : group.lines
+      }))
+    : formData.lineGroups;
+  return {
+    formData: {
+      ...formData,
+      productName: firstPreview.productName,
+      transactionModelName: firstPreview.transactionModelName,
+      licenseTerritory: firstPreview.licenseTerritory,
+      licenseLanguage: firstPreview.licenseLanguage,
+      licenseScopeSource: firstPreview.licenseScopeSource,
+      region_language_label: [firstPreview.licenseTerritory, firstPreview.licenseLanguage].filter(Boolean).join("／"),
+      rs_receipts: refreshedReceipts,
+      ...(lines ? { lines } : {}),
+      ...(lineGroups ? { lineGroups } : {})
+    },
+    changed: true,
+    message: unresolved.size
+      ? `製品名を${previewByPayer.size}社分再補完しました。未特定: ${[...unresolved].join("、")}`
+      : `受領明細${receipts.length}行の製品名を、対応するOUT条件から再補完しました。保存または再発行するまでは元文書は変更されません。`
+  };
 }
 
 function refreshed(

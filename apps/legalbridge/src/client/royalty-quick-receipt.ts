@@ -98,7 +98,8 @@ export function buildQuickReceiptPatch(input: {
     : [];
   const row = {
     sublicensee, productName, receivedOn: receipt.receivedOn, currency, amount: receipt.amount,
-    fxMode: foreign ? receipt.fxMode : "post", fxRate: foreign ? receipt.fxRate : ""
+    fxMode: foreign ? receipt.fxMode : "post", fxRate: foreign ? receipt.fxRate : "",
+    ...(outLine ? { source_out_condition_line_id: outLine.id } : {})
   };
   return {
     statementMode: "multi",
