@@ -18,6 +18,9 @@ import { MatterFolderStorageService } from "./matters/drive-folder-service.js";
 import { config } from "./config.js";
 import { RoyaltyStatementService } from "./royalty/statement-service.js";
 import { PaymentService } from "./payments/service.js";
+import { PartyRepository } from "./parties/repository.js";
+import { OpsRepository } from "./ops/repository.js";
+import { MonitoringRepository } from "./monitoring/repository.js";
 
 const asyncRoute =
   (handler: (req: Request, res: Response) => Promise<unknown>) =>
@@ -46,6 +49,9 @@ export function createRoutes(database: Transactable) {
   const storage = new DocumentStorageService(database, drive, pdf);
   const royalty = new RoyaltyStatementService(database);
   const payments = new PaymentService(database);
+  const parties = new PartyRepository(database);
+  const ops = new OpsRepository(database);
+  const monitoring = new MonitoringRepository(database);
   const matterFolders = new MatterFolderStorageService(
     database,
     config.driveMatterParentFolderId
@@ -314,6 +320,68 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       const input = z.object({ paidOn: z.string().date() }).parse(req.body ?? {});
       res.json(await payments.markPaid(Number(req.params.id), input.paidOn, actor(res)));
+    }));
+
+  // ---- 取引先・担当者 ----
+  router.get("/parties", asyncRoute(async (req, res) => {
+    res.json({ parties: await parties.list(String(req.query.q ?? "")) });
+  }));
+
+  router.get("/parties/:id", asyncRoute(async (req, res) => {
+    const detail = await parties.find(Number(req.params.id));
+    if (!detail) return res.status(404).json({ error: "取引先が見つかりません" });
+    res.json(detail);
+  }));
+
+  router.get("/staff", asyncRoute(async (_req, res) => {
+    res.json({ staff: await parties.staff() });
+  }));
+
+  // ---- フロー監視（案件をまたぐ集計）----
+  router.get("/monitoring/works", asyncRoute(async (_req, res) => {
+    res.json({ works: await monitoring.workMonitor() });
+  }));
+
+  router.get("/monitoring/outsourcing", asyncRoute(async (_req, res) => {
+    res.json({ pipeline: await monitoring.outsourcingPipeline() });
+  }));
+
+  // ---- 運用 ----
+  router.get("/summary", asyncRoute(async (_req, res) => {
+    res.json(await ops.summary());
+  }));
+
+  router.get("/deadlines", asyncRoute(async (req, res) => {
+    res.json({ deadlines: await ops.deadlines(req.query.days ? Number(req.query.days) : 30) });
+  }));
+
+  router.get("/quality-issues", asyncRoute(async (req, res) => {
+    res.json({ issues: await ops.issues(String(req.query.status ?? "open")) });
+  }));
+
+  router.post("/quality-issues/:id/resolve",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({ mode: z.enum(["resolved", "ignored"]).default("resolved") }).parse(req.body ?? {});
+      res.json(await ops.resolveIssue(Number(req.params.id), actor(res), input.mode));
+    }));
+
+  router.get("/audit-events", asyncRoute(async (req, res) => {
+    res.json({ events: await ops.auditEvents({
+      action: req.query.action ? String(req.query.action) : undefined,
+      targetType: req.query.targetType ? String(req.query.targetType) : undefined
+    }) });
+  }));
+
+  router.get("/settings", requireRole("admin"), asyncRoute(async (_req, res) => {
+    res.json({ settings: await ops.settings() });
+  }));
+
+  router.put("/settings/:key",
+    requireRole("admin"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({ value: z.unknown() }).parse(req.body ?? {});
+      res.json(await ops.saveSetting(String(req.params.key), input.value, actor(res)));
     }));
 
   return router;

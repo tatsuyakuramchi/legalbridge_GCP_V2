@@ -24,9 +24,13 @@ export interface DueCheck {
   overBy: number | null;
 }
 
-const parse = (value: string | null | undefined): Date | null => {
+// 日付は 'YYYY-MM-DD' 前提だが、DB から Date が渡ることもあるため両方受ける。
+const parse = (value: string | Date | null | undefined): Date | null => {
   if (!value) return null;
-  const date = new Date(`${String(value).slice(0, 10)}T00:00:00Z`);
+  const text = value instanceof Date
+    ? `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`
+    : String(value).slice(0, 10);
+  const date = new Date(`${text}T00:00:00Z`);
   return Number.isNaN(date.getTime()) ? null : date;
 };
 
@@ -35,7 +39,7 @@ const format = (date: Date): string => date.toISOString().slice(0, 10);
 const DAY = 24 * 60 * 60 * 1000;
 
 /** 受領日 + 60日。期日の既定値にも使う。 */
-export function dueLimitFrom(basisDate: string | null | undefined): string | null {
+export function dueLimitFrom(basisDate: string | Date | null | undefined): string | null {
   const basis = parse(basisDate);
   return basis ? format(new Date(basis.getTime() + PAYMENT_DUE_LIMIT_DAYS * DAY)) : null;
 }
@@ -44,9 +48,9 @@ export function checkPaymentDue(input: {
   /** 検査の対象か。相手先が特定受託事業者でなければ社内基準としての参考値になる。 */
   applicable: boolean;
   /** 給付を受領した日。 */
-  basisDate: string | null | undefined;
+  basisDate: string | Date | null | undefined;
   /** 定めた支払期日。 */
-  dueOn: string | null | undefined;
+  dueOn: string | Date | null | undefined;
 }): DueCheck {
   const basis = parse(input.basisDate);
   const due = parse(input.dueOn);

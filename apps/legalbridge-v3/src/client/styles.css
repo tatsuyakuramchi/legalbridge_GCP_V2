@@ -119,3 +119,16 @@ tbody tr.sel{background:var(--accent-soft)}
 .btn-sm{padding:2px 8px;font-size:11.5px}
 .meter{height:7px;border-radius:4px;background:var(--sunken);overflow:hidden}
 .meter i{display:block;height:100%;background:var(--in)}
+
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}
+.tile{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px 14px;
+  display:flex;flex-direction:column;gap:3px;text-align:left;cursor:pointer}
+.tile:hover{background:var(--sunken)}
+.tile .lab{font-size:11px;color:var(--muted)}
+.tile .val{font-family:var(--mono);font-size:22px;font-variant-numeric:tabular-nums}
+.tile .sub{font-size:11px;color:var(--faint)}
+.tile.alert{border-color:var(--out);background:var(--out-soft)}
+.tile.alert .val{color:var(--out)}
+.pipe-step.flag{background:var(--out-soft);border-color:var(--out)}
+.pipe-step.flag .ct{color:var(--out)}
+.pipe-step .ct{font-family:var(--mono);font-size:17px;font-variant-numeric:tabular-nums}
