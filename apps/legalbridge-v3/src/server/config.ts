@@ -26,10 +26,29 @@ export interface Config {
   driveKeyFilePath: string;
   driveEnvironmentTag: string;
   driveMatterParentFolderId: string;
+  /** 外部送信の段階開放。既定は off（設定し忘れで送らない）。 */
+  integrationModes: Record<"slack" | "gmail" | "cloudsign" | "backlog", "off" | "dry_run" | "live">;
+  /** 検証中に送ってよい宛先。空なら制限しない。 */
+  dispatchAllowlist: string[];
+  slackBotToken: string;
+  slackSigningSecret: string;
+  gmailSender: string;
+  cloudSignClientId: string;
+  backlogHost: string;
+  backlogApiKey: string;
+  backlogProjectId: string;
+  /** 内部エンドポイント（Webhook受信）の共有シークレット。 */
+  webhookToken: string;
 }
 
 const list = (v: string | undefined) =>
   (v ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+
+// 送信の段階。設定し忘れたら送らない（off）。
+const mode = (v: string | undefined): "off" | "dry_run" | "live" => {
+  const normalized = String(v ?? "").trim().toLowerCase();
+  return normalized === "live" ? "live" : normalized === "dry_run" ? "dry_run" : "off";
+};
 
 export const config: Config = {
   port: int(process.env.PORT, 8081),
@@ -48,5 +67,20 @@ export const config: Config = {
   driveFolderId: (process.env.GOOGLE_DRIVE_FOLDER_ID ?? "").trim(),
   driveKeyFilePath: (process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH ?? "").trim(),
   driveEnvironmentTag: (process.env.DRIVE_ENVIRONMENT_TAG ?? "validation").trim(),
-  driveMatterParentFolderId: (process.env.DRIVE_MATTER_PARENT_FOLDER_ID ?? "").trim()
+  driveMatterParentFolderId: (process.env.DRIVE_MATTER_PARENT_FOLDER_ID ?? "").trim(),
+  integrationModes: {
+    slack: mode(process.env.SLACK_MODE),
+    gmail: mode(process.env.GMAIL_MODE),
+    cloudsign: mode(process.env.CLOUDSIGN_MODE),
+    backlog: mode(process.env.BACKLOG_MODE)
+  },
+  dispatchAllowlist: list(process.env.DISPATCH_ALLOWLIST),
+  slackBotToken: (process.env.SLACK_BOT_TOKEN ?? "").trim(),
+  slackSigningSecret: (process.env.SLACK_SIGNING_SECRET ?? "").trim(),
+  gmailSender: (process.env.GMAIL_SENDER ?? "").trim(),
+  cloudSignClientId: (process.env.CLOUDSIGN_CLIENT_ID ?? "").trim(),
+  backlogHost: (process.env.BACKLOG_HOST ?? "").trim(),
+  backlogApiKey: (process.env.BACKLOG_API_KEY ?? "").trim(),
+  backlogProjectId: (process.env.BACKLOG_PROJECT_ID ?? "").trim(),
+  webhookToken: (process.env.WEBHOOK_TOKEN ?? "").trim()
 };

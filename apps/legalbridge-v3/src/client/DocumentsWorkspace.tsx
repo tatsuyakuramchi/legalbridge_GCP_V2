@@ -10,7 +10,10 @@ interface DocumentRow {
   title: string | null; counterparty: string | null; conditionCount: number;
   issuedAt: string | null; storageUrl: string | null;
 }
-interface Integrations { drive: { documents: boolean; matterFolders: boolean } }
+interface Integrations {
+  drive: { documents: boolean; matterFolders: boolean };
+  channels: Array<{ channel: string; mode: "off" | "dry_run" | "live"; configured: boolean }>;
+}
 interface PreviewResponse {
   html: string; templateLabel: string;
   missing: Array<{ name: string; label: string }>; derived: string[];
@@ -71,6 +74,22 @@ export function DocumentsWorkspace() {
       await reload();
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
     finally { setBusy(false); }
+  }
+
+  // メール送付。止まった場合は理由をそのまま出す（黙って送らないのが一番まずい）。
+  async function send(id: number) {
+    const recipient = window.prompt("送付先のメールアドレス");
+    if (!recipient) return;
+    setError(null); setStored(null);
+    try {
+      const result = await api.post<{ sent: boolean; duplicated?: boolean; gate: { reasons: string[] } }>(
+        `/documents/${id}/send`,
+        { recipient, body: "文書をお送りします。ご確認ください。", attachPdf: true });
+      setStored(result.sent ? `${recipient} へ送付しました`
+        : result.duplicated ? "同じ内容をすでに送付済みです"
+        : `送付しませんでした：${result.gate.reasons.join("／")}`);
+      await reload();
+    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
   }
 
   // Drive へ保存する。既存ファイルがあれば中身だけ差し替わり、リンクは変わらない。
@@ -193,6 +212,10 @@ export function DocumentsWorkspace() {
                               ? <button className="btn btn-sm" disabled={busy}
                                         onClick={() => store(d.id)}>Driveに保存</button>
                               : null}
+                          {integrations?.channels.some((c) => c.channel === "gmail" && c.mode !== "off") && (
+                            <button className="btn btn-sm" disabled={busy}
+                                    onClick={() => send(d.id)}>送付</button>
+                          )}
                         </span>
                       )}
                     </td>

@@ -23,6 +23,15 @@ substitutions:
   _REQUESTER_DOMAINS: ""
   # 参照専用で立てたいとき true。書込APIは 503 を返す。
   _READ_ONLY: "false"
+  # 外部送信の段階開放。off / dry_run / live。既定は全部 off。
+  _SLACK_MODE: "off"
+  _GMAIL_MODE: "off"
+  _CLOUDSIGN_MODE: "off"
+  _BACKLOG_MODE: "off"
+  _DISPATCH_ALLOWLIST: ""
+  _GMAIL_SENDER: ""
+  _BACKLOG_HOST: ""
+  _BACKLOG_PROJECT_ID: ""
 
 steps:
   - id: test
@@ -66,8 +75,8 @@ steps:
           --service-account="${_SERVICE_ACCOUNT}" \
           --add-cloudsql-instances="${_CLOUD_SQL_INSTANCE}" \
           --memory=2Gi \
-          --set-secrets="DB_PASSWORD=${_DB_PASSWORD_SECRET}:latest" \
-          --set-env-vars="^@^NODE_ENV=production@DB_SCHEMA=v3@DB_HOST=/cloudsql/${_CLOUD_SQL_INSTANCE}@DB_PORT=5432@DB_NAME=${_DB_NAME}@DB_USER=${_DB_USER}@DB_POOL_MAX=5@READ_ONLY=${_READ_ONLY}@AUTH_MODE=${_AUTH_MODE}@ADMIN_EMAILS=${_ADMIN_EMAILS}@LEGAL_EMAILS=${_LEGAL_EMAILS}@REQUESTER_DOMAINS=${_REQUESTER_DOMAINS}@GOOGLE_DRIVE_FOLDER_ID=${_DRIVE_FOLDER_ID}@DRIVE_MATTER_PARENT_FOLDER_ID=${_DRIVE_MATTER_PARENT_FOLDER_ID}@DRIVE_ENVIRONMENT_TAG=${_DRIVE_ENVIRONMENT_TAG}@CHROMIUM_PATH=/usr/bin/chromium-browser"
+          --set-secrets="DB_PASSWORD=${_DB_PASSWORD_SECRET}:latest,SLACK_BOT_TOKEN=legalbridge-v3-slack-bot-token:latest,SLACK_SIGNING_SECRET=legalbridge-v3-slack-signing-secret:latest,CLOUDSIGN_CLIENT_ID=legalbridge-v3-cloudsign-client-id:latest,BACKLOG_API_KEY=legalbridge-v3-backlog-api-key:latest,WEBHOOK_TOKEN=legalbridge-v3-webhook-token:latest" \
+          --set-env-vars="^@^NODE_ENV=production@DB_SCHEMA=v3@DB_HOST=/cloudsql/${_CLOUD_SQL_INSTANCE}@DB_PORT=5432@DB_NAME=${_DB_NAME}@DB_USER=${_DB_USER}@DB_POOL_MAX=5@READ_ONLY=${_READ_ONLY}@AUTH_MODE=${_AUTH_MODE}@ADMIN_EMAILS=${_ADMIN_EMAILS}@LEGAL_EMAILS=${_LEGAL_EMAILS}@REQUESTER_DOMAINS=${_REQUESTER_DOMAINS}@GOOGLE_DRIVE_FOLDER_ID=${_DRIVE_FOLDER_ID}@DRIVE_MATTER_PARENT_FOLDER_ID=${_DRIVE_MATTER_PARENT_FOLDER_ID}@DRIVE_ENVIRONMENT_TAG=${_DRIVE_ENVIRONMENT_TAG}@CHROMIUM_PATH=/usr/bin/chromium-browser@SLACK_MODE=${_SLACK_MODE}@GMAIL_MODE=${_GMAIL_MODE}@CLOUDSIGN_MODE=${_CLOUDSIGN_MODE}@BACKLOG_MODE=${_BACKLOG_MODE}@DISPATCH_ALLOWLIST=${_DISPATCH_ALLOWLIST}@GMAIL_SENDER=${_GMAIL_SENDER}@BACKLOG_HOST=${_BACKLOG_HOST}@BACKLOG_PROJECT_ID=${_BACKLOG_PROJECT_ID}"
 
 images:
   - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPOSITORY}/${_IMAGE}:${BUILD_ID}

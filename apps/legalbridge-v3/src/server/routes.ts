@@ -16,11 +16,19 @@ import { GoogleDriveStorage, MemoryDriveStorage, type DriveStorage } from "./doc
 import { GoogleMatterDriveFolderService, LocalMatterDriveFolderService } from "./documents/drive-folder.js";
 import { MatterFolderStorageService } from "./matters/drive-folder-service.js";
 import { config } from "./config.js";
+import { verifySlackSignature } from "./integrations/signature.js";
 import { RoyaltyStatementService } from "./royalty/statement-service.js";
 import { PaymentService } from "./payments/service.js";
 import { PartyRepository } from "./parties/repository.js";
 import { OpsRepository } from "./ops/repository.js";
 import { MonitoringRepository } from "./monitoring/repository.js";
+import { DispatchService } from "./integrations/dispatch-service.js";
+import {
+  BacklogAdapter, CloudSignAdapter, GmailAdapter, MemoryAdapter, SlackAdapter,
+  type DispatchAdapter
+} from "./integrations/adapters.js";
+import type { IntegrationChannel } from "./integrations/gate.js";
+import { GoogleAuth } from "google-auth-library";
 
 const asyncRoute =
   (handler: (req: Request, res: Response) => Promise<unknown>) =>
@@ -52,6 +60,38 @@ export function createRoutes(database: Transactable) {
   const parties = new PartyRepository(database);
   const ops = new OpsRepository(database);
   const monitoring = new MonitoringRepository(database);
+
+  // 外部送信のアダプタ。資格情報が無ければ作らない（ゲートが未設定として弾く）。
+  const useMemory = process.env.DISPATCH_ADAPTERS === "memory";
+  const gmailAuth = new GoogleAuth({
+    ...(config.driveKeyFilePath ? { keyFile: config.driveKeyFilePath } : {}),
+    scopes: ["https://www.googleapis.com/auth/gmail.send"]
+  });
+  const adapters: Partial<Record<IntegrationChannel, DispatchAdapter>> = useMemory
+    ? {
+        slack: new MemoryAdapter("slack"), gmail: new MemoryAdapter("gmail"),
+        cloudsign: new MemoryAdapter("cloudsign"), backlog: new MemoryAdapter("backlog")
+      }
+    : {
+        ...(config.slackBotToken ? { slack: new SlackAdapter(config.slackBotToken) } : {}),
+        ...(config.gmailSender ? {
+          gmail: new GmailAdapter(async () => {
+            const token = await (await gmailAuth.getClient()).getAccessToken();
+            if (!token.token) throw new Error("Gmail のアクセストークンを取得できませんでした");
+            return token.token;
+          }, config.gmailSender)
+        } : {}),
+        ...(config.cloudSignClientId ? { cloudsign: new CloudSignAdapter(config.cloudSignClientId) } : {}),
+        ...(config.backlogHost && config.backlogApiKey && config.backlogProjectId
+          ? { backlog: new BacklogAdapter(config.backlogHost, config.backlogApiKey, config.backlogProjectId) }
+          : {})
+      };
+  const dispatch = new DispatchService(database, adapters, (channel) => ({
+    mode: config.integrationModes[channel],
+    adapterConfigured: Boolean(adapters[channel]?.configured),
+    readOnly: config.readOnly,
+    allowlist: config.dispatchAllowlist
+  }));
   const matterFolders = new MatterFolderStorageService(
     database,
     config.driveMatterParentFolderId
@@ -169,7 +209,13 @@ export function createRoutes(database: Transactable) {
 
   router.get("/integrations", (_req, res) => {
     res.json({
-      drive: { documents: storage.configured, matterFolders: matterFolders.configured }
+      drive: { documents: storage.configured, matterFolders: matterFolders.configured },
+      channels: (["slack", "gmail", "cloudsign", "backlog"] as IntegrationChannel[]).map((channel) => ({
+        channel,
+        mode: config.integrationModes[channel],
+        configured: Boolean(adapters[channel]?.configured)
+      })),
+      allowlist: config.dispatchAllowlist
     });
   });
 
@@ -383,6 +429,135 @@ export function createRoutes(database: Transactable) {
       const input = z.object({ value: z.unknown() }).parse(req.body ?? {});
       res.json(await ops.saveSetting(String(req.params.key), input.value, actor(res)));
     }));
+
+  // ---- 外部送信 ----
+  const sendSchema = z.object({
+    recipient: z.string().trim().min(1).max(300),
+    subject: z.string().trim().max(300).optional(),
+    body: z.string().trim().min(1).max(20000),
+    attachPdf: z.boolean().default(false)
+  });
+
+  // 文書をメールで送る。PDF を添付する場合は発行済みの文書から生成する。
+  router.post("/documents/:id/send",
+    requireRole("admin"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const id = Number(req.params.id);
+      const input = sendSchema.parse(req.body ?? {});
+      const document = await documents.find(id);
+      if (!document) return res.status(404).json({ error: "文書が見つかりません" });
+
+      let attachment: { filename: string; mimeType: string; data: Buffer } | null = null;
+      if (input.attachPdf) {
+        const rendered = await issues.renderIssued(id);
+        attachment = {
+          filename: `${document.documentNo ?? `document-${id}`}.pdf`,
+          mimeType: "application/pdf",
+          data: await pdf.render(rendered.html)
+        };
+      }
+      res.json(await dispatch.dispatch({
+        channel: "gmail", targetType: "document", targetId: id, actor: actor(res),
+        request: {
+          recipient: input.recipient,
+          subject: input.subject ?? document.title ?? document.documentNo ?? "文書の送付",
+          body: input.body,
+          attachment
+        }
+      }));
+    }));
+
+  // 署名依頼。書類の実体が要るので PDF は必ず付ける。
+  router.post("/documents/:id/sign",
+    requireRole("admin"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const id = Number(req.params.id);
+      const input = z.object({
+        recipient: z.string().trim().email(),
+        subject: z.string().trim().max(300).optional()
+      }).parse(req.body ?? {});
+      const document = await documents.find(id);
+      if (!document) return res.status(404).json({ error: "文書が見つかりません" });
+      if (document.status !== "issued") {
+        return res.status(409).json({ error: "発行済みの文書だけを署名依頼できます", code: "CONFLICT" });
+      }
+      const rendered = await issues.renderIssued(id);
+      res.json(await dispatch.dispatch({
+        channel: "cloudsign", targetType: "document", targetId: id, actor: actor(res),
+        request: {
+          recipient: input.recipient,
+          subject: input.subject ?? document.title ?? document.documentNo ?? "署名のお願い",
+          body: "署名をお願いします。",
+          attachment: {
+            filename: `${document.documentNo ?? `document-${id}`}.pdf`,
+            mimeType: "application/pdf",
+            data: await pdf.render(rendered.html)
+          }
+        }
+      }));
+    }));
+
+  // 案件の相談スレッドへ投稿する。
+  router.post("/matters/:id/notify",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const id = Number(req.params.id);
+      const input = z.object({
+        channelId: z.string().trim().min(1).max(60),
+        body: z.string().trim().min(1).max(4000),
+        threadRef: z.string().trim().max(60).nullable().optional()
+      }).parse(req.body ?? {});
+      res.json(await dispatch.dispatch({
+        channel: "slack", targetType: "matter", targetId: id, actor: actor(res),
+        request: { recipient: input.channelId, body: input.body, threadRef: input.threadRef ?? null }
+      }));
+    }));
+
+  return router;
+}
+
+/** Webhook 受信。ユーザー認証は通さず、共有シークレットと署名で守る。 */
+export function createWebhookRouter(database: Transactable) {
+  const router = Router();
+  const dispatch = new DispatchService(database, {}, () => ({
+    mode: "off", adapterConfigured: false, readOnly: false
+  }));
+
+  router.post("/webhooks/:source", asyncRoute(async (req, res) => {
+    const source = String(req.params.source);
+    if (!["cloudsign", "backlog", "slack"].includes(source)) {
+      return res.status(404).json({ error: "unknown source" });
+    }
+    const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from(JSON.stringify(req.body ?? {}));
+
+    if (source === "slack") {
+      // Slack だけは署名で検証する。未設定は常に拒否（fail-closed）。
+      const ok = verifySlackSignature({
+        signingSecret: config.slackSigningSecret,
+        timestampHeader: req.header("x-slack-request-timestamp"),
+        signatureHeader: req.header("x-slack-signature"),
+        rawBody: raw
+      });
+      if (!ok) return res.status(401).json({ error: "signature verification failed" });
+    } else {
+      // 他は共有シークレット。未設定なら受け口ごと閉じる。
+      if (!config.webhookToken || req.header("x-lb-webhook-token") !== config.webhookToken) {
+        return res.status(config.webhookToken ? 401 : 404).json({ error: "unauthorized" });
+      }
+    }
+
+    let payload: Record<string, unknown> = {};
+    try { payload = JSON.parse(raw.toString("utf8")) as Record<string, unknown>; }
+    catch { payload = { raw: raw.toString("utf8").slice(0, 2000) }; }
+
+    const externalId = String(
+      payload.event_id ?? payload.id ?? payload.documentID ?? payload.documentId ??
+      req.header("x-lb-event-id") ?? ""
+    );
+    if (!externalId) return res.status(400).json({ error: "external id is required" });
+
+    res.json(await dispatch.receiveWebhook({ source, externalId, payload }));
+  }));
 
   return router;
 }

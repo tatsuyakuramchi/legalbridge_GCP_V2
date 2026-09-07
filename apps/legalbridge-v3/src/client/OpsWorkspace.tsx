@@ -10,6 +10,11 @@ interface AuditEvent {
   targetType: string; targetId: number | null; detail: Record<string, unknown>;
 }
 interface Setting { key: string; value: unknown; updatedAt: string | null }
+interface Integrations {
+  drive: { documents: boolean; matterFolders: boolean };
+  channels: Array<{ channel: string; mode: "off" | "dry_run" | "live"; configured: boolean }>;
+  allowlist: string[];
+}
 interface Deadline { source: string; refId: number; refNo: string | null; title: string; dueOn: string; status: string }
 
 const RULE_LABEL: Record<string, string> = {
@@ -25,22 +30,24 @@ const SOURCE_LABEL: Record<string, string> = {
 };
 
 export function OpsWorkspace() {
-  const [tab, setTab] = useState<"quality" | "deadlines" | "audit" | "settings">("quality");
+  const [tab, setTab] = useState<"quality" | "deadlines" | "audit" | "integrations" | "settings">("quality");
   const [issues, setIssues] = useState<Issue[]>([]);
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [settings, setSettings] = useState<Setting[] | null>(null);
   const [deadlines, setDeadlines] = useState<Deadline[]>([]);
+  const [integrations, setIntegrations] = useState<Integrations | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => { void reload(); }, []);
   async function reload() {
     try {
-      const [i, e, d] = await Promise.all([
+      const [i, e, d, g] = await Promise.all([
         api.get<{ issues: Issue[] }>("/quality-issues"),
         api.get<{ events: AuditEvent[] }>("/audit-events"),
-        api.get<{ deadlines: Deadline[] }>("/deadlines")
+        api.get<{ deadlines: Deadline[] }>("/deadlines"),
+        api.get<Integrations>("/integrations")
       ]);
-      setIssues(i.issues); setEvents(e.events); setDeadlines(d.deadlines);
+      setIssues(i.issues); setEvents(e.events); setDeadlines(d.deadlines); setIntegrations(g);
       // 設定は管理者だけ。権限が無ければタブごと出さない。
       try { setSettings((await api.get<{ settings: Setting[] }>("/settings")).settings); }
       catch { setSettings(null); }
@@ -68,6 +75,7 @@ export function OpsWorkspace() {
         <button aria-selected={tab === "quality"} onClick={() => setTab("quality")}>データ品質 {issues.length}</button>
         <button aria-selected={tab === "deadlines"} onClick={() => setTab("deadlines")}>期限 {deadlines.length}</button>
         <button aria-selected={tab === "audit"} onClick={() => setTab("audit")}>監査記録</button>
+        <button aria-selected={tab === "integrations"} onClick={() => setTab("integrations")}>外部連携</button>
         {settings && <button aria-selected={tab === "settings"} onClick={() => setTab("settings")}>設定</button>}
       </div>
 
@@ -139,6 +147,49 @@ export function OpsWorkspace() {
                 {!events.length && <tr><td colSpan={4} className="faint">記録がありません</td></tr>}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {tab === "integrations" && integrations && (
+        <div className="stack">
+          <div className="panel">
+            <div className="panel-hd"><h2>送信の段階</h2><span className="faint">設定し忘れは送らない（off が既定）</span></div>
+            <div className="tablewrap">
+              <table>
+                <thead><tr><th>連携</th><th>段階</th><th>接続情報</th><th>意味</th></tr></thead>
+                <tbody>
+                  {integrations.channels.map((c) => (
+                    <tr key={c.channel}>
+                      <td className="code">{c.channel}</td>
+                      <td><span className={`tag ${c.mode === "live" ? "ok" : c.mode === "dry_run" ? "warn" : ""}`}>
+                        {c.mode}</span></td>
+                      <td>{c.configured ? "設定済み" : <span className="faint">未設定</span>}</td>
+                      <td className="faint">
+                        {c.mode === "live" ? "実際に送信します"
+                          : c.mode === "dry_run" ? "送らず、何が送られるかだけ返します"
+                          : "送信しません。画面にも導線を出しません"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="panel-bd" style={{ paddingTop: 10 }}>
+              <dl className="dl">
+                <dt>宛先の許可リスト</dt>
+                <dd>{integrations.allowlist.length
+                  ? <span className="chips">{integrations.allowlist.map((a) => <span key={a} className="tag">{a}</span>)}</span>
+                  : "制限なし"}</dd>
+                <dt>Drive 保存</dt>
+                <dd>{integrations.drive.documents ? "有効" : "未設定"}
+                  {" ／ 案件フォルダ "}{integrations.drive.matterFolders ? "有効" : "未設定"}</dd>
+              </dl>
+              <div className="faint" style={{ marginTop: 9 }}>
+                送信を止めた事実も監査記録に残ります（<span className="code">*.blocked</span>）。
+                「なぜ送られていないのか」を後から追えるようにするためです。
+              </div>
+            </div>
           </div>
         </div>
       )}

@@ -20,6 +20,8 @@ function roleFor(email: string): UserRole | null {
 
 export function authenticate(request: Request, response: Response, next: NextFunction) {
   if (request.path === "/health") return next();
+  // 内部の受信口はユーザー認証を通さない。各受信口が署名か共有シークレットで守る。
+  if (request.path.startsWith("/internal/")) return next();
 
   if (config.authMode === "disabled") {
     response.locals.currentUser = { email: "dev@local", role: "admin", source: "disabled" };

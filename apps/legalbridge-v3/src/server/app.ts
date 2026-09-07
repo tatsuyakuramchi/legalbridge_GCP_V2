@@ -6,11 +6,18 @@ import { config } from "./config.js";
 import { authenticate } from "./auth.js";
 import { checkDatabase, getPool } from "./db/pool.js";
 import type { Transactable } from "./core/db.js";
-import { createRoutes, errorHandler } from "./routes.js";
+import { createRoutes, createWebhookRouter, errorHandler } from "./routes.js";
 
 export function createApp(database: Transactable | null = getPool() as Transactable | null) {
   const app = express();
   app.use(cors());
+
+  // Webhook は署名検証に生の本文が要るので、JSON パーサより前に置く。
+  // ユーザー認証も通さない（各受信口が共有シークレットか署名で守る）。
+  if (database) {
+    app.use("/internal", express.raw({ type: "*/*", limit: "2mb" }), createWebhookRouter(database));
+  }
+
   app.use(express.json({ limit: "2mb" }));
 
   app.get("/health", async (_request, response) => {
@@ -39,7 +46,7 @@ export function createApp(database: Transactable | null = getPool() as Transacta
   // 本番はビルド済みUIを同じサービスから配る（V2 と同じ構成）。
   const clientDir = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "../../client");
   app.use(express.static(clientDir));
-  app.get(/^(?!\/api|\/health).*/, (_request, response) => {
+  app.get(/^(?!\/api|\/health|\/internal).*/, (_request, response) => {
     response.sendFile(path.join(clientDir, "index.html"), (error) => {
       if (error) response.status(404).json({ error: "not found" });
     });

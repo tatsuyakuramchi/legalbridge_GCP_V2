@@ -169,18 +169,41 @@ V3 で足したのは単位の橋渡しと、確定の手続き。
 **フロー監視は案件をまたぐ集計**で、案件詳細では分からないものを見る。
 作品の権利上限は複数の案件で作られた条件から決まるため、横断しないと照合できない。
 
-### 残り
+### 外部連携（移植済み）
 
-現行から**移植**するもの（作り直さない）。
+V2 は Slack / Gmail / CloudSign が別々に「ゲート → 送信 → 台帳へ記録」を実装していて、
+blocker の語彙も冪等キーの持ち方も台帳も別だった。V3 は**1本に集約**した。
+
+| 部品 | 内容 |
+|---|---|
+| `integrations/gate.ts` | 段階開放ゲート（純関数）。チャネルは引数。`off` / `dry_run` / `live` |
+| `integrations/signature.ts` | Slack 署名検証。V2 から移植。**未設定は常に拒否**（fail-closed） |
+| `integrations/adapters.ts` | Slack / Gmail / CloudSign / Backlog の HTTP アダプタ |
+| `integrations/dispatch-service.ts` | 送信の唯一の入口。ゲート → 冪等チェック → 送信 → 監査記録 |
+
+設計上の要点。
+
+- **設定し忘れたら送らない。** モードの既定は `off`
+- **送らなかった事実も記録に残す**（`*.blocked`）。「なぜ送られていないのか」を後から追える
+- **冪等キーは対象・宛先・本文から作る**。同じ内容の再送は弾き、前回の外部IDを返す。
+  本文を変えれば別の送信として通る（訂正版の再送ができる）
+- 検証中の**宛先許可リスト**で暴発を止める
+- Webhook 受信は外部IDで一意にし、二度目は `duplicated` を返す
+- Slack の受信だけ署名検証。他は共有シークレット（未設定なら受け口ごと 404）
+
+送信そのものはトランザクションに入れられない（外部への副作用は巻き戻せない）ため、
+「冪等キーで重複を弾く → 送信 → 記録」の順にし、記録に失敗しても外部IDがログに残るようにしている。
+
+### 残り
 
 | 領域 | 移植元 |
 |---|---|
 | ~~文書生成（Handlebars → HTML → Chromium PDF）~~ | **移植済み** |
 | ~~Drive 保存~~ | **移植済み** |
-| Slack（受付・通知・スレッド） | `slack-intake/` `integrations/slack-*` |
-| Gmail（送信・受信取込） | `integrations/gmail-*` |
-| CloudSign | `integrations/cloudsign-*` |
-| Backlog | `integrations/backlog-*` |
+| ~~Slack（受付・通知・スレッド）~~ **移植済み** | `slack-intake/` `integrations/slack-*` |
+| ~~Gmail（送信・受信取込）~~ **移植済み** | `integrations/gmail-*` |
+| ~~CloudSign~~ **移植済み** | `integrations/cloudsign-*` |
+| ~~Backlog~~ **移植済み** | `integrations/backlog-*` |
 | ~~ロイヤリティ計算（MG/AG・源泉・為替）~~ | **移植済み** |
 
 新規に書くのは**書込層だけ**。事実単位のサービスが `v3` の保存先を1トランザクションで更新する
