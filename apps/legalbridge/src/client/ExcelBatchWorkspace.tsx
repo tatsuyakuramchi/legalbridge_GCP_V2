@@ -14,6 +14,7 @@ type Slot = { content: string; unitPrice: number | ""; quantity: number | ""; am
 type Accounting = {
   title: string; paymentDate: string; department: string; vendorCode: string; vendorName: string; vendorNameKana: string;
   slots: Slot[]; reimbursement: number; subtotal: number; consumptionTax: number; withholdingTax: number;
+  entityType?: "個人" | "法人";
   afterTax: number; netTransfer: number; withholdingEnabled: boolean; invoiceRegistration: string;
 };
 type BatchItem = TaxCols & { documentNumber: string; inspectionDate: string; title: string; counterparty: string; accounting?: Accounting };
@@ -105,7 +106,35 @@ export function ExcelBatchWorkspace({ canMark = false }: { canMark?: boolean }) 
       .finally(() => setLoading(false));
   }, [reload]);
 
-  // 経理提出用（V1 互換の 8 スロット・源泉列）。1 文書 = 1 行。
+  // V1 互換の束ね出力（サーバ生成）: 検収書_個人_<支払日>.xlsx（シート 検収書(個人)）＋各文書の PDF を zip で。
+  const entityCount = (g: BatchGroup, entity: "個人" | "法人") =>
+    g.items.filter((it) => it.accounting?.entityType === entity).length;
+  async function downloadBundle(g: BatchGroup, entity: "個人" | "法人", withPdf: boolean) {
+    const busy = `${g.key}:${entity}:${withPdf ? "zip" : "xlsx"}`;
+    setBusyKey(busy);
+    try {
+      const params = new URLSearchParams({ key: g.key, entity, withPdf: withPdf ? "1" : "0" });
+      const response = await fetch(`/api/v2/documents/excel-batches/bundle?${params.toString()}`);
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        toast.push(data.error ?? "出力に失敗しました。", "error");
+        return;
+      }
+      const disposition = response.headers.get("Content-Disposition") ?? "";
+      const encoded = /filename\*=UTF-8''([^;]+)/.exec(disposition)?.[1];
+      const filename = encoded ? decodeURIComponent(encoded)
+        : `${CATEGORY_LABEL[g.category]}_${entity}_${g.paymentDate || "no-date"}.${withPdf ? "zip" : "xlsx"}`;
+      const url = URL.createObjectURL(await response.blob());
+      const a = document.createElement("a");
+      a.href = url; a.download = filename; a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast.push("出力に失敗しました。", "error");
+    } finally {
+      setBusyKey("");
+    }
+  }
+  // 経理提出用（V1 互換の 8 スロット・源泉列）。1 文書 = 1 行（簡易 .xls）。
   function downloadGroup(g: BatchGroup) {
     const date = g.paymentDate || "no-date";
     const name = `${CATEGORY_LABEL[g.category]}_${g.inspectorName}_${date}`.replace(/[^\w.\-一-龥ぁ-んァ-ン]/g, "_");
@@ -158,7 +187,16 @@ export function ExcelBatchWorkspace({ canMark = false }: { canMark?: boolean }) 
               ｜消費税 {yen(g.totals.tax)} ｜税込 <b>{yen(g.totals.totalIncTax)}</b></span>}
           </div>
           <div className="batch-group-actions">
-            <button className="primary" onClick={() => downloadGroup(g)} title="経理提出用（支払スロット×8・立替金・小計・消費税・源泉税・税引後・差引振込額・インボイス登録）">経理提出用Excel（{g.count}件）</button>
+            {(["個人", "法人"] as const).map((entity) => entityCount(g, entity) > 0 && <span key={entity} className="bundle-buttons">
+              <button className="primary" disabled={busyKey.startsWith(`${g.key}:${entity}:`)}
+                onClick={() => void downloadBundle(g, entity, true)}
+                title={`旧システムと同じ形: ${CATEGORY_LABEL[g.category]}_${entity}_<支払日>.xlsx（シート ${CATEGORY_LABEL[g.category]}(${entity})）と各文書の PDF を zip で`}>
+                {busyKey === `${g.key}:${entity}:zip` ? "生成中…" : `${entity} zip（Excel＋PDF・${entityCount(g, entity)}件）`}
+              </button>
+              <button disabled={busyKey.startsWith(`${g.key}:${entity}:`)} onClick={() => void downloadBundle(g, entity, false)}
+                title="旧システムと同じ xlsx だけ（PDF なし）">{entity} xlsx</button>
+            </span>)}
+            <button onClick={() => downloadGroup(g)} title="簡易版（.xls・担当者単位・個人法人を分けない）">簡易 .xls（{g.count}件）</button>
             <button onClick={() => downloadBreakdown(g)} title="文書番号・税区分内訳・合計行の一覧">内訳一覧</button>
             {canMark && <button disabled={busyKey === g.key} onClick={() => void markGroup(g)}>
               {busyKey === g.key ? "記録中…" : "発行済みにする"}

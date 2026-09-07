@@ -46,7 +46,35 @@ export interface AccountingRow {
   netTransfer: number;
   withholdingEnabled: boolean;
   invoiceRegistration: string;    // T番号（無ければ空）
+  entityType: "個人" | "法人";     // V1 の出力単位（検収書(個人)／検収書(法人)）。マスタ→フォーム→源泉有無の順で決める
   breakdown: TaxBreakdown;
+}
+
+/** V1 経理提出用エクセルの列並び（53 列）。シート名は「検収書(個人)」のように種別＋区分。 */
+export const ACCOUNTING_SHEET_HEADERS: string[] = [
+  "件名", "支払日", "部署", "取引先コード", "氏名", "氏名（カナ）",
+  ...Array.from({ length: 8 }, (_, i) => [
+    `支払内容（${i + 1}）`, `単価（${i + 1}）`, `数量（${i + 1}）`, `金額（${i + 1}）`, `納品日(${i + 1})`
+  ]).flat(),
+  "立替金", "小計", "消費税", "源泉税", "税引後", "差引振込額", "インボイス登録"
+];
+
+/** 1 行分のセル（V1 と同じ: 空スロットは空、数値は数値のまま）。 */
+export function accountingSheetRow(row: AccountingRow): Array<string | number | null> {
+  const cell = (v: number | "" | string): string | number | null => (v === "" ? null : v);
+  return [
+    row.title, row.paymentDate, row.department, row.vendorCode, row.vendorName, row.vendorNameKana,
+    ...row.slots.flatMap((s) => [cell(s.content), cell(s.unitPrice), cell(s.quantity), cell(s.amount), cell(s.deliveryDate)]),
+    row.reimbursement, row.subtotal, row.consumptionTax, row.withholdingTax, row.afterTax, row.netTransfer,
+    cell(row.invoiceRegistration)
+  ];
+}
+
+function resolveEntityType(vendor: AccountingVendor | null, fd: Record<string, unknown>, withholdingEnabled: boolean): "個人" | "法人" {
+  const raw = str(vendor?.entityType) || first(fd, ["vendorEntityType", "entity_type", "LICENSOR_IS_CORPORATION", "許諾者種別"]);
+  if (/個人|individual|false/i.test(raw)) return "個人";
+  if (/法人|corporation|corporate|company|true/i.test(raw)) return "法人";
+  return withholdingEnabled ? "個人" : "法人";
 }
 
 export const ACCOUNTING_SLOT_COUNT = 8;
@@ -181,6 +209,7 @@ export function buildAccountingRow(
     netTransfer: afterTax + reimbursement,
     withholdingEnabled,
     invoiceRegistration: str(vendor?.invoiceRegistrationNumber) || first(fd, ["invoiceRegistrationNumber", "INVOICE_REGISTRATION_NUMBER"]),
+    entityType: resolveEntityType(vendor, fd, withholdingEnabled),
     breakdown
   };
 }

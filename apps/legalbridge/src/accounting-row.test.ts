@@ -127,3 +127,11 @@ test("検収書: 支払済行が混ざっても今回行だけをスロットへ
   assert.equal(row.subtotal, 38500);
   assert.equal(row.consumptionTax, 3850);
 });
+
+test("entityType: マスタの区分 → フォーム → 源泉有無の順で個人／法人を決める（V1 のシート分け）", () => {
+  const fd = { taxRate: 10, delivery_line_items: [{ inspected_amount_ex_tax: 10000 }] };
+  assert.equal(buildAccountingRow("inspection_certificate", fd, vendor, "2026-09-30").entityType, "個人");
+  assert.equal(buildAccountingRow("inspection_certificate", fd, { ...vendor, entityType: "法人", withholdingEnabled: false }, "2026-09-30").entityType, "法人");
+  assert.equal(buildAccountingRow("inspection_certificate", { ...fd, vendorEntityType: "法人" }, null, "2026-09-30").entityType, "法人");
+  assert.equal(buildAccountingRow("inspection_certificate", { ...fd, LICENSOR_IS_CORPORATION: "false" }, null, "2026-09-30").entityType, "個人");
+});

@@ -108,3 +108,75 @@ test("mark: 空配列は400", async () => {
     .post("/api/v2/documents/excel-batches/mark").send({ documentNumbers: [] });
   assert.equal(res.status, 400);
 });
+
+// V1 互換の束ね出力（xlsx ＋ PDF zip）。
+function bundleAppFor(opts: { role?: string } = {}) {
+  const individual = { vendorCode: "2-20-9453", vendorName: "佐野篤", vendorNameKana: "サノアツシ", entityType: "個人", withholdingEnabled: null, invoiceRegistrationNumber: null };
+  const corporate = { vendorCode: "1-10-0001", vendorName: "株式会社テスト", vendorNameKana: "", entityType: "法人", withholdingEnabled: false, invoiceRegistrationNumber: "T1234567890123" };
+  const docs: RawExcelDoc[] = [
+    { documentNumber: "ARC-INS-2026-0059", templateType: "inspection_certificate", vendor: individual, formData: {
+      inspectorEmail: "a@x", inspectorName: "池田", paymentDate: "2026-09-20", taxRate: 10,
+      delivery_line_items: [
+        { item_name: "分析（第4期）", inspection_status: "paid", inspected_amount_ex_tax: 35000, unit_price: 35000, inspected_quantity: 1, calc_method: "SUBSCRIPTION" },
+        { item_name: "分析（第5期）", inspection_status: "now", inspected_amount_ex_tax: 35000, unit_price: 35000, inspected_quantity: 1, calc_method: "SUBSCRIPTION" },
+        { item_name: "分析（第6期）", inspection_status: "skip", inspected_amount_ex_tax: 35000, unit_price: 35000, inspected_quantity: 1, calc_method: "SUBSCRIPTION" }
+      ] } },
+    { documentNumber: "ARC-INS-2026-0070", templateType: "inspection_certificate", vendor: corporate, formData: {
+      inspectorEmail: "a@x", inspectorName: "池田", paymentDate: "2026-09-20", taxRate: 10,
+      delivery_line_items: [{ item_name: "編集", inspection_status: "now", inspected_amount_ex_tax: 100000 }] } }
+  ];
+  const repository = new MemoryExcelBatchRepository(docs);
+  const app = express();
+  app.use((_req, res, next) => {
+    res.locals.currentUser = { email: "u@arclight.co.jp", subject: "t", role: opts.role ?? "legal", source: "test" } as never;
+    next();
+  });
+  app.use("/api/v2", createExcelBatchRouter(repository, false, { pdfEnabled: false }));
+  return app;
+}
+
+test("excel-batches/bundle: 個人だけの xlsx（V1 の 53 列・今回検収分のみ）を返す", async () => {
+  const app = bundleAppFor();
+  const listed = await request(app).get("/api/v2/documents/excel-batches");
+  const key = listed.body.groups[0].key as string;
+  const res = await request(app).get("/api/v2/documents/excel-batches/bundle")
+    .query({ key, entity: "個人", withPdf: "0" }).buffer(true).parse((r, cb) => {
+      const chunks: Buffer[] = [];
+      r.on("data", (c: Buffer) => chunks.push(c));
+      r.on("end", () => cb(null, Buffer.concat(chunks)));
+    });
+  assert.equal(res.status, 200);
+  assert.match(String(res.headers["content-type"]), /spreadsheetml/);
+  assert.match(String(res.headers["content-disposition"]), /filename\*=UTF-8''%E6%A4%9C%E5%8F%8E%E6%9B%B8_%E5%80%8B%E4%BA%BA_2026-09-20\.xlsx/);
+  const body = res.body as Buffer;
+  assert.equal(body.readUInt32LE(0), 0x04034b50);
+  const text = body.toString("utf8");
+  assert.match(text, /検収書\(個人\)/);                    // シート名
+  assert.match(text, /分析（第5期）/);                      // 今回検収の行だけ
+  assert.doesNotMatch(text, /第4期|第6期|株式会社テスト/);   // 支払済・未検収・法人は入らない
+  assert.match(text, /<c r="H2"><v>35000<\/v><\/c>/);      // 単価（1）
+  assert.match(text, /<c r="I2"><v>1<\/v><\/c>/);          // 数量（1）
+  assert.match(text, /<c r="AV2"><v>35000<\/v><\/c>/);     // 小計（48 列目）
+});
+
+test("excel-batches/bundle: PDF 生成が無効でも zip（xlsx＋未生成メモ）を返し、該当区分が無ければ 404", async () => {
+  const app = bundleAppFor();
+  const listed = await request(app).get("/api/v2/documents/excel-batches");
+  const key = listed.body.groups[0].key as string;
+  const zip = await request(app).get("/api/v2/documents/excel-batches/bundle")
+    .query({ key, entity: "法人" }).buffer(true).parse((r, cb) => {
+      const chunks: Buffer[] = [];
+      r.on("data", (c: Buffer) => chunks.push(c));
+      r.on("end", () => cb(null, Buffer.concat(chunks)));
+    });
+  assert.equal(zip.status, 200);
+  assert.match(String(zip.headers["content-type"]), /application\/zip/);
+  const text = (zip.body as Buffer).toString("utf8");
+  assert.match(text, /検収書_法人_2026-09-20\.xlsx/);
+  assert.match(text, /PDF未生成\.txt/);
+  assert.match(text, /ARC-INS-2026-0070/);
+  const missing = await request(app).get("/api/v2/documents/excel-batches/bundle").query({ key: "nope", entity: "個人" });
+  assert.equal(missing.status, 404);
+  const forbidden = await request(bundleAppFor({ role: "requester" })).get("/api/v2/documents/excel-batches/bundle").query({ key, entity: "個人" });
+  assert.equal(forbidden.status, 403);
+});

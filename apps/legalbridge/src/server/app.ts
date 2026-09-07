@@ -1505,9 +1505,15 @@ export function createApp(
     ?? (lookupDatabase ? new PgDocumentLookupRepository(lookupDatabase) : new MemoryDocumentLookupRepository());
   app.use("/api/v2", createDocumentLookupRouter(documentRegistry, documentLookup));
   // Excel 一括出力（10-5）。/documents/excel-batches は /documents/:id より前に評価させる。
-  app.use("/api/v2", createExcelBatchRouter(dependencies.excelBatch, excelBatchEnabled));
-  app.use("/api/v2", createDocumentRegistryRouter(documentRegistry));
   const pdfRenderer = dependencies.pdfRenderer ?? new ChromiumPdfRenderer();
+  app.use("/api/v2", createExcelBatchRouter(dependencies.excelBatch, excelBatchEnabled, {
+    // V1 互換の束ね出力（xlsx ＋ PDF zip）。PDF は pdf スコープが有効なときだけ同梱。
+    documents: documentRegistry,
+    templates: dependencies.templates,
+    pdfRenderer,
+    pdfEnabled: pdfGenerationEnabled
+  }));
+  app.use("/api/v2", createDocumentRegistryRouter(documentRegistry));
   app.use("/api/v2", createDocumentPdfRouter(
     documentRegistry,
     dependencies.templates,
