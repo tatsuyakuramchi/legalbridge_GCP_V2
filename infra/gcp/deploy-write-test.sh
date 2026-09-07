@@ -15,6 +15,7 @@
 #   SERVICE=... でデプロイ先を上書き（既定は正式名 legalbridge-v2）。
 #     旧サービスへ出す場合のみ: SERVICE=legalbridge-v2-write-test ...
 #   FLAGS_FROM=... で設定の引き継ぎ元を上書き（既定はデプロイ先自身）。
+#   FLAGS_BUILD=<Cloud Build ID> で引き継ぐビルドを直接指定（一覧取得が止まるとき）。
 #     まだ存在しないサービスへ初めて出すときに使う（§4 の載せ替えで使用済み）:
 #       SERVICE=<新> FLAGS_FROM=<稼働中> infra/gcp/deploy-write-test.sh
 #   PROJECT=... で対象プロジェクトを上書き（既定 legalbridge-488506）。
@@ -84,17 +85,26 @@ echo "採用ビルド: ${LAST_BUILD}"
 # 配信中イメージのタグが Cloud Build の ID でないことがある（別経路＝コミット SHA タグで
 # デプロイされた版。2026-09-06 に main 側の runbook で 206e5d6 が出ていた）。その場合は
 # 同じサービス向けの直近の成功ビルドから設定を引き継ぐ（フラグが消えて verify に落ちるのを防ぐ）。
-if ! gcloud builds describe "${LAST_BUILD}" --project "${PROJECT}" --format=json > "${FLAGS_FILE}.raw" 2>/dev/null; then
+# FLAGS_BUILD=<Cloud Build ID> を指定したときは、配信中イメージを見ずにそのビルドの設定を引き継ぐ
+# （一覧取得が止まるときの逃げ道）。
+if [ -n "${FLAGS_BUILD:-}" ]; then
+  LAST_BUILD="${FLAGS_BUILD}"
+  echo "採用ビルド（指定）: ${LAST_BUILD}"
+  gcloud builds describe "${LAST_BUILD}" --project "${PROJECT}" --format=json > "${FLAGS_FILE}.raw" \
+    || die "FLAGS_BUILD=${FLAGS_BUILD} のビルドを取得できませんでした"
+elif ! gcloud builds describe "${LAST_BUILD}" --project "${PROJECT}" --format=json > "${FLAGS_FILE}.raw" 2>/dev/null; then
   echo "配信中イメージのタグ ${LAST_BUILD} は Cloud Build の ID ではありません（別経路でデプロイされた版）。"
   echo "同じサービス（${FLAGS_FROM}）向けの直近の成功ビルドから設定を引き継ぎます…"
-  # 50 件分の全 JSON を取って jq で絞ると数分かかる（2026-09-07 に 2 回足踏み）。
-  # サーバー側フィルタで 1 件だけ取る。
-  # substitutions._SERVICE= のフィルタは gcloud の演算子仕様変更で「現状マッチしない」警告が
-  # 出て空になるため、status だけサーバー側で絞り、サービス名は value 出力（軽い）から選ぶ。
-  LAST_BUILD="$(gcloud builds list --project "${PROJECT}" --limit=30 --sort-by=~createTime \
-    --filter="status=SUCCESS" --format='value(id,substitutions._SERVICE)' \
-    | awk -v s="${FLAGS_FROM}" '$2 == s { print $1; exit }')"
-  [ -n "${LAST_BUILD}" ] || die "${FLAGS_FROM} 向けの成功ビルドが見つかりません。FLAGS_FROM=<設定を引き継ぐサービス名> を指定してください"
+  # 注意: --sort-by は gcloud が全履歴を取り切ってから手元で並べ替えるため、履歴の多い
+  # プロジェクトでは終わらない（2026-09-07 に 3 回足踏み）。builds list の既定順は新しい順
+  # なので並べ替え指定は付けない。--filter も付けず（substitutions._SERVICE= は演算子仕様
+  # 変更で空になる）、軽い value 出力から手元で選ぶ。
+  LAST_BUILD="$(gcloud builds list --project "${PROJECT}" --limit=40 \
+    --format='value(id,status,substitutions._SERVICE)' \
+    | awk -v s="${FLAGS_FROM}" '$2 == "SUCCESS" && $3 == s { print $1; exit }')"
+  [ -n "${LAST_BUILD}" ] || die "${FLAGS_FROM} 向けの成功ビルドが直近 40 件にありません。
+     FLAGS_BUILD=<Cloud Build ID>（gcloud builds list --limit=40 で探す）か
+     FLAGS_FROM=<設定を引き継ぐサービス名> を指定してください"
   echo "採用ビルド（代替）: ${LAST_BUILD}"
   gcloud builds describe "${LAST_BUILD}" --project "${PROJECT}" --format=json > "${FLAGS_FILE}.raw"
 fi
