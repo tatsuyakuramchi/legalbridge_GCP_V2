@@ -317,9 +317,6 @@ export class PgConditionLineRepository implements ConditionLineRepository {
               cl.region_territory, cl.region_language, cl.exclusivity, cl.sublicense_allowed,
               cl.payment_scheme, cl.payment_terms, cl.royalty_base,
               cl.deductible_costs, cl.notes,
-              cl.line_kind, cl.tax_category, cl.material_code, cl.source_material_id, cl.work_id, cl.term_end,
-              cl.counterparty_vendor_id, cl.parent_license_condition_id, cl.group_no, cl.base_price_label,
-              wm.material_name AS source_material_name,
               d.document_number, d.matter_id, d.template_type,
               d.lifecycle_status, d.form_data->>'superseded_by' AS superseded_by,
               d.form_data->>'ledger_status' AS ledger_status,
@@ -331,11 +328,20 @@ export class PgConditionLineRepository implements ConditionLineRepository {
          LEFT JOIN matters m ON m.id = d.matter_id
          LEFT JOIN vendors v ON v.id = cl.counterparty_vendor_id
          LEFT JOIN works w ON w.id = cl.work_id
-         LEFT JOIN work_materials wm ON wm.id = cl.source_material_id
         WHERE cl.id = $1`,
       [id]
     );
     if (!detail.rows[0]) return null;
+    // 任意列（075 の line_kind / tax_category、素材・期間・親条件など）は列名を固定せずに読む。
+    // 固定列に入れると未適用環境で SELECT ごと失敗し、詳細が「取得できませんでした」になる（2026-09-07）。
+    const extra = await this.database.query(
+      "SELECT row_to_json(cl) AS line FROM condition_lines cl WHERE cl.id = $1", [id]
+    ).then((r) => (r.rows[0]?.line ?? {}) as Record<string, unknown>).catch(() => ({} as Record<string, unknown>));
+    const sourceMaterialId = extra.source_material_id == null ? null : Number(extra.source_material_id);
+    const sourceMaterialName = sourceMaterialId
+      ? await this.database.query("SELECT material_name FROM work_materials WHERE id = $1", [sourceMaterialId])
+        .then((r) => (r.rows[0]?.material_name as string | null) ?? null).catch(() => null)
+      : null;
     const [regions, languages] = await Promise.all([
       this.database.query(
         `SELECT country_name FROM condition_line_regions
@@ -360,17 +366,17 @@ export class PgConditionLineRepository implements ConditionLineRepository {
       agAmount: num(row.ag_amount),
       notes: row.notes ?? null,
       // 業務委託・素材・期間・親条件（2026-09-07 の編集フォーム用）
-      lineKind: row.line_kind ?? null,
-      taxCategory: row.tax_category ?? null,
-      materialCode: row.material_code ?? null,
-      sourceMaterialId: row.source_material_id == null ? null : Number(row.source_material_id),
-      sourceMaterialName: row.source_material_name ?? null,
-      workId: row.work_id == null ? null : Number(row.work_id),
-      termEnd: row.term_end ? String(row.term_end).slice(0, 10) : null,
-      counterpartyVendorId: row.counterparty_vendor_id == null ? null : Number(row.counterparty_vendor_id),
-      parentLicenseConditionId: row.parent_license_condition_id == null ? null : Number(row.parent_license_condition_id),
-      groupNo: row.group_no == null ? null : Number(row.group_no),
-      basePriceLabel: row.base_price_label ?? null,
+      lineKind: (extra.line_kind as string | null) ?? null,
+      taxCategory: (extra.tax_category as string | null) ?? null,
+      materialCode: (extra.material_code as string | null) ?? null,
+      sourceMaterialId,
+      sourceMaterialName,
+      workId: extra.work_id == null ? null : Number(extra.work_id),
+      termEnd: extra.term_end ? String(extra.term_end).slice(0, 10) : null,
+      counterpartyVendorId: extra.counterparty_vendor_id == null ? null : Number(extra.counterparty_vendor_id),
+      parentLicenseConditionId: extra.parent_license_condition_id == null ? null : Number(extra.parent_license_condition_id),
+      groupNo: extra.group_no == null ? null : Number(extra.group_no),
+      basePriceLabel: (extra.base_price_label as string | null) ?? null,
       regions: regions.rows.length
         ? regions.rows.map((r) => String(r.country_name)).filter(Boolean)
         : legacyScopeNames(row.region_territory),
@@ -383,19 +389,25 @@ export class PgConditionLineRepository implements ConditionLineRepository {
   // 項目単位の編集（grant 066: condition_lines の UPDATE・regions/languages の INSERT/DELETE）。
   // 1 トランザクション。document_id を付け替えるときは capability_id も揃える（moveConditions と同じ）。
   async update(id: number, patch: ConditionLineUpdate): Promise<{ id: number }> {
+    // 実在する列だけ更新する（075 未適用なら line_kind / tax_category は無い）。行が無ければ LINE_NOT_FOUND。
+    const current = await this.database.query(
+      "SELECT row_to_json(cl) AS line FROM condition_lines cl WHERE cl.id = $1", [id]);
+    if (!current.rows[0]) throw new ConditionRepairError(`条件明細 ${id} が見つかりません`, "LINE_NOT_FOUND");
+    const existingColumns = new Set(Object.keys(current.rows[0].line ?? {}));
     const sets: string[] = [];
     const values: unknown[] = [id];
     for (const [key, column] of Object.entries(UPDATABLE_COLUMNS) as Array<[keyof typeof UPDATABLE_COLUMNS, string]>) {
       if (patch[key] === undefined) continue;
+      if (!existingColumns.has(column)) continue;
       values.push(patch[key]);
       sets.push(`${column} = $${values.length}`);
-      if (key === "documentId") sets.push(`capability_id = $${values.length}`);
+      if (key === "documentId" && existingColumns.has("capability_id")) sets.push(`capability_id = $${values.length}`);
     }
-    if (patch.regions !== undefined) {
+    if (patch.regions !== undefined && existingColumns.has("region_territory")) {
       values.push(patch.regions.map((r) => r.name).join("・") || null);
       sets.push(`region_territory = $${values.length}`);
     }
-    if (patch.languages !== undefined) {
+    if (patch.languages !== undefined && existingColumns.has("region_language")) {
       values.push(patch.languages.map((l) => l.name).join("・") || null);
       sets.push(`region_language = $${values.length}`);
     }
