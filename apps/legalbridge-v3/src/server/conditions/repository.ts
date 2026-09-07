@@ -185,6 +185,42 @@ export class ConditionRepository {
     }));
   }
 
+  /** 保証のある条件の消化状況。お金の画面が使う。 */
+  async balances(limit = 200) {
+    try {
+      const r = await this.database.query(
+        `SELECT b.condition_id, b.condition_no, b.currency, b.direction,
+                b.mg_amount, b.ag_amount, b.planned_total, b.consumed_total,
+                b.ag_consumed, b.ag_remaining, b.ag_consumption_rate,
+                c.name, p.name AS party_name, w.title AS work_title
+           FROM v_condition_balance b
+           JOIN conditions c ON c.id = b.condition_id
+           LEFT JOIN parties p ON p.id = c.counterparty_id
+           LEFT JOIN works w   ON w.id = c.work_id
+          WHERE c.status = 'active'
+            AND (COALESCE(b.mg_amount, 0) > 0 OR COALESCE(b.ag_amount, 0) > 0
+                 OR COALESCE(b.consumed_total, 0) > 0)
+          ORDER BY b.ag_remaining DESC, b.condition_id
+          LIMIT $1`, [Math.min(Math.max(limit, 1), 500)]);
+      return r.rows.map((row: Record<string, any>) => ({
+        conditionId: Number(row.condition_id),
+        conditionNo: str(row.condition_no),
+        name: String(row.name ?? ""),
+        direction: String(row.direction),
+        currency: String(row.currency ?? "JPY"),
+        counterparty: str(row.party_name),
+        workTitle: str(row.work_title),
+        mgAmount: Number(row.mg_amount ?? 0),
+        agAmount: Number(row.ag_amount ?? 0),
+        plannedTotal: Number(row.planned_total ?? 0),
+        consumedTotal: Number(row.consumed_total ?? 0),
+        agConsumed: Number(row.ag_consumed ?? 0),
+        agRemaining: Number(row.ag_remaining ?? 0),
+        agConsumptionRate: num(row.ag_consumption_rate)
+      }));
+    } catch (error) { throw translate(error); }
+  }
+
   async requireExisting(client: Queryable, id: number) {
     const r = await client.query(
       `SELECT id, condition_no, status, counterparty_id, currency FROM conditions WHERE id = $1 FOR UPDATE`,

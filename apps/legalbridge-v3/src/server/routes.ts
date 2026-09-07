@@ -17,6 +17,7 @@ import { GoogleMatterDriveFolderService, LocalMatterDriveFolderService } from ".
 import { MatterFolderStorageService } from "./matters/drive-folder-service.js";
 import { config } from "./config.js";
 import { RoyaltyStatementService } from "./royalty/statement-service.js";
+import { PaymentService } from "./payments/service.js";
 
 const asyncRoute =
   (handler: (req: Request, res: Response) => Promise<unknown>) =>
@@ -44,6 +45,7 @@ export function createRoutes(database: Transactable) {
       : null;
   const storage = new DocumentStorageService(database, drive, pdf);
   const royalty = new RoyaltyStatementService(database);
+  const payments = new PaymentService(database);
   const matterFolders = new MatterFolderStorageService(
     database,
     config.driveMatterParentFolderId
@@ -284,6 +286,35 @@ export function createRoutes(database: Transactable) {
       conditionId: req.query.conditionId ? Number(req.query.conditionId) : undefined
     }) });
   }));
+
+  router.get("/balances", asyncRoute(async (_req, res) => {
+    res.json({ balances: await conditions.balances() });
+  }));
+
+  // ---- 支払 ----
+  router.get("/payments", asyncRoute(async (req, res) => {
+    const direction = req.query.direction as "in" | "out" | undefined;
+    res.json({ payments: await payments.list({
+      status: req.query.status ? String(req.query.status) : undefined,
+      direction: direction === "in" || direction === "out" ? direction : undefined
+    }) });
+  }));
+
+  // 計算書から支払を起こす。割当なしでは作れない。
+  router.post("/statements/:id/payment",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({ dueOn: z.string().date().nullable().optional() }).parse(req.body ?? {});
+      res.status(201).json(await payments.createFromStatement(
+        Number(req.params.id), actor(res), { dueOn: input.dueOn ?? undefined }));
+    }));
+
+  router.post("/payments/:id/paid",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({ paidOn: z.string().date() }).parse(req.body ?? {});
+      res.json(await payments.markPaid(Number(req.params.id), input.paidOn, actor(res)));
+    }));
 
   return router;
 }

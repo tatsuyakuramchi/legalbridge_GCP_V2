@@ -3,8 +3,9 @@ import { api } from "./api.js";
 import { MattersWorkspace } from "./MattersWorkspace.js";
 import { ConditionsWorkspace } from "./ConditionsWorkspace.js";
 import { DocumentsWorkspace } from "./DocumentsWorkspace.js";
+import { MoneyWorkspace } from "./MoneyWorkspace.js";
 
-type View = "matters" | "conditions" | "documents";
+type View = "matters" | "conditions" | "documents" | "money";
 interface Me { user?: { email: string; role: string }; readOnly: boolean }
 
 export function App() {
@@ -28,6 +29,8 @@ export function App() {
                 onClick={() => { setConditionId(undefined); setView("conditions"); }}>条件</button>
         <button className="nav-item" aria-current={view === "documents" ? "page" : undefined}
                 onClick={() => setView("documents")}>文書</button>
+        <button className="nav-item" aria-current={view === "money" ? "page" : undefined}
+                onClick={() => setView("money")}>お金</button>
 
         <div className="rail-foot">
           <div className="faint">{me?.user?.email ?? "未認証"}</div>
@@ -43,6 +46,7 @@ export function App() {
         )}
         {view === "conditions" && <ConditionsWorkspace key={conditionId ?? 0} initialId={conditionId} />}
         {view === "documents" && <DocumentsWorkspace />}
+        {view === "money" && <MoneyWorkspace />}
       </main>
     </div>
   );

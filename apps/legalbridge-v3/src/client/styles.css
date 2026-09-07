@@ -117,3 +117,5 @@ tbody tr.sel{background:var(--accent-soft)}
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .preview{width:100%;height:420px;border:0;border-top:1px solid var(--line);background:#fff}
 .btn-sm{padding:2px 8px;font-size:11.5px}
+.meter{height:7px;border-radius:4px;background:var(--sunken);overflow:hidden}
+.meter i{display:block;height:100%;background:var(--in)}
