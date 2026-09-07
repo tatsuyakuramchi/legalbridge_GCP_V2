@@ -28,7 +28,11 @@ test("かんたん受領入力: 3 つの入力から計算書の欄（当事者�
   assert.equal(patch.currency, "JPY");
   const receipts = patch.rs_receipts as Array<Record<string, unknown>>;
   assert.equal(receipts.length, 1);
-  assert.deepEqual(receipts[0], { sublicensee: "Meridian Games", receivedOn: "2026-05-10", currency: "USD", amount: 12000, fxMode: "pre", fxRate: 148.2 });
+  assert.deepEqual(receipts[0], {
+    sublicensee: "Meridian Games",
+    productName: "再許諾 ／ 許諾地域：北米 ／ 許諾言語：英語",
+    receivedOn: "2026-05-10", currency: "USD", amount: 12000, fxMode: "pre", fxRate: 148.2
+  });
 });
 
 test("かんたん受領入力: 円入金は換算なし、既存の受領行に追記、アウト条件が無ければ名称欄と作品名で埋める", () => {

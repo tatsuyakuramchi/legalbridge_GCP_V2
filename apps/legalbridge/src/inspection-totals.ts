@@ -30,8 +30,12 @@ function toNumber(value: unknown, fallback = 0): number {
 export type InspectionLineStatus = "now" | "paid" | "skip";
 
 export function inspectionLineStatus(line: Record<string, unknown>): InspectionLineStatus {
-  const status = String(line.inspection_status ?? "").trim();
-  return status === "paid" || status === "skip" ? status : "now";
+  const status = String(line.inspection_status ?? "").trim().toLowerCase();
+  // 旧フォーム・取込データでは日本語または別名で保存された行がある。
+  // 未知値をすべて now にすると、サブスクの過去期まで今回支払へ累積されるため正規化する。
+  if (["paid", "completed", "inspected", "検収済み", "支払済み", "支払済"].includes(status)) return "paid";
+  if (["skip", "pending", "uninspected", "未検収", "対象外", "今回対象外"].includes(status)) return "skip";
+  return "now";
 }
 
 export function inspectionLines(formData: Record<string, unknown>): Array<Record<string, unknown>> {
@@ -47,7 +51,11 @@ export function computeInspectionTotals(formData: Record<string, unknown>): Insp
   const payable = lines.filter((line) => inspectionLineStatus(line) === "now");
   const deliveredExTax = payable.reduce((sum, line) =>
     sum + toNumber(line.inspected_amount_ex_tax ?? line.amount_ex_tax ?? line.amount), 0);
-  const taxRate = toNumber(formData.taxRate ?? formData.tax_rate, 10) || 10;
+  const rawTaxRate = formData.taxRate ?? formData.tax_rate;
+  // 未入力だけ10%へフォールバックする。明示された0%（対象外・非課税）を10%に戻さない。
+  const taxRate = rawTaxRate === "" || rawTaxRate == null
+    ? 10
+    : Math.max(0, toNumber(rawTaxRate, 10));
   const tax = Math.ceil(deliveredExTax * taxRate / 100);
   // 経費・手数料（精算で選んだ行）。式はサーバの buildInspectionContext と同じ：
   // 手数料は税抜＝検収額と合算して一括課税（二重計上しない）、経費は税込のまま加算。

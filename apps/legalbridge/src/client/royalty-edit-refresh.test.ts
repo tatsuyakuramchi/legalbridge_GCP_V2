@@ -17,11 +17,19 @@ test("既存計算書の編集開始時に明細を含む製品名をOUT条件�
   }) as typeof fetch;
   const result = await refreshRoyaltyProductForEdit({
     source_condition_line_id: 590, source_out_condition_line_id: 592,
-    productName: "Gameplay Publishing ApS", lines: [{ productName: "Gameplay Publishing ApS" }]
+    productName: "Gameplay Publishing ApS",
+    lines: [{ productName: "Gameplay Publishing ApS" }],
+    rs_receipts: [{ sublicensee: "Gameplay Publishing ApS", amount: 14324 }],
+    lineGroups: [{ lines: [{ productName: "Gameplay Publishing ApS" }] }]
   }, fetcher);
   assert.equal(result.changed, true);
   assert.equal(result.formData.productName, "再許諾 ／ 許諾地域：北欧 ／ 許諾言語：英語");
   assert.equal((result.formData.lines as Array<Record<string, unknown>>)[0].productName, result.formData.productName);
+  assert.equal((result.formData.rs_receipts as Array<Record<string, unknown>>)[0].productName, result.formData.productName);
+  assert.equal(
+    ((result.formData.lineGroups as Array<Record<string, unknown>>)[0].lines as Array<Record<string, unknown>>)[0].productName,
+    result.formData.productName
+  );
   assert.equal(calls[0], "/api/v2/license-settlements/preview");
 });
 

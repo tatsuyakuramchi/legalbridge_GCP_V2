@@ -97,7 +97,7 @@ export function buildQuickReceiptPatch(input: {
     ? (input.existing!.rs_receipts as Array<Record<string, unknown>>).filter((r) => String(r.sublicensee ?? "").trim() || Number(r.amount) > 0)
     : [];
   const row = {
-    sublicensee, receivedOn: receipt.receivedOn, currency, amount: receipt.amount,
+    sublicensee, productName, receivedOn: receipt.receivedOn, currency, amount: receipt.amount,
     fxMode: foreign ? receipt.fxMode : "post", fxRate: foreign ? receipt.fxRate : ""
   };
   return {

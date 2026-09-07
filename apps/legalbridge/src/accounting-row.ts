@@ -85,13 +85,22 @@ export function fitSlots(slots: AccountingSlot[]): AccountingSlot[] {
 function inspectionSlots(fd: Record<string, unknown>): AccountingSlot[] {
   const slots: AccountingSlot[] = inspectionLines(fd)
     .filter((line) => inspectionLineStatus(line) === "now")
-    .map((line) => ({
-      content: str(line.item_name),
-      unitPrice: line.unit_price === "" || line.unit_price == null ? "" : num(line.unit_price),
-      quantity: line.inspected_quantity === "" || line.inspected_quantity == null ? "" : num(line.inspected_quantity),
-      amount: num(line.inspected_amount_ex_tax ?? line.amount_ex_tax ?? line.amount),
-      deliveryDate: str(line.delivery_date).slice(0, 10)
-    }));
+    .map((line) => {
+      const amount = num(line.inspected_amount_ex_tax ?? line.amount_ex_tax ?? line.amount);
+      const subscription = str(line.calc_method).toUpperCase() === "SUBSCRIPTION";
+      const rawQuantity = line.inspected_quantity === "" || line.inspected_quantity == null
+        ? "" : num(line.inspected_quantity);
+      // サブスクを周期ごとに分割した1行は1期分。旧データの数量0をそのまま経理へ出さない。
+      const quantity = subscription && amount > 0 && (rawQuantity === "" || rawQuantity <= 0)
+        ? 1 : rawQuantity;
+      const unitPrice = line.unit_price === "" || line.unit_price == null
+        ? (subscription && amount > 0 ? amount : "")
+        : num(line.unit_price);
+      return {
+        content: str(line.item_name), unitPrice, quantity, amount,
+        deliveryDate: str(line.delivery_date).slice(0, 10)
+      };
+    });
   // 課税の手数料はスロットに載せる（非課税は立替金へ）。
   for (const fee of rows(fd.other_fees)) {
     const tax = str(fee.tax_category) || "taxable";
@@ -122,6 +131,14 @@ function statementSlots(fd: Record<string, unknown>): AccountingSlot[] {
       const name = str(g.contractTitle) || str(lines[0]?.productName) || label;
       return { content: `利用許諾料${name ? `（${name}）` : ""}`, unitPrice: "", quantity: "", amount, deliveryDate: date };
     });
+  }
+  const legacyLines = rows(fd.lines ?? fd.royalty_lines);
+  if (statementModeOf(fd) !== "single" && legacyLines.length) {
+    const amount = legacyLines.reduce((sum, line) => sum + num(
+      line.paymentJpy ?? line.paymentJpyStr ?? line.payment ?? line.payment_amount ?? line.royalty_amount
+    ), 0);
+    const name = str(legacyLines[0]?.productName ?? legacyLines[0]?.product_name) || label;
+    return [{ content: `利用許諾料${name ? `（${name}）` : ""}`, unitPrice: "", quantity: "", amount, deliveryDate: date }];
   }
   const money = statementTaxBreakdown(fd);
   return [{ content: `利用許諾料${label ? `（${label}）` : ""}`, unitPrice: "", quantity: "", amount: money.taxable10, deliveryDate: date }];

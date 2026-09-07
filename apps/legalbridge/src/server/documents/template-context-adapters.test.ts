@@ -40,6 +40,22 @@ test("royalty statement multi mode remains JPY display and accepts legacy rs_rec
   assert.deepEqual(context.receiptRows, [receipt]);
 });
 
+test("royalty statement preview uses the DB-refreshed product name instead of the sublicensee fallback", () => {
+  const productName = "再許諾 ／ 許諾地域：デンマーク・ノルウェー ／ 許諾言語：英語";
+  const context = buildTemplateDocumentContext("royalty_statement", {
+    statementMode: "multi",
+    rsInRatePct: 50,
+    rs_receipts: [{
+      sublicensee: "Gameplay Publishing ApS", productName,
+      receivedOn: "2026-05-31", currency: "JPY", amount: 14324, fxMode: "post"
+    }]
+  });
+  const groups = context.lineGroups as Array<Record<string, unknown>>;
+  const lines = groups[0].lines as Array<Record<string, unknown>>;
+  assert.equal(lines[0].productName, productName);
+  assert.notEqual(lines[0].productName, "Gameplay Publishing ApS");
+});
+
 test("royalty statement compatibility knows receiptRows and moneyUnit are generated", () => {
   assert.equal(isTemplateGeneratedVariable("royalty_statement", "receiptRows"), true);
   assert.equal(isTemplateGeneratedVariable("royalty_statement", "moneyUnit"), true);

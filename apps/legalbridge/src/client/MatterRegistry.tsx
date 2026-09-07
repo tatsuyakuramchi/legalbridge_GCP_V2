@@ -5,6 +5,7 @@ import { EmptyState } from "./EmptyState";
 import { CartButton } from "./MergeCart";
 import { MatterSlackPanel } from "./MatterSlackPanel";
 import { MatterSlackHistory } from "./MatterSlackHistory";
+import { shouldShowServiceOutsourcingFlow } from "./matter-flow-visibility";
 
 type Matter = {
   id: number; matterCode: string | null; title: string; status: string; counterparty: string;
@@ -313,11 +314,12 @@ function MatterDetail({ detail, labels, canEdit, canDelete = false, canUploadAtt
     {tab === "overview" && <div className="matter-workspace-body">
       {nextTask && <section className="matter-next-action"><span>NEXT ACTION</span><strong>{nextTask.title}</strong>
         <small>{nextTask.assigneeName ?? "担当未設定"} ・ {nextTask.dueAt ? formatDate(nextTask.dueAt) : "期限未設定"}</small></section>}
-      <ServiceOutsourcingFlow matter={matter} documents={detail.documents} contracts={contracts}
-        deliveryEvents={detail.deliveryEvents ?? []} payments={detail.payments ?? []}
-        issueKeys={[matter.primaryIssueKey, ...detail.issues.map((issue) => issue.issueKey)].filter((key, index, all): key is string => Boolean(key) && all.indexOf(key) === index)}
-        canRegisterDelivery={canEdit} canRegisterPayment={canRegisterPayments} onChanged={onChanged}
-        labels={labels} onCreateDocument={onCreateDocument} />
+      {shouldShowServiceOutsourcingFlow(matter.matterKind) &&
+        <ServiceOutsourcingFlow matter={matter} documents={detail.documents} contracts={contracts}
+          deliveryEvents={detail.deliveryEvents ?? []} payments={detail.payments ?? []}
+          issueKeys={[matter.primaryIssueKey, ...detail.issues.map((issue) => issue.issueKey)].filter((key, index, all): key is string => Boolean(key) && all.indexOf(key) === index)}
+          canRegisterDelivery={canEdit} canRegisterPayment={canRegisterPayments} onChanged={onChanged}
+          labels={labels} onCreateDocument={onCreateDocument} />}
       <div className="matter-relation-grid">
         <RelationCard title="依頼・Backlog" count={detail.issues.length} empty="依頼未紐付け">
           {detail.issues.slice(0, 4).map((issue) => <div key={issue.issueKey}><b>{issue.issueKey}</b><span>{issue.summary ?? issue.relation}</span></div>)}

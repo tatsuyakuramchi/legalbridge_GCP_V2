@@ -117,6 +117,28 @@ function refreshed(
         region_language_label: regionLanguage
       }))
     : formData.lines;
+  // 多明細計算書は preview 時に rs_receipts から lineGroups を再構築する。
+  // ここを更新しないと top-level の製品名だけが新しくなり、PDF明細は
+  // row.productName 不在時の fallback（サブライセンシー名）のままになる。
+  const receipts = Array.isArray(formData.rs_receipts)
+    ? (formData.rs_receipts as Array<Record<string, unknown>>).map((receipt) => ({
+        ...receipt,
+        productName: preview.productName
+      }))
+    : formData.rs_receipts;
+  // 旧下書きに計算済み lineGroups だけが残る場合にも表示を揃える。
+  const lineGroups = Array.isArray(formData.lineGroups)
+    ? (formData.lineGroups as Array<Record<string, unknown>>).map((group) => ({
+        ...group,
+        lines: Array.isArray(group.lines)
+          ? (group.lines as Array<Record<string, unknown>>).map((line) => ({
+              ...line,
+              productName: preview.productName,
+              region_language_label: regionLanguage
+            }))
+          : group.lines
+      }))
+    : formData.lineGroups;
   return {
     formData: {
       ...formData,
@@ -127,6 +149,8 @@ function refreshed(
       licenseScopeSource: preview.licenseScopeSource,
       region_language_label: regionLanguage,
       ...(lines ? { lines } : {}),
+      ...(receipts ? { rs_receipts: receipts } : {}),
+      ...(lineGroups ? { lineGroups } : {}),
       ...(inferredOutboundId ? { source_out_condition_line_id: inferredOutboundId } : {})
     },
     changed: true,

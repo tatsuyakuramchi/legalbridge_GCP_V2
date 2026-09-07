@@ -478,12 +478,19 @@ export function App() {
       window.alert(`このテンプレート（${document.templateType}）の入力フォームが見つからないため特例編集できません。取込文書の場合は「詳細を編集」を使ってください。`);
       return;
     }
+    // Backlog受付番号のない確定文書では DocumentForm の文脈取得が走らないため、
+    // 編集画面を開く前に直接DB再補完する。これがないと「再度プレビュー」を押しても
+    // 保存済みのサブライセンシー名が製品名欄に残り続ける。
+    const loaded = (document.formData ?? {}) as DocumentFormData;
+    const refreshed = document.templateType === "royalty_statement"
+      ? await refreshRoyaltyProductForEdit(loaded)
+      : { formData: loaded, changed: false, message: "" };
     setFormNonce((v) => v + 1);
     setDraftSelection(null);
     setNewDocSeed({});
     setNewDocIssueKey(document.issueKey ?? "");
-    setSeedNotice(null);
-    setDuplicateValues((document.formData ?? {}) as DocumentFormData);
+    setSeedNotice(refreshed.message || null);
+    setDuplicateValues(refreshed.formData);
     setDuplicateFrom(null);
     setReissueSource({ id: document.id, number: document.documentNumber });
     setSchema(await response.json());

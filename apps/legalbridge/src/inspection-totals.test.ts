@@ -91,3 +91,17 @@ test("状態なしの旧下書きは全行 now 扱い（後方互換）", () => 
   });
   assert.equal(totals.deliveredExTax, 30000);
 });
+
+test("旧日本語ステータスでも今回検収分だけを集計し、税率0%を保持する", () => {
+  const lines = Array.from({ length: 8 }, (_, index) => ({
+    item_name: `分析レポート作成業務（第${index + 1}期）`,
+    calc_method: "SUBSCRIPTION", inspected_quantity: 0,
+    inspected_amount_ex_tax: 38500,
+    inspection_status: index === 7 ? "今回検収" : "検収済み"
+  }));
+  const totals = computeInspectionTotals({ taxRate: 0, delivery_line_items: lines });
+  assert.equal(totals.deliveredExTax, 38500);
+  assert.equal(totals.taxRate, 0);
+  assert.equal(totals.tax, 0);
+  assert.equal(totals.totalIncTax, 38500);
+});

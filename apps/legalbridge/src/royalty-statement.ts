@@ -458,10 +458,24 @@ export function structuredStatementPatch(source: Data): StatementPatch | null {
 export function statementMoney(source: Data): { paymentExTax: number; tax: number; totalIncTax: number } {
   const patch = structuredStatementPatch(source);
   const merged: Data = patch ? { ...source, ...patch } : source;
-  const paymentExTax = patch && statementModeOf(source) === "single"
-    ? num(merged.actualRoyalty)
-    : num(pick(merged, "linesTotalPaymentJpy", "linesTotalPaymentStr", "actualRoyalty", "actualRoyaltyStr"));
-  const tax = num(pick(merged, statementModeOf(source) === "single" ? "taxAmount" : "linesTaxStr", "taxAmount", "linesTaxStr"));
-  const totalIncTax = num(pick(merged, statementModeOf(source) === "single" ? "totalPaymentStr" : "linesTotalIncTaxStr", "totalPaymentStr", "linesTotalIncTaxStr"));
-  return { paymentExTax, tax, totalIncTax: totalIncTax || paymentExTax + tax };
+  const groupedLines = records(merged.lineGroups).flatMap((group) => records(group.lines));
+  const detailLines = groupedLines.length ? groupedLines : records(pick(merged, "lines", "royalty_lines"));
+  // 旧計算書にはプレビュー用の明細金額だけが保存され、上位の合計キーが無いものがある。
+  // 経理提出用Excelではその明細を合算し、画面/PDFに表示できている金額を0円に落とさない。
+  const detailPayment = detailLines.reduce((sum, line) => sum + num(pick(
+    line, "paymentJpy", "paymentJpyStr", "payment", "payment_amount", "royalty_amount",
+    "actualRoyalty", "actualRoyaltyStr"
+  )), 0);
+  const rawPayment = patch && statementModeOf(source) === "single"
+    ? merged.actualRoyalty
+    : pick(merged, "linesTotalPaymentJpy", "linesTotalPaymentStr", "actualRoyalty", "actualRoyaltyStr");
+  const parsedPayment = num(rawPayment, Number.NaN);
+  const paymentExTax = Number.isFinite(parsedPayment) ? parsedPayment : detailPayment;
+  const rawTax = pick(merged, statementModeOf(source) === "single" ? "taxAmount" : "linesTaxStr", "taxAmount", "linesTaxStr");
+  const parsedTax = num(rawTax, Number.NaN);
+  const taxRate = num(pick(merged, "taxRate", "tax_rate"), 10);
+  const tax = Number.isFinite(parsedTax) ? parsedTax : Math.ceil(paymentExTax * taxRate / 100);
+  const rawTotal = pick(merged, statementModeOf(source) === "single" ? "totalPaymentStr" : "linesTotalIncTaxStr", "totalPaymentStr", "linesTotalIncTaxStr");
+  const totalIncTax = num(rawTotal, Number.NaN);
+  return { paymentExTax, tax, totalIncTax: Number.isFinite(totalIncTax) ? totalIncTax : paymentExTax + tax };
 }
