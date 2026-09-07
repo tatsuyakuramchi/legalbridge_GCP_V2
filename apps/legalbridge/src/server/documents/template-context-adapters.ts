@@ -1,5 +1,5 @@
 import { buildCommonDocumentContext } from "./context-adapter.js";
-import { computeInspectionTotals, inspectionLineStatus } from "../../inspection-totals.js";
+import { computeInspectionTotals, inspectionLineAmount, inspectionLineStatus } from "../../inspection-totals.js";
 import { aggregateItemDates, purchaseOrderTotals } from "../../purchase-order-totals.js";
 import { structuredStatementPatch } from "../../royalty-statement.js";
 
@@ -272,7 +272,7 @@ function buildRoyaltyStatementContext(rawSource: Data) {
 // 明細ごとの発注額との差分（金額変更）。理由付きで PDF に注記する。
 function inspectionLineChange(line: Data): { hasChange: boolean; changeLabel: string; changeNote: string } {
   const ordered = number(line.ordered_amount_ex_tax, Number.NaN);
-  const inspected = number(pick(line, "inspected_amount_ex_tax", "amount_ex_tax", "amount"));
+  const inspected = inspectionLineAmount(line as Record<string, unknown>);
   const reason = String(line.change_reason ?? "").trim();
   const differs = Number.isFinite(ordered) && ordered !== inspected;
   if (!differs && !reason) return { hasChange: false, changeLabel: "", changeNote: "" };
@@ -305,13 +305,13 @@ function buildInspectionContext(source: Data) {
       changedAt: String(pick(source, "inspectionCompletedAt", "documentDate")),
       fieldLabel: `${String(pick(line, "item_name", "description")) || "明細"} 支払対価`,
       beforeValue: `¥${yen(number(line.ordered_amount_ex_tax))}`,
-      afterValue: `¥${yen(number(pick(line, "inspected_amount_ex_tax", "amount_ex_tax", "amount")))}`,
+      afterValue: `¥${yen(inspectionLineAmount(line as Record<string, unknown>))}`,
       reason: change.changeNote || "（理由未記入）"
     }];
   });
   const changeLogs = [...manualChangeLogs, ...autoChangeLogs];
   const deliveredExTax = deliveryLines.reduce((sum, line) =>
-    sum + number(pick(line, "inspected_amount_ex_tax", "amount_ex_tax", "amount")), 0);
+    sum + inspectionLineAmount(line as Record<string, unknown>), 0);
   const otherFeesExTax = otherFees.reduce((sum, fee) =>
     sum + number(pick(fee, "amount_ex_tax", "amount")), 0);
   const expensesIncTax = expenses.reduce((sum, expense) =>
@@ -337,7 +337,7 @@ function buildInspectionContext(source: Data) {
   const groupTaxRate = shared.taxRate;
   const buildPaymentGroup = (date: string, isPaid: boolean, lines: Data[]) => {
     const subtotal = lines.reduce((sum, line) =>
-      sum + number(pick(line, "inspected_amount_ex_tax", "amount_ex_tax", "amount")), 0);
+      sum + inspectionLineAmount(line as Record<string, unknown>), 0);
     const taxAmount = Math.ceil(subtotal * groupTaxRate / 100);
     return {
       date, isPaid, taxRate: groupTaxRate,
@@ -345,7 +345,7 @@ function buildInspectionContext(source: Data) {
         item_name: pick(line, "item_name", "description"),
         spec: line.spec ?? "",
         delivery_date: pick(line, "delivery_date", "deliveredAt") || pick(source, "deliveredAt"),
-        amount_ex_tax: number(pick(line, "inspected_amount_ex_tax", "amount_ex_tax", "amount")),
+        amount_ex_tax: inspectionLineAmount(line as Record<string, unknown>),
         ...inspectionLineChange(line)
       })),
       subtotalStr: yen(subtotal),
@@ -356,7 +356,7 @@ function buildInspectionContext(source: Data) {
   // 進捗（検収率・検収済額・発注総額・未検収額）は明細の状態から自動計算する。
   // 手入力欄は旧フォームの名残＝明細があるときは計算値が手入力より優先（合計と同じ規則）。
   const lineAmount = (line: Data) =>
-    number(pick(line, "inspected_amount_ex_tax", "amount_ex_tax", "amount"));
+    inspectionLineAmount(line as Record<string, unknown>);
   const orderedTotal = allLines.reduce((sum, line) => {
     const ordered = number(line.ordered_amount_ex_tax, Number.NaN);
     return sum + (Number.isFinite(ordered) ? ordered : lineAmount(line));

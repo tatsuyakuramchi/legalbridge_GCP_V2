@@ -111,3 +111,19 @@ test("サブスク旧データ: 今回の1期だけを出し、数量0は1期へ
   assert.equal(row.withholdingTax, Math.floor(38500 * 0.1021));
   assert.equal(row.netTransfer, 38500 - row.withholdingTax);
 });
+
+test("検収書: 支払済行が混ざっても今回行だけをスロットへ、金額欄が空なら単価×数量で出す", () => {
+  const row = buildAccountingRow("inspection_certificate", {
+    taxRate: 10, delivery_line_items: [
+      { item_name: "分析レポート作成業務（第6期）", inspection_status: "paid", paid_date: "2026-07-31", inspected_amount_ex_tax: 38500 },
+      { item_name: "分析レポート作成業務（第7期）", inspection_status: "検収済み", paid_date: "2026-08-31", inspected_amount_ex_tax: 38500 },
+      { item_name: "分析レポート作成業務（第8期）", inspection_status: "now", calc_method: "SUBSCRIPTION",
+        unit_price: 38500, inspected_quantity: 1, inspected_amount_ex_tax: "" }
+    ]
+  }, vendor, "2026-09-30");
+  assert.equal(row.slots[0].content, "分析レポート作成業務（第8期）");
+  assert.equal(row.slots[0].amount, 38500);
+  assert.equal(row.slots[1].content, "");
+  assert.equal(row.subtotal, 38500);
+  assert.equal(row.consumptionTax, 3850);
+});

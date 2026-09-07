@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { computeInspectionTotals, formatYen } from "./inspection-totals.js";
+import { computeInspectionTotals, formatYen, inspectionLineAmount } from "./inspection-totals.js";
 
 // フォームの合計パネルと PDF が同じ関数を通る（画面と PDF の合計一致の要）。
 test("明細合計→切り上げ消費税→税込合計", () => {
@@ -104,4 +104,18 @@ test("旧日本語ステータスでも今回検収分だけを集計し、税�
   assert.equal(totals.taxRate, 0);
   assert.equal(totals.tax, 0);
   assert.equal(totals.totalIncTax, 38500);
+});
+
+// 金額欄が空で単価×数量だけの行（発注書引用で発注側に金額が無く、数量を触らずに確定）は
+// 単価×数量を金額とみなす。支払済（paid）の行が混ざっても今回（now）の金額は落ちない。
+test("金額欄が空の今回行は単価×数量で集計し、支払済行は今回の支払額に含めない", () => {
+  const totals = computeInspectionTotals({ taxRate: 10, delivery_line_items: [
+    { item_name: "第7期", inspection_status: "paid", inspected_amount_ex_tax: 38500 },
+    { item_name: "第8期", inspection_status: "now", unit_price: 38500, inspected_quantity: 1, inspected_amount_ex_tax: "" }
+  ]});
+  assert.equal(totals.deliveredExTax, 38500);
+  assert.equal(totals.tax, 3850);
+  assert.equal(inspectionLineAmount({ unit_price: 1000, inspected_quantity: 3 }), 3000);
+  assert.equal(inspectionLineAmount({ unit_price: 1000, inspected_quantity: 0 }), 0);
+  assert.equal(inspectionLineAmount({ inspected_amount_ex_tax: "12,000", unit_price: 1 }), 12000);
 });

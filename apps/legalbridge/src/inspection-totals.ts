@@ -38,6 +38,20 @@ export function inspectionLineStatus(line: Record<string, unknown>): InspectionL
   return "now";
 }
 
+// 明細 1 行の金額（税抜）。Excel（accounting-row）・PDF（template-context-adapters）・画面の合計が
+// 同じ関数を使う。金額欄が空で単価×数量だけ持つ行（発注書引用で発注側に金額が無く、数量を
+// 触らずに確定した行）は、フォームの案内どおり 単価×数量 を金額とみなす（2026-09-07）。
+export function inspectionLineAmount(line: Record<string, unknown>): number {
+  const raw = line.inspected_amount_ex_tax ?? line.amount_ex_tax ?? line.amount;
+  if (raw !== "" && raw != null) {
+    const amount = toNumber(raw, Number.NaN);
+    if (Number.isFinite(amount)) return amount;
+  }
+  const unit = toNumber(line.unit_price);
+  const quantity = toNumber(line.inspected_quantity ?? line.quantity);
+  return unit > 0 && quantity > 0 ? Math.round(unit * quantity) : 0;
+}
+
 export function inspectionLines(formData: Record<string, unknown>): Array<Record<string, unknown>> {
   return Array.isArray(formData.delivery_line_items)
     ? formData.delivery_line_items as Array<Record<string, unknown>> : [];
@@ -49,8 +63,7 @@ export function computeInspectionTotals(formData: Record<string, unknown>): Insp
   // ＝検収済み（paid）の過去分は既に支払われているので今回の支払額に足さない。
   const lines = allLines.filter((line) => inspectionLineStatus(line) !== "skip");
   const payable = lines.filter((line) => inspectionLineStatus(line) === "now");
-  const deliveredExTax = payable.reduce((sum, line) =>
-    sum + toNumber(line.inspected_amount_ex_tax ?? line.amount_ex_tax ?? line.amount), 0);
+  const deliveredExTax = payable.reduce((sum, line) => sum + inspectionLineAmount(line), 0);
   const rawTaxRate = formData.taxRate ?? formData.tax_rate;
   // 未入力だけ10%へフォールバックする。明示された0%（対象外・非課税）を10%に戻さない。
   const taxRate = rawTaxRate === "" || rawTaxRate == null

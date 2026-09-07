@@ -8,7 +8,7 @@
 //   小計: 課税対象の税抜合計（10%＋8%）／消費税／源泉税（税込ベース・個人または源泉ON）／
 //   税引後＝税込−源泉／差引振込額＝税引後＋立替金
 
-import { inspectionLineStatus, inspectionLines } from "./inspection-totals.js";
+import { inspectionLineAmount, inspectionLineStatus, inspectionLines } from "./inspection-totals.js";
 import { inspectionTaxBreakdown, statementTaxBreakdown, type TaxBreakdown } from "./document-tax-breakdown.js";
 import { statementModeOf, structuredStatementPatch } from "./royalty-statement.js";
 import { resolveWithholdingEnabled, withholdingTax } from "./royalty/tax.js";
@@ -86,7 +86,7 @@ function inspectionSlots(fd: Record<string, unknown>): AccountingSlot[] {
   const slots: AccountingSlot[] = inspectionLines(fd)
     .filter((line) => inspectionLineStatus(line) === "now")
     .map((line) => {
-      const amount = num(line.inspected_amount_ex_tax ?? line.amount_ex_tax ?? line.amount);
+      const amount = inspectionLineAmount(line);
       const subscription = str(line.calc_method).toUpperCase() === "SUBSCRIPTION";
       const rawQuantity = line.inspected_quantity === "" || line.inspected_quantity == null
         ? "" : num(line.inspected_quantity);

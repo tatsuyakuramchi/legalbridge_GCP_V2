@@ -8,6 +8,7 @@ import {
   generatePaymentSchedule, normalizePaymentSchedule, type PaymentScheduleRow
 } from "./payment-schedule";
 import { canSplitSubscription, splitCount, splitSubscriptionLine } from "./subscription-split";
+import { inspectionLineStatus } from "../inspection-totals";
 
 type Row = Record<string, unknown>;
 
@@ -759,10 +760,9 @@ function InspectionLineCards({ formData, onChange }: {
     const parsed = Number(String(value ?? "").replace(/,/g, ""));
     return Number.isFinite(parsed) ? parsed : 0;
   };
-  const statusOf = (row: Row): "now" | "paid" | "skip" => {
-    const status = String(row.inspection_status ?? "");
-    return status === "paid" || status === "skip" ? status : "now";
-  };
+  // 状態判定はサーバー（PDF・Excel）と同じ共有関数。画面だけ別実装だと、旧表記（検収済み 等）の行を
+  // 画面では「今回」と数え、PDF・Excel では支払済に回す食い違いが起きる（2026-09-07）。
+  const statusOf = (row: Row): "now" | "paid" | "skip" => inspectionLineStatus(row);
   const setStatus = (index: number, status: "now" | "paid" | "skip") => {
     const row = lines[index];
     const patch: Row = { inspection_status: status };
