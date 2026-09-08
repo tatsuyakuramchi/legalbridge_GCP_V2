@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, ApiError, money } from "./api.js";
 
 /**
@@ -51,6 +51,9 @@ export function ConditionSchedules(
   // 予定を実績に移すときの入力。開いている行そのものを持つ。
   const [recording, setRecording] = useState<Row | null>(null);
   const [rec, setRec] = useState({ occurredOn: "", amount: "", eventType: "", note: "" });
+  // フォームは表の上に開く。下のほうの回を押すと画面の外に出て、
+  // 「押しても何も起きない」ように見える。開いたら必ず見える位置へ運ぶ。
+  const recordForm = useRef<HTMLDivElement>(null);
 
   function load() {
     api.get<View>(`/conditions/${conditionId}/schedules`)
@@ -68,6 +71,7 @@ export function ConditionSchedules(
       eventType: view?.eventTypeByTrigger?.[recording.triggerKind] ?? "service_period",
       note: ""
     });
+    recordForm.current?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [recording]);
 
   async function saveRecord() {
@@ -174,7 +178,8 @@ export function ConditionSchedules(
       {/* 条件の詳細は画面の右半分なので、編集中の列は入りきらない。
           潰すのではなく横に流す（.tablewrap が overflow-x を持っている）。 */}
       {recording && (
-        <div className="panel-bd stack" style={{ borderBottom: "1px solid var(--line)" }}>
+        <div ref={recordForm} className="panel-bd stack"
+             style={{ borderBottom: "1px solid var(--line)" }}>
           <div className="row">
             <b>第{recording.seq}回を実績にする</b>
             <span className="faint">

@@ -1,3 +1,4 @@
+import { DomainError } from "../core/errors.js";
 import fs from "node:fs";
 import { GoogleAuth } from "google-auth-library";
 
@@ -287,7 +288,24 @@ function escapeQuery(value: string) {
   return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 }
 
-async function driveError(operation: string, response: Response) {
-  const detail = (await response.text()).slice(0, 1000);
-  return new Error(`Google Drive ${operation} failed (${response.status}): ${detail}`);
+/**
+ * Drive の失敗を、画面で読める形にして返す。
+ *
+ * これまで素の Error を投げていたので、画面には「サーバ内部でエラーが
+ * 発生しました」としか出なかった。権限が無いのか、フォルダが違うのか、
+ * 容量なのかが分からず、ログを見るまで手が打てない。
+ */
+export async function driveError(operation: string, response: Response) {
+  const raw = (await response.text()).slice(0, 1000);
+  const why =
+    response.status === 401 || response.status === 403
+      ? "保存先フォルダへの権限がありません。共有ドライブにサービスアカウントを追加してください"
+      : response.status === 404
+      ? "保存先フォルダが見つかりません（GOOGLE_DRIVE_FOLDER_ID を確認してください）"
+      : response.status === 429 || response.status >= 500
+      ? "Google Drive 側が応答しません。しばらく置いてやり直してください"
+      : "Google Drive が受け付けませんでした";
+  return new DomainError("DB_FORBIDDEN",
+    `Drive に保存できませんでした（${response.status}）。${why}`,
+    { operation, status: response.status, detail: raw });
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, ApiError, money } from "./api.js";
 
 /**
@@ -38,6 +38,8 @@ export function ConditionEvents(
   const [templates, setTemplates] = useState<TemplateOption[]>([]);
   const [templateKey, setTemplateKey] = useState("");
   const [issued, setIssued] = useState<string | null>(null);
+  // 実績と同じ理由。フォームは表の上に開くので、下の行から押すと画面の外に出る。
+  const issueForm = useRef<HTMLDivElement>(null);
 
   function load() {
     api.get<{ events: EventRow[]; types: TypeOption[] }>(`/conditions/${conditionId}/events`)
@@ -57,6 +59,10 @@ export function ConditionEvents(
     api.get<{ templates: TemplateOption[] }>("/document-templates")
       .then((r) => { setTemplates(r.templates); setTemplateKey(r.templates[0]?.templateKey ?? ""); })
       .catch((e: ApiError) => setError(e.message));
+  }, [issuing]);
+
+  useEffect(() => {
+    if (issuing) issueForm.current?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [issuing]);
 
   /**
@@ -204,7 +210,8 @@ export function ConditionEvents(
       )}
 
       {issuing && (
-        <div className="panel-bd stack" style={{ borderBottom: "1px solid var(--line)" }}>
+        <div ref={issueForm} className="panel-bd stack"
+             style={{ borderBottom: "1px solid var(--line)" }}>
           <div className="row">
             <b>{label(issuing.eventType)}の実績から文書を作る</b>
             <span className="faint">
