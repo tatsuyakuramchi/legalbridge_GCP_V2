@@ -5,6 +5,7 @@ import { recordAudit } from "../core/audit.js";
 import { checkPaymentDue, dueLimitFrom, isFreelanceActTarget, type DueCheck } from "./compliance.js";
 import { consumptionTax, resolveWithholdingEnabled, withholdingTax } from "../royalty/tax.js";
 import { taxRateFor } from "../royalty/economics.js";
+import { allocateNumber } from "../core/numbering.js";
 
 export interface PaymentRow {
   id: number;
@@ -30,6 +31,71 @@ export interface PaymentRow {
  */
 export class PaymentService {
   constructor(private readonly database: Transactable) {}
+
+  /**
+   * 支払を直に起こす。計算書を伴わない費用（顧問料・実費など）向け。
+   *
+   * 期日は取適法の検査を通す。受領日から60日を超える期日は、相手先が
+   * 特定受託事業者（個人）なら止める。法人相手なら社内基準としての警告に
+   * とどめ、記録だけ残す。
+   */
+  async create(input: {
+    partyId: number;
+    direction: "in" | "out";
+    amount: number;
+    currency?: string;
+    taxAmount?: number;
+    withholdingAmount?: number;
+    basisReceivedOn?: string | null;
+    dueOn?: string | null;
+    note?: string | null;
+  }, actor: string) {
+    if (!Number.isFinite(input.amount) || input.amount < 0) {
+      throw new DomainError("VALIDATION", "金額は0以上の整数（最小通貨単位）です");
+    }
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const party = await client.query(
+          "SELECT id, name, kind FROM parties WHERE id = $1", [input.partyId]);
+        const p = party.rows[0] as { id: number; name: string; kind: string } | undefined;
+        if (!p) throw new DomainError("NOT_FOUND", `取引先 ${input.partyId} が見つかりません`);
+
+        // 取適法。個人＝特定受託事業者として扱う。
+        const check = checkPaymentDue({
+          applicable: input.direction === "out" && p.kind === "individual",
+          basisDate: input.basisReceivedOn ?? null,
+          dueOn: input.dueOn ?? null
+        });
+        if (check.verdict === "over_limit") {
+          throw new DomainError(
+            "VALIDATION",
+            `支払期日が受領日から ${check.days} 日後です。60日以内（${check.limitDate} まで）にしてください`,
+            { check });
+        }
+
+        const no = await allocateNumber(client, { prefix: "PAY", table: "payments", column: "payment_no" });
+        const inserted = await client.query(
+          `INSERT INTO payments (payment_no, direction, party_id, currency, amount,
+                                 tax_amount, withholding_amount,
+                                 basis_received_on, due_on, status, note)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'planned', $10)
+           RETURNING id, payment_no`,
+          [no, input.direction, input.partyId, input.currency ?? "JPY",
+           Math.round(input.amount), Math.round(input.taxAmount ?? 0),
+           Math.round(input.withholdingAmount ?? 0),
+           input.basisReceivedOn ?? null, input.dueOn ?? null, input.note ?? null]);
+        const row = inserted.rows[0] as { id: number; payment_no: string };
+        const id = Number(row.id);
+
+        await recordAudit(client, {
+          actor, action: "payment.create", targetType: "payment", targetId: id,
+          detail: { paymentNo: row.payment_no, party: p.name, amount: input.amount,
+                    dueOn: input.dueOn ?? null, compliance: check.verdict }
+        });
+        return { id, paymentNo: row.payment_no, compliance: check };
+      });
+    } catch (error) { throw translate(error); }
+  }
 
   /** 計算書から支払を起こす。金額は計算書の値をそのまま使う（再計算済みのため）。 */
   async createFromStatement(statementId: number, actor: string, options: { dueOn?: string | null } = {}) {

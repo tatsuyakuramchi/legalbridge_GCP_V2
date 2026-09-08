@@ -2,6 +2,7 @@ import { inTransaction, type Queryable, type Transactable } from "../core/db.js"
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { ConditionRepository } from "./repository.js";
+import { allocateNumber } from "../core/numbering.js";
 import type { ConditionScope } from "../core/model.js";
 
 /**
@@ -17,6 +18,34 @@ export interface WriteResult {
   resolvesThrough: Array<{ target: string; rows: number }>;
   /** 改訂になった場合の新しい条件ID。 */
   revisedTo?: number;
+}
+
+export interface ConditionInput {
+  name: string;
+  /** in＝取得（費用側）、out＝許諾（収入側）。 */
+  direction: "in" | "out";
+  kind: "license" | "product" | "service" | "expense" | "fee";
+  counterpartyId: number;
+  agreementId?: number | null;
+  workId?: number | null;
+  workPartId?: number | null;
+  exclusivity?: "exclusive" | "non_exclusive" | null;
+  sublicensable?: boolean | null;
+  termStart?: string | null;
+  termEnd?: string | null;
+  currency?: string;
+  pricingModel?: "fixed" | "unit_rate" | "revenue_rate" | "subscription" | "none";
+  ratePpm?: number | null;
+  unitAmount?: number | null;
+  flatAmount?: number | null;
+  mgAmount?: number | null;
+  agAmount?: number | null;
+  taxCategory?: "taxable" | "reduced" | "exempt";
+  paymentTerms?: string | null;
+  cycle?: string | null;
+  notes?: string | null;
+  conditionNo?: string | null;
+  scopes?: ConditionScope[];
 }
 
 export interface EconomicsPatch {
@@ -52,6 +81,101 @@ export class ConditionWriteService {
   private readonly repository: ConditionRepository;
   constructor(private readonly database: Transactable) {
     this.repository = new ConditionRepository(database);
+  }
+
+  /**
+   * 条件の登録。
+   *
+   * 価格方式に必要な値が無い状態を作らせない。V3 のスキーマは
+   * 「unit_rate なら unit_amount がある」を CHECK で要求しており、移行では
+   * V1 の宣言と実データの食い違いを101件直している。同じ穴を入口で塞ぐ。
+   */
+  async create(input: ConditionInput, actor: string): Promise<{ id: number; conditionNo: string | null }> {
+    const name = String(input.name ?? "").trim();
+    if (!name) throw new DomainError("VALIDATION", "条件名は必須です");
+
+    const pricing = input.pricingModel ?? "none";
+    const required: Record<string, unknown> = {
+      unit_rate: input.unitAmount, revenue_rate: input.ratePpm, fixed: input.flatAmount
+    };
+    if (pricing in required && (required[pricing] === undefined || required[pricing] === null)) {
+      const label = { unit_rate: "単価", revenue_rate: "料率", fixed: "定額" }[pricing as string];
+      throw new DomainError("VALIDATION", `${label}を入れてください。値の無い計算方式は選べません`);
+    }
+    if (input.ratePpm !== undefined && input.ratePpm !== null
+        && (input.ratePpm < 0 || input.ratePpm > 1_000_000)) {
+      throw new DomainError("VALIDATION", "料率は 0〜100%（0〜1000000 ppm）の範囲です");
+    }
+    if (input.termStart && input.termEnd && input.termEnd < input.termStart) {
+      throw new DomainError("VALIDATION", "終了日が開始日より前です");
+    }
+    if (input.workPartId && !input.workId) {
+      throw new DomainError("VALIDATION", "パートを指定するなら作品も指定してください");
+    }
+
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const party = await client.query(
+          "SELECT id, name FROM parties WHERE id = $1", [input.counterpartyId]);
+        if (!party.rows[0]) {
+          throw new DomainError("NOT_FOUND", `取引先 ${input.counterpartyId} が見つかりません`);
+        }
+        if (input.workId) {
+          const w = await client.query("SELECT id FROM works WHERE id = $1", [input.workId]);
+          if (!w.rows[0]) throw new DomainError("NOT_FOUND", `作品 ${input.workId} が見つかりません`);
+        }
+        if (input.workPartId) {
+          const wp = await client.query(
+            "SELECT id FROM work_parts WHERE id = $1 AND work_id = $2",
+            [input.workPartId, input.workId]);
+          if (!wp.rows[0]) {
+            throw new DomainError("VALIDATION", "指定したパートはその作品のものではありません");
+          }
+        }
+
+        const no = String(input.conditionNo ?? "").trim()
+          || await allocateNumber(client, { prefix: "CL", table: "conditions", column: "condition_no" });
+
+        const inserted = await client.query(
+          `INSERT INTO conditions (condition_no, agreement_id, direction, kind, name, counterparty_id,
+                                   work_id, work_part_id, exclusivity, sublicensable,
+                                   term_start, term_end, currency, pricing_model,
+                                   rate_ppm, unit_amount, flat_amount, mg_amount, ag_amount,
+                                   tax_category, payment_terms, cycle, status, notes)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+                   $15, $16, $17, $18, $19, $20, $21, $22, 'active', $23)
+           RETURNING id, condition_no`,
+          [no, input.agreementId ?? null, input.direction, input.kind, name, input.counterpartyId,
+           input.workId ?? null, input.workPartId ?? null,
+           input.exclusivity ?? null, input.sublicensable ?? null,
+           input.termStart ?? null, input.termEnd ?? null, input.currency ?? "JPY", pricing,
+           input.ratePpm ?? null, input.unitAmount ?? null, input.flatAmount ?? null,
+           input.mgAmount ?? null, input.agAmount ?? null,
+           input.taxCategory ?? "taxable", input.paymentTerms ?? null, input.cycle ?? null,
+           input.notes ?? null]);
+        const row = inserted.rows[0] as { id: number; condition_no: string | null };
+        const id = Number(row.id);
+
+        // 許諾範囲。1件も入れなければ、その次元は無制限として扱われる。
+        for (const [index, scope] of (input.scopes ?? []).entries()) {
+          const label = String(scope.label ?? "").trim();
+          if (!label) continue;
+          await client.query(
+            `INSERT INTO condition_scopes (condition_id, scope_type, label, code, sort_order)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (condition_id, scope_type, label) DO NOTHING`,
+            [id, scope.scopeType, label, scope.code ?? null, index]);
+        }
+
+        await recordAudit(client, {
+          actor, action: "condition.create", targetType: "condition", targetId: id,
+          detail: { name, direction: input.direction, kind: input.kind,
+                    conditionNo: row.condition_no, counterparty: party.rows[0].name,
+                    pricingModel: pricing }
+        });
+        return { id, conditionNo: row.condition_no };
+      });
+    } catch (error) { throw translate(error); }
   }
 
   /**

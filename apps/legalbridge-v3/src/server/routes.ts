@@ -5,6 +5,9 @@ import { DomainError, statusFor } from "./core/errors.js";
 import { requireRole, requireWritable } from "./auth.js";
 import { ConditionRepository } from "./conditions/repository.js";
 import { ConditionWriteService } from "./conditions/write-service.js";
+import { MatterWriteService } from "./matters/write-service.js";
+import { WorkWriteService } from "./works/write-service.js";
+import { PartyWriteService } from "./parties/write-service.js";
 import { MatterRepository } from "./matters/repository.js";
 import { WorkRepository } from "./works/repository.js";
 import { checkAgainstEnvelope } from "./works/envelope.js";
@@ -58,6 +61,9 @@ export function createRoutes(database: Transactable) {
   const royalty = new RoyaltyStatementService(database);
   const payments = new PaymentService(database);
   const parties = new PartyRepository(database);
+  const matterWrites = new MatterWriteService(database);
+  const workWrites = new WorkWriteService(database);
+  const partyWrites = new PartyWriteService(database);
   const ops = new OpsRepository(database);
   const monitoring = new MonitoringRepository(database);
 
@@ -149,6 +155,163 @@ export function createRoutes(database: Transactable) {
     }
     res.json({ ...detail, envelopeCheck });
   }));
+
+  // ---------------------------------------------------------------------
+  // 新規登録
+  //   V3 で新しく始める取引はここから入る。移行してきたデータの編集経路
+  //   （patch 系）と同じ検証規則を通す。
+  // ---------------------------------------------------------------------
+
+  const partySchema = z.object({
+    name: z.string().trim().min(1).max(300),
+    kind: z.enum(["corporate", "individual"]),
+    nameKana: z.string().trim().max(300).nullable().optional(),
+    aliases: z.array(z.string().trim().min(1).max(300)).max(20).optional(),
+    invoiceNo: z.string().trim().max(40).nullable().optional(),
+    corporateNo: z.string().trim().max(40).nullable().optional(),
+    withholding: z.boolean().optional(),
+    partyCode: z.string().trim().max(40).nullable().optional(),
+    allowDuplicate: z.boolean().optional()
+  });
+  router.post("/parties", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { allowDuplicate, ...input } = partySchema.parse(req.body ?? {});
+      res.status(201).json(await partyWrites.create(input, actor(res), { allowDuplicate }));
+    }));
+
+  const contactSchema = z.object({
+    role: z.string().trim().min(1).max(40),
+    name: z.string().trim().max(200).nullable().optional(),
+    email: z.string().trim().email().max(300).nullable().optional(),
+    phone: z.string().trim().max(60).nullable().optional(),
+    department: z.string().trim().max(200).nullable().optional()
+  });
+  router.put("/parties/:id/contacts", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await partyWrites.upsertContact(
+        Number(req.params.id), contactSchema.parse(req.body ?? {}), actor(res)));
+    }));
+
+  const workSchema = z.object({
+    title: z.string().trim().min(1).max(300),
+    kind: z.enum(["own", "source_ip", "derivative"]).optional(),
+    titleKana: z.string().trim().max(300).nullable().optional(),
+    businessLine: z.string().trim().max(120).nullable().optional(),
+    status: z.enum(["planning", "in_production", "released", "archived"]).optional(),
+    remarks: z.string().trim().max(2000).nullable().optional(),
+    workCode: z.string().trim().max(40).nullable().optional(),
+    parentWorkId: z.coerce.number().int().positive().nullable().optional()
+  });
+  router.post("/works", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.status(201).json(await workWrites.create(workSchema.parse(req.body ?? {}), actor(res)));
+    }));
+
+  const partSchema = z.object({
+    name: z.string().trim().min(1).max(300),
+    partType: z.string().trim().max(60).optional(),
+    royaltyBearing: z.boolean().optional(),
+    remarks: z.string().trim().max(2000).nullable().optional(),
+    partNo: z.coerce.number().int().positive().nullable().optional()
+  });
+  router.post("/works/:id/parts", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.status(201).json(await workWrites.addPart(
+        Number(req.params.id), partSchema.parse(req.body ?? {}), actor(res)));
+    }));
+
+  const matterSchema = z.object({
+    title: z.string().trim().min(1).max(300),
+    kind: z.enum(["work", "outsourcing", "single"]),
+    ownerStaffId: z.coerce.number().int().positive().nullable().optional(),
+    counterpartyId: z.coerce.number().int().positive().nullable().optional(),
+    requesterEmail: z.string().trim().email().max(300).nullable().optional(),
+    dueOn: z.string().date().nullable().optional(),
+    remarks: z.string().trim().max(4000).nullable().optional(),
+    matterNo: z.string().trim().max(40).nullable().optional()
+  });
+  router.post("/matters", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.status(201).json(await matterWrites.create(matterSchema.parse(req.body ?? {}), actor(res)));
+    }));
+
+  const matterStatusSchema = z.object({
+    status: z.enum(["open", "waiting", "blocked", "done", "canceled"]),
+    blockedReason: z.string().trim().max(1000).nullable().optional()
+  });
+  router.patch("/matters/:id/status", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { status, blockedReason } = matterStatusSchema.parse(req.body ?? {});
+      res.json(await matterWrites.changeStatus(
+        Number(req.params.id), status, actor(res), blockedReason));
+    }));
+
+  const taskSchema = z.object({
+    title: z.string().trim().min(1).max(300),
+    taskType: z.string().trim().max(60).nullable().optional(),
+    description: z.string().trim().max(4000).nullable().optional(),
+    assigneeStaffId: z.coerce.number().int().positive().nullable().optional(),
+    dueAt: z.string().datetime({ offset: true }).nullable().optional()
+  });
+  router.post("/matters/:id/tasks", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.status(201).json(await matterWrites.addTask(
+        Number(req.params.id), taskSchema.parse(req.body ?? {}), actor(res)));
+    }));
+
+  const conditionSchema = z.object({
+    name: z.string().trim().min(1).max(300),
+    direction: z.enum(["in", "out"]),
+    kind: z.enum(["license", "product", "service", "expense", "fee"]),
+    counterpartyId: z.coerce.number().int().positive(),
+    agreementId: z.coerce.number().int().positive().nullable().optional(),
+    workId: z.coerce.number().int().positive().nullable().optional(),
+    workPartId: z.coerce.number().int().positive().nullable().optional(),
+    exclusivity: z.enum(["exclusive", "non_exclusive"]).nullable().optional(),
+    sublicensable: z.boolean().nullable().optional(),
+    termStart: z.string().date().nullable().optional(),
+    termEnd: z.string().date().nullable().optional(),
+    currency: z.string().trim().length(3).optional(),
+    pricingModel: z.enum(["fixed", "unit_rate", "revenue_rate", "subscription", "none"]).optional(),
+    ratePpm: z.coerce.number().int().min(0).max(1_000_000).nullable().optional(),
+    unitAmount: z.coerce.number().int().nullable().optional(),
+    flatAmount: z.coerce.number().int().nullable().optional(),
+    mgAmount: z.coerce.number().int().nullable().optional(),
+    agAmount: z.coerce.number().int().nullable().optional(),
+    taxCategory: z.enum(["taxable", "reduced", "exempt"]).optional(),
+    paymentTerms: z.string().trim().max(500).nullable().optional(),
+    cycle: z.string().trim().max(60).nullable().optional(),
+    notes: z.string().trim().max(4000).nullable().optional(),
+    conditionNo: z.string().trim().max(40).nullable().optional(),
+    scopes: z.array(z.object({
+      scopeType: z.enum(["region", "language", "media", "channel"]),
+      label: z.string().trim().min(1).max(120),
+      code: z.string().trim().max(40).nullable().optional()
+    })).max(200).optional()
+  });
+  router.post("/conditions", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = conditionSchema.parse(req.body ?? {});
+      res.status(201).json(await conditionWrites.create(
+        { ...input, scopes: input.scopes?.map((s) => ({ ...s, code: s.code ?? null })) },
+        actor(res)));
+    }));
+
+  const paymentSchema = z.object({
+    partyId: z.coerce.number().int().positive(),
+    direction: z.enum(["in", "out"]),
+    amount: z.coerce.number().int().min(0),
+    currency: z.string().trim().length(3).optional(),
+    taxAmount: z.coerce.number().int().min(0).optional(),
+    withholdingAmount: z.coerce.number().int().min(0).optional(),
+    basisReceivedOn: z.string().date().nullable().optional(),
+    dueOn: z.string().date().nullable().optional(),
+    note: z.string().trim().max(2000).nullable().optional()
+  });
+  router.post("/payments", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.status(201).json(await payments.create(paymentSchema.parse(req.body ?? {}), actor(res)));
+    }));
 
   const counterpartySchema = z.object({ partyId: z.coerce.number().int().positive() });
   router.patch("/conditions/:id/counterparty",
