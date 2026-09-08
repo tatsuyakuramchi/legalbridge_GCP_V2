@@ -39,7 +39,7 @@ const SOURCE_LABEL: Record<string, string> = {
 };
 
 export function OpsWorkspace() {
-  const [tab, setTab] = useState<"quality" | "deadlines" | "audit" | "integrations" | "settings">("quality");
+  const [tab, setTab] = useState<"quality" | "deadlines" | "exports" | "audit" | "integrations" | "settings">("quality");
   const [issues, setIssues] = useState<Issue[]>([]);
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [settings, setSettings] = useState<Setting[] | null>(null);
@@ -83,6 +83,7 @@ export function OpsWorkspace() {
       <div className="tabs">
         <button aria-selected={tab === "quality"} onClick={() => setTab("quality")}>データ品質 {issues.length}</button>
         <button aria-selected={tab === "deadlines"} onClick={() => setTab("deadlines")}>期限 {deadlines.length}</button>
+        <button aria-selected={tab === "exports"} onClick={() => setTab("exports")}>出力</button>
         <button aria-selected={tab === "audit"} onClick={() => setTab("audit")}>監査記録</button>
         <button aria-selected={tab === "integrations"} onClick={() => setTab("integrations")}>外部連携</button>
         {settings && <button aria-selected={tab === "settings"} onClick={() => setTab("settings")}>設定</button>}
@@ -134,6 +135,27 @@ export function OpsWorkspace() {
                 {!deadlines.length && <tr><td colSpan={5} className="faint">期限がありません</td></tr>}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {tab === "exports" && (
+        <div className="panel">
+          <div className="panel-hd">
+            <h2>一覧の出力</h2>
+            <span className="faint">全件・CSV（Excel で開ける）</span>
+          </div>
+          <div className="panel-bd">
+            <p className="faint">
+              画面の一覧には表示上限があるが、ここからは全件出る。経理提出や V1 との
+              突き合わせに使う。金額は主単位の数値で出すので、そのまま合計できる。
+            </p>
+            <div className="chips">
+              {[["conditions", "条件"], ["balances", "条件の消化と残高"], ["payments", "支払"],
+                ["statements", "計算書"], ["documents", "文書"], ["parties", "取引先"]].map(([key, label]) => (
+                <a key={key} className="btn btn-sm" href={`/api/v3/exports/${key}.csv`}>{label}</a>
+              ))}
+            </div>
           </div>
         </div>
       )}

@@ -175,3 +175,23 @@ tr.overdue td { background: #fdf2f2; }
 }
 .search-hit:hover, .search-hit:focus-visible { background: #f2f5fa; }
 .search-title { font-size: 13px; }
+
+/* 支払報告書。画面でも紙でも読める形にする。 */
+.report { margin-top: 14px; }
+.report-head { margin-bottom: 12px; }
+.report-head h3 { margin: 0 0 2px; }
+.report-group { margin-bottom: 18px; page-break-inside: avoid; }
+.report-group-hd {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 6px 0; border-bottom: 1px solid #e4e9f0;
+}
+tr.report-total td { border-top: 2px solid #cfd6e4; font-weight: 600; background: #f8fafc; }
+
+@media print {
+  .rail, .tabs, .filters, .no-print, .workspace-head p, .search { display: none !important; }
+  .app, .main, .workspace, .panel { display: block; margin: 0; padding: 0; border: 0; box-shadow: none; }
+  .panel-hd { border: 0; padding: 0 0 8px; }
+  body { background: #fff; }
+  table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  th, td { border: 1px solid #999; padding: 3px 5px; }
+}

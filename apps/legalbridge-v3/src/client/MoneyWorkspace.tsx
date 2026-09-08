@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, money } from "./api.js";
 import { CreateForm, int, text } from "./CreateForm.js";
+import { PaymentReport } from "./PaymentReport.js";
 
 interface Balance {
   conditionId: number; conditionNo: string | null; name: string; direction: string;
@@ -23,7 +24,7 @@ interface Statement {
   documentNo: string | null; conditionNo: string | null; conditionName: string; counterparty: string | null;
 }
 
-type Tab = "balances" | "payments" | "statements";
+type Tab = "balances" | "payments" | "statements" | "report";
 
 const DUE_LABEL: Record<DueCheck["verdict"], { text: string; tone: string }> = {
   ok: { text: "適合", tone: "ok" },
@@ -151,10 +152,13 @@ export function MoneyWorkspace() {
       <div className="tabs">
         {([["balances", `消化と残高 ${balances.length}`],
            ["payments", `支払 ${payments.length}`],
-           ["statements", `計算書 ${statements.length}`]] as const).map(([key, label]) => (
+           ["statements", `計算書 ${statements.length}`],
+           ["report", "支払報告書"]] as const).map(([key, label]) => (
           <button key={key} aria-selected={tab === key} onClick={() => setTab(key as Tab)}>{label}</button>
         ))}
       </div>
+
+      {tab === "report" && <PaymentReport />}
 
       {tab === "balances" && (
         <div className="panel">

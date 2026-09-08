@@ -25,6 +25,9 @@ import { PaymentService } from "./payments/service.js";
 import { PartyRepository } from "./parties/repository.js";
 import { OpsRepository } from "./ops/repository.js";
 import { SearchRepository } from "./search/repository.js";
+import { ExportRepository, DATASETS, type Dataset } from "./exports/repository.js";
+import { filename, withBom } from "./exports/csv.js";
+import { PaymentReportRepository } from "./exports/payment-report.js";
 import { MonitoringRepository } from "./monitoring/repository.js";
 import { DispatchService } from "./integrations/dispatch-service.js";
 import {
@@ -66,6 +69,8 @@ export function createRoutes(database: Transactable) {
   const workWrites = new WorkWriteService(database);
   const partyWrites = new PartyWriteService(database);
   const search = new SearchRepository(database);
+  const exports = new ExportRepository(database);
+  const paymentReport = new PaymentReportRepository(database);
   const ops = new OpsRepository(database);
   const monitoring = new MonitoringRepository(database);
 
@@ -169,6 +174,36 @@ export function createRoutes(database: Transactable) {
       const { reason } = reasonSchema.parse(req.body ?? {});
       res.status(201).json(await issues.reissue(Number(req.params.id), reason, actor(res)));
     }));
+
+  // 支払報告書。相手先ごとに期間内の支払を明細と合計で出す。
+  const reportSchema = z.object({
+    from: z.string().date(),
+    to: z.string().date(),
+    basis: z.enum(["due", "paid"]).optional(),
+    partyId: z.coerce.number().int().positive().optional()
+  });
+  router.get("/reports/payments", asyncRoute(async (req, res) => {
+    const q = reportSchema.parse(req.query ?? {});
+    res.json(await paymentReport.build(q));
+  }));
+
+  // 一覧の全件出力。画面の一覧には上限があるので、経理提出や
+  // V1 との突き合わせにはこちらを使う。
+  router.get("/exports", asyncRoute(async (_req, res) => {
+    res.json({ datasets: DATASETS });
+  }));
+  router.get("/exports/:dataset.csv", asyncRoute(async (req, res) => {
+    const dataset = String(req.params.dataset) as Dataset;
+    if (!DATASETS.some((d) => d.key === dataset)) {
+      throw new DomainError("NOT_FOUND", `出力できない一覧です: ${dataset}`);
+    }
+    const { csv, rows } = await exports.csv(dataset);
+    res.setHeader("content-type", "text/csv; charset=utf-8");
+    res.setHeader("content-disposition",
+      `attachment; filename*=UTF-8''${encodeURIComponent(filename(dataset))}`);
+    res.setHeader("x-row-count", String(rows));
+    res.send(withBom(csv));
+  }));
 
   // 横断検索。2文字未満は引かない（全件走査になるだけで役に立たない）。
   router.get("/search", asyncRoute(async (req, res) => {
