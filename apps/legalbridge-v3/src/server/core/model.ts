@@ -89,7 +89,8 @@ export interface MatterDetail extends MatterSummary {
   documents: Array<{ id: number; documentNo: string | null; status: string; templateLabel: string | null; issuedAt: string | null }>;
   payments: Array<{ id: number; paymentNo: string | null; direction: Direction; amount: number; currency: string; dueOn: string | null; status: string }>;
   communications: Array<{ occurredAt: string; action: string; actor: string; detail: Record<string, unknown> }>;
-  links: Array<{ targetType: string; targetRef: string; relation: string }>;
+  links: Array<{ targetType: string; targetRef: string; relation: string;
+                 snapshot: Record<string, unknown> }>;
   tasks: Array<{ id: number; title: string; status: string; dueAt: string | null; assigneeName: string | null }>;
 }
 

@@ -14,6 +14,28 @@ const STEPS: Record<MatterKind, string[]> = {
 
 type Tab = "conditions" | "documents" | "payments" | "communications";
 
+interface BacklogResult {
+  issueKey: string | null; url: string | null; created: boolean; reason?: string;
+  preview?: { subject: string | null; bodyPreview: string };
+}
+
+const LINK_LABEL: Record<string, string> = {
+  backlog_issue: "Backlog", email_thread: "メール", slack_thread: "Slack",
+  document: "文書", agreement: "合意", condition: "条件", payment: "支払"
+};
+
+/** 紐づけに写してある状態。Backlog なら課題の状態、メールなら最後の件名。 */
+function linkState(snapshot: Record<string, unknown>): string {
+  const s = snapshot ?? {};
+  if (s.statusName) return `${s.statusName}${s.closed ? "（完了）" : ""}`;
+  if (s.lastSubject) return String(s.lastSubject);
+  if (s.firstSubject) return String(s.firstSubject);
+  return "";
+}
+
+const backlogIssue = (detail: MatterDetail): string | null =>
+  detail.links.find((l) => l.targetType === "backlog_issue")?.targetRef ?? null;
+
 export function MattersWorkspace({ onOpenCondition }: { onOpenCondition: (id: number) => void }) {
   const [rows, setRows] = useState<MatterSummary[]>([]);
   const [selected, setSelected] = useState<number | undefined>();
@@ -24,6 +46,9 @@ export function MattersWorkspace({ onOpenCondition }: { onOpenCondition: (id: nu
   const [creating, setCreating] = useState<"matter" | "task" | null>(null);
   const [parties, setParties] = useState<Array<{ id: number; name: string }>>([]);
   const [staff, setStaff] = useState<Array<{ id: number; name: string }>>([]);
+  const [backlog, setBacklog] = useState<BacklogResult | null>(null);
+  const [backlogBusy, setBacklogBusy] = useState(false);
+  const [issueKey, setIssueKey] = useState("");
 
   function reloadMatters(select?: number) {
     api.get<{ matters: MatterSummary[] }>(`/matters${kind === "all" ? "" : `?kind=${kind}`}`)
@@ -49,6 +74,7 @@ export function MattersWorkspace({ onOpenCondition }: { onOpenCondition: (id: nu
   useEffect(() => {
     if (!selected) return;
     setTab("conditions");
+    setBacklog(null); setIssueKey("");
     api.get<MatterDetail>(`/matters/${selected}`).then(setDetail)
       .catch((e: ApiError) => setError(e.message));
   }, [selected]);
@@ -262,19 +288,90 @@ export function MattersWorkspace({ onOpenCondition }: { onOpenCondition: (id: nu
               </div>
 
               <div className="panel">
-                <div className="panel-hd"><h2>参照しているマスタ</h2><span className="faint">案件より長生きする実体</span></div>
+                <div className="panel-hd">
+                  <h2>参照しているマスタ</h2><span className="faint">案件より長生きする実体</span>
+                </div>
                 <div className="panel-bd">
                   <table>
-                    <thead><tr><th>種別</th><th>参照</th><th>関係</th></tr></thead>
+                    <thead><tr><th>種別</th><th>参照</th><th>関係</th><th>状態</th></tr></thead>
                     <tbody>
                       {detail.links.map((l) => (
                         <tr key={`${l.targetType}-${l.targetRef}`}>
-                          <td>{l.targetType}</td><td className="code">{l.targetRef}</td><td>{l.relation}</td>
+                          <td>{LINK_LABEL[l.targetType] ?? l.targetType}</td>
+                          <td className="code">{l.targetRef}</td>
+                          <td>{l.relation}</td>
+                          <td className="faint">{linkState(l.snapshot)}</td>
                         </tr>
                       ))}
-                      {!detail.links.length && <tr><td colSpan={3} className="faint">リンクはありません</td></tr>}
+                      {!detail.links.length && <tr><td colSpan={4} className="faint">リンクはありません</td></tr>}
                     </tbody>
                   </table>
+                </div>
+                <div className="panel-bd" style={{ borderTop: "1px solid var(--line)" }}>
+                  {backlogIssue(detail) ? (
+                    <div className="row">
+                      <span className="faint">
+                        Backlog：<span className="code">{backlogIssue(detail)}</span> と繋がっています。
+                        課題の状態が変わるとこの表に写ります（案件の状態は自動では動きません）。
+                      </span>
+                      <button className="btn btn-sm" disabled={backlogBusy} onClick={async () => {
+                        if (!confirm(`${backlogIssue(detail)} との紐づけを外します。課題そのものは消えません。`)) return;
+                        setBacklogBusy(true); setError(null);
+                        try {
+                          await api.del(`/matters/${detail.id}/backlog/${backlogIssue(detail)}`);
+                          setBacklog(null); reloadDetail();
+                        } catch (e) { setError((e as ApiError).message); }
+                        finally { setBacklogBusy(false); }
+                      }}>紐づけを外す</button>
+                    </div>
+                  ) : (
+                    <div className="stack" style={{ gap: 9 }}>
+                      <div className="row">
+                        <button className="btn primary" disabled={backlogBusy} onClick={async () => {
+                          setBacklogBusy(true); setError(null);
+                          try {
+                            setBacklog(await api.post<BacklogResult>(`/matters/${detail.id}/backlog`, {}));
+                            reloadDetail();
+                          } catch (e) { setError((e as ApiError).message); }
+                          finally { setBacklogBusy(false); }
+                        }}>Backlog に課題を立てる</button>
+                        <span className="faint">1案件に1課題。二度押しても増えません</span>
+                      </div>
+                      <div className="row">
+                        <input className="inline-input" value={issueKey} placeholder="LEGAL-12"
+                          onChange={(e) => setIssueKey(e.target.value)} />
+                        <button className="btn" disabled={backlogBusy || !issueKey.trim()}
+                          onClick={async () => {
+                            setBacklogBusy(true); setError(null);
+                            try {
+                              setBacklog(await api.post<BacklogResult>(
+                                `/matters/${detail.id}/backlog/link`, { issueKey: issueKey.trim() }));
+                              setIssueKey(""); reloadDetail();
+                            } catch (e) { setError((e as ApiError).message); }
+                            finally { setBacklogBusy(false); }
+                          }}>すでにある課題に繋ぐ</button>
+                        <span className="faint">
+                          Backlog で先に立てた課題はこちらから。繋がないと課題の更新が届きません
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                  {backlog && !backlog.created && !backlog.issueKey && (
+                    <div className="note" style={{ marginTop: 9 }}>
+                      課題は立ちませんでした：{backlog.reason ?? "理由不明"}
+                      {backlog.preview && (
+                        <pre className="pre" style={{ marginTop: 8 }}>
+                          {backlog.preview.subject}{"\n\n"}{backlog.preview.bodyPreview}
+                        </pre>
+                      )}
+                    </div>
+                  )}
+                  {backlog?.issueKey && (
+                    <div className="note ok" style={{ marginTop: 9 }}>
+                      <a href={backlog.url ?? "#"} target="_blank" rel="noreferrer">{backlog.issueKey}</a>
+                      {backlog.created ? " を立てました。" : ` ${backlog.reason ?? "に繋ぎました。"}`}
+                    </div>
+                  )}
                 </div>
               </div>
             </>

@@ -545,6 +545,53 @@ gcloud builds submit --config infra/v3/cloudbuild.yaml \
 届かない。受付を有効にするタイミングで `/internal` を通す経路を用意する
 （Load Balancer + Cloud Armor、または該当サービスへの `allUsers` 付与）。
 
+## 手順8.7：Backlog と繋ぐ
+
+案件と Backlog の課題を1対1で繋ぎ、課題の状態を案件画面に写す。
+**繋いでいない課題の更新は届かない**ので、繋ぐところまでが設定。
+
+```bash
+# 課題種別IDを調べる（BACKLOG_ISSUE_TYPE_ID に使う）
+curl -sS "https://xxx.backlog.jp/api/v2/projects/LEGAL/issueTypes?apiKey=${BACKLOG_API_KEY}" \
+  | jq '.[] | {id, name}'
+
+create_secret legalbridge-v3-backlog-api-key "<Backlog の API キー>"
+
+gcloud builds submit --config infra/v3/cloudbuild.yaml \
+  --substitutions=^@^_GIT_SHA=$(git rev-parse --short HEAD)@_BACKLOG_MODE=dry_run@_BACKLOG_HOST=xxx.backlog.jp@_BACKLOG_PROJECT_ID=12345@_BACKLOG_ISSUE_TYPE_ID=67890@_SECRETS_EXTRA=BACKLOG_API_KEY=legalbridge-v3-backlog-api-key:latest \
+  .
+```
+
+Backlog 側で webhook を登録する:
+
+| 設定 | 値 |
+|---|---|
+| Webhook URL | `{URL}/internal/webhooks/backlog` |
+| 通知する操作 | 課題の追加・更新・コメント |
+
+共有シークレットのヘッダ（`x-lb-webhook-token`）を Backlog の webhook は
+送れないので、`/internal` を通す経路側（Load Balancer + Cloud Armor）で
+ヘッダを付与するか、Backlog 用の経路だけ IP 制限で守る。
+
+**★ 確認：画面から1件試す**
+
+1. 案件を1つ開き、「参照しているマスタ」の下の **Backlog に課題を立てる**
+   を押す。`dry_run` のあいだは立たず、何を送るかだけが出る。
+2. `_BACKLOG_MODE=live` にして押し直すと課題が立ち、課題キーで繋がる。
+3. Backlog 側で状態を「処理中」に変えると、同じ表の「状態」に写る。
+   **案件の状態は動かない**（人が判断する）。
+4. 課題を「完了」にしても案件が開いたままなら、運用タブ→データ品質に
+   `Backlog の課題は完了だが案件が開いたまま` が出る。
+
+すでに Backlog に課題がある案件は、課題キー（例 `LEGAL-12`）を入れて
+**すでにある課題に繋ぐ**を押す。課題は立たず、繋ぐだけ。
+
+守っている規則:
+
+- 1案件に1課題。二度押しても増えない。
+- 同じ課題を2つの案件には繋げない（受信でどちらの話か決まらなくなる）。
+- 外したあと同じ内容で押し直すと、新しい課題は立てずに元の課題へ繋ぎ直す。
+
 ## 手順9：切戻し
 
 ```bash

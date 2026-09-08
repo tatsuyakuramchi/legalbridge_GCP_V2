@@ -200,3 +200,13 @@ tr.report-total td { border-top: 2px solid #cfd6e4; font-weight: 600; background
 .tag.warn { background: #fef0c7; color: #b54708; }
 .tag.danger { background: #fee4e2; color: #b42318; }
 .note { background: #fef0c7; color: #7a2e0e; padding: 8px 10px; border-radius: 6px; margin: 8px 0; }
+
+/* 外部連携の結果表示。送られなかった理由と、送られる中身を並べる。 */
+.note.ok { background: var(--ok-soft); color: var(--ok); }
+.inline-input { width: 150px; border: 1px solid var(--line-strong); border-radius: 5px;
+                padding: 5px 8px; background: var(--surface); font-family: var(--mono);
+                font-size: 12px; }
+.pre { white-space: pre-wrap; word-break: break-word; font-family: var(--mono);
+       font-size: 12px; line-height: 1.6; background: var(--sunken);
+       border: 1px solid var(--line); border-radius: 6px; padding: 9px 11px;
+       max-height: 220px; overflow: auto; }

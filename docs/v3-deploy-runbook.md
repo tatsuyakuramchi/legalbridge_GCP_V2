@@ -451,6 +451,11 @@ gcloud run services update legalbridge-v3 --region=asia-northeast1 \
 同じ内容の二度目の送信は冪等キー（チャネル・対象・宛先・本文の SHA-256）で
 弾かれ、前回の外部IDが返る。これも1回試しておく。
 
+> **Backlog は宛先がメールアドレスではない。** 課題種別ID（`BACKLOG_ISSUE_TYPE_ID`）を
+> 宛先として渡す作りなので、`DISPATCH_ALLOWLIST` にメールアドレスだけを入れると
+> Backlog は `not_allowlisted` で止まる。Backlog も live にするなら、
+> 許可リストに課題種別IDも入れること。
+
 ### 8.3 制限を外す
 
 `DISPATCH_ALLOWLIST=` を空にする。チャネルごとに 8.1 → 8.3 を繰り返す
@@ -483,6 +488,39 @@ Cloud Run が `--no-allow-unauthenticated` のままだと外部から叩けな�
 | CloudSign 送信済・閲覧済 | 途中経過。何も動かさない |
 | Backlog 課題の更新 | 紐づけ（`matter_links`）に最新の状態を写す。**案件の状態は動かさない** |
 | Backlog 課題が完了・案件は開いたまま | `BACKLOG_CLOSED_MATTER_OPEN` の課題が立つ（人が判断する） |
+
+### 8.4b Backlog を案件に繋ぐ
+
+受信側は `matter_links` の `backlog_issue` を辿って案件を特定する。
+**繋いでいない課題の更新は届かない**（「この課題に紐づく案件が無い」で終わる）。
+繋ぎ方は2つ、どちらも案件画面の「参照しているマスタ」から行う。
+
+| やりたいこと | 操作 | 何が起きるか |
+|---|---|---|
+| これから Backlog で進める | 「Backlog に課題を立てる」 | 課題を立て、その課題キーで繋ぐ |
+| すでに Backlog に課題がある | 課題キーを入れて「すでにある課題に繋ぐ」 | 課題は立てず、繋ぐだけ |
+| 間違った課題に繋いだ | 「紐づけを外す」 | 紐づけだけ外す。**課題は消さない** |
+
+必要な設定:
+
+```bash
+gcloud run services update legalbridge-v3 --region=asia-northeast1 \
+  --update-env-vars="^@^BACKLOG_MODE=live@BACKLOG_HOST=xxx.backlog.jp@BACKLOG_PROJECT_ID=12345@BACKLOG_ISSUE_TYPE_ID=67890"
+```
+
+`BACKLOG_ISSUE_TYPE_ID` が空だとゲートが `recipient_missing` で止める
+（黙って失敗しない）。課題種別IDは Backlog の
+`GET /api/v2/projects/:projectIdOrKey/issueTypes` で確認できる。
+
+守っている規則:
+
+- **1案件に1課題。** 二度押しても増えない。増やすと同じ案件のやり取りが
+  2つの課題に分かれ、どちらが本流か分からなくなる。
+- **同じ課題を2つの案件に繋がせない。** 繋げると受信したときどちらの案件の
+  話か決まらず、片方が黙って無視される。
+- **立っていない課題のキーは控えない。** off / dry_run で押しても紐づけは
+  作らない（存在しない課題を指し続けることになる）。
+- 外したあと同じ内容で押し直すと、**新しい課題は立てずに元の課題へ繋ぎ直す**。
 
 ### 8.5 定期実行
 

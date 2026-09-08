@@ -39,6 +39,8 @@ export interface Config {
   backlogHost: string;
   backlogApiKey: string;
   backlogProjectId: string;
+  /** 課題を立てるときの課題種別ID。空だと宛先未解決でゲートが止める。 */
+  backlogIssueTypeId: string;
   /** 内部エンドポイント（Webhook受信）の共有シークレット。 */
   webhookToken: string;
 }
@@ -85,5 +87,6 @@ export const config: Config = {
   backlogHost: (process.env.BACKLOG_HOST ?? "").trim(),
   backlogApiKey: (process.env.BACKLOG_API_KEY ?? "").trim(),
   backlogProjectId: (process.env.BACKLOG_PROJECT_ID ?? "").trim(),
+  backlogIssueTypeId: (process.env.BACKLOG_ISSUE_TYPE_ID ?? "").trim(),
   webhookToken: (process.env.WEBHOOK_TOKEN ?? "").trim()
 };

@@ -130,10 +130,12 @@ export class MatterRepository {
 
   private async links(id: number) {
     const r = await this.database.query(
-      `SELECT target_type, target_ref, relation FROM matter_links
+      `SELECT target_type, target_ref, relation, snapshot FROM matter_links
         WHERE matter_id = $1 ORDER BY target_type, target_ref`, [id]);
     return r.rows.map((l) => ({
-      targetType: String(l.target_type), targetRef: String(l.target_ref), relation: String(l.relation)
+      targetType: String(l.target_type), targetRef: String(l.target_ref), relation: String(l.relation),
+      // Backlog の状態やメールの件名を写してある。画面で見えるようにする。
+      snapshot: (l.snapshot as Record<string, unknown>) ?? {}
     }));
   }
 

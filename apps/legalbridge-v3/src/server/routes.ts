@@ -41,6 +41,7 @@ import {
 } from "./integrations/slack-intake.js";
 import { buildAdapters, buildDispatch, buildMailSource } from "./integrations/factory.js";
 import { MailIntakeJob } from "./jobs/mail-intake.js";
+import { BacklogService } from "./integrations/backlog-service.js";
 import type { IntegrationChannel } from "./integrations/gate.js";
 
 const asyncRoute =
@@ -91,6 +92,9 @@ export function createRoutes(database: Transactable) {
   const mailSource = buildMailSource();
   const dailyJob = new DailyJob(database, dispatch);
   const mailJob = new MailIntakeJob(database, mailSource);
+  const backlog = new BacklogService(database, dispatch, {
+    host: config.backlogHost, issueTypeId: config.backlogIssueTypeId
+  });
   const matterFolders = new MatterFolderStorageService(
     database,
     config.driveMatterParentFolderId
@@ -120,6 +124,34 @@ export function createRoutes(database: Transactable) {
     requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       res.json(await matterFolders.ensure(Number(req.params.id), actor(res)));
+    }));
+
+  // 案件から Backlog の課題を立てる。受信側が案件を特定するための
+  // 紐づけ（matter_links）はここでしか作られない。
+  const backlogSchema = z.object({ note: z.string().trim().max(2000).optional() });
+  router.post("/matters/:id/backlog",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { note } = backlogSchema.parse(req.body ?? {});
+      res.json(await backlog.createIssue(Number(req.params.id), actor(res), { note }));
+    }));
+
+  // Backlog で先に立っている課題を案件に繋ぐ。移行前から Backlog で
+  // 進めている案件は、こちらから立てる余地がない。
+  const backlogLinkSchema = z.object({ issueKey: z.string().trim().min(3).max(60) });
+  router.post("/matters/:id/backlog/link",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { issueKey } = backlogLinkSchema.parse(req.body ?? {});
+      res.json(await backlog.link(Number(req.params.id), issueKey, actor(res)));
+    }));
+
+  // 間違った課題に繋いだときの直し方。課題そのものは消さない。
+  router.delete("/matters/:id/backlog/:issueKey",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await backlog.unlink(
+        Number(req.params.id), String(req.params.issueKey), actor(res)));
     }));
 
   router.get("/matters/:id/drive-files", asyncRoute(async (req, res) => {
