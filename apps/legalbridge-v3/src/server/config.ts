@@ -33,6 +33,8 @@ export interface Config {
   slackBotToken: string;
   slackSigningSecret: string;
   gmailSender: string;
+  /** 取り込む受信メールを絞る Gmail のラベル。空なら取り込みごと無効。 */
+  gmailIntakeLabel: string;
   cloudSignClientId: string;
   backlogHost: string;
   backlogApiKey: string;
@@ -78,6 +80,7 @@ export const config: Config = {
   slackBotToken: (process.env.SLACK_BOT_TOKEN ?? "").trim(),
   slackSigningSecret: (process.env.SLACK_SIGNING_SECRET ?? "").trim(),
   gmailSender: (process.env.GMAIL_SENDER ?? "").trim(),
+  gmailIntakeLabel: (process.env.GMAIL_INTAKE_LABEL ?? "").trim(),
   cloudSignClientId: (process.env.CLOUDSIGN_CLIENT_ID ?? "").trim(),
   backlogHost: (process.env.BACKLOG_HOST ?? "").trim(),
   backlogApiKey: (process.env.BACKLOG_API_KEY ?? "").trim(),

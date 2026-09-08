@@ -15,10 +15,15 @@ interface Integrations {
   drive: { documents: boolean; matterFolders: boolean };
   channels: Array<{ channel: string; mode: "off" | "dry_run" | "live"; configured: boolean }>;
   allowlist: string[];
+  inbound: { mail: boolean };
 }
 interface Deadline { source: string; refId: number; refNo: string | null; title: string; dueOn: string; status: string; overdue: boolean }
 
 const RULE_LABEL: Record<string, string> = {
+  MAIL_SENDER_UNRESOLVED: "メールの差出人が取引先に当たらない",
+  INTAKE_PARTY_UNRESOLVED: "Slack の依頼の相手先が取引先に当たらない",
+  BACKLOG_CLOSED_MATTER_OPEN: "Backlog の課題は完了だが案件が開いたまま",
+  BACKLOG_OPEN_MATTER_CLOSED: "案件は閉じたが Backlog の課題が動いている",
   PAYMENT_UNALLOCATED: "条件に割り当てられていない支払",
   PAYMENT_DUE_OVER_LIMIT: "支払期日が受領日+60日を超えている",
   CONDITION_NO_WORK: "作品に紐づかない条件",
@@ -219,6 +224,10 @@ export function OpsWorkspace() {
                 <dt>Drive 保存</dt>
                 <dd>{integrations.drive.documents ? "有効" : "未設定"}
                   {" ／ 案件フォルダ "}{integrations.drive.matterFolders ? "有効" : "未設定"}</dd>
+                <dt>メールの取り込み</dt>
+                <dd>{integrations.inbound.mail
+                  ? "有効（ラベルの付いたメールから案件が立ちます）"
+                  : <span className="faint">未設定（GMAIL_INTAKE_LABEL が空）</span>}</dd>
               </dl>
               <div className="faint" style={{ marginTop: 9 }}>
                 送信を止めた事実も監査記録に残ります（<span className="code">*.blocked</span>）。

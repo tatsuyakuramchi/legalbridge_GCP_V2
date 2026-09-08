@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { FakeDatabase } from "../core/fake-db.js";
-import { applyInbound, handleCloudSign, mapCloudSignStatus } from "./inbound-handlers.js";
+import {
+  applyInbound, backlogIssueKey, handleBacklog, handleCloudSign, isBacklogClosed,
+  mapCloudSignStatus
+} from "./inbound-handlers.js";
 
 const sent = (over: Record<string, unknown> = {}) => ({
   document_id: 7, document_no: "ARC-LIC-2026-0003", agreement_id: 4, ...over
@@ -92,4 +95,78 @@ test("反映した事実を監査に残す", async () => {
   const detail = JSON.parse(String(audit.params[5]));
   assert.equal(detail.applied, true);
   assert.equal(detail.agreementId, 4);
+});
+
+// ---- Backlog ----
+
+const backlogDb = (linked: any[] = [{ link_id: 5, id: 8, matter_no: "MTR-2026-00008", status: "open" }]) =>
+  new FakeDatabase((t) => {
+    if (t.includes("FROM matter_links l JOIN matters m")) return linked;
+    return undefined;
+  });
+
+const issue = (statusId: number, statusName: string) => ({
+  project: { projectKey: "LEGAL" },
+  content: { key_id: 12, summary: "契約書レビュー", status: { id: statusId, name: statusName } }
+});
+
+test("課題キーはプロジェクトキーと番号から組み立てる", () => {
+  assert.equal(backlogIssueKey(issue(1, "未対応")), "LEGAL-12");
+  assert.equal(backlogIssueKey({ issueKey: "LEGAL-99" }), "LEGAL-99");
+  assert.equal(backlogIssueKey({}), "");
+});
+
+test("閉じたと見なすのは完了だけ。処理済みは担当者が終えただけ", () => {
+  assert.equal(isBacklogClosed("完了", 4), true);
+  assert.equal(isBacklogClosed("処理済み", 3), false);
+  assert.equal(isBacklogClosed("処理中", 2), false);
+  // 状態を作り替えている場合は名前で見る。
+  assert.equal(isBacklogClosed("Closed"), true);
+  assert.equal(isBacklogClosed("レビュー中"), false);
+});
+
+test("紐づけの綴りは backlog_issue（制約が通す値）", async () => {
+  const db = backlogDb();
+  await handleBacklog(db, { externalId: "e", payload: issue(2, "処理中") });
+  const q = db.find("FROM matter_links l JOIN matters m")!;
+  assert.match(q.text, /target_type = 'backlog_issue'/);
+  assert.equal(q.params[0], "LEGAL-12");
+});
+
+test("Backlog の状態は写すが、案件の状態は動かさない", async () => {
+  const db = backlogDb();
+  const r = await handleBacklog(db, { externalId: "e", payload: issue(2, "処理中") });
+
+  assert.equal(r.applied, true);
+  assert.ok(db.find("UPDATE matter_links"), "紐づけに写す");
+  assert.equal(db.find("UPDATE matters"), undefined, "案件は人が判断する");
+});
+
+test("課題が完了で案件が開いたままなら、突き合わせの課題を残す", async () => {
+  const db = backlogDb();
+  await handleBacklog(db, { externalId: "e", payload: issue(4, "完了") });
+  const dq = db.find("INSERT INTO data_quality_issues")!;
+  assert.match(dq.text, /BACKLOG_CLOSED_MATTER_OPEN/);
+  assert.equal(dq.params[0], 8);
+});
+
+test("案件を閉じたのに課題が動いていたら逆向きの課題を残す", async () => {
+  const db = backlogDb([{ link_id: 5, id: 8, matter_no: "MTR-2026-00008", status: "done" }]);
+  await handleBacklog(db, { externalId: "e", payload: issue(2, "処理中") });
+  assert.match(db.find("INSERT INTO data_quality_issues")!.text, /BACKLOG_OPEN_MATTER_CLOSED/);
+});
+
+test("食い違いが解ければ課題を閉じる。開きっぱなしにしない", async () => {
+  const db = backlogDb([{ link_id: 5, id: 8, matter_no: "MTR-2026-00008", status: "done" }]);
+  await handleBacklog(db, { externalId: "e", payload: issue(4, "完了") });
+  assert.equal(db.find("INSERT INTO data_quality_issues"), undefined);
+  assert.match(db.find("UPDATE data_quality_issues")!.text, /status = 'resolved'/);
+});
+
+test("紐づく案件が無ければ何もしない（Backlog 全体を取り込まない）", async () => {
+  const db = backlogDb([]);
+  const r = await handleBacklog(db, { externalId: "e", payload: issue(4, "完了") });
+  assert.equal(r.applied, false);
+  assert.match(String(r.detail.reason), /紐づく案件が無い/);
+  assert.equal(db.find("UPDATE matter_links"), undefined);
 });

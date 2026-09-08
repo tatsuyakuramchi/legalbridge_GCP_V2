@@ -170,7 +170,8 @@ CREATE TABLE IF NOT EXISTS v3.matter_links (
   id          bigserial PRIMARY KEY,
   matter_id   bigint NOT NULL REFERENCES v3.matters(id) ON DELETE CASCADE,
   target_type text NOT NULL CHECK (target_type IN
-              ('backlog_issue', 'document', 'agreement', 'condition', 'payment', 'slack_thread')),
+              ('backlog_issue', 'document', 'agreement', 'condition', 'payment',
+               'slack_thread', 'email_thread')),
   target_ref  text NOT NULL,
   relation    text NOT NULL DEFAULT 'related',
   snapshot    jsonb NOT NULL DEFAULT '{}'::jsonb,

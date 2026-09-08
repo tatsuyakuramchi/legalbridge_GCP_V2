@@ -87,37 +87,100 @@ export async function handleCloudSign(
 }
 
 /**
- * Backlog の課題更新。案件に紐づく課題の状態をタスクへ反映する。
- * 紐づいていない課題は無視する（Backlog 全体を取り込むのが目的ではない）。
+ * Backlog の課題の状態が「終わった」を意味するか。
+ * 既定の状態は 未対応(1) 処理中(2) 処理済み(3) 完了(4)。
+ * 処理済みは担当者が終えただけで、依頼者が閉じたわけではない。閉じたのは完了のみ。
+ */
+export function isBacklogClosed(statusName: string, statusId?: number | string | null): boolean {
+  const id = Number(statusId);
+  if (Number.isFinite(id) && id > 0) return id === 4;
+  const s = String(statusName ?? "").trim().toLowerCase();
+  return ["完了", "closed", "done"].includes(s);
+}
+
+/** Backlog の webhook から課題キーを組み立てる。読み取れなければ空文字。 */
+export function backlogIssueKey(payload: any): string {
+  const direct = String(payload?.issueKey ?? "").trim();
+  if (direct) return direct;
+  const project = String(payload?.project?.projectKey ?? "").trim();
+  const keyId = payload?.content?.key_id;
+  return project && keyId ? `${project}-${keyId}` : "";
+}
+
+/**
+ * Backlog の課題更新。
+ *
+ * 案件の状態は動かさない。Backlog で課題が閉じても、契約が締結できたとは
+ * 限らない（課題は作業の単位、案件は取り決めの単位）。ここでやるのは
+ *   1. 今の Backlog の状態を案件の紐づけに写す（画面で見えるようにする）
+ *   2. 課題が閉じたのに案件が開いたままなら、突き合わせの課題として残す
+ * の2つ。判断は人がする。放置されないように見えるところへ出しておく。
  */
 export async function handleBacklog(
   client: Queryable, input: { externalId: string; payload: Record<string, unknown>; }
 ): Promise<HandledResult> {
   const p = input.payload as any;
-  const issueKey = String(p.issueKey ?? p.content?.key_id ?? p.project?.projectKey ?? "").trim()
-    || String(p.content?.summary ?? "").trim();
-  const key = String(p.issueKey ?? "").trim()
-    || (p.project?.projectKey && p.content?.key_id ? `${p.project.projectKey}-${p.content.key_id}` : "");
-
-  const ref = key || issueKey;
+  const ref = backlogIssueKey(p);
   if (!ref) return { applied: false, detail: { reason: "課題キーを読み取れない" } };
 
-  // matter_links に 'backlog' として登録されている案件を探す。
+  // matter_links の 'backlog_issue' として登録されている案件を探す。
   const found = await client.query(
-    `SELECT m.id, m.matter_no, m.status
+    `SELECT l.id AS link_id, m.id, m.matter_no, m.status
        FROM matter_links l JOIN matters m ON m.id = l.matter_id
-      WHERE l.target_type = 'backlog' AND l.target_ref = $1
+      WHERE l.target_type = 'backlog_issue' AND l.target_ref = $1
       LIMIT 1`, [ref]);
   const row = found.rows[0] as any;
   if (!row) {
     return { applied: false, detail: { reason: "この課題に紐づく案件が無い", issueKey: ref } };
   }
 
-  const statusName = String(p.content?.status?.name ?? p.status ?? "").trim();
+  const statusName = String(p?.content?.status?.name ?? p?.status?.name ?? p?.status ?? "").trim();
+  const statusId = p?.content?.status?.id ?? p?.status?.id ?? null;
+  const summary = String(p?.content?.summary ?? "").trim();
+  const closed = isBacklogClosed(statusName, statusId);
+  const matterId = Number(row.id);
+  const matterOpen = ["open", "waiting", "blocked"].includes(String(row.status));
+
+  // 状態を紐づけに写す。案件そのものは動かさない。
+  await client.query(
+    `UPDATE matter_links
+        SET snapshot = snapshot || $2::jsonb
+      WHERE id = $1`,
+    [Number(row.link_id), JSON.stringify({
+      statusName: statusName || null, statusId: statusId ?? null,
+      summary: summary || null, closed, seenAt: new Date().toISOString()
+    })]);
+
+  // 課題は閉じたのに案件が開いたまま。どちらが正しいかは人が決める。
+  if (closed && matterOpen) {
+    await client.query(
+      `INSERT INTO data_quality_issues (rule_code, target_type, target_id, severity, detail)
+       VALUES ('BACKLOG_CLOSED_MATTER_OPEN', 'matter', $1, 'low', $2::jsonb)
+       ON CONFLICT (rule_code, target_type, target_id) DO UPDATE SET
+         detail = EXCLUDED.detail, detected_at = now(), status = 'open'`,
+      [matterId, JSON.stringify({ issueKey: ref, statusName, matterNo: row.matter_no })]);
+  } else if (!closed && !matterOpen) {
+    // 逆向き。案件を閉じたのに課題が動いている。
+    await client.query(
+      `INSERT INTO data_quality_issues (rule_code, target_type, target_id, severity, detail)
+       VALUES ('BACKLOG_OPEN_MATTER_CLOSED', 'matter', $1, 'low', $2::jsonb)
+       ON CONFLICT (rule_code, target_type, target_id) DO UPDATE SET
+         detail = EXCLUDED.detail, detected_at = now(), status = 'open'`,
+      [matterId, JSON.stringify({ issueKey: ref, statusName, matterNo: row.matter_no })]);
+  } else {
+    // 食い違いが解けたら課題を閉じる。開きっぱなしにしない。
+    await client.query(
+      `UPDATE data_quality_issues SET status = 'resolved', resolved_at = now()
+        WHERE target_type = 'matter' AND target_id = $1 AND status = 'open'
+          AND rule_code IN ('BACKLOG_CLOSED_MATTER_OPEN', 'BACKLOG_OPEN_MATTER_CLOSED')`,
+      [matterId]);
+  }
+
   return {
-    applied: false,
-    detail: { matterId: Number(row.id), matterNo: row.matter_no, issueKey: ref, statusName,
-              reason: "案件を特定した。状態の自動変更はしない（人が判断する）" }
+    applied: true,
+    detail: { matterId, matterNo: row.matter_no, issueKey: ref, statusName, closed,
+              matterStatus: String(row.status),
+              reason: "Backlog の状態を写した。案件の状態は人が決める" }
   };
 }
 

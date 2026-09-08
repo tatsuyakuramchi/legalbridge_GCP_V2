@@ -34,18 +34,14 @@ import { ImportService, IMPORT_SPECS, type ImportKind } from "./imports/service.
 import { MonitoringRepository } from "./monitoring/repository.js";
 import { ReceivableRepository } from "./monitoring/receivables.js";
 import { ContractCheckRepository } from "./monitoring/contract-check.js";
-import { DispatchService } from "./integrations/dispatch-service.js";
 import { DailyJob } from "./jobs/daily.js";
 import { IntakeService } from "./integrations/intake-service.js";
 import {
   INTAKE_COMMANDS, buildIntakeModal, parseSubmission
 } from "./integrations/slack-intake.js";
-import {
-  BacklogAdapter, CloudSignAdapter, GmailAdapter, MemoryAdapter, SlackAdapter,
-  type DispatchAdapter
-} from "./integrations/adapters.js";
+import { buildAdapters, buildDispatch, buildMailSource } from "./integrations/factory.js";
+import { MailIntakeJob } from "./jobs/mail-intake.js";
 import type { IntegrationChannel } from "./integrations/gate.js";
-import { GoogleAuth } from "google-auth-library";
 
 const asyncRoute =
   (handler: (req: Request, res: Response) => Promise<unknown>) =>
@@ -89,38 +85,12 @@ export function createRoutes(database: Transactable) {
   const ops = new OpsRepository(database);
   const monitoring = new MonitoringRepository(database);
 
-  // 外部送信のアダプタ。資格情報が無ければ作らない（ゲートが未設定として弾く）。
-  const useMemory = process.env.DISPATCH_ADAPTERS === "memory";
-  const gmailAuth = new GoogleAuth({
-    ...(config.driveKeyFilePath ? { keyFile: config.driveKeyFilePath } : {}),
-    scopes: ["https://www.googleapis.com/auth/gmail.send"]
-  });
-  const adapters: Partial<Record<IntegrationChannel, DispatchAdapter>> = useMemory
-    ? {
-        slack: new MemoryAdapter("slack"), gmail: new MemoryAdapter("gmail"),
-        cloudsign: new MemoryAdapter("cloudsign"), backlog: new MemoryAdapter("backlog")
-      }
-    : {
-        ...(config.slackBotToken ? { slack: new SlackAdapter(config.slackBotToken) } : {}),
-        ...(config.gmailSender ? {
-          gmail: new GmailAdapter(async () => {
-            const token = await (await gmailAuth.getClient()).getAccessToken();
-            if (!token.token) throw new Error("Gmail のアクセストークンを取得できませんでした");
-            return token.token;
-          }, config.gmailSender)
-        } : {}),
-        ...(config.cloudSignClientId ? { cloudsign: new CloudSignAdapter(config.cloudSignClientId) } : {}),
-        ...(config.backlogHost && config.backlogApiKey && config.backlogProjectId
-          ? { backlog: new BacklogAdapter(config.backlogHost, config.backlogApiKey, config.backlogProjectId) }
-          : {})
-      };
-  const dispatch = new DispatchService(database, adapters, (channel) => ({
-    mode: config.integrationModes[channel],
-    adapterConfigured: Boolean(adapters[channel]?.configured),
-    readOnly: config.readOnly,
-    allowlist: config.dispatchAllowlist
-  }));
+  // 外部連携は factory で組む。/internal 側と同じものを使う。
+  const adapters = buildAdapters();
+  const dispatch = buildDispatch(database, adapters);
+  const mailSource = buildMailSource();
   const dailyJob = new DailyJob(database, dispatch);
+  const mailJob = new MailIntakeJob(database, mailSource);
   const matterFolders = new MatterFolderStorageService(
     database,
     config.driveMatterParentFolderId
@@ -205,6 +175,14 @@ export function createRoutes(database: Transactable) {
   router.get("/jobs/daily/preview", asyncRoute(async (_req, res) => {
     res.json(await dailyJob.run());
   }));
+
+  // 受信メールの取り込み。手で1回動かして結果を見るためのもの。
+  // 定期実行は /internal/jobs/mail-intake（Cloud Scheduler）。
+  router.post("/jobs/mail-intake", requireRole("admin"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const limit = Number((req.body ?? {}).limit);
+      res.json(await mailJob.run({ limit: Number.isFinite(limit) ? limit : undefined }));
+    }));
 
   // 支払を条件へ割り当てる。これが無いと「どの取り決めに対する支払か」が
   // 追えず、債権の未収も出せない。
@@ -530,7 +508,9 @@ export function createRoutes(database: Transactable) {
         mode: config.integrationModes[channel],
         configured: Boolean(adapters[channel]?.configured)
       })),
-      allowlist: config.dispatchAllowlist
+      allowlist: config.dispatchAllowlist,
+      // 受信の設定。ラベルが空なら取り込みは動かない。
+      inbound: { mail: Boolean(mailSource?.configured) }
     });
   });
 
@@ -852,11 +832,17 @@ function parseForm(raw: Buffer): Record<string, string> {
 /** Webhook 受信。ユーザー認証は通さず、共有シークレットと署名で守る。 */
 export function createWebhookRouter(database: Transactable) {
   const router = Router();
-  const dispatch = new DispatchService(database, {}, () => ({
-    mode: "off", adapterConfigured: false, readOnly: false
-  }));
-
+  // 受信の記録と送信は同じ設定で動かす（画面側と食い違わせない）。
+  const dispatch = buildDispatch(database);
   const intake = new IntakeService(database);
+  const jobs: Record<string, (body: any) => Promise<unknown>> = {
+    daily: (body) => new DailyJob(database, dispatch).run({
+      notifyChannel: body?.notifyChannel, notifyTo: body?.notifyTo
+    }),
+    "mail-intake": (body) => new MailIntakeJob(database, buildMailSource()).run({
+      limit: Number(body?.limit) || undefined
+    })
+  };
 
   /** Slack の署名検証。未設定なら常に拒否（fail-closed）。 */
   const verifySlack = (req: any, raw: Buffer) => verifySlackSignature({
@@ -906,6 +892,28 @@ export function createWebhookRouter(database: Transactable) {
         errors: { title: e?.message ?? "受け付けられませんでした" }
       });
     }
+  }));
+
+  /**
+   * 定期実行の入口。Cloud Scheduler から叩く。
+   *
+   * 画面側の /api/v3/jobs/* は IAP のヘッダを見るので、Scheduler の OIDC
+   * では通らない（毎朝401で落ちる）。ジョブは /internal に置き、
+   * Cloud Run の呼び出し権限＋共有シークレットの2つで守る。
+   */
+  router.post("/jobs/:name", asyncRoute(async (req, res) => {
+    if (!config.webhookToken || req.header("x-lb-webhook-token") !== config.webhookToken) {
+      return res.status(config.webhookToken ? 401 : 404).json({ error: "unauthorized" });
+    }
+    const job = jobs[String(req.params.name)];
+    if (!job) return res.status(404).json({ error: "unknown job", known: Object.keys(jobs) });
+
+    const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from("");
+    let body: any = {};
+    try { body = raw.length ? JSON.parse(raw.toString("utf8")) : {}; }
+    catch { return res.status(400).json({ error: "本文を読み取れません" }); }
+
+    res.json(await job(body));
   }));
 
   router.post("/webhooks/:source", asyncRoute(async (req, res) => {

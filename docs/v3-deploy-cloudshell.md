@@ -213,13 +213,28 @@ psql -v ON_ERROR_STOP=1 -f infra/v3/002_views.sql
 > ビューを作り直すとランタイムロールにビューへの書込権限が付く経路がある。
 > 003 がそれを剥がす。手順4の「想定外の権限 0行」で確認できる。
 
-**★ 確認：表28 / ビュー6**
+**★ 確認：表28 / ビュー7**
 
 ```bash
 psql -c "SELECT count(*) FILTER (WHERE table_type='BASE TABLE') AS tables,
                 count(*) FILTER (WHERE table_type='VIEW')       AS views
            FROM information_schema.tables WHERE table_schema='v3';"
 ```
+
+---
+
+## 手順3.5：あとから足した変更を当てる
+
+`001_schema.sql` は `CREATE TABLE IF NOT EXISTS` なので、**既に作った表には
+流し直しても効かない**。制約や列の変更は `004_amend.sql` に積んである。
+何度流しても同じ結果になる。
+
+```bash
+psql -v ON_ERROR_STOP=1 -f infra/v3/004_amend.sql
+```
+
+初回は `A-001: matter_links.target_type に email_thread を足した`、
+2回目以降は `A-001: 適用済み` と出る。どちらも正常。
 
 ---
 
@@ -373,7 +388,7 @@ gcloud run services proxy legalbridge-v3 --region=asia-northeast1 --port=8080
 
 ---
 
-## 手順8.5：日次の点検を仕込む
+## 手順8：定期実行を仕込む
 
 画面を開かないと気づけないもの（満了間近の契約・期日を過ぎたタスク・
 支払期日）を、毎朝洗い出す。実データでは42日放置されたタスクが誰にも
@@ -382,38 +397,124 @@ gcloud run services proxy legalbridge-v3 --region=asia-northeast1 --port=8080
 通知は外部送信のゲートを通すので、**モードが off のあいだは送らない**
 （洗い出して記録するだけ）。先に仕込んでおいて構わない。
 
+> **叩き先は `/internal/jobs/...`。`/api/v3/...` ではない。**
+> `/api/v3` は IAP のヘッダ（`x-goog-authenticated-user-email`）を見る。
+> Cloud Scheduler の OIDC トークンではそのヘッダが付かないので、
+> `/api/v3/jobs/daily` を指すと**毎朝401で落ちる**（しかも誰も気づかない）。
+> `/internal` はユーザー認証を通さず、**Cloud Run の呼び出し権限＋共有
+> シークレット**の2つで守る。
+
 ```bash
 gcloud services enable cloudscheduler.googleapis.com
 
 PROJECT=legalbridge-488506
 URL="$(gcloud run services describe legalbridge-v3 --region=asia-northeast1 --format='value(status.url)')"
 SA="legalbridge-v3@${PROJECT}.iam.gserviceaccount.com"
+TOKEN="$(gcloud secrets versions access latest --secret=legalbridge-v3-webhook-token)"
 
 # Cloud Run は --no-allow-unauthenticated なので、呼び出し権限を与える。
 gcloud run services add-iam-policy-binding legalbridge-v3 \
   --region=asia-northeast1 --member="serviceAccount:${SA}" --role=roles/run.invoker
 
+# 日次の点検（平日9時・東京）
 gcloud scheduler jobs create http legalbridge-v3-daily \
   --location=asia-northeast1 \
   --schedule="0 9 * * 1-5" \
   --time-zone="Asia/Tokyo" \
-  --uri="${URL}/api/v3/jobs/daily" \
+  --uri="${URL}/internal/jobs/daily" \
   --http-method=POST \
-  --headers="Content-Type=application/json" \
+  --headers="Content-Type=application/json,x-lb-webhook-token=${TOKEN}" \
   --message-body='{"notifyChannel":"slack","notifyTo":"C0XXXXXXX"}' \
   --oidc-service-account-email="${SA}" \
   --oidc-token-audience="${URL}"
 ```
 
-平日9時（東京）に動く。`notifyTo` は Slack のチャンネルID。
-Gmail で送るなら `{"notifyChannel":"gmail","notifyTo":"legal@example.com"}`。
+`notifyTo` は Slack のチャンネルID。Gmail で送るなら
+`{"notifyChannel":"gmail","notifyTo":"legal@example.com"}`。
 
-通知せず洗い出しだけ見たいときは、画面から確かめられる:
+**★ 確認：手で1回動かす**
 
 ```bash
-curl -sS -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
-  "${URL}/api/v3/jobs/daily/preview" | jq '.counts'
+gcloud scheduler jobs run legalbridge-v3-daily --location=asia-northeast1
+gcloud scheduler jobs describe legalbridge-v3-daily --location=asia-northeast1 \
+  --format='value(status.code,lastAttemptTime)'
+# → status.code が空（＝成功）であること。2 や 16 が出たら401/403を疑う
 ```
+
+通知せず洗い出しだけ見たいときは画面から確かめられる（運用タブ→期日）。
+
+---
+
+## 手順8.5：メールの取り込みを仕込む
+
+法務の共有アドレスに届いた契約のやり取りから案件を立てる。人が転記して
+いると、転記されなかったものが案件として存在しないことになる。
+
+**取り込む範囲は Gmail 側のラベルで決める。** 受信箱すべてを対象にすると
+社内の雑談まで案件になる。法務がフィルタでラベルを付け、その運用だけで
+範囲を調整できるようにしてある。
+
+| 決めること | 値 |
+|---|---|
+| Gmail のラベル | 例：`法務受付`（フィルタで自動付与） |
+| 環境変数 | `GMAIL_INTAKE_LABEL=法務受付` |
+| 追加のスコープ | `https://www.googleapis.com/auth/gmail.readonly` |
+
+サービスアカウントに **ドメイン全体の委任**（共有アドレスの代理読み取り）が
+要る。Google Workspace 管理コンソール → セキュリティ → API の制御 →
+ドメイン全体の委任 で、クライアントIDに上のスコープを許可する。
+
+```bash
+gcloud run services update legalbridge-v3 --region=asia-northeast1 \
+  --update-env-vars="GMAIL_INTAKE_LABEL=法務受付"
+
+# 30分ごとに取り込む
+gcloud scheduler jobs create http legalbridge-v3-mail \
+  --location=asia-northeast1 \
+  --schedule="*/30 * * * *" \
+  --time-zone="Asia/Tokyo" \
+  --uri="${URL}/internal/jobs/mail-intake" \
+  --http-method=POST \
+  --headers="Content-Type=application/json,x-lb-webhook-token=${TOKEN}" \
+  --message-body='{"limit":25}' \
+  --oidc-service-account-email="${SA}" \
+  --oidc-token-audience="${URL}"
+```
+
+取り込みの規則:
+
+| 届いたもの | どうなるか |
+|---|---|
+| 初めてのスレッド | 案件が1件立つ（件名が案件名、言葉から種別を寄せる） |
+| 同じスレッドの続き | 案件は増えない。紐づけに最新の件名・添付名が残る |
+| 件名に `MTR-2026-00219` | その案件に寄る |
+| こちらが出した文書番号への返信 | その文書の案件に寄る |
+| 自動返信・不在通知・不達通知 | 取り込まない（記録もしない） |
+| 差出人が取引先の連絡先に1件だけ一致 | 相手先が付く |
+| 一致しない／2件以上 | **相手先を作らない**。`MAIL_SENDER_UNRESOLVED` の課題が立つ |
+
+> 取引先をここで作らないのは意図的。依頼者は相手先を正式名称で書かない
+> ので、書かれたとおりに作るとマスタが表記ゆれで膨らむ（V1 の取引先が
+> 2,552件になった経路）。相手先の登録は法務が画面から行う。
+
+**★ 確認：まず手で1回**
+
+```bash
+gcloud scheduler jobs run legalbridge-v3-mail --location=asia-northeast1
+```
+
+運用タブ→外部連携で「メールの取り込み：有効」になっていること。
+立った案件は 案件一覧に `MTR-` で並ぶ。当たらなかった差出人は
+運用タブ→データ品質に出る。
+
+栞（どこまで読んだか）は `v3.settings` の `mail_intake_cursor`。
+取り込みの重複はメッセージIDで弾くので、栞を戻しても案件は増えない。
+
+```bash
+psql -c "SELECT value FROM v3.settings WHERE key='mail_intake_cursor';"
+```
+
+---
 
 ## 手順8.6：Slack の受付フォーム
 

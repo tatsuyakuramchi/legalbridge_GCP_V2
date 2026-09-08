@@ -177,7 +177,22 @@ psql "$ADMIN_DSN" -c \
      FROM information_schema.tables WHERE table_schema='v3';"
 ```
 
-表 28 / ビュー 6 になっていること。
+表 28 / ビュー 7 になっていること。
+
+---
+
+## 3.5 あとから足した変更を当てる
+
+`001_schema.sql` は `CREATE TABLE IF NOT EXISTS` で書いてあるため、既に作った
+表には流し直しても効かない。制約・列の変更は `004_amend.sql` に積む。冪等。
+
+```bash
+psql "$ADMIN_DSN" -v ON_ERROR_STOP=1 -f infra/v3/004_amend.sql
+```
+
+初回は `A-001: matter_links.target_type に email_thread を足した`、2回目以降は
+`A-001: 適用済み`。**新しい表を足す変更を入れたときは `003_grants.sql` も
+流し直すこと**（新しい表にランタイムロールの権限が付かない）。
 
 ---
 
@@ -458,6 +473,30 @@ Webhook は `POST {URL}/internal/webhooks/{source}`（`source` は
 Cloud Run が `--no-allow-unauthenticated` のままだと外部から叩けないので、
 受信を有効にするタイミングで `/internal` だけを通す経路（Load Balancer + Cloud Armor、
 または該当サービスへの `allUsers` 付与）を用意する。
+
+受け取った出来事は記録するだけでなく業務に反映する:
+
+| 受信 | 反映先 |
+|---|---|
+| CloudSign 署名完了 | **合意**の状態を `executed` に（文書ではない。署名されたのは合意そのもの） |
+| CloudSign 辞退・取消 | 合意の状態を `terminated` に |
+| CloudSign 送信済・閲覧済 | 途中経過。何も動かさない |
+| Backlog 課題の更新 | 紐づけ（`matter_links`）に最新の状態を写す。**案件の状態は動かさない** |
+| Backlog 課題が完了・案件は開いたまま | `BACKLOG_CLOSED_MATTER_OPEN` の課題が立つ（人が判断する） |
+
+### 8.5 定期実行
+
+`POST {URL}/internal/jobs/{name}`（`daily` / `mail-intake`）。共有シークレット
+`x-lb-webhook-token` で守る。
+
+**`/api/v3/jobs/...` を Cloud Scheduler から叩かないこと。** `/api/v3` は IAP の
+ヘッダを見るので、OIDC トークンだけでは 401 になる（毎朝静かに落ちる）。
+コマンドは `docs/v3-deploy-cloudshell.md` の手順8・8.5。
+
+- `daily`：満了間近の契約・期日超過のタスク・支払期日を洗い出し、
+  ゲートを通して通知する。off なら洗い出しと記録だけ。
+- `mail-intake`：`GMAIL_INTAKE_LABEL` のラベルが付いたメールから案件を立てる。
+  重複はメッセージIDで弾く。取引先は作らない（当たらなければ課題として残す）。
 
 ---
 

@@ -88,36 +88,36 @@ export class DailyJob {
   }
 
   private async collect(client: Queryable): Promise<DailyFinding[]> {
-    const [agreements, tasks, payments] = await Promise.all([
-      client.query(
-        `SELECT a.id, a.agreement_no, a.title, a.expires_on, a.auto_renewal,
-                a.renewal_notice_months, p.name AS party,
-                (a.expires_on - current_date) AS days
-           FROM agreements a JOIN parties p ON p.id = a.counterparty_id
-          WHERE a.status = 'executed' AND a.expires_on IS NOT NULL
-            AND a.expires_on <= current_date + $1::int
-          ORDER BY a.expires_on`, [EXPIRY_NOTICE_DAYS]),
+    // 1本のトランザクション接続に同時に問い合わせない（pg は多重実行を
+    // 受け付けない。並べても速くならず、pg@9 では動かなくなる）。
+    const agreements = await client.query(
+      `SELECT a.id, a.agreement_no, a.title, a.expires_on, a.auto_renewal,
+              a.renewal_notice_months, p.name AS party,
+              (a.expires_on - current_date) AS days
+         FROM agreements a JOIN parties p ON p.id = a.counterparty_id
+        WHERE a.status = 'executed' AND a.expires_on IS NOT NULL
+          AND a.expires_on <= current_date + $1::int
+        ORDER BY a.expires_on`, [EXPIRY_NOTICE_DAYS]);
 
-      client.query(
-        `SELECT t.id, t.title, t.due_at, m.matter_no, m.title AS matter_title,
-                s.name AS assignee,
-                ((t.due_at AT TIME ZONE 'Asia/Tokyo')::date - current_date) AS days
-           FROM tasks t
-           JOIN matters m ON m.id = t.matter_id
-           LEFT JOIN staff s ON s.id = t.assignee_staff_id
-          WHERE t.status <> 'done' AND t.due_at IS NOT NULL
-            AND (t.due_at AT TIME ZONE 'Asia/Tokyo')::date < current_date
-          ORDER BY t.due_at`),
+    const tasks = await client.query(
+      `SELECT t.id, t.title, t.due_at, m.matter_no, m.title AS matter_title,
+              s.name AS assignee,
+              ((t.due_at AT TIME ZONE 'Asia/Tokyo')::date - current_date) AS days
+         FROM tasks t
+         JOIN matters m ON m.id = t.matter_id
+         LEFT JOIN staff s ON s.id = t.assignee_staff_id
+        WHERE t.status <> 'done' AND t.due_at IS NOT NULL
+          AND (t.due_at AT TIME ZONE 'Asia/Tokyo')::date < current_date
+        ORDER BY t.due_at`);
 
-      client.query(
-        `SELECT y.id, y.payment_no, y.due_on, y.amount, y.currency, y.status,
-                p.name AS party, p.kind AS party_kind,
-                (y.due_on - current_date) AS days
-           FROM payments y JOIN parties p ON p.id = y.party_id
-          WHERE y.status IN ('planned', 'approved') AND y.due_on IS NOT NULL
-            AND y.due_on <= current_date + 7
-          ORDER BY y.due_on`)
-    ]);
+    const payments = await client.query(
+      `SELECT y.id, y.payment_no, y.due_on, y.amount, y.currency, y.status,
+              p.name AS party, p.kind AS party_kind,
+              (y.due_on - current_date) AS days
+         FROM payments y JOIN parties p ON p.id = y.party_id
+        WHERE y.status IN ('planned', 'approved') AND y.due_on IS NOT NULL
+          AND y.due_on <= current_date + 7
+        ORDER BY y.due_on`);
 
     const findings: DailyFinding[] = [];
 

@@ -31,11 +31,11 @@ export class DocumentContextRepository {
         throw new DomainError("NOT_FOUND", "指定された条件が見つかりません");
       }
       const agreementId = input.agreementId ?? conditions[0]?.agreementId ?? null;
-      const [agreement, matter, company] = await Promise.all([
-        agreementId ? this.agreement(client, agreementId) : Promise.resolve(null),
-        input.matterId ? this.matter(client, input.matterId) : Promise.resolve(null),
-        this.company(client)
-      ]);
+      // client はトランザクションの接続で渡ってくることがある。1本の接続に
+      // 同時に問い合わせられないので、順に読む。
+      const agreement = agreementId ? await this.agreement(client, agreementId) : null;
+      const matter = input.matterId ? await this.matter(client, input.matterId) : null;
+      const company = await this.company(client);
 
       const currency = conditions[0]?.currency ?? "JPY";
       const exTax = conditions.reduce((sum, c) => sum + (c.flatAmountMinor ?? 0), 0);
