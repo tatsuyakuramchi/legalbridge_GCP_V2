@@ -66,6 +66,28 @@ export function buildCandidates(context: Record<string, any>): Candidate[] {
     add("条件", "AG 前払保証", c.agAmount, "amount");
   }
 
+  // 取引先。宛名・インボイス番号は書類にそのまま載る。
+  if (c) {
+    add("取引先", "取引先カナ", c.counterparty?.kana, "text");
+    add("取引先", "インボイス登録番号", c.counterparty?.invoiceNo, "text");
+    add("取引先", "法人番号", c.counterparty?.corporateNo, "text");
+  }
+  for (const contact of (context.contacts ?? []) as Array<Record<string, any>>) {
+    const role = CONTACT_ROLE[contact.role] ?? contact.role;
+    add("取引先", `${role}の氏名`, contact.name, "text");
+    add("取引先", `${role}の部署`, contact.department, "text");
+    add("取引先", `${role}のメール`, contact.email, "text");
+    add("取引先", `${role}の電話`, contact.phone, "text");
+  }
+
+  // 案件の担当者。検収書の「検収者」はたいていこの人。
+  const o = context.owner;
+  if (o) {
+    add("担当", "担当者名", o.name, "text");
+    add("担当", "担当者の部署", o.department, "text");
+    add("担当", "担当者のメール", o.email, "text");
+  }
+
   const e = context.event;
   if (e) {
     add("実績", "実績の発生日", e.occurredOn, "date");
@@ -120,6 +142,10 @@ export function buildCandidates(context: Record<string, any>): Candidate[] {
   }
   return out;
 }
+
+const CONTACT_ROLE: Record<string, string> = {
+  primary: "先方担当", signer: "署名者", billing: "請求先"
+};
 
 const COMPANY_LABEL: Record<string, string> = {
   name: "自社名", address: "自社住所", tel: "自社電話", representative: "代表者名",

@@ -942,6 +942,59 @@ export function createRoutes(database: Transactable) {
       res.json({ saved: Object.keys(values).length });
     }));
 
+  /**
+   * 引用元の検索。
+   *
+   * 条件や案件から辿れない人（別の部署の検収者、相手先の別の担当者）は
+   * 候補に出てこない。名前で探して引けるようにする。最小入力で書類を
+   * 作るという建て付けは、探して引けることまで含めて成り立つ。
+   */
+  router.get("/quote-sources", asyncRoute(async (req, res) => {
+    const q = String(req.query.q ?? "").trim();
+    if (q.length < 1) return res.json({ candidates: [] });
+    const like = `%${q}%`;
+    const staff = await database.query(
+      `SELECT name, email, department, staff_code FROM staff
+        WHERE status = 'active'
+          AND (name ILIKE $1 OR department ILIKE $1 OR email ILIKE $1 OR staff_code ILIKE $1)
+        ORDER BY department NULLS LAST, name LIMIT 8`, [like]);
+    const partyRows = await database.query(
+      `SELECT p.id, p.name, p.name_kana, p.invoice_no, p.kind
+         FROM parties p
+        WHERE p.status = 'active' AND (p.name ILIKE $1 OR p.name_kana ILIKE $1)
+        ORDER BY p.name LIMIT 8`, [like]);
+    const contacts = await database.query(
+      `SELECT c.role, c.name, c.email, c.department, p.name AS party_name
+         FROM party_contacts c JOIN parties p ON p.id = c.party_id
+        WHERE c.name ILIKE $1 OR c.department ILIKE $1 OR c.email ILIKE $1
+        ORDER BY p.name LIMIT 8`, [like]);
+
+    const out: Array<{ label: string; value: string; source: string; kind: string }> = [];
+    const push = (source: string, label: string, value: unknown) => {
+      const text = String(value ?? "").trim();
+      if (!text || out.some((o) => o.label === label && o.value === text)) return;
+      out.push({ label, value: text, source, kind: "text" });
+    };
+    for (const r of staff.rows as Array<Record<string, any>>) {
+      push("スタッフ", `${r.name} の氏名`, r.name);
+      push("スタッフ", `${r.name} の部署`, r.department);
+      push("スタッフ", `${r.name} のメール`, r.email);
+    }
+    for (const r of partyRows.rows as Array<Record<string, any>>) {
+      push("取引先", `${r.name} の名称`, r.name);
+      push("取引先", `${r.name} の宛名`,
+           `${r.name} ${r.kind === "individual" ? "様" : "御中"}`);
+      push("取引先", `${r.name} のカナ`, r.name_kana);
+      push("取引先", `${r.name} のインボイス番号`, r.invoice_no);
+    }
+    for (const r of contacts.rows as Array<Record<string, any>>) {
+      push("先方担当", `${r.party_name} ${r.name ?? ""} の氏名`, r.name);
+      push("先方担当", `${r.party_name} ${r.name ?? ""} の部署`, r.department);
+      push("先方担当", `${r.party_name} ${r.name ?? ""} のメール`, r.email);
+    }
+    res.json({ candidates: out.slice(0, 24) });
+  }));
+
   router.post("/documents/preview",
     requireRole("admin", "legal"),
     asyncRoute(async (req, res) => {

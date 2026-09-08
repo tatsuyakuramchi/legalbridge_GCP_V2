@@ -41,6 +41,11 @@ export class DocumentContextRepository {
       const matter = input.matterId ? await this.matter(client, input.matterId) : null;
       const company = await this.company(client);
       const events = input.eventIds?.length ? await this.events(client, input.eventIds) : [];
+      // 取引先の担当者（署名者・請求先）と、案件の担当スタッフ。
+      // 書類の宛名や検収者はここから引ける。
+      const partyId = conditions[0]?.counterpartyId ?? null;
+      const contacts = partyId ? await this.contacts(client, partyId) : [];
+      const owner = input.matterId ? await this.owner(client, input.matterId) : null;
 
       const currency = conditions[0]?.currency ?? "JPY";
       const exTax = conditions.reduce((sum, c) => sum + (c.flatAmountMinor ?? 0), 0);
@@ -61,6 +66,10 @@ export class DocumentContextRepository {
         /** 単一条件のテンプレートはこちらを使う。 */
         condition: conditions[0] ?? null,
         events,
+        /** 取引先の担当者。role ごとに引ける（primary / signer / billing）。 */
+        contacts,
+        /** 案件の担当スタッフ。検収者の既定になりうる。 */
+        owner,
         /** 実績が1件のときはこちら。検収書はこの日付と金額を使う。 */
         event: events[0] ?? null,
         /** 計算書の金額。試算の結果をそのまま渡す。無ければ null。 */
@@ -80,6 +89,32 @@ export class DocumentContextRepository {
    * これまでコンテキストに入っておらず、実績から検収書を作っても
    * 日付も金額も人が打ち直すことになっていた。
    */
+  /** 取引先の担当者。役割ごとに1件までなので、そのまま並べる。 */
+  private async contacts(client: Queryable, partyId: number) {
+    const r = await client.query(
+      `SELECT role, name, email, phone, department FROM party_contacts
+        WHERE party_id = $1 ORDER BY role`, [partyId]);
+    return (r.rows as Array<Record<string, any>>).map((row) => ({
+      role: String(row.role),
+      name: str(row.name), email: str(row.email),
+      phone: str(row.phone), department: str(row.department)
+    }));
+  }
+
+  /** 案件の担当者。検収書の「検収者」はたいていこの人。 */
+  private async owner(client: Queryable, matterId: number) {
+    const r = await client.query(
+      `SELECT s.name, s.email, s.department, s.staff_code
+         FROM matters m JOIN staff s ON s.id = m.owner_staff_id
+        WHERE m.id = $1`, [matterId]);
+    const row = r.rows[0] as Record<string, any> | undefined;
+    if (!row) return null;
+    return {
+      name: String(row.name), email: str(row.email),
+      department: str(row.department), staffCode: str(row.staff_code)
+    };
+  }
+
   private async events(client: Queryable, ids: number[]) {
     const r = await client.query(
       `SELECT e.id, e.event_type, e.occurred_on, e.period, e.quantity,
@@ -116,7 +151,9 @@ export class DocumentContextRepository {
               c.rate_ppm, c.unit_amount, c.flat_amount, c.mg_amount, c.ag_amount,
               c.term_start, c.term_end, c.tax_category, c.payment_terms, c.cycle,
               c.agreement_id, c.exclusivity, c.sublicensable, c.notes,
+              c.counterparty_id,
               p.name AS party_name, p.name_kana AS party_kana, p.kind AS party_kind,
+              p.invoice_no AS party_invoice_no, p.corporate_no AS party_corporate_no,
               w.title AS work_title, w.work_code, wp.name AS part_name
          FROM conditions c
          LEFT JOIN parties p    ON p.id = c.counterparty_id
@@ -152,10 +189,13 @@ export class DocumentContextRepository {
         sublicensable: row.sublicensable,
         notes: str(row.notes),
         agreementId: int(row.agreement_id),
+        counterpartyId: int(row.counterparty_id),
         counterparty: {
           name: str(row.party_name) ?? "",
           kana: str(row.party_kana),
           kind: str(row.party_kind),
+          invoiceNo: str(row.party_invoice_no),
+          corporateNo: str(row.party_corporate_no),
           honorific: honorificFor(str(row.party_kind))
         },
         work: { title: str(row.work_title), code: str(row.work_code), part: str(row.part_name) },

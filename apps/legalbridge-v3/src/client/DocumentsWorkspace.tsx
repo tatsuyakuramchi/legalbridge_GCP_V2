@@ -69,6 +69,11 @@ export function DocumentsWorkspace(
   const [pickedFields, setPickedFields] = useState<Set<string>>(new Set());
   // 候補を開いている欄。文字の欄は候補が多いので、押したときだけ出す。
   const [opened, setOpened] = useState<Set<string>>(new Set());
+  // 候補に無い人を名前で探して引く。別部署の検収者や、相手先の別の担当者。
+  const [quoteFor, setQuoteFor] = useState<string | null>(null);
+  const [quoteQ, setQuoteQ] = useState("");
+  const [quoteHits, setQuoteHits] = useState<Candidate[]>([]);
+  const quoteSearch = useDebounced(quoteQ, 300);
 
   useEffect(() => { void reload(); }, [search]);
   async function reload() {
@@ -103,6 +108,13 @@ export function DocumentsWorkspace(
 
   // 打つたびに問い合わせない。少し待ってからプレビューを取り直す。
   const manualJson = useDebounced(JSON.stringify(manual), 600);
+
+  useEffect(() => {
+    if (!quoteFor || !quoteSearch.trim()) { setQuoteHits([]); return; }
+    api.get<{ candidates: Candidate[] }>(
+      `/quote-sources?q=${encodeURIComponent(quoteSearch.trim())}`)
+      .then((r) => setQuoteHits(r.candidates)).catch(() => setQuoteHits([]));
+  }, [quoteFor, quoteSearch]);
 
   // ひな形を変えたら、前回そのひな形で入れた値を読み込む。
   // 検収者部署・氏名のように毎回同じものを打ち直さずに済む。
@@ -342,7 +354,7 @@ export function DocumentsWorkspace(
                                }} />
                         {fits.length > 0 && (
                           <div className="row" style={{ flexWrap: "wrap", gap: 4, marginTop: 4 }}>
-                            {!inline && (
+                            {!inline && (<>
                               <button type="button" className="btn btn-sm"
                                       onClick={() => setOpened((prev) => {
                                         const next = new Set(prev);
@@ -352,6 +364,34 @@ export function DocumentsWorkspace(
                                       })}>
                                 候補 {open ? "▴" : "▾"}
                               </button>
+                              <button type="button" className="btn btn-sm"
+                                      onClick={() => {
+                                        setQuoteFor(quoteFor === m.name ? null : m.name);
+                                        setQuoteQ(""); setQuoteHits([]);
+                                      }}>
+                                探して入れる
+                              </button>
+                            </>)}
+                            {quoteFor === m.name && (
+                              <div className="stack" style={{ gap: 4, width: "100%", marginTop: 4 }}>
+                                <input value={quoteQ} autoFocus
+                                       placeholder="スタッフ・取引先・先方担当を名前で探す"
+                                       onChange={(e) => setQuoteQ(e.target.value)} />
+                                <div className="row" style={{ flexWrap: "wrap", gap: 4 }}>
+                                  {quoteHits.map((c) => (
+                                    <button key={`${c.label}:${c.value}`} type="button"
+                                            className="btn btn-sm" style={{ whiteSpace: "nowrap" }}
+                                            title={c.source}
+                                            onClick={() => { put(c.value); setQuoteFor(null); }}>
+                                      {c.value}
+                                      <span className="faint" style={{ marginLeft: 4 }}>{c.label}</span>
+                                    </button>
+                                  ))}
+                                  {quoteSearch.trim() && !quoteHits.length && (
+                                    <span className="faint">見つかりません</span>
+                                  )}
+                                </div>
+                              </div>
                             )}
                             {open && fits.slice(0, 8).map((c) => (
                               <button key={`${c.label}:${c.value}`} type="button"
