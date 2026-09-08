@@ -355,7 +355,7 @@ gcloud builds submit --config infra/v3/cloudbuild.yaml \
 ```
 
 ビルドは `test` → `build-image` → `push-image` → `deploy` の4段。
-**`test` 段で型検査とテスト115件が通らなければ image も作られない。**
+**`test` 段で型検査とテストが通らなければ image も作られない。**
 
 ---
 
