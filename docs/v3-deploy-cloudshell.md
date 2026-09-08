@@ -611,7 +611,66 @@ psql -c "DROP ROLE legalbridge_v3_runtime;"
 
 ここから下は**メタコマンドを含まない**ので、Cloud SQL Studio にそのまま貼れる。
 Studio へは DB ユーザー（`postgres`）とパスワードでサインインする。
-**確認専用。** 移行スクリプトは上の Cloud Shell 手順で流すこと。
+
+S1 以降は**確認専用**。移行スクリプト（001〜090）は上の Cloud Shell 手順で流すこと。
+唯一の例外が次の S0 で、これは Studio から当ててよい形に書き直してある。
+
+## S0. 手順3.5（`004_amend.sql`）を Studio から当てる
+
+`matter_links.target_type` に `email_thread` を足す。メールのスレッドを案件に
+繋ぐのに要る。**足すまでメールの取り込みは必ず失敗する。**
+
+`004_amend.sql` そのものは `\set` `\echo` を含むので Studio では流せない。
+以下は同じことを素の SQL でやる。**上から順に1つずつ**実行する。
+
+**S0-1 いまの状態を見る**
+
+```sql
+SELECT conname, pg_get_constraintdef(oid) AS def
+  FROM pg_constraint
+ WHERE conrelid = 'v3.matter_links'::regclass AND contype = 'c';
+```
+
+`def` に `email_thread` が既に入っていれば適用済み。ここで終わってよい。
+入っていなければ次へ（`conname` は控えておく。多くは
+`matter_links_target_type_check`）。
+
+**S0-2 新しい制約を別名で足す**
+
+```sql
+ALTER TABLE v3.matter_links
+  ADD CONSTRAINT matter_links_target_type_chk
+  CHECK (target_type IN ('backlog_issue','document','agreement','condition',
+                         'payment','slack_thread','email_thread'));
+```
+
+> 先に足してから古いのを落とす順にしてある。逆にすると、2つの文の間に
+> **制約が1つも無い時間**ができる。この順なら、途中で止まってもテーブルは
+> 常にどちらかの制約で守られている（この間は厳しい方＝古い方が効く）。
+
+**S0-3 古い制約を落とす**
+
+```sql
+ALTER TABLE v3.matter_links
+  DROP CONSTRAINT IF EXISTS matter_links_target_type_check;
+```
+
+S0-1 の `conname` が違う名前だったら、そちらを書くこと。
+
+**S0-4 確かめる**
+
+```sql
+SELECT conname, pg_get_constraintdef(oid) AS def
+  FROM pg_constraint
+ WHERE conrelid = 'v3.matter_links'::regclass AND contype = 'c';
+```
+
+`matter_links_target_type_chk` が1つだけ残り、`def` に `email_thread` が
+入っていること。**2つ残っていたら S0-3 が効いていない**（この状態だと
+メールの取り込みは失敗し続ける）。
+
+S0-2 を二度実行すると `constraint ... already exists` が出る。害はない。
+すでに当たっている印なので、そのまま S0-4 で確かめて先へ進む。
 
 ## S1. 作られたもの（手順3のあと）
 
@@ -620,7 +679,7 @@ SELECT table_type, count(*)
   FROM information_schema.tables
  WHERE table_schema = 'v3'
  GROUP BY table_type ORDER BY table_type;
--- BASE TABLE = 28 / VIEW = 6
+-- BASE TABLE = 28 / VIEW = 7
 ```
 
 ## S2. 権限の境界（手順4のあと）★最重要
