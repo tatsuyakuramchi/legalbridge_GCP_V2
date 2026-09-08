@@ -103,9 +103,12 @@ export class ConditionEventService {
         if (!condition) throw new DomainError("NOT_FOUND", `条件 ${conditionId} が見つかりません`);
         if (condition.status !== "active" && condition.status !== "draft") {
           // 差し替え済み・無効の版に実績を足すと、どの版の実績か分からなくなる。
+          // 適用待ちの版はまだ効いていないので、実績はいまの版に付ける。
           throw new DomainError("CONFLICT",
             condition.status === "superseded"
               ? "旧版には実績を足せません。最新版に記録してください"
+              : condition.status === "scheduled"
+              ? "この版はまだ適用前です。実績はいま有効な版に記録してください"
               : "無効にした条件には実績を足せません");
         }
 

@@ -258,8 +258,14 @@ CREATE TABLE IF NOT EXISTS v3.conditions (
   cycle            text,
 
   status           text NOT NULL DEFAULT 'active'
-                   CHECK (status IN ('draft', 'active', 'superseded', 'void')),
+                   CONSTRAINT conditions_status_chk
+                   CHECK (status IN ('draft', 'active', 'scheduled', 'superseded', 'void')),
   superseded_by_id bigint REFERENCES v3.conditions(id),
+  -- この版が適用され始める日。契約期間（term_start）とは別物で、
+  -- 契約変更の「2027-04-01 から」を、契約そのものの期間を歪めずに表す。
+  effective_from   date,
+  -- 改訂の系列。初版の id を全版が持つ。AGの消化累計も予定明細もこの単位。
+  series_id        bigint,
   notes            text,
   legacy_id        integer,
   created_at       timestamptz NOT NULL DEFAULT now(),
@@ -271,6 +277,8 @@ CREATE TABLE IF NOT EXISTS v3.conditions (
   CHECK (pricing_model <> 'revenue_rate' OR rate_ppm    IS NOT NULL),
   CHECK (pricing_model <> 'fixed'        OR flat_amount IS NOT NULL),
   CHECK (status <> 'superseded' OR superseded_by_id IS NOT NULL),
+  CONSTRAINT conditions_scheduled_needs_date_chk
+    CHECK (status <> 'scheduled' OR effective_from IS NOT NULL),
   CHECK (superseded_by_id IS NULL OR superseded_by_id <> id),
   CHECK (parent_id IS NULL OR parent_id <> id)
 );
@@ -282,6 +290,20 @@ CREATE INDEX IF NOT EXISTS conditions_parent_idx  ON v3.conditions (parent_id) W
 CREATE INDEX IF NOT EXISTS conditions_active_idx  ON v3.conditions (direction, status);
 CREATE UNIQUE INDEX IF NOT EXISTS conditions_legacy_uq
   ON v3.conditions (legacy_id) WHERE legacy_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS conditions_series_idx
+  ON v3.conditions (series_id, effective_from);
+
+-- 系列は書き手ごとに取りこぼすと後から直せないので、アプリではなくここで担保する。
+CREATE OR REPLACE FUNCTION v3.set_condition_series() RETURNS trigger
+LANGUAGE plpgsql AS $set_series$
+BEGIN
+  IF NEW.series_id IS NULL THEN NEW.series_id := NEW.id; END IF;
+  RETURN NEW;
+END
+$set_series$;
+DROP TRIGGER IF EXISTS conditions_series_bi ON v3.conditions;
+CREATE TRIGGER conditions_series_bi BEFORE INSERT ON v3.conditions
+  FOR EACH ROW EXECUTE FUNCTION v3.set_condition_series();
 
 -- 地域・言語・媒体を1表に。scope_type ごとに行が無ければ「無制限」を意味する。
 CREATE TABLE IF NOT EXISTS v3.condition_scopes (

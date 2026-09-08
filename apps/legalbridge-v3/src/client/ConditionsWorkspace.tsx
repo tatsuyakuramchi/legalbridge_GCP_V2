@@ -23,6 +23,10 @@ type RoyaltyPreview = {
   };
   payment: { withholdingEnabled: boolean; withholdingTax: number; netTransfer: number };
   agConsumedBefore: number;
+  /** 実際に計算に使った版。契約変更の適用開始日をまたぐと、渡した版と変わる。 */
+  appliedVersion: {
+    id: number; conditionNo: string | null; effectiveFrom: string | null; switched: boolean;
+  } | null;
 };
 type WriteResult = {
   changed: Array<{ target: string; rows: number }>;
@@ -134,7 +138,7 @@ export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
     setError(null);
     try {
       setRoyalty(await api.post<RoyaltyPreview>(`/conditions/${detail.id}/royalty-preview`, {
-        period: "試算",
+        period: "試算", occurredOn: stmtOn || null,
         reported: { salesInput: Number(sales.replace(/[^0-9]/g, "")) || 0 }
       }));
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
@@ -267,7 +271,19 @@ export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
                           e.preventDefault(); setResult(null); setSelected(row.id);
                         }
                       }}>
-                    <td className="code">{row.conditionNo ?? `#${row.id}`}</td>
+                    <td className="code">
+                      {row.conditionNo ?? `#${row.id}`}
+                      {/* 有効でない版は一覧でも見分けが付かないと、
+                          適用待ちや旧版を開いて「直せない」と戸惑う。 */}
+                      {row.status !== "active" && (
+                        <div style={{ marginTop: 3 }}>
+                          <StatusTag kind="condition" value={row.status} />
+                          {row.status === "scheduled" && row.effectiveFrom && (
+                            <span className="faint">　{row.effectiveFrom}〜</span>
+                          )}
+                        </div>
+                      )}
+                    </td>
                     <td><span className="tag">{CONDITION_KIND_LABEL[row.kind] ?? row.kind}</span></td>
                     <td><span className={`tag ${row.direction}`}>{row.direction === "in" ? "IN" : "OUT"}</span></td>
                     <td>{row.name}<div className="faint">{row.counterparty?.name ?? "未設定"}</div></td>
@@ -396,10 +412,20 @@ export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
                 <div className="panel">
                   <div className="panel-hd"><h2>ロイヤリティ試算</h2><span className="faint">保存しません</span></div>
                   <div className="panel-bd stack">
-                    <label className="field">
-                      <span>報告売上</span>
-                      <input value={sales} onChange={(e) => setSales(e.target.value)} placeholder="例: 4896000" />
-                    </label>
+                    <div className="form-grid">
+                      <label className="field">
+                        <span>報告売上</span>
+                        <input value={sales} onChange={(e) => setSales(e.target.value)} placeholder="例: 4896000" />
+                      </label>
+                      <label className="field">
+                        <span>対象日</span>
+                        <input type="date" value={stmtOn}
+                               onChange={(e) => setStmtOn(e.target.value)} />
+                        <small className="faint">
+                          契約変更をまたぐときは、その日に効いていた版で計算します
+                        </small>
+                      </label>
+                    </div>
                     <div className="row">
                       <button className="btn" onClick={previewRoyalty} disabled={!sales}>試算する</button>
                       {royalty && !stmtOpen && (
@@ -449,6 +475,15 @@ export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
                         </div>
                       </div>
                     )}
+                    {royalty?.appliedVersion?.switched && (
+                      <div className="note warn">
+                        契約変更の適用開始日をまたぐので、
+                        <b>{royalty.appliedVersion.effectiveFrom} から適用の
+                        {royalty.appliedVersion.conditionNo ?? `#${royalty.appliedVersion.id}`}</b>
+                        で計算しました。対象日を変えると版も変わります。
+                      </div>
+                    )}
+
                     {royalty && (
                       <table>
                         <tbody>

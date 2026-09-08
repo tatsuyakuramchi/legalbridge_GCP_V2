@@ -4,14 +4,19 @@ import { FakeDatabase } from "../core/fake-db.js";
 import { ConditionWriteService } from "./write-service.js";
 import { DomainError } from "../core/errors.js";
 
-const baseRows = (over: { status?: string; events?: number } = {}) =>
+const baseRows = (
+  over: { status?: string; events?: number; pending?: Array<Record<string, unknown>> } = {}
+) =>
   (text: string): Array<Record<string, unknown>> | undefined => {
     if (text.includes("FROM conditions WHERE id = $1 FOR UPDATE")) {
       return [{ id: 1, condition_no: "CL-2026-00042", status: over.status ?? "active",
-                counterparty_id: 3, currency: "JPY" }];
+                counterparty_id: 3, currency: "JPY", series_id: 1, effective_from: "2026-04-01" }];
     }
     if (text.includes("FROM parties WHERE id = $1")) return [{ id: 9, name: "新しい取引先" }];
     if (text.includes("count(*)::int AS n FROM condition_events")) return [{ n: over.events ?? 0 }];
+    if (text.includes("SELECT current_date AS d")) return [{ d: "2026-09-08" }];
+    if (text.includes("status = 'scheduled' AND id <> $2")) return over.pending ?? [];
+    if (text.includes("UPDATE condition_schedules s")) return [];
     if (text.includes("AS documents")) {
       return [{ documents: 3, payments: 1, matters: 1, children: 0 }];
     }
@@ -102,4 +107,73 @@ test("権限不足（42501）は機能縮退できる形の DomainError に変�
     () => new ConditionWriteService(db).changeCounterparty(1, 9, "tester"),
     (error: unknown) => error instanceof DomainError && error.code === "DB_FORBIDDEN"
   );
+});
+
+// ---- 契約変更の適用開始日 ----
+
+const FUTURE = "2027-04-01";
+
+test("未来の適用開始日を渡すと、いまの版は生きたまま予約の版ができる", async () => {
+  const db = new FakeDatabase(baseRows({ events: 3 }));
+  const r = await new ConditionWriteService(db)
+    .updateEconomics(1, { ratePpm: 150000 }, "tester", FUTURE);
+
+  const insert = db.find("INSERT INTO conditions")!;
+  assert.match(insert.text, /'scheduled'|\$\d+ FROM conditions/, "新版を挿す");
+  assert.ok(insert.params.includes("scheduled"), "予約の版として置く");
+  assert.ok(insert.params.includes(FUTURE), "適用開始日を持たせる");
+  // 旧版は superseded にしない。active が2行あると集計が二重になるので
+  // 新版のほうを scheduled にして避ける。
+  assert.equal(db.find("SET status = 'superseded'"), undefined,
+    "適用日が来るまで、いまの版が効いたままでなければならない");
+  assert.equal(r.revisedTo, 77);
+});
+
+test("適用開始日が今日以前なら、これまでどおり即座に切り替わる", async () => {
+  const db = new FakeDatabase(baseRows({ events: 3 }));
+  await new ConditionWriteService(db).updateEconomics(1, { ratePpm: 150000 }, "tester", "2026-01-01");
+  assert.ok(db.find("SET status = 'superseded'"), "旧版はその場で差し替え済みになる");
+});
+
+test("適用開始日を省いても、新版は今日から適用として記録する", async () => {
+  const db = new FakeDatabase(baseRows({ events: 3 }));
+  await new ConditionWriteService(db).updateEconomics(1, { ratePpm: 150000 }, "tester");
+  const insert = db.find("INSERT INTO conditions")!;
+  assert.match(insert.text, /current_date/,
+    "JS の時計ではなく SQL の current_date（時差で1日ずれる）");
+});
+
+test("予約は系列に1つだけ。二重に入れさせない", async () => {
+  const db = new FakeDatabase(baseRows({
+    events: 3, pending: [{ id: 55, condition_no: "CL-R2", effective_from: "2027-01-01" }] }));
+  await assert.rejects(
+    () => new ConditionWriteService(db).updateEconomics(1, { ratePpm: 150000 }, "tester", FUTURE),
+    /すでに 2027-01-01 適用の改訂が予定されています/);
+  assert.equal(db.find("INSERT INTO conditions"), undefined);
+});
+
+test("予約そのものを直すときは、版を増やさず上書きする", async () => {
+  const db = new FakeDatabase(baseRows({ status: "scheduled", events: 0 }));
+  await new ConditionWriteService(db).updateEconomics(1, { ratePpm: 160000 }, "tester", FUTURE);
+  assert.equal(db.find("INSERT INTO conditions"), undefined, "まだ効いていないので版は増やさない");
+  const update = db.find("UPDATE conditions SET")!;
+  assert.ok(update.params.includes(FUTURE));
+});
+
+test("改訂は予定明細を新版へ引き継ぐ（写さずに移す）", async () => {
+  const db = new FakeDatabase(baseRows({ events: 3 }));
+  await new ConditionWriteService(db).updateEconomics(1, { flatAmount: 300000 }, "tester", FUTURE);
+  const carry = db.find("UPDATE condition_schedules s")!;
+  assert.ok(carry, "引き継がないと、12回分の予定が改訂で消える");
+  assert.match(carry.text, /SET condition_id = \$2/, "両方の版に残すと予定の合計が二重になる");
+  assert.match(carry.text, /due_on >= \$3::date/, "適用日より前の回は旧版のまま");
+  assert.match(carry.text, /NOT EXISTS \(SELECT 1 FROM condition_events/,
+    "実績が付いた回は動かさない");
+});
+
+test("改訂は系列を引き継ぐ", async () => {
+  const db = new FakeDatabase(baseRows({ events: 3 }));
+  await new ConditionWriteService(db).updateEconomics(1, { ratePpm: 150000 }, "tester");
+  assert.match(db.find("INSERT INTO conditions")!.text, /series_id/,
+    "系列が切れると AG の消化累計が版ごとに分かれる");
 });

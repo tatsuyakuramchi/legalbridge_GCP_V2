@@ -263,10 +263,12 @@ export class ConditionScheduleService {
           "SELECT id, status FROM conditions WHERE id = $1", [conditionId]);
         const condition = head.rows[0] as { status: string } | undefined;
         if (!condition) throw new DomainError("NOT_FOUND", `条件 ${conditionId} が見つかりません`);
-        if (condition.status === "superseded" || condition.status === "void") {
+        if (condition.status !== "active" && condition.status !== "draft") {
           throw new DomainError("CONFLICT",
             condition.status === "superseded"
               ? "旧版には実績を足せません。最新版を開いてください"
+              : condition.status === "scheduled"
+              ? "この版はまだ適用前です。実績はいま有効な版に記録してください"
               : "無効にした条件には実績を足せません");
         }
 

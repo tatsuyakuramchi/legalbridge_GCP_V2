@@ -18,11 +18,20 @@ const payment = (days: number) => ({
   currency: "JPY", status: "planned", party: "山田太郎", party_kind: "individual", days
 });
 
-const build = (opts: { agreements?: any[]; tasks?: any[]; payments?: any[] } = {}) =>
+const build = (opts: {
+  agreements?: any[]; tasks?: any[]; payments?: any[];
+  scheduled?: any[]; previous?: any[];
+} = {}) =>
   new FakeDatabase((t) => {
     if (t.includes("FROM agreements a")) return opts.agreements ?? [];
     if (t.includes("FROM tasks t")) return opts.tasks ?? [];
     if (t.includes("FROM payments y")) return opts.payments ?? [];
+    if (t.includes("WHERE status = 'scheduled' AND effective_from <= current_date")) {
+      return opts.scheduled ?? [];
+    }
+    if (t.includes("AND status = 'active'\n            AND (effective_from IS NULL")) {
+      return opts.previous ?? [];
+    }
     return undefined;
   });
 
@@ -110,4 +119,45 @@ test("本文は超過が古い順。放っておいた分だけ重い", () => {
   const body = formatBody(findings, "2026-09-08");
   assert.ok(body.indexOf("古い遅れ") < body.indexOf("新しい遅れ"));
   assert.match(body, /50日超過/);
+});
+
+// ---- 予約された改訂の適用 ----
+
+const pending = () => ({
+  id: 77, condition_no: "CL-2026-00042-R2", series_id: 5, effective_from: new Date(2027, 3, 1)
+});
+
+test("適用開始日が来た改訂を効かせ、前の版を差し替え済みにする", async () => {
+  const db = build({ scheduled: [pending()], previous: [{ id: 5 }] });
+  const r = await new DailyJob(db).run();
+
+  const supersede = db.find("SET status = 'superseded'")!;
+  assert.deepEqual(supersede.params, [5, 77], "前の版を新しい版で差し替える");
+  assert.ok(db.find("SET status = 'active'"), "予約の版を効かせる");
+  assert.equal(r.applied.length, 1);
+  assert.equal(r.applied[0].conditionNo, "CL-2026-00042-R2");
+  assert.equal(r.applied[0].supersededId, 5);
+});
+
+test("前の版が無くても効かせる（初版が予約だった場合）", async () => {
+  const db = build({ scheduled: [pending()], previous: [] });
+  const r = await new DailyJob(db).run();
+  assert.equal(db.find("SET status = 'superseded'"), undefined);
+  assert.ok(db.find("SET status = 'active'"));
+  assert.equal(r.applied[0].supersededId, null);
+});
+
+test("適用日が来ていなければ何も動かさない", async () => {
+  const db = build({ scheduled: [] });
+  const r = await new DailyJob(db).run();
+  assert.deepEqual(r.applied, []);
+  assert.equal(db.find("SET status = 'active'"), undefined);
+});
+
+test("切り替えは監査に残す（人が押さずに変わるので、記録が無いと追えない）", async () => {
+  const db = build({ scheduled: [pending()], previous: [{ id: 5 }] });
+  await new DailyJob(db).run();
+  const audit = db.all("INSERT INTO audit_events")
+    .find((q) => q.params[1] === "condition.apply_revision");
+  assert.ok(audit, "誰が押したわけでもない変更こそ記録が要る");
 });

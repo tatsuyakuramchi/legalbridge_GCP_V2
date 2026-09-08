@@ -35,6 +35,8 @@ const TASK: Record<string, Entry> = {
 const CONDITION: Record<string, Entry> = {
   draft: { label: "下書き", tone: "" },
   active: { label: "有効", tone: "accent" },
+  // 契約変更を締結して記録済みだが、適用開始日がまだ来ていない版。
+  scheduled: { label: "適用待ち", tone: "warn" },
   superseded: { label: "差し替え済み", tone: "" },
   void: { label: "無効", tone: "out" }
 };

@@ -1,4 +1,4 @@
-import { inTransaction, type Queryable, type Transactable } from "../core/db.js";
+import { dateStr, inTransaction, type Queryable, type Transactable } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { calculateFee, type FeeResult } from "./calc.js";
@@ -25,6 +25,13 @@ export interface CalculationPreview {
   /** 保存するときの値（最小通貨単位）。 */
   amounts: { grossMinor: number; netMinor: number; taxMinor: number; agOffsetMinor: number; mgTopupMinor: number };
   agConsumedBefore: number;
+  /**
+   * 実際に計算に使った版。渡した条件と違うときは、契約変更の適用開始日を
+   * またいでいる。画面はこれを出して、なぜその料率になったのかを見せる。
+   */
+  appliedVersion: {
+    id: number; conditionNo: string | null; effectiveFrom: string | null; switched: boolean;
+  } | null;
 }
 
 /**
@@ -70,6 +77,9 @@ export class RoyaltyStatementService {
 
         // 画面から来た金額は使わず、ここで計算し直す。
         const result = await this.calculate(client, input);
+        // 実績と計算書は、実際に計算に使った版にぶら下げる。渡された版に
+        // 付けると、料率と実績の版が食い違って後から検算できない。
+        const conditionId = result.appliedVersion?.id ?? input.conditionId;
 
         const event = await client.query(
           `INSERT INTO condition_events
@@ -77,7 +87,7 @@ export class RoyaltyStatementService {
               gross_amount, deductions, amount, document_id, created_by)
            VALUES ($1, $2, COALESCE($3::date, current_date), $4, $5, $6, $7, $8, $9, $10, $11)
            RETURNING id`,
-          [input.conditionId, input.eventType ?? "sales", input.occurredOn ?? null, input.period,
+          [conditionId, input.eventType ?? "sales", input.occurredOn ?? null, input.period,
            input.reported.quantity ?? null, input.reported.sampleQuantity ?? null,
            result.amounts.grossMinor, result.amounts.agOffsetMinor, result.amounts.netMinor,
            input.documentId, actor]
@@ -90,7 +100,7 @@ export class RoyaltyStatementService {
               net_amount, tax_amount)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
            RETURNING id`,
-          [input.documentId, input.conditionId, input.period, result.condition.currency,
+          [input.documentId, conditionId, input.period, result.condition.currency,
            result.amounts.grossMinor, result.amounts.mgTopupMinor, result.amounts.agOffsetMinor,
            result.amounts.netMinor, result.amounts.taxMinor]
         );
@@ -101,7 +111,7 @@ export class RoyaltyStatementService {
              (statement_id, line_no, condition_id, event_id, quantity, sample_quantity,
               unit_amount, rate_ppm, sales_input, fx_rate, amount)
            VALUES ($1, 1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-          [statementId, input.conditionId, eventId,
+          [statementId, conditionId, eventId,
            input.reported.quantity ?? null, input.reported.sampleQuantity ?? null,
            null, null, input.reported.salesInput ?? null, input.reported.fxRate ?? null,
            result.amounts.netMinor]
@@ -110,7 +120,9 @@ export class RoyaltyStatementService {
         await recordAudit(client, {
           actor, action: "royalty.finalize", targetType: "statement", targetId: statementId,
           detail: {
-            conditionId: input.conditionId, documentId: input.documentId, period: input.period,
+            conditionId, requestedConditionId: input.conditionId,
+            appliedVersion: result.appliedVersion,
+            documentId: input.documentId, period: input.period,
             gross: result.amounts.grossMinor, net: result.amounts.netMinor,
             agOffset: result.amounts.agOffsetMinor, mgTopup: result.amounts.mgTopupMinor,
             formula: result.fee.formula_breakdown
@@ -160,8 +172,12 @@ export class RoyaltyStatementService {
   }
 
   private async calculate(client: Queryable, input: CalculationInput): Promise<CalculationPreview> {
-    const condition = await this.loadCondition(client, input.conditionId);
-    const agConsumedBefore = await this.agConsumedBefore(client, input.conditionId);
+    const resolved = await this.resolveVersion(client, input.conditionId, input.occurredOn ?? null);
+    // 対象日に効いていた版で計算する。渡された版とずれたら、黙って差し替えずに
+    // 結果へ載せる（なぜその料率になったのかが画面から読めないと検算できない）。
+    const usedId = resolved?.id ?? input.conditionId;
+    const condition = await this.loadCondition(client, usedId);
+    const agConsumedBefore = await this.agConsumedBefore(client, usedId);
 
     const terms = buildFeeTerms(condition, input.reported);
     const adjustments = buildAdjustments(condition, input.reported, agConsumedBefore);
@@ -192,7 +208,10 @@ export class RoyaltyStatementService {
         agOffsetMinor: toMinor(fee.ag_offset_this_time, currency),
         mgTopupMinor: toMinor(fee.mg_topup_this_time, currency)
       },
-      agConsumedBefore
+      agConsumedBefore,
+      appliedVersion: resolved
+        ? { ...resolved, switched: resolved.id !== input.conditionId }
+        : null
     };
   }
 
@@ -226,13 +245,50 @@ export class RoyaltyStatementService {
 
   /**
    * これまでに消化した AG の累計（最小通貨単位）。
+   *
+   * 1版ではなく改訂の系列で数える。契約変更で条件を改訂すると新しい行に
+   * なるが、前払保証はその契約に対して1本なので、版が変わっても消化は
+   * 引き継ぐ。版ごとに数えると、改訂のたびに残高が満額に戻り、次の計算書が
+   * 消化済みの分をもう一度相殺してしまう。
+   *
    * void のイベントは数えない。deductions 列に AG 相殺分を積んでいる。
    */
   private async agConsumedBefore(client: Queryable, conditionId: number): Promise<number> {
     const r = await client.query(
-      `SELECT COALESCE(SUM(deductions), 0)::bigint AS consumed
-         FROM condition_events
-        WHERE condition_id = $1 AND status = 'active'`, [conditionId]);
+      `SELECT COALESCE(SUM(e.deductions), 0)::bigint AS consumed
+         FROM condition_events e
+         JOIN conditions c ON c.id = e.condition_id
+        WHERE c.series_id = (SELECT series_id FROM conditions WHERE id = $1)
+          AND e.status = 'active'`, [conditionId]);
     return Number((r.rows[0] as { consumed: string | number }).consumed ?? 0);
+  }
+
+  /**
+   * 対象日に効いていた版を選ぶ。
+   *
+   * 契約変更の適用開始日より前の期間を後から計算するとき、いまの版で計算すると
+   * 料率が違う。逆に、適用開始日が未来の予約版でも、その日以降の期間なら
+   * そちらで計算する必要がある。だから status ではなく日付で決める。
+   *
+   * 対象日は発生日。入っていなければ今日として扱う。
+   */
+  private async resolveVersion(
+    client: Queryable, conditionId: number, asOf: string | null
+  ): Promise<{ id: number; conditionNo: string | null; effectiveFrom: string | null } | null> {
+    const r = await client.query(
+      `SELECT c.id, c.condition_no, c.effective_from
+         FROM conditions c
+        WHERE c.series_id = (SELECT series_id FROM conditions WHERE id = $1)
+          AND c.status IN ('active', 'scheduled', 'superseded')
+          AND (c.effective_from IS NULL OR c.effective_from <= COALESCE($2::date, current_date))
+        ORDER BY c.effective_from DESC NULLS LAST, c.id DESC
+        LIMIT 1`, [conditionId, asOf]);
+    const row = r.rows[0] as
+      { id: number; condition_no: string | null; effective_from: unknown } | undefined;
+    if (!row) return null;
+    return {
+      id: Number(row.id), conditionNo: row.condition_no ? String(row.condition_no) : null,
+      effectiveFrom: dateStr(row.effective_from)
+    };
   }
 }

@@ -32,6 +32,9 @@ export interface DailyFinding {
 export interface DailyReport {
   runOn: string;
   findings: DailyFinding[];
+  /** その日から適用に変わった条件。人が押さなくても切り替わるので、必ず出す。 */
+  applied: Array<{ conditionId: number; conditionNo: string | null;
+                   effectiveFrom: string | null; supersededId: number | null }>;
   counts: Record<string, number>;
   /** 通知したか。ゲートが off なら false。 */
   notified: boolean;
@@ -49,6 +52,9 @@ export class DailyJob {
 
   async run(options: { notifyChannel?: string; notifyTo?: string } = {}): Promise<DailyReport> {
     try {
+      const applied = await inTransaction(this.database,
+        (client) => this.applyScheduledRevisions(client));
+
       const findings = await inTransaction(this.database, async (client) => {
         const found = await this.collect(client);
         await recordAudit(client, {
@@ -64,7 +70,7 @@ export class DailyJob {
 
       const report: DailyReport = {
         runOn: dateStr(new Date()) ?? "",
-        findings, counts: countBy(findings), notified: false
+        findings, counts: countBy(findings), applied, notified: false
       };
 
       if (findings.length && this.dispatch && options.notifyChannel && options.notifyTo) {
@@ -85,6 +91,58 @@ export class DailyJob {
       }
       return report;
     } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 予約された改訂を、適用開始日が来たら効かせる。
+   *
+   * 状態を保存せず参照のたびに日付で解決する手もあるが、conditions を
+   * status='active' で絞っている箇所が8つあり、全部に「いつの話か」を
+   * 持ち込むことになる。ここで1回切り替えるほうが読み手を触らずに済む。
+   *
+   * ジョブが止まったときは旧版のまま残る。新しい料率で勝手に計算書が出る
+   * よりは安全側に倒れる。日付での解決は計算書だけが別に持っている。
+   */
+  private async applyScheduledRevisions(client: Queryable) {
+    const due = await client.query(
+      `SELECT id, condition_no, series_id, effective_from FROM conditions
+        WHERE status = 'scheduled' AND effective_from <= current_date
+        ORDER BY series_id, effective_from, id
+        FOR UPDATE`);
+
+    const applied: DailyReport["applied"] = [];
+    for (const row of due.rows as Array<Record<string, any>>) {
+      const id = Number(row.id);
+      // 同じ系列で、この版より前から効いていた版を旧版にする。
+      const previous = await client.query(
+        `SELECT id FROM conditions
+          WHERE series_id = $1 AND id <> $2 AND status = 'active'
+            AND (effective_from IS NULL OR effective_from <= $3::date)
+          ORDER BY effective_from DESC NULLS LAST, id DESC
+          LIMIT 1`, [row.series_id, id, row.effective_from]);
+      const prior = previous.rows[0] as { id: number } | undefined;
+
+      if (prior) {
+        await client.query(
+          `UPDATE conditions SET status = 'superseded', superseded_by_id = $2, updated_at = now()
+            WHERE id = $1`, [prior.id, id]);
+      }
+      await client.query(
+        "UPDATE conditions SET status = 'active', updated_at = now() WHERE id = $1", [id]);
+
+      await recordAudit(client, {
+        actor: "system", action: "condition.apply_revision",
+        targetType: "condition", targetId: id,
+        detail: { effectiveFrom: dateStr(row.effective_from),
+                  supersededId: prior ? Number(prior.id) : null }
+      });
+      applied.push({
+        conditionId: id, conditionNo: row.condition_no ? String(row.condition_no) : null,
+        effectiveFrom: dateStr(row.effective_from),
+        supersededId: prior ? Number(prior.id) : null
+      });
+    }
+    return applied;
   }
 
   private async collect(client: Queryable): Promise<DailyFinding[]> {

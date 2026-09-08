@@ -7,7 +7,8 @@ import type {
 
 const SUMMARY_COLUMNS = `
   c.id, c.condition_no, c.direction, c.kind, c.name, c.currency, c.pricing_model,
-  c.rate_ppm, c.flat_amount, c.unit_amount, c.mg_amount, c.ag_amount, c.term_start, c.term_end, c.status,
+  c.rate_ppm, c.flat_amount, c.unit_amount, c.mg_amount, c.ag_amount, c.term_start, c.term_end,
+  c.status, c.effective_from,
   p.id AS party_id, p.name AS party_name, p.kind AS party_kind,
   w.id AS work_id, w.work_code, w.title AS work_title`;
 
@@ -38,6 +39,7 @@ function mapSummary(row: Record<string, any>): ConditionSummary {
     agAmount: int(row.ag_amount),
     termStart: dateStr(row.term_start),
     termEnd: dateStr(row.term_end),
+    effectiveFrom: dateStr(row.effective_from),
     status: row.status
   };
 }
@@ -194,26 +196,17 @@ export class ConditionRepository {
    * 書く処理はあったが読む処理が無く、画面からは「いま有効な版」しか見えず、
    * 前がいくらだったのか・どれが生きているのかを追えなかった。
    *
-   * 起点から前後どちらへも辿る。どの版から開いても同じ並びが返る。
+   * 系列（series_id）で引く。superseded_by_id の鎖を辿ると、まだ効いていない
+   * 予約の版が見えない。予約の版は旧版を差し替えていないので鎖に入らず、
+   * 「2027-04-01 から適用予定の改訂がある」ことが画面に出せなかった。
+   *
+   * どの版から開いても同じ並びが返る。並びは適用開始日の順で、
+   * 予約の版は最後に来る。
    */
   async revisions(id: number): Promise<ConditionRevision[]> {
     try {
       const r = await this.database.query(
-        `WITH RECURSIVE
-           -- 前へ：自分を差し替えた先が集合にいる行
-           back(id) AS (
-             SELECT $1::bigint
-             UNION
-             SELECT c.id FROM conditions c JOIN back b ON c.superseded_by_id = b.id
-           ),
-           -- 後ろへ：自分の差し替え先を辿る
-           fwd(id) AS (
-             SELECT $1::bigint
-             UNION
-             SELECT c.superseded_by_id FROM conditions c JOIN fwd f ON c.id = f.id
-              WHERE c.superseded_by_id IS NOT NULL
-           )
-         SELECT c.id, c.condition_no, c.name, c.status, c.superseded_by_id,
+        `SELECT c.id, c.condition_no, c.name, c.status, c.superseded_by_id, c.effective_from,
                 c.pricing_model, c.rate_ppm, c.flat_amount, c.unit_amount,
                 c.mg_amount, c.ag_amount, c.currency,
                 c.term_start, c.term_end, c.tax_category, c.payment_terms, c.notes,
@@ -225,8 +218,8 @@ export class ConditionRepository {
                   WHERE dc.condition_id = c.id) AS document_count
            FROM conditions c
            LEFT JOIN parties p ON p.id = c.counterparty_id
-          WHERE c.id IN (SELECT id FROM back UNION SELECT id FROM fwd)
-          ORDER BY c.created_at, c.id`,
+          WHERE c.series_id = (SELECT series_id FROM conditions WHERE id = $1)
+          ORDER BY c.effective_from NULLS FIRST, c.created_at, c.id`,
         [id]);
       return (r.rows as any[]).map((row, index) => ({
         id: Number(row.id),
@@ -236,6 +229,7 @@ export class ConditionRepository {
         // 生きているのは active だけ。draft は未発効、あとは役目を終えた版。
         live: row.status === "active",
         supersededById: int(row.superseded_by_id),
+        effectiveFrom: dateStr(row.effective_from),
         revision: index + 1,
         currency: String(row.currency),
         pricingModel: String(row.pricing_model),
@@ -296,10 +290,15 @@ export class ConditionRepository {
 
   async requireExisting(client: Queryable, id: number) {
     const r = await client.query(
-      `SELECT id, condition_no, status, counterparty_id, currency FROM conditions WHERE id = $1 FOR UPDATE`,
+      `SELECT id, condition_no, status, counterparty_id, currency, series_id, effective_from
+         FROM conditions WHERE id = $1 FOR UPDATE`,
       [id]);
     const row = r.rows[0];
     if (!row) throw new DomainError("NOT_FOUND", `条件 ${id} が見つかりません`);
-    return row as { id: number; condition_no: string | null; status: string; counterparty_id: number; currency: string };
+    return row as {
+      id: number; condition_no: string | null; status: string;
+      counterparty_id: number; currency: string;
+      series_id: number | null; effective_from: unknown;
+    };
   }
 }

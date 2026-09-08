@@ -64,7 +64,12 @@ export function ConditionRevisions(
     <div className="panel">
       <div className="panel-hd">
         <h2>契約変更の履歴</h2>
-        <span className="faint">{rows.length} 版　／　生きているのは1つだけ</span>
+        <span className="faint">
+          {rows.length} 版
+          {rows.some((r) => r.status === "scheduled")
+            ? "　／　適用待ちの改訂があります"
+            : "　／　生きているのは1つだけ"}
+        </span>
       </div>
       <div className="panel-bd stack">
         {rows.map((r, i) => {
@@ -80,8 +85,10 @@ export function ConditionRevisions(
                         disabled={r.id === conditionId}>
                   {r.conditionNo ?? `#${r.id}`}
                 </button>
-                {r.live
-                  ? <span className="tag ok">いま有効</span>
+                {r.status === "scheduled"
+                  ? <span className="tag warn">{r.effectiveFrom} から適用</span>
+                  : r.live
+                  ? <span className="tag ok">いま有効{r.effectiveFrom ? `（${r.effectiveFrom}〜）` : ""}</span>
                   : <span className="tag">{r.status === "superseded" ? "差し替え済み"
                       : r.status === "void" ? "無効" : "下書き"}</span>}
                 <span className="faint" style={{ marginLeft: "auto" }}>
@@ -111,6 +118,10 @@ export function ConditionRevisions(
         <p className="faint" style={{ margin: 0 }}>
           過去の計算書・支払は、作られた時点の版を指したままです。版を差し替えても
           遡って書き換わりません。
+          {rows.some((r) => r.status === "scheduled") && (
+            <>　適用待ちの版は、その日が来ると自動で切り替わります。
+              それまでは集計にも計算書にも今の版が使われます。</>
+          )}
         </p>
       </div>
     </div>

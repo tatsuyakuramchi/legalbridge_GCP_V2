@@ -4,7 +4,9 @@
 export type Direction = "in" | "out";
 export type ConditionKind = "license" | "product" | "service" | "expense" | "fee";
 export type PricingModel = "fixed" | "unit_rate" | "revenue_rate" | "subscription" | "none";
-export type ConditionStatus = "draft" | "active" | "superseded" | "void";
+// scheduled は「まだ効いていない予約の版」。契約変更を締結した日に記録し、
+// 適用開始日が来たら日次ジョブが active に切り替える。
+export type ConditionStatus = "draft" | "active" | "scheduled" | "superseded" | "void";
 export type MatterKind = "work" | "outsourcing" | "single";
 export type MatterStatus = "open" | "waiting" | "blocked" | "done" | "canceled";
 export type ScopeType = "region" | "language" | "media" | "channel";
@@ -35,6 +37,8 @@ export interface ConditionSummary {
   termStart: string | null;
   termEnd: string | null;
   status: ConditionStatus;
+  /** この版が適用され始める日。契約期間（termStart）とは別。 */
+  effectiveFrom: string | null;
 }
 
 export interface ConditionScope { scopeType: ScopeType; label: string; code: string | null }
@@ -70,6 +74,8 @@ export interface ConditionRevision {
   status: ConditionStatus;
   live: boolean;
   supersededById: number | null;
+  /** この版が適用され始める日。予約の版はここが未来になる。 */
+  effectiveFrom: string | null;
   /** 古い順の通し番号。画面で「第N版」と呼ぶためのもの。 */
   revision: number;
   currency: string;

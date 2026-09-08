@@ -625,11 +625,16 @@ export function createRoutes(database: Transactable) {
     taxCategory: z.enum(["taxable", "reduced", "exempt"]).optional(),
     notes: z.string().trim().max(2000).nullable().optional()
   });
+  // effectiveFrom に未来の日付を渡すと「予約された改訂」になる。
+  // 契約変更を締結した日に記録できないと、適用開始日まで人が覚えているしかない。
   router.patch("/conditions/:id",
     requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
-      const patch = economicsSchema.parse(req.body ?? {});
-      res.json(await conditionWrites.updateEconomics(Number(req.params.id), patch, actor(res)));
+      const { effectiveFrom, ...patch } = economicsSchema.extend({
+        effectiveFrom: z.string().date().nullable().optional()
+      }).parse(req.body ?? {});
+      res.json(await conditionWrites.updateEconomics(
+        Number(req.params.id), patch, actor(res), effectiveFrom ?? null));
     }));
 
   // 改訂の履歴。契約変更で金額を直すと版が増える。どれが生きているかを返す。

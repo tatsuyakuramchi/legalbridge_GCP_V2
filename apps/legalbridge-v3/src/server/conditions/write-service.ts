@@ -1,4 +1,4 @@
-import { inTransaction, type Queryable, type Transactable } from "../core/db.js";
+import { dateStr, inTransaction, type Queryable, type Transactable } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { ConditionRepository } from "./repository.js";
@@ -76,7 +76,7 @@ const COPY_COLUMNS = [
   "work_id", "work_part_id", "exclusivity", "sublicensable", "term_start", "term_end",
   "currency", "pricing_model", "rate_ppm", "unit_amount", "flat_amount", "mg_amount", "ag_amount",
   "royalty_base", "deductible_costs", "tax_category", "withholding_note", "payment_terms",
-  "cycle", "notes"
+  "cycle", "notes", "series_id", "effective_from"
 ];
 
 export class ConditionWriteService {
@@ -228,7 +228,9 @@ export class ConditionWriteService {
    * 金額・期間などの変更。V2 には存在しなかった経路。
    * 実績（condition_events）を持つ条件は履歴を壊さないため改訂（新しい行）にする。
    */
-  async updateEconomics(id: number, patch: EconomicsPatch, actor: string): Promise<WriteResult> {
+  async updateEconomics(
+    id: number, patch: EconomicsPatch, actor: string, effectiveFrom?: string | null
+  ): Promise<WriteResult> {
     const entries = (Object.keys(patch) as Array<keyof EconomicsPatch>)
       .filter((key) => patch[key] !== undefined)
       .map((key) => ({ column: ECONOMICS_COLUMNS[key], value: patch[key] as unknown }));
@@ -242,6 +244,41 @@ export class ConditionWriteService {
         }
         if (before.status === "superseded") {
           throw new DomainError("CONFLICT", "旧版の条件は編集できません。最新版を編集してください");
+        }
+
+        // 未来の日付を指定されたら「予約」にする。契約変更を締結した日に
+        // 記録できないと、その日まで人が覚えているしかない。
+        const startsLater = effectiveFrom !== null && effectiveFrom !== undefined
+          && effectiveFrom > await this.today(client);
+
+        if (startsLater) {
+          if (before.status === "scheduled") {
+            // 予約そのものを直しているだけ。まだ効いていないので上書きでよい。
+            return await this.updateInPlace(client, id, entries, actor,
+              { effective_from: effectiveFrom });
+          }
+          const pending = await client.query(
+            `SELECT id, condition_no, effective_from FROM conditions
+              WHERE series_id = $1 AND status = 'scheduled' AND id <> $2
+              ORDER BY effective_from LIMIT 1`,
+            [before.series_id ?? id, id]);
+          const already = pending.rows[0] as
+            { condition_no: string | null; effective_from: unknown } | undefined;
+          if (already) {
+            throw new DomainError("CONFLICT",
+              `すでに ${dateStr(already.effective_from) ?? "?"} 適用の改訂が予定されています。` +
+              "先にそれを直すか取り消してください");
+          }
+          const revisedTo = await this.revise(client, id, entries, effectiveFrom, "scheduled");
+          await recordAudit(client, {
+            actor, action: "condition.schedule_revision", targetType: "condition", targetId: id,
+            detail: { patch, revisedTo, effectiveFrom }
+          });
+          return {
+            changed: [{ target: `conditions（${effectiveFrom} 適用の改訂を予約）`, rows: 1 }],
+            resolvesThrough: await this.countReferences(client, id),
+            revisedTo
+          };
         }
 
         const consumed = await client.query(
@@ -267,7 +304,9 @@ export class ConditionWriteService {
         }
 
         // 実績があるので改訂する。旧版は残し、新版へ superseded_by_id で繋ぐ。
-        const revisedTo = await this.revise(client, id, entries);
+        // 適用日の指定が無ければ今日から。JS の時計ではなく SQL の current_date に
+        // 任せる（時差で1日ずれる）。
+        const revisedTo = await this.revise(client, id, entries, effectiveFrom ?? null, "active");
         await recordAudit(client, {
           actor, action: "condition.revise", targetType: "condition", targetId: id,
           detail: { patch, revisedTo, reason: "実績があるため改訂" }
@@ -314,27 +353,71 @@ export class ConditionWriteService {
     } catch (error) { throw translate(error); }
   }
 
-  private async revise(client: Queryable, id: number, entries: Array<{ column: string; value: unknown }>) {
+  /**
+   * 改訂版を作る。
+   *
+   * status='active' なら即座に効かせて旧版を superseded にする。
+   * status='scheduled' なら旧版は生きたまま置く。active のまま2行あると、
+   * conditions を status='active' で絞っている8箇所が同じ条件を二重に数える。
+   */
+  /** データベースの今日。アプリの時計と食い違わせない（時差で1日ずれる）。 */
+  private async today(client: Queryable): Promise<string> {
+    const r = await client.query("SELECT current_date AS d");
+    return String(dateStr((r.rows[0] as { d: unknown }).d));
+  }
+
+  /** その場で書き換える。実績が無い版と、まだ効いていない予約の版に使う。 */
+  private async updateInPlace(
+    client: Queryable, id: number, entries: Array<{ column: string; value: unknown }>,
+    actor: string, extra: Record<string, unknown> = {}
+  ): Promise<WriteResult> {
+    const all = [...entries, ...Object.entries(extra).map(([column, value]) => ({ column, value }))];
+    const sets = all.map((e, i) => `${e.column} = $${i + 2}`).join(", ");
+    const updated = await client.query(
+      `UPDATE conditions SET ${sets}, updated_at = now() WHERE id = $1 RETURNING id`,
+      [id, ...all.map((e) => e.value)]);
+    await recordAudit(client, {
+      actor, action: "condition.update", targetType: "condition", targetId: id,
+      detail: { patch: Object.fromEntries(all.map((e) => [e.column, e.value])), mode: "in_place" }
+    });
+    return {
+      changed: [{ target: "conditions", rows: updated.rowCount ?? 0 }],
+      resolvesThrough: await this.countReferences(client, id)
+    };
+  }
+
+  private async revise(
+    client: Queryable, id: number, entries: Array<{ column: string; value: unknown }>,
+    effectiveFrom: string | null, status: "active" | "scheduled"
+  ) {
     const overrides = new Map(entries.map((e) => [e.column, e.value]));
     // 条件番号は一意なので改訂版には採り直す。基底番号に -R2, -R3 と重ねて系列を辿れるようにする。
     overrides.set("condition_no", await this.nextRevisionNo(client, id));
+    // null は「今日から」。パラメータではなく SQL の current_date を置く。
+    const RAW_TODAY = Symbol("current_date");
+    overrides.set("effective_from", effectiveFrom ?? (RAW_TODAY as unknown as string));
     const params: unknown[] = [id];
     const selected = COPY_COLUMNS.map((column) => {
       if (!overrides.has(column)) return `c.${column}`;
-      params.push(overrides.get(column));
+      const value = overrides.get(column);
+      if (typeof value === "symbol") return "current_date";
+      params.push(value);
       return `$${params.length}`;
     });
+    params.push(status);
     const inserted = await client.query(
       `INSERT INTO conditions (${COPY_COLUMNS.join(", ")}, status)
-       SELECT ${selected.join(", ")}, 'active' FROM conditions c WHERE c.id = $1
+       SELECT ${selected.join(", ")}, $${params.length} FROM conditions c WHERE c.id = $1
        RETURNING id`,
       params
     );
     const newId = Number((inserted.rows[0] as { id: number }).id);
-    await client.query(
-      "UPDATE conditions SET status = 'superseded', superseded_by_id = $2, updated_at = now() WHERE id = $1",
-      [id, newId]
-    );
+    if (status === "active") {
+      await client.query(
+        "UPDATE conditions SET status = 'superseded', superseded_by_id = $2, updated_at = now() WHERE id = $1",
+        [id, newId]
+      );
+    }
     // 範囲も引き継ぐ
     await client.query(
       `INSERT INTO condition_scopes (condition_id, scope_type, label, code, sort_order)
@@ -342,10 +425,42 @@ export class ConditionWriteService {
        ON CONFLICT DO NOTHING`,
       [id, newId]
     );
+    await this.carrySchedules(client, id, newId, effectiveFrom);
     return newId;
   }
 
   /** 改訂版の条件番号。CL-2026-00042 → CL-2026-00042-R2 → -R3。 */
+  /**
+   * 適用日以降の予定明細を新版へ移す。
+   *
+   * 移すのであって写さない。両方の版に同じ月の行が残ると、予定の合計が
+   * 二重になる。実績が付いた行は動かさない（実績はそれが起きた版のもの）。
+   * 金額は予定のまま持っていく。改訂で単価が変わっていれば、新版の明細を
+   * 開いて直す（勝手に書き換えると、いくらの予定だったのかが消える）。
+   */
+  private async carrySchedules(
+    client: Queryable, fromId: number, toId: number, effectiveFrom: string | null
+  ) {
+    const moved = await client.query(
+      `UPDATE condition_schedules s
+          SET condition_id = $2
+        WHERE s.condition_id = $1
+          AND ($3::date IS NULL OR s.due_on IS NULL OR s.due_on >= $3::date)
+          AND NOT EXISTS (SELECT 1 FROM condition_events e
+                           WHERE e.schedule_id = s.id AND e.status = 'active')
+        RETURNING s.id`,
+      [fromId, toId, effectiveFrom]);
+    // 番号は版ごとに 1 から振り直す。第7回から始まる明細は読みにくい。
+    const rows = (moved.rows as Array<{ id: number }>).map((r) => Number(r.id));
+    if (!rows.length) return 0;
+    await client.query(
+      `UPDATE condition_schedules t SET seq = r.rn
+         FROM (SELECT id, row_number() OVER (ORDER BY due_on NULLS LAST, seq, id) AS rn
+                 FROM condition_schedules WHERE condition_id = $1) r
+        WHERE t.id = r.id AND t.seq IS DISTINCT FROM r.rn`, [toId]);
+    return rows.length;
+  }
+
   private async nextRevisionNo(client: Queryable, id: number): Promise<string | null> {
     const r = await client.query(
       `SELECT split_part(condition_no, '-R', 1) AS base FROM conditions WHERE id = $1`, [id]);

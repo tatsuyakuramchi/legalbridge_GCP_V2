@@ -13,6 +13,8 @@ interface Options {
   withholding?: boolean;
   mg?: number | null;
   ag?: number | null;
+  /** 対象日に効いていた版。null を渡すと「見つからない」を再現する。 */
+  appliedVersion?: Record<string, unknown> | null;
 }
 
 const responder = (options: Options = {}) => (text: string): Array<Record<string, unknown>> | undefined => {
@@ -31,7 +33,12 @@ const responder = (options: Options = {}) => (text: string): Array<Record<string
               withholding: options.withholding ?? false,
               party_kind: options.partyKind ?? "corporate" }];
   }
-  if (text.includes("SUM(deductions)")) return [{ consumed: options.agConsumed ?? 0 }];
+  if (text.includes("SUM(e.deductions)")) return [{ consumed: options.agConsumed ?? 0 }];
+  // 対象日に効いていた版の解決。既定では渡された版がそのまま返る。
+  if (text.includes("c.status IN ('active', 'scheduled', 'superseded')")) {
+    return options.appliedVersion === null ? []
+      : [options.appliedVersion ?? { id: 5, condition_no: "CL-2026-00042", effective_from: null }];
+  }
   if (text.includes("INSERT INTO condition_events")) return [{ id: 700 }];
   if (text.includes("INSERT INTO statements")) return [{ id: 800 }];
   return undefined;
@@ -80,7 +87,7 @@ test("確定時はフォームの値を使わず計算し直す（消化済みAG
     conditionId: 5, documentId: 6, period: "2026下期", reported: { salesInput: 4896000 }
   }, "kuramochi");
 
-  assert.ok(db.find("SUM(deductions)"), "消化済みAGをDBから読む");
+  assert.ok(db.find("SUM(e.deductions)"), "消化済みAGをDBから読む");
   const event = db.find("INSERT INTO condition_events");
   // AG残 30万 → 相殺30万、実額 61.2万 − 30万 = 31.2万
   assert.equal(event!.params[7], 300000);
@@ -141,4 +148,57 @@ test("無効・旧版の条件では計算しない", async () => {
       () => royalty.preview({ conditionId: 5, period: "2026上期", reported: { salesInput: 1 } }),
       (e: unknown) => e instanceof DomainError && e.code === "CONFLICT");
   }
+});
+
+// ---- 契約変更の適用開始日 ----
+
+test("AGの消化累計は改訂の系列で数える（版が変わっても残高は戻らない）", async () => {
+  const { db, service: royalty } = service({ ag: 1000000, agConsumed: 600000 });
+  await royalty.preview({ conditionId: 5, period: "試算", reported: { salesInput: 4896000 } });
+  const q = db.find("SUM(e.deductions)")!;
+  assert.match(q.text, /c\.series_id = \(SELECT series_id FROM conditions WHERE id = \$1\)/,
+    "1版ぶんだけ数えると、改訂のたびに前払保証の残高が満額に戻る");
+});
+
+test("対象日に効いていた版で計算する", async () => {
+  const { db, service: royalty } = service();
+  await royalty.preview({
+    conditionId: 5, period: "2027Q1", occurredOn: "2027-02-15",
+    reported: { salesInput: 1000000 }
+  });
+  const q = db.find("c.status IN ('active', 'scheduled', 'superseded')")!;
+  assert.equal(q.params[1], "2027-02-15", "発生日をそのまま対象日に使う");
+  assert.match(q.text, /effective_from IS NULL OR c\.effective_from <= COALESCE/);
+  assert.match(q.text, /ORDER BY c\.effective_from DESC/, "その日以前で最も新しい版を採る");
+});
+
+test("渡した版と違う版で計算したときは、それを結果に載せる", async () => {
+  const { service: royalty } = service({
+    appliedVersion: { id: 9, condition_no: "CL-2026-00042-R2", effective_from: "2027-04-01" }
+  });
+  const r = await royalty.preview({
+    conditionId: 5, period: "2027Q2", occurredOn: "2027-05-01",
+    reported: { salesInput: 1000000 }
+  });
+  assert.equal(r.appliedVersion?.switched, true, "黙って差し替えず、画面で読めるようにする");
+  assert.equal(r.appliedVersion?.effectiveFrom, "2027-04-01");
+});
+
+test("版が同じなら switched は立たない", async () => {
+  const { service: royalty } = service();
+  const r = await royalty.preview({ conditionId: 5, period: "試算", reported: { salesInput: 1 } });
+  assert.equal(r.appliedVersion?.switched, false);
+});
+
+test("実績と計算書は、計算に使った版にぶら下げる", async () => {
+  const { db, service: royalty } = service({
+    appliedVersion: { id: 9, condition_no: "CL-2026-00042-R2", effective_from: "2027-04-01" }
+  });
+  await royalty.finalize({
+    conditionId: 5, documentId: 6, period: "2027Q2", occurredOn: "2027-05-01",
+    reported: { salesInput: 1000000 }
+  }, "kuramochi");
+  assert.equal(db.find("INSERT INTO condition_events")!.params[0], 9,
+    "料率と実績の版が食い違うと、あとから検算できない");
+  assert.equal(db.find("INSERT INTO statements")!.params[1], 9);
 });

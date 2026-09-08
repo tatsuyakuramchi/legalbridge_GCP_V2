@@ -22,6 +22,8 @@ export interface EditResult {
   revisedTo?: number;
 }
 
+const today = () => new Date().toISOString().slice(0, 10);
+
 type Values = Record<string, string>;
 
 const asMoney = (v: number | null | undefined) => (v === null || v === undefined ? "" : String(v));
@@ -58,8 +60,11 @@ export function ConditionEdit(
   });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // 適用開始日。未来を入れると「予約された改訂」になり、いまの版は生きたまま残る。
+  const [effectiveFrom, setEffectiveFrom] = useState("");
   const set = (k: string, value: string) => setV({ ...v, [k]: value });
 
+  const later = effectiveFrom !== "" && effectiveFrom > today();
   // 実績があると、保存は改訂（旧版を残して新版を作る）になる。
   const willRevise = detail.events.length > 0;
   const readOnly = detail.status === "void" || detail.status === "superseded";
@@ -97,7 +102,8 @@ export function ConditionEdit(
   async function save() {
     setBusy(true); setError(null);
     try {
-      onDone(await api.patch<EditResult>(`/conditions/${detail.id}`, patch));
+      onDone(await api.patch<EditResult>(`/conditions/${detail.id}`,
+        { ...patch, effectiveFrom: effectiveFrom || null }));
     } catch (e) { setError((e as ApiError).message); }
     finally { setBusy(false); }
   }
@@ -141,8 +147,12 @@ export function ConditionEdit(
       </div>
 
       <div className="panel-bd">
-        <div className={willRevise ? "note warn" : "note"} style={{ marginBottom: 12 }}>
-          {willRevise
+        <div className={willRevise || later ? "note warn" : "note"} style={{ marginBottom: 12 }}>
+          {later
+            ? <>適用開始日が先なので、保存すると<b>{effectiveFrom} から効く改訂として予約します</b>。
+                いまの版はその日まで生きたままで、集計にも計算書にも今までどおり使われます。
+                当日になると自動で切り替わります（人が押す必要はありません）。</>
+            : willRevise
             ? <>この条件には実績が {detail.events.length} 件あります。保存すると
                 <b>旧版を残したまま新版を作ります（改訂）</b>。条件番号が新しくなり、
                 いまの版は「差し替え済み」になります。過去の計算書は旧版を指したままです。</>
@@ -160,8 +170,19 @@ export function ConditionEdit(
               <option value="exempt">非課税・不課税</option>
             </select>
           </label>
-          {field("termStart", "開始", { type: "date" })}
-          {field("termEnd", "終了", { type: "date", hint: "空欄は期限なし" })}
+          {field("termStart", "契約の開始", { type: "date" })}
+          {field("termEnd", "契約の終了", { type: "date", hint: "空欄は期限なし" })}
+
+          <label className="field wide">
+            <span>この変更の適用開始日</span>
+            <input type="date" value={effectiveFrom}
+                   onChange={(e) => setEffectiveFrom(e.target.value)} />
+            <small className="faint">
+              契約変更で「2027-04-01 から料率が変わる」ときは、その日を入れます。
+              契約期間そのものは動きません。空欄なら今日から効きます。
+              {detail.effectiveFrom && `　いまの版は ${detail.effectiveFrom} から適用中`}
+            </small>
+          </label>
 
           {detail.pricingModel === "revenue_rate" &&
             field("ratePct", "料率（%）", { type: "number", hint: `いまの値 ${rate(detail.ratePpm)}` })}
@@ -190,7 +211,8 @@ export function ConditionEdit(
         <div className="row">
           <button className="btn primary" disabled={busy || !changedKeys.length}
                   onClick={() => void save()}>
-            {busy ? "保存中…" : willRevise ? "改訂して保存" : "保存する"}
+            {busy ? "保存中…" : later ? `${effectiveFrom} からの改訂を予約`
+              : willRevise ? "改訂して保存" : "保存する"}
           </button>
           <button className="btn" onClick={onCancel} disabled={busy}>やめる</button>
           {!changedKeys.length && <span className="faint">変更された項目がありません</span>}
