@@ -390,6 +390,29 @@ gcloud run services proxy legalbridge-v3 --region=asia-northeast1 --port=8080
 9画面（ホーム／案件／条件／文書／お金／作品／取引先／フロー監視／運用）を開き、
 **日付が `2026-04-01` の形で出ること**を確認する（`Wed Apr 01` は不具合）。
 
+### 文書の発行は V3 からだけ行う（2026-09-08 の取り決め）
+
+移行で document_sequences は V1 の現在値をそのまま引き継いでいる
+（`PO`=127・`INS`=71 …）。V3 はその続きから振るので、番号は V1 から
+途切れずに繋がる。
+
+**ただし V1 と V3 は別々の連番を持つ。** 同じ種類の文書を両方から出すと
+同じ番号が2枚できる。案件番号や条件番号には衝突を避ける仕組みがあるが
+（`core/numbering.ts`：番号を進める → 実在を確かめる → 空いていれば使う）、
+**文書番号には無い**。V3 のランタイムロールは `public` に権限が無く、
+V1 が今いくつまで出したかを見に行けないため、検知もできない。
+
+発行済みの文書は書き換えない設計なので、出てからでは直せない。
+**発注書・検収書などの文書は V3 からだけ出す。** V1 でも出す必要が生じたら、
+先に V3 側の連番を大きく飛ばしてから（例：1000）にする。
+
+```sql
+UPDATE v3.document_sequences SET current_value = 1000
+ WHERE year = 2026 AND current_value < 1000
+   AND prefix IN ('PO','INS','ILT','LIC','ROY','SVC','PUB','PUBT',
+                  'SAL','MNT','LG','PR','NDA','IPO');
+```
+
 ### 自分以外の人にも見てもらう（検証中の暫定運用）
 
 Cloud Run は `--no-allow-unauthenticated` のままにする。使う人ごとに
