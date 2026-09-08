@@ -59,3 +59,20 @@ test("欄の名前から、その欄に合う候補の種類を当てる", () =>
   // 「氏名」は日付ではない。「日」を含むが人の名前。
   assert.notEqual(kindForField("inspector_name", "検収者氏名"), "date");
 });
+
+test("振込先を候補に出す。1行にまとめたものも用意する", () => {
+  const withBank = buildCandidates({
+    ...ctx(),
+    bank: { bankName: "みずほ銀行", branchName: "渋谷支店", accountType: "ordinary",
+            accountNumber: "1234567", holderKana: "ヨシザワ ジユンロウ" }
+  });
+  const at = (label: string) => withBank.find((c) => c.label === label)?.value;
+  assert.equal(at("振込先銀行"), "みずほ銀行");
+  assert.equal(at("口座種別"), "普通", "英語のコードは書類に出せない");
+  assert.equal(at("口座番号"), "1234567");
+  assert.equal(at("振込先（1行）"), "みずほ銀行 渋谷支店 普通 1234567 ヨシザワ ジユンロウ");
+});
+
+test("口座が無い取引先では、振込先の候補を出さない", () => {
+  assert.equal(buildCandidates(ctx()).some((c) => c.source === "振込先"), false);
+});

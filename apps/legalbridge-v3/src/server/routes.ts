@@ -949,7 +949,7 @@ export function createRoutes(database: Transactable) {
    * 候補に出てこない。名前で探して引けるようにする。最小入力で書類を
    * 作るという建て付けは、探して引けることまで含めて成り立つ。
    */
-  router.get("/quote-sources", asyncRoute(async (req, res) => {
+  router.get("/quote-sources", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
     const q = String(req.query.q ?? "").trim();
     if (q.length < 1) return res.json({ candidates: [] });
     const like = `%${q}%`;

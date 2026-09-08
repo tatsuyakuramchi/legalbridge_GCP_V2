@@ -76,8 +76,16 @@ $write$;
 -- 監査は追記専用。書き換えも削除もさせない。
 REVOKE UPDATE, DELETE, TRUNCATE ON v3.audit_events FROM legalbridge_v3_runtime;
 
--- 口座情報は既定で見せない。経理の出力を有効にするときだけ別途 GRANT する。
+-- 口座情報。支払通知書・請求書は振込先が無いと書類として成立しないので、
+-- 読み取りだけ開ける（2026-09-08 の判断）。書き込みは閉じたまま。
+--
+-- 漏れたときの被害が他の項目と桁違いなので、開ける範囲は最小にしてある。
+--   - SELECT だけ。INSERT/UPDATE/DELETE は与えない（口座の改ざんを防ぐ）
+--   - 返す経路は requireRole("admin","legal") の下にだけ置く
+-- AUTH_MODE=disabled のあいだは入れた人が全員 admin になる。IAP へ移すまでは、
+-- 「アプリに入れる人＝口座を見られる人」であることを承知して運用する。
 REVOKE ALL ON v3.party_bank_accounts FROM legalbridge_v3_runtime;
+GRANT SELECT ON v3.party_bank_accounts TO legalbridge_v3_runtime;
 
 -- テンプレート本文は読み取りのみ。改訂は管理者の運用でやる（互換境界）。
 REVOKE INSERT, UPDATE, DELETE ON v3.document_templates FROM legalbridge_v3_runtime;
@@ -136,7 +144,8 @@ SELECT table_schema, table_name, privilege_type
  WHERE grantee = 'legalbridge_v3_runtime'
    AND (table_schema <> 'v3'
         OR privilege_type = 'TRUNCATE'
-        OR table_name = 'party_bank_accounts'
+        -- 口座表は SELECT だけが正。書込権限が付いていたら異常。
+        OR (table_name = 'party_bank_accounts' AND privilege_type <> 'SELECT')
         OR (table_name IN ('document_templates', 'document_template_versions')
             AND privilege_type <> 'SELECT')
         OR (table_name = 'audit_events' AND privilege_type IN ('UPDATE', 'DELETE'))

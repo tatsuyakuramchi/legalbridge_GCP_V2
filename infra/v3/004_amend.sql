@@ -311,6 +311,21 @@ SELECT 'task', t.id, m.matter_no, t.title,
  WHERE t.due_at IS NOT NULL AND t.status <> 'done';
 
 
+-- ---------------------------------------------------------------------
+-- A-007: 口座情報を読めるようにする
+--
+-- 支払通知書・請求書は振込先が無いと書類として成立しない。読み取りだけ
+-- 開ける。書き込みは閉じたまま（口座の改ざんを防ぐ）。
+--
+-- 返す経路は requireRole("admin","legal") の下にだけ置いてある。ただし
+-- AUTH_MODE=disabled のあいだは入れた人が全員 admin になるので、
+-- 「アプリに入れる人＝口座を見られる人」であることを承知して運用する。
+-- 閉じ直すときは REVOKE SELECT ON v3.party_bank_accounts。
+-- ---------------------------------------------------------------------
+
+GRANT SELECT ON v3.party_bank_accounts TO legalbridge_v3_runtime;
+
+
 COMMIT;
 
 -- 確認
@@ -347,3 +362,8 @@ SELECT template_key, label, category
   FROM v3.document_templates
  WHERE is_active AND COALESCE(btrim(number_prefix), '') = ''
  ORDER BY category NULLS LAST, label;
+
+\echo '--- 口座表の権限（SELECT だけであること） ---'
+SELECT privilege_type FROM information_schema.role_table_grants
+ WHERE grantee = 'legalbridge_v3_runtime' AND table_name = 'party_bank_accounts'
+ ORDER BY privilege_type;

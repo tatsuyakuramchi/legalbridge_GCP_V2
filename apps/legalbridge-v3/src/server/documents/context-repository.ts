@@ -45,6 +45,7 @@ export class DocumentContextRepository {
       // 書類の宛名や検収者はここから引ける。
       const partyId = conditions[0]?.counterpartyId ?? null;
       const contacts = partyId ? await this.contacts(client, partyId) : [];
+      const bank = partyId ? await this.bank(client, partyId) : null;
       const owner = input.matterId ? await this.owner(client, input.matterId) : null;
 
       const currency = conditions[0]?.currency ?? "JPY";
@@ -68,6 +69,8 @@ export class DocumentContextRepository {
         events,
         /** 取引先の担当者。role ごとに引ける（primary / signer / billing）。 */
         contacts,
+        /** 振込先。支払通知書・請求書はこれが無いと成立しない。 */
+        bank,
         /** 案件の担当スタッフ。検収者の既定になりうる。 */
         owner,
         /** 実績が1件のときはこちら。検収書はこの日付と金額を使う。 */
@@ -99,6 +102,28 @@ export class DocumentContextRepository {
       name: str(row.name), email: str(row.email),
       phone: str(row.phone), department: str(row.department)
     }));
+  }
+
+  /**
+   * 振込先。読み取りだけ許可してある（003_grants）。
+   * 権限が無い環境でも書類の作成そのものは止めないよう、失敗は握って null を返す。
+   */
+  private async bank(client: Queryable, partyId: number) {
+    try {
+      const r = await client.query(
+        `SELECT bank_name, branch_name, account_type, account_number, account_holder_kana
+           FROM party_bank_accounts WHERE party_id = $1`, [partyId]);
+      const row = r.rows[0] as Record<string, any> | undefined;
+      if (!row) return null;
+      return {
+        bankName: str(row.bank_name), branchName: str(row.branch_name),
+        accountType: str(row.account_type), accountNumber: str(row.account_number),
+        holderKana: str(row.account_holder_kana)
+      };
+    } catch {
+      // 口座表への権限が無い環境（閉じたまま運用する場合）。書類は作れる。
+      return null;
+    }
   }
 
   /** 案件の担当者。検収書の「検収者」はたいていこの人。 */

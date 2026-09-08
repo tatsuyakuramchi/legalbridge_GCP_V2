@@ -80,6 +80,22 @@ export function buildCandidates(context: Record<string, any>): Candidate[] {
     add("取引先", `${role}の電話`, contact.phone, "text");
   }
 
+  // 振込先。支払通知書・請求書はこれが無いと書類にならない。
+  const bank = context.bank;
+  if (bank) {
+    add("振込先", "振込先銀行", bank.bankName, "text");
+    add("振込先", "振込先支店", bank.branchName, "text");
+    add("振込先", "口座種別", ACCOUNT_TYPE[bank.accountType] ?? bank.accountType, "text");
+    add("振込先", "口座番号", bank.accountNumber, "text");
+    add("振込先", "口座名義（カナ）", bank.holderKana, "text");
+    // 1行にまとめたもの。多くの書類はこの形で1行に書く。
+    const line = [bank.bankName, bank.branchName,
+                  ACCOUNT_TYPE[bank.accountType] ?? bank.accountType,
+                  bank.accountNumber, bank.holderKana]
+      .filter((v) => v !== null && v !== undefined && String(v).trim() !== "").join(" ");
+    add("振込先", "振込先（1行）", line, "text");
+  }
+
   // 案件の担当者。検収書の「検収者」はたいていこの人。
   const o = context.owner;
   if (o) {
@@ -142,6 +158,11 @@ export function buildCandidates(context: Record<string, any>): Candidate[] {
   }
   return out;
 }
+
+const ACCOUNT_TYPE: Record<string, string> = {
+  ordinary: "普通", checking: "当座", savings: "貯蓄",
+  futsu: "普通", touza: "当座"
+};
 
 const CONTACT_ROLE: Record<string, string> = {
   primary: "先方担当", signer: "署名者", billing: "請求先"
