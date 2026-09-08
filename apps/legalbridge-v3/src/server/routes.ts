@@ -1,4 +1,4 @@
-import { Router, type Request, type Response, type NextFunction } from "express";
+import express, { Router, type Request, type Response, type NextFunction } from "express";
 import { z } from "zod";
 import type { Transactable } from "./core/db.js";
 import { DomainError, statusFor } from "./core/errors.js";
@@ -22,6 +22,7 @@ import { DocumentIssueService } from "./documents/issue-service.js";
 import { ChromiumPdfRenderer, MemoryPdfRenderer, type PdfRenderer } from "./documents/pdf-renderer.js";
 import { DocumentStorageService } from "./documents/storage-service.js";
 import { GoogleDriveStorage, MemoryDriveStorage, type DriveStorage } from "./documents/drive-storage.js";
+import { DocumentImportService } from "./documents/import-service.js";
 import { GoogleMatterDriveFolderService, LocalMatterDriveFolderService } from "./documents/drive-folder.js";
 import { MatterFolderStorageService } from "./matters/drive-folder-service.js";
 import { config } from "./config.js";
@@ -79,6 +80,7 @@ export function createRoutes(database: Transactable) {
         })
       : null;
   const storage = new DocumentStorageService(database, drive, pdf);
+  const documentImports = new DocumentImportService(database, drive);
   const royalty = new RoyaltyStatementService(database);
   const payments = new PaymentService(database);
   const allocations = new PaymentAllocationService(database);
@@ -819,6 +821,47 @@ export function createRoutes(database: Transactable) {
   });
 
   // ---- 文書 ----
+  /**
+   * システムの外で作られた文書の登録（取込文書）。
+   *
+   * 本文はファイルそのものなので JSON に載せず、生のまま受ける。base64 に
+   * すると 25MB のPDFが 34MB になり、上限に当たる。付随する情報はクエリで渡す。
+   * 全体の JSON パーサは application/json しか読まないので、ここは素通りしてくる。
+   */
+  const importQuerySchema = z.object({
+    title: z.string().trim().min(1).max(300),
+    documentKind: z.string().trim().max(120).optional(),
+    conditionIds: z.string().trim().optional(),
+    matterId: z.coerce.number().int().positive().optional(),
+    agreementId: z.coerce.number().int().positive().optional(),
+    receivedOn: z.string().date().optional(),
+    note: z.string().trim().max(2000).optional(),
+    filename: z.string().trim().max(300).optional()
+  });
+  router.post("/documents/import",
+    requireRole("admin", "legal"), requireWritable,
+    express.raw({ type: () => true, limit: "26mb" }),
+    asyncRoute(async (req, res) => {
+      const q = importQuerySchema.parse(req.query);
+      const ids = (q.conditionIds ?? "").split(",").map((v) => Number(v.trim()))
+        .filter((n) => Number.isInteger(n) && n > 0);
+      res.status(201).json(await documentImports.import({
+        title: q.title, documentKind: q.documentKind ?? null,
+        conditionIds: ids, matterId: q.matterId ?? null, agreementId: q.agreementId ?? null,
+        receivedOn: q.receivedOn ?? null, note: q.note ?? null,
+        file: {
+          filename: q.filename ?? q.title,
+          mimeType: String(req.headers["content-type"] ?? "").split(";")[0].trim(),
+          data: Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0)
+        }
+      }, actor(res)));
+    }));
+
+  // 取り込みが使える状態か。設定されていないボタンを画面に出さないため。
+  router.get("/documents/import-status", (_req, res) => {
+    res.json({ configured: documentImports.configured });
+  });
+
   router.get("/document-templates", asyncRoute(async (_req, res) => {
     res.json({ templates: await documents.listTemplates() });
   }));

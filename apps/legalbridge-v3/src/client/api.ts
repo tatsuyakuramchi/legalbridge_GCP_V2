@@ -25,7 +25,13 @@ export const api = {
     request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),
   put: <T>(path: string, body: unknown) =>
     request<T>(path, { method: "PUT", body: JSON.stringify(body) }),
-  del: <T>(path: string) => request<T>(path, { method: "DELETE" })
+  del: <T>(path: string) => request<T>(path, { method: "DELETE" }),
+  /**
+   * 本文をそのまま送る。ファイルを base64 で JSON に載せると 25MB が 34MB に
+   * なって上限に当たるので、取り込みだけは生のまま渡す。
+   */
+  postRaw: <T>(path: string, body: Blob, contentType: string) =>
+    request<T>(path, { method: "POST", body, headers: { "content-type": contentType } })
 };
 
 /** 最小通貨単位の整数を表示用に戻す。 */

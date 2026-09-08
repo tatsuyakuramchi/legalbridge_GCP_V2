@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ConditionEvents } from "./ConditionEvents.js";
+import { DocumentImport } from "./DocumentImport.js";
 import { ConditionSchedules } from "./ConditionSchedules.js";
 import { ConditionRevisions } from "./ConditionRevisions.js";
 import { ConditionEdit } from "./ConditionEdit.js";
@@ -405,6 +406,9 @@ export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
                       {!detail.documents.length && <tr><td colSpan={3} className="faint">まだ文書は出ていません</td></tr>}
                     </tbody>
                   </table>
+                </div>
+                <div className="panel-bd">
+                  <DocumentImport conditionId={detail.id} onDone={refreshFlow} />
                 </div>
               </div>
 

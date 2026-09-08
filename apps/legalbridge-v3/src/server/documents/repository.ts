@@ -10,6 +10,8 @@ export interface DocumentSummary {
   templateKey: string | null;
   templateLabel: string | null;
   title: string | null;
+  /** 外で作られた文書。ひな形が無いので、作り直しも再レンダリングもできない。 */
+  imported: boolean;
   counterparty: string | null;
   matterId: number | null;
   conditionCount: number;
@@ -38,8 +40,12 @@ export interface TemplateSource {
 
 const LIST_SELECT = `
   d.id, d.document_no, d.status, d.matter_id, d.issued_at, d.storage_url,
-  v.title, v.counterparty, v.template_label, v.condition_count,
-  t.template_key`;
+  v.title, v.counterparty, v.condition_count, t.template_key,
+  -- 取込文書はひな形を持たないので、種別が空欄になる。登録時に入れた種別で埋める。
+  COALESCE(v.template_label, d.manual_inputs->>'documentKind') AS template_label,
+  -- 同じ理由で件名も空になる。
+  COALESCE(v.title, d.manual_inputs->>'title') AS title,
+  (d.template_version_id IS NULL) AS imported`;
 
 const LIST_FROM = `
   FROM documents d
@@ -55,6 +61,7 @@ function mapSummary(row: Record<string, any>): DocumentSummary {
     templateKey: str(row.template_key),
     templateLabel: str(row.template_label),
     title: str(row.title),
+    imported: row.imported === true,
     counterparty: str(row.counterparty),
     matterId: int(row.matter_id),
     conditionCount: Number(row.condition_count ?? 0),

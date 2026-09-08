@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { MatterDetail, MatterKind } from "../server/core/model.js";
 import { api, ApiError } from "./api.js";
 import { ListSearch, useDebounced } from "./ListTools.js";
+import { DocumentImport } from "./DocumentImport.js";
 import { CONDITION_KIND_LABEL, MATTER_KIND_LABEL, StatusTag } from "./labels.js";
 
 /**
@@ -188,12 +189,15 @@ export function MatterDocuments(
   return (
     <div className="stack">
       <div className="row">
-        <span className="faint">この案件で出した文書。発行は文書の画面から行います</span>
+        <span className="faint">この案件の文書。発行は文書の画面から行います</span>
         {!picking && (
           <button className="btn btn-sm" style={{ marginLeft: "auto" }}
                   onClick={() => setPicking(true)}>文書を繋ぐ</button>
         )}
       </div>
+
+      {/* 他社文書レビュー型の案件は、相手方から届いた文書を入れないと先へ進めない。 */}
+      <DocumentImport matterId={detail.id} onDone={onChanged} />
 
       {picking && (
         <div className="stack" style={{ gap: 8 }}>

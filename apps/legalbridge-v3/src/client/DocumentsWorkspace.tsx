@@ -11,6 +11,8 @@ interface DocumentRow {
   id: number; documentNo: string | null; status: string; templateLabel: string | null;
   title: string | null; counterparty: string | null; conditionCount: number;
   issuedAt: string | null; storageUrl: string | null;
+  /** 外で作られた文書。本文もひな形も無いので、組み直しも作り直しもできない。 */
+  imported: boolean;
 }
 interface Integrations {
   drive: { documents: boolean; matterFolders: boolean };
@@ -240,18 +242,27 @@ export function DocumentsWorkspace() {
                 {documents.map((d) => (
                   <tr key={d.id}>
                     <td className="code">{d.documentNo ?? "（下書き）"}</td>
-                    <td>{d.templateLabel ?? "—"}</td>
+                    <td>
+                      {d.templateLabel ?? "—"}
+                      {d.imported && <div className="faint">取込（外で作られた文書）</div>}
+                    </td>
                     <td>{d.counterparty ?? "—"}</td>
                     <td className="num">{d.conditionCount}</td>
                     <td><StatusTag kind="document" value={d.status} /></td>
                     <td>
                       {d.status === "issued" && (
                         <span className="row">
-                          <a href={`/api/v3/documents/${d.id}/html`} target="_blank" rel="noreferrer">HTML</a>
-                          <a href={`/api/v3/documents/${d.id}/pdf`}>PDF</a>
+                          {/* 取込文書は本文を持たない。実体は預けたファイルだけなので、
+                              組み直しも作り直しもできない。押せるものだけ出す。 */}
+                          {!d.imported && (<>
+                            <a href={`/api/v3/documents/${d.id}/html`} target="_blank" rel="noreferrer">HTML</a>
+                            <a href={`/api/v3/documents/${d.id}/pdf`}>PDF</a>
+                          </>)}
                           {d.storageUrl
-                            ? <a href={d.storageUrl} target="_blank" rel="noreferrer">Drive</a>
-                            : integrations?.drive.documents
+                            ? <a href={d.storageUrl} target="_blank" rel="noreferrer">
+                                {d.imported ? "ファイル" : "Drive"}
+                              </a>
+                            : !d.imported && integrations?.drive.documents
                               ? <button className="btn btn-sm" disabled={busy}
                                         onClick={() => store(d.id)}>Driveに保存</button>
                               : null}
@@ -259,8 +270,10 @@ export function DocumentsWorkspace() {
                             <button className="btn btn-sm" disabled={busy}
                                     onClick={() => send(d.id)}>送付</button>
                           )}
-                          <button className="btn btn-sm" disabled={busy}
-                                  onClick={() => reissue(d.id, d.documentNo)}>作り直す</button>
+                          {!d.imported && (
+                            <button className="btn btn-sm" disabled={busy}
+                                    onClick={() => reissue(d.id, d.documentNo)}>作り直す</button>
+                          )}
                           <button className="btn btn-sm" disabled={busy}
                                   onClick={() => voidDocument(d.id, d.documentNo)}>無効にする</button>
                         </span>
