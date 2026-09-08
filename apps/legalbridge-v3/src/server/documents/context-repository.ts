@@ -75,6 +75,8 @@ export class DocumentContextRepository {
         owner,
         /** 実績が1件のときはこちら。検収書はこの日付と金額を使う。 */
         event: events[0] ?? null,
+        /** その実績の予定明細。支払期日はここから来る。 */
+        schedule: events[0]?.schedule ?? null,
         /** 計算書の金額。試算の結果をそのまま渡す。無ければ null。 */
         royalty: input.royalty ?? null,
         totals: {
@@ -144,7 +146,8 @@ export class DocumentContextRepository {
     const r = await client.query(
       `SELECT e.id, e.event_type, e.occurred_on, e.period, e.quantity,
               e.gross_amount, e.deductions, e.amount, e.note,
-              c.currency, s.label AS schedule_label, s.seq AS schedule_seq
+              c.currency, s.label AS schedule_label, s.seq AS schedule_seq,
+              s.due_on AS schedule_due_on, s.pay_on AS schedule_pay_on
          FROM condition_events e
          JOIN conditions c ON c.id = e.condition_id
          LEFT JOIN condition_schedules s ON s.id = e.schedule_id
@@ -164,7 +167,12 @@ export class DocumentContextRepository {
         amount: toMajor(int(row.amount), currency),
         amountMinor: int(row.amount) ?? 0,
         note: str(row.note),
-        currency
+        currency,
+        /** その回の予定。支払期日は支払通知書に要る。 */
+        schedule: row.schedule_seq === null ? null : {
+          seq: int(row.schedule_seq), label: str(row.schedule_label),
+          dueOn: dateStr(row.schedule_due_on), payOn: dateStr(row.schedule_pay_on)
+        }
       };
     });
   }

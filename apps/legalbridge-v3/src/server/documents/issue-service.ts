@@ -20,6 +20,9 @@ export interface DraftInput {
   royalty?: Record<string, unknown> | null;
 }
 
+/** プレビューでの文書番号。発行のときに本物へ置き換わる。 */
+export const PREVIEW_NUMBER = "（発行時に採番）";
+
 export interface PreviewResult {
   html: string;
   binding: BindingResult;
@@ -57,7 +60,9 @@ export class DocumentIssueService {
   async preview(input: DraftInput): Promise<PreviewResult> {
     try {
       const template = await this.repository.templateSource(this.database, { templateKey: input.templateKey });
-      const context = await this.buildContext(this.database, input, null);
+      // 番号は発行のときにしか決まらない。プレビューで空にすると必須の未入力に
+      // 数えられ、発行ボタンが永久に押せなくなる。何が入るかを書いておく。
+      const context = await this.buildContext(this.database, input, PREVIEW_NUMBER);
       const binding = bindVariables(template.variables, context, input.manualInputs ?? {});
       // 候補は文脈そのものから作る。ひな形の宣言には依らない。
       const partials = await this.repository.partials();

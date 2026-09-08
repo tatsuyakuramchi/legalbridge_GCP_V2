@@ -104,6 +104,13 @@ export function buildCandidates(context: Record<string, any>): Candidate[] {
     add("担当", "担当者のメール", o.email, "text");
   }
 
+  const sc = context.schedule;
+  if (sc) {
+    add("予定", "支払期日", sc.payOn, "date");
+    add("予定", "発生予定日", sc.dueOn, "date");
+    add("予定", "対象回", sc.label, "text");
+  }
+
   const e = context.event;
   if (e) {
     add("実績", "実績の発生日", e.occurredOn, "date");

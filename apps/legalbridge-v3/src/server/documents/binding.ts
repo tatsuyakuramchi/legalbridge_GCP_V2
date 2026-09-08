@@ -1,4 +1,5 @@
 import { DomainError } from "../core/errors.js";
+import { resolveLegacyVariable } from "./legacy-variables.js";
 
 /**
  * テンプレート変数の束縛。
@@ -73,7 +74,20 @@ export function bindVariables(
     let value: unknown;
 
     if (!variable.from || variable.from === "manual") {
-      value = isEmpty(manual) ? variable.default : manual;
+      // 供給元の宣言が無い変数は、V1/V2 と同じ名前なら同じ値を入れる。
+      // 移行したひな形には宣言が無いので、これが無いと全項目が手入力になる。
+      // 手入力が先。人が直したものをデータで上書きしない。
+      if (!isEmpty(manual)) {
+        value = manual;
+      } else {
+        const legacy = resolveLegacyVariable(variable.name, context, variable.label);
+        if (!isEmpty(legacy)) {
+          value = legacy;
+          derived.push(variable.name);
+        } else {
+          value = variable.default;
+        }
+      }
     } else {
       // 供給元から解決する。手入力があってもデータ側を優先しない代わりに、
       // データ側が空のときだけ手入力で補える（移行期の欠測を埋めるため）。
