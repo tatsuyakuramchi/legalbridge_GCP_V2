@@ -158,7 +158,11 @@ export class DocumentRepository {
               tv.id AS version_id, tv.version_no
          FROM document_templates t
          LEFT JOIN document_template_versions tv ON tv.id = t.current_version_id
-        WHERE t.is_active ORDER BY t.category NULLS LAST, t.label`);
+        WHERE t.is_active
+          -- 部分テンプレートは他のひな形に差し込むもので、単独では発行できない。
+          AND t.category IS DISTINCT FROM 'partial'
+          AND t.template_key NOT LIKE '\\_%'
+        ORDER BY t.category NULLS LAST, t.label`);
     return r.rows.map((t: Record<string, any>) => ({
       id: Number(t.id), templateKey: String(t.template_key), label: String(t.label),
       category: str(t.category), numberPrefix: str(t.number_prefix),
@@ -166,14 +170,31 @@ export class DocumentRepository {
     }));
   }
 
+  /**
+   * 差し込み用の部分テンプレート。
+   *
+   * V2 は kind='partial' で持ち、名前は template_key そのもの
+   * （{{> terms_spot_2026}}）。V3 は移行でそれを category に写している。
+   * ここを template_key の "_" 始まりで探していたため1件も見つからず、
+   * 部分を差し込むひな形が「The partial ... could not be found」で
+   * 全部落ちていた。
+   *
+   * "_" 始まりの規約も残す。どちらの名前でも引けるようにしておく。
+   */
   async partials(): Promise<Record<string, string>> {
-    // 部分テンプレートは template_key が "_" で始まるものとして持つ（V2 の運用に合わせる）。
     const r = await this.database.query(
       `SELECT t.template_key, tv.html_source
          FROM document_templates t JOIN document_template_versions tv ON tv.id = t.current_version_id
-        WHERE t.template_key LIKE '\\_%'`);
-    return Object.fromEntries(r.rows.map((p: Record<string, any>) =>
-      [String(p.template_key).slice(1), String(p.html_source)]));
+        WHERE t.is_active
+          AND (t.category = 'partial' OR t.template_key LIKE '\\_%')`);
+    const out: Record<string, string> = {};
+    for (const row of r.rows as Array<Record<string, any>>) {
+      const key = String(row.template_key);
+      const html = String(row.html_source);
+      out[key] = html;
+      if (key.startsWith("_")) out[key.slice(1)] = html;
+    }
+    return out;
   }
 }
 

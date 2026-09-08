@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { FakeDatabase } from "../core/fake-db.js";
 import { DocumentIssueService } from "./issue-service.js";
+import { DocumentRepository } from "./repository.js";
 import { DomainError } from "../core/errors.js";
 
 interface Options { status?: string; blockedConditions?: Array<Record<string, unknown>>; variables?: unknown }
@@ -156,4 +157,34 @@ test("条件を指定しなければ、これまでどおり引き継ぐ", async
   });
   await new DocumentIssueService(db).reissue(1, "誤字", "a");
   assert.ok(db.find("SELECT $2, condition_id, line_no FROM document_conditions"));
+});
+
+// ---- 差し込み用の部分テンプレート ----
+
+test("部分テンプレートは category='partial' で探す（本番の持ち方）", async () => {
+  // V2 は kind='partial' で持ち、名前は template_key そのもの
+  // （{{> terms_spot_2026}}）。移行でそれが category に入る。
+  // template_key の "_" 始まりで探していたため1件も見つからず、
+  // 部分を差し込むひな形が全部落ちていた。
+  const db = new FakeDatabase((t) =>
+    t.includes("t.category = 'partial'")
+      ? [{ template_key: "terms_spot_2026", html_source: "<p>共通条項</p>" }] : []);
+  const partials = await new DocumentRepository(db).partials();
+  assert.equal(partials["terms_spot_2026"], "<p>共通条項</p>");
+});
+
+test('"_" 始まりの名前でも引ける（どちらの規約でも動くように）', async () => {
+  const db = new FakeDatabase((t) =>
+    t.includes("t.category = 'partial'")
+      ? [{ template_key: "_footer", html_source: "<p>脚注</p>" }] : []);
+  const partials = await new DocumentRepository(db).partials();
+  assert.equal(partials["_footer"], "<p>脚注</p>");
+  assert.equal(partials["footer"], "<p>脚注</p>");
+});
+
+test("部分テンプレートはひな形の選択肢に出さない（単独では発行できない）", async () => {
+  const db = new FakeDatabase(() => []);
+  await new DocumentRepository(db).listTemplates();
+  const q = db.find("FROM document_templates t")!;
+  assert.match(q.text, /t\.category IS DISTINCT FROM 'partial'/);
 });

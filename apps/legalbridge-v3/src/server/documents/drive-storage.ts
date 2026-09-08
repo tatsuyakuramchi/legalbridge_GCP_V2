@@ -301,7 +301,11 @@ export async function driveError(operation: string, response: Response) {
     response.status === 401 || response.status === 403
       ? "保存先フォルダへの権限がありません。共有ドライブにサービスアカウントを追加してください"
       : response.status === 404
-      ? "保存先フォルダが見つかりません（GOOGLE_DRIVE_FOLDER_ID を確認してください）"
+      // Drive は「権限が無くて見えない」ときも、存在を隠すために 404 を返す。
+      // フォルダIDが正しいのに 404 なら、たいていはこちら。
+      ? "保存先フォルダが見つかりません。サービスアカウントがそのフォルダを"
+        + "見られないか（共有ドライブのメンバーに追加してください）、"
+        + "GOOGLE_DRIVE_FOLDER_ID が違います"
       : response.status === 429 || response.status >= 500
       ? "Google Drive 側が応答しません。しばらく置いてやり直してください"
       : "Google Drive が受け付けませんでした";
