@@ -1,8 +1,9 @@
-import { dateStr, inTransaction, type Transactable } from "../core/db.js";
+import { dateStr, inTransaction, type Queryable, type Transactable } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { buildFlow, currentStep, type DocumentStyle, type FlowFacts, type FlowStep } from "./flow.js";
-import type { MatterKind } from "./write-service.js";
+import { MATTER_NUMBER, type MatterKind } from "./write-service.js";
+import { allocateNumber } from "../core/numbering.js";
 
 /**
  * 案件に条件と文書を繋ぐ。
@@ -38,47 +39,139 @@ export class MatterLinkService {
   /** 条件を繋ぐ。取引モデルに合わない種類は理由を添えて断る。 */
   async attachCondition(matterId: number, conditionId: number, actor: string) {
     try {
-      return await inTransaction(this.database, async (client) => {
-        const m = await client.query(
-          "SELECT id, matter_no, kind FROM matters WHERE id = $1", [matterId]);
-        const matter = m.rows[0] as { id: number; matter_no: string | null; kind: MatterKind } | undefined;
-        if (!matter) throw new DomainError("NOT_FOUND", `案件 ${matterId} が見つかりません`);
+      return await inTransaction(this.database, async (client) =>
+        this.linkCondition(client, matterId, conditionId, actor));
+    } catch (error) { throw translate(error); }
+  }
 
+  /**
+   * 条件の側から案件を付ける。無ければその場で作る。
+   *
+   * 案件が全体の入口なのに、繋ぐ操作が案件の画面にしか無かった。条件を
+   * 作った直後に付けられず、あとで案件を開いて探し直すことになっていた。
+   *
+   * 案件を新しく作るときは、条件から分かることは条件から取る。取引モデルは
+   * 条件の種類で決まり、相手先も条件のものを引き継ぐ。人が選ぶのは名前だけ。
+   */
+  async linkFromCondition(
+    conditionId: number,
+    input: { matterId?: number | null; title?: string | null; withDocuments?: boolean },
+    actor: string
+  ): Promise<{ matterId: number; matterNo: string | null; created: boolean;
+               attached: boolean; documents: number }> {
+    try {
+      return await inTransaction(this.database, async (client) => {
         const c = await client.query(
-          "SELECT id, condition_no, kind, status FROM conditions WHERE id = $1", [conditionId]);
+          `SELECT c.id, c.condition_no, c.name, c.kind, c.counterparty_id
+             FROM conditions c WHERE c.id = $1`, [conditionId]);
         const condition = c.rows[0] as any;
         if (!condition) throw new DomainError("NOT_FOUND", `条件 ${conditionId} が見つかりません`);
 
-        const allowed = CONDITION_KINDS_BY_MATTER[matter.kind];
-        if (!allowed.length) {
-          throw new DomainError("VALIDATION",
-            "文書作成モデルの案件は条件を持ちません。条件が要るなら取引モデルを変えてください");
-        }
-        if (!allowed.some((k) => k.value === condition.kind)) {
-          throw new DomainError("VALIDATION",
-            `この案件（${labelOf(matter.kind)}）に ${condition.kind} の条件は繋げません。` +
-            `使えるのは ${allowed.map((k) => k.label).join("・")} です`);
-        }
+        let matterId = input.matterId ? Number(input.matterId) : null;
+        let matterNo: string | null = null;
+        let created = false;
 
-        const inserted = await client.query(
-          `INSERT INTO matter_links (matter_id, target_type, target_ref, relation, snapshot)
-           VALUES ($1, 'condition', $2, 'covers', $3::jsonb)
-           ON CONFLICT (matter_id, target_type, target_ref) DO NOTHING
-           RETURNING id`,
-          [matterId, String(conditionId), JSON.stringify({
-            conditionNo: condition.condition_no, kind: condition.kind
-          })]);
-        const added = inserted.rows.length > 0;
-
-        if (added) {
+        if (!matterId) {
+          const kind = matterKindForCondition(String(condition.kind));
+          if (!kind) {
+            throw new DomainError("VALIDATION",
+              `${condition.kind} の条件から作れる案件がありません。案件の側から繋いでください`);
+          }
+          const title = String(input.title ?? "").trim()
+            || String(condition.name ?? "").trim()
+            || `条件 ${condition.condition_no ?? `#${conditionId}`}`;
+          const no = await allocateNumber(client, MATTER_NUMBER);
+          const inserted = await client.query(
+            `INSERT INTO matters (matter_no, title, kind, status, counterparty_id, created_by)
+             VALUES ($1, $2, $3, 'open', $4, $5) RETURNING id, matter_no`,
+            [no, title, kind, condition.counterparty_id ?? null, actor]);
+          const row = inserted.rows[0] as { id: number; matter_no: string | null };
+          matterId = Number(row.id);
+          matterNo = row.matter_no;
+          created = true;
           await recordAudit(client, {
-            actor, action: "matter.attach_condition", targetType: "matter", targetId: matterId,
-            detail: { conditionId, conditionNo: condition.condition_no, matterNo: matter.matter_no }
+            actor, action: "matter.create", targetType: "matter", targetId: matterId,
+            detail: { title, kind, matterNo, fromConditionId: conditionId,
+                      counterpartyId: condition.counterparty_id ?? null }
           });
+        } else {
+          const m = await client.query(
+            "SELECT id, matter_no FROM matters WHERE id = $1", [matterId]);
+          const found = m.rows[0] as { id: number; matter_no: string | null } | undefined;
+          if (!found) throw new DomainError("NOT_FOUND", `案件 ${matterId} が見つかりません`);
+          matterNo = found.matter_no;
         }
-        return { attached: added, conditionId, reason: added ? undefined : "すでに繋がっています" };
+
+        const link = await this.linkCondition(client, matterId, conditionId, actor);
+
+        // 条件から出した文書も同じ案件に寄せる。文書だけ案件から外れていると、
+        // 案件を開いても発行済みの書類が見えない。すでに別の案件に付いている
+        // ものは触らない（横取りになる）。
+        let documents = 0;
+        if (input.withDocuments !== false) {
+          const moved = await client.query(
+            `UPDATE documents d SET matter_id = $1
+              WHERE d.matter_id IS NULL
+                AND d.status <> 'void'
+                AND EXISTS (SELECT 1 FROM document_conditions dc
+                             WHERE dc.document_id = d.id AND dc.condition_id = $2)
+              RETURNING d.id`, [matterId, conditionId]);
+          documents = moved.rows.length;
+          if (documents) {
+            await recordAudit(client, {
+              actor, action: "matter.attach_document", targetType: "matter", targetId: matterId,
+              detail: { conditionId, documentIds: moved.rows.map((r: any) => Number(r.id)) }
+            });
+          }
+        }
+
+        return { matterId, matterNo, created, attached: link.attached, documents };
       });
     } catch (error) { throw translate(error); }
+  }
+
+  /** 繋ぐ本体。作成と同じトランザクションで走らせたいので client を受ける。 */
+  private async linkCondition(
+    client: Queryable, matterId: number, conditionId: number, actor: string
+  ) {
+    const m = await client.query(
+      "SELECT id, matter_no, kind FROM matters WHERE id = $1", [matterId]);
+    const matter = m.rows[0] as { id: number; matter_no: string | null; kind: MatterKind } | undefined;
+    if (!matter) throw new DomainError("NOT_FOUND", `案件 ${matterId} が見つかりません`);
+
+    const c = await client.query(
+      "SELECT id, condition_no, kind, status FROM conditions WHERE id = $1", [conditionId]);
+    const condition = c.rows[0] as any;
+    if (!condition) throw new DomainError("NOT_FOUND", `条件 ${conditionId} が見つかりません`);
+
+    const allowed = CONDITION_KINDS_BY_MATTER[matter.kind];
+    if (!allowed.length) {
+      throw new DomainError("VALIDATION",
+        "文書作成モデルの案件は条件を持ちません。条件が要るなら取引モデルを変えてください");
+    }
+    if (!allowed.some((k) => k.value === condition.kind)) {
+      throw new DomainError("VALIDATION",
+        `この案件（${labelOf(matter.kind)}）に ${condition.kind} の条件は繋げません。` +
+        `使えるのは ${allowed.map((k) => k.label).join("・")} です`);
+    }
+
+    const inserted = await client.query(
+      `INSERT INTO matter_links (matter_id, target_type, target_ref, relation, snapshot)
+       VALUES ($1, 'condition', $2, 'covers', $3::jsonb)
+       ON CONFLICT (matter_id, target_type, target_ref) DO NOTHING
+       RETURNING id`,
+      [matterId, String(conditionId), JSON.stringify({
+        conditionNo: condition.condition_no, kind: condition.kind
+      })]);
+    const added = inserted.rows.length > 0;
+
+    if (added) {
+      await recordAudit(client, {
+        actor, action: "matter.attach_condition", targetType: "matter", targetId: matterId,
+        detail: { conditionId, conditionNo: condition.condition_no, matterNo: matter.matter_no }
+      });
+    }
+    return { attached: added, conditionId, reason: added ? undefined : "すでに繋がっています" };
   }
 
   /** 繋ぎを外す。条件そのものは消さない。 */
@@ -234,3 +327,15 @@ export class MatterLinkService {
 
 const labelOf = (kind: MatterKind) =>
   ({ work: "ライセンス", outsourcing: "業務委託", single: "文書作成" })[kind] ?? kind;
+
+/**
+ * 条件の種類から取引モデルを決める。CONDITION_KINDS_BY_MATTER の逆引き。
+ * 対応を二箇所に書くとずれるので、表から引く。
+ */
+function matterKindForCondition(conditionKind: string): MatterKind | null {
+  for (const [kind, kinds] of Object.entries(CONDITION_KINDS_BY_MATTER) as
+       Array<[MatterKind, Array<{ value: string }>]>) {
+    if (kinds.some((k) => k.value === conditionKind)) return kind;
+  }
+  return null;
+}

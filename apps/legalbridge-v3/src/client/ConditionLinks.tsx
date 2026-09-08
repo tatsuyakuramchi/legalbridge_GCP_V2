@@ -83,6 +83,162 @@ export function ConditionCounterparty(
   );
 }
 
+/**
+ * 条件の案件。
+ *
+ * 案件が全体の入口なのに、繋ぐ操作は案件の画面にしか無かった。条件を作った
+ * 直後に付けられず、あとで案件を開いて条件を探し直すことになっていた。
+ * ここから既存の案件に付けるか、この条件から新しく作れる。
+ *
+ * 参照の向きは変えていない（案件 → 条件）。外しても条件は消えない。
+ */
+export function ConditionMatters(
+  { detail, onDone }: { detail: ConditionDetail; onDone: () => void }
+) {
+  const [mode, setMode] = useState<"closed" | "find" | "create">("closed");
+  const [keyword, setKeyword] = useState("");
+  const search = useDebounced(keyword);
+  const [matters, setMatters] = useState<Array<{ id: number; matterNo: string | null; title: string; kind: string; status: string }>>([]);
+  const [title, setTitle] = useState("");
+  const [withDocuments, setWithDocuments] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (mode !== "find") return;
+    const q = search.trim();
+    api.get<{ matters: Array<{ id: number; matterNo: string | null; title: string; kind: string; status: string }> }>(
+      `/matters${q ? `?q=${encodeURIComponent(q)}` : ""}`)
+      .then((r) => setMatters(r.matters.slice(0, 30))).catch(() => setMatters([]));
+  }, [mode, search]);
+
+  // 案件が無い文書。付けるときに何件が一緒に動くかを先に出す。
+  const loose = detail.documents.filter((d) => d.status !== "void" && d.matterId === null).length;
+
+  async function link(body: { matterId?: number; title?: string }) {
+    setBusy(true); setError(null); setNote(null);
+    try {
+      const r = await api.post<{ matterNo: string | null; created: boolean; documents: number }>(
+        `/conditions/${detail.id}/matters`, { ...body, withDocuments });
+      setNote(`${r.created ? "案件を作って繋ぎました" : "案件に繋ぎました"}：` +
+              `${r.matterNo ?? "（番号なし）"}` +
+              (r.documents ? `／文書 ${r.documents} 件も一緒に付けました` : ""));
+      setMode("closed"); setKeyword(""); setTitle("");
+      onDone();
+    } catch (e) { setError((e as ApiError).message); }
+    finally { setBusy(false); }
+  }
+
+  async function detach(matterId: number, label: string) {
+    if (!window.confirm(`${label} から外します。条件も文書も消えません。`)) return;
+    setBusy(true); setError(null); setNote(null);
+    try {
+      await api.del(`/conditions/${detail.id}/matters/${matterId}`);
+      onDone();
+    } catch (e) { setError((e as ApiError).message); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <div className="panel">
+      <div className="panel-hd">
+        <h2>案件</h2>
+        <span className="faint">
+          {detail.matters.length ? `${detail.matters.length} 件` : "付いていません"}
+        </span>
+        {mode === "closed" && (
+          <span className="row" style={{ marginLeft: "auto" }}>
+            <button className="btn btn-sm" onClick={() => setMode("find")}>既存に付ける</button>
+            <button className="btn btn-sm"
+                    onClick={() => { setTitle(detail.name); setMode("create"); }}>
+              この条件から作る
+            </button>
+          </span>
+        )}
+      </div>
+      <div className="panel-bd stack">
+        {error && <div className="alert">{error}</div>}
+        {note && <div className="note ok">{note}</div>}
+
+        {detail.matters.length ? (
+          <div className="picker">
+            {detail.matters.map((m) => (
+              <div key={m.id} className="pick">
+                <span className="code">{m.matterNo ?? `#${m.id}`}</span>
+                <span>{m.title}</span>
+                <span className="faint">{matterKindLabel(m.kind)}／{m.status}</span>
+                <button className="btn btn-sm" style={{ marginLeft: "auto" }} disabled={busy}
+                        onClick={() => void detach(m.id, m.matterNo ?? `#${m.id}`)}>外す</button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="faint" style={{ margin: 0 }}>
+            この条件はどの案件にも付いていません。案件に付けると、進み具合・期日・
+            文書がひとつの画面にまとまります。
+          </p>
+        )}
+
+        {mode !== "closed" && loose > 0 && (
+          <label className="row" style={{ gap: 6 }}>
+            <input type="checkbox" checked={withDocuments}
+                   onChange={(e) => setWithDocuments(e.target.checked)} />
+            <span>この条件から出した文書 {loose} 件も一緒に付ける</span>
+          </label>
+        )}
+
+        {mode === "find" && (
+          <div className="stack" style={{ gap: 6 }}>
+            <div className="row">
+              <ListSearch value={keyword} onChange={setKeyword}
+                placeholder="案件番号・件名" label="付ける案件を探す" />
+              <button className="btn btn-sm" onClick={() => { setMode("closed"); setKeyword(""); }}>
+                やめる
+              </button>
+            </div>
+            <div className="picker">
+              {matters.map((m) => (
+                <button key={m.id} className="btn btn-sm" style={{ textAlign: "left" }}
+                        disabled={busy || detail.matters.some((x) => x.id === m.id)}
+                        onClick={() => void link({ matterId: m.id })}>
+                  <span className="code">{m.matterNo ?? `#${m.id}`}</span> {m.title}
+                  <span className="faint"> {matterKindLabel(m.kind)}</span>
+                </button>
+              ))}
+              {!matters.length && <span className="faint">見つかりません</span>}
+            </div>
+          </div>
+        )}
+
+        {mode === "create" && (
+          <div className="stack" style={{ gap: 6 }}>
+            <label className="field">
+              <span>案件名</span>
+              <input value={title} onChange={(e) => setTitle(e.target.value)}
+                     placeholder={detail.name} />
+            </label>
+            <p className="faint" style={{ margin: 0 }}>
+              取引モデルは条件の種類（{detail.kind}）から決まります。相手先
+              {detail.counterparty ? `（${detail.counterparty.name}）` : ""}も引き継ぎます。
+            </p>
+            <div className="row">
+              <button className="btn primary btn-sm" disabled={busy}
+                      onClick={() => void link({ title: title.trim() || detail.name })}>
+                作って繋ぐ
+              </button>
+              <button className="btn btn-sm" onClick={() => setMode("closed")}>やめる</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const matterKindLabel = (kind: string) =>
+  ({ work: "ライセンス", outsourcing: "業務委託", single: "文書作成" })[kind] ?? kind;
+
 export function ConditionScopes(
   { detail, onDone }: { detail: ConditionDetail; onDone: () => void }
 ) {

@@ -191,6 +191,33 @@ export function createRoutes(database: Transactable) {
         Number(req.params.id), Number(req.params.conditionId), actor(res)));
     }));
 
+  /**
+   * 条件の側から案件に付ける。案件が無ければその場で作る。
+   *
+   * 繋ぐ操作が案件の画面にしか無かったので、条件を作った直後に付けられず、
+   * 付いていない条件が溜まっていた。参照の向きは変えない（案件→条件）。
+   */
+  const conditionMatterSchema = z.object({
+    matterId: z.coerce.number().int().positive().nullable().optional(),
+    title: z.string().trim().max(200).optional(),
+    // この条件から出した文書のうち、まだ案件が無いものも一緒に寄せる。
+    withDocuments: z.boolean().default(true)
+  });
+  router.post("/conditions/:id/matters",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = conditionMatterSchema.parse(req.body ?? {});
+      res.status(201).json(await matterLinks.linkFromCondition(
+        Number(req.params.id), input, actor(res)));
+    }));
+
+  router.delete("/conditions/:id/matters/:matterId",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await matterLinks.detachCondition(
+        Number(req.params.matterId), Number(req.params.id), actor(res)));
+    }));
+
   const attachDocSchema = z.object({ documentId: z.number().int().positive() });
   router.post("/matters/:id/documents",
     requireRole("admin", "legal"), requireWritable,

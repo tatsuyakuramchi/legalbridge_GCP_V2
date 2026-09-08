@@ -4,7 +4,7 @@ import { DocumentImport } from "./DocumentImport.js";
 import { ConditionSchedules } from "./ConditionSchedules.js";
 import { ConditionRevisions } from "./ConditionRevisions.js";
 import { ConditionEdit } from "./ConditionEdit.js";
-import { ConditionCounterparty, ConditionScopes } from "./ConditionLinks.js";
+import { ConditionCounterparty, ConditionMatters, ConditionScopes } from "./ConditionLinks.js";
 import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
 import { CONDITION_KIND_LABEL, StatusTag } from "./labels.js";
 import type { ConditionDetail, ConditionSummary, EnvelopeCheck, RightsEnvelope } from "../server/core/model.js";
@@ -526,6 +526,11 @@ export function ConditionsWorkspace(
                 editable={detail.status === "active" || detail.status === "draft"}
                 onCompose={onCompose ? (eventIds) => onCompose(detail.id, eventIds) : undefined}
                 onChanged={refreshFlow} />
+
+              <ConditionMatters detail={detail} onDone={async () => {
+                setDetail(await api.get<DetailResponse>(`/conditions/${detail.id}`));
+                refreshFlow();
+              }} />
 
               <ConditionCounterparty detail={detail} onDone={async () => {
                 setDetail(await api.get<DetailResponse>(`/conditions/${detail.id}`));

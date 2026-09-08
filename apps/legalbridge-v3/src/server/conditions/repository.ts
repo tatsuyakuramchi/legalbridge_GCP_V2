@@ -108,11 +108,12 @@ export class ConditionRepository {
     const row = detail.rows[0] as Record<string, any> | undefined;
     if (!row) return null;
 
-    const [scopes, balance, documents, events] = await Promise.all([
+    const [scopes, balance, documents, events, matters] = await Promise.all([
       this.scopes(id),
       this.balance(id),
       this.documents(id),
-      this.events(id)
+      this.events(id),
+      this.matters(id)
     ]);
 
     return {
@@ -130,8 +131,26 @@ export class ConditionRepository {
       paymentTerms: str(row.payment_terms),
       cycle: str(row.cycle),
       notes: str(row.notes),
-      scopes, balance, documents, events
+      scopes, balance, documents, events, matters
     };
+  }
+
+  /**
+   * この条件を扱っている案件。matter_links は案件→条件の向きしか無いので、
+   * 条件から読むにはここで反転する。読めないと、条件の画面では案件に付いて
+   * いるかどうかすら分からない。
+   */
+  private async matters(id: number) {
+    const r = await this.database.query(
+      `SELECT m.id, m.matter_no, m.title, m.kind, m.status
+         FROM matter_links ml
+         JOIN matters m ON m.id = ml.matter_id
+        WHERE ml.target_type = 'condition' AND ml.target_ref = $1::text
+        ORDER BY m.id`, [String(id)]);
+    return r.rows.map((m: Record<string, any>) => ({
+      id: Number(m.id), matterNo: str(m.matter_no), title: String(m.title),
+      kind: String(m.kind), status: String(m.status)
+    }));
   }
 
   private async scopes(id: number): Promise<ConditionScope[]> {
@@ -164,14 +183,15 @@ export class ConditionRepository {
   /** 文書 → 条件の参照なので、条件側からは document_conditions を辿る。 */
   private async documents(id: number) {
     const r = await this.database.query(
-      `SELECT d.id, d.document_no, d.status, d.issued_at
+      `SELECT d.id, d.document_no, d.status, d.issued_at, d.matter_id
          FROM document_conditions dc
          JOIN documents d ON d.id = dc.document_id
         WHERE dc.condition_id = $1
         ORDER BY d.issued_at DESC NULLS LAST, d.id DESC`, [id]);
     return r.rows.map((d) => ({
       id: Number(d.id), documentNo: str(d.document_no), status: String(d.status),
-      issuedAt: d.issued_at ? new Date(String(d.issued_at)).toISOString() : null
+      issuedAt: d.issued_at ? new Date(String(d.issued_at)).toISOString() : null,
+      matterId: int(d.matter_id)
     }));
   }
 

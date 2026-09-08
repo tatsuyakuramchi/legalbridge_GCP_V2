@@ -59,7 +59,14 @@ export interface ConditionDetail extends ConditionSummary {
   scopes: ConditionScope[];
   balance: ConditionBalance | null;
   /** この条件を出力した文書。参照方向を反転した結果、条件から辿れる。 */
-  documents: Array<{ id: number; documentNo: string | null; status: string; issuedAt: string | null }>;
+  documents: Array<{ id: number; documentNo: string | null; status: string;
+                     issuedAt: string | null; matterId: number | null }>;
+  /**
+   * この条件を扱っている案件。matter_links の参照方向を反転して読む。
+   * 案件が全体の入口なので、条件の側からも付いているかどうかが見えないと困る。
+   */
+  matters: Array<{ id: number; matterNo: string | null; title: string;
+                   kind: string; status: string }>;
   events: Array<{ id: number; eventType: string; occurredOn: string; period: string | null; amount: number }>;
 }
 

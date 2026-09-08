@@ -28,7 +28,9 @@ export interface TaskInput {
   dueAt?: string | null;
 }
 
-const NUMBER = { prefix: "MTR", table: "matters", column: "matter_no" };
+/** 案件番号の採番規則。条件から作る経路でも同じ番号帯を使う。 */
+export const MATTER_NUMBER = { prefix: "MTR", table: "matters", column: "matter_no" };
+const NUMBER = MATTER_NUMBER;
 
 export class MatterWriteService {
   constructor(private readonly database: Transactable) {}
