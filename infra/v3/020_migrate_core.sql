@@ -62,7 +62,7 @@ INSERT INTO v3.agreements (agreement_no, title, counterparty_id, direction, stat
 SELECT
   NULLIF(c.document_number, ''),
   COALESCE(NULLIF(c.contract_title, ''), NULLIF(c.document_number, ''), '（無題の契約）'),
-  p.id,
+  COALESCE(p.id, un.id),
   CASE WHEN EXISTS (
          SELECT 1 FROM public.condition_lines cl
            JOIN public.documents d ON d.id = cl.document_id
@@ -81,11 +81,17 @@ SELECT
   COALESCE(c.auto_renewal, false), c.renewal_notice_months,
   NULLIF(c.source_system, ''), NULLIF(c.document_url, ''), c.id
 FROM public.contracts c
-LEFT JOIN v3.parties p ON p.legacy_id = c.primary_vendor_id
-WHERE p.id IS NOT NULL
+LEFT JOIN v3.parties p  ON p.legacy_id = c.primary_vendor_id
+CROSS JOIN v3.parties un
+ WHERE un.party_code = 'UNRESOLVED'
 ON CONFLICT (legacy_id) WHERE legacy_id IS NOT NULL DO UPDATE SET
   agreement_no = EXCLUDED.agreement_no, title = EXCLUDED.title,
-  counterparty_id = EXCLUDED.counterparty_id, direction = EXCLUDED.direction,
+  counterparty_id = CASE
+    WHEN EXCLUDED.counterparty_id
+         = (SELECT id FROM v3.parties WHERE party_code = 'UNRESOLVED')
+    THEN agreements.counterparty_id      -- UI で割り当てた相手先を残す
+    ELSE EXCLUDED.counterparty_id END,
+  direction = EXCLUDED.direction,
   status = EXCLUDED.status, executed_on = EXCLUDED.executed_on,
   effective_on = EXCLUDED.effective_on, expires_on = EXCLUDED.expires_on,
   auto_renewal = EXCLUDED.auto_renewal,
@@ -119,7 +125,7 @@ SELECT
     ELSE 'service'
   END,
   COALESCE(NULLIF(cl.condition_name, ''), '（無題の条件）'),
-  cp.id,
+  COALESCE(cp.id, un.id),
   nw.id,
   np.id,
   CASE WHEN cl.exclusivity ILIKE '%non%' OR cl.exclusivity LIKE '%非独占%' THEN 'non_exclusive'
@@ -156,15 +162,26 @@ SELECT
   cl.id
 FROM public.condition_lines cl
 LEFT JOIN public.documents d ON d.id = cl.document_id
+LEFT JOIN public.contracts ct ON ct.id = d.contract_id
 LEFT JOIN v3.agreements ag   ON ag.legacy_id = d.contract_id
-LEFT JOIN v3.parties cp      ON cp.legacy_id = cl.counterparty_vendor_id
+-- 相手先は条件が直に持っていないことがある（実データで376件中176件が空）。
+-- その場合は文書→契約に1ホップして引く。契約の相手先は同じ取引の相手なので、
+-- 推測ではなくデータ上の同値。これで89件・¥10,660,807 が回収できる。
+LEFT JOIN v3.parties cp      ON cp.legacy_id = COALESCE(cl.counterparty_vendor_id,
+                                                        ct.primary_vendor_id)
 LEFT JOIN v3.works nw        ON nw.legacy_table = 'works'
                             AND nw.legacy_id = COALESCE(cl.work_id, cl.source_work_id)
 LEFT JOIN v3.work_parts np   ON np.legacy_id = cl.source_material_id
-WHERE cp.id IS NOT NULL          -- 相手先が解決できない行は取り込まない（090 で一覧化する）
+CROSS JOIN v3.parties un
+ WHERE un.party_code = 'UNRESOLVED'   -- 解決できない行は受け皿へ（090 で一覧化する）
 ON CONFLICT (legacy_id) WHERE legacy_id IS NOT NULL DO UPDATE SET
   agreement_id = EXCLUDED.agreement_id, direction = EXCLUDED.direction,
-  kind = EXCLUDED.kind, name = EXCLUDED.name, counterparty_id = EXCLUDED.counterparty_id,
+  kind = EXCLUDED.kind, name = EXCLUDED.name,
+  counterparty_id = CASE
+    WHEN EXCLUDED.counterparty_id
+         = (SELECT id FROM v3.parties WHERE party_code = 'UNRESOLVED')
+    THEN conditions.counterparty_id
+    ELSE EXCLUDED.counterparty_id END,
   work_id = EXCLUDED.work_id, work_part_id = EXCLUDED.work_part_id,
   exclusivity = EXCLUDED.exclusivity, sublicensable = EXCLUDED.sublicensable,
   term_start = EXCLUDED.term_start, term_end = EXCLUDED.term_end,
@@ -351,7 +368,7 @@ ON CONFLICT (legacy_id) WHERE legacy_id IS NOT NULL DO UPDATE SET
 INSERT INTO v3.payments (direction, party_id, currency, amount, due_on, paid_on, status, legacy_id)
 SELECT
   CASE WHEN p.direction ILIKE '%receiv%' OR p.direction = 'in' THEN 'in' ELSE 'out' END,
-  pt.id,
+  COALESCE(pt.id, un.id),
   COALESCE(NULLIF(p.currency, ''), 'JPY'),
   COALESCE(v3.to_minor(COALESCE(p.amount_ex_tax, p.total_amount), p.currency), 0),
   p.due_date, p.paid_date,
@@ -360,9 +377,16 @@ SELECT
        ELSE 'planned' END,
   p.id
 FROM public.payments p
-JOIN v3.parties pt ON pt.legacy_id = p.counterparty_vendor_id
+LEFT JOIN v3.parties pt ON pt.legacy_id = p.counterparty_vendor_id
+CROSS JOIN v3.parties un
+ WHERE un.party_code = 'UNRESOLVED'
 ON CONFLICT (legacy_id) WHERE legacy_id IS NOT NULL DO UPDATE SET
-  direction = EXCLUDED.direction, party_id = EXCLUDED.party_id,
+  direction = EXCLUDED.direction,
+  party_id = CASE
+    WHEN EXCLUDED.party_id
+         = (SELECT id FROM v3.parties WHERE party_code = 'UNRESOLVED')
+    THEN payments.party_id                -- UI で割り当てた相手先を残す
+    ELSE EXCLUDED.party_id END,
   currency = EXCLUDED.currency, amount = EXCLUDED.amount,
   due_on = EXCLUDED.due_on, paid_on = EXCLUDED.paid_on,
   status = EXCLUDED.status, updated_at = now();

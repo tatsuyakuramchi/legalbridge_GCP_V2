@@ -13,6 +13,19 @@ SET LOCAL search_path = v3, public;
 -- 取引先：vendors → parties
 --   trade_name / pen_name は別名の配列に畳む（名前解決の順序ロジックが消える）。
 -- ---------------------------------------------------------------------
+-- ---------------------------------------------------------------------
+-- 相手先の受け皿
+--   V1 には相手先が空のまま運用されている行が実在する（契約166件・
+--   条件87件・支払25件）。V3 は counterparty_id を NOT NULL にしているので、
+--   そのままでは取り込めず、V3 が金額を黙って過少計上することになる。
+--   受け皿を1件だけ置き、そこへ紐付けたうえで high の課題として一覧化する。
+--   status='archived' なので取引先の選択候補には出ない。
+--   UI から本来の相手先を割り当てれば、流し直すたびに課題は減っていく。
+-- ---------------------------------------------------------------------
+INSERT INTO v3.parties (party_code, kind, name, status)
+VALUES ('UNRESOLVED', 'corporate', '（相手先未特定）', 'archived')
+ON CONFLICT (party_code) DO UPDATE SET name = EXCLUDED.name, status = EXCLUDED.status;
+
 INSERT INTO v3.parties (party_code, kind, name, aliases, invoice_no, corporate_no,
                         withholding, status, legacy_id)
 SELECT

@@ -13,28 +13,50 @@ SET LOCAL search_path = v3, public;
 
 -- ---------------------------------------------------------------------
 -- 取り込めなかった行を記録する
+--   先にこの5ルールを一旦 resolved にし、まだ当てはまる行だけを
+--   下の INSERT が open に戻す。こうしないと、移行前に流したときの行が
+--   open のまま残り、課題一覧が実態と合わなくなる（運用のチェックリスト
+--   として使えなくなる）。
 -- ---------------------------------------------------------------------
+UPDATE v3.data_quality_issues
+   SET status = 'resolved', resolved_at = now()
+ WHERE status = 'open'
+   AND rule_code IN ('MIGRATION_CONDITION_NO_PARTY', 'MIGRATION_AGREEMENT_NO_PARTY',
+                     'MIGRATION_PAYMENT_NO_PARTY', 'CONDITION_NO_WORK',
+                     'PAYMENT_UNALLOCATED', 'DOCUMENT_NO_SOURCE');
 
--- 相手先が解決できず条件を取り込めなかった行
-INSERT INTO v3.data_quality_issues (rule_code, target_type, target_id, severity, detail)
-SELECT 'MIGRATION_CONDITION_NO_PARTY', 'legacy_condition_line', cl.id, 'high',
-       jsonb_build_object('condition_name', cl.condition_name,
-                          'vendor_id', cl.counterparty_vendor_id,
-                          'document_id', cl.document_id)
-  FROM public.condition_lines cl
- WHERE NOT EXISTS (SELECT 1 FROM v3.conditions c WHERE c.legacy_id = cl.id)
-ON CONFLICT (rule_code, target_type, target_id) DO UPDATE SET
-  detail = EXCLUDED.detail, detected_at = now(), status = 'open';
 
--- 主取引先が解決できず合意を取り込めなかった契約
+-- 相手先を特定できず受け皿（（相手先未特定））に紐付いている条件。
+-- 行は落とさず取り込んであるので、UI から本来の相手先を割り当てて潰す。
 INSERT INTO v3.data_quality_issues (rule_code, target_type, target_id, severity, detail)
-SELECT 'MIGRATION_AGREEMENT_NO_PARTY', 'legacy_contract', c.id, 'high',
-       jsonb_build_object('contract_title', c.contract_title,
-                          'primary_vendor_id', c.primary_vendor_id)
-  FROM public.contracts c
- WHERE NOT EXISTS (SELECT 1 FROM v3.agreements a WHERE a.legacy_id = c.id)
+SELECT 'MIGRATION_CONDITION_NO_PARTY', 'condition', c.id, 'high',
+       jsonb_build_object('condition_no', c.condition_no, 'name', c.name,
+                          'amount', c.flat_amount, 'currency', c.currency,
+                          'legacy_id', c.legacy_id)
+  FROM v3.conditions c
+  JOIN v3.parties un ON un.id = c.counterparty_id AND un.party_code = 'UNRESOLVED'
 ON CONFLICT (rule_code, target_type, target_id) DO UPDATE SET
-  detail = EXCLUDED.detail, detected_at = now(), status = 'open';
+  detail = EXCLUDED.detail, detected_at = now(), status = 'open', resolved_at = NULL;
+
+-- 主取引先を特定できず受け皿に紐付いている合意
+INSERT INTO v3.data_quality_issues (rule_code, target_type, target_id, severity, detail)
+SELECT 'MIGRATION_AGREEMENT_NO_PARTY', 'agreement', a.id, 'high',
+       jsonb_build_object('agreement_no', a.agreement_no, 'title', a.title,
+                          'legacy_id', a.legacy_id)
+  FROM v3.agreements a
+  JOIN v3.parties un ON un.id = a.counterparty_id AND un.party_code = 'UNRESOLVED'
+ON CONFLICT (rule_code, target_type, target_id) DO UPDATE SET
+  detail = EXCLUDED.detail, detected_at = now(), status = 'open', resolved_at = NULL;
+
+-- 相手先を特定できず受け皿に紐付いている支払
+INSERT INTO v3.data_quality_issues (rule_code, target_type, target_id, severity, detail)
+SELECT 'MIGRATION_PAYMENT_NO_PARTY', 'payment', p.id, 'high',
+       jsonb_build_object('payment_no', p.payment_no, 'amount', p.amount,
+                          'currency', p.currency, 'legacy_id', p.legacy_id)
+  FROM v3.payments p
+  JOIN v3.parties un ON un.id = p.party_id AND un.party_code = 'UNRESOLVED'
+ON CONFLICT (rule_code, target_type, target_id) DO UPDATE SET
+  detail = EXCLUDED.detail, detected_at = now(), status = 'open', resolved_at = NULL;
 
 -- 作品に紐づかない条件（V1移行データに多い）
 INSERT INTO v3.data_quality_issues (rule_code, target_type, target_id, severity, detail)
@@ -43,7 +65,7 @@ SELECT 'CONDITION_NO_WORK', 'condition', c.id, 'medium',
   FROM v3.conditions c
  WHERE c.work_id IS NULL AND c.kind IN ('license', 'product')
 ON CONFLICT (rule_code, target_type, target_id) DO UPDATE SET
-  detail = EXCLUDED.detail, detected_at = now();
+  detail = EXCLUDED.detail, detected_at = now(), status = 'open', resolved_at = NULL;
 
 -- 条件に割り当てられていない支払（現行の royalty_payments 由来の負債）
 INSERT INTO v3.data_quality_issues (rule_code, target_type, target_id, severity, detail)
@@ -52,7 +74,7 @@ SELECT 'PAYMENT_UNALLOCATED', 'payment', p.id, 'high',
   FROM v3.payments p
  WHERE NOT EXISTS (SELECT 1 FROM v3.payment_allocations a WHERE a.payment_id = p.id)
 ON CONFLICT (rule_code, target_type, target_id) DO UPDATE SET
-  detail = EXCLUDED.detail, detected_at = now();
+  detail = EXCLUDED.detail, detected_at = now(), status = 'open', resolved_at = NULL;
 
 -- 発行済みなのにテンプレートも保管先も無い文書
 INSERT INTO v3.data_quality_issues (rule_code, target_type, target_id, severity, detail)
@@ -61,15 +83,17 @@ SELECT 'DOCUMENT_NO_SOURCE', 'document', d.id, 'medium',
   FROM v3.documents d
  WHERE d.status = 'issued' AND d.template_version_id IS NULL AND d.storage_url IS NULL
 ON CONFLICT (rule_code, target_type, target_id) DO UPDATE SET
-  detail = EXCLUDED.detail, detected_at = now();
+  detail = EXCLUDED.detail, detected_at = now(), status = 'open', resolved_at = NULL;
 
 COMMIT;
 
 BEGIN READ ONLY;
 
 \echo '--- 件数の突き合わせ（差が出たら理由を説明できること）---'
+-- 取引先は受け皿（（相手先未特定））を除いて数える。移行元には無い行なので。
 SELECT '取引先'   AS entity, (SELECT count(*) FROM public.vendors)          AS src,
-                             (SELECT count(*) FROM v3.parties)              AS dst
+                             (SELECT count(*) FROM v3.parties
+                               WHERE party_code IS DISTINCT FROM 'UNRESOLVED') AS dst
 UNION ALL SELECT '担当者',   (SELECT count(*) FROM public.staff),           (SELECT count(*) FROM v3.staff)
 -- 作品だけは src 列に「移行元の件数」ではなく期待値を置く。
 --   works と source_ips を1表に統合するとき、
