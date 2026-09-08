@@ -775,7 +775,15 @@ export function createRoutes(database: Transactable) {
         templateKey: input.templateKey, conditionIds: [conditionId],
         matterId: input.matterId ?? null, manualInputs: input.manualInputs ?? {}
       }, actor(res));
-      const issued = await issues.issue(draft.id, actor(res));
+      // 発行は必須項目が埋まっていないと弾かれる。下書きを残すと、
+      // 押し直すたびに使われない行が積もるので、その場で捨てる。
+      let issued;
+      try {
+        issued = await issues.issue(draft.id, actor(res));
+      } catch (error) {
+        await issues.void(draft.id, "発行できなかったため破棄", actor(res)).catch(() => undefined);
+        throw error;
+      }
       const linked = await conditionEvents.linkDocument(
         conditionId, input.eventIds, issued.id, actor(res));
       res.status(201).json({ document: issued, ...linked });
@@ -1001,7 +1009,13 @@ export function createRoutes(database: Transactable) {
         templateKey: input.templateKey, conditionIds: [conditionId],
         matterId: input.matterId ?? null, manualInputs: input.manualInputs ?? {}
       }, actor(res));
-      const issued = await issues.issue(draft.id, actor(res));
+      let issued;
+      try {
+        issued = await issues.issue(draft.id, actor(res));
+      } catch (error) {
+        await issues.void(draft.id, "発行できなかったため破棄", actor(res)).catch(() => undefined);
+        throw error;
+      }
       const statement = await royalty.finalize({
         conditionId, period: input.period, occurredOn: input.occurredOn,
         eventType: input.eventType, reported: input.reported, documentId: issued.id

@@ -21,6 +21,12 @@ interface EventRow {
 }
 interface TypeOption { value: string; label: string }
 interface TemplateOption { templateKey: string; label: string; category: string | null }
+interface PreviewResponse {
+  templateLabel: string;
+  /** 条件と実績から決まらない項目。人が入れないと発行できない。 */
+  missing: Array<{ name: string; label: string }>;
+  derived: string[];
+}
 
 export function ConditionEvents(
   { conditionId, currency, editable, matterId, reloadKey, onChanged }:
@@ -38,6 +44,10 @@ export function ConditionEvents(
   const [templates, setTemplates] = useState<TemplateOption[]>([]);
   const [templateKey, setTemplateKey] = useState("");
   const [issued, setIssued] = useState<string | null>(null);
+  // ひな形が要求する項目のうち、条件と実績から決まらないもの。
+  // これを先に見せないと、発行を押してから8項目足りないと言われる。
+  const [preview, setPreview] = useState<PreviewResponse | null>(null);
+  const [manual, setManual] = useState<Record<string, string>>({});
   // 実績と同じ理由。フォームは表の上に開くので、下の行から押すと画面の外に出る。
   const issueForm = useRef<HTMLDivElement>(null);
 
@@ -51,6 +61,7 @@ export function ConditionEvents(
   useEffect(() => { load(); setError(null); }, [conditionId, reloadKey]);
   useEffect(() => {
     setAdding(false); setIssuing(null); setIssued(null);
+    setPreview(null); setManual({});
   }, [conditionId]);
 
   // テンプレートは文書を作るときにしか要らないので、開くまで取りに行かない。
@@ -65,19 +76,36 @@ export function ConditionEvents(
     if (issuing) issueForm.current?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [issuing]);
 
+  // ひな形を選んだ時点で、何が足りないかを出す。押してから言われるのでは遅い。
+  useEffect(() => {
+    if (!issuing || !templateKey) { setPreview(null); return; }
+    setPreview(null); setManual({});
+    api.post<PreviewResponse>("/documents/preview", {
+      templateKey, conditionIds: [conditionId], manualInputs: {}
+    }).then(setPreview).catch((e: ApiError) => setError(e.message));
+  }, [issuing, templateKey, conditionId]);
+
   /**
    * 実績から文書を作る。下書き→発行→実績への紐付けをサーバ側で1本にしてある。
    * 紐付けが済んで初めて「この検収書は第N回の分」が読めるようになる。
    */
+  const remaining = (preview?.missing ?? [])
+    .filter((m) => !String(manual[m.name] ?? "").trim()).length;
+  // プレビューが返るまでは押させない。押してから8項目足りないと言われるより、
+  // 先に何が要るかを見せる。
+  const filled = preview !== null && remaining === 0;
+
   async function issueDocument() {
     if (!issuing || !templateKey) return;
     setBusy(true); setError(null);
     try {
       const r = await api.post<{ document: { documentNo: string } }>(
         `/conditions/${conditionId}/event-documents`,
-        { templateKey, eventIds: [issuing.id], matterId: matterId ?? null });
+        { templateKey, eventIds: [issuing.id], matterId: matterId ?? null,
+          manualInputs: manual });
       setIssued(r.document.documentNo);
-      setIssuing(null); load(); onChanged();
+      setIssuing(null); setPreview(null); setManual({});
+      load(); onChanged();
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
     finally { setBusy(false); }
   }
@@ -227,15 +255,41 @@ export function ConditionEvents(
                 </option>
               ))}
             </select>
-            <span className="faint">
-              検収なら検収書、納品なら納品書。値はこの条件と実績から埋まる
-            </span>
+            <span className="faint">検収なら検収書、納品なら納品書</span>
           </label>
+
+          {preview && preview.missing.length > 0 && (
+            <div className="stack" style={{ gap: 8 }}>
+              <div className="note warn">
+                このひな形は、条件と実績から決まらない項目を {preview.missing.length} つ要求します。
+                埋めないと発行できません。
+              </div>
+              <div className="form-grid">
+                {preview.missing.map((m) => (
+                  <label key={m.name} className="field">
+                    <span>{m.label}</span>
+                    <input value={manual[m.name] ?? ""}
+                           onChange={(e) =>
+                             setManual((prev) => ({ ...prev, [m.name]: e.target.value }))} />
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="row">
-            <button className="btn primary btn-sm" disabled={busy || !templateKey}
+            <button className="btn primary btn-sm" disabled={busy || !templateKey || !filled}
                     onClick={() => void issueDocument()}>作って発行する</button>
-            <button className="btn btn-sm" onClick={() => setIssuing(null)}>やめる</button>
-            <span className="faint">発行すると番号が振られ、あとから中身は変えられません</span>
+            <button className="btn btn-sm" onClick={() => { setIssuing(null); setPreview(null); }}>
+              やめる
+            </button>
+            <span className="faint">
+              {preview
+                ? filled
+                  ? `${preview.derived.length}項目を条件から自動で埋めます。発行すると番号が振られ、あとから中身は変えられません`
+                  : `未入力 ${remaining} 件`
+                : "ひな形の中身を確かめています…"}
+            </span>
           </div>
         </div>
       )}
