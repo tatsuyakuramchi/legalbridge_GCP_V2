@@ -61,6 +61,17 @@ export function App() {
   /** その画面に渡す選択。別の画面へ移ったら持ち越さない。 */
   const focusFor = (view: View) => (focus && focus.view === view ? focus.id : undefined);
 
+  /**
+   * 文書を作りに行く。条件と実績を選んだ状態で「文書」画面を開く。
+   * 作成のフォームは1つだけにしてあるので、どこから入っても同じものを見る。
+   */
+  const [compose, setCompose] = useState<{ conditionId: number; eventIds: number[] } | null>(null);
+  const startCompose = (conditionId: number, eventIds: number[] = []) => {
+    setCompose({ conditionId, eventIds });
+    setFocus(null);
+    setView("documents");
+  };
+
   return (
     <div className="app">
       <nav className="rail" aria-label="主ナビゲーション">
@@ -92,7 +103,10 @@ export function App() {
           <MattersWorkspace key={`m${focusFor("matters") ?? 0}`}
             onOpenCondition={openCondition} initialId={focusFor("matters")} />
         )}
-        {view === "conditions" && <ConditionsWorkspace key={conditionId ?? 0} initialId={conditionId} />}
+        {view === "conditions" && (
+          <ConditionsWorkspace key={conditionId ?? 0} initialId={conditionId}
+                               onCompose={startCompose} />
+        )}
         {view === "works" && (
           <WorksWorkspace key={`w${focusFor("works") ?? 0}`}
             onOpenCondition={openCondition} initialId={focusFor("works")} />
@@ -100,7 +114,10 @@ export function App() {
         {view === "parties" && (
           <PartiesWorkspace key={`p${focusFor("parties") ?? 0}`} initialId={focusFor("parties")} />
         )}
-        {view === "documents" && <DocumentsWorkspace />}
+        {view === "documents" && (
+          <DocumentsWorkspace key={compose ? `c${compose.conditionId}` : "docs"}
+                              start={compose ?? undefined} />
+        )}
         {view === "money" && <MoneyWorkspace />}
         {view === "flows" && <FlowMonitorWorkspace onOpenCondition={openCondition} />}
         {view === "ops" && <OpsWorkspace key={opsTab ?? "quality"} initialTab={opsTab} />}

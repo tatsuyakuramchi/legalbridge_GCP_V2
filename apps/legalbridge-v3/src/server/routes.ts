@@ -903,10 +903,45 @@ export function createRoutes(database: Transactable) {
     conditionIds: z.array(z.coerce.number().int().positive()).max(200).default([]),
     matterId: z.coerce.number().int().positive().nullable().optional(),
     agreementId: z.coerce.number().int().positive().nullable().optional(),
-    manualInputs: z.record(z.string(), z.unknown()).default({})
+    manualInputs: z.record(z.string(), z.unknown()).default({}),
+    // 候補に出すための文脈。プレビューでは値を見せるだけで、保存はしない。
+    eventIds: z.array(z.coerce.number().int().positive()).max(200).default([]),
+    royalty: z.record(z.string(), z.unknown()).nullable().optional()
   });
 
   // 発行せずに中身と未入力を確認する。
+  /**
+   * ひな形ごとの「前回入れた値」。
+   *
+   * 検収者部署・検収者氏名のように、毎回同じで、条件からも実績からも
+   * 出てこない項目がある。覚えておかないと毎回打つことになる。
+   *
+   * 日付と金額は覚えない。毎回変わるものを既定に入れると、前回の日付が
+   * 入ったまま気づかず発行してしまう。
+   */
+  router.get("/document-defaults/:templateKey", asyncRoute(async (req, res) => {
+    const r = await database.query(
+      "SELECT value FROM settings WHERE key = $1",
+      [`document_defaults:${req.params.templateKey}`]);
+    res.json({ defaults: (r.rows[0] as { value?: Record<string, unknown> })?.value ?? {} });
+  }));
+
+  const defaultsSchema = z.object({
+    values: z.record(z.string(), z.string().max(300))
+  });
+  router.put("/document-defaults/:templateKey",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { values } = defaultsSchema.parse(req.body ?? {});
+      const key = `document_defaults:${req.params.templateKey}`;
+      await database.query(
+        `INSERT INTO settings (key, value, updated_by) VALUES ($1, $2::jsonb, $3)
+         ON CONFLICT (key) DO UPDATE SET
+           value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by`,
+        [key, JSON.stringify(values), actor(res)]);
+      res.json({ saved: Object.keys(values).length });
+    }));
+
   router.post("/documents/preview",
     requireRole("admin", "legal"),
     asyncRoute(async (req, res) => {
@@ -917,7 +952,9 @@ export function createRoutes(database: Transactable) {
         templateLabel: result.templateLabel,
         missing: result.binding.missing,
         derived: result.binding.derived,
-        values: result.binding.values
+        values: result.binding.values,
+        // 入力欄の横に出す候補。ひな形が供給元を宣言していなくても人が選べる。
+        candidates: result.candidates
       });
     }));
 
@@ -1021,6 +1058,88 @@ export function createRoutes(database: Transactable) {
         eventType: input.eventType, reported: input.reported, documentId: issued.id
       }, actor(res));
       res.status(201).json({ document: issued, ...statement });
+    }));
+
+  /**
+   * 文書を作る（1本化した入口）。
+   *
+   * 計算書は「先に試算 → その値で発行 → 確定」の順にする。逆にすると、
+   * 本文を固めたあとに金額を計算することになり、書類に金額が載らない。
+   */
+  const composeSchema = z.object({
+    templateKey: z.string().trim().min(1).max(120),
+    conditionIds: z.array(z.coerce.number().int().positive()).max(50).default([]),
+    eventIds: z.array(z.coerce.number().int().positive()).max(200).default([]),
+    matterId: z.coerce.number().int().positive().nullable().optional(),
+    agreementId: z.coerce.number().int().positive().nullable().optional(),
+    manualInputs: z.record(z.string(), z.unknown()).default({}),
+    /** 入れると計算書として確定する。条件は1件だけ。 */
+    royalty: z.object({
+      period: z.string().trim().min(1).max(60),
+      occurredOn: z.string().date().nullable().optional(),
+      eventType: z.enum(["manufacturing", "sales", "sublicense_receipt",
+                         "service_period", "adjustment"]).optional(),
+      reported: reportedSchema
+    }).nullable().optional()
+  });
+  router.post("/documents/compose",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = composeSchema.parse(req.body ?? {});
+      const who = actor(res);
+
+      // 1. 計算書なら先に試算する。書類に載せる金額はここで決まる。
+      let computed: Record<string, unknown> | null = null;
+      if (input.royalty) {
+        if (input.conditionIds.length !== 1) {
+          throw new DomainError("VALIDATION", "計算書は条件を1件だけ選んでください");
+        }
+        const preview = await royalty.preview({
+          conditionId: input.conditionIds[0], period: input.royalty.period,
+          occurredOn: input.royalty.occurredOn, eventType: input.royalty.eventType,
+          reported: input.royalty.reported
+        });
+        computed = royaltyForDocument(preview, input.royalty.reported);
+      }
+
+      // 2. 実績に結びつけられるかを先に確かめる。発行してから弾かれると、
+      //    番号の振られた文書だけが残る。
+      if (input.eventIds.length) {
+        if (!input.conditionIds.length) {
+          throw new DomainError("VALIDATION", "実績を選ぶときは、その条件も選んでください");
+        }
+        await conditionEvents.assertLinkable(input.conditionIds[0], input.eventIds);
+      }
+
+      // 3. 下書き → 発行。失敗したら下書きは捨てる。
+      const draft = await issues.createDraft({
+        templateKey: input.templateKey, conditionIds: input.conditionIds,
+        matterId: input.matterId ?? null, agreementId: input.agreementId ?? null,
+        manualInputs: input.manualInputs
+      }, who);
+      let issued;
+      try {
+        issued = await issues.issue(draft.id, who,
+          { eventIds: input.eventIds, royalty: computed });
+      } catch (error) {
+        await issues.void(draft.id, "発行できなかったため破棄", who).catch(() => undefined);
+        throw error;
+      }
+
+      // 4. 実績に結びつける／計算書を確定する。金額は確定時に計算し直す。
+      const linked = input.eventIds.length
+        ? await conditionEvents.linkDocument(
+            input.conditionIds[0], input.eventIds, issued.id, who)
+        : null;
+      const statement = input.royalty
+        ? await royalty.finalize({
+            conditionId: input.conditionIds[0], period: input.royalty.period,
+            occurredOn: input.royalty.occurredOn, eventType: input.royalty.eventType,
+            reported: input.royalty.reported, documentId: issued.id
+          }, who)
+        : null;
+
+      res.status(201).json({ document: issued, linked, statement, royalty: computed });
     }));
 
   router.get("/statements", asyncRoute(async (req, res) => {
@@ -1360,4 +1479,29 @@ export function errorHandler(error: unknown, _req: Request, res: Response, next:
   }
   console.error("unhandled error", error);
   return res.status(500).json({ error: "サーバ内部でエラーが発生しました" });
+}
+
+/**
+ * 試算の結果を、書類に載せる形にする。
+ * 主単位（円）の数値で渡す。テンプレートは表示用の値を使うため。
+ */
+function royaltyForDocument(
+  preview: { fee: Record<string, any>; payment: Record<string, any>; agConsumedBefore: number },
+  reported: Record<string, any>
+): Record<string, unknown> {
+  return {
+    salesInput: reported.salesInput ?? null,
+    quantity: reported.quantity ?? null,
+    grossExTax: preview.fee.gross_ex_tax,
+    mgTopup: preview.fee.mg_topup_this_time,
+    agOffset: preview.fee.ag_offset_this_time,
+    agRemaining: preview.fee.ag_remaining_after,
+    agConsumedBefore: preview.agConsumedBefore,
+    netExTax: preview.fee.actual_ex_tax,
+    taxAmount: preview.fee.tax_amount,
+    totalIncTax: preview.fee.total_inc_tax,
+    withholdingTax: preview.payment.withholdingTax,
+    netTransfer: preview.payment.netTransfer,
+    formula: preview.fee.formula_breakdown
+  };
 }

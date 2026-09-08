@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
 import { StatusTag } from "./labels.js";
 import type { ConditionSummary } from "../server/core/model.js";
-import { api, ApiError } from "./api.js";
+import { api, ApiError, money } from "./api.js";
 
 interface TemplateRow {
   id: number; templateKey: string; label: string; category: string | null; numberPrefix: string | null;
@@ -22,16 +22,38 @@ interface PreviewResponse {
   html: string; templateLabel: string;
   missing: Array<{ name: string; label: string }>; derived: string[];
   values: Record<string, unknown>;
+  /** 入力欄の横に出す候補。押すとその値が入る。 */
+  candidates: Candidate[];
+}
+interface Candidate { label: string; value: string; source: string; kind: "date" | "amount" | "text" }
+interface EventRow {
+  id: number; eventType: string; occurredOn: string | null; period: string | null;
+  amount: number; status: string;
 }
 
-export function DocumentsWorkspace() {
+/**
+ * 入力欄の名前から、その欄に合う候補の種類を当てる。
+ * 日付の欄に金額の候補を並べても選べない。当たらなければ全部出す。
+ */
+function kindFor(name: string, label: string): Candidate["kind"] | null {
+  const s = `${name} ${label}`;
+  if (/日|期日|年月日/.test(s) && !/氏名|名前/.test(label)) return "date";
+  if (/額|金額|価格|料金|税/.test(s)) return "amount";
+  if (/名|者|部署|内容|件名|住所|番号/.test(s)) return "text";
+  return null;
+}
+
+export function DocumentsWorkspace(
+  { start }: { start?: { conditionId: number; eventIds: number[] } } = {}
+) {
   const [templates, setTemplates] = useState<TemplateRow[]>([]);
   const [documents, setDocuments] = useState<DocumentRow[]>([]);
   const [keyword, setKeyword] = useState("");
   const search = useDebounced(keyword);
   const [conditions, setConditions] = useState<ConditionSummary[]>([]);
   const [templateKey, setTemplateKey] = useState("");
-  const [picked, setPicked] = useState<number[]>([]);
+  // 条件の画面から来たときは、その条件と実績を選んだ状態で開く。
+  const [picked, setPicked] = useState<number[]>(start ? [start.conditionId] : []);
   const [manual, setManual] = useState<Record<string, string>>({});
   const [preview, setPreview] = useState<PreviewResponse | null>(null);
   const [issued, setIssued] = useState<string | null>(null);
@@ -39,6 +61,14 @@ export function DocumentsWorkspace() {
   const [busy, setBusy] = useState(false);
   const [integrations, setIntegrations] = useState<Integrations | null>(null);
   const [stored, setStored] = useState<string | null>(null);
+  // 呼び出した条件の実績。検収書はここの日付と金額を候補に出す。
+  const [events, setEvents] = useState<EventRow[]>([]);
+  const [pickedEvents, setPickedEvents] = useState<number[]>(start?.eventIds ?? []);
+  const [condSearch, setCondSearch] = useState("");
+  // 候補から選んだ欄。手で打った欄だけを「前回の値」として覚える。
+  const [pickedFields, setPickedFields] = useState<Set<string>>(new Set());
+  // 候補を開いている欄。文字の欄は候補が多いので、押したときだけ出す。
+  const [opened, setOpened] = useState<Set<string>>(new Set());
 
   useEffect(() => { void reload(); }, [search]);
   async function reload() {
@@ -58,9 +88,42 @@ export function DocumentsWorkspace() {
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
   }
 
+  // 条件を1件だけ選んでいるときは、その実績を呼び出せる。
+  useEffect(() => {
+    if (picked.length !== 1) { setEvents([]); setPickedEvents([]); return; }
+    // 条件の画面から実績を指定して来たときは、その選択を消さない。
+    api.get<{ events: EventRow[] }>(`/conditions/${picked[0]}/events`)
+      .then((r) => setEvents(r.events.filter((e) => e.status === "active")))
+      .catch(() => setEvents([]));
+  }, [picked.join(",")]);
+
   const body = useMemo(() => ({
-    templateKey, conditionIds: picked, manualInputs: manual
-  }), [templateKey, picked, manual]);
+    templateKey, conditionIds: picked, eventIds: pickedEvents, manualInputs: manual
+  }), [templateKey, picked, pickedEvents, manual]);
+
+  // 打つたびに問い合わせない。少し待ってからプレビューを取り直す。
+  const manualJson = useDebounced(JSON.stringify(manual), 600);
+
+  // ひな形を変えたら、前回そのひな形で入れた値を読み込む。
+  // 検収者部署・氏名のように毎回同じものを打ち直さずに済む。
+  useEffect(() => {
+    if (!templateKey) return;
+    setManual({}); setPickedFields(new Set());
+    api.get<{ defaults: Record<string, string> }>(`/document-defaults/${templateKey}`)
+      .then((r) => setManual(r.defaults ?? {}))
+      .catch(() => undefined);
+  }, [templateKey]);
+
+  // ひな形か条件を変えたら、何が要るかを取り直す。押してから足りないと
+  // 言われるのでは遅い。
+  useEffect(() => {
+    if (!templateKey) { setPreview(null); return; }
+    setPreview(null);
+    api.post<PreviewResponse>("/documents/preview",
+      { templateKey, conditionIds: picked, eventIds: pickedEvents,
+        manualInputs: JSON.parse(manualJson) })
+      .then(setPreview).catch(() => undefined);
+  }, [templateKey, picked.join(","), pickedEvents.join(","), manualJson]);
 
   async function runPreview() {
     setError(null); setIssued(null); setBusy(true);
@@ -74,9 +137,24 @@ export function DocumentsWorkspace() {
   async function issue() {
     setError(null); setBusy(true);
     try {
-      const draft = await api.post<{ id: number }>("/documents", body);
-      const result = await api.post<{ documentNo: string }>(`/documents/${draft.id}/issue`);
-      setIssued(result.documentNo);
+      // 下書き→発行→実績への紐づけをサーバ側で1本にしてある。
+      // 途中で落ちたときは下書きごと捨てられる。
+      const result = await api.post<{ document: { documentNo: string } }>(
+        "/documents/compose", body);
+      setIssued(result.document.documentNo);
+      // 手で打った項目だけ覚える。日付と金額は毎回変わるので覚えない
+      // （前回の日付が入ったまま気づかず発行してしまう）。
+      const keep: Record<string, string> = {};
+      for (const m of preview?.missing ?? []) {
+        const kind = kindFor(m.name, m.label);
+        const value = String(manual[m.name] ?? "").trim();
+        if (value && !pickedFields.has(m.name) && kind !== "date" && kind !== "amount") {
+          keep[m.name] = value;
+        }
+      }
+      if (Object.keys(keep).length) {
+        await api.put(`/document-defaults/${templateKey}`, { values: keep }).catch(() => undefined);
+      }
       setPreview(null);
       await reload();
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
@@ -145,7 +223,11 @@ export function DocumentsWorkspace() {
     finally { setBusy(false); }
   }
 
-  const ready = Boolean(templateKey) && picked.length > 0 && preview !== null && preview.missing.length === 0;
+  // 未入力は画面の入力値で数える。プレビューは空で取っているので、
+  // preview.missing はひな形が要求する項目の一覧であって、残数ではない。
+  const remaining = (preview?.missing ?? [])
+    .filter((m) => !String(manual[m.name] ?? "").trim()).length;
+  const ready = Boolean(templateKey) && preview !== null && remaining === 0;
 
   return (
     <section className="workspace">
@@ -161,7 +243,7 @@ export function DocumentsWorkspace() {
         <div className="note">Drive 保存は未設定です（<span className="code">GOOGLE_DRIVE_FOLDER_ID</span>）。文書の作成と発行はそのまま使えます。</div>
       )}
 
-      <div className="split">
+      <div className="stack">
         <div className="stack">
           <div className="panel">
             <div className="panel-hd"><h2>作成</h2></div>
@@ -175,45 +257,132 @@ export function DocumentsWorkspace() {
                 </select>
               </label>
 
-              <div>
-                <div className="faint">出力する条件（複数可）</div>
+              <div className="stack" style={{ gap: 6 }}>
+                <div className="row">
+                  <span className="faint">この文書がどの取引のものか（条件を呼び出す）</span>
+                  <span className="faint" style={{ marginLeft: "auto" }}>
+                    {picked.length ? `${picked.length} 件を選択中` : "選ばなくても作れます"}
+                  </span>
+                </div>
+                <input value={condSearch} placeholder="条件番号・名称・相手先で絞る"
+                       onChange={(e) => setCondSearch(e.target.value)} />
                 <div className="picker">
-                  {conditions.map((c) => (
+                  {conditions
+                    .filter((c) => {
+                      const q = condSearch.trim().toLowerCase();
+                      if (!q) return picked.includes(c.id) || conditions.indexOf(c) < 20;
+                      return [c.conditionNo, c.name, c.counterparty?.name]
+                        .some((v) => String(v ?? "").toLowerCase().includes(q));
+                    })
+                    .map((c) => (
                     <label key={c.id} className="pick">
                       <input type="checkbox" checked={picked.includes(c.id)}
                              onChange={(e) => {
-                               setPreview(null);
                                setPicked((prev) => e.target.checked
                                  ? [...prev, c.id] : prev.filter((id) => id !== c.id));
                              }} />
                       <span className={`tag ${c.direction}`}>{c.direction === "in" ? "IN" : "OUT"}</span>
                       <span className="code">{c.conditionNo ?? `#${c.id}`}</span>
                       <span>{c.name}</span>
+                      <span className="faint">{c.counterparty?.name ?? ""}</span>
                     </label>
                   ))}
                 </div>
               </div>
 
+              {events.length > 0 && (
+                <div className="stack" style={{ gap: 6 }}>
+                  <div className="faint">
+                    どの実績についてか（検収書・納品書はここの日付と金額を候補に出します）
+                  </div>
+                  <div className="picker">
+                    {events.map((e) => (
+                      <label key={e.id} className="pick">
+                        <input type="checkbox" checked={pickedEvents.includes(e.id)}
+                               onChange={(ev) => setPickedEvents((prev) => ev.target.checked
+                                 ? [...prev, e.id] : prev.filter((id) => id !== e.id))} />
+                        <span className="code">{e.occurredOn ?? "—"}</span>
+                        <span>{e.period ?? ""}</span>
+                        <span className="num">{money(e.amount)}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {preview && preview.missing.length > 0 && (
                 <div className="stack">
-                  <div className="faint">条件から決まらない項目（入力が必要）</div>
-                  {preview.missing.map((m) => (
-                    <label key={m.name} className="field">
-                      <span>{m.label}</span>
-                      <input value={manual[m.name] ?? ""}
-                             onChange={(e) => setManual((prev) => ({ ...prev, [m.name]: e.target.value }))} />
-                    </label>
-                  ))}
+                  <div className="row">
+                    <span className="faint">このひな形が要求する項目</span>
+                    <span className="faint" style={{ marginLeft: "auto" }}>
+                      残り {preview.missing.filter((m) => !String(manual[m.name] ?? "").trim()).length} 件
+                    </span>
+                  </div>
+                  <div className="form-grid">
+                  {preview.missing.map((m) => {
+                    const want = kindFor(m.name, m.label);
+                    const fits = preview.candidates.filter((c) => !want || c.kind === want);
+                    // 日付と金額は数が少なく、どれも当てはまりうるのでその場に出す。
+                    // 文字は候補が多く、当てはまらないものばかり並ぶので畳んでおく。
+                    const inline = want === "date" || want === "amount";
+                    const open = inline || opened.has(m.name);
+                    const put = (value: string) => {
+                      setManual((prev) => ({ ...prev, [m.name]: value }));
+                      setPickedFields((prev) => new Set(prev).add(m.name));
+                    };
+                    return (
+                      <label key={m.name} className="field">
+                        <span>{m.label}</span>
+                        <input value={manual[m.name] ?? ""}
+                               onChange={(e) => {
+                                 setManual((prev) => ({ ...prev, [m.name]: e.target.value }));
+                                 setPickedFields((prev) => {
+                                   const next = new Set(prev); next.delete(m.name); return next;
+                                 });
+                               }} />
+                        {fits.length > 0 && (
+                          <div className="row" style={{ flexWrap: "wrap", gap: 4, marginTop: 4 }}>
+                            {!inline && (
+                              <button type="button" className="btn btn-sm"
+                                      onClick={() => setOpened((prev) => {
+                                        const next = new Set(prev);
+                                        if (next.has(m.name)) next.delete(m.name);
+                                        else next.add(m.name);
+                                        return next;
+                                      })}>
+                                候補 {open ? "▴" : "▾"}
+                              </button>
+                            )}
+                            {open && fits.slice(0, 8).map((c) => (
+                              <button key={`${c.label}:${c.value}`} type="button"
+                                      className="btn btn-sm" style={{ whiteSpace: "nowrap" }}
+                                      title={`${c.source}／${c.label}`} onClick={() => put(c.value)}>
+                                {c.value}
+                                <span className="faint" style={{ marginLeft: 4 }}>{c.label}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </label>
+                    );
+                  })}
+                  </div>
                 </div>
               )}
 
               <div className="row">
-                <button className="btn" onClick={runPreview} disabled={busy || !picked.length}>プレビュー</button>
-                <button className="btn primary" onClick={issue} disabled={busy || !ready}>発行する</button>
-                {preview && (
+                <button className="btn" onClick={runPreview} disabled={busy || !templateKey}>
+                  中身を見る
+                </button>
+                <button className="btn primary" onClick={issue} disabled={busy || !ready}>
+                  発行する
+                </button>
+                {!ready && preview && (
+                  <span className="faint">未入力 {remaining} 件</span>
+                )}
+                {preview && preview.derived.length > 0 && (
                   <span className="faint">
                     {preview.derived.length}項目を条件から自動解決
-                    {preview.missing.length > 0 && ` ／ 未入力 ${preview.missing.length}件` }
                   </span>
                 )}
               </div>

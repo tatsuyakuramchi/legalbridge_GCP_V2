@@ -5,6 +5,7 @@ import { assertComplete, bindVariables, type BindingResult } from "./binding.js"
 import { DocumentContextRepository } from "./context-repository.js";
 import { DocumentRepository } from "./repository.js";
 import { renderDocumentHtml } from "./render.js";
+import { buildCandidates, type Candidate } from "./candidates.js";
 import { currentYearInTokyo, formatDocumentNumber, nextSequence, normalizePrefix } from "./numbering.js";
 
 export interface DraftInput {
@@ -13,6 +14,10 @@ export interface DraftInput {
   matterId?: number | null;
   agreementId?: number | null;
   manualInputs?: Record<string, unknown>;
+  /** 実績。検収書はここの日付と金額を使う。 */
+  eventIds?: number[];
+  /** 計算結果。計算書は発行の時点でこれが要る。 */
+  royalty?: Record<string, unknown> | null;
 }
 
 export interface PreviewResult {
@@ -20,6 +25,8 @@ export interface PreviewResult {
   binding: BindingResult;
   templateLabel: string;
   templateVersionId: number;
+  /** 入力欄に出す候補。ひな形が供給元を宣言していなくても人が選べる。 */
+  candidates: Candidate[];
 }
 
 export interface IssuedDocument {
@@ -52,12 +59,14 @@ export class DocumentIssueService {
       const template = await this.repository.templateSource(this.database, { templateKey: input.templateKey });
       const context = await this.buildContext(this.database, input, null);
       const binding = bindVariables(template.variables, context, input.manualInputs ?? {});
+      // 候補は文脈そのものから作る。ひな形の宣言には依らない。
       const partials = await this.repository.partials();
       return {
         html: renderDocumentHtml(template.htmlSource, binding.values, partials),
         binding,
         templateLabel: template.label,
-        templateVersionId: template.templateVersionId
+        templateVersionId: template.templateVersionId,
+        candidates: buildCandidates(context)
       };
     } catch (error) { throw translate(error); }
   }
@@ -89,7 +98,17 @@ export class DocumentIssueService {
    * 発行。採番して確定値を焼き付ける。
    * 焼き付けた値（rendered_values）は記録であって参照元ではない。
    */
-  async issue(documentId: number, actor: string): Promise<IssuedDocument> {
+  /**
+   * 発行。本文はここで確定して rendered_values に凍結する。
+   *
+   * extra は下書きに保存していない文脈（実績・計算結果）。発行のときにしか
+   * 使わないので列を増やさず、作った経路から渡す。計算書は「先に計算 →
+   * その値で発行」でないと、本文に金額が載らない。
+   */
+  async issue(
+    documentId: number, actor: string,
+    extra: { eventIds?: number[]; royalty?: Record<string, unknown> | null } = {}
+  ): Promise<IssuedDocument> {
     try {
       return await inTransaction(this.database, async (client) => {
         const head = await client.query(
@@ -125,7 +144,9 @@ export class DocumentIssueService {
           templateKey: template.templateKey,
           conditionIds,
           matterId: row.matter_id,
-          agreementId: row.agreement_id
+          agreementId: row.agreement_id,
+          eventIds: extra.eventIds ?? [],
+          royalty: extra.royalty ?? null
         }, documentNo);
         const binding = bindVariables(
           template.variables, context, (row.manual_inputs as Record<string, unknown>) ?? {});
@@ -294,6 +315,8 @@ export class DocumentIssueService {
       conditionIds: input.conditionIds,
       agreementId: input.agreementId ?? null,
       matterId: input.matterId ?? null,
+      eventIds: input.eventIds ?? [],
+      royalty: input.royalty ?? null,
       documentNumber
     }, client);
     await this.contexts.attachScopes(client, context.conditions);

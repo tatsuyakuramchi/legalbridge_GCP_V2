@@ -29,9 +29,12 @@ interface PreviewResponse {
 }
 
 export function ConditionEvents(
-  { conditionId, currency, editable, matterId, reloadKey, onChanged }:
+  { conditionId, currency, editable, matterId, reloadKey, onCompose, onChanged }:
   { conditionId: number; currency: string; editable: boolean;
-    matterId?: number | null; reloadKey?: number; onChanged: () => void }
+    matterId?: number | null; reloadKey?: number;
+    /** 文書の画面へ、この条件と実績を選んだ状態で移る。 */
+    onCompose?: (eventIds: number[]) => void;
+    onChanged: () => void }
 ) {
   const [rows, setRows] = useState<EventRow[]>([]);
   const [types, setTypes] = useState<TypeOption[]>([]);
@@ -326,7 +329,12 @@ export function ConditionEvents(
                     )}
                     {editable && !voided && !row.documentId && (
                       <button className="btn btn-sm" style={{ marginLeft: 5, whiteSpace: "nowrap" }}
-                              onClick={() => { setIssuing(row); setIssued(null); }}>
+                              onClick={() => {
+                                // 作成のフォームは「文書」画面に1本化してある。
+                                // ここからはその画面へ、条件と実績を選んだ状態で移る。
+                                if (onCompose) onCompose([row.id]);
+                                else { setIssuing(row); setIssued(null); }
+                              }}>
                         文書を作る
                       </button>
                     )}

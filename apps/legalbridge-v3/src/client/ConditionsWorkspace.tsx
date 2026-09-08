@@ -35,7 +35,10 @@ type WriteResult = {
   revisedTo?: number;
 };
 
-export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
+export function ConditionsWorkspace(
+  { initialId, onCompose }:
+  { initialId?: number; onCompose?: (conditionId: number, eventIds?: number[]) => void }
+) {
   const [rows, setRows] = useState<ConditionSummary[]>([]);
   const [selected, setSelected] = useState<number | undefined>(initialId);
   const [detail, setDetail] = useState<DetailResponse | null>(null);
@@ -521,6 +524,7 @@ export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
               <ConditionEvents conditionId={detail.id} currency={detail.currency}
                 reloadKey={flowVersion}
                 editable={detail.status === "active" || detail.status === "draft"}
+                onCompose={onCompose ? (eventIds) => onCompose(detail.id, eventIds) : undefined}
                 onChanged={refreshFlow} />
 
               <ConditionCounterparty detail={detail} onDone={async () => {

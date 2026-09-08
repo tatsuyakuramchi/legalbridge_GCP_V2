@@ -178,6 +178,35 @@ export class ConditionEventService {
   }
 
   /**
+   * 結びつけられるかだけ確かめる。書かない。
+   *
+   * 文書を発行してから紐づけに失敗すると、番号の振られた文書だけが残り、
+   * 人は同じものをもう一度作ることになる。発行の前に弾く。
+   */
+  async assertLinkable(conditionId: number, eventIds: number[]): Promise<void> {
+    const ids = [...new Set(eventIds.map((n) => Math.trunc(n)))].filter((n) => n > 0);
+    if (!ids.length) return;
+    const rows = await this.database.query(
+      `SELECT id, status, document_id FROM condition_events
+        WHERE id = ANY($1::bigint[]) AND condition_id = $2`, [ids, conditionId]);
+    const found = rows.rows as Array<{ id: number; status: string; document_id: number | null }>;
+    if (found.length !== ids.length) {
+      throw new DomainError("NOT_FOUND", "この条件に無い実績が混ざっています");
+    }
+    const voided = found.filter((r) => r.status !== "active");
+    if (voided.length) {
+      throw new DomainError("CONFLICT",
+        `取り消し済みの実績は結びつけられません（#${voided.map((r) => r.id).join("・")}）`);
+    }
+    const taken = found.filter((r) => r.document_id !== null);
+    if (taken.length) {
+      throw new DomainError("CONFLICT",
+        `すでに別の文書に結びついている実績があります（#${taken.map((r) => r.id).join("・")}）。` +
+        "作り直すなら、先にその文書を無効にしてください");
+    }
+  }
+
+  /**
    * 実績を発行済み文書に結びつける。検収書・計算書がどの実績から出たかは
    * この列（condition_events.document_id）にしか無く、書く処理が無かったため
    * 「この検収書は何回目の分か」が追えなかった。

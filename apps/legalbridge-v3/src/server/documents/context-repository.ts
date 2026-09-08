@@ -12,6 +12,10 @@ export interface DocumentContextInput {
   matterId?: number | null;
   documentNumber?: string | null;
   issuedOn?: string | null;
+  /** 実績。検収書・納品書はここの日付と金額が要る。 */
+  eventIds?: number[];
+  /** 計算結果。利用許諾料計算書は、発行の時点でこれが要る。 */
+  royalty?: Record<string, unknown> | null;
 }
 
 const MINOR: Record<string, number> = { JPY: 1, KRW: 1, VND: 1 };
@@ -36,6 +40,7 @@ export class DocumentContextRepository {
       const agreement = agreementId ? await this.agreement(client, agreementId) : null;
       const matter = input.matterId ? await this.matter(client, input.matterId) : null;
       const company = await this.company(client);
+      const events = input.eventIds?.length ? await this.events(client, input.eventIds) : [];
 
       const currency = conditions[0]?.currency ?? "JPY";
       const exTax = conditions.reduce((sum, c) => sum + (c.flatAmountMinor ?? 0), 0);
@@ -55,6 +60,11 @@ export class DocumentContextRepository {
         conditions,
         /** 単一条件のテンプレートはこちらを使う。 */
         condition: conditions[0] ?? null,
+        events,
+        /** 実績が1件のときはこちら。検収書はこの日付と金額を使う。 */
+        event: events[0] ?? null,
+        /** 計算書の金額。試算の結果をそのまま渡す。無ければ null。 */
+        royalty: input.royalty ?? null,
         totals: {
           exTax: toMajor(exTax, currency),
           tax: toMajor(tax, currency),
@@ -63,6 +73,40 @@ export class DocumentContextRepository {
         }
       };
     } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 実績。検収書の「実納品日」「納品額」はここから来る。
+   * これまでコンテキストに入っておらず、実績から検収書を作っても
+   * 日付も金額も人が打ち直すことになっていた。
+   */
+  private async events(client: Queryable, ids: number[]) {
+    const r = await client.query(
+      `SELECT e.id, e.event_type, e.occurred_on, e.period, e.quantity,
+              e.gross_amount, e.deductions, e.amount, e.note,
+              c.currency, s.label AS schedule_label, s.seq AS schedule_seq
+         FROM condition_events e
+         JOIN conditions c ON c.id = e.condition_id
+         LEFT JOIN condition_schedules s ON s.id = e.schedule_id
+        WHERE e.id = ANY($1::bigint[]) AND e.status = 'active'
+        ORDER BY e.occurred_on, e.id`, [ids]);
+    return (r.rows as Array<Record<string, any>>).map((row) => {
+      const currency = String(row.currency ?? "JPY");
+      return {
+        id: Number(row.id),
+        eventType: String(row.event_type),
+        occurredOn: dateStr(row.occurred_on),
+        period: str(row.period) ?? str(row.schedule_label),
+        seq: int(row.schedule_seq),
+        quantity: int(row.quantity),
+        grossAmount: toMajor(int(row.gross_amount), currency),
+        deductions: toMajor(int(row.deductions), currency),
+        amount: toMajor(int(row.amount), currency),
+        amountMinor: int(row.amount) ?? 0,
+        note: str(row.note),
+        currency
+      };
+    });
   }
 
   private async conditions(client: Queryable, ids: number[]) {
