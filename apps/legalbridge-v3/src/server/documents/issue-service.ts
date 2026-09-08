@@ -199,8 +199,16 @@ export class DocumentIssueService {
    * 紐づく条件も引き継ぐので、そのまま発行し直せる。値は発行時に条件から
    * 引き直すため、条件を直してから再発行すれば新しい値で出る。
    */
+  /**
+   * 作り直し。
+   *
+   * 条件の紐づけは既定で引き継ぐが、間違った条件を指していたときのために
+   * 差し替えられるようにしてある。発行済みの文書そのものは書き換えない
+   * （出したものの記録なので）。直す唯一の道がこれになる。
+   */
   async reissue(
-    documentId: number, reason: string, actor: string
+    documentId: number, reason: string, actor: string,
+    conditionIds?: number[]
   ): Promise<{ id: number; supersedesId: number }> {
     const note = String(reason ?? "").trim();
     if (!note) {
@@ -230,18 +238,32 @@ export class DocumentIssueService {
            JSON.stringify(row.manual_inputs ?? {}), documentId]);
         const newId = Number((created.rows[0] as { id: number }).id);
 
-        // 紐づく条件を引き継ぐ。参照方向は文書→条件なので、行を複製する。
-        await client.query(
-          `INSERT INTO document_conditions (document_id, condition_id, line_no)
-           SELECT $2, condition_id, line_no FROM document_conditions WHERE document_id = $1
-           ON CONFLICT (document_id, condition_id) DO NOTHING`, [documentId, newId]);
+        if (conditionIds && conditionIds.length) {
+          // 条件を指定し直した。実在と重複だけ確かめて、その並びで繋ぐ。
+          const unique = [...new Set(conditionIds.map((n) => Number(n)))];
+          const found = await client.query(
+            "SELECT id FROM conditions WHERE id = ANY($1::bigint[])", [unique]);
+          if (found.rows.length !== unique.length) {
+            const known = new Set((found.rows as Array<{ id: number }>).map((r) => Number(r.id)));
+            throw new DomainError("NOT_FOUND",
+              `条件が見つかりません：${unique.filter((id) => !known.has(id)).join(", ")}`);
+          }
+          await this.linkConditions(client, newId, unique);
+        } else {
+          // 既定は引き継ぎ。参照方向は文書→条件なので、行を複製する。
+          await client.query(
+            `INSERT INTO document_conditions (document_id, condition_id, line_no)
+             SELECT $2, condition_id, line_no FROM document_conditions WHERE document_id = $1
+             ON CONFLICT (document_id, condition_id) DO NOTHING`, [documentId, newId]);
+        }
 
         await client.query(
           "UPDATE documents SET status = 'superseded' WHERE id = $1", [documentId]);
 
         await recordAudit(client, {
           actor, action: "document.reissue", targetType: "document", targetId: documentId,
-          detail: { documentNo: row.document_no, newDocumentId: newId, reason: note }
+          detail: { documentNo: row.document_no, newDocumentId: newId, reason: note,
+                    ...(conditionIds?.length ? { conditionIds } : {}) }
         });
         return { id: newId, supersedesId: documentId };
       });

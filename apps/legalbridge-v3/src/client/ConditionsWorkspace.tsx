@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { ConditionEvents } from "./ConditionEvents.js";
+import { ConditionRevisions } from "./ConditionRevisions.js";
 import { ConditionEdit } from "./ConditionEdit.js";
 import { ConditionCounterparty, ConditionScopes } from "./ConditionLinks.js";
 import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
@@ -369,6 +371,16 @@ export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
                   </div>
                 </div>
               )}
+
+              <ConditionRevisions conditionId={detail.id} onOpen={(id) => {
+                setResult(null); setSelected(id);
+              }} />
+
+              <ConditionEvents conditionId={detail.id} currency={detail.currency}
+                editable={detail.status === "active" || detail.status === "draft"}
+                onChanged={async () => {
+                  setDetail(await api.get<DetailResponse>(`/conditions/${detail.id}`));
+                }} />
 
               <ConditionCounterparty detail={detail} onDone={async () => {
                 setDetail(await api.get<DetailResponse>(`/conditions/${detail.id}`));

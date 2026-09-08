@@ -2,7 +2,7 @@ import type { Queryable, Transactable } from "../core/db.js";
 import { dateStr, int, num, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import type {
-  ConditionDetail, ConditionScope, ConditionSummary, Direction, ScopeType
+  ConditionDetail, ConditionRevision, ConditionScope, ConditionSummary, Direction, ScopeType
 } from "../core/model.js";
 
 const SUMMARY_COLUMNS = `
@@ -187,6 +187,78 @@ export class ConditionRepository {
   }
 
   /** 保証のある条件の消化状況。お金の画面が使う。 */
+  /**
+   * 改訂の履歴。
+   *
+   * 契約変更で金額を直すと、旧版を残して新版を作る（superseded_by_id で繋ぐ）。
+   * 書く処理はあったが読む処理が無く、画面からは「いま有効な版」しか見えず、
+   * 前がいくらだったのか・どれが生きているのかを追えなかった。
+   *
+   * 起点から前後どちらへも辿る。どの版から開いても同じ並びが返る。
+   */
+  async revisions(id: number): Promise<ConditionRevision[]> {
+    try {
+      const r = await this.database.query(
+        `WITH RECURSIVE
+           -- 前へ：自分を差し替えた先が集合にいる行
+           back(id) AS (
+             SELECT $1::bigint
+             UNION
+             SELECT c.id FROM conditions c JOIN back b ON c.superseded_by_id = b.id
+           ),
+           -- 後ろへ：自分の差し替え先を辿る
+           fwd(id) AS (
+             SELECT $1::bigint
+             UNION
+             SELECT c.superseded_by_id FROM conditions c JOIN fwd f ON c.id = f.id
+              WHERE c.superseded_by_id IS NOT NULL
+           )
+         SELECT c.id, c.condition_no, c.name, c.status, c.superseded_by_id,
+                c.pricing_model, c.rate_ppm, c.flat_amount, c.unit_amount,
+                c.mg_amount, c.ag_amount, c.currency,
+                c.term_start, c.term_end, c.tax_category, c.payment_terms, c.notes,
+                c.created_at, c.updated_at,
+                p.id AS party_id, p.name AS party_name,
+                (SELECT count(*)::int FROM condition_events e
+                  WHERE e.condition_id = c.id AND e.status = 'active') AS event_count,
+                (SELECT count(*)::int FROM document_conditions dc
+                  WHERE dc.condition_id = c.id) AS document_count
+           FROM conditions c
+           LEFT JOIN parties p ON p.id = c.counterparty_id
+          WHERE c.id IN (SELECT id FROM back UNION SELECT id FROM fwd)
+          ORDER BY c.created_at, c.id`,
+        [id]);
+      return (r.rows as any[]).map((row, index) => ({
+        id: Number(row.id),
+        conditionNo: str(row.condition_no),
+        name: String(row.name),
+        status: String(row.status) as ConditionDetail["status"],
+        // 生きているのは active だけ。draft は未発効、あとは役目を終えた版。
+        live: row.status === "active",
+        supersededById: int(row.superseded_by_id),
+        revision: index + 1,
+        currency: String(row.currency),
+        pricingModel: String(row.pricing_model),
+        ratePpm: int(row.rate_ppm),
+        flatAmount: int(row.flat_amount),
+        unitAmount: int(row.unit_amount),
+        mgAmount: int(row.mg_amount),
+        agAmount: int(row.ag_amount),
+        termStart: dateStr(row.term_start),
+        termEnd: dateStr(row.term_end),
+        taxCategory: String(row.tax_category),
+        paymentTerms: str(row.payment_terms),
+        notes: str(row.notes),
+        counterparty: row.party_id
+          ? { id: Number(row.party_id), name: String(row.party_name) } : null,
+        eventCount: Number(row.event_count ?? 0),
+        documentCount: Number(row.document_count ?? 0),
+        createdAt: new Date(String(row.created_at)).toISOString(),
+        updatedAt: new Date(String(row.updated_at)).toISOString()
+      }));
+    } catch (error) { throw translate(error); }
+  }
+
   async balances(limit = 200) {
     try {
       const r = await this.database.query(

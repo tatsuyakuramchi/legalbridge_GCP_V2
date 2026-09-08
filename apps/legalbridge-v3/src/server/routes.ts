@@ -5,6 +5,7 @@ import { DomainError, statusFor } from "./core/errors.js";
 import { requireRole, requireWritable } from "./auth.js";
 import { ConditionRepository } from "./conditions/repository.js";
 import { ConditionWriteService } from "./conditions/write-service.js";
+import { ConditionEventService, EVENT_TYPES } from "./conditions/event-service.js";
 import { MatterWriteService } from "./matters/write-service.js";
 import { WorkWriteService } from "./works/write-service.js";
 import { PartyWriteService } from "./parties/write-service.js";
@@ -55,6 +56,7 @@ export function createRoutes(database: Transactable) {
   const router = Router();
   const conditions = new ConditionRepository(database);
   const conditionWrites = new ConditionWriteService(database);
+  const conditionEvents = new ConditionEventService(database);
   const matters = new MatterRepository(database);
   const works = new WorkRepository(database);
   const documents = new DocumentRepository(database);
@@ -192,10 +194,16 @@ export function createRoutes(database: Transactable) {
       const { reason } = reasonSchema.parse(req.body ?? {});
       res.json(await issues.void(Number(req.params.id), reason, actor(res)));
     }));
+  // 作り直し。間違った条件を指していたときは、ここで差し替える。
+  // 発行済みの文書自体は書き換えない（出したものの記録なので）。
+  const reissueSchema = reasonSchema.extend({
+    conditionIds: z.array(z.number().int().positive()).max(200).optional()
+  });
   router.post("/documents/:id/reissue", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
-      const { reason } = reasonSchema.parse(req.body ?? {});
-      res.status(201).json(await issues.reissue(Number(req.params.id), reason, actor(res)));
+      const { reason, conditionIds } = reissueSchema.parse(req.body ?? {});
+      res.status(201).json(await issues.reissue(
+        Number(req.params.id), reason, actor(res), conditionIds));
     }));
 
   // 日次の点検。画面を開かないと気づけないものを決まった時刻に洗い出す。
@@ -558,6 +566,43 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       const patch = economicsSchema.parse(req.body ?? {});
       res.json(await conditionWrites.updateEconomics(Number(req.params.id), patch, actor(res)));
+    }));
+
+  // 改訂の履歴。契約変更で金額を直すと版が増える。どれが生きているかを返す。
+  router.get("/conditions/:id/revisions", asyncRoute(async (req, res) => {
+    res.json({ revisions: await conditions.revisions(Number(req.params.id)) });
+  }));
+
+  // 実績（条件明細の数値）。記録は消さず、取り消しは void で残す。
+  router.get("/conditions/:id/events", asyncRoute(async (req, res) => {
+    res.json({ events: await conditionEvents.list(Number(req.params.id)), types: EVENT_TYPES });
+  }));
+
+  const eventSchema = z.object({
+    eventType: z.enum(["manufacturing", "sales", "sublicense_receipt",
+                       "inspection", "delivery", "service_period", "adjustment"]),
+    occurredOn: z.string().date(),
+    period: z.string().trim().max(60).nullable().optional(),
+    quantity: z.coerce.number().nullable().optional(),
+    sampleQuantity: z.coerce.number().nullable().optional(),
+    grossAmount: z.coerce.number().int().nullable().optional(),
+    deductions: z.coerce.number().int().min(0).optional(),
+    amount: z.coerce.number().int(),
+    note: z.string().trim().max(1000).nullable().optional()
+  });
+  router.post("/conditions/:id/events",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.status(201).json(await conditionEvents.add(
+        Number(req.params.id), eventSchema.parse(req.body ?? {}), actor(res)));
+    }));
+
+  router.post("/conditions/:id/events/:eventId/void",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { reason } = reasonSchema.parse(req.body ?? {});
+      res.json(await conditionEvents.void(
+        Number(req.params.id), Number(req.params.eventId), reason, actor(res)));
     }));
 
   const scopesSchema = z.object({

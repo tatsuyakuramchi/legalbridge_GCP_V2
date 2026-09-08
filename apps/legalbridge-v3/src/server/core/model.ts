@@ -59,6 +59,39 @@ export interface ConditionDetail extends ConditionSummary {
   events: Array<{ id: number; eventType: string; occurredOn: string; period: string | null; amount: number }>;
 }
 
+/**
+ * 改訂の1版。契約変更で金額を直すと版が増える。
+ * live が「いま効いている版」。それ以外は役目を終えた記録。
+ */
+export interface ConditionRevision {
+  id: number;
+  conditionNo: string | null;
+  name: string;
+  status: ConditionStatus;
+  live: boolean;
+  supersededById: number | null;
+  /** 古い順の通し番号。画面で「第N版」と呼ぶためのもの。 */
+  revision: number;
+  currency: string;
+  pricingModel: string;
+  ratePpm: number | null;
+  flatAmount: number | null;
+  unitAmount: number | null;
+  mgAmount: number | null;
+  agAmount: number | null;
+  termStart: string | null;
+  termEnd: string | null;
+  taxCategory: string;
+  paymentTerms: string | null;
+  notes: string | null;
+  counterparty: { id: number; name: string } | null;
+  /** この版に付いている実績と文書の数。消してよいかの判断に使う。 */
+  eventCount: number;
+  documentCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ConditionBalance {
   mgAmount: number;
   agAmount: number;

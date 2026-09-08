@@ -110,3 +110,50 @@ test("下書きの作成では採番しない", async () => {
   assert.equal(db.all("INSERT INTO document_conditions").length, 2, "条件を行番号つきで結ぶ");
   assert.deepEqual(db.all("INSERT INTO document_conditions")[1].params, [42, 6, 2]);
 });
+
+test("作り直しで条件を差し替えられる（間違った条件を指していたとき）", async () => {
+  const db = new FakeDatabase((t) => {
+    if (t.includes("FROM documents WHERE id")) {
+      return [{ id: 1, document_no: "ARC-RST-2026-0001", status: "issued",
+                template_version_id: 3, matter_id: null, agreement_id: null, manual_inputs: {} }];
+    }
+    if (t.includes("INSERT INTO documents")) return [{ id: 9 }];
+    if (t.includes("SELECT id FROM conditions WHERE id = ANY")) return [{ id: 7 }, { id: 8 }];
+    return [];
+  });
+  await new DocumentIssueService(db).reissue(1, "条件の取り違え", "a", [7, 8]);
+
+  // 引き継ぎの複製ではなく、指定した条件で繋ぎ直す。
+  assert.equal(db.find("SELECT $2, condition_id, line_no FROM document_conditions"), undefined);
+  const links = db.all("INSERT INTO document_conditions");
+  assert.equal(links.length, 2);
+  assert.deepEqual(links.map((q) => q.params[1]), [7, 8]);
+});
+
+test("指定した条件が実在しなければ作り直さない", async () => {
+  const db = new FakeDatabase((t) => {
+    if (t.includes("FROM documents WHERE id")) {
+      return [{ id: 1, document_no: "D", status: "issued",
+                template_version_id: 3, matter_id: null, agreement_id: null, manual_inputs: {} }];
+    }
+    if (t.includes("INSERT INTO documents")) return [{ id: 9 }];
+    if (t.includes("SELECT id FROM conditions WHERE id = ANY")) return [{ id: 7 }];
+    return [];
+  });
+  await assert.rejects(
+    () => new DocumentIssueService(db).reissue(1, "取り違え", "a", [7, 999]),
+    /条件が見つかりません：999/);
+});
+
+test("条件を指定しなければ、これまでどおり引き継ぐ", async () => {
+  const db = new FakeDatabase((t) => {
+    if (t.includes("FROM documents WHERE id")) {
+      return [{ id: 1, document_no: "D", status: "issued",
+                template_version_id: 3, matter_id: null, agreement_id: null, manual_inputs: {} }];
+    }
+    if (t.includes("INSERT INTO documents")) return [{ id: 9 }];
+    return [];
+  });
+  await new DocumentIssueService(db).reissue(1, "誤字", "a");
+  assert.ok(db.find("SELECT $2, condition_id, line_no FROM document_conditions"));
+});
