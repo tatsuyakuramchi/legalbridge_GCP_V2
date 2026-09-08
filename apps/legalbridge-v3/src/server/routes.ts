@@ -23,6 +23,7 @@ import { config } from "./config.js";
 import { verifySlackSignature } from "./integrations/signature.js";
 import { RoyaltyStatementService } from "./royalty/statement-service.js";
 import { PaymentService } from "./payments/service.js";
+import { PaymentAllocationService } from "./payments/allocation-service.js";
 import { PartyRepository } from "./parties/repository.js";
 import { OpsRepository } from "./ops/repository.js";
 import { SearchRepository } from "./search/repository.js";
@@ -31,6 +32,8 @@ import { filename, withBom } from "./exports/csv.js";
 import { PaymentReportRepository } from "./exports/payment-report.js";
 import { ImportService, IMPORT_SPECS, type ImportKind } from "./imports/service.js";
 import { MonitoringRepository } from "./monitoring/repository.js";
+import { ReceivableRepository } from "./monitoring/receivables.js";
+import { ContractCheckRepository } from "./monitoring/contract-check.js";
 import { DispatchService } from "./integrations/dispatch-service.js";
 import {
   BacklogAdapter, CloudSignAdapter, GmailAdapter, MemoryAdapter, SlackAdapter,
@@ -66,11 +69,14 @@ export function createRoutes(database: Transactable) {
   const storage = new DocumentStorageService(database, drive, pdf);
   const royalty = new RoyaltyStatementService(database);
   const payments = new PaymentService(database);
+  const allocations = new PaymentAllocationService(database);
   const parties = new PartyRepository(database);
   const matterWrites = new MatterWriteService(database);
   const workWrites = new WorkWriteService(database);
   const partyWrites = new PartyWriteService(database);
   const partyMerge = new PartyMergeService(database);
+  const receivables = new ReceivableRepository(database);
+  const contractCheck = new ContractCheckRepository(database);
   const search = new SearchRepository(database);
   const exports = new ExportRepository(database);
   const paymentReport = new PaymentReportRepository(database);
@@ -178,6 +184,34 @@ export function createRoutes(database: Transactable) {
       const { reason } = reasonSchema.parse(req.body ?? {});
       res.status(201).json(await issues.reissue(Number(req.params.id), reason, actor(res)));
     }));
+
+  // 支払を条件へ割り当てる。これが無いと「どの取り決めに対する支払か」が
+  // 追えず、債権の未収も出せない。
+  router.get("/payments/:id/allocation-candidates", asyncRoute(async (req, res) => {
+    res.json({ candidates: await allocations.candidates(Number(req.params.id)) });
+  }));
+  const allocationSchema = z.object({
+    lines: z.array(z.object({
+      conditionId: z.coerce.number().int().positive(),
+      eventId: z.coerce.number().int().positive().nullable().optional(),
+      amount: z.coerce.number().int()
+    })).max(100)
+  });
+  router.put("/payments/:id/allocations", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { lines } = allocationSchema.parse(req.body ?? {});
+      res.json(await allocations.replace(Number(req.params.id), lines, actor(res)));
+    }));
+
+  // 債権マップ。許諾で得るはずの額と入った額の差。
+  router.get("/monitoring/receivables", asyncRoute(async (_req, res) => {
+    res.json(await receivables.map());
+  }));
+
+  // 契約チェック。依頼の前に自分で確かめる。読み取りだけなので誰でも使える。
+  router.get("/contract-check", asyncRoute(async (req, res) => {
+    res.json(await contractCheck.check(String(req.query.q ?? "")));
+  }));
 
   // 名寄せ。参照は付け替えず、統合先まで辿って解決する。
   router.get("/parties/merge/candidates", asyncRoute(async (_req, res) => {

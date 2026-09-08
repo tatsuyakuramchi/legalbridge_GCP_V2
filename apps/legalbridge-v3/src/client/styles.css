@@ -196,3 +196,7 @@ tr.report-total td { border-top: 2px solid #cfd6e4; font-weight: 600; background
   th, td { border: 1px solid #999; padding: 3px 5px; }
 }
 .good { color: #067647; font-weight: 600; }
+.tag.good { background: #dcfae6; color: #067647; }
+.tag.warn { background: #fef0c7; color: #b54708; }
+.tag.danger { background: #fee4e2; color: #b42318; }
+.note { background: #fef0c7; color: #7a2e0e; padding: 8px 10px; border-radius: 6px; margin: 8px 0; }

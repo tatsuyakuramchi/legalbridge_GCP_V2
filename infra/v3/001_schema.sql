@@ -367,12 +367,18 @@ CREATE INDEX IF NOT EXISTS payments_due_idx ON v3.payments (status, due_on);
 
 -- 支払 ↔ 条件・実績。現行に相当物が無く、紐づかないレガシー支払の原因だった。
 CREATE TABLE IF NOT EXISTS v3.payment_allocations (
+  id           bigserial PRIMARY KEY,
   payment_id   bigint NOT NULL REFERENCES v3.payments(id) ON DELETE CASCADE,
   condition_id bigint NOT NULL REFERENCES v3.conditions(id),
+  -- どの実績に対する支払か。特定できないこともあるので NULL を許す。
   event_id     bigint REFERENCES v3.condition_events(id),
-  amount       bigint NOT NULL,
-  PRIMARY KEY (payment_id, condition_id, event_id)
+  amount       bigint NOT NULL CHECK (amount <> 0),
+  -- 同じ組み合わせを二度割り当てない。NULLS NOT DISTINCT にしないと
+  -- 実績を指定しない割り当てが何本でも入ってしまう。
+  UNIQUE NULLS NOT DISTINCT (payment_id, condition_id, event_id)
 );
+COMMENT ON TABLE v3.payment_allocations IS
+  '支払を条件へ割り当てる。1件の支払を複数条件に分けられる。合計は支払額を超えない。';
 
 -- ---------------------------------------------------------------------
 -- 7. 文書

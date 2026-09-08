@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, money } from "./api.js";
+import { ReceivableMap } from "./ReceivableMap.js";
+import { ContractCheck } from "./ContractCheck.js";
 
 interface Pipeline { agreements: number; ordered: number; delivered: number; inspected: number; unpaid: number }
 interface DueCheck { verdict: "ok" | "over_limit" | "unset" | "not_applicable"; days: number | null; limitDate: string | null; overBy: number | null }
@@ -26,7 +28,7 @@ const DUE_LABEL: Record<DueCheck["verdict"], { text: string; tone: string }> = {
 };
 
 export function FlowMonitorWorkspace({ onOpenCondition }: { onOpenCondition: (id: number) => void }) {
-  const [tab, setTab] = useState<"outsourcing" | "works">("outsourcing");
+  const [tab, setTab] = useState<"outsourcing" | "works" | "receivables" | "check">("outsourcing");
   const [pipeline, setPipeline] = useState<Pipeline | null>(null);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [works, setWorks] = useState<WorkMonitor[]>([]);
@@ -58,10 +60,15 @@ export function FlowMonitorWorkspace({ onOpenCondition }: { onOpenCondition: (id
         <button aria-selected={tab === "outsourcing"} onClick={() => setTab("outsourcing")}>
           業務委託（取適法）{flagged.length ? ` ${flagged.length}` : ""}
         </button>
+        <button aria-selected={tab === "receivables"} onClick={() => setTab("receivables")}>債権</button>
+        <button aria-selected={tab === "check"} onClick={() => setTab("check")}>契約チェック</button>
         <button aria-selected={tab === "works"} onClick={() => setTab("works")}>
           作品運用{violating.length ? ` ${violating.length}` : ""}
         </button>
       </div>
+
+      {tab === "receivables" && <ReceivableMap onOpenCondition={onOpenCondition} />}
+      {tab === "check" && <ContractCheck />}
 
       {tab === "outsourcing" && (
         <div className="stack">
