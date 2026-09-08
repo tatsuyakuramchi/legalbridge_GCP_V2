@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "./api.js";
+import { CreateForm, flag, int, text } from "./CreateForm.js";
 
 interface Party {
   id: number; partyCode: string | null; name: string; kind: "corporate" | "individual";
@@ -22,16 +23,19 @@ export function PartiesWorkspace() {
   const [selected, setSelected] = useState<number | undefined>();
   const [detail, setDetail] = useState<PartyDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
 
-  useEffect(() => {
+  function reload(select?: number) {
     Promise.all([
       api.get<{ parties: Party[] }>("/parties"),
       api.get<{ staff: Staff[] }>("/staff")
     ]).then(([p, s]) => {
       setParties(p.parties); setStaff(s.staff);
-      if (p.parties[0]) setSelected(p.parties[0].id);
+      if (select) setSelected(select);
+      else if (!selected && p.parties[0]) setSelected(p.parties[0].id);
     }).catch((e: ApiError) => setError(e.message));
-  }, []);
+  }
+  useEffect(() => { reload(); }, []);
 
   useEffect(() => {
     if (!selected) return;
@@ -51,7 +55,40 @@ export function PartiesWorkspace() {
       <div className="tabs">
         <button aria-selected={tab === "parties"} onClick={() => setTab("parties")}>取引先 {parties.length}</button>
         <button aria-selected={tab === "staff"} onClick={() => setTab("staff")}>担当者 {staff.length}</button>
+        {tab === "parties" && !creating && (
+          <button className="btn primary btn-sm" onClick={() => setCreating(true)}>取引先を登録</button>
+        )}
       </div>
+
+      {creating && (
+        <CreateForm
+          title="取引先の登録"
+          path="/parties"
+          initial={{ kind: "corporate" }}
+          fields={[
+            { name: "name", label: "名称", required: true, placeholder: "株式会社◯◯" },
+            { name: "kind", label: "区分", type: "select", required: true,
+              options: [{ value: "corporate", label: "法人" }, { value: "individual", label: "個人" }],
+              hint: "個人は取適法の特定受託事業者として扱い、支払期日を60日で検査する" },
+            { name: "nameKana", label: "カナ" },
+            { name: "invoiceNo", label: "インボイス登録番号", placeholder: "T1234567890123" },
+            { name: "corporateNo", label: "法人番号",
+              visibleWhen: (v) => v.kind !== "individual" },
+            { name: "withholding", label: "源泉徴収の対象", type: "checkbox" },
+            { name: "aliases", label: "別名（屋号・ペンネーム・旧称）", type: "textarea",
+              hint: "改行で区切る。名寄せの手がかりになる" }
+          ]}
+          toPayload={(v) => ({
+            name: text(v.name), kind: v.kind, nameKana: text(v.nameKana),
+            invoiceNo: text(v.invoiceNo), corporateNo: text(v.corporateNo),
+            withholding: flag(v.withholding) ?? false,
+            aliases: String(v.aliases ?? "").split("\n").map((a) => a.trim()).filter(Boolean)
+          })}
+          retryOnConflict={{ label: "同名でも新規に作る", extra: { allowDuplicate: true } }}
+          onDone={(r) => { setCreating(false); reload(r.id); }}
+          onCancel={() => setCreating(false)}
+        />
+      )}
 
       {tab === "staff" ? (
         <div className="panel">

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, money } from "./api.js";
+import { CreateForm, int, text } from "./CreateForm.js";
 
 interface Balance {
   conditionId: number; conditionNo: string | null; name: string; direction: string;
@@ -38,8 +39,16 @@ export function MoneyWorkspace() {
   const [statements, setStatements] = useState<Statement[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [parties, setParties] = useState<Array<{ id: number; name: string; kind: string }>>([]);
 
   useEffect(() => { void reload(); }, []);
+
+  useEffect(() => {
+    if (!creating || parties.length) return;
+    api.get<{ parties: Array<{ id: number; name: string; kind: string }> }>("/parties")
+      .then((r) => setParties(r.parties)).catch(() => undefined);
+  }, [creating]);
   async function reload() {
     try {
       const [b, p, s] = await Promise.all([
@@ -88,6 +97,55 @@ export function MoneyWorkspace() {
       {notice && <div className="note">{notice}</div>}
       {overLimit > 0 && (
         <div className="alert">支払期日が受領日+60日を超えているものが {overLimit} 件あります。</div>
+      )}
+
+      <div className="row" style={{ marginBottom: 10 }}>
+        {!creating && <button className="btn primary btn-sm" onClick={() => setCreating(true)}>支払を起こす</button>}
+      </div>
+
+      {creating && (
+        <CreateForm
+          title="支払の登録"
+          submitLabel="支払を起こす"
+          path="/payments"
+          initial={{ direction: "out", currency: "JPY" }}
+          fields={[
+            { name: "partyId", label: "相手先", type: "select", required: true,
+              options: parties.map((p) => ({
+                value: String(p.id),
+                label: `${p.name}${p.kind === "individual" ? "（個人）" : ""}`
+              })) },
+            { name: "direction", label: "向き", type: "select", required: true,
+              options: [{ value: "out", label: "支払う" }, { value: "in", label: "受け取る" }] },
+            { name: "amount", label: "税抜金額（最小通貨単位）", type: "money", required: true,
+              hint: "円なら円単位。¥330,000 は 330000" },
+            { name: "taxAmount", label: "消費税", type: "money" },
+            { name: "withholdingAmount", label: "源泉徴収", type: "money" },
+            { name: "currency", label: "通貨", type: "select", required: true,
+              options: [{ value: "JPY", label: "JPY 円" }, { value: "USD", label: "USD" }, { value: "EUR", label: "EUR" }] },
+            { name: "basisReceivedOn", label: "給付を受領した日", type: "date",
+              hint: "取適法の起算点。個人相手の支払では期日の検査に使う" },
+            { name: "dueOn", label: "支払期日", type: "date" },
+            { name: "note", label: "摘要", type: "textarea" }
+          ]}
+          toPayload={(v) => ({
+            partyId: int(v.partyId), direction: v.direction, amount: int(v.amount) ?? 0,
+            taxAmount: int(v.taxAmount), withholdingAmount: int(v.withholdingAmount),
+            currency: v.currency || "JPY",
+            basisReceivedOn: text(v.basisReceivedOn), dueOn: text(v.dueOn), note: text(v.note)
+          })}
+          onDone={(r) => {
+            setCreating(false);
+            setNotice(`${r.paymentNo} を起こしました`);
+            void reload();
+          }}
+          onCancel={() => setCreating(false)}
+        >
+          <p className="faint">
+            相手先が個人（特定受託事業者）なら、受領日から60日を超える期日では登録できない。
+            法人相手は検査の対象外だが、期日と受領日は記録に残る。
+          </p>
+        </CreateForm>
       )}
 
       <div className="tabs">

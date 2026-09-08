@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ConditionSummary, RightsEnvelope } from "../server/core/model.js";
 import { api, ApiError } from "./api.js";
+import { CreateForm, int, text } from "./CreateForm.js";
 
 interface WorkRow { id: number; workCode: string | null; title: string; kind: string; status: string }
 interface Part { id: number; partNo: number; name: string; partType: string; royaltyBearing: boolean }
@@ -16,12 +17,21 @@ export function WorksWorkspace({ onOpenCondition }: { onOpenCondition: (id: numb
   const [parts, setParts] = useState<Part[]>([]);
   const [conditions, setConditions] = useState<ConditionSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState<"work" | "part" | null>(null);
 
-  useEffect(() => {
+  function reloadWorks(select?: number) {
     api.get<{ works: WorkRow[] }>("/works")
-      .then((r) => { setWorks(r.works); if (r.works[0]) setSelected(r.works[0].id); })
+      .then((r) => { setWorks(r.works); if (select) setSelected(select); else if (!selected && r.works[0]) setSelected(r.works[0].id); })
       .catch((e: ApiError) => setError(e.message));
-  }, []);
+  }
+  useEffect(() => { reloadWorks(); }, []);
+
+  function reloadParts() {
+    if (!selected) return;
+    api.get<{ envelope: RightsEnvelope; parts: Part[] }>(`/works/${selected}/envelope`)
+      .then((e) => { setEnvelope(e.envelope); setParts(e.parts); })
+      .catch((e: ApiError) => setError(e.message));
+  }
 
   useEffect(() => {
     if (!selected) return;
@@ -44,6 +54,69 @@ export function WorksWorkspace({ onOpenCondition }: { onOpenCondition: (id: numb
       </header>
 
       {error && <div className="alert">{error}</div>}
+
+      <div className="row" style={{ marginBottom: 10 }}>
+        {creating === null && (
+          <>
+            <button className="btn primary btn-sm" onClick={() => setCreating("work")}>作品を登録</button>
+            {selected && <button className="btn btn-sm" onClick={() => setCreating("part")}>パートを追加</button>}
+          </>
+        )}
+      </div>
+
+      {creating === "work" && (
+        <CreateForm
+          title="作品の登録"
+          path="/works"
+          initial={{ kind: "own", status: "planning" }}
+          fields={[
+            { name: "title", label: "作品名", required: true },
+            { name: "titleKana", label: "カナ" },
+            { name: "kind", label: "種別", type: "select", required: true,
+              options: [{ value: "own", label: "自社作品" }, { value: "source_ip", label: "原作IP" },
+                        { value: "derivative", label: "派生作品" }] },
+            { name: "status", label: "状態", type: "select", required: true,
+              options: [{ value: "planning", label: "企画中" }, { value: "in_production", label: "制作中" },
+                        { value: "released", label: "発売済" }, { value: "archived", label: "終了" }] },
+            { name: "businessLine", label: "事業区分" },
+            { name: "parentWorkId", label: "親作品ID", type: "number",
+              visibleWhen: (v) => v.kind === "derivative",
+              hint: "指定すると系譜に登録する" },
+            { name: "remarks", label: "備考", type: "textarea" }
+          ]}
+          toPayload={(v) => ({
+            title: text(v.title), titleKana: text(v.titleKana), kind: v.kind, status: v.status,
+            businessLine: text(v.businessLine), parentWorkId: int(v.parentWorkId), remarks: text(v.remarks)
+          })}
+          onDone={(r) => { setCreating(null); reloadWorks(r.id); }}
+          onCancel={() => setCreating(null)}
+        />
+      )}
+
+      {creating === "part" && selected && (
+        <CreateForm
+          title="構成パートの追加"
+          path={`/works/${selected}/parts`}
+          initial={{ partType: "unspecified", royaltyBearing: "1" }}
+          fields={[
+            { name: "name", label: "パート名", required: true, placeholder: "本文 / 挿絵 / 装丁 など" },
+            { name: "partType", label: "種類", type: "select",
+              options: [{ value: "unspecified", label: "未指定" }, { value: "text", label: "文章" },
+                        { value: "illustration", label: "イラスト" }, { value: "design", label: "デザイン" },
+                        { value: "music", label: "音楽" }, { value: "photo", label: "写真" }] },
+            { name: "royaltyBearing", label: "ロイヤリティの対象", type: "checkbox" },
+            { name: "remarks", label: "備考", type: "textarea" }
+          ]}
+          toPayload={(v) => ({
+            name: text(v.name), partType: text(v.partType),
+            royaltyBearing: v.royaltyBearing === "1", remarks: text(v.remarks)
+          })}
+          onDone={() => { setCreating(null); reloadParts(); }}
+          onCancel={() => setCreating(null)}
+        >
+          <p className="faint">パートを足すと、この作品で確認すべき権利が1つ増える。許諾できる上限は全パートの取得条件の積で決まる。</p>
+        </CreateForm>
+      )}
 
       <div className="filters">
         {works.map((w) => (

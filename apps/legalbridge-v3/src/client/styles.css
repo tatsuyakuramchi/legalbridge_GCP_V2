@@ -136,3 +136,21 @@ tbody tr.sel{background:var(--accent-soft)}
 /* 期限切れ。古いほど危険なので、目に入るようにする。 */
 tr.overdue td { background: #fdf2f2; }
 .danger { color: #b42318; font-weight: 600; }
+
+/* 新規登録のフォーム。5画面で同じ形にする。 */
+.create-form { margin-bottom: 16px; border-color: #c7d2e5; }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 16px; }
+.form-grid .field { display: flex; flex-direction: column; gap: 4px; }
+.form-grid .field.wide { grid-column: 1 / -1; }
+.form-grid .field > span { font-size: 12px; color: #475467; }
+.form-grid .req { font-style: normal; color: #b42318; font-size: 11px; margin-left: 4px; }
+.form-grid input, .form-grid select, .form-grid textarea {
+  padding: 6px 8px; border: 1px solid #cfd6e4; border-radius: 6px;
+  font: inherit; background: #fff; min-width: 0;
+}
+.form-grid input[type="checkbox"] { width: 16px; height: 16px; }
+.form-grid input:focus, .form-grid select:focus, .form-grid textarea:focus {
+  outline: 2px solid #9db4d8; outline-offset: -1px;
+}
+.create-form .row { margin-top: 14px; align-items: center; gap: 10px; }
+.create-form .alert { margin-top: 12px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }

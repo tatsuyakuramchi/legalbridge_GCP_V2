@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { MatterDetail, MatterKind, MatterSummary } from "../server/core/model.js";
 import { api, ApiError, money } from "./api.js";
+import { CreateForm, int, text } from "./CreateForm.js";
 
 const KIND_LABEL: Record<MatterKind, string> = {
   work: "作品フロー", outsourcing: "業務委託フロー", single: "単発フロー"
@@ -20,12 +21,30 @@ export function MattersWorkspace({ onOpenCondition }: { onOpenCondition: (id: nu
   const [kind, setKind] = useState<MatterKind | "all">("all");
   const [tab, setTab] = useState<Tab>("conditions");
   const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState<"matter" | "task" | null>(null);
+  const [parties, setParties] = useState<Array<{ id: number; name: string }>>([]);
+  const [staff, setStaff] = useState<Array<{ id: number; name: string }>>([]);
 
-  useEffect(() => {
+  function reloadMatters(select?: number) {
     api.get<{ matters: MatterSummary[] }>(`/matters${kind === "all" ? "" : `?kind=${kind}`}`)
-      .then((r) => { setRows(r.matters); if (r.matters[0]) setSelected(r.matters[0].id); })
+      .then((r) => { setRows(r.matters); if (select) setSelected(select); else if (!selected && r.matters[0]) setSelected(r.matters[0].id); })
       .catch((e: ApiError) => setError(e.message));
-  }, [kind]);
+  }
+  useEffect(() => { reloadMatters(); }, [kind]);
+
+  // 選択肢。登録フォームでしか使わないので、開くまで取りに行かない。
+  useEffect(() => {
+    if (creating === null || parties.length) return;
+    Promise.all([
+      api.get<{ parties: Array<{ id: number; name: string }> }>("/parties"),
+      api.get<{ staff: Array<{ id: number; name: string }> }>("/staff")
+    ]).then(([p, st]) => { setParties(p.parties); setStaff(st.staff); }).catch(() => undefined);
+  }, [creating]);
+
+  function reloadDetail() {
+    if (!selected) return;
+    api.get<MatterDetail>(`/matters/${selected}`).then(setDetail).catch((e: ApiError) => setError(e.message));
+  }
 
   useEffect(() => {
     if (!selected) return;
@@ -40,6 +59,66 @@ export function MattersWorkspace({ onOpenCondition }: { onOpenCondition: (id: nu
         <h1>案件</h1>
         <p>すべての作業の入口。フロー種別が中身を決め、条件・文書・支払・連絡がその下にぶら下がる。</p>
       </header>
+
+      <div className="row" style={{ marginBottom: 10 }}>
+        {creating === null && (
+          <>
+            <button className="btn primary btn-sm" onClick={() => setCreating("matter")}>案件を登録</button>
+            {selected && <button className="btn btn-sm" onClick={() => setCreating("task")}>タスクを追加</button>}
+          </>
+        )}
+      </div>
+
+      {creating === "matter" && (
+        <CreateForm
+          title="案件の登録"
+          path="/matters"
+          initial={{ kind: "single" }}
+          fields={[
+            { name: "title", label: "案件名", required: true },
+            { name: "kind", label: "フロー種別", type: "select", required: true,
+              options: [{ value: "work", label: "作品フロー" }, { value: "outsourcing", label: "業務委託フロー" },
+                        { value: "single", label: "条件なしフロー" }],
+              hint: "必須項目・検査・使えるテンプレートをこれが決める。後から変えると影響が大きい" },
+            { name: "counterpartyId", label: "相手先", type: "select",
+              options: parties.map((p) => ({ value: String(p.id), label: p.name })) },
+            { name: "ownerStaffId", label: "担当者", type: "select",
+              options: staff.map((p) => ({ value: String(p.id), label: p.name })) },
+            { name: "dueOn", label: "期日", type: "date" },
+            { name: "requesterEmail", label: "依頼者メール" },
+            { name: "remarks", label: "備考", type: "textarea" }
+          ]}
+          toPayload={(v) => ({
+            title: text(v.title), kind: v.kind,
+            counterpartyId: int(v.counterpartyId), ownerStaffId: int(v.ownerStaffId),
+            dueOn: text(v.dueOn), requesterEmail: text(v.requesterEmail), remarks: text(v.remarks)
+          })}
+          onDone={(r) => { setCreating(null); reloadMatters(r.id); }}
+          onCancel={() => setCreating(null)}
+        />
+      )}
+
+      {creating === "task" && selected && (
+        <CreateForm
+          title="タスクの追加"
+          path={`/matters/${selected}/tasks`}
+          fields={[
+            { name: "title", label: "やること", required: true },
+            { name: "assigneeStaffId", label: "担当者", type: "select",
+              options: staff.map((p) => ({ value: String(p.id), label: p.name })) },
+            { name: "dueAt", label: "期日", type: "date",
+              hint: "期日を入れると期限一覧に出る。過ぎたものは全部表示される" },
+            { name: "description", label: "内容", type: "textarea" }
+          ]}
+          toPayload={(v) => ({
+            title: text(v.title), assigneeStaffId: int(v.assigneeStaffId),
+            dueAt: v.dueAt ? new Date(`${v.dueAt}T09:00:00+09:00`).toISOString() : undefined,
+            description: text(v.description)
+          })}
+          onDone={() => { setCreating(null); reloadDetail(); }}
+          onCancel={() => setCreating(null)}
+        />
+      )}
 
       <div className="filters">
         {(["all", "work", "outsourcing", "single"] as const).map((value) => (
