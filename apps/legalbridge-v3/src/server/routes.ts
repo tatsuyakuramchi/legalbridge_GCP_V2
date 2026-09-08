@@ -36,6 +36,10 @@ import { ReceivableRepository } from "./monitoring/receivables.js";
 import { ContractCheckRepository } from "./monitoring/contract-check.js";
 import { DispatchService } from "./integrations/dispatch-service.js";
 import { DailyJob } from "./jobs/daily.js";
+import { IntakeService } from "./integrations/intake-service.js";
+import {
+  INTAKE_COMMANDS, buildIntakeModal, parseSubmission
+} from "./integrations/slack-intake.js";
 import {
   BacklogAdapter, CloudSignAdapter, GmailAdapter, MemoryAdapter, SlackAdapter,
   type DispatchAdapter
@@ -827,11 +831,81 @@ export function createRoutes(database: Transactable) {
   return router;
 }
 
+/**
+ * Slack のスラッシュコマンドと対話。
+ *
+ * Slack は JSON ではなくフォーム形式で送ってくる（interactions は
+ * payload= に JSON が入る）。署名検証には生の本文が要るので、
+ * webhook と同じく express.raw の下に置く。
+ *
+ * Slack は3秒以内の応答を求める。モーダルを開くのは trigger_id を使った
+ * views.open で、Slack の Web API を叩く必要がある。ここでは応答本文だけを
+ * 組み立て、送信はアダプタに任せる。
+ */
+function parseForm(raw: Buffer): Record<string, string> {
+  const params = new URLSearchParams(raw.toString("utf8"));
+  const out: Record<string, string> = {};
+  for (const [k, v] of params) out[k] = v;
+  return out;
+}
+
 /** Webhook 受信。ユーザー認証は通さず、共有シークレットと署名で守る。 */
 export function createWebhookRouter(database: Transactable) {
   const router = Router();
   const dispatch = new DispatchService(database, {}, () => ({
     mode: "off", adapterConfigured: false, readOnly: false
+  }));
+
+  const intake = new IntakeService(database);
+
+  /** Slack の署名検証。未設定なら常に拒否（fail-closed）。 */
+  const verifySlack = (req: any, raw: Buffer) => verifySlackSignature({
+    signingSecret: config.slackSigningSecret,
+    timestampHeader: req.header("x-slack-request-timestamp"),
+    signatureHeader: req.header("x-slack-signature"),
+    rawBody: raw
+  });
+
+  // スラッシュコマンド。モーダルの定義を返し、Slack 側で開かせる。
+  router.post("/slack/commands", asyncRoute(async (req, res) => {
+    const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from("");
+    if (!verifySlack(req, raw)) return res.status(401).json({ error: "signature verification failed" });
+
+    const form = parseForm(raw);
+    if (!INTAKE_COMMANDS.has(String(form.command ?? ""))) {
+      return res.json({ response_type: "ephemeral", text: "知らないコマンドです。" });
+    }
+    // trigger_id を添えて返す。views.open は呼び出し側（Slack アプリ）が行う。
+    res.json({
+      trigger_id: form.trigger_id,
+      view: buildIntakeModal({ channelId: form.channel_id })
+    });
+  }));
+
+  // モーダルの送信。ここで案件が立つ。
+  router.post("/slack/interactions", asyncRoute(async (req, res) => {
+    const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from("");
+    if (!verifySlack(req, raw)) return res.status(401).json({ error: "signature verification failed" });
+
+    const form = parseForm(raw);
+    let payload: any = {};
+    try { payload = JSON.parse(String(form.payload ?? "{}")); }
+    catch { return res.status(400).json({ error: "payload を読み取れません" }); }
+
+    if (payload.type !== "view_submission") return res.json({});   // 他の対話は無視
+
+    try {
+      const result = await intake.accept(parseSubmission(payload));
+      // Slack はモーダルを閉じるために空の 200 を求める。文面は別途返す。
+      res.json({ response_action: "clear", legalbridge: result });
+    } catch (error) {
+      const e = error as DomainError;
+      // 入力の誤りはモーダルに出す。閉じさせない。
+      return res.json({
+        response_action: "errors",
+        errors: { title: e?.message ?? "受け付けられませんでした" }
+      });
+    }
   }));
 
   router.post("/webhooks/:source", asyncRoute(async (req, res) => {

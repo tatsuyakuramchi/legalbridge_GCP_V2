@@ -373,6 +373,77 @@ gcloud run services proxy legalbridge-v3 --region=asia-northeast1 --port=8080
 
 ---
 
+## 手順8.5：日次の点検を仕込む
+
+画面を開かないと気づけないもの（満了間近の契約・期日を過ぎたタスク・
+支払期日）を、毎朝洗い出す。実データでは42日放置されたタスクが誰にも
+知られずに残っていた。
+
+通知は外部送信のゲートを通すので、**モードが off のあいだは送らない**
+（洗い出して記録するだけ）。先に仕込んでおいて構わない。
+
+```bash
+gcloud services enable cloudscheduler.googleapis.com
+
+PROJECT=legalbridge-488506
+URL="$(gcloud run services describe legalbridge-v3 --region=asia-northeast1 --format='value(status.url)')"
+SA="legalbridge-v3@${PROJECT}.iam.gserviceaccount.com"
+
+# Cloud Run は --no-allow-unauthenticated なので、呼び出し権限を与える。
+gcloud run services add-iam-policy-binding legalbridge-v3 \
+  --region=asia-northeast1 --member="serviceAccount:${SA}" --role=roles/run.invoker
+
+gcloud scheduler jobs create http legalbridge-v3-daily \
+  --location=asia-northeast1 \
+  --schedule="0 9 * * 1-5" \
+  --time-zone="Asia/Tokyo" \
+  --uri="${URL}/api/v3/jobs/daily" \
+  --http-method=POST \
+  --headers="Content-Type=application/json" \
+  --message-body='{"notifyChannel":"slack","notifyTo":"C0XXXXXXX"}' \
+  --oidc-service-account-email="${SA}" \
+  --oidc-token-audience="${URL}"
+```
+
+平日9時（東京）に動く。`notifyTo` は Slack のチャンネルID。
+Gmail で送るなら `{"notifyChannel":"gmail","notifyTo":"legal@example.com"}`。
+
+通知せず洗い出しだけ見たいときは、画面から確かめられる:
+
+```bash
+curl -sS -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  "${URL}/api/v3/jobs/daily/preview" | jq '.counts'
+```
+
+## 手順8.6：Slack の受付フォーム
+
+`/法務依頼` から案件を立てる。Slack アプリ側の設定が要る。
+
+| 設定 | 値 |
+|---|---|
+| Slash Command | `/法務依頼` → `{URL}/internal/slack/commands` |
+| Interactivity | Request URL → `{URL}/internal/slack/interactions` |
+| Event Subscriptions | `{URL}/internal/webhooks/slack` |
+| 必要な権限 | `commands`, `chat:write`, `views:open` |
+
+署名シークレットを入れる（未設定だと**常に401**で受け付けない）:
+
+```bash
+create_secret legalbridge-v3-slack-signing-secret "<Slack の Signing Secret>"
+create_secret legalbridge-v3-slack-bot-token "xoxb-..."
+
+gcloud builds submit --config infra/v3/cloudbuild.yaml \
+  --substitutions=^@^_GIT_SHA=$(git rev-parse --short HEAD)@_SLACK_MODE=dry_run@_SECRETS_EXTRA=SLACK_BOT_TOKEN=legalbridge-v3-slack-bot-token:latest,SLACK_SIGNING_SECRET=legalbridge-v3-slack-signing-secret:latest \
+  .
+```
+
+受付フォーム自体は送信を伴わないので `SLACK_MODE=off` でも動く。
+`dry_run` / `live` は V3 から Slack へ**送る**ときに効く。
+
+⚠️ Cloud Run が `--no-allow-unauthenticated` のままだと Slack から
+届かない。受付を有効にするタイミングで `/internal` を通す経路を用意する
+（Load Balancer + Cloud Armor、または該当サービスへの `allUsers` 付与）。
+
 ## 手順9：切戻し
 
 ```bash
