@@ -191,8 +191,9 @@ psql "$ADMIN_DSN" -v ON_ERROR_STOP=1 -f infra/v3/004_amend.sql
 ```
 
 初回は `A-001: matter_links.target_type に email_thread を足した`、2回目以降は
-`A-001: 適用済み`。**新しい表を足す変更を入れたときは `003_grants.sql` も
-流し直すこと**（新しい表にランタイムロールの権限が付かない）。
+`A-001: 適用済み`。A-002 は `condition_schedules.label`（予定明細の名前）を
+足す。**新しい表を足す変更を入れたときは `003_grants.sql` も流し直すこと**
+（新しい表にランタイムロールの権限が付かない。列の追加なら不要）。
 
 ---
 

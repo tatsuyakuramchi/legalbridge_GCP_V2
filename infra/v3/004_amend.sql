@@ -56,6 +56,19 @@ BEGIN
 END
 $amend_matter_links$;
 
+-- ---------------------------------------------------------------------
+-- A-002 予定明細に名前を持たせる
+--
+--   毎月28万円の1年契約は12行並ぶ。どの行が何月分かを人が読めるように
+--   名前を持たせる（「2026年4月分」「第1回 着手金」）。期日から機械的に
+--   導ける場合もあるが、着手金・中間金のような区切りは導けない。
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.condition_schedules ADD COLUMN IF NOT EXISTS label text;
+
+COMMENT ON COLUMN v3.condition_schedules.label IS
+  '明細行の名前。「2026年4月分」「第1回 着手金」など。空なら期日から表示を作る。';
+
+
 COMMIT;
 
 -- 確認
@@ -63,3 +76,9 @@ COMMIT;
 SELECT pg_get_constraintdef(c.oid) AS def
   FROM pg_constraint c
  WHERE c.conrelid = 'v3.matter_links'::regclass AND c.contype = 'c';
+
+\echo '--- condition_schedules の列 ---'
+SELECT column_name, data_type
+  FROM information_schema.columns
+ WHERE table_schema = 'v3' AND table_name = 'condition_schedules'
+ ORDER BY ordinal_position;

@@ -305,6 +305,8 @@ CREATE TABLE IF NOT EXISTS v3.condition_schedules (
                  ('on_execution', 'on_delivery', 'on_inspection', 'periodic')),
   planned_amount bigint NOT NULL,
   due_on         date,
+  -- 明細行の名前。「2026年4月分」「第1回 着手金」など。
+  label          text,
   legacy_id      integer,
   CONSTRAINT condition_schedules_seq_uq UNIQUE (condition_id, seq) DEFERRABLE INITIALLY DEFERRED
 );

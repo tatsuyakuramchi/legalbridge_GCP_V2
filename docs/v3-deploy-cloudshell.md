@@ -236,6 +236,10 @@ psql -v ON_ERROR_STOP=1 -f infra/v3/004_amend.sql
 初回は `A-001: matter_links.target_type に email_thread を足した`、
 2回目以降は `A-001: 適用済み` と出る。どちらも正常。
 
+**A-002** は `condition_schedules` に `label` 列を足す（予定明細の名前。
+「2026年4月分」「第1回 着手金」）。`ADD COLUMN IF NOT EXISTS` なので何度
+流しても同じ。末尾に出る列の一覧に `label` があれば当たっている。
+
 ---
 
 ## 手順4：権限を与える

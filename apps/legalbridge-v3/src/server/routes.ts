@@ -6,6 +6,7 @@ import { requireRole, requireWritable } from "./auth.js";
 import { ConditionRepository } from "./conditions/repository.js";
 import { ConditionWriteService } from "./conditions/write-service.js";
 import { ConditionEventService, EVENT_TYPES } from "./conditions/event-service.js";
+import { ConditionScheduleService, TRIGGER_KINDS, generateLines } from "./conditions/schedule-service.js";
 import { MatterWriteService } from "./matters/write-service.js";
 import { MatterLinkService, CONDITION_KINDS_BY_MATTER } from "./matters/link-service.js";
 import { WorkWriteService } from "./works/write-service.js";
@@ -58,6 +59,7 @@ export function createRoutes(database: Transactable) {
   const conditions = new ConditionRepository(database);
   const conditionWrites = new ConditionWriteService(database);
   const conditionEvents = new ConditionEventService(database);
+  const conditionSchedules = new ConditionScheduleService(database);
   const matters = new MatterRepository(database);
   const works = new WorkRepository(database);
   const documents = new DocumentRepository(database);
@@ -617,6 +619,49 @@ export function createRoutes(database: Transactable) {
   router.get("/conditions/:id/revisions", asyncRoute(async (req, res) => {
     res.json({ revisions: await conditions.revisions(Number(req.params.id)) });
   }));
+
+  // 予定明細。毎月28万円の1年契約なら12行並ぶ。
+  // 状態は保存せず、実績と支払の割当から導く。
+  router.get("/conditions/:id/schedules", asyncRoute(async (req, res) => {
+    res.json({ ...await conditionSchedules.list(Number(req.params.id)), triggers: TRIGGER_KINDS });
+  }));
+
+  const scheduleLine = z.object({
+    seq: z.coerce.number().int().min(1).max(999),
+    label: z.string().trim().max(120).nullable().optional(),
+    triggerKind: z.enum(["on_execution", "on_delivery", "on_inspection", "periodic"]),
+    plannedAmount: z.coerce.number().int(),
+    dueOn: z.string().date().nullable().optional()
+  });
+  router.put("/conditions/:id/schedules",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { lines } = z.object({ lines: z.array(scheduleLine).max(200) }).parse(req.body ?? {});
+      res.json(await conditionSchedules.replace(
+        Number(req.params.id),
+        lines.map((l) => ({ ...l, label: l.label ?? null, dueOn: l.dueOn ?? null })),
+        actor(res)));
+    }));
+
+  // 定期の明細を組み立てる。保存はせず、並びを返すだけ（画面で直してから保存する）。
+  const generateSchema = z.object({
+    startOn: z.string().date(),
+    count: z.coerce.number().int().min(1).max(120),
+    everyMonths: z.coerce.number().int().min(1).max(12).optional(),
+    amount: z.coerce.number().int().positive(),
+    triggerKind: z.enum(["on_execution", "on_delivery", "on_inspection", "periodic"]).optional(),
+    labelSuffix: z.string().trim().max(20).optional()
+  });
+  router.post("/conditions/:id/schedules/generate",
+    requireRole("admin", "legal"),
+    asyncRoute(async (req, res) => {
+      const input = generateSchema.parse(req.body ?? {});
+      res.json({ lines: generateLines({
+        startOn: input.startOn, count: input.count,
+        everyMonths: input.everyMonths ?? 1, amount: input.amount,
+        triggerKind: input.triggerKind ?? "periodic", labelSuffix: input.labelSuffix
+      }) });
+    }));
 
   // 実績（条件明細の数値）。記録は消さず、取り消しは void で残す。
   router.get("/conditions/:id/events", asyncRoute(async (req, res) => {

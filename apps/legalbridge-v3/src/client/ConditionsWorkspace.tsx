@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ConditionEvents } from "./ConditionEvents.js";
+import { ConditionSchedules } from "./ConditionSchedules.js";
 import { ConditionRevisions } from "./ConditionRevisions.js";
 import { ConditionEdit } from "./ConditionEdit.js";
 import { ConditionCounterparty, ConditionScopes } from "./ConditionLinks.js";
@@ -378,6 +379,12 @@ export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
               <ConditionRevisions conditionId={detail.id} onOpen={(id) => {
                 setResult(null); setSelected(id);
               }} />
+
+              <ConditionSchedules conditionId={detail.id}
+                editable={detail.status === "active" || detail.status === "draft"}
+                onChanged={async () => {
+                  setDetail(await api.get<DetailResponse>(`/conditions/${detail.id}`));
+                }} />
 
               <ConditionEvents conditionId={detail.id} currency={detail.currency}
                 editable={detail.status === "active" || detail.status === "draft"}
