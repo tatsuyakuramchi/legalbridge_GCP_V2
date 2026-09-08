@@ -298,6 +298,33 @@ Cloud SQL（PostgreSQL 15.18）へ適用済み。全12エンティティと金�
 前提の用意からロール作成・preflight・スキーマ適用・権限付与・移行・ビルド・確認・
 外部連携の段階開放・切戻しまでを、そのまま上から流せる形で書いてある。
 
+## Step 3 の実行結果（2026-09-08）
+
+`legalbridge-v3` を asia-northeast1 に作成。参照専用（`READ_ONLY=true`）で起動。
+
+```json
+{ "status": "ok", "service": "legalbridge-v3", "readOnly": true,
+  "database": { "configured": true, "reachable": true,
+                "schema": "v3", "readOnly": true } }
+```
+
+`schema` が `v3` 単独であることが V1・V2 との分離の確認になる。
+
+### 初回デプロイで詰まった点
+
+| 症状 | 原因 |
+|---|---|
+| `Secret ... was not found`（一覧には存在する） | 空文字で作ったシークレットはバージョンが作られず `versions/latest` が解決できない。持っていない資格情報は配線しない形に変更 |
+| `key in the template "SECRETS" is not a valid built-in substitution` | step 内のシェル変数を Cloud Build が置換変数として解釈する。`$$` でエスケープ |
+| アップロードが 37.6MiB | `.gcloudignore` が無く `.gitignore` が流用されるため、未追跡の `cloud-sql-proxy`（32MB）まで送っていた |
+
+### 次にやること
+
+1. 参照専用のまま V1 と数字を突き合わせる（金額・期限・相手先）
+2. `data_quality_issues` の high 367件を UI から潰す
+3. `READ_ONLY=false` にして二重入力期間へ
+4. 外部連携を `dry_run` → 宛先限定 `live` → 全開放の順で開ける
+
 ## 実行順序と依存
 
 ```
