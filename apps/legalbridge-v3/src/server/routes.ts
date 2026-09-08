@@ -29,6 +29,9 @@ import { OpsRepository } from "./ops/repository.js";
 import { SearchRepository } from "./search/repository.js";
 import { ExportRepository, DATASETS, type Dataset } from "./exports/repository.js";
 import { filename, withBom } from "./exports/csv.js";
+import { AccountingExportLedger, AccountingExportRepository } from "./exports/accounting-repository.js";
+import { ACCOUNTING_COLUMNS, BREAKDOWN_COLUMNS, totalRow } from "./exports/accounting.js";
+import { XLS_MIME, toXls, withXlsBom, xlsFilename } from "./exports/xls.js";
 import { PaymentReportRepository } from "./exports/payment-report.js";
 import { ImportService, IMPORT_SPECS, type ImportKind } from "./imports/service.js";
 import { MonitoringRepository } from "./monitoring/repository.js";
@@ -82,6 +85,8 @@ export function createRoutes(database: Transactable) {
   const search = new SearchRepository(database);
   const exports = new ExportRepository(database);
   const paymentReport = new PaymentReportRepository(database);
+  const accounting = new AccountingExportRepository(database);
+  const accountingLedger = new AccountingExportLedger(database);
   const imports = new ImportService(database);
   const ops = new OpsRepository(database);
   const monitoring = new MonitoringRepository(database);
@@ -214,6 +219,58 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       const limit = Number((req.body ?? {}).limit);
       res.json(await mailJob.run({ limit: Number.isFinite(limit) ? limit : undefined }));
+    }));
+
+  // 経理提出用の帳票（V1 互換レイアウト）。列名も順番も V1 から変えない。
+  const accountingSchema = z.object({
+    from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    basis: z.enum(["due", "paid"]).optional(),
+    includeExported: z.coerce.boolean().optional()
+  });
+
+  // 画面で中身を確かめてから出す。要確認が残ったまま出さないため。
+  router.get("/exports/accounting", asyncRoute(async (req, res) => {
+    res.json(await accounting.build(accountingSchema.parse(req.query)));
+  }));
+
+  // 束ね1つ分の Excel。groupKey は preview の key をそのまま渡す。
+  router.get("/exports/accounting.xls", asyncRoute(async (req, res) => {
+    const query = accountingSchema.parse(req.query);
+    const result = await accounting.build(query);
+    const wanted = String(req.query.groupKey ?? "");
+    const groups = wanted ? result.groups.filter((g) => g.key === wanted) : result.groups;
+    if (!groups.length) return res.status(404).json({ error: "対象の束がありません" });
+
+    const breakdown = req.query.layout === "breakdown";
+    // 束ごとに合計行を挟む。V1 も束ごとに1ファイルだった。
+    const rows = groups.flatMap((g) => [...g.rows, totalRow(g)]);
+    const label = breakdown ? "内訳一覧" : "経理提出用";
+    const sheet = groups.length === 1
+      ? `${label}_${groups[0].paymentDate || "期日未設定"}`
+      : label;
+
+    res.setHeader("content-type", `${XLS_MIME}; charset=utf-8`);
+    res.setHeader("content-disposition",
+      `attachment; filename*=UTF-8''${encodeURIComponent(xlsFilename([
+        label, groups.length === 1 ? groups[0].owner : null,
+        groups.length === 1 ? groups[0].paymentDate : `${query.from}_${query.to}`
+      ]))}`);
+    res.send(withXlsBom(toXls(sheet, breakdown ? BREAKDOWN_COLUMNS : ACCOUNTING_COLUMNS, rows)));
+  }));
+
+  const markSchema = z.object({ paymentIds: z.array(z.number().int().positive()).min(1).max(1000),
+                                batchKey: z.string().trim().max(200).optional() });
+  router.post("/exports/accounting/mark", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { paymentIds, batchKey } = markSchema.parse(req.body ?? {});
+      res.json({ recorded: await accountingLedger.markExported(paymentIds, batchKey ?? "", actor(res)) });
+    }));
+
+  router.post("/exports/accounting/unmark", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { paymentIds } = markSchema.parse(req.body ?? {});
+      res.json({ removed: await accountingLedger.unmark(paymentIds) });
     }));
 
   // 支払を条件へ割り当てる。これが無いと「どの取り決めに対する支払か」が

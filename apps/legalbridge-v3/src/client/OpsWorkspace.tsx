@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, money } from "./api.js";
 import { CsvImport } from "./CsvImport.js";
+import { AccountingExport } from "./AccountingExport.js";
 
 interface Issue {
   id: number; ruleCode: string; targetType: string; targetId: number;
@@ -147,6 +148,8 @@ export function OpsWorkspace() {
       )}
 
       {tab === "exports" && (
+        <div className="stack">
+        <AccountingExport />
         <div className="panel">
           <div className="panel-hd">
             <h2>一覧の出力</h2>
@@ -164,6 +167,7 @@ export function OpsWorkspace() {
               ))}
             </div>
           </div>
+        </div>
         </div>
       )}
 
