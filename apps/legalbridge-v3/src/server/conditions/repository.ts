@@ -7,7 +7,7 @@ import type {
 
 const SUMMARY_COLUMNS = `
   c.id, c.condition_no, c.direction, c.kind, c.name, c.currency, c.pricing_model,
-  c.rate_ppm, c.flat_amount, c.mg_amount, c.ag_amount, c.term_start, c.term_end, c.status,
+  c.rate_ppm, c.flat_amount, c.unit_amount, c.mg_amount, c.ag_amount, c.term_start, c.term_end, c.status,
   p.id AS party_id, p.name AS party_name, p.kind AS party_kind,
   w.id AS work_id, w.work_code, w.title AS work_title`;
 
@@ -33,6 +33,7 @@ function mapSummary(row: Record<string, any>): ConditionSummary {
     pricingModel: row.pricing_model,
     ratePpm: int(row.rate_ppm),
     flatAmount: int(row.flat_amount),
+    unitAmount: int(row.unit_amount),
     mgAmount: int(row.mg_amount),
     agAmount: int(row.ag_amount),
     termStart: dateStr(row.term_start),

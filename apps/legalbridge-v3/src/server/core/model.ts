@@ -28,6 +28,8 @@ export interface ConditionSummary {
   /** 百万分率。表示は ratePpm / 10000 で % になる。 */
   ratePpm: number | null;
   flatAmount: number | null;
+  /** 単価×数量のときの単価。読めないと画面から直せない。 */
+  unitAmount: number | null;
   mgAmount: number | null;
   agAmount: number | null;
   termStart: string | null;

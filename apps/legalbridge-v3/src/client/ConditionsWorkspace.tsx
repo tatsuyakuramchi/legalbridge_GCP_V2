@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { ConditionEdit } from "./ConditionEdit.js";
+import { ConditionCounterparty, ConditionScopes } from "./ConditionLinks.js";
 import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
 import { StatusTag } from "./labels.js";
 import type { ConditionDetail, ConditionSummary, EnvelopeCheck, RightsEnvelope } from "../server/core/model.js";
@@ -38,6 +40,7 @@ export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
   const [parties, setParties] = useState<Array<{ id: number; name: string }>>([]);
   const [works, setWorks] = useState<Array<{ id: number; title: string }>>([]);
   const [keyword, setKeyword] = useState("");
+  const [editing, setEditing] = useState(false);
   const search = useDebounced(keyword);
 
   function reload(select?: number) {
@@ -65,7 +68,9 @@ export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
 
   useEffect(() => {
     if (!selected) return;
-    setResult(null);
+    // ここでは結果を消さない。改訂は保存の直後に選択が新版へ移るので、
+    // 消すと「改訂しました」が出た瞬間に消える。消すのは行を選んだときだけ。
+    setEditing(false);
     api.get<DetailResponse>(`/conditions/${selected}`)
       .then(setDetail)
       .catch((e: ApiError) => setError(e.message));
@@ -83,17 +88,6 @@ export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
   }
 
-  async function raiseMg() {
-    if (!detail) return;
-    setError(null);
-    try {
-      const next = (detail.mgAmount ?? 0) + 100000;
-      setResult(await api.patch<WriteResult>(`/conditions/${detail.id}`, { mgAmount: next }));
-      setDetail(await api.get<DetailResponse>(`/conditions/${detail.id}`));
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : String(e));
-    }
-  }
 
   return (
     <section className="workspace">
@@ -214,8 +208,12 @@ export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
                 {rows.map((row) => (
                   <tr key={row.id} className={row.id === selected ? "sel" : ""} tabIndex={0}
                       aria-selected={row.id === selected}
-                      onClick={() => setSelected(row.id)}
-                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelected(row.id); } }}>
+                      onClick={() => { setResult(null); setSelected(row.id); }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault(); setResult(null); setSelected(row.id);
+                        }
+                      }}>
                     <td className="code">{row.conditionNo ?? `#${row.id}`}</td>
                     <td><span className={`tag ${row.direction}`}>{row.direction === "in" ? "IN" : "OUT"}</span></td>
                     <td>{row.name}<div className="faint">{row.counterparty?.name ?? "未設定"}</div></td>
@@ -238,11 +236,29 @@ export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
         <div className="stack">
           {detail && (
             <>
+              {editing && (
+                <ConditionEdit detail={detail}
+                  onCancel={() => setEditing(false)}
+                  onDone={async (r) => {
+                    setEditing(false);
+                    setResult(r);
+                    // 改訂されたら新版へ移る。旧版を見続けても直せない。
+                    const next = r.revisedTo ?? detail.id;
+                    if (next !== detail.id) setSelected(next);
+                    else setDetail(await api.get<DetailResponse>(`/conditions/${detail.id}`));
+                    reload();
+                  }} />
+              )}
+
               <div className="panel">
                 <div className="panel-hd">
                   <h2 className="code">{detail.conditionNo ?? `#${detail.id}`}</h2>
                   <span className={`tag ${detail.direction}`}>{detail.direction === "in" ? "IN 取得" : "OUT 許諾"}</span>
                   <StatusTag kind="condition" value={detail.status} />
+                  {!editing && detail.status !== "void" && detail.status !== "superseded" && (
+                    <button className="btn btn-sm" style={{ marginLeft: "auto" }}
+                            onClick={() => setEditing(true)}>編集</button>
+                  )}
                 </div>
                 <div className="panel-bd stack">
                   <div className="title">{detail.name}</div>
@@ -250,7 +266,16 @@ export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
                     <dt>相手先</dt><dd>{detail.counterparty?.name ?? "未設定"}</dd>
                     <dt>作品</dt><dd>{detail.work?.title ?? "—"}{detail.workPartName ? `／${detail.workPartName}` : ""}</dd>
                     <dt>期間</dt><dd className="code">{detail.termStart ?? "—"} → {detail.termEnd ?? "期限なし"}</dd>
-                    <dt>算定</dt><dd>{detail.pricingModel === "revenue_rate" ? `売上料率 ${rate(detail.ratePpm)}` : money(detail.flatAmount, detail.currency)}</dd>
+                    <dt>算定</dt><dd>{
+                      detail.pricingModel === "revenue_rate" ? `売上料率 ${rate(detail.ratePpm)}`
+                      : detail.pricingModel === "unit_rate" ? `単価 ${money(detail.unitAmount, detail.currency)} × 数量`
+                      : money(detail.flatAmount, detail.currency)
+                    }</dd>
+                    <dt>税区分</dt><dd>{
+                      { taxable: "課税 10%", reduced: "軽減 8%", exempt: "非課税・不課税" }[detail.taxCategory]
+                    }</dd>
+                    {detail.paymentTerms && (<><dt>支払条件</dt><dd>{detail.paymentTerms}</dd></>)}
+                    {detail.notes && (<><dt>備考</dt><dd>{detail.notes}</dd></>)}
                     <dt>MG / AG</dt><dd className="code">{money(detail.mgAmount, detail.currency)} / {money(detail.agAmount, detail.currency)}</dd>
                   </dl>
                   {detail.scopes.length > 0 && (
@@ -345,11 +370,20 @@ export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
                 </div>
               )}
 
-              <div className="panel">
-                <div className="panel-hd"><h2>金額を変更する</h2><span className="faint">保存先はひとつ</span></div>
-                <div className="panel-bd stack">
-                  <button className="btn primary" onClick={raiseMg}>MG を 10万円 上げる</button>
-                  {result && (
+              <ConditionCounterparty detail={detail} onDone={async () => {
+                setDetail(await api.get<DetailResponse>(`/conditions/${detail.id}`));
+                reload();
+              }} />
+
+              <ConditionScopes detail={detail} onDone={async () => {
+                setDetail(await api.get<DetailResponse>(`/conditions/${detail.id}`));
+              }} />
+
+              {result && (
+                <div className="panel">
+                  <div className="panel-hd"><h2>保存の結果</h2><span className="faint">どこが書き換わったか</span></div>
+                  <div className="panel-bd">
+                    {(
                     <div className="trace">
                       {result.revisedTo && (
                         <div className="trace-line">実績があるため改訂しました（新しい条件 #{result.revisedTo}）</div>
@@ -362,8 +396,9 @@ export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
                       ))}
                     </div>
                   )}
+                  </div>
                 </div>
-              </div>
+              )}
             </>
           )}
         </div>
