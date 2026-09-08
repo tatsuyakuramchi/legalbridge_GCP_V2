@@ -260,7 +260,7 @@ export function HomeWorkspace({ onGo }: { onGo: (view: "matters" | "money" | "op
       )}
 
       <div className="panel">
-        <div className="panel-hd"><h2>次にやること</h2><span className="faint">期日順・14日先まで</span></div>
+        <div className="panel-hd"><h2>次にやること</h2><span className="faint">期日順・期限切れ30日前から14日先まで</span></div>
         <div className="tablewrap">
           <table>
             <thead><tr><th>期日</th><th>種別</th><th>参照</th><th>内容</th></tr></thead>
