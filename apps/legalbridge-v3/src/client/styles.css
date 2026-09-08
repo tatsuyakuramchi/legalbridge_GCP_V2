@@ -195,3 +195,4 @@ tr.report-total td { border-top: 2px solid #cfd6e4; font-weight: 600; background
   table { width: 100%; border-collapse: collapse; font-size: 11px; }
   th, td { border: 1px solid #999; padding: 3px 5px; }
 }
+.good { color: #067647; font-weight: 600; }

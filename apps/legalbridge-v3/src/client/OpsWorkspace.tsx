@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, money } from "./api.js";
+import { CsvImport } from "./CsvImport.js";
 
 interface Issue {
   id: number; ruleCode: string; targetType: string; targetId: number;
@@ -39,7 +40,7 @@ const SOURCE_LABEL: Record<string, string> = {
 };
 
 export function OpsWorkspace() {
-  const [tab, setTab] = useState<"quality" | "deadlines" | "exports" | "audit" | "integrations" | "settings">("quality");
+  const [tab, setTab] = useState<"quality" | "deadlines" | "exports" | "imports" | "audit" | "integrations" | "settings">("quality");
   const [issues, setIssues] = useState<Issue[]>([]);
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [settings, setSettings] = useState<Setting[] | null>(null);
@@ -84,6 +85,7 @@ export function OpsWorkspace() {
         <button aria-selected={tab === "quality"} onClick={() => setTab("quality")}>データ品質 {issues.length}</button>
         <button aria-selected={tab === "deadlines"} onClick={() => setTab("deadlines")}>期限 {deadlines.length}</button>
         <button aria-selected={tab === "exports"} onClick={() => setTab("exports")}>出力</button>
+        <button aria-selected={tab === "imports"} onClick={() => setTab("imports")}>取込</button>
         <button aria-selected={tab === "audit"} onClick={() => setTab("audit")}>監査記録</button>
         <button aria-selected={tab === "integrations"} onClick={() => setTab("integrations")}>外部連携</button>
         {settings && <button aria-selected={tab === "settings"} onClick={() => setTab("settings")}>設定</button>}
@@ -159,6 +161,8 @@ export function OpsWorkspace() {
           </div>
         </div>
       )}
+
+      {tab === "imports" && <CsvImport />}
 
       {tab === "audit" && (
         <div className="panel">

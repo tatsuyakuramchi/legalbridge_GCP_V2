@@ -28,6 +28,7 @@ import { SearchRepository } from "./search/repository.js";
 import { ExportRepository, DATASETS, type Dataset } from "./exports/repository.js";
 import { filename, withBom } from "./exports/csv.js";
 import { PaymentReportRepository } from "./exports/payment-report.js";
+import { ImportService, IMPORT_SPECS, type ImportKind } from "./imports/service.js";
 import { MonitoringRepository } from "./monitoring/repository.js";
 import { DispatchService } from "./integrations/dispatch-service.js";
 import {
@@ -71,6 +72,7 @@ export function createRoutes(database: Transactable) {
   const search = new SearchRepository(database);
   const exports = new ExportRepository(database);
   const paymentReport = new PaymentReportRepository(database);
+  const imports = new ImportService(database);
   const ops = new OpsRepository(database);
   const monitoring = new MonitoringRepository(database);
 
@@ -173,6 +175,21 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       const { reason } = reasonSchema.parse(req.body ?? {});
       res.status(201).json(await issues.reissue(Number(req.params.id), reason, actor(res)));
+    }));
+
+  // CSV の一括取込。必ず先に試算（dryRun）を通す。
+  router.get("/imports", asyncRoute(async (_req, res) => {
+    res.json({ specs: IMPORT_SPECS });
+  }));
+  const importSchema = z.object({
+    kind: z.enum(["parties", "works"]),
+    csv: z.string().min(1).max(2_000_000),
+    dryRun: z.boolean()
+  });
+  router.post("/imports", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = importSchema.parse(req.body ?? {});
+      res.json(await imports.run({ ...input, kind: input.kind as ImportKind, actor: actor(res) }));
     }));
 
   // 支払報告書。相手先ごとに期間内の支払を明細と合計で出す。
