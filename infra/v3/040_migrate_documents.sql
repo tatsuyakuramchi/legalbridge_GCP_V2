@@ -13,10 +13,44 @@ SET LOCAL search_path = v3, public;
 -- ---------------------------------------------------------------------
 -- テンプレートと版（本文・field_schema はそのまま移す＝互換境界）
 -- ---------------------------------------------------------------------
+-- V1/V2 の DOCUMENT_PREFIXES（コード側の表）と同じ値。
+-- 本番には ARC-PO-2026-0115 や ARC-INS-2026-0031 が実在するので、
+-- 違う記号を振ると同じ書類の番号が途中で変わる。
+CREATE OR REPLACE FUNCTION v3_default_prefix(key text) RETURNS text
+LANGUAGE sql IMMUTABLE AS $prefix$
+  SELECT CASE key
+    WHEN 'purchase_order'                        THEN 'PO'
+    WHEN 'intl_purchase_order'                   THEN 'IPO'
+    WHEN 'inspection_certificate'                THEN 'INS'
+    WHEN 'license_master'                        THEN 'LIC'
+    WHEN 'individual_license_terms'              THEN 'ILT'
+    WHEN 'individual_license_terms_v3'           THEN 'ILT'
+    WHEN 'royalty_statement'                     THEN 'ROY'
+    WHEN 'service_master'                        THEN 'SVC'
+    WHEN 'pub_master_individual'                 THEN 'PUB'
+    WHEN 'pub_master_corporate'                  THEN 'PUB'
+    WHEN 'pub_license_terms'                     THEN 'PUBT'
+    WHEN 'pub_additional_terms'                  THEN 'PUBA'
+    WHEN 'sales_master_buyer'                    THEN 'SAL'
+    WHEN 'sales_master_credit'                   THEN 'SAL'
+    WHEN 'sales_master_standard'                 THEN 'SAL'
+    WHEN 'maintenance_spec'                      THEN 'MNT'
+    WHEN 'legal_response'                        THEN 'LG'
+    WHEN 'notice_consent_personal_info_freelance' THEN 'PR'
+    WHEN 'nda'                                   THEN 'NDA'
+    WHEN 'payment_notice'                        THEN 'PAY'
+    WHEN 'invoice'                               THEN 'INV'
+  END;
+$prefix$;
+
 INSERT INTO v3.document_templates (template_key, label, category, number_prefix, is_active, legacy_id)
 SELECT t.template_key,
        COALESCE(NULLIF(t.label, ''), t.template_key),
-       NULLIF(t.category, ''), NULLIF(t.document_prefix, ''),
+       NULLIF(t.category, ''),
+       -- V1/V2 はプレフィックスをコード側の表に持ち、この列は上書き用だった。
+       -- 列だけを写すと、値が入っていない大半のひな形が発行できなくなる
+       -- （V3 の発行はプレフィックスをDBから引く）。落ちた分をここで補う。
+       COALESCE(NULLIF(t.document_prefix, ''), v3_default_prefix(t.template_key)),
        COALESCE(t.is_active, true), t.id
   FROM public.document_templates t
 ON CONFLICT (legacy_id) WHERE legacy_id IS NOT NULL DO UPDATE SET

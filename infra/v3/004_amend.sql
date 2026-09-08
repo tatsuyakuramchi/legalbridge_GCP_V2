@@ -213,6 +213,52 @@ CREATE INDEX IF NOT EXISTS conditions_series_idx
   ON v3.conditions (series_id, effective_from);
 
 
+-- ---------------------------------------------------------------------
+-- A-005: 文書の採番プレフィックスを埋め戻す
+--
+-- V1/V2 はプレフィックスをコード側の表（DOCUMENT_PREFIXES）に持ち、
+-- document_templates.document_prefix は「上書きしたいときだけ入れる列」
+-- として使っていた。040 の移行はその列だけを写したので、実際に値が
+-- 入っていた5件を除く21件がプレフィックス無しで入った。
+--
+-- V3 の発行はプレフィックスをDBから引き、無ければ
+-- 「採番プレフィックスが設定されていません」で止まる。つまり
+-- 発注書も検収書も利用許諾料計算書も、本番では1枚も出せない状態だった。
+--
+-- V3 はこれをDBの側の事実として持つ（テンプレートを足すのにコード変更が
+-- 要る状態にしない）。値は V1/V2 が実際に使っていたものと同じにする。
+-- 本番には ARC-PO-2026-0115 や ARC-INS-2026-0031 が実在するので、
+-- 違う記号を振ると同じ書類の番号が途中で変わる。
+-- ---------------------------------------------------------------------
+
+UPDATE v3.document_templates t SET number_prefix = m.prefix
+  FROM (VALUES
+    ('purchase_order',                        'PO'),
+    ('intl_purchase_order',                   'IPO'),
+    ('inspection_certificate',                'INS'),
+    ('license_master',                        'LIC'),
+    ('individual_license_terms',              'ILT'),
+    ('individual_license_terms_v3',           'ILT'),
+    ('royalty_statement',                     'ROY'),
+    ('service_master',                        'SVC'),
+    ('pub_master_individual',                 'PUB'),
+    ('pub_master_corporate',                  'PUB'),
+    ('pub_license_terms',                     'PUBT'),
+    ('pub_additional_terms',                  'PUBA'),
+    ('sales_master_buyer',                    'SAL'),
+    ('sales_master_credit',                   'SAL'),
+    ('sales_master_standard',                 'SAL'),
+    ('maintenance_spec',                      'MNT'),
+    ('legal_response',                        'LG'),
+    ('notice_consent_personal_info_freelance','PR'),
+    ('nda',                                   'NDA'),
+    ('payment_notice',                        'PAY'),
+    ('invoice',                               'INV')
+  ) AS m(template_key, prefix)
+ WHERE t.template_key = m.template_key
+   AND COALESCE(btrim(t.number_prefix), '') = '';
+
+
 COMMIT;
 
 -- 確認
@@ -243,3 +289,9 @@ SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint
 
 \echo '--- 系列が埋まっていない条件（0 であること） ---'
 SELECT count(*) AS series_missing FROM v3.conditions WHERE series_id IS NULL;
+
+\echo '--- 発行できないひな形（採番プレフィックス無し。0件が望ましい） ---'
+SELECT template_key, label, category
+  FROM v3.document_templates
+ WHERE is_active AND COALESCE(btrim(number_prefix), '') = ''
+ ORDER BY category NULLS LAST, label;
