@@ -195,15 +195,45 @@ ON CONFLICT DO NOTHING;
 -- ---------------------------------------------------------------------
 -- 予定：condition_line_installments → condition_schedules
 -- ---------------------------------------------------------------------
+-- 移行元から消えた予定が残っていると番号がぶつかる。先に片付ける。
+-- 実績から参照されている行は消さず、記録だけ残す。
+INSERT INTO v3.data_quality_issues (rule_code, target_type, target_id, severity, detail)
+SELECT 'SCHEDULE_ORPHAN_IN_USE', 'condition_schedule', sc.id, 'medium',
+       jsonb_build_object('seq', sc.seq, 'legacy_id', sc.legacy_id)
+  FROM v3.condition_schedules sc
+ WHERE sc.legacy_id IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM public.condition_line_installments i WHERE i.id = sc.legacy_id)
+   AND EXISTS (SELECT 1 FROM v3.condition_events e WHERE e.schedule_id = sc.id)
+ON CONFLICT (rule_code, target_type, target_id) DO UPDATE SET
+  detail = EXCLUDED.detail, detected_at = now();
+
+DELETE FROM v3.condition_schedules sc
+ WHERE sc.legacy_id IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM public.condition_line_installments i WHERE i.id = sc.legacy_id)
+   AND NOT EXISTS (SELECT 1 FROM v3.condition_events e WHERE e.schedule_id = sc.id);
+
+--   installment_no は条件内で一意とは限らない。work_parts と同じ扱いで、
+--   全件そろって重複が無いときだけ元の番号を残し、それ以外は振り直す。
+WITH src AS (
+  SELECT i.*, ROW_NUMBER() OVER (PARTITION BY i.condition_line_id
+                                 ORDER BY i.installment_no NULLS LAST, i.id) AS rn
+    FROM public.condition_line_installments i
+), clean AS (
+  SELECT condition_line_id FROM src
+   GROUP BY condition_line_id HAVING count(*) = count(DISTINCT installment_no)
+)
 INSERT INTO v3.condition_schedules (condition_id, seq, trigger_kind, planned_amount, due_on, legacy_id)
-SELECT nc.id, i.installment_no,
+SELECT nc.id,
+       (CASE WHEN c.condition_line_id IS NOT NULL THEN i.installment_no ELSE i.rn END)::int,
        CASE WHEN i.trigger_kind IN ('on_execution','on_delivery','on_inspection','periodic')
             THEN i.trigger_kind ELSE 'on_execution' END,
        COALESCE(v3.to_minor(i.planned_amount_ex_tax, nc.currency), 0),
        i.due_date, i.id
-  FROM public.condition_line_installments i
+  FROM src i
   JOIN v3.conditions nc ON nc.legacy_id = i.condition_line_id
-ON CONFLICT (condition_id, seq) DO UPDATE SET
+  LEFT JOIN clean c ON c.condition_line_id = i.condition_line_id
+ON CONFLICT (legacy_id) WHERE legacy_id IS NOT NULL DO UPDATE SET
+  condition_id = EXCLUDED.condition_id, seq = EXCLUDED.seq,
   trigger_kind = EXCLUDED.trigger_kind, planned_amount = EXCLUDED.planned_amount,
   due_on = EXCLUDED.due_on, legacy_id = EXCLUDED.legacy_id;
 

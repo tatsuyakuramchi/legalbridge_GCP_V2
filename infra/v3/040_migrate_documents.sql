@@ -93,13 +93,37 @@ UPDATE v3.documents nd
 --   旧: condition_lines.document_id（条件が文書に従属）
 --   新: document_conditions（文書が条件を参照）
 -- ---------------------------------------------------------------------
+-- 移行元から消えた紐付けが残っていると line_no がぶつかる。
+-- この表を参照している表は無いので、そのまま消してよい。
+DELETE FROM v3.document_conditions dc
+ WHERE NOT EXISTS (
+   SELECT 1 FROM public.condition_lines cl
+     JOIN v3.documents nd  ON nd.legacy_id = cl.document_id
+     JOIN v3.conditions nc ON nc.legacy_id = cl.id
+    WHERE nd.id = dc.document_id AND nc.id = dc.condition_id);
+
+--   line_no は文書内で一意とは限らない。document_conditions は
+--   UNIQUE (document_id, line_no) を持つので、重複したまま入れると
+--   ON CONFLICT (document_id, condition_id) では捕まえられずに落ちる。
+--   全件そろって重複が無いときだけ元の番号を残し、それ以外は振り直す。
+WITH src AS (
+  SELECT cl.id, cl.document_id, cl.line_no,
+         ROW_NUMBER() OVER (PARTITION BY cl.document_id
+                            ORDER BY cl.line_no NULLS LAST, cl.id) AS rn
+    FROM public.condition_lines cl
+   WHERE cl.document_id IS NOT NULL
+), clean AS (
+  SELECT document_id FROM src
+   GROUP BY document_id HAVING count(*) = count(DISTINCT line_no)
+)
 INSERT INTO v3.document_conditions (document_id, condition_id, line_no)
 SELECT nd.id, nc.id,
-       COALESCE(cl.line_no, ROW_NUMBER() OVER (PARTITION BY cl.document_id ORDER BY cl.id))::int
-  FROM public.condition_lines cl
-  JOIN v3.documents nd  ON nd.legacy_id = cl.document_id
-  JOIN v3.conditions nc ON nc.legacy_id = cl.id
-ON CONFLICT (document_id, condition_id) DO NOTHING;
+       (CASE WHEN c.document_id IS NOT NULL THEN s.line_no ELSE s.rn END)::int
+  FROM src s
+  JOIN v3.documents nd  ON nd.legacy_id = s.document_id
+  JOIN v3.conditions nc ON nc.legacy_id = s.id
+  LEFT JOIN clean c ON c.document_id = s.document_id
+ON CONFLICT (document_id, condition_id) DO UPDATE SET line_no = EXCLUDED.line_no;
 
 -- 案件から文書へのリンク（030 で入れられなかった分）
 INSERT INTO v3.matter_links (matter_id, target_type, target_ref, relation)

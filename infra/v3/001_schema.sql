@@ -119,7 +119,9 @@ CREATE TABLE IF NOT EXISTS v3.work_parts (
   royalty_bearing boolean NOT NULL DEFAULT true,
   remarks         text,
   legacy_id       integer,
-  UNIQUE (work_id, part_no)
+  -- 移行で採番し直すことがあるため遅延可能にする。1文の途中で番号が
+  -- すれ違っても、COMMIT 時に最終状態が一意なら通る。
+  CONSTRAINT work_parts_work_part_uq UNIQUE (work_id, part_no) DEFERRABLE INITIALLY DEFERRED
 );
 COMMENT ON TABLE v3.work_parts IS '作品の構成要素（現 work_materials）。権利の上限はパートの取得条件の積で決まる。';
 
@@ -303,7 +305,7 @@ CREATE TABLE IF NOT EXISTS v3.condition_schedules (
   planned_amount bigint NOT NULL,
   due_on         date,
   legacy_id      integer,
-  UNIQUE (condition_id, seq)
+  CONSTRAINT condition_schedules_seq_uq UNIQUE (condition_id, seq) DEFERRABLE INITIALLY DEFERRED
 );
 COMMENT ON COLUMN v3.condition_schedules.trigger_kind IS
   '何をもって支払が発生するか。periodic は成果物を伴わない役務（顧問・コンサル・保守）。';
@@ -446,7 +448,7 @@ CREATE TABLE IF NOT EXISTS v3.document_conditions (
   condition_id bigint NOT NULL REFERENCES v3.conditions(id),
   line_no      int NOT NULL,
   PRIMARY KEY (document_id, condition_id),
-  UNIQUE (document_id, line_no)
+  CONSTRAINT document_conditions_line_uq UNIQUE (document_id, line_no) DEFERRABLE INITIALLY DEFERRED
 );
 
 CREATE TABLE IF NOT EXISTS v3.document_sequences (

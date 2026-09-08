@@ -144,21 +144,75 @@ ON CONFLICT (legacy_table, legacy_id) WHERE legacy_id IS NOT NULL DO UPDATE SET
 -- 構成パート：work_materials → work_parts
 --   part_no は material_no を使い、無ければ id 順に採番する。
 -- ---------------------------------------------------------------------
+-- 移行元から消えた行が V3 に残っていると、番号を振り直したときに
+-- その番号を占有したままぶつかる（並行稼働中に流し直すと起きる）。
+-- 先に孤児を片付ける。ただし条件から参照されている行は消さず、
+-- 人手で判断する対象として残す。
+INSERT INTO v3.data_quality_issues (rule_code, target_type, target_id, severity, detail)
+SELECT 'WORK_PART_ORPHAN_IN_USE', 'work_part', p.id, 'medium',
+       jsonb_build_object('part_no', p.part_no, 'name', p.name, 'legacy_id', p.legacy_id)
+  FROM v3.work_parts p
+ WHERE p.legacy_id IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM public.work_materials m WHERE m.id = p.legacy_id)
+   AND EXISTS (SELECT 1 FROM v3.conditions c WHERE c.work_part_id = p.id)
+ON CONFLICT (rule_code, target_type, target_id) DO UPDATE SET
+  detail = EXCLUDED.detail, detected_at = now();
+
+DELETE FROM v3.work_parts p
+ WHERE p.legacy_id IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM public.work_materials m WHERE m.id = p.legacy_id)
+   AND NOT EXISTS (SELECT 1 FROM v3.conditions c WHERE c.work_part_id = p.id);
+
+--   material_no は作品内で一意とは限らない（NULL 混在・重複がある）。
+--   COALESCE(material_no, ROW_NUMBER()) だと同じ番号を2度作り、1文の中で
+--   ON CONFLICT が同じ行に二度当たって落ちる。
+--   そこで「その作品の material_no が全件そろって重複が無い」ときだけ
+--   元の番号を残し、そうでない作品だけ 1 から振り直す。
+WITH src AS (
+  SELECT m.work_id, m.material_no, m.material_name, m.material_type,
+         m.is_royalty_bearing, m.remarks, m.id,
+         ROW_NUMBER() OVER (PARTITION BY m.work_id
+                            ORDER BY m.material_no NULLS LAST, m.id) AS rn
+    FROM public.work_materials m
+   WHERE COALESCE(NULLIF(m.material_name,''), '') <> ''
+), clean AS (
+  -- count(DISTINCT material_no) は NULL を数えないので、
+  -- NULL があっても重複があっても count(*) と一致しない。
+  SELECT work_id FROM src
+   GROUP BY work_id HAVING count(*) = count(DISTINCT material_no)
+)
 INSERT INTO v3.work_parts (work_id, part_no, name, part_type, royalty_bearing, remarks, legacy_id)
 SELECT nw.id,
-       COALESCE(m.material_no, ROW_NUMBER() OVER (PARTITION BY m.work_id ORDER BY m.id))::int,
-       m.material_name,
-       COALESCE(NULLIF(m.material_type, ''), 'unspecified'),
-       COALESCE(m.is_royalty_bearing, true),
-       NULLIF(m.remarks, ''),
-       m.id
-  FROM public.work_materials m
-  JOIN v3.works nw ON nw.legacy_table = 'works' AND nw.legacy_id = m.work_id
- WHERE COALESCE(NULLIF(m.material_name,''), '') <> ''
-ON CONFLICT (work_id, part_no) DO UPDATE SET
+       (CASE WHEN c.work_id IS NOT NULL THEN s.material_no ELSE s.rn END)::int,
+       s.material_name,
+       COALESCE(NULLIF(s.material_type, ''), 'unspecified'),
+       COALESCE(s.is_royalty_bearing, true),
+       NULLIF(s.remarks, ''),
+       s.id
+  FROM src s
+  JOIN v3.works nw ON nw.legacy_table = 'works' AND nw.legacy_id = s.work_id
+  LEFT JOIN clean c ON c.work_id = s.work_id
+ON CONFLICT (legacy_id) WHERE legacy_id IS NOT NULL DO UPDATE SET
+  work_id = EXCLUDED.work_id, part_no = EXCLUDED.part_no,
   name = EXCLUDED.name, part_type = EXCLUDED.part_type,
-  royalty_bearing = EXCLUDED.royalty_bearing, remarks = EXCLUDED.remarks,
-  legacy_id = EXCLUDED.legacy_id;
+  royalty_bearing = EXCLUDED.royalty_bearing, remarks = EXCLUDED.remarks;
+
+-- 振り直した作品は V1 側の採番が壊れているので、人手で直す対象として残す。
+WITH src AS (
+  SELECT m.work_id, m.material_no
+    FROM public.work_materials m
+   WHERE COALESCE(NULLIF(m.material_name,''), '') <> ''
+)
+INSERT INTO v3.data_quality_issues (rule_code, target_type, target_id, severity, detail)
+SELECT 'WORK_PART_NO_RENUMBERED', 'legacy_work', s.work_id, 'low',
+       jsonb_build_object('materials', count(*),
+                          'distinct_material_no', count(DISTINCT s.material_no),
+                          'null_material_no', count(*) FILTER (WHERE s.material_no IS NULL))
+  FROM src s
+ GROUP BY s.work_id
+HAVING count(*) <> count(DISTINCT s.material_no)
+ON CONFLICT (rule_code, target_type, target_id) DO UPDATE SET
+  detail = EXCLUDED.detail, detected_at = now();
 
 -- ---------------------------------------------------------------------
 -- 系譜：work_relations と works.parent_work_id を1表に統合
