@@ -131,6 +131,8 @@ INSERT INTO expected_source (table_name, column_name, used_by, required) VALUES
   ('matter_tasks','id','040',false),         ('matter_tasks','matter_id','040',false),
   ('matter_tasks','title','040',false),      ('matter_tasks','status','040',false),
   ('matter_tasks','assignee_staff_id','040',false),('matter_tasks','due_at','040',false),
+  ('payments','payment_no','020',false),   ('payments','tax_amount','020',false),
+  ('payments','withholding_tax','020',false), ('payments','fx_rate','020',false),
   ('legal_requests','id','040',false),       ('legal_requests','backlog_issue_key','040',false),
   ('legal_requests','summary','040',false),  ('legal_requests','deadline','040',false);
 

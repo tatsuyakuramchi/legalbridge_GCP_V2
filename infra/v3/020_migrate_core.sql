@@ -430,12 +430,21 @@ ON CONFLICT (legacy_id) WHERE legacy_id IS NOT NULL DO UPDATE SET
 -- 支払：payments → payments
 --   割当（payment_allocations）は現行に相当物が無いため、条件が特定できる行だけ結ぶ。
 -- ---------------------------------------------------------------------
-INSERT INTO v3.payments (direction, party_id, currency, amount, due_on, paid_on, status, legacy_id)
+INSERT INTO v3.payments (payment_no, direction, party_id, currency, amount,
+                         tax_amount, withholding_amount, fx_rate,
+                         due_on, paid_on, status, legacy_id)
 SELECT
+  -- payment_no は V3 で UNIQUE。V1 に重複があっても移行を止めないよう、
+  -- 2件目以降は番号なしで取り込む（行は落とさない）。
+  CASE WHEN ROW_NUMBER() OVER (PARTITION BY NULLIF(p.payment_no, '') ORDER BY p.id) = 1
+       THEN NULLIF(p.payment_no, '') END,
   CASE WHEN p.direction ILIKE '%receiv%' OR p.direction = 'in' THEN 'in' ELSE 'out' END,
   COALESCE(pt.id, un.id),
   COALESCE(NULLIF(p.currency, ''), 'JPY'),
   COALESCE(v3.to_minor(COALESCE(p.amount_ex_tax, p.total_amount), p.currency), 0),
+  COALESCE(v3.to_minor(p.tax_amount, p.currency), 0),
+  COALESCE(v3.to_minor(p.withholding_tax, p.currency), 0),
+  p.fx_rate,
   p.due_date, p.paid_date,
   CASE WHEN p.status IN ('planned','approved','paid','canceled') THEN p.status
        WHEN p.paid_date IS NOT NULL THEN 'paid'
@@ -447,12 +456,15 @@ CROSS JOIN v3.parties un
  WHERE un.party_code = 'UNRESOLVED'
 ON CONFLICT (legacy_id) WHERE legacy_id IS NOT NULL DO UPDATE SET
   direction = EXCLUDED.direction,
+  payment_no = EXCLUDED.payment_no,
   party_id = CASE
     WHEN EXCLUDED.party_id
          = (SELECT id FROM v3.parties WHERE party_code = 'UNRESOLVED')
     THEN payments.party_id                -- UI で割り当てた相手先を残す
     ELSE EXCLUDED.party_id END,
   currency = EXCLUDED.currency, amount = EXCLUDED.amount,
+  tax_amount = EXCLUDED.tax_amount,
+  withholding_amount = EXCLUDED.withholding_amount, fx_rate = EXCLUDED.fx_rate,
   due_on = EXCLUDED.due_on, paid_on = EXCLUDED.paid_on,
   status = EXCLUDED.status, updated_at = now();
 

@@ -194,7 +194,15 @@ UNION ALL
 SELECT 'schedule', s.id, c.condition_no, c.name, s.due_on, c.status
   FROM v3.condition_schedules s
   JOIN v3.conditions c ON c.id = s.condition_id
- WHERE s.due_on IS NOT NULL AND c.status = 'active';
+ WHERE s.due_on IS NOT NULL AND c.status = 'active'
+UNION ALL
+-- タスクの期日。案件の期日（matters.due_on）とは別に運用されていることが
+-- 多く、これを外すと期限一覧が実態より軽く見える。
+SELECT 'task', t.id, m.matter_no, t.title,
+       (t.due_at AT TIME ZONE 'Asia/Tokyo')::date, t.status
+  FROM v3.tasks t
+  JOIN v3.matters m ON m.id = t.matter_id
+ WHERE t.due_at IS NOT NULL AND t.status <> 'done';
 
 COMMENT ON VIEW v3.v_deadlines IS
   '案件・契約満了（更新通告日を考慮）・支払・予定を1本に。現行は都度CTEで組んでいた。';

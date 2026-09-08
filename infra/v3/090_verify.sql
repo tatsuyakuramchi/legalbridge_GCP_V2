@@ -22,7 +22,7 @@ UPDATE v3.data_quality_issues
    SET status = 'resolved', resolved_at = now()
  WHERE status = 'open'
    AND rule_code IN ('MIGRATION_CONDITION_NO_PARTY', 'MIGRATION_AGREEMENT_NO_PARTY',
-                     'MIGRATION_PAYMENT_NO_PARTY', 'CONDITION_NO_WORK',
+                     'MIGRATION_PAYMENT_NO_PARTY', 'PAYMENT_EMPTY_STUB', 'CONDITION_NO_WORK',
                      'PAYMENT_UNALLOCATED', 'DOCUMENT_NO_SOURCE');
 
 
@@ -48,13 +48,28 @@ SELECT 'MIGRATION_AGREEMENT_NO_PARTY', 'agreement', a.id, 'high',
 ON CONFLICT (rule_code, target_type, target_id) DO UPDATE SET
   detail = EXCLUDED.detail, detected_at = now(), status = 'open', resolved_at = NULL;
 
--- 相手先を特定できず受け皿に紐付いている支払
+-- 中身の無い支払（金額0・期日なし・割り当てなし）。
+-- 過去の移行が残した殻で、業務上の支払ではない。相手先を割り当てる
+-- 対象ではないので、下の2ルールからは除いてこちらで数える。
+-- 正しい後始末は V1 側で消すこと。
+INSERT INTO v3.data_quality_issues (rule_code, target_type, target_id, severity, detail)
+SELECT 'PAYMENT_EMPTY_STUB', 'payment', p.id, 'low',
+       jsonb_build_object('payment_no', p.payment_no, 'legacy_id', p.legacy_id,
+                          'note', '金額・期日・割り当てのいずれも無い。V1 側で削除するのが正しい')
+  FROM v3.payments p
+ WHERE COALESCE(p.amount, 0) = 0 AND p.due_on IS NULL AND p.paid_on IS NULL
+   AND NOT EXISTS (SELECT 1 FROM v3.payment_allocations a WHERE a.payment_id = p.id)
+ON CONFLICT (rule_code, target_type, target_id) DO UPDATE SET
+  detail = EXCLUDED.detail, detected_at = now(), status = 'open', resolved_at = NULL;
+
+-- 相手先を特定できず受け皿に紐付いている支払（空の殻は除く）
 INSERT INTO v3.data_quality_issues (rule_code, target_type, target_id, severity, detail)
 SELECT 'MIGRATION_PAYMENT_NO_PARTY', 'payment', p.id, 'high',
        jsonb_build_object('payment_no', p.payment_no, 'amount', p.amount,
                           'currency', p.currency, 'legacy_id', p.legacy_id)
   FROM v3.payments p
   JOIN v3.parties un ON un.id = p.party_id AND un.party_code = 'UNRESOLVED'
+ WHERE NOT (COALESCE(p.amount, 0) = 0 AND p.due_on IS NULL AND p.paid_on IS NULL)
 ON CONFLICT (rule_code, target_type, target_id) DO UPDATE SET
   detail = EXCLUDED.detail, detected_at = now(), status = 'open', resolved_at = NULL;
 
@@ -73,6 +88,8 @@ SELECT 'PAYMENT_UNALLOCATED', 'payment', p.id, 'high',
        jsonb_build_object('payment_no', p.payment_no, 'amount', p.amount)
   FROM v3.payments p
  WHERE NOT EXISTS (SELECT 1 FROM v3.payment_allocations a WHERE a.payment_id = p.id)
+   -- 空の殻は PAYMENT_EMPTY_STUB で数える。割り当てる中身が無い。
+   AND NOT (COALESCE(p.amount, 0) = 0 AND p.due_on IS NULL AND p.paid_on IS NULL)
 ON CONFLICT (rule_code, target_type, target_id) DO UPDATE SET
   detail = EXCLUDED.detail, detected_at = now(), status = 'open', resolved_at = NULL;
 

@@ -76,8 +76,9 @@ CREATE TABLE public.condition_events (
   event_type text, occurred_at timestamptz, amount_ex_tax numeric, period text,
   document_id integer, voided_at timestamptz);
 CREATE TABLE public.payments (
-  id serial PRIMARY KEY, counterparty_vendor_id integer, direction text, currency text,
-  amount_ex_tax numeric, total_amount numeric, tax_rate numeric,
+  id serial PRIMARY KEY, payment_no text, counterparty_vendor_id integer, direction text,
+  currency text, amount_ex_tax numeric, total_amount numeric, tax_rate numeric,
+  tax_amount numeric, withholding_tax numeric, fx_rate numeric,
   due_date date, paid_date date, status text);
 
 -- ---- データ ----
