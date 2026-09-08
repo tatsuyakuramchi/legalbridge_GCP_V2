@@ -25,6 +25,39 @@ $$;
 COMMENT ON FUNCTION v3.to_minor(numeric, text) IS '移行専用。切替後は削除してよい。';
 
 -- ---------------------------------------------------------------------
+-- 価格方式の決定
+--   V1 の calc_type / calc_method は「そう宣言されている」だけで、
+--   必要な値が入っているとは限らない（unit_rate なのに unit_amount が
+--   空、など）。V3 は CHECK でその整合を要求するので、宣言をそのまま
+--   信じると1行のために移行全体が止まる。
+--   宣言は必要な値が実在するときだけ採用し、食い違う場合は実際にある
+--   値から決め直す。決め直した行は CONDITION_PRICING_RECLASSIFIED として
+--   記録するので、V1 側の入力漏れとして追える。
+-- ---------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION v3.pricing_model_of(
+  calc_type text, calc_method text, rate_pct numeric,
+  unit_amount numeric, amount_ex_tax numeric)
+RETURNS text LANGUAGE sql IMMUTABLE AS $$
+  SELECT CASE
+    WHEN upper(COALESCE(calc_type, calc_method, '')) = 'SUBSCRIPTION'    THEN 'subscription'
+    WHEN upper(COALESCE(calc_type, calc_method, '')) = 'BASE_RATE'
+         AND rate_pct IS NOT NULL                                        THEN 'revenue_rate'
+    WHEN upper(COALESCE(calc_type, calc_method, '')) IN
+         ('BASE_QTY_RATE', 'SUPPLY_QTY', 'PER_UNIT')
+         AND unit_amount IS NOT NULL                                     THEN 'unit_rate'
+    WHEN upper(COALESCE(calc_type, calc_method, '')) = 'FIXED'
+         AND amount_ex_tax IS NOT NULL                                   THEN 'fixed'
+    -- 宣言に必要な値が無い。実データから決め直す。
+    WHEN rate_pct      IS NOT NULL AND rate_pct > 0                      THEN 'revenue_rate'
+    WHEN unit_amount   IS NOT NULL                                       THEN 'unit_rate'
+    WHEN amount_ex_tax IS NOT NULL AND amount_ex_tax > 0                 THEN 'fixed'
+    ELSE 'none'
+  END
+$$;
+COMMENT ON FUNCTION v3.pricing_model_of(text, text, numeric, numeric, numeric)
+  IS '移行専用。切替後は削除してよい。';
+
+-- ---------------------------------------------------------------------
 -- 合意：contracts → agreements
 --   direction は契約に列が無いため、ぶら下がる条件の向きから決める。
 -- ---------------------------------------------------------------------
@@ -134,16 +167,8 @@ SELECT
   v3.term_start_ok(cl.term_start, cl.term_end),
   v3.term_end_ok(cl.term_start, cl.term_end),
   COALESCE(NULLIF(cl.currency, ''), 'JPY'),
-  CASE
-    WHEN upper(COALESCE(cl.calc_type, cl.calc_method, '')) = 'SUBSCRIPTION'        THEN 'subscription'
-    WHEN upper(COALESCE(cl.calc_type, cl.calc_method, '')) IN ('BASE_RATE')        THEN 'revenue_rate'
-    WHEN upper(COALESCE(cl.calc_type, cl.calc_method, '')) IN
-         ('BASE_QTY_RATE','SUPPLY_QTY','PER_UNIT')                                 THEN 'unit_rate'
-    WHEN upper(COALESCE(cl.calc_type, cl.calc_method, '')) = 'FIXED'               THEN 'fixed'
-    WHEN cl.rate_pct IS NOT NULL AND cl.rate_pct > 0                               THEN 'revenue_rate'
-    WHEN cl.amount_ex_tax IS NOT NULL AND cl.amount_ex_tax > 0                     THEN 'fixed'
-    ELSE 'none'
-  END,
+  v3.pricing_model_of(cl.calc_type, cl.calc_method, cl.rate_pct,
+                      cl.unit_amount, cl.amount_ex_tax),
   CASE WHEN cl.rate_pct IS NOT NULL THEN round(cl.rate_pct * 10000)::int END,
   v3.to_minor(cl.unit_amount,   cl.currency),
   v3.to_minor(cl.amount_ex_tax, cl.currency),
@@ -270,6 +295,46 @@ SELECT 'CONDITION_TERM_INVERTED', 'legacy_condition_line', cl.id, 'high',
    AND cl.term_end < cl.term_start
 ON CONFLICT (rule_code, target_type, target_id) DO UPDATE SET
   detail = EXCLUDED.detail, detected_at = now(), status = 'open';
+
+-- 宣言と実データが食い違って価格方式を決め直した行を記録する。
+INSERT INTO v3.data_quality_issues (rule_code, target_type, target_id, severity, detail)
+SELECT 'CONDITION_PRICING_RECLASSIFIED', 'legacy_condition_line', cl.id, 'medium',
+       jsonb_build_object('condition_name', cl.condition_name,
+                          'declared', upper(COALESCE(cl.calc_type, cl.calc_method, '')),
+                          'applied', v3.pricing_model_of(cl.calc_type, cl.calc_method,
+                                       cl.rate_pct, cl.unit_amount, cl.amount_ex_tax),
+                          'rate_pct', cl.rate_pct,
+                          'unit_amount', cl.unit_amount,
+                          'amount_ex_tax', cl.amount_ex_tax)
+  FROM public.condition_lines cl
+ WHERE upper(COALESCE(cl.calc_type, cl.calc_method, '')) <> ''
+   AND v3.pricing_model_of(cl.calc_type, cl.calc_method, cl.rate_pct,
+                           cl.unit_amount, cl.amount_ex_tax)
+       IS DISTINCT FROM CASE upper(COALESCE(cl.calc_type, cl.calc_method, ''))
+            WHEN 'SUBSCRIPTION'   THEN 'subscription'
+            WHEN 'BASE_RATE'      THEN 'revenue_rate'
+            WHEN 'BASE_QTY_RATE'  THEN 'unit_rate'
+            WHEN 'SUPPLY_QTY'     THEN 'unit_rate'
+            WHEN 'PER_UNIT'       THEN 'unit_rate'
+            WHEN 'FIXED'          THEN 'fixed' END
+ON CONFLICT (rule_code, target_type, target_id) DO UPDATE SET
+  detail = EXCLUDED.detail, detected_at = now(), status = 'open', resolved_at = NULL;
+
+UPDATE v3.data_quality_issues q
+   SET status = 'resolved', resolved_at = now()
+ WHERE q.rule_code = 'CONDITION_PRICING_RECLASSIFIED' AND q.status = 'open'
+   AND NOT EXISTS (
+     SELECT 1 FROM public.condition_lines cl
+      WHERE cl.id = q.target_id
+        AND v3.pricing_model_of(cl.calc_type, cl.calc_method, cl.rate_pct,
+                                cl.unit_amount, cl.amount_ex_tax)
+            IS DISTINCT FROM CASE upper(COALESCE(cl.calc_type, cl.calc_method, ''))
+                 WHEN 'SUBSCRIPTION'   THEN 'subscription'
+                 WHEN 'BASE_RATE'      THEN 'revenue_rate'
+                 WHEN 'BASE_QTY_RATE'  THEN 'unit_rate'
+                 WHEN 'SUPPLY_QTY'     THEN 'unit_rate'
+                 WHEN 'PER_UNIT'       THEN 'unit_rate'
+                 WHEN 'FIXED'          THEN 'fixed' END);
 
 -- V1 側が直っていれば閉じる（流し直すたびに現状へ追従させる）。
 UPDATE v3.data_quality_issues q
