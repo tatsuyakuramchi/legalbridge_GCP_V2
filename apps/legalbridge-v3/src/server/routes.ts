@@ -657,7 +657,10 @@ export function createRoutes(database: Transactable) {
     label: z.string().trim().max(120).nullable().optional(),
     triggerKind: z.enum(["on_execution", "on_delivery", "on_inspection", "periodic"]),
     plannedAmount: z.coerce.number().int(),
-    dueOn: z.string().date().nullable().optional()
+    // 発生予定日。実績にするときの発生日の既定値になる。
+    dueOn: z.string().date().nullable().optional(),
+    // 支払期日。支払条件から導けなければ空のまま。
+    payOn: z.string().date().nullable().optional()
   });
   router.put("/conditions/:id/schedules",
     requireRole("admin", "legal"), requireWritable,
@@ -665,7 +668,9 @@ export function createRoutes(database: Transactable) {
       const { lines } = z.object({ lines: z.array(scheduleLine).max(200) }).parse(req.body ?? {});
       res.json(await conditionSchedules.replace(
         Number(req.params.id),
-        lines.map((l) => ({ ...l, label: l.label ?? null, dueOn: l.dueOn ?? null })),
+        lines.map((l) => ({
+          ...l, label: l.label ?? null, dueOn: l.dueOn ?? null, payOn: l.payOn ?? null
+        })),
         actor(res)));
     }));
 
@@ -676,16 +681,21 @@ export function createRoutes(database: Transactable) {
     everyMonths: z.coerce.number().int().min(1).max(12).optional(),
     amount: z.coerce.number().int().positive(),
     triggerKind: z.enum(["on_execution", "on_delivery", "on_inspection", "periodic"]).optional(),
-    labelSuffix: z.string().trim().max(20).optional()
+    labelSuffix: z.string().trim().max(20).optional(),
+    // 画面で上書きしたいときだけ。既定は条件の支払条件。
+    paymentTerms: z.string().trim().max(300).nullable().optional()
   });
   router.post("/conditions/:id/schedules/generate",
     requireRole("admin", "legal"),
     asyncRoute(async (req, res) => {
       const input = generateSchema.parse(req.body ?? {});
+      // 支払条件は条件が持っている。画面から入れ直させない。
+      const condition = await conditions.find(Number(req.params.id));
       res.json({ lines: generateLines({
         startOn: input.startOn, count: input.count,
         everyMonths: input.everyMonths ?? 1, amount: input.amount,
-        triggerKind: input.triggerKind ?? "periodic", labelSuffix: input.labelSuffix
+        triggerKind: input.triggerKind ?? "periodic", labelSuffix: input.labelSuffix,
+        paymentTerms: input.paymentTerms ?? condition?.paymentTerms ?? null
       }) });
     }));
 

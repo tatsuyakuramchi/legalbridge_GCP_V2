@@ -14,7 +14,7 @@ import { api, ApiError, money } from "./api.js";
 
 interface Row {
   id: number; seq: number; label: string | null; triggerKind: string;
-  plannedAmount: number; dueOn: string | null;
+  plannedAmount: number; dueOn: string | null; payOn: string | null;
   eventId: number | null; eventOn: string | null; eventAmount: number | null;
   paidAmount: number; status: "planned" | "recorded" | "paid";
 }
@@ -27,7 +27,10 @@ interface View {
   /** 予定の起点から実績の種別を決める既定値。画面では変えられる。 */
   eventTypeByTrigger: Record<string, string>;
 }
-type Draft = { seq: number; label: string; triggerKind: string; plannedAmount: string; dueOn: string };
+type Draft = {
+  seq: number; label: string; triggerKind: string; plannedAmount: string;
+  dueOn: string; payOn: string;
+};
 
 const STATUS: Record<Row["status"], { label: string; tone: string }> = {
   planned: { label: "予定", tone: "" },
@@ -87,7 +90,7 @@ export function ConditionSchedules(
   function startEdit() {
     setDraft((view!.lines).map((l) => ({
       seq: l.seq, label: l.label ?? "", triggerKind: l.triggerKind,
-      plannedAmount: String(l.plannedAmount), dueOn: l.dueOn ?? ""
+      plannedAmount: String(l.plannedAmount), dueOn: l.dueOn ?? "", payOn: l.payOn ?? ""
     })));
     setError(null);
   }
@@ -102,7 +105,7 @@ export function ConditionSchedules(
         });
       setDraft(r.lines.map((l) => ({
         seq: l.seq, label: l.label ?? "", triggerKind: l.triggerKind,
-        plannedAmount: String(l.plannedAmount), dueOn: l.dueOn ?? ""
+        plannedAmount: String(l.plannedAmount), dueOn: l.dueOn ?? "", payOn: l.payOn ?? ""
       })));
     } catch (e) { setError((e as ApiError).message); }
     finally { setBusy(false); }
@@ -116,7 +119,7 @@ export function ConditionSchedules(
         lines: draft.map((d) => ({
           seq: d.seq, label: d.label.trim() || null, triggerKind: d.triggerKind,
           plannedAmount: Math.round(Number(d.plannedAmount) || 0),
-          dueOn: d.dueOn || null
+          dueOn: d.dueOn || null, payOn: d.payOn || null
         }))
       });
       setDraft(null); load(); onChanged();
@@ -227,8 +230,9 @@ export function ConditionSchedules(
             <th style={{ width: 36 }}>回</th>
             <th style={{ minWidth: draft ? 150 : 120 }}>名前</th>
             {draft && <th style={{ width: 92 }}>起点</th>}
-            <th style={{ width: draft ? 150 : 100 }}>期日</th>
-            <th className="num" style={{ width: draft ? 116 : 104 }}>予定額</th>
+            <th style={{ width: draft ? 140 : 96 }}>発生予定</th>
+            <th style={{ width: draft ? 140 : 96 }}>支払期日</th>
+            <th className="num" style={{ width: draft ? 116 : 100 }}>予定額</th>
             <th className="num" style={{ width: draft ? 118 : 104 }}>実績</th>
             <th style={{ width: draft ? 62 : 98 }}>状態</th>
           </tr></thead>
@@ -247,8 +251,11 @@ export function ConditionSchedules(
                   </select>
                 </td>
                 <td><input className="inline-input" type="date" style={{ width: "100%", minWidth: 0 }} value={d.dueOn}
-                  aria-label={`${d.seq} 行目の期日`}
+                  aria-label={`${d.seq} 行目の発生予定日`}
                   onChange={(e) => setDraft(draft.map((x, j) => j === i ? { ...x, dueOn: e.target.value } : x))} /></td>
+                <td><input className="inline-input" type="date" style={{ width: "100%", minWidth: 0 }} value={d.payOn}
+                  aria-label={`${d.seq} 行目の支払期日`}
+                  onChange={(e) => setDraft(draft.map((x, j) => j === i ? { ...x, payOn: e.target.value } : x))} /></td>
                 <td className="num"><input className="inline-input" style={{ width: "100%", minWidth: 0, textAlign: "right" }}
                   value={d.plannedAmount} aria-label={`${d.seq} 行目の予定額`}
                   onChange={(e) => setDraft(draft.map((x, j) => j === i ? { ...x, plannedAmount: e.target.value.replace(/[^0-9]/g, "") } : x))} /></td>
@@ -270,6 +277,9 @@ export function ConditionSchedules(
                   </div>
                 </td>
                 <td className="code">{l.dueOn ?? "—"}</td>
+                <td className="code">
+                  {l.payOn ?? <span className="faint">未設定</span>}
+                </td>
                 <td className="num">{money(l.plannedAmount, cur)}</td>
                 <td className="num">
                   {l.eventAmount === null ? <span className="faint">—</span> : (
@@ -300,14 +310,14 @@ export function ConditionSchedules(
               </tr>
             ))}
             {!view.lines.length && !draft && (
-              <tr><td colSpan={6} className="faint">
+              <tr><td colSpan={7} className="faint">
                 予定明細がありません。毎月払いの契約なら、ここに回数分の行を作ります。
               </td></tr>
             )}
           </tbody>
           {draft && (
             <tfoot><tr>
-              <td colSpan={4} className="faint">{draft.length} 行</td>
+              <td colSpan={5} className="faint">{draft.length} 行</td>
               <td className="num"><b>{money(draftTotal, cur)}</b></td>
               <td colSpan={3}></td>
             </tr></tfoot>
@@ -324,7 +334,7 @@ export function ConditionSchedules(
           <button className="btn" disabled={busy}
             onClick={() => setDraft([...draft, {
               seq: draft.length + 1, label: "", triggerKind: "periodic",
-              plannedAmount: "", dueOn: ""
+              plannedAmount: "", dueOn: "", payOn: ""
             }])}>行を足す</button>
           <span className="faint">
             いまの明細をすべて置き換えます。実績が付いている行は外せません

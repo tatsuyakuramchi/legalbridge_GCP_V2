@@ -231,10 +231,12 @@ SELECT 'payment', p.id, p.payment_no,
   LEFT JOIN v3.parties pt ON pt.id = p.party_id
  WHERE p.due_on IS NOT NULL AND p.status IN ('planned', 'approved')
 UNION ALL
-SELECT 'schedule', s.id, c.condition_no, c.name, s.due_on, c.status
+-- 予定明細は支払期日を出す。due_on は「その回が発生する日」であって、
+-- 期限一覧に並ぶ他のもの（支払・満了・タスク）と意味が揃わない。
+SELECT 'schedule', s.id, c.condition_no, c.name, COALESCE(s.pay_on, s.due_on), c.status
   FROM v3.condition_schedules s
   JOIN v3.conditions c ON c.id = s.condition_id
- WHERE s.due_on IS NOT NULL AND c.status = 'active'
+ WHERE COALESCE(s.pay_on, s.due_on) IS NOT NULL AND c.status = 'active'
 UNION ALL
 -- タスクの期日。案件の期日（matters.due_on）とは別に運用されていることが
 -- 多く、これを外すと期限一覧が実態より軽く見える。

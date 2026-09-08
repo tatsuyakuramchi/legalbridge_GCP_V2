@@ -259,6 +259,58 @@ UPDATE v3.document_templates t SET number_prefix = m.prefix
    AND COALESCE(btrim(t.number_prefix), '') = '';
 
 
+-- ---------------------------------------------------------------------
+-- A-006: 予定明細に支払期日を足す
+--
+-- due_on は「その回が発生する予定日」として作ってあり（実績にするときの
+-- 発生日の既定値になる）、支払う日ではなかった。ところが列名も画面の見出しも
+-- 「期日」で、期限一覧にも「期日」として並ぶ。並ぶ他のもの（支払・契約満了・
+-- タスク）は全部「その日までにやること」なので、支払期日と読めてしまう。
+--
+-- 意味の違う2つを1列に載せていたのが原因なので、列を分ける。
+-- 支払期日は payment_terms（「検収月の翌月末払い」など）から導く。
+-- ---------------------------------------------------------------------
+
+ALTER TABLE v3.condition_schedules ADD COLUMN IF NOT EXISTS pay_on date;
+
+COMMENT ON COLUMN v3.condition_schedules.due_on IS
+  'その回が発生する予定日。実績にするときの発生日の既定値になる。支払期日は pay_on。';
+COMMENT ON COLUMN v3.condition_schedules.pay_on IS
+  '支払期日。期限一覧にはこちらを出す（無ければ due_on）。';
+
+-- 期限一覧は支払期日のほうを出す。
+CREATE OR REPLACE VIEW v3.v_deadlines AS
+SELECT 'matter'::text AS source, m.id AS ref_id, m.matter_no AS ref_no,
+       m.title, m.due_on AS due_on, m.status
+  FROM v3.matters m
+ WHERE m.due_on IS NOT NULL AND m.status NOT IN ('done', 'canceled')
+UNION ALL
+SELECT 'agreement', a.id, a.agreement_no, a.title,
+       CASE WHEN a.auto_renewal AND a.renewal_notice_months IS NOT NULL
+            THEN a.expires_on - (a.renewal_notice_months || ' months')::interval
+            ELSE a.expires_on END::date,
+       a.status
+  FROM v3.agreements a
+ WHERE a.expires_on IS NOT NULL AND a.status = 'executed'
+UNION ALL
+SELECT 'payment', p.id, p.payment_no,
+       COALESCE(pt.name, '') || ' への支払', p.due_on, p.status
+  FROM v3.payments p
+  LEFT JOIN v3.parties pt ON pt.id = p.party_id
+ WHERE p.due_on IS NOT NULL AND p.status IN ('planned', 'approved')
+UNION ALL
+SELECT 'schedule', s.id, c.condition_no, c.name, COALESCE(s.pay_on, s.due_on), c.status
+  FROM v3.condition_schedules s
+  JOIN v3.conditions c ON c.id = s.condition_id
+ WHERE COALESCE(s.pay_on, s.due_on) IS NOT NULL AND c.status = 'active'
+UNION ALL
+SELECT 'task', t.id, m.matter_no, t.title,
+       (t.due_at AT TIME ZONE 'Asia/Tokyo')::date, t.status
+  FROM v3.tasks t
+  JOIN v3.matters m ON m.id = t.matter_id
+ WHERE t.due_at IS NOT NULL AND t.status <> 'done';
+
+
 COMMIT;
 
 -- 確認

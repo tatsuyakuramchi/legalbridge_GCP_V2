@@ -2,6 +2,7 @@ import { inTransaction, type Transactable } from "../core/db.js";
 import { dateStr, int, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
+import { parsePaymentTerms, payOnFor } from "./payment-terms.js";
 
 /**
  * 条件の予定明細。
@@ -44,7 +45,10 @@ export interface ScheduleLine {
   label: string | null;
   triggerKind: TriggerKind;
   plannedAmount: number;
+  /** その回が発生する予定日（対象月の締め・検収予定日）。支払う日ではない。 */
   dueOn: string | null;
+  /** 支払期日。支払条件から導く。読めない書き方なら空のまま。 */
+  payOn: string | null;
 }
 
 export interface ScheduleRow extends ScheduleLine {
@@ -69,6 +73,8 @@ export interface ScheduleView {
 export function generateLines(input: {
   startOn: string; count: number; everyMonths: number;
   amount: number; triggerKind: TriggerKind; labelSuffix?: string;
+  /** 支払条件。「検収月の翌月末払い」など。読めれば各回の支払期日を埋める。 */
+  paymentTerms?: string | null;
 }): ScheduleLine[] {
   const start = new Date(`${input.startOn}T00:00:00Z`);
   if (Number.isNaN(start.getTime())) {
@@ -79,6 +85,9 @@ export function generateLines(input: {
   }
   const every = Math.max(1, Math.round(input.everyMonths));
   const suffix = input.labelSuffix ?? "分";
+  // 読めない書き方なら null のまま。推測で埋めると、間違った支払期日が
+  // 黙って入って気づけない。
+  const terms = parsePaymentTerms(input.paymentTerms);
 
   // 開始日がその月の末日なら、以降も末日で揃える。「翌月末払い」の契約で
   // 4/30 開始が 5/30・6/30 になると、毎月ずれた期日が並ぶ。
@@ -103,7 +112,8 @@ export function generateLines(input: {
       label: `${d.getUTCFullYear()}年${d.getUTCMonth() + 1}月${suffix}`,
       triggerKind: input.triggerKind,
       plannedAmount: Math.round(input.amount),
-      dueOn: iso
+      dueOn: iso,
+      payOn: payOnFor(iso, terms)
     };
   });
 }
@@ -119,7 +129,7 @@ export class ConditionScheduleService {
       if (!condition) throw new DomainError("NOT_FOUND", `条件 ${conditionId} が見つかりません`);
 
       const r = await this.database.query(
-        `SELECT s.id, s.seq, s.label, s.trigger_kind, s.planned_amount, s.due_on,
+        `SELECT s.id, s.seq, s.label, s.trigger_kind, s.planned_amount, s.due_on, s.pay_on,
                 e.id AS event_id, e.occurred_on AS event_on, e.amount AS event_amount,
                 COALESCE((
                   SELECT sum(al.amount) FROM payment_allocations al
@@ -145,6 +155,7 @@ export class ConditionScheduleService {
           triggerKind: String(row.trigger_kind) as TriggerKind,
           plannedAmount: Number(row.planned_amount ?? 0),
           dueOn: dateStr(row.due_on),
+          payOn: dateStr(row.pay_on),
           eventId,
           eventOn: dateStr(row.event_on),
           eventAmount: int(row.event_amount),
@@ -216,17 +227,18 @@ export class ConditionScheduleService {
           // （PostgreSQL 55000）。更新してみて、無ければ挿す。
           const updated = await client.query(
             `UPDATE condition_schedules
-                SET trigger_kind = $3, planned_amount = $4, due_on = $5::date, label = $6
+                SET trigger_kind = $3, planned_amount = $4, due_on = $5::date,
+                    label = $6, pay_on = $7::date
               WHERE condition_id = $1 AND seq = $2`,
             [conditionId, line.seq, line.triggerKind, Math.round(line.plannedAmount),
-             line.dueOn, str(line.label)]);
+             line.dueOn, str(line.label), line.payOn]);
           if ((updated.rowCount ?? 0) === 0) {
             await client.query(
               `INSERT INTO condition_schedules
-                 (condition_id, seq, trigger_kind, planned_amount, due_on, label)
-               VALUES ($1, $2, $3, $4, $5::date, $6)`,
+                 (condition_id, seq, trigger_kind, planned_amount, due_on, label, pay_on)
+               VALUES ($1, $2, $3, $4, $5::date, $6, $7::date)`,
               [conditionId, line.seq, line.triggerKind, Math.round(line.plannedAmount),
-               line.dueOn, str(line.label)]);
+               line.dueOn, str(line.label), line.payOn]);
           }
         }
 

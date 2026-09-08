@@ -329,7 +329,11 @@ CREATE TABLE IF NOT EXISTS v3.condition_schedules (
   trigger_kind   text NOT NULL CHECK (trigger_kind IN
                  ('on_execution', 'on_delivery', 'on_inspection', 'periodic')),
   planned_amount bigint NOT NULL,
+  -- その回が発生する予定日（対象月の締め・検収予定日）。支払う日ではない。
   due_on         date,
+  -- 支払期日。payment_terms（「検収月の翌月末払い」など）から導いて入れる。
+  -- 読めない書き方のときは空のままにして、人に入れてもらう。
+  pay_on         date,
   -- 明細行の名前。「2026年4月分」「第1回 着手金」など。
   label          text,
   legacy_id      integer,
@@ -337,6 +341,10 @@ CREATE TABLE IF NOT EXISTS v3.condition_schedules (
 );
 COMMENT ON COLUMN v3.condition_schedules.trigger_kind IS
   '何をもって支払が発生するか。periodic は成果物を伴わない役務（顧問・コンサル・保守）。';
+COMMENT ON COLUMN v3.condition_schedules.due_on IS
+  'その回が発生する予定日。実績にするときの発生日の既定値になる。支払期日は pay_on。';
+COMMENT ON COLUMN v3.condition_schedules.pay_on IS
+  '支払期日。期限一覧にはこちらを出す（無ければ due_on）。';
 
 -- 現 condition_events / manufacturing_events / sales_events /
 --    delivery_events / condition_receipts を統合した1表。

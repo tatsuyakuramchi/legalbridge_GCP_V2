@@ -55,7 +55,7 @@ test("回数の上限を超える指定は受け付けない", () => {
 
 const line = (seq: number, over: Record<string, unknown> = {}) => ({
   seq, label: `${seq}回目`, triggerKind: "periodic" as const,
-  plannedAmount: 280000, dueOn: "2026-04-30", ...over
+  plannedAmount: 280000, dueOn: "2026-04-30", payOn: "2026-05-31", ...over
 });
 
 const db = (over: Record<string, Array<Record<string, unknown>>> = {}) =>
@@ -190,4 +190,43 @@ test("予定は書き換えない（予定と実績の差があとから読め�
   await new ConditionScheduleService(database).record(1, 9, { amount: 300000 }, "a");
   assert.equal(database.find("UPDATE condition_schedules"), undefined);
   assert.equal(database.find("INSERT INTO condition_events")!.params[5], 300000);
+});
+
+// ---- 支払期日 ----
+
+test("支払条件が読めれば、各回の支払期日を埋める", () => {
+  const lines = gen({ count: 3, paymentTerms: "検収月の翌月末払い" });
+  assert.deepEqual(lines.map((l) => l.dueOn), ["2026-04-30", "2026-05-31", "2026-06-30"]);
+  assert.deepEqual(lines.map((l) => l.payOn), ["2026-05-31", "2026-06-30", "2026-07-31"]);
+});
+
+test("支払条件が無ければ支払期日は空のまま", () => {
+  // 発生日と同じ日を入れてしまうと、支払期日として間違ったものが黙って入る。
+  assert.deepEqual(gen({ count: 2 }).map((l) => l.payOn), [null, null]);
+  assert.deepEqual(gen({ count: 2, paymentTerms: "別途協議" }).map((l) => l.payOn), [null, null]);
+});
+
+test("発生日と支払期日は別の列に入れる", async () => {
+  const database = db();
+  await new ConditionScheduleService(database)
+    .replace(1, [line(1, { dueOn: "2026-04-30", payOn: "2026-05-31" })], "a");
+  const insert = database.find("INSERT INTO condition_schedules")!;
+  assert.match(insert.text, /due_on, label, pay_on/);
+  assert.equal(insert.params[4], "2026-04-30", "発生日");
+  assert.equal(insert.params[6], "2026-05-31", "支払期日");
+});
+
+test("実績にするときの発生日は due_on を使う（支払期日ではない）", async () => {
+  const database = recDb();
+  await new ConditionScheduleService(database).record(1, 9, {}, "a");
+  // 予定明細の due_on は 2026-07-31。支払期日ではなく、こちらが発生日になる。
+  assert.equal(database.find("INSERT INTO condition_events")!.params[3], "2026-07-31");
+});
+
+test("一覧は支払期日も返す（列を足しても SELECT に入れ忘れると画面に出ない）", async () => {
+  const database = db({ "SELECT id, currency FROM conditions": [{ id: 1, currency: "JPY" }] });
+  await new ConditionScheduleService(database).list(1);
+  const q = database.find("FROM condition_schedules s")!;
+  assert.match(q.text, /s\.due_on, s\.pay_on/,
+    "発生予定日と支払期日の両方を読む");
 });
