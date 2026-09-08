@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "./api.js";
 import { CreateForm, flag, int, text } from "./CreateForm.js";
+import { PartyMerge } from "./PartyMerge.js";
 
 interface Party {
   id: number; partyCode: string | null; name: string; kind: "corporate" | "individual";
@@ -17,7 +18,7 @@ interface Staff { id: number; staffCode: string | null; name: string; email: str
 const ROLE_LABEL: Record<string, string> = { primary: "主担当", signer: "署名者", billing: "請求先" };
 
 export function PartiesWorkspace() {
-  const [tab, setTab] = useState<"parties" | "staff">("parties");
+  const [tab, setTab] = useState<"parties" | "staff" | "merge">("parties");
   const [parties, setParties] = useState<Party[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
   const [selected, setSelected] = useState<number | undefined>();
@@ -55,6 +56,7 @@ export function PartiesWorkspace() {
       <div className="tabs">
         <button aria-selected={tab === "parties"} onClick={() => setTab("parties")}>取引先 {parties.length}</button>
         <button aria-selected={tab === "staff"} onClick={() => setTab("staff")}>担当者 {staff.length}</button>
+        <button aria-selected={tab === "merge"} onClick={() => setTab("merge")}>名寄せ</button>
         {tab === "parties" && !creating && (
           <button className="btn primary btn-sm" onClick={() => setCreating(true)}>取引先を登録</button>
         )}
@@ -90,7 +92,9 @@ export function PartiesWorkspace() {
         />
       )}
 
-      {tab === "staff" ? (
+      {tab === "merge" ? (
+        <PartyMerge onDone={() => reload()} />
+      ) : tab === "staff" ? (
         <div className="panel">
           <div className="panel-hd"><h2>担当者</h2></div>
           <div className="tablewrap">

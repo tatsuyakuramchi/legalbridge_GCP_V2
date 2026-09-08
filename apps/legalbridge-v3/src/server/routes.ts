@@ -8,6 +8,7 @@ import { ConditionWriteService } from "./conditions/write-service.js";
 import { MatterWriteService } from "./matters/write-service.js";
 import { WorkWriteService } from "./works/write-service.js";
 import { PartyWriteService } from "./parties/write-service.js";
+import { PartyMergeService } from "./parties/merge-service.js";
 import { MatterRepository } from "./matters/repository.js";
 import { WorkRepository } from "./works/repository.js";
 import { checkAgainstEnvelope } from "./works/envelope.js";
@@ -69,6 +70,7 @@ export function createRoutes(database: Transactable) {
   const matterWrites = new MatterWriteService(database);
   const workWrites = new WorkWriteService(database);
   const partyWrites = new PartyWriteService(database);
+  const partyMerge = new PartyMergeService(database);
   const search = new SearchRepository(database);
   const exports = new ExportRepository(database);
   const paymentReport = new PaymentReportRepository(database);
@@ -175,6 +177,28 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       const { reason } = reasonSchema.parse(req.body ?? {});
       res.status(201).json(await issues.reissue(Number(req.params.id), reason, actor(res)));
+    }));
+
+  // 名寄せ。参照は付け替えず、統合先まで辿って解決する。
+  router.get("/parties/merge/candidates", asyncRoute(async (_req, res) => {
+    res.json({ candidates: await partyMerge.candidates() });
+  }));
+  const mergeSchema = z.object({
+    fromId: z.coerce.number().int().positive(),
+    intoId: z.coerce.number().int().positive()
+  });
+  router.get("/parties/merge/preview", asyncRoute(async (req, res) => {
+    const { fromId, intoId } = mergeSchema.parse(req.query ?? {});
+    res.json(await partyMerge.preview(fromId, intoId));
+  }));
+  router.post("/parties/merge", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { fromId, intoId } = mergeSchema.parse(req.body ?? {});
+      res.json(await partyMerge.merge(fromId, intoId, actor(res)));
+    }));
+  router.post("/parties/:id/unmerge", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await partyMerge.unmerge(Number(req.params.id), actor(res)));
     }));
 
   // CSV の一括取込。必ず先に試算（dryRun）を通す。

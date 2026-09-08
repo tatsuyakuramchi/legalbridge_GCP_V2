@@ -15,12 +15,48 @@ SET LOCAL search_path = v3, public;
 
 -- ビューは派生物なので毎回作り直す。CREATE OR REPLACE は列の増減ができないため、
 -- 定義を変えたときに再実行で落ちるのを避ける。
+DROP VIEW IF EXISTS v3.v_party_resolved;
 DROP VIEW IF EXISTS v3.v_condition_balance;
 DROP VIEW IF EXISTS v3.v_work_rights_envelope;
 DROP VIEW IF EXISTS v3.v_work_scope_envelope;
 DROP VIEW IF EXISTS v3.v_document_display;
 DROP VIEW IF EXISTS v3.v_deadlines;
 DROP VIEW IF EXISTS v3.v_rights_sources;
+
+-- ---------------------------------------------------------------------
+-- 取引先の解決
+--   統合しても参照は付け替えない（条件も支払も統合前の相手先を指したまま）。
+--   代わりにここで統合先まで辿る。参照を書き換える方式は、統合を取り消せ
+--   なくなるうえ、書き換え漏れが起きた箇所だけ古い名前が残る。
+--   統合の連鎖（A→B→C）にも耐えるよう再帰で辿り、循環しても止まる。
+-- ---------------------------------------------------------------------
+CREATE OR REPLACE VIEW v3.v_party_resolved AS
+WITH RECURSIVE chain(id, resolved_id, depth) AS (
+  SELECT p.id, COALESCE(p.merged_into_id, p.id), 0 FROM v3.parties p
+  UNION ALL
+  SELECT c.id, COALESCE(p.merged_into_id, p.id), c.depth + 1
+    FROM chain c
+    JOIN v3.parties p ON p.id = c.resolved_id
+   WHERE p.merged_into_id IS NOT NULL AND c.depth < 10
+)
+SELECT
+  src.id                       AS party_id,
+  src.name                     AS original_name,
+  src.status                   AS original_status,
+  dst.id                       AS resolved_id,
+  dst.name                     AS resolved_name,
+  dst.kind                     AS resolved_kind,
+  dst.withholding              AS resolved_withholding,
+  dst.invoice_no               AS resolved_invoice_no,
+  (src.id <> dst.id)           AS was_merged
+FROM v3.parties src
+JOIN LATERAL (
+  SELECT resolved_id FROM chain WHERE chain.id = src.id ORDER BY depth DESC LIMIT 1
+) last ON true
+JOIN v3.parties dst ON dst.id = last.resolved_id;
+
+COMMENT ON VIEW v3.v_party_resolved IS
+  '統合を辿った後の取引先。参照は付け替えないので、表示・集計はここを通す。';
 
 -- ---------------------------------------------------------------------
 -- 条件の残高（MG下限・AG充当）
