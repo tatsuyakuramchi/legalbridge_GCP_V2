@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
+import { PARTY_KIND_LABEL, StatusTag } from "./labels.js";
 import { api, ApiError } from "./api.js";
 import { CreateForm, flag, int, text } from "./CreateForm.js";
 import { PartyMerge } from "./PartyMerge.js";
@@ -17,32 +19,41 @@ interface Staff { id: number; staffCode: string | null; name: string; email: str
 
 const ROLE_LABEL: Record<string, string> = { primary: "主担当", signer: "署名者", billing: "請求先" };
 
-export function PartiesWorkspace() {
+export function PartiesWorkspace({ initialId }: { initialId?: number } = {}) {
   const [tab, setTab] = useState<"parties" | "staff" | "merge">("parties");
   const [parties, setParties] = useState<Party[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
-  const [selected, setSelected] = useState<number | undefined>();
+  const [selected, setSelected] = useState<number | undefined>(initialId);
   const [detail, setDetail] = useState<PartyDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [keyword, setKeyword] = useState("");
+  const [kindFilter, setKindFilter] = useState<"all" | "corporate" | "individual">("all");
+  const [total, setTotal] = useState<number | null>(null);
+  const query = useDebounced(keyword);
 
   function reload(select?: number) {
+    const q = query.trim();
     Promise.all([
-      api.get<{ parties: Party[] }>("/parties"),
+      api.get<{ parties: Party[] }>(`/parties${q ? `?q=${encodeURIComponent(q)}` : ""}`),
       api.get<{ staff: Staff[] }>("/staff")
     ]).then(([p, s]) => {
       setParties(p.parties); setStaff(s.staff);
+      // 絞り込みなしの件数は、絞っていないときの結果をそのまま覚えておく。
+      if (!q) setTotal(p.parties.length);
       if (select) setSelected(select);
       else if (!selected && p.parties[0]) setSelected(p.parties[0].id);
     }).catch((e: ApiError) => setError(e.message));
   }
-  useEffect(() => { reload(); }, []);
+  useEffect(() => { reload(); }, [query]);
 
   useEffect(() => {
     if (!selected) return;
     api.get<PartyDetail>(`/parties/${selected}`).then(setDetail)
       .catch((e: ApiError) => setError(e.message));
   }, [selected]);
+
+  const shown = parties.filter((p) => kindFilter === "all" || p.kind === kindFilter);
 
   return (
     <section className="workspace">
@@ -105,7 +116,7 @@ export function PartiesWorkspace() {
                   <tr key={s.id}>
                     <td className="code">{s.staffCode ?? `#${s.id}`}</td><td>{s.name}</td>
                     <td>{s.department ?? "—"}</td><td className="faint">{s.email ?? "—"}</td>
-                    <td><span className="tag">{s.status}</span></td>
+                    <td><StatusTag kind="staff" value={s.status} /></td>
                   </tr>
                 ))}
                 {!staff.length && <tr><td colSpan={5} className="faint">担当者がいません</td></tr>}
@@ -116,26 +127,49 @@ export function PartiesWorkspace() {
       ) : (
         <div className="split">
           <div className="panel">
-            <div className="panel-hd"><h2>一覧</h2></div>
+            <div className="panel-hd">
+              <h2>一覧</h2>
+              <ListSearch value={keyword} onChange={setKeyword}
+                placeholder="名称・カナ・別名" label="取引先を絞り込む" />
+            </div>
+            <ListCount shown={shown.length} keyword={query} total={total}
+                       onClear={() => { setKeyword(""); setKindFilter("all"); }}>
+              <span className="filters">
+                {(["all", "corporate", "individual"] as const).map((value) => (
+                  <button key={value} className="chip" aria-pressed={kindFilter === value}
+                          onClick={() => setKindFilter(value)}>
+                    {value === "all" ? "すべて" : PARTY_KIND_LABEL[value]}
+                  </button>
+                ))}
+              </span>
+            </ListCount>
             <div className="tablewrap">
               <table>
                 <thead><tr><th>コード</th><th>名称</th><th>区分</th><th>源泉</th><th>状態</th></tr></thead>
                 <tbody>
-                  {parties.map((p) => (
-                    <tr key={p.id} className={p.id === selected ? "sel" : ""} onClick={() => setSelected(p.id)}>
+                  {shown.map((p) => (
+                    <tr key={p.id} className={p.id === selected ? "sel" : ""} tabIndex={0}
+                        aria-selected={p.id === selected}
+                        onClick={() => setSelected(p.id)}
+                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelected(p.id); } }}>
                       <td className="code">{p.partyCode ?? `#${p.id}`}</td>
                       <td className={p.status === "merged" ? "faint" : ""}>{p.name}</td>
-                      <td>{p.kind === "individual" ? "個人" : "法人"}</td>
+                      <td>{PARTY_KIND_LABEL[p.kind] ?? p.kind}</td>
                       <td>{p.withholding ? <span className="tag warn">あり</span> : "—"}</td>
-                      <td><span className="tag">
-                        {p.status === "merged" ? `#${p.mergedIntoId} へ統合` : p.status}
-                      </span></td>
+                      <td>{p.status === "merged"
+                        ? <span className="tag out">#{p.mergedIntoId} へ統合</span>
+                        : <StatusTag kind="party" value={p.status} />}</td>
                     </tr>
                   ))}
-                  {!parties.length && <tr><td colSpan={5} className="faint">取引先がありません</td></tr>}
+                  {!shown.length && (
+                    <tr><td colSpan={5} className="faint">
+                      {query.trim() ? `「${query}」に一致する取引先はありません` : "取引先がありません"}
+                    </td></tr>
+                  )}
                 </tbody>
               </table>
             </div>
+            <ListLimit shown={parties.length} />
           </div>
 
           <div className="stack">
@@ -145,7 +179,7 @@ export function PartiesWorkspace() {
                   <div className="panel-hd">
                     <h2 className="code">{detail.partyCode ?? `#${detail.id}`}</h2>
                     <span>{detail.name}</span>
-                    <span className="tag">{detail.kind === "individual" ? "個人" : "法人"}</span>
+                    <span className="tag">{PARTY_KIND_LABEL[detail.kind] ?? detail.kind}</span>
                   </div>
                   <div className="panel-bd">
                     <dl className="dl">

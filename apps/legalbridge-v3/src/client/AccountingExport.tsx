@@ -103,7 +103,7 @@ export function AccountingExport() {
             </p>
           )}
           {result && result.flagged > 0 && (
-            <div className="note" style={{ marginTop: 4 }}>
+            <div className="note warn" style={{ marginTop: 4 }}>
               要確認のある行は、支払内容が空欄のまま、または源泉が計算値と違うまま出ます。
               Excel の「要確認」列に理由が入るので、経理へ渡す前に潰してください。
               割当は お金 → 支払 の画面から入れられます。

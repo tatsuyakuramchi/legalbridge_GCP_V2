@@ -89,7 +89,7 @@ export function PartyMerge({ onDone }: { onDone: () => void }) {
                 <div key={b} className="alert"><b>統合できません：</b>{b}</div>
               ))}
               {preview.warnings.map((w) => (
-                <div key={w} className="note">確認：{w}</div>
+                <div key={w} className="note warn">確認：{w}</div>
               ))}
               <div className="row">
                 <button className="btn primary" disabled={busy || preview.blockers.length > 0}

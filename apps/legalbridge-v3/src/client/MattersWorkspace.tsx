@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import type { MatterDetail, MatterKind, MatterSummary } from "../server/core/model.js";
 import { api, ApiError, money } from "./api.js";
 import { CreateForm, int, text } from "./CreateForm.js";
+import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
+import { StatusTag } from "./labels.js";
 
 const KIND_LABEL: Record<MatterKind, string> = {
   work: "作品フロー", outsourcing: "業務委託フロー", single: "単発フロー"
@@ -36,9 +38,11 @@ function linkState(snapshot: Record<string, unknown>): string {
 const backlogIssue = (detail: MatterDetail): string | null =>
   detail.links.find((l) => l.targetType === "backlog_issue")?.targetRef ?? null;
 
-export function MattersWorkspace({ onOpenCondition }: { onOpenCondition: (id: number) => void }) {
+export function MattersWorkspace(
+  { onOpenCondition, initialId }: { onOpenCondition: (id: number) => void; initialId?: number }
+) {
   const [rows, setRows] = useState<MatterSummary[]>([]);
-  const [selected, setSelected] = useState<number | undefined>();
+  const [selected, setSelected] = useState<number | undefined>(initialId);
   const [detail, setDetail] = useState<MatterDetail | null>(null);
   const [kind, setKind] = useState<MatterKind | "all">("all");
   const [tab, setTab] = useState<Tab>("conditions");
@@ -49,13 +53,18 @@ export function MattersWorkspace({ onOpenCondition }: { onOpenCondition: (id: nu
   const [backlog, setBacklog] = useState<BacklogResult | null>(null);
   const [backlogBusy, setBacklogBusy] = useState(false);
   const [issueKey, setIssueKey] = useState("");
+  const [keyword, setKeyword] = useState("");
+  const query = useDebounced(keyword);
 
   function reloadMatters(select?: number) {
-    api.get<{ matters: MatterSummary[] }>(`/matters${kind === "all" ? "" : `?kind=${kind}`}`)
+    const params = new URLSearchParams();
+    if (kind !== "all") params.set("kind", kind);
+    if (query.trim()) params.set("q", query.trim());
+    api.get<{ matters: MatterSummary[] }>(`/matters${params.toString() ? `?${params}` : ""}`)
       .then((r) => { setRows(r.matters); if (select) setSelected(select); else if (!selected && r.matters[0]) setSelected(r.matters[0].id); })
       .catch((e: ApiError) => setError(e.message));
   }
-  useEffect(() => { reloadMatters(); }, [kind]);
+  useEffect(() => { reloadMatters(); }, [kind, query]);
 
   // 選択肢。登録フォームでしか使わないので、開くまで取りに行かない。
   useEffect(() => {
@@ -158,24 +167,37 @@ export function MattersWorkspace({ onOpenCondition }: { onOpenCondition: (id: nu
 
       <div className="split">
         <div className="panel">
-          <div className="panel-hd"><h2>一覧</h2></div>
+          <div className="panel-hd">
+            <h2>一覧</h2>
+            <ListSearch value={keyword} onChange={setKeyword}
+              placeholder="件名・案件番号・相手先" label="案件を絞り込む" />
+          </div>
+          <ListCount shown={rows.length} keyword={query} onClear={() => setKeyword("")} />
           <div className="tablewrap">
             <table>
               <thead><tr><th>案件番号</th><th>フロー</th><th>件名 / 相手先</th><th>状態</th><th>期日</th></tr></thead>
               <tbody>
                 {rows.map((row) => (
-                  <tr key={row.id} className={row.id === selected ? "sel" : ""} onClick={() => setSelected(row.id)}>
+                  <tr key={row.id} className={row.id === selected ? "sel" : ""}
+                      tabIndex={0} aria-selected={row.id === selected}
+                      onClick={() => setSelected(row.id)}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelected(row.id); } }}>
                     <td className="code">{row.matterNo ?? `#${row.id}`}</td>
                     <td><span className="tag accent">{KIND_LABEL[row.kind]}</span></td>
                     <td>{row.title}<div className="faint">{row.counterparty?.name ?? "—"}</div></td>
-                    <td><span className="tag">{row.status}</span></td>
+                    <td><StatusTag kind="matter" value={row.status} /></td>
                     <td className="code">{row.dueOn ?? "—"}</td>
                   </tr>
                 ))}
-                {!rows.length && <tr><td colSpan={5} className="faint">案件がありません</td></tr>}
+                {!rows.length && (
+                  <tr><td colSpan={5} className="faint">
+                    {query.trim() ? `「${query}」に一致する案件はありません` : "案件がありません"}
+                  </td></tr>
+                )}
               </tbody>
             </table>
           </div>
+          <ListLimit shown={rows.length} />
         </div>
 
         <div className="stack">
@@ -185,7 +207,7 @@ export function MattersWorkspace({ onOpenCondition }: { onOpenCondition: (id: nu
                 <div className="panel-hd">
                   <h2 className="code">{detail.matterNo ?? `#${detail.id}`}</h2>
                   <span className="tag accent">{KIND_LABEL[detail.kind]}</span>
-                  <span className="tag">{detail.status}</span>
+                  <StatusTag kind="matter" value={detail.status} />
                 </div>
                 <div className="panel-bd stack">
                   <div className="title">{detail.title}</div>
@@ -222,7 +244,8 @@ export function MattersWorkspace({ onOpenCondition }: { onOpenCondition: (id: nu
                         <thead><tr><th>条件番号</th><th>向き</th><th>内容</th></tr></thead>
                         <tbody>
                           {detail.conditions.map((c) => (
-                            <tr key={c.id} onClick={() => onOpenCondition(c.id)}>
+                            <tr key={c.id} tabIndex={0} onClick={() => onOpenCondition(c.id)}
+                                onKeyDown={(e) => { if (e.key === "Enter") onOpenCondition(c.id); }}>
                               <td className="code">{c.conditionNo ?? `#${c.id}`}</td>
                               <td><span className={`tag ${c.direction}`}>{c.direction === "in" ? "IN" : "OUT"}</span></td>
                               <td>{c.name}</td>
@@ -245,7 +268,7 @@ export function MattersWorkspace({ onOpenCondition }: { onOpenCondition: (id: nu
                         {detail.documents.map((d) => (
                           <tr key={d.id}>
                             <td className="code">{d.documentNo ?? `#${d.id}`}</td>
-                            <td>{d.templateLabel ?? "—"}</td><td>{d.status}</td>
+                            <td>{d.templateLabel ?? "—"}</td><td><StatusTag kind="document" value={d.status} /></td>
                           </tr>
                         ))}
                         {!detail.documents.length && <tr><td colSpan={3} className="faint">文書はありません</td></tr>}
@@ -262,7 +285,7 @@ export function MattersWorkspace({ onOpenCondition }: { onOpenCondition: (id: nu
                             <td className="code">{p.paymentNo ?? `#${p.id}`}</td>
                             <td>{p.direction === "in" ? "入金" : "支払"}</td>
                             <td className="num">{money(p.amount, p.currency)}</td>
-                            <td className="code">{p.dueOn ?? "—"}</td><td>{p.status}</td>
+                            <td className="code">{p.dueOn ?? "—"}</td><td><StatusTag kind="payment" value={p.status} /></td>
                           </tr>
                         ))}
                         {!detail.payments.length && <tr><td colSpan={5} className="faint">支払はありません</td></tr>}
@@ -357,7 +380,7 @@ export function MattersWorkspace({ onOpenCondition }: { onOpenCondition: (id: nu
                     </div>
                   )}
                   {backlog && !backlog.created && !backlog.issueKey && (
-                    <div className="note" style={{ marginTop: 9 }}>
+                    <div className="note warn" style={{ marginTop: 9 }}>
                       課題は立ちませんでした：{backlog.reason ?? "理由不明"}
                       {backlog.preview && (
                         <pre className="pre" style={{ marginTop: 8 }}>

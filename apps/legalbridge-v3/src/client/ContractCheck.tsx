@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { StatusTag } from "./labels.js";
 import { api, ApiError } from "./api.js";
 
 type Verdict = "covered" | "expiring" | "expired" | "none" | "ambiguous";
@@ -109,7 +110,7 @@ export function ContractCheck() {
                         <tr key={a.id} className={(a.daysToExpiry ?? 1) < 0 ? "overdue" : undefined}>
                           <td className="code">{a.agreementNo ?? `#${a.id}`}</td>
                           <td>{a.title}</td>
-                          <td><span className="tag">{a.status}</span></td>
+                          <td><StatusTag kind="agreement" value={a.status} /></td>
                           <td className="code">{a.effectiveOn ?? "—"}</td>
                           <td className="code">{a.expiresOn ?? "定めなし"}</td>
                           <td className="num">

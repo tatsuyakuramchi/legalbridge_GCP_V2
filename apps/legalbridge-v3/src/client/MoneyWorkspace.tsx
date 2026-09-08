@@ -1,4 +1,7 @@
 import { useEffect, useState } from "react";
+import { ListCount, ListSearch, useDebounced } from "./ListTools.js";
+import { PaymentAllocation, type AllocationTarget } from "./PaymentAllocation.js";
+import { StatusTag } from "./labels.js";
 import { api, ApiError, money } from "./api.js";
 import { CreateForm, int, text } from "./CreateForm.js";
 import { PaymentReport } from "./PaymentReport.js";
@@ -42,6 +45,11 @@ export function MoneyWorkspace() {
   const [notice, setNotice] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [parties, setParties] = useState<Array<{ id: number; name: string; kind: string }>>([]);
+  const [keyword, setKeyword] = useState("");
+  const [dirFilter, setDirFilter] = useState<"all" | "in" | "out">("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "unallocated" | "unpaid">("all");
+  const [allocating, setAllocating] = useState<AllocationTarget | null>(null);
+  const search = useDebounced(keyword);
 
   useEffect(() => { void reload(); }, []);
 
@@ -87,6 +95,18 @@ export function MoneyWorkspace() {
 
   const overLimit = payments.filter((p) => p.due.verdict === "over_limit").length;
 
+  const unallocatedCount = payments.filter((p) => !p.allocations.length).length;
+  const needle = search.trim().toLowerCase();
+  const shownPayments = payments.filter((p) => {
+    if (dirFilter !== "all" && p.direction !== dirFilter) return false;
+    if (statusFilter === "unallocated" && p.allocations.length) return false;
+    if (statusFilter === "unpaid" && p.status === "paid") return false;
+    if (!needle) return true;
+    // 相手先・支払番号・割当先の条件番号のどれかに当たれば残す。
+    return [p.party?.name, p.paymentNo, ...p.allocations.map((a) => a.conditionNo)]
+      .some((v) => String(v ?? "").toLowerCase().includes(needle));
+  });
+
   return (
     <section className="workspace">
       <header className="workspace-head">
@@ -95,7 +115,7 @@ export function MoneyWorkspace() {
       </header>
 
       {error && <div className="alert">{error}</div>}
-      {notice && <div className="note">{notice}</div>}
+      {notice && <div className="note ok">{notice}</div>}
       {overLimit > 0 && (
         <div className="alert">支払期日が受領日+60日を超えているものが {overLimit} 件あります。</div>
       )}
@@ -197,17 +217,47 @@ export function MoneyWorkspace() {
       )}
 
       {tab === "payments" && (
+        <div className="stack">
+        {allocating && (
+          <PaymentAllocation payment={allocating}
+            onClose={() => setAllocating(null)}
+            onSaved={() => { setAllocating(null); setNotice("割当を保存しました。"); void reload(); }} />
+        )}
         <div className="panel">
-          <div className="panel-hd"><h2>支払</h2><span className="faint">期日順</span></div>
+          <div className="panel-hd">
+            <h2>支払</h2><span className="faint">期日順</span>
+            <ListSearch value={keyword} onChange={setKeyword}
+              placeholder="相手先・支払番号・条件番号" label="支払を絞り込む" />
+          </div>
+          <ListCount shown={shownPayments.length} keyword={search} total={payments.length}
+                     onClear={() => { setKeyword(""); setDirFilter("all"); setStatusFilter("all"); }}>
+            <span className="filters">
+              {(["all", "out", "in"] as const).map((v) => (
+                <button key={v} className="chip" aria-pressed={dirFilter === v}
+                        onClick={() => setDirFilter(v)}>
+                  {v === "all" ? "すべて" : v === "out" ? "支払" : "入金"}
+                </button>
+              ))}
+              <button className="chip" aria-pressed={statusFilter === "unallocated"}
+                      onClick={() => setStatusFilter(statusFilter === "unallocated" ? "all" : "unallocated")}>
+                割当なし {unallocatedCount}
+              </button>
+              <button className="chip" aria-pressed={statusFilter === "unpaid"}
+                      onClick={() => setStatusFilter(statusFilter === "unpaid" ? "all" : "unpaid")}>
+                未払い
+              </button>
+            </span>
+          </ListCount>
           <div className="tablewrap">
             <table>
               <thead><tr>
-                <th>向き</th><th>相手先</th><th className="num">税抜</th><th className="num">源泉</th>
+                <th>支払番号</th><th>向き</th><th>相手先</th><th className="num">税抜</th><th className="num">源泉</th>
                 <th>受領日</th><th>期日</th><th>期日の検査</th><th>割当</th><th>状態</th><th></th>
               </tr></thead>
               <tbody>
-                {payments.map((p) => (
+                {shownPayments.map((p) => (
                   <tr key={p.id}>
+                    <td className="code">{p.paymentNo ?? `#${p.id}`}</td>
                     <td>{p.direction === "in" ? "入金" : "支払"}</td>
                     <td>{p.party?.name ?? "—"}
                         {p.party?.kind === "individual" && <span className="tag" style={{ marginLeft: 5 }}>個人</span>}</td>
@@ -219,17 +269,32 @@ export function MoneyWorkspace() {
                       <span className={`tag ${DUE_LABEL[p.due.verdict].tone}`}>{DUE_LABEL[p.due.verdict].text}</span>
                       {p.due.overBy && <span className="faint"> +{p.due.overBy}日</span>}
                     </td>
-                    <td className="faint">{p.allocations.map((a) => a.conditionNo ?? "—").join("、") || "なし"}</td>
-                    <td><span className="tag">{p.status}</span></td>
-                    <td>{p.status !== "paid" && (
-                      <button className="btn btn-sm" onClick={() => markPaid(p.id)}>支払済みにする</button>
-                    )}</td>
+                    <td>
+                      {p.allocations.length
+                        ? <span className="faint">{p.allocations.map((a) => a.conditionNo ?? "—").join("、")}</span>
+                        : <span className="tag warn">割当なし</span>}
+                    </td>
+                    <td><StatusTag kind="payment" value={p.status} /></td>
+                    <td className="row" style={{ gap: 6, flexWrap: "nowrap" }}>
+                      <button className="btn btn-sm" onClick={() => setAllocating({
+                        id: p.id, paymentNo: p.paymentNo, currency: p.currency, amount: p.amount,
+                        partyName: p.party?.name ?? "—", dueOn: p.dueOn, allocations: p.allocations
+                      })}>割当</button>
+                      {p.status !== "paid" && (
+                        <button className="btn btn-sm" onClick={() => markPaid(p.id)}>支払済みに</button>
+                      )}
+                    </td>
                   </tr>
                 ))}
-                {!payments.length && <tr><td colSpan={10} className="faint">支払がありません</td></tr>}
+                {!shownPayments.length && (
+                  <tr><td colSpan={11} className="faint">
+                    {payments.length ? "この絞り込みに一致する支払はありません" : "支払がありません"}
+                  </td></tr>
+                )}
               </tbody>
             </table>
           </div>
+        </div>
         </div>
       )}
 

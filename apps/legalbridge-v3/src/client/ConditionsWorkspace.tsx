@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
+import { StatusTag } from "./labels.js";
 import type { ConditionDetail, ConditionSummary, EnvelopeCheck, RightsEnvelope } from "../server/core/model.js";
 import { api, ApiError, money, rate } from "./api.js";
 import { CreateForm, int, text } from "./CreateForm.js";
@@ -35,9 +37,14 @@ export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
   const [creating, setCreating] = useState(false);
   const [parties, setParties] = useState<Array<{ id: number; name: string }>>([]);
   const [works, setWorks] = useState<Array<{ id: number; title: string }>>([]);
+  const [keyword, setKeyword] = useState("");
+  const search = useDebounced(keyword);
 
   function reload(select?: number) {
-    const query = filter === "all" ? "" : `?direction=${filter}`;
+    const params = new URLSearchParams();
+    if (filter !== "all") params.set("direction", filter);
+    if (search.trim()) params.set("q", search.trim());
+    const query = params.toString() ? `?${params}` : "";
     api.get<{ conditions: ConditionSummary[] }>(`/conditions${query}`)
       .then((r) => {
         setRows(r.conditions);
@@ -46,7 +53,7 @@ export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
       })
       .catch((e: ApiError) => setError(e.message));
   }
-  useEffect(() => { reload(); }, [filter]);
+  useEffect(() => { reload(); }, [filter, search]);
 
   useEffect(() => {
     if (!creating || parties.length) return;
@@ -194,14 +201,21 @@ export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
 
       <div className="split">
         <div className="panel">
-          <div className="panel-hd"><h2>一覧</h2></div>
+          <div className="panel-hd">
+            <h2>一覧</h2>
+            <ListSearch value={keyword} onChange={setKeyword}
+              placeholder="名称・条件番号・相手先" label="条件を絞り込む" />
+          </div>
+          <ListCount shown={rows.length} keyword={search} onClear={() => setKeyword("")} />
           <div className="tablewrap">
             <table>
               <thead><tr><th>条件番号</th><th>向き</th><th>名称 / 相手先</th><th className="num">金額・料率</th></tr></thead>
               <tbody>
                 {rows.map((row) => (
-                  <tr key={row.id} className={row.id === selected ? "sel" : ""}
-                      onClick={() => setSelected(row.id)}>
+                  <tr key={row.id} className={row.id === selected ? "sel" : ""} tabIndex={0}
+                      aria-selected={row.id === selected}
+                      onClick={() => setSelected(row.id)}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelected(row.id); } }}>
                     <td className="code">{row.conditionNo ?? `#${row.id}`}</td>
                     <td><span className={`tag ${row.direction}`}>{row.direction === "in" ? "IN" : "OUT"}</span></td>
                     <td>{row.name}<div className="faint">{row.counterparty?.name ?? "未設定"}</div></td>
@@ -210,10 +224,15 @@ export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
                     </td>
                   </tr>
                 ))}
-                {!rows.length && <tr><td colSpan={4} className="faint">条件がありません</td></tr>}
+                {!rows.length && (
+                  <tr><td colSpan={4} className="faint">
+                    {search.trim() ? `「${search}」に一致する条件はありません` : "条件がありません"}
+                  </td></tr>
+                )}
               </tbody>
             </table>
           </div>
+          <ListLimit shown={rows.length} />
         </div>
 
         <div className="stack">
@@ -223,7 +242,7 @@ export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
                 <div className="panel-hd">
                   <h2 className="code">{detail.conditionNo ?? `#${detail.id}`}</h2>
                   <span className={`tag ${detail.direction}`}>{detail.direction === "in" ? "IN 取得" : "OUT 許諾"}</span>
-                  <span className="tag">{detail.status}</span>
+                  <StatusTag kind="condition" value={detail.status} />
                 </div>
                 <div className="panel-bd stack">
                   <div className="title">{detail.name}</div>
@@ -283,7 +302,7 @@ export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
                       {detail.documents.map((d) => (
                         <tr key={d.id}>
                           <td className="code">{d.documentNo ?? `#${d.id}`}</td>
-                          <td>{d.status}</td>
+                          <td><StatusTag kind="document" value={d.status} /></td>
                           <td className="code">{d.issuedAt?.slice(0, 10) ?? "—"}</td>
                         </tr>
                       ))}

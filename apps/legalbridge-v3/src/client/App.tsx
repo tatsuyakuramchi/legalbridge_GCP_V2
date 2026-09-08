@@ -8,7 +8,7 @@ import { MoneyWorkspace } from "./MoneyWorkspace.js";
 import { WorksWorkspace } from "./WorksWorkspace.js";
 import { PartiesWorkspace } from "./PartiesWorkspace.js";
 import { FlowMonitorWorkspace } from "./FlowMonitorWorkspace.js";
-import { OpsWorkspace, HomeWorkspace } from "./OpsWorkspace.js";
+import { OpsWorkspace, HomeWorkspace, type OpsTab } from "./OpsWorkspace.js";
 
 type View = "home" | "matters" | "conditions" | "works" | "parties" | "documents" | "money" | "flows" | "ops";
 interface Me { user?: { email: string; role: string }; readOnly: boolean }
@@ -35,19 +35,31 @@ const NAV: Array<{ section: string; items: Array<{ view: View; label: string }> 
 export function App() {
   const [view, setView] = useState<View>("home");
   const [conditionId, setConditionId] = useState<number | undefined>();
+  /** 検索結果から開いたときに、その画面で選んでおく行。 */
+  const [focus, setFocus] = useState<{ view: View; id: number } | null>(null);
   const [me, setMe] = useState<Me | null>(null);
+  const [opsTab, setOpsTab] = useState<OpsTab | undefined>();
 
   useEffect(() => { api.get<Me>("/me").then(setMe).catch(() => setMe(null)); }, []);
 
   const openCondition = (id: number) => { setConditionId(id); setView("conditions"); };
 
-  /** 検索結果から開く。条件だけは ID を渡して直接その行を選ぶ。 */
+  /**
+   * 検索結果から開く。
+   * 画面を切り替えるだけでは、押した相手をもう一度探させることになる。
+   * 行を選べる画面には ID を渡して、開いた時点で選んでおく。
+   */
   const openHit = (hit: SearchHit) => {
     if (hit.target === "condition") return openCondition(hit.id);
     setConditionId(undefined);
-    setView(({ matter: "matters", document: "documents", party: "parties",
-               work: "works", payment: "money" } as const)[hit.target]);
+    const next = ({ matter: "matters", document: "documents", party: "parties",
+                    work: "works", payment: "money" } as const)[hit.target];
+    setFocus({ view: next, id: hit.id });
+    setView(next);
   };
+
+  /** その画面に渡す選択。別の画面へ移ったら持ち越さない。 */
+  const focusFor = (view: View) => (focus && focus.view === view ? focus.id : undefined);
 
   return (
     <div className="app">
@@ -62,6 +74,7 @@ export function App() {
                       aria-current={view === item.view ? "page" : undefined}
                       onClick={() => {
                         if (item.view === "conditions") setConditionId(undefined);
+                        setFocus(null);
                         setView(item.view);
                       }}>{item.label}</button>
             ))}
@@ -74,15 +87,23 @@ export function App() {
       </nav>
 
       <main className="main">
-        {view === "home" && <HomeWorkspace onGo={(v) => setView(v)} />}
-        {view === "matters" && <MattersWorkspace onOpenCondition={openCondition} />}
+        {view === "home" && <HomeWorkspace onGo={(v, tab) => { setOpsTab(tab); setView(v); }} />}
+        {view === "matters" && (
+          <MattersWorkspace key={`m${focusFor("matters") ?? 0}`}
+            onOpenCondition={openCondition} initialId={focusFor("matters")} />
+        )}
         {view === "conditions" && <ConditionsWorkspace key={conditionId ?? 0} initialId={conditionId} />}
-        {view === "works" && <WorksWorkspace onOpenCondition={openCondition} />}
-        {view === "parties" && <PartiesWorkspace />}
+        {view === "works" && (
+          <WorksWorkspace key={`w${focusFor("works") ?? 0}`}
+            onOpenCondition={openCondition} initialId={focusFor("works")} />
+        )}
+        {view === "parties" && (
+          <PartiesWorkspace key={`p${focusFor("parties") ?? 0}`} initialId={focusFor("parties")} />
+        )}
         {view === "documents" && <DocumentsWorkspace />}
         {view === "money" && <MoneyWorkspace />}
         {view === "flows" && <FlowMonitorWorkspace onOpenCondition={openCondition} />}
-        {view === "ops" && <OpsWorkspace />}
+        {view === "ops" && <OpsWorkspace key={opsTab ?? "quality"} initialTab={opsTab} />}
       </main>
     </div>
   );

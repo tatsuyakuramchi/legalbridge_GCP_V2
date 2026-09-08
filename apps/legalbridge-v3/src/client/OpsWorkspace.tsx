@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { StatusTag } from "./labels.js";
 import { api, ApiError, money } from "./api.js";
 import { CsvImport } from "./CsvImport.js";
 import { AccountingExport } from "./AccountingExport.js";
@@ -45,8 +46,10 @@ const SOURCE_LABEL: Record<string, string> = {
   matter: "案件", agreement: "契約満了", payment: "支払", schedule: "予定", task: "タスク"
 };
 
-export function OpsWorkspace() {
-  const [tab, setTab] = useState<"quality" | "deadlines" | "exports" | "imports" | "audit" | "integrations" | "settings">("quality");
+export type OpsTab = "quality" | "deadlines" | "exports" | "imports" | "audit" | "integrations" | "settings";
+
+export function OpsWorkspace({ initialTab }: { initialTab?: OpsTab } = {}) {
+  const [tab, setTab] = useState<OpsTab>(initialTab ?? "quality");
   const [issues, setIssues] = useState<Issue[]>([]);
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [settings, setSettings] = useState<Setting[] | null>(null);
@@ -137,7 +140,7 @@ export function OpsWorkspace() {
                         {d.dueOn < today && <span className="tag out" style={{ marginLeft: 5 }}>超過</span>}</td>
                     <td>{SOURCE_LABEL[d.source] ?? d.source}</td>
                     <td className="code">{d.refNo ?? `#${d.refId}`}</td>
-                    <td>{d.title}</td><td><span className="tag">{d.status}</span></td>
+                    <td>{d.title}</td><td><StatusTag kind="matter" value={d.status} /></td>
                   </tr>
                 ))}
                 {!deadlines.length && <tr><td colSpan={5} className="faint">期限がありません</td></tr>}
@@ -267,7 +270,9 @@ export function OpsWorkspace() {
 }
 
 /** ホーム。数字はすべて条件を起点に導出する。 */
-export function HomeWorkspace({ onGo }: { onGo: (view: "matters" | "money" | "ops") => void }) {
+export function HomeWorkspace(
+  { onGo }: { onGo: (view: "matters" | "money" | "ops", tab?: OpsTab) => void }
+) {
   const [summary, setSummary] = useState<{
     openMatters: number; dueSoon: number; agRemaining: number;
     qualityHigh: number; inConditions: number; outConditions: number;
@@ -294,7 +299,7 @@ export function HomeWorkspace({ onGo }: { onGo: (view: "matters" | "money" | "op
             <span className="lab">対応中の案件</span><span className="val">{summary.openMatters}</span>
             <span className="sub">IN {summary.inConditions} ／ OUT {summary.outConditions} 条件</span>
           </button>
-          <button className="tile" onClick={() => onGo("ops")}>
+          <button className="tile" onClick={() => onGo("ops", "deadlines")}>
             <span className="lab">7日以内の期限</span><span className="val">{summary.dueSoon}</span>
             <span className="sub">案件・契約満了・支払・予定</span>
           </button>
@@ -302,7 +307,7 @@ export function HomeWorkspace({ onGo }: { onGo: (view: "matters" | "money" | "op
             <span className="lab">未消化 AG 残</span><span className="val">{money(summary.agRemaining)}</span>
             <span className="sub">MGは下限なので残高を持たない</span>
           </button>
-          <button className={`tile${summary.qualityHigh ? " alert" : ""}`} onClick={() => onGo("ops")}>
+          <button className={`tile${summary.qualityHigh ? " alert" : ""}`} onClick={() => onGo("ops", "quality")}>
             <span className="lab">重大な不整合</span><span className="val">{summary.qualityHigh}</span>
             <span className="sub">未解決のもの</span>
           </button>

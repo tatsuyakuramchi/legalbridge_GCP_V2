@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
+import { StatusTag } from "./labels.js";
 import type { ConditionSummary } from "../server/core/model.js";
 import { api, ApiError } from "./api.js";
 
@@ -23,6 +25,8 @@ interface PreviewResponse {
 export function DocumentsWorkspace() {
   const [templates, setTemplates] = useState<TemplateRow[]>([]);
   const [documents, setDocuments] = useState<DocumentRow[]>([]);
+  const [keyword, setKeyword] = useState("");
+  const search = useDebounced(keyword);
   const [conditions, setConditions] = useState<ConditionSummary[]>([]);
   const [templateKey, setTemplateKey] = useState("");
   const [picked, setPicked] = useState<number[]>([]);
@@ -34,12 +38,13 @@ export function DocumentsWorkspace() {
   const [integrations, setIntegrations] = useState<Integrations | null>(null);
   const [stored, setStored] = useState<string | null>(null);
 
-  useEffect(() => { void reload(); }, []);
+  useEffect(() => { void reload(); }, [search]);
   async function reload() {
     try {
       const [t, d, c, i] = await Promise.all([
         api.get<{ templates: TemplateRow[] }>("/document-templates"),
-        api.get<{ documents: DocumentRow[] }>("/documents"),
+        api.get<{ documents: DocumentRow[] }>(
+          `/documents${search.trim() ? `?q=${encodeURIComponent(search.trim())}` : ""}`),
         api.get<{ conditions: ConditionSummary[] }>("/conditions"),
         api.get<Integrations>("/integrations")
       ]);
@@ -148,8 +153,8 @@ export function DocumentsWorkspace() {
       </header>
 
       {error && <div className="alert">{error}</div>}
-      {issued && <div className="note">発行しました：<b className="code">{issued}</b></div>}
-      {stored && <div className="note">{stored}</div>}
+      {issued && <div className="note ok">発行しました：<b className="code">{issued}</b></div>}
+      {stored && <div className="note ok">{stored}</div>}
       {integrations && !integrations.drive.documents && (
         <div className="note">Drive 保存は未設定です（<span className="code">GOOGLE_DRIVE_FOLDER_ID</span>）。文書の作成と発行はそのまま使えます。</div>
       )}
@@ -222,7 +227,12 @@ export function DocumentsWorkspace() {
         </div>
 
         <div className="panel">
-          <div className="panel-hd"><h2>発行済み・下書き</h2></div>
+          <div className="panel-hd">
+            <h2>発行済み・下書き</h2>
+            <ListSearch value={keyword} onChange={setKeyword}
+              placeholder="文書番号・相手先" label="文書を絞り込む" />
+          </div>
+          <ListCount shown={documents.length} keyword={search} onClear={() => setKeyword("")} />
           <div className="tablewrap">
             <table>
               <thead><tr><th>文書番号</th><th>種別</th><th>相手先</th><th className="num">条件</th><th>状態</th><th></th></tr></thead>
@@ -233,7 +243,7 @@ export function DocumentsWorkspace() {
                     <td>{d.templateLabel ?? "—"}</td>
                     <td>{d.counterparty ?? "—"}</td>
                     <td className="num">{d.conditionCount}</td>
-                    <td><span className="tag">{d.status}</span></td>
+                    <td><StatusTag kind="document" value={d.status} /></td>
                     <td>
                       {d.status === "issued" && (
                         <span className="row">
@@ -265,7 +275,11 @@ export function DocumentsWorkspace() {
                     </td>
                   </tr>
                 ))}
-                {!documents.length && <tr><td colSpan={6} className="faint">文書がありません</td></tr>}
+                {!documents.length && (
+                  <tr><td colSpan={6} className="faint">
+                    {search.trim() ? `「${search}」に一致する文書はありません` : "文書がありません"}
+                  </td></tr>
+                )}
               </tbody>
             </table>
           </div>

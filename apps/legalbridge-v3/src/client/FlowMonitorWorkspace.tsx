@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { StatusTag } from "./labels.js";
 import { api, ApiError, money } from "./api.js";
 import { ReceivableMap } from "./ReceivableMap.js";
 import { ContractCheck } from "./ContractCheck.js";
@@ -115,7 +116,7 @@ export function FlowMonitorWorkspace({ onOpenCondition }: { onOpenCondition: (id
                         <span className={`tag ${DUE_LABEL[p.due.verdict].tone}`}>{DUE_LABEL[p.due.verdict].text}</span>
                         {p.due.overBy && <div className="faint">上限 {p.due.limitDate}</div>}
                       </td>
-                      <td><span className="tag">{p.status}</span></td>
+                      <td><StatusTag kind="payment" value={p.status} /></td>
                     </tr>
                   ))}
                   {!payments.length && <tr><td colSpan={8} className="faint">支払がありません</td></tr>}

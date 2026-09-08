@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ListSearch, useDebounced } from "./ListTools.js";
 import type { ConditionSummary, RightsEnvelope } from "../server/core/model.js";
 import { api, ApiError } from "./api.js";
 import { CreateForm, int, text } from "./CreateForm.js";
@@ -10,21 +11,26 @@ const DIMENSION_LABEL: Record<string, string> = {
   region: "地域", language: "言語", media: "媒体", channel: "チャネル"
 };
 
-export function WorksWorkspace({ onOpenCondition }: { onOpenCondition: (id: number) => void }) {
+export function WorksWorkspace(
+  { onOpenCondition, initialId }: { onOpenCondition: (id: number) => void; initialId?: number }
+) {
   const [works, setWorks] = useState<WorkRow[]>([]);
-  const [selected, setSelected] = useState<number | undefined>();
+  const [selected, setSelected] = useState<number | undefined>(initialId);
   const [envelope, setEnvelope] = useState<RightsEnvelope | null>(null);
   const [parts, setParts] = useState<Part[]>([]);
   const [conditions, setConditions] = useState<ConditionSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState<"work" | "part" | null>(null);
+  const [keyword, setKeyword] = useState("");
+  const search = useDebounced(keyword);
 
   function reloadWorks(select?: number) {
-    api.get<{ works: WorkRow[] }>("/works")
+    const q = search.trim();
+    api.get<{ works: WorkRow[] }>(`/works${q ? `?q=${encodeURIComponent(q)}` : ""}`)
       .then((r) => { setWorks(r.works); if (select) setSelected(select); else if (!selected && r.works[0]) setSelected(r.works[0].id); })
       .catch((e: ApiError) => setError(e.message));
   }
-  useEffect(() => { reloadWorks(); }, []);
+  useEffect(() => { reloadWorks(); }, [search]);
 
   function reloadParts() {
     if (!selected) return;
@@ -118,12 +124,34 @@ export function WorksWorkspace({ onOpenCondition }: { onOpenCondition: (id: numb
         </CreateForm>
       )}
 
-      <div className="filters">
-        {works.map((w) => (
-          <button key={w.id} className="chip" aria-pressed={w.id === selected} onClick={() => setSelected(w.id)}>
-            {w.title}
-          </button>
-        ))}
+      <div className="panel">
+        <div className="panel-hd">
+          <h2>作品を選ぶ</h2>
+          <ListSearch value={keyword} onChange={setKeyword}
+            placeholder="作品名・作品コード" label="作品を絞り込む" />
+        </div>
+        <div className="list-count">
+          {search.trim()
+            ? <span>「{search}」に一致 <b className="num">{works.length}</b> 件</span>
+            : <span><b className="num">{works.length}</b> 件</span>}
+          {works.length >= 200 && <span className="faint">200 件まで。絞り込むと残りも見つかります</span>}
+        </div>
+        <div className="panel-bd">
+          {works.length ? (
+            <div className="filters">
+              {works.map((w) => (
+                <button key={w.id} className="chip" aria-pressed={w.id === selected}
+                        onClick={() => setSelected(w.id)}>
+                  {w.title}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="faint">
+              {search.trim() ? `「${search}」に一致する作品はありません` : "作品がありません"}
+            </div>
+          )}
+        </div>
       </div>
 
       {envelope && (
