@@ -77,7 +77,56 @@ export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
     api.get<DetailResponse>(`/conditions/${selected}`)
       .then(setDetail)
       .catch((e: ApiError) => setError(e.message));
+    setStmtOpen(false); setStmtDone(null); setStmtPeriod(""); setStmtOn("");
   }, [selected]);
+
+  // 予定・実績・文書は繋がっているので、どれか1つが動いたら全部引き直す。
+  // 予定から実績にしたのに実績の表が古いままだと、入ったのかどうか分からない。
+  const [flowVersion, setFlowVersion] = useState(0);
+  async function refreshFlow() {
+    setFlowVersion((v) => v + 1);
+    if (selected) setDetail(await api.get<DetailResponse>(`/conditions/${selected}`));
+  }
+
+  // 計算書の発行。試算とは別物で、こちらは実績が立ち AG も進む。
+  const [stmtOpen, setStmtOpen] = useState(false);
+  const [stmtTemplate, setStmtTemplate] = useState("");
+  const [stmtPeriod, setStmtPeriod] = useState("");
+  const [stmtOn, setStmtOn] = useState("");
+  const [stmtBusy, setStmtBusy] = useState(false);
+  const [stmtDone, setStmtDone] = useState<string | null>(null);
+  const [templates, setTemplates] = useState<
+    Array<{ templateKey: string; label: string; category: string | null }>>([]);
+
+  useEffect(() => {
+    if (!stmtOpen || templates.length) return;
+    api.get<{ templates: Array<{ templateKey: string; label: string; category: string | null }> }>(
+      "/document-templates")
+      .then((r) => { setTemplates(r.templates); setStmtTemplate(r.templates[0]?.templateKey ?? ""); })
+      .catch((e: ApiError) => setError(e.message));
+  }, [stmtOpen]);
+
+  /**
+   * 条件から計算書を出す。文書を先に発行してから結び付ける手順は実務の順番と
+   * 逆だったので、下書き→発行→確定をサーバ側で1本にしてある。
+   */
+  async function issueStatement() {
+    if (!detail) return;
+    setStmtBusy(true); setError(null);
+    try {
+      const r = await api.post<{ document: { documentNo: string } }>(
+        `/conditions/${detail.id}/statement-documents`,
+        {
+          templateKey: stmtTemplate, period: stmtPeriod.trim(),
+          occurredOn: stmtOn || null,
+          reported: { salesInput: Number(sales.replace(/[^0-9]/g, "")) || 0 }
+        });
+      setStmtDone(r.document.documentNo);
+      setStmtOpen(false);
+      await refreshFlow();
+    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
+    finally { setStmtBusy(false); }
+  }
 
   // ロイヤリティの試算。保存しないので何度でも押せる。
   async function previewRoyalty() {
@@ -353,7 +402,53 @@ export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
                     </label>
                     <div className="row">
                       <button className="btn" onClick={previewRoyalty} disabled={!sales}>試算する</button>
+                      {royalty && !stmtOpen && (
+                        <button className="btn primary" onClick={() => { setStmtOpen(true); setStmtDone(null); }}>
+                          この内容で計算書を出す
+                        </button>
+                      )}
                     </div>
+
+                    {stmtDone && (
+                      <div className="note ok">
+                        計算書 <span className="code">{stmtDone}</span> を発行しました。
+                        金額は発行のときに計算し直しています（試算の値は使いません）。
+                      </div>
+                    )}
+
+                    {stmtOpen && (
+                      <div className="stack" style={{ gap: 8 }}>
+                        <div className="form-grid">
+                          <label className="field">
+                            <span>ひな形</span>
+                            <select value={stmtTemplate} onChange={(e) => setStmtTemplate(e.target.value)}>
+                              {templates.map((t) => (
+                                <option key={t.templateKey} value={t.templateKey}>
+                                  {t.category ? `${t.category}／${t.label}` : t.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="field">
+                            <span>対象期間</span>
+                            <input value={stmtPeriod} placeholder="2026Q2 / 2026-06"
+                                   onChange={(e) => setStmtPeriod(e.target.value)} />
+                          </label>
+                          <label className="field">
+                            <span>発生日</span>
+                            <input type="date" value={stmtOn}
+                                   onChange={(e) => setStmtOn(e.target.value)} />
+                          </label>
+                        </div>
+                        <div className="row">
+                          <button className="btn primary btn-sm"
+                                  disabled={stmtBusy || !stmtTemplate || !stmtPeriod.trim()}
+                                  onClick={() => void issueStatement()}>発行して確定する</button>
+                          <button className="btn btn-sm" onClick={() => setStmtOpen(false)}>やめる</button>
+                          <span className="faint">実績が1件立ち、AGの消化もここで進みます</span>
+                        </div>
+                      </div>
+                    )}
                     {royalty && (
                       <table>
                         <tbody>
@@ -380,17 +475,14 @@ export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
                 setResult(null); setSelected(id);
               }} />
 
-              <ConditionSchedules conditionId={detail.id}
+              <ConditionSchedules conditionId={detail.id} reloadKey={flowVersion}
                 editable={detail.status === "active" || detail.status === "draft"}
-                onChanged={async () => {
-                  setDetail(await api.get<DetailResponse>(`/conditions/${detail.id}`));
-                }} />
+                onChanged={refreshFlow} />
 
               <ConditionEvents conditionId={detail.id} currency={detail.currency}
+                reloadKey={flowVersion}
                 editable={detail.status === "active" || detail.status === "draft"}
-                onChanged={async () => {
-                  setDetail(await api.get<DetailResponse>(`/conditions/${detail.id}`));
-                }} />
+                onChanged={refreshFlow} />
 
               <ConditionCounterparty detail={detail} onDone={async () => {
                 setDetail(await api.get<DetailResponse>(`/conditions/${detail.id}`));

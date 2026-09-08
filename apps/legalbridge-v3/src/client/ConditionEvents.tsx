@@ -20,10 +20,12 @@ interface EventRow {
   createdAt: string; createdBy: string;
 }
 interface TypeOption { value: string; label: string }
+interface TemplateOption { templateKey: string; label: string; category: string | null }
 
 export function ConditionEvents(
-  { conditionId, currency, editable, onChanged }:
-  { conditionId: number; currency: string; editable: boolean; onChanged: () => void }
+  { conditionId, currency, editable, matterId, reloadKey, onChanged }:
+  { conditionId: number; currency: string; editable: boolean;
+    matterId?: number | null; reloadKey?: number; onChanged: () => void }
 ) {
   const [rows, setRows] = useState<EventRow[]>([]);
   const [types, setTypes] = useState<TypeOption[]>([]);
@@ -31,13 +33,48 @@ export function ConditionEvents(
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [v, setV] = useState<Record<string, string>>({});
+  // 実績から文書（検収書など）を作るときの状態。行を選んでテンプレートを決める。
+  const [issuing, setIssuing] = useState<EventRow | null>(null);
+  const [templates, setTemplates] = useState<TemplateOption[]>([]);
+  const [templateKey, setTemplateKey] = useState("");
+  const [issued, setIssued] = useState<string | null>(null);
 
   function load() {
     api.get<{ events: EventRow[]; types: TypeOption[] }>(`/conditions/${conditionId}/events`)
       .then((r) => { setRows(r.events); setTypes(r.types); })
       .catch((e: ApiError) => setError(e.message));
   }
-  useEffect(() => { load(); setAdding(false); setError(null); }, [conditionId]);
+  // 引き直しでは結果を消さない。消すと、発行した文書番号が出た直後に
+  // 引き直しが走って消え、発行できたのかどうか分からなくなる。
+  useEffect(() => { load(); setError(null); }, [conditionId, reloadKey]);
+  useEffect(() => {
+    setAdding(false); setIssuing(null); setIssued(null);
+  }, [conditionId]);
+
+  // テンプレートは文書を作るときにしか要らないので、開くまで取りに行かない。
+  useEffect(() => {
+    if (!issuing || templates.length) return;
+    api.get<{ templates: TemplateOption[] }>("/document-templates")
+      .then((r) => { setTemplates(r.templates); setTemplateKey(r.templates[0]?.templateKey ?? ""); })
+      .catch((e: ApiError) => setError(e.message));
+  }, [issuing]);
+
+  /**
+   * 実績から文書を作る。下書き→発行→実績への紐付けをサーバ側で1本にしてある。
+   * 紐付けが済んで初めて「この検収書は第N回の分」が読めるようになる。
+   */
+  async function issueDocument() {
+    if (!issuing || !templateKey) return;
+    setBusy(true); setError(null);
+    try {
+      const r = await api.post<{ document: { documentNo: string } }>(
+        `/conditions/${conditionId}/event-documents`,
+        { templateKey, eventIds: [issuing.id], matterId: matterId ?? null });
+      setIssued(r.document.documentNo);
+      setIssuing(null); load(); onChanged();
+    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
+    finally { setBusy(false); }
+  }
 
   const label = (value: string) => types.find((t) => t.value === value)?.label ?? value;
   const set = (k: string, value: string) => setV({ ...v, [k]: value });
@@ -157,6 +194,45 @@ export function ConditionEvents(
 
       {!adding && error && <div className="panel-bd"><div className="alert">{error}</div></div>}
 
+      {issued && (
+        <div className="panel-bd">
+          <div className="note ok">
+            文書 <span className="code">{issued}</span> を発行し、実績に結び付けました。
+            中身の確認と PDF は「文書」の画面から開けます。
+          </div>
+        </div>
+      )}
+
+      {issuing && (
+        <div className="panel-bd stack" style={{ borderBottom: "1px solid var(--line)" }}>
+          <div className="row">
+            <b>{label(issuing.eventType)}の実績から文書を作る</b>
+            <span className="faint">
+              {issuing.occurredOn ?? "—"}　{money(issuing.amount, currency)}
+            </span>
+          </div>
+          <label className="field">
+            <span>ひな形</span>
+            <select value={templateKey} onChange={(e) => setTemplateKey(e.target.value)}>
+              {templates.map((t) => (
+                <option key={t.templateKey} value={t.templateKey}>
+                  {t.category ? `${t.category}／${t.label}` : t.label}
+                </option>
+              ))}
+            </select>
+            <span className="faint">
+              検収なら検収書、納品なら納品書。値はこの条件と実績から埋まる
+            </span>
+          </label>
+          <div className="row">
+            <button className="btn primary btn-sm" disabled={busy || !templateKey}
+                    onClick={() => void issueDocument()}>作って発行する</button>
+            <button className="btn btn-sm" onClick={() => setIssuing(null)}>やめる</button>
+            <span className="faint">発行すると番号が振られ、あとから中身は変えられません</span>
+          </div>
+        </div>
+      )}
+
       <div className="tablewrap">
         <table>
           <thead><tr>
@@ -179,7 +255,7 @@ export function ConditionEvents(
                   </td>
                   <td className="faint">
                     {row.documentNo
-                      ? <>計算書 <span className="code">{row.documentNo}</span></>
+                      ? <>文書 <span className="code">{row.documentNo}</span></>
                       : row.createdBy}
                   </td>
                   <td>
@@ -187,8 +263,14 @@ export function ConditionEvents(
                       <button className="btn btn-sm" disabled={busy}
                               onClick={() => void voidEvent(row)}>取り消す</button>
                     )}
+                    {editable && !voided && !row.documentId && (
+                      <button className="btn btn-sm" style={{ marginLeft: 5, whiteSpace: "nowrap" }}
+                              onClick={() => { setIssuing(row); setIssued(null); }}>
+                        文書を作る
+                      </button>
+                    )}
                     {row.documentId && !voided && (
-                      <span className="faint">計算書から</span>
+                      <span className="faint" style={{ whiteSpace: "nowrap" }}>文書あり</span>
                     )}
                   </td>
                 </tr>

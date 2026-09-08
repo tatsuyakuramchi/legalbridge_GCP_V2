@@ -88,3 +88,72 @@ test("記録も取消も監査に残す", async () => {
   await new ConditionEventService(database).add(1, input(), "legal@arch.co.jp");
   assert.equal(database.find("INSERT INTO audit_events")!.params[1], "condition.event_add");
 });
+
+// ---- 実績を文書に結びつける ----
+
+const linkDb = (over: Record<string, Array<Record<string, unknown>>> = {}) =>
+  new FakeDatabase((t) => {
+    for (const [fragment, rows] of Object.entries(over)) {
+      if (t.includes(fragment)) return rows;
+    }
+    if (t.includes("FROM documents WHERE id")) {
+      return [{ id: 7, document_no: "ARC-INS-2026-0001", status: "issued" }];
+    }
+    if (t.includes("FROM condition_events\n            WHERE id = ANY")) {
+      return [{ id: 5, status: "active", document_id: null }];
+    }
+    if (t.includes("UPDATE condition_events SET document_id")) return [{ id: 5 }];
+    return [];
+  });
+
+test("実績を発行済み文書に結びつけると document_id が入る", async () => {
+  const database = linkDb();
+  const r = await new ConditionEventService(database).linkDocument(1, [5], 7, "a");
+  assert.equal(r.documentNo, "ARC-INS-2026-0001");
+  const q = database.find("UPDATE condition_events SET document_id");
+  assert.ok(q, "この列にしか「どの文書から出たか」は無い");
+  assert.deepEqual(q!.params[0], [5]);
+});
+
+test("下書きには結びつけない（捨てられると実績が宙に浮く）", async () => {
+  await assert.rejects(
+    () => new ConditionEventService(
+      linkDb({ "FROM documents WHERE id": [{ id: 7, document_no: null, status: "draft" }] }))
+      .linkDocument(1, [5], 7, "a"), /発行済みの文書にだけ/);
+});
+
+test("取り消し済みの実績は結びつけない", async () => {
+  await assert.rejects(
+    () => new ConditionEventService(
+      linkDb({ "FROM condition_events\n            WHERE id = ANY":
+        [{ id: 5, status: "void", document_id: null }] }))
+      .linkDocument(1, [5], 7, "a"), /取り消し済みの実績は/);
+});
+
+test("すでに別の文書に出した実績は二重に出さない", async () => {
+  await assert.rejects(
+    () => new ConditionEventService(
+      linkDb({ "FROM condition_events\n            WHERE id = ANY":
+        [{ id: 5, status: "active", document_id: 99 }] }))
+      .linkDocument(1, [5], 7, "a"), /すでに別の文書に結びついている/);
+});
+
+test("同じ文書へならやり直せる（途中で落ちたときの復旧）", async () => {
+  const database = linkDb({ "FROM condition_events\n            WHERE id = ANY":
+    [{ id: 5, status: "active", document_id: 7 }] });
+  await new ConditionEventService(database).linkDocument(1, [5], 7, "a");
+  assert.ok(database.find("UPDATE condition_events SET document_id"));
+});
+
+test("この条件に無い実績は混ぜられない", async () => {
+  await assert.rejects(
+    () => new ConditionEventService(
+      linkDb({ "FROM condition_events\n            WHERE id = ANY": [] }))
+      .linkDocument(1, [5], 7, "a"), /この条件に無い実績/);
+});
+
+test("結びつけも監査に残す", async () => {
+  const database = linkDb();
+  await new ConditionEventService(database).linkDocument(1, [5], 7, "legal@arch.co.jp");
+  assert.equal(database.find("INSERT INTO audit_events")!.params[1], "condition.link_document");
+});

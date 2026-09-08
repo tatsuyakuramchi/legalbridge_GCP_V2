@@ -6,7 +6,8 @@ import { requireRole, requireWritable } from "./auth.js";
 import { ConditionRepository } from "./conditions/repository.js";
 import { ConditionWriteService } from "./conditions/write-service.js";
 import { ConditionEventService, EVENT_TYPES } from "./conditions/event-service.js";
-import { ConditionScheduleService, TRIGGER_KINDS, generateLines } from "./conditions/schedule-service.js";
+import { ConditionScheduleService, TRIGGER_KINDS, EVENT_TYPE_BY_TRIGGER,
+         generateLines } from "./conditions/schedule-service.js";
 import { MatterWriteService } from "./matters/write-service.js";
 import { MatterLinkService, CONDITION_KINDS_BY_MATTER } from "./matters/link-service.js";
 import { DOCUMENT_STYLES } from "./matters/flow.js";
@@ -639,7 +640,9 @@ export function createRoutes(database: Transactable) {
   // 予定明細。毎月28万円の1年契約なら12行並ぶ。
   // 状態は保存せず、実績と支払の割当から導く。
   router.get("/conditions/:id/schedules", asyncRoute(async (req, res) => {
-    res.json({ ...await conditionSchedules.list(Number(req.params.id)), triggers: TRIGGER_KINDS });
+    res.json({ ...await conditionSchedules.list(Number(req.params.id)),
+               triggers: TRIGGER_KINDS, eventTypes: EVENT_TYPES,
+               eventTypeByTrigger: EVENT_TYPE_BY_TRIGGER });
   }));
 
   const scheduleLine = z.object({
@@ -680,6 +683,23 @@ export function createRoutes(database: Transactable) {
     }));
 
   // 実績（条件明細の数値）。記録は消さず、取り消しは void で残す。
+  // 予定明細を実績に移す。予定と実績を繋ぐのは condition_events.schedule_id
+  // だけで、これまで書く処理が無かった。
+  const recordSchema = z.object({
+    occurredOn: z.string().date().nullable().optional(),
+    amount: z.coerce.number().int().nullable().optional(),
+    eventType: z.enum(["manufacturing", "sales", "sublicense_receipt",
+                       "inspection", "delivery", "service_period", "adjustment"]).optional(),
+    note: z.string().trim().max(2000).nullable().optional()
+  });
+  router.post("/conditions/:id/schedules/:scheduleId/record",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = recordSchema.parse(req.body ?? {});
+      res.status(201).json(await conditionSchedules.record(
+        Number(req.params.id), Number(req.params.scheduleId), input, actor(res)));
+    }));
+
   router.get("/conditions/:id/events", asyncRoute(async (req, res) => {
     res.json({ events: await conditionEvents.list(Number(req.params.id)), types: EVENT_TYPES });
   }));
@@ -718,6 +738,45 @@ export function createRoutes(database: Transactable) {
       code: z.string().trim().max(20).nullable().optional()
     })).max(200)
   });
+  // 実績から文書を作る。検収書がこれにあたる。
+  //
+  // 下書き・発行・紐付けはそれぞれ別のトランザクションで走る（既存の発行経路を
+  // 壊さないため）。途中で落ちたときは、できたところまでを返す。発行済みの文書に
+  // 後から紐づけ直せるように、link だけの経路も別に置いてある。
+  const eventDocSchema = z.object({
+    templateKey: z.string().trim().min(1).max(120),
+    eventIds: z.array(z.coerce.number().int().positive()).min(1).max(200),
+    matterId: z.coerce.number().int().positive().nullable().optional(),
+    manualInputs: z.record(z.string(), z.unknown()).optional()
+  });
+  router.post("/conditions/:id/event-documents",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = eventDocSchema.parse(req.body ?? {});
+      const conditionId = Number(req.params.id);
+      const draft = await issues.createDraft({
+        templateKey: input.templateKey, conditionIds: [conditionId],
+        matterId: input.matterId ?? null, manualInputs: input.manualInputs ?? {}
+      }, actor(res));
+      const issued = await issues.issue(draft.id, actor(res));
+      const linked = await conditionEvents.linkDocument(
+        conditionId, input.eventIds, issued.id, actor(res));
+      res.status(201).json({ document: issued, ...linked });
+    }));
+
+  // 発行済みの文書に実績を後から紐づける。上の経路が途中で落ちたときの復旧口。
+  const linkDocSchema = z.object({
+    documentId: z.coerce.number().int().positive(),
+    eventIds: z.array(z.coerce.number().int().positive()).min(1).max(200)
+  });
+  router.post("/conditions/:id/events/link-document",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = linkDocSchema.parse(req.body ?? {});
+      res.json(await conditionEvents.linkDocument(
+        Number(req.params.id), input.eventIds, input.documentId, actor(res)));
+    }));
+
   router.put("/conditions/:id/scopes",
     requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
@@ -866,6 +925,30 @@ export function createRoutes(database: Transactable) {
         documentId: z.coerce.number().int().positive()
       }).parse(req.body ?? {});
       res.status(201).json(await royalty.finalize({ conditionId: Number(req.params.id), ...input }, actor(res)));
+    }));
+
+  // 条件から計算書を作る。文書を先に発行してから結び付ける手順は、
+  // 実務の順番（条件があって、期の売上が出て、計算書を出す）と逆だった。
+  // ここは 下書き → 発行 → 確定 を1操作にまとめる。金額は確定時に計算し直す。
+  router.post("/conditions/:id/statement-documents",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = calculationSchema.extend({
+        templateKey: z.string().trim().min(1).max(120),
+        matterId: z.coerce.number().int().positive().nullable().optional(),
+        manualInputs: z.record(z.string(), z.unknown()).optional()
+      }).parse(req.body ?? {});
+      const conditionId = Number(req.params.id);
+      const draft = await issues.createDraft({
+        templateKey: input.templateKey, conditionIds: [conditionId],
+        matterId: input.matterId ?? null, manualInputs: input.manualInputs ?? {}
+      }, actor(res));
+      const issued = await issues.issue(draft.id, actor(res));
+      const statement = await royalty.finalize({
+        conditionId, period: input.period, occurredOn: input.occurredOn,
+        eventType: input.eventType, reported: input.reported, documentId: issued.id
+      }, actor(res));
+      res.status(201).json({ document: issued, ...statement });
     }));
 
   router.get("/statements", asyncRoute(async (req, res) => {

@@ -104,3 +104,90 @@ test("旧版・無効の条件の明細は変えられない", async () => {
     () => new ConditionScheduleService(db({ "SELECT id, status FROM conditions": [{ status: "superseded" }] }))
       .replace(1, [line(1)], "a"), /旧版の明細は変えられません/);
 });
+
+// ---- 予定を実績に移す ----
+
+const recDb = (over: Record<string, Array<Record<string, unknown>>> = {}) =>
+  new FakeDatabase((t) => {
+    for (const [fragment, rows] of Object.entries(over)) {
+      if (t.includes(fragment)) return rows;
+    }
+    if (t.includes("SELECT id, status FROM conditions")) return [{ id: 1, status: "active" }];
+    if (t.includes("FROM condition_schedules s WHERE s.id")) {
+      return [{ id: 9, seq: 4, label: "2026年7月分", trigger_kind: "on_inspection",
+                planned_amount: 280000, due_on: "2026-07-31" }];
+    }
+    if (t.includes("WHERE schedule_id = $1 AND status = 'active'")) return [];
+    if (t.includes("INSERT INTO condition_events")) return [{ id: 77 }];
+    return [];
+  });
+
+test("予定明細を実績にすると schedule_id を持った実績が立つ", async () => {
+  const database = recDb();
+  const r = await new ConditionScheduleService(database).record(1, 9, {}, "a");
+  assert.equal(r.eventId, 77);
+  const insert = database.find("INSERT INTO condition_events");
+  assert.ok(insert, "実績を挿す");
+  assert.match(insert!.text, /schedule_id/, "予定と実績を繋ぐのはこの列だけ");
+  assert.equal(insert!.params[1], 9, "どの予定の分かを持たせる");
+});
+
+test("金額を省くと予定額がそのまま実績になる", async () => {
+  const database = recDb();
+  await new ConditionScheduleService(database).record(1, 9, {}, "a");
+  const insert = database.find("INSERT INTO condition_events")!;
+  assert.equal(insert.params[5], 280000);
+});
+
+test("実績の種別は予定の起点から決まる（検収後の予定なら検収）", async () => {
+  const database = recDb();
+  await new ConditionScheduleService(database).record(1, 9, {}, "a");
+  assert.equal(database.find("INSERT INTO condition_events")!.params[2], "inspection");
+});
+
+test("種別は画面から変えられる", async () => {
+  const database = recDb();
+  await new ConditionScheduleService(database).record(1, 9, { eventType: "delivery" }, "a");
+  assert.equal(database.find("INSERT INTO condition_events")!.params[2], "delivery");
+});
+
+test("予定の名前が実績の対象期間になる", async () => {
+  const database = recDb();
+  await new ConditionScheduleService(database).record(1, 9, {}, "a");
+  assert.equal(database.find("INSERT INTO condition_events")!.params[4], "2026年7月分");
+});
+
+test("同じ予定に実績を二重には付けられない", async () => {
+  const database = recDb({ "WHERE schedule_id = $1 AND status = 'active'": [{ id: 5 }] });
+  await assert.rejects(
+    () => new ConditionScheduleService(database).record(1, 9, {}, "a"),
+    /第4回にはすでに実績が付いています/);
+  assert.equal(database.find("INSERT INTO condition_events"), undefined);
+});
+
+test("旧版・無効の条件には実績を足せない", async () => {
+  await assert.rejects(
+    () => new ConditionScheduleService(
+      recDb({ "SELECT id, status FROM conditions": [{ status: "superseded" }] }))
+      .record(1, 9, {}, "a"), /旧版には実績を足せません/);
+});
+
+test("他の条件の予定明細は動かせない", async () => {
+  await assert.rejects(
+    () => new ConditionScheduleService(
+      recDb({ "FROM condition_schedules s WHERE s.id": [] })).record(1, 9, {}, "a"),
+    /予定明細 9 が見つかりません/);
+});
+
+test("0円以下の実績は受け付けない", async () => {
+  await assert.rejects(
+    () => new ConditionScheduleService(recDb()).record(1, 9, { amount: 0 }, "a"),
+    /実績の金額は1以上/);
+});
+
+test("予定は書き換えない（予定と実績の差があとから読めるように）", async () => {
+  const database = recDb();
+  await new ConditionScheduleService(database).record(1, 9, { amount: 300000 }, "a");
+  assert.equal(database.find("UPDATE condition_schedules"), undefined);
+  assert.equal(database.find("INSERT INTO condition_events")!.params[5], 300000);
+});

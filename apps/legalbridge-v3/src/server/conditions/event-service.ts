@@ -173,4 +173,62 @@ export class ConditionEventService {
       });
     } catch (error) { throw translate(error); }
   }
+
+  /**
+   * 実績を発行済み文書に結びつける。検収書・計算書がどの実績から出たかは
+   * この列（condition_events.document_id）にしか無く、書く処理が無かったため
+   * 「この検収書は何回目の分か」が追えなかった。
+   *
+   * 文書は発行済みのものだけを受ける。下書きに結ぶと、下書きを捨てたときに
+   * 実績だけが宙に浮く。
+   */
+  async linkDocument(
+    conditionId: number, eventIds: number[], documentId: number, actor: string
+  ): Promise<{ linked: number; documentNo: string | null }> {
+    const ids = [...new Set(eventIds.map((n) => Math.trunc(n)))].filter((n) => n > 0);
+    if (!ids.length) throw new DomainError("VALIDATION", "結びつける実績がありません");
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const doc = await client.query(
+          "SELECT id, document_no, status FROM documents WHERE id = $1", [documentId]);
+        const document = doc.rows[0] as
+          { document_no: string | null; status: string } | undefined;
+        if (!document) throw new DomainError("NOT_FOUND", `文書 ${documentId} が見つかりません`);
+        if (document.status !== "issued") {
+          throw new DomainError("CONFLICT", "発行済みの文書にだけ実績を結びつけられます");
+        }
+
+        const rows = await client.query(
+          `SELECT id, status, document_id FROM condition_events
+            WHERE id = ANY($1::bigint[]) AND condition_id = $2`, [ids, conditionId]);
+        const found = rows.rows as Array<{ id: number; status: string; document_id: number | null }>;
+        if (found.length !== ids.length) {
+          throw new DomainError("NOT_FOUND", "この条件に無い実績が混ざっています");
+        }
+        const voided = found.filter((r) => r.status !== "active");
+        if (voided.length) {
+          throw new DomainError("CONFLICT",
+            `取り消し済みの実績は結びつけられません（#${voided.map((r) => r.id).join("・")}）`);
+        }
+        const taken = found.filter((r) => r.document_id !== null && r.document_id !== documentId);
+        if (taken.length) {
+          throw new DomainError("CONFLICT",
+            `すでに別の文書に結びついている実績があります（#${taken.map((r) => r.id).join("・")}）。` +
+            "作り直すなら、先にその文書を無効にしてください");
+        }
+
+        const updated = await client.query(
+          `UPDATE condition_events SET document_id = $3
+            WHERE id = ANY($1::bigint[]) AND condition_id = $2 AND document_id IS NULL`,
+          [ids, conditionId, documentId]);
+
+        await recordAudit(client, {
+          actor, action: "condition.link_document", targetType: "condition", targetId: conditionId,
+          detail: { documentId, documentNo: document.document_no, eventIds: ids,
+                    linked: updated.rowCount ?? 0 }
+        });
+        return { linked: updated.rowCount ?? 0, documentNo: document.document_no };
+      });
+    } catch (error) { throw translate(error); }
+  }
 }

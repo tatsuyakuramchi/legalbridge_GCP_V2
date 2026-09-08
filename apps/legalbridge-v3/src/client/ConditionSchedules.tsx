@@ -23,6 +23,9 @@ interface View {
   conditionId: number; currency: string; lines: Row[];
   total: { planned: number; recorded: number; paid: number };
   triggers: Trigger[];
+  eventTypes: Array<{ value: string; label: string }>;
+  /** 予定の起点から実績の種別を決める既定値。画面では変えられる。 */
+  eventTypeByTrigger: Record<string, string>;
 }
 type Draft = { seq: number; label: string; triggerKind: string; plannedAmount: string; dueOn: string };
 
@@ -33,8 +36,8 @@ const STATUS: Record<Row["status"], { label: string; tone: string }> = {
 };
 
 export function ConditionSchedules(
-  { conditionId, editable, onChanged }:
-  { conditionId: number; editable: boolean; onChanged: () => void }
+  { conditionId, editable, reloadKey, onChanged }:
+  { conditionId: number; editable: boolean; reloadKey?: number; onChanged: () => void }
 ) {
   const [view, setView] = useState<View | null>(null);
   const [draft, setDraft] = useState<Draft[] | null>(null);
@@ -42,12 +45,41 @@ export function ConditionSchedules(
   const [busy, setBusy] = useState(false);
   // 定期の組み立て
   const [gen, setGen] = useState({ startOn: "", count: "12", everyMonths: "1", amount: "" });
+  // 予定を実績に移すときの入力。開いている行そのものを持つ。
+  const [recording, setRecording] = useState<Row | null>(null);
+  const [rec, setRec] = useState({ occurredOn: "", amount: "", eventType: "", note: "" });
 
   function load() {
     api.get<View>(`/conditions/${conditionId}/schedules`)
       .then(setView).catch((e: ApiError) => setError(e.message));
   }
-  useEffect(() => { load(); setDraft(null); setError(null); }, [conditionId]);
+  useEffect(() => {
+    load(); setDraft(null); setError(null); setRecording(null);
+  }, [conditionId, reloadKey]);
+  // 行を開いたら、予定の値をそのまま初期値にする。ほとんどの回は予定どおりに済む。
+  useEffect(() => {
+    if (!recording) return;
+    setRec({
+      occurredOn: recording.dueOn ?? new Date().toISOString().slice(0, 10),
+      amount: String(recording.plannedAmount),
+      eventType: view?.eventTypeByTrigger?.[recording.triggerKind] ?? "service_period",
+      note: ""
+    });
+  }, [recording]);
+
+  async function saveRecord() {
+    if (!recording) return;
+    setBusy(true); setError(null);
+    try {
+      await api.post(`/conditions/${conditionId}/schedules/${recording.id}/record`, {
+        occurredOn: rec.occurredOn || null,
+        amount: Number(rec.amount.replace(/[^0-9]/g, "")) || null,
+        eventType: rec.eventType, note: rec.note.trim() || null
+      });
+      setRecording(null); load(); onChanged();
+    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
+    finally { setBusy(false); }
+  }
 
   if (!view) return null;
   const cur = view.currency;
@@ -138,17 +170,67 @@ export function ConditionSchedules(
 
       {/* 条件の詳細は画面の右半分なので、編集中の列は入りきらない。
           潰すのではなく横に流す（.tablewrap が overflow-x を持っている）。 */}
+      {recording && (
+        <div className="panel-bd stack" style={{ borderBottom: "1px solid var(--line)" }}>
+          <div className="row">
+            <b>第{recording.seq}回を実績にする</b>
+            <span className="faint">
+              {recording.label ?? "（名前なし）"}　予定 {money(recording.plannedAmount, cur)}
+            </span>
+          </div>
+          <div className="form-grid">
+            <label className="field">
+              <span>種類</span>
+              <select value={rec.eventType}
+                      onChange={(e) => setRec({ ...rec, eventType: e.target.value })}>
+                {view.eventTypes.map((t) => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span>発生日</span>
+              <input type="date" value={rec.occurredOn}
+                     onChange={(e) => setRec({ ...rec, occurredOn: e.target.value })} />
+            </label>
+            <label className="field">
+              <span>実績額</span>
+              <input value={rec.amount} style={{ textAlign: "right" }}
+                     onChange={(e) => setRec({ ...rec, amount: e.target.value.replace(/[^0-9]/g, "") })} />
+              {Number(rec.amount || 0) !== recording.plannedAmount && (
+                <span className="faint" style={{ color: "var(--out)" }}>
+                  予定と差 {money(Number(rec.amount || 0) - recording.plannedAmount, cur)}
+                </span>
+              )}
+            </label>
+            <label className="field">
+              <span>備考</span>
+              <input value={rec.note} placeholder="検収の結果など"
+                     onChange={(e) => setRec({ ...rec, note: e.target.value })} />
+            </label>
+          </div>
+          <div className="row">
+            <button className="btn primary btn-sm" disabled={busy} onClick={saveRecord}>
+              第{recording.seq}回を記録する
+            </button>
+            <button className="btn btn-sm" onClick={() => setRecording(null)}>やめる</button>
+            <span className="faint">
+              予定は書き換えません。予定と実績のどちらも残るので、あとで差が読めます
+            </span>
+          </div>
+        </div>
+      )}
+
       <div className="tablewrap">
         <table style={draft ? { minWidth: 820 } : undefined}>
           <thead><tr>
-            <th style={{ width: 40 }}>回</th>
-            <th style={{ minWidth: 150 }}>名前</th>
-            <th style={{ width: 92 }}>起点</th>
-            <th style={{ width: draft ? 150 : 106 }}>期日</th>
-            <th className="num" style={{ width: 116 }}>予定額</th>
-            <th className="num" style={{ width: 118 }}>実績</th>
-            <th style={{ width: 88 }}>状態</th>
-            {draft && <th style={{ width: 62 }}></th>}
+            <th style={{ width: 36 }}>回</th>
+            <th style={{ minWidth: draft ? 150 : 120 }}>名前</th>
+            {draft && <th style={{ width: 92 }}>起点</th>}
+            <th style={{ width: draft ? 150 : 100 }}>期日</th>
+            <th className="num" style={{ width: draft ? 116 : 104 }}>予定額</th>
+            <th className="num" style={{ width: draft ? 118 : 104 }}>実績</th>
+            <th style={{ width: draft ? 62 : 98 }}>状態</th>
           </tr></thead>
           <tbody>
             {draft ? draft.map((d, i) => (
@@ -181,9 +263,11 @@ export function ConditionSchedules(
             )) : view.lines.map((l) => (
               <tr key={l.id}>
                 <td className="code">{l.seq}</td>
-                <td>{l.label ?? <span className="faint">（名前なし）</span>}</td>
-                <td className="faint">
-                  {view.triggers.find((t) => t.value === l.triggerKind)?.label ?? l.triggerKind}
+                <td>
+                  {l.label ?? <span className="faint">（名前なし）</span>}
+                  <div className="faint">
+                    {view.triggers.find((t) => t.value === l.triggerKind)?.label ?? l.triggerKind}
+                  </div>
                 </td>
                 <td className="code">{l.dueOn ?? "—"}</td>
                 <td className="num">{money(l.plannedAmount, cur)}</td>
@@ -201,14 +285,22 @@ export function ConditionSchedules(
                   )}
                 </td>
                 <td>
-                  <span className={STATUS[l.status].tone ? `tag ${STATUS[l.status].tone}` : "tag"}>
-                    {STATUS[l.status].label}
-                  </span>
+                  {/* 予定の行に必要なのは「状態」ではなく「次にやること」なので、
+                      未消化なら状態タグの代わりにそのままボタンを出す。 */}
+                  {editable && l.status === "planned" ? (
+                    <button className="btn btn-sm" style={{ whiteSpace: "nowrap" }}
+                      onClick={() => setRecording(l)}>実績にする</button>
+                  ) : (
+                    <span className={STATUS[l.status].tone ? `tag ${STATUS[l.status].tone}` : "tag"}
+                          style={{ whiteSpace: "nowrap" }}>
+                      {STATUS[l.status].label}
+                    </span>
+                  )}
                 </td>
               </tr>
             ))}
             {!view.lines.length && !draft && (
-              <tr><td colSpan={7} className="faint">
+              <tr><td colSpan={6} className="faint">
                 予定明細がありません。毎月払いの契約なら、ここに回数分の行を作ります。
               </td></tr>
             )}

@@ -28,6 +28,17 @@ export const TRIGGER_KINDS: Array<{ value: TriggerKind; label: string; hint: str
   { value: "on_execution", label: "契約時", hint: "着手金・契約一時金" }
 ];
 
+/**
+ * 予定の起点から、実績の種別を決める。予定明細を実績に移すときの既定値で、
+ * 画面では変えられる（検収後の予定でも、実際には納品で払うことがある）。
+ */
+export const EVENT_TYPE_BY_TRIGGER: Record<TriggerKind, string> = {
+  on_inspection: "inspection",
+  on_delivery: "delivery",
+  periodic: "service_period",
+  on_execution: "service_period"
+};
+
 export interface ScheduleLine {
   seq: number;
   label: string | null;
@@ -226,6 +237,86 @@ export class ConditionScheduleService {
                     total: lines.reduce((s, l) => s + Math.round(l.plannedAmount), 0) }
         });
         return { lines: lines.length };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 予定明細を実績に移す。
+   *
+   * これまで condition_events.schedule_id を書く処理が1つも無く、予定を
+   * 立てても「その回が消化されたか」を記録する手段が無かった。予定と実績を
+   * 繋ぐのはこの列だけなので、ここが唯一の入口になる。
+   *
+   * 予定は書き換えない。実績が予定と違う金額でも、予定は予定として残す
+   * （いくらの予定がいくらになったかが、あとで読めなくなるため）。
+   */
+  async record(
+    conditionId: number, scheduleId: number,
+    input: { occurredOn?: string | null; amount?: number | null;
+             eventType?: string | null; note?: string | null },
+    actor: string
+  ): Promise<{ eventId: number; scheduleId: number }> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const head = await client.query(
+          "SELECT id, status FROM conditions WHERE id = $1", [conditionId]);
+        const condition = head.rows[0] as { status: string } | undefined;
+        if (!condition) throw new DomainError("NOT_FOUND", `条件 ${conditionId} が見つかりません`);
+        if (condition.status === "superseded" || condition.status === "void") {
+          throw new DomainError("CONFLICT",
+            condition.status === "superseded"
+              ? "旧版には実績を足せません。最新版を開いてください"
+              : "無効にした条件には実績を足せません");
+        }
+
+        const found = await client.query(
+          `SELECT s.id, s.seq, s.label, s.trigger_kind, s.planned_amount, s.due_on
+             FROM condition_schedules s WHERE s.id = $1 AND s.condition_id = $2`,
+          [scheduleId, conditionId]);
+        const line = found.rows[0] as {
+          seq: number; label: string | null; trigger_kind: TriggerKind;
+          planned_amount: string | number; due_on: unknown;
+        } | undefined;
+        if (!line) throw new DomainError("NOT_FOUND", `予定明細 ${scheduleId} が見つかりません`);
+
+        // 1つの予定に実績を二重に付けない。直すなら実績を取り消してからにする。
+        const already = await client.query(
+          "SELECT id FROM condition_events WHERE schedule_id = $1 AND status = 'active'",
+          [scheduleId]);
+        if (already.rows[0]) {
+          throw new DomainError("CONFLICT",
+            `第${line.seq}回にはすでに実績が付いています。` +
+            "直すなら先にその実績を取り消してください");
+        }
+
+        const amount = Math.round(
+          input.amount === null || input.amount === undefined
+            ? Number(line.planned_amount ?? 0) : input.amount);
+        if (amount <= 0) throw new DomainError("VALIDATION", "実績の金額は1以上です");
+
+        const occurredOn = str(input.occurredOn) ?? dateStr(line.due_on);
+        const eventType = str(input.eventType) ?? EVENT_TYPE_BY_TRIGGER[line.trigger_kind];
+        // 予定の名前を実績の期間に写す。「2026年4月分」がそのまま計算書に出る。
+        const period = str(line.label);
+
+        const inserted = await client.query(
+          `INSERT INTO condition_events
+             (condition_id, schedule_id, event_type, occurred_on, period,
+              gross_amount, deductions, amount, note, created_by)
+           VALUES ($1, $2, $3, COALESCE($4::date, current_date), $5, $6, 0, $6, $7, $8)
+           RETURNING id`,
+          [conditionId, scheduleId, eventType, occurredOn, period, amount,
+           str(input.note), actor]);
+        const eventId = Number((inserted.rows[0] as { id: number }).id);
+
+        await recordAudit(client, {
+          actor, action: "condition.record_schedule",
+          targetType: "condition", targetId: conditionId,
+          detail: { scheduleId, seq: line.seq, eventId, eventType, amount,
+                    plannedAmount: Number(line.planned_amount ?? 0) }
+        });
+        return { eventId, scheduleId };
       });
     } catch (error) { throw translate(error); }
   }
