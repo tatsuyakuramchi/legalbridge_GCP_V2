@@ -4,6 +4,7 @@ import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { evaluateGate, type GateResult, type GateSettings, type IntegrationChannel } from "./gate.js";
 import type { DispatchAdapter, DispatchRequest } from "./adapters.js";
+import { applyInbound } from "./inbound-handlers.js";
 
 export interface DispatchOutcome {
   channel: IntegrationChannel;
@@ -122,7 +123,8 @@ export class DispatchService {
   /** 外部からの受信。同じイベントを二度処理しないよう冪等キーで弾く。 */
   async receiveWebhook(input: {
     source: string; externalId: string; payload: Record<string, unknown>;
-  }): Promise<{ accepted: boolean; duplicated: boolean }> {
+  }): Promise<{ accepted: boolean; duplicated: boolean;
+               applied?: boolean; detail?: Record<string, unknown> }> {
     if (!String(input.externalId ?? "").trim()) {
       throw new DomainError("VALIDATION", "外部IDの無い受信は受け付けられません");
     }
@@ -138,7 +140,13 @@ export class DispatchService {
           [`${input.source}.receive`, key, JSON.stringify({
             externalId: input.externalId, payload: input.payload
           })]);
-        return { accepted: true, duplicated: inserted.rows.length === 0 };
+        if (inserted.rows.length === 0) {
+          // 同じ出来事を二度反映しない。記録だけで戻る。
+          return { accepted: true, duplicated: true };
+        }
+        // 受け取っただけでは業務は動かない。ここで反映する。
+        const result = await applyInbound(client, input);
+        return { accepted: true, duplicated: false, applied: result.applied, detail: result.detail };
       });
     } catch (error) { throw translate(error); }
   }

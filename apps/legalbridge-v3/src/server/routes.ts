@@ -35,6 +35,7 @@ import { MonitoringRepository } from "./monitoring/repository.js";
 import { ReceivableRepository } from "./monitoring/receivables.js";
 import { ContractCheckRepository } from "./monitoring/contract-check.js";
 import { DispatchService } from "./integrations/dispatch-service.js";
+import { DailyJob } from "./jobs/daily.js";
 import {
   BacklogAdapter, CloudSignAdapter, GmailAdapter, MemoryAdapter, SlackAdapter,
   type DispatchAdapter
@@ -115,6 +116,7 @@ export function createRoutes(database: Transactable) {
     readOnly: config.readOnly,
     allowlist: config.dispatchAllowlist
   }));
+  const dailyJob = new DailyJob(database, dispatch);
   const matterFolders = new MatterFolderStorageService(
     database,
     config.driveMatterParentFolderId
@@ -184,6 +186,21 @@ export function createRoutes(database: Transactable) {
       const { reason } = reasonSchema.parse(req.body ?? {});
       res.status(201).json(await issues.reissue(Number(req.params.id), reason, actor(res)));
     }));
+
+  // 日次の点検。画面を開かないと気づけないものを決まった時刻に洗い出す。
+  // Cloud Scheduler から叩く。通知はゲートを通すので、off なら送らない。
+  const jobSchema = z.object({
+    notifyChannel: z.enum(["slack", "gmail"]).optional(),
+    notifyTo: z.string().trim().max(300).optional()
+  });
+  router.post("/jobs/daily", requireRole("admin"),
+    asyncRoute(async (req, res) => {
+      res.json(await dailyJob.run(jobSchema.parse(req.body ?? {})));
+    }));
+  // 洗い出しだけ見る（通知しない）。画面から今の状態を確かめるのに使う。
+  router.get("/jobs/daily/preview", asyncRoute(async (_req, res) => {
+    res.json(await dailyJob.run());
+  }));
 
   // 支払を条件へ割り当てる。これが無いと「どの取り決めに対する支払か」が
   // 追えず、債権の未収も出せない。

@@ -94,7 +94,10 @@ test("受信は外部IDで一意にし、二度目は duplicated になる", asy
   const service = new DispatchService(db, {}, () => live);
   const first = await service.receiveWebhook({
     source: "cloudsign", externalId: "evt-1", payload: { status: "signed" } });
-  assert.deepEqual(first, { accepted: true, duplicated: false });
+  assert.equal(first.accepted, true);
+  assert.equal(first.duplicated, false);
+  // 受け取ったら業務へ反映する。反映できたかも返す。
+  assert.equal(typeof first.applied, "boolean");
 
   const quiet = new FakeDatabase();   // ON CONFLICT DO NOTHING で0行
   const second = new DispatchService(quiet, {}, () => live);
