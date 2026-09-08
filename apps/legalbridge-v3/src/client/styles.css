@@ -154,3 +154,24 @@ tr.overdue td { background: #fdf2f2; }
 }
 .create-form .row { margin-top: 14px; align-items: center; gap: 10px; }
 .create-form .alert { margin-top: 12px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+/* 横断検索。どの画面からでも番号・名前で辿れるようにナビへ常設する。 */
+.search { position: relative; padding: 0 12px 10px; }
+.search input {
+  width: 100%; box-sizing: border-box; padding: 6px 8px;
+  border: 1px solid #cfd6e4; border-radius: 6px; font: inherit; background: #fff;
+}
+.search-results {
+  position: absolute; z-index: 20; left: 12px; right: 12px; top: 100%;
+  max-height: 60vh; overflow: auto; background: #fff;
+  border: 1px solid #cfd6e4; border-radius: 8px; box-shadow: 0 8px 24px rgba(16,24,40,.12);
+  padding: 6px;
+}
+.search-group + .search-group { border-top: 1px solid #eef1f6; margin-top: 6px; padding-top: 6px; }
+.search-group-hd { font-size: 11px; color: #667085; padding: 2px 6px; }
+.search-hit {
+  display: flex; flex-direction: column; gap: 1px; width: 100%; text-align: left;
+  padding: 6px; border: 0; background: none; border-radius: 6px; cursor: pointer; font: inherit;
+}
+.search-hit:hover, .search-hit:focus-visible { background: #f2f5fa; }
+.search-title { font-size: 13px; }

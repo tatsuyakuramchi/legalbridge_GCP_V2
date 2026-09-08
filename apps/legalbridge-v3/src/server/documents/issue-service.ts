@@ -157,6 +157,97 @@ export class DocumentIssueService {
     } catch (error) { throw translate(error); }
   }
 
+  /**
+   * 発行済み文書の無効化。
+   *
+   * 行は消さない。発行した事実そのものが記録なので、消すと「何を出したか」を
+   * 追えなくなる。status を void にして理由を監査に残す。
+   * 保管先（Drive）のファイルにも触らない。外に出したものは取り消せない。
+   */
+  async void(documentId: number, reason: string, actor: string): Promise<{ id: number; documentNo: string | null }> {
+    const note = String(reason ?? "").trim();
+    if (!note) {
+      throw new DomainError("VALIDATION", "無効にする理由を書いてください。理由なしでは無効にできません");
+    }
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const head = await client.query(
+          "SELECT id, document_no, status FROM documents WHERE id = $1 FOR UPDATE", [documentId]);
+        const row = head.rows[0] as { id: number; document_no: string | null; status: string } | undefined;
+        if (!row) throw new DomainError("NOT_FOUND", `文書 ${documentId} が見つかりません`);
+        if (row.status === "void") throw new DomainError("CONFLICT", "この文書はすでに無効です");
+        if (row.status === "superseded") {
+          throw new DomainError("CONFLICT",
+            "差し替え済みの文書は無効にできません。差し替えた新しい版を無効にしてください");
+        }
+
+        await client.query(
+          "UPDATE documents SET status = 'void' WHERE id = $1", [documentId]);
+        await recordAudit(client, {
+          actor, action: "document.void", targetType: "document", targetId: documentId,
+          detail: { documentNo: row.document_no, from: row.status, reason: note }
+        });
+        return { id: documentId, documentNo: row.document_no };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 再発行。発行済みの文書を下書きとして作り直す。
+   *
+   * 元の文書は消さず superseded にし、新しい文書から supersedes_id で繋ぐ。
+   * 紐づく条件も引き継ぐので、そのまま発行し直せる。値は発行時に条件から
+   * 引き直すため、条件を直してから再発行すれば新しい値で出る。
+   */
+  async reissue(
+    documentId: number, reason: string, actor: string
+  ): Promise<{ id: number; supersedesId: number }> {
+    const note = String(reason ?? "").trim();
+    if (!note) {
+      throw new DomainError("VALIDATION", "作り直す理由を書いてください");
+    }
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const head = await client.query(
+          `SELECT id, document_no, status, template_version_id, matter_id, agreement_id, manual_inputs
+             FROM documents WHERE id = $1 FOR UPDATE`, [documentId]);
+        const row = head.rows[0] as Record<string, any> | undefined;
+        if (!row) throw new DomainError("NOT_FOUND", `文書 ${documentId} が見つかりません`);
+        if (row.status !== "issued") {
+          throw new DomainError("CONFLICT",
+            `発行済みの文書だけ作り直せます（この文書は ${row.status}）`);
+        }
+        if (!row.template_version_id) {
+          throw new DomainError("VALIDATION",
+            "テンプレートを持たない取込文書は作り直せません。新しく登録してください");
+        }
+
+        const created = await client.query(
+          `INSERT INTO documents (template_version_id, matter_id, agreement_id, status,
+                                  manual_inputs, supersedes_id)
+           VALUES ($1, $2, $3, 'draft', $4::jsonb, $5) RETURNING id`,
+          [row.template_version_id, row.matter_id, row.agreement_id,
+           JSON.stringify(row.manual_inputs ?? {}), documentId]);
+        const newId = Number((created.rows[0] as { id: number }).id);
+
+        // 紐づく条件を引き継ぐ。参照方向は文書→条件なので、行を複製する。
+        await client.query(
+          `INSERT INTO document_conditions (document_id, condition_id, line_no)
+           SELECT $2, condition_id, line_no FROM document_conditions WHERE document_id = $1
+           ON CONFLICT (document_id, condition_id) DO NOTHING`, [documentId, newId]);
+
+        await client.query(
+          "UPDATE documents SET status = 'superseded' WHERE id = $1", [documentId]);
+
+        await recordAudit(client, {
+          actor, action: "document.reissue", targetType: "document", targetId: documentId,
+          detail: { documentNo: row.document_no, newDocumentId: newId, reason: note }
+        });
+        return { id: newId, supersedesId: documentId };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
   /** 発行済み文書を、そのときの版と焼き付けた値で描き直す。 */
   async renderIssued(documentId: number): Promise<{ html: string; documentNo: string | null }> {
     const document = await this.repository.find(documentId);

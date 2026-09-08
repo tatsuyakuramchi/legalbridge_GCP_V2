@@ -24,6 +24,7 @@ import { RoyaltyStatementService } from "./royalty/statement-service.js";
 import { PaymentService } from "./payments/service.js";
 import { PartyRepository } from "./parties/repository.js";
 import { OpsRepository } from "./ops/repository.js";
+import { SearchRepository } from "./search/repository.js";
 import { MonitoringRepository } from "./monitoring/repository.js";
 import { DispatchService } from "./integrations/dispatch-service.js";
 import {
@@ -64,6 +65,7 @@ export function createRoutes(database: Transactable) {
   const matterWrites = new MatterWriteService(database);
   const workWrites = new WorkWriteService(database);
   const partyWrites = new PartyWriteService(database);
+  const search = new SearchRepository(database);
   const ops = new OpsRepository(database);
   const monitoring = new MonitoringRepository(database);
 
@@ -154,6 +156,25 @@ export function createRoutes(database: Transactable) {
       if (envelope) envelopeCheck = { envelope, check: checkAgainstEnvelope(detail, envelope) };
     }
     res.json({ ...detail, envelopeCheck });
+  }));
+
+  const reasonSchema = z.object({ reason: z.string().trim().min(1).max(1000) });
+  router.post("/documents/:id/void", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { reason } = reasonSchema.parse(req.body ?? {});
+      res.json(await issues.void(Number(req.params.id), reason, actor(res)));
+    }));
+  router.post("/documents/:id/reissue", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { reason } = reasonSchema.parse(req.body ?? {});
+      res.status(201).json(await issues.reissue(Number(req.params.id), reason, actor(res)));
+    }));
+
+  // 横断検索。2文字未満は引かない（全件走査になるだけで役に立たない）。
+  router.get("/search", asyncRoute(async (req, res) => {
+    const q = String(req.query.q ?? "").trim().slice(0, 100);
+    if (q.length < 2) return res.json({ query: q, results: [] });
+    res.json({ query: q, results: await search.search(q) });
   }));
 
   // ---------------------------------------------------------------------

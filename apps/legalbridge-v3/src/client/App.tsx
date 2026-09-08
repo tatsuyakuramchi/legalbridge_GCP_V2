@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "./api.js";
+import { GlobalSearch, type SearchHit } from "./GlobalSearch.js";
 import { MattersWorkspace } from "./MattersWorkspace.js";
 import { ConditionsWorkspace } from "./ConditionsWorkspace.js";
 import { DocumentsWorkspace } from "./DocumentsWorkspace.js";
@@ -40,10 +41,19 @@ export function App() {
 
   const openCondition = (id: number) => { setConditionId(id); setView("conditions"); };
 
+  /** 検索結果から開く。条件だけは ID を渡して直接その行を選ぶ。 */
+  const openHit = (hit: SearchHit) => {
+    if (hit.target === "condition") return openCondition(hit.id);
+    setConditionId(undefined);
+    setView(({ matter: "matters", document: "documents", party: "parties",
+               work: "works", payment: "money" } as const)[hit.target]);
+  };
+
   return (
     <div className="app">
       <nav className="rail" aria-label="主ナビゲーション">
         <div className="wordmark"><b>LegalBridge</b><span>Core</span></div>
+        <GlobalSearch onOpen={openHit} />
         {NAV.map((group) => (
           <div key={group.section}>
             <div className="nav-sec">{group.section}</div>

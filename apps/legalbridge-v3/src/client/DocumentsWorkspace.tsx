@@ -93,6 +93,39 @@ export function DocumentsWorkspace() {
   }
 
   // Drive へ保存する。既存ファイルがあれば中身だけ差し替わり、リンクは変わらない。
+  /**
+   * 無効化。理由を必ず聞く。行は消えず、発行した記録は残る。
+   * 外に出したファイルは取り消せないので、そこも伝える。
+   */
+  async function voidDocument(id: number, no: string | null) {
+    const reason = window.prompt(
+      `${no ?? "この文書"} を無効にします。理由を書いてください。\n` +
+      "記録は残ります。すでに送付・保存したファイルは取り消せません。");
+    if (reason === null) return;
+    setBusy(true); setError(null);
+    try {
+      await api.post(`/documents/${id}/void`, { reason });
+      setIssued(`${no ?? id} を無効にしました`);
+      await reload();
+    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
+    finally { setBusy(false); }
+  }
+
+  /** 再発行。元を差し替え済みにして、条件を引き継いだ下書きを作る。 */
+  async function reissue(id: number, no: string | null) {
+    const reason = window.prompt(
+      `${no ?? "この文書"} を作り直します。理由を書いてください。\n` +
+      "元の文書は差し替え済みとして残り、条件を引き継いだ下書きができます。");
+    if (reason === null) return;
+    setBusy(true); setError(null);
+    try {
+      const r = await api.post<{ id: number }>(`/documents/${id}/reissue`, { reason });
+      setIssued(`下書き #${r.id} を作りました。内容を確かめてから発行してください`);
+      await reload();
+    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
+    finally { setBusy(false); }
+  }
+
   async function store(id: number) {
     setError(null); setStored(null); setBusy(true);
     try {
@@ -216,7 +249,18 @@ export function DocumentsWorkspace() {
                             <button className="btn btn-sm" disabled={busy}
                                     onClick={() => send(d.id)}>送付</button>
                           )}
+                          <button className="btn btn-sm" disabled={busy}
+                                  onClick={() => reissue(d.id, d.documentNo)}>作り直す</button>
+                          <button className="btn btn-sm" disabled={busy}
+                                  onClick={() => voidDocument(d.id, d.documentNo)}>無効にする</button>
                         </span>
+                      )}
+                      {d.status === "draft" && (
+                        <button className="btn btn-sm" disabled={busy}
+                                onClick={() => voidDocument(d.id, d.documentNo)}>破棄する</button>
+                      )}
+                      {d.status === "superseded" && (
+                        <span className="faint">差し替え済み</span>
                       )}
                     </td>
                   </tr>
