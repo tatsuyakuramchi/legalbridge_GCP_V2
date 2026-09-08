@@ -270,7 +270,7 @@ export function createRoutes(database: Transactable) {
   router.post("/exports/accounting/unmark", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       const { paymentIds } = markSchema.parse(req.body ?? {});
-      res.json({ removed: await accountingLedger.unmark(paymentIds) });
+      res.json({ removed: await accountingLedger.unmark(paymentIds, actor(res)) });
     }));
 
   // 支払を条件へ割り当てる。これが無いと「どの取り決めに対する支払か」が

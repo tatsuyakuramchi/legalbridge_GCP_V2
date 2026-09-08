@@ -61,13 +61,18 @@ const PAYMENTS_SQL = `
        LIMIT 1
     ) m ON true
     LEFT JOIN staff s ON s.id = m.owner_staff_id
+    -- 出力済みかどうかは「最後の記録」で決める。監査記録は追記専用なので、
+    -- 取り消しは行を消すのではなく取り消しの記録を足す。
+    LEFT JOIN LATERAL (
+      SELECT a.action FROM audit_events a
+       WHERE a.target_type = 'payment' AND a.target_id = y.id
+         AND a.action IN ('export.accounting', 'export.accounting.undo')
+       ORDER BY a.id DESC LIMIT 1
+    ) ex ON true
    WHERE y.direction = 'out'
      AND (CASE WHEN $3::text = 'paid' THEN y.paid_on ELSE y.due_on END)
          BETWEEN $1::date AND $2::date
-     AND ($4::boolean OR NOT EXISTS (
-           SELECT 1 FROM audit_events a
-            WHERE a.action = 'export.accounting'
-              AND a.target_type = 'payment' AND a.target_id = y.id))
+     AND ($4::boolean OR ex.action IS DISTINCT FROM 'export.accounting')
    ORDER BY COALESCE(y.paid_on, y.due_on), y.id`;
 
 const LINES_SQL = `
@@ -162,30 +167,39 @@ export class AccountingExportLedger {
   constructor(private readonly database: Transactable) {}
 
   async markExported(paymentIds: number[], batchKey: string, actor: string): Promise<number> {
-    const ids = [...new Set(paymentIds.map((n) => Number(n)).filter((n) => Number.isFinite(n) && n > 0))];
-    if (!ids.length) return 0;
-    try {
-      const r = await this.database.query(
-        `INSERT INTO audit_events (actor, action, target_type, target_id, idempotency_key, detail)
-         SELECT $2, 'export.accounting', 'payment', id,
-                'export.accounting:' || id::text,
-                jsonb_build_object('batchKey', $3::text)
-           FROM unnest($1::bigint[]) AS id
-         ON CONFLICT (idempotency_key) DO NOTHING`,
-        [ids, actor, batchKey || null]);
-      return r.rowCount ?? 0;
-    } catch (error) { throw translate(error); }
+    return this.record(paymentIds, "export.accounting", actor, batchKey);
   }
 
-  /** 出力済みを取り消す。間違って出したときに戻せないと運用が詰まる。 */
-  async unmark(paymentIds: number[]): Promise<number> {
-    const ids = [...new Set(paymentIds.map((n) => Number(n)).filter((n) => Number.isFinite(n) && n > 0))];
+  /**
+   * 出力済みを取り消す。間違って出したときに戻せないと運用が詰まる。
+   * 記録を消すのではなく、取り消した記録を足す（監査記録は追記専用）。
+   */
+  async unmark(paymentIds: number[], actor: string): Promise<number> {
+    return this.record(paymentIds, "export.accounting.undo", actor, "");
+  }
+
+  /** 状態が変わるときだけ書く。二度押しても記録は増えない。 */
+  private async record(
+    paymentIds: number[], action: "export.accounting" | "export.accounting.undo",
+    actor: string, batchKey: string
+  ): Promise<number> {
+    const ids = [...new Set(paymentIds.map((n) => Number(n))
+      .filter((n) => Number.isFinite(n) && n > 0))];
     if (!ids.length) return 0;
     try {
       const r = await this.database.query(
-        `DELETE FROM audit_events
-          WHERE action = 'export.accounting' AND target_type = 'payment'
-            AND target_id = ANY($1::bigint[])`, [ids]);
+        // 列名は t.payment_id と明示する。unnest(...) AS id と書くと、
+        // 内側の audit_events.id が優先されて別のものを見に行く。
+        `INSERT INTO audit_events (actor, action, target_type, target_id, detail)
+         SELECT $2, $4, 'payment', t.payment_id, jsonb_build_object('batchKey', $3::text)
+           FROM unnest($1::bigint[]) AS t(payment_id)
+          WHERE COALESCE((
+                  SELECT a.action FROM audit_events a
+                   WHERE a.target_type = 'payment' AND a.target_id = t.payment_id
+                     AND a.action IN ('export.accounting', 'export.accounting.undo')
+                   ORDER BY a.id DESC LIMIT 1
+                ), '') IS DISTINCT FROM $4`,
+        [ids, actor, batchKey || null, action]);
       return r.rowCount ?? 0;
     } catch (error) { throw translate(error); }
   }

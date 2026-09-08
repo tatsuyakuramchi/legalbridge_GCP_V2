@@ -169,3 +169,44 @@ test("Excel が拒む文字はファイル名から落とす", () => {
     "経理提出用_法務_太郎_2026-10-31.xls");
   assert.equal(xlsFilename([null, ""]), "export.xls");
 });
+
+// ---- 出力済みの記録（監査記録は追記専用）----
+
+test("取り消しは記録を消さず、取り消した記録を足す", async () => {
+  const { AccountingExportLedger } = await import("./accounting-repository.js");
+  const { FakeDatabase } = await import("../core/fake-db.js");
+
+  const db = new FakeDatabase(() => []);
+  await new AccountingExportLedger(db).unmark([1, 2], "legal@arch.co.jp");
+
+  const q = db.find("INSERT INTO audit_events")!;
+  assert.equal(q.params[3], "export.accounting.undo");
+  // 003_grants.sql は audit_events の DELETE をランタイムロールから剥がしている。
+  // 消しに行くと本番で権限エラーになる。
+  assert.equal(db.all("DELETE").length, 0, "監査記録は追記専用");
+  assert.equal(db.all("UPDATE audit_events").length, 0);
+});
+
+test("出力済みも取り消しも、状態が変わるときだけ書く", async () => {
+  const { AccountingExportLedger } = await import("./accounting-repository.js");
+  const { FakeDatabase } = await import("../core/fake-db.js");
+
+  const db = new FakeDatabase(() => []);
+  await new AccountingExportLedger(db).markExported([1], "b", "a");
+  const sql = db.find("INSERT INTO audit_events")!.text;
+  assert.match(sql, /IS DISTINCT FROM \$4/, "同じ状態なら書かない");
+  // unnest の列は必ず名前を付ける。付けないと副問い合わせの中で
+  // audit_events.id が優先され、別の行を見に行く。
+  assert.match(sql, /unnest\(\$1::bigint\[\]\) AS t\(payment_id\)/);
+  assert.match(sql, /a\.target_id = t\.payment_id/);
+});
+
+test("空の指定では何も書かない", async () => {
+  const { AccountingExportLedger } = await import("./accounting-repository.js");
+  const { FakeDatabase } = await import("../core/fake-db.js");
+
+  const db = new FakeDatabase(() => []);
+  assert.equal(await new AccountingExportLedger(db).markExported([], "b", "a"), 0);
+  assert.equal(await new AccountingExportLedger(db).markExported([0, -1, NaN], "b", "a"), 0);
+  assert.equal(db.queries.length, 0);
+});
