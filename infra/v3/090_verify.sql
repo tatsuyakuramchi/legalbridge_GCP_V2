@@ -71,8 +71,22 @@ BEGIN READ ONLY;
 SELECT '取引先'   AS entity, (SELECT count(*) FROM public.vendors)          AS src,
                              (SELECT count(*) FROM v3.parties)              AS dst
 UNION ALL SELECT '担当者',   (SELECT count(*) FROM public.staff),           (SELECT count(*) FROM v3.staff)
-UNION ALL SELECT '作品',     (SELECT count(*) FROM public.works)
-                           + (SELECT count(*) FROM public.source_ips),      (SELECT count(*) FROM v3.works)
+-- 作品だけは src 列に「移行元の件数」ではなく期待値を置く。
+--   works と source_ips を1表に統合するとき、
+--     (a) works と同じコードの source_ips は二重登録なので取り込まない
+--     (b) source_ips 内で同じコードが重複していれば1行に寄せる
+--     (c) タイトルが空の行は両方とも取り込まない
+--   ため、単純な足し算では合わない。ここを期待値にしておけば
+--   差が出た＝移行のバグ、と読める。
+UNION ALL SELECT '作品',
+  (SELECT count(*) FROM public.works w
+    WHERE COALESCE(NULLIF(w.title,''), '') <> '')
++ (SELECT count(DISTINCT COALESCE(NULLIF(s.source_code,''), 'id:' || s.id))
+     FROM public.source_ips s
+    WHERE COALESCE(NULLIF(s.title,''), '') <> ''
+      AND NOT EXISTS (SELECT 1 FROM public.works w
+                       WHERE NULLIF(w.work_code,'') = NULLIF(s.source_code,''))),
+                                                                           (SELECT count(*) FROM v3.works)
 UNION ALL SELECT 'パート',   (SELECT count(*) FROM public.work_materials),  (SELECT count(*) FROM v3.work_parts)
 UNION ALL SELECT '合意',     (SELECT count(*) FROM public.contracts),       (SELECT count(*) FROM v3.agreements)
 UNION ALL SELECT '条件',     (SELECT count(*) FROM public.condition_lines), (SELECT count(*) FROM v3.conditions)

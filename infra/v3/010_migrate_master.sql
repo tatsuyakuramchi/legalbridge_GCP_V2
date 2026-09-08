@@ -104,12 +104,38 @@ ON CONFLICT (legacy_table, legacy_id) WHERE legacy_id IS NOT NULL DO UPDATE SET
   kind = EXCLUDED.kind, business_line = EXCLUDED.business_line,
   status = EXCLUDED.status, remarks = EXCLUDED.remarks, updated_at = now();
 
+-- source_ips は works と別の表だが、採番は同じ空間を使っている（実データでは
+-- source_code と work_code が完全に重なる）。V3 は1表なので work_code の UNIQUE が
+-- 効き、そのまま入れると衝突する。同じコードの works が既にいる行は「同一作品の
+-- 二重登録」として取り込まず、統合した事実だけ残す。
+--   source_ips.id を参照している移行先は無い（020〜040 は触れない）ので、
+--   行を落としても解決できなくなる参照は発生しない。
+INSERT INTO v3.data_quality_issues (rule_code, target_type, target_id, severity, detail)
+SELECT 'WORK_SOURCE_IP_MERGED', 'legacy_source_ip', s.id, 'low',
+       jsonb_build_object('source_code', s.source_code,
+                          'source_ip_title', s.title,
+                          'merged_into_work_code', w.work_code,
+                          'merged_into_work_title', w.title,
+                          'title_matches', s.title IS NOT DISTINCT FROM w.title)
+  FROM public.source_ips s
+  JOIN public.works w ON NULLIF(w.work_code, '') = NULLIF(s.source_code, '')
+ON CONFLICT (rule_code, target_type, target_id) DO UPDATE SET
+  detail = EXCLUDED.detail, detected_at = now();
+
+-- 取り込むのは works に居ない原作IPだけ。
+-- 同一コードが source_ips 内で重複していても1行に落とす（id の小さい方を残す）。
 INSERT INTO v3.works (work_code, title, kind, status, legacy_id, legacy_table)
-SELECT NULLIF(s.source_code,''), s.title, 'source_ip',
+SELECT DISTINCT ON (COALESCE(NULLIF(s.source_code,''), 'id:' || s.id))
+       NULLIF(s.source_code,''), s.title, 'source_ip',
        CASE WHEN COALESCE(s.is_active, true) THEN 'released' ELSE 'archived' END,
        s.id, 'source_ips'
   FROM public.source_ips s
  WHERE COALESCE(NULLIF(s.title,''), '') <> ''
+   AND NOT EXISTS (
+     SELECT 1 FROM public.works w
+      WHERE NULLIF(w.work_code, '') = NULLIF(s.source_code, '')
+   )
+ ORDER BY COALESCE(NULLIF(s.source_code,''), 'id:' || s.id), s.id
 ON CONFLICT (legacy_table, legacy_id) WHERE legacy_id IS NOT NULL DO UPDATE SET
   work_code = EXCLUDED.work_code, title = EXCLUDED.title,
   status = EXCLUDED.status, updated_at = now();
