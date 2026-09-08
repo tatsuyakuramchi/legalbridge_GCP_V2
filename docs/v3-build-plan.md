@@ -321,7 +321,7 @@ Cloud SQL（PostgreSQL 15.18）へ適用済み。全12エンティティと金�
 ### 次にやること
 
 1. 参照専用のまま V1 と数字を突き合わせる（金額・期限・相手先）
-2. `data_quality_issues` の high 367件を UI から潰す
+2. `data_quality_issues` の high 304件を UI から潰す
 3. `READ_ONLY=false` にして二重入力期間へ
 4. 外部連携を `dry_run` → 宛先限定 `live` → 全開放の順で開ける
 
