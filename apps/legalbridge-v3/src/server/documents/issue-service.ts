@@ -100,6 +100,62 @@ export class DocumentIssueService {
   }
 
   /**
+   * 下書きの手入力と条件を差し替える。
+   *
+   * 発行は下書きに保存された manual_inputs しか見ない。直す口が無いと、
+   * 作り直した下書きは中身を直せないまま発行するしかなくなる。
+   */
+  async updateDraft(
+    documentId: number,
+    input: { manualInputs?: Record<string, unknown>; conditionIds?: number[] },
+    actor: string
+  ): Promise<{ id: number }> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const head = await client.query(
+          "SELECT id, status FROM documents WHERE id = $1 FOR UPDATE", [documentId]);
+        const row = head.rows[0] as Record<string, any> | undefined;
+        if (!row) throw new DomainError("NOT_FOUND", `文書 ${documentId} が見つかりません`);
+        if (row.status !== "draft") {
+          throw new DomainError("CONFLICT", `下書きだけ直せます（この文書は ${row.status}）`);
+        }
+
+        if (input.manualInputs) {
+          await client.query(
+            "UPDATE documents SET manual_inputs = $2::jsonb WHERE id = $1",
+            [documentId, JSON.stringify(input.manualInputs)]);
+        }
+
+        if (input.conditionIds) {
+          const unique = [...new Set(input.conditionIds.map((n) => Number(n)))];
+          if (unique.length) {
+            const found = await client.query(
+              "SELECT id FROM conditions WHERE id = ANY($1::bigint[])", [unique]);
+            if (found.rows.length !== unique.length) {
+              const known = new Set((found.rows as Array<{ id: number }>).map((r) => Number(r.id)));
+              throw new DomainError("NOT_FOUND",
+                `条件が見つかりません：${unique.filter((id) => !known.has(id)).join(", ")}`);
+            }
+          }
+          await this.assertConditionsIssuable(client, unique);
+          // 並べ直しも消しも同じ経路にする。差分を取るより、張り直すほうが読める。
+          await client.query("DELETE FROM document_conditions WHERE document_id = $1", [documentId]);
+          await this.linkConditions(client, documentId, unique);
+        }
+
+        await recordAudit(client, {
+          actor, action: "document.draft.update", targetType: "document", targetId: documentId,
+          detail: {
+            ...(input.manualInputs ? { fields: Object.keys(input.manualInputs) } : {}),
+            ...(input.conditionIds ? { conditions: input.conditionIds } : {})
+          }
+        });
+        return { id: documentId };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
    * 発行。採番して確定値を焼き付ける。
    * 焼き付けた値（rendered_values）は記録であって参照元ではない。
    */

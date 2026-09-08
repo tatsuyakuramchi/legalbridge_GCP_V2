@@ -1018,10 +1018,33 @@ export function createRoutes(database: Transactable) {
       res.status(201).json(await issues.createDraft(input, actor(res)));
     }));
 
+  /**
+   * 下書きの中身を直す。
+   *
+   * 作り直した下書きは元の手入力をそのまま引き継ぐ。直せないと、間違いを
+   * 含んだまま発行するか捨てるかの二択になる。
+   */
+  const draftPatchSchema = z.object({
+    manualInputs: z.record(z.string(), z.unknown()).optional(),
+    conditionIds: z.array(z.coerce.number().int().positive()).max(200).optional()
+  });
+  router.patch("/documents/:id/draft",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = draftPatchSchema.parse(req.body ?? {});
+      res.json(await issues.updateDraft(Number(req.params.id), input, actor(res)));
+    }));
+
+  // 実績は下書きに保存していないので、発行のときに渡せるようにする。
+  const issueSchema = z.object({
+    eventIds: z.array(z.coerce.number().int().positive()).max(200).default([])
+  });
   router.post("/documents/:id/issue",
     requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
-      res.json(await issues.issue(Number(req.params.id), actor(res)));
+      const { eventIds } = issueSchema.parse(req.body ?? {});
+      res.json(await issues.issue(Number(req.params.id), actor(res),
+        eventIds.length ? { eventIds } : {}));
     }));
 
   router.get("/documents/:id/html", asyncRoute(async (req, res) => {

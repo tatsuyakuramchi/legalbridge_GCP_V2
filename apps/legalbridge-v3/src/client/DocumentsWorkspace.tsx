@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
 import { StatusTag } from "./labels.js";
 import type { ConditionSummary } from "../server/core/model.js";
@@ -55,7 +55,17 @@ export function DocumentsWorkspace(
   // 条件の画面から来たときは、その条件と実績を選んだ状態で開く。
   const [picked, setPicked] = useState<number[]>(start ? [start.conditionId] : []);
   const [manual, setManual] = useState<Record<string, string>>({});
-  const [preview, setPreview] = useState<PreviewResponse | null>(null);
+  /**
+   * ひな形が要求する項目の一覧と候補。**必ず手入力を空にして取る。**
+   *
+   * 手入力を送ると、埋まった項目は missing から消える。それを入力欄の元に
+   * すると、打ち終わった欄が画面から消える。残数は画面の値で数えれば足りる。
+   */
+  const [spec, setSpec] = useState<PreviewResponse | null>(null);
+  /** プレビューの本文。入力欄とは別に持つ。打つたびに作り直しても打鍵を邪魔しない。 */
+  const [rendered, setRendered] = useState<{ html: string; templateLabel: string } | null>(null);
+  /** 直している下書き。作り直した文書はここに載せて、直してから発行する。 */
+  const [draft, setDraft] = useState<{ id: number; no: string | null } | null>(null);
   const [issued, setIssued] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -74,6 +84,7 @@ export function DocumentsWorkspace(
   const [quoteQ, setQuoteQ] = useState("");
   const [quoteHits, setQuoteHits] = useState<Candidate[]>([]);
   const quoteSearch = useDebounced(quoteQ, 300);
+  const form = useRef<HTMLDivElement>(null);
 
   useEffect(() => { void reload(); }, [search]);
   async function reload() {
@@ -120,6 +131,8 @@ export function DocumentsWorkspace(
   // 検収者部署・氏名のように毎回同じものを打ち直さずに済む。
   useEffect(() => {
     if (!templateKey) return;
+    // 下書きを開いたときは、その下書きの手入力が正。既定で上書きしない。
+    if (draft) return;
     setManual({}); setPickedFields(new Set());
     api.get<{ defaults: Record<string, string> }>(`/document-defaults/${templateKey}`)
       .then((r) => setManual(r.defaults ?? {}))
@@ -128,19 +141,37 @@ export function DocumentsWorkspace(
 
   // ひな形か条件を変えたら、何が要るかを取り直す。押してから足りないと
   // 言われるのでは遅い。
+  //
+  // **手入力では取り直さない。** 取り直すと入力欄が作り直されて、日本語の
+  // 変換中に確定させられる（一文字打つたびに勝手に確定する）。項目の一覧は
+  // ひな形と条件と実績だけで決まるので、打っている間は動かさなくてよい。
   useEffect(() => {
-    if (!templateKey) { setPreview(null); return; }
-    setPreview(null);
+    if (!templateKey) { setSpec(null); setRendered(null); return; }
+    let live = true;
+    api.post<PreviewResponse>("/documents/preview",
+      { templateKey, conditionIds: picked, eventIds: pickedEvents, manualInputs: {} })
+      .then((r) => { if (live) setSpec(r); })
+      .catch(() => undefined);
+    return () => { live = false; };
+  }, [templateKey, picked.join(","), pickedEvents.join(",")]);
+
+  // 本文は打った値で作り直す。iframe の中身が変わるだけで、入力欄には触らない。
+  useEffect(() => {
+    if (!templateKey) return;
+    let live = true;
     api.post<PreviewResponse>("/documents/preview",
       { templateKey, conditionIds: picked, eventIds: pickedEvents,
         manualInputs: JSON.parse(manualJson) })
-      .then(setPreview).catch(() => undefined);
+      .then((r) => { if (live) setRendered({ html: r.html, templateLabel: r.templateLabel }); })
+      .catch(() => undefined);
+    return () => { live = false; };
   }, [templateKey, picked.join(","), pickedEvents.join(","), manualJson]);
 
   async function runPreview() {
     setError(null); setIssued(null); setBusy(true);
     try {
-      setPreview(await api.post<PreviewResponse>("/documents/preview", body));
+      const r = await api.post<PreviewResponse>("/documents/preview", body);
+      setRendered({ html: r.html, templateLabel: r.templateLabel });
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
     finally { setBusy(false); }
   }
@@ -149,15 +180,27 @@ export function DocumentsWorkspace(
   async function issue() {
     setError(null); setBusy(true);
     try {
-      // 下書き→発行→実績への紐づけをサーバ側で1本にしてある。
-      // 途中で落ちたときは下書きごと捨てられる。
-      const result = await api.post<{ document: { documentNo: string } }>(
-        "/documents/compose", body);
-      setIssued(result.document.documentNo);
+      let documentNo: string;
+      if (draft) {
+        // 開いている下書きを直してから発行する。発行は下書きに保存された
+        // 手入力しか見ないので、先に書き戻す。
+        await api.patch(`/documents/${draft.id}/draft`,
+          { manualInputs: manual, conditionIds: picked });
+        const r = await api.post<{ documentNo: string }>(
+          `/documents/${draft.id}/issue`, { eventIds: pickedEvents });
+        documentNo = r.documentNo;
+      } else {
+        // 下書き→発行→実績への紐づけをサーバ側で1本にしてある。
+        // 途中で落ちたときは下書きごと捨てられる。
+        const result = await api.post<{ document: { documentNo: string } }>(
+          "/documents/compose", body);
+        documentNo = result.document.documentNo;
+      }
+      setIssued(documentNo);
       // 手で打った項目だけ覚える。日付と金額は毎回変わるので覚えない
       // （前回の日付が入ったまま気づかず発行してしまう）。
       const keep: Record<string, string> = {};
-      for (const m of preview?.missing ?? []) {
+      for (const m of spec?.missing ?? []) {
         const kind = kindFor(m.name, m.label);
         const value = String(manual[m.name] ?? "").trim();
         if (value && !pickedFields.has(m.name) && kind !== "date" && kind !== "amount") {
@@ -167,7 +210,10 @@ export function DocumentsWorkspace(
       if (Object.keys(keep).length) {
         await api.put(`/document-defaults/${templateKey}`, { values: keep }).catch(() => undefined);
       }
-      setPreview(null);
+      // 項目の一覧は消さない。消すと、続けてもう1枚作るときに空の画面が残る。
+      // 日付と金額だけ落として、手で打った文字は次にも使う。
+      setManual(keep); setPickedFields(new Set());
+      setDraft(null); setPickedEvents([]);
       await reload();
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
     finally { setBusy(false); }
@@ -217,10 +263,54 @@ export function DocumentsWorkspace(
     setBusy(true); setError(null);
     try {
       const r = await api.post<{ id: number }>(`/documents/${id}/reissue`, { reason });
-      setIssued(`下書き #${r.id} を作りました。内容を確かめてから発行してください`);
       await reload();
+      // 作っただけでは直せない。そのまま上のフォームに載せる。
+      await openDraft(r.id);
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
     finally { setBusy(false); }
+  }
+
+  /**
+   * 下書きを上のフォームに載せる。ひな形・条件・手入力をそのまま引き継ぐ。
+   * 作り直した下書きを直して発行するには、ここを通る。
+   */
+  async function openDraft(id: number) {
+    setError(null); setIssued(null); setBusy(true);
+    try {
+      const d = await api.get<{
+        id: number; documentNo: string | null; templateKey: string | null;
+        manualInputs: Record<string, unknown>;
+        conditions: Array<{ id: number }>;
+      }>(`/documents/${id}`);
+      if (!d.templateKey) {
+        throw new ApiError(400, "ひな形を持たない文書は直せません");
+      }
+      const values: Record<string, string> = {};
+      for (const [k, v] of Object.entries(d.manualInputs ?? {})) {
+        if (v !== null && v !== undefined) values[k] = String(v);
+      }
+      // draft を先に立てる。ひな形を変えたときの既定読み込みに上書きさせない。
+      setDraft({ id: d.id, no: d.documentNo });
+      setTemplateKey(d.templateKey);
+      setPicked(d.conditions.map((c) => c.id));
+      setPickedEvents([]);
+      setManual(values);
+      setPickedFields(new Set());
+      form.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
+    finally { setBusy(false); }
+  }
+
+  /** 下書きから降りる。作りかけの下書きは残るので、あとで開き直せる。 */
+  function closeDraft() {
+    setDraft(null); setManual({}); setPickedFields(new Set()); setPickedEvents([]);
+    // ひな形は変わらないので既定の読み込みは走らない。ここで戻しておかないと、
+    // 下書きを閉じたあとだけ前回の値が出ない画面になる。
+    if (templateKey) {
+      api.get<{ defaults: Record<string, string> }>(`/document-defaults/${templateKey}`)
+        .then((r) => setManual(r.defaults ?? {}))
+        .catch(() => undefined);
+    }
   }
 
   async function store(id: number) {
@@ -235,11 +325,11 @@ export function DocumentsWorkspace(
     finally { setBusy(false); }
   }
 
-  // 未入力は画面の入力値で数える。プレビューは空で取っているので、
-  // preview.missing はひな形が要求する項目の一覧であって、残数ではない。
-  const remaining = (preview?.missing ?? [])
+  // 未入力は画面の入力値で数える。項目の一覧は手入力を空にして取っているので、
+  // spec.missing はひな形が要求する項目の一覧であって、残数ではない。
+  const remaining = (spec?.missing ?? [])
     .filter((m) => !String(manual[m.name] ?? "").trim()).length;
-  const ready = Boolean(templateKey) && preview !== null && remaining === 0;
+  const ready = Boolean(templateKey) && spec !== null && remaining === 0;
 
   return (
     <section className="workspace">
@@ -257,12 +347,31 @@ export function DocumentsWorkspace(
 
       <div className="stack">
         <div className="stack">
-          <div className="panel">
-            <div className="panel-hd"><h2>作成</h2></div>
+          <div className="panel" ref={form}>
+            <div className="panel-hd">
+              <h2>{draft ? "下書きを直して発行する" : "作成"}</h2>
+              {draft && (
+                <span className="row" style={{ marginLeft: "auto" }}>
+                  <span className="faint">下書き #{draft.id}</span>
+                  <button className="btn btn-sm" onClick={closeDraft} disabled={busy}>
+                    やめる
+                  </button>
+                </span>
+              )}
+            </div>
             <div className="panel-bd stack">
+              {draft && (
+                <div className="note">
+                  作り直した下書きを直しています。ひな形は元の版のまま変えられません。
+                  直して発行すると、この下書きが発行済みになります。
+                </div>
+              )}
               <label className="field">
                 <span>テンプレート</span>
-                <select value={templateKey} onChange={(e) => { setTemplateKey(e.target.value); setPreview(null); }}>
+                {/* 下書きはひな形の版を持っている。ここで変えても発行はその版で走るので、
+                    選ばせない。ひな形を変えたいなら作り直しではなく新規で作る。 */}
+                <select value={templateKey} disabled={Boolean(draft)}
+                        onChange={(e) => setTemplateKey(e.target.value)}>
                   {templates.map((t) => (
                     <option key={t.templateKey} value={t.templateKey}>{t.label}</option>
                   ))}
@@ -322,18 +431,18 @@ export function DocumentsWorkspace(
                 </div>
               )}
 
-              {preview && preview.missing.length > 0 && (
+              {spec && spec.missing.length > 0 && (
                 <div className="stack">
                   <div className="row">
                     <span className="faint">このひな形が要求する項目</span>
                     <span className="faint" style={{ marginLeft: "auto" }}>
-                      残り {preview.missing.filter((m) => !String(manual[m.name] ?? "").trim()).length} 件
+                      残り {remaining} 件
                     </span>
                   </div>
                   <div className="form-grid">
-                  {preview.missing.map((m) => {
+                  {spec.missing.map((m) => {
                     const want = kindFor(m.name, m.label);
-                    const fits = preview.candidates.filter((c) => !want || c.kind === want);
+                    const fits = spec.candidates.filter((c) => !want || c.kind === want);
                     // 日付と金額は数が少なく、どれも当てはまりうるのでその場に出す。
                     // 文字は候補が多く、当てはまらないものばかり並ぶので畳んでおく。
                     const inline = want === "date" || want === "amount";
@@ -352,9 +461,13 @@ export function DocumentsWorkspace(
                                    const next = new Set(prev); next.delete(m.name); return next;
                                  });
                                }} />
-                        {fits.length > 0 && (
+                        {/* 候補が無いときこそ探したい。「探して入れる」は候補の数に
+                            関わらず出す。ここを候補の有無で隠していたせいで、
+                            検収者氏名のように候補が出ない欄は手打ちしかできなかった。 */}
+                        {(!inline || fits.length > 0) && (
                           <div className="row" style={{ flexWrap: "wrap", gap: 4, marginTop: 4 }}>
                             {!inline && (<>
+                              {fits.length > 0 && (
                               <button type="button" className="btn btn-sm"
                                       onClick={() => setOpened((prev) => {
                                         const next = new Set(prev);
@@ -364,6 +477,7 @@ export function DocumentsWorkspace(
                                       })}>
                                 候補 {open ? "▴" : "▾"}
                               </button>
+                              )}
                               <button type="button" className="btn btn-sm"
                                       onClick={() => {
                                         setQuoteFor(quoteFor === m.name ? null : m.name);
@@ -415,24 +529,24 @@ export function DocumentsWorkspace(
                   中身を見る
                 </button>
                 <button className="btn primary" onClick={issue} disabled={busy || !ready}>
-                  発行する
+                  {draft ? "直して発行する" : "発行する"}
                 </button>
-                {!ready && preview && (
+                {!ready && spec && (
                   <span className="faint">未入力 {remaining} 件</span>
                 )}
-                {preview && preview.derived.length > 0 && (
+                {spec && spec.derived.length > 0 && (
                   <span className="faint">
-                    {preview.derived.length}項目を条件から自動解決
+                    {spec.derived.length}項目を条件から自動解決
                   </span>
                 )}
               </div>
             </div>
           </div>
 
-          {preview && (
+          {rendered && (
             <div className="panel">
-              <div className="panel-hd"><h2>プレビュー</h2><span className="faint">{preview.templateLabel}</span></div>
-              <iframe className="preview" title="文書プレビュー" srcDoc={preview.html} />
+              <div className="panel-hd"><h2>プレビュー</h2><span className="faint">{rendered.templateLabel}</span></div>
+              <iframe className="preview" title="文書プレビュー" srcDoc={rendered.html} />
             </div>
           )}
         </div>
@@ -488,8 +602,15 @@ export function DocumentsWorkspace(
                         </span>
                       )}
                       {d.status === "draft" && (
-                        <button className="btn btn-sm" disabled={busy}
-                                onClick={() => voidDocument(d.id, d.documentNo)}>破棄する</button>
+                        <span className="row">
+                          {/* 開かないと直せない。作り直した下書きはここから発行する。 */}
+                          {!d.imported && (
+                            <button className="btn btn-sm" disabled={busy}
+                                    onClick={() => openDraft(d.id)}>開いて発行する</button>
+                          )}
+                          <button className="btn btn-sm" disabled={busy}
+                                  onClick={() => voidDocument(d.id, d.documentNo)}>破棄する</button>
+                        </span>
                       )}
                       {d.status === "superseded" && (
                         <span className="faint">差し替え済み</span>
