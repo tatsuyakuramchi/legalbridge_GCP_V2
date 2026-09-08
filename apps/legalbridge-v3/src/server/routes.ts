@@ -7,6 +7,7 @@ import { ConditionRepository } from "./conditions/repository.js";
 import { ConditionWriteService } from "./conditions/write-service.js";
 import { ConditionEventService, EVENT_TYPES } from "./conditions/event-service.js";
 import { MatterWriteService } from "./matters/write-service.js";
+import { MatterLinkService, CONDITION_KINDS_BY_MATTER } from "./matters/link-service.js";
 import { WorkWriteService } from "./works/write-service.js";
 import { PartyWriteService } from "./parties/write-service.js";
 import { PartyMergeService } from "./parties/merge-service.js";
@@ -79,6 +80,7 @@ export function createRoutes(database: Transactable) {
   const allocations = new PaymentAllocationService(database);
   const parties = new PartyRepository(database);
   const matterWrites = new MatterWriteService(database);
+  const matterLinks = new MatterLinkService(database);
   const workWrites = new WorkWriteService(database);
   const partyWrites = new PartyWriteService(database);
   const partyMerge = new PartyMergeService(database);
@@ -160,6 +162,48 @@ export function createRoutes(database: Transactable) {
       res.json(await backlog.unlink(
         Number(req.params.id), String(req.params.issueKey), actor(res)));
     }));
+
+  // 案件の進み具合。段階は保存せず、揃っているものから導く。
+  router.get("/matters/:id/flow", asyncRoute(async (req, res) => {
+    res.json(await matterLinks.flow(Number(req.params.id)));
+  }));
+
+  // 案件に条件・文書を繋ぐ。読む処理はあったが書く処理が無く、
+  // 案件の条件タブは常に空だった。
+  const attachSchema = z.object({ conditionId: z.number().int().positive() });
+  router.post("/matters/:id/conditions",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { conditionId } = attachSchema.parse(req.body ?? {});
+      res.json(await matterLinks.attachCondition(Number(req.params.id), conditionId, actor(res)));
+    }));
+
+  router.delete("/matters/:id/conditions/:conditionId",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await matterLinks.detachCondition(
+        Number(req.params.id), Number(req.params.conditionId), actor(res)));
+    }));
+
+  const attachDocSchema = z.object({ documentId: z.number().int().positive() });
+  router.post("/matters/:id/documents",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { documentId } = attachDocSchema.parse(req.body ?? {});
+      res.json(await matterLinks.attachDocument(Number(req.params.id), documentId, actor(res)));
+    }));
+
+  router.delete("/matters/:id/documents/:documentId",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await matterLinks.detachDocument(
+        Number(req.params.id), Number(req.params.documentId), actor(res)));
+    }));
+
+  // 取引モデルごとに使える条件の種類。案件の種別が中身を決める。
+  router.get("/matter-kinds", (_req, res) => {
+    res.json({ kinds: CONDITION_KINDS_BY_MATTER });
+  });
 
   router.get("/matters/:id/drive-files", asyncRoute(async (req, res) => {
     res.json({ files: await matterFolders.listFiles(Number(req.params.id)) });
@@ -487,6 +531,7 @@ export function createRoutes(database: Transactable) {
     }));
 
   const conditionSchema = z.object({
+    matterId: z.coerce.number().int().positive().optional(),
     name: z.string().trim().min(1).max(300),
     direction: z.enum(["in", "out"]),
     kind: z.enum(["license", "product", "service", "expense", "fee"]),

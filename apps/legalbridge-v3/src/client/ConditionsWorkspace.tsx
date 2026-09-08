@@ -4,7 +4,7 @@ import { ConditionRevisions } from "./ConditionRevisions.js";
 import { ConditionEdit } from "./ConditionEdit.js";
 import { ConditionCounterparty, ConditionScopes } from "./ConditionLinks.js";
 import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
-import { StatusTag } from "./labels.js";
+import { CONDITION_KIND_LABEL, StatusTag } from "./labels.js";
 import type { ConditionDetail, ConditionSummary, EnvelopeCheck, RightsEnvelope } from "../server/core/model.js";
 import { api, ApiError, money, rate } from "./api.js";
 import { CreateForm, int, text } from "./CreateForm.js";
@@ -122,9 +122,10 @@ export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
             { name: "direction", label: "向き", type: "select", required: true,
               options: [{ value: "in", label: "IN 取得（費用側）" }, { value: "out", label: "OUT 許諾（収入側）" }] },
             { name: "kind", label: "種類", type: "select", required: true,
-              options: [{ value: "license", label: "ライセンス" }, { value: "product", label: "製品" },
-                        { value: "service", label: "役務" }, { value: "expense", label: "実費" },
-                        { value: "fee", label: "手数料" }] },
+              options: (["license", "product", "service", "expense", "fee"] as const).map((k) => ({
+                value: k, label: CONDITION_KIND_LABEL[k]
+              })),
+              hint: "許諾料・製品はライセンスの案件、委託料・実費・手数料は業務委託の案件に繋がる" },
             { name: "counterpartyId", label: "相手先", type: "select", required: true,
               options: parties.map((p) => ({ value: String(p.id), label: p.name })) },
             { name: "workId", label: "作品", type: "select",
@@ -205,7 +206,7 @@ export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
           <ListCount shown={rows.length} keyword={search} onClear={() => setKeyword("")} />
           <div className="tablewrap">
             <table>
-              <thead><tr><th>条件番号</th><th>向き</th><th>名称 / 相手先</th><th className="num">金額・料率</th></tr></thead>
+              <thead><tr><th>条件番号</th><th>種類</th><th>向き</th><th>名称 / 相手先</th><th className="num">金額・料率</th></tr></thead>
               <tbody>
                 {rows.map((row) => (
                   <tr key={row.id} className={row.id === selected ? "sel" : ""} tabIndex={0}
@@ -217,6 +218,7 @@ export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
                         }
                       }}>
                     <td className="code">{row.conditionNo ?? `#${row.id}`}</td>
+                    <td><span className="tag">{CONDITION_KIND_LABEL[row.kind] ?? row.kind}</span></td>
                     <td><span className={`tag ${row.direction}`}>{row.direction === "in" ? "IN" : "OUT"}</span></td>
                     <td>{row.name}<div className="faint">{row.counterparty?.name ?? "未設定"}</div></td>
                     <td className="num">
@@ -225,7 +227,7 @@ export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
                   </tr>
                 ))}
                 {!rows.length && (
-                  <tr><td colSpan={4} className="faint">
+                  <tr><td colSpan={5} className="faint">
                     {search.trim() ? `「${search}」に一致する条件はありません` : "条件がありません"}
                   </td></tr>
                 )}
@@ -255,6 +257,7 @@ export function ConditionsWorkspace({ initialId }: { initialId?: number }) {
               <div className="panel">
                 <div className="panel-hd">
                   <h2 className="code">{detail.conditionNo ?? `#${detail.id}`}</h2>
+                  <span className="tag">{CONDITION_KIND_LABEL[detail.kind] ?? detail.kind}</span>
                   <span className={`tag ${detail.direction}`}>{detail.direction === "in" ? "IN 取得" : "OUT 許諾"}</span>
                   <StatusTag kind="condition" value={detail.status} />
                   {!editing && detail.status !== "void" && detail.status !== "superseded" && (

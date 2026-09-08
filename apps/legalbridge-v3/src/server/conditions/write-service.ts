@@ -21,6 +21,8 @@ export interface WriteResult {
 }
 
 export interface ConditionInput {
+  /** 作った条件をこの案件に繋ぐ。案件から作ったときに渡す。 */
+  matterId?: number | null;
   name: string;
   /** in＝取得（費用側）、out＝許諾（収入側）。 */
   direction: "in" | "out";
@@ -173,6 +175,22 @@ export class ConditionWriteService {
                     conditionNo: row.condition_no, counterparty: party.rows[0].name,
                     pricingModel: pricing }
         });
+        // 案件から作られたなら、その場で繋ぐ。あとから繋ぐ導線を通らせると
+        // 「作ったのに案件に出てこない」が起きる。
+        if (input.matterId) {
+          const m = await client.query(
+            "SELECT id FROM matters WHERE id = $1", [input.matterId]);
+          if (!m.rows[0]) {
+            throw new DomainError("NOT_FOUND", `案件 ${input.matterId} が見つかりません`);
+          }
+          await client.query(
+            `INSERT INTO matter_links (matter_id, target_type, target_ref, relation, snapshot)
+             VALUES ($1, 'condition', $2, 'covers', $3::jsonb)
+             ON CONFLICT (matter_id, target_type, target_ref) DO NOTHING`,
+            [input.matterId, String(id),
+             JSON.stringify({ conditionNo: row.condition_no, kind: input.kind })]);
+        }
+
         return { id, conditionNo: row.condition_no };
       });
     } catch (error) { throw translate(error); }

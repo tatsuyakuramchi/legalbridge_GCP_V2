@@ -3,16 +3,11 @@ import type { MatterDetail, MatterKind, MatterSummary } from "../server/core/mod
 import { api, ApiError, money } from "./api.js";
 import { CreateForm, int, text } from "./CreateForm.js";
 import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
-import { StatusTag } from "./labels.js";
+import { MATTER_KIND_HINT, MATTER_KIND_LABEL as KIND_LABEL, StatusTag } from "./labels.js";
+import { MatterFlow } from "./MatterFlow.js";
+import { MatterConditions, MatterDocuments } from "./MatterLinks.js";
 
-const KIND_LABEL: Record<MatterKind, string> = {
-  work: "作品フロー", outsourcing: "業務委託フロー", single: "単発フロー"
-};
-const STEPS: Record<MatterKind, string[]> = {
-  work: ["権利の上限確認", "条件の合意", "契約書の締結", "実績の受領", "計算書と分配"],
-  outsourcing: ["基本契約の確認", "発注（明示事項）", "納品・報告", "検収", "支払"],
-  single: ["相談の受付", "ひな形の選定", "締結", "完了"]
-};
+
 
 type Tab = "conditions" | "documents" | "payments" | "communications";
 
@@ -54,6 +49,9 @@ export function MattersWorkspace(
   const [backlogBusy, setBacklogBusy] = useState(false);
   const [issueKey, setIssueKey] = useState("");
   const [keyword, setKeyword] = useState("");
+  // 繋ぎ直したら、進み具合と一覧を引き直す。
+  const [linkVersion, setLinkVersion] = useState(0);
+  const relink = () => { setLinkVersion((v) => v + 1); reloadDetail(); };
   const query = useDebounced(keyword);
 
   function reloadMatters(select?: number) {
@@ -112,9 +110,10 @@ export function MattersWorkspace(
           fields={[
             { name: "title", label: "案件名", required: true },
             { name: "kind", label: "フロー種別", type: "select", required: true,
-              options: [{ value: "work", label: "作品フロー" }, { value: "outsourcing", label: "業務委託フロー" },
-                        { value: "single", label: "条件なしフロー" }],
-              hint: "必須項目・検査・使えるテンプレートをこれが決める。後から変えると影響が大きい" },
+              options: (["work", "outsourcing", "single"] as const).map((k) => ({
+                value: k, label: KIND_LABEL[k]
+              })),
+              hint: "取引の型。使える条件の種類・必要な文書・検査をこれが決める。後から変えると影響が大きい" },
             { name: "counterpartyId", label: "相手先", type: "select",
               options: parties.map((p) => ({ value: String(p.id), label: p.name })) },
             { name: "ownerStaffId", label: "担当者", type: "select",
@@ -211,14 +210,11 @@ export function MattersWorkspace(
                 </div>
                 <div className="panel-bd stack">
                   <div className="title">{detail.title}</div>
-                  <div className="pipe">
-                    {STEPS[detail.kind].map((step, index) => (
-                      <div key={step} className="pipe-step">
-                        <span className="st">{index + 1}</span><span className="nm">{step}</span>
-                      </div>
-                    ))}
-                  </div>
+                  <MatterFlow matterId={detail.id} reloadKey={linkVersion} />
                   <dl className="dl">
+                    <dt>取引の型</dt>
+                    <dd>{KIND_LABEL[detail.kind]}
+                      <div className="faint">{MATTER_KIND_HINT[detail.kind]}</div></dd>
                     <dt>相手先</dt><dd>{detail.counterparty?.name ?? "—"}</dd>
                     <dt>担当</dt><dd>{detail.ownerName ?? "未設定"}</dd>
                     {detail.blockedReason && (<><dt>停滞理由</dt><dd>{detail.blockedReason}</dd></>)}
@@ -239,41 +235,12 @@ export function MattersWorkspace(
                   </div>
 
                   {tab === "conditions" && (
-                    detail.conditions.length ? (
-                      <table>
-                        <thead><tr><th>条件番号</th><th>向き</th><th>内容</th></tr></thead>
-                        <tbody>
-                          {detail.conditions.map((c) => (
-                            <tr key={c.id} tabIndex={0} onClick={() => onOpenCondition(c.id)}
-                                onKeyDown={(e) => { if (e.key === "Enter") onOpenCondition(c.id); }}>
-                              <td className="code">{c.conditionNo ?? `#${c.id}`}</td>
-                              <td><span className={`tag ${c.direction}`}>{c.direction === "in" ? "IN" : "OUT"}</span></td>
-                              <td>{c.name}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    ) : (
-                      <div className="note">
-                        この案件は条件を持ちません。秘密保持契約・通知書・法務相談など、
-                        金銭条件も権利の移動も伴わない案件がこれにあたります。
-                      </div>
-                    )
+                    <MatterConditions detail={detail} onChanged={relink}
+                      onOpenCondition={onOpenCondition} />
                   )}
 
                   {tab === "documents" && (
-                    <table>
-                      <thead><tr><th>文書番号</th><th>種別</th><th>状態</th></tr></thead>
-                      <tbody>
-                        {detail.documents.map((d) => (
-                          <tr key={d.id}>
-                            <td className="code">{d.documentNo ?? `#${d.id}`}</td>
-                            <td>{d.templateLabel ?? "—"}</td><td><StatusTag kind="document" value={d.status} /></td>
-                          </tr>
-                        ))}
-                        {!detail.documents.length && <tr><td colSpan={3} className="faint">文書はありません</td></tr>}
-                      </tbody>
-                    </table>
+                    <MatterDocuments detail={detail} onChanged={relink} />
                   )}
 
                   {tab === "payments" && (

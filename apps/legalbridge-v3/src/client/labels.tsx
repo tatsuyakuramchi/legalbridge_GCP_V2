@@ -99,7 +99,24 @@ export function StatusTag({ kind, value }: { kind: StatusKind; value: string | n
 }
 
 export const DIRECTION_LABEL: Record<string, string> = { in: "IN 取得", out: "OUT 許諾" };
+/**
+ * 取引モデル。案件の種別がそのまま取引の型で、使える条件の種類・必要な文書・
+ * 検査をこれが決める。以前は「作品フロー」と呼んでいたが、実務の言葉
+ * （ライセンス）と一致していなかったので改めた。
+ */
 export const MATTER_KIND_LABEL: Record<string, string> = {
-  work: "作品フロー", outsourcing: "業務委託フロー", single: "単発フロー"
+  work: "ライセンス", outsourcing: "業務委託", single: "単発"
+};
+
+/** 取引モデルの補足。一覧の説明や登録フォームの注記に使う。 */
+export const MATTER_KIND_HINT: Record<string, string> = {
+  work: "作品の権利を許諾する・取得する。許諾料と計算書がぶら下がる",
+  outsourcing: "外部へ仕事を頼む。委託料・実費と、発注書・検収書がぶら下がる",
+  single: "条件を持たない相談・通知。秘密保持契約やレビューなど"
+};
+
+/** 条件の種類。取引モデルの下に来るものなので、名前も実務の言葉に寄せる。 */
+export const CONDITION_KIND_LABEL: Record<string, string> = {
+  license: "許諾料", product: "製品", service: "委託料", expense: "実費", fee: "手数料"
 };
 export const PARTY_KIND_LABEL: Record<string, string> = { corporate: "法人", individual: "個人" };
