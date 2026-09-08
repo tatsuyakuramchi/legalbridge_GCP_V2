@@ -125,15 +125,25 @@ export class OpsRepository {
     } catch (error) { throw translate(error); }
   }
 
+  /**
+   * 期限。過ぎたものは下限なしで全部返す。
+   *
+   * 以前は「今日-30日から」で切っていたが、期限切れは古いほど危険なのに
+   * 古いほど見えなくなる。実データで6〜7週間放置されたタスク4件と
+   * 満了済みの契約1件が画面から消えていた。
+   */
   async deadlines(days = 30) {
     try {
       const r = await this.database.query(
-        `SELECT source, ref_id, ref_no, title, due_on, status FROM v_deadlines
-          WHERE due_on BETWEEN current_date - 30 AND current_date + $1::int
+        `SELECT source, ref_id, ref_no, title, due_on, status,
+                (due_on < current_date) AS overdue
+           FROM v_deadlines
+          WHERE due_on <= current_date + $1::int
           ORDER BY due_on LIMIT 200`, [Math.min(Math.max(days, 1), 365)]);
       return r.rows.map((row: Record<string, any>) => ({
         source: String(row.source), refId: Number(row.ref_id), refNo: str(row.ref_no),
-        title: String(row.title ?? ""), dueOn: dateStr(row.due_on) ?? "", status: String(row.status)
+        title: String(row.title ?? ""), dueOn: dateStr(row.due_on) ?? "",
+        status: String(row.status), overdue: Boolean(row.overdue)
       }));
     } catch (error) { throw translate(error); }
   }

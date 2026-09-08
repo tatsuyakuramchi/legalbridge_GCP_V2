@@ -15,18 +15,27 @@ interface Integrations {
   channels: Array<{ channel: string; mode: "off" | "dry_run" | "live"; configured: boolean }>;
   allowlist: string[];
 }
-interface Deadline { source: string; refId: number; refNo: string | null; title: string; dueOn: string; status: string }
+interface Deadline { source: string; refId: number; refNo: string | null; title: string; dueOn: string; status: string; overdue: boolean }
 
 const RULE_LABEL: Record<string, string> = {
   PAYMENT_UNALLOCATED: "条件に割り当てられていない支払",
   PAYMENT_DUE_OVER_LIMIT: "支払期日が受領日+60日を超えている",
   CONDITION_NO_WORK: "作品に紐づかない条件",
-  MIGRATION_CONDITION_NO_PARTY: "相手先が解決できず移行できなかった条件",
-  MIGRATION_AGREEMENT_NO_PARTY: "主取引先が解決できず移行できなかった契約",
+  MIGRATION_CONDITION_NO_PARTY: "相手先が未特定の条件（受け皿に紐付け済み）",
+  MIGRATION_AGREEMENT_NO_PARTY: "主取引先が未特定の契約（受け皿に紐付け済み）",
+  MIGRATION_PAYMENT_NO_PARTY: "相手先が未特定の支払（受け皿に紐付け済み）",
+  PAYMENT_EMPTY_STUB: "中身の無い支払。移行元で削除するのが正しい",
+  AGREEMENT_TERM_INVERTED: "契約期間が逆転している（矛盾する側を落として取り込み）",
+  CONDITION_TERM_INVERTED: "条件期間が逆転している（矛盾する側を落として取り込み）",
+  CONDITION_PRICING_RECLASSIFIED: "価格方式の宣言と実データが食い違う",
+  WORK_SOURCE_IP_MERGED: "原作IPを同コードの作品へ統合",
+  WORK_PART_NO_RENUMBERED: "パート番号が重複・欠落していたため振り直し",
+  WORK_PART_ORPHAN_IN_USE: "移行元から消えたが条件から参照されているパート",
+  SCHEDULE_ORPHAN_IN_USE: "移行元から消えたが実績から参照されている予定",
   DOCUMENT_NO_SOURCE: "テンプレートも保管先も無い発行済み文書"
 };
 const SOURCE_LABEL: Record<string, string> = {
-  matter: "案件", agreement: "契約満了", payment: "支払", schedule: "予定"
+  matter: "案件", agreement: "契約満了", payment: "支払", schedule: "予定", task: "タスク"
 };
 
 export function OpsWorkspace() {
@@ -231,6 +240,8 @@ export function HomeWorkspace({ onGo }: { onGo: (view: "matters" | "money" | "op
     api.get<{ deadlines: Deadline[] }>("/deadlines?days=14").then((r) => setDeadlines(r.deadlines)).catch(() => setDeadlines([]));
   }, []);
 
+  const overdueCount = deadlines.filter((d) => d.overdue).length;
+
   return (
     <section className="workspace">
       <header className="workspace-head">
@@ -260,14 +271,17 @@ export function HomeWorkspace({ onGo }: { onGo: (view: "matters" | "money" | "op
       )}
 
       <div className="panel">
-        <div className="panel-hd"><h2>次にやること</h2><span className="faint">期日順・期限切れ30日前から14日先まで</span></div>
+        <div className="panel-hd"><h2>次にやること</h2>
+          <span className="faint">
+            期日順・期限切れは全部{overdueCount > 0 && <strong className="danger">（超過 {overdueCount} 件）</strong>}
+          </span></div>
         <div className="tablewrap">
           <table>
             <thead><tr><th>期日</th><th>種別</th><th>参照</th><th>内容</th></tr></thead>
             <tbody>
               {deadlines.slice(0, 12).map((d) => (
-                <tr key={`${d.source}-${d.refId}`}>
-                  <td className="code">{d.dueOn}</td>
+                <tr key={`${d.source}-${d.refId}`} className={d.overdue ? "overdue" : undefined}>
+                  <td className="code">{d.dueOn}{d.overdue && <span className="danger"> 超過</span>}</td>
                   <td>{SOURCE_LABEL[d.source] ?? d.source}</td>
                   <td className="code">{d.refNo ?? `#${d.refId}`}</td>
                   <td>{d.title}</td>

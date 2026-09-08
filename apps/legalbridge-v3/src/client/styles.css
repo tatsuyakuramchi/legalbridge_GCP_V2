@@ -132,3 +132,7 @@ tbody tr.sel{background:var(--accent-soft)}
 .pipe-step.flag{background:var(--out-soft);border-color:var(--out)}
 .pipe-step.flag .ct{color:var(--out)}
 .pipe-step .ct{font-family:var(--mono);font-size:17px;font-variant-numeric:tabular-nums}
+
+/* 期限切れ。古いほど危険なので、目に入るようにする。 */
+tr.overdue td { background: #fdf2f2; }
+.danger { color: #b42318; font-weight: 600; }
