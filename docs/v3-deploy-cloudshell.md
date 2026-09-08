@@ -136,13 +136,25 @@ create_secret() {  # $1=名前 $2=値
 }
 
 create_secret legalbridge-v3-webhook-token "$(openssl rand -hex 32)"
-create_secret legalbridge-v3-slack-bot-token ""
-create_secret legalbridge-v3-slack-signing-secret ""
-create_secret legalbridge-v3-cloudsign-client-id ""
-create_secret legalbridge-v3-backlog-api-key ""
 
 gcloud secrets list --filter="name~legalbridge-v3" --format="value(name)"
 ```
+
+> **空のシークレットを作らないこと。** `--data-file=-` に空を渡すと箱だけ
+> できてバージョンが作られず、`versions/latest` が解決できずデプロイが
+> 失敗する（Cloud Run は "was not found" と言うが、実際は中身が無い）。
+>
+> 外部連携の資格情報は**実際に使うときに作り**、`_SECRETS_EXTRA` で
+> 配線する。持っていない資格情報は配線しない:
+>
+> ```bash
+> create_secret legalbridge-v3-slack-bot-token "xoxb-..."
+> create_secret legalbridge-v3-slack-signing-secret "..."
+>
+> gcloud builds submit --config infra/v3/cloudbuild.yaml \
+>   --substitutions=^@^_GIT_SHA=$(git rev-parse --short HEAD)@_SECRETS_EXTRA=SLACK_BOT_TOKEN=legalbridge-v3-slack-bot-token:latest,SLACK_SIGNING_SECRET=legalbridge-v3-slack-signing-secret:latest \
+>   .
+> ```
 
 ---
 

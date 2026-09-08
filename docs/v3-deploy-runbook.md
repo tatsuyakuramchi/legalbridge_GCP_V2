@@ -86,11 +86,15 @@ Cloud Build のサービスアカウントには、このアカウントを使�
 | シークレット名 | 中身 |
 |---|---|
 | `legalbridge-v3-runtime-db-password` | 手順1で決める DB パスワード |
-| `legalbridge-v3-slack-bot-token` | Slack Bot トークン（未定なら空） |
-| `legalbridge-v3-slack-signing-secret` | Slack 署名シークレット（未定なら空） |
-| `legalbridge-v3-cloudsign-client-id` | CloudSign クライアントID（未定なら空） |
-| `legalbridge-v3-backlog-api-key` | Backlog APIキー（未定なら空） |
 | `legalbridge-v3-webhook-token` | 受信口の共有シークレット（`openssl rand -hex 32`） |
+
+外部連携の資格情報（Slack・CloudSign・Backlog）は**実際に使うときに作る**。
+`cloudbuild.yaml` は既定では配線しないので、無くてもデプロイできる。
+使うときは値を入れて作り、`_SECRETS_EXTRA` で配線する。
+
+**空のシークレットを作ってはいけない。** `--data-file=-` に空を渡すと箱だけ
+できてバージョンが作られず、`versions/latest` が解決できない。Cloud Run は
+"Secret ... was not found" と言うが、実際は「中身が無い」という意味。
 
 ```bash
 create_secret() {  # $1=名前 $2=値
@@ -100,10 +104,6 @@ create_secret() {  # $1=名前 $2=値
        --project=legalbridge-488506
 }
 create_secret legalbridge-v3-webhook-token "$(openssl rand -hex 32)"
-create_secret legalbridge-v3-slack-bot-token ""
-create_secret legalbridge-v3-slack-signing-secret ""
-create_secret legalbridge-v3-cloudsign-client-id ""
-create_secret legalbridge-v3-backlog-api-key ""
 ```
 
 ---
