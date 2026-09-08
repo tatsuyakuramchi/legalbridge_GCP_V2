@@ -244,17 +244,36 @@ export PGPASSWORD="$PGPASSWORD_ADMIN"; unset PGPASSWORD_ADMIN
 
 **順番が意味を持つ**（案件が文書より先）。全部冪等なので途中で失敗しても流し直せる。
 
+> **`set -e` を対話シェルに貼らないこと。** 有効にすると、次に非ゼロを返した
+> コマンドでシェル自体が終了する（Cloud Shell のセッションが切れる）。
+> スクリプトファイルにして子プロセスで走らせる。
+
 ```bash
 infra/gcp/start-sql-proxy.sh      # トークンを貼り直してから始める
 
-set -e
+cat > ~/run-v3-migrate.sh <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+cd ~/legalbridge_GCP_V2
 for f in 010_migrate_master 020_migrate_core 030_migrate_matters 040_migrate_documents; do
   echo "=== $f ==="
   psql -v ON_ERROR_STOP=1 -f "infra/v3/${f}.sql"
 done
-set +e
+echo "=== すべて完了 ==="
+EOF
+
+bash ~/run-v3-migrate.sh 2>&1 | tee ~/v3-migrate.log
 
 psql -v ON_ERROR_STOP=1 -f infra/v3/090_verify.sql | tee ~/v3-verify.log
+```
+
+ファイルを作らずに対話シェルのまま流すなら:
+
+```bash
+for f in 010_migrate_master 020_migrate_core 030_migrate_matters 040_migrate_documents; do
+  echo "=== $f ==="
+  psql -v ON_ERROR_STOP=1 -f "infra/v3/${f}.sql" || { echo "★ $f で失敗しました"; break; }
+done
 ```
 
 **★ 止まる条件**

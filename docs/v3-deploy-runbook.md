@@ -216,12 +216,20 @@ psql "$RUNTIME_DSN" -c "SELECT count(*) FROM public.condition_lines;"           
 すべて `legacy_id` を鍵にした `ON CONFLICT DO UPDATE` なので、
 途中で失敗しても最初から流し直せる。
 
+`set -e` は対話シェルに貼らない（次に非ゼロを返したコマンドでシェルごと終了する）。
+スクリプトにして子プロセスで走らせる。
+
 ```bash
-set -e
+cat > /tmp/run-v3-migrate.sh <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
 for f in 010_migrate_master 020_migrate_core 030_migrate_matters 040_migrate_documents; do
   echo "=== $f ==="
   psql "$ADMIN_DSN" -v ON_ERROR_STOP=1 -f "infra/v3/${f}.sql"
 done
+EOF
+bash /tmp/run-v3-migrate.sh 2>&1 | tee /tmp/v3-migrate.log
+
 psql "$ADMIN_DSN" -v ON_ERROR_STOP=1 -f infra/v3/090_verify.sql | tee /tmp/v3-verify.log
 ```
 
