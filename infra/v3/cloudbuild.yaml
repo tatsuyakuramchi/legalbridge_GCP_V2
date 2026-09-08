@@ -77,10 +77,12 @@ steps:
     args:
       - -ceu
       - |
+        # $$ は Cloud Build のエスケープ。$ 1つだと置換変数として解釈され、
+        # "key in the template SECRETS is not a valid built-in substitution" で落ちる。
         SECRETS="DB_PASSWORD=${_DB_PASSWORD_SECRET}:latest"
-        SECRETS="${SECRETS},WEBHOOK_TOKEN=${_WEBHOOK_TOKEN_SECRET}:latest"
-        if [ -n "${_SECRETS_EXTRA}" ]; then SECRETS="${SECRETS},${_SECRETS_EXTRA}"; fi
-        echo "配線するシークレット: ${SECRETS}"
+        SECRETS="$${SECRETS},WEBHOOK_TOKEN=${_WEBHOOK_TOKEN_SECRET}:latest"
+        if [ -n "${_SECRETS_EXTRA}" ]; then SECRETS="$${SECRETS},${_SECRETS_EXTRA}"; fi
+        echo "配線するシークレット: $${SECRETS}"
 
         gcloud run deploy "${_SERVICE}" \
           --image="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPOSITORY}/${_IMAGE}:${BUILD_ID}" \
@@ -91,7 +93,7 @@ steps:
           --add-cloudsql-instances="${_CLOUD_SQL_INSTANCE}" \
           --labels="git-sha=${_GIT_SHA}" \
           --memory=2Gi \
-          --set-secrets="${SECRETS}" \
+          --set-secrets="$${SECRETS}" \
           --set-env-vars="^@^NODE_ENV=production@DB_SCHEMA=v3@DB_HOST=/cloudsql/${_CLOUD_SQL_INSTANCE}@DB_PORT=5432@DB_NAME=${_DB_NAME}@DB_USER=${_DB_USER}@DB_POOL_MAX=5@READ_ONLY=${_READ_ONLY}@AUTH_MODE=${_AUTH_MODE}@ADMIN_EMAILS=${_ADMIN_EMAILS}@LEGAL_EMAILS=${_LEGAL_EMAILS}@REQUESTER_DOMAINS=${_REQUESTER_DOMAINS}@GOOGLE_DRIVE_FOLDER_ID=${_DRIVE_FOLDER_ID}@DRIVE_MATTER_PARENT_FOLDER_ID=${_DRIVE_MATTER_PARENT_FOLDER_ID}@DRIVE_ENVIRONMENT_TAG=${_DRIVE_ENVIRONMENT_TAG}@CHROMIUM_PATH=/usr/bin/chromium-browser@SLACK_MODE=${_SLACK_MODE}@GMAIL_MODE=${_GMAIL_MODE}@CLOUDSIGN_MODE=${_CLOUDSIGN_MODE}@BACKLOG_MODE=${_BACKLOG_MODE}@DISPATCH_ALLOWLIST=${_DISPATCH_ALLOWLIST}@GMAIL_SENDER=${_GMAIL_SENDER}@BACKLOG_HOST=${_BACKLOG_HOST}@BACKLOG_PROJECT_ID=${_BACKLOG_PROJECT_ID}"
 
 images:
