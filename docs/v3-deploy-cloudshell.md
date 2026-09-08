@@ -209,6 +209,10 @@ psql -v ON_ERROR_STOP=1 -f infra/v3/001_schema.sql
 psql -v ON_ERROR_STOP=1 -f infra/v3/002_views.sql
 ```
 
+> **`002_views.sql` を流し直したら、必ず `003_grants.sql` も流し直すこと。**
+> ビューを作り直すとランタイムロールにビューへの書込権限が付く経路がある。
+> 003 がそれを剥がす。手順4の「想定外の権限 0行」で確認できる。
+
 **★ 確認：表28 / ビュー6**
 
 ```bash

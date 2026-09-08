@@ -93,9 +93,26 @@ BEGIN
 END
 $revoke$;
 
--- 今後 001 に表を足したときも同じ既定が効くようにする。
+-- ビューは読むだけ。派生値の置き場であって書込先ではない。
+--   002_views.sql を流し直すとビューが作り直されるので、既定権限が
+--   付いてしまう経路がある。ここで必ず剥がす（003 を再実行すれば直る）。
+DO $revoke_views$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT viewname FROM pg_views WHERE schemaname = 'v3' LOOP
+    EXECUTE format(
+      'REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON v3.%I FROM legalbridge_v3_runtime',
+      r.viewname);
+  END LOOP;
+END
+$revoke_views$;
+
+-- 今後 001 に表を足したときのための既定。
+--   SELECT だけにする。PostgreSQL の ON TABLES はビューにも効くため、
+--   書込を既定に入れると 002 を流し直したビューに書込権限が付く。
+--   表を足したときは 003 を流し直すこと（明示的な操作にする）。
 ALTER DEFAULT PRIVILEGES IN SCHEMA v3
-  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO legalbridge_v3_runtime;
+  GRANT SELECT ON TABLES TO legalbridge_v3_runtime;
 ALTER DEFAULT PRIVILEGES IN SCHEMA v3
   GRANT USAGE, SELECT ON SEQUENCES TO legalbridge_v3_runtime;
 
@@ -123,7 +140,12 @@ SELECT table_schema, table_name, privilege_type
         OR (table_name IN ('document_templates', 'document_template_versions')
             AND privilege_type <> 'SELECT')
         OR (table_name = 'audit_events' AND privilege_type IN ('UPDATE', 'DELETE'))
-        OR (table_name LIKE 'v\\_%' AND privilege_type <> 'SELECT'))
+        -- ビューは pg_views で厳密に判定する。以前は名前の前方一致
+        -- （LIKE 'v\_%'）で見ていたが、standard_conforming_strings が
+        -- 有効だとこれは「v + バックスラッシュ + 任意1文字」を意味し、
+        -- どのビューにも一致せずチェックが素通りしていた。
+        OR (table_name IN (SELECT viewname FROM pg_views WHERE schemaname = 'v3')
+            AND privilege_type <> 'SELECT'))
  ORDER BY table_schema, table_name, privilege_type;
 
 COMMIT;
