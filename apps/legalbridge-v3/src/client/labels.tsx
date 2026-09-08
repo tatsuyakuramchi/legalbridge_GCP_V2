@@ -105,14 +105,30 @@ export const DIRECTION_LABEL: Record<string, string> = { in: "IN 取得", out: "
  * （ライセンス）と一致していなかったので改めた。
  */
 export const MATTER_KIND_LABEL: Record<string, string> = {
-  work: "ライセンス", outsourcing: "業務委託", single: "単発"
+  work: "ライセンス", outsourcing: "業務委託", single: "文書作成"
 };
 
 /** 取引モデルの補足。一覧の説明や登録フォームの注記に使う。 */
 export const MATTER_KIND_HINT: Record<string, string> = {
   work: "作品の権利を許諾する・取得する。許諾料と計算書がぶら下がる",
   outsourcing: "外部へ仕事を頼む。委託料・実費と、発注書・検収書がぶら下がる",
-  single: "条件を持たない相談・通知。秘密保持契約やレビューなど"
+  single: "お金の条件を持たない文書を作る。秘密保持契約・通知書・レビューなど"
+};
+
+/**
+ * 進め方。取引モデルが「何を扱うか」を決めるのに対し、これは「どうやって文書を作るか」を
+ * 決める。取引モデルだけでは、相手方の文書を待つのか自分で書くのかが分からない。
+ */
+export const DOCUMENT_STYLE_LABEL: Record<string, string> = {
+  counterparty_review: "他社文書レビュー型",
+  own_draft: "自社ドラフト型",
+  own_template: "自社テンプレートドラフト型"
+};
+
+export const DOCUMENT_STYLE_HINT: Record<string, string> = {
+  counterparty_review: "相手方から届いた文書を確認して直す。まず文書を受け取って取り込む",
+  own_draft: "自社で一から書く。ひな形に無い条件のときはこちら",
+  own_template: "登録済みのひな形から起こす。条件から自動で埋まる"
 };
 
 /** 条件の種類。取引モデルの下に来るものなので、名前も実務の言葉に寄せる。 */

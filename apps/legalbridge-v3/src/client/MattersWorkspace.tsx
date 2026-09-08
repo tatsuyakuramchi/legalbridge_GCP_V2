@@ -3,7 +3,8 @@ import type { MatterDetail, MatterKind, MatterSummary } from "../server/core/mod
 import { api, ApiError, money } from "./api.js";
 import { CreateForm, int, text } from "./CreateForm.js";
 import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
-import { MATTER_KIND_HINT, MATTER_KIND_LABEL as KIND_LABEL, StatusTag } from "./labels.js";
+import { DOCUMENT_STYLE_HINT, DOCUMENT_STYLE_LABEL, MATTER_KIND_HINT,
+         MATTER_KIND_LABEL as KIND_LABEL, StatusTag } from "./labels.js";
 import { MatterFlow } from "./MatterFlow.js";
 import { MatterConditions, MatterDocuments } from "./MatterLinks.js";
 
@@ -49,9 +50,19 @@ export function MattersWorkspace(
   const [backlogBusy, setBacklogBusy] = useState(false);
   const [issueKey, setIssueKey] = useState("");
   const [keyword, setKeyword] = useState("");
+  // 進め方は後から決まることが多いので、詳細からその場で直せるようにする。
+  const [styleEdit, setStyleEdit] = useState(false);
   // 繋ぎ直したら、進み具合と一覧を引き直す。
   const [linkVersion, setLinkVersion] = useState(0);
   const relink = () => { setLinkVersion((v) => v + 1); reloadDetail(); };
+
+  // 進め方を変えると次にやることが変わるので、進み具合も引き直す。
+  function saveStyle(value: string) {
+    if (!selected) return;
+    api.patch(`/matters/${selected}/document-style`, { documentStyle: value || null })
+      .then(() => { setStyleEdit(false); relink(); })
+      .catch((e: ApiError) => setError(e.message));
+  }
   const query = useDebounced(keyword);
 
   function reloadMatters(select?: number) {
@@ -81,7 +92,7 @@ export function MattersWorkspace(
   useEffect(() => {
     if (!selected) return;
     setTab("conditions");
-    setBacklog(null); setIssueKey("");
+    setBacklog(null); setIssueKey(""); setStyleEdit(false);
     api.get<MatterDetail>(`/matters/${selected}`).then(setDetail)
       .catch((e: ApiError) => setError(e.message));
   }, [selected]);
@@ -90,7 +101,7 @@ export function MattersWorkspace(
     <section className="workspace">
       <header className="workspace-head">
         <h1>案件</h1>
-        <p>すべての作業の入口。フロー種別が中身を決め、条件・文書・支払・連絡がその下にぶら下がる。</p>
+        <p>すべての作業の入口。取引モデルが扱うものを決め、進め方が文書の作り方を決める。条件・文書・支払・連絡はその下にぶら下がる。</p>
       </header>
 
       <div className="row" style={{ marginBottom: 10 }}>
@@ -109,11 +120,16 @@ export function MattersWorkspace(
           initial={{ kind: "single" }}
           fields={[
             { name: "title", label: "案件名", required: true },
-            { name: "kind", label: "フロー種別", type: "select", required: true,
+            { name: "kind", label: "取引モデル", type: "select", required: true,
               options: (["work", "outsourcing", "single"] as const).map((k) => ({
                 value: k, label: KIND_LABEL[k]
               })),
-              hint: "取引の型。使える条件の種類・必要な文書・検査をこれが決める。後から変えると影響が大きい" },
+              hint: "何を扱うか。使える条件の種類・必要な文書・検査をこれが決める。後から変えると影響が大きい" },
+            { name: "documentStyle", label: "進め方", type: "select",
+              options: (["counterparty_review", "own_draft", "own_template"] as const).map((k) => ({
+                value: k, label: DOCUMENT_STYLE_LABEL[k]
+              })),
+              hint: "どうやって文書を作るか。分からなければ空のままでよい（後から詳細で入れられる）" },
             { name: "counterpartyId", label: "相手先", type: "select",
               options: parties.map((p) => ({ value: String(p.id), label: p.name })) },
             { name: "ownerStaffId", label: "担当者", type: "select",
@@ -123,7 +139,7 @@ export function MattersWorkspace(
             { name: "remarks", label: "備考", type: "textarea" }
           ]}
           toPayload={(v) => ({
-            title: text(v.title), kind: v.kind,
+            title: text(v.title), kind: v.kind, documentStyle: text(v.documentStyle),
             counterpartyId: int(v.counterpartyId), ownerStaffId: int(v.ownerStaffId),
             dueOn: text(v.dueOn), requesterEmail: text(v.requesterEmail), remarks: text(v.remarks)
           })}
@@ -174,7 +190,7 @@ export function MattersWorkspace(
           <ListCount shown={rows.length} keyword={query} onClear={() => setKeyword("")} />
           <div className="tablewrap">
             <table>
-              <thead><tr><th>案件番号</th><th>フロー</th><th>件名 / 相手先</th><th>状態</th><th>期日</th></tr></thead>
+              <thead><tr><th>案件番号</th><th>取引モデル</th><th>件名 / 相手先</th><th>状態</th><th>期日</th></tr></thead>
               <tbody>
                 {rows.map((row) => (
                   <tr key={row.id} className={row.id === selected ? "sel" : ""}
@@ -212,9 +228,35 @@ export function MattersWorkspace(
                   <div className="title">{detail.title}</div>
                   <MatterFlow matterId={detail.id} reloadKey={linkVersion} />
                   <dl className="dl">
-                    <dt>取引の型</dt>
+                    <dt>取引モデル</dt>
                     <dd>{KIND_LABEL[detail.kind]}
                       <div className="faint">{MATTER_KIND_HINT[detail.kind]}</div></dd>
+                    <dt>進め方</dt>
+                    <dd>
+                      {styleEdit ? (
+                        <div className="row">
+                          <select
+                            defaultValue={detail.documentStyle ?? ""}
+                            onChange={(e) => saveStyle(e.target.value)}
+                          >
+                            <option value="">未設定</option>
+                            {(["counterparty_review", "own_draft", "own_template"] as const).map((k) => (
+                              <option key={k} value={k}>{DOCUMENT_STYLE_LABEL[k]}</option>
+                            ))}
+                          </select>
+                          <button className="btn btn-sm" onClick={() => setStyleEdit(false)}>やめる</button>
+                        </div>
+                      ) : (
+                        <div className="row">
+                          <span>{detail.documentStyle
+                            ? DOCUMENT_STYLE_LABEL[detail.documentStyle] : "未設定"}</span>
+                          <button className="btn btn-sm" onClick={() => setStyleEdit(true)}>変更</button>
+                        </div>
+                      )}
+                      <div className="faint">{detail.documentStyle
+                        ? DOCUMENT_STYLE_HINT[detail.documentStyle]
+                        : "決めると、次にやることが「相手方の文書を確認」なのか「自社ドラフトの発行」なのかが出る"}</div>
+                    </dd>
                     <dt>相手先</dt><dd>{detail.counterparty?.name ?? "—"}</dd>
                     <dt>担当</dt><dd>{detail.ownerName ?? "未設定"}</dd>
                     {detail.blockedReason && (<><dt>停滞理由</dt><dd>{detail.blockedReason}</dd></>)}

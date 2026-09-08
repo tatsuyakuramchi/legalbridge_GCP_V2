@@ -67,9 +67,9 @@ export function MatterConditions(
   if (!allowed.length) {
     return (
       <div className="note">
-        {MATTER_KIND_LABEL[detail.kind]} の案件は条件を持ちません。秘密保持契約・通知書・
+        {MATTER_KIND_LABEL[detail.kind]}モデルの案件は条件を持ちません。秘密保持契約・通知書・
         法務相談など、金銭条件も権利の移動も伴わない案件がこれにあたります。
-        条件が要るなら、案件の種別を変えてください。
+        条件が要るなら、取引モデルを ライセンス か 業務委託 に変えてください。
       </div>
     );
   }
@@ -78,7 +78,7 @@ export function MatterConditions(
     <div className="stack">
       <div className="row">
         <span className="faint">
-          {MATTER_KIND_LABEL[detail.kind]} の案件に繋げるのは
+          {MATTER_KIND_LABEL[detail.kind]}モデルの案件に繋げるのは
           <b>{allowed.map((k) => CONDITION_KIND_LABEL[k] ?? k).join("・")}</b> の条件です
         </span>
         {!picking && (

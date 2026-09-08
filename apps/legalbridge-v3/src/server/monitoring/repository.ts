@@ -95,7 +95,7 @@ export class MonitoringRepository {
     } catch (error) { throw translate(error); }
   }
 
-  /** 業務委託の段階ごとの件数。案件のフロー種別を軸に数える。 */
+  /** 業務委託の段階ごとの件数。案件の取引モデルを軸に数える。 */
   async outsourcingPipeline() {
     try {
       const r = await this.database.query(

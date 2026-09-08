@@ -8,7 +8,9 @@ export type MatterStatus = "open" | "waiting" | "blocked" | "done" | "canceled";
 
 export interface MatterInput {
   title: string;
-  /** フロー種別。必須項目も使えるテンプレートもこれが決める制御列。 */
+  /** 進め方。他社レビュー／自社ドラフト／自社テンプレート。 */
+  documentStyle?: "counterparty_review" | "own_draft" | "own_template" | null;
+  /** 取引モデル。必須項目も使えるテンプレートもこれが決める制御列。 */
   kind: MatterKind;
   ownerStaffId?: number | null;
   counterpartyId?: number | null;
@@ -39,7 +41,7 @@ export class MatterWriteService {
     const title = String(input.title ?? "").trim();
     if (!title) throw new DomainError("VALIDATION", "案件名は必須です");
     if (!["work", "outsourcing", "single"].includes(input.kind)) {
-      throw new DomainError("VALIDATION", "フロー種別は work / outsourcing / single のいずれかです");
+      throw new DomainError("VALIDATION", "取引モデルは work / outsourcing / single のいずれかです");
     }
 
     try {
@@ -60,11 +62,12 @@ export class MatterWriteService {
         const no = String(input.matterNo ?? "").trim() || await allocateNumber(client, NUMBER);
         const inserted = await client.query(
           `INSERT INTO matters (matter_no, title, kind, status, owner_staff_id, counterparty_id,
-                                requester_email, due_on, remarks, created_by)
-           VALUES ($1, $2, $3, 'open', $4, $5, $6, $7, $8, $9)
+                                requester_email, due_on, remarks, document_style, created_by)
+           VALUES ($1, $2, $3, 'open', $4, $5, $6, $7, $8, $9, $10)
            RETURNING id, matter_no`,
           [no, title, input.kind, input.ownerStaffId ?? null, input.counterpartyId ?? null,
-           input.requesterEmail ?? null, input.dueOn ?? null, input.remarks ?? null, actor]);
+           input.requesterEmail ?? null, input.dueOn ?? null, input.remarks ?? null,
+           input.documentStyle ?? null, actor]);
         const row = inserted.rows[0] as { id: number; matter_no: string | null };
         const id = Number(row.id);
 
@@ -103,6 +106,36 @@ export class MatterWriteService {
           detail: { from: (before.rows[0] as { status: string }).status, to: status, reason }
         });
         return { id, status };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 進め方の設定・変更。取引モデル（案件の種別）だけでは実際に何をするかが決まらないので、
+   * 他社レビュー／自社ドラフト／自社テンプレートのどれで進めるかをここで決める。
+   * 既存案件は未設定のまま残るので、後から入れられる必要がある。
+   */
+  async changeDocumentStyle(
+    id: number, style: "counterparty_review" | "own_draft" | "own_template" | null, actor: string
+  ) {
+    if (style !== null && !["counterparty_review", "own_draft", "own_template"].includes(style)) {
+      throw new DomainError("VALIDATION",
+        "進め方は 他社文書レビュー型 / 自社ドラフト型 / 自社テンプレートドラフト型 のいずれかです");
+    }
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const before = await client.query(
+          "SELECT document_style FROM matters WHERE id = $1", [id]);
+        if (!before.rows[0]) throw new DomainError("NOT_FOUND", `案件 ${id} が見つかりません`);
+
+        await client.query(
+          "UPDATE matters SET document_style = $2, updated_at = now() WHERE id = $1", [id, style]);
+        await recordAudit(client, {
+          actor, action: "matter.change_document_style", targetType: "matter", targetId: id,
+          detail: { from: (before.rows[0] as { document_style: string | null }).document_style,
+                    to: style }
+        });
+        return { id, documentStyle: style };
       });
     } catch (error) { throw translate(error); }
   }

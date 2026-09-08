@@ -6,7 +6,7 @@ import type { MatterKind } from "../matters/write-service.js";
  *
  * 依頼者に V3 の画面を開かせない。Slack の中で完結させて、案件だけが
  * こちらに立つ。V2 は依頼種別ごとに動的なモーダルを組み立てていたが、
- * V3 の案件はフロー種別が3つしかないので、選ばせるのはそれだけにする。
+ * V3 の案件は取引モデルが3つしかないので、選ばせるのはそれだけにする。
  *
  * モーダルの組み立てと送信内容の読み取りは純関数にしてある。Slack を
  * 相手にせずに規則を確かめられるようにするため。
@@ -15,7 +15,7 @@ import type { MatterKind } from "../matters/write-service.js";
 export const INTAKE_COMMANDS = new Set(["/法務依頼", "/legal-request"]);
 export const INTAKE_CALLBACK_ID = "legalbridge_intake";
 
-/** 依頼種別。V3 の案件のフロー種別に1対1で対応させる。 */
+/** 依頼種別。V3 の案件の取引モデルに1対1で対応させる。 */
 export const REQUEST_TYPES: Array<{ value: MatterKind; label: string; hint: string }> = [
   { value: "outsourcing", label: "業務委託・発注", hint: "外部へ仕事を頼む。取適法の検査が付く" },
   { value: "work", label: "作品の権利", hint: "許諾を出す・取る。権利範囲を確かめる" },

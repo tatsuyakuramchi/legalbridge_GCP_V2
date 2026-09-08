@@ -69,6 +69,42 @@ COMMENT ON COLUMN v3.condition_schedules.label IS
   '明細行の名前。「2026年4月分」「第1回 着手金」など。空なら期日から表示を作る。';
 
 
+-- ---------------------------------------------------------------------
+-- A-003 案件に「進め方」を持たせる
+--
+--   取引モデル（ライセンス／業務委託／文書作成）だけでは、実際に何をする
+--   のかが決まらない。相手方の文書をレビューするのか、自社で一から書くの
+--   か、ひな形から起こすのかで、最初にやることも要る材料も違う。
+--
+--     counterparty_review … 他社文書レビュー型（相手方の文書を受け取る）
+--     own_draft           … 自社ドラフト型（一から書く）
+--     own_template        … 自社テンプレートドラフト型（ひな形から起こす）
+--
+--   既存の案件は空のまま。決まっていないものを勝手に決めない。
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.matters ADD COLUMN IF NOT EXISTS document_style text;
+
+DO $amend_doc_style$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'v3.matters'::regclass
+       AND conname = 'matters_document_style_check'
+  ) THEN
+    ALTER TABLE v3.matters ADD CONSTRAINT matters_document_style_check
+      CHECK (document_style IS NULL OR document_style IN
+             ('counterparty_review', 'own_draft', 'own_template'));
+    RAISE NOTICE 'A-003: matters.document_style を足した';
+  ELSE
+    RAISE NOTICE 'A-003: 適用済み';
+  END IF;
+END
+$amend_doc_style$;
+
+COMMENT ON COLUMN v3.matters.document_style IS
+  '進め方。counterparty_review=他社文書レビュー / own_draft=自社ドラフト / own_template=自社テンプレート。';
+
+
 COMMIT;
 
 -- 確認
@@ -82,3 +118,7 @@ SELECT column_name, data_type
   FROM information_schema.columns
  WHERE table_schema = 'v3' AND table_name = 'condition_schedules'
  ORDER BY ordinal_position;
+
+\echo '--- matters.document_style ---'
+SELECT column_name, data_type FROM information_schema.columns
+ WHERE table_schema='v3' AND table_name='matters' AND column_name='document_style';

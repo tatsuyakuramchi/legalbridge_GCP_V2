@@ -9,6 +9,7 @@ import { ConditionEventService, EVENT_TYPES } from "./conditions/event-service.j
 import { ConditionScheduleService, TRIGGER_KINDS, generateLines } from "./conditions/schedule-service.js";
 import { MatterWriteService } from "./matters/write-service.js";
 import { MatterLinkService, CONDITION_KINDS_BY_MATTER } from "./matters/link-service.js";
+import { DOCUMENT_STYLES } from "./matters/flow.js";
 import { WorkWriteService } from "./works/write-service.js";
 import { PartyWriteService } from "./parties/write-service.js";
 import { PartyMergeService } from "./parties/merge-service.js";
@@ -202,9 +203,10 @@ export function createRoutes(database: Transactable) {
         Number(req.params.id), Number(req.params.documentId), actor(res)));
     }));
 
-  // 取引モデルごとに使える条件の種類。案件の種別が中身を決める。
+  // 取引モデルごとに使える条件の種類と、進め方の選択肢。
+  // 取引モデルが「何を扱うか」、進め方が「どうやって文書を作るか」を決める。
   router.get("/matter-kinds", (_req, res) => {
-    res.json({ kinds: CONDITION_KINDS_BY_MATTER });
+    res.json({ kinds: CONDITION_KINDS_BY_MATTER, documentStyles: DOCUMENT_STYLES });
   });
 
   router.get("/matters/:id/drive-files", asyncRoute(async (req, res) => {
@@ -496,6 +498,8 @@ export function createRoutes(database: Transactable) {
   const matterSchema = z.object({
     title: z.string().trim().min(1).max(300),
     kind: z.enum(["work", "outsourcing", "single"]),
+    documentStyle: z.enum(["counterparty_review", "own_draft", "own_template"])
+      .nullable().optional(),
     ownerStaffId: z.coerce.number().int().positive().nullable().optional(),
     counterpartyId: z.coerce.number().int().positive().nullable().optional(),
     requesterEmail: z.string().trim().email().max(300).nullable().optional(),
@@ -506,6 +510,18 @@ export function createRoutes(database: Transactable) {
   router.post("/matters", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       res.status(201).json(await matterWrites.create(matterSchema.parse(req.body ?? {}), actor(res)));
+    }));
+
+  // 進め方は後から決まることが多い（相手方から文書が来て初めて他社レビューだと分かる）ので、
+  // 登録時だけでなく後からも入れられるようにする。既存案件は全部未設定なのでここが唯一の入口。
+  const docStyleSchema = z.object({
+    documentStyle: z.enum(["counterparty_review", "own_draft", "own_template"]).nullable()
+  });
+  router.patch("/matters/:id/document-style", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { documentStyle } = docStyleSchema.parse(req.body ?? {});
+      res.json(await matterWrites.changeDocumentStyle(
+        Number(req.params.id), documentStyle, actor(res)));
     }));
 
   const matterStatusSchema = z.object({

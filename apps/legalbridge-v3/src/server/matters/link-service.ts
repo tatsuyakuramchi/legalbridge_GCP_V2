@@ -1,7 +1,7 @@
 import { dateStr, inTransaction, type Transactable } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
-import { buildFlow, currentStep, type FlowFacts, type FlowStep } from "./flow.js";
+import { buildFlow, currentStep, type DocumentStyle, type FlowFacts, type FlowStep } from "./flow.js";
 import type { MatterKind } from "./write-service.js";
 
 /**
@@ -52,7 +52,7 @@ export class MatterLinkService {
         const allowed = CONDITION_KINDS_BY_MATTER[matter.kind];
         if (!allowed.length) {
           throw new DomainError("VALIDATION",
-            "単発の案件は条件を持ちません。条件が要るなら案件の種別を変えてください");
+            "文書作成モデルの案件は条件を持ちません。条件が要るなら取引モデルを変えてください");
         }
         if (!allowed.some((k) => k.value === condition.kind)) {
           throw new DomainError("VALIDATION",
@@ -149,8 +149,9 @@ export class MatterLinkService {
   async flow(matterId: number): Promise<{ steps: FlowStep[]; current: FlowStep | null; facts: FlowFacts }> {
     try {
       const head = await this.database.query(
-        "SELECT id, kind, status FROM matters WHERE id = $1", [matterId]);
-      const matter = head.rows[0] as { kind: MatterKind; status: string } | undefined;
+        "SELECT id, kind, status, document_style FROM matters WHERE id = $1", [matterId]);
+      const matter = head.rows[0] as
+        { kind: MatterKind; status: string; document_style: string | null } | undefined;
       if (!matter) throw new DomainError("NOT_FOUND", `案件 ${matterId} が見つかりません`);
 
       const conditions = await this.database.query(
@@ -163,7 +164,7 @@ export class MatterLinkService {
       const ids = rows.map((r) => Number(r.id));
 
       const documents = await this.database.query(
-        `SELECT d.status, d.document_no, t.label
+        `SELECT d.status, d.document_no, d.template_version_id, t.label
            FROM documents d
            LEFT JOIN document_template_versions v ON v.id = d.template_version_id
            LEFT JOIN document_templates t ON t.id = v.template_id
@@ -202,6 +203,7 @@ export class MatterLinkService {
 
       const facts: FlowFacts = {
         matterKind: matter.kind,
+        documentStyle: (matter.document_style as DocumentStyle | null) ?? null,
         matterStatus: matter.status,
         conditionCount: rows.length,
         activeConditionCount: rows.filter((r) => r.status === "active").length,
@@ -212,6 +214,9 @@ export class MatterLinkService {
           .filter((d) => d.status === "issued")
           .map((d) => ({ documentNo: d.document_no ?? null, label: d.label ?? null })),
         draftDocuments: (documents.rows as any[]).filter((d) => d.status === "draft").length,
+        // テンプレートを持たない文書＝取り込んだもの（相手方から受け取った文書）。
+        importedDocuments: (documents.rows as any[])
+          .filter((d) => d.template_version_id === null && d.status !== "void").length,
         events: byType,
         latestEventOn: latest,
         statements: Number((statements.rows[0] as any)?.n ?? 0),
@@ -228,4 +233,4 @@ export class MatterLinkService {
 }
 
 const labelOf = (kind: MatterKind) =>
-  ({ work: "ライセンス", outsourcing: "業務委託", single: "単発" })[kind] ?? kind;
+  ({ work: "ライセンス", outsourcing: "業務委託", single: "文書作成" })[kind] ?? kind;

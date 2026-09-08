@@ -146,6 +146,9 @@ CREATE TABLE IF NOT EXISTS v3.matters (
                      CHECK (kind IN ('work', 'outsourcing', 'single')),
   status             text NOT NULL DEFAULT 'open'
                      CHECK (status IN ('open', 'waiting', 'blocked', 'done', 'canceled')),
+  -- 進め方。取引モデルだけでは「実際に何をするか」が決まらない。
+  document_style     text CHECK (document_style IS NULL OR document_style IN
+                     ('counterparty_review', 'own_draft', 'own_template')),
   owner_staff_id     bigint REFERENCES v3.staff(id),
   counterparty_id    bigint REFERENCES v3.parties(id),
   requester_email    text,

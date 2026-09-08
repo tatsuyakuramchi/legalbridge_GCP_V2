@@ -29,7 +29,7 @@ test("フォームは依頼の種類と件名を必須にする", () => {
   assert.deepEqual(required, ["kind", "title"]);
 });
 
-test("種類は案件のフロー種別に1対1で対応する", () => {
+test("種類は案件の取引モデルに1対1で対応する", () => {
   const modal = buildIntakeModal();
   const kind = modal.blocks.find((b: any) => b.block_id === "kind") as any;
   assert.deepEqual(kind.element.options.map((o: any) => o.value),

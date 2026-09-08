@@ -3,10 +3,10 @@ import assert from "node:assert/strict";
 import { buildFlow, currentStep, type FlowFacts } from "./flow.js";
 
 const facts = (over: Partial<FlowFacts> = {}): FlowFacts => ({
-  matterKind: "outsourcing", matterStatus: "open",
+  matterKind: "outsourcing", documentStyle: null, matterStatus: "open",
   conditionCount: 0, activeConditionCount: 0, conditionsWithWork: 0,
   agreementExecuted: false, agreementNo: null,
-  issuedDocuments: [], draftDocuments: 0,
+  issuedDocuments: [], draftDocuments: 0, importedDocuments: 0,
   events: {}, latestEventOn: null, statements: 0,
   payments: { total: 0, paid: 0 }, ...over
 });
@@ -61,16 +61,77 @@ test("ライセンスの実績は 売上・製造・再許諾の受領 を数え
   assert.match(steps[3].detail, /実績 4 件/, "検収はライセンスでは数えない");
 });
 
-test("単発は条件を持たないので、文書と案件の状態だけで進む", () => {
+test("文書作成は条件を持たないので、文書と案件の状態だけで進む", () => {
   const steps = buildFlow(facts({ matterKind: "single" }));
   assert.equal(steps.length, 4);
   assert.equal(steps[0].done, true, "案件が立っている時点で受付は済");
-  assert.equal(currentStep(steps)?.name, "ひな形の選定");
+  assert.equal(currentStep(steps)?.name, "文書の用意");
 
   const done = buildFlow(facts({
     matterKind: "single", matterStatus: "done",
     issuedDocuments: [{ documentNo: "ARC-NDA-2026-0001", label: "NDA" }] }));
   assert.equal(currentStep(done), null, "すべて済なら次にやることは無い");
+});
+
+// ---- 進め方（何をするか） ----
+
+test("他社文書レビュー型は、相手方の文書を取り込むまで進まない", () => {
+  const steps = buildFlow(facts({ documentStyle: "counterparty_review" }));
+  assert.equal(steps[1].name, "相手方の文書を確認");
+  assert.equal(steps[1].done, false);
+  assert.match(steps[1].detail, /受け取った文書を登録/);
+
+  // 自社で発行しても、レビュー型では取り込みの代わりにならない。
+  const issued = buildFlow(facts({
+    documentStyle: "counterparty_review",
+    issuedDocuments: [{ documentNo: "ARC-PO-2026-0031", label: "発注書" }] }));
+  assert.equal(issued[1].done, false);
+
+  const imported = buildFlow(facts({
+    documentStyle: "counterparty_review", importedDocuments: 1 }));
+  assert.equal(imported[1].done, true);
+  assert.match(imported[1].detail, /取り込んだ文書 1 件/);
+});
+
+test("自社テンプレート型は、下書きの段階では済にしない", () => {
+  const draft = buildFlow(facts({ documentStyle: "own_template", draftDocuments: 1 }));
+  assert.equal(draft[1].name, "ひな形から発行");
+  assert.equal(draft[1].done, false);
+  assert.match(draft[1].detail, /発行するとここが済になる/);
+
+  const issued = buildFlow(facts({
+    documentStyle: "own_template",
+    issuedDocuments: [{ documentNo: "ARC-PO-2026-0031", label: "発注書" }] }));
+  assert.equal(issued[1].done, true);
+});
+
+test("自社ドラフト型は名前が変わり、やることが分かる", () => {
+  const steps = buildFlow(facts({ documentStyle: "own_draft" }));
+  assert.equal(steps[1].name, "自社ドラフトの発行");
+  assert.match(steps[1].detail, /自社で書いた文書を登録/);
+});
+
+test("進め方が未設定なら、それを次にやることとして出す", () => {
+  const steps = buildFlow(facts());
+  assert.equal(steps[1].name, "発注", "これまでの名前のまま");
+  assert.match(steps[1].detail, /進め方が未設定/);
+});
+
+test("ライセンスでも進め方が段階の名前を決める", () => {
+  const steps = buildFlow(facts({ matterKind: "work", documentStyle: "counterparty_review" }));
+  assert.equal(steps[2].name, "相手方の文書を確認");
+
+  // 合意が締結済みなら、そちらが根拠になる（文書を待たない）。
+  const executed = buildFlow(facts({
+    matterKind: "work", documentStyle: "counterparty_review",
+    agreementExecuted: true, agreementNo: "AGR-2026-0012" }));
+  assert.equal(executed[2].name, "契約書の締結");
+  assert.equal(executed[2].done, true);
+});
+
+test("文書作成モデルでも進め方が効く", () => {
+  const steps = buildFlow(facts({ matterKind: "single", documentStyle: "own_template" }));
+  assert.equal(steps[1].name, "ひな形から発行");
 });
 
 test("済の理由を必ず添える（印だけでは確かめようがない）", () => {

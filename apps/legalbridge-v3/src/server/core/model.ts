@@ -114,6 +114,8 @@ export interface MatterSummary {
   counterparty: PartyRef | null;
   dueOn: string | null;
   blockedReason: string | null;
+  /** 進め方。他社レビュー／自社ドラフト／自社テンプレート。未設定は null。 */
+  documentStyle: "counterparty_review" | "own_draft" | "own_template" | null;
 }
 
 export interface MatterDetail extends MatterSummary {

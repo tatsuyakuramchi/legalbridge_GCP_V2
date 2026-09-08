@@ -16,12 +16,13 @@ function mapSummary(row: Record<string, any>): MatterSummary {
       ? { id: Number(row.party_id), name: String(row.party_name ?? ""), kind: row.party_kind }
       : null,
     dueOn: dateStr(row.due_on),
-    blockedReason: str(row.blocked_reason)
+    blockedReason: str(row.blocked_reason),
+    documentStyle: (str(row.document_style) as MatterSummary["documentStyle"]) ?? null
   };
 }
 
 const SUMMARY_COLUMNS = `
-  m.id, m.matter_no, m.title, m.kind, m.status, m.due_on, m.blocked_reason,
+  m.id, m.matter_no, m.title, m.kind, m.status, m.due_on, m.blocked_reason, m.document_style,
   s.name AS owner_name,
   p.id AS party_id, p.name AS party_name, p.kind AS party_kind`;
 
