@@ -214,6 +214,17 @@ HAVING count(*) <> count(DISTINCT s.material_no)
 ON CONFLICT (rule_code, target_type, target_id) DO UPDATE SET
   detail = EXCLUDED.detail, detected_at = now();
 
+-- V1 側の採番が直っていれば閉じる。
+UPDATE v3.data_quality_issues q
+   SET status = 'resolved', resolved_at = now()
+ WHERE q.rule_code = 'WORK_PART_NO_RENUMBERED' AND q.status = 'open'
+   AND NOT EXISTS (
+     SELECT 1 FROM public.work_materials m
+      WHERE m.work_id = q.target_id
+        AND COALESCE(NULLIF(m.material_name,''), '') <> ''
+      GROUP BY m.work_id
+     HAVING count(*) <> count(DISTINCT m.material_no));
+
 -- ---------------------------------------------------------------------
 -- 系譜：work_relations と works.parent_work_id を1表に統合
 -- ---------------------------------------------------------------------

@@ -28,6 +28,34 @@ COMMENT ON FUNCTION v3.to_minor(numeric, text) IS '移行専用。切替後は�
 -- 合意：contracts → agreements
 --   direction は契約に列が無いため、ぶら下がる条件の向きから決める。
 -- ---------------------------------------------------------------------
+-- ---------------------------------------------------------------------
+-- 期間の正規化
+--   V1 には開始 > 終了の行が入りうる（年の打ち間違い）。V3 は
+--   CHECK (終了 >= 開始) を持つので、そのまま入れると1行のために
+--   380件の取り込みが全部止まる。並行稼働中の流し直しに耐えないので、
+--   矛盾する側だけを落として取り込む。日付は作り直さない（捏造しない）。
+--     - ありえない年（1990年より前・2100年より後）が原因ならその側を落とす
+--     - 両方ありえる値なら開始を落とす（終了は期限管理に効くので残す）
+--   元の値は data_quality_issues に残すので、失われる情報は無い。
+-- ---------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION v3.term_implausible(d date) RETURNS boolean
+  LANGUAGE sql IMMUTABLE AS
+$$ SELECT d IS NOT NULL AND (d < DATE '1990-01-01' OR d > DATE '2100-01-01') $$;
+
+CREATE OR REPLACE FUNCTION v3.term_start_ok(s date, e date) RETURNS date
+  LANGUAGE sql IMMUTABLE AS
+$$ SELECT CASE
+     WHEN s IS NULL OR e IS NULL OR e >= s THEN s
+     WHEN v3.term_implausible(s) OR NOT v3.term_implausible(e) THEN NULL
+     ELSE s END $$;
+
+CREATE OR REPLACE FUNCTION v3.term_end_ok(s date, e date) RETURNS date
+  LANGUAGE sql IMMUTABLE AS
+$$ SELECT CASE
+     WHEN s IS NULL OR e IS NULL OR e >= s THEN e
+     WHEN v3.term_implausible(e) THEN NULL
+     ELSE e END $$;
+
 INSERT INTO v3.agreements (agreement_no, title, counterparty_id, direction, status,
                            executed_on, effective_on, expires_on, auto_renewal,
                            renewal_notice_months, source_system, source_url, legacy_id)
@@ -47,7 +75,9 @@ SELECT
     WHEN c.expiration_date IS NOT NULL AND c.expiration_date < current_date THEN 'expired'
     ELSE 'executed'
   END,
-  c.executed_at::date, c.effective_date, c.expiration_date,
+  c.executed_at::date,
+  v3.term_start_ok(c.effective_date, c.expiration_date),
+  v3.term_end_ok(c.effective_date, c.expiration_date),
   COALESCE(c.auto_renewal, false), c.renewal_notice_months,
   NULLIF(c.source_system, ''), NULLIF(c.document_url, ''), c.id
 FROM public.contracts c
@@ -95,7 +125,8 @@ SELECT
   CASE WHEN cl.exclusivity ILIKE '%non%' OR cl.exclusivity LIKE '%非独占%' THEN 'non_exclusive'
        WHEN NULLIF(cl.exclusivity, '') IS NOT NULL                        THEN 'exclusive' END,
   cl.sublicense_allowed,
-  cl.term_start, cl.term_end,
+  v3.term_start_ok(cl.term_start, cl.term_end),
+  v3.term_end_ok(cl.term_start, cl.term_end),
   COALESCE(NULLIF(cl.currency, ''), 'JPY'),
   CASE
     WHEN upper(COALESCE(cl.calc_type, cl.calc_method, '')) = 'SUBSCRIPTION'        THEN 'subscription'
@@ -191,6 +222,56 @@ SELECT nc.id, 'language', btrim(part.v), part.ord - 1
  WHERE btrim(part.v) <> ''
    AND NOT EXISTS (SELECT 1 FROM public.condition_line_languages l WHERE l.condition_line_id = cl.id)
 ON CONFLICT DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- 期間が逆転していた行を記録する（元の値をここに残す）
+--   V1 側を直したら再実行で detail が更新され、直った行は消える。
+-- ---------------------------------------------------------------------
+INSERT INTO v3.data_quality_issues (rule_code, target_type, target_id, severity, detail)
+SELECT 'AGREEMENT_TERM_INVERTED', 'legacy_contract', c.id, 'high',
+       jsonb_build_object('document_number', c.document_number,
+                          'title', c.contract_title,
+                          'original_effective_date', c.effective_date,
+                          'original_expiration_date', c.expiration_date,
+                          'kept_effective_on', v3.term_start_ok(c.effective_date, c.expiration_date),
+                          'kept_expires_on',   v3.term_end_ok(c.effective_date, c.expiration_date))
+  FROM public.contracts c
+ WHERE c.effective_date IS NOT NULL AND c.expiration_date IS NOT NULL
+   AND c.expiration_date < c.effective_date
+ON CONFLICT (rule_code, target_type, target_id) DO UPDATE SET
+  detail = EXCLUDED.detail, detected_at = now(), status = 'open';
+
+INSERT INTO v3.data_quality_issues (rule_code, target_type, target_id, severity, detail)
+SELECT 'CONDITION_TERM_INVERTED', 'legacy_condition_line', cl.id, 'high',
+       jsonb_build_object('condition_name', cl.condition_name,
+                          'original_term_start', cl.term_start,
+                          'original_term_end', cl.term_end,
+                          'kept_term_start', v3.term_start_ok(cl.term_start, cl.term_end),
+                          'kept_term_end',   v3.term_end_ok(cl.term_start, cl.term_end))
+  FROM public.condition_lines cl
+ WHERE cl.term_start IS NOT NULL AND cl.term_end IS NOT NULL
+   AND cl.term_end < cl.term_start
+ON CONFLICT (rule_code, target_type, target_id) DO UPDATE SET
+  detail = EXCLUDED.detail, detected_at = now(), status = 'open';
+
+-- V1 側が直っていれば閉じる（流し直すたびに現状へ追従させる）。
+UPDATE v3.data_quality_issues q
+   SET status = 'resolved', resolved_at = now()
+ WHERE q.rule_code = 'AGREEMENT_TERM_INVERTED' AND q.status = 'open'
+   AND NOT EXISTS (
+     SELECT 1 FROM public.contracts c
+      WHERE c.id = q.target_id
+        AND c.effective_date IS NOT NULL AND c.expiration_date IS NOT NULL
+        AND c.expiration_date < c.effective_date);
+
+UPDATE v3.data_quality_issues q
+   SET status = 'resolved', resolved_at = now()
+ WHERE q.rule_code = 'CONDITION_TERM_INVERTED' AND q.status = 'open'
+   AND NOT EXISTS (
+     SELECT 1 FROM public.condition_lines cl
+      WHERE cl.id = q.target_id
+        AND cl.term_start IS NOT NULL AND cl.term_end IS NOT NULL
+        AND cl.term_end < cl.term_start);
 
 -- ---------------------------------------------------------------------
 -- 予定：condition_line_installments → condition_schedules
