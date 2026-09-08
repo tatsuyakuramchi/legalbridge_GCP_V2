@@ -390,6 +390,45 @@ gcloud run services proxy legalbridge-v3 --region=asia-northeast1 --port=8080
 9画面（ホーム／案件／条件／文書／お金／作品／取引先／フロー監視／運用）を開き、
 **日付が `2026-04-01` の形で出ること**を確認する（`Wed Apr 01` は不具合）。
 
+### GitHub と繋いで自動デプロイにする（2026-09-08）
+
+Cloud Shell には週50時間の上限があり、デプロイのたびに使っていると
+使い切る。Cloud Build のトリガーを GitHub に繋げば、push だけで
+ビルドとデプロイが走り、Cloud Shell が要らなくなる。
+
+**トリガーの設定**（Cloud Build → トリガー → 作成）
+
+| 項目 | 値 |
+|---|---|
+| イベント | ブランチに push する |
+| ブランチ | `^claude/v3$` |
+| 構成 | Cloud Build 構成ファイル `infra/v3/cloudbuild.yaml` |
+| サービス アカウント | `legalbridge-v3-build@legalbridge-488506.iam.gserviceaccount.com` |
+
+代入変数は `_GIT_SHA=$SHORT_SHA` と、外部連携の設定をそのまま入れる。
+
+**ビルド用サービスアカウントに要る権限。** ここを間違えると落ちる。
+ランタイム用の `legalbridge-v3@…` をビルドに使ってはいけない
+（ログすら書けず「No logs were found」になる。アプリの身分に
+デプロイ権限を持たせることにもなる）。
+
+プロジェクトに対して：
+- `roles/cloudbuild.builds.builder`
+- `roles/logging.logWriter` — これが無いとログが出ず、原因が追えない
+- `roles/artifactregistry.writer`
+- `roles/run.admin`
+
+`legalbridge-v3@…`（ランタイム用SA）に対して：
+- `roles/iam.serviceAccountUser` — cloudbuild.yaml が
+  `--service-account=legalbridge-v3@…` を指定してデプロイするため。
+  IAM の画面ではなく「サービス アカウント → 権限」から付ける
+
+各シークレットに対して：
+- `roles/secretmanager.secretAccessor`
+
+**注意**：トリガーを入れると `claude/v3` への push が全部デプロイになる。
+まだ試したくない変更も載るので、それが困るならブランチを分ける。
+
 ### 文書の発行は V3 からだけ行う（2026-09-08 の取り決め）
 
 移行で document_sequences は V1 の現在値をそのまま引き継いでいる
