@@ -390,6 +390,38 @@ gcloud run services proxy legalbridge-v3 --region=asia-northeast1 --port=8080
 9画面（ホーム／案件／条件／文書／お金／作品／取引先／フロー監視／運用）を開き、
 **日付が `2026-04-01` の形で出ること**を確認する（`Wed Apr 01` は不具合）。
 
+### 自分以外の人にも見てもらう（検証中の暫定運用）
+
+Cloud Run は `--no-allow-unauthenticated` のままにする。使う人ごとに
+呼び出し権限と参照権限を付け、各自が proxy を立てて見る。
+
+```bash
+for U in tatsuya.kuramochi@arclight.co.jp junko.kawashima@arclight.co.jp; do
+  gcloud run services add-iam-policy-binding legalbridge-v3 \
+    --region=asia-northeast1 --member="user:${U}" --role=roles/run.invoker
+  # proxy はサービスの情報も読むので、invoker だけでは足りない。
+  gcloud run services add-iam-policy-binding legalbridge-v3 \
+    --region=asia-northeast1 --member="user:${U}" --role=roles/run.viewer
+done
+```
+
+使う側（Cloud Shell）:
+
+```bash
+gcloud run services proxy legalbridge-v3 --region=asia-northeast1 --port=8080
+# 「ウェブでプレビュー」→ ポート 8080
+```
+
+⚠️ **`AUTH_MODE=disabled` のあいだ、入れた人は全員 admin になる**
+（`auth.ts` は disabled のとき無条件に `dev@local` / `admin` を割り当てる）。
+役割による制限は効かず、監査ログの実行者も全員 `dev@local` になる。
+検証のあいだの割り切りであって、本運用の前に IAP（`AUTH_MODE=iap`）へ
+移すこと。誰が何を発行したかを追えないまま実務に載せない。
+
+⚠️ **`--allow-unauthenticated` にしてはいけない。** URL を知った誰もが
+admin として本番データを操作できる。Cloud Run の URL は証明書の透明性
+ログに載るので、秘密にはならない。
+
 ---
 
 ## 手順8：定期実行を仕込む
