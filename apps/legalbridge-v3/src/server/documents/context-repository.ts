@@ -209,14 +209,14 @@ export class DocumentContextRepository {
   /** 案件の担当者。検収書の「検収者」はたいていこの人。 */
   private async owner(client: Queryable, matterId: number) {
     const r = await client.query(
-      `SELECT s.name, s.email, s.department, s.phone, s.staff_code
+      `SELECT s.name, s.email, s.department, s.staff_code, to_jsonb(s) AS staff_row
          FROM matters m JOIN staff s ON s.id = m.owner_staff_id
         WHERE m.id = $1`, [matterId]);
     const row = r.rows[0] as Record<string, any> | undefined;
     if (!row) return null;
     return {
       name: String(row.name), email: str(row.email),
-      department: str(row.department), phone: str(row.phone),
+      department: str(row.department), phone: str(row.staff_row?.phone),
       staffCode: str(row.staff_code)
     };
   }
@@ -270,8 +270,10 @@ export class DocumentContextRepository {
               c.counterparty_id,
               p.name AS party_name, p.name_kana AS party_kana, p.kind AS party_kind,
               p.invoice_no AS party_invoice_no, p.corporate_no AS party_corporate_no,
-              p.address AS party_address, p.phone AS party_phone, p.email AS party_email,
               p.withholding AS party_withholding,
+              -- 住所・電話・メールは A-008 で足した列。当てる前のデータベースでも
+              -- 落ちないよう、列を名指しせず行ごと受けて読む。
+              to_jsonb(p) AS party_row,
               w.title AS work_title, w.work_code, wp.name AS part_name
          FROM conditions c
          LEFT JOIN parties p    ON p.id = c.counterparty_id
@@ -314,9 +316,9 @@ export class DocumentContextRepository {
           kind: str(row.party_kind),
           invoiceNo: str(row.party_invoice_no),
           corporateNo: str(row.party_corporate_no),
-          address: str(row.party_address),
-          phone: str(row.party_phone),
-          email: str(row.party_email),
+          address: str(row.party_row?.address),
+          phone: str(row.party_row?.phone),
+          email: str(row.party_row?.email),
           withholding: row.party_withholding === true,
           honorific: honorificFor(str(row.party_kind))
         },
