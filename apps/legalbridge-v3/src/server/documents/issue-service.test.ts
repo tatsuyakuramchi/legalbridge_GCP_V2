@@ -188,3 +188,12 @@ test("部分テンプレートはひな形の選択肢に出さない（単独�
   const q = db.find("FROM document_templates t")!;
   assert.match(q.text, /t\.category IS DISTINCT FROM 'partial'/);
 });
+
+test("版の無いひな形は選択肢に出さない（選ぶと必ず404になる）", async () => {
+  const db = new FakeDatabase(() => []);
+  await new DocumentRepository(db).listTemplates();
+  const q = db.find("FROM document_templates t")!;
+  assert.doesNotMatch(q.text, /LEFT JOIN document_template_versions/,
+    "外部結合だと版の無いひな形まで並び、既定で選ばれた瞬間に作成が止まる");
+  assert.match(q.text, /JOIN document_template_versions tv ON tv\.id = t\.current_version_id/);
+});

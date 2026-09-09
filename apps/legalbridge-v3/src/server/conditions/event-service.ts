@@ -182,8 +182,14 @@ export class ConditionEventService {
    *
    * 文書を発行してから紐づけに失敗すると、番号の振られた文書だけが残り、
    * 人は同じものをもう一度作ることになる。発行の前に弾く。
+   *
+   * heldBy を渡すと、その文書が持っている実績は「空いている」ものとして扱う。
+   * 訂正版は前の版から実績を引き取るので、ここを塞ぐと差し替えのたびに
+   * 元の文書を無効にする手間が要る（それが二重作業の原因だった）。
    */
-  async assertLinkable(conditionId: number, eventIds: number[]): Promise<void> {
+  async assertLinkable(
+    conditionId: number, eventIds: number[], heldBy?: number | null
+  ): Promise<void> {
     const ids = [...new Set(eventIds.map((n) => Math.trunc(n)))].filter((n) => n > 0);
     if (!ids.length) return;
     const rows = await this.database.query(
@@ -198,11 +204,12 @@ export class ConditionEventService {
       throw new DomainError("CONFLICT",
         `取り消し済みの実績は結びつけられません（#${voided.map((r) => r.id).join("・")}）`);
     }
-    const taken = found.filter((r) => r.document_id !== null);
+    const taken = found.filter((r) =>
+      r.document_id !== null && (!heldBy || Number(r.document_id) !== Number(heldBy)));
     if (taken.length) {
       throw new DomainError("CONFLICT",
         `すでに別の文書に結びついている実績があります（#${taken.map((r) => r.id).join("・")}）。` +
-        "作り直すなら、先にその文書を無効にしてください");
+        "その文書を訂正するか、無効にしてから結び直してください");
     }
   }
 
@@ -242,7 +249,11 @@ export class ConditionEventService {
           throw new DomainError("CONFLICT",
             `取り消し済みの実績は結びつけられません（#${voided.map((r) => r.id).join("・")}）`);
         }
-        const taken = found.filter((r) => r.document_id !== null && r.document_id !== documentId);
+        // bigint は文字列で返る。数に揃えないと "7" !== 7 で、この文書自身が
+        // 結んだ実績まで「別の文書のもの」と読んでしまう
+        // （訂正版の発行で実績を移したあと、ここで必ず弾かれていた）。
+        const taken = found.filter((r) =>
+          r.document_id !== null && Number(r.document_id) !== Number(documentId));
         if (taken.length) {
           throw new DomainError("CONFLICT",
             `すでに別の文書に結びついている実績があります（#${taken.map((r) => r.id).join("・")}）。` +
@@ -254,12 +265,18 @@ export class ConditionEventService {
             WHERE id = ANY($1::bigint[]) AND condition_id = $2 AND document_id IS NULL`,
           [ids, conditionId, documentId]);
 
-        await recordAudit(client, {
-          actor, action: "condition.link_document", targetType: "condition", targetId: conditionId,
-          detail: { documentId, documentNo: document.document_no, eventIds: ids,
-                    linked: updated.rowCount ?? 0 }
-        });
-        return { linked: updated.rowCount ?? 0, documentNo: document.document_no };
+        const linked = updated.rowCount ?? 0;
+        // 何も動いていないなら記録しない。すでに全部この文書を指している
+        // （訂正版の発行で移ってきた）ときに linked:0 の行が積もると、
+        // 履歴を読む側が「結びつけに失敗した」と誤読する。
+        if (linked) {
+          await recordAudit(client, {
+            actor, action: "condition.link_document", targetType: "condition",
+            targetId: conditionId,
+            detail: { documentId, documentNo: document.document_no, eventIds: ids, linked }
+          });
+        }
+        return { linked, documentNo: document.document_no };
       });
     } catch (error) { throw translate(error); }
   }

@@ -14,7 +14,15 @@ export interface DocumentSummary {
   imported: boolean;
   counterparty: string | null;
   matterId: number | null;
+  matterNo: string | null;
   conditionCount: number;
+  /** 紐づく条件明細。件数ではなく番号を出す（何から出た書類かが分かる）。 */
+  conditions: Array<{ id: number; conditionNo: string | null }>;
+  /** この版が差し替えた前の版。 */
+  supersedesId: number | null;
+  /** この版を差し替えた新しい版。あるとき、この版はもう使わない。 */
+  supersededById: number | null;
+  supersededByNo: string | null;
   issuedAt: string | null;
   storageUrl: string | null;
 }
@@ -22,9 +30,15 @@ export interface DocumentSummary {
 export interface DocumentDetail extends DocumentSummary {
   templateVersionId: number | null;
   agreementId: number | null;
-  supersedesId: number | null;
+  /** なぜ前の版を差し替えたか。 */
+  supersedeReason: string | null;
   renderedValues: Record<string, unknown>;
   manualInputs: Record<string, unknown>;
+  /**
+   * 結びついている実績。訂正版の下書きは前の版のものを引き継いで出す。
+   * これが無いと、訂正のたびに実績を選び直すことになる。
+   */
+  eventIds: number[];
   conditions: Array<{ id: number; conditionNo: string | null; name: string; lineNo: number }>;
 }
 
@@ -42,7 +56,16 @@ export interface TemplateSource {
 
 const LIST_SELECT = `
   d.id, d.document_no, d.status, d.matter_id, d.issued_at, d.storage_url,
+  d.supersedes_id,
   v.title, v.counterparty, v.condition_count, t.template_key,
+  m.matter_no,
+  -- この版を差し替えた新しい版。参照は新→旧の向きしか無いので反転して読む。
+  nx.id AS superseded_by_id, nx.document_no AS superseded_by_no,
+  -- 条件明細は件数ではなく番号で出す。件数だけでは何に紐づくか分からない。
+  (SELECT array_agg(json_build_object('id', c.id, 'conditionNo', c.condition_no)
+                    ORDER BY dc.line_no)
+     FROM document_conditions dc JOIN conditions c ON c.id = dc.condition_id
+    WHERE dc.document_id = d.id) AS condition_refs,
   -- 取込文書はひな形を持たないので、種別が空欄になる。登録時に入れた種別で埋める。
   COALESCE(v.template_label, d.manual_inputs->>'documentKind') AS template_label,
   -- 同じ理由で件名も空になる。
@@ -53,7 +76,14 @@ const LIST_FROM = `
   FROM documents d
   LEFT JOIN v_document_display v ON v.document_id = d.id
   LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
-  LEFT JOIN document_templates t ON t.id = tv.template_id`;
+  LEFT JOIN document_templates t ON t.id = tv.template_id
+  LEFT JOIN matters m ON m.id = d.matter_id
+  -- 後継は1件だけ引く。結合のままだと、万一2件あったとき一覧の行が増える。
+  LEFT JOIN LATERAL (
+    SELECT n.id, n.document_no FROM documents n
+     WHERE n.supersedes_id = d.id AND n.status <> 'void'
+     ORDER BY n.id DESC LIMIT 1
+  ) nx ON true`;
 
 function mapSummary(row: Record<string, any>): DocumentSummary {
   return {
@@ -66,7 +96,13 @@ function mapSummary(row: Record<string, any>): DocumentSummary {
     imported: row.imported === true,
     counterparty: str(row.counterparty),
     matterId: int(row.matter_id),
+    matterNo: str(row.matter_no),
     conditionCount: Number(row.condition_count ?? 0),
+    conditions: ((row.condition_refs ?? []) as Array<{ id: number; conditionNo: string | null }>)
+      .map((c) => ({ id: Number(c.id), conditionNo: c.conditionNo ?? null })),
+    supersedesId: int(row.supersedes_id),
+    supersededById: int(row.superseded_by_id),
+    supersededByNo: str(row.superseded_by_no),
     issuedAt: row.issued_at ? new Date(String(row.issued_at)).toISOString() : null,
     storageUrl: str(row.storage_url)
   };
@@ -99,7 +135,7 @@ export class DocumentRepository {
 
   async find(id: number): Promise<DocumentDetail | null> {
     const r = await this.database.query(
-      `SELECT ${LIST_SELECT}, d.template_version_id, d.agreement_id, d.supersedes_id,
+      `SELECT ${LIST_SELECT}, d.template_version_id, d.agreement_id, d.supersede_reason,
               d.rendered_values, d.manual_inputs
          ${LIST_FROM}
         WHERE d.id = $1`, [id]);
@@ -109,11 +145,19 @@ export class DocumentRepository {
       `SELECT c.id, c.condition_no, c.name, dc.line_no
          FROM document_conditions dc JOIN conditions c ON c.id = dc.condition_id
         WHERE dc.document_id = $1 ORDER BY dc.line_no`, [id]);
+    // 実績はこの文書のもの。まだ発行していない訂正版は、前の版のものを引き継ぐ。
+    const events = await this.database.query(
+      `SELECT id FROM condition_events
+        WHERE status = 'active' AND document_id = COALESCE($2::bigint, $1::bigint)
+        ORDER BY occurred_on, id`,
+      [id, row.status === "draft" ? int(row.supersedes_id) : null]);
+
     return {
       ...mapSummary(row),
       templateVersionId: int(row.template_version_id),
       agreementId: int(row.agreement_id),
-      supersedesId: int(row.supersedes_id),
+      supersedeReason: str(row.supersede_reason),
+      eventIds: (events.rows as Array<{ id: number }>).map((e) => Number(e.id)),
       renderedValues: (row.rendered_values as Record<string, unknown>) ?? {},
       manualInputs: (row.manual_inputs as Record<string, unknown>) ?? {},
       conditions: conditions.rows.map((c: Record<string, any>) => ({
@@ -160,7 +204,9 @@ export class DocumentRepository {
       `SELECT t.id, t.template_key, t.label, t.category, t.number_prefix,
               tv.id AS version_id, tv.version_no
          FROM document_templates t
-         LEFT JOIN document_template_versions tv ON tv.id = t.current_version_id
+         -- 版の無いひな形は選ばせない。選択肢に出すと、選んだ瞬間に
+         -- 「テンプレートが見つかりません」で下書きも作れない行になる。
+         JOIN document_template_versions tv ON tv.id = t.current_version_id
         WHERE t.is_active
           -- 部分テンプレートは他のひな形に差し込むもので、単独では発行できない。
           AND t.category IS DISTINCT FROM 'partial'

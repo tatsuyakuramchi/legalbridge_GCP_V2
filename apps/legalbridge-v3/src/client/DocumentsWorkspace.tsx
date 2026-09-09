@@ -1,19 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
 import { StatusTag } from "./labels.js";
 import type { ConditionSummary } from "../server/core/model.js";
 import { api, ApiError, money } from "./api.js";
-import { Relations, type EntityKind } from "./Relations.js";
+import type { EntityKind } from "./Relations.js";
+import { DocumentDetail, type DocumentRow } from "./DocumentDetail.js";
 
 interface TemplateRow {
   id: number; templateKey: string; label: string; category: string | null; numberPrefix: string | null;
-}
-interface DocumentRow {
-  id: number; documentNo: string | null; status: string; templateLabel: string | null;
-  title: string | null; counterparty: string | null; conditionCount: number;
-  issuedAt: string | null; storageUrl: string | null;
-  /** 外で作られた文書。本文もひな形も無いので、組み直しも作り直しもできない。 */
-  imported: boolean;
 }
 interface Integrations {
   drive: { documents: boolean; matterFolders: boolean };
@@ -44,6 +38,32 @@ function kindFor(name: string, label: string): Candidate["kind"] | null {
   return null;
 }
 
+/** 一覧の中の紐づけ。件数ではなく番号を出して、そのまま辿れるようにする。 */
+function Refs(
+  { doc, onOpen }: { doc: DocumentRow; onOpen?: (kind: EntityKind, id: number) => void }
+) {
+  const shown = doc.conditions.slice(0, 2);
+  const rest = doc.conditions.length - shown.length;
+  return (
+    <span className="reflist" onClick={(e) => e.stopPropagation()}>
+      {shown.length
+        ? shown.map((c) => (
+            <button key={c.id} className="linky"
+                    onClick={() => onOpen?.("condition", c.id)}>
+              {c.conditionNo ?? `#${c.id}`}
+            </button>
+          ))
+        : <span className="none">条件明細なし</span>}
+      {rest > 0 && <span className="none">ほか {rest} 件</span>}
+      {doc.matterId
+        ? <button className="linky" onClick={() => onOpen?.("matter", doc.matterId!)}>
+            {doc.matterNo ?? `#${doc.matterId}`}
+          </button>
+        : <span className="none">案件なし</span>}
+    </span>
+  );
+}
+
 export function DocumentsWorkspace(
   { start, openDocumentId, onOpen }: {
     start?: { conditionId: number; eventIds: number[] };
@@ -72,8 +92,10 @@ export function DocumentsWorkspace(
   const [rendered, setRendered] = useState<{ html: string; templateLabel: string } | null>(null);
   /** 直している下書き。作り直した文書はここに載せて、直してから発行する。 */
   const [draft, setDraft] = useState<{ id: number; no: string | null } | null>(null);
-  /** つながりを見ている文書。案件・条件・契約への紐付けはここから直せる。 */
-  const [inspect, setInspect] = useState<{ id: number; no: string | null } | null>(null);
+  /** 一覧で選んでいる文書。右にその文書の詳細を出す。 */
+  const [selected, setSelected] = useState<number | null>(null);
+  /** 旧版を開いている文書。既定は畳む（いまの版だけを読めるようにする）。 */
+  const [unfolded, setUnfolded] = useState<Set<number>>(new Set());
   const [issued, setIssued] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -111,7 +133,7 @@ export function DocumentsWorkspace(
       const d = await api.get<{ id: number; documentNo: string | null; status: string;
                                imported: boolean }>(`/documents/${id}`);
       if (d.status === "draft" && !d.imported) { await openDraft(d.id); return; }
-      setInspect({ id: d.id, no: d.documentNo });
+      setSelected(d.id);
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
   }
   async function reload() {
@@ -139,6 +161,50 @@ export function DocumentsWorkspace(
       .then((r) => setEvents(r.events.filter((e) => e.status === "active")))
       .catch(() => setEvents([]));
   }, [picked.join(",")]);
+
+  /**
+   * 版の連鎖。参照は新→旧（supersedes_id）の一方向しか無いので、
+   * 一覧の中で辿って組み立てる。
+   */
+  const byId = useMemo(
+    () => new Map(documents.map((d) => [d.id, d])), [documents]);
+
+  /**
+   * いまの版だけ。退いた版（訂正版に差し替えられたもの）だけを下に畳む。
+   *
+   * 「後継がいるか」で畳むと、訂正版の下書きを作った瞬間に、まだ有効な発行済み
+   * 文書が一覧から消える。退くのは訂正版を発行したときなので、状態で判断する。
+   */
+  const heads = useMemo(
+    () => documents.filter((d) => d.status !== "superseded"), [documents]);
+
+  /** その版が差し替えた、退いた古い版たち（新しい順）。 */
+  const ancestorsOf = (d: DocumentRow): DocumentRow[] => {
+    const out: DocumentRow[] = [];
+    let id = d.supersedesId;
+    while (id !== null && byId.has(id) && out.length < 30) {
+      const prev = byId.get(id)!;
+      // まだ退いていない版はそれ自体が現行。畳まず、独立した行として見せる。
+      if (prev.status !== "superseded") break;
+      out.push(prev);
+      id = prev.supersedesId;
+    }
+    return out;
+  };
+
+  /** 初版から現行までの並び。履歴に出す。 */
+  const chainOf = (d: DocumentRow): DocumentRow[] => {
+    const newer: DocumentRow[] = [];
+    let id = d.supersededById;
+    while (id !== null && byId.has(id) && newer.length < 30) {
+      const next = byId.get(id)!;
+      newer.push(next);
+      id = next.supersededById;
+    }
+    return [...ancestorsOf(d).reverse(), d, ...newer];
+  };
+
+  const current = selected === null ? null : byId.get(selected) ?? null;
 
   const body = useMemo(() => ({
     templateKey, conditionIds: picked, eventIds: pickedEvents, manualInputs: manual
@@ -246,6 +312,31 @@ export function DocumentsWorkspace(
     finally { setBusy(false); }
   }
 
+  /**
+   * 一覧で選んだ下書きをそのまま発行する。フォームに載せ直す手間を省くため。
+   *
+   * 訂正版ならこの1回で前の版が退き、実績もこちらへ移る。以前は
+   * 「新版を発行」「旧版を無効化」の2手が要り、間の一瞬だけ両方が有効に見えていた。
+   *
+   * すでにフォームに載せている下書きなら、画面で直した内容を先に書き戻したいので
+   * いつもの発行を通す。
+   */
+  async function issueDraft(id: number) {
+    if (draft?.id === id) { await issue(); return; }
+    setError(null); setIssued(null); setBusy(true);
+    try {
+      // 実績はサーバが持っているものを使う。画面で選び直していない下書きを
+      // 空の実績で発行すると、前の版が結んでいた実績が宙に浮く。
+      const d = await api.get<{ eventIds: number[] }>(`/documents/${id}`);
+      const r = await api.post<{ documentNo: string }>(
+        `/documents/${id}/issue`, { eventIds: d.eventIds ?? [] });
+      setIssued(r.documentNo);
+      await reload();
+      setSelected(id);
+    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
+    finally { setBusy(false); }
+  }
+
   // メール送付。止まった場合は理由をそのまま出す（黙って送らないのが一番まずい）。
   async function send(id: number) {
     const recipient = window.prompt("送付先のメールアドレス");
@@ -281,11 +372,16 @@ export function DocumentsWorkspace(
     finally { setBusy(false); }
   }
 
-  /** 再発行。元を差し替え済みにして、条件を引き継いだ下書きを作る。 */
+  /**
+   * 訂正版を作る。条件・実績・手入力を引き継いだ下書きができるだけで、
+   * ここでは前の版はまだ有効なまま。入れ替わるのは訂正版を発行した瞬間。
+   * 下書きのまま捨てても、前の版が生きているので穴が開かない。
+   */
   async function reissue(id: number, no: string | null) {
     const reason = window.prompt(
-      `${no ?? "この文書"} を作り直します。理由を書いてください。\n` +
-      "元の文書は差し替え済みとして残り、条件を引き継いだ下書きができます。");
+      `${no ?? "この文書"} の訂正版を作ります。訂正の理由を書いてください。\n` +
+      "条件も実績も引き継いだ下書きができます。" +
+      "発行した瞬間にこの版と入れ替わるので、先に無効にする必要はありません。");
     if (reason === null) return;
     setBusy(true); setError(null);
     try {
@@ -308,6 +404,7 @@ export function DocumentsWorkspace(
         id: number; documentNo: string | null; templateKey: string | null;
         manualInputs: Record<string, unknown>;
         conditions: Array<{ id: number }>;
+        eventIds: number[];
       }>(`/documents/${id}`);
       if (!d.templateKey) {
         throw new ApiError(400, "ひな形を持たない文書は直せません");
@@ -320,7 +417,9 @@ export function DocumentsWorkspace(
       setDraft({ id: d.id, no: d.documentNo });
       setTemplateKey(d.templateKey);
       setPicked(d.conditions.map((c) => c.id));
-      setPickedEvents([]);
+      // 実績も戻す。訂正版の下書きなら、前の版が結んでいた実績が返ってくる。
+      // ここを空にすると、直して発行するたびに実績を選び直す羽目になる。
+      setPickedEvents(d.eventIds ?? []);
       setManual(values);
       setPickedFields(new Set());
       form.current?.scrollIntoView({ block: "start", behavior: "smooth" });
@@ -585,107 +684,118 @@ export function DocumentsWorkspace(
           )}
         </div>
 
-        <div className="panel">
-          <div className="panel-hd">
-            <h2>発行済み・下書き</h2>
-            <ListSearch value={keyword} onChange={setKeyword}
-              placeholder="文書番号・相手先" label="文書を絞り込む" />
+        <div className="split">
+          <div className="panel">
+            <div className="panel-hd">
+              <h2>文書</h2>
+              <span className="faint">いまの版だけを並べています</span>
+              <ListSearch value={keyword} onChange={setKeyword}
+                placeholder="文書番号・相手先" label="文書を絞り込む" />
+            </div>
+            <ListCount shown={documents.length} keyword={search} onClear={() => setKeyword("")} />
+            <div className="tablewrap">
+              <table>
+                <thead><tr>
+                  <th>文書番号</th><th>種別</th><th>条件明細 ／ 案件</th><th>状態</th>
+                </tr></thead>
+                <tbody>
+                  {heads.map((d) => {
+                    const older = ancestorsOf(d);
+                    const open = unfolded.has(d.id);
+                    return (
+                      <Fragment key={d.id}>
+                        <tr className={d.id === selected ? "sel" : ""} tabIndex={0}
+                            aria-selected={d.id === selected}
+                            onClick={() => setSelected(d.id)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault(); setSelected(d.id);
+                              }
+                            }}>
+                          <td className="code">
+                            {d.documentNo ?? "（未発行）"}
+                            {/* 訂正版の下書きは、どの版を直しているのかが分からないと
+                                「（未発行）」の行が2つ並ぶだけになる。 */}
+                            {d.supersedesId !== null && (
+                              <div className="faint">
+                                {byId.get(d.supersedesId)?.documentNo ?? `#${d.supersedesId}`} の訂正版
+                              </div>
+                            )}
+                          </td>
+                          <td>
+                            {d.templateLabel ?? "—"}
+                            <div className="faint">{d.counterparty ?? "相手先なし"}</div>
+                          </td>
+                          <td><Refs doc={d} onOpen={onOpen} /></td>
+                          <td>
+                            <StatusTag kind="document" value={d.status} />
+                            {/* まだ有効な版に訂正版の下書きが付いている状態。
+                                これを出さないと、似た行が2つある理由が読めない。 */}
+                            {d.status === "issued" && d.supersededById !== null && (
+                              <div className="faint">訂正版の下書きあり</div>
+                            )}
+                          </td>
+                        </tr>
+                        {older.length > 0 && (
+                          <tr>
+                            <td colSpan={4} style={{ paddingTop: 2, paddingBottom: 6 }}>
+                              <button className="fold" onClick={(e) => {
+                                e.stopPropagation();
+                                setUnfolded((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(d.id)) next.delete(d.id); else next.add(d.id);
+                                  return next;
+                                });
+                              }}>
+                                <span className="caret">{open ? "▾" : "▸"}</span>
+                                この文書の旧版 {older.length} 件
+                              </button>
+                            </td>
+                          </tr>
+                        )}
+                        {open && older.map((o) => (
+                          <tr key={o.id} className={`older${o.id === selected ? " sel" : ""}`}
+                              tabIndex={0} onClick={() => setSelected(o.id)}>
+                            <td className="code faint">{o.documentNo ?? "（未発行）"}</td>
+                            <td className="faint">{o.templateLabel ?? "—"}</td>
+                            <td className="faint">同上</td>
+                            <td><StatusTag kind="document" value={o.status} /></td>
+                          </tr>
+                        ))}
+                      </Fragment>
+                    );
+                  })}
+                  {!documents.length && (
+                    <tr><td colSpan={4} className="faint">
+                      {search.trim() ? `「${search}」に一致する文書はありません` : "文書がありません"}
+                    </td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div className="panel-bd" style={{ borderTop: "1px solid var(--line)" }}>
+              <div className="row" style={{ gap: 16, fontSize: 11.5, color: "var(--muted)" }}>
+                <span><b>下書き</b> まだ発行していない。中身を直せる</span>
+                <span><b>発行済み</b> 出した記録。中身は直せない</span>
+                <span><b>訂正版あり</b> 新しい版に差し替わった</span>
+              </div>
+            </div>
           </div>
-          <ListCount shown={documents.length} keyword={search} onClear={() => setKeyword("")} />
-          <div className="tablewrap">
-            <table>
-              <thead><tr><th>文書番号</th><th>種別</th><th>相手先</th><th className="num">条件明細</th><th>状態</th><th></th><th></th></tr></thead>
-              <tbody>
-                {documents.map((d) => (
-                  <tr key={d.id}>
-                    <td className="code">{d.documentNo ?? "（下書き）"}</td>
-                    <td>
-                      {d.templateLabel ?? "—"}
-                      {d.imported && <div className="faint">取込（外で作られた文書）</div>}
-                    </td>
-                    <td>{d.counterparty ?? "—"}</td>
-                    <td className="num">{d.conditionCount}</td>
-                    <td><StatusTag kind="document" value={d.status} /></td>
-                    <td>
-                      {/* どの案件・どの条件の書類かは、書類の側からも直せなければ
-                          ならない。作成のときにしか決められないと、あとから
-                          案件に付け替えるだけのために作り直すことになる。 */}
-                      <button className="btn btn-sm" disabled={busy}
-                              onClick={() => setInspect(
-                                inspect?.id === d.id ? null : { id: d.id, no: d.documentNo })}>
-                        {inspect?.id === d.id ? "閉じる" : "つながり"}
-                      </button>
-                    </td>
-                    <td>
-                      {d.status === "issued" && (
-                        <span className="row">
-                          {/* 取込文書は本文を持たない。実体は預けたファイルだけなので、
-                              組み直しも作り直しもできない。押せるものだけ出す。 */}
-                          {!d.imported && (<>
-                            <a href={`/api/v3/documents/${d.id}/html`} target="_blank" rel="noreferrer">HTML</a>
-                            <a href={`/api/v3/documents/${d.id}/pdf`}>PDF</a>
-                          </>)}
-                          {d.storageUrl
-                            ? <a href={d.storageUrl} target="_blank" rel="noreferrer">
-                                {d.imported ? "ファイル" : "Drive"}
-                              </a>
-                            : !d.imported && integrations?.drive.documents
-                              ? <button className="btn btn-sm" disabled={busy}
-                                        onClick={() => store(d.id)}>Driveに保存</button>
-                              : null}
-                          {integrations?.channels.some((c) => c.channel === "gmail" && c.mode !== "off") && (
-                            <button className="btn btn-sm" disabled={busy}
-                                    onClick={() => send(d.id)}>送付</button>
-                          )}
-                          {/* 発行済みは記録なので直接は直せない。直すのは
-                              作り直した下書きのほう。押した先が編集画面になる。 */}
-                          {!d.imported && (
-                            <button className="btn btn-sm" disabled={busy}
-                                    onClick={() => reissue(d.id, d.documentNo)}>
-                              作り直して編集
-                            </button>
-                          )}
-                          <button className="btn btn-sm" disabled={busy}
-                                  onClick={() => voidDocument(d.id, d.documentNo)}>無効にする</button>
-                        </span>
-                      )}
-                      {d.status === "draft" && (
-                        <span className="row">
-                          {/* 開かないと直せない。作り直した下書きはここから発行する。 */}
-                          {!d.imported && (
-                            <button className="btn btn-sm primary" disabled={busy}
-                                    onClick={() => openDraft(d.id)}>編集</button>
-                          )}
-                          <button className="btn btn-sm" disabled={busy}
-                                  onClick={() => voidDocument(d.id, d.documentNo)}>破棄する</button>
-                        </span>
-                      )}
-                      {d.status === "superseded" && (
-                        <span className="faint">差し替え済み</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-                {!documents.length && (
-                  <tr><td colSpan={7} className="faint">
-                    {search.trim() ? `「${search}」に一致する文書はありません` : "文書がありません"}
-                  </td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+
+          {current && (
+            <DocumentDetail
+              doc={current} versions={chainOf(current)} integrations={integrations} busy={busy}
+              onOpen={onOpen} onChanged={() => void reload()}
+              onEditDraft={(id) => void openDraft(id)}
+              onIssueDraft={(id) => void issueDraft(id)}
+              onReissue={(id, no) => void reissue(id, no)}
+              onVoid={(id, no) => void voidDocument(id, no)}
+              onStore={(id) => void store(id)}
+              onSend={(id) => void send(id)}
+              onSelect={setSelected} />
+          )}
         </div>
 
-        {inspect && (
-          <div className="stack">
-            <div className="note">
-              <b className="code">{inspect.no ?? `#${inspect.id}`}</b> のつながりです。
-              案件・条件明細・契約への紐付けはここから直せます。
-            </div>
-            <Relations kind="document" id={inspect.id} onOpen={onOpen}
-              onChanged={() => void reload()} />
-          </div>
-        )}
       </div>
     </section>
   );

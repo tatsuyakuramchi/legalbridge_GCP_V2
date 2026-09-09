@@ -1210,8 +1210,29 @@ export function createRoutes(database: Transactable) {
     requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       const { eventIds } = issueSchema.parse(req.body ?? {});
-      res.json(await issues.issue(Number(req.params.id), actor(res),
-        eventIds.length ? { eventIds } : {}));
+      const id = Number(req.params.id);
+      const who = actor(res);
+      const draft = await documents.find(id);
+      if (!draft) throw new DomainError("NOT_FOUND", `文書 ${id} が見つかりません`);
+      const conditionId = draft.conditions[0]?.id ?? null;
+
+      // 先に確かめる。発行してから弾かれると、番号だけ振られた文書が残る。
+      // 訂正版なら、前の版が持っている実績は空いているものとして扱う
+      // （発行の瞬間にこちらへ移る）。
+      if (eventIds.length) {
+        if (!conditionId) {
+          throw new DomainError("VALIDATION", "実績を結ぶには、先に条件明細を繋いでください");
+        }
+        await conditionEvents.assertLinkable(conditionId, eventIds, draft.supersedesId);
+      }
+
+      const issued = await issues.issue(id, who, eventIds.length ? { eventIds } : {});
+      // 前の版から移らなかったぶんを結ぶ。すでにこの文書を指している実績は
+      // linkDocument 側で素通りする。
+      if (eventIds.length && conditionId) {
+        await conditionEvents.linkDocument(conditionId, eventIds, id, who);
+      }
+      res.json(issued);
     }));
 
   router.get("/documents/:id/html", asyncRoute(async (req, res) => {
@@ -1340,7 +1361,7 @@ export function createRoutes(database: Transactable) {
         if (!input.conditionIds.length) {
           throw new DomainError("VALIDATION", "実績を選ぶときは、その条件も選んでください");
         }
-        await conditionEvents.assertLinkable(input.conditionIds[0], input.eventIds);
+        await conditionEvents.assertLinkable(input.conditionIds[0], input.eventIds, null);
       }
 
       // 3. 下書き → 発行。失敗したら下書きは捨てる。

@@ -42,10 +42,32 @@ const CONDITION: Record<string, Entry> = {
 };
 
 const DOCUMENT: Record<string, Entry> = {
-  draft: { label: "下書き", tone: "" },
+  draft: { label: "下書き", tone: "warn" },
   issued: { label: "発行済み", tone: "ok" },
-  superseded: { label: "差し替え済み", tone: "" },
+  // 「済み」だと何かを終えたように読める。実際は「この版はもう使わない」。
+  superseded: { label: "訂正版あり", tone: "" },
   void: { label: "無効", tone: "out" }
+};
+
+/** その状態で何ができるか。画面の帯にそのまま出す。 */
+export const DOCUMENT_STATE_NOTE: Record<string, { headline: string; detail: string }> = {
+  draft: {
+    headline: "まだ発行していません。中身を直せます。",
+    detail: "発行すると番号が振られ、そこから先は中身を直せなくなります。いまなら何度でも直せます。"
+  },
+  issued: {
+    headline: "発行済みです。中身は直せません。",
+    detail: "出した記録なので、番号も本文もこのまま残ります。直すときは訂正版を作ります。"
+      + "訂正版を発行した瞬間に、この版は退いて「訂正版あり」になります。"
+  },
+  superseded: {
+    headline: "訂正版に差し替えられました。",
+    detail: "新しい版が現行です。この版は出した事実の記録として残ります。消えません。"
+  },
+  void: {
+    headline: "無効にしました。",
+    detail: "行は消えず、出した記録として残ります。すでに送付・保存したファイルは取り消せません。"
+  }
 };
 
 const PAYMENT: Record<string, Entry> = {

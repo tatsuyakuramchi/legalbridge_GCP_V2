@@ -1,4 +1,4 @@
-import { inTransaction, type Queryable, type Transactable } from "../core/db.js";
+import { inTransaction, int, str, type Queryable, type Transactable } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { assertComplete, bindVariables, type BindingResult } from "./binding.js";
@@ -180,7 +180,8 @@ export class DocumentIssueService {
     try {
       return await inTransaction(this.database, async (client) => {
         const head = await client.query(
-          `SELECT id, status, template_version_id, matter_id, agreement_id, manual_inputs
+          `SELECT id, status, template_version_id, matter_id, agreement_id, manual_inputs,
+                  supersedes_id, supersede_reason
              FROM documents WHERE id = $1 FOR UPDATE`, [documentId]);
         const row = head.rows[0] as Record<string, any> | undefined;
         if (!row) throw new DomainError("NOT_FOUND", `文書 ${documentId} が見つかりません`);
@@ -245,9 +246,19 @@ export class DocumentIssueService {
         );
         if (!updated.rows[0]) throw new DomainError("CONFLICT", "発行中に他の操作と競合しました");
 
+        // 訂正版なら、ここで元と入れ替える。作るときではなく発行の瞬間に退かせる
+        // ので、下書きを捨てても元は有効なまま残る。人が2手に分けてやることでは
+        // ないし、2手に分けると途中で有効な版がゼロになる時間ができる。
+        const supersedes = int(row.supersedes_id);
+        if (supersedes) {
+          await this.supersede(client, supersedes, documentId, documentNo,
+            str(row.supersede_reason), actor);
+        }
+
         await recordAudit(client, {
           actor, action: "document.issue", targetType: "document", targetId: documentId,
-          detail: { documentNo, templateKey: template.templateKey, conditions: conditionIds }
+          detail: { documentNo, templateKey: template.templateKey, conditions: conditionIds,
+                    ...(supersedes ? { supersedes } : {}) }
         });
 
         return {
@@ -297,18 +308,18 @@ export class DocumentIssueService {
   }
 
   /**
-   * 再発行。発行済みの文書を下書きとして作り直す。
+   * 訂正版を作る。発行済みの文書を下書きとして作り直す。
    *
-   * 元の文書は消さず superseded にし、新しい文書から supersedes_id で繋ぐ。
-   * 紐づく条件も引き継ぐので、そのまま発行し直せる。値は発行時に条件から
-   * 引き直すため、条件を直してから再発行すれば新しい値で出る。
-   */
-  /**
-   * 作り直し。
+   * 元の文書は消さない。新しい文書から supersedes_id で繋ぎ、理由を持たせる。
+   * 条件・実績・手入力を引き継ぐので、そのまま直して発行し直せる。値は発行時に
+   * 条件から引き直すため、条件を直してから作り直せば新しい値で出る。
+   * 条件の紐づけは差し替えられるようにしてある（間違った条件を指していたとき）。
    *
-   * 条件の紐づけは既定で引き継ぐが、間違った条件を指していたときのために
-   * 差し替えられるようにしてある。発行済みの文書そのものは書き換えない
-   * （出したものの記録なので）。直す唯一の道がこれになる。
+   * **元が退くのは訂正版を発行した瞬間**（issue の中）。ここではまだ退かせない。
+   * 先に退かせると、下書きを捨てたときに有効な版がゼロになる。
+   *
+   * 発行済みの文書そのものは書き換えない（出したものの記録なので）。
+   * 直す唯一の道がこれになる。
    */
   async reissue(
     documentId: number, reason: string, actor: string,
@@ -333,13 +344,24 @@ export class DocumentIssueService {
           throw new DomainError("VALIDATION",
             "テンプレートを持たない取込文書は作り直せません。新しく登録してください");
         }
+        // 訂正版の下書きが1つでも開いていたら、もう1枚作らせない。
+        // 溜めても発行できるのは1枚だけ（発行した時点でこの版は退く）なので、
+        // 残りは行き場のない下書きになる。
+        const open = await client.query(
+          `SELECT id FROM documents
+            WHERE supersedes_id = $1 AND status = 'draft' LIMIT 1`, [documentId]);
+        if (open.rows.length) {
+          throw new DomainError("CONFLICT",
+            `この文書にはもう訂正版の下書きがあります（#${(open.rows[0] as { id: number }).id}）。` +
+            "それを直して発行してください");
+        }
 
         const created = await client.query(
           `INSERT INTO documents (template_version_id, matter_id, agreement_id, status,
-                                  manual_inputs, supersedes_id)
-           VALUES ($1, $2, $3, 'draft', $4::jsonb, $5) RETURNING id`,
+                                  manual_inputs, supersedes_id, supersede_reason)
+           VALUES ($1, $2, $3, 'draft', $4::jsonb, $5, $6) RETURNING id`,
           [row.template_version_id, row.matter_id, row.agreement_id,
-           JSON.stringify(row.manual_inputs ?? {}), documentId]);
+           JSON.stringify(row.manual_inputs ?? {}), documentId, note]);
         const newId = Number((created.rows[0] as { id: number }).id);
 
         if (conditionIds && conditionIds.length) {
@@ -361,9 +383,8 @@ export class DocumentIssueService {
              ON CONFLICT (document_id, condition_id) DO NOTHING`, [documentId, newId]);
         }
 
-        await client.query(
-          "UPDATE documents SET status = 'superseded' WHERE id = $1", [documentId]);
-
+        // 元はまだ退かせない。訂正版を発行した瞬間に入れ替える（issue の中）。
+        // ここで退かせると、下書きを捨てたときに有効な版がゼロになる。
         await recordAudit(client, {
           actor, action: "document.reissue", targetType: "document", targetId: documentId,
           detail: { documentNo: row.document_no, newDocumentId: newId, reason: note,
@@ -372,6 +393,39 @@ export class DocumentIssueService {
         return { id: newId, supersedesId: documentId };
       });
     } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 前の版を退かせる。訂正版の発行と同じトランザクションで走る。
+   *
+   * 実績（condition_events.document_id）も一緒に移す。移さないと、実績が
+   * 前の版に取られたままになり、「すでに別の文書に結びついています。作り直す
+   * なら先にその文書を無効にしてください」で止まる。それが差し替えを2手に
+   * していた原因なので、ここで引き取る。
+   */
+  private async supersede(
+    client: Queryable, oldId: number, newId: number,
+    newDocumentNo: string, reason: string | null, actor: string
+  ) {
+    const old = await client.query(
+      "SELECT id, document_no, status FROM documents WHERE id = $1 FOR UPDATE", [oldId]);
+    const row = old.rows[0] as { document_no: string | null; status: string } | undefined;
+    if (!row) throw new DomainError("NOT_FOUND", `差し替える元の文書 ${oldId} が見つかりません`);
+    // 元がすでに無効・差し替え済みなら、退かせるものが無い。訂正版は普通に出す。
+    if (row.status !== "issued") return;
+
+    const moved = await client.query(
+      `UPDATE condition_events SET document_id = $2 WHERE document_id = $1 RETURNING id`,
+      [oldId, newId]);
+    await client.query("UPDATE documents SET status = 'superseded' WHERE id = $1", [oldId]);
+
+    await recordAudit(client, {
+      actor, action: "document.supersede", targetType: "document", targetId: oldId,
+      detail: {
+        documentNo: row.document_no, replacedBy: newId, replacedByNo: newDocumentNo,
+        reason, movedEvents: moved.rows.length
+      }
+    });
   }
 
   /** 発行済み文書を、そのときの版と焼き付けた値で描き直す。 */

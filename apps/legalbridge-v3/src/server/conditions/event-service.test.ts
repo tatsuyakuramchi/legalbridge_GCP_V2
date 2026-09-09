@@ -134,15 +134,24 @@ test("すでに別の文書に出した実績は二重に出さない", async ()
   await assert.rejects(
     () => new ConditionEventService(
       linkDb({ "FROM condition_events\n            WHERE id = ANY":
-        [{ id: 5, status: "active", document_id: 99 }] }))
+        [{ id: 5, status: "active", document_id: "99" }] }))
       .linkDocument(1, [5], 7, "a"), /すでに別の文書に結びついている/);
 });
 
-test("同じ文書へならやり直せる（途中で落ちたときの復旧）", async () => {
-  const database = linkDb({ "FROM condition_events\n            WHERE id = ANY":
-    [{ id: 5, status: "active", document_id: 7 }] });
-  await new ConditionEventService(database).linkDocument(1, [5], 7, "a");
+test("同じ文書へならやり直せる（訂正版の発行で実績が先に移ってきた場合）", async () => {
+  // bigint は文字列で返る。ここを数値で書いた偽データにしていたせいで、
+  // "7" !== 7 で自分の実績まで弾く不具合を取り逃がしていた。
+  const database = linkDb({
+    "FROM condition_events\n            WHERE id = ANY":
+      [{ id: 5, status: "active", document_id: "7" }],
+    // UPDATE には document_id IS NULL が付いている。すでに埋まっているので0件。
+    "UPDATE condition_events SET document_id": []
+  });
+  const r = await new ConditionEventService(database).linkDocument(1, [5], 7, "a");
+  assert.equal(r.linked, 0, "動かすものが無い");
   assert.ok(database.find("UPDATE condition_events SET document_id"));
+  assert.ok(!database.find("INSERT INTO audit_events"),
+    "何も動いていないので記録も残さない（linked:0 は失敗と読まれる）");
 });
 
 test("この条件に無い実績は混ぜられない", async () => {
