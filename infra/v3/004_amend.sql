@@ -483,9 +483,13 @@ SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint
 SELECT count(*) AS series_missing FROM v3.conditions WHERE series_id IS NULL;
 
 \echo '--- 発行できないひな形（採番プレフィックス無し。0件が望ましい） ---'
+-- 部分テンプレート（他のひな形に差し込む約款など）は書類ではないので数えない。
 SELECT template_key, label, category
   FROM v3.document_templates
- WHERE is_active AND COALESCE(btrim(number_prefix), '') = ''
+ WHERE is_active
+   AND category IS DISTINCT FROM 'partial'
+   AND template_key NOT LIKE '\_%'
+   AND COALESCE(btrim(number_prefix), '') = ''
  ORDER BY category NULLS LAST, label;
 
 \echo '--- 自社プロファイル ---'

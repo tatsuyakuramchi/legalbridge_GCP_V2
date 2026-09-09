@@ -200,6 +200,12 @@ export class DocumentIssueService {
         const conditionIds = linked.rows.map((c) => Number((c as { condition_id: number }).condition_id));
         await this.assertConditionsIssuable(client, conditionIds);
 
+        // 部分テンプレートは他のひな形に差し込む断片で、それ自体は書類ではない
+        // （発注書の末尾に付く約款など）。採番の話になる前に断る。
+        if (template.category === "partial") {
+          throw new DomainError("VALIDATION",
+            `${template.templateKey} は他のひな形に差し込む部品で、単独では発行できません`);
+        }
         const prefix = normalizePrefix(template.numberPrefix);
         if (!prefix) {
           throw new DomainError("VALIDATION",

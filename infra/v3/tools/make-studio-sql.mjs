@@ -65,8 +65,12 @@ SELECT * FROM (
          (SELECT count(*)::text FROM v3.conditions WHERE series_id IS NULL)
   UNION ALL
   SELECT 7, '発行できないひな形（採番プレフィックス無し。0 が望ましい）',
+         -- 部分テンプレート（差し込む約款など）は書類ではないので数えない。
          (SELECT count(*)::text FROM v3.document_templates
-           WHERE is_active AND COALESCE(btrim(number_prefix), '') = '')
+           WHERE is_active
+             AND category IS DISTINCT FROM 'partial'
+             AND template_key NOT LIKE '\\_%'
+             AND COALESCE(btrim(number_prefix), '') = '')
   UNION ALL
   SELECT 8, '自社プロファイル',
          COALESCE((SELECT value::text FROM v3.settings WHERE key='company_profile'), '無い')

@@ -33,6 +33,8 @@ export interface TemplateSource {
   templateVersionId: number;
   templateKey: string;
   label: string;
+  /** 部分テンプレート（他のひな形に差し込む約款など）は 'partial'。 */
+  category: string | null;
   numberPrefix: string | null;
   htmlSource: string;
   variables: TemplateVariable[];
@@ -126,12 +128,12 @@ export class DocumentRepository {
     const r = options.versionId
       ? await client.query(
           `SELECT t.id AS template_id, tv.id AS version_id, t.template_key, t.label,
-                  t.number_prefix, tv.html_source, tv.variables
+                  t.category, t.number_prefix, tv.html_source, tv.variables
              FROM document_template_versions tv JOIN document_templates t ON t.id = tv.template_id
             WHERE tv.id = $1`, [options.versionId])
       : await client.query(
           `SELECT t.id AS template_id, tv.id AS version_id, t.template_key, t.label,
-                  t.number_prefix, tv.html_source, tv.variables
+                  t.category, t.number_prefix, tv.html_source, tv.variables
              FROM document_templates t JOIN document_template_versions tv ON tv.id = t.current_version_id
             WHERE t.template_key = $1 AND t.is_active`, [options.templateKey]);
     const row = r.rows[0] as Record<string, any> | undefined;
@@ -146,6 +148,7 @@ export class DocumentRepository {
       templateVersionId: Number(row.version_id),
       templateKey: String(row.template_key),
       label: String(row.label),
+      category: str(row.category),
       numberPrefix: str(row.number_prefix),
       htmlSource: String(row.html_source),
       variables: parseVariables(row.variables)

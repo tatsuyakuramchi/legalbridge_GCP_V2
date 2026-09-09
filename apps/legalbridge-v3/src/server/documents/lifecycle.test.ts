@@ -69,3 +69,22 @@ test("存在しない文書には何もしない", async () => {
   await assert.rejects(() => svc.void(5, "x", "k"), /見つかりません/);
   await assert.rejects(() => svc.reissue(5, "x", "k"), /見つかりません/);
 });
+
+test("部分テンプレートは単独で発行できない", async () => {
+  // terms_spot_2026 は発注書の末尾に差し込む約款。それ自体は書類ではないので、
+  // 採番の話になる前に断る（V1 でも採番記号を持っていなかった）。
+  const db = new FakeDatabase((text) => {
+    if (text.includes("FROM documents WHERE id")) return [doc("draft")];
+    if (text.includes("FROM document_template_versions tv")) {
+      return [{ template_id: 1, version_id: 2, template_key: "terms_spot_2026",
+                label: "terms_spot_2026", category: "partial", number_prefix: null,
+                html_source: "<p>約款</p>", variables: [] }];
+    }
+    if (text.includes("FROM document_conditions")) return [];
+    return undefined;
+  });
+  await assert.rejects(() => new DocumentIssueService(db).issue(5, "k"),
+    /単独では発行できません/);
+  assert.ok(!db.queries.some((q) => /document_sequences/i.test(q.text)),
+    "採番まで進まない");
+});
