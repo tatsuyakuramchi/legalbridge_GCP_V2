@@ -1,4 +1,17 @@
 -- =====================================================================
+-- LegalBridge V3 スキーマの後追い変更（Cloud SQL Studio 用）
+--
+--   このファイルは自動生成。直さないこと。
+--   直すのは infra/v3/004_amend.sql のほうで、そのあと
+--     node infra/v3/tools/make-studio-sql.mjs
+--   で作り直す。
+--
+--   使い方: Cloud SQL Studio のエディタに全部貼って実行する。
+--           何度流しても同じ結果になる。
+--   psql が使えるなら 004_amend.sql のほうを流すこと（確認の出力が読みやすい）。
+-- =====================================================================
+
+-- =====================================================================
 -- LegalBridge V3 スキーマの後追い変更
 --
 --   001_schema.sql は CREATE TABLE IF NOT EXISTS で書いてあるので、
@@ -9,8 +22,6 @@
 --   順番: 003_grants.sql の後、005_preflight.sql の前。
 --   新しい表を足したときは 003_grants.sql も流し直すこと。
 -- =====================================================================
-
-\set ON_ERROR_STOP on
 
 BEGIN;
 
@@ -68,7 +79,6 @@ ALTER TABLE v3.condition_schedules ADD COLUMN IF NOT EXISTS label text;
 COMMENT ON COLUMN v3.condition_schedules.label IS
   '明細行の名前。「2026年4月分」「第1回 着手金」など。空なら期日から表示を作る。';
 
-
 -- ---------------------------------------------------------------------
 -- A-003 案件に「進め方」を持たせる
 --
@@ -103,7 +113,6 @@ $amend_doc_style$;
 
 COMMENT ON COLUMN v3.matters.document_style IS
   '進め方。counterparty_review=他社文書レビュー / own_draft=自社ドラフト / own_template=自社テンプレート。';
-
 
 -- ---------------------------------------------------------------------
 -- A-004: 契約変更の「いつから適用か」
@@ -212,7 +221,6 @@ CREATE TRIGGER conditions_series_bi BEFORE INSERT ON v3.conditions
 CREATE INDEX IF NOT EXISTS conditions_series_idx
   ON v3.conditions (series_id, effective_from);
 
-
 -- ---------------------------------------------------------------------
 -- A-005: 文書の採番プレフィックスを埋め戻す
 --
@@ -257,7 +265,6 @@ UPDATE v3.document_templates t SET number_prefix = m.prefix
   ) AS m(template_key, prefix)
  WHERE t.template_key = m.template_key
    AND COALESCE(btrim(t.number_prefix), '') = '';
-
 
 -- ---------------------------------------------------------------------
 -- A-006: 予定明細に支払期日を足す
@@ -309,7 +316,6 @@ SELECT 'task', t.id, m.matter_no, t.title,
   FROM v3.tasks t
   JOIN v3.matters m ON m.id = t.matter_id
  WHERE t.due_at IS NOT NULL AND t.status <> 'done';
-
 
 -- ---------------------------------------------------------------------
 -- A-007: 口座情報を読めるようにする
@@ -417,64 +423,65 @@ BEGIN
 END
 $a009$;
 
-
 COMMIT;
 
--- 確認
-\echo '--- matter_links.target_type ---'
-SELECT pg_get_constraintdef(c.oid) AS def
-  FROM pg_constraint c
- WHERE c.conrelid = 'v3.matter_links'::regclass AND c.contype = 'c';
 
-\echo '--- condition_schedules の列 ---'
-SELECT column_name, data_type
-  FROM information_schema.columns
- WHERE table_schema = 'v3' AND table_name = 'condition_schedules'
- ORDER BY ordinal_position;
-
-\echo '--- matters.document_style ---'
-SELECT column_name, data_type FROM information_schema.columns
- WHERE table_schema='v3' AND table_name='matters' AND column_name='document_style';
-
-\echo '--- conditions の適用開始日と系列 ---'
-SELECT column_name, data_type FROM information_schema.columns
- WHERE table_schema='v3' AND table_name='conditions'
-   AND column_name IN ('effective_from', 'series_id')
- ORDER BY column_name;
-
-\echo '--- conditions.status で許す値 ---'
-SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint
- WHERE conrelid='v3.conditions'::regclass AND conname='conditions_status_chk';
-
-\echo '--- 系列が埋まっていない条件（0 であること） ---'
-SELECT count(*) AS series_missing FROM v3.conditions WHERE series_id IS NULL;
-
-\echo '--- 発行できないひな形（採番プレフィックス無し。0件が望ましい） ---'
-SELECT template_key, label, category
-  FROM v3.document_templates
- WHERE is_active AND COALESCE(btrim(number_prefix), '') = ''
- ORDER BY category NULLS LAST, label;
-
-\echo '--- 自社プロファイル ---'
-SELECT jsonb_pretty(value) AS company_profile
-  FROM v3.settings WHERE key = 'company_profile';
-
-\echo '--- 書類に載る連絡先（住所・電話・メール）---'
-SELECT
-  count(*) FILTER (WHERE address IS NOT NULL) AS 住所あり,
-  count(*) FILTER (WHERE phone   IS NOT NULL) AS 電話あり,
-  count(*) FILTER (WHERE email   IS NOT NULL) AS メールあり,
-  count(*) AS 取引先件数
-  FROM v3.parties;
-
-\echo '--- 振込先の欠け（銀行名・支店名・種別が空の口座）---'
-SELECT count(*) FILTER (WHERE bank_name IS NULL)    AS 銀行名なし,
-       count(*) FILTER (WHERE branch_name IS NULL)  AS 支店名なし,
-       count(*) FILTER (WHERE account_type IS NULL) AS 種別なし,
-       count(*) AS 口座件数
-  FROM v3.party_bank_accounts;
-
-\echo '--- 口座表の権限（SELECT だけであること） ---'
-SELECT privilege_type FROM information_schema.role_table_grants
- WHERE grantee = 'legalbridge_v3_runtime' AND table_name = 'party_bank_accounts'
- ORDER BY privilege_type;
+-- =====================================================================
+-- 確認（1本の表に全部出る）
+-- =====================================================================
+SELECT * FROM (
+  SELECT 1 AS n, 'matter_links の種類' AS 項目,
+         COALESCE((SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c
+                    WHERE c.conrelid = 'v3.matter_links'::regclass AND c.contype = 'c'
+                    LIMIT 1), '(制約なし)') AS 結果
+  UNION ALL
+  SELECT 2, 'condition_schedules.pay_on',
+         COALESCE((SELECT data_type FROM information_schema.columns
+                    WHERE table_schema='v3' AND table_name='condition_schedules'
+                      AND column_name='pay_on'), '無い')
+  UNION ALL
+  SELECT 3, 'matters.document_style',
+         COALESCE((SELECT data_type FROM information_schema.columns
+                    WHERE table_schema='v3' AND table_name='matters'
+                      AND column_name='document_style'), '無い')
+  UNION ALL
+  SELECT 4, 'conditions.effective_from / series_id',
+         (SELECT count(*)::text || ' 列' FROM information_schema.columns
+           WHERE table_schema='v3' AND table_name='conditions'
+             AND column_name IN ('effective_from','series_id'))
+  UNION ALL
+  SELECT 5, 'conditions.status で許す値',
+         COALESCE((SELECT pg_get_constraintdef(oid) FROM pg_constraint
+                    WHERE conrelid='v3.conditions'::regclass
+                      AND conname='conditions_status_chk'), '(制約なし)')
+  UNION ALL
+  SELECT 6, '系列が埋まっていない条件（0 であること）',
+         (SELECT count(*)::text FROM v3.conditions WHERE series_id IS NULL)
+  UNION ALL
+  SELECT 7, '発行できないひな形（採番プレフィックス無し。0 が望ましい）',
+         (SELECT count(*)::text FROM v3.document_templates
+           WHERE is_active AND COALESCE(btrim(number_prefix), '') = '')
+  UNION ALL
+  SELECT 8, '自社プロファイル',
+         COALESCE((SELECT value::text FROM v3.settings WHERE key='company_profile'), '無い')
+  UNION ALL
+  SELECT 9, '取引先の連絡先（住所 / 電話 / メール / 全件）',
+         (SELECT count(*) FILTER (WHERE address IS NOT NULL)::text || ' / ' ||
+                 count(*) FILTER (WHERE phone   IS NOT NULL)::text || ' / ' ||
+                 count(*) FILTER (WHERE email   IS NOT NULL)::text || ' / ' ||
+                 count(*)::text
+            FROM v3.parties)
+  UNION ALL
+  SELECT 10, '振込先の欠け（銀行名なし / 支店名なし / 種別なし / 全件）',
+         (SELECT count(*) FILTER (WHERE bank_name    IS NULL)::text || ' / ' ||
+                 count(*) FILTER (WHERE branch_name  IS NULL)::text || ' / ' ||
+                 count(*) FILTER (WHERE account_type IS NULL)::text || ' / ' ||
+                 count(*)::text
+            FROM v3.party_bank_accounts)
+  UNION ALL
+  SELECT 11, '口座表の権限（SELECT だけであること）',
+         COALESCE((SELECT string_agg(DISTINCT privilege_type, ', ')
+                     FROM information_schema.role_table_grants
+                    WHERE grantee = 'legalbridge_v3_runtime'
+                      AND table_name = 'party_bank_accounts'), '権限なし')
+) AS 確認 ORDER BY n;

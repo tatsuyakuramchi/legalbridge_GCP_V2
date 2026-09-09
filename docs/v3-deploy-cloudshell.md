@@ -17,8 +17,24 @@
 | `003_grants.sql` | `\if :{?confirm_v3_grants}` の**安全確認をすり抜ける**か構文エラーになる。権限付与が確認なしで走る危険がある |
 | `005_preflight.sql` | `CREATE TEMP TABLE` がセッション単位。Studio は実行ごとにセッションが変わるため、宣言した内容が消えて**空の結果が返る**（＝「問題なし」に見えてしまう） |
 
-**SQLの実行はすべて Cloud Shell の psql で行う。** Cloud SQL Studio は
-最後にまとめた「検算クエリ集」を眺める用途にだけ使う（表形式で見やすいため）。
+**移行のSQL（001〜003・005・010〜090）は Cloud Shell の psql で行う。**
+
+ただし **`004_amend.sql`（あとから足した変更）だけは Studio 用がある**。
+Cloud Shell が使えないときはこちらを貼ればよい。
+
+| ファイル | Studio で使えるか |
+|---|---|
+| `004_amend_studio.sql` | **使える。** 全文を貼って実行する。何度流しても同じ結果 |
+| それ以外の移行スクリプト | 使えない。Cloud Shell の psql で流す |
+
+`004_amend_studio.sql` は `004_amend.sql` から自動生成している。直すのは
+`004_amend.sql` のほうで、そのあと
+
+```bash
+node infra/v3/tools/make-studio-sql.mjs
+```
+
+で作り直す。食い違うと試験（`amend-sql.test.ts`）が落ちる。
 
 ---
 
@@ -233,8 +249,25 @@ psql -c "SELECT count(*) FILTER (WHERE table_type='BASE TABLE') AS tables,
 psql -v ON_ERROR_STOP=1 -f infra/v3/004_amend.sql
 ```
 
+**Cloud Shell が使えないとき**は、`infra/v3/004_amend_studio.sql` の全文を
+Cloud SQL Studio のエディタに貼って実行する。中身は同じで、psql のメタコマンド
+（`\set` `\echo`）を落とし、確認を1本の表にまとめてある。最後に11行の
+「確認」が出るので、そこを読む。
+
 初回は `A-001: matter_links.target_type に email_thread を足した`、
 2回目以降は `A-001: 適用済み` と出る。どちらも正常。
+
+**A-008** は `parties` に住所・電話・メール、`staff` に電話を足して、移行元
+（`public.vendors` / `public.staff`）から埋め戻す。V1 の契約書の頭書きと
+請求書の宛先がこれを差していたのに、V3 の表に列が無かった。
+
+**A-009** は自社プロファイルを移す。V1 は `app_settings` の `COMPANY_*` キーに
+持っていて、V3 へ移していなかったため、発注書が必須にしている
+`PARTY_A_NAME` / `PARTY_A_ADDRESS` / `PARTY_A_REP` と、計算書の
+`licensee` / `COMPANY_ADDRESS` / `COMPANY_TEL` / `COMPANY_INVOICE_NO` が
+全部空欄だった。`app_settings` が読めなくても V1 のコード既定（社名・住所・
+代表者）は入る。**確認の「自社プロファイル」に出る代表者名が現行のもので
+あることを必ず見ること。** 古い名前のまま書類に出ると気づきにくい。
 
 **A-002** は `condition_schedules` に `label` 列を足す（予定明細の名前。
 「2026年4月分」「第1回 着手金」）。`ADD COLUMN IF NOT EXISTS` なので何度
