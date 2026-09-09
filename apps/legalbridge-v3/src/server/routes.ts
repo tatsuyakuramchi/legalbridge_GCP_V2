@@ -683,6 +683,19 @@ export function createRoutes(database: Transactable) {
         Number(req.params.id), documentStyle, actor(res)));
     }));
 
+  /**
+   * 案件の担当者。検収書の【ご連絡先】はここから部署・氏名・メールを差す。
+   * 作るときにしか決められず、あとから直せなかった。
+   */
+  const matterOwnerSchema = z.object({
+    ownerStaffId: z.coerce.number().int().positive().nullable()
+  });
+  router.patch("/matters/:id/owner", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { ownerStaffId } = matterOwnerSchema.parse(req.body ?? {});
+      res.json(await matterWrites.changeOwner(Number(req.params.id), ownerStaffId, actor(res)));
+    }));
+
   const matterStatusSchema = z.object({
     status: z.enum(["open", "waiting", "blocked", "done", "canceled"]),
     blockedReason: z.string().trim().max(1000).nullable().optional()

@@ -66,7 +66,8 @@ export function MattersWorkspace(
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState<"matter" | "task" | null>(null);
   const [parties, setParties] = useState<Array<{ id: number; name: string }>>([]);
-  const [staff, setStaff] = useState<Array<{ id: number; name: string }>>([]);
+  const [staff, setStaff] = useState<
+    Array<{ id: number; name: string; department: string | null; status: string }>>([]);
   const [backlog, setBacklog] = useState<BacklogResult | null>(null);
   const [backlogBusy, setBacklogBusy] = useState(false);
   const [issueKey, setIssueKey] = useState("");
@@ -78,6 +79,21 @@ export function MattersWorkspace(
   const relink = () => { setLinkVersion((v) => v + 1); reloadDetail(); };
 
   // 進め方を変えると次にやることが変わるので、進み具合も引き直す。
+  // 担当者を決めるときにしか要らないので、開いたときに取りに行く。
+  const [ownerEdit, setOwnerEdit] = useState(false);
+  useEffect(() => {
+    if (!ownerEdit || staff.length) return;
+    api.get<{ staff: typeof staff }>("/staff")
+      .then((r) => setStaff(r.staff)).catch(() => undefined);
+  }, [ownerEdit]);
+
+  function saveOwner(value: string) {
+    if (!selected) return;
+    api.patch(`/matters/${selected}/owner`, { ownerStaffId: value ? Number(value) : null })
+      .then(() => { setOwnerEdit(false); relink(); })
+      .catch((e: ApiError) => setError(e.message));
+  }
+
   function saveStyle(value: string) {
     if (!selected) return;
     api.patch(`/matters/${selected}/document-style`, { documentStyle: value || null })
@@ -101,7 +117,7 @@ export function MattersWorkspace(
     if (creating === null || parties.length) return;
     Promise.all([
       api.get<{ parties: Array<{ id: number; name: string }> }>("/parties"),
-      api.get<{ staff: Array<{ id: number; name: string }> }>("/staff")
+      api.get<{ staff: typeof staff }>("/staff")
     ]).then(([p, st]) => { setParties(p.parties); setStaff(st.staff); }).catch(() => undefined);
   }, [creating]);
 
@@ -279,7 +295,37 @@ export function MattersWorkspace(
                         : "決めると、次にやることが「相手方の文書を確認」なのか「自社ドラフトの発行」なのかが出る"}</div>
                     </dd>
                     <dt>相手先</dt><dd>{detail.counterparty?.name ?? "—"}</dd>
-                    <dt>担当</dt><dd>{detail.ownerName ?? "未設定"}</dd>
+                    <dt>担当</dt>
+                    <dd>
+                      {ownerEdit ? (
+                        <div className="row">
+                          <select defaultValue="" onChange={(e) => saveOwner(e.target.value)}>
+                            <option value="">未設定にする</option>
+                            {/* 退職者は書類に出す担当にできない。選ばせない。 */}
+                            {staff.filter((x) => x.status === "active").map((x) => (
+                              <option key={x.id} value={String(x.id)}>
+                                {x.name}{x.department ? `（${x.department}）` : ""}
+                              </option>
+                            ))}
+                          </select>
+                          <button className="btn btn-sm"
+                                  onClick={() => setOwnerEdit(false)}>やめる</button>
+                        </div>
+                      ) : (
+                        <div className="row">
+                          <span>{detail.ownerName ?? "未設定"}</span>
+                          <button className="btn btn-sm"
+                                  onClick={() => setOwnerEdit(true)}>変更</button>
+                        </div>
+                      )}
+                      {/* 検収書の【ご連絡先】はここから部署・氏名・メールを差す。
+                          空だと連絡先が丸ごと空の書類になる。 */}
+                      {!detail.ownerName && (
+                        <div className="faint">
+                          未設定です。この案件から出す検収書の【ご連絡先】が空欄になります
+                        </div>
+                      )}
+                    </dd>
                     {detail.blockedReason && (<><dt>停滞理由</dt><dd>{detail.blockedReason}</dd></>)}
                   </dl>
                 </div>

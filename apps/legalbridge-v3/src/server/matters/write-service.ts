@@ -113,6 +113,53 @@ export class MatterWriteService {
   }
 
   /**
+   * 案件の担当者を決める・付け替える。
+   *
+   * これまで案件を作るときにしか設定できず、あとから直す経路が無かった。
+   * 検収書の【ご連絡先】は案件の担当者から部署・氏名・メールを差すので、
+   * 担当者が空の案件から出した書類は連絡先が丸ごと空になる。それなのに
+   * 埋める手段が無かった（移行してきた案件はここが空のことがある）。
+   *
+   * null を渡すと外せる。外すとその案件から出す書類の連絡先が空になるので、
+   * 外すのは付け替えの途中だけにしたい。
+   */
+  async changeOwner(id: number, ownerStaffId: number | null, actor: string) {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const before = await client.query(
+          "SELECT owner_staff_id FROM matters WHERE id = $1", [id]);
+        if (!before.rows[0]) throw new DomainError("NOT_FOUND", `案件 ${id} が見つかりません`);
+
+        let name: string | null = null;
+        if (ownerStaffId !== null) {
+          // 実在と在籍を確かめる。退職者を担当にすると、その名前が書類に出る。
+          const staff = await client.query(
+            "SELECT id, name, status FROM staff WHERE id = $1", [ownerStaffId]);
+          const row = staff.rows[0] as { name: string; status: string } | undefined;
+          if (!row) throw new DomainError("NOT_FOUND", `担当者 ${ownerStaffId} が見つかりません`);
+          if (row.status !== "active") {
+            throw new DomainError("VALIDATION",
+              `${row.name} は退職になっています。書類に出る担当者なので、在籍している人を選んでください`);
+          }
+          name = row.name;
+        }
+
+        await client.query(
+          "UPDATE matters SET owner_staff_id = $2, updated_at = now() WHERE id = $1",
+          [id, ownerStaffId]);
+        await recordAudit(client, {
+          actor, action: "matter.change_owner", targetType: "matter", targetId: id,
+          detail: {
+            from: (before.rows[0] as { owner_staff_id: number | null }).owner_staff_id,
+            to: ownerStaffId, name
+          }
+        });
+        return { id, ownerStaffId, ownerName: name };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
    * 進め方の設定・変更。取引モデル（案件の種別）だけでは実際に何をするかが決まらないので、
    * 他社レビュー／自社ドラフト／自社テンプレートのどれで進めるかをここで決める。
    * 既存案件は未設定のまま残るので、後から入れられる必要がある。

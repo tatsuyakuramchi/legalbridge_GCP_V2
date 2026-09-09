@@ -133,14 +133,23 @@ export function documentWarnings(
     // なる。文書は誰の連絡先を差そうとしたのかを知っている（案件の担当者）。
     const who = [values.inspectorName, values.STAFF_NAME, values["担当者名"]]
       .map((v) => String(v ?? "").trim()).find(Boolean);
-    out.push({
-      kind: "staff",
-      message: `${who ? `${who} の` : "担当者の"}連絡先が空です`
-        + `（${label(STAFF_LABEL, staff)}）。`
-        + "検収書は【ご連絡先】にこれを差して「5営業日以内にご連絡ください」と書くので、"
-        + "空欄だと宛先の無い書類になります。"
-        + `取引先・担当＞担当者 ${who ? `の ${who} の行` : ""}で入れてください。`
-    });
+    // 名前ごと空なら、案件に担当者が付いていない。直す先は担当者マスタでは
+    // なく案件のほう。ここを間違えると、担当者の一覧を見て「メールは入って
+    // いる」と確かめて終わってしまう（実際そうなった）。
+    const common = "検収書は【ご連絡先】にこれを差して"
+      + "「5営業日以内にご連絡ください」と書くので、空欄だと宛先の無い書類になります。";
+    out.push(who
+      ? {
+          kind: "staff",
+          message: `${who} の連絡先が空です（${label(STAFF_LABEL, staff)}）。`
+            + common + `取引先・担当＞担当者 の ${who} の行で入れてください。`
+        }
+      : {
+          kind: "staff",
+          message: "この案件に担当者が設定されていません。" + common
+            + "案件を開いて 担当 の「変更」で決めてください。"
+            + "決まると部署・氏名・メールがまとめて入ります。"
+        });
   }
 
   const rest = blank.filter((n) =>
