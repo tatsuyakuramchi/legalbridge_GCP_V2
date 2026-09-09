@@ -1250,7 +1250,9 @@ export function createRoutes(database: Transactable) {
         // 入力欄の横に出す候補。ひな形が供給元を宣言していなくても人が選べる。
         candidates: result.candidates,
         // 本文が差しているのに空で出る項目（振込先の欠けなど）。
-        warnings: result.warnings
+        warnings: result.warnings,
+        // 明細の欄と、その種になる行。
+        lines: result.lines
       });
     }));
 

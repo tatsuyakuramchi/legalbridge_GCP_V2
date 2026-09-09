@@ -6,6 +6,7 @@ import { api, ApiError, money } from "./api.js";
 import type { EntityKind } from "./Relations.js";
 import { DocumentDetail, type DocumentRow } from "./DocumentDetail.js";
 import { DocumentFields, kindFor, type Candidate, type FormField } from "./DocumentFields.js";
+import { LineItemsEditor, type Row } from "./LineItems.js";
 
 interface TemplateRow {
   id: number; templateKey: string; label: string; category: string | null; numberPrefix: string | null;
@@ -31,6 +32,8 @@ interface PreviewResponse {
   candidates: Candidate[];
   /** 本文が差しているのに空で出る項目。止めはしないが、出す前に見せる。 */
   warnings: Array<{ kind: "bank" | "company" | "other"; message: string }>;
+  /** 明細の欄と、条件・予定・実績から組んだ種の行。 */
+  lines: Array<{ name: string; rows: Row[] }>;
 }
 interface EventRow {
   id: number; eventType: string; occurredOn: string | null; period: string | null;
@@ -80,6 +83,12 @@ export function DocumentsWorkspace(
   // 条件の画面から来たときは、その条件と実績を選んだ状態で開く。
   const [picked, setPicked] = useState<number[]>(start?.conditionIds ?? []);
   const [manual, setManual] = useState<Record<string, string>>({});
+  /**
+   * 人が直した明細の行（items / other_fees / expenses / delivery_line_items）。
+   * 無い名前は種のまま（サーバが組んだ行が本文になる）。手入力の文字とは
+   * 別に持つ。混ぜると「前回の値」に配列まで覚えてしまう。
+   */
+  const [lines, setLines] = useState<Record<string, Row[]>>({});
   /**
    * ひな形が要求する項目の一覧と候補。**必ず手入力を空にして取る。**
    *
@@ -242,12 +251,14 @@ export function DocumentsWorkspace(
 
   const current = selected === null ? null : byId.get(selected) ?? null;
 
+  /** サーバへ渡す手入力。文字の欄と、直した明細の行を合わせたもの。 */
+  const inputs = useMemo(() => ({ ...manual, ...lines }), [manual, lines]);
   const body = useMemo(() => ({
-    templateKey, conditionIds: picked, eventIds: pickedEvents, manualInputs: manual
-  }), [templateKey, picked, pickedEvents, manual]);
+    templateKey, conditionIds: picked, eventIds: pickedEvents, manualInputs: inputs
+  }), [templateKey, picked, pickedEvents, inputs]);
 
   // 打つたびに問い合わせない。少し待ってからプレビューを取り直す。
-  const manualJson = useDebounced(JSON.stringify(manual), 600);
+  const manualJson = useDebounced(JSON.stringify(inputs), 600);
 
   // ひな形を変えたら、前回そのひな形で入れた値を読み込む。
   // 検収者部署・氏名のように毎回同じものを打ち直さずに済む。
@@ -255,7 +266,7 @@ export function DocumentsWorkspace(
     if (!templateKey) return;
     // 下書きを開いたときは、その下書きの手入力が正。既定で上書きしない。
     if (draft) return;
-    setManual({}); setPickedFields(new Set());
+    setManual({}); setLines({}); setPickedFields(new Set());
     api.get<{ defaults: Record<string, string> }>(`/document-defaults/${templateKey}`)
       .then((r) => setManual(r.defaults ?? {}))
       .catch(() => undefined);
@@ -307,7 +318,7 @@ export function DocumentsWorkspace(
         // 開いている下書きを直してから発行する。発行は下書きに保存された
         // 手入力しか見ないので、先に書き戻す。
         await api.patch(`/documents/${draft.id}/draft`,
-          { manualInputs: manual, conditionIds: picked });
+          { manualInputs: inputs, conditionIds: picked });
         const r = await api.post<{ documentNo: string }>(
           `/documents/${draft.id}/issue`, { eventIds: pickedEvents });
         documentNo = r.documentNo;
@@ -335,7 +346,7 @@ export function DocumentsWorkspace(
       }
       // 項目の一覧は消さない。消すと、続けてもう1枚作るときに空の画面が残る。
       // 日付と金額だけ落として、手で打った文字は次にも使う。
-      setManual(keep); setPickedFields(new Set());
+      setManual(keep); setLines({}); setPickedFields(new Set());
       setDraft(null); setPickedEvents([]);
       await reload();
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
@@ -438,8 +449,10 @@ export function DocumentsWorkspace(
         throw new ApiError(400, "ひな形を持たない文書は直せません");
       }
       const values: Record<string, string> = {};
+      const arrays: Record<string, Row[]> = {};
       for (const [k, v] of Object.entries(d.manualInputs ?? {})) {
-        if (v !== null && v !== undefined) values[k] = String(v);
+        if (Array.isArray(v)) arrays[k] = v as Row[];
+        else if (v !== null && v !== undefined && typeof v !== "object") values[k] = String(v);
       }
       // draft を先に立てる。ひな形を変えたときの既定読み込みに上書きさせない。
       setComposing(true);
@@ -450,6 +463,7 @@ export function DocumentsWorkspace(
       // ここを空にすると、直して発行するたびに実績を選び直す羽目になる。
       setPickedEvents(d.eventIds ?? []);
       setManual(values);
+      setLines(arrays);
       setPickedFields(new Set());
       form.current?.scrollIntoView({ block: "start", behavior: "smooth" });
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
@@ -459,7 +473,7 @@ export function DocumentsWorkspace(
   /** 下書きから降りる。作りかけの下書きは残るので、あとで開き直せる。 */
   function closeDraft() {
     setDraft(null); setComposing(false); setRendered(null);
-    setManual({}); setPickedFields(new Set()); setPickedEvents([]);
+    setManual({}); setLines({}); setPickedFields(new Set()); setPickedEvents([]);
     // ひな形は変わらないので既定の読み込みは走らない。ここで戻しておかないと、
     // 下書きを閉じたあとだけ前回の値が出ない画面になる。
     if (templateKey) {
@@ -632,6 +646,18 @@ export function DocumentsWorkspace(
               setManual((prev) => ({ ...prev, [name]: value }));
               setPickedFields((prev) => new Set(prev).add(name));
             }} />
+
+          {/* 明細の行。条件明細には無いが書類には要る項目（帰属先・支払方法・
+              納期・支払日）は、ここで行ごとに入れる。 */}
+          {(spec?.lines ?? []).map((l) => (
+            <LineItemsEditor key={l.name} name={l.name} seed={l.rows}
+              rows={lines[l.name] ?? null} intl={templateKey === "intl_purchase_order"}
+              onChange={(rows) => setLines((prev) => {
+                const next = { ...prev };
+                if (rows === null) delete next[l.name]; else next[l.name] = rows;
+                return next;
+              })} />
+          ))}
           </div>
 
           <aside className="compose-side stack">

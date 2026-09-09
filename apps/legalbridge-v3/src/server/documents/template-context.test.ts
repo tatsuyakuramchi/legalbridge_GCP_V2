@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  accountTypeLabel, bankInfoLine, buildTemplateContext, deliveryLinesFrom, orderLinesFrom, taxRateFor
+  accountTypeLabel, bankInfoLine, buildTemplateContext, deliveryLinesFrom, lineFieldsFor, orderLinesFrom, seedLines, taxRateFor
 } from "./template-context.js";
 import { computeInspectionTotals, inspectionTaxBreakdown, purchaseOrderTotals } from "./legacy-totals.js";
 
@@ -198,4 +198,24 @@ test("税率は条件の区分から決まる（混在は高いほうを表示�
   assert.equal(taxRateFor(ctx({
     conditions: [condition({ taxCategory: "exempt" }), condition({ taxCategory: "reduced" })]
   }), {}), 8);
+});
+
+test("発注の行は 1 × 金額 を単価に置く（本文が「¥0」を印字しないように）", () => {
+  const lines = orderLinesFrom(ctx({ schedules: [], conditions: [
+    { id: 1, name: "翻訳", flatAmount: 100000, pricingModel: "fixed", taxCategory: "taxable" }
+  ] })) as Array<Record<string, any>>;
+  assert.equal(lines[0].quantity, 1);
+  assert.equal(lines[0].unit_price, 100000);
+  assert.equal(lines[0].amount_ex_tax, 100000);
+});
+
+test("明細の欄はひな形で決まり、種の行は条件・実績から組む", () => {
+  assert.deepEqual(lineFieldsFor("purchase_order"), ["items", "other_fees", "expenses"]);
+  assert.deepEqual(lineFieldsFor("inspection_certificate"), ["delivery_line_items", "other_fees", "expenses"]);
+  assert.deepEqual(lineFieldsFor("license_master"), []);
+  const seeds = seedLines("purchase_order", ctx({ schedules: [], conditions: [
+    { id: 1, name: "翻訳", flatAmount: 100000, pricingModel: "fixed", taxCategory: "taxable" }
+  ] }));
+  assert.equal(seeds.items.length, 1);
+  assert.deepEqual(seeds.other_fees, []);
 });

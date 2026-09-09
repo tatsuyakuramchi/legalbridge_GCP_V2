@@ -23,6 +23,27 @@ type Ctx = Record<string, any>;
 const INSPECTION_KEYS = new Set(["inspection_certificate", "delivery_note", "acceptance_certificate"]);
 const PURCHASE_ORDER_KEYS = new Set(["purchase_order", "intl_purchase_order"]);
 
+/**
+ * ひな形ごとの明細の欄。画面はここに挙がった名前の分だけ行の編集欄を出す。
+ * 発注書は items / 手数料 / 経費、検収書は納品明細 / 手数料 / 経費。
+ */
+export function lineFieldsFor(templateKey: string): string[] {
+  if (PURCHASE_ORDER_KEYS.has(templateKey)) return ["items", "other_fees", "expenses"];
+  if (INSPECTION_KEYS.has(templateKey)) return ["delivery_line_items", "other_fees", "expenses"];
+  return [];
+}
+
+/** 条件・予定・実績から組んだ「種」の行。画面の編集欄の初期値。 */
+export function seedLines(templateKey: string, context: Ctx): Record<string, Row[]> {
+  const out: Record<string, Row[]> = {};
+  for (const name of lineFieldsFor(templateKey)) {
+    out[name] = name === "items" ? orderLinesFrom(context)
+      : name === "delivery_line_items" ? deliveryLinesFrom(context)
+      : [];
+  }
+  return out;
+}
+
 /** 相手先が「1件の条件」に決まるときだけ、条件から明細を組める。 */
 const singleCondition = (c: Ctx) => (c.conditions?.length === 1 ? c.conditions[0] : null);
 
@@ -96,7 +117,9 @@ export function orderLinesFrom(context: Ctx): Row[] {
       return {
         item_name: s.label ?? condition.name ?? "",
         spec: condition.notes ?? "",
-        quantity: null,
+        // 本文は 数量×単価 を印字する。空だと「¥0」が出るので、1 × 金額 で置く。
+        quantity: 1,
+        unit_price: s.plannedAmount ?? 0,
         delivery_date: s.dueOn ?? null,
         payment_date: s.payOn ?? null,
         amount_ex_tax: s.plannedAmount ?? 0,
@@ -110,7 +133,8 @@ export function orderLinesFrom(context: Ctx): Row[] {
     .map((c: Ctx) => ({
       item_name: c.name ?? "",
       spec: c.notes ?? "",
-      quantity: null,
+      quantity: 1,
+      unit_price: c.flatAmount,
       delivery_date: c.termEnd ?? null,
       payment_date: null,
       amount_ex_tax: c.flatAmount,

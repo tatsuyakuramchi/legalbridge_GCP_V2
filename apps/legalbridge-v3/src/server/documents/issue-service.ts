@@ -6,7 +6,7 @@ import { documentWarnings, type Warning } from "./preflight.js";
 import { DocumentContextRepository } from "./context-repository.js";
 import { DocumentRepository } from "./repository.js";
 import { renderDocumentHtml } from "./render.js";
-import { buildTemplateContext } from "./template-context.js";
+import { buildTemplateContext, seedLines } from "./template-context.js";
 import { resolveAllLegacyVariables } from "./legacy-variables.js";
 import { buildCandidates, type Candidate } from "./candidates.js";
 import { currentYearInTokyo, formatDocumentNumber, nextSequence, normalizePrefix } from "./numbering.js";
@@ -38,6 +38,12 @@ export interface PreviewResult {
    * 正しいこともある）が、発行の前に人が見て決められるようにする。
    */
   warnings: Warning[];
+  /**
+   * 明細の欄。ひな形が行を持つとき（発注書・検収書）、条件・予定・実績から
+   * 組んだ行を種として返す。画面はこれを初期値にして行ごとに直せる。
+   * 直した行は manualInputs の同じ名前（items など）で返ってくる。
+   */
+  lines: Array<{ name: string; rows: Array<Record<string, unknown>> }>;
 }
 
 export interface IssuedDocument {
@@ -87,7 +93,9 @@ export class DocumentIssueService {
         candidates: buildCandidates(context),
         // 宣言済みの項目は binding.missing が別に報告する。重ねない。
         warnings: documentWarnings(template.htmlSource, values,
-          template.variables.map((v) => v.name))
+          template.variables.map((v) => v.name)),
+        lines: Object.entries(seedLines(template.templateKey, context))
+          .map(([name, rows]) => ({ name, rows }))
       };
     } catch (error) { throw translate(error); }
   }
