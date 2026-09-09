@@ -122,3 +122,21 @@ test("添付の名前は案件に残す", async () => {
   assert.match(String(database.find("INSERT INTO matters")!.params[5]), /業務委託契約書\.pdf/);
   assert.match(String(database.find("INSERT INTO matter_links")!.params[2]), /業務委託契約書\.pdf/);
 });
+
+test("受け取ったメールは案件のやり取りとして本文ごと残す（新規でも紐づけでも）", async () => {
+  const created = db();
+  await new EmailIntakeService(created).accept(mail({ attachments: [{ filename: "draft.pdf", mimeType: "application/pdf", size: 10 }] }));
+  const kept = created.find("INSERT INTO matter_communications")!;
+  assert.equal(kept.params[0], 42);
+  assert.equal(kept.params[1], "email");
+  assert.equal(kept.params[2], "in");
+  assert.equal(kept.params[4], "tanaka@example.co.jp");
+  assert.equal(kept.params[6], "イラスト制作の発注について");
+  assert.equal(kept.params[7], "よろしくお願いします。");
+  assert.equal(kept.params[8], "m1", "メッセージIDで二度書かない");
+  assert.match(String(kept.params[11]), /draft\.pdf/, "添付の一覧も証憑に入れる");
+
+  const linked = db({ "target_type = 'email_thread'": [{ id: 42, matter_no: "MTR-2026-00219" }] });
+  await new EmailIntakeService(linked).accept(mail({ messageId: "m2" }));
+  assert.equal(linked.find("INSERT INTO matter_communications")!.params[8], "m2");
+});

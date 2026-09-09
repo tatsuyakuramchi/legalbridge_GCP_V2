@@ -9,6 +9,8 @@ import { createHash } from "node:crypto";
 export interface DispatchRequest {
   /** 宛先。メールアドレス／SlackチャンネルID／CloudSignの参加者など。 */
   recipient: string;
+  /** 写し。メールだけが使う。担当者を cc に入れて、やり取りが見えるようにする。 */
+  cc?: string[] | null;
   subject?: string | null;
   body: string;
   /** 添付。CloudSign は必須、Gmail は任意。 */
@@ -72,9 +74,11 @@ export class GmailAdapter implements DispatchAdapter {
   async send(request: DispatchRequest): Promise<DispatchReceipt> {
     const token = await this.accessToken();
     const boundary = `lb-${createHash("sha1").update(String(Date.now())).digest("hex").slice(0, 16)}`;
+    const cc = (request.cc ?? []).map((v) => v.trim()).filter(Boolean);
     const headers = [
       `From: ${this.sender}`,
       `To: ${request.recipient}`,
+      ...(cc.length ? [`Cc: ${cc.join(", ")}`] : []),
       `Subject: =?UTF-8?B?${Buffer.from(request.subject ?? "").toString("base64")}?=`,
       "MIME-Version: 1.0"
     ];

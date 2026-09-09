@@ -573,6 +573,51 @@ UPDATE v3.party_bank_accounts SET account_number = NULL
 UPDATE v3.party_bank_accounts SET account_holder_kana = NULL
  WHERE account_holder_kana IS NOT NULL AND btrim(account_holder_kana) = '';
 
+-- ---------------------------------------------------------------------
+-- A-015: 案件のやり取りを証憑として残す
+--
+-- 案件では担当者との Slack のやり取り、メールの送受信、ファイルの受け渡しを
+-- 記録したい。これまで送信は audit_events に、受信メールは matter_links の
+-- snapshot に、Slack の受信はどこにも残っていなかった。
+--
+-- 1本の表にまとめる。本文と生の payload（evidence）をそのまま持ち、
+-- 追記だけ（UPDATE / DELETE は与えない）。外部側の ID（Slack の ts、
+-- Gmail の message id、Drive の file id）で重複を弾く。
+-- ---------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS v3.matter_communications (
+  id           bigserial PRIMARY KEY,
+  matter_id    bigint NOT NULL REFERENCES v3.matters(id) ON DELETE CASCADE,
+  channel      text NOT NULL CHECK (channel IN ('slack', 'email', 'drive', 'note')),
+  -- in=受け取った / out=送った / note=記録だけ
+  direction    text NOT NULL CHECK (direction IN ('in', 'out', 'note')),
+  occurred_at  timestamptz NOT NULL DEFAULT now(),
+  -- 送った人（out）／差出人（in）／書いた人（note）
+  actor        text NOT NULL,
+  -- 相手。Slack のチャンネル・ユーザー、メールの宛先や差出人
+  counterpart  text,
+  subject      text,
+  body         text,
+  -- 外部側の ID。Slack の ts、Gmail の message id、Drive の file id
+  external_ref text,
+  external_url text,
+  document_id  bigint REFERENCES v3.documents(id),
+  -- 証憑。webhook の生の payload、送信のレシート、添付の一覧
+  evidence     jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
+COMMENT ON TABLE v3.matter_communications IS
+  '案件のやり取り（Slack・メール・Drive・メモ）。追記専用。evidence に生の記録を持つ。';
+CREATE INDEX IF NOT EXISTS matter_communications_matter_idx
+  ON v3.matter_communications (matter_id, occurred_at DESC);
+-- 同じ Slack メッセージ・同じメールを二度記録しない。
+CREATE UNIQUE INDEX IF NOT EXISTS matter_communications_ref_uq
+  ON v3.matter_communications (channel, external_ref) WHERE external_ref IS NOT NULL;
+
+-- 追記だけ。003_grants.sql も同じ内容にしてある。
+GRANT SELECT, INSERT ON v3.matter_communications TO legalbridge_v3_runtime;
+GRANT USAGE, SELECT ON SEQUENCE v3.matter_communications_id_seq TO legalbridge_v3_runtime;
+
 COMMIT;
 
 -- 確認
@@ -659,3 +704,8 @@ SELECT
 SELECT privilege_type FROM information_schema.role_table_grants
  WHERE grantee = 'legalbridge_v3_runtime' AND table_name = 'party_bank_accounts'
  ORDER BY privilege_type;
+
+\echo '--- やり取りの記録（A-015。表があり、権限は SELECT/INSERT だけ） ---'
+SELECT string_agg(privilege_type, ', ' ORDER BY privilege_type) AS 権限
+  FROM information_schema.role_table_grants
+ WHERE grantee = 'legalbridge_v3_runtime' AND table_name = 'matter_communications';

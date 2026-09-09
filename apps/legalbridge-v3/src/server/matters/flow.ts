@@ -60,8 +60,8 @@ export interface FlowStep {
 
 const doc = (facts: FlowFacts) =>
   facts.issuedDocuments.length
-    ? `${facts.issuedDocuments[0].documentNo ?? "番号なし"} ほか ${facts.issuedDocuments.length} 件 発行済み`
-    : "発行済みの文書なし";
+    ? `${facts.issuedDocuments[0].documentNo ?? "番号なし"} ほか ${facts.issuedDocuments.length} 件 決定済み`
+    : "決定済みの文書なし";
 
 /**
  * 文書の段階。進め方で「何をするか」が変わるので、名前も判定もそこで分ける。
@@ -80,24 +80,24 @@ function documentStep(f: FlowFacts, no: number, fallbackName: string): FlowStep 
   }
   if (f.documentStyle === "own_template") {
     return {
-      no, name: "ひな形から発行",
+      no, name: "ひな形から文書を決定",
       done: f.issuedDocuments.length > 0,
       detail: f.issuedDocuments.length
         ? doc(f)
         : f.draftDocuments > 0
-          ? `下書き ${f.draftDocuments} 件。発行するとここが済になる`
-          : "ひな形を選んで発行する"
+          ? `下書き ${f.draftDocuments} 件。決定するとここが済になる`
+          : "ひな形を選んで決定する"
     };
   }
   if (f.documentStyle === "own_draft") {
     return {
-      no, name: "自社ドラフトの発行",
+      no, name: "自社ドラフトを決定",
       done: f.issuedDocuments.length > 0,
       detail: f.issuedDocuments.length
         ? doc(f)
         : f.draftDocuments > 0
-          ? `下書き ${f.draftDocuments} 件。発行するとここが済になる`
-          : "自社で書いた文書を登録して発行する"
+          ? `下書き ${f.draftDocuments} 件。決定するとここが済になる`
+          : "自社で書いた文書を登録して決定する"
     };
   }
   return {

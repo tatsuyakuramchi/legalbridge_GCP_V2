@@ -118,6 +118,12 @@ SELECT * FROM (
            WHERE btrim(bank_name) = '' OR btrim(branch_name) = ''
               OR btrim(account_type) = '' OR btrim(account_number) = ''
               OR btrim(account_holder_kana) = '')
+  UNION ALL
+  SELECT 15, 'やり取りの記録（A-015。SELECT, INSERT だけ）',
+         COALESCE((SELECT string_agg(privilege_type, ', ' ORDER BY privilege_type)
+                     FROM information_schema.role_table_grants
+                    WHERE grantee = 'legalbridge_v3_runtime'
+                      AND table_name = 'matter_communications'), '表が無い')
 ) AS 確認 ORDER BY n;
 `;
 

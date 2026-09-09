@@ -27,6 +27,7 @@ import { GoogleDriveStorage, MemoryDriveStorage, type DriveStorage } from "./doc
 import { DocumentImportService } from "./documents/import-service.js";
 import { GoogleMatterDriveFolderService, LocalMatterDriveFolderService } from "./documents/drive-folder.js";
 import { MatterFolderStorageService } from "./matters/drive-folder-service.js";
+import { MatterCommunicationService } from "./matters/communication-service.js";
 import { config } from "./config.js";
 import { verifySlackSignature } from "./integrations/signature.js";
 import { RoyaltyStatementService } from "./royalty/statement-service.js";
@@ -108,6 +109,7 @@ export function createRoutes(database: Transactable) {
   // 外部連携は factory で組む。/internal 側と同じものを使う。
   const adapters = buildAdapters();
   const dispatch = buildDispatch(database, adapters);
+  const communications = new MatterCommunicationService(database, dispatch);
   const mailSource = buildMailSource();
   const dailyJob = new DailyJob(database, dispatch);
   const mailJob = new MailIntakeJob(database, mailSource);
@@ -1652,20 +1654,77 @@ export function createRoutes(database: Transactable) {
       }));
     }));
 
-  // 案件の相談スレッドへ投稿する。
-  router.post("/matters/:id/notify",
+  // ---- 案件のやり取り（Slack・メール・Drive・メモ）----
+  // 送信は dispatch（ゲート・冪等・監査）を通し、送れたものだけを時系列に残す。
+  router.get("/matters/:id/communications", asyncRoute(async (req, res) => {
+    res.json({ communications: await communications.list(Number(req.params.id)) });
+  }));
+
+  // 送る相手の候補。担当者（自社）と取引先の連絡先、Slack の宛先。
+  router.get("/matters/:id/recipients", asyncRoute(async (req, res) => {
+    res.json(await communications.recipients(Number(req.params.id)));
+  }));
+
+  router.post("/matters/:id/communications/note",
     requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
-      const id = Number(req.params.id);
+      const input = z.object({ body: z.string().trim().min(1).max(8000) }).parse(req.body ?? {});
+      res.status(201).json(await communications.note(Number(req.params.id), input, actor(res)));
+    }));
+
+  router.post("/matters/:id/communications/slack",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
       const input = z.object({
-        channelId: z.string().trim().min(1).max(60),
-        body: z.string().trim().min(1).max(4000),
-        threadRef: z.string().trim().max(60).nullable().optional()
+        channelId: z.string().trim().max(60).nullable().optional(),
+        threadRef: z.string().trim().max(60).nullable().optional(),
+        body: z.string().trim().min(1).max(4000)
       }).parse(req.body ?? {});
-      res.json(await dispatch.dispatch({
-        channel: "slack", targetType: "matter", targetId: id, actor: actor(res),
-        request: { recipient: input.channelId, body: input.body, threadRef: input.threadRef ?? null }
-      }));
+      res.json(await communications.sendSlack(Number(req.params.id), input, actor(res)));
+    }));
+
+  // メール。to 担当者だけ／to 取引先 cc 担当者 のどちらかは宛先で決める。
+  // 文書を添えるときは決定済みの PDF を付ける。
+  router.post("/matters/:id/communications/email",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        to: z.array(z.string().trim().email()).min(1).max(20),
+        cc: z.array(z.string().trim().email()).max(20).default([]),
+        subject: z.string().trim().min(1).max(300),
+        body: z.string().trim().min(1).max(20000),
+        documentId: z.coerce.number().int().positive().nullable().optional(),
+        attachPdf: z.boolean().default(false)
+      }).parse(req.body ?? {});
+      let attachment: { filename: string; mimeType: string; data: Buffer } | null = null;
+      if (input.documentId && input.attachPdf) {
+        const document = await documents.find(input.documentId);
+        if (!document) throw new DomainError("NOT_FOUND", `文書 ${input.documentId} が見つかりません`);
+        if (document.status !== "issued") {
+          throw new DomainError("CONFLICT", "決定済みの文書だけを添えられます（下書きは送れません）");
+        }
+        const rendered = await issues.renderIssued(input.documentId);
+        attachment = {
+          filename: `${document.documentNo ?? `document-${input.documentId}`}.pdf`,
+          mimeType: "application/pdf", data: await pdf.render(rendered.html)
+        };
+      }
+      res.json(await communications.sendEmail(Number(req.params.id), {
+        to: input.to, cc: input.cc, subject: input.subject, body: input.body,
+        documentId: input.documentId ?? null, attachment
+      }, actor(res)));
+    }));
+
+  router.post("/matters/:id/communications/drive",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        url: z.string().trim().url().max(500),
+        title: z.string().trim().max(200).nullable().optional(),
+        direction: z.enum(["in", "out"]),
+        note: z.string().trim().max(2000).nullable().optional()
+      }).parse(req.body ?? {});
+      res.status(201).json(await communications.linkDrive(Number(req.params.id), input, actor(res)));
     }));
 
   return router;
@@ -1792,6 +1851,13 @@ export function createWebhookRouter(database: Transactable) {
         rawBody: raw
       });
       if (!ok) return res.status(401).json({ error: "signature verification failed" });
+      // Events API の登録時だけ、challenge をそのまま返す（署名は上で確かめた）。
+      try {
+        const probe = JSON.parse(raw.toString("utf8")) as { type?: string; challenge?: string };
+        if (probe?.type === "url_verification" && probe.challenge) {
+          return res.json({ challenge: probe.challenge });
+        }
+      } catch { /* JSON でなければ普通の受信として続ける */ }
     } else {
       // 他は共有シークレット。未設定なら受け口ごと閉じる。
       if (!config.webhookToken || req.header("x-lb-webhook-token") !== config.webhookToken) {

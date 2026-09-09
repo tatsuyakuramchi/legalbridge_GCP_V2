@@ -1,5 +1,6 @@
 import type { Queryable } from "../core/db.js";
 import { recordAudit } from "../core/audit.js";
+import { recordCommunication, slackRef } from "../matters/communication-service.js";
 
 /**
  * 受信した出来事を業務に反映する。
@@ -184,6 +185,71 @@ export async function handleBacklog(
   };
 }
 
+/**
+ * Slack の Events API。担当者からの返信を案件のやり取りとして残す。
+ *
+ * 案件との対応は2通り。
+ *   1. 案件のスレッド（matter_links の slack_thread）への返信
+ *   2. 依頼者との DM（matters.requester_slack_id）
+ * どちらにも当たらなければ残さない（無関係なチャンネルの雑談まで拾わない）。
+ *
+ * 証憑なので、本文だけでなく Slack が送ってきた payload をそのまま evidence に持つ。
+ */
+export async function handleSlack(
+  client: Queryable, input: { externalId: string; payload: Record<string, unknown>; }
+): Promise<HandledResult> {
+  const p = input.payload as any;
+  if (p?.type !== "event_callback" || !p.event) {
+    return { applied: false, detail: { reason: "出来事の通知ではない", type: p?.type ?? null } };
+  }
+  const ev = p.event;
+  if (ev.type !== "message") {
+    return { applied: false, detail: { reason: "メッセージではない", eventType: ev.type } };
+  }
+  // 自分（bot）の投稿と、編集・参加などの副次的な出来事は残さない。
+  if (ev.bot_id || (ev.subtype && ev.subtype !== "file_share")) {
+    return { applied: false, detail: { reason: "bot の投稿か副次的な出来事", subtype: ev.subtype ?? null } };
+  }
+  const channel = String(ev.channel ?? "");
+  const ts = String(ev.ts ?? "");
+  const thread = String(ev.thread_ts ?? ev.ts ?? "");
+  const user = String(ev.user ?? "");
+  if (!channel || !ts) return { applied: false, detail: { reason: "チャンネルか ts が無い" } };
+
+  let matterId: number | null = null;
+  let how = "";
+  const byThread = await client.query(
+    `SELECT matter_id FROM matter_links
+      WHERE target_type = 'slack_thread'
+        AND (target_ref = $1 OR (snapshot->>'channelId' = $2 AND snapshot->>'threadTs' = $3))
+      LIMIT 1`, [slackRef(channel, thread), channel, thread]);
+  if (byThread.rows[0]) { matterId = Number((byThread.rows[0] as any).matter_id); how = "thread"; }
+  if (!matterId && ev.channel_type === "im" && user) {
+    const byDm = await client.query(
+      `SELECT id FROM matters WHERE requester_slack_id = $1
+        ORDER BY (status IN ('open','waiting','blocked')) DESC, created_at DESC LIMIT 1`, [user]);
+    if (byDm.rows[0]) { matterId = Number((byDm.rows[0] as any).id); how = "dm"; }
+  }
+  if (!matterId) {
+    return { applied: false, detail: { reason: "この投稿に対応する案件が無い", channel, thread } };
+  }
+
+  const files = Array.isArray(ev.files)
+    ? ev.files.map((f: any) => ({ id: f.id, name: f.name, url: f.url_private ?? null })) : [];
+  const occurredAt = Number.isFinite(Number(ts)) ? new Date(Number(ts) * 1000).toISOString() : null;
+  const id = await recordCommunication(client, {
+    matterId, channel: "slack", direction: "in", occurredAt,
+    actor: user || "slack", counterpart: channel,
+    body: String(ev.text ?? ""), externalRef: slackRef(channel, ts),
+    evidence: { matchedBy: how, event: ev, eventId: input.externalId, files }
+  });
+  return {
+    applied: id !== null,
+    detail: { matterId, matchedBy: how, channel, ts, communicationId: id,
+              ...(id === null ? { reason: "同じ投稿を記録済み" } : {}) }
+  };
+}
+
 /** 受信を業務へ反映する入口。source ごとの処理をここで束ねる。 */
 export async function applyInbound(
   client: Queryable,
@@ -191,6 +257,7 @@ export async function applyInbound(
 ): Promise<HandledResult> {
   const handler = input.source === "cloudsign" ? handleCloudSign
     : input.source === "backlog" ? handleBacklog
+    : input.source === "slack" ? handleSlack
     : null;
   if (!handler) return { applied: false, detail: { reason: "反映の対象外", source: input.source } };
 

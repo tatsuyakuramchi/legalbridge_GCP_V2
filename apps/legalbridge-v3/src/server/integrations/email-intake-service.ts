@@ -3,6 +3,21 @@ import { translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { allocateNumber } from "../core/numbering.js";
 import { describeMail, readMail, type InboundMail, type MailReading } from "./email-intake.js";
+import { recordCommunication } from "../matters/communication-service.js";
+
+/** 受け取ったメールを案件のやり取りとして残す。本文と添付の一覧が証憑。 */
+async function keepMail(client: Queryable, matterId: number, mail: InboundMail, reading: MailReading) {
+  await recordCommunication(client, {
+    matterId, channel: "email", direction: "in",
+    occurredAt: mail.receivedAt,
+    actor: reading.sender.email || mail.from || "mail",
+    counterpart: mail.to.join(", "),
+    subject: mail.subject, body: mail.body,
+    externalRef: mail.messageId,
+    evidence: { threadId: mail.threadId, rfcMessageId: mail.rfcMessageId,
+                from: mail.from, to: mail.to, attachments: mail.attachments }
+  });
+}
 
 /**
  * 受信メールを案件にする。
@@ -102,6 +117,7 @@ export class EmailIntakeService {
           attachments: mail.attachments.map((a) => a.filename)
         })]);
     }
+    await keepMail(client, matterId, mail, reading);
     await recordAudit(client, {
       actor: reading.sender.email || "mail",
       action: "mail.link", targetType: "matter", targetId: matterId,
@@ -163,6 +179,8 @@ export class EmailIntakeService {
           attachments: mail.attachments.map((a) => a.filename)
         })]);
     }
+
+    await keepMail(client, matterId, mail, reading);
 
     // 差出人がどこの誰か決まらなかった。人が当てるまで残す。
     if (!internal && !counterpartyId) {

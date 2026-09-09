@@ -7,6 +7,7 @@ import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
 import { DOCUMENT_STYLE_HINT, DOCUMENT_STYLE_LABEL, MATTER_KIND_HINT,
          MATTER_KIND_LABEL as KIND_LABEL, StatusTag } from "./labels.js";
 import { MatterFlow } from "./MatterFlow.js";
+import { MatterTimeline } from "./MatterTimeline.js";
 import { MatterConditions, MatterDocuments } from "./MatterLinks.js";
 import { Relations, type EntityKind } from "./Relations.js";
 
@@ -290,7 +291,7 @@ export function MattersWorkspace(
                       )}
                       <div className="faint">{detail.documentStyle
                         ? DOCUMENT_STYLE_HINT[detail.documentStyle]
-                        : "決めると、次にやることが「相手方の文書を確認」なのか「自社ドラフトの発行」なのかが出る"}</div>
+                        : "決めると、次にやることが「相手方の文書を確認」なのか「自社ドラフトを決定」なのかが出る"}</div>
                     </dd>
                     <dt>相手先</dt><dd>{detail.counterparty?.name ?? "—"}</dd>
                     <dt>担当</dt>
@@ -331,7 +332,7 @@ export function MattersWorkspace(
                     {([["conditions", `条件明細 ${detail.conditions.length}`],
                        ["documents", `文書 ${detail.documents.length}`],
                        ["payments", `支払 ${detail.payments.length}`],
-                       ["communications", `連絡履歴 ${detail.communications.length}`]] as const).map(([key, label]) => (
+                       ["communications", `操作の記録 ${detail.communications.length}`]] as const).map(([key, label]) => (
                       <button key={key} aria-selected={tab === key} onClick={() => setTab(key as Tab)}>{label}</button>
                     ))}
                   </div>
@@ -379,6 +380,8 @@ export function MattersWorkspace(
                   )}
                 </div>
               </div>
+
+              <MatterTimeline matterId={detail.id} documents={detail.documents} reloadKey={linkVersion} />
 
               <div className="panel">
                 <div className="panel-hd">

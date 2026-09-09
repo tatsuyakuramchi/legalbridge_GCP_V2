@@ -95,9 +95,9 @@ test("他社文書レビュー型は、相手方の文書を取り込むまで�
 
 test("自社テンプレート型は、下書きの段階では済にしない", () => {
   const draft = buildFlow(facts({ documentStyle: "own_template", draftDocuments: 1 }));
-  assert.equal(draft[1].name, "ひな形から発行");
+  assert.equal(draft[1].name, "ひな形から文書を決定");
   assert.equal(draft[1].done, false);
-  assert.match(draft[1].detail, /発行するとここが済になる/);
+  assert.match(draft[1].detail, /決定するとここが済になる/);
 
   const issued = buildFlow(facts({
     documentStyle: "own_template",
@@ -107,7 +107,7 @@ test("自社テンプレート型は、下書きの段階では済にしない",
 
 test("自社ドラフト型は名前が変わり、やることが分かる", () => {
   const steps = buildFlow(facts({ documentStyle: "own_draft" }));
-  assert.equal(steps[1].name, "自社ドラフトの発行");
+  assert.equal(steps[1].name, "自社ドラフトを決定");
   assert.match(steps[1].detail, /自社で書いた文書を登録/);
 });
 
@@ -131,7 +131,7 @@ test("ライセンスでも進め方が段階の名前を決める", () => {
 
 test("文書作成モデルでも進め方が効く", () => {
   const steps = buildFlow(facts({ matterKind: "single", documentStyle: "own_template" }));
-  assert.equal(steps[1].name, "ひな形から発行");
+  assert.equal(steps[1].name, "ひな形から文書を決定");
 });
 
 test("済の理由を必ず添える（印だけでは確かめようがない）", () => {

@@ -80,7 +80,7 @@ test("文書IDは payload の別名でも読む", async () => {
 
 test("対象外の source は反映せず、監査も増やさない", async () => {
   const db = new FakeDatabase();
-  const r = await applyInbound(db, { source: "slack", externalId: "e", payload: {} });
+  const r = await applyInbound(db, { source: "unknown", externalId: "e", payload: {} });
   assert.equal(r.applied, false);
   assert.match(String(r.detail.reason), /反映の対象外/);
   assert.equal(db.find("INSERT INTO audit_events"), undefined,
@@ -169,4 +169,60 @@ test("紐づく案件が無ければ何もしない（Backlog 全体を取り込
   assert.equal(r.applied, false);
   assert.match(String(r.detail.reason), /紐づく案件が無い/);
   assert.equal(db.find("UPDATE matter_links"), undefined);
+});
+
+/** Slack の Events API。担当者からの返信を案件のやり取りとして残す。 */
+const slackEvent = (event: Record<string, unknown>) => ({
+  type: "event_callback", event_id: "Ev01", event
+});
+
+test("Slack：案件のスレッドへの返信を、本文と payload ごと残す", async () => {
+  const db = new FakeDatabase((t) => {
+    if (t.includes("target_type = 'slack_thread'")) return [{ matter_id: 7 }];
+    if (t.includes("INSERT INTO matter_communications")) return [{ id: 5 }];
+    return undefined;
+  });
+  const r = await applyInbound(db, { source: "slack", externalId: "Ev01", payload: slackEvent({
+    type: "message", channel: "C99", ts: "1757400000.000200", thread_ts: "1757300000.000100",
+    user: "U01", text: "確認しました。問題ありません"
+  }) });
+  assert.equal(r.applied, true);
+  assert.equal(r.detail.matchedBy, "thread");
+  const kept = db.find("INSERT INTO matter_communications")!;
+  assert.equal(kept.params[0], 7);
+  assert.equal(kept.params[2], "in");
+  assert.equal(kept.params[4], "U01");
+  assert.equal(kept.params[7], "確認しました。問題ありません");
+  assert.equal(kept.params[8], "C99:1757400000.000200");
+  const evidence = JSON.parse(String(kept.params[11]));
+  assert.equal(evidence.event.text, "確認しました。問題ありません", "生の出来事を証憑として持つ");
+});
+
+test("Slack：スレッドに当たらなくても、依頼者との DM なら案件に寄せる", async () => {
+  const db = new FakeDatabase((t) => {
+    if (t.includes("target_type = 'slack_thread'")) return [];
+    if (t.includes("requester_slack_id = $1")) return [{ id: 9 }];
+    if (t.includes("INSERT INTO matter_communications")) return [{ id: 6 }];
+    return undefined;
+  });
+  const r = await applyInbound(db, { source: "slack", externalId: "Ev02", payload: slackEvent({
+    type: "message", channel: "D77", channel_type: "im", ts: "1.0", user: "U01", text: "お願いします"
+  }) });
+  assert.equal(r.applied, true);
+  assert.equal(r.detail.matchedBy, "dm");
+});
+
+test("Slack：bot の投稿・無関係なチャンネル・出来事以外は残さない", async () => {
+  const db = new FakeDatabase(() => []);
+  const bot = await applyInbound(db, { source: "slack", externalId: "e", payload: slackEvent({
+    type: "message", channel: "C1", ts: "1.0", bot_id: "B1", text: "自分の投稿" }) });
+  assert.equal(bot.applied, false);
+  const unrelated = await applyInbound(db, { source: "slack", externalId: "e2", payload: slackEvent({
+    type: "message", channel: "C1", ts: "2.0", user: "U9", text: "雑談" }) });
+  assert.equal(unrelated.applied, false);
+  assert.match(String(unrelated.detail.reason), /対応する案件が無い/);
+  const verify = await applyInbound(db, { source: "slack", externalId: "e3",
+    payload: { type: "url_verification", challenge: "x" } });
+  assert.equal(verify.applied, false);
+  assert.equal(db.find("INSERT INTO matter_communications"), undefined);
 });
