@@ -468,6 +468,53 @@ COMMENT ON COLUMN v3.documents.supersede_reason IS
   'なぜ前の版を差し替えたか。supersedes_id と対で持つ。';
 
 
+-- ---------------------------------------------------------------------
+-- A-012: 欠けた振込先を不整合として上げる
+--
+-- A-010 で「中身が1つも無い口座」は消したが、一部だけ入っている口座は
+-- 残した（海外の銀行名だけ、のような行は情報として有効なので）。
+-- ところが検収書・支払通知書は BANK_NAME / BRANCH_NAME / ACCOUNT_NUMBER /
+-- ACCOUNT_HOLDER_KANA をそのまま差し込むので、欠けたぶんは空欄で出る。
+-- 実際「口座番号と名義だけ」の振込先が載った書類が発行された。
+--
+-- 気づく先が無いのが問題なので、運用＞データ品質に出す。V1 の vendors から
+-- そのまま移ったもので、V1 でも同じ欠け方をしていた（移行での欠落ではない）。
+--
+-- 口座種別は「普通」を書かない運用もあるので必須にしない。
+-- 銀行名・支店名・口座番号・名義の4つが揃って初めて振り込める。
+-- ---------------------------------------------------------------------
+
+INSERT INTO v3.data_quality_issues (rule_code, target_type, target_id, severity, detail)
+SELECT 'PARTY_BANK_INCOMPLETE', 'party', b.party_id,
+       -- 口座番号か名義が無いものは振り込めない。銀行名だけの欠けより重い。
+       CASE WHEN b.account_number IS NULL OR b.account_holder_kana IS NULL
+            THEN 'high' ELSE 'medium' END,
+       jsonb_build_object(
+         'partyName', p.name,
+         'missing', (SELECT jsonb_agg(x) FROM unnest(ARRAY[
+            CASE WHEN b.bank_name           IS NULL THEN '銀行名'   END,
+            CASE WHEN b.branch_name         IS NULL THEN '支店名'   END,
+            CASE WHEN b.account_number      IS NULL THEN '口座番号' END,
+            CASE WHEN b.account_holder_kana IS NULL THEN '名義'     END
+         ]) AS x WHERE x IS NOT NULL))
+  FROM v3.party_bank_accounts b
+  JOIN v3.parties p ON p.id = b.party_id
+ WHERE b.bank_name IS NULL OR b.branch_name IS NULL
+    OR b.account_number IS NULL OR b.account_holder_kana IS NULL
+ON CONFLICT (rule_code, target_type, target_id) DO UPDATE SET
+  severity = EXCLUDED.severity, detail = EXCLUDED.detail, detected_at = now();
+
+-- 埋まったものは閉じる。人が直したあとも開いたままだと、一覧が信用されなくなる。
+UPDATE v3.data_quality_issues q
+   SET status = 'resolved', resolved_at = now()
+ WHERE q.rule_code = 'PARTY_BANK_INCOMPLETE' AND q.status = 'open'
+   AND NOT EXISTS (
+     SELECT 1 FROM v3.party_bank_accounts b
+      WHERE b.party_id = q.target_id
+        AND (b.bank_name IS NULL OR b.branch_name IS NULL
+             OR b.account_number IS NULL OR b.account_holder_kana IS NULL));
+
+
 COMMIT;
 
 -- 確認
@@ -533,6 +580,12 @@ SELECT count(*) FILTER (WHERE bank_name IS NULL)    AS 銀行名なし,
        count(*) FILTER (WHERE account_type IS NULL) AS 種別なし,
        count(*) AS 口座件数
   FROM v3.party_bank_accounts;
+
+\echo '--- 欠けた振込先（A-012 が上げた不整合）---'
+SELECT severity AS 重大度, count(*) AS 件数
+  FROM v3.data_quality_issues
+ WHERE rule_code = 'PARTY_BANK_INCOMPLETE' AND status = 'open'
+ GROUP BY severity ORDER BY severity;
 
 \echo '--- 口座表の権限（SELECT だけであること） ---'
 SELECT privilege_type FROM information_schema.role_table_grants

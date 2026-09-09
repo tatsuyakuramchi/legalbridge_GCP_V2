@@ -54,6 +54,7 @@ import { buildAdapters, buildDispatch, buildMailSource } from "./integrations/fa
 import { MailIntakeJob } from "./jobs/mail-intake.js";
 import { BacklogService } from "./integrations/backlog-service.js";
 import type { IntegrationChannel } from "./integrations/gate.js";
+import { parseCompanyProfile } from "./ops/company-profile-schema.js";
 
 const asyncRoute =
   (handler: (req: Request, res: Response) => Promise<unknown>) =>
@@ -1174,7 +1175,9 @@ export function createRoutes(database: Transactable) {
         derived: result.binding.derived,
         values: result.binding.values,
         // 入力欄の横に出す候補。ひな形が供給元を宣言していなくても人が選べる。
-        candidates: result.candidates
+        candidates: result.candidates,
+        // 本文が差しているのに空で出る項目（振込先の欠けなど）。
+        warnings: result.warnings
       });
     }));
 
@@ -1489,7 +1492,12 @@ export function createRoutes(database: Transactable) {
     requireRole("admin"), requireWritable,
     asyncRoute(async (req, res) => {
       const input = z.object({ value: z.unknown() }).parse(req.body ?? {});
-      res.json(await ops.saveSetting(String(req.params.key), input.value, actor(res)));
+      const key = String(req.params.key);
+      // 自社情報だけは形を確かめる。書類に差し込む先が決まっているので、
+      // 打ち間違えたキーが黙って入ると、どこにも出ないまま「入れたつもり」になる。
+      const value = key === "company_profile"
+        ? parseCompanyProfile(input.value) : input.value;
+      res.json(await ops.saveSetting(key, value, actor(res)));
     }));
 
   // ---- 外部送信 ----

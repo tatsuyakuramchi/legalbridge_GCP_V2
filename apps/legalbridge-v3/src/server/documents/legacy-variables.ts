@@ -149,6 +149,13 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown }> = [
     get: (c) => c.company?.invoiceNo },
   { names: ["COMPANY_TEL", "自社電話"], get: (c) => c.company?.tel },
   { names: ["COMPANY_POSTAL_CODE", "自社郵便番号"], get: (c) => c.company?.postalCode },
+  // 自社プロファイルは10項目あるのに、別名を用意していたのは6項目だけだった。
+  // 残りは設定に入れても書類に出ない（入れた側からは入ったように見える）。
+  { names: ["COMPANY_NAME_KANA", "自社名カナ", "自社カナ"], get: (c) => c.company?.nameKana },
+  { names: ["COMPANY_FAX", "自社FAX"], get: (c) => c.company?.fax },
+  // 相手先の口座（BANK_NAME 系）とは別物。こちらは自社の入金先。
+  { names: ["COMPANY_BANK_INFO", "自社振込先", "入金先"], get: (c) => c.company?.bankInfo },
+  { names: ["COMPANY_SEAL_NOTE", "捺印備考"], get: (c) => c.company?.sealNote },
 
   // ---- 件名・案件 ----
   { names: ["PROJECT_TITLE", "CONTRACT_TITLE", "基本契約名", "件名", "title",
@@ -317,13 +324,18 @@ const DB_FIELD_SOURCES: Record<string, (c: Ctx) => Record<string, unknown>> = {
     email: c.owner?.email,
     phone: c.owner?.phone
   }),
+  // キーは V1 の companyProfile() が返していた snake_case に合わせる。
   company: (c) => ({
     name: c.company?.name,
+    name_kana: c.company?.nameKana,
     address: c.company?.address,
     rep: c.company?.rep ?? c.company?.representative,
     invoice_no: c.company?.invoiceNo,
     tel: c.company?.tel,
-    postal_code: c.company?.postalCode
+    fax: c.company?.fax,
+    postal_code: c.company?.postalCode,
+    bank_info: c.company?.bankInfo,
+    seal_note: c.company?.sealNote
   }),
   matter: (c) => ({
     matter_code: c.matter?.matterNo ?? c.matter?.code,

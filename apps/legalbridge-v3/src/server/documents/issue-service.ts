@@ -2,6 +2,7 @@ import { inTransaction, int, str, type Queryable, type Transactable } from "../c
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { assertComplete, bindVariables, type BindingResult } from "./binding.js";
+import { documentWarnings, type Warning } from "./preflight.js";
 import { DocumentContextRepository } from "./context-repository.js";
 import { DocumentRepository } from "./repository.js";
 import { renderDocumentHtml } from "./render.js";
@@ -32,6 +33,11 @@ export interface PreviewResult {
   templateVersionId: number;
   /** 入力欄に出す候補。ひな形が供給元を宣言していなくても人が選べる。 */
   candidates: Candidate[];
+  /**
+   * 本文が差しているのに空で出る項目。止めはしない（欠けたまま出すのが
+   * 正しいこともある）が、発行の前に人が見て決められるようにする。
+   */
+  warnings: Warning[];
 }
 
 export interface IssuedDocument {
@@ -72,13 +78,16 @@ export class DocumentIssueService {
         { templateKey: template.templateKey, computed });
       // 候補は文脈そのものから作る。ひな形の宣言には依らない。
       const partials = await this.repository.partials();
+      const values = { ...resolveAllLegacyVariables(context), ...computed, ...binding.values };
       return {
-        html: renderDocumentHtml(template.htmlSource,
-          { ...resolveAllLegacyVariables(context), ...computed, ...binding.values }, partials),
+        html: renderDocumentHtml(template.htmlSource, values, partials),
         binding,
         templateLabel: template.label,
         templateVersionId: template.templateVersionId,
-        candidates: buildCandidates(context)
+        candidates: buildCandidates(context),
+        // 宣言済みの項目は binding.missing が別に報告する。重ねない。
+        warnings: documentWarnings(template.htmlSource, values,
+          template.variables.map((v) => v.name))
       };
     } catch (error) { throw translate(error); }
   }

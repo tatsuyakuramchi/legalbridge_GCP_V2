@@ -3,6 +3,7 @@ import { StatusTag } from "./labels.js";
 import { api, ApiError, money } from "./api.js";
 import { CsvImport } from "./CsvImport.js";
 import { AccountingExport } from "./AccountingExport.js";
+import { CompanyProfileForm } from "./CompanyProfileForm.js";
 
 interface Issue {
   id: number; ruleCode: string; targetType: string; targetId: number;
@@ -29,6 +30,7 @@ const RULE_LABEL: Record<string, string> = {
   PAYMENT_UNALLOCATED: "条件に割り当てられていない支払",
   PAYMENT_DUE_OVER_LIMIT: "支払期日が受領日+60日を超えている",
   CONDITION_NO_WORK: "作品に紐づかない条件",
+  PARTY_BANK_INCOMPLETE: "振込先が欠けている取引先",
   MIGRATION_CONDITION_NO_PARTY: "相手先が未特定の条件（受け皿に紐付け済み）",
   MIGRATION_AGREEMENT_NO_PARTY: "主取引先が未特定の契約（受け皿に紐付け済み）",
   MIGRATION_PAYMENT_NO_PARTY: "相手先が未特定の支払（受け皿に紐付け済み）",
@@ -112,7 +114,14 @@ export function OpsWorkspace({ initialTab }: { initialTab?: OpsTab } = {}) {
                     <td className="code">{i.ruleCode}</td>
                     <td className="code">{i.targetType} {i.targetId}</td>
                     <td>{RULE_LABEL[i.ruleCode] ?? "—"}
-                        {i.detail.overBy ? <div className="faint">超過 {String(i.detail.overBy)}日</div> : null}</td>
+                        {i.detail.overBy ? <div className="faint">超過 {String(i.detail.overBy)}日</div> : null}
+                        {/* 何が足りないのかまで出す。ルール名だけでは直しに行けない。 */}
+                        {Array.isArray(i.detail.missing) && (
+                          <div className="faint">
+                            {i.detail.partyName ? `${String(i.detail.partyName)}：` : ""}
+                            {(i.detail.missing as unknown[]).map(String).join("・")} が空
+                          </div>
+                        )}</td>
                     <td><span className={`tag ${i.severity === "high" ? "out" : ""}`}>{i.severity}</span></td>
                     <td className="row">
                       <button className="btn btn-sm" onClick={() => resolve(i.id, "resolved")}>解決</button>
@@ -246,23 +255,33 @@ export function OpsWorkspace({ initialTab }: { initialTab?: OpsTab } = {}) {
       )}
 
       {tab === "settings" && settings && (
+        <div className="stack">
+        <CompanyProfileForm
+          value={settings.find((s) => s.key === "company_profile")?.value}
+          onSaved={() => void reload()} />
         <div className="panel">
-          <div className="panel-hd"><h2>設定</h2><span className="faint">管理者のみ</span></div>
+          <div className="panel-hd">
+            <h2>その他の設定</h2><span className="faint">管理者のみ</span>
+          </div>
           <div className="tablewrap">
             <table>
               <thead><tr><th>キー</th><th>値</th><th>更新</th></tr></thead>
               <tbody>
-                {settings.map((s) => (
+                {/* 自社情報は上のフォームで編集する。生のJSONを二重に出さない。 */}
+                {settings.filter((s) => s.key !== "company_profile").map((s) => (
                   <tr key={s.key}>
                     <td className="code">{s.key}</td>
                     <td className="code faint">{JSON.stringify(s.value)}</td>
                     <td className="code">{s.updatedAt?.slice(0, 10) ?? "—"}</td>
                   </tr>
                 ))}
-                {!settings.length && <tr><td colSpan={3} className="faint">設定がありません</td></tr>}
+                {settings.filter((s) => s.key !== "company_profile").length === 0 && (
+                  <tr><td colSpan={3} className="faint">他に設定はありません</td></tr>
+                )}
               </tbody>
             </table>
           </div>
+        </div>
         </div>
       )}
     </section>

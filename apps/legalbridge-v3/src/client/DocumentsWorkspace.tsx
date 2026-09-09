@@ -19,6 +19,8 @@ interface PreviewResponse {
   values: Record<string, unknown>;
   /** 入力欄の横に出す候補。押すとその値が入る。 */
   candidates: Candidate[];
+  /** 本文が差しているのに空で出る項目。止めはしないが、出す前に見せる。 */
+  warnings: Array<{ kind: "bank" | "company" | "other"; message: string }>;
 }
 interface Candidate { label: string; value: string; source: string; kind: "date" | "amount" | "text" }
 interface EventRow {
@@ -656,6 +658,12 @@ export function DocumentsWorkspace(
                   </div>
                 </div>
               )}
+
+              {/* 宣言されていない差し込みの空欄。振込先の欠けはここにしか出ない
+                  （必須項目の未入力は上の一覧に出る）。発行は止めない。 */}
+              {(spec?.warnings ?? []).map((w) => (
+                <div key={w.kind} className="note warn">{w.message}</div>
+              ))}
 
               <div className="row">
                 <button className="btn" onClick={runPreview} disabled={busy || !templateKey}>
