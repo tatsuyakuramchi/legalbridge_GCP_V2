@@ -14,7 +14,7 @@ import type { DispatchOutcome, DispatchService } from "../integrations/dispatch-
  * 「送った／受け取った」を案件の時系列として残す側。
  */
 
-export type Channel = "slack" | "email" | "drive" | "note";
+export type Channel = "slack" | "email" | "cloudsign" | "drive" | "note";
 export type Direction = "in" | "out" | "note";
 
 export interface Communication {

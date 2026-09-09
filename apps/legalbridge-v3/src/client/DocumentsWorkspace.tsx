@@ -99,6 +99,8 @@ export function DocumentsWorkspace(
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [integrations, setIntegrations] = useState<Integrations | null>(null);
+  const [me, setMe] = useState<{ user?: { email: string; role: string } } | null>(null);
+  useEffect(() => { api.get<{ user?: { email: string; role: string } }>("/me").then(setMe).catch(() => setMe(null)); }, []);
   const [stored, setStored] = useState<string | null>(null);
   // 呼び出した条件の実績。検収書はここの日付と金額を候補に出す。
   const [events, setEvents] = useState<EventRow[]>([]);
@@ -363,22 +365,6 @@ export function DocumentsWorkspace(
       setSelected(id);
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
     finally { setBusy(false); }
-  }
-
-  // メール送付。止まった場合は理由をそのまま出す（黙って送らないのが一番まずい）。
-  async function send(id: number) {
-    const recipient = window.prompt("送付先のメールアドレス");
-    if (!recipient) return;
-    setError(null); setStored(null);
-    try {
-      const result = await api.post<{ sent: boolean; duplicated?: boolean; gate: { reasons: string[] } }>(
-        `/documents/${id}/send`,
-        { recipient, body: "文書をお送りします。ご確認ください。", attachPdf: true });
-      setStored(result.sent ? `${recipient} へ送付しました`
-        : result.duplicated ? "同じ内容をすでに送付済みです"
-        : `送付しませんでした：${result.gate.reasons.join("／")}`);
-      await reload();
-    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
   }
 
   // Drive へ保存する。既存ファイルがあれば中身だけ差し替わり、リンクは変わらない。
@@ -826,7 +812,7 @@ export function DocumentsWorkspace(
               onDerive={(id, key) => void derive(id, key)}
               onVoid={(id, no) => void voidDocument(id, no)}
               onStore={(id) => void store(id)}
-              onSend={(id) => void send(id)}
+              isAdmin={me?.user?.role === "admin" || me?.user === undefined}
               onLinkCondition={() => setLinkConditions(true)}
               openConditions={linkConditions}
               onSelect={setSelected} />

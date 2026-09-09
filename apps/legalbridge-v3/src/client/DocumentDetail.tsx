@@ -2,6 +2,7 @@ import { useState } from "react";
 import { DOCUMENT_STATE_NOTE, StatusTag } from "./labels.js";
 import { Relations, type EntityKind } from "./Relations.js";
 import { DocumentEvents } from "./DocumentEvents.js";
+import { DocumentSend } from "./DocumentSend.js";
 
 /**
  * 文書1件の詳細。
@@ -44,7 +45,7 @@ const byNo = (versions: DocumentRow[], id: number) =>
 
 export function DocumentDetail(
   { doc, versions, templates, integrations, busy, onOpen, onChanged, onLinkCondition, openConditions,
-    onEditDraft, onIssueDraft, onReissue, onDerive, onVoid, onStore, onSend, onSelect }: {
+    onEditDraft, onIssueDraft, onReissue, onDerive, onVoid, onStore, isAdmin, onSelect }: {
     doc: DocumentRow;
     /** 「下敷きに次を作る」で選べるひな形。 */
     templates: TemplateOption[];
@@ -61,7 +62,8 @@ export function DocumentDetail(
     onDerive: (id: number, templateKey: string) => void;
     onVoid: (id: number, no: string | null) => void;
     onStore: (id: number) => void;
-    onSend: (id: number) => void;
+    /** 送る（内容確認メール → CloudSign）を開いた状態で描く。 */
+    isAdmin?: boolean;
     onSelect: (id: number) => void;
     /** 「つながり」の条件明細の欄を開く。 */
     onLinkCondition: () => void;
@@ -74,6 +76,8 @@ export function DocumentDetail(
     (c.channel === "gmail" || c.channel === "cloudsign") && c.mode !== "off");
   // 「下敷きに次を作る」のひな形を選んでいる最中。
   const [deriving, setDeriving] = useState(false);
+  // 「送る」を開いているか。決定済みなら既定で開く（次にやることがこれ）。
+  const [sending, setSending] = useState(doc.phase === "decided");
   const [deriveKey, setDeriveKey] = useState("");
   const pickable = templates.filter((t) => t.category !== "partial");
   // この版を直している最中の下書き。あるあいだは、もう1枚作らせない
@@ -138,7 +142,7 @@ export function DocumentDetail(
                   : null}
               {canSend && (
                 <button className={doc.phase === "decided" ? "btn primary" : "btn"} disabled={busy}
-                        onClick={() => onSend(doc.id)}>送る</button>
+                        aria-pressed={sending} onClick={() => setSending((v) => !v)}>送る</button>
               )}
               {!doc.imported && (pending
                 ? <button className="btn"
@@ -227,6 +231,12 @@ export function DocumentDetail(
           )}
         </div>
       </div>
+
+      {sending && doc.status === "issued" && (
+        <DocumentSend documentId={doc.id} documentNo={doc.documentNo} templateLabel={doc.templateLabel}
+                      matterId={doc.matterId} channels={integrations?.channels ?? []}
+                      isAdmin={isAdmin ?? true} onChanged={onChanged} onClose={() => setSending(false)} />
+      )}
 
       {/* 版の履歴。1版しかないときは出さない（枠だけ増えても読むものが無い）。 */}
       {versions.length > 1 && (

@@ -1,6 +1,6 @@
 import express, { Router, type Request, type Response, type NextFunction } from "express";
 import { z } from "zod";
-import type { Transactable } from "./core/db.js";
+import { inTransaction, type Transactable } from "./core/db.js";
 import { DomainError, statusFor } from "./core/errors.js";
 import { requireRole, requireWritable } from "./auth.js";
 import { ConditionRepository } from "./conditions/repository.js";
@@ -21,13 +21,14 @@ import { WorkRepository } from "./works/repository.js";
 import { checkAgainstEnvelope } from "./works/envelope.js";
 import { DocumentRepository } from "./documents/repository.js";
 import { DocumentIssueService } from "./documents/issue-service.js";
+import { DocumentSendService } from "./documents/send-service.js";
 import { ChromiumPdfRenderer, MemoryPdfRenderer, type PdfRenderer } from "./documents/pdf-renderer.js";
 import { DocumentStorageService } from "./documents/storage-service.js";
 import { GoogleDriveStorage, MemoryDriveStorage, type DriveStorage } from "./documents/drive-storage.js";
 import { DocumentImportService } from "./documents/import-service.js";
 import { GoogleMatterDriveFolderService, LocalMatterDriveFolderService } from "./documents/drive-folder.js";
 import { MatterFolderStorageService } from "./matters/drive-folder-service.js";
-import { MatterCommunicationService } from "./matters/communication-service.js";
+import { MatterCommunicationService, recordCommunication } from "./matters/communication-service.js";
 import { config } from "./config.js";
 import { verifySlackSignature } from "./integrations/signature.js";
 import { RoyaltyStatementService } from "./royalty/statement-service.js";
@@ -110,6 +111,7 @@ export function createRoutes(database: Transactable) {
   const adapters = buildAdapters();
   const dispatch = buildDispatch(database, adapters);
   const communications = new MatterCommunicationService(database, dispatch);
+  const sends = new DocumentSendService(database);
   const mailSource = buildMailSource();
   const dailyJob = new DailyJob(database, dispatch);
   const mailJob = new MailIntakeJob(database, mailSource);
@@ -1588,40 +1590,72 @@ export function createRoutes(database: Transactable) {
     }));
 
   // ---- 外部送信 ----
+  // ---- 送る：内容確認のメール → 相手の確認 → CloudSign → 締結 ----
+  router.get("/documents/:id/sends", asyncRoute(async (req, res) => {
+    res.json(await sends.timeline(Number(req.params.id)));
+  }));
+
+  /** 決定済みの文書の PDF。送付と署名依頼で使う。 */
+  const pdfOf = async (id: number) => {
+    const document = await documents.find(id);
+    if (!document) throw new DomainError("NOT_FOUND", `文書 ${id} が見つかりません`);
+    if (document.status !== "issued") {
+      throw new DomainError("CONFLICT", "決定済みの文書だけ送れます（下書きは先に決定してください）");
+    }
+    const rendered = await issues.renderIssued(id);
+    return {
+      document,
+      attachment: {
+        filename: `${document.documentNo ?? `document-${id}`}.pdf`,
+        mimeType: "application/pdf", data: await pdf.render(rendered.html)
+      }
+    };
+  };
+
+  /**
+   * 内容確認のメール。任意（飛ばして CloudSign へ行ける）。
+   * 宛先は「担当者だけ」か「取引先へ、担当者を cc に」。案件があれば
+   * 案件のやり取りにも残り、スレッドに続く。
+   */
   const sendSchema = z.object({
-    recipient: z.string().trim().min(1).max(300),
+    to: z.array(z.string().trim().email()).min(1).max(20),
+    cc: z.array(z.string().trim().email()).max(20).default([]),
     subject: z.string().trim().max(300).optional(),
     body: z.string().trim().min(1).max(20000),
-    attachPdf: z.boolean().default(false)
+    attachPdf: z.boolean().default(true)
   });
-
-  // 文書をメールで送る。PDF を添付する場合は発行済みの文書から生成する。
   router.post("/documents/:id/send",
-    requireRole("admin"), requireWritable,
+    requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       const id = Number(req.params.id);
       const input = sendSchema.parse(req.body ?? {});
-      const document = await documents.find(id);
-      if (!document) return res.status(404).json({ error: "文書が見つかりません" });
-
-      let attachment: { filename: string; mimeType: string; data: Buffer } | null = null;
-      if (input.attachPdf) {
-        const rendered = await issues.renderIssued(id);
-        attachment = {
-          filename: `${document.documentNo ?? `document-${id}`}.pdf`,
-          mimeType: "application/pdf",
-          data: await pdf.render(rendered.html)
-        };
+      const { document, attachment } = await pdfOf(id);
+      const subject = input.subject
+        ?? `${document.documentNo ?? ""} ${document.templateLabel ?? "文書"} のご確認`.trim();
+      if (document.matterId) {
+        return res.json(await communications.sendEmail(document.matterId, {
+          to: input.to, cc: input.cc, subject, body: input.body,
+          documentId: id, attachment: input.attachPdf ? attachment : null
+        }, actor(res)));
       }
-      res.json(await dispatch.dispatch({
+      // 案件の無い文書（移行文書など）。やり取りの記録先が無いので送るだけ。
+      const outcome = await dispatch.dispatch({
         channel: "gmail", targetType: "document", targetId: id, actor: actor(res),
-        request: {
-          recipient: input.recipient,
-          subject: input.subject ?? document.title ?? document.documentNo ?? "文書の送付",
-          body: input.body,
-          attachment
-        }
-      }));
+        request: { recipient: input.to.join(", "), cc: input.cc, subject, body: input.body,
+                   attachment: input.attachPdf ? attachment : null }
+      });
+      res.json({ outcome, communication: null });
+    }));
+
+  // 相手の確認をもらった。返信・Slack・電話のどれでも、人が記録する。
+  router.post("/documents/:id/confirm",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        via: z.string().trim().min(1).max(40),
+        note: z.string().trim().max(2000).nullable().optional()
+      }).parse(req.body ?? {});
+      res.json(await sends.confirm(Number(req.params.id), input, actor(res)));
     }));
 
   // 署名依頼。書類の実体が要るので PDF は必ず付ける。
@@ -1633,25 +1667,25 @@ export function createRoutes(database: Transactable) {
         recipient: z.string().trim().email(),
         subject: z.string().trim().max(300).optional()
       }).parse(req.body ?? {});
-      const document = await documents.find(id);
-      if (!document) return res.status(404).json({ error: "文書が見つかりません" });
-      if (document.status !== "issued") {
-        return res.status(409).json({ error: "発行済みの文書だけを署名依頼できます", code: "CONFLICT" });
+      const { document, attachment } = await pdfOf(id);
+      const subject = input.subject ?? document.title ?? document.documentNo ?? "署名のお願い";
+      const who = actor(res);
+      const outcome = await dispatch.dispatch({
+        channel: "cloudsign", targetType: "document", targetId: id, actor: who,
+        request: { recipient: input.recipient, subject, body: "署名をお願いします。", attachment }
+      });
+      if (outcome.sent && document.matterId) {
+        await inTransaction(database, async (client) => {
+          await recordCommunication(client, {
+            matterId: document.matterId!, channel: "cloudsign", direction: "out", actor: who,
+            counterpart: input.recipient, subject,
+            body: `${document.documentNo ?? ""} の署名依頼を CloudSign で送った`,
+            externalRef: outcome.externalId ?? null, documentId: id,
+            evidence: { cloudSignDocumentId: outcome.externalId ?? null }
+          });
+        });
       }
-      const rendered = await issues.renderIssued(id);
-      res.json(await dispatch.dispatch({
-        channel: "cloudsign", targetType: "document", targetId: id, actor: actor(res),
-        request: {
-          recipient: input.recipient,
-          subject: input.subject ?? document.title ?? document.documentNo ?? "署名のお願い",
-          body: "署名をお願いします。",
-          attachment: {
-            filename: `${document.documentNo ?? `document-${id}`}.pdf`,
-            mimeType: "application/pdf",
-            data: await pdf.render(rendered.html)
-          }
-        }
-      }));
+      res.json({ outcome });
     }));
 
   // ---- 案件のやり取り（Slack・メール・Drive・メモ）----

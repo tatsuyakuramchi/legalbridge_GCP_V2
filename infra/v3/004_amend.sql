@@ -588,7 +588,7 @@ UPDATE v3.party_bank_accounts SET account_holder_kana = NULL
 CREATE TABLE IF NOT EXISTS v3.matter_communications (
   id           bigserial PRIMARY KEY,
   matter_id    bigint NOT NULL REFERENCES v3.matters(id) ON DELETE CASCADE,
-  channel      text NOT NULL CHECK (channel IN ('slack', 'email', 'drive', 'note')),
+  channel      text NOT NULL CHECK (channel IN ('slack', 'email', 'cloudsign', 'drive', 'note')),
   -- in=受け取った / out=送った / note=記録だけ
   direction    text NOT NULL CHECK (direction IN ('in', 'out', 'note')),
   occurred_at  timestamptz NOT NULL DEFAULT now(),
@@ -607,7 +607,7 @@ CREATE TABLE IF NOT EXISTS v3.matter_communications (
   created_at   timestamptz NOT NULL DEFAULT now()
 );
 COMMENT ON TABLE v3.matter_communications IS
-  '案件のやり取り（Slack・メール・Drive・メモ）。追記専用。evidence に生の記録を持つ。';
+  '案件のやり取り（Slack・メール・CloudSign・Drive・メモ）。追記専用。evidence に生の記録を持つ。';
 CREATE INDEX IF NOT EXISTS matter_communications_matter_idx
   ON v3.matter_communications (matter_id, occurred_at DESC);
 -- 同じ Slack メッセージ・同じメールを二度記録しない。

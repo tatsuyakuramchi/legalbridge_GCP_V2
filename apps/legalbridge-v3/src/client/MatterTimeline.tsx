@@ -11,7 +11,7 @@ import { api, ApiError } from "./api.js";
 
 export interface Communication {
   id: number; matterId: number;
-  channel: "slack" | "email" | "drive" | "note";
+  channel: "slack" | "email" | "cloudsign" | "drive" | "note";
   direction: "in" | "out" | "note";
   occurredAt: string; actor: string; counterpart: string | null;
   subject: string | null; body: string | null;
@@ -35,7 +35,7 @@ interface SendResult {
   communication: Communication | null;
 }
 
-const CHANNEL_LABEL = { slack: "Slack", email: "メール", drive: "Drive", note: "メモ" } as const;
+const CHANNEL_LABEL = { slack: "Slack", email: "メール", cloudsign: "CloudSign", drive: "Drive", note: "メモ" } as const;
 type Mode = "note" | "slack" | "email" | "drive";
 
 const when = (iso: string) => iso.slice(0, 16).replace("T", " ");
