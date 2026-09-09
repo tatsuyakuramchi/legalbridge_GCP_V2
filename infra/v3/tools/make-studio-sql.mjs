@@ -94,8 +94,8 @@ SELECT * FROM (
            WHERE bank_name IS NULL AND branch_name IS NULL
              AND account_number IS NULL AND account_holder_kana IS NULL)
   UNION ALL
-  SELECT 12, '口座表の権限（SELECT だけであること）',
-         COALESCE((SELECT string_agg(DISTINCT privilege_type, ', ')
+  SELECT 12, '口座表の権限（SELECT/INSERT/UPDATE。DELETE が無いこと）',
+         COALESCE((SELECT string_agg(DISTINCT privilege_type, ', ' ORDER BY privilege_type)
                      FROM information_schema.role_table_grants
                     WHERE grantee = 'legalbridge_v3_runtime'
                       AND table_name = 'party_bank_accounts'), '権限なし')

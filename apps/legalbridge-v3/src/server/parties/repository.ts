@@ -93,6 +93,25 @@ export class PartyRepository {
     } catch (error) { throw translate(error); }
   }
 
+  /**
+   * 口座の全項目。取引先の詳細（誰でも見られる）には口座番号も名義も出さない
+   * ので、直すときだけこちらを引く。呼び出し側で admin/legal に絞ってある。
+   */
+  async bankAccount(partyId: number) {
+    try {
+      const r = await this.database.query(
+        `SELECT bank_name, branch_name, account_type, account_number, account_holder_kana
+           FROM party_bank_accounts WHERE party_id = $1`, [partyId]);
+      const row = r.rows[0] as Record<string, any> | undefined;
+      return {
+        bankName: str(row?.bank_name), branchName: str(row?.branch_name),
+        accountType: str(row?.account_type), accountNumber: str(row?.account_number),
+        accountHolderKana: str(row?.account_holder_kana),
+        exists: Boolean(row)
+      };
+    } catch (error) { throw translate(error); }
+  }
+
   async staff(limit = 200) {
     try {
       const r = await this.database.query(

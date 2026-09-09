@@ -23,6 +23,14 @@ export interface StaffInput {
   status?: "active" | "retired";
 }
 
+export interface BankAccountInput {
+  bankName?: string | null;
+  branchName?: string | null;
+  accountType?: string | null;
+  accountNumber?: string | null;
+  accountHolderKana?: string | null;
+}
+
 export interface PartyContactInput {
   role: string;
   name?: string | null;
@@ -115,6 +123,66 @@ export class PartyWriteService {
           detail: { role, email: input.email ?? null }
         });
         return { partyId, role };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 取引先の口座を直す。
+   *
+   * 移行してきた 2498 件のうち 460 件が口座番号か名義を欠いていて、そのまま
+   * では振り込めない（うち 383 件は名義だけが無い）。V1 の元データが同じ形で、
+   * 移行の取りこぼしではない。直す先が要る。
+   *
+   * 触れる経路はここ1つだけ。表への書込権限も INSERT と UPDATE しか無い
+   * （行ごと消す道は用意しない。使わない口座は各欄を空にする）。
+   *
+   * 監査には「どの項目を触ったか」だけ残す。口座番号や名義そのものは書かない。
+   * audit_events は運用の画面から誰でも読めるので、そこへ写すと、表を
+   * SELECT だけに絞ってある意味が無くなる。
+   */
+  async saveBankAccount(partyId: number, input: BankAccountInput, actor: string) {
+    const clean = (v: string | null | undefined) =>
+      v === null || v === undefined ? null : (String(v).trim() || null);
+    const values = {
+      bank_name: clean(input.bankName),
+      branch_name: clean(input.branchName),
+      account_type: clean(input.accountType),
+      account_number: clean(input.accountNumber),
+      account_holder_kana: clean(input.accountHolderKana)
+    };
+
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const party = await client.query(
+          "SELECT id, name FROM parties WHERE id = $1", [partyId]);
+        const row = party.rows[0] as { name: string } | undefined;
+        if (!row) throw new DomainError("NOT_FOUND", `取引先 ${partyId} が見つかりません`);
+
+        await client.query(
+          `INSERT INTO party_bank_accounts
+             (party_id, bank_name, branch_name, account_type,
+              account_number, account_holder_kana)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (party_id) DO UPDATE SET
+             bank_name = EXCLUDED.bank_name, branch_name = EXCLUDED.branch_name,
+             account_type = EXCLUDED.account_type,
+             account_number = EXCLUDED.account_number,
+             account_holder_kana = EXCLUDED.account_holder_kana,
+             updated_at = now()`,
+          [partyId, values.bank_name, values.branch_name, values.account_type,
+           values.account_number, values.account_holder_kana]);
+
+        await recordAudit(client, {
+          actor, action: "party.save_bank_account", targetType: "party", targetId: partyId,
+          // 値は残さない。入れたか空にしたかだけ。
+          detail: {
+            partyName: row.name,
+            filled: Object.entries(values).filter(([, v]) => v !== null).map(([k]) => k),
+            cleared: Object.entries(values).filter(([, v]) => v === null).map(([k]) => k)
+          }
+        });
+        return { partyId };
       });
     } catch (error) { throw translate(error); }
   }

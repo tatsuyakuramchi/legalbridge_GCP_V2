@@ -77,15 +77,23 @@ $write$;
 REVOKE UPDATE, DELETE, TRUNCATE ON v3.audit_events FROM legalbridge_v3_runtime;
 
 -- 口座情報。支払通知書・請求書は振込先が無いと書類として成立しないので、
--- 読み取りだけ開ける（2026-09-08 の判断）。書き込みは閉じたまま。
+-- 読み取りを開ける（2026-09-08 の判断）。
+--
+-- 書き込みも開ける（2026-09-09 の判断）。移行してきた 2498 件のうち 460 件が
+-- 口座番号か名義を欠いていて、そのままでは振り込めない（うち 383 件は名義だけ）。
+-- V1 の元データがその形なので、直す先が要る。V1 側で直して移し直す道は、
+-- V1 を止める前提と噛み合わない。
 --
 -- 漏れたときの被害が他の項目と桁違いなので、開ける範囲は最小にしてある。
---   - SELECT だけ。INSERT/UPDATE/DELETE は与えない（口座の改ざんを防ぐ）
---   - 返す経路は requireRole("admin","legal") の下にだけ置く
+--   - INSERT と UPDATE だけ。DELETE は与えない（行ごと消す操作は要らない。
+--     使わない口座は各欄を空にする）
+--   - 触れる経路は取引先の画面1つだけ。requireRole("admin","legal") の下に置く
+--   - 変更は audit_events に残す（誰がいつどの取引先の口座を直したか）
 -- AUTH_MODE=disabled のあいだは入れた人が全員 admin になる。IAP へ移すまでは、
--- 「アプリに入れる人＝口座を見られる人」であることを承知して運用する。
+-- 「アプリに入れる人＝口座を見て直せる人」であることを承知して運用する。
+-- 閉じ直すときは REVOKE INSERT, UPDATE ON v3.party_bank_accounts。
 REVOKE ALL ON v3.party_bank_accounts FROM legalbridge_v3_runtime;
-GRANT SELECT ON v3.party_bank_accounts TO legalbridge_v3_runtime;
+GRANT SELECT, INSERT, UPDATE ON v3.party_bank_accounts TO legalbridge_v3_runtime;
 
 -- テンプレート本文は読み取りのみ。改訂は管理者の運用でやる（互換境界）。
 REVOKE INSERT, UPDATE, DELETE ON v3.document_templates FROM legalbridge_v3_runtime;
@@ -144,8 +152,10 @@ SELECT table_schema, table_name, privilege_type
  WHERE grantee = 'legalbridge_v3_runtime'
    AND (table_schema <> 'v3'
         OR privilege_type = 'TRUNCATE'
-        -- 口座表は SELECT だけが正。書込権限が付いていたら異常。
-        OR (table_name = 'party_bank_accounts' AND privilege_type <> 'SELECT')
+        -- 口座表は SELECT / INSERT / UPDATE が正。DELETE が付いていたら異常
+        -- （行ごと消す操作は用意していない）。
+        OR (table_name = 'party_bank_accounts'
+            AND privilege_type NOT IN ('SELECT', 'INSERT', 'UPDATE'))
         OR (table_name IN ('document_templates', 'document_template_versions')
             AND privilege_type <> 'SELECT')
         OR (table_name = 'audit_events' AND privilege_type IN ('UPDATE', 'DELETE'))

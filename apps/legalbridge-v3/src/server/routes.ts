@@ -595,6 +595,31 @@ export function createRoutes(database: Transactable) {
     phone: z.string().trim().max(60).nullable().optional(),
     department: z.string().trim().max(200).nullable().optional()
   });
+  /**
+   * 取引先の口座。読むのも直すのも admin / legal だけ。
+   *
+   * 取引先の詳細（誰でも見られる）は銀行名・支店名・種別しか返さない。
+   * 口座番号と名義はこの経路にだけ出す。
+   */
+  const bankSchema = z.object({
+    bankName: z.string().trim().max(120).nullable().optional(),
+    branchName: z.string().trim().max(120).nullable().optional(),
+    accountType: z.string().trim().max(20).nullable().optional(),
+    accountNumber: z.string().trim().max(40).nullable().optional(),
+    accountHolderKana: z.string().trim().max(200).nullable().optional()
+  });
+  router.get("/parties/:id/bank-account",
+    requireRole("admin", "legal"),
+    asyncRoute(async (req, res) => {
+      res.json(await parties.bankAccount(Number(req.params.id)));
+    }));
+  router.put("/parties/:id/bank-account",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = bankSchema.parse(req.body ?? {});
+      res.json(await partyWrites.saveBankAccount(Number(req.params.id), input, actor(res)));
+    }));
+
   router.put("/parties/:id/contacts", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       res.json(await partyWrites.upsertContact(

@@ -515,6 +515,25 @@ UPDATE v3.data_quality_issues q
              OR b.account_number IS NULL OR b.account_holder_kana IS NULL));
 
 
+-- ---------------------------------------------------------------------
+-- A-013: 取引先の口座を V3 から直せるようにする
+--
+-- 移行してきた 2498 件の口座のうち 460 件が口座番号か名義を欠いていて、
+-- そのままでは振り込めない。うち 383 件は名義（カナ）だけが無い。
+-- 突き合わせた結果、V1 の元データが同じ形で（欠けの数が V1 と完全に一致）、
+-- 移行の取りこぼしではなかった。直す先がどこかに要る。
+--
+-- 開けるのは INSERT と UPDATE だけ。DELETE は与えない（行ごと消す操作は
+-- 用意していない。使わない口座は各欄を空にする）。
+-- 触れる経路は取引先の画面1つだけで、requireRole("admin","legal") の下に置く。
+-- 変更は audit_events に残す。
+--
+-- 003_grants.sql も同じ内容に直してある。新規に立てるときはそちらが効く。
+-- ここは既に立っているデータベース用。
+-- ---------------------------------------------------------------------
+
+GRANT INSERT, UPDATE ON v3.party_bank_accounts TO legalbridge_v3_runtime;
+
 COMMIT;
 
 -- 確認
@@ -587,7 +606,7 @@ SELECT severity AS 重大度, count(*) AS 件数
  WHERE rule_code = 'PARTY_BANK_INCOMPLETE' AND status = 'open'
  GROUP BY severity ORDER BY severity;
 
-\echo '--- 口座表の権限（SELECT だけであること） ---'
+\echo '--- 口座表の権限（SELECT/INSERT/UPDATE。DELETE が無いこと） ---'
 SELECT privilege_type FROM information_schema.role_table_grants
  WHERE grantee = 'legalbridge_v3_runtime' AND table_name = 'party_bank_accounts'
  ORDER BY privilege_type;

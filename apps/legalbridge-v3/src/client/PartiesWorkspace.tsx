@@ -5,6 +5,7 @@ import { api, ApiError } from "./api.js";
 import { Relations, type EntityKind } from "./Relations.js";
 import { CreateForm, flag, int, text } from "./CreateForm.js";
 import { PartyMerge } from "./PartyMerge.js";
+import { PartyBankAccount } from "./PartyBankAccount.js";
 
 interface Party {
   id: number; partyCode: string | null; name: string; kind: "corporate" | "individual";
@@ -218,7 +219,15 @@ export function PartiesWorkspace(
                       <dt>登録番号</dt><dd className="code">{detail.invoiceNo ?? "—"}</dd>
                       <dt>源泉</dt><dd>{detail.withholding ? "対象" : detail.kind === "individual" ? "個人のため対象" : "対象外"}</dd>
                       <dt>口座</dt>
-                      <dd className="faint">{detail.bankAccount?.bankName ?? "非表示（別権限）"}</dd>
+                      <dd className="row">
+                        <span className="faint">
+                          {detail.bankAccount?.bankName ?? "登録なし"}
+                        </span>
+                        {/* 口座番号と名義はここには出さない。直すときだけ、
+                            権限を絞った経路で取りに行く。 */}
+                        <PartyBankAccount partyId={detail.id} partyName={detail.name}
+                          onSaved={() => reload(detail.id)} />
+                      </dd>
                     </dl>
                   </div>
                 </div>
