@@ -167,3 +167,19 @@ test("個人の相手先に法人だけの項目を要求しない", () => {
     { condition: { counterparty: { kind: "corporate" } } }, {}, { templateKey: "license_master" });
   assert.deepEqual(corporate.missing.map((m) => m.name), ["VENDOR_REP"]);
 });
+
+test("口座種別しか無い行は口座として扱わない", async () => {
+  // V1 のフォームは口座種別に「普通」を初期値で入れていた。銀行名も口座番号も
+  // 名義も無いまま保存された取引先が98件あり、そのまま書類に出すと
+  //「振込先: 普通」とだけ印字される。空欄より悪い（あるように見える）。
+  const { buildTemplateContext } = await import("./template-context.js");
+  const empty = buildTemplateContext("inspection_certificate", { bank: null }, {});
+  assert.equal(empty.BANK_INFO, "");
+  assert.equal(empty.ACCOUNT_TYPE, "");
+  // 銀行名だけでも入っていれば口座として出す（海外の相手先はこの形になる）。
+  const partial = buildTemplateContext("inspection_certificate",
+    { bank: { bankName: "INTESA SANPAOLO SPA", branchName: null, accountType: null,
+              accountNumber: null, holderKana: null } }, {});
+  assert.equal(partial.BANK_NAME, "INTESA SANPAOLO SPA");
+  assert.equal(partial.BANK_INFO, "INTESA SANPAOLO SPA");
+});

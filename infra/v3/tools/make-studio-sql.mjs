@@ -85,7 +85,12 @@ SELECT * FROM (
                  count(*)::text
             FROM v3.party_bank_accounts)
   UNION ALL
-  SELECT 11, '口座表の権限（SELECT だけであること）',
+  SELECT 11, '中身の無い口座（0 であること）',
+         (SELECT count(*)::text FROM v3.party_bank_accounts
+           WHERE bank_name IS NULL AND branch_name IS NULL
+             AND account_number IS NULL AND account_holder_kana IS NULL)
+  UNION ALL
+  SELECT 12, '口座表の権限（SELECT だけであること）',
          COALESCE((SELECT string_agg(DISTINCT privilege_type, ', ')
                      FROM information_schema.role_table_grants
                     WHERE grantee = 'legalbridge_v3_runtime'

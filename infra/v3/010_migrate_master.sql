@@ -82,7 +82,10 @@ INSERT INTO v3.party_bank_accounts (party_id, bank_name, branch_name, account_ty
 SELECT p.id, NULLIF(v.bank_name,''), NULLIF(v.branch_name,''), NULLIF(v.account_type,''),
        NULLIF(v.account_number,''), NULLIF(v.account_holder_kana,'')
   FROM public.vendors v JOIN v3.parties p ON p.legacy_id = v.id
- WHERE COALESCE(v.bank_name, v.branch_name, v.account_number) IS NOT NULL
+ -- 空文字は「無い」。COALESCE は NULL でない最初の値を返すので、'' を素で
+ -- 渡すと「あり」と判定され、口座種別だけが残った空の行ができる（実際に98件できた）。
+ WHERE COALESCE(NULLIF(v.bank_name, ''), NULLIF(v.branch_name, ''),
+                NULLIF(v.account_number, ''), NULLIF(v.account_holder_kana, '')) IS NOT NULL
 ON CONFLICT (party_id) DO UPDATE SET
   bank_name = EXCLUDED.bank_name, branch_name = EXCLUDED.branch_name,
   account_type = EXCLUDED.account_type, account_number = EXCLUDED.account_number,

@@ -189,11 +189,16 @@ export class DocumentContextRepository {
            FROM party_bank_accounts WHERE party_id = $1`, [partyId]);
       const row = r.rows[0] as Record<string, any> | undefined;
       if (!row) return null;
-      return {
+      const bank = {
         bankName: str(row.bank_name), branchName: str(row.branch_name),
         accountType: str(row.account_type), accountNumber: str(row.account_number),
         holderKana: str(row.account_holder_kana)
       };
+      // 口座種別しか入っていない行は口座ではない（V1 のフォームの初期値
+      // 「普通」だけが保存されたもの。移行時点で98件あった）。
+      // 種別だけを書類に出すと、振込先があるように見えてしまう。
+      const payable = bank.bankName ?? bank.accountNumber ?? bank.holderKana ?? bank.branchName;
+      return payable === null || payable === undefined ? null : bank;
     } catch {
       // 口座表への権限が無い環境（閉じたまま運用する場合）。書類は作れる。
       return null;

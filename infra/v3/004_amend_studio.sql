@@ -423,6 +423,39 @@ BEGIN
 END
 $a009$;
 
+-- ---------------------------------------------------------------------
+-- A-010: 中身の無い口座の行を片づける
+--
+-- V1 のフォームは口座種別に「普通」を初期値で入れていた。銀行名も口座番号も
+-- 名義も入れずに保存された取引先が、口座種別だけを持つ行として移ってきた
+-- （移行直後で98件）。支払える情報が1つも無いので口座ではない。
+--
+-- 残しておくと、その取引先の検収書・支払通知書に「振込先: 普通」とだけ
+-- 出る。空欄より悪い（振込先があるように見える）。
+--
+-- 消すのは「銀行名・支店名・口座番号・名義がすべて空」の行だけ。
+-- 1つでも入っていれば残す（海外の銀行名だけ、のような行は情報として有効）。
+-- ---------------------------------------------------------------------
+
+DO $a010$
+DECLARE
+  removed int;
+BEGIN
+  WITH gone AS (
+    DELETE FROM v3.party_bank_accounts
+     WHERE bank_name IS NULL AND branch_name IS NULL
+       AND account_number IS NULL AND account_holder_kana IS NULL
+    RETURNING 1
+  )
+  SELECT count(*) INTO removed FROM gone;
+  IF removed > 0 THEN
+    RAISE NOTICE 'A-010: 中身の無い口座を % 件消した', removed;
+  ELSE
+    RAISE NOTICE 'A-010: 消すものは無い';
+  END IF;
+END
+$a010$;
+
 COMMIT;
 
 
@@ -479,7 +512,12 @@ SELECT * FROM (
                  count(*)::text
             FROM v3.party_bank_accounts)
   UNION ALL
-  SELECT 11, '口座表の権限（SELECT だけであること）',
+  SELECT 11, '中身の無い口座（0 であること）',
+         (SELECT count(*)::text FROM v3.party_bank_accounts
+           WHERE bank_name IS NULL AND branch_name IS NULL
+             AND account_number IS NULL AND account_holder_kana IS NULL)
+  UNION ALL
+  SELECT 12, '口座表の権限（SELECT だけであること）',
          COALESCE((SELECT string_agg(DISTINCT privilege_type, ', ')
                      FROM information_schema.role_table_grants
                     WHERE grantee = 'legalbridge_v3_runtime'
