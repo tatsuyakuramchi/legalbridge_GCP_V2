@@ -35,7 +35,7 @@ const byNo = (versions: DocumentRow[], id: number) =>
   versions.find((v) => v.id === id)?.documentNo ?? `#${id}`;
 
 export function DocumentDetail(
-  { doc, versions, integrations, busy, onOpen, onChanged,
+  { doc, versions, integrations, busy, onOpen, onChanged, onLinkCondition, openConditions,
     onEditDraft, onIssueDraft, onReissue, onVoid, onStore, onSend, onSelect }: {
     doc: DocumentRow;
     /** 古い順に並べた版の連鎖。1件だけなら履歴は出さない。 */
@@ -51,6 +51,10 @@ export function DocumentDetail(
     onStore: (id: number) => void;
     onSend: (id: number) => void;
     onSelect: (id: number) => void;
+    /** 「つながり」の条件明細の欄を開く。 */
+    onLinkCondition: () => void;
+    /** 開いた状態で描く（上の案内から押されたとき）。 */
+    openConditions?: boolean;
   }
 ) {
   const note = DOCUMENT_STATE_NOTE[doc.status] ?? { headline: doc.status, detail: "" };
@@ -58,6 +62,9 @@ export function DocumentDetail(
   // この版を直している最中の下書き。あるあいだは、もう1枚作らせない
   // （発行できるのは1枚だけなので、残りは行き場が無くなる）。
   const pending = versions.find((v) => v.supersedesId === doc.id && v.status === "draft") ?? null;
+  // 条件明細が繋がっていない。書類は条件の出力物なので、繋がっていないと
+  // 「何の取引から出た紙か」が分からない。移行してきた文書はほぼこの状態。
+  const unlinked = doc.conditions.length === 0;
 
   return (
     <div className="stack">
@@ -146,6 +153,20 @@ export function DocumentDetail(
             </div>
           )}
 
+          {/*
+            繋ぎ直しは下の「つながり」でできるが、そこはページの一番下にある。
+            欠けているときだけ上に出して、押せばその欄が開くようにする。
+          */}
+          {unlinked && (
+            <div className="note warn">
+              条件明細が繋がっていません。この書類がどの取引から出たものかが辿れません。
+              {" "}
+              <button className="linky" onClick={onLinkCondition}>
+                下の「つながり」で繋ぐ
+              </button>
+            </div>
+          )}
+
           {doc.status === "draft" && doc.supersedesId !== null && (
             <div className="faint">
               {byNo(versions, doc.supersedesId)} の訂正版です。
@@ -185,7 +206,8 @@ export function DocumentDetail(
         </div>
       )}
 
-      <Relations kind="document" id={doc.id} onOpen={onOpen} onChanged={onChanged} />
+      <Relations kind="document" id={doc.id} initialOpen={openConditions ? "conditions" : undefined}
+                 onOpen={onOpen} onChanged={onChanged} />
     </div>
   );
 }

@@ -23,6 +23,16 @@ const LINK_LABEL: Record<string, string> = {
   document: "文書", agreement: "合意", condition: "条件", payment: "支払"
 };
 
+/**
+ * 上のタブが持っている紐づけ。
+ *
+ * 条件明細も文書も matter_links に行が入るので、そのまま表に出すと
+ * 「この案件の中身」と同じものが `condition / 5` のような生の形でもう一度並ぶ。
+ * 実際、条件と文書は3か所（タブ・この表・つながり）に出ていた。
+ * ここに出すのは、専用の置き場が無いもの（Backlog・Slack・メール）だけにする。
+ */
+const OWNED_BY_TABS = new Set(["condition", "document", "payment"]);
+
 /** 紐づけに写してある状態。Backlog なら課題の状態、メールなら最後の件名。 */
 function linkState(snapshot: Record<string, unknown>): string {
   const s = snapshot ?? {};
@@ -47,6 +57,8 @@ export function MattersWorkspace(
   const [rows, setRows] = useState<MatterSummary[]>([]);
   const [selected, setSelected] = useState<number | undefined>(initialId);
   const [detail, setDetail] = useState<MatterDetail | null>(null);
+  // タブが持っていない紐づけだけ。ここに条件や文書を出すと3か所目になる。
+  const externalLinks = (detail?.links ?? []).filter((l) => !OWNED_BY_TABS.has(l.targetType));
   const [kind, setKind] = useState<MatterKind | "all">("all");
   const [tab, setTab] = useState<Tab>("conditions");
   const [error, setError] = useState<string | null>(null);
@@ -329,25 +341,30 @@ export function MattersWorkspace(
 
               <div className="panel">
                 <div className="panel-hd">
-                  <h2>参照しているマスタ</h2><span className="faint">案件より長生きする実体</span>
+                  <h2>外部システム</h2>
+                  <span className="faint">Backlog・Slack・メール。案件の外にある記録</span>
                 </div>
-                <div className="panel-bd">
-                  <table>
-                    <thead><tr><th>種別</th><th>参照</th><th>関係</th><th>状態</th></tr></thead>
-                    <tbody>
-                      {detail.links.map((l) => (
-                        <tr key={`${l.targetType}-${l.targetRef}`}>
-                          <td>{LINK_LABEL[l.targetType] ?? l.targetType}</td>
-                          <td className="code">{l.targetRef}</td>
-                          <td>{l.relation}</td>
-                          <td className="faint">{linkState(l.snapshot)}</td>
-                        </tr>
-                      ))}
-                      {!detail.links.length && <tr><td colSpan={4} className="faint">リンクはありません</td></tr>}
-                    </tbody>
-                  </table>
-                </div>
-                <div className="panel-bd" style={{ borderTop: "1px solid var(--line)" }}>
+                {/* 空のときは表を出さない。見出しだけの表の下に「課題を立てる」が
+                    並ぶと、何の表なのか読めない。 */}
+                {externalLinks.length > 0 && (
+                  <div className="panel-bd">
+                    <table>
+                      <thead><tr><th>種別</th><th>参照</th><th>関係</th><th>状態</th></tr></thead>
+                      <tbody>
+                        {externalLinks.map((l) => (
+                          <tr key={`${l.targetType}-${l.targetRef}`}>
+                            <td>{LINK_LABEL[l.targetType] ?? l.targetType}</td>
+                            <td className="code">{l.targetRef}</td>
+                            <td>{l.relation}</td>
+                            <td className="faint">{linkState(l.snapshot)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                <div className="panel-bd" style={externalLinks.length
+                        ? { borderTop: "1px solid var(--line)" } : undefined}>
                   {backlogIssue(detail) ? (
                     <div className="row">
                       <span className="faint">
@@ -415,9 +432,13 @@ export function MattersWorkspace(
                 </div>
               </div>
 
-              {/* どちらの画面からも同じ関連を触れるようにする。案件から条件を
-                  繋げるのに条件から案件を繋げない、という片側だけの穴を塞ぐ。 */}
+              {/*
+                どちらの画面からも同じ関連を触れるようにするための共通部品。
+                案件では条件明細と文書を外す：上のタブが同じものを、繋ぐ・外す付きで
+                持っているので、ここに出すと3か所目になる（実際そうなっていた）。
+              */}
               <Relations kind="matter" id={detail.id} reloadKey={linkVersion}
+                exclude={["conditions", "documents"]}
                 onOpen={onOpen} onChanged={relink} />
             </>
           )}

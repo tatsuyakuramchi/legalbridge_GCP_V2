@@ -111,7 +111,16 @@ function mapSummary(row: Record<string, any>): DocumentSummary {
 export class DocumentRepository {
   constructor(private readonly database: Transactable) {}
 
-  async list(query: { keyword?: string; status?: string; matterId?: number; limit?: number } = {}) {
+  /**
+   * unlinked を渡すと、条件明細が1件も繋がっていない文書だけを返す。
+   * 移行してきた文書はほとんど条件が付いていない（V1 が持っていなかった）。
+   * 繋ぎ直す作業は「まだ繋がっていないものを出す」から始まるので、
+   * 探す手段が無いと一覧を上から目で追うことになる。
+   */
+  async list(query: {
+    keyword?: string; status?: string; matterId?: number;
+    unlinked?: boolean; limit?: number;
+  } = {}) {
     const where: string[] = [];
     const params: unknown[] = [];
     if (query.keyword?.trim()) {
@@ -122,6 +131,9 @@ export class DocumentRepository {
     }
     if (query.status) { params.push(query.status); where.push(`d.status = $${params.length}`); }
     if (query.matterId) { params.push(query.matterId); where.push(`d.matter_id = $${params.length}`); }
+    if (query.unlinked) {
+      where.push(`NOT EXISTS (SELECT 1 FROM document_conditions dc WHERE dc.document_id = d.id)`);
+    }
     params.push(Math.min(Math.max(query.limit ?? 200, 1), 500));
     try {
       const r = await this.database.query(

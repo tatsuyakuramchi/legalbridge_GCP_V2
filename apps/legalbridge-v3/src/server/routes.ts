@@ -1019,7 +1019,9 @@ export function createRoutes(database: Transactable) {
     res.json({ documents: await documents.list({
       keyword: String(req.query.q ?? ""),
       status: req.query.status ? String(req.query.status) : undefined,
-      matterId: req.query.matterId ? Number(req.query.matterId) : undefined
+      matterId: req.query.matterId ? Number(req.query.matterId) : undefined,
+      // 条件明細が繋がっていないものだけ。移行文書の繋ぎ直しの入口。
+      unlinked: String(req.query.unlinked ?? "") === "1"
     }) });
   }));
 

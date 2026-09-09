@@ -28,13 +28,18 @@ export const ENTITY_LABEL: Record<EntityKind, string> = {
 };
 
 export function Relations(
-  { kind, id, reloadKey, exclude = [], onOpen, onChanged }: {
+  { kind, id, reloadKey, exclude = [], initialOpen, onOpen, onChanged }: {
     kind: EntityKind;
     id: number;
     /** 外の操作で関連が変わったときに読み直す。 */
     reloadKey?: number;
     /** 専用の画面が別にある関連は出さない（同じものが2つ並ぶのを避ける）。 */
     exclude?: string[];
+    /**
+     * 最初から開いておく関連。呼び出し側が「条件明細を繋いでください」と
+     * 促したときに、押した先で探し直させないため。
+     */
+    initialOpen?: string;
     onOpen?: (kind: EntityKind, id: number) => void;
     onChanged?: () => void;
   }
@@ -42,12 +47,15 @@ export function Relations(
   const [relations, setRelations] = useState<RelationView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [open, setOpen] = useState<string | null>(null);
+  const [open, setOpen] = useState<string | null>(initialOpen ?? null);
   const [keyword, setKeyword] = useState("");
   const search = useDebounced(keyword, 300);
   const [hits, setHits] = useState<LinkItem[]>([]);
 
   useEffect(() => { void load(); }, [kind, id, reloadKey]);
+  // 別の対象に切り替わったら開き直す。前の対象で開いていた欄が残ると、
+  // 何を繋ごうとしているのか分からなくなる。
+  useEffect(() => { setOpen(initialOpen ?? null); setKeyword(""); }, [kind, id, initialOpen]);
   async function load() {
     try {
       const r = await api.get<{ relations: RelationView[] }>(`/links/${kind}/${id}`);
@@ -83,6 +91,9 @@ export function Relations(
   }
 
   if (!relations) return null;
+  // 出すものが1つも無いなら枠ごと出さない。除外した結果からっぽの
+  // 「つながり」だけが残ると、読むものが無いのに場所を取る。
+  if (!relations.length) return null;
 
   return (
     <div className="panel">

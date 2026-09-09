@@ -118,32 +118,65 @@ export function DocumentsWorkspace(
   const quoteSearch = useDebounced(quoteQ, 300);
   const form = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { void reload(); }, [search]);
+  /**
+   * 一覧の絞り込み。
+   *
+   * 「条件明細なし」は移行文書の繋ぎ直し用。移行してきた文書はほとんど条件が
+   * 付いていない（V1 が持っていなかった）ので、残りを上から目で追うのではなく、
+   * まだ繋がっていないものだけを出して片づけられるようにする。
+   */
+  const [scope, setScope] = useState<"all" | "unlinked" | "draft">("all");
+  // 「つながり」の条件明細の欄を開いた状態で出すか。上の案内から押されたとき。
+  const [linkConditions, setLinkConditions] = useState(false);
+  /**
+   * 作成フォームを出しているか。
+   *
+   * 以前はページの上半分がいつも作成フォームだった。既にある文書を見に来ても、
+   * 案件から「編集」で来ても、最初に目に入るのはテンプレートの選択欄で、
+   * いま何を開いているのか分からなかった。作るのは押してから。
+   */
+  const [composing, setComposing] = useState(false);
+
+  useEffect(() => { void reload(); }, [search, scope]);
 
   /**
-   * 他の画面から文書を指定して来たとき。下書きは直せるのでフォームへ、
-   * 発行済みは記録なので「つながり」を開く（直すなら作り直しになる）。
+   * 他の画面から文書を指定して来たとき。
+   *
+   * 以前は下書きなら作成フォームに載せていた。そのせいで、案件から「編集」を
+   * 押しただけでテンプレート選択の画面に飛び、いま何を開いたのか分からなく
+   * なっていた。取込文書のようにひな形を持たない文書では、そもそも載らない。
+   *
+   * 開いたら、まずその文書が何で何に繋がっているかを出す。フォームに載せるのは
+   * 「中身を直す」を押したときだけにする。
    */
   useEffect(() => {
     if (!openDocumentId) return;
-    void openForEdit(openDocumentId);
+    setSelected(openDocumentId);
   }, [openDocumentId]);
 
-  async function openForEdit(id: number) {
-    setError(null);
-    try {
-      const d = await api.get<{ id: number; documentNo: string | null; status: string;
-                               imported: boolean }>(`/documents/${id}`);
-      if (d.status === "draft" && !d.imported) { await openDraft(d.id); return; }
-      setSelected(d.id);
-    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
-  }
+  // 別の文書に移ったら、前の文書で開いた欄は閉じる。
+  useEffect(() => { setLinkConditions(false); }, [selected]);
+
+  /**
+   * 選んでいた文書が一覧から消えたら、次の1件へ送る。
+   *
+   * 「条件明細なし」で絞って上から繋いでいくと、繋いだ瞬間にその行は条件が
+   * 付いたので一覧から外れる。詳細が黙って空になると、片づけの手が止まる。
+   */
+  useEffect(() => {
+    if (selected === null) return;
+    if (documents.some((d) => d.id === selected)) return;
+    setSelected(documents[0]?.id ?? null);
+  }, [documents]);
   async function reload() {
     try {
       const [t, d, c, i] = await Promise.all([
         api.get<{ templates: TemplateRow[] }>("/document-templates"),
-        api.get<{ documents: DocumentRow[] }>(
-          `/documents${search.trim() ? `?q=${encodeURIComponent(search.trim())}` : ""}`),
+        api.get<{ documents: DocumentRow[] }>(`/documents?${new URLSearchParams({
+          ...(search.trim() ? { q: search.trim() } : {}),
+          ...(scope === "unlinked" ? { unlinked: "1" } : {}),
+          ...(scope === "draft" ? { status: "draft" } : {})
+        })}`),
         api.get<{ conditions: ConditionSummary[] }>("/conditions"),
         api.get<Integrations>("/integrations")
       ]);
@@ -178,7 +211,12 @@ export function DocumentsWorkspace(
    * 文書が一覧から消える。退くのは訂正版を発行したときなので、状態で判断する。
    */
   const heads = useMemo(
-    () => documents.filter((d) => d.status !== "superseded"), [documents]);
+    () => documents.filter((d) =>
+      // 退いた版でも、畳む先（後継）が一覧に居ないなら独立した行として出す。
+      // 絞り込むと後継だけ外れることがあり、件数と行数が合わなくなっていた。
+      d.status !== "superseded"
+      || !documents.some((x) => x.id === d.supersededById)),
+    [documents]);
 
   /** その版が差し替えた、退いた古い版たち（新しい順）。 */
   const ancestorsOf = (d: DocumentRow): DocumentRow[] => {
@@ -416,6 +454,7 @@ export function DocumentsWorkspace(
         if (v !== null && v !== undefined) values[k] = String(v);
       }
       // draft を先に立てる。ひな形を変えたときの既定読み込みに上書きさせない。
+      setComposing(true);
       setDraft({ id: d.id, no: d.documentNo });
       setTemplateKey(d.templateKey);
       setPicked(d.conditions.map((c) => c.id));
@@ -431,7 +470,8 @@ export function DocumentsWorkspace(
 
   /** 下書きから降りる。作りかけの下書きは残るので、あとで開き直せる。 */
   function closeDraft() {
-    setDraft(null); setManual({}); setPickedFields(new Set()); setPickedEvents([]);
+    setDraft(null); setComposing(false); setRendered(null);
+    setManual({}); setPickedFields(new Set()); setPickedEvents([]);
     // ひな形は変わらないので既定の読み込みは走らない。ここで戻しておかないと、
     // 下書きを閉じたあとだけ前回の値が出ない画面になる。
     if (templateKey) {
@@ -474,10 +514,28 @@ export function DocumentsWorkspace(
       )}
 
       <div className="stack">
+        {!composing && !draft && (
+          <div className="row">
+            <button className="btn primary" onClick={() => setComposing(true)}>
+              新しく文書を作る
+            </button>
+            <span className="faint">
+              ひな形から起こします。すでにある文書を見るだけなら、下の一覧から選んでください
+            </span>
+          </div>
+        )}
+
+        {(composing || draft) && (
         <div className="stack">
           <div className="panel" ref={form}>
             <div className="panel-hd">
-              <h2>{draft ? "下書きを直して発行する" : "作成"}</h2>
+              <h2>{draft ? "下書きを直して発行する" : "新しく文書を作る"}</h2>
+              {!draft && (
+                <button className="btn btn-sm" style={{ marginLeft: "auto" }}
+                        onClick={() => { setComposing(false); setRendered(null); }}>
+                  やめる
+                </button>
+              )}
               {draft && (
                 <span className="row" style={{ marginLeft: "auto" }}>
                   <span className="faint">下書き #{draft.id}</span>
@@ -691,6 +749,7 @@ export function DocumentsWorkspace(
             </div>
           )}
         </div>
+        )}
 
         <div className="split">
           <div className="panel">
@@ -699,6 +758,21 @@ export function DocumentsWorkspace(
               <span className="faint">いまの版だけを並べています</span>
               <ListSearch value={keyword} onChange={setKeyword}
                 placeholder="文書番号・相手先" label="文書を絞り込む" />
+            </div>
+            <div className="panel-bd" style={{ paddingBottom: 0 }}>
+              <div className="filters">
+                {([["all", "すべて"], ["unlinked", "条件明細なし"],
+                   ["draft", "下書き"]] as const).map(([value, label]) => (
+                  <button key={value} className="chip" aria-pressed={scope === value}
+                          onClick={() => setScope(value)}>{label}</button>
+                ))}
+              </div>
+              {scope === "unlinked" && (
+                <div className="faint" style={{ marginTop: 7 }}>
+                  条件明細が繋がっていない文書。取り込んだ書類は、どの取引から出たものか
+                  が分からないままになっています。1件ずつ開いて繋いでください。
+                </div>
+              )}
             </div>
             <ListCount shown={documents.length} keyword={search} onClear={() => setKeyword("")} />
             <div className="tablewrap">
@@ -800,6 +874,8 @@ export function DocumentsWorkspace(
               onVoid={(id, no) => void voidDocument(id, no)}
               onStore={(id) => void store(id)}
               onSend={(id) => void send(id)}
+              onLinkCondition={() => setLinkConditions(true)}
+              openConditions={linkConditions}
               onSelect={setSelected} />
           )}
         </div>
