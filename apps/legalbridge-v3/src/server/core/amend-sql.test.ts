@@ -2,8 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 // 生成器は素の JS（インフラ側の道具なので型は持たない）。
-// @ts-expect-error 型宣言のない .mjs を読む
-import { buildStudioSql } from "../../../../../infra/v3/tools/make-studio-sql.mjs";
+// @ts-expect-error 型宣言のない .mjs を読む（指示は指定子と同じ行の直前に置く）
+import { buildStudioSql, sourceCheckCount, studioCheckCount } from "../../../../../infra/v3/tools/make-studio-sql.mjs";
 
 /**
  * Cloud SQL Studio 用の 004_amend が、psql 用と食い違っていないかを見る。
@@ -25,6 +25,22 @@ test("Studio 用に psql のクライアント機能が残っていない", () =
   const lines = read("004_amend_studio.sql").split("\n");
   const meta = lines.filter((l) => l.startsWith("\\"));
   assert.deepEqual(meta, [], `psql の命令が残っている: ${meta.join(" / ")}`);
+});
+
+/**
+ * 確認だけは生成できない。psql 版は1項目ずつ結果を出せるが、Studio は文ごとの
+ * 結果のうちどれが見えるか分からないので、1本の表にまとめ直す必要がある。
+ * つまり同じ確認を2つの書き方で持っている＝片方に足し忘れられる。
+ *
+ * 実際 A-012 の確認が Studio 版から落ちていた。生成物どうしを比べる
+ * 「一致する」試験では、どちらも同じ古い CHECKS から作られるので気づけない。
+ */
+test("確認の項目数が psql 版と Studio 版で揃っている", () => {
+  const inSource = sourceCheckCount(read("004_amend.sql"));
+  assert.ok(inSource >= 13, `確認節が読めていない（${inSource} 項目）`);
+  assert.equal(studioCheckCount(), inSource,
+    "004_amend.sql に確認を足したら、make-studio-sql.mjs の CHECKS にも足すこと。"
+    + "片方だけだと、Studio で流した人は確かめられないまま終わる");
 });
 
 test("A-009 は取引の中にある（確認の側に置かない）", () => {

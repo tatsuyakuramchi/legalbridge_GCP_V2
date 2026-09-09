@@ -99,6 +99,13 @@ SELECT * FROM (
                      FROM information_schema.role_table_grants
                     WHERE grantee = 'legalbridge_v3_runtime'
                       AND table_name = 'party_bank_accounts'), '権限なし')
+  UNION ALL
+  SELECT 13, '欠けた振込先（A-012 が上げた不整合。high は振り込めない口座）',
+         COALESCE((SELECT string_agg(severity || ' ' || n::text, ' / ' ORDER BY severity)
+                     FROM (SELECT severity, count(*) AS n
+                             FROM v3.data_quality_issues
+                            WHERE rule_code = 'PARTY_BANK_INCOMPLETE' AND status = 'open'
+                            GROUP BY severity) AS s), '0')
 ) AS 確認 ORDER BY n;
 `;
 
@@ -106,7 +113,34 @@ export const SOURCE_PATH = SOURCE;
 export const TARGET_PATH = TARGET;
 
 /** 004_amend.sql の中身から Studio 用を作る。試験もこれを使う。 */
+/**
+ * 元ファイルの確認節にある項目の数。psql 版は `\echo '--- ... ---'` で1項目ずつ出す。
+ */
+export function sourceCheckCount(source) {
+  const end = source.indexOf("\nCOMMIT;\n");
+  const tail = end < 0 ? source : source.slice(end);
+  return (tail.match(/^\\echo '---/gm) ?? []).length;
+}
+
+/** この生成器が持っている確認項目の数。 */
+export function studioCheckCount() {
+  return (CHECKS.match(/^\s*SELECT \d+[, ]/gm) ?? []).length;
+}
+
 export function buildStudioSql(source) {
+  // 確認は psql 版と Studio 版で別々に書いてある（Studio は結果を1本にまとめる
+  // 必要があるので、同じ SQL は使えない）。別々ということは、片方に足して
+  // もう片方に足し忘れられる。実際 A-012 の確認が Studio 版から落ちていて、
+  // 生成物どうしを比べる --check では気づけなかった。数が合わなければ止める。
+  const inSource = sourceCheckCount(source);
+  const inStudio = studioCheckCount();
+  if (inSource !== inStudio) {
+    throw new Error(
+      `確認項目の数が合いません（004_amend.sql に ${inSource} 項目、`
+      + `この生成器の CHECKS に ${inStudio} 項目）。`
+      + "片方だけに足すと、Studio で流した人は確かめられないまま終わります。");
+  }
+
   // 変更の部分だけ取る（COMMIT まで）。そのあとは psql 用の確認なので使わない。
   const end = source.indexOf("\nCOMMIT;\n");
   if (end < 0) throw new Error("COMMIT; が見つかりません");

@@ -589,4 +589,11 @@ SELECT * FROM (
                      FROM information_schema.role_table_grants
                     WHERE grantee = 'legalbridge_v3_runtime'
                       AND table_name = 'party_bank_accounts'), '権限なし')
+  UNION ALL
+  SELECT 13, '欠けた振込先（A-012 が上げた不整合。high は振り込めない口座）',
+         COALESCE((SELECT string_agg(severity || ' ' || n::text, ' / ' ORDER BY severity)
+                     FROM (SELECT severity, count(*) AS n
+                             FROM v3.data_quality_issues
+                            WHERE rule_code = 'PARTY_BANK_INCOMPLETE' AND status = 'open'
+                            GROUP BY severity) AS s), '0')
 ) AS 確認 ORDER BY n;
