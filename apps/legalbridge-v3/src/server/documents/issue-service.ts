@@ -5,6 +5,7 @@ import { assertComplete, bindVariables, type BindingResult } from "./binding.js"
 import { DocumentContextRepository } from "./context-repository.js";
 import { DocumentRepository } from "./repository.js";
 import { renderDocumentHtml } from "./render.js";
+import { buildTemplateContext } from "./template-context.js";
 import { buildCandidates, type Candidate } from "./candidates.js";
 import { currentYearInTokyo, formatDocumentNumber, nextSequence, normalizePrefix } from "./numbering.js";
 
@@ -63,11 +64,15 @@ export class DocumentIssueService {
       // 番号は発行のときにしか決まらない。プレビューで空にすると必須の未入力に
       // 数えられ、発行ボタンが永久に押せなくなる。何が入るかを書いておく。
       const context = await this.buildContext(this.database, input, PREVIEW_NUMBER);
-      const binding = bindVariables(template.variables, context, input.manualInputs ?? {});
+      const manual = input.manualInputs ?? {};
+      // 明細・合計・消費税。本文はこれを差すだけなので、作らないと空欄で出る。
+      const computed = buildTemplateContext(template.templateKey, context, manual);
+      const binding = bindVariables(template.variables, context, manual,
+        { templateKey: template.templateKey, computed });
       // 候補は文脈そのものから作る。ひな形の宣言には依らない。
       const partials = await this.repository.partials();
       return {
-        html: renderDocumentHtml(template.htmlSource, binding.values, partials),
+        html: renderDocumentHtml(template.htmlSource, { ...computed, ...binding.values }, partials),
         binding,
         templateLabel: template.label,
         templateVersionId: template.templateVersionId,
@@ -209,9 +214,16 @@ export class DocumentIssueService {
           eventIds: extra.eventIds ?? [],
           royalty: extra.royalty ?? null
         }, documentNo);
-        const binding = bindVariables(
-          template.variables, context, (row.manual_inputs as Record<string, unknown>) ?? {});
+        const manual = (row.manual_inputs as Record<string, unknown>) ?? {};
+        const computed = buildTemplateContext(template.templateKey, context, manual);
+        const binding = bindVariables(template.variables, context, manual,
+          { templateKey: template.templateKey, computed });
         assertComplete(binding);
+
+        // 焼き付けるのは計算ブロックも含めた一式。本文は明細表も合計も
+        // ここから差す。宣言のある変数だけを保存すると、あとで組み直した
+        // ときに表と合計が消える。
+        const frozen = { ...computed, ...binding.values };
 
         const updated = await client.query(
           `UPDATE documents
@@ -219,7 +231,7 @@ export class DocumentIssueService {
                   issued_at = now(), issued_by = $4
             WHERE id = $1 AND status = 'draft'
             RETURNING issued_at`,
-          [documentId, documentNo, JSON.stringify(binding.values), actor]
+          [documentId, documentNo, JSON.stringify(frozen), actor]
         );
         if (!updated.rows[0]) throw new DomainError("CONFLICT", "発行中に他の操作と競合しました");
 

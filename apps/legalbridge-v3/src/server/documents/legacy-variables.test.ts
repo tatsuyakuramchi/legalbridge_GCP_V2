@@ -63,10 +63,26 @@ test("自社の担当者は案件の担当スタッフから埋まる", () => {
   assert.equal(at("検収者部署"), "法務部");
 });
 
+// 並びと区切りは V1 の buildPurchaseOrderContext と同じにしてある。
+// V1 の書類と並べたときに見た目が変わらないことが条件。
+const BANK_LINE = "みずほ銀行 / 渋谷支店 / 普通 1234567 / ヨシザワ ジユンロウ";
+
 test("振込先は1行にまとめて返す", () => {
-  assert.equal(at("BANK_INFO"), "みずほ銀行 渋谷支店 普通 1234567 ヨシザワ ジユンロウ");
-  assert.equal(at("振込先"), "みずほ銀行 渋谷支店 普通 1234567 ヨシザワ ジユンロウ");
+  assert.equal(at("BANK_INFO"), BANK_LINE);
+  assert.equal(at("振込先"), BANK_LINE);
+});
+
+test("振込先は項目ごとにも引ける（V1 の名前で）", () => {
+  // ここが欠けていたせいで、検収書の振込先に口座番号と名義しか出なかった。
   assert.equal(at("BANK_NAME"), "みずほ銀行");
+  assert.equal(at("BRANCH_NAME"), "渋谷支店");
+  assert.equal(at("ACCOUNT_TYPE"), "普通", "DB は英字。書類に出すのは日本語");
+  assert.equal(at("ACCOUNT_NUMBER"), "1234567");
+  assert.equal(at("ACCOUNT_HOLDER_KANA"), "ヨシザワ ジユンロウ");
+  // 日本語のラベルでも引ける（ひな形により名前が違う）。
+  assert.equal(at("金融機関名"), "みずほ銀行");
+  assert.equal(at("支店名"), "渋谷支店");
+  assert.equal(at("預金種別"), "普通");
 });
 
 test("納品日・検収日・金額は実績から埋まる", () => {

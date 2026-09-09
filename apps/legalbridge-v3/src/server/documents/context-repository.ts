@@ -1,6 +1,7 @@
 import type { Queryable, Transactable } from "../core/db.js";
 import { dateStr, int, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
+import { taxRatePercentFor } from "./legacy-totals.js";
 
 /**
  * テンプレート変数の供給元になる文脈を、条件・合意・当事者・作品から組み立てる。
@@ -35,25 +36,54 @@ export class DocumentContextRepository {
         throw new DomainError("NOT_FOUND", "指定された条件が見つかりません");
       }
       const agreementId = input.agreementId ?? conditions[0]?.agreementId ?? null;
+      // 案件は文書に指定されていなくても、条件から辿れば分かる。
+      // 辿らないと担当者（検収者）と件名が空のままになり、案件を指定して
+      // 作ったときだけ埋まる、という不揃いな画面になっていた。
+      const matterId = input.matterId ?? await this.matterIdForConditions(client, input.conditionIds);
       // client はトランザクションの接続で渡ってくることがある。1本の接続に
       // 同時に問い合わせられないので、順に読む。
       const agreement = agreementId ? await this.agreement(client, agreementId) : null;
-      const matter = input.matterId ? await this.matter(client, input.matterId) : null;
+      const matter = matterId ? await this.matter(client, matterId) : null;
       const company = await this.company(client);
       const events = input.eventIds?.length ? await this.events(client, input.eventIds) : [];
+      // 予定明細。発注書の明細表はここから組む（これから何回いくら払うか）。
+      const schedules = conditions.length ? await this.schedules(client, conditions.map((c) => c.id)) : [];
       // 取引先の担当者（署名者・請求先）と、案件の担当スタッフ。
       // 書類の宛名や検収者はここから引ける。
       const partyId = conditions[0]?.counterpartyId ?? null;
       const contacts = partyId ? await this.contacts(client, partyId) : [];
       const bank = partyId ? await this.bank(client, partyId) : null;
-      const owner = input.matterId ? await this.owner(client, input.matterId) : null;
+      const owner = matterId ? await this.owner(client, matterId) : null;
 
       const currency = conditions[0]?.currency ?? "JPY";
-      const exTax = conditions.reduce((sum, c) => sum + (c.flatAmountMinor ?? 0), 0);
-      const taxable = conditions
-        .filter((c) => c.taxCategory !== "exempt")
-        .reduce((sum, c) => sum + (c.flatAmountMinor ?? 0), 0);
-      const tax = Math.ceil(taxable * 0.1);
+      /**
+       * 合計。**実績を選んでいればその金額が対象**で、条件の総額ではない。
+       * ここが条件の総額だけを見ていたので、実績から出した検収書の消費税が
+       * つねに 0 円になっていた（税抜は実績、消費税は条件、という取り合わせ）。
+       *
+       * 税率は条件の税区分ごと（課税10% / 軽減8% / 非課税0%）。区分をまとめて
+       * 10% で掛けると、軽減や非課税の混じった書類が合わなくなる。
+       */
+      const bases = events.length
+        ? events.map((e) => ({
+            minor: e.amountMinor,
+            taxCategory: conditions.find((c) => c.id === e.conditionId)?.taxCategory ?? "taxable"
+          }))
+        : conditions.map((c) => ({ minor: c.flatAmountMinor ?? 0, taxCategory: c.taxCategory }));
+      const exTax = bases.reduce((sum, b) => sum + b.minor, 0);
+      // 端数は税区分ごとに切り上げる。区分をまたいで足してから切り上げると
+      // 1円ずれる（V1 の inspectionTaxBreakdown と同じ扱い）。
+      const byCategory = new Map<string, number>();
+      for (const b of bases) {
+        byCategory.set(b.taxCategory, (byCategory.get(b.taxCategory) ?? 0) + b.minor);
+      }
+      let tax = 0;
+      for (const [category, minor] of byCategory) {
+        tax += Math.ceil((minor * taxRatePercentFor(category)) / 100);
+      }
+      const taxRate = bases.length
+        ? Math.max(...bases.map((b) => taxRatePercentFor(b.taxCategory)))
+        : 10;
 
       return {
         document: {
@@ -67,6 +97,8 @@ export class DocumentContextRepository {
         /** 単一条件のテンプレートはこちらを使う。 */
         condition: conditions[0] ?? null,
         events,
+        /** 予定明細。発注書・支払通知書の明細はここから組む。 */
+        schedules,
         /** 取引先の担当者。role ごとに引ける（primary / signer / billing）。 */
         contacts,
         /** 振込先。支払通知書・請求書はこれが無いと成立しない。 */
@@ -83,6 +115,8 @@ export class DocumentContextRepository {
           exTax: toMajor(exTax, currency),
           tax: toMajor(tax, currency),
           incTax: toMajor(exTax + tax, currency),
+          /** 本文の「消費税(x%)」に差す率。 */
+          taxRate,
           currency
         }
       };
@@ -94,6 +128,33 @@ export class DocumentContextRepository {
    * これまでコンテキストに入っておらず、実績から検収書を作っても
    * 日付も金額も人が打ち直すことになっていた。
    */
+  /**
+   * 予定明細。発注書は「これから何回いくら払うか」を書く書類なので、
+   * 明細行の出どころはここ以外にない。
+   */
+  private async schedules(client: Queryable, conditionIds: number[]) {
+    const r = await client.query(
+      `SELECT s.id, s.condition_id, s.seq, s.trigger_kind, s.planned_amount,
+              s.due_on, s.pay_on, s.label, c.currency
+         FROM condition_schedules s JOIN conditions c ON c.id = s.condition_id
+        WHERE s.condition_id = ANY($1::bigint[])
+        ORDER BY s.condition_id, s.seq`, [conditionIds]);
+    return (r.rows as Array<Record<string, any>>).map((row) => {
+      const currency = String(row.currency ?? "JPY");
+      return {
+        id: Number(row.id),
+        conditionId: Number(row.condition_id),
+        seq: Number(row.seq),
+        triggerKind: String(row.trigger_kind),
+        plannedAmount: toMajor(int(row.planned_amount), currency),
+        dueOn: dateStr(row.due_on),
+        payOn: dateStr(row.pay_on),
+        label: str(row.label),
+        currency
+      };
+    });
+  }
+
   /** 取引先の担当者。役割ごとに1件までなので、そのまま並べる。 */
   private async contacts(client: Queryable, partyId: number) {
     const r = await client.query(
@@ -128,26 +189,45 @@ export class DocumentContextRepository {
     }
   }
 
+  /**
+   * 条件から案件を辿る。参照は案件 → 条件の向きしか無いので反転して読む。
+   * 複数に繋がっているときはいちばん古い案件（元の取引）を使う。
+   */
+  private async matterIdForConditions(client: Queryable, conditionIds: number[]) {
+    if (!conditionIds.length) return null;
+    const r = await client.query(
+      `SELECT ml.matter_id
+         FROM matter_links ml
+        WHERE ml.target_type = 'condition'
+          AND ml.target_ref = ANY($1::text[])
+        ORDER BY ml.matter_id
+        LIMIT 1`, [conditionIds.map((id) => String(id))]);
+    const row = r.rows[0] as { matter_id: number } | undefined;
+    return row ? Number(row.matter_id) : null;
+  }
+
   /** 案件の担当者。検収書の「検収者」はたいていこの人。 */
   private async owner(client: Queryable, matterId: number) {
     const r = await client.query(
-      `SELECT s.name, s.email, s.department, s.staff_code
+      `SELECT s.name, s.email, s.department, s.phone, s.staff_code
          FROM matters m JOIN staff s ON s.id = m.owner_staff_id
         WHERE m.id = $1`, [matterId]);
     const row = r.rows[0] as Record<string, any> | undefined;
     if (!row) return null;
     return {
       name: String(row.name), email: str(row.email),
-      department: str(row.department), staffCode: str(row.staff_code)
+      department: str(row.department), phone: str(row.phone),
+      staffCode: str(row.staff_code)
     };
   }
 
   private async events(client: Queryable, ids: number[]) {
     const r = await client.query(
-      `SELECT e.id, e.event_type, e.occurred_on, e.period, e.quantity,
+      `SELECT e.id, e.condition_id, e.event_type, e.occurred_on, e.period, e.quantity,
               e.gross_amount, e.deductions, e.amount, e.note,
               c.currency, s.label AS schedule_label, s.seq AS schedule_seq,
-              s.due_on AS schedule_due_on, s.pay_on AS schedule_pay_on
+              s.due_on AS schedule_due_on, s.pay_on AS schedule_pay_on,
+              s.planned_amount AS schedule_planned
          FROM condition_events e
          JOIN conditions c ON c.id = e.condition_id
          LEFT JOIN condition_schedules s ON s.id = e.schedule_id
@@ -157,6 +237,7 @@ export class DocumentContextRepository {
       const currency = String(row.currency ?? "JPY");
       return {
         id: Number(row.id),
+        conditionId: Number(row.condition_id),
         eventType: String(row.event_type),
         occurredOn: dateStr(row.occurred_on),
         period: str(row.period) ?? str(row.schedule_label),
@@ -166,6 +247,8 @@ export class DocumentContextRepository {
         deductions: toMajor(int(row.deductions), currency),
         amount: toMajor(int(row.amount), currency),
         amountMinor: int(row.amount) ?? 0,
+        /** その回の予定額。実績と違えば「金額変更」として本文の変更履歴に出る。 */
+        plannedAmount: toMajor(int(row.schedule_planned), currency),
         note: str(row.note),
         currency,
         /** その回の予定。支払期日は支払通知書に要る。 */
@@ -187,6 +270,8 @@ export class DocumentContextRepository {
               c.counterparty_id,
               p.name AS party_name, p.name_kana AS party_kana, p.kind AS party_kind,
               p.invoice_no AS party_invoice_no, p.corporate_no AS party_corporate_no,
+              p.address AS party_address, p.phone AS party_phone, p.email AS party_email,
+              p.withholding AS party_withholding,
               w.title AS work_title, w.work_code, wp.name AS part_name
          FROM conditions c
          LEFT JOIN parties p    ON p.id = c.counterparty_id
@@ -229,6 +314,10 @@ export class DocumentContextRepository {
           kind: str(row.party_kind),
           invoiceNo: str(row.party_invoice_no),
           corporateNo: str(row.party_corporate_no),
+          address: str(row.party_address),
+          phone: str(row.party_phone),
+          email: str(row.party_email),
+          withholding: row.party_withholding === true,
           honorific: honorificFor(str(row.party_kind))
         },
         work: { title: str(row.work_title), code: str(row.work_code), part: str(row.part_name) },

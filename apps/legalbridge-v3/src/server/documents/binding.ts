@@ -1,5 +1,6 @@
 import { DomainError } from "../core/errors.js";
-import { resolveLegacyVariable } from "./legacy-variables.js";
+import { resolveLegacyDbField, resolveLegacyVariable } from "./legacy-variables.js";
+import { isFieldRequested, type LegacyFieldMeta, type ShowWhenCondition } from "./legacy-fields.js";
 
 /**
  * テンプレート変数の束縛。
@@ -9,7 +10,7 @@ import { resolveLegacyVariable } from "./legacy-variables.js";
  *   { "name": "VENDOR_NAME", "from": "agreement.counterparty.name" }
  * 条件・合意・当事者・作品から解決できないものだけを manual として手入力に回す。
  */
-export interface TemplateVariable {
+export interface TemplateVariable extends LegacyFieldMeta {
   name: string;
   label?: string;
   /** ドット記法のパス。"manual" は手入力。省略時は manual 扱い。 */
@@ -17,6 +18,13 @@ export interface TemplateVariable {
   required?: boolean;
   /** 手入力の既定値。 */
   default?: unknown;
+  /**
+   * V1 の field_schema が持っていた供給元の宣言（"vendor.bank_name"）。
+   * 移行でそのまま残っているので、from が無くてもこれで引ける。
+   */
+  dbField?: string;
+  /** 項目の型。V1 の field_schema 由来。array は明細で、手入力には回さない。 */
+  type?: string;
 }
 
 export interface BindingResult {
@@ -38,6 +46,12 @@ export function parseVariables(raw: unknown): TemplateVariable[] {
       name,
       label: record.label ? String(record.label) : undefined,
       from: record.from ? String(record.from) : undefined,
+      // V1 の field_schema から来る宣言。読まないと全項目が手入力になる。
+      dbField: record.dbField ? String(record.dbField) : undefined,
+      type: record.type ? String(record.type) : undefined,
+      hidden: record.hidden === true,
+      readonly: record.readonly === true,
+      showWhen: record.showWhen as ShowWhenCondition | ShowWhenCondition[] | undefined,
       required: record.required === true,
       default: record.default
     }];
@@ -60,18 +74,49 @@ export function pick(context: unknown, path: string): unknown {
 const isEmpty = (value: unknown) =>
   value === null || value === undefined || (typeof value === "string" && value.trim() === "");
 
+export interface BindOptions {
+  /** ひな形のキー。どの項目を人に入力させるかの判定に使う。 */
+  templateKey?: string;
+  /**
+   * ひな形ごとの計算ブロック（明細・合計・消費税）。本文の表と合計は
+   * 同じ計算から出さないとずれるので、これは手入力より優先する。
+   */
+  computed?: Record<string, unknown>;
+}
+
 export function bindVariables(
   variables: TemplateVariable[],
   context: Record<string, unknown>,
-  manualInputs: Record<string, unknown> = {}
+  manualInputs: Record<string, unknown> = {},
+  options: BindOptions = {}
 ): BindingResult {
   const values: Record<string, unknown> = {};
   const missing: BindingResult["missing"] = [];
   const derived: string[] = [];
+  const computed = options.computed ?? {};
+  const templateKey = options.templateKey ?? "";
+
+  // 項目の出し分けはお互いの値を見る（showWhen・明細の有無）。
+  // 判定用の一式をここで作る。__ 付きは判定にだけ使う内部の値。
+  const decisionValues: Record<string, unknown> = {
+    ...computed, ...manualInputs,
+    __hasRoyalty: Boolean((context as Record<string, unknown>).royalty),
+    __counterpartyKind:
+      ((context as any).condition?.counterparty?.kind as string | undefined) ?? null
+  };
 
   for (const variable of variables) {
     const manual = manualInputs[variable.name];
     let value: unknown;
+
+    // 計算で決まる値が先。明細から出した合計を手入力で上書きさせない
+    // （本文の表と合計がずれる）。
+    const calculated = computed[variable.name];
+    if (!isEmpty(calculated)) {
+      values[variable.name] = calculated;
+      derived.push(variable.name);
+      continue;
+    }
 
     if (!variable.from || variable.from === "manual") {
       // 供給元の宣言が無い変数は、V1/V2 と同じ名前なら同じ値を入れる。
@@ -80,7 +125,13 @@ export function bindVariables(
       if (!isEmpty(manual)) {
         value = manual;
       } else {
-        const legacy = resolveLegacyVariable(variable.name, context, variable.label);
+        // dbField（V1 の宣言）→ 名前の対応表、の順に見る。宣言のほうが確か。
+        const declared = variable.dbField
+          ? resolveLegacyDbField(variable.dbField, context)
+          : undefined;
+        const legacy = isEmpty(declared)
+          ? resolveLegacyVariable(variable.name, context, variable.label)
+          : declared;
         if (!isEmpty(legacy)) {
           value = legacy;
           derived.push(variable.name);
@@ -101,7 +152,12 @@ export function bindVariables(
     }
 
     if (isEmpty(value)) {
-      if (variable.required) missing.push({ name: variable.name, label: variable.label ?? variable.name });
+      // 人に入力させない項目（計算で埋まる欄・使わない分岐の欄・隠し項目）は
+      // 未入力として数えない。ここを見ていなかったので、検収書は入力しようの
+      // ない項目まで必須として要求していた。
+      if (variable.required && isFieldRequested(templateKey, variable, decisionValues)) {
+        missing.push({ name: variable.name, label: variable.label ?? variable.name });
+      }
       continue;
     }
     values[variable.name] = value;

@@ -325,6 +325,42 @@ SELECT 'task', t.id, m.matter_no, t.title,
 
 GRANT SELECT ON v3.party_bank_accounts TO legalbridge_v3_runtime;
 
+-- ---------------------------------------------------------------------
+-- A-008: 書類に載る連絡先を持たせる（住所・電話）
+--
+-- V1 の vendors は住所と電話を持っていて、契約書・発注書・検収書の本文が
+-- それを差していた（field_schema の dbField: vendor.address ほか）。V3 の
+-- parties にその列が無かったので、住所欄のある書類は必ず手入力になっていた。
+-- staff.phone も同じ理由で足す（担当者連絡先を出す本文がある）。
+--
+-- 値は移行元から埋め戻す。public は読むだけ。
+-- ---------------------------------------------------------------------
+
+ALTER TABLE v3.parties ADD COLUMN IF NOT EXISTS address text;
+ALTER TABLE v3.parties ADD COLUMN IF NOT EXISTS phone   text;
+ALTER TABLE v3.parties ADD COLUMN IF NOT EXISTS email   text;
+ALTER TABLE v3.staff   ADD COLUMN IF NOT EXISTS phone   text;
+
+DO $a008$
+BEGIN
+  IF to_regclass('public.vendors') IS NOT NULL THEN
+    UPDATE v3.parties p
+       SET address = COALESCE(p.address, NULLIF(v.address, '')),
+           phone   = COALESCE(p.phone,   NULLIF(v.phone, '')),
+           email   = COALESCE(p.email,   NULLIF(v.email, ''))
+      FROM public.vendors v
+     WHERE v.id = p.legacy_id
+       AND (p.address IS NULL OR p.phone IS NULL OR p.email IS NULL);
+  END IF;
+  IF to_regclass('public.staff') IS NOT NULL THEN
+    UPDATE v3.staff s
+       SET phone = NULLIF(ps.phone, '')
+      FROM public.staff ps
+     WHERE ps.id = s.legacy_id AND s.phone IS NULL;
+  END IF;
+END
+$a008$;
+
 
 COMMIT;
 
@@ -362,6 +398,21 @@ SELECT template_key, label, category
   FROM v3.document_templates
  WHERE is_active AND COALESCE(btrim(number_prefix), '') = ''
  ORDER BY category NULLS LAST, label;
+
+\echo '--- 書類に載る連絡先（住所・電話・メール）---'
+SELECT
+  count(*) FILTER (WHERE address IS NOT NULL) AS 住所あり,
+  count(*) FILTER (WHERE phone   IS NOT NULL) AS 電話あり,
+  count(*) FILTER (WHERE email   IS NOT NULL) AS メールあり,
+  count(*) AS 取引先件数
+  FROM v3.parties;
+
+\echo '--- 振込先の欠け（銀行名・支店名・種別が空の口座）---'
+SELECT count(*) FILTER (WHERE bank_name IS NULL)    AS 銀行名なし,
+       count(*) FILTER (WHERE branch_name IS NULL)  AS 支店名なし,
+       count(*) FILTER (WHERE account_type IS NULL) AS 種別なし,
+       count(*) AS 口座件数
+  FROM v3.party_bank_accounts;
 
 \echo '--- 口座表の権限（SELECT だけであること） ---'
 SELECT privilege_type FROM information_schema.role_table_grants

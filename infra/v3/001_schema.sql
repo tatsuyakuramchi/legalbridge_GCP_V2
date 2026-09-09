@@ -36,6 +36,10 @@ CREATE TABLE IF NOT EXISTS v3.parties (
   aliases        text[] NOT NULL DEFAULT '{}',   -- 屋号・ペンネーム・旧称
   invoice_no     text,
   corporate_no   text,
+  -- 書類の本文に載る連絡先。契約書の頭書きと請求書の宛先が使う。
+  address        text,
+  phone          text,
+  email          text,
   withholding    boolean NOT NULL DEFAULT false,
   status         text NOT NULL DEFAULT 'active'
                  CHECK (status IN ('active', 'archived', 'merged')),
@@ -81,6 +85,7 @@ CREATE TABLE IF NOT EXISTS v3.staff (
   name          text NOT NULL,
   email         text UNIQUE,
   department    text,
+  phone         text,
   slack_user_id text,
   status        text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'retired')),
   legacy_id     integer

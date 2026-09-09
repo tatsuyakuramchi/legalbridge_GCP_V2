@@ -11,6 +11,7 @@ CREATE TABLE public.vendors (
   id serial PRIMARY KEY, vendor_name text, vendor_code text, entity_type text,
   trade_name text, pen_name text, email text, phone text,
   contact_name text, contact_email text, contact_department text, signer_email text,
+  address text,
   invoice_registration_number text, corporate_number text,
   withholding_enabled boolean, is_active boolean DEFAULT true,
   bank_name text, branch_name text, account_type text, account_number text, account_holder_kana text

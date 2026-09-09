@@ -27,7 +27,7 @@ VALUES ('UNRESOLVED', 'corporate', '（相手先未特定）', 'archived')
 ON CONFLICT (party_code) DO UPDATE SET name = EXCLUDED.name, status = EXCLUDED.status;
 
 INSERT INTO v3.parties (party_code, kind, name, aliases, invoice_no, corporate_no,
-                        withholding, status, legacy_id)
+                        address, phone, email, withholding, status, legacy_id)
 SELECT
   NULLIF(v.vendor_code, ''),
   CASE WHEN v.entity_type IN ('個人', 'individual', 'personal') THEN 'individual'
@@ -37,6 +37,9 @@ SELECT
          WHERE a IS NOT NULL AND a <> v.vendor_name),
   NULLIF(v.invoice_registration_number, ''),
   NULLIF(v.corporate_number, ''),
+  NULLIF(v.address, ''),
+  NULLIF(v.phone, ''),
+  NULLIF(v.email, ''),
   COALESCE(v.withholding_enabled, false),
   CASE WHEN COALESCE(v.is_active, true) THEN 'active' ELSE 'archived' END,
   v.id
@@ -49,6 +52,9 @@ ON CONFLICT (legacy_id) WHERE legacy_id IS NOT NULL DO UPDATE SET
   aliases      = EXCLUDED.aliases,
   invoice_no   = EXCLUDED.invoice_no,
   corporate_no = EXCLUDED.corporate_no,
+  address      = EXCLUDED.address,
+  phone        = EXCLUDED.phone,
+  email        = EXCLUDED.email,
   withholding  = EXCLUDED.withholding,
   status       = EXCLUDED.status,
   updated_at   = now();
@@ -85,12 +91,13 @@ ON CONFLICT (party_id) DO UPDATE SET
 -- ---------------------------------------------------------------------
 -- 担当者
 -- ---------------------------------------------------------------------
-INSERT INTO v3.staff (name, email, department, legacy_id)
-SELECT s.staff_name, NULLIF(s.email,''), NULLIF(s.department,''), s.id
+INSERT INTO v3.staff (name, email, department, phone, legacy_id)
+SELECT s.staff_name, NULLIF(s.email,''), NULLIF(s.department,''), NULLIF(s.phone,''), s.id
   FROM public.staff s
  WHERE COALESCE(NULLIF(s.staff_name,''), '') <> ''
 ON CONFLICT (legacy_id) WHERE legacy_id IS NOT NULL DO UPDATE SET
-  name = EXCLUDED.name, email = EXCLUDED.email, department = EXCLUDED.department;
+  name = EXCLUDED.name, email = EXCLUDED.email, department = EXCLUDED.department,
+  phone = EXCLUDED.phone;
 
 -- ---------------------------------------------------------------------
 -- 作品：works と source_ips を1表に統合（kind で区別）
