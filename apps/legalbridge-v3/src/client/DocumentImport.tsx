@@ -146,7 +146,7 @@ export function DocumentImport(
           やめる
         </button>
         <span className="faint">
-          登録すると番号が振られ、発行済みとして扱われます（下書きにはなりません）
+          登録すると番号が振られ、決定済みとして扱われます（下書きにはなりません）
         </span>
       </div>
     </div>

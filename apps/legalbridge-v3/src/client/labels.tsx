@@ -41,24 +41,41 @@ const CONDITION: Record<string, Entry> = {
   void: { label: "無効", tone: "out" }
 };
 
+/**
+ * 文書の段階。人が見るのは「下書き → 決定 → 送信」の3つ。
+ * 保存上の状態（draft / issued / superseded / void）と、送ったかどうかの記録から
+ * サーバが phase として畳んで返す。画面は phase を出す。
+ * 「発行」という語は使わない。番号が振られて中身が固まることを「決定」と呼ぶ。
+ */
 const DOCUMENT: Record<string, Entry> = {
   draft: { label: "下書き", tone: "warn" },
-  issued: { label: "発行済み", tone: "ok" },
+  // 保存上の状態を直接渡されたときの保険。段階（phase）で出すのが本筋。
+  issued: { label: "決定済み", tone: "accent" },
+  decided: { label: "決定済み", tone: "accent" },
+  sent: { label: "送信済み", tone: "ok" },
   // 「済み」だと何かを終えたように読める。実際は「この版はもう使わない」。
   superseded: { label: "訂正版あり", tone: "" },
   void: { label: "無効", tone: "out" }
 };
 
-/** その状態で何ができるか。画面の帯にそのまま出す。 */
+/** その段階で何ができるか。画面の帯にそのまま出す。 */
 export const DOCUMENT_STATE_NOTE: Record<string, { headline: string; detail: string }> = {
   draft: {
-    headline: "まだ発行していません。中身を直せます。",
-    detail: "発行すると番号が振られ、そこから先は中身を直せなくなります。いまなら何度でも直せます。"
+    headline: "下書きです。まだ決めていません。中身を直せます。",
+    detail: "「決定する」を押すと番号が振られ、そこから先は中身を直せなくなります。いまなら何度でも直せます。"
+  },
+  decided: {
+    headline: "決定済みです。まだ相手には送っていません。",
+    detail: "番号も本文もこのまま残ります。次は「送る」で内容確認のメールか CloudSign へ。"
+      + "直すときは訂正版を作ります。訂正版を決定した瞬間に、この版は退いて「訂正版あり」になります。"
   },
   issued: {
-    headline: "発行済みです。中身は直せません。",
-    detail: "出した記録なので、番号も本文もこのまま残ります。直すときは訂正版を作ります。"
-      + "訂正版を発行した瞬間に、この版は退いて「訂正版あり」になります。"
+    headline: "決定済みです。",
+    detail: "番号も本文もこのまま残ります。直すときは訂正版を作ります。"
+  },
+  sent: {
+    headline: "相手に送りました。",
+    detail: "送った記録が下に残っています。直すときは訂正版を作って、決定してからもう一度送ります。"
   },
   superseded: {
     headline: "訂正版に差し替えられました。",
@@ -66,7 +83,7 @@ export const DOCUMENT_STATE_NOTE: Record<string, { headline: string; detail: str
   },
   void: {
     headline: "無効にしました。",
-    detail: "行は消えず、出した記録として残ります。すでに送付・保存したファイルは取り消せません。"
+    detail: "行は消えず、記録として残ります。すでに送付・保存したファイルは取り消せません。"
   }
 };
 

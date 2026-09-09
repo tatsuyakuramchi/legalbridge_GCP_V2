@@ -234,7 +234,7 @@ export function ConditionEvents(
       {issued && (
         <div className="panel-bd">
           <div className="note ok">
-            文書 <span className="code">{issued}</span> を発行し、実績に結び付けました。
+            文書 <span className="code">{issued}</span> を決定し、実績に結び付けました。
             中身の確認と PDF は「文書」の画面から開けます。
           </div>
         </div>
@@ -265,7 +265,7 @@ export function ConditionEvents(
             <div className="stack" style={{ gap: 8 }}>
               <div className="note warn">
                 このひな形は、条件と実績から決まらない項目を {preview.missing.length} つ要求します。
-                埋めないと発行できません。
+                埋めないと決定できません。
               </div>
               <div className="form-grid">
                 {preview.missing.map((m) => (
@@ -282,14 +282,14 @@ export function ConditionEvents(
 
           <div className="row">
             <button className="btn primary btn-sm" disabled={busy || !templateKey || !filled}
-                    onClick={() => void issueDocument()}>作って発行する</button>
+                    onClick={() => void issueDocument()}>作って決定する</button>
             <button className="btn btn-sm" onClick={() => { setIssuing(null); setPreview(null); }}>
               やめる
             </button>
             <span className="faint">
               {preview
                 ? filled
-                  ? `${preview.derived.length}項目を条件から自動で埋めます。発行すると番号が振られ、あとから中身は変えられません`
+                  ? `${preview.derived.length}項目を条件から自動で埋めます。決定すると番号が振られ、あとから中身は変えられません`
                   : `未入力 ${remaining} 件`
                 : "ひな形の中身を確かめています…"}
             </span>

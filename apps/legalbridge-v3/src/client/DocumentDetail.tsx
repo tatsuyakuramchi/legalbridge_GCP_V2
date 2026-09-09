@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { DOCUMENT_STATE_NOTE, StatusTag } from "./labels.js";
 import { Relations, type EntityKind } from "./Relations.js";
 import { DocumentEvents } from "./DocumentEvents.js";
@@ -22,7 +23,13 @@ export interface DocumentRow {
   supersededById: number | null; supersededByNo: string | null;
   issuedAt: string | null; storageUrl: string | null;
   imported: boolean;
+  /** 人が見る段階。下書き → 決定済み → 送信済み（退いた版・無効はそのまま）。 */
+  phase: "draft" | "decided" | "sent" | "superseded" | "void";
+  sentAt: string | null;
+  sentVia: "gmail" | "cloudsign" | null;
 }
+
+export interface TemplateOption { templateKey: string; label: string; category: string | null }
 
 interface Integrations {
   drive: { documents: boolean; matterFolders: boolean };
@@ -36,9 +43,11 @@ const byNo = (versions: DocumentRow[], id: number) =>
   versions.find((v) => v.id === id)?.documentNo ?? `#${id}`;
 
 export function DocumentDetail(
-  { doc, versions, integrations, busy, onOpen, onChanged, onLinkCondition, openConditions,
-    onEditDraft, onIssueDraft, onReissue, onVoid, onStore, onSend, onSelect }: {
+  { doc, versions, templates, integrations, busy, onOpen, onChanged, onLinkCondition, openConditions,
+    onEditDraft, onIssueDraft, onReissue, onDerive, onVoid, onStore, onSend, onSelect }: {
     doc: DocumentRow;
+    /** 「下敷きに次を作る」で選べるひな形。 */
+    templates: TemplateOption[];
     /** 古い順に並べた版の連鎖。1件だけなら履歴は出さない。 */
     versions: DocumentRow[];
     integrations: Integrations | null;
@@ -48,6 +57,8 @@ export function DocumentDetail(
     onEditDraft: (id: number) => void;
     onIssueDraft: (id: number) => void;
     onReissue: (id: number, no: string | null) => void;
+    /** この文書を下敷きに、別の（または同じ）ひな形で次の下書きを作る。 */
+    onDerive: (id: number, templateKey: string) => void;
     onVoid: (id: number, no: string | null) => void;
     onStore: (id: number) => void;
     onSend: (id: number) => void;
@@ -58,8 +69,13 @@ export function DocumentDetail(
     openConditions?: boolean;
   }
 ) {
-  const note = DOCUMENT_STATE_NOTE[doc.status] ?? { headline: doc.status, detail: "" };
-  const canMail = integrations?.channels.some((c) => c.channel === "gmail" && c.mode !== "off");
+  const note = DOCUMENT_STATE_NOTE[doc.phase] ?? { headline: doc.status, detail: "" };
+  const canSend = integrations?.channels.some((c) =>
+    (c.channel === "gmail" || c.channel === "cloudsign") && c.mode !== "off");
+  // 「下敷きに次を作る」のひな形を選んでいる最中。
+  const [deriving, setDeriving] = useState(false);
+  const [deriveKey, setDeriveKey] = useState("");
+  const pickable = templates.filter((t) => t.category !== "partial");
   // この版を直している最中の下書き。あるあいだは、もう1枚作らせない
   // （発行できるのは1枚だけなので、残りは行き場が無くなる）。
   const pending = versions.find((v) => v.supersedesId === doc.id && v.status === "draft") ?? null;
@@ -71,18 +87,21 @@ export function DocumentDetail(
     <div className="stack">
       <div className="panel">
         <div className="panel-hd">
-          <h2 className="code">{doc.documentNo ?? "（未発行）"}</h2>
+          <h2 className="code">{doc.documentNo ?? "（未決定）"}</h2>
           <span className="tag">{doc.templateLabel ?? "種別なし"}</span>
-          <StatusTag kind="document" value={doc.status} />
+          <StatusTag kind="document" value={doc.phase} />
           {doc.imported && <span className="tag">取込</span>}
         </div>
         <div className="panel-bd stack">
-          <div className={`state ${doc.status}`}>
+          <div className={`state ${doc.phase}`}>
             <span className="mark" />
             <span className="txt">
               <b>{note.headline}</b>
               <span>
                 {note.detail}
+                {doc.phase === "sent" && doc.sentAt && (
+                  <>　最後に送ったのは {day(doc.sentAt)}（{doc.sentVia === "cloudsign" ? "CloudSign" : "メール"}）。</>
+                )}
                 {doc.status === "superseded" && doc.supersededByNo && (
                   <>　現行は <b className="code">{doc.supersededByNo}</b> です。</>
                 )}
@@ -97,7 +116,7 @@ export function DocumentDetail(
                       onClick={() => onEditDraft(doc.id)}>中身を直す</button>
               <button className="btn" disabled={busy}
                       onClick={() => onIssueDraft(doc.id)}>
-                {doc.supersedesId ? "訂正版として発行する" : "発行する"}
+                {doc.supersedesId ? "訂正版として決定する" : "決定する"}
               </button>
               <button className="btn" disabled={busy}
                       onClick={() => onVoid(doc.id, doc.documentNo)}>破棄する</button>
@@ -117,16 +136,20 @@ export function DocumentDetail(
                   ? <button className="btn" disabled={busy}
                             onClick={() => onStore(doc.id)}>Drive に保存</button>
                   : null}
-              {canMail && (
-                <button className="btn" disabled={busy}
-                        onClick={() => onSend(doc.id)}>送付</button>
+              {canSend && (
+                <button className={doc.phase === "decided" ? "btn primary" : "btn"} disabled={busy}
+                        onClick={() => onSend(doc.id)}>送る</button>
               )}
               {!doc.imported && (pending
-                ? <button className="btn primary"
+                ? <button className="btn"
                           onClick={() => onSelect(pending.id)}>訂正版の下書きを開く</button>
-                : <button className="btn primary" disabled={busy}
+                : <button className="btn" disabled={busy}
                           onClick={() => onReissue(doc.id, doc.documentNo)}>訂正版を作る</button>
               )}
+              <button className="btn" disabled={busy}
+                      onClick={() => { setDeriving((v) => !v); setDeriveKey(""); }}>
+                下敷きに次を作る
+              </button>
               <button className="btn" disabled={busy}
                       onClick={() => onVoid(doc.id, doc.documentNo)}>無効にする</button>
             </>)}
@@ -144,13 +167,40 @@ export function DocumentDetail(
             )}
           </div>
 
-          {doc.status === "issued" && !doc.imported && (
+          {/* 下敷きに次を作る。発注書から検収書、契約書から覚書。前の文書は退かない。 */}
+          {deriving && doc.status === "issued" && (
+            <div className="note stack" style={{ gap: 8 }}>
+              <div>
+                <b>この文書を下敷きに、次の書類を作ります。</b>
+                <span className="faint">
+                  　条件明細・案件・手入力を引き継いだ下書きができます。この文書はそのまま残ります
+                  （訂正版とは違い、退きません）。
+                </span>
+              </div>
+              <div className="row" style={{ flexWrap: "wrap" }}>
+                {pickable.map((t) => (
+                  <button key={t.templateKey} type="button" className="chip"
+                          aria-pressed={deriveKey === t.templateKey}
+                          onClick={() => setDeriveKey(t.templateKey)}>{t.label}</button>
+                ))}
+              </div>
+              <div className="row">
+                <button className="btn primary" disabled={busy || !deriveKey}
+                        onClick={() => { onDerive(doc.id, deriveKey); setDeriving(false); }}>
+                  {deriveKey ? `${pickable.find((t) => t.templateKey === deriveKey)?.label} の下書きを作る` : "ひな形を選んでください"}
+                </button>
+                <button className="btn" onClick={() => setDeriving(false)}>やめる</button>
+              </div>
+            </div>
+          )}
+
+          {doc.status === "issued" && !doc.imported && !deriving && (
             <div className="faint">
               {pending
                 ? "この版を直している下書きがあります。まだ有効なのはこの版で、"
-                  + "下書きを発行した瞬間に入れ替わります。下書きを捨ててもこの版は残ります。"
-                : "訂正版を作ると、条件明細も実績もそのまま引き継いだ下書きができます。"
-                  + "直して発行した瞬間に、この版と入れ替わります。先にこの版を無効にする必要はありません。"}
+                  + "下書きを決定した瞬間に入れ替わります。下書きを捨ててもこの版は残ります。"
+                : "直すなら「訂正版を作る」。条件明細も実績も引き継いだ下書きができ、決定した瞬間にこの版と入れ替わります。"
+                  + "次の書類（発注書のあとの検収書など）なら「下敷きに次を作る」。この版はそのまま残ります。"}
             </div>
           )}
 
@@ -171,7 +221,7 @@ export function DocumentDetail(
           {doc.status === "draft" && doc.supersedesId !== null && (
             <div className="faint">
               {byNo(versions, doc.supersedesId)} の訂正版です。
-              発行すると、その版が退いて、結びついている実績もこちらへ移ります。
+              決定すると、その版が退いて、結びついている実績もこちらへ移ります。
               前の版を無効にする操作は要りません。
             </div>
           )}
@@ -192,11 +242,11 @@ export function DocumentDetail(
                   <span className="meta">
                     <span className="row" style={{ gap: 7 }}>
                       <button className="linky code" onClick={() => onSelect(v.id)}>
-                        {v.documentNo ?? "（未発行）"}
+                        {v.documentNo ?? "（未決定）"}
                       </button>
                       {v.id === doc.id
                         ? <span className="tag accent">この版</span>
-                        : <StatusTag kind="document" value={v.status} />}
+                        : <StatusTag kind="document" value={v.phase} />}
                     </span>
                     <span className="faint">{day(v.issuedAt)}</span>
                   </span>
@@ -208,8 +258,8 @@ export function DocumentDetail(
       )}
 
       {/*
-        発行済みの文書だけ。下書きは発行のときに実績を選ぶので、ここで先に
-        結ぶと二重になる。取込文書は発行の経路を通っていないので、ここが
+        決定済みの文書だけ。下書きは決定のときに実績を選ぶので、ここで先に
+        結ぶと二重になる。取込文書は決定の経路を通っていないので、ここが
         唯一の結び先になる。
       */}
       {(doc.status === "issued" || doc.status === "superseded") && (

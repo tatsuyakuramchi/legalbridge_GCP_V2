@@ -165,3 +165,57 @@ test("差し替えでない下書きは、他の文書に触らない", async ()
   assert.ok(!db.queries.some((q) => q.text.includes("UPDATE condition_events SET document_id")),
     "関係のない実績を動かさない");
 });
+
+/** 下敷きにして次を作る。発注書から検収書を起こすときの形。 */
+const deriving = (base: Record<string, unknown>) => new FakeDatabase((text) => {
+  if (text.includes("LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id")) {
+    return [base];
+  }
+  if (text.includes("FROM document_templates t JOIN document_template_versions tv")) {
+    return [{ template_id: 7, version_id: 21, template_key: "inspection_certificate",
+              label: "検収書", category: "inspection", number_prefix: "INS",
+              html_source: "<p>{{X}}</p>", variables: [] }];
+  }
+  if (text.includes("INSERT INTO documents")) return [{ id: 9 }];
+  return undefined;
+});
+
+test("下敷きにして次を作ると、前の文書は退かず、ひな形を変えた下書きができる", async () => {
+  // 発注書（決定済み）から検収書を起こす。発注書はそのまま有効。
+  const db = deriving({ ...doc("issued"), template_key: "purchase_order",
+                        manual_inputs: { inspectorDept: "海外制作チーム" } });
+  const r = await new DocumentIssueService(db)
+    .derive(5, { templateKey: "inspection_certificate" }, "kuramochi");
+
+  assert.equal(r.id, 9);
+  assert.equal(r.baseId, 5);
+  assert.equal(r.templateKey, "inspection_certificate");
+  const created = db.find("INSERT INTO documents")!;
+  assert.equal(created.params[0], 21, "選んだひな形の現行版で作る");
+  assert.match(String(created.params[3]), /海外制作チーム/, "手入力を引き継ぐ");
+  assert.ok(!created.text.includes("supersedes_id"), "訂正版ではないので前の版に繋がない");
+  assert.ok(db.find("INSERT INTO document_conditions"), "条件明細を引き継ぐ");
+  assert.ok(!db.queries.some((q) => q.text.includes("status = 'superseded'")),
+    "前の文書は退かない");
+  const audit = db.find("INSERT INTO audit_events")!;
+  assert.equal(audit.params[1], "document.derive");
+  assert.equal(JSON.parse(String(audit.params[5])).baseDocumentId, 5);
+});
+
+test("ひな形を指定しなければ、同じひな形のもう1枚になる", async () => {
+  const db = deriving({ ...doc("issued"), template_key: "inspection_certificate" });
+  const r = await new DocumentIssueService(db).derive(5, {}, "k");
+  assert.equal(r.templateKey, "inspection_certificate");
+});
+
+test("無効にした文書は下敷きにできない。取込文書はひな形の指定が要る", async () => {
+  await assert.rejects(
+    () => new DocumentIssueService(deriving({ ...doc("void"), template_key: "purchase_order" }))
+      .derive(5, {}, "k"),
+    /無効にした文書は下敷きにできません/);
+  await assert.rejects(
+    () => new DocumentIssueService(deriving({ ...doc("issued", { template_version_id: null }),
+                                              template_key: null }))
+      .derive(5, {}, "k"),
+    /ひな形を選んでください/);
+});

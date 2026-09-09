@@ -9,6 +9,13 @@ import { DocumentDetail, type DocumentRow } from "./DocumentDetail.js";
 interface TemplateRow {
   id: number; templateKey: string; label: string; category: string | null; numberPrefix: string | null;
 }
+
+/** 一覧の絞り込み。人が見る段階（下書き → 決定 → 送信）に、繋ぎ直し用の1つを足す。 */
+const SCOPES = [
+  ["all", "すべて"], ["draft", "下書き"], ["decided", "決定済み"], ["sent", "送信済み"],
+  ["unlinked", "条件明細なし"]
+] as const;
+type Scope = (typeof SCOPES)[number][0];
 interface Integrations {
   drive: { documents: boolean; matterFolders: boolean };
   channels: Array<{ channel: string; mode: "off" | "dry_run" | "live"; configured: boolean }>;
@@ -125,7 +132,7 @@ export function DocumentsWorkspace(
    * 付いていない（V1 が持っていなかった）ので、残りを上から目で追うのではなく、
    * まだ繋がっていないものだけを出して片づけられるようにする。
    */
-  const [scope, setScope] = useState<"all" | "unlinked" | "draft">("all");
+  const [scope, setScope] = useState<Scope>("all");
   // 「つながり」の条件明細の欄を開いた状態で出すか。上の案内から押されたとき。
   const [linkConditions, setLinkConditions] = useState(false);
   /**
@@ -179,7 +186,7 @@ export function DocumentsWorkspace(
         api.get<{ documents: DocumentRow[] }>(`/documents?${new URLSearchParams({
           ...(search.trim() ? { q: search.trim() } : {}),
           ...(scope === "unlinked" ? { unlinked: "1" } : {}),
-          ...(scope === "draft" ? { status: "draft" } : {})
+          ...(scope === "draft" || scope === "decided" || scope === "sent" ? { phase: scope } : {})
         })}`),
         api.get<{ conditions: ConditionSummary[] }>("/conditions"),
         api.get<Integrations>("/integrations")
@@ -425,13 +432,27 @@ export function DocumentsWorkspace(
     const reason = window.prompt(
       `${no ?? "この文書"} の訂正版を作ります。訂正の理由を書いてください。\n` +
       "条件も実績も引き継いだ下書きができます。" +
-      "発行した瞬間にこの版と入れ替わるので、先に無効にする必要はありません。");
+      "決定した瞬間にこの版と入れ替わるので、先に無効にする必要はありません。");
     if (reason === null) return;
     setBusy(true); setError(null);
     try {
       const r = await api.post<{ id: number }>(`/documents/${id}/reissue`, { reason });
       await reload();
       // 作っただけでは直せない。そのまま上のフォームに載せる。
+      await openDraft(r.id);
+    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
+    finally { setBusy(false); }
+  }
+
+  /**
+   * 下敷きにして次を作る。発注書から検収書、契約書から覚書、同じ発注のもう1枚。
+   * 前の文書は退かない。できた下書きをそのままフォームに載せる。
+   */
+  async function derive(id: number, templateKey: string) {
+    setBusy(true); setError(null); setIssued(null);
+    try {
+      const r = await api.post<{ id: number }>(`/documents/${id}/derive`, { templateKey });
+      await reload();
       await openDraft(r.id);
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
     finally { setBusy(false); }
@@ -511,10 +532,10 @@ export function DocumentsWorkspace(
       </header>
 
       {error && <div className="alert">{error}</div>}
-      {issued && <div className="note ok">発行しました：<b className="code">{issued}</b></div>}
+      {issued && <div className="note ok">決定しました：<b className="code">{issued}</b></div>}
       {stored && <div className="note ok">{stored}</div>}
       {integrations && !integrations.drive.documents && (
-        <div className="note">Drive 保存は未設定です（<span className="code">GOOGLE_DRIVE_FOLDER_ID</span>）。文書の作成と発行はそのまま使えます。</div>
+        <div className="note">Drive 保存は未設定です（<span className="code">GOOGLE_DRIVE_FOLDER_ID</span>）。文書の作成と決定はそのまま使えます。</div>
       )}
 
       <div className="stack">
@@ -533,7 +554,7 @@ export function DocumentsWorkspace(
         <div className="stack">
           <div className="panel" ref={form}>
             <div className="panel-hd">
-              <h2>{draft ? "下書きを直して発行する" : "新しく文書を作る"}</h2>
+              <h2>{draft ? "下書きを直して決定する" : "新しく文書を作る"}</h2>
               {!draft && (
                 <button className="btn btn-sm" style={{ marginLeft: "auto" }}
                         onClick={() => { setComposing(false); setRendered(null); }}>
@@ -553,7 +574,7 @@ export function DocumentsWorkspace(
               {draft && (
                 <div className="note">
                   下書きを直しています。ひな形は元の版のまま変えられません。
-                  直して発行すると、この下書きが発行済みになります。
+                  直して決定すると、この下書きが決定済みになります。
                 </div>
               )}
               <label className="field">
@@ -732,7 +753,7 @@ export function DocumentsWorkspace(
                   中身を見る
                 </button>
                 <button className="btn primary" onClick={issue} disabled={busy || !ready}>
-                  {draft ? "直して発行する" : "発行する"}
+                  {draft ? "直して決定する" : "決定する"}
                 </button>
                 {!ready && spec && (
                   <span className="faint">未入力 {remaining} 件</span>
@@ -765,8 +786,7 @@ export function DocumentsWorkspace(
             </div>
             <div className="panel-bd" style={{ paddingBottom: 0 }}>
               <div className="filters">
-                {([["all", "すべて"], ["unlinked", "条件明細なし"],
-                   ["draft", "下書き"]] as const).map(([value, label]) => (
+                {SCOPES.map(([value, label]) => (
                   <button key={value} className="chip" aria-pressed={scope === value}
                           onClick={() => setScope(value)}>{label}</button>
                 ))}
@@ -799,7 +819,7 @@ export function DocumentsWorkspace(
                               }
                             }}>
                           <td className="code">
-                            {d.documentNo ?? "（未発行）"}
+                            {d.documentNo ?? "（未決定）"}
                             {/* 訂正版の下書きは、どの版を直しているのかが分からないと
                                 「（未発行）」の行が2つ並ぶだけになる。 */}
                             {d.supersedesId !== null && (
@@ -814,7 +834,7 @@ export function DocumentsWorkspace(
                           </td>
                           <td><Refs doc={d} onOpen={onOpen} /></td>
                           <td>
-                            <StatusTag kind="document" value={d.status} />
+                            <StatusTag kind="document" value={d.phase} />
                             {/* まだ有効な版に訂正版の下書きが付いている状態。
                                 これを出さないと、似た行が2つある理由が読めない。 */}
                             {d.status === "issued" && d.supersededById !== null && (
@@ -842,10 +862,10 @@ export function DocumentsWorkspace(
                         {open && older.map((o) => (
                           <tr key={o.id} className={`older${o.id === selected ? " sel" : ""}`}
                               tabIndex={0} onClick={() => setSelected(o.id)}>
-                            <td className="code faint">{o.documentNo ?? "（未発行）"}</td>
+                            <td className="code faint">{o.documentNo ?? "（未決定）"}</td>
                             <td className="faint">{o.templateLabel ?? "—"}</td>
                             <td className="faint">同上</td>
-                            <td><StatusTag kind="document" value={o.status} /></td>
+                            <td><StatusTag kind="document" value={o.phase} /></td>
                           </tr>
                         ))}
                       </Fragment>
@@ -861,8 +881,9 @@ export function DocumentsWorkspace(
             </div>
             <div className="panel-bd" style={{ borderTop: "1px solid var(--line)" }}>
               <div className="row" style={{ gap: 16, fontSize: 11.5, color: "var(--muted)" }}>
-                <span><b>下書き</b> まだ発行していない。中身を直せる</span>
-                <span><b>発行済み</b> 出した記録。中身は直せない</span>
+                <span><b>下書き</b> まだ決めていない。中身を直せる</span>
+                <span><b>決定済み</b> 番号が振られた。中身は直せない。次は送る</span>
+                <span><b>送信済み</b> 相手に送った</span>
                 <span><b>訂正版あり</b> 新しい版に差し替わった</span>
               </div>
             </div>
@@ -870,11 +891,13 @@ export function DocumentsWorkspace(
 
           {current && (
             <DocumentDetail
-              doc={current} versions={chainOf(current)} integrations={integrations} busy={busy}
+              doc={current} versions={chainOf(current)} templates={templates}
+              integrations={integrations} busy={busy}
               onOpen={onOpen} onChanged={() => void reload()}
               onEditDraft={(id) => void openDraft(id)}
               onIssueDraft={(id) => void issueDraft(id)}
               onReissue={(id, no) => void reissue(id, no)}
+              onDerive={(id, key) => void derive(id, key)}
               onVoid={(id, no) => void voidDocument(id, no)}
               onStore={(id) => void store(id)}
               onSend={(id) => void send(id)}

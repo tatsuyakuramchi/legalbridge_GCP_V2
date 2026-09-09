@@ -24,7 +24,7 @@ export interface DraftInput {
 }
 
 /** プレビューでの文書番号。発行のときに本物へ置き換わる。 */
-export const PREVIEW_NUMBER = "（発行時に採番）";
+export const PREVIEW_NUMBER = "（決定時に採番）";
 
 export interface PreviewResult {
   html: string;
@@ -400,6 +400,84 @@ export class DocumentIssueService {
                     ...(conditionIds?.length ? { conditionIds } : {}) }
         });
         return { id: newId, supersedesId: documentId };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 下敷きにして次の文書を作る。
+   *
+   * 訂正版（reissue）と違い、前の文書は退かない。発注書を決めたあとに同じ
+   * 条件・同じ手入力で検収書を起こす、契約書から覚書を起こす、といった
+   * 「次の書類」の入口。ひな形を変えられるのがここの要点で、変えないなら
+   * 同じひな形の別の1枚になる（複数回発注するときなど）。
+   *
+   * 引き継ぐのは 条件明細・案件・合意・手入力。実績は引き継がない（次の書類が
+   * どの実績についてかは、作るときに選ぶ）。手入力はひな形が違えば使われない
+   * 項目も混ざるが、同じ名前の項目（担当者・部署など）はそのまま埋まる。
+   */
+  async derive(
+    documentId: number,
+    input: { templateKey?: string | null; conditionIds?: number[] },
+    actor: string
+  ): Promise<{ id: number; baseId: number; templateKey: string }> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const head = await client.query(
+          `SELECT d.id, d.document_no, d.status, d.template_version_id, d.matter_id,
+                  d.agreement_id, d.manual_inputs, t.template_key
+             FROM documents d
+             LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
+             LEFT JOIN document_templates t ON t.id = tv.template_id
+            WHERE d.id = $1`, [documentId]);
+        const row = head.rows[0] as Record<string, any> | undefined;
+        if (!row) throw new DomainError("NOT_FOUND", `文書 ${documentId} が見つかりません`);
+        if (row.status === "void") {
+          throw new DomainError("CONFLICT", "無効にした文書は下敷きにできません");
+        }
+        const templateKey = String(input.templateKey ?? row.template_key ?? "").trim();
+        if (!templateKey) {
+          throw new DomainError("VALIDATION",
+            "ひな形を持たない取込文書を下敷きにするときは、ひな形を選んでください");
+        }
+        // 下敷きと同じひな形でも、版は現行のものを使う（古い版で新しい書類を作らない）。
+        const template = await this.repository.templateSource(client, { templateKey });
+        if (template.category === "partial") {
+          throw new DomainError("VALIDATION",
+            `${templateKey} は他のひな形に差し込む部品で、単独では作れません`);
+        }
+
+        const created = await client.query(
+          `INSERT INTO documents (template_version_id, matter_id, agreement_id, status, manual_inputs)
+           VALUES ($1, $2, $3, 'draft', $4::jsonb) RETURNING id`,
+          [template.templateVersionId, row.matter_id, row.agreement_id,
+           JSON.stringify(row.manual_inputs ?? {})]);
+        const newId = Number((created.rows[0] as { id: number }).id);
+
+        if (input.conditionIds && input.conditionIds.length) {
+          const unique = [...new Set(input.conditionIds.map((n) => Number(n)))];
+          const found = await client.query(
+            "SELECT id FROM conditions WHERE id = ANY($1::bigint[])", [unique]);
+          if (found.rows.length !== unique.length) {
+            const known = new Set((found.rows as Array<{ id: number }>).map((r) => Number(r.id)));
+            throw new DomainError("NOT_FOUND",
+              `条件が見つかりません：${unique.filter((id) => !known.has(id)).join(", ")}`);
+          }
+          await this.assertConditionsIssuable(client, unique);
+          await this.linkConditions(client, newId, unique);
+        } else {
+          await client.query(
+            `INSERT INTO document_conditions (document_id, condition_id, line_no)
+             SELECT $2, condition_id, line_no FROM document_conditions WHERE document_id = $1
+             ON CONFLICT (document_id, condition_id) DO NOTHING`, [documentId, newId]);
+        }
+
+        await recordAudit(client, {
+          actor, action: "document.derive", targetType: "document", targetId: newId,
+          detail: { baseDocumentId: documentId, baseDocumentNo: row.document_no,
+                    templateKey, fromTemplateKey: row.template_key ?? null }
+        });
+        return { id: newId, baseId: documentId, templateKey };
       });
     } catch (error) { throw translate(error); }
   }

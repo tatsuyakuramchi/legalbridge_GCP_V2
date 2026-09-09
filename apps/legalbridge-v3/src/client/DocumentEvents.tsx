@@ -79,7 +79,7 @@ export function DocumentEvents(
   async function unlink(row: EventRow & { conditionId: number }) {
     if (!window.confirm(
       `${row.occurredOn ?? ""} の実績を ${documentNo ?? "この文書"} から外します。`
-      + "\n発行した文書そのものは変わりません。")) return;
+      + "\n決定した文書そのものは変わりません。")) return;
     setBusy(true); setError(null); setNote(null);
     try {
       await api.post(`/conditions/${row.conditionId}/events/unlink-document`,

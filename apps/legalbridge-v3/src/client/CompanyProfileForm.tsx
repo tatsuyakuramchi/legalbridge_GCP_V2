@@ -51,7 +51,7 @@ export function CompanyProfileForm(
         {empty.length > 0 && (
           <div className="note">
             {empty.map((n) => COMPANY_PROFILE_FIELDS.find((f) => f.name === n)?.label).join("・")}
-            {" "}が空です。この項目は書類の本文に出るので、空のまま発行すると相手に渡る紙が欠けます。
+            {" "}が空です。この項目は書類の本文に出るので、空のまま決定すると相手に渡る紙が欠けます。
           </div>
         )}
 
@@ -78,7 +78,7 @@ export function CompanyProfileForm(
           {saved && <span className="faint">保存しました。次に作る書類から反映されます。</span>}
         </div>
         <div className="faint">
-          発行済みの書類は、そのときの値を焼き付けてあるので変わりません。
+          決定済みの書類は、そのときの値を焼き付けてあるので変わりません。
         </div>
       </div>
     </div>

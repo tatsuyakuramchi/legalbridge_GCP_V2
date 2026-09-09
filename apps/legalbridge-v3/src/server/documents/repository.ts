@@ -25,7 +25,22 @@ export interface DocumentSummary {
   supersededByNo: string | null;
   issuedAt: string | null;
   storageUrl: string | null;
+  /**
+   * 人が見る段階。状態（status）は保存の都合で draft / issued / superseded /
+   * void の4つだが、実務は「下書き → 決定 → 送信」で進む。送ったかどうかは
+   * 送信の記録（audit_events）から導くので、ここで畳んで返す。
+   *   draft     … まだ決めていない。中身を直せる
+   *   decided   … 決めた（番号が振られた）。まだ送っていない
+   *   sent      … 相手に送った（確認メールか CloudSign）
+   *   superseded / void … 退いた版・無効
+   */
+  phase: DocumentPhase;
+  /** 最後に送った日時と経路。送っていなければ null。 */
+  sentAt: string | null;
+  sentVia: "gmail" | "cloudsign" | null;
 }
+
+export type DocumentPhase = "draft" | "decided" | "sent" | "superseded" | "void";
 
 export interface DocumentDetail extends DocumentSummary {
   templateVersionId: number | null;
@@ -61,6 +76,7 @@ const LIST_SELECT = `
   m.matter_no,
   -- この版を差し替えた新しい版。参照は新→旧の向きしか無いので反転して読む。
   nx.id AS superseded_by_id, nx.document_no AS superseded_by_no,
+  snd.sent_at, snd.sent_via,
   -- 条件明細は件数ではなく番号で出す。件数だけでは何に紐づくか分からない。
   (SELECT array_agg(json_build_object('id', c.id, 'conditionNo', c.condition_no)
                     ORDER BY dc.line_no)
@@ -83,7 +99,23 @@ const LIST_FROM = `
     SELECT n.id, n.document_no FROM documents n
      WHERE n.supersedes_id = d.id AND n.status <> 'void'
      ORDER BY n.id DESC LIMIT 1
-  ) nx ON true`;
+  ) nx ON true
+  -- 送った記録。送信は audit_events に1本で残しているので、そこから最後の1件を引く。
+  LEFT JOIN LATERAL (
+    SELECT a.occurred_at AS sent_at, split_part(a.action, '.', 1) AS sent_via
+      FROM audit_events a
+     WHERE a.target_type = 'document' AND a.target_id = d.id
+       AND a.action IN ('gmail.send', 'cloudsign.send')
+     ORDER BY a.occurred_at DESC LIMIT 1
+  ) snd ON true`;
+
+/** 状態と送信の有無から、人が見る段階を決める。 */
+export function phaseOf(status: string, sentAt: unknown): DocumentPhase {
+  if (status === "draft") return "draft";
+  if (status === "issued") return sentAt ? "sent" : "decided";
+  if (status === "superseded") return "superseded";
+  return "void";
+}
 
 function mapSummary(row: Record<string, any>): DocumentSummary {
   return {
@@ -104,7 +136,10 @@ function mapSummary(row: Record<string, any>): DocumentSummary {
     supersededById: int(row.superseded_by_id),
     supersededByNo: str(row.superseded_by_no),
     issuedAt: row.issued_at ? new Date(String(row.issued_at)).toISOString() : null,
-    storageUrl: str(row.storage_url)
+    storageUrl: str(row.storage_url),
+    phase: phaseOf(String(row.status), row.sent_at),
+    sentAt: row.sent_at ? new Date(String(row.sent_at)).toISOString() : null,
+    sentVia: row.sent_via === "gmail" || row.sent_via === "cloudsign" ? row.sent_via : null
   };
 }
 
@@ -120,6 +155,8 @@ export class DocumentRepository {
   async list(query: {
     keyword?: string; status?: string; matterId?: number;
     unlinked?: boolean; limit?: number;
+    /** 人が見る段階で絞る。decided は「決めたがまだ送っていない」。 */
+    phase?: DocumentPhase;
   } = {}) {
     const where: string[] = [];
     const params: unknown[] = [];
@@ -130,6 +167,11 @@ export class DocumentRepository {
                    OR COALESCE(v.counterparty,'') ILIKE $${i})`);
     }
     if (query.status) { params.push(query.status); where.push(`d.status = $${params.length}`); }
+    if (query.phase === "draft") where.push("d.status = 'draft'");
+    if (query.phase === "decided") where.push("d.status = 'issued' AND snd.sent_at IS NULL");
+    if (query.phase === "sent") where.push("d.status = 'issued' AND snd.sent_at IS NOT NULL");
+    if (query.phase === "superseded") where.push("d.status = 'superseded'");
+    if (query.phase === "void") where.push("d.status = 'void'");
     if (query.matterId) { params.push(query.matterId); where.push(`d.matter_id = $${params.length}`); }
     if (query.unlinked) {
       where.push(`NOT EXISTS (SELECT 1 FROM document_conditions dc WHERE dc.document_id = d.id)`);

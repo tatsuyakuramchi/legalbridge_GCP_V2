@@ -388,6 +388,20 @@ export function createRoutes(database: Transactable) {
         Number(req.params.id), reason, actor(res), conditionIds));
     }));
 
+  /**
+   * 下敷きにして次を作る。発注書から検収書、契約書から覚書、同じ発注のもう1枚。
+   * 前の文書は退かない（訂正版とは別の入口）。
+   */
+  const deriveSchema = z.object({
+    templateKey: z.string().trim().min(1).max(60).nullable().optional(),
+    conditionIds: z.array(z.coerce.number().int().positive()).max(200).optional()
+  });
+  router.post("/documents/:id/derive", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = deriveSchema.parse(req.body ?? {});
+      res.status(201).json(await issues.derive(Number(req.params.id), input, actor(res)));
+    }));
+
   // 日次の点検。画面を開かないと気づけないものを決まった時刻に洗い出す。
   // Cloud Scheduler から叩く。通知はゲートを通すので、off なら送らない。
   const jobSchema = z.object({
@@ -1068,7 +1082,9 @@ export function createRoutes(database: Transactable) {
       status: req.query.status ? String(req.query.status) : undefined,
       matterId: req.query.matterId ? Number(req.query.matterId) : undefined,
       // 条件明細が繋がっていないものだけ。移行文書の繋ぎ直しの入口。
-      unlinked: String(req.query.unlinked ?? "") === "1"
+      unlinked: String(req.query.unlinked ?? "") === "1",
+      phase: (["draft", "decided", "sent", "superseded", "void"] as const)
+        .find((p) => p === String(req.query.phase ?? ""))
     }) });
   }));
 

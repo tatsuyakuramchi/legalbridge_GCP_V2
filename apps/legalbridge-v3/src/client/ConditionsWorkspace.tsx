@@ -343,7 +343,7 @@ export function ConditionsWorkspace(
                 <div className="panel-hd"><h2>この条件から出た文書</h2></div>
                 <div className="tablewrap">
                   <table>
-                    <thead><tr><th>文書番号</th><th>状態</th><th>発行</th></tr></thead>
+                    <thead><tr><th>文書番号</th><th>状態</th><th>決定日</th></tr></thead>
                     <tbody>
                       {detail.documents.map((d) => (
                         <tr key={d.id}>
@@ -390,8 +390,8 @@ export function ConditionsWorkspace(
 
                     {stmtDone && (
                       <div className="note ok">
-                        計算書 <span className="code">{stmtDone}</span> を発行しました。
-                        金額は発行のときに計算し直しています（試算の値は使いません）。
+                        計算書 <span className="code">{stmtDone}</span> を決定しました。
+                        金額は決定のときに計算し直しています（試算の値は使いません）。
                       </div>
                     )}
 
@@ -422,7 +422,7 @@ export function ConditionsWorkspace(
                         <div className="row">
                           <button className="btn primary btn-sm"
                                   disabled={stmtBusy || !stmtTemplate || !stmtPeriod.trim()}
-                                  onClick={() => void issueStatement()}>発行して確定する</button>
+                                  onClick={() => void issueStatement()}>決定して確定する</button>
                           <button className="btn btn-sm" onClick={() => setStmtOpen(false)}>やめる</button>
                           <span className="faint">実績が1件立ち、AGの消化もここで進みます</span>
                         </div>
