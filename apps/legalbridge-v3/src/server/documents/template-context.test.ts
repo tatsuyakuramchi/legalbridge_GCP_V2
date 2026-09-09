@@ -249,3 +249,22 @@ test("予定明細の無い分割納品でも、発注総額は条件の定額�
   assert.equal(out.pendingAmountStr, "500,000", "未検収額が 0 にならない");
   assert.equal(out.inspectedPct, 50);
 });
+
+test("検収書の行は、その条件から出た発注書の番号を持つ（条件をまたいでも行ごとに正しい）", () => {
+  const context = ctx({
+    conditions: [{ ...condition(), id: 1, conditionNo: "CL-1" }, { ...condition(), id: 2, conditionNo: "CL-2", name: "実費" }],
+    related: [
+      { id: 10, conditionId: 1, documentNo: "ARC-PO-2026-0031", templateKey: "purchase_order" },
+      { id: 11, conditionId: 2, documentNo: "ARC-PO-2026-0033", templateKey: "purchase_order" },
+      { id: 12, conditionId: 1, documentNo: "ARC-INS-2026-0001", templateKey: "inspection_certificate" }
+    ],
+    events: [
+      { id: 9, conditionId: 1, occurredOn: "2026-08-31", amount: 100000, plannedAmount: null, quantity: null, schedule: null },
+      { id: 10, conditionId: 2, occurredOn: "2026-09-05", amount: 12000, plannedAmount: null, quantity: null, schedule: null }
+    ]
+  });
+  const lines = deliveryLinesFrom(context) as Array<Record<string, any>>;
+  assert.equal(lines[0].order_no, "ARC-PO-2026-0031");
+  assert.equal(lines[1].order_no, "ARC-PO-2026-0033");
+  assert.equal(lines[1].condition_no, "CL-2");
+});

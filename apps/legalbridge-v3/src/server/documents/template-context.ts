@@ -51,6 +51,18 @@ const ownershipOf = (condition: Ctx) =>
 /** 仕様・成果物。専用の欄があればそれ、無ければ備考（以前はこれが仕様代わりだった）。 */
 const specOf = (condition: Ctx) => condition?.spec ?? condition?.notes ?? "";
 
+/**
+ * その条件から出ている発注書の番号。検収書の行に「発注番号」として出す。
+ * 条件をまたぐ検収書では行ごとに違う番号になる。
+ */
+function orderNoFor(context: Ctx, conditionId: unknown): string | null {
+  const related = (context.related ?? []) as Ctx[];
+  const mine = related.filter((d) => Number(d.conditionId) === Number(conditionId)
+    && (d.templateKey === "purchase_order" || d.templateKey === "intl_purchase_order"));
+  const nos = [...new Set(mine.map((d) => String(d.documentNo ?? "")).filter(Boolean))];
+  return nos.length ? nos.join("・") : null;
+}
+
 /** 相手先が「1件の条件」に決まるときだけ、条件から明細を組める。 */
 const singleCondition = (c: Ctx) => (c.conditions?.length === 1 ? c.conditions[0] : null);
 
@@ -73,6 +85,9 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
         spec: condition.spec ?? condition.notes ?? event.note ?? "",
         description: condition.spec ?? condition.notes ?? event.note ?? "",
         deliverable_ownership: ownershipOf(condition),
+        // この行の元になった発注書。条件をまたぐ検収書で行ごとに違う。
+        order_no: orderNoFor(context, condition.id),
+        condition_no: condition.conditionNo ?? null,
         // 名前は本番のひな形が差しているものに合わせる。inspected_quantity と
         // paid_date は検収書の本文が直接読む列で、別名では出ない。
         quantity: event.quantity ?? null,
@@ -97,6 +112,8 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
     spec: specOf(condition),
     description: specOf(condition),
     deliverable_ownership: ownershipOf(condition),
+    order_no: orderNoFor(context, condition.id),
+    condition_no: condition.conditionNo ?? null,
     quantity: null,
     inspected_quantity: null,
     delivery_date: condition.termEnd ?? null,

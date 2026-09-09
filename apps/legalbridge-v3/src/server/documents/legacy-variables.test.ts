@@ -152,3 +152,14 @@ test("値が無ければ、当たっても手入力に回す", () => {
   // 案件を選んでいない＝担当者が居ないときは、検収者を勝手に埋めない。
   assert.equal(resolveLegacyVariable("検収者氏名", { condition: { name: "x" } }), undefined);
 });
+
+test("見出しの発注番号は、条件をまたぐと重複なく「・」で並ぶ", () => {
+  const context = {
+    related: [
+      { conditionId: 1, documentNo: "ARC-PO-2026-0031", templateKey: "purchase_order" },
+      { conditionId: 2, documentNo: "ARC-PO-2026-0033", templateKey: "purchase_order" },
+      { conditionId: 3, documentNo: "ARC-PO-2026-0031", templateKey: "purchase_order" }
+    ]
+  } as any;
+  assert.equal(resolveLegacyVariable("parent_po_number", context), "ARC-PO-2026-0031・ARC-PO-2026-0033");
+});

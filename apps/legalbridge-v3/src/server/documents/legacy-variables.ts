@@ -208,9 +208,16 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown }> = [
 ];
 
 /** 同じ条件から出ている、その種別のいちばん新しい書類の番号。 */
-const relatedNo = (c: Ctx, templateKey: string): string | undefined =>
-  ((c.related ?? []) as Array<Record<string, any>>)
-    .find((d) => d.templateKey === templateKey)?.documentNo ?? undefined;
+/**
+ * 同じ条件から出ている書類の番号。条件をまたぐ検収書では発注書が複数あるので、
+ * 番号を重複なく「・」で並べる（見出しの「発注番号」に全部出す）。
+ */
+const relatedNo = (c: Ctx, templateKey: string): string | undefined => {
+  const nos = [...new Set(((c.related ?? []) as Array<Record<string, any>>)
+    .filter((d) => d.templateKey === templateKey && d.documentNo)
+    .map((d) => String(d.documentNo)))];
+  return nos.length ? nos.join("・") : undefined;
+};
 
 const contact = (c: Ctx, role: string) =>
   ((c.contacts ?? []) as Array<Record<string, any>>).find((x) => x.role === role) ?? null;

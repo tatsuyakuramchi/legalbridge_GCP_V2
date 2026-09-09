@@ -226,18 +226,24 @@ export class DocumentContextRepository {
    * 同じ条件から出ている書類。種別ごとに新しいものを1件。
    * 検収書が「どの発注に対する検収か」を書けるのは、これが読めるときだけ。
    */
+  /**
+   * 同じ条件から出ている書類。条件ごと・ひな形ごとに最新の1件。
+   * 検収書は条件をまたいで1枚にできるので、行ごとにその条件の発注番号を
+   * 出せるよう、どの条件の書類かを持たせる。
+   */
   private async relatedDocuments(client: Queryable, conditionIds: number[]) {
     const r = await client.query(
-      `SELECT DISTINCT ON (t.template_key)
-              d.id, d.document_no, d.issued_at, t.template_key
+      `SELECT DISTINCT ON (dc.condition_id, t.template_key)
+              d.id, d.document_no, d.issued_at, t.template_key, dc.condition_id
          FROM document_conditions dc
          JOIN documents d ON d.id = dc.document_id
          JOIN document_template_versions tv ON tv.id = d.template_version_id
          JOIN document_templates t ON t.id = tv.template_id
         WHERE dc.condition_id = ANY($1::bigint[]) AND d.status = 'issued'
-        ORDER BY t.template_key, d.id DESC`, [conditionIds]);
+        ORDER BY dc.condition_id, t.template_key, d.id DESC`, [conditionIds]);
     return (r.rows as Array<Record<string, any>>).map((row) => ({
       id: Number(row.id),
+      conditionId: Number(row.condition_id),
       documentNo: str(row.document_no),
       templateKey: str(row.template_key),
       issuedAt: row.issued_at ? new Date(String(row.issued_at)).toISOString() : null
