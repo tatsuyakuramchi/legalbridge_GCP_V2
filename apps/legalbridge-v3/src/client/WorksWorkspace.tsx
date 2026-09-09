@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ListSearch, useDebounced } from "./ListTools.js";
 import type { ConditionSummary, RightsEnvelope } from "../server/core/model.js";
 import { api, ApiError } from "./api.js";
+import { Relations, type EntityKind } from "./Relations.js";
 import { CreateForm, int, text } from "./CreateForm.js";
 
 interface WorkRow { id: number; workCode: string | null; title: string; kind: string; status: string }
@@ -12,7 +13,11 @@ const DIMENSION_LABEL: Record<string, string> = {
 };
 
 export function WorksWorkspace(
-  { onOpenCondition, initialId }: { onOpenCondition: (id: number) => void; initialId?: number }
+  { onOpenCondition, initialId, onOpen }: {
+    onOpenCondition: (id: number) => void;
+    initialId?: number;
+    onOpen?: (kind: EntityKind, id: number) => void;
+  }
 ) {
   const [works, setWorks] = useState<WorkRow[]>([]);
   const [selected, setSelected] = useState<number | undefined>(initialId);
@@ -260,6 +265,9 @@ export function WorksWorkspace(
               </div>
             </div>
           </div>
+
+          {/* 作品からも条件明細へ辿れる。付け外しもここからできる。 */}
+          {selected && <Relations kind="work" id={selected} onOpen={onOpen} />}
         </div>
       )}
     </section>

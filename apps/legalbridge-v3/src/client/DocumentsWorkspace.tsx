@@ -3,6 +3,7 @@ import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
 import { StatusTag } from "./labels.js";
 import type { ConditionSummary } from "../server/core/model.js";
 import { api, ApiError, money } from "./api.js";
+import { Relations, type EntityKind } from "./Relations.js";
 
 interface TemplateRow {
   id: number; templateKey: string; label: string; category: string | null; numberPrefix: string | null;
@@ -44,7 +45,10 @@ function kindFor(name: string, label: string): Candidate["kind"] | null {
 }
 
 export function DocumentsWorkspace(
-  { start }: { start?: { conditionId: number; eventIds: number[] } } = {}
+  { start, onOpen }: {
+    start?: { conditionId: number; eventIds: number[] };
+    onOpen?: (kind: EntityKind, id: number) => void;
+  } = {}
 ) {
   const [templates, setTemplates] = useState<TemplateRow[]>([]);
   const [documents, setDocuments] = useState<DocumentRow[]>([]);
@@ -66,6 +70,8 @@ export function DocumentsWorkspace(
   const [rendered, setRendered] = useState<{ html: string; templateLabel: string } | null>(null);
   /** 直している下書き。作り直した文書はここに載せて、直してから発行する。 */
   const [draft, setDraft] = useState<{ id: number; no: string | null } | null>(null);
+  /** つながりを見ている文書。案件・条件・契約への紐付けはここから直せる。 */
+  const [inspect, setInspect] = useState<{ id: number; no: string | null } | null>(null);
   const [issued, setIssued] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -380,19 +386,22 @@ export function DocumentsWorkspace(
 
               <div className="stack" style={{ gap: 6 }}>
                 <div className="row">
-                  <span className="faint">この文書がどの取引のものか（条件を呼び出す）</span>
+                  <span className="faint">
+                    この文書に載せる条件明細（契約の中の行）を選ぶ
+                  </span>
                   <span className="faint" style={{ marginLeft: "auto" }}>
                     {picked.length ? `${picked.length} 件を選択中` : "選ばなくても作れます"}
                   </span>
                 </div>
-                <input value={condSearch} placeholder="条件番号・名称・相手先で絞る"
+                <input value={condSearch} placeholder="条件番号・名称・相手先・契約で絞る"
                        onChange={(e) => setCondSearch(e.target.value)} />
                 <div className="picker">
                   {conditions
                     .filter((c) => {
                       const q = condSearch.trim().toLowerCase();
                       if (!q) return picked.includes(c.id) || conditions.indexOf(c) < 20;
-                      return [c.conditionNo, c.name, c.counterparty?.name]
+                      return [c.conditionNo, c.name, c.counterparty?.name,
+                              c.agreement?.title, c.agreement?.agreementNo]
                         .some((v) => String(v ?? "").toLowerCase().includes(q));
                     })
                     .map((c) => (
@@ -406,6 +415,10 @@ export function DocumentsWorkspace(
                       <span className="code">{c.conditionNo ?? `#${c.id}`}</span>
                       <span>{c.name}</span>
                       <span className="faint">{c.counterparty?.name ?? ""}</span>
+                      {/* どの契約の明細かが分かると、選び間違いが減る。 */}
+                      <span className="faint" style={{ marginLeft: "auto" }}>
+                        {c.agreement ? c.agreement.title : "契約なし"}
+                      </span>
                     </label>
                   ))}
                 </div>
@@ -560,7 +573,7 @@ export function DocumentsWorkspace(
           <ListCount shown={documents.length} keyword={search} onClear={() => setKeyword("")} />
           <div className="tablewrap">
             <table>
-              <thead><tr><th>文書番号</th><th>種別</th><th>相手先</th><th className="num">条件</th><th>状態</th><th></th></tr></thead>
+              <thead><tr><th>文書番号</th><th>種別</th><th>相手先</th><th className="num">条件明細</th><th>状態</th><th></th><th></th></tr></thead>
               <tbody>
                 {documents.map((d) => (
                   <tr key={d.id}>
@@ -572,6 +585,16 @@ export function DocumentsWorkspace(
                     <td>{d.counterparty ?? "—"}</td>
                     <td className="num">{d.conditionCount}</td>
                     <td><StatusTag kind="document" value={d.status} /></td>
+                    <td>
+                      {/* どの案件・どの条件の書類かは、書類の側からも直せなければ
+                          ならない。作成のときにしか決められないと、あとから
+                          案件に付け替えるだけのために作り直すことになる。 */}
+                      <button className="btn btn-sm" disabled={busy}
+                              onClick={() => setInspect(
+                                inspect?.id === d.id ? null : { id: d.id, no: d.documentNo })}>
+                        {inspect?.id === d.id ? "閉じる" : "つながり"}
+                      </button>
+                    </td>
                     <td>
                       {d.status === "issued" && (
                         <span className="row">
@@ -619,7 +642,7 @@ export function DocumentsWorkspace(
                   </tr>
                 ))}
                 {!documents.length && (
-                  <tr><td colSpan={6} className="faint">
+                  <tr><td colSpan={7} className="faint">
                     {search.trim() ? `「${search}」に一致する文書はありません` : "文書がありません"}
                   </td></tr>
                 )}
@@ -627,6 +650,17 @@ export function DocumentsWorkspace(
             </table>
           </div>
         </div>
+
+        {inspect && (
+          <div className="stack">
+            <div className="note">
+              <b className="code">{inspect.no ?? `#${inspect.id}`}</b> のつながりです。
+              案件・条件明細・契約への紐付けはここから直せます。
+            </div>
+            <Relations kind="document" id={inspect.id} onOpen={onOpen}
+              onChanged={() => void reload()} />
+          </div>
+        )}
       </div>
     </section>
   );

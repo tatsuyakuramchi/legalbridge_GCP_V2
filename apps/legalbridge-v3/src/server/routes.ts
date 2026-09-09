@@ -10,6 +10,8 @@ import { ConditionScheduleService, TRIGGER_KINDS, EVENT_TYPE_BY_TRIGGER,
          generateLines } from "./conditions/schedule-service.js";
 import { MatterWriteService } from "./matters/write-service.js";
 import { MatterLinkService, CONDITION_KINDS_BY_MATTER } from "./matters/link-service.js";
+import { LinkService } from "./links/service.js";
+import { RELATIONS, type EntityKind } from "./links/relations.js";
 import { DOCUMENT_STYLES } from "./matters/flow.js";
 import { WorkWriteService } from "./works/write-service.js";
 import { PartyWriteService } from "./parties/write-service.js";
@@ -87,6 +89,7 @@ export function createRoutes(database: Transactable) {
   const parties = new PartyRepository(database);
   const matterWrites = new MatterWriteService(database);
   const matterLinks = new MatterLinkService(database);
+  const links = new LinkService(database);
   const workWrites = new WorkWriteService(database);
   const partyWrites = new PartyWriteService(database);
   const partyMerge = new PartyMergeService(database);
@@ -120,6 +123,106 @@ export function createRoutes(database: Transactable) {
   const actor = (res: Response) => res.locals.currentUser?.email ?? "unknown";
 
   // ---- 案件（制御レイヤー） ----
+  // ---- 関連（画面と画面をつなぐハブ）----
+  //
+  // どの画面からでも同じ関連を読み書きできるようにする。案件から条件を
+  // 繋げるのに条件から案件を繋げない、という片側だけの穴を塞ぐための1本。
+  const ENTITY_KINDS = Object.keys(RELATIONS) as EntityKind[];
+  const entityKind = (value: string): EntityKind => {
+    if (!ENTITY_KINDS.includes(value as EntityKind)) {
+      throw new DomainError("NOT_FOUND", `${value} という種類はありません`);
+    }
+    return value as EntityKind;
+  };
+
+  router.get("/links/:kind/:id", asyncRoute(async (req, res) => {
+    res.json({ relations: await links.view(entityKind(String(req.params.kind)), Number(req.params.id)) });
+  }));
+
+  router.get("/links/:kind/:id/:relation/candidates", asyncRoute(async (req, res) => {
+    res.json({ candidates: await links.candidates(
+      entityKind(String(req.params.kind)), Number(req.params.id), String(req.params.relation),
+      String(req.query.q ?? "")) });
+  }));
+
+  const attachLinkSchema = z.object({ targetId: z.coerce.number().int().positive() });
+  router.post("/links/:kind/:id/:relation",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { targetId } = attachLinkSchema.parse(req.body ?? {});
+      res.json(await links.attach(entityKind(String(req.params.kind)), Number(req.params.id),
+        String(req.params.relation), targetId, actor(res)));
+    }));
+
+  router.delete("/links/:kind/:id/:relation/:targetId",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await links.detach(entityKind(String(req.params.kind)), Number(req.params.id),
+        String(req.params.relation), Number(req.params.targetId), actor(res)));
+    }));
+
+  // ---- 契約（合意）----
+  //
+  // 条件は契約の明細であって、それ自体が契約書ではない。器である契約に
+  // 画面が無かったので、条件が独立した書類のように見えていた。
+  router.get("/agreements", asyncRoute(async (req, res) => {
+    const q = String(req.query.q ?? "").trim();
+    const r = await database.query(
+      `SELECT a.id, a.agreement_no, a.title, a.direction, a.status,
+              a.executed_on, a.effective_on, a.expires_on,
+              p.id AS party_id, p.name AS party_name,
+              (SELECT count(*) FROM conditions c WHERE c.agreement_id = a.id)::int AS condition_count,
+              (SELECT count(*) FROM documents d WHERE d.agreement_id = a.id)::int AS document_count,
+              (SELECT COALESCE(sum(c.flat_amount), 0) FROM conditions c
+                WHERE c.agreement_id = a.id AND c.status = 'active')::bigint AS total_flat
+         FROM agreements a JOIN parties p ON p.id = a.counterparty_id
+        WHERE ($1 = '' OR a.title ILIKE $1 OR COALESCE(a.agreement_no,'') ILIKE $1
+               OR p.name ILIKE $1)
+        ORDER BY a.id DESC LIMIT 200`, [q ? `%${q}%` : ""]);
+    res.json({ agreements: (r.rows as Array<Record<string, any>>).map(mapAgreement) });
+  }));
+
+  router.get("/agreements/:id", asyncRoute(async (req, res) => {
+    const id = Number(req.params.id);
+    const head = await database.query(
+      `SELECT a.id, a.agreement_no, a.title, a.direction, a.status,
+              a.executed_on, a.effective_on, a.expires_on, a.auto_renewal,
+              a.renewal_notice_months, a.source_url,
+              p.id AS party_id, p.name AS party_name,
+              0 AS condition_count, 0 AS document_count, 0 AS total_flat
+         FROM agreements a JOIN parties p ON p.id = a.counterparty_id
+        WHERE a.id = $1`, [id]);
+    const row = head.rows[0] as Record<string, any> | undefined;
+    if (!row) return res.status(404).json({ error: "契約が見つかりません" });
+    // 明細（条件）はこの契約の中身。まとめて出す。
+    const lines = await database.query(
+      `SELECT c.id, c.condition_no, c.name, c.kind, c.status, c.direction, c.currency,
+              c.pricing_model, c.rate_ppm, c.flat_amount, c.mg_amount, c.ag_amount,
+              c.term_start, c.term_end, c.effective_from
+         FROM conditions c WHERE c.agreement_id = $1
+        ORDER BY c.id`, [id]);
+    res.json({
+      agreement: {
+        ...mapAgreement(row),
+        autoRenewal: row.auto_renewal === true,
+        renewalNoticeMonths: row.renewal_notice_months ?? null,
+        sourceUrl: row.source_url ?? null
+      },
+      conditions: (lines.rows as Array<Record<string, any>>).map((c) => ({
+        id: Number(c.id), conditionNo: c.condition_no ?? null, name: String(c.name),
+        kind: String(c.kind), status: String(c.status), direction: String(c.direction),
+        currency: String(c.currency), pricingModel: String(c.pricing_model),
+        ratePct: c.rate_ppm === null ? null : Number(c.rate_ppm) / 10000,
+        flatAmount: c.flat_amount === null ? null : Number(c.flat_amount),
+        mgAmount: c.mg_amount === null ? null : Number(c.mg_amount),
+        agAmount: c.ag_amount === null ? null : Number(c.ag_amount),
+        termStart: c.term_start ? String(c.term_start).slice(0, 10) : null,
+        termEnd: c.term_end ? String(c.term_end).slice(0, 10) : null,
+        effectiveFrom: c.effective_from ? String(c.effective_from).slice(0, 10) : null
+      }))
+    });
+  }));
+
   router.get("/matters", asyncRoute(async (req, res) => {
     const kind = req.query.kind as "work" | "outsourcing" | "single" | undefined;
     res.json({ matters: await matters.list({
@@ -1614,6 +1717,24 @@ export function errorHandler(error: unknown, _req: Request, res: Response, next:
  * 試算の結果を、書類に載せる形にする。
  * 主単位（円）の数値で渡す。テンプレートは表示用の値を使うため。
  */
+/** 契約（合意）の一覧・詳細で共通の形。 */
+function mapAgreement(row: Record<string, any>) {
+  return {
+    id: Number(row.id),
+    agreementNo: row.agreement_no ?? null,
+    title: String(row.title),
+    direction: String(row.direction) as "in" | "out",
+    status: String(row.status),
+    executedOn: row.executed_on ? String(row.executed_on).slice(0, 10) : null,
+    effectiveOn: row.effective_on ? String(row.effective_on).slice(0, 10) : null,
+    expiresOn: row.expires_on ? String(row.expires_on).slice(0, 10) : null,
+    counterparty: { id: Number(row.party_id), name: String(row.party_name) },
+    conditionCount: Number(row.condition_count ?? 0),
+    documentCount: Number(row.document_count ?? 0),
+    totalFlat: Number(row.total_flat ?? 0)
+  };
+}
+
 function royaltyForDocument(
   preview: { fee: Record<string, any>; payment: Record<string, any>; agConsumedBefore: number },
   reported: Record<string, any>

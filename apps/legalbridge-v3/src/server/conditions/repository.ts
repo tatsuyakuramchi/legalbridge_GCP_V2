@@ -10,12 +10,15 @@ const SUMMARY_COLUMNS = `
   c.rate_ppm, c.flat_amount, c.unit_amount, c.mg_amount, c.ag_amount, c.term_start, c.term_end,
   c.status, c.effective_from,
   p.id AS party_id, p.name AS party_name, p.kind AS party_kind,
-  w.id AS work_id, w.work_code, w.title AS work_title`;
+  w.id AS work_id, w.work_code, w.title AS work_title,
+  -- 条件は契約の明細。どの契約の行かは一覧でも見えないと、独立した書類に見える。
+  ag.id AS agreement_id, ag.agreement_no, ag.title AS agreement_title`;
 
 const SUMMARY_JOINS = `
   FROM conditions c
   LEFT JOIN parties p ON p.id = c.counterparty_id
-  LEFT JOIN works   w ON w.id = c.work_id`;
+  LEFT JOIN works   w ON w.id = c.work_id
+  LEFT JOIN agreements ag ON ag.id = c.agreement_id`;
 
 function mapSummary(row: Record<string, any>): ConditionSummary {
   return {
@@ -29,6 +32,10 @@ function mapSummary(row: Record<string, any>): ConditionSummary {
       : null,
     work: row.work_id
       ? { id: Number(row.work_id), workCode: str(row.work_code), title: String(row.work_title ?? "") }
+      : null,
+    agreement: row.agreement_id
+      ? { id: Number(row.agreement_id), agreementNo: str(row.agreement_no),
+          title: String(row.agreement_title ?? "") }
       : null,
     currency: String(row.currency ?? "JPY"),
     pricingModel: row.pricing_model,
@@ -96,10 +103,9 @@ export class ConditionRepository {
       `SELECT ${SUMMARY_COLUMNS},
               c.agreement_id, c.parent_id, c.work_part_id, c.exclusivity, c.sublicensable,
               c.tax_category, c.payment_terms, c.cycle, c.notes,
-              ag.title AS agreement_title, pc.condition_no AS parent_condition_no,
+              pc.condition_no AS parent_condition_no,
               wp.name AS work_part_name
          ${SUMMARY_JOINS}
-         LEFT JOIN agreements ag ON ag.id = c.agreement_id
          LEFT JOIN conditions pc ON pc.id = c.parent_id
          LEFT JOIN work_parts wp ON wp.id = c.work_part_id
         WHERE c.id = $1`,

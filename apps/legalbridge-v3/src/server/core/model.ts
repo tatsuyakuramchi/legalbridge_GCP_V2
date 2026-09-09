@@ -25,6 +25,8 @@ export interface ConditionSummary {
   name: string;
   counterparty: PartyRef | null;
   work: WorkRef | null;
+  /** 載っている契約。条件は契約の明細であって、それ自体が契約書ではない。 */
+  agreement: { id: number; agreementNo: string | null; title: string } | null;
   currency: string;
   pricingModel: PricingModel;
   /** 百万分率。表示は ratePpm / 10000 で % になる。 */

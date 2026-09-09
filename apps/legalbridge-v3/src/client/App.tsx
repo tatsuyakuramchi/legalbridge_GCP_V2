@@ -3,6 +3,8 @@ import { api } from "./api.js";
 import { GlobalSearch, type SearchHit } from "./GlobalSearch.js";
 import { MattersWorkspace } from "./MattersWorkspace.js";
 import { ConditionsWorkspace } from "./ConditionsWorkspace.js";
+import { AgreementsWorkspace } from "./AgreementsWorkspace.js";
+import type { EntityKind } from "./Relations.js";
 import { DocumentsWorkspace } from "./DocumentsWorkspace.js";
 import { MoneyWorkspace } from "./MoneyWorkspace.js";
 import { WorksWorkspace } from "./WorksWorkspace.js";
@@ -10,7 +12,7 @@ import { PartiesWorkspace } from "./PartiesWorkspace.js";
 import { FlowMonitorWorkspace } from "./FlowMonitorWorkspace.js";
 import { OpsWorkspace, HomeWorkspace, type OpsTab } from "./OpsWorkspace.js";
 
-type View = "home" | "matters" | "conditions" | "works" | "parties" | "documents" | "money" | "flows" | "ops";
+type View = "home" | "matters" | "agreements" | "conditions" | "works" | "parties" | "documents" | "money" | "flows" | "ops";
 interface Me { user?: { email: string; role: string }; readOnly: boolean }
 
 // 入口（案件）／横断で見る／監視・運用 の3段。案件が制御レイヤー、他は参照。
@@ -20,7 +22,9 @@ const NAV: Array<{ section: string; items: Array<{ view: View; label: string }> 
     { view: "matters", label: "案件" }
   ] },
   { section: "横断で見る", items: [
-    { view: "conditions", label: "条件" },
+    // 契約が器で、条件はその明細。並びもその順にする。
+    { view: "agreements", label: "契約" },
+    { view: "conditions", label: "条件明細" },
     { view: "works", label: "作品" },
     { view: "parties", label: "取引先・担当" },
     { view: "documents", label: "文書" },
@@ -43,6 +47,20 @@ export function App() {
   useEffect(() => { api.get<Me>("/me").then(setMe).catch(() => setMe(null)); }, []);
 
   const openCondition = (id: number) => { setConditionId(id); setView("conditions"); };
+
+  /**
+   * つながりから相手を開く。どの画面のどの関連から押しても、同じところへ行く。
+   * これが無いと、繋がっているのが見えるだけで辿れない。
+   */
+  const openEntity = (kind: EntityKind, id: number) => {
+    if (kind === "condition") return openCondition(id);
+    setConditionId(undefined);
+    const next = ({ matter: "matters", document: "documents", party: "parties",
+                    work: "works", agreement: "agreements" } as const)[kind];
+    if (!next) return;
+    setFocus({ view: next, id });
+    setView(next);
+  };
 
   /**
    * 検索結果から開く。
@@ -101,22 +119,29 @@ export function App() {
         {view === "home" && <HomeWorkspace onGo={(v, tab) => { setOpsTab(tab); setView(v); }} />}
         {view === "matters" && (
           <MattersWorkspace key={`m${focusFor("matters") ?? 0}`}
-            onOpenCondition={openCondition} initialId={focusFor("matters")} />
+            onOpenCondition={openCondition} initialId={focusFor("matters")}
+            onOpen={openEntity} />
         )}
         {view === "conditions" && (
           <ConditionsWorkspace key={conditionId ?? 0} initialId={conditionId}
-                               onCompose={startCompose} />
+                               onCompose={startCompose} onOpen={openEntity} />
         )}
         {view === "works" && (
           <WorksWorkspace key={`w${focusFor("works") ?? 0}`}
-            onOpenCondition={openCondition} initialId={focusFor("works")} />
+            onOpenCondition={openCondition} initialId={focusFor("works")}
+            onOpen={openEntity} />
         )}
         {view === "parties" && (
-          <PartiesWorkspace key={`p${focusFor("parties") ?? 0}`} initialId={focusFor("parties")} />
+          <PartiesWorkspace key={`p${focusFor("parties") ?? 0}`} initialId={focusFor("parties")}
+            onOpen={openEntity} />
         )}
         {view === "documents" && (
           <DocumentsWorkspace key={compose ? `c${compose.conditionId}` : "docs"}
-                              start={compose ?? undefined} />
+                              start={compose ?? undefined} onOpen={openEntity} />
+        )}
+        {view === "agreements" && (
+          <AgreementsWorkspace key={`a${focusFor("agreements") ?? 0}`}
+            initialId={focusFor("agreements")} onOpen={openEntity} />
         )}
         {view === "money" && <MoneyWorkspace />}
         {view === "flows" && <FlowMonitorWorkspace onOpenCondition={openCondition} />}

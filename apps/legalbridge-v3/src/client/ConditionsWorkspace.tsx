@@ -5,6 +5,7 @@ import { ConditionSchedules } from "./ConditionSchedules.js";
 import { ConditionRevisions } from "./ConditionRevisions.js";
 import { ConditionEdit } from "./ConditionEdit.js";
 import { ConditionCounterparty, ConditionMatters, ConditionScopes } from "./ConditionLinks.js";
+import { Relations, type EntityKind } from "./Relations.js";
 import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
 import { CONDITION_KIND_LABEL, StatusTag } from "./labels.js";
 import type { ConditionDetail, ConditionSummary, EnvelopeCheck, RightsEnvelope } from "../server/core/model.js";
@@ -36,8 +37,12 @@ type WriteResult = {
 };
 
 export function ConditionsWorkspace(
-  { initialId, onCompose }:
-  { initialId?: number; onCompose?: (conditionId: number, eventIds?: number[]) => void }
+  { initialId, onCompose, onOpen }:
+  {
+    initialId?: number;
+    onCompose?: (conditionId: number, eventIds?: number[]) => void;
+    onOpen?: (kind: EntityKind, id: number) => void;
+  }
 ) {
   const [rows, setRows] = useState<ConditionSummary[]>([]);
   const [selected, setSelected] = useState<number | undefined>(initialId);
@@ -152,8 +157,12 @@ export function ConditionsWorkspace(
   return (
     <section className="workspace">
       <header className="workspace-head">
-        <h1>条件</h1>
-        <p>取得（IN）と許諾（OUT）を同じ一覧で扱う。文書は条件の出力物なので、作り直しても条件は動かない。</p>
+        <h1>条件明細</h1>
+        <p>
+          条件明細は契約（合意）の中の1行です。金額と料率をここが持ち、期間と更新は契約が持ちます。
+          取得（IN）と許諾（OUT）を同じ一覧で扱います。書類は条件明細の出力物なので、
+          書類を作り直しても条件明細は動きません。
+        </p>
       </header>
 
       <div className="filters">
@@ -264,7 +273,7 @@ export function ConditionsWorkspace(
           <ListCount shown={rows.length} keyword={search} onClear={() => setKeyword("")} />
           <div className="tablewrap">
             <table>
-              <thead><tr><th>条件番号</th><th>種類</th><th>向き</th><th>名称 / 相手先</th><th className="num">金額・料率</th></tr></thead>
+              <thead><tr><th>番号</th><th>種類</th><th>向き</th><th>名称 / 相手先</th><th>載っている契約</th><th className="num">金額・料率</th></tr></thead>
               <tbody>
                 {rows.map((row) => (
                   <tr key={row.id} className={row.id === selected ? "sel" : ""} tabIndex={0}
@@ -291,14 +300,22 @@ export function ConditionsWorkspace(
                     <td><span className="tag">{CONDITION_KIND_LABEL[row.kind] ?? row.kind}</span></td>
                     <td><span className={`tag ${row.direction}`}>{row.direction === "in" ? "IN" : "OUT"}</span></td>
                     <td>{row.name}<div className="faint">{row.counterparty?.name ?? "未設定"}</div></td>
+                    {/* 条件は契約の明細。どの契約の行かが見えないと、条件そのものが
+                        書類のように見える。 */}
+                    <td className="faint">
+                      {row.agreement
+                        ? <><span className="code">{row.agreement.agreementNo ?? `#${row.agreement.id}`}</span>
+                            <div>{row.agreement.title}</div></>
+                        : "契約に載っていません"}
+                    </td>
                     <td className="num">
                       {row.pricingModel === "revenue_rate" ? rate(row.ratePpm) : money(row.flatAmount, row.currency)}
                     </td>
                   </tr>
                 ))}
                 {!rows.length && (
-                  <tr><td colSpan={5} className="faint">
-                    {search.trim() ? `「${search}」に一致する条件はありません` : "条件がありません"}
+                  <tr><td colSpan={6} className="faint">
+                    {search.trim() ? `「${search}」に一致する条件明細はありません` : "条件明細がありません"}
                   </td></tr>
                 )}
               </tbody>
@@ -336,6 +353,21 @@ export function ConditionsWorkspace(
                   )}
                 </div>
                 <div className="panel-bd stack">
+                  {/* 条件は契約の明細。どの契約の行なのかを先に出す。 */}
+                  <div className="note">
+                    {detail.agreementId ? (<>
+                      <b>{detail.agreementTitle ?? `契約 #${detail.agreementId}`}</b> の条件明細です。
+                      {onOpen && (
+                        <button className="btn btn-sm" style={{ marginLeft: 8 }}
+                                onClick={() => onOpen("agreement", detail.agreementId!)}>
+                          契約を開く
+                        </button>
+                      )}
+                    </>) : (<>
+                      どの契約にも載っていない条件明細です。条件は契約の明細なので、
+                      下の「つながり」から契約に載せてください。
+                    </>)}
+                  </div>
                   <div className="title">{detail.name}</div>
                   <dl className="dl">
                     <dt>相手先</dt><dd>{detail.counterparty?.name ?? "未設定"}</dd>
@@ -540,6 +572,10 @@ export function ConditionsWorkspace(
               <ConditionScopes detail={detail} onDone={async () => {
                 setDetail(await api.get<DetailResponse>(`/conditions/${detail.id}`));
               }} />
+
+              {/* 案件は上に専用のパネルがある（新しく作れる）ので、ここには出さない。 */}
+              <Relations kind="condition" id={detail.id} reloadKey={flowVersion}
+                exclude={["matters"]} onOpen={onOpen} onChanged={refreshFlow} />
 
               {result && (
                 <div className="panel">

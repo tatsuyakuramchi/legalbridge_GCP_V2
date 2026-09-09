@@ -7,6 +7,7 @@ import { DOCUMENT_STYLE_HINT, DOCUMENT_STYLE_LABEL, MATTER_KIND_HINT,
          MATTER_KIND_LABEL as KIND_LABEL, StatusTag } from "./labels.js";
 import { MatterFlow } from "./MatterFlow.js";
 import { MatterConditions, MatterDocuments } from "./MatterLinks.js";
+import { Relations, type EntityKind } from "./Relations.js";
 
 
 
@@ -35,7 +36,11 @@ const backlogIssue = (detail: MatterDetail): string | null =>
   detail.links.find((l) => l.targetType === "backlog_issue")?.targetRef ?? null;
 
 export function MattersWorkspace(
-  { onOpenCondition, initialId }: { onOpenCondition: (id: number) => void; initialId?: number }
+  { onOpenCondition, initialId, onOpen }: {
+    onOpenCondition: (id: number) => void;
+    initialId?: number;
+    onOpen?: (kind: EntityKind, id: number) => void;
+  }
 ) {
   const [rows, setRows] = useState<MatterSummary[]>([]);
   const [selected, setSelected] = useState<number | undefined>(initialId);
@@ -268,7 +273,7 @@ export function MattersWorkspace(
                 <div className="panel-hd"><h2>この案件の中身</h2></div>
                 <div className="panel-bd">
                   <div className="tabs">
-                    {([["conditions", `条件 ${detail.conditions.length}`],
+                    {([["conditions", `条件明細 ${detail.conditions.length}`],
                        ["documents", `文書 ${detail.documents.length}`],
                        ["payments", `支払 ${detail.payments.length}`],
                        ["communications", `連絡履歴 ${detail.communications.length}`]] as const).map(([key, label]) => (
@@ -406,6 +411,11 @@ export function MattersWorkspace(
                   )}
                 </div>
               </div>
+
+              {/* どちらの画面からも同じ関連を触れるようにする。案件から条件を
+                  繋げるのに条件から案件を繋げない、という片側だけの穴を塞ぐ。 */}
+              <Relations kind="matter" id={detail.id} reloadKey={linkVersion}
+                onOpen={onOpen} onChanged={relink} />
             </>
           )}
         </div>

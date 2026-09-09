@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
 import { PARTY_KIND_LABEL, StatusTag } from "./labels.js";
 import { api, ApiError } from "./api.js";
+import { Relations, type EntityKind } from "./Relations.js";
 import { CreateForm, flag, int, text } from "./CreateForm.js";
 import { PartyMerge } from "./PartyMerge.js";
 
@@ -19,7 +20,12 @@ interface Staff { id: number; staffCode: string | null; name: string; email: str
 
 const ROLE_LABEL: Record<string, string> = { primary: "主担当", signer: "署名者", billing: "請求先" };
 
-export function PartiesWorkspace({ initialId }: { initialId?: number } = {}) {
+export function PartiesWorkspace(
+  { initialId, onOpen }: {
+    initialId?: number;
+    onOpen?: (kind: EntityKind, id: number) => void;
+  } = {}
+) {
   const [tab, setTab] = useState<"parties" | "staff" | "merge">("parties");
   const [parties, setParties] = useState<Party[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
@@ -228,6 +234,9 @@ export function PartiesWorkspace({ initialId }: { initialId?: number } = {}) {
                     </div>
                   </div>
                 </div>
+
+                {/* 相手先からも契約と条件明細へ辿れるようにする。 */}
+                <Relations kind="party" id={detail.id} onOpen={onOpen} />
               </>
             )}
           </div>
