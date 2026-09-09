@@ -8,6 +8,7 @@ import { DOCUMENT_STYLE_HINT, DOCUMENT_STYLE_LABEL, MATTER_KIND_HINT,
          MATTER_KIND_LABEL as KIND_LABEL, StatusTag } from "./labels.js";
 import { MatterFlow } from "./MatterFlow.js";
 import { MatterTimeline } from "./MatterTimeline.js";
+import { MatterDrive } from "./MatterDrive.js";
 import { MatterConditions, MatterDocuments } from "./MatterLinks.js";
 import { Relations, type EntityKind } from "./Relations.js";
 
@@ -77,6 +78,12 @@ export function MattersWorkspace(
   const [styleEdit, setStyleEdit] = useState(false);
   // 繋ぎ直したら、進み具合と一覧を引き直す。
   const [linkVersion, setLinkVersion] = useState(0);
+  // Drive の案件フォルダが使えるか。親フォルダが未設定なら作る導線を出さない。
+  const [driveEnabled, setDriveEnabled] = useState(false);
+  useEffect(() => {
+    api.get<{ drive: { matterFolders: boolean } }>("/integrations")
+      .then((r) => setDriveEnabled(r.drive.matterFolders)).catch(() => undefined);
+  }, []);
   const relink = () => { setLinkVersion((v) => v + 1); reloadDetail(); };
 
   // 進め方を変えると次にやることが変わるので、進み具合も引き直す。
@@ -321,6 +328,11 @@ export function MattersWorkspace(
                       )}
                     </dd>
                     {detail.blockedReason && (<><dt>停滞理由</dt><dd>{detail.blockedReason}</dd></>)}
+                    <dt>Drive</dt>
+                    <dd>
+                      <MatterDrive matterId={detail.id} folderUrl={detail.driveFolderUrl}
+                                   enabled={driveEnabled} onChanged={reloadDetail} />
+                    </dd>
                   </dl>
                 </div>
               </div>
