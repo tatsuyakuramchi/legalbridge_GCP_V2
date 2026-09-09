@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { api, ApiError } from "./api.js";
+import { SearchSelect, type SearchOption } from "./SearchSelect.js";
 
 /**
  * 新規登録のフォーム。
@@ -9,7 +10,7 @@ import { api, ApiError } from "./api.js";
  * 片方だけ直したときに食い違うため。
  */
 
-export type FieldType = "text" | "number" | "money" | "date" | "select" | "textarea" | "checkbox";
+export type FieldType = "text" | "number" | "money" | "date" | "select" | "search" | "textarea" | "checkbox";
 
 export interface Field {
   name: string;
@@ -18,7 +19,12 @@ export interface Field {
   required?: boolean;
   placeholder?: string;
   hint?: string;
-  options?: Array<{ value: string; label: string }>;
+  options?: Array<{ value: string; label: string; hint?: string | null }>;
+  /**
+   * type "search" のとき、サーバに聞く検索。無ければ options をここで絞る。
+   * 一覧が長いもの（取引先・担当者・作品）はプルダウンではなくこちらを使う。
+   */
+  search?: (q: string) => Promise<SearchOption[]>;
   /** 他の項目の値によって出し入れする。 */
   visibleWhen?: (values: Record<string, string>) => boolean;
 }
@@ -78,6 +84,11 @@ export function CreateForm(props: CreateFormProps) {
                     <option key={o.value} value={o.value}>{o.label}</option>
                   ))}
                 </select>
+              ) : f.type === "search" ? (
+                <SearchSelect value={values[f.name] ?? ""} options={f.search ? undefined : (f.options ?? [])}
+                  search={f.search} emptyLabel={f.required ? undefined : "—"}
+                  placeholder={f.placeholder ?? "名前の一部で探す"}
+                  onChange={(v) => set(f.name, v)} />
               ) : f.type === "textarea" ? (
                 <textarea rows={3} value={values[f.name] ?? ""} placeholder={f.placeholder}
                   onChange={(e) => set(f.name, e.target.value)} />

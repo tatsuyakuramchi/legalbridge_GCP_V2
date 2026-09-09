@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { MatterDetail, MatterKind, MatterSummary } from "../server/core/model.js";
 import { api, ApiError, money } from "./api.js";
+import { SearchSelect, searchParties, staffOptions } from "./SearchSelect.js";
 import { CreateForm, int, text } from "./CreateForm.js";
 import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
 import { DOCUMENT_STYLE_HINT, DOCUMENT_STYLE_LABEL, MATTER_KIND_HINT,
@@ -65,7 +66,6 @@ export function MattersWorkspace(
   const [tab, setTab] = useState<Tab>("conditions");
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState<"matter" | "task" | null>(null);
-  const [parties, setParties] = useState<Array<{ id: number; name: string }>>([]);
   const [staff, setStaff] = useState<
     Array<{ id: number; name: string; department: string | null; status: string }>>([]);
   const [backlog, setBacklog] = useState<BacklogResult | null>(null);
@@ -114,11 +114,9 @@ export function MattersWorkspace(
 
   // 選択肢。登録フォームでしか使わないので、開くまで取りに行かない。
   useEffect(() => {
-    if (creating === null || parties.length) return;
-    Promise.all([
-      api.get<{ parties: Array<{ id: number; name: string }> }>("/parties"),
-      api.get<{ staff: typeof staff }>("/staff")
-    ]).then(([p, st]) => { setParties(p.parties); setStaff(st.staff); }).catch(() => undefined);
+    if (creating === null || staff.length) return;
+    api.get<{ staff: typeof staff }>("/staff")
+      .then((st) => setStaff(st.staff)).catch(() => undefined);
   }, [creating]);
 
   function reloadDetail() {
@@ -167,10 +165,10 @@ export function MattersWorkspace(
                 value: k, label: DOCUMENT_STYLE_LABEL[k]
               })),
               hint: "どうやって文書を作るか。分からなければ空のままでよい（後から詳細で入れられる）" },
-            { name: "counterpartyId", label: "相手先", type: "select",
-              options: parties.map((p) => ({ value: String(p.id), label: p.name })) },
-            { name: "ownerStaffId", label: "担当者", type: "select",
-              options: staff.map((p) => ({ value: String(p.id), label: p.name })) },
+            { name: "counterpartyId", label: "相手先", type: "search",
+              search: searchParties, placeholder: "取引先名・コードで探す" },
+            { name: "ownerStaffId", label: "担当者", type: "search",
+              options: staffOptions(staff), placeholder: "氏名・部署で探す" },
             { name: "dueOn", label: "期日", type: "date" },
             { name: "requesterEmail", label: "依頼者メール" },
             { name: "remarks", label: "備考", type: "textarea" }
@@ -191,8 +189,8 @@ export function MattersWorkspace(
           path={`/matters/${selected}/tasks`}
           fields={[
             { name: "title", label: "やること", required: true },
-            { name: "assigneeStaffId", label: "担当者", type: "select",
-              options: staff.map((p) => ({ value: String(p.id), label: p.name })) },
+            { name: "assigneeStaffId", label: "担当者", type: "search",
+              options: staffOptions(staff), placeholder: "氏名・部署で探す" },
             { name: "dueAt", label: "期日", type: "date",
               hint: "期日を入れると期限一覧に出る。過ぎたものは全部表示される" },
             { name: "description", label: "内容", type: "textarea" }
@@ -299,15 +297,10 @@ export function MattersWorkspace(
                     <dd>
                       {ownerEdit ? (
                         <div className="row">
-                          <select defaultValue="" onChange={(e) => saveOwner(e.target.value)}>
-                            <option value="">未設定にする</option>
-                            {/* 退職者は書類に出す担当にできない。選ばせない。 */}
-                            {staff.filter((x) => x.status === "active").map((x) => (
-                              <option key={x.id} value={String(x.id)}>
-                                {x.name}{x.department ? `（${x.department}）` : ""}
-                              </option>
-                            ))}
-                          </select>
+                          {/* 名前で探して決める。退職者は書類に出す担当にできないので出さない。 */}
+                          <SearchSelect value="" autoFocus emptyLabel="未設定にする"
+                                        options={staffOptions(staff)} placeholder="氏名・部署で探す"
+                                        onChange={(v) => saveOwner(v)} />
                           <button className="btn btn-sm"
                                   onClick={() => setOwnerEdit(false)}>やめる</button>
                         </div>

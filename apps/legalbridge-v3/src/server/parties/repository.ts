@@ -38,6 +38,7 @@ export class PartyRepository {
            FROM parties
           WHERE ($1 = '' OR name ILIKE '%' || $1 || '%'
                  OR COALESCE(party_code,'') ILIKE '%' || $1 || '%'
+                 OR COALESCE(name_kana,'') ILIKE '%' || $1 || '%'
                  OR EXISTS (SELECT 1 FROM unnest(aliases) a WHERE a ILIKE '%' || $1 || '%'))
           ORDER BY status, party_code NULLS LAST, id
           LIMIT $2`,

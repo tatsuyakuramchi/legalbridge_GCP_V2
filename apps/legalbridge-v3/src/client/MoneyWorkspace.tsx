@@ -3,6 +3,7 @@ import { ListCount, ListSearch, useDebounced } from "./ListTools.js";
 import { PaymentAllocation, type AllocationTarget } from "./PaymentAllocation.js";
 import { StatusTag } from "./labels.js";
 import { api, ApiError, money } from "./api.js";
+import { searchParties } from "./SearchSelect.js";
 import { CreateForm, int, text } from "./CreateForm.js";
 import { PaymentReport } from "./PaymentReport.js";
 
@@ -44,7 +45,6 @@ export function MoneyWorkspace() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const [parties, setParties] = useState<Array<{ id: number; name: string; kind: string }>>([]);
   const [keyword, setKeyword] = useState("");
   const [dirFilter, setDirFilter] = useState<"all" | "in" | "out">("all");
   const [statusFilter, setStatusFilter] = useState<"all" | "unallocated" | "unpaid">("all");
@@ -53,11 +53,6 @@ export function MoneyWorkspace() {
 
   useEffect(() => { void reload(); }, []);
 
-  useEffect(() => {
-    if (!creating || parties.length) return;
-    api.get<{ parties: Array<{ id: number; name: string; kind: string }> }>("/parties")
-      .then((r) => setParties(r.parties)).catch(() => undefined);
-  }, [creating]);
   async function reload() {
     try {
       const [b, p, s] = await Promise.all([
@@ -131,11 +126,8 @@ export function MoneyWorkspace() {
           path="/payments"
           initial={{ direction: "out", currency: "JPY" }}
           fields={[
-            { name: "partyId", label: "相手先", type: "select", required: true,
-              options: parties.map((p) => ({
-                value: String(p.id),
-                label: `${p.name}${p.kind === "individual" ? "（個人）" : ""}`
-              })) },
+            { name: "partyId", label: "相手先", type: "search", required: true,
+              search: searchParties, placeholder: "取引先名・コードで探す" },
             { name: "direction", label: "向き", type: "select", required: true,
               options: [{ value: "out", label: "支払う" }, { value: "in", label: "受け取る" }] },
             { name: "amount", label: "税抜金額（最小通貨単位）", type: "money", required: true,

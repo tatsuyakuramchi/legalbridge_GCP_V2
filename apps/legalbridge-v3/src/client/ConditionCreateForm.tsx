@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "./api.js";
 import { CreateForm } from "./CreateForm.js";
 import { CONDITION_KIND_LABEL } from "./labels.js";
+import { searchParties } from "./SearchSelect.js";
 
 /**
  * 条件明細の登録フォーム。
@@ -29,14 +30,11 @@ export function ConditionCreateForm(
     onCancel: () => void;
   }
 ) {
-  const [parties, setParties] = useState<Array<{ id: number; name: string }>>([]);
   const [works, setWorks] = useState<Array<{ id: number; title: string }>>([]);
 
   useEffect(() => {
-    Promise.all([
-      api.get<{ parties: Array<{ id: number; name: string }> }>("/parties"),
-      api.get<{ works: Array<{ id: number; title: string }> }>("/works")
-    ]).then(([p, w]) => { setParties(p.parties); setWorks(w.works); }).catch(() => undefined);
+    api.get<{ works: Array<{ id: number; title: string }> }>("/works")
+      .then((w) => setWorks(w.works)).catch(() => undefined);
   }, []);
 
   return (
@@ -54,9 +52,10 @@ export function ConditionCreateForm(
             value: k, label: CONDITION_KIND_LABEL[k]
           })),
           hint: "許諾料・製品はライセンスの案件、委託料・実費・手数料は業務委託の案件に繋がる" },
-        { name: "counterpartyId", label: "相手先", type: "select", required: true,
-          options: parties.map((p) => ({ value: String(p.id), label: p.name })) },
-        { name: "workId", label: "作品", type: "select",
+        // 取引先は 2,500 件ある。一覧から選ばせず、名前で探して決める。
+        { name: "counterpartyId", label: "相手先", type: "search", required: true,
+          search: searchParties, placeholder: "取引先名・コードで探す" },
+        { name: "workId", label: "作品", type: "search",
           options: works.map((w) => ({ value: String(w.id), label: w.title })) },
         { name: "termStart", label: "開始", type: "date" },
         { name: "termEnd", label: "終了", type: "date" },

@@ -293,3 +293,14 @@ tr.report-total td { border-top: 2px solid var(--line-strong); font-weight: 600;
   display:inline-flex;gap:5px;align-items:center}
 .fold:hover{color:var(--ink)}
 .fold .caret{font-family:var(--mono);font-size:9px}
+
+/* 検索して選ぶ欄。プルダウンの代わり。 */
+.sselect{position:relative;width:100%}
+.sselect input{width:100%;border:1px solid var(--line-strong);border-radius:5px;padding:5px 8px;background:var(--surface)}
+.sselect-menu{position:absolute;left:0;right:0;top:calc(100% + 3px);z-index:30;max-height:260px;overflow-y:auto;
+  background:var(--surface);border:1px solid var(--line-strong);border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,.12)}
+.sselect-item{display:flex;gap:8px;align-items:baseline;padding:6px 10px;font-size:12px;cursor:pointer}
+.sselect-item .faint{margin-left:auto;white-space:nowrap}
+.sselect-item[aria-selected="true"]{background:var(--accent-soft)}
+.sselect-item.current{font-weight:600}
+.sselect-empty{padding:6px 10px;font-size:12px;color:var(--faint)}
