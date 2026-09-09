@@ -619,6 +619,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS matter_communications_ref_uq
   ON v3.matter_communications (channel, external_ref) WHERE external_ref IS NOT NULL;
 
 -- 追記だけ。003_grants.sql も同じ内容にしてある。
+-- 本番は既定の権限（ALTER DEFAULT PRIVILEGES）で新しい表に INSERT/UPDATE/DELETE が
+-- 付く設定になっていて、CREATE TABLE の時点で UPDATE と DELETE も付いてしまった
+-- （2026-09-09 の確認で判明）。GRANT だけでは足りないので、明示的に剥がす。
+REVOKE ALL ON v3.matter_communications FROM legalbridge_v3_runtime;
 GRANT SELECT, INSERT ON v3.matter_communications TO legalbridge_v3_runtime;
 GRANT USAGE, SELECT ON SEQUENCE v3.matter_communications_id_seq TO legalbridge_v3_runtime;
 
