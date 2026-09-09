@@ -45,8 +45,10 @@ function kindFor(name: string, label: string): Candidate["kind"] | null {
 }
 
 export function DocumentsWorkspace(
-  { start, onOpen }: {
+  { start, openDocumentId, onOpen }: {
     start?: { conditionId: number; eventIds: number[] };
+    /** 他の画面から「編集」で来たときの文書。下書きならそのままフォームに載せる。 */
+    openDocumentId?: number;
     onOpen?: (kind: EntityKind, id: number) => void;
   } = {}
 ) {
@@ -93,6 +95,25 @@ export function DocumentsWorkspace(
   const form = useRef<HTMLDivElement>(null);
 
   useEffect(() => { void reload(); }, [search]);
+
+  /**
+   * 他の画面から文書を指定して来たとき。下書きは直せるのでフォームへ、
+   * 発行済みは記録なので「つながり」を開く（直すなら作り直しになる）。
+   */
+  useEffect(() => {
+    if (!openDocumentId) return;
+    void openForEdit(openDocumentId);
+  }, [openDocumentId]);
+
+  async function openForEdit(id: number) {
+    setError(null);
+    try {
+      const d = await api.get<{ id: number; documentNo: string | null; status: string;
+                               imported: boolean }>(`/documents/${id}`);
+      if (d.status === "draft" && !d.imported) { await openDraft(d.id); return; }
+      setInspect({ id: d.id, no: d.documentNo });
+    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
+  }
   async function reload() {
     try {
       const [t, d, c, i] = await Promise.all([
@@ -368,7 +389,7 @@ export function DocumentsWorkspace(
             <div className="panel-bd stack">
               {draft && (
                 <div className="note">
-                  作り直した下書きを直しています。ひな形は元の版のまま変えられません。
+                  下書きを直しています。ひな形は元の版のまま変えられません。
                   直して発行すると、この下書きが発行済みになります。
                 </div>
               )}
@@ -616,9 +637,13 @@ export function DocumentsWorkspace(
                             <button className="btn btn-sm" disabled={busy}
                                     onClick={() => send(d.id)}>送付</button>
                           )}
+                          {/* 発行済みは記録なので直接は直せない。直すのは
+                              作り直した下書きのほう。押した先が編集画面になる。 */}
                           {!d.imported && (
                             <button className="btn btn-sm" disabled={busy}
-                                    onClick={() => reissue(d.id, d.documentNo)}>作り直す</button>
+                                    onClick={() => reissue(d.id, d.documentNo)}>
+                              作り直して編集
+                            </button>
                           )}
                           <button className="btn btn-sm" disabled={busy}
                                   onClick={() => voidDocument(d.id, d.documentNo)}>無効にする</button>
@@ -628,8 +653,8 @@ export function DocumentsWorkspace(
                         <span className="row">
                           {/* 開かないと直せない。作り直した下書きはここから発行する。 */}
                           {!d.imported && (
-                            <button className="btn btn-sm" disabled={busy}
-                                    onClick={() => openDraft(d.id)}>開いて発行する</button>
+                            <button className="btn btn-sm primary" disabled={busy}
+                                    onClick={() => openDraft(d.id)}>編集</button>
                           )}
                           <button className="btn btn-sm" disabled={busy}
                                   onClick={() => voidDocument(d.id, d.documentNo)}>破棄する</button>

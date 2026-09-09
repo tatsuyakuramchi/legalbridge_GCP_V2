@@ -54,6 +54,7 @@ export function App() {
    */
   const openEntity = (kind: EntityKind, id: number) => {
     if (kind === "condition") return openCondition(id);
+    if (kind === "document") return openDocumentAt(id);
     setConditionId(undefined);
     const next = ({ matter: "matters", document: "documents", party: "parties",
                     work: "works", agreement: "agreements" } as const)[kind];
@@ -84,9 +85,21 @@ export function App() {
    * 作成のフォームは1つだけにしてあるので、どこから入っても同じものを見る。
    */
   const [compose, setCompose] = useState<{ conditionId: number; eventIds: number[] } | null>(null);
+  /** 他の画面の「編集」から文書の画面へ来たときの相手。 */
+  const [openDocument, setOpenDocument] = useState<number | undefined>();
   const startCompose = (conditionId: number, eventIds: number[] = []) => {
     setCompose({ conditionId, eventIds });
     setFocus(null);
+    setOpenDocument(undefined);
+    setView("documents");
+  };
+
+  /** 文書の画面へ移って、その文書を開く。下書きならそのまま編集に入る。 */
+  const openDocumentAt = (documentId: number) => {
+    setCompose(null);
+    setFocus(null);
+    setConditionId(undefined);
+    setOpenDocument(documentId);
     setView("documents");
   };
 
@@ -120,7 +133,7 @@ export function App() {
         {view === "matters" && (
           <MattersWorkspace key={`m${focusFor("matters") ?? 0}`}
             onOpenCondition={openCondition} initialId={focusFor("matters")}
-            onOpen={openEntity} />
+            onOpen={openEntity} onOpenDocument={openDocumentAt} />
         )}
         {view === "conditions" && (
           <ConditionsWorkspace key={conditionId ?? 0} initialId={conditionId}
@@ -136,8 +149,10 @@ export function App() {
             onOpen={openEntity} />
         )}
         {view === "documents" && (
-          <DocumentsWorkspace key={compose ? `c${compose.conditionId}` : "docs"}
-                              start={compose ?? undefined} onOpen={openEntity} />
+          <DocumentsWorkspace
+            key={compose ? `c${compose.conditionId}` : openDocument ? `d${openDocument}` : "docs"}
+            start={compose ?? undefined} openDocumentId={openDocument}
+            onOpen={openEntity} />
         )}
         {view === "agreements" && (
           <AgreementsWorkspace key={`a${focusFor("agreements") ?? 0}`}

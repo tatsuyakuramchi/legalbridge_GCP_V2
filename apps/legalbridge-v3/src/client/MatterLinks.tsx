@@ -150,7 +150,12 @@ export function MatterConditions(
 }
 
 export function MatterDocuments(
-  { detail, onChanged }: { detail: MatterDetail; onChanged: () => void }
+  { detail, onChanged, onOpenDocument }: {
+    detail: MatterDetail;
+    onChanged: () => void;
+    /** 文書の画面へ移って、その文書を開く。 */
+    onOpenDocument?: (documentId: number) => void;
+  }
 ) {
   const [picking, setPicking] = useState(false);
   const [keyword, setKeyword] = useState("");
@@ -232,8 +237,18 @@ export function MatterDocuments(
                 <td>{d.templateLabel ?? "—"}</td>
                 <td><StatusTag kind="document" value={d.status} /></td>
                 <td>
-                  <button className="btn btn-sm" disabled={busy}
-                    onClick={() => void detach(d.id, d.documentNo ?? `#${d.id}`)}>外す</button>
+                  <span className="row">
+                    {/* 一覧から中身へ行けないと、文書番号を控えて文書の画面で
+                        探し直すことになる。 */}
+                    {onOpenDocument && (
+                      <button className="btn btn-sm" disabled={busy}
+                        onClick={() => onOpenDocument(d.id)}>
+                        {d.status === "draft" ? "編集" : "開く"}
+                      </button>
+                    )}
+                    <button className="btn btn-sm" disabled={busy}
+                      onClick={() => void detach(d.id, d.documentNo ?? `#${d.id}`)}>外す</button>
+                  </span>
                 </td>
               </tr>
             ))}
