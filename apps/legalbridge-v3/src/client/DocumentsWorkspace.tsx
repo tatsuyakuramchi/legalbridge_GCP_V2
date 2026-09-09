@@ -309,6 +309,51 @@ export function DocumentsWorkspace(
     finally { setBusy(false); }
   }
 
+  /**
+   * 最後に保存した中身。これと違えば「保存していない変更がある」。
+   * 「やめる」で黙って捨てないための目印。
+   */
+  const [savedAt, setSavedAt] = useState<string>("");
+  const snapshot = () => JSON.stringify({ templateKey, picked, pickedEvents, inputs });
+  const dirty = (composing || draft) && Boolean(templateKey) && snapshot() !== savedAt;
+
+  /**
+   * 下書きとして保存する。番号は振らない。あとで開き直して続きができる。
+   *
+   * 以前は「決定する」まで何も保存されず、「やめる」で直した中身が消えていた。
+   * 実績の選択は下書きの列に無いので、手入力の中に _eventIds として持たせて
+   * 開き直したときに戻す。
+   */
+  async function saveDraft(): Promise<number | null> {
+    if (!templateKey) return null;
+    setError(null); setIssued(null); setBusy(true);
+    try {
+      const manualInputs = { ...inputs, _eventIds: pickedEvents };
+      let id: number;
+      if (draft) {
+        await api.patch(`/documents/${draft.id}/draft`, { manualInputs, conditionIds: picked });
+        id = draft.id;
+      } else {
+        const r = await api.post<{ id: number }>("/documents",
+          { templateKey, conditionIds: picked, manualInputs });
+        id = r.id;
+        setDraft({ id, no: null });
+      }
+      setSavedAt(snapshot());
+      setStored(`下書き #${id} を保存しました。一覧の「下書き」から開き直せます`);
+      await reload();
+      setSelected(id);
+      return id;
+    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); return null; }
+    finally { setBusy(false); }
+  }
+
+  /** 保存していない変更があれば、捨ててよいか聞く。 */
+  function confirmDiscard(): boolean {
+    if (!dirty) return true;
+    return window.confirm("保存していない変更があります。捨ててよいですか？\n（残すなら「やめる」を押して「下書きを保存」を押してください）");
+  }
+
   // 下書きを作ってから発行する。採番は発行時にだけ進む。
   async function issue() {
     setError(null); setBusy(true);
@@ -318,7 +363,7 @@ export function DocumentsWorkspace(
         // 開いている下書きを直してから発行する。発行は下書きに保存された
         // 手入力しか見ないので、先に書き戻す。
         await api.patch(`/documents/${draft.id}/draft`,
-          { manualInputs: inputs, conditionIds: picked });
+          { manualInputs: { ...inputs, _eventIds: pickedEvents }, conditionIds: picked });
         const r = await api.post<{ documentNo: string }>(
           `/documents/${draft.id}/issue`, { eventIds: pickedEvents });
         documentNo = r.documentNo;
@@ -368,9 +413,12 @@ export function DocumentsWorkspace(
     try {
       // 実績はサーバが持っているものを使う。画面で選び直していない下書きを
       // 空の実績で発行すると、前の版が結んでいた実績が宙に浮く。
-      const d = await api.get<{ eventIds: number[] }>(`/documents/${id}`);
+      const d = await api.get<{ eventIds: number[]; manualInputs: Record<string, unknown> }>(`/documents/${id}`);
+      // 前の版から引き継いだ実績が無ければ、下書きに控えた選択を使う。
+      const saved = Array.isArray(d.manualInputs?._eventIds)
+        ? (d.manualInputs._eventIds as unknown[]).map(Number).filter((n) => Number.isFinite(n)) : [];
       const r = await api.post<{ documentNo: string }>(
-        `/documents/${id}/issue`, { eventIds: d.eventIds ?? [] });
+        `/documents/${id}/issue`, { eventIds: d.eventIds?.length ? d.eventIds : saved });
       setIssued(r.documentNo);
       await reload();
       setSelected(id);
@@ -450,7 +498,10 @@ export function DocumentsWorkspace(
       }
       const values: Record<string, string> = {};
       const arrays: Record<string, Row[]> = {};
+      const savedEvents = Array.isArray(d.manualInputs?._eventIds)
+        ? (d.manualInputs._eventIds as unknown[]).map(Number).filter((n) => Number.isFinite(n)) : [];
       for (const [k, v] of Object.entries(d.manualInputs ?? {})) {
+        if (k === "_eventIds") continue;
         if (Array.isArray(v)) arrays[k] = v as Row[];
         else if (v !== null && v !== undefined && typeof v !== "object") values[k] = String(v);
       }
@@ -461,10 +512,14 @@ export function DocumentsWorkspace(
       setPicked(d.conditions.map((c) => c.id));
       // 実績も戻す。訂正版の下書きなら、前の版が結んでいた実績が返ってくる。
       // ここを空にすると、直して発行するたびに実績を選び直す羽目になる。
-      setPickedEvents(d.eventIds ?? []);
+      // 実績は 前の版のもの（訂正版）→ 下書きに控えたもの の順で戻す。
+      const events = d.eventIds?.length ? d.eventIds : savedEvents;
+      setPickedEvents(events);
       setManual(values);
       setLines(arrays);
       setPickedFields(new Set());
+      setSavedAt(JSON.stringify({ templateKey: d.templateKey, picked: d.conditions.map((c) => c.id),
+                                  pickedEvents: events, inputs: { ...values, ...arrays } }));
       form.current?.scrollIntoView({ block: "start", behavior: "smooth" });
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
     finally { setBusy(false); }
@@ -472,7 +527,7 @@ export function DocumentsWorkspace(
 
   /** 下書きから降りる。作りかけの下書きは残るので、あとで開き直せる。 */
   function closeDraft() {
-    setDraft(null); setComposing(false); setRendered(null);
+    setDraft(null); setComposing(false); setRendered(null); setSavedAt("");
     setManual({}); setLines({}); setPickedFields(new Set()); setPickedEvents([]);
     // ひな形は変わらないので既定の読み込みは走らない。ここで戻しておかないと、
     // 下書きを閉じたあとだけ前回の値が出ない画面になる。
@@ -536,15 +591,16 @@ export function DocumentsWorkspace(
               <h2>{draft ? "下書きを直して決定する" : "新しく文書を作る"}</h2>
               {!draft && (
                 <button className="btn btn-sm" style={{ marginLeft: "auto" }}
-                        onClick={() => { setComposing(false); setRendered(null); }}>
+                        onClick={() => { if (confirmDiscard()) { setComposing(false); setRendered(null); setSavedAt(""); } }}>
                   やめる
                 </button>
               )}
               {draft && (
                 <span className="row" style={{ marginLeft: "auto" }}>
                   <span className="faint">下書き #{draft.id}</span>
-                  <button className="btn btn-sm" onClick={closeDraft} disabled={busy}>
-                    やめる
+                  <button className="btn btn-sm" disabled={busy}
+                          onClick={() => { if (confirmDiscard()) closeDraft(); }}>
+                    閉じる
                   </button>
                 </span>
               )}
@@ -693,13 +749,19 @@ export function DocumentsWorkspace(
               ))}
 
                 <div className="compose-actions">
+                  <button className="btn" onClick={() => void saveDraft()} disabled={busy || !templateKey || !dirty}>
+                    {draft ? "下書きを保存" : "下書きとして保存"}
+                  </button>
                   <button className="btn primary" onClick={issue} disabled={busy || !ready}>
                     {draft ? "直して決定する" : "決定する"}
                   </button>
                   <button className="btn" onClick={runPreview} disabled={busy || !templateKey}>
                     プレビューを更新
                   </button>
-                  <span className="faint">決定すると番号が振られ、中身は直せなくなります</span>
+                  <span className="faint">
+                    {dirty ? "保存していない変更があります。" : draft ? "保存済みです。" : ""}
+                    決定すると番号が振られ、中身は直せなくなります
+                  </span>
                 </div>
               </div>
             </div>
