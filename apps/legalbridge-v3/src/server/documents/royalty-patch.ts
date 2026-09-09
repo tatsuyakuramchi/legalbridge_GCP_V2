@@ -90,7 +90,8 @@ export function singleStatementPatch(n: SingleStatementNumbers): Data {
     mgFullyConsumed: false,
     agAmount: nonZeroStr(n.agAmount),
     agAmountStr: nonZeroStr(n.agAmount),
-    agApplied: n.agAmount > 0,
+    // 条件の AG 総額が読めなくても、充当が起きていれば AG の欄は出す。
+    agApplied: n.agAmount > 0 || n.agOffsetThisTime > 0 || n.agConsumedBefore > 0,
     agConsumedBefore: nonZeroStr(n.agConsumedBefore),
     agConsumedBeforeStr: nonZeroStr(n.agConsumedBefore),
     agConsumedThisTime: nonZeroStr(n.agOffsetThisTime),

@@ -44,9 +44,13 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
         // 業務内容の本文。条件の備考は「何をしてもらったか」が書いてある欄。
         spec: condition.notes ?? event.note ?? "",
         description: condition.notes ?? event.note ?? "",
+        // 名前は本番のひな形が差しているものに合わせる。inspected_quantity と
+        // paid_date は検収書の本文が直接読む列で、別名では出ない。
         quantity: event.quantity ?? null,
+        inspected_quantity: event.quantity ?? null,
         delivery_date: event.occurredOn ?? null,
         payment_date: event.schedule?.payOn ?? event.schedule?.dueOn ?? null,
+        paid_date: event.schedule?.payOn ?? null,
         amount_ex_tax: event.amount ?? 0,
         inspected_amount_ex_tax: event.amount ?? 0,
         // 予定額。ここと違えば「金額変更」として本文の変更履歴に出る。
@@ -64,8 +68,10 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
     spec: condition.notes ?? "",
     description: condition.notes ?? "",
     quantity: null,
+    inspected_quantity: null,
     delivery_date: condition.termEnd ?? null,
     payment_date: null,
+    paid_date: null,
     amount_ex_tax: condition.flatAmount,
     inspected_amount_ex_tax: condition.flatAmount,
     ordered_amount_ex_tax: condition.flatAmount,
@@ -141,6 +147,12 @@ export function bankInfoLine(bank: Ctx | null | undefined): string {
   ].filter((v) => v !== null && v !== undefined && String(v).trim() !== "").join(" / ");
 }
 
+/** 通貨記号。本文は {{moneyUnit}}{{金額}} の形で差す。 */
+export function moneyUnitFor(currency: string): string {
+  return ({ JPY: "¥", USD: "$", EUR: "€", GBP: "£", CNY: "¥", TWD: "NT$", KRW: "₩" } as
+    Record<string, string>)[String(currency).toUpperCase()] ?? `${currency} `;
+}
+
 /** 口座種別。DB は英字で持つが、書類に出すのは日本語。 */
 export function accountTypeLabel(value: unknown): string {
   const key = String(value ?? "").trim().toLowerCase();
@@ -163,8 +175,18 @@ export function buildTemplateContext(
   templateKey: string, context: Ctx, manual: Record<string, unknown> = {}
 ): Record<string, unknown> {
   const bank = context.bank ?? null;
+  const currency = String(context.condition?.currency ?? context.totals?.currency ?? "JPY");
   const common: Record<string, unknown> = {
     taxRate: taxRateFor(context, manual),
+    /**
+     * 本文だけが使う変数。field_schema に宣言が無いので束縛の経路に乗らず、
+     * ここで入れないと本文が空になる。計算書は moneyUnit を31か所で差している。
+     */
+    moneyUnit: moneyUnitFor(currency),
+    DOC_NO: context.document?.number ?? "",
+    documentDate: context.document?.issuedOn ?? "",
+    // 軽減税率の対象か。本文は識別マーク（※）の有無に使う。
+    isReducedTax: String(context.condition?.taxCategory ?? "") === "reduced",
     BANK_INFO: bankInfoLine(bank),
     BANK_NAME: bank?.bankName ?? "",
     BRANCH_NAME: bank?.branchName ?? "",
@@ -216,6 +238,16 @@ function inspectionBlock(context: Ctx, manual: Record<string, unknown>, taxRate:
 
   // 金額変更（予定との差）は本文の変更履歴に出す。理由は書けないので
   // 「（理由未記入）」のまま出す。黙って消すより残すほうがよい。
+  // 変更の注記は行にも付ける。支払日ごとの表示は行の直下に出すため。
+  for (const line of visible) {
+    const ordered = num(line.ordered_amount_ex_tax, Number.NaN);
+    const actual = lineAmount(line);
+    const changed = Number.isFinite(ordered) && ordered !== actual;
+    line.hasChange = changed;
+    line.changeLabel = changed ? `支払対価 ¥${yen(ordered)} → ¥${yen(actual)}` : "";
+    line.changeNote = changed ? String(line.changeNote ?? "") : "";
+  }
+
   const changeLogs = now.flatMap((l) => {
     const ordered = num(l.ordered_amount_ex_tax, Number.NaN);
     const actual = lineAmount(l);
@@ -280,7 +312,10 @@ function paymentGroups(paid: Row[], now: Row[], taxRate: number, context: Ctx) {
         item_name: l.item_name ?? "",
         spec: l.spec ?? "",
         delivery_date: l.delivery_date ?? "",
-        amount_ex_tax: num(l.inspected_amount_ex_tax ?? l.amount_ex_tax ?? l.amount)
+        amount_ex_tax: num(l.inspected_amount_ex_tax ?? l.amount_ex_tax ?? l.amount),
+        hasChange: l.hasChange === true,
+        changeLabel: l.changeLabel ?? "",
+        changeNote: l.changeNote ?? ""
       })),
       subtotalStr: yen(subtotal),
       taxAmountStr: yen(tax),

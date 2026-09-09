@@ -399,6 +399,66 @@ SELECT template_key, label, category
  WHERE is_active AND COALESCE(btrim(number_prefix), '') = ''
  ORDER BY category NULLS LAST, label;
 
+-- ---------------------------------------------------------------------
+-- A-009: 自社プロファイルを移す
+--
+-- 発注書は PARTY_A_NAME / PARTY_A_ADDRESS / PARTY_A_REP を必須にしていて、
+-- 計算書は licensee / COMPANY_ADDRESS / COMPANY_TEL / COMPANY_INVOICE_NO を
+-- 差している。どれも V1 の app_settings（COMPANY_* キー）から来ていたが、
+-- V3 へは移していなかったので全部空欄だった。
+--
+-- V3 は settings.value に1件のJSONで持つ（アプリはこの形で読む）。
+-- キー名は V1 の CompanyProfile と同じにする。
+-- ---------------------------------------------------------------------
+
+DO $a009$
+DECLARE
+  v jsonb := '{}'::jsonb;
+  pair record;
+BEGIN
+  IF to_regclass('public.app_settings') IS NOT NULL THEN
+    FOR pair IN
+      SELECT k.field, s.value
+        FROM (VALUES
+          ('name',       'COMPANY_NAME'),
+          ('nameKana',   'COMPANY_NAME_KANA'),
+          ('postalCode', 'COMPANY_POSTAL_CODE'),
+          ('address',    'COMPANY_ADDRESS'),
+          ('tel',        'COMPANY_TEL'),
+          ('fax',        'COMPANY_FAX'),
+          ('rep',        'COMPANY_REPRESENTATIVE'),
+          ('invoiceNo',  'COMPANY_INVOICE_NO'),
+          ('bankInfo',   'COMPANY_BANK_INFO'),
+          ('sealNote',   'COMPANY_SEAL_NOTE')
+        ) AS k(field, key)
+        JOIN public.app_settings s ON s.key = k.key
+    LOOP
+      IF NULLIF(btrim(pair.value #>> '{}'), '') IS NOT NULL THEN
+        v := v || jsonb_build_object(pair.field, btrim(pair.value #>> '{}'));
+      END IF;
+    END LOOP;
+  END IF;
+
+  -- V1 のハードコード既定（master-data/repository.ts 旧 companyProfile()）。
+  -- 設定が未整備でも自社名と住所と代表者は書類に載る。
+  v := jsonb_build_object(
+         'name', '株式会社アークライト',
+         'address', '東京都千代田区神田小川町1-2 風雲堂ビル2階',
+         'rep', '代表取締役　青柳 昌行'
+       ) || v;
+
+  INSERT INTO v3.settings (key, value, updated_by)
+  VALUES ('company_profile', v, 'A-009')
+  ON CONFLICT (key) DO UPDATE
+    -- すでに入っているものが正。足りないキーだけ埋める。
+    SET value = EXCLUDED.value || v3.settings.value, updated_at = now();
+END
+$a009$;
+
+\echo '--- 自社プロファイル ---'
+SELECT jsonb_pretty(value) AS company_profile
+  FROM v3.settings WHERE key = 'company_profile';
+
 \echo '--- 書類に載る連絡先（住所・電話・メール）---'
 SELECT
   count(*) FILTER (WHERE address IS NOT NULL) AS 住所あり,

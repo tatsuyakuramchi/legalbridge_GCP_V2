@@ -54,6 +54,10 @@ export class DocumentContextRepository {
       const contacts = partyId ? await this.contacts(client, partyId) : [];
       const bank = partyId ? await this.bank(client, partyId) : null;
       const owner = matterId ? await this.owner(client, matterId) : null;
+      // 同じ条件から出ている他の書類。検収書は親の発注番号を見出しに出す。
+      const related = input.conditionIds.length
+        ? await this.relatedDocuments(client, input.conditionIds) : [];
+      const backlogKey = matterId ? await this.backlogKey(client, matterId) : null;
 
       const currency = conditions[0]?.currency ?? "JPY";
       /**
@@ -105,6 +109,13 @@ export class DocumentContextRepository {
         bank,
         /** 案件の担当スタッフ。検収者の既定になりうる。 */
         owner,
+        /**
+         * 同じ条件から出ている書類。検収書の見出しに出る「発注番号」は
+         * この中の発注書から来る。人に打たせるものではない。
+         */
+        related,
+        /** 案件に繋がっている Backlog 課題のキー。 */
+        backlogKey,
         /** 実績が1件のときはこちら。検収書はこの日付と金額を使う。 */
         event: events[0] ?? null,
         /** その実績の予定明細。支払期日はここから来る。 */
@@ -204,6 +215,37 @@ export class DocumentContextRepository {
         LIMIT 1`, [conditionIds.map((id) => String(id))]);
     const row = r.rows[0] as { matter_id: number } | undefined;
     return row ? Number(row.matter_id) : null;
+  }
+
+  /**
+   * 同じ条件から出ている書類。種別ごとに新しいものを1件。
+   * 検収書が「どの発注に対する検収か」を書けるのは、これが読めるときだけ。
+   */
+  private async relatedDocuments(client: Queryable, conditionIds: number[]) {
+    const r = await client.query(
+      `SELECT DISTINCT ON (t.template_key)
+              d.id, d.document_no, d.issued_at, t.template_key
+         FROM document_conditions dc
+         JOIN documents d ON d.id = dc.document_id
+         JOIN document_template_versions tv ON tv.id = d.template_version_id
+         JOIN document_templates t ON t.id = tv.template_id
+        WHERE dc.condition_id = ANY($1::bigint[]) AND d.status = 'issued'
+        ORDER BY t.template_key, d.id DESC`, [conditionIds]);
+    return (r.rows as Array<Record<string, any>>).map((row) => ({
+      id: Number(row.id),
+      documentNo: str(row.document_no),
+      templateKey: str(row.template_key),
+      issuedAt: row.issued_at ? new Date(String(row.issued_at)).toISOString() : null
+    }));
+  }
+
+  /** 案件に繋がっている Backlog 課題。書類の見出しに出るものがある。 */
+  private async backlogKey(client: Queryable, matterId: number) {
+    const r = await client.query(
+      `SELECT target_ref FROM matter_links
+        WHERE matter_id = $1 AND target_type = 'backlog_issue'
+        ORDER BY id LIMIT 1`, [matterId]);
+    return str((r.rows[0] as { target_ref?: string } | undefined)?.target_ref);
   }
 
   /** 案件の担当者。検収書の「検収者」はたいていこの人。 */

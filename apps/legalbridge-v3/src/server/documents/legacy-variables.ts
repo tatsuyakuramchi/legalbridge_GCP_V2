@@ -33,8 +33,20 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown }> = [
   // ---- 文書そのもの ----
   { names: ["CONTRACT_NO", "DOC_NO", "ORDER_NO", "documentNumber", "文書番号", "契約書番号", "発注番号"],
     get: (c) => c.document?.number },
-  { names: ["SIGN_DATE", "CONTRACT_DATE", "発行日", "契約締結日", "date", "order_date", "issue_date"],
+  { names: ["SIGN_DATE", "CONTRACT_DATE", "契約締結日"],
     get: (c) => c.agreement?.executedOn ?? c.document?.issuedOn },
+  // 発行日・発注日はその書類を出した日。合意の締結日ではない。
+  { names: ["documentDate", "発行日", "発注日", "order_date", "ORDER_DATE", "issue_date", "date"],
+    get: (c) => c.document?.issuedOn },
+  // 準拠する契約の番号。合意から引ける。
+  { names: ["linked_contract_number", "MASTER_CONTRACT_REF", "契約番号", "基本契約番号",
+            "parent_contract_number"],
+    get: (c) => c.agreement?.no },
+  { names: ["CONTRACT_TITLE_REF", "基本契約名"], get: (c) => c.agreement?.title },
+  // 検収書の見出しの「発注番号」。同じ条件から出ている発注書を辿る。
+  { names: ["parent_po_number", "PARENT_PO_NUMBER", "発注番号", "元発注番号"],
+    get: (c) => relatedNo(c, "purchase_order") ?? relatedNo(c, "intl_purchase_order") },
+  { names: ["issueKey", "BACKLOG_KEY", "課題キー"], get: (c) => c.backlogKey },
 
   // ---- 相手先（受注者・許諾者） ----
   { names: ["VENDOR_NAME", "LICENSOR_NAME", "Licensor_氏名会社名", "Licensor_名称",
@@ -45,6 +57,12 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown }> = [
     get: (c) => c.condition?.counterparty?.kana },
   { names: ["VENDOR_SUFFIX", "LICENSOR_SUFFIX", "取引先敬称", "許諾者敬称"],
     get: (c) => honorific(c.condition?.counterparty?.kind) },
+  // 本番の検収書は「法人」「個人」の2値で分岐する（COUNTERPARTY_IS_CORPORATION）。
+  // こちらは3値ではなく2値なので、空文字ではなく「個人」を返す。
+  { names: ["COUNTERPARTY_IS_CORPORATION", "受託者種別", "相手先種別"],
+    get: (c) => (c.condition?.counterparty?.kind === "individual" ? "個人" : "法人") },
+  { names: ["counterpartyRep", "受託者代表者名", "相手先代表者"],
+    get: (c) => contact(c, "signer")?.name ?? contact(c, "primary")?.name },
   { names: ["VENDOR_IS_CORPORATION", "VENDOR_MASTER_ENTITY_TYPE", "取引先種別",
             "vendorEntityType", "LICENSOR_IS_CORPORATION"],
     // V2 と同じく、法人は "法人"・個人は空文字。テンプレートが
@@ -64,6 +82,12 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown }> = [
   { names: ["VENDOR_REP", "VENDOR_REPRESENTATIVE", "Licensor_代表者名", "代表者氏名",
             "許諾者代表者", "受託者代表者"],
     get: (c) => contact(c, "signer")?.name ?? contact(c, "primary")?.name },
+  // V1 はこの欄に「様」まで含めて持っていた（本文は敬称を付けない）。
+  { names: ["VENDOR_REPRESENTATIVE_SAMA", "代表者名様"],
+    get: (c) => {
+      const name = contact(c, "signer")?.name ?? contact(c, "primary")?.name;
+      return name ? `${name} 様` : undefined;
+    } },
   { names: ["VENDOR_ADDRESS", "Licensor_住所", "許諾者住所", "取引先住所", "相手先住所"],
     get: (c) => c.condition?.counterparty?.address },
   { names: ["VENDOR_EMAIL", "Licensor_メール", "担当者メール", "取引先メール"],
@@ -71,8 +95,9 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown }> = [
   { names: ["VENDOR_CONTACT_DEPARTMENT", "先方担当者部署", "担当者部署名"],
     get: (c) => contact(c, "primary")?.department },
   { names: ["VENDOR_CONTACT_PHONE", "Licensor_電話", "担当者電話番号", "取引先電話"],
-    get: (c) => contact(c, "primary")?.phone },
-  { names: ["INVOICE_REGISTRATION_NUMBER"],
+    get: (c) => contact(c, "primary")?.phone ?? c.condition?.counterparty?.phone },
+  { names: ["INVOICE_REGISTRATION_NUMBER", "invoiceRegistrationNumber", "counterpartyTni",
+            "登録番号", "適格請求書発行事業者登録番号"],
     get: (c) => c.condition?.counterparty?.invoiceNo },
   { names: ["WITHHOLDING_TAX", "源泉徴収"],
     get: (c) => (c.condition?.counterparty?.withholding === true ? "対象"
@@ -83,17 +108,20 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown }> = [
   // 欠けていたせいで、検収書の振込先に口座番号と名義しか出ていなかった。
   { names: ["BANK_INFO", "振込先", "bank_line", "bankInfo", "振込先口座", "お振込先"],
     get: (c) => bankLine(c) },
-  { names: ["BANK_NAME", "bank_name", "振込先銀行", "振込先銀行名", "銀行名",
+  { names: ["BANK_NAME", "bank_name", "bankName", "振込先銀行", "振込先銀行名", "銀行名",
             "金融機関名", "金融機関"],
     get: (c) => c.bank?.bankName },
-  { names: ["BRANCH_NAME", "BANK_BRANCH", "branch_name", "振込先支店", "支店名", "支店"],
+  { names: ["BRANCH_NAME", "BANK_BRANCH", "branch_name", "branchName",
+            "振込先支店", "支店名", "支店"],
     get: (c) => c.bank?.branchName },
-  { names: ["ACCOUNT_TYPE", "account_type", "口座種別", "預金種別", "種別"],
+  { names: ["ACCOUNT_TYPE", "account_type", "accountType", "口座種別", "預金種別", "種別"],
     get: (c) => accountTypeLabel(c.bank?.accountType) },
-  { names: ["ACCOUNT_NUMBER", "BANK_ACCOUNT_NO", "account_number", "口座番号"],
+  { names: ["ACCOUNT_NUMBER", "BANK_ACCOUNT_NO", "account_number", "accountNo", "accountNumber",
+            "口座番号"],
     get: (c) => c.bank?.accountNumber },
   { names: ["ACCOUNT_HOLDER_KANA", "ACCOUNT_HOLDER", "BANK_ACCOUNT_HOLDER",
-            "account_holder_kana", "口座名義", "口座名義カナ", "口座名義人"],
+            "account_holder_kana", "accountHolder", "accountHolderKana",
+            "口座名義", "口座名義カナ", "口座名義人"],
     get: (c) => c.bank?.holderKana },
 
   // ---- 自社の担当者 ----
@@ -101,7 +129,8 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown }> = [
     get: (c) => c.owner?.name },
   { names: ["STAFF_DEPARTMENT", "担当者部署", "申請部署", "inspector_dept", "検収者部署"],
     get: (c) => c.owner?.department },
-  { names: ["STAFF_EMAIL", "申請者メール"], get: (c) => c.owner?.email },
+  { names: ["STAFF_EMAIL", "inspectorEmail", "申請者メール", "検収者メールアドレス"],
+    get: (c) => c.owner?.email },
   { names: ["STAFF_PHONE", "担当者電話"], get: (c) => c.owner?.phone },
   { names: ["監修者", "inspectorName"], get: (c) => c.owner?.name },
   { names: ["inspectorDept"], get: (c) => c.owner?.department },
@@ -118,20 +147,27 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown }> = [
     get: (c) => c.company?.rep ?? c.company?.representative },
   { names: ["COMPANY_INVOICE_NO", "自社インボイス番号"],
     get: (c) => c.company?.invoiceNo },
+  { names: ["COMPANY_TEL", "自社電話"], get: (c) => c.company?.tel },
+  { names: ["COMPANY_POSTAL_CODE", "自社郵便番号"], get: (c) => c.company?.postalCode },
 
   // ---- 件名・案件 ----
   { names: ["PROJECT_TITLE", "CONTRACT_TITLE", "基本契約名", "件名", "title",
             "contractTitle", "projectTitle", "deliverable", "成果物"],
     get: (c) => c.matter?.title ?? c.condition?.name },
-  { names: ["WORK_TITLE", "作品名", "原著作物名", "対象作品予定名", "対象製品予定名"],
+  { names: ["WORK_TITLE", "作品名", "原著作物名", "originalWork",
+            "対象作品予定名", "対象製品予定名"],
     get: (c) => c.condition?.work?.title },
+  { names: ["productName", "製品名", "商品名"],
+    get: (c) => c.condition?.work?.title ?? c.condition?.name },
+  { names: ["currency", "通貨"], get: (c) => c.condition?.currency },
   { names: ["WORK_ID", "work_id", "台帳ID", "作品コード"],
     get: (c) => c.condition?.work?.code },
 
   // ---- 期間・支払条件 ----
   { names: ["TERM_START", "契約開始日", "開始日"], get: (c) => c.condition?.termStart },
   { names: ["TERM_END", "契約終了日", "終了日"], get: (c) => c.condition?.termEnd },
-  { names: ["PAYMENT_TERMS", "支払条件"], get: (c) => c.condition?.paymentTerms },
+  { names: ["PAYMENT_TERMS", "paymentConditionSummary", "支払条件"],
+    get: (c) => c.condition?.paymentTerms },
 
   // ---- 金額 ----
   { names: ["AMOUNT_EX_TAX", "税抜金額", "itemsSubtotalExTax", "amount_ex_tax", "納品額"],
@@ -140,11 +176,13 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown }> = [
   { names: ["AMOUNT_INC_TAX", "税込金額"], get: (c) => yen(c.totals?.incTax) },
 
   // ---- 実績（検収書・納品書） ----
-  { names: ["DELIVERY_DATE", "実納品日", "納品日", "delivered_on", "summaryDeliveryDate"],
+  { names: ["DELIVERY_DATE", "deliveredAt", "実納品日", "納品日", "delivered_on",
+            "summaryDeliveryDate"],
     get: (c) => c.event?.occurredOn },
-  { names: ["INSPECTION_DATE", "検収完了日", "検収日", "inspected_on"],
+  { names: ["INSPECTION_DATE", "inspectionCompletedAt", "completionDate",
+            "検収完了日", "検収日", "inspected_on", "完成日"],
     get: (c) => c.event?.occurredOn },
-  { names: ["PAYMENT_DATE", "支払期日", "summaryPaymentDate"],
+  { names: ["PAYMENT_DATE", "paymentDueDate", "支払期日", "summaryPaymentDate"],
     get: (c) => c.schedule?.payOn },
   { names: ["PERIOD", "対象期間", "対象月"], get: (c) => c.event?.period },
 
@@ -161,6 +199,11 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown }> = [
   { names: ["fxRate", "為替レート"], get: (c) => c.royalty?.fxRate },
   { names: ["linesTotalSalesStr", "報告売上"], get: (c) => yen(c.royalty?.salesInput) }
 ];
+
+/** 同じ条件から出ている、その種別のいちばん新しい書類の番号。 */
+const relatedNo = (c: Ctx, templateKey: string): string | undefined =>
+  ((c.related ?? []) as Array<Record<string, any>>)
+    .find((d) => d.templateKey === templateKey)?.documentNo ?? undefined;
 
 const contact = (c: Ctx, role: string) =>
   ((c.contacts ?? []) as Array<Record<string, any>>).find((x) => x.role === role) ?? null;
@@ -179,9 +222,13 @@ const take = (entry: { names: string[]; get: (c: Ctx) => unknown }, context: Ctx
   return value;
 };
 
-/** 括弧の中と記号を落とす。「納品額 (税抜)」と「納品額」を同じものとして扱う。 */
+/**
+ * 括弧の中と記号を落とす。「納品額 (税抜)」と「納品額」を同じものとして扱う。
+ * 大文字小文字も無視する。本番のひな形は同じ意味の項目を BANK_NAME と bankName の
+ * 両方の書き方で持っているため（検収書は camelCase、発注書は大文字）。
+ */
 const normalize = (v: string) =>
-  v.replace(/[（(].*?[）)]/g, "").replace(/[\s　・:：/／-]/g, "").trim();
+  v.replace(/[（(].*?[）)]/g, "").replace(/[\s　・:：/／-]/g, "").trim().toLowerCase();
 
 /**
  * 変数名から値を引く。名前でもラベルでも引ける。
@@ -274,7 +321,9 @@ const DB_FIELD_SOURCES: Record<string, (c: Ctx) => Record<string, unknown>> = {
     name: c.company?.name,
     address: c.company?.address,
     rep: c.company?.rep ?? c.company?.representative,
-    invoice_no: c.company?.invoiceNo
+    invoice_no: c.company?.invoiceNo,
+    tel: c.company?.tel,
+    postal_code: c.company?.postalCode
   }),
   matter: (c) => ({
     matter_code: c.matter?.matterNo ?? c.matter?.code,
@@ -290,6 +339,12 @@ const DB_FIELD_SOURCES: Record<string, (c: Ctx) => Record<string, unknown>> = {
   work: (c) => ({
     code: c.condition?.work?.code,
     title: c.condition?.work?.title
+  }),
+  // V1 の auto.*（採番・今日の日付）。宣言されているのに読む側が無かったので、
+  // 発注番号と発行日が空欄のままだった。
+  auto: (c) => ({
+    docNumber: c.document?.number,
+    today: c.document?.issuedOn
   }),
   // V1 は Backlog の課題から引いていた。V3 では案件が同じ位置にある。
   backlog: (c) => ({
@@ -309,4 +364,26 @@ export function resolveLegacyDbField(path: string, context: Ctx): unknown {
   if (value === null || value === undefined) return undefined;
   if (typeof value === "string" && value.trim() === "") return undefined;
   return value;
+}
+
+/**
+ * 対応表が解決できる値をまとめて返す。
+ *
+ * V1 のテンプレート文脈は「分かるものは全部入っている袋」で、field_schema は
+ * 画面の入力欄を決めるだけだった。本文はそれに頼っていて、宣言の無い名前
+ * （DOC_NO・STAFF_NAME・moneyUnit …）を平気で差す。V3 は宣言のある変数しか
+ * 束縛していなかったので、宣言の無い差し込みが軒並み空欄になっていた。
+ *
+ * ここが返すのは既定値。宣言のある変数（手入力を含む）と計算結果が上に乗る。
+ */
+export function resolveAllLegacyVariables(context: Ctx): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const entry of RESOLVERS) {
+    const value = take(entry, context);
+    if (value === undefined) continue;
+    for (const name of entry.names) {
+      if (!(name in out)) out[name] = value;
+    }
+  }
+  return out;
 }

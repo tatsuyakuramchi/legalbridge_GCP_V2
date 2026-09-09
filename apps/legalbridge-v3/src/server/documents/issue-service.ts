@@ -6,6 +6,7 @@ import { DocumentContextRepository } from "./context-repository.js";
 import { DocumentRepository } from "./repository.js";
 import { renderDocumentHtml } from "./render.js";
 import { buildTemplateContext } from "./template-context.js";
+import { resolveAllLegacyVariables } from "./legacy-variables.js";
 import { buildCandidates, type Candidate } from "./candidates.js";
 import { currentYearInTokyo, formatDocumentNumber, nextSequence, normalizePrefix } from "./numbering.js";
 
@@ -72,7 +73,8 @@ export class DocumentIssueService {
       // 候補は文脈そのものから作る。ひな形の宣言には依らない。
       const partials = await this.repository.partials();
       return {
-        html: renderDocumentHtml(template.htmlSource, { ...computed, ...binding.values }, partials),
+        html: renderDocumentHtml(template.htmlSource,
+          { ...resolveAllLegacyVariables(context), ...computed, ...binding.values }, partials),
         binding,
         templateLabel: template.label,
         templateVersionId: template.templateVersionId,
@@ -223,7 +225,9 @@ export class DocumentIssueService {
         // 焼き付けるのは計算ブロックも含めた一式。本文は明細表も合計も
         // ここから差す。宣言のある変数だけを保存すると、あとで組み直した
         // ときに表と合計が消える。
-        const frozen = { ...computed, ...binding.values };
+        // 本文は宣言の無い名前も差す（DOC_NO・STAFF_NAME・moneyUnit …）。
+        // 対応表が解決できるものを土台に置き、計算結果と束縛した値を上に乗せる。
+        const frozen = { ...resolveAllLegacyVariables(context), ...computed, ...binding.values };
 
         const updated = await client.query(
           `UPDATE documents
