@@ -16,6 +16,7 @@ import {
   aggregateItemDates, computeInspectionTotals, inspectionTaxBreakdown,
   num, purchaseOrderTotals, rows, taxRatePercentFor, yen, type Row
 } from "./legacy-totals.js";
+import { royaltyStatementPatch } from "./royalty-patch.js";
 
 type Ctx = Record<string, any>;
 
@@ -177,6 +178,10 @@ export function buildTemplateContext(
   }
   if (PURCHASE_ORDER_KEYS.has(templateKey)) {
     return { ...common, ...orderBlock(templateKey, context, manual) };
+  }
+  if (templateKey === "royalty_statement") {
+    const patch = royaltyStatementPatch(context, manual, Number(common.taxRate));
+    return patch ? { ...common, ...patch } : common;
   }
   return common;
 }

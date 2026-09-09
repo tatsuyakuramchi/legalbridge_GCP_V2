@@ -925,6 +925,24 @@ export function createRoutes(database: Transactable) {
     res.json(detail);
   }));
 
+  const reportedSchema = z.object({
+    salesInput: z.coerce.number().int().nullable().optional(),
+    intakeCurrency: z.string().trim().length(3).nullable().optional(),
+    fxRate: z.coerce.number().positive().nullable().optional(),
+    quantity: z.coerce.number().nonnegative().nullable().optional(),
+    sampleQuantity: z.coerce.number().nonnegative().nullable().optional(),
+    acceptanceRatio: z.coerce.number().min(0).max(1).nullable().optional(),
+    periodCount: z.coerce.number().int().positive().nullable().optional(),
+    initialFee: z.coerce.number().int().nullable().optional()
+  }).default({});
+
+  const calculationSchema = z.object({
+    period: z.string().trim().min(1).max(60),
+    occurredOn: z.string().date().nullable().optional(),
+    eventType: z.enum(["manufacturing", "sales", "sublicense_receipt", "service_period", "adjustment"]).optional(),
+    reported: reportedSchema
+  });
+
   const draftSchema = z.object({
     templateKey: z.string().trim().min(1).max(60),
     conditionIds: z.array(z.coerce.number().int().positive()).max(200).default([]),
@@ -1022,10 +1040,29 @@ export function createRoutes(database: Transactable) {
     res.json({ candidates: out.slice(0, 24) });
   }));
 
+  /**
+   * 発行せずに中身を見る。
+   *
+   * 計算書は試算が無いと金額欄が空になる。押してから「金額が入っていない」と
+   * 気づくのでは遅いので、プレビューでも同じ試算を通す。
+   */
+  const previewSchema = draftSchema.extend({
+    royaltyInput: calculationSchema.nullable().optional()
+  });
   router.post("/documents/preview",
     requireRole("admin", "legal"),
     asyncRoute(async (req, res) => {
-      const input = draftSchema.parse(req.body ?? {});
+      const parsed = previewSchema.parse(req.body ?? {});
+      const { royaltyInput, ...rest } = parsed;
+      const input = { ...rest };
+      if (royaltyInput && rest.conditionIds.length === 1) {
+        const preview = await royalty.preview({
+          conditionId: rest.conditionIds[0], period: royaltyInput.period,
+          occurredOn: royaltyInput.occurredOn, eventType: royaltyInput.eventType,
+          reported: royaltyInput.reported
+        });
+        input.royalty = royaltyForDocument(preview, royaltyInput.reported);
+      }
       const result = await issues.preview(input);
       res.json({
         html: result.html,
@@ -1097,24 +1134,6 @@ export function createRoutes(database: Transactable) {
   }));
 
   // ---- ロイヤリティ ----
-  const reportedSchema = z.object({
-    salesInput: z.coerce.number().int().nullable().optional(),
-    intakeCurrency: z.string().trim().length(3).nullable().optional(),
-    fxRate: z.coerce.number().positive().nullable().optional(),
-    quantity: z.coerce.number().nonnegative().nullable().optional(),
-    sampleQuantity: z.coerce.number().nonnegative().nullable().optional(),
-    acceptanceRatio: z.coerce.number().min(0).max(1).nullable().optional(),
-    periodCount: z.coerce.number().int().positive().nullable().optional(),
-    initialFee: z.coerce.number().int().nullable().optional()
-  }).default({});
-
-  const calculationSchema = z.object({
-    period: z.string().trim().min(1).max(60),
-    occurredOn: z.string().date().nullable().optional(),
-    eventType: z.enum(["manufacturing", "sales", "sublicense_receipt", "service_period", "adjustment"]).optional(),
-    reported: reportedSchema
-  });
-
   // 試算。保存しない。
   router.post("/conditions/:id/royalty-preview",
     requireRole("admin", "legal"),
@@ -1145,13 +1164,20 @@ export function createRoutes(database: Transactable) {
         manualInputs: z.record(z.string(), z.unknown()).optional()
       }).parse(req.body ?? {});
       const conditionId = Number(req.params.id);
+      // 先に試算する。渡さないと本文の金額欄が全部空のまま発行される
+      // （計算書だけが「紙は出るが数字が無い」状態になっていた）。
+      const preview = await royalty.preview({
+        conditionId, period: input.period, occurredOn: input.occurredOn,
+        eventType: input.eventType, reported: input.reported
+      });
+      const computed = royaltyForDocument(preview, input.reported);
       const draft = await issues.createDraft({
         templateKey: input.templateKey, conditionIds: [conditionId],
         matterId: input.matterId ?? null, manualInputs: input.manualInputs ?? {}
       }, actor(res));
       let issued;
       try {
-        issued = await issues.issue(draft.id, actor(res));
+        issued = await issues.issue(draft.id, actor(res), { royalty: computed });
       } catch (error) {
         await issues.void(draft.id, "発行できなかったため破棄", actor(res)).catch(() => undefined);
         throw error;
