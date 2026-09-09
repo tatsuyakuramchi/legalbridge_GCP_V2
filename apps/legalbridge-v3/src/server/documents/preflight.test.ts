@@ -68,6 +68,15 @@ test("検収書の連絡先メールが空なら、宛先の無い紙になる�
   assert.match(w[0].message, /担当者のメール/);
   assert.doesNotMatch(w[0].message, /担当者名/, "出ているものは挙げない");
   assert.match(w[0].message, /取引先・担当＞担当者/, "どこで直すかまで言う");
+  // 誰のことかまで言う。名前が無いと担当者の一覧から当たりを付けて探すことになる。
+  assert.match(w[0].message, /浅井 崇 の連絡先が空です/);
+  assert.match(w[0].message, /担当者 の 浅井 崇 の行で入れてください/);
+});
+
+test("担当者名も空なら、名前を騙らずに「担当者の」と言う", () => {
+  const w = documentWarnings("{{inspectorName}}{{inspectorEmail}}",
+    { inspectorName: "", inspectorEmail: "" });
+  assert.match(w[0].message, /担当者の連絡先が空です/);
 });
 
 test("埋まっていれば何も言わない", () => {

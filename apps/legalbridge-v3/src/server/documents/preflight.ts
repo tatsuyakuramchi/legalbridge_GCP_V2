@@ -129,11 +129,17 @@ export function documentWarnings(
 
   const staff = blank.filter((n) => n in STAFF_LABEL);
   if (staff.length) {
+    // 誰のことか書く。名前が無いと、担当者の一覧から当たりを付けて探すことに
+    // なる。文書は誰の連絡先を差そうとしたのかを知っている（案件の担当者）。
+    const who = [values.inspectorName, values.STAFF_NAME, values["担当者名"]]
+      .map((v) => String(v ?? "").trim()).find(Boolean);
     out.push({
       kind: "staff",
-      message: `担当者の連絡先が空です（${label(STAFF_LABEL, staff)}）。`
+      message: `${who ? `${who} の` : "担当者の"}連絡先が空です`
+        + `（${label(STAFF_LABEL, staff)}）。`
         + "検収書は【ご連絡先】にこれを差して「5営業日以内にご連絡ください」と書くので、"
-        + "空欄だと宛先の無い書類になります。取引先・担当＞担当者 で入れてください。"
+        + "空欄だと宛先の無い書類になります。"
+        + `取引先・担当＞担当者 ${who ? `の ${who} の行` : ""}で入れてください。`
     });
   }
 
