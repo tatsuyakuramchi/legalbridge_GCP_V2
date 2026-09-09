@@ -8,6 +8,7 @@ import { ConditionCounterparty, ConditionMatters, ConditionScopes } from "./Cond
 import { Relations, type EntityKind } from "./Relations.js";
 import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
 import { CONDITION_KIND_LABEL, StatusTag } from "./labels.js";
+import { ConditionCreateForm } from "./ConditionCreateForm.js";
 import type { ConditionDetail, ConditionSummary, EnvelopeCheck, RightsEnvelope } from "../server/core/model.js";
 import { api, ApiError, money, rate } from "./api.js";
 import { CreateForm, int, text } from "./CreateForm.js";
@@ -40,7 +41,7 @@ export function ConditionsWorkspace(
   { initialId, onCompose, onOpen }:
   {
     initialId?: number;
-    onCompose?: (conditionId: number, eventIds?: number[]) => void;
+    onCompose?: (conditionIds: number[], eventIds?: number[]) => void;
     onOpen?: (kind: EntityKind, id: number) => void;
   }
 ) {
@@ -53,8 +54,6 @@ export function ConditionsWorkspace(
   const [sales, setSales] = useState("");
   const [royalty, setRoyalty] = useState<RoyaltyPreview | null>(null);
   const [creating, setCreating] = useState(false);
-  const [parties, setParties] = useState<Array<{ id: number; name: string }>>([]);
-  const [works, setWorks] = useState<Array<{ id: number; title: string }>>([]);
   const [keyword, setKeyword] = useState("");
   const [editing, setEditing] = useState(false);
   const search = useDebounced(keyword);
@@ -73,14 +72,6 @@ export function ConditionsWorkspace(
       .catch((e: ApiError) => setError(e.message));
   }
   useEffect(() => { reload(); }, [filter, search]);
-
-  useEffect(() => {
-    if (!creating || parties.length) return;
-    Promise.all([
-      api.get<{ parties: Array<{ id: number; name: string }> }>("/parties"),
-      api.get<{ works: Array<{ id: number; title: string }> }>("/works")
-    ]).then(([p, w]) => { setParties(p.parties); setWorks(w.works); }).catch(() => undefined);
-  }, [creating]);
 
   useEffect(() => {
     if (!selected) return;
@@ -179,86 +170,9 @@ export function ConditionsWorkspace(
       </div>
 
       {creating && (
-        <CreateForm
-          title="条件の登録"
-          path="/conditions"
-          initial={{ direction: "in", kind: "service", pricingModel: "fixed",
-                     currency: "JPY", taxCategory: "taxable" }}
-          fields={[
-            { name: "name", label: "条件名", required: true, placeholder: "◯◯の制作委託 / △△の配信許諾" },
-            { name: "direction", label: "向き", type: "select", required: true,
-              options: [{ value: "in", label: "IN 取得（費用側）" }, { value: "out", label: "OUT 許諾（収入側）" }] },
-            { name: "kind", label: "種類", type: "select", required: true,
-              options: (["license", "product", "service", "expense", "fee"] as const).map((k) => ({
-                value: k, label: CONDITION_KIND_LABEL[k]
-              })),
-              hint: "許諾料・製品はライセンスの案件、委託料・実費・手数料は業務委託の案件に繋がる" },
-            { name: "counterpartyId", label: "相手先", type: "select", required: true,
-              options: parties.map((p) => ({ value: String(p.id), label: p.name })) },
-            { name: "workId", label: "作品", type: "select",
-              options: works.map((w) => ({ value: String(w.id), label: w.title })) },
-            { name: "termStart", label: "開始", type: "date" },
-            { name: "termEnd", label: "終了", type: "date" },
-            { name: "currency", label: "通貨", type: "select", required: true,
-              options: [{ value: "JPY", label: "JPY 円" }, { value: "USD", label: "USD" }, { value: "EUR", label: "EUR" }] },
-
-            { name: "pricingModel", label: "計算方式", type: "select", required: true,
-              options: [{ value: "fixed", label: "定額" }, { value: "revenue_rate", label: "料率" },
-                        { value: "unit_rate", label: "単価×数量" }, { value: "subscription", label: "定期課金" },
-                        { value: "none", label: "計算しない" }],
-              hint: "選んだ方式に必要な値が無いと登録できない" },
-            { name: "flatAmount", label: "定額（最小通貨単位）", type: "money", required: true,
-              visibleWhen: (v) => v.pricingModel === "fixed",
-              hint: "円なら円単位。¥330,000 は 330000" },
-            { name: "ratePct", label: "料率（%）", type: "number", required: true,
-              visibleWhen: (v) => v.pricingModel === "revenue_rate",
-              placeholder: "12.5", hint: "小数で入れる。12.5 は 12.5%" },
-            { name: "unitAmount", label: "単価（最小通貨単位）", type: "money", required: true,
-              visibleWhen: (v) => v.pricingModel === "unit_rate" },
-
-            { name: "mgAmount", label: "MG 最低保証", type: "money",
-              visibleWhen: (v) => v.direction === "out",
-              hint: "毎期独立の下限。消化しないので残高を持たない" },
-            { name: "agAmount", label: "AG 前払保証", type: "money",
-              visibleWhen: (v) => v.direction === "out",
-              hint: "累積で充当する。消化しきるまで実額が出ない" },
-            { name: "exclusivity", label: "独占性", type: "select",
-              visibleWhen: (v) => v.kind === "license",
-              options: [{ value: "exclusive", label: "独占" }, { value: "non_exclusive", label: "非独占" }] },
-            { name: "taxCategory", label: "税区分", type: "select",
-              options: [{ value: "taxable", label: "課税" }, { value: "reduced", label: "軽減" },
-                        { value: "exempt", label: "非課税" }] },
-            { name: "paymentTerms", label: "支払条件", placeholder: "検収後30日 など" },
-            { name: "regions", label: "地域（許諾範囲）", visibleWhen: (v) => v.kind === "license",
-              placeholder: "日本, 台湾", hint: "カンマ区切り。空なら全世界として扱う" },
-            { name: "languages", label: "言語（許諾範囲）", visibleWhen: (v) => v.kind === "license",
-              placeholder: "日本語, 繁体字" },
-            { name: "notes", label: "備考", type: "textarea" }
-          ]}
-          toPayload={(v) => {
-            const scopes = [
-              ...String(v.regions ?? "").split(/[,、]/).map((x) => x.trim()).filter(Boolean)
-                .map((label) => ({ scopeType: "region" as const, label })),
-              ...String(v.languages ?? "").split(/[,、]/).map((x) => x.trim()).filter(Boolean)
-                .map((label) => ({ scopeType: "language" as const, label }))
-            ];
-            return {
-              name: text(v.name), direction: v.direction, kind: v.kind,
-              counterpartyId: int(v.counterpartyId), workId: int(v.workId),
-              termStart: text(v.termStart), termEnd: text(v.termEnd),
-              currency: v.currency || "JPY", pricingModel: v.pricingModel,
-              // 画面は % で受け、保存は ppm（百万分率）。12.5% → 125000
-              ratePpm: v.ratePct ? Math.round(Number(v.ratePct) * 10000) : undefined,
-              flatAmount: int(v.flatAmount), unitAmount: int(v.unitAmount),
-              mgAmount: int(v.mgAmount), agAmount: int(v.agAmount),
-              exclusivity: text(v.exclusivity), taxCategory: v.taxCategory,
-              paymentTerms: text(v.paymentTerms), notes: text(v.notes),
-              scopes: scopes.length ? scopes : undefined
-            };
-          }}
-          onDone={(r) => { setCreating(false); reload(r.id); }}
-          onCancel={() => setCreating(false)}
-        />
+        <ConditionCreateForm
+          onDone={(r: { id: number }) => { setCreating(false); reload(r.id); }}
+          onCancel={() => setCreating(false)} />
       )}
 
       {error && <div className="alert">{error}</div>}
@@ -556,7 +470,7 @@ export function ConditionsWorkspace(
               <ConditionEvents conditionId={detail.id} currency={detail.currency}
                 reloadKey={flowVersion}
                 editable={detail.status === "active" || detail.status === "draft"}
-                onCompose={onCompose ? (eventIds) => onCompose(detail.id, eventIds) : undefined}
+                onCompose={onCompose}
                 onChanged={refreshFlow} />
 
               <ConditionMatters detail={detail} onDone={async () => {

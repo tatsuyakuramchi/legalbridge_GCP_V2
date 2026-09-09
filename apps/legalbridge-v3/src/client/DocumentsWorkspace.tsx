@@ -68,7 +68,7 @@ function Refs(
 
 export function DocumentsWorkspace(
   { start, openDocumentId, onOpen }: {
-    start?: { conditionId: number; eventIds: number[] };
+    start?: { conditionIds: number[]; eventIds: number[] };
     /** 他の画面から「編集」で来たときの文書。下書きならそのままフォームに載せる。 */
     openDocumentId?: number;
     onOpen?: (kind: EntityKind, id: number) => void;
@@ -81,7 +81,7 @@ export function DocumentsWorkspace(
   const [conditions, setConditions] = useState<ConditionSummary[]>([]);
   const [templateKey, setTemplateKey] = useState("");
   // 条件の画面から来たときは、その条件と実績を選んだ状態で開く。
-  const [picked, setPicked] = useState<number[]>(start ? [start.conditionId] : []);
+  const [picked, setPicked] = useState<number[]>(start?.conditionIds ?? []);
   const [manual, setManual] = useState<Record<string, string>>({});
   /**
    * ひな形が要求する項目の一覧と候補。**必ず手入力を空にして取る。**
@@ -134,8 +134,12 @@ export function DocumentsWorkspace(
    * 以前はページの上半分がいつも作成フォームだった。既にある文書を見に来ても、
    * 案件から「編集」で来ても、最初に目に入るのはテンプレートの選択欄で、
    * いま何を開いているのか分からなかった。作るのは押してから。
+   *
+   * ただし start があるときは別。条件や実績の画面から「文書を作る」で来た人は、
+   * もう作ると決めている。ここで閉じておくと、飛んだ先で何も起きていないように
+   * 見える（条件と実績は選ばれているのに、それが隠れたフォームの中にある）。
    */
-  const [composing, setComposing] = useState(false);
+  const [composing, setComposing] = useState(Boolean(start));
 
   useEffect(() => { void reload(); }, [search, scope]);
 

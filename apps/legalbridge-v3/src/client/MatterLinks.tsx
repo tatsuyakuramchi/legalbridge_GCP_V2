@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { MatterDetail, MatterKind } from "../server/core/model.js";
 import { api, ApiError } from "./api.js";
 import { ListSearch, useDebounced } from "./ListTools.js";
+import { ConditionCreateForm } from "./ConditionCreateForm.js";
 import { DocumentImport } from "./DocumentImport.js";
 import { CONDITION_KIND_LABEL, MATTER_KIND_LABEL, StatusTag } from "./labels.js";
 
@@ -28,6 +29,7 @@ export function MatterConditions(
   { detail, onChanged, onOpenCondition }:
   { detail: MatterDetail; onChanged: () => void; onOpenCondition: (id: number) => void }
 ) {
+  const [making, setMaking] = useState(false);
   const [picking, setPicking] = useState(false);
   const [keyword, setKeyword] = useState("");
   const search = useDebounced(keyword);
@@ -65,6 +67,7 @@ export function MatterConditions(
     finally { setBusy(false); }
   }
 
+  // 作った条件はそのまま案件に繋ぐ。作って終わりだと、結局あとで繋ぐ手が要る。
   if (!allowed.length) {
     return (
       <div className="note">
@@ -82,11 +85,33 @@ export function MatterConditions(
           {MATTER_KIND_LABEL[detail.kind]}モデルの案件に繋げるのは
           <b>{allowed.map((k) => CONDITION_KIND_LABEL[k] ?? k).join("・")}</b> の条件です
         </span>
-        {!picking && (
-          <button className="btn btn-sm" style={{ marginLeft: "auto" }}
-                  onClick={() => setPicking(true)}>条件を繋ぐ</button>
+        {!picking && !making && (
+          <span className="row" style={{ marginLeft: "auto" }}>
+            {/* 案件を見ながら新しい条件を作れるようにする。以前は「条件の画面で
+                作ってください」と案内していて、作ってから案件へ戻って繋ぎ直す
+                往復が要った。 */}
+            <button className="btn btn-sm primary"
+                    onClick={() => setMaking(true)}>新しい条件を作る</button>
+            <button className="btn btn-sm"
+                    onClick={() => setPicking(true)}>すでにある条件を繋ぐ</button>
+          </span>
         )}
       </div>
+
+      {making && (
+        <ConditionCreateForm
+          title={`${detail.matterNo ?? "この案件"} に新しい条件を作る`}
+          // 案件が知っていることは入れておく。取引モデルで種類は絞れるし、
+          // 相手先は案件に付いている。人が入れるのは条件名と金額だけになる。
+          preset={{
+            kind: allowed[0],
+            ...(detail.counterparty ? { counterpartyId: String(detail.counterparty.id) } : {}),
+            // 業務委託は必ず自社が払う側。ライセンスは取得も許諾もあるので触らない。
+            ...(detail.kind === "outsourcing" ? { direction: "in" } : {})
+          }}
+          onDone={(created) => { setMaking(false); void attach(created.id); }}
+          onCancel={() => setMaking(false)} />
+      )}
 
       {picking && (
         <div className="stack" style={{ gap: 8 }}>
@@ -150,11 +175,13 @@ export function MatterConditions(
 }
 
 export function MatterDocuments(
-  { detail, onChanged, onOpenDocument }: {
+  { detail, onChanged, onOpenDocument, onCompose }: {
     detail: MatterDetail;
     onChanged: () => void;
     /** 文書の画面へ移って、その文書を開く。 */
     onOpenDocument?: (documentId: number) => void;
+    /** 文書の画面へ移って、この案件の条件を選んだ状態で作成に入る。 */
+    onCompose?: (conditionIds: number[], eventIds?: number[]) => void;
   }
 ) {
   const [picking, setPicking] = useState(false);
@@ -194,10 +221,27 @@ export function MatterDocuments(
   return (
     <div className="stack">
       <div className="row">
-        <span className="faint">この案件の文書。発行は文書の画面から行います</span>
+        <span className="faint">この案件の文書</span>
+        {/*
+          作る導線をここに置く。以前は「発行は文書の画面から行います」と書いて
+          あるだけで、文書の画面へ行ってから条件を選び直す必要があった。
+          この案件の条件を選んだ状態で作成に入る。
+        */}
+        {onCompose && !picking && (
+          detail.conditions.length ? (
+            <button className="btn btn-sm primary" style={{ marginLeft: "auto" }}
+                    onClick={() => onCompose(detail.conditions.map((c) => c.id))}>
+              この案件で文書を作る
+            </button>
+          ) : (
+            <span className="faint" style={{ marginLeft: "auto" }}>
+              条件明細を繋ぐと、ここから文書を作れます
+            </span>
+          )
+        )}
         {!picking && (
-          <button className="btn btn-sm" style={{ marginLeft: "auto" }}
-                  onClick={() => setPicking(true)}>文書を繋ぐ</button>
+          <button className="btn btn-sm"
+                  onClick={() => setPicking(true)}>すでにある文書を繋ぐ</button>
         )}
       </div>
 

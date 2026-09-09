@@ -84,11 +84,14 @@ export function App() {
    * 文書を作りに行く。条件と実績を選んだ状態で「文書」画面を開く。
    * 作成のフォームは1つだけにしてあるので、どこから入っても同じものを見る。
    */
-  const [compose, setCompose] = useState<{ conditionId: number; eventIds: number[] } | null>(null);
+  const [compose, setCompose] =
+    useState<{ conditionIds: number[]; eventIds: number[] } | null>(null);
   /** 他の画面の「編集」から文書の画面へ来たときの相手。 */
   const [openDocument, setOpenDocument] = useState<number | undefined>();
-  const startCompose = (conditionId: number, eventIds: number[] = []) => {
-    setCompose({ conditionId, eventIds });
+  // 条件は複数受ける。発注書のように1枚で2件以上の条件を載せる書類があるので、
+  // 案件から来たときはその案件の条件をまとめて選んだ状態にする。
+  const startCompose = (conditionIds: number[], eventIds: number[] = []) => {
+    setCompose({ conditionIds, eventIds });
     setFocus(null);
     setOpenDocument(undefined);
     setView("documents");
@@ -133,7 +136,7 @@ export function App() {
         {view === "matters" && (
           <MattersWorkspace key={`m${focusFor("matters") ?? 0}`}
             onOpenCondition={openCondition} initialId={focusFor("matters")}
-            onOpen={openEntity} onOpenDocument={openDocumentAt} />
+            onOpen={openEntity} onCompose={startCompose} onOpenDocument={openDocumentAt} />
         )}
         {view === "conditions" && (
           <ConditionsWorkspace key={conditionId ?? 0} initialId={conditionId}
@@ -150,7 +153,7 @@ export function App() {
         )}
         {view === "documents" && (
           <DocumentsWorkspace
-            key={compose ? `c${compose.conditionId}` : openDocument ? `d${openDocument}` : "docs"}
+            key={compose ? `c${compose.conditionIds.join("-")}` : openDocument ? `d${openDocument}` : "docs"}
             start={compose ?? undefined} openDocumentId={openDocument}
             onOpen={openEntity} />
         )}
