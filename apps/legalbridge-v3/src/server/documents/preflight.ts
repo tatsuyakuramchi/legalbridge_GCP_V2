@@ -69,7 +69,7 @@ export function blankPlaceholders(
 }
 
 /** 画面に出す注意書き。名前の羅列では何を直せばいいか分からないので、束ねる。 */
-export interface Warning { kind: "bank" | "company" | "other"; message: string }
+export interface Warning { kind: "bank" | "company" | "staff" | "other"; message: string }
 
 const BANK_LABEL: Record<string, string> = {
   BANK_INFO: "振込先", BANK_NAME: "銀行名", BRANCH_NAME: "支店名",
@@ -87,6 +87,17 @@ const COMPANY_LABEL: Record<string, string> = {
   COMPANY_INVOICE_NO: "自社の登録番号（T番号）",
   COMPANY_BANK_INFO: "自社の振込先", COMPANY_SEAL_NOTE: "捺印・備考",
   PARTY_A_NAME: "自社名", PARTY_A_ADDRESS: "自社住所", PARTY_A_REP: "自社代表者"
+};
+
+/**
+ * 案件の担当者。検収書の【ご連絡先】はここから来る。
+ * 本番のひな形は inspectorDept / inspectorName / inspectorEmail を差している。
+ */
+const STAFF_LABEL: Record<string, string> = {
+  STAFF_NAME: "担当者名", inspectorName: "担当者名", 検収者氏名: "担当者名",
+  STAFF_DEPARTMENT: "担当者の部署", inspectorDept: "担当者の部署",
+  STAFF_EMAIL: "担当者のメール", inspectorEmail: "担当者のメール",
+  STAFF_PHONE: "担当者の電話"
 };
 
 /** 空欄をひとまとまりの日本語にする。 */
@@ -116,7 +127,18 @@ export function documentWarnings(
     });
   }
 
-  const rest = blank.filter((n) => !(n in BANK_LABEL) && !(n in COMPANY_LABEL));
+  const staff = blank.filter((n) => n in STAFF_LABEL);
+  if (staff.length) {
+    out.push({
+      kind: "staff",
+      message: `担当者の連絡先が空です（${label(STAFF_LABEL, staff)}）。`
+        + "検収書は【ご連絡先】にこれを差して「5営業日以内にご連絡ください」と書くので、"
+        + "空欄だと宛先の無い書類になります。取引先・担当＞担当者 で入れてください。"
+    });
+  }
+
+  const rest = blank.filter((n) =>
+    !(n in BANK_LABEL) && !(n in COMPANY_LABEL) && !(n in STAFF_LABEL));
   if (rest.length) {
     out.push({ kind: "other", message: `空欄のまま出る項目: ${rest.join("・")}` });
   }

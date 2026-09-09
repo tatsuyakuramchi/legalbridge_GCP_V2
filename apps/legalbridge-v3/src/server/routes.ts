@@ -1444,6 +1444,24 @@ export function createRoutes(database: Transactable) {
     res.json(detail);
   }));
 
+  /**
+   * 自社の担当者を直す。検収書の【ご連絡先】はここから来る。
+   * 移行で入れたきり直す経路が無く、メールが空のまま書類に出ていた。
+   */
+  const staffPatchSchema = z.object({
+    name: z.string().trim().min(1).max(120).optional(),
+    email: z.string().trim().max(200).nullable().optional(),
+    department: z.string().trim().max(120).nullable().optional(),
+    phone: z.string().trim().max(60).nullable().optional(),
+    status: z.enum(["active", "retired"]).optional()
+  });
+  router.patch("/staff/:id",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = staffPatchSchema.parse(req.body ?? {});
+      res.json(await partyWrites.updateStaff(Number(req.params.id), input, actor(res)));
+    }));
+
   router.get("/staff", asyncRoute(async (_req, res) => {
     res.json({ staff: await parties.staff() });
   }));

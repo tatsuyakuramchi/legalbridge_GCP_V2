@@ -16,7 +16,10 @@ interface PartyDetail extends Party {
   references: { conditions: number; payments: number; documents: number; matters: number };
   bankAccount: { bankName: string | null } | null;
 }
-interface Staff { id: number; staffCode: string | null; name: string; email: string | null; department: string | null; status: string }
+interface Staff {
+  id: number; staffCode: string | null; name: string;
+  email: string | null; department: string | null; phone: string | null; status: string;
+}
 
 const ROLE_LABEL: Record<string, string> = { primary: "主担当", signer: "署名者", billing: "請求先" };
 
@@ -37,6 +40,8 @@ export function PartiesWorkspace(
   const [kindFilter, setKindFilter] = useState<"all" | "corporate" | "individual">("all");
   const [total, setTotal] = useState<number | null>(null);
   const query = useDebounced(keyword);
+  // 在籍していてメールの無い人。退職者は書類に出ないので数えない。
+  const noMail = staff.filter((s) => s.status === "active" && !s.email);
 
   function reload(select?: number) {
     const q = query.trim();
@@ -113,19 +118,35 @@ export function PartiesWorkspace(
         <PartyMerge onDone={() => reload()} />
       ) : tab === "staff" ? (
         <div className="panel">
-          <div className="panel-hd"><h2>担当者</h2></div>
+          <div className="panel-hd">
+            <h2>担当者</h2>
+            <span className="faint">
+              検収書の【ご連絡先】と発注書の担当欄に、この部署・氏名・メール・電話が出ます
+            </span>
+          </div>
+          {/* メールの空欄は、検収書が「5営業日以内に下記へ異議を」と書いている
+              その連絡先が無いということ。件数で見えるようにする。 */}
+          {noMail.length > 0 && (
+            <div className="panel-bd">
+              <div className="note warn">
+                メールが未登録の担当者が {noMail.length} 名います
+                （{noMail.slice(0, 3).map((s) => s.name).join("・")}
+                {noMail.length > 3 ? " ほか" : ""}）。
+                検収書の連絡先が空欄のまま出ます。
+              </div>
+            </div>
+          )}
           <div className="tablewrap">
             <table>
-              <thead><tr><th>コード</th><th>氏名</th><th>部門</th><th>メール</th><th>状態</th></tr></thead>
+              <thead><tr>
+                <th>コード</th><th>氏名</th><th>部門</th><th>メール</th><th>電話</th>
+                <th>状態</th><th></th>
+              </tr></thead>
               <tbody>
                 {staff.map((s) => (
-                  <tr key={s.id}>
-                    <td className="code">{s.staffCode ?? `#${s.id}`}</td><td>{s.name}</td>
-                    <td>{s.department ?? "—"}</td><td className="faint">{s.email ?? "—"}</td>
-                    <td><StatusTag kind="staff" value={s.status} /></td>
-                  </tr>
+                  <StaffRow key={s.id} row={s} onSaved={reload} />
                 ))}
-                {!staff.length && <tr><td colSpan={5} className="faint">担当者がいません</td></tr>}
+                {!staff.length && <tr><td colSpan={7} className="faint">担当者がいません</td></tr>}
               </tbody>
             </table>
           </div>
@@ -243,5 +264,84 @@ export function PartiesWorkspace(
         </div>
       )}
     </section>
+  );
+}
+
+/**
+ * 担当者1行。押したところだけ直せるようにする。
+ *
+ * 検収書の【ご連絡先】は部署・氏名・メールをそのまま差すので、ここが空だと
+ * 「5営業日以内に下記へご連絡ください」と書いてあるのに宛先の無い紙になる。
+ * 移行で入れたきり直す経路が無かったので、一覧から直せるようにした。
+ */
+function StaffRow({ row, onSaved }: { row: Staff; onSaved: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(row);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function start() { setDraft(row); setError(null); setEditing(true); }
+
+  async function save() {
+    setBusy(true); setError(null);
+    try {
+      await api.patch(`/staff/${row.id}`, {
+        name: draft.name, email: draft.email, department: draft.department,
+        phone: draft.phone, status: draft.status
+      });
+      setEditing(false);
+      onSaved();
+    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
+    finally { setBusy(false); }
+  }
+
+  if (!editing) {
+    return (
+      <tr>
+        <td className="code">{row.staffCode ?? `#${row.id}`}</td>
+        <td>{row.name}</td>
+        <td>{row.department ?? "—"}</td>
+        {/* 空欄は薄い「—」ではなく、欠けとして見せる。書類に出る項目なので。 */}
+        <td className={row.email ? "faint" : ""}>
+          {row.email ?? <span className="tag out">未登録</span>}
+        </td>
+        <td className="faint">{row.phone ?? "—"}</td>
+        <td><StatusTag kind="staff" value={row.status} /></td>
+        <td><button className="btn btn-sm" onClick={start}>直す</button></td>
+      </tr>
+    );
+  }
+
+  const cell = (key: "name" | "email" | "department" | "phone", placeholder?: string) => (
+    <td>
+      <input value={draft[key] ?? ""} placeholder={placeholder} disabled={busy}
+             onChange={(e) => setDraft({ ...draft, [key]: e.target.value })} />
+    </td>
+  );
+
+  return (
+    <tr className="sel">
+      <td className="code">{row.staffCode ?? `#${row.id}`}</td>
+      {cell("name")}
+      {cell("department", "ボードゲーム事業部")}
+      {cell("email", "asai@example.co.jp")}
+      {cell("phone", "03-0000-0000")}
+      <td>
+        <select value={draft.status} disabled={busy}
+                onChange={(e) => setDraft({ ...draft, status: e.target.value })}>
+          <option value="active">在籍</option>
+          <option value="retired">退職</option>
+        </select>
+      </td>
+      <td className="row">
+        <button className="btn btn-sm primary" onClick={() => void save()} disabled={busy}>
+          保存
+        </button>
+        <button className="btn btn-sm" onClick={() => setEditing(false)} disabled={busy}>
+          やめる
+        </button>
+        {error && <span className="faint">{error}</span>}
+      </td>
+    </tr>
   );
 }

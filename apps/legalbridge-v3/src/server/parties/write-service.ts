@@ -15,6 +15,14 @@ export interface PartyInput {
   partyCode?: string | null;
 }
 
+export interface StaffInput {
+  name?: string;
+  email?: string | null;
+  department?: string | null;
+  phone?: string | null;
+  status?: "active" | "retired";
+}
+
 export interface PartyContactInput {
   role: string;
   name?: string | null;
@@ -107,6 +115,60 @@ export class PartyWriteService {
           detail: { role, email: input.email ?? null }
         });
         return { partyId, role };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 自社の担当者を直す。
+   *
+   * 検収書は【ご連絡先】に担当者の部署・氏名・メールを差し、そこに
+   * 「5営業日以内に異議を」と書く。メールが空だと、期限だけ書いてあって
+   * 連絡先が無い紙になる。それなのに staff は移行で入れたきり、
+   * V3 から直す経路がどこにも無かった。
+   */
+  async updateStaff(id: number, input: StaffInput, actor: string) {
+    const sets: string[] = [];
+    const params: unknown[] = [id];
+    const changed: string[] = [];
+    const put = (column: string, value: unknown) => {
+      params.push(value);
+      sets.push(`${column} = $${params.length}`);
+      changed.push(column);
+    };
+
+    if (input.name !== undefined) {
+      const name = String(input.name).trim();
+      // 氏名は書類に出るので空にはできない。退職者は status で外す。
+      if (!name) throw new DomainError("VALIDATION", "担当者の氏名は空にできません");
+      put("name", name);
+    }
+    // 空文字は「消す」。NULL で持たないと、書類側の空欄判定が効かない。
+    const blankToNull = (v: string | null | undefined) =>
+      v === null || v === undefined ? null : (String(v).trim() || null);
+    if (input.email !== undefined) put("email", blankToNull(input.email));
+    if (input.department !== undefined) put("department", blankToNull(input.department));
+    if (input.phone !== undefined) put("phone", blankToNull(input.phone));
+    if (input.status !== undefined) put("status", input.status);
+    if (!sets.length) throw new DomainError("VALIDATION", "直す項目がありません");
+
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const r = await client.query(
+          `UPDATE staff SET ${sets.join(", ")} WHERE id = $1
+           RETURNING id, staff_code, name, email, department, phone, status`, params);
+        const row = r.rows[0] as Record<string, any> | undefined;
+        if (!row) throw new DomainError("NOT_FOUND", `担当者 ${id} が見つかりません`);
+
+        await recordAudit(client, {
+          actor, action: "staff.update", targetType: "staff", targetId: id,
+          detail: { fields: changed, name: row.name }
+        });
+        return {
+          id: Number(row.id), staffCode: row.staff_code ?? null, name: String(row.name),
+          email: row.email ?? null, department: row.department ?? null,
+          phone: row.phone ?? null, status: String(row.status)
+        };
       });
     } catch (error) { throw translate(error); }
   }

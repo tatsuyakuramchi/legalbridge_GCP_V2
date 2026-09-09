@@ -96,12 +96,14 @@ export class PartyRepository {
   async staff(limit = 200) {
     try {
       const r = await this.database.query(
-        `SELECT id, staff_code, name, email, department, status FROM staff
+        `SELECT id, staff_code, name, email, department, phone, status FROM staff
           ORDER BY status, department NULLS LAST, name LIMIT $1`,
         [Math.min(Math.max(limit, 1), 500)]);
       return r.rows.map((s: Record<string, any>) => ({
         id: Number(s.id), staffCode: str(s.staff_code), name: String(s.name),
-        email: str(s.email), department: str(s.department), status: String(s.status)
+        email: str(s.email), department: str(s.department),
+        // 検収書・発注書は STAFF_PHONE も差す。一覧で欠けが見えないと直せない。
+        phone: str(s.phone), status: String(s.status)
       }));
     } catch (error) { throw translate(error); }
   }

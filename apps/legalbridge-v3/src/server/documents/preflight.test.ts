@@ -57,6 +57,19 @@ test("自社情報の空欄は、どこで直すかまで言う", () => {
   assert.match(w[0].message, /運用＞設定＞自社情報/);
 });
 
+test("検収書の連絡先メールが空なら、宛先の無い紙になると言う", () => {
+  // 本番の検収書はこの3つを差して「5営業日以内に下記へご異議を」と書く。
+  const w = documentWarnings(
+    "株式会社アークライト　{{inspectorDept}}　担当: {{inspectorName}}<br>E-mail: {{inspectorEmail}}",
+    { inspectorDept: "ボードゲーム事業部　海外制作チーム", inspectorName: "浅井 崇",
+      inspectorEmail: null });
+  assert.equal(w.length, 1);
+  assert.equal(w[0].kind, "staff");
+  assert.match(w[0].message, /担当者のメール/);
+  assert.doesNotMatch(w[0].message, /担当者名/, "出ているものは挙げない");
+  assert.match(w[0].message, /取引先・担当＞担当者/, "どこで直すかまで言う");
+});
+
 test("埋まっていれば何も言わない", () => {
   assert.deepEqual(documentWarnings("{{BANK_NAME}}{{COMPANY_TEL}}",
     { BANK_NAME: "みずほ銀行", COMPANY_TEL: "03-6811-0730" }), []);
