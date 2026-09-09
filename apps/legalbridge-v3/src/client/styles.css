@@ -306,3 +306,26 @@ tr.report-total td { border-top: 2px solid var(--line-strong); font-weight: 600;
 .sselect-item[aria-selected="true"]{background:var(--accent-soft)}
 .sselect-item.current{font-weight:600}
 .sselect-empty{padding:6px 10px;font-size:12px;color:var(--faint)}
+
+/* ── 文書作成フォーム。左に区分ごとの入力、右にプレビューと点検 ─────────── */
+.compose{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;align-items:start}
+@media (max-width:1180px){.compose{grid-template-columns:minmax(0,1fr)}}
+.compose-side{position:sticky;top:12px}
+.compose-side .preview{height:560px}
+.fsec .panel-hd h2{font-size:13px}
+.frow{display:grid;grid-template-columns:170px minmax(0,1fr);gap:10px;align-items:start;font-size:12px}
+.frow.miss .flabel > span:last-child{color:var(--out)}
+.flabel{display:flex;flex-direction:column;gap:3px;color:var(--muted);padding-top:5px}
+.src{display:inline-block;width:max-content;font-size:10px;padding:0 6px;border-radius:3px;
+  letter-spacing:.04em;border:1px solid var(--line-strong);color:var(--muted)}
+.src.auto{background:var(--accent-soft);border-color:transparent;color:var(--accent)}
+.src.computed{background:var(--ok-soft);border-color:transparent;color:var(--ok)}
+.src.manual{background:var(--warn-soft);border-color:transparent;color:var(--warn)}
+.fbody input,.fbody select,.fbody textarea{width:100%;border:1px solid var(--line-strong);border-radius:5px;
+  padding:6px 8px;background:var(--surface);color:var(--ink);font:inherit;min-width:0}
+.fbody input[type="checkbox"]{width:16px;height:16px}
+.fro{display:flex;gap:10px;align-items:baseline;padding:5px 0;border-bottom:1px dashed var(--line)}
+.fro .linky{margin-left:auto;white-space:nowrap}
+.check-list{display:flex;flex-direction:column;gap:5px;font-size:12px}
+.check-list .ok{color:var(--ok)} .check-list .ng{color:var(--out)}
+.compose-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding-top:10px;border-top:1px solid var(--line)}

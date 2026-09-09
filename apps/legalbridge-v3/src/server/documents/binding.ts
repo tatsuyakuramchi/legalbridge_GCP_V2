@@ -25,6 +25,33 @@ export interface TemplateVariable extends LegacyFieldMeta {
   dbField?: string;
   /** 項目の型。V1 の field_schema 由来。array は明細で、手入力には回さない。 */
   type?: string;
+  /** 画面の区分（"I. 基本情報" など）。V1 の field_schema 由来。無ければ末尾の区分に入る。 */
+  group?: string;
+  helpText?: string;
+  placeholder?: string;
+  /** select の選択肢。 */
+  options?: string[];
+}
+
+/**
+ * 画面に出す項目1つ。ひな形が要求する項目を、出どころ付きで並べる。
+ *   computed … 明細・合計・消費税。計算で決まる。手入力で上書きしない
+ *   auto     … 条件・合意・相手先・案件から引いた。空なら手で補える
+ *   manual   … ここから決まらない。人が入れる
+ */
+export interface FormField {
+  name: string;
+  label: string;
+  group: string | null;
+  type: string;
+  required: boolean;
+  source: "computed" | "auto" | "manual";
+  /** いま入る値（自動・計算なら引いた値、手入力なら渡された値）。 */
+  value: unknown;
+  helpText: string | null;
+  placeholder: string | null;
+  options: string[] | null;
+  readonly: boolean;
 }
 
 export interface BindingResult {
@@ -33,6 +60,8 @@ export interface BindingResult {
   missing: Array<{ name: string; label: string }>;
   /** 供給元から解決した変数（手入力と区別して画面に出す）。 */
   derived: string[];
+  /** 画面に出す項目の一覧。区分と出どころ付き。人に見せない項目は入らない。 */
+  fields: FormField[];
 }
 
 export function parseVariables(raw: unknown): TemplateVariable[] {
@@ -49,6 +78,10 @@ export function parseVariables(raw: unknown): TemplateVariable[] {
       // V1 の field_schema から来る宣言。読まないと全項目が手入力になる。
       dbField: record.dbField ? String(record.dbField) : undefined,
       type: record.type ? String(record.type) : undefined,
+      group: record.group ? String(record.group) : undefined,
+      helpText: record.helpText ? String(record.helpText) : undefined,
+      placeholder: record.placeholder ? String(record.placeholder) : undefined,
+      options: Array.isArray(record.options) ? record.options.map((o) => String(o)) : undefined,
       hidden: record.hidden === true,
       readonly: record.readonly === true,
       showWhen: record.showWhen as ShowWhenCondition | ShowWhenCondition[] | undefined,
@@ -93,6 +126,7 @@ export function bindVariables(
   const values: Record<string, unknown> = {};
   const missing: BindingResult["missing"] = [];
   const derived: string[] = [];
+  const fields: FormField[] = [];
   const computed = options.computed ?? {};
   const templateKey = options.templateKey ?? "";
 
@@ -105,9 +139,30 @@ export function bindVariables(
       ((context as any).condition?.counterparty?.kind as string | undefined) ?? null
   };
 
+  // 画面に出す項目。明細（array）と隠し項目は出さない。
+  const shown = (variable: TemplateVariable) =>
+    variable.type !== "array" && variable.type !== "hidden"
+    && isFieldRequested(templateKey, variable, decisionValues);
+  const field = (
+    variable: TemplateVariable, source: FormField["source"], value: unknown
+  ): FormField => ({
+    name: variable.name,
+    label: variable.label ?? variable.name,
+    group: variable.group ?? null,
+    type: variable.type ?? "text",
+    required: variable.required === true,
+    source,
+    value: value ?? null,
+    helpText: variable.helpText ?? null,
+    placeholder: variable.placeholder ?? null,
+    options: variable.options ?? null,
+    readonly: variable.readonly === true
+  });
+
   for (const variable of variables) {
     const manual = manualInputs[variable.name];
     let value: unknown;
+    let source: FormField["source"] = "manual";
 
     // 計算で決まる値が先。明細から出した合計を手入力で上書きさせない
     // （本文の表と合計がずれる）。
@@ -115,6 +170,7 @@ export function bindVariables(
     if (!isEmpty(calculated)) {
       values[variable.name] = calculated;
       derived.push(variable.name);
+      if (shown(variable)) fields.push(field(variable, "computed", calculated));
       continue;
     }
 
@@ -134,6 +190,7 @@ export function bindVariables(
           : declared;
         if (!isEmpty(legacy)) {
           value = legacy;
+          source = "auto";
           derived.push(variable.name);
         } else {
           value = variable.default;
@@ -145,11 +202,14 @@ export function bindVariables(
       const resolved = pick(context, variable.from);
       if (!isEmpty(resolved)) {
         value = resolved;
+        source = "auto";
         derived.push(variable.name);
       } else {
         value = isEmpty(manual) ? variable.default : manual;
       }
     }
+
+    if (shown(variable)) fields.push(field(variable, source, value));
 
     if (isEmpty(value)) {
       // 人に入力させない項目（計算で埋まる欄・使わない分岐の欄・隠し項目）は
@@ -163,7 +223,7 @@ export function bindVariables(
     values[variable.name] = value;
   }
 
-  return { values, missing, derived };
+  return { values, missing, derived, fields };
 }
 
 export function assertComplete(result: BindingResult): void {

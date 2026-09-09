@@ -1239,6 +1239,8 @@ export function createRoutes(database: Transactable) {
         missing: result.binding.missing,
         derived: result.binding.derived,
         values: result.binding.values,
+        // 画面に出す項目の一覧。区分と出どころ（計算／自動／手入力）付き。
+        fields: result.binding.fields,
         // 入力欄の横に出す候補。ひな形が供給元を宣言していなくても人が選べる。
         candidates: result.candidates,
         // 本文が差しているのに空で出る項目（振込先の欠けなど）。

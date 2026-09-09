@@ -183,3 +183,29 @@ test("口座種別しか無い行は口座として扱わない", async () => {
   assert.equal(partial.BANK_NAME, "INTESA SANPAOLO SPA");
   assert.equal(partial.BANK_INFO, "INTESA SANPAOLO SPA");
 });
+
+test("画面に出す項目は区分と出どころ付きで並ぶ。明細と隠し項目は出さない", () => {
+  // 発注書の形。相手先は条件から、合計は計算から、備考は人が入れる。
+  const variables = parseVariables([
+    { name: "VENDOR_NAME", label: "相手先", group: "I. 基本情報", from: "condition.counterparty.name", required: true },
+    { name: "totalAmountStr", label: "合計", group: "III. 金額" },
+    { name: "REMARKS", label: "備考", group: "IV. その他", type: "textarea", helpText: "任意" },
+    { name: "items", label: "明細", type: "array" },
+    { name: "SECRET", label: "隠し", hidden: true },
+    { name: "PAY_METHOD", label: "支払方法", type: "select", options: ["振込", "現金"], required: true }
+  ]);
+  const r = bindVariables(variables, { condition: { counterparty: { name: "合同会社アトリエ蒼" } } },
+    { REMARKS: "急ぎ" }, { templateKey: "purchase_order", computed: { totalAmountStr: "330,000" } });
+
+  assert.deepEqual(r.fields.map((f) => [f.name, f.source, f.group]), [
+    ["VENDOR_NAME", "auto", "I. 基本情報"],
+    ["totalAmountStr", "computed", "III. 金額"],
+    ["REMARKS", "manual", "IV. その他"],
+    ["PAY_METHOD", "manual", null]
+  ], "明細（array）と隠し項目は画面に出さない");
+  assert.equal(r.fields[0].value, "合同会社アトリエ蒼", "自動で引いた値をそのまま見せる");
+  assert.equal(r.fields[2].value, "急ぎ");
+  assert.equal(r.fields[2].helpText, "任意");
+  assert.deepEqual(r.fields[3].options, ["振込", "現金"]);
+  assert.deepEqual(r.missing.map((m) => m.name), ["PAY_METHOD"]);
+});

@@ -5,6 +5,7 @@ import type { ConditionSummary } from "../server/core/model.js";
 import { api, ApiError, money } from "./api.js";
 import type { EntityKind } from "./Relations.js";
 import { DocumentDetail, type DocumentRow } from "./DocumentDetail.js";
+import { DocumentFields, kindFor, type Candidate, type FormField } from "./DocumentFields.js";
 
 interface TemplateRow {
   id: number; templateKey: string; label: string; category: string | null; numberPrefix: string | null;
@@ -24,27 +25,16 @@ interface PreviewResponse {
   html: string; templateLabel: string;
   missing: Array<{ name: string; label: string }>; derived: string[];
   values: Record<string, unknown>;
+  /** 画面に出す項目。区分と出どころ（計算／自動／手入力）付き。 */
+  fields: FormField[];
   /** 入力欄の横に出す候補。押すとその値が入る。 */
   candidates: Candidate[];
   /** 本文が差しているのに空で出る項目。止めはしないが、出す前に見せる。 */
   warnings: Array<{ kind: "bank" | "company" | "other"; message: string }>;
 }
-interface Candidate { label: string; value: string; source: string; kind: "date" | "amount" | "text" }
 interface EventRow {
   id: number; eventType: string; occurredOn: string | null; period: string | null;
   amount: number; status: string;
-}
-
-/**
- * 入力欄の名前から、その欄に合う候補の種類を当てる。
- * 日付の欄に金額の候補を並べても選べない。当たらなければ全部出す。
- */
-function kindFor(name: string, label: string): Candidate["kind"] | null {
-  const s = `${name} ${label}`;
-  if (/日|期日|年月日/.test(s) && !/氏名|名前/.test(label)) return "date";
-  if (/額|金額|価格|料金|税/.test(s)) return "amount";
-  if (/名|者|部署|内容|件名|住所|番号/.test(s)) return "text";
-  return null;
 }
 
 /** 一覧の中の紐づけ。件数ではなく番号を出して、そのまま辿れるようにする。 */
@@ -116,13 +106,6 @@ export function DocumentsWorkspace(
   const [condSearch, setCondSearch] = useState("");
   // 候補から選んだ欄。手で打った欄だけを「前回の値」として覚える。
   const [pickedFields, setPickedFields] = useState<Set<string>>(new Set());
-  // 候補を開いている欄。文字の欄は候補が多いので、押したときだけ出す。
-  const [opened, setOpened] = useState<Set<string>>(new Set());
-  // 候補に無い人を名前で探して引く。別部署の検収者や、相手先の別の担当者。
-  const [quoteFor, setQuoteFor] = useState<string | null>(null);
-  const [quoteQ, setQuoteQ] = useState("");
-  const [quoteHits, setQuoteHits] = useState<Candidate[]>([]);
-  const quoteSearch = useDebounced(quoteQ, 300);
   const form = useRef<HTMLDivElement>(null);
 
   /**
@@ -264,13 +247,6 @@ export function DocumentsWorkspace(
   // 打つたびに問い合わせない。少し待ってからプレビューを取り直す。
   const manualJson = useDebounced(JSON.stringify(manual), 600);
 
-  useEffect(() => {
-    if (!quoteFor || !quoteSearch.trim()) { setQuoteHits([]); return; }
-    api.get<{ candidates: Candidate[] }>(
-      `/quote-sources?q=${encodeURIComponent(quoteSearch.trim())}`)
-      .then((r) => setQuoteHits(r.candidates)).catch(() => setQuoteHits([]));
-  }, [quoteFor, quoteSearch]);
-
   // ひな形を変えたら、前回そのひな形で入れた値を読み込む。
   // 検収者部署・氏名のように毎回同じものを打ち直さずに済む。
   useEffect(() => {
@@ -344,11 +320,12 @@ export function DocumentsWorkspace(
       // 手で打った項目だけ覚える。日付と金額は毎回変わるので覚えない
       // （前回の日付が入ったまま気づかず発行してしまう）。
       const keep: Record<string, string> = {};
-      for (const m of spec?.missing ?? []) {
-        const kind = kindFor(m.name, m.label);
-        const value = String(manual[m.name] ?? "").trim();
-        if (value && !pickedFields.has(m.name) && kind !== "date" && kind !== "amount") {
-          keep[m.name] = value;
+      for (const f of spec?.fields ?? []) {
+        if (f.source !== "manual") continue;   // 自動の欄の上書きは今回だけ
+        const kind = kindFor(f.name, f.label, f.type);
+        const value = String(manual[f.name] ?? "").trim();
+        if (value && !pickedFields.has(f.name) && kind !== "date" && kind !== "amount") {
+          keep[f.name] = value;
         }
       }
       if (Object.keys(keep).length) {
@@ -520,8 +497,8 @@ export function DocumentsWorkspace(
 
   // 未入力は画面の入力値で数える。項目の一覧は手入力を空にして取っているので、
   // spec.missing はひな形が要求する項目の一覧であって、残数ではない。
-  const remaining = (spec?.missing ?? [])
-    .filter((m) => !String(manual[m.name] ?? "").trim()).length;
+  const remaining = (spec?.fields ?? [])
+    .filter((f) => f.required && f.source === "manual" && !String(manual[f.name] ?? "").trim()).length;
   const ready = Boolean(templateKey) && spec !== null && remaining === 0;
 
   return (
@@ -551,8 +528,10 @@ export function DocumentsWorkspace(
         )}
 
         {(composing || draft) && (
-        <div className="stack">
-          <div className="panel" ref={form}>
+        <div className="compose" ref={form}>
+          {/* 左：何から作るか → 区分ごとの入力。右：プレビューと点検（付いてくる）。 */}
+          <div className="stack">
+          <div className="panel">
             <div className="panel-hd">
               <h2>{draft ? "下書きを直して決定する" : "新しく文書を作る"}</h2>
               {!draft && (
@@ -649,130 +628,77 @@ export function DocumentsWorkspace(
                 </div>
               )}
 
-              {spec && spec.missing.length > 0 && (
-                <div className="stack">
-                  <div className="row">
-                    <span className="faint">このひな形が要求する項目</span>
-                    <span className="faint" style={{ marginLeft: "auto" }}>
-                      残り {remaining} 件
-                    </span>
-                  </div>
-                  <div className="form-grid">
-                  {spec.missing.map((m) => {
-                    const want = kindFor(m.name, m.label);
-                    const fits = spec.candidates.filter((c) => !want || c.kind === want);
-                    // 日付と金額は数が少なく、どれも当てはまりうるのでその場に出す。
-                    // 文字は候補が多く、当てはまらないものばかり並ぶので畳んでおく。
-                    const inline = want === "date" || want === "amount";
-                    const open = inline || opened.has(m.name);
-                    const put = (value: string) => {
-                      setManual((prev) => ({ ...prev, [m.name]: value }));
-                      setPickedFields((prev) => new Set(prev).add(m.name));
-                    };
-                    return (
-                      <label key={m.name} className="field">
-                        <span>{m.label}</span>
-                        <input value={manual[m.name] ?? ""}
-                               onChange={(e) => {
-                                 setManual((prev) => ({ ...prev, [m.name]: e.target.value }));
-                                 setPickedFields((prev) => {
-                                   const next = new Set(prev); next.delete(m.name); return next;
-                                 });
-                               }} />
-                        {/* 候補が無いときこそ探したい。「探して入れる」は候補の数に
-                            関わらず出す。ここを候補の有無で隠していたせいで、
-                            検収者氏名のように候補が出ない欄は手打ちしかできなかった。 */}
-                        {(!inline || fits.length > 0) && (
-                          <div className="row" style={{ flexWrap: "wrap", gap: 4, marginTop: 4 }}>
-                            {!inline && (<>
-                              {fits.length > 0 && (
-                              <button type="button" className="btn btn-sm"
-                                      onClick={() => setOpened((prev) => {
-                                        const next = new Set(prev);
-                                        if (next.has(m.name)) next.delete(m.name);
-                                        else next.add(m.name);
-                                        return next;
-                                      })}>
-                                候補 {open ? "▴" : "▾"}
-                              </button>
-                              )}
-                              <button type="button" className="btn btn-sm"
-                                      onClick={() => {
-                                        setQuoteFor(quoteFor === m.name ? null : m.name);
-                                        setQuoteQ(""); setQuoteHits([]);
-                                      }}>
-                                探して入れる
-                              </button>
-                            </>)}
-                            {quoteFor === m.name && (
-                              <div className="stack" style={{ gap: 4, width: "100%", marginTop: 4 }}>
-                                <input value={quoteQ} autoFocus
-                                       placeholder="スタッフ・取引先・先方担当を名前で探す"
-                                       onChange={(e) => setQuoteQ(e.target.value)} />
-                                <div className="row" style={{ flexWrap: "wrap", gap: 4 }}>
-                                  {quoteHits.map((c) => (
-                                    <button key={`${c.label}:${c.value}`} type="button"
-                                            className="btn btn-sm" style={{ whiteSpace: "nowrap" }}
-                                            title={c.source}
-                                            onClick={() => { put(c.value); setQuoteFor(null); }}>
-                                      {c.value}
-                                      <span className="faint" style={{ marginLeft: 4 }}>{c.label}</span>
-                                    </button>
-                                  ))}
-                                  {quoteSearch.trim() && !quoteHits.length && (
-                                    <span className="faint">見つかりません</span>
-                                  )}
-                                </div>
-                              </div>
-                            )}
-                            {open && fits.slice(0, 8).map((c) => (
-                              <button key={`${c.label}:${c.value}`} type="button"
-                                      className="btn btn-sm" style={{ whiteSpace: "nowrap" }}
-                                      title={`${c.source}／${c.label}`} onClick={() => put(c.value)}>
-                                {c.value}
-                                <span className="faint" style={{ marginLeft: 4 }}>{c.label}</span>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </label>
-                    );
-                  })}
-                  </div>
-                </div>
-              )}
+            </div>
+          </div>
 
+          <DocumentFields fields={spec?.fields ?? []} manual={manual}
+            candidates={spec?.candidates ?? []}
+            onChange={(name, value) => {
+              setManual((prev) => {
+                const next = { ...prev };
+                // 空にしたら「入れていない」に戻す。空文字を送ると自動の値を消してしまう。
+                if (value === "") delete next[name]; else next[name] = value;
+                return next;
+              });
+              setPickedFields((prev) => { const next = new Set(prev); next.delete(name); return next; });
+            }}
+            onPick={(name, value) => {
+              setManual((prev) => ({ ...prev, [name]: value }));
+              setPickedFields((prev) => new Set(prev).add(name));
+            }} />
+          </div>
+
+          <aside className="compose-side stack">
+            <div className="panel">
+              <div className="panel-hd">
+                <h2>決定前の点検</h2>
+                <span className="faint">{spec ? `${spec.fields.length} 項目` : "ひな形を選ぶと出ます"}</span>
+              </div>
+              <div className="panel-bd stack">
+                {spec && (
+                  <div className="check-list">
+                    <div className={remaining === 0 ? "ok" : "ng"}>
+                      {remaining === 0 ? "✓ 必須の入力は揃っています" : `✕ 未入力 ${remaining} 件：`}
+                      {remaining > 0 && (
+                        <span className="faint">
+                          {" "}{spec.fields.filter((f) => f.required && f.source === "manual"
+                              && !String(manual[f.name] ?? "").trim()).map((f) => f.label).join("・")}
+                        </span>
+                      )}
+                    </div>
+                    <div className="faint">
+                      自動 {spec.fields.filter((f) => f.source !== "manual").length} 項目を条件・相手先・案件から、
+                      手入力 {spec.fields.filter((f) => f.source === "manual").length} 項目を人が入れます
+                      {picked.length ? `。条件明細 ${picked.length} 件` : "。条件明細なし"}
+                      {pickedEvents.length ? `、実績 ${pickedEvents.length} 件` : ""}
+                    </div>
+                  </div>
+                )}
               {/* 宣言されていない差し込みの空欄。振込先の欠けはここにしか出ない
                   （必須項目の未入力は上の一覧に出る）。発行は止めない。 */}
               {(spec?.warnings ?? []).map((w) => (
                 <div key={w.kind} className="note warn">{w.message}</div>
               ))}
 
-              <div className="row">
-                <button className="btn" onClick={runPreview} disabled={busy || !templateKey}>
-                  中身を見る
-                </button>
-                <button className="btn primary" onClick={issue} disabled={busy || !ready}>
-                  {draft ? "直して決定する" : "決定する"}
-                </button>
-                {!ready && spec && (
-                  <span className="faint">未入力 {remaining} 件</span>
-                )}
-                {spec && spec.derived.length > 0 && (
-                  <span className="faint">
-                    {spec.derived.length}項目を条件から自動解決
-                  </span>
-                )}
+                <div className="compose-actions">
+                  <button className="btn primary" onClick={issue} disabled={busy || !ready}>
+                    {draft ? "直して決定する" : "決定する"}
+                  </button>
+                  <button className="btn" onClick={runPreview} disabled={busy || !templateKey}>
+                    プレビューを更新
+                  </button>
+                  <span className="faint">決定すると番号が振られ、中身は直せなくなります</span>
+                </div>
               </div>
             </div>
-          </div>
 
-          {rendered && (
-            <div className="panel">
-              <div className="panel-hd"><h2>プレビュー</h2><span className="faint">{rendered.templateLabel}</span></div>
-              <iframe className="preview" title="文書プレビュー" srcDoc={rendered.html} />
-            </div>
-          )}
+            {rendered && (
+              <div className="panel">
+                <div className="panel-hd"><h2>プレビュー</h2><span className="faint">{rendered.templateLabel}</span></div>
+                <iframe className="preview" title="文書プレビュー" srcDoc={rendered.html} />
+              </div>
+            )}
+          </aside>
         </div>
         )}
 
