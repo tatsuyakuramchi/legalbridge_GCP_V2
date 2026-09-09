@@ -69,7 +69,7 @@ function Refs(
 
 export function DocumentsWorkspace(
   { start, openDocumentId, onOpen }: {
-    start?: { conditionIds: number[]; eventIds: number[] };
+    start?: { conditionIds: number[]; eventIds: number[]; matterId?: number | null };
     /** 他の画面から「編集」で来たときの文書。下書きならそのままフォームに載せる。 */
     openDocumentId?: number;
     onOpen?: (kind: EntityKind, id: number) => void;
@@ -258,9 +258,11 @@ export function DocumentsWorkspace(
 
   /** サーバへ渡す手入力。文字の欄と、直した明細の行を合わせたもの。 */
   const inputs = useMemo(() => ({ ...manual, ...lines }), [manual, lines]);
+  /** 案件。案件や条件の画面から来たときに決まる。無ければサーバが条件から引く。 */
+  const matterId = start?.matterId ?? null;
   const body = useMemo(() => ({
-    templateKey, conditionIds: picked, eventIds: pickedEvents, manualInputs: inputs
-  }), [templateKey, picked, pickedEvents, inputs]);
+    templateKey, conditionIds: picked, eventIds: pickedEvents, manualInputs: inputs, matterId
+  }), [templateKey, picked, pickedEvents, inputs, matterId]);
 
   // 打つたびに問い合わせない。少し待ってからプレビューを取り直す。
   const manualJson = useDebounced(JSON.stringify(inputs), 600);
@@ -340,7 +342,7 @@ export function DocumentsWorkspace(
         id = draft.id;
       } else {
         const r = await api.post<{ id: number }>("/documents",
-          { templateKey, conditionIds: picked, manualInputs });
+          { templateKey, conditionIds: picked, manualInputs, matterId });
         id = r.id;
         setDraft({ id, no: null });
       }

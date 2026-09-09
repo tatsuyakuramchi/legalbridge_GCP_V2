@@ -33,7 +33,7 @@ export function ConditionEvents(
   { conditionId: number; currency: string; editable: boolean;
     matterId?: number | null; reloadKey?: number;
     /** 文書の画面へ、この条件と実績を選んだ状態で移る。 */
-    onCompose?: (conditionIds: number[], eventIds: number[]) => void;
+    onCompose?: (conditionIds: number[], eventIds: number[], matterId?: number | null) => void;
     onChanged: () => void }
 ) {
   const [rows, setRows] = useState<EventRow[]>([]);
@@ -332,7 +332,7 @@ export function ConditionEvents(
                               onClick={() => {
                                 // 作成のフォームは「文書」画面に1本化してある。
                                 // ここからはその画面へ、条件と実績を選んだ状態で移る。
-                                if (onCompose) onCompose([conditionId], [row.id]);
+                                if (onCompose) onCompose([conditionId], [row.id], matterId ?? null);
                                 else { setIssuing(row); setIssued(null); }
                               }}>
                         文書を作る

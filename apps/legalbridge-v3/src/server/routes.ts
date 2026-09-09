@@ -29,7 +29,7 @@ import { GoogleDriveStorage, MemoryDriveStorage, type DriveStorage } from "./doc
 import { DocumentImportService } from "./documents/import-service.js";
 import { GoogleMatterDriveFolderService, LocalMatterDriveFolderService } from "./documents/drive-folder.js";
 import { MatterFolderStorageService } from "./matters/drive-folder-service.js";
-import { MatterCommunicationService, recordCommunication } from "./matters/communication-service.js";
+import { MatterCommunicationService, driveIdFromUrl, recordCommunication } from "./matters/communication-service.js";
 import { config } from "./config.js";
 import { verifySlackSignature } from "./integrations/signature.js";
 import { RoyaltyStatementService } from "./royalty/statement-service.js";
@@ -1656,6 +1656,23 @@ export function createRoutes(database: Transactable) {
     if (!document) throw new DomainError("NOT_FOUND", `文書 ${id} が見つかりません`);
     if (document.status !== "issued") {
       throw new DomainError("CONFLICT", "決定済みの文書だけ送れます（下書きは先に決定してください）");
+    }
+    // 取り込んだ文書（外で作って登録したもの）はひな形が無いので描けない。
+    // 登録のときに Drive へ置いたファイルをそのまま添える。
+    if (document.imported) {
+      const fileId = driveIdFromUrl(document.storageUrl ?? "");
+      if (!fileId || !drive || typeof drive.downloadFile !== "function") {
+        throw new DomainError("VALIDATION",
+          "取り込んだ文書のファイルを Drive から読めません（Drive 保存が未設定か、保存先が無い）");
+      }
+      const file = await drive.downloadFile(fileId);
+      const ext = file.mimeType === "application/pdf" ? "pdf"
+        : String(document.manualInputs?.filename ?? "").split(".").pop() || "bin";
+      return {
+        document,
+        attachment: { filename: `${document.documentNo ?? `document-${id}`}.${ext}`,
+                      mimeType: file.mimeType, data: file.data }
+      };
     }
     const rendered = await issues.renderIssued(id);
     return {

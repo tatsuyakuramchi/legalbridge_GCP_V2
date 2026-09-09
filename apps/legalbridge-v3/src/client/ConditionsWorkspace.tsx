@@ -41,7 +41,7 @@ export function ConditionsWorkspace(
   { initialId, onCompose, onOpen }:
   {
     initialId?: number;
-    onCompose?: (conditionIds: number[], eventIds?: number[]) => void;
+    onCompose?: (conditionIds: number[], eventIds?: number[], matterId?: number | null) => void;
     onOpen?: (kind: EntityKind, id: number) => void;
   }
 ) {
@@ -267,7 +267,7 @@ export function ConditionsWorkspace(
                           条件を探し直すことになる。 */}
                       {onCompose && (
                         <button className="btn btn-sm primary"
-                                onClick={() => onCompose([detail.id])}>この条件で文書を作る</button>
+                                onClick={() => onCompose([detail.id], [], detail.matters[0]?.id ?? null)}>この条件で文書を作る</button>
                       )}
                       <button className="btn btn-sm" onClick={() => setEditing(true)}>編集</button>
                     </span>
@@ -355,7 +355,7 @@ export function ConditionsWorkspace(
                   <span className="faint">契約書・発注書はここから。検収書・計算書は下の実績から</span>
                   {onCompose && detail.status !== "void" && detail.status !== "superseded" && (
                     <button className="btn btn-sm" style={{ marginLeft: "auto" }}
-                            onClick={() => onCompose([detail.id])}>文書を作る</button>
+                            onClick={() => onCompose([detail.id], [], detail.matters[0]?.id ?? null)}>文書を作る</button>
                   )}
                 </div>
                 <div className="tablewrap">

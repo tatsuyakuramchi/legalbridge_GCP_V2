@@ -56,7 +56,7 @@ export function MattersWorkspace(
     /** 文書の画面へ移って、その文書を開く。 */
     onOpenDocument?: (documentId: number) => void;
     /** 文書の画面へ移って、この案件の条件を選んだ状態で作成に入る。 */
-    onCompose?: (conditionIds: number[], eventIds?: number[]) => void;
+    onCompose?: (conditionIds: number[], eventIds?: number[], matterId?: number | null) => void;
   }
 ) {
   const [rows, setRows] = useState<MatterSummary[]>([]);

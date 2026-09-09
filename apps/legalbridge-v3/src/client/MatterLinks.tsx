@@ -181,7 +181,7 @@ export function MatterDocuments(
     /** 文書の画面へ移って、その文書を開く。 */
     onOpenDocument?: (documentId: number) => void;
     /** 文書の画面へ移って、この案件の条件を選んだ状態で作成に入る。 */
-    onCompose?: (conditionIds: number[], eventIds?: number[]) => void;
+    onCompose?: (conditionIds: number[], eventIds?: number[], matterId?: number | null) => void;
   }
 ) {
   const [picking, setPicking] = useState(false);
@@ -230,7 +230,7 @@ export function MatterDocuments(
         {onCompose && !picking && (
           detail.conditions.length ? (
             <button className="btn btn-sm primary" style={{ marginLeft: "auto" }}
-                    onClick={() => onCompose(detail.conditions.map((c) => c.id))}>
+                    onClick={() => onCompose(detail.conditions.map((c) => c.id), [], detail.id)}>
               この案件で文書を作る
             </button>
           ) : (

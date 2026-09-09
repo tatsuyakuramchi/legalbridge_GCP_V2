@@ -85,13 +85,14 @@ export function App() {
    * 作成のフォームは1つだけにしてあるので、どこから入っても同じものを見る。
    */
   const [compose, setCompose] =
-    useState<{ conditionIds: number[]; eventIds: number[] } | null>(null);
+    useState<{ conditionIds: number[]; eventIds: number[]; matterId: number | null } | null>(null);
   /** 他の画面の「編集」から文書の画面へ来たときの相手。 */
   const [openDocument, setOpenDocument] = useState<number | undefined>();
   // 条件は複数受ける。発注書のように1枚で2件以上の条件を載せる書類があるので、
   // 案件から来たときはその案件の条件をまとめて選んだ状態にする。
-  const startCompose = (conditionIds: number[], eventIds: number[] = []) => {
-    setCompose({ conditionIds, eventIds });
+  // 案件も受ける。案件や条件の画面から作った文書は、その案件に載せる。
+  const startCompose = (conditionIds: number[], eventIds: number[] = [], matterId: number | null = null) => {
+    setCompose({ conditionIds, eventIds, matterId });
     setFocus(null);
     setOpenDocument(undefined);
     setView("documents");

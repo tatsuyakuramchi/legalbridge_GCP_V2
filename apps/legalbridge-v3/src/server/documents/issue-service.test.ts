@@ -197,3 +197,27 @@ test("版の無いひな形は選択肢に出さない（選ぶと必ず404に�
     "外部結合だと版の無いひな形まで並び、既定で選ばれた瞬間に作成が止まる");
   assert.match(q.text, /JOIN document_template_versions tv ON tv\.id = t\.current_version_id/);
 });
+
+test("案件を渡さずに作った下書きは、条件の載っている案件に載せる（1つに決まるときだけ）", async () => {
+  const build = (matters: Array<{ matter_id: number }>) => new FakeDatabase((text) => {
+    if (text.includes("FROM document_templates t JOIN document_template_versions tv")) {
+      return [{ template_id: 301, version_id: 401, template_key: "purchase_order",
+                label: "発注書", number_prefix: "PO", html_source: "<p/>", variables: [] }];
+    }
+    if (text.includes("AND status IN ('void', 'superseded')")) return [];
+    if (text.includes("SELECT DISTINCT matter_id FROM matter_links")) return matters;
+    if (text.includes("INSERT INTO documents")) return [{ id: 42 }];
+    return undefined;
+  });
+  const one = build([{ matter_id: 3 }]);
+  await new DocumentIssueService(one).createDraft({ templateKey: "purchase_order", conditionIds: [5] }, "k");
+  assert.equal(one.find("INSERT INTO documents")!.params[1], 3, "条件の案件に載せる");
+
+  const two = build([{ matter_id: 3 }, { matter_id: 4 }]);
+  await new DocumentIssueService(two).createDraft({ templateKey: "purchase_order", conditionIds: [5] }, "k");
+  assert.equal(two.find("INSERT INTO documents")!.params[1], null, "2つの案件に載っていれば決めない");
+
+  const given = build([{ matter_id: 3 }]);
+  await new DocumentIssueService(given).createDraft({ templateKey: "purchase_order", conditionIds: [5], matterId: 9 }, "k");
+  assert.equal(given.find("INSERT INTO documents")!.params[1], 9, "渡された案件が優先");
+});

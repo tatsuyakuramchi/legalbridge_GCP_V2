@@ -106,10 +106,13 @@ export class DocumentIssueService {
       return await inTransaction(this.database, async (client) => {
         const template = await this.repository.templateSource(client, { templateKey: input.templateKey });
         await this.assertConditionsIssuable(client, input.conditionIds);
+        // 案件が渡されなければ、条件の載っている案件を引く。条件の画面から作った
+        // 文書が案件に出てこない、という穴を塞ぐ。複数の案件に載っていれば決めない。
+        const matterId = input.matterId ?? await this.matterOfConditions(client, input.conditionIds);
         const inserted = await client.query(
           `INSERT INTO documents (template_version_id, matter_id, agreement_id, status, manual_inputs)
            VALUES ($1, $2, $3, 'draft', $4::jsonb) RETURNING id`,
-          [template.templateVersionId, input.matterId ?? null, input.agreementId ?? null,
+          [template.templateVersionId, matterId, input.agreementId ?? null,
            JSON.stringify(input.manualInputs ?? {})]
         );
         const id = Number((inserted.rows[0] as { id: number }).id);
@@ -553,6 +556,16 @@ export class DocumentIssueService {
     }, client);
     await this.contexts.attachScopes(client, context.conditions);
     return context as unknown as Record<string, unknown>;
+  }
+
+  /** 条件が載っている案件。1つに決まるときだけ返す。 */
+  private async matterOfConditions(client: Queryable, conditionIds: number[]): Promise<number | null> {
+    if (!conditionIds.length) return null;
+    const r = await client.query(
+      `SELECT DISTINCT matter_id FROM matter_links
+        WHERE target_type = 'condition' AND target_ref = ANY($1::text[])`,
+      [conditionIds.map(String)]);
+    return r.rows.length === 1 ? Number((r.rows[0] as { matter_id: number }).matter_id) : null;
   }
 
   private async linkConditions(client: Queryable, documentId: number, conditionIds: number[]) {
