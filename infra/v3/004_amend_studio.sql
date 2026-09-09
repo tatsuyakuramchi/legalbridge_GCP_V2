@@ -538,6 +538,45 @@ UPDATE v3.data_quality_issues q
 
 GRANT INSERT, UPDATE ON v3.party_bank_accounts TO legalbridge_v3_runtime;
 
+-- ---------------------------------------------------------------------
+-- A-014: 空白だけの値を NULL に揃える
+--
+-- 検収書の【ご連絡先】が空欄になる件を追ったとき、staff.email が
+-- 空白だけの文字列だった。アプリは str() が btrim して判定するので
+-- 「空」として扱い、書類には何も出ない。ところが SQL で
+-- `email IS NULL` を探しても引っかからないので、DB を見た人は
+-- 「入っているのに出ない」と読んでしまう。
+--
+-- 移行は NULLIF(x, '') で入れたが、これは空文字だけを NULL にする。
+-- V1 側に ' ' のような空白入りが残っていると素通りする。
+--
+-- 揃えるのは、書類に差し込む項目だけ。意味は変わらない
+-- （アプリはどちらも「空」として扱う）。
+-- ---------------------------------------------------------------------
+
+UPDATE v3.staff SET email = NULL       WHERE email IS NOT NULL      AND btrim(email) = '';
+UPDATE v3.staff SET department = NULL  WHERE department IS NOT NULL AND btrim(department) = '';
+UPDATE v3.staff SET phone = NULL       WHERE phone IS NOT NULL      AND btrim(phone) = '';
+
+UPDATE v3.parties SET address = NULL WHERE address IS NOT NULL AND btrim(address) = '';
+UPDATE v3.parties SET phone   = NULL WHERE phone   IS NOT NULL AND btrim(phone) = '';
+UPDATE v3.parties SET email   = NULL WHERE email   IS NOT NULL AND btrim(email) = '';
+
+UPDATE v3.party_contacts SET name = NULL  WHERE name IS NOT NULL  AND btrim(name) = '';
+UPDATE v3.party_contacts SET email = NULL WHERE email IS NOT NULL AND btrim(email) = '';
+UPDATE v3.party_contacts SET phone = NULL WHERE phone IS NOT NULL AND btrim(phone) = '';
+
+UPDATE v3.party_bank_accounts SET bank_name = NULL
+ WHERE bank_name IS NOT NULL AND btrim(bank_name) = '';
+UPDATE v3.party_bank_accounts SET branch_name = NULL
+ WHERE branch_name IS NOT NULL AND btrim(branch_name) = '';
+UPDATE v3.party_bank_accounts SET account_type = NULL
+ WHERE account_type IS NOT NULL AND btrim(account_type) = '';
+UPDATE v3.party_bank_accounts SET account_number = NULL
+ WHERE account_number IS NOT NULL AND btrim(account_number) = '';
+UPDATE v3.party_bank_accounts SET account_holder_kana = NULL
+ WHERE account_holder_kana IS NOT NULL AND btrim(account_holder_kana) = '';
+
 COMMIT;
 
 
@@ -615,4 +654,16 @@ SELECT * FROM (
                              FROM v3.data_quality_issues
                             WHERE rule_code = 'PARTY_BANK_INCOMPLETE' AND status = 'open'
                             GROUP BY severity) AS s), '0')
+  UNION ALL
+  SELECT 14, '空白だけの値（A-014 のあと 0 であること。担当者 / 取引先 / 口座）',
+         (SELECT count(*)::text FROM v3.staff
+           WHERE btrim(email) = '' OR btrim(department) = '' OR btrim(phone) = '')
+         || ' / ' ||
+         (SELECT count(*)::text FROM v3.parties
+           WHERE btrim(address) = '' OR btrim(phone) = '' OR btrim(email) = '')
+         || ' / ' ||
+         (SELECT count(*)::text FROM v3.party_bank_accounts
+           WHERE btrim(bank_name) = '' OR btrim(branch_name) = ''
+              OR btrim(account_type) = '' OR btrim(account_number) = ''
+              OR btrim(account_holder_kana) = '')
 ) AS 確認 ORDER BY n;

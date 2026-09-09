@@ -106,6 +106,18 @@ SELECT * FROM (
                              FROM v3.data_quality_issues
                             WHERE rule_code = 'PARTY_BANK_INCOMPLETE' AND status = 'open'
                             GROUP BY severity) AS s), '0')
+  UNION ALL
+  SELECT 14, '空白だけの値（A-014 のあと 0 であること。担当者 / 取引先 / 口座）',
+         (SELECT count(*)::text FROM v3.staff
+           WHERE btrim(email) = '' OR btrim(department) = '' OR btrim(phone) = '')
+         || ' / ' ||
+         (SELECT count(*)::text FROM v3.parties
+           WHERE btrim(address) = '' OR btrim(phone) = '' OR btrim(email) = '')
+         || ' / ' ||
+         (SELECT count(*)::text FROM v3.party_bank_accounts
+           WHERE btrim(bank_name) = '' OR btrim(branch_name) = ''
+              OR btrim(account_type) = '' OR btrim(account_number) = ''
+              OR btrim(account_holder_kana) = '')
 ) AS 確認 ORDER BY n;
 `;
 
