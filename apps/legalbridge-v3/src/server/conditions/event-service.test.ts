@@ -161,6 +161,43 @@ test("この条件に無い実績は混ぜられない", async () => {
       .linkDocument(1, [5], 7, "a"), /この条件に無い実績/);
 });
 
+/**
+ * 外す側。移行してきた文書を実績に結び直す作業では必ず取り違えるので、
+ * 直せないと、間違えた瞬間にその実績は二度と正しい文書に結べなくなる。
+ */
+const unlinkDb = (rowCount = 1) =>
+  new FakeDatabase((t) => (t.includes("SET document_id = NULL")
+    ? Array.from({ length: rowCount }, (_, i) => ({ id: i + 1 })) : undefined));
+
+test("結びつけを外せる（結び直しの取り違えを直せる）", async () => {
+  const db = unlinkDb();
+  const r = await new ConditionEventService(db).unlinkDocument(1, [5], 7, "kuramochi");
+  assert.equal(r.unlinked, 1);
+  const q = db.find("SET document_id = NULL")!;
+  assert.deepEqual(q.params, [[5], 1, 7]);
+  assert.equal(db.find("INSERT INTO audit_events")!.params[1], "condition.unlink_document");
+});
+
+test("外すのは、その文書に結びついている実績だけ", async () => {
+  // 番号を取り違えたまま押しても、別の文書の紐づけには手が届かない。
+  const q = unlinkDb();
+  await new ConditionEventService(q).unlinkDocument(1, [5], 7, "k");
+  assert.match(q.find("SET document_id = NULL")!.text, /document_id = \$3/);
+});
+
+test("外すものが無ければ、黙って成功しない", async () => {
+  // 0件で成功を返すと、画面には「外した」と出るのに何も変わっていない。
+  await assert.rejects(
+    () => new ConditionEventService(unlinkDb(0)).unlinkDocument(1, [5], 7, "k"),
+    /結びついている実績がありません/);
+});
+
+test("外す実績を指定しなければ断る", async () => {
+  await assert.rejects(
+    () => new ConditionEventService(unlinkDb()).unlinkDocument(1, [], 7, "k"),
+    /外す実績がありません/);
+});
+
 test("結びつけも監査に残す", async () => {
   const database = linkDb();
   await new ConditionEventService(database).linkDocument(1, [5], 7, "legal@arch.co.jp");

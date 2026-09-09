@@ -933,6 +933,15 @@ export function createRoutes(database: Transactable) {
         Number(req.params.id), input.eventIds, input.documentId, actor(res)));
     }));
 
+  // 結びつけを外す。移行文書を結び直す作業では取り違えが起きるので、直せる道を残す。
+  router.post("/conditions/:id/events/unlink-document",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = linkDocSchema.parse(req.body ?? {});
+      res.json(await conditionEvents.unlinkDocument(
+        Number(req.params.id), input.eventIds, input.documentId, actor(res)));
+    }));
+
   router.put("/conditions/:id/scopes",
     requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {

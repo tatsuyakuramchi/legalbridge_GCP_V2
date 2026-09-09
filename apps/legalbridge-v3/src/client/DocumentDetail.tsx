@@ -1,5 +1,6 @@
 import { DOCUMENT_STATE_NOTE, StatusTag } from "./labels.js";
 import { Relations, type EntityKind } from "./Relations.js";
+import { DocumentEvents } from "./DocumentEvents.js";
 
 /**
  * 文書1件の詳細。
@@ -204,6 +205,16 @@ export function DocumentDetail(
             </ol>
           </div>
         </div>
+      )}
+
+      {/*
+        発行済みの文書だけ。下書きは発行のときに実績を選ぶので、ここで先に
+        結ぶと二重になる。取込文書は発行の経路を通っていないので、ここが
+        唯一の結び先になる。
+      */}
+      {(doc.status === "issued" || doc.status === "superseded") && (
+        <DocumentEvents documentId={doc.id} documentNo={doc.documentNo}
+                        conditions={doc.conditions} onChanged={onChanged} />
       )}
 
       <Relations kind="document" id={doc.id} initialOpen={openConditions ? "conditions" : undefined}

@@ -214,6 +214,43 @@ export class ConditionEventService {
   }
 
   /**
+   * 結びつけを外す。
+   *
+   * 移行してきた文書を実績に結び直す作業では必ず取り違える。外せないと、
+   * 間違えた瞬間にその実績は二度と正しい文書に結べなくなる（別の文書に
+   * 取られている扱いになる）。直せる道を用意しておく。
+   *
+   * 外しても文書は変わらない。発行した紙の内容ではなく、
+   * 「どの実績を指しているか」の索引を直すだけ。
+   */
+  async unlinkDocument(
+    conditionId: number, eventIds: number[], documentId: number, actor: string
+  ): Promise<{ unlinked: number }> {
+    const ids = [...new Set(eventIds.map((n) => Math.trunc(n)))].filter((n) => n > 0);
+    if (!ids.length) throw new DomainError("VALIDATION", "外す実績がありません");
+    try {
+      return await inTransaction(this.database, async (client) => {
+        // いま見ている文書に結びついているものだけ外す。番号を取り違えたまま
+        // 押しても、別の文書の紐づけには手が届かない。
+        const updated = await client.query(
+          `UPDATE condition_events SET document_id = NULL
+            WHERE id = ANY($1::bigint[]) AND condition_id = $2 AND document_id = $3`,
+          [ids, conditionId, documentId]);
+        const unlinked = updated.rowCount ?? 0;
+        if (!unlinked) {
+          throw new DomainError("CONFLICT",
+            "その文書に結びついている実績がありません。画面を読み直してください");
+        }
+        await recordAudit(client, {
+          actor, action: "condition.unlink_document", targetType: "condition",
+          targetId: conditionId, detail: { documentId, eventIds: ids, unlinked }
+        });
+        return { unlinked };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
    * 実績を発行済み文書に結びつける。検収書・計算書がどの実績から出たかは
    * この列（condition_events.document_id）にしか無く、書く処理が無かったため
    * 「この検収書は何回目の分か」が追えなかった。
