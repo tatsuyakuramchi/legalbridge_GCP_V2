@@ -7,6 +7,7 @@ import type { EntityKind } from "./Relations.js";
 import { DocumentDetail, type DocumentRow } from "./DocumentDetail.js";
 import { DocumentFields, kindFor, type Candidate, type FormField } from "./DocumentFields.js";
 import { LineItemsEditor, type Row } from "./LineItems.js";
+import { BulkOrders } from "./BulkOrders.js";
 
 interface TemplateRow {
   id: number; templateKey: string; label: string; category: string | null; numberPrefix: string | null;
@@ -141,8 +142,11 @@ export function DocumentsWorkspace(
    * 見える（条件と実績は選ばれているのに、それが隠れたフォームの中にある）。
    */
   const [composing, setComposing] = useState(Boolean(start));
+  /** 一括作成（CSV）を開いているか。束を作ったら一覧をその束で絞る。 */
+  const [bulk, setBulk] = useState(false);
+  const [batchId, setBatchId] = useState<number | null>(null);
 
-  useEffect(() => { void reload(); }, [search, scope]);
+  useEffect(() => { void reload(); }, [search, scope, batchId]);
 
   /**
    * 他の画面から文書を指定して来たとき。
@@ -180,7 +184,8 @@ export function DocumentsWorkspace(
         api.get<{ documents: DocumentRow[] }>(`/documents?${new URLSearchParams({
           ...(search.trim() ? { q: search.trim() } : {}),
           ...(scope === "unlinked" ? { unlinked: "1" } : {}),
-          ...(scope === "draft" || scope === "decided" || scope === "sent" ? { phase: scope } : {})
+          ...(scope === "draft" || scope === "decided" || scope === "sent" ? { phase: scope } : {}),
+          ...(batchId ? { batchId: String(batchId) } : {})
         })}`),
         api.get<{ conditions: ConditionSummary[] }>("/conditions"),
         api.get<Integrations>("/integrations")
@@ -571,15 +576,25 @@ export function DocumentsWorkspace(
       )}
 
       <div className="stack">
-        {!composing && !draft && (
+        {!composing && !draft && !bulk && (
           <div className="row">
             <button className="btn primary" onClick={() => setComposing(true)}>
               新しく文書を作る
+            </button>
+            <button className="btn" onClick={() => setBulk(true)}>
+              まとめて作る（CSV）
             </button>
             <span className="faint">
               ひな形から起こします。すでにある文書を見るだけなら、下の一覧から選んでください
             </span>
           </div>
+        )}
+
+        {bulk && !composing && !draft && (
+          <BulkOrders templates={templates}
+            onOpenDocument={(id) => { setSelected(id); }}
+            onClose={() => setBulk(false)}
+            onCreated={(id) => { setBatchId(id); void reload(); }} />
         )}
 
         {(composing || draft) && (
@@ -790,6 +805,10 @@ export function DocumentsWorkspace(
                   <button key={value} className="chip" aria-pressed={scope === value}
                           onClick={() => setScope(value)}>{label}</button>
                 ))}
+                {batchId && (
+                  <button className="chip" aria-pressed onClick={() => setBatchId(null)}
+                          title="この束の絞り込みを外す">一括 #{batchId} ×</button>
+                )}
               </div>
               {scope === "unlinked" && (
                 <div className="faint" style={{ marginTop: 7 }}>

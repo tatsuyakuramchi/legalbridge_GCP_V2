@@ -626,6 +626,35 @@ REVOKE ALL ON v3.matter_communications FROM legalbridge_v3_runtime;
 GRANT SELECT, INSERT ON v3.matter_communications TO legalbridge_v3_runtime;
 GRANT USAGE, SELECT ON SEQUENCE v3.matter_communications_id_seq TO legalbridge_v3_runtime;
 
+-- ---------------------------------------------------------------------
+-- A-016: 発注書の一括作成（束）
+--
+-- 1つの案件に関わる発注先すべてに、CSV から発注書の下書きをまとめて起こす。
+-- 行ごとに条件明細を作ってから文書を起こすので、一括で作った発注書も
+-- 普通の発注書と同じ扱い。ここでは「束」を持つ表と、文書に束の ID を足す。
+-- 束の結果（どの取引先を飛ばしたか・何を作ったか）は result に残す。
+-- ---------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS v3.document_batches (
+  id              bigserial PRIMARY KEY,
+  template_key    text NOT NULL,
+  matter_id       bigint REFERENCES v3.matters(id),
+  source_filename text,
+  row_count       int NOT NULL DEFAULT 0,
+  created_by      text,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  -- 束ごとの結果。取引先・条件明細・文書・飛ばした理由
+  result          jsonb NOT NULL DEFAULT '[]'::jsonb
+);
+COMMENT ON TABLE v3.document_batches IS
+  '文書の一括作成の束。CSV 1ファイル = 1束。文書は documents.batch_id で束に属する。';
+ALTER TABLE v3.documents ADD COLUMN IF NOT EXISTS batch_id bigint REFERENCES v3.document_batches(id);
+CREATE INDEX IF NOT EXISTS documents_batch_idx ON v3.documents (batch_id) WHERE batch_id IS NOT NULL;
+
+REVOKE ALL ON v3.document_batches FROM legalbridge_v3_runtime;
+GRANT SELECT, INSERT, UPDATE ON v3.document_batches TO legalbridge_v3_runtime;
+GRANT USAGE, SELECT ON SEQUENCE v3.document_batches_id_seq TO legalbridge_v3_runtime;
+
 COMMIT;
 
 
@@ -721,4 +750,13 @@ SELECT * FROM (
                      FROM information_schema.role_table_grants
                     WHERE grantee = 'legalbridge_v3_runtime'
                       AND table_name = 'matter_communications'), '表が無い')
+  UNION ALL
+  SELECT 16, '一括作成の束（A-016。SELECT, INSERT, UPDATE と documents.batch_id）',
+         COALESCE((SELECT string_agg(privilege_type, ', ' ORDER BY privilege_type)
+                     FROM information_schema.role_table_grants
+                    WHERE grantee = 'legalbridge_v3_runtime'
+                      AND table_name = 'document_batches'), '表が無い')
+         || ' / batch_id=' || COALESCE((SELECT data_type FROM information_schema.columns
+                    WHERE table_schema='v3' AND table_name='documents'
+                      AND column_name='batch_id'), '無い')
 ) AS 確認 ORDER BY n;

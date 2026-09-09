@@ -22,6 +22,7 @@ import { checkAgainstEnvelope } from "./works/envelope.js";
 import { DocumentRepository } from "./documents/repository.js";
 import { DocumentIssueService } from "./documents/issue-service.js";
 import { DocumentSendService } from "./documents/send-service.js";
+import { DocumentBatchService, templateCsv } from "./documents/batch-service.js";
 import { ChromiumPdfRenderer, MemoryPdfRenderer, type PdfRenderer } from "./documents/pdf-renderer.js";
 import { DocumentStorageService } from "./documents/storage-service.js";
 import { GoogleDriveStorage, MemoryDriveStorage, type DriveStorage } from "./documents/drive-storage.js";
@@ -112,6 +113,7 @@ export function createRoutes(database: Transactable) {
   const dispatch = buildDispatch(database, adapters);
   const communications = new MatterCommunicationService(database, dispatch);
   const sends = new DocumentSendService(database);
+  const batches = new DocumentBatchService(database, issues, communications, pdf);
   const mailSource = buildMailSource();
   const dailyJob = new DailyJob(database, dispatch);
   const mailJob = new MailIntakeJob(database, mailSource);
@@ -1090,9 +1092,54 @@ export function createRoutes(database: Transactable) {
       // 条件明細が繋がっていないものだけ。移行文書の繋ぎ直しの入口。
       unlinked: String(req.query.unlinked ?? "") === "1",
       phase: (["draft", "decided", "sent", "superseded", "void"] as const)
-        .find((p) => p === String(req.query.phase ?? ""))
+        .find((p) => p === String(req.query.phase ?? "")),
+      batchId: req.query.batchId ? Number(req.query.batchId) : undefined
     }) });
   }));
+
+  // ---- 発注書の一括作成（束）。/documents/:id より前に置く（:id に "batches" が当たる）----
+  router.get("/documents/batches", asyncRoute(async (_req, res) => {
+    res.json({ batches: await batches.list() });
+  }));
+  router.get("/documents/batches/template.csv", (_req, res) => {
+    res.setHeader("content-type", "text/csv; charset=utf-8");
+    res.setHeader("content-disposition", 'attachment; filename="purchase_orders.csv"');
+    res.send(templateCsv());
+  });
+  const batchInput = z.object({
+    templateKey: z.string().trim().min(1).max(60),
+    matterId: z.coerce.number().int().positive(),
+    csv: z.string().min(1).max(2_000_000),
+    choices: z.record(z.string(), z.coerce.number().int().positive()).default({})
+  });
+  // 突き合わせ。何も作らない。
+  router.post("/documents/batches/preview", requireRole("admin", "legal"),
+    asyncRoute(async (req, res) => {
+      res.json(await batches.preview(batchInput.parse(req.body ?? {})));
+    }));
+  router.post("/documents/batches", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = batchInput.extend({ filename: z.string().trim().max(200).nullable().optional() })
+        .parse(req.body ?? {});
+      res.status(201).json(await batches.create(input, actor(res)));
+    }));
+  router.get("/documents/batches/:id", asyncRoute(async (req, res) => {
+    const batch = await batches.find(Number(req.params.id));
+    if (!batch) return res.status(404).json({ error: "一括作成の束が見つかりません" });
+    res.json(batch);
+  }));
+  router.post("/documents/batches/:id/issue", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await batches.issueAll(Number(req.params.id), actor(res)));
+    }));
+  router.post("/documents/batches/:id/send", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        subject: z.string().trim().max(300).nullable().optional(),
+        body: z.string().trim().max(20000).nullable().optional()
+      }).parse(req.body ?? {});
+      res.json(await batches.sendAll(Number(req.params.id), input, actor(res)));
+    }));
 
   router.get("/documents/:id", asyncRoute(async (req, res) => {
     const detail = await documents.find(Number(req.params.id));

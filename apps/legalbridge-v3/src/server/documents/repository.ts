@@ -38,6 +38,8 @@ export interface DocumentSummary {
   /** 最後に送った日時と経路。送っていなければ null。 */
   sentAt: string | null;
   sentVia: "gmail" | "cloudsign" | null;
+  /** 一括作成の束。CSV から作った文書だけ持つ。 */
+  batchId: number | null;
 }
 
 export type DocumentPhase = "draft" | "decided" | "sent" | "superseded" | "void";
@@ -71,7 +73,7 @@ export interface TemplateSource {
 
 const LIST_SELECT = `
   d.id, d.document_no, d.status, d.matter_id, d.issued_at, d.storage_url,
-  d.supersedes_id,
+  d.supersedes_id, d.batch_id,
   v.title, v.counterparty, v.condition_count, t.template_key,
   m.matter_no,
   -- この版を差し替えた新しい版。参照は新→旧の向きしか無いので反転して読む。
@@ -139,7 +141,8 @@ function mapSummary(row: Record<string, any>): DocumentSummary {
     storageUrl: str(row.storage_url),
     phase: phaseOf(String(row.status), row.sent_at),
     sentAt: row.sent_at ? new Date(String(row.sent_at)).toISOString() : null,
-    sentVia: row.sent_via === "gmail" || row.sent_via === "cloudsign" ? row.sent_via : null
+    sentVia: row.sent_via === "gmail" || row.sent_via === "cloudsign" ? row.sent_via : null,
+    batchId: int(row.batch_id)
   };
 }
 
@@ -157,6 +160,8 @@ export class DocumentRepository {
     unlinked?: boolean; limit?: number;
     /** 人が見る段階で絞る。decided は「決めたがまだ送っていない」。 */
     phase?: DocumentPhase;
+    /** 一括作成の束で絞る。 */
+    batchId?: number;
   } = {}) {
     const where: string[] = [];
     const params: unknown[] = [];
@@ -173,6 +178,7 @@ export class DocumentRepository {
     if (query.phase === "superseded") where.push("d.status = 'superseded'");
     if (query.phase === "void") where.push("d.status = 'void'");
     if (query.matterId) { params.push(query.matterId); where.push(`d.matter_id = $${params.length}`); }
+    if (query.batchId) { params.push(query.batchId); where.push(`d.batch_id = $${params.length}`); }
     if (query.unlinked) {
       where.push(`NOT EXISTS (SELECT 1 FROM document_conditions dc WHERE dc.document_id = d.id)`);
     }

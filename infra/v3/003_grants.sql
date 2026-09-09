@@ -95,6 +95,9 @@ REVOKE UPDATE, DELETE, TRUNCATE ON v3.audit_events FROM legalbridge_v3_runtime;
 REVOKE ALL ON v3.party_bank_accounts FROM legalbridge_v3_runtime;
 GRANT SELECT, INSERT, UPDATE ON v3.party_bank_accounts TO legalbridge_v3_runtime;
 
+-- 一括作成の束。結果を書き戻すので UPDATE は要る。消さない。
+REVOKE DELETE, TRUNCATE ON v3.document_batches FROM legalbridge_v3_runtime;
+
 -- やり取りの記録は証憑。追記だけで、書き換えも削除もさせない。
 REVOKE UPDATE, DELETE, TRUNCATE ON v3.matter_communications FROM legalbridge_v3_runtime;
 

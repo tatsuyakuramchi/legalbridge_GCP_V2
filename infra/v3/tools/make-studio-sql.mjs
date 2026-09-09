@@ -124,6 +124,15 @@ SELECT * FROM (
                      FROM information_schema.role_table_grants
                     WHERE grantee = 'legalbridge_v3_runtime'
                       AND table_name = 'matter_communications'), '表が無い')
+  UNION ALL
+  SELECT 16, '一括作成の束（A-016。SELECT, INSERT, UPDATE と documents.batch_id）',
+         COALESCE((SELECT string_agg(privilege_type, ', ' ORDER BY privilege_type)
+                     FROM information_schema.role_table_grants
+                    WHERE grantee = 'legalbridge_v3_runtime'
+                      AND table_name = 'document_batches'), '表が無い')
+         || ' / batch_id=' || COALESCE((SELECT data_type FROM information_schema.columns
+                    WHERE table_schema='v3' AND table_name='documents'
+                      AND column_name='batch_id'), '無い')
 ) AS 確認 ORDER BY n;
 `;
 
