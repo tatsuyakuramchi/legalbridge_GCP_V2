@@ -1334,6 +1334,27 @@ export function createRoutes(database: Transactable) {
       res.json(await issues.updateDraft(Number(req.params.id), input, actor(res)));
     }));
 
+  /**
+   * 実績を条件ごとに分け、どの条件も文書に繋がっていることを確かめる。
+   * 検収書は委託料と実費のように条件をまたいで1枚にできるので、
+   * 「最初の条件」だけを見てはいけない。
+   */
+  const eventGroupsFor = async (conditionIds: number[], eventIds: number[], noConditionHint: string) => {
+    const groups = await conditionEvents.groupByCondition(eventIds);
+    if (groups.size && !conditionIds.length) {
+      throw new DomainError("VALIDATION", `実績を結ぶには、${noConditionHint}`);
+    }
+    const allowed = new Set(conditionIds.map(Number));
+    for (const conditionId of groups.keys()) {
+      if (!allowed.has(conditionId)) {
+        throw new DomainError("VALIDATION",
+          `条件 #${conditionId} の実績が選ばれていますが、その条件はこの文書に繋がっていません。` +
+          "条件明細も一緒に選んでください");
+      }
+    }
+    return groups;
+  };
+
   // 実績は下書きに保存していないので、発行のときに渡せるようにする。
   const issueSchema = z.object({
     eventIds: z.array(z.coerce.number().int().positive()).max(200).default([])
@@ -1346,23 +1367,22 @@ export function createRoutes(database: Transactable) {
       const who = actor(res);
       const draft = await documents.find(id);
       if (!draft) throw new DomainError("NOT_FOUND", `文書 ${id} が見つかりません`);
-      const conditionId = draft.conditions[0]?.id ?? null;
 
       // 先に確かめる。発行してから弾かれると、番号だけ振られた文書が残る。
+      // 実績は条件をまたいでよい（委託料と実費を1枚の検収書に）。条件ごとに分けて、
+      // その条件が文書に繋がっているかと、結べるかを見る。
       // 訂正版なら、前の版が持っている実績は空いているものとして扱う
       // （発行の瞬間にこちらへ移る）。
-      if (eventIds.length) {
-        if (!conditionId) {
-          throw new DomainError("VALIDATION", "実績を結ぶには、先に条件明細を繋いでください");
-        }
-        await conditionEvents.assertLinkable(conditionId, eventIds, draft.supersedesId);
+      const groups = await eventGroupsFor(draft.conditions.map((c) => c.id), eventIds, "先に条件明細を繋いでください");
+      for (const [conditionId, ids] of groups) {
+        await conditionEvents.assertLinkable(conditionId, ids, draft.supersedesId);
       }
 
       const issued = await issues.issue(id, who, eventIds.length ? { eventIds } : {});
       // 前の版から移らなかったぶんを結ぶ。すでにこの文書を指している実績は
       // linkDocument 側で素通りする。
-      if (eventIds.length && conditionId) {
-        await conditionEvents.linkDocument(conditionId, eventIds, id, who);
+      for (const [conditionId, ids] of groups) {
+        await conditionEvents.linkDocument(conditionId, ids, id, who);
       }
       res.json(issued);
     }));
@@ -1491,12 +1511,10 @@ export function createRoutes(database: Transactable) {
       }
 
       // 2. 実績に結びつけられるかを先に確かめる。発行してから弾かれると、
-      //    番号の振られた文書だけが残る。
-      if (input.eventIds.length) {
-        if (!input.conditionIds.length) {
-          throw new DomainError("VALIDATION", "実績を選ぶときは、その条件も選んでください");
-        }
-        await conditionEvents.assertLinkable(input.conditionIds[0], input.eventIds, null);
+      //    番号の振られた文書だけが残る。実績は条件をまたいでよい。
+      const groups = await eventGroupsFor(input.conditionIds, input.eventIds, "その条件も選んでください");
+      for (const [conditionId, ids] of groups) {
+        await conditionEvents.assertLinkable(conditionId, ids, null);
       }
 
       // 3. 下書き → 発行。失敗したら下書きは捨てる。
@@ -1515,10 +1533,12 @@ export function createRoutes(database: Transactable) {
       }
 
       // 4. 実績に結びつける／計算書を確定する。金額は確定時に計算し直す。
-      const linked = input.eventIds.length
-        ? await conditionEvents.linkDocument(
-            input.conditionIds[0], input.eventIds, issued.id, who)
-        : null;
+      let linked: { linked: number; documentNo: string | null } | null = null;
+      for (const [conditionId, ids] of groups) {
+        const r = await conditionEvents.linkDocument(conditionId, ids, issued.id, who);
+        const before: number = linked ? linked.linked : 0;
+        linked = { linked: before + r.linked, documentNo: r.documentNo };
+      }
       const statement = input.royalty
         ? await royalty.finalize({
             conditionId: input.conditionIds[0], period: input.royalty.period,

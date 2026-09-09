@@ -203,3 +203,14 @@ test("結びつけも監査に残す", async () => {
   await new ConditionEventService(database).linkDocument(1, [5], 7, "legal@arch.co.jp");
   assert.equal(database.find("INSERT INTO audit_events")!.params[1], "condition.link_document");
 });
+
+test("実績を条件ごとに分ける。無い実績は止める", async () => {
+  const db = new FakeDatabase((t, params) =>
+    t.includes("SELECT id, condition_id FROM condition_events")
+      ? (params[0] as number[]).filter((i) => i !== 99).map((i) => ({ id: String(i), condition_id: i < 20 ? "1" : "2" }))
+      : undefined);
+  const svc = new ConditionEventService(db);
+  const groups = await svc.groupByCondition([11, 21, 12]);
+  assert.deepEqual([...groups.entries()], [[1, [11, 12]], [2, [21]]]);
+  await assert.rejects(() => svc.groupByCondition([11, 99]), /実績が見つかりません：99/);
+});

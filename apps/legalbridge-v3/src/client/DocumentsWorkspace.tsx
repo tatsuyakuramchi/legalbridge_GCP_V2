@@ -38,7 +38,9 @@ interface PreviewResponse {
 }
 interface EventRow {
   id: number; eventType: string; occurredOn: string | null; period: string | null;
-  amount: number; status: string;
+  amount: number; status: string; documentId?: number | null;
+  /** どの条件の実績か。条件をまたいで1枚にするので、行に持たせる。 */
+  conditionId: number; conditionNo: string | null; conditionName: string;
 }
 
 /** 一覧の中の紐づけ。件数ではなく番号を出して、そのまま辿れるようにする。 */
@@ -198,14 +200,31 @@ export function DocumentsWorkspace(
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
   }
 
-  // 条件を1件だけ選んでいるときは、その実績を呼び出せる。
+  /**
+   * 選んだ条件の実績を全部呼び出す。条件をまたいで選べる（委託料と実費の
+   * 検収を1枚に）。条件を外したら、その条件の実績の選択も外す。
+   * 条件の画面から実績を指定して来たときは、その選択を消さない。
+   */
   useEffect(() => {
-    if (picked.length !== 1) { setEvents([]); setPickedEvents([]); return; }
-    // 条件の画面から実績を指定して来たときは、その選択を消さない。
-    api.get<{ events: EventRow[] }>(`/conditions/${picked[0]}/events`)
-      .then((r) => setEvents(r.events.filter((e) => e.status === "active")))
-      .catch(() => setEvents([]));
-  }, [picked.join(",")]);
+    if (!picked.length) { setEvents([]); setPickedEvents([]); return; }
+    let live = true;
+    Promise.all(picked.map((id) =>
+      api.get<{ events: Array<Omit<EventRow, "conditionId" | "conditionNo" | "conditionName">> }>(`/conditions/${id}/events`)
+        .then((r) => {
+          const c = conditions.find((x) => x.id === id);
+          return r.events.filter((e) => e.status === "active").map((e) => ({
+            ...e, conditionId: id, conditionNo: c?.conditionNo ?? null, conditionName: c?.name ?? `#${id}`
+          }));
+        })
+        .catch(() => [] as EventRow[])))
+      .then((lists) => {
+        if (!live) return;
+        const all = lists.flat();
+        setEvents(all);
+        setPickedEvents((prev) => prev.filter((id) => all.some((e) => e.id === id)));
+      });
+    return () => { live = false; };
+  }, [picked.join(","), conditions.length]);
 
   /**
    * 版の連鎖。参照は新→旧（supersedes_id）の一方向しか無いので、
@@ -683,20 +702,41 @@ export function DocumentsWorkspace(
 
               {events.length > 0 && (
                 <div className="stack" style={{ gap: 6 }}>
-                  <div className="faint">
-                    どの実績についてか（検収書・納品書はここの日付と金額を候補に出します）
+                  <div className="row">
+                    <span className="faint">
+                      どの実績についてか（検収書・納品書はここの1件が明細の1行になります）
+                    </span>
+                    <span className="faint" style={{ marginLeft: "auto" }}>
+                      {picked.length > 1 ? "条件をまたいで選べます。委託料と実費を1枚の検収書に" : ""}
+                      {pickedEvents.length ? `　${pickedEvents.length} 件を選択中` : ""}
+                    </span>
                   </div>
                   <div className="picker">
-                    {events.map((e) => (
-                      <label key={e.id} className="pick">
-                        <input type="checkbox" checked={pickedEvents.includes(e.id)}
-                               onChange={(ev) => setPickedEvents((prev) => ev.target.checked
-                                 ? [...prev, e.id] : prev.filter((id) => id !== e.id))} />
-                        <span className="code">{e.occurredOn ?? "—"}</span>
-                        <span>{e.period ?? ""}</span>
-                        <span className="num">{money(e.amount)}</span>
-                      </label>
-                    ))}
+                    {picked.map((cid) => {
+                      const mine = events.filter((e) => e.conditionId === cid);
+                      if (!mine.length) return null;
+                      return (
+                        <Fragment key={cid}>
+                          {picked.length > 1 && (
+                            <div className="faint" style={{ marginTop: 4 }}>
+                              <span className="code">{mine[0].conditionNo ?? `#${cid}`}</span> {mine[0].conditionName}
+                            </div>
+                          )}
+                          {mine.map((e) => (
+                            <label key={e.id} className="pick" style={e.documentId ? { opacity: 0.6 } : undefined}>
+                              <input type="checkbox" checked={pickedEvents.includes(e.id)}
+                                     disabled={Boolean(e.documentId) && !pickedEvents.includes(e.id)}
+                                     onChange={(ev) => setPickedEvents((prev) => ev.target.checked
+                                       ? [...prev, e.id] : prev.filter((id) => id !== e.id))} />
+                              <span className="code">{e.occurredOn ?? "—"}</span>
+                              <span>{e.period ?? ""}</span>
+                              <span className="num">{money(e.amount)}</span>
+                              {e.documentId && <span className="faint">文書あり</span>}
+                            </label>
+                          ))}
+                        </Fragment>
+                      );
+                    })}
                   </div>
                 </div>
               )}

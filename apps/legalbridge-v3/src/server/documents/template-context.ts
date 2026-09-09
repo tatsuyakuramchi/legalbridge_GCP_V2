@@ -243,6 +243,19 @@ export function buildTemplateContext(
   return common;
 }
 
+/**
+ * 実績が載っている条件の定額の合計。予定明細が無い分割納品の「発注総額」に使う。
+ * 実績を選んでいなければ、選んだ条件すべての定額。
+ */
+function conditionTotalFor(context: Ctx): number {
+  const conditions = (context.conditions ?? []) as Ctx[];
+  const events = (context.events ?? []) as Ctx[];
+  const referenced = new Set(events.map((e) => Number(e.conditionId)));
+  const target = referenced.size
+    ? conditions.filter((c) => referenced.has(Number(c.id))) : conditions;
+  return target.reduce((sum, c) => sum + num(c.flatAmount), 0);
+}
+
 function inspectionBlock(context: Ctx, manual: Record<string, unknown>, taxRate: number) {
   const lines = rows(manual.delivery_line_items).length
     ? rows(manual.delivery_line_items)
@@ -258,11 +271,18 @@ function inspectionBlock(context: Ctx, manual: Record<string, unknown>, taxRate:
   const now = visible.filter((l) => String(l.inspection_status ?? "now") === "now");
 
   // 進捗（検収率・検収済額・発注総額・未検収額）。予定額を持つ行から出す。
+  //
+  // 予定明細を作らずに分割で実績を入れていくと、行に予定額が無い。そのとき
+  // 行の額を足すと発注総額＝検収済額になり、未検収額が常に 0 と出てしまう。
+  // 予定額を1行も持たないなら、実績が載っている条件の定額の合計を発注総額にする。
   const lineAmount = (l: Row) => num(l.inspected_amount_ex_tax ?? l.amount_ex_tax ?? l.amount);
-  const orderedTotal = visible.reduce((sum, l) => {
-    const ordered = num(l.ordered_amount_ex_tax, Number.NaN);
-    return sum + (Number.isFinite(ordered) ? ordered : lineAmount(l));
-  }, 0);
+  const hasOrdered = visible.some((l) => Number.isFinite(num(l.ordered_amount_ex_tax, Number.NaN)));
+  const orderedTotal = hasOrdered
+    ? visible.reduce((sum, l) => {
+        const ordered = num(l.ordered_amount_ex_tax, Number.NaN);
+        return sum + (Number.isFinite(ordered) ? ordered : lineAmount(l));
+      }, 0)
+    : conditionTotalFor(context) || visible.reduce((sum, l) => sum + lineAmount(l), 0);
   const inspectedSoFar = [...paid, ...now].reduce((sum, l) => sum + lineAmount(l), 0);
   const progress = visible.length && orderedTotal > 0 ? {
     totalOrderAmountStr: yen(orderedTotal),

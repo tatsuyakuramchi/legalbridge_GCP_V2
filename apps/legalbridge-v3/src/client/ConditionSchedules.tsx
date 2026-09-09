@@ -39,8 +39,10 @@ const STATUS: Record<Row["status"], { label: string; tone: string }> = {
 };
 
 export function ConditionSchedules(
-  { conditionId, editable, reloadKey, onChanged }:
-  { conditionId: number; editable: boolean; reloadKey?: number; onChanged: () => void }
+  { conditionId, editable, reloadKey, onChanged, flatAmount, currency }:
+  { conditionId: number; editable: boolean; reloadKey?: number; onChanged: () => void;
+    /** 条件の定額。予定の合計がこれと合っていなければ注意を出す。 */
+    flatAmount?: number | null; currency?: string }
 ) {
   const [view, setView] = useState<View | null>(null);
   const [draft, setDraft] = useState<Draft[] | null>(null);
@@ -329,6 +331,17 @@ export function ConditionSchedules(
           )}
         </table>
       </div>
+      {/* 予定の割り方が条件の定額と合っていないと、発注書の合計と検収の進捗が狂う。 */}
+      {flatAmount != null && flatAmount > 0 && (draft ? draft.length > 0 : view.lines.length > 0)
+        && (draft ? draftTotal : view.total.planned) !== flatAmount && (
+        <div className="panel-bd" style={{ paddingBottom: 0 }}>
+          <div className="note warn">
+            予定の合計 {money(draft ? draftTotal : view.total.planned, cur)} が、条件の定額 {money(flatAmount, currency ?? cur)} と合っていません
+            （差 {money((draft ? draftTotal : view.total.planned) - flatAmount, cur)}）。
+            分割の割り方を見直すか、条件の定額を直してください。
+          </div>
+        </div>
+      )}
 
       {draft && (
         <div className="panel-bd row">

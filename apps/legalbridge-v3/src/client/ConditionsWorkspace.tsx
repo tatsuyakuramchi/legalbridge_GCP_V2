@@ -482,6 +482,7 @@ export function ConditionsWorkspace(
               }} />
 
               <ConditionSchedules conditionId={detail.id} reloadKey={flowVersion}
+                flatAmount={detail.pricingModel === "fixed" ? detail.flatAmount : null} currency={detail.currency}
                 editable={detail.status === "active" || detail.status === "draft"}
                 onChanged={refreshFlow} />
 

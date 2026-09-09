@@ -229,10 +229,13 @@ export function MatterDocuments(
         */}
         {onCompose && !picking && (
           detail.conditions.length ? (
-            <button className="btn btn-sm primary" style={{ marginLeft: "auto" }}
-                    onClick={() => onCompose(detail.conditions.map((c) => c.id), [], detail.id)}>
-              この案件で文書を作る
-            </button>
+            <span className="row" style={{ marginLeft: "auto" }}>
+              <span className="faint">検収書は条件をまたいで実績を選べます（委託料と実費を1枚に）</span>
+              <button className="btn btn-sm primary"
+                      onClick={() => onCompose(detail.conditions.map((c) => c.id), [], detail.id)}>
+                この案件で文書を作る
+              </button>
+            </span>
           ) : (
             <span className="faint" style={{ marginLeft: "auto" }}>
               条件明細を繋ぐと、ここから文書を作れます

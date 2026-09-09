@@ -233,3 +233,19 @@ test("条件の仕様と帰属先が明細の行に出る。仕様が無けれ�
   assert.equal(fallback[0].spec, "備考だけ");
   assert.equal(fallback[0].deliverable_ownership, null);
 });
+
+test("予定明細の無い分割納品でも、発注総額は条件の定額から出て未検収額が残る", () => {
+  const context = ctx({
+    conditions: [{ ...condition(), flatAmount: 1000000 }],
+    condition: { ...condition(), flatAmount: 1000000 },
+    events: [
+      { id: 9, conditionId: 1, occurredOn: "2026-08-31", amount: 300000, plannedAmount: null, quantity: null, schedule: null },
+      { id: 10, conditionId: 1, occurredOn: "2026-09-30", amount: 200000, plannedAmount: null, quantity: null, schedule: null }
+    ]
+  });
+  const out = buildTemplateContext("inspection_certificate", context, {}) as Record<string, any>;
+  assert.equal(out.totalOrderAmountStr, "1,000,000", "予定が無ければ条件の定額が発注総額");
+  assert.equal(out.inspectedAmountStr, "500,000");
+  assert.equal(out.pendingAmountStr, "500,000", "未検収額が 0 にならない");
+  assert.equal(out.inspectedPct, 50);
+});

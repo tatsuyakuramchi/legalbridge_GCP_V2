@@ -251,6 +251,30 @@ export class ConditionEventService {
   }
 
   /**
+   * 実績を条件ごとに分ける。1枚の検収書に、委託料と実費のように条件をまたいだ
+   * 実績を載せるときの入口。結びつけは条件ごとに行うので、先に束を分ける。
+   * 見つからない実績があれば止める（黙って落とすと、その回だけ検収書に載らない）。
+   */
+  async groupByCondition(eventIds: number[]): Promise<Map<number, number[]>> {
+    const ids = [...new Set(eventIds.map((n) => Math.trunc(Number(n))))].filter((n) => n > 0);
+    const out = new Map<number, number[]>();
+    if (!ids.length) return out;
+    const r = await this.database.query(
+      "SELECT id, condition_id FROM condition_events WHERE id = ANY($1::bigint[])", [ids]);
+    const rows = r.rows as Array<{ id: number; condition_id: number }>;
+    if (rows.length !== ids.length) {
+      const known = new Set(rows.map((x) => Number(x.id)));
+      throw new DomainError("NOT_FOUND",
+        `実績が見つかりません：${ids.filter((i) => !known.has(i)).join(", ")}`);
+    }
+    for (const row of rows) {
+      const cid = Number(row.condition_id);
+      out.set(cid, [...(out.get(cid) ?? []), Number(row.id)]);
+    }
+    return out;
+  }
+
+  /**
    * 実績を発行済み文書に結びつける。検収書・計算書がどの実績から出たかは
    * この列（condition_events.document_id）にしか無く、書く処理が無かったため
    * 「この検収書は何回目の分か」が追えなかった。
