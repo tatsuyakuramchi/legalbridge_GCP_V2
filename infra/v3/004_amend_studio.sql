@@ -655,6 +655,31 @@ REVOKE ALL ON v3.document_batches FROM legalbridge_v3_runtime;
 GRANT SELECT, INSERT, UPDATE ON v3.document_batches TO legalbridge_v3_runtime;
 GRANT USAGE, SELECT ON SEQUENCE v3.document_batches_id_seq TO legalbridge_v3_runtime;
 
+-- ---------------------------------------------------------------------
+-- A-017: 条件明細に「仕様・成果物」と「成果物の帰属先」を持たせる
+--
+-- 発注書・検収書の明細は行ごとに 仕様・成果物 と 成果物の帰属先 を印字するが、
+-- 条件明細にその欄が無く、備考を仕様の代わりに使い、帰属先は文書側で毎回
+-- 入れていた。条件で持てば、そこから出る書類の行が自動で埋まる。
+-- ---------------------------------------------------------------------
+
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS spec text;
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS deliverable_ownership text;
+DO $amend_ownership$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.conditions'::regclass
+                    AND conname = 'conditions_deliverable_ownership_chk') THEN
+    ALTER TABLE v3.conditions ADD CONSTRAINT conditions_deliverable_ownership_chk
+      CHECK (deliverable_ownership IS NULL OR deliverable_ownership IN ('orderer', 'contractor'));
+  END IF;
+END
+$amend_ownership$;
+COMMENT ON COLUMN v3.conditions.spec IS
+  '仕様・成果物。発注書・検収書の明細の「仕様・成果物」に出る。';
+COMMENT ON COLUMN v3.conditions.deliverable_ownership IS
+  '成果物の帰属先。orderer=発注者（譲渡型）/ contractor=受注者（利用許諾型）。';
+
 COMMIT;
 
 
@@ -759,4 +784,9 @@ SELECT * FROM (
          || ' / batch_id=' || COALESCE((SELECT data_type FROM information_schema.columns
                     WHERE table_schema='v3' AND table_name='documents'
                       AND column_name='batch_id'), '無い')
+  UNION ALL
+  SELECT 17, '条件明細の仕様と帰属先（A-017。2 列）',
+         (SELECT count(*)::text || ' 列' FROM information_schema.columns
+           WHERE table_schema='v3' AND table_name='conditions'
+             AND column_name IN ('spec','deliverable_ownership'))
 ) AS 確認 ORDER BY n;

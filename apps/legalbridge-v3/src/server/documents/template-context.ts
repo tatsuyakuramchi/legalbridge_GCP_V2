@@ -44,6 +44,13 @@ export function seedLines(templateKey: string, context: Ctx): Record<string, Row
   return out;
 }
 
+/** 成果物の帰属先。条件は orderer/contractor で持ち、書類は日本語で印字する。 */
+export const OWNERSHIP_LABEL: Record<string, string> = { orderer: "発注者", contractor: "受注者" };
+const ownershipOf = (condition: Ctx) =>
+  OWNERSHIP_LABEL[String(condition?.deliverableOwnership ?? "")] ?? null;
+/** 仕様・成果物。専用の欄があればそれ、無ければ備考（以前はこれが仕様代わりだった）。 */
+const specOf = (condition: Ctx) => condition?.spec ?? condition?.notes ?? "";
+
 /** 相手先が「1件の条件」に決まるときだけ、条件から明細を組める。 */
 const singleCondition = (c: Ctx) => (c.conditions?.length === 1 ? c.conditions[0] : null);
 
@@ -62,9 +69,10 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
         ?? context.condition ?? {};
       return {
         item_name: condition.name ?? condition.work?.title ?? "",
-        // 業務内容の本文。条件の備考は「何をしてもらったか」が書いてある欄。
-        spec: condition.notes ?? event.note ?? "",
-        description: condition.notes ?? event.note ?? "",
+        // 業務内容の本文。仕様の欄が無い条件は備考で代える。
+        spec: condition.spec ?? condition.notes ?? event.note ?? "",
+        description: condition.spec ?? condition.notes ?? event.note ?? "",
+        deliverable_ownership: ownershipOf(condition),
         // 名前は本番のひな形が差しているものに合わせる。inspected_quantity と
         // paid_date は検収書の本文が直接読む列で、別名では出ない。
         quantity: event.quantity ?? null,
@@ -86,8 +94,9 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
   if (!condition || !condition.flatAmount) return [];
   return [{
     item_name: condition.name ?? "",
-    spec: condition.notes ?? "",
-    description: condition.notes ?? "",
+    spec: specOf(condition),
+    description: specOf(condition),
+    deliverable_ownership: ownershipOf(condition),
     quantity: null,
     inspected_quantity: null,
     delivery_date: condition.termEnd ?? null,
@@ -116,7 +125,8 @@ export function orderLinesFrom(context: Ctx): Row[] {
         ?? context.condition ?? {};
       return {
         item_name: s.label ?? condition.name ?? "",
-        spec: condition.notes ?? "",
+        spec: specOf(condition),
+        deliverable_ownership: ownershipOf(condition),
         // 本文は 数量×単価 を印字する。空だと「¥0」が出るので、1 × 金額 で置く。
         quantity: 1,
         unit_price: s.plannedAmount ?? 0,
@@ -132,7 +142,8 @@ export function orderLinesFrom(context: Ctx): Row[] {
     .filter((c: Ctx) => c.flatAmount)
     .map((c: Ctx) => ({
       item_name: c.name ?? "",
-      spec: c.notes ?? "",
+      spec: specOf(c),
+      deliverable_ownership: ownershipOf(c),
       quantity: 1,
       unit_price: c.flatAmount,
       delivery_date: c.termEnd ?? null,

@@ -303,6 +303,9 @@ export function ConditionsWorkspace(
                       { taxable: "課税 10%", reduced: "軽減 8%", exempt: "非課税・不課税" }[detail.taxCategory]
                     }</dd>
                     {detail.paymentTerms && (<><dt>支払条件</dt><dd>{detail.paymentTerms}</dd></>)}
+                    {detail.spec && (<><dt>仕様・成果物</dt><dd style={{ whiteSpace: "pre-wrap" }}>{detail.spec}</dd></>)}
+                    {detail.deliverableOwnership && (<><dt>帰属先</dt>
+                      <dd>{detail.deliverableOwnership === "orderer" ? "発注者（譲渡型）" : "受注者（利用許諾型）"}</dd></>)}
                     {detail.notes && (<><dt>備考</dt><dd>{detail.notes}</dd></>)}
                     <dt>MG / AG</dt><dd className="code">{money(detail.mgAmount, detail.currency)} / {money(detail.agAmount, detail.currency)}</dd>
                   </dl>

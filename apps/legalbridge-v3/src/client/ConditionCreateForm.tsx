@@ -89,6 +89,13 @@ export function ConditionCreateForm(
           options: [{ value: "taxable", label: "課税" }, { value: "reduced", label: "軽減" },
                     { value: "exempt", label: "非課税" }] },
         { name: "paymentTerms", label: "支払条件", placeholder: "検収後30日 など" },
+        // 発注書・検収書の明細はここから出る。備考を仕様代わりにしない。
+        { name: "spec", label: "仕様・成果物", type: "textarea",
+          placeholder: "カラーイラスト1点（表紙用）、A4 相当 など",
+          hint: "発注書・検収書の明細の「仕様・成果物」にそのまま出る" },
+        { name: "deliverableOwnership", label: "成果物の帰属先", type: "select",
+          options: [{ value: "orderer", label: "発注者（譲渡型）" }, { value: "contractor", label: "受注者（利用許諾型）" }],
+          hint: "発注書の明細に出る。業績連動のとき 受注者=利用許諾料／発注者=インセンティブ報酬 として表記される" },
         { name: "regions", label: "地域（許諾範囲）", visibleWhen: (v) => v.kind === "license",
           placeholder: "日本, 台湾", hint: "カンマ区切り。空なら全世界として扱う" },
         { name: "languages", label: "言語（許諾範囲）", visibleWhen: (v) => v.kind === "license",
@@ -113,6 +120,7 @@ export function ConditionCreateForm(
           mgAmount: int(v.mgAmount), agAmount: int(v.agAmount),
           exclusivity: text(v.exclusivity), taxCategory: v.taxCategory,
           paymentTerms: text(v.paymentTerms), notes: text(v.notes),
+          spec: text(v.spec), deliverableOwnership: text(v.deliverableOwnership),
           scopes: scopes.length ? scopes : undefined
         };
       }}

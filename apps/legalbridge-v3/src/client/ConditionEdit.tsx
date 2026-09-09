@@ -71,6 +71,8 @@ export function ConditionEdit(
     exclusivity: detail.exclusivity ?? "",
     taxCategory: detail.taxCategory,
     paymentTerms: detail.paymentTerms ?? "",
+    spec: detail.spec ?? "",
+    deliverableOwnership: detail.deliverableOwnership ?? "",
     regions: joinScopes(detail, "region"),
     languages: joinScopes(detail, "language"),
     notes: detail.notes ?? ""
@@ -103,6 +105,8 @@ export function ConditionEdit(
       ["termEnd", patchText(v.termEnd, detail.termEnd)],
       ["paymentTerms", patchText(v.paymentTerms, detail.paymentTerms)],
       ["notes", patchText(v.notes, detail.notes)],
+      ["spec", patchText(v.spec, detail.spec)],
+      ["deliverableOwnership", patchText(v.deliverableOwnership, detail.deliverableOwnership)],
       ["flatAmount", patchInt(v.flatAmount, detail.flatAmount)],
       ["unitAmount", patchInt(v.unitAmount, detail.unitAmount)],
       ["mgAmount", patchInt(v.mgAmount, detail.mgAmount)],
@@ -285,6 +289,18 @@ export function ConditionEdit(
             </select>
           </label>
           {field("paymentTerms", "支払条件", { placeholder: "検収後30日 など" })}
+          {field("spec", "仕様・成果物", { type: "textarea",
+            placeholder: "カラーイラスト1点（表紙用）、A4 相当 など",
+            hint: "発注書・検収書の明細の「仕様・成果物」にそのまま出る" })}
+          <label className="field">
+            <span>成果物の帰属先</span>
+            <select value={v.deliverableOwnership} onChange={(e) => set("deliverableOwnership", e.target.value)}>
+              <option value="">—</option>
+              <option value="orderer">発注者（譲渡型）</option>
+              <option value="contractor">受注者（利用許諾型）</option>
+            </select>
+            <small className="faint">発注書の明細に出る</small>
+          </label>
           {detail.kind === "license" && (<>
             {field("regions", "地域（許諾範囲）", { placeholder: "日本, 台湾",
               hint: "カンマ区切り。空なら全世界として扱う。媒体・チャネルは下の「権利の範囲」で" })}

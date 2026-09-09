@@ -102,7 +102,7 @@ export class ConditionRepository {
     const detail = await this.database.query(
       `SELECT ${SUMMARY_COLUMNS},
               c.agreement_id, c.parent_id, c.work_part_id, c.exclusivity, c.sublicensable,
-              c.tax_category, c.payment_terms, c.cycle, c.notes,
+              c.tax_category, c.payment_terms, c.cycle, c.notes, c.spec, c.deliverable_ownership,
               pc.condition_no AS parent_condition_no,
               wp.name AS work_part_name
          ${SUMMARY_JOINS}
@@ -137,6 +137,9 @@ export class ConditionRepository {
       paymentTerms: str(row.payment_terms),
       cycle: str(row.cycle),
       notes: str(row.notes),
+      spec: str(row.spec),
+      deliverableOwnership: row.deliverable_ownership === "orderer" || row.deliverable_ownership === "contractor"
+        ? row.deliverable_ownership : null,
       scopes, balance, documents, events, matters
     };
   }

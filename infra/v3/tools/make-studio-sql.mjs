@@ -133,6 +133,11 @@ SELECT * FROM (
          || ' / batch_id=' || COALESCE((SELECT data_type FROM information_schema.columns
                     WHERE table_schema='v3' AND table_name='documents'
                       AND column_name='batch_id'), '無い')
+  UNION ALL
+  SELECT 17, '条件明細の仕様と帰属先（A-017。2 列）',
+         (SELECT count(*)::text || ' 列' FROM information_schema.columns
+           WHERE table_schema='v3' AND table_name='conditions'
+             AND column_name IN ('spec','deliverable_ownership'))
 ) AS 確認 ORDER BY n;
 `;
 

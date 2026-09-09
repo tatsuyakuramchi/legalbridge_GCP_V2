@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { FakeDatabase } from "../core/fake-db.js";
-import { DocumentBatchService, groupRows, readRows, templateCsv } from "./batch-service.js";
+import { DocumentBatchService, groupRows, ownershipOfRows, readRows, templateCsv } from "./batch-service.js";
 
 const CSV = `取引先コード,取引先名,品目・業務名,仕様・成果物,数量,単価（税抜）,納期,支払日,成果物の帰属先,支払方法,備考
 VD-00317,合同会社アトリエ蒼,第4巻 表紙イラスト,カラー1点,1,150000,2026-10-31,2026-11-30,発注者,固定額,
@@ -93,4 +93,12 @@ test("発注書以外のひな形では一括を受けない", async () => {
   const { svc } = build();
   await assert.rejects(
     () => svc.preview({ templateKey: "license_master", matterId: 3, csv: CSV }), /発注書（国内・海外）だけ/);
+});
+
+test("束の帰属先は行が揃っているときだけ条件に持たせる", () => {
+  const rows = readRows(CSV);
+  assert.equal(ownershipOfRows(rows.slice(0, 2)), "orderer");
+  const mixed = [rows[0], { ...rows[3], item: { ...rows[3].item, deliverable_ownership: "受注者" } }];
+  assert.equal(ownershipOfRows(mixed), null, "発注者と受注者が混ざっている");
+  assert.equal(ownershipOfRows([{ ...rows[0], item: { ...rows[0].item, deliverable_ownership: null } }]), null, "空なら決めない");
 });

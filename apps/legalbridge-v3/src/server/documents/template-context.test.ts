@@ -219,3 +219,17 @@ test("明細の欄はひな形で決まり、種の行は条件・実績から�
   assert.equal(seeds.items.length, 1);
   assert.deepEqual(seeds.other_fees, []);
 });
+
+test("条件の仕様と帰属先が明細の行に出る。仕様が無ければ備考で代える", () => {
+  const withSpec = orderLinesFrom(ctx({ schedules: [], conditions: [
+    { id: 1, name: "翻訳", flatAmount: 100000, pricingModel: "fixed", taxCategory: "taxable",
+      spec: "全章の英訳", notes: "備考", deliverableOwnership: "orderer" }
+  ] })) as Array<Record<string, any>>;
+  assert.equal(withSpec[0].spec, "全章の英訳");
+  assert.equal(withSpec[0].deliverable_ownership, "発注者");
+  const fallback = orderLinesFrom(ctx({ schedules: [], conditions: [
+    { id: 1, name: "翻訳", flatAmount: 100000, pricingModel: "fixed", taxCategory: "taxable", notes: "備考だけ" }
+  ] })) as Array<Record<string, any>>;
+  assert.equal(fallback[0].spec, "備考だけ");
+  assert.equal(fallback[0].deliverable_ownership, null);
+});

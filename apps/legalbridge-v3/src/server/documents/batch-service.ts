@@ -118,6 +118,14 @@ export function readRows(text: string): BatchRow[] {
   });
 }
 
+/** 束の行の帰属先が全部同じならそれを条件に持たせる。混ざっていれば決めない。 */
+export function ownershipOfRows(rows: BatchRow[]): "orderer" | "contractor" | null {
+  const set = new Set(rows.map((r) => String(r.item.deliverable_ownership ?? "")).filter(Boolean));
+  if (set.size !== 1) return null;
+  const v = [...set][0];
+  return v === "発注者" ? "orderer" : v === "受注者" ? "contractor" : null;
+}
+
 export interface PartyCandidate { id: number; name: string; partyCode: string | null }
 export interface BatchGroup {
   /** 束の鍵。取引先コードがあればそれ、無ければ名前。 */
@@ -282,7 +290,11 @@ export class DocumentBatchService {
               pricingModel: "fixed", flatAmount: g.total, currency: "JPY",
               termEnd: g.rows.map((r) => r.item.delivery_date as string | null).filter(Boolean).sort().pop() ?? null,
               paymentTerms: [...new Set(g.rows.map((r) => r.item.payment_date as string | null).filter(Boolean))].join("、") || null,
-              notes: [...new Set(g.rows.map((r) => r.item.remarks as string | null).filter(Boolean))].join("\n") || null
+              notes: [...new Set(g.rows.map((r) => r.item.remarks as string | null).filter(Boolean))].join("\n") || null,
+              // 仕様と帰属先も条件に持たせる。行ごとに違えば仕様は行名付きで並べ、帰属先は空にする。
+              spec: g.rows.map((r) => r.item.spec ? (g.rows.length > 1 ? `${r.item.item_name}：${r.item.spec}` : String(r.item.spec)) : "")
+                .filter(Boolean).join("\n") || null,
+              deliverableOwnership: ownershipOfRows(g.rows)
             }, actor);
             conditionId = created.id; conditionNo = created.conditionNo;
           } else {

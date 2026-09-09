@@ -58,6 +58,10 @@ export interface ConditionDetail extends ConditionSummary {
   paymentTerms: string | null;
   cycle: string | null;
   notes: string | null;
+  /** 仕様・成果物。書類の明細の「仕様・成果物」に出る。 */
+  spec: string | null;
+  /** 成果物の帰属先。orderer=発注者 / contractor=受注者。 */
+  deliverableOwnership: "orderer" | "contractor" | null;
   scopes: ConditionScope[];
   balance: ConditionBalance | null;
   /** この条件を出力した文書。参照方向を反転した結果、条件から辿れる。 */
