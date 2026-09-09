@@ -34,3 +34,37 @@ test("A-009 は取引の中にある（確認の側に置かない）", () => {
     assert.ok(changes.includes(marker), `${marker} が COMMIT より後にある`);
   }
 });
+
+/**
+ * 採番記号の表は2か所にある。新規移行は 040 の v3_default_prefix()、
+ * 移行済みのデータベースは 004 の A-005 が使う。片方だけ足すと、いつ移行したかで
+ * 文書番号が変わる。実際に legal_freeform をここで取りこぼしていた。
+ */
+function prefixesOf(sql: string, pattern: RegExp): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const m of sql.matchAll(pattern)) out.set(m[1], m[2]);
+  return out;
+}
+
+test("採番記号の表が2か所で一致している", () => {
+  const migration = prefixesOf(read("040_migrate_documents.sql"),
+    /WHEN\s+'([a-z0-9_]+)'\s+THEN\s+'([A-Z0-9-]+)'/g);
+  const amend = prefixesOf(read("004_amend.sql"),
+    /\('([a-z0-9_]+)',\s*'([A-Z0-9-]+)'\)/g);
+
+  assert.ok(migration.size >= 20, `040 の表が読めていない（${migration.size} 件）`);
+  const diff: string[] = [];
+  for (const [key, prefix] of migration) {
+    if (amend.get(key) !== prefix) diff.push(`${key}: 040=${prefix} / 004=${amend.get(key) ?? "無い"}`);
+  }
+  for (const [key, prefix] of amend) {
+    if (!migration.has(key)) diff.push(`${key}: 004=${prefix} / 040=無い`);
+  }
+  assert.deepEqual(diff, [], `採番記号が食い違っている: ${diff.join(" ／ ")}`);
+});
+
+test("汎用法務文書に採番記号がある（V1 では持っていなかった）", () => {
+  const amend = prefixesOf(read("004_amend.sql"), /\('([a-z0-9_]+)',\s*'([A-Z0-9-]+)'\)/g);
+  assert.equal(amend.get("legal_freeform"), "LG",
+    "採番記号が無いと、そのひな形は発行しようとするたびに失敗する");
+});

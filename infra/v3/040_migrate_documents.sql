@@ -36,6 +36,9 @@ LANGUAGE sql IMMUTABLE AS $prefix$
     WHEN 'sales_master_standard'                 THEN 'SAL'
     WHEN 'maintenance_spec'                      THEN 'MNT'
     WHEN 'legal_response'                        THEN 'LG'
+    -- 汎用法務文書は V1 でも採番記号を持っておらず、一度も発行できなかった。
+    -- 法務回答書と同じ連番に載せる（法務が出した文書を一続きで数える）。
+    WHEN 'legal_freeform'                        THEN 'LG'
     WHEN 'notice_consent_personal_info_freelance' THEN 'PR'
     WHEN 'nda'                                   THEN 'NDA'
     WHEN 'payment_notice'                        THEN 'PAY'

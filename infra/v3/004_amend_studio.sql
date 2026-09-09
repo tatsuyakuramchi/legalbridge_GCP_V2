@@ -258,6 +258,9 @@ UPDATE v3.document_templates t SET number_prefix = m.prefix
     ('sales_master_standard',                 'SAL'),
     ('maintenance_spec',                      'MNT'),
     ('legal_response',                        'LG'),
+    -- 汎用法務文書。V1 でも採番記号が無く、一度も発行できなかった。
+    -- 法務回答書と同じ連番に載せる。
+    ('legal_freeform',                        'LG'),
     ('notice_consent_personal_info_freelance','PR'),
     ('nda',                                   'NDA'),
     ('payment_notice',                        'PAY'),
