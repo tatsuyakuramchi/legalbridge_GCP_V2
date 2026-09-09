@@ -1163,10 +1163,13 @@ export function createRoutes(database: Transactable) {
   }).default({});
 
   const calculationSchema = z.object({
-    period: z.string().trim().min(1).max(60),
+    // 実績の束から出すときは省ける（実績の期間から導く）。
+    period: z.string().trim().max(60).nullable().optional(),
     occurredOn: z.string().date().nullable().optional(),
     eventType: z.enum(["manufacturing", "sales", "sublicense_receipt", "service_period", "adjustment"]).optional(),
-    reported: reportedSchema
+    reported: reportedSchema,
+    /** 実績の束。選んだ実績の根拠を合算して1回計算し、実績は新しく作らない。 */
+    eventIds: z.array(z.coerce.number().int().positive()).max(500).optional()
   });
 
   const draftSchema = z.object({
@@ -1421,23 +1424,26 @@ export function createRoutes(database: Transactable) {
       // （計算書だけが「紙は出るが数字が無い」状態になっていた）。
       const preview = await royalty.preview({
         conditionId, period: input.period, occurredOn: input.occurredOn,
-        eventType: input.eventType, reported: input.reported
+        eventType: input.eventType, reported: input.reported, eventIds: input.eventIds
       });
-      const computed = royaltyForDocument(preview, input.reported);
+      // 実績の束から出したときは、導いた報告値と期間で本文を作る。
+      const computed = royaltyForDocument(preview, preview.reported);
       const draft = await issues.createDraft({
         templateKey: input.templateKey, conditionIds: [conditionId],
         matterId: input.matterId ?? null, manualInputs: input.manualInputs ?? {}
       }, actor(res));
       let issued;
       try {
-        issued = await issues.issue(draft.id, actor(res), { royalty: computed });
+        issued = await issues.issue(draft.id, actor(res),
+          { royalty: computed, eventIds: input.eventIds ?? [] });
       } catch (error) {
         await issues.void(draft.id, "発行できなかったため破棄", actor(res)).catch(() => undefined);
         throw error;
       }
       const statement = await royalty.finalize({
-        conditionId, period: input.period, occurredOn: input.occurredOn,
-        eventType: input.eventType, reported: input.reported, documentId: issued.id
+        conditionId, period: preview.period, occurredOn: preview.occurredOn,
+        eventType: input.eventType, reported: preview.reported, eventIds: input.eventIds,
+        documentId: issued.id
       }, actor(res));
       res.status(201).json({ document: issued, ...statement });
     }));

@@ -380,7 +380,8 @@ export function ConditionsWorkspace(
 
               {detail.direction === "out" && detail.pricingModel === "revenue_rate" && (
                 <div className="panel">
-                  <div className="panel-hd"><h2>ロイヤリティ試算</h2><span className="faint">保存しません</span></div>
+                  <div className="panel-hd"><h2>ロイヤリティ試算</h2>
+                    <span className="faint">保存しません。実績を記録してあるなら、下の実績を選んで計算書を作るほうが確かです（実績が結ばれる）</span></div>
                   <div className="panel-bd stack">
                     <div className="form-grid">
                       <label className="field">
@@ -485,6 +486,7 @@ export function ConditionsWorkspace(
                 onChanged={refreshFlow} />
 
               <ConditionEvents conditionId={detail.id} currency={detail.currency}
+                pricingModel={detail.pricingModel} matterId={detail.matters[0]?.id ?? null}
                 reloadKey={flowVersion}
                 editable={detail.status === "active" || detail.status === "draft"}
                 onCompose={onCompose}

@@ -10,10 +10,33 @@ import {
 
 export interface CalculationInput {
   conditionId: number;
-  period: string;
+  /** 対象期間。実績の束から出すときは省ける（実績の期間から導く）。 */
+  period?: string | null;
   occurredOn?: string | null;
   eventType?: "manufacturing" | "sales" | "sublicense_receipt" | "service_period" | "adjustment";
-  reported: ReportedResult;
+  reported?: ReportedResult;
+  /**
+   * 実績の束。渡すと、選んだ実績の根拠（報告売上・数量）を合算して1回だけ
+   * 計算し、実績は新しく作らず選んだものを計算書に結ぶ。渡さなければ
+   * これまでどおり reported から計算し、確定時に実績を1件作る。
+   */
+  eventIds?: number[];
+}
+
+/** 計算書に載る実績1件。根拠（売上か数量）と、その比で按分した額。 */
+export interface StatementBasis {
+  eventId: number;
+  eventType: string;
+  occurredOn: string | null;
+  period: string | null;
+  /** 根拠。料率なら報告売上（最小通貨単位）、数量ベースなら数量。 */
+  basis: number;
+  quantity: number | null;
+  sampleQuantity: number | null;
+  salesInput: number | null;
+  /** 根拠の比。合計で 1。 */
+  share: number;
+  note: string | null;
 }
 
 export interface CalculationPreview {
@@ -32,6 +55,12 @@ export interface CalculationPreview {
   appliedVersion: {
     id: number; conditionNo: string | null; effectiveFrom: string | null; switched: boolean;
   } | null;
+  /** 実際に計算に使った報告値と期間。実績の束から導いたときはここに入る。 */
+  reported: ReportedResult;
+  period: string;
+  occurredOn: string | null;
+  /** 実績の束から出したときの、実績ごとの根拠と按分。 */
+  events: StatementBasis[];
 }
 
 /**
@@ -43,13 +72,115 @@ export interface CalculationPreview {
  *   3. 確定時だけ、実績・計算書・明細・支払を1トランザクションで書く
  * だけを担う。フォームの値は信用せず、確定時に必ず計算し直す（V1・V2 と同じ防御）。
  */
+/** 総額を比で割る。端数は最終行に寄せて、合計が総額と一致するようにする。 */
+export function apportion(total: number, shares: number[]): number[] {
+  if (!shares.length) return [];
+  const out = shares.slice(0, -1).map((s) => Math.round(total * s));
+  out.push(total - out.reduce((a, b) => a + b, 0));
+  return out;
+}
+
 export class RoyaltyStatementService {
   constructor(private readonly database: Transactable) {}
 
   async preview(input: CalculationInput): Promise<CalculationPreview> {
     try {
-      return await this.calculate(this.database, input);
+      const resolved = await this.resolveInput(this.database, input);
+      return await this.calculate(this.database, resolved.input, resolved.events);
     } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 実績の束から報告値を導く。渡されていなければ reported をそのまま使う。
+   *
+   * 根拠は計算方式で決まる。料率（revenue_rate）なら報告売上（売上・再許諾の
+   * 受領の gross_amount）、数量ベース（unit_rate）なら製造数・販売数。
+   * 違う種類が混ざっていれば止める（合算できない）。
+   */
+  private async resolveInput(
+    client: Queryable, input: CalculationInput
+  ): Promise<{ input: CalculationInput & { period: string; reported: ReportedResult }; events: StatementBasis[] }> {
+    const ids = [...new Set((input.eventIds ?? []).map((n) => Number(n)))].filter((n) => n > 0);
+    if (!ids.length) {
+      const period = String(input.period ?? "").trim();
+      if (!period) throw new DomainError("VALIDATION", "対象期間を入れてください");
+      return { input: { ...input, period, reported: input.reported ?? {} }, events: [] };
+    }
+
+    const condition = await this.loadCondition(client, input.conditionId);
+    const r = await client.query(
+      `SELECT e.id, e.condition_id, e.event_type, e.occurred_on, e.period, e.quantity,
+              e.sample_quantity, e.gross_amount, e.amount, e.document_id, e.status, e.note,
+              (c.series_id = (SELECT COALESCE(series_id, id) FROM conditions WHERE id = $2)
+               OR c.id = $2) AS same_series
+         FROM condition_events e JOIN conditions c ON c.id = e.condition_id
+        WHERE e.id = ANY($1::bigint[])
+        ORDER BY e.occurred_on, e.id`, [ids, input.conditionId]);
+    const rows = r.rows as Array<Record<string, any>>;
+    if (rows.length !== ids.length) {
+      const known = new Set(rows.map((x) => Number(x.id)));
+      throw new DomainError("NOT_FOUND", `実績が見つかりません：${ids.filter((i) => !known.has(i)).join(", ")}`);
+    }
+    for (const e of rows) {
+      const tag = `実績 #${e.id}（${dateStr(e.occurred_on) ?? "日付なし"}）`;
+      if (e.same_series !== true) throw new DomainError("VALIDATION", `${tag} はこの条件の実績ではありません`);
+      if (e.status !== "active") throw new DomainError("CONFLICT", `${tag} は取り消されています`);
+      if (e.document_id) throw new DomainError("CONFLICT", `${tag} はすでに別の文書に結ばれています`);
+    }
+
+    // 根拠の取り方。計算方式で決まる。
+    const model = condition.pricingModel;
+    const basisOf = (e: Record<string, any>): number => {
+      const type = String(e.event_type);
+      if (model === "revenue_rate") {
+        if (type !== "sales" && type !== "sublicense_receipt") {
+          throw new DomainError("VALIDATION",
+            `料率の条件の計算書に載せられるのは 売上 と 再許諾の受領 の実績だけです（実績 #${e.id} は ${type}）`);
+        }
+        const gross = Number(e.gross_amount ?? e.amount ?? 0);
+        if (!(gross > 0)) throw new DomainError("VALIDATION", `実績 #${e.id} に報告売上（額）が入っていません`);
+        return gross;
+      }
+      if (model === "unit_rate") {
+        if (type !== "manufacturing" && type !== "sales") {
+          throw new DomainError("VALIDATION",
+            `数量ベースの条件の計算書に載せられるのは 製造 と 売上 の実績だけです（実績 #${e.id} は ${type}）`);
+        }
+        const qty = Number(e.quantity ?? 0);
+        if (!(qty > 0)) throw new DomainError("VALIDATION", `実績 #${e.id} に数量が入っていません`);
+        return qty;
+      }
+      throw new DomainError("VALIDATION",
+        `この計算方式（${model}）では実績から計算書を出せません。料率か単価×数量の条件だけです`);
+    };
+    const basis = rows.map(basisOf);
+    const total = basis.reduce((a, b) => a + b, 0);
+    const events: StatementBasis[] = rows.map((e, i) => ({
+      eventId: Number(e.id), eventType: String(e.event_type),
+      occurredOn: dateStr(e.occurred_on), period: e.period ? String(e.period) : null,
+      basis: basis[i],
+      quantity: e.quantity === null ? null : Number(e.quantity),
+      sampleQuantity: e.sample_quantity === null ? null : Number(e.sample_quantity),
+      salesInput: model === "revenue_rate" ? basis[i] : null,
+      share: total > 0 ? basis[i] / total : 0,
+      note: e.note ? String(e.note) : null
+    }));
+
+    const reported: ReportedResult = model === "revenue_rate"
+      ? { salesInput: total }
+      : { quantity: total,
+          sampleQuantity: events.reduce((a, e) => a + (e.sampleQuantity ?? 0), 0) || null };
+    // 期間は揃っていればそれ、揃っていなければ最古〜最新。発生日は最新。
+    const periods = [...new Set(events.map((e) => e.period).filter(Boolean))];
+    const dates = events.map((e) => e.occurredOn).filter(Boolean).sort();
+    const period = String(input.period ?? "").trim()
+      || (periods.length === 1 ? String(periods[0])
+          : dates.length ? `${dates[0]}〜${dates[dates.length - 1]}` : "");
+    if (!period) throw new DomainError("VALIDATION", "対象期間を入れてください（実績に期間も日付もありません）");
+    return {
+      input: { ...input, period, reported, occurredOn: input.occurredOn ?? dates[dates.length - 1] ?? null },
+      events
+    };
   }
 
   /**
@@ -76,23 +207,12 @@ export class RoyaltyStatementService {
         }
 
         // 画面から来た金額は使わず、ここで計算し直す。
-        const result = await this.calculate(client, input);
+        const resolved = await this.resolveInput(client, input);
+        const calcInput = resolved.input;
+        const result = await this.calculate(client, calcInput, resolved.events);
         // 実績と計算書は、実際に計算に使った版にぶら下げる。渡された版に
         // 付けると、料率と実績の版が食い違って後から検算できない。
         const conditionId = result.appliedVersion?.id ?? input.conditionId;
-
-        const event = await client.query(
-          `INSERT INTO condition_events
-             (condition_id, event_type, occurred_on, period, quantity, sample_quantity,
-              gross_amount, deductions, amount, document_id, created_by)
-           VALUES ($1, $2, COALESCE($3::date, current_date), $4, $5, $6, $7, $8, $9, $10, $11)
-           RETURNING id`,
-          [conditionId, input.eventType ?? "sales", input.occurredOn ?? null, input.period,
-           input.reported.quantity ?? null, input.reported.sampleQuantity ?? null,
-           result.amounts.grossMinor, result.amounts.agOffsetMinor, result.amounts.netMinor,
-           input.documentId, actor]
-        );
-        const eventId = Number((event.rows[0] as { id: number }).id);
 
         const statement = await client.query(
           `INSERT INTO statements
@@ -100,29 +220,66 @@ export class RoyaltyStatementService {
               net_amount, tax_amount)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
            RETURNING id`,
-          [input.documentId, conditionId, input.period, result.condition.currency,
+          [input.documentId, conditionId, calcInput.period, result.condition.currency,
            result.amounts.grossMinor, result.amounts.mgTopupMinor, result.amounts.agOffsetMinor,
            result.amounts.netMinor, result.amounts.taxMinor]
         );
         const statementId = Number((statement.rows[0] as { id: number }).id);
 
-        await client.query(
-          `INSERT INTO statement_lines
-             (statement_id, line_no, condition_id, event_id, quantity, sample_quantity,
-              unit_amount, rate_ppm, sales_input, fx_rate, amount)
-           VALUES ($1, 1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-          [statementId, conditionId, eventId,
-           input.reported.quantity ?? null, input.reported.sampleQuantity ?? null,
-           null, null, input.reported.salesInput ?? null, input.reported.fxRate ?? null,
-           result.amounts.netMinor]
-        );
+        let eventId: number;
+        if (resolved.events.length) {
+          // 実績の束。新しい実績は作らず、選んだ実績を計算書と文書に結ぶ。
+          // 明細は実績1件が1行。額は根拠の比で按分し、端数は最終行に寄せる
+          // （MG の上乗せ・AG の相殺は明細に割らず、合計欄だけに出る）。
+          const net = result.amounts.netMinor;
+          const shares = apportion(net, resolved.events.map((e) => e.share));
+          for (const [i, e] of resolved.events.entries()) {
+            await client.query(
+              `INSERT INTO statement_lines
+                 (statement_id, line_no, condition_id, event_id, quantity, sample_quantity,
+                  unit_amount, rate_ppm, sales_input, fx_rate, amount)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+              [statementId, i + 1, conditionId, e.eventId, e.quantity, e.sampleQuantity,
+               null, null, e.salesInput, null, shares[i]]);
+          }
+          await client.query(
+            `UPDATE condition_events SET document_id = $2
+              WHERE id = ANY($1::bigint[]) AND document_id IS NULL`,
+            [resolved.events.map((e) => e.eventId), input.documentId]);
+          eventId = resolved.events[0].eventId;
+        } else {
+          // 実績を渡されていない（試算からの近道）。実績を1件立てて結ぶ。
+          const event = await client.query(
+            `INSERT INTO condition_events
+               (condition_id, event_type, occurred_on, period, quantity, sample_quantity,
+                gross_amount, deductions, amount, document_id, created_by)
+             VALUES ($1, $2, COALESCE($3::date, current_date), $4, $5, $6, $7, $8, $9, $10, $11)
+             RETURNING id`,
+            [conditionId, input.eventType ?? "sales", calcInput.occurredOn ?? null, calcInput.period,
+             calcInput.reported.quantity ?? null, calcInput.reported.sampleQuantity ?? null,
+             result.amounts.grossMinor, result.amounts.agOffsetMinor, result.amounts.netMinor,
+             input.documentId, actor]
+          );
+          eventId = Number((event.rows[0] as { id: number }).id);
+          await client.query(
+            `INSERT INTO statement_lines
+               (statement_id, line_no, condition_id, event_id, quantity, sample_quantity,
+                unit_amount, rate_ppm, sales_input, fx_rate, amount)
+             VALUES ($1, 1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+            [statementId, conditionId, eventId,
+             calcInput.reported.quantity ?? null, calcInput.reported.sampleQuantity ?? null,
+             null, null, calcInput.reported.salesInput ?? null, calcInput.reported.fxRate ?? null,
+             result.amounts.netMinor]
+          );
+        }
 
         await recordAudit(client, {
           actor, action: "royalty.finalize", targetType: "statement", targetId: statementId,
           detail: {
             conditionId, requestedConditionId: input.conditionId,
             appliedVersion: result.appliedVersion,
-            documentId: input.documentId, period: input.period,
+            documentId: input.documentId, period: calcInput.period,
+            eventIds: resolved.events.map((e) => e.eventId),
             gross: result.amounts.grossMinor, net: result.amounts.netMinor,
             agOffset: result.amounts.agOffsetMinor, mgTopup: result.amounts.mgTopupMinor,
             formula: result.fee.formula_breakdown
@@ -171,7 +328,10 @@ export class RoyaltyStatementService {
     } catch (error) { throw translate(error); }
   }
 
-  private async calculate(client: Queryable, input: CalculationInput): Promise<CalculationPreview> {
+  private async calculate(
+    client: Queryable, input: CalculationInput & { period: string; reported: ReportedResult },
+    events: StatementBasis[] = []
+  ): Promise<CalculationPreview> {
     const resolved = await this.resolveVersion(client, input.conditionId, input.occurredOn ?? null);
     // 対象日に効いていた版で計算する。渡された版とずれたら、黙って差し替えずに
     // 結果へ載せる（なぜその料率になったのかが画面から読めないと検算できない）。
@@ -211,7 +371,11 @@ export class RoyaltyStatementService {
       agConsumedBefore,
       appliedVersion: resolved
         ? { ...resolved, switched: resolved.id !== input.conditionId }
-        : null
+        : null,
+      reported: input.reported,
+      period: input.period,
+      occurredOn: input.occurredOn ?? null,
+      events
     };
   }
 

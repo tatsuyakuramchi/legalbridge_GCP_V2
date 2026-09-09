@@ -21,6 +21,15 @@ interface EventRow {
 }
 interface TypeOption { value: string; label: string }
 interface TemplateOption { templateKey: string; label: string; category: string | null }
+interface StatementPreview {
+  fee: { gross_ex_tax: number; mg_topup_this_time: number; ag_offset_this_time: number;
+         actual_ex_tax: number; tax_amount: number; formula_breakdown: string };
+  payment: { withholdingEnabled: boolean; withholdingTax: number; netTransfer: number };
+  period: string; occurredOn: string | null;
+  reported: { salesInput?: number | null; quantity?: number | null };
+  events: Array<{ eventId: number; eventType: string; occurredOn: string | null; basis: number; share: number }>;
+  appliedVersion: { conditionNo: string | null; switched: boolean } | null;
+}
 interface PreviewResponse {
   templateLabel: string;
   /** 条件と実績から決まらない項目。人が入れないと発行できない。 */
@@ -29,9 +38,11 @@ interface PreviewResponse {
 }
 
 export function ConditionEvents(
-  { conditionId, currency, editable, matterId, reloadKey, onCompose, onChanged }:
+  { conditionId, currency, editable, matterId, pricingModel, reloadKey, onCompose, onChanged }:
   { conditionId: number; currency: string; editable: boolean;
     matterId?: number | null; reloadKey?: number;
+    /** 計算方式。料率・単価×数量なら実績の束から計算書を出せる。 */
+    pricingModel?: string;
     /** 文書の画面へ、この条件と実績を選んだ状態で移る。 */
     onCompose?: (conditionIds: number[], eventIds: number[], matterId?: number | null) => void;
     onChanged: () => void }
@@ -53,6 +64,48 @@ export function ConditionEvents(
   const [manual, setManual] = useState<Record<string, string>>({});
   // 実績と同じ理由。フォームは表の上に開くので、下の行から押すと画面の外に出る。
   const issueForm = useRef<HTMLDivElement>(null);
+  /**
+   * 選んだ実績。複数選んで1枚の書類にする。
+   * 料率の条件なら計算書（根拠を合算して1回計算、明細は実績ごとに按分）、
+   * 定額なら検収書・納品書（実績が明細の行になる）。
+   */
+  const [picked, setPicked] = useState<Set<number>>(new Set());
+  const royalty = pricingModel === "revenue_rate" || pricingModel === "unit_rate";
+  // 計算書のフォーム。選んだ実績を束にして出す。
+  const [stmtOpen, setStmtOpen] = useState(false);
+  const [stmtTemplate, setStmtTemplate] = useState("");
+  const [stmtPeriod, setStmtPeriod] = useState("");
+  const [stmtPreview, setStmtPreview] = useState<StatementPreview | null>(null);
+  const [stmtBusy, setStmtBusy] = useState(false);
+  const [stmtDone, setStmtDone] = useState<string | null>(null);
+
+  const pickedIds = [...picked].filter((id) => rows.some((r) => r.id === id && r.status === "active" && !r.documentId));
+
+  // 束を変えたら試算し直す。保存しない。
+  useEffect(() => {
+    if (!stmtOpen || !pickedIds.length) { setStmtPreview(null); return; }
+    let live = true;
+    api.post<StatementPreview>(`/conditions/${conditionId}/royalty-preview`,
+      { eventIds: pickedIds, period: stmtPeriod.trim() || null })
+      .then((r) => { if (live) { setStmtPreview(r); setError(null); } })
+      .catch((e: ApiError) => { if (live) { setStmtPreview(null); setError(e.message); } });
+    return () => { live = false; };
+  }, [stmtOpen, pickedIds.join(","), stmtPeriod]);
+
+  async function issueStatement() {
+    if (!stmtTemplate || !pickedIds.length) return;
+    setStmtBusy(true); setError(null);
+    try {
+      const r = await api.post<{ document: { documentNo: string } }>(
+        `/conditions/${conditionId}/statement-documents`,
+        { templateKey: stmtTemplate, eventIds: pickedIds, period: stmtPeriod.trim() || null,
+          matterId: matterId ?? null });
+      setStmtDone(r.document.documentNo);
+      setStmtOpen(false); setPicked(new Set()); setStmtPreview(null);
+      load(); onChanged();
+    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
+    finally { setStmtBusy(false); }
+  }
 
   function load() {
     api.get<{ events: EventRow[]; types: TypeOption[] }>(`/conditions/${conditionId}/events`)
@@ -69,11 +122,15 @@ export function ConditionEvents(
 
   // テンプレートは文書を作るときにしか要らないので、開くまで取りに行かない。
   useEffect(() => {
-    if (!issuing || templates.length) return;
+    if ((!issuing && !stmtOpen) || templates.length) return;
     api.get<{ templates: TemplateOption[] }>("/document-templates")
-      .then((r) => { setTemplates(r.templates); setTemplateKey(r.templates[0]?.templateKey ?? ""); })
+      .then((r) => {
+        setTemplates(r.templates); setTemplateKey(r.templates[0]?.templateKey ?? "");
+        setStmtTemplate(r.templates.find((t) => t.templateKey === "royalty_statement")?.templateKey
+          ?? r.templates[0]?.templateKey ?? "");
+      })
       .catch((e: ApiError) => setError(e.message));
-  }, [issuing]);
+  }, [issuing, stmtOpen]);
 
   useEffect(() => {
     if (issuing) issueForm.current?.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -196,10 +253,14 @@ export function ConditionEvents(
               <input inputMode="numeric" value={f("quantity")} onChange={(e) => set("quantity", e.target.value)} />
             </label>
             <label className="field">
-              <span>総額（任意）</span>
+              <span>{royalty ? "報告売上・受領額（円）" : "総額（任意）"}</span>
               <input inputMode="numeric" value={f("grossAmount")}
                      onChange={(e) => set("grossAmount", e.target.value)} />
-              <small className="faint">控除前。入れたら実額と合っている必要があります</small>
+              <small className="faint">
+                {royalty
+                  ? "料率の条件では、ここが計算書の根拠になる。外貨は当社着金時のレートで円に直した額を入れる。ロイヤリティの額は計算書で計算する"
+                  : "控除前。入れたら実額と合っている必要があります"}
+              </small>
             </label>
             <label className="field">
               <span>控除</span>
@@ -297,10 +358,102 @@ export function ConditionEvents(
         </div>
       )}
 
+      {stmtDone && (
+        <div className="panel-bd">
+          <div className="note ok">
+            計算書 <span className="code">{stmtDone}</span> を決定し、選んだ実績に結び付けました。
+            金額は決定のときに計算し直しています。
+          </div>
+        </div>
+      )}
+
+      {/* 選んだ実績から書類を作る。料率なら計算書、定額なら検収書・納品書。 */}
+      {editable && rows.some((r) => r.status === "active" && !r.documentId) && (
+        <div className="panel-bd row" style={{ borderBottom: "1px solid var(--line)", gap: 8 }}>
+          <span className="faint">
+            {pickedIds.length ? `${pickedIds.length} 件を選択中` : "左の四角で実績を選ぶと、まとめて1枚の書類にできます"}
+          </span>
+          {royalty ? (
+            <button className="btn btn-sm primary" disabled={!pickedIds.length || stmtOpen}
+                    onClick={() => { setStmtOpen(true); setStmtDone(null); }}>
+              選んだ {pickedIds.length} 件で計算書を作る
+            </button>
+          ) : (
+            <button className="btn btn-sm primary" disabled={!pickedIds.length}
+                    onClick={() => onCompose?.([conditionId], pickedIds, matterId ?? null)}>
+              選んだ {pickedIds.length} 件で文書を作る
+            </button>
+          )}
+          {pickedIds.length > 0 && (
+            <button className="linky" onClick={() => setPicked(new Set())}>選択を外す</button>
+          )}
+        </div>
+      )}
+
+      {stmtOpen && (
+        <div className="panel-bd stack" style={{ borderBottom: "1px solid var(--line)" }}>
+          <div className="row">
+            <b>選んだ実績の束から計算書を作る</b>
+            <span className="faint">根拠（報告売上・数量）を合算して1回だけ計算し、明細は実績1件が1行。額は根拠の比で按分</span>
+          </div>
+          <div className="form-grid">
+            <label className="field">
+              <span>ひな形</span>
+              <select value={stmtTemplate} onChange={(e) => setStmtTemplate(e.target.value)}>
+                {templates.map((t) => (
+                  <option key={t.templateKey} value={t.templateKey}>
+                    {t.category ? `${t.category}／${t.label}` : t.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span>対象期間</span>
+              <input value={stmtPeriod} placeholder={stmtPreview?.period ?? "実績から導く"}
+                     onChange={(e) => setStmtPeriod(e.target.value)} />
+              <small className="faint">空なら実績の期間（揃っていなければ最古〜最新）</small>
+            </label>
+          </div>
+          {stmtPreview && (
+            <table>
+              <tbody>
+                {stmtPreview.events.map((e) => (
+                  <tr key={e.eventId}>
+                    <td className="code">{e.occurredOn ?? "—"}</td>
+                    <td>{label(e.eventType)}</td>
+                    <td className="num">{money(e.basis, currency)}</td>
+                    <td className="faint">{Math.round(e.share * 1000) / 10}%</td>
+                  </tr>
+                ))}
+                <tr><td><b>根拠の合計</b></td><td></td>
+                    <td className="num"><b>{money(stmtPreview.reported.salesInput ?? stmtPreview.reported.quantity ?? 0, currency)}</b></td>
+                    <td className="faint">期間 {stmtPreview.period}{stmtPreview.appliedVersion?.switched ? `／${stmtPreview.appliedVersion.conditionNo} の版で計算` : ""}</td></tr>
+                <tr><td>グロス</td><td></td><td className="num">{money(stmtPreview.fee.gross_ex_tax, currency)}</td>
+                    <td className="faint">{stmtPreview.fee.formula_breakdown}</td></tr>
+                <tr><td>MG 上乗せ／AG 相殺</td><td></td>
+                    <td className="num">{money(stmtPreview.fee.mg_topup_this_time, currency)}／−{money(stmtPreview.fee.ag_offset_this_time, currency)}</td>
+                    <td className="faint">明細には割らず、合計にだけ効く</td></tr>
+                <tr><td><b>税抜実額</b></td><td></td><td className="num"><b>{money(stmtPreview.fee.actual_ex_tax, currency)}</b></td>
+                    <td className="faint">消費税 {money(stmtPreview.fee.tax_amount, currency)}
+                      {stmtPreview.payment.withholdingEnabled ? `／源泉 ${money(stmtPreview.payment.withholdingTax, currency)}` : ""}</td></tr>
+              </tbody>
+            </table>
+          )}
+          <div className="row">
+            <button className="btn primary btn-sm" disabled={stmtBusy || !stmtPreview || !stmtTemplate}
+                    onClick={() => void issueStatement()}>
+              {stmtBusy ? "決定しています…" : "計算書を決定する"}
+            </button>
+            <button className="btn btn-sm" onClick={() => { setStmtOpen(false); setStmtPreview(null); }}>やめる</button>
+            <span className="faint">決定すると番号が振られ、選んだ実績はこの計算書に結ばれます</span>
+          </div>
+        </div>
+      )}
+
       <div className="tablewrap">
         <table>
           <thead><tr>
-            <th>発生日</th><th>種類</th><th>期間</th><th className="num">数量</th>
+            <th></th><th>発生日</th><th>種類</th><th>期間</th><th className="num">数量</th>
             <th className="num">実額</th><th>出どころ</th><th></th>
           </tr></thead>
           <tbody>
@@ -308,6 +461,16 @@ export function ConditionEvents(
               const voided = row.status === "void";
               return (
                 <tr key={row.id} style={voided ? { opacity: 0.6 } : undefined}>
+                  <td>
+                    {editable && !voided && !row.documentId && (
+                      <input type="checkbox" checked={picked.has(row.id)} aria-label={`実績 ${row.occurredOn ?? row.id} を選ぶ`}
+                             onChange={(e) => setPicked((prev) => {
+                               const next = new Set(prev);
+                               if (e.target.checked) next.add(row.id); else next.delete(row.id);
+                               return next;
+                             })} />
+                    )}
+                  </td>
                   <td className="code">{row.occurredOn ?? "—"}</td>
                   <td>{label(row.eventType)}
                     {voided && <span className="tag out" style={{ marginLeft: 5 }}>取消</span>}</td>
@@ -346,7 +509,7 @@ export function ConditionEvents(
               );
             })}
             {!rows.length && (
-              <tr><td colSpan={7} className="faint">
+              <tr><td colSpan={8} className="faint">
                 実績がありません。製造数・売上・検収などをここに記録します。
               </td></tr>
             )}

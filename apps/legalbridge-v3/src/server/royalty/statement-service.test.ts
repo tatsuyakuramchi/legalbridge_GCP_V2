@@ -202,3 +202,83 @@ test("実績と計算書は、計算に使った版にぶら下げる", async ()
     "料率と実績の版が食い違うと、あとから検算できない");
   assert.equal(db.find("INSERT INTO statements")!.params[1], 9);
 });
+
+/** 実績の束から出す。売上報告が2件、報告売上は 300万 と 200万。 */
+const eventRows = (over: Array<Partial<Record<string, unknown>>> = []) => [
+  { id: 41, condition_id: 5, event_type: "sales", occurred_on: "2026-04-30", period: "2026上期",
+    quantity: null, sample_quantity: null, gross_amount: 3000000, amount: 3000000,
+    document_id: null, status: "active", note: null, same_series: true },
+  { id: 42, condition_id: 5, event_type: "sales", occurred_on: "2026-06-30", period: "2026上期",
+    quantity: null, sample_quantity: null, gross_amount: 2000000, amount: 2000000,
+    document_id: null, status: "active", note: null, same_series: true }
+].map((r, i) => ({ ...r, ...(over[i] ?? {}) }));
+
+const withEvents = (rows: Array<Record<string, unknown>>, options: Options = {}) => {
+  const base = responder(options);
+  const db = new FakeDatabase((text, params) => {
+    if (text.includes("FROM condition_events e JOIN conditions c") && text.includes("e.id = ANY")) {
+      const ids = (params[0] as number[]).map(Number);
+      return rows.filter((r) => ids.includes(Number(r.id)));
+    }
+    return base(text);
+  });
+  return { db, service: new RoyaltyStatementService(db) };
+};
+
+test("実績の束：報告売上を合算して1回計算し、期間は実績から導く", async () => {
+  const { db, service: royalty } = withEvents(eventRows());
+  const r = await royalty.preview({ conditionId: 5, eventIds: [41, 42] });
+  assert.equal(r.reported.salesInput, 5000000, "300万 + 200万");
+  assert.equal(r.period, "2026上期", "揃っているのでその期間");
+  assert.equal(r.occurredOn, "2026-06-30", "発生日は最新");
+  assert.equal(r.fee.gross_ex_tax, 625000, "500万 × 12.5%");
+  assert.deepEqual(r.events.map((e) => e.share), [0.6, 0.4]);
+  assert.equal(db.all("INSERT").length, 0);
+});
+
+test("実績の束：期間が揃っていなければ最古〜最新", async () => {
+  const { service: royalty } = withEvents(eventRows([{ period: "2026-04" }, { period: "2026-06" }]));
+  const r = await royalty.preview({ conditionId: 5, eventIds: [41, 42] });
+  assert.equal(r.period, "2026-04-30〜2026-06-30");
+});
+
+test("実績の束：他の条件・取消済み・文書に結ばれた実績・違う種類は断る", async () => {
+  const other = withEvents(eventRows([{ same_series: false }]));
+  await assert.rejects(() => other.service.preview({ conditionId: 5, eventIds: [41, 42] }), /この条件の実績ではありません/);
+  const voided = withEvents(eventRows([{ status: "void" }]));
+  await assert.rejects(() => voided.service.preview({ conditionId: 5, eventIds: [41, 42] }), /取り消されています/);
+  const taken = withEvents(eventRows([{}, { document_id: 9 }]));
+  await assert.rejects(() => taken.service.preview({ conditionId: 5, eventIds: [41, 42] }), /別の文書に結ばれています/);
+  const mixed = withEvents(eventRows([{ event_type: "manufacturing", quantity: 100 }]));
+  await assert.rejects(() => mixed.service.preview({ conditionId: 5, eventIds: [41, 42] }), /売上 と 再許諾の受領 の実績だけ/);
+});
+
+test("実績の束の確定：実績は作らず、明細を実績ごとに根拠比で按分し、実績を文書に結ぶ", async () => {
+  const { db, service: royalty } = withEvents(eventRows());
+  const r = await royalty.finalize({ conditionId: 5, eventIds: [41, 42], documentId: 6 }, "kuramochi");
+  assert.equal(db.all("INSERT INTO condition_events").length, 0, "新しい実績は作らない");
+  const lines = db.all("INSERT INTO statement_lines");
+  assert.equal(lines.length, 2);
+  assert.equal(lines[0].params[3], 41);
+  assert.equal(lines[0].params[10], 375000, "62.5万 × 0.6");
+  assert.equal(lines[1].params[10], 250000, "残り。合計は 62.5万");
+  const linked = db.find("UPDATE condition_events SET document_id")!;
+  assert.deepEqual(linked.params, [[41, 42], 6]);
+  assert.equal(r.eventId, 41);
+  const audit = db.find("INSERT INTO audit_events")!;
+  assert.match(String(audit.params[5]), /"eventIds":\[41,42\]/);
+});
+
+test("按分は端数を最終行に寄せて、合計が総額と一致する", async () => {
+  const { apportion } = await import("./statement-service.js");
+  assert.deepEqual(apportion(100, [1 / 3, 1 / 3, 1 / 3]), [33, 33, 34]);
+  assert.deepEqual(apportion(625000, [0.6, 0.4]), [375000, 250000]);
+  assert.deepEqual(apportion(0, [1]), [0]);
+});
+
+test("実績を渡さないときは期間が必須（今までどおり実績を1件作る）", async () => {
+  const { db, service: royalty } = service();
+  await assert.rejects(() => royalty.preview({ conditionId: 5, reported: { salesInput: 1 } }), /対象期間を入れてください/);
+  await royalty.finalize({ conditionId: 5, period: "2026上期", reported: { salesInput: 4896000 }, documentId: 6 }, "k");
+  assert.equal(db.all("INSERT INTO condition_events").length, 1);
+});
