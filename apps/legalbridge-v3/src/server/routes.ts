@@ -812,7 +812,9 @@ export function createRoutes(database: Transactable) {
     termEnd: z.string().date().nullable().optional(),
     paymentTerms: z.string().trim().max(300).nullable().optional(),
     taxCategory: z.enum(["taxable", "reduced", "exempt"]).optional(),
-    notes: z.string().trim().max(2000).nullable().optional()
+    notes: z.string().trim().max(2000).nullable().optional(),
+    workId: z.coerce.number().int().positive().nullable().optional(),
+    exclusivity: z.enum(["exclusive", "non_exclusive"]).nullable().optional()
   });
   // effectiveFrom に未来の日付を渡すと「予約された改訂」になる。
   // 契約変更を締結した日に記録できないと、適用開始日まで人が覚えているしかない。

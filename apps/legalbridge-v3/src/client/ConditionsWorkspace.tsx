@@ -4,7 +4,7 @@ import { DocumentImport } from "./DocumentImport.js";
 import { ConditionSchedules } from "./ConditionSchedules.js";
 import { ConditionRevisions } from "./ConditionRevisions.js";
 import { ConditionEdit } from "./ConditionEdit.js";
-import { ConditionCounterparty, ConditionMatters, ConditionScopes } from "./ConditionLinks.js";
+import { ConditionMatters, ConditionScopes } from "./ConditionLinks.js";
 import { Relations, type EntityKind } from "./Relations.js";
 import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
 import { CONDITION_KIND_LABEL, StatusTag } from "./labels.js";
@@ -262,8 +262,15 @@ export function ConditionsWorkspace(
                   <span className={`tag ${detail.direction}`}>{detail.direction === "in" ? "IN 取得" : "OUT 許諾"}</span>
                   <StatusTag kind="condition" value={detail.status} />
                   {!editing && detail.status !== "void" && detail.status !== "superseded" && (
-                    <button className="btn btn-sm" style={{ marginLeft: "auto" }}
-                            onClick={() => setEditing(true)}>編集</button>
+                    <span className="row" style={{ marginLeft: "auto" }}>
+                      {/* 条件は文書の元。ここから作れないと、文書の画面へ行って
+                          条件を探し直すことになる。 */}
+                      {onCompose && (
+                        <button className="btn btn-sm primary"
+                                onClick={() => onCompose([detail.id])}>この条件で文書を作る</button>
+                      )}
+                      <button className="btn btn-sm" onClick={() => setEditing(true)}>編集</button>
+                    </span>
                   )}
                 </div>
                 <div className="panel-bd stack">
@@ -340,7 +347,14 @@ export function ConditionsWorkspace(
               )}
 
               <div className="panel">
-                <div className="panel-hd"><h2>この条件から出た文書</h2></div>
+                <div className="panel-hd">
+                  <h2>この条件から出た文書</h2>
+                  <span className="faint">契約書・発注書はここから。検収書・計算書は下の実績から</span>
+                  {onCompose && detail.status !== "void" && detail.status !== "superseded" && (
+                    <button className="btn btn-sm" style={{ marginLeft: "auto" }}
+                            onClick={() => onCompose([detail.id])}>文書を作る</button>
+                  )}
+                </div>
                 <div className="tablewrap">
                   <table>
                     <thead><tr><th>文書番号</th><th>状態</th><th>決定日</th></tr></thead>
@@ -476,11 +490,6 @@ export function ConditionsWorkspace(
               <ConditionMatters detail={detail} onDone={async () => {
                 setDetail(await api.get<DetailResponse>(`/conditions/${detail.id}`));
                 refreshFlow();
-              }} />
-
-              <ConditionCounterparty detail={detail} onDone={async () => {
-                setDetail(await api.get<DetailResponse>(`/conditions/${detail.id}`));
-                reload();
               }} />
 
               <ConditionScopes detail={detail} onDone={async () => {

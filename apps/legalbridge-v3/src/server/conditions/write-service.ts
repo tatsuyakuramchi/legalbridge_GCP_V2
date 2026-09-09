@@ -62,12 +62,16 @@ export interface EconomicsPatch {
   paymentTerms?: string | null;
   taxCategory?: "taxable" | "reduced" | "exempt";
   notes?: string | null;
+  /** 作品と独占性。登録のときに入れられるのに、編集で直せなかった。 */
+  workId?: number | null;
+  exclusivity?: "exclusive" | "non_exclusive" | null;
 }
 
 const ECONOMICS_COLUMNS: Record<keyof EconomicsPatch, string> = {
   name: "name", ratePpm: "rate_ppm", flatAmount: "flat_amount", unitAmount: "unit_amount",
   mgAmount: "mg_amount", agAmount: "ag_amount", termStart: "term_start", termEnd: "term_end",
-  paymentTerms: "payment_terms", taxCategory: "tax_category", notes: "notes"
+  paymentTerms: "payment_terms", taxCategory: "tax_category", notes: "notes",
+  workId: "work_id", exclusivity: "exclusivity"
 };
 
 // 改訂で引き継ぐ列（id・状態・監査列を除く条件の中身すべて）。
@@ -244,6 +248,10 @@ export class ConditionWriteService {
         }
         if (before.status === "superseded") {
           throw new DomainError("CONFLICT", "旧版の条件は編集できません。最新版を編集してください");
+        }
+        if (patch.workId) {
+          const w = await client.query("SELECT id FROM works WHERE id = $1", [patch.workId]);
+          if (!w.rows[0]) throw new DomainError("NOT_FOUND", `作品 ${patch.workId} が見つかりません`);
         }
 
         // 未来の日付を指定されたら「予約」にする。契約変更を締結した日に

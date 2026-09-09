@@ -177,3 +177,18 @@ test("改訂は系列を引き継ぐ", async () => {
   assert.match(db.find("INSERT INTO conditions")!.text, /series_id/,
     "系列が切れると AG の消化累計が版ごとに分かれる");
 });
+
+test("作品と独占性も編集で直せる。無い作品は断る", async () => {
+  const rows = baseRows({ events: 0 });
+  const db = new FakeDatabase((t, params) => {
+    if (t.includes("SELECT id FROM works WHERE id")) return params[0] === 9 ? [{ id: 9 }] : [];
+    return rows(t);
+  });
+  await new ConditionWriteService(db).updateEconomics(1, { workId: 9, exclusivity: "exclusive" }, "tester");
+  const update = db.find("UPDATE conditions SET work_id");
+  assert.ok(update, "登録と同じ項目を編集でも受ける");
+  assert.deepEqual(update!.params, [1, 9, "exclusive"]);
+
+  await assert.rejects(
+    () => new ConditionWriteService(db).updateEconomics(1, { workId: 404 }, "tester"), /作品 404 が見つかりません/);
+});
