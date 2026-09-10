@@ -83,6 +83,10 @@ services:
       REMOTE_DB_NAME: ${REMOTE_DB_NAME:-legalbridge}
       SYNC_DB_USER: ${SYNC_DB_USER:-legalbridge_v3_backup}
       SYNC_DB_PASSWORD: ${SYNC_DB_PASSWORD:-}
+      # 写しの取り方。proxy（既定・3307 番を使う）か export（443 番だけ）。
+      SYNC_MODE: ${SYNC_MODE:-proxy}
+      EXPORT_BUCKET: ${EXPORT_BUCKET:-}
+      EXPORT_SUBDIR: ${EXPORT_SUBDIR:-}
       # Proxy を PC 側で動かすときだけ設定する（3307 番が塞がれている環境）。
       SYNC_DB_HOST: ${SYNC_DB_HOST:-}
       SYNC_DB_PORT: ${SYNC_DB_PORT:-5433}

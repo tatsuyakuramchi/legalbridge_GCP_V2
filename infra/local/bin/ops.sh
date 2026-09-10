@@ -2,6 +2,7 @@
 # 予備系の作業スクリプト。ops コンテナの中で走る（ホストに psql は要らない）。
 #
 #   ops sync              本番 v3 スキーマを写してローカル DB に入れる（平時に毎晩）
+#   ops export-info       エクスポート方式（SYNC_MODE=export）の準備に要る値を出す
 #   ops restore <file>    手元の写し（/dumps/…）をローカル DB に入れ直す
 #   ops fresh             本番データなしで開発用 DB を作る（模擬データ）
 #   ops grants            ランタイムロールの権限を当て直す
@@ -15,10 +16,16 @@
 set -euo pipefail
 
 # Windows で .env を書くと行末に CR が付くことがある。パスワードに紛れ込むと本番に
-# つながらないので、ここで落とす。
-for v in SYNC_DB_PASSWORD SYNC_DB_USER CLOUD_SQL_INSTANCE REMOTE_DB_NAME KEEP_DUMPS PGPASSWORD; do
-  eval "$v=\${$v%\$'\r'}"
-done
+# つながらないので、ここで落とす。未設定の変数は空にしておく（set -u で落ちないように）。
+strip_cr() {
+  local n
+  for n in "$@"; do eval "$n=\"\${$n-}\"; $n=\"\${$n%\$'\r'}\""; done
+}
+strip_cr SYNC_DB_PASSWORD SYNC_DB_USER SYNC_DB_HOST SYNC_DB_PORT \
+         CLOUD_SQL_INSTANCE REMOTE_DB_NAME KEEP_DUMPS PGPASSWORD \
+         SYNC_MODE EXPORT_BUCKET EXPORT_SUBDIR
+# 世代数が空だと prune が全部消してしまう。既定を置く。
+[ -n "$KEEP_DUMPS" ] || KEEP_DUMPS=14
 
 DUMPS="${DUMPS:-/dumps}"
 DATA="${DATA:-/data}"
@@ -55,9 +62,25 @@ stamp_of() {
   fi
 }
 
+# 写しをローカル DB に入れ直す。形式は2つある。
+#   *.dump    Proxy 経由の pg_dump（カスタム形式。スキーマ丸ごと）
+#   *.sql.gz  Cloud SQL のエクスポート（平文 SQL。表だけなのでビューは作り直す）
 restore() {
   local file="$1"
   [ -f "$file" ] || die "写しが見つかりません: $file"
+  case "$file" in
+    *.sql.gz) restore_sql "$file" ;;
+    *)        restore_custom "$file" ;;
+  esac
+  apply_grants
+  local rows
+  rows=$(psql -Atq -c "SELECT count(*) FROM v3.matters" 2>/dev/null || echo '?')
+  log "入れ替え完了（案件 ${rows} 件）"
+  write_stamp "$(stamp_of "$file")"
+}
+
+restore_custom() {
+  local file="$1"
   # grep -q は最初の一致で閉じるので pipefail に引っかかる。全部読ませる。
   pg_restore --list "$file" | grep "SCHEMA - v3" >/dev/null || die "v3 スキーマの写しではありません: $file"
   log "ローカル DB の v3 を入れ替える（$file）"
@@ -69,14 +92,200 @@ restore() {
     pg_restore --no-owner --no-privileges -f - "$file"
     echo "COMMIT;"
   } | psql_local >/dev/null
-  apply_grants
-  local rows
-  rows=$(psql -Atq -c "SELECT count(*) FROM v3.matters" 2>/dev/null || echo '?')
-  log "入れ替え完了（案件 ${rows} 件）"
-  write_stamp "$(stamp_of "$file")"
 }
 
-sync() {
+# 表単位の書き出しには関数が入らない（トリガーの定義だけが入る）ので、
+# 手元のスキーマ定義から関数を先に作る。増えても直す場所は 001/004 のまま。
+install_functions() {
+  local f
+  for f in "$V3/001_schema.sql" "$V3/004_amend.sql"; do
+    awk '/^CREATE OR REPLACE FUNCTION v3\./{on=1}
+         on{print}
+         on && /^\$[a-zA-Z_]*\$;[[:space:]]*$/{on=0}' "$f"
+  done
+}
+
+restore_sql() {
+  local file="$1"
+  gunzip -c "$file" | grep "CREATE TABLE v3\." >/dev/null \
+    || die "v3 の表が入っていません: $file"
+  log "ローカル DB の v3 を入れ替える（$file）"
+  # 取り除くもの:
+  #   OWNER TO / GRANT / REVOKE / SET SESSION AUTHORIZATION
+  #     本番にしかないロールを指すので、そのままでは復元が止まる。
+  #     権限はこのあと 003_grants.sql で当て直すので捨ててよい。
+  #   CREATE SCHEMA
+  #     こちらで作るので二重定義にしない。
+  {
+    echo "BEGIN;"
+    echo "DROP SCHEMA IF EXISTS v3 CASCADE;"
+    echo "CREATE SCHEMA v3;"
+    install_functions
+    gunzip -c "$file" | sed -E '/^ALTER .* OWNER TO /d; /^(GRANT|REVOKE|SET SESSION AUTHORIZATION|CREATE SCHEMA) /d'
+    echo "COMMIT;"
+  } | psql_local >/dev/null
+  # エクスポートは表だけなので、ビューは手元の定義から作る。
+  log "ビューを作り直す"
+  psql_local -f "$V3/002_views.sql" >/dev/null
+}
+
+# ---------------------------------------------------------------------
+# Google の API を叩くための下ごしらえ（方式2で使う）。
+#   通信は 443 番だけ。社内ネットワークが 3307 番を塞いでいても通る。
+# ---------------------------------------------------------------------
+GCP_PROJECT_ID() { echo "${CLOUD_SQL_INSTANCE%%:*}"; }
+INSTANCE_ID()    { echo "${CLOUD_SQL_INSTANCE##*:}"; }
+
+# adc.json（人のログイン）から使い捨ての access token を作る。
+# サービスアカウントの鍵は組織ポリシーで作れないので、こちらだけを見る。
+access_token() {
+  local f=/keys/adc.json
+  [ -f "$f" ] || die "keys/adc.json がありません。docker compose run --rm login を先に。"
+  local tok
+  tok=$(curl -s --max-time 30 -X POST https://oauth2.googleapis.com/token \
+        -d client_id="$(jq -r .client_id "$f")" \
+        -d client_secret="$(jq -r .client_secret "$f")" \
+        -d refresh_token="$(jq -r .refresh_token "$f")" \
+        -d grant_type=refresh_token | jq -r '.access_token // empty')
+  [ -n "$tok" ] || die "ログインが切れています。docker compose run --rm login をやり直してください。"
+  echo "$tok"
+}
+
+# API を叩く。第1引数が HTTP メソッド、第2が URL、第3があれば本文（JSON）。
+# 応答は標準出力へ。HTTP が 400 以上ならエラー本文を出して止める。
+api() {
+  local method="$1" url="$2" body="${3:-}"
+  local out code
+  # 引数は配列で渡す。JSON の本文には空白が入るので、展開したままでは分割される。
+  local args=(-s -w '\n%{http_code}' --max-time 120 -X "$method" "$url"
+              -H "Authorization: Bearer $TOKEN"
+              -H "x-goog-user-project: $(GCP_PROJECT_ID)")
+  if [ -n "$body" ]; then
+    args+=(-H "Content-Type: application/json" -d "$body")
+  fi
+  out=$(curl "${args[@]}")
+  code=$(echo "$out" | tail -n1)
+  out=$(echo "$out" | sed '$d')
+  if [ "$code" -ge 400 ]; then
+    echo "$out" | jq -r '.error.message // .' >&2
+    die "API が $code を返しました（$method $url）"
+  fi
+  echo "$out"
+}
+
+# 写す対象の表。手元のスキーマ定義から作るので、表が増えても直す場所は1つで済む。
+v3_tables_json() {
+  grep -ohE 'CREATE TABLE (IF NOT EXISTS )?v3\.[a-z_]+' "$V3/001_schema.sql" "$V3/004_amend.sql" \
+    | sed -E 's/.*(v3\.[a-z_]+)/\1/' | sort -u | jq -R . | jq -s .
+}
+
+# ---------------------------------------------------------------------
+# 方式2：Cloud SQL のエクスポートで Cloud Storage に出し、そこから落とす。
+#   443 番しか使わない。3307 番が塞がれている環境はこちら。
+# ---------------------------------------------------------------------
+sync_export() {
+  [ -n "${CLOUD_SQL_INSTANCE:-}" ] || die "CLOUD_SQL_INSTANCE が空です（.env）"
+  [ -n "${EXPORT_BUCKET:-}" ] || die "EXPORT_BUCKET が空です（.env）。ops export-info を見てください。"
+  mkdir -p "$DUMPS"
+
+  local project instance name object uri tables
+  project=$(GCP_PROJECT_ID); instance=$(INSTANCE_ID)
+  TOKEN=$(access_token)
+
+  name="v3_$(date '+%Y%m%d_%H%M').sql.gz"
+  object="${EXPORT_SUBDIR:+${EXPORT_SUBDIR}/}$name"
+  uri="gs://$EXPORT_BUCKET/$object"
+  tables=$(v3_tables_json)
+  log "本番の v3 を書き出す（$(echo "$tables" | jq 'length') 表 → $uri）"
+
+  local body op
+  body=$(jq -n --arg uri "$uri" --arg db "$REMOTE_DB_NAME" --argjson tables "$tables" \
+    '{exportContext:{kind:"sql#exportContext",fileType:"SQL",uri:$uri,
+                     databases:[$db],sqlExportOptions:{tables:$tables}}}')
+  op=$(api POST "https://sqladmin.googleapis.com/v1/projects/$project/instances/$instance/export" "$body" \
+       | jq -r '.name // empty')
+  [ -n "$op" ] || die "書き出しを始められませんでした"
+
+  # 書き出しはインスタンス側で走る。終わるまで待つ（最大30分）。
+  local status="" i
+  for i in $(seq 1 180); do
+    sleep 10
+    status=$(api GET "https://sqladmin.googleapis.com/v1/projects/$project/operations/$op" \
+             | jq -r '.status // empty')
+    if [ "$status" = "DONE" ]; then break; fi
+    if [ $((i % 6)) -eq 0 ]; then log "書き出し中（$((i / 6)) 分経過）"; fi
+  done
+  [ "$status" = "DONE" ] || die "書き出しが30分で終わりませんでした"
+
+  local err
+  err=$(api GET "https://sqladmin.googleapis.com/v1/projects/$project/operations/$op" \
+        | jq -r '.error.errors[0].message // empty')
+  [ -z "$err" ] || die "書き出しが失敗しました: $err"
+
+  local file="$DUMPS/$name"
+  log "Cloud Storage から落とす"
+  local enc; enc=$(jq -rn --arg o "$object" '$o|@uri')
+  if ! curl -sS --fail --max-time 1800 -o "$file" \
+       -H "Authorization: Bearer $TOKEN" \
+       -H "x-goog-user-project: $project" \
+       "https://storage.googleapis.com/storage/v1/b/$EXPORT_BUCKET/o/$enc?alt=media"; then
+    rm -f "$file"
+    die "落とせませんでした（バケットの読み取り権限を確かめてください）"
+  fi
+  log "落とし終わり（$(du -h "$file" | cut -f1)）"
+
+  # 置きっぱなしにしない。手元に落ちた時点でバケットからは消す。
+  # ここで失敗しても写しは手元にあるので、止めずに知らせるだけにする。
+  if curl -sS --fail -X DELETE \
+       -H "Authorization: Bearer $TOKEN" -H "x-goog-user-project: $project" \
+       "https://storage.googleapis.com/storage/v1/b/$EXPORT_BUCKET/o/$enc" >/dev/null 2>&1; then
+    log "バケットの書き出しファイルを消した"
+  else
+    log "バケットのファイルを消せませんでした（残っています。手で消してください）"
+  fi
+
+  restore "$file"
+  prune
+}
+
+# 方式2の準備に要る値を出す。バケットに書けるのはインスタンスの持つ
+# サービスアカウントなので、その宛先をここで調べて示す。
+export_info() {
+  [ -n "${CLOUD_SQL_INSTANCE:-}" ] || die "CLOUD_SQL_INSTANCE が空です（.env）"
+  local project instance sa
+  project=$(GCP_PROJECT_ID); instance=$(INSTANCE_ID)
+  TOKEN=$(access_token)
+  sa=$(api GET "https://sqladmin.googleapis.com/v1/projects/$project/instances/$instance" \
+       | jq -r '.serviceAccountEmailAddress // empty')
+  [ -n "$sa" ] || die "インスタンスの情報を取れませんでした"
+
+  cat <<INFO
+
+エクスポート方式（SYNC_MODE=export）の準備
+
+ 1. Cloud Storage でバケットを1つ作る
+      場所      asia-northeast1（インスタンスと同じ）
+      アクセス  「公開アクセスの防止」を有効。均一なアクセス制御
+      ライフサイクル  1日で削除（消し忘れの保険。同期のたびに消してはいる）
+
+ 2. そのバケットに、このインスタンスのサービスアカウントを追加する
+      プリンシパル  $sa
+      ロール        Storage オブジェクト管理者
+
+ 3. .env に次の2行を書く
+      SYNC_MODE=export
+      EXPORT_BUCKET=<作ったバケット名>
+
+ 4. 同期する
+      docker compose run --rm ops sync
+
+INFO
+}
+
+# ---------------------------------------------------------------------
+# 方式1：Cloud SQL Auth Proxy で直につなぐ（既定）。3307 番が通る環境向け。
+# ---------------------------------------------------------------------
+sync_proxy() {
   [ -n "${SYNC_DB_PASSWORD:-}" ] || die "SYNC_DB_PASSWORD が空です（.env）"
   mkdir -p "$DUMPS"
 
@@ -129,7 +338,7 @@ sync() {
   if ! PGPASSWORD="$SYNC_DB_PASSWORD" pg_dump -h "$host" -p "$port" -U "$SYNC_DB_USER" -d "$REMOTE_DB_NAME" \
       -n v3 -Fc --no-owner --no-privileges -f "$file"; then
     rm -f "$file"
-    [ -n "$proxy" ] && { echo "--- proxy log ---" >&2; tail -n 20 /tmp/proxy.log >&2; }
+    if [ -n "$proxy" ]; then echo "--- proxy log ---" >&2; tail -n 20 /tmp/proxy.log >&2; fi
     die "写しを取れませんでした（上のログを見る。認証切れなら README の「同期が失敗するとき」）"
   fi
   [ -n "$proxy" ] && kill $proxy 2>/dev/null || true
@@ -137,10 +346,13 @@ sync() {
   log "写し完了（$(du -h "$file" | cut -f1)）"
 
   restore "$file"
+  prune
+}
 
-  # 古い写しを消す。KEEP_DUMPS 世代だけ残す。
+# 古い写しを消す。KEEP_DUMPS 世代だけ残す。
+prune() {
   # 名前に時点が入っているので名前で並べる（更新日時は写した日ではない）。
-  ls -1 "$DUMPS"/v3_*.dump 2>/dev/null | sort -r | tail -n +"$((KEEP_DUMPS + 1))" | while read -r old; do
+  ls -1 "$DUMPS"/v3_* 2>/dev/null | sort -r | tail -n +"$((KEEP_DUMPS + 1))" | while read -r old; do
     log "古い写しを消す: $old"; rm -f "$old"
   done
 }
@@ -161,7 +373,7 @@ fresh() {
 
 status() {
   echo "写し（$DUMPS）:"
-  ls -lh "$DUMPS"/v3_*.dump 2>/dev/null | awk '{print "  " $9 "  " $5}' || echo "  なし"
+  ls -lh "$DUMPS"/v3_* 2>/dev/null | awk '{print "  " $9 "  " $5}' || echo "  なし"
   echo "いま入っているデータの時点: $(cat "$STAMP" 2>/dev/null || echo '不明（まだ入れていない）')"
   psql -Atq -c "SELECT '案件 ' || count(*) || ' 件' FROM v3.matters" 2>/dev/null || echo "v3 スキーマがまだありません"
 }
@@ -203,9 +415,19 @@ netcheck() {
   echo "確かめた口はすべて通っています。"
 }
 
+# 写しの取り方は2通り。3307 番が通るかで決まる（既定は proxy）。
+sync() {
+  case "${SYNC_MODE:-proxy}" in
+    proxy)  sync_proxy ;;
+    export) sync_export ;;
+    *) die "SYNC_MODE は proxy か export です: ${SYNC_MODE}" ;;
+  esac
+}
+
 case "${1:-}" in
   netcheck) shift; netcheck "$@" ;;
   sync) sync ;;
+  export-info) export_info ;;
   restore) [ -n "${2:-}" ] || die "使い方: ops restore /dumps/v3_YYYYmmdd_HHMM.dump"; restore "$2" ;;
   fresh) fresh ;;
   grants) apply_grants ;;
