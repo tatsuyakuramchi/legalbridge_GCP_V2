@@ -304,10 +304,15 @@ import_rows() {
   # 文字コードや列数の違いで分かりにくい形で落ちる。先に名指しで止める。
   local files=() others=()
   for f in "${all[@]}"; do
-    local head1
-    head1=$(head -c 200 "$f" | head -1 | sed -e 's/^\xef\xbb\xbf//' -e 's/\r$//' -e 's/"//g' \
-            | tr -d ' ' | tr 'A-Z' 'a-z')
-    if [ "$head1" = "tbl,data" ]; then files+=("$f"); else others+=("$(basename "$f")"); fi
+    # 見出しの1行だけを読む。パイプで繋ぐと、後ろが先に閉じたときに
+    # 前が SIGPIPE で落ち、pipefail と set -e で何も出さずに終わる。
+    local head1=""
+    IFS= read -r head1 < "$f" || true
+    head1=${head1#$'\xef\xbb\xbf'}   # BOM
+    head1=${head1%$'\r'}              # CRLF
+    head1=${head1//\"/}                # 引用符
+    head1=${head1// /}                 # 空白
+    if [ "${head1,,}" = "tbl,data" ]; then files+=("$f"); else others+=("$(basename "$f")"); fi
   done
   if [ "${#others[@]}" -gt 0 ]; then
     echo "094_export_rows.sql の結果ではない CSV が混ざっています（${#others[@]} 個）:" >&2
