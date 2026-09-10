@@ -39,10 +39,12 @@ type WriteResult = {
 };
 
 export function ConditionsWorkspace(
-  { initialId, onCompose, onOpen }:
+  { initialId, onCompose, onOpen, onOpenDocument }:
   {
     initialId?: number;
     onCompose?: (conditionIds: number[], eventIds?: number[], matterId?: number | null) => void;
+    /** 決めた文書をそのまま開く。 */
+    onOpenDocument?: (documentId: number) => void;
     onOpen?: (kind: EntityKind, id: number) => void;
   }
 ) {
@@ -497,6 +499,7 @@ export function ConditionsWorkspace(
                 reloadKey={flowVersion}
                 editable={!readOnly && (detail.status === "active" || detail.status === "draft")}
                 openForSchedule={recordSchedule}
+                onOpenDocument={onOpenDocument}
                 onOpened={() => setRecordSchedule(null)}
                 onCompose={onCompose}
                 onChanged={refreshFlow} />

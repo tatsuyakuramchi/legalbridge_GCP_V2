@@ -160,7 +160,8 @@ export function App() {
         )}
         {view === "conditions" && (
           <ConditionsWorkspace key={conditionId ?? 0} initialId={conditionId}
-                               onCompose={startCompose} onOpen={openEntity} />
+                               onCompose={startCompose} onOpen={openEntity}
+                               onOpenDocument={openDocumentAt} />
         )}
         {view === "works" && (
           <WorksWorkspace key={`w${focusFor("works") ?? 0}`}

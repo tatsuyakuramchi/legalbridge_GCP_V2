@@ -46,7 +46,7 @@ interface PreviewResponse {
 
 export function ConditionEvents(
   { conditionId, currency, editable, matterId, pricingModel, reloadKey,
-    openForSchedule, onOpened, onCompose, onChanged }:
+    openForSchedule, onOpened, onCompose, onOpenDocument, onChanged }:
   { conditionId: number; currency: string; editable: boolean;
     matterId?: number | null; reloadKey?: number;
     /** 予定の行の「実績にする」から渡された回。この回でフォームを開く。 */
@@ -56,6 +56,8 @@ export function ConditionEvents(
     pricingModel?: string;
     /** 文書の画面へ、この条件と実績を選んだ状態で移る。 */
     onCompose?: (conditionIds: number[], eventIds: number[], matterId?: number | null) => void;
+    /** 決めた文書をそのまま開く。決めたあと画面に留まると次の手が分からない。 */
+    onOpenDocument?: (documentId: number) => void;
     onChanged: () => void }
 ) {
   const [rows, setRows] = useState<EventRow[]>([]);
@@ -68,7 +70,7 @@ export function ConditionEvents(
   const [issuing, setIssuing] = useState<EventRow | null>(null);
   const [templates, setTemplates] = useState<TemplateOption[]>([]);
   const [templateKey, setTemplateKey] = useState("");
-  const [issued, setIssued] = useState<string | null>(null);
+  const [issued, setIssued] = useState<{ id: number; documentNo: string } | null>(null);
   // ひな形が要求する項目のうち、条件と実績から決まらないもの。
   // これを先に見せないと、発行を押してから8項目足りないと言われる。
   const [preview, setPreview] = useState<PreviewResponse | null>(null);
@@ -93,7 +95,7 @@ export function ConditionEvents(
   const [stmtPeriod, setStmtPeriod] = useState("");
   const [stmtPreview, setStmtPreview] = useState<StatementPreview | null>(null);
   const [stmtBusy, setStmtBusy] = useState(false);
-  const [stmtDone, setStmtDone] = useState<string | null>(null);
+  const [stmtDone, setStmtDone] = useState<{ id: number; documentNo: string } | null>(null);
 
   const pickedIds = [...picked].filter((id) => rows.some((r) => r.id === id && r.status === "active" && !r.documentId));
 
@@ -112,11 +114,11 @@ export function ConditionEvents(
     if (!stmtTemplate || !pickedIds.length) return;
     setStmtBusy(true); setError(null);
     try {
-      const r = await api.post<{ document: { documentNo: string } }>(
+      const r = await api.post<{ document: { id: number; documentNo: string } }>(
         `/conditions/${conditionId}/statement-documents`,
         { templateKey: stmtTemplate, eventIds: pickedIds, period: stmtPeriod.trim() || null,
           matterId: matterId ?? null });
-      setStmtDone(r.document.documentNo);
+      setStmtDone({ id: r.document.id, documentNo: r.document.documentNo });
       setStmtOpen(false); setPicked(new Set()); setStmtPreview(null);
       load(); onChanged();
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
@@ -187,11 +189,11 @@ export function ConditionEvents(
     if (!issuing || !templateKey) return;
     setBusy(true); setError(null);
     try {
-      const r = await api.post<{ document: { documentNo: string } }>(
+      const r = await api.post<{ document: { id: number; documentNo: string } }>(
         `/conditions/${conditionId}/event-documents`,
         { templateKey, eventIds: [issuing.id], matterId: matterId ?? null,
           manualInputs: manual });
-      setIssued(r.document.documentNo);
+      setIssued({ id: r.document.id, documentNo: r.document.documentNo });
       setIssuing(null); setPreview(null); setManual({});
       load(); onChanged();
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
@@ -432,9 +434,21 @@ export function ConditionEvents(
 
       {issued && (
         <div className="panel-bd">
-          <div className="note ok">
-            文書 <span className="code">{issued}</span> を決定し、実績に結び付けました。
-            中身の確認と PDF は「文書」の画面から開けます。
+          <div className="note ok done-note">
+            <div className="row">
+              <b>決定しました</b>
+              <span className="code">{issued.documentNo}</span>
+              <span className="faint">実績に結び付けました</span>
+            </div>
+            <div className="row">
+              {onOpenDocument && (
+                <button className="btn primary btn-sm"
+                        onClick={() => { const id = issued.id; setIssued(null); onOpenDocument(id); }}>
+                  この文書を開く
+                </button>
+              )}
+              <button className="btn btn-sm" onClick={() => setIssued(null)}>閉じる</button>
+            </div>
           </div>
         </div>
       )}
@@ -498,9 +512,21 @@ export function ConditionEvents(
 
       {stmtDone && (
         <div className="panel-bd">
-          <div className="note ok">
-            計算書 <span className="code">{stmtDone}</span> を決定し、選んだ実績に結び付けました。
-            金額は決定のときに計算し直しています。
+          <div className="note ok done-note">
+            <div className="row">
+              <b>計算書を決定しました</b>
+              <span className="code">{stmtDone.documentNo}</span>
+              <span className="faint">選んだ実績に結び付け、金額は決定のときに計算し直しました</span>
+            </div>
+            <div className="row">
+              {onOpenDocument && (
+                <button className="btn primary btn-sm"
+                        onClick={() => { const id = stmtDone.id; setStmtDone(null); onOpenDocument(id); }}>
+                  この文書を開く
+                </button>
+              )}
+              <button className="btn btn-sm" onClick={() => setStmtDone(null)}>閉じる</button>
+            </div>
           </div>
         </div>
       )}

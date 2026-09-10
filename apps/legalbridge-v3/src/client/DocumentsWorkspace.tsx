@@ -107,7 +107,10 @@ export function DocumentsWorkspace(
   const [selected, setSelected] = useState<number | null>(null);
   /** 旧版を開いている文書。既定は畳む（いまの版だけを読めるようにする）。 */
   const [unfolded, setUnfolded] = useState<Set<number>>(new Set());
-  const [issued, setIssued] = useState<string | null>(null);
+  // 決定した結果。番号だけでなく id も持つ（そのまま開けるように）。
+  const [issued, setIssued] = useState<{ id: number; documentNo: string } | null>(null);
+  // 決定したことに気づかず同じ画面を見続けないよう、結果まで運ぶ。
+  const issuedRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [integrations, setIntegrations] = useState<Integrations | null>(null);
@@ -389,23 +392,23 @@ export function DocumentsWorkspace(
   async function issue() {
     setError(null); setBusy(true);
     try {
-      let documentNo: string;
+      let done: { id: number; documentNo: string };
       if (draft) {
         // 開いている下書きを直してから発行する。発行は下書きに保存された
         // 手入力しか見ないので、先に書き戻す。
         await api.patch(`/documents/${draft.id}/draft`,
           { manualInputs: { ...inputs, _eventIds: pickedEvents }, conditionIds: picked });
-        const r = await api.post<{ documentNo: string }>(
+        const r = await api.post<{ id: number; documentNo: string }>(
           `/documents/${draft.id}/issue`, { eventIds: pickedEvents });
-        documentNo = r.documentNo;
+        done = { id: r.id, documentNo: r.documentNo };
       } else {
         // 下書き→発行→実績への紐づけをサーバ側で1本にしてある。
         // 途中で落ちたときは下書きごと捨てられる。
-        const result = await api.post<{ document: { documentNo: string } }>(
+        const result = await api.post<{ document: { id: number; documentNo: string } }>(
           "/documents/compose", body);
-        documentNo = result.document.documentNo;
+        done = { id: result.document.id, documentNo: result.document.documentNo };
       }
-      setIssued(documentNo);
+      setIssued(done);
       // 手で打った項目だけ覚える。日付と金額は毎回変わるので覚えない
       // （前回の日付が入ったまま気づかず発行してしまう）。
       const keep: Record<string, string> = {};
@@ -425,6 +428,8 @@ export function DocumentsWorkspace(
       setManual(keep); setLines({}); setPickedFields(new Set());
       setDraft(null); setPickedEvents([]);
       await reload();
+      // 長いフォームの下で押すと、上に出た結果が見えない。結果まで運ぶ。
+      issuedRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
     finally { setBusy(false); }
   }
@@ -448,9 +453,9 @@ export function DocumentsWorkspace(
       // 前の版から引き継いだ実績が無ければ、下書きに控えた選択を使う。
       const saved = Array.isArray(d.manualInputs?._eventIds)
         ? (d.manualInputs._eventIds as unknown[]).map(Number).filter((n) => Number.isFinite(n)) : [];
-      const r = await api.post<{ documentNo: string }>(
+      const r = await api.post<{ id: number; documentNo: string }>(
         `/documents/${id}/issue`, { eventIds: d.eventIds?.length ? d.eventIds : saved });
-      setIssued(r.documentNo);
+      setIssued({ id: r.id, documentNo: r.documentNo });
       await reload();
       setSelected(id);
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
@@ -470,7 +475,8 @@ export function DocumentsWorkspace(
     setBusy(true); setError(null);
     try {
       await api.post(`/documents/${id}/void`, { reason });
-      setIssued(`${no ?? id} を無効にしました`);
+      // 決定の結果とは別。無効化に「この文書を開く」を出しても仕方がない。
+      setStored(`${no ?? id} を無効にしました`);
       await reload();
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
     finally { setBusy(false); }
@@ -595,7 +601,31 @@ export function DocumentsWorkspace(
       </header>
 
       {error && <div className="alert">{error}</div>}
-      {issued && <div className="note ok">決定しました：<b className="code">{issued}</b></div>}
+      {issued && (
+        <div ref={issuedRef} className="note ok done-note">
+          <div className="row">
+            <b>決定しました</b>
+            <span className="code">{issued.documentNo}</span>
+            <span className="faint">番号が振られ、中身は直せなくなりました</span>
+          </div>
+          <div className="row">
+            <button className="btn primary btn-sm" onClick={() => {
+              // 一覧と詳細は作成中は出ないので、閉じてから開く。
+              setComposing(false); setDraft(null); setBulk(false);
+              setSelected(issued.id); setIssued(null);
+            }}>この文書を開く</button>
+            {(composing || draft) && (
+              <button className="btn btn-sm" onClick={() => setIssued(null)}>
+                続けてもう1枚作る
+              </button>
+            )}
+            <button className="btn btn-sm" onClick={() => {
+              setComposing(false); setDraft(null); setBulk(false);
+              setRendered(null); setSavedAt(""); setIssued(null);
+            }}>閉じて一覧へ</button>
+          </div>
+        </div>
+      )}
       {stored && <div className="note ok">{stored}</div>}
       {integrations && !integrations.drive.documents && (
         <div className="note">Drive 保存は未設定です（<span className="code">GOOGLE_DRIVE_FOLDER_ID</span>）。文書の作成と決定はそのまま使えます。</div>
