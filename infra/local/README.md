@@ -146,6 +146,38 @@ docker compose run --rm ops netcheck 34.146.158.194 3307    # DB への口（IP 
 許可してもらうのが本筋。Cloud SQL を社外から使うときの標準的な要件なので、
 依頼としては通りやすい。
 
+### Proxy を PC 側で動かす
+
+コンテナからは 3307 番が通らないのに、Windows から直接なら通ることがある
+（コンテナの通信は Docker の経路を通るので、社内の機器の扱いが変わる）。
+まず PC から確かめる。
+
+```powershell
+Test-NetConnection 34.146.158.194 -Port 3307
+```
+
+`TcpTestSucceeded : True` なら、Proxy を PC 側で動かして、コンテナはそれを使う。
+
+1. Cloud SQL Auth Proxy を落として置く（Windows 版の実行ファイル 1 つ。gcloud は要らない）
+   ```powershell
+   Invoke-WebRequest -Uri https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.15.0/cloud-sql-proxy.x64.exe -OutFile cloud-sql-proxy.exe
+   ```
+2. `.env` に次の 1 行を足す
+   ```
+   SYNC_DB_HOST=host.docker.internal
+   ```
+3. 同期のたびに、まず Proxy を上げてから `ops sync` を走らせる
+   ```powershell
+   Start-Process -WindowStyle Hidden .\cloud-sql-proxy.exe `
+     "--credentials-file=keys\adc.json","--quota-project=legalbridge-488506","--address=0.0.0.0","--port=5433","legalbridge-488506:asia-northeast1:legalbridge-db"
+   docker compose run --rm ops sync
+   Get-Process cloud-sql-proxy | Stop-Process
+   ```
+
+`--address=0.0.0.0` はコンテナから届かせるために要る。この PC が社内ネットワークに
+直接いる場合、5433 番が同じネットワークの他の PC からも見えることになるので、
+Windows のファイアウォールで 5433 番を塞いでおくこと（Docker からの接続は影響を受けない）。
+
 それが通らないなら、毎晩の自動同期は諦めて、ブラウザだけで写しを作る運用にする。
 
 1. Cloud SQL の画面 → インスタンス → エクスポート → 形式 SQL、対象 `legalbridge`、

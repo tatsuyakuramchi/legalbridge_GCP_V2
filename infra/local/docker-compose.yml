@@ -83,8 +83,14 @@ services:
       REMOTE_DB_NAME: ${REMOTE_DB_NAME:-legalbridge}
       SYNC_DB_USER: ${SYNC_DB_USER:-legalbridge_v3_backup}
       SYNC_DB_PASSWORD: ${SYNC_DB_PASSWORD:-}
+      # Proxy を PC 側で動かすときだけ設定する（3307 番が塞がれている環境）。
+      SYNC_DB_HOST: ${SYNC_DB_HOST:-}
+      SYNC_DB_PORT: ${SYNC_DB_PORT:-5433}
       KEEP_DUMPS: ${KEEP_DUMPS:-14}
       TZ: Asia/Tokyo
+    extra_hosts:
+      # PC 側で動かす Proxy を host.docker.internal で呼べるようにする（Linux 用）。
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./bin/ops.sh:/usr/local/bin/ops:ro
       - ../v3:/v3:ro

@@ -77,49 +77,62 @@ restore() {
 }
 
 sync() {
-  [ -n "${CLOUD_SQL_INSTANCE:-}" ] || die "CLOUD_SQL_INSTANCE が空です（.env）"
   [ -n "${SYNC_DB_PASSWORD:-}" ] || die "SYNC_DB_PASSWORD が空です（.env）"
-  # 認証情報は 2 通り。サービスアカウントの鍵（sa.json）か、gcloud でログインした
-  # 人の認証情報（adc.json = application_default_credentials.json の写し）。
-  # 組織ポリシーで鍵が作れないときは後者を使う。
-  local cred
-  if [ -f /keys/sa.json ]; then cred=/keys/sa.json
-  elif [ -f /keys/adc.json ]; then cred=/keys/adc.json
-  else die "keys/sa.json も keys/adc.json もありません（README の「事前準備」）"; fi
-  local project="${CLOUD_SQL_INSTANCE%%:*}"
   mkdir -p "$DUMPS"
 
-  log "Cloud SQL Auth Proxy を上げる（$cred）"
-  # 人の認証情報のときは Admin API の課金・割当先の指定が要る（--quota-project）。
-  cloud-sql-proxy --credentials-file="$cred" --quota-project "$project" \
-    --port 5433 "$CLOUD_SQL_INSTANCE" > /tmp/proxy.log 2>&1 &
-  local proxy=$!
-  trap 'kill $proxy 2>/dev/null || true' EXIT
-  for _ in $(seq 1 30); do
-    pg_isready -h 127.0.0.1 -p 5433 -q && break
-    sleep 1
-  done
-  if ! pg_isready -h 127.0.0.1 -p 5433 -q; then
-    echo "--- proxy log ---" >&2; tail -n 5 /tmp/proxy.log >&2
-    if grep -q "connection refused\|i/o timeout" /tmp/proxy.log; then
-      echo >&2
-      echo "Cloud SQL の 3307 番へ届いていません。社内ネットワークがこの番号を" >&2
-      echo "塞いでいる可能性があります。ログの IP を使って確かめてください:" >&2
-      echo "  docker compose run --rm ops netcheck <ログに出た IP> 3307" >&2
+  # 写しを取りに行く先。既定はこのコンテナが上げる Proxy。
+  # 社内ネットワークが 3307 番を塞いでいる場合は、Proxy を PC 側で動かして
+  # SYNC_DB_HOST=host.docker.internal を .env に書く（README「Proxy を PC 側で動かす」）。
+  local host="${SYNC_DB_HOST:-127.0.0.1}" port="${SYNC_DB_PORT:-5433}"
+  local proxy=""
+
+  if [ -n "${SYNC_DB_HOST:-}" ]; then
+    log "PC 側の Proxy を使う（$host:$port）"
+    pg_isready -h "$host" -p "$port" -q || die "$host:$port につながりません。PC 側で Proxy が動いていますか"
+  else
+    [ -n "${CLOUD_SQL_INSTANCE:-}" ] || die "CLOUD_SQL_INSTANCE が空です（.env）"
+    # 認証情報は 2 通り。サービスアカウントの鍵（sa.json）か、gcloud でログインした
+    # 人の認証情報（adc.json = application_default_credentials.json の写し）。
+    # 組織ポリシーで鍵が作れないときは後者を使う。
+    local cred
+    if [ -f /keys/sa.json ]; then cred=/keys/sa.json
+    elif [ -f /keys/adc.json ]; then cred=/keys/adc.json
+    else die "keys/sa.json も keys/adc.json もありません（README の「事前準備」）"; fi
+    local project="${CLOUD_SQL_INSTANCE%%:*}"
+
+    log "Cloud SQL Auth Proxy を上げる（$cred）"
+    # 人の認証情報のときは Admin API の課金・割当先の指定が要る（--quota-project）。
+    cloud-sql-proxy --credentials-file="$cred" --quota-project "$project" \
+      --port "$port" "$CLOUD_SQL_INSTANCE" > /tmp/proxy.log 2>&1 &
+    proxy=$!
+    trap 'kill $proxy 2>/dev/null || true' EXIT
+    for _ in $(seq 1 30); do
+      pg_isready -h "$host" -p "$port" -q && break
+      sleep 1
+    done
+    if ! pg_isready -h "$host" -p "$port" -q; then
+      echo "--- proxy log ---" >&2; tail -n 5 /tmp/proxy.log >&2
+      if grep -q "connection refused\|i/o timeout" /tmp/proxy.log; then
+        echo >&2
+        echo "Cloud SQL の 3307 番へ届いていません。社内ネットワークがこの番号を" >&2
+        echo "塞いでいる可能性があります。ログの IP を使って確かめてください:" >&2
+        echo "  docker compose run --rm ops netcheck <ログに出た IP> 3307" >&2
+        echo "PC からは通るなら、Proxy を PC 側で動かせます（README を見てください）。" >&2
+      fi
+      die "Proxy がつながりません"
     fi
-    die "Proxy がつながりません"
   fi
 
   local file="$DUMPS/v3_$(date '+%Y%m%d_%H%M').dump"
   log "本番の v3 スキーマを写す → $file"
   # 所有者と権限は持ち込まない（本番だけにあるロールで復元が止まるのを避ける）。
-  if ! PGPASSWORD="$SYNC_DB_PASSWORD" pg_dump -h 127.0.0.1 -p 5433 -U "$SYNC_DB_USER" -d "$REMOTE_DB_NAME" \
+  if ! PGPASSWORD="$SYNC_DB_PASSWORD" pg_dump -h "$host" -p "$port" -U "$SYNC_DB_USER" -d "$REMOTE_DB_NAME" \
       -n v3 -Fc --no-owner --no-privileges -f "$file"; then
     rm -f "$file"
-    echo "--- proxy log ---" >&2; tail -n 20 /tmp/proxy.log >&2
+    [ -n "$proxy" ] && { echo "--- proxy log ---" >&2; tail -n 20 /tmp/proxy.log >&2; }
     die "写しを取れませんでした（上のログを見る。認証切れなら README の「同期が失敗するとき」）"
   fi
-  kill $proxy 2>/dev/null || true
+  [ -n "$proxy" ] && kill $proxy 2>/dev/null || true
   trap - EXIT
   log "写し完了（$(du -h "$file" | cut -f1)）"
 
