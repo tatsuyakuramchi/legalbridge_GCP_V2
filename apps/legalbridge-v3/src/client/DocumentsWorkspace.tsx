@@ -111,6 +111,14 @@ export function DocumentsWorkspace(
   const [draft, setDraft] = useState<{ id: number; no: string | null } | null>(null);
   /** 一覧で選んでいる文書。右にその文書の詳細を出す。 */
   const [selected, setSelected] = useState<number | null>(null);
+  /**
+   * 作成中に文書の一覧を開いているか。
+   *
+   * 作成のフォームは長い（条件書は 24 項目＋2つの表）。その下に全文書の一覧が
+   * そのまま続いていて、いま作っているものと関係のない行を延々とスクロール
+   * させられていた。作成中は畳んで、必要なら開く。
+   */
+  const [listWhileComposing, setListWhileComposing] = useState(false);
   /** 旧版を開いている文書。既定は畳む（いまの版だけを読めるようにする）。 */
   const [unfolded, setUnfolded] = useState<Set<number>>(new Set());
   // 決定した結果。番号だけでなく id も持つ（そのまま開けるように）。
@@ -665,6 +673,9 @@ export function DocumentsWorkspace(
   // spec.missing はひな形が要求する項目の一覧であって、残数ではない。
   const remaining = (spec?.fields ?? [])
     .filter((f) => f.required && f.source === "manual" && !String(manual[f.name] ?? "").trim()).length;
+  // 作成中（新規・下書きを直している）か。作成中は下の一覧を畳む。
+  const composeMode = composing || Boolean(draft);
+  const listShown = !composeMode || listWhileComposing;
   // 計算書は試算が返って初めて出せる。金額の無い紙を出させない。
   const ready = Boolean(templateKey) && spec !== null && specFresh && remaining === 0
     && (!isStatement || stmt !== null);
@@ -1019,10 +1030,24 @@ export function DocumentsWorkspace(
           <div className="panel">
             <div className="panel-hd">
               <h2>文書</h2>
-              <span className="faint">いまの版だけを並べています</span>
-              <ListSearch value={keyword} onChange={setKeyword}
-                placeholder="文書番号・相手先" label="文書を絞り込む" />
+              {listShown ? (
+                <>
+                  <span className="faint">いまの版だけを並べています</span>
+                  <ListSearch value={keyword} onChange={setKeyword}
+                    placeholder="文書番号・相手先" label="文書を絞り込む" />
+                </>
+              ) : (
+                <span className="faint">作成中は畳んでいます</span>
+              )}
+              {composeMode && (
+                <button className="btn btn-sm" style={{ marginLeft: "auto" }}
+                        onClick={() => setListWhileComposing(!listWhileComposing)}>
+                  {listShown ? "一覧を畳む" : `一覧を開く（${documents.length} 件）`}
+                </button>
+              )}
             </div>
+            {listShown && (
+            <>
             <div className="panel-bd" style={{ paddingBottom: 0 }}>
               <div className="filters">
                 {SCOPES.map(([value, label]) => (
@@ -1130,6 +1155,8 @@ export function DocumentsWorkspace(
                 <span><b>訂正版あり</b> 新しい版に差し替わった</span>
               </div>
             </div>
+            </>
+            )}
           </div>
 
           {current && (
