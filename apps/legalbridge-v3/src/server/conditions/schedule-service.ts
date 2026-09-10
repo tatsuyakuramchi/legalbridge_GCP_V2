@@ -1,4 +1,4 @@
-import { inTransaction, type Transactable } from "../core/db.js";
+import { inTransaction, type Queryable, type Transactable } from "../core/db.js";
 import { dateStr, int, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
@@ -33,6 +33,37 @@ export const TRIGGER_KINDS: Array<{ value: TriggerKind; label: string; hint: str
  * 予定の起点から、実績の種別を決める。予定明細を実績に移すときの既定値で、
  * 画面では変えられる（検収後の予定でも、実際には納品で払うことがある）。
  */
+/**
+ * 予定の1回を実績に使えるか確かめて、その行を返す。
+ *
+ * 実績は2つの入口から作れる（予定の行から／実績の欄で回を選んで）。
+ * 「その条件の回か」「もう実績が付いていないか」の規則をここだけに置く。
+ */
+export async function claimSchedule(
+  client: Queryable, conditionId: number, scheduleId: number
+): Promise<{ seq: number; label: string | null; trigger_kind: TriggerKind;
+             planned_amount: string | number; due_on: unknown }> {
+  const found = await client.query(
+    `SELECT s.id, s.seq, s.label, s.trigger_kind, s.planned_amount, s.due_on
+       FROM condition_schedules s WHERE s.id = $1 AND s.condition_id = $2`,
+    [scheduleId, conditionId]);
+  const line = found.rows[0] as {
+    seq: number; label: string | null; trigger_kind: TriggerKind;
+    planned_amount: string | number; due_on: unknown;
+  } | undefined;
+  if (!line) throw new DomainError("NOT_FOUND", `予定明細 ${scheduleId} が見つかりません`);
+
+  // 1つの予定に実績を二重に付けない。直すなら実績を取り消してからにする。
+  const already = await client.query(
+    "SELECT id FROM condition_events WHERE schedule_id = $1 AND status = 'active'",
+    [scheduleId]);
+  if (already.rows[0]) {
+    throw new DomainError("CONFLICT",
+      `第${line.seq}回にはすでに実績が付いています。直すなら先にその実績を取り消してください`);
+  }
+  return line;
+}
+
 export const EVENT_TYPE_BY_TRIGGER: Record<TriggerKind, string> = {
   on_inspection: "inspection",
   on_delivery: "delivery",
@@ -266,9 +297,14 @@ export class ConditionScheduleService {
   async record(
     conditionId: number, scheduleId: number,
     input: { occurredOn?: string | null; amount?: number | null;
-             eventType?: string | null; note?: string | null },
+             eventType?: string | null; note?: string | null;
+             quantity?: number | null; deliverable?: string | null;
+             inspectedOn?: string | null;
+             inspectorDept?: string | null; inspectorName?: string | null },
     actor: string
   ): Promise<{ eventId: number; scheduleId: number }> {
+    // 実績を足す側（ConditionEventService.add）でも同じ回を選べる。
+    // 回の取り合いの規則は claimSchedule ひとつに置いてある。
     try {
       return await inTransaction(this.database, async (client) => {
         const head = await client.query(
@@ -284,25 +320,7 @@ export class ConditionScheduleService {
               : "無効にした条件には実績を足せません");
         }
 
-        const found = await client.query(
-          `SELECT s.id, s.seq, s.label, s.trigger_kind, s.planned_amount, s.due_on
-             FROM condition_schedules s WHERE s.id = $1 AND s.condition_id = $2`,
-          [scheduleId, conditionId]);
-        const line = found.rows[0] as {
-          seq: number; label: string | null; trigger_kind: TriggerKind;
-          planned_amount: string | number; due_on: unknown;
-        } | undefined;
-        if (!line) throw new DomainError("NOT_FOUND", `予定明細 ${scheduleId} が見つかりません`);
-
-        // 1つの予定に実績を二重に付けない。直すなら実績を取り消してからにする。
-        const already = await client.query(
-          "SELECT id FROM condition_events WHERE schedule_id = $1 AND status = 'active'",
-          [scheduleId]);
-        if (already.rows[0]) {
-          throw new DomainError("CONFLICT",
-            `第${line.seq}回にはすでに実績が付いています。` +
-            "直すなら先にその実績を取り消してください");
-        }
+        const line = await claimSchedule(client, conditionId, scheduleId);
 
         const amount = Math.round(
           input.amount === null || input.amount === undefined
@@ -317,11 +335,15 @@ export class ConditionScheduleService {
         const inserted = await client.query(
           `INSERT INTO condition_events
              (condition_id, schedule_id, event_type, occurred_on, period,
-              gross_amount, deductions, amount, note, created_by)
-           VALUES ($1, $2, $3, COALESCE($4::date, current_date), $5, $6, 0, $6, $7, $8)
+              gross_amount, deductions, amount, note, created_by,
+              quantity, deliverable, inspected_on, inspector_dept, inspector_name)
+           VALUES ($1, $2, $3, COALESCE($4::date, current_date), $5, $6, 0, $6, $7, $8,
+                   $9, $10, $11::date, $12, $13)
            RETURNING id`,
           [conditionId, scheduleId, eventType, occurredOn, period, amount,
-           str(input.note), actor]);
+           str(input.note), actor,
+           input.quantity ?? null, str(input.deliverable), str(input.inspectedOn),
+           str(input.inspectorDept), str(input.inspectorName)]);
         const eventId = Number((inserted.rows[0] as { id: number }).id);
 
         await recordAudit(client, {

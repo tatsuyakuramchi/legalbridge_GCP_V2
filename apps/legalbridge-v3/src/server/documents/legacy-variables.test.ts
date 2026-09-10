@@ -63,6 +63,27 @@ test("自社の担当者は案件の担当スタッフから埋まる", () => {
   assert.equal(at("検収者部署"), "法務部");
 });
 
+/**
+ * 検収者は「誰が検収したか」の記録なので、実績にあればそれが正しい。
+ * 実績に入れておけば、検収書を作るときに人が入れずに済む。
+ */
+test("検収者と検収日は、実績にあれば実績から取る", () => {
+  const withEvent = { event: { occurredOn: "2026-08-31", inspectedOn: "2026-09-02",
+                               inspectorName: "倉持 達也", inspectorDept: "事業推進部" } };
+  assert.equal(at("検収者氏名", withEvent), "倉持 達也");
+  assert.equal(at("検収者部署", withEvent), "事業推進部");
+  assert.equal(at("inspectorName", withEvent), "倉持 達也");
+  assert.equal(at("検収日", withEvent), "2026-09-02");
+  // 担当者そのものは実績で上書きしない。発注書の申請者などに使う。
+  assert.equal(at("STAFF_NAME", withEvent), "川島 純子");
+});
+
+test("実績に検収者が無ければ案件の担当者で代える", () => {
+  const bare = { event: { occurredOn: "2026-08-31" } };
+  assert.equal(at("検収者氏名", bare), "川島 純子");
+  assert.equal(at("検収日", bare), "2026-08-31", "検収日が無ければ納品日");
+});
+
 // 並びと区切りは V1 の buildPurchaseOrderContext と同じにしてある。
 // V1 の書類と並べたときに見た目が変わらないことが条件。
 const BANK_LINE = "みずほ銀行 / 渋谷支店 / 普通 1234567 / ヨシザワ ジユンロウ";

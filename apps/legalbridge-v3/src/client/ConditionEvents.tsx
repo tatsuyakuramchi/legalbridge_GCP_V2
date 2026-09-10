@@ -16,10 +16,17 @@ interface EventRow {
   quantity: number | null; sampleQuantity: number | null;
   grossAmount: number | null; deductions: number; amount: number;
   status: string; note: string | null;
+  scheduleId: number | null; scheduleLabel: string | null;
+  deliverable: string | null; inspectedOn: string | null;
+  inspectorDept: string | null; inspectorName: string | null;
   documentId: number | null; documentNo: string | null;
   createdAt: string; createdBy: string;
 }
 interface TypeOption { value: string; label: string }
+interface ScheduleRow {
+  id: number; seq: number; label: string | null; triggerKind: string;
+  plannedAmount: number; dueOn: string | null; eventId: number | null;
+}
 interface TemplateOption { templateKey: string; label: string; category: string | null }
 interface StatementPreview {
   fee: { gross_ex_tax: number; mg_topup_this_time: number; ag_offset_this_time: number;
@@ -38,9 +45,13 @@ interface PreviewResponse {
 }
 
 export function ConditionEvents(
-  { conditionId, currency, editable, matterId, pricingModel, reloadKey, onCompose, onChanged }:
+  { conditionId, currency, editable, matterId, pricingModel, reloadKey,
+    openForSchedule, onOpened, onCompose, onChanged }:
   { conditionId: number; currency: string; editable: boolean;
     matterId?: number | null; reloadKey?: number;
+    /** 予定の行の「実績にする」から渡された回。この回でフォームを開く。 */
+    openForSchedule?: number | null;
+    onOpened?: () => void;
     /** 計算方式。料率・単価×数量なら実績の束から計算書を出せる。 */
     pricingModel?: string;
     /** 文書の画面へ、この条件と実績を選んだ状態で移る。 */
@@ -64,6 +75,8 @@ export function ConditionEvents(
   const [manual, setManual] = useState<Record<string, string>>({});
   // 実績と同じ理由。フォームは表の上に開くので、下の行から押すと画面の外に出る。
   const issueForm = useRef<HTMLDivElement>(null);
+  // 予定の行から開いたとき、フォームが画面の外だと押しても何も起きないように見える。
+  const addForm = useRef<HTMLDivElement>(null);
   /**
    * 選んだ実績。複数選んで1枚の書類にする。
    * 料率の条件なら計算書（根拠を合算して1回計算、明細は実績ごとに按分）、
@@ -71,6 +84,9 @@ export function ConditionEvents(
    */
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const royalty = pricingModel === "revenue_rate" || pricingModel === "unit_rate";
+  // 予定の回。実績が付いていない回だけ選べる（1つの回に実績は1件）。
+  const [schedules, setSchedules] = useState<ScheduleRow[]>([]);
+  const [typeByTrigger, setTypeByTrigger] = useState<Record<string, string>>({});
   // 計算書のフォーム。選んだ実績を束にして出す。
   const [stmtOpen, setStmtOpen] = useState(false);
   const [stmtTemplate, setStmtTemplate] = useState("");
@@ -111,6 +127,11 @@ export function ConditionEvents(
     api.get<{ events: EventRow[]; types: TypeOption[] }>(`/conditions/${conditionId}/events`)
       .then((r) => { setRows(r.events); setTypes(r.types); })
       .catch((e: ApiError) => setError(e.message));
+    // 予定は「どの回の分か」を選ぶために要る。実績の欄だけ見ていると回に繋がらない。
+    api.get<{ lines: ScheduleRow[]; eventTypeByTrigger: Record<string, string> }>(
+      `/conditions/${conditionId}/schedules`)
+      .then((r) => { setSchedules(r.lines ?? []); setTypeByTrigger(r.eventTypeByTrigger ?? {}); })
+      .catch(() => { setSchedules([]); });
   }
   // 引き直しでは結果を消さない。消すと、発行した文書番号が出た直後に
   // 引き直しが走って消え、発行できたのかどうか分からなくなる。
@@ -119,6 +140,13 @@ export function ConditionEvents(
     setAdding(false); setIssuing(null); setIssued(null);
     setPreview(null); setManual({});
   }, [conditionId]);
+  // 予定の行の「実績にする」から開く。入力欄は実績の欄ひとつに寄せてある。
+  useEffect(() => {
+    if (!openForSchedule || !schedules.length) return;
+    start(openForSchedule);
+    onOpened?.();
+    addForm.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [openForSchedule, schedules.length]);
 
   // テンプレートは文書を作るときにしか要らないので、開くまで取りに行かない。
   useEffect(() => {
@@ -175,11 +203,47 @@ export function ConditionEvents(
   // 入力欄は「足す」を押すまで空。未定義のまま .trim() を呼ぶと画面ごと落ちる。
   const f = (k: string) => v[k] ?? "";
 
-  function start() {
-    setV({ eventType: "sales", occurredOn: new Date().toISOString().slice(0, 10),
-           period: "", quantity: "", grossAmount: "", deductions: "", amount: "", note: "" });
-    setAdding(true); setError(null);
+  const openSchedules = schedules.filter((s) => !s.eventId);
+  const chosen = openSchedules.find((s) => String(s.id) === (v.scheduleId ?? ""));
+  // 検収・納品の実績は検収書の行になる。そのとき出る欄が変わる。
+  const inspecting = (v.eventType ?? "") === "inspection" || (v.eventType ?? "") === "delivery";
+  const plannedDiff = chosen && (v.amount ?? "").trim()
+    ? Number(v.amount) - chosen.plannedAmount : null;
+
+  /** 空のフォームの初期値。料率なら売上、定額なら検収を既定にする。 */
+  function blank(): Record<string, string> {
+    return {
+      scheduleId: "", eventType: royalty ? "sales" : "inspection",
+      occurredOn: new Date().toISOString().slice(0, 10),
+      period: "", quantity: royalty ? "" : "1",
+      grossAmount: "", deductions: "", amount: "", note: "",
+      deliverable: "", inspectedOn: "", inspectorDept: "", inspectorName: ""
+    };
   }
+
+  function start(scheduleId?: number) {
+    const next = blank();
+    setV(next);
+    setAdding(true); setError(null);
+    if (scheduleId) applySchedule(String(scheduleId), next);
+  }
+
+  /** 回を選んだら、予定の値をそのまま入れる。ほとんどの回は予定どおりに済む。 */
+  function applySchedule(id: string, base?: Record<string, string>) {
+    const from = base ?? v;
+    const line = schedules.find((s) => String(s.id) === id);
+    if (!line) { setV({ ...from, scheduleId: "" }); return; }
+    setV({
+      ...from,
+      scheduleId: id,
+      occurredOn: line.dueOn ?? from.occurredOn ?? new Date().toISOString().slice(0, 10),
+      amount: String(line.plannedAmount),
+      period: line.label ?? from.period ?? "",
+      eventType: typeByTrigger[line.triggerKind] ?? from.eventType ?? "inspection",
+      inspectedOn: line.dueOn ?? from.inspectedOn ?? ""
+    });
+  }
+  const pickSchedule = (id: string) => applySchedule(id);
 
   async function add() {
     setBusy(true); setError(null);
@@ -193,7 +257,13 @@ export function ConditionEvents(
         grossAmount: gross ? Math.round(Number(gross)) : null,
         deductions: f("deductions").trim() ? Math.round(Number(f("deductions"))) : 0,
         amount: Math.round(Number(f("amount") || 0)),
-        note: f("note").trim() || null
+        note: f("note").trim() || null,
+        scheduleId: f("scheduleId") ? Number(f("scheduleId")) : null,
+        // 検収書がそのまま使う項目。空なら文書側で条件・案件から補う。
+        deliverable: f("deliverable").trim() || null,
+        inspectedOn: f("inspectedOn") || null,
+        inspectorDept: f("inspectorDept").trim() || null,
+        inspectorName: f("inspectorName").trim() || null
       });
       setAdding(false); load(); onChanged();
     } catch (e) { setError((e as ApiError).message); }
@@ -226,12 +296,37 @@ export function ConditionEvents(
             `　（取消 ${rows.filter((r) => r.status === "void").length} 件を含む）`}
         </span>
         {editable && !adding && (
-          <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={start}>実績を足す</button>
+          <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={() => start()}>実績を足す</button>
         )}
       </div>
 
       {adding && (
-        <div className="panel-bd stack" style={{ borderBottom: "1px solid var(--line)" }}>
+        <div ref={addForm} className="panel-bd stack" style={{ borderBottom: "1px solid var(--line)" }}>
+          {/* 予定がある条件は、どの回の分かを繋がないと検収書の支払日が空になる。
+              予定の行の「実績にする」も、この欄を選んだ状態でここを開く。 */}
+          {openSchedules.length > 0 && (
+            <div className="form-grid">
+            <label className="field wide">
+              <span>どの回の分か</span>
+              <select value={f("scheduleId")} onChange={(e) => pickSchedule(e.target.value)}>
+                <option value="">（予定と結び付けない）</option>
+                {openSchedules.map((s) => (
+                  <option key={s.id} value={String(s.id)}>
+                    第{s.seq}回　{s.label ?? "（名前なし）"}　
+                    予定 {money(s.plannedAmount, currency)}
+                    {s.dueOn ? `　期日 ${s.dueOn}` : ""}
+                  </option>
+                ))}
+              </select>
+              <small className={f("scheduleId") ? "faint" : "danger"}>
+                {f("scheduleId")
+                  ? "発生日・金額・種類・期間は予定から入れました。違えば直してください"
+                  : "結び付けないと、検収書の支払日が空欄になります"}
+              </small>
+            </label>
+            </div>
+          )}
+
           <div className="form-grid">
             <label className="field">
               <span>種類</span>
@@ -240,33 +335,40 @@ export function ConditionEvents(
               </select>
             </label>
             <label className="field">
-              <span>発生日</span>
+              <span>{inspecting ? "納品日" : "発生日"}</span>
               <input type="date" value={f("occurredOn")} onChange={(e) => set("occurredOn", e.target.value)} />
             </label>
-            <label className="field">
-              <span>対象期間</span>
-              <input value={f("period")} placeholder="2026Q2 / 2026-06"
-                     onChange={(e) => set("period", e.target.value)} />
-            </label>
+            {royalty && (
+              <label className="field">
+                <span>対象期間</span>
+                <input value={f("period")} placeholder="2026Q2 / 2026-06"
+                       onChange={(e) => set("period", e.target.value)} />
+              </label>
+            )}
             <label className="field">
               <span>数量</span>
               <input inputMode="numeric" value={f("quantity")} onChange={(e) => set("quantity", e.target.value)} />
+              {inspecting && (
+                <small className="faint">検収書の「今回数量」に出ます。1回分なら 1</small>
+              )}
             </label>
-            <label className="field">
-              <span>{royalty ? "報告売上・受領額（円）" : "総額（任意）"}</span>
-              <input inputMode="numeric" value={f("grossAmount")}
-                     onChange={(e) => set("grossAmount", e.target.value)} />
-              <small className="faint">
-                {royalty
-                  ? "料率の条件では、ここが計算書の根拠になる。外貨は当社着金時のレートで円に直した額を入れる。ロイヤリティの額は計算書で計算する"
-                  : "控除前。入れたら実額と合っている必要があります"}
-              </small>
-            </label>
-            <label className="field">
-              <span>控除</span>
-              <input inputMode="numeric" value={f("deductions")}
-                     onChange={(e) => set("deductions", e.target.value)} />
-            </label>
+            {royalty && (
+              <>
+                <label className="field">
+                  <span>報告売上・受領額（円）</span>
+                  <input inputMode="numeric" value={f("grossAmount")}
+                         onChange={(e) => set("grossAmount", e.target.value)} />
+                  <small className="faint">
+                    料率の条件では、ここが計算書の根拠になる。外貨は当社着金時のレートで円に直した額を入れる。ロイヤリティの額は計算書で計算する
+                  </small>
+                </label>
+                <label className="field">
+                  <span>控除</span>
+                  <input inputMode="numeric" value={f("deductions")}
+                         onChange={(e) => set("deductions", e.target.value)} />
+                </label>
+              </>
+            )}
             <label className="field">
               <span>実額</span>
               <input inputMode="numeric" value={f("amount")} onChange={(e) => set("amount", e.target.value)} />
@@ -275,7 +377,43 @@ export function ConditionEvents(
                   総額 − 控除 = {money(derived, currency)}
                 </small>
               )}
+              {plannedDiff !== null && plannedDiff !== 0 && (
+                <small className="danger">予定と差 {money(plannedDiff, currency)}</small>
+              )}
             </label>
+          </div>
+
+          {/* 検収書がそのまま使う項目。ここに入れておけば文書を作るとき人が入れずに済む。 */}
+          {inspecting && (
+            <div className="stack" style={{ gap: 6 }}>
+              <div className="faint">検収書に載る項目（入れておくと文書を作るときに入力が要りません）</div>
+              <div className="form-grid">
+                <label className="field wide">
+                  <span>成果物・業務内容</span>
+                  <input value={f("deliverable")} placeholder="空なら条件の名前を使います"
+                         onChange={(e) => set("deliverable", e.target.value)} />
+                </label>
+                <label className="field">
+                  <span>検収日</span>
+                  <input type="date" value={f("inspectedOn")}
+                         onChange={(e) => set("inspectedOn", e.target.value)} />
+                  <small className="faint">空なら納品日を使います</small>
+                </label>
+                <label className="field">
+                  <span>検収者の部署</span>
+                  <input value={f("inspectorDept")} placeholder="空なら案件の担当者から"
+                         onChange={(e) => set("inspectorDept", e.target.value)} />
+                </label>
+                <label className="field">
+                  <span>検収者の氏名</span>
+                  <input value={f("inspectorName")} placeholder="空なら案件の担当者から"
+                         onChange={(e) => set("inspectorName", e.target.value)} />
+                </label>
+              </div>
+            </div>
+          )}
+
+          <div className="form-grid">
             <label className="field wide">
               <span>備考</span>
               <input value={f("note")} onChange={(e) => set("note", e.target.value)} />
@@ -474,7 +612,13 @@ export function ConditionEvents(
                   <td className="code">{row.occurredOn ?? "—"}</td>
                   <td>{label(row.eventType)}
                     {voided && <span className="tag out" style={{ marginLeft: 5 }}>取消</span>}</td>
-                  <td className="faint">{row.period ?? "—"}</td>
+                  <td className="faint">
+                    {row.period ?? "—"}
+                    {/* どの回に繋がっているか。繋がっていない実績は検収書の支払日が空になる。 */}
+                    {row.scheduleId
+                      ? <div className="tag">{row.scheduleLabel ?? "予定あり"}</div>
+                      : null}
+                  </td>
                   <td className="num">{row.quantity ?? "—"}</td>
                   <td className="num" style={voided ? { textDecoration: "line-through" } : undefined}>
                     {money(row.amount, currency)}

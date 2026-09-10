@@ -87,6 +87,8 @@ export function ConditionsWorkspace(
   // 予定・実績・文書は繋がっているので、どれか1つが動いたら全部引き直す。
   // 予定から実績にしたのに実績の表が古いままだと、入ったのかどうか分からない。
   const [flowVersion, setFlowVersion] = useState(0);
+  // 予定の行から「実績にする」を押したとき、その回を実績のフォームに渡す。
+  const [recordSchedule, setRecordSchedule] = useState<number | null>(null);
   async function refreshFlow() {
     setFlowVersion((v) => v + 1);
     if (selected) setDetail(await api.get<DetailResponse>(`/conditions/${selected}`));
@@ -484,12 +486,15 @@ export function ConditionsWorkspace(
               <ConditionSchedules conditionId={detail.id} reloadKey={flowVersion}
                 flatAmount={detail.pricingModel === "fixed" ? detail.flatAmount : null} currency={detail.currency}
                 editable={detail.status === "active" || detail.status === "draft"}
+                onRecord={(scheduleId) => setRecordSchedule(scheduleId)}
                 onChanged={refreshFlow} />
 
               <ConditionEvents conditionId={detail.id} currency={detail.currency}
                 pricingModel={detail.pricingModel} matterId={detail.matters[0]?.id ?? null}
                 reloadKey={flowVersion}
                 editable={detail.status === "active" || detail.status === "draft"}
+                openForSchedule={recordSchedule}
+                onOpened={() => setRecordSchedule(null)}
                 onCompose={onCompose}
                 onChanged={refreshFlow} />
 

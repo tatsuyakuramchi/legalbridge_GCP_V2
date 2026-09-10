@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, ApiError, money } from "./api.js";
 
 /**
@@ -39,10 +39,16 @@ const STATUS: Record<Row["status"], { label: string; tone: string }> = {
 };
 
 export function ConditionSchedules(
-  { conditionId, editable, reloadKey, onChanged, flatAmount, currency }:
+  { conditionId, editable, reloadKey, onChanged, flatAmount, currency, onRecord }:
   { conditionId: number; editable: boolean; reloadKey?: number; onChanged: () => void;
     /** 条件の定額。予定の合計がこれと合っていなければ注意を出す。 */
-    flatAmount?: number | null; currency?: string }
+    flatAmount?: number | null; currency?: string;
+    /**
+     * 「実績にする」を押したとき。実績のフォームをこの回で開く。
+     * 記録の入力は実績の欄ひとつに寄せる。同じものを2か所で書くと、
+     * どちらかに欄を足し忘れて片方だけ入らなくなる。
+     */
+    onRecord?: (scheduleId: number) => void }
 ) {
   const [view, setView] = useState<View | null>(null);
   const [draft, setDraft] = useState<Draft[] | null>(null);
@@ -50,46 +56,14 @@ export function ConditionSchedules(
   const [busy, setBusy] = useState(false);
   // 定期の組み立て
   const [gen, setGen] = useState({ startOn: "", count: "12", everyMonths: "1", amount: "" });
-  // 予定を実績に移すときの入力。開いている行そのものを持つ。
-  const [recording, setRecording] = useState<Row | null>(null);
-  const [rec, setRec] = useState({ occurredOn: "", amount: "", eventType: "", note: "" });
-  // フォームは表の上に開く。下のほうの回を押すと画面の外に出て、
-  // 「押しても何も起きない」ように見える。開いたら必ず見える位置へ運ぶ。
-  const recordForm = useRef<HTMLDivElement>(null);
 
   function load() {
     api.get<View>(`/conditions/${conditionId}/schedules`)
       .then(setView).catch((e: ApiError) => setError(e.message));
   }
   useEffect(() => {
-    load(); setDraft(null); setError(null); setRecording(null);
+    load(); setDraft(null); setError(null);
   }, [conditionId, reloadKey]);
-  // 行を開いたら、予定の値をそのまま初期値にする。ほとんどの回は予定どおりに済む。
-  useEffect(() => {
-    if (!recording) return;
-    setRec({
-      occurredOn: recording.dueOn ?? new Date().toISOString().slice(0, 10),
-      amount: String(recording.plannedAmount),
-      eventType: view?.eventTypeByTrigger?.[recording.triggerKind] ?? "service_period",
-      note: ""
-    });
-    recordForm.current?.scrollIntoView({ block: "center", behavior: "smooth" });
-  }, [recording]);
-
-  async function saveRecord() {
-    if (!recording) return;
-    setBusy(true); setError(null);
-    try {
-      await api.post(`/conditions/${conditionId}/schedules/${recording.id}/record`, {
-        occurredOn: rec.occurredOn || null,
-        amount: Number(rec.amount.replace(/[^0-9]/g, "")) || null,
-        eventType: rec.eventType, note: rec.note.trim() || null
-      });
-      setRecording(null); load(); onChanged();
-    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
-    finally { setBusy(false); }
-  }
-
   if (!view) return null;
   const cur = view.currency;
 
@@ -179,57 +153,6 @@ export function ConditionSchedules(
 
       {/* 条件の詳細は画面の右半分なので、編集中の列は入りきらない。
           潰すのではなく横に流す（.tablewrap が overflow-x を持っている）。 */}
-      {recording && (
-        <div ref={recordForm} className="panel-bd stack"
-             style={{ borderBottom: "1px solid var(--line)" }}>
-          <div className="row">
-            <b>第{recording.seq}回を実績にする</b>
-            <span className="faint">
-              {recording.label ?? "（名前なし）"}　予定 {money(recording.plannedAmount, cur)}
-            </span>
-          </div>
-          <div className="form-grid">
-            <label className="field">
-              <span>種類</span>
-              <select value={rec.eventType}
-                      onChange={(e) => setRec({ ...rec, eventType: e.target.value })}>
-                {view.eventTypes.map((t) => (
-                  <option key={t.value} value={t.value}>{t.label}</option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
-              <span>発生日</span>
-              <input type="date" value={rec.occurredOn}
-                     onChange={(e) => setRec({ ...rec, occurredOn: e.target.value })} />
-            </label>
-            <label className="field">
-              <span>実績額</span>
-              <input value={rec.amount} style={{ textAlign: "right" }}
-                     onChange={(e) => setRec({ ...rec, amount: e.target.value.replace(/[^0-9]/g, "") })} />
-              {Number(rec.amount || 0) !== recording.plannedAmount && (
-                <span className="faint" style={{ color: "var(--out)" }}>
-                  予定と差 {money(Number(rec.amount || 0) - recording.plannedAmount, cur)}
-                </span>
-              )}
-            </label>
-            <label className="field">
-              <span>備考</span>
-              <input value={rec.note} placeholder="検収の結果など"
-                     onChange={(e) => setRec({ ...rec, note: e.target.value })} />
-            </label>
-          </div>
-          <div className="row">
-            <button className="btn primary btn-sm" disabled={busy} onClick={saveRecord}>
-              第{recording.seq}回を記録する
-            </button>
-            <button className="btn btn-sm" onClick={() => setRecording(null)}>やめる</button>
-            <span className="faint">
-              予定は書き換えません。予定と実績のどちらも残るので、あとで差が読めます
-            </span>
-          </div>
-        </div>
-      )}
 
       <div className="tablewrap">
         <table style={draft ? { minWidth: 820 } : undefined}>
@@ -306,7 +229,7 @@ export function ConditionSchedules(
                       未消化なら状態タグの代わりにそのままボタンを出す。 */}
                   {editable && l.status === "planned" ? (
                     <button className="btn btn-sm" style={{ whiteSpace: "nowrap" }}
-                      onClick={() => setRecording(l)}>実績にする</button>
+                      onClick={() => onRecord?.(l.id)}>実績にする</button>
                   ) : (
                     <span className={STATUS[l.status].tone ? `tag ${STATUS[l.status].tone}` : "tag"}
                           style={{ whiteSpace: "nowrap" }}>

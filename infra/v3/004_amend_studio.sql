@@ -680,6 +680,29 @@ COMMENT ON COLUMN v3.conditions.spec IS
 COMMENT ON COLUMN v3.conditions.deliverable_ownership IS
   '成果物の帰属先。orderer=発注者（譲渡型）/ contractor=受注者（利用許諾型）。';
 
+-- ---------------------------------------------------------------------
+-- A-018: 実績に、検収書がそのまま使う項目を持たせる
+--
+-- 検収書は実績1件が明細1行になる。ところが行に出る「成果物・業務内容」は
+-- 条件の名前しか使えず、分納の回ごとに違う成果物を書けなかった。検収日・
+-- 検収者も文書を作るたびに人が入れていた。実績は「いつ・何を・誰が検収したか」
+-- の記録なので、そこに置けば書類は写すだけで済む。
+-- ---------------------------------------------------------------------
+
+ALTER TABLE v3.condition_events ADD COLUMN IF NOT EXISTS deliverable    text;
+ALTER TABLE v3.condition_events ADD COLUMN IF NOT EXISTS inspected_on   date;
+ALTER TABLE v3.condition_events ADD COLUMN IF NOT EXISTS inspector_dept text;
+ALTER TABLE v3.condition_events ADD COLUMN IF NOT EXISTS inspector_name text;
+
+COMMENT ON COLUMN v3.condition_events.deliverable IS
+  'この回の成果物・業務内容。空なら条件の名前を使う。検収書の明細の1列目。';
+COMMENT ON COLUMN v3.condition_events.inspected_on IS
+  '検収日。空なら発生日（納品日）を使う。';
+COMMENT ON COLUMN v3.condition_events.inspector_dept IS
+  '検収者の部署。空なら案件の担当者から引く。';
+COMMENT ON COLUMN v3.condition_events.inspector_name IS
+  '検収者の氏名。空なら案件の担当者から引く。';
+
 COMMIT;
 
 
@@ -789,4 +812,9 @@ SELECT * FROM (
          (SELECT count(*)::text || ' 列' FROM information_schema.columns
            WHERE table_schema='v3' AND table_name='conditions'
              AND column_name IN ('spec','deliverable_ownership'))
+  UNION ALL
+  SELECT 18, '実績の検収書向けの列（A-018。4 列）',
+         (SELECT count(*)::text || ' 列' FROM information_schema.columns
+           WHERE table_schema='v3' AND table_name='condition_events'
+             AND column_name IN ('deliverable','inspected_on','inspector_dept','inspector_name'))
 ) AS 確認 ORDER BY n;

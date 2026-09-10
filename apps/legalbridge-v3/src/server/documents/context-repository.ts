@@ -278,6 +278,7 @@ export class DocumentContextRepository {
     const r = await client.query(
       `SELECT e.id, e.condition_id, e.event_type, e.occurred_on, e.period, e.quantity,
               e.gross_amount, e.deductions, e.amount, e.note,
+              e.deliverable, e.inspected_on, e.inspector_dept, e.inspector_name,
               c.currency, s.label AS schedule_label, s.seq AS schedule_seq,
               s.due_on AS schedule_due_on, s.pay_on AS schedule_pay_on,
               s.planned_amount AS schedule_planned
@@ -304,6 +305,11 @@ export class DocumentContextRepository {
         plannedAmount: toMajor(int(row.schedule_planned), currency),
         note: str(row.note),
         currency,
+        /** 検収書がそのまま使う項目。実績に入っていれば文書側で人が入れずに済む。 */
+        deliverable: str(row.deliverable),
+        inspectedOn: dateStr(row.inspected_on),
+        inspectorDept: str(row.inspector_dept),
+        inspectorName: str(row.inspector_name),
         /** その回の予定。支払期日は支払通知書に要る。 */
         schedule: row.schedule_seq === null ? null : {
           seq: int(row.schedule_seq), label: str(row.schedule_label),

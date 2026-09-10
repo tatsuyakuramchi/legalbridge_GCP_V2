@@ -897,6 +897,14 @@ export function createRoutes(database: Transactable) {
     }));
 
   // 実績（条件明細の数値）。記録は消さず、取り消しは void で残す。
+  // 検収書がそのまま使う項目。実績に入れておけば文書を作るとき人が入れずに済む。
+  const inspectionFields = {
+    deliverable: z.string().trim().max(2000).nullable().optional(),
+    inspectedOn: z.string().date().nullable().optional(),
+    inspectorDept: z.string().trim().max(120).nullable().optional(),
+    inspectorName: z.string().trim().max(120).nullable().optional()
+  };
+
   // 予定明細を実績に移す。予定と実績を繋ぐのは condition_events.schedule_id
   // だけで、これまで書く処理が無かった。
   const recordSchema = z.object({
@@ -904,7 +912,9 @@ export function createRoutes(database: Transactable) {
     amount: z.coerce.number().int().nullable().optional(),
     eventType: z.enum(["manufacturing", "sales", "sublicense_receipt",
                        "inspection", "delivery", "service_period", "adjustment"]).optional(),
-    note: z.string().trim().max(2000).nullable().optional()
+    note: z.string().trim().max(2000).nullable().optional(),
+    quantity: z.coerce.number().nullable().optional(),
+    ...inspectionFields
   });
   router.post("/conditions/:id/schedules/:scheduleId/record",
     requireRole("admin", "legal"), requireWritable,
@@ -928,7 +938,10 @@ export function createRoutes(database: Transactable) {
     grossAmount: z.coerce.number().int().nullable().optional(),
     deductions: z.coerce.number().int().min(0).optional(),
     amount: z.coerce.number().int(),
-    note: z.string().trim().max(1000).nullable().optional()
+    note: z.string().trim().max(1000).nullable().optional(),
+    // どの予定の回か。分納の支払日はここが繋がっていないと空になる。
+    scheduleId: z.coerce.number().int().positive().nullable().optional(),
+    ...inspectionFields
   });
   router.post("/conditions/:id/events",
     requireRole("admin", "legal"), requireWritable,

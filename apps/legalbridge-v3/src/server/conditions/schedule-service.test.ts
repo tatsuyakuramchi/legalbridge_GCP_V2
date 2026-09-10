@@ -230,3 +230,17 @@ test("一覧は支払期日も返す（列を足しても SELECT に入れ忘れ
   assert.match(q.text, /s\.due_on, s\.pay_on/,
     "発生予定日と支払期日の両方を読む");
 });
+
+test("予定の行から作る実績にも、検収書が使う項目を残せる", async () => {
+  const database = recDb();
+  await new ConditionScheduleService(database).record(1, 9, {
+    quantity: 1, deliverable: "第1回 本文原稿",
+    inspectedOn: "2026-05-02", inspectorDept: "法務", inspectorName: "倉持"
+  }, "a");
+  const q = database.find("INSERT INTO condition_events")!;
+  assert.equal(q.params[8], 1, "数量");
+  assert.equal(q.params[9], "第1回 本文原稿");
+  assert.equal(q.params[10], "2026-05-02");
+  assert.equal(q.params[11], "法務");
+  assert.equal(q.params[12], "倉持");
+});

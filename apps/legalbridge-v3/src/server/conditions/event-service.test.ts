@@ -32,17 +32,17 @@ test("総額と控除が合っていれば記録する", async () => {
     input({ grossAmount: 4000000, deductions: 200000, amount: 3800000 }), "legal@arch.co.jp");
   assert.equal(r.id, 9);
   const q = database.find("INSERT INTO condition_events")!;
-  assert.equal(q.params[6], 4000000);   // gross
-  assert.equal(q.params[7], 200000);    // deductions
-  assert.equal(q.params[8], 3800000);   // amount
+  assert.equal(q.params[7], 4000000);   // gross
+  assert.equal(q.params[8], 200000);    // deductions
+  assert.equal(q.params[9], 3800000);   // amount
 });
 
 test("総額を書かなければ実額だけで記録できる", async () => {
   const database = db();
   await new ConditionEventService(database).add(1, input(), "a");
   const q = database.find("INSERT INTO condition_events")!;
-  assert.equal(q.params[6], null, "総額は任意");
-  assert.equal(q.params[7], 0);
+  assert.equal(q.params[7], null, "総額は任意");
+  assert.equal(q.params[8], 0);
 });
 
 test("旧版・無効の条件には実績を足せない", async () => {
@@ -213,4 +213,75 @@ test("実績を条件ごとに分ける。無い実績は止める", async () =>
   const groups = await svc.groupByCondition([11, 21, 12]);
   assert.deepEqual([...groups.entries()], [[1, [11, 12]], [2, [21]]]);
   await assert.rejects(() => svc.groupByCondition([11, 99]), /実績が見つかりません：99/);
+});
+
+/**
+ * 実績は2つの入口から作れる（実績の欄で回を選ぶ／予定の行から）。
+ * 検収書の支払日は予定から引くので、回に繋がっていない実績は支払日が空になる。
+ */
+test("回を選べば予定に繋がり、発生日・金額・期間・種類が予定から入る", async () => {
+  const database = db({
+    "FROM condition_schedules s WHERE s.id": [{
+      id: 7, seq: 2, label: "2026年5月分", trigger_kind: "delivery",
+      planned_amount: 280000, due_on: "2026-05-31"
+    }],
+    "SELECT id FROM condition_events WHERE schedule_id": []
+  });
+  await new ConditionEventService(database).add(1,
+    input({ scheduleId: 7, occurredOn: "", period: null, amount: 280000 }), "a");
+  const q = database.find("INSERT INTO condition_events")!;
+  assert.equal(q.params[1], 7, "回に繋がっている");
+  assert.equal(q.params[3], "2026-05-31", "発生日は予定の期日");
+  assert.equal(q.params[4], "2026年5月分", "期間は予定の名前");
+});
+
+test("回を選んでも、入れた発生日と期間はそのまま残る", async () => {
+  const database = db({
+    "FROM condition_schedules s WHERE s.id": [{
+      id: 7, seq: 2, label: "2026年5月分", trigger_kind: "delivery",
+      planned_amount: 280000, due_on: "2026-05-31"
+    }],
+    "SELECT id FROM condition_events WHERE schedule_id": []
+  });
+  await new ConditionEventService(database).add(1,
+    input({ scheduleId: 7, occurredOn: "2026-06-02", period: "2026年6月に検収" }), "a");
+  const q = database.find("INSERT INTO condition_events")!;
+  assert.equal(q.params[3], "2026-06-02");
+  assert.equal(q.params[4], "2026年6月に検収");
+});
+
+test("すでに実績が付いた回は選べない", async () => {
+  const database = db({
+    "FROM condition_schedules s WHERE s.id": [{
+      id: 7, seq: 2, label: null, trigger_kind: "delivery",
+      planned_amount: 280000, due_on: "2026-05-31"
+    }],
+    "SELECT id FROM condition_events WHERE schedule_id": [{ id: 55 }]
+  });
+  await assert.rejects(
+    () => new ConditionEventService(database).add(1, input({ scheduleId: 7 }), "a"),
+    /第2回にはすでに実績が付いています/);
+  assert.equal(database.find("INSERT INTO condition_events"), undefined);
+});
+
+test("他の条件の回は選べない", async () => {
+  const database = db({ "FROM condition_schedules s WHERE s.id": [] });
+  await assert.rejects(
+    () => new ConditionEventService(database).add(1, input({ scheduleId: 7 }), "a"),
+    /予定明細 7 が見つかりません/);
+});
+
+test("検収書がそのまま使う項目を実績に残す", async () => {
+  const database = db();
+  await new ConditionEventService(database).add(1, input({
+    eventType: "inspection", quantity: 1,
+    deliverable: "第2回 キャラクターデザイン一式",
+    inspectedOn: "2026-06-01", inspectorDept: "法務", inspectorName: "倉持"
+  }), "a");
+  const q = database.find("INSERT INTO condition_events")!;
+  assert.equal(q.params[5], 1, "数量");
+  assert.equal(q.params[12], "第2回 キャラクターデザイン一式");
+  assert.equal(q.params[13], "2026-06-01");
+  assert.equal(q.params[14], "法務");
+  assert.equal(q.params[15], "倉持");
 });

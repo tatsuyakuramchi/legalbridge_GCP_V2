@@ -138,6 +138,11 @@ SELECT * FROM (
          (SELECT count(*)::text || ' 列' FROM information_schema.columns
            WHERE table_schema='v3' AND table_name='conditions'
              AND column_name IN ('spec','deliverable_ownership'))
+  UNION ALL
+  SELECT 18, '実績の検収書向けの列（A-018。4 列）',
+         (SELECT count(*)::text || ' 列' FROM information_schema.columns
+           WHERE table_schema='v3' AND table_name='condition_events'
+             AND column_name IN ('deliverable','inspected_on','inspector_dept','inspector_name'))
 ) AS 確認 ORDER BY n;
 `;
 

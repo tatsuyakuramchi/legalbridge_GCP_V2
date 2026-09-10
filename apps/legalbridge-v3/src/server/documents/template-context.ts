@@ -80,7 +80,8 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
       const condition = (context.conditions ?? []).find((c: Ctx) => c.id === event.conditionId)
         ?? context.condition ?? {};
       return {
-        item_name: condition.name ?? condition.work?.title ?? "",
+        // 分納は回ごとに成果物が違う。実績に書いてあればそれを使う。
+        item_name: event.deliverable ?? condition.name ?? condition.work?.title ?? "",
         // 業務内容の本文。仕様の欄が無い条件は備考で代える。
         spec: condition.spec ?? condition.notes ?? event.note ?? "",
         description: condition.spec ?? condition.notes ?? event.note ?? "",
@@ -93,6 +94,7 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
         quantity: event.quantity ?? null,
         inspected_quantity: event.quantity ?? null,
         delivery_date: event.occurredOn ?? null,
+        inspection_date: event.inspectedOn ?? event.occurredOn ?? null,
         payment_date: event.schedule?.payOn ?? event.schedule?.dueOn ?? null,
         paid_date: event.schedule?.payOn ?? null,
         amount_ex_tax: event.amount ?? 0,

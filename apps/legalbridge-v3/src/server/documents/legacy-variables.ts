@@ -125,15 +125,22 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown }> = [
     get: (c) => c.bank?.holderKana },
 
   // ---- 自社の担当者 ----
-  { names: ["STAFF_NAME", "担当者名", "申請者名", "requester", "inspector_name", "検収者氏名"],
+  { names: ["STAFF_NAME", "担当者名", "申請者名", "requester"],
     get: (c) => c.owner?.name },
-  { names: ["STAFF_DEPARTMENT", "担当者部署", "申請部署", "inspector_dept", "検収者部署"],
+  { names: ["STAFF_DEPARTMENT", "担当者部署", "申請部署"],
     get: (c) => c.owner?.department },
+  // 検収者は「誰が検収したか」の記録なので、実績にあればそちらが正しい。
+  // 実績に無いときだけ案件の担当者で代える（従来の動き）。
+  { names: ["inspector_name", "検収者氏名"],
+    get: (c) => c.event?.inspectorName ?? c.owner?.name },
+  { names: ["inspector_dept", "検収者部署"],
+    get: (c) => c.event?.inspectorDept ?? c.owner?.department },
   { names: ["STAFF_EMAIL", "inspectorEmail", "申請者メール", "検収者メールアドレス"],
     get: (c) => c.owner?.email },
   { names: ["STAFF_PHONE", "担当者電話"], get: (c) => c.owner?.phone },
-  { names: ["監修者", "inspectorName"], get: (c) => c.owner?.name },
-  { names: ["inspectorDept"], get: (c) => c.owner?.department },
+  { names: ["監修者"], get: (c) => c.owner?.name },
+  { names: ["inspectorName"], get: (c) => c.event?.inspectorName ?? c.owner?.name },
+  { names: ["inspectorDept"], get: (c) => c.event?.inspectorDept ?? c.owner?.department },
 
   // ---- 自社 ----
   { names: ["COMPANY_NAME", "PARTY_A_NAME", "Licensee_名称", "Licensee_氏名会社名",
@@ -188,7 +195,8 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown }> = [
     get: (c) => c.event?.occurredOn },
   { names: ["INSPECTION_DATE", "inspectionCompletedAt", "completionDate",
             "検収完了日", "検収日", "inspected_on", "完成日"],
-    get: (c) => c.event?.occurredOn },
+    // 検収日は納品日と別の日になりうる。実績に入っていればそれを使う。
+    get: (c) => c.event?.inspectedOn ?? c.event?.occurredOn },
   { names: ["PAYMENT_DATE", "paymentDueDate", "支払期日", "summaryPaymentDate"],
     get: (c) => c.schedule?.payOn },
   { names: ["PERIOD", "対象期間", "対象月"], get: (c) => c.event?.period },

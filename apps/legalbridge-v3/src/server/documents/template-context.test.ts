@@ -268,3 +268,23 @@ test("検収書の行は、その条件から出た発注書の番号を持つ�
   assert.equal(lines[1].order_no, "ARC-PO-2026-0033");
   assert.equal(lines[1].condition_no, "CL-2");
 });
+
+test("検収の明細は、実績にあれば成果物と検収日を実績から取る", () => {
+  const lines = deliveryLinesFrom(ctx({
+    events: [
+      { id: 9, conditionId: 1, occurredOn: "2026-08-31", amount: 280000, quantity: 1,
+        deliverable: "第2回 キャラクターデザイン一式", inspectedOn: "2026-09-02",
+        schedule: { seq: 2, label: "2026年8月分", dueOn: "2026-08-31", payOn: "2026-09-20" } },
+      // 実績に成果物が無ければ、これまでどおり条件の名前を使う。
+      { id: 10, conditionId: 1, occurredOn: "2026-09-30", amount: 280000, schedule: null }
+    ]
+  })) as Array<Record<string, any>>;
+  assert.equal(lines.length, 2);
+  assert.equal(lines[0].item_name, "第2回 キャラクターデザイン一式");
+  assert.equal(lines[0].inspected_quantity, 1);
+  assert.equal(lines[0].inspection_date, "2026-09-02");
+  assert.equal(lines[0].paid_date, "2026-09-20", "支払日は繋がった予定から");
+  assert.equal(lines[1].item_name, "アナログボードゲームの企画・開発");
+  assert.equal(lines[1].inspection_date, "2026-09-30", "検収日が無ければ納品日");
+  assert.equal(lines[1].paid_date, null, "予定に繋がっていない実績は支払日が空");
+});

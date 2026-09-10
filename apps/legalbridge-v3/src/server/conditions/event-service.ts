@@ -2,6 +2,7 @@ import { inTransaction, type Transactable } from "../core/db.js";
 import { dateStr, int, num, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
+import { claimSchedule } from "./schedule-service.js";
 
 /**
  * 条件の実績（明細の数値）。
@@ -40,6 +41,13 @@ export interface EventInput {
   deductions?: number | null;
   amount: number;
   note?: string | null;
+  /** どの予定の回か。分納の支払日は予定から引くので、ここが繋がっていないと空になる。 */
+  scheduleId?: number | null;
+  /** 検収書がそのまま使う項目。ここに入れておけば文書を作るとき人が入れずに済む。 */
+  deliverable?: string | null;
+  inspectedOn?: string | null;
+  inspectorDept?: string | null;
+  inspectorName?: string | null;
 }
 
 export interface EventRow {
@@ -54,6 +62,13 @@ export interface EventRow {
   amount: number;
   status: string;
   note: string | null;
+  scheduleId: number | null;
+  /** 予定の回の呼び名（第1回・2026年4月分など）。画面で回を見分ける。 */
+  scheduleLabel: string | null;
+  deliverable: string | null;
+  inspectedOn: string | null;
+  inspectorDept: string | null;
+  inspectorName: string | null;
   /** 計算書から作られた実績。画面からは直せない。 */
   documentId: number | null;
   documentNo: string | null;
@@ -69,9 +84,12 @@ export class ConditionEventService {
       const r = await this.database.query(
         `SELECT e.id, e.event_type, e.occurred_on, e.period, e.quantity, e.sample_quantity,
                 e.gross_amount, e.deductions, e.amount, e.status, e.note,
+                e.schedule_id, s.label AS schedule_label, s.seq AS schedule_seq,
+                e.deliverable, e.inspected_on, e.inspector_dept, e.inspector_name,
                 e.document_id, d.document_no, e.created_at, e.created_by
            FROM condition_events e
            LEFT JOIN documents d ON d.id = e.document_id
+           LEFT JOIN condition_schedules s ON s.id = e.schedule_id
           WHERE e.condition_id = $1
           ORDER BY e.occurred_on DESC, e.id DESC`, [conditionId]);
       return (r.rows as any[]).map((row) => ({
@@ -86,6 +104,13 @@ export class ConditionEventService {
         amount: Number(row.amount ?? 0),
         status: String(row.status),
         note: str(row.note),
+        scheduleId: int(row.schedule_id),
+        scheduleLabel: str(row.schedule_label)
+          ?? (row.schedule_seq ? `第${Number(row.schedule_seq)}回` : null),
+        deliverable: str(row.deliverable),
+        inspectedOn: dateStr(row.inspected_on),
+        inspectorDept: str(row.inspector_dept),
+        inspectorName: str(row.inspector_name),
         documentId: int(row.document_id),
         documentNo: str(row.document_no),
         createdAt: new Date(String(row.created_at)).toISOString(),
@@ -112,6 +137,19 @@ export class ConditionEventService {
               : "無効にした条件には実績を足せません");
         }
 
+        // 回を選んでいれば、規則も既定値も予定側に合わせる。
+        // 予定の行から作った実績と、ここから作った実績を同じものにする。
+        let scheduleId: number | null = null;
+        let occurredOn = input.occurredOn;
+        let period = str(input.period);
+        if (input.scheduleId) {
+          const line = await claimSchedule(client, conditionId, input.scheduleId);
+          scheduleId = input.scheduleId;
+          occurredOn = occurredOn || (dateStr(line.due_on) ?? occurredOn);
+          // 予定の名前を実績の期間に写す。「2026年4月分」がそのまま計算書に出る。
+          period = period ?? str(line.label);
+        }
+
         const amount = Math.round(input.amount);
         const gross = input.grossAmount === null || input.grossAmount === undefined
           ? null : Math.round(input.grossAmount);
@@ -124,18 +162,22 @@ export class ConditionEventService {
 
         const inserted = await client.query(
           `INSERT INTO condition_events
-             (condition_id, event_type, occurred_on, period, quantity, sample_quantity,
-              gross_amount, deductions, amount, note, created_by)
-           VALUES ($1, $2, $3::date, $4, $5, $6, $7, $8, $9, $10, $11)
+             (condition_id, schedule_id, event_type, occurred_on, period,
+              quantity, sample_quantity, gross_amount, deductions, amount, note, created_by,
+              deliverable, inspected_on, inspector_dept, inspector_name)
+           VALUES ($1, $2, $3, $4::date, $5, $6, $7, $8, $9, $10, $11, $12,
+                   $13, $14::date, $15, $16)
            RETURNING id`,
-          [conditionId, input.eventType, input.occurredOn, str(input.period),
+          [conditionId, scheduleId, input.eventType, occurredOn, period,
            input.quantity ?? null, input.sampleQuantity ?? null,
-           gross, deductions, amount, str(input.note), actor]);
+           gross, deductions, amount, str(input.note), actor,
+           str(input.deliverable), str(input.inspectedOn),
+           str(input.inspectorDept), str(input.inspectorName)]);
         const id = Number((inserted.rows[0] as { id: number }).id);
 
         await recordAudit(client, {
           actor, action: "condition.event_add", targetType: "condition", targetId: conditionId,
-          detail: { eventId: id, eventType: input.eventType, occurredOn: input.occurredOn, amount }
+          detail: { eventId: id, eventType: input.eventType, occurredOn, amount, scheduleId }
         });
         return { id };
       });
