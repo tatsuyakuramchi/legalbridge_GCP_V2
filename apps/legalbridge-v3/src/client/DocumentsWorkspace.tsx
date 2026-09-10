@@ -277,6 +277,11 @@ export function DocumentsWorkspace(
 
   /** サーバへ渡す手入力。文字の欄と、直した明細の行を合わせたもの。 */
   const inputs = useMemo(() => ({ ...manual, ...lines }), [manual, lines]);
+
+  // 検収書・納品書は実績1件が明細1行。実績を選ぶ枠を出すかどうかの判断に使う。
+  const usesDeliveryLines = (spec?.lines ?? []).some((l) => l.name === "delivery_line_items");
+  // 選んだのに実績が無い条件。ここが空だと、その条件は1行も出ない。
+  const withoutEvents = picked.filter((cid) => !events.some((e) => e.conditionId === cid));
   /** 案件。案件や条件の画面から来たときに決まる。無ければサーバが条件から引く。 */
   const matterId = start?.matterId ?? null;
   const body = useMemo(() => ({
@@ -700,7 +705,7 @@ export function DocumentsWorkspace(
                 </div>
               </div>
 
-              {events.length > 0 && (
+              {(events.length > 0 || (usesDeliveryLines && picked.length > 0)) && (
                 <div className="stack" style={{ gap: 6 }}>
                   <div className="row">
                     <span className="faint">
@@ -711,15 +716,29 @@ export function DocumentsWorkspace(
                       {pickedEvents.length ? `　${pickedEvents.length} 件を選択中` : ""}
                     </span>
                   </div>
+                  {/* 実績の無い条件は明細に出ない。黙って消すと「選んだのに反映されない」に見える。 */}
+                  {withoutEvents.length > 0 && (
+                    <div className="note warn">
+                      選んだ条件のうち {withoutEvents.length} 件は実績が無いので明細に出ません。
+                      条件の画面で実績を登録してから作り直してください。
+                    </div>
+                  )}
                   <div className="picker">
                     {picked.map((cid) => {
                       const mine = events.filter((e) => e.conditionId === cid);
-                      if (!mine.length) return null;
+                      const c = conditions.find((x) => x.id === cid);
+                      const no = mine[0]?.conditionNo ?? c?.conditionNo ?? `#${cid}`;
+                      const nm = mine[0]?.conditionName ?? c?.name ?? "";
                       return (
                         <Fragment key={cid}>
                           {picked.length > 1 && (
                             <div className="faint" style={{ marginTop: 4 }}>
-                              <span className="code">{mine[0].conditionNo ?? `#${cid}`}</span> {mine[0].conditionName}
+                              <span className="code">{no}</span> {nm}
+                            </div>
+                          )}
+                          {mine.length === 0 && (
+                            <div className="faint" style={{ padding: "4px 8px" }}>
+                              実績がありません（取り消した実績は出ません）。この条件は明細に出ません。
                             </div>
                           )}
                           {mine.map((e) => (
