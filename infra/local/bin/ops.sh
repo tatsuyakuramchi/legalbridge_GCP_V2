@@ -295,10 +295,26 @@ import_rows() {
   local dir="${1:-}"
   [ -n "$dir" ] || die "使い方: ops import-rows /dumps/rows"
   [ -d "$dir" ] || die "フォルダがありません: $dir"
-  local files=()
+  local all=()
   local f
-  for f in "$dir"/*.csv "$dir"/*.CSV; do [ -f "$f" ] && files+=("$f"); done
-  [ "${#files[@]}" -gt 0 ] || die "$dir に CSV がありません"
+  for f in "$dir"/*.csv "$dir"/*.CSV; do [ -f "$f" ] && all+=("$f"); done
+  [ "${#all[@]}" -gt 0 ] || die "$dir に CSV がありません"
+
+  # 094 の結果は見出しが tbl,data の2列。それ以外の CSV が混ざっていると、
+  # 文字コードや列数の違いで分かりにくい形で落ちる。先に名指しで止める。
+  local files=() others=()
+  for f in "${all[@]}"; do
+    local head1
+    head1=$(head -c 200 "$f" | head -1 | sed -e 's/^\xef\xbb\xbf//' -e 's/\r$//' -e 's/"//g' \
+            | tr -d ' ' | tr 'A-Z' 'a-z')
+    if [ "$head1" = "tbl,data" ]; then files+=("$f"); else others+=("$(basename "$f")"); fi
+  done
+  if [ "${#others[@]}" -gt 0 ]; then
+    echo "094_export_rows.sql の結果ではない CSV が混ざっています（${#others[@]} 個）:" >&2
+    printf '  %s\n' "${others[@]:0:10}" >&2
+    [ "${#others[@]}" -gt 10 ] && echo "  … ほか $(( ${#others[@]} - 10 )) 個" >&2
+    die "$dir には取り出した CSV だけを置いてください"
+  fi
   log "${#files[@]} 個の CSV を取り込む"
 
   log "v3 を手元の定義から作り直す"

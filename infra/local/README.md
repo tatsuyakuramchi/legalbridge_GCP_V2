@@ -120,9 +120,14 @@ Cloud SQL Studio だけで完結する。読み取りしかしないので本番
 
 ```powershell
 mkdir dumps\rows -Force
-Move-Item "$HOME\Downloads\*.csv" dumps\rows\
+# 落としたファイルだけを名指しで移す。*.csv にすると関係ない CSV まで巻き込む。
+Move-Item "$HOME\Downloads\studio_results_<日付>_<時刻>.csv" dumps\rows\
+Get-ChildItem dumps\rows\*.csv | ForEach-Object { "$($_.Name): $((Get-Content $_ | Measure-Object -Line).Lines - 1)" }
 docker compose run --rm ops import-rows /dumps/rows
 ```
+
+`dumps\rows` には取り出した CSV だけを置く。ほかの CSV が混ざっていると
+取り込みは名指しで止まる（文字コードの違うファイルで分かりにくく落ちないように）。
 
 表の構造は手元の定義（`001_schema.sql` + `004_amend.sql`）から作り直し、
 中身だけを CSV から入れる。ビューと権限もそのあと当て直す。
