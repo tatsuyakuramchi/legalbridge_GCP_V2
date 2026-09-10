@@ -24,12 +24,14 @@ const responder = (options: Options = {}) => (text: string): Array<Record<string
   if (text.includes("FROM statements WHERE document_id")) {
     return options.hasStatement ? [{ id: 99 }] : [];
   }
-  if (text.includes("FROM conditions c LEFT JOIN parties p")) {
-    return [{ id: 5, condition_no: "CL-2026-00042", currency: "JPY",
+  if (text.includes("FROM conditions c") && text.includes("LEFT JOIN parties p")) {
+    return [{ id: 5, condition_no: "CL-2026-00042", name: "配信許諾", kind: "license",
+              direction: "out", counterparty_id: 11, currency: "JPY",
               pricing_model: "revenue_rate", rate_ppm: 125000,
               unit_amount: null, flat_amount: null,
               mg_amount: options.mg ?? null, ag_amount: options.ag ?? null,
               tax_category: "taxable", status: options.conditionStatus ?? "active",
+              agreement_title: "配信許諾基本契約", agreement_no: "AG-2026-0001",
               withholding: options.withholding ?? false,
               party_kind: options.partyKind ?? "corporate" }];
   }
@@ -134,11 +136,69 @@ test("発行済みでない文書には計算書を結び付けない", async ()
   assert.ok(db.texts.includes("ROLLBACK"));
 });
 
-test("同じ文書に二重の計算書は作らない", async () => {
+test("同じ文書に同じ条件の計算書は二重に作らない", async () => {
   const { service: royalty } = service({ hasStatement: true });
   await assert.rejects(
     () => royalty.finalize({ conditionId: 5, documentId: 6, period: "2026上期", reported: { salesInput: 1 } }, "x"),
-    (e: unknown) => e instanceof DomainError && /すでに計算書/.test(e.message));
+    (e: unknown) => e instanceof DomainError && /計算書がすでにあります/.test(e.message));
+});
+
+test("束ね：1枚の文書に、条件ごとの計算書を作る", async () => {
+  // 作品ひとつに取引モデルが何本もあるとき、相手先に出す計算書は1枚。
+  // 計算は条件ごと（料率も MG・AG も条件ごとに違う）、計算書の行も条件ごと。
+  const written = new Set<string>();
+  const db = new FakeDatabase((text: string, params: unknown[]) => {
+    if (text.includes("FROM documents WHERE id = $1 FOR UPDATE")) return [{ id: 6, status: "issued" }];
+    if (text.includes("FROM statements WHERE document_id")) {
+      return written.has(`${params[0]}/${params[1]}`) ? [{ id: 99 }] : [];
+    }
+    if (text.includes("FROM conditions c") && text.includes("LEFT JOIN parties p")) {
+      const id = Number(params[0]);
+      return [{ id, condition_no: `CL-2026-0004${id}`, name: `条件${id}`, kind: "license",
+                direction: "out", counterparty_id: 11, currency: "JPY", pricing_model: "revenue_rate",
+                rate_ppm: id === 5 ? 125000 : 200000,
+                unit_amount: null, flat_amount: null, mg_amount: null, ag_amount: null,
+                tax_category: "taxable", status: "active",
+                agreement_title: "配信許諾基本契約", agreement_no: "AG-2026-0001",
+                withholding: false, party_kind: "corporate" }];
+    }
+    if (text.includes("SUM(e.deductions)")) return [{ consumed: 0 }];
+    if (text.includes("c.status IN ('active', 'scheduled', 'superseded')")) {
+      return [{ id: Number(params[0]), condition_no: null, effective_from: null }];
+    }
+    if (text.includes("INSERT INTO condition_events")) return [{ id: 700 }];
+    if (text.includes("INSERT INTO statements")) {
+      written.add(`${params[0]}/${params[1]}`);
+      return [{ id: 800 }];
+    }
+    return undefined;
+  });
+  const royalty = new RoyaltyStatementService(db);
+
+  const done = await royalty.finalizeAll([
+    { conditionId: 5, documentId: 6, period: "2026上期", reported: { salesInput: 4896000 } },
+    { conditionId: 9, documentId: 6, period: "2026上期", reported: { salesInput: 1000000 } }
+  ], "x");
+  assert.equal(done.length, 2);
+  assert.deepEqual(done.map((d) => d.netMinor), [612000, 200000], "条件ごとの料率で計算する");
+  assert.equal(db.all("INSERT INTO statements").length, 2, "条件ごとに1本");
+  assert.equal(db.all("FROM documents WHERE id = $1 FOR UPDATE").length, 1, "文書の錠は1回");
+
+  // 同じ条件をもう一度は断る。二重に計上すると支払が倍になる。
+  await assert.rejects(
+    () => royalty.finalizeAll(
+      [{ conditionId: 5, documentId: 6, period: "2026下期", reported: { salesInput: 1 } }], "x"),
+    (e: unknown) => e instanceof DomainError && /計算書がすでにあります/.test(e.message));
+});
+
+test("束ね：文書がばらばらなら断る", async () => {
+  const { service: royalty } = service();
+  await assert.rejects(
+    () => royalty.finalizeAll([
+      { conditionId: 5, documentId: 6, period: "2026上期", reported: { salesInput: 1 } },
+      { conditionId: 5, documentId: 7, period: "2026上期", reported: { salesInput: 1 } }
+    ], "x"),
+    (e: unknown) => e instanceof DomainError && /1枚の文書/.test(e.message));
 });
 
 test("無効・旧版の条件では計算しない", async () => {

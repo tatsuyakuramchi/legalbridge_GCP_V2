@@ -176,6 +176,42 @@ test("計算書：金額が全部出る", () => {
   assert.equal(v.totalPaymentStr, "495,000");
 });
 
+test("計算書：束ねると取引モデルごとの行になり、合計は行の和になる", () => {
+  // 作品ひとつに自社製造・自社販売と再許諾が並ぶ案件。相手先に出すのは1枚で、
+  // 中は取引モデルごとの内訳。金額は条件ごとの試算をそのまま印字する
+  // （V1 はここでテンプレート側が計算し直していた）。
+  const v = rendered("royalty_statement", {
+    statementMode: "bundle",
+    rs_bundle_lines: [
+      { conditionId: 5, contractTitle: "配信許諾基本契約", contractNumber: "AG-2026-0001",
+        conditionName: "自社製造・自社販売", methodLabel: "製造数量ベース",
+        salesJpy: 4_800_000, ratePct: 12.5, paymentJpy: 600_000,
+        basisNote: "400個 × 基準価格" },
+      { conditionId: 9, contractTitle: "配信許諾基本契約", contractNumber: "AG-2026-0001",
+        conditionName: "再許諾", methodLabel: "サブライセンス受領ベース",
+        salesJpy: 1_000_000, ratePct: 20, paymentJpy: 200_000,
+        basisNote: "算定期間 2026上期" }
+    ],
+    rs_bundle_tax: 80_000
+  });
+  assert.equal(v.statementMode, "multi", "本文の描き方は多明細と同じ");
+  const groups = v.lineGroups as Array<Record<string, any>>;
+  assert.equal(groups.length, 2, "取引モデルの数だけ内訳が並ぶ");
+  assert.equal(groups[0].lines[0].productName, "自社製造・自社販売");
+  assert.equal(groups[0].lines[0].paymentJpyStr, "600,000");
+  assert.equal(groups[1].methodLabel, "サブライセンス受領ベース");
+  assert.equal(v.linesTotalSalesStr, "5,800,000");
+  assert.equal(v.linesTotalPaymentStr, "800,000");
+  assert.equal(v.linesTaxStr, "80,000", "渡した税額をそのまま出す（税区分が違いうる）");
+  assert.equal(v.linesTotalIncTaxStr, "880,000");
+});
+
+test("計算書：束ねの行が無ければ単票のまま", () => {
+  const v = rendered("royalty_statement", { rs_bundle_lines: [] });
+  assert.equal(v.statementMode, "single");
+  assert.equal(v.actualRoyaltyStr, "450,000");
+});
+
 test("計算書：振込先は宣言に供給元が無くても名前で引ける", () => {
   // royalty_statement の口座欄には dbField が無い。名前だけが手がかり。
   assertFilled("royalty_statement",

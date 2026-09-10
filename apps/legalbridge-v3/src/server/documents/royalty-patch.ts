@@ -6,10 +6,11 @@
  * grossRoyaltyStr・agConsumedThisTimeStr・lineGroups … を作らないと、
  * 計算書は金額の入っていない紙になる。
  *
- * V1 との違いは計算のやり直しをしないこと。単票は V3 の試算（royalty）を
- * そのまま印字する。書類とデータベースの金額は同じ計算から出さないと合わない。
- * 多明細（rs_receipts）と束ね（rs_bundle）は V3 に相当する仕組みがまだ無いので、
- * V1 と同じく入力から計算する。
+ * V1 との違いは計算のやり直しをしないこと。単票は V3 の試算（royalty）を、
+ * 束ね（rs_bundle_lines）は条件ごとの試算をそのまま印字する。書類と
+ * データベースの金額は同じ計算から出さないと合わない。
+ * 多明細（rs_receipts）と V1 形式の束ね（rs_bundle）は V3 に相当する仕組みが
+ * まだ無いので、V1 と同じく入力から計算する。
  */
 
 import { calculateFee, type FeeResult } from "../royalty/calc.js";
@@ -338,6 +339,89 @@ export function bundleStatementPatch(
 }
 
 // ---------------------------------------------------------------------------
+// 束ね（V3・計算済みの行を印字する）
+// ---------------------------------------------------------------------------
+
+/**
+ * 束ねの1行。V1 の rs_bundle は入力値を持ち、印字のたびに計算し直していた。
+ * V3 は条件ごとに試算した結果（＝データベースに入る金額）をそのまま印字する。
+ * 同じ計算から出さないと、書類の金額と計算書の金額が合わない。
+ */
+export interface BundleLine {
+  conditionId: number | null;
+  contractTitle: string;
+  contractNumber: string;
+  conditionName: string;
+  methodLabel: string;
+  /** 根拠額（税抜）。売上報告ならその額、数量ベースなら 数量×基準価格。 */
+  salesJpy: number;
+  ratePct: number;
+  /** 実額（税抜）。MG の上乗せ・AG の充当を反映済み。 */
+  paymentJpy: number;
+  basisNote: string;
+}
+
+export function bundleLinesFrom(source: Data): BundleLine[] {
+  return records(source.rs_bundle_lines).map((row) => ({
+    conditionId: Math.trunc(num(row.conditionId)) || null,
+    contractTitle: String(row.contractTitle ?? ""),
+    contractNumber: String(row.contractNumber ?? ""),
+    conditionName: String(row.conditionName ?? ""),
+    methodLabel: String(row.methodLabel ?? ""),
+    salesJpy: num(row.salesJpy),
+    ratePct: num(row.ratePct),
+    paymentJpy: num(row.paymentJpy),
+    basisNote: String(row.basisNote ?? "")
+  }));
+}
+
+/**
+ * 計算済みの行から束ねの本文変数を組む。描画は多明細（lineGroups）と同じ形。
+ * 消費税は行ごとの税区分が違いうるので、合計を渡せるようにしてある。
+ * 渡されなければ従来どおり合計に税率を掛ける。
+ */
+export function bundleLinesPatch(
+  input: { lines: BundleLine[]; taxRatePct?: number; taxTotal?: number | null }
+): Data {
+  const taxRate = Number(input.taxRatePct) || 10;
+  const lineGroups = input.lines.map((line) => ({
+    contractTitle: line.contractTitle,
+    contractNumber: line.contractNumber,
+    methodLabel: line.methodLabel,
+    conditionId: line.conditionId ?? "",
+    lines: [{
+      productName: line.conditionName || line.contractTitle || line.contractNumber,
+      salesJpy: line.salesJpy,
+      salesJpyStr: fmtYen(line.salesJpy),
+      ratePctResolved: String(line.ratePct),
+      paymentJpy: line.paymentJpy,
+      paymentJpyStr: fmtYen(line.paymentJpy),
+      basisNote: line.basisNote
+    }],
+    subtotalSales: line.salesJpy,
+    subtotalSalesStr: fmtYen(line.salesJpy),
+    subtotalPayment: line.paymentJpy,
+    subtotalPaymentStr: fmtYen(line.paymentJpy)
+  }));
+  const totalSalesJpy = input.lines.reduce((sum, l) => sum + l.salesJpy, 0);
+  const totalPaymentJpy = input.lines.reduce((sum, l) => sum + l.paymentJpy, 0);
+  const tax = input.taxTotal === null || input.taxTotal === undefined
+    ? Math.ceil((totalPaymentJpy * taxRate) / 100)
+    : Math.round(input.taxTotal);
+  return {
+    statementMode: "multi",
+    lineGroups,
+    taxRate: String(taxRate),
+    linesTotalSalesJpy: totalSalesJpy,
+    linesTotalSalesStr: fmtYen(totalSalesJpy),
+    linesTotalPaymentJpy: totalPaymentJpy,
+    linesTotalPaymentStr: fmtYen(totalPaymentJpy),
+    linesTaxStr: fmtYen(tax),
+    linesTotalIncTaxStr: fmtYen(totalPaymentJpy + tax)
+  };
+}
+
+// ---------------------------------------------------------------------------
 // 入口
 // ---------------------------------------------------------------------------
 
@@ -392,6 +476,16 @@ export function royaltyStatementPatch(
 ): Data | null {
   const mode = statementModeOf(manual);
   const rate = num(pick(manual, "taxRate", "tax_rate"), taxRatePct);
+
+  // V3 が組んだ束ね。条件ごとに試算した結果がそのまま入っているので計算しない。
+  const computedLines = bundleLinesFrom(manual);
+  if (computedLines.length) {
+    const total = manual.rs_bundle_tax;
+    return bundleLinesPatch({
+      lines: computedLines, taxRatePct: rate,
+      taxTotal: total === undefined || total === null ? null : num(total)
+    });
+  }
 
   if (mode === "bundle") {
     const entries = bundleEntriesFrom(manual).filter(bundleEntryActive);

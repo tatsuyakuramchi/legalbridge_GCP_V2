@@ -34,6 +34,7 @@ import { MatterCommunicationService, driveIdFromUrl, recordCommunication } from 
 import { config } from "./config.js";
 import { verifySlackSignature } from "./integrations/signature.js";
 import { RoyaltyStatementService } from "./royalty/statement-service.js";
+import { bundleLineFrom, bundleTotals } from "./royalty/bundle.js";
 import { PaymentService } from "./payments/service.js";
 import { PaymentAllocationService } from "./payments/allocation-service.js";
 import { PartyRepository } from "./parties/repository.js";
@@ -1509,6 +1510,108 @@ export function createRoutes(database: Transactable) {
     }));
 
   /**
+   * 条件をまたいだ計算書（束ね）。
+   *
+   * 作品ひとつに取引モデルが何本もある（自社製造・自社販売、再許諾…）とき、
+   * 相手先に出す計算書は1枚で、中は取引モデルごとの内訳になる。V1・V2 では
+   * これを手入力の表（rs_bundle）で作っていて、金額はテンプレート側で
+   * 計算し直していた。ここは条件ごとに試算し、その結果を印字し、条件ごとに
+   * 計算書を1本ずつ結ぶ。書類とデータベースの金額は同じ計算から出す。
+   */
+  const bundleSchema = z.object({
+    templateKey: z.string().trim().min(1).max(120),
+    matterId: z.coerce.number().int().positive().nullable().optional(),
+    agreementId: z.coerce.number().int().positive().nullable().optional(),
+    manualInputs: z.record(z.string(), z.unknown()).default({}),
+    entries: z.array(calculationSchema.extend({
+      conditionId: z.coerce.number().int().positive()
+    })).min(1).max(50)
+  });
+
+  type BundleEntries = z.infer<typeof bundleSchema>["entries"];
+  const previewBundle = async (entries: BundleEntries) => {
+    const ids = entries.map((e) => e.conditionId);
+    if (new Set(ids).size !== ids.length) {
+      throw new DomainError("VALIDATION", "同じ条件を2回は選べません");
+    }
+    // 直列に試算する。AG の消化累計は条件ごとに読むので順番に意味は無いが、
+    // 弾かれた理由を条件ごとに返せるようにしておく。
+    const previews = [];
+    for (const entry of entries) {
+      previews.push(await royalty.preview({
+        conditionId: entry.conditionId, period: entry.period, occurredOn: entry.occurredOn,
+        eventType: entry.eventType, reported: entry.reported, eventIds: entry.eventIds
+      }));
+    }
+    return previews;
+  };
+
+  // 試算。保存しない。1枚にまとめたときの内訳と合計を返す。
+  router.post("/statement-documents/preview",
+    requireRole("admin", "legal"),
+    asyncRoute(async (req, res) => {
+      const input = bundleSchema.omit({ templateKey: true }).extend({
+        templateKey: z.string().trim().max(120).optional()
+      }).parse(req.body ?? {});
+      const previews = await previewBundle(input.entries);
+      res.json({
+        lines: previews.map(bundleLineFrom),
+        totals: bundleTotals(previews),
+        previews
+      });
+    }));
+
+  router.post("/statement-documents",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = bundleSchema.parse(req.body ?? {});
+      const who = actor(res);
+      const previews = await previewBundle(input.entries);
+      const totals = bundleTotals(previews);
+      const lines = previews.map(bundleLineFrom);
+      const eventIds = input.entries.flatMap((e) => e.eventIds ?? []);
+
+      const draft = await issues.createDraft({
+        templateKey: input.templateKey,
+        conditionIds: input.entries.map((e) => e.conditionId),
+        matterId: input.matterId ?? null,
+        agreementId: input.agreementId ?? null,
+        // 本文はここに焼き付けた行から描く。計算済みなので、印字のときに
+        // 計算し直さない（rs_bundle_lines を royalty-patch が拾う）。
+        manualInputs: {
+          ...input.manualInputs,
+          statementMode: "bundle",
+          rs_bundle_lines: lines,
+          rs_bundle_tax: totals.tax
+        }
+      }, who);
+
+      let issued;
+      try {
+        issued = await issues.issue(draft.id, who, { eventIds });
+      } catch (error) {
+        await issues.void(draft.id, "発行できなかったため破棄", who).catch(() => undefined);
+        throw error;
+      }
+      // 金額は確定時にもう一度計算し直す（V1・V2 と同じ防御）。ここで弾かれたら
+      // 文書を無効にする。番号の振られた紙だけが残って、計算書の無い計算書に
+      // なるのを防ぐ。
+      let statements;
+      try {
+        statements = await royalty.finalizeAll(
+          input.entries.map((e) => ({
+            conditionId: e.conditionId, period: e.period, occurredOn: e.occurredOn,
+            eventType: e.eventType, reported: e.reported, eventIds: e.eventIds,
+            documentId: issued.id
+          })), who);
+      } catch (error) {
+        await issues.void(issued.id, "計算書を結べなかったため無効", who).catch(() => undefined);
+        throw error;
+      }
+      res.status(201).json({ document: issued, statements, totals, lines });
+    }));
+
+  /**
    * 文書を作る（1本化した入口）。
    *
    * 計算書は「先に試算 → その値で発行 → 確定」の順にする。逆にすると、
@@ -1621,23 +1724,31 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       const id = Number(req.params.id);
       const input = z.object({ dueOn: z.string().date().nullable().optional() }).parse(req.body ?? {});
+      // 計算書は1枚に条件のぶんだけ行が並ぶ（束ね）。先頭の1本だけ見ると、
+      // 残りの条件の金額が支払から落ちる。文書ごとにまとめて立てる。
       const found = await database.query(
-        "SELECT id FROM statements WHERE document_id = $1", [id]);
-      const statementId = (found.rows[0] as { id: number } | undefined)?.id;
-      res.status(201).json(statementId
-        ? await payments.createFromStatement(Number(statementId), actor(res),
-                                             { dueOn: input.dueOn ?? undefined })
+        "SELECT count(*)::int AS n FROM statements WHERE document_id = $1", [id]);
+      const hasStatement = Number((found.rows[0] as { n: number } | undefined)?.n ?? 0) > 0;
+      res.status(201).json(hasStatement
+        ? await payments.createFromStatementDocument(id, actor(res),
+                                                     { dueOn: input.dueOn ?? undefined })
         : await payments.createFromInspection(id, actor(res),
                                               { dueOn: input.dueOn ?? undefined }));
     }));
 
   // 計算書から支払を起こす。割当なしでは作れない。
+  // 支払は計算書ではなく「文書1枚」につき1件。束ねた計算書は1枚に条件のぶんだけ
+  // 行が並ぶので、行ごとに支払を立てると相手先1社への支払が何件にも割れる。
   router.post("/statements/:id/payment",
     requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       const input = z.object({ dueOn: z.string().date().nullable().optional() }).parse(req.body ?? {});
-      res.status(201).json(await payments.createFromStatement(
-        Number(req.params.id), actor(res), { dueOn: input.dueOn ?? undefined }));
+      const found = await database.query(
+        "SELECT document_id FROM statements WHERE id = $1", [Number(req.params.id)]);
+      const row = found.rows[0] as { document_id: number } | undefined;
+      if (!row) throw new DomainError("NOT_FOUND", `計算書 ${req.params.id} が見つかりません`);
+      res.status(201).json(await payments.createFromStatementDocument(
+        Number(row.document_id), actor(res), { dueOn: input.dueOn ?? undefined }));
     }));
 
   router.post("/payments/:id/paid",

@@ -717,6 +717,27 @@ ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS order_no text;
 COMMENT ON COLUMN v3.conditions.order_no IS
   '外部で出した発注書の番号。V3 で出した発注書が紐づいていればそちらを優先する。';
 
+-- ---------------------------------------------------------------------
+-- A-020: 1枚の計算書に、条件ごとの計算書行を持てるようにする
+--
+-- 作品ひとつに取引モデルが何本もある（自社製造・自社販売、再許諾…）とき、
+-- 相手先に出す計算書は1枚で、中は取引モデルごとの内訳になる。V1・V2 も
+-- そうしていた。ところが statements.document_id が UNIQUE だったため、
+-- 1枚の文書に結べる計算書は1本だけで、条件ごとに紙を出すしかなかった。
+--
+-- 計算は条件ごとに行う（料率も MG・AG も条件ごとに違う）ので、計算書も
+-- 条件ごとに1本のまま。1枚に束ねるのは印字と支払のまとめ方だけ。
+-- 同じ条件を同じ文書に二重に結ぶのは引き続き禁じる（支払が倍になる）。
+-- ---------------------------------------------------------------------
+
+ALTER TABLE v3.statements DROP CONSTRAINT IF EXISTS statements_document_id_key;
+CREATE UNIQUE INDEX IF NOT EXISTS statements_document_condition_uq
+  ON v3.statements (document_id, condition_id);
+CREATE INDEX IF NOT EXISTS statements_document_idx ON v3.statements (document_id);
+
+COMMENT ON COLUMN v3.statements.document_id IS
+  'この計算書を載せた文書。1枚の文書に条件のぶんだけ行が並ぶ（条件ごとに1本）。';
+
 COMMIT;
 
 
@@ -835,4 +856,13 @@ SELECT * FROM (
   SELECT 19, '条件の外部の発注番号（A-019。1 列）',
          (SELECT count(*)::text || ' 列' FROM information_schema.columns
            WHERE table_schema='v3' AND table_name='conditions' AND column_name='order_no')
+  UNION ALL
+  SELECT 20, '計算書の一意制約（A-020。旧 0・新 1）',
+         (SELECT count(*)::text FROM pg_constraint
+           WHERE conrelid = 'v3.statements'::regclass
+             AND conname = 'statements_document_id_key')
+         || ' / ' ||
+         (SELECT count(*)::text FROM pg_indexes
+           WHERE schemaname = 'v3' AND tablename = 'statements'
+             AND indexname = 'statements_document_condition_uq')
 ) AS 確認 ORDER BY n;

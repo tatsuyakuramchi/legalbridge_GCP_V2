@@ -147,6 +147,15 @@ SELECT * FROM (
   SELECT 19, '条件の外部の発注番号（A-019。1 列）',
          (SELECT count(*)::text || ' 列' FROM information_schema.columns
            WHERE table_schema='v3' AND table_name='conditions' AND column_name='order_no')
+  UNION ALL
+  SELECT 20, '計算書の一意制約（A-020。旧 0・新 1）',
+         (SELECT count(*)::text FROM pg_constraint
+           WHERE conrelid = 'v3.statements'::regclass
+             AND conname = 'statements_document_id_key')
+         || ' / ' ||
+         (SELECT count(*)::text FROM pg_indexes
+           WHERE schemaname = 'v3' AND tablename = 'statements'
+             AND indexname = 'statements_document_condition_uq')
 ) AS 確認 ORDER BY n;
 `;
 

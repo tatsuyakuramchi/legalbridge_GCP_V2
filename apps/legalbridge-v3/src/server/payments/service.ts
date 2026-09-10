@@ -97,14 +97,96 @@ export class PaymentService {
     } catch (error) { throw translate(error); }
   }
 
-  /** 計算書から支払を起こす。金額は計算書の値をそのまま使う（再計算済みのため）。 */
-  async createFromStatement(statementId: number, actor: string, options: { dueOn?: string | null } = {}) {
+  /**
+   * 支払1件と、その割当を書く。
+   *
+   * 計算書からも検収書からも同じ手順を踏む（期日の検査 → 記録 → 上限超えの控え）。
+   * 入口ごとに書いていたころは、片方だけ直して食い違う余地があった。
+   * 支払は必ず割当を持つ。根拠のない支払行を残さないための約束。
+   */
+  private async writeWithAllocations(
+    client: Queryable,
+    input: {
+      direction: "in" | "out";
+      partyId: number;
+      partyKind: string | null;
+      currency: string;
+      net: number;
+      tax: number;
+      withholding: number;
+      basis: string | null;
+      dueOn: string | null;
+      allocations: Array<{ conditionId: number; eventId: number | null; amount: number }>;
+      /** 監査に添える出どころ（計算書 id・文書 id など）。 */
+      detail: Record<string, unknown>;
+    },
+    actor: string
+  ) {
+    const inserted = await client.query(
+      `INSERT INTO payments
+         (direction, party_id, currency, amount, tax_amount, withholding_amount,
+          basis_received_on, due_on, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::date, $8::date, 'planned')
+       RETURNING id`,
+      [input.direction, input.partyId, input.currency, input.net, input.tax,
+       input.withholding, input.basis, input.dueOn]);
+    const paymentId = Number((inserted.rows[0] as { id: number }).id);
+
+    for (const a of input.allocations) {
+      await client.query(
+        `INSERT INTO payment_allocations (payment_id, condition_id, event_id, amount)
+         VALUES ($1, $2, $3, $4)`,
+        [paymentId, a.conditionId, a.eventId, a.amount]);
+    }
+
+    const due = checkPaymentDue({
+      applicable: input.direction === "out" && isFreelanceActTarget(input.partyKind),
+      basisDate: input.basis, dueOn: input.dueOn
+    });
+
+    await recordAudit(client, {
+      actor, action: "payment.create", targetType: "payment", targetId: paymentId,
+      detail: {
+        ...input.detail, direction: input.direction,
+        amount: input.net, tax: input.tax, withholding: input.withholding,
+        basis: input.basis, dueOn: input.dueOn, dueVerdict: due.verdict
+      }
+    });
+    // 期日が上限を超えていたら、記録として残して一覧で拾えるようにする。
+    if (due.verdict === "over_limit") {
+      await client.query(
+        `INSERT INTO data_quality_issues (rule_code, target_type, target_id, severity, detail)
+         VALUES ('PAYMENT_DUE_OVER_LIMIT', 'payment', $1, 'high', $2::jsonb)
+         ON CONFLICT (rule_code, target_type, target_id) DO UPDATE
+           SET detail = EXCLUDED.detail, detected_at = now(), status = 'open'`,
+        [paymentId, JSON.stringify({
+          basis: input.basis, dueOn: input.dueOn,
+          overBy: due.overBy, limitDate: due.limitDate })]);
+    }
+
+    return {
+      paymentId, direction: input.direction, amount: input.net,
+      tax: input.tax, withholding: input.withholding, dueOn: input.dueOn, due
+    };
+  }
+
+  /**
+   * 計算書（1枚）から支払を立てる。
+   *
+   * 束ねた計算書は1枚に条件のぶんだけ計算書行が並ぶ。条件ごとに支払を立てると、
+   * 相手先には1枚しか出していないのに支払が何件も並び、経理提出用の表も
+   * 行がばらける。支払は文書1枚につき1件にし、条件ごとに割当を作る。
+   * 割当がそのまま経理の「支払内容」になる。
+   */
+  async createFromStatementDocument(
+    documentId: number, actor: string, options: { dueOn?: string | null } = {}
+  ) {
     try {
       return await inTransaction(this.database, async (client) => {
-        const head = await client.query(
-          `SELECT s.id, s.condition_id, s.currency, s.net_amount, s.tax_amount, s.period,
+        const found = await client.query(
+          `SELECT s.id AS statement_id, s.condition_id, s.currency, s.net_amount, s.tax_amount,
                   c.direction, c.tax_category, c.counterparty_id,
-                  p.kind AS party_kind, p.withholding, p.name AS party_name,
+                  p.kind AS party_kind, p.withholding,
                   e.id AS event_id, e.occurred_on
              FROM statements s
              JOIN conditions c ON c.id = s.condition_id
@@ -115,83 +197,89 @@ export class PaymentService {
                   AND status = 'active'
                 ORDER BY id DESC LIMIT 1
              ) e ON true
-            WHERE s.id = $1
-            FOR UPDATE OF s`, [statementId]);
-        const row = head.rows[0] as Record<string, any> | undefined;
-        if (!row) throw new DomainError("NOT_FOUND", `計算書 ${statementId} が見つかりません`);
-        if (!row.counterparty_id) {
-          throw new DomainError("VALIDATION", "相手先が未設定の条件からは支払を作れません");
+            WHERE s.document_id = $1
+            ORDER BY s.id
+              FOR UPDATE OF s`, [documentId]);
+        const rows = found.rows as Array<Record<string, any>>;
+        if (!rows.length) {
+          throw new DomainError("VALIDATION", `文書 ${documentId} に計算書がありません`);
         }
 
+        const parties = new Set(rows.map((r) => Number(r.counterparty_id)));
+        if (parties.size !== 1 || !rows[0].counterparty_id) {
+          throw new DomainError("VALIDATION",
+            "相手先が1件に決まりません。相手先ごとに計算書を分けてください");
+        }
+        const directions = new Set(rows.map((r) => String(r.direction)));
+        if (directions.size !== 1) {
+          throw new DomainError("VALIDATION", "取得と許諾が混ざった計算書からは支払を作れません");
+        }
+        const currencies = new Set(rows.map((r) => String(r.currency ?? "JPY")));
+        if (currencies.size !== 1) {
+          throw new DomainError("VALIDATION", "通貨の違う計算書は1件の支払にまとめられません");
+        }
+
+        // 同じ条件・実績に二重に支払を立てない。直すなら先の支払を取り消す。
+        // 組で突き合わせる（条件だけで見ると、同じ条件の別の回まで塞いでしまう）。
+        // 実績の無い計算書は 0 を置いて NULL と突き合わせる。
         const duplicated = await client.query(
-          `SELECT p.id FROM payments p
+          `SELECT p.id
+             FROM payments p
              JOIN payment_allocations a ON a.payment_id = p.id
-            WHERE a.condition_id = $1 AND a.event_id IS NOT DISTINCT FROM $2
-              AND p.status <> 'canceled'`,
-          [row.condition_id, row.event_id ?? null]);
+             JOIN unnest($1::bigint[], $2::bigint[]) AS t(condition_id, event_id)
+               ON a.condition_id = t.condition_id
+              AND a.event_id IS NOT DISTINCT FROM NULLIF(t.event_id, 0)
+            WHERE p.status <> 'canceled'
+            LIMIT 1`,
+          [rows.map((r) => Number(r.condition_id)),
+           rows.map((r) => (r.event_id === null || r.event_id === undefined ? 0 : Number(r.event_id)))]);
         if (duplicated.rows[0]) {
           throw new DomainError("CONFLICT",
-            `この実績にはすでに支払 #${(duplicated.rows[0] as { id: number }).id} があります`);
+            `この計算書にはすでに支払 #${(duplicated.rows[0] as { id: number }).id} があります`);
         }
 
         // 権利を許諾する側（out）は受け取る側なので入金、取得側（in）は支払。
-        const direction: "in" | "out" = row.direction === "out" ? "in" : "out";
-        const currency = String(row.currency ?? "JPY");
-        const net = Number(row.net_amount ?? 0);
-        const taxRate = taxRateFor({
-          id: 0, conditionNo: null, currency, pricingModel: "none",
-          ratePpm: null, unitAmount: null, flatAmount: null, mgAmount: null, agAmount: null,
-          taxCategory: String(row.tax_category ?? "taxable") as "taxable" | "reduced" | "exempt"
-        });
-        const tax = Number(row.tax_amount ?? consumptionTax(net, taxRate));
+        const direction: "in" | "out" = String(rows[0].direction) === "out" ? "in" : "out";
+        const currency = String(rows[0].currency ?? "JPY");
 
-        // 源泉は自社が支払う側でだけ差し引く。
+        // 金額は計算書の値。すでに条件ごとの税区分で計算し直してある。
+        let net = 0;
+        let tax = 0;
+        for (const r of rows) {
+          const amount = Number(r.net_amount ?? 0);
+          net += amount;
+          tax += r.tax_amount === null || r.tax_amount === undefined
+            ? consumptionTax(amount, taxRateFor({
+                id: 0, conditionNo: null, currency, pricingModel: "none",
+                ratePpm: null, unitAmount: null, flatAmount: null, mgAmount: null, agAmount: null,
+                taxCategory: String(r.tax_category ?? "taxable") as "taxable" | "reduced" | "exempt"
+              }))
+            : Number(r.tax_amount);
+        }
+        if (net <= 0) throw new DomainError("VALIDATION", "金額が 0 の計算書からは支払を作れません");
+
         const withholdingEnabled = direction === "out" && resolveWithholdingEnabled({
-          vendorWithholdingEnabled: row.withholding === true,
-          entityType: str(row.party_kind)
+          vendorWithholdingEnabled: rows[0].withholding === true,
+          entityType: str(rows[0].party_kind)
         });
         const withholding = withholdingEnabled ? withholdingTax(net + tax, true) : 0;
 
-        const basis = dateStr(row.occurred_on);
+        // 起算日は実績のいちばん遅い日。全部が出そろってからでないと支払は起きない。
+        const dates = rows.map((r) => dateStr(r.occurred_on))
+          .filter((d): d is string => Boolean(d)).sort();
+        const basis = dates[dates.length - 1] ?? null;
         const dueOn = options.dueOn ?? dueLimitFrom(basis);
 
-        const inserted = await client.query(
-          `INSERT INTO payments
-             (direction, party_id, currency, amount, tax_amount, withholding_amount,
-              basis_received_on, due_on, status)
-           VALUES ($1, $2, $3, $4, $5, $6, $7::date, $8::date, 'planned')
-           RETURNING id`,
-          [direction, row.counterparty_id, currency, net, tax, withholding, basis, dueOn]);
-        const paymentId = Number((inserted.rows[0] as { id: number }).id);
-
-        await client.query(
-          `INSERT INTO payment_allocations (payment_id, condition_id, event_id, amount)
-           VALUES ($1, $2, $3, $4)`,
-          [paymentId, row.condition_id, row.event_id ?? null, net]);
-
-        const due = checkPaymentDue({
-          applicable: direction === "out" && isFreelanceActTarget(str(row.party_kind)),
-          basisDate: basis, dueOn
-        });
-
-        await recordAudit(client, {
-          actor, action: "payment.create", targetType: "payment", targetId: paymentId,
-          detail: {
-            statementId, conditionId: row.condition_id, direction,
-            amount: net, tax, withholding, basis, dueOn, dueVerdict: due.verdict
-          }
-        });
-        // 期日が上限を超えていたら、記録として残して一覧で拾えるようにする。
-        if (due.verdict === "over_limit") {
-          await client.query(
-            `INSERT INTO data_quality_issues (rule_code, target_type, target_id, severity, detail)
-             VALUES ('PAYMENT_DUE_OVER_LIMIT', 'payment', $1, 'high', $2::jsonb)
-             ON CONFLICT (rule_code, target_type, target_id) DO UPDATE
-               SET detail = EXCLUDED.detail, detected_at = now(), status = 'open'`,
-            [paymentId, JSON.stringify({ basis, dueOn, overBy: due.overBy, limitDate: due.limitDate })]);
-        }
-
-        return { paymentId, direction, amount: net, tax, withholding, dueOn, due };
+        return await this.writeWithAllocations(client, {
+          direction, partyId: Number(rows[0].counterparty_id), partyKind: str(rows[0].party_kind),
+          currency, net, tax, withholding, basis, dueOn,
+          allocations: rows.map((r) => ({
+            conditionId: Number(r.condition_id),
+            eventId: r.event_id === null || r.event_id === undefined ? null : Number(r.event_id),
+            amount: Number(r.net_amount ?? 0)
+          })),
+          detail: { documentId, statementIds: rows.map((r) => Number(r.statement_id)) }
+        }, actor);
       });
     } catch (error) { throw translate(error); }
   }
@@ -200,7 +288,7 @@ export class PaymentService {
    * 検収書から支払を立てる。
    *
    * 当社の支払は検収書か利用許諾計算書のどちらかから起きる。計算書のほうは
-   * createFromStatement が受け持つ。こちらは検収書で、文書に結び付いた実績
+   * createFromStatementDocument が受け持つ。こちらは検収書で、文書に結び付いた実績
    * （condition_events.document_id）が支払の中身になる。
    *
    * 1枚の検収書に複数の実績が載る（条件をまたぐ委託料と実費など）。支払は
@@ -289,44 +377,15 @@ export class PaymentService {
           .filter((d): d is string => Boolean(d)).sort();
         const dueOn = options.dueOn ?? payOns[payOns.length - 1] ?? dueLimitFrom(basis);
 
-        const inserted = await client.query(
-          `INSERT INTO payments
-             (direction, party_id, currency, amount, tax_amount, withholding_amount,
-              basis_received_on, due_on, status)
-           VALUES ($1, $2, $3, $4, $5, $6, $7::date, $8::date, 'planned')
-           RETURNING id`,
-          [direction, rows[0].counterparty_id, currency, net, tax, withholding, basis, dueOn]);
-        const paymentId = Number((inserted.rows[0] as { id: number }).id);
-
-        for (const r of rows) {
-          await client.query(
-            `INSERT INTO payment_allocations (payment_id, condition_id, event_id, amount)
-             VALUES ($1, $2, $3, $4)`,
-            [paymentId, r.condition_id, r.event_id, Number(r.amount ?? 0)]);
-        }
-
-        const due = checkPaymentDue({
-          applicable: direction === "out" && isFreelanceActTarget(str(rows[0].party_kind)),
-          basisDate: basis, dueOn
-        });
-
-        await recordAudit(client, {
-          actor, action: "payment.create", targetType: "payment", targetId: paymentId,
-          detail: {
-            documentId, eventIds: rows.map((r) => Number(r.event_id)), direction,
-            amount: net, tax, withholding, basis, dueOn, dueVerdict: due.verdict
-          }
-        });
-        if (due.verdict === "over_limit") {
-          await client.query(
-            `INSERT INTO data_quality_issues (rule_code, target_type, target_id, severity, detail)
-             VALUES ('PAYMENT_DUE_OVER_LIMIT', 'payment', $1, 'high', $2::jsonb)
-             ON CONFLICT (rule_code, target_type, target_id) DO UPDATE
-               SET detail = EXCLUDED.detail, detected_at = now(), status = 'open'`,
-            [paymentId, JSON.stringify({ basis, dueOn, overBy: due.overBy, limitDate: due.limitDate })]);
-        }
-
-        return { paymentId, direction, amount: net, tax, withholding, dueOn, due };
+        return await this.writeWithAllocations(client, {
+          direction, partyId: Number(rows[0].counterparty_id), partyKind: str(rows[0].party_kind),
+          currency, net, tax, withholding, basis, dueOn,
+          allocations: rows.map((r) => ({
+            conditionId: Number(r.condition_id), eventId: Number(r.event_id),
+            amount: Number(r.amount ?? 0)
+          })),
+          detail: { documentId, eventIds: rows.map((r) => Number(r.event_id)) }
+        }, actor);
       });
     } catch (error) { throw translate(error); }
   }

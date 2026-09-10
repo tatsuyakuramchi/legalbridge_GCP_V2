@@ -10,6 +10,7 @@ import { MatterFlow } from "./MatterFlow.js";
 import { MatterTimeline } from "./MatterTimeline.js";
 import { MatterDrive } from "./MatterDrive.js";
 import { MatterConditions, MatterDocuments } from "./MatterLinks.js";
+import { MatterStatement } from "./MatterStatement.js";
 import { Relations, type EntityKind } from "./Relations.js";
 
 
@@ -388,8 +389,14 @@ export function MattersWorkspace(
                   </div>
 
                   {tab === "conditions" && (
-                    <MatterConditions detail={detail} onChanged={relink}
-                      onOpenCondition={onOpenCondition} />
+                    <div className="stack">
+                      <MatterConditions detail={detail} onChanged={relink}
+                        onOpenCondition={onOpenCondition} />
+                      {/* 取引モデルが何本あっても計算書は1枚。条件ごとに1枚ずつ
+                          出す口しか無く、束ねる手段が画面にもサーバにも無かった。 */}
+                      <MatterStatement detail={detail}
+                        onChanged={relink} onOpenDocument={onOpenDocument} />
+                    </div>
                   )}
 
                   {tab === "documents" && (

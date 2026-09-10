@@ -4,7 +4,7 @@ import { recordAudit } from "../core/audit.js";
 import { calculateFee, type FeeResult } from "./calc.js";
 import { computeRoyaltyPayment, resolveWithholdingEnabled, type PaymentBreakdown } from "./tax.js";
 import {
-  buildAdjustments, buildFeeTerms, taxRateFor, toMajor, toMinor,
+  buildAdjustments, buildFeeTerms, ppmToPct, taxRateFor, toMajor, toMinor,
   type ConditionEconomics, type ReportedResult
 } from "./economics.js";
 
@@ -40,7 +40,15 @@ export interface StatementBasis {
 }
 
 export interface CalculationPreview {
-  condition: { id: number; conditionNo: string | null; currency: string; pricingModel: string };
+  condition: {
+    id: number; conditionNo: string | null; currency: string; pricingModel: string;
+    /** 束ねた計算書の行に出す見出し。 */
+    name: string; kind: string; direction: string; counterpartyId: number | null;
+    agreementTitle: string | null; agreementNo: string | null;
+    /** 印字用の条件そのものの値（主単位・%）。 */
+    ratePct: number; unitAmount: number; mgAmount: number; agAmount: number;
+    taxRatePct: number;
+  };
   /** エンジンの結果（主単位）。画面はこれをそのまま表示できる。 */
   fee: FeeResult;
   /** 支払側の内訳。源泉は相手先が個人なら自動で対象になる。 */
@@ -193,102 +201,148 @@ export class RoyaltyStatementService {
   ): Promise<{ statementId: number; eventId: number; netMinor: number }> {
     try {
       return await inTransaction(this.database, async (client) => {
-        const document = await client.query(
-          "SELECT id, status FROM documents WHERE id = $1 FOR UPDATE", [input.documentId]);
-        const documentRow = document.rows[0] as { status?: string } | undefined;
-        if (!documentRow) throw new DomainError("NOT_FOUND", `文書 ${input.documentId} が見つかりません`);
-        if (documentRow.status !== "issued") {
-          throw new DomainError("CONFLICT", "発行済みの文書にだけ計算書を結び付けられます");
-        }
-        const already = await client.query(
-          "SELECT id FROM statements WHERE document_id = $1", [input.documentId]);
-        if (already.rows[0]) {
-          throw new DomainError("CONFLICT", "この文書にはすでに計算書があります");
-        }
-
-        // 画面から来た金額は使わず、ここで計算し直す。
-        const resolved = await this.resolveInput(client, input);
-        const calcInput = resolved.input;
-        const result = await this.calculate(client, calcInput, resolved.events);
-        // 実績と計算書は、実際に計算に使った版にぶら下げる。渡された版に
-        // 付けると、料率と実績の版が食い違って後から検算できない。
-        const conditionId = result.appliedVersion?.id ?? input.conditionId;
-
-        const statement = await client.query(
-          `INSERT INTO statements
-             (document_id, condition_id, period, currency, gross_amount, mg_topup, ag_offset,
-              net_amount, tax_amount)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-           RETURNING id`,
-          [input.documentId, conditionId, calcInput.period, result.condition.currency,
-           result.amounts.grossMinor, result.amounts.mgTopupMinor, result.amounts.agOffsetMinor,
-           result.amounts.netMinor, result.amounts.taxMinor]
-        );
-        const statementId = Number((statement.rows[0] as { id: number }).id);
-
-        let eventId: number;
-        if (resolved.events.length) {
-          // 実績の束。新しい実績は作らず、選んだ実績を計算書と文書に結ぶ。
-          // 明細は実績1件が1行。額は根拠の比で按分し、端数は最終行に寄せる
-          // （MG の上乗せ・AG の相殺は明細に割らず、合計欄だけに出る）。
-          const net = result.amounts.netMinor;
-          const shares = apportion(net, resolved.events.map((e) => e.share));
-          for (const [i, e] of resolved.events.entries()) {
-            await client.query(
-              `INSERT INTO statement_lines
-                 (statement_id, line_no, condition_id, event_id, quantity, sample_quantity,
-                  unit_amount, rate_ppm, sales_input, fx_rate, amount)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-              [statementId, i + 1, conditionId, e.eventId, e.quantity, e.sampleQuantity,
-               null, null, e.salesInput, null, shares[i]]);
-          }
-          await client.query(
-            `UPDATE condition_events SET document_id = $2
-              WHERE id = ANY($1::bigint[]) AND document_id IS NULL`,
-            [resolved.events.map((e) => e.eventId), input.documentId]);
-          eventId = resolved.events[0].eventId;
-        } else {
-          // 実績を渡されていない（試算からの近道）。実績を1件立てて結ぶ。
-          const event = await client.query(
-            `INSERT INTO condition_events
-               (condition_id, event_type, occurred_on, period, quantity, sample_quantity,
-                gross_amount, deductions, amount, document_id, created_by)
-             VALUES ($1, $2, COALESCE($3::date, current_date), $4, $5, $6, $7, $8, $9, $10, $11)
-             RETURNING id`,
-            [conditionId, input.eventType ?? "sales", calcInput.occurredOn ?? null, calcInput.period,
-             calcInput.reported.quantity ?? null, calcInput.reported.sampleQuantity ?? null,
-             result.amounts.grossMinor, result.amounts.agOffsetMinor, result.amounts.netMinor,
-             input.documentId, actor]
-          );
-          eventId = Number((event.rows[0] as { id: number }).id);
-          await client.query(
-            `INSERT INTO statement_lines
-               (statement_id, line_no, condition_id, event_id, quantity, sample_quantity,
-                unit_amount, rate_ppm, sales_input, fx_rate, amount)
-             VALUES ($1, 1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-            [statementId, conditionId, eventId,
-             calcInput.reported.quantity ?? null, calcInput.reported.sampleQuantity ?? null,
-             null, null, calcInput.reported.salesInput ?? null, calcInput.reported.fxRate ?? null,
-             result.amounts.netMinor]
-          );
-        }
-
-        await recordAudit(client, {
-          actor, action: "royalty.finalize", targetType: "statement", targetId: statementId,
-          detail: {
-            conditionId, requestedConditionId: input.conditionId,
-            appliedVersion: result.appliedVersion,
-            documentId: input.documentId, period: calcInput.period,
-            eventIds: resolved.events.map((e) => e.eventId),
-            gross: result.amounts.grossMinor, net: result.amounts.netMinor,
-            agOffset: result.amounts.agOffsetMinor, mgTopup: result.amounts.mgTopupMinor,
-            formula: result.fee.formula_breakdown
-          }
-        });
-
-        return { statementId, eventId, netMinor: result.amounts.netMinor };
+        await this.lockIssuedDocument(client, input.documentId);
+        return await this.finalizeOne(client, input, actor);
       });
     } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 複数の条件を1枚の計算書にまとめて確定する。
+   *
+   * 作品ひとつに取引モデルが何本もある（自社製造・自社販売、再許諾…）とき、
+   * 相手先に出すのは1枚。条件ごとに1本ずつ紙を出すのは実務と合わない。
+   * 計算は条件ごとに行い（料率も MG・AG も条件ごとに違う）、計算書の行も
+   * 条件ごとに作る。1枚に束ねるのは印字と支払のまとめ方だけ。
+   */
+  async finalizeAll(
+    inputs: Array<CalculationInput & { documentId: number }>,
+    actor: string
+  ): Promise<Array<{ conditionId: number; statementId: number; eventId: number; netMinor: number }>> {
+    if (!inputs.length) throw new DomainError("VALIDATION", "条件を1件以上選んでください");
+    const documentIds = [...new Set(inputs.map((i) => i.documentId))];
+    if (documentIds.length !== 1) {
+      throw new DomainError("VALIDATION", "1枚の文書にまとめてください");
+    }
+    try {
+      return await inTransaction(this.database, async (client) => {
+        await this.lockIssuedDocument(client, documentIds[0]);
+        const out = [];
+        for (const input of inputs) {
+          out.push({ conditionId: input.conditionId, ...await this.finalizeOne(client, input, actor) });
+        }
+        return out;
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  private async lockIssuedDocument(client: Queryable, documentId: number): Promise<void> {
+    const document = await client.query(
+      "SELECT id, status FROM documents WHERE id = $1 FOR UPDATE", [documentId]);
+    const documentRow = document.rows[0] as { status?: string } | undefined;
+    if (!documentRow) throw new DomainError("NOT_FOUND", `文書 ${documentId} が見つかりません`);
+    if (documentRow.status !== "issued") {
+      throw new DomainError("CONFLICT", "発行済みの文書にだけ計算書を結び付けられます");
+    }
+  }
+
+  /** 条件1本ぶんの確定。呼ぶ側がトランザクションと文書の錠を持つ。 */
+  private async finalizeOne(
+    client: Queryable,
+    input: CalculationInput & { documentId: number },
+    actor: string
+  ): Promise<{ statementId: number; eventId: number; netMinor: number }> {
+    // 画面から来た金額は使わず、ここで計算し直す。
+    const resolved = await this.resolveInput(client, input);
+    const calcInput = resolved.input;
+    const result = await this.calculate(client, calcInput, resolved.events);
+    // 実績と計算書は、実際に計算に使った版にぶら下げる。渡された版に
+    // 付けると、料率と実績の版が食い違って後から検算できない。
+    const conditionId = result.appliedVersion?.id ?? input.conditionId;
+
+    // 同じ条件の計算書を1枚の文書に二重に作らない。条件が違えば作ってよい
+    // （束ねた計算書は条件ごとに1行ずつ持つ）。
+    const already = await client.query(
+      "SELECT id FROM statements WHERE document_id = $1 AND condition_id = $2",
+      [input.documentId, conditionId]);
+    if (already.rows[0]) {
+      throw new DomainError("CONFLICT",
+        `この文書には条件 ${result.condition.conditionNo ?? conditionId} の計算書がすでにあります`);
+    }
+
+    const statement = await client.query(
+      `INSERT INTO statements
+         (document_id, condition_id, period, currency, gross_amount, mg_topup, ag_offset,
+          net_amount, tax_amount)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING id`,
+      [input.documentId, conditionId, calcInput.period, result.condition.currency,
+       result.amounts.grossMinor, result.amounts.mgTopupMinor, result.amounts.agOffsetMinor,
+       result.amounts.netMinor, result.amounts.taxMinor]
+    );
+    const statementId = Number((statement.rows[0] as { id: number }).id);
+
+    let eventId: number;
+    if (resolved.events.length) {
+      // 実績の束。新しい実績は作らず、選んだ実績を計算書と文書に結ぶ。
+      // 明細は実績1件が1行。額は根拠の比で按分し、端数は最終行に寄せる
+      // （MG の上乗せ・AG の相殺は明細に割らず、合計欄だけに出る）。
+      const net = result.amounts.netMinor;
+      const shares = apportion(net, resolved.events.map((e) => e.share));
+      for (const [i, e] of resolved.events.entries()) {
+        await client.query(
+          `INSERT INTO statement_lines
+             (statement_id, line_no, condition_id, event_id, quantity, sample_quantity,
+              unit_amount, rate_ppm, sales_input, fx_rate, amount)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+          [statementId, i + 1, conditionId, e.eventId, e.quantity, e.sampleQuantity,
+           null, null, e.salesInput, null, shares[i]]);
+      }
+      await client.query(
+        `UPDATE condition_events SET document_id = $2
+          WHERE id = ANY($1::bigint[]) AND document_id IS NULL`,
+        [resolved.events.map((e) => e.eventId), input.documentId]);
+      eventId = resolved.events[0].eventId;
+    } else {
+      // 実績を渡されていない（試算からの近道）。実績を1件立てて結ぶ。
+      const event = await client.query(
+        `INSERT INTO condition_events
+           (condition_id, event_type, occurred_on, period, quantity, sample_quantity,
+            gross_amount, deductions, amount, document_id, created_by)
+         VALUES ($1, $2, COALESCE($3::date, current_date), $4, $5, $6, $7, $8, $9, $10, $11)
+         RETURNING id`,
+        [conditionId, input.eventType ?? "sales", calcInput.occurredOn ?? null, calcInput.period,
+         calcInput.reported.quantity ?? null, calcInput.reported.sampleQuantity ?? null,
+         result.amounts.grossMinor, result.amounts.agOffsetMinor, result.amounts.netMinor,
+         input.documentId, actor]
+      );
+      eventId = Number((event.rows[0] as { id: number }).id);
+      await client.query(
+        `INSERT INTO statement_lines
+           (statement_id, line_no, condition_id, event_id, quantity, sample_quantity,
+            unit_amount, rate_ppm, sales_input, fx_rate, amount)
+         VALUES ($1, 1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [statementId, conditionId, eventId,
+         calcInput.reported.quantity ?? null, calcInput.reported.sampleQuantity ?? null,
+         null, null, calcInput.reported.salesInput ?? null, calcInput.reported.fxRate ?? null,
+         result.amounts.netMinor]
+      );
+    }
+
+    await recordAudit(client, {
+      actor, action: "royalty.finalize", targetType: "statement", targetId: statementId,
+      detail: {
+        conditionId, requestedConditionId: input.conditionId,
+        appliedVersion: result.appliedVersion,
+        documentId: input.documentId, period: calcInput.period,
+        eventIds: resolved.events.map((e) => e.eventId),
+        gross: result.amounts.grossMinor, net: result.amounts.netMinor,
+        agOffset: result.amounts.agOffsetMinor, mgTopup: result.amounts.mgTopupMinor,
+        formula: result.fee.formula_breakdown
+      }
+    });
+
+    return { statementId, eventId, netMinor: result.amounts.netMinor };
   }
 
   /** 計算書の一覧。文書と条件を添えて返す。 */
@@ -357,7 +411,15 @@ export class RoyaltyStatementService {
     return {
       condition: {
         id: condition.id, conditionNo: condition.conditionNo,
-        currency, pricingModel: condition.pricingModel
+        currency, pricingModel: condition.pricingModel,
+        name: condition.name, kind: condition.kind, direction: condition.direction,
+        counterpartyId: condition.counterpartyId,
+        agreementTitle: condition.agreementTitle, agreementNo: condition.agreementNo,
+        ratePct: ppmToPct(condition.ratePpm),
+        unitAmount: toMajor(condition.unitAmount, currency),
+        mgAmount: toMajor(condition.mgAmount, currency),
+        agAmount: toMajor(condition.agAmount, currency),
+        taxRatePct: taxRateFor(condition)
       },
       fee,
       payment: { ...payment, withholdingEnabled },
@@ -381,10 +443,15 @@ export class RoyaltyStatementService {
 
   private async loadCondition(client: Queryable, id: number) {
     const r = await client.query(
-      `SELECT c.id, c.condition_no, c.currency, c.pricing_model, c.rate_ppm,
-              c.unit_amount, c.flat_amount, c.mg_amount, c.ag_amount, c.tax_category, c.status,
+      `SELECT c.id, c.condition_no, c.name, c.kind, c.direction, c.currency, c.pricing_model,
+              c.counterparty_id,
+              c.rate_ppm, c.unit_amount, c.flat_amount, c.mg_amount, c.ag_amount,
+              c.tax_category, c.status,
+              a.title AS agreement_title, a.agreement_no,
               p.withholding, p.kind AS party_kind
-         FROM conditions c LEFT JOIN parties p ON p.id = c.counterparty_id
+         FROM conditions c
+         LEFT JOIN parties p ON p.id = c.counterparty_id
+         LEFT JOIN agreements a ON a.id = c.agreement_id
         WHERE c.id = $1`, [id]);
     const row = r.rows[0] as Record<string, any> | undefined;
     if (!row) throw new DomainError("NOT_FOUND", `条件 ${id} が見つかりません`);
@@ -403,7 +470,15 @@ export class RoyaltyStatementService {
       agAmount: row.ag_amount === null ? null : Number(row.ag_amount),
       taxCategory: String(row.tax_category ?? "taxable") as ConditionEconomics["taxCategory"],
       counterpartyWithholding: row.withholding === true,
-      counterpartyKind: row.party_kind ? String(row.party_kind) : null
+      counterpartyKind: row.party_kind ? String(row.party_kind) : null,
+      // 束ねた計算書の1行に印字する。条件名・契約名・契約番号が無いと、
+      // 何本もの取引モデルが並んだときにどの行が何の分か読めない。
+      name: String(row.name ?? ""),
+      kind: String(row.kind ?? ""),
+      counterpartyId: row.counterparty_id === null ? null : Number(row.counterparty_id),
+      direction: String(row.direction ?? "out"),
+      agreementTitle: row.agreement_title ? String(row.agreement_title) : null,
+      agreementNo: row.agreement_no ? String(row.agreement_no) : null
     };
   }
 
