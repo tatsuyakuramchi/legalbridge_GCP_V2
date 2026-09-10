@@ -8,6 +8,7 @@
 #   ops fresh             本番データなしで開発用 DB を作る（模擬データ）
 #   ops grants            ランタイムロールの権限を当て直す
 #   ops upgrade           手元の DB を今のスキーマに合わせる（列を足したあと）
+#   ops sql <file>        SQL を流す（infra/v3 の診断は /v3/095_… で指せる）
 #   ops status            写しの一覧と、いま入っているデータの時点
 #   ops netcheck [host port]
 #                         同期に要る Google の口へ、コンテナから届くかを見る。
@@ -627,6 +628,8 @@ case "${1:-}" in
   fresh) fresh ;;
   grants) apply_grants ;;
   upgrade) upgrade ;;
+  sql) [ -n "${2:-}" ] || die "使い方: ops sql /v3/095_diagnose_condition.sql"
+       psql -v ON_ERROR_STOP=1 -f "$2" ;;
   status) status ;;
-  *) sed -n '2,12p' "$0"; exit 2 ;;
+  *) sed -n '2,13p' "$0"; exit 2 ;;
 esac
