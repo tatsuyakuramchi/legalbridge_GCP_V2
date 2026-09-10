@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  FIXED_DEALS, LICENSE_TERMS_VARIABLES, dealIdFor, dealSeeds,
+  FIXED_DEALS, LICENSE_TERMS_VARIABLES, dealIdFor, dealInUse, dealSeeds,
   isLicenseTermsTemplate, licenseTermsPatch, licenseTermsSeeds, materialSeeds
 } from "./license-terms.js";
 
@@ -63,8 +63,9 @@ test("取引形態の種：条件明細の範囲・MG・AG・通貨を重ねる"
   assert.equal(deals[0].mg, "100000");
   // 非加算型は条件の料率がそのまま実効料率になる。
   assert.equal(deals[1].fixedRate, "50");
-  // 当たる条件が無い形態も残す。範囲は上限を置く（未記入と上限なしを混同しない）。
+  // 当たる条件が無い形態も行は残すが、載せない。範囲は上限を置く。
   assert.equal(deals[2].conditionNo, undefined);
+  assert.equal(deals[2].use, false);
   assert.equal(deals[2].reg, "全世界");
   assert.equal(deals[2].lang, "全言語");
 });
@@ -83,7 +84,8 @@ test("構成要素の種：作品の取得条件から並べ、加算型の形�
 
 test("本文：加算型は構成要素の料率の合計、非加算型は実効料率", () => {
   const patch = licenseTermsPatch(context, {});
-  assert.equal(patch.conds.length, 3);
+  // 条件明細が当たった2種だけ載る（自社製造・他社販売は当たらないので出ない）。
+  assert.equal(patch.conds.length, 2);
   assert.equal(patch.conds[0].appliedRate, "7%", "5% + 2%");
   assert.equal(patch.conds[1].appliedRate, "50%");
   assert.equal(patch.conds[0].calcModel, "基準価格×個数×料率");
@@ -94,8 +96,8 @@ test("本文：権利元が複数なら権利元の列を出し、列数を数�
   const patch = licenseTermsPatch(context, {});
   assert.equal(patch.showHolder, true);
   assert.equal(patch.scopeColCount, 6);
-  assert.equal(patch.rateColCount, 4, "2 + 加算型 2 件");
-  assert.deepEqual(patch.lcs[0].addonRates, ["5%", "5%"]);
+  assert.equal(patch.rateColCount, 3, "2 + 載せる加算型 1 件");
+  assert.deepEqual(patch.lcs[0].addonRates, ["5%"]);
   assert.equal(patch.lcs[0].lcSourceDoc, "AGR-2026-0001");
   assert.equal(patch.lcs[1].lcSourceDoc, "本条件書（新規）", "根拠文書が無ければ新規");
 });
@@ -170,4 +172,46 @@ test("本文が差す名前を全部供給する（本番のひな形から採�
   for (const name of ["seId", "seText"]) {
     assert.ok(name in patch.specialExtras[0], `specialExtras に ${name} が無い`);
   }
+});
+
+test("取引形態は許諾するぶんだけ載せる（再許諾しかない案件に自社製造の行を出さない）", () => {
+  const only = {
+    ...context,
+    conditions: [{ id: 8, conditionNo: "CL-2026-00051", name: "再許諾", direction: "out",
+                   pricingModel: "revenue_rate", ratePct: 50, currency: "JPY",
+                   mgAmount: 0, agAmount: 0, scopes: { region: ["全世界"], language: [] } }]
+  };
+  const deals = dealSeeds(only);
+  assert.deepEqual(deals.map((d) => d.use), [false, true, false]);
+
+  const patch = licenseTermsPatch(only, {});
+  assert.equal(patch.conds.length, 1);
+  assert.equal(patch.conds[0].condName, "権利許諾（サブライセンス）");
+  // 加算型が1つも載らないので、構成要素の料率の列も出ない。
+  assert.equal(patch.rateColCount, 2);
+  assert.deepEqual(patch.lcs[0].addonRates, []);
+});
+
+test("条件明細が1つも当たらないときは3種とも出して人に選ばせる", () => {
+  const deals = dealSeeds({ conditions: [], acquisitions: [] });
+  assert.deepEqual(deals.map((d) => d.use), [true, true, true]);
+});
+
+test("載せない形態の値は消さない（載せ直せば戻る）", () => {
+  const deals: Array<Record<string, any>> =
+    dealSeeds(context).map((d) => ({ ...d, use: d.id === 2 }));
+  const patch = licenseTermsPatch(context, { v3_conds: deals });
+  assert.equal(patch.conds.length, 1);
+  // 行そのものは残っているので、載せ直せば地域も料率もそのまま。
+  assert.equal(deals[0].reg, "日本");
+});
+
+test("use が無い行は載せる扱い（手で足した行・古い下書きを落とさない）", () => {
+  assert.equal(dealInUse({ name: "自由記載" }), true);
+  assert.equal(dealInUse({ name: "自由記載", use: false }), false);
+  const patch = licenseTermsPatch(context, {
+    v3_conds: [{ id: 9, name: "自由記載", addon: false, fixedRate: "3" }]
+  });
+  assert.equal(patch.conds.length, 1);
+  assert.equal(patch.conds[0].appliedRate, "3%");
 });

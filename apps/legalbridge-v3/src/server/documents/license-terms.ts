@@ -135,13 +135,19 @@ const joined = (labels: unknown) => (Array.isArray(labels) ? labels.join("・") 
  */
 export function dealSeeds(context: Data): Data[] {
   const granted = (context.conditions ?? []).filter((c: Data) => c.direction === "out");
+  const matched = FIXED_DEALS.filter((deal) => granted.some((c: Data) => dealIdFor(c) === deal.id));
   return FIXED_DEALS.map((deal) => {
     const match = granted.find((c: Data) => dealIdFor(c) === deal.id);
-    // 当たる条件が無い形態も残す（人が使うかもしれない）。範囲は上限を置いて
-    // おく。空欄のまま出すと、上限なしなのか未記入なのかが読めない。
-    if (!match) return { ...deal, reg: deal.maxReg, lang: deal.maxLang };
+    if (!match) {
+      // 当たる条件が無い形態。行そのものは残すが、載せるかどうかは別。
+      // 条件明細から1つでも当たっているなら、当たらなかった形態は載せない
+      // （再許諾だけの案件に「自社製造・自社販売」の行が出ていた）。
+      // 何も当たらないときは3種とも出して、人に選んでもらう。
+      return { ...deal, use: matched.length === 0, reg: deal.maxReg, lang: deal.maxLang };
+    }
     return {
       ...deal,
+      use: true,
       conditionId: match.id,
       conditionNo: match.conditionNo ?? null,
       // 非加算型（サブライセンス）は条件の料率がそのまま実効料率になる。
@@ -153,6 +159,16 @@ export function dealSeeds(context: Data): Data[] {
     };
   });
 }
+
+/**
+ * この条件書に載せる形態か。
+ *
+ * 固定3種は「料率合算の軸」を揃えるための決め打ちで、3種すべてを毎回
+ * 許諾するという意味ではない。再許諾しかしない案件に自社製造の行が出ると、
+ * 許諾していない取引の条件を書いた紙になる。
+ * use が無い行（手で足した行・古い下書き）は載せる扱いにする。
+ */
+export const dealInUse = (deal: Data): boolean => deal.use !== false;
 
 /** 条件明細がどの取引形態にあたるか。計算方式で決まる。 */
 export function dealIdFor(condition: Data): number | null {
@@ -203,7 +219,9 @@ export function licenseTermsSeeds(context: Data): Record<string, Data[]> {
 
 export function licenseTermsPatch(context: Data, manual: Data = {}): Data {
   const seeds = licenseTermsSeeds(context);
-  const deals = list(manual.v3_conds).length ? list(manual.v3_conds) : seeds.v3_conds;
+  const all = list(manual.v3_conds).length ? list(manual.v3_conds) : seeds.v3_conds;
+  // 載せない形態は表からも料率の列からも消す。値は消さないので、載せ直せば戻る。
+  const deals = all.filter(dealInUse);
   const materials = list(manual.v3_lcs).length ? list(manual.v3_lcs) : seeds.v3_lcs;
 
   /** 加算型は構成要素の料率の合計、非加算型は実効料率。 */

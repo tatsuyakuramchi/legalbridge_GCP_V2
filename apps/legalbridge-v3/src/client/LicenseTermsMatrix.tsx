@@ -46,7 +46,9 @@ export function LicenseTermsMatrix(
   const materialRows = materials ?? seedMaterials;
   const slRows = sublicensees ?? [];
   const extraRows = extras ?? [];
-  const addons = dealRows.filter((d) => Boolean(d.addon));
+  // 載せる形態だけを数える。載せない形態の料率の列は構成要素にも出さない。
+  const used = dealRows.filter((d) => d.use !== false);
+  const addons = used.filter((d) => Boolean(d.addon));
 
   const setDeal = (index: number, patch: Row) =>
     onChange("v3_conds", dealRows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
@@ -57,12 +59,13 @@ export function LicenseTermsMatrix(
 
   // 料率が入っているのに素材コードが無い行は、台帳と結線されない。
   // 黙って弱いデータを入れないよう、決定する前に見せる。
-  const warnings = materialRows.flatMap((row, i) => {
+  const warnings = (used.length ? [] : ["載せる取引形態がありません。1つ以上選んでください"])
+    .concat(materialRows.flatMap((row, i) => {
     const has = Object.values(rates(row)).some((v) => String(v ?? "").trim() !== "");
     return has && !text(row.material_code).trim()
       ? [`構成要素${i + 1}（${text(row.name) || "名称未設定"}）に素材コードがありません`]
       : [];
-  });
+    }));
 
   const changed = deals !== null || materials !== null;
   const setSl = (index: number, patch: Row) =>
@@ -110,15 +113,22 @@ export function LicenseTermsMatrix(
 
           <div className="stack" style={{ gap: 6 }}>
             <div className="row">
-              <b>取引形態（固定3種）</b>
+              <b>取引形態</b>
               <span className="faint">
-                加算型は構成要素の料率の合計が実効料率になります。非加算型は実効料率をここに入れます
+                この条件書で許諾するものだけ選びます（{used.length}／{dealRows.length}）。
+                加算型は構成要素の料率の合計が実効料率、非加算型は実効料率をここに入れます
               </span>
             </div>
             {dealRows.map((deal, index) => (
-              <div key={String(deal.id ?? index)} className="trace">
+              <div key={String(deal.id ?? index)} className="trace"
+                   style={deal.use === false ? { opacity: 0.55 } : undefined}>
                 <div className="row">
-                  <b>{index + 1}. {text(deal.name)}</b>
+                  {/* 3種すべてを毎回許諾するわけではない。載せるものだけ選ぶ。 */}
+                  <label className="row" style={{ gap: 6 }}>
+                    <input type="checkbox" checked={deal.use !== false}
+                           onChange={(e) => setDeal(index, { use: e.target.checked })} />
+                    <b>{text(deal.name)}</b>
+                  </label>
                   <span className="tag">{deal.addon ? "加算型" : "非加算型"}</span>
                   <span className="faint">
                     {CALC_LABEL[text(deal.calc_type)] ?? "—"}／基準: {text(deal.basePrice) || "—"}
@@ -127,8 +137,13 @@ export function LicenseTermsMatrix(
                     <span className="code faint" style={{ marginLeft: "auto" }}>
                       {text(deal.conditionNo)} から
                     </span>
-                  ) : null}
+                  ) : (
+                    <span className="faint" style={{ marginLeft: "auto" }}>条件明細なし</span>
+                  )}
                 </div>
+                {deal.use === false ? (
+                  <span className="faint">この条件書には載せません</span>
+                ) : (
                 <div className="row">
                   {!deal.addon && (
                     <label className="field">
@@ -168,6 +183,7 @@ export function LicenseTermsMatrix(
                            onChange={(e) => setDeal(index, { cur: e.target.value })} />
                   </label>
                 </div>
+                )}
               </div>
             ))}
           </div>
@@ -282,7 +298,7 @@ export function LicenseTermsMatrix(
             {!slRows.length && <span className="faint">まだありません</span>}
           </div>
           <datalist id="v3-deal-names">
-            {dealRows.map((d, i) => <option key={i} value={text(d.name)} />)}
+            {used.map((d, i) => <option key={i} value={text(d.name)} />)}
           </datalist>
 
           {/* 特記事項。条項の追加。 */}
