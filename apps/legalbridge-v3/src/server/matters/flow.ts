@@ -56,6 +56,11 @@ export interface FlowStep {
   done: boolean;
   /** 済／未の根拠。 */
   detail: string;
+  /**
+   * この段階の作業をする場所。案件の中身のタブ名。
+   * 工程を見て「次はこれ」と分かっても、どこで手を動かすかが分からなければ止まる。
+   */
+  tab?: "conditions" | "documents" | "payments" | "communications";
 }
 
 const doc = (facts: FlowFacts) =>
@@ -72,6 +77,7 @@ function documentStep(f: FlowFacts, no: number, fallbackName: string): FlowStep 
     const got = f.importedDocuments > 0;
     return {
       no, name: "相手方の文書を確認",
+      tab: "documents",
       done: got,
       detail: got
         ? `取り込んだ文書 ${f.importedDocuments} 件`
@@ -81,6 +87,7 @@ function documentStep(f: FlowFacts, no: number, fallbackName: string): FlowStep 
   if (f.documentStyle === "own_template") {
     return {
       no, name: "ひな形から文書を決定",
+      tab: "documents",
       done: f.issuedDocuments.length > 0,
       detail: f.issuedDocuments.length
         ? doc(f)
@@ -92,6 +99,7 @@ function documentStep(f: FlowFacts, no: number, fallbackName: string): FlowStep 
   if (f.documentStyle === "own_draft") {
     return {
       no, name: "自社ドラフトを決定",
+      tab: "documents",
       done: f.issuedDocuments.length > 0,
       detail: f.issuedDocuments.length
         ? doc(f)
@@ -102,6 +110,7 @@ function documentStep(f: FlowFacts, no: number, fallbackName: string): FlowStep 
   }
   return {
     no, name: fallbackName,
+    tab: "documents",
     done: f.issuedDocuments.length > 0 || f.importedDocuments > 0,
     detail: f.documentStyle === null && !f.issuedDocuments.length && !f.importedDocuments
       ? "進め方が未設定。他社レビューか自社ドラフトかを決めると、次にやることが決まる"
@@ -116,22 +125,22 @@ const eventsOf = (facts: FlowFacts, types: string[]) =>
 function licenseSteps(f: FlowFacts): FlowStep[] {
   const received = eventsOf(f, ["sales", "manufacturing", "sublicense_receipt"]);
   return [
-    { no: 1, name: "権利の上限確認", done: f.conditionsWithWork > 0,
+    { no: 1, name: "権利の上限確認", tab: "conditions", done: f.conditionsWithWork > 0,
       detail: f.conditionsWithWork > 0
         ? `作品に紐づく条件 ${f.conditionsWithWork} 件`
         : "作品に紐づく条件がない。許諾できる上限が決まらない" },
-    { no: 2, name: "条件の合意", done: f.activeConditionCount > 0,
+    { no: 2, name: "条件の合意", tab: "conditions", done: f.activeConditionCount > 0,
       detail: f.activeConditionCount > 0
         ? `有効な条件 ${f.activeConditionCount} 件`
         : "条件が登録されていない" },
     f.agreementExecuted
-      ? { no: 3, name: "契約書の締結", done: true,
+      ? { no: 3, name: "契約書の締結", tab: "documents", done: true,
           detail: `合意 ${f.agreementNo ?? ""} 締結済み`.trim() }
       : documentStep(f, 3, "契約書の締結"),
-    { no: 4, name: "実績の受領", done: received > 0,
+    { no: 4, name: "実績の受領", tab: "conditions", done: received > 0,
       detail: received > 0
         ? `実績 ${received} 件（直近 ${f.latestEventOn ?? "—"}）` : "実績の記録がない" },
-    { no: 5, name: "計算書と分配", done: f.statements > 0 || f.payments.paid > 0,
+    { no: 5, name: "計算書と分配", tab: "payments", done: f.statements > 0 || f.payments.paid > 0,
       detail: f.statements > 0
         ? `計算書 ${f.statements} 件` : f.payments.paid > 0
           ? `支払済み ${f.payments.paid} 件` : "計算書も支払もない" }
@@ -143,21 +152,27 @@ function outsourcingSteps(f: FlowFacts): FlowStep[] {
   const delivered = eventsOf(f, ["delivery", "manufacturing", "service_period"]);
   const inspected = eventsOf(f, ["inspection"]);
   return [
-    { no: 1, name: "基本契約の確認", done: f.agreementExecuted,
+    { no: 1, name: "基本契約の確認", tab: "documents", done: f.agreementExecuted,
       detail: f.agreementExecuted
         ? `合意 ${f.agreementNo ?? ""} 締結済み`.trim()
         : "締結済みの合意に紐づいていない" },
-    documentStep(f, 2, "発注"),
-    { no: 3, name: "納品・報告", done: delivered > 0,
+    // 発注書も検収書も条件明細から出る。ここが無いと「文書を作る」で
+    // 選ぶものが無く、どこで登録するのかが画面から読めない。
+    { no: 2, name: "条件明細の登録", tab: "conditions", done: f.activeConditionCount > 0,
+      detail: f.activeConditionCount > 0
+        ? `有効な条件 ${f.activeConditionCount} 件`
+        : "委託の中身（金額・納期・支払条件）を条件明細に入れる。発注書はここから出る" },
+    documentStep(f, 3, "発注"),
+    { no: 4, name: "納品・報告", tab: "conditions", done: delivered > 0,
       detail: delivered > 0
         ? `納品・製造の実績 ${delivered} 件（直近 ${f.latestEventOn ?? "—"}）`
-        : "納品の記録がない" },
-    { no: 4, name: "検収", done: inspected > 0,
-      detail: inspected > 0 ? `検収の実績 ${inspected} 件` : "検収の記録がない" },
-    { no: 5, name: "支払", done: f.payments.paid > 0,
+        : "納品の記録がない。条件明細の実績に入れる" },
+    { no: 5, name: "検収", tab: "conditions", done: inspected > 0,
+      detail: inspected > 0 ? `検収の実績 ${inspected} 件` : "検収の記録がない。条件明細の実績に入れる" },
+    { no: 6, name: "支払", tab: "payments", done: f.payments.paid > 0,
       detail: f.payments.total > 0
         ? `支払 ${f.payments.total} 件のうち ${f.payments.paid} 件が支払済み`
-        : "支払がない" }
+        : "支払がない。検収書から支払を立てる" }
   ];
 }
 
@@ -167,12 +182,12 @@ function outsourcingSteps(f: FlowFacts): FlowStep[] {
  */
 function documentSteps(f: FlowFacts): FlowStep[] {
   return [
-    { no: 1, name: "相談の受付", done: true, detail: "案件が立っている" },
+    { no: 1, name: "相談の受付", tab: "communications", done: true, detail: "案件が立っている" },
     documentStep(f, 2, "文書の用意"),
-    { no: 3, name: "締結", done: f.agreementExecuted || f.issuedDocuments.length > 0,
+    { no: 3, name: "締結", tab: "documents", done: f.agreementExecuted || f.issuedDocuments.length > 0,
       detail: f.agreementExecuted
         ? `合意 ${f.agreementNo ?? ""} 締結済み`.trim() : doc(f) },
-    { no: 4, name: "完了", done: f.matterStatus === "done",
+    { no: 4, name: "完了", tab: "communications", done: f.matterStatus === "done",
       detail: f.matterStatus === "done" ? "案件が完了" : "案件がまだ開いている" }
   ];
 }

@@ -347,3 +347,7 @@ button.pipe-step{font:inherit;text-align:left;cursor:pointer;color:inherit;backg
 /* 決定したあとの結果。次に何をするかまで置く。 */
 .done-note{display:flex;flex-direction:column;gap:8px}
 .done-note .row{gap:8px;align-items:center;flex-wrap:wrap}
+
+/* 工程の段階は押すとその作業のタブへ移る。ボタンでも見た目は帯のまま。 */
+button.pipe-step{font:inherit;color:inherit;text-align:left;cursor:pointer}
+button.pipe-step:hover{border-color:var(--accent)}

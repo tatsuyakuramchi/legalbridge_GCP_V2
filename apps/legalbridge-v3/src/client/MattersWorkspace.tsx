@@ -269,7 +269,8 @@ export function MattersWorkspace(
                 </div>
                 <div className="panel-bd stack">
                   <div className="title">{detail.title}</div>
-                  <MatterFlow matterId={detail.id} reloadKey={linkVersion} />
+                  <MatterFlow matterId={detail.id} reloadKey={linkVersion}
+                          onGo={(t) => setTab(t)} />
                   <dl className="dl">
                     <dt>取引モデル</dt>
                     <dd>{KIND_LABEL[detail.kind]}
