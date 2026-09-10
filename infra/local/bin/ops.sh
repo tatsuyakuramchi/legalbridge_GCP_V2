@@ -6,7 +6,10 @@
 #   ops fresh             本番データなしで開発用 DB を作る（模擬データ）
 #   ops grants            ランタイムロールの権限を当て直す
 #   ops status            写しの一覧と、いま入っているデータの時点
-#   ops netcheck          同期に要る Google の口へ、コンテナから届くかを見る
+#   ops netcheck [host port]
+#                         同期に要る Google の口へ、コンテナから届くかを見る。
+#                         host port を足すと、そこへの TCP 接続も試す
+#                         （例: ops netcheck 34.146.158.194 3307）
 #
 # ローカル DB への接続は PGHOST / PGUSER / PGPASSWORD / PGDATABASE（compose が渡す）。
 set -euo pipefail
@@ -96,7 +99,16 @@ sync() {
     pg_isready -h 127.0.0.1 -p 5433 -q && break
     sleep 1
   done
-  pg_isready -h 127.0.0.1 -p 5433 -q || { cat /tmp/proxy.log >&2; die "Proxy がつながりません"; }
+  if ! pg_isready -h 127.0.0.1 -p 5433 -q; then
+    echo "--- proxy log ---" >&2; tail -n 5 /tmp/proxy.log >&2
+    if grep -q "connection refused\|i/o timeout" /tmp/proxy.log; then
+      echo >&2
+      echo "Cloud SQL の 3307 番へ届いていません。社内ネットワークがこの番号を" >&2
+      echo "塞いでいる可能性があります。ログの IP を使って確かめてください:" >&2
+      echo "  docker compose run --rm ops netcheck <ログに出た IP> 3307" >&2
+    fi
+    die "Proxy がつながりません"
+  fi
 
   local file="$DUMPS/v3_$(date '+%Y%m%d_%H%M').dump"
   log "本番の v3 スキーマを写す → $file"
@@ -146,7 +158,7 @@ status() {
 netcheck() {
   local ng=0
   for host in oauth2.googleapis.com sqladmin.googleapis.com; do
-    printf '%-28s ' "$host"
+    printf '%-34s ' "$host:443"
     local code
     code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "https://$host/" 2>/dev/null) || code=""
     if [ -n "$code" ] && [ "$code" != "000" ]; then
@@ -156,18 +168,30 @@ netcheck() {
       ng=1
     fi
   done
+
+  # 追加の TCP 確認。Cloud SQL の実体は 3307 番を使う。443 が通っても
+  # ここが塞がれていると Proxy は使えないので、番号ごとに分けて見る。
+  if [ -n "${1:-}" ] && [ -n "${2:-}" ]; then
+    printf '%-34s ' "$1:$2"
+    if nc -z -w 10 "$1" "$2" 2>/dev/null; then
+      echo "OK (つながる)"
+    else
+      echo "つながりません"
+      ng=1
+    fi
+  fi
+
   if [ "$ng" = 1 ]; then
     echo
-    echo "コンテナからも Google に届いていません。Cloud SQL Auth Proxy を使う同期は"
-    echo "この PC では動きません。README の「gcloud も Proxy も通らないとき」を見てください。"
+    echo "塞がれている口があります。README の「gcloud も Proxy も通らないとき」を見てください。"
     return 1
   fi
   echo
-  echo "コンテナからは届いています。ops login でログインできます。"
+  echo "確かめた口はすべて通っています。"
 }
 
 case "${1:-}" in
-  netcheck) netcheck ;;
+  netcheck) shift; netcheck "$@" ;;
   sync) sync ;;
   restore) [ -n "${2:-}" ] || die "使い方: ops restore /dumps/v3_YYYYmmdd_HHMM.dump"; restore "$2" ;;
   fresh) fresh ;;

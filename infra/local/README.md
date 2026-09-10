@@ -129,9 +129,22 @@ docker compose run --rm login            # 届くならこれでログインす�
 
 ### gcloud も Proxy も通らないとき
 
-`ops netcheck` がコンテナからも「つながりません」と言う場合、この PC からは
-Cloud SQL Auth Proxy を使えない。ネットワークの担当者に
-`oauth2.googleapis.com` と `sqladmin.googleapis.com` への接続を許可してもらうのが本筋。
+同期は 2 種類の口を使う。片方だけ塞がれていることがあるので分けて確かめる。
+
+| 行き先 | 番号 | 使いみち |
+| --- | --- | --- |
+| `oauth2.googleapis.com` / `sqladmin.googleapis.com` | 443 | ログインとインスタンスの情報 |
+| Cloud SQL インスタンスの IP | 3307 | Proxy から DB への通信 |
+
+```powershell
+docker compose run --rm ops netcheck                        # 443 の 2 つ
+docker compose run --rm ops netcheck 34.146.158.194 3307    # DB への口（IP は proxy log に出る）
+```
+
+`connection refused` は社内ネットワークが番号ごとに止めている典型。ネットワークの
+担当者に、この PC からの **外向き TCP 3307 番**（宛先は Cloud SQL の IP）を
+許可してもらうのが本筋。Cloud SQL を社外から使うときの標準的な要件なので、
+依頼としては通りやすい。
 
 それが通らないなら、毎晩の自動同期は諦めて、ブラウザだけで写しを作る運用にする。
 
