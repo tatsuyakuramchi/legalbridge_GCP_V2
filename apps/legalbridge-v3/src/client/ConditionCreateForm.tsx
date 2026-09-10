@@ -14,6 +14,11 @@ import { searchParties } from "./SearchSelect.js";
  * 相手先と作品の一覧は開いたときに取りに行く（登録するときにしか要らない）。
  */
 
+interface Agreement {
+  id: number; agreementNo: string | null; title: string;
+  counterparty: { id: number; name: string } | null;
+}
+
 const text = (v: unknown) => { const s = String(v ?? "").trim(); return s || undefined; };
 const int = (v: unknown) => { const n = Number(v); return Number.isFinite(n) && n ? n : undefined; };
 
@@ -25,16 +30,23 @@ export function ConditionCreateForm(
      * 条件の種類も案件が知っている。埋めないと、必須7項目を人が
      * もう一度入れることになる。
      */
-    preset?: Partial<Record<"direction" | "kind" | "counterpartyId", string>>;
+    preset?: Partial<Record<
+      "direction" | "kind" | "counterpartyId" | "workId" | "agreementId"
+      | "currency" | "taxCategory" | "pricingModel" | "name", string>>;
     onDone: (created: { id: number }) => void;
     onCancel: () => void;
   }
 ) {
   const [works, setWorks] = useState<Array<{ id: number; title: string }>>([]);
+  const [agreements, setAgreements] = useState<Agreement[]>([]);
 
   useEffect(() => {
     api.get<{ works: Array<{ id: number; title: string }> }>("/works")
       .then((w) => setWorks(w.works)).catch(() => undefined);
+    // 条件は契約（合意）の明細。どの契約の下の条件かが入っていないと、
+    // 契約から条件を辿れず、計算書の契約名・契約番号も空で出る。
+    api.get<{ agreements: Agreement[] }>("/agreements")
+      .then((a) => setAgreements(a.agreements)).catch(() => undefined);
   }, []);
 
   return (
@@ -56,7 +68,16 @@ export function ConditionCreateForm(
         { name: "counterpartyId", label: "相手先", type: "search", required: true,
           search: searchParties, placeholder: "取引先名・コードで探す" },
         { name: "workId", label: "作品", type: "search",
-          options: works.map((w) => ({ value: String(w.id), label: w.title })) },
+          options: works.map((w) => ({ value: String(w.id), label: w.title })),
+          hint: "ライセンスの条件は作品にぶら下げる。ここが空だと権利の上限を計算できない" },
+        // 相手先が分かっているときは、その相手先の契約だけを候補にする。
+        { name: "agreementId", label: "契約（合意）", type: "search",
+          options: agreements
+            .filter((a) => !preset?.counterpartyId
+              || String(a.counterparty?.id ?? "") === preset.counterpartyId)
+            .map((a) => ({ value: String(a.id), label: a.title,
+                           hint: [a.agreementNo, a.counterparty?.name].filter(Boolean).join("／") })),
+          hint: "計算書の契約名・契約番号はここから出る" },
         { name: "termStart", label: "開始", type: "date" },
         { name: "termEnd", label: "終了", type: "date" },
         { name: "currency", label: "通貨", type: "select", required: true,
@@ -116,6 +137,7 @@ export function ConditionCreateForm(
         return {
           name: text(v.name), direction: v.direction, kind: v.kind,
           counterpartyId: int(v.counterpartyId), workId: int(v.workId),
+          agreementId: int(v.agreementId),
           termStart: text(v.termStart), termEnd: text(v.termEnd),
           currency: v.currency || "JPY", pricingModel: v.pricingModel,
           // 画面は % で受け、保存は ppm（百万分率）。12.5% → 125000

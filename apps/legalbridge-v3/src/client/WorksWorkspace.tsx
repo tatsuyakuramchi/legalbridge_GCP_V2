@@ -4,6 +4,7 @@ import type { ConditionSummary, RightsEnvelope } from "../server/core/model.js";
 import { api, ApiError } from "./api.js";
 import { Relations, type EntityKind } from "./Relations.js";
 import { CreateForm, int, text } from "./CreateForm.js";
+import { WorkCreateForm } from "./WorkCreateForm.js";
 
 interface WorkRow { id: number; workCode: string | null; title: string; kind: string; status: string }
 interface Part { id: number; partNo: number; name: string; partType: string; royaltyBearing: boolean }
@@ -76,32 +77,9 @@ export function WorksWorkspace(
       </div>
 
       {creating === "work" && (
-        <CreateForm
-          title="作品の登録"
-          path="/works"
-          initial={{ kind: "own", status: "planning" }}
-          fields={[
-            { name: "title", label: "作品名", required: true },
-            { name: "titleKana", label: "カナ" },
-            { name: "kind", label: "種別", type: "select", required: true,
-              options: [{ value: "own", label: "自社作品" }, { value: "source_ip", label: "原作IP" },
-                        { value: "derivative", label: "派生作品" }] },
-            { name: "status", label: "状態", type: "select", required: true,
-              options: [{ value: "planning", label: "企画中" }, { value: "in_production", label: "制作中" },
-                        { value: "released", label: "発売済" }, { value: "archived", label: "終了" }] },
-            { name: "businessLine", label: "事業区分" },
-            { name: "parentWorkId", label: "親作品ID", type: "number",
-              visibleWhen: (v) => v.kind === "derivative",
-              hint: "指定すると系譜に登録する" },
-            { name: "remarks", label: "備考", type: "textarea" }
-          ]}
-          toPayload={(v) => ({
-            title: text(v.title), titleKana: text(v.titleKana), kind: v.kind, status: v.status,
-            businessLine: text(v.businessLine), parentWorkId: int(v.parentWorkId), remarks: text(v.remarks)
-          })}
+        <WorkCreateForm
           onDone={(r) => { setCreating(null); reloadWorks(r.id); }}
-          onCancel={() => setCreating(null)}
-        />
+          onCancel={() => setCreating(null)} />
       )}
 
       {creating === "part" && selected && (

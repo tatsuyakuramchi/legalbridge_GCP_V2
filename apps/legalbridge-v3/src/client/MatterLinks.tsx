@@ -3,6 +3,7 @@ import type { MatterDetail, MatterKind } from "../server/core/model.js";
 import { api, ApiError } from "./api.js";
 import { ListSearch, useDebounced } from "./ListTools.js";
 import { ConditionCreateForm } from "./ConditionCreateForm.js";
+import { WorkChooser, type WorkOption } from "./WorkChooser.js";
 import { DocumentImport } from "./DocumentImport.js";
 import { CONDITION_KIND_LABEL, MATTER_KIND_LABEL, StatusTag } from "./labels.js";
 
@@ -36,9 +37,24 @@ export function MatterConditions(
   const [candidates, setCandidates] = useState<CandidateCondition[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [made, setMade] = useState<number | null>(null);
+  const [work, setWork] = useState<WorkOption | null>(null);
 
   const allowed = ALLOWED_KINDS[detail.kind] ?? [];
   const linked = new Set(detail.conditions.map((c) => c.id));
+
+  // ライセンスは作品が軸。作品ひとつに、取引モデルの違う条件（自社製造・自社販売、
+  // 再許諾…）が何本も並ぶ。だから作品を先に決め、条件はそこから1本ずつ作る。
+  const licensing = detail.kind === "work";
+  // 2本目以降は、1本目が知っていることを引き継ぐ。作品・相手先・契約・通貨を
+  // 毎回入れ直させると、同じ作品の条件が別々の契約にぶら下がって食い違う。
+  const last = detail.conditions[detail.conditions.length - 1] ?? null;
+
+  useEffect(() => {
+    if (work) return;
+    const first = detail.conditions.map((c) => c.work).find(Boolean);
+    if (first) setWork({ id: first.id, title: first.title, workCode: first.workCode });
+  }, [detail.conditions]);
 
   useEffect(() => {
     if (!picking) return;
@@ -89,26 +105,65 @@ export function MatterConditions(
             {/* 案件を見ながら新しい条件を作れるようにする。以前は「条件の画面で
                 作ってください」と案内していて、作ってから案件へ戻って繋ぎ直す
                 往復が要った。 */}
-            <button className="btn btn-sm primary"
-                    onClick={() => setMaking(true)}>新しい条件を作る</button>
+            <button className="btn btn-sm primary" disabled={licensing && !work}
+                    onClick={() => { setMade(null); setMaking(true); }}>
+              {licensing ? "この作品で条件を1本作る" : "新しい条件を作る"}
+            </button>
             <button className="btn btn-sm"
                     onClick={() => setPicking(true)}>すでにある条件を繋ぐ</button>
           </span>
         )}
       </div>
 
+      {/* 作品を決める段。ライセンスの工程1「権利の上限確認」はここが済む
+          ことで済になる。作品が決まらないまま条件を作ると、作品から辿れず、
+          許諾できる上限も計算できない条件ができる。 */}
+      {licensing && !making && (
+        <div className="stack" style={{ gap: 6 }}>
+          <WorkChooser value={work} onChange={(w) => { setWork(w); setMade(null); }} disabled={busy} />
+          <span className="faint">
+            {work
+              ? `「${work.title}」の条件をここから1本ずつ作ります。取引モデル（自社製造・自社販売／再許諾…）ごとに1本です`
+              : "先に作品を決めてください。作品が決まらないと、許諾できる上限が計算できません"}
+          </span>
+        </div>
+      )}
+
+      {/* 作ったあとの行き先。続けて次の1本を作るのが普通なので、その場に置く。 */}
+      {made !== null && !making && (
+        <div className="done-note">
+          条件を作って、この案件に繋ぎました。
+          <span className="row">
+            <button className="btn btn-sm primary" onClick={() => { setMade(null); setMaking(true); }}>
+              続けてもう1本作る
+            </button>
+            <button className="btn btn-sm" onClick={() => onOpenCondition(made)}>作った条件を開く</button>
+            <button className="btn btn-sm" onClick={() => setMade(null)}>閉じる</button>
+          </span>
+        </div>
+      )}
+
       {making && (
         <ConditionCreateForm
-          title={`${detail.matterNo ?? "この案件"} に新しい条件を作る`}
-          // 案件が知っていることは入れておく。取引モデルで種類は絞れるし、
-          // 相手先は案件に付いている。人が入れるのは条件名と金額だけになる。
+          title={work
+            ? `「${work.title}」の条件を1本作る`
+            : `${detail.matterNo ?? "この案件"} に新しい条件を作る`}
+          // 案件と、すでに作った条件が知っていることは入れておく。人が入れるのは
+          // その条件だけの中身（取引モデルの名前と金額）になる。
           preset={{
-            kind: allowed[0],
-            ...(detail.counterparty ? { counterpartyId: String(detail.counterparty.id) } : {}),
-            // 業務委託は必ず自社が払う側。ライセンスは取得も許諾もあるので触らない。
-            ...(detail.kind === "outsourcing" ? { direction: "in" } : {})
+            kind: (last?.kind as string | undefined) ?? allowed[0],
+            ...(detail.counterparty
+              ? { counterpartyId: String(detail.counterparty.id) }
+              : last?.counterparty ? { counterpartyId: String(last.counterparty.id) } : {}),
+            // 業務委託は必ず自社が払う側。ライセンスは取得も許諾もあるので、
+            // 1本目に合わせる（同じ作品の許諾が IN と OUT に散らばらない）。
+            ...(detail.kind === "outsourcing" ? { direction: "in" }
+              : last ? { direction: last.direction } : {}),
+            ...(work ? { workId: String(work.id) } : {}),
+            ...(last?.agreement ? { agreementId: String(last.agreement.id) } : {}),
+            ...(last ? { currency: last.currency } : {})
           }}
-          onDone={(created) => { setMaking(false); void attach(created.id); }}
+          onDone={(created) => { setMaking(false); setMade(created.id); void attach(created.id); }}
           onCancel={() => setMaking(false)} />
       )}
 
