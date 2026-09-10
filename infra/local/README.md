@@ -86,6 +86,32 @@ docker compose run --rm ops sync
 `password authentication failed` なら `.env` の `SYNC_DB_PASSWORD` と本番のロールのパスワードが
 違う。`permission denied` なら v3 に表が増えたあと `sql/backup_role.sql` の GRANT を流し直していない。
 
+### gcloud のログインが接続エラーで落ちる（Windows）
+
+`gcloud auth application-default login` が `ConnectionError` や
+`WinError -1 / 0xffffffff` で落ちるのに、ブラウザや `Invoke-WebRequest` では
+Google に届く場合、社内のセキュリティ製品が通信を検査している。Windows はその
+製品の証明書を信頼しているが、gcloud に同梱の Python は自前の証明書一覧しか見ないので弾かれる。
+
+Windows が信頼している証明書を書き出して、gcloud にそれを使わせる。
+
+```powershell
+$pem = "$HOME\.gcloud-ca.pem"
+Get-ChildItem Cert:\LocalMachine\Root, Cert:\CurrentUser\Root |
+  Sort-Object Thumbprint -Unique |
+  ForEach-Object {
+    "-----BEGIN CERTIFICATE-----"
+    [Convert]::ToBase64String($_.RawData, 'InsertLineBreaks')
+    "-----END CERTIFICATE-----"
+  } | Set-Content -Encoding ascii $pem
+gcloud config set core/custom_ca_certs_file $pem
+gcloud auth application-default login --project legalbridge-488506
+```
+
+これでも通らないときは、そもそも gcloud を使わずに済む経路（Cloud SQL の
+エクスポート機能で Cloud Storage に出し、ブラウザで落として `ops restore`）に切り替える。
+毎晩の自動化はできなくなるが、写しは手に入る。
+
 ## GCP が停止したとき
 
 1. 予備系の PC で `docker compose ps` を見て db と app が上がっていることを確かめる
