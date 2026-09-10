@@ -603,6 +603,11 @@ export function createRoutes(database: Transactable) {
     invoiceNo: z.string().trim().max(40).nullable().optional(),
     corporateNo: z.string().trim().max(40).nullable().optional(),
     withholding: z.boolean().optional(),
+    // 書類の頭書き・宛先に出る連絡先。入れる口が無く、移行と CSV 取込で
+    // 入ったきりだった。
+    address: z.string().trim().max(500).nullable().optional(),
+    phone: z.string().trim().max(60).nullable().optional(),
+    email: z.string().trim().max(200).nullable().optional(),
     partyCode: z.string().trim().max(40).nullable().optional(),
     allowDuplicate: z.boolean().optional()
   });
@@ -610,6 +615,20 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       const { allowDuplicate, ...input } = partySchema.parse(req.body ?? {});
       res.status(201).json(await partyWrites.create(input, actor(res), { allowDuplicate }));
+    }));
+
+  /**
+   * 取引先を直す。登録はできても直せず、名前の誤りも住所の欠けも SQL でしか
+   * 直せなかった。書類の宛名・頭書き・インボイス番号はここから出る。
+   */
+  const partyPatchSchema = partySchema
+    .omit({ allowDuplicate: true, partyCode: true })
+    .partial()
+    .extend({ status: z.enum(["active", "archived"]).optional() });
+  router.patch("/parties/:id", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await partyWrites.update(
+        Number(req.params.id), partyPatchSchema.parse(req.body ?? {}), actor(res)));
     }));
 
   const contactSchema = z.object({

@@ -11,6 +11,10 @@ export interface PartyInput {
   invoiceNo?: string | null;
   corporateNo?: string | null;
   withholding?: boolean;
+  /** 書類の本文に載る連絡先。契約書の頭書きと請求書の宛先が使う。 */
+  address?: string | null;
+  phone?: string | null;
+  email?: string | null;
   /** 指定しなければ採番する。 */
   partyCode?: string | null;
 }
@@ -40,6 +44,13 @@ export interface PartyContactInput {
 }
 
 const NUMBER = { prefix: "PTY", table: "parties", column: "party_code" };
+
+/**
+ * 空文字は NULL にする。「未入力」と「空にする」を取り違えないため。
+ * 空文字のまま持つと、書類側の空欄判定（欠けの警告）が効かなくなる。
+ */
+const blank = (v: string | null | undefined) =>
+  v === null || v === undefined ? null : (String(v).trim() || null);
 
 /** 同じ相手先を二重に作らないための照合。表記ゆれは拾えないので完全一致だけ見る。 */
 async function findSameName(client: Queryable, name: string) {
@@ -83,12 +94,14 @@ export class PartyWriteService {
 
         const inserted = await client.query(
           `INSERT INTO parties (party_code, kind, name, name_kana, aliases,
-                                invoice_no, corporate_no, withholding, status)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'active')
+                                invoice_no, corporate_no, withholding,
+                                address, phone, email, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'active')
            RETURNING id, party_code`,
           [code, input.kind, name, input.nameKana ?? null,
            input.aliases ?? [], input.invoiceNo ?? null, input.corporateNo ?? null,
-           input.withholding === true]);
+           input.withholding === true,
+           blank(input.address), blank(input.phone), blank(input.email)]);
         const row = inserted.rows[0] as { id: number; party_code: string | null };
 
         await recordAudit(client, {
@@ -96,6 +109,84 @@ export class PartyWriteService {
           detail: { name, kind: input.kind, partyCode: row.party_code }
         });
         return { id: Number(row.id), partyCode: row.party_code };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 取引先を直す。
+   *
+   * 登録する経路はあったのに直す経路が無く、名前の誤りもインボイス番号の
+   * 欠けも SQL でしか直せなかった。住所・電話・メールに至っては入れる口も
+   * 無く、移行と CSV 取込で入ったきりだった。書類の頭書きと宛先はここから
+   * 出るので、直せないままでは誤った紙が出続ける。
+   *
+   * 統合した取引先は直せない（参照は統合先に寄せてある）。先に統合を取り消す。
+   */
+  async update(id: number, input: Partial<PartyInput> & { status?: "active" | "archived" }, actor: string) {
+    const sets: string[] = [];
+    const params: unknown[] = [id];
+    const changed: string[] = [];
+    const put = (column: string, value: unknown) => {
+      params.push(value);
+      sets.push(`${column} = $${params.length}`);
+      changed.push(column);
+    };
+
+    if (input.name !== undefined) {
+      const name = String(input.name).trim();
+      // 名前は書類の宛名になる。空にはできない。使わなくなったら status で外す。
+      if (!name) throw new DomainError("VALIDATION", "取引先名は空にできません");
+      put("name", name);
+    }
+    if (input.kind !== undefined) put("kind", input.kind);
+    if (input.nameKana !== undefined) put("name_kana", blank(input.nameKana));
+    if (input.aliases !== undefined) {
+      put("aliases", input.aliases.map((a) => String(a).trim()).filter(Boolean));
+    }
+    if (input.invoiceNo !== undefined) put("invoice_no", blank(input.invoiceNo));
+    if (input.corporateNo !== undefined) put("corporate_no", blank(input.corporateNo));
+    if (input.withholding !== undefined) put("withholding", input.withholding === true);
+    if (input.address !== undefined) put("address", blank(input.address));
+    if (input.phone !== undefined) put("phone", blank(input.phone));
+    if (input.email !== undefined) put("email", blank(input.email));
+    // merged はここでは付けられない。統合は merge / unmerge が持つ。
+    if (input.status !== undefined) put("status", input.status);
+    if (!sets.length) throw new DomainError("VALIDATION", "直す項目がありません");
+
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const head = await client.query(
+          "SELECT id, name, status FROM parties WHERE id = $1 FOR UPDATE", [id]);
+        const before = head.rows[0] as { name: string; status: string } | undefined;
+        if (!before) throw new DomainError("NOT_FOUND", `取引先 ${id} が見つかりません`);
+        if (before.status === "merged") {
+          throw new DomainError("CONFLICT",
+            "統合された取引先は直せません。直すなら先に統合を取り消してください");
+        }
+
+        const r = await client.query(
+          `UPDATE parties SET ${sets.join(", ")}, updated_at = now() WHERE id = $1
+           RETURNING id, party_code, name, kind, name_kana, aliases, invoice_no,
+                     corporate_no, withholding, address, phone, email, status`, params);
+        const row = r.rows[0] as Record<string, any>;
+
+        await recordAudit(client, {
+          actor, action: "party.update", targetType: "party", targetId: id,
+          // 値そのものは残さない（住所・電話は書類に出る個人の連絡先でもある）。
+          // 何をいつ誰が直したかが辿れれば足りる。
+          detail: { fields: changed, name: String(row.name), was: before.name }
+        });
+
+        return {
+          id: Number(row.id), partyCode: row.party_code ?? null, name: String(row.name),
+          kind: String(row.kind), nameKana: row.name_kana ?? null,
+          aliases: (row.aliases ?? []) as string[],
+          invoiceNo: row.invoice_no ?? null, corporateNo: row.corporate_no ?? null,
+          withholding: row.withholding === true,
+          address: row.address ?? null, phone: row.phone ?? null, email: row.email ?? null,
+          status: String(row.status)
+        };
       });
     } catch (error) { throw translate(error); }
   }

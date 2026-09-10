@@ -9,6 +9,8 @@ export interface PartySummary {
 
 export interface PartyDetail extends PartySummary {
   nameKana: string | null; invoiceNo: string | null; corporateNo: string | null;
+  /** 書類の頭書き・宛先に出る連絡先。 */
+  address: string | null; phone: string | null; email: string | null;
   contacts: Array<{ role: string; name: string | null; email: string | null; phone: string | null; department: string | null }>;
   /** 参照している実体の数。名寄せの影響範囲を見るのに使う。 */
   references: { conditions: number; payments: number; documents: number; matters: number };
@@ -51,7 +53,7 @@ export class PartyRepository {
     try {
       const head = await this.database.query(
         `SELECT id, party_code, name, name_kana, kind, aliases, withholding, status,
-                merged_into_id, invoice_no, corporate_no
+                merged_into_id, invoice_no, corporate_no, address, phone, email
            FROM parties WHERE id = $1`, [id]);
       const row = head.rows[0] as Record<string, any> | undefined;
       if (!row) return null;
@@ -77,6 +79,10 @@ export class PartyRepository {
         nameKana: str(row.name_kana),
         invoiceNo: str(row.invoice_no),
         corporateNo: str(row.corporate_no),
+        // 書類の頭書き・宛先に出る。読めないと、欠けているのかどうかも分からない。
+        address: str(row.address),
+        phone: str(row.phone),
+        email: str(row.email),
         contacts: contacts.rows.map((c: Record<string, any>) => ({
           role: String(c.role), name: str(c.name), email: str(c.email),
           phone: str(c.phone), department: str(c.department)
