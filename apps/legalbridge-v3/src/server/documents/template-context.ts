@@ -17,6 +17,7 @@ import {
   num, purchaseOrderTotals, rows, taxRatePercentFor, yen, type Row
 } from "./legacy-totals.js";
 import { royaltyStatementPatch } from "./royalty-patch.js";
+import { isLicenseTermsTemplate, licenseTermsPatch, licenseTermsSeeds } from "./license-terms.js";
 
 type Ctx = Record<string, any>;
 
@@ -36,11 +37,15 @@ export const isStatementTemplate = (templateKey: string): boolean =>
 export function lineFieldsFor(templateKey: string): string[] {
   if (PURCHASE_ORDER_KEYS.has(templateKey)) return ["items", "other_fees", "expenses"];
   if (INSPECTION_KEYS.has(templateKey)) return ["delivery_line_items", "other_fees", "expenses"];
+  // 条件書は「明細」ではなく2つの表（取引形態・構成要素）。画面は名前で
+  // 専用の編集欄に振り分ける。
+  if (isLicenseTermsTemplate(templateKey)) return ["v3_conds", "v3_lcs"];
   return [];
 }
 
 /** 条件・予定・実績から組んだ「種」の行。画面の編集欄の初期値。 */
 export function seedLines(templateKey: string, context: Ctx): Record<string, Row[]> {
+  if (isLicenseTermsTemplate(templateKey)) return licenseTermsSeeds(context) as Record<string, Row[]>;
   const out: Record<string, Row[]> = {};
   for (const name of lineFieldsFor(templateKey)) {
     out[name] = name === "items" ? orderLinesFrom(context)
@@ -237,7 +242,13 @@ export function accountTypeLabel(value: unknown): string {
  * 規則：行があるのに手入力が勝つと、本文の表と合計がずれる。
  */
 export function buildTemplateContext(
-  templateKey: string, context: Ctx, manual: Record<string, unknown> = {}
+  templateKey: string, context: Ctx, manual: Record<string, unknown> = {},
+  /**
+   * 束縛の結果（項目に実際に入った値）。条件書のように「項目の値をそのまま
+   * 本文の見出しに出す」ひな形は、手入力だけでは足りない（自動で埋まった
+   * 契約書番号・発行日・許諾者名が本文で空になる）。渡さなければ手入力だけ見る。
+   */
+  bound: Record<string, unknown> = {}
 ): Record<string, unknown> {
   const bank = context.bank ?? null;
   const currency = String(context.condition?.currency ?? context.totals?.currency ?? "JPY");
@@ -265,6 +276,9 @@ export function buildTemplateContext(
   }
   if (PURCHASE_ORDER_KEYS.has(templateKey)) {
     return { ...common, ...orderBlock(templateKey, context, manual) };
+  }
+  if (isLicenseTermsTemplate(templateKey)) {
+    return { ...common, ...licenseTermsPatch(context, { ...bound, ...manual }) };
   }
   if (isStatementTemplate(templateKey)) {
     const patch = royaltyStatementPatch(context, manual, Number(common.taxRate));

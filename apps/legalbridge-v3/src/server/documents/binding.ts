@@ -31,6 +31,15 @@ export interface TemplateVariable extends LegacyFieldMeta {
   placeholder?: string;
   /** select の選択肢。 */
   options?: string[];
+  /**
+   * 名前による推測を使わない。
+   *
+   * 移行したひな形は供給元の宣言を持たないので、V1・V2 と同じ名前なら同じ値を
+   * 入れる対応表で補っている。ところが名前が近いだけの項目まで当たってしまう
+   * （条件書の「許諾者種別」に相手先の名前が入る、「監修者」に自社の担当者が
+   * 入る）。供給元をこちらで決めている項目は、推測を切って空のままにする。
+   */
+  noGuess?: boolean;
 }
 
 /**
@@ -186,7 +195,7 @@ export function bindVariables(
           ? resolveLegacyDbField(variable.dbField, context)
           : undefined;
         const legacy = isEmpty(declared)
-          ? resolveLegacyVariable(variable.name, context, variable.label)
+          ? (variable.noGuess ? undefined : resolveLegacyVariable(variable.name, context, variable.label))
           : declared;
         if (!isEmpty(legacy)) {
           value = legacy;

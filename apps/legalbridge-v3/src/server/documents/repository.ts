@@ -2,6 +2,7 @@ import type { Queryable, Transactable } from "../core/db.js";
 import { dateStr, int, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { parseVariables, type TemplateVariable } from "./binding.js";
+import { LICENSE_TERMS_VARIABLES, isLicenseTermsTemplate } from "./license-terms.js";
 
 export interface DocumentSummary {
   id: number;
@@ -146,6 +147,19 @@ function mapSummary(row: Record<string, any>): DocumentSummary {
   };
 }
 
+/**
+ * ひな形の項目。宣言が空のときだけコードの一覧で補う。
+ *
+ * 個別利用許諾条件書は V1・V2 でも項目の一覧がコードの中にあり、データベースの
+ * field_schema は空だった。移行はその列だけを引き継いだので、V3 ではこの書類の
+ * 項目が1つも無く、ひな形を選んでも入力欄が出なかった。V2 と同じ規則にする
+ * （データベースに宣言があればそちらが勝つ。あとから版で足せる）。
+ */
+function variablesFor(templateKey: string, declared: TemplateVariable[]): TemplateVariable[] {
+  if (declared.length) return declared;
+  return isLicenseTermsTemplate(templateKey) ? LICENSE_TERMS_VARIABLES : declared;
+}
+
 export class DocumentRepository {
   constructor(private readonly database: Transactable) {}
 
@@ -255,7 +269,7 @@ export class DocumentRepository {
       category: str(row.category),
       numberPrefix: str(row.number_prefix),
       htmlSource: String(row.html_source),
-      variables: parseVariables(row.variables)
+      variables: variablesFor(String(row.template_key), parseVariables(row.variables))
     };
   }
 

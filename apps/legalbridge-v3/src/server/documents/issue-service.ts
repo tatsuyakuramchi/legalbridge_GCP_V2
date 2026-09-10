@@ -79,7 +79,11 @@ export class DocumentIssueService {
       const context = await this.buildContext(this.database, input, PREVIEW_NUMBER);
       const manual = input.manualInputs ?? {};
       // 明細・合計・消費税。本文はこれを差すだけなので、作らないと空欄で出る。
-      const computed = buildTemplateContext(template.templateKey, context, manual);
+      // 先に一度束縛して、項目に入った値も計算ブロックに渡す（条件書は本文の
+      // 見出しが項目の値そのものなので、手入力だけでは空欄になる）。
+      const first = bindVariables(template.variables, context, manual,
+        { templateKey: template.templateKey });
+      const computed = buildTemplateContext(template.templateKey, context, manual, first.values);
       const binding = bindVariables(template.variables, context, manual,
         { templateKey: template.templateKey, computed });
       // 候補は文脈そのものから作る。ひな形の宣言には依らない。
@@ -244,7 +248,11 @@ export class DocumentIssueService {
           royalty: extra.royalty ?? null
         }, documentNo);
         const manual = (row.manual_inputs as Record<string, unknown>) ?? {};
-        const computed = buildTemplateContext(template.templateKey, context, manual);
+        // プレビューと同じ順で組む。先に一度束縛して、項目に入った値も
+        // 計算ブロックへ渡す（条件書の見出しは項目の値そのもの）。
+        const first = bindVariables(template.variables, context, manual,
+          { templateKey: template.templateKey });
+        const computed = buildTemplateContext(template.templateKey, context, manual, first.values);
         const binding = bindVariables(template.variables, context, manual,
           { templateKey: template.templateKey, computed });
         assertComplete(binding);

@@ -338,6 +338,8 @@ const DB_FIELD_SOURCES: Record<string, (c: Ctx) => Record<string, unknown>> = {
       contact_email: primary.email,
       invoice_registration_number: party.invoiceNo,
       corporate_number: party.corporateNo,
+      // 法人／個人。条件書の「許諾者種別」がここから決まる。
+      entity_type: party.kind === "individual" ? "個人" : party.kind ? "法人" : undefined,
       withholding_enabled: party.withholding,
       bank_name: bank.bankName,
       branch_name: bank.branchName,

@@ -209,3 +209,20 @@ test("画面に出す項目は区分と出どころ付きで並ぶ。明細と�
   assert.deepEqual(r.fields[3].options, ["振込", "現金"]);
   assert.deepEqual(r.missing.map((m) => m.name), ["PAY_METHOD"]);
 });
+
+test("noGuess の項目は名前で推測しない（近い名前の値が紛れ込まない）", () => {
+  // 条件書の「許諾者種別」は 法人／個人 の選択。名前が近いだけで相手先の
+  // 名前が入っていた。供給元をこちらで決めている項目は推測を切る。
+  const context = {
+    condition: { counterparty: { name: "晨光數位出版股份有限公司", kind: "corporate" } }
+  };
+  const guessed = bindVariables([{ name: "許諾者種別" }], context, {});
+  assert.equal(guessed.values["許諾者種別"], "晨光數位出版股份有限公司", "推測は当たってしまう");
+
+  const declared = bindVariables(
+    [{ name: "許諾者種別", dbField: "vendor.entity_type", noGuess: true }], context, {});
+  assert.equal(declared.values["許諾者種別"], "法人");
+
+  const blank = bindVariables([{ name: "許諾者種別", noGuess: true }], context, {});
+  assert.equal(blank.values["許諾者種別"], undefined, "供給元が無ければ空のまま");
+});

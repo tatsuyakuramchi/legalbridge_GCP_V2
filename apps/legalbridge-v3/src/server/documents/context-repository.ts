@@ -58,6 +58,10 @@ export class DocumentContextRepository {
       const related = input.conditionIds.length
         ? await this.relatedDocuments(client, input.conditionIds) : [];
       const backlogKey = matterId ? await this.backlogKey(client, matterId) : null;
+      // 作品の取得条件。条件書の「構成要素」はここから並ぶ（許諾できる上限を
+      // 決めているのは作品の取得条件なので、書類に並ぶのもそれ）。
+      const workIds = [...new Set(conditions.map((c) => c.workId).filter((id): id is number => Boolean(id)))];
+      const acquisitions = workIds.length ? await this.acquisitions(client, workIds) : [];
 
       const currency = conditions[0]?.currency ?? "JPY";
       /**
@@ -116,6 +120,11 @@ export class DocumentContextRepository {
         related,
         /** 案件に繋がっている Backlog 課題のキー。 */
         backlogKey,
+        /**
+         * この文書の条件が指している作品の取得条件（IN）。
+         * 個別利用許諾条件書の「構成要素」の表はここから組む。
+         */
+        acquisitions,
         /** 実績が1件のときはこちら。検収書はこの日付と金額を使う。 */
         event: events[0] ?? null,
         /** その実績の予定明細。支払期日はここから来る。 */
@@ -327,7 +336,7 @@ export class DocumentContextRepository {
               c.term_start, c.term_end, c.tax_category, c.payment_terms, c.cycle,
               c.agreement_id, c.exclusivity, c.sublicensable, c.notes, c.spec, c.deliverable_ownership,
               c.order_no,
-              c.counterparty_id,
+              c.counterparty_id, c.work_id,
               p.name AS party_name, p.name_kana AS party_kana, p.kind AS party_kind,
               p.invoice_no AS party_invoice_no, p.corporate_no AS party_corporate_no,
               p.withholding AS party_withholding,
@@ -366,6 +375,9 @@ export class DocumentContextRepository {
         paymentTerms: str(row.payment_terms),
         cycle: str(row.cycle),
         exclusivity: str(row.exclusivity),
+        /** 書類に印字する言い方。列は enum なので、そのまま出すと英語が出る。 */
+        exclusivityLabel: row.exclusivity === "exclusive" ? "独占"
+          : row.exclusivity === "non_exclusive" ? "非独占" : null,
         sublicensable: row.sublicensable,
         notes: str(row.notes),
         spec: str(row.spec),
@@ -374,6 +386,8 @@ export class DocumentContextRepository {
         orderNo: str(row.order_no),
         agreementId: int(row.agreement_id),
         counterpartyId: int(row.counterparty_id),
+        /** 作品。条件書の構成要素は、この作品の取得条件から並ぶ。 */
+        workId: int(row.work_id),
         counterparty: {
           name: str(row.party_name) ?? "",
           kana: str(row.party_kana),
@@ -443,6 +457,48 @@ export class DocumentContextRepository {
     const r = await client.query("SELECT value FROM settings WHERE key = 'company_profile'");
     const value = (r.rows[0] as { value?: Record<string, unknown> } | undefined)?.value;
     return (value && typeof value === "object" ? value : {}) as Record<string, unknown>;
+  }
+
+  /**
+   * 作品の取得条件（IN）。個別利用許諾条件書の「構成要素」の表になる。
+   *
+   * 許諾できる上限を決めているのは作品の取得条件なので、条件書に並べる
+   * 構成要素もそれ。範囲（地域・言語）は取得条件に付いた範囲をそのまま出す。
+   */
+  private async acquisitions(client: Queryable, workIds: number[]) {
+    const r = await client.query(
+      `SELECT c.id, c.condition_no, c.name, c.rate_ppm, c.currency,
+              c.mg_amount, c.ag_amount,
+              p.name AS party_name, wp.name AS part_name, w.title AS work_title,
+              a.agreement_no,
+              (SELECT array_agg(s.label ORDER BY s.sort_order, s.label)
+                 FROM condition_scopes s
+                WHERE s.condition_id = c.id AND s.scope_type = 'region')   AS regions,
+              (SELECT array_agg(s.label ORDER BY s.sort_order, s.label)
+                 FROM condition_scopes s
+                WHERE s.condition_id = c.id AND s.scope_type = 'language') AS languages
+         FROM conditions c
+         LEFT JOIN parties p     ON p.id = c.counterparty_id
+         LEFT JOIN works w       ON w.id = c.work_id
+         LEFT JOIN work_parts wp ON wp.id = c.work_part_id
+         LEFT JOIN agreements a  ON a.id = c.agreement_id
+        WHERE c.work_id = ANY($1::bigint[])
+          AND c.direction = 'in' AND c.status = 'active'
+        ORDER BY wp.part_no NULLS LAST, c.id`, [workIds]);
+    return (r.rows as Array<Record<string, any>>).map((row) => ({
+      id: Number(row.id),
+      conditionNo: str(row.condition_no),
+      name: String(row.name ?? ""),
+      partName: str(row.part_name),
+      workTitle: str(row.work_title),
+      counterparty: str(row.party_name),
+      agreementNo: str(row.agreement_no),
+      ratePct: row.rate_ppm === null || row.rate_ppm === undefined
+        ? null : Number(row.rate_ppm) / 10000,
+      currency: String(row.currency ?? "JPY"),
+      regions: (row.regions ?? []) as string[],
+      languages: (row.languages ?? []) as string[]
+    }));
   }
 
   /** 範囲は行数が多いので条件をまとめて1回で引く。 */

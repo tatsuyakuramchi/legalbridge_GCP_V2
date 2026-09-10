@@ -9,6 +9,7 @@ import { DocumentFields, kindFor, type Candidate, type FormField } from "./Docum
 import { LineItemsEditor, type Row } from "./LineItems.js";
 import { BulkOrders } from "./BulkOrders.js";
 import { StatementBreakdown, type StatementLine, type StatementTotals } from "./StatementLines.js";
+import { LicenseTermsMatrix } from "./LicenseTermsMatrix.js";
 
 interface TemplateRow {
   id: number; templateKey: string; label: string; category: string | null; numberPrefix: string | null;
@@ -301,6 +302,9 @@ export function DocumentsWorkspace(
   // ひな形を変えた直後は前のひな形の spec が残っているので、それは使わない。
   const specFresh = specKey === templateKey;
   const isStatement = specFresh && spec?.statement === true;
+  // 条件書は明細ではなく2つの表を持つ。名前で見分ける（サーバの seedLines と対）。
+  const isLicenseTerms = specFresh
+    && (spec?.lines ?? []).some((l) => l.name === "v3_conds");
   const [stmtPeriod, setStmtPeriod] = useState("");
   const [stmt, setStmt] = useState<{ lines: StatementLine[]; totals: StatementTotals } | null>(null);
   const [stmtError, setStmtError] = useState<string | null>(null);
@@ -906,9 +910,23 @@ export function DocumentsWorkspace(
               setPickedFields((prev) => new Set(prev).add(name));
             }} />
 
+          {/* 条件書は明細ではなく2つの表（取引形態・構成要素）。列も編集の仕方も
+              違うので、専用の欄で出す。 */}
+          {isLicenseTerms && (
+            <LicenseTermsMatrix
+              deals={lines.v3_conds ?? null} materials={lines.v3_lcs ?? null}
+              seedDeals={spec?.lines.find((l) => l.name === "v3_conds")?.rows ?? []}
+              seedMaterials={spec?.lines.find((l) => l.name === "v3_lcs")?.rows ?? []}
+              onChange={(name, rows) => setLines((prev) => {
+                const next = { ...prev };
+                if (rows === null) delete next[name]; else next[name] = rows;
+                return next;
+              })} />
+          )}
+
           {/* 明細の行。条件明細には無いが書類には要る項目（帰属先・支払方法・
               納期・支払日）は、ここで行ごとに入れる。 */}
-          {(spec?.lines ?? []).map((l) => (
+          {!isLicenseTerms && (spec?.lines ?? []).map((l) => (
             <LineItemsEditor key={l.name} name={l.name} seed={l.rows}
               rows={lines[l.name] ?? null} intl={templateKey === "intl_purchase_order"}
               onChange={(rows) => setLines((prev) => {
