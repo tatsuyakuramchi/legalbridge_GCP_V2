@@ -34,8 +34,17 @@ infra/local/
    ローカル DB の 2 つのパスワードは新しく決める。
 3. **本番に読み取り専用ロール**を作る：`infra/local/sql/backup_role.sql` の `<PASSWORD>` を
    置き換えて Cloud SQL Studio で流し、同じ値を `.env` の `SYNC_DB_PASSWORD` に書く。
-4. **サービスアカウントの鍵**：GCP で「Cloud SQL クライアント」役割だけを持つ
-   サービスアカウントを作り、JSON 鍵を `infra/local/keys/sa.json` に置く。
+4. **同期に使う認証情報**。次のどちらか。
+   - **人のログイン（組織ポリシーで鍵が作れないときはこちら）**：PC に gcloud CLI を入れ、
+     Cloud SQL クライアント以上の権限を持つ自分のアカウントでログインして、その認証情報を写す。
+     ```powershell
+     winget install Google.CloudSDK        # 入れたらターミナルを開き直す
+     gcloud auth application-default login --project legalbridge-488506
+     Copy-Item "$env:APPDATA\gcloud\application_default_credentials.json" keys\adc.json
+     ```
+     （macOS / Linux は `~/.config/gcloud/application_default_credentials.json`）
+   - **サービスアカウントの鍵**：「Cloud SQL クライアント」役割だけを持つサービスアカウントを作り、
+     JSON 鍵を `infra/local/keys/sa.json` に置く。両方あれば鍵が優先。
 5. 起動：
 
    ```bash
@@ -61,6 +70,21 @@ infra/local/
 
 同期が止まっていないかは、画面左下の「データ … 時点」か `ops status` で分かる。
 **時点が古いまま数日たっていたら、それ自体が異常**（鍵の失効・パスワード変更・PC の停止）。
+
+## 同期が失敗するとき
+
+`ops sync` が「写しを取れませんでした」で止まり、proxy log に `invalid_grant` や
+`reauthentication` と出ていたら、人のログインの認証情報が切れている（組織の再認証ポリシー）。
+ログインし直して写し直す。
+
+```powershell
+gcloud auth application-default login --project legalbridge-488506
+Copy-Item "$env:APPDATA\gcloud\application_default_credentials.json" keys\adc.json -Force
+docker compose run --rm ops sync
+```
+
+`password authentication failed` なら `.env` の `SYNC_DB_PASSWORD` と本番のロールのパスワードが
+違う。`permission denied` なら v3 に表が増えたあと `sql/backup_role.sql` の GRANT を流し直していない。
 
 ## GCP が停止したとき
 

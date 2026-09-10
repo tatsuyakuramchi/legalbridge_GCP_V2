@@ -75,12 +75,20 @@ restore() {
 sync() {
   [ -n "${CLOUD_SQL_INSTANCE:-}" ] || die "CLOUD_SQL_INSTANCE が空です（.env）"
   [ -n "${SYNC_DB_PASSWORD:-}" ] || die "SYNC_DB_PASSWORD が空です（.env）"
-  [ -f /keys/sa.json ] || die "/keys/sa.json（Cloud SQL Client 権限のサービスアカウント鍵）がありません"
+  # 認証情報は 2 通り。サービスアカウントの鍵（sa.json）か、gcloud でログインした
+  # 人の認証情報（adc.json = application_default_credentials.json の写し）。
+  # 組織ポリシーで鍵が作れないときは後者を使う。
+  local cred
+  if [ -f /keys/sa.json ]; then cred=/keys/sa.json
+  elif [ -f /keys/adc.json ]; then cred=/keys/adc.json
+  else die "keys/sa.json も keys/adc.json もありません（README の「事前準備」）"; fi
+  local project="${CLOUD_SQL_INSTANCE%%:*}"
   mkdir -p "$DUMPS"
 
-  log "Cloud SQL Auth Proxy を上げる"
-  cloud-sql-proxy --credentials-file=/keys/sa.json --port 5433 "$CLOUD_SQL_INSTANCE" \
-    > /tmp/proxy.log 2>&1 &
+  log "Cloud SQL Auth Proxy を上げる（$cred）"
+  # 人の認証情報のときは Admin API の課金・割当先の指定が要る（--quota-project）。
+  cloud-sql-proxy --credentials-file="$cred" --quota-project "$project" \
+    --port 5433 "$CLOUD_SQL_INSTANCE" > /tmp/proxy.log 2>&1 &
   local proxy=$!
   trap 'kill $proxy 2>/dev/null || true' EXIT
   for _ in $(seq 1 30); do
@@ -92,8 +100,12 @@ sync() {
   local file="$DUMPS/v3_$(date '+%Y%m%d_%H%M').dump"
   log "本番の v3 スキーマを写す → $file"
   # 所有者と権限は持ち込まない（本番だけにあるロールで復元が止まるのを避ける）。
-  PGPASSWORD="$SYNC_DB_PASSWORD" pg_dump -h 127.0.0.1 -p 5433 -U "$SYNC_DB_USER" -d "$REMOTE_DB_NAME" \
-    -n v3 -Fc --no-owner --no-privileges -f "$file"
+  if ! PGPASSWORD="$SYNC_DB_PASSWORD" pg_dump -h 127.0.0.1 -p 5433 -U "$SYNC_DB_USER" -d "$REMOTE_DB_NAME" \
+      -n v3 -Fc --no-owner --no-privileges -f "$file"; then
+    rm -f "$file"
+    echo "--- proxy log ---" >&2; tail -n 20 /tmp/proxy.log >&2
+    die "写しを取れませんでした（上のログを見る。認証切れなら README の「同期が失敗するとき」）"
+  fi
   kill $proxy 2>/dev/null || true
   trap - EXIT
   log "写し完了（$(du -h "$file" | cut -f1)）"
