@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ConditionEvents } from "./ConditionEvents.js";
+import { useReadOnly } from "./read-only.js";
 import { DocumentImport } from "./DocumentImport.js";
 import { ConditionSchedules } from "./ConditionSchedules.js";
 import { ConditionRevisions } from "./ConditionRevisions.js";
@@ -89,6 +90,8 @@ export function ConditionsWorkspace(
   const [flowVersion, setFlowVersion] = useState(0);
   // 予定の行から「実績にする」を押したとき、その回を実績のフォームに渡す。
   const [recordSchedule, setRecordSchedule] = useState<number | null>(null);
+  // 読み取り専用なら、登録の欄そのものを出さない（押してから断られない）。
+  const readOnly = useReadOnly();
   async function refreshFlow() {
     setFlowVersion((v) => v + 1);
     if (selected) setDetail(await api.get<DetailResponse>(`/conditions/${selected}`));
@@ -485,14 +488,14 @@ export function ConditionsWorkspace(
 
               <ConditionSchedules conditionId={detail.id} reloadKey={flowVersion}
                 flatAmount={detail.pricingModel === "fixed" ? detail.flatAmount : null} currency={detail.currency}
-                editable={detail.status === "active" || detail.status === "draft"}
+                editable={!readOnly && (detail.status === "active" || detail.status === "draft")}
                 onRecord={(scheduleId) => setRecordSchedule(scheduleId)}
                 onChanged={refreshFlow} />
 
               <ConditionEvents conditionId={detail.id} currency={detail.currency}
                 pricingModel={detail.pricingModel} matterId={detail.matters[0]?.id ?? null}
                 reloadKey={flowVersion}
-                editable={detail.status === "active" || detail.status === "draft"}
+                editable={!readOnly && (detail.status === "active" || detail.status === "draft")}
                 openForSchedule={recordSchedule}
                 onOpened={() => setRecordSchedule(null)}
                 onCompose={onCompose}

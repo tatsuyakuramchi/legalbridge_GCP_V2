@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "./api.js";
+import { ReadOnlyContext } from "./read-only.js";
 import { GlobalSearch, type SearchHit } from "./GlobalSearch.js";
 import { MattersWorkspace } from "./MattersWorkspace.js";
 import { ConditionsWorkspace } from "./ConditionsWorkspace.js";
@@ -112,6 +113,7 @@ export function App() {
   };
 
   return (
+    <ReadOnlyContext.Provider value={Boolean(me?.readOnly)}>
     <div className="app">
       <nav className="rail" aria-label="主ナビゲーション">
         <div className="wordmark"><b>LegalBridge</b><span>Core</span></div>
@@ -143,6 +145,13 @@ export function App() {
       </nav>
 
       <main className="main">
+        {/* 押してから断られると、書いた内容が消える。先に知らせる。 */}
+        {me?.readOnly && (
+          <div className="note warn" style={{ marginBottom: 12 }}>
+            読み取り専用で動いています。登録・変更・送信はできません。
+            {me.site?.dataAsOf ? `データは ${me.site.dataAsOf} 時点の写しです。` : ""}
+          </div>
+        )}
         {view === "home" && <HomeWorkspace onGo={(v, tab) => { setOpsTab(tab); setView(v); }} />}
         {view === "matters" && (
           <MattersWorkspace key={`m${focusFor("matters") ?? 0}`}
@@ -177,5 +186,6 @@ export function App() {
         {view === "ops" && <OpsWorkspace key={opsTab ?? "quality"} initialTab={opsTab} />}
       </main>
     </div>
+    </ReadOnlyContext.Provider>
   );
 }
