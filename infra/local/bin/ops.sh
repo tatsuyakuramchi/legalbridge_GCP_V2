@@ -3,6 +3,7 @@
 #
 #   ops sync              本番 v3 スキーマを写してローカル DB に入れる（平時に毎晩）
 #   ops export-info       エクスポート方式（SYNC_MODE=export）の準備に要る値を出す
+#   ops import-rows <dir> Studio から落とした CSV を取り込む（094_export_rows.sql の結果）
 #   ops restore <file>    手元の写し（/dumps/…）をローカル DB に入れ直す
 #   ops fresh             本番データなしで開発用 DB を作る（模擬データ）
 #   ops grants            ランタイムロールの権限を当て直す
@@ -283,6 +284,161 @@ INFO
 }
 
 # ---------------------------------------------------------------------
+# 方式3：Cloud SQL Studio から落とした CSV を取り込む。
+#   自動同期の経路が両方とも塞がれている環境向け。人が Studio で
+#   094_export_rows.sql を流し、結果（tbl, data の2列）を CSV で落として置く。
+#
+#   表の構造は手元の定義（001 + 004）から作り、中身だけを CSV から入れる。
+#   本番にしか無い列があれば取り込まずに止める（黙って落とさない）。
+# ---------------------------------------------------------------------
+import_rows() {
+  local dir="${1:-}"
+  [ -n "$dir" ] || die "使い方: ops import-rows /dumps/rows"
+  [ -d "$dir" ] || die "フォルダがありません: $dir"
+  local files=()
+  local f
+  for f in "$dir"/*.csv "$dir"/*.CSV; do [ -f "$f" ] && files+=("$f"); done
+  [ "${#files[@]}" -gt 0 ] || die "$dir に CSV がありません"
+  log "${#files[@]} 個の CSV を取り込む"
+
+  log "v3 を手元の定義から作り直す"
+  psql_local -c "DROP SCHEMA IF EXISTS v3 CASCADE;" >/dev/null
+  psql_local -f "$V3/001_schema.sql" >/dev/null
+  psql_local -f "$V3/004_amend.sql" >/dev/null
+
+  log "行を入れる"
+  {
+    echo "BEGIN;"
+    echo "CREATE TEMP TABLE staging (tbl text, data jsonb);"
+    for f in "${files[@]}"; do
+      # Studio の CSV は見出し付きの2列。位置で読むので列名は問わない。
+      printf '\\copy staging FROM %s WITH (FORMAT csv, HEADER true)\n' "'$f'"
+    done
+    cat <<'SQL'
+-- 取り込む前に、落ちるものが無いかを確かめる。
+DO $guard$
+DECLARE bad text; n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM staging;
+  IF n = 0 THEN RAISE EXCEPTION 'CSV に行がありません'; END IF;
+  RAISE NOTICE '  読み込んだ行 %', n;
+
+  SELECT string_agg(DISTINCT s.tbl, ', ') INTO bad
+    FROM staging s
+    LEFT JOIN pg_tables t ON t.schemaname = 'v3' AND t.tablename = s.tbl
+   WHERE t.tablename IS NULL;
+  IF bad IS NOT NULL THEN
+    RAISE EXCEPTION 'v3 に無い表が入っています: %', bad;
+  END IF;
+
+  -- 本番にあって手元の定義に無い列。黙って捨てると気づけないので止める。
+  SELECT string_agg(DISTINCT s.tbl || '.' || s.k, ', ') INTO bad
+    FROM (SELECT DISTINCT tbl, jsonb_object_keys(data) AS k FROM staging) s
+    LEFT JOIN information_schema.columns c
+      ON c.table_schema = 'v3' AND c.table_name = s.tbl AND c.column_name = s.k
+   WHERE c.column_name IS NULL;
+  IF bad IS NOT NULL THEN
+    RAISE EXCEPTION '手元の定義に無い列があります（001/004 が古い）: %', bad;
+  END IF;
+END
+$guard$;
+
+-- 入れる。外部キーの向きは表をまたいで循環するので、順番では解けない。
+-- いったん引き金を止めて入れ、あとで参照が揃っているかを数える。
+DO $load$
+DECLARE r record;
+BEGIN
+  -- スキーマ定義は既定の行を入れる表がある（自社プロファイルなど）。
+  -- 本番の中身で置き換えるので、先に空にする。
+  EXECUTE (SELECT 'TRUNCATE ' || string_agg(format('v3.%I', tablename), ', ') || ' CASCADE'
+             FROM pg_tables WHERE schemaname = 'v3');
+
+  FOR r IN SELECT tablename FROM pg_tables WHERE schemaname = 'v3' LOOP
+    EXECUTE format('ALTER TABLE v3.%I DISABLE TRIGGER ALL', r.tablename);
+  END LOOP;
+
+  FOR r IN SELECT DISTINCT tbl FROM staging ORDER BY 1 LOOP
+    EXECUTE format(
+      'INSERT INTO v3.%I SELECT (jsonb_populate_record(NULL::v3.%I, s.data)).* FROM staging s WHERE s.tbl = %L',
+      r.tbl, r.tbl, r.tbl);
+  END LOOP;
+
+  FOR r IN SELECT tablename FROM pg_tables WHERE schemaname = 'v3' LOOP
+    EXECUTE format('ALTER TABLE v3.%I ENABLE TRIGGER ALL', r.tablename);
+  END LOOP;
+END
+$load$;
+
+-- 参照の欠け。ページを落とし損ねていると、ここで分かる。
+DO $fk$
+DECLARE r record; n bigint; bad text := '';
+BEGIN
+  FOR r IN
+    SELECT cl.relname AS src, fcl.relname AS tgt, con.conname,
+           (SELECT string_agg('s.' || quote_ident(a.attname), ', ' ORDER BY x.ord)
+              FROM unnest(con.conkey) WITH ORDINALITY AS x(attnum, ord)
+              JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = x.attnum) AS src_cols,
+           (SELECT string_agg('t.' || quote_ident(a.attname), ', ' ORDER BY x.ord)
+              FROM unnest(con.confkey) WITH ORDINALITY AS x(attnum, ord)
+              JOIN pg_attribute a ON a.attrelid = con.confrelid AND a.attnum = x.attnum) AS tgt_cols
+      FROM pg_constraint con
+      JOIN pg_class cl ON cl.oid = con.conrelid
+      JOIN pg_class fcl ON fcl.oid = con.confrelid
+      JOIN pg_namespace ns ON ns.oid = cl.relnamespace
+     WHERE con.contype = 'f' AND ns.nspname = 'v3'
+  LOOP
+    -- 参照側がすべて非 NULL の行だけが検査の対象（MATCH SIMPLE）。
+    EXECUTE format(
+      'SELECT count(*) FROM v3.%I s WHERE ROW(%s) IS NOT NULL'
+      || ' AND NOT EXISTS (SELECT 1 FROM v3.%I t WHERE ROW(%s) = ROW(%s))',
+      r.src, r.src_cols, r.tgt, r.tgt_cols, r.src_cols) INTO n;
+    IF n > 0 THEN
+      bad := bad || format(E'\n  %s → %s が %s 件（%s）', r.src, r.tgt, n, r.conname);
+    END IF;
+  END LOOP;
+  IF bad <> '' THEN
+    RAISE EXCEPTION E'参照先の無い行があります。落とし損ねたページがありませんか:%', bad;
+  END IF;
+END
+$fk$;
+
+-- 連番を実際の最大値の次に合わせる。ここを忘れると採番が既存とぶつかる。
+DO $seq$
+DECLARE r record;
+BEGIN
+  FOR r IN
+    SELECT c.relname AS tbl, a.attname AS col,
+           pg_get_serial_sequence('v3.' || quote_ident(c.relname), a.attname) AS seq
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+     WHERE n.nspname = 'v3' AND c.relkind = 'r'
+  LOOP
+    IF r.seq IS NOT NULL THEN
+      EXECUTE format('SELECT setval(%L, COALESCE((SELECT max(%I) FROM v3.%I), 0) + 1, false)',
+                     r.seq, r.col, r.tbl);
+    END IF;
+  END LOOP;
+END
+$seq$;
+COMMIT;
+SQL
+  } | psql_local >/dev/null
+
+  log "ビューを作り直す"
+  psql_local -f "$V3/002_views.sql" >/dev/null
+  apply_grants
+
+  local rows
+  rows=$(psql -Atq -c "SELECT count(*) FROM v3.matters" 2>/dev/null || echo '?')
+  log "取り込み完了（案件 ${rows} 件）"
+  # 落としたファイルの新しいほうを、データの時点とみなす。
+  local newest
+  newest=$(ls -1t "${files[@]}" | head -1)
+  write_stamp "$(date -r "$newest" '+%Y-%m-%d %H:%M') 取り出し"
+}
+
+# ---------------------------------------------------------------------
 # 方式1：Cloud SQL Auth Proxy で直につなぐ（既定）。3307 番が通る環境向け。
 # ---------------------------------------------------------------------
 sync_proxy() {
@@ -428,6 +584,7 @@ case "${1:-}" in
   netcheck) shift; netcheck "$@" ;;
   sync) sync ;;
   export-info) export_info ;;
+  import-rows) shift; import_rows "${1:-}" ;;
   restore) [ -n "${2:-}" ] || die "使い方: ops restore /dumps/v3_YYYYmmdd_HHMM.dump"; restore "$2" ;;
   fresh) fresh ;;
   grants) apply_grants ;;
