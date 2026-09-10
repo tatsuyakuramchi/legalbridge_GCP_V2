@@ -23,12 +23,14 @@ DECLARE
   next_no int;
   new_id bigint;
   loop_start int;
-  item_pos int;
-  cell_end int;
+  anchor_pos int;
 
   th_item_old constant text := '<th style="width:47%">成果物・業務内容</th>';
   th_item_new constant text := '<th style="width:33%">成果物・業務内容</th><th style="width:14%">発注番号</th>';
-  cell_new    constant text := '<td class="center">{{order_no}}</td>';
+  cell_new    constant text := E'<td class="center">{{order_no}}</td>\n            ';
+  -- 差し込む位置の目印：明細ループの中の数量セル。成果物のセルの直後にある。
+  -- （成果物のセルは {{or item_name ../description}} と書かれていて {{item_name}} では探せない）
+  qty_cell    constant text := '<td class="center">{{#if (gt inspected_quantity 0)}}';
   total_sub_old constant text := '<td colspan="5" class="right">検収 小計（税抜）</td>';
   total_sub_new constant text := '<td colspan="6" class="right">検収 小計（税抜）</td>';
   total_tax_old constant text := E'<td colspan="5" class="right">\n          消費税(';
@@ -59,20 +61,16 @@ BEGIN
   IF loop_start = 0 THEN
     RAISE EXCEPTION '明細のループ（{{#each delivery_line_items}}）が見つかりません';
   END IF;
-  -- ループの中の、成果物のセル（{{item_name}} を含む <td>）の閉じ位置。
-  item_pos := strpos(substr(src, loop_start), '{{item_name}}');
-  IF item_pos = 0 THEN
-    RAISE EXCEPTION '明細のループに {{item_name}} が見つかりません';
+  IF (length(src) - length(replace(src, qty_cell, ''))) / length(qty_cell) <> 1 THEN
+    RAISE EXCEPTION '明細の数量セル（inspected_quantity）が 1 箇所ではありません。093 で現行版を確かめてください';
   END IF;
-  item_pos := loop_start + item_pos - 1;
-  cell_end := strpos(substr(src, item_pos), '</td>');
-  IF cell_end = 0 THEN
-    RAISE EXCEPTION '成果物のセルの閉じ（</td>）が見つかりません';
+  anchor_pos := strpos(src, qty_cell);
+  IF anchor_pos < loop_start THEN
+    RAISE EXCEPTION '数量セルが明細ループの外にあります。093 で現行版を確かめてください';
   END IF;
-  cell_end := item_pos + cell_end - 1 + length('</td>');
 
-  -- 成果物のセルの直後に発注番号のセルを差し込む。
-  new_html := substr(src, 1, cell_end - 1) || cell_new || substr(src, cell_end);
+  -- 成果物のセルと数量のセルの間に、発注番号のセルを差し込む。
+  new_html := substr(src, 1, anchor_pos - 1) || cell_new || substr(src, anchor_pos);
   new_html := replace(new_html, th_item_old, th_item_new);
   new_html := replace(new_html, total_sub_old, total_sub_new);
   new_html := replace(new_html, total_tax_old, total_tax_new);
