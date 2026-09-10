@@ -43,7 +43,10 @@ infra/local/
      docker compose run --rm login
      ```
      `login` は PC の gcloud にブラウザを開かせるだけで、Google への通信はコンテナが行う。
-     画面の指示どおり、出てきたコマンドを PowerShell に貼り、最後に出た長い URL を貼り返す。
+     画面に出る `gcloud auth application-default login --remote-bootstrap="..."` を
+     **コマンドごと**もう1つの PowerShell に貼って実行し、ブラウザで許可したあとに
+     PowerShell へ出る `https://localhost:8085/?...` を `login` の画面に貼り返す。
+     URL だけをブラウザに貼ると `Missing required parameter: redirect_uri` になる。
 
      PC の gcloud が普通に動く環境なら、PC 側で取って写すだけでもよい。
      ```powershell

@@ -2,21 +2,39 @@
 # 同期に使う認証情報を、コンテナの中で取る。
 #
 # Windows の gcloud が接続エラーで落ちる環境向け。ブラウザを開く役だけを PC に任せ、
-# 引き換え（トークンの取得）はコンテナが行う。PC 側は Google への接続をしない。
+# トークンの引き換えはコンテナが行う。PC 側は Google へ接続しない。
 #
 #   docker compose run --rm login
-#
-# 手順は画面に出る:
-#   1. 表示された長いコマンドを PC の PowerShell に貼って実行する
-#   2. ブラウザが開くのでログインして許可する
-#   3. PC の画面に出た長い URL をここに貼って Enter
 set -euo pipefail
 
 PROJECT="${CLOUDSDK_CORE_PROJECT:?プロジェクトが未設定です}"
 OUT=/keys/adc.json
 
-echo "== 同期用の認証情報を取ります（プロジェクト: $PROJECT）"
-echo "   PC 側では gcloud がブラウザを開くだけで、Google への通信はこのコンテナが行います。"
+cat <<'GUIDE'
+=====================================================================
+ 同期用の認証情報を取ります。手順は次のとおりです。
+
+  1. このあと画面に
+       gcloud auth application-default login --remote-bootstrap="https://..."
+     という長いコマンドが出ます。
+
+  2. PowerShell を「もう1つ」開いて、そのコマンドを丸ごと貼って実行します。
+     ★ URL だけをブラウザに貼らないでください。
+       この URL は gcloud が受け取る前提の形なので、ブラウザに直接入れると
+       「Missing required parameter: redirect_uri」と言われます。
+
+  3. ブラウザが開くのでログインして許可します。
+     PowerShell に、今度は
+       https://localhost:8085/?state=...&code=...
+     という長い URL が出ます。
+
+  4. その URL をコピーして、この画面の「Enter the output of the above command:」
+     に貼って Enter を押します。
+
+  この間、PC 側の gcloud は Google へ接続しません（ブラウザを開くだけ）。
+  やり直したいときは Ctrl+C で抜けて、もう一度 docker compose run --rm login。
+=====================================================================
+GUIDE
 echo
 
 gcloud auth application-default login --no-browser --project "$PROJECT"
@@ -27,5 +45,5 @@ SRC="${CLOUDSDK_CONFIG:-/root/.config/gcloud}/application_default_credentials.js
 cp "$SRC" "$OUT"
 chmod 600 "$OUT"
 echo
-echo "認証情報を $OUT に置きました。次は同期です:"
+echo "認証情報を keys/adc.json に置きました。次は同期です:"
 echo "  docker compose run --rm ops sync"
