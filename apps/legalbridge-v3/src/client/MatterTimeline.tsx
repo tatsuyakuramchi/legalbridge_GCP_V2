@@ -298,7 +298,7 @@ export function MatterTimeline(
               </span>
             </li>
           ))}
-          {!rows.length && <li className="faint">まだ記録がありません</li>}
+          {!rows.length && <li className="faint empty">まだ記録がありません</li>}
         </ol>
       </div>
     </div>
