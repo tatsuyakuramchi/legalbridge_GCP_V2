@@ -93,5 +93,19 @@ services:
       - ./keys:/keys:ro
     entrypoint: ["bash", "/usr/local/bin/ops"]
 
+  # 同期に使う認証情報を取る。Windows の gcloud が接続エラーで落ちる環境向けに、
+  # トークンの引き換えをコンテナ側で行う（PC はブラウザを開く役だけ）。
+  #   docker compose run --rm login
+  login:
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:stable
+    profiles: ["ops"]
+    environment:
+      CLOUDSDK_CONFIG: /keys/gcloud
+      CLOUDSDK_CORE_PROJECT: ${GCP_PROJECT:-legalbridge-488506}
+    volumes:
+      - ./bin/login.sh:/usr/local/bin/login:ro
+      - ./keys:/keys
+    entrypoint: ["bash", "/usr/local/bin/login"]
+
 volumes:
   pgdata:

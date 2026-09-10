@@ -35,10 +35,18 @@ infra/local/
 3. **本番に読み取り専用ロール**を作る：`infra/local/sql/backup_role.sql` の `<PASSWORD>` を
    置き換えて Cloud SQL Studio で流し、同じ値を `.env` の `SYNC_DB_PASSWORD` に書く。
 4. **同期に使う認証情報**。次のどちらか。
-   - **人のログイン（組織ポリシーで鍵が作れないときはこちら）**：PC に gcloud CLI を入れ、
-     Cloud SQL クライアント以上の権限を持つ自分のアカウントでログインして、その認証情報を写す。
+   - **人のログイン（組織ポリシーで鍵が作れないときはこちら）**：Cloud SQL クライアント以上の
+     権限を持つ自分のアカウントでログインし、その認証情報を `keys/adc.json` に置く。
+     まずコンテナから Google に届くかを見て、届くならコンテナ側でログインする。
      ```powershell
-     winget install Google.CloudSDK        # 入れたらターミナルを開き直す
+     docker compose run --rm ops netcheck
+     docker compose run --rm login
+     ```
+     `login` は PC の gcloud にブラウザを開かせるだけで、Google への通信はコンテナが行う。
+     画面の指示どおり、出てきたコマンドを PowerShell に貼り、最後に出た長い URL を貼り返す。
+
+     PC の gcloud が普通に動く環境なら、PC 側で取って写すだけでもよい。
+     ```powershell
      gcloud auth application-default login --project legalbridge-488506
      Copy-Item "$env:APPDATA\gcloud\application_default_credentials.json" keys\adc.json
      ```
@@ -108,9 +116,29 @@ gcloud config set core/custom_ca_certs_file $pem
 gcloud auth application-default login --project legalbridge-488506
 ```
 
-これでも通らないときは、そもそも gcloud を使わずに済む経路（Cloud SQL の
-エクスポート機能で Cloud Storage に出し、ブラウザで落として `ops restore`）に切り替える。
-毎晩の自動化はできなくなるが、写しは手に入る。
+証明書ではなく接続そのものが張れていない（`Failed to establish a new connection`）場合は、
+証明書を足しても直らない。PC の gcloud は諦めて、コンテナ側でログインする。
+
+```powershell
+docker compose run --rm ops netcheck     # コンテナから Google に届くかを見る
+docker compose run --rm login            # 届くならこれでログインする
+```
+
+### gcloud も Proxy も通らないとき
+
+`ops netcheck` がコンテナからも「つながりません」と言う場合、この PC からは
+Cloud SQL Auth Proxy を使えない。ネットワークの担当者に
+`oauth2.googleapis.com` と `sqladmin.googleapis.com` への接続を許可してもらうのが本筋。
+
+それが通らないなら、毎晩の自動同期は諦めて、ブラウザだけで写しを作る運用にする。
+
+1. Cloud SQL の画面 → インスタンス → エクスポート → 形式 SQL、対象 `legalbridge`、
+   出力先の Cloud Storage バケットを指定して実行
+2. Cloud Storage の画面から、できたファイルをこの PC にダウンロード
+3. `infra/local/dumps/` に置いて `docker compose run --rm ops restore /dumps/<ファイル名>`
+
+この経路では写しに V1・V2 の `public` も含まれる。手元に置く範囲が広がるので、
+PC の管理はいっそう厳しくすること。
 
 ## GCP が停止したとき
 

@@ -6,6 +6,7 @@
 #   ops fresh             本番データなしで開発用 DB を作る（模擬データ）
 #   ops grants            ランタイムロールの権限を当て直す
 #   ops status            写しの一覧と、いま入っているデータの時点
+#   ops netcheck          同期に要る Google の口へ、コンテナから届くかを見る
 #
 # ローカル DB への接続は PGHOST / PGUSER / PGPASSWORD / PGDATABASE（compose が渡す）。
 set -euo pipefail
@@ -140,11 +141,37 @@ status() {
   psql -Atq -c "SELECT '案件 ' || count(*) || ' 件' FROM v3.matters" 2>/dev/null || echo "v3 スキーマがまだありません"
 }
 
+# 同期は Google の2つの口を使う。コンテナから届くかをここで切り分ける
+# （Windows の gcloud が塞がれていても、コンテナは通ることがある。逆もある）。
+netcheck() {
+  local ng=0
+  for host in oauth2.googleapis.com sqladmin.googleapis.com; do
+    printf '%-28s ' "$host"
+    local code
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "https://$host/" 2>/dev/null) || code=""
+    if [ -n "$code" ] && [ "$code" != "000" ]; then
+      echo "OK (HTTP $code)"
+    else
+      echo "つながりません"
+      ng=1
+    fi
+  done
+  if [ "$ng" = 1 ]; then
+    echo
+    echo "コンテナからも Google に届いていません。Cloud SQL Auth Proxy を使う同期は"
+    echo "この PC では動きません。README の「gcloud も Proxy も通らないとき」を見てください。"
+    return 1
+  fi
+  echo
+  echo "コンテナからは届いています。ops login でログインできます。"
+}
+
 case "${1:-}" in
+  netcheck) netcheck ;;
   sync) sync ;;
   restore) [ -n "${2:-}" ] || die "使い方: ops restore /dumps/v3_YYYYmmdd_HHMM.dump"; restore "$2" ;;
   fresh) fresh ;;
   grants) apply_grants ;;
   status) status ;;
-  *) sed -n '2,10p' "$0"; exit 2 ;;
+  *) sed -n '2,11p' "$0"; exit 2 ;;
 esac
