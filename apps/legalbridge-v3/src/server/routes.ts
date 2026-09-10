@@ -1598,6 +1598,28 @@ export function createRoutes(database: Transactable) {
     }) });
   }));
 
+  /**
+   * 文書から支払を起こす。
+   *
+   * 当社の支払は検収書か利用許諾計算書のどちらかから起きる。文書の画面を
+   * ひとつの入口にして、どちらの書類かで振り分ける。経理提出用の一覧は
+   * 支払から作られるので、ここを通らないと経理に出ない。
+   */
+  router.post("/documents/:id/payment",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const id = Number(req.params.id);
+      const input = z.object({ dueOn: z.string().date().nullable().optional() }).parse(req.body ?? {});
+      const found = await database.query(
+        "SELECT id FROM statements WHERE document_id = $1", [id]);
+      const statementId = (found.rows[0] as { id: number } | undefined)?.id;
+      res.status(201).json(statementId
+        ? await payments.createFromStatement(Number(statementId), actor(res),
+                                             { dueOn: input.dueOn ?? undefined })
+        : await payments.createFromInspection(id, actor(res),
+                                              { dueOn: input.dueOn ?? undefined }));
+    }));
+
   // 計算書から支払を起こす。割当なしでは作れない。
   router.post("/statements/:id/payment",
     requireRole("admin", "legal"), requireWritable,

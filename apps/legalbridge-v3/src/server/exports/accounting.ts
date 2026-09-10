@@ -60,6 +60,21 @@ export interface AccountingSource {
   matterNo: string | null;
   matterTitle: string | null;
   lines: AllocationLine[];
+  /**
+   * 元になった書類の明細（検収書）。V1・V2 は支払内容をここから出していた。
+   * 条件の名前ではなく、その回に検収した成果物がそのまま経理の明細になる。
+   * 手で起こした支払には無いので、そのときは割当から組む。
+   */
+  documentLines?: DocumentLine[];
+}
+
+/** 検収書の明細1行。V2 の inspectionSlots が読んでいた項目に合わせる。 */
+export interface DocumentLine {
+  content: string;
+  unitPrice: number | null;
+  quantity: number | null;
+  amount: number;
+  deliveryDate: string | null;
 }
 
 export interface AccountingRow {
@@ -156,13 +171,24 @@ export function buildAccountingRow(source: AccountingSource): AccountingRow {
   // 源泉が違うと申告が狂う。黙って出さずに印を付ける。
   if (withholdingExpected !== withholdingTax) flags.push("withholdingGap");
 
-  const slots = fitSlots(source.lines.map((l) => ({
-    content: [l.conditionNo, l.name].filter(Boolean).join(" ") || "（内容未設定）",
-    unitPrice: l.unitAmount ?? "",
-    quantity: l.quantity ?? "",
-    amount: l.amount,
-    deliveryDate: l.occurredOn ?? ""
-  })));
+  // 支払内容は書類の明細をそのまま出す（V1・V2 と同じ）。経理は「何に対する
+  // 支払か」で照合するので、条件の名前では足りない。書類が無い支払だけ、
+  // 割当から組む。
+  const slots = fitSlots(source.documentLines?.length
+    ? source.documentLines.map((l) => ({
+        content: l.content || "（内容未設定）",
+        unitPrice: l.unitPrice ?? "",
+        quantity: l.quantity ?? "",
+        amount: l.amount,
+        deliveryDate: l.deliveryDate ?? ""
+      }))
+    : source.lines.map((l) => ({
+        content: [l.conditionNo, l.name].filter(Boolean).join(" ") || "（内容未設定）",
+        unitPrice: l.unitAmount ?? "",
+        quantity: l.quantity ?? "",
+        amount: l.amount,
+        deliveryDate: l.occurredOn ?? ""
+      })));
 
   return {
     paymentId: source.paymentId,

@@ -462,6 +462,24 @@ export function DocumentsWorkspace(
     finally { setBusy(false); }
   }
 
+  /**
+   * この書類から支払を立てる。
+   *
+   * 当社の支払は検収書か利用許諾計算書から起きる。経理提出用の一覧は支払から
+   * 作られるので、ここを通らないと経理に出ない。二重に立てようとするとサーバが断る。
+   */
+  async function createPayment(id: number) {
+    setError(null); setStored(null); setBusy(true);
+    try {
+      const r = await api.post<{ paymentId: number; amount: number; dueOn: string | null }>(
+        `/documents/${id}/payment`, {});
+      setStored(`支払 #${r.paymentId} を立てました`
+        + `（${money(r.amount)}${r.dueOn ? `　支払期日 ${r.dueOn}` : ""}）。`
+        + "経理提出用は「運用」の出力タブから出せます");
+    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
+    finally { setBusy(false); }
+  }
+
   // Drive へ保存する。既存ファイルがあれば中身だけ差し替わり、リンクは変わらない。
   /**
    * 無効化。理由を必ず聞く。行は消えず、発行した記録は残る。
@@ -1001,6 +1019,7 @@ export function DocumentsWorkspace(
 
           {current && (
             <DocumentDetail
+              onPayment={createPayment}
               doc={current} versions={chainOf(current)} templates={templates}
               integrations={integrations} busy={busy}
               onOpen={onOpen} onChanged={() => void reload()}

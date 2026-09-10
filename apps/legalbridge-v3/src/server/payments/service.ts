@@ -196,6 +196,141 @@ export class PaymentService {
     } catch (error) { throw translate(error); }
   }
 
+  /**
+   * 検収書から支払を立てる。
+   *
+   * 当社の支払は検収書か利用許諾計算書のどちらかから起きる。計算書のほうは
+   * createFromStatement が受け持つ。こちらは検収書で、文書に結び付いた実績
+   * （condition_events.document_id）が支払の中身になる。
+   *
+   * 1枚の検収書に複数の実績が載る（条件をまたぐ委託料と実費など）。支払は
+   * 1枚につき1件にし、実績ごとに割当を作る。経理提出用の「支払内容」は
+   * その割当から出るので、行がそのまま経理の明細になる。
+   */
+  async createFromInspection(documentId: number, actor: string, options: { dueOn?: string | null } = {}) {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const found = await client.query(
+          `SELECT e.id AS event_id, e.amount, e.occurred_on, e.inspected_on, e.deliverable,
+                  c.id AS condition_id, c.direction, c.tax_category, c.currency,
+                  c.counterparty_id, c.payment_terms,
+                  p.kind AS party_kind, p.withholding,
+                  s.pay_on AS schedule_pay_on
+             FROM condition_events e
+             JOIN conditions c ON c.id = e.condition_id
+             LEFT JOIN parties p ON p.id = c.counterparty_id
+             LEFT JOIN condition_schedules s ON s.id = e.schedule_id
+            WHERE e.document_id = $1 AND e.status = 'active'
+            ORDER BY e.id
+              FOR UPDATE OF e`, [documentId]);
+        const rows = found.rows as Array<Record<string, any>>;
+        if (!rows.length) {
+          throw new DomainError("VALIDATION",
+            "この文書に結び付いた実績がありません。実績から作った検収書だけが支払になります");
+        }
+
+        const parties = new Set(rows.map((r) => Number(r.counterparty_id)));
+        if (parties.size !== 1 || !rows[0].counterparty_id) {
+          throw new DomainError("VALIDATION",
+            "相手先が1件に決まりません。相手先ごとに検収書を分けてください");
+        }
+        const directions = new Set(rows.map((r) => String(r.direction)));
+        if (directions.size !== 1) {
+          throw new DomainError("VALIDATION", "取得と許諾が混ざった文書からは支払を作れません");
+        }
+
+        // 同じ実績に二重に支払を立てない。直すなら先の支払を取り消す。
+        const duplicated = await client.query(
+          `SELECT p.id FROM payments p
+             JOIN payment_allocations a ON a.payment_id = p.id
+            WHERE a.event_id = ANY($1::bigint[]) AND p.status <> 'canceled'`,
+          [rows.map((r) => Number(r.event_id))]);
+        if (duplicated.rows[0]) {
+          throw new DomainError("CONFLICT",
+            `この検収書の実績にはすでに支払 #${(duplicated.rows[0] as { id: number }).id} があります`);
+        }
+
+        // 権利を許諾する側（out）は受け取る側なので入金、取得側（in）は支払。
+        const direction: "in" | "out" = String(rows[0].direction) === "out" ? "in" : "out";
+        const currency = String(rows[0].currency ?? "JPY");
+
+        // 消費税は税区分ごとに掛けて足す。区分をまとめて10%にすると
+        // 軽減や非課税が混じった検収書で合わなくなる。
+        let net = 0;
+        let tax = 0;
+        for (const r of rows) {
+          const amount = Number(r.amount ?? 0);
+          net += amount;
+          const rate = taxRateFor({
+            id: 0, conditionNo: null, currency, pricingModel: "none",
+            ratePpm: null, unitAmount: null, flatAmount: null, mgAmount: null, agAmount: null,
+            taxCategory: String(r.tax_category ?? "taxable") as "taxable" | "reduced" | "exempt"
+          });
+          tax += consumptionTax(amount, rate);
+        }
+        if (net <= 0) throw new DomainError("VALIDATION", "金額が 0 の実績からは支払を作れません");
+
+        const withholdingEnabled = direction === "out" && resolveWithholdingEnabled({
+          vendorWithholdingEnabled: rows[0].withholding === true,
+          entityType: str(rows[0].party_kind)
+        });
+        const withholding = withholdingEnabled ? withholdingTax(net + tax, true) : 0;
+
+        // 起算日は検収日（無ければ納品日）のいちばん遅い日。全部が済んでからでないと
+        // 支払は起きない。
+        const basisDates = rows
+          .map((r) => dateStr(r.inspected_on) ?? dateStr(r.occurred_on))
+          .filter((d): d is string => Boolean(d))
+          .sort();
+        const basis = basisDates[basisDates.length - 1] ?? null;
+
+        // 期日は予定の支払日をそのまま使う。回ごとに違えばいちばん遅い日。
+        const payOns = rows.map((r) => dateStr(r.schedule_pay_on))
+          .filter((d): d is string => Boolean(d)).sort();
+        const dueOn = options.dueOn ?? payOns[payOns.length - 1] ?? dueLimitFrom(basis);
+
+        const inserted = await client.query(
+          `INSERT INTO payments
+             (direction, party_id, currency, amount, tax_amount, withholding_amount,
+              basis_received_on, due_on, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7::date, $8::date, 'planned')
+           RETURNING id`,
+          [direction, rows[0].counterparty_id, currency, net, tax, withholding, basis, dueOn]);
+        const paymentId = Number((inserted.rows[0] as { id: number }).id);
+
+        for (const r of rows) {
+          await client.query(
+            `INSERT INTO payment_allocations (payment_id, condition_id, event_id, amount)
+             VALUES ($1, $2, $3, $4)`,
+            [paymentId, r.condition_id, r.event_id, Number(r.amount ?? 0)]);
+        }
+
+        const due = checkPaymentDue({
+          applicable: direction === "out" && isFreelanceActTarget(str(rows[0].party_kind)),
+          basisDate: basis, dueOn
+        });
+
+        await recordAudit(client, {
+          actor, action: "payment.create", targetType: "payment", targetId: paymentId,
+          detail: {
+            documentId, eventIds: rows.map((r) => Number(r.event_id)), direction,
+            amount: net, tax, withholding, basis, dueOn, dueVerdict: due.verdict
+          }
+        });
+        if (due.verdict === "over_limit") {
+          await client.query(
+            `INSERT INTO data_quality_issues (rule_code, target_type, target_id, severity, detail)
+             VALUES ('PAYMENT_DUE_OVER_LIMIT', 'payment', $1, 'high', $2::jsonb)
+             ON CONFLICT (rule_code, target_type, target_id) DO UPDATE
+               SET detail = EXCLUDED.detail, detected_at = now(), status = 'open'`,
+            [paymentId, JSON.stringify({ basis, dueOn, overBy: due.overBy, limitDate: due.limitDate })]);
+        }
+
+        return { paymentId, direction, amount: net, tax, withholding, dueOn, due };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
   /** 支払の記録（実際に振り込んだ日を入れる）。 */
   async markPaid(paymentId: number, paidOn: string, actor: string) {
     try {

@@ -45,7 +45,8 @@ const byNo = (versions: DocumentRow[], id: number) =>
 
 export function DocumentDetail(
   { doc, versions, templates, integrations, busy, onOpen, onChanged, onLinkCondition, openConditions,
-    onEditDraft, onIssueDraft, onReissue, onDerive, onVoid, onStore, isAdmin, onSelect }: {
+    onEditDraft, onIssueDraft, onReissue, onDerive, onVoid, onStore, onPayment,
+    isAdmin, onSelect }: {
     doc: DocumentRow;
     /** 「下敷きに次を作る」で選べるひな形。 */
     templates: TemplateOption[];
@@ -62,6 +63,8 @@ export function DocumentDetail(
     onDerive: (id: number, templateKey: string) => void;
     onVoid: (id: number, no: string | null) => void;
     onStore: (id: number) => void;
+    /** この書類から支払を立てる。検収書と利用許諾計算書だけが対象。 */
+    onPayment?: (id: number) => void | Promise<void>;
     /** 送る（内容確認メール → CloudSign）を開いた状態で描く。 */
     isAdmin?: boolean;
     onSelect: (id: number) => void;
@@ -149,6 +152,12 @@ export function DocumentDetail(
                           onClick={() => onSelect(pending.id)}>訂正版の下書きを開く</button>
                 : <button className="btn" disabled={busy}
                           onClick={() => onReissue(doc.id, doc.documentNo)}>訂正版を作る</button>
+              )}
+              {/* 当社の支払は検収書か利用許諾計算書から起きる。支払を立てないと
+                  経理提出用の一覧に出ない。 */}
+              {onPayment && (
+                <button className="btn" disabled={busy}
+                        onClick={() => void onPayment(doc.id)}>支払を立てる</button>
               )}
               <button className="btn" disabled={busy}
                       onClick={() => { setDeriving((v) => !v); setDeriveKey(""); }}>

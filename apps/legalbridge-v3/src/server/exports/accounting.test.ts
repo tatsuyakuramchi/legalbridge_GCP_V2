@@ -4,6 +4,7 @@ import {
   ACCOUNTING_COLUMNS, ACCOUNTING_SLOT_COUNT, buildAccountingRow, expectedWithholding,
   fitSlots, groupAccounting, totalRow, type AccountingSource, type AllocationLine
 } from "./accounting.js";
+import { documentLinesFrom } from "./accounting-repository.js";
 import { toXls, xlsFilename } from "./xls.js";
 
 const line = (over: Partial<AllocationLine> = {}): AllocationLine => ({
@@ -209,4 +210,70 @@ test("空の指定では何も書かない", async () => {
   assert.equal(await new AccountingExportLedger(db).markExported([], "b", "a"), 0);
   assert.equal(await new AccountingExportLedger(db).markExported([0, -1, NaN], "b", "a"), 0);
   assert.equal(db.queries.length, 0);
+});
+
+test("支払内容は書類の明細から出す（V1・V2 と同じ）", () => {
+  const row = buildAccountingRow(source({
+    documentLines: [
+      { content: "第2回 キャラクターデザイン一式", unitPrice: 280000, quantity: 1,
+        amount: 280000, deliveryDate: "2026-08-31" },
+      { content: "『ワンダラス・クリーチャーズ』の翻訳", unitPrice: null, quantity: 1,
+        amount: 100000, deliveryDate: "2026-08-31" }
+    ]
+  }));
+  assert.equal(row.slots[0].content, "第2回 キャラクターデザイン一式");
+  assert.equal(row.slots[0].unitPrice, 280000);
+  assert.equal(row.slots[0].deliveryDate, "2026-08-31");
+  assert.equal(row.slots[1].content, "『ワンダラス・クリーチャーズ』の翻訳");
+  assert.equal(row.slots[1].unitPrice, "", "単価が無ければ空。0 は出さない");
+});
+
+test("書類が無い支払（手で起こした分）は割当から組む", () => {
+  const row = buildAccountingRow(source());
+  assert.notEqual(row.slots[0].content, "");
+});
+
+test("書類の明細は「今回の分」だけを支払内容にする", () => {
+  const lines = documentLinesFrom({
+    delivery_line_items: [
+      { item_name: "第1回 本文原稿", inspection_status: "done",
+        inspected_amount_ex_tax: 280000, delivery_date: "2026-04-30" },
+      { item_name: "第2回 挿絵", inspection_status: "now", inspected_quantity: 1,
+        unit_price: 280000, inspected_amount_ex_tax: 280000, delivery_date: "2026-05-31T00:00:00Z" },
+      { item_name: "第3回 装丁", inspection_status: "pending", inspected_amount_ex_tax: 280000 }
+    ],
+    other_fees: [
+      { fee_name: "振込手数料", amount_ex_tax: 550, tax_category: "taxable" },
+      { fee_name: "立替の交通費", amount_ex_tax: 1200, tax_category: "exempt" }
+    ]
+  });
+  assert.deepEqual(lines.map((l) => l.content), ["第2回 挿絵", "振込手数料"]);
+  assert.equal(lines[0].quantity, 1);
+  assert.equal(lines[0].unitPrice, 280000);
+  assert.equal(lines[0].deliveryDate, "2026-05-31", "日付は10文字に切る");
+  assert.equal(lines[1].amount, 550, "課税の手数料は支払内容に載る");
+});
+
+test("印の無い行はそのまま今回の分として扱う", () => {
+  const lines = documentLinesFrom({
+    delivery_line_items: [{ item_name: "翻訳", amount_ex_tax: 100000 }]
+  });
+  assert.deepEqual(lines.map((l) => l.content), ["翻訳"]);
+  assert.equal(lines[0].amount, 100000);
+});
+
+test("書類が空なら明細も空（割当から組む側へ落ちる）", () => {
+  assert.deepEqual(documentLinesFrom(null), []);
+  assert.deepEqual(documentLinesFrom({}), []);
+});
+
+test("継続課金の1期分は数量1・単価＝金額で出す（V2 と同じ）", () => {
+  const lines = documentLinesFrom({
+    delivery_line_items: [
+      { item_name: "月額サポート 2026年8月", calc_method: "SUBSCRIPTION",
+        inspected_amount_ex_tax: 50000, inspected_quantity: 0 }
+    ]
+  });
+  assert.equal(lines[0].quantity, 1);
+  assert.equal(lines[0].unitPrice, 50000);
 });

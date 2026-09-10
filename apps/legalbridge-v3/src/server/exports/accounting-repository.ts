@@ -3,7 +3,7 @@ import { dateStr, str } from "../core/db.js";
 import { translate } from "../core/errors.js";
 import {
   buildAccountingRow, groupAccounting,
-  type AccountingGroup, type AccountingSource, type AllocationLine
+  type AccountingGroup, type AccountingSource, type AllocationLine, type DocumentLine
 } from "./accounting.js";
 
 /**
@@ -75,6 +75,23 @@ const PAYMENTS_SQL = `
      AND ($4::boolean OR ex.action IS DISTINCT FROM 'export.accounting')
    ORDER BY COALESCE(y.paid_on, y.due_on), y.id`;
 
+/**
+ * 支払の元になった書類（検収書）の明細。
+ *
+ * 支払は実績から起こすので、割当の実績を辿ればその実績を載せた書類に着く。
+ * V1・V2 は経理の「支払内容」を書類の明細から出していたので、そこを合わせる。
+ * 1つの支払が複数の書類にまたがるときは、どれとも決められないので使わない。
+ */
+const DOCUMENT_SQL = `
+  SELECT al.payment_id, count(DISTINCT e.document_id) AS documents,
+         min(e.document_id) AS document_id,
+         (array_agg(d.rendered_values ORDER BY d.id))[1] AS rendered_values
+    FROM payment_allocations al
+    JOIN condition_events e ON e.id = al.event_id
+    JOIN documents d ON d.id = e.document_id AND d.status = 'issued'
+   WHERE al.payment_id = ANY($1::bigint[])
+   GROUP BY al.payment_id`;
+
 const LINES_SQL = `
   SELECT al.payment_id, al.amount, c.condition_no, c.name, c.tax_category,
          c.currency, c.unit_amount,
@@ -84,6 +101,55 @@ const LINES_SQL = `
     LEFT JOIN condition_events e ON e.id = al.event_id
    WHERE al.payment_id = ANY($1::bigint[])
    ORDER BY al.payment_id, c.condition_no NULLS LAST, al.id`;
+
+/**
+ * 焼き付けた書類の中身から、経理の支払内容にする行を取り出す。
+ *
+ * V2 の inspectionSlots と同じ扱いにする。
+ *   ・今回検収の行だけを載せる（分納の済んだ回・これからの回は載せない）
+ *   ・課税の手数料は行として載せる（非課税は立替金なので載せない）
+ */
+export function documentLinesFrom(rendered: unknown): DocumentLine[] {
+  const values = (rendered ?? {}) as Record<string, unknown>;
+  const rowsOf = (v: unknown) =>
+    Array.isArray(v) ? v.filter((x): x is Record<string, unknown> => !!x && typeof x === "object") : [];
+  const n = (v: unknown): number | null => {
+    if (v === "" || v === null || v === undefined) return null;
+    const parsed = Number(String(v).replace(/[,¥\s]/g, ""));
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const text = (v: unknown) => (v === null || v === undefined ? "" : String(v).trim());
+
+  const lines: DocumentLine[] = [];
+  for (const row of rowsOf(values.delivery_line_items)) {
+    // 分納は「今回の分」だけが支払の対象。済んだ回を混ぜると二重に払う。
+    const status = text(row.inspection_status);
+    if (status && status !== "now") continue;
+    const amount = n(row.inspected_amount_ex_tax ?? row.amount_ex_tax ?? row.amount) ?? 0;
+    // 継続課金を周期ごとに割った1行は1期分。数量も単価も持たないので、
+    // 空欄や 0 のまま経理へ出さない（V2 の inspectionSlots と同じ扱い）。
+    const subscription = text(row.calc_method).toUpperCase() === "SUBSCRIPTION";
+    const quantity = n(row.inspected_quantity ?? row.quantity);
+    lines.push({
+      content: text(row.item_name),
+      unitPrice: n(row.unit_price) ?? (subscription && amount > 0 ? amount : null),
+      quantity: subscription && amount > 0 && (quantity === null || quantity <= 0) ? 1 : quantity,
+      amount,
+      deliveryDate: text(row.delivery_date).slice(0, 10) || null
+    });
+  }
+  for (const fee of rowsOf(values.other_fees)) {
+    // 非課税の手数料は立替金の側で数える。ここに載せると二重になる。
+    if ((text(fee.tax_category) || "taxable") === "exempt") continue;
+    lines.push({
+      content: text(fee.fee_name ?? fee.item_name ?? fee.name) || "その他手数料",
+      unitPrice: null, quantity: null,
+      amount: n(fee.amount_ex_tax ?? fee.amount) ?? 0,
+      deliveryDate: null
+    });
+  }
+  return lines;
+}
 
 export class AccountingExportRepository {
   constructor(private readonly database: Transactable) {}
@@ -98,6 +164,17 @@ export class AccountingExportRepository {
       const lines = ids.length
         ? await this.database.query(LINES_SQL, [ids])
         : { rows: [] as any[] };
+
+      // 書類の明細を先に取る。あれば支払内容はこちらを使う。
+      const docLines = new Map<number, DocumentLine[]>();
+      if (ids.length) {
+        const docs = await this.database.query(DOCUMENT_SQL, [ids]);
+        for (const d of docs.rows as any[]) {
+          if (Number(d.documents) !== 1) continue;
+          const lines = documentLinesFrom(d.rendered_values);
+          if (lines.length) docLines.set(Number(d.payment_id), lines);
+        }
+      }
 
       const byPayment = new Map<number, AllocationLine[]>();
       for (const l of lines.rows as any[]) {
@@ -141,7 +218,8 @@ export class AccountingExportRepository {
           ownerDepartment: str(r.owner_department),
           matterNo: str(r.matter_no),
           matterTitle: str(r.matter_title),
-          lines: byPayment.get(id) ?? []
+          lines: byPayment.get(id) ?? [],
+          documentLines: docLines.get(id)
         };
         return buildAccountingRow(source);
       });
