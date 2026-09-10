@@ -706,6 +706,17 @@ export function createRoutes(database: Transactable) {
     }));
 
   /**
+   * 取引モデル。案件が扱うものを決めるので、作るときに間違えると後戻りできなかった。
+   * 繋がっている条件が新しいモデルで使えないときは断る（理由と条件番号を返す）。
+   */
+  const matterKindSchema = z.object({ kind: z.enum(["work", "outsourcing", "single"]) });
+  router.patch("/matters/:id/kind", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { kind } = matterKindSchema.parse(req.body ?? {});
+      res.json(await matterWrites.changeKind(Number(req.params.id), kind, actor(res)));
+    }));
+
+  /**
    * 案件の担当者。検収書の【ご連絡先】はここから部署・氏名・メールを差す。
    * 作るときにしか決められず、あとから直せなかった。
    */

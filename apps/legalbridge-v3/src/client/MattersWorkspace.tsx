@@ -76,6 +76,8 @@ export function MattersWorkspace(
   const [keyword, setKeyword] = useState("");
   // 進め方は後から決まることが多いので、詳細からその場で直せるようにする。
   const [styleEdit, setStyleEdit] = useState(false);
+  // 取引モデルは案件が扱うものを決める。作るときに間違えることが多いので直せるようにする。
+  const [kindEdit, setKindEdit] = useState(false);
   // 繋ぎ直したら、進み具合と一覧を引き直す。
   const [linkVersion, setLinkVersion] = useState(0);
   // Drive の案件フォルダが使えるか。親フォルダが未設定なら作る導線を出さない。
@@ -106,6 +108,18 @@ export function MattersWorkspace(
     if (!selected) return;
     api.patch(`/matters/${selected}/document-style`, { documentStyle: value || null })
       .then(() => { setStyleEdit(false); relink(); })
+      .catch((e: ApiError) => setError(e.message));
+  }
+
+  /**
+   * 取引モデルを変える。扱える条件の種類が変わるので、いま繋がっている条件が
+   * 使えなくなる組み合わせはサーバが断る（条件番号を添えて返る）。
+   */
+  function saveKind(value: string) {
+    if (!selected || !value) return;
+    setError(null);
+    api.patch(`/matters/${selected}/kind`, { kind: value })
+      .then(() => { setKindEdit(false); relink(); })
       .catch((e: ApiError) => setError(e.message));
   }
   const query = useDebounced(keyword);
@@ -273,8 +287,31 @@ export function MattersWorkspace(
                           onGo={(t) => setTab(t)} />
                   <dl className="dl">
                     <dt>取引モデル</dt>
-                    <dd>{KIND_LABEL[detail.kind]}
-                      <div className="faint">{MATTER_KIND_HINT[detail.kind]}</div></dd>
+                    <dd>
+                      {kindEdit ? (
+                        <div className="row">
+                          <select defaultValue={detail.kind}
+                                  onChange={(e) => saveKind(e.target.value)}>
+                            {(["work", "outsourcing", "single"] as const).map((k) => (
+                              <option key={k} value={k}>{KIND_LABEL[k]}</option>
+                            ))}
+                          </select>
+                          <button className="btn btn-sm" onClick={() => setKindEdit(false)}>やめる</button>
+                        </div>
+                      ) : (
+                        <div className="row">
+                          <span>{KIND_LABEL[detail.kind]}</span>
+                          <button className="btn btn-sm" onClick={() => setKindEdit(true)}>変更</button>
+                        </div>
+                      )}
+                      <div className="faint">{MATTER_KIND_HINT[detail.kind]}</div>
+                      {kindEdit && (
+                        <div className="faint">
+                          変えると扱える条件の種類と工程が変わります。
+                          いま繋がっている条件が使えなくなる組み合わせは断られます
+                        </div>
+                      )}
+                    </dd>
                     <dt>進め方</dt>
                     <dd>
                       {styleEdit ? (

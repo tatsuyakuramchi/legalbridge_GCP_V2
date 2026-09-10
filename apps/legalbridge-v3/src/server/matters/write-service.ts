@@ -2,6 +2,7 @@ import { inTransaction, type Transactable } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { allocateNumber } from "../core/numbering.js";
+import { CONDITION_KINDS_BY_MATTER } from "./link-service.js";
 
 export type MatterKind = "work" | "outsourcing" | "single";
 export type MatterStatus = "open" | "waiting" | "blocked" | "done" | "canceled";
@@ -185,6 +186,53 @@ export class MatterWriteService {
                     to: style }
         });
         return { id, documentStyle: style };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 取引モデルを変える。
+   *
+   * 取引モデルは案件が扱うものを決めるので、作るときに間違えると後戻りできなかった。
+   * 実際には「文書作成のつもりが委託だった」がよく起きる。
+   *
+   * すでに繋がっている条件の種類が新しいモデルで使えないときは断る。黙って変えると、
+   * 案件から辿れるのに新しく繋ぎ直せない条件が残る。外してから変えてもらう。
+   */
+  async changeKind(id: number, kind: MatterKind, actor: string) {
+    if (!["work", "outsourcing", "single"].includes(kind)) {
+      throw new DomainError("VALIDATION", "取引モデルは ライセンス / 業務委託 / 文書作成 のいずれかです");
+    }
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const before = await client.query(
+          "SELECT kind FROM matters WHERE id = $1 FOR UPDATE", [id]);
+        if (!before.rows[0]) throw new DomainError("NOT_FOUND", `案件 ${id} が見つかりません`);
+        const from = String((before.rows[0] as { kind: string }).kind);
+        if (from === kind) return { id, kind };
+
+        const allowed = CONDITION_KINDS_BY_MATTER[kind] ?? [];
+        const linked = await client.query(
+          `SELECT DISTINCT c.kind, c.condition_no
+             FROM matter_links l
+             JOIN conditions c ON c.id::text = l.target_ref
+            WHERE l.matter_id = $1 AND l.target_type = 'condition'`, [id]);
+        const stuck = (linked.rows as Array<{ kind: string; condition_no: string | null }>)
+          .filter((r) => !allowed.some((a) => a.value === r.kind));
+        if (stuck.length) {
+          throw new DomainError("CONFLICT",
+            `繋がっている条件が新しい取引モデルで使えません（${
+              stuck.map((r) => r.condition_no ?? r.kind).join("・")}）。` +
+            "先に条件を外してから変えてください");
+        }
+
+        await client.query(
+          "UPDATE matters SET kind = $2, updated_at = now() WHERE id = $1", [id, kind]);
+        await recordAudit(client, {
+          actor, action: "matter.change_kind", targetType: "matter", targetId: id,
+          detail: { from, to: kind }
+        });
+        return { id, kind };
       });
     } catch (error) { throw translate(error); }
   }
