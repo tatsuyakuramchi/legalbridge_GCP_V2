@@ -60,7 +60,12 @@ function orderNoFor(context: Ctx, conditionId: unknown): string | null {
   const mine = related.filter((d) => Number(d.conditionId) === Number(conditionId)
     && (d.templateKey === "purchase_order" || d.templateKey === "intl_purchase_order"));
   const nos = [...new Set(mine.map((d) => String(d.documentNo ?? "")).filter(Boolean))];
-  return nos.length ? nos.join("・") : null;
+  if (nos.length) return nos.join("・");
+  // V3 で出した発注書が無いときは、条件に控えた外部の番号を使う。
+  // 移行した条件は発注書が V1・V2 側にあるので、ここが埋まっていないと空欄になる。
+  const condition = (context.conditions ?? []).find((c: Ctx) => c.id === conditionId);
+  const fallback = String(condition?.orderNo ?? "").trim();
+  return fallback || null;
 }
 
 /** 相手先が「1件の条件」に決まるときだけ、条件から明細を組める。 */

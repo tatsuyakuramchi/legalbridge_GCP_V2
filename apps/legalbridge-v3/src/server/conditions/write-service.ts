@@ -50,6 +50,8 @@ export interface ConditionInput {
   spec?: string | null;
   /** 成果物の帰属先。orderer=発注者（譲渡型）/ contractor=受注者（利用許諾型）。 */
   deliverableOwnership?: "orderer" | "contractor" | null;
+  /** 外部で出した発注書の番号。V3 で出した発注書があればそちらを優先する。 */
+  orderNo?: string | null;
   conditionNo?: string | null;
   scopes?: ConditionScope[];
 }
@@ -71,6 +73,7 @@ export interface EconomicsPatch {
   exclusivity?: "exclusive" | "non_exclusive" | null;
   spec?: string | null;
   deliverableOwnership?: "orderer" | "contractor" | null;
+  orderNo?: string | null;
 }
 
 const ECONOMICS_COLUMNS: Record<keyof EconomicsPatch, string> = {
@@ -78,7 +81,7 @@ const ECONOMICS_COLUMNS: Record<keyof EconomicsPatch, string> = {
   mgAmount: "mg_amount", agAmount: "ag_amount", termStart: "term_start", termEnd: "term_end",
   paymentTerms: "payment_terms", taxCategory: "tax_category", notes: "notes",
   workId: "work_id", exclusivity: "exclusivity",
-  spec: "spec", deliverableOwnership: "deliverable_ownership"
+  spec: "spec", deliverableOwnership: "deliverable_ownership", orderNo: "order_no"
 };
 
 // 改訂で引き継ぐ列（id・状態・監査列を除く条件の中身すべて）。
@@ -87,7 +90,7 @@ const COPY_COLUMNS = [
   "work_id", "work_part_id", "exclusivity", "sublicensable", "term_start", "term_end",
   "currency", "pricing_model", "rate_ppm", "unit_amount", "flat_amount", "mg_amount", "ag_amount",
   "royalty_base", "deductible_costs", "tax_category", "withholding_note", "payment_terms",
-  "cycle", "notes", "series_id", "effective_from", "spec", "deliverable_ownership"
+  "cycle", "notes", "series_id", "effective_from", "spec", "deliverable_ownership", "order_no"
 ];
 
 export class ConditionWriteService {
@@ -155,9 +158,9 @@ export class ConditionWriteService {
                                    term_start, term_end, currency, pricing_model,
                                    rate_ppm, unit_amount, flat_amount, mg_amount, ag_amount,
                                    tax_category, payment_terms, cycle, status, notes,
-                                   spec, deliverable_ownership)
+                                   spec, deliverable_ownership, order_no)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-                   $15, $16, $17, $18, $19, $20, $21, $22, 'active', $23, $24, $25)
+                   $15, $16, $17, $18, $19, $20, $21, $22, 'active', $23, $24, $25, $26)
            RETURNING id, condition_no`,
           [no, input.agreementId ?? null, input.direction, input.kind, name, input.counterpartyId,
            input.workId ?? null, input.workPartId ?? null,
@@ -166,7 +169,8 @@ export class ConditionWriteService {
            input.ratePpm ?? null, input.unitAmount ?? null, input.flatAmount ?? null,
            input.mgAmount ?? null, input.agAmount ?? null,
            input.taxCategory ?? "taxable", input.paymentTerms ?? null, input.cycle ?? null,
-           input.notes ?? null, input.spec ?? null, input.deliverableOwnership ?? null]);
+           input.notes ?? null, input.spec ?? null, input.deliverableOwnership ?? null,
+           input.orderNo ?? null]);
         const row = inserted.rows[0] as { id: number; condition_no: string | null };
         const id = Number(row.id);
 

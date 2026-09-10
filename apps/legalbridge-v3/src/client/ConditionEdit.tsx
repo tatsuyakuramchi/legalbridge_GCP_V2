@@ -72,6 +72,7 @@ export function ConditionEdit(
     taxCategory: detail.taxCategory,
     paymentTerms: detail.paymentTerms ?? "",
     spec: detail.spec ?? "",
+    orderNo: detail.orderNo ?? "",
     deliverableOwnership: detail.deliverableOwnership ?? "",
     regions: joinScopes(detail, "region"),
     languages: joinScopes(detail, "language"),
@@ -106,6 +107,7 @@ export function ConditionEdit(
       ["paymentTerms", patchText(v.paymentTerms, detail.paymentTerms)],
       ["notes", patchText(v.notes, detail.notes)],
       ["spec", patchText(v.spec, detail.spec)],
+      ["orderNo", patchText(v.orderNo, detail.orderNo)],
       ["deliverableOwnership", patchText(v.deliverableOwnership, detail.deliverableOwnership)],
       ["flatAmount", patchInt(v.flatAmount, detail.flatAmount)],
       ["unitAmount", patchInt(v.unitAmount, detail.unitAmount)],
@@ -292,6 +294,9 @@ export function ConditionEdit(
           {field("spec", "仕様・成果物", { type: "textarea",
             placeholder: "カラーイラスト1点（表紙用）、A4 相当 など",
             hint: "発注書・検収書の明細の「仕様・成果物」にそのまま出る" })}
+          {field("orderNo", "発注番号（外部）", {
+            placeholder: "ARC-PO-2025-0123",
+            hint: "V1・V2 や紙で出した発注書の番号。検収書の発注番号に出る。V3 で発注書を出したらそちらが優先される" })}
           <label className="field">
             <span>成果物の帰属先</span>
             <select value={v.deliverableOwnership} onChange={(e) => set("deliverableOwnership", e.target.value)}>

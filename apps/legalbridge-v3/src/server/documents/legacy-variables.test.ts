@@ -184,3 +184,24 @@ test("見出しの発注番号は、条件をまたぐと重複なく「・」�
   } as any;
   assert.equal(resolveLegacyVariable("parent_po_number", context), "ARC-PO-2026-0031・ARC-PO-2026-0033");
 });
+
+test("見出しの発注番号も、V3 の発注書が無ければ条件の控えを使う", () => {
+  const context = {
+    related: [],
+    conditions: [{ id: 1, orderNo: "ARC-PO-2025-0123" }, { id: 2, orderNo: "ARC-PO-2025-0124" },
+                 { id: 3, orderNo: null }]
+  } as any;
+  assert.equal(resolveLegacyVariable("parent_po_number", context),
+               "ARC-PO-2025-0123・ARC-PO-2025-0124");
+});
+
+test("「発注番号」は文書自身の番号を指す（検収書の親は parent_po_number）", () => {
+  // 同じ名前が2か所にあり、先に見つかったほうが勝つ。発注書では自分の番号が正しい。
+  // 検収書のひな形で親の発注番号を出したいときは parent_po_number を使う。
+  const context = {
+    document: { number: "ARC-INS-2026-1001" },
+    related: [{ conditionId: 1, documentNo: "ARC-PO-2026-0031", templateKey: "purchase_order" }]
+  } as any;
+  assert.equal(resolveLegacyVariable("発注番号", context), "ARC-INS-2026-1001");
+  assert.equal(resolveLegacyVariable("parent_po_number", context), "ARC-PO-2026-0031");
+});

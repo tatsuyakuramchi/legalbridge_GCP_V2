@@ -93,6 +93,10 @@ export function ConditionCreateForm(
         { name: "spec", label: "仕様・成果物", type: "textarea",
           placeholder: "カラーイラスト1点（表紙用）、A4 相当 など",
           hint: "発注書・検収書の明細の「仕様・成果物」にそのまま出る" },
+        // V3 で発注書を出せば自動で入る。移行した条件は元が V1・V2 側にあるので控える。
+        { name: "orderNo", label: "発注番号（外部）",
+          placeholder: "ARC-PO-2025-0123",
+          hint: "V1・V2 や紙で出した発注書の番号。検収書の発注番号に出る。V3 で発注書を出したらそちらが優先される" },
         { name: "deliverableOwnership", label: "成果物の帰属先", type: "select",
           options: [{ value: "orderer", label: "発注者（譲渡型）" }, { value: "contractor", label: "受注者（利用許諾型）" }],
           hint: "発注書の明細に出る。業績連動のとき 受注者=利用許諾料／発注者=インセンティブ報酬 として表記される" },

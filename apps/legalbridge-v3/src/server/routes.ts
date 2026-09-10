@@ -768,6 +768,8 @@ export function createRoutes(database: Transactable) {
     notes: z.string().trim().max(4000).nullable().optional(),
     spec: z.string().trim().max(4000).nullable().optional(),
     deliverableOwnership: z.enum(["orderer", "contractor"]).nullable().optional(),
+    // 外部で出した発注書の番号。V3 で出した発注書があればそちらを優先する。
+    orderNo: z.string().trim().max(60).nullable().optional(),
     conditionNo: z.string().trim().max(40).nullable().optional(),
     scopes: z.array(z.object({
       scopeType: z.enum(["region", "language", "media", "channel"]),
@@ -822,7 +824,8 @@ export function createRoutes(database: Transactable) {
     workId: z.coerce.number().int().positive().nullable().optional(),
     exclusivity: z.enum(["exclusive", "non_exclusive"]).nullable().optional(),
     spec: z.string().trim().max(4000).nullable().optional(),
-    deliverableOwnership: z.enum(["orderer", "contractor"]).nullable().optional()
+    deliverableOwnership: z.enum(["orderer", "contractor"]).nullable().optional(),
+    orderNo: z.string().trim().max(60).nullable().optional()
   });
   // effectiveFrom に未来の日付を渡すと「予約された改訂」になる。
   // 契約変更を締結した日に記録できないと、適用開始日まで人が覚えているしかない。

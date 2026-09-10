@@ -103,6 +103,7 @@ export class ConditionRepository {
       `SELECT ${SUMMARY_COLUMNS},
               c.agreement_id, c.parent_id, c.work_part_id, c.exclusivity, c.sublicensable,
               c.tax_category, c.payment_terms, c.cycle, c.notes, c.spec, c.deliverable_ownership,
+              c.order_no,
               pc.condition_no AS parent_condition_no,
               wp.name AS work_part_name
          ${SUMMARY_JOINS}
@@ -138,6 +139,7 @@ export class ConditionRepository {
       cycle: str(row.cycle),
       notes: str(row.notes),
       spec: str(row.spec),
+      orderNo: str(row.order_no),
       deliverableOwnership: row.deliverable_ownership === "orderer" || row.deliverable_ownership === "contractor"
         ? row.deliverable_ownership : null,
       scopes, balance, documents, events, matters

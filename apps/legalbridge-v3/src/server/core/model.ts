@@ -62,6 +62,12 @@ export interface ConditionDetail extends ConditionSummary {
   spec: string | null;
   /** 成果物の帰属先。orderer=発注者 / contractor=受注者。 */
   deliverableOwnership: "orderer" | "contractor" | null;
+  /**
+   * 外部で出した発注書の番号。V1・V2 や紙で出した発注書は V3 に文書として無く、
+   * 検収書の発注番号を引ける元が無いので、ここに控える。
+   * V3 で出した発注書が紐づいていればそちらを優先する。
+   */
+  orderNo: string | null;
   scopes: ConditionScope[];
   balance: ConditionBalance | null;
   /** この条件を出力した文書。参照方向を反転した結果、条件から辿れる。 */

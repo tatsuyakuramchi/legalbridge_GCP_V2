@@ -288,3 +288,35 @@ test("検収の明細は、実績にあれば成果物と検収日を実績か�
   assert.equal(lines[1].inspection_date, "2026-09-30", "検収日が無ければ納品日");
   assert.equal(lines[1].paid_date, null, "予定に繋がっていない実績は支払日が空");
 });
+
+/**
+ * 検収書の発注番号は、その条件から V3 で出した発注書の番号を使う。
+ * V1・V2 や紙で出した発注書は V3 に文書として無いので、条件に控えた番号で代える。
+ */
+test("V3 の発注書が無ければ、条件に控えた発注番号を使う", () => {
+  const lines = deliveryLinesFrom(ctx({
+    conditions: [condition({ id: 1, orderNo: "ARC-PO-2025-0123" })],
+    condition: condition({ id: 1, orderNo: "ARC-PO-2025-0123" }),
+    related: [],
+    events: [{ id: 9, conditionId: 1, occurredOn: "2026-08-31", amount: 280000, schedule: null }]
+  })) as Array<Record<string, any>>;
+  assert.equal(lines[0].order_no, "ARC-PO-2025-0123");
+});
+
+test("V3 の発注書があればそちらを使う（控えは使わない）", () => {
+  const lines = deliveryLinesFrom(ctx({
+    conditions: [condition({ id: 1, orderNo: "ARC-PO-2025-0123" })],
+    condition: condition({ id: 1, orderNo: "ARC-PO-2025-0123" }),
+    related: [{ conditionId: 1, templateKey: "purchase_order", documentNo: "ARC-PO-2026-0031" }],
+    events: [{ id: 9, conditionId: 1, occurredOn: "2026-08-31", amount: 280000, schedule: null }]
+  })) as Array<Record<string, any>>;
+  assert.equal(lines[0].order_no, "ARC-PO-2026-0031");
+});
+
+test("控えも発注書も無ければ空のまま", () => {
+  const lines = deliveryLinesFrom(ctx({
+    related: [],
+    events: [{ id: 9, conditionId: 1, occurredOn: "2026-08-31", amount: 280000, schedule: null }]
+  })) as Array<Record<string, any>>;
+  assert.equal(lines[0].order_no, null);
+});

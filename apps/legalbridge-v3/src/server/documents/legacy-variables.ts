@@ -31,6 +31,9 @@ const yen = (v: unknown) =>
  */
 const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown }> = [
   // ---- 文書そのもの ----
+  // 「発注番号」はここにもあり、この表は先に見つかったほうが勝つ。発注書では
+  // 自分の番号が正しいのでこのままにする。検収書で親の発注番号を出したいときは
+  // parent_po_number（明細の行なら order_no）を使うこと。
   { names: ["CONTRACT_NO", "DOC_NO", "ORDER_NO", "documentNumber", "文書番号", "契約書番号", "発注番号"],
     get: (c) => c.document?.number },
   { names: ["SIGN_DATE", "CONTRACT_DATE", "契約締結日"],
@@ -45,7 +48,8 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown }> = [
   { names: ["CONTRACT_TITLE_REF", "基本契約名"], get: (c) => c.agreement?.title },
   // 検収書の見出しの「発注番号」。同じ条件から出ている発注書を辿る。
   { names: ["parent_po_number", "PARENT_PO_NUMBER", "発注番号", "元発注番号"],
-    get: (c) => relatedNo(c, "purchase_order") ?? relatedNo(c, "intl_purchase_order") },
+    get: (c) => relatedNo(c, "purchase_order") ?? relatedNo(c, "intl_purchase_order")
+             ?? conditionOrderNos(c) },
   { names: ["issueKey", "BACKLOG_KEY", "課題キー"], get: (c) => c.backlogKey },
 
   // ---- 相手先（受注者・許諾者） ----
@@ -220,6 +224,16 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown }> = [
  * 同じ条件から出ている書類の番号。条件をまたぐ検収書では発注書が複数あるので、
  * 番号を重複なく「・」で並べる（見出しの「発注番号」に全部出す）。
  */
+/**
+ * 条件に控えた外部の発注番号。V3 で出した発注書が無いときの控え。
+ * 移行した条件は発注書が V1・V2 側にあるので、ここが見出しの発注番号になる。
+ */
+const conditionOrderNos = (c: Ctx): string | undefined => {
+  const list = (c.conditions ?? []) as Array<Record<string, any>>;
+  const nos = [...new Set(list.map((x) => String(x.orderNo ?? "").trim()).filter(Boolean))];
+  return nos.length ? nos.join("・") : undefined;
+};
+
 const relatedNo = (c: Ctx, templateKey: string): string | undefined => {
   const nos = [...new Set(((c.related ?? []) as Array<Record<string, any>>)
     .filter((d) => d.templateKey === templateKey && d.documentNo)

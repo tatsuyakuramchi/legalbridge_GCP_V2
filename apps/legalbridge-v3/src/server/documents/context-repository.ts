@@ -326,6 +326,7 @@ export class DocumentContextRepository {
               c.rate_ppm, c.unit_amount, c.flat_amount, c.mg_amount, c.ag_amount,
               c.term_start, c.term_end, c.tax_category, c.payment_terms, c.cycle,
               c.agreement_id, c.exclusivity, c.sublicensable, c.notes, c.spec, c.deliverable_ownership,
+              c.order_no,
               c.counterparty_id,
               p.name AS party_name, p.name_kana AS party_kana, p.kind AS party_kind,
               p.invoice_no AS party_invoice_no, p.corporate_no AS party_corporate_no,
@@ -369,6 +370,8 @@ export class DocumentContextRepository {
         notes: str(row.notes),
         spec: str(row.spec),
         deliverableOwnership: str(row.deliverable_ownership),
+        /** 外部で出した発注番号。V3 の発注書が無いときの控え。 */
+        orderNo: str(row.order_no),
         agreementId: int(row.agreement_id),
         counterpartyId: int(row.counterparty_id),
         counterparty: {

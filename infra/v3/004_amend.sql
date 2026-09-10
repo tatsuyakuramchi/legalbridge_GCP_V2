@@ -699,6 +699,20 @@ COMMENT ON COLUMN v3.condition_events.inspector_dept IS
 COMMENT ON COLUMN v3.condition_events.inspector_name IS
   '検収者の氏名。空なら案件の担当者から引く。';
 
+-- ---------------------------------------------------------------------
+-- A-019: 条件に「外部の発注番号」を持たせる
+--
+-- 検収書の発注番号は、その条件から V3 で出した発注書の番号を使う。ところが
+-- V1・V2 で出した発注書や紙で交わした発注書は V3 に文書として無いので、
+-- 引ける元が無く空欄になる。V3 で出した発注書があればそちらが正しいので、
+-- ここは「無いときに使う番号」。移行した条件はほとんどがこちら。
+-- ---------------------------------------------------------------------
+
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS order_no text;
+
+COMMENT ON COLUMN v3.conditions.order_no IS
+  '外部で出した発注書の番号。V3 で出した発注書が紐づいていればそちらを優先する。';
+
 COMMIT;
 
 -- 確認
@@ -807,3 +821,7 @@ SELECT count(*) AS 列数 FROM information_schema.columns
 SELECT count(*) AS 列数 FROM information_schema.columns
  WHERE table_schema = 'v3' AND table_name = 'condition_events'
    AND column_name IN ('deliverable', 'inspected_on', 'inspector_dept', 'inspector_name');
+
+\echo '--- 条件の外部の発注番号（A-019。1 列であること） ---'
+SELECT count(*) AS 列数 FROM information_schema.columns
+ WHERE table_schema = 'v3' AND table_name = 'conditions' AND column_name = 'order_no';

@@ -143,6 +143,10 @@ SELECT * FROM (
          (SELECT count(*)::text || ' 列' FROM information_schema.columns
            WHERE table_schema='v3' AND table_name='condition_events'
              AND column_name IN ('deliverable','inspected_on','inspector_dept','inspector_name'))
+  UNION ALL
+  SELECT 19, '条件の外部の発注番号（A-019。1 列）',
+         (SELECT count(*)::text || ' 列' FROM information_schema.columns
+           WHERE table_schema='v3' AND table_name='conditions' AND column_name='order_no')
 ) AS 確認 ORDER BY n;
 `;
 
