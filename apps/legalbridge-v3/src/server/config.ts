@@ -18,6 +18,12 @@ export interface Config {
   databaseSchema: string;
   readOnly: boolean;
   authMode: "disabled" | "iap";
+  /** 認証なしで動かすときに名乗る利用者（予備系・開発用）。役割の見え方を試すため。 */
+  localUserEmail: string;
+  localUserRole: "admin" | "legal" | "requester";
+  /** 画面の隅に出す環境名と、データがいつ時点の写しかを書いたファイル（予備系用）。 */
+  siteLabel: string;
+  dataStampPath: string;
   adminEmails: string[];
   legalEmails: string[];
   requesterDomains: string[];
@@ -54,6 +60,13 @@ const mode = (v: string | undefined): "off" | "dry_run" | "live" => {
   return normalized === "live" ? "live" : normalized === "dry_run" ? "dry_run" : "off";
 };
 
+// 役割名の綴り違いは admin に倒さず、起動時に分かるよう例外にする。
+const localRole = (v: string | undefined): "admin" | "legal" | "requester" => {
+  const normalized = String(v ?? "admin").trim().toLowerCase() || "admin";
+  if (normalized === "admin" || normalized === "legal" || normalized === "requester") return normalized;
+  throw new Error(`LOCAL_USER_ROLE は admin / legal / requester のどれかにしてください: ${v}`);
+};
+
 export const config: Config = {
   port: int(process.env.PORT, 8081),
   databaseUrl: process.env.DATABASE_URL,
@@ -65,6 +78,10 @@ export const config: Config = {
   databaseSchema: (process.env.DB_SCHEMA ?? "v3").trim(),
   readOnly: bool(process.env.READ_ONLY, false),
   authMode: process.env.AUTH_MODE === "iap" ? "iap" : "disabled",
+  localUserEmail: (process.env.LOCAL_USER_EMAIL ?? "").trim() || "dev@local",
+  localUserRole: localRole(process.env.LOCAL_USER_ROLE),
+  siteLabel: (process.env.SITE_LABEL ?? "").trim(),
+  dataStampPath: (process.env.DATA_STAMP_PATH ?? "").trim(),
   adminEmails: list(process.env.ADMIN_EMAILS),
   legalEmails: list(process.env.LEGAL_EMAILS),
   requesterDomains: list(process.env.REQUESTER_DOMAINS),

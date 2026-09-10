@@ -339,3 +339,7 @@ button.pipe-step{font:inherit;text-align:left;cursor:pointer;color:inherit;backg
 .line-grid .field.wide{grid-column:1 / -1}
 .line-grid input,.line-grid select,.line-grid textarea{width:100%;border:1px solid var(--line-strong);border-radius:5px;
   padding:5px 8px;background:var(--surface);color:var(--ink);font:inherit;min-width:0}
+
+/* 予備系の目印。どの環境で、いつ時点のデータを見ているかを常に出す。 */
+.site-badge{margin-top:8px;padding:6px 8px;border-radius:6px;background:var(--warn-soft);color:var(--warn);font-size:12px;line-height:1.4;display:flex;flex-direction:column;gap:2px}
+.site-badge b{letter-spacing:.02em}

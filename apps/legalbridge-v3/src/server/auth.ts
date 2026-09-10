@@ -24,7 +24,7 @@ export function authenticate(request: Request, response: Response, next: NextFun
   if (request.path.startsWith("/internal/")) return next();
 
   if (config.authMode === "disabled") {
-    response.locals.currentUser = { email: "dev@local", role: "admin", source: "disabled" };
+    response.locals.currentUser = { email: config.localUserEmail, role: config.localUserRole, source: "disabled" };
     return next();
   }
   // IAP は署名済みヘッダを前段で検証する前提。ここではメールから役割だけを決める。

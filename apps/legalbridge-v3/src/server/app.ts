@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
@@ -7,6 +8,18 @@ import { authenticate } from "./auth.js";
 import { checkDatabase, getPool } from "./db/pool.js";
 import type { Transactable } from "./core/db.js";
 import { createRoutes, createWebhookRouter, errorHandler } from "./routes.js";
+
+/**
+ * 予備系で「どの環境で、いつ時点のデータを見ているか」を画面に出すための情報。
+ * 同期スクリプトが書く印のファイルを毎回読む（同期のたびに変わるので持たない）。
+ */
+export function siteInfo(): { label: string; dataAsOf: string | null } {
+  let dataAsOf: string | null = null;
+  if (config.dataStampPath) {
+    try { dataAsOf = fs.readFileSync(config.dataStampPath, "utf8").trim() || null; } catch { dataAsOf = null; }
+  }
+  return { label: config.siteLabel, dataAsOf };
+}
 
 export function createApp(database: Transactable | null = getPool() as Transactable | null) {
   const app = express();
@@ -32,7 +45,7 @@ export function createApp(database: Transactable | null = getPool() as Transacta
   app.use(authenticate);
 
   app.get("/api/v3/me", (_request, response) => {
-    response.json({ user: response.locals.currentUser, readOnly: config.readOnly });
+    response.json({ user: response.locals.currentUser, readOnly: config.readOnly, site: siteInfo() });
   });
 
   if (database) {

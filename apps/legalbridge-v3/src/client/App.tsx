@@ -13,7 +13,11 @@ import { FlowMonitorWorkspace } from "./FlowMonitorWorkspace.js";
 import { OpsWorkspace, HomeWorkspace, type OpsTab } from "./OpsWorkspace.js";
 
 type View = "home" | "matters" | "agreements" | "conditions" | "works" | "parties" | "documents" | "money" | "flows" | "ops";
-interface Me { user?: { email: string; role: string }; readOnly: boolean }
+interface Me {
+  user?: { email: string; role: string };
+  readOnly: boolean;
+  site?: { label: string; dataAsOf: string | null };
+}
 
 // 入口（案件）／横断で見る／監視・運用 の3段。案件が制御レイヤー、他は参照。
 const NAV: Array<{ section: string; items: Array<{ view: View; label: string }> }> = [
@@ -129,6 +133,12 @@ export function App() {
         <div className="rail-foot">
           <div className="faint">{me?.user?.email ?? "未認証"}</div>
           <div className="faint">{me?.user?.role ?? "—"}{me?.readOnly ? " ／ 読み取り専用" : ""}</div>
+          {me?.site?.label && (
+            <div className="site-badge" title={me.site.dataAsOf ? `データは ${me.site.dataAsOf} 時点の写し` : undefined}>
+              <b>{me.site.label}</b>
+              {me.site.dataAsOf && <span>データ {me.site.dataAsOf} 時点</span>}
+            </div>
+          )}
         </div>
       </nav>
 

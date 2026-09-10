@@ -1,0 +1,97 @@
+# LegalBridge V3 予備系（GCP 停止時の参照用）・開発用のローカル構成。
+#
+#   db   ローカルの PostgreSQL。平時から上げっぱなしにして、毎晩の同期で
+#        本番 v3 スキーマの写しを受け取る。
+#   app  V3 本体（本番と同じ Dockerfile.v3）。既定は読み取り専用。
+#   ops  同期・復元・開発用初期化を行う作業用コンテナ。使うときだけ
+#        `docker compose run --rm ops <サブコマンド>` で起動する。
+#
+# 設定は同じフォルダの .env（.env.example を写して埋める）。
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${LOCAL_DB_PASSWORD:?LOCAL_DB_PASSWORD を .env に書いてください}
+      POSTGRES_DB: legalbridge
+      V3_RUNTIME_PASSWORD: ${V3_RUNTIME_PASSWORD:?V3_RUNTIME_PASSWORD を .env に書いてください}
+      TZ: Asia/Tokyo
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d legalbridge"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    # 外へは出さない。psql で覗くときは `docker compose exec db psql -U postgres legalbridge`。
+
+  app:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.v3
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    environment:
+      NODE_ENV: production
+      PORT: "8080"
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: legalbridge
+      DB_SCHEMA: v3
+      # 本番と同じく、権限を絞ったランタイムロールで接続する。
+      DB_USER: legalbridge_v3_runtime
+      DB_PASSWORD: ${V3_RUNTIME_PASSWORD}
+      DB_POOL_MAX: "5"
+      # 予備系は読み取り専用が既定。開発で書き込むときは .env で false にする。
+      READ_ONLY: ${READ_ONLY:-true}
+      AUTH_MODE: disabled
+      LOCAL_USER_EMAIL: ${LOCAL_USER_EMAIL:-backup@local}
+      LOCAL_USER_ROLE: ${LOCAL_USER_ROLE:-admin}
+      SITE_LABEL: ${SITE_LABEL:-予備系}
+      DATA_STAMP_PATH: /data/SYNC_STAMP
+      # ファイルは Drive ではなく手元のフォルダへ（./data/files）。
+      DRIVE_STORAGE: local
+      LOCAL_FILES_DIR: /data/files
+      CHROMIUM_PATH: /usr/bin/chromium-browser
+      # 外部連携はすべて止める（設定しない＝off）。Backlog・Slack・メール・CloudSign は送らない。
+      SLACK_MODE: "off"
+      GMAIL_MODE: "off"
+      CLOUDSIGN_MODE: "off"
+      BACKLOG_MODE: "off"
+      TZ: Asia/Tokyo
+    volumes:
+      - ./data:/data
+
+  ops:
+    build: ./ops
+    profiles: ["ops"]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGUSER: postgres
+      PGPASSWORD: ${LOCAL_DB_PASSWORD}
+      PGDATABASE: legalbridge
+      CLOUD_SQL_INSTANCE: ${CLOUD_SQL_INSTANCE:-}
+      REMOTE_DB_NAME: ${REMOTE_DB_NAME:-legalbridge}
+      SYNC_DB_USER: ${SYNC_DB_USER:-legalbridge_v3_backup}
+      SYNC_DB_PASSWORD: ${SYNC_DB_PASSWORD:-}
+      KEEP_DUMPS: ${KEEP_DUMPS:-14}
+      TZ: Asia/Tokyo
+    volumes:
+      - ./bin/ops.sh:/usr/local/bin/ops:ro
+      - ../v3:/v3:ro
+      - ./dumps:/dumps
+      - ./data:/data
+      - ./keys:/keys:ro
+    entrypoint: ["ops"]
+
+volumes:
+  pgdata:

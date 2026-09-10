@@ -74,7 +74,9 @@ export async function recordCommunication(
 /** Drive の URL からファイル／フォルダの ID を取り出す。取れなければ null。 */
 export function driveIdFromUrl(url: string): string | null {
   const s = String(url ?? "").trim();
-  const m = s.match(/\/(?:d|folders|file\/d)\/([A-Za-z0-9_-]{10,})/) ?? s.match(/[?&]id=([A-Za-z0-9_-]{10,})/);
+  const m = s.match(/\/(?:d|folders|file\/d)\/([A-Za-z0-9_-]{10,})/) ?? s.match(/[?&]id=([A-Za-z0-9_-]{10,})/)
+    // 予備系・開発用のローカル保存のリンク。
+    ?? s.match(/\/local-files\/([A-Za-z0-9][A-Za-z0-9._-]{0,120})(?:[?#]|$)/);
   return m ? m[1] : null;
 }
 

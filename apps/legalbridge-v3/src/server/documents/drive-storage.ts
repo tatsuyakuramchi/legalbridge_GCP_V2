@@ -38,6 +38,9 @@ export function driveFileIdFromLink(link: string | null | undefined): string | n
   if (!value) return null;
   const path = value.match(/\/d\/([A-Za-z0-9_-]{10,})/);
   if (path) return path[1];
+  // 予備系・開発用のローカル保存（/api/v3/local-files/<id>）。
+  const local = value.match(/\/local-files\/([A-Za-z0-9][A-Za-z0-9._-]{0,120})(?:[?#]|$)/);
+  if (local) return local[1];
   const query = value.match(/[?&]id=([A-Za-z0-9_-]{10,})/);
   if (query) return query[1];
   // リンクではなく ID がそのまま入っている場合。

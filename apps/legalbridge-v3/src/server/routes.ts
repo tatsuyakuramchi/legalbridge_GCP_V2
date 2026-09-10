@@ -26,6 +26,7 @@ import { DocumentBatchService, templateCsv } from "./documents/batch-service.js"
 import { ChromiumPdfRenderer, MemoryPdfRenderer, type PdfRenderer } from "./documents/pdf-renderer.js";
 import { DocumentStorageService } from "./documents/storage-service.js";
 import { GoogleDriveStorage, MemoryDriveStorage, type DriveStorage } from "./documents/drive-storage.js";
+import { LocalFileStorage } from "./documents/local-file-storage.js";
 import { DocumentImportService } from "./documents/import-service.js";
 import { GoogleMatterDriveFolderService, LocalMatterDriveFolderService } from "./documents/drive-folder.js";
 import { MatterFolderStorageService } from "./matters/drive-folder-service.js";
@@ -79,6 +80,7 @@ export function createRoutes(database: Transactable) {
   // Drive は未設定でも起動する。保存を呼んだときだけ 503 で理由を返す。
   const drive: DriveStorage | null =
     process.env.DRIVE_STORAGE === "memory" ? new MemoryDriveStorage()
+    : process.env.DRIVE_STORAGE === "local" ? new LocalFileStorage(process.env.LOCAL_FILES_DIR || "./data/files")
     : config.driveFolderId
       ? new GoogleDriveStorage(config.driveFolderId, {
           keyFilePath: config.driveKeyFilePath || undefined,
@@ -1399,6 +1401,17 @@ export function createRoutes(database: Transactable) {
       const force = String(req.query.force ?? "") === "1";
       res.json(await storage.store(Number(req.params.id), actor(res), { force }));
     }));
+
+  // ローカル保存（DRIVE_STORAGE=local）のファイルを返す。Drive の閲覧リンクの代わり。
+  // 認証の内側（/api/v3）に置くので、予備系でも誰でも開けるファイルにはならない。
+  router.get("/local-files/:id", asyncRoute(async (req, res) => {
+    if (!(drive instanceof LocalFileStorage)) throw new DomainError("NOT_FOUND", "ローカル保存は使っていません");
+    const file = await drive.downloadFile(String(req.params.id));
+    res.type(file.mimeType)
+       .setHeader("content-disposition",
+         `inline; filename*=UTF-8''${encodeURIComponent(file.filename)}`);
+    res.send(file.data);
+  }));
 
   router.get("/documents/:id/pdf", asyncRoute(async (req, res) => {
     const rendered = await issues.renderIssued(Number(req.params.id));
