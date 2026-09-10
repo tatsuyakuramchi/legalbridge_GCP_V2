@@ -915,6 +915,8 @@ export function DocumentsWorkspace(
           {isLicenseTerms && (
             <LicenseTermsMatrix
               deals={lines.v3_conds ?? null} materials={lines.v3_lcs ?? null}
+              sublicensees={lines.v3_sublicensees ?? null}
+              extras={lines.v3_special_extras ?? null}
               seedDeals={spec?.lines.find((l) => l.name === "v3_conds")?.rows ?? []}
               seedMaterials={spec?.lines.find((l) => l.name === "v3_lcs")?.rows ?? []}
               onChange={(name, rows) => setLines((prev) => {

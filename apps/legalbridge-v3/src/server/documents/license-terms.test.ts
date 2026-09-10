@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   FIXED_DEALS, LICENSE_TERMS_VARIABLES, dealIdFor, dealSeeds,
-  isLicenseTermsTemplate, licenseTermsPatch, materialSeeds
+  isLicenseTermsTemplate, licenseTermsPatch, licenseTermsSeeds, materialSeeds
 } from "./license-terms.js";
 
 const context = {
@@ -120,4 +120,54 @@ test("本文：自社の通知先は担当者から組む", () => {
   const patch = licenseTermsPatch(context, {});
   assert.equal(patch.licenseeContact, "浅井 崇 ／ 03-5555-6666 ／ asai@example.test");
   assert.equal(licenseTermsPatch(context, { Licensee_連絡先: "法務部" }).licenseeContact, "法務部");
+});
+
+test("サブライセンシーと特記事項はそのまま本文へ渡す（種は空・欄は要る）", () => {
+  // V3 のデータからは導けない（相手が決まる前に書く）。種は空だが、欄が無いと
+  // 本文の表を埋める手段がどこにも無くなる。
+  const seeds = licenseTermsSeeds(context);
+  assert.deepEqual(seeds.v3_sublicensees, []);
+  assert.deepEqual(seeds.v3_special_extras, []);
+
+  const patch = licenseTermsPatch(context, {
+    v3_sublicensees: [{ slPartner: "サブA社", slRegion: "北米", slRate: "50" }],
+    v3_special_extras: [{ seId: "1", seText: "監修は毎回受ける" }]
+  });
+  assert.equal(patch.sublicensees.length, 1);
+  assert.equal(patch.sublicensees[0].slPartner, "サブA社");
+  assert.equal(patch.specialExtras[0].seText, "監修は毎回受ける");
+});
+
+test("本文が差す名前を全部供給する（本番のひな形から採った一覧との突き合わせ）", () => {
+  // 本番の individual_license_terms_v3 が差している名前（2026-09-10 時点）。
+  // 行の中で差すものは、その行を作っている側で確かめる。
+  const patch = licenseTermsPatch(context, {
+    v3_sublicensees: [{ slPartner: "サブA社", slRegion: "北米", slLang: "英語",
+                        slCond: "権利許諾", slRate: "50", slDate: "2026-08-01", slNote: "" }],
+    v3_special_extras: [{ seId: "1", seText: "特記" }],
+    v3_calc_base_rows: [{ edition: "初版", trigger: "発売日", note: "—" }]
+  });
+  const top = ["contractNo", "issueDate", "startDate", "workId", "masterAgreement",
+    "licensorName", "licensorAddress", "licensorRep", "licensorContact",
+    "licenseeName", "licenseeAddress", "licenseeRep", "licenseeContact",
+    "productName", "productDefinition", "exclusivity", "maxRegion", "maxLanguage",
+    "scope", "supervisor", "scopeColCount", "rateColCount"];
+  for (const name of top) assert.ok(name in patch, `${name} を供給していない`);
+
+  for (const name of ["condLabel", "condName", "condType", "calcModel", "condRegion",
+                      "condLang", "appliedRate", "quantity", "ag", "mg", "currency", "basePrice"]) {
+    assert.ok(name in patch.conds[0], `conds に ${name} が無い`);
+  }
+  for (const name of ["lcId", "lcName", "lcHolder", "lcRegion", "lcLanguage", "lcSourceDoc"]) {
+    assert.ok(name in patch.lcs[0], `lcs に ${name} が無い`);
+  }
+  for (const name of ["edition", "trigger", "note"]) {
+    assert.ok(name in patch.calcBaseRows[0], `calcBaseRows に ${name} が無い`);
+  }
+  for (const name of ["slPartner", "slRegion", "slLang", "slCond", "slRate", "slDate", "slNote"]) {
+    assert.ok(name in patch.sublicensees[0], `sublicensees に ${name} が無い`);
+  }
+  for (const name of ["seId", "seText"]) {
+    assert.ok(name in patch.specialExtras[0], `specialExtras に ${name} が無い`);
+  }
 });

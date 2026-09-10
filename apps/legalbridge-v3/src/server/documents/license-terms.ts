@@ -182,9 +182,19 @@ export function materialSeeds(context: Data): Data[] {
   }));
 }
 
-/** 画面の編集欄に渡す種。手入力があればそちらが勝つ（人が直したものを消さない）。 */
+/**
+ * 画面の編集欄に渡す種。手入力があればそちらが勝つ（人が直したものを消さない）。
+ *
+ * サブライセンシーと特記事項は V3 のデータから導けないので空で始める。
+ * 種が空でも欄は要る（本文がその表を差しているので、無いと出す手段が無い）。
+ */
 export function licenseTermsSeeds(context: Data): Record<string, Data[]> {
-  return { v3_conds: dealSeeds(context), v3_lcs: materialSeeds(context) };
+  return {
+    v3_conds: dealSeeds(context),
+    v3_lcs: materialSeeds(context),
+    v3_sublicensees: [],
+    v3_special_extras: []
+  };
 }
 
 // ---------------------------------------------------------------------------

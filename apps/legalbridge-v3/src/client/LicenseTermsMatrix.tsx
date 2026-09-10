@@ -22,23 +22,30 @@ const CALC_LABEL: Record<string, string> = {
   SUBSCRIPTION: "サブスク", SUPPLY_QTY: "供給価格×個数×料率"
 };
 
+export type MatrixName = "v3_conds" | "v3_lcs" | "v3_sublicensees" | "v3_special_extras";
+
 const text = (v: unknown) => (v == null ? "" : String(v));
 const rates = (row: Row): Record<string, unknown> =>
   row.rates && typeof row.rates === "object" ? row.rates as Record<string, unknown> : {};
 
 export function LicenseTermsMatrix(
-  { deals, materials, seedDeals, seedMaterials, onChange }: {
+  { deals, materials, sublicensees, extras, seedDeals, seedMaterials, onChange }: {
     /** いま画面が持っている行。null なら種のまま（まだ直していない）。 */
     deals: Row[] | null;
     materials: Row[] | null;
+    /** サブライセンシーと特記事項は V3 のデータから導けないので、種は空。 */
+    sublicensees: Row[] | null;
+    extras: Row[] | null;
     seedDeals: Row[];
     seedMaterials: Row[];
-    onChange: (name: "v3_conds" | "v3_lcs", rows: Row[] | null) => void;
+    onChange: (name: MatrixName, rows: Row[] | null) => void;
   }
 ) {
   const [open, setOpen] = useState(true);
   const dealRows = deals ?? seedDeals;
   const materialRows = materials ?? seedMaterials;
+  const slRows = sublicensees ?? [];
+  const extraRows = extras ?? [];
   const addons = dealRows.filter((d) => Boolean(d.addon));
 
   const setDeal = (index: number, patch: Row) =>
@@ -58,6 +65,17 @@ export function LicenseTermsMatrix(
   });
 
   const changed = deals !== null || materials !== null;
+  const setSl = (index: number, patch: Row) =>
+    onChange("v3_sublicensees", slRows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  const setExtra = (index: number, patch: Row) =>
+    onChange("v3_special_extras", extraRows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  const slField = (index: number, key: string, label: string, list?: string) => (
+    <label className="field">
+      <span>{label}</span>
+      <input list={list} value={text(slRows[index][key])}
+             onChange={(e) => setSl(index, { [key]: e.target.value })} />
+    </label>
+  );
 
   return (
     <div className="panel">
@@ -227,6 +245,70 @@ export function LicenseTermsMatrix(
                 </tbody>
               </table>
             </div>
+          </div>
+
+          {/* サブライセンシー。本文は再許諾先の一覧をここから出す。
+              V3 のデータから導けない（まだ相手が決まっていない段階で書く）ので、
+              種は空。欄が無いと、本文の表を埋める手段がどこにも無くなる。 */}
+          <div className="stack" style={{ gap: 6 }}>
+            <div className="row">
+              <b>サブライセンシー</b>
+              <span className="faint">再許諾を出す先。決まっているぶんだけ書きます</span>
+              <button className="btn btn-sm" style={{ marginLeft: "auto" }}
+                      onClick={() => onChange("v3_sublicensees", [...slRows, {
+                        slPartner: "", slRegion: "", slLang: "",
+                        slCond: "", slRate: "", slDate: "", slNote: ""
+                      }])}>
+                行を足す
+              </button>
+            </div>
+            {slRows.map((_, index) => (
+              <div key={index} className="trace">
+                <div className="row">
+                  {slField(index, "slPartner", "再許諾先")}
+                  {slField(index, "slRegion", "地域", "v3-region-presets")}
+                  {slField(index, "slLang", "言語", "v3-lang-presets")}
+                  {slField(index, "slCond", "取引形態", "v3-deal-names")}
+                  {slField(index, "slRate", "料率（%）")}
+                  {slField(index, "slDate", "開始日")}
+                  {slField(index, "slNote", "備考")}
+                  <button className="btn btn-sm"
+                          onClick={() => onChange("v3_sublicensees", slRows.filter((_, i) => i !== index))}>
+                    外す
+                  </button>
+                </div>
+              </div>
+            ))}
+            {!slRows.length && <span className="faint">まだありません</span>}
+          </div>
+          <datalist id="v3-deal-names">
+            {dealRows.map((d, i) => <option key={i} value={text(d.name)} />)}
+          </datalist>
+
+          {/* 特記事項。条項の追加。 */}
+          <div className="stack" style={{ gap: 6 }}>
+            <div className="row">
+              <b>特記事項</b>
+              <span className="faint">この条件書だけの取り決め</span>
+              <button className="btn btn-sm" style={{ marginLeft: "auto" }}
+                      onClick={() => onChange("v3_special_extras",
+                        [...extraRows, { seId: String(extraRows.length + 1), seText: "" }])}>
+                行を足す
+              </button>
+            </div>
+            {extraRows.map((row, index) => (
+              <div key={index} className="row">
+                <input style={{ width: 60 }} value={text(row.seId)}
+                       onChange={(e) => setExtra(index, { seId: e.target.value })} />
+                <textarea rows={2} style={{ flex: 1 }} value={text(row.seText)}
+                          onChange={(e) => setExtra(index, { seText: e.target.value })} />
+                <button className="btn btn-sm"
+                        onClick={() => onChange("v3_special_extras", extraRows.filter((_, i) => i !== index))}>
+                  外す
+                </button>
+              </div>
+            ))}
+            {!extraRows.length && <span className="faint">まだありません</span>}
           </div>
         </div>
       )}

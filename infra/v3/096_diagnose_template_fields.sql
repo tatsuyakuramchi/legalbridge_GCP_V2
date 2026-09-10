@@ -81,3 +81,50 @@ SELECT DISTINCT m[1] AS 本文が差す名前
    -- Handlebars の構文語は差し込みではないので落とす。
    AND m[1] NOT IN ('each', 'if', 'unless', 'with', 'else', 'this', 'log', 'lookup')
  ORDER BY 本文が差す名前;
+
+-- ---------------------------------------------------------------------
+-- 4. ひとつのひな形の項目を、出し分けの条件つきで並べる
+--
+--    項目が宣言されているのに画面に出ないときは、ここで理由が分かる。
+--      hidden = true         … 最初から出さない項目
+--      showWhen あり          … 他の項目の値が条件に合うときだけ出る
+--      type = array           … 明細。専用の編集欄で扱うので一覧には出ない
+--    ひな形を変えるときは下の template_key を書き換える。
+-- ---------------------------------------------------------------------
+SELECT x.ord                                        AS 番号,
+       x.f->>'name'                                 AS 項目,
+       x.f->>'label'                                AS 名前,
+       x.f->>'group'                                AS 区分,
+       COALESCE(x.f->>'type', 'text')               AS 型,
+       COALESCE(x.f->>'dbField', '')                AS 供給元,
+       (x.f->>'required')::boolean                  AS 必須,
+       COALESCE((x.f->>'hidden')::boolean, false)   AS 隠し,
+       COALESCE((x.f->'showWhen')::text, '')        AS 出し分けの条件
+  FROM v3.document_templates t
+  JOIN v3.document_template_versions v ON v.id = t.current_version_id,
+       LATERAL jsonb_array_elements(v.variables) WITH ORDINALITY AS x(f, ord)
+ WHERE t.template_key = 'royalty_statement'
+ ORDER BY x.ord;
+
+-- ---------------------------------------------------------------------
+-- 5. 出し分けの条件がどの項目を見ているか（4 のまとめ）
+--
+--    「この項目が入るまで、他の項目が出ない」という鎖の起点が分かる。
+--    起点になっている項目が V3 で誰も入れない値なら、画面は空のままになる。
+-- ---------------------------------------------------------------------
+SELECT COALESCE(w->>'field', '(条件なし)')          AS 見ている項目,
+       count(*)                                     AS その条件で出る項目の数
+  FROM v3.document_templates t
+  JOIN v3.document_template_versions v ON v.id = t.current_version_id,
+       LATERAL jsonb_array_elements(v.variables) AS f
+  LEFT JOIN LATERAL (
+    SELECT CASE jsonb_typeof(f->'showWhen')
+             WHEN 'array'  THEN f->'showWhen'
+             WHEN 'object' THEN jsonb_build_array(f->'showWhen')
+             ELSE '[]'::jsonb
+           END AS arr
+  ) AS s ON true
+  LEFT JOIN LATERAL jsonb_array_elements(s.arr) AS w ON true
+ WHERE t.template_key = 'royalty_statement'
+ GROUP BY 1
+ ORDER BY 2 DESC;
