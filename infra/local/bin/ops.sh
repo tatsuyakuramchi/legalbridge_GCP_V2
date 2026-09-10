@@ -10,6 +10,12 @@
 # ローカル DB への接続は PGHOST / PGUSER / PGPASSWORD / PGDATABASE（compose が渡す）。
 set -euo pipefail
 
+# Windows で .env を書くと行末に CR が付くことがある。パスワードに紛れ込むと本番に
+# つながらないので、ここで落とす。
+for v in SYNC_DB_PASSWORD SYNC_DB_USER CLOUD_SQL_INSTANCE REMOTE_DB_NAME KEEP_DUMPS PGPASSWORD; do
+  eval "$v=\${$v%\$'\r'}"
+done
+
 DUMPS="${DUMPS:-/dumps}"
 DATA="${DATA:-/data}"
 STAMP="$DATA/SYNC_STAMP"

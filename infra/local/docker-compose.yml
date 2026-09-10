@@ -91,7 +91,7 @@ services:
       - ./dumps:/dumps
       - ./data:/data
       - ./keys:/keys:ro
-    entrypoint: ["ops"]
+    entrypoint: ["bash", "/usr/local/bin/ops"]
 
 volumes:
   pgdata:
