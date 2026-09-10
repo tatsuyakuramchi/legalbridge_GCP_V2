@@ -30,7 +30,16 @@ export const CONDITION_KINDS_BY_MATTER: Record<MatterKind, Array<{ value: string
     { value: "expense", label: "実費" },
     { value: "fee", label: "手数料" }
   ],
-  single: []
+  // 文書作成でも、金銭の条件を持つ文書はある（自社のひな形から出す覚書など）。
+  // 中身が決め打ちにならないので、どの種類も繋げるようにしておく。
+  // 進め方が自社テンプレートドラフト型なら、ひな形の明細は条件から埋まる。
+  single: [
+    { value: "license", label: "許諾料" },
+    { value: "product", label: "製品（グッズ等）" },
+    { value: "service", label: "委託料" },
+    { value: "expense", label: "実費" },
+    { value: "fee", label: "手数料" }
+  ]
 };
 
 export class MatterLinkService {
@@ -147,7 +156,7 @@ export class MatterLinkService {
     const allowed = CONDITION_KINDS_BY_MATTER[matter.kind];
     if (!allowed.length) {
       throw new DomainError("VALIDATION",
-        "文書作成モデルの案件は条件を持ちません。条件が要るなら取引モデルを変えてください");
+        `${labelOf(matter.kind)}モデルの案件は条件を持ちません。条件が要るなら取引モデルを変えてください`);
     }
     if (!allowed.some((k) => k.value === condition.kind)) {
       throw new DomainError("VALIDATION",

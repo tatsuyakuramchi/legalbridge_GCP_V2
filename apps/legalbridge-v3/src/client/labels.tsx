@@ -153,7 +153,7 @@ export const MATTER_KIND_LABEL: Record<string, string> = {
 export const MATTER_KIND_HINT: Record<string, string> = {
   work: "作品の権利を許諾する・取得する。許諾料と計算書がぶら下がる",
   outsourcing: "外部へ仕事を頼む。委託料・実費と、発注書・検収書がぶら下がる",
-  single: "お金の条件を持たない文書を作る。秘密保持契約・通知書・レビューなど"
+  single: "1件の文書を作る。秘密保持契約・通知書・覚書など。金銭の条件がある文書なら条件明細も持てる"
 };
 
 /**

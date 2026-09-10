@@ -71,9 +71,8 @@ export function MatterConditions(
   if (!allowed.length) {
     return (
       <div className="note">
-        {MATTER_KIND_LABEL[detail.kind]}モデルの案件は条件を持ちません。秘密保持契約・通知書・
-        法務相談など、金銭条件も権利の移動も伴わない案件がこれにあたります。
-        条件が要るなら、取引モデルを ライセンス か 業務委託 に変えてください。
+        {MATTER_KIND_LABEL[detail.kind]}モデルの案件は条件を持ちません。
+        条件が要るなら、取引モデルを変えてください。
       </div>
     );
   }
@@ -312,5 +311,7 @@ export function MatterDocuments(
 const ALLOWED_KINDS: Record<MatterKind, string[]> = {
   work: ["license", "product"],
   outsourcing: ["service", "expense", "fee"],
-  single: []
+  // 文書作成でも金銭の条件を持つ文書はある（自社のひな形から出す覚書など）。
+  // サーバ側の CONDITION_KINDS_BY_MATTER と同じ並びにしておくこと。
+  single: ["license", "product", "service", "expense", "fee"]
 };

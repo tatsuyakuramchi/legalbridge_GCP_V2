@@ -108,7 +108,7 @@ test("他社文書レビュー型は、相手方の文書を取り込むまで�
   const steps = buildFlow(facts({ documentStyle: "counterparty_review" }));
   assert.equal(steps[2].name, "相手方の文書を確認");
   assert.equal(steps[2].done, false);
-  assert.match(steps[2].detail, /受け取った文書を登録/);
+  assert.match(steps[2].detail, /外で作った文書を登録/);
 
   // 自社で発行しても、レビュー型では取り込みの代わりにならない。
   const issued = buildFlow(facts({
@@ -137,7 +137,7 @@ test("自社テンプレート型は、下書きの段階では済にしない",
 test("自社ドラフト型は名前が変わり、やることが分かる", () => {
   const steps = buildFlow(facts({ documentStyle: "own_draft" }));
   assert.equal(steps[2].name, "自社ドラフトを決定");
-  assert.match(steps[2].detail, /自社で書いた文書を登録/);
+  assert.match(steps[2].detail, /外で作った文書を登録/);
 });
 
 test("進め方が未設定なら、それを次にやることとして出す", () => {
@@ -158,9 +158,31 @@ test("ライセンスでも進め方が段階の名前を決める", () => {
   assert.equal(executed[2].done, true);
 });
 
+/**
+ * 文書作成モデルの3択で、やることが変わる。
+ *   他社レビュー型・自社ドラフト型 … 外で作った文書を登録する。条件は要るときだけ
+ *   自社テンプレート型             … ひな形の中身が条件から埋まるので、条件明細が要る
+ */
 test("文書作成モデルでも進め方が効く", () => {
-  const steps = buildFlow(facts({ matterKind: "single", documentStyle: "own_template" }));
-  assert.equal(steps[1].name, "ひな形から文書を決定");
+  const template = buildFlow(facts({ matterKind: "single", documentStyle: "own_template" }));
+  assert.deepEqual(template.map((s) => s.name),
+    ["相談の受付", "条件明細の登録", "ひな形から文書を決定", "締結", "完了"]);
+  assert.equal(currentStep(template)?.name, "条件明細の登録");
+
+  for (const style of ["counterparty_review", "own_draft"] as const) {
+    const steps = buildFlow(facts({ matterKind: "single", documentStyle: style }));
+    assert.equal(steps.length, 4, `${style} に条件明細の段階は挟まない`);
+    assert.match(steps[1].detail, /外で作った文書を登録/);
+    assert.match(steps[1].detail, /条件明細も登録/, "要るときは条件も登録できると分かる");
+  }
+});
+
+test("文書作成モデルでも条件明細を持てる", () => {
+  // 覚書のように金銭の条件を持つ文書がある。持てないと、ひな形の明細が埋まらない。
+  const withCondition = buildFlow(facts({
+    matterKind: "single", documentStyle: "own_template", activeConditionCount: 1 }));
+  assert.equal(withCondition[1].done, true);
+  assert.match(withCondition[1].detail, /有効な条件 1 件/);
 });
 
 test("済の理由を必ず添える（印だけでは確かめようがない）", () => {

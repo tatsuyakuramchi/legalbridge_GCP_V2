@@ -19,11 +19,13 @@ export type DocumentStyle = "counterparty_review" | "own_draft" | "own_template"
 
 export const DOCUMENT_STYLES: Array<{ value: DocumentStyle; label: string; hint: string }> = [
   { value: "counterparty_review", label: "他社文書レビュー型",
-    hint: "相手方から届いた文書を確認して直す。まず文書を受け取って取り込む" },
+    hint: "相手方から届いた文書を確認して直す。外で作った文書を登録する。"
+        + "金銭の条件がある文書なら条件明細も登録する" },
   { value: "own_draft", label: "自社ドラフト型",
-    hint: "自社で一から書く。ひな形に無い条件のときはこちら" },
+    hint: "自社で一から書く。書いた文書を登録する。"
+        + "金銭の条件がある文書なら条件明細も登録する" },
   { value: "own_template", label: "自社テンプレートドラフト型",
-    hint: "登録済みのひな形から起こす。条件から自動で埋まる" }
+    hint: "登録済みのひな形から起こす。条件明細の登録が要る（中身はそこから埋まる）" }
 ];
 
 export interface FlowFacts {
@@ -81,7 +83,8 @@ function documentStep(f: FlowFacts, no: number, fallbackName: string): FlowStep 
       done: got,
       detail: got
         ? `取り込んだ文書 ${f.importedDocuments} 件`
-        : "相手方の文書がまだ取り込まれていない。受け取った文書を登録する"
+        : "相手方の文書がまだ取り込まれていない。「外で作った文書を登録」から入れる"
+          + (f.activeConditionCount ? "" : "。金銭の条件がある文書なら条件明細も登録する")
     };
   }
   if (f.documentStyle === "own_template") {
@@ -93,7 +96,9 @@ function documentStep(f: FlowFacts, no: number, fallbackName: string): FlowStep 
         ? doc(f)
         : f.draftDocuments > 0
           ? `下書き ${f.draftDocuments} 件。決定するとここが済になる`
-          : "ひな形を選んで決定する"
+          : f.activeConditionCount > 0
+            ? "ひな形を選んで決定する"
+            : "先に条件明細を登録する。ひな形の中身はそこから埋まる"
     };
   }
   if (f.documentStyle === "own_draft") {
@@ -105,7 +110,8 @@ function documentStep(f: FlowFacts, no: number, fallbackName: string): FlowStep 
         ? doc(f)
         : f.draftDocuments > 0
           ? `下書き ${f.draftDocuments} 件。決定するとここが済になる`
-          : "自社で書いた文書を登録して決定する"
+          : "自社で書いた文書を「外で作った文書を登録」から入れる"
+            + (f.activeConditionCount ? "" : "。金銭の条件がある文書なら条件明細も登録する")
     };
   }
   return {
@@ -181,15 +187,33 @@ function outsourcingSteps(f: FlowFacts): FlowStep[] {
  * この型は文書を作ることそのものが流れなので、進め方が段階を決める。
  */
 function documentSteps(f: FlowFacts): FlowStep[] {
-  return [
-    { no: 1, name: "相談の受付", tab: "communications", done: true, detail: "案件が立っている" },
-    documentStep(f, 2, "文書の用意"),
-    { no: 3, name: "締結", tab: "documents", done: f.agreementExecuted || f.issuedDocuments.length > 0,
-      detail: f.agreementExecuted
-        ? `合意 ${f.agreementNo ?? ""} 締結済み`.trim() : doc(f) },
-    { no: 4, name: "完了", tab: "communications", done: f.matterStatus === "done",
-      detail: f.matterStatus === "done" ? "案件が完了" : "案件がまだ開いている" }
+  const steps: FlowStep[] = [
+    { no: 1, name: "相談の受付", tab: "communications", done: true, detail: "案件が立っている" }
   ];
+  // ひな形から起こす型は、条件明細が無いと中身が埋まらない。外で作る2つの型は
+  // 文書そのものを登録するので、条件明細は要るときだけでよい（段階にしない）。
+  if (f.documentStyle === "own_template") {
+    steps.push({
+      no: 2, name: "条件明細の登録", tab: "conditions",
+      done: f.activeConditionCount > 0,
+      detail: f.activeConditionCount > 0
+        ? `有効な条件 ${f.activeConditionCount} 件`
+        : "文書に載る金額・期間・範囲を条件明細に入れる。ひな形はここから埋まる"
+    });
+  }
+  const next = steps.length + 1;
+  steps.push(documentStep(f, next, "文書の用意"));
+  steps.push({
+    no: next + 1, name: "締結", tab: "documents",
+    done: f.agreementExecuted || f.issuedDocuments.length > 0,
+    detail: f.agreementExecuted
+      ? `合意 ${f.agreementNo ?? ""} 締結済み`.trim() : doc(f)
+  });
+  steps.push({
+    no: next + 2, name: "完了", tab: "communications", done: f.matterStatus === "done",
+    detail: f.matterStatus === "done" ? "案件が完了" : "案件がまだ開いている"
+  });
+  return steps;
 }
 
 export function buildFlow(facts: FlowFacts): FlowStep[] {
