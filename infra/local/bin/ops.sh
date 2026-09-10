@@ -4,6 +4,8 @@
 #   ops sync              本番 v3 スキーマを写してローカル DB に入れる（平時に毎晩）
 #   ops export-info       エクスポート方式（SYNC_MODE=export）の準備に要る値を出す
 #   ops import-rows <dir> Studio から落とした CSV を取り込む（094_export_rows.sql の結果）
+#   ops import-contacts <dir>
+#                         連絡先と口座だけを本番の値にする（098_export_contacts.sql の結果）
 #   ops restore <file>    手元の写し（/dumps/…）をローカル DB に入れ直す
 #   ops fresh             本番データなしで開発用 DB を作る（模擬データ）
 #   ops grants            ランタイムロールの権限を当て直す
@@ -480,6 +482,128 @@ SQL
 # ---------------------------------------------------------------------
 # 方式1：Cloud SQL Auth Proxy で直につなぐ（既定）。3307 番が通る環境向け。
 # ---------------------------------------------------------------------
+# ---------------------------------------------------------------------
+# 連絡先と口座だけを本番の値で上書きする（098_export_contacts.sql の結果）。
+#
+# import-rows は全部入れ替える（TRUNCATE してから入れる）。連絡先と口座だけを
+# 新しくしたいときにそれを使うと、手元で作った案件も文書も消える。こちらは
+# 取引先コードで突き合わせて、住所・電話・メール・連絡先・口座だけを直す。
+# 取引先そのものは作らない（手元に無いコードは飛ばして、最後に数を出す）。
+# ---------------------------------------------------------------------
+import_contacts() {
+  local dir="${1:-}"
+  [ -n "$dir" ] || die "使い方: ops import-contacts /dumps/contacts"
+  [ -d "$dir" ] || die "フォルダがありません: $dir"
+  local files=() others=() f
+  for f in "$dir"/*.csv "$dir"/*.CSV; do
+    [ -f "$f" ] || continue
+    local head1=""
+    IFS= read -r head1 < "$f" || true
+    head1=${head1#$'\xef\xbb\xbf'}
+    head1=${head1%$'\r'}
+    head1=${head1//\"/}
+    head1=${head1// /}
+    if [ "${head1,,}" = "tbl,data" ]; then files+=("$f"); else others+=("$(basename "$f")"); fi
+  done
+  if [ "${#others[@]}" -gt 0 ]; then
+    echo "098_export_contacts.sql の結果ではない CSV が混ざっています（${#others[@]} 個）:" >&2
+    printf '  %s\n' "${others[@]:0:10}" >&2
+    die "$dir には取り出した CSV だけを置いてください"
+  fi
+  [ "${#files[@]}" -gt 0 ] || die "$dir に CSV がありません"
+  log "${#files[@]} 個の CSV を読む"
+
+  {
+    echo "BEGIN;"
+    echo "CREATE TEMP TABLE staging (tbl text, data jsonb);"
+    for f in "${files[@]}"; do
+      printf '\\copy staging FROM %s WITH (FORMAT csv, HEADER true)\n' "'$f'"
+    done
+    cat <<'SQL'
+DO $guard$
+DECLARE bad text; n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM staging;
+  IF n = 0 THEN RAISE EXCEPTION 'CSV に行がありません'; END IF;
+  RAISE NOTICE '  読み込んだ行 %', n;
+
+  -- この道で入れてよい表は3つだけ。ほかが混ざっていたら、取り違えなので止める。
+  SELECT string_agg(DISTINCT tbl, ', ') INTO bad FROM staging
+   WHERE tbl NOT IN ('parties', 'party_contacts', 'party_bank_accounts');
+  IF bad IS NOT NULL THEN
+    RAISE EXCEPTION 'この道で入れられない表が入っています: %（全部入れ替えるなら import-rows）', bad;
+  END IF;
+
+  SELECT count(*) INTO n FROM staging WHERE COALESCE(data->>'party_code', '') = '';
+  IF n > 0 THEN RAISE EXCEPTION '取引先コードの無い行が % 件あります', n; END IF;
+END
+$guard$;
+
+-- 突き合わせは取引先コード。id は本番と手元でずれうるので見ない。
+CREATE TEMP VIEW src AS
+  SELECT s.tbl, s.data, p.id AS party_id
+    FROM staging s
+    LEFT JOIN v3.parties p ON p.party_code = s.data->>'party_code';
+
+DO $load$
+DECLARE missing bigint; touched bigint;
+BEGIN
+  SELECT count(*) INTO missing FROM src WHERE party_id IS NULL;
+
+  UPDATE v3.parties p
+     SET address = src.data->>'address',
+         phone   = src.data->>'phone',
+         email   = src.data->>'email',
+         updated_at = now()
+    FROM src
+   WHERE src.tbl = 'parties' AND src.party_id = p.id;
+  GET DIAGNOSTICS touched = ROW_COUNT;
+  RAISE NOTICE '  取引先の住所・電話・メール %', touched;
+
+  INSERT INTO v3.party_contacts (party_id, role, name, email, phone, department)
+  SELECT src.party_id, src.data->>'role', src.data->>'name', src.data->>'email',
+         src.data->>'phone', src.data->>'department'
+    FROM src
+   WHERE src.tbl = 'party_contacts' AND src.party_id IS NOT NULL
+  ON CONFLICT (party_id, role) DO UPDATE
+     SET name = EXCLUDED.name, email = EXCLUDED.email,
+         phone = EXCLUDED.phone, department = EXCLUDED.department;
+  GET DIAGNOSTICS touched = ROW_COUNT;
+  RAISE NOTICE '  連絡先 %', touched;
+
+  INSERT INTO v3.party_bank_accounts
+    (party_id, bank_name, branch_name, account_type, account_number, account_holder_kana)
+  SELECT src.party_id, src.data->>'bank_name', src.data->>'branch_name',
+         src.data->>'account_type', src.data->>'account_number',
+         src.data->>'account_holder_kana'
+    FROM src
+   WHERE src.tbl = 'party_bank_accounts' AND src.party_id IS NOT NULL
+  ON CONFLICT (party_id) DO UPDATE
+     SET bank_name = EXCLUDED.bank_name, branch_name = EXCLUDED.branch_name,
+         account_type = EXCLUDED.account_type, account_number = EXCLUDED.account_number,
+         account_holder_kana = EXCLUDED.account_holder_kana, updated_at = now();
+  GET DIAGNOSTICS touched = ROW_COUNT;
+  RAISE NOTICE '  口座 %', touched;
+
+  IF missing > 0 THEN
+    RAISE NOTICE '  手元に無い取引先コードだったので飛ばした行 %', missing;
+  END IF;
+END
+$load$;
+COMMIT;
+SQL
+  } | psql_local -f - || die "取り込みに失敗した"
+
+  apply_grants
+  log "入った。件数はこのあとの確認で見られる"
+  psql_local -c "SELECT
+      (SELECT count(*) FROM v3.parties WHERE phone   IS NOT NULL) AS 電話あり,
+      (SELECT count(*) FROM v3.parties WHERE email   IS NOT NULL) AS メールあり,
+      (SELECT count(*) FROM v3.parties WHERE address IS NOT NULL) AS 住所あり,
+      (SELECT count(*) FROM v3.party_contacts)      AS 連絡先,
+      (SELECT count(*) FROM v3.party_bank_accounts) AS 口座;"
+}
+
 sync_proxy() {
   [ -n "${SYNC_DB_PASSWORD:-}" ] || die "SYNC_DB_PASSWORD が空です（.env）"
   mkdir -p "$DUMPS"
@@ -624,6 +748,7 @@ case "${1:-}" in
   sync) sync ;;
   export-info) export_info ;;
   import-rows) shift; import_rows "${1:-}" ;;
+  import-contacts) shift; import_contacts "${1:-}" ;;
   restore) [ -n "${2:-}" ] || die "使い方: ops restore /dumps/v3_YYYYmmdd_HHMM.dump"; restore "$2" ;;
   fresh) fresh ;;
   grants) apply_grants ;;
@@ -631,5 +756,5 @@ case "${1:-}" in
   sql) [ -n "${2:-}" ] || die "使い方: ops sql /v3/095_diagnose_condition.sql"
        psql -v ON_ERROR_STOP=1 -f "$2" ;;
   status) status ;;
-  *) sed -n '2,13p' "$0"; exit 2 ;;
+  *) sed -n '2,15p' "$0"; exit 2 ;;
 esac

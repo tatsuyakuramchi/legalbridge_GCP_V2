@@ -162,6 +162,39 @@ docker compose run --rm ops import-rows /dumps/rows
 - 取り込むと手元の v3 は入れ替わる。ローカルで作った下書きなどは消える。
 - CSV には口座情報や個人情報が入る。取り込んだら `dumps/rows/` は消すこと。
 
+## 連絡先と口座だけを本番の値にする
+
+上の `import-rows` は**全部入れ替える**。手元で作った案件も文書も消えるので、
+「取引先の住所・電話・メールと、連絡先・口座だけを本番に合わせたい」ときには使えない。
+そのための細い道。
+
+**1. 取り出す**
+
+`infra/v3/098_export_contacts.sql` の3つのクエリを Studio でそれぞれ流し、
+結果を CSV で落とす（見出しは `tbl,data` の2列で、094 と同じ形）。
+
+**2. 取り込む**
+
+```powershell
+mkdir dumps\contacts -Force
+Move-Item "$HOME\Downloads\studio_results_<日付>_<時刻>.csv" dumps\contacts\
+docker compose run --rm ops import-contacts /dumps/contacts
+```
+
+突き合わせは**取引先コード**（`party_code`）。id は本番と手元でずれうるので見ない。
+手元に無いコードの行は飛ばして、最後に飛ばした数を出す。取引先そのものは作らない。
+
+入れ替えるのは次だけ。ほかの表には触らない。
+
+| 表 | 直すもの | 突き合わせ |
+| --- | --- | --- |
+| `parties` | 住所・電話・メール | `party_code` |
+| `party_contacts` | 主担当・署名者・請求先 | `party_code` + 役割 |
+| `party_bank_accounts` | 銀行・支店・種別・口座番号・名義 | `party_code` |
+
+**★ この CSV には口座番号・名義・個人の電話番号が入る。**
+チャットや issue に貼らない。取り込んだら `dumps/contacts/` を消すこと。
+
 ## 毎晩の同期
 
 `docker compose run --rm ops sync` を毎晩走らせる。PC は付けたままにする。
