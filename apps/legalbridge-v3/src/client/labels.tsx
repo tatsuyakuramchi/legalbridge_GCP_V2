@@ -176,4 +176,14 @@ export const DOCUMENT_STYLE_HINT: Record<string, string> = {
 export const CONDITION_KIND_LABEL: Record<string, string> = {
   license: "許諾料", product: "製品", service: "委託料", expense: "実費", fee: "手数料"
 };
+/**
+ * 実績の種類。サーバの EVENT_TYPES と対。
+ * 実績の画面はサーバから種類の一覧を取るが、実績を並べるだけの画面
+ * （作品の動きなど）は一覧を取りに行かないので、ここに持つ。
+ */
+export const EVENT_TYPE_LABEL: Record<string, string> = {
+  manufacturing: "製造", sales: "売上", sublicense_receipt: "再許諾の受領",
+  inspection: "検収", delivery: "納品", service_period: "役務の期間", adjustment: "調整"
+};
+
 export const PARTY_KIND_LABEL: Record<string, string> = { corporate: "法人", individual: "個人" };

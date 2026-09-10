@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { MatterDetail } from "../server/core/model.js";
 import { api, ApiError } from "./api.js";
 import { useReadOnly } from "./read-only.js";
+import { EVENT_TYPE_LABEL } from "./labels.js";
 
 /**
  * 案件の条件をまたいだ利用許諾計算書。
@@ -29,7 +30,6 @@ interface Totals {
   withholdingTax: number; netTransfer: number; netMinor: number;
 }
 interface TemplateOption { templateKey: string; label: string; category: string | null }
-interface TypeOption { value: string; label: string }
 
 /** 束ねの金額はサーバが主単位（円）で返す。最小通貨単位の money() と混ぜない。 */
 const major = (value: number, currency: string) =>
@@ -50,7 +50,6 @@ export function MatterStatement(
   const editable = !useReadOnly();
   const [open, setOpen] = useState(false);
   const [eventsBy, setEventsBy] = useState<Record<number, EventRow[]>>({});
-  const [typeLabel, setTypeLabel] = useState<Record<string, string>>({});
   const [picked, setPicked] = useState<Record<number, number[]>>({});
   const [period, setPeriod] = useState("");
   const [templates, setTemplates] = useState<TemplateOption[]>([]);
@@ -73,14 +72,10 @@ export function MatterStatement(
     if (!open) return;
     setError(null);
     Promise.all(targets.map((c) =>
-      api.get<{ events: EventRow[]; types: TypeOption[] }>(`/conditions/${c.id}/events`)
-        .then((r) => [c.id, r] as const)
-        .catch(() => [c.id, { events: [] as EventRow[], types: [] as TypeOption[] }] as const)))
-      .then((pairs) => {
-        setEventsBy(Object.fromEntries(pairs.map(([id, r]) => [id, r.events])));
-        setTypeLabel(Object.fromEntries(
-          pairs.flatMap(([, r]) => r.types).map((t) => [t.value, t.label])));
-      });
+      api.get<{ events: EventRow[] }>(`/conditions/${c.id}/events`)
+        .then((r) => [c.id, r.events] as const)
+        .catch(() => [c.id, [] as EventRow[]] as const)))
+      .then((pairs) => setEventsBy(Object.fromEntries(pairs)));
     if (!templates.length) {
       api.get<{ templates: TemplateOption[] }>("/document-templates")
         .then((r) => {
@@ -137,10 +132,8 @@ export function MatterStatement(
   return (
     <div className="panel">
       <div className="panel-hd">
-        <h2>実績から計算書を作る</h2>
-        <span className="faint">
-          取引モデルが何本あっても、相手先に出すのは1枚。中は取引モデルごとの内訳になります
-        </span>
+        <h2 style={{ whiteSpace: "nowrap" }}>実績から計算書</h2>
+        <span className="faint">取引モデルが何本あっても、相手先に出すのは1枚</span>
         {!open && editable && (
           <button className="btn btn-sm primary" style={{ marginLeft: "auto" }}
                   onClick={() => { setOpen(true); setDone(null); }}>
@@ -168,6 +161,10 @@ export function MatterStatement(
       {open && (
         <div className="panel-bd stack">
           {error && <div className="alert">{error}</div>}
+          <span className="faint">
+            取引モデル（＝条件）ごとに実績を選びます。計算は条件ごと（料率も MG・AG も
+            条件ごとに違う）で、1枚にまとめるのは印字と支払のまとめ方だけです。
+          </span>
 
           <div className="row">
             <label className="field">
@@ -204,7 +201,7 @@ export function MatterStatement(
                                checked={(picked[c.id] ?? []).includes(e.id)}
                                onChange={() => toggle(c.id, e.id)} />
                         <span className="code">{e.occurredOn ?? "—"}</span>
-                        <span>{typeLabel[e.eventType] ?? e.eventType}</span>
+                        <span>{EVENT_TYPE_LABEL[e.eventType] ?? e.eventType}</span>
                         <span className="faint">
                           {e.period ?? ""}
                           {e.quantity !== null ? `　数量 ${e.quantity}` : ""}

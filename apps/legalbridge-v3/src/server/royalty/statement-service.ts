@@ -298,10 +298,18 @@ export class RoyaltyStatementService {
           [statementId, i + 1, conditionId, e.eventId, e.quantity, e.sampleQuantity,
            null, null, e.salesInput, null, shares[i]]);
       }
-      await client.query(
-        `UPDATE condition_events SET document_id = $2
-          WHERE id = ANY($1::bigint[]) AND document_id IS NULL`,
-        [resolved.events.map((e) => e.eventId), input.documentId]);
+      // AG の消化は deductions 列で数える（agConsumedBefore が SUM する列）。
+      // 実績を新しく立てる道では入れているのに、束ねる道では入れていなかった。
+      // そのため前払保証がいつまでも消化されず、次の計算書でも同じ額が
+      // もう一度相殺されて、実額が出ないままになる。ここでも積む。
+      const offsets = apportion(result.amounts.agOffsetMinor,
+                                resolved.events.map((e) => e.share));
+      for (const [i, e] of resolved.events.entries()) {
+        await client.query(
+          `UPDATE condition_events SET document_id = $2, deductions = $3
+            WHERE id = $1 AND document_id IS NULL`,
+          [e.eventId, input.documentId, offsets[i]]);
+      }
       eventId = resolved.events[0].eventId;
     } else {
       // 実績を渡されていない（試算からの近道）。実績を1件立てて結ぶ。

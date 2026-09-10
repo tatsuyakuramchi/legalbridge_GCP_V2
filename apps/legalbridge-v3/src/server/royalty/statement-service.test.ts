@@ -322,11 +322,25 @@ test("実績の束の確定：実績は作らず、明細を実績ごとに根�
   assert.equal(lines[0].params[3], 41);
   assert.equal(lines[0].params[10], 375000, "62.5万 × 0.6");
   assert.equal(lines[1].params[10], 250000, "残り。合計は 62.5万");
-  const linked = db.find("UPDATE condition_events SET document_id")!;
-  assert.deepEqual(linked.params, [[41, 42], 6]);
+  const linked = db.all("UPDATE condition_events SET document_id");
+  assert.deepEqual(linked.map((q) => q.params), [[41, 6, 0], [42, 6, 0]],
+    "実績ごとに文書へ結び、AG の消化（この条件は AG 無しなので 0）を積む");
   assert.equal(r.eventId, 41);
   const audit = db.find("INSERT INTO audit_events")!;
   assert.match(String(audit.params[5]), /"eventIds":\[41,42\]/);
+});
+
+test("実績の束の確定：AG の消化を実績に積む（次の計算書で二重に相殺しない）", async () => {
+  // deductions 列が AG の消化累計。束ねる道で積んでいなかったので、
+  // 前払保証がいつまでも消化されず、次の期も同じ額が相殺されていた。
+  // 総額 62.5万・AG 80万。今回の充当は総額どまりの 62.5万。
+  const { db, service: royalty } = withEvents(eventRows(), { ag: 800000 });
+  const r = await royalty.finalize({ conditionId: 5, eventIds: [41, 42], documentId: 6 }, "kuramochi");
+  assert.equal(r.netMinor, 0, "全額が AG で相殺されるので実額は出ない");
+  const linked = db.all("UPDATE condition_events SET document_id");
+  assert.deepEqual(linked.map((q) => q.params[2]), [375000, 250000], "根拠の比で割る");
+  assert.equal(linked.reduce((sum, q) => sum + Number(q.params[2]), 0), 625000,
+    "合計は今回の充当額と一致する");
 });
 
 test("按分は端数を最終行に寄せて、合計が総額と一致する", async () => {

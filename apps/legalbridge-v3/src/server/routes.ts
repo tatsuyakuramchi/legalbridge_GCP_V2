@@ -1,6 +1,6 @@
 import express, { Router, type Request, type Response, type NextFunction } from "express";
 import { z } from "zod";
-import { inTransaction, type Transactable } from "./core/db.js";
+import { dateStr, inTransaction, type Transactable } from "./core/db.js";
 import { DomainError, statusFor } from "./core/errors.js";
 import { requireRole, requireWritable } from "./auth.js";
 import { ConditionRepository } from "./conditions/repository.js";
@@ -1056,6 +1056,100 @@ export function createRoutes(database: Transactable) {
     const envelope = await works.envelope(id);
     if (!envelope) return res.status(404).json({ error: "作品が見つかりません" });
     res.json({ envelope, parts: await works.parts(id) });
+  }));
+
+  /**
+   * 作品にぶら下がっている動き。
+   *
+   * 作品の画面は取得条件と展開条件までしか見せていなかった。ライセンスは
+   * 作品が軸で、実績も計算書も支払も作品にぶら下がる。条件の画面へ1本ずつ
+   * 入って数え直さないと「この作品はいくら生んだのか」が読めなかった。
+   */
+  router.get("/works/:id/activity", asyncRoute(async (req, res) => {
+    const id = Number(req.params.id);
+    const [events, statements, payments, documents] = await Promise.all([
+      database.query(
+        `SELECT e.id, e.event_type, e.occurred_on, e.period, e.quantity, e.amount,
+                c.id AS condition_id, c.condition_no, c.name AS condition_name, c.currency,
+                d.id AS document_id, d.document_no
+           FROM condition_events e
+           JOIN conditions c ON c.id = e.condition_id
+           LEFT JOIN documents d ON d.id = e.document_id
+          WHERE c.work_id = $1 AND e.status = 'active'
+          ORDER BY e.occurred_on DESC NULLS LAST, e.id DESC
+          LIMIT 100`, [id]),
+      database.query(
+        `SELECT s.id, s.period, s.currency, s.net_amount, s.tax_amount,
+                c.condition_no, c.name AS condition_name,
+                d.id AS document_id, d.document_no, d.status AS document_status
+           FROM statements s
+           JOIN conditions c ON c.id = s.condition_id
+           JOIN documents d ON d.id = s.document_id
+          WHERE c.work_id = $1
+          ORDER BY s.id DESC
+          LIMIT 100`, [id]),
+      database.query(
+        `SELECT DISTINCT p.id, p.payment_no, p.direction, p.currency, p.amount,
+                p.tax_amount, p.withholding_amount, p.due_on, p.paid_on, p.status,
+                pt.name AS party_name
+           FROM payments p
+           JOIN payment_allocations a ON a.payment_id = p.id
+           JOIN conditions c ON c.id = a.condition_id
+           LEFT JOIN parties pt ON pt.id = p.party_id
+          WHERE c.work_id = $1
+          ORDER BY p.id DESC
+          LIMIT 100`, [id]),
+      database.query(
+        `SELECT DISTINCT d.id, d.document_no, d.status, d.issued_at,
+                COALESCE(t.label, t.template_key) AS template_label
+           FROM documents d
+           JOIN document_conditions dc ON dc.document_id = d.id
+           JOIN conditions c ON c.id = dc.condition_id
+           LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
+           LEFT JOIN document_templates t ON t.id = tv.template_id
+          WHERE c.work_id = $1
+          ORDER BY d.id DESC
+          LIMIT 100`, [id])
+    ]);
+    res.json({
+      events: (events.rows as Array<Record<string, any>>).map((e) => ({
+        id: Number(e.id), eventType: String(e.event_type),
+        occurredOn: dateStr(e.occurred_on),
+        period: e.period ? String(e.period) : null,
+        quantity: e.quantity === null ? null : Number(e.quantity),
+        amount: Number(e.amount ?? 0), currency: String(e.currency ?? "JPY"),
+        conditionId: Number(e.condition_id),
+        conditionNo: e.condition_no ? String(e.condition_no) : null,
+        conditionName: String(e.condition_name),
+        documentId: e.document_id === null ? null : Number(e.document_id),
+        documentNo: e.document_no ? String(e.document_no) : null
+      })),
+      statements: (statements.rows as Array<Record<string, any>>).map((s) => ({
+        id: Number(s.id), period: String(s.period), currency: String(s.currency),
+        netAmount: Number(s.net_amount ?? 0), taxAmount: Number(s.tax_amount ?? 0),
+        conditionNo: s.condition_no ? String(s.condition_no) : null,
+        conditionName: String(s.condition_name),
+        documentId: Number(s.document_id),
+        documentNo: s.document_no ? String(s.document_no) : null,
+        documentStatus: String(s.document_status)
+      })),
+      payments: (payments.rows as Array<Record<string, any>>).map((p) => ({
+        id: Number(p.id), paymentNo: p.payment_no ? String(p.payment_no) : null,
+        direction: String(p.direction), currency: String(p.currency),
+        amount: Number(p.amount ?? 0), taxAmount: Number(p.tax_amount ?? 0),
+        withholdingAmount: Number(p.withholding_amount ?? 0),
+        dueOn: dateStr(p.due_on),
+        paidOn: dateStr(p.paid_on),
+        status: String(p.status),
+        partyName: p.party_name ? String(p.party_name) : null
+      })),
+      documents: (documents.rows as Array<Record<string, any>>).map((d) => ({
+        id: Number(d.id), documentNo: d.document_no ? String(d.document_no) : null,
+        status: String(d.status),
+        issuedAt: d.issued_at ? new Date(String(d.issued_at)).toISOString() : null,
+        templateLabel: d.template_label ? String(d.template_label) : null
+      }))
+    });
   }));
 
   router.get("/integrations", (_req, res) => {

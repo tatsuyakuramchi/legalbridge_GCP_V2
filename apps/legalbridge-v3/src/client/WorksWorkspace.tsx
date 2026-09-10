@@ -1,12 +1,36 @@
 import { useEffect, useState } from "react";
 import { ListSearch, useDebounced } from "./ListTools.js";
 import type { ConditionSummary, RightsEnvelope } from "../server/core/model.js";
-import { api, ApiError } from "./api.js";
+import { api, ApiError, money } from "./api.js";
 import { Relations, type EntityKind } from "./Relations.js";
 import { CreateForm, int, text } from "./CreateForm.js";
 import { WorkCreateForm } from "./WorkCreateForm.js";
+import { EVENT_TYPE_LABEL } from "./labels.js";
 
 interface WorkRow { id: number; workCode: string | null; title: string; kind: string; status: string }
+
+/**
+ * 作品にぶら下がっている動き。
+ *
+ * 作品が軸なのに、この画面は取得条件と展開条件までしか見せていなかった。
+ * 実績も計算書も支払も作品にぶら下がるのに、条件を1本ずつ開いて数え直さないと
+ * 「この作品はいくら生んだのか」が読めなかった。
+ */
+interface Activity {
+  events: Array<{ id: number; eventType: string; occurredOn: string | null; period: string | null;
+                  quantity: number | null; amount: number; currency: string;
+                  conditionId: number; conditionNo: string | null; conditionName: string;
+                  documentId: number | null; documentNo: string | null }>;
+  statements: Array<{ id: number; period: string; currency: string; netAmount: number;
+                      taxAmount: number; conditionNo: string | null; conditionName: string;
+                      documentId: number; documentNo: string | null; documentStatus: string }>;
+  payments: Array<{ id: number; paymentNo: string | null; direction: string; currency: string;
+                    amount: number; taxAmount: number; withholdingAmount: number;
+                    dueOn: string | null; paidOn: string | null; status: string;
+                    partyName: string | null }>;
+  documents: Array<{ id: number; documentNo: string | null; status: string;
+                     issuedAt: string | null; templateLabel: string | null }>;
+}
 interface Part { id: number; partNo: number; name: string; partType: string; royaltyBearing: boolean }
 
 const DIMENSION_LABEL: Record<string, string> = {
@@ -25,6 +49,7 @@ export function WorksWorkspace(
   const [envelope, setEnvelope] = useState<RightsEnvelope | null>(null);
   const [parts, setParts] = useState<Part[]>([]);
   const [conditions, setConditions] = useState<ConditionSummary[]>([]);
+  const [activity, setActivity] = useState<Activity | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState<"work" | "part" | null>(null);
   const [keyword, setKeyword] = useState("");
@@ -47,11 +72,13 @@ export function WorksWorkspace(
 
   useEffect(() => {
     if (!selected) return;
+    setActivity(null);
     Promise.all([
       api.get<{ envelope: RightsEnvelope; parts: Part[] }>(`/works/${selected}/envelope`),
-      api.get<{ conditions: ConditionSummary[] }>(`/conditions?workId=${selected}`)
-    ]).then(([e, c]) => {
-      setEnvelope(e.envelope); setParts(e.parts); setConditions(c.conditions);
+      api.get<{ conditions: ConditionSummary[] }>(`/conditions?workId=${selected}`),
+      api.get<Activity>(`/works/${selected}/activity`)
+    ]).then(([e, c, a]) => {
+      setEnvelope(e.envelope); setParts(e.parts); setConditions(c.conditions); setActivity(a);
     }).catch((e: ApiError) => setError(e.message));
   }, [selected]);
 
@@ -248,6 +275,150 @@ export function WorksWorkspace(
           {selected && <Relations kind="work" id={selected} onOpen={onOpen} />}
         </div>
       )}
+
+      {/* 作品でいま何が起きているか。条件を1本ずつ開かずに読めるようにする。
+          表が並ぶので、権利の話の2段組みには入れず、下に幅いっぱいで置く。 */}
+      {envelope && activity && <WorkActivity activity={activity} onOpen={onOpen} />}
     </section>
+  );
+}
+
+const PAYMENT_STATUS_LABEL: Record<string, string> = {
+  planned: "予定", approved: "承認済み", paid: "支払済み", canceled: "取消"
+};
+
+/**
+ * 作品の動き。実績 → 計算書 → 文書 → 支払 の順に並べる。
+ * 権利の話（上限・展開）とは別の軸なので、パネルを分けてある。
+ */
+function WorkActivity(
+  { activity, onOpen }: { activity: Activity; onOpen?: (kind: EntityKind, id: number) => void }
+) {
+  const paid = activity.payments.filter((p) => p.status === "paid").length;
+  const sum = (rows: Array<{ netAmount: number }>) =>
+    rows.reduce((total, r) => total + r.netAmount, 0);
+  const currency = activity.statements[0]?.currency ?? "JPY";
+
+  return (
+    <div className="panel">
+      <div className="panel-hd">
+        <h2>この作品の動き</h2>
+        <span className="faint">
+          実績 <b className="num">{activity.events.length}</b> 件 ／
+          計算書 <b className="num">{activity.statements.length}</b> 件 ／
+          文書 <b className="num">{activity.documents.length}</b> 件 ／
+          支払 <b className="num">{activity.payments.length}</b> 件（うち支払済み {paid} 件）
+        </span>
+      </div>
+      <div className="panel-bd stack">
+        {activity.statements.length > 0 && (
+          <div className="stack" style={{ gap: 4 }}>
+            <div className="row">
+              <b>計算書</b>
+              <span className="faint">
+                実額の合計 {money(sum(activity.statements), currency)}（税抜）
+              </span>
+            </div>
+            <div className="tablewrap">
+              <table>
+                <thead><tr><th>文書番号</th><th>取引モデル</th><th>期間</th>
+                           <th className="num">実額（税抜）</th><th></th></tr></thead>
+                <tbody>
+                  {activity.statements.slice(0, 10).map((s) => (
+                    <tr key={s.id}>
+                      <td className="code">{s.documentNo ?? `#${s.documentId}`}</td>
+                      <td>{s.conditionName}</td>
+                      <td>{s.period}</td>
+                      <td className="num">{money(s.netAmount, s.currency)}</td>
+                      <td>
+                        {onOpen && (
+                          <button className="btn btn-sm"
+                                  onClick={() => onOpen("document", s.documentId)}>開く</button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {activity.events.length > 0 && (
+          <div className="stack" style={{ gap: 4 }}>
+            <b>実績</b>
+            <div className="tablewrap">
+              <table>
+                <thead><tr><th>発生日</th><th>取引モデル</th><th>種類</th><th>期間</th>
+                           <th className="num">数量</th><th className="num">金額</th>
+                           <th>結んだ文書</th></tr></thead>
+                <tbody>
+                  {activity.events.slice(0, 10).map((e) => (
+                    <tr key={e.id}>
+                      <td className="code">{e.occurredOn ?? "—"}</td>
+                      <td>{e.conditionName}</td>
+                      <td>{EVENT_TYPE_LABEL[e.eventType] ?? e.eventType}</td>
+                      <td>{e.period ?? "—"}</td>
+                      <td className="num">{e.quantity ?? "—"}</td>
+                      <td className="num">{money(e.amount, e.currency)}</td>
+                      <td className="code faint">{e.documentNo ?? "（未結）"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {activity.events.length > 10 && (
+              <span className="faint">直近 10 件。残りは条件明細の実績で見られます</span>
+            )}
+          </div>
+        )}
+
+        {activity.payments.length > 0 && (
+          <div className="stack" style={{ gap: 4 }}>
+            <b>支払・入金</b>
+            <div className="tablewrap">
+              <table>
+                <thead><tr><th>支払番号</th><th>相手先</th><th>向き</th>
+                           <th className="num">金額</th><th>期日</th><th>状態</th></tr></thead>
+                <tbody>
+                  {activity.payments.slice(0, 10).map((p) => (
+                    <tr key={p.id}>
+                      <td className="code">{p.paymentNo ?? `#${p.id}`}</td>
+                      <td>{p.partyName ?? "—"}</td>
+                      <td>{p.direction === "in" ? "入金" : "支払"}</td>
+                      <td className="num">{money(p.amount, p.currency)}</td>
+                      <td className="code">{p.dueOn ?? "—"}</td>
+                      <td>{PAYMENT_STATUS_LABEL[p.status] ?? p.status}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {activity.documents.length > 0 && (
+          <div className="stack" style={{ gap: 4 }}>
+            <b>文書</b>
+            <div className="picker">
+              {activity.documents.slice(0, 20).map((d) => (
+                <button key={d.id} className="btn btn-sm" style={{ textAlign: "left" }}
+                        disabled={!onOpen} onClick={() => onOpen?.("document", d.id)}>
+                  <span className="code">{d.documentNo ?? "（下書き）"}</span>
+                  {" "}{d.templateLabel ?? "—"}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {!activity.events.length && !activity.statements.length
+          && !activity.documents.length && !activity.payments.length && (
+          <div className="faint">
+            この作品ではまだ実績も文書も動いていません。条件明細に実績を入れると、ここに並びます。
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
