@@ -145,17 +145,24 @@ test("検収書は明細があるとき単票の金額欄を要求しない", ()
     "明細が無ければ従来どおり手入力に回す");
 });
 
-test("計算書は試算があるあいだ計算欄を要求しない", () => {
+test("計算書の計算欄は人に入力させない（試算がまだ無くても）", () => {
+  // V1 はここを人が打てた。V3 の計算書は必ず条件と実績から出るので、
+  // ひな形を選んだ直後（試算がまだ無い）でも打たせる欄ではない。
+  // 宣言をそのまま並べていたころは「金額を全部手で入れてください」という
+  // 画面になっていた（本番のひな形は 64 項目のうち 22 項目がこれ）。
   const variables = parseVariables([
     { name: "grossRoyaltyStr", label: "グロス", required: true },
     { name: "PERIOD", label: "対象期間", required: true }
   ]);
-  const withRoyalty = bindVariables(variables, { royalty: { grossExTax: 1000 } }, {},
-    { templateKey: "royalty_statement" });
-  assert.deepEqual(withRoyalty.missing.map((m) => m.name), ["PERIOD"]);
+  for (const context of [{ royalty: { grossExTax: 1000 } }, {}]) {
+    const bound = bindVariables(variables, context, {}, { templateKey: "royalty_statement" });
+    assert.deepEqual(bound.missing.map((m) => m.name), ["PERIOD"]);
+    assert.deepEqual(bound.fields.map((f) => f.name), ["PERIOD"], "計算欄は画面に出さない");
+  }
 
-  const without = bindVariables(variables, {}, {}, { templateKey: "royalty_statement" });
-  assert.equal(without.missing.length, 2);
+  // ほかのひな形には効かない。同じ名前でも意味が違う。
+  const other = bindVariables(variables, {}, {}, { templateKey: "inspection_certificate" });
+  assert.equal(other.missing.length, 2);
 });
 
 test("個人の相手先に法人だけの項目を要求しない", () => {

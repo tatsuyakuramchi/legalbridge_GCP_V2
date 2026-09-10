@@ -62,8 +62,13 @@ export function isInspectionFallbackFieldHidden(
 }
 
 /**
- * 利用許諾料計算書の計算欄。試算の結果で埋まるので、試算があるあいだは
- * 手入力に回さない。入力しても計算で上書きされる。
+ * 利用許諾料計算書の計算欄。
+ *
+ * V1 はここを人が打てた（電卓で出した金額を紙に写す運用）。V3 の計算書は
+ * 条件と実績から試算して出すので、打たせる意味が無い。打った値は本文に
+ * 差さるので、データベースの計算書と紙の金額が食い違う余地にもなる。
+ * 42 項目のうち 22 項目がこれで、宣言をそのまま並べると「金額を全部手で
+ * 入れてください」という画面になっていた。
  */
 const ROYALTY_COMPUTED_FIELDS = new Set([
   "calcType", "statementMode", "msrpStr", "quantity", "sampleQuantity",
@@ -80,12 +85,12 @@ const ROYALTY_COMPUTED_FIELDS = new Set([
 ]);
 
 export function isRoyaltyComputedFieldHidden(
-  templateKey: string, fieldName: string, values: Record<string, unknown>
+  templateKey: string, fieldName: string, _values: Record<string, unknown>
 ): boolean {
   if (templateKey !== "royalty_statement") return false;
-  if (!ROYALTY_COMPUTED_FIELDS.has(fieldName)) return false;
-  // V3 は試算の結果を royalty として渡す。あるなら計算欄は自動。
-  return Boolean(values.__hasRoyalty);
+  // 試算があるかどうかに依らず隠す。V3 の計算書は必ず条件と実績から出るので、
+  // 試算がまだ無い段階（ひな形を選んだ直後）でも、人が入れる欄ではない。
+  return ROYALTY_COMPUTED_FIELDS.has(fieldName);
 }
 
 /**

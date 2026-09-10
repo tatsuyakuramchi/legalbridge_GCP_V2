@@ -133,8 +133,15 @@ Cloud SQL Studio だけで完結する。読み取りしかしないので本番
 
 ```powershell
 mkdir dumps\rows -Force
-# 落としたファイルだけを名指しで移す。*.csv にすると関係ない CSV まで巻き込む。
-Move-Item "$HOME\Downloads\studio_results_<日付>_<時刻>.csv" dumps\rows\
+
+# 見出しが tbl,data のものだけを拾う。関係ない CSV を巻き込まないため。
+# まず何が移るのかを見る。
+$src = Get-ChildItem "$HOME\Downloads\studio_results_*.csv" |
+  Where-Object { ((Get-Content $_.FullName -TotalCount 1) -replace '^\uFEFF','' -replace '"','') -eq 'tbl,data' }
+$src | Select-Object Name, LastWriteTime, Length
+
+# よければ移す。
+$src | Move-Item -Destination dumps\rows\
 Get-ChildItem dumps\rows\*.csv | ForEach-Object { "$($_.Name): $((Get-Content $_ | Measure-Object -Line).Lines - 1)" }
 docker compose run --rm ops import-rows /dumps/rows
 ```
@@ -177,8 +184,18 @@ docker compose run --rm ops import-rows /dumps/rows
 
 ```powershell
 mkdir dumps\contacts -Force
-Move-Item "$HOME\Downloads\studio_results_<日付>_<時刻>.csv" dumps\contacts\
+
+# 見出しが tbl,data のものだけを拾う。まず何が移るのかを見る。
+$src = Get-ChildItem "$HOME\Downloads\studio_results_*.csv" |
+  Where-Object { ((Get-Content $_.FullName -TotalCount 1) -replace '^\uFEFF','' -replace '"','') -eq 'tbl,data' }
+$src | Select-Object Name, LastWriteTime, Length
+
+# よければ移す。
+$src | Move-Item -Destination dumps\contacts\
 docker compose run --rm ops import-contacts /dumps/contacts
+
+# 取り込んだら消す（口座番号・名義・個人の電話番号が入っている）。
+Remove-Item dumps\contacts\*.csv
 ```
 
 突き合わせは**取引先コード**（`party_code`）。id は本番と手元でずれうるので見ない。
