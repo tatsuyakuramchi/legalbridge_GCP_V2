@@ -170,6 +170,13 @@ export function BulkOrders(
                 {csv && <span className="code">{csv.name}</span>}
                 <span className="faint">UTF-8 か Shift_JIS。1行 = 1品目。同じ取引先の行は1枚にまとまる</span>
               </div>
+              {/* 突き合わせは案件が決まってから走る。先に CSV を選ぶと、選んだのに
+                  何も出ないまま止まって、読み込みに失敗したように見えていた。 */}
+              {csv && !matterId && (
+                <div className="note" style={{ marginTop: 6 }}>
+                  案件がまだ決まっていません。上で案件を選ぶと、この CSV の突き合わせが出ます
+                </div>
+              )}
             </div></div>
           {recent.length > 0 && (
             <div className="faint">
