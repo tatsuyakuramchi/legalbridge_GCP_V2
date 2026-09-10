@@ -7,6 +7,7 @@
 #   ops restore <file>    手元の写し（/dumps/…）をローカル DB に入れ直す
 #   ops fresh             本番データなしで開発用 DB を作る（模擬データ）
 #   ops grants            ランタイムロールの権限を当て直す
+#   ops upgrade           手元の DB を今のスキーマに合わせる（列を足したあと）
 #   ops status            写しの一覧と、いま入っているデータの時点
 #   ops netcheck [host port]
 #                         同期に要る Google の口へ、コンテナから届くかを見る。
@@ -281,6 +282,22 @@ export_info() {
       docker compose run --rm ops sync
 
 INFO
+}
+
+# 手元の DB を今のスキーマに合わせる。
+#
+#   git pull で列が増えたとき、入っているデータはそのままで構造だけ追いつかせる。
+#   これをやらないと、アプリが新しい列を読もうとして「サーバ内部でエラー」になる。
+#   004 は何度流しても同じ結果になるように書いてある。
+upgrade() {
+  log "後追いの変更を当てる（004_amend.sql）"
+  psql_local -f "$V3/004_amend.sql" >/dev/null
+  log "ビューを作り直す"
+  psql_local -f "$V3/002_views.sql" >/dev/null
+  apply_grants
+  local rows
+  rows=$(psql -Atq -c "SELECT count(*) FROM v3.matters" 2>/dev/null || echo '?')
+  log "完了（案件 ${rows} 件。データはそのまま）"
 }
 
 # ---------------------------------------------------------------------
@@ -609,6 +626,7 @@ case "${1:-}" in
   restore) [ -n "${2:-}" ] || die "使い方: ops restore /dumps/v3_YYYYmmdd_HHMM.dump"; restore "$2" ;;
   fresh) fresh ;;
   grants) apply_grants ;;
+  upgrade) upgrade ;;
   status) status ;;
-  *) sed -n '2,11p' "$0"; exit 2 ;;
+  *) sed -n '2,12p' "$0"; exit 2 ;;
 esac

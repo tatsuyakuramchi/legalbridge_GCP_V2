@@ -52,7 +52,7 @@ Remove-Item keys\adc.json -ErrorAction SilentlyContinue
 infra/local/
   docker-compose.yml   db（PostgreSQL）／app（V3）／ops（同期・復元の作業用）
   .env.example         設定のひな形。.env に写して埋める
-  bin/ops.sh           ops コンテナの中で走るスクリプト（sync / restore / fresh / grants / status）
+  bin/ops.sh           ops コンテナの中で走るスクリプト（sync / restore / fresh / upgrade / grants / status）
   db/init/             ローカル DB の初回起動でランタイムロールを作る
   ops/Dockerfile       psql・pg_dump と Cloud SQL Auth Proxy を入れた作業用イメージ
   sql/backup_role.sql  本番に作る読み取り専用ロール（Studio で1回）
@@ -100,6 +100,19 @@ infra/local/
    ```
 
    http://localhost:8080 を開くと、左下に「予備系／データ YYYY-MM-DD HH:MM 時点」と出る。
+
+## コードを更新したとき
+
+列が増える変更を取り込んだら、手元の DB も合わせる。入っているデータはそのまま。
+
+```powershell
+git pull
+docker compose up -d --build app
+docker compose run --rm ops upgrade
+```
+
+`upgrade` を忘れると、アプリが新しい列を読もうとして画面に
+「サーバ内部でエラーが発生しました」と出る。何度流しても同じ結果になる。
 
 ## Studio から本番の中身を入れる
 
