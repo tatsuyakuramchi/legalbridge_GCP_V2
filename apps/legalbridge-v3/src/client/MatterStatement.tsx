@@ -3,6 +3,7 @@ import type { MatterDetail } from "../server/core/model.js";
 import { api, ApiError } from "./api.js";
 import { useReadOnly } from "./read-only.js";
 import { EVENT_TYPE_LABEL } from "./labels.js";
+import { StatementBreakdown, type StatementLine, type StatementTotals } from "./StatementLines.js";
 
 /**
  * 案件の条件をまたいだ利用許諾計算書。
@@ -20,20 +21,7 @@ interface EventRow {
   quantity: number | null; grossAmount: number | null; amount: number;
   status: string; documentId: number | null; note: string | null;
 }
-interface Line {
-  conditionId: number | null; contractTitle: string; contractNumber: string;
-  conditionName: string; methodLabel: string;
-  salesJpy: number; ratePct: number; paymentJpy: number; basisNote: string;
-}
-interface Totals {
-  currency: string; basis: number; netExTax: number; tax: number; totalIncTax: number;
-  withholdingTax: number; netTransfer: number; netMinor: number;
-}
 interface TemplateOption { templateKey: string; label: string; category: string | null }
-
-/** 束ねの金額はサーバが主単位（円）で返す。最小通貨単位の money() と混ぜない。 */
-const major = (value: number, currency: string) =>
-  new Intl.NumberFormat("ja-JP", { style: "currency", currency }).format(value);
 
 export function MatterStatement(
   { detail, onChanged, onOpenDocument }: {
@@ -54,7 +42,7 @@ export function MatterStatement(
   const [period, setPeriod] = useState("");
   const [templates, setTemplates] = useState<TemplateOption[]>([]);
   const [templateKey, setTemplateKey] = useState("");
-  const [result, setResult] = useState<{ lines: Line[]; totals: Totals } | null>(null);
+  const [result, setResult] = useState<{ lines: StatementLine[]; totals: StatementTotals } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<{ id: number; documentNo: string | null } | null>(null);
@@ -91,7 +79,7 @@ export function MatterStatement(
   useEffect(() => {
     if (!open || !entries.length) { setResult(null); return; }
     let live = true;
-    api.post<{ lines: Line[]; totals: Totals }>("/statement-documents/preview", {
+    api.post<{ lines: StatementLine[]; totals: StatementTotals }>("/statement-documents/preview", {
       entries: entries.map((e) => ({ ...e, period: period.trim() || null }))
     })
       .then((r) => { if (live) { setResult(r); setError(null); } })
@@ -219,47 +207,7 @@ export function MatterStatement(
             );
           })}
 
-          {result && (
-            <div className="tablewrap">
-              <table>
-                <thead>
-                  <tr><th>取引モデル</th><th>算定方法</th><th className="num">根拠額</th>
-                      <th className="num">料率</th><th className="num">実額（税抜）</th><th>但し書き</th></tr>
-                </thead>
-                <tbody>
-                  {result.lines.map((l, i) => (
-                    <tr key={l.conditionId ?? i}>
-                      <td>{l.conditionName}</td>
-                      <td>{l.methodLabel}</td>
-                      <td className="num">{major(l.salesJpy, result.totals.currency)}</td>
-                      <td className="num">{l.ratePct ? `${l.ratePct}%` : "—"}</td>
-                      <td className="num">{major(l.paymentJpy, result.totals.currency)}</td>
-                      <td className="faint">{l.basisNote}</td>
-                    </tr>
-                  ))}
-                  <tr>
-                    <td colSpan={4}><b>合計（税抜）</b></td>
-                    <td className="num"><b>{major(result.totals.netExTax, result.totals.currency)}</b></td>
-                    <td />
-                  </tr>
-                  <tr>
-                    <td colSpan={4}>消費税</td>
-                    <td className="num">{major(result.totals.tax, result.totals.currency)}</td>
-                    <td className="faint">条件ごとの税区分で計算します</td>
-                  </tr>
-                  <tr>
-                    <td colSpan={4}><b>合計（税込）</b></td>
-                    <td className="num"><b>{major(result.totals.totalIncTax, result.totals.currency)}</b></td>
-                    <td className="faint">
-                      {result.totals.withholdingTax > 0
-                        ? `源泉 ${major(result.totals.withholdingTax, result.totals.currency)} を引いた振込額 ${major(result.totals.netTransfer, result.totals.currency)}`
-                        : ""}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          )}
+          {result && <StatementBreakdown lines={result.lines} totals={result.totals} />}
 
           <div className="row">
             <button className="btn primary" disabled={busy || !result || !templateKey}

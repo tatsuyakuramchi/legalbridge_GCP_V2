@@ -8,6 +8,7 @@ import { DocumentDetail, type DocumentRow } from "./DocumentDetail.js";
 import { DocumentFields, kindFor, type Candidate, type FormField } from "./DocumentFields.js";
 import { LineItemsEditor, type Row } from "./LineItems.js";
 import { BulkOrders } from "./BulkOrders.js";
+import { StatementBreakdown, type StatementLine, type StatementTotals } from "./StatementLines.js";
 
 interface TemplateRow {
   id: number; templateKey: string; label: string; category: string | null; numberPrefix: string | null;
@@ -35,6 +36,8 @@ interface PreviewResponse {
   warnings: Array<{ kind: "bank" | "company" | "other"; message: string }>;
   /** 明細の欄と、条件・予定・実績から組んだ種の行。 */
   lines: Array<{ name: string; rows: Row[] }>;
+  /** 計算書か。金額の枠（対象期間・実績・試算）を出すかどうか。 */
+  statement?: boolean;
 }
 interface EventRow {
   id: number; eventType: string; occurredOn: string | null; period: string | null;
@@ -99,6 +102,8 @@ export function DocumentsWorkspace(
    * すると、打ち終わった欄が画面から消える。残数は画面の値で数えれば足りる。
    */
   const [spec, setSpec] = useState<PreviewResponse | null>(null);
+  /** spec がどのひな形のものか。ひな形を変えた直後は前のひな形の項目が残る。 */
+  const [specKey, setSpecKey] = useState("");
   /** プレビューの本文。入力欄とは別に持つ。打つたびに作り直しても打鍵を邪魔しない。 */
   const [rendered, setRendered] = useState<{ html: string; templateLabel: string } | null>(null);
   /** 直している下書き。作り直した文書はここに載せて、直してから発行する。 */
@@ -283,6 +288,31 @@ export function DocumentsWorkspace(
 
   // 検収書・納品書は実績1件が明細1行。実績を選ぶ枠を出すかどうかの判断に使う。
   const usesDeliveryLines = (spec?.lines ?? []).some((l) => l.name === "delivery_line_items");
+  /**
+   * 計算書。ほかのひな形と違って、本文の金額は手入力ではなく実績からの試算で決まる。
+   *
+   * ここに枠が無かったので、ひな形に「利用許諾料計算書」を選ぶと、条件を選んでも
+   * 入力欄が1つも出ないまま「決定する」だけが残っていた（本文が差す金額は
+   * 手入力の宣言に無いので、項目一覧にも出てこない）。押せば金額の入っていない
+   * 紙が1枚できる。実績を選んで試算し、その試算のまま出す道をここに置く。
+   */
+  // 判断はサーバが持つ（template-context の isStatementTemplate）。ここで
+  // ひな形の名前を並べ直すと、増えたときに片方だけ直して食い違う。
+  // ひな形を変えた直後は前のひな形の spec が残っているので、それは使わない。
+  const specFresh = specKey === templateKey;
+  const isStatement = specFresh && spec?.statement === true;
+  const [stmtPeriod, setStmtPeriod] = useState("");
+  const [stmt, setStmt] = useState<{ lines: StatementLine[]; totals: StatementTotals } | null>(null);
+  const [stmtError, setStmtError] = useState<string | null>(null);
+  // 条件ごとに実績をまとめる。計算は条件ごと（料率も MG・AG も条件ごとに違う）で、
+  // 1枚にまとめるのは印字と支払のまとめ方だけ。
+  const stmtEntries = picked
+    .map((cid) => ({
+      conditionId: cid,
+      eventIds: pickedEvents.filter((id) => events.some((e) => e.id === id && e.conditionId === cid))
+    }))
+    .filter((e) => e.eventIds.length > 0);
+  const stmtKey = stmtEntries.map((e) => `${e.conditionId}:${e.eventIds.join("-")}`).join(",");
   // 選んだのに実績が無い条件。ここが空だと、その条件は1行も出ない。
   const withoutEvents = picked.filter((cid) => !events.some((e) => e.conditionId === cid));
   /** 案件。案件や条件の画面から来たときに決まる。無ければサーバが条件から引く。 */
@@ -317,7 +347,7 @@ export function DocumentsWorkspace(
     let live = true;
     api.post<PreviewResponse>("/documents/preview",
       { templateKey, conditionIds: picked, eventIds: pickedEvents, manualInputs: {} })
-      .then((r) => { if (live) setSpec(r); })
+      .then((r) => { if (live) { setSpec(r); setSpecKey(templateKey); } })
       .catch(() => undefined);
     return () => { live = false; };
   }, [templateKey, picked.join(","), pickedEvents.join(",")]);
@@ -342,6 +372,18 @@ export function DocumentsWorkspace(
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
     finally { setBusy(false); }
   }
+
+  // 計算書の試算。選び直すたびに引き直す。保存しない。
+  useEffect(() => {
+    if (!isStatement || !stmtEntries.length) { setStmt(null); setStmtError(null); return; }
+    let live = true;
+    api.post<{ lines: StatementLine[]; totals: StatementTotals }>("/statement-documents/preview", {
+      entries: stmtEntries.map((e) => ({ ...e, period: stmtPeriod.trim() || null }))
+    })
+      .then((r) => { if (live) { setStmt(r); setStmtError(null); } })
+      .catch((e: ApiError) => { if (live) { setStmt(null); setStmtError(e.message); } });
+    return () => { live = false; };
+  }, [isStatement, stmtKey, stmtPeriod]);
 
   /**
    * 最後に保存した中身。これと違えば「保存していない変更がある」。
@@ -401,6 +443,16 @@ export function DocumentsWorkspace(
         const r = await api.post<{ id: number; documentNo: string }>(
           `/documents/${draft.id}/issue`, { eventIds: pickedEvents });
         done = { id: r.id, documentNo: r.documentNo };
+      } else if (isStatement) {
+        // 計算書は 試算 → 発行 → 確定 を1本にしてある。金額は確定時にもう一度
+        // 計算し直すので、画面に出ている試算の値は送らない。
+        const result = await api.post<{ document: { id: number; documentNo: string } }>(
+          "/statement-documents", {
+            templateKey, matterId,
+            manualInputs: inputs,
+            entries: stmtEntries.map((e) => ({ ...e, period: stmtPeriod.trim() || null }))
+          });
+        done = { id: result.document.id, documentNo: result.document.documentNo };
       } else {
         // 下書き→発行→実績への紐づけをサーバ側で1本にしてある。
         // 途中で落ちたときは下書きごと捨てられる。
@@ -426,7 +478,7 @@ export function DocumentsWorkspace(
       // 項目の一覧は消さない。消すと、続けてもう1枚作るときに空の画面が残る。
       // 日付と金額だけ落として、手で打った文字は次にも使う。
       setManual(keep); setLines({}); setPickedFields(new Set());
-      setDraft(null); setPickedEvents([]);
+      setDraft(null); setPickedEvents([]); setStmt(null); setStmtPeriod("");
       await reload();
       // 長いフォームの下で押すと、上に出た結果が見えない。結果まで運ぶ。
       issuedRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
@@ -609,7 +661,9 @@ export function DocumentsWorkspace(
   // spec.missing はひな形が要求する項目の一覧であって、残数ではない。
   const remaining = (spec?.fields ?? [])
     .filter((f) => f.required && f.source === "manual" && !String(manual[f.name] ?? "").trim()).length;
-  const ready = Boolean(templateKey) && spec !== null && remaining === 0;
+  // 計算書は試算が返って初めて出せる。金額の無い紙を出させない。
+  const ready = Boolean(templateKey) && spec !== null && specFresh && remaining === 0
+    && (!isStatement || stmt !== null);
 
   return (
     <section className="workspace">
@@ -753,11 +807,13 @@ export function DocumentsWorkspace(
                 </div>
               </div>
 
-              {(events.length > 0 || (usesDeliveryLines && picked.length > 0)) && (
+              {(events.length > 0 || ((usesDeliveryLines || isStatement) && picked.length > 0)) && (
                 <div className="stack" style={{ gap: 6 }}>
                   <div className="row">
                     <span className="faint">
-                      どの実績についてか（検収書・納品書はここの1件が明細の1行になります）
+                      {isStatement
+                        ? "どの実績を載せるか（選んだ実績の根拠を条件ごとに合算して計算します）"
+                        : "どの実績についてか（検収書・納品書はここの1件が明細の1行になります）"}
                     </span>
                     <span className="faint" style={{ marginLeft: "auto" }}>
                       {picked.length > 1 ? "条件をまたいで選べます。委託料と実費を1枚の検収書に" : ""}
@@ -808,6 +864,29 @@ export function DocumentsWorkspace(
                 </div>
               )}
 
+              {/* 計算書の枠。ほかのひな形は本文の項目を人が埋めるが、計算書の金額は
+                  条件と実績から計算して決まる。ここが無いと、条件を選んでも
+                  入力欄が1つも出ないまま「決定する」だけが残る。 */}
+              {isStatement && (
+                <div className="stack" style={{ gap: 6 }}>
+                  <label className="field">
+                    <span>対象期間</span>
+                    <input value={stmtPeriod} onChange={(e) => setStmtPeriod(e.target.value)}
+                           placeholder="2026上期（空なら選んだ実績の期間から決めます）" />
+                  </label>
+                  {stmtError && <div className="alert">{stmtError}</div>}
+                  {stmt
+                    ? <StatementBreakdown lines={stmt.lines} totals={stmt.totals} />
+                    : !stmtError && (
+                      <div className="note">
+                        条件明細と、その条件の実績を選ぶと、取引モデルごとの内訳と合計が出ます。
+                        計算は条件ごと（料率も MG・AG も条件ごとに違う）で、1枚にまとめるのは
+                        印字と支払のまとめ方だけです。
+                      </div>
+                    )}
+                </div>
+              )}
+
             </div>
           </div>
 
@@ -847,6 +926,18 @@ export function DocumentsWorkspace(
                 <span className="faint">{spec ? `${spec.fields.length} 項目` : "ひな形を選ぶと出ます"}</span>
               </div>
               <div className="panel-bd stack">
+                {spec && isStatement && (
+                  <div className="check-list">
+                    <div className={stmt ? "ok" : "ng"}>
+                      {stmt
+                        ? `✓ ${stmt.lines.length} 件の取引モデルで試算できています`
+                        : "✕ 条件明細と実績を選ぶと試算します"}
+                    </div>
+                    <div className="faint">
+                      金額は決定するときにもう一度計算し直します。下書きにはできません
+                    </div>
+                  </div>
+                )}
                 {spec && (
                   <div className="check-list">
                     <div className={remaining === 0 ? "ok" : "ng"}>
@@ -873,7 +964,11 @@ export function DocumentsWorkspace(
               ))}
 
                 <div className="compose-actions">
-                  <button className="btn" onClick={() => void saveDraft()} disabled={busy || !templateKey || !dirty}>
+                  {/* 計算書は 試算 → 発行 → 確定 が1本。下書きで止めると、金額の
+                      決まっていない紙が残り、あとから発行しても計算書が結ばれない。 */}
+                  <button className="btn" onClick={() => void saveDraft()}
+                          disabled={busy || !templateKey || !dirty || isStatement}
+                          title={isStatement ? "計算書は下書きにできません（試算した金額のまま出します）" : undefined}>
                     {draft ? "下書きを保存" : "下書きとして保存"}
                   </button>
                   <button className="btn primary" onClick={issue} disabled={busy || !ready}>

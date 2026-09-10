@@ -22,6 +22,12 @@ type Ctx = Record<string, any>;
 
 const INSPECTION_KEYS = new Set(["inspection_certificate", "delivery_note", "acceptance_certificate"]);
 const PURCHASE_ORDER_KEYS = new Set(["purchase_order", "intl_purchase_order"]);
+/**
+ * 計算書のひな形。本文の金額は手入力ではなく、条件と実績からの試算で決まる。
+ * 画面もここを見て入力の枠を出し分ける（別々に書くと片方だけ増えて食い違う）。
+ */
+export const isStatementTemplate = (templateKey: string): boolean =>
+  templateKey === "royalty_statement";
 
 /**
  * ひな形ごとの明細の欄。画面はここに挙がった名前の分だけ行の編集欄を出す。
@@ -260,7 +266,7 @@ export function buildTemplateContext(
   if (PURCHASE_ORDER_KEYS.has(templateKey)) {
     return { ...common, ...orderBlock(templateKey, context, manual) };
   }
-  if (templateKey === "royalty_statement") {
+  if (isStatementTemplate(templateKey)) {
     const patch = royaltyStatementPatch(context, manual, Number(common.taxRate));
     return patch ? { ...common, ...patch } : common;
   }

@@ -13,6 +13,7 @@ import { MatterLinkService, CONDITION_KINDS_BY_MATTER } from "./matters/link-ser
 import { LinkService } from "./links/service.js";
 import { RELATIONS, type EntityKind } from "./links/relations.js";
 import { DOCUMENT_STYLES } from "./matters/flow.js";
+import { isStatementTemplate } from "./documents/template-context.js";
 import { WorkWriteService } from "./works/write-service.js";
 import { PartyWriteService } from "./parties/write-service.js";
 import { PartyMergeService } from "./parties/merge-service.js";
@@ -1430,7 +1431,9 @@ export function createRoutes(database: Transactable) {
         // 本文が差しているのに空で出る項目（振込先の欠けなど）。
         warnings: result.warnings,
         // 明細の欄と、その種になる行。
-        lines: result.lines
+        lines: result.lines,
+        // 計算書か。画面は金額の枠（対象期間・実績・試算）をこれで出し分ける。
+        statement: isStatementTemplate(parsed.templateKey)
       });
     }));
 
