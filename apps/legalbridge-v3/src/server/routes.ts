@@ -1367,16 +1367,28 @@ export function createRoutes(database: Transactable) {
    * 候補に出てこない。名前で探して引けるようにする。最小入力で書類を
    * 作るという建て付けは、探して引けることまで含めて成り立つ。
    */
+  /**
+   * 入力欄の「探して入れる」で引ける値。
+   *
+   * 人（スタッフ・取引先・先方担当）は名前で横断して引く。相手先の別の担当者や
+   * 別部署の検収者を入れたいことがあるので、ここは絞らない。
+   * 契約と文書は partyId を渡したときだけ、その取引先のぶんを返す。基本契約名の
+   * ような欄は「この相手との契約」から選ぶもので、他社の契約が並ぶと選び間違える。
+   */
   router.get("/quote-sources", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
     const q = String(req.query.q ?? "").trim();
-    if (q.length < 1) return res.json({ candidates: [] });
+    const partyId = Number(req.query.partyId) > 0 ? Number(req.query.partyId) : null;
+    // 取引先が決まっていれば、打つ前でもその取引先の契約と文書を並べる。
+    if (q.length < 1 && !partyId) return res.json({ candidates: [] });
     const like = `%${q}%`;
-    const staff = await database.query(
+    // 人は名前を打ってから引く。空で引くと、関係の無い8人が並ぶ。
+    const none = { rows: [] as Array<Record<string, any>> };
+    const staff = q.length < 1 ? none : await database.query(
       `SELECT name, email, department, phone, staff_code FROM staff
         WHERE status = 'active'
           AND (name ILIKE $1 OR department ILIKE $1 OR email ILIKE $1 OR staff_code ILIKE $1)
         ORDER BY department NULLS LAST, name LIMIT 8`, [like]);
-    const partyRows = await database.query(
+    const partyRows = q.length < 1 ? none : await database.query(
       // 住所・電話・メールは取引先そのものが持つ列。書類の頭書きと宛先に出る
       // のに、ここで拾っていなかったので「探して入れる」に出てこなかった。
       `SELECT p.id, p.name, p.name_kana, p.invoice_no, p.corporate_no, p.kind,
@@ -1385,11 +1397,27 @@ export function createRoutes(database: Transactable) {
         WHERE p.status = 'active'
           AND (p.name ILIKE $1 OR p.name_kana ILIKE $1 OR p.email ILIKE $1)
         ORDER BY p.name LIMIT 8`, [like]);
-    const contacts = await database.query(
+    const contacts = q.length < 1 ? none : await database.query(
       `SELECT c.role, c.name, c.email, c.phone, c.department, p.name AS party_name
          FROM party_contacts c JOIN parties p ON p.id = c.party_id
         WHERE c.name ILIKE $1 OR c.department ILIKE $1 OR c.email ILIKE $1
         ORDER BY p.name LIMIT 8`, [like]);
+
+    // 契約と文書は取引先のぶんだけ。基本契約名はここから選ぶ。
+    const agreements = partyId ? await database.query(
+      `SELECT agreement_no, title, status, executed_on
+         FROM agreements
+        WHERE counterparty_id = $1
+          AND ($2 = '' OR title ILIKE $3 OR COALESCE(agreement_no, '') ILIKE $3)
+        ORDER BY executed_on DESC NULLS LAST, id DESC LIMIT 10`,
+      [partyId, q, like]) : { rows: [] as Array<Record<string, any>> };
+    const docs = partyId ? await database.query(
+      `SELECT document_no, title, template_label
+         FROM v_document_display
+        WHERE counterparty_id = $1 AND status <> 'void'
+          AND ($2 = '' OR title ILIKE $3 OR COALESCE(document_no, '') ILIKE $3)
+        ORDER BY issued_at DESC NULLS LAST, document_id DESC LIMIT 10`,
+      [partyId, q, like]) : { rows: [] as Array<Record<string, any>> };
 
     const out: Array<{ label: string; value: string; source: string; kind: string }> = [];
     const push = (source: string, label: string, value: unknown) => {
@@ -1397,6 +1425,29 @@ export function createRoutes(database: Transactable) {
       if (!text || out.some((o) => o.label === label && o.value === text)) return;
       out.push({ label, value: text, source, kind: "text" });
     };
+    // 同じ件名の文書は何枚もある（計算書は毎期出る）。入る値が同じなら、
+    // 並べても選び分けられないので1つにする。
+    const once = (source: string, label: string, value: unknown) => {
+      const text = String(value ?? "").trim();
+      if (!text || out.some((o) => o.source === source && o.value === text)) return;
+      out.push({ label, value: text, source, kind: "text" });
+    };
+    // 探しているのはたいてい契約名なので、人より先に並べる。
+    // 番号は打って絞ったときだけ出す。空で開いたときは「何があるか」を
+    // 見せる場面で、番号まで並べると件名が埋もれる（計算書は毎期出るので
+    // 同じ件名の番号が10個並ぶ）。
+    const withNumbers = q.length > 0;
+    for (const r of agreements.rows as Array<Record<string, any>>) {
+      const no = r.agreement_no ? String(r.agreement_no) : "番号なし";
+      once("契約", `${no} の件名`, r.title);
+      if (withNumbers) once("契約", `${r.title ?? no} の番号`, r.agreement_no);
+    }
+    for (const r of docs.rows as Array<Record<string, any>>) {
+      const no = r.document_no ? String(r.document_no) : "（下書き）";
+      const kind = r.template_label ? String(r.template_label) : "文書";
+      once("文書", `${no}（${kind}）の件名`, r.title);
+      if (withNumbers) once("文書", `${r.title ?? kind} の文書番号`, r.document_no);
+    }
     for (const r of staff.rows as Array<Record<string, any>>) {
       push("スタッフ", `${r.name} の氏名`, r.name);
       push("スタッフ", `${r.name} の部署`, r.department);

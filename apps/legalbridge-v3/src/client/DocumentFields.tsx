@@ -60,11 +60,16 @@ export function groupsOf(fields: FormField[]): Array<{ name: string; fields: For
 }
 
 export function DocumentFields(
-  { fields, manual, candidates, onChange, onPick }: {
+  { fields, manual, candidates, partyId, onChange, onPick }: {
     fields: FormField[];
     /** 人が入れた値。自動の欄を上書きしたものも含む。 */
     manual: Record<string, string>;
     candidates: Candidate[];
+    /**
+     * この文書の相手先。決まっていれば「探して入れる」で、その取引先の
+     * 契約と文書を引ける。他社の契約が並ぶと選び間違えるので絞る。
+     */
+    partyId?: number | null;
     /** 手で打った。 */
     onChange: (name: string, value: string) => void;
     /** 候補から選んだ（「前回の値」として覚えない）。 */
@@ -82,10 +87,15 @@ export function DocumentFields(
   const quoteSearch = useDebounced(quoteQ, 300);
 
   useEffect(() => {
-    if (!quoteFor || !quoteSearch.trim()) { setQuoteHits([]); return; }
-    api.get<{ candidates: Candidate[] }>(`/quote-sources?q=${encodeURIComponent(quoteSearch.trim())}`)
+    // 取引先が決まっていれば、打つ前でもその取引先の契約と文書を並べる。
+    // 基本契約名のような欄は「この相手との契約」から選ぶもので、思い出して
+    // 打つものではない。
+    if (!quoteFor || (!quoteSearch.trim() && !partyId)) { setQuoteHits([]); return; }
+    const params = new URLSearchParams({ q: quoteSearch.trim() });
+    if (partyId) params.set("partyId", String(partyId));
+    api.get<{ candidates: Candidate[] }>(`/quote-sources?${params}`)
       .then((r) => setQuoteHits(r.candidates)).catch(() => setQuoteHits([]));
-  }, [quoteFor, quoteSearch]);
+  }, [quoteFor, quoteSearch, partyId]);
 
   const toggle = (set: Set<string>, name: string) => {
     const next = new Set(set);
@@ -195,7 +205,9 @@ export function DocumentFields(
                         {quoteFor === f.name && (
                           <div className="stack" style={{ gap: 4, width: "100%", marginTop: 4 }}>
                             <input value={quoteQ} autoFocus
-                                   placeholder="スタッフ・取引先・先方担当を名前で探す"
+                                   placeholder={partyId
+                                     ? "この取引先の契約・文書、スタッフ・先方担当を名前で探す"
+                                     : "スタッフ・取引先・先方担当を名前で探す"}
                                    onChange={(e) => setQuoteQ(e.target.value)} />
                             <div className="row" style={{ flexWrap: "wrap", gap: 4 }}>
                               {quoteHits.map((c) => (

@@ -330,6 +330,17 @@ export function DocumentsWorkspace(
   const withoutEvents = picked.filter((cid) => !events.some((e) => e.conditionId === cid));
   /** 案件。案件や条件の画面から来たときに決まる。無ければサーバが条件から引く。 */
   const matterId = start?.matterId ?? null;
+  /**
+   * この文書の相手先。選んだ条件が1社に決まるときだけ。
+   * 「探して入れる」でこの取引先の契約・文書を引くのに使う。
+   * 混ざっているときは絞らない（どちらの契約かを決められない）。
+   */
+  const partyId = (() => {
+    const ids = [...new Set(picked
+      .map((id) => conditions.find((c) => c.id === id)?.counterparty?.id)
+      .filter((v): v is number => typeof v === "number"))];
+    return ids.length === 1 ? ids[0] : null;
+  })();
   const body = useMemo(() => ({
     templateKey, conditionIds: picked, eventIds: pickedEvents, manualInputs: inputs, matterId
   }), [templateKey, picked, pickedEvents, inputs, matterId]);
@@ -907,7 +918,7 @@ export function DocumentsWorkspace(
           </div>
 
           <DocumentFields fields={spec?.fields ?? []} manual={manual}
-            candidates={spec?.candidates ?? []}
+            candidates={spec?.candidates ?? []} partyId={partyId}
             onChange={(name, value) => {
               setManual((prev) => {
                 const next = { ...prev };
