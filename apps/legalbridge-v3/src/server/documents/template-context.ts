@@ -62,6 +62,41 @@ export function seedLines(templateKey: string, context: Ctx): Record<string, Row
 export const OWNERSHIP_LABEL: Record<string, string> = { orderer: "発注者", contractor: "受注者" };
 const ownershipOf = (condition: Ctx) =>
   OWNERSHIP_LABEL[String(condition?.deliverableOwnership ?? "")] ?? null;
+/**
+ * 明細の支払方法。発注書・検収書の本文がこれで出し分ける。
+ *
+ * 条件の計算方式をそのまま大文字にしていたので、料率の条件は "REVENUE_RATE" に
+ * なっていた。欄の選択肢は FIXED / ROYALTY / SUBSCRIPTION の3つなので、どれにも
+ * 当たらず、業績連動の枝（確定報酬の名称・料率・計算式）が一度も開かなかった。
+ *
+ * 単価×数量は金額が先に決まるので固定額の側。業績連動は売上に料率を掛けるほう。
+ */
+export function calcMethodOf(condition: Ctx): string {
+  switch (String(condition?.pricingModel ?? "")) {
+    case "revenue_rate":  return "ROYALTY";
+    case "subscription":  return "SUBSCRIPTION";
+    case "fixed":
+    case "unit_rate":     return "FIXED";
+    default:              return "";      // 未選択は固定額として出る
+  }
+}
+
+/**
+ * 業績連動のときの報酬の名前。成果物の帰属先で変わる。
+ *
+ *   受注者（利用許諾型）… 成果物は相手のもの。当社は使う対価を払う → 利用許諾料
+ *   発注者（譲渡型）  … 成果物は当社のもの。売れたぶんを還元する → インセンティブ報酬
+ *
+ * 人が直せる。決まった言い方が別にある案件もある（執筆料など）。
+ */
+export function rewardLabelOf(condition: Ctx): string | null {
+  if (calcMethodOf(condition) !== "ROYALTY") return null;
+  const owner = String(condition?.deliverableOwnership ?? "");
+  if (owner === "contractor") return "利用許諾料";
+  if (owner === "orderer") return "インセンティブ報酬";
+  return null;
+}
+
 /** 仕様・成果物。専用の欄があればそれ、無ければ備考（以前はこれが仕様代わりだった）。 */
 const specOf = (condition: Ctx) => condition?.spec ?? condition?.notes ?? "";
 
@@ -122,7 +157,8 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
         ordered_amount_ex_tax: event.plannedAmount ?? null,
         tax_category: condition.taxCategory ?? "taxable",
         inspection_status: "now",
-        calc_method: String(condition.pricingModel ?? "").toUpperCase()
+        calc_method: calcMethodOf(condition),
+        reward_label: rewardLabelOf(condition)
       };
     });
   }
@@ -145,7 +181,8 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
     ordered_amount_ex_tax: condition.flatAmount,
     tax_category: condition.taxCategory ?? "taxable",
     inspection_status: "now",
-    calc_method: String(condition.pricingModel ?? "").toUpperCase()
+    calc_method: calcMethodOf(condition),
+        reward_label: rewardLabelOf(condition)
   }];
 }
 
@@ -172,7 +209,8 @@ export function orderLinesFrom(context: Ctx): Row[] {
         payment_date: s.payOn ?? null,
         amount_ex_tax: s.plannedAmount ?? 0,
         tax_category: condition.taxCategory ?? "taxable",
-        calc_method: String(condition.pricingModel ?? "").toUpperCase()
+        calc_method: calcMethodOf(condition),
+        reward_label: rewardLabelOf(condition)
       };
     });
   }
@@ -188,7 +226,8 @@ export function orderLinesFrom(context: Ctx): Row[] {
       payment_date: null,
       amount_ex_tax: c.flatAmount,
       tax_category: c.taxCategory ?? "taxable",
-      calc_method: String(c.pricingModel ?? "").toUpperCase()
+      calc_method: calcMethodOf(c),
+      reward_label: rewardLabelOf(c)
     }));
 }
 

@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  accountTypeLabel, bankInfoLine, buildTemplateContext, deliveryLinesFrom, lineFieldsFor, orderLinesFrom, seedLines, taxRateFor
+  accountTypeLabel, bankInfoLine, buildTemplateContext, calcMethodOf, deliveryLinesFrom,
+  lineFieldsFor, orderLinesFrom, rewardLabelOf, seedLines, taxRateFor
 } from "./template-context.js";
 import { computeInspectionTotals, inspectionTaxBreakdown, purchaseOrderTotals } from "./legacy-totals.js";
 
@@ -319,4 +320,45 @@ test("控えも発注書も無ければ空のまま", () => {
     events: [{ id: 9, conditionId: 1, occurredOn: "2026-08-31", amount: 280000, schedule: null }]
   })) as Array<Record<string, any>>;
   assert.equal(lines[0].order_no, null);
+});
+
+// ---------------------------------------------------------------------------
+// 明細の支払方法と、業績連動の報酬の名前
+// ---------------------------------------------------------------------------
+
+test("条件の計算方式を、明細の支払方法に読み替える", () => {
+  // 計算方式をそのまま大文字にしていたので "REVENUE_RATE" が入り、欄の選択肢
+  // （FIXED / ROYALTY / SUBSCRIPTION）のどれにも当たらず、業績連動の枝が
+  // 一度も開かなかった。
+  assert.equal(calcMethodOf({ pricingModel: "revenue_rate" }), "ROYALTY");
+  assert.equal(calcMethodOf({ pricingModel: "subscription" }), "SUBSCRIPTION");
+  // 単価×数量は金額が先に決まる。業績連動ではない。
+  assert.equal(calcMethodOf({ pricingModel: "unit_rate" }), "FIXED");
+  assert.equal(calcMethodOf({ pricingModel: "fixed" }), "FIXED");
+  assert.equal(calcMethodOf({ pricingModel: "none" }), "");
+  assert.equal(calcMethodOf({}), "");
+});
+
+test("業績連動の報酬の名前は、成果物の帰属先で決まる", () => {
+  const royalty = (owner: string | null) =>
+    rewardLabelOf({ pricingModel: "revenue_rate", deliverableOwnership: owner });
+  assert.equal(royalty("contractor"), "利用許諾料", "成果物は相手のもの。使う対価を払う");
+  assert.equal(royalty("orderer"), "インセンティブ報酬", "成果物は当社のもの。売れたぶんを還元する");
+  assert.equal(royalty(null), null, "帰属先が決まっていなければ名乗らない");
+  // 業績連動でなければ、報酬の名前は要らない。
+  assert.equal(rewardLabelOf({ pricingModel: "fixed", deliverableOwnership: "orderer" }), null);
+});
+
+test("検収書の納品明細に、支払方法と報酬の名前が入る", () => {
+  const context = {
+    conditions: [{ id: 5, name: "挿絵", pricingModel: "revenue_rate",
+                   deliverableOwnership: "contractor", taxCategory: "taxable" }],
+    events: [{ conditionId: 5, occurredOn: "2026-05-31", amount: 120000, quantity: 3 }]
+  };
+  const [line] = deliveryLinesFrom(context);
+  assert.equal(line.calc_method, "ROYALTY");
+  assert.equal(line.reward_label, "利用許諾料");
+  assert.equal(line.deliverable_ownership, "受注者");
+  // 金額は実績のまま。業績連動でも計算は別で行い、結果を人が入れる。
+  assert.equal(line.inspected_amount_ex_tax, 120000);
 });

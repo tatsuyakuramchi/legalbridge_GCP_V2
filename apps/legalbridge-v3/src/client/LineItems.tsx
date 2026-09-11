@@ -115,14 +115,35 @@ export const INSPECTION_COLUMNS: Column[] = [
   { name: "paid_date", label: "支払日", type: "date" },
   { name: "inspection_status", label: "扱い", type: "select",
     options: [{ value: "now", label: "今回検収する" }, { value: "paid", label: "支払済み（前回まで）" }, { value: "skip", label: "対象外" }] },
-  { name: "changeNote", label: "金額変更の理由", showWhen: { field: "hasChange", truthy: true } }
+  { name: "changeNote", label: "金額変更の理由", showWhen: { field: "hasChange", truthy: true } },
+  /*
+   * 業績連動のぶん。報酬計算書という書類は作らず、検収書の明細にこの行を
+   * 載せて済ませる。金額（検収金額）は別で計算した結果を人が入れる。
+   * ここに置くのは「その金額が何なのか」を紙に書くための欄。
+   */
+  { name: "deliverable_ownership", label: "成果物の帰属先", type: "select",
+    options: [{ value: "発注者", label: "発注者（譲渡型）" }, { value: "受注者", label: "受注者（利用許諾型）" }],
+    helpText: "条件明細から入る。業績連動のとき 受注者=利用許諾料／発注者=インセンティブ報酬" },
+  { name: "calc_method", label: "支払方法", type: "select",
+    options: [{ value: "FIXED", label: "固定額" },
+              { value: "ROYALTY", label: "業績連動（利用許諾料・インセンティブ報酬）" },
+              { value: "SUBSCRIPTION", label: "定期支払" }],
+    helpText: "条件明細の計算方式から入る。未選択は固定額として出る" },
+  { name: "reward_label", label: "確定報酬の名称", showWhen: royaltyOnly,
+    helpText: "帰属先から入る（利用許諾料／インセンティブ報酬）。別の言い方なら直す" },
+  { name: "rate_pct", label: "料率（%）", type: "number", showWhen: royaltyOnly },
+  { name: "base_price_label", label: "基準価格", showWhen: royaltyOnly,
+    helpText: "何に料率を掛けたか（上代×数量、売上高など）" },
+  { name: "formula_text", label: "計算の根拠", type: "textarea", showWhen: royaltyOnly,
+    helpText: "検収金額をどう出したか。計算は別で行い、結果と根拠をここに書く" }
 ];
 
 export const LINE_SECTIONS: Record<string, { title: string; columns: Column[]; intl?: Column[]; hint: string }> = {
   items: { title: "発注明細", columns: ITEM_COLUMNS, intl: INTL_ITEM_COLUMNS,
            hint: "予定明細（無ければ条件の総額）から組んだ行。帰属先・支払方法・納期・支払日はここで入れる" },
   delivery_line_items: { title: "納品明細", columns: INSPECTION_COLUMNS,
-           hint: "選んだ実績が1行ずつ。検収金額が予定額と違えば変更履歴に出る" },
+           hint: "選んだ実績が1行ずつ。検収金額が予定額と違えば変更履歴に出る。"
+               + "業績連動の行は、別で計算した金額と根拠をここに入れる" },
   other_fees: { title: "その他手数料", columns: FEE_COLUMNS, hint: "無ければ空のまま" },
   expenses: { title: "経費", columns: EXPENSE_COLUMNS, hint: "税込で入れる。無ければ空のまま" }
 };
