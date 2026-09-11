@@ -336,7 +336,7 @@ export class DocumentContextRepository {
               c.term_start, c.term_end, c.tax_category, c.payment_terms, c.cycle,
               c.agreement_id, c.exclusivity, c.sublicensable, c.notes, c.spec, c.deliverable_ownership,
               c.order_no,
-              c.counterparty_id, c.work_id,
+              c.counterparty_id, c.work_id, c.work_part_id,
               p.name AS party_name, p.name_kana AS party_kana, p.kind AS party_kind,
               p.invoice_no AS party_invoice_no, p.corporate_no AS party_corporate_no,
               p.withholding AS party_withholding,
@@ -388,6 +388,11 @@ export class DocumentContextRepository {
         counterpartyId: int(row.counterparty_id),
         /** 作品。条件書の構成要素は、この作品の取得条件から並ぶ。 */
         workId: int(row.work_id),
+        /**
+         * この条件が指している素材（パート）。条件書の構成要素の行はこれで
+         * まとまる。同じ素材に取引形態のぶんだけ条件明細が並ぶのが移行後の形。
+         */
+        workPartId: int(row.work_part_id),
         counterparty: {
           name: str(row.party_name) ?? "",
           kana: str(row.party_kana),

@@ -7,11 +7,14 @@ import type { Row } from "./LineItems.js";
  *   取引形態（v3_conds）… 固定3種。どの形態で許諾するかと、その条件（地域・
  *                          言語・数量・AG・MG・通貨）。id は 1/2/3 固定で、
  *                          構成要素の料率マップの鍵になるので変えない。
- *   構成要素（v3_lcs）  … 作品を組み立てている素材と、その権利元。加算型の
- *                          形態は、ここに並ぶ料率の合計が実効料率になる。
+ *   構成要素（v3_lcs）  … 原作を組み立てている素材。許諾の対象そのものが
+ *                          コアロジック、追加の許諾料が発生するものが
+ *                          サブコンポーネント。加算型の適用料率は、ここに
+ *                          並ぶ料率の合計（コアの基本＋サブの追加）になる。
  *
- * 種は条件明細と作品の取得条件から入れてある（V1・V2 は全部手打ちだった）。
- * ここで直したものが本文にそのまま出る。
+ * 種は条件明細から入れてある（V1・V2 は全部手打ちだった）。移行後のデータは
+ * 「同じ素材に、取引形態のぶんだけ条件明細が並ぶ」形なので、素材でまとめれば
+ * 行が立ち、形態で割れば料率の列になる。ここで直したものが本文にそのまま出る。
  */
 
 const REGION_PRESETS = ["全世界", "日本", "全世界（日本を除く）", "北米", "欧州", "アジア", "中国", "韓国", "台湾"];
@@ -57,15 +60,26 @@ export function LicenseTermsMatrix(
   const setRate = (index: number, dealId: unknown, value: string) =>
     setMaterial(index, { rates: { ...rates(materialRows[index]), [String(dealId)]: value } });
 
-  // 料率が入っているのに素材コードが無い行は、台帳と結線されない。
-  // 黙って弱いデータを入れないよう、決定する前に見せる。
-  const warnings = (used.length ? [] : ["載せる取引形態がありません。1つ以上選んでください"])
-    .concat(materialRows.flatMap((row, i) => {
-    const has = Object.values(rates(row)).some((v) => String(v ?? "").trim() !== "");
-    return has && !text(row.material_code).trim()
-      ? [`構成要素${i + 1}（${text(row.name) || "名称未設定"}）に素材コードがありません`]
-      : [];
-    }));
+  /**
+   * 決定する前に見せる。V1・V2 は「素材コードが無い」を警告していたが、V3 は
+   * 素材コードを移行していないので、その警告は毎回出て意味を失う。V3 で実際に
+   * 確かめられるのは、紙が成立しない組み合わせのほう。
+   */
+  const warnings = [
+    ...(used.length ? [] : ["載せる取引形態がありません。1つ以上選んでください"]),
+    // 加算型なのに料率がどこにも無ければ、適用料率が「—」で出る。
+    ...addons.filter((d) => !materialRows.some(
+        (row) => String(rates(row)[String(d.id)] ?? "").trim() !== ""))
+      .map((d) => `${text(d.name)}（加算型）の料率が構成要素に1つも入っていません`),
+    // 非加算型は構成要素の料率を持たない。実効料率をここに入れないと空欄で出る。
+    ...used.filter((d) => !d.addon && !String(d.fixedRate ?? "").trim())
+      .map((d) => `${text(d.name)}（非加算型）の実効料率が空です`),
+    ...used.filter((d) => d.rateConflict)
+      .map((d) => `${text(d.name)} に当たった条件明細で料率が割れています（${text(d.conditionNo)}）。`
+        + "実効料率は1つしか書けないので、どれを書くか決めてください"),
+    ...used.filter((d) => d.assignedFrom === "order")
+      .map((d) => `${text(d.name)} は条件明細の並び順から推定しました。違っていれば直してください`)
+  ];
 
   const changed = deals !== null || materials !== null;
   const setSl = (index: number, patch: Row) =>
@@ -136,6 +150,7 @@ export function LicenseTermsMatrix(
                   {deal.conditionNo ? (
                     <span className="code faint" style={{ marginLeft: "auto" }}>
                       {text(deal.conditionNo)} から
+                      {deal.assignedFrom === "order" ? "（並び順から推定）" : ""}
                     </span>
                   ) : (
                     <span className="faint" style={{ marginLeft: "auto" }}>条件明細なし</span>
@@ -192,11 +207,15 @@ export function LicenseTermsMatrix(
             <div className="row">
               <b>構成要素</b>
               <span className="faint">
-                作品の取得条件から並べています。料率の列は加算型の形態のぶんだけ出ます
+                条件明細が指している素材を並べています。コアロジックが許諾の対象、
+                サブコンポーネントが追加許諾料の出る要素。加算型の適用料率は
+                この列の合計です
               </span>
               <button className="btn btn-sm" style={{ marginLeft: "auto" }}
                       onClick={() => onChange("v3_lcs", [...materialRows, {
                         material_code: "", name: "", holder: "",
+                        // 1行目は許諾の対象そのもの、2行目以降は追加の要素。
+                        role: materialRows.length ? "sub" : "core",
                         region: "全世界", language: "全言語", rates: {}
                       }])}>
                 行を足す
@@ -206,7 +225,8 @@ export function LicenseTermsMatrix(
               <table>
                 <thead>
                   <tr>
-                    <th>素材コード</th><th>名称</th><th>権利元</th><th>地域</th><th>言語</th>
+                    <th>役割</th><th>素材コード</th><th>名称</th><th>権利元</th>
+                    <th>地域</th><th>言語</th>
                     {addons.map((d) => (
                       <th key={String(d.id)} className="num">{text(d.name)}<br />料率(%)</th>
                     ))}
@@ -216,6 +236,14 @@ export function LicenseTermsMatrix(
                 <tbody>
                   {materialRows.map((row, index) => (
                     <tr key={index}>
+                      <td>
+                        {/* 許諾の対象そのものか、追加許諾料の出る要素か。 */}
+                        <select value={row.role === "sub" ? "sub" : "core"}
+                                onChange={(e) => setMaterial(index, { role: e.target.value })}>
+                          <option value="core">コアロジック</option>
+                          <option value="sub">サブコンポーネント</option>
+                        </select>
+                      </td>
                       <td>
                         <input className="code" value={text(row.material_code)}
                                onChange={(e) => setMaterial(index, { material_code: e.target.value })} />
@@ -253,12 +281,34 @@ export function LicenseTermsMatrix(
                   ))}
                   {!materialRows.length && (
                     <tr>
-                      <td colSpan={6 + addons.length} className="faint">
-                        構成要素がありません。作品に取得条件を登録すると、ここに並びます
+                      <td colSpan={7 + addons.length} className="faint">
+                        構成要素がありません。この条件書に載せる条件明細を選ぶと、
+                        その条件が指している素材がここに並びます
                       </td>
                     </tr>
                   )}
                 </tbody>
+                {/* 紙に出るのは合計のほう。ここで見えていないと、足し忘れも
+                    足しすぎも決定するまで分からない。 */}
+                {addons.length > 0 && materialRows.length > 0 && (
+                  <tfoot>
+                    <tr>
+                      <td colSpan={6}>適用料率（加算型＝構成要素料率の合算）</td>
+                      {addons.map((d) => {
+                        const total = materialRows.reduce((sum, row) => {
+                          const value = Number.parseFloat(String(rates(row)[String(d.id)] ?? ""));
+                          return sum + (Number.isFinite(value) ? value : 0);
+                        }, 0);
+                        return (
+                          <td key={String(d.id)} className="num">
+                            <b>{total > 0 ? `${+total.toFixed(2)}%` : "—"}</b>
+                          </td>
+                        );
+                      })}
+                      <td></td>
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </div>
           </div>

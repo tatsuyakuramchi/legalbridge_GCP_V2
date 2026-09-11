@@ -132,30 +132,111 @@ const percent = (value: number | null) => (value == null ? "—" : `${+value.toF
 const joined = (labels: unknown) => (Array.isArray(labels) ? labels.join("・") : "");
 
 /**
- * 取引形態の種。固定3種に、この文書に載せる条件明細（OUT）の値を重ねる。
+ * 取引形態の割り当て。どの条件明細がどの形態か。
  *
- * 条件明細の計算方式が形態を決める（料率＝サブライセンス、単価×数量＝製造販売）。
- * 決められないときは固定3種のままにする。人が直せるので、外すより残すほうがよい。
+ * 計算方式（pricing_model）では決められない。本番の移行データは3種とも
+ * revenue_rate で入っていて、そのまま見ると全部「権利許諾」になる。
+ * 移行のとき V3 に置き場所が無かったので、形態は備考へ逃がしてある：
+ *
+ *   取引形態: 自社製造・自社販売 / 計算モデル: 基準価格 × 個数 × 料率
+ *
+ * 備考にも無いもの（V3 で起こした条件・古い移行分）は並び順で当てる。
+ * 同じ素材に 形態1→2→3 の順で並ぶのが移行後の形なので、素材ごとに数える。
+ * 推定した割り当ては画面に出して、人が直せるようにする。
+ */
+const DEAL_ID_BY_NAME = new Map(FIXED_DEALS.map((deal) => [String(deal.name), Number(deal.id)]));
+
+export function dealModelFromNotes(notes: unknown): number | null {
+  const found = /取引形態[:：]\s*([^/\n]+)/.exec(String(notes ?? ""));
+  if (!found) return null;
+  return DEAL_ID_BY_NAME.get(found[1].trim()) ?? null;
+}
+
+/**
+ * 条件をまとめる鍵＝「どの契約の、どの素材か」。
+ *
+ * 素材だけでまとめると、同じ素材を2本の契約で取得している場合（本番の
+ * ito_イラストは ARC-ILT-2026-0030 と 0033 の2本にある）に6本が1行へ潰れて、
+ * 取引形態の当てはめも料率も混ざる。紙に根拠文書の列があるのはこのため。
+ */
+export const partKeyOf = (condition: Data): string =>
+  `${condition.agreementId ?? ""}／`
+  + String(condition.workPartId ?? condition.work?.part ?? condition.workId ?? "＿");
+
+/** 条件明細 → 取引形態。備考が先、無ければ素材の中での並び順。 */
+export function assignDeals(conditions: Data[]): Map<number, number> {
+  const groups = new Map<string, Data[]>();
+  for (const condition of conditions) {
+    const key = partKeyOf(condition);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(condition);
+  }
+  const out = new Map<number, number>();
+  for (const group of groups.values()) {
+    // 備考で決まっている形態は先に押さえ、残りを空いている形態へ順に当てる。
+    const taken = new Set<number>();
+    const rest: Data[] = [];
+    for (const condition of group) {
+      const noted = dealModelFromNotes(condition.notes);
+      if (noted && !taken.has(noted)) { out.set(Number(condition.id), noted); taken.add(noted); }
+      else rest.push(condition);
+    }
+    const free = FIXED_DEALS.map((d) => Number(d.id)).filter((id) => !taken.has(id));
+    // 並び順で当てるのは、その素材が3種そろっているときだけ。1本・2本しか
+    // 無い素材は、どの形態なのかを順番からは決められない（本番では 1本=5組・
+    // 2本=14組ある）。当てずに空けておき、画面で人に選ばせる。間違った形態を
+    // 黙って紙に出すより良い。
+    if (taken.size + rest.length !== FIXED_DEALS.length) continue;
+    rest.forEach((condition, index) => {
+      const id = free[index];
+      if (id) out.set(Number(condition.id), id);
+    });
+  }
+  return out;
+}
+
+/** その条件が備考で形態を名乗っているか（推定と区別して画面に出す）。 */
+export const dealIdFor = (condition: Data): number | null =>
+  dealModelFromNotes(condition.notes);
+
+/**
+ * 取引形態の種。この条件書に載せる条件明細から作る。
+ *
+ * 固定3種のうち、条件明細が当たった形態だけを載せる。1種しか無い案件も
+ * 2種の案件もあるので（本番では 1本=5組・2本=14組・3本=18組）、3種とも
+ * 出すのは「何も当たらなかったとき」だけにする。
  */
 export function dealSeeds(context: Data): Data[] {
-  const granted = (context.conditions ?? []).filter((c: Data) => c.direction === "out");
-  const matched = FIXED_DEALS.filter((deal) => granted.some((c: Data) => dealIdFor(c) === deal.id));
+  const picked = list(context.conditions);
+  const assigned = assignDeals(picked);
   return FIXED_DEALS.map((deal) => {
-    const match = granted.find((c: Data) => dealIdFor(c) === deal.id);
+    const matches = picked.filter((c) => assigned.get(Number(c.id)) === Number(deal.id));
+    const match = matches[0];
     if (!match) {
       // 当たる条件が無い形態。行そのものは残すが、載せるかどうかは別。
-      // 条件明細から1つでも当たっているなら、当たらなかった形態は載せない
-      // （再許諾だけの案件に「自社製造・自社販売」の行が出ていた）。
       // 何も当たらないときは3種とも出して、人に選んでもらう。
-      return { ...deal, use: matched.length === 0, reg: deal.maxReg, lang: deal.maxLang };
+      return { ...deal, use: assigned.size === 0, reg: deal.maxReg, lang: deal.maxLang };
     }
     return {
       ...deal,
       use: true,
       conditionId: match.id,
-      conditionNo: match.conditionNo ?? null,
+      conditionNo: matches.map((c) => c.conditionNo).filter(Boolean).join("・") || null,
+      /**
+       * 形態の出どころ。notes=備考に書いてあった / order=並び順から推定。
+       * 1本でも推定が混ざっていれば推定として出す（素材ごとに当て方が違う）。
+       */
+      assignedFrom: matches.every((c) => dealModelFromNotes(c.notes)) ? "notes" : "order",
       // 非加算型（サブライセンス）は条件の料率がそのまま実効料率になる。
+      // 加算型は構成要素ごとの料率を合算するので、ここには置かない。
       fixedRate: deal.addon ? "" : text(match.ratePct ?? ""),
+      /**
+       * 非加算型に当たった条件が複数あって、料率が割れている。
+       * 実効料率は1つしか書けないので、どれを書くかは人が決める。
+       * 黙って先頭を採ると、書かれなかったほうの料率が紙から消える。
+       */
+      rateConflict: !deal.addon
+        && new Set(matches.map((c) => text(c.ratePct ?? ""))).size > 1,
       reg: joined(match.scopes?.region) || String(deal.maxReg),
       lang: joined(match.scopes?.language) || String(deal.maxLang),
       ag: text(match.agAmount ?? 0), mg: text(match.mgAmount ?? 0),
@@ -174,32 +255,60 @@ export function dealSeeds(context: Data): Data[] {
  */
 export const dealInUse = (deal: Data): boolean => deal.use !== false;
 
-/** 条件明細がどの取引形態にあたるか。計算方式で決まる。 */
-export function dealIdFor(condition: Data): number | null {
-  if (condition.direction !== "out") return null;
-  if (condition.pricingModel === "revenue_rate") return 2;   // 許諾収入 × 料率
-  if (condition.pricingModel === "unit_rate") return 1;      // 基準価格 × 数量 × 料率
-  return null;
-}
-
 /**
- * 構成要素の種。作品の取得条件（IN）から作る。
+ * 構成要素（素材）の種。この条件書に載せる条件明細が指している素材を並べる。
  *
- * 「許諾できる上限は構成パート全部の取得条件の積で決まる」というのが V3 の
- * 建て付けなので、条件書に並べる構成要素も取得条件そのもの。料率は加算型の
- * 形態（自社製造・自社販売／自社製造・他社販売）に同じ率を置く。人が直せる。
+ * 原作には構成要素があり、許諾の対象そのものが コアロジック、追加の許諾料が
+ * 発生するものが サブコンポーネント。加算型の適用料率は、この表に並ぶ料率の
+ * 合算（コアの基本料率＋サブの追加料率）になる。
+ *
+ * 移行後のデータは「同じ素材に、取引形態のぶんだけ条件明細が並ぶ」形なので、
+ * 素材でまとめれば行が立ち、形態で割れば料率の列になる。表はもう条件明細の
+ * 中にある。
+ *
+ * 非加算型（サブライセンス）の料率はここに入れない。入れると加算型の合計に
+ * 混ざって、5% + 50% = 55% のような紙が出る。
  */
 export function materialSeeds(context: Data): Data[] {
-  const addonIds = addonDeals(FIXED_DEALS).map((d) => String(d.id));
-  return list(context.acquisitions).map((acquired) => ({
-    material_code: acquired.conditionNo ?? "",
-    name: acquired.partName || acquired.name || acquired.workTitle || "",
-    holder: acquired.counterparty ?? "",
-    region: joined(acquired.regions) || "全世界",
-    language: joined(acquired.languages) || "全言語",
-    source_doc: acquired.agreementNo ?? "",
-    rates: Object.fromEntries(addonIds.map((id) => [id, text(acquired.ratePct ?? "")]))
-  }));
+  const picked = list(context.conditions);
+  const assigned = assignDeals(picked);
+  const addonIds = new Set(addonDeals(FIXED_DEALS).map((d) => Number(d.id)));
+  // 権利元・根拠文書は作品の取得条件のほうが詳しい（契約番号を持っている）。
+  const acquisitions = list(context.acquisitions);
+
+  const groups = new Map<string, Data[]>();
+  for (const condition of picked) {
+    const key = partKeyOf(condition);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(condition);
+  }
+
+  return [...groups.values()].map((group, index) => {
+    const head = group[0];
+    const source = acquisitions.find((a) => Number(a.id) === Number(head.id))
+      ?? acquisitions.find((a) => a.partName && a.partName === head.work?.part);
+    const rates: Data = {};
+    for (const condition of group) {
+      const dealId = assigned.get(Number(condition.id));
+      if (dealId && addonIds.has(dealId)) rates[String(dealId)] = text(condition.ratePct ?? "");
+    }
+    return {
+      material_code: text(source?.conditionNo ?? head.conditionNo ?? ""),
+      name: text(head.work?.part || head.name || head.work?.title || ""),
+      holder: text(head.counterparty?.name ?? ""),
+      source_doc: text(source?.agreementNo ?? ""),
+      region: joined(head.scopes?.region) || joined(source?.regions) || "全世界",
+      language: joined(head.scopes?.language) || joined(source?.languages) || "全言語",
+      /**
+       * 構成上の役割。先頭を許諾の対象（コアロジック）、以降を追加許諾料の
+       * 出る要素（サブコンポーネント）として置く。人が直せる。
+       * V1 の work_materials.material_role にあたるが、V3 は移行していない
+       * ので作品側からは引けない。この条件書でどう扱うかとして持つ。
+       */
+      role: index === 0 ? "core" : "sub",
+      rates
+    };
+  });
 }
 
 /**
@@ -304,7 +413,11 @@ export function licenseTermsPatch(context: Data, manual: Data = {}): Data {
   const all = list(manual.v3_conds).length ? list(manual.v3_conds) : seeds.v3_conds;
   // 載せない形態は表からも料率の列からも消す。値は消さないので、載せ直せば戻る。
   const deals = all.filter(dealInUse);
-  const materials = list(manual.v3_lcs).length ? list(manual.v3_lcs) : seeds.v3_lcs;
+  // コアロジック（許諾の対象）を先に、サブコンポーネント（追加許諾料）を後に。
+  // 紙の読み順がそうなっている。並べ替えだけで、行は落とさない。
+  const materials = (list(manual.v3_lcs).length ? list(manual.v3_lcs) : seeds.v3_lcs)
+    .slice()
+    .sort((a, b) => (a.role === "sub" ? 1 : 0) - (b.role === "sub" ? 1 : 0));
 
   /** 加算型は構成要素の料率の合計、非加算型は実効料率。 */
   const appliedRate = (deal: Data): string => {
@@ -391,6 +504,9 @@ export function licenseTermsPatch(context: Data, manual: Data = {}): Data {
         lcSourceDoc: !source || /^(この|本)条件書/.test(source) ? "本条件書（新規）" : source,
         lcRegion: text(material.region),
         lcLanguage: text(material.language),
+        /** 構成上の役割。本文が出し分けるならこれを見る。 */
+        lcRole: material.role === "sub" ? "サブコンポーネント" : "コアロジック",
+        lcIsCore: material.role !== "sub",
         addonRates: addons.map(({ deal }) => percent(number(rates[String(deal.id ?? "")])))
       };
     }),
