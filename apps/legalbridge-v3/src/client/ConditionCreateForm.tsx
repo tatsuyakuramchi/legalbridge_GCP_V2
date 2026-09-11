@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "./api.js";
+import { parseLanguages, parseRegions } from "../server/core/rights-scope.js";
 import { CreateForm } from "./CreateForm.js";
 import { CONDITION_KIND_LABEL } from "./labels.js";
 import { searchParties } from "./SearchSelect.js";
@@ -121,18 +122,22 @@ export function ConditionCreateForm(
         { name: "deliverableOwnership", label: "成果物の帰属先", type: "select",
           options: [{ value: "orderer", label: "発注者（譲渡型）" }, { value: "contractor", label: "受注者（利用許諾型）" }],
           hint: "発注書の明細に出る。業績連動のとき 受注者=利用許諾料／発注者=インセンティブ報酬 として表記される" },
-        { name: "regions", label: "地域（許諾範囲）", visibleWhen: (v) => v.kind === "license",
-          placeholder: "日本, 台湾", hint: "カンマ区切り。空なら全世界として扱う" },
-        { name: "languages", label: "言語（許諾範囲）", visibleWhen: (v) => v.kind === "license",
-          placeholder: "日本語, 繁体字" },
+        { name: "regions", label: "地域（許諾範囲）", type: "regions",
+          visibleWhen: (v) => v.kind === "license",
+          hint: "何も選ばなければ、その次元は無制限（全世界）として扱われます" },
+        { name: "languages", label: "言語（許諾範囲）", type: "languages",
+          visibleWhen: (v) => v.kind === "license" },
         { name: "notes", label: "備考", type: "textarea" }
       ]}
       toPayload={(v) => {
+        // 画面は表示名を繋いだ文字列で持っている。保存はコード付きに戻す。
+        // 作品の権利包絡との照合はコードで行う（名前だと「日本」「日本国内」が
+        // 別物になる）。表に無い語はコード無しのまま入れる。
         const scopes = [
-          ...String(v.regions ?? "").split(/[,、]/).map((x) => x.trim()).filter(Boolean)
-            .map((label) => ({ scopeType: "region" as const, label })),
-          ...String(v.languages ?? "").split(/[,、]/).map((x) => x.trim()).filter(Boolean)
-            .map((label) => ({ scopeType: "language" as const, label }))
+          ...parseRegions(v.regions ?? "")
+            .map((s) => ({ scopeType: "region" as const, label: s.name, code: s.code || null })),
+          ...parseLanguages(v.languages ?? "")
+            .map((s) => ({ scopeType: "language" as const, label: s.name, code: s.code || null }))
         ];
         return {
           name: text(v.name), direction: v.direction, kind: v.kind,

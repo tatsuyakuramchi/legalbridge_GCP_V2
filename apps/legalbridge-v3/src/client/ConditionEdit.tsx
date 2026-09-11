@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { parseLanguages, parseRegions } from "../server/core/rights-scope.js";
+import { RightsScopePicker } from "./RightsScopePicker.js";
 import { api, ApiError, money, rate } from "./api.js";
 import type { ConditionDetail } from "../server/core/model.js";
 import { CONDITION_KIND_LABEL } from "./labels.js";
@@ -34,9 +36,9 @@ type Values = Record<string, string>;
 const asMoney = (v: number | null | undefined) => (v === null || v === undefined ? "" : String(v));
 const asPct = (ppm: number | null | undefined) =>
   ppm === null || ppm === undefined ? "" : String(ppm / 10000);
+/** 選択欄が読める形（表示名を「、」で繋ぐ）。保存のときにコードへ戻す。 */
 const joinScopes = (detail: ConditionDetail, type: string) =>
-  detail.scopes.filter((s) => s.scopeType === type).map((s) => s.label).join(", ");
-const splitScopes = (v: string) => v.split(/[,、]/).map((x) => x.trim()).filter(Boolean);
+  detail.scopes.filter((s) => s.scopeType === type).map((s) => s.label).join("、");
 
 /** 空欄は「変更なし」ではなく「空にする」。両者を取り違えないよう明示的に分ける。 */
 const patchText = (next: string, before: string | null) => {
@@ -149,8 +151,12 @@ export function ConditionEdit(
           .map((s) => ({ scopeType: s.scopeType, label: s.label, code: s.code ?? null }));
         await api.put(`/conditions/${detail.id}/scopes`, { scopes: [
           ...kept,
-          ...splitScopes(v.regions).map((label) => ({ scopeType: "region", label, code: null })),
-          ...splitScopes(v.languages).map((label) => ({ scopeType: "language", label, code: null }))
+          // 照合はコードで行うので、名前から引き当てて入れ直す。当たらない語は
+          // コード無しのまま残す（移行してきた表記を黙って捨てない）。
+          ...parseRegions(v.regions ?? "")
+            .map((s) => ({ scopeType: "region", label: s.name, code: s.code || null })),
+          ...parseLanguages(v.languages ?? "")
+            .map((s) => ({ scopeType: "language", label: s.name, code: s.code || null }))
         ] });
       }
       if (Object.keys(patch).length) {
@@ -185,7 +191,10 @@ export function ConditionEdit(
   const field = (name: string, label: string, extra?: { type?: string; hint?: string; wide?: boolean; placeholder?: string }) => (
     <label className={extra?.wide ? "field wide" : "field"} key={name}>
       <span>{label}</span>
-      {extra?.type === "textarea"
+      {extra?.type === "regions" || extra?.type === "languages"
+        ? <RightsScopePicker kind={extra.type === "regions" ? "region" : "language"}
+                             value={v[name] ?? ""} onChange={(next) => set(name, next)} />
+        : extra?.type === "textarea"
         ? <textarea rows={3} value={v[name] ?? ""} placeholder={extra.placeholder} onChange={(e) => set(name, e.target.value)} />
         : <input type={extra?.type ?? "text"} value={v[name] ?? ""} placeholder={extra?.placeholder}
                  inputMode={extra?.type === "number" ? "numeric" : undefined}
@@ -307,9 +316,9 @@ export function ConditionEdit(
             <small className="faint">発注書の明細に出る</small>
           </label>
           {detail.kind === "license" && (<>
-            {field("regions", "地域（許諾範囲）", { placeholder: "日本, 台湾",
-              hint: "カンマ区切り。空なら全世界として扱う。媒体・チャネルは下の「権利の範囲」で" })}
-            {field("languages", "言語（許諾範囲）", { placeholder: "日本語, 繁体字" })}
+            {field("regions", "地域（許諾範囲）", { type: "regions", wide: true,
+              hint: "何も選ばなければ無制限（全世界）。媒体・チャネルは下の「権利の範囲」で" })}
+            {field("languages", "言語（許諾範囲）", { type: "languages", wide: true })}
           </>)}
           {field("notes", "備考", { type: "textarea", wide: true })}
 

@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { api, ApiError } from "./api.js";
 import { SearchSelect, type SearchOption } from "./SearchSelect.js";
+import { RightsScopePicker } from "./RightsScopePicker.js";
 
 /**
  * 新規登録のフォーム。
@@ -10,7 +11,8 @@ import { SearchSelect, type SearchOption } from "./SearchSelect.js";
  * 片方だけ直したときに食い違うため。
  */
 
-export type FieldType = "text" | "number" | "money" | "date" | "select" | "search" | "textarea" | "checkbox";
+export type FieldType = "text" | "number" | "money" | "date" | "select" | "search"
+  | "textarea" | "checkbox" | "regions" | "languages";
 
 export interface Field {
   name: string;
@@ -89,6 +91,10 @@ export function CreateForm(props: CreateFormProps) {
                   search={f.search} emptyLabel={f.required ? undefined : "—"}
                   placeholder={f.placeholder ?? "名前の一部で探す"}
                   onChange={(v) => set(f.name, v)} />
+              ) : f.type === "regions" || f.type === "languages" ? (
+                /* 許諾の範囲。ISO のコードから選ぶ（自由記載だと表記が割れる）。 */
+                <RightsScopePicker kind={f.type === "regions" ? "region" : "language"}
+                  value={values[f.name] ?? ""} onChange={(v) => set(f.name, v)} />
               ) : f.type === "textarea" ? (
                 <textarea rows={3} value={values[f.name] ?? ""} placeholder={f.placeholder}
                   onChange={(e) => set(f.name, e.target.value)} />

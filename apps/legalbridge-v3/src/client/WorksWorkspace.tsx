@@ -183,7 +183,7 @@ export function WorksWorkspace(
                       {envelope.scopes.map((s) => (
                         <tr key={s.scopeType}>
                           <td>{DIMENSION_LABEL[s.scopeType] ?? s.scopeType}</td>
-                          <td>{s.labels.join("・")}</td>
+                          <td>{s.values.map((x) => x.label).join("・")}</td>
                           <td className="faint">—</td>
                         </tr>
                       ))}

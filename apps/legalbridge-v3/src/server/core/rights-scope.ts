@@ -1,6 +1,10 @@
 /**
  * 許諾の範囲（地域・言語）。V2 の rights-scope.ts の移植。
  *
+ * 画面（選ばせる）とサーバ（作品の権利包絡と照らす）の両方が同じ表を見る。
+ * 片方だけが名前の揺れを知っていると、画面で通って保存で弾かれる、あるいは
+ * その逆が起きるので、コードと表示名の対応はここ1か所に置く。
+ *
  * 自由記載にすると「日本」「日本国内」「JP」が別物として台帳に入り、作品の
  * 権利包絡（全パートの取得条件の積）が割れる。ISO の国コード・言語コードから
  * 複数選ぶ形にして、表示名はコードから引く。
@@ -38,7 +42,11 @@ export const LANGUAGE_CODES = [
   "na","nb","nd","ne","ng","nl","nn","no","nr","nv","ny","oc","oj","om","or","os","pa","pi","pl","ps","pt","qu",
   "rm","rn","ro","ru","rw","sa","sc","sd","se","sg","si","sk","sl","sm","sn","so","sq","sr","ss","st","su","sv",
   "sw","ta","te","tg","th","ti","tk","tl","tn","to","tr","ts","tt","tw","ty","ug","uk","ur","uz","ve","vi","vo",
-  "wa","wo","xh","yi","yo","za","zh","zu"
+  "wa","wo","xh","yi","yo","za","zh","zu",
+  // ここから V3 で足したぶん。ISO 639-1 は中国語を1つしか持たないが、台帳の
+  // 許諾範囲は繁体字と簡体字を書き分けている（台湾・香港と中国本土で許諾先も
+  // 条件も別）。区別できないと、この業務で最も多い指定が自由記載に落ちる。
+  "zh-Hant","zh-Hans"
 ] as const;
 
 export const REGION_PRESETS: Record<string, string[]> = {
@@ -111,7 +119,8 @@ export function parseRegions(text: string): ScopeOption[] {
   return splitScope(text).map((word) => {
     if (word === WORLD_REGION.name || word.toUpperCase() === "WORLD") return WORLD_REGION;
     const code = byName.get(word)
-      ?? (COUNTRY_CODES as readonly string[]).find((c) => c === word.toUpperCase());
+      ?? (COUNTRY_CODES as readonly string[])
+           .find((c) => c.toUpperCase() === word.toUpperCase());
     return code ? { code, name: regionName(code) } : { code: "", name: word };
   });
 }
@@ -121,7 +130,48 @@ export function parseLanguages(text: string): ScopeOption[] {
   return splitScope(text).map((word) => {
     if (word === ALL_LANGUAGE.name || word.toUpperCase() === "ALL") return ALL_LANGUAGE;
     const code = byName.get(word)
-      ?? (LANGUAGE_CODES as readonly string[]).find((c) => c === word.toLowerCase());
+      ?? (LANGUAGE_CODES as readonly string[])
+           .find((c) => c.toLowerCase() === word.toLowerCase());
     return code ? { code, name: languageName(code) } : { code: "", name: word };
   });
+}
+
+/**
+ * 許諾できる範囲に収まっているか。V2 の scopeAllowed と同じ考え方。
+ *
+ * コードで比べる。名前だけで比べると「アメリカ」と「アメリカ合衆国」が別物に
+ * なり、取得済みの国が上限外と出る。ただし移行してきた行にはコードが無いので、
+ * コードで当たらなければ名前でも見る。どちらかで一致すれば範囲内とする
+ * （コードが揃うまでのあいだ、同じ国を上限外と言わないため）。
+ *
+ * 上限の側に 全世界／全言語 があれば、その次元は無制限。逆に上限が国ごとの
+ * 指定なら、全世界での許諾は出せない。
+ */
+export function scopeAllows(
+  allowed: ScopeOption[],
+  requested: ScopeOption[],
+  universalCode: "WORLD" | "ALL"
+): { ok: boolean; outside: ScopeOption[] } {
+  if (!requested.length) return { ok: true, outside: [] };
+
+  const universalName = universalCode === "WORLD" ? WORLD_REGION.name : ALL_LANGUAGE.name;
+  const canonical = (option: ScopeOption) => {
+    const code = String(option.code ?? "").trim();
+    if (!code) return "";
+    return universalCode === "WORLD" || code.toUpperCase() === "ALL"
+      ? code.toUpperCase() : code.toLowerCase();
+  };
+  const isUniversal = (option: ScopeOption) =>
+    canonical(option) === universalCode || (!canonical(option) && option.name === universalName);
+
+  if (allowed.some(isUniversal)) return { ok: true, outside: [] };
+
+  const codes = new Set(allowed.map(canonical).filter(Boolean));
+  const names = new Set(allowed.map((a) => a.name).filter(Boolean));
+  const outside = requested.filter((r) => {
+    if (isUniversal(r)) return true;          // 上限が国ごとなら全世界では出せない
+    const code = canonical(r);
+    return !(code && codes.has(code)) && !names.has(r.name);
+  });
+  return { ok: outside.length === 0, outside };
 }

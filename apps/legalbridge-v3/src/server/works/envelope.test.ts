@@ -12,8 +12,11 @@ const envelope: RightsEnvelope = {
   exclusivityLimit: "non_exclusive", exclusivityLimitedBy: "CL-2025-00311",
   sublicensable: true, sublicenseLimitedBy: null,
   scopes: [
-    { scopeType: "media", labels: ["出版", "電子配信"] },
-    { scopeType: "region", labels: ["台湾", "香港", "マカオ", "北米"] }
+    // 媒体はコードを持たない次元（名前で比べる）。地域は ISO のコード付き。
+    { scopeType: "media", values: [{ code: null, label: "出版" }, { code: null, label: "電子配信" }] },
+    { scopeType: "region", values: [
+      { code: "TW", label: "台湾" }, { code: "HK", label: "香港" },
+      { code: "MO", label: "マカオ" }, { code: "US", label: "アメリカ合衆国" }] }
   ]
 };
 
@@ -24,13 +27,54 @@ const condition = (over: Partial<Parameters<typeof checkAgainstEnvelope>[0]> = {
 test("上限内の展開は inside", () => {
   const result = checkAgainstEnvelope(condition({
     scopes: [
-      { scopeType: "region", label: "台湾", code: null },
+      { scopeType: "region", label: "台湾", code: "TW" },
       { scopeType: "media", label: "電子配信", code: null }
     ],
     termEnd: "2029-03-31"
   }), envelope);
   assert.equal(result.verdict, "inside");
   assert.deepEqual(result.violations, []);
+});
+
+test("地域はコードで比べる。表記が違っても同じ国なら上限内", () => {
+  // 移行してきた条件の「アメリカ」と、上限側の「アメリカ合衆国」。名前で
+  // 比べていたころは、取得済みの国が上限外と出ていた。
+  const result = checkAgainstEnvelope(condition({
+    scopes: [{ scopeType: "region", label: "アメリカ", code: "US" }]
+  }), envelope);
+  assert.equal(result.verdict, "inside");
+});
+
+test("コードの無い移行済みの行は名前でも当てる（コードが揃うまで上限外にしない）", () => {
+  const result = checkAgainstEnvelope(condition({
+    scopes: [{ scopeType: "region", label: "台湾", code: null }]
+  }), envelope);
+  assert.equal(result.verdict, "inside");
+});
+
+test("コードも名前も当たらなければ上限外", () => {
+  const result = checkAgainstEnvelope(condition({
+    scopes: [{ scopeType: "region", label: "大韓民国", code: "KR" }]
+  }), envelope);
+  assert.equal(result.verdict, "outside");
+  assert.equal(result.violations[0].actual, "大韓民国");
+});
+
+test("上限が全世界なら、どの国を出しても上限内", () => {
+  const world = { ...envelope, scopes: [
+    { scopeType: "region" as const, values: [{ code: "WORLD", label: "全世界" }] }] };
+  const result = checkAgainstEnvelope(condition({
+    scopes: [{ scopeType: "region", label: "日本", code: "JP" }]
+  }), world);
+  assert.equal(result.verdict, "inside");
+});
+
+test("上限が国ごとの指定なら、全世界では出せない", () => {
+  const result = checkAgainstEnvelope(condition({
+    scopes: [{ scopeType: "region", label: "全世界", code: "WORLD" }]
+  }), envelope);
+  assert.equal(result.verdict, "outside");
+  assert.equal(result.violations[0].actual, "全世界");
 });
 
 test("商品化は媒体の上限外（本文だけ見ると通ってしまう誤判定を防ぐ）", () => {

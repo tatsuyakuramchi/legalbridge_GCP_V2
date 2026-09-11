@@ -1,4 +1,5 @@
 import type { ConditionDetail, EnvelopeCheck, RightsEnvelope, ScopeType } from "../core/model.js";
+import { scopeAllows, type ScopeOption } from "../core/rights-scope.js";
 
 /**
  * 許諾範囲の照合。個々のIN条件ではなく、作品の権利包絡（構成パート全部の積）と比べる。
@@ -17,15 +18,19 @@ export function checkAgainstEnvelope(
   }
 
   for (const dimension of ["region", "language", "media", "channel"] as ScopeType[]) {
-    const allowed = envelope.scopes.find((s) => s.scopeType === dimension)?.labels ?? [];
+    const allowed = envelope.scopes.find((s) => s.scopeType === dimension)?.values ?? [];
     if (!allowed.length) continue;                     // 上限の指定なし＝無制限
-    const requested = condition.scopes.filter((s) => s.scopeType === dimension).map((s) => s.label);
-    const outside = requested.filter((label) => !allowed.includes(label));
-    if (outside.length) {
+    const requested = condition.scopes.filter((s) => s.scopeType === dimension);
+    // 地域・言語は ISO のコードで比べる（V2 と同じ）。媒体・チャネルはコードを
+    // 持たないので名前で比べることになるが、判定は1本の関数に任せる。
+    const universal = dimension === "language" ? "ALL" : "WORLD";
+    const { ok, outside } = scopeAllows(
+      allowed.map(asOption), requested.map(asOption), universal);
+    if (!ok) {
       violations.push({
         dimension: labelOf(dimension),
-        expected: allowed.join("・"),
-        actual: outside.join("・"),
+        expected: allowed.map((a) => a.label).join("・"),
+        actual: outside.map((o) => o.name).join("・"),
         limitedBy: null
       });
     }
@@ -66,3 +71,6 @@ const labelOf = (dimension: ScopeType) =>
   : dimension === "language" ? "言語"
   : dimension === "media" ? "媒体"
   : "チャネル";
+
+const asOption = (scope: { code?: string | null; label: string }): ScopeOption =>
+  ({ code: scope.code ?? "", name: scope.label });

@@ -31,7 +31,9 @@ export class WorkRepository {
                   exclusivity_limit, exclusivity_limited_by, sublicensable, sublicense_limited_by
              FROM v_work_rights_envelope WHERE work_id = $1`, [workId]),
         this.database.query(
-          `SELECT scope_type, array_agg(label ORDER BY label) AS labels
+          `SELECT scope_type,
+                  jsonb_agg(jsonb_build_object('code', code, 'label', label)
+                            ORDER BY label) AS values
              FROM v_work_scope_envelope WHERE work_id = $1 GROUP BY scope_type`, [workId])
       ]);
       const row = scalar.rows[0] as Record<string, any> | undefined;
@@ -49,7 +51,8 @@ export class WorkRepository {
         sublicenseLimitedBy: str(row.sublicense_limited_by),
         scopes: scopes.rows.map((s) => ({
           scopeType: s.scope_type as ScopeType,
-          labels: (s.labels as string[] | null) ?? []
+          values: ((s.values as Array<{ code: string | null; label: string }> | null) ?? [])
+            .map((v) => ({ code: str(v.code), label: String(v.label) }))
         }))
       };
     } catch (error) { throw translate(error); }

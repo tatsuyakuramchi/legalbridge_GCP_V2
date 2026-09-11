@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import {
   ALL_LANGUAGE, COUNTRY_CODES, LANGUAGE_CODES, REGION_PRESETS, WORLD_REGION,
   displayScope, languageName, parseLanguages, parseRegions, regionName, type ScopeOption
-} from "./rights-scope.js";
+} from "../server/core/rights-scope.js";
 
 /**
  * 許諾の範囲（地域・言語）を複数選ぶ欄。V2 の RightsScopePicker の移植。

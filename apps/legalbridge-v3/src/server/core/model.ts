@@ -168,7 +168,11 @@ export interface RightsEnvelope {
   exclusivityLimitedBy: string | null;
   sublicensable: boolean;
   sublicenseLimitedBy: string | null;
-  scopes: Array<{ scopeType: ScopeType; labels: string[] }>;
+  /**
+   * 許諾できる上限。コードで照合する（名前で比べると「日本」「日本国内」が
+   * 別物になる）。移行してきた行はコードを持たないので null が入る。
+   */
+  scopes: Array<{ scopeType: ScopeType; values: Array<{ code: string | null; label: string }> }>;
 }
 
 export type ScopeVerdict = "inside" | "outside" | "unknown";
