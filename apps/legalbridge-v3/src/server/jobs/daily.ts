@@ -1,4 +1,5 @@
 import { inTransaction, type Queryable, type Transactable } from "../core/db.js";
+import { scanWorkParts } from "../ops/quality-scan.js";
 import { dateStr } from "../core/db.js";
 import { translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
@@ -36,6 +37,8 @@ export interface DailyReport {
   applied: Array<{ conditionId: number; conditionNo: string | null;
                    effectiveFrom: string | null; supersededId: number | null }>;
   counts: Record<string, number>;
+  /** データ品質の点検の結果。上げた数と、直ったので閉じた数。 */
+  quality: { opened: number; resolved: number };
   /** 通知したか。ゲートが off なら false。 */
   notified: boolean;
   notifyDetail?: Record<string, unknown>;
@@ -55,12 +58,17 @@ export class DailyJob {
       const applied = await inTransaction(this.database,
         (client) => this.applyScheduledRevisions(client));
 
+      // データ品質の点検。見つけたものは data_quality_issues に積み、
+      // 直ったものは閉じる（運用画面の「未解決の不整合」がそのまま追いつく）。
+      const quality = await inTransaction(this.database, (client) => scanWorkParts(client));
+
       const findings = await inTransaction(this.database, async (client) => {
         const found = await this.collect(client);
         await recordAudit(client, {
           actor: "system", action: "job.daily", targetType: "job",
           detail: {
             counts: countBy(found),
+            quality,
             // 何を見つけたかを残す。あとから「あの日は出ていたか」を追える。
             findings: found.map((f) => ({ kind: f.kind, refNo: f.refNo, dueOn: f.dueOn }))
           }
@@ -70,7 +78,7 @@ export class DailyJob {
 
       const report: DailyReport = {
         runOn: dateStr(new Date()) ?? "",
-        findings, counts: countBy(findings), applied, notified: false
+        findings, counts: countBy(findings), applied, quality, notified: false
       };
 
       if (findings.length && this.dispatch && options.notifyChannel && options.notifyTo) {

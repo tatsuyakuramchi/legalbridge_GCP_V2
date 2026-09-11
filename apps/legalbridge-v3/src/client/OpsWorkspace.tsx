@@ -43,7 +43,8 @@ const RULE_LABEL: Record<string, string> = {
   WORK_PART_NO_RENUMBERED: "パート番号が重複・欠落していたため振り直し",
   WORK_PART_ORPHAN_IN_USE: "移行元から消えたが条件から参照されているパート",
   SCHEDULE_ORPHAN_IN_USE: "移行元から消えたが実績から参照されている予定",
-  DOCUMENT_NO_SOURCE: "テンプレートも保管先も無い発行済み文書"
+  DOCUMENT_NO_SOURCE: "テンプレートも保管先も無い発行済み文書",
+  WORK_PART_MISFILED: "素材が別の作品の下にある（名前が別の作品を名乗っている）"
 };
 const SOURCE_LABEL: Record<string, string> = {
   matter: "案件", agreement: "契約満了", payment: "支払", schedule: "予定", task: "タスク"
