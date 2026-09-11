@@ -186,4 +186,10 @@ export const EVENT_TYPE_LABEL: Record<string, string> = {
   inspection: "検収", delivery: "納品", service_period: "役務の期間", adjustment: "調整"
 };
 
+/** 計算方式。サーバの PricingModel と対。 */
+export const PRICING_MODEL_LABEL: Record<string, string> = {
+  fixed: "定額", unit_rate: "単価×数量", revenue_rate: "料率",
+  subscription: "定期課金", none: "計算しない"
+};
+
 export const PARTY_KIND_LABEL: Record<string, string> = { corporate: "法人", individual: "個人" };

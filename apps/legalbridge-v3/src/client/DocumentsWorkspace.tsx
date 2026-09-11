@@ -10,6 +10,7 @@ import { LineItemsEditor, type Row } from "./LineItems.js";
 import { BulkOrders } from "./BulkOrders.js";
 import { StatementBreakdown, type StatementLine, type StatementTotals } from "./StatementLines.js";
 import { LicenseTermsMatrix } from "./LicenseTermsMatrix.js";
+import { ConditionLabel } from "./ConditionLabel.js";
 
 interface TemplateRow {
   id: number; templateKey: string; label: string; category: string | null; numberPrefix: string | null;
@@ -810,9 +811,9 @@ export function DocumentsWorkspace(
                                  ? [...prev, c.id] : prev.filter((id) => id !== c.id));
                              }} />
                       <span className={`tag ${c.direction}`}>{c.direction === "in" ? "IN" : "OUT"}</span>
-                      <span className="code">{c.conditionNo ?? `#${c.id}`}</span>
-                      <span>{c.name}</span>
-                      <span className="faint">{c.counterparty?.name ?? ""}</span>
+                      {/* 出すものは型で変える。ライセンスは作品と取引モデル、
+                          業務委託は件名と金額で見分ける。 */}
+                      <ConditionLabel c={c} />
                       {/* どの契約の明細かが分かると、選び間違いが減る。 */}
                       <span className="faint" style={{ marginLeft: "auto" }}>
                         {c.agreement ? c.agreement.title : "契約なし"}

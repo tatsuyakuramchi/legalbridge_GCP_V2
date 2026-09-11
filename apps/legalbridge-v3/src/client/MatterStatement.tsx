@@ -3,6 +3,7 @@ import type { MatterDetail } from "../server/core/model.js";
 import { api, ApiError } from "./api.js";
 import { useReadOnly } from "./read-only.js";
 import { EVENT_TYPE_LABEL } from "./labels.js";
+import { ConditionLabel } from "./ConditionLabel.js";
 import { StatementBreakdown, type StatementLine, type StatementTotals } from "./StatementLines.js";
 
 /**
@@ -174,12 +175,8 @@ export function MatterStatement(
             const rows = freeEvents(c.id);
             return (
               <div key={c.id} className="stack" style={{ gap: 4 }}>
-                <div className="row">
-                  <span className="code">{c.conditionNo ?? `#${c.id}`}</span>
-                  <b>{c.name}</b>
-                  <span className="tag">
-                    {c.pricingModel === "unit_rate" ? "単価×数量" : "料率"}
-                  </span>
+                <div className="row" style={{ gap: 7 }}>
+                  <ConditionLabel c={c} />
                 </div>
                 {rows.length ? (
                   <div className="picker">

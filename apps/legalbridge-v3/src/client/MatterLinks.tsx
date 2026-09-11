@@ -6,6 +6,7 @@ import { ConditionCreateForm } from "./ConditionCreateForm.js";
 import { WorkChooser, type WorkOption } from "./WorkChooser.js";
 import { DocumentImport } from "./DocumentImport.js";
 import { CONDITION_KIND_LABEL, MATTER_KIND_LABEL, StatusTag } from "./labels.js";
+import { ConditionLabel } from "./ConditionLabel.js";
 
 /**
  * 案件に条件と文書を繋ぐ操作。
@@ -20,6 +21,10 @@ import { CONDITION_KIND_LABEL, MATTER_KIND_LABEL, StatusTag } from "./labels.js"
 interface CandidateCondition {
   id: number; conditionNo: string | null; name: string;
   direction: string; kind: string; counterparty: { name: string } | null;
+  // 見出しは型で変わる（ライセンスは作品と取引モデル、業務委託は件名と金額）。
+  work: { title: string } | null;
+  currency: string; pricingModel: string;
+  flatAmount: number | null; unitAmount: number | null; ratePpm: number | null;
 }
 interface CandidateDocument {
   id: number; documentNo: string | null; templateLabel: string | null;
@@ -179,10 +184,10 @@ export function MatterConditions(
               <button key={c.id} className="btn btn-sm" style={{ textAlign: "left" }}
                       disabled={busy || linked.has(c.id)}
                       onClick={() => void attach(c.id)}>
-                <span className="code">{c.conditionNo ?? `#${c.id}`}</span>
-                {" "}{CONDITION_KIND_LABEL[c.kind] ?? c.kind} / {c.name}
-                {c.counterparty ? `（${c.counterparty.name}）` : ""}
-                {linked.has(c.id) ? "　繋がっています" : ""}
+                <span className="row" style={{ gap: 7 }}>
+                  <ConditionLabel c={c} showKind />
+                  {linked.has(c.id) && <span className="faint">繋がっています</span>}
+                </span>
               </button>
             ))}
             {!candidates.length && (
@@ -210,7 +215,7 @@ export function MatterConditions(
                 </td>
                 <td><span className="tag">{CONDITION_KIND_LABEL[c.kind] ?? c.kind}</span></td>
                 <td><span className={`tag ${c.direction}`}>{c.direction === "in" ? "IN" : "OUT"}</span></td>
-                <td>{c.name}</td>
+                <td><span className="row" style={{ gap: 7 }}><ConditionLabel c={c} omitCode /></span></td>
                 <td>
                   <button className="btn btn-sm" disabled={busy}
                     onClick={() => void detach(c.id, c.conditionNo ?? `#${c.id}`)}>外す</button>

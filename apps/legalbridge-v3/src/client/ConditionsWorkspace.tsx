@@ -9,6 +9,7 @@ import { ConditionMatters, ConditionScopes } from "./ConditionLinks.js";
 import { Relations, type EntityKind } from "./Relations.js";
 import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
 import { CONDITION_KIND_LABEL, StatusTag } from "./labels.js";
+import { conditionAmountLabel, dealModelLabel, isLicenseCondition } from "./ConditionLabel.js";
 import { ConditionCreateForm } from "./ConditionCreateForm.js";
 import type { ConditionDetail, ConditionSummary, EnvelopeCheck, RightsEnvelope } from "../server/core/model.js";
 import { api, ApiError, money, rate } from "./api.js";
@@ -220,7 +221,24 @@ export function ConditionsWorkspace(
                     </td>
                     <td><span className="tag">{CONDITION_KIND_LABEL[row.kind] ?? row.kind}</span></td>
                     <td><span className={`tag ${row.direction}`}>{row.direction === "in" ? "IN" : "OUT"}</span></td>
-                    <td>{row.name}<div className="faint">{row.counterparty?.name ?? "未設定"}</div></td>
+                    {/* 出すものは型で変える。ライセンスは作品と取引モデル、
+                        業務委託は件名。金額は右の列にある。 */}
+                    <td>
+                      {isLicenseCondition(row) ? (
+                        <>
+                          {row.work?.title ?? row.name}
+                          <div className="faint">
+                            {row.counterparty?.name ?? "未設定"}　{dealModelLabel(row)}
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          {row.work?.title && <span className="faint">{row.work.title}　</span>}
+                          {row.name}
+                          <div className="faint">{row.counterparty?.name ?? "未設定"}</div>
+                        </>
+                      )}
+                    </td>
                     {/* 条件は契約の明細。どの契約の行かが見えないと、条件そのものが
                         書類のように見える。 */}
                     <td className="faint">
@@ -229,9 +247,9 @@ export function ConditionsWorkspace(
                             <div>{row.agreement.title}</div></>
                         : "契約に載っていません"}
                     </td>
-                    <td className="num">
-                      {row.pricingModel === "revenue_rate" ? rate(row.ratePpm) : money(row.flatAmount, row.currency)}
-                    </td>
+                    {/* 単価×数量の条件は定額が空なので「—」しか出ていなかった。
+                        計算方式に合った値を出す。 */}
+                    <td className="num">{conditionAmountLabel(row)}</td>
                   </tr>
                 ))}
                 {!rows.length && (
