@@ -513,7 +513,8 @@ export function ConditionsWorkspace(
                 onChanged={refreshFlow} />
 
               <ConditionEvents conditionId={detail.id} currency={detail.currency}
-                pricingModel={detail.pricingModel} matterId={detail.matters[0]?.id ?? null}
+                pricingModel={detail.pricingModel} deliverableOwnership={detail.deliverableOwnership}
+                matterId={detail.matters[0]?.id ?? null}
                 reloadKey={flowVersion}
                 editable={!readOnly && (detail.status === "active" || detail.status === "draft")}
                 openForSchedule={recordSchedule}

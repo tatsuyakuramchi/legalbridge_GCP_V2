@@ -19,6 +19,7 @@ import {
 import { royaltyStatementPatch } from "./royalty-patch.js";
 import { isLicenseTermsTemplate, licenseTermsPatch, licenseTermsSeeds,
          licenseTermsSuggestions } from "./license-terms.js";
+import { calcMethodFor, ownershipLabelOf, rewardLabelFor } from "../core/reward.js";
 
 type Ctx = Record<string, any>;
 
@@ -58,44 +59,13 @@ export function seedLines(templateKey: string, context: Ctx): Record<string, Row
   return out;
 }
 
-/** 成果物の帰属先。条件は orderer/contractor で持ち、書類は日本語で印字する。 */
-export const OWNERSHIP_LABEL: Record<string, string> = { orderer: "発注者", contractor: "受注者" };
-const ownershipOf = (condition: Ctx) =>
-  OWNERSHIP_LABEL[String(condition?.deliverableOwnership ?? "")] ?? null;
-/**
- * 明細の支払方法。発注書・検収書の本文がこれで出し分ける。
- *
- * 条件の計算方式をそのまま大文字にしていたので、料率の条件は "REVENUE_RATE" に
- * なっていた。欄の選択肢は FIXED / ROYALTY / SUBSCRIPTION の3つなので、どれにも
- * 当たらず、業績連動の枝（確定報酬の名称・料率・計算式）が一度も開かなかった。
- *
- * 単価×数量は金額が先に決まるので固定額の側。業績連動は売上に料率を掛けるほう。
- */
-export function calcMethodOf(condition: Ctx): string {
-  switch (String(condition?.pricingModel ?? "")) {
-    case "revenue_rate":  return "ROYALTY";
-    case "subscription":  return "SUBSCRIPTION";
-    case "fixed":
-    case "unit_rate":     return "FIXED";
-    default:              return "";      // 未選択は固定額として出る
-  }
-}
-
-/**
- * 業績連動のときの報酬の名前。成果物の帰属先で変わる。
- *
- *   受注者（利用許諾型）… 成果物は相手のもの。当社は使う対価を払う → 利用許諾料
- *   発注者（譲渡型）  … 成果物は当社のもの。売れたぶんを還元する → インセンティブ報酬
- *
- * 人が直せる。決まった言い方が別にある案件もある（執筆料など）。
- */
-export function rewardLabelOf(condition: Ctx): string | null {
-  if (calcMethodOf(condition) !== "ROYALTY") return null;
-  const owner = String(condition?.deliverableOwnership ?? "");
-  if (owner === "contractor") return "利用許諾料";
-  if (owner === "orderer") return "インセンティブ報酬";
-  return null;
-}
+export { OWNERSHIP_LABEL } from "../core/reward.js";
+const ownershipOf = (condition: Ctx) => ownershipLabelOf(condition?.deliverableOwnership);
+/** 明細の支払方法。FIXED / ROYALTY / SUBSCRIPTION。判定は画面と共通。 */
+export const calcMethodOf = (condition: Ctx): string => calcMethodFor(condition?.pricingModel);
+/** 業績連動のときの報酬の名前（利用許諾料・インセンティブ報酬）。判定は画面と共通。 */
+export const rewardLabelOf = (condition: Ctx): string | null =>
+  rewardLabelFor(condition?.pricingModel, condition?.deliverableOwnership);
 
 /** 仕様・成果物。専用の欄があればそれ、無ければ備考（以前はこれが仕様代わりだった）。 */
 const specOf = (condition: Ctx) => condition?.spec ?? condition?.notes ?? "";
@@ -121,6 +91,25 @@ function orderNoFor(context: Ctx, conditionId: unknown): string | null {
 const singleCondition = (c: Ctx) => (c.conditions?.length === 1 ? c.conditions[0] : null);
 
 /**
+ * 業績連動の内訳。検収書の行の下に「利用許諾料（料率 8% ／ 基準 …）／ 算定根拠」を出す。
+ *
+ * 料率は条件が持っていて、算定の根拠は実績のメモに書いてある。どちらも
+ * すでに入っているのに紙まで届いておらず、人が明細へ同じことを打ち直していた。
+ *
+ * 仕様の欄がメモを使っているときは根拠を入れない。同じ文が2行続いて出る。
+ * 明細で人が入れた値のほうが強い（rows(manual.items) がこの結果を置き換える）。
+ */
+function rewardBreakdown(condition: Ctx, event: Ctx, spec: unknown): Row {
+  if (calcMethodOf(condition) !== "ROYALTY") return {};
+  const note = String(event?.note ?? "").trim();
+  return {
+    ...(condition?.ratePct === null || condition?.ratePct === undefined
+      ? {} : { rate_pct: condition.ratePct }),
+    ...(note && note !== String(spec ?? "").trim() ? { formula_text: note } : {})
+  };
+}
+
+/**
  * 検収・納品の明細を実績から組む。
  *
  * 実績（condition_events）1件が明細1行。検収書は「どの回の分か」を書く
@@ -133,12 +122,14 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
     return events.map((event) => {
       const condition = (context.conditions ?? []).find((c: Ctx) => c.id === event.conditionId)
         ?? context.condition ?? {};
+      const spec = condition.spec ?? condition.notes ?? event.note ?? "";
       return {
         // 分納は回ごとに成果物が違う。実績に書いてあればそれを使う。
         item_name: event.deliverable ?? condition.name ?? condition.work?.title ?? "",
         // 業務内容の本文。仕様の欄が無い条件は備考で代える。
-        spec: condition.spec ?? condition.notes ?? event.note ?? "",
-        description: condition.spec ?? condition.notes ?? event.note ?? "",
+        spec,
+        description: spec,
+        ...rewardBreakdown(condition, event, spec),
         deliverable_ownership: ownershipOf(condition),
         // この行の元になった発注書。条件をまたぐ検収書で行ごとに違う。
         order_no: orderNoFor(context, condition.id),
@@ -168,6 +159,7 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
     item_name: condition.name ?? "",
     spec: specOf(condition),
     description: specOf(condition),
+    ...rewardBreakdown(condition, {}, specOf(condition)),
     deliverable_ownership: ownershipOf(condition),
     order_no: orderNoFor(context, condition.id),
     condition_no: condition.conditionNo ?? null,
@@ -527,5 +519,20 @@ export function suggestionsFor(
   templateKey: string, context: Ctx, bound: Record<string, unknown> = {}
 ): Record<string, unknown> {
   if (isLicenseTermsTemplate(templateKey)) return licenseTermsSuggestions(context, bound);
+  // 発注書・検収書の本文は、明細の外（見出しのあたり）でも料率と帰属先を差している。
+  // 条件が1件に決まるときは台帳から引ける。ここを空のまま出すと「料率 ％」だけが
+  // 残った紙になる。ひな形が from を持っていればそちらが勝つ。
+  if (INSPECTION_KEYS.has(templateKey) || PURCHASE_ORDER_KEYS.has(templateKey)) {
+    const condition = singleCondition(context) ?? context.condition;
+    if (!condition) return {};
+    const reward = rewardLabelOf(condition);
+    return {
+      calc_method: calcMethodOf(condition),
+      ...(ownershipOf(condition) ? { deliverable_ownership: ownershipOf(condition) } : {}),
+      ...(reward ? { reward_label: reward } : {}),
+      ...(condition.ratePct === null || condition.ratePct === undefined
+        ? {} : { rate_pct: condition.ratePct })
+    };
+  }
   return {};
 }

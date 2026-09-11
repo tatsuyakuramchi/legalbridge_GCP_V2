@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError, money } from "./api.js";
+import { rewardLabelFor } from "../server/core/reward.js";
 
 /**
  * 条件の実績（明細の数値）。
@@ -45,10 +46,12 @@ interface PreviewResponse {
 }
 
 export function ConditionEvents(
-  { conditionId, currency, editable, matterId, pricingModel, reloadKey,
+  { conditionId, currency, editable, matterId, pricingModel, deliverableOwnership, reloadKey,
     openForSchedule, onOpened, onCompose, onOpenDocument, onChanged }:
   { conditionId: number; currency: string; editable: boolean;
     matterId?: number | null; reloadKey?: number;
+    /** 成果物の帰属先。料率の条件では報酬の呼び方がこれで決まる。 */
+    deliverableOwnership?: string | null;
     /** 予定の行の「実績にする」から渡された回。この回でフォームを開く。 */
     openForSchedule?: number | null;
     onOpened?: () => void;
@@ -86,6 +89,14 @@ export function ConditionEvents(
    */
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const royalty = pricingModel === "revenue_rate" || pricingModel === "unit_rate";
+  /**
+   * 業績連動の報酬（利用許諾料・インセンティブ報酬）。
+   *
+   * この条件は計算書を出さない。算定は別（売上報告なり社内の集計なり）で行い、
+   * 結果の金額を人がここへ入れて、検収書の明細に内訳として載せる。
+   * 売上を入れさせて計算書へ誘導すると、二重に計算した別の額が出る。
+   */
+  const rewardLabel = rewardLabelFor(pricingModel, deliverableOwnership);
   // 予定の回。実績が付いていない回だけ選べる（1つの回に実績は1件）。
   const [schedules, setSchedules] = useState<ScheduleRow[]>([]);
   const [typeByTrigger, setTypeByTrigger] = useState<Record<string, string>>({});
@@ -215,9 +226,9 @@ export function ConditionEvents(
   /** 空のフォームの初期値。料率なら売上、定額なら検収を既定にする。 */
   function blank(): Record<string, string> {
     return {
-      scheduleId: "", eventType: royalty ? "sales" : "inspection",
+      scheduleId: "", eventType: royalty && !rewardLabel ? "sales" : "inspection",
       occurredOn: new Date().toISOString().slice(0, 10),
-      period: "", quantity: royalty ? "" : "1",
+      period: "", quantity: royalty && !rewardLabel ? "" : "1",
       grossAmount: "", deductions: "", amount: "", note: "",
       deliverable: "", inspectedOn: "", inspectorDept: "", inspectorName: ""
     };
@@ -340,7 +351,7 @@ export function ConditionEvents(
               <span>{inspecting ? "納品日" : "発生日"}</span>
               <input type="date" value={f("occurredOn")} onChange={(e) => set("occurredOn", e.target.value)} />
             </label>
-            {royalty && (
+            {royalty && !rewardLabel && (
               <label className="field">
                 <span>対象期間</span>
                 <input value={f("period")} placeholder="2026Q2 / 2026-06"
@@ -354,7 +365,7 @@ export function ConditionEvents(
                 <small className="faint">検収書の「今回数量」に出ます。1回分なら 1</small>
               )}
             </label>
-            {royalty && (
+            {royalty && !rewardLabel && (
               <>
                 <label className="field">
                   <span>報告売上・受領額（円）</span>
@@ -372,8 +383,13 @@ export function ConditionEvents(
               </>
             )}
             <label className="field">
-              <span>実額</span>
+              <span>{rewardLabel ?? "実額"}</span>
               <input inputMode="numeric" value={f("amount")} onChange={(e) => set("amount", e.target.value)} />
+              {rewardLabel && (
+                <small className="faint">
+                  別で算定した結果を入れます。ここに入れた額がそのまま検収書の明細になります
+                </small>
+              )}
               {derived !== null && (
                 <small className={String(derived) === f("amount").trim() ? "faint" : "danger"}>
                   総額 − 控除 = {money(derived, currency)}
@@ -417,8 +433,13 @@ export function ConditionEvents(
 
           <div className="form-grid">
             <label className="field wide">
-              <span>備考</span>
+              <span>{rewardLabel ? "算定根拠" : "備考"}</span>
               <input value={f("note")} onChange={(e) => set("note", e.target.value)} />
+              {rewardLabel && (
+                <small className="faint">
+                  検収書の明細に、料率と一緒にそのまま出ます（例: 上代1,500円 × 1,000部 × 8%）
+                </small>
+              )}
             </label>
           </div>
           {error && <div className="alert">{error}</div>}
@@ -531,13 +552,15 @@ export function ConditionEvents(
         </div>
       )}
 
-      {/* 選んだ実績から書類を作る。料率なら計算書、定額なら検収書・納品書。 */}
+      {/* 選んだ実績から書類を作る。料率なら計算書、定額なら検収書・納品書。
+          業績連動の業務委託は金額がもう決まっているので計算書には行かない。
+          報酬計算書のひな形は作らず、検収書の明細に内訳として載せる。 */}
       {editable && rows.some((r) => r.status === "active" && !r.documentId) && (
         <div className="panel-bd row" style={{ borderBottom: "1px solid var(--line)", gap: 8 }}>
           <span className="faint">
             {pickedIds.length ? `${pickedIds.length} 件を選択中` : "左の四角で実績を選ぶと、まとめて1枚の書類にできます"}
           </span>
-          {royalty ? (
+          {royalty && !rewardLabel ? (
             <button className="btn btn-sm primary" disabled={!pickedIds.length || stmtOpen}
                     onClick={() => { setStmtOpen(true); setStmtDone(null); }}>
               選んだ {pickedIds.length} 件で計算書を作る
@@ -547,6 +570,9 @@ export function ConditionEvents(
                     onClick={() => onCompose?.([conditionId], pickedIds, matterId ?? null)}>
               選んだ {pickedIds.length} 件で文書を作る
             </button>
+          )}
+          {rewardLabel && (
+            <span className="faint">{rewardLabel}は検収書の明細に内訳として出ます（計算書は作りません）</span>
           )}
           {pickedIds.length > 0 && (
             <button className="linky" onClick={() => setPicked(new Set())}>選択を外す</button>

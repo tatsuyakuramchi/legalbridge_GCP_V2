@@ -93,7 +93,11 @@ export class DocumentIssueService {
         { templateKey: template.templateKey, computed, suggested });
       // 候補は文脈そのものから作る。ひな形の宣言には依らない。
       const partials = await this.repository.partials();
-      const values = { ...resolveAllLegacyVariables(context), ...computed, ...binding.values };
+      // 文案は宣言済みの項目なら bindVariables が入れている（手入力が勝つ）。
+      // 本文が宣言の無い名前を差していることがあり、そのぶんがここに残る。
+      // 入れないと、料率や帰属先のように台帳から引ける値が空欄で紙に出る。
+      const values = { ...resolveAllLegacyVariables(context), ...suggested,
+                       ...computed, ...binding.values };
       return {
         html: renderDocumentHtml(template.htmlSource, values, partials),
         binding,
@@ -269,7 +273,8 @@ export class DocumentIssueService {
         // ときに表と合計が消える。
         // 本文は宣言の無い名前も差す（DOC_NO・STAFF_NAME・moneyUnit …）。
         // 対応表が解決できるものを土台に置き、計算結果と束縛した値を上に乗せる。
-        const frozen = { ...resolveAllLegacyVariables(context), ...computed, ...binding.values };
+        const frozen = { ...resolveAllLegacyVariables(context), ...suggested,
+                         ...computed, ...binding.values };
 
         const updated = await client.query(
           `UPDATE documents

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   accountTypeLabel, bankInfoLine, buildTemplateContext, calcMethodOf, deliveryLinesFrom,
-  lineFieldsFor, orderLinesFrom, rewardLabelOf, seedLines, taxRateFor
+  lineFieldsFor, orderLinesFrom, rewardLabelOf, seedLines, suggestionsFor, taxRateFor
 } from "./template-context.js";
 import { computeInspectionTotals, inspectionTaxBreakdown, purchaseOrderTotals } from "./legacy-totals.js";
 
@@ -380,4 +380,59 @@ test("支払日ごとにまとめても、業績連動の欄は行に残る", ()
   assert.equal(line.base_price_label, "上代 × 数量");
   assert.equal(line.formula_text, "上代1,500円 × 1,000部 × 8%");
   assert.equal(line.deliverable_ownership, "受注者");
+});
+
+test("業績連動の行は、料率を条件から、算定根拠を実績のメモから引く", () => {
+  // どちらも台帳に入っているのに紙まで届かず、人が明細へ打ち直していた。
+  const [line] = deliveryLinesFrom({
+    conditions: [{ id: 5, name: "挿絵", pricingModel: "revenue_rate", spec: "A4カラー10点",
+                   deliverableOwnership: "contractor", ratePct: 8 }],
+    events: [{ conditionId: 5, occurredOn: "2026-05-31", amount: 120000,
+               note: "上代1,500円×1,000部×8%で算定" }]
+  });
+  assert.equal(line.rate_pct, 8);
+  assert.equal(line.formula_text, "上代1,500円×1,000部×8%で算定");
+});
+
+test("仕様の欄がメモを使っているときは、算定根拠に同じ文を重ねない", () => {
+  const [line] = deliveryLinesFrom({
+    conditions: [{ id: 5, name: "挿絵", pricingModel: "revenue_rate",
+                   deliverableOwnership: "contractor", ratePct: 8 }],
+    events: [{ conditionId: 5, amount: 120000, note: "上代1,500円×1,000部×8%で算定" }]
+  });
+  assert.equal(line.spec, "上代1,500円×1,000部×8%で算定");
+  assert.equal(line.formula_text, undefined);
+});
+
+test("定額の行には料率も算定根拠も出さない", () => {
+  const [line] = deliveryLinesFrom({
+    conditions: [{ id: 6, name: "組版", pricingModel: "fixed", ratePct: 8 }],
+    events: [{ conditionId: 6, amount: 50000, note: "一式" }]
+  });
+  assert.equal(line.rate_pct, undefined);
+  assert.equal(line.formula_text, undefined);
+});
+
+test("検収書の見出しの料率・帰属先は、条件が1件に決まるとき台帳から埋める", () => {
+  // 本文は明細の外でも {{rate_pct}} と {{deliverable_ownership}} を差している。
+  // 空のまま出すと「料率 ％」だけが残った紙になる。
+  const context = {
+    conditions: [{ id: 5, pricingModel: "revenue_rate",
+                   deliverableOwnership: "contractor", ratePct: 8 }]
+  };
+  assert.deepEqual(suggestionsFor("inspection_certificate", context), {
+    calc_method: "ROYALTY", deliverable_ownership: "受注者",
+    reward_label: "利用許諾料", rate_pct: 8
+  });
+  assert.deepEqual(suggestionsFor("purchase_order", context), {
+    calc_method: "ROYALTY", deliverable_ownership: "受注者",
+    reward_label: "利用許諾料", rate_pct: 8
+  });
+});
+
+test("条件が複数なら見出しの料率は埋めない（行ごとに違う）", () => {
+  assert.deepEqual(suggestionsFor("inspection_certificate", {
+    conditions: [{ id: 5, pricingModel: "revenue_rate", ratePct: 8 },
+                 { id: 6, pricingModel: "revenue_rate", ratePct: 5 }]
+  }), {});
 });
