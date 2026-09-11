@@ -1,0 +1,5 @@
+# コンテナの中で走るスクリプトは Windows でチェックアウトしても LF のまま。
+bin/* text eol=lf
+db/init/* text eol=lf
+ops/* text eol=lf
+.env.example text eol=lf

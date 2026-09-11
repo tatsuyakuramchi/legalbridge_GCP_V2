@@ -1,0 +1,362 @@
+:root{
+  --ground:#F5F6F3; --surface:#fff; --sunken:#EEF0EB;
+  --ink:#16202A; --muted:#5F6B75; --faint:#818C94;
+  --line:#D9DFD6; --line-strong:#BEC7BB;
+  --accent:#24466E; --accent-soft:#E4EAF2;
+  --in:#1C6B66; --in-soft:#DDECEA;
+  --out:#97363F; --out-soft:#F5E3E4;
+  --ok:#446F40; --ok-soft:#E3EEDF;
+  --warn:#8A4B12; --warn-soft:#FBEBCF;
+  --mono:"Roboto Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --ground:#11161A; --surface:#191F25; --sunken:#0D1216;
+    --ink:#E7EBE6; --muted:#98A3AB; --faint:#78848C;
+    --line:#2B333A; --line-strong:#3B454D;
+    --accent:#84A9D8; --accent-soft:#1D2A3A;
+    --in:#5CB8B1; --in-soft:#14302E;
+    --out:#D8929A; --out-soft:#331A1D;
+    --ok:#8CBA84; --ok-soft:#1B2A19;
+    --warn:#E0B27C; --warn-soft:#33260F;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);
+  font:13px/1.7 "Noto Sans JP",system-ui,-apple-system,"Hiragino Kaku Gothic ProN",sans-serif}
+button,input,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.app{display:grid;grid-template-columns:210px minmax(0,1fr);min-height:100vh}
+.rail{background:var(--surface);border-right:1px solid var(--line);padding:16px 0 12px;
+  display:flex;flex-direction:column;gap:2px;position:sticky;top:0;height:100vh}
+.wordmark{padding:0 18px 14px;display:flex;flex-direction:column}
+.wordmark b{font-size:16px;letter-spacing:.05em}
+.wordmark span{font-size:10px;letter-spacing:.16em;color:var(--faint)}
+.nav-sec{padding:10px 18px 4px;font-size:10px;letter-spacing:.14em;color:var(--faint)}
+.nav-item{width:100%;text-align:left;padding:6px 18px;background:none;border:0;
+  border-left:2px solid transparent;cursor:pointer;color:var(--muted)}
+.nav-item:hover{background:var(--sunken)}
+.nav-item[aria-current="page"]{border-left-color:var(--accent);background:var(--accent-soft);
+  color:var(--ink);font-weight:700}
+.rail-foot{margin-top:auto;padding:12px 18px 0;border-top:1px solid var(--line)}
+
+.main{min-width:0}
+.workspace{padding:22px 26px 60px;display:flex;flex-direction:column;gap:16px}
+.workspace-head h1{margin:0;font-size:21px;letter-spacing:.03em}
+.workspace-head p{margin:4px 0 0;color:var(--muted);font-size:12px;max-width:62ch}
+
+.split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;align-items:start}
+@media (max-width:1100px){.split{grid-template-columns:minmax(0,1fr)}}
+.stack{display:flex;flex-direction:column;gap:12px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:8px}
+.panel-hd{display:flex;align-items:center;gap:9px;padding:10px 14px;border-bottom:1px solid var(--line)}
+.panel-hd h2{margin:0;font-size:12.5px}
+.panel-bd{padding:14px}
+.title{font-size:15px;font-weight:700}
+
+.tablewrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:12px}
+/* 見出しは一番小さい字なので、faint（コントラスト3.4:1）では読めない。
+   muted なら 5.5:1 で AA を満たす。スクロールしても列が分かるよう固定する。 */
+th{text-align:left;font-weight:500;font-size:11px;letter-spacing:.09em;color:var(--muted);
+  padding:7px 12px;border-bottom:1px solid var(--line);white-space:nowrap;
+  position:sticky;top:0;background:var(--surface);z-index:1}
+td{padding:8px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+tbody tr:last-child td{border-bottom:0}
+tbody tr[class],tbody tr[onclick],tbody tr[tabindex]{cursor:pointer}
+tbody tr[tabindex]:hover{background:var(--sunken)}
+tbody tr.sel{background:var(--accent-soft)}
+.num{font-family:var(--mono);text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.code{font-family:var(--mono);font-size:11.5px;white-space:nowrap}
+.faint{color:var(--faint);font-size:11.5px}
+.bad{color:var(--out);font-weight:500}
+
+.dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:5px 16px;font-size:12px;margin:0}
+.dl dt{color:var(--muted);white-space:nowrap}
+.dl dd{margin:0}
+
+.tag{display:inline-block;font-size:10.5px;padding:1px 7px;border-radius:3px;
+  border:1px solid var(--line-strong);color:var(--muted);line-height:1.6;white-space:nowrap}
+.tag.in{background:var(--in-soft);border-color:transparent;color:var(--in);font-weight:700}
+.tag.out{background:var(--out-soft);border-color:transparent;color:var(--out);font-weight:700}
+.tag.ok{background:var(--ok-soft);border-color:transparent;color:var(--ok)}
+.tag.accent{background:var(--accent-soft);border-color:transparent;color:var(--accent)}
+.chips{display:flex;flex-wrap:wrap;gap:5px}
+
+.filters{display:flex;gap:6px;flex-wrap:wrap}
+.chip{border:1px solid var(--line-strong);background:var(--surface);border-radius:20px;
+  padding:3px 11px;font-size:11.5px;cursor:pointer;color:var(--muted)}
+.chip[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:var(--ground);font-weight:500}
+
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:12px;flex-wrap:wrap}
+.tabs button{border:0;background:none;padding:6px 12px;font-size:12px;cursor:pointer;
+  color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px}
+.tabs button[aria-selected="true"]{color:var(--ink);font-weight:700;border-bottom-color:var(--accent)}
+
+.pipe{display:flex;overflow-x:auto}
+.pipe-step{flex:1 0 120px;border:1px solid var(--line);border-right:0;padding:8px 11px;
+  display:flex;flex-direction:column;gap:2px}
+.pipe-step:first-child{border-radius:7px 0 0 7px}
+.pipe-step:last-child{border-right:1px solid var(--line);border-radius:0 7px 7px 0}
+.pipe-step .st{font-family:var(--mono);font-size:10px;color:var(--faint)}
+.pipe-step .nm{font-size:11.5px;font-weight:700}
+
+.btn{border:1px solid var(--line-strong);background:var(--surface);border-radius:6px;
+  padding:5px 12px;font-size:12px;cursor:pointer}
+/* 暗いテーマの --accent は明るい青。白文字だと読めないので地の色を使う。 */
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--ground)}
+.alert{border-left:2px solid var(--out);background:var(--out-soft);color:var(--out);
+  padding:9px 12px;border-radius:0 6px 6px 0;font-size:12px}
+.note{border:1px dashed var(--line-strong);border-radius:6px;padding:10px 12px;
+  font-size:11.5px;color:var(--muted)}
+.trace{background:var(--sunken);border:1px solid var(--line);border-radius:7px;
+  padding:10px 12px;display:flex;flex-direction:column;gap:5px}
+.trace-line{font-size:11.5px}
+
+.field{display:grid;grid-template-columns:110px minmax(0,1fr);gap:10px;align-items:center;font-size:12px}
+.field > span{color:var(--muted)}
+.field select,.field input{width:100%;border:1px solid var(--line-strong);border-radius:5px;
+  padding:5px 8px;background:var(--surface)}
+.picker{display:flex;flex-direction:column;gap:4px;max-height:190px;overflow-y:auto;
+  border:1px solid var(--line);border-radius:6px;padding:8px;margin-top:5px}
+.pick{display:flex;gap:7px;align-items:center;font-size:12px;cursor:pointer}
+/* 定型文の1件。本文は改行を活かしたまま出す（貼る形そのものを見せる）。
+   長いものは枠の中で送る。一覧のほうが流れると、選ぶ前に見失う。 */
+.snip{border:1px solid var(--line);border-radius:6px;padding:7px 9px;background:var(--sunken)}
+.snip p{margin:3px 0 0;font-size:12px;white-space:pre-wrap;max-height:7em;overflow-y:auto}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+/* 文書プレビューは印刷物なので、テーマに関わらず白紙のままにする。 */
+.preview{width:100%;height:420px;border:0;border-top:1px solid var(--line);background:#fff}
+.btn-sm{padding:2px 8px;font-size:11.5px}
+.meter{height:7px;border-radius:4px;background:var(--sunken);overflow:hidden}
+.meter i{display:block;height:100%;background:var(--in)}
+
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}
+.tile{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px 14px;
+  display:flex;flex-direction:column;gap:3px;text-align:left;cursor:pointer}
+.tile:hover{background:var(--sunken)}
+.tile .lab{font-size:11px;color:var(--muted)}
+.tile .val{font-family:var(--mono);font-size:22px;font-variant-numeric:tabular-nums}
+.tile .sub{font-size:11px;color:var(--faint)}
+.tile.alert{border-color:var(--out);background:var(--out-soft)}
+.tile.alert .val{color:var(--out)}
+.pipe-step.flag{background:var(--out-soft);border-color:var(--out)}
+.pipe-step.flag .ct{color:var(--out)}
+.pipe-step .ct{font-family:var(--mono);font-size:17px;font-variant-numeric:tabular-nums}
+
+/* 期限切れ。古いほど危険なので、目に入るようにする。 */
+tr.overdue td { background: var(--out-soft); }
+.danger { color: var(--out); font-weight: 600; }
+.good   { color: var(--ok);  font-weight: 600; }
+
+/* 新規登録のフォーム。5画面で同じ形にする。 */
+.create-form { margin-bottom: 16px; border-color: var(--line-strong); }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 16px; }
+/* .field は横並び用に align-items:center を持っている。縦積みのこちらでは
+   中央寄せのせいで入力欄が中身の幅（textarea なら既定の 20 文字）で止まり、
+   列の中で細く浮く。上書きして列幅いっぱいに伸ばす。 */
+.form-grid .field { display: flex; flex-direction: column; gap: 4px;
+  align-items: stretch; }
+.form-grid .field.wide { grid-column: 1 / -1; }
+.form-grid .field > span { font-size: 12px; color: var(--muted); }
+.form-grid .req { font-style: normal; color: var(--out); font-size: 11px; margin-left: 4px; }
+/* 背景を白で固定すると、暗いテーマで文字色（--ink）と重なって読めなくなる。 */
+.form-grid input, .form-grid select, .form-grid textarea {
+  padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: 6px;
+  font: inherit; color: var(--ink); background: var(--surface); min-width: 0;
+}
+.form-grid input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); }
+.form-grid input:focus, .form-grid select:focus, .form-grid textarea:focus {
+  outline: 2px solid var(--accent); outline-offset: -1px;
+}
+.create-form .row { margin-top: 14px; align-items: center; gap: 10px; }
+.create-form .alert { margin-top: 12px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+/* 横断検索。どの画面からでも番号・名前で辿れるようにナビへ常設する。 */
+.search { position: relative; padding: 0 12px 10px; }
+.search input {
+  width: 100%; box-sizing: border-box; padding: 6px 8px;
+  border: 1px solid var(--line-strong); border-radius: 6px; font: inherit;
+  color: var(--ink); background: var(--surface);
+}
+.search-results {
+  position: absolute; z-index: 20; left: 12px; right: 12px; top: 100%;
+  max-height: 60vh; overflow: auto; background: var(--surface);
+  border: 1px solid var(--line-strong); border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.18); padding: 6px;
+}
+.search-group + .search-group { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 6px; }
+.search-group-hd { font-size: 11px; color: var(--muted); padding: 2px 6px; }
+.search-hit {
+  display: flex; flex-direction: column; gap: 1px; width: 100%; text-align: left;
+  padding: 6px; border: 0; background: none; border-radius: 6px; cursor: pointer; font: inherit;
+}
+.search-hit:hover, .search-hit:focus-visible { background: var(--sunken); }
+.search-title { font-size: 13px; }
+
+/* 一覧の絞り込み。件数と上限をここに出す（黙って200件で切らない）。 */
+.list-tools { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.list-search { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; max-width: 300px; }
+.list-search input {
+  flex: 1; min-width: 0; box-sizing: border-box; padding: 4px 8px;
+  border: 1px solid var(--line-strong); border-radius: 5px;
+  font: inherit; font-size: 12px; color: var(--ink); background: var(--surface);
+}
+.list-count {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 7px 14px; border-bottom: 1px solid var(--line);
+  background: var(--sunken); font-size: 11.5px; color: var(--muted);
+}
+.list-count .num { font-family: var(--mono); font-weight: 700; }
+.list-foot {
+  display: flex; align-items: center; gap: 9px;
+  padding: 9px 14px; border-top: 1px solid var(--line); font-size: 11.5px; color: var(--muted);
+}
+
+/* 支払報告書。画面でも紙でも読める形にする。 */
+.report { margin-top: 14px; }
+.report-head { margin-bottom: 12px; }
+.report-head h3 { margin: 0 0 2px; }
+.report-group { margin-bottom: 18px; page-break-inside: avoid; }
+.report-group-hd {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 6px 0; border-bottom: 1px solid var(--line);
+}
+tr.report-total td { border-top: 2px solid var(--line-strong); font-weight: 600; background: var(--sunken); }
+
+@media print {
+  .rail, .tabs, .filters, .no-print, .workspace-head p, .search, .list-tools { display: none !important; }
+  .app, .main, .workspace, .panel { display: block; margin: 0; padding: 0; border: 0; box-shadow: none; }
+  .panel-hd { border: 0; padding: 0 0 8px; }
+  body { background: #fff; }
+  table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  th, td { border: 1px solid #999; padding: 3px 5px; }
+  th { position: static; }
+}
+
+.tag.good   { background: var(--ok-soft);   border-color: transparent; color: var(--ok); }
+.tag.warn   { background: var(--warn-soft); border-color: transparent; color: var(--warn); }
+.tag.danger { background: var(--out-soft);  border-color: transparent; color: var(--out); }
+
+/* 補足は控えめに、注意は色で。同じ .note に2つの意味を持たせない。 */
+.note.ok   { border-style: solid; background: var(--ok-soft);   border-color: transparent; color: var(--ok); }
+.note.warn { border-style: solid; background: var(--warn-soft); border-color: transparent; color: var(--warn); }
+
+.inline-input { width: 150px; border: 1px solid var(--line-strong); border-radius: 5px;
+                padding: 5px 8px; background: var(--surface); color: var(--ink);
+                font-family: var(--mono); font-size: 12px; }
+.pre { white-space: pre-wrap; word-break: break-word; font-family: var(--mono);
+       font-size: 12px; line-height: 1.6; background: var(--sunken);
+       border: 1px solid var(--line); border-radius: 6px; padding: 9px 11px;
+       max-height: 220px; overflow: auto; }
+
+/* ── 文書の状態の帯。何ができるかを色と言葉の両方で出す ────────────── */
+.state{display:flex;gap:11px;padding:11px 13px;border-radius:7px;align-items:flex-start}
+.state .mark{width:3px;align-self:stretch;border-radius:2px;flex:0 0 3px}
+.state .txt{display:flex;flex-direction:column;gap:2px;min-width:0}
+.state b{font-size:12.5px}
+.state .txt > span{font-size:11.5px;color:var(--muted)}
+.state.draft{background:var(--warn-soft)}
+.state.draft .mark{background:var(--warn)} .state.draft b{color:var(--warn)}
+.state.issued,.state.decided{background:var(--accent-soft)}
+.state.issued .mark,.state.decided .mark{background:var(--accent)} .state.issued b,.state.decided b{color:var(--accent)}
+.state.sent{background:var(--ok-soft)}
+.state.sent .mark{background:var(--ok)} .state.sent b{color:var(--ok)}
+.state.superseded{background:var(--sunken)}
+.state.superseded .mark{background:var(--line-strong)} .state.superseded b{color:var(--muted)}
+.state.void{background:var(--out-soft)}
+.state.void .mark{background:var(--out)} .state.void b{color:var(--out)}
+
+/* ── 版の履歴。縦に一本、いまの版だけ塗る ────────────────────────── */
+.hist{display:flex;flex-direction:column;margin:0;padding:0;list-style:none}
+.hist li{display:grid;grid-template-columns:16px minmax(0,1fr);gap:10px;padding:0 0 12px}
+.hist li:last-child{padding-bottom:0}
+/* 「まだ記録がありません」のような1文だけの行。li の格子（16px + 本文）に
+   そのまま入れると、文が 16px の列に落ちて1文字ずつ縦に折り返される。 */
+.hist li.empty{display:block;padding-bottom:0}
+/* 目盛りは .tick / .meta。左ナビの .rail と、印刷で消す .rail を巻き込まない
+   名前にしてある（.rail は height:100vh を持っているので、履歴の1行が
+   画面いっぱいに伸びる）。 */
+.hist .tick{position:relative;display:flex;justify-content:center}
+.hist .tick::before{content:"";position:absolute;top:11px;bottom:-12px;width:1px;
+  background:var(--line-strong)}
+.hist li:last-child .tick::before{display:none}
+.hist .pip{width:9px;height:9px;border-radius:50%;background:var(--surface);
+  border:2px solid var(--line-strong);margin-top:5px;z-index:1}
+.hist li.cur .pip{background:var(--accent);border-color:var(--accent)}
+.hist .meta{display:flex;flex-direction:column;gap:1px;min-width:0}
+
+/* 文字だけのボタン。表の中で番号をそのまま押せるようにする。 */
+.linky{border:0;background:none;padding:0;color:var(--accent);cursor:pointer;
+  font-family:var(--mono);font-size:11.5px;text-align:left}
+.linky:hover{text-decoration:underline}
+
+/* 一覧の中の紐づけ。番号を縦に並べる。 */
+.reflist{display:flex;flex-direction:column;gap:1px;line-height:1.5}
+.reflist .none{color:var(--faint);font-size:11px}
+
+/* 旧版の折りたたみ。 */
+.older td{background:var(--sunken);padding-top:5px;padding-bottom:5px}
+.fold{border:0;background:none;color:var(--muted);font-size:11px;cursor:pointer;padding:0;
+  display:inline-flex;gap:5px;align-items:center}
+.fold:hover{color:var(--ink)}
+.fold .caret{font-family:var(--mono);font-size:9px}
+
+/* 検索して選ぶ欄。プルダウンの代わり。 */
+.sselect{position:relative;width:100%}
+.sselect input{width:100%;border:1px solid var(--line-strong);border-radius:5px;padding:5px 8px;background:var(--surface)}
+.sselect-menu{position:absolute;left:0;right:0;top:calc(100% + 3px);z-index:30;max-height:260px;overflow-y:auto;
+  background:var(--surface);border:1px solid var(--line-strong);border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,.12)}
+.sselect-item{display:flex;gap:8px;align-items:baseline;padding:6px 10px;font-size:12px;cursor:pointer}
+.sselect-item .faint{margin-left:auto;white-space:nowrap}
+.sselect-item[aria-selected="true"]{background:var(--accent-soft)}
+.sselect-item.current{font-weight:600}
+.sselect-empty{padding:6px 10px;font-size:12px;color:var(--faint)}
+
+/* ── 文書作成フォーム。左に区分ごとの入力、右にプレビューと点検 ─────────── */
+.compose{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;align-items:start}
+@media (max-width:1180px){.compose{grid-template-columns:minmax(0,1fr)}}
+.compose-side{position:sticky;top:12px}
+.compose-side .preview{height:560px}
+.fsec .panel-hd h2{font-size:13px}
+.frow{display:grid;grid-template-columns:170px minmax(0,1fr);gap:10px;align-items:start;font-size:12px}
+.frow.miss .flabel > span:last-child{color:var(--out)}
+.flabel{display:flex;flex-direction:column;gap:3px;color:var(--muted);padding-top:5px}
+.src{display:inline-block;width:max-content;font-size:10px;padding:0 6px;border-radius:3px;
+  letter-spacing:.04em;border:1px solid var(--line-strong);color:var(--muted)}
+.src.auto{background:var(--accent-soft);border-color:transparent;color:var(--accent)}
+.src.computed{background:var(--ok-soft);border-color:transparent;color:var(--ok)}
+.src.manual{background:var(--warn-soft);border-color:transparent;color:var(--warn)}
+/* 文案は台帳から引いた値ではない。自動とは別の見た目にして、直してよいことを示す。 */
+.src.suggested{background:var(--sunken);border-color:var(--line-strong);color:var(--muted)}
+.fbody input,.fbody select,.fbody textarea{width:100%;border:1px solid var(--line-strong);border-radius:5px;
+  padding:6px 8px;background:var(--surface);color:var(--ink);font:inherit;min-width:0}
+.fbody input[type="checkbox"]{width:16px;height:16px}
+.fro{display:flex;gap:10px;align-items:baseline;padding:5px 0;border-bottom:1px dashed var(--line)}
+.fro .linky{margin-left:auto;white-space:nowrap}
+.check-list{display:flex;flex-direction:column;gap:5px;font-size:12px}
+.check-list .ok{color:var(--ok)} .check-list .ng{color:var(--out)}
+.compose-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding-top:10px;border-top:1px solid var(--line)}
+/* 送る工程の段。押して開く。 */
+button.pipe-step{font:inherit;text-align:left;cursor:pointer;color:inherit;background:var(--surface)}
+.pipe-step.open{box-shadow:inset 0 -3px 0 var(--accent)}
+/* 明細の行。1行を1枚のカードにして、列は折り返す。 */
+.line-card{border:1px solid var(--line);border-radius:6px;padding:10px 12px;background:var(--sunken)}
+.line-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px 12px}
+.line-grid .field{display:flex;flex-direction:column;gap:3px;align-items:stretch}
+.line-grid .field.wide{grid-column:1 / -1}
+.line-grid input,.line-grid select,.line-grid textarea{width:100%;border:1px solid var(--line-strong);border-radius:5px;
+  padding:5px 8px;background:var(--surface);color:var(--ink);font:inherit;min-width:0}
+
+/* 予備系の目印。どの環境で、いつ時点のデータを見ているかを常に出す。 */
+.site-badge{margin-top:8px;padding:6px 8px;border-radius:6px;background:var(--warn-soft);color:var(--warn);font-size:12px;line-height:1.4;display:flex;flex-direction:column;gap:2px}
+.site-badge b{letter-spacing:.02em}
+
+/* 決定したあとの結果。次に何をするかまで置く。 */
+.done-note{display:flex;flex-direction:column;gap:8px}
+.done-note .row{gap:8px;align-items:center;flex-wrap:wrap}
+
+/* 工程の段階は押すとその作業のタブへ移る。ボタンでも見た目は帯のまま。 */
+button.pipe-step{font:inherit;color:inherit;text-align:left;cursor:pointer}
+button.pipe-step:hover{border-color:var(--accent)}

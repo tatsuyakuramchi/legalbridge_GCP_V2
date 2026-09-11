@@ -1,0 +1,619 @@
+import { useEffect, useState } from "react";
+import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
+import { PARTY_KIND_LABEL, StatusTag } from "./labels.js";
+import { api, ApiError } from "./api.js";
+import { Relations, type EntityKind } from "./Relations.js";
+import { CreateForm, flag, int, text } from "./CreateForm.js";
+import { PartyMerge } from "./PartyMerge.js";
+import { PartyBankAccount } from "./PartyBankAccount.js";
+
+interface Party {
+  id: number; partyCode: string | null; name: string; kind: "corporate" | "individual";
+  aliases: string[]; withholding: boolean; status: string; mergedIntoId: number | null;
+}
+interface PartyDetail extends Party {
+  nameKana: string | null; invoiceNo: string | null; corporateNo: string | null;
+  /** 書類の頭書き・宛先に出る。欠けていると宛先の無い紙が出る。 */
+  address: string | null; phone: string | null; email: string | null;
+  contacts: Array<{ role: string; name: string | null; email: string | null;
+                    phone: string | null; department: string | null }>;
+  references: { conditions: number; payments: number; documents: number; matters: number };
+  bankAccount: { bankName: string | null } | null;
+}
+interface Staff {
+  id: number; staffCode: string | null; name: string;
+  email: string | null; department: string | null; phone: string | null; status: string;
+}
+
+const ROLE_LABEL: Record<string, string> = { primary: "主担当", signer: "署名者", billing: "請求先" };
+
+export function PartiesWorkspace(
+  { initialId, onOpen }: {
+    initialId?: number;
+    onOpen?: (kind: EntityKind, id: number) => void;
+  } = {}
+) {
+  const [tab, setTab] = useState<"parties" | "staff" | "merge">("parties");
+  const [parties, setParties] = useState<Party[]>([]);
+  const [staff, setStaff] = useState<Staff[]>([]);
+  const [selected, setSelected] = useState<number | undefined>(initialId);
+  const [detail, setDetail] = useState<PartyDetail | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  /** 取引先を直しているか。詳細の中で欄に切り替える。 */
+  const [editing, setEditing] = useState(false);
+  const [keyword, setKeyword] = useState("");
+  const [kindFilter, setKindFilter] = useState<"all" | "corporate" | "individual">("all");
+  const [total, setTotal] = useState<number | null>(null);
+  const query = useDebounced(keyword);
+  // 在籍していてメールの無い人。退職者は書類に出ないので数えない。
+  const noMail = staff.filter((s) => s.status === "active" && !s.email);
+
+  function reload(select?: number) {
+    const q = query.trim();
+    Promise.all([
+      api.get<{ parties: Party[] }>(`/parties${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+      api.get<{ staff: Staff[] }>("/staff")
+    ]).then(([p, s]) => {
+      setParties(p.parties); setStaff(s.staff);
+      // 絞り込みなしの件数は、絞っていないときの結果をそのまま覚えておく。
+      if (!q) setTotal(p.parties.length);
+      if (select) setSelected(select);
+      else if (!selected && p.parties[0]) setSelected(p.parties[0].id);
+    }).catch((e: ApiError) => setError(e.message));
+  }
+  useEffect(() => { reload(); }, [query]);
+
+  useEffect(() => {
+    if (!selected) return;
+    // 別の取引先へ移ったら編集は閉じる。開いたまま持ち越すと、直したつもりの
+    // 内容が別の相手先に入る。
+    setEditing(false);
+    api.get<PartyDetail>(`/parties/${selected}`).then(setDetail)
+      .catch((e: ApiError) => setError(e.message));
+  }, [selected]);
+
+  const shown = parties.filter((p) => kindFilter === "all" || p.kind === kindFilter);
+
+  return (
+    <section className="workspace">
+      <header className="workspace-head">
+        <h1>取引先・担当</h1>
+        <p>屋号・ペンネーム・旧称は別名として1件にまとめる。統合しても参照は付け替えず、統合先を辿って解決する。</p>
+      </header>
+
+      {error && <div className="alert">{error}</div>}
+
+      <div className="tabs">
+        <button aria-selected={tab === "parties"} onClick={() => setTab("parties")}>取引先 {parties.length}</button>
+        <button aria-selected={tab === "staff"} onClick={() => setTab("staff")}>担当者 {staff.length}</button>
+        <button aria-selected={tab === "merge"} onClick={() => setTab("merge")}>名寄せ</button>
+        {tab === "parties" && !creating && (
+          <button className="btn primary btn-sm" onClick={() => setCreating(true)}>取引先を登録</button>
+        )}
+      </div>
+
+      {creating && (
+        <CreateForm
+          title="取引先の登録"
+          path="/parties"
+          initial={{ kind: "corporate" }}
+          fields={[
+            { name: "name", label: "名称", required: true, placeholder: "株式会社◯◯" },
+            { name: "kind", label: "区分", type: "select", required: true,
+              options: [{ value: "corporate", label: "法人" }, { value: "individual", label: "個人" }],
+              hint: "個人は取適法の特定受託事業者として扱い、支払期日を60日で検査する" },
+            { name: "nameKana", label: "カナ" },
+            { name: "invoiceNo", label: "インボイス登録番号", placeholder: "T1234567890123" },
+            { name: "corporateNo", label: "法人番号",
+              visibleWhen: (v) => v.kind !== "individual" },
+            { name: "withholding", label: "源泉徴収の対象", type: "checkbox" },
+            // 契約書の頭書きと請求書の宛先に出る。登録時に入れる口が無く、
+            // 移行と CSV 取込で入ったきりだった。
+            { name: "address", label: "住所", placeholder: "東京都千代田区…",
+              hint: "契約書の頭書きと請求書の宛先に出る" },
+            { name: "phone", label: "電話", placeholder: "03-0000-0000" },
+            { name: "email", label: "メール", placeholder: "info@example.co.jp" },
+            { name: "aliases", label: "別名（屋号・ペンネーム・旧称）", type: "textarea",
+              hint: "改行で区切る。名寄せの手がかりになる" }
+          ]}
+          toPayload={(v) => ({
+            name: text(v.name), kind: v.kind, nameKana: text(v.nameKana),
+            invoiceNo: text(v.invoiceNo), corporateNo: text(v.corporateNo),
+            withholding: flag(v.withholding) ?? false,
+            address: text(v.address), phone: text(v.phone), email: text(v.email),
+            aliases: String(v.aliases ?? "").split("\n").map((a) => a.trim()).filter(Boolean)
+          })}
+          retryOnConflict={{ label: "同名でも新規に作る", extra: { allowDuplicate: true } }}
+          onDone={(r) => { setCreating(false); reload(r.id); }}
+          onCancel={() => setCreating(false)}
+        />
+      )}
+
+      {tab === "merge" ? (
+        <PartyMerge onDone={() => reload()} />
+      ) : tab === "staff" ? (
+        <div className="panel">
+          <div className="panel-hd">
+            <h2>担当者</h2>
+            <span className="faint">
+              検収書の【ご連絡先】と発注書の担当欄に、この部署・氏名・メール・電話が出ます
+            </span>
+          </div>
+          {/* メールの空欄は、検収書が「5営業日以内に下記へ異議を」と書いている
+              その連絡先が無いということ。件数で見えるようにする。 */}
+          {noMail.length > 0 && (
+            <div className="panel-bd">
+              <div className="note warn">
+                メールが未登録の担当者が {noMail.length} 名います
+                （{noMail.slice(0, 3).map((s) => s.name).join("・")}
+                {noMail.length > 3 ? " ほか" : ""}）。
+                検収書の連絡先が空欄のまま出ます。
+              </div>
+            </div>
+          )}
+          <div className="tablewrap">
+            <table>
+              <thead><tr>
+                <th>コード</th><th>氏名</th><th>部門</th><th>メール</th><th>電話</th>
+                <th>状態</th><th></th>
+              </tr></thead>
+              <tbody>
+                {staff.map((s) => (
+                  <StaffRow key={s.id} row={s} onSaved={reload} />
+                ))}
+                {!staff.length && <tr><td colSpan={7} className="faint">担当者がいません</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
+        <div className="split">
+          <div className="panel">
+            <div className="panel-hd">
+              <h2>一覧</h2>
+              <ListSearch value={keyword} onChange={setKeyword}
+                placeholder="名称・カナ・別名" label="取引先を絞り込む" />
+            </div>
+            <ListCount shown={shown.length} keyword={query} total={total}
+                       onClear={() => { setKeyword(""); setKindFilter("all"); }}>
+              <span className="filters">
+                {(["all", "corporate", "individual"] as const).map((value) => (
+                  <button key={value} className="chip" aria-pressed={kindFilter === value}
+                          onClick={() => setKindFilter(value)}>
+                    {value === "all" ? "すべて" : PARTY_KIND_LABEL[value]}
+                  </button>
+                ))}
+              </span>
+            </ListCount>
+            <div className="tablewrap">
+              <table>
+                <thead><tr><th>コード</th><th>名称</th><th>区分</th><th>源泉</th><th>状態</th></tr></thead>
+                <tbody>
+                  {shown.map((p) => (
+                    <tr key={p.id} className={p.id === selected ? "sel" : ""} tabIndex={0}
+                        aria-selected={p.id === selected}
+                        onClick={() => setSelected(p.id)}
+                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelected(p.id); } }}>
+                      <td className="code">{p.partyCode ?? `#${p.id}`}</td>
+                      <td className={p.status === "merged" ? "faint" : ""}>{p.name}</td>
+                      <td>{PARTY_KIND_LABEL[p.kind] ?? p.kind}</td>
+                      <td>{p.withholding ? <span className="tag warn">あり</span> : "—"}</td>
+                      <td>{p.status === "merged"
+                        ? <span className="tag out">#{p.mergedIntoId} へ統合</span>
+                        : <StatusTag kind="party" value={p.status} />}</td>
+                    </tr>
+                  ))}
+                  {!shown.length && (
+                    <tr><td colSpan={5} className="faint">
+                      {query.trim() ? `「${query}」に一致する取引先はありません` : "取引先がありません"}
+                    </td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <ListLimit shown={parties.length} />
+          </div>
+
+          <div className="stack">
+            {detail && (
+              <>
+                <div className="panel">
+                  <div className="panel-hd">
+                    <h2 className="code">{detail.partyCode ?? `#${detail.id}`}</h2>
+                    <span>{detail.name}</span>
+                    <span className="tag">{PARTY_KIND_LABEL[detail.kind] ?? detail.kind}</span>
+                    {detail.status !== "active" && <StatusTag kind="party" value={detail.status} />}
+                    {/* 登録はできても直せず、名前の誤りも住所の欠けも直す手が
+                        無かった。書類の宛名・頭書きはここから出る。 */}
+                    {detail.status !== "merged" && !editing && (
+                      <button className="btn btn-sm" style={{ marginLeft: "auto" }}
+                              onClick={() => setEditing(true)}>直す</button>
+                    )}
+                  </div>
+                  {editing ? (
+                    <PartyEdit party={detail}
+                      onDone={() => { setEditing(false); reload(detail.id); }}
+                      onCancel={() => setEditing(false)} />
+                  ) : (
+                  <div className="panel-bd">
+                    <dl className="dl">
+                      <dt>別名</dt>
+                      <dd>{detail.aliases.length
+                        ? <span className="chips">{detail.aliases.map((a) => <span key={a} className="tag">{a}</span>)}</span>
+                        : "—"}</dd>
+                      <dt>カナ</dt><dd>{detail.nameKana ?? "—"}</dd>
+                      <dt>登録番号</dt><dd className="code">{detail.invoiceNo ?? "—"}</dd>
+                      <dt>源泉</dt><dd>{detail.withholding ? "対象" : detail.kind === "individual" ? "個人のため対象" : "対象外"}</dd>
+                      {/* 空欄は薄い「—」ではなく欠けとして見せる。書類に出る項目なので。 */}
+                      <dt>住所</dt>
+                      <dd>{detail.address ?? <span className="tag out">未登録</span>}</dd>
+                      <dt>電話</dt><dd>{detail.phone ?? "—"}</dd>
+                      <dt>メール</dt><dd className="faint">{detail.email ?? "—"}</dd>
+                      <dt>口座</dt>
+                      <dd className="row">
+                        <span className="faint">
+                          {detail.bankAccount?.bankName ?? "登録なし"}
+                        </span>
+                        {/* 口座番号と名義はここには出さない。直すときだけ、
+                            権限を絞った経路で取りに行く。 */}
+                        <PartyBankAccount partyId={detail.id} partyName={detail.name}
+                          onSaved={() => reload(detail.id)} />
+                      </dd>
+                    </dl>
+                  </div>
+                  )}
+                </div>
+
+                {/* 連絡先。書く口（PUT /parties/:id/contacts）はあったのに、
+                    画面は見るだけだった。書類の宛先はここから出る。 */}
+                <PartyContacts party={detail} onSaved={() => reload(detail.id)} />
+
+                <div className="panel">
+                  <div className="panel-hd"><h2>参照している実体</h2><span className="faint">名寄せの影響範囲</span></div>
+                  <div className="panel-bd">
+                    <dl className="dl">
+                      <dt>条件</dt><dd>{detail.references.conditions}件</dd>
+                      <dt>支払</dt><dd>{detail.references.payments}件</dd>
+                      <dt>合意</dt><dd>{detail.references.documents}件</dd>
+                      <dt>案件</dt><dd>{detail.references.matters}件</dd>
+                    </dl>
+                    <div className="faint" style={{ marginTop: 9 }}>
+                      統合しても参照は付け替えません。統合先を辿って解決するためです。
+                    </div>
+                  </div>
+                </div>
+
+                {/* 相手先からも契約と条件明細へ辿れるようにする。 */}
+                <Relations kind="party" id={detail.id} onOpen={onOpen} />
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/**
+ * 担当者1行。押したところだけ直せるようにする。
+ *
+ * 検収書の【ご連絡先】は部署・氏名・メールをそのまま差すので、ここが空だと
+ * 「5営業日以内に下記へご連絡ください」と書いてあるのに宛先の無い紙になる。
+ * 移行で入れたきり直す経路が無かったので、一覧から直せるようにした。
+ */
+function StaffRow({ row, onSaved }: { row: Staff; onSaved: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(row);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function start() { setDraft(row); setError(null); setEditing(true); }
+
+  async function save() {
+    setBusy(true); setError(null);
+    try {
+      await api.patch(`/staff/${row.id}`, {
+        name: draft.name, email: draft.email, department: draft.department,
+        phone: draft.phone, status: draft.status
+      });
+      setEditing(false);
+      onSaved();
+    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
+    finally { setBusy(false); }
+  }
+
+  if (!editing) {
+    return (
+      <tr>
+        <td className="code">{row.staffCode ?? `#${row.id}`}</td>
+        <td>{row.name}</td>
+        <td>{row.department ?? "—"}</td>
+        {/* 空欄は薄い「—」ではなく、欠けとして見せる。書類に出る項目なので。 */}
+        <td className={row.email ? "faint" : ""}>
+          {row.email ?? <span className="tag out">未登録</span>}
+        </td>
+        <td className="faint">{row.phone ?? "—"}</td>
+        <td><StatusTag kind="staff" value={row.status} /></td>
+        <td><button className="btn btn-sm" onClick={start}>直す</button></td>
+      </tr>
+    );
+  }
+
+  const cell = (key: "name" | "email" | "department" | "phone", placeholder?: string) => (
+    <td>
+      <input value={draft[key] ?? ""} placeholder={placeholder} disabled={busy}
+             onChange={(e) => setDraft({ ...draft, [key]: e.target.value })} />
+    </td>
+  );
+
+  return (
+    <tr className="sel">
+      <td className="code">{row.staffCode ?? `#${row.id}`}</td>
+      {cell("name")}
+      {cell("department", "ボードゲーム事業部")}
+      {cell("email", "asai@example.co.jp")}
+      {cell("phone", "03-0000-0000")}
+      <td>
+        <select value={draft.status} disabled={busy}
+                onChange={(e) => setDraft({ ...draft, status: e.target.value })}>
+          <option value="active">在籍</option>
+          <option value="retired">退職</option>
+        </select>
+      </td>
+      <td className="row">
+        <button className="btn btn-sm primary" onClick={() => void save()} disabled={busy}>
+          保存
+        </button>
+        <button className="btn btn-sm" onClick={() => setEditing(false)} disabled={busy}>
+          やめる
+        </button>
+        {error && <span className="faint">{error}</span>}
+      </td>
+    </tr>
+  );
+}
+
+/**
+ * 取引先を直す欄。
+ *
+ * 登録する経路はあったのに直す経路が無く、名前の誤りもインボイス番号の欠けも
+ * SQL でしか直せなかった。住所・電話・メールに至っては入れる口も無く、移行と
+ * CSV 取込で入ったきりだった。契約書の頭書きと請求書の宛先はここから出るので、
+ * 直せないままでは誤った紙が出続ける。
+ */
+function PartyEdit(
+  { party, onDone, onCancel }: {
+    party: PartyDetail;
+    onDone: () => void;
+    onCancel: () => void;
+  }
+) {
+  const [v, setV] = useState({
+    name: party.name,
+    kind: party.kind as string,
+    nameKana: party.nameKana ?? "",
+    invoiceNo: party.invoiceNo ?? "",
+    corporateNo: party.corporateNo ?? "",
+    withholding: party.withholding,
+    address: party.address ?? "",
+    phone: party.phone ?? "",
+    email: party.email ?? "",
+    aliases: party.aliases.join("\n"),
+    status: party.status
+  });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function save() {
+    setBusy(true); setError(null);
+    try {
+      await api.patch(`/parties/${party.id}`, {
+        name: v.name.trim(), kind: v.kind,
+        // 空文字は「消す」。サーバ側で NULL に落として、書類の空欄判定を効かせる。
+        nameKana: v.nameKana, invoiceNo: v.invoiceNo, corporateNo: v.corporateNo,
+        withholding: v.withholding,
+        address: v.address, phone: v.phone, email: v.email,
+        aliases: v.aliases.split("\n").map((a) => a.trim()).filter(Boolean),
+        status: v.status
+      });
+      onDone();
+    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
+    finally { setBusy(false); }
+  }
+
+  const field = (
+    key: "name" | "nameKana" | "invoiceNo" | "corporateNo" | "address" | "phone" | "email",
+    label: string, placeholder?: string, hint?: string
+  ) => (
+    <label className="field">
+      <span>{label}</span>
+      <span className="stack" style={{ gap: 2 }}>
+        <input value={v[key]} placeholder={placeholder} disabled={busy}
+               onChange={(e) => setV({ ...v, [key]: e.target.value })} />
+        {hint && <small className="faint">{hint}</small>}
+      </span>
+    </label>
+  );
+
+  return (
+    <div className="panel-bd stack">
+      {error && <div className="alert">{error}</div>}
+      <div className="form-grid">
+        {field("name", "名称", "株式会社◯◯", "書類の宛名になります。空にはできません")}
+        <label className="field">
+          <span>区分</span>
+          <select value={v.kind} disabled={busy}
+                  onChange={(e) => setV({ ...v, kind: e.target.value })}>
+            <option value="corporate">法人</option>
+            <option value="individual">個人</option>
+          </select>
+        </label>
+        {field("nameKana", "カナ")}
+        {field("invoiceNo", "インボイス登録番号", "T1234567890123")}
+        {v.kind !== "individual" && field("corporateNo", "法人番号")}
+        {field("address", "住所", "東京都千代田区…", "契約書の頭書きと請求書の宛先に出ます")}
+        {field("phone", "電話", "03-0000-0000")}
+        {field("email", "メール", "info@example.co.jp")}
+        <label className="field">
+          <span>源泉徴収</span>
+          <span className="row">
+            <input type="checkbox" checked={v.withholding} disabled={busy}
+                   onChange={(e) => setV({ ...v, withholding: e.target.checked })} />
+            <small className="faint">
+              個人は区分だけで対象になります。法人でも対象なら入れてください
+            </small>
+          </span>
+        </label>
+        <label className="field">
+          <span>状態</span>
+          <span className="stack" style={{ gap: 2 }}>
+            <select value={v.status} disabled={busy}
+                    onChange={(e) => setV({ ...v, status: e.target.value })}>
+              <option value="active">取引中</option>
+              <option value="archived">取引終了</option>
+            </select>
+            <small className="faint">
+              取引終了にしても、これまでの条件・支払・書類は残ります
+            </small>
+          </span>
+        </label>
+        <label className="field wide">
+          <span>別名</span>
+          <span className="stack" style={{ gap: 2 }}>
+            <textarea rows={2} value={v.aliases} disabled={busy}
+                      onChange={(e) => setV({ ...v, aliases: e.target.value })} />
+            <small className="faint">屋号・ペンネーム・旧称。改行で区切る。名寄せの手がかりになる</small>
+          </span>
+        </label>
+      </div>
+      <div className="row">
+        <button className="btn primary" onClick={() => void save()}
+                disabled={busy || !v.name.trim()}>
+          {busy ? "保存中…" : "保存する"}
+        </button>
+        <button className="btn" onClick={onCancel} disabled={busy}>やめる</button>
+      </div>
+    </div>
+  );
+}
+
+/** 連絡先の役割。書類のどこに出るかで決まっているので、増やすのは3つだけ。 */
+const CONTACT_ROLES = [
+  { value: "primary", label: "主担当", hint: "検収書の【ご連絡先】と、送信の宛先" },
+  { value: "signer", label: "署名者", hint: "契約書の記名押印欄" },
+  { value: "billing", label: "請求先", hint: "請求書・支払通知書の宛先" }
+];
+
+/**
+ * 取引先の連絡先。役割ごとに1件。
+ *
+ * 書く口はサーバにあったのに、画面は表を出すだけで直せなかった。
+ * 検収書は「5営業日以内に下記へご連絡ください」と書くので、ここが空だと
+ * 宛先の無い紙が出る。
+ */
+function PartyContacts(
+  { party, onSaved }: { party: PartyDetail; onSaved: () => void }
+) {
+  const [role, setRole] = useState<string | null>(null);
+  const [v, setV] = useState({ name: "", email: "", phone: "", department: "" });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function start(target: string) {
+    const found = party.contacts.find((c) => c.role === target);
+    setV({
+      name: found?.name ?? "", email: found?.email ?? "",
+      phone: found?.phone ?? "", department: found?.department ?? ""
+    });
+    setError(null);
+    setRole(target);
+  }
+
+  async function save() {
+    if (!role) return;
+    setBusy(true); setError(null);
+    try {
+      await api.put(`/parties/${party.id}/contacts`, { role, ...v });
+      setRole(null);
+      onSaved();
+    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
+    finally { setBusy(false); }
+  }
+
+  const cell = (key: "name" | "email" | "phone" | "department", placeholder?: string) => (
+    <td>
+      <input value={v[key]} placeholder={placeholder} disabled={busy}
+             onChange={(e) => setV({ ...v, [key]: e.target.value })} />
+    </td>
+  );
+
+  return (
+    <div className="panel">
+      <div className="panel-hd">
+        <h2>連絡先</h2>
+        <span className="faint">役割ごとに1件。書類の宛先はここから出ます</span>
+      </div>
+      {error && <div className="panel-bd"><div className="alert">{error}</div></div>}
+      <div className="tablewrap">
+        <table>
+          <thead><tr>
+            <th>役割</th><th>氏名</th><th>メール</th><th>電話</th><th>部門</th><th></th>
+          </tr></thead>
+          <tbody>
+            {CONTACT_ROLES.map((r) => {
+              const c = party.contacts.find((x) => x.role === r.value);
+              if (role === r.value) {
+                return (
+                  <tr key={r.value} className="sel">
+                    <td>{r.label}</td>
+                    {cell("name", "青井 蒼")}
+                    {cell("email", "ao@example.co.jp")}
+                    {cell("phone", "03-0000-0000")}
+                    {cell("department", "制作部")}
+                    <td className="row">
+                      <button className="btn btn-sm primary" disabled={busy}
+                              onClick={() => void save()}>保存</button>
+                      <button className="btn btn-sm" disabled={busy}
+                              onClick={() => setRole(null)}>やめる</button>
+                    </td>
+                  </tr>
+                );
+              }
+              return (
+                <tr key={r.value}>
+                  <td>{r.label}<div className="faint">{r.hint}</div></td>
+                  <td>{c?.name ?? "—"}</td>
+                  {/* 空欄は薄い「—」ではなく欠けとして見せる。主担当のメールは
+                      検収書の異議申立先なので、空なら書類が成立しない。 */}
+                  <td className={c?.email ? "faint" : ""}>
+                    {c?.email ?? (r.value === "primary"
+                      ? <span className="tag out">未登録</span> : "—")}
+                  </td>
+                  <td className="faint">{c?.phone ?? "—"}</td>
+                  <td>{c?.department ?? "—"}</td>
+                  <td>
+                    <button className="btn btn-sm" onClick={() => start(r.value)}>
+                      {c ? "直す" : "入れる"}
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+            {/* 役割の一覧に無いものが移行で入っていることがある。読めるようにする。 */}
+            {party.contacts.filter((c) => !CONTACT_ROLES.some((r) => r.value === c.role)).map((c) => (
+              <tr key={c.role}>
+                <td>{ROLE_LABEL[c.role] ?? c.role}</td>
+                <td>{c.name ?? "—"}</td>
+                <td className="faint">{c.email ?? "—"}</td>
+                <td className="faint">{c.phone ?? "—"}</td>
+                <td>{c.department ?? "—"}</td>
+                <td />
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
