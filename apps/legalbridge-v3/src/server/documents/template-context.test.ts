@@ -362,3 +362,22 @@ test("検収書の納品明細に、支払方法と報酬の名前が入る", ()
   // 金額は実績のまま。業績連動でも計算は別で行い、結果を人が入れる。
   assert.equal(line.inspected_amount_ex_tax, 120000);
 });
+
+test("支払日ごとにまとめても、業績連動の欄は行に残る", () => {
+  // 本文は paymentGroups → this.lines を差す。ここで拾い落とすと、人が明細に
+  // 入れた報酬の内訳がどこにも出ない（拾っていなかった）。
+  const block = buildTemplateContext("inspection_certificate", {}, {
+    delivery_line_items: [{
+      item_name: "挿絵", inspected_amount_ex_tax: 120000, inspection_status: "paid",
+      payment_date: "2026-06-30", calc_method: "ROYALTY", reward_label: "利用許諾料",
+      rate_pct: "8", base_price_label: "上代 × 数量", formula_text: "上代1,500円 × 1,000部 × 8%",
+      deliverable_ownership: "受注者"
+    }]
+  });
+  const line = (block.paymentGroups as any[])[0].lines[0];
+  assert.equal(line.reward_label, "利用許諾料");
+  assert.equal(line.rate_pct, "8");
+  assert.equal(line.base_price_label, "上代 × 数量");
+  assert.equal(line.formula_text, "上代1,500円 × 1,000部 × 8%");
+  assert.equal(line.deliverable_ownership, "受注者");
+});

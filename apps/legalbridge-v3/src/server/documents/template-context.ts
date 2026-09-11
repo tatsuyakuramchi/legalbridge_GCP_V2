@@ -456,7 +456,15 @@ function paymentGroups(paid: Row[], now: Row[], taxRate: number, context: Ctx) {
         amount_ex_tax: num(l.inspected_amount_ex_tax ?? l.amount_ex_tax ?? l.amount),
         hasChange: l.hasChange === true,
         changeLabel: l.changeLabel ?? "",
-        changeNote: l.changeNote ?? ""
+        changeNote: l.changeNote ?? "",
+        // 業績連動のぶん。報酬計算書を別に作らず、この行の下に内訳を書く。
+        // ここで拾わないと、人が明細に入れても本文まで届かない。
+        deliverable_ownership: l.deliverable_ownership ?? "",
+        calc_method: l.calc_method ?? "",
+        reward_label: l.reward_label ?? "",
+        rate_pct: l.rate_pct ?? "",
+        base_price_label: l.base_price_label ?? "",
+        formula_text: l.formula_text ?? ""
       })),
       subtotalStr: yen(subtotal),
       taxAmountStr: yen(tax),
