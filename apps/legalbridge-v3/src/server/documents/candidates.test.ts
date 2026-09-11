@@ -6,7 +6,9 @@ const ctx = () => ({
   condition: {
     conditionNo: "CL-2026-00410", name: "毎月280,000円の委託",
     counterparty: { name: "吉澤淳郎", honorific: "様", kana: "ヨシザワ ジュンロウ",
-                    invoiceNo: "T1234567890123" },
+                    invoiceNo: "T1234567890123", corporateNo: null,
+                    address: "東京都杉並区高円寺1-2-3", phone: "03-1111-2222",
+                    email: "yoshizawa@example.com" },
     termStart: "2026-04-01", termEnd: "2027-03-31",
     paymentTerms: "検収月の翌月末払い", flatAmount: 280000
   },
@@ -26,6 +28,14 @@ test("取引先の情報を候補に出す（宛名・カナ・インボイス�
   assert.equal(find("相手先名（敬称つき）")?.value, "吉澤淳郎 様");
   assert.equal(find("取引先カナ")?.value, "ヨシザワ ジュンロウ");
   assert.equal(find("インボイス登録番号")?.value, "T1234567890123");
+});
+
+test("取引先そのものの連絡先も候補に出す（登録してあるのに選べなかった）", () => {
+  // 住所・電話・メールは取引先の列。契約書の頭書きと請求書の宛先に出るのに、
+  // 候補に入れていなかったので、登録してあっても手で打ち直すしかなかった。
+  assert.equal(find("取引先の住所")?.value, "東京都杉並区高円寺1-2-3");
+  assert.equal(find("取引先の電話")?.value, "03-1111-2222");
+  assert.equal(find("取引先のメール")?.value, "yoshizawa@example.com");
 });
 
 test("取引先の担当者を役割ごとに出す", () => {

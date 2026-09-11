@@ -1372,17 +1372,21 @@ export function createRoutes(database: Transactable) {
     if (q.length < 1) return res.json({ candidates: [] });
     const like = `%${q}%`;
     const staff = await database.query(
-      `SELECT name, email, department, staff_code FROM staff
+      `SELECT name, email, department, phone, staff_code FROM staff
         WHERE status = 'active'
           AND (name ILIKE $1 OR department ILIKE $1 OR email ILIKE $1 OR staff_code ILIKE $1)
         ORDER BY department NULLS LAST, name LIMIT 8`, [like]);
     const partyRows = await database.query(
-      `SELECT p.id, p.name, p.name_kana, p.invoice_no, p.kind
+      // 住所・電話・メールは取引先そのものが持つ列。書類の頭書きと宛先に出る
+      // のに、ここで拾っていなかったので「探して入れる」に出てこなかった。
+      `SELECT p.id, p.name, p.name_kana, p.invoice_no, p.corporate_no, p.kind,
+              p.address, p.phone, p.email
          FROM parties p
-        WHERE p.status = 'active' AND (p.name ILIKE $1 OR p.name_kana ILIKE $1)
+        WHERE p.status = 'active'
+          AND (p.name ILIKE $1 OR p.name_kana ILIKE $1 OR p.email ILIKE $1)
         ORDER BY p.name LIMIT 8`, [like]);
     const contacts = await database.query(
-      `SELECT c.role, c.name, c.email, c.department, p.name AS party_name
+      `SELECT c.role, c.name, c.email, c.phone, c.department, p.name AS party_name
          FROM party_contacts c JOIN parties p ON p.id = c.party_id
         WHERE c.name ILIKE $1 OR c.department ILIKE $1 OR c.email ILIKE $1
         ORDER BY p.name LIMIT 8`, [like]);
@@ -1397,20 +1401,28 @@ export function createRoutes(database: Transactable) {
       push("スタッフ", `${r.name} の氏名`, r.name);
       push("スタッフ", `${r.name} の部署`, r.department);
       push("スタッフ", `${r.name} のメール`, r.email);
+      push("スタッフ", `${r.name} の電話`, r.phone);
     }
     for (const r of partyRows.rows as Array<Record<string, any>>) {
       push("取引先", `${r.name} の名称`, r.name);
       push("取引先", `${r.name} の宛名`,
            `${r.name} ${r.kind === "individual" ? "様" : "御中"}`);
       push("取引先", `${r.name} のカナ`, r.name_kana);
+      push("取引先", `${r.name} のメール`, r.email);
+      push("取引先", `${r.name} の電話`, r.phone);
+      push("取引先", `${r.name} の住所`, r.address);
       push("取引先", `${r.name} のインボイス番号`, r.invoice_no);
+      push("取引先", `${r.name} の法人番号`, r.corporate_no);
     }
     for (const r of contacts.rows as Array<Record<string, any>>) {
       push("先方担当", `${r.party_name} ${r.name ?? ""} の氏名`, r.name);
       push("先方担当", `${r.party_name} ${r.name ?? ""} の部署`, r.department);
       push("先方担当", `${r.party_name} ${r.name ?? ""} のメール`, r.email);
+      push("先方担当", `${r.party_name} ${r.name ?? ""} の電話`, r.phone);
     }
-    res.json({ candidates: out.slice(0, 24) });
+    // 1件の名前で引いても、取引先と先方担当で 10 件を超える。24 で切ると
+    // あとに並ぶ先方担当がまるごと落ちていた。
+    res.json({ candidates: out.slice(0, 60) });
   }));
 
   /**

@@ -71,6 +71,11 @@ export function buildCandidates(context: Record<string, any>): Candidate[] {
     add("取引先", "取引先カナ", c.counterparty?.kana, "text");
     add("取引先", "インボイス登録番号", c.counterparty?.invoiceNo, "text");
     add("取引先", "法人番号", c.counterparty?.corporateNo, "text");
+    // 取引先そのものが持つ連絡先。契約書の頭書きと請求書の宛先に出るのに、
+    // 候補に出していなかったので、登録してあっても選べなかった。
+    add("取引先", "取引先の住所", c.counterparty?.address, "text");
+    add("取引先", "取引先の電話", c.counterparty?.phone, "text");
+    add("取引先", "取引先のメール", c.counterparty?.email, "text");
   }
   for (const contact of (context.contacts ?? []) as Array<Record<string, any>>) {
     const role = CONTACT_ROLE[contact.role] ?? contact.role;
