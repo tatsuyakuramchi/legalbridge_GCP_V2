@@ -273,7 +273,9 @@ export function roleOfPart(part: { partType?: string | null; part?: string | nul
   const type = String(part.partType ?? "").toLowerCase();
   if (type === "game_design") return "core";
   if (type && type !== "other" && type !== "unspecified") return "sub";
-  return /ゲームデザイン|原作|コアロジック|core/i.test(String(part.part ?? "")) ? "core" : "sub";
+  // Original_Core_Logic は台帳の命名規則（旧「原作ゲームデザイン」）。
+  return /Original_Core_Logic|ゲームデザイン|原作|コアロジック|core/i
+    .test(String(part.part ?? "")) ? "core" : "sub";
 }
 
 /**

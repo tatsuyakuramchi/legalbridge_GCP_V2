@@ -354,6 +354,8 @@ test("構成上の役割は素材の種別から決める（コアロジック�
   assert.equal(roleOfPart({ partType: "scenario", part: "追補" }), "sub");
   // 種別が入っていない素材は名前で見る。
   assert.equal(roleOfPart({ partType: "other", part: "原作ゲームデザイン" }), "core");
+  // 台帳の命名規則（2026-09-11 に「原作ゲームデザイン」から改名）。
+  assert.equal(roleOfPart({ partType: "other", part: "ito_Original_Core_Logic" }), "core");
   assert.equal(roleOfPart({ partType: null, part: "設定資料" }), "sub");
   assert.equal(roleOfPart({}), "sub", "分からなければサブ（コアを勝手に増やさない）");
 });
