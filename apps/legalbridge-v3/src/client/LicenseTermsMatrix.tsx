@@ -74,6 +74,20 @@ export function LicenseTermsMatrix(
     // 非加算型は構成要素の料率を持たない。実効料率をここに入れないと空欄で出る。
     ...used.filter((d) => !d.addon && !String(d.fixedRate ?? "").trim())
       .map((d) => `${text(d.name)}（非加算型）の実効料率が空です`),
+    /**
+     * 同じ素材が複数の根拠文書で並んでいる。改訂（新しい条件書が前のを
+     * 差し替えた）なら、新しいほうだけを載せる。両方載せると料率が二重に
+     * 合算される。どちらが正かは人しか知らないので、落とさずに出す。
+     */
+    ...[...materialRows.reduce((map, row) => {
+      const name = text(row.name).trim();
+      if (name) map.set(name, (map.get(name) ?? new Set<string>()).add(text(row.source_doc).trim()));
+      return map;
+    }, new Map<string, Set<string>>())]
+      .filter(([, docs]) => docs.size > 1)
+      .map(([name, docs]) =>
+        `構成要素「${name}」が ${[...docs].map((d) => d || "根拠なし").join("・")} の`
+        + "2つ以上で並んでいます。改訂なら新しいほうだけを載せてください（料率が二重に合算されます）"),
     ...used.filter((d) => d.rateConflict)
       .map((d) => `${text(d.name)} に当たった条件明細で料率が割れています（${text(d.conditionNo)}）。`
         + "実効料率は1つしか書けないので、どれを書くか決めてください"),
