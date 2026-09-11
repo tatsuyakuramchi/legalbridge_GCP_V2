@@ -74,7 +74,8 @@ lineage AS (
 twisted AS (
   SELECT 6 AS n, 'いまねじれている行' AS 区分,
          count(*)::text || ' 件' AS 対象,
-         'パートの作品と条件の作品が食い違う行（移したあと 0 になること）' AS 詳細
+         'パートの作品と条件の作品が食い違う行。今回の対象（下の条件明細）のぶんは移動で解消する。'
+         || '残りは別の素材の話なので、この作業では減らない' AS 詳細
     FROM v3.conditions c JOIN v3.work_parts p ON p.id = c.work_part_id
    WHERE c.work_id IS DISTINCT FROM p.work_id
 )
@@ -140,15 +141,21 @@ BEGIN
      AND c.work_id IS DISTINCT FROM p.work_id;
   GET DIAGNOSTICS moved_conds = ROW_COUNT;
 
-  -- 確認。食い違う行が残っていたら、この DO ごと巻き戻る。
+  -- 確認は「今回動かしたパート」だけを見る。
+  -- 台帳全体には対象外のねじれも残っている（本番で39件）。全体を条件にすると、
+  -- 直したぶんまで巻き戻る。残りは知らせるだけにして、止める理由にはしない。
+  SELECT count(*) INTO bad
+    FROM v3.conditions c JOIN v3.work_parts p ON p.id = c.work_part_id
+   WHERE p.id IN (24, 28, 26) AND c.work_id IS DISTINCT FROM p.work_id;
+  IF bad > 0 THEN
+    RAISE EXCEPTION '動かしたパートで、作品の食い違う条件が % 件残っています。巻き戻しました', bad;
+  END IF;
+
   SELECT count(*) INTO bad
     FROM v3.conditions c JOIN v3.work_parts p ON p.id = c.work_part_id
    WHERE c.work_id IS DISTINCT FROM p.work_id;
-  IF bad > 0 THEN
-    RAISE EXCEPTION 'パートの作品と条件の作品が食い違う行が % 件あります。巻き戻しました', bad;
-  END IF;
-
-  RAISE NOTICE 'パート % 件、条件明細 % 件を移しました。', moved_parts, moved_conds;
+  RAISE NOTICE 'パート % 件、条件明細 % 件を移しました。台帳全体に残っているねじれ: % 件（今回の対象外。別途の整理が要る）',
+               moved_parts, moved_conds, bad;
 END
 $move$;
 

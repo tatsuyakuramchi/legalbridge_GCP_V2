@@ -131,15 +131,20 @@ UPDATE v3.conditions c
    AND p.id IN (SELECT part_id FROM move_plan)
    AND c.work_id IS DISTINCT FROM p.work_id;
 
--- 確認：パートの作品と条件の作品が食い違う行が残っていないこと。
+-- 確認：今回動かしたパートについて、食い違う行が残っていないこと。
+--
+-- 全体で見てはいけない。台帳には今回の対象以外にも、パートと条件の作品が
+-- 食い違う行が残っている（本番で39件）。全体を条件にすると、直したぶんまで
+-- 巻き戻る。残りの件数は下に出すが、止める理由にはしない。
 DO $verify$
 DECLARE bad int;
 BEGIN
   SELECT count(*) INTO bad
     FROM v3.conditions c JOIN v3.work_parts p ON p.id = c.work_part_id
-   WHERE c.work_id IS DISTINCT FROM p.work_id;
+   WHERE p.id IN (SELECT part_id FROM move_plan)
+     AND c.work_id IS DISTINCT FROM p.work_id;
   IF bad > 0 THEN
-    RAISE EXCEPTION 'パートの作品と条件の作品が食い違う行が % 件あります', bad;
+    RAISE EXCEPTION '動かしたパートで、作品の食い違う条件が % 件残っています', bad;
   END IF;
 END
 $verify$;
@@ -154,3 +159,8 @@ SELECT w.work_code AS 作品, w.title AS 作品名,
   FROM v3.works w
  WHERE w.work_code IN ('LO-2026-0021', 'W-2026-0001', 'W-2026-0012')
  ORDER BY w.work_code;
+
+\echo '--- 台帳全体に残っているねじれ（今回の対象以外。別途の整理が要る）---'
+SELECT count(*) AS 残っているねじれ
+  FROM v3.conditions c JOIN v3.work_parts p ON p.id = c.work_part_id
+ WHERE c.work_id IS DISTINCT FROM p.work_id;
