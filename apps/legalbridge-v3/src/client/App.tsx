@@ -90,7 +90,8 @@ export function App() {
    * 作成のフォームは1つだけにしてあるので、どこから入っても同じものを見る。
    */
   const [compose, setCompose] =
-    useState<{ conditionIds: number[]; eventIds: number[]; matterId: number | null } | null>(null);
+    useState<{ conditionIds: number[]; eventIds: number[]; matterId: number | null;
+               bulk?: boolean } | null>(null);
   /** 他の画面の「編集」から文書の画面へ来たときの相手。 */
   const [openDocument, setOpenDocument] = useState<number | undefined>();
   // 条件は複数受ける。発注書のように1枚で2件以上の条件を載せる書類があるので、
@@ -98,6 +99,19 @@ export function App() {
   // 案件も受ける。案件や条件の画面から作った文書は、その案件に載せる。
   const startCompose = (conditionIds: number[], eventIds: number[] = [], matterId: number | null = null) => {
     setCompose({ conditionIds, eventIds, matterId });
+    setFocus(null);
+    setOpenDocument(undefined);
+    setView("documents");
+  };
+
+  /**
+   * 発注書の一括作成へ移る。案件を決めた状態で開く。
+   *
+   * 入口が文書の画面の中にしか無く、案件から来た人は画面を移ってから
+   * 案件をもう一度選び直す必要があった（同じ案件を2回選ばせていた）。
+   */
+  const startBulkOrders = (matterId: number) => {
+    setCompose({ conditionIds: [], eventIds: [], matterId, bulk: true });
     setFocus(null);
     setOpenDocument(undefined);
     setView("documents");
@@ -156,7 +170,8 @@ export function App() {
         {view === "matters" && (
           <MattersWorkspace key={`m${focusFor("matters") ?? 0}`}
             onOpenCondition={openCondition} initialId={focusFor("matters")}
-            onOpen={openEntity} onCompose={startCompose} onOpenDocument={openDocumentAt} />
+            onOpen={openEntity} onCompose={startCompose} onOpenDocument={openDocumentAt}
+            onBulkOrders={startBulkOrders} />
         )}
         {view === "conditions" && (
           <ConditionsWorkspace key={conditionId ?? 0} initialId={conditionId}
@@ -174,7 +189,8 @@ export function App() {
         )}
         {view === "documents" && (
           <DocumentsWorkspace
-            key={compose ? `c${compose.conditionIds.join("-")}` : openDocument ? `d${openDocument}` : "docs"}
+            key={compose ? `c${compose.bulk ? "bulk" : ""}${compose.matterId ?? ""}${compose.conditionIds.join("-")}`
+                          : openDocument ? `d${openDocument}` : "docs"}
             start={compose ?? undefined} openDocumentId={openDocument}
             onOpen={openEntity} />
         )}

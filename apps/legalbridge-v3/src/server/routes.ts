@@ -1288,7 +1288,8 @@ export function createRoutes(database: Transactable) {
     templateKey: z.string().trim().min(1).max(60),
     matterId: z.coerce.number().int().positive(),
     csv: z.string().min(1).max(2_000_000),
-    choices: z.record(z.string(), z.coerce.number().int().positive()).default({})
+    choices: z.record(z.string(), z.coerce.number().int().positive()).default({}),
+    workChoices: z.record(z.string(), z.coerce.number().int().positive()).default({})
   });
   // 突き合わせ。何も作らない。
   router.post("/documents/batches/preview", requireRole("admin", "legal"),

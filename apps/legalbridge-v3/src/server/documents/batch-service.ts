@@ -31,6 +31,10 @@ export const TEMPLATE_KEYS = new Set(["purchase_order", "intl_purchase_order"]);
 export const ORDER_COLUMNS: Array<{ key: string; label: string; required?: boolean; note: string }> = [
   { key: "partyCode", label: "取引先コード", note: "コードか名前のどちらかで当てる" },
   { key: "partyName", label: "取引先名", note: "登録名・別名・カナのどれかに一致" },
+  // 作品は1つの案件に何本でも載る。列が無いと、同じ取引先の行が作品をまたいで
+  // 1枚に混ざり、条件明細も作品なしで作られていた。
+  { key: "workCode", label: "作品コード", note: "コードか作品名のどちらかで当てる。空なら作品なし" },
+  { key: "workTitle", label: "作品名", note: "登録名に一致" },
   { key: "item_name", label: "品目・業務名", required: true, note: "" },
   { key: "spec", label: "仕様・成果物", note: "" },
   { key: "quantity", label: "数量", note: "空なら 1" },
@@ -44,17 +48,23 @@ export const ORDER_COLUMNS: Array<{ key: string; label: string; required?: boole
 
 export function templateCsv(): string {
   const header = ORDER_COLUMNS.map((c) => c.label).join(",");
-  const example = [
-    "VD-00317", "合同会社アトリエ蒼", "第4巻 表紙イラスト", "カラー1点", "1", "150000",
-    "2026-10-31", "2026-11-30", "発注者", "固定額", ""
-  ].join(",");
-  return `﻿${header}\n${example}\n`;
+  // 例は2行にする。1行だけだと「同じ取引先でも作品が違えば別の発注書になる」
+  // ことが伝わらず、作品の列を空のまま使われる。
+  const examples = [
+    ["VD-00317", "合同会社アトリエ蒼", "WRK-10013", "星降る夜のミュゼ", "第4巻 表紙イラスト",
+     "カラー1点", "1", "150000", "2026-10-31", "2026-11-30", "発注者", "固定額", ""],
+    ["VD-00317", "合同会社アトリエ蒼", "WRK-10021", "夜明けのクロニクル", "第1巻 挿絵",
+     "モノクロ12点", "12", "8000", "2026-11-30", "2026-12-31", "発注者", "固定額", ""]
+  ].map((row) => row.join(","));
+  return `﻿${header}\n${examples.join("\n")}\n`;
 }
 
 export interface BatchRow {
   line: number;
   partyCode: string | null;
   partyName: string | null;
+  workCode: string | null;
+  workTitle: string | null;
   item: Record<string, unknown>;
   amount: number;
   issues: string[];
@@ -105,6 +115,8 @@ export function readRows(text: string): BatchRow[] {
       line: i + 2,
       partyCode: get("partyCode") || null,
       partyName: get("partyName") || null,
+      workCode: get("workCode") || null,
+      workTitle: get("workTitle") || null,
       item: {
         item_name: itemName, spec: get("spec") || null,
         quantity: quantity ?? null, unit_price: unitPrice ?? null, amount_ex_tax: amount,
@@ -127,14 +139,25 @@ export function ownershipOfRows(rows: BatchRow[]): "orderer" | "contractor" | nu
 }
 
 export interface PartyCandidate { id: number; name: string; partyCode: string | null }
+export interface WorkCandidate { id: number; title: string; workCode: string | null }
+
+/** 作品の当たり方。none は CSV が作品を書いていない（作品なしの発注）。 */
+export type WorkResolution = "none" | "resolved" | "ambiguous" | "missing";
+
 export interface BatchGroup {
-  /** 束の鍵。取引先コードがあればそれ、無ければ名前。 */
+  /** 束の鍵。取引先（コード、無ければ名前）と作品の組。 */
   key: string;
   partyCode: string | null;
   partyName: string | null;
   resolution: "resolved" | "ambiguous" | "missing";
   party: PartyCandidate | null;
   candidates: PartyCandidate[];
+  /** CSV に書かれた作品と、その当たり具合。 */
+  workCode: string | null;
+  workTitle: string | null;
+  workResolution: WorkResolution;
+  work: WorkCandidate | null;
+  workCandidates: WorkCandidate[];
   /** 条件明細の扱い。既存に当てるか、新しく作るか。 */
   condition: { mode: "existing" | "new"; id: number | null; conditionNo: string | null };
   rows: BatchRow[];
@@ -149,18 +172,35 @@ export interface BatchPreview {
   summary: { rows: number; groups: number; creatable: number; skipped: number; choose: number };
 }
 
-/** 同じ取引先の行を束ねる。鍵はコード、無ければ名前。 */
-export function groupRows(rows: BatchRow[]): Array<Pick<BatchGroup, "key" | "partyCode" | "partyName" | "rows" | "total">> {
+/** 束の鍵の取引先の側。コード、無ければ名前。 */
+const partyToken = (r: BatchRow) =>
+  r.partyCode ? `code:${r.partyCode.toLowerCase()}` : r.partyName ? `name:${r.partyName}` : `line:${r.line}`;
+
+/** 束の鍵の作品の側。書いていなければ「作品なし」。 */
+const workToken = (r: BatchRow) =>
+  r.workCode ? `wcode:${r.workCode.toLowerCase()}` : r.workTitle ? `wname:${r.workTitle}` : "wnone";
+
+/**
+ * 同じ取引先・同じ作品の行を束ねる。1束 = 発注書1枚 = 条件明細1件。
+ *
+ * 取引先だけで束ねていたので、1つの案件に作品が何本かあると、同じ取引先の
+ * 行が作品をまたいで1枚に混ざっていた。条件明細も作品なしで1件できるので、
+ * その先（検収書・支払・権利）からどの作品の仕事か辿れなくなる。
+ */
+export function groupRows(rows: BatchRow[]): Array<
+  Pick<BatchGroup, "key" | "partyCode" | "partyName" | "workCode" | "workTitle" | "rows" | "total">
+> {
   const order: string[] = [];
   const by = new Map<string, BatchRow[]>();
   for (const r of rows) {
-    const key = r.partyCode ? `code:${r.partyCode.toLowerCase()}` : r.partyName ? `name:${r.partyName}` : `line:${r.line}`;
+    const key = `${partyToken(r)}／${workToken(r)}`;
     if (!by.has(key)) { by.set(key, []); order.push(key); }
     by.get(key)!.push(r);
   }
   return order.map((key) => {
     const list = by.get(key)!;
-    return { key, partyCode: list[0].partyCode, partyName: list[0].partyName, rows: list,
+    return { key, partyCode: list[0].partyCode, partyName: list[0].partyName,
+             workCode: list[0].workCode, workTitle: list[0].workTitle, rows: list,
              total: list.reduce((s, r) => s + r.amount, 0) };
   });
 }
@@ -199,7 +239,8 @@ export class DocumentBatchService {
    * choices は「候補が複数の束でどれを選んだか」（束の鍵 → 取引先ID）。
    */
   async preview(input: {
-    templateKey: string; matterId: number; csv: string; choices?: Record<string, number>;
+    templateKey: string; matterId: number; csv: string;
+    choices?: Record<string, number>; workChoices?: Record<string, number>;
   }): Promise<BatchPreview> {
     if (!TEMPLATE_KEYS.has(input.templateKey)) {
       throw new DomainError("VALIDATION", "一括で作れるのは発注書（国内・海外）だけです");
@@ -218,23 +259,41 @@ export class DocumentBatchService {
           party = resolved.candidates.find((c) => c.id === chosen)!;
           resolution = "resolved";
         }
+        // 作品も取引先と同じ当て方をする。書いていなければ「作品なし」。
+        const foundWork = await this.resolveWork(this.database, g.workCode, g.workTitle);
+        const pickedWork = input.workChoices?.[g.key];
+        let work = foundWork.work;
+        let workResolution = foundWork.resolution;
+        if (workResolution === "ambiguous" && pickedWork
+            && foundWork.candidates.some((c) => c.id === pickedWork)) {
+          work = foundWork.candidates.find((c) => c.id === pickedWork)!;
+          workResolution = "resolved";
+        }
         const issues = [
           ...(resolution === "missing" ? ["取引先が未登録（コードも名前も当たらない）。この束は飛ばす"] : []),
           ...(resolution === "ambiguous" ? ["候補が複数。どれかを選ぶ"] : []),
+          ...(workResolution === "missing"
+            ? [`作品が見つからない（${[g.workCode, g.workTitle].filter(Boolean).join(" / ")}）。この束は飛ばす`] : []),
+          ...(workResolution === "ambiguous" ? ["作品の候補が複数。どれかを選ぶ"] : []),
           ...g.rows.flatMap((r) => r.issues.map((m) => `${r.line} 行目：${m}`))
         ];
-        const condition = party
-          ? await this.existingCondition(this.database, input.matterId, party.id)
+        // 作品が決まっていない束では引かない。作品なしの条件に当たって
+        // 「既存」と出てしまい、飛ばす束なのに当たっているように見える。
+        const condition = party && (workResolution === "none" || workResolution === "resolved")
+          ? await this.existingCondition(this.database, input.matterId, party.id, work?.id ?? null)
           : null;
         const blocking = g.rows.some((r) => r.issues.length > 0);
+        // 取引先と作品のどちらかが未登録なら飛ばす。どちらかが候補待ちなら選ぶ。
+        const stuck = resolution === "missing" || workResolution === "missing";
+        const choosing = resolution === "ambiguous" || workResolution === "ambiguous";
         groups.push({
           ...g, resolution, party, candidates: resolved.candidates,
+          workResolution, work, workCandidates: foundWork.candidates,
           condition: condition
             ? { mode: "existing", id: condition.id, conditionNo: condition.conditionNo }
             : { mode: "new", id: null, conditionNo: null },
           issues,
-          action: resolution === "resolved" && !blocking ? "create"
-            : resolution === "ambiguous" ? "choose" : "skip"
+          action: stuck ? "skip" : choosing ? "choose" : blocking ? "skip" : "create"
         });
       }
       return {
@@ -255,7 +314,7 @@ export class DocumentBatchService {
    */
   async create(
     input: { templateKey: string; matterId: number; csv: string; filename?: string | null;
-             choices?: Record<string, number> },
+             choices?: Record<string, number>; workChoices?: Record<string, number> },
     actor: string
   ): Promise<BatchRecord> {
     const preview = await this.preview(input);
@@ -285,8 +344,11 @@ export class DocumentBatchService {
               matterId: input.matterId,
               name: g.rows.length === 1
                 ? String(g.rows[0].item.item_name)
-                : `${matterRow.title} ${g.party.name}`,
+                : `${g.work?.title ?? matterRow.title} ${g.party.name}`,
               direction: "in", kind: "service", counterpartyId: g.party.id,
+              // 作品まで持たせないと、この条件から出た検収書も支払も
+              // どの作品の仕事か辿れない。
+              workId: g.work?.id ?? null,
               pricingModel: "fixed", flatAmount: g.total, currency: "JPY",
               termEnd: g.rows.map((r) => r.item.delivery_date as string | null).filter(Boolean).sort().pop() ?? null,
               paymentTerms: [...new Set(g.rows.map((r) => r.item.payment_date as string | null).filter(Boolean))].join("、") || null,
@@ -464,15 +526,59 @@ export class DocumentBatchService {
     return { resolution: "missing", party: null, candidates: [] };
   }
 
-  /** この案件に載っている、その取引先の 定額・委託料 の有効な条件。 */
-  private async existingCondition(client: Queryable, matterId: number, partyId: number) {
+  /**
+   * 作品を当てる。コード → 題名 の順。1件に決まるときだけ resolved。
+   *
+   * 取引先と違って、書いていないのは誤りではない（作品に紐づかない委託がある）。
+   * 書いてあるのに当たらないときだけ止める。黙って作品なしで作ると、その先から
+   * どの作品の仕事か辿れない条件明細が残る。
+   */
+  async resolveWork(client: Queryable, code: string | null, title: string | null):
+    Promise<{ resolution: WorkResolution; work: WorkCandidate | null; candidates: WorkCandidate[] }> {
+    if (!code && !title) return { resolution: "none", work: null, candidates: [] };
+    const map = (w: any): WorkCandidate => ({ id: Number(w.id), title: String(w.title), workCode: str(w.work_code) });
+    const byCode = code
+      ? (await client.query(
+          `SELECT id, title, work_code FROM works
+            WHERE lower(btrim(work_code)) = lower(btrim($1)) LIMIT 5`, [code])).rows.map(map)
+      : [];
+    const byTitle = title
+      ? (await client.query(
+          `SELECT id, title, work_code FROM works
+            WHERE btrim(title) = btrim($1) OR btrim(COALESCE(title_kana, '')) = btrim($1)
+            LIMIT 5`, [title])).rows.map(map)
+      : [];
+    if (byCode.length === 1) {
+      // コードで決まった。題名が別の作品を指しているなら、人に決めてもらう。
+      if (byTitle.length && !byTitle.some((w) => w.id === byCode[0].id)) {
+        return { resolution: "ambiguous", work: null,
+                 candidates: [byCode[0], ...byTitle.filter((w) => w.id !== byCode[0].id)] };
+      }
+      return { resolution: "resolved", work: byCode[0], candidates: byCode };
+    }
+    if (byCode.length > 1) return { resolution: "ambiguous", work: null, candidates: byCode };
+    if (byTitle.length === 1) return { resolution: "resolved", work: byTitle[0], candidates: byTitle };
+    if (byTitle.length > 1) return { resolution: "ambiguous", work: null, candidates: byTitle };
+    return { resolution: "missing", work: null, candidates: [] };
+  }
+
+  /**
+   * この案件に載っている、その取引先・その作品の 定額・委託料 の有効な条件。
+   *
+   * 作品まで見ないと、作品が何本かある案件で、別の作品の条件に発注書が
+   * ぶら下がってしまう。作品なしの束は作品なしの条件にだけ当てる。
+   */
+  private async existingCondition(
+    client: Queryable, matterId: number, partyId: number, workId: number | null
+  ) {
     const r = await client.query(
       `SELECT c.id, c.condition_no FROM matter_links ml
          JOIN conditions c ON c.id::text = ml.target_ref
         WHERE ml.matter_id = $1 AND ml.target_type = 'condition'
           AND c.counterparty_id = $2 AND c.status = 'active'
           AND c.kind = 'service' AND c.pricing_model = 'fixed'
-        ORDER BY c.id DESC LIMIT 1`, [matterId, partyId]);
+          AND c.work_id IS NOT DISTINCT FROM $3
+        ORDER BY c.id DESC LIMIT 1`, [matterId, partyId, workId]);
     const row = r.rows[0] as { id: number; condition_no: string | null } | undefined;
     return row ? { id: Number(row.id), conditionNo: str(row.condition_no) } : null;
   }

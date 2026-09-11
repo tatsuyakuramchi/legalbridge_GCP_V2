@@ -50,7 +50,7 @@ const backlogIssue = (detail: MatterDetail): string | null =>
   detail.links.find((l) => l.targetType === "backlog_issue")?.targetRef ?? null;
 
 export function MattersWorkspace(
-  { onOpenCondition, initialId, onOpen, onOpenDocument, onCompose }: {
+  { onOpenCondition, initialId, onOpen, onOpenDocument, onCompose, onBulkOrders }: {
     onOpenCondition: (id: number) => void;
     initialId?: number;
     onOpen?: (kind: EntityKind, id: number) => void;
@@ -58,6 +58,8 @@ export function MattersWorkspace(
     onOpenDocument?: (documentId: number) => void;
     /** 文書の画面へ移って、この案件の条件を選んだ状態で作成に入る。 */
     onCompose?: (conditionIds: number[], eventIds?: number[], matterId?: number | null) => void;
+    /** 発注書の一括作成（CSV）へ、この案件を決めた状態で移る。 */
+    onBulkOrders?: (matterId: number) => void;
   }
 ) {
   const [rows, setRows] = useState<MatterSummary[]>([]);
@@ -401,7 +403,8 @@ export function MattersWorkspace(
 
                   {tab === "documents" && (
                     <MatterDocuments detail={detail} onChanged={relink}
-                      onOpenDocument={onOpenDocument} onCompose={onCompose} />
+                      onOpenDocument={onOpenDocument} onCompose={onCompose}
+                      onBulkOrders={onBulkOrders} />
                   )}
 
                   {tab === "payments" && (

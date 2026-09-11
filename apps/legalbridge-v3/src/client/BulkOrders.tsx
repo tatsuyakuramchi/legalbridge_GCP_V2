@@ -6,20 +6,27 @@ import { SearchSelect, type SearchOption } from "./SearchSelect.js";
  * 発注書の一括作成。
  *
  *   1. ひな形と案件を決め、CSV を選ぶ（雛形はここから取れる）
- *   2. 突き合わせ：同じ取引先の行を1束（1枚）にまとめ、取引先の当たり具合を見せる。何も作らない
+ *   2. 突き合わせ：同じ取引先・同じ作品の行を1束（1枚）にまとめ、当たり具合を見せる。何も作らない
  *   3. 下書きを N 件作る：束ごとに 条件明細 → 案件 → 下書き
  *   4. 束の画面：まとめて決定、まとめて送る（取引先へ、担当者を cc）
  *
- * 取引先が当たらない束は飛ばして残りを作る。飛ばした束は結果に残る。
+ * 1束 = 発注書1枚 = 条件明細1件。取引先だけで束ねていたので、作品が何本かある
+ * 案件では同じ取引先の行が作品をまたいで1枚に混ざっていた。
+ *
+ * 取引先や作品が当たらない束は飛ばして残りを作る。飛ばした束は結果に残る。
  * 扱うのは定額の業務委託だけ。
  */
 
 interface Candidate { id: number; name: string; partyCode: string | null }
+interface WorkCandidate { id: number; title: string; workCode: string | null }
 interface Row { line: number; item: Record<string, unknown>; amount: number; issues: string[] }
 interface Group {
   key: string; partyCode: string | null; partyName: string | null;
   resolution: "resolved" | "ambiguous" | "missing";
   party: Candidate | null; candidates: Candidate[];
+  workCode: string | null; workTitle: string | null;
+  workResolution: "none" | "resolved" | "ambiguous" | "missing";
+  work: WorkCandidate | null; workCandidates: WorkCandidate[];
   condition: { mode: "existing" | "new"; id: number | null; conditionNo: string | null };
   rows: Row[]; total: number; issues: string[]; action: "create" | "choose" | "skip";
 }
@@ -51,10 +58,17 @@ async function readCsv(file: File): Promise<string> {
 const TONE = { create: "ok", choose: "warn", skip: "out" } as const;
 const ACTION_LABEL = { create: "作る", choose: "選ぶ", skip: "飛ばす" } as const;
 const RES_LABEL = { resolved: "取引先 1件に決定", ambiguous: "候補が複数", missing: "取引先が未登録" } as const;
+const WORK_LABEL = { none: "作品なし", resolved: "作品 1件に決定",
+                     ambiguous: "作品の候補が複数", missing: "作品が未登録" } as const;
 
 export function BulkOrders(
-  { templates, onOpenDocument, onClose, onCreated }: {
+  { templates, initialMatterId, onOpenDocument, onClose, onCreated }: {
     templates: Array<{ templateKey: string; label: string }>;
+    /**
+     * 案件の画面から来たときの案件。決まった状態で開く。
+     * ここが空だと、案件から来た人にもう一度同じ案件を選ばせることになる。
+     */
+    initialMatterId?: number | null;
     onOpenDocument: (id: number) => void;
     onClose: () => void;
     /** 束ができた・決定した・送った。一覧を引き直してもらう。 */
@@ -63,9 +77,13 @@ export function BulkOrders(
 ) {
   const orderTemplates = templates.filter((t) => t.templateKey === "purchase_order" || t.templateKey === "intl_purchase_order");
   const [templateKey, setTemplateKey] = useState(orderTemplates[0]?.templateKey ?? "purchase_order");
-  const [matterId, setMatterId] = useState("");
+  const [matterId, setMatterId] = useState(initialMatterId ? String(initialMatterId) : "");
+  /** 案件から来たときは、その案件の名前を出して固定する。押せば選び直せる。 */
+  const [matterLabel, setMatterLabel] = useState<string | null>(null);
   const [csv, setCsv] = useState<{ name: string; text: string } | null>(null);
   const [choices, setChoices] = useState<Record<string, number>>({});
+  /** 作品の候補が複数の束で、どれを選んだか（束の鍵 → 作品ID）。 */
+  const [workChoices, setWorkChoices] = useState<Record<string, number>>({});
   const [preview, setPreview] = useState<Preview | null>(null);
   const [batch, setBatch] = useState<Batch | null>(null);
   const [recent, setRecent] = useState<BatchHead[]>([]);
@@ -78,23 +96,33 @@ export function BulkOrders(
     api.get<{ batches: BatchHead[] }>("/documents/batches").then((r) => setRecent(r.batches)).catch(() => undefined);
   }, [batch?.id]);
 
+  // 案件から来たときは番号と件名を出す。ID だけだと、合っているか確かめられない。
+  useEffect(() => {
+    if (!initialMatterId) return;
+    api.get<{ matterNo: string | null; title: string }>(`/matters/${initialMatterId}`)
+      .then((m) => setMatterLabel(`${m.matterNo ?? `#${initialMatterId}`} ${m.title}`))
+      .catch(() => setMatterLabel(`#${initialMatterId}`));
+  }, [initialMatterId]);
+
   // 案件・ひな形・CSV・候補の選択が揃うたびに突き合わせ直す。何も作らない。
   useEffect(() => {
     if (!csv || !matterId) { setPreview(null); return; }
     let live = true;
     setError(null);
-    api.post<Preview>("/documents/batches/preview", { templateKey, matterId: Number(matterId), csv: csv.text, choices })
+    api.post<Preview>("/documents/batches/preview",
+      { templateKey, matterId: Number(matterId), csv: csv.text, choices, workChoices })
       .then((r) => { if (live) setPreview(r); })
       .catch((e: ApiError) => { if (live) { setPreview(null); setError(e.message); } });
     return () => { live = false; };
-  }, [csv, matterId, templateKey, JSON.stringify(choices)]);
+  }, [csv, matterId, templateKey, JSON.stringify(choices), JSON.stringify(workChoices)]);
 
   async function create() {
     if (!csv || !matterId) return;
     setBusy(true); setError(null);
     try {
       const b = await api.post<Batch>("/documents/batches",
-        { templateKey, matterId: Number(matterId), csv: csv.text, filename: csv.name, choices });
+        { templateKey, matterId: Number(matterId), csv: csv.text, filename: csv.name,
+          choices, workChoices });
       setBatch(b); setPreview(null); setCsv(null); setIssueResult(null); setSendResult(null);
       onCreated(b.id);
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
@@ -137,8 +165,10 @@ export function BulkOrders(
       {!batch && (
       <div className="panel">
         <div className="panel-hd">
-          <h2>まとめて作る</h2>
-          <span className="faint">CSV から、1つの案件の発注先すべてに発注書の下書きを起こす。定額の業務委託だけ</span>
+          <h2>発注書をまとめて作る</h2>
+          <span className="faint">
+            CSV から、1つの案件の発注先すべてに発注書の下書きを起こす。取引先と作品の組ごとに1枚。定額の業務委託だけ
+          </span>
           <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={onClose}>やめる</button>
         </div>
         <div className="panel-bd stack">
@@ -151,8 +181,19 @@ export function BulkOrders(
             </div></div>
           <div className="frow"><div className="flabel"><span>案件</span></div>
             <div className="fbody">
-              <SearchSelect value={matterId} search={searchMatters} placeholder="案件番号・件名で探す"
-                            onChange={(v) => setMatterId(v)} />
+              {/* 案件から来たときは決まっている。選び直したい人のために外せる。 */}
+              {matterLabel && String(initialMatterId) === matterId ? (
+                <div className="row">
+                  <span className="src auto">案件から</span>
+                  <b>{matterLabel}</b>
+                  <button className="linky" onClick={() => { setMatterLabel(null); setMatterId(""); }}>
+                    別の案件にする
+                  </button>
+                </div>
+              ) : (
+                <SearchSelect value={matterId} search={searchMatters} placeholder="案件番号・件名で探す"
+                              onChange={(v) => setMatterId(v)} />
+              )}
               <div className="faint" style={{ marginTop: 3 }}>この束の条件明細と発注書は、すべてこの案件に載ります</div>
             </div></div>
           <div className="frow"><div className="flabel"><span>CSV</span></div>
@@ -164,11 +205,14 @@ export function BulkOrders(
                   <input type="file" accept=".csv,text/csv" style={{ display: "none" }}
                          onChange={async (e) => {
                            const f = e.target.files?.[0]; if (!f) return;
-                           setChoices({}); setCsv({ name: f.name, text: await readCsv(f) });
+                           setChoices({}); setWorkChoices({});
+                           setCsv({ name: f.name, text: await readCsv(f) });
                          }} />
                 </label>
                 {csv && <span className="code">{csv.name}</span>}
-                <span className="faint">UTF-8 か Shift_JIS。1行 = 1品目。同じ取引先の行は1枚にまとまる</span>
+                <span className="faint">
+                  UTF-8 か Shift_JIS。1行 = 1品目。同じ取引先・同じ作品の行が1枚にまとまる
+                </span>
               </div>
               {/* 突き合わせは案件が決まってから走る。先に CSV を選ぶと、選んだのに
                   何も出ないまま止まって、読み込みに失敗したように見えていた。 */}
@@ -206,19 +250,21 @@ export function BulkOrders(
         </div>
         <div className="tablewrap">
           <table>
-            <thead><tr><th>#</th><th>取引先 ／ 品目</th><th className="num">数量</th><th className="num">単価</th><th className="num">金額</th><th>納期</th><th>帰属先</th><th>条件明細</th><th>扱い</th></tr></thead>
+            <thead><tr><th>#</th><th>取引先・作品 ／ 品目</th><th className="num">数量</th><th className="num">単価</th><th className="num">金額</th><th>納期</th><th>帰属先</th><th>条件明細</th><th>扱い</th></tr></thead>
             <tbody>
               {preview.groups.map((g) => (
-                <GroupRows key={g.key} g={g} chosen={choices[g.key]}
-                           onChoose={(id) => setChoices((c) => ({ ...c, [g.key]: id }))} />
+                <GroupRows key={g.key} g={g} chosen={choices[g.key]} chosenWork={workChoices[g.key]}
+                           onChoose={(id) => setChoices((c) => ({ ...c, [g.key]: id }))}
+                           onChooseWork={(id) => setWorkChoices((c) => ({ ...c, [g.key]: id }))} />
               ))}
             </tbody>
           </table>
         </div>
         <div className="panel-bd stack">
           <div className="note">
-            条件明細：その取引先にこの案件の定額・委託料の条件があれば「既存」に当てる。無ければ「新規」で1件作る（金額は行の合計、終了は納期の最遅）。
-            取引先はここでは作らない。未登録の束は飛ばし、登録してから残りだけ再アップロードする。
+            1束 = 発注書1枚 = 条件明細1件。同じ取引先でも作品が違えば別の束になります。
+            条件明細：その取引先・その作品にこの案件の定額・委託料の条件があれば「既存」に当てる。無ければ「新規」で1件作る（金額は行の合計、終了は納期の最遅、作品は当てた作品）。
+            取引先も作品もここでは作りません。未登録の束は飛ばし、登録してから残りだけ再アップロードしてください。
           </div>
           <div className="row">
             <button className="btn primary" disabled={busy || !ready.length} onClick={() => void create()}>
@@ -304,8 +350,16 @@ export function BulkOrders(
   );
 }
 
-function GroupRows({ g, chosen, onChoose }: { g: Group; chosen?: number; onChoose: (id: number) => void }) {
+function GroupRows(
+  { g, chosen, chosenWork, onChoose, onChooseWork }: {
+    g: Group; chosen?: number; chosenWork?: number;
+    onChoose: (id: number) => void; onChooseWork: (id: number) => void;
+  }
+) {
   const tone = TONE[g.action];
+  // 作品は書いていないことがある（作品に紐づかない委託）。それは誤りではない。
+  const workTone = g.workResolution === "resolved" ? "ok"
+    : g.workResolution === "none" ? "" : g.workResolution === "ambiguous" ? "warn" : "out";
   return (
     <>
       <tr className={g.action === "skip" ? "older" : ""}>
@@ -318,6 +372,27 @@ function GroupRows({ g, chosen, onChoose }: { g: Group; chosen?: number; onChoos
               {g.candidates.map((c) => (
                 <button key={c.id} type="button" className="chip" aria-pressed={chosen === c.id} onClick={() => onChoose(c.id)}>
                   {c.partyCode ?? "—"} {c.name}
+                </button>
+              ))}
+            </div>
+          )}
+          {/* どの作品の束かを、取引先と同じ行に出す。ここが分からないと
+              「同じ取引先の束が2つある」だけの表になる。 */}
+          <div className="row" style={{ marginTop: 3, gap: 6 }}>
+            <span className={`tag ${workTone}`}>{WORK_LABEL[g.workResolution]}</span>
+            <span>
+              {g.work?.title ?? g.workTitle ?? (g.workResolution === "none" ? "—" : "")}
+              {(g.work?.workCode ?? g.workCode) && (
+                <span className="code faint">　{g.work?.workCode ?? g.workCode}</span>
+              )}
+            </span>
+          </div>
+          {g.workResolution === "ambiguous" && (
+            <div className="row" style={{ marginTop: 4, flexWrap: "wrap" }}>
+              {g.workCandidates.map((w) => (
+                <button key={w.id} type="button" className="chip" aria-pressed={chosenWork === w.id}
+                        onClick={() => onChooseWork(w.id)}>
+                  {w.workCode ?? "—"} {w.title}
                 </button>
               ))}
             </div>

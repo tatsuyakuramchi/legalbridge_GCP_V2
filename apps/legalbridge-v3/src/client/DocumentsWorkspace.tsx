@@ -76,7 +76,9 @@ function Refs(
 
 export function DocumentsWorkspace(
   { start, openDocumentId, onOpen }: {
-    start?: { conditionIds: number[]; eventIds: number[]; matterId?: number | null };
+    start?: { conditionIds: number[]; eventIds: number[]; matterId?: number | null;
+              /** 案件から「発注書をまとめて作る」で来た。一括作成を開いた状態にする。 */
+              bulk?: boolean };
     /** 他の画面から「編集」で来たときの文書。下書きならそのままフォームに載せる。 */
     openDocumentId?: number;
     onOpen?: (kind: EntityKind, id: number) => void;
@@ -161,9 +163,9 @@ export function DocumentsWorkspace(
    * もう作ると決めている。ここで閉じておくと、飛んだ先で何も起きていないように
    * 見える（条件と実績は選ばれているのに、それが隠れたフォームの中にある）。
    */
-  const [composing, setComposing] = useState(Boolean(start));
+  const [composing, setComposing] = useState(Boolean(start) && !start?.bulk);
   /** 一括作成（CSV）を開いているか。束を作ったら一覧をその束で絞る。 */
-  const [bulk, setBulk] = useState(false);
+  const [bulk, setBulk] = useState(Boolean(start?.bulk));
   const [batchId, setBatchId] = useState<number | null>(null);
 
   useEffect(() => { void reload(); }, [search, scope, batchId]);
@@ -736,8 +738,10 @@ export function DocumentsWorkspace(
             <button className="btn primary" onClick={() => setComposing(true)}>
               新しく文書を作る
             </button>
+            {/* 何がまとまるのか分からない名前だった。CSV から作れるのは
+                発注書だけなので、そう書く。 */}
             <button className="btn" onClick={() => setBulk(true)}>
-              まとめて作る（CSV）
+              発注書をまとめて作る（CSV）
             </button>
             <span className="faint">
               ひな形から起こします。すでにある文書を見るだけなら、下の一覧から選んでください
@@ -746,7 +750,7 @@ export function DocumentsWorkspace(
         )}
 
         {bulk && !composing && !draft && (
-          <BulkOrders templates={templates}
+          <BulkOrders templates={templates} initialMatterId={start?.matterId ?? null}
             onOpenDocument={(id) => { setSelected(id); }}
             onClose={() => setBulk(false)}
             onCreated={(id) => { setBatchId(id); void reload(); }} />

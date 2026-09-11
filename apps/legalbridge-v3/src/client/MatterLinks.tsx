@@ -234,13 +234,15 @@ export function MatterConditions(
 }
 
 export function MatterDocuments(
-  { detail, onChanged, onOpenDocument, onCompose }: {
+  { detail, onChanged, onOpenDocument, onCompose, onBulkOrders }: {
     detail: MatterDetail;
     onChanged: () => void;
     /** 文書の画面へ移って、その文書を開く。 */
     onOpenDocument?: (documentId: number) => void;
     /** 文書の画面へ移って、この案件の条件を選んだ状態で作成に入る。 */
     onCompose?: (conditionIds: number[], eventIds?: number[], matterId?: number | null) => void;
+    /** 発注書の一括作成（CSV）へ、この案件を決めた状態で移る。 */
+    onBulkOrders?: (matterId: number) => void;
   }
 ) {
   const [picking, setPicking] = useState(false);
@@ -306,6 +308,23 @@ export function MatterDocuments(
                   onClick={() => setPicking(true)}>すでにある文書を繋ぐ</button>
         )}
       </div>
+
+      {/*
+        一括作成の入口。これまで文書の画面の中にしか無く、案件からは辿れなかった。
+        条件明細がまだ1件も無い案件でこそ要る（束が条件明細ごと作る）ので、
+        「この案件で文書を作る」と違って条件の有無では隠さない。
+      */}
+      {onBulkOrders && !picking && (
+        <div className="row">
+          <button className="btn btn-sm" onClick={() => onBulkOrders(detail.id)}>
+            発注書をまとめて作る（CSV）
+          </button>
+          <span className="faint">
+            発注先が何社もある業務委託向け。取引先と作品の組ごとに1枚ずつ下書きを起こし、
+            条件明細もその場で作ります
+          </span>
+        </div>
+      )}
 
       {/* 他社文書レビュー型の案件は、相手方から届いた文書を入れないと先へ進めない。 */}
       <DocumentImport matterId={detail.id} onDone={onChanged} />
