@@ -70,6 +70,17 @@ stamp_of() {
 # 写しをローカル DB に入れ直す。形式は2つある。
 #   *.dump    Proxy 経由の pg_dump（カスタム形式。スキーマ丸ごと）
 #   *.sql.gz  Cloud SQL のエクスポート（平文 SQL。表だけなのでビューは作り直す）
+# 入れ替えの前に、いまの v3 を写しておく。中身が無ければ何もしない。
+backup_before_replace() {
+  local rows
+  rows=$(psql -Atq -c "SELECT count(*) FROM v3.matters" 2>/dev/null || echo 0)
+  [ "${rows:-0}" -gt 0 ] 2>/dev/null || { log "いまの v3 は空。写しは取らない"; return 0; }
+  local out="$DUMPS/before_import_$(date '+%Y%m%d_%H%M%S').dump"
+  log "入れ替える前の写しを取る（案件 ${rows} 件）→ $out"
+  pg_dump --no-owner --no-privileges -n v3 -Fc -f "$out"
+  log "戻すときは: ops restore ${out}"
+}
+
 restore() {
   local file="$1"
   [ -f "$file" ] || die "写しが見つかりません: $file"
@@ -341,6 +352,13 @@ import_rows() {
     die "$dir には取り出した CSV だけを置いてください"
   fi
   log "${#files[@]} 個の CSV を取り込む"
+
+  # 入れ替える前に、いまの中身を写しておく。
+  #
+  # import-rows は v3 を丸ごと作り直すので、手元で作った案件も文書も消える。
+  # README には書いてあるが、消えてから気づくと戻せない（実際に案件を1件
+  # 失った）。戻せる形を必ず残してから消す。戻すのは ops restore。
+  backup_before_replace
 
   log "v3 を手元の定義から作り直す"
   psql_local -c "DROP SCHEMA IF EXISTS v3 CASCADE;" >/dev/null

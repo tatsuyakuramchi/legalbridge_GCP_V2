@@ -173,7 +173,10 @@ docker compose run --rm ops import-rows /dumps/rows
 
 - 1行が1件で、中身は JSON。NULL・日本語・配列・jsonb・改行も崩れない。
   記号（`<` や `&`）も含めて、取り出しと取り込みで一致することを確認済み。
-- 取り込むと手元の v3 は入れ替わる。ローカルで作った下書きなどは消える。
+- 取り込むと手元の v3 は入れ替わる。ローカルで作った案件・文書・下書きは消える。
+  入れ替える前に `dumps/before_import_YYYYmmdd_HHMMSS.dump` を自動で取るので、
+  消してしまったら `docker compose run --rm ops restore /dumps/before_import_….dump`
+  で戻せる（戻すと今度は取り込んだぶんが消えるので、順番に注意）。
 - CSV には口座情報や個人情報が入る。取り込んだら `dumps/rows/` は消すこと。
 
 ## 連絡先と口座だけを本番の値にする
