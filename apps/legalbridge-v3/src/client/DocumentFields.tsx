@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useDebounced } from "./ListTools.js";
 import { RightsScopePicker } from "./RightsScopePicker.js";
+import { SnippetPicker } from "./SnippetPicker.js";
 import { api } from "./api.js";
 
 /**
@@ -207,6 +208,17 @@ export function DocumentFields(
                                   }}>
                             探して入れる
                           </button>
+                        )}
+                        {/*
+                          長文は台帳から引けるものではなく、決めた言い回しを選んで
+                          貼るもの。許諾範囲がその代表で、V2 は定型文の画面を別タブで
+                          開いてコピペしていた。
+                        */}
+                        {f.type === "textarea" && (
+                          <SnippetPicker value={value}
+                                         hint={/許諾|範囲|scope/i.test(`${f.name} ${f.label}`)
+                                           ? "scope" : undefined}
+                                         onInsert={(v) => onChange(f.name, v)} />
                         )}
                         {quoteFor === f.name && (
                           <div className="stack" style={{ gap: 4, width: "100%", marginTop: 4 }}>

@@ -61,6 +61,7 @@ import { MailIntakeJob } from "./jobs/mail-intake.js";
 import { BacklogService } from "./integrations/backlog-service.js";
 import type { IntegrationChannel } from "./integrations/gate.js";
 import { parseCompanyProfile } from "./ops/company-profile-schema.js";
+import { SnippetService } from "./snippets/service.js";
 
 const asyncRoute =
   (handler: (req: Request, res: Response) => Promise<unknown>) =>
@@ -110,6 +111,7 @@ export function createRoutes(database: Transactable) {
   const accountingLedger = new AccountingExportLedger(database);
   const imports = new ImportService(database);
   const ops = new OpsRepository(database);
+  const snippets = new SnippetService(database);
   const monitoring = new MonitoringRepository(database);
 
   // 外部連携は factory で組む。/internal 側と同じものを使う。
@@ -2020,6 +2022,40 @@ export function createRoutes(database: Transactable) {
       const value = key === "company_profile"
         ? parseCompanyProfile(input.value) : input.value;
       res.json(await ops.saveSetting(key, value, actor(res)));
+    }));
+
+  // ---- 定型文 ----
+  // 許諾範囲・特約・仕様の文面を全社で1つ持つ。読みは全員（requester も文書を
+  // 起こすので要る）。足す・直す・外すは admin/legal。消す操作は無い（論理削除）。
+  router.get("/snippets", asyncRoute(async (_req, res) => {
+    res.json({ snippets: await snippets.list() });
+  }));
+
+  router.post("/snippets", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        category: z.string().optional(),
+        title: z.string(),
+        body: z.string().optional(),
+        sortOrder: z.number().optional()
+      }).parse(req.body ?? {});
+      res.status(201).json(await snippets.create(input, actor(res)));
+    }));
+
+  router.patch("/snippets/:id", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        category: z.string().optional(),
+        title: z.string(),
+        body: z.string().optional(),
+        sortOrder: z.number().optional()
+      }).parse(req.body ?? {});
+      res.json(await snippets.update(Number(req.params.id), input, actor(res)));
+    }));
+
+  router.post("/snippets/:id/deactivate", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await snippets.deactivate(Number(req.params.id), actor(res)));
     }));
 
   // ---- 外部送信 ----

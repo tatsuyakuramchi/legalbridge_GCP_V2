@@ -734,6 +734,76 @@ CREATE INDEX IF NOT EXISTS statements_document_idx ON v3.statements (document_id
 COMMENT ON COLUMN v3.statements.document_id IS
   'この計算書を載せた文書。1枚の文書に条件のぶんだけ行が並ぶ（条件ごとに1本）。';
 
+-- ---------------------------------------------------------------------
+-- A-021: 定型文（V2 の text_snippets を V3 へ）
+--
+-- 許諾範囲・特約・業務明細のような長文は、毎回ゼロから書くものではなく、
+-- 全社で決めた言い回しを選んで貼るもの。V2 は V1 の text_snippets を
+-- 共有の定型文集として持ち、文書作成の長文欄から別タブで開いてコピペして
+-- いた（Phase 16-1・grant 045）。V3 はこれを移していなかったので、
+-- 許諾範囲が各人の記憶頼みの自由記載になっていた。
+--
+-- V3 の runtime は public に一切の権限が無い（V1 を触らない前提）ので、
+-- V1 の表をそのまま読むことはできない。v3 に同じ形の表を作って中身を写す。
+-- 以後の追加・修正は V3 側で行う（V1 へは戻らない）。
+--
+-- 消すのは is_active=false の論理削除。書類に貼った文面の出どころが
+-- 消えると、あとから「どの版を貼ったのか」を辿れなくなる。
+-- ---------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS v3.text_snippets (
+  id         bigserial PRIMARY KEY,
+  -- scope=許諾範囲 は V3 で足した区分。V1 に無い区分の行は other に寄せる。
+  category   text NOT NULL DEFAULT 'special_terms'
+             CHECK (category IN ('special_terms', 'work_item', 'scope', 'other')),
+  title      text NOT NULL CHECK (btrim(title) <> ''),
+  body       text NOT NULL DEFAULT '',
+  sort_order int NOT NULL DEFAULT 0,
+  is_active  boolean NOT NULL DEFAULT true,
+  legacy_id  bigint UNIQUE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+COMMENT ON TABLE v3.text_snippets IS
+  '定型文。文書の長文欄（許諾範囲・特約・仕様）へ貼るための全社共有の文面。論理削除のみ。';
+
+CREATE INDEX IF NOT EXISTS text_snippets_active_idx
+  ON v3.text_snippets (category, sort_order, id) WHERE is_active;
+
+-- V1（public.text_snippets・V1 移行 0151）から写す。legacy_id で冪等。
+-- V1 側で直したものを拾い直せるように、上書きで合わせる。V3 で足した行は
+-- legacy_id が NULL なので、この文では触らない。
+DO $a021$
+BEGIN
+  IF to_regclass('public.text_snippets') IS NOT NULL THEN
+    INSERT INTO v3.text_snippets (category, title, body, sort_order, is_active, legacy_id)
+    SELECT CASE WHEN t.category IN ('special_terms', 'work_item', 'scope', 'other')
+                THEN t.category ELSE 'other' END,
+           btrim(t.title),
+           COALESCE(t.body, ''),
+           COALESCE(t.sort_order, 0),
+           COALESCE(t.is_active, true),
+           t.id
+      FROM public.text_snippets t
+     WHERE COALESCE(btrim(t.title), '') <> ''
+    ON CONFLICT (legacy_id) DO UPDATE SET
+      category   = EXCLUDED.category,
+      title      = EXCLUDED.title,
+      body       = EXCLUDED.body,
+      sort_order = EXCLUDED.sort_order,
+      is_active  = EXCLUDED.is_active,
+      updated_at = now();
+  END IF;
+END
+$a021$;
+
+-- 読みは全員、書きは admin/legal（アプリ側で絞る）。消す操作は持たせない。
+-- 本番は既定の権限で新しい表に DELETE まで付いてしまうので、明示的に剥がす
+-- （A-015 と同じ事情）。003_grants.sql も同じ内容にしてある。
+REVOKE ALL ON v3.text_snippets FROM legalbridge_v3_runtime;
+GRANT SELECT, INSERT, UPDATE ON v3.text_snippets TO legalbridge_v3_runtime;
+GRANT USAGE, SELECT ON SEQUENCE v3.text_snippets_id_seq TO legalbridge_v3_runtime;
+
 COMMIT;
 
 -- 確認
@@ -855,3 +925,9 @@ SELECT
   (SELECT count(*) FROM pg_indexes
     WHERE schemaname = 'v3' AND tablename = 'statements'
       AND indexname = 'statements_document_condition_uq')  AS 新索引;
+
+\echo '--- 定型文（A-021。表があり、権限は SELECT/INSERT/UPDATE。DELETE が無いこと） ---'
+SELECT (SELECT string_agg(privilege_type, ', ' ORDER BY privilege_type)
+          FROM information_schema.role_table_grants
+         WHERE grantee = 'legalbridge_v3_runtime' AND table_name = 'text_snippets') AS 権限,
+       (SELECT count(*) FROM v3.text_snippets WHERE is_active) AS 件数;

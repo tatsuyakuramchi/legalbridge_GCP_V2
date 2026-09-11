@@ -9,6 +9,8 @@
  * 直した行は manualInputs の同じ名前（items など）で保存され、以後はそれが
  * 本文になる。「自動に戻す」で種の行に戻る。
  */
+import { SnippetPicker } from "./SnippetPicker.js";
+
 export type Row = Record<string, unknown>;
 
 interface ShowWhen { field: string; anyOf?: string[]; truthy?: boolean }
@@ -193,7 +195,13 @@ export function LineItemsEditor(
                       {c.options!.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                     </select>
                   ) : c.type === "textarea" ? (
-                    <textarea rows={2} value={show(row[c.name])} onChange={(e) => update(i, c, e.target.value)} />
+                    <>
+                      <textarea rows={2} value={show(row[c.name])}
+                                onChange={(e) => update(i, c, e.target.value)} />
+                      {/* 仕様・備考も決めた言い回しを貼る欄。定型文から入れられる。 */}
+                      <SnippetPicker value={show(row[c.name])}
+                                     onInsert={(v) => update(i, c, v)} />
+                    </>
                   ) : (
                     <input type={c.type === "date" ? "date" : "text"}
                            inputMode={c.type === "number" ? "numeric" : undefined}

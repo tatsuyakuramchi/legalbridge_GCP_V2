@@ -156,6 +156,14 @@ SELECT * FROM (
          (SELECT count(*)::text FROM pg_indexes
            WHERE schemaname = 'v3' AND tablename = 'statements'
              AND indexname = 'statements_document_condition_uq')
+  UNION ALL
+  SELECT 21, '定型文（A-021。SELECT, INSERT, UPDATE と、使える文面の数）',
+         COALESCE((SELECT string_agg(privilege_type, ', ' ORDER BY privilege_type)
+                     FROM information_schema.role_table_grants
+                    WHERE grantee = 'legalbridge_v3_runtime'
+                      AND table_name = 'text_snippets'), '表が無い')
+         || ' / ' || COALESCE((SELECT count(*)::text FROM v3.text_snippets
+                                WHERE is_active), '0') || ' 件'
 ) AS 確認 ORDER BY n;
 `;
 

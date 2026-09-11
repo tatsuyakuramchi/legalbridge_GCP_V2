@@ -101,6 +101,10 @@ REVOKE DELETE, TRUNCATE ON v3.document_batches FROM legalbridge_v3_runtime;
 -- やり取りの記録は証憑。追記だけで、書き換えも削除もさせない。
 REVOKE UPDATE, DELETE, TRUNCATE ON v3.matter_communications FROM legalbridge_v3_runtime;
 
+-- 定型文は消さない。使わなくなったものは is_active=false で一覧から外す
+-- （貼った文面の出どころを後から辿れるようにしておく）。
+REVOKE DELETE, TRUNCATE ON v3.text_snippets FROM legalbridge_v3_runtime;
+
 -- テンプレート本文は読み取りのみ。改訂は管理者の運用でやる（互換境界）。
 REVOKE INSERT, UPDATE, DELETE ON v3.document_templates FROM legalbridge_v3_runtime;
 REVOKE INSERT, UPDATE, DELETE ON v3.document_template_versions FROM legalbridge_v3_runtime;
