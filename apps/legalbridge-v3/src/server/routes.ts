@@ -202,7 +202,12 @@ export function createRoutes(database: Transactable) {
               a.executed_on, a.effective_on, a.expires_on, a.auto_renewal,
               a.renewal_notice_months, a.source_url,
               p.id AS party_id, p.name AS party_name,
-              0 AS condition_count, 0 AS document_count, 0 AS total_flat
+              -- 一覧と同じ数を出す。0 を置いていたので、詳細だけ「条件 0 件」と
+              -- 出ていた（一覧では正しく数えている）。
+              (SELECT count(*) FROM conditions c WHERE c.agreement_id = a.id)::int AS condition_count,
+              (SELECT count(*) FROM documents d WHERE d.agreement_id = a.id)::int AS document_count,
+              (SELECT COALESCE(sum(c.flat_amount), 0) FROM conditions c
+                WHERE c.agreement_id = a.id AND c.status = 'active')::bigint AS total_flat
          FROM agreements a JOIN parties p ON p.id = a.counterparty_id
         WHERE a.id = $1`, [id]);
     const row = head.rows[0] as Record<string, any> | undefined;
@@ -211,9 +216,24 @@ export function createRoutes(database: Transactable) {
     const lines = await database.query(
       `SELECT c.id, c.condition_no, c.name, c.kind, c.status, c.direction, c.currency,
               c.pricing_model, c.rate_ppm, c.flat_amount, c.mg_amount, c.ag_amount,
-              c.term_start, c.term_end, c.effective_from
-         FROM conditions c WHERE c.agreement_id = $1
-        ORDER BY c.id`, [id]);
+              c.term_start, c.term_end, c.effective_from,
+              -- 基本契約は複数の作品に及ぶ。どの作品の条件なのかが見えないと、
+              -- 契約の画面から及ぶ範囲が読めない。
+              c.work_id, w.work_code, w.title AS work_title, wp.name AS part_name
+         FROM conditions c
+         LEFT JOIN works w       ON w.id = c.work_id
+         LEFT JOIN work_parts wp ON wp.id = c.work_part_id
+        WHERE c.agreement_id = $1
+        ORDER BY w.title NULLS LAST, c.id`, [id]);
+    // この契約が及ぶ作品。条件をまとめ直したもの（契約は作品を直接持たない）。
+    const works = await database.query(
+      `SELECT w.id, w.work_code, w.title,
+              count(*)::int AS condition_count,
+              count(*) FILTER (WHERE c.status = 'active')::int AS active_count
+         FROM conditions c JOIN works w ON w.id = c.work_id
+        WHERE c.agreement_id = $1
+        GROUP BY w.id, w.work_code, w.title
+        ORDER BY w.title`, [id]);
     res.json({
       agreement: {
         ...mapAgreement(row),
@@ -229,9 +249,17 @@ export function createRoutes(database: Transactable) {
         flatAmount: c.flat_amount === null ? null : Number(c.flat_amount),
         mgAmount: c.mg_amount === null ? null : Number(c.mg_amount),
         agAmount: c.ag_amount === null ? null : Number(c.ag_amount),
-        termStart: c.term_start ? String(c.term_start).slice(0, 10) : null,
-        termEnd: c.term_end ? String(c.term_end).slice(0, 10) : null,
-        effectiveFrom: c.effective_from ? String(c.effective_from).slice(0, 10) : null
+        termStart: dateStr(c.term_start),
+        termEnd: dateStr(c.term_end),
+        effectiveFrom: dateStr(c.effective_from),
+        work: c.work_id
+          ? { id: Number(c.work_id), code: c.work_code ?? null,
+              title: String(c.work_title ?? ""), part: c.part_name ?? null }
+          : null
+      })),
+      works: (works.rows as Array<Record<string, any>>).map((w) => ({
+        id: Number(w.id), code: w.work_code ?? null, title: String(w.title),
+        conditionCount: Number(w.condition_count), activeCount: Number(w.active_count)
       }))
     });
   }));
@@ -2453,9 +2481,10 @@ function mapAgreement(row: Record<string, any>) {
     title: String(row.title),
     direction: String(row.direction) as "in" | "out",
     status: String(row.status),
-    executedOn: row.executed_on ? String(row.executed_on).slice(0, 10) : null,
-    effectiveOn: row.effective_on ? String(row.effective_on).slice(0, 10) : null,
-    expiresOn: row.expires_on ? String(row.expires_on).slice(0, 10) : null,
+    // date 列は Date で返る。String() で切ると "Tue Apr 01" になる。
+    executedOn: dateStr(row.executed_on),
+    effectiveOn: dateStr(row.effective_on),
+    expiresOn: dateStr(row.expires_on),
     counterparty: { id: Number(row.party_id), name: String(row.party_name) },
     conditionCount: Number(row.condition_count ?? 0),
     documentCount: Number(row.document_count ?? 0),

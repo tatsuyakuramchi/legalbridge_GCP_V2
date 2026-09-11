@@ -28,6 +28,13 @@ interface LineRow {
   ratePct: number | null; flatAmount: number | null;
   mgAmount: number | null; agAmount: number | null;
   termStart: string | null; termEnd: string | null; effectiveFrom: string | null;
+  /** どの作品の条件か。基本契約は複数の作品に及ぶ。 */
+  work: { id: number; code: string | null; title: string; part: string | null } | null;
+}
+
+interface WorkRow {
+  id: number; code: string | null; title: string;
+  conditionCount: number; activeCount: number;
 }
 
 interface Detail {
@@ -35,6 +42,8 @@ interface Detail {
     autoRenewal: boolean; renewalNoticeMonths: number | null; sourceUrl: string | null;
   };
   conditions: LineRow[];
+  /** この契約が及ぶ作品。条件をまとめ直したもの。 */
+  works: WorkRow[];
 }
 
 const KIND_LABEL: Record<string, string> = {
@@ -153,6 +162,32 @@ export function AgreementsWorkspace(
               </div>
             </div>
 
+            {detail.works.length > 0 && (
+              <div className="panel">
+                <div className="panel-hd">
+                  <h2>及ぶ作品 {detail.works.length}</h2>
+                  <span className="faint">
+                    契約は作品を直接持ちません。条件明細がどの作品を指しているかで決まります
+                  </span>
+                </div>
+                <div className="panel-bd">
+                  <div className="chips">
+                    {detail.works.map((w) => (
+                      <button key={w.id} type="button" className="tag accent"
+                              onClick={() => onOpen?.("work", w.id)}
+                              title={w.code ?? undefined}>
+                        {w.title}
+                        <span className="faint" style={{ marginLeft: 4 }}>
+                          条件 {w.activeCount}
+                          {w.conditionCount !== w.activeCount && `／${w.conditionCount}`}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="panel">
               <div className="panel-hd">
                 <h2>条件明細</h2>
@@ -163,13 +198,23 @@ export function AgreementsWorkspace(
               <div className="tablewrap">
                 <table>
                   <thead><tr>
-                    <th>番号</th><th>名称</th><th>種類</th><th>条件</th>
+                    <th>番号</th><th>作品</th><th>名称</th><th>種類</th><th>条件</th>
                     <th>期間</th><th>適用開始</th><th>状態</th><th></th>
                   </tr></thead>
                   <tbody>
                     {detail.conditions.map((line) => (
                       <tr key={line.id}>
                         <td className="code">{line.conditionNo ?? `#${line.id}`}</td>
+                        <td>
+                          {line.work ? (
+                            <>
+                              {line.work.title}
+                              {line.work.part && (
+                                <span className="faint" style={{ marginLeft: 4 }}>{line.work.part}</span>
+                              )}
+                            </>
+                          ) : <span className="faint">作品なし</span>}
+                        </td>
                         <td>{line.name}</td>
                         <td>{KIND_LABEL[line.kind] ?? line.kind}</td>
                         <td className="faint">{terms(line)}</td>
@@ -187,7 +232,7 @@ export function AgreementsWorkspace(
                       </tr>
                     ))}
                     {!detail.conditions.length && (
-                      <tr><td colSpan={8} className="faint">
+                      <tr><td colSpan={9} className="faint">
                         この契約にはまだ条件明細がありません。下の「つながり」から繋げます。
                       </td></tr>
                     )}
