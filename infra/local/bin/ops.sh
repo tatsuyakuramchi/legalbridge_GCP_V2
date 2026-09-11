@@ -381,6 +381,23 @@ BEGIN
   IF bad IS NOT NULL THEN
     RAISE EXCEPTION '手元の定義に無い列があります（001/004 が古い）: %', bad;
   END IF;
+
+  -- 同じ行が二度入っていないか。
+  --
+  -- 取り出しはページに分けて落とすので、前に落とした CSV が残っているところへ
+  -- 新しいページを足すと、同じ行が重なる。そのまま入れると
+  -- 「duplicate key value violates unique constraint」で落ちるが、どの CSV が
+  -- 余計なのかは分からない。先に、重なった表と件数を名指しで出して止める。
+  SELECT string_agg(d.tbl || ' ' || d.n || ' 件', '、' ORDER BY d.n DESC) INTO bad
+    FROM (SELECT tbl, count(*) - count(DISTINCT data->>'id') AS n
+            FROM staging WHERE data ? 'id'
+           GROUP BY tbl HAVING count(*) <> count(DISTINCT data->>'id')) d;
+  IF bad IS NOT NULL THEN
+    RAISE EXCEPTION E'同じ行が二度入っています: %\n'
+      '  取り出したページが重なっています。別の日に落とした CSV が\n'
+      '  dumps/rows に残っていませんか。フォルダを空にして、094 の「1.」で\n'
+      '  出たページ数のぶんを落とし直してください。', bad;
+  END IF;
 END
 $guard$;
 
