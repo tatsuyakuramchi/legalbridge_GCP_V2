@@ -37,6 +37,9 @@ export const ORDER_COLUMNS: Array<{ key: string; label: string; required?: boole
   // 1枚に混ざり、条件明細も作品なしで作られていた。
   { key: "workCode", label: "作品コード", note: "コードか作品名のどちらかで当てる。空なら作品なし" },
   { key: "workTitle", label: "作品名", note: "登録名に一致" },
+  // 基本契約と条件名は束ごとの値。全行に同じものを書く（違えば不備として出す）。
+  { key: "agreementNo", label: "契約番号", note: "空なら取引先から自動で当てる" },
+  { key: "conditionName", label: "条件名", note: "空なら自動。書けば同じ取引先・作品でも別の条件になる" },
   { key: "item_name", label: "品目・業務名", required: true, note: "" },
   { key: "spec", label: "仕様・成果物", note: "" },
   { key: "quantity", label: "数量", note: "空なら 1" },
@@ -45,6 +48,8 @@ export const ORDER_COLUMNS: Array<{ key: string; label: string; required?: boole
   { key: "triggerKind", label: "起点", required: true, note: "検収後 / 納品後 / 契約時 / 定期" },
   { key: "delivery_date", label: "納期", note: "2026-10-31 か 2026/10/31" },
   { key: "payment_date", label: "支払日", note: "" },
+  // 発注明細の「契約種別・支払条件」。行ごとの欄で、そのまま紙に出る。
+  { key: "payment_terms", label: "契約種別・支払条件", note: "例: 月末締め翌月末払い" },
   { key: "deliverable_ownership", label: "成果物の帰属先", note: "発注者 か 受注者" },
   { key: "calc_method", label: "支払方法", note: "固定額 だけ。空なら固定額" },
   { key: "remarks", label: "備考", note: "" }
@@ -55,10 +60,12 @@ export function templateCsv(): string {
   // 例は2行にする。1行だけだと「同じ取引先でも作品が違えば別の発注書になる」
   // ことが伝わらず、作品の列を空のまま使われる。
   const examples = [
-    ["VD-00317", "合同会社アトリエ蒼", "WRK-10013", "星降る夜のミュゼ", "第4巻 表紙イラスト",
-     "カラー1点", "1", "150000", "検収後", "2026-10-31", "2026-11-30", "発注者", "固定額", ""],
-    ["VD-00317", "合同会社アトリエ蒼", "WRK-10021", "夜明けのクロニクル", "第1巻 挿絵",
-     "モノクロ12点", "12", "8000", "検収後", "2026-11-30", "2026-12-31", "発注者", "固定額", ""]
+    ["VD-00317", "合同会社アトリエ蒼", "WRK-10013", "星降る夜のミュゼ", "", "",
+     "第4巻 表紙イラスト", "カラー1点", "1", "150000", "検収後", "2026-10-31", "2026-11-30",
+     "月末締め翌月末払い", "発注者", "固定額", ""],
+    ["VD-00317", "合同会社アトリエ蒼", "WRK-10021", "夜明けのクロニクル", "", "",
+     "第1巻 挿絵", "モノクロ12点", "12", "8000", "検収後", "2026-11-30", "2026-12-31",
+     "月末締め翌月末払い", "発注者", "固定額", ""]
   ].map((row) => row.join(","));
   return `﻿${header}\n${examples.join("\n")}\n`;
 }
@@ -69,6 +76,10 @@ export interface BatchRow {
   partyName: string | null;
   workCode: string | null;
   workTitle: string | null;
+  /** 基本契約の番号。空なら取引先から自動で当てる。 */
+  agreementNo: string | null;
+  /** 条件名。空なら自動。書けば束の分かれ方にも効く。 */
+  conditionName: string | null;
   /** 予定明細の起点。読めなければ null（その行は不備として残る）。 */
   triggerKind: TriggerKind | null;
   item: Record<string, unknown>;
@@ -157,12 +168,16 @@ export function readRows(text: string): BatchRow[] {
       partyName: get("partyName") || null,
       workCode: get("workCode") || null,
       workTitle: get("workTitle") || null,
+      agreementNo: get("agreementNo") || null,
+      conditionName: get("conditionName") || null,
       triggerKind,
       item: {
         item_name: itemName, spec: get("spec") || null,
         quantity: quantity ?? null, unit_price: unitPrice ?? null, amount_ex_tax: amount,
         delivery_date: deliveryDate, payment_date: paymentDate,
         deliverable_ownership: ownership || null, calc_method: "FIXED",
+        // 発注明細の「契約種別・支払条件」。本文がこの列をそのまま印字する。
+        payment_terms: get("payment_terms") || null,
         remarks: get("remarks") || null
       },
       amount,
@@ -221,6 +236,8 @@ export interface BatchGroup {
   /** CSV に書かれた作品と、その当たり具合。 */
   workCode: string | null;
   workTitle: string | null;
+  /** CSV に書かれた条件名（空なら自動生成）。 */
+  conditionName: string | null;
   workResolution: WorkResolution;
   work: WorkCandidate | null;
   workCandidates: WorkCandidate[];
@@ -259,6 +276,13 @@ const workToken = (r: BatchRow) =>
   r.workCode ? `wcode:${r.workCode.toLowerCase()}` : r.workTitle ? `wname:${r.workTitle}` : "wnone";
 
 /**
+ * 束の鍵の条件名の側。書いていなければ1つにまとまる（これまでどおり）。
+ * 書けば、同じ取引先・同じ作品でも条件を分けられる。分ける手立てが
+ * 他に無いので、人が名前で決められるようにしておく。
+ */
+const nameToken = (r: BatchRow) => (r.conditionName ? `cname:${r.conditionName}` : "cauto");
+
+/**
  * 同じ取引先・同じ作品の行を束ねる。1束 = 発注書1枚 = 条件明細1件。
  *
  * 取引先だけで束ねていたので、1つの案件に作品が何本かあると、同じ取引先の
@@ -266,22 +290,40 @@ const workToken = (r: BatchRow) =>
  * その先（検収書・支払・権利）からどの作品の仕事か辿れなくなる。
  */
 export function groupRows(rows: BatchRow[]): Array<
-  Pick<BatchGroup, "key" | "partyCode" | "partyName" | "workCode" | "workTitle" | "rows" | "total">
+  Pick<BatchGroup, "key" | "partyCode" | "partyName" | "workCode" | "workTitle"
+                 | "conditionName" | "rows" | "total">
 > {
   const order: string[] = [];
   const by = new Map<string, BatchRow[]>();
   for (const r of rows) {
-    const key = `${partyToken(r)}／${workToken(r)}`;
+    const key = `${partyToken(r)}／${workToken(r)}／${nameToken(r)}`;
     if (!by.has(key)) { by.set(key, []); order.push(key); }
     by.get(key)!.push(r);
   }
   return order.map((key) => {
     const list = by.get(key)!;
     return { key, partyCode: list[0].partyCode, partyName: list[0].partyName,
-             workCode: list[0].workCode, workTitle: list[0].workTitle, rows: list,
+             workCode: list[0].workCode, workTitle: list[0].workTitle,
+             conditionName: list[0].conditionName, rows: list,
              total: list.reduce((s, r) => s + r.amount, 0) };
   });
 }
+
+/**
+ * 束の中で揃っている値だけを返す。揃っていなければ null。
+ *
+ * 契約番号・支払条件は条件明細に1つしか持てない。行ごとに違うまま作ると、
+ * どれか1行のぶんが全体の値として残る。揃っていないことを見せて、
+ * 人に直してもらう。
+ */
+export function sameAcross<T>(rows: BatchRow[], pick: (r: BatchRow) => T | null): T | null {
+  const set = new Set(rows.map(pick).filter((v) => v !== null && v !== ""));
+  return set.size === 1 ? ([...set][0] as T) : null;
+}
+
+/** 束の中で値が食い違っているか（1つも無いのは食い違いではない）。 */
+export const conflicts = (rows: BatchRow[], pick: (r: BatchRow) => string | null): boolean =>
+  new Set(rows.map(pick).filter(Boolean)).size > 1;
 
 export interface BatchResultEntry {
   key: string; partyName: string | null; status: "created" | "skipped" | "failed";
@@ -349,27 +391,38 @@ export class DocumentBatchService {
           work = foundWork.candidates.find((c) => c.id === pickedWork)!;
           workResolution = "resolved";
         }
+        // 束の中で1つに決まらない値。条件明細は1つしか持てないので、
+        // 食い違ったまま作らずに人へ返す（どれか1行のぶんが全体の値として残る）。
+        const mixed = conflicts(g.rows, (r) => r.agreementNo)
+          ? ["契約番号が行ごとに違います。1つの条件明細に契約は1つです"] : [];
+        // 取引先と作品のどちらかが未登録なら飛ばす。どちらかが候補待ちなら選ぶ。
+        const stuck = resolution === "missing" || workResolution === "missing";
+        const choosing = resolution === "ambiguous" || workResolution === "ambiguous";
+        // 作品が決まっていない束では引かない。作品なしの条件に当たって
+        // 「既存」と出てしまい、飛ばす束なのに当たっているように見える。
+        const condition = party && (workResolution === "none" || workResolution === "resolved")
+          ? await this.existingCondition(this.database, input.matterId, party.id, work?.id ?? null)
+          : null;
+        // 新しく作る条件に付ける基本契約。既存に当てる束は今の合意のまま触らない。
+        const basic = party && !condition && !stuck && !choosing
+          ? await this.basicAgreement(this.database, input.matterId, party.id,
+                                      sameAcross(g.rows, (r) => r.agreementNo))
+          : { agreement: null, note: null as string | null, missing: false };
+        // 契約番号を書いたのに当たらない束は作らない。黙って「基本契約なし」で
+        // 作ると、紙がスポット契約の約款で出る。
+        const badAgreement = Boolean((basic as { missing?: boolean }).missing);
         const issues = [
           ...(resolution === "missing" ? ["取引先が未登録（コードも名前も当たらない）。この束は飛ばす"] : []),
           ...(resolution === "ambiguous" ? ["候補が複数。どれかを選ぶ"] : []),
           ...(workResolution === "missing"
             ? [`作品が見つからない（${[g.workCode, g.workTitle].filter(Boolean).join(" / ")}）。この束は飛ばす`] : []),
           ...(workResolution === "ambiguous" ? ["作品の候補が複数。どれかを選ぶ"] : []),
+          ...mixed,
+          ...(badAgreement && basic.note ? [`${basic.note}。この束は飛ばす`] : []),
           ...g.rows.flatMap((r) => r.issues.map((m) => `${r.line} 行目：${m}`))
         ];
-        // 作品が決まっていない束では引かない。作品なしの条件に当たって
-        // 「既存」と出てしまい、飛ばす束なのに当たっているように見える。
-        const condition = party && (workResolution === "none" || workResolution === "resolved")
-          ? await this.existingCondition(this.database, input.matterId, party.id, work?.id ?? null)
-          : null;
-        const blocking = g.rows.some((r) => r.issues.length > 0);
-        // 取引先と作品のどちらかが未登録なら飛ばす。どちらかが候補待ちなら選ぶ。
-        const stuck = resolution === "missing" || workResolution === "missing";
-        const choosing = resolution === "ambiguous" || workResolution === "ambiguous";
-        // 新しく作る条件に付ける基本契約。既存に当てる束は今の合意のまま触らない。
-        const basic = party && !condition && !stuck && !choosing
-          ? await this.basicAgreement(this.database, input.matterId, party.id)
-          : { agreement: null, note: null };
+        const blocking = g.rows.some((r) => r.issues.length > 0)
+          || mixed.length > 0 || badAgreement;
         groups.push({
           ...g, resolution, party, candidates: resolved.candidates,
           workResolution, work, workCandidates: foundWork.candidates,
@@ -429,16 +482,21 @@ export class DocumentBatchService {
           if (!conditionId) {
             const created = await this.conditions.create({
               matterId: input.matterId,
-              name: g.rows.length === 1
-                ? String(g.rows[0].item.item_name)
-                : `${g.work?.title ?? matterRow.title} ${g.party.name}`,
+              // 名前は人が決められる。書いていなければこれまでどおり自動。
+              name: g.conditionName
+                ?? (g.rows.length === 1
+                  ? String(g.rows[0].item.item_name)
+                  : `${g.work?.title ?? matterRow.title} ${g.party.name}`),
               direction: "in", kind: "service", counterpartyId: g.party.id,
               // 作品まで持たせないと、この条件から出た検収書も支払も
               // どの作品の仕事か辿れない。
               workId: g.work?.id ?? null,
               pricingModel: "fixed", flatAmount: g.total, currency: "JPY",
               termEnd: g.rows.map((r) => r.item.delivery_date as string | null).filter(Boolean).sort().pop() ?? null,
-              paymentTerms: [...new Set(g.rows.map((r) => r.item.payment_date as string | null).filter(Boolean))].join("、") || null,
+              // 支払条件。以前はここへ支払日を並べて入れていたが、この欄は
+              // 「月末締め翌月末払い」のような条件を書くところで、解析して
+              // 支払日を導く先でもある。日付は各回の予定明細（pay_on）が持つ。
+              paymentTerms: sameAcross(g.rows, (r) => (r.item.payment_terms as string | null) ?? null),
               notes: [...new Set(g.rows.map((r) => r.item.remarks as string | null).filter(Boolean))].join("\n") || null,
               // 仕様と帰属先も条件に持たせる。行ごとに違えば仕様は行名付きで並べ、帰属先は空にする。
               spec: g.rows.map((r) => r.item.spec ? (g.rows.length > 1 ? `${r.item.item_name}：${r.item.spec}` : String(r.item.spec)) : "")
@@ -667,10 +725,33 @@ export class DocumentBatchService {
    * ちょうど1件のときだけ当てる。決まらなければ付けない。
    * 発注書は基本契約なしでも出せるので、ここは止める理由にしない。
    */
-  private async basicAgreement(client: Queryable, matterId: number, partyId: number):
-    Promise<{ agreement: AgreementRef | null; note: string | null }> {
+  private async basicAgreement(
+    client: Queryable, matterId: number, partyId: number, agreementNo: string | null
+  ): Promise<{ agreement: AgreementRef | null; note: string | null; missing?: boolean }> {
     const map = (a: any): AgreementRef =>
       ({ id: Number(a.id), agreementNo: str(a.agreement_no), title: str(a.title) });
+    // 契約番号が書いてあれば、それを当てる。自動判定より人の指定が強い。
+    if (agreementNo) {
+      const found = await client.query(
+        `SELECT id, agreement_no, title, counterparty_id FROM agreements
+          WHERE lower(btrim(agreement_no)) = lower(btrim($1)) LIMIT 5`, [agreementNo]);
+      if (!found.rows.length) {
+        return { agreement: null, missing: true,
+                 note: `契約番号 ${agreementNo} が見つかりません` };
+      }
+      if (found.rows.length > 1) {
+        return { agreement: null, missing: true,
+                 note: `契約番号 ${agreementNo} が複数あります` };
+      }
+      const row = found.rows[0] as any;
+      // 別の取引先の契約にぶら下げない。番号の写し間違いを黙って通すと、
+      // 関係の無い契約に発注が紐づく。
+      if (Number(row.counterparty_id) !== partyId) {
+        return { agreement: null, missing: true,
+                 note: `契約 ${agreementNo} はこの取引先の契約ではありません` };
+      }
+      return { agreement: map(row), note: null };
+    }
     const inMatter = await client.query(
       `SELECT DISTINCT a.id, a.agreement_no, a.title
          FROM matter_links ml

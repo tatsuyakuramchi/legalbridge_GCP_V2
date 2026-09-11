@@ -31,7 +31,7 @@ interface Group {
   key: string; partyCode: string | null; partyName: string | null;
   resolution: "resolved" | "ambiguous" | "missing";
   party: Candidate | null; candidates: Candidate[];
-  workCode: string | null; workTitle: string | null;
+  workCode: string | null; workTitle: string | null; conditionName: string | null;
   workResolution: "none" | "resolved" | "ambiguous" | "missing";
   work: WorkCandidate | null; workCandidates: WorkCandidate[];
   condition: {
@@ -277,7 +277,8 @@ export function BulkOrders(
             条件明細：その取引先・その作品にこの案件の定額・委託料の条件があれば「既存」に当てる。
             無ければ発注書と同時に「新規」で1件作ります
             （金額は行の合計、終了は納期の最遅、作品は当てた作品、基本契約はその取引先の締結済みのもの、
-            予定明細は CSV の1行が1回・起点は行の「起点」）。
+            予定明細は CSV の1行が1回・起点は行の「起点」、支払条件は行が揃っていればその値）。
+            条件名を書けば、同じ取引先・同じ作品でも別の条件明細・別の発注書に分かれます。
             基本契約が決まらなくても発注書は作れます（基本契約なしの発注）。あとから条件の画面で付けられます。
             取引先も作品もここでは作りません。未登録の束は飛ばし、登録してから残りだけ再アップロードしてください。
           </div>
@@ -402,6 +403,9 @@ function GroupRows(
               )}
             </span>
           </div>
+          {g.conditionName && (
+            <div className="faint" style={{ marginTop: 3 }}>条件名 {g.conditionName}</div>
+          )}
           {g.workResolution === "ambiguous" && (
             <div className="row" style={{ marginTop: 4, flexWrap: "wrap" }}>
               {g.workCandidates.map((w) => (

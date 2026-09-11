@@ -205,3 +205,28 @@ test("「発注番号」は文書自身の番号を指す（検収書の親は p
   assert.equal(resolveLegacyVariable("発注番号", context), "ARC-INS-2026-1001");
   assert.equal(resolveLegacyVariable("parent_po_number", context), "ARC-PO-2026-0031");
 });
+
+test("発注元（甲・委託者・ライセンシー）は自社。相手先ではない", () => {
+  // PARTY_A_NAME を相手先の対応表にも入れていたので、相手先のほうが先に
+  // 当たり、発注書の「発注元 名称」に取引先の名前が入っていた。
+  // 住所と代表者は自社を返していたので、社名だけ相手のものになっていた。
+  const context = {
+    company: { name: "自社", address: "自社住所", rep: "自社代表" },
+    condition: { counterparty: { name: "取引先", address: "取引先住所" } }
+  };
+  for (const label of ["発注元 名称", "甲 名称", "発注者 (甲)", "甲 (委託者) 商号", "ライセンシー名称"]) {
+    assert.equal(resolveLegacyVariable("PARTY_A_NAME", context, label), "自社");
+  }
+  assert.equal(resolveLegacyVariable("PARTY_A_ADDRESS", context, "発注元 住所"), "自社住所");
+  assert.equal(resolveLegacyVariable("PARTY_A_REP", context, "発注元 代表者"), "自社代表");
+  // 相手先の欄はそのまま。
+  assert.equal(resolveLegacyVariable("VENDOR_NAME", context, "発注先 名称"), "取引先");
+});
+
+test("基本契約ありは、条件に契約が付いているかで決まる", () => {
+  // 埋まらないと、契約を当ててあっても紙は「スポット契約の約款による」で出る。
+  assert.equal(resolveLegacyVariable("HAS_BASE_CONTRACT",
+    { agreement: { no: "AGR-2025-0011", title: "制作業務委託基本契約" } }, "基本契約あり"), true);
+  // 契約が無ければ決めない（人がチェックを入れられる）。
+  assert.equal(resolveLegacyVariable("HAS_BASE_CONTRACT", { agreement: undefined }, "基本契約あり"), undefined);
+});

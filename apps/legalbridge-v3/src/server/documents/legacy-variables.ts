@@ -46,6 +46,15 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown }> = [
             "parent_contract_number"],
     get: (c) => c.agreement?.no },
   { names: ["CONTRACT_TITLE_REF", "基本契約名"], get: (c) => c.agreement?.title },
+  /**
+   * 基本契約に基づく発注かどうか。
+   *
+   * 発注書の本文はここで準拠条項を出し分ける。埋まらないと、条件に基本契約を
+   * 当ててあっても「別紙のスポット契約用約款による」側で紙が出る。
+   * 人が外せば人が勝つ（false は空扱いにならないので手入力が残る）。
+   */
+  { names: ["HAS_BASE_CONTRACT", "基本契約あり"],
+    get: (c) => (c.agreement?.no || c.agreement?.title ? true : undefined) },
   // 検収書の見出しの「発注番号」。同じ条件から出ている発注書を辿る。
   { names: ["parent_po_number", "PARENT_PO_NUMBER", "発注番号", "元発注番号"],
     get: (c) => relatedNo(c, "purchase_order") ?? relatedNo(c, "intl_purchase_order")
@@ -53,8 +62,14 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown }> = [
   { names: ["issueKey", "BACKLOG_KEY", "課題キー"], get: (c) => c.backlogKey },
 
   // ---- 相手先（受注者・許諾者） ----
+  //
+  // PARTY_A_NAME はここに置かない。甲・発注元・委託者・ライセンシーはすべて
+  // 自社を指す名前で、ひな形5本（nda・maintenance_spec・service_master・
+  // purchase_order・license_master）のどれも自社の意味で使っている。
+  // ここに置いていたので相手先のほうが先に当たり、発注書の「発注元 名称」に
+  // 取引先の名前が入っていた（住所と代表者は自社なので、社名だけ相手のもの）。
   { names: ["VENDOR_NAME", "LICENSOR_NAME", "Licensor_氏名会社名", "Licensor_名称",
-            "許諾者", "相手先", "取引先", "counterparty", "licensor", "PARTY_A_NAME",
+            "許諾者", "相手先", "取引先", "counterparty", "licensor",
             "contractor_name", "受託者名"],
     get: (c) => c.condition?.counterparty?.name },
   { names: ["VENDOR_KANA", "取引先カナ", "LICENSOR_KANA"],
