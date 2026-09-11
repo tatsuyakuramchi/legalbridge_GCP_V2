@@ -44,9 +44,10 @@ export interface TemplateVariable extends LegacyFieldMeta {
 
 /**
  * 画面に出す項目1つ。ひな形が要求する項目を、出どころ付きで並べる。
- *   computed … 明細・合計・消費税。計算で決まる。手入力で上書きしない
- *   auto     … 条件・合意・相手先・案件から引いた。空なら手で補える
- *   manual   … ここから決まらない。人が入れる
+ *   computed  … 明細・合計・消費税。計算で決まる。手入力で上書きしない
+ *   auto      … 条件・合意・相手先・案件から引いた。空なら手で補える
+ *   suggested … 条件から組み立てた文案。そのまま出してもよいし、直してもよい
+ *   manual    … ここから決まらない。人が入れる
  */
 export interface FormField {
   name: string;
@@ -54,7 +55,7 @@ export interface FormField {
   group: string | null;
   type: string;
   required: boolean;
-  source: "computed" | "auto" | "manual";
+  source: "computed" | "auto" | "suggested" | "manual";
   /** いま入る値（自動・計算なら引いた値、手入力なら渡された値）。 */
   value: unknown;
   helpText: string | null;
@@ -124,6 +125,14 @@ export interface BindOptions {
    * 同じ計算から出さないとずれるので、これは手入力より優先する。
    */
   computed?: Record<string, unknown>;
+  /**
+   * 条件から組み立てた文案（許諾範囲など）。計算と違って手入力が勝つ。
+   *
+   * 長文の欄は、中身のほとんどが条件明細に既にある（独占性・地域・言語・
+   * 対象製品）。それを人が打ち直すと、条件を直したときに文だけ古いまま残る。
+   * 既定の文として先に入れておき、変わったことを書くときだけ人が直す。
+   */
+  suggested?: Record<string, unknown>;
 }
 
 export function bindVariables(
@@ -137,6 +146,7 @@ export function bindVariables(
   const derived: string[] = [];
   const fields: FormField[] = [];
   const computed = options.computed ?? {};
+  const suggested = options.suggested ?? {};
   const templateKey = options.templateKey ?? "";
 
   // 項目の出し分けはお互いの値を見る（showWhen・明細の有無）。
@@ -201,6 +211,9 @@ export function bindVariables(
           value = legacy;
           source = "auto";
           derived.push(variable.name);
+        } else if (!isEmpty(suggested[variable.name])) {
+          value = suggested[variable.name];
+          source = "suggested";
         } else {
           value = variable.default;
         }
@@ -213,8 +226,13 @@ export function bindVariables(
         value = resolved;
         source = "auto";
         derived.push(variable.name);
+      } else if (!isEmpty(manual)) {
+        value = manual;
+      } else if (!isEmpty(suggested[variable.name])) {
+        value = suggested[variable.name];
+        source = "suggested";
       } else {
-        value = isEmpty(manual) ? variable.default : manual;
+        value = variable.default;
       }
     }
 

@@ -1380,6 +1380,9 @@ export function createRoutes(database: Transactable) {
   router.get("/quote-sources", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
     const q = String(req.query.q ?? "").trim();
     const partyId = Number(req.query.partyId) > 0 ? Number(req.query.partyId) : null;
+    // どの欄から引いているか。決まっていれば、その取引先に前回出した書類で
+    // この欄に入っていた文言を並べる。
+    const field = String(req.query.field ?? "").trim();
     // 取引先が決まっていれば、打つ前でもその取引先の契約と文書を並べる。
     if (q.length < 1 && !partyId) return res.json({ candidates: [] });
     const like = `%${q}%`;
@@ -1421,6 +1424,24 @@ export function createRoutes(database: Transactable) {
         ORDER BY issued_at DESC NULLS LAST, document_id DESC LIMIT 10`,
       [partyId, q, like]) : { rows: [] as Array<Record<string, any>> };
 
+    /**
+     * 前回この欄に入れた文言。
+     *
+     * 許諾範囲・特約のような長文は、同じ相手なら前と同じ言い回しを使うことが
+     * 多い。定型文に登録するほどでもない相手ごとの言い回しが、毎回打ち直しに
+     * なっていた。決定済みの書類に焼き付いた値（rendered_values）を見る。
+     * 下書きの値は「書きかけ」なので、焼き付いていなければ手入力を見る。
+     */
+    const past = partyId && field ? await database.query(
+      `SELECT COALESCE(NULLIF(d.rendered_values ->> $2, ''), d.manual_inputs ->> $2) AS value,
+              v.document_no, v.template_label, v.issued_at
+         FROM documents d
+         JOIN v_document_display v ON v.document_id = d.id
+        WHERE v.counterparty_id = $1 AND d.status <> 'void'
+          AND COALESCE(NULLIF(d.rendered_values ->> $2, ''), d.manual_inputs ->> $2) IS NOT NULL
+        ORDER BY d.issued_at DESC NULLS LAST, d.id DESC LIMIT 5`,
+      [partyId, field]) : { rows: [] as Array<Record<string, any>> };
+
     const out: Array<{ label: string; value: string; source: string; kind: string }> = [];
     const push = (source: string, label: string, value: unknown) => {
       const text = String(value ?? "").trim();
@@ -1434,6 +1455,13 @@ export function createRoutes(database: Transactable) {
       if (!text || out.some((o) => o.source === source && o.value === text)) return;
       out.push({ label, value: text, source, kind: "text" });
     };
+    // 前回の文言が一番手に取りやすい。先頭に置く。
+    for (const r of past.rows as Array<Record<string, any>>) {
+      // issued_at は Date で返る。String() すると "Thu Sep 10 2026 ..." になる。
+      const when = dateStr(r.issued_at) ?? "下書き";
+      const no = r.document_no ? String(r.document_no) : String(r.template_label ?? "文書");
+      once("前回の文言", `${no}（${when}）`, r.value);
+    }
     // 探しているのはたいてい契約名なので、人より先に並べる。
     // 番号は打って絞ったときだけ出す。空で開いたときは「何があるか」を
     // 見せる場面で、番号まで並べると件名が埋もれる（計算書は毎期出るので

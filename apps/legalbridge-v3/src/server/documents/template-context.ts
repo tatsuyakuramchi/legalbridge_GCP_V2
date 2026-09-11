@@ -17,7 +17,8 @@ import {
   num, purchaseOrderTotals, rows, taxRatePercentFor, yen, type Row
 } from "./legacy-totals.js";
 import { royaltyStatementPatch } from "./royalty-patch.js";
-import { isLicenseTermsTemplate, licenseTermsPatch, licenseTermsSeeds } from "./license-terms.js";
+import { isLicenseTermsTemplate, licenseTermsPatch, licenseTermsSeeds,
+         licenseTermsSuggestions } from "./license-terms.js";
 
 type Ctx = Record<string, any>;
 
@@ -467,4 +468,17 @@ function orderBlock(templateKey: string, context: Ctx, manual: Record<string, un
     DELIVERY_DATE: deliveryDate,
     PAYMENT_DATE: paymentDate
   };
+}
+
+/**
+ * ひな形ごとの文案。長文の欄を、条件から組み立てた文で先に埋めておく。
+ *
+ * 計算（buildTemplateContext）と違って、人が直したらそちらが勝つ。台帳の値
+ * ではなく下書きなので、いつもと違うことを書く余地を残す。
+ */
+export function suggestionsFor(
+  templateKey: string, context: Ctx, bound: Record<string, unknown> = {}
+): Record<string, unknown> {
+  if (isLicenseTermsTemplate(templateKey)) return licenseTermsSuggestions(context, bound);
+  return {};
 }

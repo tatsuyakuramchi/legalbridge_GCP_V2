@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   FIXED_DEALS, LICENSE_TERMS_VARIABLES, dealIdFor, dealInUse, dealSeeds,
-  isLicenseTermsTemplate, licenseTermsPatch, licenseTermsSeeds, materialSeeds
+  isLicenseTermsTemplate, licenseScopeSentence, licenseTermsPatch, licenseTermsSeeds,
+  licenseTermsSuggestions, materialSeeds
 } from "./license-terms.js";
 
 const context = {
@@ -214,4 +215,35 @@ test("use が無い行は載せる扱い（手で足した行・古い下書き�
   });
   assert.equal(patch.conds.length, 1);
   assert.equal(patch.conds[0].appliedRate, "3%");
+});
+
+// ---------------------------------------------------------------------------
+// 許諾範囲の文案
+// ---------------------------------------------------------------------------
+
+test("地域・言語・独占性から許諾範囲の文を組む", () => {
+  const sentence = licenseScopeSentence({ condition: { sublicensable: false } }, {
+    v3_maxRegion: "台湾、香港", v3_maxLanguage: "繁体中国語",
+    対象製品予定名: "星降る夜のミュゼ ボードゲーム版", 独占性: "非独占"
+  });
+  assert.match(sentence, /台湾、香港における繁体中国語/);
+  assert.match(sentence, /星降る夜のミュゼ ボードゲーム版/);
+  assert.match(sentence, /非独占とする/);
+  assert.match(sentence, /再許諾することができない/);
+});
+
+test("再許諾できる条件なら、その旨を書く（書かないと不可と読まれる）", () => {
+  const sentence = licenseScopeSentence({ condition: { sublicensable: true } },
+    { v3_maxRegion: "全世界", v3_maxLanguage: "全言語" });
+  assert.match(sentence, /再許諾することができる/);
+});
+
+test("地域も言語も決まっていなければ文を作らない（中身の無い文を紙に載せない）", () => {
+  assert.equal(licenseScopeSentence({}, { 対象製品予定名: "何か" }), "");
+  assert.deepEqual(licenseTermsSuggestions({}, {}), {});
+});
+
+test("片方だけ決まっていれば、もう片方は無制限として書く", () => {
+  const sentence = licenseScopeSentence({}, { v3_maxRegion: "日本" });
+  assert.match(sentence, /日本における全言語/);
 });

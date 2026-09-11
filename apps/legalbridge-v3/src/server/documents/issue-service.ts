@@ -6,7 +6,7 @@ import { documentWarnings, type Warning } from "./preflight.js";
 import { DocumentContextRepository } from "./context-repository.js";
 import { DocumentRepository } from "./repository.js";
 import { renderDocumentHtml } from "./render.js";
-import { buildTemplateContext, seedLines } from "./template-context.js";
+import { buildTemplateContext, seedLines, suggestionsFor } from "./template-context.js";
 import { resolveAllLegacyVariables } from "./legacy-variables.js";
 import { buildCandidates, type Candidate } from "./candidates.js";
 import { currentYearInTokyo, formatDocumentNumber, nextSequence, normalizePrefix } from "./numbering.js";
@@ -83,9 +83,14 @@ export class DocumentIssueService {
       // 見出しが項目の値そのものなので、手入力だけでは空欄になる）。
       const first = bindVariables(template.variables, context, manual,
         { templateKey: template.templateKey });
-      const computed = buildTemplateContext(template.templateKey, context, manual, first.values);
+      // 文案（条件から組み立てた地域・言語・許諾範囲）。1回目の束縛で埋まった
+      // 値を見るので、人が欄で直していればそちらで組み直る。本文もこれを差すので、
+      // 計算ブロックより先に作って渡す。
+      const suggested = suggestionsFor(template.templateKey, context, first.values);
+      const computed = buildTemplateContext(template.templateKey, context, manual,
+        { ...suggested, ...first.values });
       const binding = bindVariables(template.variables, context, manual,
-        { templateKey: template.templateKey, computed });
+        { templateKey: template.templateKey, computed, suggested });
       // 候補は文脈そのものから作る。ひな形の宣言には依らない。
       const partials = await this.repository.partials();
       const values = { ...resolveAllLegacyVariables(context), ...computed, ...binding.values };
@@ -252,9 +257,11 @@ export class DocumentIssueService {
         // 計算ブロックへ渡す（条件書の見出しは項目の値そのもの）。
         const first = bindVariables(template.variables, context, manual,
           { templateKey: template.templateKey });
-        const computed = buildTemplateContext(template.templateKey, context, manual, first.values);
+        const suggested = suggestionsFor(template.templateKey, context, first.values);
+        const computed = buildTemplateContext(template.templateKey, context, manual,
+          { ...suggested, ...first.values });
         const binding = bindVariables(template.variables, context, manual,
-          { templateKey: template.templateKey, computed });
+          { templateKey: template.templateKey, computed, suggested });
         assertComplete(binding);
 
         // 焼き付けるのは計算ブロックも含めた一式。本文は明細表も合計も

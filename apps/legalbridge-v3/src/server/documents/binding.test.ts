@@ -233,3 +233,37 @@ test("noGuess の項目は名前で推測しない（近い名前の値が紛れ
   const blank = bindVariables([{ name: "許諾者種別", noGuess: true }], context, {});
   assert.equal(blank.values["許諾者種別"], undefined, "供給元が無ければ空のまま");
 });
+
+test("文案は手入力に負ける（下書きであって台帳の値ではない）", () => {
+  const vars = [{ name: "SCOPE", label: "許諾範囲", type: "textarea" }];
+  const filled = bindVariables(vars, {}, {}, { suggested: { SCOPE: "組み立てた文" } });
+  assert.equal(filled.values.SCOPE, "組み立てた文");
+  assert.equal(filled.fields[0].source, "suggested");
+
+  const edited = bindVariables(vars, {}, { SCOPE: "人が書いた文" },
+    { suggested: { SCOPE: "組み立てた文" } });
+  assert.equal(edited.values.SCOPE, "人が書いた文");
+  assert.equal(edited.fields[0].source, "manual");
+});
+
+test("文案は計算に負ける（表と合計はずらせない）", () => {
+  const result = bindVariables([{ name: "TOTAL", label: "合計" }], {}, {},
+    { computed: { TOTAL: 1000 }, suggested: { TOTAL: "文案" } });
+  assert.equal(result.values.TOTAL, 1000);
+  assert.equal(result.fields[0].source, "computed");
+});
+
+test("台帳から引けるなら文案は出さない", () => {
+  const result = bindVariables(
+    [{ name: "WORK", label: "作品名", from: "work.title" }],
+    { work: { title: "星降る夜のミュゼ" } }, {}, { suggested: { WORK: "文案" } });
+  assert.equal(result.values.WORK, "星降る夜のミュゼ");
+  assert.equal(result.fields[0].source, "auto");
+});
+
+test("必須の欄は文案で埋まれば未入力に数えない", () => {
+  const result = bindVariables(
+    [{ name: "SCOPE", label: "許諾範囲", required: true }], {}, {},
+    { suggested: { SCOPE: "組み立てた文" } });
+  assert.deepEqual(result.missing, []);
+});

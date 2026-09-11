@@ -14,17 +14,19 @@ import { api } from "./api.js";
  *
  *   計算   … 明細・合計・消費税。手で直せない（表と合計がずれる）
  *   自動   … 条件・合意・相手先・案件から引いた。空なら手で補える。上書きもできる
+ *   文案   … 条件から組み立てた下書き。そのまま出してもよいし、直してもよい
  *   手入力 … ここから決まらない。人が入れる
  */
 export interface FormField {
   name: string; label: string; group: string | null; type: string; required: boolean;
-  source: "computed" | "auto" | "manual"; value: unknown;
+  source: "computed" | "auto" | "suggested" | "manual"; value: unknown;
   helpText: string | null; placeholder: string | null; options: string[] | null;
   readonly: boolean;
 }
 export interface Candidate { label: string; value: string; source: string; kind: "date" | "amount" | "text" }
 
-const SOURCE_LABEL = { computed: "計算", auto: "自動", manual: "手入力" } as const;
+const SOURCE_LABEL =
+  { computed: "計算", auto: "自動", suggested: "文案", manual: "手入力" } as const;
 
 /**
  * 入力欄の名前から、その欄に合う候補の種類を当てる。
@@ -39,6 +41,18 @@ export function kindFor(name: string, label: string, type?: string): Candidate["
   if (/名|者|部署|内容|件名|住所|番号/.test(s)) return "text";
   return null;
 }
+
+/**
+ * 候補の札に出す文字。前回の許諾範囲のような長文は、そのまま出すと1行が
+ * 画面からはみ出す。頭だけ見せて、全文は title で読めるようにする。
+ */
+const brief = (v: string): string => {
+  const one = v.replace(/\s+/g, " ").trim();
+  return one.length > 32 ? `${one.slice(0, 32)}…` : one;
+};
+
+/* 前回の許諾範囲のような長文も並ぶので、1行に押し込めず枠の中で折り返す。 */
+const CAND_STYLE = { whiteSpace: "normal", textAlign: "left", maxWidth: "100%" } as const;
 
 const show = (v: unknown): string => {
   if (v === null || v === undefined) return "";
@@ -95,6 +109,8 @@ export function DocumentFields(
     if (!quoteFor || (!quoteSearch.trim() && !partyId)) { setQuoteHits([]); return; }
     const params = new URLSearchParams({ q: quoteSearch.trim() });
     if (partyId) params.set("partyId", String(partyId));
+    // どの欄から引いているかを伝える。前回この欄に入れた文言を並べるため。
+    params.set("field", quoteFor);
     api.get<{ candidates: Candidate[] }>(`/quote-sources?${params}`)
       .then((r) => setQuoteHits(r.candidates)).catch(() => setQuoteHits([]));
   }, [quoteFor, quoteSearch, partyId]);
@@ -124,15 +140,18 @@ export function DocumentFields(
           <div className="panel-hd">
             <h2>{g.name}</h2>
             <span className="faint">
-              {g.fields.filter((f) => f.source !== "manual").length > 0 &&
-                `自動 ${g.fields.filter((f) => f.source !== "manual").length}`}
+              {g.fields.filter((f) => f.source === "computed" || f.source === "auto").length > 0 &&
+                `自動 ${g.fields.filter((f) => f.source === "computed" || f.source === "auto").length}`}
+              {g.fields.some((f) => f.source === "suggested") &&
+                `　文案 ${g.fields.filter((f) => f.source === "suggested").length}`}
               {g.fields.some((f) => f.source === "manual") &&
                 `　手入力 ${g.fields.filter((f) => f.source === "manual").length}`}
             </span>
           </div>
           <div className="panel-bd stack" style={{ gap: 10 }}>
             {g.fields.map((f) => {
-              const editing = f.source === "manual" || overriding.has(f.name)
+              const editing = f.source === "manual" || f.source === "suggested"
+                || overriding.has(f.name)
                 || (f.source === "auto" && f.name in manual);
               const value = f.name in manual ? manual[f.name] : show(f.value);
               const blank = !String(value ?? "").trim();
@@ -224,16 +243,16 @@ export function DocumentFields(
                           <div className="stack" style={{ gap: 4, width: "100%", marginTop: 4 }}>
                             <input value={quoteQ} autoFocus
                                    placeholder={partyId
-                                     ? "この取引先の契約・文書、スタッフ・先方担当を名前で探す"
+                                     ? "この取引先の前回の文言・契約・文書、スタッフ・先方担当を名前で探す"
                                      : "スタッフ・取引先・先方担当を名前で探す"}
                                    onChange={(e) => setQuoteQ(e.target.value)} />
                             <div className="row" style={{ flexWrap: "wrap", gap: 4 }}>
                               {quoteHits.map((c) => (
                                 <button key={`${c.label}:${c.value}`} type="button"
-                                        className="btn btn-sm" style={{ whiteSpace: "nowrap" }}
-                                        title={c.source}
+                                        className="btn btn-sm" style={CAND_STYLE}
+                                        title={`${c.source}\n${c.value}`}
                                         onClick={() => { onPick(f.name, c.value); setQuoteFor(null); }}>
-                                  {c.value}
+                                  {brief(c.value)}
                                   <span className="faint" style={{ marginLeft: 4 }}>{c.label}</span>
                                 </button>
                               ))}
@@ -245,10 +264,10 @@ export function DocumentFields(
                         )}
                         {open && fits.slice(0, 8).map((c) => (
                           <button key={`${c.label}:${c.value}`} type="button"
-                                  className="btn btn-sm" style={{ whiteSpace: "nowrap" }}
-                                  title={`${c.source}／${c.label}`}
+                                  className="btn btn-sm" style={CAND_STYLE}
+                                  title={`${c.source}／${c.label}\n${c.value}`}
                                   onClick={() => onPick(f.name, c.value)}>
-                            {c.value}
+                            {brief(c.value)}
                             <span className="faint" style={{ marginLeft: 4 }}>{c.label}</span>
                           </button>
                         ))}

@@ -221,6 +221,84 @@ export function licenseTermsSeeds(context: Data): Record<string, Data[]> {
 // 本文の文脈（V2 buildIndividualLicenseV3Context の移植）
 // ---------------------------------------------------------------------------
 
+/**
+ * 許諾範囲の文案。
+ *
+ * この文は、中身のほとんどが既にどこかにある。独占性は条件明細、地域と言語は
+ * 許諾範囲、対象製品はこの書類の上の欄。人が打ち直すと、条件を直したときに
+ * 文だけ古いまま残る（地域を足したのに範囲の文は前のまま、が起きる）。
+ *
+ * 組み立てた文を既定で入れておき、いつもと違うことを書くときだけ人が直す。
+ * 直した文はそのまま残り、以後この組み立ては効かない（手入力が勝つ）。
+ *
+ * 材料が足りないとき（地域も言語も未指定）は文を作らない。空欄のほうが、
+ * 中身の無い文が紙に載るより良い。
+ */
+export function licenseScopeSentence(context: Data, bound: Data = {}): string {
+  const value = (...keys: string[]): string => {
+    for (const key of keys) {
+      const found = bound[key] ?? context[key];
+      if (found != null && String(found).trim() !== "") return String(found).trim();
+    }
+    return "";
+  };
+  const region = value("v3_maxRegion", "許諾地域", "maxRegion");
+  const language = value("v3_maxLanguage", "許諾言語", "maxLanguage");
+  if (!region && !language) return "";
+
+  const product = value("対象製品予定名", "productName");
+  const exclusivity = value("独占性", "exclusivity");
+  const sublicensable = context.condition?.sublicensable;
+
+  const parts: string[] = [];
+  parts.push(`本許諾の範囲は、${region || "全世界"}における${language || "全言語"}`
+    + `${product ? `の${product}` : ""}とする。`);
+  if (exclusivity) parts.push(`本許諾は${exclusivity}とする。`);
+  // 再許諾は「書いていない＝できない」と読まれる。条件明細で決まっているので、
+  // どちらであっても書く。
+  if (sublicensable === true) parts.push("被許諾者は、許諾者の事前の書面による承諾を得て、第三者に再許諾することができる。");
+  if (sublicensable === false) parts.push("被許諾者は、第三者に再許諾することができない。");
+  return parts.join("");
+}
+
+/**
+ * この書類に載せる条件明細が持っている許諾範囲。
+ *
+ * 上限の地域・言語は条件明細（condition_scopes）に既にある。人が思い出して
+ * 打つものではない。条件を複数載せるときは、どれかに挙がっている範囲を
+ * すべて並べる（載せた条件の合計がこの書類の範囲になる）。
+ */
+function scopeOfConditions(context: Data, type: "region" | "language"): string {
+  const conditions = Array.isArray(context.conditions) ? context.conditions as Data[]
+    : context.condition ? [context.condition as Data] : [];
+  const labels: string[] = [];
+  for (const condition of conditions) {
+    for (const label of (condition?.scopes?.[type] ?? []) as string[]) {
+      const value = String(label ?? "").trim();
+      if (value && !labels.includes(value)) labels.push(value);
+    }
+  }
+  return labels.join("、");
+}
+
+/**
+ * ひな形ごとの文案。人が直せる（計算と違い、手入力が勝つ）。
+ *
+ * 地域・言語は条件明細から、許諾範囲の文はその地域・言語から組む。文は
+ * 1回目の束縛で埋まった値（bound）を見るので、人が欄で地域を変えていれば
+ * そちらで組み直る。
+ */
+export function licenseTermsSuggestions(context: Data, bound: Data = {}): Data {
+  const out: Data = {};
+  const region = scopeOfConditions(context, "region");
+  const language = scopeOfConditions(context, "language");
+  if (region) out.v3_maxRegion = region;
+  if (language) out.v3_maxLanguage = language;
+  const scope = licenseScopeSentence(context, { ...out, ...bound });
+  if (scope) out.v3_scope = scope;
+  return out;
+}
+
 export function licenseTermsPatch(context: Data, manual: Data = {}): Data {
   const seeds = licenseTermsSeeds(context);
   const all = list(manual.v3_conds).length ? list(manual.v3_conds) : seeds.v3_conds;
