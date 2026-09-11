@@ -9,6 +9,8 @@
  * 同じ書類が V1 と V3 で違う金額になってはいけない。
  */
 
+import { roundAmount } from "../core/rounding.js";
+
 export type TaxCategory = "taxable" | "reduced" | "exempt";
 
 /** 税区分ごとの税率（%）。V1 の TAX_CATEGORY_OPTIONS と同じ。 */
@@ -122,11 +124,17 @@ export function computeInspectionTotals(source: Row): InspectionTotals {
 // 発注書
 // ---------------------------------------------------------------------------
 
-/** 明細1行の税抜額。金額欄が空なら単価×数量で補う。V1 と同じ。 */
+/**
+ * 明細1行の税抜額。金額欄が空なら単価×数量で補う。V1 と同じ。
+ *
+ * 行ごとに四捨五入する。数量が小数だと端数が出て、紙に並ぶ行の金額が
+ * 端数のまま出るうえ、足しても合計に一致しなくなる。
+ */
 export function lineAmountExTax(row: Row): number {
   const amount = num(pickRow(row, "amount_ex_tax", "amount", "subtotal"));
-  if (amount) return amount;
-  return num(pickRow(row, "unit_price", "unitPrice")) * num(pickRow(row, "quantity", "qty") ?? 1);
+  if (amount) return roundAmount(amount);
+  return roundAmount(
+    num(pickRow(row, "unit_price", "unitPrice")) * num(pickRow(row, "quantity", "qty") ?? 1));
 }
 
 export interface PurchaseOrderTotals {

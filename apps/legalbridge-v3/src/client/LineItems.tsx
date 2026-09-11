@@ -10,6 +10,7 @@
  * 本文になる。「自動に戻す」で種の行に戻る。
  */
 import { SnippetPicker } from "./SnippetPicker.js";
+import { roundAmount } from "../server/core/rounding.js";
 
 export type Row = Record<string, unknown>;
 
@@ -175,7 +176,8 @@ export function LineItemsEditor(
       // 数量×単価 → 金額。金額を手で直したときは触らない。
       if ((col.name === "quantity" || col.name === "unit_price") && name === "items") {
         const q = num(row.quantity); const u = num(row.unit_price);
-        if (q !== null && u !== null) row.amount_ex_tax = q * u;
+        // 数量が小数だと端数が出る。金額は円の整数なので行ごとに四捨五入する。
+        if (q !== null && u !== null) row.amount_ex_tax = roundAmount(q * u);
       }
       return row;
     });

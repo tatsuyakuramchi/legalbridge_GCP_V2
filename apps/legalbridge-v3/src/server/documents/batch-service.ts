@@ -3,6 +3,7 @@ import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { parseCsv, csvAmount } from "../imports/parse.js";
 import { ConditionWriteService } from "../conditions/write-service.js";
+import { roundAmount } from "../core/rounding.js";
 import { ConditionScheduleService, TRIGGER_KINDS,
          type ScheduleLine, type TriggerKind } from "../conditions/schedule-service.js";
 import { MatterLinkService } from "../matters/link-service.js";
@@ -161,7 +162,9 @@ export function readRows(text: string): BatchRow[] {
     if (ownership === null) issues.push(`成果物の帰属先は 発注者 か 受注者（${ownershipRaw}）`);
     const method = get("calc_method");
     if (method && !/^(固定額|FIXED)$/i.test(method)) issues.push(`支払方法は 固定額 だけ扱えます（${method}）`);
-    const amount = (quantity ?? 0) * (unitPrice ?? 0);
+    // 数量は小数を取る（0.5人日）。掛けた金額に端数が出ると、条件明細の
+    // 金額欄（整数）へ渡すところで落ちる。行ごとに四捨五入して整数にする。
+    const amount = roundAmount((quantity ?? 0) * (unitPrice ?? 0));
     return {
       line: i + 2,
       partyCode: get("partyCode") || null,
@@ -401,7 +404,8 @@ export class DocumentBatchService {
         // 作品が決まっていない束では引かない。作品なしの条件に当たって
         // 「既存」と出てしまい、飛ばす束なのに当たっているように見える。
         const condition = party && (workResolution === "none" || workResolution === "resolved")
-          ? await this.existingCondition(this.database, input.matterId, party.id, work?.id ?? null)
+          ? await this.existingCondition(this.database, input.matterId, party.id,
+                                         work?.id ?? null, g.conditionName)
           : null;
         // 新しく作る条件に付ける基本契約。既存に当てる束は今の合意のまま触らない。
         const basic = party && !condition && !stuck && !choosing
@@ -784,8 +788,12 @@ export class DocumentBatchService {
    * ぶら下がってしまう。作品なしの束は作品なしの条件にだけ当てる。
    */
   private async existingCondition(
-    client: Queryable, matterId: number, partyId: number, workId: number | null
+    client: Queryable, matterId: number, partyId: number, workId: number | null,
+    conditionName: string | null
   ) {
+    // 条件名を書いてあるときは名前まで見る。束は名前で分かれるのに、当てる
+    // ほうが名前を見ないと、別の名前を書いても同じ条件にぶら下がって
+    // 名前が捨てられる（分ける手立てが無くなる）。
     const r = await client.query(
       `SELECT c.id, c.condition_no FROM matter_links ml
          JOIN conditions c ON c.id::text = ml.target_ref
@@ -793,7 +801,8 @@ export class DocumentBatchService {
           AND c.counterparty_id = $2 AND c.status = 'active'
           AND c.kind = 'service' AND c.pricing_model = 'fixed'
           AND c.work_id IS NOT DISTINCT FROM $3
-        ORDER BY c.id DESC LIMIT 1`, [matterId, partyId, workId]);
+          AND ($4::text IS NULL OR btrim(c.name) = btrim($4))
+        ORDER BY c.id DESC LIMIT 1`, [matterId, partyId, workId, conditionName]);
     const row = r.rows[0] as { id: number; condition_no: string | null } | undefined;
     return row ? { id: Number(row.id), conditionNo: str(row.condition_no) } : null;
   }

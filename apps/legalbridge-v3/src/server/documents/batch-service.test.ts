@@ -200,7 +200,7 @@ test("既存の条件に当てるときは作品まで見る", async () => {
     return p[2] === 11 ? [{ id: 44, condition_no: "CL-2026-00044" }] : [];
   });
   const r = await svc.preview({ templateKey: "purchase_order", matterId: 3, csv: CSV_WORKS });
-  assert.ok(seen.every((p) => p.length === 3), "作品IDを渡している");
+  assert.ok(seen.every((p) => p.length === 4), "作品IDと条件名を渡している");
   assert.equal(r.groups[0].condition.id, 44);
   assert.equal(r.groups[1].condition.mode, "new", "別の作品なので当てない");
 });
@@ -395,4 +395,48 @@ VD-00317,合同会社アトリエ蒼,,,,,挿絵,カラー1点,1,120000,検収後
   assert.equal(sameAcross(rows, (r) => (r.item.payment_terms as string | null) ?? null), "翌月末");
   const mixed = [rows[0], { ...rows[1], item: { ...rows[1].item, payment_terms: "当月末" } }];
   assert.equal(sameAcross(mixed, (r) => (r.item.payment_terms as string | null) ?? null), null);
+});
+
+test("数量が小数でも、行の金額は四捨五入して整数になる", () => {
+  // 端数のまま条件明細の金額欄（bigint）へ渡すと
+  // invalid input syntax for type bigint: "157987.5" で落ちる。
+  const rows = readRows(`${HEAD}
+VD-00317,合同会社アトリエ蒼,,,,,校正,一式,1.5,3333,検収後,2027-01-31,2027-02-28,,発注者,固定額,
+VD-00317,合同会社アトリエ蒼,,,,,追加,一式,0.5,1001,検収後,2027-01-31,2027-02-28,,発注者,固定額,`);
+  // 数量と単価はそのまま。金額だけ丸める。
+  assert.equal(rows[0].item.quantity, 1.5);
+  assert.equal(rows[0].item.unit_price, 3333);
+  assert.equal(rows[0].amount, 5000, "4999.5 → 5000");
+  assert.equal(rows[0].item.amount_ex_tax, 5000);
+  assert.equal(rows[1].amount, 501, "500.5 → 501");
+  // 束の合計も整数。行を丸めてから足すので、明細の合計と総額が必ず合う。
+  const [group] = groupRows(rows);
+  assert.equal(group.total, 5501);
+  assert.ok(Number.isInteger(group.total));
+});
+
+test("小数の金額でも予定明細が置ける", () => {
+  // 予定明細は 0円以下を弾く。丸める前は 0.4 のような行が 0 になって
+  // 置けなかった（丸めれば 0 のままなので落ちるのは同じだが、
+  // 1円以上になる行は置けるようになる）。
+  const rows = readRows(`${HEAD}
+VD-00317,合同会社アトリエ蒼,,,,,校正,一式,1.5,3333,検収後,2027-01-31,2027-02-28,,発注者,固定額,`);
+  assert.deepEqual(scheduleLinesFrom(rows).map((l) => l.plannedAmount), [5000]);
+});
+
+test("条件名を書いたときは、同じ名前の条件にだけ当てる", async () => {
+  // 束は名前で分かれるのに当てるほうが名前を見ないと、別の名前を書いても
+  // 同じ条件にぶら下がり、名前が捨てられる（分ける手立てが無くなる）。
+  const seen: unknown[][] = [];
+  const { svc } = build((t, p) => {
+    if (!t.includes("c.pricing_model = 'fixed'")) return undefined;
+    seen.push(p);
+    return p[3] === "第1期 制作" ? [{ id: 44, condition_no: "CL-2026-00044" }] : [];
+  });
+  const r = await svc.preview({ templateKey: "purchase_order", matterId: 3, csv: `${HEAD}
+VD-00317,合同会社アトリエ蒼,,,,第1期 制作,表紙,カラー1点,1,150000,検収後,2026-10-31,2026-11-30,,発注者,固定額,
+VD-00317,合同会社アトリエ蒼,,,,第2期 制作,挿絵,カラー1点,1,120000,検収後,2027-01-31,2027-02-28,,発注者,固定額,` });
+  assert.deepEqual(seen.map((p) => p[3]), ["第1期 制作", "第2期 制作"]);
+  assert.equal(r.groups[0].condition.id, 44, "同じ名前の条件に当たる");
+  assert.equal(r.groups[1].condition.mode, "new", "別の名前なので新しく作る");
 });
