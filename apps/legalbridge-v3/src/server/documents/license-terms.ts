@@ -96,8 +96,12 @@ export const LICENSE_TERMS_VARIABLES: TemplateVariable[] = [
     helpText: "許諾を受けて出す製品の名前。作品名とは別のことが多いので、ここは人が入れる" },
   { name: "独占性", label: "独占性", type: "select", options: ["独占", "非独占"],
     group: "IV. 許諾概要", required: true, from: "condition.exclusivityLabel" },
-  { name: "v3_maxRegion", label: "許諾地域（上限）", group: "IV. 許諾概要", noGuess: true },
-  { name: "v3_maxLanguage", label: "許諾言語（上限）", group: "IV. 許諾概要", noGuess: true },
+  // 自由記載だと「日本」「日本国内」「JP」が別物として入り、作品の権利包絡が
+  // 割れる。ISO のコードから複数選ぶ欄にする（画面が type を見て出し分ける）。
+  { name: "v3_maxRegion", label: "許諾地域（上限）", type: "regions",
+    group: "IV. 許諾概要", noGuess: true },
+  { name: "v3_maxLanguage", label: "許諾言語（上限）", type: "languages",
+    group: "IV. 許諾概要", noGuess: true },
   { name: "v3_scope", label: "許諾範囲", type: "textarea", group: "IV. 許諾概要", noGuess: true },
   { name: "監修者", label: "監修者", group: "IV. 許諾概要", noGuess: true,
     helpText: "許諾者側の監修担当。当社の担当者ではない" },

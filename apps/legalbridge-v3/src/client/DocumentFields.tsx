@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useDebounced } from "./ListTools.js";
+import { RightsScopePicker } from "./RightsScopePicker.js";
 import { api } from "./api.js";
 
 /**
@@ -155,6 +156,11 @@ export function DocumentFields(
                           </button>
                         )}
                       </div>
+                    ) : f.type === "regions" || f.type === "languages" ? (
+                      /* 許諾の範囲。自由記載だと表記が割れるので ISO のコードから選ぶ。 */
+                      <RightsScopePicker kind={f.type === "regions" ? "region" : "language"}
+                                         value={value}
+                                         onChange={(v) => onChange(f.name, v)} />
                     ) : f.type === "textarea" ? (
                       <textarea rows={3} value={value} placeholder={f.placeholder ?? undefined}
                                 onChange={(e) => onChange(f.name, e.target.value)} />

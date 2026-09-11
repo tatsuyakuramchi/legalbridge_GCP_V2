@@ -56,6 +56,10 @@ export function buildCandidates(context: Record<string, any>): Candidate[] {
         c.counterparty?.name ? `${c.counterparty.name} ${c.counterparty.honorific ?? ""}`.trim() : null,
         "text");
     add("条件", "作品名", c.work?.title, "text");
+    // 許諾の範囲。条件に付いた地域・言語をそのまま候補に出す。条件書の
+    // 「許諾地域（上限）」はこれを写したものになる。
+    add("条件", "許諾地域", (c.scopes?.region ?? []).join("、"), "text");
+    add("条件", "許諾言語", (c.scopes?.language ?? []).join("、"), "text");
     add("条件", "契約の開始日", c.termStart, "date");
     add("条件", "契約の終了日", c.termEnd, "date");
     add("条件", "支払条件", c.paymentTerms, "text");
