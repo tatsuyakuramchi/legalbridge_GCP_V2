@@ -7,7 +7,7 @@ import { SearchSelect, type SearchOption } from "./SearchSelect.js";
  *
  *   1. ひな形と案件を決め、CSV を選ぶ（雛形はここから取れる）
  *   2. 突き合わせ：同じ取引先・同じ作品の行を1束（1枚）にまとめ、当たり具合を見せる。何も作らない
- *   3. 下書きを N 件作る：束ごとに 条件明細 → 案件 → 下書き
+ *   3. 下書きを N 件作る：束ごとに 条件明細（基本契約・作品・予定明細つき）→ 案件 → 下書き
  *   4. 束の画面：まとめて決定、まとめて送る（取引先へ、担当者を cc）
  *
  * 1束 = 発注書1枚 = 条件明細1件。取引先だけで束ねていたので、作品が何本かある
@@ -27,7 +27,11 @@ interface Group {
   workCode: string | null; workTitle: string | null;
   workResolution: "none" | "resolved" | "ambiguous" | "missing";
   work: WorkCandidate | null; workCandidates: WorkCandidate[];
-  condition: { mode: "existing" | "new"; id: number | null; conditionNo: string | null };
+  condition: {
+    mode: "existing" | "new"; id: number | null; conditionNo: string | null;
+    agreement: { id: number; agreementNo: string | null; title: string | null } | null;
+    agreementNote: string | null; schedules: number;
+  };
   rows: Row[]; total: number; issues: string[]; action: "create" | "choose" | "skip";
 }
 interface Preview { groups: Group[]; summary: { rows: number; groups: number; creatable: number; skipped: number; choose: number } }
@@ -263,7 +267,11 @@ export function BulkOrders(
         <div className="panel-bd stack">
           <div className="note">
             1束 = 発注書1枚 = 条件明細1件。同じ取引先でも作品が違えば別の束になります。
-            条件明細：その取引先・その作品にこの案件の定額・委託料の条件があれば「既存」に当てる。無ければ「新規」で1件作る（金額は行の合計、終了は納期の最遅、作品は当てた作品）。
+            条件明細：その取引先・その作品にこの案件の定額・委託料の条件があれば「既存」に当てる。
+            無ければ発注書と同時に「新規」で1件作ります
+            （金額は行の合計、終了は納期の最遅、作品は当てた作品、基本契約はその取引先の締結済みのもの、
+            予定明細は CSV の1行が1回・起点は検収後）。
+            基本契約が決まらなくても発注書は作れます（基本契約なしの発注）。あとから条件の画面で付けられます。
             取引先も作品もここでは作りません。未登録の束は飛ばし、登録してから残りだけ再アップロードしてください。
           </div>
           <div className="row">
@@ -405,7 +413,23 @@ function GroupRows(
         <td>
           {g.condition.mode === "existing"
             ? <><span className="src auto">既存</span> <span className="code faint">{g.condition.conditionNo}</span></>
-            : g.party ? <><span className="src auto">新規</span> <span className="faint">条件を作る</span></> : <span className="faint">—</span>}
+            : g.party && g.action !== "skip" ? (
+              // 発注書と同時に何が作られるかを、作る前に見せる。
+              // 作ってから「基本契約が付いていない」「回が無い」に気づくと、
+              // 条件の画面で1件ずつ入れ直すことになる。
+              <>
+                <span className="src auto">新規</span> <span className="faint">条件を作る</span>
+                <div className="faint" style={{ marginTop: 2 }}>
+                  {g.condition.agreement
+                    ? <>基本契約 <span className="code">{g.condition.agreement.agreementNo}</span></>
+                    : <span className="bad">基本契約なし</span>}
+                  {g.condition.schedules > 0 && `　予定 ${g.condition.schedules} 回`}
+                </div>
+                {g.condition.agreementNote && (
+                  <div className="faint" style={{ marginTop: 2 }}>{g.condition.agreementNote}</div>
+                )}
+              </>
+            ) : <span className="faint">—</span>}
         </td>
         <td><span className={`tag ${tone}`}>{ACTION_LABEL[g.action]}</span></td>
       </tr>

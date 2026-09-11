@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { FakeDatabase } from "../core/fake-db.js";
-import { DocumentBatchService, groupRows, ownershipOfRows, readRows, templateCsv } from "./batch-service.js";
+import { DocumentBatchService, groupRows, ownershipOfRows, readRows, scheduleLinesFrom,
+         templateCsv } from "./batch-service.js";
 
 const HEAD = "取引先コード,取引先名,作品コード,作品名,品目・業務名,仕様・成果物,数量,"
   + "単価（税抜）,納期,支払日,成果物の帰属先,支払方法,備考";
@@ -122,7 +123,11 @@ test("突き合わせ：その取引先の定額・委託料の条件がこの�
   const { svc } = build((t) =>
     t.includes("c.pricing_model = 'fixed'") ? [{ id: 44, condition_no: "CL-2026-00044" }] : undefined);
   const r = await svc.preview({ templateKey: "purchase_order", matterId: 3, csv: CSV });
-  assert.deepEqual(r.groups[0].condition, { mode: "existing", id: 44, conditionNo: "CL-2026-00044" });
+  assert.equal(r.groups[0].condition.mode, "existing");
+  assert.equal(r.groups[0].condition.id, 44);
+  assert.equal(r.groups[0].condition.conditionNo, "CL-2026-00044");
+  // 既存に当てる束は、いまの基本契約のまま触らない。
+  assert.equal(r.groups[0].condition.agreement, null);
 });
 
 test("発注書以外のひな形では一括を受けない", async () => {
@@ -195,7 +200,7 @@ test("既存の条件に当てるときは作品まで見る", async () => {
   });
   const r = await svc.preview({ templateKey: "purchase_order", matterId: 3, csv: CSV_WORKS });
   assert.ok(seen.every((p) => p.length === 3), "作品IDを渡している");
-  assert.deepEqual(r.groups[0].condition, { mode: "existing", id: 44, conditionNo: "CL-2026-00044" });
+  assert.equal(r.groups[0].condition.id, 44);
   assert.equal(r.groups[1].condition.mode, "new", "別の作品なので当てない");
 });
 
@@ -208,4 +213,71 @@ test("作品が決まっていない束では、既存の条件を引かない",
 VD-00317,合同会社アトリエ蒼,WRK-99999,,表紙,カラー1点,1,150000,2026-10-31,2026-11-30,発注者,固定額,` });
   assert.equal(r.groups[0].workResolution, "missing");
   assert.equal(r.groups[0].condition.mode, "new");
+});
+
+test("予定明細は CSV の1行が1回。納期と支払日をそのまま持つ", () => {
+  // 予定が無いと、実績を入れるときに「どの回の分か」が選べず、
+  // 検収書の支払日が空欄で出る。
+  const lines = scheduleLinesFrom(readRows(CSV_WORKS).slice(0, 2));
+  assert.deepEqual(lines, [
+    { seq: 1, label: "表紙イラスト", triggerKind: "on_inspection",
+      plannedAmount: 150000, dueOn: "2026-10-31", payOn: "2026-11-30" },
+    { seq: 2, label: "挿絵", triggerKind: "on_inspection",
+      plannedAmount: 80000, dueOn: "2026-10-31", payOn: "2026-11-30" }
+  ]);
+});
+
+test("0円の行は予定明細に置かない（置けない）", () => {
+  const rows = readRows(CSV_WORKS).slice(0, 2);
+  const zeroed = [{ ...rows[0], amount: 0 }, rows[1]];
+  assert.deepEqual(scheduleLinesFrom(zeroed).map((l) => l.seq), [1]);
+  assert.equal(scheduleLinesFrom(zeroed)[0].plannedAmount, 80000);
+});
+
+/** 締結済みの基本契約（取得側）を1件だけ持つ取引先。 */
+const agreement = (t: string) =>
+  t.includes("FROM agreements") && t.includes("direction = 'in'")
+    ? [{ id: 7, agreement_no: "AGR-2025-0011", title: "制作業務委託基本契約" }] : undefined;
+
+test("新しく作る条件には、その取引先の締結済みの基本契約を当てる", async () => {
+  // 条件明細は基本契約にぶら下がる。付けずに作ると鎖の1本目が切れ、
+  // 契約の画面からこの発注が見えない。
+  const { svc } = build((t) => agreement(t));
+  const r = await svc.preview({ templateKey: "purchase_order", matterId: 3, csv: CSV_WORKS });
+  assert.equal(r.groups[0].condition.mode, "new");
+  assert.deepEqual(r.groups[0].condition.agreement,
+    { id: 7, agreementNo: "AGR-2025-0011", title: "制作業務委託基本契約" });
+  assert.equal(r.groups[0].condition.agreementNote, null);
+  assert.equal(r.groups[0].condition.schedules, 2, "行の数だけ回ができる");
+});
+
+test("この案件で既に使っている基本契約を優先する", async () => {
+  const { svc } = build((t) =>
+    t.includes("JOIN agreements a ON a.id = c.agreement_id")
+      ? [{ id: 9, agreement_no: "AGR-2024-0002", title: "旧・制作業務委託基本契約" }]
+      : agreement(t));
+  const r = await svc.preview({ templateKey: "purchase_order", matterId: 3, csv: CSV_WORKS });
+  assert.equal(r.groups[0].condition.agreement?.id, 9);
+});
+
+test("基本契約が決まらなくても止めない。理由だけ残す", async () => {
+  // 発注書は基本契約なしでも出せる（相手と基本契約を交わしていない単発）。
+  const { svc } = build();
+  const r = await svc.preview({ templateKey: "purchase_order", matterId: 3, csv: CSV_WORKS });
+  assert.equal(r.groups[0].condition.agreement, null);
+  assert.match(r.groups[0].condition.agreementNote ?? "", /基本契約が見つかりません/);
+  assert.equal(r.groups[0].action, "create", "止める理由にはしない");
+  assert.equal(r.groups[0].issues.length, 0, "不備としては数えない");
+});
+
+test("基本契約の候補が複数なら当てない。あとで人が選ぶ", async () => {
+  const { svc } = build((t) =>
+    t.includes("FROM agreements") && t.includes("direction = 'in'")
+      ? [{ id: 7, agreement_no: "A-1", title: "基本契約1" },
+         { id: 8, agreement_no: "A-2", title: "基本契約2" }]
+      : undefined);
+  const r = await svc.preview({ templateKey: "purchase_order", matterId: 3, csv: CSV_WORKS });
+  assert.equal(r.groups[0].condition.agreement, null);
+  assert.match(r.groups[0].condition.agreementNote ?? "", /複数あります/);
+  assert.equal(r.groups[0].action, "create");
 });

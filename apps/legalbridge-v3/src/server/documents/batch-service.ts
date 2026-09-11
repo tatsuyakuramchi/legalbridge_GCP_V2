@@ -3,6 +3,7 @@ import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { parseCsv, csvAmount } from "../imports/parse.js";
 import { ConditionWriteService } from "../conditions/write-service.js";
+import { ConditionScheduleService, type ScheduleLine } from "../conditions/schedule-service.js";
 import { MatterLinkService } from "../matters/link-service.js";
 import { MatterCommunicationService } from "../matters/communication-service.js";
 import { DocumentIssueService } from "./issue-service.js";
@@ -130,6 +131,29 @@ export function readRows(text: string): BatchRow[] {
   });
 }
 
+/**
+ * 束の行から、条件の予定明細を組む。CSV の1行が1回。
+ *
+ * 予定を作らないと、条件明細は金額の総額しか持たない。実績を入れるときに
+ * 「どの回の分か」が選べず、検収書の支払日が空欄で出る。CSV には納期も
+ * 支払日も1行ずつ書いてあるので、そのまま回にできる。
+ *
+ * 起点は「検収後」。業務委託の発注は検収を起点に払うのが既定で、違う案件は
+ * 条件の画面で直せる。0円の行は置けない（予定明細の規則）ので落とす。
+ */
+export function scheduleLinesFrom(rows: BatchRow[]): ScheduleLine[] {
+  return rows
+    .filter((r) => Math.round(r.amount) > 0)
+    .map((r, index) => ({
+      seq: index + 1,
+      label: String(r.item.item_name ?? "") || null,
+      triggerKind: "on_inspection" as const,
+      plannedAmount: Math.round(r.amount),
+      dueOn: (r.item.delivery_date as string | null) ?? null,
+      payOn: (r.item.payment_date as string | null) ?? null
+    }));
+}
+
 /** 束の行の帰属先が全部同じならそれを条件に持たせる。混ざっていれば決めない。 */
 export function ownershipOfRows(rows: BatchRow[]): "orderer" | "contractor" | null {
   const set = new Set(rows.map((r) => String(r.item.deliverable_ownership ?? "")).filter(Boolean));
@@ -140,6 +164,7 @@ export function ownershipOfRows(rows: BatchRow[]): "orderer" | "contractor" | nu
 
 export interface PartyCandidate { id: number; name: string; partyCode: string | null }
 export interface WorkCandidate { id: number; title: string; workCode: string | null }
+export interface AgreementRef { id: number; agreementNo: string | null; title: string | null }
 
 /** 作品の当たり方。none は CSV が作品を書いていない（作品なしの発注）。 */
 export type WorkResolution = "none" | "resolved" | "ambiguous" | "missing";
@@ -158,8 +183,20 @@ export interface BatchGroup {
   workResolution: WorkResolution;
   work: WorkCandidate | null;
   workCandidates: WorkCandidate[];
-  /** 条件明細の扱い。既存に当てるか、新しく作るか。 */
-  condition: { mode: "existing" | "new"; id: number | null; conditionNo: string | null };
+  /**
+   * 条件明細の扱い。既存に当てるか、新しく作るか。
+   * 新しく作るときは、基本契約と予定明細もここで決まる（作ってから
+   * 人が入れ直すものを減らす）。
+   */
+  condition: {
+    mode: "existing" | "new"; id: number | null; conditionNo: string | null;
+    /** 新しく作る条件に付ける基本契約。決まらなければ null（発注書は基本契約なしでも出せる）。 */
+    agreement: AgreementRef | null;
+    /** 基本契約が決まらなかった理由。埋まらないことは止める理由ではないので、issues には出さない。 */
+    agreementNote: string | null;
+    /** 作る予定明細の回数。CSV の1行が1回。 */
+    schedules: number;
+  };
   rows: BatchRow[];
   total: number;
   issues: string[];
@@ -220,6 +257,7 @@ export interface BatchRecord {
 
 export class DocumentBatchService {
   private readonly conditions: ConditionWriteService;
+  private readonly schedules: ConditionScheduleService;
   private readonly matters: MatterLinkService;
   private readonly documents: DocumentRepository;
 
@@ -230,6 +268,7 @@ export class DocumentBatchService {
     private readonly pdf: PdfRenderer
   ) {
     this.conditions = new ConditionWriteService(database);
+    this.schedules = new ConditionScheduleService(database);
     this.matters = new MatterLinkService(database);
     this.documents = new DocumentRepository(database);
   }
@@ -286,12 +325,19 @@ export class DocumentBatchService {
         // 取引先と作品のどちらかが未登録なら飛ばす。どちらかが候補待ちなら選ぶ。
         const stuck = resolution === "missing" || workResolution === "missing";
         const choosing = resolution === "ambiguous" || workResolution === "ambiguous";
+        // 新しく作る条件に付ける基本契約。既存に当てる束は今の合意のまま触らない。
+        const basic = party && !condition && !stuck && !choosing
+          ? await this.basicAgreement(this.database, input.matterId, party.id)
+          : { agreement: null, note: null };
         groups.push({
           ...g, resolution, party, candidates: resolved.candidates,
           workResolution, work, workCandidates: foundWork.candidates,
           condition: condition
-            ? { mode: "existing", id: condition.id, conditionNo: condition.conditionNo }
-            : { mode: "new", id: null, conditionNo: null },
+            ? { mode: "existing", id: condition.id, conditionNo: condition.conditionNo,
+                agreement: null, agreementNote: null, schedules: 0 }
+            : { mode: "new", id: null, conditionNo: null,
+                agreement: basic.agreement, agreementNote: basic.note,
+                schedules: scheduleLinesFrom(g.rows).length },
           issues,
           action: stuck ? "skip" : choosing ? "choose" : blocking ? "skip" : "create"
         });
@@ -356,9 +402,16 @@ export class DocumentBatchService {
               // 仕様と帰属先も条件に持たせる。行ごとに違えば仕様は行名付きで並べ、帰属先は空にする。
               spec: g.rows.map((r) => r.item.spec ? (g.rows.length > 1 ? `${r.item.item_name}：${r.item.spec}` : String(r.item.spec)) : "")
                 .filter(Boolean).join("\n") || null,
-              deliverableOwnership: ownershipOfRows(g.rows)
+              deliverableOwnership: ownershipOfRows(g.rows),
+              // 条件明細は基本契約にぶら下がる。付けずに作ると
+              // 契約の画面からこの発注が見えない。
+              agreementId: g.condition.agreement?.id ?? null
             }, actor);
             conditionId = created.id; conditionNo = created.conditionNo;
+            // 予定明細。CSV の1行が1回。これが無いと、実績を入れるときに
+            // 「どの回の分か」が選べず、検収書の支払日が空欄で出る。
+            const lines = scheduleLinesFrom(g.rows);
+            if (lines.length) await this.schedules.replace(conditionId, lines, actor);
           } else {
             await this.matters.attachCondition(input.matterId, conditionId, actor);
           }
@@ -560,6 +613,46 @@ export class DocumentBatchService {
     if (byTitle.length === 1) return { resolution: "resolved", work: byTitle[0], candidates: byTitle };
     if (byTitle.length > 1) return { resolution: "ambiguous", work: null, candidates: byTitle };
     return { resolution: "missing", work: null, candidates: [] };
+  }
+
+  /**
+   * その取引先との業務委託の基本契約。
+   *
+   * 条件明細は基本契約にぶら下がる（基本契約 ⇒ 作品 ⇒ 条件明細 ⇒ 発注書）。
+   * 付けずに作ると鎖の1本目が切れ、契約の画面からこの発注が見えない。
+   *
+   * まず、この案件で既に使っている基本契約を見る（案件の工程バーが読んで
+   * いるのと同じもの）。無ければ、その取引先の締結済みの取得側の合意が
+   * ちょうど1件のときだけ当てる。決まらなければ付けない。
+   * 発注書は基本契約なしでも出せるので、ここは止める理由にしない。
+   */
+  private async basicAgreement(client: Queryable, matterId: number, partyId: number):
+    Promise<{ agreement: AgreementRef | null; note: string | null }> {
+    const map = (a: any): AgreementRef =>
+      ({ id: Number(a.id), agreementNo: str(a.agreement_no), title: str(a.title) });
+    const inMatter = await client.query(
+      `SELECT DISTINCT a.id, a.agreement_no, a.title
+         FROM matter_links ml
+         JOIN conditions c ON c.id::text = ml.target_ref
+         JOIN agreements a ON a.id = c.agreement_id
+        WHERE ml.matter_id = $1 AND ml.target_type = 'condition'
+          AND c.counterparty_id = $2 AND c.status = 'active'
+        LIMIT 5`, [matterId, partyId]);
+    if (inMatter.rows.length === 1) return { agreement: map(inMatter.rows[0]), note: null };
+    if (inMatter.rows.length > 1) {
+      return { agreement: null,
+               note: "この案件でこの取引先の基本契約が複数使われています。条件明細を作ってから選んでください" };
+    }
+    const executed = await client.query(
+      `SELECT id, agreement_no, title FROM agreements
+        WHERE counterparty_id = $1 AND direction = 'in' AND status = 'executed'
+        LIMIT 5`, [partyId]);
+    if (executed.rows.length === 1) return { agreement: map(executed.rows[0]), note: null };
+    if (executed.rows.length > 1) {
+      return { agreement: null,
+               note: "この取引先の締結済みの基本契約が複数あります。条件明細を作ってから選んでください" };
+    }
+    return { agreement: null, note: "締結済みの基本契約が見つかりません（基本契約なしの発注として作ります）" };
   }
 
   /**
