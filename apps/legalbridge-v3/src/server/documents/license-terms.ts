@@ -256,6 +256,27 @@ export function dealSeeds(context: Data): Data[] {
 export const dealInUse = (deal: Data): boolean => deal.use !== false;
 
 /**
+ * 構成上の役割。許諾の対象そのものが コアロジック、追加の許諾料が発生する
+ * ものが サブコンポーネント。
+ *
+ * V1 の work_materials.material_role（core_logic / sub_component）にあたるが、
+ * V3 は移行していない。ただ素材の種別（work_parts.part_type）が残っていて、
+ * 本番のデータはそこで割れている：
+ *
+ *   ito_原作ゲームデザイン   game_design   … 許諾の対象（コアロジック）
+ *   ito_イラスト             illustration  … 追加の要素（サブコンポーネント）
+ *
+ * 種別が入っていない素材（part_type='other'）は名前で見る。どちらとも言えなければ
+ * サブとして置く。コアは1件のはずなので、増やすより人に足してもらうほうが安全。
+ */
+export function roleOfPart(part: { partType?: string | null; part?: string | null }): "core" | "sub" {
+  const type = String(part.partType ?? "").toLowerCase();
+  if (type === "game_design") return "core";
+  if (type && type !== "other" && type !== "unspecified") return "sub";
+  return /ゲームデザイン|原作|コアロジック|core/i.test(String(part.part ?? "")) ? "core" : "sub";
+}
+
+/**
  * 構成要素（素材）の種。この条件書に載せる条件明細が指している素材を並べる。
  *
  * 原作には構成要素があり、許諾の対象そのものが コアロジック、追加の許諾料が
@@ -283,7 +304,7 @@ export function materialSeeds(context: Data): Data[] {
     groups.get(key)!.push(condition);
   }
 
-  return [...groups.values()].map((group, index) => {
+  return [...groups.values()].map((group) => {
     const head = group[0];
     const source = acquisitions.find((a) => Number(a.id) === Number(head.id))
       ?? acquisitions.find((a) => a.partName && a.partName === head.work?.part);
@@ -299,13 +320,8 @@ export function materialSeeds(context: Data): Data[] {
       source_doc: text(source?.agreementNo ?? ""),
       region: joined(head.scopes?.region) || joined(source?.regions) || "全世界",
       language: joined(head.scopes?.language) || joined(source?.languages) || "全言語",
-      /**
-       * 構成上の役割。先頭を許諾の対象（コアロジック）、以降を追加許諾料の
-       * 出る要素（サブコンポーネント）として置く。人が直せる。
-       * V1 の work_materials.material_role にあたるが、V3 は移行していない
-       * ので作品側からは引けない。この条件書でどう扱うかとして持つ。
-       */
-      role: index === 0 ? "core" : "sub",
+      // 構成上の役割。素材の種別から決める。人が直せる。
+      role: roleOfPart(head.work ?? {}),
       rates
     };
   });

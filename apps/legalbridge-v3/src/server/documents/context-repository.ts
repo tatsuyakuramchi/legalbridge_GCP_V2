@@ -343,7 +343,8 @@ export class DocumentContextRepository {
               -- 住所・電話・メールは A-008 で足した列。当てる前のデータベースでも
               -- 落ちないよう、列を名指しせず行ごと受けて読む。
               to_jsonb(p) AS party_row,
-              w.title AS work_title, w.work_code, wp.name AS part_name
+              w.title AS work_title, w.work_code, wp.name AS part_name,
+              wp.part_type AS part_type
          FROM conditions c
          LEFT JOIN parties p    ON p.id = c.counterparty_id
          LEFT JOIN works w      ON w.id = c.work_id
@@ -405,7 +406,9 @@ export class DocumentContextRepository {
           withholding: row.party_withholding === true,
           honorific: honorificFor(str(row.party_kind))
         },
-        work: { title: str(row.work_title), code: str(row.work_code), part: str(row.part_name) },
+        work: { title: str(row.work_title), code: str(row.work_code), part: str(row.part_name),
+                /** 素材の種別（game_design / illustration …）。構成上の役割を決めるのに使う。 */
+                partType: str(row.part_type) },
         scopes: { region: [] as string[], language: [] as string[], media: [] as string[] }
       };
     }).map((condition, index, all) => ({ ...condition, index: index + 1, total: all.length }));

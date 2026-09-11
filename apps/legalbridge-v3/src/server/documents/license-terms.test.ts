@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   FIXED_DEALS, LICENSE_TERMS_VARIABLES, assignDeals, dealIdFor, dealInUse, dealSeeds,
-  dealModelFromNotes, isLicenseTermsTemplate, licenseScopeSentence, licenseTermsPatch,
+  dealModelFromNotes, isLicenseTermsTemplate, roleOfPart, licenseScopeSentence, licenseTermsPatch,
   licenseTermsSeeds, licenseTermsSuggestions, materialSeeds
 } from "./license-terms.js";
 
@@ -25,22 +25,22 @@ const context = {
   conditions: [
     // 素材1。取引形態3種ぶん並ぶ（備考に形態が書いてある）。
     cond({ id: 21, conditionNo: "CL-2026-00321", name: "ito_イラスト", workPartId: 7,
-      work: { title: "ito", part: "ito_イラスト" }, ratePct: 2, mgAmount: 100000,
+      work: { title: "ito", part: "ito_イラスト", partType: "illustration" }, ratePct: 2, mgAmount: 100000,
       notes: "取引形態: 自社製造・自社販売 / 計算モデル: 基準価格 × 個数 × 料率",
       scopes: { region: ["日本"], language: ["日本語"] },
       counterparty: { name: "株式会社オリジナル" } }),
     cond({ id: 22, conditionNo: "CL-2026-00322", name: "ito_イラスト", workPartId: 7,
-      work: { title: "ito", part: "ito_イラスト" }, ratePct: 50,
+      work: { title: "ito", part: "ito_イラスト", partType: "illustration" }, ratePct: 50,
       notes: "取引形態: 権利許諾（サブライセンス） / 計算モデル: 実効料率（基準価格 × 料率）",
       scopes: { region: ["全世界"], language: [] },
       counterparty: { name: "株式会社オリジナル" } }),
     cond({ id: 23, conditionNo: "CL-2026-00323", name: "ito_イラスト", workPartId: 7,
-      work: { title: "ito", part: "ito_イラスト" }, ratePct: 2,
+      work: { title: "ito", part: "ito_イラスト", partType: "illustration" }, ratePct: 2,
       notes: "取引形態: 自社製造・他社販売 / 計算モデル: 供給価格 × 個数 × 料率",
       counterparty: { name: "株式会社オリジナル" } }),
     // 素材2。備考が無いので並び順で当てる（V3 で起こした条件）。
     cond({ id: 31, conditionNo: "CL-2026-00331", name: "追加イラスト", workPartId: 9,
-      work: { title: "ito", part: "追加イラスト" }, ratePct: 5,
+      work: { title: "ito", part: "追加イラスト", partType: "illustration" }, ratePct: 5,
       counterparty: { name: "合同会社アトリエ蒼" } })
   ],
   acquisitions: [
@@ -149,8 +149,8 @@ test("構成要素の種：条件明細が指す素材で行を立て、加算�
   // 素材2は形態が決まっていない（1本しかない）ので料率の置き場所が無い。
   // 画面で形態を選べば入る。
   assert.deepEqual(materials[1].rates, {});
-  assert.equal(materials[0].role, "core", "許諾の対象そのもの");
-  assert.equal(materials[1].role, "sub", "追加許諾料の出る要素");
+  // 役割は素材の種別で決まる。どちらもイラスト＝追加の要素。
+  assert.deepEqual(materials.map((m) => m.role), ["sub", "sub"]);
 });
 
 test("本文：加算型は構成要素の料率の合計、非加算型は実効料率", () => {
@@ -346,4 +346,14 @@ test("地域も言語も決まっていなければ文を作らない（中身�
 test("片方だけ決まっていれば、もう片方は無制限として書く", () => {
   const sentence = licenseScopeSentence({}, { v3_maxRegion: "日本" });
   assert.match(sentence, /日本における全言語/);
+});
+
+test("構成上の役割は素材の種別から決める（コアロジックは原作のゲームデザイン）", () => {
+  assert.equal(roleOfPart({ partType: "game_design", part: "ito_原作ゲームデザイン" }), "core");
+  assert.equal(roleOfPart({ partType: "illustration", part: "ito_イラスト" }), "sub");
+  assert.equal(roleOfPart({ partType: "scenario", part: "追補" }), "sub");
+  // 種別が入っていない素材は名前で見る。
+  assert.equal(roleOfPart({ partType: "other", part: "原作ゲームデザイン" }), "core");
+  assert.equal(roleOfPart({ partType: null, part: "設定資料" }), "sub");
+  assert.equal(roleOfPart({}), "sub", "分からなければサブ（コアを勝手に増やさない）");
 });
