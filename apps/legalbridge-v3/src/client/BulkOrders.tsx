@@ -19,7 +19,14 @@ import { SearchSelect, type SearchOption } from "./SearchSelect.js";
 
 interface Candidate { id: number; name: string; partyCode: string | null }
 interface WorkCandidate { id: number; title: string; workCode: string | null }
-interface Row { line: number; item: Record<string, unknown>; amount: number; issues: string[] }
+interface Row {
+  line: number; item: Record<string, unknown>; amount: number; issues: string[];
+  /** 予定明細の起点。読めなければ null（その行は不備として issues に出る）。 */
+  triggerKind: "on_execution" | "on_delivery" | "on_inspection" | "periodic" | null;
+}
+const TRIGGER_LABEL: Record<string, string> = {
+  periodic: "定期", on_inspection: "検収後", on_delivery: "納品後", on_execution: "契約時"
+};
 interface Group {
   key: string; partyCode: string | null; partyName: string | null;
   resolution: "resolved" | "ambiguous" | "missing";
@@ -254,7 +261,7 @@ export function BulkOrders(
         </div>
         <div className="tablewrap">
           <table>
-            <thead><tr><th>#</th><th>取引先・作品 ／ 品目</th><th className="num">数量</th><th className="num">単価</th><th className="num">金額</th><th>納期</th><th>帰属先</th><th>条件明細</th><th>扱い</th></tr></thead>
+            <thead><tr><th>#</th><th>取引先・作品 ／ 品目</th><th className="num">数量</th><th className="num">単価</th><th className="num">金額</th><th>起点</th><th>納期</th><th>帰属先</th><th>条件明細</th><th>扱い</th></tr></thead>
             <tbody>
               {preview.groups.map((g) => (
                 <GroupRows key={g.key} g={g} chosen={choices[g.key]} chosenWork={workChoices[g.key]}
@@ -270,7 +277,7 @@ export function BulkOrders(
             条件明細：その取引先・その作品にこの案件の定額・委託料の条件があれば「既存」に当てる。
             無ければ発注書と同時に「新規」で1件作ります
             （金額は行の合計、終了は納期の最遅、作品は当てた作品、基本契約はその取引先の締結済みのもの、
-            予定明細は CSV の1行が1回・起点は検収後）。
+            予定明細は CSV の1行が1回・起点は行の「起点」）。
             基本契約が決まらなくても発注書は作れます（基本契約なしの発注）。あとから条件の画面で付けられます。
             取引先も作品もここでは作りません。未登録の束は飛ばし、登録してから残りだけ再アップロードしてください。
           </div>
@@ -409,7 +416,7 @@ function GroupRows(
         </td>
         <td colSpan={2} className="faint">{g.rows.length} 品目 → {g.action === "skip" ? "飛ばす" : "発注書 1 枚"}</td>
         <td className="num">{money(g.total)}</td>
-        <td></td><td></td>
+        <td></td><td></td><td></td>
         <td>
           {g.condition.mode === "existing"
             ? <><span className="src auto">既存</span> <span className="code faint">{g.condition.conditionNo}</span></>
@@ -441,6 +448,11 @@ function GroupRows(
           <td className="num">{String(r.item.quantity ?? "")}</td>
           <td className="num">{money(r.item.unit_price as number | null)}</td>
           <td className="num">{money(r.amount)}</td>
+          {/* 起点は回ごとに違う（着手金は契約時、本編は検収後）。行ごとに出す。
+              「検収後」が「検収／後」と折れると別の言葉に見えるので折らない。 */}
+          <td style={{ whiteSpace: "nowrap" }}>
+            {r.triggerKind ? TRIGGER_LABEL[r.triggerKind] : <span className="bad">—</span>}
+          </td>
           <td className="code">{String(r.item.delivery_date ?? "—")}</td>
           <td>{String(r.item.deliverable_ownership ?? "—")}</td>
           <td></td><td></td>

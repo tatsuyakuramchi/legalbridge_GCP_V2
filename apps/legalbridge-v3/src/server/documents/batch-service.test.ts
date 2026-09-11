@@ -1,25 +1,25 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { FakeDatabase } from "../core/fake-db.js";
-import { DocumentBatchService, groupRows, ownershipOfRows, readRows, scheduleLinesFrom,
-         templateCsv } from "./batch-service.js";
+import { DocumentBatchService, groupRows, ownershipOfRows, readRows, readTriggerKind,
+         scheduleLinesFrom, templateCsv } from "./batch-service.js";
 
 const HEAD = "取引先コード,取引先名,作品コード,作品名,品目・業務名,仕様・成果物,数量,"
-  + "単価（税抜）,納期,支払日,成果物の帰属先,支払方法,備考";
+  + "単価（税抜）,起点,納期,支払日,成果物の帰属先,支払方法,備考";
 
 /** 作品を書かない CSV。以前の運用そのまま（作品なしの委託）。 */
 const CSV = `${HEAD}
-VD-00317,合同会社アトリエ蒼,,,第4巻 表紙イラスト,カラー1点,1,150000,2026-10-31,2026-11-30,発注者,固定額,
-VD-00317,合同会社アトリエ蒼,,,第4巻 挿絵,モノクロ12点,12,"8,000",2026/10/31,2026-11-30,発注者（譲渡型）,,
-,ヨシザワ アツオ,,,第4巻 地図イラスト,見開き1点,1,60000,2026-10-15,2026-11-30,発注者,固定額,
-VD-00120,株式会社ヒナタ翻訳,,,英訳,全章,1,200000,2026-12-20,2027-01-31,発注者,業績連動,`;
+VD-00317,合同会社アトリエ蒼,,,第4巻 表紙イラスト,カラー1点,1,150000,検収後,2026-10-31,2026-11-30,発注者,固定額,
+VD-00317,合同会社アトリエ蒼,,,第4巻 挿絵,モノクロ12点,12,"8,000",検収,2026/10/31,2026-11-30,発注者（譲渡型）,,
+,ヨシザワ アツオ,,,第4巻 地図イラスト,見開き1点,1,60000,納品後,2026-10-15,2026-11-30,発注者,固定額,
+VD-00120,株式会社ヒナタ翻訳,,,英訳,全章,1,200000,契約時,2026-12-20,2027-01-31,発注者,業績連動,`;
 
 /** 取引先2社 × 作品2本。同じ取引先でも作品が違えば別の発注書になる。 */
 const CSV_WORKS = `${HEAD}
-VD-00317,合同会社アトリエ蒼,WRK-10013,,表紙イラスト,カラー1点,1,150000,2026-10-31,2026-11-30,発注者,固定額,
-VD-00317,合同会社アトリエ蒼,WRK-10013,,挿絵,モノクロ4点,4,20000,2026-10-31,2026-11-30,発注者,固定額,
-VD-00317,合同会社アトリエ蒼,WRK-10021,,表紙イラスト,カラー1点,1,120000,2026-11-30,2026-12-31,発注者,固定額,
-,株式会社ヒナタ翻訳,,夜明けのクロニクル,翻訳,全章,1,60000,2026-11-15,2026-12-31,発注者,固定額,`;
+VD-00317,合同会社アトリエ蒼,WRK-10013,,表紙イラスト,カラー1点,1,150000,検収後,2026-10-31,2026-11-30,発注者,固定額,
+VD-00317,合同会社アトリエ蒼,WRK-10013,,挿絵,モノクロ4点,4,20000,検収後,2026-10-31,2026-11-30,発注者,固定額,
+VD-00317,合同会社アトリエ蒼,WRK-10021,,表紙イラスト,カラー1点,1,120000,契約時,2026-11-30,2026-12-31,発注者,固定額,
+,株式会社ヒナタ翻訳,,夜明けのクロニクル,翻訳,全章,1,60000,検収後,2026-11-15,2026-12-31,発注者,固定額,`;
 
 test("雛形の見出しは列の定義から出す（BOM 付き）。例は作品違いの2行", () => {
   const csv = templateCsv();
@@ -165,7 +165,7 @@ test("突き合わせ：書いてある作品が当たらなければ飛ばす�
   // 黙って作品なしで作ると、どの作品の仕事か辿れない条件明細が残る。
   const { svc } = build();
   const r = await svc.preview({ templateKey: "purchase_order", matterId: 3, csv: `${HEAD}
-VD-00317,合同会社アトリエ蒼,WRK-99999,,表紙,カラー1点,1,150000,2026-10-31,2026-11-30,発注者,固定額,` });
+VD-00317,合同会社アトリエ蒼,WRK-99999,,表紙,カラー1点,1,150000,検収後,2026-10-31,2026-11-30,発注者,固定額,` });
   assert.equal(r.groups[0].workResolution, "missing");
   assert.equal(r.groups[0].action, "skip");
   assert.match(r.groups[0].issues.join(" "), /作品が見つからない/);
@@ -178,7 +178,7 @@ test("突き合わせ：作品の候補が複数なら選ぶ。選べば作れ�
          { id: 13, title: "星降る夜のミュゼ（愛蔵版）", work_code: "WRK-10013" }]
       : undefined);
   const csv = `${HEAD}
-VD-00317,合同会社アトリエ蒼,WRK-10013,,表紙,カラー1点,1,150000,2026-10-31,2026-11-30,発注者,固定額,`;
+VD-00317,合同会社アトリエ蒼,WRK-10013,,表紙,カラー1点,1,150000,検収後,2026-10-31,2026-11-30,発注者,固定額,`;
   const key = "code:vd-00317／wcode:wrk-10013";
   const before = await svc.preview({ templateKey: "purchase_order", matterId: 3, csv });
   assert.equal(before.groups[0].action, "choose");
@@ -210,7 +210,7 @@ test("作品が決まっていない束では、既存の条件を引かない",
   const { svc } = build((t) =>
     t.includes("c.pricing_model = 'fixed'") ? [{ id: 44, condition_no: "CL-2026-00044" }] : undefined);
   const r = await svc.preview({ templateKey: "purchase_order", matterId: 3, csv: `${HEAD}
-VD-00317,合同会社アトリエ蒼,WRK-99999,,表紙,カラー1点,1,150000,2026-10-31,2026-11-30,発注者,固定額,` });
+VD-00317,合同会社アトリエ蒼,WRK-99999,,表紙,カラー1点,1,150000,検収後,2026-10-31,2026-11-30,発注者,固定額,` });
   assert.equal(r.groups[0].workResolution, "missing");
   assert.equal(r.groups[0].condition.mode, "new");
 });
@@ -280,4 +280,51 @@ test("基本契約の候補が複数なら当てない。あとで人が選ぶ",
   assert.equal(r.groups[0].condition.agreement, null);
   assert.match(r.groups[0].condition.agreementNote ?? "", /複数あります/);
   assert.equal(r.groups[0].action, "create");
+});
+
+test("起点は雛形の言葉・短い言葉・中の値のどれでも読む", () => {
+  // 人が手で書き足す欄。表記を1つに縛ると「検収」と書いただけで全行が不備になる。
+  assert.equal(readTriggerKind("検収後"), "on_inspection");
+  assert.equal(readTriggerKind("検収"), "on_inspection");
+  assert.equal(readTriggerKind("on_inspection"), "on_inspection");
+  assert.equal(readTriggerKind("納品後"), "on_delivery");
+  assert.equal(readTriggerKind("契約時"), "on_execution");
+  assert.equal(readTriggerKind("着手金"), "on_execution");
+  assert.equal(readTriggerKind("定期"), "periodic");
+  assert.equal(readTriggerKind("毎月"), "periodic");
+  assert.equal(readTriggerKind(""), null);
+  assert.equal(readTriggerKind("出来高"), null);
+});
+
+test("起点は必須。空でも読めなくても、その行は不備になる", () => {
+  const rows = readRows(`${HEAD}
+VD-00317,合同会社アトリエ蒼,,,表紙,カラー1点,1,150000,,2026-10-31,2026-11-30,発注者,固定額,
+VD-00317,合同会社アトリエ蒼,,,挿絵,カラー1点,1,150000,出来高,2026-10-31,2026-11-30,発注者,固定額,`);
+  assert.match(rows[0].issues.join(" "), /起点が空/);
+  assert.match(rows[1].issues.join(" "), /起点が読めない（出来高）/);
+  assert.equal(rows[0].triggerKind, null);
+});
+
+test("起点の列が無ければ、行ごとの不備を並べずに雛形を取り直させる", () => {
+  // 古い雛形のファイルは全行が不備になる。何百件並べても直しようがない。
+  const old = "取引先コード,取引先名,品目・業務名,仕様・成果物,数量,単価（税抜）,納期,支払日,成果物の帰属先,支払方法,備考\n"
+    + "VD-00317,合同会社アトリエ蒼,表紙,カラー1点,1,150000,2026-10-31,2026-11-30,発注者,固定額,";
+  assert.throws(() => readRows(old), /「起点」の列がありません/);
+});
+
+test("予定明細の起点は行ごと。1つの束の中でも変わる", () => {
+  // 着手金は契約時、本編は検収後。束でひとつに決められない。
+  const rows = readRows(`${HEAD}
+VD-00317,合同会社アトリエ蒼,,,着手金,一式,1,50000,契約時,2026-09-30,2026-10-31,発注者,固定額,
+VD-00317,合同会社アトリエ蒼,,,本編,カラー10点,10,15000,検収後,2026-10-31,2026-11-30,発注者,固定額,`);
+  assert.deepEqual(scheduleLinesFrom(rows).map((l) => [l.seq, l.label, l.triggerKind]), [
+    [1, "着手金", "on_execution"],
+    [2, "本編", "on_inspection"]
+  ]);
+});
+
+test("雛形の例は起点が埋まっている", () => {
+  // 空の見本を配ると、そのまま返ってきて全行が不備になる。
+  const [, first] = templateCsv().trimEnd().split("\n");
+  assert.ok(first.includes("検収後"));
 });

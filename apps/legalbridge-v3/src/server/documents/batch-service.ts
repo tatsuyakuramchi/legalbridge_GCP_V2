@@ -3,7 +3,8 @@ import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { parseCsv, csvAmount } from "../imports/parse.js";
 import { ConditionWriteService } from "../conditions/write-service.js";
-import { ConditionScheduleService, type ScheduleLine } from "../conditions/schedule-service.js";
+import { ConditionScheduleService, TRIGGER_KINDS,
+         type ScheduleLine, type TriggerKind } from "../conditions/schedule-service.js";
 import { MatterLinkService } from "../matters/link-service.js";
 import { MatterCommunicationService } from "../matters/communication-service.js";
 import { DocumentIssueService } from "./issue-service.js";
@@ -40,6 +41,8 @@ export const ORDER_COLUMNS: Array<{ key: string; label: string; required?: boole
   { key: "spec", label: "仕様・成果物", note: "" },
   { key: "quantity", label: "数量", note: "空なら 1" },
   { key: "unit_price", label: "単価（税抜）", required: true, note: "円" },
+  // 起点は回ごとに違う（着手金は契約時、本編は検収後）。束でひとつに決められない。
+  { key: "triggerKind", label: "起点", required: true, note: "検収後 / 納品後 / 契約時 / 定期" },
   { key: "delivery_date", label: "納期", note: "2026-10-31 か 2026/10/31" },
   { key: "payment_date", label: "支払日", note: "" },
   { key: "deliverable_ownership", label: "成果物の帰属先", note: "発注者 か 受注者" },
@@ -53,9 +56,9 @@ export function templateCsv(): string {
   // ことが伝わらず、作品の列を空のまま使われる。
   const examples = [
     ["VD-00317", "合同会社アトリエ蒼", "WRK-10013", "星降る夜のミュゼ", "第4巻 表紙イラスト",
-     "カラー1点", "1", "150000", "2026-10-31", "2026-11-30", "発注者", "固定額", ""],
+     "カラー1点", "1", "150000", "検収後", "2026-10-31", "2026-11-30", "発注者", "固定額", ""],
     ["VD-00317", "合同会社アトリエ蒼", "WRK-10021", "夜明けのクロニクル", "第1巻 挿絵",
-     "モノクロ12点", "12", "8000", "2026-11-30", "2026-12-31", "発注者", "固定額", ""]
+     "モノクロ12点", "12", "8000", "検収後", "2026-11-30", "2026-12-31", "発注者", "固定額", ""]
   ].map((row) => row.join(","));
   return `﻿${header}\n${examples.join("\n")}\n`;
 }
@@ -66,6 +69,8 @@ export interface BatchRow {
   partyName: string | null;
   workCode: string | null;
   workTitle: string | null;
+  /** 予定明細の起点。読めなければ null（その行は不備として残る）。 */
+  triggerKind: TriggerKind | null;
   item: Record<string, unknown>;
   amount: number;
   issues: string[];
@@ -79,6 +84,26 @@ const normalizeDate = (v: string | undefined): string | null => {
   return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
 };
 
+/**
+ * 起点の読み取り。雛形の言葉（検収後）でも、短く書いた言葉（検収）でも、
+ * 中の値（on_inspection）でも読む。人が手で書き足す欄なので、表記を1つに
+ * 縛ると「検収」と書いただけで全行が不備になる。
+ */
+export function readTriggerKind(raw: string): TriggerKind | null {
+  const text = String(raw ?? "").trim();
+  if (!text) return null;
+  const exact = TRIGGER_KINDS.find((t) => t.value === text || t.label === text);
+  if (exact) return exact.value;
+  if (/検収/.test(text)) return "on_inspection";
+  if (/納品|検品/.test(text)) return "on_delivery";
+  if (/契約|着手/.test(text)) return "on_execution";
+  if (/定期|毎月|毎月度|月次|四半期/.test(text)) return "periodic";
+  return null;
+}
+
+export const TRIGGER_LABEL: Record<TriggerKind, string> =
+  Object.fromEntries(TRIGGER_KINDS.map((t) => [t.value, t.label])) as Record<TriggerKind, string>;
+
 /** 見出しは日本語の列名か、明細のキー名のどちらでも読む。 */
 const pick = (row: Record<string, string>, column: { key: string; label: string }) =>
   row[column.label] ?? row[column.key] ?? "";
@@ -91,6 +116,14 @@ export function readRows(text: string): BatchRow[] {
     throw new DomainError("VALIDATION",
       `見出しが雛形と合いません。雛形をダウンロードして、その列名で作ってください（読んだ見出し: ${parsed.headers.slice(0, 5).join(", ")}）`);
   }
+  // 列そのものが無いなら、行ごとの不備として何百件も並べない。
+  // 古い雛形で作ったファイルなので、雛形を取り直してもらう。
+  for (const column of ORDER_COLUMNS.filter((c) => c.required)) {
+    if (!parsed.headers.includes(column.label) && !parsed.headers.includes(column.key)) {
+      throw new DomainError("VALIDATION",
+        `「${column.label}」の列がありません。雛形をダウンロードし直して、その列名で作ってください`);
+    }
+  }
   return parsed.rows.map((row, i) => {
     const get = (key: string) => String(pick(row, ORDER_COLUMNS.find((c) => c.key === key)!)).trim();
     const issues: string[] = [];
@@ -100,6 +133,12 @@ export function readRows(text: string): BatchRow[] {
     if (quantity === undefined || quantity <= 0) issues.push("数量が読めない");
     const unitPrice = csvAmount(get("unit_price"));
     if (unitPrice === undefined) issues.push("単価が空か読めない");
+    const triggerKind = readTriggerKind(get("triggerKind"));
+    if (!triggerKind) {
+      issues.push(get("triggerKind")
+        ? `起点が読めない（${get("triggerKind")}）。検収後 / 納品後 / 契約時 / 定期 のどれか`
+        : "起点が空。検収後 / 納品後 / 契約時 / 定期 のどれかを入れる");
+    }
     const delivery = get("delivery_date");
     const deliveryDate = normalizeDate(delivery);
     if (delivery && !deliveryDate) issues.push(`納期が日付として読めない（${delivery}）`);
@@ -118,6 +157,7 @@ export function readRows(text: string): BatchRow[] {
       partyName: get("partyName") || null,
       workCode: get("workCode") || null,
       workTitle: get("workTitle") || null,
+      triggerKind,
       item: {
         item_name: itemName, spec: get("spec") || null,
         quantity: quantity ?? null, unit_price: unitPrice ?? null, amount_ex_tax: amount,
@@ -138,16 +178,17 @@ export function readRows(text: string): BatchRow[] {
  * 「どの回の分か」が選べず、検収書の支払日が空欄で出る。CSV には納期も
  * 支払日も1行ずつ書いてあるので、そのまま回にできる。
  *
- * 起点は「検収後」。業務委託の発注は検収を起点に払うのが既定で、違う案件は
- * 条件の画面で直せる。0円の行は置けない（予定明細の規則）ので落とす。
+ * 起点は行が持つ（着手金は契約時、本編は検収後、と1つの束の中でも変わる）。
+ * 読めない行は先に不備として弾かれるので、ここに来るのは読めた行だけ。
+ * 0円の行は置けない（予定明細の規則）ので落とす。
  */
 export function scheduleLinesFrom(rows: BatchRow[]): ScheduleLine[] {
   return rows
-    .filter((r) => Math.round(r.amount) > 0)
+    .filter((r) => Math.round(r.amount) > 0 && r.triggerKind)
     .map((r, index) => ({
       seq: index + 1,
       label: String(r.item.item_name ?? "") || null,
-      triggerKind: "on_inspection" as const,
+      triggerKind: r.triggerKind!,
       plannedAmount: Math.round(r.amount),
       dueOn: (r.item.delivery_date as string | null) ?? null,
       payOn: (r.item.payment_date as string | null) ?? null
