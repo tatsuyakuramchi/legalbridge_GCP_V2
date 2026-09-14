@@ -344,6 +344,22 @@ export function ConditionEvents(
     if (usageBasis === null || !rate || rate <= 0) return null;
     return Math.ceil((usageBasis * rate) / 100);
   })();
+
+  /** 記録できる状態か。押せないときは、その理由をボタンの横に出す。 */
+  const whyNotRecord = (() => {
+    if (usage) {
+      if (usage.needsOutCondition && !f("outConditionId")) return "許諾したアウト条件を選んでください";
+      if (usageBasis === null) {
+        return usage.value === "sublicense" || lumpSum
+          ? "受領額を入れてください"
+          : `${usage.value === "oem" ? "受領価格と製造個数" : "基準価格と数量"}を入れてください`;
+      }
+      if (usageAmount === null) return "料率を入れてください";
+      return "";
+    }
+    return f("amount").trim() ? "" : "実額を入れてください";
+  })();
+  const canRecord = whyNotRecord === "";
   const plannedDiff = chosen && (v.amount ?? "").trim()
     ? Number(v.amount) - chosen.plannedAmount : null;
 
@@ -775,8 +791,15 @@ export function ConditionEvents(
           </div>
           {error && <div className="alert">{error}</div>}
           <div className="row">
-            <button className="btn primary" disabled={busy || !f("amount").trim()}
+            {/*
+              * 押せない理由は必ず出す。利用形態のある実績は実額の欄が無い
+              * （基礎 × 料率で出す）のに、実額が空だと押せないままだった。
+              * 欄を消したのに、それを見ている判定を残していたので、押しても
+              * 何も起きない画面になっていた。
+              */}
+            <button className="btn primary" disabled={busy || !canRecord}
                     onClick={() => void add()}>{busy ? "保存中…" : "記録する"}</button>
+            {!canRecord && !busy && <span className="faint">{whyNotRecord}</span>}
             <button className="btn" disabled={busy} onClick={() => setAdding(false)}>やめる</button>
           </div>
         </div>
