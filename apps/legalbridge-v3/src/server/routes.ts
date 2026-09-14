@@ -1,6 +1,6 @@
 import express, { Router, type Request, type Response, type NextFunction } from "express";
 import { z } from "zod";
-import { dateStr, inTransaction, str, type Transactable } from "./core/db.js";
+import { dateStr, int, inTransaction, str, type Transactable } from "./core/db.js";
 import { DomainError, statusFor } from "./core/errors.js";
 import { recordAudit } from "./core/audit.js";
 import { requireRole, requireWritable } from "./auth.js";
@@ -1046,6 +1046,9 @@ export function createRoutes(database: Transactable) {
     const like = `%${q}%`;
     const r = await database.query(
       `SELECT c.id, c.condition_no, c.name, c.status,
+              -- 他社販売の受領価格は、許諾したアウト条件が決めている。
+              -- 単価を持つ条件なら、実績の欄の既定値にする。
+              c.pricing_model, c.unit_amount, c.currency,
               p.name AS party_name, w.title AS work_title,
               (SELECT string_agg(sc.label, '・' ORDER BY sc.scope_type, sc.sort_order, sc.label)
                  FROM condition_scopes sc WHERE sc.condition_id = c.id) AS scopes
@@ -1065,7 +1068,8 @@ export function createRoutes(database: Transactable) {
       conditions: (r.rows as Array<Record<string, any>>).map((c) => ({
         id: Number(c.id), conditionNo: str(c.condition_no), name: String(c.name ?? ""),
         status: String(c.status), partyName: str(c.party_name),
-        workTitle: str(c.work_title), scopes: str(c.scopes)
+        workTitle: str(c.work_title), scopes: str(c.scopes),
+        pricingModel: String(c.pricing_model ?? "none"), unitAmount: int(c.unit_amount)
       }))
     });
   }));

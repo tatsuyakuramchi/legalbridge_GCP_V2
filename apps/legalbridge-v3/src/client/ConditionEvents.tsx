@@ -38,6 +38,7 @@ interface StageOption { value: string; label: string }
 interface OutCondition {
   id: number; conditionNo: string | null; name: string;
   status: string; partyName: string | null; workTitle: string | null; scopes: string | null;
+  pricingModel: string; unitAmount: number | null;
 }
 interface ScheduleRow {
   id: number; seq: number; label: string | null; triggerKind: string;
@@ -63,7 +64,7 @@ interface PreviewResponse {
 
 export function ConditionEvents(
   { conditionId, currency, editable, matterId, pricingModel, deliverableOwnership, reloadKey,
-    ratePpm, direction, workTitle,
+    ratePpm, conditionUnitAmount, conditionQuantity, direction, workTitle,
     openForSchedule, onOpened, onCompose, onOpenDocument, onChanged }:
   { conditionId: number; currency: string; editable: boolean;
     matterId?: number | null; reloadKey?: number;
@@ -76,6 +77,9 @@ export function ConditionEvents(
     pricingModel?: string;
     /** 条件の料率（百万分率）。実績の料率の初期値になる。 */
     ratePpm?: number | null;
+    /** 条件の単価と個数。自社製造・自社販売の基準価格・数量の初期値になる。 */
+    conditionUnitAmount?: number | null;
+    conditionQuantity?: number | null;
     /** 取得（IN）の条件か。利用形態を付けられるのはこちらだけ。 */
     direction?: string;
     /** 条件の作品。アウト条件の候補を同じ作品に寄せる。 */
@@ -131,6 +135,30 @@ export function ConditionEvents(
   const canUse = royalty && (direction ?? "in") === "in";
   // 条件の料率を実績の初期値にする。その回だけ違う料率があれば直せる。
   const defaultRatePct = ratePpm === null || ratePpm === undefined ? "" : String(ratePpm / 10000);
+  const asText = (n: number | null | undefined) =>
+    n === null || n === undefined ? "" : String(n);
+
+  /**
+   * 利用形態を選んだときの初期値。
+   *
+   * 自社製造・自社販売の基準価格と個数は条件が持っている。条件に入れたのに
+   * 実績で打ち直すのでは、条件に持たせた意味が無い。打ち直した値が条件と
+   * 違っていても誰も気づかない。
+   *
+   * 他社販売の受領価格は相手が払う額なので、条件（作者との契約）ではなく
+   * 許諾したアウト条件から入れる。選んだときに埋める。
+   */
+  function usageDefaults(value: string): Record<string, string> {
+    const base = {
+      usageType: value, outConditionId: "", grossAmount: "",
+      basisKind: "per_unit", paymentStage: "",
+      ratePct: v.ratePct || defaultRatePct
+    };
+    if (value === "in_house") {
+      return { ...base, unitAmount: asText(conditionUnitAmount), quantity: asText(conditionQuantity) };
+    }
+    return { ...base, unitAmount: "", quantity: "" };
+  }
   // 予定の回。実績が付いていない回だけ選べる（1つの回に実績は1件）。
   const [schedules, setSchedules] = useState<ScheduleRow[]>([]);
   const [typeByTrigger, setTypeByTrigger] = useState<Record<string, string>>({});
@@ -476,11 +504,10 @@ export function ConditionEvents(
                 <span>利用形態</span>
                 <select value={f("usageType")}
                   onChange={(e) => setV({
-                    ...v, usageType: e.target.value,
+                    ...v,
                     // 形を変えたら、その形で使わない欄は消す。前の形の数字が
                     // 残ったまま保存されると、紙に出ない数字が実績に残る。
-                    outConditionId: "", unitAmount: "", grossAmount: "",
-                    ratePct: v.ratePct || defaultRatePct
+                    ...usageDefaults(e.target.value)
                   })}>
                   <option value="">（計算書を出さない実績）</option>
                   {usageTypes.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
@@ -522,7 +549,16 @@ export function ConditionEvents(
                 <input value={outQuery} placeholder={`${workTitle ?? "作品"} の許諾を相手先名などで探す`}
                   onChange={(e) => setOutQuery(e.target.value)} />
                 <select value={f("outConditionId")} style={{ marginTop: 4 }}
-                  onChange={(e) => set("outConditionId", e.target.value)}>
+                  onChange={(e) => {
+                    const chosenOut = outFound.find((o) => String(o.id) === e.target.value);
+                    // 受領価格は許諾したアウト条件が決めている。単価を持つ
+                    // 条件なら入れておく（打ち直した値が契約と違っても気づけない）。
+                    const price = usage?.value === "oem" && !lumpSum
+                      && chosenOut?.pricingModel === "unit_rate"
+                      ? asText(chosenOut.unitAmount) : null;
+                    setV({ ...v, outConditionId: e.target.value,
+                           ...(price ? { unitAmount: price } : {}) });
+                  }}>
                   <option value="">（選んでください）</option>
                   {outFound.map((o) => (
                     <option key={o.id} value={o.id}>

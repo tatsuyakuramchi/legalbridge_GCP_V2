@@ -515,6 +515,7 @@ export function ConditionsWorkspace(
               <ConditionEvents conditionId={detail.id} currency={detail.currency}
                 pricingModel={detail.pricingModel} deliverableOwnership={detail.deliverableOwnership}
                 ratePpm={detail.ratePpm} direction={detail.direction}
+                conditionUnitAmount={detail.unitAmount} conditionQuantity={detail.quantity}
                 workTitle={detail.work?.title ?? null}
                 matterId={detail.matters[0]?.id ?? null}
                 reloadKey={flowVersion}
