@@ -30,6 +30,10 @@
 --    同じ語が何か所にも出ることがある（希望納期は受領情報の表と、下の
 --    合計の枠と、2か所にある）。最初の1つだけを見て直すと、もう片方が
 --    残る。ここは出てくるだけ全部出す。
+--
+--    前後の長さを (?:.{0,250}){2} と書いているのは、Postgres の {m,n} が
+--    255 までしか書けないため。.{0,500} は
+--    「invalid repetition count(s)」で落ちる。
 -- ---------------------------------------------------------------------
 WITH src AS (
   SELECT v.html_source AS h
@@ -43,7 +47,8 @@ lbl(name) AS (
 ),
 hit AS (
   SELECT lbl.name,
-         (regexp_matches(src.h, '(.{0,300}' || lbl.name || '.{0,500})', 'g'))[1] AS around
+         (regexp_matches(src.h,
+            '((?:.{0,250}){2}' || lbl.name || '(?:.{0,250}){2})', 'g'))[1] AS around
     FROM src, lbl
 )
 SELECT E'\n========== ' || hit.name || E' ==========\n' || hit.around
