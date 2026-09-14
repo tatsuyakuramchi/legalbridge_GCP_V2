@@ -10,6 +10,7 @@ import { MatterLinkService } from "../matters/link-service.js";
 import { MatterCommunicationService } from "../matters/communication-service.js";
 import { DocumentIssueService } from "./issue-service.js";
 import { DocumentRepository, type DocumentSummary } from "./repository.js";
+import { agreementRefText } from "./legacy-variables.js";
 import type { PdfRenderer } from "./pdf-renderer.js";
 
 /**
@@ -39,7 +40,8 @@ export const ORDER_COLUMNS: Array<{ key: string; label: string; required?: boole
   { key: "workCode", label: "作品コード", note: "コードか作品名のどちらかで当てる。空なら作品なし" },
   { key: "workTitle", label: "作品名", note: "登録名に一致" },
   // 基本契約と条件名は束ごとの値。全行に同じものを書く（違えば不備として出す）。
-  { key: "agreementNo", label: "契約番号", note: "空なら取引先から自動で当てる" },
+  { key: "agreementNo", label: "契約番号",
+    note: "空なら取引先から自動で当てる。「なし」と書けば基本契約なしの発注にする" },
   { key: "conditionName", label: "条件名", note: "空なら自動。書けば同じ取引先・作品でも別の条件になる" },
   { key: "item_name", label: "品目・業務名", required: true, note: "" },
   { key: "spec", label: "仕様・成果物", note: "" },
@@ -51,7 +53,11 @@ export const ORDER_COLUMNS: Array<{ key: string; label: string; required?: boole
   { key: "payment_date", label: "支払日", note: "" },
   // 発注明細の「契約種別・支払条件」。行ごとの欄で、そのまま紙に出る。
   { key: "payment_terms", label: "契約種別・支払条件", note: "例: 月末締め翌月末払い" },
-  { key: "deliverable_ownership", label: "成果物の帰属先", note: "発注者 か 受注者" },
+  { key: "deliverable_ownership", label: "成果物の帰属先",
+    note: "発注者 か 受注者。空ならその行に帰属先を出さない" },
+  // 書類の見た目の切り替え。束ごとの値なので全行に同じものを書く。
+  { key: "orderSign", label: "発注署名欄", note: "あり / なし。空なら なし" },
+  { key: "acceptSign", label: "承諾署名欄", note: "あり / なし。空なら なし" },
   { key: "calc_method", label: "支払方法", note: "固定額 だけ。空なら固定額" },
   { key: "remarks", label: "備考", note: "" }
 ];
@@ -63,10 +69,10 @@ export function templateCsv(): string {
   const examples = [
     ["VD-00317", "合同会社アトリエ蒼", "WRK-10013", "星降る夜のミュゼ", "", "",
      "第4巻 表紙イラスト", "カラー1点", "1", "150000", "検収後", "2026-10-31", "2026-11-30",
-     "月末締め翌月末払い", "発注者", "固定額", ""],
+     "月末締め翌月末払い", "発注者", "あり", "なし", "固定額", ""],
     ["VD-00317", "合同会社アトリエ蒼", "WRK-10021", "夜明けのクロニクル", "", "",
      "第1巻 挿絵", "モノクロ12点", "12", "8000", "検収後", "2026-11-30", "2026-12-31",
-     "月末締め翌月末払い", "発注者", "固定額", ""]
+     "月末締め翌月末払い", "発注者", "あり", "なし", "固定額", ""]
   ].map((row) => row.join(","));
   return `﻿${header}\n${examples.join("\n")}\n`;
 }
@@ -83,6 +89,9 @@ export interface BatchRow {
   conditionName: string | null;
   /** 予定明細の起点。読めなければ null（その行は不備として残る）。 */
   triggerKind: TriggerKind | null;
+  /** 発注署名欄・承諾署名欄を出すか。未記入は null（ひな形の既定に任せる）。 */
+  orderSign: boolean | null;
+  acceptSign: boolean | null;
   item: Record<string, unknown>;
   amount: number;
   issues: string[];
@@ -110,6 +119,20 @@ export function readTriggerKind(raw: string): TriggerKind | null {
   if (/納品|検品/.test(text)) return "on_delivery";
   if (/契約|着手/.test(text)) return "on_execution";
   if (/定期|毎月|毎月度|月次|四半期/.test(text)) return "periodic";
+  return null;
+}
+
+/**
+ * あり・なしの読み取り。未記入（null）と「なし」（false）は違う。
+ *
+ * 未記入は「決めていない」で、書類のひな形の既定に任せる。「なし」は
+ * 人が外したという指示なので、既定が「あり」でも出さない。
+ */
+export function readOnOff(raw: string): boolean | null {
+  const text = String(raw ?? "").trim();
+  if (!text) return null;
+  if (/^(あり|有|要|表示|する|on|true|yes|y|1|○|◯|◎)$/i.test(text)) return true;
+  if (/^(なし|無|不要|非表示|しない|off|false|no|n|0|×|✕|-|—)$/i.test(text)) return false;
   return null;
 }
 
@@ -174,6 +197,8 @@ export function readRows(text: string): BatchRow[] {
       agreementNo: get("agreementNo") || null,
       conditionName: get("conditionName") || null,
       triggerKind,
+      orderSign: readOnOff(get("orderSign")),
+      acceptSign: readOnOff(get("acceptSign")),
       item: {
         item_name: itemName, spec: get("spec") || null,
         quantity: quantity ?? null, unit_price: unitPrice ?? null, amount_ex_tax: amount,
@@ -324,6 +349,34 @@ export function sameAcross<T>(rows: BatchRow[], pick: (r: BatchRow) => T | null)
   return set.size === 1 ? ([...set][0] as T) : null;
 }
 
+/**
+ * 書類ごとの切り替え。発注書の「VII. 契約・署名」の欄に渡す。
+ *
+ * 未記入の項目は渡さない。渡すと「人が決めた」扱いになり、ひな形の既定や
+ * 条件からの差し込み（基本契約あり）を上書きしてしまう。
+ */
+export function documentToggles(g: Pick<BatchGroup, "rows" | "condition">): Record<string, unknown> {
+  const orderSign = sameAcross(g.rows, (r) => r.orderSign);
+  const acceptSign = sameAcross(g.rows, (r) => r.acceptSign);
+  // 契約番号に「なし」と書かれた束は、契約を当てずにここへ来る。
+  const declaredNone = g.rows.some((r) => /^(なし|無|none|-)$/i.test(String(r.agreementNo ?? "").trim()));
+  const agreement = g.condition.agreement;
+  return {
+    ...(orderSign === null ? {} : { SHOW_ORDER_SIGN_SECTION: orderSign }),
+    ...(acceptSign === null ? {} : { SHOW_SIGN_SECTION: acceptSign }),
+    ...(declaredNone ? { HAS_BASE_CONTRACT: false } : {}),
+    // 基本契約の名前。番号だけだと紙に「AGR-2025-0011」としか出ない。
+    ...(agreement
+      ? { HAS_BASE_CONTRACT: true,
+          MASTER_CONTRACT_REF: agreementRefText(agreement.title, agreement.agreementNo) }
+      : {})
+  };
+}
+
+/** あり・なしを、食い違いの判定に使える文字にする（未記入は数えない）。 */
+const onOffText = (value: boolean | null) =>
+  value === null ? null : value ? "on" : "off";
+
 /** 束の中で値が食い違っているか（1つも無いのは食い違いではない）。 */
 export const conflicts = (rows: BatchRow[], pick: (r: BatchRow) => string | null): boolean =>
   new Set(rows.map(pick).filter(Boolean)).size > 1;
@@ -396,8 +449,16 @@ export class DocumentBatchService {
         }
         // 束の中で1つに決まらない値。条件明細は1つしか持てないので、
         // 食い違ったまま作らずに人へ返す（どれか1行のぶんが全体の値として残る）。
-        const mixed = conflicts(g.rows, (r) => r.agreementNo)
-          ? ["契約番号が行ごとに違います。1つの条件明細に契約は1つです"] : [];
+        const mixed = [
+          ...(conflicts(g.rows, (r) => r.agreementNo)
+            ? ["契約番号が行ごとに違います。1つの条件明細に契約は1つです"] : []),
+          // 署名欄は書類ごとの切り替え。行ごとに違うと、どれを採るかを
+          // こちらで決めることになる。人に直してもらう。
+          ...(conflicts(g.rows, (r) => onOffText(r.orderSign))
+            ? ["発注署名欄が行ごとに違います。書類ごとの切り替えです"] : []),
+          ...(conflicts(g.rows, (r) => onOffText(r.acceptSign))
+            ? ["承諾署名欄が行ごとに違います。書類ごとの切り替えです"] : [])
+        ];
         // 取引先と作品のどちらかが未登録なら飛ばす。どちらかが候補待ちなら選ぶ。
         const stuck = resolution === "missing" || workResolution === "missing";
         const choosing = resolution === "ambiguous" || workResolution === "ambiguous";
@@ -520,7 +581,12 @@ export class DocumentBatchService {
           }
           const draft = await this.issues.createDraft({
             templateKey: input.templateKey, conditionIds: [conditionId], matterId: input.matterId,
-            manualInputs: { items: g.rows.map((r) => r.item), _batchId: batchId }
+            manualInputs: {
+              items: g.rows.map((r) => r.item), _batchId: batchId,
+              // 書類ごとの切り替え。手入力として渡すので、人がそのあと画面で
+              // 直せる（差し込みの自動判定より手入力が勝つ）。
+              ...documentToggles(g)
+            }
           }, actor);
           await this.database.query(
             "UPDATE documents SET batch_id = $2 WHERE id = $1", [draft.id, batchId]);
@@ -734,6 +800,11 @@ export class DocumentBatchService {
   ): Promise<{ agreement: AgreementRef | null; note: string | null; missing?: boolean }> {
     const map = (a: any): AgreementRef =>
       ({ id: Number(a.id), agreementNo: str(a.agreement_no), title: str(a.title) });
+    // 「なし」は人が外したという指示。自動で探さず、基本契約なしの発注にする
+    // （紙はスポット契約の約款の側で出る）。
+    if (agreementNo && /^(なし|無|none|-)$/i.test(agreementNo.trim())) {
+      return { agreement: null, note: "基本契約なしの発注として作ります（CSV の指定）" };
+    }
     // 契約番号が書いてあれば、それを当てる。自動判定より人の指定が強い。
     if (agreementNo) {
       const found = await client.query(

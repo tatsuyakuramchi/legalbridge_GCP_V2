@@ -29,6 +29,17 @@ const yen = (v: unknown) =>
  * 変数名 → 値の取り出し。同じ意味の別名は V1/V2 の実データに合わせて並べる
  * （document-business-columns.ts の PARTY_NAME_KEYS / TITLE_KEYS ほか）。
  */
+/**
+ * 基本契約の呼び方。「制作業務委託基本契約（AGR-2025-0011）」。
+ * 紙に差し込む文字を1つだけ決めて、一括作成からも同じものを使う。
+ */
+export function agreementRefText(title: unknown, no: unknown): string | undefined {
+  const name = String(title ?? "").trim();
+  const number = String(no ?? "").trim();
+  if (name && number) return `${name}（${number}）`;
+  return name || number || undefined;
+}
+
 const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown }> = [
   // ---- 文書そのもの ----
   // 「発注番号」はここにもあり、この表は先に見つかったほうが勝つ。発注書では
@@ -42,9 +53,12 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown }> = [
   { names: ["documentDate", "発行日", "発注日", "order_date", "ORDER_DATE", "issue_date", "date"],
     get: (c) => c.document?.issuedOn },
   // 準拠する契約の番号。合意から引ける。
-  { names: ["linked_contract_number", "MASTER_CONTRACT_REF", "契約番号", "基本契約番号",
-            "parent_contract_number"],
+  { names: ["linked_contract_number", "契約番号", "基本契約番号", "parent_contract_number"],
     get: (c) => c.agreement?.no },
+  // 発注書の「基本契約名 / 番号」。準拠契約の条項に差し込むので、番号だけだと
+  // 紙に「AGR-2025-0011」としか出ず、何の契約か読めない。
+  { names: ["MASTER_CONTRACT_REF", "基本契約名 / 番号"],
+    get: (c) => agreementRefText(c.agreement?.title, c.agreement?.no) },
   { names: ["CONTRACT_TITLE_REF", "基本契約名"], get: (c) => c.agreement?.title },
   /**
    * 基本契約に基づく発注かどうか。

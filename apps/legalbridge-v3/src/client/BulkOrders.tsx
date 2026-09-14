@@ -21,6 +21,8 @@ interface Candidate { id: number; name: string; partyCode: string | null }
 interface WorkCandidate { id: number; title: string; workCode: string | null }
 interface Row {
   line: number; item: Record<string, unknown>; amount: number; issues: string[];
+  /** 書類ごとの切り替え。未記入は null（ひな形の既定に任せる）。 */
+  orderSign: boolean | null; acceptSign: boolean | null;
   /** 予定明細の起点。読めなければ null（その行は不備として issues に出る）。 */
   triggerKind: "on_execution" | "on_delivery" | "on_inspection" | "periodic" | null;
 }
@@ -366,6 +368,21 @@ export function BulkOrders(
   );
 }
 
+/** 書類ごとの切り替え。書いてある束だけ出す（未記入は既定に任せるので黙っている）。 */
+function Toggles({ rows }: { rows: Row[] }) {
+  const one = (pick: (r: Row) => boolean | null) => {
+    const set = new Set(rows.map(pick).filter((v) => v !== null));
+    return set.size === 1 ? [...set][0] : null;
+  };
+  const shown: string[] = [];
+  const order = one((r) => r.orderSign);
+  const accept = one((r) => r.acceptSign);
+  if (order !== null) shown.push(`発注署名欄 ${order ? "あり" : "なし"}`);
+  if (accept !== null) shown.push(`承諾署名欄 ${accept ? "あり" : "なし"}`);
+  if (!shown.length) return null;
+  return <div className="faint" style={{ marginTop: 2 }}>{shown.join("　")}</div>;
+}
+
 function GroupRows(
   { g, chosen, chosenWork, onChoose, onChooseWork }: {
     g: Group; chosen?: number; chosenWork?: number;
@@ -439,6 +456,8 @@ function GroupRows(
                 {g.condition.agreementNote && (
                   <div className="faint" style={{ marginTop: 2 }}>{g.condition.agreementNote}</div>
                 )}
+                {/* 署名欄は紙の見た目が変わる。作る前に見せる。 */}
+                <Toggles rows={g.rows} />
               </>
             ) : <span className="faint">—</span>}
         </td>
