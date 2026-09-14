@@ -362,6 +362,10 @@ export interface BundleLine {
   /** 実額（税抜）。MG の上乗せ・AG の充当を反映済み。 */
   paymentJpy: number;
   basisNote: string;
+  /** 払ってきた相手（許諾＝アウトの取引先）。紙の「入金企業」に出す。 */
+  payerName?: string | null;
+  /** 相手から入ってきた通貨（アウト条件の通貨）。紙の「入金通貨」に出す。 */
+  intakeCurrency?: string | null;
 }
 
 export function bundleLinesFrom(source: Data): BundleLine[] {
@@ -375,7 +379,9 @@ export function bundleLinesFrom(source: Data): BundleLine[] {
     salesJpy: num(row.salesJpy),
     ratePct: num(row.ratePct),
     paymentJpy: num(row.paymentJpy),
-    basisNote: String(row.basisNote ?? "")
+    basisNote: String(row.basisNote ?? ""),
+    payerName: String(row.payerName ?? ""),
+    intakeCurrency: String(row.intakeCurrency ?? "")
   }));
 }
 
@@ -394,6 +400,7 @@ export function usageBundleLines(
     productName?: string | null; methodLabel?: string | null; basisNote?: string | null;
     outConditionNo?: string | null; outConditionName?: string | null;
     outPartyName?: string | null; outScopes?: string | null;
+    outCurrency?: string | null;
     basis: number; ratePct?: number | null; amount?: number | null;
     period?: string | null;
   }>
@@ -409,7 +416,9 @@ export function usageBundleLines(
     ratePct: Number(e.ratePct ?? 0),
     paymentJpy: Number(e.amount ?? 0),
     basisNote: [e.basisNote, e.outScopes, e.period ? `対象期間 ${e.period}` : ""]
-      .map((x) => String(x ?? "").trim()).filter(Boolean).join("・")
+      .map((x) => String(x ?? "").trim()).filter(Boolean).join("・"),
+    payerName: e.outPartyName ?? "",
+    intakeCurrency: e.outCurrency ?? ""
   }));
 }
 
@@ -520,6 +529,35 @@ export function bundleLinesPatch(
 // 入口
 // ---------------------------------------------------------------------------
 
+/**
+ * 受領情報（サブライセンス入金）の見出し。
+ *
+ * 紙には1組しか書けない。だから「行ごとに違いうるもの」を出すときは、
+ * 全部の行で同じときだけ出し、混ざっていれば空にする。1社ぶんだけを
+ * 選んで出すと、載っていない相手の入金を、載っている相手のものとして
+ * 読ませることになる。混ざったときは明細の「対象契約」が行ごとに出す。
+ */
+function receiptHeader(context: Data, lines: BundleLine[]): Data {
+  const same = (values: Array<string | null | undefined>) => {
+    const found = [...new Set(values.map((v) => String(v ?? "").trim()).filter(Boolean))];
+    return found.length === 1 ? found[0] : "";
+  };
+  const condition = (context.condition ?? {}) as Data;
+  const counterparty = (condition.counterparty ?? {}) as Data;
+  return {
+    // 入金企業は「払ってきた相手」＝許諾（アウト）の取引先。
+    // payerCompany は自社名の別名として登録されていて、当社の名前が出ていた。
+    // 計算書のときだけ、ここで上書きする（他のひな形の自社名は動かさない）。
+    payerCompany: same(lines.map((l) => l.payerName)),
+    // デザイナー／権利者は作者。＝取得（イン）条件の取引先。
+    designerName: String(counterparty.name ?? ""),
+    // 入金通貨はアウト条件の通貨。契約が何建てかは、その契約が持っている。
+    intakeCurrency: same(lines.map((l) => l.intakeCurrency)),
+    // カテゴリーの欄は使わない（本文からも消す。infra/v3/107）。
+    royaltyCategory: ""
+  };
+}
+
 export function statementModeOf(source: Data): "single" | "multi" | "bundle" {
   const mode = String(source.statementMode ?? "");
   return mode === "multi" || mode === "bundle" ? mode : "single";
@@ -576,10 +614,13 @@ export function royaltyStatementPatch(
   const computedLines = bundleLinesFrom(manual);
   if (computedLines.length) {
     const total = manual.rs_bundle_tax;
-    return bundleLinesPatch({
-      lines: computedLines, taxRatePct: rate,
-      taxTotal: total === undefined || total === null ? null : num(total)
-    });
+    return {
+      ...bundleLinesPatch({
+        lines: computedLines, taxRatePct: rate,
+        taxTotal: total === undefined || total === null ? null : num(total)
+      }),
+      ...receiptHeader(context, computedLines)
+    };
   }
 
   if (mode === "bundle") {

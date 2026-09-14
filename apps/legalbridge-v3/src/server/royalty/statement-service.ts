@@ -56,8 +56,10 @@ export interface StatementBasis {
   outConditionId?: number | null;
   outConditionNo?: string | null;
   outConditionName?: string | null;
-  /** 許諾先の取引先名。紙の「対象契約」に出す。 */
+  /** 許諾先の取引先名。紙の「対象契約」と「入金企業」に出す。 */
   outPartyName?: string | null;
+  /** アウト条件の通貨。相手から入ってきた通貨。紙の「入金通貨」に出す。 */
+  outCurrency?: string | null;
   /** 許諾地域・言語など。紙に「従前に決めた内容」として出す。 */
   outScopes?: string | null;
   /** 製品名。作品名を出す。 */
@@ -167,7 +169,7 @@ export class RoyaltyStatementService {
               e.usage_type, e.out_condition_id, e.unit_amount, e.payment_stage, e.tax_included,
               COALESCE(e.rate_ppm, c.rate_ppm) AS rate_ppm,
               oc.condition_no AS out_condition_no, oc.name AS out_condition_name,
-              op.name AS out_party_name,
+              op.name AS out_party_name, oc.currency AS out_currency,
               -- 製品名は作品名。アウト条件の作品を先に見て、無ければイン条件の作品。
               COALESCE(ow.title, w.title) AS product_name,
               -- 許諾地域・言語など。従前に決めた内容をそのまま紙に出す。
@@ -317,6 +319,7 @@ export class RoyaltyStatementService {
         outConditionNo: str(e.out_condition_no),
         outConditionName: str(e.out_condition_name),
         outPartyName: str(e.out_party_name),
+        outCurrency: str(e.out_currency),
         outScopes: str(e.out_scopes),
         productName: str(e.product_name),
         unitAmount: int(e.unit_amount),

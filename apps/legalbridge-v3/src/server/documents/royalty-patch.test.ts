@@ -236,3 +236,44 @@ test("試算の行を渡せば、プレビューでも明細が出る", () => {
 test("行を渡さなければ本文は組めない。空の明細を出すより出さない", () => {
   assert.equal(royaltyStatementPatch({}, { statementMode: "bundle" }, 10), null);
 });
+
+test("受領情報：入金企業は許諾先、権利者はイン条件の取引先", () => {
+  // payerCompany は「自社名」の別名として登録されていて、入金企業の欄に
+  // 当社（株式会社アークライト）が出ていた。計算書のときだけ上書きする。
+  const line = (payer: string, currency: string) => ({
+    conditionId: 11, eventId: 42, contractTitle: `${payer}　タイ語版`,
+    contractNumber: "CL-2026-00443", conditionName: "トーネードスプラッシュ",
+    methodLabel: "自社製造・他社販売（前金・受領価格）",
+    salesJpy: 736799, ratePct: 10, paymentJpy: 73680, basisNote: "前金",
+    payerName: payer, intakeCurrency: currency
+  });
+  const context = { condition: { counterparty: { name: "合同会社アトリエ蒼" } } };
+  const patch = royaltyStatementPatch(context, {
+    statementMode: "bundle",
+    rs_bundle_lines: [line("Meanbook Co., Ltd.", "USD"), line("Meanbook Co., Ltd.", "USD")],
+    rs_bundle_tax: 12694
+  }, 10);
+  assert.ok(patch);
+  assert.equal(patch.payerCompany, "Meanbook Co., Ltd.", "払ってきた相手を出す");
+  assert.equal(patch.designerName, "合同会社アトリエ蒼", "権利者はイン条件の取引先");
+  assert.equal(patch.intakeCurrency, "USD", "入金通貨はアウト条件の通貨");
+  assert.equal(patch.royaltyCategory, "", "カテゴリーは使わない");
+});
+
+test("受領情報：許諾先が混ざったら入金企業は空にする", () => {
+  // 紙の見出しは1組しか書けない。1社ぶんを選んで出すと、載っていない相手の
+  // 入金を、載っている相手のものとして読ませることになる。
+  const line = (payer: string, currency: string) => ({
+    conditionId: 11, eventId: 42, contractTitle: payer, contractNumber: "CL-1",
+    conditionName: "製品", methodLabel: "再許諾（受領価格）",
+    salesJpy: 100000, ratePct: 10, paymentJpy: 10000, basisNote: "",
+    payerName: payer, intakeCurrency: currency
+  });
+  const patch = royaltyStatementPatch({}, {
+    statementMode: "bundle",
+    rs_bundle_lines: [line("Meanbook Co., Ltd.", "USD"), line("晨光數位出版", "TWD")]
+  }, 10);
+  assert.ok(patch);
+  assert.equal(patch.payerCompany, "", "混ざったら出さない");
+  assert.equal(patch.intakeCurrency, "", "通貨も混ざったら出さない");
+});
