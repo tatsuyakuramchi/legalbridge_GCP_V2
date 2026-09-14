@@ -88,7 +88,8 @@ export const USAGE_TYPES: UsageTypeSpec[] = [
     // 「単価と個数が入っているか、受領額が入っているか」で読み分ける。
     fields: ["unitAmount", "quantity", "sampleQuantity", "grossAmount"],
     hasStages: true, choosableBasis: true,
-    hint: "自社で作って相手が売る。前金・後金に分かれる契約は2件に分けて入れる"
+    hint: "自社で作って相手が売る。受領額に料率を掛ける（再許諾と同じ計算）。"
+        + "個数建ての契約のときだけ算定の形を変える"
   }
 ];
 
@@ -146,7 +147,10 @@ export function netOfTax(amount: number, taxIncluded: boolean | null | undefined
 export function basisKindOf(input: UsageBasisInput): "per_unit" | "lump" {
   if (input.usageType === "sublicense") return "lump";
   if (input.usageType === "in_house") return "per_unit";
-  return Number(input.grossAmount ?? 0) > 0 ? "lump" : "per_unit";
+  // 他社販売は受領額に料率を掛ける形が主。個数と単価が入っている行だけ、
+  // 個数建ての契約として扱う。
+  return Number(input.unitAmount ?? 0) > 0 && Number(input.quantity ?? 0) > 0
+    ? "per_unit" : "lump";
 }
 
 /**

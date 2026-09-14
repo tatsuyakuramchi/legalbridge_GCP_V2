@@ -145,3 +145,18 @@ test("割り戻したことを紙に出す。相手が検算できないと問�
     "1000個 × 受領価格（税込 ÷ 1.1）");
   assert.equal(basisNoteOf({ usageType: "sublicense", grossAmount: 1 }), "受領価格");
 });
+
+test("他社販売は受領額 × 料率が既定。個数と単価が揃った行だけ個数建て", () => {
+  // 海外から売上が入ってくる取引には個数が無い。再許諾と同じ計算になる。
+  assert.equal(basisKindOf({ usageType: "oem", grossAmount: 1_000_000 }), "lump");
+  assert.equal(basisKindOf({ usageType: "oem" }), "lump", "何も無ければ受領額の形");
+  assert.equal(basisKindOf({ usageType: "oem", quantity: 1000 }), "lump",
+    "個数だけでは個数建てにしない");
+  assert.equal(basisKindOf({ usageType: "oem", unitAmount: 800, quantity: 1000 }), "per_unit");
+});
+
+test("受領額の形は、紙にも個数を出さない", () => {
+  assert.equal(basisNoteOf({ usageType: "oem", grossAmount: 1_000_000 }), "受領価格");
+  assert.equal(methodLabelOf({ usageType: "oem", grossAmount: 1_000_000 }),
+    "自社製造・他社販売（受領価格）");
+});

@@ -162,7 +162,10 @@ export function ConditionEvents(
   function usageDefaults(value: string): Record<string, string> {
     const base = {
       usageType: value, outConditionId: "", grossAmount: "",
-      basisKind: "per_unit", paymentStage: "",
+      // 他社販売は受領額に料率を掛ける形が既定。海外から売上が入ってくる取引が
+      // 中心で、そこには個数が無い（再許諾と同じ計算になる）。
+      // 個数建ての契約もあるので、形そのものは選べるままにしてある。
+      basisKind: "lump", paymentStage: "", taxIncluded: "",
       ratePct: v.ratePct || defaultRatePct
     };
     if (value === "in_house") {
@@ -307,7 +310,7 @@ export function ConditionEvents(
   // 選んだ利用形態。これで要る欄が決まる。
   const usage = usageTypes.find((u) => u.value === (v.usageType ?? "")) ?? null;
   // 自社製造・他社販売は契約によって形が違う。前金だけ定額、という契約もある。
-  const lumpSum = Boolean(usage?.choosableBasis) && (v.basisKind ?? "per_unit") === "lump";
+  const lumpSum = Boolean(usage?.choosableBasis) && (v.basisKind ?? "lump") !== "per_unit";
   const usageField = (name: string) => {
     if (!usage?.fields.includes(name)) return false;
     if (!usage.choosableBasis) return true;
@@ -377,7 +380,7 @@ export function ConditionEvents(
       grossAmount: "", deductions: "", amount: "", note: "",
       contractForm: "", serviceFrom: "", serviceTo: "",
       usageType: "", outConditionId: "", unitAmount: "", ratePct: defaultRatePct,
-      paymentStage: "", basisKind: "per_unit", taxIncluded: "",
+      paymentStage: "", basisKind: "lump", taxIncluded: "",
       deliverable: "", inspectedOn: "", inspectorDept: "", inspectorName: ""
     };
   }
@@ -565,9 +568,13 @@ export function ConditionEvents(
                     // 形を変えたら前の形の数字を消す。両方入った行は保存できない。
                     unitAmount: "", quantity: "", sampleQuantity: "", grossAmount: ""
                   })}>
+                  <option value="lump">受領額 × 料率（個数は出さない）</option>
                   <option value="per_unit">受領価格（1個あたり）× 製造個数</option>
-                  <option value="lump">受領額そのもの（定額の前金など）</option>
                 </select>
+                <small className="faint">
+                  海外から売上が入ってくる取引は受領額のまま。
+                  個数建ての契約のときだけ下を選ぶ
+                </small>
               </label>
             )}
             {usage?.needsOutCondition && (
