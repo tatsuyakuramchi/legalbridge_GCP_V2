@@ -118,6 +118,14 @@ export interface UsageBasisInput {
    * 入っている額はそのまま残し、ここで割り戻す（記録は入金額と一致させる）。
    */
   taxIncluded?: boolean | null;
+  /**
+   * 算定の形の指定。入力中の画面から渡す。
+   *
+   * 保存した行は数字から読み分けられるが、入力の途中はまだ数字が揃っていない。
+   * 「受領額 × 料率」を選んだ直後の空の行を数字から読むと、選んだ形と
+   * 画面に出る方式名が食い違う。選んでいるならそれを使う。
+   */
+  basisKind?: "per_unit" | "lump" | null;
 }
 
 /** 受領額を割り戻すときの税率。国内の消費税に合わせる。 */
@@ -147,6 +155,8 @@ export function netOfTax(amount: number, taxIncluded: boolean | null | undefined
 export function basisKindOf(input: UsageBasisInput): "per_unit" | "lump" {
   if (input.usageType === "sublicense") return "lump";
   if (input.usageType === "in_house") return "per_unit";
+  // 画面が形を指定しているならそれに従う。数字はまだ揃っていないことがある。
+  if (input.basisKind) return input.basisKind;
   // 他社販売は受領額に料率を掛ける形が主。個数と単価が入っている行だけ、
   // 個数建ての契約として扱う。
   return Number(input.unitAmount ?? 0) > 0 && Number(input.quantity ?? 0) > 0

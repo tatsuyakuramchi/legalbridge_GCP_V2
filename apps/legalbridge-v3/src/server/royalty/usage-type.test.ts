@@ -160,3 +160,18 @@ test("受領額の形は、紙にも個数を出さない", () => {
   assert.equal(methodLabelOf({ usageType: "oem", grossAmount: 1_000_000 }),
     "自社製造・他社販売（受領価格）");
 });
+
+test("画面が形を指定していれば、数字が揃う前でもその形で読む", () => {
+  // 入力中は数字がまだ入っていない。数字から読むと、人が「受領額 × 料率」を
+  // 選んだ直後に方式名が「× 製造個数」と出て、選んだ形と食い違って見える。
+  assert.equal(basisKindOf({ usageType: "oem", basisKind: "lump" }), "lump");
+  assert.equal(basisKindOf({ usageType: "oem", basisKind: "per_unit" }), "per_unit");
+  assert.equal(
+    methodLabelOf({ usageType: "oem", basisKind: "lump", paymentStage: "advance" }),
+    "自社製造・他社販売（前金・受領価格）");
+});
+
+test("指定が無ければ、保存した行は入っている数字から読む", () => {
+  assert.equal(basisKindOf({ usageType: "oem", grossAmount: 100000 }), "lump");
+  assert.equal(basisKindOf({ usageType: "oem", unitAmount: 500, quantity: 10 }), "per_unit");
+});

@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { api, ApiError, money } from "./api.js";
 import { rewardLabelFor } from "../server/core/reward.js";
 import { CONTRACT_FORMS } from "../server/conditions/contract-form.js";
-import { RECEIPT_TAX_RATE_PCT } from "../server/royalty/usage-type.js";
+import { readNumberInput } from "../server/core/number-input.js";
+import { RECEIPT_TAX_RATE_PCT, methodLabelOf } from "../server/royalty/usage-type.js";
+import type { PaymentStage, UsageType } from "../server/royalty/usage-type.js";
 
 /** 税込を税別に直すときの割る数。1.1 */
 const TAX_DIVISOR = 1 + RECEIPT_TAX_RATE_PCT / 100;
@@ -322,12 +324,16 @@ export function ConditionEvents(
    * 保存する前に、その実績の許諾料を見せる。式はサーバと同じ。
    * 揃っていなければ null（数字が足りないうちは何も出さない）。
    */
-  const numOf = (name: string) => {
-    const raw = f(name).trim();
-    if (!raw) return null;
-    const parsed = Number(raw.replace(/[^0-9.-]/g, ""));
-    return Number.isFinite(parsed) ? parsed : null;
-  };
+  /**
+   * 数字の欄を読む。桁区切りのカンマと全角の数字は直して読む。
+   * 数字として読めないものは null（空欄と同じ扱い。保存する前に別途止める）。
+   *
+   * 以前はここだけがカンマを落としていて、保存はそのまま Number() に渡して
+   * いた。「810,479」は画面の試算では 810479、保存では NaN → JSON で null に
+   * なり、サーバは受領額の入っていない実績として読んで
+   * 「受領価格（1個あたり）を入れてください」で止まっていた。読み方を1本にする。
+   */
+  const numOf = (name: string) => readNumberInput(f(name));
   /** 税込で入っているなら割り戻す。式はサーバと同じ（端数は切り捨て）。 */
   const taxIncluded = f("taxIncluded") === "included";
   // 整数どうしで割る。1.1 で割ると切りのいい額のたびに1円ずれる（サーバと同じ式）。
@@ -353,8 +359,33 @@ export function ConditionEvents(
     return Math.ceil((usageBasis * rate) / 100);
   })();
 
+  /**
+   * 入っているのに数字として読めない欄。名前を出して止める。
+   *
+   * 黙って空扱いにすると、サーバから「受領価格（1個あたり）を入れてください」の
+   * ような、入れたつもりの欄とは別の欄の名前が返ってくる。
+   */
+  const badNumberField = (() => {
+    const shownFields: Array<[string, string]> = [
+      ["quantity", usage?.value === "oem" ? "製造個数" : "数量"],
+      ["sampleQuantity", "見本（無償分）"],
+      ["unitAmount", usage?.value === "oem" ? "受領価格（1個あたり）" : "基準価格"],
+      ["grossAmount", usage ? (lumpSum ? "受領額" : "受領価格") : "報告売上・受領額"],
+      ["deductions", "控除"],
+      ["ratePct", "料率（%）"],
+      ["amount", rewardLabel ?? "実額"]
+    ];
+    for (const [name, label] of shownFields) {
+      if (f(name).trim() && numOf(name) === null) {
+        return `${label}に数字として読めない字が入っています：${f(name).trim()}`;
+      }
+    }
+    return "";
+  })();
+
   /** 記録できる状態か。押せないときは、その理由をボタンの横に出す。 */
   const whyNotRecord = (() => {
+    if (badNumberField) return badNumberField;
     if (usage) {
       if (usage.needsOutCondition && !f("outConditionId")) return "許諾したアウト条件を選んでください";
       if (usageBasis === null) {
@@ -416,24 +447,41 @@ export function ConditionEvents(
   async function add() {
     setBusy(true); setError(null);
     try {
-      const gross = f("grossAmount").trim();
+      /**
+       * 画面に出ていない欄は送らない。
+       *
+       * 算定の形を「受領額 × 料率」にしても、アウト条件を選んだときに自動で
+       * 入った単価は状態に残る。そのまま送るとサーバは
+       * 「受領額と『個数 × 単価』の両方は入れられません」で止まる。
+       * 人からは、画面に出ていない欄のせいで止まっていることが見えない。
+       */
+      const shown = (name: string) =>
+        usage && !usageField(name) ? null : numOf(name);
+      const rounded = (name: string) => {
+        const value = shown(name);
+        return value === null ? null : Math.round(value);
+      };
+      const rate = numOf("ratePct");
       await api.post(`/conditions/${conditionId}/events`, {
         eventType: f("eventType"),
         occurredOn: f("occurredOn"),
         period: f("period").trim() || null,
-        quantity: f("quantity").trim() ? Number(f("quantity")) : null,
-        grossAmount: gross ? Math.round(Number(gross)) : null,
-        deductions: f("deductions").trim() ? Math.round(Number(f("deductions"))) : 0,
-        amount: Math.round(Number(f("amount") || 0)),
+        quantity: shown("quantity"),
+        // 見本は作者に払わない分。送っていなかったので、引いたつもりの数が
+        // 引かれないまま計算書に出ていた。
+        sampleQuantity: shown("sampleQuantity"),
+        grossAmount: rounded("grossAmount"),
+        deductions: Math.round(numOf("deductions") ?? 0),
+        amount: Math.round(numOf("amount") ?? 0),
         note: f("note").trim() || null,
         contractForm: f("contractForm").trim() || null,
         serviceFrom: f("serviceFrom") || null,
         serviceTo: f("serviceTo") || null,
         usageType: f("usageType") || null,
         outConditionId: f("outConditionId") ? Number(f("outConditionId")) : null,
-        unitAmount: f("unitAmount").trim() ? Math.round(Number(f("unitAmount"))) : null,
+        unitAmount: rounded("unitAmount"),
         // 画面は % で受け、保存は ppm（百万分率）。8% → 80000
-        ratePpm: f("ratePct").trim() ? Math.round(Number(f("ratePct")) * 10000) : null,
+        ratePpm: rate === null ? null : Math.round(rate * 10000),
         paymentStage: f("paymentStage") || null,
         taxIncluded: f("taxIncluded") === "included",
         scheduleId: f("scheduleId") ? Number(f("scheduleId")) : null,
@@ -735,8 +783,13 @@ export function ConditionEvents(
             )}
             {usage && (
               <div className="note" style={{ gridColumn: "1 / -1" }}>
-                {usage.methodLabel}
-                {f("paymentStage") && `　${stages.find((x) => x.value === f("paymentStage"))?.label}`}
+                {/* 紙に出る方式名をそのまま見せる。仕様の固定文言を出していたので、
+                    「受領額 × 料率」を選んでも「× 製造個数」と書かれていた。 */}
+                {methodLabelOf({
+                  usageType: usage.value as UsageType,
+                  basisKind: lumpSum ? "lump" : "per_unit",
+                  paymentStage: (f("paymentStage") || null) as PaymentStage | null
+                })}
                 {pickedOut?.workTitle && `　製品名：${pickedOut.workTitle}`}
                 {!pickedOut && workTitle && `　製品名：${workTitle}`}
                 {pickedOut?.scopes && `　許諾範囲：${pickedOut.scopes}`}
