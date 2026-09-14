@@ -45,6 +45,10 @@ export function lineFieldsFor(templateKey: string): string[] {
   if (isLicenseTermsTemplate(templateKey)) {
     return ["v3_conds", "v3_lcs", "v3_sublicensees", "v3_special_extras"];
   }
+  // 計算書は金額を計算から出すので明細を人が打つことはない。ただし紙に出る
+  // 文字（製品名・対象契約）は直せないと困る。作品名やアウト条件の名前が
+  // そのまま出るので、相手に見せる呼び方と食い違うことがある。
+  if (isStatementTemplate(templateKey)) return ["rs_line_labels"];
   return [];
 }
 
@@ -55,6 +59,7 @@ export function seedLines(templateKey: string, context: Ctx): Record<string, Row
   for (const name of lineFieldsFor(templateKey)) {
     out[name] = name === "items" ? orderLinesFrom(context)
       : name === "delivery_line_items" ? deliveryLinesFrom(context)
+      : name === "rs_line_labels" ? statementLabelRows(context)
       : [];
   }
   return out;
@@ -67,6 +72,29 @@ export const calcMethodOf = (condition: Ctx): string => calcMethodFor(condition?
 /** 業績連動のときの報酬の名前（利用許諾料・インセンティブ報酬）。判定は画面と共通。 */
 export const rewardLabelOf = (condition: Ctx): string | null =>
   rewardLabelFor(condition?.pricingModel, condition?.deliverableOwnership);
+
+/**
+ * 計算書の行の見出し（人が直せるぶん）。実績1件が1行。
+ *
+ * 金額と料率は計算から出すのでここには置かない。置くと、人が打った金額と
+ * 計算した金額のどちらが紙に出るのか読めなくなる。
+ */
+export function statementLabelRows(context: Ctx): Row[] {
+  return ((context.events ?? []) as Ctx[])
+    .filter((event) => event.usageType)
+    .map((event) => {
+      const condition = (context.conditions ?? []).find((c: Ctx) => c.id === event.conditionId)
+        ?? context.condition ?? {};
+      const out = event.outCondition ?? {};
+      return {
+        eventId: event.id,
+        productName: out.workTitle ?? condition.work?.title ?? "",
+        contractTitle: [out.partyName, out.name]
+          .map((x: unknown) => String(x ?? "").trim()).filter(Boolean).join("　"),
+        contractNumber: out.conditionNo ?? ""
+      };
+    });
+}
 
 /** 仕様・成果物。専用の欄があればそれ、無ければ備考（以前はこれが仕様代わりだった）。 */
 const specOf = (condition: Ctx) => condition?.spec ?? condition?.notes ?? "";

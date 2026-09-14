@@ -91,6 +91,19 @@ export const INTL_ITEM_COLUMNS: Column[] = ITEM_COLUMNS.flatMap((c) => c.name ==
           helpText: "例: within 30 days after receipt of invoice" } satisfies Column]
   : [c]);
 
+/**
+ * 計算書の行の見出し。金額と料率は計算から出すので、ここでは直せない。
+ * 紙に出る文字だけを人が整える（作品名やアウト条件の名前が、相手に見せる
+ * 呼び方と食い違うことがある）。
+ */
+export const STATEMENT_LABEL_COLUMNS: Column[] = [
+  { name: "productName", label: "製品名",
+    helpText: "紙の「製品名」に出る。既定は作品名" },
+  { name: "contractTitle", label: "対象契約",
+    helpText: "許諾先の取引先名と条件名。既定はアウト条件から入る" },
+  { name: "contractNumber", label: "契約番号", helpText: "既定はアウト条件の番号" }
+];
+
 export const EXPENSE_COLUMNS: Column[] = [
   { name: "expense_name", label: "経費名" },
   { name: "spent_date", label: "利用日", type: "date" },
@@ -146,7 +159,10 @@ export const LINE_SECTIONS: Record<string, { title: string; columns: Column[]; i
            hint: "選んだ実績が1行ずつ。検収金額が予定額と違えば変更履歴に出る。"
                + "業績連動の行は、別で計算した金額と根拠をここに入れる" },
   other_fees: { title: "その他手数料", columns: FEE_COLUMNS, hint: "無ければ空のまま" },
-  expenses: { title: "経費", columns: EXPENSE_COLUMNS, hint: "税込で入れる。無ければ空のまま" }
+  expenses: { title: "経費", columns: EXPENSE_COLUMNS, hint: "税込で入れる。無ければ空のまま" },
+  rs_line_labels: { title: "計算書の行の見出し", columns: STATEMENT_LABEL_COLUMNS,
+           hint: "選んだ実績が1行ずつ。金額と料率は計算から出すので直せない。"
+               + "紙に出る文字だけを整える（相手に見せる呼び方が違うとき）" }
 };
 
 const show = (v: unknown) => (v === null || v === undefined ? "" : String(v));

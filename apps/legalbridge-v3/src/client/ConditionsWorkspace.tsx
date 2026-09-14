@@ -43,7 +43,8 @@ export function ConditionsWorkspace(
   { initialId, onCompose, onOpen, onOpenDocument }:
   {
     initialId?: number;
-    onCompose?: (conditionIds: number[], eventIds?: number[], matterId?: number | null) => void;
+    onCompose?: (conditionIds: number[], eventIds?: number[], matterId?: number | null,
+                 templateKey?: string | null) => void;
     /** 決めた文書をそのまま開く。 */
     onOpenDocument?: (documentId: number) => void;
     onOpen?: (kind: EntityKind, id: number) => void;

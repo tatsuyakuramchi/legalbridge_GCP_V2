@@ -293,6 +293,9 @@ export class DocumentContextRepository {
               e.gross_amount, e.deductions, e.amount, e.note,
               e.deliverable, e.inspected_on, e.inspector_dept, e.inspector_name,
               e.contract_form, e.service_from, e.service_to,
+              e.usage_type, e.out_condition_id,
+              oc.condition_no AS out_condition_no, oc.name AS out_condition_name,
+              op.name AS out_party_name, ow.title AS out_work_title,
               s.contract_form AS schedule_contract_form,
               s.service_from AS schedule_service_from, s.service_to AS schedule_service_to,
               c.currency, s.label AS schedule_label, s.seq AS schedule_seq,
@@ -301,6 +304,9 @@ export class DocumentContextRepository {
          FROM condition_events e
          JOIN conditions c ON c.id = e.condition_id
          LEFT JOIN condition_schedules s ON s.id = e.schedule_id
+         LEFT JOIN conditions oc ON oc.id = e.out_condition_id
+         LEFT JOIN parties    op ON op.id = oc.counterparty_id
+         LEFT JOIN works      ow ON ow.id = oc.work_id
         WHERE e.id = ANY($1::bigint[]) AND e.status = 'active'
         ORDER BY e.occurred_on, e.id`, [ids]);
     return (r.rows as Array<Record<string, any>>).map((row) => {
@@ -320,6 +326,15 @@ export class DocumentContextRepository {
         /** その回の予定額。実績と違えば「金額変更」として本文の変更履歴に出る。 */
         plannedAmount: toMajor(int(row.schedule_planned), currency),
         // 契約形式と役務提供期間は、実績が持っていなければ予定の回から継ぐ。
+        usageType: str(row.usage_type),
+        // 許諾先。紙の「対象契約」と製品名の既定値になる。
+        outCondition: row.out_condition_id ? {
+          id: Number(row.out_condition_id),
+          conditionNo: str(row.out_condition_no),
+          name: str(row.out_condition_name),
+          partyName: str(row.out_party_name),
+          workTitle: str(row.out_work_title)
+        } : null,
         contractForm: str(row.contract_form) ?? str(row.schedule_contract_form),
         serviceFrom: dateStr(row.service_from) ?? dateStr(row.schedule_service_from),
         serviceTo: dateStr(row.service_to) ?? dateStr(row.schedule_service_to),

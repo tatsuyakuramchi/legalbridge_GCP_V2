@@ -349,6 +349,8 @@ export function bundleStatementPatch(
  */
 export interface BundleLine {
   conditionId: number | null;
+  /** どの実績から出た行か。フォームで直した見出しを突き合わせるのに使う。 */
+  eventId?: number | null;
   contractTitle: string;
   contractNumber: string;
   conditionName: string;
@@ -364,6 +366,7 @@ export interface BundleLine {
 export function bundleLinesFrom(source: Data): BundleLine[] {
   return records(source.rs_bundle_lines).map((row) => ({
     conditionId: Math.trunc(num(row.conditionId)) || null,
+    eventId: Math.trunc(num(row.eventId)) || null,
     contractTitle: String(row.contractTitle ?? ""),
     contractNumber: String(row.contractNumber ?? ""),
     conditionName: String(row.conditionName ?? ""),
@@ -384,38 +387,86 @@ export function bundleLinesFrom(source: Data): BundleLine[] {
  *
  * 行の額は計算済み。ここでは組み替えるだけで計算し直さない。
  */
-/** 片方がもう片方に丸ごと含まれていれば、同じことを言っているとみなす。 */
-function sameWords(a: string | null | undefined, b: string | null | undefined): boolean {
-  const x = String(a ?? "").trim();
-  const y = String(b ?? "").trim();
-  if (!x || !y) return false;
-  return y.includes(x) || x.includes(y);
-}
-
 export function usageBundleLines(
   events: Array<{
+    eventId?: number | null;
     productName?: string | null; methodLabel?: string | null; basisNote?: string | null;
-    outConditionNo?: string | null; outConditionName?: string | null; outScopes?: string | null;
+    outConditionNo?: string | null; outConditionName?: string | null;
+    outPartyName?: string | null; outScopes?: string | null;
     basis: number; ratePct?: number | null; amount?: number | null;
     period?: string | null;
   }>
 ): BundleLine[] {
   return events.map((e) => ({
     conditionId: null,
-    // 群の見出しは許諾先の条件。自社製造・自社販売は相手がいないので空。
-    //
-    // 方式名と同じ言葉なら出さない。アウト条件に「自社製造・他社販売」と
-    // 名前を付けている運用があり、そのまま出すと見出しに同じ語が2回並ぶ。
-    contractTitle: sameWords(e.outConditionName, e.methodLabel) ? "" : (e.outConditionName ?? ""),
+    eventId: e.eventId ?? null,
+    contractTitle: outContractTitle(e),
     contractNumber: e.outConditionNo ?? "",
     conditionName: e.productName ?? "",
-    methodLabel: e.methodLabel ?? "",
+    methodLabel: usageMethodLabel(e),
     salesJpy: e.basis,
     ratePct: Number(e.ratePct ?? 0),
     paymentJpy: Number(e.amount ?? 0),
     basisNote: [e.basisNote, e.outScopes, e.period ? `対象期間 ${e.period}` : ""]
       .map((x) => String(x ?? "").trim()).filter(Boolean).join("・")
   }));
+}
+
+/**
+ * 紙の「対象契約」。誰に許諾した分かが読めないと意味が無い。
+ * 取引先名と条件名を並べる。自社製造・自社販売は相手がいないので空。
+ */
+export function outContractTitle(
+  e: { outPartyName?: string | null; outConditionName?: string | null }
+): string {
+  return [e.outPartyName, e.outConditionName]
+    .map((x) => String(x ?? "").trim()).filter(Boolean).join("　");
+}
+
+/**
+ * 方式名。条件名が既に利用形態を言っているなら、そこは繰り返さない。
+ *
+ * アウト条件に「自社製造・他社販売」と名前を付けている運用があり、
+ * そのまま出すと見出しに同じ語が2回並ぶ。残すのは括弧の中（前金・受領価格 ×
+ * 製造個数）で、そこが行ごとに違う情報。
+ */
+export function usageMethodLabel(
+  e: { methodLabel?: string | null; outConditionName?: string | null }
+): string {
+  const label = String(e.methodLabel ?? "").trim();
+  const name = String(e.outConditionName ?? "").trim();
+  if (!name || !label.startsWith(name)) return label;
+  const rest = label.slice(name.length).replace(/^[（(]|[）)]$/g, "").trim();
+  return rest || label;
+}
+
+/**
+ * 人が文書作成フォームで直した見出しを、計算済みの行に重ねる。
+ *
+ * 直せるのは紙の文字（製品名・対象契約・契約番号）だけ。金額と料率は計算から
+ * 出すので触らせない。行の突き合わせは実績の id でする（並べ替えても崩れない）。
+ */
+export function applyLineLabels(lines: BundleLine[], source: Data): BundleLine[] {
+  const edits = new Map<number, Data>();
+  for (const row of records(source.rs_line_labels)) {
+    const id = Math.trunc(num(row.eventId));
+    if (id) edits.set(id, row);
+  }
+  if (!edits.size) return lines;
+  return lines.map((line) => {
+    const edit = line.eventId ? edits.get(line.eventId) : undefined;
+    if (!edit) return line;
+    const text = (value: unknown, fallback: string) => {
+      const typed = String(value ?? "").trim();
+      return typed || fallback;
+    };
+    return {
+      ...line,
+      conditionName: text(edit.productName, line.conditionName),
+      contractTitle: text(edit.contractTitle, line.contractTitle),
+      contractNumber: text(edit.contractNumber, line.contractNumber)
+    };
+  });
 }
 
 /**

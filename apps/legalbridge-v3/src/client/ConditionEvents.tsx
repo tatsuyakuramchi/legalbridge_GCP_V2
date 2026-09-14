@@ -89,7 +89,8 @@ export function ConditionEvents(
     /** 条件の作品。アウト条件の候補を同じ作品に寄せる。 */
     workTitle?: string | null;
     /** 文書の画面へ、この条件と実績を選んだ状態で移る。 */
-    onCompose?: (conditionIds: number[], eventIds: number[], matterId?: number | null) => void;
+    onCompose?: (conditionIds: number[], eventIds: number[], matterId?: number | null,
+                 templateKey?: string | null) => void;
     /** 決めた文書をそのまま開く。決めたあと画面に留まると次の手が分からない。 */
     onOpenDocument?: (documentId: number) => void;
     onChanged: () => void }
@@ -972,7 +973,8 @@ export function ConditionEvents(
           <div className="row">
             <button className="btn primary btn-sm"
                     disabled={!stmtPreview || !onCompose}
-                    onClick={() => onCompose?.([conditionId], pickedIds, matterId ?? null)}>
+                    onClick={() => onCompose?.([conditionId], pickedIds, matterId ?? null,
+                                              "royalty_statement")}>
               この内容で文書を作る
             </button>
             <button className="btn btn-sm" onClick={() => { setStmtOpen(false); setStmtPreview(null); }}>やめる</button>

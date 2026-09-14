@@ -55,6 +55,8 @@ export interface StatementBasis {
   outConditionId?: number | null;
   outConditionNo?: string | null;
   outConditionName?: string | null;
+  /** 許諾先の取引先名。紙の「対象契約」に出す。 */
+  outPartyName?: string | null;
   /** 許諾地域・言語など。紙に「従前に決めた内容」として出す。 */
   outScopes?: string | null;
   /** 製品名。作品名を出す。 */
@@ -164,6 +166,7 @@ export class RoyaltyStatementService {
               e.usage_type, e.out_condition_id, e.unit_amount, e.payment_stage,
               COALESCE(e.rate_ppm, c.rate_ppm) AS rate_ppm,
               oc.condition_no AS out_condition_no, oc.name AS out_condition_name,
+              op.name AS out_party_name,
               -- 製品名は作品名。アウト条件の作品を先に見て、無ければイン条件の作品。
               COALESCE(ow.title, w.title) AS product_name,
               -- 許諾地域・言語など。従前に決めた内容をそのまま紙に出す。
@@ -173,6 +176,7 @@ export class RoyaltyStatementService {
                OR c.id = $2) AS same_series
          FROM condition_events e JOIN conditions c ON c.id = e.condition_id
          LEFT JOIN conditions oc ON oc.id = e.out_condition_id
+         LEFT JOIN parties op ON op.id = oc.counterparty_id
          LEFT JOIN works w ON w.id = c.work_id
          LEFT JOIN works ow ON ow.id = oc.work_id
         WHERE e.id = ANY($1::bigint[])
@@ -310,6 +314,7 @@ export class RoyaltyStatementService {
         outConditionId: int(e.out_condition_id),
         outConditionNo: str(e.out_condition_no),
         outConditionName: str(e.out_condition_name),
+        outPartyName: str(e.out_party_name),
         outScopes: str(e.out_scopes),
         productName: str(e.product_name),
         unitAmount: int(e.unit_amount),

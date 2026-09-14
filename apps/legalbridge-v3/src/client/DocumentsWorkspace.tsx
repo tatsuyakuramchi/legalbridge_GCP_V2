@@ -77,6 +77,12 @@ function Refs(
 export function DocumentsWorkspace(
   { start, openDocumentId, onOpen }: {
     start?: { conditionIds: number[]; eventIds: number[]; matterId?: number | null;
+              /**
+               * 呼んだ側が決めているひな形。計算書のように「何を作るか」が
+               * 移る前から決まっている経路で渡す。渡さないと既定（先頭）の
+               * ひな形で開き、人がもう一度選び直すことになる。
+               */
+              templateKey?: string | null;
               /** 案件から「発注書をまとめて作る」で来た。一括作成を開いた状態にする。 */
               bulk?: boolean };
     /** 他の画面から「編集」で来たときの文書。下書きならそのままフォームに載せる。 */
@@ -216,7 +222,12 @@ export function DocumentsWorkspace(
       setDocuments(d.documents);
       setConditions(c.conditions);
       setIntegrations(i);
-      if (!templateKey && t.templates[0]) setTemplateKey(t.templates[0].templateKey);
+      if (!templateKey) {
+        const wanted = start?.templateKey
+          && t.templates.some((x) => x.templateKey === start.templateKey)
+          ? start.templateKey : null;
+        if (wanted ?? t.templates[0]) setTemplateKey(wanted ?? t.templates[0].templateKey);
+      }
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
   }
 
@@ -404,12 +415,15 @@ export function DocumentsWorkspace(
     if (!isStatement || !stmtEntries.length) { setStmt(null); setStmtError(null); return; }
     let live = true;
     api.post<{ lines: StatementLine[]; totals: StatementTotals }>("/statement-documents/preview", {
-      entries: stmtEntries.map((e) => ({ ...e, period: stmtPeriod.trim() || null }))
+      entries: stmtEntries.map((e) => ({ ...e, period: stmtPeriod.trim() || null })),
+      // 直した見出し（製品名・対象契約）を試算にも効かせる。ここを渡さないと、
+      // 画面で直したのに試算と紙で違う文字が出る。
+      manualInputs: inputs
     })
       .then((r) => { if (live) { setStmt(r); setStmtError(null); } })
       .catch((e: ApiError) => { if (live) { setStmt(null); setStmtError(e.message); } });
     return () => { live = false; };
-  }, [isStatement, stmtKey, stmtPeriod]);
+  }, [isStatement, stmtKey, stmtPeriod, JSON.stringify(lines.rs_line_labels ?? null)]);
 
   /**
    * 最後に保存した中身。これと違えば「保存していない変更がある」。

@@ -38,6 +38,7 @@ import { verifySlackSignature } from "./integrations/signature.js";
 import { RoyaltyStatementService } from "./royalty/statement-service.js";
 import { PAYMENT_STAGES, USAGE_TYPES } from "./royalty/usage-type.js";
 import { bundleLinesFor, bundleTotals } from "./royalty/bundle.js";
+import { applyLineLabels } from "./documents/royalty-patch.js";
 import { PaymentService } from "./payments/service.js";
 import { PaymentAllocationService } from "./payments/allocation-service.js";
 import { PartyRepository } from "./parties/repository.js";
@@ -1888,7 +1889,7 @@ export function createRoutes(database: Transactable) {
         ...(input.manualInputs ?? {}),
         ...(usageEvents.length
           ? { statementMode: "multi",
-              rs_bundle_lines: bundleLinesFor(preview),
+              rs_bundle_lines: applyLineLabels(bundleLinesFor(preview), input.manualInputs ?? {}),
               rs_bundle_tax: preview.fee.tax_amount }
           : {})
       };
@@ -1958,7 +1959,7 @@ export function createRoutes(database: Transactable) {
       }).parse(req.body ?? {});
       const previews = await previewBundle(input.entries);
       res.json({
-        lines: previews.flatMap(bundleLinesFor),
+        lines: applyLineLabels(previews.flatMap(bundleLinesFor), input.manualInputs ?? {}),
         totals: bundleTotals(previews),
         previews
       });
@@ -1971,7 +1972,8 @@ export function createRoutes(database: Transactable) {
       const who = actor(res);
       const previews = await previewBundle(input.entries);
       const totals = bundleTotals(previews);
-      const lines = previews.flatMap(bundleLinesFor);
+      // 人がフォームで直した見出し（製品名・対象契約）を重ねる。金額は触らせない。
+      const lines = applyLineLabels(previews.flatMap(bundleLinesFor), input.manualInputs ?? {});
       const eventIds = input.entries.flatMap((e) => e.eventIds ?? []);
 
       const draft = await issues.createDraft({
