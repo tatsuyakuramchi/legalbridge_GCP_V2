@@ -17,6 +17,8 @@ interface Options {
   schedulePayOn?: string;
   /** その計算書に載っている実績。前金・後金で2件になる。 */
   events?: Array<{ id: number; condition_id: number; amount: number; occurred_on?: string }>;
+  /** 紙に印字した支払期日（焼き付けた値）。 */
+  printedDueOn?: string | null;
 }
 
 const responder = (options: Options = {}) => (text: string): Array<Record<string, unknown>> | undefined => {
@@ -30,6 +32,9 @@ const responder = (options: Options = {}) => (text: string): Array<Record<string
               party_name: "如月 涼", event_id: 700 + i,
               occurred_on: options.occurredOn ?? "2026-06-20",
               schedule_pay_on: options.schedulePayOn ?? null, ...over }));
+  }
+  if (text.includes("FROM documents d WHERE d.id = $1")) {
+    return [{ due_on: options.printedDueOn ?? null }];
   }
   if (text.includes("FROM condition_events ev")) return options.events ?? [];
   if (text.includes("JOIN payment_allocations a ON a.payment_id = p.id")) {
@@ -252,4 +257,29 @@ test("支払済みは取り消せない。返金は別の記録にする", async
 test("無い支払は取り消せない", async () => {
   const { service } = cancelSvc(null);
   await assert.rejects(() => service.cancel(900, "x", "k"), DomainError);
+});
+
+test("期日は紙に印字した日をいちばんに見る", async () => {
+  // 期日を決めるものが3つある。紙の支払期日は文書作成フォームで人が入れられる
+  // ので、予定明細だけを見ていると、印字した日と支払の日が食い違う。
+  const { service } = svc({
+    occurredOn: "2026-08-31", printedDueOn: "2026-09-18", schedulePayOn: "2026-10-05"
+  });
+  const result = await service.createFromStatementDocument(26, "kuramochi");
+  assert.equal(result.dueOn, "2026-09-18", "予定明細（10-05）より紙が勝つ");
+});
+
+test("紙の日付が読めない形なら、予定明細へ落ちる", async () => {
+  // 和暦や「未定」が入っていることがある。日付として読めないものは使わない。
+  const { service } = svc({
+    occurredOn: "2026-08-31", printedDueOn: "令和8年9月18日", schedulePayOn: "2026-10-05"
+  });
+  const result = await service.createFromStatementDocument(26, "kuramochi");
+  assert.equal(result.dueOn, "2026-10-05");
+});
+
+test("紙にも予定にも無ければ、受領日 +60日", async () => {
+  const { service } = svc({ occurredOn: "2026-06-20" });
+  const result = await service.createFromStatementDocument(26, "kuramochi");
+  assert.equal(result.dueOn, "2026-08-19");
 });

@@ -74,6 +74,9 @@ const PAYMENTS_SQL = `
        ORDER BY a.id DESC LIMIT 1
     ) ex ON true
    WHERE y.direction = 'out'
+     -- 取り消した支払は経理へ出さない。行は記録として残してあるだけで、
+     -- 払う約束ではない。混ぜると、立て直した支払と並んで同じ額が2回出る。
+     AND y.status <> 'canceled'
      AND (CASE WHEN $3::text = 'paid' THEN y.paid_on ELSE y.due_on END)
          BETWEEN $1::date AND $2::date
      AND ($4::boolean OR ex.action IS DISTINCT FROM 'export.accounting')

@@ -228,6 +228,26 @@ export class PaymentService {
           throw new DomainError("VALIDATION", `文書 ${documentId} に計算書がありません`);
         }
 
+        // 紙に印字した支払期日。これが相手への約束なので、支払もこの日にする。
+        //
+        // 期日の出どころは3つある。
+        //   1. 紙（文書作成フォームで人が入れた日。入れなければ 2 が出る）
+        //   2. 予定明細の支払日（condition_schedules.pay_on）
+        //   3. 実績のいちばん遅い発生日 + 60日（下請法の上限）
+        // 支払は 2 → 3 しか見ていなかったので、フォームで 09-18 と入れて
+        // 印字した紙に対して、支払が 10-30 で立っていた。焼き付けた値を
+        // 先に見る。何がその日を決めたかに関わらず、紙と支払が揃う。
+        const printed = await client.query(
+          `SELECT COALESCE(d.rendered_values ->> 'paymentDueDate',
+                           d.rendered_values ->> 'PAYMENT_DATE',
+                           d.rendered_values ->> '支払期日') AS due_on
+             FROM documents d WHERE d.id = $1`, [documentId]);
+        const printedDueOn = (() => {
+          const raw = str((printed.rows[0] as { due_on?: unknown } | undefined)?.due_on);
+          // 日付として読めない形（和暦・「未定」など）は使わない。
+          return raw && /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : null;
+        })();
+
         // その計算書に載っている実績を全部取る。1本の計算書が実績1件とは
         // 限らない（前金と後金で2明細になる）。いちばん新しい1件だけを
         // 割当にしていたので、紙は2行なのに経理提出用は合計の1行になり、
@@ -327,12 +347,13 @@ export class PaymentService {
         // 食い違いが出ていた。検収書の経路（createFromInspection）は予定の
         // 支払日を見ている。同じにする。
         //
-        // 60日 は下請法の上限であって約束の日ではない。予定が無いときだけ
+        // 60日 は下請法の上限であって約束の日ではない。どれも無いときだけ
         // そこへ落とす。上限を超えていれば、この後の期日検査が警告を出す
         // （黙って上限へ丸めない）。
         const payOns = rows.map((r) => dateStr(r.schedule_pay_on))
           .filter((d): d is string => Boolean(d)).sort();
-        const dueOn = options.dueOn ?? payOns[payOns.length - 1] ?? dueLimitFrom(basis);
+        const dueOn = options.dueOn ?? printedDueOn
+          ?? payOns[payOns.length - 1] ?? dueLimitFrom(basis);
 
         return await this.writeWithAllocations(client, {
           direction, partyId: Number(rows[0].counterparty_id), partyKind: str(rows[0].party_kind),
