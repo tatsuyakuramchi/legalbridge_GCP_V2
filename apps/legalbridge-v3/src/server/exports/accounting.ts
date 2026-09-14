@@ -112,6 +112,31 @@ const emptySlot = (): AccountingSlot =>
   ({ content: "", unitPrice: "", quantity: "", amount: "", deliveryDate: "" });
 
 /**
+ * 単価。持っていなければ 金額 ÷ 数量 で出す。
+ *
+ * 検収書の明細は「何をいくらで」を実績から組むので、単価を持たない行がある
+ * （実績は数量と金額しか持たない）。経理の表で単価の列が空のままだと、
+ * 受け取った側が1件ずつ電卓を叩くことになる。
+ *
+ * ただし割り切れないときは出さない。丸めた単価を置くと 単価×数量≠金額 に
+ * なり、経理の表の中で二つの数が食い違う。空欄のほうがまだ分かる。
+ */
+export function unitPriceOf(amount: unknown, quantity: unknown): number | "" {
+  const total = Number(amount);
+  const count = Number(quantity);
+  if (!Number.isFinite(total) || !Number.isFinite(count) || count === 0) return "";
+  // 通貨の最小の桁（主単位で小数2桁）まで丸めてから、掛け戻して金額に
+  // 戻るかを見る。10000 ÷ 3 のように戻らない割り方は空欄にする。
+  const unit = Math.round((total / count) * 100) / 100;
+  return Number.isFinite(unit) && unit * count === total ? unit : "";
+}
+
+/** 持っている単価を優先し、無ければ金額と数量から出す。 */
+const unitPriceFor = (
+  held: number | null | undefined, amount: unknown, quantity: unknown
+): number | "" => (held === null || held === undefined ? unitPriceOf(amount, quantity) : held);
+
+/**
  * 9件目以降は8件目に束ねる（V1 と同じ）。
  * 落とすと合計が合わなくなるので、内容を連結して金額を足す。
  */
@@ -177,14 +202,14 @@ export function buildAccountingRow(source: AccountingSource): AccountingRow {
   const slots = fitSlots(source.documentLines?.length
     ? source.documentLines.map((l) => ({
         content: l.content || "（内容未設定）",
-        unitPrice: l.unitPrice ?? "",
+        unitPrice: unitPriceFor(l.unitPrice, l.amount, l.quantity),
         quantity: l.quantity ?? "",
         amount: l.amount,
         deliveryDate: l.deliveryDate ?? ""
       }))
     : source.lines.map((l) => ({
         content: [l.conditionNo, l.name].filter(Boolean).join(" ") || "（内容未設定）",
-        unitPrice: l.unitAmount ?? "",
+        unitPrice: unitPriceFor(l.unitAmount, l.amount, l.quantity),
         quantity: l.quantity ?? "",
         amount: l.amount,
         deliveryDate: l.occurredOn ?? ""

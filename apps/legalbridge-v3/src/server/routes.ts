@@ -475,12 +475,17 @@ export function createRoutes(database: Transactable) {
   });
 
   // 画面で中身を確かめてから出す。要確認が残ったまま出さないため。
-  router.get("/exports/accounting", asyncRoute(async (req, res) => {
+  //
+  // 氏名（カナ）に振込口座の名義カナが載る。口座の情報は admin・legal しか
+  // 見られない決まりなので、この帳票も同じところで止める。
+  router.get("/exports/accounting", requireRole("admin", "legal"),
+    asyncRoute(async (req, res) => {
     res.json(await accounting.build(accountingSchema.parse(req.query)));
   }));
 
   // 束ね1つ分の Excel。groupKey は preview の key をそのまま渡す。
-  router.get("/exports/accounting.xls", asyncRoute(async (req, res) => {
+  router.get("/exports/accounting.xls", requireRole("admin", "legal"),
+    asyncRoute(async (req, res) => {
     const query = accountingSchema.parse(req.query);
     const result = await accounting.build(query);
     const wanted = String(req.query.groupKey ?? "");

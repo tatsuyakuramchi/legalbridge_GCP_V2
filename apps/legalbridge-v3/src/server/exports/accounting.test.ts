@@ -225,7 +225,7 @@ test("支払内容は書類の明細から出す（V1・V2 と同じ）", () => 
   assert.equal(row.slots[0].unitPrice, 280000);
   assert.equal(row.slots[0].deliveryDate, "2026-08-31");
   assert.equal(row.slots[1].content, "『ワンダラス・クリーチャーズ』の翻訳");
-  assert.equal(row.slots[1].unitPrice, "", "単価が無ければ空。0 は出さない");
+  assert.equal(row.slots[1].unitPrice, 100000, "単価を持たない行は 金額 ÷ 数量 で出す");
 });
 
 test("書類が無い支払（手で起こした分）は割当から組む", () => {
@@ -276,4 +276,55 @@ test("継続課金の1期分は数量1・単価＝金額で出す（V2 と同じ
   });
   assert.equal(lines[0].quantity, 1);
   assert.equal(lines[0].unitPrice, 50000);
+});
+
+// ---- 単価（経理が電卓を叩かずに済むように） ----
+
+test("単価を持たない明細は 金額 ÷ 数量 で出す", () => {
+  const row = buildAccountingRow(source({
+    documentLines: [{ content: "R&R241-1C イラスト制作", unitPrice: null,
+                      quantity: 1, amount: 300000, deliveryDate: "2026-07-23" }]
+  }));
+  assert.equal(row.slots[0].unitPrice, 300000, "実績は数量と金額しか持たない。単価は割って出す");
+  assert.equal(row.slots[0].quantity, 1);
+});
+
+test("数量が2以上でも割って出す", () => {
+  const row = buildAccountingRow(source({
+    documentLines: [{ content: "カット", unitPrice: null,
+                      quantity: 4, amount: 24000, deliveryDate: null }]
+  }));
+  assert.equal(row.slots[0].unitPrice, 6000);
+});
+
+test("割り切れないときは単価を出さない。丸めると 単価×数量≠金額 になる", () => {
+  const row = buildAccountingRow(source({
+    documentLines: [{ content: "カット", unitPrice: null,
+                      quantity: 3, amount: 10000, deliveryDate: null }]
+  }));
+  assert.equal(row.slots[0].unitPrice, "");
+  assert.equal(row.slots[0].amount, 10000, "金額はそのまま出す");
+});
+
+test("書いてある単価はそのまま。割った値で上書きしない", () => {
+  const row = buildAccountingRow(source({
+    documentLines: [{ content: "カット", unitPrice: 5000,
+                      quantity: 4, amount: 24000, deliveryDate: null }]
+  }));
+  assert.equal(row.slots[0].unitPrice, 5000);
+});
+
+test("割当から組む明細も単価を割って出す", () => {
+  const row = buildAccountingRow(source({
+    amount: 60000, lines: [line({ amount: 60000, quantity: 2, unitAmount: null })]
+  }));
+  assert.equal(row.slots[0].unitPrice, 30000);
+});
+
+test("数量が無ければ単価は出さない。金額をそのまま単価にはしない", () => {
+  const row = buildAccountingRow(source({
+    documentLines: [{ content: "一式", unitPrice: null,
+                      quantity: null, amount: 300000, deliveryDate: null }]
+  }));
+  assert.equal(row.slots[0].unitPrice, "");
 });

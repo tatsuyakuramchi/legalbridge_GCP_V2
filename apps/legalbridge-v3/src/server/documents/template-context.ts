@@ -99,6 +99,21 @@ const singleCondition = (c: Ctx) => (c.conditions?.length === 1 ? c.conditions[0
  * 仕様の欄がメモを使っているときは根拠を入れない。同じ文が2行続いて出る。
  * 明細で人が入れた値のほうが強い（rows(manual.items) がこの結果を置き換える）。
  */
+/**
+ * 明細の単価。条件が単価を持っていればそれを使い、無ければ 金額 ÷ 数量。
+ *
+ * 割り切れないときは置かない。丸めた単価は 単価×数量≠金額 になり、
+ * 書類でも経理の表でも二つの数が食い違う。
+ */
+function unitPriceOf(held: unknown, amount: unknown, quantity: unknown): number | null {
+  if (held !== null && held !== undefined && String(held) !== "") return num(held);
+  const total = num(amount, Number.NaN);
+  const count = num(quantity, Number.NaN);
+  if (!Number.isFinite(total) || !Number.isFinite(count) || count === 0) return null;
+  const unit = Math.round((total / count) * 100) / 100;
+  return unit * count === total ? unit : null;
+}
+
 function rewardBreakdown(condition: Ctx, event: Ctx, spec: unknown): Row {
   if (calcMethodOf(condition) !== "ROYALTY") return {};
   const note = String(event?.note ?? "").trim();
@@ -138,6 +153,10 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
         // paid_date は検収書の本文が直接読む列で、別名では出ない。
         quantity: event.quantity ?? null,
         inspected_quantity: event.quantity ?? null,
+        // 単価。条件が持っていればそれ、無ければ 金額 ÷ 数量。検収書の本文は
+        // 単価を刷らないが、経理提出用の帳票がこの値を読む。空のままだと
+        // 経理の単価の列が全部空欄になる。
+        unit_price: unitPriceOf(condition.unitAmount, event.amount, event.quantity),
         delivery_date: event.occurredOn ?? null,
         inspection_date: event.inspectedOn ?? event.occurredOn ?? null,
         payment_date: event.schedule?.payOn ?? event.schedule?.dueOn ?? null,
@@ -165,6 +184,8 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
     condition_no: condition.conditionNo ?? null,
     quantity: null,
     inspected_quantity: null,
+    // 単発の1行は数量を持たない。総額がそのまま単価にあたる。
+    unit_price: condition.unitAmount ?? condition.flatAmount,
     delivery_date: condition.termEnd ?? null,
     payment_date: null,
     paid_date: null,

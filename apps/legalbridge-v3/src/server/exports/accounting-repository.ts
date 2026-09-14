@@ -45,10 +45,14 @@ const PAYMENTS_SQL = `
          y.due_on, y.paid_on, y.status,
          p.party_code, p.name AS party_name, p.name_kana, p.kind AS party_kind,
          p.invoice_no, p.withholding,
+         -- 氏名（カナ）は V1・V2 と同じく振込口座の名義カナを出す。経理はこの
+         -- 列を振込名義の照合に使う。口座が無いときだけ取引先のカナで代える。
+         b.account_holder_kana,
          m.matter_no, m.title AS matter_title,
          s.name AS owner_name, s.department AS owner_department
     FROM payments y
     JOIN parties p ON p.id = y.party_id
+    LEFT JOIN party_bank_accounts b ON b.party_id = p.id
     -- 案件は割当の条件から辿る。複数当たったら番号の若い1件に寄せる。
     LEFT JOIN LATERAL (
       SELECT mt.matter_no, mt.title, mt.owner_staff_id
@@ -210,7 +214,7 @@ export class AccountingExportRepository {
           status: String(r.status),
           party: {
             code: str(r.party_code), name: String(r.party_name ?? ""),
-            kana: str(r.name_kana),
+            kana: str(r.account_holder_kana) ?? str(r.name_kana),
             kind: r.party_kind === "individual" ? "individual" : "corporate",
             invoiceNo: str(r.invoice_no), withholding: r.withholding === true
           },
