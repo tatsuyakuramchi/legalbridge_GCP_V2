@@ -36,7 +36,10 @@ const yen = (v: unknown) =>
 export function agreementRefText(title: unknown, no: unknown): string | undefined {
   const name = String(title ?? "").trim();
   const number = String(no ?? "").trim();
-  if (name && number) return `${name}（${number}）`;
+  // 名前を入れずに登録した合意は、題名が契約番号そのままになっている
+  // （移行でそう入った。台帳に何件もある）。そのまま繋ぐと
+  // 「ARC-PO-2026-0113（ARC-PO-2026-0113）」と二重に出る。
+  if (name && number && name !== number) return `${name}（${number}）`;
   return name || number || undefined;
 }
 

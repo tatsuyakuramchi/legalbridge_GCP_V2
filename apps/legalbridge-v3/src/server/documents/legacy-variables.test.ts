@@ -230,3 +230,17 @@ test("基本契約ありは、条件に契約が付いているかで決まる",
   // 契約が無ければ決めない（人がチェックを入れられる）。
   assert.equal(resolveLegacyVariable("HAS_BASE_CONTRACT", { agreement: undefined }, "基本契約あり"), undefined);
 });
+
+test("基本契約の呼び方は「名前（番号）」。題名が番号そのままなら重ねない", () => {
+  assert.equal(resolveLegacyVariable("MASTER_CONTRACT_REF",
+    { agreement: { no: "ARC-OUT-2026-0006", title: "業務委託契約書" } }, "基本契約名 / 番号"),
+    "業務委託契約書（ARC-OUT-2026-0006）");
+  // 名前を入れずに登録した合意は題名が契約番号そのままになっている。
+  // 繋ぐと「ARC-PO-2026-0113（ARC-PO-2026-0113）」と二重に出る。
+  assert.equal(resolveLegacyVariable("MASTER_CONTRACT_REF",
+    { agreement: { no: "ARC-PO-2026-0113", title: "ARC-PO-2026-0113" } }, "基本契約名 / 番号"),
+    "ARC-PO-2026-0113");
+  // 題名が無ければ番号だけ。
+  assert.equal(resolveLegacyVariable("MASTER_CONTRACT_REF",
+    { agreement: { no: "ARC-PO-2026-0001" } }, "基本契約名 / 番号"), "ARC-PO-2026-0001");
+});
