@@ -109,6 +109,31 @@ export interface UsageBasisInput {
   grossAmount?: number | null;
   /** 入金区分。前金・後金に分かれる契約で、どちらの入金かを持つ。 */
   paymentStage?: PaymentStage | null;
+  /**
+   * 受領額・受領価格が税込で入っているか。
+   *
+   * 受領元が海外なら税込、国内なら税別で報告が来る。許諾料は税別の額に
+   * 料率を掛けて出すので、税込のまま掛けると 10% 多く払う。
+   * 入っている額はそのまま残し、ここで割り戻す（記録は入金額と一致させる）。
+   */
+  taxIncluded?: boolean | null;
+}
+
+/** 受領額を割り戻すときの税率。国内の消費税に合わせる。 */
+export const RECEIPT_TAX_RATE_PCT = 10;
+
+/**
+ * 税込で入っている受領額を税別に直す。税別ならそのまま。
+ *
+ * 整数どうしで割る。1.1 で割ると 1,100,000 ÷ 1.1 が 999999.9999… になり、
+ * 切りのいい額のたびに1円ずれる（浮動小数の丸め）。
+ *
+ * 端数は切り捨てる。切り上げると、割り戻した額に税を足したとき元の額を
+ * 超えることがあり、相手の入金より多い基礎で計算することになる。
+ */
+export function netOfTax(amount: number, taxIncluded: boolean | null | undefined): number {
+  if (!taxIncluded) return amount;
+  return Math.floor((amount * 100) / (100 + RECEIPT_TAX_RATE_PCT));
 }
 
 /**
@@ -136,7 +161,7 @@ export function basisOf(input: UsageBasisInput, tag: string): number {
     if (!(gross > 0)) {
       throw new DomainError("VALIDATION", `${tag}：再許諾は受領価格を入れてください`);
     }
-    return Math.round(gross);
+    return netOfTax(Math.round(gross), input.taxIncluded);
   }
   if (input.usageType === "oem") {
     // 個数×単価と受領額の両方が入っている行は、どちらで計算したのか決められない。
@@ -146,13 +171,18 @@ export function basisOf(input: UsageBasisInput, tag: string): number {
       throw new DomainError("VALIDATION",
         `${tag}：受領額と「個数 × 単価」の両方は入れられません。どちらかにしてください`);
     }
-    if (gross > 0) return Math.round(gross);
+    if (gross > 0) return netOfTax(Math.round(gross), input.taxIncluded);
   }
-  const unit = Number(input.unitAmount ?? 0);
+  // 基準価格は自社の定価なので割り戻さない。割り戻すのは相手から受け取った額だけ。
+  const unit = input.usageType === "oem"
+    ? netOfTax(Number(input.unitAmount ?? 0), input.taxIncluded)
+    : Number(input.unitAmount ?? 0);
   const quantity = Number(input.quantity ?? 0);
   const sample = Number(input.sampleQuantity ?? 0);
   const priceLabel = input.usageType === "oem" ? "受領価格（1個あたり）" : "基準価格";
-  if (!(unit > 0)) throw new DomainError("VALIDATION", `${tag}：${priceLabel}を入れてください`);
+  if (!(Number(input.unitAmount ?? 0) > 0)) {
+    throw new DomainError("VALIDATION", `${tag}：${priceLabel}を入れてください`);
+  }
   if (!(quantity > 0)) {
     throw new DomainError("VALIDATION",
       `${tag}：${input.usageType === "oem" ? "製造個数" : "個数"}を入れてください`);
@@ -169,14 +199,16 @@ export function basisOf(input: UsageBasisInput, tag: string): number {
 export function basisNoteOf(input: UsageBasisInput): string {
   const stage = paymentStageLabel(input.paymentStage);
   const head = stage ? `${stage}　` : "";
-  if (basisKindOf(input) === "lump") return `${head}受領価格`;
+  // 割り戻したときは、その式も出す。相手が検算できないと問い合わせになる。
+  const tax = input.taxIncluded ? `（税込 ÷ ${1 + RECEIPT_TAX_RATE_PCT / 100}）` : "";
+  if (basisKindOf(input) === "lump") return `${head}受領価格${tax}`;
   const quantity = Number(input.quantity ?? 0);
   const sample = Number(input.sampleQuantity ?? 0);
   const billable = Math.max(0, quantity - sample);
   const price = input.usageType === "oem" ? "受領価格" : "基準価格";
   return sample > 0
-    ? `${head}${billable}個（${quantity} − 見本 ${sample}）× ${price}`
-    : `${head}${billable}個 × ${price}`;
+    ? `${head}${billable}個（${quantity} − 見本 ${sample}）× ${price}${tax}`
+    : `${head}${billable}個 × ${price}${tax}`;
 }
 
 /**

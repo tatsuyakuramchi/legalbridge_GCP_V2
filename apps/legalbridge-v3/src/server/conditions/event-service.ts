@@ -69,6 +69,8 @@ export interface EventInput {
   ratePpm?: number | null;
   /** 入金区分。前金・後金に分かれる契約で、どちらの入金かを持つ。 */
   paymentStage?: PaymentStage | null;
+  /** 受領額・受領価格が税込か。海外からの受領は税込で来る。 */
+  taxIncluded?: boolean | null;
 }
 
 export interface EventRow {
@@ -102,6 +104,7 @@ export interface EventRow {
   ratePpm: number | null;
   paymentStage: string | null;
   paymentStageLabel: string | null;
+  taxIncluded: boolean | null;
   /** 計算書から作られた実績。画面からは直せない。 */
   documentId: number | null;
   documentNo: string | null;
@@ -121,6 +124,7 @@ export class ConditionEventService {
                 e.deliverable, e.inspected_on, e.inspector_dept, e.inspector_name,
                 e.contract_form, e.service_from, e.service_to,
                 e.usage_type, e.out_condition_id, e.unit_amount, e.rate_ppm, e.payment_stage,
+                e.tax_included,
                 oc.condition_no AS out_condition_no, oc.name AS out_condition_name,
                 e.document_id, d.document_no, e.created_at, e.created_by
            FROM condition_events e
@@ -160,6 +164,8 @@ export class ConditionEventService {
         ratePpm: int(row.rate_ppm),
         paymentStage: str(row.payment_stage),
         paymentStageLabel: paymentStageLabel(row.payment_stage) || null,
+        taxIncluded: row.tax_included === null || row.tax_included === undefined
+          ? null : Boolean(row.tax_included),
         documentId: int(row.document_id),
         documentNo: str(row.document_no),
         createdAt: new Date(String(row.created_at)).toISOString(),
@@ -237,6 +243,7 @@ export class ConditionEventService {
             sampleQuantity: input.sampleQuantity ?? null,
             grossAmount: input.grossAmount ?? null,
             paymentStage: input.paymentStage ?? null,
+            taxIncluded: input.taxIncluded ?? null,
             outConditionId: input.outConditionId ?? null
           }, "この実績");
         }
@@ -256,7 +263,8 @@ export class ConditionEventService {
           ? Math.ceil((basisOf({
               usageType, unitAmount, quantity: input.quantity ?? null,
               sampleQuantity: input.sampleQuantity ?? null, grossAmount: gross,
-              paymentStage: input.paymentStage ?? null
+              paymentStage: input.paymentStage ?? null,
+              taxIncluded: input.taxIncluded ?? null
             }, "この実績") * ppmToPct(ratePpm)) / 100)
           : Math.round(input.amount);
         if (!usageType && gross !== null && gross - deductions !== amount) {
@@ -275,10 +283,11 @@ export class ConditionEventService {
               quantity, sample_quantity, gross_amount, deductions, amount, note, created_by,
               deliverable, inspected_on, inspector_dept, inspector_name,
               contract_form, service_from, service_to,
-              usage_type, out_condition_id, unit_amount, rate_ppm, payment_stage)
+              usage_type, out_condition_id, unit_amount, rate_ppm, payment_stage,
+              tax_included)
            VALUES ($1, $2, $3, $4::date, $5, $6, $7, $8, $9, $10, $11, $12,
                    $13, $14::date, $15, $16, $17, $18::date, $19::date,
-                   $20, $21, $22, $23, $24)
+                   $20, $21, $22, $23, $24, $25)
            RETURNING id`,
           [conditionId, scheduleId, input.eventType, occurredOn, period,
            input.quantity ?? null, input.sampleQuantity ?? null,
@@ -287,7 +296,7 @@ export class ConditionEventService {
            str(input.inspectorDept), str(input.inspectorName),
            contractForm, serviceFrom, serviceTo,
            usageType, input.outConditionId ?? null, unitAmount, ratePpm,
-           input.paymentStage ?? null]);
+           input.paymentStage ?? null, input.taxIncluded ?? null]);
         const id = Number((inserted.rows[0] as { id: number }).id);
 
         await recordAudit(client, {

@@ -996,6 +996,8 @@ export function createRoutes(database: Transactable) {
     ratePpm: z.coerce.number().int().min(0).max(1_000_000).nullable().optional(),
     /** 入金区分。前金・後金に分かれる契約で、どちらの入金かを持つ。 */
     paymentStage: z.enum(["advance", "balance"]).nullable().optional(),
+    /** 受領額・受領価格が税込か。海外からの受領は税込で来る。 */
+    taxIncluded: z.boolean().nullable().optional(),
     // 契約形式と役務提供期間。空なら予定の回・条件から継ぐ。
     contractForm: z.string().trim().max(60).nullable().optional(),
     serviceFrom: z.string().date().nullable().optional(),

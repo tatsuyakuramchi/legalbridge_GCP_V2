@@ -163,7 +163,7 @@ export class RoyaltyStatementService {
     const r = await client.query(
       `SELECT e.id, e.condition_id, e.event_type, e.occurred_on, e.period, e.quantity,
               e.sample_quantity, e.gross_amount, e.amount, e.document_id, e.status, e.note,
-              e.usage_type, e.out_condition_id, e.unit_amount, e.payment_stage,
+              e.usage_type, e.out_condition_id, e.unit_amount, e.payment_stage, e.tax_included,
               COALESCE(e.rate_ppm, c.rate_ppm) AS rate_ppm,
               oc.condition_no AS out_condition_no, oc.name AS out_condition_name,
               op.name AS out_party_name,
@@ -288,7 +288,9 @@ export class RoyaltyStatementService {
         unitAmount: int(e.unit_amount),
         quantity, sampleQuantity,
         grossAmount: int(e.gross_amount),
-        paymentStage: (str(e.payment_stage) ?? null) as PaymentStage | null
+        paymentStage: (str(e.payment_stage) ?? null) as PaymentStage | null,
+        taxIncluded: e.tax_included === null || e.tax_included === undefined
+          ? null : Boolean(e.tax_included)
       };
       const basis = basisOf(shape, tag);
       const ratePct = ppmToPct(int(e.rate_ppm));

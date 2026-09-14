@@ -2,6 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { api, ApiError, money } from "./api.js";
 import { rewardLabelFor } from "../server/core/reward.js";
 import { CONTRACT_FORMS } from "../server/conditions/contract-form.js";
+import { RECEIPT_TAX_RATE_PCT } from "../server/royalty/usage-type.js";
+
+/** 税込を税別に直すときの割る数。1.1 */
+const TAX_DIVISOR = 1 + RECEIPT_TAX_RATE_PCT / 100;
 
 /**
  * 条件の実績（明細の数値）。
@@ -321,17 +325,24 @@ export function ConditionEvents(
     const parsed = Number(raw.replace(/[^0-9.-]/g, ""));
     return Number.isFinite(parsed) ? parsed : null;
   };
+  /** 税込で入っているなら割り戻す。式はサーバと同じ（端数は切り捨て）。 */
+  const taxIncluded = f("taxIncluded") === "included";
+  // 整数どうしで割る。1.1 で割ると切りのいい額のたびに1円ずれる（サーバと同じ式）。
+  const net = (amount: number) =>
+    taxIncluded ? Math.floor((amount * 100) / (100 + RECEIPT_TAX_RATE_PCT)) : amount;
   const usageBasis = (() => {
     if (!usage) return null;
     if (usage.value === "sublicense" || lumpSum) {
       const gross = numOf("grossAmount");
-      return gross && gross > 0 ? Math.round(gross) : null;
+      return gross && gross > 0 ? net(Math.round(gross)) : null;
     }
     const unit = numOf("unitAmount");
     const quantity = numOf("quantity");
     if (!unit || !quantity || unit <= 0 || quantity <= 0) return null;
     const billable = Math.max(0, quantity - (numOf("sampleQuantity") ?? 0));
-    return billable > 0 ? Math.round(unit * billable) : null;
+    // 基準価格は自社の定価なので割り戻さない。割り戻すのは受領した額だけ。
+    const price = usage.value === "oem" ? net(unit) : unit;
+    return billable > 0 ? Math.round(price * billable) : null;
   })();
   const usageAmount = (() => {
     const rate = numOf("ratePct");
@@ -366,7 +377,7 @@ export function ConditionEvents(
       grossAmount: "", deductions: "", amount: "", note: "",
       contractForm: "", serviceFrom: "", serviceTo: "",
       usageType: "", outConditionId: "", unitAmount: "", ratePct: defaultRatePct,
-      paymentStage: "", basisKind: "per_unit",
+      paymentStage: "", basisKind: "per_unit", taxIncluded: "",
       deliverable: "", inspectedOn: "", inspectorDept: "", inspectorName: ""
     };
   }
@@ -421,6 +432,7 @@ export function ConditionEvents(
         // 画面は % で受け、保存は ppm（百万分率）。8% → 80000
         ratePpm: f("ratePct").trim() ? Math.round(Number(f("ratePct")) * 10000) : null,
         paymentStage: f("paymentStage") || null,
+        taxIncluded: f("taxIncluded") === "included",
         scheduleId: f("scheduleId") ? Number(f("scheduleId")) : null,
         // 検収書がそのまま使う項目。空なら文書側で条件・案件から補う。
         deliverable: f("deliverable").trim() || null,
@@ -601,6 +613,25 @@ export function ConditionEvents(
                   : null}
               </label>
             )}
+            {/*
+              * 受領元が海外なら税込、国内なら税別で報告が来る。許諾料は税別に
+              * 料率を掛けて出すので、税込のまま掛けると 10% 多く払う。
+              * 入っている額はそのまま残し、算定のときに割り戻す。
+              */}
+            {usage && (usage.value === "sublicense" || usage.value === "oem") && (
+              <label className="field">
+                <span>受領額の税</span>
+                <select value={f("taxIncluded")}
+                  onChange={(e) => set("taxIncluded", e.target.value)}>
+                  <option value="">税別（国内からの受領）</option>
+                  <option value="included">税込（海外からの受領）</option>
+                </select>
+                <small className="faint">
+                  税込なら {TAX_DIVISOR} で割り戻してから料率を掛けます。
+                  入れた額はそのまま記録に残ります
+                </small>
+              </label>
+            )}
             {usageField("unitAmount") && (
               <label className="field">
                 <span>{usage?.value === "oem" ? "受領価格（1個あたり）" : "基準価格"}</span>
@@ -715,6 +746,7 @@ export function ConditionEvents(
                     : <b>{money(usageAmount, currency)}</b>}
                   {usageAmount !== null && (
                     <span className="faint" style={{ marginLeft: 8 }}>
+                      {taxIncluded ? `税込 ÷ ${TAX_DIVISOR} → ` : ""}
                       {money(usageBasis ?? 0, currency)} × {f("ratePct")}%
                     </span>
                   )}

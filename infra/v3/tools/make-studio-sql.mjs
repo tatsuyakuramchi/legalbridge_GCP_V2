@@ -185,6 +185,11 @@ SELECT * FROM (
          (SELECT count(*)::text FROM information_schema.columns
            WHERE table_schema='v3' AND table_name='condition_events'
              AND column_name = 'payment_stage')
+  UNION ALL
+  SELECT 25, '受領額の税込・税別（A-025。1 列であること）',
+         (SELECT count(*)::text FROM information_schema.columns
+           WHERE table_schema='v3' AND table_name='condition_events'
+             AND column_name = 'tax_included')
 ) AS 確認 ORDER BY n;
 `;
 

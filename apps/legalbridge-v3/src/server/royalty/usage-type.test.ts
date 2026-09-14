@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  assertUsageInput, basisKindOf, basisNoteOf, basisOf, methodLabelOf,
+  assertUsageInput, basisKindOf, basisNoteOf, basisOf, methodLabelOf, netOfTax,
   usageTypeSpec, USAGE_TYPES
 } from "./usage-type.js";
 import { DomainError } from "../core/errors.js";
@@ -105,4 +105,43 @@ test("どちらの形で入れたかは、入っている数字から読み分�
   assert.equal(basisKindOf({ usageType: "oem", grossAmount: 1_000_000 }), "lump");
   assert.equal(basisKindOf({ usageType: "sublicense", grossAmount: 1 }), "lump");
   assert.equal(basisKindOf({ usageType: "in_house", unitAmount: 1, quantity: 1 }), "per_unit");
+});
+
+// ---- 税込の受領額（受領元が海外のとき） ----
+
+test("税込で入っている受領額は、割り戻してから料率を掛ける", () => {
+  // 税込 1,100,000 を税別 1,000,000 に直す。直さないと 10% 多く払う。
+  assert.equal(basisOf({ usageType: "sublicense", grossAmount: 1_100_000,
+                         taxIncluded: true }, "行"), 1_000_000);
+  assert.equal(basisOf({ usageType: "sublicense", grossAmount: 1_100_000 }, "行"), 1_100_000);
+});
+
+test("他社販売の受領価格（1個）も割り戻す", () => {
+  assert.equal(basisOf({ usageType: "oem", unitAmount: 880, quantity: 1000,
+                         taxIncluded: true }, "行"), 800_000);
+  // 定額の前金も受領した額なので割り戻す。
+  assert.equal(basisOf({ usageType: "oem", grossAmount: 1_100_000,
+                         taxIncluded: true }, "行"), 1_000_000);
+});
+
+test("基準価格は自社の定価なので割り戻さない", () => {
+  // 自社製造・自社販売に受領は無い。税込のつまみが効くと定価が目減りする。
+  assert.equal(basisOf({ usageType: "in_house", unitAmount: 1100, quantity: 100,
+                         taxIncluded: true }, "行"), 110_000);
+});
+
+test("端数は切り捨てる。割り戻した額に税を足して元を超えさせない", () => {
+  // 1,000 ÷ 1.1 = 909.09…。910 にすると 910 × 1.1 = 1,001 で入金を超える。
+  assert.equal(netOfTax(1000, true), 909);
+  assert.equal(netOfTax(1000, false), 1000);
+  assert.equal(netOfTax(1000, null), 1000);
+});
+
+test("割り戻したことを紙に出す。相手が検算できないと問い合わせになる", () => {
+  assert.equal(basisNoteOf({ usageType: "sublicense", grossAmount: 1, taxIncluded: true }),
+    "受領価格（税込 ÷ 1.1）");
+  assert.equal(basisNoteOf({ usageType: "oem", unitAmount: 1, quantity: 1000,
+                             taxIncluded: true }),
+    "1000個 × 受領価格（税込 ÷ 1.1）");
+  assert.equal(basisNoteOf({ usageType: "sublicense", grossAmount: 1 }), "受領価格");
 });

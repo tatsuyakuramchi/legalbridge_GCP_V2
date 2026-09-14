@@ -957,6 +957,22 @@ BEGIN
 END
 $a024$;
 
+-- ---------------------------------------------------------------------
+-- A-025: 受領額が税込か税別かを実績に持たせる
+--
+-- 受領元が海外なら税込、国内なら税別で報告が来る。作者に払う許諾料は
+-- 税別の額に料率を掛けて出すので、税込のまま掛けると 10% 多く払う。
+--
+-- 入っている額はそのまま残し、算定のときに割り戻す。記録を先に割ってしまうと、
+-- 実績の額と実際の入金額が合わなくなり、あとで突き合わせられない。
+-- 紙にも「税込 1,100,000 ÷ 1.1」と出して、相手が検算できるようにする。
+-- ---------------------------------------------------------------------
+
+ALTER TABLE v3.condition_events ADD COLUMN IF NOT EXISTS tax_included boolean;
+
+COMMENT ON COLUMN v3.condition_events.tax_included IS
+  '受領額・受領価格が税込で入っているか。true なら算定のとき税別へ割り戻す。';
+
 COMMIT;
 
 -- 確認
@@ -1104,3 +1120,7 @@ SELECT count(*) AS 列数 FROM information_schema.columns
 \echo '--- 実績の入金区分（A-024。1 列であること） ---'
 SELECT count(*) AS 列数 FROM information_schema.columns
  WHERE table_schema='v3' AND table_name='condition_events' AND column_name = 'payment_stage';
+
+\echo '--- 受領額の税込・税別（A-025。1 列であること） ---'
+SELECT count(*) AS 列数 FROM information_schema.columns
+ WHERE table_schema='v3' AND table_name='condition_events' AND column_name = 'tax_included';
