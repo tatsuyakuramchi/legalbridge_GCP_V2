@@ -436,3 +436,28 @@ test("条件が複数なら見出しの料率は埋めない（行ごとに違�
                  { id: 6, pricingModel: "revenue_rate", ratePct: 5 }]
   }), {});
 });
+
+test("業績連動の条件は、定額が無くても明細の行にする", () => {
+  // 報酬は売上が立ってから決まるが、「何を頼んだか」は発注書に書く。
+  // 定額の無い条件を落としていたので、品目名も仕様も無い、金額 ¥0 の行だけが
+  // 残る発注書になっていた。
+  const lines = orderLinesFrom(ctx({ schedules: [], conditions: [
+    { id: 1, name: "品質評価基準の策定および評価分析レポート作成業務",
+      notes: "試作品の評価", flatAmount: null, pricingModel: "revenue_rate",
+      deliverableOwnership: "contractor", taxCategory: "taxable" }
+  ] })) as Array<Record<string, any>>;
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].item_name, "品質評価基準の策定および評価分析レポート作成業務");
+  assert.equal(lines[0].spec, "試作品の評価");
+  assert.equal(lines[0].amount_ex_tax, 0, "金額は売上が立つまで決まらない");
+  assert.equal(lines[0].unit_price, 0);
+  assert.equal(lines[0].calc_method, "ROYALTY");
+  assert.equal(lines[0].reward_label, "利用許諾料", "本文はこちらを出す");
+});
+
+test("定額も業績連動も無い条件は、これまでどおり明細に出さない", () => {
+  const lines = orderLinesFrom(ctx({ schedules: [], conditions: [
+    { id: 1, name: "実費", flatAmount: null, pricingModel: "fixed", taxCategory: "taxable" }
+  ] }));
+  assert.equal(lines.length, 0);
+});

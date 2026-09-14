@@ -268,20 +268,25 @@ export function orderLinesFrom(context: Ctx): Row[] {
     });
   }
   return (context.conditions ?? [])
-    .filter((c: Ctx) => c.flatAmount)
+    // 定額の無い条件も、業績連動なら1行にする。報酬は売上が立ってから決まるが、
+    // 「何を頼んだか」は発注書に書かないといけない。落とすと、品目名も仕様も
+    // 無い明細ゼロの発注書が出る（金額だけ ¥0 の行が残る）。
+    .filter((c: Ctx) => c.flatAmount || calcMethodOf(c) === "ROYALTY")
     .map((c: Ctx) => ({
       item_name: c.name ?? "",
       spec: specOf(c),
       deliverable_ownership: ownershipOf(c),
       // 条件に個数があればそれを使う。無ければ「一式1」として出す。
       quantity: c.quantity ?? 1,
-      unit_price: c.unitAmount ?? c.flatAmount,
+      // 業績連動は金額が先に決まらない。0 を置き、本文は reward_label
+      // （利用許諾料・インセンティブ報酬）のほうを出す。
+      unit_price: c.unitAmount ?? c.flatAmount ?? 0,
       payment_terms: contractFormFor(c.contractForm),
       term_start: c.termStart ?? null,
       term_end: c.termEnd ?? null,
       delivery_date: c.termEnd ?? null,
       payment_date: null,
-      amount_ex_tax: c.flatAmount,
+      amount_ex_tax: c.flatAmount ?? 0,
       tax_category: c.taxCategory ?? "taxable",
       calc_method: calcMethodOf(c),
       reward_label: rewardLabelOf(c)
