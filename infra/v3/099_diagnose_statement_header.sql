@@ -26,6 +26,10 @@
 --
 --    欄の見出しの語を本文から探して、その前後を切り出す。本文は2万字
 --    あるので全部は出さない。
+--
+--    同じ語が何か所にも出ることがある（希望納期は受領情報の表と、下の
+--    合計の枠と、2か所にある）。最初の1つだけを見て直すと、もう片方が
+--    残る。ここは出てくるだけ全部出す。
 -- ---------------------------------------------------------------------
 WITH src AS (
   SELECT v.html_source AS h
@@ -34,16 +38,20 @@ WITH src AS (
    WHERE t.template_key = 'royalty_statement'
 ),
 lbl(name) AS (
-  VALUES ('受領情報'), ('入金企業'), ('デザイナー'), ('カテゴリ'), ('入金通貨'), ('レート')
+  VALUES ('受領情報'), ('入金企業'), ('デザイナー'), ('カテゴリ'),
+         ('入金通貨'), ('レート'), ('希望納期')
+),
+hit AS (
+  SELECT lbl.name,
+         (regexp_matches(src.h, '(.{0,300}' || lbl.name || '.{0,500})', 'g'))[1] AS around
+    FROM src, lbl
 )
-SELECT E'\n========== ' || lbl.name || E' ==========\n' ||
-       CASE WHEN position(lbl.name in src.h) = 0
-            THEN '（この語は本文に無い）'
-            ELSE substring(src.h
-                           from greatest(1, position(lbl.name in src.h) - 250)
-                           for 900)
-       END
-  FROM src, lbl;
+SELECT E'\n========== ' || hit.name || E' ==========\n' || hit.around
+  FROM hit
+UNION ALL
+SELECT E'\n========== ' || lbl.name || E' ==========\n（この語は本文に無い）'
+  FROM lbl
+ WHERE NOT EXISTS (SELECT 1 FROM hit WHERE hit.name = lbl.name);
 
 -- ---------------------------------------------------------------------
 -- 2. 受領情報の block が差している名前
