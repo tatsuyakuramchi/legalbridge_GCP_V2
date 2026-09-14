@@ -223,8 +223,11 @@ test("noGuess の項目は名前で推測しない（近い名前の値が紛れ
   const context = {
     condition: { counterparty: { name: "晨光數位出版股份有限公司", kind: "corporate" } }
   };
+  // 推測そのものも、前方一致では当たらなくした（「許諾者種別」の属性は種別の
+  // ほうで、許諾者ではない）。noGuess はそれとは別に、供給元を宣言した項目で
+  // 推測を確実に切るための指定として残す。
   const guessed = bindVariables([{ name: "許諾者種別" }], context, {});
-  assert.equal(guessed.values["許諾者種別"], "晨光數位出版股份有限公司", "推測は当たってしまう");
+  assert.equal(guessed.values["許諾者種別"], undefined, "前方一致では当たらない");
 
   const declared = bindVariables(
     [{ name: "許諾者種別", dbField: "vendor.entity_type", noGuess: true }], context, {});

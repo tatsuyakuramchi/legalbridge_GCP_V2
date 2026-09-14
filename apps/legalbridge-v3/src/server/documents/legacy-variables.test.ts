@@ -244,3 +244,20 @@ test("基本契約の呼び方は「名前（番号）」。題名が番号そ�
   assert.equal(resolveLegacyVariable("MASTER_CONTRACT_REF",
     { agreement: { no: "ARC-PO-2026-0001" } }, "基本契約名 / 番号"), "ARC-PO-2026-0001");
 });
+
+test("前方一致では当てない。属性は名前の後ろに来る", () => {
+  // 計算書の「T番号」の欄に許諾者の氏名が出ていた。licensor_t_number が
+  // licensor を含んでいたため。属性は t_number のほうで、licensor は誰の
+  // 話かを言っているだけ。
+  assert.equal(at("licensor"), "吉澤淳郎");
+  assert.notEqual(at("licensor_t_number"), "吉澤淳郎");
+  assert.equal(at("許諾者種別"), undefined);
+  // 末尾での一致は今までどおり効く。
+  assert.equal(at("取引先カナ"), "ヨシザワ ジユンロウ");
+  assert.equal(at("検収書発行日"), "2026-09-08");
+});
+
+test("T番号は適格請求書発行事業者の登録番号", () => {
+  assert.equal(at("licensor_t_number"), "T1234567890123");
+  assert.equal(at("T番号"), "T1234567890123");
+});

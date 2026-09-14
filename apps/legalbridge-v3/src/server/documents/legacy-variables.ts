@@ -132,7 +132,11 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown }> = [
     get: (c) => contact(c, "primary")?.department },
   { names: ["VENDOR_CONTACT_PHONE", "Licensor_電話", "担当者電話番号", "取引先電話"],
     get: (c) => contact(c, "primary")?.phone ?? c.condition?.counterparty?.phone },
+  // licensor_t_number は計算書の「T番号」。適格請求書発行事業者の登録番号で、
+  // T で始まるのでこの呼び名になっている。V2 はここに Backlog の課題キーを
+  // 入れていた（欄の意味と中身が違う）。V3 は登録番号を入れる。
   { names: ["INVOICE_REGISTRATION_NUMBER", "invoiceRegistrationNumber", "counterpartyTni",
+            "licensor_t_number", "T番号",
             "登録番号", "適格請求書発行事業者登録番号"],
     get: (c) => c.condition?.counterparty?.invoiceNo },
   { names: ["WITHHOLDING_TAX", "源泉徴収"],
@@ -299,6 +303,19 @@ const normalize = (v: string) =>
   v.replace(/[（(].*?[）)]/g, "").replace(/[\s　・:：/／-]/g, "").trim().toLowerCase();
 
 /**
+ * 名前を、突き合わせる単位に割る。
+ *
+ * 「成果物・業務内容」のような並記は、どちらも同じものを指す別名なので
+ * 両方を見る。割らずに繋げると「成果物業務内容」になり、末尾でしか
+ * 当てられなくなる。
+ */
+const segments = (v: string): string[] =>
+  v.replace(/[（(].*?[）)]/g, "")
+   .split(/[・,、/／|｜]+/)
+   .map((part) => normalize(part))
+   .filter((part) => part.length >= 2);
+
+/**
  * 変数名から値を引く。名前でもラベルでも引ける。
  *
  * まず完全一致。次に、正規化したうえでの部分一致を長い名前から試す
@@ -318,16 +335,24 @@ export function resolveLegacyVariable(name: string, context: Ctx, label?: string
   }
 
   // 部分一致。長い名前を先に見る（「実納品日」より「納品日」が先に当たると困る）。
+  //
+  // 当たるのは、名前ぜんぶか**末尾**だけ。何の属性かは名前の後ろに来る。
+  //   取引先住所 → 住所   実納品日 → 納品日   （後ろが属性）
+  //   licensor_t_number → licensor ではない（属性は t_number のほう）
+  //
+  // どこでも当たってよいことにしていたので、計算書の「T番号」の欄に許諾者の
+  // 氏名が出ていた。licensor_t_number が licensor を含んでいたため。
+  // 同じ形で「許諾者種別」に相手先の名前が入る当たり方も止まる。
   const matches: Array<{ length: number; entry: typeof RESOLVERS[number] }> = [];
   for (const key of keys) {
-    const flat = normalize(key);
-    if (flat.length < 2) continue;
-    for (const entry of RESOLVERS) {
-      for (const candidate of entry.names) {
-        const target = normalize(candidate);
-        if (target.length < 3) continue;
-        if (flat === target || flat.includes(target)) {
-          matches.push({ length: target.length, entry });
+    for (const flat of segments(key)) {
+      for (const entry of RESOLVERS) {
+        for (const candidate of entry.names) {
+          const target = normalize(candidate);
+          if (target.length < 3) continue;
+          if (flat === target || flat.endsWith(target)) {
+            matches.push({ length: target.length, entry });
+          }
         }
       }
     }
