@@ -84,13 +84,26 @@ export function buildFeeTerms(condition: ConditionEconomics, reported: ReportedR
     }
 
     case "revenue_rate": {
-      // 報告売上に料率。外貨なら手入力レートで円に直してから掛ける。
-      const raw = toMajor(reported.salesInput ?? 0, reported.intakeCurrency ?? currency);
+      // 報告売上に料率を掛ける。金額は条件の通貨で持つ（MG・AG・単価も同じ）。
+      //
+      // 換算が要るのは「相手が報告してきた通貨」と「条件の通貨」が違うときだけ。
+      // ここを JPY かどうかで見ていたので、USD 建ての条件に USD の報告が来ると
+      // 「外貨なので円に直す」と判断し、レートが無いまま 0 を掛けていた。
+      // 結果、計算書が黙って 0 円で出る（紙は出るが数字が無い）。
       const intake = String(reported.intakeCurrency ?? currency).toUpperCase();
-      const base = intake === "JPY"
-        ? Math.round(raw)
-        : Math.round(raw * Number(reported.fxRate ?? 0));
-      return { type: "revenue", base_amount: base, rate_pct: rate };
+      const raw = toMajor(reported.salesInput ?? 0, intake);
+      if (intake === String(currency).toUpperCase()) {
+        return { type: "revenue", base_amount: Math.round(raw), rate_pct: rate };
+      }
+      // 換算が要るのにレートが無いなら止める。0 を掛けて 0 円の計算書を出すより、
+      // レートを入れてくださいと言うほうがよい（金額は直せないまま相手に届く）。
+      const fx = Number(reported.fxRate ?? 0);
+      if (!(fx > 0)) {
+        throw new DomainError("VALIDATION",
+          `報告は ${intake} ですが、この条件は ${currency} 建てです。` +
+          "為替レートを入れてください（入れないと計算書が0円で出ます）");
+      }
+      return { type: "revenue", base_amount: Math.round(raw * fx), rate_pct: rate };
     }
 
     case "subscription": {

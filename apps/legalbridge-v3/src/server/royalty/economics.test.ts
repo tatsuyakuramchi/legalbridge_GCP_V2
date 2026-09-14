@@ -115,3 +115,24 @@ test("歩留率は検収での減額に効く", () => {
   assert.equal(result.gross_ex_tax, 16500);
   assert.equal(result.after_acceptance, 13200);
 });
+
+test("報告の通貨と条件の通貨が同じなら換算しない（USD 建ての条件に USD の報告）", () => {
+  // ここが 0 円になっていた。条件が USD なのに「外貨だから円に直す」と判断し、
+  // レートが無いまま 0 を掛けていた。計算書は紙だけ出て金額が全部 0 だった。
+  const terms = buildFeeTerms(
+    { ...base, currency: "USD", ratePpm: 80000 },
+    { salesInput: 6400000 });
+  assert.deepEqual(terms, { type: "revenue", base_amount: 64000, rate_pct: 8 });
+});
+
+test("換算が要るのにレートが無ければ止める。0 円の計算書を出さない", () => {
+  assert.throws(
+    () => buildFeeTerms({ ...base, currency: "JPY" }, { salesInput: 500000, intakeCurrency: "USD" }),
+    (e: unknown) => e instanceof DomainError && e.code === "VALIDATION"
+      && /為替レート/.test((e as DomainError).message));
+});
+
+test("円建ての条件に円の報告。レートは要らない", () => {
+  const terms = buildFeeTerms({ ...base, currency: "JPY" }, { salesInput: 1200000 });
+  assert.deepEqual(terms, { type: "revenue", base_amount: 1200000, rate_pct: 12.5 });
+});
