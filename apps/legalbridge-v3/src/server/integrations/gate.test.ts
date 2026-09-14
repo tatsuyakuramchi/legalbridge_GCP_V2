@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { evaluateGate, parseMode } from "./gate.js";
+import { evaluateGate, parseMode, type GateSettings } from "./gate.js";
 
 const base = { mode: "live" as const, adapterConfigured: true, readOnly: false };
 
@@ -51,4 +51,30 @@ test("モードの既定は off（設定し忘れで送らない）", () => {
   assert.equal(parseMode("LIVE"), "live");
   assert.equal(parseMode("dry_run"), "dry_run");
   assert.equal(parseMode("yes"), "off");
+});
+
+test("許可リストは cc・bcc も見る。1人でも外にいたら止める", () => {
+  // recipient しか見ていなかったので、検証中でも cc に本物の取引先を入れると
+  // そのまま届いた。
+  const settings: GateSettings = { mode: "live", adapterConfigured: true, readOnly: false,
+                                   allowlist: ["ok@arclight.co.jp"] };
+  const inside = evaluateGate(
+    { channel: "gmail", recipient: "ok@arclight.co.jp", recipients: ["ok@arclight.co.jp"] },
+    settings);
+  assert.equal(inside.allowed, true);
+  const outside = evaluateGate(
+    { channel: "gmail", recipient: "ok@arclight.co.jp", recipients: ["vendor@example.com"] },
+    settings);
+  assert.equal(outside.allowed, false);
+  assert.ok(outside.blockers.includes("not_allowlisted"));
+});
+
+test("宛先を連結して渡しても、1件ずつ照合する", () => {
+  // メールは「A, B」と連結して渡している。まとめて比べると必ず外れる。
+  const settings: GateSettings = { mode: "live", adapterConfigured: true, readOnly: false,
+                                   allowlist: ["a@arclight.co.jp", "b@arclight.co.jp"] };
+  assert.equal(evaluateGate(
+    { channel: "gmail", recipient: "a@arclight.co.jp, b@arclight.co.jp" }, settings).allowed, true);
+  assert.equal(evaluateGate(
+    { channel: "gmail", recipient: "a@arclight.co.jp, x@example.com" }, settings).allowed, false);
 });

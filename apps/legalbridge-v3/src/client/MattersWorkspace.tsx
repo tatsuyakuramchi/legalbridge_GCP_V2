@@ -85,9 +85,18 @@ export function MattersWorkspace(
   const [linkVersion, setLinkVersion] = useState(0);
   // Drive の案件フォルダが使えるか。親フォルダが未設定なら作る導線を出さない。
   const [driveEnabled, setDriveEnabled] = useState(false);
+  /** 送信の口。文書を選んで送るときに、メールと CloudSign の on/off を出し分ける。 */
+  const [channels, setChannels] =
+    useState<Array<{ channel: string; mode: "off" | "dry_run" | "live"; configured: boolean }>>([]);
+  const [isAdmin, setIsAdmin] = useState(false);
   useEffect(() => {
-    api.get<{ drive: { matterFolders: boolean } }>("/integrations")
-      .then((r) => setDriveEnabled(r.drive.matterFolders)).catch(() => undefined);
+    api.get<{ drive: { matterFolders: boolean };
+              channels: Array<{ channel: string; mode: "off" | "dry_run" | "live"; configured: boolean }> }>(
+      "/integrations")
+      .then((r) => { setDriveEnabled(r.drive.matterFolders); setChannels(r.channels ?? []); })
+      .catch(() => undefined);
+    api.get<{ user?: { role: string } }>("/me")
+      .then((r) => setIsAdmin(r.user?.role === "admin")).catch(() => undefined);
   }, []);
   const relink = () => { setLinkVersion((v) => v + 1); reloadDetail(); };
 
@@ -404,7 +413,7 @@ export function MattersWorkspace(
                   {tab === "documents" && (
                     <MatterDocuments detail={detail} onChanged={relink}
                       onOpenDocument={onOpenDocument} onCompose={onCompose}
-                      onBulkOrders={onBulkOrders} />
+                      onBulkOrders={onBulkOrders} channels={channels} isAdmin={isAdmin} />
                   )}
 
                   {tab === "payments" && (

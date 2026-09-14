@@ -1,7 +1,8 @@
 import express, { Router, type Request, type Response, type NextFunction } from "express";
 import { z } from "zod";
-import { dateStr, inTransaction, type Transactable } from "./core/db.js";
+import { dateStr, inTransaction, str, type Transactable } from "./core/db.js";
 import { DomainError, statusFor } from "./core/errors.js";
+import { recordAudit } from "./core/audit.js";
 import { requireRole, requireWritable } from "./auth.js";
 import { ConditionRepository } from "./conditions/repository.js";
 import { ConditionWriteService } from "./conditions/write-service.js";
@@ -2245,6 +2246,163 @@ export function createRoutes(database: Transactable) {
       res.json({ outcome, communication: null });
     }));
 
+  /**
+   * 何枚かの文書を1通・1封筒で送る。
+   *
+   * 同じ取引先へ発注書を数枚、あるいは発注書と検収書を1式で、という送り方をする。
+   * 1枚ずつ送ると相手の受信箱が同じ件名で埋まり、どれが何の組か読めなくなる。
+   *
+   * **相手先が違う文書を混ぜない。** 1通に混ざると、A社への便りに B社の
+   * 発注書が付く。取り返しがつかないので、混ざっていたら送らずに弾く。
+   */
+  const manyDocuments = async (documentIds: number[]) => {
+    const ids = [...new Set(documentIds.map(Number))];
+    const loaded = [];
+    for (const id of ids) loaded.push(await pdfOf(id));
+    const parties = [...new Set(loaded.map((x) => x.document.counterparty ?? "（相手先なし）"))];
+    if (parties.length > 1) {
+      throw new DomainError("VALIDATION",
+        `相手先の違う文書は1通にまとめられません（${parties.join("・")}）。` +
+        "相手先ごとに分けて送ってください");
+    }
+    return loaded;
+  };
+
+  /**
+   * 何枚かの文書を送ったことを、文書ごとに記録する。
+   *
+   * 送信そのものの記録（宛先・本文・外部ID）は dispatch 側に1本ある。ただし
+   * それは束に対する1本なので、文書の「送信済み」はそこからは読めない。
+   * 画面が読むのは文書ごとのこの記録のほう。束の全員に同じ内容で残す。
+   */
+  const markSent = async (
+    ids: number[], channel: "gmail" | "cloudsign", externalId: string | null,
+    detail: Record<string, unknown>, who: string
+  ) => {
+    await inTransaction(database, async (client) => {
+      for (const id of ids) {
+        await recordAudit(client, {
+          actor: who, action: `${channel}.send`, targetType: "document", targetId: id,
+          idempotencyKey: `${channel}.send:multi:${externalId ?? "none"}:${id}`,
+          detail: { ...detail, externalId, documentIds: ids, partOfBundle: ids.length > 1 }
+        });
+      }
+    });
+  };
+
+  const sendManySchema = z.object({
+    documentIds: z.array(z.coerce.number().int().positive()).min(1).max(20),
+    to: z.array(z.string().trim().email()).min(1).max(20),
+    cc: z.array(z.string().trim().email()).max(20).default([]),
+    bcc: z.array(z.string().trim().email()).max(20).default([]),
+    subject: z.string().trim().max(300).optional(),
+    body: z.string().trim().min(1).max(20000),
+    attachPdf: z.boolean().default(true)
+  });
+  router.post("/documents/send-many",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = sendManySchema.parse(req.body ?? {});
+      const who = actor(res);
+      const loaded = await manyDocuments(input.documentIds);
+      const ids = loaded.map((x) => x.document.id);
+      const numbers = loaded.map((x) => x.document.documentNo ?? `#${x.document.id}`);
+      const subject = input.subject ?? `${numbers.join("・")} のご確認`;
+      const attachments = input.attachPdf ? loaded.map((x) => x.attachment) : [];
+      const matterId = loaded.find((x) => x.document.matterId)?.document.matterId ?? null;
+
+      const outcome = await dispatch.dispatch({
+        // 束そのものへの記録。文書ごとの「送信済み」は markSent が残す。
+        // ここを "document" にすると先頭の1枚だけ記録が二重になる。
+        channel: "gmail", targetType: "documents", targetId: ids[0], actor: who,
+        request: { recipient: input.to.join(", "), cc: input.cc, bcc: input.bcc,
+                   subject, body: input.body, attachments,
+                   threadRef: matterId ? await communications.emailThreadOf(matterId) : null }
+      });
+      if (outcome.sent) {
+        await markSent(ids, "gmail", outcome.externalId ?? null,
+                       { subject, to: input.to, cc: input.cc, bcc: input.bcc }, who);
+        if (matterId) {
+          await inTransaction(database, async (client) => {
+            await recordCommunication(client, {
+              matterId, channel: "email", direction: "out", actor: who,
+              counterpart: [...input.to, ...input.cc.map((c) => `cc:${c}`),
+                            ...input.bcc.map((b) => `bcc:${b}`)].join(", "),
+              subject, body: input.body,
+              externalRef: outcome.externalId ?? null, documentId: ids[0],
+              evidence: { to: input.to, cc: input.cc, bcc: input.bcc, documentIds: ids,
+                          documentNos: numbers, attachments: attachments.map((a) => a.filename) }
+            });
+          });
+        }
+      }
+      res.json({ outcome, documentIds: ids, documentNos: numbers });
+    }));
+
+  /**
+   * 何枚かの文書を1つの CloudSign の封筒で署名依頼する。
+   *
+   * 署名者は順番に署名を求める（order）。確認者・CC は署名しないが書類を見られる
+   * （CloudSign の reportees）。
+   */
+  const signManySchema = z.object({
+    documentIds: z.array(z.coerce.number().int().positive()).min(1).max(20),
+    signers: z.array(z.object({
+      email: z.string().trim().email(),
+      name: z.string().trim().max(120).optional(),
+      organization: z.string().trim().max(200).optional()
+    })).min(1).max(10),
+    reportees: z.array(z.object({
+      email: z.string().trim().email(),
+      name: z.string().trim().max(120).optional()
+    })).max(10).default([]),
+    subject: z.string().trim().max(300).optional(),
+    body: z.string().trim().max(2000).optional()
+  });
+  router.post("/documents/sign-many",
+    requireRole("admin"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = signManySchema.parse(req.body ?? {});
+      const who = actor(res);
+      const loaded = await manyDocuments(input.documentIds);
+      const ids = loaded.map((x) => x.document.id);
+      const numbers = loaded.map((x) => x.document.documentNo ?? `#${x.document.id}`);
+      const subject = input.subject ?? `${numbers.join("・")} 署名のお願い`;
+      const matterId = loaded.find((x) => x.document.matterId)?.document.matterId ?? null;
+
+      const outcome = await dispatch.dispatch({
+        // 束そのものへの記録。文書ごとの「送信済み」は markSent が残す。
+        channel: "cloudsign", targetType: "documents", targetId: ids[0], actor: who,
+        request: {
+          // 許可リストと記録のための代表。実際の宛先は participants と reportees。
+          recipient: input.signers.map((x) => x.email).join(", "),
+          subject, body: input.body ?? "署名をお願いします。",
+          attachments: loaded.map((x) => x.attachment),
+          participants: input.signers.map((x, i) => ({ ...x, order: i + 1 })),
+          reportees: input.reportees
+        }
+      });
+      if (outcome.sent) {
+        await markSent(ids, "cloudsign", outcome.externalId ?? null,
+                       { subject, signers: input.signers.map((x) => x.email),
+                         reportees: input.reportees.map((x) => x.email) }, who);
+        if (matterId) {
+          await inTransaction(database, async (client) => {
+            await recordCommunication(client, {
+              matterId, channel: "cloudsign", direction: "out", actor: who,
+              counterpart: input.signers.map((x) => x.email).join(", "),
+              subject, body: `${numbers.join("・")} の署名依頼を CloudSign で送った`,
+              externalRef: outcome.externalId ?? null, documentId: ids[0],
+              evidence: { cloudSignDocumentId: outcome.externalId ?? null,
+                          signers: input.signers, reportees: input.reportees,
+                          documentIds: ids, documentNos: numbers }
+            });
+          });
+        }
+      }
+      res.json({ outcome, documentIds: ids, documentNos: numbers });
+    }));
+
   // 相手の確認をもらった。返信・Slack・電話のどれでも、人が記録する。
   router.post("/documents/:id/confirm",
     requireRole("admin", "legal"), requireWritable,
@@ -2291,6 +2449,42 @@ export function createRoutes(database: Transactable) {
   router.get("/matters/:id/communications", asyncRoute(async (req, res) => {
     res.json({ communications: await communications.list(Number(req.params.id)) });
   }));
+
+  /**
+   * 送り先をすべてから探す。
+   *
+   * 案件の候補（担当者と相手先の連絡先）だけでは、経理や他部署の人を
+   * 写しに入れられない。名前・メール・取引先名で引いて、選んで足せるようにする。
+   *
+   * 連絡先は個人の情報なので、文書を送れる人（admin・legal）だけに出す。
+   */
+  router.get("/recipients/search",
+    requireRole("admin", "legal"),
+    asyncRoute(async (req, res) => {
+      const q = String(req.query.q ?? "").trim();
+      const like = `%${q}%`;
+      const rows = await database.query(
+        `SELECT * FROM (
+           SELECT 'contact' AS kind, c.name, c.email,
+                  p.name AS belongs_to, c.role, c.department
+             FROM party_contacts c JOIN parties p ON p.id = c.party_id
+            WHERE COALESCE(btrim(c.email), '') <> ''
+              AND ($1 = '' OR c.name ILIKE $2 OR c.email ILIKE $2 OR p.name ILIKE $2)
+           UNION ALL
+           SELECT 'staff', s.name, s.email, '自社', NULL, s.department
+             FROM staff s
+            WHERE COALESCE(btrim(s.email), '') <> '' AND s.status = 'active'
+              AND ($1 = '' OR s.name ILIKE $2 OR s.email ILIKE $2)
+         ) x
+         ORDER BY (x.kind = 'staff') DESC, x.belongs_to, x.name
+         LIMIT 50`, [q, like]);
+      res.json({
+        recipients: (rows.rows as any[]).map((r) => ({
+          kind: String(r.kind), name: str(r.name), email: String(r.email).trim(),
+          belongsTo: str(r.belongs_to), role: str(r.role), department: str(r.department)
+        }))
+      });
+    }));
 
   // 送る相手の候補。担当者（自社）と取引先の連絡先、Slack の宛先。
   router.get("/matters/:id/recipients", asyncRoute(async (req, res) => {

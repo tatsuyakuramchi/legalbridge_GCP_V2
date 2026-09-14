@@ -343,6 +343,11 @@ export class MatterCommunicationService {
     };
   }
 
+  /** その案件のメールのスレッド。何枚かまとめて送るときも同じ流れに続ける。 */
+  async emailThreadOf(matterId: number): Promise<string | null> {
+    return this.emailThread(this.database, matterId);
+  }
+
   private async emailThread(client: Queryable, matterId: number): Promise<string | null> {
     const r = await client.query(
       `SELECT target_ref FROM matter_links

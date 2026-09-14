@@ -3,6 +3,7 @@ import type { MatterDetail, MatterKind } from "../server/core/model.js";
 import { api, ApiError, saveCsv } from "./api.js";
 import { ListSearch, useDebounced } from "./ListTools.js";
 import { ConditionCreateForm } from "./ConditionCreateForm.js";
+import { SendMany } from "./SendMany.js";
 import { WorkChooser, type WorkOption } from "./WorkChooser.js";
 import { DocumentImport } from "./DocumentImport.js";
 import { CONDITION_KIND_LABEL, MATTER_KIND_LABEL, StatusTag } from "./labels.js";
@@ -234,7 +235,7 @@ export function MatterConditions(
 }
 
 export function MatterDocuments(
-  { detail, onChanged, onOpenDocument, onCompose, onBulkOrders }: {
+  { detail, onChanged, onOpenDocument, onCompose, onBulkOrders, channels, isAdmin }: {
     detail: MatterDetail;
     onChanged: () => void;
     /** 文書の画面へ移って、その文書を開く。 */
@@ -243,6 +244,9 @@ export function MatterDocuments(
     onCompose?: (conditionIds: number[], eventIds?: number[], matterId?: number | null) => void;
     /** 発注書の一括作成（CSV）へ、この案件を決めた状態で移る。 */
     onBulkOrders?: (matterId: number) => void;
+    /** 送信のできる口。メールと CloudSign の on/off を出し分ける。 */
+    channels?: Array<{ channel: string; mode: "off" | "dry_run" | "live"; configured: boolean }>;
+    isAdmin?: boolean;
   }
 ) {
   const [picking, setPicking] = useState(false);
@@ -266,9 +270,15 @@ export function MatterDocuments(
     && (d.templateKey === "purchase_order" || d.templateKey === "intl_purchase_order");
   /** 下書きはひな形を問わずまとめて決定できる。実績は下書きが控えている。 */
   const decidable = (d: MatterDetail["documents"][number]) => d.status === "draft";
-  const selectable = (d: MatterDetail["documents"][number]) => fixable(d) || decidable(d);
+  const selectable = (d: MatterDetail["documents"][number]) =>
+    fixable(d) || decidable(d) || d.status === "issued";
   const pickedIds = detail.documents.filter((d) => fixable(d) && picked.has(d.id)).map((d) => d.id);
+  /** 送れるのは決定済みの文書。ひな形は問わない（発注書と検収書を1通で送る）。 */
+  const sendable = (d: MatterDetail["documents"][number]) => d.status === "issued";
+  const pickedSendable = detail.documents.filter((d) => sendable(d) && picked.has(d.id));
   const pickedDrafts = detail.documents.filter((d) => decidable(d) && picked.has(d.id)).map((d) => d.id);
+  /** 送信の画面を開いているか。決定済みの文書を選んでから開く。 */
+  const [sending, setSending] = useState(false);
   /** まとめて決定の結果。落ちたものは理由を出す。 */
   const [issued, setIssued] =
     useState<Array<{ documentId: number; documentNo: string | null; ok: boolean; reason?: string }> | null>(null);
@@ -446,6 +456,14 @@ export function MatterDocuments(
                   onClick={() => void exportPicked()}>
             選んだ {pickedIds.length} 件を CSV に出す（一括修正用）
           </button>
+          {/* 同じ取引先へ何枚かを1通・1封筒で送る。1枚ずつ送ると、相手の
+              受信箱が同じ件名で埋まってどれが何の組か読めなくなる。 */}
+          {channels && (
+            <button className="btn btn-sm" disabled={busy || !pickedSendable.length}
+                    onClick={() => setSending(true)}>
+              選んだ {pickedSendable.length} 件を送る
+            </button>
+          )}
           {detail.documents.some(decidable) && (
             <button className="linky" disabled={busy}
                     onClick={() => setPicked(new Set(detail.documents.filter(decidable).map((d) => d.id)))}>
@@ -467,6 +485,15 @@ export function MatterDocuments(
         </div>
       )}
 
+      {sending && channels && (
+        <SendMany
+          documents={pickedSendable.map((d) => ({ id: d.id, documentNo: d.documentNo,
+                                                  counterparty: d.counterparty }))}
+          channels={channels} isAdmin={Boolean(isAdmin)}
+          onDone={() => { setPicked(new Set()); onChanged(); }}
+          onClose={() => setSending(false)} />
+      )}
+
       {detail.documents.length ? (
         <table>
           <thead><tr><th></th><th>文書番号</th><th>取引先</th><th>種別</th><th>状態</th><th></th></tr></thead>
@@ -474,8 +501,8 @@ export function MatterDocuments(
             {detail.documents.map((d) => (
               <tr key={d.id}>
                 <td>
-                  {/* 選べるのは、決定できる下書きと、直せる決定済みの発注書だけ。
-                      退いた版や発注書以外の決定済みには四角を出さない。 */}
+                  {/* 選べるのは、決定できる下書きと、送れる・直せる決定済みの文書。
+                      退いた版には四角を出さない。 */}
                   {selectable(d) && (
                     <input type="checkbox" checked={picked.has(d.id)}
                            aria-label={`${d.documentNo ?? `#${d.id}`} を選ぶ`}

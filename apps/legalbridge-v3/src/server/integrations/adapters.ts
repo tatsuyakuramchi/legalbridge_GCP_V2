@@ -11,12 +11,41 @@ export interface DispatchRequest {
   recipient: string;
   /** 写し。メールだけが使う。担当者を cc に入れて、やり取りが見えるようにする。 */
   cc?: string[] | null;
+  /** 隠しの写し。相手には見えない。 */
+  bcc?: string[] | null;
   subject?: string | null;
   body: string;
-  /** 添付。CloudSign は必須、Gmail は任意。 */
-  attachment?: { filename: string; mimeType: string; data: Buffer } | null;
+  /** 添付。CloudSign は必須、Gmail は任意。1枚だけのときはこちら。 */
+  attachment?: Attachment | null;
+  /** 添付が複数のとき（発注書を何枚か、発注書と検収書を1通で）。 */
+  attachments?: Attachment[] | null;
+  /**
+   * CloudSign の署名者。順番に署名を求める（order）。
+   * 空なら recipient を1人の署名者として扱う。
+   */
+  participants?: Array<{ email: string; name?: string | null;
+                         organization?: string | null; order?: number }> | null;
+  /** CloudSign の確認者・CC（reportees）。署名はしないが書類を見られる。 */
+  reportees?: Array<{ email: string; name?: string | null }> | null;
   /** 外部側の参照（スレッド返信など）。 */
   threadRef?: string | null;
+}
+
+export interface Attachment { filename: string; mimeType: string; data: Buffer }
+
+/** 添付の一覧。1枚だけの書き方と複数の書き方の両方を受ける。 */
+export const attachmentsOf = (request: DispatchRequest): Attachment[] =>
+  (request.attachments?.length ? request.attachments
+    : request.attachment ? [request.attachment] : []);
+
+/** 実際に届く宛先すべて。許可リストの照合に使う（cc・bcc も外へ届く）。 */
+export function everyRecipient(request: DispatchRequest): string[] {
+  return [
+    ...String(request.recipient ?? "").split(/[,;]/),
+    ...(request.cc ?? []), ...(request.bcc ?? []),
+    ...(request.participants ?? []).map((p) => p.email),
+    ...(request.reportees ?? []).map((r) => r.email)
+  ].map((v) => String(v ?? "").trim()).filter(Boolean);
 }
 
 export interface DispatchReceipt {
@@ -75,23 +104,31 @@ export class GmailAdapter implements DispatchAdapter {
     const token = await this.accessToken();
     const boundary = `lb-${createHash("sha1").update(String(Date.now())).digest("hex").slice(0, 16)}`;
     const cc = (request.cc ?? []).map((v) => v.trim()).filter(Boolean);
+    // bcc は本文（RFC822）に書かない。書くと相手に見える。Gmail API は
+    // Bcc ヘッダを見て配送し、受信側には渡さないので、ヘッダには入れる。
+    const bcc = (request.bcc ?? []).map((v) => v.trim()).filter(Boolean);
     const headers = [
       `From: ${this.sender}`,
       `To: ${request.recipient}`,
       ...(cc.length ? [`Cc: ${cc.join(", ")}`] : []),
+      ...(bcc.length ? [`Bcc: ${bcc.join(", ")}`] : []),
       `Subject: =?UTF-8?B?${Buffer.from(request.subject ?? "").toString("base64")}?=`,
       "MIME-Version: 1.0"
     ];
-    const mime = request.attachment
+    const files = attachmentsOf(request);
+    const mime = files.length
       ? [
           ...headers,
           `Content-Type: multipart/mixed; boundary="${boundary}"`, "",
           `--${boundary}`, "Content-Type: text/plain; charset=UTF-8", "", request.body, "",
-          `--${boundary}`,
-          `Content-Type: ${request.attachment.mimeType}; name="${request.attachment.filename}"`,
-          "Content-Transfer-Encoding: base64",
-          `Content-Disposition: attachment; filename="${request.attachment.filename}"`, "",
-          request.attachment.data.toString("base64"), "",
+          // 添付は何枚でも。発注書を数枚、発注書と検収書を1通で、という送り方をする。
+          ...files.flatMap((file) => [
+            `--${boundary}`,
+            `Content-Type: ${file.mimeType}; name="${file.filename}"`,
+            "Content-Transfer-Encoding: base64",
+            `Content-Disposition: attachment; filename="${file.filename}"`, "",
+            file.data.toString("base64"), ""
+          ]),
           `--${boundary}--`
         ].join("\r\n")
       : [...headers, "Content-Type: text/plain; charset=UTF-8", "", request.body].join("\r\n");
@@ -132,29 +169,65 @@ export class CloudSignAdapter implements DispatchAdapter {
   }
 
   async send(request: DispatchRequest): Promise<DispatchReceipt> {
-    if (!request.attachment) throw new Error("CloudSign には送信する書類が必要です");
+    const files = attachmentsOf(request);
+    if (!files.length) throw new Error("CloudSign には送信する書類が必要です");
     const token = await this.token();
     const auth = { Authorization: `Bearer ${token}` };
+    const form = (fields: Record<string, string | undefined>) =>
+      new URLSearchParams(
+        Object.entries(fields).filter(([, v]) => v !== undefined && v !== "") as [string, string][]
+      ).toString();
 
     const created = await this.fetchImpl(`${this.baseUrl}/documents`, {
       method: "POST", headers: { ...auth, "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ title: request.subject ?? request.attachment.filename }).toString()
+      body: form({ title: request.subject ?? files[0].filename })
     });
     if (!created.ok) return fail("CloudSign", created);
     const document = await created.json() as { id?: string };
     const documentId = String(document.id ?? "");
 
-    const participants = await this.fetchImpl(`${this.baseUrl}/documents/${documentId}/participants`, {
-      method: "POST", headers: { ...auth, "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ email: request.recipient, name: request.recipient }).toString()
-    });
-    if (!participants.ok) return fail("CloudSign", participants);
+    // 書類は何枚でも同じ封筒に入れられる（発注書を数枚、発注書と検収書を1式で）。
+    for (const file of files) {
+      const body = new FormData();
+      body.append("uploadfile",
+        new Blob([new Uint8Array(file.data)], { type: file.mimeType }), file.filename);
+      const added = await this.fetchImpl(`${this.baseUrl}/documents/${documentId}/files`,
+        { method: "POST", headers: auth, body });
+      if (!added.ok) return fail("CloudSign", added);
+    }
+
+    // 署名者。order で署名の順番が決まる。指定が無ければ recipient を1人だけ。
+    const signers = request.participants?.length
+      ? request.participants
+      : [{ email: request.recipient, name: request.recipient }];
+    for (const [index, signer] of signers.entries()) {
+      const added = await this.fetchImpl(`${this.baseUrl}/documents/${documentId}/participants`, {
+        method: "POST", headers: { ...auth, "content-type": "application/x-www-form-urlencoded" },
+        body: form({
+          email: signer.email, name: signer.name ?? signer.email,
+          organization: signer.organization ?? undefined,
+          order: String(signer.order ?? index + 1)
+        })
+      });
+      if (!added.ok) return fail("CloudSign", added);
+    }
+
+    // 確認者・CC。署名はしないが書類を見られる（CloudSign の reportees）。
+    for (const reportee of request.reportees ?? []) {
+      const added = await this.fetchImpl(`${this.baseUrl}/documents/${documentId}/reportees`, {
+        method: "POST", headers: { ...auth, "content-type": "application/x-www-form-urlencoded" },
+        body: form({ email: reportee.email, name: reportee.name ?? reportee.email })
+      });
+      if (!added.ok) return fail("CloudSign", added);
+    }
 
     const sent = await this.fetchImpl(`${this.baseUrl}/documents/${documentId}`, {
       method: "POST", headers: auth
     });
     if (!sent.ok) return fail("CloudSign", sent);
-    return { externalId: documentId, raw: { documentId } };
+    return { externalId: documentId, raw: { documentId, files: files.length,
+                                            signers: signers.length,
+                                            reportees: (request.reportees ?? []).length } };
   }
 }
 

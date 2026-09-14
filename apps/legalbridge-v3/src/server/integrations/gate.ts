@@ -45,6 +45,13 @@ export interface GateSettings {
 export interface GateInput {
   channel: IntegrationChannel;
   recipient?: string | null;
+  /**
+   * 実際に届く宛先すべて。to だけでなく cc・bcc・CloudSign の参加者も入れる。
+   *
+   * 許可リストは recipient しか見ていなかったので、cc に本物の取引先を入れると
+   * 検証中でもそのまま届いた。1人でも外にいたら止める。
+   */
+  recipients?: string[];
   hasContent?: boolean;
 }
 
@@ -72,8 +79,13 @@ export function evaluateGate(input: GateInput, settings: GateSettings): GateResu
   if (input.hasContent === false) blockers.push("content_missing");
 
   const allowlist = (settings.allowlist ?? []).map((v) => v.trim().toLowerCase()).filter(Boolean);
-  const recipient = String(input.recipient ?? "").trim().toLowerCase();
-  if (allowlist.length && recipient && !allowlist.includes(recipient)) {
+  // recipient は「Aさん, Bさん」のように連結して渡ってくることがある。
+  // 区切って1件ずつ見ないと、連結した文字列が一致せず全部弾かれる。
+  const everyone = [
+    ...String(input.recipient ?? "").split(/[,;]/),
+    ...(input.recipients ?? [])
+  ].map((v) => v.trim().toLowerCase()).filter(Boolean);
+  if (allowlist.length && everyone.some((who) => !allowlist.includes(who))) {
     blockers.push("not_allowlisted");
   }
 

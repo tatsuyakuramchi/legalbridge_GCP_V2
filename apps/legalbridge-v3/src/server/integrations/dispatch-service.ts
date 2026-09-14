@@ -3,6 +3,7 @@ import { inTransaction, type Transactable } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { evaluateGate, type GateResult, type GateSettings, type IntegrationChannel } from "./gate.js";
+import { attachmentsOf, everyRecipient } from "./adapters.js";
 import type { DispatchAdapter, DispatchRequest } from "./adapters.js";
 import { applyInbound } from "./inbound-handlers.js";
 
@@ -55,11 +56,14 @@ export class DispatchService {
   }): Promise<DispatchOutcome> {
     const adapter = this.adapters[input.channel];
     const settings = this.settings(input.channel);
+    const files = attachmentsOf(input.request);
     const gate = evaluateGate(
       {
         channel: input.channel,
         recipient: input.request.recipient,
-        hasContent: Boolean(input.request.body || input.request.attachment)
+        // cc・bcc・CloudSign の参加者も外へ届く。許可リストは全員を見る。
+        recipients: everyRecipient(input.request),
+        hasContent: Boolean(input.request.body || files.length)
       },
       { ...settings, adapterConfigured: settings.adapterConfigured && Boolean(adapter?.configured) }
     );
@@ -68,7 +72,7 @@ export class DispatchService {
       recipient: input.request.recipient,
       subject: input.request.subject ?? null,
       bodyPreview: input.request.body.slice(0, 500),
-      attachment: input.request.attachment?.filename ?? null
+      attachment: files.map((f) => f.filename).join("、") || null
     };
 
     if (!gate.allowed) {
@@ -103,7 +107,9 @@ export class DispatchService {
         detail: {
           recipient: input.request.recipient, subject: input.request.subject ?? null,
           externalId: receipt.externalId, threadRef: receipt.threadRef ?? null,
-          attachment: input.request.attachment?.filename ?? null
+          attachment: files.map((f) => f.filename).join("、") || null,
+          // 誰に届いたかを記録に残す。あとから「この1通は誰に行ったか」を辿る。
+          cc: input.request.cc ?? [], bcc: input.request.bcc ?? []
         }
       });
     } catch (error) {
