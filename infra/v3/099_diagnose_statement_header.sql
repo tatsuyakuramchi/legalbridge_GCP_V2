@@ -1,6 +1,6 @@
 -- =====================================================================
 -- 利用許諾料計算書の「受領情報（サブライセンス入金）」を見る
--- （Cloud SQL Studio／ops sql 用）
+-- （ops sql / Cloud SQL Studio 用）
 --
 --   何度流しても読むだけ。書き込みは1つも無い。
 --
@@ -9,52 +9,60 @@
 --   専用にしてある。受領情報の各欄がどの名前を差しているかは本文にしか
 --   書いていないので、名前を知らないまま供給側を直すと、別の欄に当たる。
 --   実際 payerCompany は「自社名」の別名として登録されていて、入金企業の
---   欄に株式会社アークライト（当社）が出ていた。
+--   欄に当社の名前が出ていた。
 --
---   直したいのは4つ:
---     入金企業   … 当社ではなく、許諾（OUT）の取引先名（払ってきた相手）
---     デザイナー / 権利者 … 取得（IN）の取引先名
---     カテゴリー … 使わないので消す
---     入金通貨   … 受領通貨と、当社適用レート
---
---   1・2 の出力をそのまま貼っていただければ、供給側と本文の直し方を
---   確定できる。個人情報は含まない（ひな形の骨組みだけ）。
+--   出力の 1 と 2 をそのまま貼っていただければ、直し方を確定できる。
+--   ひな形の骨組みだけで、個人情報・口座情報は含まない。
 -- =====================================================================
 
--- ---------------------------------------------------------------------
--- 1. 受領情報の block をそのまま出す
---
---    「受領情報」から 1800 文字。表の作りと {{ }} の名前が見える。
--- ---------------------------------------------------------------------
-SELECT t.template_key                                        AS ひな形,
-       v.id                                                  AS 版,
-       length(v.html_source)                                 AS 本文の長さ,
-       position('受領情報' in v.html_source)                  AS 受領情報の位置,
-       substring(v.html_source
-                 from greatest(1, position('受領情報' in v.html_source) - 200)
-                 for 1800)                                   AS 受領情報のあたり
-  FROM v3.document_templates t
-  JOIN v3.document_template_versions v ON v.id = t.current_version_id
- WHERE t.template_key = 'royalty_statement';
+-- ページャと桁揃えを止める。揃えると長い行が切られて、肝心の {{ }} が
+-- 「--More--」の向こうに隠れる。
+\pset pager off
+\pset format unaligned
+\pset tuples_only on
 
 -- ---------------------------------------------------------------------
--- 2. 受領情報のあたりで差している名前だけを並べる
+-- 1. 直したい欄のまわりだけを、そのまま出す
 --
---    ここに出た名前が、そのまま直す対象になる。
+--    欄の見出しの語を本文から探して、その前後を切り出す。本文は2万字
+--    あるので全部は出さない。
 -- ---------------------------------------------------------------------
+WITH src AS (
+  SELECT v.html_source AS h
+    FROM v3.document_templates t
+    JOIN v3.document_template_versions v ON v.id = t.current_version_id
+   WHERE t.template_key = 'royalty_statement'
+),
+lbl(name) AS (
+  VALUES ('受領情報'), ('入金企業'), ('デザイナー'), ('カテゴリ'), ('入金通貨'), ('レート')
+)
+SELECT E'\n========== ' || lbl.name || E' ==========\n' ||
+       CASE WHEN position(lbl.name in src.h) = 0
+            THEN '（この語は本文に無い）'
+            ELSE substring(src.h
+                           from greatest(1, position(lbl.name in src.h) - 250)
+                           for 900)
+       END
+  FROM src, lbl;
+
+-- ---------------------------------------------------------------------
+-- 2. 受領情報の block が差している名前
+-- ---------------------------------------------------------------------
+SELECT E'\n========== 受領情報が差す名前 ==========';
+
 WITH blk AS (
   SELECT substring(v.html_source
                    from greatest(1, position('受領情報' in v.html_source) - 200)
-                   for 1800) AS html
+                   for 2500) AS html
     FROM v3.document_templates t
     JOIN v3.document_template_versions v ON v.id = t.current_version_id
    WHERE t.template_key = 'royalty_statement'
 )
-SELECT DISTINCT m[1] AS 受領情報が差す名前
+SELECT DISTINCT m[1]
   FROM blk,
        LATERAL regexp_matches(blk.html,
          '\{\{[#/]?\s*([A-Za-z0-9_一-龠ぁ-んァ-ヶー]+)', 'g') AS m
- WHERE m[1] NOT IN ('each', 'if', 'unless', 'with', 'else', 'this', 'log', 'lookup')
+ WHERE m[1] NOT IN ('each', 'if', 'unless', 'with', 'else', 'this', 'log', 'lookup', 'eq')
  ORDER BY 1;
 
 -- ---------------------------------------------------------------------
@@ -62,11 +70,13 @@ SELECT DISTINCT m[1] AS 受領情報が差す名前
 --
 --    受領情報の欄が block の外の名前を使っていたとき用。
 -- ---------------------------------------------------------------------
-SELECT DISTINCT m[1] AS 本文が差す名前
+SELECT E'\n========== 本文が差す名前（全体） ==========';
+
+SELECT DISTINCT m[1]
   FROM v3.document_templates t
   JOIN v3.document_template_versions v ON v.id = t.current_version_id,
        LATERAL regexp_matches(v.html_source,
          '\{\{[#/]?\s*([A-Za-z0-9_一-龠ぁ-んァ-ヶー]+)', 'g') AS m
  WHERE t.template_key = 'royalty_statement'
-   AND m[1] NOT IN ('each', 'if', 'unless', 'with', 'else', 'this', 'log', 'lookup')
+   AND m[1] NOT IN ('each', 'if', 'unless', 'with', 'else', 'this', 'log', 'lookup', 'eq')
  ORDER BY 1;
