@@ -266,6 +266,14 @@ export function BulkOrders(
             <div className="fbody">
               <div className="row">
                 <a className="btn" href="/api/v3/documents/batches/template.csv">雛形をダウンロード</a>
+                {/* 直すときは、いまの中身を出して書き換えるほうが早い。
+                    19列を人が組み直すのは現実的でない。 */}
+                <button className="btn" disabled={busy || !matterId}
+                        title={matterId ? undefined : "先に案件を選んでください"}
+                        onClick={() => void exportCsv(
+                          { matterId: Number(matterId) }, `orders-matter-${matterId}.csv`)}>
+                  この案件の決定済み発注書を出す
+                </button>
                 <label className="btn primary" style={{ cursor: "pointer" }}>
                   ファイルを選ぶ
                   <input type="file" accept=".csv,text/csv" style={{ display: "none" }}
@@ -280,6 +288,20 @@ export function BulkOrders(
                   UTF-8 か Shift_JIS。1行 = 1品目。同じ取引先・同じ作品の行が1枚にまとまる
                 </span>
               </div>
+              {exported && (
+                <div className={exported.skipped.length ? "note warn" : "note ok"}
+                     style={{ marginTop: 6 }}>
+                  発注書 {exported.documents} 枚・明細 {exported.rows} 行を出しました。
+                  「一括修正」は あり で入っています。<b>修正理由は空</b>なので、
+                  直す理由を書いてから上げ直してください。
+                  {exported.skipped.length > 0 && (
+                    <div style={{ marginTop: 4 }}>
+                      出せなかったもの {exported.skipped.length} 件：
+                      {exported.skipped.map((x) => `${x.documentNo ?? "（番号なし）"}（${x.reason}）`).join("／")}
+                    </div>
+                  )}
+                </div>
+              )}
               {/* 突き合わせは案件が決まってから走る。先に CSV を選ぶと、選んだのに
                   何も出ないまま止まって、読み込みに失敗したように見えていた。 */}
               {csv && !matterId && (
