@@ -4,7 +4,10 @@ import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { claimSchedule } from "./schedule-service.js";
 import { readContractForm } from "./contract-form.js";
-import { assertUsageInput, basisOf, usageTypeLabel, type UsageType } from "../royalty/usage-type.js";
+import {
+  assertUsageInput, basisOf, paymentStageLabel, usageTypeLabel,
+  type PaymentStage, type UsageType
+} from "../royalty/usage-type.js";
 import { ppmToPct } from "../royalty/economics.js";
 
 /**
@@ -64,6 +67,8 @@ export interface EventInput {
   unitAmount?: number | null;
   /** その回の料率（百万分率）。既定はイン条件の料率。 */
   ratePpm?: number | null;
+  /** 入金区分。前金・後金に分かれる契約で、どちらの入金かを持つ。 */
+  paymentStage?: PaymentStage | null;
 }
 
 export interface EventRow {
@@ -95,6 +100,8 @@ export interface EventRow {
   outConditionName: string | null;
   unitAmount: number | null;
   ratePpm: number | null;
+  paymentStage: string | null;
+  paymentStageLabel: string | null;
   /** 計算書から作られた実績。画面からは直せない。 */
   documentId: number | null;
   documentNo: string | null;
@@ -113,7 +120,7 @@ export class ConditionEventService {
                 e.schedule_id, s.label AS schedule_label, s.seq AS schedule_seq,
                 e.deliverable, e.inspected_on, e.inspector_dept, e.inspector_name,
                 e.contract_form, e.service_from, e.service_to,
-                e.usage_type, e.out_condition_id, e.unit_amount, e.rate_ppm,
+                e.usage_type, e.out_condition_id, e.unit_amount, e.rate_ppm, e.payment_stage,
                 oc.condition_no AS out_condition_no, oc.name AS out_condition_name,
                 e.document_id, d.document_no, e.created_at, e.created_by
            FROM condition_events e
@@ -151,6 +158,8 @@ export class ConditionEventService {
         outConditionName: str(row.out_condition_name),
         unitAmount: int(row.unit_amount),
         ratePpm: int(row.rate_ppm),
+        paymentStage: str(row.payment_stage),
+        paymentStageLabel: paymentStageLabel(row.payment_stage) || null,
         documentId: int(row.document_id),
         documentNo: str(row.document_no),
         createdAt: new Date(String(row.created_at)).toISOString(),
@@ -227,6 +236,7 @@ export class ConditionEventService {
             unitAmount, quantity: input.quantity ?? null,
             sampleQuantity: input.sampleQuantity ?? null,
             grossAmount: input.grossAmount ?? null,
+            paymentStage: input.paymentStage ?? null,
             outConditionId: input.outConditionId ?? null
           }, "この実績");
         }
@@ -245,7 +255,8 @@ export class ConditionEventService {
         const amount = usageType
           ? Math.ceil((basisOf({
               usageType, unitAmount, quantity: input.quantity ?? null,
-              sampleQuantity: input.sampleQuantity ?? null, grossAmount: gross
+              sampleQuantity: input.sampleQuantity ?? null, grossAmount: gross,
+              paymentStage: input.paymentStage ?? null
             }, "この実績") * ppmToPct(ratePpm)) / 100)
           : Math.round(input.amount);
         if (!usageType && gross !== null && gross - deductions !== amount) {
@@ -264,10 +275,10 @@ export class ConditionEventService {
               quantity, sample_quantity, gross_amount, deductions, amount, note, created_by,
               deliverable, inspected_on, inspector_dept, inspector_name,
               contract_form, service_from, service_to,
-              usage_type, out_condition_id, unit_amount, rate_ppm)
+              usage_type, out_condition_id, unit_amount, rate_ppm, payment_stage)
            VALUES ($1, $2, $3, $4::date, $5, $6, $7, $8, $9, $10, $11, $12,
                    $13, $14::date, $15, $16, $17, $18::date, $19::date,
-                   $20, $21, $22, $23)
+                   $20, $21, $22, $23, $24)
            RETURNING id`,
           [conditionId, scheduleId, input.eventType, occurredOn, period,
            input.quantity ?? null, input.sampleQuantity ?? null,
@@ -275,7 +286,8 @@ export class ConditionEventService {
            str(input.deliverable), str(input.inspectedOn),
            str(input.inspectorDept), str(input.inspectorName),
            contractForm, serviceFrom, serviceTo,
-           usageType, input.outConditionId ?? null, unitAmount, ratePpm]);
+           usageType, input.outConditionId ?? null, unitAmount, ratePpm,
+           input.paymentStage ?? null]);
         const id = Number((inserted.rows[0] as { id: number }).id);
 
         await recordAudit(client, {

@@ -180,6 +180,11 @@ SELECT * FROM (
          (SELECT count(*)::text FROM information_schema.columns
            WHERE table_schema='v3' AND table_name='condition_events'
              AND column_name IN ('usage_type','out_condition_id','unit_amount','rate_ppm'))
+  UNION ALL
+  SELECT 24, '実績の入金区分（A-024。1 列であること）',
+         (SELECT count(*)::text FROM information_schema.columns
+           WHERE table_schema='v3' AND table_name='condition_events'
+             AND column_name = 'payment_stage')
 ) AS 確認 ORDER BY n;
 `;
 

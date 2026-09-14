@@ -23,6 +23,23 @@ import { DomainError } from "../core/errors.js";
 
 export type UsageType = "in_house" | "sublicense" | "oem";
 
+/**
+ * 入金区分。契約金と残金で2回に分けて入る契約がある。
+ *
+ * 区分を持たないと、紙に同じ行が2本並ぶ。「5000個 × 受領価格」が2回出ると、
+ * 受け取った側は10,000個作ったと読む。数量は同じ製造ぶんを指しているので、
+ * どちらの入金かが行に出ていないと足し算が狂う。
+ */
+export type PaymentStage = "advance" | "balance";
+
+export const PAYMENT_STAGES: Array<{ value: PaymentStage; label: string }> = [
+  { value: "advance", label: "前金" },
+  { value: "balance", label: "後金" }
+];
+
+export const paymentStageLabel = (value: unknown): string =>
+  PAYMENT_STAGES.find((p) => p.value === value)?.label ?? "";
+
 export interface UsageTypeSpec {
   value: UsageType;
   label: string;
@@ -32,6 +49,14 @@ export interface UsageTypeSpec {
   needsOutCondition: boolean;
   /** 画面に出す欄。ここに無い欄は、その形では使わない。 */
   fields: Array<"unitAmount" | "quantity" | "sampleQuantity" | "grossAmount">;
+  /** 前金・後金に分けられるか。相手のいる形（アウト条件を使う形）だけ。 */
+  hasStages: boolean;
+  /**
+   * 算定の形を行ごとに選べるか。
+   * 前金の形は契約による。個数に応じて単価を前金分・後金分に割る契約もあれば、
+   * 前金だけ定額で後金が実績払い、という契約もある。
+   */
+  choosableBasis: boolean;
   hint: string;
 }
 
@@ -42,6 +67,7 @@ export const USAGE_TYPES: UsageTypeSpec[] = [
     methodLabel: "自社製造・自社販売（基準価格 × 個数）",
     needsOutCondition: false,
     fields: ["unitAmount", "quantity", "sampleQuantity"],
+    hasStages: false, choosableBasis: false,
     hint: "自社で作って自社で売る。相手への許諾が無いのでアウト条件は要らない"
   },
   {
@@ -50,6 +76,7 @@ export const USAGE_TYPES: UsageTypeSpec[] = [
     methodLabel: "再許諾（受領価格）",
     needsOutCondition: true,
     fields: ["grossAmount"],
+    hasStages: true, choosableBasis: false,
     hint: "相手に許諾して、相手から受け取った額が算定の基礎になる"
   },
   {
@@ -57,8 +84,11 @@ export const USAGE_TYPES: UsageTypeSpec[] = [
     label: "自社製造・他社販売",
     methodLabel: "自社製造・他社販売（受領価格 × 製造個数）",
     needsOutCondition: true,
-    fields: ["unitAmount", "quantity", "sampleQuantity"],
-    hint: "自社で作って相手が売る。受領価格は1個あたり"
+    // 個数×単価でも、受領額そのものでも入れられる。どちらで入れたかは
+    // 「単価と個数が入っているか、受領額が入っているか」で読み分ける。
+    fields: ["unitAmount", "quantity", "sampleQuantity", "grossAmount"],
+    hasStages: true, choosableBasis: true,
+    hint: "自社で作って相手が売る。前金・後金に分かれる契約は2件に分けて入れる"
   }
 ];
 
@@ -75,8 +105,23 @@ export interface UsageBasisInput {
   unitAmount?: number | null;
   quantity?: number | null;
   sampleQuantity?: number | null;
-  /** 受領価格の合計（再許諾）。最小通貨単位。 */
+  /** 受領価格の合計（再許諾、または定額の前金）。最小通貨単位。 */
   grossAmount?: number | null;
+  /** 入金区分。前金・後金に分かれる契約で、どちらの入金かを持つ。 */
+  paymentStage?: PaymentStage | null;
+}
+
+/**
+ * その行が「個数 × 単価」で出しているか、「受領額そのもの」で出しているか。
+ *
+ * 自社製造・他社販売は契約によってどちらもある。新しい列を足さず、
+ * 入っている数字から読み分ける（両方入っている行は受け付けないので、
+ * あとからでも一意に決まる）。
+ */
+export function basisKindOf(input: UsageBasisInput): "per_unit" | "lump" {
+  if (input.usageType === "sublicense") return "lump";
+  if (input.usageType === "in_house") return "per_unit";
+  return Number(input.grossAmount ?? 0) > 0 ? "lump" : "per_unit";
 }
 
 /**
@@ -86,12 +131,22 @@ export interface UsageBasisInput {
  * 計算書が番号付きで出る（外貨の換算で実際に起きた）。
  */
 export function basisOf(input: UsageBasisInput, tag: string): number {
+  const gross = Number(input.grossAmount ?? 0);
   if (input.usageType === "sublicense") {
-    const gross = Number(input.grossAmount ?? 0);
     if (!(gross > 0)) {
       throw new DomainError("VALIDATION", `${tag}：再許諾は受領価格を入れてください`);
     }
     return Math.round(gross);
+  }
+  if (input.usageType === "oem") {
+    // 個数×単価と受領額の両方が入っている行は、どちらで計算したのか決められない。
+    // 片方を勝たせると、人が見ていない側の数字が紙に出ないまま残る。
+    const hasPerUnit = Number(input.unitAmount ?? 0) > 0 || Number(input.quantity ?? 0) > 0;
+    if (gross > 0 && hasPerUnit) {
+      throw new DomainError("VALIDATION",
+        `${tag}：受領額と「個数 × 単価」の両方は入れられません。どちらかにしてください`);
+    }
+    if (gross > 0) return Math.round(gross);
   }
   const unit = Number(input.unitAmount ?? 0);
   const quantity = Number(input.quantity ?? 0);
@@ -110,16 +165,34 @@ export function basisOf(input: UsageBasisInput, tag: string): number {
   return Math.round(unit * billable);
 }
 
-/** 紙に出す「どう出した数字か」の一行。 */
+/** 紙に出す「どう出した数字か」の一行。入金区分があれば先に付ける。 */
 export function basisNoteOf(input: UsageBasisInput): string {
-  if (input.usageType === "sublicense") return "受領価格";
+  const stage = paymentStageLabel(input.paymentStage);
+  const head = stage ? `${stage}　` : "";
+  if (basisKindOf(input) === "lump") return `${head}受領価格`;
   const quantity = Number(input.quantity ?? 0);
   const sample = Number(input.sampleQuantity ?? 0);
   const billable = Math.max(0, quantity - sample);
   const price = input.usageType === "oem" ? "受領価格" : "基準価格";
   return sample > 0
-    ? `${billable}個（${quantity} − 見本 ${sample}）× ${price}`
-    : `${billable}個 × ${price}`;
+    ? `${head}${billable}個（${quantity} − 見本 ${sample}）× ${price}`
+    : `${head}${billable}個 × ${price}`;
+}
+
+/**
+ * 紙に出す方式名。前金・後金は行の見出しで分ける。
+ * 同じ方式の行が2本並ぶと、受け取った側はどちらの入金か読めない。
+ */
+export function methodLabelOf(input: UsageBasisInput): string {
+  const spec = usageTypeSpec(input.usageType);
+  if (!spec) return "";
+  const stage = paymentStageLabel(input.paymentStage);
+  if (!stage) {
+    return input.usageType === "oem" && basisKindOf(input) === "lump"
+      ? "自社製造・他社販売（受領価格）" : spec.methodLabel;
+  }
+  const shape = basisKindOf(input) === "lump" ? "受領価格" : "受領価格 × 製造個数";
+  return `${spec.label}（${stage}・${shape}）`;
 }
 
 /**
@@ -141,6 +214,10 @@ export function assertUsageInput(
   if (!spec.needsOutCondition && input.outConditionId) {
     throw new DomainError("VALIDATION",
       `${tag}：${spec.label} にアウト条件は付きません`);
+  }
+  if (input.paymentStage && !spec.hasStages) {
+    throw new DomainError("VALIDATION",
+      `${tag}：${spec.label} に前金・後金の区別は付きません`);
   }
   basisOf(input, tag);
 }

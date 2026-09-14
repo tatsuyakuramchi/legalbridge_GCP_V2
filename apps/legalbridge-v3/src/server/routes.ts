@@ -36,7 +36,7 @@ import { MatterCommunicationService, driveIdFromUrl, recordCommunication } from 
 import { config } from "./config.js";
 import { verifySlackSignature } from "./integrations/signature.js";
 import { RoyaltyStatementService } from "./royalty/statement-service.js";
-import { USAGE_TYPES } from "./royalty/usage-type.js";
+import { PAYMENT_STAGES, USAGE_TYPES } from "./royalty/usage-type.js";
 import { usageBundleLines } from "./documents/royalty-patch.js";
 import { bundleLineFrom, bundleTotals } from "./royalty/bundle.js";
 import { PaymentService } from "./payments/service.js";
@@ -994,6 +994,8 @@ export function createRoutes(database: Transactable) {
     unitAmount: z.coerce.number().int().nullable().optional(),
     /** その回の料率（百万分率）。空ならイン条件の料率。 */
     ratePpm: z.coerce.number().int().min(0).max(1_000_000).nullable().optional(),
+    /** 入金区分。前金・後金に分かれる契約で、どちらの入金かを持つ。 */
+    paymentStage: z.enum(["advance", "balance"]).nullable().optional(),
     // 契約形式と役務提供期間。空なら予定の回・条件から継ぐ。
     contractForm: z.string().trim().max(60).nullable().optional(),
     serviceFrom: z.string().date().nullable().optional(),
@@ -1028,7 +1030,8 @@ export function createRoutes(database: Transactable) {
       events: await conditionEvents.list(Number(req.params.id)),
       types: EVENT_TYPES,
       // 権利の使い方と、その形で要る欄。画面はこれを見て欄を出し分ける。
-      usageTypes: USAGE_TYPES
+      usageTypes: USAGE_TYPES,
+      paymentStages: PAYMENT_STAGES
     });
   }));
 

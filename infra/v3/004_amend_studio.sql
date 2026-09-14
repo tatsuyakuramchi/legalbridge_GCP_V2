@@ -929,6 +929,38 @@ $a023$;
 CREATE INDEX IF NOT EXISTS condition_events_out_idx
   ON v3.condition_events (out_condition_id) WHERE out_condition_id IS NOT NULL;
 
+-- ---------------------------------------------------------------------
+-- A-024: 実績に「入金区分」（前金・後金）を持たせる
+--
+-- 自社製造・他社販売も再許諾も、契約金と残金に分かれることがある。
+-- 同じ許諾・同じ製造ぶんに対して入金が2回あり、計算書には2明細で出る。
+--
+-- 区分を持たないと、紙に同じ行が2本並ぶ。「5000個 × 受領価格」が2回出ると、
+-- 受け取った側は10,000個作ったと読む。数量は同じ製造ぶんを指しているので、
+-- どちらの入金かが行に出ていないと足し算が狂う。
+--
+-- 前金の形は契約による。個数に応じて単価を前金分・後金分に割る契約もあれば、
+-- 前金だけ定額で後金が実績払い、という契約もある。どちらで入れたかは
+-- 「単価と個数が入っているか、受領額が入っているか」で読み分ける。
+-- 両方入っている行は止める（どちらで計算したのか決められない）。
+-- ---------------------------------------------------------------------
+
+ALTER TABLE v3.condition_events ADD COLUMN IF NOT EXISTS payment_stage text;
+
+COMMENT ON COLUMN v3.condition_events.payment_stage IS
+  '入金区分。advance=前金 / balance=後金。分けない入金は NULL。';
+
+DO $a024$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.condition_events'::regclass
+                    AND conname = 'condition_events_payment_stage_chk') THEN
+    ALTER TABLE v3.condition_events ADD CONSTRAINT condition_events_payment_stage_chk
+      CHECK (payment_stage IS NULL OR payment_stage = ANY (ARRAY['advance', 'balance']));
+  END IF;
+END
+$a024$;
+
 COMMIT;
 
 
@@ -1080,4 +1112,9 @@ SELECT * FROM (
          (SELECT count(*)::text FROM information_schema.columns
            WHERE table_schema='v3' AND table_name='condition_events'
              AND column_name IN ('usage_type','out_condition_id','unit_amount','rate_ppm'))
+  UNION ALL
+  SELECT 24, '実績の入金区分（A-024。1 列であること）',
+         (SELECT count(*)::text FROM information_schema.columns
+           WHERE table_schema='v3' AND table_name='condition_events'
+             AND column_name = 'payment_stage')
 ) AS 確認 ORDER BY n;

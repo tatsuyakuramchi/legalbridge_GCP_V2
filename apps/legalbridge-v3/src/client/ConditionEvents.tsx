@@ -26,12 +26,15 @@ interface EventRow {
   usageType: string | null; usageLabel: string | null;
   outConditionId: number | null; outConditionNo: string | null; outConditionName: string | null;
   unitAmount: number | null; ratePpm: number | null;
+  paymentStage: string | null; paymentStageLabel: string | null;
 }
 interface TypeOption { value: string; label: string }
 interface UsageOption {
   value: string; label: string; methodLabel: string;
-  needsOutCondition: boolean; fields: string[]; hint: string;
+  needsOutCondition: boolean; fields: string[];
+  hasStages: boolean; choosableBasis: boolean; hint: string;
 }
+interface StageOption { value: string; label: string }
 interface OutCondition {
   id: number; conditionNo: string | null; name: string;
   status: string; partyName: string | null; workTitle: string | null; scopes: string | null;
@@ -86,6 +89,7 @@ export function ConditionEvents(
   const [rows, setRows] = useState<EventRow[]>([]);
   const [types, setTypes] = useState<TypeOption[]>([]);
   const [usageTypes, setUsageTypes] = useState<UsageOption[]>([]);
+  const [stages, setStages] = useState<StageOption[]>([]);
   const [outFound, setOutFound] = useState<OutCondition[]>([]);
   const [outQuery, setOutQuery] = useState("");
   const [adding, setAdding] = useState(false);
@@ -178,9 +182,13 @@ export function ConditionEvents(
   }
 
   function load() {
-    api.get<{ events: EventRow[]; types: TypeOption[]; usageTypes: UsageOption[] }>(
+    api.get<{ events: EventRow[]; types: TypeOption[];
+              usageTypes: UsageOption[]; paymentStages: StageOption[] }>(
       `/conditions/${conditionId}/events`)
-      .then((r) => { setRows(r.events); setTypes(r.types); setUsageTypes(r.usageTypes ?? []); })
+      .then((r) => {
+        setRows(r.events); setTypes(r.types);
+        setUsageTypes(r.usageTypes ?? []); setStages(r.paymentStages ?? []);
+      })
       .catch((e: ApiError) => setError(e.message));
     // 予定は「どの回の分か」を選ぶために要る。実績の欄だけ見ていると回に繋がらない。
     api.get<{ lines: ScheduleRow[]; eventTypeByTrigger: Record<string, string> }>(
@@ -267,7 +275,14 @@ export function ConditionEvents(
     || (v.eventType ?? "") === "service_period";
   // 選んだ利用形態。これで要る欄が決まる。
   const usage = usageTypes.find((u) => u.value === (v.usageType ?? "")) ?? null;
-  const usageField = (name: string) => Boolean(usage?.fields.includes(name));
+  // 自社製造・他社販売は契約によって形が違う。前金だけ定額、という契約もある。
+  const lumpSum = Boolean(usage?.choosableBasis) && (v.basisKind ?? "per_unit") === "lump";
+  const usageField = (name: string) => {
+    if (!usage?.fields.includes(name)) return false;
+    if (!usage.choosableBasis) return true;
+    // 形を選べる場合は、選んだ形で使う欄だけを出す。両方入れた行は保存できない。
+    return lumpSum ? name === "grossAmount" : name !== "grossAmount";
+  };
   const pickedOut = outFound.find((o) => String(o.id) === (v.outConditionId ?? ""));
   /**
    * 保存する前に、その実績の許諾料を見せる。式はサーバと同じ。
@@ -281,7 +296,7 @@ export function ConditionEvents(
   };
   const usageBasis = (() => {
     if (!usage) return null;
-    if (usage.value === "sublicense") {
+    if (usage.value === "sublicense" || lumpSum) {
       const gross = numOf("grossAmount");
       return gross && gross > 0 ? Math.round(gross) : null;
     }
@@ -308,6 +323,7 @@ export function ConditionEvents(
       grossAmount: "", deductions: "", amount: "", note: "",
       contractForm: "", serviceFrom: "", serviceTo: "",
       usageType: "", outConditionId: "", unitAmount: "", ratePct: defaultRatePct,
+      paymentStage: "", basisKind: "per_unit",
       deliverable: "", inspectedOn: "", inspectorDept: "", inspectorName: ""
     };
   }
@@ -361,6 +377,7 @@ export function ConditionEvents(
         unitAmount: f("unitAmount").trim() ? Math.round(Number(f("unitAmount"))) : null,
         // 画面は % で受け、保存は ppm（百万分率）。8% → 80000
         ratePpm: f("ratePct").trim() ? Math.round(Number(f("ratePct")) * 10000) : null,
+        paymentStage: f("paymentStage") || null,
         scheduleId: f("scheduleId") ? Number(f("scheduleId")) : null,
         // 検収書がそのまま使う項目。空なら文書側で条件・案件から補う。
         deliverable: f("deliverable").trim() || null,
@@ -471,6 +488,34 @@ export function ConditionEvents(
                 {usage && <small className="faint">{usage.hint}</small>}
               </label>
             )}
+            {usage?.hasStages && (
+              <label className="field">
+                <span>入金区分</span>
+                <select value={f("paymentStage")}
+                  onChange={(e) => set("paymentStage", e.target.value)}>
+                  <option value="">分けない（一括）</option>
+                  {stages.map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}
+                </select>
+                <small className="faint">
+                  前金・後金に分かれる契約は、入金ごとに1件ずつ入れてください。
+                  計算書には区分つきで2明細に出ます
+                </small>
+              </label>
+            )}
+            {usage?.choosableBasis && (
+              <label className="field">
+                <span>算定の形</span>
+                <select value={f("basisKind")}
+                  onChange={(e) => setV({
+                    ...v, basisKind: e.target.value,
+                    // 形を変えたら前の形の数字を消す。両方入った行は保存できない。
+                    unitAmount: "", quantity: "", sampleQuantity: "", grossAmount: ""
+                  })}>
+                  <option value="per_unit">受領価格（1個あたり）× 製造個数</option>
+                  <option value="lump">受領額そのもの（定額の前金など）</option>
+                </select>
+              </label>
+            )}
             {usage?.needsOutCondition && (
               <label className="field" style={{ gridColumn: "1 / -1" }}>
                 <span>許諾したアウト条件</span>
@@ -561,7 +606,7 @@ export function ConditionEvents(
             )}
             {usageField("grossAmount") && (
               <label className="field">
-                <span>受領価格</span>
+                <span>{lumpSum ? "受領額" : "受領価格"}</span>
                 <input inputMode="numeric" value={f("grossAmount")}
                   onChange={(e) => set("grossAmount", e.target.value)} />
                 <small className="faint">
@@ -589,6 +634,7 @@ export function ConditionEvents(
             {usage && (
               <div className="note" style={{ gridColumn: "1 / -1" }}>
                 {usage.methodLabel}
+                {f("paymentStage") && `　${stages.find((x) => x.value === f("paymentStage"))?.label}`}
                 {pickedOut?.workTitle && `　製品名：${pickedOut.workTitle}`}
                 {!pickedOut && workTitle && `　製品名：${workTitle}`}
                 {pickedOut?.scopes && `　許諾範囲：${pickedOut.scopes}`}
@@ -907,6 +953,9 @@ export function ConditionEvents(
                   {canUse && (
                     <td>
                       {row.usageLabel ?? <span className="faint">—</span>}
+                      {row.paymentStageLabel && (
+                        <span className="tag" style={{ marginLeft: 5 }}>{row.paymentStageLabel}</span>
+                      )}
                       {row.outConditionNo && (
                         <div className="faint">{row.outConditionNo}　{row.outConditionName}</div>
                       )}

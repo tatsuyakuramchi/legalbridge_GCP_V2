@@ -7,7 +7,10 @@ import {
   buildAdjustments, buildFeeTerms, ppmToPct, taxRateFor, toMajor, toMinor,
   type ConditionEconomics, type ReportedResult
 } from "./economics.js";
-import { basisNoteOf, basisOf, usageTypeSpec, type UsageType } from "./usage-type.js";
+import {
+  basisNoteOf, basisOf, methodLabelOf, usageTypeSpec,
+  type PaymentStage, type UsageType
+} from "./usage-type.js";
 
 export interface CalculationInput {
   conditionId: number;
@@ -45,6 +48,8 @@ export interface StatementBasis {
   methodLabel?: string | null;
   /** どう出した数字かの一行（「120個 × 基準価格」など）。 */
   basisNote?: string | null;
+  /** 入金区分（前金・後金）。 */
+  paymentStage?: string | null;
   /** 相手へ許諾したアウト条件。再許諾・他社販売のとき。 */
   outConditionId?: number | null;
   outConditionNo?: string | null;
@@ -155,7 +160,7 @@ export class RoyaltyStatementService {
     const r = await client.query(
       `SELECT e.id, e.condition_id, e.event_type, e.occurred_on, e.period, e.quantity,
               e.sample_quantity, e.gross_amount, e.amount, e.document_id, e.status, e.note,
-              e.usage_type, e.out_condition_id, e.unit_amount,
+              e.usage_type, e.out_condition_id, e.unit_amount, e.payment_stage,
               COALESCE(e.rate_ppm, c.rate_ppm) AS rate_ppm,
               oc.condition_no AS out_condition_no, oc.name AS out_condition_name,
               -- 製品名は作品名。アウト条件の作品を先に見て、無ければイン条件の作品。
@@ -277,7 +282,8 @@ export class RoyaltyStatementService {
         usageType,
         unitAmount: int(e.unit_amount),
         quantity, sampleQuantity,
-        grossAmount: int(e.gross_amount)
+        grossAmount: int(e.gross_amount),
+        paymentStage: (str(e.payment_stage) ?? null) as PaymentStage | null
       };
       const basis = basisOf(shape, tag);
       const ratePct = ppmToPct(int(e.rate_ppm));
@@ -294,7 +300,11 @@ export class RoyaltyStatementService {
         salesInput: usageType === "sublicense" ? basis : null,
         share: 0,
         note: e.note ? String(e.note) : null,
-        usageType, usageLabel: spec.label, methodLabel: spec.methodLabel,
+        usageType, usageLabel: spec.label,
+        // 前金・後金は方式名で分ける。同じ方式の行が2本並ぶと、
+        // 受け取った側はどちらの入金か読めない（数量も二重に見える）。
+        methodLabel: methodLabelOf(shape),
+        paymentStage: shape.paymentStage,
         basisNote: basisNoteOf(shape),
         outConditionId: int(e.out_condition_id),
         outConditionNo: str(e.out_condition_no),
