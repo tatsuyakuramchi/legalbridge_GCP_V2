@@ -187,7 +187,7 @@ export class PaymentService {
           `SELECT s.id AS statement_id, s.condition_id, s.currency, s.net_amount, s.tax_amount,
                   c.direction, c.tax_category, c.counterparty_id,
                   p.kind AS party_kind, p.withholding,
-                  e.id AS event_id, e.occurred_on
+                  e.id AS event_id, e.occurred_on, sp.pay_on AS schedule_pay_on
              FROM statements s
              JOIN conditions c ON c.id = s.condition_id
              LEFT JOIN parties p ON p.id = c.counterparty_id
@@ -197,6 +197,15 @@ export class PaymentService {
                   AND status = 'active'
                 ORDER BY id DESC LIMIT 1
              ) e ON true
+             -- 紙に出した支払期日。予定の回が持っている。実績が何件あっても
+             -- 紙は1枚なので、回をまたぐときはいちばん遅い日を見る。
+             LEFT JOIN LATERAL (
+               SELECT max(sc.pay_on) AS pay_on
+                 FROM condition_events ev
+                 JOIN condition_schedules sc ON sc.id = ev.schedule_id
+                WHERE ev.condition_id = s.condition_id AND ev.document_id = s.document_id
+                  AND ev.status = 'active'
+             ) sp ON true
             WHERE s.document_id = $1
             ORDER BY s.id
               FOR UPDATE OF s`, [documentId]);
@@ -268,7 +277,18 @@ export class PaymentService {
         const dates = rows.map((r) => dateStr(r.occurred_on))
           .filter((d): d is string => Boolean(d)).sort();
         const basis = dates[dates.length - 1] ?? null;
-        const dueOn = options.dueOn ?? dueLimitFrom(basis);
+        // 期日は紙に出した支払期日と同じにする。計算書は予定の支払日
+        // （{{paymentDueDate}}）を印字しているのに、ここだけ 60日 の上限で
+        // 立てていたので、相手に送った紙が 09-18、社内の支払が 10-30 という
+        // 食い違いが出ていた。検収書の経路（createFromInspection）は予定の
+        // 支払日を見ている。同じにする。
+        //
+        // 60日 は下請法の上限であって約束の日ではない。予定が無いときだけ
+        // そこへ落とす。上限を超えていれば、この後の期日検査が警告を出す
+        // （黙って上限へ丸めない）。
+        const payOns = rows.map((r) => dateStr(r.schedule_pay_on))
+          .filter((d): d is string => Boolean(d)).sort();
+        const dueOn = options.dueOn ?? payOns[payOns.length - 1] ?? dueLimitFrom(basis);
 
         return await this.writeWithAllocations(client, {
           direction, partyId: Number(rows[0].counterparty_id), partyKind: str(rows[0].party_kind),

@@ -13,6 +13,8 @@ interface Options {
   noParty?: boolean;
   /** 1枚に何本の計算書が載っているか。上書きしたい列だけ書く。 */
   statements?: Array<Record<string, unknown>>;
+  /** 紙に出る支払期日（予定の回の支払日）。 */
+  schedulePayOn?: string;
 }
 
 const responder = (options: Options = {}) => (text: string): Array<Record<string, unknown>> | undefined => {
@@ -24,7 +26,8 @@ const responder = (options: Options = {}) => (text: string): Array<Record<string
               tax_category: "taxable", counterparty_id: options.noParty ? null : 2,
               party_kind: options.partyKind ?? "individual", withholding: options.withholding ?? false,
               party_name: "如月 涼", event_id: 700 + i,
-              occurred_on: options.occurredOn ?? "2026-06-20", ...over }));
+              occurred_on: options.occurredOn ?? "2026-06-20",
+              schedule_pay_on: options.schedulePayOn ?? null, ...over }));
   }
   if (text.includes("JOIN payment_allocations a ON a.payment_id = p.id")) {
     return options.duplicated ? [{ id: 55 }] : [];
@@ -120,4 +123,41 @@ test("支払を記録すると期日超過の記録が閉じる", async () => {
   const resolved = db.find("SET status = 'resolved'");
   assert.ok(resolved, "期日超過の記録を閉じる");
   assert.deepEqual(resolved!.params, [900]);
+});
+
+test("期日は紙に出した支払期日（予定の回）と同じにする", async () => {
+  // 計算書は予定の支払日を {{paymentDueDate}} として印字している。支払だけ
+  // 60日 の上限で立てていたので、相手に送った紙が 09-18、社内の支払が 10-30
+  // という食い違いが出ていた。検収書の経路は予定の支払日を見ている。
+  const { service } = svc({ occurredOn: "2026-08-31", schedulePayOn: "2026-09-18" });
+  const result = await service.createFromStatementDocument(26, "kuramochi");
+  assert.equal(result.dueOn, "2026-09-18", "60日後（2026-10-30）ではなく紙の日");
+});
+
+test("回をまたぐときは、いちばん遅い支払日を使う", async () => {
+  const { service } = svc({
+    occurredOn: "2026-08-31",
+    statements: [
+      { schedule_pay_on: "2026-09-18" },
+      { net_amount: 57600, tax_amount: 5760, schedule_pay_on: "2026-10-20" }
+    ]
+  });
+  const result = await service.createFromStatementDocument(26, "kuramochi");
+  assert.equal(result.dueOn, "2026-10-20", "早いほうに合わせると、遅い回が期日前になる");
+});
+
+test("予定の支払日が60日を超えていても、黙って上限へ丸めない", async () => {
+  // 上限は法の線であって約束の日ではない。約束した日で立て、超過は記録に残す。
+  const { db, service } = svc({ occurredOn: "2026-06-20", schedulePayOn: "2026-08-27" });
+  const result = await service.createFromStatementDocument(26, "kuramochi");
+  assert.equal(result.dueOn, "2026-08-27");
+  assert.equal(result.due.verdict, "over_limit");
+  assert.equal(result.due.overBy, 8);
+  assert.ok(db.find("PAYMENT_DUE_OVER_LIMIT"), "データ品質の記録に残す");
+});
+
+test("予定の回が無ければ、これまでどおり受領日 +60日", async () => {
+  const { service } = svc({ occurredOn: "2026-06-20" });
+  const result = await service.createFromStatementDocument(26, "kuramochi");
+  assert.equal(result.dueOn, "2026-08-19");
 });
