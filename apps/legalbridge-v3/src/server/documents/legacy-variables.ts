@@ -30,7 +30,7 @@ const yen = (v: unknown) =>
  * （document-business-columns.ts の PARTY_NAME_KEYS / TITLE_KEYS ほか）。
  */
 /**
- * 基本契約の呼び方。「制作業務委託基本契約（AGR-2025-0011）」。
+ * 基本契約の呼び方。「業務委託基本契約（AGR-2025-0011）」。
  * 紙に差し込む文字を1つだけ決めて、一括作成からも同じものを使う。
  */
 export function agreementRefText(title: unknown, no: unknown): string | undefined {

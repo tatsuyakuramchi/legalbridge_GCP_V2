@@ -226,7 +226,7 @@ test("発注元（甲・委託者・ライセンシー）は自社。相手先�
 test("基本契約ありは、条件に契約が付いているかで決まる", () => {
   // 埋まらないと、契約を当ててあっても紙は「スポット契約の約款による」で出る。
   assert.equal(resolveLegacyVariable("HAS_BASE_CONTRACT",
-    { agreement: { no: "AGR-2025-0011", title: "制作業務委託基本契約" } }, "基本契約あり"), true);
+    { agreement: { no: "AGR-2025-0011", title: "業務委託基本契約" } }, "基本契約あり"), true);
   // 契約が無ければ決めない（人がチェックを入れられる）。
   assert.equal(resolveLegacyVariable("HAS_BASE_CONTRACT", { agreement: undefined }, "基本契約あり"), undefined);
 });

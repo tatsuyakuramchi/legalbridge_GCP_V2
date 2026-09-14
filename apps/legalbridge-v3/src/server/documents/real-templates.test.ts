@@ -22,7 +22,7 @@ const context = {
     rep: "代表取締役　野澤 邦仁", tel: "03-6811-0730",
     postalCode: "101-0052", invoiceNo: "T7010001071296"
   },
-  agreement: { no: "AGR-2026-0088", title: "制作業務委託基本契約", executedOn: "2026-04-01" },
+  agreement: { no: "AGR-2026-0088", title: "業務委託基本契約", executedOn: "2026-04-01" },
   matter: { title: "挿絵 追加発注" },
   conditions: [{ id: 1, taxCategory: "taxable" }],
   condition: {

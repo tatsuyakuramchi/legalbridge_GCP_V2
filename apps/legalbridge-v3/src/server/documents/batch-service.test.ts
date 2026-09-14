@@ -239,7 +239,7 @@ test("0円の行は予定明細に置かない（置けない）", () => {
 /** 締結済みの基本契約（取得側）を1件だけ持つ取引先。 */
 const agreement = (t: string) =>
   t.includes("FROM agreements") && t.includes("direction = 'in'")
-    ? [{ id: 7, agreement_no: "AGR-2025-0011", title: "制作業務委託基本契約" }] : undefined;
+    ? [{ id: 7, agreement_no: "AGR-2025-0011", title: "業務委託基本契約" }] : undefined;
 
 test("新しく作る条件には、その取引先の締結済みの基本契約を当てる", async () => {
   // 条件明細は基本契約にぶら下がる。付けずに作ると鎖の1本目が切れ、
@@ -248,7 +248,7 @@ test("新しく作る条件には、その取引先の締結済みの基本契�
   const r = await svc.preview({ templateKey: "purchase_order", matterId: 3, csv: CSV_WORKS });
   assert.equal(r.groups[0].condition.mode, "new");
   assert.deepEqual(r.groups[0].condition.agreement,
-    { id: 7, agreementNo: "AGR-2025-0011", title: "制作業務委託基本契約" });
+    { id: 7, agreementNo: "AGR-2025-0011", title: "業務委託基本契約" });
   assert.equal(r.groups[0].condition.agreementNote, null);
   assert.equal(r.groups[0].condition.schedules, 2, "行の数だけ回ができる");
 });
@@ -256,7 +256,7 @@ test("新しく作る条件には、その取引先の締結済みの基本契�
 test("この案件で既に使っている基本契約を優先する", async () => {
   const { svc } = build((t) =>
     t.includes("JOIN agreements a ON a.id = c.agreement_id")
-      ? [{ id: 9, agreement_no: "AGR-2024-0002", title: "旧・制作業務委託基本契約" }]
+      ? [{ id: 9, agreement_no: "AGR-2024-0002", title: "旧・業務委託基本契約" }]
       : agreement(t));
   const r = await svc.preview({ templateKey: "purchase_order", matterId: 3, csv: CSV_WORKS });
   assert.equal(r.groups[0].condition.agreement?.id, 9);
@@ -351,7 +351,7 @@ VD-00317,合同会社アトリエ蒼,WRK-10013,,,第2期 制作,挿絵,カラー
 test("契約番号を書けば、その契約を当てる（自動判定より強い）", async () => {
   const { svc } = build((t, p) =>
     t.includes("FROM agreements") && t.includes("lower(btrim(agreement_no))")
-      ? [{ id: 7, agreement_no: "AGR-2025-0011", title: "制作業務委託基本契約", counterparty_id: 2 }]
+      ? [{ id: 7, agreement_no: "AGR-2025-0011", title: "業務委託基本契約", counterparty_id: 2 }]
       : undefined);
   const r = await svc.preview({ templateKey: "purchase_order", matterId: 3, csv: `${HEAD}
 VD-00317,合同会社アトリエ蒼,,,AGR-2025-0011,,表紙,カラー1点,1,150000,検収後,2026-10-31,2026-11-30,,発注者,,,固定額,` });
@@ -460,13 +460,13 @@ test("署名欄と基本契約の切り替えを、書類の手入力として�
 VD-00317,合同会社アトリエ蒼,,,,,表紙,カラー1点,1,150000,検収後,2026-10-31,2026-11-30,,発注者,あり,なし,固定額,`);
   assert.deepEqual(documentToggles({
     rows,
-    condition: { agreement: { id: 7, agreementNo: "AGR-2025-0011", title: "制作業務委託基本契約" } }
+    condition: { agreement: { id: 7, agreementNo: "AGR-2025-0011", title: "業務委託基本契約" } }
   } as never), {
     SHOW_ORDER_SIGN_SECTION: true,
     SHOW_SIGN_SECTION: false,
     HAS_BASE_CONTRACT: true,
     // 番号だけだと紙に何の契約か出ない。
-    MASTER_CONTRACT_REF: "制作業務委託基本契約（AGR-2025-0011）"
+    MASTER_CONTRACT_REF: "業務委託基本契約（AGR-2025-0011）"
   });
 });
 

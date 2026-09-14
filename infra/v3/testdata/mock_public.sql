@@ -100,7 +100,7 @@ INSERT INTO work_materials (id,work_id,material_no,material_name,material_type,i
 INSERT INTO work_relations (parent_work_id,child_work_id,relation_type) VALUES (10,11,'translation');
 INSERT INTO contracts (id,document_number,contract_title,primary_vendor_id,contract_status,executed_at,effective_date,expiration_date,auto_renewal,renewal_notice_months) VALUES
  (201,'AGR-2026-0088','繁体字版 配信許諾契約',3,'executed','2026-04-02','2026-04-01','2029-03-31',true,3),
- (202,'AGR-2025-0011','制作業務委託基本契約',2,'executed','2025-04-01','2025-04-01',NULL,true,1),
+ (202,'AGR-2025-0011','業務委託基本契約',2,'executed','2025-04-01','2025-04-01',NULL,true,1),
  (203,'AGR-2020-0001','相手先未設定の旧契約',NULL,'executed',NULL,NULL,NULL,false,NULL);
 INSERT INTO document_templates (id,template_key,label,category,document_prefix,current_version_id) VALUES
  (301,'royalty_statement','利用許諾料計算書','license','ARC-RS',401),
