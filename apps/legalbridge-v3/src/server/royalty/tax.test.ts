@@ -9,12 +9,12 @@ import {
   computeRoyaltyPayment
 } from "./tax.js";
 
-test("消費税は ceil(税抜 × 税率/100)、既定10%・8%可・0円は0", () => {
+test("消費税は切り捨て(税抜 × 税率/100)、既定10%・8%可・0円は0", () => {
   assert.equal(consumptionTax(10000), 1000);
-  assert.equal(consumptionTax(8642), 865);     // ceil(864.2)
+  assert.equal(consumptionTax(8642), 864);     // 864.2 を切り捨て
   assert.equal(consumptionTax(10000, 8), 800);
   assert.equal(consumptionTax(0), 0);
-  assert.equal(consumptionTax(1), 1);          // ceil(0.1)
+  assert.equal(consumptionTax(1), 0);          // 0.1 を切り捨て
 });
 
 test("源泉対象判定：vendor有効 / 個人 / フォーム上書き のいずれかで対象", () => {

@@ -15,6 +15,7 @@
 
 import { calculateFee, type FeeResult } from "../royalty/calc.js";
 import { computeStatementLine, convertToJpy } from "../royalty/fx.js";
+import { taxOf } from "../royalty/rounding.js";
 
 type Data = Record<string, unknown>;
 
@@ -187,7 +188,7 @@ export function multiStatementPatch(input: MultiStatementInput): Data {
   });
   const totalSalesJpy = lines.reduce((sum, l) => sum + l.salesJpy, 0);
   const totalPaymentJpy = lines.reduce((sum, l) => sum + l.paymentJpy, 0);
-  const tax = Math.ceil((totalPaymentJpy * taxRate) / 100);
+  const tax = taxOf(totalPaymentJpy, taxRate);
   return {
     statementMode: "multi",
     lineGroups: [{
@@ -323,7 +324,7 @@ export function bundleStatementPatch(
   });
   const totalSalesJpy = computed.reduce((sum, e) => sum + e.salesJpy, 0);
   const totalPaymentJpy = computed.reduce((sum, e) => sum + e.fee.actual_ex_tax, 0);
-  const tax = Math.ceil((totalPaymentJpy * taxRate) / 100);
+  const tax = taxOf(totalPaymentJpy, taxRate);
   return {
     // 本文は多明細と同じ形で描く。保存側の statementMode は bundle のまま。
     statementMode: "multi",
@@ -500,7 +501,7 @@ export function bundleLinesPatch(
   const totalSalesJpy = input.lines.reduce((sum, l) => sum + l.salesJpy, 0);
   const totalPaymentJpy = input.lines.reduce((sum, l) => sum + l.paymentJpy, 0);
   const tax = input.taxTotal === null || input.taxTotal === undefined
-    ? Math.ceil((totalPaymentJpy * taxRate) / 100)
+    ? taxOf(totalPaymentJpy, taxRate)
     : Math.round(input.taxTotal);
   return {
     statementMode: "multi",

@@ -11,6 +11,7 @@ import {
   basisNoteOf, basisOf, methodLabelOf, usageTypeSpec,
   type PaymentStage, type UsageType
 } from "./usage-type.js";
+import { roundRoyalty } from "./rounding.js";
 
 export interface CalculationInput {
   conditionId: number;
@@ -298,8 +299,7 @@ export class RoyaltyStatementService {
         throw new DomainError("VALIDATION",
           `${tag}：料率が入っていません。イン条件か実績に料率を入れてください`);
       }
-      // 支払は ceil（V1 踏襲）。1円未満を切り捨てると作者の取り分が減る。
-      const amount = Math.ceil((basis * ratePct) / 100);
+      const amount = roundRoyalty((basis * ratePct) / 100);
       return {
         eventId: Number(e.id), eventType: String(e.event_type),
         occurredOn: dateStr(e.occurred_on), period: e.period ? String(e.period) : null,

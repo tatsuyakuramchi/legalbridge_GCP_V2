@@ -3,6 +3,7 @@ import { api, ApiError, money } from "./api.js";
 import { rewardLabelFor } from "../server/core/reward.js";
 import { CONTRACT_FORMS } from "../server/conditions/contract-form.js";
 import { readNumberInput } from "../server/core/number-input.js";
+import { roundRoyalty } from "../server/royalty/rounding.js";
 import { RECEIPT_TAX_RATE_PCT, methodLabelOf } from "../server/royalty/usage-type.js";
 import type { PaymentStage, UsageType } from "../server/royalty/usage-type.js";
 
@@ -356,7 +357,9 @@ export function ConditionEvents(
   const usageAmount = (() => {
     const rate = numOf("ratePct");
     if (usageBasis === null || !rate || rate <= 0) return null;
-    return Math.ceil((usageBasis * rate) / 100);
+    // 丸め方はサーバと同じ（rounding.ts）。ここだけ違うと、画面に出た額と
+    // 保存された額が1円ずれる。
+    return roundRoyalty((usageBasis * rate) / 100);
   })();
 
   /**

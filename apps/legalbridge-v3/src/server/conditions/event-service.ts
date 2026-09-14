@@ -9,6 +9,7 @@ import {
   type PaymentStage, type UsageType
 } from "../royalty/usage-type.js";
 import { ppmToPct } from "../royalty/economics.js";
+import { roundRoyalty } from "../royalty/rounding.js";
 
 /**
  * 条件の実績（明細の数値）。
@@ -260,7 +261,7 @@ export class ConditionEventService {
         // 「総額 − 控除 = 実額」の決まりは、報告売上をそのまま実額にしていた
         // 古い形のもの。受領価格に料率を掛ける形では成り立たないので見ない。
         const amount = usageType
-          ? Math.ceil((basisOf({
+          ? roundRoyalty((basisOf({
               usageType, unitAmount, quantity: input.quantity ?? null,
               sampleQuantity: input.sampleQuantity ?? null, grossAmount: gross,
               paymentStage: input.paymentStage ?? null,

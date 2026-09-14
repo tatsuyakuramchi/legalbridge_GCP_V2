@@ -15,16 +15,18 @@
  *   after_mg
  *     ↓ − AG 相殺（累積消化）
  *   actual_ex_tax
- *     ↓ × tax_rate（ceil）
+ *     ↓ × tax_rate（切り捨て）
  *   total_inc_tax
  *
  * gross の形は契約の料金モデルで決まる：
- *   固定額型   gross = ceil(unit_price × (quantity − sample_quantity))
- *   サブスク型 gross = ceil(period_amount × period_count + initial_fee)
- *   業績連動型 gross = ceil(base_price × (quantity − sample_quantity) × rate_pct/100)
- *   売上報告型 gross = ceil(base_amount × rate_pct/100)（数量なし）
+ *   固定額型   gross = round(unit_price × (quantity − sample_quantity))
+ *   サブスク型 gross = round(period_amount × period_count + initial_fee)
+ *   業績連動型 gross = round(base_price × (quantity − sample_quantity) × rate_pct/100)
+ *   売上報告型 gross = round(base_amount × rate_pct/100)（数量なし）
  *
- * 丸めポリシー（Legal合意）：消費税・その他の中間計算とも Math.ceil で統一。
+ * 丸めポリシー（2026-09 変更）：利用許諾料は四捨五入、消費税は切り捨て。
+ * 決め方は rounding.ts に置き、ここは呼ぶだけにする。
+ * それ以前は「消費税・その他の中間計算とも ceil で統一」だった。
  *
  * MG / AG モデル：
  *   - MG（最低保証）= 各計算書での floor。actual = max(after_acceptance, mg_amount)。
@@ -37,6 +39,7 @@
  * AG として再解釈すべきもの。既存呼び出し側との互換のため返却shapeは維持し、
  * 常に 0 / mg_amount / false を返す（deprecated）。
  */
+import { roundRoyalty, taxOf } from "./rounding.js";
 
 // ─────────────────────────────────────────────────────────────────
 //  Types
@@ -138,7 +141,7 @@ function calcGross(terms: FeeTerms, adj: Adjustments): {
       const samples = Number(adj.sample_quantity) || 0;
       const billable = Math.max(0, Number(terms.quantity) - samples);
       const unit = Number(terms.unit_price) || 0;
-      const gross = Math.ceil(unit * billable);
+      const gross = roundRoyalty(unit * billable);
       const breakdown = samples > 0
         ? `${unit} × (${terms.quantity} − ${samples}) = ${gross}`
         : `${unit} × ${billable} = ${gross}`;
@@ -149,7 +152,7 @@ function calcGross(terms: FeeTerms, adj: Adjustments): {
       const periodCount = Number(terms.period_count) || 0;
       const initial = Number(terms.initial_fee) || 0;
       const recurring = periodAmount * periodCount;
-      const gross = Math.ceil(recurring + initial);
+      const gross = roundRoyalty(recurring + initial);
       const breakdown = initial > 0
         ? `${periodAmount} × ${periodCount} (${terms.period_unit || "period"}) + initial ${initial} = ${gross}`
         : `${periodAmount} × ${periodCount} (${terms.period_unit || "period"}) = ${gross}`;
@@ -160,7 +163,7 @@ function calcGross(terms: FeeTerms, adj: Adjustments): {
       const billable = Math.max(0, Number(terms.quantity) - samples);
       const base = Number(terms.base_price) || 0;
       const rate = Number(terms.rate_pct) || 0;
-      const gross = Math.ceil(base * billable * (rate / 100));
+      const gross = roundRoyalty(base * billable * (rate / 100));
       const breakdown = samples > 0
         ? `${base} × (${terms.quantity} − ${samples}) × ${rate}% = ${gross}`
         : `${base} × ${billable} × ${rate}% = ${gross}`;
@@ -170,7 +173,7 @@ function calcGross(terms: FeeTerms, adj: Adjustments): {
       // 売上報告型 = 報告金額 × 料率（数量なし）。
       const base = Number(terms.base_amount) || 0;
       const rate = Number(terms.rate_pct) || 0;
-      const gross = Math.ceil(base * (rate / 100));
+      const gross = roundRoyalty(base * (rate / 100));
       const breakdown = `${base} × ${rate}% = ${gross}`;
       return { gross, breakdown };
     }
@@ -201,7 +204,7 @@ export function calculateFee(
     rawRatio == null || !Number.isFinite(Number(rawRatio))
       ? 1.0
       : Math.max(0, Math.min(1, Number(rawRatio)));
-  const after_acceptance = Math.ceil(gross * ratio);
+  const after_acceptance = roundRoyalty(gross * ratio);
 
   // 3. MG floor：グロスが MG を下回ったら MG を採用（MG自体は消化されない）。
   const mgTotal = Number(adjustments.mg_amount) || 0;
@@ -223,9 +226,9 @@ export function calculateFee(
     agTotal > 0 && agConsumedBefore + ag_offset_this_time >= agTotal;
   const actual_ex_tax = after_mg - ag_offset_this_time;
 
-  // 5. Tax（ceil）
+  // 5. Tax（切り捨て）
   const safeTaxRate = Number(taxRate) || 0;
-  const tax_amount = Math.ceil(actual_ex_tax * (safeTaxRate / 100));
+  const tax_amount = taxOf(actual_ex_tax, safeTaxRate);
   const total_inc_tax = actual_ex_tax + tax_amount;
 
   return {

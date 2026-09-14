@@ -22,6 +22,7 @@
  * 丸め注記：消費税は ceil、源泉は各段 floor（V1踏襲）。源泉税額はDBに永続化されず
  * 支払報告の導出値（物理列 `payments.withholding_tax` は別途存在）。
  */
+import { taxOf } from "./rounding.js";
 
 /** 源泉：100万円のしきい値。 */
 export const WITHHOLDING_THRESHOLD = 1_000_000;
@@ -31,12 +32,13 @@ export const WITHHOLDING_RATE = 0.1021;
 export const WITHHOLDING_RATE_OVER = 0.2042;
 
 /**
- * 消費税額 = ceil(税抜 × 税率/100)。税率既定10%。
+ * 消費税額 = 切り捨て(税抜 × 税率/100)。税率既定10%。
+ *
+ * 下の源泉徴収も切り捨てだが、あちらは所得税法の定めで、こちらは社内の
+ * 決まり。同じ丸め方でも由来が違うので別々に持つ。
  */
 export function consumptionTax(amountExTax: number, taxRatePct: number = 10): number {
-  const base = Number(amountExTax) || 0;
-  const rate = Number(taxRatePct) || 0;
-  return Math.ceil((base * rate) / 100);
+  return taxOf(amountExTax, taxRatePct);
 }
 
 /**

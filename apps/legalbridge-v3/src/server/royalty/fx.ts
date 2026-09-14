@@ -1,5 +1,5 @@
 // V2 から移植（apps/legalbridge/src/royalty/fx.ts）。純関数・DB非依存。
-// 為替は手入力レートのみ。円換算は round、支払は ceil（V1踏襲）。
+// 為替は手入力レートのみ。円換算・支払とも四捨五入（rounding.ts の決まり）。
 /**
  * 為替換算・売上報告明細の計算（純関数・DB非依存）— Phase 1 スライス9。
  *
@@ -18,6 +18,7 @@
  *
  * 丸め：円換算 base は round、支払は ceil（V1踏襲）。
  */
+import { roundRoyalty } from "./rounding.js";
 
 /**
  * 外貨額を円へ換算する。JPY（大小文字無視）はそのまま round、
@@ -67,13 +68,13 @@ export function computeStatementLine(input: StatementLineInput): StatementLine {
     return {
       method: "manufacturing",
       salesJpy: Math.round(unitPrice * billable),
-      paymentJpy: Math.ceil((unitPrice * billable * ratePct) / 100),
+      paymentJpy: roundRoyalty((unitPrice * billable * ratePct) / 100),
     };
   }
   const base = convertToJpy(Number(input.salesInput) || 0, input.intakeCurrency ?? "JPY", input.fxRate ?? 0);
   return {
     method: "revenue",
     salesJpy: base,
-    paymentJpy: Math.ceil((base * ratePct) / 100),
+    paymentJpy: roundRoyalty((base * ratePct) / 100),
   };
 }

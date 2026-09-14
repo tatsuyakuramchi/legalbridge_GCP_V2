@@ -95,15 +95,15 @@ test("AG offset：残高から相殺、ag_consumed_beforeを反映、使い切�
   assert.equal(none.ag_fully_consumed, false);
 });
 
-// ── 消費税（ceil） ──
+// ── 消費税（切り捨て） ──
 
-test("消費税は ceil(税抜 × 税率)、税率既定10%、8%も可", () => {
-  // revenue gross 8642 → tax ceil(864.2)=865
+test("消費税は切り捨て(税抜 × 税率)、税率既定10%、8%も可", () => {
+  // revenue gross round(8641.92)=8642 → tax 864.2 を切り捨てて 864
   const r = calculateFee({ type: "revenue", base_amount: 123456, rate_pct: 7 });
   assert.equal(r.actual_ex_tax, 8642);
   assert.equal(r.tax_rate, 10);
-  assert.equal(r.tax_amount, 865);
-  assert.equal(r.total_inc_tax, 9507);
+  assert.equal(r.tax_amount, 864);
+  assert.equal(r.total_inc_tax, 9506);
 
   const r8 = calculateFee({ type: "fixed", unit_price: 10000, quantity: 1 }, {}, 8);
   assert.equal(r8.tax_amount, 800);

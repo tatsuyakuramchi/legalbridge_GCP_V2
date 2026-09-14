@@ -97,13 +97,15 @@ test("MG下限のあとにAG相殺が来る（順序が変わると金額が変�
   assert.equal(result.tax_amount, 40000);
 });
 
-test("丸めは切り上げで統一（1円のズレを許容しない）", () => {
+test("許諾料は四捨五入、消費税は切り捨て", () => {
   const condition = { ...base, ratePpm: 33333 };          // 3.3333%
   const result = calculateFee(
     buildFeeTerms(condition, { salesInput: 100001 }),
     buildAdjustments(condition, {}, 0), 10);
-  assert.equal(result.gross_ex_tax, Math.ceil(100001 * 0.033333));
-  assert.equal(result.tax_amount, Math.ceil(result.actual_ex_tax * 0.1));
+  // 100001 × 3.3333% = 3333.36…。切り上げなら 3334 だが、四捨五入で 3333。
+  assert.equal(result.gross_ex_tax, 3333);
+  assert.equal(result.gross_ex_tax, Math.round(100001 * 0.033333));
+  assert.equal(result.tax_amount, Math.floor(result.actual_ex_tax * 0.1));
 });
 
 test("歩留率は検収での減額に効く", () => {
