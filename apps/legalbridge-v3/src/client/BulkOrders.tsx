@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, ApiError, money } from "./api.js";
+import { api, ApiError, money, saveCsv } from "./api.js";
 import { SearchSelect, type SearchOption } from "./SearchSelect.js";
 
 /**
@@ -78,18 +78,6 @@ async function readCsv(file: File): Promise<string> {
   const utf8 = new TextDecoder("utf-8", { fatal: false }).decode(buf);
   if (!utf8.includes("�")) return utf8;
   try { return new TextDecoder("shift_jis").decode(buf); } catch { return utf8; }
-}
-
-/**
- * CSV を手元へ落とす。
- * サーバは中身を JSON で返す（認証の内側なので、素のリンクでは取りに行けない）。
- */
-function saveCsv(csv: string, name: string) {
-  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-  const a = document.createElement("a");
-  a.href = url; a.download = name;
-  document.body.appendChild(a); a.click(); a.remove();
-  URL.revokeObjectURL(url);
 }
 
 const TONE = { create: "ok", choose: "warn", skip: "out" } as const;

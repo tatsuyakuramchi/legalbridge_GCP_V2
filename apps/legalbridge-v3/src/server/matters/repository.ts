@@ -85,14 +85,20 @@ export class MatterRepository {
 
   private async documents(id: number) {
     const r = await this.database.query(
-      `SELECT d.id, d.document_no, d.status, d.issued_at, v.template_label
+      `SELECT d.id, d.document_no, d.status, d.issued_at, v.template_label,
+              t.template_key
          FROM documents d
          LEFT JOIN v_document_display v ON v.document_id = d.id
+         LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
+         LEFT JOIN document_templates t ON t.id = tv.template_id
         WHERE d.matter_id = $1
         ORDER BY d.issued_at DESC NULLS LAST, d.id DESC`, [id]);
     return r.rows.map((d) => ({
       id: Number(d.id), documentNo: str(d.document_no), status: String(d.status),
       templateLabel: str(d.template_label),
+      // ひな形の種類。画面が「発注書だけ」を選り分けるのに要る
+      // （名前で見分けると「発注書 (国内)」の表記に依存する）。
+      templateKey: str(d.template_key),
       issuedAt: d.issued_at ? new Date(String(d.issued_at)).toISOString() : null
     }));
   }

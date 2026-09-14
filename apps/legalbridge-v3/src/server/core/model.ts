@@ -148,7 +148,9 @@ export interface MatterDetail extends MatterSummary {
   driveFolderUrl: string | null;
   /** 案件は所有せず参照するだけ。ここに並ぶのは全部リンク。 */
   conditions: ConditionSummary[];
-  documents: Array<{ id: number; documentNo: string | null; status: string; templateLabel: string | null; issuedAt: string | null }>;
+  documents: Array<{ id: number; documentNo: string | null; status: string;
+                     templateLabel: string | null; templateKey: string | null;
+                     issuedAt: string | null }>;
   payments: Array<{ id: number; paymentNo: string | null; direction: Direction; amount: number; currency: string; dueOn: string | null; status: string }>;
   communications: Array<{ occurredAt: string; action: string; actor: string; detail: Record<string, unknown> }>;
   links: Array<{ targetType: string; targetRef: string; relation: string;

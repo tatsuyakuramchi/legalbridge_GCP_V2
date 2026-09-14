@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { MatterDetail, MatterKind } from "../server/core/model.js";
-import { api, ApiError } from "./api.js";
+import { api, ApiError, saveCsv } from "./api.js";
 import { ListSearch, useDebounced } from "./ListTools.js";
 import { ConditionCreateForm } from "./ConditionCreateForm.js";
 import { WorkChooser, type WorkOption } from "./WorkChooser.js";
@@ -252,6 +252,32 @@ export function MatterDocuments(
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const linked = new Set(detail.documents.map((d) => d.id));
+  /**
+   * 一括修正に出す文書。決定済みの発注書だけが選べる。
+   * ここで選ばせないと、直したい文書が分かっているのに、案件まるごと出して
+   * 要らない行を Excel で消す作業になる。
+   */
+  const [picked, setPicked] = useState<Set<number>>(new Set());
+  const [exported, setExported] =
+    useState<{ rows: number; documents: number;
+               skipped: Array<{ documentNo: string | null; reason: string }> } | null>(null);
+  const fixable = (d: MatterDetail["documents"][number]) =>
+    d.status === "issued"
+    && (d.templateKey === "purchase_order" || d.templateKey === "intl_purchase_order");
+  const pickedIds = detail.documents.filter((d) => fixable(d) && picked.has(d.id)).map((d) => d.id);
+
+  async function exportPicked() {
+    setBusy(true); setError(null); setExported(null);
+    try {
+      const r = await api.post<{ csv: string; rows: number; documents: number;
+                                 skipped: Array<{ documentNo: string | null; reason: string }> }>(
+        "/documents/batches/export", { documentIds: pickedIds });
+      if (!r.rows) setError("出せる明細がありませんでした");
+      else saveCsv(r.csv, `orders-${detail.matterNo ?? detail.id}.csv`);
+      setExported(r);
+    } catch (e) { setError((e as ApiError).message); }
+    finally { setBusy(false); }
+  }
 
   useEffect(() => {
     if (!picking) return;
@@ -352,12 +378,60 @@ export function MatterDocuments(
 
       {error && <div className="alert">{error}</div>}
 
+      {exported && (
+        <div className={exported.skipped.length ? "note warn" : "note ok"}>
+          発注書 {exported.documents} 枚・明細 {exported.rows} 行を出しました。
+          直すところを書き換え、<b>修正理由</b>を入れてから
+          「発注書をまとめて作る（CSV）」で上げ直してください。
+          {exported.skipped.length > 0 && (
+            <div style={{ marginTop: 4 }}>
+              出せなかったもの {exported.skipped.length} 件：
+              {exported.skipped.map((x) => `${x.documentNo ?? "（番号なし）"}（${x.reason}）`).join("／")}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 決定済みの発注書を選んで、一括修正の CSV に出す。
+          直したい文書が分かっているのに案件まるごと出すのでは、要らない行を
+          Excel で消す作業になる。 */}
+      {detail.documents.some(fixable) && (
+        <div className="row">
+          <button className="btn btn-sm" disabled={busy || !pickedIds.length}
+                  onClick={() => void exportPicked()}>
+            選んだ {pickedIds.length} 件を CSV に出す（一括修正用）
+          </button>
+          <button className="linky" disabled={busy}
+                  onClick={() => setPicked(new Set(detail.documents.filter(fixable).map((d) => d.id)))}>
+            決定済みの発注書をすべて選ぶ
+          </button>
+          {pickedIds.length > 0 && (
+            <button className="linky" onClick={() => setPicked(new Set())}>選択を外す</button>
+          )}
+          <span className="faint">
+            出した CSV は「一括修正 あり」で入っています。直して上げ直すと訂正版になります
+          </span>
+        </div>
+      )}
+
       {detail.documents.length ? (
         <table>
-          <thead><tr><th>文書番号</th><th>種別</th><th>状態</th><th></th></tr></thead>
+          <thead><tr><th></th><th>文書番号</th><th>種別</th><th>状態</th><th></th></tr></thead>
           <tbody>
             {detail.documents.map((d) => (
               <tr key={d.id}>
+                <td>
+                  {/* 直せるのは決定済みの発注書だけ。それ以外は四角を出さない。 */}
+                  {fixable(d) && (
+                    <input type="checkbox" checked={picked.has(d.id)}
+                           aria-label={`${d.documentNo ?? d.id} を一括修正に出す`}
+                           onChange={(e) => setPicked((prev) => {
+                             const next = new Set(prev);
+                             if (e.target.checked) next.add(d.id); else next.delete(d.id);
+                             return next;
+                           })} />
+                  )}
+                </td>
                 <td className="code">{d.documentNo ?? "（下書き）"}</td>
                 <td>{d.templateLabel ?? "—"}</td>
                 <td><StatusTag kind="document" value={d.status} /></td>

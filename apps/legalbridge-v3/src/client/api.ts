@@ -45,3 +45,17 @@ export function money(amount: number | null, currency = "JPY"): string {
 /** 百万分率を % 表示へ。 */
 export const rate = (ppm: number | null): string =>
   ppm === null || ppm === undefined ? "—" : `${(ppm / 10000).toFixed(3)}%`;
+
+/**
+ * CSV を手元へ落とす。
+ *
+ * サーバは中身を JSON で返す（API は認証の内側なので、素のリンクでは
+ * 取りに行けない）。受け取った文字列をここでファイルにする。
+ */
+export function saveCsv(csv: string, name: string) {
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const a = document.createElement("a");
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
