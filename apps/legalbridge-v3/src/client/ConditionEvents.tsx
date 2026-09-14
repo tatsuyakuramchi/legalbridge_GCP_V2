@@ -23,8 +23,19 @@ interface EventRow {
   inspectorDept: string | null; inspectorName: string | null;
   documentId: number | null; documentNo: string | null;
   createdAt: string; createdBy: string;
+  usageType: string | null; usageLabel: string | null;
+  outConditionId: number | null; outConditionNo: string | null; outConditionName: string | null;
+  unitAmount: number | null; ratePpm: number | null;
 }
 interface TypeOption { value: string; label: string }
+interface UsageOption {
+  value: string; label: string; methodLabel: string;
+  needsOutCondition: boolean; fields: string[]; hint: string;
+}
+interface OutCondition {
+  id: number; conditionNo: string | null; name: string;
+  status: string; partyName: string | null; workTitle: string | null; scopes: string | null;
+}
 interface ScheduleRow {
   id: number; seq: number; label: string | null; triggerKind: string;
   plannedAmount: number; dueOn: string | null; eventId: number | null;
@@ -49,6 +60,7 @@ interface PreviewResponse {
 
 export function ConditionEvents(
   { conditionId, currency, editable, matterId, pricingModel, deliverableOwnership, reloadKey,
+    ratePpm, direction, workTitle,
     openForSchedule, onOpened, onCompose, onOpenDocument, onChanged }:
   { conditionId: number; currency: string; editable: boolean;
     matterId?: number | null; reloadKey?: number;
@@ -59,6 +71,12 @@ export function ConditionEvents(
     onOpened?: () => void;
     /** 計算方式。料率・単価×数量なら実績の束から計算書を出せる。 */
     pricingModel?: string;
+    /** 条件の料率（百万分率）。実績の料率の初期値になる。 */
+    ratePpm?: number | null;
+    /** 取得（IN）の条件か。利用形態を付けられるのはこちらだけ。 */
+    direction?: string;
+    /** 条件の作品。アウト条件の候補を同じ作品に寄せる。 */
+    workTitle?: string | null;
     /** 文書の画面へ、この条件と実績を選んだ状態で移る。 */
     onCompose?: (conditionIds: number[], eventIds: number[], matterId?: number | null) => void;
     /** 決めた文書をそのまま開く。決めたあと画面に留まると次の手が分からない。 */
@@ -67,6 +85,9 @@ export function ConditionEvents(
 ) {
   const [rows, setRows] = useState<EventRow[]>([]);
   const [types, setTypes] = useState<TypeOption[]>([]);
+  const [usageTypes, setUsageTypes] = useState<UsageOption[]>([]);
+  const [outFound, setOutFound] = useState<OutCondition[]>([]);
+  const [outQuery, setOutQuery] = useState("");
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -99,6 +120,13 @@ export function ConditionEvents(
    * 売上を入れさせて計算書へ誘導すると、二重に計算した別の額が出る。
    */
   const rewardLabel = rewardLabelFor(pricingModel, deliverableOwnership);
+  /**
+   * 利用形態を付けられるのは取得（IN）の料率・単価×数量の条件だけ。
+   * 許諾料は作者から取った権利に対して払うものなので、実績はイン条件に載せる。
+   */
+  const canUse = royalty && (direction ?? "in") === "in";
+  // 条件の料率を実績の初期値にする。その回だけ違う料率があれば直せる。
+  const defaultRatePct = ratePpm === null || ratePpm === undefined ? "" : String(ratePpm / 10000);
   // 予定の回。実績が付いていない回だけ選べる（1つの回に実績は1件）。
   const [schedules, setSchedules] = useState<ScheduleRow[]>([]);
   const [typeByTrigger, setTypeByTrigger] = useState<Record<string, string>>({});
@@ -111,6 +139,17 @@ export function ConditionEvents(
   const [stmtDone, setStmtDone] = useState<{ id: number; documentNo: string } | null>(null);
 
   const pickedIds = [...picked].filter((id) => rows.some((r) => r.id === id && r.status === "active" && !r.documentId));
+
+  // 許諾したアウト条件を引く。作品で寄せてあるので、空欄でも候補が出る。
+  useEffect(() => {
+    if (!usageTypes.length) return;
+    let live = true;
+    api.get<{ conditions: OutCondition[] }>(
+      `/conditions/${conditionId}/out-candidates${outQuery.trim() ? `?q=${encodeURIComponent(outQuery.trim())}` : ""}`)
+      .then((r) => { if (live) setOutFound(r.conditions); })
+      .catch(() => { if (live) setOutFound([]); });
+    return () => { live = false; };
+  }, [conditionId, outQuery, usageTypes.length]);
 
   // 束を変えたら試算し直す。保存しない。
   useEffect(() => {
@@ -139,8 +178,9 @@ export function ConditionEvents(
   }
 
   function load() {
-    api.get<{ events: EventRow[]; types: TypeOption[] }>(`/conditions/${conditionId}/events`)
-      .then((r) => { setRows(r.events); setTypes(r.types); })
+    api.get<{ events: EventRow[]; types: TypeOption[]; usageTypes: UsageOption[] }>(
+      `/conditions/${conditionId}/events`)
+      .then((r) => { setRows(r.events); setTypes(r.types); setUsageTypes(r.usageTypes ?? []); })
       .catch((e: ApiError) => setError(e.message));
     // 予定は「どの回の分か」を選ぶために要る。実績の欄だけ見ていると回に繋がらない。
     api.get<{ lines: ScheduleRow[]; eventTypeByTrigger: Record<string, string> }>(
@@ -225,6 +265,37 @@ export function ConditionEvents(
   // 定期の回か。回を選んでいなければ、種別が役務の期間なら定期とみなす。
   const periodicRound = chosen?.triggerKind === "periodic"
     || (v.eventType ?? "") === "service_period";
+  // 選んだ利用形態。これで要る欄が決まる。
+  const usage = usageTypes.find((u) => u.value === (v.usageType ?? "")) ?? null;
+  const usageField = (name: string) => Boolean(usage?.fields.includes(name));
+  const pickedOut = outFound.find((o) => String(o.id) === (v.outConditionId ?? ""));
+  /**
+   * 保存する前に、その実績の許諾料を見せる。式はサーバと同じ。
+   * 揃っていなければ null（数字が足りないうちは何も出さない）。
+   */
+  const numOf = (name: string) => {
+    const raw = f(name).trim();
+    if (!raw) return null;
+    const parsed = Number(raw.replace(/[^0-9.-]/g, ""));
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const usageBasis = (() => {
+    if (!usage) return null;
+    if (usage.value === "sublicense") {
+      const gross = numOf("grossAmount");
+      return gross && gross > 0 ? Math.round(gross) : null;
+    }
+    const unit = numOf("unitAmount");
+    const quantity = numOf("quantity");
+    if (!unit || !quantity || unit <= 0 || quantity <= 0) return null;
+    const billable = Math.max(0, quantity - (numOf("sampleQuantity") ?? 0));
+    return billable > 0 ? Math.round(unit * billable) : null;
+  })();
+  const usageAmount = (() => {
+    const rate = numOf("ratePct");
+    if (usageBasis === null || !rate || rate <= 0) return null;
+    return Math.ceil((usageBasis * rate) / 100);
+  })();
   const plannedDiff = chosen && (v.amount ?? "").trim()
     ? Number(v.amount) - chosen.plannedAmount : null;
 
@@ -236,6 +307,7 @@ export function ConditionEvents(
       period: "", quantity: royalty && !rewardLabel ? "" : "1",
       grossAmount: "", deductions: "", amount: "", note: "",
       contractForm: "", serviceFrom: "", serviceTo: "",
+      usageType: "", outConditionId: "", unitAmount: "", ratePct: defaultRatePct,
       deliverable: "", inspectedOn: "", inspectorDept: "", inspectorName: ""
     };
   }
@@ -284,6 +356,11 @@ export function ConditionEvents(
         contractForm: f("contractForm").trim() || null,
         serviceFrom: f("serviceFrom") || null,
         serviceTo: f("serviceTo") || null,
+        usageType: f("usageType") || null,
+        outConditionId: f("outConditionId") ? Number(f("outConditionId")) : null,
+        unitAmount: f("unitAmount").trim() ? Math.round(Number(f("unitAmount"))) : null,
+        // 画面は % で受け、保存は ppm（百万分率）。8% → 80000
+        ratePpm: f("ratePct").trim() ? Math.round(Number(f("ratePct")) * 10000) : null,
         scheduleId: f("scheduleId") ? Number(f("scheduleId")) : null,
         // 検収書がそのまま使う項目。空なら文書側で条件・案件から補う。
         deliverable: f("deliverable").trim() || null,
@@ -371,13 +448,87 @@ export function ConditionEvents(
                        onChange={(e) => set("period", e.target.value)} />
               </label>
             )}
-            <label className="field">
-              <span>数量</span>
-              <input inputMode="numeric" value={f("quantity")} onChange={(e) => set("quantity", e.target.value)} />
-              {inspecting && (
-                <small className="faint">検収書の「今回数量」に出ます。1回分なら 1</small>
-              )}
-            </label>
+            {/*
+              * 権利の使い方。利用許諾料計算書はこれで算定の形が決まる。
+              *   自社製造・自社販売 … 基準価格 × 個数 × 料率（アウト条件なし）
+              *   再許諾            … 受領価格 × 料率（アウト条件あり）
+              *   自社製造・他社販売 … 受領価格 × 製造個数 × 料率（アウト条件あり）
+              */}
+            {canUse && (
+              <label className="field">
+                <span>利用形態</span>
+                <select value={f("usageType")}
+                  onChange={(e) => setV({
+                    ...v, usageType: e.target.value,
+                    // 形を変えたら、その形で使わない欄は消す。前の形の数字が
+                    // 残ったまま保存されると、紙に出ない数字が実績に残る。
+                    outConditionId: "", unitAmount: "", grossAmount: "",
+                    ratePct: v.ratePct || defaultRatePct
+                  })}>
+                  <option value="">（計算書を出さない実績）</option>
+                  {usageTypes.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
+                </select>
+                {usage && <small className="faint">{usage.hint}</small>}
+              </label>
+            )}
+            {usage?.needsOutCondition && (
+              <label className="field" style={{ gridColumn: "1 / -1" }}>
+                <span>許諾したアウト条件</span>
+                <input value={outQuery} placeholder={`${workTitle ?? "作品"} の許諾を相手先名などで探す`}
+                  onChange={(e) => setOutQuery(e.target.value)} />
+                <select value={f("outConditionId")} style={{ marginTop: 4 }}
+                  onChange={(e) => set("outConditionId", e.target.value)}>
+                  <option value="">（選んでください）</option>
+                  {outFound.map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.conditionNo ?? `#${o.id}`}　{o.partyName ?? "—"}　{o.name}
+                    </option>
+                  ))}
+                </select>
+                {pickedOut?.scopes
+                  ? <small className="faint">許諾範囲：{pickedOut.scopes}（計算書に出ます）</small>
+                  : <small className="faint">
+                      見つからなければ 条件明細 → 条件を登録 で、許諾（OUT）の条件を作ってから戻ってください
+                    </small>}
+              </label>
+            )}
+            {usageField("unitAmount") && (
+              <label className="field">
+                <span>{usage?.value === "oem" ? "受領価格（1個あたり）" : "基準価格"}</span>
+                <input inputMode="numeric" value={f("unitAmount")}
+                  onChange={(e) => set("unitAmount", e.target.value)} />
+                <small className="faint">税抜・{currency}</small>
+              </label>
+            )}
+            {(!usage || usageField("quantity")) && (
+              <label className="field">
+                <span>{usage?.value === "oem" ? "製造個数" : "数量"}</span>
+                <input inputMode="numeric" value={f("quantity")} onChange={(e) => set("quantity", e.target.value)} />
+                {inspecting && !usage && (
+                  <small className="faint">検収書の「今回数量」に出ます。1回分なら 1</small>
+                )}
+              </label>
+            )}
+            {usageField("sampleQuantity") && (
+              <label className="field">
+                <span>見本（無償分）</span>
+                <input inputMode="numeric" value={f("sampleQuantity")}
+                  onChange={(e) => set("sampleQuantity", e.target.value)} />
+                <small className="faint">引いた数に料率が掛かります</small>
+              </label>
+            )}
+            {usage && (
+              <label className="field">
+                <span>料率（%）</span>
+                <input inputMode="numeric" value={f("ratePct")}
+                  onChange={(e) => set("ratePct", e.target.value)} />
+                <small className="faint">
+                  {defaultRatePct
+                    ? `イン条件の料率 ${defaultRatePct}% を入れています。特約の回だけ直してください`
+                    : "イン条件に料率がありません。ここに入れるか、条件の料率を直してください"}
+                </small>
+              </label>
+            )}
             <label className="field">
               <span>契約形式</span>
               <input list="contract-forms-event" value={f("contractForm")}
@@ -408,7 +559,17 @@ export function ConditionEvents(
                 <small className="faint">終了日がその回の締め日です</small>
               </label>
             )}
-            {royalty && !rewardLabel && (
+            {usageField("grossAmount") && (
+              <label className="field">
+                <span>受領価格</span>
+                <input inputMode="numeric" value={f("grossAmount")}
+                  onChange={(e) => set("grossAmount", e.target.value)} />
+                <small className="faint">
+                  相手から受け取った額（税抜・{currency}）。これに料率が掛かります
+                </small>
+              </label>
+            )}
+            {royalty && !rewardLabel && !usage && (
               <>
                 <label className="field">
                   <span>報告売上・受領額（円）</span>
@@ -425,6 +586,32 @@ export function ConditionEvents(
                 </label>
               </>
             )}
+            {usage && (
+              <div className="note" style={{ gridColumn: "1 / -1" }}>
+                {usage.methodLabel}
+                {pickedOut?.workTitle && `　製品名：${pickedOut.workTitle}`}
+                {!pickedOut && workTitle && `　製品名：${workTitle}`}
+                {pickedOut?.scopes && `　許諾範囲：${pickedOut.scopes}`}
+              </div>
+            )}
+            {/* 利用形態のある実績は、実額を人が入れない。基礎 × 料率がそのまま
+                作者に払う額なので、入れさせると紙と食い違う。ここには出る額を見せる。 */}
+            {usage ? (
+              <div className="field" style={{ gridColumn: "1 / -1" }}>
+                <span>この実績の許諾料</span>
+                <div className="num" style={{ fontSize: "1.15em", padding: "4px 0" }}>
+                  {usageAmount === null
+                    ? <span className="faint">数字が揃うと出ます</span>
+                    : <b>{money(usageAmount, currency)}</b>}
+                  {usageAmount !== null && (
+                    <span className="faint" style={{ marginLeft: 8 }}>
+                      {money(usageBasis ?? 0, currency)} × {f("ratePct")}%
+                    </span>
+                  )}
+                </div>
+                <small className="faint">保存するときにサーバでも計算し直します</small>
+              </div>
+            ) : (
             <label className="field">
               <span>{rewardLabel ?? "実額"}</span>
               <input inputMode="numeric" value={f("amount")} onChange={(e) => set("amount", e.target.value)} />
@@ -442,6 +629,7 @@ export function ConditionEvents(
                 <small className="danger">予定と差 {money(plannedDiff, currency)}</small>
               )}
             </label>
+            )}
           </div>
 
           {/* 検収書がそのまま使う項目。ここに入れておけば文書を作るとき人が入れずに済む。 */}
@@ -686,7 +874,9 @@ export function ConditionEvents(
       <div className="tablewrap">
         <table>
           <thead><tr>
-            <th></th><th>発生日</th><th>種類</th><th>期間</th><th className="num">数量</th>
+            <th></th><th>発生日</th><th>種類</th><th>期間</th>
+            {canUse && <th>利用形態 ／ 許諾先</th>}
+            <th className="num">数量</th>
             <th className="num">実額</th><th>出どころ</th><th></th>
           </tr></thead>
           <tbody>
@@ -714,6 +904,20 @@ export function ConditionEvents(
                       ? <div className="tag">{row.scheduleLabel ?? "予定あり"}</div>
                       : null}
                   </td>
+                  {canUse && (
+                    <td>
+                      {row.usageLabel ?? <span className="faint">—</span>}
+                      {row.outConditionNo && (
+                        <div className="faint">{row.outConditionNo}　{row.outConditionName}</div>
+                      )}
+                      {row.ratePpm !== null && row.ratePpm !== undefined && (
+                        <div className="faint">
+                          {row.unitAmount ? `${money(row.unitAmount, currency)} × ` : ""}
+                          料率 {row.ratePpm / 10000}%
+                        </div>
+                      )}
+                    </td>
+                  )}
                   <td className="num">{row.quantity ?? "—"}</td>
                   <td className="num" style={voided ? { textDecoration: "line-through" } : undefined}>
                     {money(row.amount, currency)}

@@ -867,6 +867,68 @@ BEGIN
 END
 $a022$;
 
+-- ---------------------------------------------------------------------
+-- A-023: 実績に「利用形態」と、その形に要る数値を持たせる
+--
+-- 利用許諾料計算書は、作者から取った権利（イン条件）に対して払うもの。
+-- 料率はイン条件が決めており、実績はその権利をどう使ったかの記録になる。
+-- 使い方は3つあり、要る数字が違う。
+--
+--   自社製造・自社販売 … アウト条件なし。基準価格 × 個数 × 料率
+--   再許諾            … アウト条件あり。受領価格 × 料率
+--   自社製造・他社販売 … アウト条件あり。受領価格 × 製造個数 × 料率
+--
+-- これまで実績は「数量」と「金額」しか持たず、どの使い方なのかも、
+-- どのアウト条件に対する実績なのかも残らなかった。そのため計算書は
+-- 「実績を載せた条件そのものの計算方式」で分岐するしかなく、
+-- イン条件の料率とアウト条件の実績を組み合わせられなかった。
+--
+-- 料率は実績が持つ。イン条件の値を初期値に入れ、その回だけ違う料率
+-- （特約・期中改定）があれば直せる。直した値が実績に残るので、あとから
+-- 「なぜこの料率なのか」を紙と突き合わせられる。
+-- ---------------------------------------------------------------------
+
+ALTER TABLE v3.condition_events ADD COLUMN IF NOT EXISTS usage_type       text;
+ALTER TABLE v3.condition_events ADD COLUMN IF NOT EXISTS out_condition_id bigint;
+ALTER TABLE v3.condition_events ADD COLUMN IF NOT EXISTS unit_amount      bigint;
+ALTER TABLE v3.condition_events ADD COLUMN IF NOT EXISTS rate_ppm         integer;
+
+COMMENT ON COLUMN v3.condition_events.usage_type IS
+  '利用形態。in_house=自社製造・自社販売 / sublicense=再許諾 / oem=自社製造・他社販売。';
+COMMENT ON COLUMN v3.condition_events.out_condition_id IS
+  '相手に許諾したアウト条件。再許諾・他社販売のときに指す。許諾地域などを紙に出す。';
+COMMENT ON COLUMN v3.condition_events.unit_amount IS
+  '自社製造・自社販売なら基準価格、自社製造・他社販売なら受領価格（1個あたり）。';
+COMMENT ON COLUMN v3.condition_events.rate_ppm IS
+  'その回に効く料率（百万分率）。既定はイン条件の料率。特約の回だけ直せる。';
+
+DO $a023$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.condition_events'::regclass
+                    AND conname = 'condition_events_usage_type_chk') THEN
+    ALTER TABLE v3.condition_events ADD CONSTRAINT condition_events_usage_type_chk
+      CHECK (usage_type IS NULL
+             OR usage_type = ANY (ARRAY['in_house', 'sublicense', 'oem']));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.condition_events'::regclass
+                    AND conname = 'condition_events_out_condition_fk') THEN
+    ALTER TABLE v3.condition_events ADD CONSTRAINT condition_events_out_condition_fk
+      FOREIGN KEY (out_condition_id) REFERENCES v3.conditions(id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.condition_events'::regclass
+                    AND conname = 'condition_events_rate_ppm_chk') THEN
+    ALTER TABLE v3.condition_events ADD CONSTRAINT condition_events_rate_ppm_chk
+      CHECK (rate_ppm IS NULL OR (rate_ppm >= 0 AND rate_ppm <= 1000000));
+  END IF;
+END
+$a023$;
+
+CREATE INDEX IF NOT EXISTS condition_events_out_idx
+  ON v3.condition_events (out_condition_id) WHERE out_condition_id IS NOT NULL;
+
 COMMIT;
 
 
@@ -1013,4 +1075,9 @@ SELECT * FROM (
          || ' / ' || (SELECT count(*)::text FROM information_schema.columns
                        WHERE table_schema='v3' AND table_name='condition_events'
                          AND column_name IN ('contract_form','service_from','service_to'))
+  UNION ALL
+  SELECT 23, '実績の利用形態（A-023。4 列であること）',
+         (SELECT count(*)::text FROM information_schema.columns
+           WHERE table_schema='v3' AND table_name='condition_events'
+             AND column_name IN ('usage_type','out_condition_id','unit_amount','rate_ppm'))
 ) AS 確認 ORDER BY n;

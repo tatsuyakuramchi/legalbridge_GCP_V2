@@ -12,7 +12,7 @@ const db = (over: Record<string, Array<Record<string, unknown>>> = {}) =>
     for (const [fragment, rows] of Object.entries(over)) {
       if (t.includes(fragment)) return rows;
     }
-    if (t.includes("SELECT id, status FROM conditions")) return [{ id: 1, status: "active" }];
+    if (t.includes("SELECT id, status, direction")) return [{ id: 1, status: "active", direction: "in", rate_ppm: null, currency: "JPY" }];
     if (t.includes("INSERT INTO condition_events")) return [{ id: 9 }];
     return [];
   });
@@ -47,11 +47,11 @@ test("総額を書かなければ実額だけで記録できる", async () => {
 
 test("旧版・無効の条件には実績を足せない", async () => {
   await assert.rejects(
-    () => new ConditionEventService(db({ "SELECT id, status FROM conditions": [{ id: 1, status: "superseded" }] }))
+    () => new ConditionEventService(db({ "SELECT id, status, direction": [{ id: 1, status: "superseded" }] }))
       .add(1, input(), "a"),
     /旧版には実績を足せません/);
   await assert.rejects(
-    () => new ConditionEventService(db({ "SELECT id, status FROM conditions": [{ id: 1, status: "void" }] }))
+    () => new ConditionEventService(db({ "SELECT id, status, direction": [{ id: 1, status: "void" }] }))
       .add(1, input(), "a"),
     /無効にした条件には実績を足せません/);
 });

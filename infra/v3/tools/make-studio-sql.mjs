@@ -175,6 +175,11 @@ SELECT * FROM (
          || ' / ' || (SELECT count(*)::text FROM information_schema.columns
                        WHERE table_schema='v3' AND table_name='condition_events'
                          AND column_name IN ('contract_form','service_from','service_to'))
+  UNION ALL
+  SELECT 23, '実績の利用形態（A-023。4 列であること）',
+         (SELECT count(*)::text FROM information_schema.columns
+           WHERE table_schema='v3' AND table_name='condition_events'
+             AND column_name IN ('usage_type','out_condition_id','unit_amount','rate_ppm'))
 ) AS 確認 ORDER BY n;
 `;
 

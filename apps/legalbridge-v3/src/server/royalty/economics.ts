@@ -41,6 +41,11 @@ export interface ReportedResult {
   salesInput?: number | null;
   intakeCurrency?: string | null;
   fxRate?: number | null;
+  /**
+   * 料率の上書き（%）。行ごとに料率を掛けたあとの合計を渡すときに 100 を入れる。
+   * 条件の料率をもう一度掛けると二重になるため。
+   */
+  ratePctOverride?: number | null;
   /** 数量ベース：製造数・販売数と、うち無償分。 */
   quantity?: number | null;
   sampleQuantity?: number | null;
@@ -61,7 +66,9 @@ export const TAX_RATE_BY_CATEGORY: Record<ConditionEconomics["taxCategory"], num
  */
 export function buildFeeTerms(condition: ConditionEconomics, reported: ReportedResult): FeeTerms {
   const currency = condition.currency;
-  const rate = ppmToPct(condition.ratePpm);
+  // 行ごとに料率を掛け終わっているときは 100 が渡る。条件の料率で掛け直さない。
+  const rate = reported.ratePctOverride === null || reported.ratePctOverride === undefined
+    ? ppmToPct(condition.ratePpm) : Number(reported.ratePctOverride);
 
   switch (condition.pricingModel) {
     case "fixed":

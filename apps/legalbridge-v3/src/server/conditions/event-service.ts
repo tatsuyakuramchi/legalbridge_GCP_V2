@@ -1,9 +1,11 @@
-import { inTransaction, type Transactable } from "../core/db.js";
+import { inTransaction, type Queryable, type Transactable } from "../core/db.js";
 import { dateStr, int, num, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { claimSchedule } from "./schedule-service.js";
 import { readContractForm } from "./contract-form.js";
+import { assertUsageInput, basisOf, usageTypeLabel, type UsageType } from "../royalty/usage-type.js";
+import { ppmToPct } from "../royalty/economics.js";
 
 /**
  * 条件の実績（明細の数値）。
@@ -54,6 +56,14 @@ export interface EventInput {
   /** 役務提供期間。定期払いの回で使う。 */
   serviceFrom?: string | null;
   serviceTo?: string | null;
+  /** 権利の使い方。利用許諾料計算書はこれで算定の形が決まる。 */
+  usageType?: UsageType | null;
+  /** 相手へ許諾したアウト条件。再許諾・他社販売で要る。 */
+  outConditionId?: number | null;
+  /** 基準価格（自社販売）／受領価格1個あたり（他社販売）。 */
+  unitAmount?: number | null;
+  /** その回の料率（百万分率）。既定はイン条件の料率。 */
+  ratePpm?: number | null;
 }
 
 export interface EventRow {
@@ -78,6 +88,13 @@ export interface EventRow {
   contractForm: string | null;
   serviceFrom: string | null;
   serviceTo: string | null;
+  usageType: string | null;
+  usageLabel: string | null;
+  outConditionId: number | null;
+  outConditionNo: string | null;
+  outConditionName: string | null;
+  unitAmount: number | null;
+  ratePpm: number | null;
   /** 計算書から作られた実績。画面からは直せない。 */
   documentId: number | null;
   documentNo: string | null;
@@ -96,10 +113,13 @@ export class ConditionEventService {
                 e.schedule_id, s.label AS schedule_label, s.seq AS schedule_seq,
                 e.deliverable, e.inspected_on, e.inspector_dept, e.inspector_name,
                 e.contract_form, e.service_from, e.service_to,
+                e.usage_type, e.out_condition_id, e.unit_amount, e.rate_ppm,
+                oc.condition_no AS out_condition_no, oc.name AS out_condition_name,
                 e.document_id, d.document_no, e.created_at, e.created_by
            FROM condition_events e
            LEFT JOIN documents d ON d.id = e.document_id
            LEFT JOIN condition_schedules s ON s.id = e.schedule_id
+           LEFT JOIN conditions oc ON oc.id = e.out_condition_id
           WHERE e.condition_id = $1
           ORDER BY e.occurred_on DESC, e.id DESC`, [conditionId]);
       return (r.rows as any[]).map((row) => ({
@@ -124,6 +144,13 @@ export class ConditionEventService {
         contractForm: str(row.contract_form),
         serviceFrom: dateStr(row.service_from),
         serviceTo: dateStr(row.service_to),
+        usageType: str(row.usage_type),
+        usageLabel: row.usage_type ? usageTypeLabel(row.usage_type) : null,
+        outConditionId: int(row.out_condition_id),
+        outConditionNo: str(row.out_condition_no),
+        outConditionName: str(row.out_condition_name),
+        unitAmount: int(row.unit_amount),
+        ratePpm: int(row.rate_ppm),
         documentId: int(row.document_id),
         documentNo: str(row.document_no),
         createdAt: new Date(String(row.created_at)).toISOString(),
@@ -136,8 +163,12 @@ export class ConditionEventService {
     try {
       return await inTransaction(this.database, async (client) => {
         const head = await client.query(
-          "SELECT id, status FROM conditions WHERE id = $1", [conditionId]);
-        const condition = head.rows[0] as { id: number; status: string } | undefined;
+          "SELECT id, status, direction, rate_ppm, currency FROM conditions WHERE id = $1",
+          [conditionId]);
+        const condition = head.rows[0] as {
+          id: number; status: string; direction: string;
+          rate_ppm: number | null; currency: string;
+        } | undefined;
         if (!condition) throw new DomainError("NOT_FOUND", `条件 ${conditionId} が見つかりません`);
         if (condition.status !== "active" && condition.status !== "draft") {
           // 差し替え済み・無効の版に実績を足すと、どの版の実績か分からなくなる。
@@ -175,14 +206,56 @@ export class ConditionEventService {
           throw new DomainError("VALIDATION", "役務提供期間の終了が開始より前です");
         }
 
-        const amount = Math.round(input.amount);
+        // 権利の使い方。入れてあれば、その形に要る数字が揃っているかを先に見る。
+        // 足りないまま実績を作ると、計算書を出す段になって初めて気づく。
+        const usageType = (input.usageType ?? null) as UsageType | null;
+        const unitAmount = input.unitAmount === null || input.unitAmount === undefined
+          ? null : Math.round(input.unitAmount);
+        // 料率はイン条件から引く。その回だけ違う料率があれば入力が勝つ。
+        const ratePpm = input.ratePpm === null || input.ratePpm === undefined
+          ? (usageType ? int(condition.rate_ppm) : null)
+          : Math.round(input.ratePpm);
+        if (usageType) {
+          if (condition.direction !== "in") {
+            throw new DomainError("VALIDATION",
+              "利用形態を付けられるのは取得（IN）の条件の実績だけです。" +
+              "許諾料は作者から取った権利に対して払うものなので、実績はイン条件に載せます");
+          }
+          await this.assertOutCondition(client, conditionId, input.outConditionId ?? null);
+          assertUsageInput({
+            usageType,
+            unitAmount, quantity: input.quantity ?? null,
+            sampleQuantity: input.sampleQuantity ?? null,
+            grossAmount: input.grossAmount ?? null,
+            outConditionId: input.outConditionId ?? null
+          }, "この実績");
+        }
+
         const gross = input.grossAmount === null || input.grossAmount === undefined
           ? null : Math.round(input.grossAmount);
         const deductions = Math.round(input.deductions ?? 0);
-        if (gross !== null && gross - deductions !== amount) {
+
+        // 利用形態のある実績は、実額を人が入れるものではない。
+        // 算定の基礎（基準価格×個数／受領価格）に料率を掛けた額がそのまま
+        // 作者に払う額なので、ここで出す。人に入れさせると、紙の数字と
+        // 実績の数字が食い違ったまま残る。
+        //
+        // 「総額 − 控除 = 実額」の決まりは、報告売上をそのまま実額にしていた
+        // 古い形のもの。受領価格に料率を掛ける形では成り立たないので見ない。
+        const amount = usageType
+          ? Math.ceil((basisOf({
+              usageType, unitAmount, quantity: input.quantity ?? null,
+              sampleQuantity: input.sampleQuantity ?? null, grossAmount: gross
+            }, "この実績") * ppmToPct(ratePpm)) / 100)
+          : Math.round(input.amount);
+        if (!usageType && gross !== null && gross - deductions !== amount) {
           // 総額・控除・実額が合わない記録を残すと、あとで検算できない。
           throw new DomainError("VALIDATION",
             `総額 ${gross} − 控除 ${deductions} = ${gross - deductions} が実額 ${amount} と合いません`);
+        }
+        if (usageType && !(amount > 0)) {
+          throw new DomainError("VALIDATION",
+            "算定の結果が0になります。基準価格・個数・受領価格・料率を確かめてください");
         }
 
         const inserted = await client.query(
@@ -190,25 +263,58 @@ export class ConditionEventService {
              (condition_id, schedule_id, event_type, occurred_on, period,
               quantity, sample_quantity, gross_amount, deductions, amount, note, created_by,
               deliverable, inspected_on, inspector_dept, inspector_name,
-              contract_form, service_from, service_to)
+              contract_form, service_from, service_to,
+              usage_type, out_condition_id, unit_amount, rate_ppm)
            VALUES ($1, $2, $3, $4::date, $5, $6, $7, $8, $9, $10, $11, $12,
-                   $13, $14::date, $15, $16, $17, $18::date, $19::date)
+                   $13, $14::date, $15, $16, $17, $18::date, $19::date,
+                   $20, $21, $22, $23)
            RETURNING id`,
           [conditionId, scheduleId, input.eventType, occurredOn, period,
            input.quantity ?? null, input.sampleQuantity ?? null,
            gross, deductions, amount, str(input.note), actor,
            str(input.deliverable), str(input.inspectedOn),
            str(input.inspectorDept), str(input.inspectorName),
-           contractForm, serviceFrom, serviceTo]);
+           contractForm, serviceFrom, serviceTo,
+           usageType, input.outConditionId ?? null, unitAmount, ratePpm]);
         const id = Number((inserted.rows[0] as { id: number }).id);
 
         await recordAudit(client, {
           actor, action: "condition.event_add", targetType: "condition", targetId: conditionId,
-          detail: { eventId: id, eventType: input.eventType, occurredOn, amount, scheduleId }
+          detail: { eventId: id, eventType: input.eventType, occurredOn, amount, scheduleId,
+                    usageType, outConditionId: input.outConditionId ?? null }
         });
         return { id };
       });
     } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 指したアウト条件が使えるものか確かめる。
+   *
+   * 向きが OUT であること、生きている版であること、自分自身でないこと。
+   * ここを見ないと、取得の条件や無効な版を「許諾先」として指した実績が
+   * できてしまい、紙に出す許諾地域が別の契約のものになる。
+   */
+  private async assertOutCondition(
+    client: Queryable, conditionId: number, outConditionId: number | null
+  ): Promise<void> {
+    if (!outConditionId) return;
+    if (outConditionId === conditionId) {
+      throw new DomainError("VALIDATION", "自分自身をアウト条件には指せません");
+    }
+    const found = await client.query(
+      "SELECT id, direction, status, condition_no FROM conditions WHERE id = $1",
+      [outConditionId]);
+    const row = found.rows[0] as
+      { direction: string; status: string; condition_no: string | null } | undefined;
+    if (!row) throw new DomainError("NOT_FOUND", `条件 ${outConditionId} が見つかりません`);
+    const tag = row.condition_no ?? `#${outConditionId}`;
+    if (row.direction !== "out") {
+      throw new DomainError("VALIDATION", `${tag} は許諾（OUT）の条件ではありません`);
+    }
+    if (row.status !== "active" && row.status !== "draft" && row.status !== "scheduled") {
+      throw new DomainError("VALIDATION", `${tag} は使える状態ではありません（${row.status}）`);
+    }
   }
 
   /** 取り消し。行は残す。理由を必ず添える。 */

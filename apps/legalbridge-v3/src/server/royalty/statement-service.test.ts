@@ -320,8 +320,10 @@ test("実績の束の確定：実績は作らず、明細を実績ごとに根�
   const lines = db.all("INSERT INTO statement_lines");
   assert.equal(lines.length, 2);
   assert.equal(lines[0].params[3], 41);
-  assert.equal(lines[0].params[10], 375000, "62.5万 × 0.6");
-  assert.equal(lines[1].params[10], 250000, "残り。合計は 62.5万");
+  // 列は (statement_id, line_no, condition_id, event_id, product_name,
+  //        quantity, sample_quantity, unit_amount, rate_ppm, sales_input, fx_rate, amount)
+  assert.equal(lines[0].params[11], 375000, "62.5万 × 0.6");
+  assert.equal(lines[1].params[11], 250000, "残り。合計は 62.5万");
   const linked = db.all("UPDATE condition_events SET document_id");
   assert.deepEqual(linked.map((q) => q.params), [[41, 6, 0], [42, 6, 0]],
     "実績ごとに文書へ結び、AG の消化（この条件は AG 無しなので 0）を積む");

@@ -376,6 +376,38 @@ export function bundleLinesFrom(source: Data): BundleLine[] {
 }
 
 /**
+ * 利用形態の付いた実績を、本文の行にする。
+ *
+ * 紙に出るのは「何を・どう使って・いくらの基礎に・何%を掛けたか」。
+ * 製品名は作品名、方式は利用形態、許諾地域などは従前に決めたアウト条件の
+ * 内容をそのまま添える（相手はそれを見て自分の契約だと分かる）。
+ *
+ * 行の額は計算済み。ここでは組み替えるだけで計算し直さない。
+ */
+export function usageBundleLines(
+  events: Array<{
+    productName?: string | null; methodLabel?: string | null; basisNote?: string | null;
+    outConditionNo?: string | null; outConditionName?: string | null; outScopes?: string | null;
+    basis: number; ratePct?: number | null; amount?: number | null;
+    period?: string | null;
+  }>
+): BundleLine[] {
+  return events.map((e) => ({
+    conditionId: null,
+    // 群の見出しは許諾先の条件。自社製造・自社販売は相手がいないので空。
+    contractTitle: e.outConditionName ?? "",
+    contractNumber: e.outConditionNo ?? "",
+    conditionName: e.productName ?? "",
+    methodLabel: e.methodLabel ?? "",
+    salesJpy: e.basis,
+    ratePct: Number(e.ratePct ?? 0),
+    paymentJpy: Number(e.amount ?? 0),
+    basisNote: [e.basisNote, e.outScopes, e.period ? `対象期間 ${e.period}` : ""]
+      .map((x) => String(x ?? "").trim()).filter(Boolean).join("・")
+  }));
+}
+
+/**
  * 計算済みの行から束ねの本文変数を組む。描画は多明細（lineGroups）と同じ形。
  * 消費税は行ごとの税区分が違いうるので、合計を渡せるようにしてある。
  * 渡されなければ従来どおり合計に税率を掛ける。

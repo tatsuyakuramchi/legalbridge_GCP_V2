@@ -1,4 +1,4 @@
-import { dateStr, inTransaction, type Queryable, type Transactable } from "../core/db.js";
+import { dateStr, int, inTransaction, str, type Queryable, type Transactable } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { calculateFee, type FeeResult } from "./calc.js";
@@ -7,6 +7,7 @@ import {
   buildAdjustments, buildFeeTerms, ppmToPct, taxRateFor, toMajor, toMinor,
   type ConditionEconomics, type ReportedResult
 } from "./economics.js";
+import { basisNoteOf, basisOf, usageTypeSpec, type UsageType } from "./usage-type.js";
 
 export interface CalculationInput {
   conditionId: number;
@@ -37,6 +38,27 @@ export interface StatementBasis {
   /** 根拠の比。合計で 1。 */
   share: number;
   note: string | null;
+  /** 権利の使い方。付いていれば、これで算定の形が決まる。 */
+  usageType?: string | null;
+  usageLabel?: string | null;
+  /** 紙に出す方式名。 */
+  methodLabel?: string | null;
+  /** どう出した数字かの一行（「120個 × 基準価格」など）。 */
+  basisNote?: string | null;
+  /** 相手へ許諾したアウト条件。再許諾・他社販売のとき。 */
+  outConditionId?: number | null;
+  outConditionNo?: string | null;
+  outConditionName?: string | null;
+  /** 許諾地域・言語など。紙に「従前に決めた内容」として出す。 */
+  outScopes?: string | null;
+  /** 製品名。作品名を出す。 */
+  productName?: string | null;
+  /** 基準価格／受領単価（最小通貨単位）。 */
+  unitAmount?: number | null;
+  /** その行に効いた料率（%）。 */
+  ratePct?: number | null;
+  /** その行の許諾料（税抜・最小通貨単位）。 */
+  amount?: number | null;
 }
 
 export interface CalculationPreview {
@@ -88,6 +110,20 @@ export function apportion(total: number, shares: number[]): number[] {
   return out;
 }
 
+/**
+ * 行ごとに出した額を、合計に合わせる。
+ *
+ * 行の額は行ごとの料率で出ているので按分しない。MG の上乗せ・AG の相殺が
+ * 効くと合計だけがずれるので、その差を最終行に寄せる。差が無ければ何もしない。
+ */
+export function settleToTotal(amounts: number[], total: number): number[] {
+  if (!amounts.length) return [];
+  const out = amounts.slice();
+  const sum = out.reduce((a, b) => a + b, 0);
+  out[out.length - 1] += total - sum;
+  return out;
+}
+
 export class RoyaltyStatementService {
   constructor(private readonly database: Transactable) {}
 
@@ -119,9 +155,20 @@ export class RoyaltyStatementService {
     const r = await client.query(
       `SELECT e.id, e.condition_id, e.event_type, e.occurred_on, e.period, e.quantity,
               e.sample_quantity, e.gross_amount, e.amount, e.document_id, e.status, e.note,
+              e.usage_type, e.out_condition_id, e.unit_amount,
+              COALESCE(e.rate_ppm, c.rate_ppm) AS rate_ppm,
+              oc.condition_no AS out_condition_no, oc.name AS out_condition_name,
+              -- 製品名は作品名。アウト条件の作品を先に見て、無ければイン条件の作品。
+              COALESCE(ow.title, w.title) AS product_name,
+              -- 許諾地域・言語など。従前に決めた内容をそのまま紙に出す。
+              (SELECT string_agg(sc.label, '・' ORDER BY sc.scope_type, sc.sort_order, sc.label)
+                 FROM condition_scopes sc WHERE sc.condition_id = oc.id) AS out_scopes,
               (c.series_id = (SELECT COALESCE(series_id, id) FROM conditions WHERE id = $2)
                OR c.id = $2) AS same_series
          FROM condition_events e JOIN conditions c ON c.id = e.condition_id
+         LEFT JOIN conditions oc ON oc.id = e.out_condition_id
+         LEFT JOIN works w ON w.id = c.work_id
+         LEFT JOIN works ow ON ow.id = oc.work_id
         WHERE e.id = ANY($1::bigint[])
         ORDER BY e.occurred_on, e.id`, [ids, input.conditionId]);
     const rows = r.rows as Array<Record<string, any>>;
@@ -136,7 +183,15 @@ export class RoyaltyStatementService {
       if (e.document_id) throw new DomainError("CONFLICT", `${tag} はすでに別の文書に結ばれています`);
     }
 
-    // 根拠の取り方。計算方式で決まる。
+    // 利用形態が付いている実績は、その形で算定する。
+    // 権利の使い方（自社製造・再許諾・他社販売）で要る数字が違い、
+    // 料率も回ごとに違いうるので、条件1本の計算方式では決められない。
+    if (rows.some((e) => e.usage_type)) {
+      return this.resolveByUsage(rows, condition, input);
+    }
+
+    // 利用形態の無い実績（この仕組みより前に入れたもの）は、これまでどおり
+    // 条件の計算方式で決める。
     const model = condition.pricingModel;
     const basisOf = (e: Record<string, any>): number => {
       const type = String(e.event_type);
@@ -187,6 +242,94 @@ export class RoyaltyStatementService {
     if (!period) throw new DomainError("VALIDATION", "対象期間を入れてください（実績に期間も日付もありません）");
     return {
       input: { ...input, period, reported, occurredOn: input.occurredOn ?? dates[dates.length - 1] ?? null },
+      events
+    };
+  }
+
+  /**
+   * 利用形態の付いた実績から、行ごとに算定する。
+   *
+   * 条件1本を1回だけ計算して比で按分する、という従来のやり方は使えない。
+   * 料率が回ごとに違いうるからで、按分すると「この行の料率は何%か」が
+   * 紙と合わなくなる。行ごとに 基礎 × 料率 を出し、足したものを合計にする。
+   * MG・AG は条件のものなので、合計にだけ効かせる（行には割らない）。
+   */
+  private resolveByUsage(
+    rows: Array<Record<string, any>>,
+    condition: ConditionEconomics,
+    input: CalculationInput
+  ): { input: CalculationInput & { period: string; reported: ReportedResult }; events: StatementBasis[] } {
+    const missing = rows.filter((e) => !e.usage_type);
+    if (missing.length) {
+      throw new DomainError("VALIDATION",
+        `利用形態の入っていない実績が混ざっています（#${missing.map((e) => e.id).join("・")}）。` +
+        "同じ計算書に、形の分かる実績と分からない実績は載せられません");
+    }
+
+    const events: StatementBasis[] = rows.map((e) => {
+      const tag = `実績 #${e.id}`;
+      const usageType = String(e.usage_type) as UsageType;
+      const spec = usageTypeSpec(usageType);
+      if (!spec) throw new DomainError("VALIDATION", `${tag}：利用形態が分かりません（${e.usage_type}）`);
+      const quantity = e.quantity === null ? null : Number(e.quantity);
+      const sampleQuantity = e.sample_quantity === null ? null : Number(e.sample_quantity);
+      const shape = {
+        usageType,
+        unitAmount: int(e.unit_amount),
+        quantity, sampleQuantity,
+        grossAmount: int(e.gross_amount)
+      };
+      const basis = basisOf(shape, tag);
+      const ratePct = ppmToPct(int(e.rate_ppm));
+      if (!(ratePct > 0)) {
+        throw new DomainError("VALIDATION",
+          `${tag}：料率が入っていません。イン条件か実績に料率を入れてください`);
+      }
+      // 支払は ceil（V1 踏襲）。1円未満を切り捨てると作者の取り分が減る。
+      const amount = Math.ceil((basis * ratePct) / 100);
+      return {
+        eventId: Number(e.id), eventType: String(e.event_type),
+        occurredOn: dateStr(e.occurred_on), period: e.period ? String(e.period) : null,
+        basis, quantity, sampleQuantity,
+        salesInput: usageType === "sublicense" ? basis : null,
+        share: 0,
+        note: e.note ? String(e.note) : null,
+        usageType, usageLabel: spec.label, methodLabel: spec.methodLabel,
+        basisNote: basisNoteOf(shape),
+        outConditionId: int(e.out_condition_id),
+        outConditionNo: str(e.out_condition_no),
+        outConditionName: str(e.out_condition_name),
+        outScopes: str(e.out_scopes),
+        productName: str(e.product_name),
+        unitAmount: int(e.unit_amount),
+        ratePct,
+        amount
+      };
+    });
+
+    const total = events.reduce((sum, e) => sum + e.basis, 0);
+    for (const e of events) e.share = total > 0 ? e.basis / total : 0;
+
+    // 期間は揃っていればそれ、揃っていなければ最古〜最新。発生日は最新。
+    const periods = [...new Set(events.map((e) => e.period).filter(Boolean))];
+    const dates = events.map((e) => e.occurredOn).filter(Boolean).sort() as string[];
+    const period = String(input.period ?? "").trim()
+      || (periods.length === 1 ? String(periods[0])
+          : dates.length ? `${dates[0]}〜${dates[dates.length - 1]}` : "");
+    if (!period) {
+      throw new DomainError("VALIDATION", "対象期間を入れてください（実績に期間も日付もありません）");
+    }
+
+    // 行ごとに出した許諾料の合計を、そのまま算定の基礎として渡す。
+    // 料率は 100% にして、合計に MG・AG と税だけを効かせる（行で掛け済み）。
+    const gross = events.reduce((sum, e) => sum + (e.amount ?? 0), 0);
+    return {
+      input: {
+        ...input, period,
+        occurredOn: input.occurredOn ?? dates[dates.length - 1] ?? null,
+        reported: { salesInput: gross, ratePctOverride: 100,
+                    intakeCurrency: condition.currency }
+      },
       events
     };
   }
@@ -288,15 +431,25 @@ export class RoyaltyStatementService {
       // 明細は実績1件が1行。額は根拠の比で按分し、端数は最終行に寄せる
       // （MG の上乗せ・AG の相殺は明細に割らず、合計欄だけに出る）。
       const net = result.amounts.netMinor;
+      // 利用形態の付いた実績は、行ごとに料率まで掛けて額が出ている。按分しない
+      // （按分すると「この行の料率は何%か」が紙と合わなくなる）。MG・AG が
+      // 効いたぶんだけ合計がずれるので、そのぶんを最終行に寄せる。
+      const byUsage = resolved.events.some((e) => e.usageType);
+      const lineAmounts = byUsage
+        ? settleToTotal(resolved.events.map((e) => e.amount ?? 0), net)
+        : apportion(net, resolved.events.map((e) => e.share));
       const shares = apportion(net, resolved.events.map((e) => e.share));
       for (const [i, e] of resolved.events.entries()) {
         await client.query(
           `INSERT INTO statement_lines
-             (statement_id, line_no, condition_id, event_id, quantity, sample_quantity,
-              unit_amount, rate_ppm, sales_input, fx_rate, amount)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-          [statementId, i + 1, conditionId, e.eventId, e.quantity, e.sampleQuantity,
-           null, null, e.salesInput, null, shares[i]]);
+             (statement_id, line_no, condition_id, event_id, product_name,
+              quantity, sample_quantity, unit_amount, rate_ppm, sales_input, fx_rate, amount)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+          [statementId, i + 1, conditionId, e.eventId, e.productName ?? null,
+           e.quantity, e.sampleQuantity,
+           e.unitAmount ?? null,
+           e.ratePct === null || e.ratePct === undefined ? null : Math.round(e.ratePct * 10000),
+           e.salesInput, null, lineAmounts[i]]);
       }
       // AG の消化は deductions 列で数える（agConsumedBefore が SUM する列）。
       // 実績を新しく立てる道では入れているのに、束ねる道では入れていなかった。

@@ -36,6 +36,8 @@ import { MatterCommunicationService, driveIdFromUrl, recordCommunication } from 
 import { config } from "./config.js";
 import { verifySlackSignature } from "./integrations/signature.js";
 import { RoyaltyStatementService } from "./royalty/statement-service.js";
+import { USAGE_TYPES } from "./royalty/usage-type.js";
+import { usageBundleLines } from "./documents/royalty-patch.js";
 import { bundleLineFrom, bundleTotals } from "./royalty/bundle.js";
 import { PaymentService } from "./payments/service.js";
 import { PaymentAllocationService } from "./payments/allocation-service.js";
@@ -985,6 +987,13 @@ export function createRoutes(database: Transactable) {
   // 実績（条件明細の数値）。記録は消さず、取り消しは void で残す。
   // 検収書がそのまま使う項目。実績に入れておけば文書を作るとき人が入れずに済む。
   const inspectionFields = {
+    // 権利の使い方。利用許諾料計算書はこれで算定の形が決まる。
+    usageType: z.enum(["in_house", "sublicense", "oem"]).nullable().optional(),
+    outConditionId: z.coerce.number().int().positive().nullable().optional(),
+    /** 基準価格（自社販売）／受領価格1個あたり（他社販売）。 */
+    unitAmount: z.coerce.number().int().nullable().optional(),
+    /** その回の料率（百万分率）。空ならイン条件の料率。 */
+    ratePpm: z.coerce.number().int().min(0).max(1_000_000).nullable().optional(),
     // 契約形式と役務提供期間。空なら予定の回・条件から継ぐ。
     contractForm: z.string().trim().max(60).nullable().optional(),
     serviceFrom: z.string().date().nullable().optional(),
@@ -1015,8 +1024,56 @@ export function createRoutes(database: Transactable) {
     }));
 
   router.get("/conditions/:id/events", asyncRoute(async (req, res) => {
-    res.json({ events: await conditionEvents.list(Number(req.params.id)), types: EVENT_TYPES });
+    res.json({
+      events: await conditionEvents.list(Number(req.params.id)),
+      types: EVENT_TYPES,
+      // 権利の使い方と、その形で要る欄。画面はこれを見て欄を出し分ける。
+      usageTypes: USAGE_TYPES
+    });
   }));
+
+  /**
+   * 許諾したアウト条件を探す。
+   *
+   * 再許諾・他社販売の実績は「誰に許諾した分か」が要る。作品で絞って
+   * 相手先の名前で引く。見つからなければ画面から条件明細の登録へ飛ばす。
+   */
+  router.get("/conditions/:id/out-candidates", asyncRoute(async (req, res) => {
+    const q = String(req.query.q ?? "").trim();
+    const like = `%${q}%`;
+    const r = await database.query(
+      `SELECT c.id, c.condition_no, c.name, c.status,
+              p.name AS party_name, w.title AS work_title,
+              (SELECT string_agg(sc.label, '・' ORDER BY sc.scope_type, sc.sort_order, sc.label)
+                 FROM condition_scopes sc WHERE sc.condition_id = c.id) AS scopes
+         FROM conditions c
+         LEFT JOIN parties p ON p.id = c.counterparty_id
+         LEFT JOIN works   w ON w.id = c.work_id
+        WHERE c.direction = 'out'
+          AND c.status IN ('active', 'draft', 'scheduled')
+          -- 同じ作品の許諾を先に出す。作品が違う許諾を混ぜると取り違える。
+          AND ($2::bigint IS NULL OR c.work_id IS NULL OR c.work_id = $2)
+          AND ($1 = '' OR c.name ILIKE $3 OR c.condition_no ILIKE $3
+               OR p.name ILIKE $3 OR w.title ILIKE $3)
+        ORDER BY (c.work_id = $2) DESC NULLS LAST, c.condition_no NULLS LAST, c.id
+        LIMIT 30`,
+      [q, await workIdOfCondition(Number(req.params.id)), like]);
+    res.json({
+      conditions: (r.rows as Array<Record<string, any>>).map((c) => ({
+        id: Number(c.id), conditionNo: str(c.condition_no), name: String(c.name ?? ""),
+        status: String(c.status), partyName: str(c.party_name),
+        workTitle: str(c.work_title), scopes: str(c.scopes)
+      }))
+    });
+  }));
+
+  /** その条件の作品。アウト条件の候補を同じ作品に寄せるために使う。 */
+  const workIdOfCondition = async (conditionId: number): Promise<number | null> => {
+    const r = await database.query(
+      "SELECT work_id FROM conditions WHERE id = $1", [conditionId]);
+    const row = r.rows[0] as { work_id: number | null } | undefined;
+    return row?.work_id ? Number(row.work_id) : null;
+  };
 
   const eventSchema = z.object({
     eventType: z.enum(["manufacturing", "sales", "sublicense_receipt",
@@ -1027,7 +1084,8 @@ export function createRoutes(database: Transactable) {
     sampleQuantity: z.coerce.number().nullable().optional(),
     grossAmount: z.coerce.number().int().nullable().optional(),
     deductions: z.coerce.number().int().min(0).optional(),
-    amount: z.coerce.number().int(),
+    // 利用形態のある実績は、実額を算定して入れるので渡さなくてよい。
+    amount: z.coerce.number().int().default(0),
     note: z.string().trim().max(1000).nullable().optional(),
     // どの予定の回か。分納の支払日はここが繋がっていないと空になる。
     scheduleId: z.coerce.number().int().positive().nullable().optional(),
@@ -1807,9 +1865,20 @@ export function createRoutes(database: Transactable) {
       });
       // 実績の束から出したときは、導いた報告値と期間で本文を作る。
       const computed = royaltyForDocument(preview, preview.reported);
+      // 利用形態の付いた実績は、本文も行ごとに出す。製品名（作品名）・方式・
+      // 許諾地域は行ごとに違い、合計だけの1行では相手に何の計算か伝わらない。
+      const usageEvents = (preview.events ?? []).filter((e) => e.usageType);
+      const manualInputs = {
+        ...(input.manualInputs ?? {}),
+        ...(usageEvents.length
+          ? { statementMode: "multi",
+              rs_bundle_lines: usageBundleLines(usageEvents),
+              rs_bundle_tax: preview.fee.tax_amount }
+          : {})
+      };
       const draft = await issues.createDraft({
         templateKey: input.templateKey, conditionIds: [conditionId],
-        matterId: input.matterId ?? null, manualInputs: input.manualInputs ?? {}
+        matterId: input.matterId ?? null, manualInputs
       }, actor(res));
       let issued;
       try {
