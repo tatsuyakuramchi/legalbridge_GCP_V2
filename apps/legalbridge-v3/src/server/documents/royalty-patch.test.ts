@@ -204,3 +204,35 @@ test("数量の報告があれば製造時等として扱う", () => {
   assert.equal(p?.calcType, "manufacturing");
   assert.equal(p?.billableQuantity, "480");
 });
+
+test("試算の行を渡せば、プレビューでも明細が出る", () => {
+  // 文書作成フォームの右側は /documents/preview を叩く。決定するときだけ
+  // rs_bundle_lines を焼き付けていたので、プレビューは明細の無い紙を映し、
+  // 「固定額・金額なし」に見えていた。渡せば決定後と同じ形が出る。
+  const lines = [
+    { conditionId: 11, eventId: 42, contractTitle: "晨光數位出版　英語版 単行本 出版許諾",
+      contractNumber: "CL-2026-00041", conditionName: "英語版 単行本 出版許諾",
+      methodLabel: "自社製造・他社販売（前金・受領価格）",
+      salesJpy: 736799, ratePct: 10, paymentJpy: 73680,
+      basisNote: "前金　受領価格（税込 ÷ 1.1）" },
+    { conditionId: 11, eventId: 43, contractTitle: "晨光數位出版　英語版 単行本 出版許諾",
+      contractNumber: "CL-2026-00041", conditionName: "英語版 単行本 出版許諾",
+      methodLabel: "自社製造・他社販売（後金・受領価格）",
+      salesJpy: 532608, ratePct: 10, paymentJpy: 53261,
+      basisNote: "後金　受領価格（税込 ÷ 1.1）" }
+  ];
+  const patch = royaltyStatementPatch({}, {
+    statementMode: "bundle", rs_bundle_lines: lines, rs_bundle_tax: 12695
+  }, 10);
+  assert.ok(patch, "明細を渡したのに本文の変数が組めていない");
+  const groups = patch.lineGroups as Array<Record<string, unknown>>;
+  assert.equal(groups.length, 2, "前金・後金で2行");
+  assert.equal(groups[0].methodLabel, "自社製造・他社販売（前金・受領価格）");
+  assert.equal(patch.linesTotalPaymentStr, "126,941");
+  assert.equal(patch.linesTaxStr, "12,695", "税は試算の額をそのまま出す");
+  assert.equal(patch.linesTotalIncTaxStr, "139,636");
+});
+
+test("行を渡さなければ本文は組めない。空の明細を出すより出さない", () => {
+  assert.equal(royaltyStatementPatch({}, { statementMode: "bundle" }, 10), null);
+});

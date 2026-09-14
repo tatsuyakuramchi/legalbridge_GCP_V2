@@ -354,12 +354,27 @@ export function DocumentsWorkspace(
       .filter((v): v is number => typeof v === "number"))];
     return ids.length === 1 ? ids[0] : null;
   })();
+  /**
+   * 本文に渡す値。計算書だけ、手入力に試算の行を足す。
+   *
+   * 決定するときは /statement-documents が試算の行を本文へ焼き付けるのに、
+   * プレビューには渡していなかった。右側だけが明細の無い紙を映し、
+   * 「当期利用許諾料（グロス）／固定額／金額なし」という、実際には出ない
+   * 見た目になっていた。決定で焼き付けるのと同じ行をここでも渡す。
+   */
+  const previewInputs = useMemo(() => (
+    isStatement && stmt
+      ? { ...inputs, statementMode: "bundle",
+          rs_bundle_lines: stmt.lines, rs_bundle_tax: stmt.totals.tax }
+      : inputs
+  ), [isStatement, stmt, inputs]);
   const body = useMemo(() => ({
-    templateKey, conditionIds: picked, eventIds: pickedEvents, manualInputs: inputs, matterId
-  }), [templateKey, picked, pickedEvents, inputs, matterId]);
+    templateKey, conditionIds: picked, eventIds: pickedEvents,
+    manualInputs: previewInputs, matterId
+  }), [templateKey, picked, pickedEvents, previewInputs, matterId]);
 
   // 打つたびに問い合わせない。少し待ってからプレビューを取り直す。
-  const manualJson = useDebounced(JSON.stringify(inputs), 600);
+  const manualJson = useDebounced(JSON.stringify(previewInputs), 600);
 
   // ひな形を変えたら、前回そのひな形で入れた値を読み込む。
   // 検収者部署・氏名のように毎回同じものを打ち直さずに済む。
