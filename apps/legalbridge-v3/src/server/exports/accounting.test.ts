@@ -328,3 +328,39 @@ test("数量が無ければ単価は出さない。金額をそのまま単価�
   }));
   assert.equal(row.slots[0].unitPrice, "");
 });
+
+test("計算書の明細は、前金・後金がそのまま経理の行になる", () => {
+  // 紙は2行、経理は合計の1行、という状態だった。計算書の明細は検収書と
+  // 作りが違う（delivery_line_items ではなく lineGroups）ので読めていなかった。
+  const lines = documentLinesFrom({
+    lineGroups: [
+      { contractTitle: "Meanbook Co., Ltd.　タイ語版", contractNumber: "CL-2026-00443",
+        methodLabel: "自社製造・他社販売（前金・受領価格）",
+        lines: [{ productName: "トーネードスプラッシュ", paymentJpy: 73680,
+                  occurredOn: "2026-08-31" }] },
+      { contractTitle: "Meanbook Co., Ltd.　タイ語版", contractNumber: "CL-2026-00443",
+        methodLabel: "自社製造・他社販売（後金・受領価格）",
+        lines: [{ productName: "トーネードスプラッシュ", paymentJpy: 53261,
+                  occurredOn: "2026-08-31" }] }
+    ]
+  });
+  assert.equal(lines.length, 2, "前金と後金で2行");
+  assert.equal(lines[0].content,
+    "自社製造・他社販売（前金・受領価格）　トーネードスプラッシュ",
+    "方式名だけだと2行が同じ文字になる");
+  assert.equal(lines[0].amount, 73680);
+  assert.equal(lines[1].amount, 53261);
+  assert.equal(lines[0].deliveryDate, "2026-08-31");
+  assert.equal(lines[0].unitPrice, null, "受領額 × 料率なので単価は無い");
+  assert.equal(lines[0].quantity, null);
+});
+
+test("検収書の行があるときは、計算書の明細を混ぜない", () => {
+  // 1枚に両方は載らない。混ぜると同じ支払が二重に数えられる。
+  const lines = documentLinesFrom({
+    delivery_line_items: [{ item_name: "挿絵", amount_ex_tax: 50000 }],
+    lineGroups: [{ methodLabel: "再許諾（受領価格）", lines: [{ paymentJpy: 99999 }] }]
+  });
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].content, "挿絵");
+});

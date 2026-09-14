@@ -112,6 +112,11 @@ const LINES_SQL = `
  * V2 の inspectionSlots と同じ扱いにする。
  *   ・今回検収の行だけを載せる（分納の済んだ回・これからの回は載せない）
  *   ・課税の手数料は行として載せる（非課税は立替金なので載せない）
+ *
+ * 計算書は明細の作りが違う（検収書の delivery_line_items ではなく lineGroups）。
+ * 読めていなかったので、前金・後金で2行出ている計算書から支払を立てても、
+ * 経理提出用は合計の1行だけになっていた。紙と経理で行数が違うと、経理は
+ * 何に対する支払か照合できない。
  */
 export function documentLinesFrom(rendered: unknown): DocumentLine[] {
   const values = (rendered ?? {}) as Record<string, unknown>;
@@ -142,6 +147,28 @@ export function documentLinesFrom(rendered: unknown): DocumentLine[] {
       deliveryDate: text(row.delivery_date).slice(0, 10) || null
     });
   }
+  // 計算書の明細。1明細＝1グループ（前金・後金、取引モデルごと）。
+  // 検収書の行があるときは触らない（1枚に両方は載らない）。
+  if (!lines.length) {
+    for (const group of rowsOf(values.lineGroups)) {
+      for (const row of rowsOf(group.lines)) {
+        const amount = n(row.paymentJpy) ?? 0;
+        // 方式名（前金・受領価格…）と製品名。どちらも行ごとに違うので、
+        // 並べないと2行が同じ文字になって見分けが付かない。
+        const content = [text(group.methodLabel), text(row.productName)]
+          .filter(Boolean).join("　");
+        lines.push({
+          content: content || text(group.contractNumber),
+          // 利用形態の付いた実績は個数建てではない（受領額 × 料率）。
+          // 単価と数量を空で出す（0 を置くと経理が数量0の行として弾く）。
+          unitPrice: null, quantity: null,
+          amount,
+          deliveryDate: text(row.occurredOn).slice(0, 10) || null
+        });
+      }
+    }
+  }
+
   for (const fee of rowsOf(values.other_fees)) {
     // 非課税の手数料は立替金の側で数える。ここに載せると二重になる。
     if ((text(fee.tax_category) || "taxable") === "exempt") continue;

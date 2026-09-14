@@ -88,7 +88,8 @@ export function bundleLineFrom(preview: CalculationPreview): BundleLine {
     salesJpy: basisAmountOf(preview),
     ratePct: c.ratePct,
     paymentJpy: preview.fee.actual_ex_tax,
-    basisNote: basisNoteOf(preview)
+    basisNote: basisNoteOf(preview),
+    occurredOn: preview.occurredOn ?? null
   };
 }
 

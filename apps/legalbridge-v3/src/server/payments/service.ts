@@ -3,6 +3,20 @@ import { dateStr, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { checkPaymentDue, dueLimitFrom, isFreelanceActTarget, type DueCheck } from "./compliance.js";
+
+/**
+ * 合計を、重みの比で割る。端数は最後の1本に寄せる。
+ *
+ * 按分してから丸めると合計が1円ずれ、支払の額と割当の合計が合わなくなる。
+ * 重みが全部0（額の入っていない実績しかない）なら、割りようがないので
+ * 先頭に全部置く。0円の割当を並べるより、どこに乗っているかが見えるほうがよい。
+ */
+export function splitToTotal(total: number, weights: number[]): number[] {
+  const sum = weights.reduce((a, b) => a + b, 0);
+  if (!(sum > 0)) return weights.map((_, i) => (i === 0 ? total : 0));
+  const head = weights.slice(0, -1).map((w) => Math.round((total * w) / sum));
+  return [...head, total - head.reduce((a, b) => a + b, 0)];
+}
 import { consumptionTax, resolveWithholdingEnabled, withholdingTax } from "../royalty/tax.js";
 import { taxRateFor } from "../royalty/economics.js";
 import { allocateNumber } from "../core/numbering.js";
@@ -214,6 +228,23 @@ export class PaymentService {
           throw new DomainError("VALIDATION", `文書 ${documentId} に計算書がありません`);
         }
 
+        // その計算書に載っている実績を全部取る。1本の計算書が実績1件とは
+        // 限らない（前金と後金で2明細になる）。いちばん新しい1件だけを
+        // 割当にしていたので、紙は2行なのに経理提出用は合計の1行になり、
+        // 残りの実績は「支払済み」の印が付かないまま二重払いの余地が残っていた。
+        const eventRows = await client.query(
+          `SELECT ev.id, ev.condition_id, ev.amount, ev.occurred_on
+             FROM condition_events ev
+            WHERE ev.document_id = $1 AND ev.status = 'active'
+            ORDER BY ev.id`, [documentId]);
+        const eventsByCondition = new Map<number, Array<{ id: number; amount: number }>>();
+        for (const e of eventRows.rows as Array<Record<string, any>>) {
+          const key = Number(e.condition_id);
+          const list = eventsByCondition.get(key) ?? [];
+          list.push({ id: Number(e.id), amount: Number(e.amount ?? 0) });
+          eventsByCondition.set(key, list);
+        }
+
         const parties = new Set(rows.map((r) => Number(r.counterparty_id)));
         if (parties.size !== 1 || !rows[0].counterparty_id) {
           throw new DomainError("VALIDATION",
@@ -231,6 +262,19 @@ export class PaymentService {
         // 同じ条件・実績に二重に支払を立てない。直すなら先の支払を取り消す。
         // 組で突き合わせる（条件だけで見ると、同じ条件の別の回まで塞いでしまう）。
         // 実績の無い計算書は 0 を置いて NULL と突き合わせる。
+        const allocations = rows.flatMap((r) => {
+          const conditionId = Number(r.condition_id);
+          const net = Number(r.net_amount ?? 0);
+          const events = eventsByCondition.get(conditionId) ?? [];
+          if (events.length <= 1) {
+            const only = events[0]?.id
+              ?? (r.event_id === null || r.event_id === undefined ? null : Number(r.event_id));
+            return [{ conditionId, eventId: only, amount: net }];
+          }
+          const shares = splitToTotal(net, events.map((e) => e.amount));
+          return events.map((e, i) => ({ conditionId, eventId: e.id, amount: shares[i] }));
+        });
+
         const duplicated = await client.query(
           `SELECT p.id
              FROM payments p
@@ -240,8 +284,8 @@ export class PaymentService {
               AND a.event_id IS NOT DISTINCT FROM NULLIF(t.event_id, 0)
             WHERE p.status <> 'canceled'
             LIMIT 1`,
-          [rows.map((r) => Number(r.condition_id)),
-           rows.map((r) => (r.event_id === null || r.event_id === undefined ? 0 : Number(r.event_id)))]);
+          [allocations.map((a) => a.conditionId),
+           allocations.map((a) => a.eventId ?? 0)]);
         if (duplicated.rows[0]) {
           throw new DomainError("CONFLICT",
             `この計算書にはすでに支払 #${(duplicated.rows[0] as { id: number }).id} があります`);
@@ -292,12 +336,7 @@ export class PaymentService {
 
         return await this.writeWithAllocations(client, {
           direction, partyId: Number(rows[0].counterparty_id), partyKind: str(rows[0].party_kind),
-          currency, net, tax, withholding, basis, dueOn,
-          allocations: rows.map((r) => ({
-            conditionId: Number(r.condition_id),
-            eventId: r.event_id === null || r.event_id === undefined ? null : Number(r.event_id),
-            amount: Number(r.net_amount ?? 0)
-          })),
+          currency, net, tax, withholding, basis, dueOn, allocations,
           detail: { documentId, statementIds: rows.map((r) => Number(r.statement_id)) }
         }, actor);
       });

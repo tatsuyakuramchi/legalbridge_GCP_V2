@@ -15,6 +15,8 @@ interface Options {
   statements?: Array<Record<string, unknown>>;
   /** 紙に出る支払期日（予定の回の支払日）。 */
   schedulePayOn?: string;
+  /** その計算書に載っている実績。前金・後金で2件になる。 */
+  events?: Array<{ id: number; condition_id: number; amount: number; occurred_on?: string }>;
 }
 
 const responder = (options: Options = {}) => (text: string): Array<Record<string, unknown>> | undefined => {
@@ -29,6 +31,7 @@ const responder = (options: Options = {}) => (text: string): Array<Record<string
               occurred_on: options.occurredOn ?? "2026-06-20",
               schedule_pay_on: options.schedulePayOn ?? null, ...over }));
   }
+  if (text.includes("FROM condition_events ev")) return options.events ?? [];
   if (text.includes("JOIN payment_allocations a ON a.payment_id = p.id")) {
     return options.duplicated ? [{ id: 55 }] : [];
   }
@@ -160,4 +163,45 @@ test("予定の回が無ければ、これまでどおり受領日 +60日", asyn
   const { service } = svc({ occurredOn: "2026-06-20" });
   const result = await service.createFromStatementDocument(26, "kuramochi");
   assert.equal(result.dueOn, "2026-08-19");
+});
+
+test("前金・後金の計算書は、実績ごとに割り当てる", async () => {
+  // いちばん新しい実績1件だけに全額を割り当てていた。紙は2行なのに経理提出用は
+  // 合計の1行になり、割り当てられなかったほうの実績には支払済みの印が付かない。
+  // 同じ実績で二度目の支払を立てても、重複の検査に引っかからない。
+  const { db, service } = svc({
+    events: [
+      { id: 700, condition_id: 5, amount: 73680 },
+      { id: 701, condition_id: 5, amount: 53261 }
+    ],
+    statements: [{ net_amount: 126941, tax_amount: 12694 }]
+  });
+  await service.createFromStatementDocument(26, "kuramochi");
+  const allocations = db.all("INSERT INTO payment_allocations").map((a) => a.params);
+  assert.equal(allocations.length, 2, "実績の数だけ割当を作る");
+  assert.deepEqual(allocations, [[900, 5, 700, 73680], [900, 5, 701, 53261]]);
+  assert.equal(allocations.reduce((sum, a) => sum + Number(a[3]), 0), 126941,
+    "割当の合計は支払の額と一致する");
+});
+
+test("MG・AG で総額がずれても、割当の合計は支払の額に合わせる", async () => {
+  // 実績の額の比で割る。按分してから丸めると合計が1円ずれる。
+  const { db, service } = svc({
+    events: [
+      { id: 700, condition_id: 5, amount: 10000 },
+      { id: 701, condition_id: 5, amount: 20000 }
+    ],
+    statements: [{ net_amount: 100001, tax_amount: 10000 }]
+  });
+  await service.createFromStatementDocument(26, "kuramochi");
+  const amounts = db.all("INSERT INTO payment_allocations").map((a) => Number(a.params[3]));
+  assert.equal(amounts.reduce((a, b) => a + b, 0), 100001, "端数は最後の1本に寄せる");
+  assert.deepEqual(amounts, [33334, 66667]);
+});
+
+test("実績が1件の計算書は、これまでどおり1件の割当", async () => {
+  const { db, service } = svc({ events: [{ id: 700, condition_id: 5, amount: 612000 }] });
+  await service.createFromStatementDocument(26, "kuramochi");
+  assert.deepEqual(db.all("INSERT INTO payment_allocations").map((a) => a.params),
+    [[900, 5, 700, 612000]]);
 });

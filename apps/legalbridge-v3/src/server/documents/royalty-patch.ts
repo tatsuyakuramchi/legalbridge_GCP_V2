@@ -366,6 +366,8 @@ export interface BundleLine {
   payerName?: string | null;
   /** 相手から入ってきた通貨（アウト条件の通貨）。紙の「入金通貨」に出す。 */
   intakeCurrency?: string | null;
+  /** その実績の発生日。経理提出用の「納品日」になる。 */
+  occurredOn?: string | null;
 }
 
 export function bundleLinesFrom(source: Data): BundleLine[] {
@@ -381,7 +383,8 @@ export function bundleLinesFrom(source: Data): BundleLine[] {
     paymentJpy: num(row.paymentJpy),
     basisNote: String(row.basisNote ?? ""),
     payerName: String(row.payerName ?? ""),
-    intakeCurrency: String(row.intakeCurrency ?? "")
+    intakeCurrency: String(row.intakeCurrency ?? ""),
+    occurredOn: String(row.occurredOn ?? "")
   }));
 }
 
@@ -402,7 +405,7 @@ export function usageBundleLines(
     outPartyName?: string | null; outScopes?: string | null;
     outCurrency?: string | null;
     basis: number; ratePct?: number | null; amount?: number | null;
-    period?: string | null;
+    period?: string | null; occurredOn?: string | null;
   }>
 ): BundleLine[] {
   return events.map((e) => ({
@@ -418,7 +421,8 @@ export function usageBundleLines(
     basisNote: [e.basisNote, e.outScopes, e.period ? `対象期間 ${e.period}` : ""]
       .map((x) => String(x ?? "").trim()).filter(Boolean).join("・"),
     payerName: e.outPartyName ?? "",
-    intakeCurrency: e.outCurrency ?? ""
+    intakeCurrency: e.outCurrency ?? "",
+    occurredOn: e.occurredOn ?? ""
   }));
 }
 
@@ -500,7 +504,9 @@ export function bundleLinesPatch(
       ratePctResolved: String(line.ratePct),
       paymentJpy: line.paymentJpy,
       paymentJpyStr: fmtYen(line.paymentJpy),
-      basisNote: line.basisNote
+      basisNote: line.basisNote,
+      // 経理提出用の「納品日」。紙には出さないが、焼き付けた値から経理が拾う。
+      occurredOn: line.occurredOn ?? ""
     }],
     subtotalSales: line.salesJpy,
     subtotalSalesStr: fmtYen(line.salesJpy),
