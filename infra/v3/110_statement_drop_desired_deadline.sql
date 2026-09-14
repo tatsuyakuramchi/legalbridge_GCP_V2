@@ -14,10 +14,17 @@
 --     2. 下の合計の枠の列（見出しの td/th と、{{desiredDeadline}} の td/th）
 --   片方だけ消すともう片方が紙に残るので、両方まとめて消す。
 --
---   ★ 消し切れなかったときは新しい版を作らない。
+--   ★ 消し切れなかったとき、消しすぎたときは、新しい版を作らない。
 --     本文の作りが想定と違うということなので、中途半端な版を current に
 --     向けるより、何もしないほうがよい。そのときは
 --     099_diagnose_statement_header.sql の出力を見て手を入れる。
+--
+--   ※ 最初の版は {{#if desiredDeadline}}.*?{{/if}} で消していて、本文を
+--     2万字から8千字に削った。Postgres の正規表現は「最初に優先を持つ
+--     量指定子」が式全体の貪欲さを決める。先頭に置いた \s* が貪欲なので、
+--     後ろの .*? も貪欲に振る舞い、最初の {{#if}} から**最後の** {{/if}}
+--     までが消えた。いまは {{/if}} を跨げない書き方にしてあり、貪欲さに
+--     左右されない。長さと目印の見張りも足した。
 --
 --   いまの版は残る。新しい版を作って current_version_id を向けるだけ。
 --   発行済みの文書は中身を凍らせてあるので、過去の PDF は変わらない。
@@ -45,7 +52,10 @@ cut AS (
            regexp_replace(
              regexp_replace(s.html_source,
                -- 1. 受領情報の表の中の行。丸ごと。
-               '\s*\{\{#if desiredDeadline\}\}.*?\{\{/if\}\}', '', 'g'),
+               -- (?:(?!\{\{/if\}\}).)* ＝「{{/if}} ではない文字」の繰り返し。
+               -- 最初の {{/if}} で必ず止まる。.*? と違い、式全体の貪欲さに
+               -- 左右されない（先頭に \s* を置くと .*? も貪欲になる）。
+               '\{\{#if desiredDeadline\}\}(?:(?!\{\{/if\}\}).)*\{\{/if\}\}', '', 'g'),
              -- 2a. 見出しの枡（中身が「希望納期」だけのもの）。
              '\s*<t[dh][^>]*>[^<]*希望納期[^<]*</t[dh]>', '', 'g'),
            -- 2b. 値の枡。
@@ -70,6 +80,15 @@ made AS (
    -- ★ 消し切れていなければ作らない。
      AND position('希望納期' in c.html) = 0
      AND position('desiredDeadline' in c.html) = 0
+   -- ★ 消しすぎていても作らない。消えるのは数百字。1000字を超えて減るのは
+   --   行き過ぎで、本文を壊している。
+     AND length(c.html) >= length(c.html_source) - 1000
+   -- ★ 紙の骨組みが残っていなければ作らない。長さだけでは、真ん中が
+   --   まるごと抜けたことに気づけない。
+     AND position('{{paymentDueDate}}' in c.html) > 0
+     AND position('{{totalPaymentStr}}' in c.html) > 0
+     AND position('{{payerCompany}}' in c.html) > 0
+     AND position('{{designerName}}' in c.html) > 0
   RETURNING id, template_id, version_no
 ),
 pointed AS (
@@ -87,6 +106,15 @@ SELECT '—', '0 件', '',
          WHEN (SELECT position('希望納期' in html_source) = 0
                  AND position('desiredDeadline' in html_source) = 0 FROM src)
            THEN '既に消えています（何もしていません）'
+         WHEN (SELECT length(html) < length(html_source) - 1000 FROM cut)
+           THEN '消しすぎになるので止めました（' ||
+                (SELECT (length(html_source) - length(html))::text FROM cut) ||
+                ' 字減る）。099 の出力を見てください'
+         WHEN (SELECT position('{{paymentDueDate}}' in html) = 0
+                 OR position('{{totalPaymentStr}}' in html) = 0
+                 OR position('{{payerCompany}}' in html) = 0
+                 OR position('{{designerName}}' in html) = 0 FROM cut)
+           THEN '紙の骨組みまで消えるので止めました。099 の出力を見てください'
          ELSE '消し切れませんでした。本文の作りが想定と違います。'
                 || '099_diagnose_statement_header.sql の「希望納期」の出力を見てください'
        END
@@ -104,6 +132,7 @@ SELECT t.template_key                                      AS キー,
        (position('{{paymentDueDate}}' in v.html_source) > 0) AS 支払期日は残っている,
        (position('{{totalPaymentStr}}' in v.html_source) > 0) AS 合計は残っている,
        (position('{{payerCompany}}' in v.html_source) > 0)  AS 入金企業は残っている,
+       (position('{{designerName}}' in v.html_source) > 0)  AS 権利者は残っている,
        length(v.html_source)                               AS 本文の長さ
   FROM v3.document_templates t
   JOIN v3.document_template_versions v ON v.id = t.current_version_id
