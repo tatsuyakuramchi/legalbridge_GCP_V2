@@ -2158,6 +2158,15 @@ export function createRoutes(database: Transactable) {
         Number(row.document_id), actor(res), { dueOn: input.dueOn ?? undefined }));
     }));
 
+  // 支払の取り消し。行は消さず、理由を残して canceled にする。
+  // 取り消せば、同じ実績で立て直せる（重複の検査は canceled を見ない）。
+  router.post("/payments/:id/cancel",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({ reason: z.string().trim().min(1).max(500) }).parse(req.body ?? {});
+      res.json(await payments.cancel(Number(req.params.id), input.reason, actor(res)));
+    }));
+
   router.post("/payments/:id/paid",
     requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {

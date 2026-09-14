@@ -78,6 +78,22 @@ export function MoneyWorkspace() {
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
   }
 
+  /**
+   * 支払を取り消す。行は消さず、理由を残して状態を変える。
+   * 取り消すと同じ実績で立て直せる（重複の検査は取消済みを見ない）。
+   */
+  async function cancelPayment(p: Payment) {
+    const reason = prompt(
+      `支払 ${p.paymentNo ?? `#${p.id}`}（${money(p.amount, p.currency)}）を取り消します。理由を書いてください。`);
+    if (!reason?.trim()) return;
+    setError(null); setNotice(null);
+    try {
+      await api.post(`/payments/${p.id}/cancel`, { reason: reason.trim() });
+      setNotice(`支払 ${p.paymentNo ?? `#${p.id}`} を取り消しました。同じ実績で立て直せます`);
+      await reload();
+    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
+  }
+
   async function markPaid(paymentId: number) {
     setError(null); setNotice(null);
     try {
@@ -272,8 +288,13 @@ export function MoneyWorkspace() {
                         id: p.id, paymentNo: p.paymentNo, currency: p.currency, amount: p.amount,
                         partyName: p.party?.name ?? "—", dueOn: p.dueOn, allocations: p.allocations
                       })}>割当</button>
-                      {p.status !== "paid" && (
+                      {p.status !== "paid" && p.status !== "canceled" && (
                         <button className="btn btn-sm" onClick={() => markPaid(p.id)}>支払済みに</button>
+                      )}
+                      {/* 払い終えたものは取り消せない。お金が出たあとで約束だけ
+                          無かったことにすると、帳簿と現金が合わなくなる。 */}
+                      {p.status !== "paid" && p.status !== "canceled" && (
+                        <button className="btn btn-sm" onClick={() => void cancelPayment(p)}>取り消す</button>
                       )}
                     </td>
                   </tr>

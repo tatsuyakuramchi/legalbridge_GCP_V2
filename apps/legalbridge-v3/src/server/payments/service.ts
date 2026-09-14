@@ -474,6 +474,52 @@ export class PaymentService {
     } catch (error) { throw translate(error); }
   }
 
+  /**
+   * 支払を取り消す。
+   *
+   * 行は消さない。status を canceled にして理由を残す。支払は「いつ・誰に・
+   * いくら払う約束をしたか」の記録なので、消すと約束をした事実まで消える。
+   * 重複の検査は canceled を見ないので、取り消せば同じ実績で立て直せる。
+   *
+   * 払い終えたものは取り消せない。お金が出たあとで約束だけ無かったことに
+   * すると、帳簿と現金が合わなくなる。返金は別の記録として立てる。
+   */
+  async cancel(paymentId: number, reason: string, actor: string) {
+    const why = String(reason ?? "").trim();
+    if (!why) throw new DomainError("VALIDATION", "取り消しの理由は必須です");
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const found = await client.query(
+          `SELECT id, payment_no, status, amount, paid_on, note
+             FROM payments WHERE id = $1 FOR UPDATE`, [paymentId]);
+        const row = found.rows[0] as Record<string, any> | undefined;
+        if (!row) throw new DomainError("NOT_FOUND", `支払 ${paymentId} が見つかりません`);
+        if (String(row.status) === "canceled") {
+          throw new DomainError("CONFLICT", "すでに取り消されています");
+        }
+        if (String(row.status) === "paid") {
+          throw new DomainError("CONFLICT",
+            `この支払は ${dateStr(row.paid_on) ?? ""} に支払済みです。` +
+            "取り消すのではなく、返金や次回の相殺として別に記録してください");
+        }
+        await client.query(
+          `UPDATE payments SET status = 'canceled', note = $2, updated_at = now()
+            WHERE id = $1`,
+          [paymentId, [str(row.note), `取消：${why}`].filter(Boolean).join("\n")]);
+        await recordAudit(client, {
+          actor, action: "payment.cancel", targetType: "payment", targetId: paymentId,
+          detail: { reason: why, amount: Number(row.amount), paymentNo: str(row.payment_no) }
+        });
+        // 期日超過の記録も閉じる。取り消した支払の期日は守りようがない。
+        await client.query(
+          `UPDATE data_quality_issues SET status = 'resolved', resolved_at = now()
+            WHERE rule_code = 'PAYMENT_DUE_OVER_LIMIT' AND target_type = 'payment' AND target_id = $1`,
+          [paymentId]);
+        return { paymentId, canceled: true };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
   async list(query: { status?: string; direction?: "in" | "out"; limit?: number } = {}): Promise<PaymentRow[]> {
     const where: string[] = [];
     const params: unknown[] = [];

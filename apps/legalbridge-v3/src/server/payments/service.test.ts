@@ -205,3 +205,51 @@ test("実績が1件の計算書は、これまでどおり1件の割当", async 
   assert.deepEqual(db.all("INSERT INTO payment_allocations").map((a) => a.params),
     [[900, 5, 700, 612000]]);
 });
+
+// ---- 取り消し ---------------------------------------------------------
+
+const cancelSvc = (row: Record<string, unknown> | null) => {
+  const db = new FakeDatabase((text: string) => {
+    if (text.includes("FROM payments WHERE id = $1 FOR UPDATE")) return row ? [row] : [];
+    return undefined;
+  });
+  return { db, service: new PaymentService(db) };
+};
+
+const planned = { id: 900, payment_no: "PAY-2026-0007", status: "planned",
+                  amount: 126941, paid_on: null, note: null };
+
+test("支払を取り消すと、行は残り理由が付く", async () => {
+  // 支払は「いつ・誰に・いくら払う約束をしたか」の記録。消すと約束をした
+  // 事実まで消える。文書の無効化・実績の取り消しと同じ扱いにする。
+  const { db, service } = cancelSvc(planned);
+  const result = await service.cancel(900, "期日と明細が違うので立て直す", "kuramochi");
+  assert.deepEqual(result, { paymentId: 900, canceled: true });
+  const update = db.find("UPDATE payments SET status = 'canceled'");
+  assert.ok(update, "行は消さずに状態を変える");
+  assert.equal(update!.params[1], "取消：期日と明細が違うので立て直す");
+  const audit = db.find("INSERT INTO audit_events");
+  assert.ok(audit, "監査記録に残す");
+  assert.equal(audit!.params[1], "payment.cancel");
+});
+
+test("理由なしでは取り消せない", async () => {
+  const { service } = cancelSvc(planned);
+  await assert.rejects(() => service.cancel(900, "   ", "k"), /理由は必須/);
+});
+
+test("すでに取り消したものは二度取り消さない", async () => {
+  const { service } = cancelSvc({ ...planned, status: "canceled" });
+  await assert.rejects(() => service.cancel(900, "重複", "k"), /すでに取り消されています/);
+});
+
+test("支払済みは取り消せない。返金は別の記録にする", async () => {
+  // お金が出たあとで約束だけ無かったことにすると、帳簿と現金が合わなくなる。
+  const { service } = cancelSvc({ ...planned, status: "paid", paid_on: "2026-09-18" });
+  await assert.rejects(() => service.cancel(900, "やり直し", "k"), /支払済みです/);
+});
+
+test("無い支払は取り消せない", async () => {
+  const { service } = cancelSvc(null);
+  await assert.rejects(() => service.cancel(900, "x", "k"), DomainError);
+});
