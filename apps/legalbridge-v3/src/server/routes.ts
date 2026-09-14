@@ -1302,6 +1302,18 @@ export function createRoutes(database: Transactable) {
         .parse(req.body ?? {});
       res.status(201).json(await batches.create(input, actor(res)));
     }));
+  /**
+   * 決定済みの発注書を、一括修正にそのまま上げられる CSV にして出す。
+   * 案件まるごとか、文書を名指しか。出せるのは発注書だけ。
+   */
+  router.post("/documents/batches/export", requireRole("admin", "legal"),
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        matterId: z.coerce.number().int().positive().nullable().optional(),
+        documentIds: z.array(z.coerce.number().int().positive()).max(500).default([])
+      }).parse(req.body ?? {});
+      res.json(await batches.exportCsv(input));
+    }));
   router.get("/documents/batches/:id", asyncRoute(async (req, res) => {
     const batch = await batches.find(Number(req.params.id));
     if (!batch) return res.status(404).json({ error: "一括作成の束が見つかりません" });

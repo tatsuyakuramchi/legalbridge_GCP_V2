@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { FakeDatabase } from "../core/fake-db.js";
 import { documentToggles, DocumentBatchService, groupRows, ownershipOfRows, readOnOff,
          readRows, readTriggerKind, sameAcross, scheduleLinesFrom,
-         templateCsv } from "./batch-service.js";
+         templateCsv, toCsv } from "./batch-service.js";
 
 const HEAD = "取引先コード,取引先名,作品コード,作品名,契約番号,条件名,品目・業務名,仕様・成果物,数量,"
   + "単価（税抜）,起点,納期,支払日,契約種別・支払条件,成果物の帰属先,発注署名欄,承諾署名欄,支払方法,備考,"
@@ -569,4 +569,33 @@ VD-00317,合同会社アトリエ蒼,,,,,表紙,カラー1点,1,150000,検収後
 VD-00317,合同会社アトリエ蒼,,,,,挿絵,カラー1点,1,120000,検収後,2026-10-31,2026-11-30,,発注者,,,固定額,,なし,誤り` });
   assert.equal(r.groups[0].action, "skip");
   assert.match(r.groups[0].issues.join(" "), /一括修正が行ごとに違います/);
+});
+
+test("書き出した CSV は、そのまま読み直せる", () => {
+  // 出したものを上げ直すのが目的なので、往復できなければ意味がない。
+  const csv = toCsv([{
+    partyCode: "VD-00317", partyName: "合同会社アトリエ蒼",
+    workCode: "WRK-10013", workTitle: "", agreementNo: "AGR-2025-0011",
+    conditionName: "第1期 制作", item_name: "表紙, 見開き", spec: "カラー1点",
+    quantity: 1.5, unit_price: 41250, triggerKind: "検収後",
+    delivery_date: "2026-10-31", payment_date: "2026-11-30",
+    payment_terms: "月末締め翌月末払い", deliverable_ownership: "発注者",
+    orderSign: "あり", acceptSign: "なし", calc_method: "固定額",
+    remarks: "改行\nあり", fix: "あり", fixReason: ""
+  }]);
+  const [row] = readRows(csv);
+  assert.equal(row.partyCode, "VD-00317");
+  assert.equal(row.conditionName, "第1期 制作");
+  assert.equal(row.agreementNo, "AGR-2025-0011");
+  // カンマや改行を含む値も崩れない。
+  assert.equal(row.item.item_name, "表紙, 見開き");
+  assert.equal(row.item.remarks, "改行\nあり");
+  assert.equal(row.triggerKind, "on_inspection");
+  assert.equal(row.orderSign, true);
+  assert.equal(row.acceptSign, false);
+  assert.equal(row.fix, true);
+  assert.equal(row.amount, 61875, "1.5 × 41250 = 61875");
+  // 修正理由は空で出す。人が書くまでは上げても飛ぶ。
+  assert.equal(row.fixReason, null);
+  assert.deepEqual(row.issues, []);
 });

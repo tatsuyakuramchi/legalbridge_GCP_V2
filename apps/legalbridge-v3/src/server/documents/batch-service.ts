@@ -65,7 +65,6 @@ export const ORDER_COLUMNS: Array<{ key: string; label: string; required?: boole
 ];
 
 export function templateCsv(): string {
-  const header = ORDER_COLUMNS.map((c) => c.label).join(",");
   // 例は2行にする。1行だけだと「同じ取引先でも作品が違えば別の発注書になる」
   // ことが伝わらず、作品の列を空のまま使われる。
   const examples = [
@@ -75,8 +74,21 @@ export function templateCsv(): string {
     ["VD-00317", "合同会社アトリエ蒼", "WRK-10021", "夜明けのクロニクル", "", "",
      "第1巻 挿絵", "モノクロ12点", "12", "8000", "検収後", "2026-11-30", "2026-12-31",
      "月末締め翌月末払い", "発注者", "あり", "なし", "固定額", "", "", ""]
-  ].map((row) => row.join(","));
-  return `﻿${header}\n${examples.join("\n")}\n`;
+  ].map((row) => Object.fromEntries(ORDER_COLUMNS.map((c, i) => [c.key, row[i]])));
+  return toCsv(examples);
+}
+
+/** CSV の1セル。カンマ・引用符・改行が入っていたら囲って escape する。 */
+function csvCell(value: unknown): string {
+  const text = value === null || value === undefined ? "" : String(value);
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+/** 見出し＋行を CSV に組む。Excel で開けるよう BOM を付ける。 */
+export function toCsv(rows: Array<Record<string, unknown>>): string {
+  const header = ORDER_COLUMNS.map((c) => c.label).join(",");
+  const body = rows.map((row) => ORDER_COLUMNS.map((c) => csvCell(row[c.key])).join(","));
+  return `\ufeff${[header, ...body].join("\n")}\n`;
 }
 
 export interface BatchRow {
@@ -387,6 +399,10 @@ export function documentToggles(g: Pick<BatchGroup, "rows">): Record<string, unk
   };
 }
 
+/** 書き出すときの あり・なし。決めていない（未記入）なら空のまま出す。 */
+const onOffLabel = (value: unknown) =>
+  value === true ? "あり" : value === false ? "なし" : "";
+
 /** あり・なしを、食い違いの判定に使える文字にする（未記入は数えない）。 */
 const onOffText = (value: boolean | null) =>
   value === null ? null : value ? "on" : "off";
@@ -653,6 +669,104 @@ export class DocumentBatchService {
         });
       });
       return (await this.find(batchId))!;
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 決定済みの発注書を、一括修正にそのまま上げられる CSV にして出す。
+   *
+   * 直すたびに人が19列を手で組み直すのは現実的でない。いまの中身を出して、
+   * 直したいところだけ書き換えて上げ直せるようにする。
+   * 「一括修正」は あり で出し、**修正理由だけ空**にする。理由は訂正版の
+   * 記録に残るもので、こちらでは決められない（書かなければ上げても飛ぶ）。
+   *
+   * 出せるのは発注書だけ。利用許諾の条件書は項目が桁違いに多く、CSV の
+   * 1行に収まらない。
+   *
+   * 1行が明細1行。条件明細が2件以上ぶら下がる文書は、この CSV の形
+   * （1束＝1条件＝1文書）で表せないので出さずに理由を返す。
+   */
+  async exportCsv(input: { matterId?: number | null; documentIds?: number[] }): Promise<{
+    csv: string; rows: number; documents: number;
+    skipped: Array<{ documentNo: string | null; reason: string }>;
+  }> {
+    try {
+      const ids = (input.documentIds ?? []).map(Number).filter(Boolean);
+      if (!ids.length && !input.matterId) {
+        throw new DomainError("VALIDATION", "案件か文書を指定してください");
+      }
+      const found = await this.database.query(
+        `SELECT d.id, d.document_no, d.manual_inputs,
+                c.id AS condition_id, c.name AS condition_name,
+                p.party_code, p.name AS party_name,
+                w.work_code, w.title AS work_title, a.agreement_no,
+                count(*) OVER (PARTITION BY d.id) AS condition_count
+           FROM documents d
+           JOIN document_conditions dc ON dc.document_id = d.id
+           JOIN conditions c ON c.id = dc.condition_id
+           JOIN parties p ON p.id = c.counterparty_id
+           LEFT JOIN works w ON w.id = c.work_id
+           LEFT JOIN agreements a ON a.id = c.agreement_id
+           JOIN document_template_versions v ON v.id = d.template_version_id
+           JOIN document_templates t ON t.id = v.template_id
+          WHERE t.template_key = ANY($1::text[])
+            AND d.status = 'issued'
+            AND ($2::bigint[] IS NULL OR d.id = ANY($2::bigint[]))
+            AND ($3::bigint IS NULL OR d.matter_id = $3)
+          ORDER BY d.id, dc.line_no`,
+        [[...TEMPLATE_KEYS], ids.length ? ids : null, input.matterId ?? null]);
+
+      // 起点は明細に無く、条件の予定明細が持っている。品目名で突き合わせ、
+      // 合わなければ並び順で拾う。どちらも当たらなければ検収後にする
+      // （上げ直すときに必須なので、空では出さない）。
+      const conditionIds = [...new Set((found.rows as any[]).map((r) => Number(r.condition_id)))];
+      const plans = conditionIds.length
+        ? (await this.database.query(
+            `SELECT condition_id, seq, label, trigger_kind FROM condition_schedules
+              WHERE condition_id = ANY($1::bigint[]) ORDER BY condition_id, seq`,
+            [conditionIds])).rows as any[]
+        : [];
+
+      const skipped: Array<{ documentNo: string | null; reason: string }> = [];
+      const out: Array<Record<string, unknown>> = [];
+      const seen = new Set<number>();
+      for (const row of found.rows as any[]) {
+        const documentId = Number(row.id);
+        if (seen.has(documentId)) continue;   // 条件が2件以上でも文書は1回だけ見る
+        seen.add(documentId);
+        if (Number(row.condition_count) > 1) {
+          skipped.push({ documentNo: str(row.document_no),
+                         reason: "条件明細が2件以上ぶら下がっています。この CSV の形では表せません" });
+          continue;
+        }
+        const manual = (row.manual_inputs ?? {}) as Record<string, any>;
+        const items = Array.isArray(manual.items) ? manual.items as Array<Record<string, any>> : [];
+        if (!items.length) {
+          skipped.push({ documentNo: str(row.document_no), reason: "明細がありません" });
+          continue;
+        }
+        const mine = plans.filter((s) => Number(s.condition_id) === Number(row.condition_id));
+        for (const [index, item] of items.entries()) {
+          const plan = mine.find((s) => str(s.label) === String(item.item_name ?? "")) ?? mine[index];
+          out.push({
+            partyCode: str(row.party_code), partyName: str(row.party_name),
+            workCode: str(row.work_code), workTitle: str(row.work_title),
+            agreementNo: str(row.agreement_no), conditionName: str(row.condition_name),
+            item_name: item.item_name, spec: item.spec,
+            quantity: item.quantity, unit_price: item.unit_price,
+            triggerKind: TRIGGER_LABEL[(plan?.trigger_kind as TriggerKind) ?? "on_inspection"],
+            delivery_date: item.delivery_date, payment_date: item.payment_date,
+            payment_terms: item.payment_terms,
+            deliverable_ownership: item.deliverable_ownership,
+            orderSign: onOffLabel(manual.SHOW_ORDER_SIGN_SECTION),
+            acceptSign: onOffLabel(manual.SHOW_SIGN_SECTION),
+            calc_method: "固定額", remarks: item.remarks,
+            // 直すために出す CSV なので、修正は あり。理由だけは人が書く。
+            fix: "あり", fixReason: ""
+          });
+        }
+      }
+      return { csv: toCsv(out), rows: out.length, documents: seen.size - skipped.length, skipped };
     } catch (error) { throw translate(error); }
   }
 

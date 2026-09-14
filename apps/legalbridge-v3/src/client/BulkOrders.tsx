@@ -80,6 +80,18 @@ async function readCsv(file: File): Promise<string> {
   try { return new TextDecoder("shift_jis").decode(buf); } catch { return utf8; }
 }
 
+/**
+ * CSV を手元へ落とす。
+ * サーバは中身を JSON で返す（認証の内側なので、素のリンクでは取りに行けない）。
+ */
+function saveCsv(csv: string, name: string) {
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const a = document.createElement("a");
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+
 const TONE = { create: "ok", choose: "warn", skip: "out" } as const;
 const ACTION_LABEL = { create: "作る", choose: "選ぶ", skip: "飛ばす" } as const;
 const RES_LABEL = { resolved: "取引先 1件に決定", ambiguous: "候補が複数", missing: "取引先が未登録" } as const;
@@ -116,6 +128,10 @@ export function BulkOrders(
   const [sendResult, setSendResult] = useState<Array<{ documentId: number; documentNo: string | null; partyName: string | null; sent: boolean; reason?: string; to?: string[] }> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** 書き出しの結果。出せなかった文書はここに理由が並ぶ。 */
+  const [exported, setExported] =
+    useState<{ rows: number; documents: number;
+               skipped: Array<{ documentNo: string | null; reason: string }> } | null>(null);
 
   useEffect(() => {
     api.get<{ batches: BatchHead[] }>("/documents/batches").then((r) => setRecent(r.batches)).catch(() => undefined);
@@ -140,6 +156,24 @@ export function BulkOrders(
       .catch((e: ApiError) => { if (live) { setPreview(null); setError(e.message); } });
     return () => { live = false; };
   }, [csv, matterId, templateKey, JSON.stringify(choices), JSON.stringify(workChoices)]);
+
+  /**
+   * 決定済みの発注書を CSV に出す。直したいところだけ書き換えて上げ直せる。
+   * 「一括修正」は あり で出るが、**修正理由は空**なので、書いてから上げる。
+   */
+  async function exportCsv(body: { matterId?: number; documentIds?: number[] }, name: string) {
+    setBusy(true); setError(null); setExported(null);
+    try {
+      const r = await api.post<{ csv: string; rows: number; documents: number;
+                                 skipped: Array<{ documentNo: string | null; reason: string }> }>(
+        "/documents/batches/export", body);
+      if (!r.rows) {
+        setError("出せる発注書がありませんでした（決定済みのものだけが対象です）");
+      } else saveCsv(r.csv, name);
+      setExported(r);
+    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
+    finally { setBusy(false); }
+  }
 
   async function create() {
     if (!csv || !matterId) return;
@@ -332,11 +366,32 @@ export function BulkOrders(
             {batch.matterNo ?? "案件なし"} {batch.matterTitle ?? ""}　{batch.sourceFilename ?? ""}　{batch.createdAt.slice(0, 10)} {batch.createdBy ?? ""}
           </span>
           <span className="row" style={{ marginLeft: "auto", gap: 6 }}>
+            {/* この束の発注書だけを出す。まとめて出した中から探す手間が要らない。 */}
+            <button className="btn btn-sm" disabled={busy || !batch.documents.length}
+                    onClick={() => void exportCsv(
+                      { documentIds: batch.documents.map((d) => d.id) },
+                      `orders-batch-${batch.id}.csv`)}>
+              この束を CSV に出す
+            </button>
             <button className="btn btn-sm" onClick={() => { setBatch(null); setIssueResult(null); setSendResult(null); }}>別の束を作る</button>
             <button className="btn btn-sm" onClick={onClose}>閉じる</button>
           </span>
         </div>
         {error && <div className="panel-bd"><div className="alert">{error}</div></div>}
+        {exported && (
+          <div className="panel-bd">
+            <div className={exported.skipped.length ? "note warn" : "note ok"}>
+              発注書 {exported.documents} 枚・明細 {exported.rows} 行を出しました。
+              直すところを書き換え、<b>修正理由</b>を入れてから上げ直してください。
+              {exported.skipped.length > 0 && (
+                <div style={{ marginTop: 4 }}>
+                  出せなかったもの {exported.skipped.length} 件：
+                  {exported.skipped.map((x) => `${x.documentNo ?? "（番号なし）"}（${x.reason}）`).join("／")}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
         <div className="tablewrap">
           <table>
             <thead><tr><th>取引先</th><th>条件明細</th><th>文書</th><th>状態</th><th>結果</th><th></th></tr></thead>
