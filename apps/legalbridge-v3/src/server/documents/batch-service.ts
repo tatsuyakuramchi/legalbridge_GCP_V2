@@ -10,7 +10,6 @@ import { MatterLinkService } from "../matters/link-service.js";
 import { MatterCommunicationService } from "../matters/communication-service.js";
 import { DocumentIssueService } from "./issue-service.js";
 import { DocumentRepository, type DocumentSummary } from "./repository.js";
-import { agreementRefText } from "./legacy-variables.js";
 import type { PdfRenderer } from "./pdf-renderer.js";
 
 /**
@@ -59,7 +58,10 @@ export const ORDER_COLUMNS: Array<{ key: string; label: string; required?: boole
   { key: "orderSign", label: "発注署名欄", note: "あり / なし。空なら なし" },
   { key: "acceptSign", label: "承諾署名欄", note: "あり / なし。空なら なし" },
   { key: "calc_method", label: "支払方法", note: "固定額 だけ。空なら固定額" },
-  { key: "remarks", label: "備考", note: "" }
+  { key: "remarks", label: "備考", note: "" },
+  // 末尾。既に決定した発注書を直すときだけ使う。
+  { key: "fix", label: "一括修正", note: "あり / なし。空なら なし（新しく作る）" },
+  { key: "fixReason", label: "修正理由", note: "一括修正が あり のときは必須。訂正版の記録に残る" }
 ];
 
 export function templateCsv(): string {
@@ -69,10 +71,10 @@ export function templateCsv(): string {
   const examples = [
     ["VD-00317", "合同会社アトリエ蒼", "WRK-10013", "星降る夜のミュゼ", "", "",
      "第4巻 表紙イラスト", "カラー1点", "1", "150000", "検収後", "2026-10-31", "2026-11-30",
-     "月末締め翌月末払い", "発注者", "あり", "なし", "固定額", ""],
+     "月末締め翌月末払い", "発注者", "あり", "なし", "固定額", "", "", ""],
     ["VD-00317", "合同会社アトリエ蒼", "WRK-10021", "夜明けのクロニクル", "", "",
      "第1巻 挿絵", "モノクロ12点", "12", "8000", "検収後", "2026-11-30", "2026-12-31",
-     "月末締め翌月末払い", "発注者", "あり", "なし", "固定額", ""]
+     "月末締め翌月末払い", "発注者", "あり", "なし", "固定額", "", "", ""]
   ].map((row) => row.join(","));
   return `﻿${header}\n${examples.join("\n")}\n`;
 }
@@ -92,6 +94,10 @@ export interface BatchRow {
   /** 発注署名欄・承諾署名欄を出すか。未記入は null（ひな形の既定に任せる）。 */
   orderSign: boolean | null;
   acceptSign: boolean | null;
+  /** 決定済みの発注書を直すか。あり なら訂正版を起こす。 */
+  fix: boolean | null;
+  /** 訂正の理由。記録に残るので、直すときは必須。 */
+  fixReason: string | null;
   item: Record<string, unknown>;
   amount: number;
   issues: string[];
@@ -199,6 +205,8 @@ export function readRows(text: string): BatchRow[] {
       triggerKind,
       orderSign: readOnOff(get("orderSign")),
       acceptSign: readOnOff(get("acceptSign")),
+      fix: readOnOff(get("fix")),
+      fixReason: get("fixReason") || null,
       item: {
         item_name: itemName, spec: get("spec") || null,
         quantity: quantity ?? null, unit_price: unitPrice ?? null, amount_ex_tax: amount,
@@ -286,13 +294,21 @@ export interface BatchGroup {
   rows: BatchRow[];
   total: number;
   issues: string[];
-  /** この束をどうするか。create=作る / choose=候補を選ぶ / skip=飛ばす */
+  /**
+   * 決定済みの発注書を直す束。on=false なら新しく作る（これまでどおり）。
+   * 対象が決まらないときは reason が理由を持ち、束は飛ぶ。
+   */
+  fix: { on: boolean; documentId: number | null; documentNo: string | null;
+         reason: string | null; note: string | null };
+  /** この束をどうするか。create=作る／直す / choose=候補を選ぶ / skip=飛ばす */
   action: "create" | "choose" | "skip";
 }
 
 export interface BatchPreview {
   groups: BatchGroup[];
-  summary: { rows: number; groups: number; creatable: number; skipped: number; choose: number };
+  summary: { rows: number; groups: number; creatable: number; skipped: number; choose: number;
+             /** creatable のうち、決定済みの発注書を直す束。 */
+             revising: number };
 }
 
 /** 束の鍵の取引先の側。コード、無ければ名前。 */
@@ -352,24 +368,22 @@ export function sameAcross<T>(rows: BatchRow[], pick: (r: BatchRow) => T | null)
 /**
  * 書類ごとの切り替え。発注書の「VII. 契約・署名」の欄に渡す。
  *
- * 未記入の項目は渡さない。渡すと「人が決めた」扱いになり、ひな形の既定や
- * 条件からの差し込み（基本契約あり）を上書きしてしまう。
+ * 渡すのは **CSV に書いてあることだけ**。未記入は渡さない。渡すと
+ * 「人が決めた」扱いになり、ひな形の既定や条件からの差し込みを塞ぐ。
+ *
+ * 基本契約の「あり」と名前は渡さない。条件明細が合意を持っていれば、
+ * 差し込みのときにそこから引ける（HAS_BASE_CONTRACT・MASTER_CONTRACT_REF）。
+ * ここで固めると、合意の名前を直したときに古い名前が残る。
+ * 「なし」だけは人の指示なので渡す（既定が「あり」でも外す）。
  */
-export function documentToggles(g: Pick<BatchGroup, "rows" | "condition">): Record<string, unknown> {
+export function documentToggles(g: Pick<BatchGroup, "rows">): Record<string, unknown> {
   const orderSign = sameAcross(g.rows, (r) => r.orderSign);
   const acceptSign = sameAcross(g.rows, (r) => r.acceptSign);
-  // 契約番号に「なし」と書かれた束は、契約を当てずにここへ来る。
   const declaredNone = g.rows.some((r) => /^(なし|無|none|-)$/i.test(String(r.agreementNo ?? "").trim()));
-  const agreement = g.condition.agreement;
   return {
     ...(orderSign === null ? {} : { SHOW_ORDER_SIGN_SECTION: orderSign }),
     ...(acceptSign === null ? {} : { SHOW_SIGN_SECTION: acceptSign }),
-    ...(declaredNone ? { HAS_BASE_CONTRACT: false } : {}),
-    // 基本契約の名前。番号だけだと紙に「AGR-2025-0011」としか出ない。
-    ...(agreement
-      ? { HAS_BASE_CONTRACT: true,
-          MASTER_CONTRACT_REF: agreementRefText(agreement.title, agreement.agreementNo) }
-      : {})
+    ...(declaredNone ? { HAS_BASE_CONTRACT: false } : {})
   };
 }
 
@@ -382,9 +396,13 @@ export const conflicts = (rows: BatchRow[], pick: (r: BatchRow) => string | null
   new Set(rows.map(pick).filter(Boolean)).size > 1;
 
 export interface BatchResultEntry {
-  key: string; partyName: string | null; status: "created" | "skipped" | "failed";
+  key: string; partyName: string | null;
+  /** revised は決定済みの発注書の訂正版を起こした束。 */
+  status: "created" | "revised" | "skipped" | "failed";
   partyId?: number; conditionId?: number; conditionNo?: string | null;
   documentId?: number; reason?: string;
+  /** 訂正版が退かせる相手の文書番号（発行した時点で退く）。 */
+  supersedesNo?: string | null;
 }
 
 export interface BatchRecord {
@@ -457,7 +475,11 @@ export class DocumentBatchService {
           ...(conflicts(g.rows, (r) => onOffText(r.orderSign))
             ? ["発注署名欄が行ごとに違います。書類ごとの切り替えです"] : []),
           ...(conflicts(g.rows, (r) => onOffText(r.acceptSign))
-            ? ["承諾署名欄が行ごとに違います。書類ごとの切り替えです"] : [])
+            ? ["承諾署名欄が行ごとに違います。書類ごとの切り替えです"] : []),
+          ...(conflicts(g.rows, (r) => onOffText(r.fix))
+            ? ["一括修正が行ごとに違います。書類ごとの切り替えです"] : []),
+          ...(conflicts(g.rows, (r) => r.fixReason)
+            ? ["修正理由が行ごとに違います。1枚の訂正版に理由は1つです"] : [])
         ];
         // 取引先と作品のどちらかが未登録なら飛ばす。どちらかが候補待ちなら選ぶ。
         const stuck = resolution === "missing" || workResolution === "missing";
@@ -476,6 +498,9 @@ export class DocumentBatchService {
         // 契約番号を書いたのに当たらない束は作らない。黙って「基本契約なし」で
         // 作ると、紙がスポット契約の約款で出る。
         const badAgreement = Boolean((basic as { missing?: boolean }).missing);
+        // 決定済みの発注書を直す束。相手が1枚に決まるときだけ直せる。
+        const fix = await this.resolveFix(g, condition?.id ?? null, input.templateKey,
+                                          stuck || choosing);
         const issues = [
           ...(resolution === "missing" ? ["取引先が未登録（コードも名前も当たらない）。この束は飛ばす"] : []),
           ...(resolution === "ambiguous" ? ["候補が複数。どれかを選ぶ"] : []),
@@ -484,13 +509,15 @@ export class DocumentBatchService {
           ...(workResolution === "ambiguous" ? ["作品の候補が複数。どれかを選ぶ"] : []),
           ...mixed,
           ...(badAgreement && basic.note ? [`${basic.note}。この束は飛ばす`] : []),
+          ...(fix.on && fix.note ? [`${fix.note}。この束は飛ばす`] : []),
           ...g.rows.flatMap((r) => r.issues.map((m) => `${r.line} 行目：${m}`))
         ];
         const blocking = g.rows.some((r) => r.issues.length > 0)
-          || mixed.length > 0 || badAgreement;
+          || mixed.length > 0 || badAgreement || Boolean(fix.on && fix.note);
         groups.push({
           ...g, resolution, party, candidates: resolved.candidates,
           workResolution, work, workCandidates: foundWork.candidates,
+          fix,
           condition: condition
             ? { mode: "existing", id: condition.id, conditionNo: condition.conditionNo,
                 agreement: null, agreementNote: null, schedules: 0 }
@@ -506,6 +533,7 @@ export class DocumentBatchService {
         summary: {
           rows: rows.length, groups: groups.length,
           creatable: groups.filter((g) => g.action === "create").length,
+          revising: groups.filter((g) => g.action === "create" && g.fix.on).length,
           skipped: groups.filter((g) => g.action === "skip").length,
           choose: groups.filter((g) => g.action === "choose").length
         }
@@ -579,19 +607,33 @@ export class DocumentBatchService {
           } else {
             await this.matters.attachCondition(input.matterId, conditionId, actor);
           }
-          const draft = await this.issues.createDraft({
-            templateKey: input.templateKey, conditionIds: [conditionId], matterId: input.matterId,
-            manualInputs: {
-              items: g.rows.map((r) => r.item), _batchId: batchId,
-              // 書類ごとの切り替え。手入力として渡すので、人がそのあと画面で
-              // 直せる（差し込みの自動判定より手入力が勝つ）。
-              ...documentToggles(g)
-            }
-          }, actor);
+          const manualInputs = {
+            items: g.rows.map((r) => r.item), _batchId: batchId,
+            // 書類ごとの切り替え。手入力として渡すので、人がそのあと画面で
+            // 直せる（差し込みの自動判定より手入力が勝つ）。
+            ...documentToggles(g)
+          };
+          // 一括修正の束は、新しく作らずに決定済みの発注書の訂正版を起こす。
+          // 決定した文書は書き換えない（出したものの記録なので）。元が退くのは
+          // 訂正版を発行した瞬間なので、ここでは下書きが2枚並ぶだけで、
+          // 「まとめて決定」を押すまで相手に出したものは動かない。
+          const draft = g.fix.on && g.fix.documentId
+            ? await this.issues.reissue(g.fix.documentId, g.fix.reason ?? "一括修正", actor,
+                                        [conditionId])
+            : await this.issues.createDraft({
+                templateKey: input.templateKey, conditionIds: [conditionId],
+                matterId: input.matterId, manualInputs
+              }, actor);
+          // 訂正版は元の手入力を引き継いでいる。CSV の中身で置き換える。
+          if (g.fix.on && g.fix.documentId) {
+            await this.issues.updateDraft(draft.id, { manualInputs }, actor);
+          }
           await this.database.query(
             "UPDATE documents SET batch_id = $2 WHERE id = $1", [draft.id, batchId]);
-          result.push({ key: g.key, partyName: g.party.name, status: "created", partyId: g.party.id,
-                        conditionId, conditionNo, documentId: draft.id });
+          result.push({ key: g.key, partyName: g.party.name,
+                        status: g.fix.on ? "revised" : "created", partyId: g.party.id,
+                        conditionId, conditionNo, documentId: draft.id,
+                        ...(g.fix.on ? { supersedesNo: g.fix.documentNo } : {}) });
         } catch (error) {
           result.push({ key: g.key, partyName: g.party.name, status: "failed",
                         reason: (error as Error)?.message ?? String(error) });
@@ -605,6 +647,7 @@ export class DocumentBatchService {
           actor, action: "document.batch", targetType: "document_batch", targetId: batchId,
           detail: { templateKey: input.templateKey, matterId: input.matterId, filename: input.filename ?? null,
                     created: result.filter((r) => r.status === "created").length,
+                    revised: result.filter((r) => r.status === "revised").length,
                     skipped: result.filter((r) => r.status === "skipped").length,
                     failed: result.filter((r) => r.status === "failed").length }
         });
@@ -622,7 +665,7 @@ export class DocumentBatchService {
       const result = (row.result as BatchResultEntry[]) ?? [];
       return {
         ...this.mapBatch(row),
-        created: result.filter((x) => x.status === "created").length,
+        created: result.filter((x) => x.status === "created" || x.status === "revised").length,
         skipped: result.filter((x) => x.status === "skipped").length,
         failed: result.filter((x) => x.status === "failed").length
       };
@@ -782,6 +825,63 @@ export class DocumentBatchService {
     if (byTitle.length === 1) return { resolution: "resolved", work: byTitle[0], candidates: byTitle };
     if (byTitle.length > 1) return { resolution: "ambiguous", work: null, candidates: byTitle };
     return { resolution: "missing", work: null, candidates: [] };
+  }
+
+  /**
+   * 「一括修正」の束の行き先を決める。
+   *
+   * 直すのは決定済みの発注書。CSV の中身で訂正版の下書きを起こす。
+   * 条件明細そのものは触らない（金額や納期を台帳ごと直すのは別の作業で、
+   * 条件の改訂になる）。台帳と紙が食い違うときは、突き合わせの表で知らせる。
+   */
+  private async resolveFix(
+    g: { rows: BatchRow[] }, conditionId: number | null, templateKey: string, unresolved: boolean
+  ): Promise<BatchGroup["fix"]> {
+    const off = { on: false, documentId: null, documentNo: null, reason: null, note: null };
+    // 行ごとに違うのは食い違い。mixed 側で拾うので、ここは1つに決まるときだけ。
+    if (sameAcross(g.rows, (r) => (r.fix === true ? "on" : null)) !== "on") return off;
+    const reason = sameAcross(g.rows, (r) => r.fixReason);
+    const base = { on: true, documentId: null as number | null, documentNo: null as string | null,
+                   reason };
+    if (!reason) {
+      return { ...base, note: "修正理由が空です。訂正版の記録に残るので必ず書いてください" };
+    }
+    // 取引先や作品が決まっていない束は、そもそもどの条件の話か定まらない。
+    if (unresolved) return { ...base, note: null };
+    if (!conditionId) {
+      return { ...base,
+               note: "直す相手が見つかりません（この取引先・作品・条件名の条件明細がこの案件にありません）" };
+    }
+    const found = await this.issuedDocument(this.database, conditionId, templateKey);
+    if (!found.length) {
+      return { ...base, note: "直す相手が見つかりません（この条件明細から決定済みの発注書が出ていません）" };
+    }
+    if (found.length > 1) {
+      return { ...base,
+               note: `決定済みの発注書が ${found.length} 枚あります（${found.map((d) => d.documentNo ?? `#${d.id}`).join("・")}）。どれを直すか決められません` };
+    }
+    return { ...base, documentId: found[0].id, documentNo: found[0].documentNo, note: null };
+  }
+
+  /**
+   * 直す相手の発注書。その条件から出ている決定済みのものを探す。
+   *
+   * 決定した文書は書き換えない（出したものの記録なので）。直す唯一の道は
+   * 訂正版を起こすことで、元は訂正版を発行した瞬間に退く。
+   *
+   * 1枚に決まるときだけ直す。0枚なら直すものが無く、2枚以上ならどれを
+   * 直すかをこちらでは決められない。どちらも飛ばして理由を残す。
+   */
+  private async issuedDocument(client: Queryable, conditionId: number, templateKey: string) {
+    const r = await client.query(
+      `SELECT d.id, d.document_no FROM document_conditions dc
+         JOIN documents d ON d.id = dc.document_id
+         JOIN document_template_versions v ON v.id = d.template_version_id
+         JOIN document_templates t ON t.id = v.template_id
+        WHERE dc.condition_id = $1 AND t.template_key = $2 AND d.status = 'issued'
+        ORDER BY d.id DESC LIMIT 5`, [conditionId, templateKey]);
+    return (r.rows as Array<{ id: number; document_no: string | null }>)
+      .map((row) => ({ id: Number(row.id), documentNo: str(row.document_no) }));
   }
 
   /**

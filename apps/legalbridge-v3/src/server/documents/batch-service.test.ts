@@ -6,7 +6,8 @@ import { documentToggles, DocumentBatchService, groupRows, ownershipOfRows, read
          templateCsv } from "./batch-service.js";
 
 const HEAD = "取引先コード,取引先名,作品コード,作品名,契約番号,条件名,品目・業務名,仕様・成果物,数量,"
-  + "単価（税抜）,起点,納期,支払日,契約種別・支払条件,成果物の帰属先,発注署名欄,承諾署名欄,支払方法,備考";
+  + "単価（税抜）,起点,納期,支払日,契約種別・支払条件,成果物の帰属先,発注署名欄,承諾署名欄,支払方法,備考,"
+  + "一括修正,修正理由";
 
 /** 作品を書かない CSV。以前の運用そのまま（作品なしの委託）。 */
 const CSV = `${HEAD}
@@ -25,7 +26,7 @@ VD-00317,合同会社アトリエ蒼,WRK-10021,,,,表紙イラスト,カラー1�
 test("雛形の見出しは列の定義から出す（BOM 付き）。例は作品違いの2行", () => {
   const csv = templateCsv();
   assert.ok(csv.startsWith("﻿取引先コード,取引先名,作品コード,作品名,契約番号,条件名,品目・業務名"));
-  assert.ok(csv.includes("成果物の帰属先,発注署名欄,承諾署名欄,支払方法,備考"));
+  assert.ok(csv.includes("成果物の帰属先,発注署名欄,承諾署名欄,支払方法,備考,一括修正,修正理由"));
   // 1行だけだと「作品が違えば別の発注書」が伝わらない。
   assert.equal(csv.trimEnd().split("\n").length, 3);
   assert.ok(csv.includes("契約種別・支払条件"));
@@ -458,22 +459,18 @@ test("あり・なしは書き方を選ばない。未記入は「決めてい�
 test("署名欄と基本契約の切り替えを、書類の手入力として渡す", () => {
   const rows = readRows(`${HEAD}
 VD-00317,合同会社アトリエ蒼,,,,,表紙,カラー1点,1,150000,検収後,2026-10-31,2026-11-30,,発注者,あり,なし,固定額,`);
-  assert.deepEqual(documentToggles({
-    rows,
-    condition: { agreement: { id: 7, agreementNo: "AGR-2025-0011", title: "業務委託基本契約" } }
-  } as never), {
+  // 基本契約の「あり」と名前は渡さない。条件が合意を持っていれば差し込みで
+  // 引ける。ここで固めると、合意の名前を直しても古い名前が残る。
+  assert.deepEqual(documentToggles({ rows } as never), {
     SHOW_ORDER_SIGN_SECTION: true,
-    SHOW_SIGN_SECTION: false,
-    HAS_BASE_CONTRACT: true,
-    // 番号だけだと紙に何の契約か出ない。
-    MASTER_CONTRACT_REF: "業務委託基本契約（AGR-2025-0011）"
+    SHOW_SIGN_SECTION: false
   });
 });
 
 test("未記入の切り替えは渡さない（ひな形の既定に任せる）", () => {
   const rows = readRows(`${HEAD}
 VD-00317,合同会社アトリエ蒼,,,,,表紙,カラー1点,1,150000,検収後,2026-10-31,2026-11-30,,発注者,,,固定額,`);
-  assert.deepEqual(documentToggles({ rows, condition: { agreement: null } } as never), {});
+  assert.deepEqual(documentToggles({ rows } as never), {});
 });
 
 test("契約番号に「なし」と書けば、基本契約なしの発注にする", async () => {
@@ -486,8 +483,7 @@ VD-00317,合同会社アトリエ蒼,,,なし,,表紙,カラー1点,1,150000,検
   assert.match(r.groups[0].condition.agreementNote ?? "", /基本契約なしの発注/);
   const rows = readRows(`${HEAD}
 VD-00317,合同会社アトリエ蒼,,,なし,,表紙,カラー1点,1,150000,検収後,2026-10-31,2026-11-30,,発注者,,,固定額,`);
-  assert.deepEqual(documentToggles({ rows, condition: { agreement: null } } as never),
-    { HAS_BASE_CONTRACT: false });
+  assert.deepEqual(documentToggles({ rows } as never), { HAS_BASE_CONTRACT: false });
 });
 
 test("署名欄が行ごとに違えば飛ばす（書類ごとの切り替え）", async () => {
@@ -504,4 +500,73 @@ test("帰属先は空にできる（その行に出さない）", () => {
 VD-00317,合同会社アトリエ蒼,,,,,表紙,カラー1点,1,150000,検収後,2026-10-31,2026-11-30,,,,,固定額,`);
   assert.deepEqual(rows[0].issues, [], "空は不備ではない");
   assert.equal(rows[0].item.deliverable_ownership, null);
+});
+
+/** 決定済みの発注書が1枚だけある条件、という状態の作り物。 */
+const withIssued = (docs: Array<{ id: number; document_no: string }>) =>
+  (t: string) => t.includes("c.pricing_model = 'fixed'")
+    ? [{ id: 44, condition_no: "CL-2026-00044" }]
+    : t.includes("d.status = 'issued'") ? docs : undefined;
+
+test("一括修正：決定済みの発注書が1枚なら、それを直す相手にする", async () => {
+  const { svc } = build(withIssued([{ id: 90, document_no: "ARC-PO-2026-1009" }]));
+  const r = await svc.preview({ templateKey: "purchase_order", matterId: 3, csv: `${HEAD}
+VD-00317,合同会社アトリエ蒼,,,,,表紙,カラー1点,1,150000,検収後,2026-10-31,2026-11-30,,発注者,,,固定額,,あり,単価の誤り` });
+  assert.equal(r.groups[0].action, "create");
+  assert.deepEqual(r.groups[0].fix,
+    { on: true, documentId: 90, documentNo: "ARC-PO-2026-1009", reason: "単価の誤り", note: null });
+  assert.equal(r.summary.revising, 1);
+});
+
+test("一括修正：修正理由が空なら飛ばす", async () => {
+  // 訂正版の記録に残る。空のまま通すと、あとから何を直したのか読めない。
+  const { svc } = build(withIssued([{ id: 90, document_no: "ARC-PO-2026-1009" }]));
+  const r = await svc.preview({ templateKey: "purchase_order", matterId: 3, csv: `${HEAD}
+VD-00317,合同会社アトリエ蒼,,,,,表紙,カラー1点,1,150000,検収後,2026-10-31,2026-11-30,,発注者,,,固定額,,あり,` });
+  assert.equal(r.groups[0].action, "skip");
+  assert.match(r.groups[0].issues.join(" "), /修正理由が空です/);
+});
+
+test("一括修正：決定済みの発注書が無ければ飛ばす", async () => {
+  const { svc } = build(withIssued([]));
+  const r = await svc.preview({ templateKey: "purchase_order", matterId: 3, csv: `${HEAD}
+VD-00317,合同会社アトリエ蒼,,,,,表紙,カラー1点,1,150000,検収後,2026-10-31,2026-11-30,,発注者,,,固定額,,あり,単価の誤り` });
+  assert.equal(r.groups[0].action, "skip");
+  assert.match(r.groups[0].issues.join(" "), /決定済みの発注書が出ていません/);
+});
+
+test("一括修正：決定済みの発注書が複数なら、どれを直すか決めない", async () => {
+  const { svc } = build(withIssued([
+    { id: 90, document_no: "ARC-PO-2026-1009" }, { id: 91, document_no: "ARC-PO-2026-1010" }]));
+  const r = await svc.preview({ templateKey: "purchase_order", matterId: 3, csv: `${HEAD}
+VD-00317,合同会社アトリエ蒼,,,,,表紙,カラー1点,1,150000,検収後,2026-10-31,2026-11-30,,発注者,,,固定額,,あり,単価の誤り` });
+  assert.equal(r.groups[0].action, "skip");
+  assert.match(r.groups[0].issues.join(" "), /2 枚あります/);
+});
+
+test("一括修正：条件明細が新しく作られる束は直せない", async () => {
+  // 直す相手が無い。新しく作るつもりなら「一括修正」を なし にする。
+  const { svc } = build();
+  const r = await svc.preview({ templateKey: "purchase_order", matterId: 3, csv: `${HEAD}
+VD-00317,合同会社アトリエ蒼,,,,,表紙,カラー1点,1,150000,検収後,2026-10-31,2026-11-30,,発注者,,,固定額,,あり,単価の誤り` });
+  assert.equal(r.groups[0].action, "skip");
+  assert.match(r.groups[0].issues.join(" "), /条件明細がこの案件にありません/);
+});
+
+test("一括修正が なし・空なら、これまでどおり新しく作る", async () => {
+  const { svc } = build();
+  const r = await svc.preview({ templateKey: "purchase_order", matterId: 3, csv: `${HEAD}
+VD-00317,合同会社アトリエ蒼,,,,,表紙,カラー1点,1,150000,検収後,2026-10-31,2026-11-30,,発注者,,,固定額,,,` });
+  assert.equal(r.groups[0].action, "create");
+  assert.equal(r.groups[0].fix.on, false);
+  assert.equal(r.summary.revising, 0);
+});
+
+test("一括修正が行ごとに違えば飛ばす", async () => {
+  const { svc } = build(withIssued([{ id: 90, document_no: "ARC-PO-2026-1009" }]));
+  const r = await svc.preview({ templateKey: "purchase_order", matterId: 3, csv: `${HEAD}
+VD-00317,合同会社アトリエ蒼,,,,,表紙,カラー1点,1,150000,検収後,2026-10-31,2026-11-30,,発注者,,,固定額,,あり,誤り
+VD-00317,合同会社アトリエ蒼,,,,,挿絵,カラー1点,1,120000,検収後,2026-10-31,2026-11-30,,発注者,,,固定額,,なし,誤り` });
+  assert.equal(r.groups[0].action, "skip");
+  assert.match(r.groups[0].issues.join(" "), /一括修正が行ごとに違います/);
 });

@@ -41,11 +41,23 @@ interface Group {
     agreement: { id: number; agreementNo: string | null; title: string | null } | null;
     agreementNote: string | null; schedules: number;
   };
+  /** 決定済みの発注書を直す束。 */
+  fix: { on: boolean; documentId: number | null; documentNo: string | null;
+         reason: string | null; note: string | null };
   rows: Row[]; total: number; issues: string[]; action: "create" | "choose" | "skip";
 }
-interface Preview { groups: Group[]; summary: { rows: number; groups: number; creatable: number; skipped: number; choose: number } }
-interface ResultEntry { key: string; partyName: string | null; status: "created" | "skipped" | "failed";
-  conditionNo?: string | null; documentId?: number; reason?: string }
+interface Preview {
+  groups: Group[];
+  summary: { rows: number; groups: number; creatable: number; skipped: number;
+             choose: number; revising: number };
+}
+interface ResultEntry {
+  key: string; partyName: string | null;
+  status: "created" | "revised" | "skipped" | "failed";
+  conditionNo?: string | null; documentId?: number; reason?: string;
+  /** 訂正版が退かせる相手の文書番号。 */
+  supersedesNo?: string | null;
+}
 interface Doc { id: number; documentNo: string | null; status: string; phase: string; counterparty: string | null;
   templateLabel: string | null; conditions: Array<{ id: number; conditionNo: string | null }> }
 interface Batch { id: number; templateKey: string; matterId: number | null; matterNo: string | null; matterTitle: string | null;
@@ -150,7 +162,13 @@ export function BulkOrders(
 
   async function issueAll() {
     if (!batch) return;
-    if (!window.confirm("必須が揃っている下書きをまとめて決定します。決定すると番号が振られ、中身は直せなくなります。")) return;
+    const revised = batch.result.filter((r) => r.status === "revised");
+    const note = revised.length
+      ? `\n\nうち ${revised.length} 件は訂正版です。決定すると、元の発注書（`
+        + `${revised.map((r) => r.supersedesNo ?? "—").join("・")}）が退きます。`
+      : "";
+    if (!window.confirm(
+      "必須が揃っている下書きをまとめて決定します。決定すると番号が振られ、中身は直せなくなります。" + note)) return;
     setBusy(true); setError(null);
     try {
       const r = await api.post<{ results: NonNullable<typeof issueResult>; batch: Batch }>(`/documents/batches/${batch.id}/issue`);
@@ -171,6 +189,7 @@ export function BulkOrders(
   }
 
   const ready = preview?.groups.filter((g) => g.action === "create") ?? [];
+  const revising = ready.filter((g) => g.fix.on).length;
 
   return (
     <div className="stack">
@@ -256,7 +275,10 @@ export function BulkOrders(
           <h2>突き合わせの結果</h2>
           <span className="faint">{csv?.name}　{preview.summary.rows} 行 → {preview.summary.groups} 束</span>
           <span className="row" style={{ marginLeft: "auto", gap: 6 }}>
-            <span className="tag ok">作れる {preview.summary.creatable}</span>
+            <span className="tag ok">作れる {preview.summary.creatable - preview.summary.revising}</span>
+            {preview.summary.revising > 0 && (
+              <span className="tag accent">直す {preview.summary.revising}</span>
+            )}
             {preview.summary.choose > 0 && <span className="tag warn">選ぶ {preview.summary.choose}</span>}
             {preview.summary.skipped > 0 && <span className="tag out">飛ばす {preview.summary.skipped}</span>}
           </span>
@@ -276,6 +298,9 @@ export function BulkOrders(
         <div className="panel-bd stack">
           <div className="note">
             1束 = 発注書1枚 = 条件明細1件。同じ取引先でも作品が違えば別の束になります。
+            「一括修正」を あり にした束は、新しく作らずに<b>決定済みの発注書の訂正版</b>を起こします
+            （相手は、その条件明細から出ている決定済みの発注書が1枚に決まるときだけ）。
+            訂正版も下書きなので、決定するまで相手に出したものは動きません。条件明細そのものは直しません。
             条件明細：その取引先・その作品にこの案件の定額・委託料の条件があれば「既存」に当てる。
             無ければ発注書と同時に「新規」で1件作ります
             （金額は行の合計、終了は納期の最遅、作品は当てた作品、基本契約はその取引先の締結済みのもの、
@@ -286,7 +311,10 @@ export function BulkOrders(
           </div>
           <div className="row">
             <button className="btn primary" disabled={busy || !ready.length} onClick={() => void create()}>
-              {busy ? "作っています…" : `下書きを ${ready.length} 件作る`}
+              {busy ? "作っています…"
+                : revising > 0
+                  ? `下書きを ${ready.length} 件作る（うち訂正版 ${revising} 件）`
+                  : `下書きを ${ready.length} 件作る`}
             </button>
             {preview.summary.choose > 0 && <span className="faint">候補が決まっていない束は「飛ばす」に落ちます</span>}
           </div>
@@ -316,10 +344,17 @@ export function BulkOrders(
               {batch.result.map((r) => {
                 const doc = batch.documents.find((d) => d.id === r.documentId);
                 return (
-                  <tr key={r.key} className={r.status !== "created" ? "older" : ""}>
+                  <tr key={r.key}
+                      className={r.status === "created" || r.status === "revised" ? "" : "older"}>
                     <td>{r.partyName ?? "（取引先なし）"}</td>
                     <td className="code">{r.conditionNo ?? "—"}</td>
-                    <td className="code">{doc ? (doc.documentNo ?? `#${doc.id}`) : "—"}</td>
+                    <td className="code">
+                      {doc ? (doc.documentNo ?? `#${doc.id}`) : "—"}
+                      {/* 訂正版は、どれを退かせるものかが分からないと読めない。 */}
+                      {r.status === "revised" && (
+                        <div className="faint">訂正版（{r.supersedesNo ?? "—"} を差し替え）</div>
+                      )}
+                    </td>
                     <td>{doc ? <span className={`tag ${doc.phase === "draft" ? "warn" : doc.phase === "sent" ? "ok" : "accent"}`}>
                       {doc.phase === "draft" ? "下書き" : doc.phase === "decided" ? "決定済み" : doc.phase === "sent" ? "送信済み" : doc.phase}
                     </span> : <span className={`tag ${r.status === "failed" ? "out" : ""}`}>{r.status === "failed" ? "失敗" : "飛ばした"}</span>}</td>
@@ -342,6 +377,11 @@ export function BulkOrders(
                     onClick={() => void issueAll()}>
               下書き {batch.documents.filter((d) => d.status === "draft").length} 件をまとめて決定
             </button>
+            {batch.result.some((r) => r.status === "revised") && (
+              <span className="faint">
+                訂正版は<b>決定した瞬間に</b>元の発注書と入れ替わります。それまで相手に出したものは動きません
+              </span>
+            )}
             <button className="btn" disabled={busy || !batch.documents.some((d) => d.phase === "decided")}
                     onClick={() => void sendAll()}>
               決定済み {batch.documents.filter((d) => d.phase === "decided").length} 件をまとめて送る（取引先へ、担当者を cc）
@@ -433,6 +473,15 @@ function GroupRows(
               ))}
             </div>
           )}
+          {/* 直す束は、相手の文書番号と理由を必ず見せる。決定済みのものを
+              退かせる操作なので、押す前に何が退くのか分かる必要がある。 */}
+          {g.fix.on && g.fix.documentNo && (
+            <div className="row" style={{ marginTop: 3, gap: 6 }}>
+              <span className="tag accent">訂正版</span>
+              <span className="code">{g.fix.documentNo}</span>
+              <span className="faint">を直す（{g.fix.reason}）</span>
+            </div>
+          )}
           {g.issues.length > 0 && <div className="faint" style={{ marginTop: 3 }}>{g.issues.join("／")}</div>}
         </td>
         <td colSpan={2} className="faint">{g.rows.length} 品目 → {g.action === "skip" ? "飛ばす" : "発注書 1 枚"}</td>
@@ -461,7 +510,10 @@ function GroupRows(
               </>
             ) : <span className="faint">—</span>}
         </td>
-        <td><span className={`tag ${tone}`}>{ACTION_LABEL[g.action]}</span></td>
+        {/* 直す束は「作る」ではない。押す前に見分けが付くようにする。 */}
+        <td><span className={`tag ${g.action === "create" && g.fix.on ? "accent" : tone}`}>
+          {g.action === "create" && g.fix.on ? "直す" : ACTION_LABEL[g.action]}
+        </span></td>
       </tr>
       {g.rows.map((r) => (
         <tr key={r.line} className={g.action === "skip" ? "older" : ""}>
