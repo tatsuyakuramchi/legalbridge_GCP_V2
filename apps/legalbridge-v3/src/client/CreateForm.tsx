@@ -20,7 +20,8 @@ export interface Field {
   type?: FieldType;
   required?: boolean;
   placeholder?: string;
-  hint?: string;
+  /** 補足。他の項目に応じて変えたいときは関数で渡す（通貨で単位が変わる欄など）。 */
+  hint?: string | ((values: Record<string, string>) => string);
   options?: Array<{ value: string; label: string; hint?: string | null }>;
   /**
    * type "search" のとき、サーバに聞く検索。無ければ options をここで絞る。
@@ -108,7 +109,11 @@ export function CreateForm(props: CreateFormProps) {
                   value={values[f.name] ?? ""} placeholder={f.placeholder}
                   onChange={(e) => set(f.name, e.target.value)} />
               )}
-              {f.hint && <small className="faint">{f.hint}</small>}
+              {(typeof f.hint === "function" ? f.hint(values) : f.hint) && (
+                <small className="faint">
+                  {typeof f.hint === "function" ? f.hint(values) : f.hint}
+                </small>
+              )}
             </label>
           ))}
         </div>

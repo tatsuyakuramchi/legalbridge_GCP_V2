@@ -2807,13 +2807,51 @@ export function createWebhookRouter(database: Transactable) {
   return router;
 }
 
+/**
+ * zod の指摘を1行にする。欄の名前は画面の見出しに合わせて日本語にする。
+ * 出せない欄は英語の項目名のまま出す（何も出さないよりは辿れる）。
+ */
+const FIELD_LABELS: Record<string, string> = {
+  name: "条件名", direction: "向き", kind: "種類", counterpartyId: "相手先",
+  workId: "作品", agreementId: "載っている契約", currency: "通貨",
+  pricingModel: "計算方式", ratePpm: "料率", unitAmount: "単価",
+  quantity: "個数", flatAmount: "定額", mgAmount: "MG 最低保証", agAmount: "AG 前払保証",
+  termStart: "開始", termEnd: "終了", taxCategory: "税区分",
+  paymentTerms: "支払条件", contractForm: "契約形式", notes: "備考",
+  spec: "仕様・成果物", orderNo: "発注番号（外部）", deliverableOwnership: "成果物の帰属先",
+  occurredOn: "発生日", period: "対象期間", amount: "実額", grossAmount: "受領価格",
+  sampleQuantity: "見本", usageType: "利用形態", outConditionId: "アウト条件",
+  paymentStage: "入金区分", eventType: "種類", scheduleId: "予定の回",
+  plannedAmount: "予定額", dueOn: "発生予定日", payOn: "支払期日",
+  serviceFrom: "役務提供期間（開始）", serviceTo: "役務提供期間（終了）"
+};
+
+export function zodSummary(error: z.ZodError): string {
+  return error.issues.slice(0, 3).map((issue) => {
+    const path = issue.path.filter((p) => typeof p === "string" || typeof p === "number");
+    const key = String(path[path.length - 1] ?? "");
+    const label = FIELD_LABELS[key] ?? (key || "どこか");
+    // 整数を求める欄に小数が来たときは、いちばん多い間違いなので言い切る。
+    if (issue.code === "invalid_type" && "expected" in issue && issue.expected === "int") {
+      return `${label}：小数は入れられません。最小通貨単位の整数で入れてください`;
+    }
+    return `${label}：${issue.message}`;
+  }).join(" / ");
+}
+
 export function errorHandler(error: unknown, _req: Request, res: Response, next: NextFunction) {
   if (res.headersSent) return next(error);
   if (error instanceof DomainError) {
     return res.status(statusFor(error.code)).json({ error: error.message, code: error.code, detail: error.detail });
   }
   if (error instanceof z.ZodError) {
-    return res.status(400).json({ error: "入力が正しくありません", issues: error.issues });
+    // どの欄が悪いのかを本文に入れる。画面は error しか出さないので、
+    // 「入力が正しくありません」だけだと、どこを直せばいいのか分からない
+    // （小数の単価が弾かれたとき、実際に手が止まった）。
+    return res.status(400).json({
+      error: `入力が正しくありません（${zodSummary(error)}）`,
+      issues: error.issues
+    });
   }
   console.error("unhandled error", error);
   return res.status(500).json({ error: "サーバ内部でエラーが発生しました" });

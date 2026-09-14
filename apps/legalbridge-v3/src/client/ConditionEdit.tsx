@@ -6,6 +6,7 @@ import type { ConditionDetail } from "../server/core/model.js";
 import { CONDITION_KIND_LABEL } from "./labels.js";
 import { SearchSelect, searchParties } from "./SearchSelect.js";
 import { CONTRACT_FORMS } from "../server/conditions/contract-form.js";
+import { minorUnitHint } from "./ConditionCreateForm.js";
 
 /**
  * 条件の編集。
@@ -294,7 +295,7 @@ export function ConditionEdit(
             */}
           {detail.pricingModel !== "revenue_rate" && (<>
             {field("unitAmount", "単価（最小通貨単位）", { type: "number",
-              hint: `円なら円単位。いまの値 ${money(detail.unitAmount, detail.currency)}` })}
+              hint: `${minorUnitHint(detail.currency)}　いまの値 ${money(detail.unitAmount, detail.currency)}` })}
             {field("quantity", "個数", { type: "number",
               placeholder: "1", hint: "小数も入る（0.5人月など）。単価×個数が定額に入る" })}
           </>)}
@@ -303,7 +304,7 @@ export function ConditionEdit(
           {detail.pricingModel !== "revenue_rate" &&
             field("flatAmount", "定額（最小通貨単位）", { type: "number",
               hint: computedFlat === null
-                ? `円なら円単位。いまの値 ${money(detail.flatAmount, detail.currency)}`
+                ? `${minorUnitHint(detail.currency)}　いまの値 ${money(detail.flatAmount, detail.currency)}`
                 : `単価×個数 = ${computedFlat.toLocaleString("ja-JP")}。直せば手の値が勝つ` })}
 
           {detail.direction === "out" && (<>

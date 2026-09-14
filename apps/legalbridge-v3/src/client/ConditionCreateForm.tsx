@@ -4,6 +4,20 @@ import { parseLanguages, parseRegions } from "../server/core/rights-scope.js";
 import { CreateForm } from "./CreateForm.js";
 import { CONDITION_KIND_LABEL } from "./labels.js";
 import { searchParties } from "./SearchSelect.js";
+import { minorPerMajor } from "../server/royalty/economics.js";
+
+/**
+ * 金額の欄の補足。通貨で単位が変わる。
+ *
+ * 「最小通貨単位」と書いてあるだけでは、USD の $7.35 を 7.35 と打ってしまう。
+ * 小数は保存できないので弾かれるが、何を直せばいいのかは画面から読めない
+ * （実際にここで手が止まった）。通貨に合わせて例を出す。
+ */
+export function minorUnitHint(currency: string): string {
+  const per = minorPerMajor(currency || "JPY");
+  if (per === 1) return `${currency || "JPY"} は整数で入れる。¥330,000 は 330000`;
+  return `${currency} は1/${per}単位。$7.35 は 735（小数は入れられません）`;
+}
 
 /**
  * 条件明細の登録フォーム。
@@ -91,19 +105,20 @@ export function ConditionCreateForm(
           hint: "選んだ方式に必要な値が無いと登録できない" },
         { name: "flatAmount", label: "定額（最小通貨単位）", type: "money", required: true,
           visibleWhen: (v) => v.pricingModel === "fixed",
-          hint: "円なら円単位。¥330,000 は 330000" },
+          hint: (v) => minorUnitHint(v.currency) },
         { name: "ratePct", label: "料率（%）", type: "number", required: true,
           visibleWhen: (v) => v.pricingModel === "revenue_rate",
           placeholder: "12.5", hint: "小数で入れる。12.5 は 12.5%" },
         { name: "unitAmount", label: "単価（最小通貨単位）", type: "money", required: true,
-          visibleWhen: (v) => v.pricingModel === "unit_rate" },
+          visibleWhen: (v) => v.pricingModel === "unit_rate",
+          hint: (v) => minorUnitHint(v.currency) },
 
         { name: "mgAmount", label: "MG 最低保証", type: "money",
           visibleWhen: (v) => v.direction === "out",
-          hint: "毎期独立の下限。消化しないので残高を持たない" },
+          hint: (v) => `毎期独立の下限。消化しないので残高を持たない。${minorUnitHint(v.currency)}` },
         { name: "agAmount", label: "AG 前払保証", type: "money",
           visibleWhen: (v) => v.direction === "out",
-          hint: "累積で充当する。消化しきるまで実額が出ない" },
+          hint: (v) => `累積で充当する。消化しきるまで実額が出ない。${minorUnitHint(v.currency)}` },
         { name: "exclusivity", label: "独占性", type: "select",
           visibleWhen: (v) => v.kind === "license",
           options: [{ value: "exclusive", label: "独占" }, { value: "non_exclusive", label: "非独占" }] },
