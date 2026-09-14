@@ -267,26 +267,29 @@ export function orderLinesFrom(context: Ctx): Row[] {
       };
     });
   }
+  // 選んだ条件は、金額が決まっていなくても1行にする。
+  //
+  // 以前は「定額のある条件」だけを拾っていた。料率型・定期課金・単価型の条件は
+  // 定額を持たないので1行も出ず、品目名も仕様も空のまま、金額 ¥0 の行だけが
+  // 残る発注書になっていた。人がその条件を選んでいる以上、何を頼んだのかは
+  // 紙に出さないといけない。金額が無いのは、フォームが「未入力」として出す。
   return (context.conditions ?? [])
-    // 定額の無い条件も、業績連動なら1行にする。報酬は売上が立ってから決まるが、
-    // 「何を頼んだか」は発注書に書かないといけない。落とすと、品目名も仕様も
-    // 無い明細ゼロの発注書が出る（金額だけ ¥0 の行が残る）。
-    .filter((c: Ctx) => c.flatAmount || calcMethodOf(c) === "ROYALTY")
     .map((c: Ctx) => ({
       item_name: c.name ?? "",
       spec: specOf(c),
       deliverable_ownership: ownershipOf(c),
       // 条件に個数があればそれを使う。無ければ「一式1」として出す。
       quantity: c.quantity ?? 1,
-      // 業績連動は金額が先に決まらない。0 を置き、本文は reward_label
-      // （利用許諾料・インセンティブ報酬）のほうを出す。
       unit_price: c.unitAmount ?? c.flatAmount ?? 0,
       payment_terms: contractFormFor(c.contractForm),
       term_start: c.termStart ?? null,
       term_end: c.termEnd ?? null,
       delivery_date: c.termEnd ?? null,
       payment_date: null,
-      amount_ex_tax: c.flatAmount ?? 0,
+      // 定額があればそれ。単価建ての条件は 単価 × 個数。どちらも無ければ 0。
+      amount_ex_tax: c.flatAmount
+        ?? (c.unitAmount === null || c.unitAmount === undefined
+              ? 0 : Number(c.unitAmount) * Number(c.quantity ?? 1)),
       tax_category: c.taxCategory ?? "taxable",
       calc_method: calcMethodOf(c),
       reward_label: rewardLabelOf(c)

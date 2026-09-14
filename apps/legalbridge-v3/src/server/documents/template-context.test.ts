@@ -455,9 +455,25 @@ test("業績連動の条件は、定額が無くても明細の行にする", ()
   assert.equal(lines[0].reward_label, "利用許諾料", "本文はこちらを出す");
 });
 
-test("定額も業績連動も無い条件は、これまでどおり明細に出さない", () => {
+test("金額の決まっていない条件も、品目名は紙に出す", () => {
+  // 定期課金・単価型・未設定の条件は定額を持たない。落とすと、人が選んだ条件が
+  // 紙のどこにも出ないまま、金額 ¥0 の空行だけが残る。
   const lines = orderLinesFrom(ctx({ schedules: [], conditions: [
-    { id: 1, name: "実費", flatAmount: null, pricingModel: "fixed", taxCategory: "taxable" }
-  ] }));
-  assert.equal(lines.length, 0);
+    { id: 1, name: "品質評価レポート作成業務", flatAmount: null,
+      pricingModel: "subscription", taxCategory: "taxable" }
+  ] })) as Array<Record<string, any>>;
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].item_name, "品質評価レポート作成業務");
+  assert.equal(lines[0].amount_ex_tax, 0, "金額はフォームが「未入力」として出す");
+  assert.equal(lines[0].calc_method, "SUBSCRIPTION");
+});
+
+test("単価建ての条件は 単価 × 個数 を金額にする", () => {
+  const lines = orderLinesFrom(ctx({ schedules: [], conditions: [
+    { id: 1, name: "自社製造・他社販売", flatAmount: null, unitAmount: 1650, quantity: 100,
+      pricingModel: "unit_rate", taxCategory: "taxable" }
+  ] })) as Array<Record<string, any>>;
+  assert.equal(lines[0].unit_price, 1650);
+  assert.equal(lines[0].quantity, 100);
+  assert.equal(lines[0].amount_ex_tax, 165000);
 });

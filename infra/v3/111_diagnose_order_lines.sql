@@ -6,8 +6,13 @@
 --   発注書の明細は、条件明細から組む。組み方は2通り。
 --     ・予定明細（回）があれば、その回ごとに1行
 --     ・無ければ、条件そのものを1行
---   後者は「定額（flat_amount）がある条件」だけを拾っていた。料率型の条件は
---   定額を持たないので1行も出ず、品目名も仕様も空の発注書になる。
+--   後者は「定額（flat_amount）がある条件」だけを拾っていた。定期課金・
+--   料率型・単価型の条件は定額を持たないので1行も出ず、品目名も仕様も空の
+--   発注書になっていた。いまは選んだ条件を必ず1行にする。
+--
+--   この照会は「その行にいくら出るか」を見るためのもの。金額が 0 で出る
+--   条件は、定額も単価も予定明細も入っていない。紙に品目名は出るが、
+--   合計金額は人が入れることになる。
 --
 --   ★ 下の condition_no を、見たい条件の番号に書き換えて流す。
 -- =====================================================================
@@ -32,20 +37,20 @@ SELECT c.condition_no                                   AS 条件番号,
          WHEN (SELECT count(*) FROM v3.condition_schedules s
                 WHERE s.condition_id = c.id) > 0
            THEN '予定明細から組む（回ごとに1行）'
-         WHEN c.flat_amount IS NOT NULL AND c.flat_amount <> 0
-           THEN '条件から1行（定額あり）'
-         WHEN c.pricing_model = 'revenue_rate'
-           THEN '条件から1行（業績連動。111 の改修後）'
-         ELSE '★ 明細が1行も出ない'
+         WHEN COALESCE(c.flat_amount, 0) <> 0
+           THEN '条件から1行。金額 = 定額'
+         WHEN COALESCE(c.unit_amount, 0) <> 0
+           THEN '条件から1行。金額 = 単価 × 個数'
+         ELSE '★ 条件から1行。金額 0（人が入れる）'
        END                                              AS 明細の出方
   FROM v3.conditions c
  WHERE c.condition_no = 'CL-0000-00000';   -- ★ ここを書き換える
 
 -- ---------------------------------------------------------------------
--- 2. 明細が1行も出ない条件を、まとめて探す
+-- 2. 金額の入っていない条件を、まとめて探す
 --
---    定額も予定明細も無く、業績連動でもない条件。発注書を作ると
---    品目名の空いた行だけが出る。
+--    定額も単価も予定明細も無い。品目名は紙に出るが、合計金額は人が入れる
+--    ことになる。数が多ければ、条件の登録のしかたを見直す材料になる。
 -- ---------------------------------------------------------------------
 SELECT c.condition_no AS 条件番号, c.name AS 条件名,
        c.pricing_model AS 計算方式, c.status AS 状態,
@@ -55,7 +60,7 @@ SELECT c.condition_no AS 条件番号, c.name AS 条件名,
  WHERE c.direction = 'in'
    AND c.status IN ('active', 'draft')
    AND COALESCE(c.flat_amount, 0) = 0
-   AND c.pricing_model IS DISTINCT FROM 'revenue_rate'
+   AND COALESCE(c.unit_amount, 0) = 0
    AND NOT EXISTS (SELECT 1 FROM v3.condition_schedules s WHERE s.condition_id = c.id)
  ORDER BY c.condition_no
  LIMIT 50;
