@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { FakeDatabase } from "../core/fake-db.js";
-import { ConditionScheduleService, generateLines } from "./schedule-service.js";
+import { closingDateOf, ConditionScheduleService, generateLines } from "./schedule-service.js";
 
 const gen = (over: Record<string, unknown> = {}) => generateLines({
   startOn: "2026-04-30", count: 12, everyMonths: 1,
@@ -243,4 +243,65 @@ test("予定の行から作る実績にも、検収書が使う項目を残せ�
   assert.equal(q.params[10], "2026-05-02");
   assert.equal(q.params[11], "法務");
   assert.equal(q.params[12], "倉持");
+});
+
+// ---- 契約形式と役務提供期間（定期払い） ----
+
+test("定期の回は役務提供期間を持ち、その終わりが締め日になる", () => {
+  const lines = generateLines({
+    startOn: "2026-04-30", count: 3, everyMonths: 1, amount: 280000,
+    triggerKind: "periodic", paymentTerms: "月末締め翌月末払い", contractForm: "準委任"
+  });
+  assert.equal(lines[0].serviceTo, "2026-04-30", "期間の終わり＝その回の締め日");
+  assert.equal(lines[0].dueOn, "2026-04-30");
+  assert.equal(lines[0].serviceFrom, "2026-04-01", "1回目も前の締めの翌日から数える");
+  assert.equal(lines[1].serviceFrom, "2026-05-01", "前の回の締めの翌日から");
+  assert.equal(lines[1].serviceTo, "2026-05-31");
+  assert.equal(lines[2].payOn, "2026-07-31", "締めの翌月末に払う");
+  assert.equal(lines[0].contractForm, "準委任", "契約形式は全回に入る");
+});
+
+test("月末締めでない定期は、その日で区切った期間になる", () => {
+  // 20日締めの契約。1回目も 3/21〜4/20 と数える。
+  const lines = generateLines({
+    startOn: "2026-04-20", count: 2, everyMonths: 1, amount: 100000, triggerKind: "periodic"
+  });
+  assert.deepEqual(
+    [lines[0].serviceFrom, lines[0].serviceTo], ["2026-03-21", "2026-04-20"]);
+  assert.deepEqual(
+    [lines[1].serviceFrom, lines[1].serviceTo], ["2026-04-21", "2026-05-20"]);
+});
+
+test("四半期の定期は3ヶ月分をひとつの期間にする", () => {
+  const lines = generateLines({
+    startOn: "2026-06-30", count: 2, everyMonths: 3, amount: 900000, triggerKind: "periodic"
+  });
+  assert.deepEqual(
+    [lines[0].serviceFrom, lines[0].serviceTo], ["2026-04-01", "2026-06-30"]);
+  assert.deepEqual(
+    [lines[1].serviceFrom, lines[1].serviceTo], ["2026-07-01", "2026-09-30"]);
+});
+
+test("定期でない起点には役務提供期間を置かない", () => {
+  const lines = generateLines({
+    startOn: "2026-04-30", count: 2, everyMonths: 1, amount: 100000,
+    triggerKind: "on_inspection"
+  });
+  assert.equal(lines[0].serviceTo, undefined, "検収後の回に期間は無い");
+});
+
+test("締め日は、役務提供期間の終わりが空欄のときだけ埋める", () => {
+  // 月末締めでない契約（20日締め）は、人が入れた締め日が勝つ。
+  assert.equal(closingDateOf({
+    seq: 1, label: null, triggerKind: "periodic", plannedAmount: 1,
+    dueOn: "2026-04-20", payOn: null, serviceFrom: "2026-03-21", serviceTo: "2026-04-20"
+  }), "2026-04-20");
+  assert.equal(closingDateOf({
+    seq: 1, label: null, triggerKind: "periodic", plannedAmount: 1,
+    dueOn: null, payOn: null, serviceFrom: "2026-04-01", serviceTo: "2026-04-30"
+  }), "2026-04-30", "空なら期間の終わりを締め日にする");
+  assert.equal(closingDateOf({
+    seq: 1, label: null, triggerKind: "on_delivery", plannedAmount: 1,
+    dueOn: null, payOn: null, serviceTo: "2026-04-30"
+  }), null, "定期でなければ期間から締め日は作らない");
 });

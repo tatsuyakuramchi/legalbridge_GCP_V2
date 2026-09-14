@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError, money } from "./api.js";
 import { rewardLabelFor } from "../server/core/reward.js";
+import { CONTRACT_FORMS } from "../server/conditions/contract-form.js";
 
 /**
  * 条件の実績（明細の数値）。
@@ -27,6 +28,7 @@ interface TypeOption { value: string; label: string }
 interface ScheduleRow {
   id: number; seq: number; label: string | null; triggerKind: string;
   plannedAmount: number; dueOn: string | null; eventId: number | null;
+  contractForm: string | null; serviceFrom: string | null; serviceTo: string | null;
 }
 interface TemplateOption { templateKey: string; label: string; category: string | null }
 interface StatementPreview {
@@ -220,6 +222,9 @@ export function ConditionEvents(
   const chosen = openSchedules.find((s) => String(s.id) === (v.scheduleId ?? ""));
   // 検収・納品の実績は検収書の行になる。そのとき出る欄が変わる。
   const inspecting = (v.eventType ?? "") === "inspection" || (v.eventType ?? "") === "delivery";
+  // 定期の回か。回を選んでいなければ、種別が役務の期間なら定期とみなす。
+  const periodicRound = chosen?.triggerKind === "periodic"
+    || (v.eventType ?? "") === "service_period";
   const plannedDiff = chosen && (v.amount ?? "").trim()
     ? Number(v.amount) - chosen.plannedAmount : null;
 
@@ -230,6 +235,7 @@ export function ConditionEvents(
       occurredOn: new Date().toISOString().slice(0, 10),
       period: "", quantity: royalty && !rewardLabel ? "" : "1",
       grossAmount: "", deductions: "", amount: "", note: "",
+      contractForm: "", serviceFrom: "", serviceTo: "",
       deliverable: "", inspectedOn: "", inspectorDept: "", inspectorName: ""
     };
   }
@@ -253,7 +259,11 @@ export function ConditionEvents(
       amount: String(line.plannedAmount),
       period: line.label ?? from.period ?? "",
       eventType: typeByTrigger[line.triggerKind] ?? from.eventType ?? "inspection",
-      inspectedOn: line.dueOn ?? from.inspectedOn ?? ""
+      inspectedOn: line.dueOn ?? from.inspectedOn ?? "",
+      // 契約形式と役務提供期間は回が持っている。人が写し直さずに済ませる。
+      contractForm: line.contractForm ?? from.contractForm ?? "",
+      serviceFrom: line.serviceFrom ?? "",
+      serviceTo: line.serviceTo ?? ""
     });
   }
   const pickSchedule = (id: string) => applySchedule(id);
@@ -271,6 +281,9 @@ export function ConditionEvents(
         deductions: f("deductions").trim() ? Math.round(Number(f("deductions"))) : 0,
         amount: Math.round(Number(f("amount") || 0)),
         note: f("note").trim() || null,
+        contractForm: f("contractForm").trim() || null,
+        serviceFrom: f("serviceFrom") || null,
+        serviceTo: f("serviceTo") || null,
         scheduleId: f("scheduleId") ? Number(f("scheduleId")) : null,
         // 検収書がそのまま使う項目。空なら文書側で条件・案件から補う。
         deliverable: f("deliverable").trim() || null,
@@ -333,7 +346,7 @@ export function ConditionEvents(
               </select>
               <small className={f("scheduleId") ? "faint" : "danger"}>
                 {f("scheduleId")
-                  ? "発生日・金額・種類・期間は予定から入れました。違えば直してください"
+                  ? "発生日・金額・種類・期間・契約形式は予定から入れました。違えば直してください"
                   : "結び付けないと、検収書の支払日が空欄になります"}
               </small>
             </label>
@@ -365,6 +378,36 @@ export function ConditionEvents(
                 <small className="faint">検収書の「今回数量」に出ます。1回分なら 1</small>
               )}
             </label>
+            <label className="field">
+              <span>契約形式</span>
+              <input list="contract-forms-event" value={f("contractForm")}
+                     placeholder={chosen?.contractForm ?? "条件に合わせる"}
+                     onChange={(e) => set("contractForm", e.target.value)} />
+              <datalist id="contract-forms-event">
+                {CONTRACT_FORMS.map((x) => <option key={x} value={x} />)}
+              </datalist>
+              <small className="faint">
+                空なら予定の回・条件のものを使います。検収書の「契約種別」に出ます
+              </small>
+            </label>
+            {/* 役務提供期間は定期払いの回のためのもの。毎月の顧問料は
+                「何月分か」が金額と同じくらい大事で、名前の文字列だけでは
+                締めのずれを確かめられない。 */}
+            {(periodicRound || f("serviceFrom") || f("serviceTo")) && (
+              <label className="field">
+                <span>役務提供期間</span>
+                <div className="row" style={{ gap: 5, flexWrap: "nowrap" }}>
+                  <input type="date" value={f("serviceFrom")}
+                         aria-label="役務提供期間の開始"
+                         onChange={(e) => set("serviceFrom", e.target.value)} />
+                  <span className="faint">〜</span>
+                  <input type="date" value={f("serviceTo")}
+                         aria-label="役務提供期間の終了"
+                         onChange={(e) => set("serviceTo", e.target.value)} />
+                </div>
+                <small className="faint">終了日がその回の締め日です</small>
+              </label>
+            )}
             {royalty && !rewardLabel && (
               <>
                 <label className="field">

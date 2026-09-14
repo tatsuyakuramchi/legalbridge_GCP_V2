@@ -34,6 +34,8 @@ export interface ConditionSummary {
   flatAmount: number | null;
   /** 単価×数量のときの単価。読めないと画面から直せない。 */
   unitAmount: number | null;
+  /** 個数。単価と組。単価×個数が定額の既定値になる。 */
+  quantity: number | null;
   mgAmount: number | null;
   agAmount: number | null;
   termStart: string | null;
@@ -55,7 +57,10 @@ export interface ConditionDetail extends ConditionSummary {
   exclusivity: "exclusive" | "non_exclusive" | null;
   sublicensable: boolean | null;
   taxCategory: "taxable" | "reduced" | "exempt";
+  /** 支払条件。「月末締め翌月末払い」。読んで支払期日を出す。 */
   paymentTerms: string | null;
+  /** 契約形式（請負・委任など）。紙に書く語。支払条件とは別。 */
+  contractForm: string | null;
   cycle: string | null;
   notes: string | null;
   /** 仕様・成果物。書類の明細の「仕様・成果物」に出る。 */
@@ -102,12 +107,15 @@ export interface ConditionRevision {
   ratePpm: number | null;
   flatAmount: number | null;
   unitAmount: number | null;
+  quantity: number | null;
   mgAmount: number | null;
   agAmount: number | null;
   termStart: string | null;
   termEnd: string | null;
   taxCategory: string;
   paymentTerms: string | null;
+  /** 契約形式（請負・委任など）。支払条件とは別。 */
+  contractForm: string | null;
   notes: string | null;
   counterparty: { id: number; name: string } | null;
   /** この版に付いている実績と文書の数。消してよいかの判断に使う。 */

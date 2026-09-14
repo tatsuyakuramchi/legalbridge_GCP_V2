@@ -827,11 +827,15 @@ export function createRoutes(database: Transactable) {
     pricingModel: z.enum(["fixed", "unit_rate", "revenue_rate", "subscription", "none"]).optional(),
     ratePpm: z.coerce.number().int().min(0).max(1_000_000).nullable().optional(),
     unitAmount: z.coerce.number().int().nullable().optional(),
+    // 個数。単価と組。入れておけば単価×個数が定額の既定値になる。
+    quantity: z.coerce.number().nullable().optional(),
     flatAmount: z.coerce.number().int().nullable().optional(),
     mgAmount: z.coerce.number().int().nullable().optional(),
     agAmount: z.coerce.number().int().nullable().optional(),
     taxCategory: z.enum(["taxable", "reduced", "exempt"]).optional(),
     paymentTerms: z.string().trim().max(500).nullable().optional(),
+    // 契約形式（請負・委任など）。支払条件とは別の欄。
+    contractForm: z.string().trim().max(60).nullable().optional(),
     cycle: z.string().trim().max(60).nullable().optional(),
     notes: z.string().trim().max(4000).nullable().optional(),
     spec: z.string().trim().max(4000).nullable().optional(),
@@ -882,11 +886,13 @@ export function createRoutes(database: Transactable) {
     ratePpm: z.coerce.number().int().min(0).max(1_000_000).nullable().optional(),
     flatAmount: z.coerce.number().int().nullable().optional(),
     unitAmount: z.coerce.number().int().nullable().optional(),
+    quantity: z.coerce.number().nullable().optional(),
     mgAmount: z.coerce.number().int().nullable().optional(),
     agAmount: z.coerce.number().int().nullable().optional(),
     termStart: z.string().date().nullable().optional(),
     termEnd: z.string().date().nullable().optional(),
     paymentTerms: z.string().trim().max(300).nullable().optional(),
+    contractForm: z.string().trim().max(60).nullable().optional(),
     taxCategory: z.enum(["taxable", "reduced", "exempt"]).optional(),
     notes: z.string().trim().max(2000).nullable().optional(),
     workId: z.coerce.number().int().positive().nullable().optional(),
@@ -928,7 +934,12 @@ export function createRoutes(database: Transactable) {
     // 発生予定日。実績にするときの発生日の既定値になる。
     dueOn: z.string().date().nullable().optional(),
     // 支払期日。支払条件から導けなければ空のまま。
-    payOn: z.string().date().nullable().optional()
+    payOn: z.string().date().nullable().optional(),
+    // その回の契約形式。空なら条件のものを継ぐ。
+    contractForm: z.string().trim().max(60).nullable().optional(),
+    // 役務提供期間。定期払いの回で使う。終了日は締め日の既定値になる。
+    serviceFrom: z.string().date().nullable().optional(),
+    serviceTo: z.string().date().nullable().optional()
   });
   router.put("/conditions/:id/schedules",
     requireRole("admin", "legal"), requireWritable,
@@ -937,7 +948,9 @@ export function createRoutes(database: Transactable) {
       res.json(await conditionSchedules.replace(
         Number(req.params.id),
         lines.map((l) => ({
-          ...l, label: l.label ?? null, dueOn: l.dueOn ?? null, payOn: l.payOn ?? null
+          ...l, label: l.label ?? null, dueOn: l.dueOn ?? null, payOn: l.payOn ?? null,
+          contractForm: l.contractForm ?? null,
+          serviceFrom: l.serviceFrom ?? null, serviceTo: l.serviceTo ?? null
         })),
         actor(res)));
     }));
@@ -963,13 +976,19 @@ export function createRoutes(database: Transactable) {
         startOn: input.startOn, count: input.count,
         everyMonths: input.everyMonths ?? 1, amount: input.amount,
         triggerKind: input.triggerKind ?? "periodic", labelSuffix: input.labelSuffix,
-        paymentTerms: input.paymentTerms ?? condition?.paymentTerms ?? null
+        paymentTerms: input.paymentTerms ?? condition?.paymentTerms ?? null,
+        // 契約形式も条件が持っている。組んだ全回に同じものを入れる。
+        contractForm: condition?.contractForm ?? null
       }) });
     }));
 
   // 実績（条件明細の数値）。記録は消さず、取り消しは void で残す。
   // 検収書がそのまま使う項目。実績に入れておけば文書を作るとき人が入れずに済む。
   const inspectionFields = {
+    // 契約形式と役務提供期間。空なら予定の回・条件から継ぐ。
+    contractForm: z.string().trim().max(60).nullable().optional(),
+    serviceFrom: z.string().date().nullable().optional(),
+    serviceTo: z.string().date().nullable().optional(),
     deliverable: z.string().trim().max(2000).nullable().optional(),
     inspectedOn: z.string().date().nullable().optional(),
     inspectorDept: z.string().trim().max(120).nullable().optional(),

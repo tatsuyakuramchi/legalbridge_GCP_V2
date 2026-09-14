@@ -1,5 +1,5 @@
 import type { Queryable, Transactable } from "../core/db.js";
-import { dateStr, int, str } from "../core/db.js";
+import { dateStr, int, num, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { taxRatePercentFor } from "./legacy-totals.js";
 
@@ -155,7 +155,8 @@ export class DocumentContextRepository {
   private async schedules(client: Queryable, conditionIds: number[]) {
     const r = await client.query(
       `SELECT s.id, s.condition_id, s.seq, s.trigger_kind, s.planned_amount,
-              s.due_on, s.pay_on, s.label, c.currency
+              s.due_on, s.pay_on, s.label, s.contract_form, s.service_from, s.service_to,
+              c.currency
          FROM condition_schedules s JOIN conditions c ON c.id = s.condition_id
         WHERE s.condition_id = ANY($1::bigint[])
         ORDER BY s.condition_id, s.seq`, [conditionIds]);
@@ -170,6 +171,9 @@ export class DocumentContextRepository {
         dueOn: dateStr(row.due_on),
         payOn: dateStr(row.pay_on),
         label: str(row.label),
+        contractForm: str(row.contract_form),
+        serviceFrom: dateStr(row.service_from),
+        serviceTo: dateStr(row.service_to),
         currency
       };
     });
@@ -288,6 +292,9 @@ export class DocumentContextRepository {
       `SELECT e.id, e.condition_id, e.event_type, e.occurred_on, e.period, e.quantity,
               e.gross_amount, e.deductions, e.amount, e.note,
               e.deliverable, e.inspected_on, e.inspector_dept, e.inspector_name,
+              e.contract_form, e.service_from, e.service_to,
+              s.contract_form AS schedule_contract_form,
+              s.service_from AS schedule_service_from, s.service_to AS schedule_service_to,
               c.currency, s.label AS schedule_label, s.seq AS schedule_seq,
               s.due_on AS schedule_due_on, s.pay_on AS schedule_pay_on,
               s.planned_amount AS schedule_planned
@@ -312,6 +319,10 @@ export class DocumentContextRepository {
         amountMinor: int(row.amount) ?? 0,
         /** その回の予定額。実績と違えば「金額変更」として本文の変更履歴に出る。 */
         plannedAmount: toMajor(int(row.schedule_planned), currency),
+        // 契約形式と役務提供期間は、実績が持っていなければ予定の回から継ぐ。
+        contractForm: str(row.contract_form) ?? str(row.schedule_contract_form),
+        serviceFrom: dateStr(row.service_from) ?? dateStr(row.schedule_service_from),
+        serviceTo: dateStr(row.service_to) ?? dateStr(row.schedule_service_to),
         note: str(row.note),
         currency,
         /** 検収書がそのまま使う項目。実績に入っていれば文書側で人が入れずに済む。 */
@@ -332,8 +343,9 @@ export class DocumentContextRepository {
     if (!ids.length) return [];
     const result = await client.query(
       `SELECT c.id, c.condition_no, c.name, c.direction, c.kind, c.currency, c.pricing_model,
-              c.rate_ppm, c.unit_amount, c.flat_amount, c.mg_amount, c.ag_amount,
-              c.term_start, c.term_end, c.tax_category, c.payment_terms, c.cycle,
+              c.rate_ppm, c.unit_amount, c.quantity, c.flat_amount, c.mg_amount, c.ag_amount,
+              c.term_start, c.term_end, c.tax_category, c.payment_terms, c.contract_form,
+              c.cycle,
               c.agreement_id, c.exclusivity, c.sublicensable, c.notes, c.spec, c.deliverable_ownership,
               c.order_no,
               c.counterparty_id, c.work_id, c.work_part_id,
@@ -366,6 +378,7 @@ export class DocumentContextRepository {
         ratePct: row.rate_ppm === null || row.rate_ppm === undefined
           ? null : Number(row.rate_ppm) / 10000,
         unitAmount: toMajor(int(row.unit_amount), currency),
+        quantity: num(row.quantity),
         flatAmount: toMajor(int(row.flat_amount), currency),
         mgAmount: toMajor(int(row.mg_amount), currency),
         agAmount: toMajor(int(row.ag_amount), currency),
@@ -374,6 +387,7 @@ export class DocumentContextRepository {
         termEnd: dateStr(row.term_end),
         taxCategory: String(row.tax_category ?? "taxable"),
         paymentTerms: str(row.payment_terms),
+        contractForm: str(row.contract_form),
         cycle: str(row.cycle),
         exclusivity: str(row.exclusivity),
         /** 書類に印字する言い方。列は enum なので、そのまま出すと英語が出る。 */

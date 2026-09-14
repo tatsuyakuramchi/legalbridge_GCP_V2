@@ -164,6 +164,17 @@ SELECT * FROM (
                       AND table_name = 'text_snippets'), '表が無い')
          || ' / ' || COALESCE((SELECT count(*)::text FROM v3.text_snippets
                                 WHERE is_active), '0') || ' 件'
+  UNION ALL
+  SELECT 22, '単価・個数・契約形式・役務提供期間（A-022。条件 2 / 予定 3 / 実績 3）',
+         (SELECT count(*)::text FROM information_schema.columns
+           WHERE table_schema='v3' AND table_name='conditions'
+             AND column_name IN ('quantity','contract_form'))
+         || ' / ' || (SELECT count(*)::text FROM information_schema.columns
+                       WHERE table_schema='v3' AND table_name='condition_schedules'
+                         AND column_name IN ('contract_form','service_from','service_to'))
+         || ' / ' || (SELECT count(*)::text FROM information_schema.columns
+                       WHERE table_schema='v3' AND table_name='condition_events'
+                         AND column_name IN ('contract_form','service_from','service_to'))
 ) AS 確認 ORDER BY n;
 `;
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, money } from "./api.js";
+import { CONTRACT_FORMS } from "../server/conditions/contract-form.js";
 
 /**
  * 条件の予定明細。
@@ -15,6 +16,7 @@ import { api, ApiError, money } from "./api.js";
 interface Row {
   id: number; seq: number; label: string | null; triggerKind: string;
   plannedAmount: number; dueOn: string | null; payOn: string | null;
+  contractForm: string | null; serviceFrom: string | null; serviceTo: string | null;
   eventId: number | null; eventOn: string | null; eventAmount: number | null;
   paidAmount: number; status: "planned" | "recorded" | "paid";
 }
@@ -30,7 +32,20 @@ interface View {
 type Draft = {
   seq: number; label: string; triggerKind: string; plannedAmount: string;
   dueOn: string; payOn: string;
+  contractForm: string; serviceFrom: string; serviceTo: string;
 };
+
+/** 行から編集用の値を作る。読み込みと組み立てで同じ形にする。 */
+const toDraft = (l: {
+  seq: number; label: string | null; triggerKind: string; plannedAmount: number | string;
+  dueOn?: string | null; payOn?: string | null;
+  contractForm?: string | null; serviceFrom?: string | null; serviceTo?: string | null;
+}): Draft => ({
+  seq: l.seq, label: l.label ?? "", triggerKind: l.triggerKind,
+  plannedAmount: String(l.plannedAmount),
+  dueOn: l.dueOn ?? "", payOn: l.payOn ?? "",
+  contractForm: l.contractForm ?? "", serviceFrom: l.serviceFrom ?? "", serviceTo: l.serviceTo ?? ""
+});
 
 const STATUS: Record<Row["status"], { label: string; tone: string }> = {
   planned: { label: "予定", tone: "" },
@@ -68,25 +83,20 @@ export function ConditionSchedules(
   const cur = view.currency;
 
   function startEdit() {
-    setDraft((view!.lines).map((l) => ({
-      seq: l.seq, label: l.label ?? "", triggerKind: l.triggerKind,
-      plannedAmount: String(l.plannedAmount), dueOn: l.dueOn ?? "", payOn: l.payOn ?? ""
-    })));
+    setDraft((view!.lines).map(toDraft));
     setError(null);
   }
 
   async function generate() {
     setBusy(true); setError(null);
     try {
-      const r = await api.post<{ lines: Array<Omit<Draft, "plannedAmount"> & { plannedAmount: number }> }>(
+      const r = await api.post<{ lines: Array<Omit<Draft, "plannedAmount" | "label"> & {
+        plannedAmount: number; label: string | null }> }>(
         `/conditions/${conditionId}/schedules/generate`, {
           startOn: gen.startOn, count: Number(gen.count),
           everyMonths: Number(gen.everyMonths), amount: Number(gen.amount)
         });
-      setDraft(r.lines.map((l) => ({
-        seq: l.seq, label: l.label ?? "", triggerKind: l.triggerKind,
-        plannedAmount: String(l.plannedAmount), dueOn: l.dueOn ?? "", payOn: l.payOn ?? ""
-      })));
+      setDraft(r.lines.map(toDraft));
     } catch (e) { setError((e as ApiError).message); }
     finally { setBusy(false); }
   }
@@ -99,7 +109,12 @@ export function ConditionSchedules(
         lines: draft.map((d) => ({
           seq: d.seq, label: d.label.trim() || null, triggerKind: d.triggerKind,
           plannedAmount: Math.round(Number(d.plannedAmount) || 0),
-          dueOn: d.dueOn || null, payOn: d.payOn || null
+          dueOn: d.dueOn || null, payOn: d.payOn || null,
+          contractForm: d.contractForm.trim() || null,
+          // 役務提供期間は定期の回だけ。ほかの起点に残しておくと、
+          // 起点を変えたときに関係の無い期間が付いたままになる。
+          serviceFrom: d.triggerKind === "periodic" ? (d.serviceFrom || null) : null,
+          serviceTo: d.triggerKind === "periodic" ? (d.serviceTo || null) : null
         }))
       });
       setDraft(null); load(); onChanged();
@@ -108,6 +123,8 @@ export function ConditionSchedules(
   }
 
   const draftTotal = draft?.reduce((s, d) => s + (Number(d.plannedAmount) || 0), 0) ?? 0;
+  // 定期の回がひとつでもあれば、日付の見出しは「締め日」にする。
+  const periodic = (draft ?? view.lines).some((l) => l.triggerKind === "periodic");
 
   return (
     <div className="panel">
@@ -154,13 +171,21 @@ export function ConditionSchedules(
       {/* 条件の詳細は画面の右半分なので、編集中の列は入りきらない。
           潰すのではなく横に流す（.tablewrap が overflow-x を持っている）。 */}
 
+      <datalist id="contract-forms-schedule">
+        {CONTRACT_FORMS.map((f) => <option key={f} value={f} />)}
+      </datalist>
+
       <div className="tablewrap">
-        <table style={draft ? { minWidth: 820 } : undefined}>
+        <table style={draft ? { minWidth: 1340 } : undefined}>
           <thead><tr>
             <th style={{ width: 36 }}>回</th>
             <th style={{ minWidth: draft ? 150 : 120 }}>名前</th>
             {draft && <th style={{ width: 92 }}>起点</th>}
-            <th style={{ width: draft ? 140 : 96 }}>発生予定</th>
+            {draft && <th style={{ width: 120 }}>契約形式</th>}
+            {/* 定期の回は、役務提供期間の終わり＝その回の締め日。
+                起点によって意味が変わるので、見出しも合わせて変える。 */}
+            <th style={{ width: draft ? 140 : 96 }}>{periodic ? "締め日" : "発生予定"}</th>
+            {draft && <th style={{ width: 260 }}>役務提供期間</th>}
             <th style={{ width: draft ? 140 : 96 }}>支払期日</th>
             <th className="num" style={{ width: draft ? 116 : 100 }}>予定額</th>
             <th className="num" style={{ width: draft ? 118 : 104 }}>実績</th>
@@ -180,9 +205,31 @@ export function ConditionSchedules(
                     {view.triggers.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
                   </select>
                 </td>
+                <td>
+                  <input className="inline-input" style={{ width: "100%", minWidth: 0 }}
+                    list="contract-forms-schedule" value={d.contractForm}
+                    aria-label={`${d.seq} 行目の契約形式`} placeholder="条件に合わせる"
+                    onChange={(e) => setDraft(draft.map((x, j) => j === i ? { ...x, contractForm: e.target.value } : x))} />
+                </td>
                 <td><input className="inline-input" type="date" style={{ width: "100%", minWidth: 0 }} value={d.dueOn}
-                  aria-label={`${d.seq} 行目の発生予定日`}
+                  aria-label={`${d.seq} 行目の${d.triggerKind === "periodic" ? "締め日" : "発生予定日"}`}
                   onChange={(e) => setDraft(draft.map((x, j) => j === i ? { ...x, dueOn: e.target.value } : x))} /></td>
+                <td>
+                  {d.triggerKind === "periodic" ? (
+                    <div className="row" style={{ gap: 4, flexWrap: "nowrap" }}>
+                      <input className="inline-input" type="date" style={{ minWidth: 0 }} value={d.serviceFrom}
+                        aria-label={`${d.seq} 行目の役務提供期間の開始`}
+                        onChange={(e) => setDraft(draft.map((x, j) => j === i ? { ...x, serviceFrom: e.target.value } : x))} />
+                      <span className="faint">〜</span>
+                      {/* 期間の終わりを入れたら、締め日が空ならそこへ入れる。
+                          入っている締め日は動かさない（月末締めでない契約がある）。 */}
+                      <input className="inline-input" type="date" style={{ minWidth: 0 }} value={d.serviceTo}
+                        aria-label={`${d.seq} 行目の役務提供期間の終了`}
+                        onChange={(e) => setDraft(draft.map((x, j) => j === i
+                          ? { ...x, serviceTo: e.target.value, dueOn: x.dueOn || e.target.value } : x))} />
+                    </div>
+                  ) : <span className="faint">定期のみ</span>}
+                </td>
                 <td><input className="inline-input" type="date" style={{ width: "100%", minWidth: 0 }} value={d.payOn}
                   aria-label={`${d.seq} 行目の支払期日`}
                   onChange={(e) => setDraft(draft.map((x, j) => j === i ? { ...x, payOn: e.target.value } : x))} /></td>
@@ -204,9 +251,15 @@ export function ConditionSchedules(
                   {l.label ?? <span className="faint">（名前なし）</span>}
                   <div className="faint">
                     {view.triggers.find((t) => t.value === l.triggerKind)?.label ?? l.triggerKind}
+                    {l.contractForm && `／${l.contractForm}`}
                   </div>
                 </td>
-                <td className="code">{l.dueOn ?? "—"}</td>
+                <td className="code">
+                  {l.dueOn ?? "—"}
+                  {l.serviceFrom && l.serviceTo && (
+                    <div className="faint">{l.serviceFrom} 〜 {l.serviceTo}</div>
+                  )}
+                </td>
                 <td className="code">
                   {l.payOn ?? <span className="faint">未設定</span>}
                 </td>
@@ -273,10 +326,9 @@ export function ConditionSchedules(
           </button>
           <button className="btn" disabled={busy} onClick={() => setDraft(null)}>やめる</button>
           <button className="btn" disabled={busy}
-            onClick={() => setDraft([...draft, {
-              seq: draft.length + 1, label: "", triggerKind: "periodic",
-              plannedAmount: "", dueOn: "", payOn: ""
-            }])}>行を足す</button>
+            onClick={() => setDraft([...draft, toDraft({
+              seq: draft.length + 1, label: "", triggerKind: "periodic", plannedAmount: ""
+            })])}>行を足す</button>
           <span className="faint">
             いまの明細をすべて置き換えます。実績が付いている行は外せません
           </span>

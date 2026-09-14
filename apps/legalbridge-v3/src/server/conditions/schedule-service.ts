@@ -3,6 +3,7 @@ import { dateStr, int, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { parsePaymentTerms, payOnFor } from "./payment-terms.js";
+import { readContractForm } from "./contract-form.js";
 
 /**
  * 条件の予定明細。
@@ -42,14 +43,17 @@ export const TRIGGER_KINDS: Array<{ value: TriggerKind; label: string; hint: str
 export async function claimSchedule(
   client: Queryable, conditionId: number, scheduleId: number
 ): Promise<{ seq: number; label: string | null; trigger_kind: TriggerKind;
-             planned_amount: string | number; due_on: unknown }> {
+             planned_amount: string | number; due_on: unknown;
+             contract_form: string | null; service_from: unknown; service_to: unknown }> {
   const found = await client.query(
-    `SELECT s.id, s.seq, s.label, s.trigger_kind, s.planned_amount, s.due_on
+    `SELECT s.id, s.seq, s.label, s.trigger_kind, s.planned_amount, s.due_on,
+            s.contract_form, s.service_from, s.service_to
        FROM condition_schedules s WHERE s.id = $1 AND s.condition_id = $2`,
     [scheduleId, conditionId]);
   const line = found.rows[0] as {
     seq: number; label: string | null; trigger_kind: TriggerKind;
     planned_amount: string | number; due_on: unknown;
+    contract_form: string | null; service_from: unknown; service_to: unknown;
   } | undefined;
   if (!line) throw new DomainError("NOT_FOUND", `予定明細 ${scheduleId} が見つかりません`);
 
@@ -80,6 +84,11 @@ export interface ScheduleLine {
   dueOn: string | null;
   /** 支払期日。支払条件から導く。読めない書き方なら空のまま。 */
   payOn: string | null;
+  /** その回の契約形式（請負・委任など）。空なら条件のものを継ぐ。 */
+  contractForm?: string | null;
+  /** 役務提供期間。定期払いの回で使う。 */
+  serviceFrom?: string | null;
+  serviceTo?: string | null;
 }
 
 export interface ScheduleRow extends ScheduleLine {
@@ -106,6 +115,8 @@ export function generateLines(input: {
   amount: number; triggerKind: TriggerKind; labelSuffix?: string;
   /** 支払条件。「検収月の翌月末払い」など。読めれば各回の支払期日を埋める。 */
   paymentTerms?: string | null;
+  /** 契約形式。全回に同じものを入れる。回ごとに違うなら画面で直す。 */
+  contractForm?: string | null;
 }): ScheduleLine[] {
   const start = new Date(`${input.startOn}T00:00:00Z`);
   if (Number.isNaN(start.getTime())) {
@@ -126,17 +137,23 @@ export function generateLines(input: {
   const startsAtMonthEnd =
     start.getUTCDate() === lastOfMonth(start.getUTCFullYear(), start.getUTCMonth());
 
-  return Array.from({ length: input.count }, (_, i) => {
+  // i 回目の締め日。i に -1 を渡すと「1回前の締め」になり、それが
+  // 1回目の役務提供期間の始まりを決める（締めの翌日から）。
+  const closingAt = (i: number) => {
     const year = start.getUTCFullYear();
     const month = start.getUTCMonth() + i * every;
+    const first = new Date(Date.UTC(year, month, 1));
     const day = startsAtMonthEnd
-      ? lastOfMonth(new Date(Date.UTC(year, month, 1)).getUTCFullYear(),
-                    new Date(Date.UTC(year, month, 1)).getUTCMonth())
+      ? lastOfMonth(first.getUTCFullYear(), first.getUTCMonth())
       // 末日でなければ日を保つ。その月に無い日（2/30）はその月の末日へ寄せる。
-      : Math.min(start.getUTCDate(),
-                 lastOfMonth(new Date(Date.UTC(year, month, 1)).getUTCFullYear(),
-                             new Date(Date.UTC(year, month, 1)).getUTCMonth()));
-    const d = new Date(Date.UTC(year, month, day));
+      : Math.min(start.getUTCDate(), lastOfMonth(first.getUTCFullYear(), first.getUTCMonth()));
+    return new Date(Date.UTC(year, month, day));
+  };
+  const dayAfter = (d: Date) =>
+    new Date(d.getTime() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+  return Array.from({ length: input.count }, (_, i) => {
+    const d = closingAt(i);
     const iso = d.toISOString().slice(0, 10);
     return {
       seq: i + 1,
@@ -144,9 +161,28 @@ export function generateLines(input: {
       triggerKind: input.triggerKind,
       plannedAmount: Math.round(input.amount),
       dueOn: iso,
-      payOn: payOnFor(iso, terms)
+      payOn: payOnFor(iso, terms),
+      contractForm: readContractForm(input.contractForm),
+      // 定期の回は、その回が受け持つ役務提供期間も置く。前の回の締めの
+      // 翌日から、この回の締めまで。「何月分か」を名前の文字列でなく日付で持つ。
+      // 1回目も同じ数え方をする（20日締めの契約なら 3/21〜4/20 になる）。
+      ...(input.triggerKind === "periodic"
+        ? { serviceFrom: dayAfter(closingAt(i - 1)), serviceTo: iso }
+        : {})
     };
   });
+}
+
+/**
+ * その回の締め日（＝権利発生日）。
+ *
+ * 定期払いは「何月分か」で払う。役務提供期間の終わりがその月の締めなので、
+ * 期間を入れたのに締め日が空、という行を作らせない。手で入れた締め日が
+ * あればそちらが勝つ（月末締めではない契約もある）。
+ */
+export function closingDateOf(line: ScheduleLine): string | null {
+  if (line.dueOn) return line.dueOn;
+  return line.triggerKind === "periodic" ? (line.serviceTo ?? null) : null;
 }
 
 export class ConditionScheduleService {
@@ -161,6 +197,7 @@ export class ConditionScheduleService {
 
       const r = await this.database.query(
         `SELECT s.id, s.seq, s.label, s.trigger_kind, s.planned_amount, s.due_on, s.pay_on,
+                s.contract_form, s.service_from, s.service_to,
                 e.id AS event_id, e.occurred_on AS event_on, e.amount AS event_amount,
                 COALESCE((
                   SELECT sum(al.amount) FROM payment_allocations al
@@ -187,6 +224,9 @@ export class ConditionScheduleService {
           plannedAmount: Number(row.planned_amount ?? 0),
           dueOn: dateStr(row.due_on),
           payOn: dateStr(row.pay_on),
+          contractForm: str(row.contract_form),
+          serviceFrom: dateStr(row.service_from),
+          serviceTo: dateStr(row.service_to),
           eventId,
           eventOn: dateStr(row.event_on),
           eventAmount: int(row.event_amount),
@@ -256,20 +296,27 @@ export class ConditionScheduleService {
           // ON CONFLICT は使えない。seq の一意制約は移行時の採番のために
           // DEFERRABLE にしてあり、遅延可能な制約は調停に使えないため
           // （PostgreSQL 55000）。更新してみて、無ければ挿す。
+          // 定期の回は、役務提供期間の終わりを締め日の既定値にする。
+          const dueOn = closingDateOf(line);
+          const values = [
+            conditionId, line.seq, line.triggerKind, Math.round(line.plannedAmount),
+            dueOn, str(line.label), line.payOn,
+            readContractForm(line.contractForm),
+            line.serviceFrom || null, line.serviceTo || null
+          ];
           const updated = await client.query(
             `UPDATE condition_schedules
                 SET trigger_kind = $3, planned_amount = $4, due_on = $5::date,
-                    label = $6, pay_on = $7::date
-              WHERE condition_id = $1 AND seq = $2`,
-            [conditionId, line.seq, line.triggerKind, Math.round(line.plannedAmount),
-             line.dueOn, str(line.label), line.payOn]);
+                    label = $6, pay_on = $7::date, contract_form = $8,
+                    service_from = $9::date, service_to = $10::date
+              WHERE condition_id = $1 AND seq = $2`, values);
           if ((updated.rowCount ?? 0) === 0) {
             await client.query(
               `INSERT INTO condition_schedules
-                 (condition_id, seq, trigger_kind, planned_amount, due_on, label, pay_on)
-               VALUES ($1, $2, $3, $4, $5::date, $6, $7::date)`,
-              [conditionId, line.seq, line.triggerKind, Math.round(line.plannedAmount),
-               line.dueOn, str(line.label), line.payOn]);
+                 (condition_id, seq, trigger_kind, planned_amount, due_on, label, pay_on,
+                  contract_form, service_from, service_to)
+               VALUES ($1, $2, $3, $4, $5::date, $6, $7::date, $8, $9::date, $10::date)`,
+              values);
           }
         }
 
@@ -300,7 +347,9 @@ export class ConditionScheduleService {
              eventType?: string | null; note?: string | null;
              quantity?: number | null; deliverable?: string | null;
              inspectedOn?: string | null;
-             inspectorDept?: string | null; inspectorName?: string | null },
+             inspectorDept?: string | null; inspectorName?: string | null;
+             contractForm?: string | null;
+             serviceFrom?: string | null; serviceTo?: string | null },
     actor: string
   ): Promise<{ eventId: number; scheduleId: number }> {
     // 実績を足す側（ConditionEventService.add）でも同じ回を選べる。
@@ -331,19 +380,26 @@ export class ConditionScheduleService {
         const eventType = str(input.eventType) ?? EVENT_TYPE_BY_TRIGGER[line.trigger_kind];
         // 予定の名前を実績の期間に写す。「2026年4月分」がそのまま計算書に出る。
         const period = str(line.label);
+        // 契約形式と役務提供期間は回が持っている。入力があればそちらが勝つ。
+        const contractForm = readContractForm(input.contractForm)
+          ?? readContractForm(line.contract_form);
+        const serviceFrom = input.serviceFrom || dateStr(line.service_from);
+        const serviceTo = input.serviceTo || dateStr(line.service_to);
 
         const inserted = await client.query(
           `INSERT INTO condition_events
              (condition_id, schedule_id, event_type, occurred_on, period,
               gross_amount, deductions, amount, note, created_by,
-              quantity, deliverable, inspected_on, inspector_dept, inspector_name)
+              quantity, deliverable, inspected_on, inspector_dept, inspector_name,
+              contract_form, service_from, service_to)
            VALUES ($1, $2, $3, COALESCE($4::date, current_date), $5, $6, 0, $6, $7, $8,
-                   $9, $10, $11::date, $12, $13)
+                   $9, $10, $11::date, $12, $13, $14, $15::date, $16::date)
            RETURNING id`,
           [conditionId, scheduleId, eventType, occurredOn, period, amount,
            str(input.note), actor,
            input.quantity ?? null, str(input.deliverable), str(input.inspectedOn),
-           str(input.inspectorDept), str(input.inspectorName)]);
+           str(input.inspectorDept), str(input.inspectorName),
+           contractForm, serviceFrom, serviceTo]);
         const eventId = Number((inserted.rows[0] as { id: number }).id);
 
         await recordAudit(client, {

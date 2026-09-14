@@ -804,6 +804,65 @@ REVOKE ALL ON v3.text_snippets FROM legalbridge_v3_runtime;
 GRANT SELECT, INSERT, UPDATE ON v3.text_snippets TO legalbridge_v3_runtime;
 GRANT USAGE, SELECT ON SEQUENCE v3.text_snippets_id_seq TO legalbridge_v3_runtime;
 
+-- ---------------------------------------------------------------------
+-- A-022: 単価・個数・契約形式・役務提供期間を、条件と予定と実績に持たせる
+--
+-- どれも「文書を作るときのフォームにだけ」あった。つまり紙を作る直前に
+-- 人が入れ直すしかなく、条件にも予定にも実績にも残らない。同じ相手に
+-- 毎月出す書類でも毎回入れ直しになり、入れ忘れれば黙って空欄で出る。
+-- 経理提出用の単価の列が全部空だったのも、元をたどるとこれ。
+--
+-- 契約形式（請負・委任）は payment_terms とは別の列にする。payment_terms は
+-- 「月末締め翌月末払い」を読んで支払期日を出すのに使っている。同じ列に
+-- 「請負」と書くと読めず、支払期日の自動計算が黙って効かなくなる。
+-- V1・V2 から引き継いだ「契約種別・支払条件」という1つの欄が、
+-- 実際には2つの別のことを指していた。
+--
+-- 役務提供期間は定期払いの回に持たせる。毎月の顧問料は「何月分か」が
+-- 金額と同じくらい大事で、これまでは名前（2026年4月分）の文字列しか
+-- 無かったので、締めのずれを機械では確かめられなかった。
+-- ---------------------------------------------------------------------
+
+ALTER TABLE v3.conditions          ADD COLUMN IF NOT EXISTS quantity      numeric(14,4);
+ALTER TABLE v3.conditions          ADD COLUMN IF NOT EXISTS contract_form text;
+ALTER TABLE v3.condition_schedules ADD COLUMN IF NOT EXISTS contract_form text;
+ALTER TABLE v3.condition_schedules ADD COLUMN IF NOT EXISTS service_from  date;
+ALTER TABLE v3.condition_schedules ADD COLUMN IF NOT EXISTS service_to    date;
+ALTER TABLE v3.condition_events    ADD COLUMN IF NOT EXISTS contract_form text;
+ALTER TABLE v3.condition_events    ADD COLUMN IF NOT EXISTS service_from  date;
+ALTER TABLE v3.condition_events    ADD COLUMN IF NOT EXISTS service_to    date;
+
+COMMENT ON COLUMN v3.conditions.quantity IS
+  '個数。単価と組で持つ。単価×個数を定額の既定値にする（人が上書きできる）。';
+COMMENT ON COLUMN v3.conditions.contract_form IS
+  '契約形式（請負・委任・準委任など）。支払条件（payment_terms）とは別。';
+COMMENT ON COLUMN v3.condition_schedules.contract_form IS
+  'その回の契約形式。空なら条件のものを使う。';
+COMMENT ON COLUMN v3.condition_schedules.service_from IS
+  '役務提供期間の開始。定期払いの回で使う。';
+COMMENT ON COLUMN v3.condition_schedules.service_to IS
+  '役務提供期間の終了。定期払いの締め日の既定値になる。';
+COMMENT ON COLUMN v3.condition_events.contract_form IS
+  'その実績の契約形式。空なら予定・条件のものを使う。';
+
+-- 期間の前後が逆の行を作らせない。定期の締めを機械で確かめられるようにする。
+DO $a022$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.condition_schedules'::regclass
+                    AND conname = 'condition_schedules_service_span_chk') THEN
+    ALTER TABLE v3.condition_schedules ADD CONSTRAINT condition_schedules_service_span_chk
+      CHECK (service_to IS NULL OR service_from IS NULL OR service_to >= service_from);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.condition_events'::regclass
+                    AND conname = 'condition_events_service_span_chk') THEN
+    ALTER TABLE v3.condition_events ADD CONSTRAINT condition_events_service_span_chk
+      CHECK (service_to IS NULL OR service_from IS NULL OR service_to >= service_from);
+  END IF;
+END
+$a022$;
+
 COMMIT;
 
 -- 確認
@@ -931,3 +990,14 @@ SELECT (SELECT string_agg(privilege_type, ', ' ORDER BY privilege_type)
           FROM information_schema.role_table_grants
          WHERE grantee = 'legalbridge_v3_runtime' AND table_name = 'text_snippets') AS 権限,
        (SELECT count(*) FROM v3.text_snippets WHERE is_active) AS 件数;
+
+\echo '--- 単価・個数・契約形式・役務提供期間（A-022。8 列であること） ---'
+SELECT (SELECT count(*) FROM information_schema.columns
+         WHERE table_schema='v3' AND table_name='conditions'
+           AND column_name IN ('quantity','contract_form'))                 AS 条件,
+       (SELECT count(*) FROM information_schema.columns
+         WHERE table_schema='v3' AND table_name='condition_schedules'
+           AND column_name IN ('contract_form','service_from','service_to')) AS 予定,
+       (SELECT count(*) FROM information_schema.columns
+         WHERE table_schema='v3' AND table_name='condition_events'
+           AND column_name IN ('contract_form','service_from','service_to')) AS 実績;

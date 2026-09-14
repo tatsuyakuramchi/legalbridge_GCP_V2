@@ -5,6 +5,7 @@ import { api, ApiError, money, rate } from "./api.js";
 import type { ConditionDetail } from "../server/core/model.js";
 import { CONDITION_KIND_LABEL } from "./labels.js";
 import { SearchSelect, searchParties } from "./SearchSelect.js";
+import { CONTRACT_FORMS } from "../server/conditions/contract-form.js";
 
 /**
  * 条件の編集。
@@ -45,6 +46,12 @@ const patchText = (next: string, before: string | null) => {
   const value = next.trim() === "" ? null : next.trim();
   return value === (before ?? null) ? undefined : value;
 };
+/** 個数は小数もある（0.5人月・1.5ヶ月）。整数に丸めない。 */
+const patchNum = (next: string, before: number | null) => {
+  const value = next.trim() === "" ? null : Number(next.replace(/[^0-9.-]/g, ""));
+  if (value !== null && !Number.isFinite(value)) return undefined;
+  return value === (before ?? null) ? undefined : value;
+};
 const patchInt = (next: string, before: number | null) => {
   const value = next.trim() === "" ? null : Math.round(Number(next.replace(/[^0-9-]/g, "")));
   if (value !== null && !Number.isFinite(value)) return undefined;
@@ -68,11 +75,14 @@ export function ConditionEdit(
     ratePct: asPct(detail.ratePpm),
     flatAmount: asMoney(detail.flatAmount),
     unitAmount: asMoney(detail.unitAmount),
+    quantity: detail.quantity === null || detail.quantity === undefined
+      ? "" : String(detail.quantity),
     mgAmount: asMoney(detail.mgAmount),
     agAmount: asMoney(detail.agAmount),
     exclusivity: detail.exclusivity ?? "",
     taxCategory: detail.taxCategory,
     paymentTerms: detail.paymentTerms ?? "",
+    contractForm: detail.contractForm ?? "",
     spec: detail.spec ?? "",
     orderNo: detail.orderNo ?? "",
     deliverableOwnership: detail.deliverableOwnership ?? "",
@@ -92,6 +102,16 @@ export function ConditionEdit(
       .then((w) => setWorks(w.works)).catch(() => undefined);
   }, []);
 
+  // 単価×個数。入れてあれば定額の欄に出す。手で直した値があればそちらが勝つ
+  // （文書作成フォームの「金額（税抜）」と同じ扱い）。
+  const computedFlat = (() => {
+    const unit = Number(v.unitAmount.replace(/[^0-9.-]/g, ""));
+    const count = Number(v.quantity.replace(/[^0-9.-]/g, ""));
+    if (!v.unitAmount.trim() || !v.quantity.trim()) return null;
+    if (!Number.isFinite(unit) || !Number.isFinite(count)) return null;
+    return Math.sign(unit * count) * Math.round(Math.abs(unit * count));
+  })();
+
   const later = effectiveFrom !== "" && effectiveFrom > today();
   // 実績があると、保存は改訂（旧版を残して新版を作る）になる。
   const willRevise = detail.events.length > 0;
@@ -107,6 +127,8 @@ export function ConditionEdit(
       ["termStart", patchText(v.termStart, detail.termStart)],
       ["termEnd", patchText(v.termEnd, detail.termEnd)],
       ["paymentTerms", patchText(v.paymentTerms, detail.paymentTerms)],
+      ["contractForm", patchText(v.contractForm, detail.contractForm)],
+      ["quantity", patchNum(v.quantity, detail.quantity)],
       ["notes", patchText(v.notes, detail.notes)],
       ["spec", patchText(v.spec, detail.spec)],
       ["orderNo", patchText(v.orderNo, detail.orderNo)],
@@ -264,14 +286,25 @@ export function ConditionEdit(
           {fixed("計算方式", PRICING_LABEL[detail.pricingModel] ?? detail.pricingModel,
             "計算方式は変えられません。変えると過去の計算根拠が変わるので、新しい条件を作ってください")}
 
-          {detail.pricingModel === "fixed" &&
-            field("flatAmount", "定額（最小通貨単位）", { type: "number",
-              hint: `円なら円単位。いまの値 ${money(detail.flatAmount, detail.currency)}` })}
+          {/*
+            * 単価・個数は計算方式によらず出す。これまで単価は「単価×数量」の
+            * 条件にしか出ておらず、個数はどこにも無かった。そのため発注書や
+            * 検収書を作るたびに人が明細へ打ち直すことになり、経理提出用の
+            * 単価の列も空のままだった。条件が持てば、紙にも帳票にも流れる。
+            */}
+          {detail.pricingModel !== "revenue_rate" && (<>
+            {field("unitAmount", "単価（最小通貨単位）", { type: "number",
+              hint: `円なら円単位。いまの値 ${money(detail.unitAmount, detail.currency)}` })}
+            {field("quantity", "個数", { type: "number",
+              placeholder: "1", hint: "小数も入る（0.5人月など）。単価×個数が定額に入る" })}
+          </>)}
           {detail.pricingModel === "revenue_rate" &&
             field("ratePct", "料率（%）", { type: "number", hint: `小数で入れる。いまの値 ${rate(detail.ratePpm)}` })}
-          {detail.pricingModel === "unit_rate" &&
-            field("unitAmount", "単価（最小通貨単位）", { type: "number",
-              hint: `いまの値 ${money(detail.unitAmount, detail.currency)}` })}
+          {detail.pricingModel !== "revenue_rate" &&
+            field("flatAmount", "定額（最小通貨単位）", { type: "number",
+              hint: computedFlat === null
+                ? `円なら円単位。いまの値 ${money(detail.flatAmount, detail.currency)}`
+                : `単価×個数 = ${computedFlat.toLocaleString("ja-JP")}。直せば手の値が勝つ` })}
 
           {detail.direction === "out" && (<>
             {field("mgAmount", "MG 最低保証", { type: "number",
@@ -299,7 +332,20 @@ export function ConditionEdit(
               <option value="exempt">非課税</option>
             </select>
           </label>
-          {field("paymentTerms", "支払条件", { placeholder: "検収後30日 など" })}
+          <label className="field">
+            <span>契約形式</span>
+            <input list="contract-forms" value={v.contractForm}
+                   placeholder="請負 / 委任 など"
+                   onChange={(e) => set("contractForm", e.target.value)} />
+            <datalist id="contract-forms">
+              {CONTRACT_FORMS.map((f) => <option key={f} value={f} />)}
+            </datalist>
+            <small className="faint">
+              発注書・検収書の「契約種別」に出る。一覧に無い形は直接書ける
+            </small>
+          </label>
+          {field("paymentTerms", "支払条件", { placeholder: "月末締め翌月末払い など",
+            hint: "予定明細の支払期日はここから出す。契約形式（請負）はひとつ上の欄へ" })}
           {field("spec", "仕様・成果物", { type: "textarea",
             placeholder: "カラーイラスト1点（表紙用）、A4 相当 など",
             hint: "発注書・検収書の明細の「仕様・成果物」にそのまま出る" })}

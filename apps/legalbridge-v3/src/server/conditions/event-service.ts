@@ -3,6 +3,7 @@ import { dateStr, int, num, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { claimSchedule } from "./schedule-service.js";
+import { readContractForm } from "./contract-form.js";
 
 /**
  * 条件の実績（明細の数値）。
@@ -48,6 +49,11 @@ export interface EventInput {
   inspectedOn?: string | null;
   inspectorDept?: string | null;
   inspectorName?: string | null;
+  /** 契約形式（請負・委任など）。空なら予定・条件のものを継ぐ。 */
+  contractForm?: string | null;
+  /** 役務提供期間。定期払いの回で使う。 */
+  serviceFrom?: string | null;
+  serviceTo?: string | null;
 }
 
 export interface EventRow {
@@ -69,6 +75,9 @@ export interface EventRow {
   inspectedOn: string | null;
   inspectorDept: string | null;
   inspectorName: string | null;
+  contractForm: string | null;
+  serviceFrom: string | null;
+  serviceTo: string | null;
   /** 計算書から作られた実績。画面からは直せない。 */
   documentId: number | null;
   documentNo: string | null;
@@ -86,6 +95,7 @@ export class ConditionEventService {
                 e.gross_amount, e.deductions, e.amount, e.status, e.note,
                 e.schedule_id, s.label AS schedule_label, s.seq AS schedule_seq,
                 e.deliverable, e.inspected_on, e.inspector_dept, e.inspector_name,
+                e.contract_form, e.service_from, e.service_to,
                 e.document_id, d.document_no, e.created_at, e.created_by
            FROM condition_events e
            LEFT JOIN documents d ON d.id = e.document_id
@@ -111,6 +121,9 @@ export class ConditionEventService {
         inspectedOn: dateStr(row.inspected_on),
         inspectorDept: str(row.inspector_dept),
         inspectorName: str(row.inspector_name),
+        contractForm: str(row.contract_form),
+        serviceFrom: dateStr(row.service_from),
+        serviceTo: dateStr(row.service_to),
         documentId: int(row.document_id),
         documentNo: str(row.document_no),
         createdAt: new Date(String(row.created_at)).toISOString(),
@@ -142,12 +155,24 @@ export class ConditionEventService {
         let scheduleId: number | null = null;
         let occurredOn = input.occurredOn;
         let period = str(input.period);
+        // 契約形式と役務提供期間は、書いていなければ予定の回から継ぐ。
+        // 回ごとに決めたものを、実績を入れるたびに人が写し直すのは無駄で、
+        // 写し忘れれば紙が空欄で出る。
+        let contractForm = readContractForm(input.contractForm);
+        let serviceFrom = input.serviceFrom || null;
+        let serviceTo = input.serviceTo || null;
         if (input.scheduleId) {
           const line = await claimSchedule(client, conditionId, input.scheduleId);
           scheduleId = input.scheduleId;
           occurredOn = occurredOn || (dateStr(line.due_on) ?? occurredOn);
           // 予定の名前を実績の期間に写す。「2026年4月分」がそのまま計算書に出る。
           period = period ?? str(line.label);
+          contractForm = contractForm ?? readContractForm(line.contract_form);
+          serviceFrom = serviceFrom ?? dateStr(line.service_from);
+          serviceTo = serviceTo ?? dateStr(line.service_to);
+        }
+        if (serviceFrom && serviceTo && serviceTo < serviceFrom) {
+          throw new DomainError("VALIDATION", "役務提供期間の終了が開始より前です");
         }
 
         const amount = Math.round(input.amount);
@@ -164,15 +189,17 @@ export class ConditionEventService {
           `INSERT INTO condition_events
              (condition_id, schedule_id, event_type, occurred_on, period,
               quantity, sample_quantity, gross_amount, deductions, amount, note, created_by,
-              deliverable, inspected_on, inspector_dept, inspector_name)
+              deliverable, inspected_on, inspector_dept, inspector_name,
+              contract_form, service_from, service_to)
            VALUES ($1, $2, $3, $4::date, $5, $6, $7, $8, $9, $10, $11, $12,
-                   $13, $14::date, $15, $16)
+                   $13, $14::date, $15, $16, $17, $18::date, $19::date)
            RETURNING id`,
           [conditionId, scheduleId, input.eventType, occurredOn, period,
            input.quantity ?? null, input.sampleQuantity ?? null,
            gross, deductions, amount, str(input.note), actor,
            str(input.deliverable), str(input.inspectedOn),
-           str(input.inspectorDept), str(input.inspectorName)]);
+           str(input.inspectorDept), str(input.inspectorName),
+           contractForm, serviceFrom, serviceTo]);
         const id = Number((inserted.rows[0] as { id: number }).id);
 
         await recordAudit(client, {

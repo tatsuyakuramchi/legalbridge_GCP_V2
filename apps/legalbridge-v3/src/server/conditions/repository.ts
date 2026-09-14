@@ -7,8 +7,8 @@ import type {
 
 const SUMMARY_COLUMNS = `
   c.id, c.condition_no, c.direction, c.kind, c.name, c.currency, c.pricing_model,
-  c.rate_ppm, c.flat_amount, c.unit_amount, c.mg_amount, c.ag_amount, c.term_start, c.term_end,
-  c.status, c.effective_from,
+  c.rate_ppm, c.flat_amount, c.unit_amount, c.quantity, c.mg_amount, c.ag_amount,
+  c.term_start, c.term_end, c.status, c.effective_from,
   p.id AS party_id, p.name AS party_name, p.kind AS party_kind,
   w.id AS work_id, w.work_code, w.title AS work_title,
   -- 条件は契約の明細。どの契約の行かは一覧でも見えないと、独立した書類に見える。
@@ -42,6 +42,7 @@ function mapSummary(row: Record<string, any>): ConditionSummary {
     ratePpm: int(row.rate_ppm),
     flatAmount: int(row.flat_amount),
     unitAmount: int(row.unit_amount),
+    quantity: num(row.quantity),
     mgAmount: int(row.mg_amount),
     agAmount: int(row.ag_amount),
     termStart: dateStr(row.term_start),
@@ -102,8 +103,8 @@ export class ConditionRepository {
     const detail = await this.database.query(
       `SELECT ${SUMMARY_COLUMNS},
               c.agreement_id, c.parent_id, c.work_part_id, c.exclusivity, c.sublicensable,
-              c.tax_category, c.payment_terms, c.cycle, c.notes, c.spec, c.deliverable_ownership,
-              c.order_no,
+              c.tax_category, c.payment_terms, c.contract_form, c.cycle, c.notes,
+              c.spec, c.deliverable_ownership, c.order_no,
               pc.condition_no AS parent_condition_no,
               wp.name AS work_part_name
          ${SUMMARY_JOINS}
@@ -136,6 +137,7 @@ export class ConditionRepository {
         ? null : Boolean(row.sublicensable),
       taxCategory: row.tax_category ?? "taxable",
       paymentTerms: str(row.payment_terms),
+      contractForm: str(row.contract_form),
       cycle: str(row.cycle),
       notes: str(row.notes),
       spec: str(row.spec),
@@ -238,9 +240,10 @@ export class ConditionRepository {
     try {
       const r = await this.database.query(
         `SELECT c.id, c.condition_no, c.name, c.status, c.superseded_by_id, c.effective_from,
-                c.pricing_model, c.rate_ppm, c.flat_amount, c.unit_amount,
+                c.pricing_model, c.rate_ppm, c.flat_amount, c.unit_amount, c.quantity,
                 c.mg_amount, c.ag_amount, c.currency,
-                c.term_start, c.term_end, c.tax_category, c.payment_terms, c.notes,
+                c.term_start, c.term_end, c.tax_category, c.payment_terms, c.contract_form,
+                c.notes,
                 c.created_at, c.updated_at,
                 p.id AS party_id, p.name AS party_name,
                 (SELECT count(*)::int FROM condition_events e
@@ -267,12 +270,14 @@ export class ConditionRepository {
         ratePpm: int(row.rate_ppm),
         flatAmount: int(row.flat_amount),
         unitAmount: int(row.unit_amount),
+        quantity: num(row.quantity),
         mgAmount: int(row.mg_amount),
         agAmount: int(row.ag_amount),
         termStart: dateStr(row.term_start),
         termEnd: dateStr(row.term_end),
         taxCategory: String(row.tax_category),
         paymentTerms: str(row.payment_terms),
+        contractForm: str(row.contract_form),
         notes: str(row.notes),
         counterparty: row.party_id
           ? { id: Number(row.party_id), name: String(row.party_name) } : null,

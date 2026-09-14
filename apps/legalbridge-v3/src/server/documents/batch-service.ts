@@ -31,7 +31,11 @@ import type { PdfRenderer } from "./pdf-renderer.js";
 export const TEMPLATE_KEYS = new Set(["purchase_order", "intl_purchase_order"]);
 
 /** CSV の列。画面の明細の欄と同じ名前で出す。 */
-export const ORDER_COLUMNS: Array<{ key: string; label: string; required?: boolean; note: string }> = [
+export const ORDER_COLUMNS: Array<{
+  key: string; label: string; required?: boolean; note: string;
+  /** 旧い雛形の見出し。読むときだけ受け付ける（書き出しは label のほう）。 */
+  aliases?: string[];
+}> = [
   { key: "partyCode", label: "取引先コード", note: "コードか名前のどちらかで当てる" },
   { key: "partyName", label: "取引先名", note: "登録名・別名・カナのどれかに一致" },
   // 作品は1つの案件に何本でも載る。列が無いと、同じ取引先の行が作品をまたいで
@@ -50,8 +54,13 @@ export const ORDER_COLUMNS: Array<{ key: string; label: string; required?: boole
   { key: "triggerKind", label: "起点", required: true, note: "検収後 / 納品後 / 契約時 / 定期" },
   { key: "delivery_date", label: "納期", note: "2026-10-31 か 2026/10/31" },
   { key: "payment_date", label: "支払日", note: "" },
-  // 発注明細の「契約種別・支払条件」。行ごとの欄で、そのまま紙に出る。
-  { key: "payment_terms", label: "契約種別・支払条件", note: "例: 月末締め翌月末払い" },
+  // 契約形式と支払条件は別のもの。1つの欄に混ぜていたので、「請負」と書くと
+  // 支払条件として読めず、予定明細の支払期日が空のまま出ていた。
+  // 旧い雛形の「契約種別・支払条件」に書いてあるのは契約形式なので、そちらへ読む。
+  { key: "contract_form", label: "契約形式", aliases: ["契約種別・支払条件"],
+    note: "請負 / 委任 / 準委任 など。発注書の「契約種別」に出る" },
+  { key: "payment_terms", label: "支払条件",
+    note: "例: 月末締め翌月末払い。ここから各回の支払期日を出す" },
   { key: "deliverable_ownership", label: "成果物の帰属先",
     note: "発注者 か 受注者。空ならその行に帰属先を出さない" },
   // 書類の見た目の切り替え。束ごとの値なので全行に同じものを書く。
@@ -70,10 +79,10 @@ export function templateCsv(): string {
   const examples = [
     ["VD-00317", "合同会社アトリエ蒼", "WRK-10013", "星降る夜のミュゼ", "", "",
      "第4巻 表紙イラスト", "カラー1点", "1", "150000", "検収後", "2026-10-31", "2026-11-30",
-     "月末締め翌月末払い", "発注者", "あり", "なし", "固定額", "", "", ""],
+     "請負", "月末締め翌月末払い", "発注者", "あり", "なし", "固定額", "", "", ""],
     ["VD-00317", "合同会社アトリエ蒼", "WRK-10021", "夜明けのクロニクル", "", "",
      "第1巻 挿絵", "モノクロ12点", "12", "8000", "検収後", "2026-11-30", "2026-12-31",
-     "月末締め翌月末払い", "発注者", "あり", "なし", "固定額", "", "", ""]
+     "請負", "月末締め翌月末払い", "発注者", "あり", "なし", "固定額", "", "", ""]
   ].map((row) => Object.fromEntries(ORDER_COLUMNS.map((c, i) => [c.key, row[i]])));
   return toCsv(examples);
 }
@@ -110,6 +119,11 @@ export interface BatchRow {
   fix: boolean | null;
   /** 訂正の理由。記録に残るので、直すときは必須。 */
   fixReason: string | null;
+  /**
+   * 支払条件。「月末締め翌月末払い」を読んで各回の支払期日を出す。
+   * 紙に出る契約形式（請負）とは別で、そちらは item.payment_terms が持つ。
+   */
+  paymentTerms: string | null;
   item: Record<string, unknown>;
   amount: number;
   issues: string[];
@@ -158,13 +172,21 @@ export const TRIGGER_LABEL: Record<TriggerKind, string> =
   Object.fromEntries(TRIGGER_KINDS.map((t) => [t.value, t.label])) as Record<TriggerKind, string>;
 
 /** 見出しは日本語の列名か、明細のキー名のどちらでも読む。 */
-const pick = (row: Record<string, string>, column: { key: string; label: string }) =>
-  row[column.label] ?? row[column.key] ?? "";
+const pick = (
+  row: Record<string, string>, column: { key: string; label: string; aliases?: string[] }
+) => {
+  const hit = row[column.label] ?? row[column.key];
+  if (hit !== undefined) return hit;
+  for (const alias of column.aliases ?? []) if (row[alias] !== undefined) return row[alias];
+  return "";
+};
 
 /** CSV の行を、明細の1行として読む。読めないところは issues に残す（行は捨てない）。 */
 export function readRows(text: string): BatchRow[] {
   const parsed = parseCsv(text, { maxRows: 1000 });
-  const known = ORDER_COLUMNS.some((c) => parsed.headers.includes(c.label) || parsed.headers.includes(c.key));
+  const known = ORDER_COLUMNS.some((c) => parsed.headers.includes(c.label)
+    || parsed.headers.includes(c.key)
+    || (c.aliases ?? []).some((a) => parsed.headers.includes(a)));
   if (!known) {
     throw new DomainError("VALIDATION",
       `見出しが雛形と合いません。雛形をダウンロードして、その列名で作ってください（読んだ見出し: ${parsed.headers.slice(0, 5).join(", ")}）`);
@@ -219,13 +241,16 @@ export function readRows(text: string): BatchRow[] {
       acceptSign: readOnOff(get("acceptSign")),
       fix: readOnOff(get("fix")),
       fixReason: get("fixReason") || null,
+      // 支払条件は条件が持つ（各回の支払期日をここから出す）。行の欄ではない。
+      paymentTerms: get("payment_terms") || null,
       item: {
         item_name: itemName, spec: get("spec") || null,
         quantity: quantity ?? null, unit_price: unitPrice ?? null, amount_ex_tax: amount,
         delivery_date: deliveryDate, payment_date: paymentDate,
         deliverable_ownership: ownership || null, calc_method: "FIXED",
-        // 発注明細の「契約種別・支払条件」。本文がこの列をそのまま印字する。
-        payment_terms: get("payment_terms") || null,
+        // 発注明細の「契約種別」。本文がこの列をそのまま印字する。
+        // 紙に出るのは契約形式のほうで、支払条件は条件が持って支払期日を出す。
+        payment_terms: get("contract_form") || null,
         remarks: get("remarks") || null
       },
       amount,
@@ -605,7 +630,9 @@ export class DocumentBatchService {
               // 支払条件。以前はここへ支払日を並べて入れていたが、この欄は
               // 「月末締め翌月末払い」のような条件を書くところで、解析して
               // 支払日を導く先でもある。日付は各回の予定明細（pay_on）が持つ。
-              paymentTerms: sameAcross(g.rows, (r) => (r.item.payment_terms as string | null) ?? null),
+              paymentTerms: sameAcross(g.rows, (r) => r.paymentTerms ?? null),
+              // 契約形式。行ごとに違えば条件には置かず、各行（＝各回）が持つ。
+              contractForm: sameAcross(g.rows, (r) => (r.item.payment_terms as string | null) ?? null),
               notes: [...new Set(g.rows.map((r) => r.item.remarks as string | null).filter(Boolean))].join("\n") || null,
               // 仕様と帰属先も条件に持たせる。行ごとに違えば仕様は行名付きで並べ、帰属先は空にする。
               spec: g.rows.map((r) => r.item.spec ? (g.rows.length > 1 ? `${r.item.item_name}：${r.item.spec}` : String(r.item.spec)) : "")
@@ -756,7 +783,8 @@ export class DocumentBatchService {
             quantity: item.quantity, unit_price: item.unit_price,
             triggerKind: TRIGGER_LABEL[(plan?.trigger_kind as TriggerKind) ?? "on_inspection"],
             delivery_date: item.delivery_date, payment_date: item.payment_date,
-            payment_terms: item.payment_terms,
+            contract_form: item.payment_terms,
+            payment_terms: str(row.payment_terms),
             deliverable_ownership: item.deliverable_ownership,
             orderSign: onOffLabel(manual.SHOW_ORDER_SIGN_SECTION),
             acceptSign: onOffLabel(manual.SHOW_SIGN_SECTION),

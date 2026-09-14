@@ -3,6 +3,8 @@ import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { ConditionRepository } from "./repository.js";
 import { allocateNumber } from "../core/numbering.js";
+import { roundAmount } from "../core/rounding.js";
+import { readContractForm } from "./contract-form.js";
 import type { ConditionScope } from "../core/model.js";
 
 /**
@@ -39,11 +41,15 @@ export interface ConditionInput {
   pricingModel?: "fixed" | "unit_rate" | "revenue_rate" | "subscription" | "none";
   ratePpm?: number | null;
   unitAmount?: number | null;
+  /** 個数。単価と組で持つ。単価×個数が定額の既定値になる。 */
+  quantity?: number | null;
   flatAmount?: number | null;
   mgAmount?: number | null;
   agAmount?: number | null;
   taxCategory?: "taxable" | "reduced" | "exempt";
   paymentTerms?: string | null;
+  /** 契約形式（請負・委任など）。支払条件とは別のもの。 */
+  contractForm?: string | null;
   cycle?: string | null;
   notes?: string | null;
   /** 仕様・成果物。発注書・検収書の明細の「仕様・成果物」に出る。 */
@@ -61,11 +67,13 @@ export interface EconomicsPatch {
   ratePpm?: number | null;
   flatAmount?: number | null;
   unitAmount?: number | null;
+  quantity?: number | null;
   mgAmount?: number | null;
   agAmount?: number | null;
   termStart?: string | null;
   termEnd?: string | null;
   paymentTerms?: string | null;
+  contractForm?: string | null;
   taxCategory?: "taxable" | "reduced" | "exempt";
   notes?: string | null;
   /** 作品と独占性。登録のときに入れられるのに、編集で直せなかった。 */
@@ -80,6 +88,7 @@ const ECONOMICS_COLUMNS: Record<keyof EconomicsPatch, string> = {
   name: "name", ratePpm: "rate_ppm", flatAmount: "flat_amount", unitAmount: "unit_amount",
   mgAmount: "mg_amount", agAmount: "ag_amount", termStart: "term_start", termEnd: "term_end",
   paymentTerms: "payment_terms", taxCategory: "tax_category", notes: "notes",
+  quantity: "quantity", contractForm: "contract_form",
   workId: "work_id", exclusivity: "exclusivity",
   spec: "spec", deliverableOwnership: "deliverable_ownership", orderNo: "order_no"
 };
@@ -90,7 +99,8 @@ const COPY_COLUMNS = [
   "work_id", "work_part_id", "exclusivity", "sublicensable", "term_start", "term_end",
   "currency", "pricing_model", "rate_ppm", "unit_amount", "flat_amount", "mg_amount", "ag_amount",
   "royalty_base", "deductible_costs", "tax_category", "withholding_note", "payment_terms",
-  "cycle", "notes", "series_id", "effective_from", "spec", "deliverable_ownership", "order_no"
+  "cycle", "notes", "series_id", "effective_from", "spec", "deliverable_ownership", "order_no",
+  "quantity", "contract_form"
 ];
 
 export class ConditionWriteService {
@@ -111,8 +121,14 @@ export class ConditionWriteService {
     if (!name) throw new DomainError("VALIDATION", "条件名は必須です");
 
     const pricing = input.pricingModel ?? "none";
+    // 単価と個数を入れてあれば、定額は掛けて出す。入れた額があればそちらが勝つ
+    // （端数の調整や「一式で値引き」を潰さない）。文書の明細の金額欄と同じ扱い。
+    const flatAmount = input.flatAmount ?? (
+      input.unitAmount !== undefined && input.unitAmount !== null
+        && input.quantity !== undefined && input.quantity !== null
+        ? roundAmount(input.unitAmount * input.quantity) : null);
     const required: Record<string, unknown> = {
-      unit_rate: input.unitAmount, revenue_rate: input.ratePpm, fixed: input.flatAmount
+      unit_rate: input.unitAmount, revenue_rate: input.ratePpm, fixed: flatAmount
     };
     if (pricing in required && (required[pricing] === undefined || required[pricing] === null)) {
       const label = { unit_rate: "単価", revenue_rate: "料率", fixed: "定額" }[pricing as string];
@@ -158,19 +174,22 @@ export class ConditionWriteService {
                                    term_start, term_end, currency, pricing_model,
                                    rate_ppm, unit_amount, flat_amount, mg_amount, ag_amount,
                                    tax_category, payment_terms, cycle, status, notes,
-                                   spec, deliverable_ownership, order_no)
+                                   spec, deliverable_ownership, order_no,
+                                   quantity, contract_form)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-                   $15, $16, $17, $18, $19, $20, $21, $22, 'active', $23, $24, $25, $26)
+                   $15, $16, $17, $18, $19, $20, $21, $22, 'active', $23, $24, $25, $26,
+                   $27, $28)
            RETURNING id, condition_no`,
           [no, input.agreementId ?? null, input.direction, input.kind, name, input.counterpartyId,
            input.workId ?? null, input.workPartId ?? null,
            input.exclusivity ?? null, input.sublicensable ?? null,
            input.termStart ?? null, input.termEnd ?? null, input.currency ?? "JPY", pricing,
-           input.ratePpm ?? null, input.unitAmount ?? null, input.flatAmount ?? null,
+           input.ratePpm ?? null, input.unitAmount ?? null, flatAmount,
            input.mgAmount ?? null, input.agAmount ?? null,
            input.taxCategory ?? "taxable", input.paymentTerms ?? null, input.cycle ?? null,
            input.notes ?? null, input.spec ?? null, input.deliverableOwnership ?? null,
-           input.orderNo ?? null]);
+           input.orderNo ?? null,
+           input.quantity ?? null, readContractForm(input.contractForm)]);
         const row = inserted.rows[0] as { id: number; condition_no: string | null };
         const id = Number(row.id);
 

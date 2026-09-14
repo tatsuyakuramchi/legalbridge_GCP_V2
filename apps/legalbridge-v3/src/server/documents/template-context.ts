@@ -20,6 +20,7 @@ import { royaltyStatementPatch } from "./royalty-patch.js";
 import { isLicenseTermsTemplate, licenseTermsPatch, licenseTermsSeeds,
          licenseTermsSuggestions } from "./license-terms.js";
 import { calcMethodFor, ownershipLabelOf, rewardLabelFor } from "../core/reward.js";
+import { contractFormFor } from "../conditions/contract-form.js";
 
 type Ctx = Record<string, any>;
 
@@ -157,6 +158,12 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
         // 単価を刷らないが、経理提出用の帳票がこの値を読む。空のままだと
         // 経理の単価の列が全部空欄になる。
         unit_price: unitPriceOf(condition.unitAmount, event.amount, event.quantity),
+        // 契約種別・支払条件の欄には契約形式（請負・委任）を出す。実績 →
+        // 予定 → 条件 の順に、書いてあるものを使う。
+        payment_terms: contractFormFor(event.contractForm, condition.contractForm),
+        // 定期払いの役務提供期間。本文の「役務提供期間」がここを読む。
+        term_start: event.serviceFrom ?? null,
+        term_end: event.serviceTo ?? null,
         delivery_date: event.occurredOn ?? null,
         inspection_date: event.inspectedOn ?? event.occurredOn ?? null,
         payment_date: event.schedule?.payOn ?? event.schedule?.dueOn ?? null,
@@ -186,6 +193,7 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
     inspected_quantity: null,
     // 単発の1行は数量を持たない。総額がそのまま単価にあたる。
     unit_price: condition.unitAmount ?? condition.flatAmount,
+    payment_terms: contractFormFor(condition.contractForm),
     delivery_date: condition.termEnd ?? null,
     payment_date: null,
     paid_date: null,
@@ -218,6 +226,10 @@ export function orderLinesFrom(context: Ctx): Row[] {
         // 本文は 数量×単価 を印字する。空だと「¥0」が出るので、1 × 金額 で置く。
         quantity: 1,
         unit_price: s.plannedAmount ?? 0,
+        payment_terms: contractFormFor(s.contractForm, condition.contractForm),
+        // 定期払いの回は、受け持つ役務提供期間を持つ。本文がそのまま差す。
+        term_start: s.serviceFrom ?? null,
+        term_end: s.serviceTo ?? null,
         delivery_date: s.dueOn ?? null,
         payment_date: s.payOn ?? null,
         amount_ex_tax: s.plannedAmount ?? 0,
@@ -233,8 +245,12 @@ export function orderLinesFrom(context: Ctx): Row[] {
       item_name: c.name ?? "",
       spec: specOf(c),
       deliverable_ownership: ownershipOf(c),
-      quantity: 1,
-      unit_price: c.flatAmount,
+      // 条件に個数があればそれを使う。無ければ「一式1」として出す。
+      quantity: c.quantity ?? 1,
+      unit_price: c.unitAmount ?? c.flatAmount,
+      payment_terms: contractFormFor(c.contractForm),
+      term_start: c.termStart ?? null,
+      term_end: c.termEnd ?? null,
       delivery_date: c.termEnd ?? null,
       payment_date: null,
       amount_ex_tax: c.flatAmount,
