@@ -264,7 +264,34 @@ export function MatterDocuments(
   const fixable = (d: MatterDetail["documents"][number]) =>
     d.status === "issued"
     && (d.templateKey === "purchase_order" || d.templateKey === "intl_purchase_order");
+  /** 下書きはひな形を問わずまとめて決定できる。実績は下書きが控えている。 */
+  const decidable = (d: MatterDetail["documents"][number]) => d.status === "draft";
+  const selectable = (d: MatterDetail["documents"][number]) => fixable(d) || decidable(d);
   const pickedIds = detail.documents.filter((d) => fixable(d) && picked.has(d.id)).map((d) => d.id);
+  const pickedDrafts = detail.documents.filter((d) => decidable(d) && picked.has(d.id)).map((d) => d.id);
+  /** まとめて決定の結果。落ちたものは理由を出す。 */
+  const [issued, setIssued] =
+    useState<Array<{ documentId: number; documentNo: string | null; ok: boolean; reason?: string }> | null>(null);
+
+  /**
+   * 選んだ下書きをまとめて決定する。
+   * 決定は相手に出すものが確定する操作なので、何枚に何が起きるかを先に出す。
+   */
+  async function decidePicked() {
+    if (!window.confirm(
+      `下書き ${pickedDrafts.length} 件をまとめて決定します。`
+      + "決定すると番号が振られ、中身は直せなくなります。"
+      + "\n訂正版が含まれていれば、その瞬間に元の版が退きます。")) return;
+    setBusy(true); setError(null); setIssued(null);
+    try {
+      const r = await api.post<{ results: NonNullable<typeof issued> }>(
+        "/documents/issue-many", { documentIds: pickedDrafts });
+      setIssued(r.results);
+      setPicked(new Set());
+      onChanged();
+    } catch (e) { setError((e as ApiError).message); }
+    finally { setBusy(false); }
+  }
 
   async function exportPicked() {
     setBusy(true); setError(null); setExported(null);
@@ -392,24 +419,50 @@ export function MatterDocuments(
         </div>
       )}
 
-      {/* 決定済みの発注書を選んで、一括修正の CSV に出す。
-          直したい文書が分かっているのに案件まるごと出すのでは、要らない行を
-          Excel で消す作業になる。 */}
-      {detail.documents.some(fixable) && (
-        <div className="row">
+      {issued && (
+        <div className={issued.every((r) => r.ok) ? "note ok" : "note warn"}>
+          決定 {issued.filter((r) => r.ok).length} 件
+          {issued.filter((r) => r.ok).map((r) => ` ${r.documentNo}`).join("、")}
+          {issued.some((r) => !r.ok) && (
+            <div style={{ marginTop: 4 }}>
+              決定できなかったもの {issued.filter((r) => !r.ok).length} 件：
+              {issued.filter((r) => !r.ok).map((r) => `#${r.documentId}（${r.reason}）`).join("／")}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 左の四角で選んで、まとめて決定するか、一括修正の CSV に出す。
+          決定は束の中だけまとめてできたので、束をまたぐと1枚ずつ押すしかなかった。
+          書き出しも、直したい文書が分かっているのに案件まるごと出して、
+          要らない行を Excel で消す作業になっていた。 */}
+      {detail.documents.some(selectable) && (
+        <div className="row" style={{ flexWrap: "wrap" }}>
+          <button className="btn btn-sm primary" disabled={busy || !pickedDrafts.length}
+                  onClick={() => void decidePicked()}>
+            選んだ {pickedDrafts.length} 件をまとめて決定
+          </button>
           <button className="btn btn-sm" disabled={busy || !pickedIds.length}
                   onClick={() => void exportPicked()}>
             選んだ {pickedIds.length} 件を CSV に出す（一括修正用）
           </button>
-          <button className="linky" disabled={busy}
-                  onClick={() => setPicked(new Set(detail.documents.filter(fixable).map((d) => d.id)))}>
-            決定済みの発注書をすべて選ぶ
-          </button>
-          {pickedIds.length > 0 && (
+          {detail.documents.some(decidable) && (
+            <button className="linky" disabled={busy}
+                    onClick={() => setPicked(new Set(detail.documents.filter(decidable).map((d) => d.id)))}>
+              下書きをすべて選ぶ
+            </button>
+          )}
+          {detail.documents.some(fixable) && (
+            <button className="linky" disabled={busy}
+                    onClick={() => setPicked(new Set(detail.documents.filter(fixable).map((d) => d.id)))}>
+              決定済みの発注書をすべて選ぶ
+            </button>
+          )}
+          {picked.size > 0 && (
             <button className="linky" onClick={() => setPicked(new Set())}>選択を外す</button>
           )}
           <span className="faint">
-            出した CSV は「一括修正 あり」で入っています。直して上げ直すと訂正版になります
+            左の四角で選びます。決定は下書きに、CSV は決定済みの発注書に効きます
           </span>
         </div>
       )}
@@ -421,10 +474,11 @@ export function MatterDocuments(
             {detail.documents.map((d) => (
               <tr key={d.id}>
                 <td>
-                  {/* 直せるのは決定済みの発注書だけ。それ以外は四角を出さない。 */}
-                  {fixable(d) && (
+                  {/* 選べるのは、決定できる下書きと、直せる決定済みの発注書だけ。
+                      退いた版や発注書以外の決定済みには四角を出さない。 */}
+                  {selectable(d) && (
                     <input type="checkbox" checked={picked.has(d.id)}
-                           aria-label={`${d.documentNo ?? d.id} を一括修正に出す`}
+                           aria-label={`${d.documentNo ?? `#${d.id}`} を選ぶ`}
                            onChange={(e) => setPicked((prev) => {
                              const next = new Set(prev);
                              if (e.target.checked) next.add(d.id); else next.delete(d.id);

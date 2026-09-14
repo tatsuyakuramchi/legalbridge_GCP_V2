@@ -1639,32 +1639,75 @@ export function createRoutes(database: Transactable) {
   const issueSchema = z.object({
     eventIds: z.array(z.coerce.number().int().positive()).max(200).default([])
   });
+  /**
+   * 1枚を発行する。まとめて決定するときもここを通す。
+   *
+   * 先に確かめる。発行してから弾かれると、番号だけ振られた文書が残る。
+   * 実績は条件をまたいでよい（委託料と実費を1枚の検収書に）。条件ごとに分けて、
+   * その条件が文書に繋がっているかと、結べるかを見る。
+   * 訂正版なら、前の版が持っている実績は空いているものとして扱う
+   * （発行の瞬間にこちらへ移る）。
+   */
+  const issueOne = async (id: number, eventIds: number[], who: string) => {
+    const draft = await documents.find(id);
+    if (!draft) throw new DomainError("NOT_FOUND", `文書 ${id} が見つかりません`);
+    const groups = await eventGroupsFor(draft.conditions.map((c) => c.id), eventIds,
+                                        "先に条件明細を繋いでください");
+    for (const [conditionId, ids] of groups) {
+      await conditionEvents.assertLinkable(conditionId, ids, draft.supersedesId);
+    }
+    const issued = await issues.issue(id, who, eventIds.length ? { eventIds } : {});
+    // 前の版から移らなかったぶんを結ぶ。すでにこの文書を指している実績は
+    // linkDocument 側で素通りする。
+    for (const [conditionId, ids] of groups) {
+      await conditionEvents.linkDocument(conditionId, ids, id, who);
+    }
+    return issued;
+  };
+
   router.post("/documents/:id/issue",
     requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       const { eventIds } = issueSchema.parse(req.body ?? {});
-      const id = Number(req.params.id);
+      res.json(await issueOne(Number(req.params.id), eventIds, actor(res)));
+    }));
+
+  /**
+   * 選んだ下書きをまとめて決定する。
+   *
+   * 束（一括作成のかたまり）の中だけは前からまとめて決定できたが、束をまたぐと、
+   * また画面で1枚ずつ作った下書きは、1枚ずつ押すしかなかった。
+   *
+   * 1枚で失敗しても止めない。決まったものは決まり、落ちたものは理由を返す。
+   * 途中で止めると、どこまで決まったのかが画面から読めなくなる。
+   *
+   * 実績は下書きの手入力に控えてある（_eventIds）。読まずに発行すると、
+   * 検収書が実績に繋がらないまま出て、そこから支払を立てられなくなる。
+   */
+  router.post("/documents/issue-many",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { documentIds } = z.object({
+        documentIds: z.array(z.coerce.number().int().positive()).min(1).max(200)
+      }).parse(req.body ?? {});
       const who = actor(res);
-      const draft = await documents.find(id);
-      if (!draft) throw new DomainError("NOT_FOUND", `文書 ${id} が見つかりません`);
-
-      // 先に確かめる。発行してから弾かれると、番号だけ振られた文書が残る。
-      // 実績は条件をまたいでよい（委託料と実費を1枚の検収書に）。条件ごとに分けて、
-      // その条件が文書に繋がっているかと、結べるかを見る。
-      // 訂正版なら、前の版が持っている実績は空いているものとして扱う
-      // （発行の瞬間にこちらへ移る）。
-      const groups = await eventGroupsFor(draft.conditions.map((c) => c.id), eventIds, "先に条件明細を繋いでください");
-      for (const [conditionId, ids] of groups) {
-        await conditionEvents.assertLinkable(conditionId, ids, draft.supersedesId);
+      const results: Array<{ documentId: number; documentNo: string | null;
+                             ok: boolean; reason?: string }> = [];
+      for (const id of [...new Set(documentIds)]) {
+        try {
+          const draft = await documents.find(id);
+          const saved = Array.isArray(draft?.manualInputs?._eventIds)
+            ? (draft!.manualInputs!._eventIds as unknown[])
+                .map(Number).filter((n) => Number.isFinite(n))
+            : [];
+          const issued = await issueOne(id, saved, who);
+          results.push({ documentId: id, documentNo: issued.documentNo ?? null, ok: true });
+        } catch (error) {
+          results.push({ documentId: id, documentNo: null, ok: false,
+                         reason: (error as Error)?.message ?? String(error) });
+        }
       }
-
-      const issued = await issues.issue(id, who, eventIds.length ? { eventIds } : {});
-      // 前の版から移らなかったぶんを結ぶ。すでにこの文書を指している実績は
-      // linkDocument 側で素通りする。
-      for (const [conditionId, ids] of groups) {
-        await conditionEvents.linkDocument(conditionId, ids, id, who);
-      }
-      res.json(issued);
+      res.json({ results });
     }));
 
   router.get("/documents/:id/html", asyncRoute(async (req, res) => {
