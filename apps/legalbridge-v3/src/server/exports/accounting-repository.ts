@@ -160,11 +160,14 @@ export function documentLinesFrom(rendered: unknown): DocumentLine[] {
         // 並べないと2行が同じ文字になって見分けが付かない。
         const content = [text(group.methodLabel), text(row.productName)]
           .filter(Boolean).join("　");
+        // 数量は個数建ての行だけが持つ。受領額 × 料率の行は個数が無いので 1。
+        // 単価は渡さない。経理側が 金額 ÷ 数量 で出し、割り切れないときは
+        // 空にする（単価 × 数量 = 金額 が崩れた表を出さないための決まり）。
+        const billable = n(row.quantity);
         lines.push({
           content: content || text(group.contractNumber),
-          // 利用形態の付いた実績は個数建てではない（受領額 × 料率）。
-          // 単価と数量を空で出す（0 を置くと経理が数量0の行として弾く）。
-          unitPrice: null, quantity: null,
+          unitPrice: null,
+          quantity: billable && billable > 0 ? billable : (amount > 0 ? 1 : null),
           amount,
           deliveryDate: text(row.occurredOn).slice(0, 10) || null
         });

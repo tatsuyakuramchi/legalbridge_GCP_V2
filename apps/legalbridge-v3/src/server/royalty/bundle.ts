@@ -89,7 +89,10 @@ export function bundleLineFrom(preview: CalculationPreview): BundleLine {
     ratePct: c.ratePct,
     paymentJpy: preview.fee.actual_ex_tax,
     basisNote: basisNoteOf(preview),
-    occurredOn: preview.occurredOn ?? null
+    occurredOn: preview.occurredOn ?? null,
+    quantity: Number(preview.reported.quantity ?? 0) > 0
+      ? Math.max(0, Number(preview.reported.quantity ?? 0)
+                  - Number(preview.reported.sampleQuantity ?? 0)) : null
   };
 }
 

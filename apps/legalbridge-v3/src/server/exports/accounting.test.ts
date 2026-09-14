@@ -351,8 +351,9 @@ test("計算書の明細は、前金・後金がそのまま経理の行にな�
   assert.equal(lines[0].amount, 73680);
   assert.equal(lines[1].amount, 53261);
   assert.equal(lines[0].deliveryDate, "2026-08-31");
-  assert.equal(lines[0].unitPrice, null, "受領額 × 料率なので単価は無い");
-  assert.equal(lines[0].quantity, null);
+  // 単価は経理側が 金額 ÷ 数量 で出す。ここでは渡さない。
+  assert.equal(lines[0].unitPrice, null);
+  assert.equal(lines[0].quantity, 1, "個数建てではないので 1");
 });
 
 test("検収書の行があるときは、計算書の明細を混ぜない", () => {
@@ -363,4 +364,36 @@ test("検収書の行があるときは、計算書の明細を混ぜない", ()
   });
   assert.equal(lines.length, 1);
   assert.equal(lines[0].content, "挿絵");
+});
+
+test("個数建ての行は、実際の個数を数量に出す（見本は引く）", () => {
+  const lines = documentLinesFrom({
+    lineGroups: [
+      { methodLabel: "自社製造・自社販売（基準価格 × 個数）",
+        lines: [{ productName: "星降る夜のミュゼ", paymentJpy: 120000,
+                  quantity: 400, occurredOn: "2026-08-31" }] }
+    ]
+  });
+  assert.equal(lines[0].quantity, 400);
+  assert.equal(lines[0].unitPrice, null, "単価は経理側が 金額 ÷ 数量 で出す");
+});
+
+test("受領額 × 料率の行は、単価が金額・数量が1として出る", () => {
+  // 経理の表は 単価 × 数量 = 金額 が成り立たないと単価を空にする。個数の
+  // 無い行に受領価格を単価として置くと、料率を掛けたぶんだけ合わなくなる。
+  const rows = documentLinesFrom({
+    lineGroups: [{ methodLabel: "再許諾（受領価格）",
+                   lines: [{ productName: "作品X", paymentJpy: 73680 }] }]
+  });
+  const slot = buildAccountingRow({
+    paymentId: 1, paymentNo: "PAY-1", currency: "JPY",
+    amount: 73680, taxAmount: 7368, withholdingAmount: 0,
+    dueOn: "2026-09-18", paidOn: null,
+    party: { name: "如月 涼", kind: "individual", code: null, kana: null,
+             invoiceNo: null, withholding: false },
+    lines: [], documentLines: rows
+  } as never).slots[0];
+  assert.equal(slot.quantity, 1);
+  assert.equal(slot.unitPrice, 73680, "金額 ÷ 1");
+  assert.equal(slot.amount, 73680);
 });

@@ -368,6 +368,13 @@ export interface BundleLine {
   intakeCurrency?: string | null;
   /** その実績の発生日。経理提出用の「納品日」になる。 */
   occurredOn?: string | null;
+  /**
+   * 有償の個数（見本を引いたあと）。経理提出用の「数量」になる。
+   *
+   * 個数建ての行だけが持つ。受領額 × 料率の行は個数を持たないので、
+   * 経理の側で 1 を置く（単価 × 数量 = 金額 を崩さないため）。
+   */
+  quantity?: number | null;
 }
 
 export function bundleLinesFrom(source: Data): BundleLine[] {
@@ -384,7 +391,8 @@ export function bundleLinesFrom(source: Data): BundleLine[] {
     basisNote: String(row.basisNote ?? ""),
     payerName: String(row.payerName ?? ""),
     intakeCurrency: String(row.intakeCurrency ?? ""),
-    occurredOn: String(row.occurredOn ?? "")
+    occurredOn: String(row.occurredOn ?? ""),
+    quantity: num(row.quantity) || null
   }));
 }
 
@@ -406,6 +414,7 @@ export function usageBundleLines(
     outCurrency?: string | null;
     basis: number; ratePct?: number | null; amount?: number | null;
     period?: string | null; occurredOn?: string | null;
+    quantity?: number | null; sampleQuantity?: number | null;
   }>
 ): BundleLine[] {
   return events.map((e) => ({
@@ -422,7 +431,10 @@ export function usageBundleLines(
       .map((x) => String(x ?? "").trim()).filter(Boolean).join("・"),
     payerName: e.outPartyName ?? "",
     intakeCurrency: e.outCurrency ?? "",
-    occurredOn: e.occurredOn ?? ""
+    occurredOn: e.occurredOn ?? "",
+    // 見本は作者に払わない分なので引く。紙の但し書きと同じ数にする。
+    quantity: Number(e.quantity ?? 0) > 0
+      ? Math.max(0, Number(e.quantity ?? 0) - Number(e.sampleQuantity ?? 0)) : null
   }));
 }
 
@@ -505,8 +517,10 @@ export function bundleLinesPatch(
       paymentJpy: line.paymentJpy,
       paymentJpyStr: fmtYen(line.paymentJpy),
       basisNote: line.basisNote,
-      // 経理提出用の「納品日」。紙には出さないが、焼き付けた値から経理が拾う。
-      occurredOn: line.occurredOn ?? ""
+      // 経理提出用の「納品日」「数量」。紙には出さないが、焼き付けた値から
+      // 経理が拾う。
+      occurredOn: line.occurredOn ?? "",
+      quantity: line.quantity ?? ""
     }],
     subtotalSales: line.salesJpy,
     subtotalSalesStr: fmtYen(line.salesJpy),
