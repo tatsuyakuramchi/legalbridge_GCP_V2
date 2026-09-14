@@ -20,7 +20,8 @@ export interface CalculationInput {
   eventType?: "manufacturing" | "sales" | "sublicense_receipt" | "service_period" | "adjustment";
   reported?: ReportedResult;
   /**
-   * 実績の束。渡すと、選んだ実績の根拠（報告売上・数量）を合算して1回だけ
+   * 実績の束。利用形態のある実績は行ごとに算定する。無ければ、
+   * 選んだ実績の根拠（報告売上・数量）を合算して1回だけ
    * 計算し、実績は新しく作らず選んだものを計算書に結ぶ。渡さなければ
    * これまでどおり reported から計算し、確定時に実績を1件作る。
    */
@@ -438,7 +439,7 @@ export class RoyaltyStatementService {
     let eventId: number;
     if (resolved.events.length) {
       // 実績の束。新しい実績は作らず、選んだ実績を計算書と文書に結ぶ。
-      // 明細は実績1件が1行。額は根拠の比で按分し、端数は最終行に寄せる
+      // 明細は実績1件が1行。利用形態があれば行ごとの額、無ければ根拠の比で按分し、端数は最終行に寄せる
       // （MG の上乗せ・AG の相殺は明細に割らず、合計欄だけに出る）。
       const net = result.amounts.netMinor;
       // 利用形態の付いた実績は、行ごとに料率まで掛けて額が出ている。按分しない

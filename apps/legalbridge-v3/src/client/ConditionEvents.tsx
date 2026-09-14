@@ -111,7 +111,7 @@ export function ConditionEvents(
   const addForm = useRef<HTMLDivElement>(null);
   /**
    * 選んだ実績。複数選んで1枚の書類にする。
-   * 料率の条件なら計算書（根拠を合算して1回計算、明細は実績ごとに按分）、
+   * 料率の条件なら計算書（利用形態のある実績は行ごとに算定、無ければ合算して按分）、
    * 定額なら検収書・納品書（実績が明細の行になる）。
    */
   const [picked, setPicked] = useState<Set<number>>(new Set());
@@ -861,7 +861,11 @@ export function ConditionEvents(
         <div className="panel-bd stack" style={{ borderBottom: "1px solid var(--line)" }}>
           <div className="row">
             <b>選んだ実績の束から計算書を作る</b>
-            <span className="faint">根拠（報告売上・数量）を合算して1回だけ計算し、明細は実績1件が1行。額は根拠の比で按分</span>
+            <span className="faint">
+              {rows.some((r) => picked.has(r.id) && r.usageType)
+                ? "明細は実績1件が1行。行ごとに 基礎 × 料率 を出して足す（MG・AG は合計にだけ効く）"
+                : "根拠（報告売上・数量）を合算して1回だけ計算し、明細は実績1件が1行。額は根拠の比で按分"}
+            </span>
           </div>
           <div className="form-grid">
             <label className="field">
