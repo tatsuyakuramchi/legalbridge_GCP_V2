@@ -1057,14 +1057,24 @@ export function createRoutes(database: Transactable) {
          LEFT JOIN works   w ON w.id = c.work_id
         WHERE c.direction = 'out'
           AND c.status IN ('active', 'draft', 'scheduled')
-          -- 同じ作品の許諾を先に出す。作品が違う許諾を混ぜると取り違える。
-          AND ($2::bigint IS NULL OR c.work_id IS NULL OR c.work_id = $2)
+          -- 作品では絞らない。並び順で寄せるだけにする。
+          --
+          -- 絞ると、作品を入れ忘れた許諾やシリーズ単位で登録した許諾が候補から
+          -- 消える。消えたことは画面から読めないので、「アウト条件が1件も無い」
+          -- のか「作品が違って隠れている」のかが分からないまま手が止まる。
           AND ($1 = '' OR c.name ILIKE $3 OR c.condition_no ILIKE $3
                OR p.name ILIKE $3 OR w.title ILIKE $3)
-        ORDER BY (c.work_id = $2) DESC NULLS LAST, c.condition_no NULLS LAST, c.id
-        LIMIT 30`,
+        ORDER BY (c.work_id IS NOT DISTINCT FROM $2::bigint) DESC,
+                 c.condition_no NULLS LAST, c.id
+        LIMIT 50`,
       [q, await workIdOfCondition(Number(req.params.id)), like]);
+    // 許諾（OUT）の条件が1件も無いのか、探した言葉に当たらないだけなのかを
+    // 画面が言い分けられるようにする。0件の理由が分からないと次の手が決まらない。
+    const total = await database.query(
+      `SELECT count(*)::int AS n FROM conditions
+        WHERE direction = 'out' AND status IN ('active', 'draft', 'scheduled')`);
     res.json({
+      total: Number((total.rows[0] as { n: number }).n ?? 0),
       conditions: (r.rows as Array<Record<string, any>>).map((c) => ({
         id: Number(c.id), conditionNo: str(c.condition_no), name: String(c.name ?? ""),
         status: String(c.status), partyName: str(c.party_name),

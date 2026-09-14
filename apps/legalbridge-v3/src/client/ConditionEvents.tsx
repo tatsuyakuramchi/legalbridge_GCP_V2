@@ -95,6 +95,8 @@ export function ConditionEvents(
   const [usageTypes, setUsageTypes] = useState<UsageOption[]>([]);
   const [stages, setStages] = useState<StageOption[]>([]);
   const [outFound, setOutFound] = useState<OutCondition[]>([]);
+  /** 許諾（OUT）の条件が世の中に何件あるか。0件の理由を言い分けるために使う。 */
+  const [outTotal, setOutTotal] = useState<number | null>(null);
   const [outQuery, setOutQuery] = useState("");
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -176,10 +178,13 @@ export function ConditionEvents(
   useEffect(() => {
     if (!usageTypes.length) return;
     let live = true;
-    api.get<{ conditions: OutCondition[] }>(
+    api.get<{ conditions: OutCondition[]; total: number }>(
       `/conditions/${conditionId}/out-candidates${outQuery.trim() ? `?q=${encodeURIComponent(outQuery.trim())}` : ""}`)
-      .then((r) => { if (live) setOutFound(r.conditions); })
-      .catch(() => { if (live) setOutFound([]); });
+      .then((r) => { if (live) { setOutFound(r.conditions); setOutTotal(r.total); } })
+      .catch((e: ApiError) => {
+        // 黙って空にしない。候補が出ない理由が読めないと、そこで手が止まる。
+        if (live) { setOutFound([]); setOutTotal(null); setError(e.message); }
+      });
     return () => { live = false; };
   }, [conditionId, outQuery, usageTypes.length]);
 
@@ -548,6 +553,15 @@ export function ConditionEvents(
                 <span>許諾したアウト条件</span>
                 <input value={outQuery} placeholder={`${workTitle ?? "作品"} の許諾を相手先名などで探す`}
                   onChange={(e) => setOutQuery(e.target.value)} />
+                {!outFound.length && (
+                  <small className="danger" style={{ marginTop: 4 }}>
+                    {outTotal === 0
+                      ? "許諾（OUT）の条件がまだ1件もありません。条件明細 → 条件を登録 で、向きを「OUT 許諾」にして作ってください"
+                      : outQuery.trim()
+                      ? `「${outQuery.trim()}」に当たる許諾がありません（許諾は全部で ${outTotal ?? "?"} 件）。言葉を変えるか、空にして一覧から選んでください`
+                      : "候補を読み込んでいます"}
+                  </small>
+                )}
                 <select value={f("outConditionId")} style={{ marginTop: 4 }}
                   onChange={(e) => {
                     const chosenOut = outFound.find((o) => String(o.id) === e.target.value);
@@ -568,9 +582,13 @@ export function ConditionEvents(
                 </select>
                 {pickedOut?.scopes
                   ? <small className="faint">許諾範囲：{pickedOut.scopes}（計算書に出ます）</small>
-                  : <small className="faint">
-                      見つからなければ 条件明細 → 条件を登録 で、許諾（OUT）の条件を作ってから戻ってください
-                    </small>}
+                  : outFound.length
+                  ? <small className="faint">
+                      {workTitle ? `${workTitle} の許諾を上に出しています。` : ""}
+                      {outFound.length} 件（ほかの作品の許諾も選べます）。
+                      無ければ 条件明細 → 条件を登録 で作ってから戻ってください
+                    </small>
+                  : null}
               </label>
             )}
             {usageField("unitAmount") && (
