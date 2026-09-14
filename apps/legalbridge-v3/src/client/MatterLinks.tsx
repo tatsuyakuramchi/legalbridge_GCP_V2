@@ -469,7 +469,7 @@ export function MatterDocuments(
 
       {detail.documents.length ? (
         <table>
-          <thead><tr><th></th><th>文書番号</th><th>種別</th><th>状態</th><th></th></tr></thead>
+          <thead><tr><th></th><th>文書番号</th><th>取引先</th><th>種別</th><th>状態</th><th></th></tr></thead>
           <tbody>
             {detail.documents.map((d) => (
               <tr key={d.id}>
@@ -486,11 +486,17 @@ export function MatterDocuments(
                            })} />
                   )}
                 </td>
-                <td className="code">{d.documentNo ?? "（下書き）"}</td>
-                <td>{d.templateLabel ?? "—"}</td>
-                <td><StatusTag kind="document" value={d.status} /></td>
-                <td>
-                  <span className="row">
+                {/* 案件の右欄は幅が狭い。番号・種別・状態・ボタンが折り返すと、
+                    1行が3段になって一覧として読めなくなる。折り返すのは
+                    取引先の名前だけにする。 */}
+                <td className="code" style={{ whiteSpace: "nowrap" }}>
+                  {d.documentNo ?? "（下書き）"}
+                </td>
+                <td>{d.counterparty ?? "—"}</td>
+                <td style={{ whiteSpace: "nowrap" }}>{d.templateLabel ?? "—"}</td>
+                <td style={{ whiteSpace: "nowrap" }}><StatusTag kind="document" value={d.status} /></td>
+                <td style={{ whiteSpace: "nowrap" }}>
+                  <span className="row" style={{ flexWrap: "nowrap" }}>
                     {/* 一覧から中身へ行けないと、文書番号を控えて文書の画面で
                         探し直すことになる。 */}
                     {onOpenDocument && (

@@ -86,7 +86,7 @@ export class MatterRepository {
   private async documents(id: number) {
     const r = await this.database.query(
       `SELECT d.id, d.document_no, d.status, d.issued_at, v.template_label,
-              t.template_key
+              v.counterparty, t.template_key
          FROM documents d
          LEFT JOIN v_document_display v ON v.document_id = d.id
          LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
@@ -96,6 +96,8 @@ export class MatterRepository {
     return r.rows.map((d) => ({
       id: Number(d.id), documentNo: str(d.document_no), status: String(d.status),
       templateLabel: str(d.template_label),
+      // 相手先。番号と種別だけでは、どれが誰あての1枚か読めない。
+      counterparty: str(d.counterparty),
       // ひな形の種類。画面が「発注書だけ」を選り分けるのに要る
       // （名前で見分けると「発注書 (国内)」の表記に依存する）。
       templateKey: str(d.template_key),

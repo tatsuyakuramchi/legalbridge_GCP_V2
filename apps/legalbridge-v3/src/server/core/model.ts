@@ -150,7 +150,7 @@ export interface MatterDetail extends MatterSummary {
   conditions: ConditionSummary[];
   documents: Array<{ id: number; documentNo: string | null; status: string;
                      templateLabel: string | null; templateKey: string | null;
-                     issuedAt: string | null }>;
+                     counterparty: string | null; issuedAt: string | null }>;
   payments: Array<{ id: number; paymentNo: string | null; direction: Direction; amount: number; currency: string; dueOn: string | null; status: string }>;
   communications: Array<{ occurredAt: string; action: string; actor: string; detail: Record<string, unknown> }>;
   links: Array<{ targetType: string; targetRef: string; relation: string;
