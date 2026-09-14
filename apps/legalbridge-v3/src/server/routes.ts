@@ -37,8 +37,7 @@ import { config } from "./config.js";
 import { verifySlackSignature } from "./integrations/signature.js";
 import { RoyaltyStatementService } from "./royalty/statement-service.js";
 import { PAYMENT_STAGES, USAGE_TYPES } from "./royalty/usage-type.js";
-import { usageBundleLines } from "./documents/royalty-patch.js";
-import { bundleLineFrom, bundleTotals } from "./royalty/bundle.js";
+import { bundleLinesFor, bundleTotals } from "./royalty/bundle.js";
 import { PaymentService } from "./payments/service.js";
 import { PaymentAllocationService } from "./payments/allocation-service.js";
 import { PartyRepository } from "./parties/repository.js";
@@ -1889,7 +1888,7 @@ export function createRoutes(database: Transactable) {
         ...(input.manualInputs ?? {}),
         ...(usageEvents.length
           ? { statementMode: "multi",
-              rs_bundle_lines: usageBundleLines(usageEvents),
+              rs_bundle_lines: bundleLinesFor(preview),
               rs_bundle_tax: preview.fee.tax_amount }
           : {})
       };
@@ -1959,7 +1958,7 @@ export function createRoutes(database: Transactable) {
       }).parse(req.body ?? {});
       const previews = await previewBundle(input.entries);
       res.json({
-        lines: previews.map(bundleLineFrom),
+        lines: previews.flatMap(bundleLinesFor),
         totals: bundleTotals(previews),
         previews
       });
@@ -1972,7 +1971,7 @@ export function createRoutes(database: Transactable) {
       const who = actor(res);
       const previews = await previewBundle(input.entries);
       const totals = bundleTotals(previews);
-      const lines = previews.map(bundleLineFrom);
+      const lines = previews.flatMap(bundleLinesFor);
       const eventIds = input.entries.flatMap((e) => e.eventIds ?? []);
 
       const draft = await issues.createDraft({

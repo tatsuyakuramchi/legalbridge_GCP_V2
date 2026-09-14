@@ -384,6 +384,14 @@ export function bundleLinesFrom(source: Data): BundleLine[] {
  *
  * 行の額は計算済み。ここでは組み替えるだけで計算し直さない。
  */
+/** 片方がもう片方に丸ごと含まれていれば、同じことを言っているとみなす。 */
+function sameWords(a: string | null | undefined, b: string | null | undefined): boolean {
+  const x = String(a ?? "").trim();
+  const y = String(b ?? "").trim();
+  if (!x || !y) return false;
+  return y.includes(x) || x.includes(y);
+}
+
 export function usageBundleLines(
   events: Array<{
     productName?: string | null; methodLabel?: string | null; basisNote?: string | null;
@@ -395,7 +403,10 @@ export function usageBundleLines(
   return events.map((e) => ({
     conditionId: null,
     // 群の見出しは許諾先の条件。自社製造・自社販売は相手がいないので空。
-    contractTitle: e.outConditionName ?? "",
+    //
+    // 方式名と同じ言葉なら出さない。アウト条件に「自社製造・他社販売」と
+    // 名前を付けている運用があり、そのまま出すと見出しに同じ語が2回並ぶ。
+    contractTitle: sameWords(e.outConditionName, e.methodLabel) ? "" : (e.outConditionName ?? ""),
     contractNumber: e.outConditionNo ?? "",
     conditionName: e.productName ?? "",
     methodLabel: e.methodLabel ?? "",

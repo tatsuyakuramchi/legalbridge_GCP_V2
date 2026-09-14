@@ -1,5 +1,5 @@
 import { DomainError } from "../core/errors.js";
-import type { BundleLine } from "../documents/royalty-patch.js";
+import { usageBundleLines, type BundleLine } from "../documents/royalty-patch.js";
 import { toMajor } from "./economics.js";
 import type { CalculationPreview } from "./statement-service.js";
 
@@ -59,6 +59,22 @@ export function basisNoteOf(preview: CalculationPreview): string {
   }
   if (preview.events.length) notes.push(`実績 ${preview.events.length} 件`);
   return notes.join("・");
+}
+
+/**
+ * 1枚の計算書に載せる行。
+ *
+ * 利用形態の付いた実績は、実績1件が1行になる（前金と後金、再許諾と自社販売で
+ * 料率も相手も違うので、条件で1行にまとめると内訳が消える）。
+ * 利用形態の無い実績は、これまでどおり条件1本で1行。
+ *
+ * 入口が2つある（条件の画面から直接／文書作成フォームから）。ここを通さないと
+ * 片方の入口だけ明細の作りが変わり、同じ実績から違う紙が出る。
+ */
+export function bundleLinesFor(preview: CalculationPreview): BundleLine[] {
+  const usage = preview.events.filter((e) => e.usageType);
+  if (usage.length) return usageBundleLines(usage);
+  return [bundleLineFrom(preview)];
 }
 
 export function bundleLineFrom(preview: CalculationPreview): BundleLine {

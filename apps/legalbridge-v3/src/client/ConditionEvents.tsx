@@ -52,7 +52,11 @@ interface StatementPreview {
   payment: { withholdingEnabled: boolean; withholdingTax: number; netTransfer: number };
   period: string; occurredOn: string | null;
   reported: { salesInput?: number | null; quantity?: number | null };
-  events: Array<{ eventId: number; eventType: string; occurredOn: string | null; basis: number; share: number }>;
+  events: Array<{
+    eventId: number; eventType: string; occurredOn: string | null; basis: number; share: number;
+    usageType?: string | null; usageLabel?: string | null;
+    basisNote?: string | null; ratePct?: number | null; amount?: number | null;
+  }>;
   appliedVersion: { conditionNo: string | null; switched: boolean } | null;
 }
 interface PreviewResponse {
@@ -166,13 +170,19 @@ export function ConditionEvents(
   const [typeByTrigger, setTypeByTrigger] = useState<Record<string, string>>({});
   // 計算書のフォーム。選んだ実績を束にして出す。
   const [stmtOpen, setStmtOpen] = useState(false);
-  const [stmtTemplate, setStmtTemplate] = useState("");
   const [stmtPeriod, setStmtPeriod] = useState("");
   const [stmtPreview, setStmtPreview] = useState<StatementPreview | null>(null);
-  const [stmtBusy, setStmtBusy] = useState(false);
-  const [stmtDone, setStmtDone] = useState<{ id: number; documentNo: string } | null>(null);
 
   const pickedIds = [...picked].filter((id) => rows.some((r) => r.id === id && r.status === "active" && !r.documentId));
+  /**
+   * 利用形態のある行は、行ごとに料率を掛けてから足す。そのとき reported に
+   * 入っているのは「許諾料の合計」であって根拠ではないので、根拠の合計は
+   * 行の基礎を足して出す（reported をそのまま出すと、根拠の欄に許諾料が並ぶ）。
+   */
+  const byUsageRows = Boolean(stmtPreview?.events.some((e) => e.usageType));
+  const basisTotal = byUsageRows
+    ? (stmtPreview?.events ?? []).reduce((sum, e) => sum + e.basis, 0)
+    : Number(stmtPreview?.reported.salesInput ?? stmtPreview?.reported.quantity ?? 0);
 
   // 許諾したアウト条件を引く。作品で寄せてあるので、空欄でも候補が出る。
   useEffect(() => {
@@ -198,21 +208,6 @@ export function ConditionEvents(
       .catch((e: ApiError) => { if (live) { setStmtPreview(null); setError(e.message); } });
     return () => { live = false; };
   }, [stmtOpen, pickedIds.join(","), stmtPeriod]);
-
-  async function issueStatement() {
-    if (!stmtTemplate || !pickedIds.length) return;
-    setStmtBusy(true); setError(null);
-    try {
-      const r = await api.post<{ document: { id: number; documentNo: string } }>(
-        `/conditions/${conditionId}/statement-documents`,
-        { templateKey: stmtTemplate, eventIds: pickedIds, period: stmtPeriod.trim() || null,
-          matterId: matterId ?? null });
-      setStmtDone({ id: r.document.id, documentNo: r.document.documentNo });
-      setStmtOpen(false); setPicked(new Set()); setStmtPreview(null);
-      load(); onChanged();
-    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
-    finally { setStmtBusy(false); }
-  }
 
   function load() {
     api.get<{ events: EventRow[]; types: TypeOption[];
@@ -250,8 +245,6 @@ export function ConditionEvents(
     api.get<{ templates: TemplateOption[] }>("/document-templates")
       .then((r) => {
         setTemplates(r.templates); setTemplateKey(r.templates[0]?.templateKey ?? "");
-        setStmtTemplate(r.templates.find((t) => t.templateKey === "royalty_statement")?.templateKey
-          ?? r.templates[0]?.templateKey ?? "");
       })
       .catch((e: ApiError) => setError(e.message));
   }, [issuing, stmtOpen]);
@@ -885,27 +878,6 @@ export function ConditionEvents(
         </div>
       )}
 
-      {stmtDone && (
-        <div className="panel-bd">
-          <div className="note ok done-note">
-            <div className="row">
-              <b>計算書を決定しました</b>
-              <span className="code">{stmtDone.documentNo}</span>
-              <span className="faint">選んだ実績に結び付け、金額は決定のときに計算し直しました</span>
-            </div>
-            <div className="row">
-              {onOpenDocument && (
-                <button className="btn primary btn-sm"
-                        onClick={() => { const id = stmtDone.id; setStmtDone(null); onOpenDocument(id); }}>
-                  この文書を開く
-                </button>
-              )}
-              <button className="btn btn-sm" onClick={() => setStmtDone(null)}>閉じる</button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* 選んだ実績から書類を作る。料率なら計算書、定額なら検収書・納品書。
           業績連動の業務委託は金額がもう決まっているので計算書には行かない。
           報酬計算書のひな形は作らず、検収書の明細に内訳として載せる。 */}
@@ -916,7 +888,7 @@ export function ConditionEvents(
           </span>
           {royalty && !rewardLabel ? (
             <button className="btn btn-sm primary" disabled={!pickedIds.length || stmtOpen}
-                    onClick={() => { setStmtOpen(true); setStmtDone(null); }}>
+                    onClick={() => setStmtOpen(true)}>
               選んだ {pickedIds.length} 件で計算書を作る
             </button>
           ) : (
@@ -937,24 +909,15 @@ export function ConditionEvents(
       {stmtOpen && (
         <div className="panel-bd stack" style={{ borderBottom: "1px solid var(--line)" }}>
           <div className="row">
-            <b>選んだ実績の束から計算書を作る</b>
+            <b>選んだ実績の試算</b>
             <span className="faint">
               {rows.some((r) => picked.has(r.id) && r.usageType)
                 ? "明細は実績1件が1行。行ごとに 基礎 × 料率 を出して足す（MG・AG は合計にだけ効く）"
                 : "根拠（報告売上・数量）を合算して1回だけ計算し、明細は実績1件が1行。額は根拠の比で按分"}
             </span>
           </div>
+          {/* ひな形は文書作成フォームで選ぶ。ここで選ばせると同じことを2回聞く。 */}
           <div className="form-grid">
-            <label className="field">
-              <span>ひな形</span>
-              <select value={stmtTemplate} onChange={(e) => setStmtTemplate(e.target.value)}>
-                {templates.map((t) => (
-                  <option key={t.templateKey} value={t.templateKey}>
-                    {t.category ? `${t.category}／${t.label}` : t.label}
-                  </option>
-                ))}
-              </select>
-            </label>
             <label className="field">
               <span>対象期間</span>
               <input value={stmtPeriod} placeholder={stmtPreview?.period ?? "実績から導く"}
@@ -968,16 +931,25 @@ export function ConditionEvents(
                 {stmtPreview.events.map((e) => (
                   <tr key={e.eventId}>
                     <td className="code">{e.occurredOn ?? "—"}</td>
-                    <td>{label(e.eventType)}</td>
+                    <td>{e.usageLabel ?? label(e.eventType)}</td>
                     <td className="num">{money(e.basis, currency)}</td>
-                    <td className="faint">{Math.round(e.share * 1000) / 10}%</td>
+                    <td className="faint">
+                      {/* 行ごとに料率が違いうる。比だけ出すと、その行がどう出たか読めない。 */}
+                      {e.ratePct ? `× ${e.ratePct}% = ${money(e.amount ?? 0, currency)}`
+                                 : `${Math.round(e.share * 1000) / 10}%`}
+                      {e.basisNote ? `　${e.basisNote}` : ""}
+                    </td>
                   </tr>
                 ))}
                 <tr><td><b>根拠の合計</b></td><td></td>
-                    <td className="num"><b>{money(stmtPreview.reported.salesInput ?? stmtPreview.reported.quantity ?? 0, currency)}</b></td>
+                    <td className="num"><b>{money(basisTotal, currency)}</b></td>
                     <td className="faint">期間 {stmtPreview.period}{stmtPreview.appliedVersion?.switched ? `／${stmtPreview.appliedVersion.conditionNo} の版で計算` : ""}</td></tr>
                 <tr><td>グロス</td><td></td><td className="num">{money(stmtPreview.fee.gross_ex_tax, currency)}</td>
-                    <td className="faint">{stmtPreview.fee.formula_breakdown}</td></tr>
+                    <td className="faint">
+                      {/* 行ごとに料率を掛けたあとは、合計に条件の料率をもう一度
+                          掛けない。その場合の「◯ × 100%」は式として意味が無い。 */}
+                      {byUsageRows ? "行ごとの許諾料の合計" : stmtPreview.fee.formula_breakdown}
+                    </td></tr>
                 <tr><td>MG 上乗せ／AG 相殺</td><td></td>
                     <td className="num">{money(stmtPreview.fee.mg_topup_this_time, currency)}／−{money(stmtPreview.fee.ag_offset_this_time, currency)}</td>
                     <td className="faint">明細には割らず、合計にだけ効く</td></tr>
@@ -987,13 +959,26 @@ export function ConditionEvents(
               </tbody>
             </table>
           )}
+          {/*
+            * ここで決定せず、文書作成フォームへ渡す。
+            *
+            * 計算書は本文の項目が多く（入金企業・入金通貨・レート・カテゴリーなど）、
+            * 条件と実績だけでは埋まらない。ここで決定していたので、空欄のまま
+            * 番号の振られた紙が出ていた。決定したあとは中身を直せない。
+            *
+            * 定額の書類はもともとフォームを通っている。いちばん補完が要る
+            * 計算書だけが素通りしていた。
+            */}
           <div className="row">
-            <button className="btn primary btn-sm" disabled={stmtBusy || !stmtPreview || !stmtTemplate}
-                    onClick={() => void issueStatement()}>
-              {stmtBusy ? "決定しています…" : "計算書を決定する"}
+            <button className="btn primary btn-sm"
+                    disabled={!stmtPreview || !onCompose}
+                    onClick={() => onCompose?.([conditionId], pickedIds, matterId ?? null)}>
+              この内容で文書を作る
             </button>
             <button className="btn btn-sm" onClick={() => { setStmtOpen(false); setStmtPreview(null); }}>やめる</button>
-            <span className="faint">決定すると番号が振られ、選んだ実績はこの計算書に結ばれます</span>
+            <span className="faint">
+              文書作成フォームへ移ります。空欄を埋めて内容を確かめてから決定してください
+            </span>
           </div>
         </div>
       )}
