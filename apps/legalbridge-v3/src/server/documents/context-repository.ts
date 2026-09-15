@@ -18,13 +18,6 @@ export interface DocumentContextInput {
   eventIds?: number[];
   /** 計算結果。利用許諾料計算書は、発行の時点でこれが要る。 */
   royalty?: Record<string, unknown> | null;
-  /**
-   * 文書の担当者（当社側）。人が文書作成フォームで選ぶ。
-   * 以前は案件の担当者を自動で入れていたが、検収者・申請者・通知先は文書ごとに
-   * 違うことがあり、自動で入った名前がそのまま紙に出ていた。空なら担当者の
-   * 項目は空のまま（案件の担当者は候補として出す）。
-   */
-  staffId?: number | null;
 }
 
 const MINOR: Record<string, number> = { JPY: 1, KRW: 1, VND: 1 };
@@ -61,9 +54,7 @@ export class DocumentContextRepository {
       const partyId = conditions[0]?.counterpartyId ?? null;
       const contacts = partyId ? await this.contacts(client, partyId) : [];
       const bank = partyId ? await this.bank(client, partyId) : null;
-      // 担当者は人が選ぶ。案件の担当者は候補に回す（1回で入れられる）。
-      const owner = input.staffId ? await this.staff(client, input.staffId) : null;
-      const matterOwner = matterId ? await this.owner(client, matterId) : null;
+      const owner = matterId ? await this.owner(client, matterId) : null;
       // 同じ条件から出ている他の書類。検収書は親の発注番号を見出しに出す。
       const related = input.conditionIds.length
         ? await this.relatedDocuments(client, input.conditionIds) : [];
@@ -121,10 +112,8 @@ export class DocumentContextRepository {
         contacts,
         /** 振込先。支払通知書・請求書はこれが無いと成立しない。 */
         bank,
-        /** 文書の担当者（フォームで選んだ人）。検収者・申請者・通知先はこれ。 */
+        /** 案件の担当スタッフ。検収者の既定になりうる。 */
         owner,
-        /** 案件の担当者。担当者の候補として画面に出す。自動では入れない。 */
-        matterOwner,
         /**
          * 同じ条件から出ている書類。検収書の見出しに出る「発注番号」は
          * この中の発注書から来る。人に打たせるものではない。
@@ -285,29 +274,15 @@ export class DocumentContextRepository {
   }
 
   /** 案件の担当者。検収書の「検収者」はたいていこの人。 */
-  /** フォームで選んだ担当者。 */
-  private async staff(client: Queryable, staffId: number) {
-    const r = await client.query(
-      `SELECT s.id, s.name, s.email, s.department, s.staff_code, to_jsonb(s) AS staff_row
-         FROM staff s WHERE s.id = $1`, [staffId]);
-    const row = r.rows[0] as Record<string, any> | undefined;
-    if (!row) throw new DomainError("NOT_FOUND", `担当者 ${staffId} が見つかりません`);
-    return {
-      id: Number(row.id), name: String(row.name), email: str(row.email),
-      department: str(row.department), phone: str(row.staff_row?.phone),
-      staffCode: str(row.staff_code)
-    };
-  }
-
   private async owner(client: Queryable, matterId: number) {
     const r = await client.query(
-      `SELECT s.id AS staff_id, s.name, s.email, s.department, s.staff_code, to_jsonb(s) AS staff_row
+      `SELECT s.name, s.email, s.department, s.staff_code, to_jsonb(s) AS staff_row
          FROM matters m JOIN staff s ON s.id = m.owner_staff_id
         WHERE m.id = $1`, [matterId]);
     const row = r.rows[0] as Record<string, any> | undefined;
     if (!row) return null;
     return {
-      id: int(row.staff_id), name: String(row.name), email: str(row.email),
+      name: String(row.name), email: str(row.email),
       department: str(row.department), phone: str(row.staff_row?.phone),
       staffCode: str(row.staff_code)
     };

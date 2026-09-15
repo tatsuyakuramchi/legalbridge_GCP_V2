@@ -26,17 +26,6 @@ export interface DraftInput {
 /** プレビューでの文書番号。発行のときに本物へ置き換わる。 */
 export const PREVIEW_NUMBER = "（決定時に採番）";
 
-/**
- * 手入力の中の「担当者」。人がフォームで選んだ当社の担当者（staff.id）。
- * 手入力と一緒に文書に保存され、作り直し・発行でも同じ人が入る。
- */
-export const STAFF_INPUT_KEY = "__staffId";
-export function staffIdOf(manual: Record<string, unknown> | undefined | null): number | null {
-  const raw = manual?.[STAFF_INPUT_KEY];
-  const n = Number(raw);
-  return raw === null || raw === undefined || raw === "" || !Number.isFinite(n) || n <= 0 ? null : Math.trunc(n);
-}
-
 export interface PreviewResult {
   html: string;
   binding: BindingResult;
@@ -87,8 +76,8 @@ export class DocumentIssueService {
       const template = await this.repository.templateSource(this.database, { templateKey: input.templateKey });
       // 番号は発行のときにしか決まらない。プレビューで空にすると必須の未入力に
       // 数えられ、発行ボタンが永久に押せなくなる。何が入るかを書いておく。
+      const context = await this.buildContext(this.database, input, PREVIEW_NUMBER);
       const manual = input.manualInputs ?? {};
-      const context = await this.buildContext(this.database, input, PREVIEW_NUMBER, staffIdOf(manual));
       // 明細・合計・消費税。本文はこれを差すだけなので、作らないと空欄で出る。
       // 先に一度束縛して、項目に入った値も計算ブロックに渡す（条件書は本文の
       // 見出しが項目の値そのものなので、手入力だけでは空欄になる）。
@@ -262,7 +251,6 @@ export class DocumentIssueService {
         const year = currentYearInTokyo();
         const documentNo = formatDocumentNumber(prefix, year, await nextSequence(client, prefix, year));
 
-        const manual = (row.manual_inputs as Record<string, unknown>) ?? {};
         const context = await this.buildContext(client, {
           templateKey: template.templateKey,
           conditionIds,
@@ -270,7 +258,8 @@ export class DocumentIssueService {
           agreementId: row.agreement_id,
           eventIds: extra.eventIds ?? [],
           royalty: extra.royalty ?? null
-        }, documentNo, staffIdOf(manual));
+        }, documentNo);
+        const manual = (row.manual_inputs as Record<string, unknown>) ?? {};
         // プレビューと同じ順で組む。先に一度束縛して、項目に入った値も
         // 計算ブロックへ渡す（条件書の見出しは項目の値そのもの）。
         const first = bindVariables(template.variables, context, manual,
@@ -578,8 +567,7 @@ export class DocumentIssueService {
   }
 
   private async buildContext(
-    client: Queryable, input: Omit<DraftInput, "manualInputs">, documentNumber: string | null,
-    staffId: number | null = null
+    client: Queryable, input: Omit<DraftInput, "manualInputs">, documentNumber: string | null
   ) {
     const context = await this.contexts.build({
       conditionIds: input.conditionIds,
@@ -587,8 +575,7 @@ export class DocumentIssueService {
       matterId: input.matterId ?? null,
       eventIds: input.eventIds ?? [],
       royalty: input.royalty ?? null,
-      documentNumber,
-      staffId
+      documentNumber
     }, client);
     await this.contexts.attachScopes(client, context.conditions);
     return context as unknown as Record<string, unknown>;
