@@ -216,9 +216,14 @@ export class ConditionRepository {
 
   private async events(id: number) {
     const r = await this.database.query(
+      // 改訂の系列の全版。実績は登録した版に付いたままなので、新しい版から
+      // も見えないと「条件を直したら実績が消えた」に見える。
       `SELECT id, event_type, occurred_on, period, amount
          FROM condition_events
-        WHERE condition_id = $1 AND status = 'active'
+        WHERE condition_id IN (SELECT x.id FROM conditions x
+                                WHERE x.id = $1
+                                   OR x.series_id = (SELECT COALESCE(y.series_id, y.id) FROM conditions y WHERE y.id = $1))
+          AND status = 'active'
         ORDER BY occurred_on DESC, id DESC LIMIT 100`, [id]);
     return r.rows.map((e) => ({
       id: Number(e.id), eventType: String(e.event_type),

@@ -76,8 +76,21 @@ export interface EventInput {
   taxIncluded?: boolean | null;
 }
 
+/**
+ * 改訂の系列に属する条件の id。実績は登録した版の id に付いたまま残るので、
+ * 新しい版を開いても実績が見えない・結べない、が起きていた（「条件を差し替えたら
+ * 実績がついてこない」）。一覧も結びつけも、同じ系列の全版を対象にする。
+ */
+const SERIES_IDS_SQL = (param: string) =>
+  `(SELECT x.id FROM conditions x
+     WHERE x.id = ${param}
+        OR x.series_id = (SELECT COALESCE(y.series_id, y.id) FROM conditions y WHERE y.id = ${param}))`;
+
 export interface EventRow {
   id: number;
+  /** この実績が付いている版。改訂前の版なら番号が違う。 */
+  conditionId: number;
+  conditionNo: string | null;
   eventType: string;
   occurredOn: string | null;
   period: string | null;
@@ -129,15 +142,19 @@ export class ConditionEventService {
                 e.usage_type, e.out_condition_id, e.unit_amount, e.rate_ppm, e.payment_stage,
                 e.tax_included,
                 oc.condition_no AS out_condition_no, oc.name AS out_condition_name,
-                e.document_id, d.document_no, e.created_at, e.created_by
+                e.document_id, d.document_no, e.created_at, e.created_by,
+                e.condition_id, ec.condition_no AS own_condition_no
            FROM condition_events e
            LEFT JOIN documents d ON d.id = e.document_id
            LEFT JOIN condition_schedules s ON s.id = e.schedule_id
            LEFT JOIN conditions oc ON oc.id = e.out_condition_id
-          WHERE e.condition_id = $1
+           LEFT JOIN conditions ec ON ec.id = e.condition_id
+          WHERE e.condition_id IN ${SERIES_IDS_SQL("$1")}
           ORDER BY e.occurred_on DESC, e.id DESC`, [conditionId]);
       return (r.rows as any[]).map((row) => ({
         id: Number(row.id),
+        conditionId: Number(row.condition_id),
+        conditionNo: str(row.own_condition_no),
         eventType: String(row.event_type),
         occurredOn: dateStr(row.occurred_on),
         period: str(row.period),
@@ -397,7 +414,7 @@ export class ConditionEventService {
     if (!ids.length) return;
     const rows = await this.database.query(
       `SELECT id, status, document_id FROM condition_events
-        WHERE id = ANY($1::bigint[]) AND condition_id = $2`, [ids, conditionId]);
+        WHERE id = ANY($1::bigint[]) AND condition_id IN ${SERIES_IDS_SQL("$2")}`, [ids, conditionId]);
     const found = rows.rows as Array<{ id: number; status: string; document_id: number | null }>;
     if (found.length !== ids.length) {
       throw new DomainError("NOT_FOUND", "この条件に無い実績が混ざっています");
@@ -437,7 +454,7 @@ export class ConditionEventService {
         // 押しても、別の文書の紐づけには手が届かない。
         const updated = await client.query(
           `UPDATE condition_events SET document_id = NULL
-            WHERE id = ANY($1::bigint[]) AND condition_id = $2 AND document_id = $3`,
+            WHERE id = ANY($1::bigint[]) AND condition_id IN ${SERIES_IDS_SQL("$2")} AND document_id = $3`,
           [ids, conditionId, documentId]);
         const unlinked = updated.rowCount ?? 0;
         if (!unlinked) {
@@ -503,7 +520,7 @@ export class ConditionEventService {
 
         const rows = await client.query(
           `SELECT id, status, document_id FROM condition_events
-            WHERE id = ANY($1::bigint[]) AND condition_id = $2`, [ids, conditionId]);
+            WHERE id = ANY($1::bigint[]) AND condition_id IN ${SERIES_IDS_SQL("$2")}`, [ids, conditionId]);
         const found = rows.rows as Array<{ id: number; status: string; document_id: number | null }>;
         if (found.length !== ids.length) {
           throw new DomainError("NOT_FOUND", "この条件に無い実績が混ざっています");
@@ -526,7 +543,7 @@ export class ConditionEventService {
 
         const updated = await client.query(
           `UPDATE condition_events SET document_id = $3
-            WHERE id = ANY($1::bigint[]) AND condition_id = $2 AND document_id IS NULL`,
+            WHERE id = ANY($1::bigint[]) AND condition_id IN ${SERIES_IDS_SQL("$2")} AND document_id IS NULL`,
           [ids, conditionId, documentId]);
 
         const linked = updated.rowCount ?? 0;
