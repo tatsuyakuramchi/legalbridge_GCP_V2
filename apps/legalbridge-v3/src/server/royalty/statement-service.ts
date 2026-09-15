@@ -1,4 +1,5 @@
 import { dateStr, int, inTransaction, str, type Queryable, type Transactable } from "../core/db.js";
+import { CHILD_TITLES_SQL, statementProductName } from "./product-name.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { calculateFee, type FeeResult } from "./calc.js";
@@ -170,8 +171,9 @@ export class RoyaltyStatementService {
               COALESCE(e.rate_ppm, c.rate_ppm) AS rate_ppm,
               oc.condition_no AS out_condition_no, oc.name AS out_condition_name,
               op.name AS out_party_name, oc.currency AS out_currency,
-              -- 製品名は作品名。アウト条件の作品を先に見て、無ければイン条件の作品。
-              COALESCE(ow.title, w.title) AS product_name,
+              -- 製品名は利用形態で決める（product-name.ts）。ここは材料だけ引く。
+              w.title AS in_work_title, w.kind AS in_work_kind, ow.title AS out_work_title,
+              ${CHILD_TITLES_SQL("c.work_id")} AS child_titles,
               -- 許諾地域・言語など。従前に決めた内容をそのまま紙に出す。
               (SELECT string_agg(sc.label, '・' ORDER BY sc.scope_type, sc.sort_order, sc.label)
                  FROM condition_scopes sc WHERE sc.condition_id = oc.id) AS out_scopes,
@@ -321,7 +323,11 @@ export class RoyaltyStatementService {
         outPartyName: str(e.out_party_name),
         outCurrency: str(e.out_currency),
         outScopes: str(e.out_scopes),
-        productName: str(e.product_name),
+        productName: statementProductName({
+          usageType, outConditionName: str(e.out_condition_name), outWorkTitle: str(e.out_work_title),
+          inWorkTitle: str(e.in_work_title), inWorkKind: str(e.in_work_kind),
+          childTitles: Array.isArray(e.child_titles) ? e.child_titles : null
+        }) || null,
         unitAmount: int(e.unit_amount),
         ratePct,
         amount

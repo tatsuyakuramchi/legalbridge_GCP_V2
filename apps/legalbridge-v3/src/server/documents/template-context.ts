@@ -94,7 +94,8 @@ export function statementLabelRows(context: Ctx): Row[] {
       const out = event.outCondition ?? {};
       return {
         eventId: event.id,
-        productName: out.workTitle ?? condition.work?.title ?? "",
+        // 利用形態で決まる（自社販売＝当社作品名、再許諾・他社販売＝条件名）。
+        productName: event.productName ?? out.workTitle ?? condition.work?.title ?? "",
         contractTitle: [out.partyName, out.name]
           .map((x: unknown) => String(x ?? "").trim()).filter(Boolean).join("　"),
         contractNumber: out.conditionNo ?? ""

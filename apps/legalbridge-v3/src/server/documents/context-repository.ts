@@ -2,6 +2,7 @@ import type { Queryable, Transactable } from "../core/db.js";
 import { dateStr, int, num, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { taxRatePercentFor } from "./legacy-totals.js";
+import { CHILD_TITLES_SQL, SOURCE_TITLES_SQL, originalWorkTitle, statementProductName } from "../royalty/product-name.js";
 
 /**
  * テンプレート変数の供給元になる文脈を、条件・合意・当事者・作品から組み立てる。
@@ -296,6 +297,8 @@ export class DocumentContextRepository {
               e.usage_type, e.out_condition_id,
               oc.condition_no AS out_condition_no, oc.name AS out_condition_name,
               op.name AS out_party_name, ow.title AS out_work_title,
+              w.title AS in_work_title, w.kind AS in_work_kind,
+              ${CHILD_TITLES_SQL("c.work_id")} AS child_titles,
               s.contract_form AS schedule_contract_form,
               s.service_from AS schedule_service_from, s.service_to AS schedule_service_to,
               c.currency, s.label AS schedule_label, s.seq AS schedule_seq,
@@ -307,6 +310,7 @@ export class DocumentContextRepository {
          LEFT JOIN conditions oc ON oc.id = e.out_condition_id
          LEFT JOIN parties    op ON op.id = oc.counterparty_id
          LEFT JOIN works      ow ON ow.id = oc.work_id
+         LEFT JOIN works      w  ON w.id = c.work_id
         WHERE e.id = ANY($1::bigint[]) AND e.status = 'active'
         ORDER BY e.occurred_on, e.id`, [ids]);
     return (r.rows as Array<Record<string, any>>).map((row) => {
@@ -327,6 +331,13 @@ export class DocumentContextRepository {
         plannedAmount: toMajor(int(row.schedule_planned), currency),
         // 契約形式と役務提供期間は、実績が持っていなければ予定の回から継ぐ。
         usageType: str(row.usage_type),
+        /** 計算書の行の製品名。利用形態で決まる（product-name.ts）。 */
+        productName: statementProductName({
+          usageType: str(row.usage_type), outConditionName: str(row.out_condition_name),
+          outWorkTitle: str(row.out_work_title), inWorkTitle: str(row.in_work_title),
+          inWorkKind: str(row.in_work_kind),
+          childTitles: Array.isArray(row.child_titles) ? row.child_titles : null
+        }) || null,
         // 許諾先。紙の「対象契約」と製品名の既定値になる。
         outCondition: row.out_condition_id ? {
           id: Number(row.out_condition_id),
@@ -370,8 +381,9 @@ export class DocumentContextRepository {
               -- 住所・電話・メールは A-008 で足した列。当てる前のデータベースでも
               -- 落ちないよう、列を名指しせず行ごと受けて読む。
               to_jsonb(p) AS party_row,
-              w.title AS work_title, w.work_code, wp.name AS part_name,
-              wp.part_type AS part_type
+              w.title AS work_title, w.work_code, w.kind AS work_kind, wp.name AS part_name,
+              wp.part_type AS part_type,
+              ${SOURCE_TITLES_SQL("c.work_id")} AS source_titles
          FROM conditions c
          LEFT JOIN parties p    ON p.id = c.counterparty_id
          LEFT JOIN works w      ON w.id = c.work_id
@@ -436,6 +448,15 @@ export class DocumentContextRepository {
           honorific: honorificFor(str(row.party_kind))
         },
         work: { title: str(row.work_title), code: str(row.work_code), part: str(row.part_name),
+                kind: str(row.work_kind),
+                /**
+                 * 原作名。作品が原作ならその名前、当社作品なら系譜の親の原作名。
+                 * 計算書の件名「◯◯ 利用許諾料のご報告」はこれを差す。
+                 */
+                sourceTitle: originalWorkTitle({
+                  inWorkTitle: str(row.work_title), inWorkKind: str(row.work_kind),
+                  sourceTitles: Array.isArray(row.source_titles) ? row.source_titles : null
+                }) || null,
                 /** 素材の種別（game_design / illustration …）。構成上の役割を決めるのに使う。 */
                 partType: str(row.part_type) },
         scopes: { region: [] as string[], language: [] as string[], media: [] as string[] }

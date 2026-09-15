@@ -208,8 +208,11 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown }> = [
   { names: ["PROJECT_TITLE", "CONTRACT_TITLE", "基本契約名", "件名", "title",
             "contractTitle", "projectTitle", "deliverable", "成果物"],
     get: (c) => c.matter?.title ?? c.condition?.name },
-  { names: ["WORK_TITLE", "作品名", "原著作物名", "originalWork",
-            "対象作品予定名", "対象製品予定名"],
+  // 計算書の件名「◯◯ 利用許諾料のご報告」の◯◯は原作名。イン条件が当社作品に
+  // ぶら下がっていても、系譜の親の原作名を出す（無ければ作品名）。
+  { names: ["originalWork", "原著作物名", "原作名"],
+    get: (c) => c.condition?.work?.sourceTitle ?? c.condition?.work?.title },
+  { names: ["WORK_TITLE", "作品名", "対象作品予定名", "対象製品予定名"],
     get: (c) => c.condition?.work?.title },
   { names: ["productName", "製品名", "商品名"],
     get: (c) => c.condition?.work?.title ?? c.condition?.name },
