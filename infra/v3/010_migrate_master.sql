@@ -1,0 +1,270 @@
+-- =====================================================================
+-- V3移行 010：マスタ（取引先・担当者・作品・パート・系譜）
+--   冪等。legacy_id をキーに ON CONFLICT DO UPDATE で何度でも流し直せる。
+--   実行: psql "$ADMIN_DSN" -f infra/v3/010_migrate_master.sql
+-- =====================================================================
+
+\set ON_ERROR_STOP on
+
+BEGIN;
+SET LOCAL search_path = v3, public;
+
+-- ---------------------------------------------------------------------
+-- 取引先：vendors → parties
+--   trade_name / pen_name は別名の配列に畳む（名前解決の順序ロジックが消える）。
+-- ---------------------------------------------------------------------
+-- ---------------------------------------------------------------------
+-- 相手先の受け皿
+--   V1 には相手先が空のまま運用されている行が実在する（契約166件・
+--   条件87件・支払25件）。V3 は counterparty_id を NOT NULL にしているので、
+--   そのままでは取り込めず、V3 が金額を黙って過少計上することになる。
+--   受け皿を1件だけ置き、そこへ紐付けたうえで high の課題として一覧化する。
+--   status='archived' なので取引先の選択候補には出ない。
+--   UI から本来の相手先を割り当てれば、流し直すたびに課題は減っていく。
+-- ---------------------------------------------------------------------
+INSERT INTO v3.parties (party_code, kind, name, status)
+VALUES ('UNRESOLVED', 'corporate', '（相手先未特定）', 'archived')
+ON CONFLICT (party_code) DO UPDATE SET name = EXCLUDED.name, status = EXCLUDED.status;
+
+INSERT INTO v3.parties (party_code, kind, name, aliases, invoice_no, corporate_no,
+                        address, phone, email, withholding, status, legacy_id)
+SELECT
+  NULLIF(v.vendor_code, ''),
+  CASE WHEN v.entity_type IN ('個人', 'individual', 'personal') THEN 'individual'
+       ELSE 'corporate' END,
+  v.vendor_name,
+  ARRAY(SELECT DISTINCT a FROM unnest(ARRAY[NULLIF(v.trade_name,''), NULLIF(v.pen_name,'')]) a
+         WHERE a IS NOT NULL AND a <> v.vendor_name),
+  NULLIF(v.invoice_registration_number, ''),
+  NULLIF(v.corporate_number, ''),
+  NULLIF(v.address, ''),
+  NULLIF(v.phone, ''),
+  NULLIF(v.email, ''),
+  COALESCE(v.withholding_enabled, false),
+  CASE WHEN COALESCE(v.is_active, true) THEN 'active' ELSE 'archived' END,
+  v.id
+FROM public.vendors v
+WHERE COALESCE(NULLIF(v.vendor_name, ''), '') <> ''
+ON CONFLICT (legacy_id) WHERE legacy_id IS NOT NULL DO UPDATE SET
+  party_code   = EXCLUDED.party_code,
+  kind         = EXCLUDED.kind,
+  name         = EXCLUDED.name,
+  aliases      = EXCLUDED.aliases,
+  invoice_no   = EXCLUDED.invoice_no,
+  corporate_no = EXCLUDED.corporate_no,
+  address      = EXCLUDED.address,
+  phone        = EXCLUDED.phone,
+  email        = EXCLUDED.email,
+  withholding  = EXCLUDED.withholding,
+  status       = EXCLUDED.status,
+  updated_at   = now();
+
+-- 連絡先（主担当・署名者）
+INSERT INTO v3.party_contacts (party_id, role, name, email, phone, department)
+SELECT p.id, 'primary', NULLIF(v.contact_name,''),
+       COALESCE(NULLIF(v.contact_email,''), NULLIF(v.email,'')),
+       NULLIF(v.phone,''), NULLIF(v.contact_department,'')
+  FROM public.vendors v JOIN v3.parties p ON p.legacy_id = v.id
+ WHERE COALESCE(v.contact_name, v.contact_email, v.email, v.phone, v.contact_department) IS NOT NULL
+ON CONFLICT (party_id, role) DO UPDATE SET
+  name = EXCLUDED.name, email = EXCLUDED.email,
+  phone = EXCLUDED.phone, department = EXCLUDED.department;
+
+INSERT INTO v3.party_contacts (party_id, role, email)
+SELECT p.id, 'signer', v.signer_email
+  FROM public.vendors v JOIN v3.parties p ON p.legacy_id = v.id
+ WHERE NULLIF(v.signer_email, '') IS NOT NULL
+ON CONFLICT (party_id, role) DO UPDATE SET email = EXCLUDED.email;
+
+-- 口座（機微情報は別表へ隔離）
+INSERT INTO v3.party_bank_accounts (party_id, bank_name, branch_name, account_type,
+                                    account_number, account_holder_kana)
+SELECT p.id, NULLIF(v.bank_name,''), NULLIF(v.branch_name,''), NULLIF(v.account_type,''),
+       NULLIF(v.account_number,''), NULLIF(v.account_holder_kana,'')
+  FROM public.vendors v JOIN v3.parties p ON p.legacy_id = v.id
+ -- 空文字は「無い」。COALESCE は NULL でない最初の値を返すので、'' を素で
+ -- 渡すと「あり」と判定され、口座種別だけが残った空の行ができる（実際に98件できた）。
+ WHERE COALESCE(NULLIF(v.bank_name, ''), NULLIF(v.branch_name, ''),
+                NULLIF(v.account_number, ''), NULLIF(v.account_holder_kana, '')) IS NOT NULL
+ON CONFLICT (party_id) DO UPDATE SET
+  bank_name = EXCLUDED.bank_name, branch_name = EXCLUDED.branch_name,
+  account_type = EXCLUDED.account_type, account_number = EXCLUDED.account_number,
+  account_holder_kana = EXCLUDED.account_holder_kana, updated_at = now();
+
+-- ---------------------------------------------------------------------
+-- 担当者
+-- ---------------------------------------------------------------------
+INSERT INTO v3.staff (name, email, department, phone, legacy_id)
+SELECT s.staff_name, NULLIF(s.email,''), NULLIF(s.department,''), NULLIF(s.phone,''), s.id
+  FROM public.staff s
+ WHERE COALESCE(NULLIF(s.staff_name,''), '') <> ''
+ON CONFLICT (legacy_id) WHERE legacy_id IS NOT NULL DO UPDATE SET
+  name = EXCLUDED.name, email = EXCLUDED.email, department = EXCLUDED.department,
+  phone = EXCLUDED.phone;
+
+-- ---------------------------------------------------------------------
+-- 作品：works と source_ips を1表に統合（kind で区別）
+-- ---------------------------------------------------------------------
+INSERT INTO v3.works (work_code, title, title_kana, kind, business_line, status,
+                      remarks, legacy_id, legacy_table)
+SELECT
+  NULLIF(w.work_code, ''), w.title, NULLIF(w.title_kana, ''),
+  CASE WHEN w.parent_work_id IS NOT NULL THEN 'derivative' ELSE 'own' END,
+  NULLIF(w.business_line, ''),
+  CASE
+    WHEN NOT COALESCE(w.is_active, true)                    THEN 'archived'
+    WHEN w.status IN ('planning','in_production','released') THEN w.status
+    WHEN w.status IN ('企画中')                              THEN 'planning'
+    WHEN w.status IN ('制作中')                              THEN 'in_production'
+    WHEN w.status IN ('発売済','発売済み')                    THEN 'released'
+    ELSE 'planning'
+  END,
+  NULLIF(w.remarks, ''), w.id, 'works'
+FROM public.works w
+WHERE COALESCE(NULLIF(w.title,''), '') <> ''
+ON CONFLICT (legacy_table, legacy_id) WHERE legacy_id IS NOT NULL DO UPDATE SET
+  work_code = EXCLUDED.work_code, title = EXCLUDED.title, title_kana = EXCLUDED.title_kana,
+  kind = EXCLUDED.kind, business_line = EXCLUDED.business_line,
+  status = EXCLUDED.status, remarks = EXCLUDED.remarks, updated_at = now();
+
+-- source_ips は works と別の表だが、採番は同じ空間を使っている（実データでは
+-- source_code と work_code が完全に重なる）。V3 は1表なので work_code の UNIQUE が
+-- 効き、そのまま入れると衝突する。同じコードの works が既にいる行は「同一作品の
+-- 二重登録」として取り込まず、統合した事実だけ残す。
+--   source_ips.id を参照している移行先は無い（020〜040 は触れない）ので、
+--   行を落としても解決できなくなる参照は発生しない。
+INSERT INTO v3.data_quality_issues (rule_code, target_type, target_id, severity, detail)
+SELECT 'WORK_SOURCE_IP_MERGED', 'legacy_source_ip', s.id, 'low',
+       jsonb_build_object('source_code', s.source_code,
+                          'source_ip_title', s.title,
+                          'merged_into_work_code', w.work_code,
+                          'merged_into_work_title', w.title,
+                          'title_matches', s.title IS NOT DISTINCT FROM w.title)
+  FROM public.source_ips s
+  JOIN public.works w ON NULLIF(w.work_code, '') = NULLIF(s.source_code, '')
+ON CONFLICT (rule_code, target_type, target_id) DO UPDATE SET
+  detail = EXCLUDED.detail, detected_at = now();
+
+-- 取り込むのは works に居ない原作IPだけ。
+-- 同一コードが source_ips 内で重複していても1行に落とす（id の小さい方を残す）。
+INSERT INTO v3.works (work_code, title, kind, status, legacy_id, legacy_table)
+SELECT DISTINCT ON (COALESCE(NULLIF(s.source_code,''), 'id:' || s.id))
+       NULLIF(s.source_code,''), s.title, 'source_ip',
+       CASE WHEN COALESCE(s.is_active, true) THEN 'released' ELSE 'archived' END,
+       s.id, 'source_ips'
+  FROM public.source_ips s
+ WHERE COALESCE(NULLIF(s.title,''), '') <> ''
+   AND NOT EXISTS (
+     SELECT 1 FROM public.works w
+      WHERE NULLIF(w.work_code, '') = NULLIF(s.source_code, '')
+   )
+ ORDER BY COALESCE(NULLIF(s.source_code,''), 'id:' || s.id), s.id
+ON CONFLICT (legacy_table, legacy_id) WHERE legacy_id IS NOT NULL DO UPDATE SET
+  work_code = EXCLUDED.work_code, title = EXCLUDED.title,
+  status = EXCLUDED.status, updated_at = now();
+
+-- ---------------------------------------------------------------------
+-- 構成パート：work_materials → work_parts
+--   part_no は material_no を使い、無ければ id 順に採番する。
+-- ---------------------------------------------------------------------
+-- 移行元から消えた行が V3 に残っていると、番号を振り直したときに
+-- その番号を占有したままぶつかる（並行稼働中に流し直すと起きる）。
+-- 先に孤児を片付ける。ただし条件から参照されている行は消さず、
+-- 人手で判断する対象として残す。
+INSERT INTO v3.data_quality_issues (rule_code, target_type, target_id, severity, detail)
+SELECT 'WORK_PART_ORPHAN_IN_USE', 'work_part', p.id, 'medium',
+       jsonb_build_object('part_no', p.part_no, 'name', p.name, 'legacy_id', p.legacy_id)
+  FROM v3.work_parts p
+ WHERE p.legacy_id IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM public.work_materials m WHERE m.id = p.legacy_id)
+   AND EXISTS (SELECT 1 FROM v3.conditions c WHERE c.work_part_id = p.id)
+ON CONFLICT (rule_code, target_type, target_id) DO UPDATE SET
+  detail = EXCLUDED.detail, detected_at = now();
+
+DELETE FROM v3.work_parts p
+ WHERE p.legacy_id IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM public.work_materials m WHERE m.id = p.legacy_id)
+   AND NOT EXISTS (SELECT 1 FROM v3.conditions c WHERE c.work_part_id = p.id);
+
+--   material_no は作品内で一意とは限らない（NULL 混在・重複がある）。
+--   COALESCE(material_no, ROW_NUMBER()) だと同じ番号を2度作り、1文の中で
+--   ON CONFLICT が同じ行に二度当たって落ちる。
+--   そこで「その作品の material_no が全件そろって重複が無い」ときだけ
+--   元の番号を残し、そうでない作品だけ 1 から振り直す。
+WITH src AS (
+  SELECT m.work_id, m.material_no, m.material_name, m.material_type,
+         m.is_royalty_bearing, m.remarks, m.id,
+         ROW_NUMBER() OVER (PARTITION BY m.work_id
+                            ORDER BY m.material_no NULLS LAST, m.id) AS rn
+    FROM public.work_materials m
+   WHERE COALESCE(NULLIF(m.material_name,''), '') <> ''
+), clean AS (
+  -- count(DISTINCT material_no) は NULL を数えないので、
+  -- NULL があっても重複があっても count(*) と一致しない。
+  SELECT work_id FROM src
+   GROUP BY work_id HAVING count(*) = count(DISTINCT material_no)
+)
+INSERT INTO v3.work_parts (work_id, part_no, name, part_type, royalty_bearing, remarks, legacy_id)
+SELECT nw.id,
+       (CASE WHEN c.work_id IS NOT NULL THEN s.material_no ELSE s.rn END)::int,
+       s.material_name,
+       COALESCE(NULLIF(s.material_type, ''), 'unspecified'),
+       COALESCE(s.is_royalty_bearing, true),
+       NULLIF(s.remarks, ''),
+       s.id
+  FROM src s
+  JOIN v3.works nw ON nw.legacy_table = 'works' AND nw.legacy_id = s.work_id
+  LEFT JOIN clean c ON c.work_id = s.work_id
+ON CONFLICT (legacy_id) WHERE legacy_id IS NOT NULL DO UPDATE SET
+  work_id = EXCLUDED.work_id, part_no = EXCLUDED.part_no,
+  name = EXCLUDED.name, part_type = EXCLUDED.part_type,
+  royalty_bearing = EXCLUDED.royalty_bearing, remarks = EXCLUDED.remarks;
+
+-- 振り直した作品は V1 側の採番が壊れているので、人手で直す対象として残す。
+WITH src AS (
+  SELECT m.work_id, m.material_no
+    FROM public.work_materials m
+   WHERE COALESCE(NULLIF(m.material_name,''), '') <> ''
+)
+INSERT INTO v3.data_quality_issues (rule_code, target_type, target_id, severity, detail)
+SELECT 'WORK_PART_NO_RENUMBERED', 'legacy_work', s.work_id, 'low',
+       jsonb_build_object('materials', count(*),
+                          'distinct_material_no', count(DISTINCT s.material_no),
+                          'null_material_no', count(*) FILTER (WHERE s.material_no IS NULL))
+  FROM src s
+ GROUP BY s.work_id
+HAVING count(*) <> count(DISTINCT s.material_no)
+ON CONFLICT (rule_code, target_type, target_id) DO UPDATE SET
+  detail = EXCLUDED.detail, detected_at = now();
+
+-- V1 側の採番が直っていれば閉じる。
+UPDATE v3.data_quality_issues q
+   SET status = 'resolved', resolved_at = now()
+ WHERE q.rule_code = 'WORK_PART_NO_RENUMBERED' AND q.status = 'open'
+   AND NOT EXISTS (
+     SELECT 1 FROM public.work_materials m
+      WHERE m.work_id = q.target_id
+        AND COALESCE(NULLIF(m.material_name,''), '') <> ''
+      GROUP BY m.work_id
+     HAVING count(*) <> count(DISTINCT m.material_no));
+
+-- ---------------------------------------------------------------------
+-- 系譜：work_relations と works.parent_work_id を1表に統合
+-- ---------------------------------------------------------------------
+INSERT INTO v3.work_lineage (parent_work_id, child_work_id, relation_type)
+SELECT pw.id, cw.id, COALESCE(NULLIF(r.relation_type,''), 'derivative')
+  FROM public.work_relations r
+  JOIN v3.works pw ON pw.legacy_table = 'works' AND pw.legacy_id = r.parent_work_id
+  JOIN v3.works cw ON cw.legacy_table = 'works' AND cw.legacy_id = r.child_work_id
+ WHERE pw.id <> cw.id
+ON CONFLICT DO NOTHING;
+
+INSERT INTO v3.work_lineage (parent_work_id, child_work_id, relation_type)
+SELECT pw.id, cw.id, 'derivative'
+  FROM public.works w
+  JOIN v3.works cw ON cw.legacy_table = 'works' AND cw.legacy_id = w.id
+  JOIN v3.works pw ON pw.legacy_table = 'works' AND pw.legacy_id = w.parent_work_id
+ WHERE w.parent_work_id IS NOT NULL AND pw.id <> cw.id
+ON CONFLICT DO NOTHING;
+
+COMMIT;

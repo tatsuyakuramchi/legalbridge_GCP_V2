@@ -1,0 +1,137 @@
+import { useEffect, useState } from "react";
+import { api } from "./api.js";
+import { parseLanguages, parseRegions } from "../server/core/rights-scope.js";
+import { CreateForm, type Field } from "./CreateForm.js";
+import { searchParties } from "./SearchSelect.js";
+import { CONDITION_USAGE_TYPES } from "../server/core/condition-usage.js";
+import { minorUnitHint } from "./ConditionCreateForm.js";
+
+/**
+ * 許諾の条件を作品1点ぶん登録する（ゲーム：自社製造・自社販売／再許諾／自社製造・他社販売）。
+ *
+ * 条件は利用形態ごとに1本（料率1つ）。3本を条件登録で別々に作ると、作品や
+ * 相手先・契約が食い違う、利用形態を入れ忘れる、が起きる。ここは1画面で
+ * 受けて、サーバが1トランザクションで N 本作る（POST /conditions/license-set）。
+ * 料率を空にした利用形態は作らない。個別利用許諾条件書はこの N 本を
+ * 取引形態の表に畳んで出す。出版は PubConditionSetForm（紙・電子）。
+ */
+
+interface Agreement {
+  id: number; agreementNo: string | null; title: string;
+  counterparty: { id: number; name: string } | null;
+}
+
+const text = (v: unknown) => { const s = String(v ?? "").trim(); return s || undefined; };
+const int = (v: unknown) => { const n = Number(v); return Number.isFinite(n) && n ? n : undefined; };
+const rate = (v: unknown) => {
+  const s = String(v ?? "").trim().replace(/[%％]/g, "");
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+};
+
+const GAME_USAGES = CONDITION_USAGE_TYPES.filter((u) => u.family === "game");
+
+export interface LicenseSetCreated {
+  conditions: Array<{ usageType: string; id: number; conditionNo: string | null }>;
+}
+
+export function LicenseSetForm(
+  { preset, onDone, onCancel }: {
+    preset?: Partial<Record<"counterpartyId" | "workId" | "agreementId" | "matterId", string>>;
+    onDone: (created: LicenseSetCreated) => void;
+    onCancel: () => void;
+  }
+) {
+  const [works, setWorks] = useState<Array<{ id: number; title: string }>>([]);
+  const [agreements, setAgreements] = useState<Agreement[]>([]);
+
+  useEffect(() => {
+    api.get<{ works: Array<{ id: number; title: string }> }>("/works")
+      .then((w) => setWorks(w.works)).catch(() => undefined);
+    api.get<{ agreements: Agreement[] }>("/agreements")
+      .then((a) => setAgreements(a.agreements)).catch(() => undefined);
+  }, []);
+
+  // 利用形態ごとに 料率／独占性／MG／AG。料率が空なら、その形態は作らない。
+  const usageFields: Field[] = GAME_USAGES.flatMap((u): Field[] => [
+    { name: `rate_${u.value}`, label: `${u.label}：料率（%）`, type: "number", placeholder: "2",
+      hint: `${u.hint}。空ならこの形態の条件は作らない` },
+    { name: `excl_${u.value}`, label: `${u.label}：独占区分`, type: "select",
+      options: [{ value: "non_exclusive", label: "非独占" }, { value: "exclusive", label: "独占" }],
+      visibleWhen: (v) => String(v[`rate_${u.value}`] ?? "").trim() !== "" },
+    { name: `mg_${u.value}`, label: `${u.label}：MG 最低保証`, type: "money",
+      visibleWhen: (v) => String(v[`rate_${u.value}`] ?? "").trim() !== "",
+      hint: (v) => `毎期独立の下限。${minorUnitHint(v.currency || "JPY")}` },
+    { name: `ag_${u.value}`, label: `${u.label}：AG 前払保証`, type: "money",
+      visibleWhen: (v) => String(v[`rate_${u.value}`] ?? "").trim() !== "",
+      hint: (v) => `累積で充当する。${minorUnitHint(v.currency || "JPY")}` }
+  ]);
+
+  return (
+    <CreateForm
+      title="許諾の条件を登録（利用形態ごとに1本）"
+      submitLabel="利用形態ぶんの条件を登録する"
+      path="/conditions/license-set"
+      initial={{ currency: "JPY", taxCategory: "taxable",
+                 ...Object.fromEntries(GAME_USAGES.map((u) => [`excl_${u.value}`, "non_exclusive"])),
+                 ...preset }}
+      fields={[
+        { name: "counterpartyId", label: "許諾者（権利者）", type: "search", required: true,
+          search: searchParties, placeholder: "取引先名・コードで探す",
+          hint: "個別利用許諾条件書の Licensor" },
+        { name: "workId", label: "原作（Core Logic）", type: "search",
+          options: works.map((w) => ({ value: String(w.id), label: w.title })),
+          hint: "取得の条件は原作にぶら下げる。条件書の構成要素と計算書の件名はここから出る" },
+        { name: "title", label: "条件名（対象製品予定名など）", required: true,
+          placeholder: "ito 原作ゲームデザイン / ◯◯ 英語版",
+          hint: "利用形態ぶんの条件すべてに同じ名前が付く" },
+        { name: "agreementId", label: "基本契約（合意）", type: "search",
+          options: agreements
+            .filter((a) => !preset?.counterpartyId
+              || String(a.counterparty?.id ?? "") === preset.counterpartyId)
+            .map((a) => ({ value: String(a.id), label: a.title,
+                           hint: [a.agreementNo, a.counterparty?.name].filter(Boolean).join("／") })),
+          hint: "条件書の基本契約名・計算書の契約番号はここから出る" },
+        { name: "termStart", label: "許諾開始", type: "date" },
+        { name: "termEnd", label: "許諾終了", type: "date", hint: "空なら期間の定めなし" },
+        { name: "currency", label: "通貨", type: "select", required: true,
+          options: [{ value: "JPY", label: "JPY 円" }, { value: "USD", label: "USD" }, { value: "EUR", label: "EUR" }] },
+        ...usageFields,
+        { name: "taxCategory", label: "税区分", type: "select",
+          options: [{ value: "taxable", label: "課税" }, { value: "reduced", label: "軽減" },
+                    { value: "exempt", label: "非課税" }] },
+        { name: "regions", label: "地域（許諾範囲）", type: "regions",
+          hint: "何も選ばなければ全世界。利用形態ぶんの条件すべてに同じ範囲が付く" },
+        { name: "languages", label: "言語（許諾範囲）", type: "languages" },
+        { name: "notes", label: "備考", type: "textarea" }
+      ]}
+      toPayload={(v) => {
+        const scopes = [
+          ...parseRegions(v.regions ?? "")
+            .map((s) => ({ scopeType: "region" as const, label: s.name, code: s.code || null })),
+          ...parseLanguages(v.languages ?? "")
+            .map((s) => ({ scopeType: "language" as const, label: s.name, code: s.code || null }))
+        ];
+        const rows = GAME_USAGES.flatMap((u) => {
+          const r = rate(v[`rate_${u.value}`]);
+          return r === null ? [] : [{
+            usageType: u.value, ratePct: r, exclusivity: v[`excl_${u.value}`] || null,
+            mgAmount: int(v[`mg_${u.value}`]) ?? null, agAmount: int(v[`ag_${u.value}`]) ?? null
+          }];
+        });
+        return {
+          title: text(v.title),
+          counterpartyId: int(v.counterpartyId), workId: int(v.workId),
+          agreementId: int(v.agreementId), matterId: int(v.matterId),
+          termStart: text(v.termStart), termEnd: text(v.termEnd),
+          currency: v.currency || "JPY", taxCategory: v.taxCategory, notes: text(v.notes),
+          scopes: scopes.length ? scopes : undefined,
+          rows
+        };
+      }}
+      onDone={onDone}
+      onCancel={onCancel}
+    />
+  );
+}

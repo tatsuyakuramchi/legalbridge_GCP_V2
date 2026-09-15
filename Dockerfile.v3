@@ -1,0 +1,33 @@
+# LegalBridge V3。V2 とは別サービスとして Cloud Run に載せる。
+# ビルド文脈はリポジトリ直下（npm workspaces のため）。
+#   docker build -f Dockerfile.v3 -t legalbridge-v3 .
+FROM node:22-alpine AS build
+WORKDIR /app
+
+COPY package.json package-lock.json tsconfig.base.json ./
+COPY apps/legalbridge/package.json apps/legalbridge/package.json
+COPY apps/legalbridge-v3/package.json apps/legalbridge-v3/package.json
+RUN npm ci
+
+COPY apps/legalbridge-v3 apps/legalbridge-v3
+RUN npm run build -w @legalbridge/v3
+
+FROM node:22-alpine AS runtime
+WORKDIR /app
+# PDF 生成に Chromium、和文の字形に Noto CJK が要る。
+RUN apk add --no-cache chromium font-noto-cjk
+ENV NODE_ENV=production
+ENV PORT=8080
+ENV CHROMIUM_PATH=/usr/bin/chromium-browser
+# 触るスキーマを固定する。public には近づかない。
+ENV DB_SCHEMA=v3
+
+COPY package.json package-lock.json ./
+COPY apps/legalbridge/package.json apps/legalbridge/package.json
+COPY apps/legalbridge-v3/package.json apps/legalbridge-v3/package.json
+RUN npm ci --omit=dev
+
+COPY --from=build /app/apps/legalbridge-v3/dist apps/legalbridge-v3/dist
+USER node
+EXPOSE 8080
+CMD ["npm", "run", "start", "-w", "@legalbridge/v3"]
