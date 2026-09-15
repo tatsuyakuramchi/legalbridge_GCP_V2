@@ -190,6 +190,11 @@ SELECT * FROM (
          (SELECT count(*)::text FROM information_schema.columns
            WHERE table_schema='v3' AND table_name='condition_events'
              AND column_name = 'tax_included')
+  UNION ALL
+  SELECT 26, '作品の統合先（A-026。1 列であること）',
+         (SELECT count(*)::text FROM information_schema.columns
+           WHERE table_schema='v3' AND table_name='works'
+             AND column_name = 'merged_into_id')
 ) AS 確認 ORDER BY n;
 `;
 

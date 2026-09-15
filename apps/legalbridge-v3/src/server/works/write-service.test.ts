@@ -96,3 +96,51 @@ test("削除は条件が指していないときだけ。指していれば何�
   assert.deepEqual(result, { deleted: true, workCode: "WRK-0001" });
   assert.ok(free.find("DELETE FROM works WHERE id = $1"));
 });
+
+// ---- 統合 ------------------------------------------------------------
+
+const mergeRows = (
+  over: { sourceMerged?: number | null; targetMerged?: number | null; targetStatus?: string; related?: boolean } = {}
+) => (text: string, params: unknown[]): Array<Record<string, unknown>> | undefined => {
+  if (text.includes("FROM works WHERE id = $1 FOR UPDATE")) {
+    const id = Number(params[0]);
+    return id === 1
+      ? [{ id: 1, work_code: "WRK-0001", title: "ito（旧）", status: "released", merged_into_id: over.sourceMerged ?? null }]
+      : [{ id: 2, work_code: "WRK-0002", title: "ito", status: over.targetStatus ?? "released", merged_into_id: over.targetMerged ?? null }];
+  }
+  if (text.includes("WITH RECURSIVE up")) return over.related ? [{ "?column?": 1 }] : [];
+  if (text.includes("UPDATE conditions SET work_id")) return [{}, {}, {}];
+  if (text.includes("UPDATE work_parts SET work_id")) return [{}];
+  if (text.includes("INSERT INTO work_lineage")) return [{}];
+  return undefined;
+};
+
+test("統合は条件・パート・系譜を先へ付け替え、元は終了にして統合先を記録する", async () => {
+  const db = new FakeDatabase(mergeRows());
+  const result = await new WorkWriteService(db).merge(1, 2, "t");
+  assert.deepEqual(result.moved, { conditions: 3, parts: 1, lineage: 2 });
+  assert.deepEqual(db.find("UPDATE conditions SET work_id")!.params, [1, 2], "条件は全部先へ");
+  assert.ok(db.find("UPDATE work_parts SET work_id"), "パートは番号を振り直して先へ");
+  assert.ok(db.find("DELETE FROM work_lineage WHERE parent_work_id = $1 OR child_work_id = $1"), "元の系譜は消す");
+  const archived = db.find("merged_into_id = $2");
+  assert.deepEqual(archived!.params, [1, 2, "統合：→ WRK-0002 ito"]);
+  assert.equal(db.all("DELETE FROM works").length, 0, "行は消さない");
+  const audits = db.all("INSERT INTO audit_events").map((a) => a.params[1]);
+  assert.deepEqual(audits, ["work.merge", "work.merge_in"], "両方に記録を残す");
+});
+
+test("同じ作品・統合済み・終了した先・系譜で繋がった2つはまとめない", async () => {
+  await assert.rejects(() => new WorkWriteService(new FakeDatabase(mergeRows())).merge(1, 1, "t"), /同じ作品/);
+  await assert.rejects(
+    () => new WorkWriteService(new FakeDatabase(mergeRows({ sourceMerged: 9 }))).merge(1, 2, "t"),
+    /すでに別の作品にまとめて/);
+  await assert.rejects(
+    () => new WorkWriteService(new FakeDatabase(mergeRows({ targetMerged: 9 }))).merge(1, 2, "t"),
+    /統合先がすでに/);
+  await assert.rejects(
+    () => new WorkWriteService(new FakeDatabase(mergeRows({ targetStatus: "archived" }))).merge(1, 2, "t"),
+    /終了した作品には/);
+  const related = new FakeDatabase(mergeRows({ related: true }));
+  await assert.rejects(() => new WorkWriteService(related).merge(1, 2, "t"), /系譜で繋がっている/);
+  assert.equal(related.all("UPDATE conditions").length, 0, "止まったら何も動かさない");
+});

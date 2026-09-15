@@ -68,7 +68,7 @@ export class WorkRepository {
     try {
       const works = await this.database.query(
         `SELECT w.id, w.work_code, w.title, w.title_kana, w.kind, w.status, w.business_line,
-                (w.legacy_id IS NOT NULL) AS legacy,
+                (w.legacy_id IS NOT NULL) AS legacy, w.merged_into_id,
                 (SELECT count(*)::int FROM conditions c
                   WHERE c.work_id = w.id AND c.status <> 'void') AS conditions,
                 (SELECT count(*)::int FROM work_parts p WHERE p.work_id = w.id) AS parts
@@ -89,6 +89,7 @@ export class WorkRepository {
           id: Number(w.id), workCode: str(w.work_code), title: String(w.title),
           titleKana: str(w.title_kana), kind: String(w.kind), status: String(w.status),
           businessLine: str(w.business_line), legacy: w.legacy === true,
+          mergedIntoId: w.merged_into_id === null || w.merged_into_id === undefined ? null : Number(w.merged_into_id),
           conditions: Number(w.conditions ?? 0), parts: Number(w.parts ?? 0)
         })),
         lineage: lineage.rows.map((l) => ({
@@ -102,9 +103,11 @@ export class WorkRepository {
   async find(workId: number) {
     try {
       const r = await this.database.query(
-        `SELECT id, work_code, title, title_kana, kind, status, business_line, remarks,
-                (legacy_id IS NOT NULL) AS legacy
-           FROM works WHERE id = $1`, [workId]);
+        `SELECT w.id, w.work_code, w.title, w.title_kana, w.kind, w.status, w.business_line, w.remarks,
+                (w.legacy_id IS NOT NULL) AS legacy, w.merged_into_id,
+                m.work_code AS merged_into_code, m.title AS merged_into_title
+           FROM works w LEFT JOIN works m ON m.id = w.merged_into_id
+          WHERE w.id = $1`, [workId]);
       const w = r.rows[0] as Record<string, any> | undefined;
       if (!w) return null;
       const [sources, children, parts] = await Promise.all([
@@ -126,6 +129,8 @@ export class WorkRepository {
         id: Number(w.id), workCode: str(w.work_code), title: String(w.title),
         titleKana: str(w.title_kana), kind: String(w.kind), status: String(w.status),
         businessLine: str(w.business_line), remarks: str(w.remarks), legacy: w.legacy === true,
+        mergedInto: w.merged_into_id === null || w.merged_into_id === undefined ? null
+          : { id: Number(w.merged_into_id), workCode: str(w.merged_into_code), title: String(w.merged_into_title ?? "") },
         sources: (sources.rows as Array<Record<string, any>>).map(ref),
         children: (children.rows as Array<Record<string, any>>).map(ref),
         parts

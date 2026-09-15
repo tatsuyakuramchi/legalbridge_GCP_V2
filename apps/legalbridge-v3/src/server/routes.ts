@@ -1274,6 +1274,13 @@ export function createRoutes(database: Transactable) {
       res.json(await workWrites.removePart(Number(req.params.id), Number(req.params.partId), actor(res)));
     }));
 
+  // 作品の統合。条件・パート・系譜を先へ付け替え、こちらは終了にして統合先を記録する。
+  router.post("/works/:id/merge", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { intoId } = z.object({ intoId: z.coerce.number().int().positive() }).parse(req.body ?? {});
+      res.json(await workWrites.merge(Number(req.params.id), intoId, actor(res)));
+    }));
+
   // 終了 → 削除の2段階。条件と同じ作り。
   router.post("/works/:id/archive", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {

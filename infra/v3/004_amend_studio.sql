@@ -977,6 +977,27 @@ ALTER TABLE v3.condition_events ADD COLUMN IF NOT EXISTS tax_included boolean;
 COMMENT ON COLUMN v3.condition_events.tax_included IS
   '受領額・受領価格が税込で入っているか。true なら算定のとき税別へ割り戻す。';
 
+-- ---------------------------------------------------------------------
+-- A-026: 作品の統合先
+--
+-- 移行データには同じ作品が表記違いで何本も入っている。1つにまとめるとき、
+-- 条件・パート・系譜は残す側へ付け替え、まとめられた側は終了にする。
+-- どこへまとめたかを残しておかないと、古い番号で探した人が行き止まりになる。
+-- 取引先の統合（merged_into_id）と同じ持ち方。
+-- ---------------------------------------------------------------------
+
+ALTER TABLE v3.works ADD COLUMN IF NOT EXISTS merged_into_id bigint REFERENCES v3.works(id);
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'works_merged_into_self_chk') THEN
+    ALTER TABLE v3.works ADD CONSTRAINT works_merged_into_self_chk
+      CHECK (merged_into_id IS NULL OR merged_into_id <> id);
+  END IF;
+END $$;
+
+COMMENT ON COLUMN v3.works.merged_into_id IS
+  'この作品をまとめた先。統合すると条件・パート・系譜は先へ付け替え、こちらは終了になる。';
+
 COMMIT;
 
 
@@ -1138,4 +1159,9 @@ SELECT * FROM (
          (SELECT count(*)::text FROM information_schema.columns
            WHERE table_schema='v3' AND table_name='condition_events'
              AND column_name = 'tax_included')
+  UNION ALL
+  SELECT 26, '作品の統合先（A-026。1 列であること）',
+         (SELECT count(*)::text FROM information_schema.columns
+           WHERE table_schema='v3' AND table_name='works'
+             AND column_name = 'merged_into_id')
 ) AS 確認 ORDER BY n;

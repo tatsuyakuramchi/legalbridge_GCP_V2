@@ -31,6 +31,7 @@ import { useReadOnly } from "./read-only.js";
 interface TreeWork {
   id: number; workCode: string | null; title: string; titleKana: string | null;
   kind: string; status: string; businessLine: string | null; legacy: boolean;
+  mergedIntoId: number | null;
   conditions: number; parts: number;
 }
 interface Tree { works: TreeWork[]; lineage: Array<{ parentId: number; childId: number }> }
@@ -40,6 +41,7 @@ interface Part { id: number; partNo: number; name: string; partType: string; roy
 interface WorkDetail {
   id: number; workCode: string | null; title: string; titleKana: string | null; kind: string;
   status: string; businessLine: string | null; remarks: string | null; legacy: boolean;
+  mergedInto: { id: number; workCode: string | null; title: string } | null;
   sources: WorkRefRow[]; children: WorkRefRow[]; parts: Part[];
 }
 
@@ -143,6 +145,9 @@ export function WorksWorkspace(
   const [creating, setCreating] = useState<"work" | "source" | "part" | "condition" | null>(null);
   const [moveTo, setMoveTo] = useState<string>("");
   const [moving, setMoving] = useState(false);
+  const [mergeTo, setMergeTo] = useState<string>("");
+  const [merging, setMerging] = useState(false);
+  const [newSource, setNewSource] = useState<{ title: string; titleKana: string } | null>(null);
   const [cleanup, setCleanup] = useState<{ conditions: LegacyCondition[]; works: LegacyWork[] } | null>(null);
   const [cleanupOpen, setCleanupOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -179,7 +184,7 @@ export function WorksWorkspace(
       });
     }).catch(fail);
   }
-  useEffect(() => { setNotice(null); void reloadWork(); }, [selected, includeVoid]);
+  useEffect(() => { void reloadWork(); }, [selected, includeVoid]);
 
   function reloadCleanup() {
     return api.get<{ conditions: LegacyCondition[]; works: LegacyWork[] }>("/cleanup/legacy")
@@ -245,6 +250,44 @@ export function WorksWorkspace(
     try {
       await api.put(`/works/${work.id}/sources`, { parentIds: ids });
       setNotice("原作を付け替えました");
+      await Promise.all([reloadTree(), reloadWork()]);
+    } catch (e) { fail(e); } finally { setBusy(false); }
+  }
+
+  /**
+   * 統合。条件・パート・系譜を先へ付け替え、この作品は終了にして統合先を記録する。
+   * 移行データの表記違いをまとめるための操作なので、実績のある条件も一緒に動く
+   * （条件の work_id を付け替えるだけで、条件の中身は変わらない）。
+   */
+  async function mergeWork() {
+    if (!work || !mergeTo) return;
+    const target = tree.works.find((t) => String(t.id) === mergeTo);
+    if (!confirm(`「${work.title}」を「${target?.title ?? mergeTo}」にまとめます。\n` +
+                 `条件 ${conditions.length} 件・パート ${work.parts.length} 件・原作の繋がりを移し、` +
+                 `「${work.title}」は終了になります。よろしいですか？`)) return;
+    setBusy(true); setError(null);
+    try {
+      const r = await api.post<{ moved: { conditions: number; parts: number; lineage: number } }>(
+        `/works/${work.id}/merge`, { intoId: Number(mergeTo) });
+      setNotice(`「${target?.title ?? ""}」にまとめました（条件 ${r.moved.conditions}・パート ${r.moved.parts}・系譜 ${r.moved.lineage}）`);
+      setMerging(false); setMergeTo("");
+      setSelected(Number(mergeTo));
+      await reloadTree();
+    } catch (e) { fail(e); } finally { setBusy(false); }
+  }
+
+  /** 原作をその場で登録して、この作品に付ける。登録してから探し直す往復を無くす。 */
+  async function createSourceAndAttach() {
+    if (!work || !newSource || !newSource.title.trim()) return;
+    setBusy(true); setError(null);
+    try {
+      const made = await api.post<{ id: number }>("/works", {
+        title: newSource.title.trim(), titleKana: newSource.titleKana.trim() || null,
+        kind: "source_ip", status: "released"
+      });
+      await api.put(`/works/${work.id}/sources`, { parentIds: [...work.sources.map((s) => s.id), made.id] });
+      setNotice(`原作「${newSource.title.trim()}」を登録して付けました`);
+      setNewSource(null);
       await Promise.all([reloadTree(), reloadWork()]);
     } catch (e) { fail(e); } finally { setBusy(false); }
   }
@@ -386,11 +429,11 @@ export function WorksWorkspace(
     <div key={w.id}>
       <button className={`node${depth ? " child" : ""}`} aria-pressed={w.id === selected}
               style={depth > 1 ? { marginLeft: 18 * depth } : undefined}
-              onClick={() => setSelected(w.id)}>
+              onClick={() => { setNotice(null); setError(null); setSelected(w.id); }}>
         {w.kind === "source_ip" && <span className="tag accent">原作</span>}
         <span className="grow">{w.title}</span>
         {w.legacy && <span className="faint" title="V2 から移した作品">移行</span>}
-        {w.status === "archived" && <span className="faint">終了</span>}
+        {w.mergedIntoId ? <span className="faint">統合済</span> : w.status === "archived" && <span className="faint">終了</span>}
         <span className="faint num">{w.conditions}</span>
       </button>
       {depth < 3 && kindFilter === "all" && (grouped.childrenOf.get(w.id) ?? []).map((c) => renderNode(c, depth + 1))}
@@ -587,8 +630,16 @@ export function WorksWorkspace(
                 <span className="tag accent">{KIND_LABEL[work.kind] ?? work.kind}</span>
                 <StatusTag kind="work" value={work.status} />
                 {work.legacy && <span className="tag">V2 から移行</span>}
-                {editable && (
+                {work.mergedInto && (
+                  <button className="btn btn-sm" onClick={() => setSelected(work.mergedInto!.id)}>
+                    → {work.mergedInto.workCode ?? `#${work.mergedInto.id}`} {work.mergedInto.title} にまとめ済み
+                  </button>
+                )}
+                {editable && !work.mergedInto && (
                   <span className="row" style={{ marginLeft: "auto" }}>
+                    {!merging && work.status !== "archived" && (
+                      <button className="btn btn-sm" disabled={busy} onClick={() => setMerging(true)}>別の作品に統合</button>
+                    )}
                     {work.status !== "archived"
                       ? <button className="btn btn-sm" disabled={busy} onClick={() => void archiveWork()}>終了にする</button>
                       : <button className="btn btn-sm" disabled={busy} onClick={() => void removeWork()}>削除する</button>}
@@ -597,6 +648,22 @@ export function WorksWorkspace(
                   </span>
                 )}
               </div>
+              {merging && (
+                <div className="panel-bd row" style={{ borderBottom: "1px solid var(--line)" }}>
+                  <b>まとめる先</b>
+                  <div style={{ minWidth: 320 }}>
+                    <SearchSelect value={mergeTo} placeholder="残す側の作品を探す" autoFocus
+                      options={moveOptions.filter((o) => {
+                        const t = tree.works.find((x) => String(x.id) === o.value);
+                        return t && t.status !== "archived" && !t.mergedIntoId;
+                      })}
+                      onChange={(v) => setMergeTo(v)} />
+                  </div>
+                  <button className="btn btn-sm primary" disabled={busy || !mergeTo} onClick={() => void mergeWork()}>統合する</button>
+                  <button className="btn btn-sm" onClick={() => { setMerging(false); setMergeTo(""); }}>やめる</button>
+                  <span className="faint">条件・パート・原作の繋がりを先へ移し、この作品は終了になります。系譜で繋がっている2つはまとめられません</span>
+                </div>
+              )}
               <div className="panel-bd ledger-form">
                 <label className="field"><span>題名</span>
                   <input value={form.title ?? ""} disabled={!editable} onChange={(e) => setForm({ ...form, title: e.target.value })} /></label>
@@ -647,11 +714,37 @@ export function WorksWorkspace(
                     {!work.sources.length && <span className="faint">原作が付いていません</span>}
                   </div>
                   {editable && (
-                    <div style={{ maxWidth: 420 }}>
-                      <SearchSelect value="" options={sourceOptions.filter((o) => !work.sources.some((s) => String(s.id) === o.value))}
-                        placeholder="原作名で探して足す" disabled={busy}
-                        onChange={(v) => { if (v) void setSources([...work.sources.map((s) => s.id), Number(v)]); }} />
-                      {!sourceOptions.length && <div className="faint">原作がまだ登録されていません。上の「原作を登録」から</div>}
+                    <div className="row" style={{ alignItems: "flex-start" }}>
+                      <div style={{ minWidth: 300, flex: "0 1 420px" }}>
+                        <SearchSelect value="" options={sourceOptions.filter((o) => !work.sources.some((s) => String(s.id) === o.value))}
+                          placeholder="原作名で探して足す" disabled={busy}
+                          onChange={(v) => { if (v) void setSources([...work.sources.map((s) => s.id), Number(v)]); }} />
+                      </div>
+                      {!newSource && (
+                        <button className="btn btn-sm" disabled={busy}
+                                onClick={() => setNewSource({ title: keyword.trim(), titleKana: "" })}>
+                          無ければ登録して付ける
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {editable && newSource && (
+                    <div className="note stack" style={{ gap: 8 }}>
+                      <b>原作（Core Logic）を新しく登録して、この作品に付ける</b>
+                      <div className="ledger-form">
+                        <label className="field"><span>原作名</span>
+                          <input autoFocus value={newSource.title}
+                                 onChange={(e) => setNewSource({ ...newSource, title: e.target.value })}
+                                 onKeyDown={(e) => { if (e.key === "Enter") void createSourceAndAttach(); }} /></label>
+                        <label className="field"><span>カナ</span>
+                          <input value={newSource.titleKana}
+                                 onChange={(e) => setNewSource({ ...newSource, titleKana: e.target.value })} /></label>
+                      </div>
+                      <div className="row">
+                        <button className="btn btn-sm primary" disabled={busy || !newSource.title.trim()}
+                                onClick={() => void createSourceAndAttach()}>登録して付ける</button>
+                        <button className="btn btn-sm" onClick={() => setNewSource(null)}>やめる</button>
+                      </div>
                     </div>
                   )}
                 </>)}

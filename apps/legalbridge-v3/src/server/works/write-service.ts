@@ -290,10 +290,111 @@ export class WorkWriteService {
     } catch (error) { throw translate(error); }
   }
 
+  /**
+   * 作品の統合。id を intoId にまとめる。
+   *
+   * 移行データには同じ作品が表記違いで何本も入っている。条件・パート・系譜を
+   * 残す側へ付け替え、まとめられた側は終了にして統合先を記録する（取引先の
+   * 統合と同じ持ち方）。行は消さない。古い番号で探した人が、どこへ行ったかを
+   * 辿れるようにする。
+   *
+   * 付け替えるもの
+   *   条件      work_id を先へ（無効化・旧版も含めて全部。指す先を失わせない）
+   *   パート    先の末尾に番号を振り直して移す。条件の work_part_id はそのまま生きる
+   *   系譜      こちらの親は先の親に、こちらの子は先の子に。自分自身への輪は落とす
+   *
+   * 系譜で繋がっている2つ（親と子）はまとめない。子を親にまとめると、子の
+   * 子が親の子になるだけで済むように見えるが、親の親がこちらだった場合に輪に
+   * なる。関係のある2つは、先に系譜を外してからまとめてもらう。
+   */
+  async merge(id: number, intoId: number, actor: string): Promise<{
+    id: number; intoId: number; moved: { conditions: number; parts: number; lineage: number };
+  }> {
+    if (id === intoId) throw new DomainError("VALIDATION", "同じ作品にはまとめられません");
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const source = await this.requireWork(client, id);
+        const target = await this.requireWork(client, intoId);
+        if (source.merged_into_id) {
+          throw new DomainError("CONFLICT", "この作品はすでに別の作品にまとめてあります");
+        }
+        if (target.merged_into_id) {
+          throw new DomainError("CONFLICT", "統合先がすでに別の作品にまとめられています。その先を選んでください");
+        }
+        if (target.status === "archived") {
+          throw new DomainError("VALIDATION", "終了した作品にはまとめられません。残す側を選んでください");
+        }
+        const related = await client.query(
+          `WITH RECURSIVE up AS (
+             SELECT parent_work_id AS wid, 1 AS depth FROM work_lineage WHERE child_work_id = $1
+             UNION
+             SELECT l.parent_work_id, up.depth + 1 FROM work_lineage l JOIN up ON l.child_work_id = up.wid
+              WHERE up.depth < 20
+           ), down AS (
+             SELECT child_work_id AS wid, 1 AS depth FROM work_lineage WHERE parent_work_id = $1
+             UNION
+             SELECT l.child_work_id, down.depth + 1 FROM work_lineage l JOIN down ON l.parent_work_id = down.wid
+              WHERE down.depth < 20
+           )
+           SELECT 1 FROM up WHERE wid = $2
+           UNION ALL
+           SELECT 1 FROM down WHERE wid = $2
+           LIMIT 1`, [id, intoId]);
+        if (related.rows[0]) {
+          throw new DomainError("VALIDATION",
+            "系譜で繋がっている作品どうしはまとめられません。先に原作の付け外しで系譜を切ってください");
+        }
+
+        const conditions = await client.query(
+          "UPDATE conditions SET work_id = $2, updated_at = now() WHERE work_id = $1", [id, intoId]);
+        const parts = await client.query(
+          `UPDATE work_parts SET work_id = $2,
+                  part_no = part_no + (SELECT COALESCE(max(part_no), 0) FROM work_parts WHERE work_id = $2)
+            WHERE work_id = $1`, [id, intoId]);
+        // 系譜。先と同じ行があれば ON CONFLICT で吸収し、自分自身への輪は入れない。
+        const parents = await client.query(
+          `INSERT INTO work_lineage (parent_work_id, child_work_id, relation_type)
+           SELECT parent_work_id, $2, relation_type FROM work_lineage
+            WHERE child_work_id = $1 AND parent_work_id <> $2
+           ON CONFLICT DO NOTHING`, [id, intoId]);
+        const children = await client.query(
+          `INSERT INTO work_lineage (parent_work_id, child_work_id, relation_type)
+           SELECT $2, child_work_id, relation_type FROM work_lineage
+            WHERE parent_work_id = $1 AND child_work_id <> $2
+           ON CONFLICT DO NOTHING`, [id, intoId]);
+        await client.query(
+          "DELETE FROM work_lineage WHERE parent_work_id = $1 OR child_work_id = $1", [id]);
+
+        await client.query(
+          `UPDATE works
+              SET status = 'archived', merged_into_id = $2,
+                  remarks = concat_ws(E'\n', NULLIF(remarks, ''), $3::text),
+                  updated_at = now()
+            WHERE id = $1`,
+          [id, intoId, `統合：→ ${target.work_code ?? `#${intoId}`} ${target.title}`]);
+
+        const moved = {
+          conditions: conditions.rowCount ?? 0, parts: parts.rowCount ?? 0,
+          lineage: (parents.rowCount ?? 0) + (children.rowCount ?? 0)
+        };
+        await recordAudit(client, {
+          actor, action: "work.merge", targetType: "work", targetId: id,
+          detail: { intoId, intoCode: target.work_code, moved }
+        });
+        await recordAudit(client, {
+          actor, action: "work.merge_in", targetType: "work", targetId: intoId,
+          detail: { fromId: id, fromCode: source.work_code, moved }
+        });
+        return { id, intoId, moved };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
   private async requireWork(client: { query: (t: string, p?: unknown[]) => Promise<{ rows: unknown[] }> }, id: number) {
     const r = await client.query(
-      "SELECT id, work_code, title, status FROM works WHERE id = $1 FOR UPDATE", [id]);
-    const row = r.rows[0] as { id: number; work_code: string | null; title: string; status: string } | undefined;
+      "SELECT id, work_code, title, status, merged_into_id FROM works WHERE id = $1 FOR UPDATE", [id]);
+    const row = r.rows[0] as { id: number; work_code: string | null; title: string; status: string;
+                               merged_into_id: number | null } | undefined;
     if (!row) throw new DomainError("NOT_FOUND", `作品 ${id} が見つかりません`);
     return row;
   }
