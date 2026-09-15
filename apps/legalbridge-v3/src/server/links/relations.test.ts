@@ -61,3 +61,18 @@ test("文書は案件・条件・契約に紐づけ直せる", () => {
       `文書から ${relation} を繋げない。作成のときにしか決められないと作り直すしかなくなる`);
   }
 });
+
+test("文書の候補は文書番号だけでなく件名・取り込み時の文書名・種別・相手先で当たり、相手先の文書を先に出す", async () => {
+  const seen: Array<{ text: string; params: unknown[] }> = [];
+  const client = { query: async (text: string, params: unknown[] = []) => { seen.push({ text, params }); return { rows: [] }; } };
+  await RELATIONS.agreement.documents.candidates!(client as never, 7, "業務委託");
+  await RELATIONS.condition.documents.candidates!(client as never, 5, "");
+  for (const q of seen) {
+    assert.match(q.text, /manual_inputs->>'title'/, "取り込み時の文書名");
+    assert.match(q.text, /v\.title/, "表示名");
+    assert.match(q.text, /v\.counterparty_id = \(SELECT counterparty_id FROM (agreements|conditions)/, "相手先の文書を先に");
+    assert.match(q.text, /LIMIT 50/);
+  }
+  assert.deepEqual(seen[0].params, [7, "%業務委託%"]);
+  assert.deepEqual(seen[1].params, [5, ""]);
+});

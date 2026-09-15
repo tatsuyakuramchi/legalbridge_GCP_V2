@@ -63,10 +63,22 @@ const asCondition = (r: Record<string, any>): LinkItem => ({
   kind: "condition"
 });
 
-const asDocument = (r: Record<string, any>): LinkItem => ({
-  id: Number(r.id), code: str(r.document_no), label: String(r.label ?? "（種別なし）"),
-  note: statusLabel(String(r.status)), kind: "document"
-});
+/**
+ * 文書の札。種別（ひな形のラベル、取り込みなら文書の種類）と表示名。
+ * 取り込んだ文書は種別を入れていないことが多く、以前は「（種別なし）」とだけ
+ * 出て、契約書なのかどうかも読めなかった。取り込み時の文書名は
+ * manual_inputs.title にある。
+ */
+const asDocument = (r: Record<string, any>): LinkItem => {
+  const kind = str(r.label) ?? (r.template_version_id ? "文書" : "取り込み文書");
+  const title = str(r.title) ?? str(r.manual_title);
+  const label = title && title !== str(r.document_no) ? `${kind}（${title}）` : kind;
+  return {
+    id: Number(r.id), code: str(r.document_no), label,
+    note: [statusLabel(String(r.status)), str(r.counterparty)].filter(Boolean).join("／"),
+    kind: "document"
+  };
+};
 
 const asAgreement = (r: Record<string, any>): LinkItem => ({
   id: Number(r.id), code: str(r.agreement_no), label: String(r.title),
@@ -109,11 +121,24 @@ const conditionKindLabel = (kind: string) =>
 // ---------------------------------------------------------------------------
 
 const DOCUMENT_SELECT = `
-  d.id, d.document_no, d.status,
-  COALESCE(t.label, d.manual_inputs->>'documentKind') AS label
+  d.id, d.document_no, d.status, d.template_version_id,
+  COALESCE(t.label, d.manual_inputs->>'documentKind') AS label,
+  v.title, d.manual_inputs->>'title' AS manual_title, v.counterparty, v.counterparty_id
   FROM documents d
   LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
-  LEFT JOIN document_templates t ON t.id = tv.template_id`;
+  LEFT JOIN document_templates t ON t.id = tv.template_id
+  LEFT JOIN v_document_display v ON v.document_id = d.id`;
+
+/**
+ * 文書の候補を探す条件。文書検索（文書の画面）と同じものに当てる：
+ * 文書番号・表示名（契約名→案件名→条件名）・取り込み時の文書名・ひな形の
+ * ラベル・相手先名。以前は文書番号にしか当たらず、件名で探しても出なかった。
+ * $n は like 済みの検索語（空なら全部）。
+ */
+const documentMatches = (n: string) => `
+  ($${n} = '' OR COALESCE(d.document_no,'') ILIKE $${n} OR COALESCE(v.title,'') ILIKE $${n}
+   OR COALESCE(d.manual_inputs->>'title','') ILIKE $${n} OR COALESCE(t.label,'') ILIKE $${n}
+   OR COALESCE(d.manual_inputs->>'documentKind','') ILIKE $${n} OR COALESCE(v.counterparty,'') ILIKE $${n})`;
 
 async function assertExists(client: Queryable, table: string, id: number, name: string) {
   const r = await client.query(`SELECT 1 FROM ${table} WHERE id = $1`, [id]);
@@ -215,10 +240,12 @@ export const RELATIONS: Record<EntityKind, Record<string, RelationDefinition>> =
       candidates: async (c, id, q) => rows(await c.query(
         `SELECT ${DOCUMENT_SELECT}
           WHERE d.status <> 'void'
-            AND ($2 = '' OR COALESCE(d.document_no,'') ILIKE $2)
+            AND ${documentMatches("2")}
             AND NOT EXISTS (SELECT 1 FROM document_conditions dc
                              WHERE dc.document_id = d.id AND dc.condition_id = $1)
-          ORDER BY d.id DESC LIMIT 20`, [id, q ? like(q) : ""])).map(asDocument),
+          -- その条件の相手先の文書を先に。他社の文書が並ぶと選び間違える。
+          ORDER BY (v.counterparty_id = (SELECT counterparty_id FROM conditions WHERE id = $1)) DESC NULLS LAST,
+                   d.id DESC LIMIT 50`, [id, q ? like(q) : ""])).map(asDocument),
       attach: async (c, id, targetId) => {
         await assertExists(c, "documents", targetId, "文書");
         const seq = await c.query(
@@ -376,8 +403,11 @@ export const RELATIONS: Record<EntityKind, Record<string, RelationDefinition>> =
       candidates: async (c, id, q) => rows(await c.query(
         `SELECT ${DOCUMENT_SELECT}
           WHERE d.agreement_id IS DISTINCT FROM $1 AND d.status <> 'void'
-            AND ($2 = '' OR COALESCE(d.document_no,'') ILIKE $2)
-          ORDER BY d.id DESC LIMIT 20`, [id, q ? like(q) : ""])).map(asDocument),
+            AND ${documentMatches("2")}
+          -- その契約の相手先の文書を先に。空で開いたときに他社の新しい文書が
+          -- 20件並ぶだけだったので、探したい契約書に届かなかった。
+          ORDER BY (v.counterparty_id = (SELECT counterparty_id FROM agreements WHERE id = $1)) DESC NULLS LAST,
+                   d.id DESC LIMIT 50`, [id, q ? like(q) : ""])).map(asDocument),
       attach: async (c, id, targetId) => {
         await assertExists(c, "documents", targetId, "文書");
         await c.query("UPDATE documents SET agreement_id = $1 WHERE id = $2", [id, targetId]);

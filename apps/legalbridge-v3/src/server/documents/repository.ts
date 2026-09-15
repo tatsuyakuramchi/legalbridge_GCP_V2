@@ -186,7 +186,10 @@ export class DocumentRepository {
     if (query.keyword?.trim()) {
       params.push(`%${query.keyword.trim()}%`);
       const i = params.length;
+      // 取り込んだ文書の名前（manual_inputs.title）も件名として当てる。契約も案件も
+      // 条件も付いていない取り込み文書は表示名が文書番号に落ちるので、名前で探せなかった。
       where.push(`(COALESCE(d.document_no,'') ILIKE $${i} OR COALESCE(v.title,'') ILIKE $${i}
+                   OR COALESCE(d.manual_inputs->>'title','') ILIKE $${i}
                    OR COALESCE(v.counterparty,'') ILIKE $${i})`);
     }
     if (query.status) { params.push(query.status); where.push(`d.status = $${params.length}`); }
