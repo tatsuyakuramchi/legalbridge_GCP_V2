@@ -30,6 +30,8 @@ export interface Field {
   search?: (q: string) => Promise<SearchOption[]>;
   /** 他の項目の値によって出し入れする。 */
   visibleWhen?: (values: Record<string, string>) => boolean;
+  /** type "search" で、初期値の表示名（案件から相手先を引き継いだときなど。無いと「#2」と出る）。 */
+  valueLabel?: string | null;
 }
 
 export interface CreateFormProps {
@@ -90,6 +92,7 @@ export function CreateForm(props: CreateFormProps) {
               ) : f.type === "search" ? (
                 <SearchSelect value={values[f.name] ?? ""} options={f.search ? undefined : (f.options ?? [])}
                   search={f.search} emptyLabel={f.required ? undefined : "—"}
+                  valueLabel={values[f.name] && values[f.name] === (props.initial?.[f.name] ?? "") ? f.valueLabel : null}
                   placeholder={f.placeholder ?? "名前の一部で探す"}
                   onChange={(v) => set(f.name, v)} />
               ) : f.type === "regions" || f.type === "languages" ? (

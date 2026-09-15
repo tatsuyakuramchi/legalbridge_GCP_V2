@@ -477,3 +477,22 @@ test("単価建ての条件は 単価 × 個数 を金額にする", () => {
   assert.equal(lines[0].quantity, 100);
   assert.equal(lines[0].amount_ex_tax, 165000);
 });
+
+test("手数料・経費の条件は品目に混ぜず、その他手数料・経費の行の種になる", () => {
+  const conditions = [
+    { id: 1, name: "翻訳", flatAmount: 100000, pricingModel: "fixed", taxCategory: "taxable", kind: "service" },
+    { id: 2, name: "送料", flatAmount: 3000, pricingModel: "fixed", taxCategory: "taxable", kind: "fee" },
+    { id: 3, name: "交通費", flatAmount: 12000, pricingModel: "fixed", taxCategory: "exempt", kind: "expense" }
+  ];
+  const seeds = seedLines("purchase_order", ctx({ schedules: [], conditions }));
+  assert.deepEqual(seeds.items.map((r) => r.item_name), ["翻訳"], "品目は委託料だけ");
+  assert.deepEqual(seeds.other_fees.map((r) => [r.condition_id, r.fee_name, r.amount]), [[2, "送料", 3000]]);
+  assert.deepEqual(seeds.expenses.map((r) => [r.condition_id, r.expense_name, r.amount_inc_tax]), [[3, "交通費", 12000]]);
+  // 予定明細があっても、手数料・経費の予定は品目に出さない。
+  const withSchedules = orderLinesFrom(ctx({ conditions, schedules: [
+    { id: 11, conditionId: 1, seq: 1, label: "納品", plannedAmount: 100000, dueOn: "2026-10-31" },
+    { id: 12, conditionId: 2, seq: 1, label: "送料", plannedAmount: 3000, dueOn: "2026-10-31" }
+  ] })) as Array<Record<string, any>>;
+  assert.equal(withSchedules.length, 1);
+  assert.equal(withSchedules[0].amount_ex_tax, 100000);
+});

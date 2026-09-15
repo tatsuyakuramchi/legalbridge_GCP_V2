@@ -8,6 +8,8 @@ import { WorkChooser, type WorkOption } from "./WorkChooser.js";
 import { DocumentImport } from "./DocumentImport.js";
 import { CONDITION_KIND_LABEL, MATTER_KIND_LABEL, StatusTag } from "./labels.js";
 import { ConditionLabel } from "./ConditionLabel.js";
+import { ServiceSetForm } from "./ServiceSetForm.js";
+import { money } from "./api.js";
 
 /**
  * 案件に条件と文書を繋ぐ操作。
@@ -33,10 +35,14 @@ interface CandidateDocument {
 }
 
 export function MatterConditions(
-  { detail, onChanged, onOpenCondition }:
-  { detail: MatterDetail; onChanged: () => void; onOpenCondition: (id: number) => void }
+  { detail, onChanged, onOpenCondition, onCompose }: {
+    detail: MatterDetail; onChanged: () => void; onOpenCondition: (id: number) => void;
+    /** 文書の画面へ移って、この業務の条件を選び、ひな形を決めた状態で作成に入る。 */
+    onCompose?: (conditionIds: number[], eventIds?: number[], matterId?: number | null,
+                 templateKey?: string | null) => void;
+  }
 ) {
-  const [making, setMaking] = useState(false);
+  const [making, setMaking] = useState<false | "one" | "service">(false);
   const [picking, setPicking] = useState(false);
   const [keyword, setKeyword] = useState("");
   const search = useDebounced(keyword);
@@ -52,6 +58,9 @@ export function MatterConditions(
   // ライセンスは作品が軸。作品ひとつに、取引モデルの違う条件（自社製造・自社販売、
   // 再許諾…）が何本も並ぶ。だから作品を先に決め、条件はそこから1本ずつ作る。
   const licensing = detail.kind === "work";
+  // 業務委託は案件が業務の単位。契約×相手先が違えば別の業務として束ねて見せる。
+  const outsourcing = detail.kind === "outsourcing";
+  const bundles = outsourcing ? serviceBundles(detail.conditions) : [];
   // 2本目以降は、1本目が知っていることを引き継ぐ。作品・相手先・契約・通貨を
   // 毎回入れ直させると、同じ作品の条件が別々の契約にぶら下がって食い違う。
   const last = detail.conditions[detail.conditions.length - 1] ?? null;
@@ -111,9 +120,16 @@ export function MatterConditions(
             {/* 案件を見ながら新しい条件を作れるようにする。以前は「条件の画面で
                 作ってください」と案内していて、作ってから案件へ戻って繋ぎ直す
                 往復が要った。 */}
-            <button className="btn btn-sm primary" disabled={licensing && !work}
-                    onClick={() => { setMade(null); setMaking(true); }}>
-              {licensing ? "この作品で条件を1本作る" : "新しい条件を作る"}
+            {outsourcing && (
+              <button className="btn btn-sm primary"
+                      title="委託料に実費・手数料を組にして1回で登録する。発注書はこの組を1枚に載せる"
+                      onClick={() => { setMade(null); setMaking("service"); }}>
+                業務セットを登録（委託料＋実費＋手数料）
+              </button>
+            )}
+            <button className={`btn btn-sm${outsourcing ? "" : " primary"}`} disabled={licensing && !work}
+                    onClick={() => { setMade(null); setMaking("one"); }}>
+              {licensing ? "この作品で条件を1本作る" : outsourcing ? "条件を1本だけ作る" : "新しい条件を作る"}
             </button>
             <button className="btn btn-sm"
                     onClick={() => setPicking(true)}>すでにある条件を繋ぐ</button>
@@ -140,7 +156,7 @@ export function MatterConditions(
         <div className="done-note">
           条件を作って、この案件に繋ぎました。
           <span className="row">
-            <button className="btn btn-sm primary" onClick={() => { setMade(null); setMaking(true); }}>
+            <button className="btn btn-sm primary" onClick={() => { setMade(null); setMaking("one"); }}>
               続けてもう1本作る
             </button>
             <button className="btn btn-sm" onClick={() => onOpenCondition(made)}>作った条件を開く</button>
@@ -149,7 +165,26 @@ export function MatterConditions(
         </div>
       )}
 
-      {making && (
+      {making === "service" && (
+        <ServiceSetForm
+          counterpartyName={detail.counterparty?.name ?? last?.counterparty?.name ?? null}
+          preset={{
+            matterId: String(detail.id),
+            ...(detail.counterparty
+              ? { counterpartyId: String(detail.counterparty.id) }
+              : last?.counterparty ? { counterpartyId: String(last.counterparty.id) } : {}),
+            ...(last?.agreement ? { agreementId: String(last.agreement.id) } : {})
+          }}
+          onDone={(created) => {
+            setMaking(false);
+            setMade(created.conditions[0]?.id ?? null);
+            // サーバが案件に繋いでいる（matterId 付き）。読み直すだけでよい。
+            onChanged();
+          }}
+          onCancel={() => setMaking(false)} />
+      )}
+
+      {making === "one" && (
         <ConditionCreateForm
           title={work
             ? `「${work.title}」の条件を1本作る`
@@ -203,7 +238,70 @@ export function MatterConditions(
 
       {error && <div className="alert">{error}</div>}
 
-      {detail.conditions.length ? (
+      {/* 業務委託は業務の束で見せる。委託料と、それに付く実費・手数料が1枚の
+          発注書に載る単位。契約や相手先が違えば別の束。 */}
+      {outsourcing && bundles.length > 0 && (
+        <div className="stack" style={{ gap: 10 }}>
+          {bundles.map((b) => {
+            const ids = b.conditions.map((c) => c.id);
+            const total = b.conditions.reduce((sum, c) => sum + (c.flatAmount ?? 0), 0);
+            return (
+              <div key={b.key} className="note" style={{ borderStyle: "solid" }}>
+                <div className="row" style={{ alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
+                  <b>業務 {b.no}：{b.title}</b>
+                  <span className="faint">
+                    {b.counterparty ?? "相手先なし"} ／ {b.agreement ?? "基本契約なし"}
+                    {b.conditions.length > 1 && ` ／ ${b.conditions.length} 本 合計 ${money(total, b.currency)}`}
+                  </span>
+                  {onCompose && (
+                    <span className="row" style={{ marginLeft: "auto", gap: 6 }}>
+                      <button className="btn btn-sm primary" disabled={busy}
+                              title="この業務の条件をすべて載せた発注書の下書きへ。経費・その他費用の欄に打った行は、決定のときに条件になってこの業務に繋がる"
+                              onClick={() => onCompose(ids, [], detail.id, "purchase_order")}>
+                        この業務で発注書を作る
+                      </button>
+                      <button className="btn btn-sm" disabled={busy}
+                              onClick={() => onCompose(ids, [], detail.id, "inspection_certificate")}>
+                        検収書を作る
+                      </button>
+                    </span>
+                  )}
+                </div>
+                <table style={{ marginTop: 6 }}>
+                  <thead><tr><th>条件番号</th><th>内容</th><th className="num">金額</th><th></th></tr></thead>
+                  <tbody>
+                    {b.conditions.map((c) => (
+                      <tr key={c.id}>
+                        <td className="code" style={{ whiteSpace: "nowrap" }}>
+                          <button className="btn btn-sm" onClick={() => onOpenCondition(c.id)}>
+                            {c.conditionNo ?? `#${c.id}`}
+                          </button>
+                        </td>
+                        <td style={{ width: "100%" }}>
+                          <span className="tag" style={{ marginRight: 6 }}>{CONDITION_KIND_LABEL[c.kind] ?? c.kind}</span>
+                          {c.name}{c.status !== "active" && <> <StatusTag kind="condition" value={c.status} /></>}
+                        </td>
+                        <td className="num" style={{ whiteSpace: "nowrap" }}>
+                          {c.pricingModel === "unit_rate" && c.unitAmount != null
+                            ? `${money(c.unitAmount, c.currency)} × ${c.quantity ?? "—"}`
+                            : c.flatAmount != null ? money(c.flatAmount, c.currency) : "—"}
+                          {c.kind === "expense" && <span className="faint">（税込）</span>}
+                        </td>
+                        <td style={{ whiteSpace: "nowrap" }}>
+                          <button className="btn btn-sm" disabled={busy}
+                            onClick={() => void detach(c.id, c.conditionNo ?? `#${c.id}`)}>外す</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {detail.conditions.length && !(outsourcing && bundles.length) ? (
         <table>
           <thead><tr><th>条件番号</th><th>種類</th><th>向き</th><th>内容</th><th></th></tr></thead>
           <tbody>
@@ -225,13 +323,51 @@ export function MatterConditions(
             ))}
           </tbody>
         </table>
-      ) : (
+      ) : !detail.conditions.length ? (
         <div className="faint">
-          まだ条件が繋がっていません。「条件を繋ぐ」から選ぶか、条件の画面で作ってください。
+          まだ条件が繋がっていません。
+          {outsourcing ? "「業務セットを登録」で委託料・実費・手数料を組で作るか、" : "「条件を繋ぐ」から選ぶか、"}
+          条件の画面で作ってください。
         </div>
-      )}
+      ) : null}
     </div>
   );
+}
+
+/** 業務の束。契約×相手先で1つ。委託料が先頭、実費・手数料が後ろ。 */
+interface ServiceBundle {
+  key: string; no: number; title: string;
+  counterparty: string | null; agreement: string | null; currency: string;
+  conditions: MatterDetail["conditions"];
+}
+
+const BUNDLE_ORDER: Record<string, number> = { service: 0, product: 0, license: 0, expense: 1, fee: 2 };
+
+/**
+ * 案件の条件を業務の束に分ける。委託料の条件が業務の顔で、同じ契約・同じ相手先の
+ * 実費・手数料はその下に付く。委託料の無い束（実費だけ繋いだ等）もそのまま出す。
+ */
+export function serviceBundles(conditions: MatterDetail["conditions"]): ServiceBundle[] {
+  const map = new Map<string, ServiceBundle>();
+  for (const c of conditions) {
+    const key = `${c.agreement?.id ?? "-"}:${c.counterparty?.id ?? "-"}`;
+    let b = map.get(key);
+    if (!b) {
+      b = { key, no: map.size + 1, title: "", counterparty: c.counterparty?.name ?? null,
+            agreement: c.agreement ? (c.agreement.title || c.agreement.agreementNo || null) : null,
+            currency: c.currency, conditions: [] };
+      map.set(key, b);
+    }
+    b.conditions.push(c);
+  }
+  for (const b of map.values()) {
+    b.conditions.sort((x, y) => (BUNDLE_ORDER[x.kind] ?? 9) - (BUNDLE_ORDER[y.kind] ?? 9) || x.id - y.id);
+    const heads = b.conditions.filter((c) => (BUNDLE_ORDER[c.kind] ?? 9) === 0);
+    const head = heads[0] ?? b.conditions[0];
+    // 同じ契約・相手先に委託料が何本もあれば、まとめて1枚の発注書に載る。
+    b.title = heads.length > 1 ? `${head.name} ほか ${heads.length - 1} 件` : head.name;
+  }
+  return [...map.values()];
 }
 
 export function MatterDocuments(

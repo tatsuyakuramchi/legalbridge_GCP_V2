@@ -917,6 +917,37 @@ export function createRoutes(database: Transactable) {
       agAmount: z.coerce.number().int().min(0).nullable().optional()
     })).min(1).max(5)
   });
+  /** 業務委託の条件を業務1つぶん（委託料＋実費＋手数料）まとめて登録する。 */
+  const serviceSetSchema = z.object({
+    matterId: z.coerce.number().int().positive().nullable().optional(),
+    title: z.string().trim().min(1).max(300),
+    counterpartyId: z.coerce.number().int().positive(),
+    agreementId: z.coerce.number().int().positive().nullable().optional(),
+    workId: z.coerce.number().int().positive().nullable().optional(),
+    termStart: z.string().date().nullable().optional(),
+    termEnd: z.string().date().nullable().optional(),
+    currency: z.string().trim().length(3).optional(),
+    taxCategory: z.enum(["taxable", "reduced", "exempt"]).optional(),
+    paymentTerms: z.string().trim().max(300).nullable().optional(),
+    contractForm: z.string().trim().max(60).nullable().optional(),
+    deliverableOwnership: z.enum(["orderer", "contractor"]).nullable().optional(),
+    rows: z.array(z.object({
+      kind: z.enum(["service", "expense", "fee"]),
+      name: z.string().trim().max(300).nullable().optional(),
+      pricingModel: z.enum(["fixed", "unit_rate"]).optional(),
+      flatAmount: z.coerce.number().int().min(0).nullable().optional(),
+      unitAmount: z.coerce.number().int().min(0).nullable().optional(),
+      quantity: z.coerce.number().nullable().optional(),
+      spec: z.string().trim().max(4000).nullable().optional(),
+      notes: z.string().trim().max(2000).nullable().optional()
+    })).min(1).max(20)
+  });
+  router.post("/conditions/service-set", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.status(201).json(await conditionWrites.createServiceSet(
+        serviceSetSchema.parse(req.body ?? {}), actor(res)));
+    }));
+
   router.post("/conditions/license-set", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       const input = licenseSetSchema.parse(req.body ?? {});

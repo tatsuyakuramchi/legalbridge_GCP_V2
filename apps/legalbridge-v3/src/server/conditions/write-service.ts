@@ -66,6 +66,35 @@ export interface LicenseSetResult {
   conditions: Array<{ usageType: ConditionUsageType; id: number; conditionNo: string | null }>;
 }
 
+/** 業務セット（業務委託）の1行。委託料・実費・手数料。 */
+export interface ServiceSetRow {
+  kind: "service" | "expense" | "fee";
+  /** 空なら業務名から付ける（「◯◯ 実費」）。 */
+  name?: string | null;
+  pricingModel?: "fixed" | "unit_rate";
+  flatAmount?: number | null;
+  unitAmount?: number | null;
+  quantity?: number | null;
+  spec?: string | null;
+  notes?: string | null;
+}
+export interface ServiceSetInput {
+  matterId?: number | null;
+  /** 業務名。委託料の条件名。 */
+  title: string;
+  counterpartyId: number;
+  agreementId?: number | null;
+  workId?: number | null;
+  termStart?: string | null;
+  termEnd?: string | null;
+  currency?: string;
+  taxCategory?: "taxable" | "reduced" | "exempt";
+  paymentTerms?: string | null;
+  contractForm?: string | null;
+  deliverableOwnership?: "orderer" | "contractor" | null;
+  rows: ServiceSetRow[];
+}
+
 /**
  * 単価と個数を入れてあれば、定額は掛けて出す。入れた額があればそちらが勝つ
  * （端数の調整や「一式で値引き」を潰さない）。文書の明細の金額欄と同じ扱い。
@@ -217,7 +246,7 @@ export class ConditionWriteService {
   async create(input: ConditionInput, actor: string): Promise<{ id: number; conditionNo: string | null }> {
     validateConditionInput(input);
     try {
-      return await inTransaction(this.database, (client) => this.createIn(client, input, actor));
+      return await inTransaction(this.database, (client) => this.createWithin(client, input, actor));
     } catch (error) { throw translate(error); }
   }
 
@@ -301,7 +330,7 @@ export class ConditionWriteService {
         }
         const out: LicenseSetResult = { conditions: [] };
         for (const [index, one] of inputs.entries()) {
-          const created = await this.createIn(client, one, actor);
+          const created = await this.createWithin(client, one, actor);
           out.conditions.push({ usageType: rows[index].usageType, ...created });
         }
         return out;
@@ -329,8 +358,60 @@ export class ConditionWriteService {
     return { print: pick("pub_print"), digital: pick("pub_digital") };
   }
 
-  /** 条件1本の INSERT。トランザクションは呼ぶ側が持つ。 */
-  private async createIn(client: Queryable, input: ConditionInput, actor: string)
+  /**
+   * 業務委託の条件を業務1つぶんまとめて登録する。委託料（定額／単価×数量）に
+   * 実費・手数料を足して N 本。同じトランザクションで作り、案件にも繋ぐ。
+   * 発注書はこの組を1枚に載せる。
+   */
+  async createServiceSet(input: ServiceSetInput, actor: string): Promise<LicenseSetResult> {
+    const title = String(input.title ?? "").trim();
+    if (!title) throw new DomainError("VALIDATION", "業務名（委託料の条件名）は必須です");
+    const rows = (input.rows ?? []).filter((r) => r && r.kind);
+    if (!rows.some((r) => r.kind === "service")) {
+      throw new DomainError("VALIDATION", "委託料の行を1つ入れてください（実費・手数料だけの業務は作れません）");
+    }
+    const inputs = rows.map((row): ConditionInput => {
+      const pricing = row.pricingModel ?? "fixed";
+      return {
+        matterId: input.matterId ?? null,
+        name: String(row.name ?? "").trim() || (row.kind === "service" ? title
+          : row.kind === "expense" ? `${title} 実費` : `${title} 手数料`),
+        direction: "in",
+        kind: row.kind,
+        counterpartyId: input.counterpartyId,
+        agreementId: input.agreementId ?? null,
+        workId: input.workId ?? null,
+        termStart: input.termStart ?? null,
+        termEnd: input.termEnd ?? null,
+        currency: input.currency ?? "JPY",
+        pricingModel: pricing,
+        flatAmount: row.flatAmount ?? null,
+        unitAmount: row.unitAmount ?? null,
+        quantity: row.quantity ?? null,
+        // 経費は税込の実費で受けるので消費税を重ねない。
+        taxCategory: row.kind === "expense" ? "exempt" : (input.taxCategory ?? "taxable"),
+        paymentTerms: input.paymentTerms ?? null,
+        contractForm: row.kind === "service" ? (input.contractForm ?? null) : null,
+        spec: row.spec ?? null,
+        deliverableOwnership: row.kind === "service" ? (input.deliverableOwnership ?? null) : null,
+        notes: row.notes ?? null
+      };
+    });
+    for (const one of inputs) validateConditionInput(one);
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const out: LicenseSetResult = { conditions: [] };
+        for (const [index, one] of inputs.entries()) {
+          const made = await this.createWithin(client, one, actor);
+          out.conditions.push({ usageType: rows[index].kind as unknown as ConditionUsageType, ...made });
+        }
+        return out;
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /** 条件1本の INSERT。トランザクションは呼ぶ側が持つ（セット登録・文書の決定から使う）。 */
+  async createWithin(client: Queryable, input: ConditionInput, actor: string)
     : Promise<{ id: number; conditionNo: string | null }> {
     const name = String(input.name ?? "").trim();
     const pricing = input.pricingModel ?? "none";

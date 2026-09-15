@@ -22,6 +22,7 @@ import { isLicenseTermsTemplate, licenseTermsPatch, licenseTermsSeeds,
 import { PUB_TITLES_FIELD, isPubTermsTemplate, pubTermsPatch, pubTermsSuggestions,
          pubTermsWarnings, pubTitleSeeds } from "./pub-terms.js";
 import type { Warning } from "./preflight.js";
+import { expenseLinesFrom, feeLinesFrom, isSettlementKind } from "./settlement-conditions.js";
 import { calcMethodFor, ownershipLabelOf, rewardLabelFor } from "../core/reward.js";
 import { contractFormFor } from "../conditions/contract-form.js";
 
@@ -66,6 +67,10 @@ export function seedLines(templateKey: string, context: Ctx): Record<string, Row
     out[name] = name === "items" ? orderLinesFrom(context)
       : name === "delivery_line_items" ? deliveryLinesFrom(context)
       : name === "rs_line_labels" ? statementLabelRows(context)
+      // 手数料・経費は繋がっている fee / expense の条件から。決定のときに行から
+      // 作った条件が、作り直しでも同じ行として戻る。
+      : name === "other_fees" ? feeLinesFrom((context.conditions ?? []) as Ctx[])
+      : name === "expenses" ? expenseLinesFrom((context.conditions ?? []) as Ctx[])
       : [];
   }
   return out;
@@ -249,7 +254,9 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
  * （condition_schedules）。予定を持たない条件は総額を1行にする。
  */
 export function orderLinesFrom(context: Ctx): Row[] {
-  const schedules = (context.schedules ?? []) as Ctx[];
+  const settlementIds = new Set(((context.conditions ?? []) as Ctx[])
+    .filter((c) => isSettlementKind(c.kind)).map((c) => c.id));
+  const schedules = ((context.schedules ?? []) as Ctx[]).filter((s) => !settlementIds.has(s.conditionId));
   if (schedules.length) {
     return schedules.map((s) => {
       const condition = (context.conditions ?? []).find((c: Ctx) => c.id === s.conditionId)
@@ -280,7 +287,10 @@ export function orderLinesFrom(context: Ctx): Row[] {
   // 定額を持たないので1行も出ず、品目名も仕様も空のまま、金額 ¥0 の行だけが
   // 残る発注書になっていた。人がその条件を選んでいる以上、何を頼んだのかは
   // 紙に出さないといけない。金額が無いのは、フォームが「未入力」として出す。
-  return (context.conditions ?? [])
+  // 手数料・経費の条件は別の表（その他手数料・経費）に出す。品目に混ぜると
+  // 同じ額が2回載る。
+  return ((context.conditions ?? []) as Ctx[])
+    .filter((c) => !isSettlementKind(c.kind))
     .map((c: Ctx) => ({
       item_name: c.name ?? "",
       spec: specOf(c),

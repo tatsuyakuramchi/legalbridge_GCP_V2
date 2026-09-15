@@ -10,6 +10,8 @@ import { buildTemplateContext, seedLines, suggestionsFor, templateWarnings } fro
 import { resolveAllLegacyVariables } from "./legacy-variables.js";
 import { buildCandidates, type Candidate } from "./candidates.js";
 import { currentYearInTokyo, formatDocumentNumber, nextSequence, normalizePrefix } from "./numbering.js";
+import { materializeSettlementRows } from "./settlement-conditions.js";
+import { ConditionWriteService } from "../conditions/write-service.js";
 
 export interface DraftInput {
   templateKey: string;
@@ -64,10 +66,12 @@ export interface IssuedDocument {
 export class DocumentIssueService {
   private readonly repository: DocumentRepository;
   private readonly contexts: DocumentContextRepository;
+  private readonly conditionWrites: ConditionWriteService;
 
   constructor(private readonly database: Transactable) {
     this.repository = new DocumentRepository(database);
     this.contexts = new DocumentContextRepository(database);
+    this.conditionWrites = new ConditionWriteService(database);
   }
 
   /** 発行せずに中身を確認する。必須の未入力もここで分かる。 */
@@ -237,6 +241,18 @@ export class DocumentIssueService {
         const conditionIds = linked.rows.map((c) => Number((c as { condition_id: number }).condition_id));
         await this.assertConditionsIssuable(client, conditionIds);
 
+        // 発注書・検収書の手数料・経費の行で、条件の無いものは条件にする。
+        // 台帳に無い行が紙にだけ残ると、実績も支払も付けられない。
+        const settled = await materializeSettlementRows(client, this.conditionWrites, {
+          documentId, templateKey: template.templateKey, matterId: int(row.matter_id),
+          conditionIds, manual: (row.manual_inputs as Record<string, unknown>) ?? {}
+        }, actor);
+        if (settled.created.length) {
+          await client.query("UPDATE documents SET manual_inputs = $2::jsonb WHERE id = $1",
+            [documentId, JSON.stringify(settled.manual)]);
+          conditionIds.push(...settled.created.map((c) => c.id));
+        }
+
         // 部分テンプレートは他のひな形に差し込む断片で、それ自体は書類ではない
         // （発注書の末尾に付く約款など）。採番の話になる前に断る。
         if (template.category === "partial") {
@@ -259,7 +275,7 @@ export class DocumentIssueService {
           eventIds: extra.eventIds ?? [],
           royalty: extra.royalty ?? null
         }, documentNo);
-        const manual = (row.manual_inputs as Record<string, unknown>) ?? {};
+        const manual = settled.manual;
         // プレビューと同じ順で組む。先に一度束縛して、項目に入った値も
         // 計算ブロックへ渡す（条件書の見出しは項目の値そのもの）。
         const first = bindVariables(template.variables, context, manual,
@@ -301,6 +317,7 @@ export class DocumentIssueService {
         await recordAudit(client, {
           actor, action: "document.issue", targetType: "document", targetId: documentId,
           detail: { documentNo, templateKey: template.templateKey, conditions: conditionIds,
+                    ...(settled.created.length ? { createdConditions: settled.created } : {}),
                     ...(supersedes ? { supersedes } : {}) }
         });
 

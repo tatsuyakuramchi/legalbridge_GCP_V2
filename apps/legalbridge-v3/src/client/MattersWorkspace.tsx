@@ -57,7 +57,8 @@ export function MattersWorkspace(
     /** 文書の画面へ移って、その文書を開く。 */
     onOpenDocument?: (documentId: number) => void;
     /** 文書の画面へ移って、この案件の条件を選んだ状態で作成に入る。 */
-    onCompose?: (conditionIds: number[], eventIds?: number[], matterId?: number | null) => void;
+    onCompose?: (conditionIds: number[], eventIds?: number[], matterId?: number | null,
+                 templateKey?: string | null) => void;
     /** 発注書の一括作成（CSV）へ、この案件を決めた状態で移る。 */
     onBulkOrders?: (matterId: number) => void;
   }
@@ -402,7 +403,7 @@ export function MattersWorkspace(
                   {tab === "conditions" && (
                     <div className="stack">
                       <MatterConditions detail={detail} onChanged={relink}
-                        onOpenCondition={onOpenCondition} />
+                        onOpenCondition={onOpenCondition} onCompose={onCompose} />
                       {/* 取引モデルが何本あっても計算書は1枚。条件ごとに1枚ずつ
                           出す口しか無く、束ねる手段が画面にもサーバにも無かった。 */}
                       <MatterStatement detail={detail}

@@ -13,6 +13,7 @@ import { conditionAmountLabel, dealModelLabel, isLicenseCondition } from "./Cond
 import { ConditionCreateForm } from "./ConditionCreateForm.js";
 import { PubConditionSetForm } from "./PubConditionSetForm.js";
 import { LicenseSetForm } from "./LicenseSetForm.js";
+import { ServiceSetForm } from "./ServiceSetForm.js";
 import type { ConditionDetail, ConditionSummary, EnvelopeCheck, RightsEnvelope } from "../server/core/model.js";
 import { api, ApiError, money, rate } from "./api.js";
 import { CreateForm, int, text } from "./CreateForm.js";
@@ -62,7 +63,7 @@ export function ConditionsWorkspace(
   const [error, setError] = useState<string | null>(null);
   const [sales, setSales] = useState("");
   const [royalty, setRoyalty] = useState<RoyaltyPreview | null>(null);
-  const [creating, setCreating] = useState<false | "one" | "publishing" | "license">(false);
+  const [creating, setCreating] = useState<false | "one" | "publishing" | "license" | "service">(false);
   const [keyword, setKeyword] = useState("");
   const [editing, setEditing] = useState(false);
   const search = useDebounced(keyword);
@@ -225,6 +226,12 @@ export function ConditionsWorkspace(
             出版セットを登録（紙・電子）
           </button>
         )}
+        {!creating && (
+          <button className="btn btn-sm" onClick={() => setCreating("service")}
+                  title="業務委託の委託料に実費・手数料を組にして1回で作る。発注書はこの組を1枚に載せる">
+            業務セットを登録（業務委託）
+          </button>
+        )}
       </div>
 
       {creating === "one" && (
@@ -235,6 +242,11 @@ export function ConditionsWorkspace(
       {creating === "publishing" && (
         <PubConditionSetForm
           onDone={(r) => { setCreating(false); reload((r.print ?? r.digital)?.id); }}
+          onCancel={() => setCreating(false)} />
+      )}
+      {creating === "service" && (
+        <ServiceSetForm
+          onDone={(r) => { setCreating(false); reload(r.conditions[0]?.id); }}
           onCancel={() => setCreating(false)} />
       )}
       {creating === "license" && (
