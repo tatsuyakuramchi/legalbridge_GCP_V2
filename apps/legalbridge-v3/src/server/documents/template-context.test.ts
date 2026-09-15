@@ -496,3 +496,35 @@ test("手数料・経費の条件は品目に混ぜず、その他手数料・�
   assert.equal(withSchedules.length, 1);
   assert.equal(withSchedules[0].amount_ex_tax, 100000);
 });
+
+test("実績を選ばず条件を2本（委託料と実費）載せた検収書は、委託料が明細の行、実費は経費の表", () => {
+  const conditions = [
+    { id: 1, name: "9月 ジャッジ業務", flatAmount: 11818, pricingModel: "fixed", taxCategory: "taxable", kind: "service",
+      termEnd: "2026-09-06" },
+    { id: 2, name: "交通費", flatAmount: 334, pricingModel: "fixed", taxCategory: "exempt", kind: "expense" }
+  ];
+  const lines = deliveryLinesFrom(ctx({ events: [], conditions })) as Array<Record<string, any>>;
+  assert.equal(lines.length, 1, "以前は条件が1本のときしか行を作らず、単票の枝に落ちていた");
+  assert.equal(lines[0].item_name, "9月 ジャッジ業務");
+  assert.equal(lines[0].amount_ex_tax, 11818);
+  assert.equal(lines[0].delivery_date, "2026-09-06");
+  const seeds = seedLines("inspection_certificate", ctx({ events: [], conditions }));
+  assert.equal(seeds.delivery_line_items.length, 1);
+  assert.deepEqual(seeds.expenses.map((r) => [r.expense_name, r.amount_inc_tax]), [["交通費", 334]]);
+  // 行があるので消費税と検収金額も計算される（単票の枝では空だった）。
+  const c = buildTemplateContext("inspection_certificate", ctx({ events: [], conditions }),
+    { delivery_line_items: seeds.delivery_line_items, expenses: seeds.expenses });
+  assert.equal(c.deliveredAmountStr, "11,818");
+  assert.equal(c.taxAmountStr, "1,182");
+  assert.equal(c.totalAmountStr, "13,000");
+  assert.equal(c.grandTotalPayableStr, "13,334", "経費は税込のまま足す");
+});
+
+test("委託料が2本なら2行。定額の無い条件は行にしない", () => {
+  const lines = deliveryLinesFrom(ctx({ events: [], conditions: [
+    { id: 1, name: "第1回", flatAmount: 100000, pricingModel: "fixed", taxCategory: "taxable", kind: "service" },
+    { id: 2, name: "第2回", flatAmount: 180000, pricingModel: "fixed", taxCategory: "taxable", kind: "service" },
+    { id: 3, name: "未定", flatAmount: null, pricingModel: "none", taxCategory: "taxable", kind: "service" }
+  ] })) as Array<Record<string, any>>;
+  assert.deepEqual(lines.map((l) => [l.item_name, l.amount_ex_tax]), [["第1回", 100000], ["第2回", 180000]]);
+});

@@ -1751,13 +1751,19 @@ export function createRoutes(database: Transactable) {
           AND ($2 = '' OR title ILIKE $3 OR COALESCE(agreement_no, '') ILIKE $3)
         ORDER BY executed_on DESC NULLS LAST, id DESC LIMIT 10`,
       [partyId, q, like]) : { rows: [] as Array<Record<string, any>> };
+    // 欄が番号の欄（発注番号・契約番号）なら、件名ではなく番号を並べる。
+    // 発注番号の欄に「◯◯ の件名」が並んでも入れるものが無い。
+    const wantsNumber = /番号|number|_no$|No$|po_no|parent_po/i.test(field);
+    // 発注番号の欄なら発注書を先に。検収書の親 PO はいつも発注書。
+    const wantsOrder = /発注|po_|_po|purchase|order/i.test(field);
     const docs = partyId ? await database.query(
       `SELECT document_no, title, template_label
          FROM v_document_display
-        WHERE counterparty_id = $1 AND status <> 'void'
+        WHERE counterparty_id = $1 AND status NOT IN ('void', 'superseded')
           AND ($2 = '' OR title ILIKE $3 OR COALESCE(document_no, '') ILIKE $3)
-        ORDER BY issued_at DESC NULLS LAST, document_id DESC LIMIT 10`,
-      [partyId, q, like]) : { rows: [] as Array<Record<string, any>> };
+        ORDER BY ($4 AND COALESCE(template_label, '') LIKE '%発注%') DESC,
+                 issued_at DESC NULLS LAST, document_id DESC LIMIT 10`,
+      [partyId, q, like, wantsOrder]) : { rows: [] as Array<Record<string, any>> };
 
     /**
      * 前回この欄に入れた文言。
@@ -1801,17 +1807,19 @@ export function createRoutes(database: Transactable) {
     // 番号は打って絞ったときだけ出す。空で開いたときは「何があるか」を
     // 見せる場面で、番号まで並べると件名が埋もれる（計算書は毎期出るので
     // 同じ件名の番号が10個並ぶ）。
-    const withNumbers = q.length > 0;
+    const withNumbers = q.length > 0 || wantsNumber;
     for (const r of agreements.rows as Array<Record<string, any>>) {
       const no = r.agreement_no ? String(r.agreement_no) : "番号なし";
-      once("契約", `${no} の件名`, r.title);
+      if (!wantsNumber) once("契約", `${no} の件名`, r.title);
       if (withNumbers) once("契約", `${r.title ?? no} の番号`, r.agreement_no);
     }
     for (const r of docs.rows as Array<Record<string, any>>) {
       const no = r.document_no ? String(r.document_no) : "（下書き）";
       const kind = r.template_label ? String(r.template_label) : "文書";
-      once("文書", `${no}（${kind}）の件名`, r.title);
-      if (withNumbers) once("文書", `${r.title ?? kind} の文書番号`, r.document_no);
+      if (!wantsNumber) once("文書", `${no}（${kind}）の件名`, r.title);
+      // 番号の札は「発注書 ARC-PO-…」のように種類と番号で。件名を頭に置くと
+      // 同じ件名の発注書が何枚もあるとき見分けられない。
+      if (withNumbers) once("文書", `${kind}（${String(r.title ?? "").slice(0, 24)}）の文書番号`, r.document_no);
     }
     for (const r of staff.rows as Array<Record<string, any>>) {
       push("スタッフ", `${r.name} の氏名`, r.name);

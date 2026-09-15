@@ -219,9 +219,12 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
       };
     });
   }
-  const condition = singleCondition(context);
-  if (!condition || !condition.flatAmount) return [];
-  return [{
+  // 実績を選んでいなければ、載せた条件を1本1行にする（手数料・経費は別の表）。
+  // 以前は条件が1本のときしか行を作らず、委託料と実費の2本を載せると行が
+  // 0 になってひな形の単票の枝（列の数が見出しと合わない古い行）に落ちていた。
+  return ((context.conditions ?? []) as Ctx[])
+    .filter((c) => !isSettlementKind(c.kind) && num(c.flatAmount) > 0)
+    .map((condition) => ({
     item_name: condition.name ?? "",
     spec: specOf(condition),
     description: specOf(condition),
@@ -243,8 +246,8 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
     tax_category: condition.taxCategory ?? "taxable",
     inspection_status: "now",
     calc_method: calcMethodOf(condition),
-        reward_label: rewardLabelOf(condition)
-  }];
+    reward_label: rewardLabelOf(condition)
+  }));
 }
 
 /**
