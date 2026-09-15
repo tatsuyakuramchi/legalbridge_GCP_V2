@@ -59,13 +59,18 @@ export interface ConditionListQuery {
   workId?: number;
   matterId?: number;
   limit?: number;
+  /**
+   * 無効化した条件も出す。既定では出さない（使わないものが一覧に混ざる）が、
+   * 削除は無効化 → 削除の2段階なので、無効化したものを見る道が無いと消せない。
+   */
+  includeVoid?: boolean;
 }
 
 export class ConditionRepository {
   constructor(private readonly database: Transactable) {}
 
   async list(query: ConditionListQuery = {}): Promise<ConditionSummary[]> {
-    const where: string[] = ["c.status <> 'void'"];
+    const where: string[] = query.includeVoid ? ["true"] : ["c.status <> 'void'"];
     const params: unknown[] = [];
     const add = (clause: string, value: unknown) => { params.push(value); where.push(clause.replace("$?", `$${params.length}`)); };
 

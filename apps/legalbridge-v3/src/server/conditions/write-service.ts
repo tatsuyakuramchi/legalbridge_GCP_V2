@@ -400,6 +400,116 @@ export class ConditionWriteService {
    * conditions を status='active' で絞っている8箇所が同じ条件を二重に数える。
    */
   /** データベースの今日。アプリの時計と食い違わせない（時差で1日ずれる）。 */
+  /**
+   * 条件の無効化。削除の1段目。
+   *
+   * 行は消さない。状態を void にして理由を残す。無効化した条件は一覧・
+   * アウト条件の候補・文書作成から消え、編集も実績の追加もできなくなる。
+   * 発行済みの文書や支払は、この条件を今までどおり指し続ける（紙に出た
+   * 事実は変わらない）。
+   *
+   * 消してよいかどうかは、この段階では問わない。参照があっても無効化は
+   * できる。参照の無いものだけが、次の段（remove）で本当に消える。
+   */
+  async void(id: number, reason: string, actor: string): Promise<WriteResult> {
+    const why = String(reason ?? "").trim();
+    if (!why) throw new DomainError("VALIDATION", "無効化の理由は必須です");
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const before = await this.repository.requireExisting(client, id);
+        if (before.status === "void") throw new DomainError("CONFLICT", "すでに無効化されています");
+        if (before.status === "superseded") {
+          throw new DomainError("CONFLICT",
+            "旧版の条件は無効化できません。最新版を無効化してください");
+        }
+        await client.query(
+          `UPDATE conditions
+              SET status = 'void',
+                  notes = concat_ws(E'\n', NULLIF(notes, ''), $2::text),
+                  updated_at = now()
+            WHERE id = $1`,
+          [id, `無効化：${why}`]);
+        await recordAudit(client, {
+          actor, action: "condition.void", targetType: "condition", targetId: id,
+          detail: { reason: why, conditionNo: before.condition_no, was: before.status }
+        });
+        return {
+          changed: [{ target: "conditions（無効化）", rows: 1 }],
+          resolvesThrough: await this.countReferences(client, id)
+        };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 条件の削除。削除の2段目。
+   *
+   * 無効化してあるものだけを消す（無効化 → 削除の2段階）。いきなり消せる
+   * 作りにすると、押し間違いが取り返せない。
+   *
+   * 何かがこの条件を指していれば消さない。文書・支払・計算書・実績・案件・
+   * 派生条件・他の実績のアウト条件・改訂の系譜。どれも、消すと指す先を
+   * 失う。何が指しているかを返し、人が判断できるようにする。
+   * 予定明細と許諾範囲は条件の一部なので一緒に消える（ON DELETE CASCADE）。
+   */
+  async remove(id: number, actor: string): Promise<{ deleted: true; conditionNo: string | null }> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const before = await this.repository.requireExisting(client, id);
+        if (before.status !== "void") {
+          throw new DomainError("VALIDATION",
+            "先に無効化してください（無効化 → 削除の2段階）。無効化すると一覧から消え、" +
+            "何も指していなければ削除できます");
+        }
+        const blockers = await this.countDeleteBlockers(client, id);
+        if (blockers.length) {
+          throw new DomainError("CONFLICT",
+            "この条件を指しているものがあるので削除できません：" +
+            blockers.map((b) => `${b.target} ${b.rows} 件`).join("、") +
+            "。無効化のままにしておいてください");
+        }
+        await client.query("DELETE FROM conditions WHERE id = $1", [id]);
+        await recordAudit(client, {
+          actor, action: "condition.delete", targetType: "condition", targetId: id,
+          detail: { conditionNo: before.condition_no }
+        });
+        return { deleted: true, conditionNo: before.condition_no };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 削除を止めるもの。countReferences より広い。
+   * あちらは「表示が追随するもの」を数える。こちらは「消すと指す先を失うもの」。
+   * 取り消した実績も数える。取り消しの記録がこの条件を指しているため。
+   */
+  private async countDeleteBlockers(client: Queryable, id: number) {
+    const r = await client.query(
+      `SELECT
+         (SELECT count(*)::int FROM condition_events WHERE condition_id = $1)                   AS events,
+         (SELECT count(*)::int FROM condition_events WHERE out_condition_id = $1)               AS out_refs,
+         (SELECT count(*)::int FROM document_conditions WHERE condition_id = $1)                AS documents,
+         (SELECT count(*)::int FROM payment_allocations WHERE condition_id = $1)                AS payments,
+         (SELECT count(*)::int FROM statements WHERE condition_id = $1)                         AS statements,
+         (SELECT count(*)::int FROM statement_lines WHERE condition_id = $1)                    AS statement_lines,
+         (SELECT count(*)::int FROM matter_links
+           WHERE target_type = 'condition' AND target_ref = $1::text)                           AS matters,
+         (SELECT count(*)::int FROM conditions WHERE parent_id = $1)                            AS children,
+         (SELECT count(*)::int FROM conditions WHERE superseded_by_id = $1)                     AS older_versions`,
+      [id]);
+    const row = r.rows[0] as Record<string, number>;
+    return [
+      { target: "実績", rows: Number(row.events ?? 0) },
+      { target: "この条件をアウト条件にした実績", rows: Number(row.out_refs ?? 0) },
+      { target: "文書", rows: Number(row.documents ?? 0) },
+      { target: "支払の割当", rows: Number(row.payments ?? 0) },
+      { target: "計算書", rows: Number(row.statements ?? 0) + Number(row.statement_lines ?? 0) },
+      { target: "案件", rows: Number(row.matters ?? 0) },
+      { target: "派生した条件", rows: Number(row.children ?? 0) },
+      { target: "この版に改訂された旧版", rows: Number(row.older_versions ?? 0) }
+    ].filter((entry) => entry.rows > 0);
+  }
+
   private async today(client: Queryable): Promise<string> {
     const r = await client.query("SELECT current_date AS d");
     return String(dateStr((r.rows[0] as { d: unknown }).d));

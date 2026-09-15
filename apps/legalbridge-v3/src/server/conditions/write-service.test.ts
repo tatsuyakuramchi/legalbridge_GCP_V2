@@ -192,3 +192,75 @@ test("作品と独占性も編集で直せる。無い作品は断る", async ()
   await assert.rejects(
     () => new ConditionWriteService(db).updateEconomics(1, { workId: 404 }, "tester"), /作品 404 が見つかりません/);
 });
+
+// ---- 無効化 → 削除 -----------------------------------------------------
+
+const deleteRows = (
+  over: { status?: string; blockers?: Record<string, number> } = {}
+) => (text: string): Array<Record<string, unknown>> | undefined => {
+  if (text.includes("FROM conditions WHERE id = $1 FOR UPDATE")) {
+    return [{ id: 1, condition_no: "CL-2026-00042", status: over.status ?? "active",
+              counterparty_id: 3, currency: "JPY", series_id: 1, effective_from: null }];
+  }
+  if (text.includes("AS older_versions")) {
+    return [{ events: 0, out_refs: 0, documents: 0, payments: 0, statements: 0,
+              statement_lines: 0, matters: 0, children: 0, older_versions: 0, ...over.blockers }];
+  }
+  if (text.includes("AS documents")) return [{ documents: 0, payments: 0, matters: 0, children: 0 }];
+  if (text.includes("UPDATE conditions")) return [{ id: 1 }];
+  return undefined;
+};
+
+test("無効化は行を残し、理由を備考に足す", async () => {
+  const db = new FakeDatabase(deleteRows());
+  const result = await new ConditionWriteService(db).void(1, "登録ミス", "tester");
+  const update = db.find("SET status = 'void'");
+  assert.ok(update, "状態を変えるだけで消さない");
+  assert.deepEqual(update!.params, [1, "無効化：登録ミス"]);
+  assert.equal(db.all("DELETE FROM conditions").length, 0);
+  assert.deepEqual(result.changed, [{ target: "conditions（無効化）", rows: 1 }]);
+  const audit = db.find("INSERT INTO audit_events");
+  assert.equal(audit!.params[1], "condition.void");
+});
+
+test("理由なしでは無効化できない", async () => {
+  const db = new FakeDatabase(deleteRows());
+  await assert.rejects(() => new ConditionWriteService(db).void(1, " ", "t"), /理由は必須/);
+});
+
+test("旧版と無効化済みは無効化できない", async () => {
+  await assert.rejects(
+    () => new ConditionWriteService(new FakeDatabase(deleteRows({ status: "superseded" }))).void(1, "x", "t"),
+    /最新版を無効化/);
+  await assert.rejects(
+    () => new ConditionWriteService(new FakeDatabase(deleteRows({ status: "void" }))).void(1, "x", "t"),
+    /すでに無効化/);
+});
+
+test("削除は無効化済みで、何も指していないものだけ", async () => {
+  // 2段階。いきなり消せる作りにすると押し間違いが取り返せない。
+  const active = new FakeDatabase(deleteRows({ status: "active" }));
+  await assert.rejects(() => new ConditionWriteService(active).remove(1, "t"), /先に無効化/);
+  assert.equal(active.all("DELETE FROM conditions").length, 0);
+
+  const voided = new FakeDatabase(deleteRows({ status: "void" }));
+  const result = await new ConditionWriteService(voided).remove(1, "t");
+  assert.deepEqual(result, { deleted: true, conditionNo: "CL-2026-00042" });
+  assert.ok(voided.find("DELETE FROM conditions WHERE id = $1"));
+  assert.equal(voided.find("INSERT INTO audit_events")!.params[1], "condition.delete");
+});
+
+test("指しているものがあれば消さず、何が指しているかを言う", async () => {
+  // 取り消した実績も数える。取り消しの記録がこの条件を指している。
+  const db = new FakeDatabase(deleteRows({
+    status: "void", blockers: { events: 2, documents: 1, out_refs: 1, older_versions: 1 }
+  }));
+  await assert.rejects(() => new ConditionWriteService(db).remove(1, "t"), (e: DomainError) => {
+    assert.match(e.message, /実績 2 件/);
+    assert.match(e.message, /文書 1 件/);
+    assert.match(e.message, /アウト条件にした実績 1 件/);
+    assert.match(e.message, /改訂された旧版 1 件/);
+    return true;
+  });
+  assert.equal(db.all("DELETE FROM conditions").length, 0);
+});

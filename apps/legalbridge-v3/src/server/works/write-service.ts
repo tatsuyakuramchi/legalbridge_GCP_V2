@@ -29,6 +29,35 @@ export interface WorkPartInput {
 
 const NUMBER = { prefix: "WRK", table: "works", column: "work_code" };
 
+export interface WorkPatch {
+  title?: string;
+  titleKana?: string | null;
+  kind?: WorkKind;
+  businessLine?: string | null;
+  status?: WorkStatus;
+  remarks?: string | null;
+}
+
+export interface WorkPartPatch {
+  name?: string;
+  partType?: string;
+  royaltyBearing?: boolean;
+  remarks?: string | null;
+  partNo?: number;
+}
+
+const WORK_COLUMNS: Record<keyof WorkPatch, string> = {
+  title: "title", titleKana: "title_kana", kind: "kind", businessLine: "business_line",
+  status: "status", remarks: "remarks"
+};
+const PART_COLUMNS: Record<keyof WorkPartPatch, string> = {
+  name: "name", partType: "part_type", royaltyBearing: "royalty_bearing",
+  remarks: "remarks", partNo: "part_no"
+};
+
+/** 原作（Core Logic）と作品の親子。関係の種類は1つに固定する。 */
+const SOURCE_RELATION = "derivative";
+
 export class WorkWriteService {
   constructor(private readonly database: Transactable) {}
 
@@ -68,6 +97,211 @@ export class WorkWriteService {
         return { id, workCode: row.work_code };
       });
     } catch (error) { throw translate(error); }
+  }
+
+  /** 作品の本体の編集。題名・カナ・種別・事業区分・状態・備考。 */
+  async update(id: number, patch: WorkPatch, actor: string): Promise<{ id: number }> {
+    const entries = (Object.keys(patch) as Array<keyof WorkPatch>)
+      .filter((key) => patch[key] !== undefined)
+      .map((key) => ({ column: WORK_COLUMNS[key], value: patch[key] as unknown }));
+    if (!entries.length) throw new DomainError("VALIDATION", "変更する項目がありません");
+    if (patch.title !== undefined && !String(patch.title).trim()) {
+      throw new DomainError("VALIDATION", "作品名は必須です");
+    }
+    try {
+      return await inTransaction(this.database, async (client) => {
+        await this.requireWork(client, id);
+        const sets = entries.map((e, i) => `${e.column} = $${i + 2}`).join(", ");
+        await client.query(
+          `UPDATE works SET ${sets}, updated_at = now() WHERE id = $1`,
+          [id, ...entries.map((e) => e.value)]);
+        await recordAudit(client, {
+          actor, action: "work.update", targetType: "work", targetId: id, detail: { patch }
+        });
+        return { id };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 原作（Core Logic）の付け替え。
+   *
+   * 原作 N に対して作品 N。この作品の「親」の集合を、渡されたものに置き換える。
+   * 自分自身や、自分の子孫を親にはできない（系譜が輪になる）。
+   */
+  async setSources(id: number, parentIds: number[], actor: string): Promise<{ id: number; sources: number[] }> {
+    const wanted = [...new Set(parentIds.map(Number).filter((n) => Number.isFinite(n) && n > 0))];
+    try {
+      return await inTransaction(this.database, async (client) => {
+        await this.requireWork(client, id);
+        if (wanted.includes(id)) throw new DomainError("VALIDATION", "自分自身を原作にはできません");
+        if (wanted.length) {
+          const found = await client.query(
+            "SELECT id FROM works WHERE id = ANY($1::bigint[])", [wanted]);
+          const known = new Set((found.rows as Array<{ id: unknown }>).map((r) => Number(r.id)));
+          const missing = wanted.filter((p) => !known.has(p));
+          if (missing.length) {
+            throw new DomainError("NOT_FOUND", `作品 ${missing.join("・")} が見つかりません`);
+          }
+          // 輪の検査。候補の親から上へ辿って、この作品に戻ってきたら輪。
+          const loop = await client.query(
+            `WITH RECURSIVE up AS (
+               SELECT parent_work_id AS wid, 0 AS depth FROM work_lineage
+                WHERE child_work_id = ANY($1::bigint[])
+               UNION
+               SELECT l.parent_work_id, up.depth + 1 FROM work_lineage l
+                 JOIN up ON l.child_work_id = up.wid
+                WHERE up.depth < 20
+             )
+             SELECT 1 FROM up WHERE wid = $2 LIMIT 1`, [wanted, id]);
+          if (loop.rows[0]) {
+            throw new DomainError("VALIDATION",
+              "その作品はこの作品から派生しているので、原作にはできません（系譜が輪になります）");
+          }
+        }
+        await client.query(
+          "DELETE FROM work_lineage WHERE child_work_id = $1 AND relation_type = $2",
+          [id, SOURCE_RELATION]);
+        for (const parent of wanted) {
+          await client.query(
+            `INSERT INTO work_lineage (parent_work_id, child_work_id, relation_type)
+             VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, [parent, id, SOURCE_RELATION]);
+        }
+        await recordAudit(client, {
+          actor, action: "work.set_sources", targetType: "work", targetId: id,
+          detail: { sources: wanted }
+        });
+        return { id, sources: wanted };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  async updatePart(
+    workId: number, partId: number, patch: WorkPartPatch, actor: string
+  ): Promise<{ id: number }> {
+    const entries = (Object.keys(patch) as Array<keyof WorkPartPatch>)
+      .filter((key) => patch[key] !== undefined)
+      .map((key) => ({ column: PART_COLUMNS[key], value: patch[key] as unknown }));
+    if (!entries.length) throw new DomainError("VALIDATION", "変更する項目がありません");
+    if (patch.name !== undefined && !String(patch.name).trim()) {
+      throw new DomainError("VALIDATION", "パート名は必須です");
+    }
+    try {
+      return await inTransaction(this.database, async (client) => {
+        await this.requirePart(client, workId, partId);
+        const sets = entries.map((e, i) => `${e.column} = $${i + 3}`).join(", ");
+        await client.query(
+          `UPDATE work_parts SET ${sets} WHERE id = $1 AND work_id = $2`,
+          [partId, workId, ...entries.map((e) => e.value)]);
+        await recordAudit(client, {
+          actor, action: "work.update_part", targetType: "work", targetId: workId,
+          detail: { partId, patch }
+        });
+        return { id: partId };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /** パートの削除。条件がそのパートを指していれば消さない。 */
+  async removePart(workId: number, partId: number, actor: string): Promise<{ deleted: true }> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        await this.requirePart(client, workId, partId);
+        const used = await client.query(
+          "SELECT count(*)::int AS n FROM conditions WHERE work_part_id = $1", [partId]);
+        const n = Number((used.rows[0] as { n: number }).n);
+        if (n > 0) {
+          throw new DomainError("CONFLICT",
+            `このパートを指している条件が ${n} 件あるので削除できません。先に条件側を直してください`);
+        }
+        await client.query("DELETE FROM work_parts WHERE id = $1 AND work_id = $2", [partId, workId]);
+        await recordAudit(client, {
+          actor, action: "work.remove_part", targetType: "work", targetId: workId, detail: { partId }
+        });
+        return { deleted: true };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 作品の終了（削除の1段目）。状態を archived にする。一覧の既定から消える。
+   * 条件や文書からは今までどおり辿れる。
+   */
+  async archive(id: number, reason: string, actor: string): Promise<{ id: number }> {
+    const why = String(reason ?? "").trim();
+    if (!why) throw new DomainError("VALIDATION", "終了にする理由は必須です");
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const work = await this.requireWork(client, id);
+        if (work.status === "archived") throw new DomainError("CONFLICT", "すでに終了しています");
+        await client.query(
+          `UPDATE works
+              SET status = 'archived',
+                  remarks = concat_ws(E'\n', NULLIF(remarks, ''), $2::text),
+                  updated_at = now()
+            WHERE id = $1`, [id, `終了：${why}`]);
+        await recordAudit(client, {
+          actor, action: "work.archive", targetType: "work", targetId: id,
+          detail: { reason: why, was: work.status }
+        });
+        return { id };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 作品の削除（2段目）。終了にしてあるものだけ。
+   * 条件（無効化済みも含む）が指していれば消さない。パートと系譜は作品の
+   * 一部なので一緒に消える（ON DELETE CASCADE）。
+   */
+  async remove(id: number, actor: string): Promise<{ deleted: true; workCode: string | null }> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const work = await this.requireWork(client, id);
+        if (work.status !== "archived") {
+          throw new DomainError("VALIDATION",
+            "先に終了にしてください（終了 → 削除の2段階）");
+        }
+        const used = await client.query(
+          `SELECT
+             (SELECT count(*)::int FROM conditions WHERE work_id = $1) AS conditions,
+             (SELECT count(*)::int FROM conditions c
+                JOIN work_parts p ON p.id = c.work_part_id WHERE p.work_id = $1) AS part_refs,
+             (SELECT count(*)::int FROM work_lineage WHERE parent_work_id = $1) AS children`,
+          [id]);
+        const row = used.rows[0] as Record<string, number>;
+        const blockers = [
+          { target: "条件", rows: Number(row.conditions ?? 0) },
+          { target: "パートを指す条件", rows: Number(row.part_refs ?? 0) },
+          { target: "この作品を原作にしている作品", rows: Number(row.children ?? 0) }
+        ].filter((b) => b.rows > 0);
+        if (blockers.length) {
+          throw new DomainError("CONFLICT",
+            "この作品を指しているものがあるので削除できません：" +
+            blockers.map((b) => `${b.target} ${b.rows} 件`).join("、"));
+        }
+        await client.query("DELETE FROM works WHERE id = $1", [id]);
+        await recordAudit(client, {
+          actor, action: "work.delete", targetType: "work", targetId: id,
+          detail: { workCode: work.work_code, title: work.title }
+        });
+        return { deleted: true, workCode: work.work_code };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  private async requireWork(client: { query: (t: string, p?: unknown[]) => Promise<{ rows: unknown[] }> }, id: number) {
+    const r = await client.query(
+      "SELECT id, work_code, title, status FROM works WHERE id = $1 FOR UPDATE", [id]);
+    const row = r.rows[0] as { id: number; work_code: string | null; title: string; status: string } | undefined;
+    if (!row) throw new DomainError("NOT_FOUND", `作品 ${id} が見つかりません`);
+    return row;
+  }
+
+  private async requirePart(client: { query: (t: string, p?: unknown[]) => Promise<{ rows: unknown[] }> }, workId: number, partId: number) {
+    const r = await client.query(
+      "SELECT id FROM work_parts WHERE id = $1 AND work_id = $2 FOR UPDATE", [partId, workId]);
+    if (!r.rows[0]) throw new DomainError("NOT_FOUND", `パート ${partId} が見つかりません`);
   }
 
   /**

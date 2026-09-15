@@ -16,6 +16,7 @@ import { RELATIONS, type EntityKind } from "./links/relations.js";
 import { DOCUMENT_STYLES } from "./matters/flow.js";
 import { isStatementTemplate } from "./documents/template-context.js";
 import { WorkWriteService } from "./works/write-service.js";
+import { LegacyCleanupRepository } from "./ops/legacy-cleanup.js";
 import { PartyWriteService } from "./parties/write-service.js";
 import { PartyMergeService } from "./parties/merge-service.js";
 import { MatterRepository } from "./matters/repository.js";
@@ -397,7 +398,8 @@ export function createRoutes(database: Transactable) {
       keyword: String(req.query.q ?? ""),
       direction: direction === "in" || direction === "out" ? direction : undefined,
       kind: req.query.kind ? String(req.query.kind) : undefined,
-      workId: req.query.workId ? Number(req.query.workId) : undefined
+      workId: req.query.workId ? Number(req.query.workId) : undefined,
+      includeVoid: String(req.query.void ?? "") === "1"
     }) });
   }));
 
@@ -915,6 +917,18 @@ export function createRoutes(database: Transactable) {
         Number(req.params.id), patch, actor(res), effectiveFrom ?? null));
     }));
 
+  // 無効化 → 削除の2段階。無効化は理由必須で、参照があってもできる。
+  // 削除は無効化済みで、何も指していないものだけ。
+  router.post("/conditions/:id/void", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { reason } = reasonSchema.parse(req.body ?? {});
+      res.json(await conditionWrites.void(Number(req.params.id), reason, actor(res)));
+    }));
+  router.delete("/conditions/:id", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await conditionWrites.remove(Number(req.params.id), actor(res)));
+    }));
+
   // 改訂の履歴。契約変更で金額を直すと版が増える。どれが生きているかを返す。
   router.get("/conditions/:id/revisions", asyncRoute(async (req, res) => {
     res.json({ revisions: await conditions.revisions(Number(req.params.id)) });
@@ -1202,6 +1216,74 @@ export function createRoutes(database: Transactable) {
   router.get("/works", asyncRoute(async (req, res) => {
     res.json({ works: await works.list(String(req.query.q ?? "")) });
   }));
+
+  // 移行データの棚卸し。消してよいものを人が選ぶための材料。
+  const legacyCleanup = new LegacyCleanupRepository(database);
+  router.get("/cleanup/legacy", requireRole("admin", "legal"), asyncRoute(async (_req, res) => {
+    const [conditions, works] = await Promise.all([legacyCleanup.conditions(), legacyCleanup.works()]);
+    res.json({ conditions, works });
+  }));
+
+  // 台帳。作品と原作（Core Logic）の系譜を1回で返す。
+  router.get("/works/tree", asyncRoute(async (req, res) => {
+    res.json(await works.tree(String(req.query.q ?? ""), String(req.query.archived ?? "") === "1"));
+  }));
+
+  router.get("/works/:id", asyncRoute(async (req, res) => {
+    const work = await works.find(Number(req.params.id));
+    if (!work) return res.status(404).json({ error: "作品が見つかりません" });
+    res.json(work);
+  }));
+
+  const workPatchSchema = z.object({
+    title: z.string().trim().min(1).max(300).optional(),
+    titleKana: z.string().trim().max(300).nullable().optional(),
+    kind: z.enum(["own", "source_ip", "derivative"]).optional(),
+    businessLine: z.string().trim().max(120).nullable().optional(),
+    status: z.enum(["planning", "in_production", "released", "archived"]).optional(),
+    remarks: z.string().trim().max(2000).nullable().optional()
+  });
+  router.patch("/works/:id", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await workWrites.update(
+        Number(req.params.id), workPatchSchema.parse(req.body ?? {}), actor(res)));
+    }));
+
+  // 原作（Core Logic）の付け替え。原作 N に対して作品 N。
+  router.put("/works/:id/sources", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({ parentIds: z.array(z.coerce.number().int().positive()).max(50) })
+        .parse(req.body ?? {});
+      res.json(await workWrites.setSources(Number(req.params.id), input.parentIds, actor(res)));
+    }));
+
+  const partPatchSchema = z.object({
+    name: z.string().trim().min(1).max(300).optional(),
+    partType: z.string().trim().max(60).optional(),
+    royaltyBearing: z.boolean().optional(),
+    remarks: z.string().trim().max(2000).nullable().optional(),
+    partNo: z.coerce.number().int().positive().optional()
+  });
+  router.patch("/works/:id/parts/:partId", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await workWrites.updatePart(Number(req.params.id), Number(req.params.partId),
+        partPatchSchema.parse(req.body ?? {}), actor(res)));
+    }));
+  router.delete("/works/:id/parts/:partId", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await workWrites.removePart(Number(req.params.id), Number(req.params.partId), actor(res)));
+    }));
+
+  // 終了 → 削除の2段階。条件と同じ作り。
+  router.post("/works/:id/archive", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { reason } = reasonSchema.parse(req.body ?? {});
+      res.json(await workWrites.archive(Number(req.params.id), reason, actor(res)));
+    }));
+  router.delete("/works/:id", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await workWrites.remove(Number(req.params.id), actor(res)));
+    }));
 
   router.get("/works/:id/envelope", asyncRoute(async (req, res) => {
     const id = Number(req.params.id);

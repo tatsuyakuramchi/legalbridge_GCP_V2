@@ -54,6 +54,8 @@ export function ConditionsWorkspace(
   const [selected, setSelected] = useState<number | undefined>(initialId);
   const [detail, setDetail] = useState<DetailResponse | null>(null);
   const [filter, setFilter] = useState<"all" | "in" | "out">("all");
+  // 削除は無効化 → 削除の2段階。無効化したものを見る道が無いと、消せない。
+  const [includeVoid, setIncludeVoid] = useState(false);
   const [result, setResult] = useState<WriteResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sales, setSales] = useState("");
@@ -67,6 +69,7 @@ export function ConditionsWorkspace(
     const params = new URLSearchParams();
     if (filter !== "all") params.set("direction", filter);
     if (search.trim()) params.set("q", search.trim());
+    if (includeVoid) params.set("void", "1");
     const query = params.toString() ? `?${params}` : "";
     api.get<{ conditions: ConditionSummary[] }>(`/conditions${query}`)
       .then((r) => {
@@ -76,7 +79,7 @@ export function ConditionsWorkspace(
       })
       .catch((e: ApiError) => setError(e.message));
   }
-  useEffect(() => { reload(); }, [filter, search]);
+  useEffect(() => { reload(); }, [filter, search, includeVoid]);
 
   useEffect(() => {
     if (!selected) return;
@@ -96,6 +99,35 @@ export function ConditionsWorkspace(
   const [recordSchedule, setRecordSchedule] = useState<number | null>(null);
   // 読み取り専用なら、登録の欄そのものを出さない（押してから断られない）。
   const readOnly = useReadOnly();
+  /**
+   * 無効化 → 削除の2段階。
+   * 無効化は理由必須で、参照があってもできる。削除は無効化済みで、何も指して
+   * いないものだけ。サーバが「何が指しているか」を返すので、そのまま出す。
+   */
+  async function voidCondition() {
+    if (!detail) return;
+    const reason = prompt(`条件 ${detail.conditionNo ?? `#${detail.id}`}「${detail.name}」を無効化します。理由を書いてください。`);
+    if (!reason?.trim()) return;
+    setError(null);
+    try {
+      const r = await api.post<WriteResult>(`/conditions/${detail.id}/void`, { reason: reason.trim() });
+      setResult(r);
+      setDetail(await api.get<DetailResponse>(`/conditions/${detail.id}`));
+      reload();
+    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
+  }
+
+  async function removeCondition() {
+    if (!detail) return;
+    if (!confirm(`条件 ${detail.conditionNo ?? `#${detail.id}`} を削除します。元に戻せません。よろしいですか？`)) return;
+    setError(null);
+    try {
+      await api.del(`/conditions/${detail.id}`);
+      setResult(null); setDetail(null); setSelected(undefined);
+      reload();
+    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
+  }
+
   async function refreshFlow() {
     setFlowVersion((v) => v + 1);
     if (selected) setDetail(await api.get<DetailResponse>(`/conditions/${selected}`));
@@ -172,6 +204,9 @@ export function ConditionsWorkspace(
             {value === "all" ? "すべて" : value === "in" ? "IN 取得" : "OUT 許諾"}
           </button>
         ))}
+        <button className="chip" aria-pressed={includeVoid} onClick={() => setIncludeVoid((v) => !v)}>
+          無効化済みも
+        </button>
       </div>
 
       <div className="row" style={{ marginBottom: 10 }}>
@@ -296,6 +331,17 @@ export function ConditionsWorkspace(
                                 onClick={() => onCompose([detail.id], [], detail.matters[0]?.id ?? null)}>この条件で文書を作る</button>
                       )}
                       <button className="btn btn-sm" onClick={() => setEditing(true)}>編集</button>
+                      {/* 削除は 無効化 → 削除 の2段階。無効化は理由必須で、参照が
+                          あってもできる。本当に消えるのは、無効化済みで何も指して
+                          いないものだけ。 */}
+                      <button className="btn btn-sm" onClick={() => void voidCondition()}>無効化</button>
+                    </span>
+                  )}
+                  {!editing && detail.status === "void" && (
+                    <span className="row" style={{ marginLeft: "auto" }}>
+                      <button className="btn btn-sm" onClick={() => void removeCondition()}>
+                        削除する
+                      </button>
                     </span>
                   )}
                 </div>
