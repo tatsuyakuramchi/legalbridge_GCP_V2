@@ -35,11 +35,13 @@ interface CandidateDocument {
 }
 
 export function MatterConditions(
-  { detail, onChanged, onOpenCondition, onCompose }: {
+  { detail, onChanged, onOpenCondition, onCompose, onRecordEvent }: {
     detail: MatterDetail; onChanged: () => void; onOpenCondition: (id: number) => void;
     /** 文書の画面へ移って、この業務の条件を選び、ひな形を決めた状態で作成に入る。 */
     onCompose?: (conditionIds: number[], eventIds?: number[], matterId?: number | null,
                  templateKey?: string | null) => void;
+    /** 実績タブへ移って、この条件の実績を記録する。 */
+    onRecordEvent?: (conditionId: number) => void;
   }
 ) {
   const [making, setMaking] = useState<false | "one" | "service">(false);
@@ -288,6 +290,10 @@ export function MatterConditions(
                           {c.kind === "expense" && <span className="faint">（税込）</span>}
                         </td>
                         <td style={{ whiteSpace: "nowrap" }}>
+                          {onRecordEvent && c.status === "active" && (
+                            <button className="btn btn-sm" disabled={busy} title="実績タブへ移って、この条件の実績を記録する"
+                              onClick={() => onRecordEvent(c.id)}>実績</button>
+                          )}{" "}
                           <button className="btn btn-sm" disabled={busy}
                             onClick={() => void detach(c.id, c.conditionNo ?? `#${c.id}`)}>外す</button>
                         </td>
@@ -315,7 +321,11 @@ export function MatterConditions(
                 <td><span className="tag">{CONDITION_KIND_LABEL[c.kind] ?? c.kind}</span></td>
                 <td><span className={`tag ${c.direction}`}>{c.direction === "in" ? "IN" : "OUT"}</span></td>
                 <td><span className="row" style={{ gap: 7 }}><ConditionLabel c={c} omitCode /></span></td>
-                <td>
+                <td style={{ whiteSpace: "nowrap" }}>
+                  {onRecordEvent && c.status === "active" && (
+                    <button className="btn btn-sm" disabled={busy} title="実績タブへ移って、この条件の実績を記録する"
+                      onClick={() => onRecordEvent(c.id)}>実績</button>
+                  )}{" "}
                   <button className="btn btn-sm" disabled={busy}
                     onClick={() => void detach(c.id, c.conditionNo ?? `#${c.id}`)}>外す</button>
                 </td>

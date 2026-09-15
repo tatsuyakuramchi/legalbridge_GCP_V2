@@ -957,10 +957,13 @@ export function createRoutes(database: Transactable) {
     }));
 
   const paymentSchema = z.object({
-    partyId: z.coerce.number().int().positive(),
-    direction: z.enum(["in", "out"]),
+    // 相手先か条件のどちらか。条件を渡せば相手先・通貨・向きは条件から決まる。
+    partyId: z.coerce.number().int().positive().nullable().optional(),
+    conditionId: z.coerce.number().int().positive().nullable().optional(),
+    eventId: z.coerce.number().int().positive().nullable().optional(),
+    direction: z.enum(["in", "out"]).nullable().optional(),
     amount: z.coerce.number().int().min(0),
-    currency: z.string().trim().length(3).optional(),
+    currency: z.string().trim().length(3).nullable().optional(),
     taxAmount: z.coerce.number().int().min(0).optional(),
     withholdingAmount: z.coerce.number().int().min(0).optional(),
     basisReceivedOn: z.string().date().nullable().optional(),

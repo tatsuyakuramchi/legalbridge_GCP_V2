@@ -53,30 +53,71 @@ export class PaymentService {
    * 特定受託事業者（個人）なら止める。法人相手なら社内基準としての警告に
    * とどめ、記録だけ残す。
    */
+  /**
+   * 支払を手で立てる。
+   *
+   * 条件（conditionId）を渡せば、相手先・通貨・向きはその条件から決まり、
+   * 支払額の全部をその条件に割り当てる。案件の画面から「この条件に払う」を
+   * 立てる口で、割当が付くので案件からも辿れる（案件の支払は割当経由で引く）。
+   * 条件を渡さない支払は割当なし（あとで割当画面で付ける）。
+   */
   async create(input: {
-    partyId: number;
-    direction: "in" | "out";
+    partyId?: number | null;
+    direction?: "in" | "out" | null;
     amount: number;
-    currency?: string;
+    currency?: string | null;
     taxAmount?: number;
     withholdingAmount?: number;
     basisReceivedOn?: string | null;
     dueOn?: string | null;
     note?: string | null;
+    /** 割当先の条件。相手先・通貨・向きの出どころにもなる。 */
+    conditionId?: number | null;
+    /** どの実績に対する支払か。条件と組で渡す。 */
+    eventId?: number | null;
   }, actor: string) {
     if (!Number.isFinite(input.amount) || input.amount < 0) {
       throw new DomainError("VALIDATION", "金額は0以上の整数（最小通貨単位）です");
     }
+    if (!input.partyId && !input.conditionId) {
+      throw new DomainError("VALIDATION", "相手先か、割り当てる条件のどちらかは必要です");
+    }
     try {
       return await inTransaction(this.database, async (client) => {
+        let condition: { id: number; conditionNo: string | null; counterpartyId: number | null;
+                         currency: string; direction: "in" | "out"; status: string } | null = null;
+        if (input.conditionId) {
+          const c = await client.query(
+            `SELECT id, condition_no, counterparty_id, currency, direction, status
+               FROM conditions WHERE id = $1`, [input.conditionId]);
+          const row = c.rows[0] as Record<string, any> | undefined;
+          if (!row) throw new DomainError("NOT_FOUND", `条件 ${input.conditionId} が見つかりません`);
+          if (row.status === "void" || row.status === "superseded") {
+            throw new DomainError("CONFLICT", `条件 ${row.condition_no ?? row.id} は無効化または改訂済みです。今の版に立ててください`);
+          }
+          if (!row.counterparty_id) {
+            throw new DomainError("VALIDATION", "条件に相手先が入っていないので支払を立てられません");
+          }
+          condition = { id: Number(row.id), conditionNo: str(row.condition_no),
+                        counterpartyId: Number(row.counterparty_id), currency: String(row.currency ?? "JPY"),
+                        direction: String(row.direction) === "out" ? "out" : "in", status: String(row.status) };
+          if (input.partyId && Number(input.partyId) !== condition.counterpartyId) {
+            throw new DomainError("VALIDATION", "相手先が条件の相手先と違います。条件の相手先に立ててください");
+          }
+        }
+        const partyId = Number(input.partyId ?? condition?.counterpartyId);
+        // 権利を許諾する側（out）は受け取る側なので入金、取得側（in）は支払。
+        const direction: "in" | "out" = input.direction
+          ?? (condition ? (condition.direction === "out" ? "in" : "out") : "out");
+        const currency = input.currency ?? condition?.currency ?? "JPY";
         const party = await client.query(
-          "SELECT id, name, kind FROM parties WHERE id = $1", [input.partyId]);
+          "SELECT id, name, kind FROM parties WHERE id = $1", [partyId]);
         const p = party.rows[0] as { id: number; name: string; kind: string } | undefined;
-        if (!p) throw new DomainError("NOT_FOUND", `取引先 ${input.partyId} が見つかりません`);
+        if (!p) throw new DomainError("NOT_FOUND", `取引先 ${partyId} が見つかりません`);
 
         // 取適法。個人＝特定受託事業者として扱う。
         const check = checkPaymentDue({
-          applicable: input.direction === "out" && p.kind === "individual",
+          applicable: direction === "out" && p.kind === "individual",
           basisDate: input.basisReceivedOn ?? null,
           dueOn: input.dueOn ?? null
         });
@@ -94,19 +135,30 @@ export class PaymentService {
                                  basis_received_on, due_on, status, note)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'planned', $10)
            RETURNING id, payment_no`,
-          [no, input.direction, input.partyId, input.currency ?? "JPY",
+          [no, direction, partyId, currency,
            Math.round(input.amount), Math.round(input.taxAmount ?? 0),
            Math.round(input.withholdingAmount ?? 0),
            input.basisReceivedOn ?? null, input.dueOn ?? null, input.note ?? null]);
         const row = inserted.rows[0] as { id: number; payment_no: string };
         const id = Number(row.id);
 
+        // 条件宛てなら、税抜の全額をその条件に割り当てる。根拠のない支払行を残さない。
+        if (condition && Math.round(input.amount) > 0) {
+          await client.query(
+            `INSERT INTO payment_allocations (payment_id, condition_id, event_id, amount)
+             VALUES ($1, $2, $3, $4)`,
+            [id, condition.id, input.eventId ?? null, Math.round(input.amount)]);
+        }
+
         await recordAudit(client, {
           actor, action: "payment.create", targetType: "payment", targetId: id,
           detail: { paymentNo: row.payment_no, party: p.name, amount: input.amount,
-                    dueOn: input.dueOn ?? null, compliance: check.verdict }
+                    dueOn: input.dueOn ?? null, compliance: check.verdict,
+                    ...(condition ? { conditionId: condition.id, conditionNo: condition.conditionNo,
+                                      eventId: input.eventId ?? null } : {}) }
         });
-        return { id, paymentNo: row.payment_no, compliance: check };
+        return { id, paymentNo: row.payment_no, direction, compliance: check,
+                 conditionId: condition?.id ?? null };
       });
     } catch (error) { throw translate(error); }
   }

@@ -283,3 +283,50 @@ test("紙にも予定にも無ければ、受領日 +60日", async () => {
   const result = await service.createFromStatementDocument(26, "kuramochi");
   assert.equal(result.dueOn, "2026-08-19");
 });
+
+// ---- 条件宛てに手で立てる（案件の画面から） ----------------------------------
+
+const manualSvc = (over: { condition?: Record<string, unknown> | null; partyKind?: string } = {}) => {
+  const db = new FakeDatabase((text: string) => {
+    if (text.includes("FROM conditions WHERE id = $1")) {
+      return over.condition === null ? [] : [over.condition ?? {
+        id: 5, condition_no: "CL-2026-00005", counterparty_id: 2, currency: "JPY", direction: "in", status: "active"
+      }];
+    }
+    if (text.includes("FROM parties WHERE id")) return [{ id: 2, name: "如月 涼", kind: over.partyKind ?? "corporate" }];
+    if (text.includes("SELECT 1 FROM document_sequences")) return [{ x: 1 }];
+    if (text.includes("UPDATE document_sequences")) return [{ current_value: 7 }];
+    if (text.includes("FROM payments WHERE payment_no")) return [];
+    if (text.includes("INSERT INTO payments")) return [{ id: 901, payment_no: "PAY-2026-00007" }];
+    return undefined;
+  });
+  return { db, service: new PaymentService(db) };
+};
+
+test("条件宛てに立てた支払は、相手先・通貨・向きを条件から取り、全額をその条件に割り当てる", async () => {
+  const { db, service } = manualSvc();
+  const r = await service.create({ conditionId: 5, amount: 30000, taxAmount: 3000, dueOn: "2026-10-31" }, "k");
+  assert.equal(r.id, 901);
+  assert.equal(r.direction, "out", "取得（IN）の条件なので自社が払う");
+  assert.equal(r.conditionId, 5);
+  const inserted = db.find("INSERT INTO payments")!;
+  assert.deepEqual(inserted.params.slice(1, 5), ["out", 2, "JPY", 30000]);
+  assert.deepEqual(db.find("INSERT INTO payment_allocations")!.params, [901, 5, null, 30000]);
+  const audit = db.find("INSERT INTO audit_events")!;
+  assert.equal(JSON.parse(String(audit.params[5])).conditionNo, "CL-2026-00005");
+});
+
+test("条件も相手先も無い、条件の相手先と違う、旧版の条件には立てない", async () => {
+  await assert.rejects(() => manualSvc().service.create({ amount: 1 }, "k"), /相手先か、割り当てる条件/);
+  await assert.rejects(() => manualSvc().service.create({ conditionId: 5, partyId: 9, amount: 1 }, "k"), /条件の相手先と違います/);
+  await assert.rejects(() => manualSvc({ condition: { id: 5, condition_no: "CL-1", counterparty_id: 2, currency: "JPY",
+    direction: "in", status: "superseded" } }).service.create({ conditionId: 5, amount: 1 }, "k"), /改訂済み/);
+  await assert.rejects(() => manualSvc({ condition: null }).service.create({ conditionId: 5, amount: 1 }, "k"), /見つかりません/);
+});
+
+test("相手先だけの支払はこれまでどおり割当なしで立つ", async () => {
+  const { db, service } = manualSvc();
+  const r = await service.create({ partyId: 2, direction: "out", amount: 500 }, "k");
+  assert.equal(r.id, 901);
+  assert.equal(db.all("INSERT INTO payment_allocations").length, 0);
+});

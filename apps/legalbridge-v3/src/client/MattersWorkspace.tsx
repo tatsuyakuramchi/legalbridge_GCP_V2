@@ -11,11 +11,13 @@ import { MatterTimeline } from "./MatterTimeline.js";
 import { MatterDrive } from "./MatterDrive.js";
 import { MatterConditions, MatterDocuments } from "./MatterLinks.js";
 import { MatterStatement } from "./MatterStatement.js";
+import { MatterEvents } from "./MatterEvents.js";
+import { MatterPayments } from "./MatterPayments.js";
 import { Relations, type EntityKind } from "./Relations.js";
 
 
 
-type Tab = "conditions" | "documents" | "payments" | "communications";
+type Tab = "conditions" | "events" | "documents" | "payments" | "communications";
 
 interface BacklogResult {
   issueKey: string | null; url: string | null; created: boolean; reason?: string;
@@ -70,6 +72,8 @@ export function MattersWorkspace(
   const externalLinks = (detail?.links ?? []).filter((l) => !OWNED_BY_TABS.has(l.targetType));
   const [kind, setKind] = useState<MatterKind | "all">("all");
   const [tab, setTab] = useState<Tab>("conditions");
+  /** 実績タブで開いている条件。条件明細タブの「実績」から来たときはその条件。 */
+  const [eventCondition, setEventCondition] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState<"matter" | "task" | null>(null);
   const [staff, setStaff] = useState<
@@ -161,7 +165,7 @@ export function MattersWorkspace(
 
   useEffect(() => {
     if (!selected) return;
-    setTab("conditions");
+    setTab("conditions"); setEventCondition(null);
     setBacklog(null); setIssueKey(""); setStyleEdit(false);
     api.get<MatterDetail>(`/matters/${selected}`).then(setDetail)
       .catch((e: ApiError) => setError(e.message));
@@ -393,6 +397,7 @@ export function MattersWorkspace(
                 <div className="panel-bd">
                   <div className="tabs">
                     {([["conditions", `条件明細 ${detail.conditions.length}`],
+                       ["events", "実績"],
                        ["documents", `文書 ${detail.documents.length}`],
                        ["payments", `支払 ${detail.payments.length}`],
                        ["communications", `操作の記録 ${detail.communications.length}`]] as const).map(([key, label]) => (
@@ -403,12 +408,18 @@ export function MattersWorkspace(
                   {tab === "conditions" && (
                     <div className="stack">
                       <MatterConditions detail={detail} onChanged={relink}
-                        onOpenCondition={onOpenCondition} onCompose={onCompose} />
+                        onOpenCondition={onOpenCondition} onCompose={onCompose}
+                        onRecordEvent={(id) => { setEventCondition(id); setTab("events"); }} />
                       {/* 取引モデルが何本あっても計算書は1枚。条件ごとに1枚ずつ
                           出す口しか無く、束ねる手段が画面にもサーバにも無かった。 */}
                       <MatterStatement detail={detail}
                         onChanged={relink} onOpenDocument={onOpenDocument} />
                     </div>
+                  )}
+
+                  {tab === "events" && (
+                    <MatterEvents detail={detail} conditionId={eventCondition} onPick={setEventCondition}
+                      onCompose={onCompose} onOpenDocument={onOpenDocument} onChanged={relink} />
                   )}
 
                   {tab === "documents" && (
@@ -418,20 +429,7 @@ export function MattersWorkspace(
                   )}
 
                   {tab === "payments" && (
-                    <table>
-                      <thead><tr><th>支払番号</th><th>向き</th><th className="num">金額</th><th>期日</th><th>状態</th></tr></thead>
-                      <tbody>
-                        {detail.payments.map((p) => (
-                          <tr key={p.id}>
-                            <td className="code">{p.paymentNo ?? `#${p.id}`}</td>
-                            <td>{p.direction === "in" ? "入金" : "支払"}</td>
-                            <td className="num">{money(p.amount, p.currency)}</td>
-                            <td className="code">{p.dueOn ?? "—"}</td><td><StatusTag kind="payment" value={p.status} /></td>
-                          </tr>
-                        ))}
-                        {!detail.payments.length && <tr><td colSpan={5} className="faint">支払はありません</td></tr>}
-                      </tbody>
-                    </table>
+                    <MatterPayments detail={detail} onChanged={relink} onOpenDocument={onOpenDocument} />
                   )}
 
                   {tab === "communications" && (
