@@ -294,6 +294,21 @@ export class MatterLinkService {
               WHERE al.condition_id = ANY($1::bigint[])`, [ids])
         : { rows: [{ total: 0, paid: 0 }] };
 
+      // 定額の条件が何本あって、何本が払い切れたか（完了扱いも含む）。
+      const settled = ids.length
+        ? await this.database.query(
+            `SELECT count(*)::int AS fixed,
+                    count(*) FILTER (WHERE c.closed_at IS NOT NULL OR COALESCE(pd.paid, 0) >= c.flat_amount)::int AS done
+               FROM conditions c
+               LEFT JOIN LATERAL (
+                 SELECT sum(al.amount) AS paid FROM payment_allocations al
+                   JOIN payments y ON y.id = al.payment_id
+                  WHERE al.condition_id = c.id AND y.status = 'paid'
+               ) pd ON true
+              WHERE c.id = ANY($1::bigint[]) AND c.status = 'active'
+                AND c.pricing_model IN ('fixed', 'unit_rate') AND COALESCE(c.flat_amount, 0) > 0`, [ids])
+        : { rows: [{ fixed: 0, done: 0 }] };
+
       const byType: Record<string, number> = {};
       let latest: string | null = null;
       for (const e of events.rows as any[]) {
@@ -325,6 +340,10 @@ export class MatterLinkService {
         payments: {
           total: Number((payments.rows[0] as any)?.total ?? 0),
           paid: Number((payments.rows[0] as any)?.paid ?? 0)
+        },
+        fixedConditions: {
+          total: Number((settled.rows[0] as any)?.fixed ?? 0),
+          done: Number((settled.rows[0] as any)?.done ?? 0)
         }
       };
 

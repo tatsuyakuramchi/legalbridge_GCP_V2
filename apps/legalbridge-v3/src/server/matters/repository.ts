@@ -17,19 +17,35 @@ function mapSummary(row: Record<string, any>): MatterSummary {
       : null,
     dueOn: dateStr(row.due_on),
     blockedReason: str(row.blocked_reason),
-    documentStyle: (str(row.document_style) as MatterSummary["documentStyle"]) ?? null
+    documentStyle: (str(row.document_style) as MatterSummary["documentStyle"]) ?? null,
+    settled: { fixed: Number(row.fixed_count ?? 0), done: Number(row.done_count ?? 0) }
   };
 }
 
 const SUMMARY_COLUMNS = `
   m.id, m.matter_no, m.title, m.kind, m.status, m.due_on, m.blocked_reason, m.document_style,
   s.name AS owner_name,
-  p.id AS party_id, p.name AS party_name, p.kind AS party_kind`;
+  p.id AS party_id, p.name AS party_name, p.kind AS party_kind,
+  fx.fixed_count, fx.done_count`;
 
+// 定額の条件が何本あって何本が払い切れたか。一覧に「支払済み」の札を出すため。
 const SUMMARY_FROM = `
   FROM matters m
   LEFT JOIN staff   s ON s.id = m.owner_staff_id
-  LEFT JOIN parties p ON p.id = m.counterparty_id`;
+  LEFT JOIN parties p ON p.id = m.counterparty_id
+  LEFT JOIN LATERAL (
+    SELECT count(*)::int AS fixed_count,
+           count(*) FILTER (WHERE c.closed_at IS NOT NULL OR COALESCE(pd.paid, 0) >= c.flat_amount)::int AS done_count
+      FROM matter_links ml
+      JOIN conditions c ON ml.target_type = 'condition' AND c.id::text = ml.target_ref
+      LEFT JOIN LATERAL (
+        SELECT sum(al.amount) AS paid FROM payment_allocations al
+          JOIN payments y ON y.id = al.payment_id
+         WHERE al.condition_id = c.id AND y.status = 'paid'
+      ) pd ON true
+     WHERE ml.matter_id = m.id AND c.status = 'active'
+       AND c.pricing_model IN ('fixed', 'unit_rate') AND COALESCE(c.flat_amount, 0) > 0
+  ) fx ON true`;
 
 export class MatterRepository {
   private readonly conditions: ConditionRepository;

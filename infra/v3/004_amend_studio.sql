@@ -1084,6 +1084,24 @@ COMMENT ON COLUMN v3.works.copyright_notice IS
 COMMENT ON COLUMN v3.works.third_party_rights IS
   '共同著作・第三者の権利。出版条件書の一覧に出る。無ければ空（紙には「なし」）。';
 
+-- ---------------------------------------------------------------------
+-- A-028: 条件の完了扱い
+--
+-- 定額の業務委託の条件は、実績 → 検収書 → 支払（割当）と進めば「支払済み」が
+-- 事実から導出できる。ただし V1・V2 の時代に払い終えた条件は V3 に支払の記録が
+-- 無く、導出だけだと永遠に「未払」に見える。そこで、人が理由つきで閉じる列を
+-- 1組持つ。閉じた条件は一覧・案件・文書作成の候補で「完了」として畳まれる。
+-- 事実から支払済みになるものは閉じなくてよい（閉じても同じ扱い）。
+-- ---------------------------------------------------------------------
+
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS closed_at timestamptz;
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS closed_reason text;
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS closed_by text;
+COMMENT ON COLUMN v3.conditions.closed_at IS
+  '人が完了扱いにした日時。支払の記録が V3 に無い移行データなどを閉じるため。事実から支払済みになるものは閉じなくてよい。';
+COMMENT ON COLUMN v3.conditions.closed_reason IS '完了扱いにした理由（V2 で支払済み など）。';
+COMMENT ON COLUMN v3.conditions.closed_by IS '完了扱いにした人。';
+
 COMMIT;
 
 
@@ -1259,4 +1277,9 @@ SELECT * FROM (
         + (SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='works'
               AND column_name IN ('copyright_notice', 'third_party_rights')))::text
+  UNION ALL
+  SELECT 28, '条件の完了扱い（A-028。3 列であること）',
+         (SELECT count(*)::text FROM information_schema.columns
+           WHERE table_schema='v3' AND table_name='conditions'
+             AND column_name IN ('closed_at', 'closed_reason', 'closed_by'))
 ) AS 確認 ORDER BY n;

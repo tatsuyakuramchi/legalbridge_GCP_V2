@@ -1,3 +1,4 @@
+import { SETTLEMENT_LABEL, type ConditionSettlement } from "../server/conditions/settlement.js";
 /**
  * 画面に出す語の対応表。
  *
@@ -134,6 +135,33 @@ export function statusOf(kind: StatusKind, value: string | null | undefined): En
 }
 
 /** 表の中で使う状態の札。 */
+/**
+ * 条件の決着（未着手／検収済み・未払／支払予定／一部支払済み／支払済み／完了扱い）。
+ * 事実（実績・割当・支払）から導いた札。サーバの settlement.ts と対。
+ */
+const SETTLEMENT_TONE: Record<string, string> = {
+  paid: "ok", closed: "ok", partly_paid: "warn", payment_planned: "warn", inspected: "accent", in_progress: "accent"
+};
+export function SettlementTag({ settlement, compact }: {
+  settlement: ConditionSettlement | null | undefined; compact?: boolean;
+}) {
+  if (!settlement) return null;
+  const tone = SETTLEMENT_TONE[settlement.state];
+  const label = SETTLEMENT_LABEL[settlement.state] ?? settlement.state;
+  const title = [
+    settlement.closedReason ? `完了扱い：${settlement.closedReason}` : "",
+    settlement.targetAmount !== null ? `定額 ${settlement.targetAmount.toLocaleString()} ／ 支払済み ${settlement.paidAmount.toLocaleString()}` : "",
+    settlement.eventCount ? `実績 ${settlement.eventCount} 件` : "実績なし"
+  ].filter(Boolean).join("\n");
+  return (
+    <span className={tone ? `tag ${tone}` : "tag"} title={title}>
+      {label}
+      {!compact && settlement.state === "partly_paid" && settlement.targetAmount
+        ? ` ${Math.round((settlement.paidAmount / settlement.targetAmount) * 100)}%` : ""}
+    </span>
+  );
+}
+
 export function StatusTag({ kind, value }: { kind: StatusKind; value: string | null | undefined }) {
   const { label, tone } = statusOf(kind, value);
   return <span className={tone ? `tag ${tone}` : "tag"}>{label}</span>;

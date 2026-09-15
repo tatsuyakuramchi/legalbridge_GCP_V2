@@ -1018,6 +1018,16 @@ export function createRoutes(database: Transactable) {
 
   // 無効化 → 削除の2段階。無効化は理由必須で、参照があってもできる。
   // 削除は無効化済みで、何も指していないものだけ。
+  router.post("/conditions/:id/close", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({ reason: z.string().trim().min(1).max(500) }).parse(req.body ?? {});
+      res.json(await conditionWrites.close(Number(req.params.id), input.reason, actor(res)));
+    }));
+  router.post("/conditions/:id/reopen", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await conditionWrites.reopen(Number(req.params.id), actor(res)));
+    }));
+
   router.post("/conditions/:id/void", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       const { reason } = reasonSchema.parse(req.body ?? {});

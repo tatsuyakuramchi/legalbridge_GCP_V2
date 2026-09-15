@@ -204,6 +204,11 @@ SELECT * FROM (
         + (SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='works'
               AND column_name IN ('copyright_notice', 'third_party_rights')))::text
+  UNION ALL
+  SELECT 28, '条件の完了扱い（A-028。3 列であること）',
+         (SELECT count(*)::text FROM information_schema.columns
+           WHERE table_schema='v3' AND table_name='conditions'
+             AND column_name IN ('closed_at', 'closed_reason', 'closed_by'))
 ) AS 確認 ORDER BY n;
 `;
 

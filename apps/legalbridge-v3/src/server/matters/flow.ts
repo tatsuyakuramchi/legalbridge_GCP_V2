@@ -49,6 +49,8 @@ export interface FlowFacts {
   latestEventOn: string | null;
   statements: number;
   payments: { total: number; paid: number };
+  /** 定額の条件のうち払い切れた（または完了扱いの）本数。業務委託の「支払」の済はこれで見る。 */
+  fixedConditions?: { total: number; done: number };
 }
 
 export interface FlowStep {
@@ -175,10 +177,17 @@ function outsourcingSteps(f: FlowFacts): FlowStep[] {
         : "納品の記録がない。条件明細の実績に入れる" },
     { no: 5, name: "検収", tab: "conditions", done: inspected > 0,
       detail: inspected > 0 ? `検収の実績 ${inspected} 件` : "検収の記録がない。条件明細の実績に入れる" },
-    { no: 6, name: "支払", tab: "payments", done: f.payments.paid > 0,
-      detail: f.payments.total > 0
-        ? `支払 ${f.payments.total} 件のうち ${f.payments.paid} 件が支払済み`
-        : "支払がない。検収書から支払を立てる" }
+    { no: 6, name: "支払", tab: "payments",
+      // 定額の条件が全部払い切れて初めて済。1件払っただけでは済にしない。
+      done: f.fixedConditions && f.fixedConditions.total > 0
+        ? f.fixedConditions.done >= f.fixedConditions.total
+        : f.payments.paid > 0,
+      detail: f.fixedConditions && f.fixedConditions.total > 0
+        ? `定額の条件 ${f.fixedConditions.total} 本のうち ${f.fixedConditions.done} 本が支払済み`
+          + (f.payments.total > 0 ? `（支払 ${f.payments.total} 件、うち ${f.payments.paid} 件支払済み）` : "")
+        : f.payments.total > 0
+          ? `支払 ${f.payments.total} 件のうち ${f.payments.paid} 件が支払済み`
+          : "支払がない。検収書から支払を立てる" }
   ];
 }
 

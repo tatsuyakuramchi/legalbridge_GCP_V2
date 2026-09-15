@@ -6,7 +6,7 @@ import { ConditionCreateForm } from "./ConditionCreateForm.js";
 import { SendMany } from "./SendMany.js";
 import { WorkChooser, type WorkOption } from "./WorkChooser.js";
 import { DocumentImport } from "./DocumentImport.js";
-import { CONDITION_KIND_LABEL, MATTER_KIND_LABEL, StatusTag } from "./labels.js";
+import { CONDITION_KIND_LABEL, MATTER_KIND_LABEL, SettlementTag, StatusTag } from "./labels.js";
 import { ConditionLabel } from "./ConditionLabel.js";
 import { ServiceSetForm } from "./ServiceSetForm.js";
 import { money } from "./api.js";
@@ -53,6 +53,8 @@ export function MatterConditions(
   const [busy, setBusy] = useState(false);
   const [made, setMade] = useState<number | null>(null);
   const [work, setWork] = useState<WorkOption | null>(null);
+  /** 支払済み・完了扱いの条件を開いて見せるか。既定は畳む（業務の束ごと）。 */
+  const [showSettled, setShowSettled] = useState<Set<string>>(new Set());
 
   const allowed = ALLOWED_KINDS[detail.kind] ?? [];
   const linked = new Set(detail.conditions.map((c) => c.id));
@@ -247,13 +249,20 @@ export function MatterConditions(
           {bundles.map((b) => {
             const ids = b.conditions.map((c) => c.id);
             const total = b.conditions.reduce((sum, c) => sum + (c.flatAmount ?? 0), 0);
+            const settled = b.conditions.filter((c) => c.settlement?.done);
+            const fixed = b.conditions.filter((c) => c.settlement?.targetAmount);
+            const allDone = fixed.length > 0 && fixed.every((c) => c.settlement?.done);
+            const opened = showSettled.has(b.key);
+            const shown = opened ? b.conditions : b.conditions.filter((c) => !c.settlement?.done);
             return (
-              <div key={b.key} className="note" style={{ borderStyle: "solid" }}>
+              <div key={b.key} className="note" style={{ borderStyle: "solid", ...(allDone ? { opacity: 0.85 } : {}) }}>
                 <div className="row" style={{ alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
                   <b>業務 {b.no}：{b.title}</b>
+                  {allDone && <span className="tag ok">支払済み</span>}
                   <span className="faint">
                     {b.counterparty ?? "相手先なし"} ／ {b.agreement ?? "基本契約なし"}
                     {b.conditions.length > 1 && ` ／ ${b.conditions.length} 本 合計 ${money(total, b.currency)}`}
+                    {fixed.length > 0 && !allDone && ` ／ 支払済み ${settled.length}／${fixed.length} 本`}
                   </span>
                   {onCompose && (
                     <span className="row" style={{ marginLeft: "auto", gap: 6 }}>
@@ -272,7 +281,7 @@ export function MatterConditions(
                 <table style={{ marginTop: 6 }}>
                   <thead><tr><th>条件番号</th><th>内容</th><th className="num">金額</th><th></th></tr></thead>
                   <tbody>
-                    {b.conditions.map((c) => (
+                    {shown.map((c) => (
                       <tr key={c.id}>
                         <td className="code" style={{ whiteSpace: "nowrap" }}>
                           <button className="btn btn-sm" onClick={() => onOpenCondition(c.id)}>
@@ -282,6 +291,11 @@ export function MatterConditions(
                         <td style={{ width: "100%" }}>
                           <span className="tag" style={{ marginRight: 6 }}>{CONDITION_KIND_LABEL[c.kind] ?? c.kind}</span>
                           {c.name}{c.status !== "active" && <> <StatusTag kind="condition" value={c.status} /></>}
+                          {/* 進捗は列を増やさず名前の下に。列が増えると狭い案件の枠で
+                              右端のボタンが切れる。 */}
+                          {c.settlement && c.settlement.state !== "open" && (
+                            <div style={{ marginTop: 3 }}><SettlementTag settlement={c.settlement} /></div>
+                          )}
                         </td>
                         <td className="num" style={{ whiteSpace: "nowrap" }}>
                           {c.pricingModel === "unit_rate" && c.unitAmount != null
@@ -299,6 +313,16 @@ export function MatterConditions(
                         </td>
                       </tr>
                     ))}
+                    {settled.length > 0 && (
+                      <tr><td colSpan={4} className="faint">
+                        <button type="button" className="linky"
+                                onClick={() => setShowSettled((s) => {
+                                  const n = new Set(s); if (n.has(b.key)) n.delete(b.key); else n.add(b.key); return n;
+                                })}>
+                          {opened ? `完了した ${settled.length} 本を畳む` : `完了した ${settled.length} 本を表示`}
+                        </button>
+                      </td></tr>
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -320,7 +344,12 @@ export function MatterConditions(
                 </td>
                 <td><span className="tag">{CONDITION_KIND_LABEL[c.kind] ?? c.kind}</span></td>
                 <td><span className={`tag ${c.direction}`}>{c.direction === "in" ? "IN" : "OUT"}</span></td>
-                <td><span className="row" style={{ gap: 7 }}><ConditionLabel c={c} omitCode /></span></td>
+                <td>
+                  <span className="row" style={{ gap: 7 }}><ConditionLabel c={c} omitCode /></span>
+                  {c.settlement && c.settlement.state !== "open" && (
+                    <div style={{ marginTop: 3 }}><SettlementTag settlement={c.settlement} /></div>
+                  )}
+                </td>
                 <td style={{ whiteSpace: "nowrap" }}>
                   {onRecordEvent && c.status === "active" && (
                     <button className="btn btn-sm" disabled={busy} title="実績タブへ移って、この条件の実績を記録する"

@@ -1,3 +1,4 @@
+import type { ConditionSettlement } from "../conditions/settlement.js";
 import type { ConditionUsageType } from "./condition-usage.js";
 // V3 のドメインモデル。物理の軸は条件、運用の軸は案件。
 // 画面もAPIもこの型だけを扱い、テーブルの列名は外へ出さない。
@@ -46,6 +47,8 @@ export interface ConditionSummary {
   effectiveFrom: string | null;
   /** 利用形態（A-027）。自社製造・自社販売／再許諾／自社製造・他社販売／出版（紙）／出版（電子）。 */
   usageType: ConditionUsageType | null;
+  /** 決着。実績・割当・支払済み・完了扱いから導く。一覧で「支払済み」を畳む。 */
+  settlement: ConditionSettlement;
 }
 
 export interface ConditionScope { scopeType: ScopeType; label: string; code: string | null }
@@ -152,6 +155,8 @@ export interface MatterSummary {
   blockedReason: string | null;
   /** 進め方。他社レビュー／自社ドラフト／自社テンプレート。未設定は null。 */
   documentStyle: "counterparty_review" | "own_draft" | "own_template" | null;
+  /** 定額の条件の本数と、払い切れた（完了扱い含む）本数。全部済なら「支払済み」の札。 */
+  settled: { fixed: number; done: number };
 }
 
 export interface MatterDetail extends MatterSummary {

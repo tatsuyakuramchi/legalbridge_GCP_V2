@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
-import { StatusTag } from "./labels.js";
+import { StatusTag, SettlementTag } from "./labels.js";
 import type { ConditionSummary } from "../server/core/model.js";
 import { api, ApiError, money } from "./api.js";
 import type { EntityKind } from "./Relations.js";
@@ -96,6 +96,9 @@ export function DocumentsWorkspace(
   const [keyword, setKeyword] = useState("");
   const search = useDebounced(keyword);
   const [conditions, setConditions] = useState<ConditionSummary[]>([]);
+  /** 支払済み・完了扱いの条件も候補に出すか。既定は出さない。 */
+  const [showSettled, setShowSettled] = useState(false);
+  const settledCount = conditions.filter((c) => c.settlement?.done).length;
   const [templateKey, setTemplateKey] = useState("");
   // 条件の画面から来たときは、その条件と実績を選んだ状態で開く。
   const [picked, setPicked] = useState<number[]>(start?.conditionIds ?? []);
@@ -837,17 +840,28 @@ export function DocumentsWorkspace(
                     {picked.length ? `${picked.length} 件を選択中` : "選ばなくても作れます"}
                   </span>
                 </div>
-                <input value={condSearch} placeholder="条件番号・名称・相手先・契約で絞る"
-                       onChange={(e) => setCondSearch(e.target.value)} />
+                <div className="row" style={{ gap: 8, alignItems: "center" }}>
+                  <input value={condSearch} placeholder="条件番号・名称・相手先・契約で絞る"
+                         style={{ flex: 1 }} onChange={(e) => setCondSearch(e.target.value)} />
+                  {/* 支払済み・完了扱いの条件は既定で出さない。検収書を作るときに
+                      払い終えた条件が何十本も並ぶと、載せる条件が探せない。 */}
+                  <button type="button" className="chip" aria-pressed={showSettled}
+                          title="支払済み・完了扱いの条件も候補に出す"
+                          onClick={() => setShowSettled((v) => !v)}>
+                    完了も表示{settledCount ? `（${settledCount}）` : ""}
+                  </button>
+                </div>
                 <div className="picker">
                   {conditions
+                    .filter((c) => showSettled || picked.includes(c.id) || !c.settlement?.done)
                     .filter((c) => {
                       const q = condSearch.trim().toLowerCase();
-                      if (!q) return picked.includes(c.id) || conditions.indexOf(c) < 20;
+                      if (!q) return picked.includes(c.id) || conditions.indexOf(c) < 40;
                       return [c.conditionNo, c.name, c.counterparty?.name,
                               c.agreement?.title, c.agreement?.agreementNo]
                         .some((v) => String(v ?? "").toLowerCase().includes(q));
                     })
+                    .slice(0, 30)
                     .map((c) => (
                     <label key={c.id} className="pick">
                       <input type="checkbox" checked={picked.includes(c.id)}
@@ -859,6 +873,7 @@ export function DocumentsWorkspace(
                       {/* 出すものは型で変える。ライセンスは作品と取引モデル、
                           業務委託は件名と金額で見分ける。 */}
                       <ConditionLabel c={c} />
+                      {c.settlement && c.settlement.state !== "open" && <SettlementTag settlement={c.settlement} compact />}
                       {/* どの契約の明細かが分かると、選び間違いが減る。 */}
                       <span className="faint" style={{ marginLeft: "auto" }}>
                         {c.agreement ? c.agreement.title : "契約なし"}

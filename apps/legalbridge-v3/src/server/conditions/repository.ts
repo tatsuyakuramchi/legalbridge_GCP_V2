@@ -4,6 +4,7 @@ import { DomainError, translate } from "../core/errors.js";
 import type {
   ConditionDetail, ConditionRevision, ConditionScope, ConditionSummary, Direction, ScopeType
 } from "../core/model.js";
+import { SETTLEMENT_COLUMNS, SETTLEMENT_LATERAL_SQL, settlementOf } from "./settlement.js";
 
 const SUMMARY_COLUMNS = `
   c.id, c.condition_no, c.direction, c.kind, c.name, c.currency, c.pricing_model,
@@ -12,13 +13,16 @@ const SUMMARY_COLUMNS = `
   p.id AS party_id, p.name AS party_name, p.kind AS party_kind,
   w.id AS work_id, w.work_code, w.title AS work_title,
   -- 条件は契約の明細。どの契約の行かは一覧でも見えないと、独立した書類に見える。
-  ag.id AS agreement_id, ag.agreement_no, ag.title AS agreement_title`;
+  ag.id AS agreement_id, ag.agreement_no, ag.title AS agreement_title,
+  -- 決着（実績・割当・支払済み・完了扱い）。一覧で「支払済み」を畳むため。
+  ${SETTLEMENT_COLUMNS}`;
 
 const SUMMARY_JOINS = `
   FROM conditions c
   LEFT JOIN parties p ON p.id = c.counterparty_id
   LEFT JOIN works   w ON w.id = c.work_id
-  LEFT JOIN agreements ag ON ag.id = c.agreement_id`;
+  LEFT JOIN agreements ag ON ag.id = c.agreement_id
+  ${SETTLEMENT_LATERAL_SQL}`;
 
 function mapSummary(row: Record<string, any>): ConditionSummary {
   return {
@@ -49,7 +53,8 @@ function mapSummary(row: Record<string, any>): ConditionSummary {
     termEnd: dateStr(row.term_end),
     effectiveFrom: dateStr(row.effective_from),
     status: row.status,
-    usageType: (row.usage_type ?? null) as ConditionSummary["usageType"]
+    usageType: (row.usage_type ?? null) as ConditionSummary["usageType"],
+    settlement: settlementOf(row)
   };
 }
 

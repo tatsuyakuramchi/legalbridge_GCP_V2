@@ -274,7 +274,15 @@ export function MattersWorkspace(
                     <td className="code">{row.matterNo ?? `#${row.id}`}</td>
                     <td><span className="tag accent">{KIND_LABEL[row.kind]}</span></td>
                     <td>{row.title}<div className="faint">{row.counterparty?.name ?? "—"}</div></td>
-                    <td><StatusTag kind="matter" value={row.status} /></td>
+                    <td>
+                      <StatusTag kind="matter" value={row.status} />
+                      {/* 定額の条件が全部払い切れた案件。支払が終わったかを一覧で見分ける。 */}
+                      {row.settled?.fixed > 0 && (
+                        row.settled.done >= row.settled.fixed
+                          ? <div style={{ marginTop: 3 }}><span className="tag ok">支払済み</span></div>
+                          : <div className="faint" style={{ marginTop: 3 }}>支払 {row.settled.done}／{row.settled.fixed} 本</div>
+                      )}
+                    </td>
                     <td className="code">{row.dueOn ?? "—"}</td>
                   </tr>
                 ))}

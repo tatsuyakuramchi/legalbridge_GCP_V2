@@ -686,6 +686,53 @@ export class ConditionWriteService {
    * 消してよいかどうかは、この段階では問わない。参照があっても無効化は
    * できる。参照の無いものだけが、次の段（remove）で本当に消える。
    */
+  /**
+   * 完了扱いにする（A-028）。
+   *
+   * 支払済みは事実（割当）から導くのが本筋で、これは V1・V2 で払い終えて V3 に
+   * 支払の記録が無い条件などを、理由つきで閉じる口。状態は変えない（active の
+   * まま）。実績や文書は今までどおり作れるが、一覧と候補では「完了」に畳まれる。
+   */
+  async close(id: number, reason: string, actor: string): Promise<WriteResult> {
+    const why = String(reason ?? "").trim();
+    if (!why) throw new DomainError("VALIDATION", "完了扱いにする理由は必須です（V2 で支払済み など）");
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const before = await this.repository.requireExisting(client, id);
+        if (before.status === "void" || before.status === "superseded") {
+          throw new DomainError("CONFLICT", "無効化または改訂済みの条件は完了扱いにできません");
+        }
+        const r = await client.query(
+          `UPDATE conditions SET closed_at = now(), closed_reason = $2, closed_by = $3, updated_at = now()
+            WHERE id = $1 AND closed_at IS NULL RETURNING id`, [id, why, actor]);
+        if (!r.rows[0]) throw new DomainError("CONFLICT", "すでに完了扱いです");
+        await recordAudit(client, {
+          actor, action: "condition.close", targetType: "condition", targetId: id,
+          detail: { reason: why, conditionNo: before.condition_no }
+        });
+        return { changed: [{ target: "conditions（完了扱い）", rows: 1 }], resolvesThrough: [] };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /** 完了扱いを取り消す。閉じた理由は監査に残る。 */
+  async reopen(id: number, actor: string): Promise<WriteResult> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const before = await this.repository.requireExisting(client, id);
+        const r = await client.query(
+          `UPDATE conditions SET closed_at = NULL, closed_reason = NULL, closed_by = NULL, updated_at = now()
+            WHERE id = $1 AND closed_at IS NOT NULL RETURNING id`, [id]);
+        if (!r.rows[0]) throw new DomainError("CONFLICT", "完了扱いになっていません");
+        await recordAudit(client, {
+          actor, action: "condition.reopen", targetType: "condition", targetId: id,
+          detail: { conditionNo: before.condition_no }
+        });
+        return { changed: [{ target: "conditions（完了扱いの取り消し）", rows: 1 }], resolvesThrough: [] };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
   async void(id: number, reason: string, actor: string): Promise<WriteResult> {
     const why = String(reason ?? "").trim();
     if (!why) throw new DomainError("VALIDATION", "無効化の理由は必須です");

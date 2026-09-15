@@ -8,7 +8,7 @@ import { ConditionEdit } from "./ConditionEdit.js";
 import { ConditionMatters, ConditionScopes } from "./ConditionLinks.js";
 import { Relations, type EntityKind } from "./Relations.js";
 import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
-import { CONDITION_KIND_LABEL, StatusTag } from "./labels.js";
+import { CONDITION_KIND_LABEL, SettlementTag, StatusTag } from "./labels.js";
 import { conditionAmountLabel, dealModelLabel, isLicenseCondition } from "./ConditionLabel.js";
 import { ConditionCreateForm } from "./ConditionCreateForm.js";
 import { PubConditionSetForm } from "./PubConditionSetForm.js";
@@ -59,6 +59,8 @@ export function ConditionsWorkspace(
   const [filter, setFilter] = useState<"all" | "in" | "out">("all");
   // 削除は無効化 → 削除の2段階。無効化したものを見る道が無いと、消せない。
   const [includeVoid, setIncludeVoid] = useState(false);
+  // 支払済み・完了扱いは既定で隠す。払い終えた条件が並ぶと、動いている条件が探せない。
+  const [hideSettled, setHideSettled] = useState(true);
   const [result, setResult] = useState<WriteResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sales, setSales] = useState("");
@@ -107,6 +109,29 @@ export function ConditionsWorkspace(
    * 無効化は理由必須で、参照があってもできる。削除は無効化済みで、何も指して
    * いないものだけ。サーバが「何が指しているか」を返すので、そのまま出す。
    */
+  async function closeCondition() {
+    if (!detail) return;
+    const reason = prompt(`${detail.conditionNo ?? `#${detail.id}`} を完了扱いにします。理由を書いてください（V2 で支払済み など）。`);
+    if (!reason?.trim()) return;
+    setError(null);
+    try {
+      await api.post(`/conditions/${detail.id}/close`, { reason: reason.trim() });
+      setDetail(await api.get<DetailResponse>(`/conditions/${detail.id}`));
+      reload();
+    } catch (e) { setError((e as ApiError).message); }
+  }
+
+  async function reopenCondition() {
+    if (!detail) return;
+    if (!confirm("完了扱いを取り消します。")) return;
+    setError(null);
+    try {
+      await api.post(`/conditions/${detail.id}/reopen`, {});
+      setDetail(await api.get<DetailResponse>(`/conditions/${detail.id}`));
+      reload();
+    } catch (e) { setError((e as ApiError).message); }
+  }
+
   async function voidCondition() {
     if (!detail) return;
     const reason = prompt(`条件 ${detail.conditionNo ?? `#${detail.id}`}「${detail.name}」を無効化します。理由を書いてください。`);
@@ -210,6 +235,10 @@ export function ConditionsWorkspace(
         <button className="chip" aria-pressed={includeVoid} onClick={() => setIncludeVoid((v) => !v)}>
           無効化済みも
         </button>
+        <button className="chip" aria-pressed={hideSettled} onClick={() => setHideSettled((v) => !v)}
+                title="支払済み・完了扱いの条件を一覧から畳む">
+          完了を隠す
+        </button>
       </div>
 
       <div className="row" style={{ marginBottom: 10 }}>
@@ -269,7 +298,7 @@ export function ConditionsWorkspace(
             <table>
               <thead><tr><th>番号</th><th>種類</th><th>向き</th><th>名称 / 相手先</th><th>載っている契約</th><th className="num">金額・料率</th></tr></thead>
               <tbody>
-                {rows.map((row) => (
+                {rows.filter((row) => !hideSettled || row.id === selected || !row.settlement?.done).map((row) => (
                   <tr key={row.id} className={row.id === selected ? "sel" : ""} tabIndex={0}
                       aria-selected={row.id === selected}
                       onClick={() => { setResult(null); setSelected(row.id); }}
@@ -289,6 +318,10 @@ export function ConditionsWorkspace(
                             <span className="faint">　{row.effectiveFrom}〜</span>
                           )}
                         </div>
+                      )}
+                      {/* 進捗（検収済み・支払済み…）。未着手は出さない（大半がそれで、札が並ぶだけになる）。 */}
+                      {row.settlement && row.settlement.state !== "open" && (
+                        <div style={{ marginTop: 3 }}><SettlementTag settlement={row.settlement} /></div>
                       )}
                     </td>
                     <td><span className="tag">{CONDITION_KIND_LABEL[row.kind] ?? row.kind}</span></td>
@@ -324,6 +357,12 @@ export function ConditionsWorkspace(
                     <td className="num">{conditionAmountLabel(row)}</td>
                   </tr>
                 ))}
+                {hideSettled && rows.some((r) => r.settlement?.done && r.id !== selected) && (
+                  <tr><td colSpan={6} className="faint">
+                    完了した条件 {rows.filter((r) => r.settlement?.done).length} 本を隠しています。
+                    <button type="button" className="linky" onClick={() => setHideSettled(false)}>表示する</button>
+                  </td></tr>
+                )}
                 {!rows.length && (
                   <tr><td colSpan={6} className="faint">
                     {search.trim() ? `「${search}」に一致する条件明細はありません` : "条件明細がありません"}
@@ -358,8 +397,17 @@ export function ConditionsWorkspace(
                   <span className="tag">{CONDITION_KIND_LABEL[detail.kind] ?? detail.kind}</span>
                   <span className={`tag ${detail.direction}`}>{detail.direction === "in" ? "IN 取得" : "OUT 許諾"}</span>
                   <StatusTag kind="condition" value={detail.status} />
+                  <SettlementTag settlement={detail.settlement} />
                   {!editing && detail.status !== "void" && detail.status !== "superseded" && (
                     <span className="row" style={{ marginLeft: "auto" }}>
+                      {/* 支払済みは事実（割当）から出る。V1・V2 で払い終えて V3 に支払の
+                          記録が無い条件だけ、理由つきで閉じる。 */}
+                      {detail.settlement?.state === "closed" ? (
+                        <button className="btn btn-sm" onClick={() => void reopenCondition()}>完了扱いを取り消す</button>
+                      ) : !detail.settlement?.done && (
+                        <button className="btn btn-sm" title="V2 で支払済みなど、V3 に支払の記録が無いものを理由つきで閉じる"
+                                onClick={() => void closeCondition()}>完了扱いにする</button>
+                      )}
                       {/* 条件は文書の元。ここから作れないと、文書の画面へ行って
                           条件を探し直すことになる。 */}
                       {onCompose && (
