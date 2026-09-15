@@ -76,7 +76,7 @@ export const PUB_TERMS_VARIABLES: TemplateVariable[] = [
   { name: "許諾者登録番号", label: "許諾者（甲）登録番号（T番号）", group: "II. 許諾者（甲）",
     from: "condition.counterparty.invoiceNo", helpText: "適格請求書発行事業者でなければ空のまま" },
   { name: "許諾者連絡先", label: "許諾者（甲）通知先", group: "II. 許諾者（甲）", noGuess: true,
-    helpText: "空なら取引先の担当者（氏名・メール・電話）が入ります" },
+    helpText: "自動では入れません。候補の「先方担当の氏名・メール・電話」から入れるか、手で書く" },
 
   { name: "被許諾者名称", label: "被許諾者（乙）名称", group: "III. 被許諾者（乙）", required: true,
     from: "company.name" },
@@ -320,8 +320,6 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
     };
   });
 
-  const primary = (context.contacts ?? []).find((c: Data) => c.role === "primary")
-    ?? (context.contacts ?? [])[0];
   const counterparty = context.condition?.counterparty ?? {};
   const translationShare = number(pick("翻訳版取り分"));
   const autoRenew = pick("自動更新") !== "しない";
@@ -339,8 +337,8 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
     licensorRep: pick("許諾者代表者名"),
     licensorInvoiceNo: pick("許諾者登録番号") || text(counterparty.invoiceNo),
     licensorIsCorp: text(counterparty.kind) !== "individual",
-    licensorContact: pick("許諾者連絡先")
-      || joinContact([primary?.department, primary?.name, primary?.email, primary?.phone ?? counterparty.phone]),
+    // 相手先の担当者は自動で入れない（手入力か候補から）。
+    licensorContact: pick("許諾者連絡先"),
     /** 源泉徴収。取引先の設定（個人はふつう対象）。本文の固定文言が出し分ける。 */
     withholding: counterparty.withholding === true,
 

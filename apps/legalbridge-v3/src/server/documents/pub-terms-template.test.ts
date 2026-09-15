@@ -56,7 +56,9 @@ function render(manual: Record<string, unknown>) {
 test("本文が差す名前はすべて計算ブロックから出る（空欄で出る差し込みが無い）", () => {
   const rows = pubTitleSeeds(context);
   rows[0] = { ...rows[0], copyright: "© 2026 甲野 甲太", third_party: "なし" };
-  const { out, values } = render({ pub_titles: rows, "翻訳版取り分": "50", "特記事項": "電子署名で締結する。" });
+  const { out, values } = render({ pub_titles: rows, "翻訳版取り分": "50", "特記事項": "電子署名で締結する。",
+    // 相手先の担当者は自動で入らないので、手入力（候補から入れる想定）。
+    "許諾者連絡先": "甲野 甲太 ／ kono@example.test ／ 03-0000-0000" });
   const blanks = blankPlaceholders(html, values, PUB_TERMS_VARIABLES.map((v) => v.name));
   // 行の中の名前（no / title …）は each の文脈なので、外側の値には無くてよい。
   const rowNames = new Set(["no", "title", "edition", "copyright", "thirdParty", "printRate", "printExclusivity",
@@ -75,7 +77,7 @@ test("本文が差す名前はすべて計算ブロックから出る（空欄�
   assert.ok(out.includes("対価（税抜）の 50%"), "翻訳版の行");
   assert.ok(out.includes("〇〇銀行 / 本店 / 普通 0000000 / コウノ コウタ"), "振込先は取引先の口座");
   assert.ok(out.includes("源泉徴収し"), "個人の許諾者は源泉あり");
-  assert.ok(out.includes("甲野 甲太 ／ kono@example.test ／ 03-0000-0000"));
+  assert.ok(out.includes("甲野 甲太 ／ kono@example.test ／ 03-0000-0000"), "手で入れた通知先が出る");
   assert.ok(out.includes("編集部 ／ 編集 花子"));
   assert.ok(out.includes("1か月前までに"), "合意の更新通知が入る");
   assert.ok(out.includes("第１０条"), "特記事項あり");

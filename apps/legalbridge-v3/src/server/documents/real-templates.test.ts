@@ -128,8 +128,7 @@ test("検収書：明細の列名が本文と一致する", () => {
 test("発注書：当事者・自社・振込先・合計が出る", () => {
   assertFilled("purchase_order", [
     "ORDER_NO", "ORDER_DATE", "発注日", "発行日", "PROJECT_TITLE",
-    "VENDOR_NAME", "VENDOR_SUFFIX", "VENDOR_ADDRESS", "VENDOR_EMAIL",
-    "VENDOR_CONTACT_NAME", "VENDOR_CONTACT_PHONE", "VENDOR_REPRESENTATIVE_SAMA",
+    "VENDOR_NAME", "VENDOR_SUFFIX", "VENDOR_ADDRESS", "VENDOR_REPRESENTATIVE_SAMA",
     "PARTY_A_NAME", "PARTY_A_ADDRESS", "PARTY_A_REP",
     "STAFF_NAME", "STAFF_DEPARTMENT", "STAFF_EMAIL", "STAFF_PHONE",
     "BANK_NAME", "BRANCH_NAME", "ACCOUNT_TYPE", "ACCOUNT_NUMBER",
@@ -217,4 +216,12 @@ test("計算書：振込先は宣言に供給元が無くても名前で引け�
   assertFilled("royalty_statement",
     ["bankName", "branchName", "accountType", "accountNo", "accountHolder",
      "invoiceRegistrationNumber"]);
+});
+
+test("発注書：相手先の担当者（氏名・メール・電話・部署）は自動で入れない", () => {
+  const values = resolveAllLegacyVariables(context);
+  for (const name of ["VENDOR_CONTACT_NAME", "VENDOR_CONTACT_PHONE", "VENDOR_EMAIL", "VENDOR_CONTACT_DEPARTMENT",
+                      "先方担当者名", "担当者メール", "取引先電話"]) {
+    assert.equal(values[name], undefined, `${name} が自動で入っている`);
+  }
 });

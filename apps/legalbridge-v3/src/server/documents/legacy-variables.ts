@@ -109,10 +109,17 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown }> = [
     get: (c) => c.condition?.counterparty?.invoiceNo },
   { names: ["VENDOR_CORPORATE_NO", "法人番号"],
     get: (c) => c.condition?.counterparty?.corporateNo },
-  { names: ["VENDOR_CONTACT_NAME", "先方担当者名"],
-    get: (c) => contact(c, "primary")?.name },
-  { names: ["VENDOR_CONTACT_EMAIL", "先方担当者メール"],
-    get: (c) => contact(c, "primary")?.email },
+  // 相手先の担当者（氏名・部署・メール・電話）は自動で入れない。
+  //
+  // 取引先の担当者マスタから発注書・検収書の「発注先 通知先」に入れていたが、
+  // 書類ごとに宛てる人が違う（同じ社の別の担当、今回だけ上長）。マスタの
+  // 1人が黙って紙に出て、直したつもりの欄が次の文書でまた戻る。
+  // 欄は手入力にして、担当者マスタの人は候補（「先方担当の氏名」など）から
+  // 1回で入れる。候補は candidates.ts が出す。
+  // 消した名前：VENDOR_CONTACT_NAME・先方担当者名・VENDOR_CONTACT_EMAIL・
+  //   先方担当者メール・VENDOR_EMAIL・Licensor_メール・担当者メール・取引先メール・
+  //   VENDOR_CONTACT_DEPARTMENT・先方担当者部署・担当者部署名・VENDOR_CONTACT_PHONE・
+  //   Licensor_電話・担当者電話番号・取引先電話
   { names: ["VENDOR_SIGNER_NAME", "署名者名"],
     get: (c) => contact(c, "signer")?.name },
   { names: ["VENDOR_REP", "VENDOR_REPRESENTATIVE", "Licensor_代表者名", "代表者氏名",
@@ -126,12 +133,6 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown }> = [
     } },
   { names: ["VENDOR_ADDRESS", "Licensor_住所", "許諾者住所", "取引先住所", "相手先住所"],
     get: (c) => c.condition?.counterparty?.address },
-  { names: ["VENDOR_EMAIL", "Licensor_メール", "担当者メール", "取引先メール"],
-    get: (c) => contact(c, "primary")?.email ?? contact(c, "billing")?.email },
-  { names: ["VENDOR_CONTACT_DEPARTMENT", "先方担当者部署", "担当者部署名"],
-    get: (c) => contact(c, "primary")?.department },
-  { names: ["VENDOR_CONTACT_PHONE", "Licensor_電話", "担当者電話番号", "取引先電話"],
-    get: (c) => contact(c, "primary")?.phone ?? c.condition?.counterparty?.phone },
   // licensor_t_number は計算書の「T番号」。適格請求書発行事業者の登録番号で、
   // T で始まるのでこの呼び名になっている。V2 はここに Backlog の課題キーを
   // 入れていた（欄の意味と中身が違う）。V3 は登録番号を入れる。
@@ -390,12 +391,9 @@ const DB_FIELD_SOURCES: Record<string, (c: Ctx) => Record<string, unknown>> = {
       name: party.name,
       name_kana: party.kana,
       address: party.address,
-      phone: party.phone ?? primary.phone,
-      email: party.email ?? primary.email,
+      // 担当者の欄（phone / email / contact_*）は自動で入れない（上の対応表と同じ理由）。
+      // 宣言（dbField）で指していても空のまま出し、候補から人が選ぶ。
       vendor_rep: signer.name ?? primary.name,
-      contact_name: primary.name,
-      contact_department: primary.department,
-      contact_email: primary.email,
       invoice_registration_number: party.invoiceNo,
       corporate_number: party.corporateNo,
       // 法人／個人。条件書の「許諾者種別」がここから決まる。

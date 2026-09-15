@@ -119,7 +119,9 @@ test("本文の文脈：甲＝取引先、乙＝当社、通知先・源泉・�
   assert.equal(patch.licensorName, "甲野 甲太");
   assert.equal(patch.licensorIsCorp, false);
   assert.equal(patch.withholding, true);
-  assert.equal(patch.licensorContact, "甲野 甲太 ／ kono@example.test ／ 03-0000-0000");
+  assert.equal(patch.licensorContact, "", "相手先の担当者は自動で入れない");
+  assert.equal(pubTermsPatch(context, { "許諾者連絡先": "甲野 甲太 ／ kono@example.test" }).licensorContact,
+    "甲野 甲太 ／ kono@example.test");
   assert.equal(patch.licenseeName, "株式会社サンプル出版");
   assert.equal(patch.licenseeContact, "編集部 ／ 編集 花子 ／ hanako@example.test ／ 03-1111-1111");
   assert.equal(patch.hasTranslation, true);
