@@ -3,6 +3,7 @@ import { dateStr, int, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { parseVariables, type TemplateVariable } from "./binding.js";
 import { LICENSE_TERMS_VARIABLES, isLicenseTermsTemplate } from "./license-terms.js";
+import { PUB_TERMS_VARIABLES, isPubTermsTemplate } from "./pub-terms.js";
 
 export interface DocumentSummary {
   id: number;
@@ -157,7 +158,10 @@ function mapSummary(row: Record<string, any>): DocumentSummary {
  */
 function variablesFor(templateKey: string, declared: TemplateVariable[]): TemplateVariable[] {
   if (declared.length) return declared;
-  return isLicenseTermsTemplate(templateKey) ? LICENSE_TERMS_VARIABLES : declared;
+  if (isLicenseTermsTemplate(templateKey)) return LICENSE_TERMS_VARIABLES;
+  // 出版の条件書（V3）も項目はコードが持つ。ひな形の SQL は本文だけを運ぶ。
+  if (isPubTermsTemplate(templateKey)) return PUB_TERMS_VARIABLES;
+  return declared;
 }
 
 export class DocumentRepository {

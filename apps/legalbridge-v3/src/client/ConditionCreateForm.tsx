@@ -5,6 +5,7 @@ import { CreateForm } from "./CreateForm.js";
 import { CONDITION_KIND_LABEL } from "./labels.js";
 import { searchParties } from "./SearchSelect.js";
 import { minorPerMajor } from "../server/royalty/economics.js";
+import { PUB_MEDIA } from "../server/core/pub-media.js";
 
 /**
  * 金額の欄の補足。通貨で単位が変わる。
@@ -140,6 +141,12 @@ export function ConditionCreateForm(
         { name: "regions", label: "地域（許諾範囲）", type: "regions",
           visibleWhen: (v) => v.kind === "license",
           hint: "何も選ばなければ、その次元は無制限（全世界）として扱われます" },
+        // 出版の条件書は媒体で紙・電子を見分ける。作品1点＝紙・電子の2本を
+        // まとめて作るなら「出版の条件を登録」のほうが早い。
+        { name: "media", label: "媒体", type: "select",
+          visibleWhen: (v) => v.kind === "license",
+          options: PUB_MEDIA.map((m) => ({ value: m.code, label: m.label })),
+          hint: "出版の許諾（紙／電子）はここを入れる。出版条件書はこれで紙と電子の列を分ける" },
         { name: "languages", label: "言語（許諾範囲）", type: "languages",
           visibleWhen: (v) => v.kind === "license" },
         { name: "notes", label: "備考", type: "textarea" }
@@ -152,7 +159,9 @@ export function ConditionCreateForm(
           ...parseRegions(v.regions ?? "")
             .map((s) => ({ scopeType: "region" as const, label: s.name, code: s.code || null })),
           ...parseLanguages(v.languages ?? "")
-            .map((s) => ({ scopeType: "language" as const, label: s.name, code: s.code || null }))
+            .map((s) => ({ scopeType: "language" as const, label: s.name, code: s.code || null })),
+          ...PUB_MEDIA.filter((m) => v.kind === "license" && m.code === v.media)
+            .map((m) => ({ scopeType: "media" as const, label: m.label, code: m.code as string | null }))
         ];
         return {
           name: text(v.name), direction: v.direction, kind: v.kind,

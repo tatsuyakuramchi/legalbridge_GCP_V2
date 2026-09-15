@@ -19,6 +19,9 @@ import {
 import { royaltyStatementPatch } from "./royalty-patch.js";
 import { isLicenseTermsTemplate, licenseTermsPatch, licenseTermsSeeds,
          licenseTermsSuggestions } from "./license-terms.js";
+import { PUB_TITLES_FIELD, isPubTermsTemplate, pubTermsPatch, pubTermsSuggestions,
+         pubTermsWarnings, pubTitleSeeds } from "./pub-terms.js";
+import type { Warning } from "./preflight.js";
 import { calcMethodFor, ownershipLabelOf, rewardLabelFor } from "../core/reward.js";
 import { contractFormFor } from "../conditions/contract-form.js";
 
@@ -45,6 +48,8 @@ export function lineFieldsFor(templateKey: string): string[] {
   if (isLicenseTermsTemplate(templateKey)) {
     return ["v3_conds", "v3_lcs", "v3_sublicensees", "v3_special_extras"];
   }
+  // 出版の条件書は「対象著作物の一覧」1つ。作品1点が1行で、紙・電子の条件が畳まれる。
+  if (isPubTermsTemplate(templateKey)) return [PUB_TITLES_FIELD];
   // 計算書は金額を計算から出すので明細を人が打つことはない。ただし紙に出る
   // 文字（製品名・対象契約）は直せないと困る。作品名やアウト条件の名前が
   // そのまま出るので、相手に見せる呼び方と食い違うことがある。
@@ -55,6 +60,7 @@ export function lineFieldsFor(templateKey: string): string[] {
 /** 条件・予定・実績から組んだ「種」の行。画面の編集欄の初期値。 */
 export function seedLines(templateKey: string, context: Ctx): Record<string, Row[]> {
   if (isLicenseTermsTemplate(templateKey)) return licenseTermsSeeds(context) as Record<string, Row[]>;
+  if (isPubTermsTemplate(templateKey)) return { [PUB_TITLES_FIELD]: pubTitleSeeds(context) as Row[] };
   const out: Record<string, Row[]> = {};
   for (const name of lineFieldsFor(templateKey)) {
     out[name] = name === "items" ? orderLinesFrom(context)
@@ -387,6 +393,9 @@ export function buildTemplateContext(
   if (isLicenseTermsTemplate(templateKey)) {
     return { ...common, ...licenseTermsPatch(context, { ...bound, ...manual }) };
   }
+  if (isPubTermsTemplate(templateKey)) {
+    return { ...common, ...pubTermsPatch(context, { ...bound, ...manual }) };
+  }
   if (isStatementTemplate(templateKey)) {
     const patch = royaltyStatementPatch(context, manual, Number(common.taxRate));
     return patch ? { ...common, ...patch } : common;
@@ -592,6 +601,7 @@ export function suggestionsFor(
   templateKey: string, context: Ctx, bound: Record<string, unknown> = {}
 ): Record<string, unknown> {
   if (isLicenseTermsTemplate(templateKey)) return licenseTermsSuggestions(context, bound);
+  if (isPubTermsTemplate(templateKey)) return pubTermsSuggestions(context, bound);
   // 発注書・検収書の本文は、明細の外（見出しのあたり）でも料率と帰属先を差している。
   // 条件が1件に決まるときは台帳から引ける。ここを空のまま出すと「料率 ％」だけが
   // 残った紙になる。ひな形が from を持っていればそちらが勝つ。
@@ -608,4 +618,16 @@ export function suggestionsFor(
     };
   }
   return {};
+}
+
+/**
+ * ひな形ごとの警告。決定する前に画面に出す。
+ *
+ * 出版の条件書は、載せられない条件明細（料率でない・媒体が無い）を黙って
+ * 落とさず名指しする。差し込みの空欄（documentWarnings）とは別の種類なので、
+ * ここで足す。発行は止めない。
+ */
+export function templateWarnings(templateKey: string, context: Ctx): Warning[] {
+  if (isPubTermsTemplate(templateKey)) return pubTermsWarnings(context);
+  return [];
 }

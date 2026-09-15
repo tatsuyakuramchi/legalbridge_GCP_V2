@@ -118,3 +118,9 @@ test("実物の検収書で、あの不完全な振込先が発行前に挙が�
   assert.match(w[0].message, /銀行名・支店名・口座種別/);
   assert.match(w[1].message, /自社電話番号/);
 });
+
+test("ヘルパ呼び出しはヘルパ名ではなく引数を点検する", () => {
+  const html = "<p>{{formatDate 締結日}} {{formatYen 金額}} {{eq 種別 \"法人\"}} {{add @index 1}} {{名前}}</p>";
+  assert.deepEqual(referencedNames(html), ["締結日", "金額", "種別", "名前"]);
+  assert.deepEqual(blankPlaceholders(html, { 締結日: "2026-10-01", 金額: 0, 種別: "法人" }), ["名前"]);
+});

@@ -14,6 +14,8 @@ import { roundAmount } from "../server/core/rounding.js";
 
 export type Row = Record<string, unknown>;
 
+const show = (v: unknown) => (v === null || v === undefined ? "" : String(v));
+
 interface ShowWhen { field: string; anyOf?: string[]; truthy?: boolean }
 export interface Column {
   name: string; label: string;
@@ -152,7 +154,37 @@ export const INSPECTION_COLUMNS: Column[] = [
     helpText: "検収金額をどう出したか。計算は別で行い、結果と根拠をここに書く" }
 ];
 
-export const LINE_SECTIONS: Record<string, { title: string; columns: Column[]; intl?: Column[]; hint: string }> = {
+/**
+ * 出版条件書の対象著作物。作品1点が1行で、紙・電子の条件が畳まれている。
+ * 料率と独占区分は条件明細の写しなので、ここでは直せない（行の見出しに出す）。
+ * 直せるのは、条件明細に置き場所の無い文字（著作権表示・共同著作・備考）。
+ */
+export const PUB_TITLE_COLUMNS: Column[] = [
+  { name: "title", label: "原著作物名" },
+  { name: "edition", label: "対象出版物名", helpText: "作品名と同じなら空でよい" },
+  { name: "copyright", label: "著作権表示", helpText: "奥付に入れる表示。© 2026 著作者名 など" },
+  { name: "third_party", label: "共同著作・第三者権利", helpText: "無ければ空。紙には「なし」と出る" },
+  { name: "note", label: "備考", type: "textarea",
+    helpText: "初版部数・著作権表示の位置など、この作品だけの取り決め。条件明細の備考から写してある" }
+];
+
+/** 行の見出しの添え字。紙・電子の料率と独占区分（条件明細の写し）。 */
+const pubTitleSubtitle = (row: Row): string => {
+  const print = show(row.print_rate); const digital = show(row.digital_rate);
+  if (!print && !digital) return "";
+  const cell = (rate: string, ex: unknown) => (rate === "—" || !rate ? "—" : `${rate}／${show(ex) || "—"}`);
+  return `紙 ${cell(print, row.print_exclusivity)}　電子 ${cell(digital, row.digital_exclusivity)}`
+    + (Array.isArray(row.condition_ids) && row.condition_ids.length ? "" : "（手で足した行）");
+};
+
+export const LINE_SECTIONS: Record<string, {
+  title: string; columns: Column[]; intl?: Column[]; hint: string;
+  /** 行の見出しに添える文字（条件から出た値の確認用）。 */
+  subtitle?: (row: Row) => string;
+}> = {
+  pub_titles: { title: "対象著作物（出版条件書の一覧）", columns: PUB_TITLE_COLUMNS, subtitle: pubTitleSubtitle,
+           hint: "選んだ条件明細から、作品1点が1行。紙・電子の料率と独占区分は条件明細の写しで、"
+               + "ここでは直せない（直すなら条件を直す）。著作権表示・共同著作・備考はここで入れる" },
   items: { title: "発注明細", columns: ITEM_COLUMNS, intl: INTL_ITEM_COLUMNS,
            hint: "予定明細（無ければ条件の総額）から組んだ行。帰属先・支払方法・納期・支払日はここで入れる" },
   delivery_line_items: { title: "納品明細", columns: INSPECTION_COLUMNS,
@@ -165,7 +197,6 @@ export const LINE_SECTIONS: Record<string, { title: string; columns: Column[]; i
                + "紙に出る文字だけを整える（相手に見せる呼び方が違うとき）" }
 };
 
-const show = (v: unknown) => (v === null || v === undefined ? "" : String(v));
 const num = (v: unknown) => { const n = Number(String(v ?? "").replace(/[^0-9.-]/g, "")); return Number.isFinite(n) ? n : null; };
 
 export function LineItemsEditor(
@@ -220,7 +251,10 @@ export function LineItemsEditor(
         {current.map((row, i) => (
           <div key={i} className="line-card">
             <div className="row" style={{ marginBottom: 6 }}>
-              <b>{i + 1}. {show(row.item_name ?? row.expense_name ?? row.fee_name) || "（名前なし）"}</b>
+              <b>{i + 1}. {show(row.item_name ?? row.title ?? row.expense_name ?? row.fee_name) || "（名前なし）"}</b>
+              {section.subtitle && section.subtitle(row) && (
+                <span className="faint" style={{ marginLeft: 8 }}>{section.subtitle(row)}</span>
+              )}
               <button type="button" className="linky" style={{ marginLeft: "auto" }}
                       onClick={() => onChange(current.filter((_, j) => j !== i))}>この行を外す</button>
             </div>

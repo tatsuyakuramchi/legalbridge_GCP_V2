@@ -6,6 +6,68 @@ import { allocateNumber } from "../core/numbering.js";
 import { roundAmount } from "../core/rounding.js";
 import { readContractForm } from "./contract-form.js";
 import type { ConditionScope } from "../core/model.js";
+import { PUB_MEDIA_LABEL, pubMediaOf, type PubMedia } from "../core/pub-media.js";
+
+/** 出版の条件（作品1点＝紙・電子）。createPublishingSet の入力。 */
+export interface PublishingTerms {
+  /** 料率（%）。11 は 11%。 */
+  ratePct: number;
+  exclusivity?: "exclusive" | "non_exclusive" | null;
+}
+export interface PublishingSetInput {
+  matterId?: number | null;
+  /** 対象出版物名。条件名になる。 */
+  title: string;
+  counterpartyId: number;
+  agreementId?: number | null;
+  workId?: number | null;
+  termStart?: string | null;
+  termEnd?: string | null;
+  currency?: string;
+  taxCategory?: "taxable" | "reduced" | "exempt";
+  paymentTerms?: string | null;
+  notes?: string | null;
+  /** 地域・言語。媒体はここではなく print / digital で決まる。 */
+  scopes?: ConditionScope[];
+  print?: PublishingTerms | null;
+  digital?: PublishingTerms | null;
+}
+export type PublishingSetResult = Record<PubMedia, { id: number; conditionNo: string | null } | null>;
+
+/**
+ * 単価と個数を入れてあれば、定額は掛けて出す。入れた額があればそちらが勝つ
+ * （端数の調整や「一式で値引き」を潰さない）。文書の明細の金額欄と同じ扱い。
+ */
+const flatAmountOf = (input: ConditionInput): number | null =>
+  input.flatAmount ?? (
+    input.unitAmount !== undefined && input.unitAmount !== null
+      && input.quantity !== undefined && input.quantity !== null
+      ? roundAmount(input.unitAmount * input.quantity) : null);
+
+/** 登録の入力の検証。トランザクションに入る前に済ませる。 */
+function validateConditionInput(input: ConditionInput): void {
+  const name = String(input.name ?? "").trim();
+  if (!name) throw new DomainError("VALIDATION", "条件名は必須です");
+  const pricing = input.pricingModel ?? "none";
+  const flatAmount = flatAmountOf(input);
+  const required: Record<string, unknown> = {
+    unit_rate: input.unitAmount, revenue_rate: input.ratePpm, fixed: flatAmount
+  };
+  if (pricing in required && (required[pricing] === undefined || required[pricing] === null)) {
+    const label = { unit_rate: "単価", revenue_rate: "料率", fixed: "定額" }[pricing as string];
+    throw new DomainError("VALIDATION", `${label}を入れてください。値の無い計算方式は選べません`);
+  }
+  if (input.ratePpm !== undefined && input.ratePpm !== null
+      && (input.ratePpm < 0 || input.ratePpm > 1_000_000)) {
+    throw new DomainError("VALIDATION", "料率は 0〜100%（0〜1000000 ppm）の範囲です");
+  }
+  if (input.termStart && input.termEnd && input.termEnd < input.termStart) {
+    throw new DomainError("VALIDATION", "終了日が開始日より前です");
+  }
+  if (input.workPartId && !input.workId) {
+    throw new DomainError("VALIDATION", "パートを指定するなら作品も指定してください");
+  }
+}
 
 /**
  * 書込サービス。V2 で「編集が一部にしか効かない」原因だった列単位APIをやめ、
@@ -117,36 +179,95 @@ export class ConditionWriteService {
    * V1 の宣言と実データの食い違いを101件直している。同じ穴を入口で塞ぐ。
    */
   async create(input: ConditionInput, actor: string): Promise<{ id: number; conditionNo: string | null }> {
-    const name = String(input.name ?? "").trim();
-    if (!name) throw new DomainError("VALIDATION", "条件名は必須です");
+    validateConditionInput(input);
+    try {
+      return await inTransaction(this.database, (client) => this.createIn(client, input, actor));
+    } catch (error) { throw translate(error); }
+  }
 
-    const pricing = input.pricingModel ?? "none";
-    // 単価と個数を入れてあれば、定額は掛けて出す。入れた額があればそちらが勝つ
-    // （端数の調整や「一式で値引き」を潰さない）。文書の明細の金額欄と同じ扱い。
-    const flatAmount = input.flatAmount ?? (
-      input.unitAmount !== undefined && input.unitAmount !== null
-        && input.quantity !== undefined && input.quantity !== null
-        ? roundAmount(input.unitAmount * input.quantity) : null);
-    const required: Record<string, unknown> = {
-      unit_rate: input.unitAmount, revenue_rate: input.ratePpm, fixed: flatAmount
-    };
-    if (pricing in required && (required[pricing] === undefined || required[pricing] === null)) {
-      const label = { unit_rate: "単価", revenue_rate: "料率", fixed: "定額" }[pricing as string];
-      throw new DomainError("VALIDATION", `${label}を入れてください。値の無い計算方式は選べません`);
+  /**
+   * 出版の条件を作品1点ぶんまとめて登録する。紙と電子で条件2本（どちらか
+   * 1本でもよい）。同じトランザクションで作るので、紙だけできて電子が
+   * 落ちる、が起きない。出版条件書はこの2本を1行に畳んで出す。
+   *
+   * 同じ作品・同じ相手先に同じ媒体の生きた条件が既にあれば止める。2本
+   * あると条件書のどちらの料率を載せるか決められない（改定は既存の条件を
+   * 直す・改訂する）。
+   */
+  async createPublishingSet(input: PublishingSetInput, actor: string): Promise<PublishingSetResult> {
+    const title = String(input.title ?? "").trim();
+    if (!title) throw new DomainError("VALIDATION", "対象出版物名（条件名）は必須です");
+    if (!input.print && !input.digital) {
+      throw new DomainError("VALIDATION", "紙か電子のどちらかの料率を入れてください");
     }
-    if (input.ratePpm !== undefined && input.ratePpm !== null
-        && (input.ratePpm < 0 || input.ratePpm > 1_000_000)) {
-      throw new DomainError("VALIDATION", "料率は 0〜100%（0〜1000000 ppm）の範囲です");
+    const media: Array<{ media: PubMedia; terms: PublishingTerms }> = [];
+    if (input.print) media.push({ media: "print", terms: input.print });
+    if (input.digital) media.push({ media: "digital", terms: input.digital });
+    for (const { media: kind, terms } of media) {
+      const rate = Number(terms.ratePct);
+      if (!Number.isFinite(rate) || rate < 0 || rate > 100) {
+        throw new DomainError("VALIDATION", `${PUB_MEDIA_LABEL[kind]}の料率は 0〜100（%）で入れてください`);
+      }
     }
-    if (input.termStart && input.termEnd && input.termEnd < input.termStart) {
-      throw new DomainError("VALIDATION", "終了日が開始日より前です");
-    }
-    if (input.workPartId && !input.workId) {
-      throw new DomainError("VALIDATION", "パートを指定するなら作品も指定してください");
-    }
+    const scopes = (input.scopes ?? []).filter((s) => s.scopeType !== "media");
+    const inputs = media.map(({ media: kind, terms }): ConditionInput => ({
+      matterId: input.matterId ?? null,
+      name: title,
+      direction: "in",
+      kind: "license",
+      counterpartyId: input.counterpartyId,
+      agreementId: input.agreementId ?? null,
+      workId: input.workId ?? null,
+      exclusivity: terms.exclusivity ?? null,
+      termStart: input.termStart ?? null,
+      termEnd: input.termEnd ?? null,
+      currency: input.currency ?? "JPY",
+      pricingModel: "revenue_rate",
+      // 画面は % で受け、保存は ppm（百万分率）。11% → 110000
+      ratePpm: Math.round(Number(terms.ratePct) * 10000),
+      taxCategory: input.taxCategory ?? "taxable",
+      paymentTerms: input.paymentTerms ?? null,
+      notes: input.notes ?? null,
+      scopes: [...scopes, { scopeType: "media", label: PUB_MEDIA_LABEL[kind], code: kind }]
+    }));
+    for (const one of inputs) validateConditionInput(one);
 
     try {
       return await inTransaction(this.database, async (client) => {
+        if (input.workId) {
+          const existing = await client.query(
+            `SELECT c.condition_no, s.label, s.code
+               FROM conditions c JOIN condition_scopes s ON s.condition_id = c.id
+              WHERE c.work_id = $1 AND c.counterparty_id = $2 AND c.direction = 'in'
+                AND c.status IN ('active', 'scheduled') AND s.scope_type = 'media'`,
+            [input.workId, input.counterpartyId]);
+          for (const row of existing.rows as Array<{ condition_no: string | null; label: string; code: string | null }>) {
+            const held = pubMediaOf(row.code) ?? pubMediaOf(row.label);
+            const clash = media.find((m) => m.media === held);
+            if (clash) {
+              throw new DomainError("CONFLICT",
+                `この作品には同じ相手先の${PUB_MEDIA_LABEL[clash.media]}の条件（${row.condition_no ?? "番号なし"}）が既にあります。`
+                + "料率を変えるならその条件を直してください");
+            }
+          }
+        }
+        const out: PublishingSetResult = { print: null, digital: null };
+        for (const [index, one] of inputs.entries()) {
+          const created = await this.createIn(client, one, actor);
+          out[media[index].media] = created;
+        }
+        return out;
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /** 条件1本の INSERT。トランザクションは呼ぶ側が持つ。 */
+  private async createIn(client: Queryable, input: ConditionInput, actor: string)
+    : Promise<{ id: number; conditionNo: string | null }> {
+    const name = String(input.name ?? "").trim();
+    const pricing = input.pricingModel ?? "none";
+    const flatAmount = flatAmountOf(input);
+    {
         const party = await client.query(
           "SELECT id, name FROM parties WHERE id = $1", [input.counterpartyId]);
         if (!party.rows[0]) {
@@ -227,8 +348,7 @@ export class ConditionWriteService {
         }
 
         return { id, conditionNo: row.condition_no };
-      });
-    } catch (error) { throw translate(error); }
+    }
   }
 
   /**

@@ -8,6 +8,7 @@ import { WorkCreateForm } from "./WorkCreateForm.js";
 import { SearchSelect } from "./SearchSelect.js";
 import { ConditionEdit, type EditResult } from "./ConditionEdit.js";
 import { ConditionCreateForm } from "./ConditionCreateForm.js";
+import { PubConditionSetForm } from "./PubConditionSetForm.js";
 import { CONDITION_KIND_LABEL, EVENT_TYPE_LABEL, StatusTag } from "./labels.js";
 import { useReadOnly } from "./read-only.js";
 
@@ -142,7 +143,7 @@ export function WorksWorkspace(
   const [activity, setActivity] = useState<Activity | null>(null);
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [editing, setEditing] = useState<ConditionDetail | null>(null);
-  const [creating, setCreating] = useState<"work" | "source" | "part" | "condition" | null>(null);
+  const [creating, setCreating] = useState<"work" | "source" | "part" | "condition" | "publishing" | null>(null);
   const [moveTo, setMoveTo] = useState<string>("");
   const [moving, setMoving] = useState(false);
   const [mergeTo, setMergeTo] = useState<string>("");
@@ -821,10 +822,23 @@ export function WorksWorkspace(
                 {editable && creating === null && (
                   <button className="btn btn-sm primary" onClick={() => setCreating("condition")}>条件を登録</button>
                 )}
+                {editable && creating === null && (
+                  <button className="btn btn-sm" onClick={() => setCreating("publishing")}
+                          title="この作品の紙・電子の条件を1回で作る。出版条件書はこの2本を1行に畳んで出す">
+                    出版の条件（紙・電子）
+                  </button>
+                )}
               </div>
               {creating === "condition" && (
                 <div className="panel-bd">
                   <ConditionCreateForm preset={{ workId: String(work.id) }}
+                    onDone={() => { setCreating(null); void reloadWork(); void reloadTree(); }}
+                    onCancel={() => setCreating(null)} />
+                </div>
+              )}
+              {creating === "publishing" && (
+                <div className="panel-bd">
+                  <PubConditionSetForm preset={{ workId: String(work.id) }}
                     onDone={() => { setCreating(null); void reloadWork(); void reloadTree(); }}
                     onCancel={() => setCreating(null)} />
                 </div>

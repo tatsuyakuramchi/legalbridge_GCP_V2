@@ -861,6 +861,42 @@ export function createRoutes(database: Transactable) {
         actor(res)));
     }));
 
+  /**
+   * 出版の条件を作品1点ぶん（紙・電子）まとめて登録する。
+   * 出版条件書の一覧は、ここで作った2本を1行に畳んで出す。
+   */
+  const publishingTermsSchema = z.object({
+    ratePct: z.coerce.number().min(0).max(100),
+    exclusivity: z.enum(["exclusive", "non_exclusive"]).nullable().optional()
+  }).nullable().optional();
+  const publishingSetSchema = z.object({
+    matterId: z.coerce.number().int().positive().nullable().optional(),
+    title: z.string().trim().min(1).max(300),
+    counterpartyId: z.coerce.number().int().positive(),
+    agreementId: z.coerce.number().int().positive().nullable().optional(),
+    workId: z.coerce.number().int().positive().nullable().optional(),
+    termStart: z.string().date().nullable().optional(),
+    termEnd: z.string().date().nullable().optional(),
+    currency: z.string().trim().length(3).optional(),
+    taxCategory: z.enum(["taxable", "reduced", "exempt"]).optional(),
+    paymentTerms: z.string().trim().max(300).nullable().optional(),
+    notes: z.string().trim().max(4000).nullable().optional(),
+    scopes: z.array(z.object({
+      scopeType: z.enum(["region", "language", "channel"]),
+      label: z.string().trim().min(1).max(120),
+      code: z.string().trim().max(40).nullable().optional()
+    })).max(200).optional(),
+    print: publishingTermsSchema,
+    digital: publishingTermsSchema
+  });
+  router.post("/conditions/publishing-set", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = publishingSetSchema.parse(req.body ?? {});
+      res.status(201).json(await conditionWrites.createPublishingSet(
+        { ...input, scopes: input.scopes?.map((s) => ({ ...s, code: s.code ?? null })) },
+        actor(res)));
+    }));
+
   const paymentSchema = z.object({
     partyId: z.coerce.number().int().positive(),
     direction: z.enum(["in", "out"]),

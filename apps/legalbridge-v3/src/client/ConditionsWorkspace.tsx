@@ -11,6 +11,7 @@ import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
 import { CONDITION_KIND_LABEL, StatusTag } from "./labels.js";
 import { conditionAmountLabel, dealModelLabel, isLicenseCondition } from "./ConditionLabel.js";
 import { ConditionCreateForm } from "./ConditionCreateForm.js";
+import { PubConditionSetForm } from "./PubConditionSetForm.js";
 import type { ConditionDetail, ConditionSummary, EnvelopeCheck, RightsEnvelope } from "../server/core/model.js";
 import { api, ApiError, money, rate } from "./api.js";
 import { CreateForm, int, text } from "./CreateForm.js";
@@ -60,7 +61,7 @@ export function ConditionsWorkspace(
   const [error, setError] = useState<string | null>(null);
   const [sales, setSales] = useState("");
   const [royalty, setRoyalty] = useState<RoyaltyPreview | null>(null);
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreating] = useState<false | "one" | "publishing">(false);
   const [keyword, setKeyword] = useState("");
   const [editing, setEditing] = useState(false);
   const search = useDebounced(keyword);
@@ -210,12 +211,23 @@ export function ConditionsWorkspace(
       </div>
 
       <div className="row" style={{ marginBottom: 10 }}>
-        {!creating && <button className="btn primary btn-sm" onClick={() => setCreating(true)}>条件を登録</button>}
+        {!creating && <button className="btn primary btn-sm" onClick={() => setCreating("one")}>条件を登録</button>}
+        {!creating && (
+          <button className="btn btn-sm" onClick={() => setCreating("publishing")}
+                  title="作品1点ぶんの紙・電子の条件を1回で作る。出版条件書はこの2本を1行に畳んで出す">
+            出版の条件を登録（紙・電子）
+          </button>
+        )}
       </div>
 
-      {creating && (
+      {creating === "one" && (
         <ConditionCreateForm
           onDone={(r: { id: number }) => { setCreating(false); reload(r.id); }}
+          onCancel={() => setCreating(false)} />
+      )}
+      {creating === "publishing" && (
+        <PubConditionSetForm
+          onDone={(r) => { setCreating(false); reload((r.print ?? r.digital)?.id); }}
           onCancel={() => setCreating(false)} />
       )}
 

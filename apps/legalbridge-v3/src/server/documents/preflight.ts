@@ -16,6 +16,17 @@ const HELPERS = new Set([
 ]);
 
 /**
+ * 値を整形するヘルパ（rendering.ts の registerLegacyHelpers）。
+ * `{{formatDate 締結日}}` はヘルパ名ではなく、引数の 締結日 が空かを見る。
+ * ここに無いヘルパは名前そのものが点検に出て「formatDate が空」と誤報する。
+ */
+const VALUE_HELPERS = new Set([
+  "formatDate", "formatDateCompact", "formatCurrency", "formatMoney", "formatPct", "formatYen",
+  "circledNum", "index1", "add", "multiply", "or", "gt", "lt", "eq", "ne", "join", "length",
+  "concat", "cycleLabel", "cycleLabelEn", "billingDayLabel", "billingDayLabelEn", "invoiceLabel"
+]);
+
+/**
  * 本文の中で、条件にも繰り返しにも囲まれていない差し込みだけを残す。
  *
  *   {{#if X}}…{{/if}}   … 出す出さないを本文側が決めている。空でよい
@@ -41,15 +52,24 @@ function unconditionalBody(html: string): string {
 export function referencedNames(html: string): string[] {
   const names: string[] = [];
   const seen = new Set<string>();
-  for (const m of unconditionalBody(html).matchAll(/\{\{\{?\s*([^}\s|]+)/g)) {
-    const raw = String(m[1]);
-    // 制御・ヘルパ・パス付き（this.x, @index, ../y）は値として点検しない。
+  const push = (raw: string) => {
+    // 制御・ヘルパ・パス付き（this.x, @index, ../y）・文字列や数のリテラルは
+    // 値として点検しない。
     if (raw.startsWith("#") || raw.startsWith("/") || raw.startsWith("@")
         || raw.startsWith("!") || raw.startsWith(">") || raw.includes(".")
-        || raw.includes("/") || HELPERS.has(raw)) continue;
-    if (seen.has(raw)) continue;
+        || raw.includes("/") || raw.startsWith("\"") || raw.startsWith("'")
+        || /^-?\d+$/.test(raw) || raw === "true" || raw === "false"
+        || HELPERS.has(raw) || VALUE_HELPERS.has(raw)) return;
+    if (seen.has(raw)) return;
     seen.add(raw);
     names.push(raw);
+  };
+  for (const m of unconditionalBody(html).matchAll(/\{\{\{?\s*([^}]+?)\s*\}?\}\}/g)) {
+    const tokens = String(m[1]).split(/\s+/).filter(Boolean);
+    const head = tokens[0] ?? "";
+    // ヘルパ呼び出しは引数のほうを見る（{{formatDate 締結日}} → 締結日）。
+    if (VALUE_HELPERS.has(head)) tokens.slice(1).forEach(push);
+    else push(head);
   }
   return names;
 }
@@ -98,6 +118,20 @@ const STAFF_LABEL: Record<string, string> = {
   STAFF_DEPARTMENT: "担当者の部署", inspectorDept: "担当者の部署",
   STAFF_EMAIL: "担当者のメール", inspectorEmail: "担当者のメール",
   STAFF_PHONE: "担当者の電話"
+};
+
+/**
+ * 本文が差す名前の読み方。計算ブロックが出す英名は、そのまま出すと何を直せば
+ * いいか読めない（出版条件書の licensorContact など）。項目の見出しに戻す。
+ */
+const OTHER_LABEL: Record<string, string> = {
+  agreementNo: "基本契約番号", agreementTitle: "基本契約名",
+  licensorName: "許諾者（甲）名称", licensorAddress: "許諾者（甲）住所",
+  licensorRep: "許諾者（甲）代表者名", licensorContact: "許諾者（甲）通知先",
+  licenseeName: "被許諾者（乙）名称", licenseeAddress: "被許諾者（乙）住所",
+  licenseeRep: "被許諾者（乙）代表者名", licenseeContact: "被許諾者（乙）通知先",
+  termStart: "許諾開始日", termEnd: "許諾終了日", region: "許諾地域", language: "許諾言語",
+  signDate: "締結日", docNo: "文書番号"
 };
 
 /** 空欄をひとまとまりの日本語にする。 */
@@ -155,7 +189,7 @@ export function documentWarnings(
   const rest = blank.filter((n) =>
     !(n in BANK_LABEL) && !(n in COMPANY_LABEL) && !(n in STAFF_LABEL));
   if (rest.length) {
-    out.push({ kind: "other", message: `空欄のまま出る項目: ${rest.join("・")}` });
+    out.push({ kind: "other", message: `空欄のまま出る項目: ${label(OTHER_LABEL, rest)}` });
   }
   return out;
 }

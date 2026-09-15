@@ -6,7 +6,7 @@ import { documentWarnings, type Warning } from "./preflight.js";
 import { DocumentContextRepository } from "./context-repository.js";
 import { DocumentRepository } from "./repository.js";
 import { renderDocumentHtml } from "./render.js";
-import { buildTemplateContext, seedLines, suggestionsFor } from "./template-context.js";
+import { buildTemplateContext, seedLines, suggestionsFor, templateWarnings } from "./template-context.js";
 import { resolveAllLegacyVariables } from "./legacy-variables.js";
 import { buildCandidates, type Candidate } from "./candidates.js";
 import { currentYearInTokyo, formatDocumentNumber, nextSequence, normalizePrefix } from "./numbering.js";
@@ -105,8 +105,11 @@ export class DocumentIssueService {
         templateVersionId: template.templateVersionId,
         candidates: buildCandidates(context),
         // 宣言済みの項目は binding.missing が別に報告する。重ねない。
-        warnings: documentWarnings(template.htmlSource, values,
-          template.variables.map((v) => v.name)),
+        warnings: [
+          ...documentWarnings(template.htmlSource, values, template.variables.map((v) => v.name)),
+          // ひな形ごとの警告（出版の条件書：一覧に載せられない条件明細）。
+          ...templateWarnings(template.templateKey, context)
+        ],
         lines: Object.entries(seedLines(template.templateKey, context))
           .map(([name, rows]) => ({ name, rows }))
       };
