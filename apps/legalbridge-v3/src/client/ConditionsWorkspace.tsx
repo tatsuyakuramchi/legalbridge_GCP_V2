@@ -12,6 +12,7 @@ import { CONDITION_KIND_LABEL, StatusTag } from "./labels.js";
 import { conditionAmountLabel, dealModelLabel, isLicenseCondition } from "./ConditionLabel.js";
 import { ConditionCreateForm } from "./ConditionCreateForm.js";
 import { PubConditionSetForm } from "./PubConditionSetForm.js";
+import { LicenseSetForm } from "./LicenseSetForm.js";
 import type { ConditionDetail, ConditionSummary, EnvelopeCheck, RightsEnvelope } from "../server/core/model.js";
 import { api, ApiError, money, rate } from "./api.js";
 import { CreateForm, int, text } from "./CreateForm.js";
@@ -61,7 +62,7 @@ export function ConditionsWorkspace(
   const [error, setError] = useState<string | null>(null);
   const [sales, setSales] = useState("");
   const [royalty, setRoyalty] = useState<RoyaltyPreview | null>(null);
-  const [creating, setCreating] = useState<false | "one" | "publishing">(false);
+  const [creating, setCreating] = useState<false | "one" | "publishing" | "license">(false);
   const [keyword, setKeyword] = useState("");
   const [editing, setEditing] = useState(false);
   const search = useDebounced(keyword);
@@ -213,9 +214,15 @@ export function ConditionsWorkspace(
       <div className="row" style={{ marginBottom: 10 }}>
         {!creating && <button className="btn primary btn-sm" onClick={() => setCreating("one")}>条件を登録</button>}
         {!creating && (
+          <button className="btn btn-sm" onClick={() => setCreating("license")}
+                  title="作品1点ぶんの自社製造・再許諾・他社販売の条件を1回で作る。個別利用許諾条件書はこの N 本を表に畳んで出す">
+            許諾セットを登録（ゲーム）
+          </button>
+        )}
+        {!creating && (
           <button className="btn btn-sm" onClick={() => setCreating("publishing")}
                   title="作品1点ぶんの紙・電子の条件を1回で作る。出版条件書はこの2本を1行に畳んで出す">
-            出版の条件を登録（紙・電子）
+            出版セットを登録（紙・電子）
           </button>
         )}
       </div>
@@ -228,6 +235,11 @@ export function ConditionsWorkspace(
       {creating === "publishing" && (
         <PubConditionSetForm
           onDone={(r) => { setCreating(false); reload((r.print ?? r.digital)?.id); }}
+          onCancel={() => setCreating(false)} />
+      )}
+      {creating === "license" && (
+        <LicenseSetForm
+          onDone={(r) => { setCreating(false); reload(r.conditions[0]?.id); }}
           onCancel={() => setCreating(false)} />
       )}
 
@@ -575,7 +587,7 @@ export function ConditionsWorkspace(
                 pricingModel={detail.pricingModel} deliverableOwnership={detail.deliverableOwnership}
                 ratePpm={detail.ratePpm} direction={detail.direction}
                 conditionUnitAmount={detail.unitAmount} conditionQuantity={detail.quantity}
-                workTitle={detail.work?.title ?? null}
+                workTitle={detail.work?.title ?? null} workId={detail.work?.id ?? null}
                 matterId={detail.matters[0]?.id ?? null}
                 reloadKey={flowVersion}
                 editable={!readOnly && (detail.status === "active" || detail.status === "draft")}

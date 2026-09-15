@@ -299,6 +299,7 @@ export class DocumentContextRepository {
               op.name AS out_party_name, ow.title AS out_work_title,
               w.title AS in_work_title, w.kind AS in_work_kind,
               ${CHILD_TITLES_SQL("c.work_id")} AS child_titles,
+              e.work_id AS event_work_id, ew.title AS event_work_title,
               s.contract_form AS schedule_contract_form,
               s.service_from AS schedule_service_from, s.service_to AS schedule_service_to,
               c.currency, s.label AS schedule_label, s.seq AS schedule_seq,
@@ -311,6 +312,7 @@ export class DocumentContextRepository {
          LEFT JOIN parties    op ON op.id = oc.counterparty_id
          LEFT JOIN works      ow ON ow.id = oc.work_id
          LEFT JOIN works      w  ON w.id = c.work_id
+         LEFT JOIN works      ew ON ew.id = e.work_id
         WHERE e.id = ANY($1::bigint[]) AND e.status = 'active'
         ORDER BY e.occurred_on, e.id`, [ids]);
     return (r.rows as Array<Record<string, any>>).map((row) => {
@@ -336,8 +338,12 @@ export class DocumentContextRepository {
           usageType: str(row.usage_type), outConditionName: str(row.out_condition_name),
           outWorkTitle: str(row.out_work_title), inWorkTitle: str(row.in_work_title),
           inWorkKind: str(row.in_work_kind),
-          childTitles: Array.isArray(row.child_titles) ? row.child_titles : null
+          childTitles: Array.isArray(row.child_titles) ? row.child_titles : null,
+          eventWorkTitle: str(row.event_work_title)
         }) || null,
+        /** 実績が指す当社作品（A-027）。 */
+        workId: int(row.event_work_id),
+        workTitle: str(row.event_work_title),
         // 許諾先。紙の「対象契約」と製品名の既定値になる。
         outCondition: row.out_condition_id ? {
           id: Number(row.out_condition_id),
@@ -373,7 +379,7 @@ export class DocumentContextRepository {
               c.term_start, c.term_end, c.tax_category, c.payment_terms, c.contract_form,
               c.cycle,
               c.agreement_id, c.exclusivity, c.sublicensable, c.notes, c.spec, c.deliverable_ownership,
-              c.order_no,
+              c.order_no, c.usage_type,
               c.counterparty_id, c.work_id, c.work_part_id,
               p.name AS party_name, p.name_kana AS party_kana, p.kind AS party_kind,
               p.invoice_no AS party_invoice_no, p.corporate_no AS party_corporate_no,
@@ -381,7 +387,9 @@ export class DocumentContextRepository {
               -- 住所・電話・メールは A-008 で足した列。当てる前のデータベースでも
               -- 落ちないよう、列を名指しせず行ごと受けて読む。
               to_jsonb(p) AS party_row,
-              w.title AS work_title, w.work_code, w.kind AS work_kind, wp.name AS part_name,
+              w.title AS work_title, w.work_code, w.kind AS work_kind,
+              w.copyright_notice AS work_copyright, w.third_party_rights AS work_third_party,
+              wp.name AS part_name,
               wp.part_type AS part_type,
               ${SOURCE_TITLES_SQL("c.work_id")} AS source_titles
          FROM conditions c
@@ -426,6 +434,8 @@ export class DocumentContextRepository {
         deliverableOwnership: str(row.deliverable_ownership),
         /** 外部で出した発注番号。V3 の発注書が無いときの控え。 */
         orderNo: str(row.order_no),
+        /** 利用形態（A-027）。条件書の行・取引形態の当てはめはこれが先。 */
+        usageType: str(row.usage_type),
         agreementId: int(row.agreement_id),
         counterpartyId: int(row.counterparty_id),
         /** 作品。条件書の構成要素は、この作品の取得条件から並ぶ。 */
@@ -449,6 +459,9 @@ export class DocumentContextRepository {
         },
         work: { title: str(row.work_title), code: str(row.work_code), part: str(row.part_name),
                 kind: str(row.work_kind),
+                /** 著作権表示・第三者権利（A-027）。出版条件書の一覧の種。 */
+                copyrightNotice: str(row.work_copyright),
+                thirdPartyRights: str(row.work_third_party),
                 /**
                  * 原作名。作品が原作ならその名前、当社作品なら系譜の親の原作名。
                  * 計算書の件名「◯◯ 利用許諾料のご報告」はこれを差す。

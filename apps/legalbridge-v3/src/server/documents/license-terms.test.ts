@@ -359,3 +359,13 @@ test("構成上の役割は素材の種別から決める（コアロジック�
   assert.equal(roleOfPart({ partType: null, part: "設定資料" }), "sub");
   assert.equal(roleOfPart({}), "sub", "分からなければサブ（コアを勝手に増やさない）");
 });
+
+test("利用形態の列（A-027）があれば備考の文字列より先に取引形態が決まる", () => {
+  const assigned = assignDeals([
+    cond({ id: 51, workPartId: 70, usageType: "oem",
+      notes: "取引形態: 自社製造・自社販売 / 計算モデル: 基準価格 × 個数 × 料率" }),
+    cond({ id: 52, workPartId: 70, usageType: "sublicense" }),
+    cond({ id: 53, workPartId: 70, usageType: "in_house" })
+  ]);
+  assert.deepEqual([assigned.get(51), assigned.get(52), assigned.get(53)], [3, 2, 1]);
+});

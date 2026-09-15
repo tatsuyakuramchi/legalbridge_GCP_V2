@@ -87,12 +87,12 @@ test("載せられない条件は名指しで警告し、行からは落とす",
     ]
   };
   assert.match(rowBlockerOf(broken.conditions[3])!, /料率ではありません/);
-  assert.match(rowBlockerOf(broken.conditions[4])!, /媒体/);
+  assert.match(rowBlockerOf(broken.conditions[4])!, /利用形態/);
   assert.equal(rowBlockerOf(broken.conditions[0]), null);
   const messages = pubTermsWarnings(broken).map((w) => w.message);
   assert.equal(messages.length, 4, messages.join("\n"));
   assert.ok(messages.some((m) => m.includes("CL-2026-00460") && m.includes("料率")));
-  assert.ok(messages.some((m) => m.includes("CL-2026-00461") && m.includes("媒体")));
+  assert.ok(messages.some((m) => m.includes("CL-2026-00461") && m.includes("利用形態")));
   assert.ok(messages.some((m) => m.includes("ねこの図書館") && m.includes("紙の条件が2本")));
   assert.ok(messages.some((m) => m.includes("相手先の違う")));
   // 壊れていない条件だけが行になる（作品14は媒体はあるので行になる）。
@@ -164,4 +164,20 @@ test("項目の宣言：一覧は array で手入力に回らない。既定値�
     assert.ok(PUB_TERMS_VARIABLES.find((v) => v.name === name)?.default, name);
   }
   assert.equal(new Set(PUB_TERMS_VARIABLES.map((v) => v.name)).size, PUB_TERMS_VARIABLES.length, "名前の重複なし");
+});
+
+test("利用形態（A-027）が入っていれば媒体の範囲より先に見る。作品の著作権表示が行の種になる", () => {
+  const rows = pubTitleSeeds({
+    conditions: [
+      cond({ id: 11, conditionNo: "CL-1", name: "本A", workId: 21, usageType: "pub_print", ratePct: 10,
+        work: { title: "本A", copyrightNotice: "© 2026 甲野 甲太", thirdPartyRights: "挿絵：乙川 乙子" } }),
+      cond({ id: 12, conditionNo: "CL-2", name: "本A", workId: 21, usageType: "pub_digital", ratePct: 12,
+        work: { title: "本A", copyrightNotice: "© 2026 甲野 甲太" }, scopes: { region: [], language: [], media: ["紙"] } })
+    ]
+  });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].print_rate, "10%");
+  assert.equal(rows[0].digital_rate, "12%", "範囲に紙とあっても列の pub_digital が勝つ");
+  assert.equal(rows[0].copyright, "© 2026 甲野 甲太");
+  assert.equal(rows[0].third_party, "挿絵：乙川 乙子");
 });

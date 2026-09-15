@@ -104,6 +104,7 @@ export class WorkRepository {
     try {
       const r = await this.database.query(
         `SELECT w.id, w.work_code, w.title, w.title_kana, w.kind, w.status, w.business_line, w.remarks,
+                w.copyright_notice, w.third_party_rights,
                 (w.legacy_id IS NOT NULL) AS legacy, w.merged_into_id,
                 m.work_code AS merged_into_code, m.title AS merged_into_title
            FROM works w LEFT JOIN works m ON m.id = w.merged_into_id
@@ -129,6 +130,7 @@ export class WorkRepository {
         id: Number(w.id), workCode: str(w.work_code), title: String(w.title),
         titleKana: str(w.title_kana), kind: String(w.kind), status: String(w.status),
         businessLine: str(w.business_line), remarks: str(w.remarks), legacy: w.legacy === true,
+        copyrightNotice: str(w.copyright_notice), thirdPartyRights: str(w.third_party_rights),
         mergedInto: w.merged_into_id === null || w.merged_into_id === undefined ? null
           : { id: Number(w.merged_into_id), workCode: str(w.merged_into_code), title: String(w.merged_into_title ?? "") },
         sources: (sources.rows as Array<Record<string, any>>).map(ref),

@@ -717,7 +717,9 @@ export function createRoutes(database: Transactable) {
     status: z.enum(["planning", "in_production", "released", "archived"]).optional(),
     remarks: z.string().trim().max(2000).nullable().optional(),
     workCode: z.string().trim().max(40).nullable().optional(),
-    parentWorkId: z.coerce.number().int().positive().nullable().optional()
+    parentWorkId: z.coerce.number().int().positive().nullable().optional(),
+    copyrightNotice: z.string().trim().max(300).nullable().optional(),
+    thirdPartyRights: z.string().trim().max(600).nullable().optional()
   });
   router.post("/works", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
@@ -814,6 +816,9 @@ export function createRoutes(database: Transactable) {
         Number(req.params.id), taskSchema.parse(req.body ?? {}), actor(res)));
     }));
 
+  /** 利用形態（A-027）。条件書・計算書の製品名・許諾セットがこれを見る。 */
+  const usageTypeSchema = z.enum(["in_house", "sublicense", "oem", "pub_print", "pub_digital"])
+    .nullable().optional();
   const conditionSchema = z.object({
     matterId: z.coerce.number().int().positive().optional(),
     name: z.string().trim().min(1).max(300),
@@ -851,7 +856,8 @@ export function createRoutes(database: Transactable) {
       scopeType: z.enum(["region", "language", "media", "channel"]),
       label: z.string().trim().min(1).max(120),
       code: z.string().trim().max(40).nullable().optional()
-    })).max(200).optional()
+    })).max(200).optional(),
+    usageType: usageTypeSchema
   });
   router.post("/conditions", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
@@ -893,6 +899,28 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       const input = publishingSetSchema.parse(req.body ?? {});
       res.status(201).json(await conditionWrites.createPublishingSet(
+        { ...input, scopes: input.scopes?.map((s) => ({ ...s, code: s.code ?? null })) },
+        actor(res)));
+    }));
+
+  /**
+   * 許諾の条件を作品1点ぶん、利用形態ごとにまとめて登録する。
+   * 個別利用許諾条件書（自社製造・再許諾・他社販売）はこれで3本を1回で作る。
+   */
+  const licenseSetSchema = publishingSetSchema.omit({ print: true, digital: true }).extend({
+    workPartId: z.coerce.number().int().positive().nullable().optional(),
+    rows: z.array(z.object({
+      usageType: z.enum(["in_house", "sublicense", "oem", "pub_print", "pub_digital"]),
+      ratePct: z.coerce.number().min(0).max(100),
+      exclusivity: z.enum(["exclusive", "non_exclusive"]).nullable().optional(),
+      mgAmount: z.coerce.number().int().min(0).nullable().optional(),
+      agAmount: z.coerce.number().int().min(0).nullable().optional()
+    })).min(1).max(5)
+  });
+  router.post("/conditions/license-set", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = licenseSetSchema.parse(req.body ?? {});
+      res.status(201).json(await conditionWrites.createLicenseSet(
         { ...input, scopes: input.scopes?.map((s) => ({ ...s, code: s.code ?? null })) },
         actor(res)));
     }));
@@ -939,7 +967,8 @@ export function createRoutes(database: Transactable) {
     exclusivity: z.enum(["exclusive", "non_exclusive"]).nullable().optional(),
     spec: z.string().trim().max(4000).nullable().optional(),
     deliverableOwnership: z.enum(["orderer", "contractor"]).nullable().optional(),
-    orderNo: z.string().trim().max(60).nullable().optional()
+    orderNo: z.string().trim().max(60).nullable().optional(),
+    usageType: usageTypeSchema
   });
   // effectiveFrom に未来の日付を渡すと「予約された改訂」になる。
   // 契約変更を締結した日に記録できないと、適用開始日まで人が覚えているしかない。
@@ -1040,6 +1069,8 @@ export function createRoutes(database: Transactable) {
     // 権利の使い方。利用許諾料計算書はこれで算定の形が決まる。
     usageType: z.enum(["in_house", "sublicense", "oem"]).nullable().optional(),
     outConditionId: z.coerce.number().int().positive().nullable().optional(),
+    /** どの当社作品の売上か（A-027）。自社製造・自社販売の計算書の製品名になる。 */
+    workId: z.coerce.number().int().positive().nullable().optional(),
     /** 基準価格（自社販売）／受領価格1個あたり（他社販売）。 */
     unitAmount: z.coerce.number().int().nullable().optional(),
     /** その回の料率（百万分率）。空ならイン条件の料率。 */
@@ -1277,7 +1308,9 @@ export function createRoutes(database: Transactable) {
     kind: z.enum(["own", "source_ip", "derivative"]).optional(),
     businessLine: z.string().trim().max(120).nullable().optional(),
     status: z.enum(["planning", "in_production", "released", "archived"]).optional(),
-    remarks: z.string().trim().max(2000).nullable().optional()
+    remarks: z.string().trim().max(2000).nullable().optional(),
+    copyrightNotice: z.string().trim().max(300).nullable().optional(),
+    thirdPartyRights: z.string().trim().max(600).nullable().optional()
   });
   router.patch("/works/:id", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {

@@ -16,6 +16,9 @@ export interface WorkInput {
   workCode?: string | null;
   /** 親作品。指定すると系譜に登録し、kind を derivative にする。 */
   parentWorkId?: number | null;
+  /** 著作権表示・第三者権利（A-027）。出版条件書の一覧に出る。 */
+  copyrightNotice?: string | null;
+  thirdPartyRights?: string | null;
 }
 
 export interface WorkPartInput {
@@ -36,6 +39,8 @@ export interface WorkPatch {
   businessLine?: string | null;
   status?: WorkStatus;
   remarks?: string | null;
+  copyrightNotice?: string | null;
+  thirdPartyRights?: string | null;
 }
 
 export interface WorkPartPatch {
@@ -48,7 +53,8 @@ export interface WorkPartPatch {
 
 const WORK_COLUMNS: Record<keyof WorkPatch, string> = {
   title: "title", titleKana: "title_kana", kind: "kind", businessLine: "business_line",
-  status: "status", remarks: "remarks"
+  status: "status", remarks: "remarks",
+  copyrightNotice: "copyright_notice", thirdPartyRights: "third_party_rights"
 };
 const PART_COLUMNS: Record<keyof WorkPartPatch, string> = {
   name: "name", partType: "part_type", royaltyBearing: "royalty_bearing",
@@ -77,10 +83,12 @@ export class WorkWriteService {
         const kind: WorkKind = input.kind ?? (input.parentWorkId ? "derivative" : "own");
 
         const inserted = await client.query(
-          `INSERT INTO works (work_code, title, title_kana, kind, business_line, status, remarks)
-           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, work_code`,
+          `INSERT INTO works (work_code, title, title_kana, kind, business_line, status, remarks,
+                              copyright_notice, third_party_rights)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, work_code`,
           [code, title, input.titleKana ?? null, kind, input.businessLine ?? null,
-           input.status ?? "planning", input.remarks ?? null]);
+           input.status ?? "planning", input.remarks ?? null,
+           input.copyrightNotice ?? null, input.thirdPartyRights ?? null]);
         const row = inserted.rows[0] as { id: number; work_code: string | null };
         const id = Number(row.id);
 

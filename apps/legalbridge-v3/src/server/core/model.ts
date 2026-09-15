@@ -1,3 +1,4 @@
+import type { ConditionUsageType } from "./condition-usage.js";
 // V3 のドメインモデル。物理の軸は条件、運用の軸は案件。
 // 画面もAPIもこの型だけを扱い、テーブルの列名は外へ出さない。
 
@@ -43,6 +44,8 @@ export interface ConditionSummary {
   status: ConditionStatus;
   /** この版が適用され始める日。契約期間（termStart）とは別。 */
   effectiveFrom: string | null;
+  /** 利用形態（A-027）。自社製造・自社販売／再許諾／自社製造・他社販売／出版（紙）／出版（電子）。 */
+  usageType: ConditionUsageType | null;
 }
 
 export interface ConditionScope { scopeType: ScopeType; label: string; code: string | null }

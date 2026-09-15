@@ -1,5 +1,6 @@
 import { money, rate } from "./api.js";
 import { CONDITION_KIND_LABEL, PRICING_MODEL_LABEL } from "./labels.js";
+import { conditionUsageLabel } from "../server/core/condition-usage.js";
 
 /**
  * 条件明細の見出し。選ぶ画面はどこもこれで揃える。
@@ -27,6 +28,7 @@ export interface LabelledCondition {
   flatAmount?: number | null;
   unitAmount?: number | null;
   ratePpm?: number | null;
+  usageType?: string | null;
 }
 
 /** 権利を扱う条件か。許諾料と製品がライセンス、残りが業務委託。 */
@@ -40,7 +42,9 @@ export const isLicenseCondition = (c: { kind: string }): boolean =>
  * 「自社製造・他社販売」は計算方式が製造販売と同じなので当てられない。
  * 当てられないものは計算方式をそのまま出す（黙って空にしない）。
  */
-export function dealModelLabel(c: { direction: string; pricingModel?: string }): string {
+export function dealModelLabel(c: { direction: string; pricingModel?: string; usageType?: string | null }): string {
+  // 利用形態の列（A-027）が入っていればそれ。推測より先。
+  if (c.usageType) return conditionUsageLabel(c.usageType);
   // 取得（IN）は「許諾を受ける側」で、取引モデルの話ではない。
   if (c.direction === "in") return "取得";
   if (c.pricingModel === "unit_rate") return "自社製造・自社販売";

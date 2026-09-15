@@ -36,3 +36,8 @@ test("件名の原作名：原作ならそのまま、当社作品なら系譜�
   assert.equal(originalWorkTitle({ inWorkTitle: "ito", inWorkKind: "own", sourceTitles: ["原作A", "原作B"] }), "原作A・原作B");
   assert.equal(originalWorkTitle({ inWorkTitle: "ito", inWorkKind: "own", sourceTitles: [] }), "ito");
 });
+
+test("実績が作品を指していれば（A-027）それが最優先。推測はしない", () => {
+  assert.equal(statementProductName({ usageType: "in_house", inWorkTitle: "ito 原作", inWorkKind: "source_ip",
+    childTitles: ["ito", "ito クラシック"], eventWorkTitle: "ito クラシック" }), "ito クラシック");
+});

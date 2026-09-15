@@ -173,6 +173,7 @@ export class RoyaltyStatementService {
               op.name AS out_party_name, oc.currency AS out_currency,
               -- 製品名は利用形態で決める（product-name.ts）。ここは材料だけ引く。
               w.title AS in_work_title, w.kind AS in_work_kind, ow.title AS out_work_title,
+              ew.title AS event_work_title,
               ${CHILD_TITLES_SQL("c.work_id")} AS child_titles,
               -- 許諾地域・言語など。従前に決めた内容をそのまま紙に出す。
               (SELECT string_agg(sc.label, '・' ORDER BY sc.scope_type, sc.sort_order, sc.label)
@@ -184,6 +185,7 @@ export class RoyaltyStatementService {
          LEFT JOIN parties op ON op.id = oc.counterparty_id
          LEFT JOIN works w ON w.id = c.work_id
          LEFT JOIN works ow ON ow.id = oc.work_id
+         LEFT JOIN works ew ON ew.id = e.work_id
         WHERE e.id = ANY($1::bigint[])
         ORDER BY e.occurred_on, e.id`, [ids, input.conditionId]);
     const rows = r.rows as Array<Record<string, any>>;
@@ -326,7 +328,8 @@ export class RoyaltyStatementService {
         productName: statementProductName({
           usageType, outConditionName: str(e.out_condition_name), outWorkTitle: str(e.out_work_title),
           inWorkTitle: str(e.in_work_title), inWorkKind: str(e.in_work_kind),
-          childTitles: Array.isArray(e.child_titles) ? e.child_titles : null
+          childTitles: Array.isArray(e.child_titles) ? e.child_titles : null,
+          eventWorkTitle: str(e.event_work_title)
         }) || null,
         unitAmount: int(e.unit_amount),
         ratePct,

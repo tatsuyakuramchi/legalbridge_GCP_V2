@@ -185,7 +185,7 @@ export function App() {
         {view === "works" && (
           <WorksWorkspace key={`w${focusFor("works") ?? 0}`}
             onOpenCondition={openCondition} initialId={focusFor("works")}
-            onOpen={openEntity} />
+            onOpen={openEntity} onCompose={startCompose} />
         )}
         {view === "parties" && (
           <PartiesWorkspace key={`p${focusFor("parties") ?? 0}`} initialId={focusFor("parties")}

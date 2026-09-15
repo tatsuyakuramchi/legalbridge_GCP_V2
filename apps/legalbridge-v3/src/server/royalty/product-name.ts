@@ -24,6 +24,8 @@ export interface ProductNameSource {
   inWorkKind?: string | null;
   /** その原作から作った当社の作品（系譜の子）。 */
   childTitles?: Array<string | null> | null;
+  /** 実績が指している当社作品（A-027）。あればこれが最優先。 */
+  eventWorkTitle?: string | null;
 }
 
 const text = (v: unknown) => String(v ?? "").trim();
@@ -36,7 +38,9 @@ export function statementProductName(s: ProductNameSource): string {
   if (usage === "sublicense" || usage === "oem") {
     return text(s.outConditionName) || text(s.outWorkTitle) || text(s.inWorkTitle);
   }
-  // 自社製造・自社販売（利用形態なしの旧データも同じ扱い）。
+  // 自社製造・自社販売（利用形態なしの旧データも同じ扱い）。実績が作品を
+  // 指していればそれ。推測より先。
+  if (text(s.eventWorkTitle)) return text(s.eventWorkTitle);
   if (text(s.outWorkTitle) || text(s.outConditionName)) {
     return text(s.outWorkTitle) || text(s.outConditionName);
   }

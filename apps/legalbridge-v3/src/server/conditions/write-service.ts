@@ -7,6 +7,8 @@ import { roundAmount } from "../core/rounding.js";
 import { readContractForm } from "./contract-form.js";
 import type { ConditionScope } from "../core/model.js";
 import { PUB_MEDIA_LABEL, pubMediaOf, type PubMedia } from "../core/pub-media.js";
+import { conditionUsageLabel, pubMediaOfUsage, usageOfPubMedia,
+         type ConditionUsageType } from "../core/condition-usage.js";
 
 /** 出版の条件（作品1点＝紙・電子）。createPublishingSet の入力。 */
 export interface PublishingTerms {
@@ -33,6 +35,36 @@ export interface PublishingSetInput {
   digital?: PublishingTerms | null;
 }
 export type PublishingSetResult = Record<PubMedia, { id: number; conditionNo: string | null } | null>;
+
+/** 許諾セットの1行。利用形態ごとの料率と独占性。 */
+export interface LicenseSetRow {
+  usageType: ConditionUsageType;
+  /** 料率（%）。 */
+  ratePct: number;
+  exclusivity?: "exclusive" | "non_exclusive" | null;
+  mgAmount?: number | null;
+  agAmount?: number | null;
+}
+export interface LicenseSetInput {
+  matterId?: number | null;
+  /** 条件名（対象製品名・対象出版物名）。全行に同じ名前が付く。 */
+  title: string;
+  counterpartyId: number;
+  agreementId?: number | null;
+  workId?: number | null;
+  workPartId?: number | null;
+  termStart?: string | null;
+  termEnd?: string | null;
+  currency?: string;
+  taxCategory?: "taxable" | "reduced" | "exempt";
+  paymentTerms?: string | null;
+  notes?: string | null;
+  scopes?: ConditionScope[];
+  rows: LicenseSetRow[];
+}
+export interface LicenseSetResult {
+  conditions: Array<{ usageType: ConditionUsageType; id: number; conditionNo: string | null }>;
+}
 
 /**
  * 単価と個数を入れてあれば、定額は掛けて出す。入れた額があればそちらが勝つ
@@ -122,6 +154,8 @@ export interface ConditionInput {
   orderNo?: string | null;
   conditionNo?: string | null;
   scopes?: ConditionScope[];
+  /** 利用形態（A-027）。出版なら媒体の範囲も同時に入る。 */
+  usageType?: ConditionUsageType | null;
 }
 
 export interface EconomicsPatch {
@@ -144,6 +178,7 @@ export interface EconomicsPatch {
   spec?: string | null;
   deliverableOwnership?: "orderer" | "contractor" | null;
   orderNo?: string | null;
+  usageType?: ConditionUsageType | null;
 }
 
 const ECONOMICS_COLUMNS: Record<keyof EconomicsPatch, string> = {
@@ -152,7 +187,8 @@ const ECONOMICS_COLUMNS: Record<keyof EconomicsPatch, string> = {
   paymentTerms: "payment_terms", taxCategory: "tax_category", notes: "notes",
   quantity: "quantity", contractForm: "contract_form",
   workId: "work_id", exclusivity: "exclusivity",
-  spec: "spec", deliverableOwnership: "deliverable_ownership", orderNo: "order_no"
+  spec: "spec", deliverableOwnership: "deliverable_ownership", orderNo: "order_no",
+  usageType: "usage_type"
 };
 
 // 改訂で引き継ぐ列（id・状態・監査列を除く条件の中身すべて）。
@@ -186,31 +222,35 @@ export class ConditionWriteService {
   }
 
   /**
-   * 出版の条件を作品1点ぶんまとめて登録する。紙と電子で条件2本（どちらか
-   * 1本でもよい）。同じトランザクションで作るので、紙だけできて電子が
-   * 落ちる、が起きない。出版条件書はこの2本を1行に畳んで出す。
+   * 許諾の条件を作品1点ぶんまとめて登録する。利用形態ごとに1本。
    *
-   * 同じ作品・同じ相手先に同じ媒体の生きた条件が既にあれば止める。2本
-   * あると条件書のどちらの料率を載せるか決められない（改定は既存の条件を
-   * 直す・改訂する）。
+   * 条件は利用形態ごとに1本（料率1つ）で持つ。実績・計算・支払・改訂が
+   * 条件1本を軸に回るので、まとめて1本にはしない。代わりに登録を1回で
+   * 済ませ、同じトランザクションで N 本作る（1本だけできて残りが落ちない）。
+   * 条件書は一組（契約×作品）を1行に畳んで出す。
+   *
+   * 同じ作品・同じ相手先に同じ利用形態の生きた条件が既にあれば止める。
+   * 2本あると条件書のどちらの料率を載せるか決められない（改定は既存の
+   * 条件を直す・改訂する）。
    */
-  async createPublishingSet(input: PublishingSetInput, actor: string): Promise<PublishingSetResult> {
+  async createLicenseSet(input: LicenseSetInput, actor: string): Promise<LicenseSetResult> {
     const title = String(input.title ?? "").trim();
-    if (!title) throw new DomainError("VALIDATION", "対象出版物名（条件名）は必須です");
-    if (!input.print && !input.digital) {
-      throw new DomainError("VALIDATION", "紙か電子のどちらかの料率を入れてください");
-    }
-    const media: Array<{ media: PubMedia; terms: PublishingTerms }> = [];
-    if (input.print) media.push({ media: "print", terms: input.print });
-    if (input.digital) media.push({ media: "digital", terms: input.digital });
-    for (const { media: kind, terms } of media) {
-      const rate = Number(terms.ratePct);
+    if (!title) throw new DomainError("VALIDATION", "条件名（対象製品名・対象出版物名）は必須です");
+    const rows = (input.rows ?? []).filter((r) => r && r.usageType);
+    if (!rows.length) throw new DomainError("VALIDATION", "利用形態を1つ以上選び、料率を入れてください");
+    const seen = new Set<string>();
+    for (const row of rows) {
+      if (seen.has(row.usageType)) {
+        throw new DomainError("VALIDATION", `${conditionUsageLabel(row.usageType)}が2回入っています`);
+      }
+      seen.add(row.usageType);
+      const rate = Number(row.ratePct);
       if (!Number.isFinite(rate) || rate < 0 || rate > 100) {
-        throw new DomainError("VALIDATION", `${PUB_MEDIA_LABEL[kind]}の料率は 0〜100（%）で入れてください`);
+        throw new DomainError("VALIDATION", `${conditionUsageLabel(row.usageType)}の料率は 0〜100（%）で入れてください`);
       }
     }
     const scopes = (input.scopes ?? []).filter((s) => s.scopeType !== "media");
-    const inputs = media.map(({ media: kind, terms }): ConditionInput => ({
+    const inputs = rows.map((row): ConditionInput => ({
       matterId: input.matterId ?? null,
       name: title,
       direction: "in",
@@ -218,47 +258,75 @@ export class ConditionWriteService {
       counterpartyId: input.counterpartyId,
       agreementId: input.agreementId ?? null,
       workId: input.workId ?? null,
-      exclusivity: terms.exclusivity ?? null,
+      workPartId: input.workPartId ?? null,
+      exclusivity: row.exclusivity ?? null,
       termStart: input.termStart ?? null,
       termEnd: input.termEnd ?? null,
       currency: input.currency ?? "JPY",
       pricingModel: "revenue_rate",
       // 画面は % で受け、保存は ppm（百万分率）。11% → 110000
-      ratePpm: Math.round(Number(terms.ratePct) * 10000),
+      ratePpm: Math.round(Number(row.ratePct) * 10000),
+      mgAmount: row.mgAmount ?? null,
+      agAmount: row.agAmount ?? null,
       taxCategory: input.taxCategory ?? "taxable",
       paymentTerms: input.paymentTerms ?? null,
       notes: input.notes ?? null,
-      scopes: [...scopes, { scopeType: "media", label: PUB_MEDIA_LABEL[kind], code: kind }]
+      scopes,
+      usageType: row.usageType
     }));
     for (const one of inputs) validateConditionInput(one);
 
     try {
       return await inTransaction(this.database, async (client) => {
         if (input.workId) {
+          // 同じ作品・相手先の生きた条件の利用形態。列が空の古い条件は媒体の範囲から読む。
           const existing = await client.query(
-            `SELECT c.condition_no, s.label, s.code
-               FROM conditions c JOIN condition_scopes s ON s.condition_id = c.id
+            `SELECT c.condition_no, c.usage_type,
+                    (SELECT array_agg(coalesce(s.code, s.label)) FROM condition_scopes s
+                      WHERE s.condition_id = c.id AND s.scope_type = 'media') AS media
+               FROM conditions c
               WHERE c.work_id = $1 AND c.counterparty_id = $2 AND c.direction = 'in'
-                AND c.status IN ('active', 'scheduled') AND s.scope_type = 'media'`,
+                AND c.status IN ('active', 'scheduled')`,
             [input.workId, input.counterpartyId]);
-          for (const row of existing.rows as Array<{ condition_no: string | null; label: string; code: string | null }>) {
-            const held = pubMediaOf(row.code) ?? pubMediaOf(row.label);
-            const clash = media.find((m) => m.media === held);
+          for (const row of existing.rows as Array<{ condition_no: string | null; usage_type: string | null; media: string[] | null }>) {
+            const held: string | null = row.usage_type
+              ?? (() => { const m = pubMediaOf((row.media ?? [])[0]); return m ? usageOfPubMedia(m) : null; })();
+            const clash = held ? rows.find((r) => r.usageType === held) : undefined;
             if (clash) {
               throw new DomainError("CONFLICT",
-                `この作品には同じ相手先の${PUB_MEDIA_LABEL[clash.media]}の条件（${row.condition_no ?? "番号なし"}）が既にあります。`
+                `この作品には同じ相手先の${conditionUsageLabel(clash.usageType)}の条件（${row.condition_no ?? "番号なし"}）が既にあります。`
                 + "料率を変えるならその条件を直してください");
             }
           }
         }
-        const out: PublishingSetResult = { print: null, digital: null };
+        const out: LicenseSetResult = { conditions: [] };
         for (const [index, one] of inputs.entries()) {
           const created = await this.createIn(client, one, actor);
-          out[media[index].media] = created;
+          out.conditions.push({ usageType: rows[index].usageType, ...created });
         }
         return out;
       });
     } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 出版の条件を作品1点ぶんまとめて登録する。紙と電子で条件2本（どちらか
+   * 1本でもよい）。許諾セットの特例で、同じ実装を通る。
+   */
+  async createPublishingSet(input: PublishingSetInput, actor: string): Promise<PublishingSetResult> {
+    if (!input.print && !input.digital) {
+      throw new DomainError("VALIDATION", "紙か電子のどちらかの料率を入れてください");
+    }
+    const rows: LicenseSetRow[] = [];
+    if (input.print) rows.push({ usageType: "pub_print", ratePct: input.print.ratePct, exclusivity: input.print.exclusivity ?? null });
+    if (input.digital) rows.push({ usageType: "pub_digital", ratePct: input.digital.ratePct, exclusivity: input.digital.exclusivity ?? null });
+    const { print: _p, digital: _d, ...rest } = input;
+    const made = await this.createLicenseSet({ ...rest, rows }, actor);
+    const pick = (usage: ConditionUsageType) => {
+      const found = made.conditions.find((c) => c.usageType === usage);
+      return found ? { id: found.id, conditionNo: found.conditionNo } : null;
+    };
+    return { print: pick("pub_print"), digital: pick("pub_digital") };
   }
 
   /** 条件1本の INSERT。トランザクションは呼ぶ側が持つ。 */
@@ -296,10 +364,10 @@ export class ConditionWriteService {
                                    rate_ppm, unit_amount, flat_amount, mg_amount, ag_amount,
                                    tax_category, payment_terms, cycle, status, notes,
                                    spec, deliverable_ownership, order_no,
-                                   quantity, contract_form)
+                                   quantity, contract_form, usage_type)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
                    $15, $16, $17, $18, $19, $20, $21, $22, 'active', $23, $24, $25, $26,
-                   $27, $28)
+                   $27, $28, $29)
            RETURNING id, condition_no`,
           [no, input.agreementId ?? null, input.direction, input.kind, name, input.counterpartyId,
            input.workId ?? null, input.workPartId ?? null,
@@ -310,12 +378,18 @@ export class ConditionWriteService {
            input.taxCategory ?? "taxable", input.paymentTerms ?? null, input.cycle ?? null,
            input.notes ?? null, input.spec ?? null, input.deliverableOwnership ?? null,
            input.orderNo ?? null,
-           input.quantity ?? null, readContractForm(input.contractForm)]);
+           input.quantity ?? null, readContractForm(input.contractForm), input.usageType ?? null]);
         const row = inserted.rows[0] as { id: number; condition_no: string | null };
         const id = Number(row.id);
 
         // 許諾範囲。1件も入れなければ、その次元は無制限として扱われる。
-        for (const [index, scope] of (input.scopes ?? []).entries()) {
+        // 出版の利用形態は媒体の範囲も一緒に入れる（古い読み手は範囲を見る）。
+        const scopes: ConditionScope[] = [...(input.scopes ?? [])];
+        const media = pubMediaOfUsage(input.usageType);
+        if (media && !scopes.some((s) => s.scopeType === "media")) {
+          scopes.push({ scopeType: "media", label: PUB_MEDIA_LABEL[media], code: media });
+        }
+        for (const [index, scope] of scopes.entries()) {
           const label = String(scope.label ?? "").trim();
           if (!label) continue;
           await client.query(

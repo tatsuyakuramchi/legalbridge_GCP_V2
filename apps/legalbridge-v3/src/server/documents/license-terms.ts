@@ -15,6 +15,7 @@
  */
 
 import type { TemplateVariable } from "./binding.js";
+import { dealIdOfUsage } from "../core/condition-usage.js";
 
 export const LICENSE_TERMS_KEY = "individual_license_terms_v3";
 export const isLicenseTermsTemplate = (templateKey: string): boolean =>
@@ -153,6 +154,15 @@ export function dealModelFromNotes(notes: unknown): number | null {
 }
 
 /**
+ * 条件が名乗っている取引形態。利用形態の列（A-027）が先、無ければ備考の文字列。
+ * 列が入っていれば備考は見ない（列を直したのに備考が古いまま、で紙が
+ * 変わらないのを防ぐ）。
+ */
+export function dealModelOf(condition: Data): number | null {
+  return dealIdOfUsage(condition?.usageType) ?? dealModelFromNotes(condition?.notes);
+}
+
+/**
  * 条件をまとめる鍵＝「どの契約の、どの素材か」。
  *
  * 素材だけでまとめると、同じ素材を2本の契約で取得している場合（本番の
@@ -177,7 +187,7 @@ export function assignDeals(conditions: Data[]): Map<number, number> {
     const taken = new Set<number>();
     const rest: Data[] = [];
     for (const condition of group) {
-      const noted = dealModelFromNotes(condition.notes);
+      const noted = dealModelOf(condition);
       if (noted && !taken.has(noted)) { out.set(Number(condition.id), noted); taken.add(noted); }
       else rest.push(condition);
     }
@@ -196,8 +206,7 @@ export function assignDeals(conditions: Data[]): Map<number, number> {
 }
 
 /** その条件が備考で形態を名乗っているか（推定と区別して画面に出す）。 */
-export const dealIdFor = (condition: Data): number | null =>
-  dealModelFromNotes(condition.notes);
+export const dealIdFor = (condition: Data): number | null => dealModelOf(condition);
 
 /**
  * 取引形態の種。この条件書に載せる条件明細から作る。
@@ -226,7 +235,7 @@ export function dealSeeds(context: Data): Data[] {
        * 形態の出どころ。notes=備考に書いてあった / order=並び順から推定。
        * 1本でも推定が混ざっていれば推定として出す（素材ごとに当て方が違う）。
        */
-      assignedFrom: matches.every((c) => dealModelFromNotes(c.notes)) ? "notes" : "order",
+      assignedFrom: matches.every((c) => dealModelOf(c)) ? "notes" : "order",
       // 非加算型（サブライセンス）は条件の料率がそのまま実効料率になる。
       // 加算型は構成要素ごとの料率を合算するので、ここには置かない。
       fixedRate: deal.addon ? "" : text(match.ratePct ?? ""),

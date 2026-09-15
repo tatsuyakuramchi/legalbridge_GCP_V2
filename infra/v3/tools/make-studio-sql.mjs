@@ -195,6 +195,15 @@ SELECT * FROM (
          (SELECT count(*)::text FROM information_schema.columns
            WHERE table_schema='v3' AND table_name='works'
              AND column_name = 'merged_into_id')
+  UNION ALL
+  SELECT 27, '条件の利用形態・実績の作品・作品の著作権表示（A-027。4 列であること）',
+         ((SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='v3' AND table_name='conditions' AND column_name = 'usage_type')
+        + (SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='v3' AND table_name='condition_events' AND column_name = 'work_id')
+        + (SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='v3' AND table_name='works'
+              AND column_name IN ('copyright_notice', 'third_party_rights')))::text
 ) AS 確認 ORDER BY n;
 `;
 

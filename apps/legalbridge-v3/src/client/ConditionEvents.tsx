@@ -75,7 +75,7 @@ interface PreviewResponse {
 
 export function ConditionEvents(
   { conditionId, currency, editable, matterId, pricingModel, deliverableOwnership, reloadKey,
-    ratePpm, conditionUnitAmount, conditionQuantity, direction, workTitle,
+    ratePpm, conditionUnitAmount, conditionQuantity, direction, workTitle, workId,
     openForSchedule, onOpened, onCompose, onOpenDocument, onChanged }:
   { conditionId: number; currency: string; editable: boolean;
     matterId?: number | null; reloadKey?: number;
@@ -95,6 +95,8 @@ export function ConditionEvents(
     direction?: string;
     /** 条件の作品。アウト条件の候補を同じ作品に寄せる。 */
     workTitle?: string | null;
+    /** 条件の作品 id。自社製造・自社販売の実績で「どの当社作品の売上か」の候補を引く。 */
+    workId?: number | null;
     /** 文書の画面へ、この条件と実績を選んだ状態で移る。 */
     onCompose?: (conditionIds: number[], eventIds: number[], matterId?: number | null,
                  templateKey?: string | null) => void;
@@ -194,6 +196,17 @@ export function ConditionEvents(
   const basisTotal = byUsageRows
     ? (stmtPreview?.events ?? []).reduce((sum, e) => sum + e.basis, 0)
     : Number(stmtPreview?.reported.salesInput ?? stmtPreview?.reported.quantity ?? 0);
+
+  // 自社製造・自社販売の「どの当社作品の売上か」。原作の子作品（系譜）と原作そのもの。
+  const [workOptions, setWorkOptions] = useState<Array<{ id: number; title: string }>>([]);
+  useEffect(() => {
+    if (!workId) { setWorkOptions([]); return; }
+    let live = true;
+    api.get<{ id: number; title: string; kind: string; children: Array<{ id: number; title: string }> }>(`/works/${workId}`)
+      .then((w) => { if (live) setWorkOptions([...w.children, { id: w.id, title: `${w.title}（この条件の作品）` }]); })
+      .catch(() => { if (live) setWorkOptions([]); });
+    return () => { live = false; };
+  }, [workId]);
 
   // 許諾したアウト条件を引く。作品で寄せてあるので、空欄でも候補が出る。
   useEffect(() => {
@@ -413,7 +426,7 @@ export function ConditionEvents(
       period: "", quantity: royalty && !rewardLabel ? "" : "1",
       grossAmount: "", deductions: "", amount: "", note: "",
       contractForm: "", serviceFrom: "", serviceTo: "",
-      usageType: "", outConditionId: "", unitAmount: "", ratePct: defaultRatePct,
+      usageType: "", outConditionId: "", workId: "", unitAmount: "", ratePct: defaultRatePct,
       paymentStage: "", basisKind: "lump", taxIncluded: "",
       deliverable: "", inspectedOn: "", inspectorDept: "", inspectorName: ""
     };
@@ -482,6 +495,8 @@ export function ConditionEvents(
         serviceTo: f("serviceTo") || null,
         usageType: f("usageType") || null,
         outConditionId: f("outConditionId") ? Number(f("outConditionId")) : null,
+        // どの当社作品の売上か（A-027）。計算書の製品名になる。
+        workId: f("workId") ? Number(f("workId")) : null,
         unitAmount: rounded("unitAmount"),
         // 画面は % で受け、保存は ppm（百万分率）。8% → 80000
         ratePpm: rate === null ? null : Math.round(rate * 10000),
@@ -625,6 +640,18 @@ export function ConditionEvents(
                 <small className="faint">
                   海外から売上が入ってくる取引は受領額のまま。
                   個数建ての契約のときだけ下を選ぶ
+                </small>
+              </label>
+            )}
+            {usage?.value === "in_house" && (
+              <label className="field">
+                <span>売れた当社作品</span>
+                <select value={f("workId")} onChange={(e) => set("workId", e.target.value)}>
+                  <option value="">{workOptions.length > 1 ? "（選んでください）" : "（原作の作品名で出す）"}</option>
+                  {workOptions.map((w) => <option key={w.id} value={w.id}>{w.title}</option>)}
+                </select>
+                <small className="faint">
+                  計算書の製品名になる。原作から作った作品が1つなら空でもその名前が出る
                 </small>
               </label>
             )}

@@ -64,6 +64,8 @@ export interface EventInput {
   usageType?: UsageType | null;
   /** 相手へ許諾したアウト条件。再許諾・他社販売で要る。 */
   outConditionId?: number | null;
+  /** どの当社作品の売上か（A-027）。自社製造・自社販売の計算書の製品名になる。 */
+  workId?: number | null;
   /** 基準価格（自社販売）／受領価格1個あたり（他社販売）。 */
   unitAmount?: number | null;
   /** その回の料率（百万分率）。既定はイン条件の料率。 */
@@ -238,6 +240,10 @@ export class ConditionEventService {
               "許諾料は作者から取った権利に対して払うものなので、実績はイン条件に載せます");
           }
           await this.assertOutCondition(client, conditionId, input.outConditionId ?? null);
+          if (input.workId) {
+            const w = await client.query("SELECT id FROM works WHERE id = $1", [input.workId]);
+            if (!w.rows[0]) throw new DomainError("NOT_FOUND", `作品 ${input.workId} が見つかりません`);
+          }
           assertUsageInput({
             usageType,
             unitAmount, quantity: input.quantity ?? null,
@@ -285,10 +291,10 @@ export class ConditionEventService {
               deliverable, inspected_on, inspector_dept, inspector_name,
               contract_form, service_from, service_to,
               usage_type, out_condition_id, unit_amount, rate_ppm, payment_stage,
-              tax_included)
+              tax_included, work_id)
            VALUES ($1, $2, $3, $4::date, $5, $6, $7, $8, $9, $10, $11, $12,
                    $13, $14::date, $15, $16, $17, $18::date, $19::date,
-                   $20, $21, $22, $23, $24, $25)
+                   $20, $21, $22, $23, $24, $25, $26)
            RETURNING id`,
           [conditionId, scheduleId, input.eventType, occurredOn, period,
            input.quantity ?? null, input.sampleQuantity ?? null,
@@ -297,7 +303,7 @@ export class ConditionEventService {
            str(input.inspectorDept), str(input.inspectorName),
            contractForm, serviceFrom, serviceTo,
            usageType, input.outConditionId ?? null, unitAmount, ratePpm,
-           input.paymentStage ?? null, input.taxIncluded ?? null]);
+           input.paymentStage ?? null, input.taxIncluded ?? null, input.workId ?? null]);
         const id = Number((inserted.rows[0] as { id: number }).id);
 
         await recordAudit(client, {

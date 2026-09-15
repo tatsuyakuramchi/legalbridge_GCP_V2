@@ -7,6 +7,7 @@ import { CONDITION_KIND_LABEL } from "./labels.js";
 import { SearchSelect, searchParties } from "./SearchSelect.js";
 import { CONTRACT_FORMS } from "../server/conditions/contract-form.js";
 import { minorUnitHint } from "./ConditionCreateForm.js";
+import { CONDITION_USAGE_TYPES } from "../server/core/condition-usage.js";
 
 /**
  * 条件の編集。
@@ -81,6 +82,7 @@ export function ConditionEdit(
     mgAmount: asMoney(detail.mgAmount),
     agAmount: asMoney(detail.agAmount),
     exclusivity: detail.exclusivity ?? "",
+    usageType: detail.usageType ?? "",
     taxCategory: detail.taxCategory,
     paymentTerms: detail.paymentTerms ?? "",
     contractForm: detail.contractForm ?? "",
@@ -139,7 +141,8 @@ export function ConditionEdit(
       ["mgAmount", patchInt(v.mgAmount, detail.mgAmount)],
       ["agAmount", patchInt(v.agAmount, detail.agAmount)],
       ["workId", patchInt(v.workId, detail.work?.id ?? null)],
-      ["exclusivity", patchText(v.exclusivity, detail.exclusivity)]
+      ["exclusivity", patchText(v.exclusivity, detail.exclusivity)],
+      ["usageType", patchText(v.usageType, detail.usageType)]
     ];
     for (const [key, value] of pairs) if (value !== undefined) patch[key] = value;
 
@@ -315,6 +318,16 @@ export function ConditionEdit(
                 ? `消化済み ${money(detail.balance.agConsumed, detail.currency)}／残 ${money(detail.balance.agRemaining, detail.currency)}`
                 : "累積で充当する。消化しきるまで実額が出ない" })}
           </>)}
+          {detail.kind === "license" && detail.direction === "in" && (
+            <label className="field">
+              <span>利用形態</span>
+              <select value={v.usageType} onChange={(e) => set("usageType", e.target.value)}>
+                <option value="">—</option>
+                {CONDITION_USAGE_TYPES.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
+              </select>
+              <small className="faint">条件書の行・計算書の製品名はこれで決まる。1本に1つ</small>
+            </label>
+          )}
           {detail.kind === "license" && (
             <label className="field">
               <span>独占性</span>

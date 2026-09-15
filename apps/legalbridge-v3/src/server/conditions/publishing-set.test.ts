@@ -14,12 +14,12 @@ const base: PublishingSetInput = {
   digital: { ratePct: 15, exclusivity: "non_exclusive" }
 };
 
-const build = (existingMedia: Array<{ condition_no: string; label: string; code: string | null }> = []) => {
+const build = (existingMedia: Array<{ condition_no: string; usage_type: string | null; media: string[] | null }> = []) => {
   let next = 100;
   return new FakeDatabase((text) => {
     if (text.includes("FROM parties WHERE id")) return [{ id: 5, name: "甲野 甲太" }];
     if (text.includes("FROM works WHERE id")) return [{ id: 9 }];
-    if (text.includes("s.scope_type = 'media'")) return existingMedia;
+    if (text.includes("c.status IN ('active', 'scheduled')")) return existingMedia;
     if (text.includes("SELECT 1 FROM document_sequences")) return [{ x: 1 }];
     if (text.includes("UPDATE document_sequences")) return [{ current_value: next }];
     if (text.includes("FROM conditions WHERE condition_no")) return [];
@@ -62,18 +62,18 @@ test("紙だけでもよい。どちらも無ければ止める", async () => {
 
 test("料率の範囲と対象出版物名を検証する", async () => {
   const svc = new ConditionWriteService(build());
-  await assert.rejects(() => svc.createPublishingSet({ ...base, print: { ratePct: 101 } }, "k"), /紙の料率は 0〜100/);
+  await assert.rejects(() => svc.createPublishingSet({ ...base, print: { ratePct: 101 } }, "k"), /出版（紙）の料率は 0〜100/);
   await assert.rejects(() => svc.createPublishingSet({ ...base, title: " " }, "k"), /対象出版物名/);
 });
 
 test("同じ作品・同じ相手先に同じ媒体の生きた条件があれば止める（何も作らない）", async () => {
-  const db = build([{ condition_no: "CL-2026-00090", label: "紙媒体", code: null }]);
+  const db = build([{ condition_no: "CL-2026-00090", usage_type: null, media: ["紙媒体"] }]);
   await assert.rejects(
     () => new ConditionWriteService(db).createPublishingSet(base, "k"),
-    /紙の条件（CL-2026-00090）が既にあります/);
+    /出版（紙）の条件（CL-2026-00090）が既にあります/);
   assert.equal(db.queries.filter((q) => q.text.includes("INSERT INTO conditions")).length, 0);
   // 電子だけなら通る（紙は既にあるので足さない）。
-  const ok = await new ConditionWriteService(build([{ condition_no: "CL-2026-00090", label: "紙", code: "print" }]))
+  const ok = await new ConditionWriteService(build([{ condition_no: "CL-2026-00090", usage_type: "pub_print", media: ["print"] }]))
     .createPublishingSet({ ...base, print: null }, "k");
   assert.ok(ok.digital);
 });

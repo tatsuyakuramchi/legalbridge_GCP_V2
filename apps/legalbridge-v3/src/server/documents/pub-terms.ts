@@ -21,6 +21,7 @@
 import type { TemplateVariable } from "./binding.js";
 import type { Warning } from "./preflight.js";
 import { type PubMedia, pubMediaOfScopes } from "../core/pub-media.js";
+import { pubMediaOfUsage } from "../core/condition-usage.js";
 
 export const PUB_TERMS_KEY = "pub_license_terms_v3";
 export const isPubTermsTemplate = (templateKey: string): boolean => templateKey === PUB_TERMS_KEY;
@@ -125,9 +126,9 @@ export const PUB_TERMS_VARIABLES: TemplateVariable[] = [
 // 一覧の行（条件明細から組む）
 // ---------------------------------------------------------------------------
 
-/** 条件1本の媒体。範囲の media から。 */
+/** 条件1本の媒体。利用形態（A-027）が先、無ければ範囲の media から。 */
 export const mediaOfCondition = (condition: Data): PubMedia | null =>
-  pubMediaOfScopes(condition?.scopes?.media);
+  pubMediaOfUsage(condition?.usageType) ?? pubMediaOfScopes(condition?.scopes?.media);
 
 const exclusivityText = (condition: Data | undefined): string =>
   condition ? text(condition.exclusivityLabel
@@ -148,7 +149,7 @@ export function rowBlockerOf(condition: Data): string | null {
     return `${no}：計算方式が料率ではありません（出版の許諾料は 定価×部数×料率 で固定です）`;
   }
   if (!mediaOfCondition(condition)) {
-    return `${no}：媒体（紙／電子）が入っていません。条件の「権利の範囲」で媒体を1つ入れてください`;
+    return `${no}：利用形態（出版・紙／出版・電子）が入っていません。条件の編集で利用形態を選んでください`;
   }
   return null;
 }
@@ -180,8 +181,9 @@ export function pubTitleSeeds(context: Data): Data[] {
       item_name: title,
       title,
       edition,
-      copyright: "",
-      third_party: "",
+      // 作品に持たせた著作権表示・第三者権利（A-027）。無ければ行で人が入れる。
+      copyright: text(head.work?.copyrightNotice),
+      third_party: text(head.work?.thirdPartyRights),
       note: notes,
       print_rate: print ? percentText(print.ratePct) : "—",
       print_exclusivity: print ? exclusivityText(print) || "—" : "—",

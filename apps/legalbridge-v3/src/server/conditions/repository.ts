@@ -8,7 +8,7 @@ import type {
 const SUMMARY_COLUMNS = `
   c.id, c.condition_no, c.direction, c.kind, c.name, c.currency, c.pricing_model,
   c.rate_ppm, c.flat_amount, c.unit_amount, c.quantity, c.mg_amount, c.ag_amount,
-  c.term_start, c.term_end, c.status, c.effective_from,
+  c.term_start, c.term_end, c.status, c.effective_from, c.usage_type,
   p.id AS party_id, p.name AS party_name, p.kind AS party_kind,
   w.id AS work_id, w.work_code, w.title AS work_title,
   -- 条件は契約の明細。どの契約の行かは一覧でも見えないと、独立した書類に見える。
@@ -48,7 +48,8 @@ function mapSummary(row: Record<string, any>): ConditionSummary {
     termStart: dateStr(row.term_start),
     termEnd: dateStr(row.term_end),
     effectiveFrom: dateStr(row.effective_from),
-    status: row.status
+    status: row.status,
+    usageType: (row.usage_type ?? null) as ConditionSummary["usageType"]
   };
 }
 

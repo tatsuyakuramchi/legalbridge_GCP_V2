@@ -9,6 +9,8 @@ import { SearchSelect } from "./SearchSelect.js";
 import { ConditionEdit, type EditResult } from "./ConditionEdit.js";
 import { ConditionCreateForm } from "./ConditionCreateForm.js";
 import { PubConditionSetForm } from "./PubConditionSetForm.js";
+import { LicenseSetForm } from "./LicenseSetForm.js";
+import { conditionUsageLabel } from "../server/core/condition-usage.js";
 import { CONDITION_KIND_LABEL, EVENT_TYPE_LABEL, StatusTag } from "./labels.js";
 import { useReadOnly } from "./read-only.js";
 
@@ -42,6 +44,7 @@ interface Part { id: number; partNo: number; name: string; partType: string; roy
 interface WorkDetail {
   id: number; workCode: string | null; title: string; titleKana: string | null; kind: string;
   status: string; businessLine: string | null; remarks: string | null; legacy: boolean;
+  copyrightNotice: string | null; thirdPartyRights: string | null;
   mergedInto: { id: number; workCode: string | null; title: string } | null;
   sources: WorkRefRow[]; children: WorkRefRow[]; parts: Part[];
 }
@@ -122,10 +125,13 @@ async function runEach<T>(
 }
 
 export function WorksWorkspace(
-  { onOpenCondition, initialId, onOpen }: {
+  { onOpenCondition, initialId, onOpen, onCompose }: {
     onOpenCondition: (id: number) => void;
     initialId?: number;
     onOpen?: (kind: EntityKind, id: number) => void;
+    /** 文書の画面へ、選んだ条件を載せた状態で移る。台帳から文書を作る入口。 */
+    onCompose?: (conditionIds: number[], eventIds?: number[], matterId?: number | null,
+                 templateKey?: string | null) => void;
   }
 ) {
   const readOnly = useReadOnly();
@@ -143,7 +149,7 @@ export function WorksWorkspace(
   const [activity, setActivity] = useState<Activity | null>(null);
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [editing, setEditing] = useState<ConditionDetail | null>(null);
-  const [creating, setCreating] = useState<"work" | "source" | "part" | "condition" | "publishing" | null>(null);
+  const [creating, setCreating] = useState<"work" | "source" | "part" | "condition" | "publishing" | "license" | null>(null);
   const [moveTo, setMoveTo] = useState<string>("");
   const [moving, setMoving] = useState(false);
   const [mergeTo, setMergeTo] = useState<string>("");
@@ -181,7 +187,8 @@ export function WorksWorkspace(
       setWork(w); setEnvelope(e.envelope); setConditions(c.conditions); setActivity(a);
       setForm({
         title: w.title, titleKana: w.titleKana ?? "", kind: w.kind, status: w.status,
-        businessLine: w.businessLine ?? "", remarks: w.remarks ?? ""
+        businessLine: w.businessLine ?? "", remarks: w.remarks ?? "",
+        copyrightNotice: w.copyrightNotice ?? "", thirdPartyRights: w.thirdPartyRights ?? ""
       });
     }).catch(fail);
   }
@@ -229,7 +236,8 @@ export function WorksWorkspace(
   const dirty = work && (
     form.title !== work.title || form.titleKana !== (work.titleKana ?? "") ||
     form.kind !== work.kind || form.status !== work.status ||
-    form.businessLine !== (work.businessLine ?? "") || form.remarks !== (work.remarks ?? ""));
+    form.businessLine !== (work.businessLine ?? "") || form.remarks !== (work.remarks ?? "") ||
+    form.copyrightNotice !== (work.copyrightNotice ?? "") || form.thirdPartyRights !== (work.thirdPartyRights ?? ""));
 
   async function saveWork() {
     if (!work) return;
@@ -238,7 +246,9 @@ export function WorksWorkspace(
       await api.patch(`/works/${work.id}`, {
         title: form.title.trim(), titleKana: form.titleKana.trim() || null,
         kind: form.kind, status: form.status,
-        businessLine: form.businessLine.trim() || null, remarks: form.remarks.trim() || null
+        businessLine: form.businessLine.trim() || null, remarks: form.remarks.trim() || null,
+        copyrightNotice: form.copyrightNotice.trim() || null,
+        thirdPartyRights: form.thirdPartyRights.trim() || null
       });
       setNotice("作品を保存しました");
       await Promise.all([reloadTree(), reloadWork()]);
@@ -445,7 +455,7 @@ export function WorksWorkspace(
     <section className="workspace">
       <header className="workspace-head">
         <h1>作品台帳</h1>
-        <p>作品・原作（Core Logic）・条件（取引モデル）をここで直す。原作 N に対して作品 N。条件の中身（予定・実績・計算書）は条件明細で扱う。</p>
+        <p>作品・原作（Core Logic）・条件（利用形態ごとに1本）をここで直す。原作 N に対して作品 N。条件の中身（予定・実績・計算書）は条件明細で扱う。</p>
       </header>
 
       {error && <div className="alert" style={{ whiteSpace: "pre-wrap" }}>{error}</div>}
@@ -680,6 +690,13 @@ export function WorksWorkspace(
                   </select></label>
                 <label className="field"><span>事業区分</span>
                   <input value={form.businessLine ?? ""} disabled={!editable} onChange={(e) => setForm({ ...form, businessLine: e.target.value })} /></label>
+                <label className="field"><span>著作権表示</span>
+                  <input value={form.copyrightNotice ?? ""} disabled={!editable} placeholder="© 2026 著作者名"
+                         onChange={(e) => setForm({ ...form, copyrightNotice: e.target.value })} />
+                  <small className="faint">出版条件書の一覧に出る</small></label>
+                <label className="field"><span>共同著作・第三者権利</span>
+                  <input value={form.thirdPartyRights ?? ""} disabled={!editable} placeholder="挿絵：◯◯ など。無ければ空"
+                         onChange={(e) => setForm({ ...form, thirdPartyRights: e.target.value })} /></label>
                 <label className="field wide"><span>備考</span>
                   <textarea value={form.remarks ?? ""} disabled={!editable} onChange={(e) => setForm({ ...form, remarks: e.target.value })} /></label>
               </div>
@@ -752,14 +769,15 @@ export function WorksWorkspace(
               </div>
             </div>
 
-            {/* パート。名前・種別・課金対象をその場で直す。 */}
-            <div className="panel">
-              <div className="panel-hd">
-                <h2>構成パート</h2>
+            {/* パート。名前・種別・課金対象をその場で直す。畳んでおく（毎回は見ない）。 */}
+            <details className="panel" open={work.parts.length > 0 || creating === "part"}>
+              <summary className="panel-hd" style={{ cursor: "pointer" }}>
+                <h2 style={{ display: "inline" }}>構成パート</h2>
+                <span className="faint" style={{ marginLeft: 8 }}>{work.parts.length} 件</span>
                 {editable && creating === null && (
                   <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={() => setCreating("part")}>パートを追加</button>
                 )}
-              </div>
+              </summary>
               {creating === "part" && (
                 <div className="panel-bd">
                   <CreateForm title="構成パートの追加" path={`/works/${work.id}/parts`}
@@ -808,13 +826,13 @@ export function WorksWorkspace(
                   </tbody>
                 </table>
               </div>
-            </div>
+            </details>
 
             {/* 条件（取引モデル）。ここで直すのは頭だけ。中身は条件明細へ。 */}
             <div className="panel">
               <div className="panel-hd">
-                <h2>条件（取引モデル）</h2>
-                <span className="faint num">{conditions.length}</span>
+                <h2>条件</h2>
+                <span className="faint">利用形態ごとに1本　{conditions.length} 件</span>
                 <label className="ledger-check" style={{ marginLeft: "auto" }}>
                   <input type="checkbox" checked={includeVoid} onChange={(e) => setIncludeVoid(e.target.checked)} />
                   無効化済みも
@@ -823,9 +841,15 @@ export function WorksWorkspace(
                   <button className="btn btn-sm primary" onClick={() => setCreating("condition")}>条件を登録</button>
                 )}
                 {editable && creating === null && (
+                  <button className="btn btn-sm" onClick={() => setCreating("license")}
+                          title="この作品の自社製造・再許諾・他社販売の条件を1回で作る">
+                    許諾セット（ゲーム）
+                  </button>
+                )}
+                {editable && creating === null && (
                   <button className="btn btn-sm" onClick={() => setCreating("publishing")}
                           title="この作品の紙・電子の条件を1回で作る。出版条件書はこの2本を1行に畳んで出す">
-                    出版の条件（紙・電子）
+                    出版セット（紙・電子）
                   </button>
                 )}
               </div>
@@ -843,9 +867,21 @@ export function WorksWorkspace(
                     onCancel={() => setCreating(null)} />
                 </div>
               )}
+              {creating === "license" && (
+                <div className="panel-bd">
+                  <LicenseSetForm preset={{ workId: String(work.id) }}
+                    onDone={() => { setCreating(null); void reloadWork(); void reloadTree(); }}
+                    onCancel={() => setCreating(null)} />
+                </div>
+              )}
               {editable && picked.length > 0 && (
                 <div className="panel-bd row" style={{ borderBottom: "1px solid var(--line)" }}>
                   <b>選択 {picked.length} 件</b>
+                  {onCompose && (
+                    <button className="btn btn-sm primary" disabled={busy}
+                            title="選んだ条件を載せた状態で文書の画面へ移る（条件書・計算書）"
+                            onClick={() => onCompose(picked.map((c) => c.id))}>この条件で文書を作る</button>
+                  )}
                   <button className="btn btn-sm" disabled={busy} onClick={() => void voidPicked()}>無効化</button>
                   {!moving
                     ? <button className="btn btn-sm" disabled={busy} onClick={() => setMoving(true)}>別の作品へ移す</button>
@@ -868,7 +904,7 @@ export function WorksWorkspace(
                              checked={conditions.some((c) => c.status !== "void") && checked.size === conditions.filter((c) => c.status !== "void").length}
                              onChange={(e) => setChecked(e.target.checked ? new Set(conditions.filter((c) => c.status !== "void").map((c) => c.id)) : new Set())} />
                     )}</th>
-                    <th>番号</th><th>向き</th><th>種類</th><th>名前</th><th>相手先</th>
+                    <th>番号</th><th>向き</th><th>利用形態</th><th>名前</th><th>相手先</th>
                     <th>計算</th><th>期間</th><th>状態</th><th></th>
                   </tr></thead>
                   <tbody>
@@ -877,7 +913,8 @@ export function WorksWorkspace(
                         <td>{editable && c.status !== "void" && <input type="checkbox" checked={checked.has(c.id)} onChange={() => toggle(c.id)} />}</td>
                         <td className="code">{c.conditionNo ?? `#${c.id}`}</td>
                         <td><span className={`tag ${c.direction}`}>{c.direction === "in" ? "IN" : "OUT"}</span></td>
-                        <td>{CONDITION_KIND_LABEL[c.kind] ?? c.kind}</td>
+                        <td>{c.usageType ? conditionUsageLabel(c.usageType)
+                              : <span className="faint">{CONDITION_KIND_LABEL[c.kind] ?? c.kind}</span>}</td>
                         <td>{c.name}</td>
                         <td>{c.counterparty?.name ?? "—"}</td>
                         <td className="faint" style={{ whiteSpace: "nowrap" }}>{pricingSummary(c)}</td>
@@ -948,8 +985,16 @@ export function WorksWorkspace(
               </details>
             )}
 
-            <Relations kind="work" id={work.id} onOpen={onOpen} />
-            {activity && <WorkActivity activity={activity} onOpen={onOpen} />}
+            {/* つながりと動き。作り替えの作業では毎回は見ないので畳んでおく。 */}
+            <details className="ledger-more">
+              <summary className="faint" style={{ cursor: "pointer", padding: "4px 0" }}>
+                つながり（案件・文書・契約）と、この作品の動き（実績・計算書・支払）を見る
+              </summary>
+              <div className="stack" style={{ marginTop: 8 }}>
+                <Relations kind="work" id={work.id} onOpen={onOpen} />
+                {activity && <WorkActivity activity={activity} onOpen={onOpen} />}
+              </div>
+            </details>
           </>)}
         </div>
       </div>

@@ -994,6 +994,92 @@ END $$;
 COMMENT ON COLUMN v3.works.merged_into_id IS
   'この作品をまとめた先。統合すると条件・パート・系譜は先へ付け替え、こちらは終了になる。';
 
+-- ---------------------------------------------------------------------
+-- A-027: 条件の利用形態、実績の作品、作品の著作権表示・第三者権利
+--
+-- 「権利をどう使うか」が3か所に散っていた。ゲームの取引形態は条件の備考の
+-- 文字列（取引形態: 自社製造・自社販売）、出版の紙・電子は許諾範囲の媒体、
+-- 実績には usage_type。条件書も計算書もそれを推測で組んでいた。
+-- 条件に利用形態の列を1つ持ち、備考の解析と媒体の判定をやめる。
+--
+--   in_house    自社製造・自社販売
+--   sublicense  再許諾（権利許諾）
+--   oem         自社製造・他社販売
+--   pub_print   出版（紙）
+--   pub_digital 出版（電子）
+--
+-- 実績には「どの当社作品の売上か」を持つ。自社製造・自社販売の計算書の
+-- 製品名はこれ。空なら原作の子作品が1つのときだけ推定する。
+--
+-- 作品には著作権表示と第三者権利を持つ。出版条件書の一覧が毎回手入力に
+-- なっていたもの。
+-- ---------------------------------------------------------------------
+
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS usage_type text;
+COMMENT ON COLUMN v3.conditions.usage_type IS
+  '利用形態。in_house=自社製造・自社販売 / sublicense=再許諾 / oem=自社製造・他社販売 / pub_print=出版（紙） / pub_digital=出版（電子）。';
+
+DO $a027$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.conditions'::regclass
+                    AND conname = 'conditions_usage_type_chk') THEN
+    ALTER TABLE v3.conditions ADD CONSTRAINT conditions_usage_type_chk
+      CHECK (usage_type IS NULL
+             OR usage_type = ANY (ARRAY['in_house', 'sublicense', 'oem', 'pub_print', 'pub_digital']));
+  END IF;
+END $a027$;
+
+-- 埋め戻し（1）備考の「取引形態: …」から。入っているものは触らない。
+UPDATE v3.conditions
+   SET usage_type = CASE
+         WHEN notes ~ '取引形態[:：]\s*自社製造・自社販売' THEN 'in_house'
+         WHEN notes ~ '取引形態[:：]\s*権利許諾'           THEN 'sublicense'
+         WHEN notes ~ '取引形態[:：]\s*自社製造・他社販売' THEN 'oem'
+       END
+ WHERE usage_type IS NULL
+   AND notes ~ '取引形態[:：]\s*(自社製造・自社販売|権利許諾|自社製造・他社販売)';
+
+-- 埋め戻し（2）許諾範囲の媒体から。紙と電子の両方が付いた条件は決められないので触らない。
+WITH media AS (
+  SELECT s.condition_id,
+         bool_or(lower(coalesce(s.code, '')) IN ('print', 'paper', 'book')
+                 OR s.label IN ('紙', '紙媒体', '紙書籍', '書籍', '印刷', '出版物')) AS has_print,
+         bool_or(lower(coalesce(s.code, '')) IN ('digital', 'ebook', 'e-book', 'electronic')
+                 OR s.label IN ('電子', '電子書籍', '電子版', '配信', '電子配信', 'デジタル')) AS has_digital
+    FROM v3.condition_scopes s
+   WHERE s.scope_type = 'media'
+   GROUP BY s.condition_id
+)
+UPDATE v3.conditions c
+   SET usage_type = CASE WHEN m.has_print THEN 'pub_print' ELSE 'pub_digital' END
+  FROM media m
+ WHERE m.condition_id = c.id AND c.usage_type IS NULL
+   AND (m.has_print <> m.has_digital);
+
+CREATE INDEX IF NOT EXISTS conditions_usage_idx
+  ON v3.conditions (work_id, usage_type) WHERE usage_type IS NOT NULL;
+
+ALTER TABLE v3.condition_events ADD COLUMN IF NOT EXISTS work_id bigint;
+COMMENT ON COLUMN v3.condition_events.work_id IS
+  'どの当社作品の売上か。自社製造・自社販売の計算書の製品名。空なら原作の子作品が1つのときだけ推定する。';
+DO $a027b$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.condition_events'::regclass
+                    AND conname = 'condition_events_work_fk') THEN
+    ALTER TABLE v3.condition_events ADD CONSTRAINT condition_events_work_fk
+      FOREIGN KEY (work_id) REFERENCES v3.works(id);
+  END IF;
+END $a027b$;
+
+ALTER TABLE v3.works ADD COLUMN IF NOT EXISTS copyright_notice   text;
+ALTER TABLE v3.works ADD COLUMN IF NOT EXISTS third_party_rights text;
+COMMENT ON COLUMN v3.works.copyright_notice IS
+  '著作権表示（© 2026 著作者名）。出版条件書の一覧に出る。';
+COMMENT ON COLUMN v3.works.third_party_rights IS
+  '共同著作・第三者の権利。出版条件書の一覧に出る。無ければ空（紙には「なし」）。';
+
 COMMIT;
 
 -- 確認
@@ -1149,3 +1235,14 @@ SELECT count(*) AS 列数 FROM information_schema.columns
 \echo '--- 作品の統合先（A-026。1 列であること） ---'
 SELECT count(*) AS 列数 FROM information_schema.columns
  WHERE table_schema='v3' AND table_name='works' AND column_name = 'merged_into_id';
+
+\echo '--- 条件の利用形態・実績の作品・作品の著作権表示（A-027。4 列であること） ---'
+SELECT (SELECT count(*) FROM information_schema.columns
+         WHERE table_schema='v3' AND table_name='conditions' AND column_name = 'usage_type')
+     + (SELECT count(*) FROM information_schema.columns
+         WHERE table_schema='v3' AND table_name='condition_events' AND column_name = 'work_id')
+     + (SELECT count(*) FROM information_schema.columns
+         WHERE table_schema='v3' AND table_name='works'
+           AND column_name IN ('copyright_notice', 'third_party_rights')) AS 列数;
+SELECT usage_type AS 利用形態, count(*) AS 条件数
+  FROM v3.conditions WHERE status <> 'void' GROUP BY usage_type ORDER BY usage_type NULLS LAST;
