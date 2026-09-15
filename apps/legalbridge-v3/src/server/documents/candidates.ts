@@ -105,8 +105,9 @@ export function buildCandidates(context: Record<string, any>): Candidate[] {
     add("振込先", "振込先（1行）", line, "text");
   }
 
-  // 案件の担当者。検収書の「検収者」はたいていこの人。
-  const o = context.owner;
+  // 案件の担当者。文書の担当者は人が選ぶ（自動では入れない）ので、候補に出す。
+  // 検収書の「検収者」はたいていこの人。
+  const o = context.matterOwner ?? context.owner;
   if (o) {
     add("担当", "担当者名", o.name, "text");
     add("担当", "担当者の部署", o.department, "text");

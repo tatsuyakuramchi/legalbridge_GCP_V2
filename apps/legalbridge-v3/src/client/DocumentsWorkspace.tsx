@@ -11,6 +11,11 @@ import { BulkOrders } from "./BulkOrders.js";
 import { StatementBreakdown, type StatementLine, type StatementTotals } from "./StatementLines.js";
 import { LicenseTermsMatrix } from "./LicenseTermsMatrix.js";
 import { ConditionLabel } from "./ConditionLabel.js";
+import { SearchSelect } from "./SearchSelect.js";
+
+/** 手入力の中の「担当者」（staff.id）。サーバの STAFF_INPUT_KEY と対。 */
+const STAFF_INPUT_KEY = "__staffId";
+interface StaffRow { id: number; name: string; department: string | null; status: string }
 
 interface TemplateRow {
   id: number; templateKey: string; label: string; category: string | null; numberPrefix: string | null;
@@ -99,6 +104,12 @@ export function DocumentsWorkspace(
   // 条件の画面から来たときは、その条件と実績を選んだ状態で開く。
   const [picked, setPicked] = useState<number[]>(start?.conditionIds ?? []);
   const [manual, setManual] = useState<Record<string, string>>({});
+  // 担当者は人が選ぶ。案件の担当者を自動で入れていたころは、検収者・申請者・
+  // 通知先に案件の担当者の名前がそのまま紙に出ていた。
+  const [staffList, setStaffList] = useState<StaffRow[]>([]);
+  useEffect(() => {
+    api.get<{ staff: StaffRow[] }>("/staff").then((r) => setStaffList(r.staff)).catch(() => undefined);
+  }, []);
   /**
    * 人が直した明細の行（items / other_fees / expenses / delivery_line_items）。
    * 無い名前は種のまま（サーバが組んだ行が本文になる）。手入力の文字とは
@@ -826,6 +837,39 @@ export function DocumentsWorkspace(
                   ))}
                 </select>
               </label>
+
+              {/* 担当者（当社側）。検収者・申請者・通知先・監修者の欄はこの人から入る。
+                  自動では入れない。案件の担当者は候補として1回で選べる。 */}
+              {(() => {
+                const ownerName = spec?.candidates.find((c) => c.source === "担当" && c.label === "担当者名")?.value;
+                const ownerRow = ownerName ? staffList.find((s) => s.name === String(ownerName)) : undefined;
+                const current = manual[STAFF_INPUT_KEY] ?? "";
+                return (
+                  <label className="field">
+                    <span>担当者（当社側）</span>
+                    <SearchSelect value={current} emptyLabel="（選ばない：担当者の欄は空のまま）"
+                      placeholder="担当者を名前・部署で探す"
+                      options={staffList.filter((s) => s.status !== "inactive" || String(s.id) === current)
+                        .map((s) => ({ value: String(s.id), label: s.name, hint: s.department }))}
+                      onChange={(v) => setManual((prev) => {
+                        const next = { ...prev };
+                        if (v) next[STAFF_INPUT_KEY] = v; else delete next[STAFF_INPUT_KEY];
+                        return next;
+                      })} />
+                    <small className="faint">
+                      検収者・申請者・通知先・監修者の欄に、この人の氏名・部署・メール・電話が入ります。
+                      {ownerRow && String(ownerRow.id) !== current && (
+                        <> 案件の担当者は {ownerRow.name}。
+                          <button type="button" className="linky"
+                                  onClick={() => setManual((prev) => ({ ...prev, [STAFF_INPUT_KEY]: String(ownerRow.id) }))}>
+                            この人にする
+                          </button>
+                        </>
+                      )}
+                    </small>
+                  </label>
+                );
+              })()}
 
               <div className="stack" style={{ gap: 6 }}>
                 <div className="row">
