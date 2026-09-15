@@ -11,6 +11,7 @@ import { BulkOrders } from "./BulkOrders.js";
 import { StatementBreakdown, type StatementLine, type StatementTotals } from "./StatementLines.js";
 import { LicenseTermsMatrix } from "./LicenseTermsMatrix.js";
 import { ConditionLabel } from "./ConditionLabel.js";
+import { BLANK_INPUT_KEY, blankedNames } from "../server/documents/binding.js";
 
 interface TemplateRow {
   id: number; templateKey: string; label: string; category: string | null; numberPrefix: string | null;
@@ -952,6 +953,14 @@ export function DocumentsWorkspace(
 
           <DocumentFields fields={spec?.fields ?? []} manual={manual}
             candidates={spec?.candidates ?? []} partyId={partyId}
+            blanked={blankedNames(manual)}
+            onBlank={(name, on) => setManual((prev) => {
+              const next = { ...prev };
+              const set = blankedNames(prev);
+              if (on) { set.add(name); delete next[name]; } else set.delete(name);
+              if (set.size) next[BLANK_INPUT_KEY] = JSON.stringify([...set]); else delete next[BLANK_INPUT_KEY];
+              return next;
+            })}
             onChange={(name, value) => {
               setManual((prev) => {
                 const next = { ...prev };

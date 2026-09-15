@@ -76,7 +76,7 @@ export function groupsOf(fields: FormField[]): Array<{ name: string; fields: For
 }
 
 export function DocumentFields(
-  { fields, manual, candidates, partyId, onChange, onPick }: {
+  { fields, manual, candidates, partyId, onChange, onPick, blanked, onBlank }: {
     fields: FormField[];
     /** 人が入れた値。自動の欄を上書きしたものも含む。 */
     manual: Record<string, string>;
@@ -90,6 +90,9 @@ export function DocumentFields(
     onChange: (name: string, value: string) => void;
     /** 候補から選んだ（「前回の値」として覚えない）。 */
     onPick: (name: string, value: string) => void;
+    /** 「空にする」と決めた自動の欄。自動の値があっても紙には空で出す。 */
+    blanked?: Set<string>;
+    onBlank?: (name: string, on: boolean) => void;
   }
 ) {
   // 自動の欄を手で直している最中のもの。
@@ -150,9 +153,10 @@ export function DocumentFields(
           </div>
           <div className="panel-bd stack" style={{ gap: 10 }}>
             {g.fields.map((f) => {
-              const editing = f.source === "manual" || f.source === "suggested"
+              const isBlanked = Boolean(blanked?.has(f.name));
+              const editing = !isBlanked && (f.source === "manual" || f.source === "suggested"
                 || overriding.has(f.name)
-                || (f.source === "auto" && f.name in manual);
+                || (f.source === "auto" && f.name in manual));
               const value = f.name in manual ? manual[f.name] : show(f.value);
               const blank = !String(value ?? "").trim();
               const want = kindFor(f.name, f.label, f.type);
@@ -166,13 +170,28 @@ export function DocumentFields(
                     <span>{f.label}{f.required && <em className="req"> 必須</em>}</span>
                   </div>
                   <div className="fbody">
-                    {!editing ? (
+                    {isBlanked ? (
+                      <div className="fro">
+                        <span className="faint">（空のまま出します）</span>
+                        {onBlank && (
+                          <button type="button" className="linky" onClick={() => onBlank(f.name, false)}>
+                            自動に戻す
+                          </button>
+                        )}
+                      </div>
+                    ) : !editing ? (
                       <div className="fro">
                         <span className={blank ? "faint" : ""}>{blank ? "（空）" : show(f.value)}</span>
                         {f.source === "auto" && !f.readonly && (
                           <button type="button" className="linky"
                                   onClick={() => setOverriding((s) => toggle(s, f.name))}>
                             {blank ? "手で入れる" : "上書きする"}
+                          </button>
+                        )}
+                        {f.source === "auto" && !f.readonly && !blank && onBlank && (
+                          <button type="button" className="linky" title="自動の値を使わず、この欄を空のまま紙に出す"
+                                  onClick={() => onBlank(f.name, true)}>
+                            空にする
                           </button>
                         )}
                       </div>

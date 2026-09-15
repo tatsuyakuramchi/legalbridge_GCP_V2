@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { bindVariables, parseVariables, pick, assertComplete } from "./binding.js";
+import { bindVariables, blankedNames, parseVariables, pick, assertComplete } from "./binding.js";
 import { DomainError } from "../core/errors.js";
 
 const context = {
@@ -269,4 +269,16 @@ test("必須の欄は文案で埋まれば未入力に数えない", () => {
     [{ name: "SCOPE", label: "許諾範囲", required: true }], {}, {},
     { suggested: { SCOPE: "組み立てた文" } });
   assert.deepEqual(result.missing, []);
+});
+
+test("「空にする」と決めた自動の欄は、自動の値があっても空で出す（必須にも数えない）", () => {
+  const variables = [{ name: "VENDOR_ACCEPT_DATE", label: "受領日（承諾日）", type: "date", required: true }];
+  const context = { document: { issuedOn: "2026-09-15" } };
+  const plain = bindVariables(variables, context, { VENDOR_ACCEPT_DATE: "2026-09-20" });
+  assert.equal(plain.values.VENDOR_ACCEPT_DATE, "2026-09-20");
+  const blank = bindVariables(variables, context, { __blank: JSON.stringify(["VENDOR_ACCEPT_DATE"]) });
+  assert.equal(blank.values.VENDOR_ACCEPT_DATE, "");
+  assert.equal(blank.fields[0].source, "manual");
+  assert.deepEqual(blank.missing, []);
+  assert.deepEqual([...blankedNames({ __blank: ["A", " ", "B"] })], ["A", "B"]);
 });

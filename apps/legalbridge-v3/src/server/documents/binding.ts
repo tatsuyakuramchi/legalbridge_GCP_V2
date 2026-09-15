@@ -145,6 +145,7 @@ export function bindVariables(
   const missing: BindingResult["missing"] = [];
   const derived: string[] = [];
   const fields: FormField[] = [];
+  const blanked = blankedNames(manualInputs);
   const computed = options.computed ?? {};
   const suggested = options.suggested ?? {};
   const templateKey = options.templateKey ?? "";
@@ -190,6 +191,14 @@ export function bindVariables(
       values[variable.name] = calculated;
       derived.push(variable.name);
       if (shown(variable)) fields.push(field(variable, "computed", calculated));
+      continue;
+    }
+
+    if (blanked.has(variable.name)) {
+      // 人が「空にする」と決めた欄。自動の値があっても入れない（承諾日のように
+      // 相手が手で書く欄）。空でも必須の未入力には数えない：空にすると決めたのは人。
+      values[variable.name] = "";
+      if (shown(variable)) fields.push(field(variable, "manual", ""));
       continue;
     }
 
@@ -251,6 +260,21 @@ export function bindVariables(
   }
 
   return { values, missing, derived, fields };
+}
+
+/**
+ * 手入力の中の「空にする」欄の名前。自動で埋まる欄を空のまま紙に出したいとき
+ * （受注者が記入する承諾日など）に、画面がここへ名前を入れる。
+ * 配列でも JSON 文字列でも受ける（手入力は文字列で運ばれることがある）。
+ */
+export const BLANK_INPUT_KEY = "__blank";
+export function blankedNames(manualInputs: Record<string, unknown> | null | undefined): Set<string> {
+  const raw = manualInputs?.[BLANK_INPUT_KEY];
+  let list: unknown = raw;
+  if (typeof raw === "string") {
+    try { list = JSON.parse(raw); } catch { list = raw.split(/[,\n]/); }
+  }
+  return new Set(Array.isArray(list) ? list.map((x) => String(x ?? "").trim()).filter(Boolean) : []);
 }
 
 export function assertComplete(result: BindingResult): void {

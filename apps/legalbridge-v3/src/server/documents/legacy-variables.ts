@@ -43,7 +43,13 @@ export function agreementRefText(title: unknown, no: unknown): string | undefine
   return name || number || undefined;
 }
 
-const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown }> = [
+/**
+ * 対応表の1行。noSuffix に挙げた名前は、名前ぜんぶが一致したときだけ当て、
+ * 末尾一致では当てない。「date」で終わる名前（VENDOR_ACCEPT_DATE・
+ * ACCEPT_REPLY_DUE_DATE）が軒並み発行日で埋まり、受注者が記入する承諾日まで
+ * 自動で入っていた。「発行日」の末尾一致（検収書発行日）は残す。
+ */
+const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown; noSuffix?: string[] }> = [
   // ---- 文書そのもの ----
   // 「発注番号」はここにもあり、この表は先に見つかったほうが勝つ。発注書では
   // 自分の番号が正しいのでこのままにする。検収書で親の発注番号を出したいときは
@@ -54,7 +60,7 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown }> = [
     get: (c) => c.agreement?.executedOn ?? c.document?.issuedOn },
   // 発行日・発注日はその書類を出した日。合意の締結日ではない。
   { names: ["documentDate", "発行日", "発注日", "order_date", "ORDER_DATE", "issue_date", "date"],
-    get: (c) => c.document?.issuedOn },
+    get: (c) => c.document?.issuedOn, noSuffix: ["date", "issue_date", "order_date"] },
   // 準拠する契約の番号。合意から引ける。
   { names: ["linked_contract_number", "契約番号", "基本契約番号", "parent_contract_number"],
     get: (c) => c.agreement?.no },
@@ -352,6 +358,7 @@ export function resolveLegacyVariable(name: string, context: Ctx, label?: string
     for (const flat of segments(key)) {
       for (const entry of RESOLVERS) {
         for (const candidate of entry.names) {
+          if (entry.noSuffix?.includes(candidate)) continue;
           const target = normalize(candidate);
           if (target.length < 3) continue;
           if (flat === target || flat.endsWith(target)) {

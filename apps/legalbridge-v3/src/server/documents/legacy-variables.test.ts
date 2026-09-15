@@ -261,3 +261,11 @@ test("T番号は適格請求書発行事業者の登録番号", () => {
   assert.equal(at("licensor_t_number"), "T1234567890123");
   assert.equal(at("T番号"), "T1234567890123");
 });
+
+test("「date」で終わるだけの名前は発行日で埋めない（承諾日・返信期限は相手や人が入れる）", () => {
+  const context = { document: { number: "ARC-PO-2026-0001", issuedOn: "2026-09-15" } };
+  assert.equal(resolveLegacyVariable("VENDOR_ACCEPT_DATE", context, "受領日（承諾日）"), undefined);
+  assert.equal(resolveLegacyVariable("ACCEPT_REPLY_DUE_DATE", context, "返信期限"), undefined);
+  assert.equal(resolveLegacyVariable("documentDate", context), "2026-09-15", "名前ぜんぶが一致すれば入る");
+  assert.equal(resolveLegacyVariable("ORDER_DATE", context), "2026-09-15");
+});
