@@ -98,7 +98,6 @@ export function DocumentsWorkspace(
   const [conditions, setConditions] = useState<ConditionSummary[]>([]);
   /** 支払済み・完了扱いの条件も候補に出すか。既定は出さない。 */
   const [showSettled, setShowSettled] = useState(false);
-  const settledCount = conditions.filter((c) => c.settlement?.done).length;
   const [templateKey, setTemplateKey] = useState("");
   // 条件の画面から来たときは、その条件と実績を選んだ状態で開く。
   const [picked, setPicked] = useState<number[]>(start?.conditionIds ?? []);
@@ -122,6 +121,13 @@ export function DocumentsWorkspace(
   const [rendered, setRendered] = useState<{ html: string; templateLabel: string } | null>(null);
   /** 直している下書き。作り直した文書はここに載せて、直してから発行する。 */
   const [draft, setDraft] = useState<{ id: number; no: string | null } | null>(null);
+  /** 開いている下書きの案件。条件の候補をこの案件のぶんに絞る。 */
+  const [draftMatterId, setDraftMatterId] = useState<number | null>(null);
+  /** 案件が決まっているとき、その案件の条件だけを候補に出す（既定）。 */
+  const [scopeToMatter, setScopeToMatter] = useState(true);
+  /** 差し替え済み（改訂前）の版も候補に出すか。既定は出さない。 */
+  const [showSuperseded, setShowSuperseded] = useState(false);
+  const [matterConditions, setMatterConditions] = useState<ConditionSummary[] | null>(null);
   /** 一覧で選んでいる文書。右にその文書の詳細を出す。 */
   const [selected, setSelected] = useState<number | null>(null);
   /**
@@ -345,8 +351,24 @@ export function DocumentsWorkspace(
   const stmtKey = stmtEntries.map((e) => `${e.conditionId}:${e.eventIds.join("-")}`).join(",");
   // 選んだのに実績が無い条件。ここが空だと、その条件は1行も出ない。
   const withoutEvents = picked.filter((cid) => !events.some((e) => e.conditionId === cid));
-  /** 案件。案件や条件の画面から来たときに決まる。無ければサーバが条件から引く。 */
-  const matterId = start?.matterId ?? null;
+  /** 案件。案件や条件の画面から来たとき、または開いた下書きのもの。無ければサーバが条件から引く。 */
+  const matterId = start?.matterId ?? draftMatterId ?? null;
+
+  // 案件が決まっていれば、その案件に紐づく条件だけを候補にする。全社の条件が
+  // 並ぶと、同じ名前の別案件の条件や改訂前の版を取り違える。
+  useEffect(() => {
+    if (!matterId) { setMatterConditions(null); return; }
+    let live = true;
+    api.get<{ conditions: ConditionSummary[] }>(`/conditions?matterId=${matterId}`)
+      .then((r) => { if (live) setMatterConditions(r.conditions); })
+      .catch(() => { if (live) setMatterConditions(null); });
+    return () => { live = false; };
+  }, [matterId]);
+  const scoped = Boolean(matterId) && scopeToMatter && matterConditions !== null;
+  const candidateConditions = (scoped ? matterConditions! : conditions)
+    .filter((c) => showSuperseded || picked.includes(c.id) || c.status !== "superseded");
+  const supersededCount = (scoped ? matterConditions! : conditions).filter((c) => c.status === "superseded").length;
+  const settledCount = (scoped ? matterConditions! : conditions).filter((c) => c.settlement?.done).length;
   /**
    * この文書の相手先。選んだ条件が1社に決まるときだけ。
    * 「探して入れる」でこの取引先の契約・文書を引くのに使う。
@@ -655,10 +677,12 @@ export function DocumentsWorkspace(
     try {
       const d = await api.get<{
         id: number; documentNo: string | null; templateKey: string | null;
+        matterId: number | null;
         manualInputs: Record<string, unknown>;
         conditions: Array<{ id: number }>;
         eventIds: number[];
       }>(`/documents/${id}`);
+      setDraftMatterId(d.matterId ?? null);
       if (!d.templateKey) {
         throw new ApiError(400, "ひな形を持たない文書は直せません");
       }
@@ -840,9 +864,23 @@ export function DocumentsWorkspace(
                     {picked.length ? `${picked.length} 件を選択中` : "選ばなくても作れます"}
                   </span>
                 </div>
-                <div className="row" style={{ gap: 8, alignItems: "center" }}>
+                <div className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                   <input value={condSearch} placeholder="条件番号・名称・相手先・契約で絞る"
-                         style={{ flex: 1 }} onChange={(e) => setCondSearch(e.target.value)} />
+                         style={{ flex: 1, minWidth: 200 }} onChange={(e) => setCondSearch(e.target.value)} />
+                  {matterId && (
+                    <button type="button" className="chip" aria-pressed={scopeToMatter}
+                            title="この案件に紐づく条件だけを候補に出す。外すと全社の条件から選べる"
+                            onClick={() => setScopeToMatter((v) => !v)}>
+                      この案件の条件だけ{matterConditions ? `（${matterConditions.length}）` : ""}
+                    </button>
+                  )}
+                  {supersededCount > 0 && (
+                    <button type="button" className="chip" aria-pressed={showSuperseded}
+                            title="改訂前の版（差し替え済み）も候補に出す。ふつうは今の版に載せる"
+                            onClick={() => setShowSuperseded((v) => !v)}>
+                      旧版も表示（{supersededCount}）
+                    </button>
+                  )}
                   {/* 支払済み・完了扱いの条件は既定で出さない。検収書を作るときに
                       払い終えた条件が何十本も並ぶと、載せる条件が探せない。 */}
                   <button type="button" className="chip" aria-pressed={showSettled}
@@ -852,11 +890,11 @@ export function DocumentsWorkspace(
                   </button>
                 </div>
                 <div className="picker">
-                  {conditions
+                  {candidateConditions
                     .filter((c) => showSettled || picked.includes(c.id) || !c.settlement?.done)
                     .filter((c) => {
                       const q = condSearch.trim().toLowerCase();
-                      if (!q) return picked.includes(c.id) || conditions.indexOf(c) < 40;
+                      if (!q) return picked.includes(c.id) || scoped || candidateConditions.indexOf(c) < 40;
                       return [c.conditionNo, c.name, c.counterparty?.name,
                               c.agreement?.title, c.agreement?.agreementNo]
                         .some((v) => String(v ?? "").toLowerCase().includes(q));
