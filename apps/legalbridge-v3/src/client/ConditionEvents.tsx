@@ -194,6 +194,9 @@ export function ConditionEvents(
   const [stmtPeriod, setStmtPeriod] = useState("");
   const [stmtPreview, setStmtPreview] = useState<StatementPreview | null>(null);
 
+  // 選択より前に置く。あとに置くと、実績を選んだ瞬間に宣言前の参照で画面ごと落ちる。
+  /** 文書に結びついているか。無効にした文書に付いたままの実績は空いている扱い。 */
+  const isLinked = (r: EventRow) => Boolean(r.documentId) && r.documentStatus !== "void";
   const pickedIds = [...picked].filter((id) => rows.some((r) => r.id === id && r.status === "active" && !isLinked(r)));
   /**
    * 利用形態のある行は、行ごとに料率を掛けてから足す。そのとき reported に
@@ -324,8 +327,6 @@ export function ConditionEvents(
   // 入力欄は「足す」を押すまで空。未定義のまま .trim() を呼ぶと画面ごと落ちる。
   const f = (k: string) => v[k] ?? "";
 
-  /** 文書に結びついているか。無効にした文書に付いたままの実績は空いている扱い。 */
-  const isLinked = (r: EventRow) => Boolean(r.documentId) && r.documentStatus !== "void";
   const openSchedules = schedules.filter((s) => !s.eventId);
   // 業務委託（委託料・実費・手数料）は、条件の内容 → 実績 → 差分 → 次のアクション の流れで記録する。
   const serviceFlow = kind === "service" || kind === "expense" || kind === "fee";
