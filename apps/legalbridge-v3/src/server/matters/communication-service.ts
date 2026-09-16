@@ -118,7 +118,9 @@ export class MatterCommunicationService {
         `SELECT c.*, d.document_no
            FROM matter_communications c
            LEFT JOIN documents d ON d.id = c.document_id
-          WHERE c.matter_id = $1
+          -- 統合した案件（merged_into_id）のやり取りも一緒に読む。記録は追記専用で
+          -- 統合のときに付け替えないので、読む側で束ねる。
+          WHERE c.matter_id IN (SELECT m.id FROM matters m WHERE m.id = $1 OR m.merged_into_id = $1)
           ORDER BY c.occurred_at DESC, c.id DESC
           LIMIT $2`, [matterId, Math.min(Math.max(limit, 1), 500)]);
       return r.rows.map(map);

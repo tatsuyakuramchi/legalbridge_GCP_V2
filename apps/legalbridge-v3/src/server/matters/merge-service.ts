@@ -110,7 +110,10 @@ export class MatterMergeService {
         };
         moved.documents = await move("documents");
         moved.tasks = await move("tasks");
-        moved.communications = await move("matter_communications");
+        // やり取りの記録（matter_communications）は追記専用で、実行ロールに UPDATE が
+        // 無い（記録は書き換えない約束）。動かさず、統合先の画面が統合元の分も
+        // 一緒に読む（communication-service）。
+        moved.communications = [];
         moved.batches = await move("document_batches");
 
         // 統合先に Drive フォルダが無ければ統合元のを引き継ぐ。備考は捨てずに足す。
@@ -173,7 +176,7 @@ export class MatterMergeService {
         };
         await back("documents", moved.documents);
         await back("tasks", moved.tasks);
-        await back("matter_communications", moved.communications);
+        // やり取りの記録は動かしていないので戻すものが無い。
         await back("document_batches", moved.batches);
         for (const l of moved.links ?? []) {
           await client.query(

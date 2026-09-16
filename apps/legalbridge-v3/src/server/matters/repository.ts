@@ -148,7 +148,8 @@ export class MatterRepository {
     const r = await this.database.query(
       `SELECT occurred_at, action, actor, detail
          FROM audit_events
-        WHERE (target_type = 'matter' AND target_id = $1)
+        WHERE (target_type = 'matter'
+               AND target_id IN (SELECT m.id FROM matters m WHERE m.id = $1 OR m.merged_into_id = $1))
            OR (target_type = 'document' AND target_id IN (SELECT id FROM documents WHERE matter_id = $1))
         ORDER BY occurred_at DESC LIMIT 100`, [id]);
     return r.rows.map((a) => ({

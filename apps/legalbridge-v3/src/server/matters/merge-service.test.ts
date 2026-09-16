@@ -22,7 +22,6 @@ const build = (into: Record<string, unknown> = {}, from: Record<string, unknown>
     if (text.includes("SET matter_id = $2 WHERE matter_id = $1 RETURNING id")) {
       if (text.includes("UPDATE documents")) return [{ id: 101 }, { id: 102 }, { id: 103 }];
       if (text.includes("UPDATE tasks")) return [{ id: 7 }];
-      if (text.includes("UPDATE matter_communications")) return [{ id: 51 }, { id: 52 }, { id: 53 }, { id: 54 }];
       return [];
     }
     if (text.includes("SELECT id, remarks, drive_folder_url FROM matters")) {
@@ -44,9 +43,11 @@ test("統合：中身を統合先へ付け替え、統合元に統合先の印�
   const moveLinks = db.find("UPDATE matter_links l SET matter_id = $2")!;
   assert.deepEqual(moveLinks.params, [1, 9]);
   assert.ok(db.find("DELETE FROM matter_links WHERE matter_id = $1"));
-  for (const table of ["documents", "tasks", "matter_communications", "document_batches"]) {
+  for (const table of ["documents", "tasks", "document_batches"]) {
     assert.ok(db.all(`UPDATE ${table} SET matter_id = $2`).length, table);
   }
+  // やり取りの記録は追記専用（実行ロールに UPDATE が無い）。動かさない。
+  assert.equal(db.all("UPDATE matter_communications").length, 0);
   // Drive フォルダは統合先に無いので引き継ぐ。備考は足す。
   assert.deepEqual(db.find("SET drive_folder_url = $2")!.params, [9, "https://drive/x"]);
   assert.match(String(db.find("SET remarks = concat_ws")!.params[1]), /統合元 MTR-1 の備考/);
