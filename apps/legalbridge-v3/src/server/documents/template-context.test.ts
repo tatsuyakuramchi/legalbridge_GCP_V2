@@ -561,3 +561,15 @@ test("画面で直した明細の仕様からも、まとめと残りを出し�
   assert.equal(line.spec_body, "●英訳\n●校正");
   assert.equal(line.has_spec_body, true);
 });
+
+test("発注書の経費合計：金額（税込）の欄が空文字で amount にだけ額がある行も足す", () => {
+  const c = buildTemplateContext("purchase_order", ctx({ schedules: [] }), {
+    expenses: [
+      { expense_name: "交通費", amount_inc_tax: "", amount: "502" },
+      { expense_name: "交通費", amount_inc_tax: "502" },
+      { expense_name: "宿泊費", amount_inc_tax: "¥1,000" }
+    ]
+  }) as Record<string, any>;
+  assert.equal(c.expensesTotalIncTax, 2004);
+  assert.equal(c.expensesTotalIncTaxStr, "2,004");
+});

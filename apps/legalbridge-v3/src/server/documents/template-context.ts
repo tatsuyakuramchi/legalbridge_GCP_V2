@@ -14,8 +14,7 @@
 
 import {
   aggregateItemDates, computeInspectionTotals, inspectionTaxBreakdown,
-  num, purchaseOrderTotals, rows, taxRatePercentFor, yen, type Row
-} from "./legacy-totals.js";
+  num, purchaseOrderTotals, rows, taxRatePercentFor, yen, type Row, pickRow } from "./legacy-totals.js";
 import { royaltyStatementPatch } from "./royalty-patch.js";
 import { isLicenseTermsTemplate, licenseTermsPatch, licenseTermsSeeds,
          licenseTermsSuggestions } from "./license-terms.js";
@@ -613,8 +612,10 @@ function orderBlock(templateKey: string, context: Ctx, manual: Record<string, un
   const intl = templateKey === "intl_purchase_order";
   const deliveryDate = aggregateItemDates(items, "delivery_date", intl);
   const paymentDate = aggregateItemDates(items, "payment_date", intl);
+  // 空文字は「無い」として次の列を見る（?? だと "" が拾われて 0 になる。画面の
+  // 行は欄を空文字で持つので、amount にだけ額がある行の合計が 0 と出ていた）。
   const expensesTotalIncTax = expenses.reduce((sum, e) =>
-    sum + num(e.amount_inc_tax ?? e.amount), 0);
+    sum + num(pickRow(e, "amount_inc_tax", "amount")), 0);
   return {
     items,
     other_fees: otherFees,

@@ -31,6 +31,11 @@ const amountOf = (v: unknown): number | null => {
   const n = Number(String(v ?? "").replace(/[^0-9.-]/g, ""));
   return String(v ?? "").trim() === "" || !Number.isFinite(n) ? null : Math.round(n);
 };
+/** 空文字は「無い」として次の列を見る。画面の行は欄を空文字で持つ。 */
+const firstAmount = (row: Row, ...keys: string[]): number | null => {
+  for (const key of keys) { const n = amountOf(row[key]); if (n !== null) return n; }
+  return null;
+};
 const rowsOf = (v: unknown): Row[] =>
   Array.isArray(v) ? v.filter((x): x is Row => Boolean(x) && typeof x === "object") : [];
 
@@ -64,7 +69,7 @@ export async function materializeSettlementRows(
   const pending = [
     ...fees.map((row) => ({ kind: "fee" as const, row, name: text(row.fee_name), amount: amountOf(row.amount) })),
     ...expenses.map((row) => ({ kind: "expense" as const, row, name: text(row.expense_name),
-                                amount: amountOf(row.amount_inc_tax ?? row.amount) }))
+                                amount: firstAmount(row, "amount_inc_tax", "amount") }))
   ].filter((p) => !int(p.row.condition_id) && (p.name || (p.amount ?? 0) > 0));
   if (!pending.length) return { manual: source.manual, created };
 
