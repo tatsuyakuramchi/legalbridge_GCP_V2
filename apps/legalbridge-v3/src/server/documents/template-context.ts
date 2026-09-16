@@ -112,6 +112,29 @@ export function statementLabelRows(context: Ctx): Row[] {
 const specOf = (condition: Ctx) => condition?.spec ?? condition?.notes ?? "";
 
 /**
+ * 仕様の本文を「1行のまとめ」と「残りの全文」に分ける。
+ *
+ * 検収書の「成果物・業務内容」の列は幅が 33% しかなく、●審判業務…のような
+ * 長文をそのまま刷ると 1 行が 20 行分の高さになっていた。改訂したひな形は
+ * 行に spec_head（先頭の行。イベント名・日時など）だけを出し、その直下に
+ * 表の幅いっぱいの行を足して spec_body（残り）を刷る。古いひな形は spec を
+ * そのまま読むので、spec は変えない。
+ */
+export function splitSpec(text: unknown): { spec_head: string; spec_body: string; has_spec_body: boolean } {
+  const lines = String(text ?? "").replace(/\r\n?/g, "\n").split("\n").map((l) => l.trim());
+  const first = lines.findIndex((l) => l !== "");
+  if (first < 0) return { spec_head: "", spec_body: "", has_spec_body: false };
+  const head = lines[first];
+  const body = lines.slice(first + 1).filter((l) => l !== "").join("\n");
+  // 先頭が●の箇条書きなら、まとめにせず全文を下の行へ（見出しに箇条書きが来ると読みにくい）。
+  if (/^[●・■◆]/.test(head)) {
+    const all = lines.filter((l) => l !== "").join("\n");
+    return { spec_head: "", spec_body: all, has_spec_body: all !== "" };
+  }
+  return { spec_head: head, spec_body: body, has_spec_body: body !== "" };
+}
+
+/**
  * その条件から出ている発注書の番号。検収書の行に「発注番号」として出す。
  * 条件をまたぐ検収書では行ごとに違う番号になる。
  */
@@ -185,6 +208,7 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
         // 業務内容の本文。仕様の欄が無い条件は備考で代える。
         spec,
         description: spec,
+        ...splitSpec(spec),
         ...rewardBreakdown(condition, event, spec),
         deliverable_ownership: ownershipOf(condition),
         // この行の元になった発注書。条件をまたぐ検収書で行ごとに違う。
@@ -228,6 +252,7 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
     item_name: condition.name ?? "",
     spec: specOf(condition),
     description: specOf(condition),
+    ...splitSpec(specOf(condition)),
     ...rewardBreakdown(condition, {}, specOf(condition)),
     deliverable_ownership: ownershipOf(condition),
     order_no: orderNoFor(context, condition.id),

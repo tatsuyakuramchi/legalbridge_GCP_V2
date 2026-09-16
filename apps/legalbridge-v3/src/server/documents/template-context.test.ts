@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   accountTypeLabel, bankInfoLine, buildTemplateContext, calcMethodOf, deliveryLinesFrom,
-  lineFieldsFor, orderLinesFrom, rewardLabelOf, seedLines, suggestionsFor, taxRateFor
+  lineFieldsFor, orderLinesFrom, rewardLabelOf, seedLines, splitSpec, suggestionsFor, taxRateFor
 } from "./template-context.js";
 import { computeInspectionTotals, inspectionTaxBreakdown, purchaseOrderTotals } from "./legacy-totals.js";
 
@@ -527,4 +527,26 @@ test("委託料が2本なら2行。定額の無い条件は行にしない", () 
     { id: 3, name: "未定", flatAmount: null, pricingModel: "none", taxCategory: "taxable", kind: "service" }
   ] })) as Array<Record<string, any>>;
   assert.deepEqual(lines.map((l) => [l.item_name, l.amount_ex_tax]), [["第1回", 100000], ["第2回", 180000]]);
+});
+
+test("検収書の行は仕様を「1行のまとめ」と「残りの全文」に分けて持つ（改訂ひな形が読む）", () => {
+  const spec = "イベント名：氷星杯　日時：2026/9/13(日) 12:00〜\n●審判業務（判定業務、記録）\n\n●競技イベント遂行業務（進行管理）";
+  const [line] = deliveryLinesFrom(ctx({ conditions: [condition({ spec })], condition: condition({ spec }) })) as Array<Record<string, any>>;
+  assert.equal(line.spec, spec, "古いひな形が読む spec はそのまま");
+  assert.equal(line.spec_head, "イベント名：氷星杯　日時：2026/9/13(日) 12:00〜");
+  assert.equal(line.spec_body, "●審判業務（判定業務、記録）\n●競技イベント遂行業務（進行管理）");
+  assert.equal(line.has_spec_body, true);
+  // 実績を選ばないときの行にも同じ分け方
+  const [fromCondition] = deliveryLinesFrom(ctx({ events: [], conditions: [condition({ spec })] })) as Array<Record<string, any>>;
+  assert.equal(fromCondition.spec_head, "イベント名：氷星杯　日時：2026/9/13(日) 12:00〜");
+  assert.equal(fromCondition.has_spec_body, true);
+});
+
+test("仕様が1行なら残りは無し。先頭が箇条書きならまとめにせず全文を下へ。空なら両方空", () => {
+  assert.deepEqual(splitSpec("カラーイラスト1点（表紙用）"),
+    { spec_head: "カラーイラスト1点（表紙用）", spec_body: "", has_spec_body: false });
+  assert.deepEqual(splitSpec("●審判業務\n●遂行業務"),
+    { spec_head: "", spec_body: "●審判業務\n●遂行業務", has_spec_body: true });
+  assert.deepEqual(splitSpec("  \n"), { spec_head: "", spec_body: "", has_spec_body: false });
+  assert.deepEqual(splitSpec("a\r\nb"), { spec_head: "a", spec_body: "b", has_spec_body: true });
 });
