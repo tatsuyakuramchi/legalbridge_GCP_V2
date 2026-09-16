@@ -209,6 +209,11 @@ SELECT * FROM (
          (SELECT count(*)::text FROM information_schema.columns
            WHERE table_schema='v3' AND table_name='conditions'
              AND column_name IN ('closed_at', 'closed_reason', 'closed_by'))
+  UNION ALL
+  SELECT 29, '案件の統合先（A-029。2 列であること）',
+         (SELECT count(*)::text FROM information_schema.columns
+           WHERE table_schema='v3' AND table_name='matters'
+             AND column_name IN ('merged_into_id', 'merged_at'))
 ) AS 確認 ORDER BY n;
 `;
 

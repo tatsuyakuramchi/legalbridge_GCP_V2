@@ -1102,6 +1102,23 @@ COMMENT ON COLUMN v3.conditions.closed_at IS
 COMMENT ON COLUMN v3.conditions.closed_reason IS '完了扱いにした理由（V2 で支払済み など）。';
 COMMENT ON COLUMN v3.conditions.closed_by IS '完了扱いにした人。';
 
+-- ---------------------------------------------------------------------
+-- A-029: 案件の統合
+--
+-- 同じ仕事の案件が2つできたとき（先に相手方から届いた契約書で1つ、発注の段で
+-- もう1つ）、片方にまとめる。統合元の条件・文書・タスク・やり取り・外部リンクは
+-- 統合先へ付け替え、統合元は消さずに merged_into_id を持って「統合済み」になる
+-- （一覧から消え、開けば統合先へ飛ぶ）。取り消しは監査の記録から付け戻す。
+-- 取引先の名寄せ（merged_into_id）と同じ作法。
+-- ---------------------------------------------------------------------
+
+ALTER TABLE v3.matters ADD COLUMN IF NOT EXISTS merged_into_id bigint REFERENCES v3.matters(id);
+ALTER TABLE v3.matters ADD COLUMN IF NOT EXISTS merged_at timestamptz;
+COMMENT ON COLUMN v3.matters.merged_into_id IS
+  '統合先の案件。入っていればこの案件は統合済みで、一覧には出ない。中身は統合先へ付け替えてある。';
+COMMENT ON COLUMN v3.matters.merged_at IS '統合した日時。';
+CREATE INDEX IF NOT EXISTS matters_merged_into_idx ON v3.matters (merged_into_id) WHERE merged_into_id IS NOT NULL;
+
 COMMIT;
 
 
@@ -1282,4 +1299,9 @@ SELECT * FROM (
          (SELECT count(*)::text FROM information_schema.columns
            WHERE table_schema='v3' AND table_name='conditions'
              AND column_name IN ('closed_at', 'closed_reason', 'closed_by'))
+  UNION ALL
+  SELECT 29, '案件の統合先（A-029。2 列であること）',
+         (SELECT count(*)::text FROM information_schema.columns
+           WHERE table_schema='v3' AND table_name='matters'
+             AND column_name IN ('merged_into_id', 'merged_at'))
 ) AS 確認 ORDER BY n;

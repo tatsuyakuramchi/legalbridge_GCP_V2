@@ -157,6 +157,9 @@ export interface MatterSummary {
   documentStyle: "counterparty_review" | "own_draft" | "own_template" | null;
   /** 定額の条件の本数と、払い切れた（完了扱い含む）本数。全部済なら「支払済み」の札。 */
   settled: { fixed: number; done: number };
+  /** 統合先（A-029）。入っていればこの案件は統合済みで、中身は統合先にある。 */
+  mergedIntoId: number | null;
+  mergedIntoNo: string | null;
 }
 
 export interface MatterDetail extends MatterSummary {

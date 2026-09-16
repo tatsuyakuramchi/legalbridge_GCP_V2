@@ -19,6 +19,15 @@ import { Relations, type EntityKind } from "./Relations.js";
 
 type Tab = "conditions" | "events" | "documents" | "payments" | "communications";
 
+/** 統合の下見。サーバの MatterMergePreview と対。 */
+interface MergePreview {
+  from: { id: number; matterNo: string | null; title: string };
+  into: { id: number; matterNo: string | null; title: string };
+  moves: { conditions: number; documents: number; tasks: number; communications: number; links: number; batches: number };
+  blockers: string[];
+  warnings: string[];
+}
+
 interface BacklogResult {
   issueKey: string | null; url: string | null; created: boolean; reason?: string;
   preview?: { subject: string | null; bodyPreview: string };
@@ -86,6 +95,44 @@ export function MattersWorkspace(
   const [styleEdit, setStyleEdit] = useState(false);
   // 取引モデルは案件が扱うものを決める。作るときに間違えることが多いので直せるようにする。
   const [kindEdit, setKindEdit] = useState(false);
+  /** 別の案件への統合。統合先を選ぶ → 何が動くかを見る → 実行。 */
+  const [merging, setMerging] = useState(false);
+  const [mergeInto, setMergeInto] = useState<{ id: number; label: string } | null>(null);
+  const [mergePreview, setMergePreview] = useState<MergePreview | null>(null);
+  const [mergeBusy, setMergeBusy] = useState(false);
+
+  useEffect(() => {
+    if (!merging || !detail || !mergeInto) { setMergePreview(null); return; }
+    api.get<MergePreview>(`/matters/merge/preview?fromId=${detail.id}&intoId=${mergeInto.id}`)
+      .then(setMergePreview).catch((e: ApiError) => { setMergePreview(null); setError(e.message); });
+  }, [merging, mergeInto?.id, detail?.id]);
+
+  async function mergeMatter() {
+    if (!detail || !mergeInto || !mergePreview) return;
+    const warn = mergePreview.warnings.length ? `\n注意：${mergePreview.warnings.join("／")}` : "";
+    if (!confirm(`${detail.matterNo ?? `#${detail.id}`} を ${mergeInto.label} に統合します。`
+      + "条件・文書・タスク・やり取り・外部リンクは統合先へ移り、この案件は一覧から消えます（取り消せます）。" + warn)) return;
+    setMergeBusy(true); setError(null);
+    try {
+      await api.post("/matters/merge", { fromId: detail.id, intoId: mergeInto.id,
+                                         acknowledge: mergePreview.warnings.length > 0 });
+      setMerging(false); setMergeInto(null);
+      reloadMatters(mergeInto.id);
+      setSelected(mergeInto.id);
+    } catch (e) { setError((e as ApiError).message); }
+    finally { setMergeBusy(false); }
+  }
+
+  async function unmergeMatter() {
+    if (!detail?.mergedIntoId) return;
+    if (!confirm(`${detail.matterNo ?? `#${detail.id}`} の統合を取り消します。統合のときに移した中身を戻します。`)) return;
+    setMergeBusy(true); setError(null);
+    try {
+      await api.post(`/matters/${detail.id}/unmerge`, {});
+      reloadMatters(detail.id); reloadDetail();
+    } catch (e) { setError((e as ApiError).message); }
+    finally { setMergeBusy(false); }
+  }
   // 繋ぎ直したら、進み具合と一覧を引き直す。
   const [linkVersion, setLinkVersion] = useState(0);
   // Drive の案件フォルダが使えるか。親フォルダが未設定なら作る導線を出さない。
@@ -305,8 +352,68 @@ export function MattersWorkspace(
                   <h2 className="code">{detail.matterNo ?? `#${detail.id}`}</h2>
                   <span className="tag accent">{KIND_LABEL[detail.kind]}</span>
                   <StatusTag kind="matter" value={detail.status} />
+                  {detail.mergedIntoId && <span className="tag warn">統合済み</span>}
+                  {!detail.mergedIntoId && !merging && (
+                    <button className="btn btn-sm" style={{ marginLeft: "auto" }}
+                            title="同じ仕事の案件が2つできたとき、片方にまとめる。中身は統合先へ移り、取り消せる"
+                            onClick={() => { setMerging(true); setMergeInto(null); }}>
+                      別の案件に統合する
+                    </button>
+                  )}
                 </div>
                 <div className="panel-bd stack">
+                  {/* 統合済みの案件。中身は統合先にあるので、そちらへ誘導する。 */}
+                  {detail.mergedIntoId && (
+                    <div className="note warn">
+                      この案件は <span className="code">{detail.mergedIntoNo ?? `#${detail.mergedIntoId}`}</span> に統合されています。
+                      条件・文書・タスクは統合先にあります。
+                      <span className="row" style={{ marginTop: 6, gap: 6 }}>
+                        <button className="btn btn-sm primary" onClick={() => setSelected(detail.mergedIntoId!)}>統合先を開く</button>
+                        <button className="btn btn-sm" disabled={mergeBusy} onClick={() => void unmergeMatter()}>統合を取り消す</button>
+                      </span>
+                    </div>
+                  )}
+                  {merging && (
+                    <div className="note stack" style={{ gap: 8 }}>
+                      <div className="row" style={{ alignItems: "center" }}>
+                        <b>別の案件に統合する</b>
+                        <span className="faint">この案件の中身を統合先へ移し、この案件は統合済みになります</span>
+                        <button className="btn btn-sm" style={{ marginLeft: "auto" }}
+                                onClick={() => { setMerging(false); setMergeInto(null); }}>やめる</button>
+                      </div>
+                      <SearchSelect value={mergeInto ? String(mergeInto.id) : ""} autoFocus
+                        placeholder="統合先の案件を 件名・案件番号・相手先 で探す"
+                        search={async (q) => {
+                          const r = await api.get<{ matters: MatterSummary[] }>(`/matters?q=${encodeURIComponent(q)}`);
+                          return r.matters.filter((m) => m.id !== detail.id).map((m) => ({
+                            value: String(m.id), label: `${m.matterNo ?? `#${m.id}`} ${m.title}`,
+                            hint: [KIND_LABEL[m.kind], m.counterparty?.name].filter(Boolean).join("／")
+                          }));
+                        }}
+                        onChange={(v, opt) => setMergeInto(v ? { id: Number(v), label: opt?.label ?? v } : null)} />
+                      {mergePreview && (
+                        <div className="stack" style={{ gap: 4 }}>
+                          <div>
+                            <b>{mergePreview.from.matterNo ?? `#${mergePreview.from.id}`}</b> → <b>{mergePreview.into.matterNo ?? `#${mergePreview.into.id}`}</b>
+                            （{mergePreview.into.title}）
+                          </div>
+                          <div className="faint">
+                            移るもの：条件 {mergePreview.moves.conditions}／文書 {mergePreview.moves.documents}／
+                            タスク {mergePreview.moves.tasks}／やり取り {mergePreview.moves.communications}／
+                            外部リンク {mergePreview.moves.links}
+                          </div>
+                          {mergePreview.blockers.map((b) => <div key={b} className="alert">{b}</div>)}
+                          {mergePreview.warnings.map((w) => <div key={w} className="note warn">{w}</div>)}
+                          <div className="row">
+                            <button className="btn btn-sm primary" disabled={mergeBusy || mergePreview.blockers.length > 0}
+                                    onClick={() => void mergeMatter()}>
+                              {mergePreview.warnings.length ? "確認のうえ統合する" : "統合する"}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <div className="title">{detail.title}</div>
                   <MatterFlow matterId={detail.id} reloadKey={linkVersion}
                           onGo={(t) => setTab(t)} />

@@ -18,12 +18,15 @@ function mapSummary(row: Record<string, any>): MatterSummary {
     dueOn: dateStr(row.due_on),
     blockedReason: str(row.blocked_reason),
     documentStyle: (str(row.document_style) as MatterSummary["documentStyle"]) ?? null,
-    settled: { fixed: Number(row.fixed_count ?? 0), done: Number(row.done_count ?? 0) }
+    settled: { fixed: Number(row.fixed_count ?? 0), done: Number(row.done_count ?? 0) },
+    mergedIntoId: row.merged_into_id ? Number(row.merged_into_id) : null,
+    mergedIntoNo: str(row.merged_into_no)
   };
 }
 
 const SUMMARY_COLUMNS = `
   m.id, m.matter_no, m.title, m.kind, m.status, m.due_on, m.blocked_reason, m.document_style,
+  m.merged_into_id, mi.matter_no AS merged_into_no,
   s.name AS owner_name,
   p.id AS party_id, p.name AS party_name, p.kind AS party_kind,
   fx.fixed_count, fx.done_count`;
@@ -33,6 +36,7 @@ const SUMMARY_FROM = `
   FROM matters m
   LEFT JOIN staff   s ON s.id = m.owner_staff_id
   LEFT JOIN parties p ON p.id = m.counterparty_id
+  LEFT JOIN matters mi ON mi.id = m.merged_into_id
   LEFT JOIN LATERAL (
     SELECT count(*)::int AS fixed_count,
            count(*) FILTER (WHERE c.closed_at IS NOT NULL OR COALESCE(pd.paid, 0) >= c.flat_amount)::int AS done_count
@@ -54,7 +58,8 @@ export class MatterRepository {
   }
 
   async list(query: { keyword?: string; kind?: MatterKind; openOnly?: boolean; limit?: number } = {}) {
-    const where: string[] = [];
+    // 統合済みの案件は一覧に出さない。開けば統合先へ飛ぶ。
+    const where: string[] = ["m.merged_into_id IS NULL"];
     const params: unknown[] = [];
     if (query.keyword?.trim()) {
       params.push(`%${query.keyword.trim()}%`);

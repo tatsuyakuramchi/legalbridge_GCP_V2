@@ -20,6 +20,7 @@ import { LegacyCleanupRepository } from "./ops/legacy-cleanup.js";
 import { PartyWriteService } from "./parties/write-service.js";
 import { PartyMergeService } from "./parties/merge-service.js";
 import { MatterRepository } from "./matters/repository.js";
+import { MatterMergeService } from "./matters/merge-service.js";
 import { WorkRepository } from "./works/repository.js";
 import { checkAgainstEnvelope } from "./works/envelope.js";
 import { DocumentRepository } from "./documents/repository.js";
@@ -106,6 +107,7 @@ export function createRoutes(database: Transactable) {
   const workWrites = new WorkWriteService(database);
   const partyWrites = new PartyWriteService(database);
   const partyMerge = new PartyMergeService(database);
+  const matterMerge = new MatterMergeService(database);
   const receivables = new ReceivableRepository(database);
   const contractCheck = new ContractCheckRepository(database);
   const search = new SearchRepository(database);
@@ -276,6 +278,26 @@ export function createRoutes(database: Transactable) {
       openOnly: req.query.open === "1"
     }) });
   }));
+
+  // 案件の統合（A-029）。下見 → 実行 → 取り消し。/matters/:id より前に置く。
+  const matterMergeSchema = z.object({
+    fromId: z.coerce.number().int().positive(),
+    intoId: z.coerce.number().int().positive(),
+    acknowledge: z.coerce.boolean().optional()
+  });
+  router.get("/matters/merge/preview", asyncRoute(async (req, res) => {
+    const { fromId, intoId } = matterMergeSchema.parse(req.query ?? {});
+    res.json(await matterMerge.preview(fromId, intoId));
+  }));
+  router.post("/matters/merge", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { fromId, intoId, acknowledge } = matterMergeSchema.parse(req.body ?? {});
+      res.json(await matterMerge.merge(fromId, intoId, actor(res), { acknowledge: acknowledge === true }));
+    }));
+  router.post("/matters/:id/unmerge", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await matterMerge.unmerge(Number(req.params.id), actor(res)));
+    }));
 
   router.get("/matters/:id", asyncRoute(async (req, res) => {
     const matter = await matters.find(Number(req.params.id));
