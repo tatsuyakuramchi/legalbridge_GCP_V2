@@ -229,7 +229,15 @@ export function DocumentsWorkspace(
         api.get<Integrations>("/integrations")
       ]);
       setTemplates(t.templates);
-      setDocuments(d.documents);
+      // 開くよう指定された文書が一覧の 200 件に入っていなければ、単独で引いて先頭に足す。
+      // 一覧は下書き・発行日なしが先に並ぶので、決定済みの文書は 200 件から溢れることが
+      // あり、溢れると「選んでいた文書が消えたら次へ」で先頭の下書きに飛んでいた。
+      let list = d.documents;
+      if (openDocumentId && !list.some((x) => x.id === openDocumentId)) {
+        const one = await api.get<DocumentRow>(`/documents/${openDocumentId}`).catch(() => null);
+        if (one) list = [one, ...list];
+      }
+      setDocuments(list);
       setConditions(c.conditions);
       setIntegrations(i);
       if (!templateKey) {
