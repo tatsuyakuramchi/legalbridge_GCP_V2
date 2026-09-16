@@ -33,6 +33,17 @@ const yen = (v: unknown) =>
  * 基本契約の呼び方。「業務委託基本契約（AGR-2025-0011）」。
  * 紙に差し込む文字を1つだけ決めて、一括作成からも同じものを使う。
  */
+/**
+ * 実績の日付のうちいちばん遅いもの。実績が 1 件なら（従来どおり）その実績。
+ * 日付は ISO の文字列なので文字列比較で並ぶ。
+ */
+function latestDate(c: Ctx, pick: (e: Ctx) => unknown, fallback?: unknown): unknown {
+  const events = (Array.isArray(c.events) && c.events.length ? c.events : [c.event]).filter(Boolean) as Ctx[];
+  const dates = events.map((e) => pick(e)).filter((d): d is string => typeof d === "string" && d !== "");
+  if (!dates.length) return fallback ?? (c.event ? pick(c.event) : undefined) ?? undefined;
+  return dates.reduce((a, b) => (b > a ? b : a));
+}
+
 export function agreementRefText(title: unknown, no: unknown): string | undefined {
   const name = String(title ?? "").trim();
   const number = String(no ?? "").trim();
@@ -240,15 +251,18 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown; noSuffix?: s
   { names: ["AMOUNT_INC_TAX", "税込金額"], get: (c) => yen(c.totals?.incTax) },
 
   // ---- 実績（検収書・納品書） ----
+  // 実績が複数（分納をまとめた検収書）のときは、頭書きの納品日・検収日・支払期日は
+  // いちばん遅い実績のものにする。先頭の実績を使っていたので、9/6 と 9/13 の
+  // 2 回分をまとめた検収書の頭書きが「9/6 に役務完了・検収」と出ていた。
   { names: ["DELIVERY_DATE", "deliveredAt", "実納品日", "納品日", "delivered_on",
             "summaryDeliveryDate"],
-    get: (c) => c.event?.occurredOn },
+    get: (c) => latestDate(c, (e) => e.occurredOn) },
   { names: ["INSPECTION_DATE", "inspectionCompletedAt", "completionDate",
             "検収完了日", "検収日", "inspected_on", "完成日"],
     // 検収日は納品日と別の日になりうる。実績に入っていればそれを使う。
-    get: (c) => c.event?.inspectedOn ?? c.event?.occurredOn },
+    get: (c) => latestDate(c, (e) => e.inspectedOn ?? e.occurredOn) },
   { names: ["PAYMENT_DATE", "paymentDueDate", "支払期日", "summaryPaymentDate"],
-    get: (c) => c.schedule?.payOn },
+    get: (c) => latestDate(c, (e) => e.schedule?.payOn, c.schedule?.payOn) },
   { names: ["PERIOD", "対象期間", "対象月"], get: (c) => c.event?.period },
 
   // ---- 計算書 ----

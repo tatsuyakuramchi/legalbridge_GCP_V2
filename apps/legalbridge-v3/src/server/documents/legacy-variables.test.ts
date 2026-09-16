@@ -84,6 +84,29 @@ test("実績に検収者が無ければ案件の担当者で代える", () => {
   assert.equal(at("検収日", bare), "2026-08-31", "検収日が無ければ納品日");
 });
 
+/**
+ * 分納をまとめた検収書。頭書きの納品日・検収日・支払期日は、いちばん遅い実績に
+ * 合わせる。先頭の実績を使うと、9/6 と 9/13 の 2 回分なのに「9/6 に役務完了」と出る。
+ */
+test("実績が複数なら、頭書きの納品日・検収日・支払期日はいちばん遅い実績のもの", () => {
+  const two = {
+    event: { occurredOn: "2026-09-06", schedule: { payOn: "2026-10-20" } },
+    schedule: { payOn: "2026-10-20" },
+    events: [
+      { occurredOn: "2026-09-06", schedule: { payOn: "2026-10-20" } },
+      { occurredOn: "2026-09-13", inspectedOn: "2026-09-14", schedule: { payOn: "2026-10-31" } }
+    ]
+  };
+  assert.equal(at("納品日", two), "2026-09-13");
+  assert.equal(at("summaryDeliveryDate", two), "2026-09-13");
+  assert.equal(at("検収日", two), "2026-09-14");
+  assert.equal(at("支払期日", two), "2026-10-31");
+  // 1 件なら従来どおり
+  const one = { event: { occurredOn: "2026-08-31" }, events: [{ occurredOn: "2026-08-31" }] };
+  assert.equal(at("納品日", one), "2026-08-31");
+  assert.equal(at("検収日", one), "2026-08-31");
+});
+
 // 並びと区切りは V1 の buildPurchaseOrderContext と同じにしてある。
 // V1 の書類と並べたときに見た目が変わらないことが条件。
 const BANK_LINE = "みずほ銀行 / 渋谷支店 / 普通 1234567 / ヨシザワ ジユンロウ";
