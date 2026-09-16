@@ -383,3 +383,13 @@ tr[aria-selected="true"] td{background:var(--accent-soft)}
 .inline-input{width:100%;border:1px solid var(--line-strong);border-radius:5px;padding:3px 6px;font:inherit;font-size:12px;background:var(--surface)}
 .ledger .btn-sm{white-space:nowrap}
 .ledger td .row{flex-wrap:nowrap}
+
+/* 案件の「整理」タブ。半分幅の枠に条件・文書・実績を並べるので、表ではなく2行の行にする。 */
+.graph-list{display:flex;flex-direction:column}
+.graph-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;padding:6px 0;
+  border-top:1px solid var(--line);align-items:start;font-size:12px}
+.graph-row.series-head{border-top:2px solid var(--line-strong)}
+.graph-row .row{gap:6px;align-items:center}
+.graph-row .sub{color:var(--faint);font-size:11.5px;margin-top:2px;line-height:1.6}
+.graph-row .acts{display:flex;flex-direction:column;gap:4px;align-items:flex-end}
+.graph-row .acts .btn{white-space:nowrap}

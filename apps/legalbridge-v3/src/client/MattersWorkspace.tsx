@@ -13,11 +13,12 @@ import { MatterConditions, MatterDocuments } from "./MatterLinks.js";
 import { MatterStatement } from "./MatterStatement.js";
 import { MatterEvents } from "./MatterEvents.js";
 import { MatterPayments } from "./MatterPayments.js";
+import { MatterGraph } from "./MatterGraph.js";
 import { Relations, type EntityKind } from "./Relations.js";
 
 
 
-type Tab = "conditions" | "events" | "documents" | "payments" | "communications";
+type Tab = "conditions" | "events" | "documents" | "payments" | "communications" | "graph";
 
 /** 統合の下見。サーバの MatterMergePreview と対。 */
 interface MergePreview {
@@ -515,7 +516,8 @@ export function MattersWorkspace(
                        ["events", "実績"],
                        ["documents", `文書 ${detail.documents.length}`],
                        ["payments", `支払 ${detail.payments.length}`],
-                       ["communications", `操作の記録 ${detail.communications.length}`]] as const).map(([key, label]) => (
+                       ["communications", `操作の記録 ${detail.communications.length}`],
+                       ["graph", "整理"]] as const).map(([key, label]) => (
                       <button key={key} aria-selected={tab === key} onClick={() => setTab(key as Tab)}>{label}</button>
                     ))}
                   </div>
@@ -545,6 +547,11 @@ export function MattersWorkspace(
 
                   {tab === "payments" && (
                     <MatterPayments detail={detail} onChanged={relink} onOpenDocument={onOpenDocument} />
+                  )}
+
+                  {tab === "graph" && (
+                    <MatterGraph matterId={detail.id} reloadKey={linkVersion} onChanged={relink}
+                      onOpenDocument={onOpenDocument} onOpenCondition={onOpenCondition} />
                   )}
 
                   {tab === "communications" && (

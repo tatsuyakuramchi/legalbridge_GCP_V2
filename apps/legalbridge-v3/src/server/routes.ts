@@ -21,6 +21,7 @@ import { PartyWriteService } from "./parties/write-service.js";
 import { PartyMergeService } from "./parties/merge-service.js";
 import { MatterRepository } from "./matters/repository.js";
 import { MatterMergeService } from "./matters/merge-service.js";
+import { MatterGraphService } from "./matters/graph-service.js";
 import { WorkRepository } from "./works/repository.js";
 import { checkAgainstEnvelope } from "./works/envelope.js";
 import { DocumentRepository } from "./documents/repository.js";
@@ -108,6 +109,7 @@ export function createRoutes(database: Transactable) {
   const partyWrites = new PartyWriteService(database);
   const partyMerge = new PartyMergeService(database);
   const matterMerge = new MatterMergeService(database);
+  const matterGraph = new MatterGraphService(database);
   const receivables = new ReceivableRepository(database);
   const contractCheck = new ContractCheckRepository(database);
   const search = new SearchRepository(database);
@@ -298,6 +300,14 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       res.json(await matterMerge.unmerge(Number(req.params.id), actor(res)));
     }));
+
+  /**
+   * 繋がりの整理。案件を軸に条件（改訂の全版）・実績・文書・支払を一式で返し、
+   * 機械的に見つかる不整合を名指しする。直す操作は既存の API で行う。
+   */
+  router.get("/matters/:id/graph", asyncRoute(async (req, res) => {
+    res.json(await matterGraph.graph(Number(req.params.id)));
+  }));
 
   router.get("/matters/:id", asyncRoute(async (req, res) => {
     const matter = await matters.find(Number(req.params.id));
