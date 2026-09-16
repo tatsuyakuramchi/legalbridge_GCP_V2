@@ -245,16 +245,29 @@ export class DocumentContextRepository {
    * 検収書は条件をまたいで1枚にできるので、行ごとにその条件の発注番号を
    * 出せるよう、どの条件の書類かを持たせる。
    */
+  /**
+   * その条件から出した文書（発注書など）。検収書の行の発注番号はここから引く。
+   *
+   * 条件を改訂すると新しい id になるが、発注書は旧版の id に繋がったまま残る。
+   * 今の版の id だけで探すと、改訂した条件の検収書で発注番号が空になる
+   * （実績と同じ壊れ方）。系列（改訂の全版）で探し、結果は頼まれた id に付ける。
+   */
   private async relatedDocuments(client: Queryable, conditionIds: number[]) {
     const r = await client.query(
-      `SELECT DISTINCT ON (dc.condition_id, t.template_key)
-              d.id, d.document_no, d.issued_at, t.template_key, dc.condition_id
-         FROM document_conditions dc
+      `WITH wanted AS (
+         SELECT y.id, COALESCE(y.series_id, y.id) AS series
+           FROM conditions y WHERE y.id = ANY($1::bigint[])
+       )
+       SELECT DISTINCT ON (w.id, t.template_key)
+              d.id, d.document_no, d.issued_at, t.template_key, w.id AS condition_id
+         FROM wanted w
+         JOIN conditions x ON COALESCE(x.series_id, x.id) = w.series
+         JOIN document_conditions dc ON dc.condition_id = x.id
          JOIN documents d ON d.id = dc.document_id
          JOIN document_template_versions tv ON tv.id = d.template_version_id
          JOIN document_templates t ON t.id = tv.template_id
-        WHERE dc.condition_id = ANY($1::bigint[]) AND d.status = 'issued'
-        ORDER BY dc.condition_id, t.template_key, d.id DESC`, [conditionIds]);
+        WHERE d.status = 'issued'
+        ORDER BY w.id, t.template_key, d.id DESC`, [conditionIds]);
     return (r.rows as Array<Record<string, any>>).map((row) => ({
       id: Number(row.id),
       conditionId: Number(row.condition_id),
