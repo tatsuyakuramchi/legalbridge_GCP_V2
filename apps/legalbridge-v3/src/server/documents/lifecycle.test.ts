@@ -10,6 +10,7 @@ const doc = (status: string, extra: Record<string, unknown> = {}) => ({
 
 const build = (row: Record<string, unknown> | undefined) => new FakeDatabase((text) => {
   if (text.includes("FROM documents WHERE id")) return row ? [row] : [];
+  if (text.includes("UPDATE condition_events SET document_id = NULL")) return [{ id: 70, condition_id: 5 }, { id: 71, condition_id: 5 }];
   if (text.includes("INSERT INTO documents")) return [{ id: 9 }];
   return undefined;
 });
@@ -218,4 +219,14 @@ test("無効にした文書は下敷きにできない。取込文書はひな�
                                               template_key: null }))
       .derive(5, {}, "k"),
     /ひな形を選んでください/);
+});
+
+test("無効化すると、結びついていた実績を解放する（作り直せるように）", async () => {
+  const db = build(doc("issued"));
+  const r = await new DocumentIssueService(db).void(5, "宛先を間違えたため", "kuramochi");
+  assert.equal(r.releasedEvents, 2);
+  const release = db.find("UPDATE condition_events SET document_id = NULL")!;
+  assert.deepEqual(release.params, [5]);
+  const audit = db.find("INSERT INTO audit_events")!;
+  assert.deepEqual(JSON.parse(String(audit.params[5])).releasedEvents, [{ id: 70, conditionId: 5 }, { id: 71, conditionId: 5 }]);
 });

@@ -132,6 +132,8 @@ export interface EventRow {
   /** 計算書から作られた実績。画面からは直せない。 */
   documentId: number | null;
   documentNo: string | null;
+  /** 結びついている文書の状態。void なら空いている扱い（作り直せる）。 */
+  documentStatus: string | null;
   /** 予定との差分（A-030）。 */
   expectedQuantity: number | null;
   expectedAmount: number | null;
@@ -156,7 +158,7 @@ export class ConditionEventService {
                 e.usage_type, e.out_condition_id, e.unit_amount, e.rate_ppm, e.payment_stage,
                 e.tax_included,
                 oc.condition_no AS out_condition_no, oc.name AS out_condition_name,
-                e.document_id, d.document_no, e.created_at, e.created_by,
+                e.document_id, d.document_no, d.status AS document_status, e.created_at, e.created_by,
                 e.condition_id, ec.condition_no AS own_condition_no,
                 e.expected_quantity, e.expected_amount, e.variance_note, e.follow_up, e.follow_up_due_on
            FROM condition_events e
@@ -203,6 +205,7 @@ export class ConditionEventService {
           ? null : Boolean(row.tax_included),
         documentId: int(row.document_id),
         documentNo: str(row.document_no),
+        documentStatus: str(row.document_status),
         expectedQuantity: num(row.expected_quantity),
         expectedAmount: int(row.expected_amount),
         varianceNote: str(row.variance_note),
@@ -442,8 +445,11 @@ export class ConditionEventService {
     const ids = [...new Set(eventIds.map((n) => Math.trunc(n)))].filter((n) => n > 0);
     if (!ids.length) return;
     const rows = await this.database.query(
-      `SELECT id, status, document_id FROM condition_events
-        WHERE id = ANY($1::bigint[]) AND condition_id IN ${SERIES_IDS_SQL("$2")}`, [ids, conditionId]);
+      `SELECT e.id, e.status,
+              -- 無効にした文書に結びついたままの実績は、空いているものとして扱う。
+              CASE WHEN d.status = 'void' THEN NULL ELSE e.document_id END AS document_id
+         FROM condition_events e LEFT JOIN documents d ON d.id = e.document_id
+        WHERE e.id = ANY($1::bigint[]) AND e.condition_id IN ${SERIES_IDS_SQL("$2")}`, [ids, conditionId]);
     const found = rows.rows as Array<{ id: number; status: string; document_id: number | null }>;
     if (found.length !== ids.length) {
       throw new DomainError("NOT_FOUND", "この条件に無い実績が混ざっています");
@@ -564,8 +570,11 @@ export class ConditionEventService {
         }
 
         const rows = await client.query(
-          `SELECT id, status, document_id FROM condition_events
-            WHERE id = ANY($1::bigint[]) AND condition_id IN ${SERIES_IDS_SQL("$2")}`, [ids, conditionId]);
+          `SELECT e.id, e.status,
+              -- 無効にした文書に結びついたままの実績は、空いているものとして扱う。
+              CASE WHEN d.status = 'void' THEN NULL ELSE e.document_id END AS document_id
+         FROM condition_events e LEFT JOIN documents d ON d.id = e.document_id
+        WHERE e.id = ANY($1::bigint[]) AND e.condition_id IN ${SERIES_IDS_SQL("$2")}`, [ids, conditionId]);
         const found = rows.rows as Array<{ id: number; status: string; document_id: number | null }>;
         if (found.length !== ids.length) {
           throw new DomainError("NOT_FOUND", "この条件に無い実績が混ざっています");
@@ -588,7 +597,9 @@ export class ConditionEventService {
 
         const updated = await client.query(
           `UPDATE condition_events SET document_id = $3
-            WHERE id = ANY($1::bigint[]) AND condition_id IN ${SERIES_IDS_SQL("$2")} AND document_id IS NULL`,
+            WHERE id = ANY($1::bigint[]) AND condition_id IN ${SERIES_IDS_SQL("$2")}
+              AND (document_id IS NULL
+                   OR document_id IN (SELECT x.id FROM documents x WHERE x.status = 'void'))`,
           [ids, conditionId, documentId]);
 
         const linked = updated.rowCount ?? 0;

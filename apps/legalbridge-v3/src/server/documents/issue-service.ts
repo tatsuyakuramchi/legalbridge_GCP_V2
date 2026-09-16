@@ -339,7 +339,8 @@ export class DocumentIssueService {
    * 追えなくなる。status を void にして理由を監査に残す。
    * 保管先（Drive）のファイルにも触らない。外に出したものは取り消せない。
    */
-  async void(documentId: number, reason: string, actor: string): Promise<{ id: number; documentNo: string | null }> {
+  async void(documentId: number, reason: string, actor: string)
+    : Promise<{ id: number; documentNo: string | null; releasedEvents: number }> {
     const note = String(reason ?? "").trim();
     if (!note) {
       throw new DomainError("VALIDATION", "無効にする理由を書いてください。理由なしでは無効にできません");
@@ -358,11 +359,19 @@ export class DocumentIssueService {
 
         await client.query(
           "UPDATE documents SET status = 'void' WHERE id = $1", [documentId]);
+        // この文書に結びついていた実績を解放する。結んだままだと「別の文書に
+        // 結びついている」と弾かれ、無効にした文書を作り直せなかった。
+        const released = await client.query(
+          "UPDATE condition_events SET document_id = NULL WHERE document_id = $1 RETURNING id, condition_id",
+          [documentId]);
+        const releasedEvents = (released.rows as Array<{ id: number; condition_id: number }>)
+          .map((e) => ({ id: Number(e.id), conditionId: Number(e.condition_id) }));
         await recordAudit(client, {
           actor, action: "document.void", targetType: "document", targetId: documentId,
-          detail: { documentNo: row.document_no, from: row.status, reason: note }
+          detail: { documentNo: row.document_no, from: row.status, reason: note,
+                    ...(releasedEvents.length ? { releasedEvents } : {}) }
         });
-        return { id: documentId, documentNo: row.document_no };
+        return { id: documentId, documentNo: row.document_no, releasedEvents: releasedEvents.length };
       });
     } catch (error) { throw translate(error); }
   }

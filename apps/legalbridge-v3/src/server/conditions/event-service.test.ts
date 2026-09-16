@@ -99,7 +99,7 @@ const linkDb = (over: Record<string, Array<Record<string, unknown>>> = {}) =>
     if (t.includes("FROM documents WHERE id")) {
       return [{ id: 7, document_no: "ARC-INS-2026-0001", status: "issued" }];
     }
-    if (t.includes("FROM condition_events\n            WHERE id = ANY")) {
+    if (t.includes("FROM condition_events e LEFT JOIN documents d")) {
       return [{ id: 5, status: "active", document_id: null }];
     }
     if (t.includes("UPDATE condition_events SET document_id")) return [{ id: 5 }];
@@ -125,7 +125,7 @@ test("下書きには結びつけない（捨てられると実績が宙に浮�
 test("取り消し済みの実績は結びつけない", async () => {
   await assert.rejects(
     () => new ConditionEventService(
-      linkDb({ "FROM condition_events\n            WHERE id = ANY":
+      linkDb({ "FROM condition_events e LEFT JOIN documents d":
         [{ id: 5, status: "void", document_id: null }] }))
       .linkDocument(1, [5], 7, "a"), /取り消し済みの実績は/);
 });
@@ -133,7 +133,7 @@ test("取り消し済みの実績は結びつけない", async () => {
 test("すでに別の文書に出した実績は二重に出さない", async () => {
   await assert.rejects(
     () => new ConditionEventService(
-      linkDb({ "FROM condition_events\n            WHERE id = ANY":
+      linkDb({ "FROM condition_events e LEFT JOIN documents d":
         [{ id: 5, status: "active", document_id: "99" }] }))
       .linkDocument(1, [5], 7, "a"), /すでに別の文書に結びついている/);
 });
@@ -142,7 +142,7 @@ test("同じ文書へならやり直せる（訂正版の発行で実績が先�
   // bigint は文字列で返る。ここを数値で書いた偽データにしていたせいで、
   // "7" !== 7 で自分の実績まで弾く不具合を取り逃がしていた。
   const database = linkDb({
-    "FROM condition_events\n            WHERE id = ANY":
+    "FROM condition_events e LEFT JOIN documents d":
       [{ id: 5, status: "active", document_id: "7" }],
     // UPDATE には document_id IS NULL が付いている。すでに埋まっているので0件。
     "UPDATE condition_events SET document_id": []
@@ -157,7 +157,7 @@ test("同じ文書へならやり直せる（訂正版の発行で実績が先�
 test("この条件に無い実績は混ぜられない", async () => {
   await assert.rejects(
     () => new ConditionEventService(
-      linkDb({ "FROM condition_events\n            WHERE id = ANY": [] }))
+      linkDb({ "FROM condition_events e LEFT JOIN documents d": [] }))
       .linkDocument(1, [5], 7, "a"), /この条件に無い実績/);
 });
 
@@ -324,4 +324,17 @@ test("予定との差分と次のアクション（A-030）を実績に残す。
   await new ConditionEventService(plain).add(1, { eventType: "inspection", occurredOn: "2026-09-13", amount: 502 }, "k");
   assert.deepEqual(plain.find("INSERT INTO condition_events")!.params.slice(26, 31), [null, null, null, null, null]);
   assert.equal(JSON.parse(String(plain.find("INSERT INTO audit_events")!.params[5])).followUp, undefined, "差分が無ければ監査にも書かない");
+});
+
+test("結びつけの検査：無効な文書に結びついたままの実績は空いている扱い", async () => {
+  // 検査の SQL 自体が無効な文書の document_id を NULL に読み替える。行がそう返れば通る。
+  const database = new FakeDatabase((t) => {
+    if (t.includes("CASE WHEN d.status = 'void' THEN NULL ELSE e.document_id END")) {
+      return [{ id: 70, status: "active", document_id: null }];
+    }
+    return undefined;
+  });
+  await new ConditionEventService(database).assertLinkable(5, [70], null);
+  const q = database.find("FROM condition_events e LEFT JOIN documents d")!;
+  assert.match(q.text, /d\.status = 'void'/);
 });

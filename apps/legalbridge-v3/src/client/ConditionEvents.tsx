@@ -30,6 +30,8 @@ interface EventRow {
   deliverable: string | null; inspectedOn: string | null;
   inspectorDept: string | null; inspectorName: string | null;
   documentId: number | null; documentNo: string | null;
+  /** 結びついている文書の状態。無効なら空いている扱い。 */
+  documentStatus: string | null;
   /** 予定との差分（A-030）。 */
   expectedQuantity: number | null; expectedAmount: number | null;
   varianceNote: string | null; followUp: string | null; followUpDueOn: string | null;
@@ -192,7 +194,7 @@ export function ConditionEvents(
   const [stmtPeriod, setStmtPeriod] = useState("");
   const [stmtPreview, setStmtPreview] = useState<StatementPreview | null>(null);
 
-  const pickedIds = [...picked].filter((id) => rows.some((r) => r.id === id && r.status === "active" && !r.documentId));
+  const pickedIds = [...picked].filter((id) => rows.some((r) => r.id === id && r.status === "active" && !isLinked(r)));
   /**
    * 利用形態のある行は、行ごとに料率を掛けてから足す。そのとき reported に
    * 入っているのは「許諾料の合計」であって根拠ではないので、根拠の合計は
@@ -322,6 +324,8 @@ export function ConditionEvents(
   // 入力欄は「足す」を押すまで空。未定義のまま .trim() を呼ぶと画面ごと落ちる。
   const f = (k: string) => v[k] ?? "";
 
+  /** 文書に結びついているか。無効にした文書に付いたままの実績は空いている扱い。 */
+  const isLinked = (r: EventRow) => Boolean(r.documentId) && r.documentStatus !== "void";
   const openSchedules = schedules.filter((s) => !s.eventId);
   // 業務委託（委託料・実費・手数料）は、条件の内容 → 実績 → 差分 → 次のアクション の流れで記録する。
   const serviceFlow = kind === "service" || kind === "expense" || kind === "fee";
@@ -518,6 +522,22 @@ export function ConditionEvents(
         inspectorName: f("inspectorName").trim() || null
       });
       setAdding(false); load(); onChanged();
+    } catch (e) { setError((e as ApiError).message); }
+    finally { setBusy(false); }
+  }
+
+  /** 文書との結びつけを外す。二重発行の安全ガードを人が外す口。 */
+  async function unlinkEvent(row: EventRow) {
+    if (!row.documentId) return;
+    const why = row.documentStatus === "void"
+      ? `無効にした文書 ${row.documentNo ?? `#${row.documentId}`} との結びつけを外します。`
+      : `文書 ${row.documentNo ?? `#${row.documentId}`} との結びつけを外します。文書は変わりません。`
+        + "\n外すと、この実績で別の文書を作れるようになります（二重発行の防止が効かなくなります）。";
+    if (!confirm(why)) return;
+    setBusy(true); setError(null);
+    try {
+      await api.post(`/conditions/${conditionId}/events/unlink-document`, { eventIds: [row.id], documentId: row.documentId });
+      load(); onChanged();
     } catch (e) { setError((e as ApiError).message); }
     finally { setBusy(false); }
   }
@@ -1022,7 +1042,7 @@ export function ConditionEvents(
       {/* 選んだ実績から書類を作る。料率なら計算書、定額なら検収書・納品書。
           業績連動の業務委託は金額がもう決まっているので計算書には行かない。
           報酬計算書のひな形は作らず、検収書の明細に内訳として載せる。 */}
-      {editable && rows.some((r) => r.status === "active" && !r.documentId) && (
+      {editable && rows.some((r) => r.status === "active" && !isLinked(r)) && (
         <div className="panel-bd row" style={{ borderBottom: "1px solid var(--line)", gap: 8 }}>
           <span className="faint">
             {pickedIds.length ? `${pickedIds.length} 件を選択中` : "左の四角で実績を選ぶと、まとめて1枚の書類にできます"}
@@ -1182,15 +1202,23 @@ export function ConditionEvents(
                   </td>
                   <td className="faint">
                     {row.documentNo
-                      ? <>文書 <span className="code">{row.documentNo}</span></>
+                      ? <>文書 <span className="code">{row.documentNo}</span>
+                          {row.documentStatus === "void" && <span className="tag danger" style={{ marginLeft: 4 }}>無効</span>}
+                          {/* 結びつけを外す。無効にした文書から作り直すときや、取り違えたとき。 */}
+                          {editable && !voided && (
+                            <button className="linky" style={{ marginLeft: 6 }} disabled={busy}
+                                    title="この文書との結びつけを外す。文書そのものは変わらない"
+                                    onClick={() => void unlinkEvent(row)}>外す</button>
+                          )}
+                        </>
                       : row.createdBy}
                   </td>
                   <td>
-                    {editable && !voided && !row.documentId && (
+                    {editable && !voided && !isLinked(row) && (
                       <button className="btn btn-sm" disabled={busy}
                               onClick={() => void voidEvent(row)}>取り消す</button>
                     )}
-                    {editable && !voided && !row.documentId && (
+                    {editable && !voided && !isLinked(row) && (
                       <button className="btn btn-sm" style={{ marginLeft: 5, whiteSpace: "nowrap" }}
                               onClick={() => {
                                 // 作成のフォームは「文書」画面に1本化してある。
