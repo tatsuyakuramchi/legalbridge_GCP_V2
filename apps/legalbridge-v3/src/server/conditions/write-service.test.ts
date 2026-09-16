@@ -65,6 +65,10 @@ test("実績がある条件は改訂になり、旧版は superseded として�
   assert.ok(supersede, "旧版を superseded にする");
   assert.deepEqual(supersede!.params, [1, 77]);
   assert.ok(db.find("INSERT INTO condition_scopes"), "範囲も引き継ぐ");
+  // 案件の紐づけは新版へ移す。旧版に残ると、案件から見える条件が古い版で止まる。
+  const carry = db.find("INSERT INTO matter_links")!;
+  assert.deepEqual(carry.params, ["1", "77"]);
+  assert.deepEqual(db.find("DELETE FROM matter_links WHERE target_type = 'condition'")!.params, ["1"]);
   const audit = db.find("INSERT INTO audit_events");
   assert.ok(String(audit!.params[1]).includes("revise"));
 });

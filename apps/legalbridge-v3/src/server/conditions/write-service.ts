@@ -896,6 +896,17 @@ export class ConditionWriteService {
        ON CONFLICT DO NOTHING`,
       [id, newId]
     );
+    // 案件の紐づけは新しい版へ移す。旧版に付いたままだと、案件から見える条件が
+    // 古い版のまま止まり、案件の工程（実績・支払の数）も旧版だけを数えていた。
+    await client.query(
+      `INSERT INTO matter_links (matter_id, target_type, target_ref, relation, snapshot)
+       SELECT matter_id, target_type, $2::text, relation, snapshot
+         FROM matter_links WHERE target_type = 'condition' AND target_ref = $1::text
+       ON CONFLICT (matter_id, target_type, target_ref) DO NOTHING`,
+      [String(id), String(newId)]);
+    await client.query(
+      "DELETE FROM matter_links WHERE target_type = 'condition' AND target_ref = $1::text",
+      [String(id)]);
     await this.carrySchedules(client, id, newId, effectiveFrom);
     return newId;
   }

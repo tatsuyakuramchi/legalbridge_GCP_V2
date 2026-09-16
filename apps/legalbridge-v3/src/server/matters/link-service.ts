@@ -263,7 +263,16 @@ export class MatterLinkService {
            LEFT JOIN agreements a ON a.id = c.agreement_id
           WHERE ml.matter_id = $1 AND ml.target_type = 'condition'`, [matterId]);
       const rows = conditions.rows as any[];
-      const ids = rows.map((r) => Number(r.id));
+      const linkedIds = rows.map((r) => Number(r.id));
+      // 実績・計算書・支払は登録した版の id に付いたまま残る。改訂の全版（系列）で数える。
+      const series = linkedIds.length
+        ? await this.database.query(
+            `SELECT x.id FROM conditions x
+              WHERE COALESCE(x.series_id, x.id) IN
+                    (SELECT COALESCE(y.series_id, y.id) FROM conditions y WHERE y.id = ANY($1::bigint[]))`,
+            [linkedIds])
+        : { rows: [] as any[] };
+      const ids = [...new Set([...linkedIds, ...(series.rows as any[]).map((r) => Number(r.id))])];
 
       const documents = await this.database.query(
         `SELECT d.status, d.document_no, d.template_version_id, t.label
@@ -295,15 +304,20 @@ export class MatterLinkService {
         : { rows: [{ total: 0, paid: 0 }] };
 
       // 定額の条件が何本あって、何本が払い切れたか（完了扱いも含む）。
+      // 改訂の予約中は旧版と新版が両方 active なので、系列で1本と数える。
+      // 支払の割当は旧版の id に付いたまま残るので、系列の全版で足す。
       const settled = ids.length
         ? await this.database.query(
-            `SELECT count(*)::int AS fixed,
-                    count(*) FILTER (WHERE c.closed_at IS NOT NULL OR COALESCE(pd.paid, 0) >= c.flat_amount)::int AS done
+            `SELECT count(DISTINCT COALESCE(c.series_id, c.id))::int AS fixed,
+                    count(DISTINCT COALESCE(c.series_id, c.id))
+                      FILTER (WHERE c.closed_at IS NOT NULL OR COALESCE(pd.paid, 0) >= c.flat_amount)::int AS done
                FROM conditions c
                LEFT JOIN LATERAL (
                  SELECT sum(al.amount) AS paid FROM payment_allocations al
                    JOIN payments y ON y.id = al.payment_id
-                  WHERE al.condition_id = c.id AND y.status = 'paid'
+                  WHERE y.status = 'paid'
+                    AND al.condition_id IN (SELECT x.id FROM conditions x
+                                             WHERE COALESCE(x.series_id, x.id) = COALESCE(c.series_id, c.id))
                ) pd ON true
               WHERE c.id = ANY($1::bigint[]) AND c.status = 'active'
                 AND c.pricing_model IN ('fixed', 'unit_rate') AND COALESCE(c.flat_amount, 0) > 0`, [ids])

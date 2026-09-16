@@ -38,14 +38,19 @@ const SUMMARY_FROM = `
   LEFT JOIN parties p ON p.id = m.counterparty_id
   LEFT JOIN matters mi ON mi.id = m.merged_into_id
   LEFT JOIN LATERAL (
-    SELECT count(*)::int AS fixed_count,
-           count(*) FILTER (WHERE c.closed_at IS NOT NULL OR COALESCE(pd.paid, 0) >= c.flat_amount)::int AS done_count
+    -- 改訂の予約中は旧版と新版が両方 active なので系列で1本と数え、
+    -- 支払の割当は旧版の id に残るので系列の全版で足す。
+    SELECT count(DISTINCT COALESCE(c.series_id, c.id))::int AS fixed_count,
+           count(DISTINCT COALESCE(c.series_id, c.id))
+             FILTER (WHERE c.closed_at IS NOT NULL OR COALESCE(pd.paid, 0) >= c.flat_amount)::int AS done_count
       FROM matter_links ml
       JOIN conditions c ON ml.target_type = 'condition' AND c.id::text = ml.target_ref
       LEFT JOIN LATERAL (
         SELECT sum(al.amount) AS paid FROM payment_allocations al
           JOIN payments y ON y.id = al.payment_id
-         WHERE al.condition_id = c.id AND y.status = 'paid'
+         WHERE y.status = 'paid'
+           AND al.condition_id IN (SELECT x.id FROM conditions x
+                                    WHERE COALESCE(x.series_id, x.id) = COALESCE(c.series_id, c.id))
       ) pd ON true
      WHERE ml.matter_id = m.id AND c.status = 'active'
        AND c.pricing_model IN ('fixed', 'unit_rate') AND COALESCE(c.flat_amount, 0) > 0
