@@ -204,13 +204,19 @@ export class ConditionRepository {
     };
   }
 
-  /** 文書 → 条件の参照なので、条件側からは document_conditions を辿る。 */
+  /**
+   * 文書 → 条件の参照なので、条件側からは document_conditions を辿る。
+   * 改訂の全版（系列）で見る。発注書は旧版の id に繋がったまま残るので、
+   * 新版を開いたときに「この条件から出た文書」が空になっていた。
+   */
   private async documents(id: number) {
     const r = await this.database.query(
-      `SELECT d.id, d.document_no, d.status, d.issued_at, d.matter_id
+      `SELECT DISTINCT d.id, d.document_no, d.status, d.issued_at, d.matter_id
          FROM document_conditions dc
          JOIN documents d ON d.id = dc.document_id
-        WHERE dc.condition_id = $1
+        WHERE dc.condition_id IN (SELECT x.id FROM conditions x
+                                   WHERE COALESCE(x.series_id, x.id) =
+                                         (SELECT COALESCE(y.series_id, y.id) FROM conditions y WHERE y.id = $1))
         ORDER BY d.issued_at DESC NULLS LAST, d.id DESC`, [id]);
     return r.rows.map((d) => ({
       id: Number(d.id), documentNo: str(d.document_no), status: String(d.status),

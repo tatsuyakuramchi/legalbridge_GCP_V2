@@ -236,7 +236,11 @@ export const RELATIONS: Record<EntityKind, Record<string, RelationDefinition>> =
       list: async (c, id) => rows(await c.query(
         `SELECT ${DOCUMENT_SELECT}
            JOIN document_conditions dc ON dc.document_id = d.id
-          WHERE dc.condition_id = $1 ORDER BY d.id DESC`, [id])).map(asDocument),
+          -- 改訂の全版（系列）。旧版に繋がったままの発注書も新版から見える。
+          WHERE dc.condition_id IN (SELECT x.id FROM conditions x
+                                     WHERE COALESCE(x.series_id, x.id) =
+                                           (SELECT COALESCE(y.series_id, y.id) FROM conditions y WHERE y.id = $1))
+          ORDER BY d.id DESC`, [id])).map(asDocument),
       candidates: async (c, id, q) => rows(await c.query(
         `SELECT ${DOCUMENT_SELECT}
           WHERE d.status <> 'void'
