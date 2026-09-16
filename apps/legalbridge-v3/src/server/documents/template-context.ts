@@ -465,6 +465,13 @@ function inspectionBlock(context: Ctx, manual: Record<string, unknown>, taxRate:
   const totals = computeInspectionTotals(source);
   const breakdown = inspectionTaxBreakdown(source);
 
+  // 仕様の「1行のまとめ」と「残り」は、いま入っている spec から出し直す。種の行を
+  // 画面で直したとき、種に付いていた spec_head が古いままにならないように。
+  for (const line of lines) {
+    if (line.spec !== undefined || line.description !== undefined) {
+      Object.assign(line, splitSpec(line.spec ?? line.description ?? ""));
+    }
+  }
   const visible = lines.filter((l) => String(l.inspection_status ?? "now") !== "skip");
   const paid = visible.filter((l) => String(l.inspection_status ?? "") === "paid");
   const now = visible.filter((l) => String(l.inspection_status ?? "now") === "now");

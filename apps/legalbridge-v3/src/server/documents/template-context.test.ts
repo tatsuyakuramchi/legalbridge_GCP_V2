@@ -550,3 +550,14 @@ test("仕様が1行なら残りは無し。先頭が箇条書きならまとめ�
   assert.deepEqual(splitSpec("  \n"), { spec_head: "", spec_body: "", has_spec_body: false });
   assert.deepEqual(splitSpec("a\r\nb"), { spec_head: "a", spec_body: "b", has_spec_body: true });
 });
+
+test("画面で直した明細の仕様からも、まとめと残りを出し直す（種の値を引きずらない）", () => {
+  const c = buildTemplateContext("inspection_certificate", ctx(), {
+    delivery_line_items: [{ item_name: "翻訳", spec: "納品物：訳文一式\n●英訳\n●校正", spec_head: "古いまとめ",
+                            amount_ex_tax: 1000, inspected_amount_ex_tax: 1000, tax_category: "taxable" }]
+  }) as Record<string, any>;
+  const [line] = c.delivery_line_items;
+  assert.equal(line.spec_head, "納品物：訳文一式");
+  assert.equal(line.spec_body, "●英訳\n●校正");
+  assert.equal(line.has_spec_body, true);
+});
