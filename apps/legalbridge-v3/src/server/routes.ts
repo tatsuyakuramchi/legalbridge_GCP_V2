@@ -1958,9 +1958,12 @@ export function createRoutes(database: Transactable) {
     if (groups.size && !conditionIds.length) {
       throw new DomainError("VALIDATION", `実績を結ぶには、${noConditionHint}`);
     }
-    const allowed = new Set(conditionIds.map(Number));
+    // id ではなく系列（改訂の全版）で突き合わせる。改訂すると文書には今の版が
+    // 繋がり、実績は旧版に付いたまま残るので、id で比べると弾いてしまう。
+    const series = await conditionEvents.seriesOf([...conditionIds.map(Number), ...groups.keys()]);
+    const allowed = new Set(conditionIds.map((id) => series.get(Number(id)) ?? Number(id)));
     for (const conditionId of groups.keys()) {
-      if (!allowed.has(conditionId)) {
+      if (!allowed.has(series.get(conditionId) ?? conditionId)) {
         throw new DomainError("VALIDATION",
           `条件 #${conditionId} の実績が選ばれていますが、その条件はこの文書に繋がっていません。` +
           "条件明細も一緒に選んでください");

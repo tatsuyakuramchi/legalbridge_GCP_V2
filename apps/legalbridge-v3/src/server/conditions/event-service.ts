@@ -475,6 +475,22 @@ export class ConditionEventService {
    * 実績を載せるときの入口。結びつけは条件ごとに行うので、先に束を分ける。
    * 見つからない実績があれば止める（黙って落とすと、その回だけ検収書に載らない）。
    */
+  /**
+   * 条件 id → 系列（改訂の全版に共通の id）。
+   * 文書に繋いだ条件は今の版、実績は旧版に付いたまま、ということが改訂のあとに
+   * 起きる。id で突き合わせると「その条件はこの文書に繋がっていません」と
+   * 弾いてしまうので、系列で比べる。
+   */
+  async seriesOf(conditionIds: number[]): Promise<Map<number, number>> {
+    const ids = [...new Set(conditionIds.map((n) => Math.trunc(Number(n))))].filter((n) => n > 0);
+    const out = new Map<number, number>();
+    if (!ids.length) return out;
+    const r = await this.database.query(
+      "SELECT id, COALESCE(series_id, id) AS series FROM conditions WHERE id = ANY($1::bigint[])", [ids]);
+    for (const row of r.rows as Array<{ id: number; series: number }>) out.set(Number(row.id), Number(row.series));
+    return out;
+  }
+
   async groupByCondition(eventIds: number[]): Promise<Map<number, number[]>> {
     const ids = [...new Set(eventIds.map((n) => Math.trunc(Number(n))))].filter((n) => n > 0);
     const out = new Map<number, number[]>();

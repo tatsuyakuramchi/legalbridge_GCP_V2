@@ -285,3 +285,17 @@ test("検収書がそのまま使う項目を実績に残す", async () => {
   assert.equal(q.params[14], "法務");
   assert.equal(q.params[15], "倉持");
 });
+
+test("条件 id → 系列。改訂の旧版と今の版が同じ系列に落ちる", async () => {
+  const db = new FakeDatabase((text) => {
+    if (text.includes("COALESCE(series_id, id) AS series")) {
+      return [{ id: 997, series: 997 }, { id: 1012, series: 997 }, { id: 5, series: 5 }];
+    }
+    return undefined;
+  });
+  const m = await new ConditionEventService(db).seriesOf([997, 1012, 5, 5]);
+  assert.equal(m.get(997), 997);
+  assert.equal(m.get(1012), 997, "改訂後の版は旧版の id を系列に持つ");
+  assert.equal(m.get(5), 5);
+  assert.deepEqual(await new ConditionEventService(db).seriesOf([]), new Map());
+});
