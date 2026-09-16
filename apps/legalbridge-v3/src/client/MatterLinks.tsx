@@ -248,7 +248,14 @@ export function MatterConditions(
         <div className="stack" style={{ gap: 10 }}>
           {bundles.map((b) => {
             const ids = b.conditions.map((c) => c.id);
-            const total = b.conditions.reduce((sum, c) => sum + (c.flatAmount ?? 0), 0);
+            // 委託料・手数料は税抜、実費は税込の立替。足すと意味の無い数になるので
+            // 合計は出さず、くくりを分けて並べる。
+            const exTax = b.conditions.filter((c) => c.kind !== "expense").reduce((sum, c) => sum + (c.flatAmount ?? 0), 0);
+            const incTax = b.conditions.filter((c) => c.kind === "expense").reduce((sum, c) => sum + (c.flatAmount ?? 0), 0);
+            const amounts = [
+              exTax > 0 ? `${b.conditions.some((c) => c.kind === "fee") ? "委託料・手数料" : "委託料"} ${money(exTax, b.currency)}（税抜）` : "",
+              incTax > 0 ? `経費 ${money(incTax, b.currency)}（税込）` : ""
+            ].filter(Boolean).join("＋");
             const settled = b.conditions.filter((c) => c.settlement?.done);
             const fixed = b.conditions.filter((c) => c.settlement?.targetAmount);
             const allDone = fixed.length > 0 && fixed.every((c) => c.settlement?.done);
@@ -261,7 +268,8 @@ export function MatterConditions(
                   {allDone && <span className="tag ok">支払済み</span>}
                   <span className="faint">
                     {b.counterparty ?? "相手先なし"} ／ {b.agreement ?? "基本契約なし"}
-                    {b.conditions.length > 1 && ` ／ ${b.conditions.length} 本 合計 ${money(total, b.currency)}`}
+                    {b.conditions.length > 1 && ` ／ ${b.conditions.length} 本`}
+                    {b.conditions.length > 1 && amounts && ` ／ ${amounts}`}
                     {fixed.length > 0 && !allDone && ` ／ 支払済み ${settled.length}／${fixed.length} 本`}
                   </span>
                   {onCompose && (
