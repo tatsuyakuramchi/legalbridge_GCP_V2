@@ -74,6 +74,14 @@ export interface EventInput {
   paymentStage?: PaymentStage | null;
   /** 受領額・受領価格が税込か。海外からの受領は税込で来る。 */
   taxIncluded?: boolean | null;
+  /** 記録時点の予定（条件または予定の回）。差分の記録が条件の改訂で変わらないように写して持つ（A-030）。 */
+  expectedQuantity?: number | null;
+  expectedAmount?: number | null;
+  /** 予定との差分の理由。 */
+  varianceNote?: string | null;
+  /** 差分への次のアクション。wait=不足分を待つ / settle_short=不足のまま終了（減額） / as_is=意図どおり。 */
+  followUp?: "wait" | "settle_short" | "as_is" | null;
+  followUpDueOn?: string | null;
 }
 
 /**
@@ -124,6 +132,12 @@ export interface EventRow {
   /** 計算書から作られた実績。画面からは直せない。 */
   documentId: number | null;
   documentNo: string | null;
+  /** 予定との差分（A-030）。 */
+  expectedQuantity: number | null;
+  expectedAmount: number | null;
+  varianceNote: string | null;
+  followUp: string | null;
+  followUpDueOn: string | null;
   createdAt: string;
   createdBy: string;
 }
@@ -143,7 +157,8 @@ export class ConditionEventService {
                 e.tax_included,
                 oc.condition_no AS out_condition_no, oc.name AS out_condition_name,
                 e.document_id, d.document_no, e.created_at, e.created_by,
-                e.condition_id, ec.condition_no AS own_condition_no
+                e.condition_id, ec.condition_no AS own_condition_no,
+                e.expected_quantity, e.expected_amount, e.variance_note, e.follow_up, e.follow_up_due_on
            FROM condition_events e
            LEFT JOIN documents d ON d.id = e.document_id
            LEFT JOIN condition_schedules s ON s.id = e.schedule_id
@@ -188,6 +203,11 @@ export class ConditionEventService {
           ? null : Boolean(row.tax_included),
         documentId: int(row.document_id),
         documentNo: str(row.document_no),
+        expectedQuantity: num(row.expected_quantity),
+        expectedAmount: int(row.expected_amount),
+        varianceNote: str(row.variance_note),
+        followUp: str(row.follow_up),
+        followUpDueOn: dateStr(row.follow_up_due_on),
         createdAt: new Date(String(row.created_at)).toISOString(),
         createdBy: String(row.created_by)
       }));
@@ -308,10 +328,12 @@ export class ConditionEventService {
               deliverable, inspected_on, inspector_dept, inspector_name,
               contract_form, service_from, service_to,
               usage_type, out_condition_id, unit_amount, rate_ppm, payment_stage,
-              tax_included, work_id)
+              tax_included, work_id,
+              expected_quantity, expected_amount, variance_note, follow_up, follow_up_due_on)
            VALUES ($1, $2, $3, $4::date, $5, $6, $7, $8, $9, $10, $11, $12,
                    $13, $14::date, $15, $16, $17, $18::date, $19::date,
-                   $20, $21, $22, $23, $24, $25, $26)
+                   $20, $21, $22, $23, $24, $25, $26,
+                   $27, $28, $29, $30, $31::date)
            RETURNING id`,
           [conditionId, scheduleId, input.eventType, occurredOn, period,
            input.quantity ?? null, input.sampleQuantity ?? null,
@@ -320,13 +342,20 @@ export class ConditionEventService {
            str(input.inspectorDept), str(input.inspectorName),
            contractForm, serviceFrom, serviceTo,
            usageType, input.outConditionId ?? null, unitAmount, ratePpm,
-           input.paymentStage ?? null, input.taxIncluded ?? null, input.workId ?? null]);
+           input.paymentStage ?? null, input.taxIncluded ?? null, input.workId ?? null,
+           input.expectedQuantity ?? null,
+           input.expectedAmount === null || input.expectedAmount === undefined ? null : Math.round(input.expectedAmount),
+           str(input.varianceNote), input.followUp ?? null, input.followUpDueOn || null]);
         const id = Number((inserted.rows[0] as { id: number }).id);
 
         await recordAudit(client, {
           actor, action: "condition.event_add", targetType: "condition", targetId: conditionId,
           detail: { eventId: id, eventType: input.eventType, occurredOn, amount, scheduleId,
-                    usageType, outConditionId: input.outConditionId ?? null }
+                    usageType, outConditionId: input.outConditionId ?? null,
+                    ...(input.varianceNote || input.followUp
+                      ? { expectedQuantity: input.expectedQuantity ?? null, expectedAmount: input.expectedAmount ?? null,
+                          varianceNote: str(input.varianceNote), followUp: input.followUp ?? null,
+                          followUpDueOn: input.followUpDueOn || null } : {}) }
         });
         return { id };
       });

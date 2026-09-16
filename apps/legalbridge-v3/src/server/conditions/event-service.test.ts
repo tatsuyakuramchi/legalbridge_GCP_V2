@@ -299,3 +299,29 @@ test("条件 id → 系列。改訂の旧版と今の版が同じ系列に落ち
   assert.equal(m.get(5), 5);
   assert.deepEqual(await new ConditionEventService(db).seriesOf([]), new Map());
 });
+
+test("予定との差分と次のアクション（A-030）を実績に残す。無ければ空のまま", async () => {
+  const database = new FakeDatabase((t) => {
+    if (t.includes("FROM conditions WHERE id = $1")) return [{ id: 1, status: "active", direction: "in", rate_ppm: null, currency: "JPY" }];
+    if (t.includes("INSERT INTO condition_events")) return [{ id: 9 }];
+    return undefined;
+  });
+  const svc = new ConditionEventService(database);
+  await svc.add(1, { eventType: "inspection", occurredOn: "2026-09-13", quantity: 3, amount: 30000,
+    expectedQuantity: 5, expectedAmount: 50000, varianceNote: "2 点不足", followUp: "wait", followUpDueOn: "2026-09-30" }, "k");
+  const q = database.find("INSERT INTO condition_events")!;
+  assert.deepEqual(q.params.slice(26, 31), [5, 50000, "2 点不足", "wait", "2026-09-30"]);
+  const audit = database.find("INSERT INTO audit_events")!;
+  const detail = JSON.parse(String(audit.params[5]));
+  assert.equal(detail.followUp, "wait");
+  assert.equal(detail.varianceNote, "2 点不足");
+
+  const plain = new FakeDatabase((t) => {
+    if (t.includes("FROM conditions WHERE id = $1")) return [{ id: 1, status: "active", direction: "in", rate_ppm: null, currency: "JPY" }];
+    if (t.includes("INSERT INTO condition_events")) return [{ id: 10 }];
+    return undefined;
+  });
+  await new ConditionEventService(plain).add(1, { eventType: "inspection", occurredOn: "2026-09-13", amount: 502 }, "k");
+  assert.deepEqual(plain.find("INSERT INTO condition_events")!.params.slice(26, 31), [null, null, null, null, null]);
+  assert.equal(JSON.parse(String(plain.find("INSERT INTO audit_events")!.params[5])).followUp, undefined, "差分が無ければ監査にも書かない");
+});

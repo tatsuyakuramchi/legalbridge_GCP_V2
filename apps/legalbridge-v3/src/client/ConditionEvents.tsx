@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { ServiceEventForm } from "./ServiceEventForm.js";
 import { api, ApiError, money } from "./api.js";
 import { rewardLabelFor } from "../server/core/reward.js";
 import { CONTRACT_FORMS } from "../server/conditions/contract-form.js";
@@ -29,6 +30,9 @@ interface EventRow {
   deliverable: string | null; inspectedOn: string | null;
   inspectorDept: string | null; inspectorName: string | null;
   documentId: number | null; documentNo: string | null;
+  /** 予定との差分（A-030）。 */
+  expectedQuantity: number | null; expectedAmount: number | null;
+  varianceNote: string | null; followUp: string | null; followUpDueOn: string | null;
   createdAt: string; createdBy: string;
   usageType: string | null; usageLabel: string | null;
   outConditionId: number | null; outConditionNo: string | null; outConditionName: string | null;
@@ -75,9 +79,11 @@ interface PreviewResponse {
 
 export function ConditionEvents(
   { conditionId, currency, editable, matterId, pricingModel, deliverableOwnership, reloadKey,
-    ratePpm, conditionUnitAmount, conditionQuantity, direction, workTitle, workId,
+    ratePpm, conditionUnitAmount, conditionQuantity, direction, workTitle, workId, kind,
     openForSchedule, onOpened, onCompose, onOpenDocument, onChanged }:
   { conditionId: number; currency: string; editable: boolean;
+    /** 条件の種類。委託料・実費・手数料は業務委託の記録の流れ（ServiceEventForm）を出す。 */
+    kind?: string | null;
     matterId?: number | null; reloadKey?: number;
     /** 成果物の帰属先。料率の条件では報酬の呼び方がこれで決まる。 */
     deliverableOwnership?: string | null;
@@ -317,6 +323,8 @@ export function ConditionEvents(
   const f = (k: string) => v[k] ?? "";
 
   const openSchedules = schedules.filter((s) => !s.eventId);
+  // 業務委託（委託料・実費・手数料）は、条件の内容 → 実績 → 差分 → 次のアクション の流れで記録する。
+  const serviceFlow = kind === "service" || kind === "expense" || kind === "fee";
   const chosen = openSchedules.find((s) => String(s.id) === (v.scheduleId ?? ""));
   // 検収・納品の実績は検収書の行になる。そのとき出る欄が変わる。
   const inspecting = (v.eventType ?? "") === "inspection" || (v.eventType ?? "") === "delivery";
@@ -544,7 +552,17 @@ export function ConditionEvents(
         )}
       </div>
 
-      {adding && (
+      {adding && serviceFlow && (
+        <div ref={addForm} className="panel-bd" style={{ borderBottom: "1px solid var(--line)" }}>
+          <ServiceEventForm conditionId={conditionId} kind={kind ?? "service"} currency={currency}
+            schedules={schedules} initialScheduleId={v.scheduleId ? Number(v.scheduleId) : null}
+            matterId={matterId ?? null}
+            onDone={() => { setAdding(false); load(); onChanged(); }}
+            onCancel={() => setAdding(false)} />
+        </div>
+      )}
+
+      {adding && !serviceFlow && (
         <div ref={addForm} className="panel-bd stack" style={{ borderBottom: "1px solid var(--line)" }}>
           {/* 予定がある条件は、どの回の分かを繋がないと検収書の支払日が空になる。
               予定の行の「実績にする」も、この欄を選んだ状態でここを開く。 */}
@@ -1199,10 +1217,21 @@ export function ConditionEvents(
         </table>
       </div>
 
-      {rows.some((r) => r.note) && (
+      {rows.some((r) => r.note || r.varianceNote) && (
         <div className="panel-bd">
-          {rows.filter((r) => r.note).map((r) => (
-            <div key={r.id} className="faint">#{r.id}：{r.note}</div>
+          {rows.filter((r) => r.note || r.varianceNote).map((r) => (
+            <div key={r.id} className="faint">
+              #{r.id}：{r.note}
+              {/* 予定との差分（A-030）。理由と次のアクションを実績のそばに出す。 */}
+              {r.varianceNote && (
+                <> <span className="tag warn">変更</span> {r.varianceNote}
+                  {r.followUp === "wait" && `（不足分を待つ${r.followUpDueOn ? `：${r.followUpDueOn} まで` : ""}）`}
+                  {r.followUp === "settle_short" && "（不足のまま終了・減額）"}
+                  {r.followUp === "as_is" && "（意図どおり）"}
+                  {r.expectedAmount !== null && `　予定 ${money(r.expectedAmount, currency)} → 実績 ${money(r.amount, currency)}`}
+                </>
+              )}
+            </div>
           ))}
         </div>
       )}

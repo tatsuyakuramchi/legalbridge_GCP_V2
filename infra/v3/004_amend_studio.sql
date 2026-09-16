@@ -1119,6 +1119,37 @@ COMMENT ON COLUMN v3.matters.merged_into_id IS
 COMMENT ON COLUMN v3.matters.merged_at IS '統合した日時。';
 CREATE INDEX IF NOT EXISTS matters_merged_into_idx ON v3.matters (merged_into_id) WHERE merged_into_id IS NOT NULL;
 
+-- ---------------------------------------------------------------------
+-- A-030: 実績の「予定との差分」と「次のアクション」
+--
+-- 業務委託の実績は、条件（または予定の回）の数量・金額と突き合わせて記録する。
+-- 納品数が足りない・金額が違う・納期に遅れた、を見つけたら理由を残し、
+-- 「不足分を待つ（期日つきのタスク）」か「不足のまま終了（減額）」を決める。
+-- 予定の値は記録時点の条件から写して持つ（あとで条件を直しても差分の記録が
+-- 変わらないように）。
+-- ---------------------------------------------------------------------
+
+ALTER TABLE v3.condition_events ADD COLUMN IF NOT EXISTS expected_quantity numeric;
+ALTER TABLE v3.condition_events ADD COLUMN IF NOT EXISTS expected_amount   bigint;
+ALTER TABLE v3.condition_events ADD COLUMN IF NOT EXISTS variance_note     text;
+ALTER TABLE v3.condition_events ADD COLUMN IF NOT EXISTS follow_up         text;
+ALTER TABLE v3.condition_events ADD COLUMN IF NOT EXISTS follow_up_due_on  date;
+COMMENT ON COLUMN v3.condition_events.expected_quantity IS '記録時点の予定数量（条件または予定の回から写す）。';
+COMMENT ON COLUMN v3.condition_events.expected_amount   IS '記録時点の予定額（税抜、最小通貨単位）。';
+COMMENT ON COLUMN v3.condition_events.variance_note     IS '予定との差分の理由（納品数が足りない、単価の見直し など）。';
+COMMENT ON COLUMN v3.condition_events.follow_up         IS '差分への次のアクション。wait=不足分を待つ / settle_short=不足のまま終了（減額） / as_is=差分は意図どおり。';
+COMMENT ON COLUMN v3.condition_events.follow_up_due_on  IS '不足分を待つ期日。タスクにも同じ期日を立てる。';
+DO $a030$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.condition_events'::regclass
+                    AND conname = 'condition_events_follow_up_chk') THEN
+    ALTER TABLE v3.condition_events ADD CONSTRAINT condition_events_follow_up_chk
+      CHECK (follow_up IS NULL OR follow_up IN ('wait', 'settle_short', 'as_is'));
+  END IF;
+END
+$a030$;
+
 COMMIT;
 
 
@@ -1304,4 +1335,9 @@ SELECT * FROM (
          (SELECT count(*)::text FROM information_schema.columns
            WHERE table_schema='v3' AND table_name='matters'
              AND column_name IN ('merged_into_id', 'merged_at'))
+  UNION ALL
+  SELECT 30, '実績の予定との差分・次のアクション（A-030。5 列であること）',
+         (SELECT count(*)::text FROM information_schema.columns
+           WHERE table_schema='v3' AND table_name='condition_events'
+             AND column_name IN ('expected_quantity', 'expected_amount', 'variance_note', 'follow_up', 'follow_up_due_on'))
 ) AS 確認 ORDER BY n;

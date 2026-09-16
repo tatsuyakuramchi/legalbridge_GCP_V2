@@ -214,6 +214,11 @@ SELECT * FROM (
          (SELECT count(*)::text FROM information_schema.columns
            WHERE table_schema='v3' AND table_name='matters'
              AND column_name IN ('merged_into_id', 'merged_at'))
+  UNION ALL
+  SELECT 30, '実績の予定との差分・次のアクション（A-030。5 列であること）',
+         (SELECT count(*)::text FROM information_schema.columns
+           WHERE table_schema='v3' AND table_name='condition_events'
+             AND column_name IN ('expected_quantity', 'expected_amount', 'variance_note', 'follow_up', 'follow_up_due_on'))
 ) AS 確認 ORDER BY n;
 `;
 

@@ -1255,6 +1255,12 @@ export function createRoutes(database: Transactable) {
     note: z.string().trim().max(1000).nullable().optional(),
     // どの予定の回か。分納の支払日はここが繋がっていないと空になる。
     scheduleId: z.coerce.number().int().positive().nullable().optional(),
+    // 予定との差分と次のアクション（A-030）。業務委託の実績で使う。
+    expectedQuantity: z.coerce.number().nullable().optional(),
+    expectedAmount: z.coerce.number().int().nullable().optional(),
+    varianceNote: z.string().trim().max(2000).nullable().optional(),
+    followUp: z.enum(["wait", "settle_short", "as_is"]).nullable().optional(),
+    followUpDueOn: z.string().date().nullable().optional(),
     ...inspectionFields
   });
   router.post("/conditions/:id/events",

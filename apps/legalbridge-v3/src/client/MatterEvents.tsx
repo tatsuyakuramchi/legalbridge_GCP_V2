@@ -66,7 +66,7 @@ export function MatterEvents(
           matterId={detail.id} reloadKey={reloadKey}
           pricingModel={chosen.pricingModel} ratePpm={chosen.ratePpm}
           conditionUnitAmount={chosen.unitAmount} conditionQuantity={chosen.quantity}
-          direction={chosen.direction}
+          direction={chosen.direction} kind={chosen.kind}
           workTitle={chosen.work?.title ?? null} workId={chosen.work?.id ?? null}
           onCompose={onCompose} onOpenDocument={onOpenDocument}
           onChanged={() => { setReloadKey((v) => v + 1); onChanged(); }} />
