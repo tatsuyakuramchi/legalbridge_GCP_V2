@@ -80,6 +80,8 @@ test("作品 CSV：親作品を書くと原作にぶら下がる。当たらな�
     if (text.includes("SELECT 1 FROM document_sequences")) return [{ x: 1 }];
     if (text.includes("UPDATE document_sequences")) return [{ current_value: 7 }];
     if (text.includes("INSERT INTO works")) return [{ id: 10, work_code: "WRK-7" }];
+    // 著作権表示は履歴（A-031）の初版の行にも入る。
+    if (text.includes("INSERT INTO work_credits")) return [{ id: 1 }];
     return undefined;
   });
   const csv = "作品名,種別,親作品,著作権表示\n新作ゲーム,,原作小説,© 2026 著者\n別のゲーム,,無い原作,";
@@ -90,5 +92,8 @@ test("作品 CSV：親作品を書くと原作にぶら下がる。当たらな�
   assert.equal(ins.params[3], "derivative", "親があれば派生作品");
   assert.equal(ins.params[7], "© 2026 著者");
   assert.ok(db.find("INSERT INTO work_lineage"));
+  const credit = db.find("INSERT INTO work_credits")!;
+  assert.equal(credit.params[2], "初版");
+  assert.equal(credit.params[3], "© 2026 著者");
   assert.match(r.rows[1].message ?? "", /親作品「無い原作」が見つかりません/);
 });

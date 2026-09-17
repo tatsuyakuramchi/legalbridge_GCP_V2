@@ -1146,6 +1146,44 @@ BEGIN
 END
 $a030$;
 
+-- ---------------------------------------------------------------------
+-- A-031: クレジット表記（著作権表示・第三者権利）の履歴
+--
+-- 重版で著作権表示が変わる。作品を重複登録すると条件・実績・系譜が割れ、
+-- 表記のロジックだけでは権利者との取り決めで決まる文言と「いつから」が残らない。
+-- 作品 1 点に「適用開始日つきの表記」を行で持つ。今の表記は適用開始日が今日以前で
+-- 最新の行。works.copyright_notice / third_party_rights はその写し（アプリが同期）。
+-- 文書は決定日時点の表記を使う（決定済みの文書は値が焼き付いているので変わらない）。
+-- ---------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS v3.work_credits (
+  id                 bigserial PRIMARY KEY,
+  work_id            bigint NOT NULL REFERENCES v3.works(id) ON DELETE CASCADE,
+  effective_from     date   NOT NULL,
+  edition            text,
+  copyright_notice   text   NOT NULL,
+  third_party_rights text,
+  note               text,
+  created_by         text,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (work_id, effective_from)
+);
+COMMENT ON TABLE  v3.work_credits IS 'クレジット表記の履歴（A-031）。作品 1 点に適用開始日つきの表記を行で持つ。今の表記は適用開始日が今日以前で最新の行。';
+COMMENT ON COLUMN v3.work_credits.effective_from     IS 'この表記を使い始める日（重版の刷り日など）。';
+COMMENT ON COLUMN v3.work_credits.edition            IS '版（初版・第2刷 など）。表示用。';
+COMMENT ON COLUMN v3.work_credits.copyright_notice   IS '著作権表示（© 2026 著作者名 など）。';
+COMMENT ON COLUMN v3.work_credits.third_party_rights IS '共同著作・第三者権利（挿絵：◯◯ など）。';
+CREATE INDEX IF NOT EXISTS work_credits_work_idx ON v3.work_credits (work_id, effective_from DESC);
+GRANT SELECT, INSERT, UPDATE, DELETE ON v3.work_credits TO legalbridge_v3_runtime;
+GRANT USAGE, SELECT ON SEQUENCE v3.work_credits_id_seq TO legalbridge_v3_runtime;
+
+-- 既存の著作権表示を初版の行として写す（空でないものだけ。二重には入れない）。
+INSERT INTO v3.work_credits (work_id, effective_from, edition, copyright_notice, third_party_rights, created_by)
+SELECT w.id, w.created_at::date, '初版', w.copyright_notice, w.third_party_rights, 'migration'
+  FROM v3.works w
+ WHERE btrim(COALESCE(w.copyright_notice, '')) <> ''
+   AND NOT EXISTS (SELECT 1 FROM v3.work_credits c WHERE c.work_id = w.id);
+
 COMMIT;
 
 -- 確認
@@ -1326,3 +1364,8 @@ SELECT count(*) AS 列数 FROM information_schema.columns
 SELECT count(*) AS 列数 FROM information_schema.columns
  WHERE table_schema='v3' AND table_name='condition_events'
    AND column_name IN ('expected_quantity', 'expected_amount', 'variance_note', 'follow_up', 'follow_up_due_on');
+
+\echo '--- クレジット表記の履歴（A-031。表があり 6 列であること） ---'
+SELECT count(*) AS 列数 FROM information_schema.columns
+ WHERE table_schema='v3' AND table_name='work_credits'
+   AND column_name IN ('work_id', 'effective_from', 'edition', 'copyright_notice', 'third_party_rights', 'note');

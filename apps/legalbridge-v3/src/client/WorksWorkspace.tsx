@@ -125,6 +125,11 @@ async function runEach<T>(
   return { ok, failed };
 }
 
+interface Credit {
+  id: number; effectiveFrom: string; edition: string | null; copyrightNotice: string;
+  thirdPartyRights: string | null; note: string | null; createdBy: string | null; current: boolean;
+}
+
 export function WorksWorkspace(
   { onOpenCondition, initialId, onOpen, onCompose }: {
     onOpenCondition: (id: number) => void;
@@ -151,6 +156,32 @@ export function WorksWorkspace(
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [editing, setEditing] = useState<ConditionDetail | null>(null);
   const [creating, setCreating] = useState<"work" | "source" | "part" | "condition" | "publishing" | "license" | "import_works" | "import_conditions" | null>(null);
+  /** クレジット表記の履歴（A-031）。重版で変わる著作権表示を適用開始日つきで持つ。 */
+  const [credits, setCredits] = useState<Credit[]>([]);
+  const [creditForm, setCreditForm] = useState<{ effectiveFrom: string; edition: string; copyrightNotice: string; thirdPartyRights: string; note: string } | null>(null);
+  const reloadCredits = (id: number) =>
+    api.get<{ credits: Credit[] }>(`/works/${id}/credits`).then((r) => setCredits(r.credits)).catch(() => setCredits([]));
+  async function addCredit() {
+    if (!work || !creditForm) return;
+    setBusy(true); setError(null); setNotice(null);
+    try {
+      await api.post(`/works/${work.id}/credits`, {
+        effectiveFrom: creditForm.effectiveFrom, edition: creditForm.edition.trim() || null,
+        copyrightNotice: creditForm.copyrightNotice.trim(),
+        thirdPartyRights: creditForm.thirdPartyRights.trim() || null, note: creditForm.note.trim() || null
+      });
+      setNotice(`クレジット表記を ${creditForm.effectiveFrom} から「${creditForm.copyrightNotice.trim()}」にしました`);
+      setCreditForm(null);
+      await reloadWork();
+    } catch (e) { fail(e); } finally { setBusy(false); }
+  }
+  async function removeCredit(c: Credit) {
+    if (!work) return;
+    if (!confirm(`${c.effectiveFrom} からの表記「${c.copyrightNotice}」の行を消します。今の表記は残りの行から決まります。`)) return;
+    setBusy(true); setError(null);
+    try { await api.del(`/works/${work.id}/credits/${c.id}`); await reloadWork(); }
+    catch (e) { fail(e); } finally { setBusy(false); }
+  }
   const [moveTo, setMoveTo] = useState<string>("");
   const [moving, setMoving] = useState(false);
   const [mergeTo, setMergeTo] = useState<string>("");
@@ -188,9 +219,9 @@ export function WorksWorkspace(
       setWork(w); setEnvelope(e.envelope); setConditions(c.conditions); setActivity(a);
       setForm({
         title: w.title, titleKana: w.titleKana ?? "", kind: w.kind, status: w.status,
-        businessLine: w.businessLine ?? "", remarks: w.remarks ?? "",
-        copyrightNotice: w.copyrightNotice ?? "", thirdPartyRights: w.thirdPartyRights ?? ""
+        businessLine: w.businessLine ?? "", remarks: w.remarks ?? ""
       });
+      void reloadCredits(w.id);
     }).catch(fail);
   }
   useEffect(() => { void reloadWork(); }, [selected, includeVoid]);
@@ -237,8 +268,7 @@ export function WorksWorkspace(
   const dirty = work && (
     form.title !== work.title || form.titleKana !== (work.titleKana ?? "") ||
     form.kind !== work.kind || form.status !== work.status ||
-    form.businessLine !== (work.businessLine ?? "") || form.remarks !== (work.remarks ?? "") ||
-    form.copyrightNotice !== (work.copyrightNotice ?? "") || form.thirdPartyRights !== (work.thirdPartyRights ?? ""));
+    form.businessLine !== (work.businessLine ?? "") || form.remarks !== (work.remarks ?? ""));
 
   async function saveWork() {
     if (!work) return;
@@ -247,9 +277,7 @@ export function WorksWorkspace(
       await api.patch(`/works/${work.id}`, {
         title: form.title.trim(), titleKana: form.titleKana.trim() || null,
         kind: form.kind, status: form.status,
-        businessLine: form.businessLine.trim() || null, remarks: form.remarks.trim() || null,
-        copyrightNotice: form.copyrightNotice.trim() || null,
-        thirdPartyRights: form.thirdPartyRights.trim() || null
+        businessLine: form.businessLine.trim() || null, remarks: form.remarks.trim() || null
       });
       setNotice("作品を保存しました");
       await Promise.all([reloadTree(), reloadWork()]);
@@ -711,15 +739,82 @@ export function WorksWorkspace(
                   </select></label>
                 <label className="field"><span>事業区分</span>
                   <input value={form.businessLine ?? ""} disabled={!editable} onChange={(e) => setForm({ ...form, businessLine: e.target.value })} /></label>
-                <label className="field"><span>著作権表示</span>
-                  <input value={form.copyrightNotice ?? ""} disabled={!editable} placeholder="© 2026 著作者名"
-                         onChange={(e) => setForm({ ...form, copyrightNotice: e.target.value })} />
-                  <small className="faint">出版条件書の一覧に出る</small></label>
-                <label className="field"><span>共同著作・第三者権利</span>
-                  <input value={form.thirdPartyRights ?? ""} disabled={!editable} placeholder="挿絵：◯◯ など。無ければ空"
-                         onChange={(e) => setForm({ ...form, thirdPartyRights: e.target.value })} /></label>
+                <label className="field"><span>著作権表示（今）</span>
+                  <input value={work.copyrightNotice ?? ""} readOnly placeholder="下の「クレジット表記」で入れる" />
+                  <small className="faint">重版などで変わる。下の「クレジット表記」の欄で履歴として持つ</small></label>
+                <label className="field"><span>共同著作・第三者権利（今）</span>
+                  <input value={work.thirdPartyRights ?? ""} readOnly placeholder="下の「クレジット表記」で入れる" /></label>
                 <label className="field wide"><span>備考</span>
                   <textarea value={form.remarks ?? ""} disabled={!editable} onChange={(e) => setForm({ ...form, remarks: e.target.value })} /></label>
+              </div>
+            </div>
+
+            {/* クレジット表記の履歴（A-031）。重版で著作権表示が変わる。作品は増やさず、
+                適用開始日つきの行で持つ。文書は決定日時点の表記を使う。 */}
+            <div className="panel">
+              <div className="panel-hd">
+                <h2>クレジット表記</h2>
+                <span className="faint">著作権表示・第三者権利。重版などで変わったら行を足す（過去の行は残る）</span>
+                {editable && !creditForm && (
+                  <button className="btn btn-sm primary" style={{ marginLeft: "auto" }} disabled={busy}
+                          onClick={() => {
+                            const cur = credits.find((c) => c.current);
+                            setCreditForm({ effectiveFrom: new Date().toISOString().slice(0, 10), edition: "",
+                                            copyrightNotice: cur?.copyrightNotice ?? work.copyrightNotice ?? "",
+                                            thirdPartyRights: cur?.thirdPartyRights ?? work.thirdPartyRights ?? "", note: "" });
+                          }}>
+                    {credits.length ? "重版などで表記を変える" : "表記を登録する"}
+                  </button>
+                )}
+              </div>
+              <div className="panel-bd stack" style={{ gap: 8 }}>
+                {creditForm && (
+                  <div className="note stack" style={{ gap: 8 }}>
+                    <div className="ledger-form">
+                      <label className="field"><span>適用開始日</span>
+                        <input type="date" value={creditForm.effectiveFrom}
+                               onChange={(e) => setCreditForm({ ...creditForm, effectiveFrom: e.target.value })} />
+                        <small className="faint">重版の刷り日など。この日以降に決定する文書がこの表記になる</small></label>
+                      <label className="field"><span>版</span>
+                        <input value={creditForm.edition} placeholder="第2刷 / 新装版"
+                               onChange={(e) => setCreditForm({ ...creditForm, edition: e.target.value })} /></label>
+                      <label className="field wide"><span>著作権表示</span>
+                        <input autoFocus value={creditForm.copyrightNotice} placeholder="© 2026 著作者名 / Arclight"
+                               onChange={(e) => setCreditForm({ ...creditForm, copyrightNotice: e.target.value })} /></label>
+                      <label className="field wide"><span>共同著作・第三者権利</span>
+                        <input value={creditForm.thirdPartyRights} placeholder="挿絵：◯◯ など。無ければ空"
+                               onChange={(e) => setCreditForm({ ...creditForm, thirdPartyRights: e.target.value })} /></label>
+                      <label className="field wide"><span>メモ</span>
+                        <input value={creditForm.note} placeholder="変えた理由（監修者の追加 など）。任意"
+                               onChange={(e) => setCreditForm({ ...creditForm, note: e.target.value })} /></label>
+                    </div>
+                    <div className="row">
+                      <button className="btn btn-sm primary" disabled={busy || !creditForm.copyrightNotice.trim() || !creditForm.effectiveFrom}
+                              onClick={() => void addCredit()}>この表記にする</button>
+                      <button className="btn btn-sm" onClick={() => setCreditForm(null)}>やめる</button>
+                    </div>
+                  </div>
+                )}
+                {credits.length ? (
+                  <table>
+                    <thead><tr><th>適用開始</th><th>版</th><th>著作権表示</th><th>第三者権利</th><th>メモ</th><th></th></tr></thead>
+                    <tbody>
+                      {credits.map((c) => (
+                        <tr key={c.id} style={c.current ? undefined : { opacity: 0.7 }}>
+                          <td className="code">{c.effectiveFrom}{c.current && <span className="tag ok" style={{ marginLeft: 6 }}>今</span>}
+                            {!c.current && c.effectiveFrom > new Date().toISOString().slice(0, 10) && <span className="tag accent" style={{ marginLeft: 6 }}>予定</span>}</td>
+                          <td>{c.edition ?? "—"}</td>
+                          <td>{c.copyrightNotice}</td>
+                          <td className="faint">{c.thirdPartyRights ?? "—"}</td>
+                          <td className="faint">{c.note ?? ""}{c.createdBy ? <span style={{ marginLeft: 6 }}>（{c.createdBy}）</span> : null}</td>
+                          <td>{editable && <button className="btn btn-sm" disabled={busy} onClick={() => void removeCredit(c)}>消す</button>}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <span className="faint">表記が登録されていません。出版条件書の一覧に出るので、初版の表記を登録してください</span>
+                )}
               </div>
             </div>
 

@@ -32,7 +32,7 @@ export class DocumentContextRepository {
 
   async build(input: DocumentContextInput, client: Queryable = this.database) {
     try {
-      const conditions = await this.conditions(client, input.conditionIds);
+      const conditions = await this.conditions(client, input.conditionIds, input.issuedOn ?? dateStr(new Date()));
       if (input.conditionIds.length && !conditions.length) {
         throw new DomainError("NOT_FOUND", "指定された条件が見つかりません");
       }
@@ -394,7 +394,7 @@ export class DocumentContextRepository {
     });
   }
 
-  private async conditions(client: Queryable, ids: number[]) {
+  private async conditions(client: Queryable, ids: number[], asOf: string | null = null) {
     if (!ids.length) return [];
     const result = await client.query(
       `SELECT c.id, c.condition_no, c.name, c.direction, c.kind, c.currency, c.pricing_model,
@@ -411,17 +411,24 @@ export class DocumentContextRepository {
               -- 落ちないよう、列を名指しせず行ごと受けて読む。
               to_jsonb(p) AS party_row,
               w.title AS work_title, w.work_code, w.kind AS work_kind,
-              w.copyright_notice AS work_copyright, w.third_party_rights AS work_third_party,
+              -- クレジット表記は決定日時点の行（A-031）。無ければ作品の列。
+              COALESCE(wc.copyright_notice, w.copyright_notice) AS work_copyright,
+              COALESCE(wc.third_party_rights, w.third_party_rights) AS work_third_party,
               wp.name AS part_name,
               wp.part_type AS part_type,
               ${SOURCE_TITLES_SQL("c.work_id")} AS source_titles
          FROM conditions c
          LEFT JOIN parties p    ON p.id = c.counterparty_id
          LEFT JOIN works w      ON w.id = c.work_id
+         LEFT JOIN LATERAL (
+           SELECT x.copyright_notice, x.third_party_rights FROM work_credits x
+            WHERE x.work_id = w.id AND x.effective_from <= COALESCE($2::date, current_date)
+            ORDER BY x.effective_from DESC, x.id DESC LIMIT 1
+         ) wc ON true
          LEFT JOIN work_parts wp ON wp.id = c.work_part_id
         WHERE c.id = ANY($1::bigint[])
         ORDER BY array_position($1::bigint[], c.id)`,
-      [ids]
+      [ids, asOf]
     );
     return result.rows.map((row: Record<string, any>) => {
       const currency = String(row.currency ?? "JPY");

@@ -219,6 +219,11 @@ SELECT * FROM (
          (SELECT count(*)::text FROM information_schema.columns
            WHERE table_schema='v3' AND table_name='condition_events'
              AND column_name IN ('expected_quantity', 'expected_amount', 'variance_note', 'follow_up', 'follow_up_due_on'))
+  UNION ALL
+  SELECT 31, 'クレジット表記の履歴（A-031。表があり 6 列であること）',
+         (SELECT count(*)::text FROM information_schema.columns
+           WHERE table_schema='v3' AND table_name='work_credits'
+             AND column_name IN ('work_id', 'effective_from', 'edition', 'copyright_notice', 'third_party_rights', 'note'))
 ) AS 確認 ORDER BY n;
 `;
 

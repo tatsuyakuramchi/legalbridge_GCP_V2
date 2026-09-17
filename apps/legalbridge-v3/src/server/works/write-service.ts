@@ -1,6 +1,7 @@
 import { inTransaction, type Transactable } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
+import { upsertCredit } from "./credits.js";
 import { allocateNumber } from "../core/numbering.js";
 
 export type WorkKind = "own" | "source_ip" | "derivative";
@@ -102,6 +103,13 @@ export class WorkWriteService {
           actor, action: "work.create", targetType: "work", targetId: id,
           detail: { title, kind, workCode: row.work_code, parentWorkId: input.parentWorkId ?? null }
         });
+        // 著作権表示は履歴（A-031）で持つ。登録時の表記は初版の行。
+        if (String(input.copyrightNotice ?? "").trim()) {
+          await upsertCredit(client, id, {
+            effectiveFrom: new Date().toISOString().slice(0, 10), edition: "初版",
+            copyrightNotice: String(input.copyrightNotice), thirdPartyRights: input.thirdPartyRights ?? null
+          }, actor);
+        }
         return { id, workCode: row.work_code };
       });
     } catch (error) { throw translate(error); }
@@ -126,6 +134,19 @@ export class WorkWriteService {
         await recordAudit(client, {
           actor, action: "work.update", targetType: "work", targetId: id, detail: { patch }
         });
+        // 著作権表示・第三者権利を直したら、今日から効く行として履歴（A-031）にも残す。
+        // 列だけ直すと履歴と食い違い、次の同期で古い表記に戻る。
+        if (patch.copyrightNotice !== undefined || patch.thirdPartyRights !== undefined) {
+          const cur = await client.query(
+            "SELECT copyright_notice, third_party_rights FROM works WHERE id = $1", [id]);
+          const row = cur.rows[0] as { copyright_notice: string | null; third_party_rights: string | null } | undefined;
+          if (row && String(row.copyright_notice ?? "").trim()) {
+            await upsertCredit(client, id, {
+              effectiveFrom: new Date().toISOString().slice(0, 10),
+              copyrightNotice: String(row.copyright_notice), thirdPartyRights: row.third_party_rights
+            }, actor);
+          }
+        }
         return { id };
       });
     } catch (error) { throw translate(error); }

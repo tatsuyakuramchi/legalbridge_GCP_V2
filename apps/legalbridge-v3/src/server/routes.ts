@@ -22,6 +22,7 @@ import { PartyMergeService } from "./parties/merge-service.js";
 import { MatterRepository } from "./matters/repository.js";
 import { MatterMergeService } from "./matters/merge-service.js";
 import { MatterGraphService } from "./matters/graph-service.js";
+import { WorkCreditService } from "./works/credits.js";
 import { settlesEvents } from "./documents/settlement-docs.js";
 import { WorkRepository } from "./works/repository.js";
 import { checkAgainstEnvelope } from "./works/envelope.js";
@@ -107,6 +108,7 @@ export function createRoutes(database: Transactable) {
   const matterLinks = new MatterLinkService(database);
   const links = new LinkService(database);
   const workWrites = new WorkWriteService(database);
+  const workCredits = new WorkCreditService(database);
   const partyWrites = new PartyWriteService(database);
   const partyMerge = new PartyMergeService(database);
   const matterMerge = new MatterMergeService(database);
@@ -1413,6 +1415,26 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       res.json(await workWrites.update(
         Number(req.params.id), workPatchSchema.parse(req.body ?? {}), actor(res)));
+    }));
+
+  // クレジット表記の履歴（A-031）。重版で変わる著作権表示を、適用開始日つきで持つ。
+  router.get("/works/:id/credits", asyncRoute(async (req, res) => {
+    res.json(await workCredits.list(Number(req.params.id)));
+  }));
+  const creditSchema = z.object({
+    effectiveFrom: z.string().date(),
+    edition: z.string().trim().max(60).nullable().optional(),
+    copyrightNotice: z.string().trim().min(1).max(300),
+    thirdPartyRights: z.string().trim().max(600).nullable().optional(),
+    note: z.string().trim().max(1000).nullable().optional()
+  });
+  router.post("/works/:id/credits", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.status(201).json(await workCredits.add(Number(req.params.id), creditSchema.parse(req.body ?? {}), actor(res)));
+    }));
+  router.delete("/works/:id/credits/:creditId", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await workCredits.remove(Number(req.params.id), Number(req.params.creditId), actor(res)));
     }));
 
   // 原作（Core Logic）の付け替え。原作 N に対して作品 N。
