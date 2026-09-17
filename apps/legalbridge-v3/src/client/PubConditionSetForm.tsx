@@ -63,7 +63,7 @@ export function PubConditionSetForm(
         { name: "counterpartyId", label: "許諾者（著作権者）", type: "search", required: true,
           search: searchParties, placeholder: "取引先名・コードで探す",
           hint: "条件書の甲。振込先はこの取引先の口座" },
-        { name: "workId", label: "原著作物（作品）", type: "search", required: true,
+        { name: "workId", label: "原著作物（作品）／原作を兼ねる作品", type: "search", required: true,
           options: works.map((w) => ({ value: String(w.id), label: w.title })),
           hint: (v) => {
             const t = works.find((w) => String(w.id) === String(v.workId ?? ""))?.title ?? "";

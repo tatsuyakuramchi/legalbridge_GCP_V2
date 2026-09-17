@@ -86,7 +86,7 @@ export function ConditionCreateForm(
         // 取引先は 2,500 件ある。一覧から選ばせず、名前で探して決める。
         { name: "counterpartyId", label: "相手先", type: "search", required: true,
           search: searchParties, placeholder: "取引先名・コードで探す" },
-        { name: "workId", label: "作品", type: "search",
+        { name: "workId", label: "作品（許諾なら原作か、原作を兼ねる作品）", type: "search",
           options: works.map((w) => ({ value: String(w.id), label: w.title })),
           hint: "ライセンスの条件は作品にぶら下げる。ここが空だと権利の上限を計算できない" },
         // 相手先が分かっているときは、その相手先の契約だけを候補にする。

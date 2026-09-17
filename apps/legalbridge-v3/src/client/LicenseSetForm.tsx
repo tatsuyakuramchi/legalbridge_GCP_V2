@@ -96,9 +96,9 @@ export function LicenseSetForm(
         { name: "counterpartyId", label: "許諾者（権利者）", type: "search", required: true,
           search: searchParties, placeholder: "取引先名・コードで探す",
           hint: "個別利用許諾条件書の Licensor" },
-        { name: "workId", label: "原作（Core Logic）", type: "search", required: true,
+        { name: "workId", label: "原作（Core Logic）／原作を兼ねる作品", type: "search", required: true,
           options: works.map((w) => ({ value: String(w.id), label: w.title })),
-          hint: "取得の条件は原作にぶら下げる。条件名は 作品名｜取引モデル で自動で付く。条件書の構成要素と計算書の件名もここから出る" },
+          hint: "取得の条件は原作にぶら下げる。原作と同じ名前の自社作品なら、その作品自身を選ぶ（原作を別に登録しない）。条件名は 作品名｜取引モデル で自動で付く" },
         { name: "agreementId", label: "基本契約（合意）", type: "search",
           options: agreements
             .filter((a) => !preset?.counterpartyId

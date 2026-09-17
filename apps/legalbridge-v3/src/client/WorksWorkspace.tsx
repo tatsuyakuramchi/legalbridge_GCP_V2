@@ -443,6 +443,9 @@ export function WorksWorkspace(
               style={depth > 1 ? { marginLeft: 18 * depth } : undefined}
               onClick={() => { setNotice(null); setError(null); setSelected(w.id); }}>
         {w.kind === "source_ip" && <span className="tag accent">原作</span>}
+        {w.kind !== "source_ip" && depth === 0 && w.conditions > 0 && !tree.lineage.some((l) => l.childId === w.id) && (
+          <span className="tag" title="原作が別に無く、この作品自身に条件が付いている（原作と同じ名前の自社作品）">原作を兼ねる</span>
+        )}
         <span className="grow">{w.title}</span>
         {w.legacy && <span className="faint" title="V2 から移した作品">移行</span>}
         {w.mergedIntoId ? <span className="faint">統合済</span> : w.status === "archived" && <span className="faint">終了</span>}
@@ -747,7 +750,13 @@ export function WorksWorkspace(
                         )}
                       </span>
                     ))}
-                    {!work.sources.length && <span className="faint">原作が付いていません</span>}
+                    {!work.sources.length && (
+                      conditions.some((c) => c.direction === "in" && c.kind === "license" && c.status !== "void")
+                        ? <span className="tag accent" title="原作と同じ名前の自社作品。許諾の条件はこの作品自身に付いている">原作を兼ねる作品</span>
+                        : <span className="faint">
+                            原作が付いていません。原作と同じ名前の自社作品なら、別に原作を登録せず、この作品自身に許諾の条件を付けてください（原作を兼ねる）
+                          </span>
+                    )}
                   </div>
                   {editable && (
                     <div className="row" style={{ alignItems: "flex-start" }}>
