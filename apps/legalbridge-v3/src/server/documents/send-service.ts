@@ -38,6 +38,8 @@ export interface SendTimeline {
   /** 次にやる段。全部済んでいれば null。 */
   current: SendStep | null;
   events: SendEvent[];
+  /** 合意に繋がっているか。締結の手記録はこれが無いとできない。 */
+  hasAgreement: boolean;
 }
 
 export class DocumentSendService {
@@ -83,11 +85,13 @@ export class DocumentSendService {
             : "返信・Slack・電話で確認をもらったら記録する" },
         { key: "cloudsign", name: "CloudSign で署名依頼", done: sign !== null, at: sign?.at ?? null,
           detail: sign
-            ? `${String(sign.detail.recipient ?? "")} へ署名依頼（CloudSign #${String(sign.detail.externalId ?? "")}）`
-            : "署名者のメールアドレスを入れて送る" },
+            ? sign.detail.manual === true
+              ? `${String(sign.detail.recipient ?? "")} へ署名依頼（システム外で送付。${sign.actor} が記録${sign.detail.externalId ? `／CloudSign #${String(sign.detail.externalId)}` : ""}）`
+              : `${String(sign.detail.recipient ?? "")} へ署名依頼（CloudSign #${String(sign.detail.externalId ?? "")}）`
+            : "署名者のメールアドレスを入れて送る。システム外で送ったなら手で記録できる" },
         { key: "executed", name: "締結", done: executed, at: executed ? (applied?.at ?? (doc.agreement_at ? new Date(String(doc.agreement_at)).toISOString() : null)) : null,
           detail: executed
-            ? "合意が締結済み"
+            ? applied?.detail.manual === true ? `合意が締結済み（${applied.actor} が手で記録）` : "合意が締結済み"
             : doc.agreement_id
               ? "CloudSign から結果が届くと、合意が締結済みになる"
               : "この文書は合意に繋がっていないので、締結は記録されない（つながり から合意を付ける）" }
@@ -95,7 +99,95 @@ export class DocumentSendService {
       // 任意の段は飛ばせる。次にやるのは「必須で済んでいない最初」。
       const current = steps.find((s) => !s.done && !s.optional)
         ?? (steps.every((s) => s.done || s.optional) && !steps[3].done ? steps[3] : null);
-      return { steps, current: steps[3].done ? null : current, events };
+      return { steps, current: steps[3].done ? null : current, events, hasAgreement: Boolean(doc.agreement_id) };
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * システム外で扱った CloudSign の状態を手で記録する。
+   *
+   * 予備系（ローカル）では CloudSign 連携が動かないので、署名依頼は CloudSign の
+   * 画面から直接送る。そのままだと「送る」の段が進まず、締結も記録されない。
+   * 送信は cloudsign.send、結果は cloudsign.applied として、webhook と同じ形で
+   * 監査に残す（manual: true を付ける）。段の導出は変えない。
+   */
+  async recordCloudSign(
+    documentId: number,
+    input: { status: "sent" | "executed" | "terminated"; at?: string | null;
+             externalId?: string | null; signer?: string | null; note?: string | null },
+    actor: string
+  ): Promise<{ id: number; status: string; agreementUpdated: boolean }> {
+    // 日付だけを受ける。正午（JST）にしておくと、UTC に直しても日付が前日にずれない。
+    const at = str(input.at) ? `${String(input.at).slice(0, 10)}T12:00:00+09:00` : null;
+    const note = str(input.note);
+    const externalId = str(input.externalId);
+    const signer = str(input.signer);
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const head = await client.query(
+          `SELECT d.id, d.document_no, d.status, d.matter_id, d.agreement_id, a.status AS agreement_status
+             FROM documents d LEFT JOIN agreements a ON a.id = d.agreement_id
+            WHERE d.id = $1 FOR UPDATE OF d`, [documentId]);
+        const doc = head.rows[0] as Record<string, any> | undefined;
+        if (!doc) throw new DomainError("NOT_FOUND", `文書 ${documentId} が見つかりません`);
+        if (doc.status !== "issued") {
+          throw new DomainError("CONFLICT", "決定済みの文書だけ CloudSign の状態を記録できます（下書きは先に決定してください）");
+        }
+        const no = str(doc.document_no) ?? `#${documentId}`;
+        const matterId = int(doc.matter_id);
+        const agreementId = int(doc.agreement_id);
+
+        if (input.status === "sent") {
+          await recordAudit(client, {
+            actor, action: "cloudsign.send", targetType: "document", targetId: documentId, occurredAt: at,
+            detail: { manual: true, recipient: signer ?? "", externalId, note, documentNo: no }
+          });
+          if (matterId) {
+            await recordCommunication(client, {
+              matterId, channel: "cloudsign", direction: "out", actor,
+              counterpart: signer ?? "", subject: `${no} の署名依頼`,
+              body: `${no} の署名依頼を CloudSign で送った（システム外で送付。手で記録）${note ? `：${note}` : ""}`,
+              externalRef: externalId, documentId,
+              evidence: { manual: true, cloudSignDocumentId: externalId, signer, at: input.at ?? null }
+            });
+          }
+          return { id: documentId, status: "sent", agreementUpdated: false };
+        }
+
+        // 締結・辞退。動かすのは合意の状態（文書は出力物）。合意が無ければ記録だけ残す。
+        if (input.status === "executed" && !agreementId) {
+          throw new DomainError("VALIDATION",
+            `${no} は合意に繋がっていないので、締結を記録できません。「つながり」から合意を付けてから記録してください`);
+        }
+        let agreementUpdated = false;
+        if (agreementId) {
+          const updated = await client.query(
+            `UPDATE agreements
+                SET status = $2,
+                    executed_on = CASE WHEN $2 = 'executed' THEN COALESCE(executed_on, $3::date) ELSE executed_on END,
+                    updated_at = now()
+              WHERE id = $1 AND status <> $2 RETURNING id`,
+            [agreementId, input.status, input.at ? String(input.at).slice(0, 10) : null]);
+          agreementUpdated = (updated.rowCount ?? 0) > 0;
+        }
+        await recordAudit(client, {
+          actor, action: "cloudsign.applied", targetType: "document", targetId: documentId, occurredAt: at,
+          detail: { manual: true, applied: agreementUpdated || input.status === "executed", status: input.status,
+                    documentId, documentNo: no, agreementId, externalId, note,
+                    ...(agreementId ? {} : { reason: "合意に繋がっていないため状態は動かしていない" }) }
+        });
+        if (matterId) {
+          const label = input.status === "executed" ? "締結した" : "辞退・取下げになった";
+          await recordCommunication(client, {
+            matterId, channel: "cloudsign", direction: "in", actor,
+            counterpart: signer ?? "", subject: `${no} の CloudSign の結果`,
+            body: `${no} が CloudSign で${label}（手で記録）${note ? `：${note}` : ""}`,
+            externalRef: externalId, documentId,
+            evidence: { manual: true, status: input.status, agreementId, agreementUpdated, at: input.at ?? null }
+          });
+        }
+        return { id: documentId, status: input.status, agreementUpdated };
+      });
     } catch (error) { throw translate(error); }
   }
 

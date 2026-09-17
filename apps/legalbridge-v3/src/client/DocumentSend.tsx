@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "./api.js";
+import { CloudSignManual } from "./CloudSignManual.js";
 
 /**
  * 決定した文書を「送る」。
@@ -14,7 +15,7 @@ import { api, ApiError } from "./api.js";
  */
 
 interface Step { key: "mail" | "confirmed" | "cloudsign" | "executed"; name: string; done: boolean; at: string | null; detail: string; optional?: boolean }
-interface Timeline { steps: Step[]; current: Step | null; events: Array<{ at: string; action: string; actor: string }> }
+interface Timeline { steps: Step[]; current: Step | null; events: Array<{ at: string; action: string; actor: string }>; hasAgreement?: boolean }
 interface Recipients {
   owner: { name: string; email: string | null } | null;
   counterparty: { name: string; email: string | null } | null;
@@ -230,11 +231,27 @@ export function DocumentSend(
                 CloudSign で署名依頼を送る
               </button>
             </div>
+            {/* 予備系では連携が無い。CloudSign の画面から直接送ったぶんを、ここで手で記録する。 */}
+            <details open={modeOf("cloudsign") !== "live"} style={{ borderTop: "1px solid var(--line)", paddingTop: 8 }}>
+              <summary style={{ cursor: "pointer" }}>システム外（CloudSign の画面から直接）で送った・結果が届いたときは、手で記録する</summary>
+              <div style={{ marginTop: 8 }}>
+                <CloudSignManual documentId={documentId} documentNo={documentNo} initial="sent"
+                  defaultSigner={signer} hasAgreement={tl?.hasAgreement ?? null}
+                  onDone={(m) => { void run(async () => m); }} />
+              </div>
+            </details>
           </div>
         )}
 
         {open === "executed" && tl && (
-          <div className="faint">{tl.steps[3].detail}</div>
+          <div className="stack" style={{ gap: 8 }}>
+            <div className="faint">{tl.steps[3].detail}</div>
+            {!tl.steps[3].done && (
+              <CloudSignManual documentId={documentId} documentNo={documentNo} initial="executed"
+                defaultSigner={signer} hasAgreement={tl.hasAgreement ?? null}
+                onDone={(m) => { void run(async () => m); }} />
+            )}
+          </div>
         )}
       </div>
     </div>

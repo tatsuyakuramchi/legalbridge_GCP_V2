@@ -4,6 +4,7 @@ import { api, ApiError, saveCsv } from "./api.js";
 import { ListSearch, useDebounced } from "./ListTools.js";
 import { ConditionCreateForm } from "./ConditionCreateForm.js";
 import { SendMany } from "./SendMany.js";
+import { CloudSignManual } from "./CloudSignManual.js";
 import { WorkChooser, type WorkOption } from "./WorkChooser.js";
 import { DocumentImport } from "./DocumentImport.js";
 import { CONDITION_KIND_LABEL, MATTER_KIND_LABEL, SettlementTag, StatusTag } from "./labels.js";
@@ -462,6 +463,9 @@ export function MatterDocuments(
   const pickedDrafts = detail.documents.filter((d) => decidable(d) && picked.has(d.id)).map((d) => d.id);
   /** 送信の画面を開いているか。決定済みの文書を選んでから開く。 */
   const [sending, setSending] = useState(false);
+  /** CloudSign の状態を手で記録する文書。予備系では連携が無いので、ここから記録する。 */
+  const [csDoc, setCsDoc] = useState<MatterDetail["documents"][number] | null>(null);
+  const [csNotice, setCsNotice] = useState<string | null>(null);
   /** まとめて決定の結果。落ちたものは理由を出す。 */
   const [issued, setIssued] =
     useState<Array<{ documentId: number; documentNo: string | null; ok: boolean; reason?: string }> | null>(null);
@@ -668,6 +672,21 @@ export function MatterDocuments(
         </div>
       )}
 
+      {csNotice && <div className="note ok">{csNotice}</div>}
+      {csDoc && (
+        <div className="note" style={{ borderStyle: "solid" }}>
+          <div className="row" style={{ marginBottom: 6 }}>
+            <b>CloudSign の状態を記録：{csDoc.documentNo ?? `#${csDoc.id}`}</b>
+            <span className="faint">{csDoc.templateLabel ?? ""}{csDoc.counterparty ? ` ／ ${csDoc.counterparty}` : ""}</span>
+          </div>
+          <CloudSignManual documentId={csDoc.id} documentNo={csDoc.documentNo}
+            initial={csDoc.sentVia === "cloudsign" ? "executed" : "sent"}
+            hasAgreement={csDoc.agreementStatus !== null}
+            onDone={(m) => { setCsNotice(m); setCsDoc(null); onChanged(); }}
+            onClose={() => setCsDoc(null)} />
+        </div>
+      )}
+
       {sending && channels && (
         <SendMany
           documents={pickedSendable.map((d) => ({ id: d.id, documentNo: d.documentNo,
@@ -704,9 +723,21 @@ export function MatterDocuments(
                 </td>
                 <td>{d.counterparty ?? "—"}</td>
                 <td style={{ whiteSpace: "nowrap" }}>{d.templateLabel ?? "—"}</td>
-                <td style={{ whiteSpace: "nowrap" }}><StatusTag kind="document" value={d.status} /></td>
                 <td style={{ whiteSpace: "nowrap" }}>
-                  <span className="row" style={{ flexWrap: "nowrap" }}>
+                  <StatusTag kind="document" value={d.status} />
+                  {/* 送った口と締結。段が見えないと、CloudSign をどこまで進めたか案件から分からない。 */}
+                  {d.status === "issued" && (d.agreementStatus === "executed"
+                    ? <div><span className="tag ok" title={d.sentAt ? `送信 ${d.sentAt.slice(0, 10)}` : undefined}>締結済み</span></div>
+                    : d.agreementStatus === "terminated"
+                      ? <div><span className="tag out">辞退・取下げ</span></div>
+                      : d.sentVia === "cloudsign"
+                        ? <div><span className="tag accent" title={d.sentAt ? `送信 ${d.sentAt.slice(0, 10)}` : undefined}>CloudSign 送信済</span></div>
+                        : d.sentVia === "gmail"
+                          ? <div><span className="tag" title={d.sentAt ? `送信 ${d.sentAt.slice(0, 10)}` : undefined}>メール送付済</span></div>
+                          : null)}
+                </td>
+                <td style={{ whiteSpace: "nowrap" }}>
+                  <span className="row" style={{ flexWrap: "nowrap", gap: 4 }}>
                     {/* 一覧から中身へ行けないと、文書番号を控えて文書の画面で
                         探し直すことになる。 */}
                     {onOpenDocument && (
@@ -714,6 +745,12 @@ export function MatterDocuments(
                         onClick={() => onOpenDocument(d.id)}>
                         {d.status === "draft" ? "編集" : "開く"}
                       </button>
+                    )}
+                    {d.status === "issued" && d.agreementStatus !== "executed" && (
+                      <button className="btn btn-sm" disabled={busy}
+                        title="CloudSign の画面から直接送った・結果が届いたときに、状態を手で記録する"
+                        aria-pressed={csDoc?.id === d.id}
+                        onClick={() => { setCsNotice(null); setCsDoc(csDoc?.id === d.id ? null : d); }}>署名</button>
                     )}
                     <button className="btn btn-sm" disabled={busy}
                       onClick={() => void detach(d.id, d.documentNo ?? `#${d.id}`)}>外す</button>

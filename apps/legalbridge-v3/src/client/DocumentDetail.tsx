@@ -75,8 +75,9 @@ export function DocumentDetail(
   }
 ) {
   const note = DOCUMENT_STATE_NOTE[doc.phase] ?? { headline: doc.status, detail: "" };
-  const canSend = integrations?.channels.some((c) =>
-    (c.channel === "gmail" || c.channel === "cloudsign") && c.mode !== "off");
+  // 連携が全部 off（予備系）でも「送る」は出す。送信の口が無くても、相手の確認と
+  // CloudSign の状態は手で記録できるので、閉じてしまうと段が進められない。
+  const canSend = doc.status === "issued";
   // 「下敷きに次を作る」のひな形を選んでいる最中。
   const [deriving, setDeriving] = useState(false);
   // 「送る」を開いているか。決定済みなら既定で開く（次にやることがこれ）。

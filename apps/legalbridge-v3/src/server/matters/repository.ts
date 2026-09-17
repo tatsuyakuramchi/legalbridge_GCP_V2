@@ -112,11 +112,21 @@ export class MatterRepository {
   private async documents(id: number) {
     const r = await this.database.query(
       `SELECT d.id, d.document_no, d.status, d.issued_at, v.template_label,
-              v.counterparty, t.template_key
+              v.counterparty, t.template_key, a.status AS agreement_status,
+              snd.sent_at, snd.sent_via
          FROM documents d
          LEFT JOIN v_document_display v ON v.document_id = d.id
          LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
          LEFT JOIN document_templates t ON t.id = tv.template_id
+         LEFT JOIN agreements a ON a.id = d.agreement_id
+         -- 送った記録（文書の一覧と同じ引き方）。案件の文書タブで CloudSign の段を出す。
+         LEFT JOIN LATERAL (
+           SELECT x.occurred_at AS sent_at, split_part(x.action, '.', 1) AS sent_via
+             FROM audit_events x
+            WHERE x.target_type = 'document' AND x.target_id = d.id
+              AND x.action IN ('gmail.send', 'cloudsign.send')
+            ORDER BY x.occurred_at DESC LIMIT 1
+         ) snd ON true
         WHERE d.matter_id = $1
         ORDER BY d.issued_at DESC NULLS LAST, d.id DESC`, [id]);
     return r.rows.map((d) => ({
@@ -127,7 +137,10 @@ export class MatterRepository {
       // ひな形の種類。画面が「発注書だけ」を選り分けるのに要る
       // （名前で見分けると「発注書 (国内)」の表記に依存する）。
       templateKey: str(d.template_key),
-      issuedAt: d.issued_at ? new Date(String(d.issued_at)).toISOString() : null
+      issuedAt: d.issued_at ? new Date(String(d.issued_at)).toISOString() : null,
+      sentAt: d.sent_at ? new Date(String(d.sent_at)).toISOString() : null,
+      sentVia: str(d.sent_via),
+      agreementStatus: str(d.agreement_status)
     }));
   }
 

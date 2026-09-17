@@ -2787,6 +2787,24 @@ export function createRoutes(database: Transactable) {
       res.json(await sends.confirm(Number(req.params.id), input, actor(res)));
     }));
 
+  /**
+   * システム外で扱った CloudSign の状態を手で記録する（予備系で連携が無いとき）。
+   * sent＝署名依頼を送った、executed＝締結した、terminated＝辞退・取下げ。
+   */
+  const cloudSignManualSchema = z.object({
+    status: z.enum(["sent", "executed", "terminated"]),
+    at: z.string().date().nullable().optional(),
+    externalId: z.string().trim().max(120).nullable().optional(),
+    signer: z.string().trim().max(200).nullable().optional(),
+    note: z.string().trim().max(2000).nullable().optional()
+  });
+  router.post("/documents/:id/cloudsign-status",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = cloudSignManualSchema.parse(req.body ?? {});
+      res.json(await sends.recordCloudSign(Number(req.params.id), input, actor(res)));
+    }));
+
   // 署名依頼。書類の実体が要るので PDF は必ず付ける。
   router.post("/documents/:id/sign",
     requireRole("admin"), requireWritable,

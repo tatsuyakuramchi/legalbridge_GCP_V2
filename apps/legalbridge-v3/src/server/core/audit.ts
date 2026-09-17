@@ -7,6 +7,8 @@ export interface AuditEntry {
   targetId?: number | null;
   idempotencyKey?: string | null;
   detail?: Record<string, unknown>;
+  /** 出来事の日時。システム外で起きたことを後から記録するときだけ渡す。無ければ今。 */
+  occurredAt?: string | null;
 }
 
 /**
@@ -15,8 +17,8 @@ export interface AuditEntry {
  */
 export async function recordAudit(client: Queryable, entry: AuditEntry): Promise<void> {
   await client.query(
-    `INSERT INTO audit_events (actor, action, target_type, target_id, idempotency_key, detail)
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+    `INSERT INTO audit_events (actor, action, target_type, target_id, idempotency_key, detail, occurred_at)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb, COALESCE($7::timestamptz, now()))
      ON CONFLICT (idempotency_key) DO NOTHING`,
     [
       entry.actor,
@@ -24,7 +26,8 @@ export async function recordAudit(client: Queryable, entry: AuditEntry): Promise
       entry.targetType,
       entry.targetId ?? null,
       entry.idempotencyKey ?? null,
-      JSON.stringify(entry.detail ?? {})
+      JSON.stringify(entry.detail ?? {}),
+      entry.occurredAt ?? null
     ]
   );
 }
