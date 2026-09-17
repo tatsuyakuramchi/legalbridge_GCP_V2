@@ -6,6 +6,7 @@ import { CONDITION_KIND_LABEL } from "./labels.js";
 import { searchParties } from "./SearchSelect.js";
 import { minorPerMajor } from "../server/royalty/economics.js";
 import { CONDITION_USAGE_TYPES } from "../server/core/condition-usage.js";
+import { conditionNameFor } from "../server/conditions/naming.js";
 
 /**
  * 金額の欄の補足。通貨で単位が変わる。
@@ -72,7 +73,9 @@ export function ConditionCreateForm(
       initial={{ direction: "in", kind: "service", pricingModel: "fixed",
                  currency: "JPY", taxCategory: "taxable", ...preset }}
       fields={[
-        { name: "name", label: "条件名", required: true, placeholder: "◯◯の制作委託 / △△の配信許諾" },
+        // 作品に紐づく許諾（IN）は名前を打たせない。作品名｜取引モデル で付く（下の利用形態）。
+        { name: "name", label: "条件名", required: true, placeholder: "◯◯の制作委託 / △△の配信許諾",
+          visibleWhen: (v) => !(v.kind === "license" && v.direction === "in" && String(v.workId ?? "").trim() !== "") },
         { name: "direction", label: "向き", type: "select", required: true,
           options: [{ value: "in", label: "IN 取得（費用側）" }, { value: "out", label: "OUT 許諾（収入側）" }] },
         { name: "kind", label: "種類", type: "select", required: true,
@@ -143,10 +146,21 @@ export function ConditionCreateForm(
           hint: "何も選ばなければ、その次元は無制限（全世界）として扱われます" },
         // 利用形態（A-027）。条件書の行・計算書の製品名はこれで決まる。
         // 作品1点ぶんをまとめて作るなら「許諾セット」「出版セット」のほうが早い。
-        { name: "usageType", label: "利用形態", type: "select",
+        { name: "usageType", label: "利用形態（取引モデル）", type: "select",
           visibleWhen: (v) => v.kind === "license" && v.direction === "in",
+          required: true,
           options: CONDITION_USAGE_TYPES.map((u) => ({ value: u.value, label: u.label, hint: u.hint })),
-          hint: "取得（IN）の許諾で、この条件がどの使い方の料率かを決める。1本に1つ" },
+          hint: (v) => {
+            const t = works.find((w) => String(w.id) === String(v.workId ?? ""))?.title ?? "";
+            const made = v.usageType ? conditionNameFor({ workTitle: t, usageType: v.usageType as never,
+                                                         sublicensee: v.sublicensee, purpose: v.purpose }) : null;
+            return made ? `条件名：${made}` : "取得（IN）の許諾で、この条件がどの使い方の料率かを決める。作品を選ぶと 作品名｜取引モデル の条件名が付く";
+          } },
+        { name: "sublicensee", label: "再許諾先の名称", required: true, placeholder: "Alpha Games",
+          visibleWhen: (v) => v.kind === "license" && v.direction === "in" && v.usageType === "sublicense",
+          hint: "条件名「作品名｜再許諾（再許諾先／目的）」に入る" },
+        { name: "purpose", label: "再許諾の目的", placeholder: "英語版の製造販売",
+          visibleWhen: (v) => v.kind === "license" && v.direction === "in" && v.usageType === "sublicense" },
         { name: "languages", label: "言語（許諾範囲）", type: "languages",
           visibleWhen: (v) => v.kind === "license" },
         { name: "notes", label: "備考", type: "textarea" }
@@ -161,8 +175,11 @@ export function ConditionCreateForm(
           ...parseLanguages(v.languages ?? "")
             .map((s) => ({ scopeType: "language" as const, label: s.name, code: s.code || null })),
         ];
+        const ruled = v.kind === "license" && v.direction === "in" && String(v.workId ?? "").trim() !== "";
         return {
-          name: text(v.name), direction: v.direction, kind: v.kind,
+          // 作品に紐づく許諾は名前を送らない（サーバが 作品名｜取引モデル で付ける）。
+          name: ruled ? "" : text(v.name), direction: v.direction, kind: v.kind,
+          sublicensee: ruled ? text(v.sublicensee) : undefined, purpose: ruled ? text(v.purpose) : undefined,
           counterpartyId: int(v.counterpartyId), workId: int(v.workId),
           agreementId: int(v.agreementId),
           termStart: text(v.termStart), termEnd: text(v.termEnd),

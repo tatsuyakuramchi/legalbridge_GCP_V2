@@ -7,6 +7,7 @@ import { roundAmount } from "../core/rounding.js";
 import { readContractForm } from "./contract-form.js";
 import type { ConditionScope } from "../core/model.js";
 import { PUB_MEDIA_LABEL, pubMediaOf, type PubMedia } from "../core/pub-media.js";
+import { conditionNameFor } from "./naming.js";
 import { conditionUsageLabel, pubMediaOfUsage, usageOfPubMedia,
          type ConditionUsageType } from "../core/condition-usage.js";
 
@@ -18,8 +19,11 @@ export interface PublishingTerms {
 }
 export interface PublishingSetInput {
   matterId?: number | null;
-  /** 対象出版物名。条件名になる。 */
-  title: string;
+  /**
+   * 条件名の手入力。空なら規則（作品名｜紙出版 など）で付ける。作品が無い
+   * ときだけ必須。
+   */
+  title?: string | null;
   counterpartyId: number;
   agreementId?: number | null;
   workId?: number | null;
@@ -33,8 +37,11 @@ export interface PublishingSetInput {
   scopes?: ConditionScope[];
   print?: PublishingTerms | null;
   digital?: PublishingTerms | null;
+  /** 出版の再許諾（翻訳出版など）。再許諾先と目的が条件名に入る。 */
+  sublicense?: (PublishingTerms & { sublicensee?: string | null; purpose?: string | null }) | null;
 }
-export type PublishingSetResult = Record<PubMedia, { id: number; conditionNo: string | null } | null>;
+export type PublishingSetResult = Record<PubMedia, { id: number; conditionNo: string | null } | null>
+  & { sublicense?: { id: number; conditionNo: string | null } | null };
 
 /** 許諾セットの1行。利用形態ごとの料率と独占性。 */
 export interface LicenseSetRow {
@@ -44,11 +51,18 @@ export interface LicenseSetRow {
   exclusivity?: "exclusive" | "non_exclusive" | null;
   mgAmount?: number | null;
   agAmount?: number | null;
+  /** 再許諾先の名称。再許諾のときは必須（条件名に入る）。 */
+  sublicensee?: string | null;
+  /** 再許諾の目的。条件名に入る。 */
+  purpose?: string | null;
 }
 export interface LicenseSetInput {
   matterId?: number | null;
-  /** 条件名（対象製品名・対象出版物名）。全行に同じ名前が付く。 */
-  title: string;
+  /**
+   * 条件名の手入力。空なら規則（作品名｜取引モデル）で行ごとに付ける。
+   * 作品が無いときだけ必須（作品名が無いと規則で付けられない）。
+   */
+  title?: string | null;
   counterpartyId: number;
   agreementId?: number | null;
   workId?: number | null;
@@ -185,6 +199,9 @@ export interface ConditionInput {
   scopes?: ConditionScope[];
   /** 利用形態（A-027）。出版なら媒体の範囲も同時に入る。 */
   usageType?: ConditionUsageType | null;
+  /** 再許諾先の名称・目的。名前が空のとき、規則の条件名に入れる（保存先は名前）。 */
+  sublicensee?: string | null;
+  purpose?: string | null;
 }
 
 export interface EconomicsPatch {
@@ -244,9 +261,26 @@ export class ConditionWriteService {
    * V1 の宣言と実データの食い違いを101件直している。同じ穴を入口で塞ぐ。
    */
   async create(input: ConditionInput, actor: string): Promise<{ id: number; conditionNo: string | null }> {
-    validateConditionInput(input);
     try {
-      return await inTransaction(this.database, (client) => this.createWithin(client, input, actor));
+      return await inTransaction(this.database, async (client) => {
+        // 作品に紐づく許諾（IN）の条件名は規則で付ける（作品名｜取引モデル）。
+        // 画面は名前を打たせず利用形態を選ばせる。名前が来ていればそれを尊重する。
+        if (!String(input.name ?? "").trim() && input.kind === "license" && input.direction === "in"
+            && input.workId && input.usageType) {
+          const w = await client.query("SELECT title FROM works WHERE id = $1", [input.workId]);
+          const made = conditionNameFor({ workTitle: (w.rows[0] as { title?: string } | undefined)?.title ?? "",
+                                          usageType: input.usageType,
+                                          sublicensee: input.sublicensee, purpose: input.purpose });
+          if (!made) {
+            throw new DomainError("VALIDATION", input.usageType === "sublicense"
+              ? "再許諾は再許諾先の名称を入れてください（条件名に入ります）"
+              : `作品 ${input.workId} が見つかりません`);
+          }
+          input = { ...input, name: made };
+        }
+        validateConditionInput(input);
+        return this.createWithin(client, input, actor);
+      });
     } catch (error) { throw translate(error); }
   }
 
@@ -264,24 +298,43 @@ export class ConditionWriteService {
    */
   async createLicenseSet(input: LicenseSetInput, actor: string): Promise<LicenseSetResult> {
     const title = String(input.title ?? "").trim();
-    if (!title) throw new DomainError("VALIDATION", "条件名（対象製品名・対象出版物名）は必須です");
+    if (!title && !input.workId) {
+      throw new DomainError("VALIDATION", "作品を選んでください（条件名は 作品名｜取引モデル で自動で付きます）。作品に紐づかない条件なら条件名を入れてください");
+    }
     const rows = (input.rows ?? []).filter((r) => r && r.usageType);
     if (!rows.length) throw new DomainError("VALIDATION", "利用形態を1つ以上選び、料率を入れてください");
-    const seen = new Set<string>();
     for (const row of rows) {
-      if (seen.has(row.usageType)) {
-        throw new DomainError("VALIDATION", `${conditionUsageLabel(row.usageType)}が2回入っています`);
-      }
-      seen.add(row.usageType);
       const rate = Number(row.ratePct);
       if (!Number.isFinite(rate) || rate < 0 || rate > 100) {
         throw new DomainError("VALIDATION", `${conditionUsageLabel(row.usageType)}の料率は 0〜100（%）で入れてください`);
       }
+      if (row.usageType === "sublicense" && !title && !String(row.sublicensee ?? "").trim()) {
+        throw new DomainError("VALIDATION", "再許諾は再許諾先の名称を入れてください（条件名「作品名｜再許諾（再許諾先／目的）」になります）");
+      }
     }
     const scopes = (input.scopes ?? []).filter((s) => s.scopeType !== "media");
+    // 作品名は取引の中で取る（規則で名前を付けるため）。手入力の名前があればそれが勝つ。
+    const nameOf = (row: LicenseSetRow, workTitle: string | null): string => {
+      if (title) return title;
+      const made = conditionNameFor({ workTitle: workTitle ?? "", usageType: row.usageType,
+                                      sublicensee: row.sublicensee, purpose: row.purpose });
+      if (!made) throw new DomainError("VALIDATION", `条件名を付けられません（作品名が空か、再許諾先が無い）`);
+      return made;
+    };
+    // 同じ利用形態が2回：再許諾は相手・目的が違えば別の条件なので、名前で比べる。
+    const seen = new Set<string>();
+    const dupKey = (row: LicenseSetRow) => row.usageType === "sublicense"
+      ? `sublicense:${String(row.sublicensee ?? "").trim()}:${String(row.purpose ?? "").trim()}` : row.usageType;
+    for (const row of rows) {
+      const key = dupKey(row);
+      if (seen.has(key)) {
+        throw new DomainError("VALIDATION", `${conditionUsageLabel(row.usageType)}${row.usageType === "sublicense" ? "（同じ再許諾先・目的）" : ""}が2回入っています`);
+      }
+      seen.add(key);
+    }
     const inputs = rows.map((row): ConditionInput => ({
       matterId: input.matterId ?? null,
-      name: title,
+      name: title || "（作品名から付ける）",
       direction: "in",
       kind: "license",
       counterpartyId: input.counterpartyId,
@@ -307,20 +360,31 @@ export class ConditionWriteService {
 
     try {
       return await inTransaction(this.database, async (client) => {
+        let workTitle: string | null = null;
+        if (input.workId) {
+          const w = await client.query("SELECT title FROM works WHERE id = $1", [input.workId]);
+          workTitle = (w.rows[0] as { title?: string } | undefined)?.title ?? null;
+          if (!title && !workTitle) throw new DomainError("NOT_FOUND", `作品 ${input.workId} が見つかりません`);
+        }
+        for (const [index, one] of inputs.entries()) one.name = nameOf(rows[index], workTitle);
         if (input.workId) {
           // 同じ作品・相手先の生きた条件の利用形態。列が空の古い条件は媒体の範囲から読む。
+          // 再許諾は相手・目的ごとに別の条件なので、名前が同じときだけ重複とみなす。
           const existing = await client.query(
-            `SELECT c.condition_no, c.usage_type,
+            `SELECT c.condition_no, c.usage_type, c.name,
                     (SELECT array_agg(coalesce(s.code, s.label)) FROM condition_scopes s
                       WHERE s.condition_id = c.id AND s.scope_type = 'media') AS media
                FROM conditions c
               WHERE c.work_id = $1 AND c.counterparty_id = $2 AND c.direction = 'in'
                 AND c.status IN ('active', 'scheduled')`,
             [input.workId, input.counterpartyId]);
-          for (const row of existing.rows as Array<{ condition_no: string | null; usage_type: string | null; media: string[] | null }>) {
+          for (const row of existing.rows as Array<{ condition_no: string | null; usage_type: string | null; name?: string | null; media: string[] | null }>) {
             const held: string | null = row.usage_type
               ?? (() => { const m = pubMediaOf((row.media ?? [])[0]); return m ? usageOfPubMedia(m) : null; })();
-            const clash = held ? rows.find((r) => r.usageType === held) : undefined;
+            const clash = held
+              ? rows.find((r, i) => r.usageType === held
+                  && (held !== "sublicense" || String(row.name ?? "").trim() === inputs[i].name))
+              : undefined;
             if (clash) {
               throw new DomainError("CONFLICT",
                 `この作品には同じ相手先の${conditionUsageLabel(clash.usageType)}の条件（${row.condition_no ?? "番号なし"}）が既にあります。`
@@ -343,19 +407,23 @@ export class ConditionWriteService {
    * 1本でもよい）。許諾セットの特例で、同じ実装を通る。
    */
   async createPublishingSet(input: PublishingSetInput, actor: string): Promise<PublishingSetResult> {
-    if (!input.print && !input.digital) {
-      throw new DomainError("VALIDATION", "紙か電子のどちらかの料率を入れてください");
+    if (!input.print && !input.digital && !input.sublicense) {
+      throw new DomainError("VALIDATION", "紙・電子・再許諾のどれかの料率を入れてください");
     }
     const rows: LicenseSetRow[] = [];
     if (input.print) rows.push({ usageType: "pub_print", ratePct: input.print.ratePct, exclusivity: input.print.exclusivity ?? null });
     if (input.digital) rows.push({ usageType: "pub_digital", ratePct: input.digital.ratePct, exclusivity: input.digital.exclusivity ?? null });
-    const { print: _p, digital: _d, ...rest } = input;
+    if (input.sublicense) {
+      rows.push({ usageType: "sublicense", ratePct: input.sublicense.ratePct, exclusivity: input.sublicense.exclusivity ?? null,
+                  sublicensee: input.sublicense.sublicensee ?? null, purpose: input.sublicense.purpose ?? null });
+    }
+    const { print: _p, digital: _d, sublicense: _s, ...rest } = input;
     const made = await this.createLicenseSet({ ...rest, rows }, actor);
     const pick = (usage: ConditionUsageType) => {
       const found = made.conditions.find((c) => c.usageType === usage);
       return found ? { id: found.id, conditionNo: found.conditionNo } : null;
     };
-    return { print: pick("pub_print"), digital: pick("pub_digital") };
+    return { print: pick("pub_print"), digital: pick("pub_digital"), sublicense: pick("sublicense") };
   }
 
   /**

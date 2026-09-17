@@ -615,7 +615,7 @@ export function createRoutes(database: Transactable) {
     res.json({ specs: IMPORT_SPECS });
   }));
   const importSchema = z.object({
-    kind: z.enum(["parties", "works"]),
+    kind: z.enum(["parties", "works", "license_conditions"]),
     csv: z.string().min(1).max(2_000_000),
     dryRun: z.boolean()
   });
@@ -854,7 +854,10 @@ export function createRoutes(database: Transactable) {
     .nullable().optional();
   const conditionSchema = z.object({
     matterId: z.coerce.number().int().positive().optional(),
-    name: z.string().trim().min(1).max(300),
+    // 作品に紐づく許諾（IN）は空でよい（作品名｜取引モデル で付く）。それ以外は必須（サービス側で確かめる）。
+    name: z.string().trim().max(300).default(""),
+    sublicensee: z.string().trim().max(200).nullable().optional(),
+    purpose: z.string().trim().max(200).nullable().optional(),
     direction: z.enum(["in", "out"]),
     kind: z.enum(["license", "product", "service", "expense", "fee"]),
     counterpartyId: z.coerce.number().int().positive(),
@@ -910,7 +913,8 @@ export function createRoutes(database: Transactable) {
   }).nullable().optional();
   const publishingSetSchema = z.object({
     matterId: z.coerce.number().int().positive().nullable().optional(),
-    title: z.string().trim().min(1).max(300),
+    // 空なら 作品名｜紙出版 のように規則で付ける。作品が無いときだけ必須（サービス側で確かめる）。
+    title: z.string().trim().max(300).nullable().optional(),
     counterpartyId: z.coerce.number().int().positive(),
     agreementId: z.coerce.number().int().positive().nullable().optional(),
     workId: z.coerce.number().int().positive().nullable().optional(),
@@ -926,7 +930,13 @@ export function createRoutes(database: Transactable) {
       code: z.string().trim().max(40).nullable().optional()
     })).max(200).optional(),
     print: publishingTermsSchema,
-    digital: publishingTermsSchema
+    digital: publishingTermsSchema,
+    sublicense: z.object({
+      ratePct: z.coerce.number().min(0).max(100),
+      exclusivity: z.enum(["exclusive", "non_exclusive"]).nullable().optional(),
+      sublicensee: z.string().trim().max(200).nullable().optional(),
+      purpose: z.string().trim().max(200).nullable().optional()
+    }).nullable().optional()
   });
   router.post("/conditions/publishing-set", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
@@ -940,15 +950,17 @@ export function createRoutes(database: Transactable) {
    * 許諾の条件を作品1点ぶん、利用形態ごとにまとめて登録する。
    * 個別利用許諾条件書（自社製造・再許諾・他社販売）はこれで3本を1回で作る。
    */
-  const licenseSetSchema = publishingSetSchema.omit({ print: true, digital: true }).extend({
+  const licenseSetSchema = publishingSetSchema.omit({ print: true, digital: true, sublicense: true }).extend({
     workPartId: z.coerce.number().int().positive().nullable().optional(),
     rows: z.array(z.object({
       usageType: z.enum(["in_house", "sublicense", "oem", "pub_print", "pub_digital"]),
       ratePct: z.coerce.number().min(0).max(100),
       exclusivity: z.enum(["exclusive", "non_exclusive"]).nullable().optional(),
       mgAmount: z.coerce.number().int().min(0).nullable().optional(),
-      agAmount: z.coerce.number().int().min(0).nullable().optional()
-    })).min(1).max(5)
+      agAmount: z.coerce.number().int().min(0).nullable().optional(),
+      sublicensee: z.string().trim().max(200).nullable().optional(),
+      purpose: z.string().trim().max(200).nullable().optional()
+    })).min(1).max(20)
   });
   /** 業務委託の条件を業務1つぶん（委託料＋実費＋手数料）まとめて登録する。 */
   const serviceSetSchema = z.object({

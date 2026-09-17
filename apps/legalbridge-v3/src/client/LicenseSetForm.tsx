@@ -4,6 +4,7 @@ import { parseLanguages, parseRegions } from "../server/core/rights-scope.js";
 import { CreateForm, type Field } from "./CreateForm.js";
 import { searchParties } from "./SearchSelect.js";
 import { CONDITION_USAGE_TYPES } from "../server/core/condition-usage.js";
+import { conditionNameFor } from "../server/conditions/naming.js";
 import { minorUnitHint } from "./ConditionCreateForm.js";
 
 /**
@@ -53,10 +54,25 @@ export function LicenseSetForm(
       .then((a) => setAgreements(a.agreements)).catch(() => undefined);
   }, []);
 
+  // 条件名は 作品名｜取引モデル で付く（再許諾は 再許諾先／目的 つき）。打たせない。
+  const workTitle = (v: Record<string, string>) => works.find((w) => String(w.id) === String(v.workId ?? ""))?.title ?? "";
+  const nameHint = (v: Record<string, string>, usage: typeof GAME_USAGES[number]["value"]) => {
+    const made = conditionNameFor({ workTitle: workTitle(v), usageType: usage,
+                                    sublicensee: v.sublicensee, purpose: v.purpose });
+    return made ? `条件名：${made}` : usage === "sublicense" ? "条件名は 作品名｜再許諾（再許諾先／目的）。再許諾先を入れてください" : "作品を選ぶと 作品名｜取引モデル の条件名が付きます";
+  };
   // 利用形態ごとに 料率／独占性／MG／AG。料率が空なら、その形態は作らない。
   const usageFields: Field[] = GAME_USAGES.flatMap((u): Field[] => [
     { name: `rate_${u.value}`, label: `${u.label}：料率（%）`, type: "number", placeholder: "2",
-      hint: `${u.hint}。空ならこの形態の条件は作らない` },
+      hint: (v) => `${u.hint}。空ならこの形態の条件は作らない${String(v[`rate_${u.value}`] ?? "").trim() ? `。${nameHint(v, u.value)}` : ""}` },
+    ...(u.value === "sublicense" ? [
+      { name: "sublicensee", label: "再許諾：再許諾先の名称", required: true, placeholder: "Alpha Games",
+        visibleWhen: (v) => String(v.rate_sublicense ?? "").trim() !== "",
+        hint: "条件名「作品名｜再許諾（再許諾先／目的）」に入る" } as Field,
+      { name: "purpose", label: "再許諾：目的", placeholder: "英語版の製造販売",
+        visibleWhen: (v) => String(v.rate_sublicense ?? "").trim() !== "",
+        hint: "空でもよい。入れると条件名に入る" } as Field
+    ] : []),
     { name: `excl_${u.value}`, label: `${u.label}：独占区分`, type: "select",
       options: [{ value: "non_exclusive", label: "非独占" }, { value: "exclusive", label: "独占" }],
       visibleWhen: (v) => String(v[`rate_${u.value}`] ?? "").trim() !== "" },
@@ -80,12 +96,9 @@ export function LicenseSetForm(
         { name: "counterpartyId", label: "許諾者（権利者）", type: "search", required: true,
           search: searchParties, placeholder: "取引先名・コードで探す",
           hint: "個別利用許諾条件書の Licensor" },
-        { name: "workId", label: "原作（Core Logic）", type: "search",
+        { name: "workId", label: "原作（Core Logic）", type: "search", required: true,
           options: works.map((w) => ({ value: String(w.id), label: w.title })),
-          hint: "取得の条件は原作にぶら下げる。条件書の構成要素と計算書の件名はここから出る" },
-        { name: "title", label: "条件名（対象製品予定名など）", required: true,
-          placeholder: "ito 原作ゲームデザイン / ◯◯ 英語版",
-          hint: "利用形態ぶんの条件すべてに同じ名前が付く" },
+          hint: "取得の条件は原作にぶら下げる。条件名は 作品名｜取引モデル で自動で付く。条件書の構成要素と計算書の件名もここから出る" },
         { name: "agreementId", label: "基本契約（合意）", type: "search",
           options: agreements
             .filter((a) => !preset?.counterpartyId
@@ -117,11 +130,12 @@ export function LicenseSetForm(
           const r = rate(v[`rate_${u.value}`]);
           return r === null ? [] : [{
             usageType: u.value, ratePct: r, exclusivity: v[`excl_${u.value}`] || null,
-            mgAmount: int(v[`mg_${u.value}`]) ?? null, agAmount: int(v[`ag_${u.value}`]) ?? null
+            mgAmount: int(v[`mg_${u.value}`]) ?? null, agAmount: int(v[`ag_${u.value}`]) ?? null,
+            ...(u.value === "sublicense" ? { sublicensee: text(v.sublicensee) ?? null, purpose: text(v.purpose) ?? null } : {})
           }];
         });
         return {
-          title: text(v.title),
+          title: null,
           counterpartyId: int(v.counterpartyId), workId: int(v.workId),
           agreementId: int(v.agreementId), matterId: int(v.matterId),
           termStart: text(v.termStart), termEnd: text(v.termEnd),

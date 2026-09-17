@@ -18,7 +18,7 @@ const build = (existingMedia: Array<{ condition_no: string; usage_type: string |
   let next = 100;
   return new FakeDatabase((text) => {
     if (text.includes("FROM parties WHERE id")) return [{ id: 5, name: "甲野 甲太" }];
-    if (text.includes("FROM works WHERE id")) return [{ id: 9 }];
+    if (text.includes("FROM works WHERE id")) return [{ id: 9, title: "星降る夜のはなし" }];
     if (text.includes("c.status IN ('active', 'scheduled')")) return existingMedia;
     if (text.includes("SELECT 1 FROM document_sequences")) return [{ x: 1 }];
     if (text.includes("UPDATE document_sequences")) return [{ current_value: next }];
@@ -57,13 +57,24 @@ test("紙だけでもよい。どちらも無ければ止める", async () => {
   assert.equal(r.digital, null);
   await assert.rejects(
     () => new ConditionWriteService(build()).createPublishingSet({ ...base, print: null, digital: null }, "k"),
-    /紙か電子のどちらか/);
+    /紙・電子・再許諾のどれか/);
 });
 
-test("料率の範囲と対象出版物名を検証する", async () => {
+test("料率の範囲を検証する。作品も条件名も無ければ止める", async () => {
   const svc = new ConditionWriteService(build());
   await assert.rejects(() => svc.createPublishingSet({ ...base, print: { ratePct: 101 } }, "k"), /出版（紙）の料率は 0〜100/);
-  await assert.rejects(() => svc.createPublishingSet({ ...base, title: " " }, "k"), /対象出版物名/);
+  await assert.rejects(() => svc.createPublishingSet({ ...base, title: " ", workId: null }, "k"), /作品を選んでください/);
+});
+
+test("条件名が空なら 作品名｜紙出版・電子出版・再許諾（再許諾先／目的） で付く", async () => {
+  const db = build();
+  const r = await new ConditionWriteService(db).createPublishingSet({
+    ...base, title: null, sublicense: { ratePct: 50, sublicensee: "海外出版社", purpose: "英語版の翻訳出版" }
+  }, "k");
+  assert.ok(r.print && r.digital && r.sublicense);
+  const inserts = db.queries.filter((q) => q.text.includes("INSERT INTO conditions"));
+  assert.deepEqual(inserts.map((q) => q.params[4]),
+    ["星降る夜のはなし｜紙出版", "星降る夜のはなし｜電子出版", "星降る夜のはなし｜再許諾（海外出版社／英語版の翻訳出版）"]);
 });
 
 test("同じ作品・同じ相手先に同じ媒体の生きた条件があれば止める（何も作らない）", async () => {

@@ -17,11 +17,11 @@ const base: LicenseSetInput = {
   ]
 };
 
-const build = (existing: Array<{ condition_no: string; usage_type: string | null; media: string[] | null }> = []) => {
+const build = (existing: Array<{ condition_no: string; usage_type: string | null; name?: string; media: string[] | null }> = []) => {
   let next = 100;
   return new FakeDatabase((text) => {
     if (text.includes("FROM parties WHERE id")) return [{ id: 5, name: "権利者" }];
-    if (text.includes("FROM works WHERE id")) return [{ id: 9 }];
+    if (text.includes("FROM works WHERE id")) return [{ id: 9, title: "ito" }];
     if (text.includes("c.status IN ('active', 'scheduled')")) return existing;
     if (text.includes("SELECT 1 FROM document_sequences")) return [{ x: 1 }];
     if (text.includes("UPDATE document_sequences")) return [{ current_value: next }];
@@ -61,7 +61,7 @@ test("出版セットは許諾セットの特例：利用形態 pub_print / pub_
 
 test("同じ作品・相手先に同じ利用形態があれば止める（列でも、古い媒体の範囲でも）", async () => {
   await assert.rejects(
-    () => new ConditionWriteService(build([{ condition_no: "CL-1", usage_type: "sublicense", media: null }]))
+    () => new ConditionWriteService(build([{ condition_no: "CL-1", usage_type: "sublicense", name: "ito", media: null }]))
       .createLicenseSet(base, "k"),
     /再許諾の条件（CL-1）が既にあります/);
   await assert.rejects(
@@ -75,4 +75,45 @@ test("同じ利用形態を2回、料率の範囲外、行なしは止める", a
   await assert.rejects(() => svc.createLicenseSet({ ...base, rows: [base.rows[0], base.rows[0]] }, "k"), /2回入っています/);
   await assert.rejects(() => svc.createLicenseSet({ ...base, rows: [{ usageType: "oem", ratePct: 101 }] }, "k"), /0〜100/);
   await assert.rejects(() => svc.createLicenseSet({ ...base, rows: [] }, "k"), /利用形態を1つ以上/);
+});
+
+/**
+ * 条件名の規則。名前を打たせず、作品名｜取引モデル で行ごとに付ける。
+ * 再許諾は 再許諾先／目的 が名前に入り、相手が違えば同じ作品・相手先でも別の条件。
+ */
+test("条件名が空なら 作品名｜取引モデル で行ごとに付く。再許諾は再許諾先／目的つき", async () => {
+  const db = build();
+  const r = await new ConditionWriteService(db).createLicenseSet({
+    ...base, title: null,
+    rows: [
+      { usageType: "in_house", ratePct: 2 },
+      { usageType: "sublicense", ratePct: 50, sublicensee: "Alpha Games", purpose: "英語版の製造販売" },
+      { usageType: "sublicense", ratePct: 50, sublicensee: "Beta", purpose: "韓国語版" },
+      { usageType: "oem", ratePct: 2 }
+    ]
+  }, "k");
+  assert.equal(r.conditions.length, 4);
+  const inserts = db.queries.filter((q) => q.text.includes("INSERT INTO conditions"));
+  assert.deepEqual(inserts.map((q) => q.params[4]), [
+    "ito｜自社製造・自社販売", "ito｜再許諾（Alpha Games／英語版の製造販売）", "ito｜再許諾（Beta／韓国語版）", "ito｜自社製造・他社販売"
+  ]);
+});
+
+test("再許諾は再許諾先が要る。同じ再許諾先・目的の再許諾が2回なら止める。相手が違う既存の再許諾とは重ならない", async () => {
+  const svc = new ConditionWriteService(build([{ condition_no: "CL-1", usage_type: "sublicense", name: "ito｜再許諾（Alpha Games／英語版）", media: null }]));
+  await assert.rejects(() => svc.createLicenseSet({ ...base, title: null, rows: [{ usageType: "sublicense", ratePct: 50 }] }, "k"),
+    /再許諾先の名称/);
+  await assert.rejects(() => svc.createLicenseSet({ ...base, title: null, rows: [
+    { usageType: "sublicense", ratePct: 50, sublicensee: "X", purpose: "y" },
+    { usageType: "sublicense", ratePct: 40, sublicensee: "X", purpose: "y" }] }, "k"), /2回入っています/);
+  await assert.rejects(() => svc.createLicenseSet({ ...base, title: null, rows: [
+    { usageType: "sublicense", ratePct: 50, sublicensee: "Alpha Games", purpose: "英語版" }] }, "k"), /CL-1）が既にあります/);
+  const ok = await svc.createLicenseSet({ ...base, title: null, rows: [
+    { usageType: "sublicense", ratePct: 50, sublicensee: "Beta", purpose: "韓国語版" }] }, "k");
+  assert.equal(ok.conditions.length, 1);
+});
+
+test("作品も条件名も無ければ止める", async () => {
+  await assert.rejects(() => new ConditionWriteService(build()).createLicenseSet({ ...base, title: null, workId: null }, "k"),
+    /作品を選んでください/);
 });

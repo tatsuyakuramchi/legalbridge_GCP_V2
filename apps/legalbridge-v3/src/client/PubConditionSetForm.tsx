@@ -3,6 +3,7 @@ import { api } from "./api.js";
 import { parseLanguages, parseRegions } from "../server/core/rights-scope.js";
 import { CreateForm } from "./CreateForm.js";
 import { searchParties } from "./SearchSelect.js";
+import { conditionNameFor } from "../server/conditions/naming.js";
 
 /**
  * 出版の条件を作品1点ぶん登録する（紙・電子）。
@@ -57,17 +58,18 @@ export function PubConditionSetForm(
       submitLabel="紙・電子の条件を登録する"
       path="/conditions/publishing-set"
       initial={{ printExclusivity: "non_exclusive", digitalExclusivity: "non_exclusive",
-                 taxCategory: "taxable", ...preset }}
+                 sublicenseExclusivity: "non_exclusive", taxCategory: "taxable", ...preset }}
       fields={[
         { name: "counterpartyId", label: "許諾者（著作権者）", type: "search", required: true,
           search: searchParties, placeholder: "取引先名・コードで探す",
           hint: "条件書の甲。振込先はこの取引先の口座" },
-        { name: "workId", label: "原著作物（作品）", type: "search",
+        { name: "workId", label: "原著作物（作品）", type: "search", required: true,
           options: works.map((w) => ({ value: String(w.id), label: w.title })),
-          hint: "条件書の一覧は作品1点が1行。作品に付けないと同じ作品の紙・電子を1行にまとめられない" },
-        { name: "title", label: "対象出版物名", required: true,
-          placeholder: "◯◯（単行本） / ◯◯ 第1巻",
-          hint: "条件名になる。作品名と違うときだけ条件書の行に2段で出る" },
+          hint: (v) => {
+            const t = works.find((w) => String(w.id) === String(v.workId ?? ""))?.title ?? "";
+            return t ? `条件名：${t}｜紙出版 ／ ${t}｜電子出版（再許諾は 再許諾先／目的 つき）`
+                     : "条件書の一覧は作品1点が1行。条件名は 作品名｜紙出版 のように自動で付く";
+          } },
         { name: "agreementId", label: "基本契約（合意）", type: "search",
           options: agreements
             .filter((a) => !preset?.counterpartyId
@@ -88,6 +90,20 @@ export function PubConditionSetForm(
         { name: "digitalExclusivity", label: "電子 独占区分", type: "select",
           options: [{ value: "non_exclusive", label: "非独占" }, { value: "exclusive", label: "独占" }],
           visibleWhen: (v) => String(v.digitalRate ?? "").trim() !== "" },
+        { name: "sublicenseRate", label: "再許諾 料率（%）", type: "number", placeholder: "50",
+          hint: (v) => {
+            const t = works.find((w) => String(w.id) === String(v.workId ?? ""))?.title ?? "";
+            const made = conditionNameFor({ workTitle: t, usageType: "sublicense", sublicensee: v.sublicensee, purpose: v.purpose });
+            return `翻訳出版など、相手に許諾して受け取った額 × 料率。空なら再許諾の条件は作らない${made ? `。条件名：${made}` : ""}`;
+          } },
+        { name: "sublicensee", label: "再許諾 再許諾先の名称", required: true, placeholder: "海外出版社",
+          visibleWhen: (v) => String(v.sublicenseRate ?? "").trim() !== "",
+          hint: "条件名「作品名｜再許諾（再許諾先／目的）」に入る" },
+        { name: "purpose", label: "再許諾 目的", placeholder: "英語版の翻訳出版",
+          visibleWhen: (v) => String(v.sublicenseRate ?? "").trim() !== "" },
+        { name: "sublicenseExclusivity", label: "再許諾 独占区分", type: "select",
+          options: [{ value: "non_exclusive", label: "非独占" }, { value: "exclusive", label: "独占" }],
+          visibleWhen: (v) => String(v.sublicenseRate ?? "").trim() !== "" },
 
         { name: "taxCategory", label: "税区分", type: "select",
           options: [{ value: "taxable", label: "課税" }, { value: "reduced", label: "軽減" },
@@ -108,8 +124,12 @@ export function PubConditionSetForm(
         ];
         const print = rate(v.printRate);
         const digital = rate(v.digitalRate);
+        const sub = rate(v.sublicenseRate);
         return {
-          title: text(v.title),
+          title: null,
+          sublicense: sub === null ? null
+            : { ratePct: sub, exclusivity: v.sublicenseExclusivity || null,
+                sublicensee: text(v.sublicensee) ?? null, purpose: text(v.purpose) ?? null },
           counterpartyId: int(v.counterpartyId), workId: int(v.workId),
           agreementId: int(v.agreementId), matterId: int(v.matterId),
           termStart: text(v.termStart), termEnd: text(v.termEnd),
