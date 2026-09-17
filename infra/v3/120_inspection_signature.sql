@@ -50,7 +50,7 @@ DECLARE
     || E'        </td>\n'
     || E'        <td style="width:50%;vertical-align:top;padding:6px 8px;border:1px solid #bbb;">\n'
     || E'          <div style="color:#555;margin-bottom:6px;">発注者（確認者）</div>\n'
-    || E'          <div style="height:34px;border-bottom:1px solid #333;padding-top:14px;">株式会社アークライト　{{inspectorDept}}　{{inspectorName}}</div>\n'
+    || E'          <div style="min-height:34px;border-bottom:1px solid #333;display:flex;align-items:flex-end;padding-bottom:2px;line-height:1.4;">株式会社アークライト　{{inspectorDept}}　{{inspectorName}}</div>\n'
     || E'          <div style="margin-top:6px;">確認日：{{formatDate INSPECTION_DATE}}</div>\n'
     || E'        </td>\n'
     || E'      </tr>\n'
