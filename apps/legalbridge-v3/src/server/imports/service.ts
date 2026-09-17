@@ -2,6 +2,10 @@ import type { Transactable } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { PartyWriteService } from "../parties/write-service.js";
 import { WorkWriteService } from "../works/write-service.js";
+import { ConditionWriteService, type LicenseSetRow } from "../conditions/write-service.js";
+import { conditionNameFor, parseUsageType } from "../conditions/naming.js";
+import { parseLanguages, parseRegions } from "../core/rights-scope.js";
+import type { ConditionScope } from "../core/model.js";
 import { csvAmount, csvBoolean, parseCsv } from "./parse.js";
 
 /**
@@ -15,7 +19,7 @@ import { csvAmount, csvBoolean, parseCsv } from "./parse.js";
  * 画面から入れた行と取り込んだ行で品質が変わる。
  */
 
-export type ImportKind = "parties" | "works";
+export type ImportKind = "parties" | "works" | "license_conditions";
 
 export interface ImportSpec {
   kind: ImportKind;
@@ -39,10 +43,22 @@ export const IMPORT_SPECS: ImportSpec[] = [
   {
     kind: "works", label: "作品",
     required: ["作品名"],
-    optional: ["カナ", "種別", "状態", "事業区分", "備考"],
-    sample: "作品名,カナ,種別,状態,事業区分,備考\n" +
-            "新作ボードゲーム,シンサクボードゲーム,自社作品,企画中,ゲーム,\n" +
-            "原作小説,ゲンサクショウセツ,原作IP,発売済,出版,"
+    optional: ["カナ", "種別", "状態", "事業区分", "作品コード", "親作品", "著作権表示", "第三者権利", "備考"],
+    sample: "作品名,カナ,種別,状態,事業区分,作品コード,親作品,著作権表示,第三者権利,備考\n" +
+            "原作小説,ゲンサクショウセツ,原作IP,発売済,出版,,,© 2026 著者名,,\n" +
+            "新作ボードゲーム,シンサクボードゲーム,派生作品,企画中,ゲーム,,原作小説,© 2026 著者名 / Arclight,挿絵：〇〇,"
+  },
+  {
+    kind: "license_conditions", label: "利用許諾条件（作品に紐づく IN の許諾）",
+    required: ["作品名", "許諾者", "取引モデル", "料率"],
+    optional: ["作品コード", "許諾者コード", "契約番号", "独占", "MG", "AG", "再許諾先", "目的",
+               "開始日", "終了日", "通貨", "支払条件", "地域", "言語", "備考"],
+    sample: "作品名,作品コード,許諾者,許諾者コード,契約番号,取引モデル,料率,独占,MG,AG,再許諾先,目的,開始日,終了日,通貨,支払条件,地域,言語,備考\n" +
+            "ito,,権利者名,,AGR-2026-0001,自社製造・自社販売,2,非独占,100000,,,,2026-10-01,2031-09-30,JPY,,全世界,,\n" +
+            "ito,,権利者名,,AGR-2026-0001,自社製造・他社販売,2,非独占,,,,,2026-10-01,2031-09-30,JPY,,全世界,,\n" +
+            "ito,,権利者名,,AGR-2026-0001,再許諾,50,非独占,,,Alpha Games,英語版の製造販売,2026-10-01,2031-09-30,JPY,,全世界,,\n" +
+            "星降る夜のはなし,,著者名,,,紙出版,11,非独占,,,,,2026-10-01,,JPY,,,日本語,\n" +
+            "星降る夜のはなし,,著者名,,,電子出版,15,非独占,,,,,2026-10-01,,JPY,,,日本語,"
   }
 ];
 
@@ -75,13 +91,42 @@ const WORK_STATUS: Record<string, "planning" | "in_production" | "released" | "a
   発売済: "released", released: "released", 終了: "archived", archived: "archived"
 };
 
+/** 利用許諾条件の CSV の1行。作品×許諾者×契約×期間で束ねて許諾セットにする。 */
+interface LicenseCsvRow {
+  line: number;
+  label: string;
+  workId: number; workTitle: string;
+  partyId: number; partyName: string;
+  agreementId: number | null;
+  termStart: string | null; termEnd: string | null;
+  currency: string;
+  paymentTerms: string | null;
+  notes: string | null;
+  scopes: ConditionScope[];
+  row: LicenseSetRow;
+}
+
+const EXCLUSIVITY: Record<string, "exclusive" | "non_exclusive"> = {
+  独占: "exclusive", exclusive: "exclusive", 非独占: "non_exclusive", non_exclusive: "non_exclusive"
+};
+
+function csvDate(value: string | undefined): string | null {
+  const s = String(value ?? "").trim();
+  if (!s) return null;
+  const m = s.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})$/);
+  if (!m) throw new DomainError("VALIDATION", `日付は 2026-10-01 か 2026/10/01 の形で入れてください（"${s}"）`);
+  return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
+}
+
 export class ImportService {
   private readonly parties: PartyWriteService;
   private readonly works: WorkWriteService;
+  private readonly conditions: ConditionWriteService;
 
   constructor(private readonly database: Transactable) {
     this.parties = new PartyWriteService(database);
     this.works = new WorkWriteService(database);
+    this.conditions = new ConditionWriteService(database);
   }
 
   async run(input: {
@@ -98,12 +143,22 @@ export class ImportService {
     }
 
     const rows: RowOutcome[] = [];
+    if (input.kind === "license_conditions") {
+      return this.licenseConditions(parsed.rows, input.dryRun, input.actor);
+    }
+    // 同じ CSV の前の行で作る作品は、試算でも親作品として当たったことにする
+    // （原作の行 → 派生作品の行 の順に書けば1回で入る）。
+    const earlier = new Set<string>();
     for (const [index, row] of parsed.rows.entries()) {
       const line = index + 2;   // 1行目は見出し
       try {
         const outcome = input.kind === "parties"
           ? await this.party(row, input.dryRun, input.actor)
-          : await this.work(row, input.dryRun, input.actor);
+          : await this.work(row, input.dryRun, input.actor, earlier);
+        for (const k of [row["作品名"], row["作品コード"]]) {
+          const v = String(k ?? "").trim().toLowerCase();
+          if (v) earlier.add(v);
+        }
         rows.push({ line, ...outcome });
       } catch (error) {
         const e = error as DomainError;
@@ -160,7 +215,8 @@ export class ImportService {
     return { status: "ok", label: name, id: created.id, code: created.partyCode };
   }
 
-  private async work(row: Record<string, string>, dryRun: boolean, actor: string):
+  private async work(row: Record<string, string>, dryRun: boolean, actor: string,
+                     earlier: Set<string> = new Set()):
     Promise<Omit<RowOutcome, "line">> {
     const title = String(row["作品名"] ?? "").trim();
     if (!title) throw new DomainError("VALIDATION", "作品名が空です");
@@ -174,6 +230,37 @@ export class ImportService {
     if (statusText && !WORK_STATUS[statusText]) {
       throw new DomainError("VALIDATION",
         `状態は「企画中」「制作中」「発売済」「終了」のいずれかです（"${statusText}"）`);
+    }
+
+    // 親作品（原作）。コードか作品名で当てる。書いてあるのに当たらなければ止める
+    // （黙って親なしで作ると、原作から派生作品を辿れない）。
+    const parentText = String(row["親作品"] ?? "").trim();
+    let parentWorkId: number | null = null;
+    if (parentText) {
+      const parent = await this.database.query(
+        `SELECT id FROM works
+          WHERE lower(btrim(work_code)) = lower(btrim($1)) OR btrim(title) = btrim($1)
+          LIMIT 2`, [parentText]);
+      if (parent.rows.length !== 1) {
+        if (parent.rows.length === 0 && dryRun && earlier.has(parentText.toLowerCase())) {
+          // この CSV の前の行で作る作品。登録のときは順に作るので当たる。
+          parentWorkId = null;
+        } else {
+          throw new DomainError("VALIDATION", parent.rows.length
+            ? `親作品「${parentText}」が複数あります。作品コードで指定してください`
+            : `親作品「${parentText}」が見つかりません。先に親作品の行を取り込むか、登録してください`);
+        }
+      } else {
+        parentWorkId = Number((parent.rows[0] as { id: number }).id);
+      }
+    }
+    const workCode = String(row["作品コード"] ?? "").trim() || null;
+    if (workCode) {
+      const taken = await this.database.query(
+        "SELECT id FROM works WHERE lower(btrim(work_code)) = lower(btrim($1)) LIMIT 1", [workCode]);
+      if (taken.rows[0]) {
+        throw new DomainError("CONFLICT", `作品コード ${workCode} は既に使われています（#${Number((taken.rows[0] as { id: number }).id)}）`);
+      }
     }
 
     if (dryRun) {
@@ -190,11 +277,182 @@ export class ImportService {
     const created = await this.works.create({
       title,
       titleKana: row["カナ"] || null,
-      kind: kindText ? WORK_KIND[kindText] : "own",
+      kind: kindText ? WORK_KIND[kindText] : (parentWorkId ? "derivative" : "own"),
       status: statusText ? WORK_STATUS[statusText] : "planning",
       businessLine: row["事業区分"] || null,
-      remarks: row["備考"] || null
+      remarks: row["備考"] || null,
+      workCode,
+      parentWorkId,
+      copyrightNotice: row["著作権表示"] || null,
+      thirdPartyRights: row["第三者権利"] || null
     }, actor);
     return { status: "ok", label: title, id: created.id, code: created.workCode };
+  }
+
+  /**
+   * 利用許諾条件の一括登録。1行＝条件1本（作品×許諾者×取引モデル）。
+   *
+   * 条件名は打たせない。作品名｜取引モデル（再許諾は 再許諾先／目的 つき）で
+   * 付ける。登録は許諾セット（createLicenseSet）を通す：同じ作品・許諾者・
+   * 契約・期間の行を1束にして1トランザクションで作るので、重複の検査も
+   * 画面から登録したときと同じ。
+   *
+   * 試算では何も書かず、作品・許諾者・契約の当たりと値の検証だけ返す。
+   */
+  private async licenseConditions(
+    raw: Array<Record<string, string>>, dryRun: boolean, actor: string
+  ): Promise<ImportReport> {
+    const outcomes = new Map<number, RowOutcome>();
+    const parsedRows: LicenseCsvRow[] = [];
+    for (const [index, row] of raw.entries()) {
+      const line = index + 2;
+      const label = `${String(row["作品名"] ?? "").trim()} ／ ${String(row["取引モデル"] ?? "").trim()}`;
+      try {
+        parsedRows.push(await this.licenseRow(line, label, row));
+      } catch (error) {
+        const e = error as DomainError;
+        outcomes.set(line, { line, status: e?.code === "CONFLICT" ? "duplicate" : "error", label,
+                             message: e?.message ?? "読めませんでした" });
+      }
+    }
+
+    // 束ねる：作品×許諾者×契約×期間×通貨。
+    const groups = new Map<string, LicenseCsvRow[]>();
+    for (const r of parsedRows) {
+      const key = [r.workId, r.partyId, r.agreementId ?? "", r.termStart ?? "", r.termEnd ?? "", r.currency].join("|");
+      groups.set(key, [...(groups.get(key) ?? []), r]);
+    }
+    for (const group of groups.values()) {
+      const first = group[0];
+      // 束の中の名前の重複（同じ取引モデル、同じ再許諾先・目的）は登録側が止める。
+      const names = group.map((r) => conditionNameFor({ workTitle: r.workTitle, usageType: r.row.usageType,
+                                                          sublicensee: r.row.sublicensee, purpose: r.row.purpose }) ?? "");
+      if (dryRun) {
+        // 既存との重複は登録側と同じ規則で見る（書かずに）。
+        const existing = await this.database.query(
+          `SELECT c.condition_no, c.usage_type, c.name
+             FROM conditions c
+            WHERE c.work_id = $1 AND c.counterparty_id = $2 AND c.direction = 'in'
+              AND c.status IN ('active', 'scheduled')`, [first.workId, first.partyId]);
+        for (const [i, r] of group.entries()) {
+          const clash = (existing.rows as Array<{ condition_no: string | null; usage_type: string | null; name: string | null }>)
+            .find((x) => x.usage_type === r.row.usageType
+              && (r.row.usageType !== "sublicense" || String(x.name ?? "").trim() === names[i]));
+          outcomes.set(r.line, clash
+            ? { line: r.line, status: "duplicate", label: r.label,
+                message: `${r.partyName} の同じ取引モデルの条件（${clash.condition_no ?? "番号なし"}）が既にあります。この束は飛ばされます` }
+            : { line: r.line, status: "ok", label: r.label, message: `条件名：${names[i]}` });
+        }
+        continue;
+      }
+      try {
+        const made = await this.conditions.createLicenseSet({
+          title: null, counterpartyId: first.partyId, workId: first.workId, agreementId: first.agreementId,
+          termStart: first.termStart, termEnd: first.termEnd, currency: first.currency,
+          paymentTerms: first.paymentTerms, notes: first.notes, scopes: first.scopes,
+          rows: group.map((r) => r.row)
+        }, actor);
+        for (const [i, r] of group.entries()) {
+          const c = made.conditions[i];
+          outcomes.set(r.line, { line: r.line, status: "ok", label: r.label, id: c?.id, code: c?.conditionNo ?? null,
+                                 message: `条件名：${names[i]}` });
+        }
+      } catch (error) {
+        const e = error as DomainError;
+        for (const r of group) {
+          outcomes.set(r.line, { line: r.line, status: e?.code === "CONFLICT" ? "duplicate" : "error", label: r.label,
+                                 message: e?.message ?? "登録に失敗しました" });
+        }
+      }
+    }
+
+    const rows = [...outcomes.values()].sort((a, b) => a.line - b.line);
+    return {
+      kind: "license_conditions", dryRun, total: rows.length,
+      ok: rows.filter((r) => r.status === "ok").length,
+      duplicate: rows.filter((r) => r.status === "duplicate").length,
+      error: rows.filter((r) => r.status === "error").length,
+      rows
+    };
+  }
+
+  /** 1行を読む。作品・許諾者・契約は1件に決まるときだけ通す。 */
+  private async licenseRow(line: number, label: string, row: Record<string, string>): Promise<LicenseCsvRow> {
+    const usageType = parseUsageType(row["取引モデル"]);
+    if (!usageType) {
+      throw new DomainError("VALIDATION",
+        `取引モデルは「自社製造・自社販売」「再許諾」「自社製造・他社販売」「紙出版」「電子出版」のいずれかです（"${String(row["取引モデル"] ?? "").trim()}"）`);
+    }
+    const rateText = String(row["料率"] ?? "").trim().replace(/[%％]/g, "");
+    const ratePct = Number(rateText);
+    if (!rateText || !Number.isFinite(ratePct) || ratePct < 0 || ratePct > 100) {
+      throw new DomainError("VALIDATION", `料率は 0〜100（%）で入れてください（"${String(row["料率"] ?? "").trim()}"）`);
+    }
+    const exclText = String(row["独占"] ?? "").trim();
+    if (exclText && !EXCLUSIVITY[exclText]) {
+      throw new DomainError("VALIDATION", `独占は「独占」か「非独占」です（"${exclText}"）`);
+    }
+    const sublicensee = String(row["再許諾先"] ?? "").trim() || null;
+    const purpose = String(row["目的"] ?? "").trim() || null;
+    if (usageType === "sublicense" && !sublicensee) {
+      throw new DomainError("VALIDATION", "再許諾は「再許諾先」を入れてください（条件名「作品名｜再許諾（再許諾先／目的）」になります）");
+    }
+
+    const work = await this.findOne(
+      `SELECT id, title FROM works
+        WHERE ($1 <> '' AND lower(btrim(work_code)) = lower(btrim($1)))
+           OR ($2 <> '' AND (btrim(title) = btrim($2) OR btrim(COALESCE(title_kana, '')) = btrim($2)))
+        LIMIT 3`,
+      [String(row["作品コード"] ?? "").trim(), String(row["作品名"] ?? "").trim()],
+      `作品「${String(row["作品コード"] ?? row["作品名"] ?? "").trim()}」`);
+    const party = await this.findOne(
+      `SELECT id, name FROM parties
+        WHERE status <> 'merged'
+          AND (($1 <> '' AND lower(btrim(party_code)) = lower(btrim($1)))
+            OR ($2 <> '' AND (btrim(name) = btrim($2) OR btrim(COALESCE(name_kana, '')) = btrim($2)
+                              OR EXISTS (SELECT 1 FROM unnest(aliases) a WHERE btrim(a) = btrim($2)))))
+        LIMIT 3`,
+      [String(row["許諾者コード"] ?? "").trim(), String(row["許諾者"] ?? "").trim()],
+      `許諾者「${String(row["許諾者コード"] ?? row["許諾者"] ?? "").trim()}」`);
+    let agreementId: number | null = null;
+    const agreementNo = String(row["契約番号"] ?? "").trim();
+    if (agreementNo) {
+      const a = await this.findOne(
+        `SELECT id, counterparty_id AS cp FROM agreements WHERE lower(btrim(agreement_no)) = lower(btrim($1)) LIMIT 3`,
+        [agreementNo], `契約番号 ${agreementNo}`);
+      if (Number(a.cp) !== Number(party.id)) {
+        throw new DomainError("VALIDATION", `契約 ${agreementNo} は ${String(party.name)} の契約ではありません`);
+      }
+      agreementId = Number(a.id);
+    }
+    const scopes: ConditionScope[] = [
+      ...parseRegions(String(row["地域"] ?? "")).map((s) => ({ scopeType: "region" as const, label: s.name, code: s.code || null })),
+      ...parseLanguages(String(row["言語"] ?? "")).map((s) => ({ scopeType: "language" as const, label: s.name, code: s.code || null }))
+    ];
+    return {
+      line, label: `${String(work.title)} ／ ${String(row["取引モデル"] ?? "").trim()}`,
+      workId: Number(work.id), workTitle: String(work.title),
+      partyId: Number(party.id), partyName: String(party.name),
+      agreementId,
+      termStart: csvDate(row["開始日"]), termEnd: csvDate(row["終了日"]),
+      currency: (String(row["通貨"] ?? "").trim() || "JPY").toUpperCase(),
+      paymentTerms: String(row["支払条件"] ?? "").trim() || null,
+      notes: String(row["備考"] ?? "").trim() || null,
+      scopes,
+      row: {
+        usageType, ratePct, exclusivity: exclText ? EXCLUSIVITY[exclText] : "non_exclusive",
+        mgAmount: csvAmount(row["MG"]) ?? null, agAmount: csvAmount(row["AG"]) ?? null,
+        sublicensee, purpose
+      }
+    };
+  }
+
+  private async findOne(sql: string, params: unknown[], what: string): Promise<Record<string, unknown>> {
+    if (params.every((p) => String(p ?? "") === "")) throw new DomainError("VALIDATION", `${what}が空です`);
+    const r = await this.database.query(sql, params);
+    if (r.rows.length === 1) return r.rows[0] as Record<string, unknown>;
+    throw new DomainError("VALIDATION", r.rows.length
+      ? `${what}が複数当たります。コードで指定してください`
+      : `${what}が見つかりません。先に登録してください`);
   }
 }

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, ApiError } from "./api.js";
 
 interface Spec {
-  kind: "parties" | "works"; label: string;
+  kind: string; label: string;
   required: string[]; optional: string[]; sample: string;
 }
 interface RowOutcome {
@@ -24,9 +24,9 @@ const STATUS_LABEL: Record<RowOutcome["status"], string> = {
  * 試算を通さないと登録できない。500行を書いてから結果を見るのでは、
  * マスタを壊したあとにしか気づけない。
  */
-export function CsvImport() {
+export function CsvImport({ initialKind }: { initialKind?: string } = {}) {
   const [specs, setSpecs] = useState<Spec[]>([]);
-  const [kind, setKind] = useState<"parties" | "works">("parties");
+  const [kind, setKind] = useState<string>(initialKind ?? "parties");
   const [csv, setCsv] = useState("");
   const [report, setReport] = useState<Report | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -64,7 +64,7 @@ export function CsvImport() {
           <label className="field">
             <span>種類</span>
             <select value={kind} onChange={(e) => {
-              setKind(e.target.value as "parties" | "works"); setReport(null);
+              setKind(e.target.value); setReport(null);
             }}>
               {specs.map((s) => <option key={s.kind} value={s.kind}>{s.label}</option>)}
             </select>
@@ -84,6 +84,10 @@ export function CsvImport() {
                     onClick={() => { setCsv(spec.sample); setReport(null); }}>
               見本を入れる
             </button>
+            <a className="btn btn-sm" style={{ marginLeft: 6 }} download={`${spec.kind}.csv`}
+               href={`data:text/csv;charset=utf-8,${encodeURIComponent("\ufeff" + spec.sample)}`}>
+              見本を CSV で保存
+            </a>
           </p>
         )}
 
@@ -118,14 +122,14 @@ export function CsvImport() {
               {report.error > 0 && <span className="danger">エラー {report.error}</span>}
             </div>
 
-            {report.rows.some((r) => r.status !== "ok") && (
+            {report.rows.some((r) => r.status !== "ok" || r.message) && (
               <div className="tablewrap" style={{ marginTop: 10 }}>
                 <table>
                   <thead>
                     <tr><th>行</th><th>状態</th><th>対象</th><th>内容</th></tr>
                   </thead>
                   <tbody>
-                    {report.rows.filter((r) => r.status !== "ok").map((r) => (
+                    {report.rows.filter((r) => r.status !== "ok" || r.message).map((r) => (
                       <tr key={r.line} className={r.status === "error" ? "overdue" : undefined}>
                         <td className="num">{r.line}</td>
                         <td>{STATUS_LABEL[r.status]}</td>

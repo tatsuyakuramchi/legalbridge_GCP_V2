@@ -5,6 +5,7 @@ import { api, ApiError, money, rate } from "./api.js";
 import { Relations, type EntityKind } from "./Relations.js";
 import { CreateForm, text } from "./CreateForm.js";
 import { WorkCreateForm } from "./WorkCreateForm.js";
+import { CsvImport } from "./CsvImport.js";
 import { SearchSelect } from "./SearchSelect.js";
 import { ConditionEdit, type EditResult } from "./ConditionEdit.js";
 import { ConditionCreateForm } from "./ConditionCreateForm.js";
@@ -149,7 +150,7 @@ export function WorksWorkspace(
   const [activity, setActivity] = useState<Activity | null>(null);
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [editing, setEditing] = useState<ConditionDetail | null>(null);
-  const [creating, setCreating] = useState<"work" | "source" | "part" | "condition" | "publishing" | "license" | null>(null);
+  const [creating, setCreating] = useState<"work" | "source" | "part" | "condition" | "publishing" | "license" | "import_works" | "import_conditions" | null>(null);
   const [moveTo, setMoveTo] = useState<string>("");
   const [moving, setMoving] = useState(false);
   const [mergeTo, setMergeTo] = useState<string>("");
@@ -465,6 +466,10 @@ export function WorksWorkspace(
         {editable && creating === null && (<>
           <button className="btn primary btn-sm" onClick={() => setCreating("work")}>作品を登録</button>
           <button className="btn btn-sm" onClick={() => setCreating("source")}>原作を登録</button>
+          <button className="btn btn-sm" onClick={() => setCreating("import_works")}
+                  title="作品を CSV でまとめて登録する（試算してから登録）">作品を一括登録（CSV）</button>
+          <button className="btn btn-sm" onClick={() => setCreating("import_conditions")}
+                  title="作品に紐づく利用許諾条件を CSV でまとめて登録する。条件名は 作品名｜取引モデル で付く">条件を一括登録（CSV）</button>
         </>)}
         <button className="btn btn-sm" style={{ marginLeft: "auto" }} aria-pressed={cleanupOpen}
                 onClick={() => setCleanupOpen((v) => !v)}>
@@ -475,6 +480,19 @@ export function WorksWorkspace(
       {creating === "work" && (
         <WorkCreateForm onDone={(r) => { setCreating(null); void reloadTree(r.id); }}
                         onCancel={() => setCreating(null)} />
+      )}
+      {(creating === "import_works" || creating === "import_conditions") && (
+        <div className="stack">
+          <div className="row">
+            <button className="btn btn-sm" onClick={() => { setCreating(null); void reloadTree(); }}>閉じる</button>
+            <span className="faint">
+              {creating === "import_works"
+                ? "作品名が同じ行は重複として出ます。親作品を書くと派生作品として原作にぶら下がります"
+                : "1行が条件1本。作品名・許諾者は登録済みのものに一致させてください。条件名は打ちません（作品名｜取引モデル）"}
+            </span>
+          </div>
+          <CsvImport initialKind={creating === "import_works" ? "works" : "license_conditions"} />
+        </div>
       )}
       {creating === "source" && (
         <CreateForm title="原作（Core Logic）の登録" path="/works"
