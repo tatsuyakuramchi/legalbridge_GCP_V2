@@ -120,6 +120,33 @@ test("予定額と違えば変更履歴に出す", () => {
   assert.equal(logs[0].afterValue, "¥250,000");
 });
 
+/**
+ * 予定明細の無い業務委託でも、記録のときに確かめた額（expected）と実額が違えば
+ * 変更履歴に出し、相手の確認欄（署名）を出す。理由は差分の記録から。
+ */
+test("予定が無くても記録時の確認額と違えば変更履歴と署名欄を出す", () => {
+  const c = buildTemplateContext("inspection_certificate", ctx({
+    events: [{ id: 9, conditionId: 1, occurredOn: "2026-09-20", amount: 30000,
+               plannedAmount: null, expectedAmount: 50000, varianceNote: "5点中3点の納品。残りは待たず減額で終了",
+               schedule: null }]
+  }), {});
+  assert.equal(c.hasChangeLogs, true);
+  assert.equal(c.needsSignature, true);
+  const logs = c.changeLogs as Array<Record<string, string>>;
+  assert.equal(logs[0].beforeValue, "¥50,000");
+  assert.equal(logs[0].afterValue, "¥30,000");
+  assert.equal(logs[0].reason, "5点中3点の納品。残りは待たず減額で終了");
+});
+
+test("額が変わっていなければ署名欄は出ない", () => {
+  const c = buildTemplateContext("inspection_certificate", ctx({
+    events: [{ id: 9, conditionId: 1, occurredOn: "2026-09-20", amount: 50000,
+               plannedAmount: null, expectedAmount: 50000, schedule: null }]
+  }), {});
+  assert.equal(c.hasChangeLogs, false);
+  assert.equal(c.needsSignature, false);
+});
+
 test("手で直した明細は計算で消さない", () => {
   const c = buildTemplateContext("inspection_certificate", ctx(), {
     delivery_line_items: [{ item_name: "手で足した行", amount_ex_tax: 500 }]

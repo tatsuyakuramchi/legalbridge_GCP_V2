@@ -233,8 +233,11 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
         paid_date: event.schedule?.payOn ?? null,
         amount_ex_tax: event.amount ?? 0,
         inspected_amount_ex_tax: event.amount ?? 0,
-        // 予定額。ここと違えば「金額変更」として本文の変更履歴に出る。
-        ordered_amount_ex_tax: event.plannedAmount ?? null,
+        // 予定額。ここと違えば「金額変更」として本文の変更履歴に出る。予定明細が
+        // 無ければ、記録のときに確かめた条件どおりの額（A-030 の expected）で代える。
+        ordered_amount_ex_tax: event.plannedAmount ?? event.expectedAmount ?? null,
+        // 差分の記録。変更履歴の「理由」になる。
+        changeNote: event.varianceNote ?? "",
         tax_category: condition.taxCategory ?? "taxable",
         inspection_status: "now",
         calc_method: calcMethodOf(condition),
@@ -517,7 +520,7 @@ function inspectionBlock(context: Ctx, manual: Record<string, unknown>, taxRate:
       fieldLabel: `${String(l.item_name ?? "明細")} 支払対価`,
       beforeValue: `¥${yen(ordered)}`,
       afterValue: `¥${yen(actual)}`,
-      reason: "（理由未記入）"
+      reason: String(l.changeNote ?? "").trim() || "（理由未記入）"
     }];
   });
 
@@ -545,6 +548,9 @@ function inspectionBlock(context: Ctx, manual: Record<string, unknown>, taxRate:
     other_fees: otherFees,
     changeLogs,
     hasChangeLogs: changeLogs.length > 0,
+    // 金額が当初から変わった検収書は、相手の確認（署名）欄を出す。変更履歴と同じ
+    // 条件にしてあるので、履歴が出るのに署名欄が無い／その逆は起きない。
+    needsSignature: changeLogs.length > 0,
     useGroupedInspection: paid.length > 0,
     paymentGroups: paid.length ? paymentGroups(paid, now, taxRate, context) : [],
     otherFeesTaxable: totals.otherFeesExTax > 0,

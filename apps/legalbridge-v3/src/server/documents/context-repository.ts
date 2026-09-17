@@ -307,6 +307,7 @@ export class DocumentContextRepository {
               e.gross_amount, e.deductions, e.amount, e.note,
               e.deliverable, e.inspected_on, e.inspector_dept, e.inspector_name,
               e.contract_form, e.service_from, e.service_to,
+              e.expected_amount, e.variance_note,
               e.usage_type, e.out_condition_id,
               oc.condition_no AS out_condition_no, oc.name AS out_condition_name,
               op.name AS out_party_name, ow.title AS out_work_title,
@@ -344,6 +345,13 @@ export class DocumentContextRepository {
         amountMinor: int(row.amount) ?? 0,
         /** その回の予定額。実績と違えば「金額変更」として本文の変更履歴に出る。 */
         plannedAmount: toMajor(int(row.schedule_planned), currency),
+        /**
+         * 記録のときに確かめた条件どおりの額（A-030）。予定明細が無い業務委託でも
+         * ここと実額が違えば「金額変更」として変更履歴と署名欄が出る。
+         */
+        expectedAmount: toMajor(int(row.expected_amount), currency),
+        /** 差分の記録（不足納品など）。変更履歴の「理由」に出す。 */
+        varianceNote: str(row.variance_note),
         // 契約形式と役務提供期間は、実績が持っていなければ予定の回から継ぐ。
         usageType: str(row.usage_type),
         /** 計算書の行の製品名。利用形態で決まる（product-name.ts）。 */
