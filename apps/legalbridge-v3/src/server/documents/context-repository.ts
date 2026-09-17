@@ -338,7 +338,9 @@ export class DocumentContextRepository {
         occurredOn: dateStr(row.occurred_on),
         period: str(row.period) ?? str(row.schedule_label),
         seq: int(row.schedule_seq),
-        quantity: int(row.quantity),
+        // 数量は小数を持てる（原稿の頁数 2.5 など。列は numeric(14,4)）。ここで
+        // 整数に切っていたので、検収書の「今回数量」だけ小数が落ちていた。
+        quantity: num(row.quantity),
         grossAmount: toMajor(int(row.gross_amount), currency),
         deductions: toMajor(int(row.deductions), currency),
         amount: toMajor(int(row.amount), currency),
