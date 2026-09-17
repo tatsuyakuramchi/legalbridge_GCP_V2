@@ -896,6 +896,26 @@ export function WorksWorkspace(
                   <button className="btn btn-sm" onClick={() => setChecked(new Set())}>選択を外す</button>
                 </div>
               )}
+              {/* 編集の欄は表の上。表の下に出すと、条件が多い作品では画面の外に開いて
+                  「押しても反応しない」ように見えた。 */}
+              {editing && (
+                <div className="panel-bd" ref={(el) => el?.scrollIntoView({ block: "nearest" })}
+                     style={{ borderBottom: "1px solid var(--line)", background: "var(--surface)" }}>
+                  <div className="row" style={{ marginBottom: 8 }}>
+                    <b>条件を編集：{editing.conditionNo ?? `#${editing.id}`}</b>
+                    <span className="faint">{editing.name}</span>
+                  </div>
+                  <ConditionEdit detail={editing}
+                    onCancel={() => setEditing(null)}
+                    onDone={(r: EditResult) => {
+                      setEditing(null);
+                      setNotice(r.revisedTo
+                        ? `実績があるので改訂しました（新しい版 #${r.revisedTo}）`
+                        : "条件を保存しました");
+                      void reloadWork(); void reloadTree();
+                    }} />
+                </div>
+              )}
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -935,19 +955,6 @@ export function WorksWorkspace(
                   </tbody>
                 </table>
               </div>
-              {editing && (
-                <div className="panel-bd">
-                  <ConditionEdit detail={editing}
-                    onCancel={() => setEditing(null)}
-                    onDone={(r: EditResult) => {
-                      setEditing(null);
-                      setNotice(r.revisedTo
-                        ? `実績があるので改訂しました（新しい版 #${r.revisedTo}）`
-                        : "条件を保存しました");
-                      void reloadWork(); void reloadTree();
-                    }} />
-                </div>
-              )}
             </div>
 
             {/* 権利の上限。畳んでおく。作り替えの作業では毎回は見ない。 */}
