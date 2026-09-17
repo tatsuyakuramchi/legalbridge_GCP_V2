@@ -29,6 +29,8 @@ interface EventRow {
   scheduleId: number | null; scheduleLabel: string | null;
   deliverable: string | null; inspectedOn: string | null;
   inspectorDept: string | null; inspectorName: string | null;
+  /** 出どころの発注番号（系列の決定済み発注書。無ければ条件に控えた番号）。 */
+  orderNo?: string | null;
   documentId: number | null; documentNo: string | null;
   /** 結びついている文書の状態。無効なら空いている扱い。 */
   documentStatus: string | null;
@@ -330,6 +332,13 @@ export function ConditionEvents(
   const openSchedules = schedules.filter((s) => !s.eventId);
   // 業務委託（委託料・実費・手数料）は、条件の内容 → 実績 → 差分 → 次のアクション の流れで記録する。
   const serviceFlow = kind === "service" || kind === "expense" || kind === "fee";
+  /**
+   * 実績に基づいて作る決済文書。出どころは発注書だが、実績が結びつくのは
+   * 検収書（業務委託）か計算書（許諾）だけ。発注書は実績を占有しない。
+   */
+  const settlementDoc = !serviceFlow && royalty && !rewardLabel
+    ? { label: "計算書", templateKey: "royalty_statement" }
+    : { label: "検収書", templateKey: "inspection_certificate" };
   const chosen = openSchedules.find((s) => String(s.id) === (v.scheduleId ?? ""));
   // 検収・納品の実績は検収書の行になる。そのとき出る欄が変わる。
   const inspecting = (v.eventType ?? "") === "inspection" || (v.eventType ?? "") === "delivery";
@@ -1055,8 +1064,8 @@ export function ConditionEvents(
             </button>
           ) : (
             <button className="btn btn-sm primary" disabled={!pickedIds.length}
-                    onClick={() => onCompose?.([conditionId], pickedIds, matterId ?? null)}>
-              選んだ {pickedIds.length} 件で文書を作る
+                    onClick={() => onCompose?.([conditionId], pickedIds, matterId ?? null, settlementDoc.templateKey)}>
+              選んだ {pickedIds.length} 件で{settlementDoc.label}を作る
             </button>
           )}
           {rewardLabel && (
@@ -1152,7 +1161,7 @@ export function ConditionEvents(
             <th></th><th>発生日</th><th>種類</th><th>期間</th>
             {canUse && <th>利用形態 ／ 許諾先</th>}
             <th className="num">数量</th>
-            <th className="num">実額</th><th>出どころ</th><th></th>
+            <th className="num">実額</th><th>出どころ</th><th>{settlementDoc.label}</th><th></th>
           </tr></thead>
           <tbody>
             {rows.map((row) => {
@@ -1201,44 +1210,52 @@ export function ConditionEvents(
                     {money(row.amount, currency)}
                     {row.deductions ? <div className="faint">控除 {money(row.deductions, currency)}</div> : null}
                   </td>
-                  <td className="faint">
+                  {/* 出どころ：この実績が応える発注（発注書の番号）。誰が記録したかは補足。 */}
+                  <td className="faint" style={{ whiteSpace: "nowrap" }}>
+                    {row.orderNo
+                      ? <>発注 <span className="code">{row.orderNo}</span></>
+                      : <span title="この条件の系列に決定済みの発注書が無い">発注書なし</span>}
+                    {row.createdBy && <div className="faint" style={{ fontSize: 10.5 }}>記録 {row.createdBy}</div>}
+                  </td>
+                  {/* 決済文書：この実績に基づいて作った検収書／計算書。支払はここから起こる。 */}
+                  <td className="faint" style={{ whiteSpace: "nowrap" }}>
                     {row.documentNo
-                      ? <>文書 <span className="code">{row.documentNo}</span>
-                          {row.documentStatus === "void" && <span className="tag danger" style={{ marginLeft: 4 }}>無効</span>}
+                      ? <><span className="code">{row.documentNo}</span>
+                          {row.documentStatus === "void"
+                            ? <span className="tag danger" style={{ marginLeft: 4 }}>無効</span>
+                            : <span className="tag ok" style={{ marginLeft: 4 }}>作成済</span>}
                           {/* 結びつけを外す。無効にした文書から作り直すときや、取り違えたとき。 */}
                           {editable && !voided && (
                             <button className="linky" style={{ marginLeft: 6 }} disabled={busy}
-                                    title="この文書との結びつけを外す。文書そのものは変わらない"
+                                    title={`この${settlementDoc.label}との結びつけを外す。文書そのものは変わらない`}
                                     onClick={() => void unlinkEvent(row)}>外す</button>
                           )}
                         </>
-                      : row.createdBy}
+                      : voided ? "—"
+                      : editable
+                        ? <button className="btn btn-sm primary" style={{ whiteSpace: "nowrap" }} disabled={busy}
+                                  title={`この実績に基づいて${settlementDoc.label}を作る（文書の画面へ、条件と実績を選んだ状態で移る）`}
+                                  onClick={() => {
+                                    // 作成のフォームは「文書」画面に1本化してある。
+                                    // ここからはその画面へ、条件と実績を選んだ状態で移る。
+                                    if (onCompose) onCompose([conditionId], [row.id], matterId ?? null, settlementDoc.templateKey);
+                                    else { setIssuing(row); setIssued(null); }
+                                  }}>
+                            {settlementDoc.label}を作る
+                          </button>
+                        : "未作成"}
                   </td>
                   <td>
                     {editable && !voided && !isLinked(row) && (
                       <button className="btn btn-sm" disabled={busy}
                               onClick={() => void voidEvent(row)}>取り消す</button>
                     )}
-                    {editable && !voided && !isLinked(row) && (
-                      <button className="btn btn-sm" style={{ marginLeft: 5, whiteSpace: "nowrap" }}
-                              onClick={() => {
-                                // 作成のフォームは「文書」画面に1本化してある。
-                                // ここからはその画面へ、条件と実績を選んだ状態で移る。
-                                if (onCompose) onCompose([conditionId], [row.id], matterId ?? null);
-                                else { setIssuing(row); setIssued(null); }
-                              }}>
-                        文書を作る
-                      </button>
-                    )}
-                    {row.documentId && !voided && (
-                      <span className="faint" style={{ whiteSpace: "nowrap" }}>文書あり</span>
-                    )}
                   </td>
                 </tr>
               );
             })}
             {!rows.length && (
-              <tr><td colSpan={8} className="faint">
+              <tr><td colSpan={9} className="faint">
                 実績がありません。製造数・売上・検収などをここに記録します。
               </td></tr>
             )}

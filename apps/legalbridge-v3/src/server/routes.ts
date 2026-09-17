@@ -22,6 +22,7 @@ import { PartyMergeService } from "./parties/merge-service.js";
 import { MatterRepository } from "./matters/repository.js";
 import { MatterMergeService } from "./matters/merge-service.js";
 import { MatterGraphService } from "./matters/graph-service.js";
+import { settlesEvents } from "./documents/settlement-docs.js";
 import { WorkRepository } from "./works/repository.js";
 import { checkAgainstEnvelope } from "./works/envelope.js";
 import { DocumentRepository } from "./documents/repository.js";
@@ -1324,8 +1325,10 @@ export function createRoutes(database: Transactable) {
         await issues.void(draft.id, "発行できなかったため破棄", actor(res)).catch(() => undefined);
         throw error;
       }
-      const linked = await conditionEvents.linkDocument(
-        conditionId, input.eventIds, issued.id, actor(res));
+      // 実績を結ぶのは検収書・計算書だけ。発注書を実績から作っても占有しない。
+      const linked = settlesEvents(input.templateKey)
+        ? await conditionEvents.linkDocument(conditionId, input.eventIds, issued.id, actor(res))
+        : { linked: 0, documentNo: issued.documentNo };
       res.status(201).json({ document: issued, ...linked });
     }));
 
@@ -2006,14 +2009,22 @@ export function createRoutes(database: Transactable) {
     if (!draft) throw new DomainError("NOT_FOUND", `文書 ${id} が見つかりません`);
     const groups = await eventGroupsFor(draft.conditions.map((c) => c.id), eventIds,
                                         "先に条件明細を繋いでください");
-    for (const [conditionId, ids] of groups) {
-      await conditionEvents.assertLinkable(conditionId, ids, draft.supersedesId);
+    // 実績を結ぶ（占有する）のは検収書・納品書・計算書だけ。発注書は実績の
+    // 出どころであって、決済する文書ではない。発注書が結ぶと、本来の検収書が
+    // 「別の文書に結びついている」と弾かれて作れなくなっていた。
+    const settles = settlesEvents(draft.templateKey);
+    if (settles) {
+      for (const [conditionId, ids] of groups) {
+        await conditionEvents.assertLinkable(conditionId, ids, draft.supersedesId);
+      }
     }
     const issued = await issues.issue(id, who, eventIds.length ? { eventIds } : {});
     // 前の版から移らなかったぶんを結ぶ。すでにこの文書を指している実績は
     // linkDocument 側で素通りする。
-    for (const [conditionId, ids] of groups) {
-      await conditionEvents.linkDocument(conditionId, ids, id, who);
+    if (settles) {
+      for (const [conditionId, ids] of groups) {
+        await conditionEvents.linkDocument(conditionId, ids, id, who);
+      }
     }
     return issued;
   };
@@ -2314,8 +2325,12 @@ export function createRoutes(database: Transactable) {
       // 2. 実績に結びつけられるかを先に確かめる。発行してから弾かれると、
       //    番号の振られた文書だけが残る。実績は条件をまたいでよい。
       const groups = await eventGroupsFor(input.conditionIds, input.eventIds, "その条件も選んでください");
-      for (const [conditionId, ids] of groups) {
-        await conditionEvents.assertLinkable(conditionId, ids, null);
+      // 発注書など決済しない文書は実績を占有しない（issueOne と同じ）。
+      const settles = settlesEvents(input.templateKey);
+      if (settles) {
+        for (const [conditionId, ids] of groups) {
+          await conditionEvents.assertLinkable(conditionId, ids, null);
+        }
       }
 
       // 3. 下書き → 発行。失敗したら下書きは捨てる。
@@ -2335,10 +2350,12 @@ export function createRoutes(database: Transactable) {
 
       // 4. 実績に結びつける／計算書を確定する。金額は確定時に計算し直す。
       let linked: { linked: number; documentNo: string | null } | null = null;
-      for (const [conditionId, ids] of groups) {
-        const r = await conditionEvents.linkDocument(conditionId, ids, issued.id, who);
-        const before: number = linked ? linked.linked : 0;
-        linked = { linked: before + r.linked, documentNo: r.documentNo };
+      if (settles) {
+        for (const [conditionId, ids] of groups) {
+          const r = await conditionEvents.linkDocument(conditionId, ids, issued.id, who);
+          const before: number = linked ? linked.linked : 0;
+          linked = { linked: before + r.linked, documentNo: r.documentNo };
+        }
       }
       const statement = input.royalty
         ? await royalty.finalize({

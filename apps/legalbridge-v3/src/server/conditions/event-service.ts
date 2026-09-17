@@ -96,6 +96,8 @@ const SERIES_IDS_SQL = (param: string) =>
 
 export interface EventRow {
   id: number;
+  /** 出どころの発注番号（系列の決定済み発注書。無ければ条件に控えた番号）。 */
+  orderNo?: string | null;
   /** この実績が付いている版。改訂前の版なら番号が違う。 */
   conditionId: number;
   conditionNo: string | null;
@@ -160,18 +162,33 @@ export class ConditionEventService {
                 oc.condition_no AS out_condition_no, oc.name AS out_condition_name,
                 e.document_id, d.document_no, d.status AS document_status, e.created_at, e.created_by,
                 e.condition_id, ec.condition_no AS own_condition_no,
-                e.expected_quantity, e.expected_amount, e.variance_note, e.follow_up, e.follow_up_due_on
+                e.expected_quantity, e.expected_amount, e.variance_note, e.follow_up, e.follow_up_due_on,
+                COALESCE(po.document_no, ec.order_no) AS order_no
            FROM condition_events e
            LEFT JOIN documents d ON d.id = e.document_id
            LEFT JOIN condition_schedules s ON s.id = e.schedule_id
            LEFT JOIN conditions oc ON oc.id = e.out_condition_id
            LEFT JOIN conditions ec ON ec.id = e.condition_id
+           -- 出どころの発注書。条件の系列（改訂の全版）に繋いだ決定済みの発注書のうち最新。
+           -- 無ければ条件に控えた外部の発注番号（移行した条件は発注書が V1・V2 側にある）。
+           LEFT JOIN LATERAL (
+             SELECT pd.document_no
+               FROM document_conditions dc
+               JOIN documents pd ON pd.id = dc.document_id
+               JOIN document_template_versions ptv ON ptv.id = pd.template_version_id
+               JOIN document_templates pt ON pt.id = ptv.template_id
+              WHERE dc.condition_id IN ${SERIES_IDS_SQL("e.condition_id")}
+                AND pt.template_key IN ('purchase_order', 'intl_purchase_order')
+                AND pd.status IN ('issued', 'sent')
+              ORDER BY pd.issued_at DESC NULLS LAST, pd.id DESC LIMIT 1
+           ) po ON true
           WHERE e.condition_id IN ${SERIES_IDS_SQL("$1")}
           ORDER BY e.occurred_on DESC, e.id DESC`, [conditionId]);
       return (r.rows as any[]).map((row) => ({
         id: Number(row.id),
         conditionId: Number(row.condition_id),
         conditionNo: str(row.own_condition_no),
+        orderNo: str(row.order_no),
         eventType: String(row.event_type),
         occurredOn: dateStr(row.occurred_on),
         period: str(row.period),
