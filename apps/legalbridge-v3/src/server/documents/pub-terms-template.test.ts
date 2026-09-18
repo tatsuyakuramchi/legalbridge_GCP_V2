@@ -9,12 +9,12 @@ import { PUB_TERMS_VARIABLES, pubTermsPatch, pubTitleSeeds } from "./pub-terms.j
 import { bankInfoLine } from "./template-context.js";
 
 /**
- * ひな形の本文は infra/v3/124（r3。初版は 113）の SQL が運ぶ（本番に流すのはその SQL）。
+ * ひな形の本文は infra/v3/125（r4。初版は 113）の SQL が運ぶ（本番に流すのはその SQL）。
  * ここは同じ SQL から本文を取り出して描画し、本文が差す名前と計算ブロックが
  * 出す名前がずれていないかを見張る。片方だけ直すと空欄の紙が出る。
  */
 const here = path.dirname(fileURLToPath(import.meta.url));
-const sql = readFileSync(path.resolve(here, "../../../../../infra/v3/124_pub_license_terms_v3_r3.sql"), "utf8");
+const sql = readFileSync(path.resolve(here, "../../../../../infra/v3/125_pub_license_terms_v3_r4.sql"), "utf8");
 const html = (() => {
   const start = sql.indexOf("$html$") + "$html$".length;
   const end = sql.indexOf("$html$", start);
@@ -66,7 +66,7 @@ test("本文が差す名前はすべて計算ブロックから出る（空欄�
   const outside = blanks.filter((name) => !rowNames.has(name));
   assert.deepEqual(outside, [], `空欄で出る差し込み: ${outside.join(", ")}`);
   assert.ok(!out.includes("{{"), "差し込みが残っていない");
-  assert.ok(out.includes("size: A4 landscape"), "A4 横");
+  assert.ok(out.includes("size: A4 portrait"), "A4 縦");
   assert.ok(out.includes("2026年10月1日"), "締結日は和暦風の表記");
   assert.ok(out.includes("11%／非独占"), "紙の料率と独占区分");
   assert.ok(out.includes("15%／非独占"), "電子の料率と独占区分");
