@@ -231,10 +231,12 @@ export class DocumentIssueService {
         if (!row.template_version_id) {
           throw new DomainError("VALIDATION", "テンプレートが設定されていない文書は発行できません");
         }
+        // 下書きは作ったときの版を指している。ひな形を改訂したあとに決定すると、
+        // 画面のプレビュー（現行版）と紙（下書きの版）が食い違うので、決定の
+        // 時点で現行版に付け替える。決定済みの文書は版を固定したまま。
+        const versionId = await this.rebindToCurrentVersion(client, documentId, Number(row.template_version_id));
 
-        const template = await this.repository.templateSource(client, {
-          versionId: Number(row.template_version_id)
-        });
+        const template = await this.repository.templateSource(client, { versionId });
         const linked = await client.query(
           "SELECT condition_id FROM document_conditions WHERE document_id = $1 ORDER BY line_no",
           [documentId]);
@@ -317,6 +319,8 @@ export class DocumentIssueService {
         await recordAudit(client, {
           actor, action: "document.issue", targetType: "document", targetId: documentId,
           detail: { documentNo, templateKey: template.templateKey, conditions: conditionIds,
+                    ...(versionId !== Number(row.template_version_id)
+                      ? { templateVersionWas: Number(row.template_version_id), templateVersion: versionId } : {}),
                     ...(settled.created.length ? { createdConditions: settled.created } : {}),
                     ...(supersedes ? { supersedes } : {}) }
         });
@@ -573,6 +577,21 @@ export class DocumentIssueService {
         reason, movedEvents: moved.rows.length
       }
     });
+  }
+
+  /**
+   * 下書きのひな形の版を現行版に付け替える。改訂前に作った下書きが古い版の
+   * まま紙になるのを防ぐ。現行版が同じか無ければそのまま。使う版 id を返す。
+   */
+  private async rebindToCurrentVersion(client: Queryable, documentId: number, versionId: number): Promise<number> {
+    const r = await client.query(
+      `SELECT t.current_version_id
+         FROM document_templates t JOIN document_template_versions tv ON tv.template_id = t.id
+        WHERE tv.id = $1`, [versionId]);
+    const current = (r.rows[0] as { current_version_id: number | null } | undefined)?.current_version_id;
+    if (!current || Number(current) === versionId) return versionId;
+    await client.query("UPDATE documents SET template_version_id = $2 WHERE id = $1", [documentId, Number(current)]);
+    return Number(current);
   }
 
   /** 発行済み文書を、そのときの版と焼き付けた値で描き直す。 */

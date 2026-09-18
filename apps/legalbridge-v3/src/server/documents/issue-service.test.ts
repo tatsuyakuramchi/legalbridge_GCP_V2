@@ -221,3 +221,27 @@ test("案件を渡さずに作った下書きは、条件の載っている案�
   await new DocumentIssueService(given).createDraft({ templateKey: "purchase_order", conditionIds: [5], matterId: 9 }, "k");
   assert.equal(given.find("INSERT INTO documents")!.params[1], 9, "渡された案件が優先");
 });
+
+test("改訂前に作った下書きは、決定のときに現行版へ付け替える（プレビューと紙を揃える）", async () => {
+  const base = responder();
+  const db = new FakeDatabase((text) => {
+    if (text.includes("SELECT t.current_version_id")) return [{ current_version_id: 402 }];
+    return base(text);
+  });
+  await new DocumentIssueService(db).issue(1, "kuramochi");
+  const rebind = db.find("UPDATE documents SET template_version_id");
+  assert.deepEqual(rebind!.params, [1, 402]);
+  const src = db.find("FROM document_template_versions tv JOIN document_templates t");
+  assert.equal(src!.params[0], 402, "本文は現行版で描く");
+  assert.equal(db.find("INSERT INTO audit_events")!.params[1], "document.issue");
+});
+
+test("現行版のままの下書きは付け替えない", async () => {
+  const base = responder();
+  const db = new FakeDatabase((text) => {
+    if (text.includes("SELECT t.current_version_id")) return [{ current_version_id: 401 }];
+    return base(text);
+  });
+  await new DocumentIssueService(db).issue(1, "kuramochi");
+  assert.equal(db.find("UPDATE documents SET template_version_id"), undefined);
+});
