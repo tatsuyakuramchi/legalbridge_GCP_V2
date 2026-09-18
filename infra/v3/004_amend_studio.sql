@@ -1188,6 +1188,48 @@ SELECT w.id, w.created_at::date, '初版', w.copyright_notice, w.third_party_rig
  WHERE btrim(COALESCE(w.copyright_notice, '')) <> ''
    AND NOT EXISTS (SELECT 1 FROM v3.work_credits c WHERE c.work_id = w.id);
 
+-- ---------------------------------------------------------------------
+-- A-032: 取引先の代表者と、連絡先の「人＋役割の印」
+--
+-- 法人は代表者（肩書・氏名）と担当者が別の人で、発注書の宛名や署名欄に代表者を
+-- 出す・出さないがある。代表者は取引先そのものの属性として列で持つ。
+-- 連絡先は「役割ごとに 1 人」の表だったので、同じ人を役割の数だけ打ち直していた。
+-- 1 行 = 1 人にして、役割（主担当・署名者・請求先）は印（配列）で複数付ける。
+-- 個人は本人が窓口（連絡先が無ければ本人の氏名・メール・電話に落ちる）。
+-- role の列は互換のために残す（roles の先頭を写す）。
+-- ---------------------------------------------------------------------
+
+ALTER TABLE v3.parties ADD COLUMN IF NOT EXISTS representative_title text;
+ALTER TABLE v3.parties ADD COLUMN IF NOT EXISTS representative_name  text;
+COMMENT ON COLUMN v3.parties.representative_title IS '代表者の肩書（代表取締役 など）。法人だけ。';
+COMMENT ON COLUMN v3.parties.representative_name  IS '代表者の氏名。発注書の宛名・署名欄に出す（出す・出さないは文書側）。';
+
+ALTER TABLE v3.party_contacts ADD COLUMN IF NOT EXISTS roles text[] NOT NULL DEFAULT '{}';
+COMMENT ON COLUMN v3.party_contacts.roles IS '役割の印（primary=主担当 / signer=署名者 / billing=請求先）。1 人に複数付く。';
+UPDATE v3.party_contacts SET roles = ARRAY[role]
+ WHERE roles = '{}' AND role IS NOT NULL AND btrim(role) <> '';
+DO $a032$
+DECLARE r record;
+BEGIN
+  -- 「役割ごとに 1 人」の UNIQUE と role の CHECK を外す（名前は環境で違いうるので中身で探す）。
+  FOR r IN
+    SELECT conname FROM pg_constraint
+     WHERE conrelid = 'v3.party_contacts'::regclass
+       AND ((contype = 'u' AND pg_get_constraintdef(oid) LIKE '%role%')
+         OR (contype = 'c' AND pg_get_constraintdef(oid) LIKE '%role%' AND conname <> 'party_contacts_roles_chk'))
+  LOOP
+    EXECUTE format('ALTER TABLE v3.party_contacts DROP CONSTRAINT %I', r.conname);
+  END LOOP;
+  ALTER TABLE v3.party_contacts ALTER COLUMN role DROP NOT NULL;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.party_contacts'::regclass AND conname = 'party_contacts_roles_chk') THEN
+    ALTER TABLE v3.party_contacts ADD CONSTRAINT party_contacts_roles_chk
+      CHECK (roles <@ ARRAY['primary', 'signer', 'billing']::text[]);
+  END IF;
+END
+$a032$;
+CREATE INDEX IF NOT EXISTS party_contacts_party_idx ON v3.party_contacts (party_id);
+
 COMMIT;
 
 
@@ -1383,4 +1425,10 @@ SELECT * FROM (
          (SELECT count(*)::text FROM information_schema.columns
            WHERE table_schema='v3' AND table_name='work_credits'
              AND column_name IN ('work_id', 'effective_from', 'edition', 'copyright_notice', 'third_party_rights', 'note'))
+  UNION ALL
+  SELECT 32, '取引先の代表者と連絡先の役割の印（A-032。3 列であること）',
+         ((SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='v3' AND table_name='parties' AND column_name IN ('representative_title', 'representative_name'))
+        + (SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='v3' AND table_name='party_contacts' AND column_name = 'roles'))::text
 ) AS 確認 ORDER BY n;

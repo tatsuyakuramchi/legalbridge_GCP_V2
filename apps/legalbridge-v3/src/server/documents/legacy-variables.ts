@@ -114,8 +114,19 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown; noSuffix?: s
   // こちらは3値ではなく2値なので、空文字ではなく「個人」を返す。
   { names: ["COUNTERPARTY_IS_CORPORATION", "受託者種別", "相手先種別"],
     get: (c) => (c.condition?.counterparty?.kind === "individual" ? "個人" : "法人") },
+  // 代表者（A-032）。取引先の代表者の欄が先。無ければ署名者→主担当（旧い動き）。
   { names: ["counterpartyRep", "受託者代表者名", "相手先代表者"],
-    get: (c) => contact(c, "signer")?.name ?? contact(c, "primary")?.name },
+    get: (c) => representativeName(c) },
+  { names: ["representativeTitle", "VENDOR_REPRESENTATIVE_TITLE", "代表者肩書", "受託者代表者肩書"],
+    get: (c) => c.condition?.counterparty?.representativeTitle },
+  // 「代表取締役 ◯◯」の 1 行。宛名・署名欄にそのまま置く。文書で出したくなければ
+  // この欄を空にする（手入力が自動値に勝つ）。
+  { names: ["representativeLine", "VENDOR_REPRESENTATIVE_LINE", "代表者行", "受託者代表者行"],
+    get: (c) => {
+      const title = String(c.condition?.counterparty?.representativeTitle ?? "").trim();
+      const name = String(c.condition?.counterparty?.representativeName ?? "").trim();
+      return name ? [title, name].filter(Boolean).join(" ") : undefined;
+    } },
   { names: ["VENDOR_IS_CORPORATION", "VENDOR_MASTER_ENTITY_TYPE", "取引先種別",
             "vendorEntityType", "LICENSOR_IS_CORPORATION"],
     // V2 と同じく、法人は "法人"・個人は空文字。テンプレートが
@@ -140,12 +151,12 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown; noSuffix?: s
   { names: ["VENDOR_SIGNER_NAME", "署名者名"],
     get: (c) => contact(c, "signer")?.name },
   { names: ["VENDOR_REP", "VENDOR_REPRESENTATIVE", "Licensor_代表者名", "代表者氏名",
-            "許諾者代表者", "受託者代表者"],
-    get: (c) => contact(c, "signer")?.name ?? contact(c, "primary")?.name },
+            "許諾者代表者", "受託者代表者", "representativeName"],
+    get: (c) => representativeName(c) },
   // V1 はこの欄に「様」まで含めて持っていた（本文は敬称を付けない）。
   { names: ["VENDOR_REPRESENTATIVE_SAMA", "代表者名様"],
     get: (c) => {
-      const name = contact(c, "signer")?.name ?? contact(c, "primary")?.name;
+      const name = representativeName(c);
       return name ? `${name} 様` : undefined;
     } },
   { names: ["VENDOR_ADDRESS", "Licensor_住所", "許諾者住所", "取引先住所", "相手先住所"],
@@ -304,6 +315,15 @@ const relatedNo = (c: Ctx, templateKey: string): string | undefined => {
 const contact = (c: Ctx, role: string) =>
   ((c.contacts ?? []) as Array<Record<string, any>>).find((x) => x.role === role) ?? null;
 
+/** 代表者の氏名。取引先の代表者の欄 → 署名者 → 主担当 の順。個人は本人。 */
+const representativeName = (c: Ctx): string | undefined => {
+  const party = c.condition?.counterparty ?? {};
+  const own = String(party.representativeName ?? "").trim();
+  if (own) return own;
+  if (party.kind === "individual") return String(party.name ?? "").trim() || undefined;
+  return contact(c, "signer")?.name ?? contact(c, "primary")?.name ?? undefined;
+};
+
 function bankLine(c: Ctx): string | null {
   return bankInfoLine(c.bank) || null;
 }
@@ -414,7 +434,8 @@ const DB_FIELD_SOURCES: Record<string, (c: Ctx) => Record<string, unknown>> = {
       address: party.address,
       // 担当者の欄（phone / email / contact_*）は自動で入れない（上の対応表と同じ理由）。
       // 宣言（dbField）で指していても空のまま出し、候補から人が選ぶ。
-      vendor_rep: signer.name ?? primary.name,
+      vendor_rep: representativeName(c) ?? signer.name ?? primary.name,
+      representative_title: party.representativeTitle,
       invoice_registration_number: party.invoiceNo,
       corporate_number: party.corporateNo,
       // 法人／個人。条件書の「許諾者種別」がここから決まる。

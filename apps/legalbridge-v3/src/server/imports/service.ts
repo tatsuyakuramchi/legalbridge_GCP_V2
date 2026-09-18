@@ -35,10 +35,11 @@ export const IMPORT_SPECS: ImportSpec[] = [
   {
     kind: "parties", label: "取引先",
     required: ["名称", "区分"],
-    optional: ["取引先コード", "カナ", "インボイス番号", "法人番号", "源泉対象", "別名"],
-    sample: "名称,区分,取引先コード,カナ,インボイス番号,法人番号,源泉対象,別名\n" +
-            "株式会社甲,法人,,カブシキガイシャコウ,T1234567890123,1234567890123,,甲社\n" +
-            "山田太郎,個人,V-0102,ヤマダタロウ,,,対象,やまだ"
+    optional: ["取引先コード", "カナ", "インボイス番号", "法人番号", "源泉対象", "別名",
+               "代表者肩書", "代表者氏名", "主担当氏名", "主担当メール", "主担当部署"],
+    sample: "名称,区分,取引先コード,カナ,インボイス番号,法人番号,源泉対象,別名,代表者肩書,代表者氏名,主担当氏名,主担当メール,主担当部署\n" +
+            "株式会社甲,法人,,カブシキガイシャコウ,T1234567890123,1234567890123,,甲社,代表取締役,甲野 一郎,乙山 花子,otoyama@example.co.jp,制作部\n" +
+            "山田太郎,個人,V-0102,ヤマダタロウ,,,対象,やまだ,,,,,"
   },
   {
     kind: "works", label: "作品",
@@ -215,6 +216,9 @@ export class ImportService {
 
     const created = await this.parties.create({
       name, kind, partyCode,
+      representativeTitle: row["代表者肩書"] || null,
+      representativeName: row["代表者氏名"] || null,
+      primaryContact: { name: row["主担当氏名"] || null, email: row["主担当メール"] || null, department: row["主担当部署"] || null },
       nameKana: row["カナ"] || null,
       invoiceNo: row["インボイス番号"] || null,
       corporateNo: row["法人番号"] || null,

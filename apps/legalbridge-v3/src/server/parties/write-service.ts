@@ -17,6 +17,23 @@ export interface PartyInput {
   email?: string | null;
   /** 指定しなければ採番する。 */
   partyCode?: string | null;
+  /** 代表者（法人）。肩書と氏名。発注書の宛名・署名欄に出す（出す・出さないは文書側）。 */
+  representativeTitle?: string | null;
+  representativeName?: string | null;
+  /** 登録と同時に入れる主担当（法人）。別の表で入れ直す手間を省く。 */
+  primaryContact?: { name?: string | null; email?: string | null; department?: string | null } | null;
+}
+
+export const CONTACT_ROLES = ["primary", "signer", "billing"] as const;
+export type ContactRole = typeof CONTACT_ROLES[number];
+
+/** 連絡先 1 人（A-032）。役割は印で複数付く。 */
+export interface ContactInput {
+  name?: string | null;
+  department?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  roles?: ContactRole[];
 }
 
 export interface StaffInput {
@@ -44,6 +61,16 @@ export interface PartyContactInput {
 }
 
 const NUMBER = { prefix: "PTY", table: "parties", column: "party_code" };
+
+function normalizeRoles(roles: unknown): ContactRole[] {
+  const out: ContactRole[] = [];
+  for (const r of Array.isArray(roles) ? roles : []) {
+    const v = String(r ?? "").trim() as ContactRole;
+    if (!CONTACT_ROLES.includes(v)) throw new DomainError("VALIDATION", `役割は 主担当・署名者・請求先 のどれかです（"${v}"）`);
+    if (!out.includes(v)) out.push(v);
+  }
+  return out;
+}
 
 /**
  * 空文字は NULL にする。「未入力」と「空にする」を取り違えないため。
@@ -104,14 +131,27 @@ export class PartyWriteService {
         const inserted = await client.query(
           `INSERT INTO parties (party_code, kind, name, name_kana, aliases,
                                 invoice_no, corporate_no, withholding,
-                                address, phone, email, status)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'active')
+                                address, phone, email, status,
+                                representative_title, representative_name)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'active', $12, $13)
            RETURNING id, party_code`,
           [code, input.kind, name, input.nameKana ?? null,
            input.aliases ?? [], input.invoiceNo ?? null, input.corporateNo ?? null,
            input.withholding === true,
-           blank(input.address), blank(input.phone), blank(input.email)]);
+           blank(input.address), blank(input.phone), blank(input.email),
+           // 代表者は法人だけ。個人は本人が代表なので持たない。
+           input.kind === "individual" ? null : blank(input.representativeTitle),
+           input.kind === "individual" ? null : blank(input.representativeName)]);
         const row = inserted.rows[0] as { id: number; party_code: string | null };
+
+        // 登録と同時に主担当を 1 人入れる（法人）。個人は本人が窓口なので要らない。
+        const pc = input.primaryContact;
+        if (input.kind !== "individual" && pc && (String(pc.name ?? "").trim() || String(pc.email ?? "").trim())) {
+          await client.query(
+            `INSERT INTO party_contacts (party_id, role, roles, name, email, department)
+             VALUES ($1, 'primary', ARRAY['primary']::text[], $2, $3, $4)`,
+            [Number(row.id), blank(pc.name), blank(pc.email), blank(pc.department)]);
+        }
 
         await recordAudit(client, {
           actor, action: "party.create", targetType: "party", targetId: Number(row.id),
@@ -157,6 +197,8 @@ export class PartyWriteService {
       put("party_code", code);
     }
     if (input.nameKana !== undefined) put("name_kana", blank(input.nameKana));
+    if (input.representativeTitle !== undefined) put("representative_title", blank(input.representativeTitle));
+    if (input.representativeName !== undefined) put("representative_name", blank(input.representativeName));
     if (input.aliases !== undefined) {
       put("aliases", input.aliases.map((a) => String(a).trim()).filter(Boolean));
     }
@@ -220,24 +262,30 @@ export class PartyWriteService {
     } catch (error) { throw translate(error); }
   }
 
-  /** 連絡先の登録・差し替え。役割ごとに1件（UNIQUE (party_id, role)）。 */
+  /**
+   * 役割を指定して連絡先を入れる（旧い口）。その役割の印を持つ人がいれば
+   * その人を直し、いなければ新しく 1 人足す。
+   */
   async upsertContact(partyId: number, input: PartyContactInput, actor: string) {
-    const role = String(input.role ?? "").trim();
+    const role = String(input.role ?? "").trim() as ContactRole;
     if (!role) throw new DomainError("VALIDATION", "連絡先の役割は必須です");
+    if (!CONTACT_ROLES.includes(role)) throw new DomainError("VALIDATION", `役割は 主担当・署名者・請求先 のどれかです（"${role}"）`);
     try {
       return await inTransaction(this.database, async (client) => {
-        const party = await client.query("SELECT id FROM parties WHERE id = $1", [partyId]);
-        if (!party.rows[0]) throw new DomainError("NOT_FOUND", `取引先 ${partyId} が見つかりません`);
-
-        await client.query(
-          `INSERT INTO party_contacts (party_id, role, name, email, phone, department)
-           VALUES ($1, $2, $3, $4, $5, $6)
-           ON CONFLICT (party_id, role) DO UPDATE SET
-             name = EXCLUDED.name, email = EXCLUDED.email,
-             phone = EXCLUDED.phone, department = EXCLUDED.department`,
-          [partyId, role, input.name ?? null, input.email ?? null,
-           input.phone ?? null, input.department ?? null]);
-
+        await this.requireParty(client, partyId);
+        const found = await client.query(
+          "SELECT id FROM party_contacts WHERE party_id = $1 AND $2 = ANY(roles) ORDER BY id LIMIT 1", [partyId, role]);
+        const hit = found.rows[0] as { id: number } | undefined;
+        if (hit) {
+          await client.query(
+            `UPDATE party_contacts SET name = $2, email = $3, phone = $4, department = $5 WHERE id = $1`,
+            [hit.id, blank(input.name), blank(input.email), blank(input.phone), blank(input.department)]);
+        } else {
+          await client.query(
+            `INSERT INTO party_contacts (party_id, role, roles, name, email, phone, department)
+             VALUES ($1, $2, ARRAY[$2]::text[], $3, $4, $5, $6)`,
+            [partyId, role, blank(input.name), blank(input.email), blank(input.phone), blank(input.department)]);
+        }
         await recordAudit(client, {
           actor, action: "party.upsert_contact", targetType: "party", targetId: partyId,
           detail: { role, email: input.email ?? null }
@@ -245,6 +293,78 @@ export class PartyWriteService {
         return { partyId, role };
       });
     } catch (error) { throw translate(error); }
+  }
+
+  /** 連絡先を 1 人足す。役割の印は複数。 */
+  async addContact(partyId: number, input: ContactInput, actor: string): Promise<{ id: number }> {
+    const roles = normalizeRoles(input.roles);
+    if (!String(input.name ?? "").trim() && !String(input.email ?? "").trim()) {
+      throw new DomainError("VALIDATION", "氏名かメールのどちらかは入れてください");
+    }
+    try {
+      return await inTransaction(this.database, async (client) => {
+        await this.requireParty(client, partyId);
+        const r = await client.query(
+          `INSERT INTO party_contacts (party_id, role, roles, name, email, phone, department)
+           VALUES ($1, $2, $3::text[], $4, $5, $6, $7) RETURNING id`,
+          [partyId, roles[0] ?? null, roles, blank(input.name), blank(input.email), blank(input.phone), blank(input.department)]);
+        const id = Number((r.rows[0] as { id: number }).id);
+        await recordAudit(client, {
+          actor, action: "party.add_contact", targetType: "party", targetId: partyId,
+          detail: { contactId: id, roles, email: blank(input.email) }
+        });
+        return { id };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /** 連絡先を直す（氏名・部署・メール・電話・役割の印）。 */
+  async updateContact(partyId: number, contactId: number, input: ContactInput, actor: string): Promise<{ id: number }> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        await this.requireParty(client, partyId);
+        const sets: string[] = []; const params: unknown[] = [contactId, partyId];
+        const put = (col: string, v: unknown) => { params.push(v); sets.push(`${col} = $${params.length}`); };
+        if (input.name !== undefined) put("name", blank(input.name));
+        if (input.department !== undefined) put("department", blank(input.department));
+        if (input.email !== undefined) put("email", blank(input.email));
+        if (input.phone !== undefined) put("phone", blank(input.phone));
+        if (input.roles !== undefined) {
+          const roles = normalizeRoles(input.roles);
+          put("roles", roles); put("role", roles[0] ?? null);
+        }
+        if (!sets.length) throw new DomainError("VALIDATION", "直す項目がありません");
+        const r = await client.query(
+          `UPDATE party_contacts SET ${sets.join(", ")} WHERE id = $1 AND party_id = $2 RETURNING id`, params);
+        if (!r.rows[0]) throw new DomainError("NOT_FOUND", `連絡先 ${contactId} が見つかりません`);
+        await recordAudit(client, {
+          actor, action: "party.update_contact", targetType: "party", targetId: partyId,
+          detail: { contactId, fields: sets.map((x) => x.split(" ")[0]) }
+        });
+        return { id: contactId };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  async removeContact(partyId: number, contactId: number, actor: string): Promise<{ id: number }> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const r = await client.query(
+          "DELETE FROM party_contacts WHERE id = $1 AND party_id = $2 RETURNING id, name", [contactId, partyId]);
+        const row = r.rows[0] as { id: number; name: string | null } | undefined;
+        if (!row) throw new DomainError("NOT_FOUND", `連絡先 ${contactId} が見つかりません`);
+        await recordAudit(client, {
+          actor, action: "party.remove_contact", targetType: "party", targetId: partyId,
+          detail: { contactId, name: row.name ?? null }
+        });
+        return { id: contactId };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  private async requireParty(client: Queryable, partyId: number): Promise<void> {
+    const party = await client.query("SELECT id FROM parties WHERE id = $1", [partyId]);
+    if (!party.rows[0]) throw new DomainError("NOT_FOUND", `取引先 ${partyId} が見つかりません`);
   }
 
   /**

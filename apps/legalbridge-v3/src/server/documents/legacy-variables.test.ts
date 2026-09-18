@@ -292,3 +292,17 @@ test("「date」で終わるだけの名前は発行日で埋めない（承諾�
   assert.equal(resolveLegacyVariable("documentDate", context), "2026-09-15", "名前ぜんぶが一致すれば入る");
   assert.equal(resolveLegacyVariable("ORDER_DATE", context), "2026-09-15");
 });
+
+test("代表者（A-032）：法人は代表者の欄が先。無ければ署名者→主担当。個人は本人", () => {
+  const corp = { condition: { counterparty: { name: "甲社", kind: "corporate",
+                                              representativeTitle: "代表取締役", representativeName: "甲野 一郎" } } };
+  assert.equal(at("受託者代表者名", corp), "甲野 一郎");
+  assert.equal(at("代表者肩書", corp), "代表取締役");
+  assert.equal(at("代表者行", corp), "代表取締役 甲野 一郎");
+  // 欄が無ければ旧い動き（署名者）。
+  const noRep = { condition: { counterparty: { name: "甲社", kind: "corporate" } } };
+  assert.equal(at("受託者代表者名", noRep), "署名 太郎");
+  assert.equal(at("代表者行", noRep), undefined, "肩書・氏名が無ければ行は出さない");
+  // 個人は本人。
+  assert.equal(at("受託者代表者名"), "吉澤淳郎");
+});

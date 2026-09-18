@@ -180,16 +180,33 @@ export class DocumentContextRepository {
     });
   }
 
-  /** 取引先の担当者。役割ごとに1件までなので、そのまま並べる。 */
+  /**
+   * 取引先の担当者。1 行 = 1 人で役割は印（A-032）。本文は役割で引くので、
+   * 役割ごとに 1 件に開いて返す（同じ人が 2 つの役割なら 2 件）。
+   * 個人は本人が窓口：役割の人がいなければ本人の氏名・メール・電話に落とす。
+   */
   private async contacts(client: Queryable, partyId: number) {
     const r = await client.query(
-      `SELECT role, name, email, phone, department FROM party_contacts
-        WHERE party_id = $1 ORDER BY role`, [partyId]);
-    return (r.rows as Array<Record<string, any>>).map((row) => ({
-      role: String(row.role),
-      name: str(row.name), email: str(row.email),
-      phone: str(row.phone), department: str(row.department)
-    }));
+      `SELECT roles, role, name, email, phone, department FROM party_contacts
+        WHERE party_id = $1 ORDER BY id`, [partyId]);
+    const out: Array<{ role: string; name: string | null; email: string | null; phone: string | null; department: string | null }> = [];
+    for (const row of r.rows as Array<Record<string, any>>) {
+      const roles: string[] = Array.isArray(row.roles) && row.roles.length ? row.roles.map(String)
+        : row.role ? [String(row.role)] : [];
+      for (const role of roles) {
+        if (out.some((x) => x.role === role)) continue;
+        out.push({ role, name: str(row.name), email: str(row.email), phone: str(row.phone), department: str(row.department) });
+      }
+    }
+    const p = await client.query("SELECT kind, name, email, phone FROM parties WHERE id = $1", [partyId]);
+    const party = p.rows[0] as Record<string, any> | undefined;
+    if (party && String(party.kind) === "individual") {
+      for (const role of ["primary", "signer", "billing"]) {
+        if (out.some((x) => x.role === role)) continue;
+        out.push({ role, name: str(party.name), email: str(party.email), phone: str(party.phone), department: null });
+      }
+    }
+    return out;
   }
 
   /**
@@ -484,6 +501,9 @@ export class DocumentContextRepository {
           address: str(row.party_row?.address),
           phone: str(row.party_row?.phone),
           email: str(row.party_row?.email),
+          /** 代表者（法人）。宛名・署名欄に出す。 */
+          representativeTitle: str(row.party_row?.representative_title),
+          representativeName: str(row.party_row?.representative_name),
           withholding: row.party_withholding === true,
           honorific: honorificFor(str(row.party_kind))
         },

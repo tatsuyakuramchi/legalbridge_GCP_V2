@@ -15,7 +15,10 @@ interface PartyDetail extends Party {
   nameKana: string | null; invoiceNo: string | null; corporateNo: string | null;
   /** 書類の頭書き・宛先に出る。欠けていると宛先の無い紙が出る。 */
   address: string | null; phone: string | null; email: string | null;
-  contacts: Array<{ role: string; name: string | null; email: string | null;
+  /** 代表者（法人）。宛名・署名欄に出す・出さないを選ぶ。個人は null。 */
+  representativeTitle: string | null; representativeName: string | null;
+  /** 連絡先は 1 行 = 1 人。roles は 主担当／署名者／請求先 の印（複数可）。 */
+  contacts: Array<{ id: number; roles: string[]; role: string; name: string | null; email: string | null;
                     phone: string | null; department: string | null }>;
   references: { conditions: number; payments: number; documents: number; matters: number };
   bankAccount: { bankName: string | null } | null;
@@ -110,6 +113,21 @@ export function PartiesWorkspace(
             { name: "invoiceNo", label: "インボイス登録番号", placeholder: "T1234567890123" },
             { name: "corporateNo", label: "法人番号",
               visibleWhen: (v) => v.kind !== "individual" },
+            // 代表者は担当者と別。発注書の宛名や署名欄で「代表取締役 ◯◯」を
+            // 出す・出さないがあるので、肩書と氏名を分けて持つ。
+            { name: "representativeTitle", label: "代表者の肩書", placeholder: "代表取締役",
+              visibleWhen: (v) => v.kind !== "individual" },
+            { name: "representativeName", label: "代表者の氏名", placeholder: "青井 蒼",
+              visibleWhen: (v) => v.kind !== "individual",
+              hint: "発注書・契約書の宛名と署名欄に「肩書 氏名」で出せます。担当者は登録後に連絡先へ" },
+            // 法人の窓口。個人は本人が窓口なので聞かない。
+            { name: "primaryName", label: "主担当の氏名", placeholder: "担当者名",
+              visibleWhen: (v) => v.kind !== "individual" },
+            { name: "primaryEmail", label: "主担当のメール", placeholder: "tanto@example.co.jp",
+              visibleWhen: (v) => v.kind !== "individual",
+              hint: "検収書の【ご連絡先】と送信の宛先。あとから連絡先で人を足せます" },
+            { name: "primaryDepartment", label: "主担当の部署", placeholder: "制作部",
+              visibleWhen: (v) => v.kind !== "individual" },
             { name: "withholding", label: "源泉徴収の対象", type: "checkbox" },
             // 契約書の頭書きと請求書の宛先に出る。登録時に入れる口が無く、
             // 移行と CSV 取込で入ったきりだった。
@@ -126,7 +144,14 @@ export function PartiesWorkspace(
             invoiceNo: text(v.invoiceNo), corporateNo: text(v.corporateNo),
             withholding: flag(v.withholding) ?? false,
             address: text(v.address), phone: text(v.phone), email: text(v.email),
-            aliases: String(v.aliases ?? "").split("\n").map((a) => a.trim()).filter(Boolean)
+            aliases: String(v.aliases ?? "").split("\n").map((a) => a.trim()).filter(Boolean),
+            ...(v.kind !== "individual" ? {
+              representativeTitle: text(v.representativeTitle),
+              representativeName: text(v.representativeName),
+              primaryContact: (text(v.primaryName) || text(v.primaryEmail))
+                ? { name: text(v.primaryName), email: text(v.primaryEmail), department: text(v.primaryDepartment) }
+                : null
+            } : {})
           })}
           retryOnConflict={{ label: "同名でも新規に作る", extra: { allowDuplicate: true } }}
           onDone={(r) => { setCreating(false); reload(r.id); }}
@@ -249,6 +274,15 @@ export function PartiesWorkspace(
                       <dt>カナ</dt><dd>{detail.nameKana ?? "—"}</dd>
                       <dt>登録番号</dt><dd className="code">{detail.invoiceNo ?? "—"}</dd>
                       <dt>源泉</dt><dd>{detail.withholding ? "対象" : detail.kind === "individual" ? "個人のため対象" : "対象外"}</dd>
+                      {/* 代表者は宛名・署名欄に出す人。担当者（連絡先）とは別。 */}
+                      {detail.kind !== "individual" && (
+                        <>
+                          <dt>代表者</dt>
+                          <dd>{detail.representativeName
+                            ? [detail.representativeTitle, detail.representativeName].filter(Boolean).join(" ")
+                            : <span className="faint">未登録（宛名は名称だけで出ます）</span>}</dd>
+                        </>
+                      )}
                       {/* 空欄は薄い「—」ではなく欠けとして見せる。書類に出る項目なので。 */}
                       <dt>住所</dt>
                       <dd>{detail.address ?? <span className="tag out">未登録</span>}</dd>
@@ -400,6 +434,8 @@ function PartyEdit(
     nameKana: party.nameKana ?? "",
     invoiceNo: party.invoiceNo ?? "",
     corporateNo: party.corporateNo ?? "",
+    representativeTitle: party.representativeTitle ?? "",
+    representativeName: party.representativeName ?? "",
     withholding: party.withholding,
     address: party.address ?? "",
     phone: party.phone ?? "",
@@ -419,6 +455,9 @@ function PartyEdit(
         ...(v.partyCode.trim() !== (party.partyCode ?? "") ? { partyCode: v.partyCode.trim() } : {}),
         // 空文字は「消す」。サーバ側で NULL に落として、書類の空欄判定を効かせる。
         nameKana: v.nameKana, invoiceNo: v.invoiceNo, corporateNo: v.corporateNo,
+        // 個人にした場合は代表者を消す（本人が代表なので）。
+        representativeTitle: v.kind === "individual" ? "" : v.representativeTitle,
+        representativeName: v.kind === "individual" ? "" : v.representativeName,
         withholding: v.withholding,
         address: v.address, phone: v.phone, email: v.email,
         aliases: v.aliases.split("\n").map((a) => a.trim()).filter(Boolean),
@@ -430,7 +469,8 @@ function PartyEdit(
   }
 
   const field = (
-    key: "name" | "partyCode" | "nameKana" | "invoiceNo" | "corporateNo" | "address" | "phone" | "email",
+    key: "name" | "partyCode" | "nameKana" | "invoiceNo" | "corporateNo" | "address" | "phone" | "email"
+       | "representativeTitle" | "representativeName",
     label: string, placeholder?: string, hint?: string
   ) => (
     <label className="field">
@@ -461,6 +501,9 @@ function PartyEdit(
         {field("nameKana", "カナ")}
         {field("invoiceNo", "インボイス登録番号", "T1234567890123")}
         {v.kind !== "individual" && field("corporateNo", "法人番号")}
+        {v.kind !== "individual" && field("representativeTitle", "代表者の肩書", "代表取締役")}
+        {v.kind !== "individual" && field("representativeName", "代表者の氏名", "青井 蒼",
+               "発注書・契約書の宛名と署名欄に「肩書 氏名」で出せます。担当者は下の連絡先へ")}
         {field("address", "住所", "東京都千代田区…", "契約書の頭書きと請求書の宛先に出ます")}
         {field("phone", "電話", "03-0000-0000")}
         {field("email", "メール", "info@example.co.jp")}
@@ -507,121 +550,157 @@ function PartyEdit(
   );
 }
 
-/** 連絡先の役割。書類のどこに出るかで決まっているので、増やすのは3つだけ。 */
+/** 連絡先の役割の印。書類のどこに出るかで決まっているので3つだけ。 */
 const CONTACT_ROLES = [
   { value: "primary", label: "主担当", hint: "検収書の【ご連絡先】と、送信の宛先" },
   { value: "signer", label: "署名者", hint: "契約書の記名押印欄" },
   { value: "billing", label: "請求先", hint: "請求書・支払通知書の宛先" }
 ];
 
+type ContactDraft = { name: string; email: string; phone: string; department: string; roles: string[] };
+const EMPTY_DRAFT: ContactDraft = { name: "", email: "", phone: "", department: "", roles: [] };
+
 /**
- * 取引先の連絡先。役割ごとに1件。
+ * 取引先の連絡先。1 行 = 1 人で、役割は印で付ける（A-032）。
  *
- * 書く口はサーバにあったのに、画面は表を出すだけで直せなかった。
- * 検収書は「5営業日以内に下記へご連絡ください」と書くので、ここが空だと
- * 宛先の無い紙が出る。
+ * 以前は役割ごとに 1 件の欄で、同じ人が主担当と請求先を兼ねると 2 回打ち、
+ * 人が増えると入れる口が無かった。人を並べて印を付ける形にする。
+ *
+ * 個人の取引先は本人が窓口なので、取引先そのもののメール・電話を使う。
+ * ここには代理（マネージャー・事務所）だけを足す。
  */
 function PartyContacts(
   { party, onSaved }: { party: PartyDetail; onSaved: () => void }
 ) {
-  const [role, setRole] = useState<string | null>(null);
-  const [v, setV] = useState({ name: "", email: "", phone: "", department: "" });
+  /** "new" は追加中、数字は直している行の id。 */
+  const [editing, setEditing] = useState<"new" | number | null>(null);
+  const [v, setV] = useState<ContactDraft>(EMPTY_DRAFT);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const individual = party.kind === "individual";
+  const hasPrimary = party.contacts.some((c) => c.roles.includes("primary"));
 
-  function start(target: string) {
-    const found = party.contacts.find((c) => c.role === target);
-    setV({
-      name: found?.name ?? "", email: found?.email ?? "",
-      phone: found?.phone ?? "", department: found?.department ?? ""
-    });
+  function startNew() {
+    // 最初の 1 人は主担当になることが多い。個人の代理は印なしで足す。
+    setV({ ...EMPTY_DRAFT, roles: !individual && !hasPrimary ? ["primary"] : [] });
     setError(null);
-    setRole(target);
+    setEditing("new");
+  }
+  function startEdit(c: PartyDetail["contacts"][number]) {
+    setV({ name: c.name ?? "", email: c.email ?? "", phone: c.phone ?? "",
+           department: c.department ?? "", roles: [...c.roles] });
+    setError(null);
+    setEditing(c.id);
+  }
+  function toggleRole(role: string) {
+    setV({ ...v, roles: v.roles.includes(role) ? v.roles.filter((r) => r !== role) : [...v.roles, role] });
   }
 
   async function save() {
-    if (!role) return;
+    if (editing === null) return;
     setBusy(true); setError(null);
     try {
-      await api.put(`/parties/${party.id}/contacts`, { role, ...v });
-      setRole(null);
+      if (editing === "new") await api.post(`/parties/${party.id}/contacts`, v);
+      else await api.patch(`/parties/${party.id}/contacts/${editing}`, v);
+      setEditing(null);
       onSaved();
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
     finally { setBusy(false); }
   }
 
-  const cell = (key: "name" | "email" | "phone" | "department", placeholder?: string) => (
-    <td>
+  async function remove(c: PartyDetail["contacts"][number]) {
+    if (!window.confirm(`${c.name ?? c.email ?? "この連絡先"} を消しますか？`)) return;
+    setBusy(true); setError(null);
+    try {
+      await api.del(`/parties/${party.id}/contacts/${c.id}`);
+      onSaved();
+    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
+    finally { setBusy(false); }
+  }
+
+  const input = (key: "name" | "email" | "phone" | "department", label: string, placeholder?: string) => (
+    <label className="field">
+      <span>{label}</span>
       <input value={v[key]} placeholder={placeholder} disabled={busy}
              onChange={(e) => setV({ ...v, [key]: e.target.value })} />
-    </td>
+    </label>
+  );
+  // 足す・直すの欄。表の行に詰めると 580px の枠から溢れるので、普通の欄で出す。
+  const editor = (
+    <div className="stack" style={{ gap: 8, padding: "8px 0", borderTop: "1px solid var(--line)" }}>
+      <div className="form-grid">
+        {input("name", "氏名", individual ? "マネージャー名" : "青井 蒼")}
+        {input("department", individual ? "所属（事務所など）" : "部署", individual ? "◯◯事務所" : "制作部")}
+        {input("email", "メール", "ao@example.co.jp")}
+        {input("phone", "電話", "03-0000-0000")}
+        <label className="field wide">
+          <span>役割</span>
+          <span className="chips">
+            {CONTACT_ROLES.map((r) => (
+              <button key={r.value} type="button" className="chip" aria-pressed={v.roles.includes(r.value)}
+                      title={r.hint} disabled={busy} onClick={() => toggleRole(r.value)}>{r.label}</button>
+            ))}
+          </span>
+        </label>
+      </div>
+      <div className="row">
+        <button className="btn btn-sm primary" disabled={busy || (!v.name.trim() && !v.email.trim())}
+                onClick={() => void save()}>{busy ? "保存中…" : "保存"}</button>
+        <button className="btn btn-sm" disabled={busy} onClick={() => setEditing(null)}>やめる</button>
+      </div>
+    </div>
   );
 
   return (
     <div className="panel">
       <div className="panel-hd">
-        <h2>連絡先</h2>
-        <span className="faint">役割ごとに1件。書類の宛先はここから出ます</span>
+        <h2>{individual ? "連絡先（代理）" : "連絡先"}</h2>
+        <span className="faint">
+          {individual ? "本人が窓口。マネージャー・事務所などがいれば足す" : "1 人 1 行。役割の印で書類のどこに出るかが決まる"}
+        </span>
+        {editing === null && (
+          <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={startNew}>人を足す</button>
+        )}
       </div>
-      {error && <div className="panel-bd"><div className="alert">{error}</div></div>}
-      <div className="tablewrap">
-        <table>
-          <thead><tr>
-            <th>役割</th><th>氏名</th><th>メール</th><th>電話</th><th>部門</th><th></th>
-          </tr></thead>
-          <tbody>
-            {CONTACT_ROLES.map((r) => {
-              const c = party.contacts.find((x) => x.role === r.value);
-              if (role === r.value) {
-                return (
-                  <tr key={r.value} className="sel">
-                    <td>{r.label}</td>
-                    {cell("name", "青井 蒼")}
-                    {cell("email", "ao@example.co.jp")}
-                    {cell("phone", "03-0000-0000")}
-                    {cell("department", "制作部")}
-                    <td className="row">
-                      <button className="btn btn-sm primary" disabled={busy}
-                              onClick={() => void save()}>保存</button>
-                      <button className="btn btn-sm" disabled={busy}
-                              onClick={() => setRole(null)}>やめる</button>
-                    </td>
-                  </tr>
-                );
-              }
-              return (
-                <tr key={r.value}>
-                  <td>{r.label}<div className="faint">{r.hint}</div></td>
-                  <td>{c?.name ?? "—"}</td>
-                  {/* 空欄は薄い「—」ではなく欠けとして見せる。主担当のメールは
-                      検収書の異議申立先なので、空なら書類が成立しない。 */}
-                  <td className={c?.email ? "faint" : ""}>
-                    {c?.email ?? (r.value === "primary"
-                      ? <span className="tag out">未登録</span> : "—")}
-                  </td>
-                  <td className="faint">{c?.phone ?? "—"}</td>
-                  <td>{c?.department ?? "—"}</td>
-                  <td>
-                    <button className="btn btn-sm" onClick={() => start(r.value)}>
-                      {c ? "直す" : "入れる"}
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
-            {/* 役割の一覧に無いものが移行で入っていることがある。読めるようにする。 */}
-            {party.contacts.filter((c) => !CONTACT_ROLES.some((r) => r.value === c.role)).map((c) => (
-              <tr key={c.role}>
-                <td>{ROLE_LABEL[c.role] ?? c.role}</td>
-                <td>{c.name ?? "—"}</td>
-                <td className="faint">{c.email ?? "—"}</td>
-                <td className="faint">{c.phone ?? "—"}</td>
-                <td>{c.department ?? "—"}</td>
-                <td />
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="panel-bd stack" style={{ gap: 6 }}>
+        {error && <div className="alert">{error}</div>}
+        {individual ? (
+          <div className="note">
+            本人：{party.name}
+            {party.email ? <span className="faint">　{party.email}</span> : <span className="tag out">メール未登録</span>}
+            {party.phone && <span className="faint">　{party.phone}</span>}
+            <div className="faint">検収書の【ご連絡先】・送信の宛先・署名欄はいずれも本人。直すなら上の「直す」から</div>
+          </div>
+        ) : !hasPrimary && (
+          // 主担当のメールは検収書の異議申立先なので、空なら書類が成立しない。
+          <div className="note warn">主担当がいません。検収書の【ご連絡先】と送信の宛先が空のまま出ます</div>
+        )}
+        {!individual && (
+          <div className="faint">
+            {CONTACT_ROLES.map((r) => `${r.label}＝${r.hint}`).join("　／　")}
+          </div>
+        )}
+        {party.contacts.map((c) => editing === c.id ? <div key={c.id}>{editor}</div> : (
+          <div key={c.id} className="graph-row">
+            <div>
+              <div className="row">
+                <strong>{c.name ?? <span className="faint">（氏名なし）</span>}</strong>
+                {c.department && <span className="faint">{c.department}</span>}
+                {c.roles.map((r) => <span key={r} className="tag">{ROLE_LABEL[r] ?? r}</span>)}
+              </div>
+              <div className="sub">
+                {/* 主担当のメールは検収書の異議申立先。空なら欠けとして見せる。 */}
+                {c.email ?? (c.roles.includes("primary") ? <span className="tag out">メール未登録</span> : "メール —")}
+                {c.phone && <>{" ／ "}{c.phone}</>}
+              </div>
+            </div>
+            <div className="acts">
+              <button className="btn btn-sm" disabled={busy} onClick={() => startEdit(c)}>直す</button>
+              <button className="btn btn-sm" disabled={busy} onClick={() => void remove(c)}>消す</button>
+            </div>
+          </div>
+        ))}
+        {editing === "new" && editor}
       </div>
     </div>
   );

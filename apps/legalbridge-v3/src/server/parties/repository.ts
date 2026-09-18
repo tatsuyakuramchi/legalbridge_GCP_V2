@@ -11,7 +11,10 @@ export interface PartyDetail extends PartySummary {
   nameKana: string | null; invoiceNo: string | null; corporateNo: string | null;
   /** 書類の頭書き・宛先に出る連絡先。 */
   address: string | null; phone: string | null; email: string | null;
-  contacts: Array<{ role: string; name: string | null; email: string | null; phone: string | null; department: string | null }>;
+  /** 代表者（法人）。宛名・署名欄で出す・出さないを選ぶ。個人は null。 */
+  representativeTitle: string | null; representativeName: string | null;
+  /** 連絡先は 1 行 = 1 人。roles は 主担当(primary)/署名者(signer)/請求先(billing) の印。 */
+  contacts: Array<{ id: number; roles: string[]; role: string; name: string | null; email: string | null; phone: string | null; department: string | null }>;
   /** 参照している実体の数。名寄せの影響範囲を見るのに使う。 */
   references: { conditions: number; payments: number; documents: number; matters: number };
   /** 口座は権限が無ければ null。表ごと GRANT していないので普通は null。 */
@@ -53,14 +56,15 @@ export class PartyRepository {
     try {
       const head = await this.database.query(
         `SELECT id, party_code, name, name_kana, kind, aliases, withholding, status,
-                merged_into_id, invoice_no, corporate_no, address, phone, email
+                merged_into_id, invoice_no, corporate_no, address, phone, email,
+                representative_title, representative_name
            FROM parties WHERE id = $1`, [id]);
       const row = head.rows[0] as Record<string, any> | undefined;
       if (!row) return null;
 
       const [contacts, refs, bank] = await Promise.all([
         this.database.query(
-          "SELECT role, name, email, phone, department FROM party_contacts WHERE party_id = $1 ORDER BY role", [id]),
+          "SELECT id, role, roles, name, email, phone, department FROM party_contacts WHERE party_id = $1 ORDER BY id", [id]),
         this.database.query(
           `SELECT (SELECT count(*)::int FROM conditions WHERE counterparty_id = $1) AS conditions,
                   (SELECT count(*)::int FROM payments   WHERE party_id = $1)        AS payments,
@@ -83,8 +87,15 @@ export class PartyRepository {
         address: str(row.address),
         phone: str(row.phone),
         email: str(row.email),
+        // 代表者（法人）。宛名・署名欄に出す。
+        representativeTitle: str(row.representative_title),
+        representativeName: str(row.representative_name),
+        // 連絡先は 1 行 = 1 人。役割は印（roles）。role は互換のため先頭の印。
         contacts: contacts.rows.map((c: Record<string, any>) => ({
-          role: String(c.role), name: str(c.name), email: str(c.email),
+          id: Number(c.id),
+          roles: (Array.isArray(c.roles) ? c.roles : []).map(String),
+          role: str(c.role) ?? (Array.isArray(c.roles) && c.roles[0] ? String(c.roles[0]) : ""),
+          name: str(c.name), email: str(c.email),
           phone: str(c.phone), department: str(c.department)
         })),
         references: {

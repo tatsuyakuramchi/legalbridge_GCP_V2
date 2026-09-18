@@ -224,6 +224,12 @@ SELECT * FROM (
          (SELECT count(*)::text FROM information_schema.columns
            WHERE table_schema='v3' AND table_name='work_credits'
              AND column_name IN ('work_id', 'effective_from', 'edition', 'copyright_notice', 'third_party_rights', 'note'))
+  UNION ALL
+  SELECT 32, '取引先の代表者と連絡先の役割の印（A-032。3 列であること）',
+         ((SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='v3' AND table_name='parties' AND column_name IN ('representative_title', 'representative_name'))
+        + (SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='v3' AND table_name='party_contacts' AND column_name = 'roles'))::text
 ) AS 確認 ORDER BY n;
 `;
 

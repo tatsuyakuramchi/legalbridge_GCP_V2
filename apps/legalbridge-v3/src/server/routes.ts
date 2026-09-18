@@ -684,6 +684,15 @@ export function createRoutes(database: Transactable) {
     phone: z.string().trim().max(60).nullable().optional(),
     email: z.string().trim().max(200).nullable().optional(),
     partyCode: z.string().trim().max(40).nullable().optional(),
+    // 代表者（法人）。宛名・署名欄に出す。
+    representativeTitle: z.string().trim().max(60).nullable().optional(),
+    representativeName: z.string().trim().max(200).nullable().optional(),
+    // 登録と同時に入れる主担当（法人）。
+    primaryContact: z.object({
+      name: z.string().trim().max(200).nullable().optional(),
+      email: z.string().trim().max(300).nullable().optional(),
+      department: z.string().trim().max(200).nullable().optional()
+    }).nullable().optional(),
     allowDuplicate: z.boolean().optional()
   });
   router.post("/parties", requireRole("admin", "legal"), requireWritable,
@@ -697,7 +706,7 @@ export function createRoutes(database: Transactable) {
    * 直せなかった。書類の宛名・頭書き・インボイス番号はここから出る。
    */
   const partyPatchSchema = partySchema
-    .omit({ allowDuplicate: true })
+    .omit({ allowDuplicate: true, primaryContact: true })
     .partial()
     .extend({ status: z.enum(["active", "archived"]).optional() });
   router.patch("/parties/:id", requireRole("admin", "legal"), requireWritable,
@@ -742,6 +751,29 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       res.json(await partyWrites.upsertContact(
         Number(req.params.id), contactSchema.parse(req.body ?? {}), actor(res)));
+    }));
+  // 連絡先は 1 行 = 1 人（A-032）。役割は印で複数付く。
+  const contactItemSchema = z.object({
+    name: z.string().trim().max(200).nullable().optional(),
+    department: z.string().trim().max(200).nullable().optional(),
+    email: z.string().trim().max(300).nullable().optional()
+      .refine((v) => !v || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v), "メールの形が違います"),
+    phone: z.string().trim().max(60).nullable().optional(),
+    roles: z.array(z.enum(["primary", "signer", "billing"])).max(3).optional()
+  });
+  router.post("/parties/:id/contacts", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.status(201).json(await partyWrites.addContact(
+        Number(req.params.id), contactItemSchema.parse(req.body ?? {}), actor(res)));
+    }));
+  router.patch("/parties/:id/contacts/:contactId", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await partyWrites.updateContact(
+        Number(req.params.id), Number(req.params.contactId), contactItemSchema.parse(req.body ?? {}), actor(res)));
+    }));
+  router.delete("/parties/:id/contacts/:contactId", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await partyWrites.removeContact(Number(req.params.id), Number(req.params.contactId), actor(res)));
     }));
 
   const workSchema = z.object({
@@ -1823,7 +1855,7 @@ export function createRoutes(database: Transactable) {
           AND (p.name ILIKE $1 OR p.name_kana ILIKE $1 OR p.email ILIKE $1)
         ORDER BY p.name LIMIT 8`, [like]);
     const contacts = q.length < 1 ? none : await database.query(
-      `SELECT c.role, c.name, c.email, c.phone, c.department, p.name AS party_name
+      `SELECT array_to_string(c.roles, ',') AS role, c.name, c.email, c.phone, c.department, p.name AS party_name
          FROM party_contacts c JOIN parties p ON p.id = c.party_id
         WHERE c.name ILIKE $1 OR c.department ILIKE $1 OR c.email ILIKE $1
         ORDER BY p.name LIMIT 8`, [like]);
@@ -2908,7 +2940,7 @@ export function createRoutes(database: Transactable) {
       const rows = await database.query(
         `SELECT * FROM (
            SELECT 'contact' AS kind, c.name, c.email,
-                  p.name AS belongs_to, c.role, c.department
+                  p.name AS belongs_to, array_to_string(c.roles, ',') AS role, c.department
              FROM party_contacts c JOIN parties p ON p.id = c.party_id
             WHERE COALESCE(btrim(c.email), '') <> ''
               AND ($1 = '' OR c.name ILIKE $2 OR c.email ILIKE $2 OR p.name ILIKE $2)

@@ -299,8 +299,8 @@ export class MatterCommunicationService {
       : null;
     const contacts = matter.counterparty_id
       ? (await this.database.query(
-          `SELECT name, email, role, department FROM party_contacts
-            WHERE party_id = $1 AND email IS NOT NULL ORDER BY role, name`, [matter.counterparty_id])).rows
+          `SELECT name, email, array_to_string(roles, ',') AS role, department FROM party_contacts
+            WHERE party_id = $1 AND email IS NOT NULL ORDER BY id`, [matter.counterparty_id])).rows
       : [];
     const party = matter.counterparty_id
       ? (await this.database.query(
