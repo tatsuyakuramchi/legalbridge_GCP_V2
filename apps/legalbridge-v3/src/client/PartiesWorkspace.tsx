@@ -100,6 +100,9 @@ export function PartiesWorkspace(
           initial={{ kind: "corporate" }}
           fields={[
             { name: "name", label: "名称", required: true, placeholder: "株式会社◯◯" },
+            // 会計や旧システムの番号を使いたいことがある。空なら自動採番（PTY-…）。
+            { name: "partyCode", label: "取引先コード", placeholder: "空なら自動採番",
+              hint: "会計・旧システムの番号を使うなら入れる。他の取引先と重なる番号は登録できない" },
             { name: "kind", label: "区分", type: "select", required: true,
               options: [{ value: "corporate", label: "法人" }, { value: "individual", label: "個人" }],
               hint: "個人は取適法の特定受託事業者として扱い、支払期日を60日で検査する" },
@@ -119,6 +122,7 @@ export function PartiesWorkspace(
           ]}
           toPayload={(v) => ({
             name: text(v.name), kind: v.kind, nameKana: text(v.nameKana),
+            partyCode: text(v.partyCode),
             invoiceNo: text(v.invoiceNo), corporateNo: text(v.corporateNo),
             withholding: flag(v.withholding) ?? false,
             address: text(v.address), phone: text(v.phone), email: text(v.email),

@@ -35,10 +35,10 @@ export const IMPORT_SPECS: ImportSpec[] = [
   {
     kind: "parties", label: "取引先",
     required: ["名称", "区分"],
-    optional: ["カナ", "インボイス番号", "法人番号", "源泉対象", "別名"],
-    sample: "名称,区分,カナ,インボイス番号,法人番号,源泉対象,別名\n" +
-            "株式会社甲,法人,カブシキガイシャコウ,T1234567890123,1234567890123,,甲社\n" +
-            "山田太郎,個人,ヤマダタロウ,,,対象,やまだ"
+    optional: ["取引先コード", "カナ", "インボイス番号", "法人番号", "源泉対象", "別名"],
+    sample: "名称,区分,取引先コード,カナ,インボイス番号,法人番号,源泉対象,別名\n" +
+            "株式会社甲,法人,,カブシキガイシャコウ,T1234567890123,1234567890123,,甲社\n" +
+            "山田太郎,個人,V-0102,ヤマダタロウ,,,対象,やまだ"
   },
   {
     kind: "works", label: "作品",
@@ -190,6 +190,15 @@ export class ImportService {
       throw new DomainError("VALIDATION", `区分は「法人」か「個人」です（"${kindText}"）`);
     }
 
+    // 取引先コード。空なら自動採番。書いてあれば他と重ならないことを確かめる。
+    const partyCode = String(row["取引先コード"] ?? "").trim() || null;
+    if (partyCode) {
+      const taken = await this.database.query(
+        "SELECT id, name FROM parties WHERE lower(btrim(party_code)) = lower(btrim($1)) LIMIT 1", [partyCode]);
+      const hit = taken.rows[0] as { id: number; name: string } | undefined;
+      if (hit) throw new DomainError("CONFLICT", `取引先コード ${partyCode} は既に「${hit.name}」で使われています`);
+    }
+
     if (dryRun) {
       // 書かずに、同名が既にいるかだけ確かめる。
       const same = await this.database.query(
@@ -205,7 +214,7 @@ export class ImportService {
     }
 
     const created = await this.parties.create({
-      name, kind,
+      name, kind, partyCode,
       nameKana: row["カナ"] || null,
       invoiceNo: row["インボイス番号"] || null,
       corporateNo: row["法人番号"] || null,

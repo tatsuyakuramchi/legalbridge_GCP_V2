@@ -89,8 +89,17 @@ export class PartyWriteService {
           }
         }
 
-        const code = String(input.partyCode ?? "").trim()
-          || await allocateNumber(client, NUMBER);
+        const wanted = String(input.partyCode ?? "").trim();
+        if (wanted) {
+          // 手で決めたコードは重ねない。UNIQUE で落ちると素っ気ない文になる。
+          const taken = await client.query(
+            "SELECT id, name FROM parties WHERE lower(btrim(party_code)) = lower(btrim($1)) LIMIT 1", [wanted]);
+          const hit = taken.rows[0] as { id: number; name: string } | undefined;
+          if (hit) {
+            throw new DomainError("CONFLICT", `取引先コード ${wanted} は既に「${hit.name}」（#${Number(hit.id)}）で使われています`);
+          }
+        }
+        const code = wanted || await allocateNumber(client, NUMBER);
 
         const inserted = await client.query(
           `INSERT INTO parties (party_code, kind, name, name_kana, aliases,
