@@ -9,12 +9,12 @@ import { PUB_TERMS_VARIABLES, pubTermsPatch, pubTitleSeeds } from "./pub-terms.j
 import { bankInfoLine } from "./template-context.js";
 
 /**
- * ひな形の本文は infra/v3/123（r2。初版は 113）の SQL が運ぶ（本番に流すのはその SQL）。
+ * ひな形の本文は infra/v3/124（r3。初版は 113）の SQL が運ぶ（本番に流すのはその SQL）。
  * ここは同じ SQL から本文を取り出して描画し、本文が差す名前と計算ブロックが
  * 出す名前がずれていないかを見張る。片方だけ直すと空欄の紙が出る。
  */
 const here = path.dirname(fileURLToPath(import.meta.url));
-const sql = readFileSync(path.resolve(here, "../../../../../infra/v3/123_pub_license_terms_v3_r2.sql"), "utf8");
+const sql = readFileSync(path.resolve(here, "../../../../../infra/v3/124_pub_license_terms_v3_r3.sql"), "utf8");
 const html = (() => {
   const start = sql.indexOf("$html$") + "$html$".length;
   const end = sql.indexOf("$html$", start);

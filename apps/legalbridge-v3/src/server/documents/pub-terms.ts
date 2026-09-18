@@ -177,8 +177,10 @@ export function pubTitleSeeds(context: Data): Data[] {
     const digital = group.find((c) => mediaOfCondition(c) === "digital");
     const head = print ?? digital ?? group[0];
     const title = text(head.work?.title) || text(head.name);
-    // 対象出版物名は条件名。作品名と同じなら空にして、紙に二重に出さない。
-    const edition = text(head.name) === title ? "" : text(head.name);
+    // 対象出版物名は条件名。作品名と同じか、規則どおりの「作品名｜取引モデル」
+    // なら空にして、紙に二重に出さない（規則名は台帳の都合で、出版物名ではない）。
+    const name = text(head.name);
+    const edition = name === title || name.startsWith(`${title}｜`) ? "" : name;
     const notes = [...new Set(group.map((c) => text(c.notes)).filter(Boolean))].join("／");
     return {
       item_name: title,
