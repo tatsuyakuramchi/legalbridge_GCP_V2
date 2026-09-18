@@ -75,8 +75,10 @@ export const PUB_TERMS_VARIABLES: TemplateVariable[] = [
     helpText: "個人の許諾者なら空のままでよい" },
   { name: "許諾者登録番号", label: "許諾者（甲）登録番号（T番号）", group: "II. 許諾者（甲）",
     from: "condition.counterparty.invoiceNo", helpText: "適格請求書発行事業者でなければ空のまま" },
-  { name: "許諾者連絡先", label: "許諾者（甲）通知先", group: "II. 許諾者（甲）", noGuess: true,
-    helpText: "自動では入れません。候補の「先方担当の氏名・メール・電話」から入れるか、手で書く" },
+  // 通知先は 部署 ／ 氏名 ／ メール ／ 電話 の 1 行。画面は 4 つの欄で編集する（type: contact）。
+  { name: "許諾者連絡先", label: "許諾者（甲）通知先", type: "contact", group: "II. 許諾者（甲）",
+    dbField: "vendor.contact_line", noGuess: true,
+    helpText: "取引先の主担当（個人は本人）が入ります。違う人にするなら上書きする" },
 
   { name: "被許諾者名称", label: "被許諾者（乙）名称", group: "III. 被許諾者（乙）", required: true,
     from: "company.name" },
@@ -86,8 +88,9 @@ export const PUB_TERMS_VARIABLES: TemplateVariable[] = [
     from: "company.rep" },
   { name: "被許諾者登録番号", label: "被許諾者（乙）登録番号（T番号）", group: "III. 被許諾者（乙）",
     from: "company.invoiceNo" },
-  { name: "被許諾者連絡先", label: "被許諾者（乙）通知先", group: "III. 被許諾者（乙）", noGuess: true,
-    helpText: "空なら案件の担当者（氏名・メール・電話）が入ります" },
+  { name: "被許諾者連絡先", label: "被許諾者（乙）通知先", type: "contact", group: "III. 被許諾者（乙）",
+    dbField: "staff.contact_line", noGuess: true,
+    helpText: "案件の担当者（部署・氏名・メール・電話）が入ります。違う人にするなら上書きする" },
 
   { name: "許諾開始日", label: "許諾開始日", type: "date", group: "IV. 許諾期間・地域・言語", required: true,
     noGuess: true, helpText: "空なら条件明細の開始日のいちばん早い日" },
@@ -321,6 +324,7 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
   });
 
   const counterparty = context.condition?.counterparty ?? {};
+  const primaryContact = list(context.contacts).find((c) => c.role === "primary") ?? {};
   const translationShare = number(pick("翻訳版取り分"));
   const autoRenew = pick("自動更新") !== "しない";
   const bank = context.bank ?? null;
@@ -337,8 +341,9 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
     licensorRep: pick("許諾者代表者名"),
     licensorInvoiceNo: pick("許諾者登録番号") || text(counterparty.invoiceNo),
     licensorIsCorp: text(counterparty.kind) !== "individual",
-    // 相手先の担当者は自動で入れない（手入力か候補から）。
-    licensorContact: pick("許諾者連絡先"),
+    // 取引先の主担当（個人は本人）。A-032 で取引先が持つようになった。
+    licensorContact: pick("許諾者連絡先")
+      || joinContact([primaryContact.department, primaryContact.name, primaryContact.email, primaryContact.phone]),
     /** 源泉徴収。取引先の設定（個人はふつう対象）。本文の固定文言が出し分ける。 */
     withholding: counterparty.withholding === true,
 

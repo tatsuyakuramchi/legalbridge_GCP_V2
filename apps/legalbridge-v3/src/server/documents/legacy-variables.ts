@@ -312,6 +312,13 @@ const relatedNo = (c: Ctx, templateKey: string): string | undefined => {
   return nos.length ? nos.join("・") : undefined;
 };
 
+/** 通知先の 1 行。空の部分は飛ばし、全部空なら undefined（欄は空のまま）。 */
+export const CONTACT_LINE_SEPARATOR = " ／ ";
+export const contactLine = (parts: unknown[]): string | undefined => {
+  const line = parts.map((v) => (v == null ? "" : String(v).trim())).filter(Boolean).join(CONTACT_LINE_SEPARATOR);
+  return line || undefined;
+};
+
 const contact = (c: Ctx, role: string) =>
   ((c.contacts ?? []) as Array<Record<string, any>>).find((x) => x.role === role) ?? null;
 
@@ -435,6 +442,9 @@ const DB_FIELD_SOURCES: Record<string, (c: Ctx) => Record<string, unknown>> = {
       // 担当者の欄（phone / email / contact_*）は自動で入れない（上の対応表と同じ理由）。
       // 宣言（dbField）で指していても空のまま出し、候補から人が選ぶ。
       vendor_rep: representativeName(c) ?? signer.name ?? primary.name,
+      // 通知先の 1 行（部署 ／ 氏名 ／ メール ／ 電話）。A-032 で主担当が取引先に
+      // 付き、個人は本人に落ちるので、ここは自動で入れてよい。
+      contact_line: contactLine([primary.department, primary.name, primary.email, primary.phone]),
       representative_title: party.representativeTitle,
       invoice_registration_number: party.invoiceNo,
       corporate_number: party.corporateNo,
@@ -453,7 +463,8 @@ const DB_FIELD_SOURCES: Record<string, (c: Ctx) => Record<string, unknown>> = {
     name: c.owner?.name,
     department: c.owner?.department,
     email: c.owner?.email,
-    phone: c.owner?.phone
+    phone: c.owner?.phone,
+    contact_line: contactLine([c.owner?.department, c.owner?.name, c.owner?.email, c.owner?.phone])
   }),
   // キーは V1 の companyProfile() が返していた snake_case に合わせる。
   company: (c) => ({

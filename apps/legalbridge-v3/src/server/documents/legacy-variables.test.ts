@@ -306,3 +306,11 @@ test("代表者（A-032）：法人は代表者の欄が先。無ければ署名
   // 個人は本人。
   assert.equal(at("受託者代表者名"), "吉澤淳郎");
 });
+
+test("通知先の 1 行（contact_line）：主担当の 部署 ／ 氏名 ／ メール ／ 電話。空は飛ばす", async () => {
+  const { resolveLegacyDbField } = await import("./legacy-variables.js");
+  const c = ctx({ contacts: [{ role: "primary", name: "甲野 甲太", email: "k@example.test", phone: null, department: "編集部" }] });
+  assert.equal(resolveLegacyDbField("vendor.contact_line", c), "編集部 ／ 甲野 甲太 ／ k@example.test");
+  assert.equal(resolveLegacyDbField("staff.contact_line", c), "法務部 ／ 川島 純子 ／ j@arclight.co.jp");
+  assert.equal(resolveLegacyDbField("vendor.contact_line", ctx({ contacts: [] })), undefined, "主担当が無ければ空のまま");
+});

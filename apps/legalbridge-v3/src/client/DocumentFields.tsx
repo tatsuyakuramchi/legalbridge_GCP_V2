@@ -195,6 +195,10 @@ export function DocumentFields(
                           </button>
                         )}
                       </div>
+                    ) : f.type === "contact" ? (
+                      <ContactEditor value={value} candidates={candidates}
+                                     side={/乙|被許諾者|自社|当社|発注者/.test(f.label) ? "licensee" : "licensor"}
+                                     onChange={(v) => onChange(f.name, v)} />
                     ) : f.type === "regions" || f.type === "languages" ? (
                       /* 許諾の範囲。自由記載だと表記が割れるので ISO のコードから選ぶ。 */
                       <RightsScopePicker kind={f.type === "regions" ? "region" : "language"}
@@ -303,5 +307,78 @@ export function DocumentFields(
         </div>
       ))}
     </>
+  );
+}
+
+/**
+ * 通知先（部署 ／ 氏名 ／ メール ／ 電話）の欄。
+ *
+ * 紙には 1 行で出るが、1 つの欄に「／」区切りで打たせると甲と乙で書き方が
+ * 揃わない（乙は自動で 4 つ揃うのに、甲は電話だけ、のように）。4 つの欄で
+ * 編集し、値は紙と同じ 1 行（" ／ " 区切り）で持つ。
+ */
+const CONTACT_SEP = " ／ ";
+type ContactParts = { department: string; name: string; email: string; phone: string };
+
+/** 1 行を 4 つに戻す。メールは @、電話は数字で見分け、残りは 部署・氏名 の順。 */
+function splitContact(line: string): ContactParts {
+  const parts = String(line ?? "").split(/\s*[／/]\s*/).map((x) => x.trim()).filter(Boolean);
+  const out: ContactParts = { department: "", name: "", email: "", phone: "" };
+  const rest: string[] = [];
+  for (const x of parts) {
+    if (!out.email && x.includes("@")) out.email = x;
+    else if (!out.phone && /^[\d０-９+＋()（）\-‐－ー\s]{6,}$/.test(x)) out.phone = x;
+    else rest.push(x);
+  }
+  if (rest.length >= 2) { out.department = rest[0]; out.name = rest.slice(1).join(" "); }
+  else if (rest.length === 1) out.name = rest[0];
+  return out;
+}
+const joinContactParts = (v: ContactParts) =>
+  [v.department, v.name, v.email, v.phone].map((x) => x.trim()).filter(Boolean).join(CONTACT_SEP);
+
+function ContactEditor(
+  { value, candidates, side, onChange }: {
+    value: string; candidates: Candidate[];
+    /** 甲（相手先）なら取引先の担当者、乙（当社）なら案件の担当者を候補に出す。 */
+    side: "licensor" | "licensee";
+    onChange: (v: string) => void;
+  }
+) {
+  const v = splitContact(value);
+  const set = (key: keyof ContactParts, x: string) => onChange(joinContactParts({ ...v, [key]: x }));
+  // 候補から 4 つまとめて入れる。候補の札は candidates.ts の付け方に合わせる。
+  const get = (label: string) => candidates.find((c) => c.label === label)?.value ?? "";
+  const from = (who: string) => ({
+    department: get(`${who}の部署`), name: get(`${who}の氏名`), email: get(`${who}のメール`), phone: get(`${who}の電話`)
+  });
+  const fill = (side === "licensor"
+    ? ["先方担当", "署名者", "請求先"].map((who) => ({ who, parts: from(who) }))
+    : [{ who: "案件の担当者", parts: { department: get("担当者の部署"), name: get("担当者名"),
+                                       email: get("担当者のメール"), phone: get("担当者の電話") } }])
+    .filter((x) => x.parts.name || x.parts.email);
+  const cell = (key: keyof ContactParts, label: string, placeholder: string, type = "text") => (
+    <label className="stack" style={{ gap: 2, minWidth: 0 }}>
+      <small className="faint">{label}</small>
+      <input value={v[key]} placeholder={placeholder} type={type}
+             onChange={(e) => set(key, e.target.value)} />
+    </label>
+  );
+  return (
+    <div className="stack" style={{ gap: 4 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 8px" }}>
+        {cell("department", "部署", "編集部")}
+        {cell("name", "氏名", "担当者名")}
+        {cell("email", "メール", "tanto@example.co.jp", "email")}
+        {cell("phone", "電話", "03-0000-0000", "tel")}
+      </div>
+      <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+        <span className="faint">紙には「{joinContactParts(v) || "（空）"}」と出ます</span>
+        {fill.map((x) => (
+          <button key={x.who} type="button" className="linky"
+                  onClick={() => onChange(joinContactParts(x.parts))}>{x.who}を入れる</button>
+        ))}
+      </div>
+    </div>
   );
 }

@@ -111,6 +111,7 @@ export function buildCandidates(context: Record<string, any>): Candidate[] {
     add("担当", "担当者名", o.name, "text");
     add("担当", "担当者の部署", o.department, "text");
     add("担当", "担当者のメール", o.email, "text");
+    add("担当", "担当者の電話", o.phone, "text");
   }
 
   const sc = context.schedule;
