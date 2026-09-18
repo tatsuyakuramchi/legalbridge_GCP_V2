@@ -395,6 +395,7 @@ function PartyEdit(
 ) {
   const [v, setV] = useState({
     name: party.name,
+    partyCode: party.partyCode ?? "",
     kind: party.kind as string,
     nameKana: party.nameKana ?? "",
     invoiceNo: party.invoiceNo ?? "",
@@ -414,6 +415,8 @@ function PartyEdit(
     try {
       await api.patch(`/parties/${party.id}`, {
         name: v.name.trim(), kind: v.kind,
+        // コードは変えたときだけ送る（空で送ると「空にできない」と止まる）。
+        ...(v.partyCode.trim() !== (party.partyCode ?? "") ? { partyCode: v.partyCode.trim() } : {}),
         // 空文字は「消す」。サーバ側で NULL に落として、書類の空欄判定を効かせる。
         nameKana: v.nameKana, invoiceNo: v.invoiceNo, corporateNo: v.corporateNo,
         withholding: v.withholding,
@@ -427,7 +430,7 @@ function PartyEdit(
   }
 
   const field = (
-    key: "name" | "nameKana" | "invoiceNo" | "corporateNo" | "address" | "phone" | "email",
+    key: "name" | "partyCode" | "nameKana" | "invoiceNo" | "corporateNo" | "address" | "phone" | "email",
     label: string, placeholder?: string, hint?: string
   ) => (
     <label className="field">
@@ -445,6 +448,8 @@ function PartyEdit(
       {error && <div className="alert">{error}</div>}
       <div className="form-grid">
         {field("name", "名称", "株式会社◯◯", "書類の宛名になります。空にはできません")}
+        {field("partyCode", "取引先コード", "PTY-2026-00001",
+               "会計・旧システムの番号に合わせて直せます。他の取引先と重なる番号は使えません。決定済みの文書は変わりません")}
         <label className="field">
           <span>区分</span>
           <select value={v.kind} disabled={busy}

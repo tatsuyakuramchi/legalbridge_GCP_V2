@@ -149,6 +149,13 @@ export class PartyWriteService {
       put("name", name);
     }
     if (input.kind !== undefined) put("kind", input.kind);
+    // 取引先コードは会計・旧システムの番号に合わせて後から直せる。参照は id で
+    // 持っているので繋がりは切れない。決定済みの文書は焼き付いた値のまま。
+    if (input.partyCode !== undefined) {
+      const code = String(input.partyCode ?? "").trim();
+      if (!code) throw new DomainError("VALIDATION", "取引先コードは空にできません");
+      put("party_code", code);
+    }
     if (input.nameKana !== undefined) put("name_kana", blank(input.nameKana));
     if (input.aliases !== undefined) {
       put("aliases", input.aliases.map((a) => String(a).trim()).filter(Boolean));
@@ -166,12 +173,22 @@ export class PartyWriteService {
     try {
       return await inTransaction(this.database, async (client) => {
         const head = await client.query(
-          "SELECT id, name, status FROM parties WHERE id = $1 FOR UPDATE", [id]);
-        const before = head.rows[0] as { name: string; status: string } | undefined;
+          "SELECT id, name, status, party_code FROM parties WHERE id = $1 FOR UPDATE", [id]);
+        const before = head.rows[0] as { name: string; status: string; party_code: string | null } | undefined;
         if (!before) throw new DomainError("NOT_FOUND", `取引先 ${id} が見つかりません`);
         if (before.status === "merged") {
           throw new DomainError("CONFLICT",
             "統合された取引先は直せません。直すなら先に統合を取り消してください");
+        }
+        if (input.partyCode !== undefined) {
+          const code = String(input.partyCode).trim();
+          const taken = await client.query(
+            "SELECT id, name FROM parties WHERE lower(btrim(party_code)) = lower(btrim($1)) AND id <> $2 LIMIT 1",
+            [code, id]);
+          const hit = taken.rows[0] as { id: number; name: string } | undefined;
+          if (hit) {
+            throw new DomainError("CONFLICT", `取引先コード ${code} は既に「${hit.name}」（#${Number(hit.id)}）で使われています`);
+          }
         }
 
         const r = await client.query(
@@ -184,7 +201,10 @@ export class PartyWriteService {
           actor, action: "party.update", targetType: "party", targetId: id,
           // 値そのものは残さない（住所・電話は書類に出る個人の連絡先でもある）。
           // 何をいつ誰が直したかが辿れれば足りる。
-          detail: { fields: changed, name: String(row.name), was: before.name }
+          detail: { fields: changed, name: String(row.name), was: before.name,
+                    // コードは番号なので残す（旧番号で探せるように）。
+                    ...(changed.includes("party_code")
+                      ? { partyCode: String(row.party_code ?? ""), partyCodeWas: before.party_code ?? null } : {}) }
         });
 
         return {

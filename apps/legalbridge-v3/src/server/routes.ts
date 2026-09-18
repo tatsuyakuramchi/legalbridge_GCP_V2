@@ -697,7 +697,7 @@ export function createRoutes(database: Transactable) {
    * 直せなかった。書類の宛名・頭書き・インボイス番号はここから出る。
    */
   const partyPatchSchema = partySchema
-    .omit({ allowDuplicate: true, partyCode: true })
+    .omit({ allowDuplicate: true })
     .partial()
     .extend({ status: z.enum(["active", "archived"]).optional() });
   router.patch("/parties/:id", requireRole("admin", "legal"), requireWritable,
