@@ -154,7 +154,7 @@ export class DocumentIssueService {
    */
   async updateDraft(
     documentId: number,
-    input: { manualInputs?: Record<string, unknown>; conditionIds?: number[] },
+    input: { manualInputs?: Record<string, unknown>; conditionIds?: number[]; agreementId?: number | null },
     actor: string
   ): Promise<{ id: number }> {
     try {
@@ -171,6 +171,16 @@ export class DocumentIssueService {
           await client.query(
             "UPDATE documents SET manual_inputs = $2::jsonb WHERE id = $1",
             [documentId, JSON.stringify(input.manualInputs)]);
+        }
+
+        // 基本契約（発注書の準拠契約）。条件に契約が付いていないときや、別の
+        // 契約に基づく発注のときに人が選ぶ。null は「条件の契約に従う」。
+        if (input.agreementId !== undefined) {
+          if (input.agreementId !== null) {
+            const a = await client.query("SELECT id FROM agreements WHERE id = $1", [input.agreementId]);
+            if (!a.rows[0]) throw new DomainError("NOT_FOUND", `契約 ${input.agreementId} が見つかりません`);
+          }
+          await client.query("UPDATE documents SET agreement_id = $2 WHERE id = $1", [documentId, input.agreementId]);
         }
 
         if (input.conditionIds) {
@@ -194,7 +204,8 @@ export class DocumentIssueService {
           actor, action: "document.draft.update", targetType: "document", targetId: documentId,
           detail: {
             ...(input.manualInputs ? { fields: Object.keys(input.manualInputs) } : {}),
-            ...(input.conditionIds ? { conditions: input.conditionIds } : {})
+            ...(input.conditionIds ? { conditions: input.conditionIds } : {}),
+            ...(input.agreementId !== undefined ? { agreementId: input.agreementId } : {})
           }
         });
         return { id: documentId };

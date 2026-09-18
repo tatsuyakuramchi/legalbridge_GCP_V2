@@ -123,6 +123,13 @@ export function DocumentsWorkspace(
   const [draft, setDraft] = useState<{ id: number; no: string | null } | null>(null);
   /** 開いている下書きの案件。条件の候補をこの案件のぶんに絞る。 */
   const [draftMatterId, setDraftMatterId] = useState<number | null>(null);
+  /**
+   * 基本契約（発注書の準拠契約・条件書の基本契約）。null は「選んだ条件に
+   * 付いている契約に従う」。条件に契約が無いときや、別の契約に基づくときに選ぶ。
+   */
+  const [agreementId, setAgreementId] = useState<number | null>(null);
+  const [agreements, setAgreements] = useState<Array<{ id: number; agreementNo: string | null; title: string;
+    status: string; counterparty: { id: number; name: string } }>>([]);
   /** 案件が決まっているとき、その案件の条件だけを候補に出す（既定）。 */
   const [scopeToMatter, setScopeToMatter] = useState(true);
   /** 差し替え済み（改訂前）の版も候補に出すか。既定は出さない。 */
@@ -388,6 +395,20 @@ export function DocumentsWorkspace(
       .filter((v): v is number => typeof v === "number"))];
     return ids.length === 1 ? ids[0] : null;
   })();
+  // 基本契約の選択肢は、この相手先の契約だけ。他社の契約が並ぶと選び間違える。
+  useEffect(() => {
+    if (!partyId) { setAgreements([]); return; }
+    let live = true;
+    api.get<{ agreements: typeof agreements }>("/agreements")
+      .then((r) => { if (live) setAgreements(r.agreements.filter((a) => a.counterparty.id === partyId)); })
+      .catch(() => { if (live) setAgreements([]); });
+    return () => { live = false; };
+  }, [partyId]);
+  /** 選んだ条件に付いている契約（人が選ばなければこれに従う）。 */
+  const conditionAgreement = (() => {
+    const found = picked.map((id) => conditions.find((c) => c.id === id)?.agreement).filter(Boolean);
+    return found[0] ?? null;
+  })();
   /**
    * 本文に渡す値。計算書だけ、手入力に試算の行を足す。
    *
@@ -404,8 +425,8 @@ export function DocumentsWorkspace(
   ), [isStatement, stmt, inputs]);
   const body = useMemo(() => ({
     templateKey, conditionIds: picked, eventIds: pickedEvents,
-    manualInputs: previewInputs, matterId
-  }), [templateKey, picked, pickedEvents, previewInputs, matterId]);
+    manualInputs: previewInputs, matterId, agreementId
+  }), [templateKey, picked, pickedEvents, previewInputs, matterId, agreementId]);
 
   // 打つたびに問い合わせない。少し待ってからプレビューを取り直す。
   const manualJson = useDebounced(JSON.stringify(previewInputs), 600);
@@ -432,11 +453,11 @@ export function DocumentsWorkspace(
     if (!templateKey) { setSpec(null); setRendered(null); return; }
     let live = true;
     api.post<PreviewResponse>("/documents/preview",
-      { templateKey, conditionIds: picked, eventIds: pickedEvents, manualInputs: {} })
+      { templateKey, conditionIds: picked, eventIds: pickedEvents, manualInputs: {}, agreementId })
       .then((r) => { if (live) { setSpec(r); setSpecKey(templateKey); } })
       .catch(() => undefined);
     return () => { live = false; };
-  }, [templateKey, picked.join(","), pickedEvents.join(",")]);
+  }, [templateKey, picked.join(","), pickedEvents.join(","), agreementId]);
 
   // 本文は打った値で作り直す。iframe の中身が変わるだけで、入力欄には触らない。
   useEffect(() => {
@@ -444,7 +465,7 @@ export function DocumentsWorkspace(
     let live = true;
     api.post<PreviewResponse>("/documents/preview",
       { templateKey, conditionIds: picked, eventIds: pickedEvents,
-        manualInputs: JSON.parse(manualJson) })
+        manualInputs: JSON.parse(manualJson), agreementId })
       .then((r) => { if (live) setRendered({ html: r.html, templateLabel: r.templateLabel }); })
       .catch(() => undefined);
     return () => { live = false; };
@@ -496,11 +517,11 @@ export function DocumentsWorkspace(
       const manualInputs = { ...inputs, _eventIds: pickedEvents };
       let id: number;
       if (draft) {
-        await api.patch(`/documents/${draft.id}/draft`, { manualInputs, conditionIds: picked });
+        await api.patch(`/documents/${draft.id}/draft`, { manualInputs, conditionIds: picked, agreementId });
         id = draft.id;
       } else {
         const r = await api.post<{ id: number }>("/documents",
-          { templateKey, conditionIds: picked, manualInputs, matterId });
+          { templateKey, conditionIds: picked, manualInputs, matterId, agreementId });
         id = r.id;
         setDraft({ id, no: null });
       }
@@ -528,7 +549,7 @@ export function DocumentsWorkspace(
         // 開いている下書きを直してから発行する。発行は下書きに保存された
         // 手入力しか見ないので、先に書き戻す。
         await api.patch(`/documents/${draft.id}/draft`,
-          { manualInputs: { ...inputs, _eventIds: pickedEvents }, conditionIds: picked });
+          { manualInputs: { ...inputs, _eventIds: pickedEvents }, conditionIds: picked, agreementId });
         const r = await api.post<{ id: number; documentNo: string }>(
           `/documents/${draft.id}/issue`, { eventIds: pickedEvents });
         done = { id: r.id, documentNo: r.documentNo };
@@ -685,12 +706,13 @@ export function DocumentsWorkspace(
     try {
       const d = await api.get<{
         id: number; documentNo: string | null; templateKey: string | null;
-        matterId: number | null;
+        matterId: number | null; agreementId: number | null;
         manualInputs: Record<string, unknown>;
         conditions: Array<{ id: number }>;
         eventIds: number[];
       }>(`/documents/${id}`);
       setDraftMatterId(d.matterId ?? null);
+      setAgreementId(d.agreementId ?? null);
       if (!d.templateKey) {
         throw new ApiError(400, "ひな形を持たない文書は直せません");
       }
@@ -927,6 +949,32 @@ export function DocumentsWorkspace(
                     </label>
                   ))}
                 </div>
+                {/* 基本契約。発注書の準拠条項と「基本契約名 / 番号」はここから出る。
+                    条件に契約が付いていれば黙ってそれを使うが、付いていない条件や
+                    別の契約に基づく発注では人が選ぶ。 */}
+                {picked.length > 0 && partyId && (
+                  <label className="field" style={{ marginTop: 6 }}>
+                    <span>基本契約</span>
+                    <span className="stack" style={{ gap: 2 }}>
+                      <select value={agreementId ?? ""} onChange={(e) => setAgreementId(e.target.value ? Number(e.target.value) : null)}>
+                        <option value="">
+                          {conditionAgreement
+                            ? `条件の契約に従う（${conditionAgreement.title}${conditionAgreement.agreementNo ? ` ${conditionAgreement.agreementNo}` : ""}）`
+                            : "条件に契約が付いていない（基本契約なしで出す）"}
+                        </option>
+                        {agreements.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.title}{a.agreementNo ? ` ${a.agreementNo}` : ""}{a.status !== "executed" ? `（${a.status}）` : ""}
+                          </option>
+                        ))}
+                      </select>
+                      <small className="faint">
+                        発注書の「基本契約名 / 番号」と準拠条項に出ます。基本契約に基づかない発注にするなら、
+                        項目の「基本契約あり」を外してください
+                      </small>
+                    </span>
+                  </label>
+                )}
               </div>
 
               {(events.length > 0 || ((usesDeliveryLines || isStatement) && picked.length > 0)) && (

@@ -2024,7 +2024,9 @@ export function createRoutes(database: Transactable) {
    */
   const draftPatchSchema = z.object({
     manualInputs: z.record(z.string(), z.unknown()).optional(),
-    conditionIds: z.array(z.coerce.number().int().positive()).max(200).optional()
+    conditionIds: z.array(z.coerce.number().int().positive()).max(200).optional(),
+    // 基本契約。null で「条件の契約に従う」に戻す。
+    agreementId: z.coerce.number().int().positive().nullable().optional()
   });
   router.patch("/documents/:id/draft",
     requireRole("admin", "legal"), requireWritable,

@@ -245,3 +245,21 @@ test("現行版のままの下書きは付け替えない", async () => {
   await new DocumentIssueService(db).issue(1, "kuramochi");
   assert.equal(db.find("UPDATE documents SET template_version_id"), undefined);
 });
+
+test("下書きの基本契約を選び直せる。null で条件の契約に戻す。無い契約は止める", async () => {
+  const db = new FakeDatabase((t) => {
+    if (t.includes("SELECT id, status FROM documents WHERE id = $1 FOR UPDATE")) return [{ id: 1, status: "draft" }];
+    if (t.includes("SELECT id FROM agreements WHERE id = $1")) return [{ id: 201 }];
+    return [];
+  });
+  const svc = new DocumentIssueService(db);
+  await svc.updateDraft(1, { agreementId: 201 }, "k");
+  assert.deepEqual(db.find("UPDATE documents SET agreement_id")!.params, [1, 201]);
+  await svc.updateDraft(1, { agreementId: null }, "k");
+  assert.deepEqual(db.all("UPDATE documents SET agreement_id").at(-1)!.params, [1, null]);
+  const none = new FakeDatabase((t) => {
+    if (t.includes("SELECT id, status FROM documents WHERE id = $1 FOR UPDATE")) return [{ id: 1, status: "draft" }];
+    return [];
+  });
+  await assert.rejects(() => new DocumentIssueService(none).updateDraft(1, { agreementId: 999 }, "k"), /契約 999/);
+});
