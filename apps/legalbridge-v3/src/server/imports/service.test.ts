@@ -253,3 +253,49 @@ test("条件の更新：無効・旧版は止める。当てる手がかりの�
   await assert.rejects(() => new ImportService(condDb()).run({
     kind: "license_conditions", csv: "料率\n11", dryRun: true, actor: "k", mode: "update" }), /条件番号/);
 });
+
+/**
+ * 翻訳版再許諾（A-033）。取引モデルの選択肢に紙・電子の翻訳版が増え、
+ * 「別途合意」の列で再許諾ごとの合意の要否を入れられる。
+ */
+test("登録：翻訳版再許諾（紙・電子）を取り込み、別途合意の要否も入る", async () => {
+  const db = build();
+  const csv = [
+    "作品名,許諾者,取引モデル,料率,別途合意",
+    "ito,権利者名,翻訳版再許諾（紙）,50,要",
+    "ito,権利者名,翻訳版再許諾（電子）,40,不要"
+  ].join("\n");
+  const r = await new ImportService(db).run({ kind: "license_conditions", csv, dryRun: false, actor: "k" });
+  assert.equal(r.ok, 2, JSON.stringify(r.rows));
+  // 再許諾先が決まっていなくても作れる（相手は後から決まる）。
+  assert.match(r.rows[0].message ?? "", /ito｜翻訳版再許諾（紙）/);
+  const inserts = db.all("INSERT INTO conditions");
+  assert.equal(inserts.length, 2);
+  const usage = inserts.map((q) => q.params.find((p) => String(p).startsWith("pub_sub")));
+  assert.deepEqual(usage, ["pub_sub_print", "pub_sub_digital"]);
+  assert.ok(inserts[0].params.includes("required"), "紙は「要」");
+  assert.ok(inserts[1].params.includes("covered"), "電子は「不要」");
+});
+
+test("登録：別途合意は翻訳版再許諾だけの列。読めない値は行ごとに止める", async () => {
+  const db = build();
+  const csv = [
+    "作品名,許諾者,取引モデル,料率,別途合意",
+    "ito,権利者名,紙出版,11,",
+    "ito,権利者名,翻訳版再許諾（紙）,50,たぶん要る"
+  ].join("\n");
+  const r = await new ImportService(db).run({ kind: "license_conditions", csv, dryRun: true, actor: "k" });
+  assert.equal(r.ok, 1);
+  assert.equal(r.error, 1);
+  assert.match(r.rows[1].message ?? "", /別途合意は「要」か「不要」です/);
+});
+
+test("条件の更新：別途合意だけを直せる", async () => {
+  const db = condDb();
+  const r = await new ImportService(db).run({
+    kind: "license_conditions", csv: "条件番号,別途合意\nCL-1,不要", dryRun: false, actor: "k", mode: "update" });
+  assert.equal(r.ok, 1, JSON.stringify(r.rows));
+  const q = db.find("UPDATE conditions SET")!;
+  assert.match(q.text, /sublicense_consent = \$2/);
+  assert.equal(q.params[1], "covered");
+});

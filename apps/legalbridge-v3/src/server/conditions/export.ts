@@ -18,7 +18,7 @@ import type { ConditionUsageType } from "../core/condition-usage.js";
 /** 取込（license_conditions）と同じ見出し。並びも合わせる。 */
 export const CONDITION_EXPORT_HEADERS = [
   "条件番号", "作品コード", "作品名", "許諾者コード", "許諾者", "契約番号",
-  "取引モデル", "料率", "独占", "MG", "AG", "開始日", "終了日", "通貨",
+  "取引モデル", "料率", "独占", "MG", "AG", "別途合意", "開始日", "終了日", "通貨",
   "支払条件", "地域", "言語", "備考", "状態"
 ] as const;
 
@@ -80,7 +80,7 @@ export class ConditionExportService {
     try {
       const r = await this.database.query(
         `SELECT c.condition_no, c.usage_type, c.rate_ppm, c.exclusivity, c.mg_amount, c.ag_amount,
-                c.term_start, c.term_end, c.currency, c.payment_terms, c.notes, c.status,
+                c.sublicense_consent, c.term_start, c.term_end, c.currency, c.payment_terms, c.notes, c.status,
                 w.work_code, w.title AS work_title,
                 p.party_code, p.name AS party_name,
                 ag.agreement_no,
@@ -111,6 +111,8 @@ export class ConditionExportService {
         x.exclusivity === "exclusive" ? "独占" : x.exclusivity === "non_exclusive" ? "非独占" : "",
         int(x.mg_amount) ?? "",
         int(x.ag_amount) ?? "",
+        // 別途合意（A-033）。翻訳版再許諾だけが持つ。それ以外は空。
+        x.sublicense_consent === "required" ? "要" : x.sublicense_consent === "covered" ? "不要" : "",
         dateStr(x.term_start) ?? "",
         dateStr(x.term_end) ?? "",
         str(x.currency) ?? "",

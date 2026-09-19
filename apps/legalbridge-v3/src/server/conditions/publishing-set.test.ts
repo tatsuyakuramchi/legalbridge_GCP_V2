@@ -41,9 +41,9 @@ test("紙と電子の2本を1回で登録する。媒体は範囲に入る", asy
   // 向き IN・種類 license・料率。11% → 110000 ppm。
   assert.equal(inserts[0].params[2], "in");
   assert.equal(inserts[0].params[3], "license");
-  assert.equal(inserts[0].params[13], "revenue_rate");
-  assert.equal(inserts[0].params[14], 110_000);
-  assert.equal(inserts[1].params[14], 150_000);
+  assert.equal(inserts[0].params[14], "revenue_rate");
+  assert.equal(inserts[0].params[15], 110_000);
+  assert.equal(inserts[1].params[15], 150_000);
   const scopes = db.queries.filter((q) => q.text.includes("INSERT INTO condition_scopes"));
   assert.deepEqual(scopes.map((q) => [q.params[1], q.params[2], q.params[3]]),
     [["region", "全世界", "WORLD"], ["media", "紙", "print"],
@@ -57,7 +57,7 @@ test("紙だけでもよい。どちらも無ければ止める", async () => {
   assert.equal(r.digital, null);
   await assert.rejects(
     () => new ConditionWriteService(build()).createPublishingSet({ ...base, print: null, digital: null }, "k"),
-    /紙・電子・再許諾のどれか/);
+    /紙・電子・翻訳版・再許諾のどれか/);
 });
 
 test("料率の範囲を検証する。作品も条件名も無ければ止める", async () => {

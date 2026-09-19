@@ -24,8 +24,14 @@ export const USAGE_NAME_LABEL: Record<ConditionUsageType, string> = {
   sublicense: "再許諾",
   oem: "自社製造・他社販売",
   pub_print: "紙出版",
-  pub_digital: "電子出版"
+  pub_digital: "電子出版",
+  // 翻訳版の再許諾（A-033）。相手が決まる前に作るので、再許諾先は名前に要らない。
+  pub_sub_print: "翻訳版再許諾（紙）",
+  pub_sub_digital: "翻訳版再許諾（電子）"
 };
+
+/** 再許諾先を名前に入れる取引モデル。出版の翻訳版は相手が後から決まるので入れない。 */
+const NEEDS_SUBLICENSEE = new Set<ConditionUsageType>(["sublicense"]);
 
 export const NAME_SEPARATOR = "｜";
 
@@ -44,12 +50,15 @@ export function conditionNameFor(input: NamingInput): string | null {
   if (!title) return null;
   const label = USAGE_NAME_LABEL[input.usageType];
   if (!label) return null;
-  if (input.usageType === "sublicense") {
-    const to = String(input.sublicensee ?? "").trim();
-    const why = String(input.purpose ?? "").trim();
+  const to = String(input.sublicensee ?? "").trim();
+  const why = String(input.purpose ?? "").trim();
+  if (NEEDS_SUBLICENSEE.has(input.usageType)) {
+    // ゲームの再許諾は相手ごとに1本ずつ立つので、相手が無いと名前が重なる。
     if (!to) return null;
     return `${title}${NAME_SEPARATOR}${label}（${why ? `${to}／${why}` : to}）`;
   }
+  // 翻訳版は作品1点につき紙・電子で1本ずつ。相手が決まっていれば添える。
+  if (to) return `${title}${NAME_SEPARATOR}${label}（${why ? `${to}／${why}` : to}）`;
   return `${title}${NAME_SEPARATOR}${label}`;
 }
 
@@ -66,6 +75,9 @@ export function parseUsageType(text: unknown): ConditionUsageType | null {
     if (u.label.replace(/[()（）]/g, "") === s) return u.value;
   }
   const alias: Record<string, ConditionUsageType> = {
+    翻訳版: "pub_sub_print", 翻訳版紙: "pub_sub_print", 翻訳版再許諾紙: "pub_sub_print",
+    翻訳版電子: "pub_sub_digital", 翻訳版再許諾電子: "pub_sub_digital",
+    翻訳版再許諾: "pub_sub_print",
     紙: "pub_print", 出版紙: "pub_print", 紙出版: "pub_print", print: "pub_print",
     電子: "pub_digital", 出版電子: "pub_digital", 電子出版: "pub_digital", digital: "pub_digital",
     自社製造自社販売: "in_house", 自社販売: "in_house",

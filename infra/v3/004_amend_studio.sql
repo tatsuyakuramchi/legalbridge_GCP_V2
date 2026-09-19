@@ -1431,4 +1431,11 @@ SELECT * FROM (
             WHERE table_schema='v3' AND table_name='parties' AND column_name IN ('representative_title', 'representative_name'))
         + (SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='party_contacts' AND column_name = 'roles'))::text
+  UNION ALL
+  SELECT 33, '翻訳版再許諾と別途合意（A-033。列 1 と CHECK 1 で 2 であること）',
+         ((SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='v3' AND table_name='conditions' AND column_name = 'sublicense_consent')
+        + (SELECT count(*) FROM pg_constraint
+            WHERE conrelid='v3.conditions'::regclass AND conname='conditions_usage_type_chk'
+              AND pg_get_constraintdef(oid) LIKE '%pub_sub_print%'))::text
 ) AS 確認 ORDER BY n;

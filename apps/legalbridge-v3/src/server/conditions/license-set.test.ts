@@ -38,7 +38,7 @@ test("利用形態ごとに1本ずつ、1トランザクションで作る。利
   const inserts = db.queries.filter((q) => q.text.includes("INSERT INTO conditions"));
   assert.equal(inserts.length, 3);
   // 利用形態は最後の列（$29）。料率は ppm。MG は行ごと。
-  assert.deepEqual(inserts.map((q) => [q.params[28], q.params[14], q.params[17]]),
+  assert.deepEqual(inserts.map((q) => [q.params[29], q.params[15], q.params[18]]),
     [["in_house", 20_000, 100000], ["sublicense", 500_000, null], ["oem", 20_000, null]]);
   // ゲームの利用形態には媒体の範囲を付けない。
   assert.equal(db.queries.filter((q) => q.text.includes("INSERT INTO condition_scopes")).length, 0);
@@ -53,7 +53,7 @@ test("出版セットは許諾セットの特例：利用形態 pub_print / pub_
   assert.equal(r.print?.id, 101);
   assert.equal(r.digital?.id, 102);
   const inserts = db.queries.filter((q) => q.text.includes("INSERT INTO conditions"));
-  assert.deepEqual(inserts.map((q) => q.params[28]), ["pub_print", "pub_digital"]);
+  assert.deepEqual(inserts.map((q) => q.params[29]), ["pub_print", "pub_digital"]);
   const scopes = db.queries.filter((q) => q.text.includes("INSERT INTO condition_scopes"));
   assert.deepEqual(scopes.map((q) => [q.params[1], q.params[2], q.params[3]]),
     [["media", "紙", "print"], ["media", "電子", "digital"]]);

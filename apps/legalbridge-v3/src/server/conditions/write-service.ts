@@ -17,6 +17,16 @@ export interface PublishingTerms {
   ratePct: number;
   exclusivity?: "exclusive" | "non_exclusive" | null;
 }
+/**
+ * 翻訳版の再許諾（A-033）。乙が第三者に出させ、受領額から甲へ払う。
+ * 相手が決まる前に作るので、再許諾先は無くてよい（決まっていれば条件名に入る）。
+ */
+export interface PublishingTranslationTerms extends PublishingTerms {
+  /** 再許諾ごとの別途合意。covered=不要（本条件書で許諾済み）/ required=要。 */
+  consent?: "covered" | "required" | null;
+  sublicensee?: string | null;
+  purpose?: string | null;
+}
 export interface PublishingSetInput {
   matterId?: number | null;
   /**
@@ -37,11 +47,16 @@ export interface PublishingSetInput {
   scopes?: ConditionScope[];
   print?: PublishingTerms | null;
   digital?: PublishingTerms | null;
+  /** 翻訳版の再許諾（A-033）。紙・電子で率が違うので別々に持つ。 */
+  translationPrint?: PublishingTranslationTerms | null;
+  translationDigital?: PublishingTranslationTerms | null;
   /** 出版の再許諾（翻訳出版など）。再許諾先と目的が条件名に入る。 */
   sublicense?: (PublishingTerms & { sublicensee?: string | null; purpose?: string | null }) | null;
 }
 export type PublishingSetResult = Record<PubMedia, { id: number; conditionNo: string | null } | null>
-  & { sublicense?: { id: number; conditionNo: string | null } | null };
+  & { sublicense?: { id: number; conditionNo: string | null } | null;
+      translationPrint?: { id: number; conditionNo: string | null } | null;
+      translationDigital?: { id: number; conditionNo: string | null } | null; };
 
 /** 許諾セットの1行。利用形態ごとの料率と独占性。 */
 export interface LicenseSetRow {
@@ -55,6 +70,8 @@ export interface LicenseSetRow {
   sublicensee?: string | null;
   /** 再許諾の目的。条件名に入る。 */
   purpose?: string | null;
+  /** 再許諾の別途合意（A-033）。翻訳版の条文と一覧の印が出し分かれる。 */
+  sublicenseConsent?: "covered" | "required" | null;
 }
 export interface LicenseSetInput {
   matterId?: number | null;
@@ -172,6 +189,8 @@ export interface ConditionInput {
   workPartId?: number | null;
   exclusivity?: "exclusive" | "non_exclusive" | null;
   sublicensable?: boolean | null;
+  /** 再許諾の別途合意（A-033）。covered=不要 / required=要。空は「要」扱い。 */
+  sublicenseConsent?: "covered" | "required" | null;
   termStart?: string | null;
   termEnd?: string | null;
   currency?: string;
@@ -221,6 +240,8 @@ export interface EconomicsPatch {
   /** 作品と独占性。登録のときに入れられるのに、編集で直せなかった。 */
   workId?: number | null;
   exclusivity?: "exclusive" | "non_exclusive" | null;
+  /** 再許諾の別途合意（A-033）。 */
+  sublicenseConsent?: "covered" | "required" | null;
   spec?: string | null;
   deliverableOwnership?: "orderer" | "contractor" | null;
   orderNo?: string | null;
@@ -232,7 +253,7 @@ const ECONOMICS_COLUMNS: Record<keyof EconomicsPatch, string> = {
   mgAmount: "mg_amount", agAmount: "ag_amount", termStart: "term_start", termEnd: "term_end",
   paymentTerms: "payment_terms", taxCategory: "tax_category", notes: "notes",
   quantity: "quantity", contractForm: "contract_form",
-  workId: "work_id", exclusivity: "exclusivity",
+  workId: "work_id", exclusivity: "exclusivity", sublicenseConsent: "sublicense_consent",
   spec: "spec", deliverableOwnership: "deliverable_ownership", orderNo: "order_no",
   usageType: "usage_type"
 };
@@ -240,7 +261,7 @@ const ECONOMICS_COLUMNS: Record<keyof EconomicsPatch, string> = {
 // 改訂で引き継ぐ列（id・状態・監査列を除く条件の中身すべて）。
 const COPY_COLUMNS = [
   "condition_no", "agreement_id", "parent_id", "direction", "kind", "name", "counterparty_id",
-  "work_id", "work_part_id", "exclusivity", "sublicensable", "term_start", "term_end",
+  "work_id", "work_part_id", "exclusivity", "sublicensable", "sublicense_consent", "term_start", "term_end",
   "currency", "pricing_model", "rate_ppm", "unit_amount", "flat_amount", "mg_amount", "ag_amount",
   "royalty_base", "deductible_costs", "tax_category", "withholding_note", "payment_terms",
   "cycle", "notes", "series_id", "effective_from", "spec", "deliverable_ownership", "order_no",
@@ -354,7 +375,8 @@ export class ConditionWriteService {
       paymentTerms: input.paymentTerms ?? null,
       notes: input.notes ?? null,
       scopes,
-      usageType: row.usageType
+      usageType: row.usageType,
+      sublicenseConsent: row.sublicenseConsent ?? null
     }));
     for (const one of inputs) validateConditionInput(one);
 
@@ -407,8 +429,9 @@ export class ConditionWriteService {
    * 1本でもよい）。許諾セットの特例で、同じ実装を通る。
    */
   async createPublishingSet(input: PublishingSetInput, actor: string): Promise<PublishingSetResult> {
-    if (!input.print && !input.digital && !input.sublicense) {
-      throw new DomainError("VALIDATION", "紙・電子・再許諾のどれかの料率を入れてください");
+    if (!input.print && !input.digital && !input.sublicense
+        && !input.translationPrint && !input.translationDigital) {
+      throw new DomainError("VALIDATION", "紙・電子・翻訳版・再許諾のどれかの料率を入れてください");
     }
     const rows: LicenseSetRow[] = [];
     if (input.print) rows.push({ usageType: "pub_print", ratePct: input.print.ratePct, exclusivity: input.print.exclusivity ?? null });
@@ -417,13 +440,23 @@ export class ConditionWriteService {
       rows.push({ usageType: "sublicense", ratePct: input.sublicense.ratePct, exclusivity: input.sublicense.exclusivity ?? null,
                   sublicensee: input.sublicense.sublicensee ?? null, purpose: input.sublicense.purpose ?? null });
     }
-    const { print: _p, digital: _d, sublicense: _s, ...rest } = input;
+    // 翻訳版の再許諾（A-033）。紙・電子で1本ずつ。
+    for (const [usage, terms] of [["pub_sub_print", input.translationPrint],
+                                  ["pub_sub_digital", input.translationDigital]] as const) {
+      if (!terms) continue;
+      rows.push({ usageType: usage, ratePct: terms.ratePct, exclusivity: terms.exclusivity ?? null,
+                  sublicensee: terms.sublicensee ?? null, purpose: terms.purpose ?? null,
+                  sublicenseConsent: terms.consent ?? null });
+    }
+    const { print: _p, digital: _d, sublicense: _s,
+            translationPrint: _tp, translationDigital: _td, ...rest } = input;
     const made = await this.createLicenseSet({ ...rest, rows }, actor);
     const pick = (usage: ConditionUsageType) => {
       const found = made.conditions.find((c) => c.usageType === usage);
       return found ? { id: found.id, conditionNo: found.conditionNo } : null;
     };
-    return { print: pick("pub_print"), digital: pick("pub_digital"), sublicense: pick("sublicense") };
+    return { print: pick("pub_print"), digital: pick("pub_digital"), sublicense: pick("sublicense"),
+             translationPrint: pick("pub_sub_print"), translationDigital: pick("pub_sub_digital") };
   }
 
   /**
@@ -508,19 +541,19 @@ export class ConditionWriteService {
 
         const inserted = await client.query(
           `INSERT INTO conditions (condition_no, agreement_id, direction, kind, name, counterparty_id,
-                                   work_id, work_part_id, exclusivity, sublicensable,
+                                   work_id, work_part_id, exclusivity, sublicensable, sublicense_consent,
                                    term_start, term_end, currency, pricing_model,
                                    rate_ppm, unit_amount, flat_amount, mg_amount, ag_amount,
                                    tax_category, payment_terms, cycle, status, notes,
                                    spec, deliverable_ownership, order_no,
                                    quantity, contract_form, usage_type)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-                   $15, $16, $17, $18, $19, $20, $21, $22, 'active', $23, $24, $25, $26,
-                   $27, $28, $29)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+                   $16, $17, $18, $19, $20, $21, $22, $23, 'active', $24, $25, $26, $27,
+                   $28, $29, $30)
            RETURNING id, condition_no`,
           [no, input.agreementId ?? null, input.direction, input.kind, name, input.counterpartyId,
            input.workId ?? null, input.workPartId ?? null,
-           input.exclusivity ?? null, input.sublicensable ?? null,
+           input.exclusivity ?? null, input.sublicensable ?? null, input.sublicenseConsent ?? null,
            input.termStart ?? null, input.termEnd ?? null, input.currency ?? "JPY", pricing,
            input.ratePpm ?? null, input.unitAmount ?? null, flatAmount,
            input.mgAmount ?? null, input.agAmount ?? null,

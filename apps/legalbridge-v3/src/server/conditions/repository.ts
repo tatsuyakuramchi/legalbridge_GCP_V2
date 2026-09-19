@@ -114,6 +114,7 @@ export class ConditionRepository {
     const detail = await this.database.query(
       `SELECT ${SUMMARY_COLUMNS},
               c.agreement_id, c.parent_id, c.work_part_id, c.exclusivity, c.sublicensable,
+              c.sublicense_consent,
               c.tax_category, c.payment_terms, c.contract_form, c.cycle, c.notes,
               c.spec, c.deliverable_ownership, c.order_no,
               pc.condition_no AS parent_condition_no,
@@ -146,6 +147,7 @@ export class ConditionRepository {
       exclusivity: row.exclusivity ?? null,
       sublicensable: row.sublicensable === null || row.sublicensable === undefined
         ? null : Boolean(row.sublicensable),
+      sublicenseConsent: (str(row.sublicense_consent) as "covered" | "required" | null) ?? null,
       taxCategory: row.tax_category ?? "taxable",
       paymentTerms: str(row.payment_terms),
       contractForm: str(row.contract_form),

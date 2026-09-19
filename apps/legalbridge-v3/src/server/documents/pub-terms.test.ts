@@ -135,7 +135,11 @@ test("本文の文脈：甲＝取引先、乙＝当社、通知先・源泉・�
   assert.deepEqual(patch.titles[1], {
     no: 2, title: "ねこの図書館", edition: "ねこの図書館 ①", copyright: "", thirdParty: "なし", note: "",
     printRate: "10%", printExclusivity: "独占", digitalRate: "—", digitalExclusivity: "—",
-    hasPrint: true, hasDigital: false
+    hasPrint: true, hasDigital: false,
+    // 翻訳版の再許諾（A-033）。この作品は翻訳版の条件を持たないので空。
+    // showTranslation は行ではなく表の都合（1点でもあれば全行に列が出る）。
+    translation: "—", translationLines: [], hasTranslation: false, translationConsent: "",
+    translationConsentRequired: false, showTranslation: false
   });
 });
 
@@ -203,4 +207,41 @@ test("ひな形は2本立て。作品の点数に合わないほうを選んで�
   // 作品が数点なのに別紙形式 → 一覧形式を勧める
   const few = { conditions: many.conditions.slice(0, 2) };
   assert.match(pubTermsWarnings(few, PUB_TERMS_ANNEX_KEY).map((x) => x.message).join("｜"), /一覧形式/);
+});
+
+test("翻訳版再許諾（A-033）：紙・電子の率を1つの欄にまとめ、別途合意の要否を添える", async () => {
+  const { pubTitleSeeds, pubTermsPatch, pubTermsWarnings } = await import("./pub-terms.js");
+  const base = {
+    pricingModel: "revenue_rate", counterpartyId: 5, workId: 10,
+    work: { title: "星降る夜のはなし", copyrightNotice: "© 2026 著者名" }
+  };
+  const context = { conditions: [
+    { ...base, id: 1, conditionNo: "CL-1", name: "星降る夜のはなし｜紙出版", usageType: "pub_print", ratePct: 10, exclusivity: "non_exclusive" },
+    { ...base, id: 2, conditionNo: "CL-2", name: "星降る夜のはなし｜電子出版", usageType: "pub_digital", ratePct: 15, exclusivity: "non_exclusive" },
+    { ...base, id: 3, conditionNo: "CL-3", name: "星降る夜のはなし｜翻訳版再許諾（紙）", usageType: "pub_sub_print", ratePct: 50, sublicenseConsent: "required" },
+    { ...base, id: 4, conditionNo: "CL-4", name: "星降る夜のはなし｜翻訳版再許諾（電子）", usageType: "pub_sub_digital", ratePct: 40, sublicenseConsent: "covered" }
+  ] };
+
+  // 種：自社出版と翻訳版は別の欄に畳む（1作品1行のまま）。
+  const seeds = pubTitleSeeds(context);
+  assert.equal(seeds.length, 1, "4本でも1行");
+  assert.equal(seeds[0].trans_print_rate, "50%");
+  assert.equal(seeds[0].trans_digital_rate, "40%");
+  assert.equal(seeds[0].trans_consent, "要", "紙と電子で違えば厳しいほう（要）に寄せる");
+
+  const patch = pubTermsPatch(context, { pub_titles: seeds });
+  const row = patch.titles[0];
+  assert.equal(row.printRate, "10%");
+  assert.equal(row.translation, "紙 50%／電子 40%");
+  assert.equal(row.translationConsent, "要");
+  assert.equal(row.hasTranslation, true);
+  assert.equal(patch.hasTranslationConditions, true);
+  assert.equal(patch.translationConsentRequired, true);
+  assert.equal(patch.hasTranslation, true, "手入力の取り分が無くても翻訳版の条を出す");
+
+  // 紙出版と翻訳版（紙）が1本ずつあるのは重複ではない。
+  assert.deepEqual(pubTermsWarnings(context).filter((w) => /2本あります/.test(w.message)), []);
+  // 同じ枠に2本あれば、これまでどおり重複として出す。
+  const dup = { conditions: [...context.conditions, { ...base, id: 5, conditionNo: "CL-5", name: "もう1本", usageType: "pub_sub_print", ratePct: 30 }] };
+  assert.match(pubTermsWarnings(dup).map((w) => w.message).join("｜"), /翻訳版の紙の条件が2本/);
 });

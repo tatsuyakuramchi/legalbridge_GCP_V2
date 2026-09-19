@@ -62,6 +62,11 @@ export interface ConditionDetail extends ConditionSummary {
   workPartName: string | null;
   exclusivity: "exclusive" | "non_exclusive" | null;
   sublicensable: boolean | null;
+  /**
+   * 再許諾ごとの別途合意（A-033）。翻訳版再許諾の条件だけが持つ。
+   * covered=不要（この条件書で許諾済み）／required=要（相手ごとに別途合意）。
+   */
+  sublicenseConsent: "covered" | "required" | null;
   taxCategory: "taxable" | "reduced" | "exempt";
   /** 支払条件。「月末締め翌月末払い」。読んで支払期日を出す。 */
   paymentTerms: string | null;

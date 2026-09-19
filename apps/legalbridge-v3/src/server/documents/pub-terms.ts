@@ -21,7 +21,7 @@
 import type { TemplateVariable } from "./binding.js";
 import type { Warning } from "./preflight.js";
 import { type PubMedia, pubMediaOfScopes } from "../core/pub-media.js";
-import { pubMediaOfUsage } from "../core/condition-usage.js";
+import { isSublicensingUsage, pubMediaOfUsage } from "../core/condition-usage.js";
 
 export const PUB_TERMS_KEY = "pub_license_terms_v3";
 /**
@@ -149,6 +149,17 @@ export const PUB_TERMS_VARIABLES: TemplateVariable[] = [
 export const mediaOfCondition = (condition: Data): PubMedia | null =>
   pubMediaOfUsage(condition?.usageType) ?? pubMediaOfScopes(condition?.scopes?.media);
 
+/** 翻訳版の再許諾か（A-033）。自社出版の紙・電子と分けて畳む。 */
+export const isTranslationCondition = (condition: Data): boolean =>
+  isSublicensingUsage(condition?.usageType);
+
+/**
+ * 再許諾の別途合意（A-033）。空は「要」扱い（黙って包括許諾にしない）。
+ * 条件書の条文と一覧の印がこれで出し分かれる。
+ */
+export const consentLabel = (value: unknown): "不要" | "要" =>
+  String(value ?? "") === "covered" ? "不要" : "要";
+
 const exclusivityText = (condition: Data | undefined): string =>
   condition ? text(condition.exclusivityLabel
     ?? (condition.exclusivity === "exclusive" ? "独占"
@@ -189,9 +200,14 @@ export function pubTitleSeeds(context: Data): Data[] {
     groups.get(key)!.push(condition);
   }
   return [...groups.values()].map((group) => {
-    const print = group.find((c) => mediaOfCondition(c) === "print");
-    const digital = group.find((c) => mediaOfCondition(c) === "digital");
-    const head = print ?? digital ?? group[0];
+    const own = group.filter((c) => !isTranslationCondition(c));
+    const trans = group.filter((c) => isTranslationCondition(c));
+    const print = own.find((c) => mediaOfCondition(c) === "print");
+    const digital = own.find((c) => mediaOfCondition(c) === "digital");
+    // 翻訳版の再許諾（A-033）。紙・電子で率が違うので別々に持つ。
+    const transPrint = trans.find((c) => mediaOfCondition(c) === "print");
+    const transDigital = trans.find((c) => mediaOfCondition(c) === "digital");
+    const head = print ?? digital ?? transPrint ?? transDigital ?? group[0];
     const title = text(head.work?.title) || text(head.name);
     // 対象出版物名は条件名。作品名と同じか、規則どおりの「作品名｜取引モデル」
     // なら空にして、紙に二重に出さない（規則名は台帳の都合で、出版物名ではない）。
@@ -210,8 +226,15 @@ export function pubTitleSeeds(context: Data): Data[] {
       print_exclusivity: print ? exclusivityText(print) || "—" : "—",
       digital_rate: digital ? percentText(digital.ratePct) : "—",
       digital_exclusivity: digital ? exclusivityText(digital) || "—" : "—",
+      trans_print_rate: transPrint ? percentText(transPrint.ratePct) : "",
+      trans_digital_rate: transDigital ? percentText(transDigital.ratePct) : "",
+      // 別途合意の要否。紙と電子で違えば、要のほうに寄せる（厳しいほうで書く）。
+      trans_consent: trans.length
+        ? (trans.some((c) => consentLabel(c.sublicenseConsent) === "要") ? "要" : "不要") : "",
       print_condition_id: print?.id ?? null,
       digital_condition_id: digital?.id ?? null,
+      trans_print_condition_id: transPrint?.id ?? null,
+      trans_digital_condition_id: transDigital?.id ?? null,
       // 手で足した行と見分ける。条件から出た行は料率を条件から引き直す。
       condition_ids: group.map((c) => c.id)
     };
@@ -234,13 +257,15 @@ export function pubTermsWarnings(context: Data, templateKey: string = PUB_TERMS_
   const seen = new Map<string, number>();
   for (const condition of conditions) {
     if (rowBlockerOf(condition)) continue;
-    const key = `${titleKeyOf(condition)}／${mediaOfCondition(condition)}`;
+    // 自社出版と翻訳版は別の枠。紙出版と翻訳版（紙）が1本ずつあるのは重複ではない。
+    const key = `${titleKeyOf(condition)}／${isTranslationCondition(condition) ? "trans" : "own"}／${mediaOfCondition(condition)}`;
     seen.set(key, (seen.get(key) ?? 0) + 1);
   }
   for (const [key, count] of seen) {
     if (count > 1) {
-      const media = key.endsWith("print") ? "紙" : "電子";
-      const first = conditions.find((c) => `${titleKeyOf(c)}／${mediaOfCondition(c)}` === key);
+      const media = `${key.includes("／trans／") ? "翻訳版の" : ""}${key.endsWith("print") ? "紙" : "電子"}`;
+      const first = conditions.find((c) =>
+        `${titleKeyOf(c)}／${isTranslationCondition(c) ? "trans" : "own"}／${mediaOfCondition(c)}` === key);
       out.push({ kind: "other",
         message: `同じ作品「${text(first?.work?.title) || text(first?.name)}」に${media}の条件が${count}本あります。1本にしてください` });
     }
@@ -332,10 +357,22 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
   const seeds = pubTitleSeeds(context);
   const rows = list(manual[PUB_TITLES_FIELD]).length ? list(manual[PUB_TITLES_FIELD]) : seeds;
 
-  const titles = rows.map((row, index) => {
+  const titleRows = rows.map((row, index) => {
     const print = row.print_condition_id != null ? byId.get(Number(row.print_condition_id)) : undefined;
     const digital = row.digital_condition_id != null ? byId.get(Number(row.digital_condition_id)) : undefined;
-    const fromLedger = Boolean(print || digital);
+    const transPrint = row.trans_print_condition_id != null ? byId.get(Number(row.trans_print_condition_id)) : undefined;
+    const transDigital = row.trans_digital_condition_id != null ? byId.get(Number(row.trans_digital_condition_id)) : undefined;
+    const fromLedger = Boolean(print || digital || transPrint || transDigital);
+    // 翻訳版は「紙 50%／電子 40%」のように1つの欄にまとめる。列を2つ足すと
+    // A4 縦に収まらない。片方だけの作品はその媒体だけ出す。
+    const transPrintRate = transPrint ? percentText(transPrint.ratePct) : text(row.trans_print_rate);
+    const transDigitalRate = transDigital ? percentText(transDigital.ratePct) : text(row.trans_digital_rate);
+    const transLines = [transPrintRate ? `紙 ${transPrintRate}` : "",
+                        transDigitalRate ? `電子 ${transDigitalRate}` : ""].filter(Boolean);
+    const transText = transLines.join("／");
+    const transConsent = (transPrint || transDigital)
+      ? ([transPrint, transDigital].filter(Boolean).some((c) => consentLabel(c!.sublicenseConsent) === "要") ? "要" : "不要")
+      : text(row.trans_consent);
     return {
       no: index + 1,
       title: text(row.title) || text(row.item_name),
@@ -350,10 +387,26 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
       digitalExclusivity: fromLedger ? (digital ? exclusivityText(digital) || "—" : "—")
         : (text(row.digital_exclusivity) || "—"),
       hasPrint: fromLedger ? Boolean(print) : text(row.print_rate) !== "" && text(row.print_rate) !== "—",
-      hasDigital: fromLedger ? Boolean(digital) : text(row.digital_rate) !== "" && text(row.digital_rate) !== "—"
+      hasDigital: fromLedger ? Boolean(digital) : text(row.digital_rate) !== "" && text(row.digital_rate) !== "—",
+      // 翻訳版の再許諾（A-033）。紙・電子の率を1つの欄にまとめ、別途合意の要否を添える。
+      // 作品ごとに率が違うので、条文ではなく一覧で持つ。
+      translation: transText || "—",
+      // 欄は 22mm しかないので、紙と電子は行を分けて出す（「紙 50%／電子」で
+      // 折れると読めない）。文字列のほうは一覧の書き出しや画面で使う。
+      translationLines: transLines,
+      hasTranslation: Boolean(transText),
+      translationConsent: transConsent,
+      // 「要」の作品が1点でもあれば、条文は個別合意が要る側で書く。
+      translationConsentRequired: transConsent === "要"
     };
   });
+  // 一覧に「翻訳版再許諾」の列を出すか。1点でも翻訳版の条件があれば全行に出す
+  // （列は表ごと。行ごとに出し入れはできない）。備考の行の colspan もこれで決まる。
+  const showTranslation = titleRows.some((t) => t.hasTranslation);
+  const titles = titleRows.map((t) => ({ ...t, showTranslation }));
 
+  // 翻訳版の条件がある作品。別途合意の要否は、この中だけで数える。
+  const transTitles = titles.filter((t) => t.hasTranslation);
   const counterparty = context.condition?.counterparty ?? {};
   const primaryContact = list(context.contacts).find((c) => c.role === "primary") ?? {};
   const translationShare = number(pick("翻訳版取り分"));
@@ -394,7 +447,17 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
     region: pick("許諾地域") || "全世界",
     language: pick("許諾言語") || "日本語",
 
-    hasTranslation: translationShare != null,
+    // 翻訳版（A-033）。条件明細があればそちらが本体。作品ごとに率が違うので
+    // 条文には率を書かず、一覧の「翻訳版」欄を指す。条件が無いときだけ、
+    // これまでどおり手入力の取り分（1枚に1つ）で書く。
+    hasTranslationConditions: transTitles.length > 0,
+    translationConsentRequired: transTitles.some((t) => t.translationConsentRequired),
+    translationConsentAllCovered: transTitles.length > 0
+      && !transTitles.some((t) => t.translationConsentRequired),
+    // 要と不要が混ざる（作品ごとに違う）。条文は一覧の欄を指して書き分ける。
+    translationConsentMixed: transTitles.some((t) => t.translationConsentRequired)
+      && transTitles.some((t) => !t.translationConsentRequired),
+    hasTranslation: translationShare != null || transTitles.length > 0,
     translationShare: translationShare == null ? "" : percentText(translationShare),
     payPrint: pick("紙の支払時期") || "翌月末日",
     digitalPeriod: pick("電子の集計期間") || "7月1日〜翌年6月30日",

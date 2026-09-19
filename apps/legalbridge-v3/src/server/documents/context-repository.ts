@@ -418,7 +418,8 @@ export class DocumentContextRepository {
               c.rate_ppm, c.unit_amount, c.quantity, c.flat_amount, c.mg_amount, c.ag_amount,
               c.term_start, c.term_end, c.tax_category, c.payment_terms, c.contract_form,
               c.cycle,
-              c.agreement_id, c.exclusivity, c.sublicensable, c.notes, c.spec, c.deliverable_ownership,
+              c.agreement_id, c.exclusivity, c.sublicensable, c.sublicense_consent,
+              c.notes, c.spec, c.deliverable_ownership,
               c.order_no, c.usage_type,
               c.counterparty_id, c.work_id, c.work_part_id,
               p.name AS party_name, p.name_kana AS party_kana, p.kind AS party_kind,
@@ -476,6 +477,8 @@ export class DocumentContextRepository {
         exclusivityLabel: row.exclusivity === "exclusive" ? "独占"
           : row.exclusivity === "non_exclusive" ? "非独占" : null,
         sublicensable: row.sublicensable,
+        // 再許諾の別途合意（A-033）。条件書の条文と一覧の印が出し分かれる。
+        sublicenseConsent: str(row.sublicense_consent),
         notes: str(row.notes),
         spec: str(row.spec),
         deliverableOwnership: str(row.deliverable_ownership),

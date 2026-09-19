@@ -7,7 +7,7 @@ import { CONDITION_KIND_LABEL } from "./labels.js";
 import { SearchSelect, searchParties } from "./SearchSelect.js";
 import { CONTRACT_FORMS } from "../server/conditions/contract-form.js";
 import { minorUnitHint } from "./ConditionCreateForm.js";
-import { CONDITION_USAGE_TYPES } from "../server/core/condition-usage.js";
+import { CONDITION_USAGE_TYPES, isSublicensingUsage } from "../server/core/condition-usage.js";
 
 /**
  * 条件の編集。
@@ -83,6 +83,7 @@ export function ConditionEdit(
     agAmount: asMoney(detail.agAmount),
     exclusivity: detail.exclusivity ?? "",
     usageType: detail.usageType ?? "",
+    sublicenseConsent: detail.sublicenseConsent ?? "",
     taxCategory: detail.taxCategory,
     paymentTerms: detail.paymentTerms ?? "",
     contractForm: detail.contractForm ?? "",
@@ -142,7 +143,8 @@ export function ConditionEdit(
       ["agAmount", patchInt(v.agAmount, detail.agAmount)],
       ["workId", patchInt(v.workId, detail.work?.id ?? null)],
       ["exclusivity", patchText(v.exclusivity, detail.exclusivity)],
-      ["usageType", patchText(v.usageType, detail.usageType)]
+      ["usageType", patchText(v.usageType, detail.usageType)],
+      ["sublicenseConsent", patchText(v.sublicenseConsent, detail.sublicenseConsent)]
     ];
     for (const [key, value] of pairs) if (value !== undefined) patch[key] = value;
 
@@ -326,6 +328,18 @@ export function ConditionEdit(
                 {CONDITION_USAGE_TYPES.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
               </select>
               <small className="faint">条件書の行・計算書の製品名はこれで決まる。1本に1つ</small>
+            </label>
+          )}
+          {isSublicensingUsage(v.usageType) && (
+            <label className="field">
+              <span>再許諾ごとの別途合意</span>
+              <select value={v.sublicenseConsent}
+                      onChange={(e) => set("sublicenseConsent", e.target.value)}>
+                <option value="">—</option>
+                <option value="covered">不要（本条件書で許諾済み）</option>
+                <option value="required">要（再許諾先ごとに別途合意）</option>
+              </select>
+              <small className="faint">出版条件書の翻訳版の欄と本文（第4条）に出る</small>
             </label>
           )}
           {detail.kind === "license" && (

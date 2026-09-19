@@ -9,7 +9,10 @@
 
 import type { PubMedia } from "./pub-media.js";
 
-export type ConditionUsageType = "in_house" | "sublicense" | "oem" | "pub_print" | "pub_digital";
+export type ConditionUsageType =
+  | "in_house" | "sublicense" | "oem"
+  | "pub_print" | "pub_digital"
+  | "pub_sub_print" | "pub_sub_digital";
 
 export interface ConditionUsageSpec {
   value: ConditionUsageType;
@@ -20,6 +23,11 @@ export interface ConditionUsageSpec {
   dealId: 1 | 2 | 3 | null;
   /** 出版の媒体。ゲームには無い。 */
   media: PubMedia | null;
+  /**
+   * 第三者への再許諾か（A-033）。出版の翻訳版がこれ。
+   * 自社が出すのではなく、相手に出させて受領額から取り分を払う。
+   */
+  sublicensing?: boolean;
   hint: string;
 }
 
@@ -33,8 +41,20 @@ export const CONDITION_USAGE_TYPES: ConditionUsageSpec[] = [
   { value: "pub_print", label: "出版（紙）", family: "publishing", dealId: null, media: "print",
     hint: "税抜定価 × 印税対象部数 × 料率" },
   { value: "pub_digital", label: "出版（電子）", family: "publishing", dealId: null, media: "digital",
-    hint: "配信価格 × ダウンロード数 × 料率" }
+    hint: "配信価格 × ダウンロード数 × 料率" },
+  // 翻訳版の再許諾（A-033）。乙が第三者に出させ、受け取った対価から甲へ払う。
+  // 紙と電子で率が違うので別々に持つ。相手が決まる前でも条件を作れる。
+  { value: "pub_sub_print", label: "翻訳版再許諾（紙）", family: "publishing", dealId: null,
+    media: "print", sublicensing: true,
+    hint: "再許諾先から受領する対価（税抜）× 料率。紙の翻訳版" },
+  { value: "pub_sub_digital", label: "翻訳版再許諾（電子）", family: "publishing", dealId: null,
+    media: "digital", sublicensing: true,
+    hint: "再許諾先から受領する対価（税抜）× 料率。電子の翻訳版" }
 ];
+
+/** 第三者への再許諾の形態か（翻訳版）。自社出版と区別する。 */
+export const isSublicensingUsage = (value: unknown): boolean =>
+  conditionUsageSpec(value)?.sublicensing === true;
 
 export const conditionUsageSpec = (value: unknown): ConditionUsageSpec | null =>
   CONDITION_USAGE_TYPES.find((t) => t.value === value) ?? null;
@@ -50,6 +70,10 @@ export const dealIdOfUsage = (value: unknown): 1 | 2 | 3 | null =>
 export const pubMediaOfUsage = (value: unknown): PubMedia | null =>
   conditionUsageSpec(value)?.media ?? null;
 
-/** 出版の媒体 → 利用形態。 */
-export const usageOfPubMedia = (media: PubMedia): ConditionUsageType =>
-  media === "print" ? "pub_print" : "pub_digital";
+/**
+ * 出版の媒体 → 利用形態。自社出版か翻訳版再許諾かで分かれる。
+ */
+export const usageOfPubMedia = (media: PubMedia, sublicensing = false): ConditionUsageType =>
+  sublicensing
+    ? (media === "print" ? "pub_sub_print" : "pub_sub_digital")
+    : (media === "print" ? "pub_print" : "pub_digital");

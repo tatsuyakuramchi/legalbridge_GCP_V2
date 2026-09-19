@@ -5,7 +5,7 @@ import { CreateForm } from "./CreateForm.js";
 import { CONDITION_KIND_LABEL } from "./labels.js";
 import { searchParties } from "./SearchSelect.js";
 import { minorPerMajor } from "../server/royalty/economics.js";
-import { CONDITION_USAGE_TYPES } from "../server/core/condition-usage.js";
+import { CONDITION_USAGE_TYPES, isSublicensingUsage } from "../server/core/condition-usage.js";
 import { conditionNameFor } from "../server/conditions/naming.js";
 
 /**
@@ -161,6 +161,12 @@ export function ConditionCreateForm(
           hint: "条件名「作品名｜再許諾（再許諾先／目的）」に入る" },
         { name: "purpose", label: "再許諾の目的", placeholder: "英語版の製造販売",
           visibleWhen: (v) => v.kind === "license" && v.direction === "in" && v.usageType === "sublicense" },
+        // 翻訳版の再許諾（A-033）。再許諾先ごとに別途合意が要るかを条件に持たせる。
+        { name: "sublicenseConsent", label: "再許諾ごとの別途合意", type: "select",
+          visibleWhen: (v) => isSublicensingUsage(v.usageType),
+          options: [{ value: "covered", label: "不要（本条件書で許諾済み）" },
+                    { value: "required", label: "要（再許諾先ごとに別途合意）" }],
+          hint: "出版条件書の翻訳版の欄と本文（第4条）に出る" },
         { name: "languages", label: "言語（許諾範囲）", type: "languages",
           visibleWhen: (v) => v.kind === "license" },
         { name: "notes", label: "備考", type: "textarea" }
@@ -190,6 +196,7 @@ export function ConditionCreateForm(
           mgAmount: int(v.mgAmount), agAmount: int(v.agAmount),
           exclusivity: text(v.exclusivity), taxCategory: v.taxCategory,
           usageType: v.kind === "license" ? text(v.usageType) : undefined,
+          sublicenseConsent: isSublicensingUsage(v.usageType) ? text(v.sublicenseConsent) : undefined,
           paymentTerms: text(v.paymentTerms), notes: text(v.notes),
           spec: text(v.spec), deliverableOwnership: text(v.deliverableOwnership),
           scopes: scopes.length ? scopes : undefined

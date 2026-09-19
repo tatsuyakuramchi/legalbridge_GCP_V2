@@ -63,10 +63,10 @@ test("決定で、条件の無い手数料・経費の行から条件を作り�
   const inserts = db.all("INSERT INTO conditions");
   assert.equal(inserts.length, 2, "空の行と condition_id の付いた行は作らない");
   // [kind, name, counterparty, agreement, flat_amount, tax_category, notes]
-  assert.deepEqual(inserts.map((q) => [q.params[3], q.params[4], q.params[5], q.params[1], q.params[16], q.params[19], q.params[22]]),
+  assert.deepEqual(inserts.map((q) => [q.params[3], q.params[4], q.params[5], q.params[1], q.params[17], q.params[20], q.params[23]]),
     [["fee", "送料", 9, 33, 3000, "taxable", "着払い分"],
      ["expense", "交通費", 9, 33, 12000, "exempt", "利用日 2026-09-01／往復／税込の実費"]]);
-  assert.deepEqual(inserts.map((q) => [q.params[10], q.params[11]]),
+  assert.deepEqual(inserts.map((q) => [q.params[11], q.params[12]]),
     [["2026-09-01", "2027-03-31"], ["2026-09-01", "2027-03-31"]], "期間は先頭の条件（委託料）から写す");
 
   const links = db.all("INSERT INTO document_conditions");

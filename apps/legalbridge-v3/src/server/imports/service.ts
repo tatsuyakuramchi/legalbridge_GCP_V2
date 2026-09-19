@@ -3,7 +3,9 @@ import { DomainError, translate } from "../core/errors.js";
 import { PartyWriteService } from "../parties/write-service.js";
 import { WorkWriteService, type WorkPatch } from "../works/write-service.js";
 import { ConditionWriteService, type EconomicsPatch, type LicenseSetRow } from "../conditions/write-service.js";
-import { conditionNameFor, parseUsageType } from "../conditions/naming.js";
+import { conditionNameFor, parseUsageType, USAGE_NAME_LABEL } from "../conditions/naming.js";
+import { CONDITION_USAGE_TYPES, isSublicensingUsage,
+         type ConditionUsageType } from "../core/condition-usage.js";
 import { parseLanguages, parseRegions } from "../core/rights-scope.js";
 import type { ConditionScope } from "../core/model.js";
 import { csvAmount, csvBoolean, parseCsv } from "./parse.js";
@@ -77,17 +79,20 @@ export const IMPORT_SPECS: ImportSpec[] = [
     kind: "license_conditions", label: "利用許諾条件（作品に紐づく IN の許諾）",
     required: ["作品名", "許諾者", "取引モデル", "料率"],
     optional: ["作品コード", "許諾者コード", "契約番号", "独占", "MG", "AG", "再許諾先", "目的",
-               "開始日", "終了日", "通貨", "支払条件", "地域", "言語", "備考"],
-    sample: "作品名,作品コード,許諾者,許諾者コード,契約番号,取引モデル,料率,独占,MG,AG,再許諾先,目的,開始日,終了日,通貨,支払条件,地域,言語,備考\n" +
-            "ito,,権利者名,,AGR-2026-0001,自社製造・自社販売,2,非独占,100000,,,,2026-10-01,2031-09-30,JPY,,全世界,,\n" +
-            "ito,,権利者名,,AGR-2026-0001,自社製造・他社販売,2,非独占,,,,,2026-10-01,2031-09-30,JPY,,全世界,,\n" +
-            "ito,,権利者名,,AGR-2026-0001,再許諾,50,非独占,,,Alpha Games,英語版の製造販売,2026-10-01,2031-09-30,JPY,,全世界,,\n" +
-            "星降る夜のはなし,,著者名,,,紙出版,11,非独占,,,,,2026-10-01,,JPY,,,日本語,\n" +
-            "星降る夜のはなし,,著者名,,,電子出版,15,非独占,,,,,2026-10-01,,JPY,,,日本語,",
+               "別途合意", "開始日", "終了日", "通貨", "支払条件", "地域", "言語", "備考"],
+    sample: "作品名,作品コード,許諾者,許諾者コード,契約番号,取引モデル,料率,独占,MG,AG,再許諾先,目的,別途合意,開始日,終了日,通貨,支払条件,地域,言語,備考\n" +
+            "ito,,権利者名,,AGR-2026-0001,自社製造・自社販売,2,非独占,100000,,,,,2026-10-01,2031-09-30,JPY,,全世界,,\n" +
+            "ito,,権利者名,,AGR-2026-0001,自社製造・他社販売,2,非独占,,,,,,2026-10-01,2031-09-30,JPY,,全世界,,\n" +
+            "ito,,権利者名,,AGR-2026-0001,再許諾,50,非独占,,,Alpha Games,英語版の製造販売,,2026-10-01,2031-09-30,JPY,,全世界,,\n" +
+            "星降る夜のはなし,,著者名,,,紙出版,11,非独占,,,,,,2026-10-01,,JPY,,,日本語,\n" +
+            "星降る夜のはなし,,著者名,,,電子出版,15,非独占,,,,,,2026-10-01,,JPY,,,日本語,\n" +
+            "星降る夜のはなし,,著者名,,,翻訳版再許諾（紙）,50,非独占,,,,,要,2026-10-01,,JPY,,全世界,,\n" +
+            "星降る夜のはなし,,著者名,,,翻訳版再許諾（電子）,40,非独占,,,,,要,2026-10-01,,JPY,,全世界,,",
     updatable: true,
     updateHint: "当てる先は 条件番号。無ければ 作品名（または作品コード）＋取引モデルで当てます" +
                 "（再許諾は 再許諾先 も見ます）。作品・許諾者・契約・通貨は替えられません（条件の画面で）",
-    updateColumns: ["料率", "独占", "MG", "AG", "開始日", "終了日", "支払条件", "地域", "言語", "備考"],
+    updateColumns: ["料率", "独占", "MG", "AG", "別途合意", "開始日", "終了日", "支払条件",
+                    "地域", "言語", "備考"],
     updateSample: "条件番号,料率,開始日,終了日\n" +
                   "CL-2026-00451,11,2026-10-01,2031-09-30\n" +
                   "CL-2026-00452,15,,"
@@ -141,8 +146,24 @@ interface LicenseCsvRow {
   row: LicenseSetRow;
 }
 
+/** 取込が受ける取引モデルの言い方。増えたら勝手に増える（書き漏らさない）。 */
+const USAGE_CHOICES = CONDITION_USAGE_TYPES.map((u) => `「${USAGE_NAME_LABEL[u.value]}」`).join("");
+
+/**
+ * 条件名に相手先が入る取引モデルか。入るものは、同じ取引モデルでも相手ごとに
+ * 何本も立つので、重複の判定を名前まで見て行う。
+ */
+const nameSensitive = (usage: ConditionUsageType) =>
+  usage === "sublicense" || isSublicensingUsage(usage);
+
 const EXCLUSIVITY: Record<string, "exclusive" | "non_exclusive"> = {
   独占: "exclusive", exclusive: "exclusive", 非独占: "non_exclusive", non_exclusive: "non_exclusive"
+};
+
+/** 再許諾ごとの別途合意（A-033）。翻訳版再許諾の行だけが持つ。 */
+const CONSENT: Record<string, "covered" | "required"> = {
+  要: "required", 必要: "required", 要合意: "required", required: "required",
+  不要: "covered", 不要合意: "covered", 許諾済み: "covered", covered: "covered"
 };
 
 function csvDate(value: string | undefined): string | null {
@@ -494,7 +515,7 @@ export class ImportService {
         for (const [i, r] of group.entries()) {
           const clash = (existing.rows as Array<{ condition_no: string | null; usage_type: string | null; name: string | null }>)
             .find((x) => x.usage_type === r.row.usageType
-              && (r.row.usageType !== "sublicense" || String(x.name ?? "").trim() === names[i]));
+              && (!nameSensitive(r.row.usageType) || String(x.name ?? "").trim() === names[i]));
           outcomes.set(r.line, clash
             ? { line: r.line, status: "duplicate", label: r.label,
                 message: `${r.partyName} の同じ取引モデルの条件（${clash.condition_no ?? "番号なし"}）が既にあります。この束は飛ばされます` }
@@ -539,7 +560,7 @@ export class ImportService {
     const usageType = parseUsageType(row["取引モデル"]);
     if (!usageType) {
       throw new DomainError("VALIDATION",
-        `取引モデルは「自社製造・自社販売」「再許諾」「自社製造・他社販売」「紙出版」「電子出版」のいずれかです（"${String(row["取引モデル"] ?? "").trim()}"）`);
+        `取引モデルは${USAGE_CHOICES}のいずれかです（"${String(row["取引モデル"] ?? "").trim()}"）`);
     }
     const rateText = String(row["料率"] ?? "").trim().replace(/[%％]/g, "");
     const ratePct = Number(rateText);
@@ -552,6 +573,11 @@ export class ImportService {
     }
     const sublicensee = String(row["再許諾先"] ?? "").trim() || null;
     const purpose = String(row["目的"] ?? "").trim() || null;
+    // 別途合意は翻訳版再許諾の列。ほかの取引モデルでは読まない（空欄なら null）。
+    const consentText = String(row["別途合意"] ?? "").trim();
+    if (consentText && !CONSENT[consentText]) {
+      throw new DomainError("VALIDATION", `別途合意は「要」か「不要」です（"${consentText}"）`);
+    }
     if (usageType === "sublicense" && !sublicensee) {
       throw new DomainError("VALIDATION", "再許諾は「再許諾先」を入れてください（条件名「作品名｜再許諾（再許諾先／目的）」になります）");
     }
@@ -600,7 +626,8 @@ export class ImportService {
       row: {
         usageType, ratePct, exclusivity: exclText ? EXCLUSIVITY[exclText] : "non_exclusive",
         mgAmount: csvAmount(row["MG"]) ?? null, agAmount: csvAmount(row["AG"]) ?? null,
-        sublicensee, purpose
+        sublicensee, purpose,
+        sublicenseConsent: isSublicensingUsage(usageType) && consentText ? CONSENT[consentText] : null
       }
     };
   }
@@ -634,7 +661,7 @@ export class ImportService {
       const usageType = parseUsageType(row["取引モデル"]);
       if (!usageType) {
         throw new DomainError("VALIDATION",
-          `条件番号が無い行は「取引モデル」で当てます。「自社製造・自社販売」「再許諾」「自社製造・他社販売」「紙出版」「電子出版」のいずれかです（"${String(row["取引モデル"] ?? "").trim()}"）`);
+          `条件番号が無い行は「取引モデル」で当てます。${USAGE_CHOICES}のいずれかです（"${String(row["取引モデル"] ?? "").trim()}"）`);
       }
       const work = await this.findOne(
         `SELECT id, title FROM works
@@ -691,6 +718,13 @@ export class ImportService {
     }
     if (text("MG")) put("MG", "mgAmount", csvAmount(row["MG"]) ?? null);
     if (text("AG")) put("AG", "agAmount", csvAmount(row["AG"]) ?? null);
+    const consentText = text("別途合意");
+    if (consentText) {
+      if (!CONSENT[consentText]) {
+        throw new DomainError("VALIDATION", `別途合意は「要」か「不要」です（"${consentText}"）`);
+      }
+      put("別途合意", "sublicenseConsent", CONSENT[consentText]);
+    }
     const termStart = text("開始日");
     if (termStart) put("開始日", "termStart", csvDate(row["開始日"]));
     const termEnd = text("終了日");

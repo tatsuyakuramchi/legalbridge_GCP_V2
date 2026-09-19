@@ -14,6 +14,9 @@ import { conditionNameFor } from "../server/conditions/naming.js";
  * 2本作る（POST /conditions/publishing-set）。
  *
  * 電子の料率を空にすれば紙だけ（条件書の電子欄は「—」）。
+ *
+ * 翻訳版の再許諾（A-033）もここで一緒に作る。紙・電子で率が違うので
+ * 別々の欄。相手先が決まる前に決めるので、再許諾先は空でよい。
  */
 
 interface Agreement {
@@ -33,7 +36,15 @@ const rate = (v: unknown) => {
 export interface PublishingSetCreated {
   print: { id: number; conditionNo: string | null } | null;
   digital: { id: number; conditionNo: string | null } | null;
+  translationPrint?: { id: number; conditionNo: string | null } | null;
+  translationDigital?: { id: number; conditionNo: string | null } | null;
 }
+
+/** 翻訳版の別途合意（A-033）。条件書の翻訳版の欄と第4条の書き分けに出る。 */
+const CONSENT_OPTIONS = [
+  { value: "covered", label: "不要（本条件書で許諾済み）" },
+  { value: "required", label: "要（再許諾先ごとに別途合意）" }
+];
 
 export function PubConditionSetForm(
   { preset, onDone, onCancel }: {
@@ -58,7 +69,8 @@ export function PubConditionSetForm(
       submitLabel="紙・電子の条件を登録する"
       path="/conditions/publishing-set"
       initial={{ printExclusivity: "non_exclusive", digitalExclusivity: "non_exclusive",
-                 sublicenseExclusivity: "non_exclusive", taxCategory: "taxable", ...preset }}
+                 sublicenseExclusivity: "non_exclusive", transConsent: "covered",
+                 taxCategory: "taxable", ...preset }}
       fields={[
         { name: "counterpartyId", label: "許諾者（著作権者）", type: "search", required: true,
           search: searchParties, placeholder: "取引先名・コードで探す",
@@ -90,6 +102,20 @@ export function PubConditionSetForm(
         { name: "digitalExclusivity", label: "電子 独占区分", type: "select",
           options: [{ value: "non_exclusive", label: "非独占" }, { value: "exclusive", label: "独占" }],
           visibleWhen: (v) => String(v.digitalRate ?? "").trim() !== "" },
+        { name: "transPrintRate", label: "翻訳版再許諾 紙 料率（%）", type: "number", placeholder: "50",
+          hint: "乙が第三者に翻訳版を出させたときの取り分。受領する対価（税抜）× 料率。空なら作らない" },
+        { name: "transDigitalRate", label: "翻訳版再許諾 電子 料率（%）", type: "number", placeholder: "40",
+          hint: "紙と率が違ってよい。空なら電子の翻訳版の条件は作らない" },
+        { name: "transConsent", label: "翻訳版 別途合意の要否", type: "select",
+          options: CONSENT_OPTIONS,
+          visibleWhen: (v) => String(v.transPrintRate ?? "").trim() !== ""
+            || String(v.transDigitalRate ?? "").trim() !== "",
+          hint: "条件書の翻訳版の欄と第4条に出る。相手先が決まる前でも決めておける" },
+        { name: "transSublicensee", label: "翻訳版 再許諾先の名称（決まっていれば）",
+          placeholder: "未定なら空",
+          visibleWhen: (v) => String(v.transPrintRate ?? "").trim() !== ""
+            || String(v.transDigitalRate ?? "").trim() !== "",
+          hint: "空なら「翻訳版再許諾（紙）」のような条件名で作る" },
         { name: "sublicenseRate", label: "再許諾 料率（%）", type: "number", placeholder: "50",
           hint: (v) => {
             const t = works.find((w) => String(w.id) === String(v.workId ?? ""))?.title ?? "";
@@ -125,6 +151,12 @@ export function PubConditionSetForm(
         const print = rate(v.printRate);
         const digital = rate(v.digitalRate);
         const sub = rate(v.sublicenseRate);
+        const transPrint = rate(v.transPrintRate);
+        const transDigital = rate(v.transDigitalRate);
+        const translation = (r: number) => ({
+          ratePct: r, exclusivity: null, consent: v.transConsent || null,
+          sublicensee: text(v.transSublicensee) ?? null, purpose: null
+        });
         return {
           title: null,
           sublicense: sub === null ? null
@@ -136,7 +168,9 @@ export function PubConditionSetForm(
           taxCategory: v.taxCategory, notes: text(v.notes),
           scopes: scopes.length ? scopes : undefined,
           print: print === null ? null : { ratePct: print, exclusivity: v.printExclusivity || null },
-          digital: digital === null ? null : { ratePct: digital, exclusivity: v.digitalExclusivity || null }
+          digital: digital === null ? null : { ratePct: digital, exclusivity: v.digitalExclusivity || null },
+          translationPrint: transPrint === null ? null : translation(transPrint),
+          translationDigital: transDigital === null ? null : translation(transDigital)
         };
       }}
       onDone={onDone}

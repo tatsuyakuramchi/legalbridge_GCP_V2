@@ -1228,6 +1228,59 @@ CREATE INDEX IF NOT EXISTS party_contacts_party_idx ON v3.party_contacts (party_
 
 COMMIT;
 
+-- ---------------------------------------------------------------------
+-- A-033: 出版の翻訳版再許諾（利用形態を 2 つ足す）と、再許諾の別途合意の要否
+--
+-- 翻訳版の再許諾は、これまで条件明細に置き場所が無く、出版条件書の
+-- 「翻訳版取り分」という手入力の % だけで扱っていた。作品ごとに率が違い、
+-- 紙と電子で別々に決まるのに、1 枚に 1 つの数字しか持てなかった（台帳にも
+-- 残らず、実績も支払も繋がらない）。利用形態に翻訳版の紙・電子を足して、
+-- ほかの条件と同じ 1 本の条件明細にする。
+--
+-- 再許諾に甲の個別合意が要るかどうかも条件ごとに違う（包括で許諾済みか、
+-- 都度の書面合意か）。条文の書き分けに使うので列で持つ。
+--   covered  … 本条件書で許諾済み。再許諾ごとの個別合意は不要
+--   required … 再許諾ごとに甲の書面による事前合意が必要（未設定はこちら扱い）
+-- ---------------------------------------------------------------------
+
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS sublicense_consent text;
+COMMENT ON COLUMN v3.conditions.sublicense_consent IS
+  '再許諾の別途合意（covered=不要 / required=要）。空は「要」として扱う。条件書の条文が出し分ける。';
+
+DO $a033$
+BEGIN
+  -- 利用形態：翻訳版の紙・電子を足す。
+  IF EXISTS (SELECT 1 FROM pg_constraint
+              WHERE conrelid = 'v3.conditions'::regclass AND conname = 'conditions_usage_type_chk') THEN
+    ALTER TABLE v3.conditions DROP CONSTRAINT conditions_usage_type_chk;
+  END IF;
+  ALTER TABLE v3.conditions ADD CONSTRAINT conditions_usage_type_chk
+    CHECK (usage_type IS NULL
+           OR usage_type = ANY (ARRAY['in_house', 'sublicense', 'oem',
+                                      'pub_print', 'pub_digital',
+                                      'pub_sub_print', 'pub_sub_digital']));
+
+  -- 実績の利用形態も同じ値を取る（条件から写す）。
+  IF EXISTS (SELECT 1 FROM pg_constraint
+              WHERE conrelid = 'v3.condition_events'::regclass AND conname = 'condition_events_usage_type_chk') THEN
+    ALTER TABLE v3.condition_events DROP CONSTRAINT condition_events_usage_type_chk;
+  END IF;
+  ALTER TABLE v3.condition_events ADD CONSTRAINT condition_events_usage_type_chk
+    CHECK (usage_type IS NULL
+           OR usage_type = ANY (ARRAY['in_house', 'sublicense', 'oem',
+                                      'pub_print', 'pub_digital',
+                                      'pub_sub_print', 'pub_sub_digital']));
+
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.conditions'::regclass AND conname = 'conditions_sublicense_consent_chk') THEN
+    ALTER TABLE v3.conditions ADD CONSTRAINT conditions_sublicense_consent_chk
+      CHECK (sublicense_consent IS NULL OR sublicense_consent IN ('covered', 'required'));
+  END IF;
+END
+$a033$;
+
+COMMIT;
+
 -- 確認
 \echo '--- matter_links.target_type ---'
 SELECT pg_get_constraintdef(c.oid) AS def
@@ -1417,3 +1470,10 @@ SELECT (SELECT count(*) FROM information_schema.columns
          WHERE table_schema='v3' AND table_name='parties' AND column_name IN ('representative_title', 'representative_name'))
      + (SELECT count(*) FROM information_schema.columns
          WHERE table_schema='v3' AND table_name='party_contacts' AND column_name = 'roles') AS 列数;
+
+\echo '--- 翻訳版再許諾と別途合意（A-033。列と CHECK があること） ---'
+SELECT (SELECT count(*) FROM information_schema.columns
+         WHERE table_schema='v3' AND table_name='conditions' AND column_name='sublicense_consent') AS 合意の列,
+       (SELECT count(*) FROM pg_constraint
+         WHERE conrelid='v3.conditions'::regclass AND conname='conditions_usage_type_chk'
+           AND pg_get_constraintdef(oid) LIKE '%pub_sub_print%') AS 翻訳版を許す;
