@@ -1,0 +1,113 @@
+# LegalBridge V3 のビルドとデプロイ。
+#   V2 の legalbridge-v2-preview とは別サービス・別ロールで動かし、
+#   同じ Cloud SQL インスタンスの v3 スキーマだけを見る。
+#   切戻しはサービス単位（V2 は触らない）。
+substitutions:
+  _REGION: asia-northeast1
+  _SERVICE: legalbridge-v3
+  _AR_REPOSITORY: legalbridge
+  _IMAGE: legalbridge-v3
+  _CLOUD_SQL_INSTANCE: legalbridge-488506:asia-northeast1:legalbridge-db
+  _DB_NAME: legalbridge
+  _DB_USER: legalbridge_v3_runtime
+  _DB_PASSWORD_SECRET: legalbridge-v3-runtime-db-password
+  # 外部連携の資格情報。使うチャネルの分だけここに足す。
+  # 持っていない資格情報を配線しない（空のシークレットはバージョンが
+  # 無く versions/latest が解決できないため、デプロイが失敗する）。
+  #   例: _SECRETS_EXTRA=SLACK_BOT_TOKEN=legalbridge-v3-slack-bot-token:latest,SLACK_SIGNING_SECRET=legalbridge-v3-slack-signing-secret:latest
+  _WEBHOOK_TOKEN_SECRET: legalbridge-v3-webhook-token
+  _SECRETS_EXTRA: ""
+  _SERVICE_ACCOUNT: legalbridge-v3@legalbridge-488506.iam.gserviceaccount.com
+  # どのコミットを載せたかをリビジョンに刻む。手動 submit では $SHORT_SHA が
+  # 空になるので、呼び出し側で明示する:
+  #   --substitutions=_GIT_SHA=$(git rev-parse --short HEAD)
+  _GIT_SHA: unknown
+  # Drive 保存。空のままなら保存機能だけが無効になり、他は動く。
+  _DRIVE_FOLDER_ID: ""
+  _DRIVE_MATTER_PARENT_FOLDER_ID: ""
+  _DRIVE_ENVIRONMENT_TAG: validation
+  # 認証。実アカウントを載せるまでは disabled で立てる。
+  _AUTH_MODE: disabled
+  _ADMIN_EMAILS: ""
+  _LEGAL_EMAILS: ""
+  _REQUESTER_DOMAINS: ""
+  # 参照専用で立てたいとき true。書込APIは 503 を返す。
+  _READ_ONLY: "false"
+  # 外部送信の段階開放。off / dry_run / live。既定は全部 off。
+  _SLACK_MODE: "off"
+  _GMAIL_MODE: "off"
+  _CLOUDSIGN_MODE: "off"
+  _BACKLOG_MODE: "off"
+  _DISPATCH_ALLOWLIST: ""
+  _GMAIL_SENDER: ""
+  # 取り込む受信メールを絞る Gmail のラベル。空なら取り込みごと無効。
+  _GMAIL_INTAKE_LABEL: ""
+  _BACKLOG_HOST: ""
+  # 課題を立てるときの課題種別ID。空だと宛先未解決でゲートが止める。
+  _BACKLOG_ISSUE_TYPE_ID: ""
+  _BACKLOG_PROJECT_ID: ""
+
+steps:
+  - id: test
+    name: node:22
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        npm ci
+        npm run typecheck:v3
+        npm run test:v3
+        npm run build:v3
+
+  - id: build-image
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --file
+      - Dockerfile.v3
+      - --tag
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPOSITORY}/${_IMAGE}:${BUILD_ID}
+      - .
+
+  - id: push-image
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPOSITORY}/${_IMAGE}:${BUILD_ID}
+
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        # $$ は Cloud Build のエスケープ。$ 1つだと置換変数として解釈され、
+        # "key in the template SECRETS is not a valid built-in substitution" で落ちる。
+        #
+        # --set-env-vars の区切りは | にする。@ にすると、メールアドレスを持つ値
+        # （GMAIL_SENDER・ADMIN_EMAILS・LEGAL_EMAILS・DISPATCH_ALLOWLIST）を
+        # gcloud がそこで割ってしまい、"Bad syntax for dict arg" で落ちる。
+        # 値に | が入ることは無い。
+        SECRETS="DB_PASSWORD=${_DB_PASSWORD_SECRET}:latest"
+        SECRETS="$${SECRETS},WEBHOOK_TOKEN=${_WEBHOOK_TOKEN_SECRET}:latest"
+        if [ -n "${_SECRETS_EXTRA}" ]; then SECRETS="$${SECRETS},${_SECRETS_EXTRA}"; fi
+        echo "配線するシークレット: $${SECRETS}"
+
+        gcloud run deploy "${_SERVICE}" \
+          --image="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPOSITORY}/${_IMAGE}:${BUILD_ID}" \
+          --region="${_REGION}" \
+          --platform=managed \
+          --no-allow-unauthenticated \
+          --service-account="${_SERVICE_ACCOUNT}" \
+          --add-cloudsql-instances="${_CLOUD_SQL_INSTANCE}" \
+          --labels="git-sha=${_GIT_SHA}" \
+          --memory=2Gi \
+          --set-secrets="$${SECRETS}" \
+          --set-env-vars="^|^NODE_ENV=production|DB_SCHEMA=v3|DB_HOST=/cloudsql/${_CLOUD_SQL_INSTANCE}|DB_PORT=5432|DB_NAME=${_DB_NAME}|DB_USER=${_DB_USER}|DB_POOL_MAX=5|READ_ONLY=${_READ_ONLY}|AUTH_MODE=${_AUTH_MODE}|ADMIN_EMAILS=${_ADMIN_EMAILS}|LEGAL_EMAILS=${_LEGAL_EMAILS}|REQUESTER_DOMAINS=${_REQUESTER_DOMAINS}|GOOGLE_DRIVE_FOLDER_ID=${_DRIVE_FOLDER_ID}|DRIVE_MATTER_PARENT_FOLDER_ID=${_DRIVE_MATTER_PARENT_FOLDER_ID}|DRIVE_ENVIRONMENT_TAG=${_DRIVE_ENVIRONMENT_TAG}|CHROMIUM_PATH=/usr/bin/chromium-browser|SLACK_MODE=${_SLACK_MODE}|GMAIL_MODE=${_GMAIL_MODE}|CLOUDSIGN_MODE=${_CLOUDSIGN_MODE}|BACKLOG_MODE=${_BACKLOG_MODE}|DISPATCH_ALLOWLIST=${_DISPATCH_ALLOWLIST}|GMAIL_SENDER=${_GMAIL_SENDER}|GMAIL_INTAKE_LABEL=${_GMAIL_INTAKE_LABEL}|BACKLOG_HOST=${_BACKLOG_HOST}|BACKLOG_PROJECT_ID=${_BACKLOG_PROJECT_ID}|BACKLOG_ISSUE_TYPE_ID=${_BACKLOG_ISSUE_TYPE_ID}"
+
+images:
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPOSITORY}/${_IMAGE}:${BUILD_ID}
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8
