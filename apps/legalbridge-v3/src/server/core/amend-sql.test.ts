@@ -43,12 +43,21 @@ test("確認の項目数が psql 版と Studio 版で揃っている", () => {
     + "片方だけだと、Studio で流した人は確かめられないまま終わる");
 });
 
-test("A-009 は取引の中にある（確認の側に置かない）", () => {
-  // 一度ここを間違えて、変更が COMMIT の外で走っていた。
-  const changes = read("004_amend.sql").split("\nCOMMIT;\n")[0];
-  for (const marker of ["A-008", "A-009"]) {
-    assert.ok(changes.includes(marker), `${marker} が COMMIT より後にある`);
-  }
+/**
+ * 変更は全部 COMMIT より前に置く。Studio 用の生成器は最初の COMMIT までを
+ * 「変更の部分」として取り出すので、COMMIT より後ろに書いた変更は Studio 用に
+ * 入らない。psql で流すローカルだけ直って、本番に列が無い状態になる。
+ * 実際 A-033 をここで取りこぼして、本番だけ条件明細が開けない状態になりかけた。
+ */
+test("変更の区画（A-NNN）はすべて取引の中にある（確認の側に置かない）", () => {
+  const source = read("004_amend.sql");
+  const [changes, ...tail] = source.split("\nCOMMIT;\n");
+  assert.equal(tail.length, 1, "COMMIT; は1つだけ（取引を分けると Studio 用と食い違う）");
+  const markers = [...source.matchAll(/^-- (A-\d+)[:：]/gm)].map((m) => m[1]);
+  assert.ok(markers.length >= 30, `変更の区画が読めていない（${markers.length} 件）`);
+  const outside = markers.filter((m) => !changes.includes(`-- ${m}:`));
+  assert.deepEqual(outside, [],
+    `COMMIT より後ろに変更がある（Studio 用に入らない）: ${outside.join(", ")}`);
 });
 
 /**

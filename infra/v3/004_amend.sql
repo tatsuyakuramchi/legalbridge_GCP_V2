@@ -1226,8 +1226,6 @@ END
 $a032$;
 CREATE INDEX IF NOT EXISTS party_contacts_party_idx ON v3.party_contacts (party_id);
 
-COMMIT;
-
 -- ---------------------------------------------------------------------
 -- A-033: 出版の翻訳版再許諾（利用形態を 2 つ足す）と、再許諾の別途合意の要否
 --
