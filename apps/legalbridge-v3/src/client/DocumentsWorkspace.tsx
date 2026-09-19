@@ -12,6 +12,7 @@ import { StatementBreakdown, type StatementLine, type StatementTotals } from "./
 import { LicenseTermsMatrix } from "./LicenseTermsMatrix.js";
 import { ConditionLabel } from "./ConditionLabel.js";
 import { BLANK_INPUT_KEY, blankedNames } from "../server/documents/binding.js";
+import { PUB_TERMS_TEMPLATE_HINT } from "../server/documents/pub-terms.js";
 
 interface TemplateRow {
   id: number; templateKey: string; label: string; category: string | null; numberPrefix: string | null;
@@ -905,6 +906,11 @@ export function DocumentsWorkspace(
                     <option key={t.templateKey} value={t.templateKey}>{t.label}</option>
                   ))}
                 </select>
+                {/* ひな形の名前は文書の一覧の「種別」にも出るので短くしてある。
+                    どちらを選ぶかの手がかりは名前ではなく、ここに出す。 */}
+                {PUB_TERMS_TEMPLATE_HINT[templateKey] && (
+                  <small className="faint">{PUB_TERMS_TEMPLATE_HINT[templateKey]}</small>
+                )}
               </label>
 
               <div className="stack" style={{ gap: 6 }}>

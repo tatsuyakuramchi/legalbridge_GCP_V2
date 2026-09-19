@@ -769,8 +769,10 @@ export function MatterDocuments(
       )}
 
       {detail.documents.length ? (
+        // 幅が足りないときは、ページごと横に伸ばさず表の中で横に送る。
+        <div style={{ overflowX: "auto" }}>
         <table>
-          <thead><tr><th></th><th>文書番号</th><th>取引先</th><th>種別</th><th>状態</th><th></th></tr></thead>
+          <thead><tr><th></th><th>文書番号</th><th>種別 ／ 取引先</th><th>状態</th><th></th></tr></thead>
           <tbody>
             {detail.documents.map((d) => (
               <tr key={d.id}>
@@ -787,14 +789,18 @@ export function MatterDocuments(
                            })} />
                   )}
                 </td>
-                {/* 案件の右欄は幅が狭い。番号・種別・状態・ボタンが折り返すと、
-                    1行が3段になって一覧として読めなくなる。折り返すのは
-                    取引先の名前だけにする。 */}
+                {/* 案件の右欄は幅が狭い（500px 前後）。番号・状態・ボタンは折り返すと
+                    読めなくなるので固定。可変なのは種別だけにして、取引先はその下に
+                    小さく置く（文書の一覧と同じ組み方）。列を6つ並べて種別を
+                    折り返さないでいると、ひな形の名前が長くなったときに表が枠から
+                    はみ出し、取引先が1文字ずつに潰れる。 */}
                 <td className="code" style={{ whiteSpace: "nowrap" }}>
                   {d.documentNo ?? "（下書き）"}
                 </td>
-                <td>{d.counterparty ?? "—"}</td>
-                <td style={{ whiteSpace: "nowrap" }}>{d.templateLabel ?? "—"}</td>
+                <td style={{ minWidth: "8em" }}>
+                  {d.templateLabel ?? "—"}
+                  <div className="faint">{d.counterparty ?? "相手先なし"}</div>
+                </td>
                 <td style={{ whiteSpace: "nowrap" }}>
                   <StatusTag kind="document" value={d.status} />
                   {/* 送った口と締結。段が見えないと、CloudSign をどこまで進めたか案件から分からない。 */}
@@ -832,6 +838,7 @@ export function MatterDocuments(
             ))}
           </tbody>
         </table>
+        </div>
       ) : (
         <div className="faint">この案件の文書はまだありません。</div>
       )}

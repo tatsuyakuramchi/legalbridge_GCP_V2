@@ -42,6 +42,18 @@ export const isPubTermsAnnex = (templateKey: string): boolean => templateKey ===
 /** これを超えたら別紙形式を勧める作品数。A4 縦で本文の前に表が1ページ以上続く目安。 */
 export const PUB_TITLES_ANNEX_HINT = 12;
 
+/**
+ * どちらのひな形を選ぶかの手がかり（A-038）。
+ *
+ * 以前はひな形の名前に「作品が少ないとき／多いとき」を入れていたが、名前は
+ * 文書の一覧の「種別」の列にも出るので、狭い欄では表が壊れる。名前は形式だけ
+ * にして、手がかりはひな形を選ぶところに出す。
+ */
+export const PUB_TERMS_TEMPLATE_HINT: Record<string, string> = {
+  [PUB_TERMS_KEY]: `作品が少ないとき向け。対象著作物の一覧が第１条に出る（${PUB_TITLES_ANNEX_HINT} 点あたりまで）`,
+  [PUB_TERMS_ANNEX_KEY]: "作品が多いとき向け。条文を先に読み切れるよう、一覧は末尾の別紙1に出る"
+};
+
 /** 一覧の行の欄。画面の行編集（LineItems の pub_titles）と本文が同じ名前を読む。 */
 export const PUB_TITLES_FIELD = "pub_titles";
 
