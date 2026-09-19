@@ -232,7 +232,9 @@ export function DocumentsWorkspace(
           ...(scope === "draft" || scope === "decided" || scope === "sent" ? { phase: scope } : {}),
           ...(batchId ? { batchId: String(batchId) } : {})
         })}`),
-        api.get<{ conditions: ConditionSummary[] }>("/conditions"),
+        // 出版の条件書は条件 170 本で1通になる。既定の 200 では台帳の新しい順に
+        // 切られて、載せたい条件が候補に出てこない。
+        api.get<{ conditions: ConditionSummary[] }>("/conditions?limit=500"),
         api.get<Integrations>("/integrations")
       ]);
       setTemplates(t.templates);
@@ -374,7 +376,7 @@ export function DocumentsWorkspace(
   useEffect(() => {
     if (!matterId) { setMatterConditions(null); return; }
     let live = true;
-    api.get<{ conditions: ConditionSummary[] }>(`/conditions?matterId=${matterId}`)
+    api.get<{ conditions: ConditionSummary[] }>(`/conditions?matterId=${matterId}&limit=500`)
       .then((r) => { if (live) setMatterConditions(r.conditions); })
       .catch(() => { if (live) setMatterConditions(null); });
     return () => { live = false; };
@@ -382,6 +384,26 @@ export function DocumentsWorkspace(
   const scoped = Boolean(matterId) && scopeToMatter && matterConditions !== null;
   const candidateConditions = (scoped ? matterConditions! : conditions)
     .filter((c) => showSuperseded || picked.includes(c.id) || c.status !== "superseded");
+  /** 候補を何行まで描くか。80点の作品を1通に載せるので、押して伸ばせるようにする。 */
+  const [shownLimit, setShownLimit] = useState(40);
+  /**
+   * 絞り込みに当たっている候補。選んだものは、絞り込みに当たらなくても必ず出す
+   * （画面から消えると、何を選んだのか分からないまま紙に載る）。
+   */
+  const matchedConditions = candidateConditions
+    .filter((c) => showSettled || picked.includes(c.id) || !c.settlement?.done)
+    .filter((c) => {
+      const q = condSearch.trim().toLowerCase();
+      if (!q) return true;
+      return [c.conditionNo, c.name, c.counterparty?.name,
+              c.agreement?.title, c.agreement?.agreementNo]
+        .some((v) => String(v ?? "").toLowerCase().includes(q));
+    });
+  const shownConditions = [
+    ...matchedConditions.filter((c) => picked.includes(c.id)),
+    ...matchedConditions.filter((c) => !picked.includes(c.id)).slice(0, Math.max(0, shownLimit - picked.length))
+  ];
+  const hiddenConditions = matchedConditions.length - shownConditions.length;
   const supersededCount = (scoped ? matterConditions! : conditions).filter((c) => c.status === "superseded").length;
   const settledCount = (scoped ? matterConditions! : conditions).filter((c) => c.settlement?.done).length;
   /**
@@ -920,16 +942,7 @@ export function DocumentsWorkspace(
                   </button>
                 </div>
                 <div className="picker">
-                  {candidateConditions
-                    .filter((c) => showSettled || picked.includes(c.id) || !c.settlement?.done)
-                    .filter((c) => {
-                      const q = condSearch.trim().toLowerCase();
-                      if (!q) return picked.includes(c.id) || scoped || candidateConditions.indexOf(c) < 40;
-                      return [c.conditionNo, c.name, c.counterparty?.name,
-                              c.agreement?.title, c.agreement?.agreementNo]
-                        .some((v) => String(v ?? "").toLowerCase().includes(q));
-                    })
-                    .slice(0, 30)
+                  {shownConditions
                     .map((c) => (
                     <label key={c.id} className="pick">
                       <input type="checkbox" checked={picked.includes(c.id)}
@@ -948,6 +961,32 @@ export function DocumentsWorkspace(
                       </span>
                     </label>
                   ))}
+                </div>
+                {/* 80点の作品（条件 170 本）を1通に載せることがある。1件ずつ押して
+                    いられないので、絞り込んだぶんをまとめて選べるようにする。
+                    選んだ数と、出していない件数もここで分かるようにする。 */}
+                <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+                  <span className="faint">
+                    選択 {picked.length} 件／候補 {matchedConditions.length} 件
+                    {hiddenConditions > 0 && `（うち ${hiddenConditions} 件は未表示）`}
+                  </span>
+                  {matchedConditions.length > 0 && (
+                    <button type="button" className="btn btn-sm"
+                            onClick={() => setPicked((prev) => [...new Set([...prev, ...matchedConditions.map((c) => c.id)])])}>
+                      この {matchedConditions.length} 件をまとめて選ぶ
+                    </button>
+                  )}
+                  {hiddenConditions > 0 && (
+                    <button type="button" className="btn btn-sm"
+                            onClick={() => setShownLimit((n) => n + 100)}>
+                      もっと出す（+100）
+                    </button>
+                  )}
+                  {picked.length > 0 && (
+                    <button type="button" className="btn btn-sm" onClick={() => setPicked([])}>
+                      選択をすべて外す
+                    </button>
+                  )}
                 </div>
                 {/* 基本契約。発注書の準拠条項と「基本契約名 / 番号」はここから出る。
                     条件に契約が付いていれば黙ってそれを使うが、付いていない条件や

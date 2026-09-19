@@ -4,7 +4,7 @@ import { api, ApiError } from "./api.js";
 interface Spec {
   kind: string; label: string;
   required: string[]; optional: string[]; sample: string;
-  updatable?: boolean; updateColumns?: string[]; updateSample?: string;
+  updatable?: boolean; updateColumns?: string[]; updateSample?: string; updateHint?: string;
 }
 type Mode = "create" | "update";
 interface RowOutcome {
@@ -101,9 +101,8 @@ export function CsvImport({ initialKind }: { initialKind?: string } = {}) {
           <p className="faint">
             {updating ? (
               <>
-                当てる先は <b>作品コード</b>（無ければ <b>作品名</b>）で決まります。
-                書き換えられる列: {(spec.updateColumns ?? []).join("、")}。
-                <b>空欄の列は触りません</b>（空にして消すことはできません）。親作品はここでは付け替えません
+                {spec.updateHint}。書き換えられる列: {(spec.updateColumns ?? []).join("、")}。
+                <b>空欄の列は触りません</b>（空にして消すことはできません）
               </>
             ) : (
               <>

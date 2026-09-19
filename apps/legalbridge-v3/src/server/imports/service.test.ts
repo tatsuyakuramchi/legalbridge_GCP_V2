@@ -165,3 +165,80 @@ test("更新：当てる手がかりの見出しが無ければ受け付けな�
   await assert.rejects(() => svc.run({ kind: "parties", csv: "名称\n甲", dryRun: true, actor: "k", mode: "update" }),
     /できません/);
 });
+
+/**
+ * 利用許諾条件の更新（条件番号か、作品＋取引モデルで当てて、書いてある列だけ直す）。
+ */
+const condDb = (hits: Array<Record<string, unknown>> = [{ id: 31, condition_no: "CL-1", name: "ito｜紙出版", status: "active" }]) =>
+  new FakeDatabase((text, params) => {
+    if (text.includes("WHERE lower(btrim(condition_no))")) {
+      return String(params?.[0]) === "CL-1" ? hits : [];
+    }
+    if (text.includes("FROM works\n          WHERE")) return [{ id: 9, title: "ito" }];
+    if (text.includes("WHERE c.work_id = $1 AND c.usage_type = $2")) return hits;
+    if (text.includes("FROM condition_scopes WHERE condition_id")) {
+      return [{ scope_type: "media", label: "紙", code: "print" },
+              { scope_type: "region", label: "日本", code: "JP" }];
+    }
+    // 更新側（ConditionWriteService）
+    if (text.includes("FROM conditions") && text.includes("FOR UPDATE")) {
+      return [{ id: 31, status: "active", condition_no: "CL-1", name: "ito｜紙出版" }];
+    }
+    if (text.includes("UPDATE conditions SET")) return [{ id: 31 }];
+    if (text.includes("DELETE FROM condition_scopes")) return [];
+    if (text.includes("INSERT INTO condition_scopes")) return [{ id: 1 }];
+    if (text.includes("SELECT current_date")) return [{ today: "2026-09-19" }];
+    // 実績が付いていれば版を分ける判断（ここでは付いていない＝その場で直す）
+    if (text.includes("FROM condition_events WHERE condition_id")) return [{ n: 0 }];
+    if (text.includes("FROM document_conditions WHERE condition_id")) {
+      return [{ documents: 0, payments: 0, matters: 0, children: 0 }];
+    }
+    return undefined;
+  });
+
+test("条件の更新：条件番号で当て、料率だけを直す（％→ppm）", async () => {
+  const db = condDb();
+  const r = await new ImportService(db).run({
+    kind: "license_conditions", csv: "条件番号,料率,備考\nCL-1,12.5,", dryRun: false, actor: "k", mode: "update" });
+  assert.equal(r.ok, 1, JSON.stringify(r.rows));
+  const q = db.find("UPDATE conditions SET")!;
+  assert.match(q.text, /rate_ppm = \$2/);
+  assert.equal(q.params[1], 125000);
+  assert.doesNotMatch(q.text, /notes/, "空欄の備考は触らない");
+});
+
+test("条件の更新：地域を当てても媒体（紙・電子）は残す", async () => {
+  const db = condDb();
+  await new ImportService(db).run({
+    kind: "license_conditions", csv: "条件番号,地域\nCL-1,全世界", dryRun: false, actor: "k", mode: "update" });
+  const inserts = db.all("INSERT INTO condition_scopes");
+  const types = inserts.map((q) => String(q.params[1]));
+  assert.ok(types.includes("media"), "媒体は残す");
+  assert.ok(types.includes("region"), "地域は入れ替える");
+  assert.equal(types.filter((t) => t === "region").length, 1, "古い地域は消える");
+});
+
+test("条件の更新：作品＋取引モデルでも当たる。当たらない・複数は止める", async () => {
+  const db = condDb();
+  const r = await new ImportService(db).run({
+    kind: "license_conditions", csv: "作品名,取引モデル,料率\nito,紙出版,11", dryRun: true, actor: "k", mode: "update" });
+  assert.equal(r.ok, 1, JSON.stringify(r.rows));
+  assert.equal(db.find("UPDATE conditions SET"), undefined, "試算では書かない");
+
+  const many = await new ImportService(condDb([
+    { id: 31, condition_no: "CL-1", name: "ito｜再許諾（A）", status: "active" },
+    { id: 32, condition_no: "CL-2", name: "ito｜再許諾（B）", status: "active" }
+  ])).run({ kind: "license_conditions", csv: "作品名,取引モデル,料率\nito,再許諾,50", dryRun: true, actor: "k", mode: "update" });
+  assert.equal(many.error, 1);
+  assert.match(many.rows[0].message ?? "", /複数あります/);
+});
+
+test("条件の更新：無効・旧版は止める。当てる手がかりの見出しが無ければ受け付けない", async () => {
+  const voided = condDb([{ id: 31, condition_no: "CL-1", name: "ito｜紙出版", status: "void" }]);
+  const r = await new ImportService(voided).run({
+    kind: "license_conditions", csv: "条件番号,料率\nCL-1,11", dryRun: true, actor: "k", mode: "update" });
+  assert.match(r.rows[0].message ?? "", /無効化/);
+
+  await assert.rejects(() => new ImportService(condDb()).run({
+    kind: "license_conditions", csv: "料率\n11", dryRun: true, actor: "k", mode: "update" }), /条件番号/);
+});

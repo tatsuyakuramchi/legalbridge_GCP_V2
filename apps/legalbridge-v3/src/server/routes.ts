@@ -440,6 +440,9 @@ export function createRoutes(database: Transactable) {
       direction: direction === "in" || direction === "out" ? direction : undefined,
       kind: req.query.kind ? String(req.query.kind) : undefined,
       workId: req.query.workId ? Number(req.query.workId) : undefined,
+      // 出版の条件書は作品 80 点・条件 170 本で1通になる。既定の 200 では
+      // 台帳の新しい順に切られて、載せたい条件が候補に出てこない。
+      limit: req.query.limit ? Number(req.query.limit) : undefined,
       includeVoid: String(req.query.void ?? "") === "1"
     }) });
   }));
@@ -1780,7 +1783,7 @@ export function createRoutes(database: Transactable) {
 
   const draftSchema = z.object({
     templateKey: z.string().trim().min(1).max(60),
-    conditionIds: z.array(z.coerce.number().int().positive()).max(200).default([]),
+    conditionIds: z.array(z.coerce.number().int().positive()).max(500).default([]),
     matterId: z.coerce.number().int().positive().nullable().optional(),
     agreementId: z.coerce.number().int().positive().nullable().optional(),
     manualInputs: z.record(z.string(), z.unknown()).default({}),
@@ -2032,7 +2035,7 @@ export function createRoutes(database: Transactable) {
    */
   const draftPatchSchema = z.object({
     manualInputs: z.record(z.string(), z.unknown()).optional(),
-    conditionIds: z.array(z.coerce.number().int().positive()).max(200).optional(),
+    conditionIds: z.array(z.coerce.number().int().positive()).max(500).optional(),
     // 基本契約。null で「条件の契約に従う」に戻す。
     agreementId: z.coerce.number().int().positive().nullable().optional()
   });
@@ -2364,7 +2367,8 @@ export function createRoutes(database: Transactable) {
    */
   const composeSchema = z.object({
     templateKey: z.string().trim().min(1).max(120),
-    conditionIds: z.array(z.coerce.number().int().positive()).max(50).default([]),
+    // 出版の条件書は作品 80 点・条件 170 本で1通になる。
+    conditionIds: z.array(z.coerce.number().int().positive()).max(500).default([]),
     eventIds: z.array(z.coerce.number().int().positive()).max(200).default([]),
     matterId: z.coerce.number().int().positive().nullable().optional(),
     agreementId: z.coerce.number().int().positive().nullable().optional(),

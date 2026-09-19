@@ -2,7 +2,7 @@ import type { Transactable } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { PartyWriteService } from "../parties/write-service.js";
 import { WorkWriteService, type WorkPatch } from "../works/write-service.js";
-import { ConditionWriteService, type LicenseSetRow } from "../conditions/write-service.js";
+import { ConditionWriteService, type EconomicsPatch, type LicenseSetRow } from "../conditions/write-service.js";
 import { conditionNameFor, parseUsageType } from "../conditions/naming.js";
 import { parseLanguages, parseRegions } from "../core/rights-scope.js";
 import type { ConditionScope } from "../core/model.js";
@@ -45,6 +45,8 @@ export interface ImportSpec {
   updateColumns?: string[];
   /** update のときの見本。 */
   updateSample?: string;
+  /** update のときの当て方の説明。 */
+  updateHint?: string;
 }
 
 export const IMPORT_SPECS: ImportSpec[] = [
@@ -65,6 +67,7 @@ export const IMPORT_SPECS: ImportSpec[] = [
             "原作小説,ゲンサクショウセツ,原作IP,発売済,出版,,,© 2026 著者名,,\n" +
             "新作ボードゲーム,シンサクボードゲーム,派生作品,企画中,ゲーム,,原作小説,© 2026 著者名 / Arclight,挿絵：〇〇,",
     updatable: true,
+    updateHint: "当てる先は 作品コード（無ければ 作品名）。親作品はここでは付け替えません（系譜は作品画面で）",
     updateColumns: ["カナ", "種別", "状態", "事業区分", "著作権表示", "第三者権利", "備考", "作品名"],
     updateSample: "作品コード,備考\n" +
                   "WRK-2026-0001,初版1000部。奥付の表記は別紙のとおり\n" +
@@ -80,7 +83,14 @@ export const IMPORT_SPECS: ImportSpec[] = [
             "ito,,権利者名,,AGR-2026-0001,自社製造・他社販売,2,非独占,,,,,2026-10-01,2031-09-30,JPY,,全世界,,\n" +
             "ito,,権利者名,,AGR-2026-0001,再許諾,50,非独占,,,Alpha Games,英語版の製造販売,2026-10-01,2031-09-30,JPY,,全世界,,\n" +
             "星降る夜のはなし,,著者名,,,紙出版,11,非独占,,,,,2026-10-01,,JPY,,,日本語,\n" +
-            "星降る夜のはなし,,著者名,,,電子出版,15,非独占,,,,,2026-10-01,,JPY,,,日本語,"
+            "星降る夜のはなし,,著者名,,,電子出版,15,非独占,,,,,2026-10-01,,JPY,,,日本語,",
+    updatable: true,
+    updateHint: "当てる先は 条件番号。無ければ 作品名（または作品コード）＋取引モデルで当てます" +
+                "（再許諾は 再許諾先 も見ます）。作品・許諾者・契約・通貨は替えられません（条件の画面で）",
+    updateColumns: ["料率", "独占", "MG", "AG", "開始日", "終了日", "支払条件", "地域", "言語", "備考"],
+    updateSample: "条件番号,料率,開始日,終了日\n" +
+                  "CL-2026-00451,11,2026-10-01,2031-09-30\n" +
+                  "CL-2026-00452,15,,"
   }
 ];
 
@@ -166,8 +176,16 @@ export class ImportService {
 
     const parsed = parseCsv(input.csv);
     if (mode === "update") {
-      // どの作品を直すかが決まればよい。作品コードだけ、作品名だけの CSV でも当てる。
-      if (!parsed.headers.includes("作品コード") && !parsed.headers.includes("作品名")) {
+      // どれを直すかが決まればよい。値の列は書いてあるものだけ当てる。
+      if (input.kind === "license_conditions") {
+        const byNo = parsed.headers.includes("条件番号");
+        const byWork = (parsed.headers.includes("作品名") || parsed.headers.includes("作品コード"))
+          && parsed.headers.includes("取引モデル");
+        if (!byNo && !byWork) {
+          throw new DomainError("VALIDATION",
+            "更新には「条件番号」か、「作品名（または作品コード）」と「取引モデル」の見出しが要ります");
+        }
+      } else if (!parsed.headers.includes("作品コード") && !parsed.headers.includes("作品名")) {
         throw new DomainError("VALIDATION",
           "更新には「作品コード」か「作品名」の見出しが要ります。どの作品を直すかが決まりません");
       }
@@ -180,7 +198,7 @@ export class ImportService {
     }
 
     const rows: RowOutcome[] = [];
-    if (input.kind === "license_conditions") {
+    if (input.kind === "license_conditions" && mode === "create") {
       return this.licenseConditions(parsed.rows, input.dryRun, input.actor);
     }
     // 同じ CSV の前の行で作る作品は、試算でも親作品として当たったことにする
@@ -189,11 +207,13 @@ export class ImportService {
     for (const [index, row] of parsed.rows.entries()) {
       const line = index + 2;   // 1行目は見出し
       try {
-        const outcome = input.kind === "parties"
-          ? await this.party(row, input.dryRun, input.actor)
-          : mode === "update"
-            ? await this.workUpdate(row, input.dryRun, input.actor)
-            : await this.work(row, input.dryRun, input.actor, earlier);
+        const outcome = input.kind === "license_conditions"
+          ? await this.conditionUpdate(row, input.dryRun, input.actor)
+          : input.kind === "parties"
+            ? await this.party(row, input.dryRun, input.actor)
+            : mode === "update"
+              ? await this.workUpdate(row, input.dryRun, input.actor)
+              : await this.work(row, input.dryRun, input.actor, earlier);
         for (const k of [row["作品名"], row["作品コード"]]) {
           const v = String(k ?? "").trim().toLowerCase();
           if (v) earlier.add(v);
@@ -204,7 +224,7 @@ export class ImportService {
         rows.push({
           line,
           status: e?.code === "CONFLICT" ? "duplicate" : "error",
-          label: String(row[spec.required[0]] ?? row["作品コード"] ?? ""),
+          label: String(row["条件番号"] ?? row[spec.required[0]] ?? row["作品コード"] ?? ""),
           message: e?.message ?? (mode === "update" ? "更新に失敗しました" : "登録に失敗しました")
         });
       }
@@ -583,6 +603,142 @@ export class ImportService {
         sublicensee, purpose
       }
     };
+  }
+
+
+  /**
+   * 既に登録してある利用許諾条件に、CSV に書いてある列だけを当てる。
+   *
+   * 当てる先は条件番号。無ければ 作品（作品コード／作品名）＋取引モデルで当てる
+   * （条件名の規則がそのまま鍵になる）。再許諾は相手ごとに何本も立つので、
+   * 再許諾先も見る。それでも2本以上当たれば、条件番号で指定してもらう。
+   *
+   * 空欄の列は触らない。作品・許諾者・契約・通貨は替えない（条件の identity が
+   * 変わってしまう。付け替えは条件の画面で）。
+   */
+  private async conditionUpdate(row: Record<string, string>, dryRun: boolean, actor: string):
+    Promise<Omit<RowOutcome, "line">> {
+    const text = (header: string) => String(row[header] ?? "").trim() || null;
+    const conditionNo = text("条件番号");
+    let hits: Array<{ id: number; condition_no: string | null; name: string; status: string }>;
+    let label: string;
+
+    if (conditionNo) {
+      const r = await this.database.query(
+        `SELECT id, condition_no, name, status FROM conditions
+          WHERE lower(btrim(condition_no)) = lower(btrim($1)) LIMIT 2`, [conditionNo]);
+      hits = r.rows as typeof hits;
+      label = conditionNo;
+      if (!hits.length) throw new DomainError("NOT_FOUND", `条件番号 ${conditionNo} が見つかりません`);
+    } else {
+      const usageType = parseUsageType(row["取引モデル"]);
+      if (!usageType) {
+        throw new DomainError("VALIDATION",
+          `条件番号が無い行は「取引モデル」で当てます。「自社製造・自社販売」「再許諾」「自社製造・他社販売」「紙出版」「電子出版」のいずれかです（"${String(row["取引モデル"] ?? "").trim()}"）`);
+      }
+      const work = await this.findOne(
+        `SELECT id, title FROM works
+          WHERE ($1 <> '' AND lower(btrim(work_code)) = lower(btrim($1)))
+             OR ($2 <> '' AND (btrim(title) = btrim($2) OR btrim(COALESCE(title_kana, '')) = btrim($2)))
+          LIMIT 3`,
+        [String(row["作品コード"] ?? "").trim(), String(row["作品名"] ?? "").trim()],
+        `作品「${String(row["作品コード"] ?? row["作品名"] ?? "").trim()}」`);
+      label = `${String(work.title)} ／ ${String(row["取引モデル"] ?? "").trim()}`;
+      const sublicensee = text("再許諾先") ?? "";
+      const r = await this.database.query(
+        `SELECT c.id, c.condition_no, c.name, c.status FROM conditions c
+          WHERE c.work_id = $1 AND c.usage_type = $2
+            AND c.status IN ('active', 'scheduled')
+            AND ($3 = '' OR c.name ILIKE '%' || $3 || '%')
+          ORDER BY c.id LIMIT 3`, [Number(work.id), usageType, sublicensee]);
+      hits = r.rows as typeof hits;
+      if (!hits.length) {
+        throw new DomainError("NOT_FOUND",
+          `${label} の条件が見つかりません。先に登録するか、条件番号で指定してください`);
+      }
+    }
+    if (hits.length > 1) {
+      throw new DomainError("VALIDATION", `${label} に当たる条件が複数あります。条件番号で指定してください`);
+    }
+    const condition = hits[0];
+    const who = `${condition.condition_no ?? `#${condition.id}`} ${condition.name}`;
+    if (condition.status === "void") {
+      throw new DomainError("CONFLICT", `${who} は無効化されています。直せません`);
+    }
+    if (condition.status === "superseded") {
+      throw new DomainError("CONFLICT", `${who} は旧版です。最新版を指定してください`);
+    }
+
+    const patch: EconomicsPatch = {};
+    const changed: string[] = [];
+    const put = <K extends keyof EconomicsPatch>(header: string, key: K, value: EconomicsPatch[K]) => {
+      patch[key] = value; changed.push(header);
+    };
+    const rateText = text("料率");
+    if (rateText) {
+      const ratePct = Number(rateText.replace(/[%％]/g, ""));
+      if (!Number.isFinite(ratePct) || ratePct < 0 || ratePct > 100) {
+        throw new DomainError("VALIDATION", `料率は 0〜100（%）で入れてください（"${rateText}"）`);
+      }
+      put("料率", "ratePpm", Math.round(ratePct * 10000));
+    }
+    const exclText = text("独占");
+    if (exclText) {
+      if (!EXCLUSIVITY[exclText]) {
+        throw new DomainError("VALIDATION", `独占は「独占」か「非独占」です（"${exclText}"）`);
+      }
+      put("独占", "exclusivity", EXCLUSIVITY[exclText]);
+    }
+    if (text("MG")) put("MG", "mgAmount", csvAmount(row["MG"]) ?? null);
+    if (text("AG")) put("AG", "agAmount", csvAmount(row["AG"]) ?? null);
+    const termStart = text("開始日");
+    if (termStart) put("開始日", "termStart", csvDate(row["開始日"]));
+    const termEnd = text("終了日");
+    if (termEnd) put("終了日", "termEnd", csvDate(row["終了日"]));
+    const paymentTerms = text("支払条件");
+    if (paymentTerms) put("支払条件", "paymentTerms", paymentTerms);
+    const notes = text("備考");
+    if (notes) put("備考", "notes", notes);
+
+    // 地域・言語。媒体（紙・電子）は条件の素性なので残す。
+    const regionText = text("地域");
+    const languageText = text("言語");
+    let scopes: ConditionScope[] | null = null;
+    if (regionText || languageText) {
+      const cur = await this.database.query(
+        "SELECT scope_type, label, code FROM condition_scopes WHERE condition_id = $1 ORDER BY sort_order, id",
+        [Number(condition.id)]);
+      const keep = (cur.rows as Array<Record<string, any>>)
+        .filter((s) => String(s.scope_type) !== (regionText ? "region" : "")
+                    && String(s.scope_type) !== (languageText ? "language" : ""))
+        .map((s) => ({ scopeType: String(s.scope_type) as ConditionScope["scopeType"],
+                       label: String(s.label), code: s.code ?? null }));
+      scopes = [
+        ...keep,
+        ...(regionText ? parseRegions(regionText).map((s) => ({ scopeType: "region" as const, label: s.name, code: s.code || null })) : []),
+        ...(languageText ? parseLanguages(languageText).map((s) => ({ scopeType: "language" as const, label: s.name, code: s.code || null })) : [])
+      ];
+      if (regionText) changed.push("地域");
+      if (languageText) changed.push("言語");
+    }
+
+    if (!changed.length) {
+      return { status: "skip", label, id: Number(condition.id), code: condition.condition_no,
+               message: `${who}：当てる項目がありません（空欄の列は触りません）` };
+    }
+    const what = changed.join("・");
+    if (dryRun) {
+      return { status: "ok", label, id: Number(condition.id), code: condition.condition_no,
+               message: `${who} の ${what} を更新します` };
+    }
+    if (Object.keys(patch).length) {
+      // 効き始める日は指定しない（その場で直す）。改訂として版を分けたいときは
+      // 条件の画面から。
+      await this.conditions.updateEconomics(Number(condition.id), patch, actor, null);
+    }
+    if (scopes) await this.conditions.replaceScopes(Number(condition.id), scopes, actor);
+    return { status: "ok", label, id: Number(condition.id), code: condition.condition_no,
+             message: `${who} の ${what} を更新しました` };
   }
 
   private async findOne(sql: string, params: unknown[], what: string): Promise<Record<string, unknown>> {
