@@ -33,6 +33,16 @@ const rate = (v: unknown) => {
   return Number.isFinite(n) ? n : null;
 };
 
+/** 「1年」「6か月」を月に。空なら1年（12か月）。 */
+const renewMonths = (v: unknown) => {
+  const s = String(v ?? "").trim().replace(/\s+/g, "");
+  if (!s) return 12;
+  const m = s.match(/^(\d+)(年|か月|ヶ月|カ月)?$/);
+  if (!m) return 12;
+  const n = Number(m[1]);
+  return /年/.test(m[2] ?? "") ? n * 12 : n;
+};
+
 export interface PublishingSetCreated {
   print: { id: number; conditionNo: string | null } | null;
   digital: { id: number; conditionNo: string | null } | null;
@@ -91,6 +101,17 @@ export function PubConditionSetForm(
           hint: "条件書の基本契約番号・自動更新の通知期限はここから出る" },
         { name: "termStart", label: "許諾開始", type: "date" },
         { name: "termEnd", label: "許諾終了", type: "date", hint: "空なら期間の定めなし" },
+        // 自動更新（A-039）。更新した回数は持たず、終了日・単位・今日から数える。
+        { name: "autoRenew", label: "自動更新", type: "select",
+          options: [{ value: "", label: "しない" }, { value: "1", label: "する" }],
+          visibleWhen: (v) => String(v.termEnd ?? "").trim() !== "",
+          hint: "終了日が来るたびに自動で更新したことにする。条件書には「更新 n 回」と出る" },
+        { name: "renewMonths", label: "更新の単位", placeholder: "1年",
+          visibleWhen: (v) => Boolean(v.autoRenew) && String(v.termEnd ?? "").trim() !== "",
+          hint: "「1年」「6か月」。空なら1年" },
+        { name: "renewStoppedOn", label: "更新を止めた日", type: "date",
+          visibleWhen: (v) => Boolean(v.autoRenew) && String(v.termEnd ?? "").trim() !== "",
+          hint: "入れるとその日で回数が止まる（いまの期間は満了まで有効）" },
 
         { name: "printRate", label: "紙 料率（%）", type: "number", placeholder: "11",
           hint: "税抜定価 × 印税対象部数 × 料率。空なら紙の条件は作らない" },
@@ -165,6 +186,9 @@ export function PubConditionSetForm(
           counterpartyId: int(v.counterpartyId), workId: int(v.workId),
           agreementId: int(v.agreementId), matterId: int(v.matterId),
           termStart: text(v.termStart), termEnd: text(v.termEnd),
+          autoRenew: v.autoRenew ? true : (text(v.termEnd) ? false : undefined),
+          renewMonths: v.autoRenew ? renewMonths(v.renewMonths) : undefined,
+          renewStoppedOn: v.autoRenew ? (text(v.renewStoppedOn) ?? null) : undefined,
           taxCategory: v.taxCategory, notes: text(v.notes),
           scopes: scopes.length ? scopes : undefined,
           print: print === null ? null : { ratePct: print, exclusivity: v.printExclusivity || null },

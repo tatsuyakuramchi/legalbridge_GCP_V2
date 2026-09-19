@@ -86,6 +86,10 @@ export interface LicenseSetInput {
   workPartId?: number | null;
   termStart?: string | null;
   termEnd?: string | null;
+  /** 自動更新（A-039）。期間は束で1つなので、更新も束で決める。 */
+  autoRenew?: boolean | null;
+  renewMonths?: number | null;
+  renewStoppedOn?: string | null;
   currency?: string;
   taxCategory?: "taxable" | "reduced" | "exempt";
   paymentTerms?: string | null;
@@ -191,6 +195,12 @@ export interface ConditionInput {
   sublicensable?: boolean | null;
   /** 再許諾の別途合意（A-033）。covered=不要 / required=要。空は「要」扱い。 */
   sublicenseConsent?: "covered" | "required" | null;
+  /** 自動更新（A-039）。許諾期間の更新を条件ごとに持つ。更新した回数は導く。 */
+  autoRenew?: boolean | null;
+  /** 更新の単位（月）。12 = 1年。空は 12 として扱う。 */
+  renewMonths?: number | null;
+  /** 更新を止めた日。以後は更新しない（その期間は満了まで有効）。 */
+  renewStoppedOn?: string | null;
   termStart?: string | null;
   termEnd?: string | null;
   currency?: string;
@@ -242,6 +252,10 @@ export interface EconomicsPatch {
   exclusivity?: "exclusive" | "non_exclusive" | null;
   /** 再許諾の別途合意（A-033）。 */
   sublicenseConsent?: "covered" | "required" | null;
+  /** 自動更新（A-039）。期間そのものは termStart / termEnd。 */
+  autoRenew?: boolean | null;
+  renewMonths?: number | null;
+  renewStoppedOn?: string | null;
   spec?: string | null;
   deliverableOwnership?: "orderer" | "contractor" | null;
   orderNo?: string | null;
@@ -254,6 +268,7 @@ const ECONOMICS_COLUMNS: Record<keyof EconomicsPatch, string> = {
   paymentTerms: "payment_terms", taxCategory: "tax_category", notes: "notes",
   quantity: "quantity", contractForm: "contract_form",
   workId: "work_id", exclusivity: "exclusivity", sublicenseConsent: "sublicense_consent",
+  autoRenew: "auto_renew", renewMonths: "renew_months", renewStoppedOn: "renew_stopped_on",
   spec: "spec", deliverableOwnership: "deliverable_ownership", orderNo: "order_no",
   usageType: "usage_type"
 };
@@ -265,7 +280,7 @@ const COPY_COLUMNS = [
   "currency", "pricing_model", "rate_ppm", "unit_amount", "flat_amount", "mg_amount", "ag_amount",
   "royalty_base", "deductible_costs", "tax_category", "withholding_note", "payment_terms",
   "cycle", "notes", "series_id", "effective_from", "spec", "deliverable_ownership", "order_no",
-  "quantity", "contract_form"
+  "quantity", "contract_form", "auto_renew", "renew_months", "renew_stopped_on"
 ];
 
 export class ConditionWriteService {
@@ -365,6 +380,9 @@ export class ConditionWriteService {
       exclusivity: row.exclusivity ?? null,
       termStart: input.termStart ?? null,
       termEnd: input.termEnd ?? null,
+      autoRenew: input.autoRenew ?? null,
+      renewMonths: input.renewMonths ?? null,
+      renewStoppedOn: input.renewStoppedOn ?? null,
       currency: input.currency ?? "JPY",
       pricingModel: "revenue_rate",
       // 画面は % で受け、保存は ppm（百万分率）。11% → 110000
@@ -546,10 +564,11 @@ export class ConditionWriteService {
                                    rate_ppm, unit_amount, flat_amount, mg_amount, ag_amount,
                                    tax_category, payment_terms, cycle, status, notes,
                                    spec, deliverable_ownership, order_no,
-                                   quantity, contract_form, usage_type)
+                                   quantity, contract_form, usage_type,
+                                   auto_renew, renew_months, renew_stopped_on)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
                    $16, $17, $18, $19, $20, $21, $22, $23, 'active', $24, $25, $26, $27,
-                   $28, $29, $30)
+                   $28, $29, $30, $31, $32, $33)
            RETURNING id, condition_no`,
           [no, input.agreementId ?? null, input.direction, input.kind, name, input.counterpartyId,
            input.workId ?? null, input.workPartId ?? null,
@@ -560,7 +579,8 @@ export class ConditionWriteService {
            input.taxCategory ?? "taxable", input.paymentTerms ?? null, input.cycle ?? null,
            input.notes ?? null, input.spec ?? null, input.deliverableOwnership ?? null,
            input.orderNo ?? null,
-           input.quantity ?? null, readContractForm(input.contractForm), input.usageType ?? null]);
+           input.quantity ?? null, readContractForm(input.contractForm), input.usageType ?? null,
+           input.autoRenew ?? null, input.renewMonths ?? null, input.renewStoppedOn ?? null]);
         const row = inserted.rows[0] as { id: number; condition_no: string | null };
         const id = Number(row.id);
 

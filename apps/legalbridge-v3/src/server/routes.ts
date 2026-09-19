@@ -928,6 +928,15 @@ export function createRoutes(database: Transactable) {
     .nullable().optional();
   /** 再許諾ごとの別途合意（A-033）。covered=不要／required=要。 */
   const sublicenseConsentSchema = z.enum(["covered", "required"]).nullable().optional();
+  /**
+   * 自動更新（A-039）。期間そのものは termStart / termEnd。
+   * 更新した回数は持たない（終了日・単位・基準日から数える）。
+   */
+  const renewalFields = {
+    autoRenew: z.boolean().nullable().optional(),
+    renewMonths: z.coerce.number().int().min(1).max(120).nullable().optional(),
+    renewStoppedOn: z.string().date().nullable().optional()
+  };
   const conditionSchema = z.object({
     matterId: z.coerce.number().int().positive().optional(),
     // 作品に紐づく許諾（IN）は空でよい（作品名｜取引モデル で付く）。それ以外は必須（サービス側で確かめる）。
@@ -943,6 +952,7 @@ export function createRoutes(database: Transactable) {
     exclusivity: z.enum(["exclusive", "non_exclusive"]).nullable().optional(),
     sublicensable: z.boolean().nullable().optional(),
     sublicenseConsent: sublicenseConsentSchema,
+    ...renewalFields,
     termStart: z.string().date().nullable().optional(),
     termEnd: z.string().date().nullable().optional(),
     currency: z.string().trim().length(3).optional(),
@@ -1004,6 +1014,7 @@ export function createRoutes(database: Transactable) {
     workId: z.coerce.number().int().positive().nullable().optional(),
     termStart: z.string().date().nullable().optional(),
     termEnd: z.string().date().nullable().optional(),
+    ...renewalFields,
     currency: z.string().trim().length(3).optional(),
     taxCategory: z.enum(["taxable", "reduced", "exempt"]).optional(),
     paymentTerms: z.string().trim().max(300).nullable().optional(),
@@ -1136,6 +1147,7 @@ export function createRoutes(database: Transactable) {
     workId: z.coerce.number().int().positive().nullable().optional(),
     exclusivity: z.enum(["exclusive", "non_exclusive"]).nullable().optional(),
     sublicenseConsent: sublicenseConsentSchema,
+    ...renewalFields,
     spec: z.string().trim().max(4000).nullable().optional(),
     deliverableOwnership: z.enum(["orderer", "contractor"]).nullable().optional(),
     orderNo: z.string().trim().max(60).nullable().optional(),

@@ -137,10 +137,11 @@ test("本文の文脈：甲＝取引先、乙＝当社、通知先・源泉・�
     printRate: "10%", printExclusivity: "独占", digitalRate: "—", digitalExclusivity: "—",
     hasPrint: true, hasDigital: false,
     // 翻訳版の再許諾（A-033）。この作品は翻訳版の条件を持たないので空。
-    // 備考も無いので、下に続く行も作らない。
     translation: "—", hasTranslation: false, translationConsent: "",
-    translationConsentRequired: false, hasNoteRow: false,
-    translationLabel: "翻訳版再許諾", translationDerivative: false
+    translationConsentRequired: false,
+    translationLabel: "翻訳版再許諾", translationDerivative: false,
+    // 許諾期間（A-039）。条件が期間を持つので、下に続く行が出る。
+    term: "2026.10.1〜2032.3.31（更新なし）", hasTerm: true, hasNoteRow: true
   });
 });
 

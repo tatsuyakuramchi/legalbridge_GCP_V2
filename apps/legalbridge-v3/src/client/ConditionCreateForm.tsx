@@ -39,6 +39,16 @@ interface Agreement {
 const text = (v: unknown) => { const s = String(v ?? "").trim(); return s || undefined; };
 const int = (v: unknown) => { const n = Number(v); return Number.isFinite(n) && n ? n : undefined; };
 
+/** 「1年」「6か月」を月に。空なら1年（12か月）。 */
+const renewMonths = (v: unknown) => {
+  const s = String(v ?? "").trim().replace(/\s+/g, "");
+  if (!s) return 12;
+  const m = s.match(/^(\d+)(年|か月|ヶ月|カ月)?$/);
+  if (!m) return 12;
+  const n = Number(m[1]);
+  return /年/.test(m[2] ?? "") ? n * 12 : n;
+};
+
 export function ConditionCreateForm(
   { title = "条件の登録", preset, onDone, onCancel }: {
     title?: string;
@@ -99,6 +109,17 @@ export function ConditionCreateForm(
           hint: "計算書の契約名・契約番号はここから出る" },
         { name: "termStart", label: "開始", type: "date" },
         { name: "termEnd", label: "終了", type: "date" },
+        // 自動更新（A-039）。更新した回数は持たず、終了日・単位・今日から数える。
+        { name: "autoRenew", label: "自動更新", type: "select",
+          options: [{ value: "", label: "しない" }, { value: "1", label: "する" }],
+          visibleWhen: (v) => String(v.termEnd ?? "").trim() !== "",
+          hint: "終了日が来るたびに自動で更新したことにする。条件書には「更新 n 回」と出る" },
+        { name: "renewMonths", label: "更新の単位", placeholder: "1年",
+          visibleWhen: (v) => Boolean(v.autoRenew) && String(v.termEnd ?? "").trim() !== "",
+          hint: "「1年」「6か月」。空なら1年" },
+        { name: "renewStoppedOn", label: "更新を止めた日", type: "date",
+          visibleWhen: (v) => Boolean(v.autoRenew) && String(v.termEnd ?? "").trim() !== "",
+          hint: "入れるとその日で回数が止まる（いまの期間は満了まで有効）" },
         { name: "currency", label: "通貨", type: "select", required: true,
           options: [{ value: "JPY", label: "JPY 円" }, { value: "USD", label: "USD" }, { value: "EUR", label: "EUR" }] },
 
@@ -189,6 +210,9 @@ export function ConditionCreateForm(
           counterpartyId: int(v.counterpartyId), workId: int(v.workId),
           agreementId: int(v.agreementId),
           termStart: text(v.termStart), termEnd: text(v.termEnd),
+          autoRenew: v.autoRenew ? true : (text(v.termEnd) ? false : undefined),
+          renewMonths: v.autoRenew ? renewMonths(v.renewMonths) : undefined,
+          renewStoppedOn: v.autoRenew ? (text(v.renewStoppedOn) ?? null) : undefined,
           currency: v.currency || "JPY", pricingModel: v.pricingModel,
           // 画面は % で受け、保存は ppm（百万分率）。12.5% → 125000
           ratePpm: v.ratePct ? Math.round(Number(v.ratePct) * 10000) : undefined,

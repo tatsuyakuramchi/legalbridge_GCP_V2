@@ -231,6 +231,11 @@ SELECT * FROM (
         + (SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='party_contacts' AND column_name = 'roles'))::text
   UNION ALL
+  SELECT 34, '条件ごとの自動更新（A-039。列が 3 つあること）',
+         (SELECT count(*) FROM information_schema.columns
+           WHERE table_schema='v3' AND table_name='conditions'
+             AND column_name IN ('auto_renew', 'renew_months', 'renew_stopped_on'))::text
+  UNION ALL
   SELECT 33, '翻訳版再許諾と別途合意（A-033。列 1 と CHECK 1 で 2 であること）',
          ((SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='conditions' AND column_name = 'sublicense_consent')

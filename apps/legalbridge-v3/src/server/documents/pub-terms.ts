@@ -22,6 +22,7 @@ import type { TemplateVariable } from "./binding.js";
 import type { Warning } from "./preflight.js";
 import { type PubMedia, pubMediaOfScopes } from "../core/pub-media.js";
 import { isSublicensingUsage, pubMediaOfUsage } from "../core/condition-usage.js";
+import { renewalLabel } from "../conditions/renewal.js";
 
 export const PUB_TERMS_KEY = "pub_license_terms_v3";
 /**
@@ -213,6 +214,9 @@ export function rowBlockerOf(condition: Data): string | null {
  * ので、備考だけ条件の備考から写し、あとは人が行で入れる。直した行は
  * manualInputs の pub_titles に残る。
  */
+/** 今日（YYYY-MM-DD）。更新の回数を数える既定の基準日。 */
+const todayStr = () => new Date().toISOString().slice(0, 10);
+
 export function pubTitleSeeds(context: Data): Data[] {
   const groups = new Map<string, Data[]>();
   for (const condition of list(context.conditions)) {
@@ -253,6 +257,13 @@ export function pubTitleSeeds(context: Data): Data[] {
       // 別途合意の要否。紙と電子で違えば、要のほうに寄せる（厳しいほうで書く）。
       trans_consent: trans.length
         ? (trans.some((c) => consentLabel(c.sublicenseConsent) === "要") ? "要" : "不要") : "",
+      // 許諾期間と自動更新（A-039）。期間は作品ごとに違うので一覧に出す。
+      // 行を直したときは、この文字がそのまま紙に出る（条件を直すのが本筋）。
+      term_label: renewalLabel({
+        termStart: text(head.termStart) || null, termEnd: text(head.termEnd) || null,
+        autoRenew: head.autoRenew === true,
+        renewMonths: number(head.renewMonths), renewStoppedOn: text(head.renewStoppedOn) || null
+      }, todayStr()),
       print_condition_id: print?.id ?? null,
       digital_condition_id: digital?.id ?? null,
       trans_print_condition_id: transPrint?.id ?? null,
@@ -381,6 +392,9 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
 
   // 翻訳の立て付け（A-034）。一覧の行の見出しにも条文にも同じ語を使うので、
   // 行を組む前に決めておく（each の中からは外側の値が見えない）。
+  // 更新の回数を数える基準日。締結日（下書きは今日）。決定した文書は値を
+  // 保存するので、あとから回数が増えても過去の紙は変わらない。
+  const asOf = pick("締結日") || text(context.document?.issuedOn) || todayStr();
   const translationDerivative = pick("翻訳の扱い") === "二次的著作物";
   const translationLabel = translationDerivative ? "翻訳版" : "翻訳版再許諾";
 
@@ -396,6 +410,17 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
     const transDigitalRate = transDigital ? percentText(transDigital.ratePct) : text(row.trans_digital_rate);
     const transText = [transPrintRate ? `紙 ${transPrintRate}` : "",
                        transDigitalRate ? `電子 ${transDigitalRate}` : ""].filter(Boolean).join("／");
+    // 許諾期間は自社出版の条件から引く（紙→電子→翻訳版の順）。行を直して
+    // いても条件があればそちらが正。条件が無い行は書いてある文字をそのまま出す。
+    const termHead = print ?? digital ?? transPrint ?? transDigital;
+    const termLabel = termHead
+      ? renewalLabel({
+          termStart: text(termHead.termStart) || null, termEnd: text(termHead.termEnd) || null,
+          autoRenew: termHead.autoRenew === true,
+          renewMonths: number(termHead.renewMonths),
+          renewStoppedOn: text(termHead.renewStoppedOn) || null
+        }, asOf)
+      : text(row.term_label);
     const transConsent = (transPrint || transDigital)
       ? ([transPrint, transDigital].filter(Boolean).some((c) => consentLabel(c!.sublicenseConsent) === "要") ? "要" : "不要")
       : text(row.trans_consent);
@@ -422,8 +447,11 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
       translationConsent: transConsent,
       // 「要」の作品が1点でもあれば、条文は個別合意が要る側で書く。
       translationConsentRequired: transConsent === "要",
-      // 作品の下に続ける行（翻訳版・備考）を出すか。どちらも無ければ行を作らない。
-      hasNoteRow: Boolean(transText) || text(row.note) !== "",
+      // 許諾期間と更新（A-039）。条件から引き直す（行を直していてもそちらが正）。
+      term: termLabel,
+      hasTerm: Boolean(termLabel),
+      // 作品の下に続ける行（許諾期間・翻訳版・備考）を出すか。
+      hasNoteRow: Boolean(termLabel) || Boolean(transText) || text(row.note) !== "",
       translationLabel, translationDerivative
     };
   });
@@ -496,6 +524,8 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
     titles,
     /** 一覧に載る作品の点数。第１条の要約と別紙1の見出しに出る（r5）。 */
     titleCount: titles.length,
-    hasAnyDigital: titles.some((t) => t.hasDigital)
+    hasAnyDigital: titles.some((t) => t.hasDigital),
+    /** 作品ごとの許諾期間が一覧に出ているか。第３条がそちらを指す（A-039）。 */
+    hasWorkTerms: titles.some((t) => t.hasTerm)
   };
 }

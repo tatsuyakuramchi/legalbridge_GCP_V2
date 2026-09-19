@@ -79,20 +79,21 @@ export const IMPORT_SPECS: ImportSpec[] = [
     kind: "license_conditions", label: "利用許諾条件（作品に紐づく IN の許諾）",
     required: ["作品名", "許諾者", "取引モデル", "料率"],
     optional: ["作品コード", "許諾者コード", "契約番号", "独占", "MG", "AG", "再許諾先", "目的",
-               "別途合意", "開始日", "終了日", "通貨", "支払条件", "地域", "言語", "備考"],
-    sample: "作品名,作品コード,許諾者,許諾者コード,契約番号,取引モデル,料率,独占,MG,AG,再許諾先,目的,別途合意,開始日,終了日,通貨,支払条件,地域,言語,備考\n" +
-            "ito,,権利者名,,AGR-2026-0001,自社製造・自社販売,2,非独占,100000,,,,,2026-10-01,2031-09-30,JPY,,全世界,,\n" +
-            "ito,,権利者名,,AGR-2026-0001,自社製造・他社販売,2,非独占,,,,,,2026-10-01,2031-09-30,JPY,,全世界,,\n" +
-            "ito,,権利者名,,AGR-2026-0001,再許諾,50,非独占,,,Alpha Games,英語版の製造販売,,2026-10-01,2031-09-30,JPY,,全世界,,\n" +
-            "星降る夜のはなし,,著者名,,,紙出版,11,非独占,,,,,,2026-10-01,,JPY,,,日本語,\n" +
-            "星降る夜のはなし,,著者名,,,電子出版,15,非独占,,,,,,2026-10-01,,JPY,,,日本語,\n" +
-            "星降る夜のはなし,,著者名,,,翻訳版再許諾（紙）,50,非独占,,,,,要,2026-10-01,,JPY,,全世界,,\n" +
-            "星降る夜のはなし,,著者名,,,翻訳版再許諾（電子）,40,非独占,,,,,要,2026-10-01,,JPY,,全世界,,",
+               "別途合意", "開始日", "終了日", "自動更新", "更新の単位", "更新停止日",
+               "通貨", "支払条件", "地域", "言語", "備考"],
+    sample: "作品名,作品コード,許諾者,許諾者コード,契約番号,取引モデル,料率,独占,MG,AG,再許諾先,目的,別途合意,開始日,終了日,自動更新,更新の単位,更新停止日,通貨,支払条件,地域,言語,備考\n" +
+            "ito,,権利者名,,AGR-2026-0001,自社製造・自社販売,2,非独占,100000,,,,,2026-10-01,2031-09-30,する,1年,,JPY,,全世界,,\n" +
+            "ito,,権利者名,,AGR-2026-0001,自社製造・他社販売,2,非独占,,,,,,2026-10-01,2031-09-30,しない,,,JPY,,全世界,,\n" +
+            "ito,,権利者名,,AGR-2026-0001,再許諾,50,非独占,,,Alpha Games,英語版の製造販売,,2026-10-01,2031-09-30,,,,JPY,,全世界,,\n" +
+            "星降る夜のはなし,,著者名,,,紙出版,11,非独占,,,,,,2026-10-01,2031-09-30,する,1年,,JPY,,,日本語,\n" +
+            "星降る夜のはなし,,著者名,,,電子出版,15,非独占,,,,,,2026-10-01,2031-09-30,する,1年,,JPY,,,日本語,\n" +
+            "星降る夜のはなし,,著者名,,,翻訳版再許諾（紙）,50,非独占,,,,,要,2026-10-01,,,,,JPY,,全世界,,\n" +
+            "星降る夜のはなし,,著者名,,,翻訳版再許諾（電子）,40,非独占,,,,,要,2026-10-01,,,,,JPY,,全世界,,",
     updatable: true,
     updateHint: "当てる先は 条件番号。無ければ 作品名（または作品コード）＋取引モデルで当てます" +
                 "（再許諾は 再許諾先 も見ます）。作品・許諾者・契約・通貨は替えられません（条件の画面で）",
-    updateColumns: ["料率", "独占", "MG", "AG", "別途合意", "開始日", "終了日", "支払条件",
-                    "地域", "言語", "備考"],
+    updateColumns: ["料率", "独占", "MG", "AG", "別途合意", "開始日", "終了日",
+                    "自動更新", "更新の単位", "更新停止日", "支払条件", "地域", "言語", "備考"],
     updateSample: "条件番号,料率,開始日,終了日\n" +
                   "CL-2026-00451,11,2026-10-01,2031-09-30\n" +
                   "CL-2026-00452,15,,"
@@ -139,6 +140,10 @@ interface LicenseCsvRow {
   partyId: number; partyName: string;
   agreementId: number | null;
   termStart: string | null; termEnd: string | null;
+  /** 自動更新（A-039）。期間と同じく束ごと。 */
+  autoRenew: boolean | null;
+  renewMonths: number | null;
+  renewStoppedOn: string | null;
   currency: string;
   paymentTerms: string | null;
   notes: string | null;
@@ -158,6 +163,27 @@ const nameSensitive = (usage: ConditionUsageType) =>
 
 const EXCLUSIVITY: Record<string, "exclusive" | "non_exclusive"> = {
   独占: "exclusive", exclusive: "exclusive", 非独占: "non_exclusive", non_exclusive: "non_exclusive"
+};
+
+/**
+ * 更新の単位（A-039）。「1年」「12か月」「6か月」のような書き方を月に直す。
+ * 読めなければ null（行ごとに止める）。
+ */
+export function parseRenewMonths(text: unknown): number | null {
+  const s = String(text ?? "").trim().replace(/\s+/g, "");
+  if (!s) return null;
+  const m = s.match(/^(\d+(?:\.\d+)?)(年|か月|ヶ月|ケ月|カ月|months?|month|m)?$/i);
+  if (!m) return null;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const months = /年/.test(m[2] ?? "") ? n * 12 : n;
+  return Number.isInteger(months) && months >= 1 && months <= 120 ? months : null;
+}
+
+/** 自動更新の言い方（A-039）。 */
+const AUTO_RENEW: Record<string, boolean> = {
+  する: true, 有: true, あり: true, 自動更新: true, true: true, yes: true,
+  しない: false, 無: false, なし: false, false: false, no: false
 };
 
 /** 再許諾ごとの別途合意（A-033）。翻訳版再許諾の行だけが持つ。 */
@@ -497,7 +523,8 @@ export class ImportService {
     // 束ねる：作品×許諾者×契約×期間×通貨。
     const groups = new Map<string, LicenseCsvRow[]>();
     for (const r of parsedRows) {
-      const key = [r.workId, r.partyId, r.agreementId ?? "", r.termStart ?? "", r.termEnd ?? "", r.currency].join("|");
+      const key = [r.workId, r.partyId, r.agreementId ?? "", r.termStart ?? "", r.termEnd ?? "",
+                   r.autoRenew ?? "", r.renewMonths ?? "", r.renewStoppedOn ?? "", r.currency].join("|");
       groups.set(key, [...(groups.get(key) ?? []), r]);
     }
     for (const group of groups.values()) {
@@ -526,7 +553,9 @@ export class ImportService {
       try {
         const made = await this.conditions.createLicenseSet({
           title: null, counterpartyId: first.partyId, workId: first.workId, agreementId: first.agreementId,
-          termStart: first.termStart, termEnd: first.termEnd, currency: first.currency,
+          termStart: first.termStart, termEnd: first.termEnd,
+          autoRenew: first.autoRenew, renewMonths: first.renewMonths,
+          renewStoppedOn: first.renewStoppedOn, currency: first.currency,
           paymentTerms: first.paymentTerms, notes: first.notes, scopes: first.scopes,
           rows: group.map((r) => r.row)
         }, actor);
@@ -582,6 +611,19 @@ export class ImportService {
       throw new DomainError("VALIDATION", "再許諾は「再許諾先」を入れてください（条件名「作品名｜再許諾（再許諾先／目的）」になります）");
     }
 
+    // 自動更新（A-039）。単位は「1年」「6か月」。読めない値は行ごとに止める。
+    const renewText = String(row["自動更新"] ?? "").trim();
+    if (renewText && !(renewText in AUTO_RENEW)) {
+      throw new DomainError("VALIDATION", `自動更新は「する」か「しない」です（"${renewText}"）`);
+    }
+    const autoRenew = renewText ? AUTO_RENEW[renewText] : null;
+    const monthsText = String(row["更新の単位"] ?? "").trim();
+    const renewMonths = monthsText ? parseRenewMonths(monthsText) : null;
+    if (monthsText && renewMonths == null) {
+      throw new DomainError("VALIDATION",
+        `更新の単位は「1年」「6か月」のように入れてください（"${monthsText}"）`);
+    }
+
     const work = await this.findOne(
       `SELECT id, title FROM works
         WHERE ($1 <> '' AND lower(btrim(work_code)) = lower(btrim($1)))
@@ -619,6 +661,7 @@ export class ImportService {
       partyId: Number(party.id), partyName: String(party.name),
       agreementId,
       termStart: csvDate(row["開始日"]), termEnd: csvDate(row["終了日"]),
+      autoRenew, renewMonths, renewStoppedOn: csvDate(row["更新停止日"]),
       currency: (String(row["通貨"] ?? "").trim() || "JPY").toUpperCase(),
       paymentTerms: String(row["支払条件"] ?? "").trim() || null,
       notes: String(row["備考"] ?? "").trim() || null,
@@ -718,6 +761,23 @@ export class ImportService {
     }
     if (text("MG")) put("MG", "mgAmount", csvAmount(row["MG"]) ?? null);
     if (text("AG")) put("AG", "agAmount", csvAmount(row["AG"]) ?? null);
+    const renewText = text("自動更新");
+    if (renewText) {
+      if (!(renewText in AUTO_RENEW)) {
+        throw new DomainError("VALIDATION", `自動更新は「する」か「しない」です（"${renewText}"）`);
+      }
+      put("自動更新", "autoRenew", AUTO_RENEW[renewText]);
+    }
+    const monthsText = text("更新の単位");
+    if (monthsText) {
+      const months = parseRenewMonths(monthsText);
+      if (months == null) {
+        throw new DomainError("VALIDATION",
+          `更新の単位は「1年」「6か月」のように入れてください（"${monthsText}"）`);
+      }
+      put("更新の単位", "renewMonths", months);
+    }
+    if (text("更新停止日")) put("更新停止日", "renewStoppedOn", csvDate(row["更新停止日"]));
     const consentText = text("別途合意");
     if (consentText) {
       if (!CONSENT[consentText]) {

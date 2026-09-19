@@ -67,6 +67,15 @@ export interface ConditionDetail extends ConditionSummary {
    * covered=不要（この条件書で許諾済み）／required=要（相手ごとに別途合意）。
    */
   sublicenseConsent: "covered" | "required" | null;
+  /**
+   * 自動更新（A-039）。許諾期間（termStart / termEnd）を条件ごとに更新する。
+   * 更新した回数は持たない。終了日・単位・基準日から数える（renewal.ts）。
+   */
+  autoRenew: boolean | null;
+  /** 更新の単位（月）。12 = 1年。空は 12 として扱う。 */
+  renewMonths: number | null;
+  /** 更新を止めた日。以後は更新しない（その期間は満了まで有効）。 */
+  renewStoppedOn: string | null;
   taxCategory: "taxable" | "reduced" | "exempt";
   /** 支払条件。「月末締め翌月末払い」。読んで支払期日を出す。 */
   paymentTerms: string | null;

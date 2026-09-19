@@ -299,3 +299,45 @@ test("条件の更新：別途合意だけを直せる", async () => {
   assert.match(q.text, /sublicense_consent = \$2/);
   assert.equal(q.params[1], "covered");
 });
+
+/**
+ * 許諾期間の自動更新（A-039）。期間は束ごとなので、CSV も束の列として受ける。
+ */
+test("登録：自動更新と更新の単位を取り込む（「1年」「6か月」）", async () => {
+  const db = build();
+  const csv = [
+    "作品名,許諾者,取引モデル,料率,開始日,終了日,自動更新,更新の単位",
+    "ito,権利者名,自社製造・自社販売,2,2026-10-01,2031-09-30,する,1年"
+  ].join("\n");
+  const r = await new ImportService(db).run({ kind: "license_conditions", csv, dryRun: false, actor: "k" });
+  assert.equal(r.ok, 1, JSON.stringify(r.rows));
+  const q = db.find("INSERT INTO conditions")!;
+  assert.ok(q.params.includes(true), "自動更新する");
+  assert.ok(q.params.includes(12), "1年 = 12か月");
+});
+
+test("登録：読めない自動更新・単位は行ごとに止める", async () => {
+  const db = build();
+  const csv = [
+    "作品名,許諾者,取引モデル,料率,開始日,終了日,自動更新,更新の単位",
+    "ito,権利者名,紙出版,11,2026-10-01,2031-09-30,たぶんする,",
+    "ito,権利者名,電子出版,15,2026-10-01,2031-09-30,する,ときどき"
+  ].join("\n");
+  const r = await new ImportService(db).run({ kind: "license_conditions", csv, dryRun: true, actor: "k" });
+  assert.equal(r.error, 2);
+  assert.match(r.rows[0].message ?? "", /自動更新は「する」か「しない」です/);
+  assert.match(r.rows[1].message ?? "", /更新の単位は「1年」「6か月」のように/);
+});
+
+test("条件の更新：自動更新と止めた日を直せる", async () => {
+  const db = condDb();
+  const r = await new ImportService(db).run({
+    kind: "license_conditions", csv: "条件番号,自動更新,更新の単位,更新停止日\nCL-1,する,6か月,2030-04-01",
+    dryRun: false, actor: "k", mode: "update" });
+  assert.equal(r.ok, 1, JSON.stringify(r.rows));
+  const q = db.find("UPDATE conditions SET")!;
+  assert.match(q.text, /auto_renew = \$\d/);
+  assert.match(q.text, /renew_months = \$\d/);
+  assert.match(q.text, /renew_stopped_on = \$\d/);
+  assert.ok(q.params.includes(6), "6か月");
+});

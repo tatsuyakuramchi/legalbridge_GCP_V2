@@ -37,6 +37,16 @@ export interface LicenseSetCreated {
   conditions: Array<{ usageType: string; id: number; conditionNo: string | null }>;
 }
 
+/** 「1年」「6か月」を月に。空なら1年（12か月）。 */
+const renewMonths = (v: unknown) => {
+  const s = String(v ?? "").trim().replace(/\s+/g, "");
+  if (!s) return 12;
+  const m = s.match(/^(\d+)(年|か月|ヶ月|カ月)?$/);
+  if (!m) return 12;
+  const n = Number(m[1]);
+  return /年/.test(m[2] ?? "") ? n * 12 : n;
+};
+
 export function LicenseSetForm(
   { preset, onDone, onCancel }: {
     preset?: Partial<Record<"counterpartyId" | "workId" | "agreementId" | "matterId", string>>;
@@ -108,6 +118,17 @@ export function LicenseSetForm(
           hint: "条件書の基本契約名・計算書の契約番号はここから出る" },
         { name: "termStart", label: "許諾開始", type: "date" },
         { name: "termEnd", label: "許諾終了", type: "date", hint: "空なら期間の定めなし" },
+        // 自動更新（A-039）。更新した回数は持たず、終了日・単位・今日から数える。
+        { name: "autoRenew", label: "自動更新", type: "select",
+          options: [{ value: "", label: "しない" }, { value: "1", label: "する" }],
+          visibleWhen: (v) => String(v.termEnd ?? "").trim() !== "",
+          hint: "終了日が来るたびに自動で更新したことにする。条件書には「更新 n 回」と出る" },
+        { name: "renewMonths", label: "更新の単位", placeholder: "1年",
+          visibleWhen: (v) => Boolean(v.autoRenew) && String(v.termEnd ?? "").trim() !== "",
+          hint: "「1年」「6か月」。空なら1年" },
+        { name: "renewStoppedOn", label: "更新を止めた日", type: "date",
+          visibleWhen: (v) => Boolean(v.autoRenew) && String(v.termEnd ?? "").trim() !== "",
+          hint: "入れるとその日で回数が止まる（いまの期間は満了まで有効）" },
         { name: "currency", label: "通貨", type: "select", required: true,
           options: [{ value: "JPY", label: "JPY 円" }, { value: "USD", label: "USD" }, { value: "EUR", label: "EUR" }] },
         ...usageFields,
@@ -139,6 +160,9 @@ export function LicenseSetForm(
           counterpartyId: int(v.counterpartyId), workId: int(v.workId),
           agreementId: int(v.agreementId), matterId: int(v.matterId),
           termStart: text(v.termStart), termEnd: text(v.termEnd),
+          autoRenew: v.autoRenew ? true : (text(v.termEnd) ? false : undefined),
+          renewMonths: v.autoRenew ? renewMonths(v.renewMonths) : undefined,
+          renewStoppedOn: v.autoRenew ? (text(v.renewStoppedOn) ?? null) : undefined,
           currency: v.currency || "JPY", taxCategory: v.taxCategory, notes: text(v.notes),
           scopes: scopes.length ? scopes : undefined,
           rows

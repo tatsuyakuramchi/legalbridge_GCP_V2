@@ -18,7 +18,8 @@ import type { ConditionUsageType } from "../core/condition-usage.js";
 /** 取込（license_conditions）と同じ見出し。並びも合わせる。 */
 export const CONDITION_EXPORT_HEADERS = [
   "条件番号", "作品コード", "作品名", "許諾者コード", "許諾者", "契約番号",
-  "取引モデル", "料率", "独占", "MG", "AG", "別途合意", "開始日", "終了日", "通貨",
+  "取引モデル", "料率", "独占", "MG", "AG", "別途合意", "開始日", "終了日",
+  "自動更新", "更新の単位", "更新停止日", "通貨",
   "支払条件", "地域", "言語", "備考", "状態"
 ] as const;
 
@@ -80,7 +81,8 @@ export class ConditionExportService {
     try {
       const r = await this.database.query(
         `SELECT c.condition_no, c.usage_type, c.rate_ppm, c.exclusivity, c.mg_amount, c.ag_amount,
-                c.sublicense_consent, c.term_start, c.term_end, c.currency, c.payment_terms, c.notes, c.status,
+                c.sublicense_consent, c.term_start, c.term_end,
+                c.auto_renew, c.renew_months, c.renew_stopped_on, c.currency, c.payment_terms, c.notes, c.status,
                 w.work_code, w.title AS work_title,
                 p.party_code, p.name AS party_name,
                 ag.agreement_no,
@@ -115,6 +117,11 @@ export class ConditionExportService {
         x.sublicense_consent === "required" ? "要" : x.sublicense_consent === "covered" ? "不要" : "",
         dateStr(x.term_start) ?? "",
         dateStr(x.term_end) ?? "",
+        // 自動更新（A-039）。更新した回数は書き出さない（数えるもの）。
+        x.auto_renew === true ? "する" : x.auto_renew === false ? "しない" : "",
+        int(x.renew_months) == null ? ""
+          : (int(x.renew_months)! % 12 === 0 ? `${int(x.renew_months)! / 12}年` : `${int(x.renew_months)}か月`),
+        dateStr(x.renew_stopped_on) ?? "",
         str(x.currency) ?? "",
         str(x.payment_terms) ?? "",
         str(x.regions) ?? "",

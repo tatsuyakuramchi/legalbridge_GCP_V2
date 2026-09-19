@@ -10,7 +10,7 @@ import { bankInfoLine } from "./template-context.js";
 
 /**
  * ひな形の本文は infra/v3 の SQL が運ぶ（本番に流すのはその SQL）。いまの版は
- * 131 が運ぶ2本（1本目＝一覧形式、2本目＝別紙形式）。
+ * 133 が運ぶ2本（1本目＝一覧形式、2本目＝別紙形式）。
  * ここは同じ SQL から本文を取り出して描画し、本文が差す名前と計算ブロックが
  * 出す名前がずれていないかを見張る。片方だけ直すと空欄の紙が出る。
  */
@@ -28,9 +28,9 @@ const bodyOf = (file: string, index = 0) => {
   return sql.slice(start, end);
 };
 /** 一覧形式（作品が少ないとき。一覧は第１条）。 */
-const listHtml = bodyOf("131_pub_license_terms_derivative_scope.sql", 0);
+const listHtml = bodyOf("133_pub_terms_work_period.sql", 0);
 /** 別紙形式（作品が多いとき。一覧は別紙1）。 */
-const annexHtml = bodyOf("131_pub_license_terms_derivative_scope.sql", 1);
+const annexHtml = bodyOf("133_pub_terms_work_period.sql", 1);
 // 既存の試験はこれまでどおり別紙形式の本文で通す（項目は2本立てで同じ）。
 const html = annexHtml;
 
@@ -76,7 +76,7 @@ test("本文が差す名前はすべて計算ブロックから出る（空欄�
   const rowNames = new Set(["no", "title", "edition", "copyright", "thirdParty", "printRate", "printExclusivity",
     "digitalRate", "digitalExclusivity", "note", "hasPrint", "hasDigital",
     "translation", "hasTranslation", "translationConsent", "hasNoteRow",
-    "translationLabel", "translationDerivative"]);
+    "translationLabel", "translationDerivative", "term", "hasTerm"]);
   const outside = blanks.filter((name) => !rowNames.has(name));
   assert.deepEqual(outside, [], `空欄で出る差し込み: ${outside.join(", ")}`);
   assert.ok(!out.includes("{{"), "差し込みが残っていない");
@@ -252,4 +252,57 @@ test("二次的著作物で翻訳版の条件が無ければ、二次利用は�
   assert.ok(out.includes("本条件書の対象外とし、甲乙の別途合意による"));
   assert.ok(!out.includes("の行を目安とする"), "指す先が無いので料率には触れない");
   assert.ok(!out.includes("<th>翻訳物の著作権</th>"));
+});
+
+/**
+ * 作品ごとの許諾期間と更新（A-039）。備考と同じ行に1文で出る。
+ * 回数は終了日・単位・締結日から数えるので、紙に出る満了日が動く。
+ */
+test("許諾期間：作品ごとに備考と同じ行へ出し、更新した回数だけ満了日が進む", () => {
+  const ctx = {
+    ...context,
+    conditions: context.conditions.map((c: any, i: number) => (i === 0
+      ? { ...c, termStart: "2026-10-01", termEnd: "2031-09-30",
+          autoRenew: true, renewMonths: 12, renewStoppedOn: null }
+      : { ...c, termStart: "2026-10-01", termEnd: "2029-09-30", autoRenew: false }))
+  };
+  const patch = pubTermsPatch(ctx, { "締結日": "2033-05-01", "許諾者連絡先": "甲" });
+  const out = renderDocumentHtml(annexHtml, { taxRate: 10, BANK_INFO: "", ...patch });
+  assert.ok(!out.includes("{{"));
+  // 2031.9.30 の満了を2回またいだので、いまの期間は 2033.9.30 まで。
+  assert.ok(out.includes('<span class="lbl">許諾期間</span>2026.10.1〜2033.9.30（更新 2回）'),
+    "更新した回数と、更新後の満了日");
+  assert.ok(out.includes('<span class="lbl">許諾期間</span>2026.10.1〜2029.9.30（更新なし）'),
+    "自動更新しない作品");
+  assert.ok(out.includes("一覧の「許諾期間」の行による"), "第３条が作品ごとの期間を指す");
+  // 備考と同じ行に並ぶ（行は増えない）。
+  assert.ok(out.includes('（更新 2回）<span class="lbl">備考</span>初版100部'));
+});
+
+test("許諾期間：止めた作品は「以後更新しない」。決定済みの紙は締結日で固まる", () => {
+  const base = (over: Record<string, unknown>) => ({
+    ...context,
+    conditions: context.conditions.map((c: any) => ({
+      ...c, termStart: "2026-10-01", termEnd: "2031-09-30",
+      autoRenew: true, renewMonths: 12, ...over
+    }))
+  });
+  const stopped = pubTermsPatch(base({ renewStoppedOn: "2033-05-01" }),
+    { "締結日": "2040-01-01", "許諾者連絡先": "甲" });
+  const out = renderDocumentHtml(annexHtml, { taxRate: 10, BANK_INFO: "", ...stopped });
+  assert.ok(out.includes("2026.10.1〜2033.9.30（更新 2回・以後更新しない）"));
+
+  // 同じ条件でも、締結日が違えば回数が違う（決定した紙はその日で固まる）。
+  const early = pubTermsPatch(base({}), { "締結日": "2031-09-30", "許諾者連絡先": "甲" });
+  const outEarly = renderDocumentHtml(annexHtml, { taxRate: 10, BANK_INFO: "", ...early });
+  assert.ok(outEarly.includes("2026.10.1〜2031.9.30（更新 0回）"));
+});
+
+test("許諾期間：期間を持たない条件なら行を出さない（これまでの紙は変わらない）", () => {
+  const patch = pubTermsPatch({ ...context,
+    conditions: context.conditions.map((c: any) => ({ ...c, termStart: null, termEnd: null })) },
+    { "許諾者連絡先": "甲" });
+  const out = renderDocumentHtml(annexHtml, { taxRate: 10, BANK_INFO: "", ...patch });
+  assert.ok(!out.includes('<span class="lbl">許諾期間</span>'));
+  assert.ok(!out.includes("一覧の「許諾期間」の行による"));
 });

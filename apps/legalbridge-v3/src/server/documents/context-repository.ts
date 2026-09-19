@@ -419,6 +419,7 @@ export class DocumentContextRepository {
               c.term_start, c.term_end, c.tax_category, c.payment_terms, c.contract_form,
               c.cycle,
               c.agreement_id, c.exclusivity, c.sublicensable, c.sublicense_consent,
+              c.auto_renew, c.renew_months, c.renew_stopped_on,
               c.notes, c.spec, c.deliverable_ownership,
               c.order_no, c.usage_type,
               c.counterparty_id, c.work_id, c.work_part_id,
@@ -479,6 +480,10 @@ export class DocumentContextRepository {
         sublicensable: row.sublicensable,
         // 再許諾の別途合意（A-033）。条件書の条文と一覧の印が出し分かれる。
         sublicenseConsent: str(row.sublicense_consent),
+        // 自動更新（A-039）。更新した回数は条件書を組むときに数える。
+        autoRenew: row.auto_renew === null || row.auto_renew === undefined ? null : Boolean(row.auto_renew),
+        renewMonths: int(row.renew_months),
+        renewStoppedOn: dateStr(row.renew_stopped_on),
         notes: str(row.notes),
         spec: str(row.spec),
         deliverableOwnership: str(row.deliverable_ownership),

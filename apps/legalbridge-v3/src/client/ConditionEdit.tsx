@@ -74,6 +74,9 @@ export function ConditionEdit(
     workId: detail.work ? String(detail.work.id) : "",
     termStart: detail.termStart ?? "",
     termEnd: detail.termEnd ?? "",
+    autoRenew: detail.autoRenew ? "1" : "",
+    renewMonths: detail.renewMonths ? String(detail.renewMonths) : "",
+    renewStoppedOn: detail.renewStoppedOn ?? "",
     ratePct: asPct(detail.ratePpm),
     flatAmount: asMoney(detail.flatAmount),
     unitAmount: asMoney(detail.unitAmount),
@@ -130,6 +133,7 @@ export function ConditionEdit(
     const pairs: Array<[string, unknown]> = [
       ["termStart", patchText(v.termStart, detail.termStart)],
       ["termEnd", patchText(v.termEnd, detail.termEnd)],
+      ["renewStoppedOn", patchText(v.renewStoppedOn, detail.renewStoppedOn)],
       ["paymentTerms", patchText(v.paymentTerms, detail.paymentTerms)],
       ["contractForm", patchText(v.contractForm, detail.contractForm)],
       ["quantity", patchNum(v.quantity, detail.quantity)],
@@ -147,6 +151,19 @@ export function ConditionEdit(
       ["sublicenseConsent", patchText(v.sublicenseConsent, detail.sublicenseConsent)]
     ];
     for (const [key, value] of pairs) if (value !== undefined) patch[key] = value;
+
+    // 自動更新（A-039）。更新しないなら単位と止めた日は空に戻す。
+    const autoRenew = v.autoRenew === "1";
+    if (autoRenew !== Boolean(detail.autoRenew)) patch.autoRenew = autoRenew;
+    const months = v.renewMonths.trim() === "" ? null : Math.round(Number(v.renewMonths));
+    if (autoRenew && months !== (detail.renewMonths ?? null)
+        && (months === null || Number.isFinite(months))) {
+      patch.renewMonths = months;
+    }
+    if (!autoRenew) {
+      if (detail.renewMonths !== null) patch.renewMonths = null;
+      if (detail.renewStoppedOn !== null) patch.renewStoppedOn = null;
+    }
 
     // 画面は % で受け、保存は ppm（百万分率）。12.5% → 125000
     const pct = v.ratePct.trim();
@@ -288,6 +305,27 @@ export function ConditionEdit(
           </label>
           {field("termStart", "開始", { type: "date" })}
           {field("termEnd", "終了", { type: "date", hint: "空欄は期限なし" })}
+          {/*
+            自動更新（A-039）。更新した回数は持たず、終了日・単位・基準日から
+            数える。止めたい日が来たら「更新を止めた日」を入れる。
+          */}
+          {v.termEnd.trim() !== "" && (
+            <label className="field">
+              <span>自動更新</span>
+              <select value={v.autoRenew} onChange={(e) => set("autoRenew", e.target.value)}>
+                <option value="">しない</option>
+                <option value="1">する</option>
+              </select>
+              <small className="faint">
+                終了日が来るたびに自動で更新したことにする。条件書には「更新 n 回」と出る
+              </small>
+            </label>
+          )}
+          {v.termEnd.trim() !== "" && v.autoRenew === "1" && (<>
+            {field("renewMonths", "更新の単位（月）", { type: "number", hint: "12 = 1年。空なら1年" })}
+            {field("renewStoppedOn", "更新を止めた日",
+              { type: "date", hint: "入れるとその日で回数が止まる（いまの期間は満了まで有効）" })}
+          </>)}
           {fixed("通貨", detail.currency, "通貨は変えられません。金額の意味が変わるため")}
           {fixed("計算方式", PRICING_LABEL[detail.pricingModel] ?? detail.pricingModel,
             "計算方式は変えられません。変えると過去の計算根拠が変わるので、新しい条件を作ってください")}

@@ -1281,6 +1281,39 @@ BEGIN
 END
 $a033$;
 
+-- ---------------------------------------------------------------------
+-- A-039: 条件ごとの自動更新（更新の単位・止めた日）
+--
+-- 許諾期間は条件がすでに持っている（term_start / term_end）。足りないのは
+-- 「そのあと自動で更新するか」で、これまで契約（合意）にしか無かった。
+-- 出版は作品ごとに期間も更新も違うので、条件の列にする。
+--
+-- 更新した回数は列に持たない。終了日・単位・今日から数えれば出るものを
+-- 列で持つと、数える人と数えない人が出て食い違う（毎年の書き換えも要る）。
+-- 止めたい日が来たら renew_stopped_on を入れる。そこで数が止まる。
+--   auto_renew        … 自動更新するか。null・false は「更新なし」
+--   renew_months      … 更新の単位（月）。12 = 1年。null は 12 として扱う
+--   renew_stopped_on  … 更新を止めた日。以後は更新しない（その期間は満了まで）
+-- ---------------------------------------------------------------------
+
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS auto_renew boolean;
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS renew_months integer;
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS renew_stopped_on date;
+COMMENT ON COLUMN v3.conditions.auto_renew IS
+  '自動更新するか（null・false は更新なし）。更新した回数は終了日・単位・基準日から導く。';
+COMMENT ON COLUMN v3.conditions.renew_months IS '更新の単位（月）。12 = 1年。null は 12 として扱う。';
+COMMENT ON COLUMN v3.conditions.renew_stopped_on IS '更新を止めた日。以後は更新しない（その期間は満了まで有効）。';
+
+DO $a039$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.conditions'::regclass AND conname = 'conditions_renew_months_chk') THEN
+    ALTER TABLE v3.conditions ADD CONSTRAINT conditions_renew_months_chk
+      CHECK (renew_months IS NULL OR (renew_months > 0 AND renew_months <= 120));
+  END IF;
+END
+$a039$;
+
 COMMIT;
 
 
@@ -1482,6 +1515,11 @@ SELECT * FROM (
             WHERE table_schema='v3' AND table_name='parties' AND column_name IN ('representative_title', 'representative_name'))
         + (SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='party_contacts' AND column_name = 'roles'))::text
+  UNION ALL
+  SELECT 34, '条件ごとの自動更新（A-039。列が 3 つあること）',
+         (SELECT count(*) FROM information_schema.columns
+           WHERE table_schema='v3' AND table_name='conditions'
+             AND column_name IN ('auto_renew', 'renew_months', 'renew_stopped_on'))::text
   UNION ALL
   SELECT 33, '翻訳版再許諾と別途合意（A-033。列 1 と CHECK 1 で 2 であること）',
          ((SELECT count(*) FROM information_schema.columns
