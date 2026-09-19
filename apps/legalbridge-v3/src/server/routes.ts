@@ -11,6 +11,7 @@ import { ConditionScheduleService, TRIGGER_KINDS, EVENT_TYPE_BY_TRIGGER,
          generateLines } from "./conditions/schedule-service.js";
 import { MatterWriteService } from "./matters/write-service.js";
 import { MatterLinkService, CONDITION_KINDS_BY_MATTER } from "./matters/link-service.js";
+import { ConditionExportService } from "./conditions/export.js";
 import { LinkService } from "./links/service.js";
 import { RELATIONS, type EntityKind } from "./links/relations.js";
 import { DOCUMENT_STYLES } from "./matters/flow.js";
@@ -79,6 +80,7 @@ export function createRoutes(database: Transactable) {
   const router = Router();
   const conditions = new ConditionRepository(database);
   const conditionWrites = new ConditionWriteService(database);
+  const conditionExport = new ConditionExportService(database);
   const conditionEvents = new ConditionEventService(database);
   const conditionSchedules = new ConditionScheduleService(database);
   const matters = new MatterRepository(database);
@@ -446,6 +448,30 @@ export function createRoutes(database: Transactable) {
       limit: req.query.limit ? Number(req.query.limit) : undefined,
       includeVoid: String(req.query.void ?? "") === "1"
     }) });
+  }));
+
+  /**
+   * 条件を CSV で書き出す。見出しは取込（license_conditions）と同じなので、
+   * 書き出して直してそのまま取り込める。絞り込みは一覧と同じものを受ける。
+   *
+   * ※ router.get("/conditions/:id") より前に置くこと。後ろだと :id="export"
+   *    として扱われて 404 になる。
+   */
+  router.get("/conditions/export", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
+    const csv = await conditionExport.run({
+      keyword: String(req.query.q ?? ""),
+      direction: req.query.direction as "in" | "out" | undefined,
+      kind: req.query.kind ? String(req.query.kind) : undefined,
+      workId: req.query.workId ? Number(req.query.workId) : undefined,
+      matterId: req.query.matterId ? Number(req.query.matterId) : undefined,
+      includeVoid: String(req.query.void ?? "") === "1",
+      limit: req.query.limit ? Number(req.query.limit) : undefined
+    });
+    const day = new Date().toISOString().slice(0, 10);
+    res.type("text/csv; charset=utf-8")
+       .set("Content-Disposition", `attachment; filename="conditions-${day}.csv"`)
+       // Excel が UTF-8 と分かるように BOM を付ける（無いと日本語が化ける）。
+       .send(`\ufeff${csv}`);
   }));
 
   router.get("/conditions/:id", asyncRoute(async (req, res) => {

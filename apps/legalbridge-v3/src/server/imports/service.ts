@@ -706,7 +706,8 @@ export class ImportService {
     let scopes: ConditionScope[] | null = null;
     if (regionText || languageText) {
       const cur = await this.database.query(
-        "SELECT scope_type, label, code FROM condition_scopes WHERE condition_id = $1 ORDER BY sort_order, id",
+        // condition_scopes に id は無い（condition_id・scope_type・label が鍵）。
+        "SELECT scope_type, label, code FROM condition_scopes WHERE condition_id = $1 ORDER BY sort_order, label",
         [Number(condition.id)]);
       const keep = (cur.rows as Array<Record<string, any>>)
         .filter((s) => String(s.scope_type) !== (regionText ? "region" : "")

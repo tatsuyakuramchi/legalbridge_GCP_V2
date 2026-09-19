@@ -70,6 +70,16 @@ export function ConditionsWorkspace(
   const [editing, setEditing] = useState(false);
   const search = useDebounced(keyword);
 
+  /** 一覧の絞り込み。書き出しにも同じものを渡す。 */
+  const listQuery = (() => {
+    const params = new URLSearchParams();
+    if (filter !== "all") params.set("direction", filter);
+    if (search.trim()) params.set("q", search.trim());
+    if (includeVoid) params.set("void", "1");
+    return params.toString() ? `?${params}` : "";
+  })();
+  const exportQuery = listQuery;
+
   function reload(select?: number) {
     const params = new URLSearchParams();
     if (filter !== "all") params.set("direction", filter);
@@ -243,6 +253,14 @@ export function ConditionsWorkspace(
 
       <div className="row" style={{ marginBottom: 10 }}>
         {!creating && <button className="btn primary btn-sm" onClick={() => setCreating("one")}>条件を登録</button>}
+        {/* 一括修正（CSV の「登録済みに当てる」）は、今なにが入っているかを
+            手元に出せないと直しようがない。絞り込んだぶんをそのまま書き出す。 */}
+        {!creating && (
+          <a className="btn btn-sm" href={`/api/v3/conditions/export${exportQuery}`}
+             title="いま絞り込んでいる条件を CSV で書き出す。見出しは取込と同じなので、直してそのまま取り込める">
+            CSV で書き出す
+          </a>
+        )}
         {!creating && (
           <button className="btn btn-sm" onClick={() => setCreating("license")}
                   title="作品1点ぶんの自社製造・再許諾・他社販売の条件を1回で作る。個別利用許諾条件書はこの N 本を表に畳んで出す">

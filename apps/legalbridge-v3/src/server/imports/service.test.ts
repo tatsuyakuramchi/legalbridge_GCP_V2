@@ -207,6 +207,17 @@ test("条件の更新：条件番号で当て、料率だけを直す（％→pp
   assert.doesNotMatch(q.text, /notes/, "空欄の備考は触らない");
 });
 
+test("条件の更新：既存の範囲を読む SQL は condition_scopes の実際の列だけを使う", async () => {
+  // condition_scopes に id 列は無い。ORDER BY id と書くと、地域・言語を当てる
+  // 行だけが「column id does not exist」で落ちる（書き出した CSV をそのまま
+  // 取り込むと必ず通る道）。
+  const db = condDb();
+  await new ImportService(db).run({
+    kind: "license_conditions", csv: "条件番号,地域\nCL-1,全世界", dryRun: false, actor: "k", mode: "update" });
+  const q = db.find("FROM condition_scopes WHERE condition_id")!;
+  assert.doesNotMatch(q.text, /\bid\b/, `実在しない列を使っている: ${q.text}`);
+});
+
 test("条件の更新：地域を当てても媒体（紙・電子）は残す", async () => {
   const db = condDb();
   await new ImportService(db).run({
