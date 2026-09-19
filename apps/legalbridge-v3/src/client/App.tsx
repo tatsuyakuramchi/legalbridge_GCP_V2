@@ -51,6 +51,14 @@ export function App() {
 
   useEffect(() => { api.get<Me>("/me").then(setMe).catch(() => setMe(null)); }, []);
 
+  /** 左の桁を畳んでいるか。畳んだ状態はこの端末に覚えておく。 */
+  const [railSlim, setRailSlim] = useState(() => {
+    try { return localStorage.getItem("lb.railSlim") === "1"; } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("lb.railSlim", railSlim ? "1" : "0"); } catch { /* 使えなくても困らない */ }
+  }, [railSlim]);
+
   const openCondition = (id: number) => { setConditionId(id); setView("conditions"); };
 
   /**
@@ -132,8 +140,15 @@ export function App() {
 
   return (
     <ReadOnlyContext.Provider value={Boolean(me?.readOnly)}>
-    <div className="app">
+    <div className={`app${railSlim ? " rail-slim" : ""}`}>
       <nav className="rail" aria-label="主ナビゲーション">
+        {/* ウィンドウを半分にすると、この桁だけで横幅の2割を使う。畳めるようにして
+            表の広い画面では中身に回す。畳んだかどうかは次に開いたときも残す。 */}
+        <button className="rail-toggle" onClick={() => setRailSlim((v) => !v)}
+                title={railSlim ? "ナビゲーションを開く" : "ナビゲーションを畳む"}
+                aria-label={railSlim ? "ナビゲーションを開く" : "ナビゲーションを畳む"}>
+          {railSlim ? "»" : "«"}
+        </button>
         <div className="wordmark"><b>LegalBridge</b><span>Core</span></div>
         <GlobalSearch onOpen={openHit} />
         {NAV.map((group) => (

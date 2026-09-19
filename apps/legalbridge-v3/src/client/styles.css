@@ -41,13 +41,61 @@ button,input,select{font:inherit;color:inherit}
   color:var(--ink);font-weight:700}
 .rail-foot{margin-top:auto;padding:12px 18px 0;border-top:1px solid var(--line)}
 
+/* 左の桁を畳む。畳んだときは開くボタンだけを残す。 */
+.rail-toggle{align-self:flex-end;margin:0 8px 4px;padding:1px 7px;border:1px solid var(--line);
+  border-radius:5px;background:var(--surface);color:var(--faint);cursor:pointer;font-size:11px;line-height:1.5}
+.rail-toggle:hover{color:var(--ink);border-color:var(--line-strong)}
+.app.rail-slim{grid-template-columns:40px minmax(0,1fr)}
+.app.rail-slim .rail{padding-top:10px}
+.app.rail-slim .rail > *:not(.rail-toggle){display:none}
+.app.rail-slim .rail-toggle{align-self:center;margin:0}
+
 .main{min-width:0}
 .workspace{padding:22px 26px 60px;display:flex;flex-direction:column;gap:16px}
 .workspace-head h1{margin:0;font-size:21px;letter-spacing:.03em}
 .workspace-head p{margin:4px 0 0;color:var(--muted);font-size:12px;max-width:62ch}
 
-.split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;align-items:start}
-@media (max-width:1100px){.split{grid-template-columns:minmax(0,1fr)}}
+/* ── 一覧と詳細 ───────────────────────────────────────────────────────
+   ウィンドウを半分（960px 前後）にして使うので、既定は「1画面に1つ」。
+   一覧で選ぶと一覧を畳み、詳細を全幅で出す。並べたままだと詳細が一覧の
+   全長ぶん下に落ちて、行を押しても画面に出てこない（条件明細120件で
+   約9,000px 下だった）。最大化（1700px 以上）のときだけ左右に並べる。 */
+.split{display:grid;grid-template-columns:minmax(0,1fr);gap:14px;align-items:start}
+
+/* 一覧へ戻る道。並べているときは要らない。 */
+.md-back{display:flex;align-items:center;gap:6px;background:none;border:0;
+  padding:0 0 8px;color:var(--muted);cursor:pointer;font-size:12px}
+.md-back:hover{color:var(--ink);text-decoration:underline}
+
+@media (max-width:1699px){
+  /* 選んでいる間は一覧を畳む。一覧にしか効かない操作（絞り込みの札）も一緒に。 */
+  .workspace.picked .md-list,
+  .workspace.picked .md-list-only{display:none}
+  .workspace:not(.picked) .md-detail{display:none}
+}
+@media (min-width:1700px){
+  /* 一覧は5〜6列の表なので、固定の細い桁にすると列が切れる。比で割って
+     詳細に多くを渡しつつ、一覧にも表が収まるだけの幅を残す。 */
+  .split{grid-template-columns:minmax(500px,1fr) minmax(0,2fr)}
+  /* 並べたときの一覧は横に狭い。見出しと番号の折り返しを許し、余白も詰めて
+     列が切れないようにする（切れると状態や期日が読めず、一覧として用をなさない）。
+     金額だけは折らない（桁が途中で切れると別の数字に見える）。 */
+  .split > .md-list th{white-space:normal}
+  .split > .md-list th,.split > .md-list td{padding-left:8px;padding-right:8px;overflow-wrap:anywhere}
+  .split > .md-list .code{white-space:normal}
+  /* 桁の多い一覧は、並べると1行が3段にも伸びる。脇に置いたときだけ
+     落とす列に md-list-extra を付けておく（全幅のときは出る）。 */
+  .split > .md-list .md-list-extra{display:none}
+  .md-back{display:none}
+  /* 一覧だけを画面に貼り付けて、一覧の中だけで送る。こうしないと詳細を
+     読み進めるたびに一覧も流れて、戻ったときに元の行を見失う。
+     詳細はページと一緒に流す（入れ子の送りを2つ作らない）。 */
+  .split > .md-list{position:sticky;top:12px;max-height:calc(100vh - 24px);
+    display:flex;flex-direction:column;overflow:hidden}
+  /* 送るのは表の中だけ。桁ごと送ると、絞り込みの欄も列の見出しも一緒に
+     消えて、何の一覧を見ているのか分からなくなる。 */
+  .split > .md-list .tablewrap{overflow:auto;min-height:0;overscroll-behavior:contain}
+}
 .stack{display:flex;flex-direction:column;gap:12px}
 .panel{background:var(--surface);border:1px solid var(--line);border-radius:8px}
 .panel-hd{display:flex;align-items:center;gap:9px;padding:10px 14px;border-bottom:1px solid var(--line)}
@@ -226,8 +274,11 @@ tr.overdue td { background: var(--out-soft); }
 tr.report-total td { border-top: 2px solid var(--line-strong); font-weight: 600; background: var(--sunken); }
 
 @media print {
-  .rail, .tabs, .filters, .no-print, .workspace-head p, .search, .list-tools { display: none !important; }
-  .app, .main, .workspace, .panel { display: block; margin: 0; padding: 0; border: 0; box-shadow: none; }
+  .rail, .tabs, .filters, .no-print, .workspace-head p, .search, .list-tools,
+  .md-back, .md-list { display: none !important; }
+  .app, .main, .workspace, .panel, .split { display: block; margin: 0; padding: 0; border: 0; box-shadow: none; }
+  /* 貼り付けと高さの上限は画面のための細工。紙では切れるので外す。 */
+  .md-detail, .split > * { position: static; max-height: none; overflow: visible; }
   .panel-hd { border: 0; padding: 0 0 8px; }
   body { background: #fff; }
   table { width: 100%; border-collapse: collapse; font-size: 11px; }
@@ -316,7 +367,18 @@ tr.report-total td { border-top: 2px solid var(--line-strong); font-weight: 600;
 
 /* ── 文書作成フォーム。左に区分ごとの入力、右にプレビューと点検 ─────────── */
 .compose{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;align-items:start}
-@media (max-width:1180px){.compose{grid-template-columns:minmax(0,1fr)}}
+/* 入力とプレビューを並べられない幅では、見る面を切り替える。並べたまま
+   縦に積むと、プレビューが入力欄の全長より下に落ちて見えなくなる。 */
+.compose-switch{display:none}
+@media (max-width:1180px){
+  .compose{grid-template-columns:minmax(0,1fr)}
+  .compose-switch{display:flex;gap:6px;position:sticky;top:0;z-index:6;
+    padding:6px 0;background:var(--ground)}
+  .compose.pane-form > .compose-side{display:none}
+  .compose.pane-preview > .compose-main{display:none}
+  /* 切り替えた先では画面いっぱいに使う。560px 固定だと下が余る。 */
+  .compose-side .preview{height:calc(100vh - 220px);min-height:420px}
+}
 .compose-side{position:sticky;top:12px}
 .compose-side .preview{height:560px}
 .fsec .panel-hd h2{font-size:13px}
@@ -362,8 +424,12 @@ button.pipe-step{font:inherit;color:inherit;text-align:left;cursor:pointer}
 button.pipe-step:hover{border-color:var(--accent)}
 
 /* ---- 作品台帳 ---- */
-.ledger{display:grid;grid-template-columns:minmax(260px,320px) minmax(0,1fr);gap:14px;align-items:start}
-@media (max-width:900px){.ledger{grid-template-columns:minmax(0,1fr)}}
+/* 作品の台帳も一覧と詳細の組。分かれ目は .split と同じにする
+   （画面ごとに作法が違うと、同じ幅で片方だけ切り替わる）。 */
+.ledger{display:grid;grid-template-columns:minmax(0,1fr);gap:14px;align-items:start}
+@media (min-width:1700px){
+  .ledger{grid-template-columns:minmax(260px,320px) minmax(0,1fr)}
+}
 .ledger-tree{display:flex;flex-direction:column;gap:2px;max-height:70vh;overflow-y:auto;padding:6px}
 .ledger-tree .node{display:flex;align-items:center;gap:7px;width:100%;text-align:left;border:1px solid transparent;
   background:transparent;border-radius:6px;padding:5px 8px;font-size:12px;cursor:pointer}

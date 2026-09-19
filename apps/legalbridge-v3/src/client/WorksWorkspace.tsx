@@ -14,6 +14,7 @@ import { LicenseSetForm } from "./LicenseSetForm.js";
 import { conditionUsageLabel } from "../server/core/condition-usage.js";
 import { CONDITION_KIND_LABEL, EVENT_TYPE_LABEL, StatusTag } from "./labels.js";
 import { useReadOnly } from "./read-only.js";
+import { DetailBack, isWideLayout } from "./DetailBack.js";
 
 /**
  * 作品台帳。
@@ -201,7 +202,7 @@ export function WorksWorkspace(
       .then((r) => {
         setTree(r);
         if (select) setSelected(select);
-        else if (!selected && r.works[0]) setSelected(r.works[0].id);
+        else if (!selected && isWideLayout() && r.works[0]) setSelected(r.works[0].id);
       })
       .catch(fail);
   }
@@ -484,7 +485,7 @@ export function WorksWorkspace(
   );
 
   return (
-    <section className="workspace">
+    <section className={`workspace${selected ? " picked" : ""}`}>
       <header className="workspace-head">
         <h1>作品台帳</h1>
         <p>作品・原作（Core Logic）・条件（利用形態ごとに1本）をここで直す。原作 N に対して作品 N。条件の中身（予定・実績・計算書）は条件明細で扱う。</p>
@@ -640,7 +641,7 @@ export function WorksWorkspace(
 
       <div className="ledger">
         {/* ---- 左：作品を選ぶ ---- */}
-        <div className="panel">
+        <div className="panel md-list">
           <div className="panel-hd">
             <h2>作品を選ぶ</h2>
             <span className="faint num">{tree.works.length}</span>
@@ -681,7 +682,8 @@ export function WorksWorkspace(
         </div>
 
         {/* ---- 右：選んだ作品 ---- */}
-        <div className="stack">
+        <div className="stack md-detail">
+          <DetailBack label="作品" count={tree.works.length} onBack={() => setSelected(undefined)} />
           {!work && <div className="panel"><div className="panel-bd faint">左から作品を選んでください</div></div>}
           {work && (<>
             <div className="panel">

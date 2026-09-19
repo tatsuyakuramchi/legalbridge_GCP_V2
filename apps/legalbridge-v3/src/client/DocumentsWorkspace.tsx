@@ -5,6 +5,7 @@ import type { ConditionSummary } from "../server/core/model.js";
 import { api, ApiError, money } from "./api.js";
 import type { EntityKind } from "./Relations.js";
 import { DocumentDetail, type DocumentRow } from "./DocumentDetail.js";
+import { DetailBack } from "./DetailBack.js";
 import { DocumentFields, kindFor, type Candidate, type FormField } from "./DocumentFields.js";
 import { LineItemsEditor, type Row } from "./LineItems.js";
 import { BulkOrders } from "./BulkOrders.js";
@@ -799,13 +800,19 @@ export function DocumentsWorkspace(
     .filter((f) => f.required && f.source === "manual" && !String(manual[f.name] ?? "").trim()).length;
   // 作成中（新規・下書きを直している）か。作成中は下の一覧を畳む。
   const composeMode = composing || Boolean(draft);
+  /**
+   * 作成中に出す面（狭い画面のとき）。ウィンドウを半分にすると入力と
+   * プレビューは並ばず、プレビューが入力欄の全長より下に落ちる。
+   * 並べられない幅では、見る面を切り替える。
+   */
+  const [composePane, setComposePane] = useState<"form" | "preview">("form");
   const listShown = !composeMode || listWhileComposing;
   // 計算書は試算が返って初めて出せる。金額の無い紙を出させない。
   const ready = Boolean(templateKey) && spec !== null && specFresh && remaining === 0
     && (!isStatement || stmt !== null);
 
   return (
-    <section className="workspace">
+    <section className={`workspace${selected === null ? "" : " picked"}`}>
       <header className="workspace-head">
         <h1>文書</h1>
         <p>文書は条件の出力物。相手先も件名も条件と合意から解決するので、入力するのはそこから決まらないものだけ。</p>
@@ -867,9 +874,17 @@ export function DocumentsWorkspace(
         )}
 
         {(composing || draft) && (
-        <div className="compose" ref={form}>
+        <>
+        {/* 並べられない幅のときだけ出る切り替え。広い画面では CSS で消える。 */}
+        <div className="compose-switch">
+          <button className="chip" aria-pressed={composePane === "form"}
+                  onClick={() => setComposePane("form")}>入力</button>
+          <button className="chip" aria-pressed={composePane === "preview"}
+                  onClick={() => setComposePane("preview")}>プレビューと点検</button>
+        </div>
+        <div className={`compose pane-${composePane}`} ref={form}>
           {/* 左：何から作るか → 区分ごとの入力。右：プレビューと点検（付いてくる）。 */}
-          <div className="stack">
+          <div className="stack compose-main">
           <div className="panel">
             <div className="panel-hd">
               <h2>{draft ? "下書きを直して決定する" : "新しく文書を作る"}</h2>
@@ -1232,10 +1247,11 @@ export function DocumentsWorkspace(
             )}
           </aside>
         </div>
+        </>
         )}
 
         <div className="split">
-          <div className="panel">
+          <div className="panel md-list">
             <div className="panel-hd">
               <h2>文書</h2>
               {listShown ? (
@@ -1367,6 +1383,8 @@ export function DocumentsWorkspace(
             )}
           </div>
 
+          <div className="stack md-detail">
+          <DetailBack label="文書" count={documents.length} onBack={() => setSelected(null)} />
           {current && (
             <DocumentDetail
               onPayment={createPayment}
@@ -1384,6 +1402,7 @@ export function DocumentsWorkspace(
               openConditions={linkConditions}
               onSelect={setSelected} />
           )}
+          </div>
         </div>
 
       </div>

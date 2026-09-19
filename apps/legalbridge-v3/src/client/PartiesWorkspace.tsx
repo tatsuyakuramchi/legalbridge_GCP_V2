@@ -6,6 +6,7 @@ import { Relations, type EntityKind } from "./Relations.js";
 import { CreateForm, flag, int, text } from "./CreateForm.js";
 import { PartyMerge } from "./PartyMerge.js";
 import { PartyBankAccount } from "./PartyBankAccount.js";
+import { DetailBack, isWideLayout } from "./DetailBack.js";
 
 interface Party {
   id: number; partyCode: string | null; name: string; kind: "corporate" | "individual";
@@ -62,7 +63,7 @@ export function PartiesWorkspace(
       // 絞り込みなしの件数は、絞っていないときの結果をそのまま覚えておく。
       if (!q) setTotal(p.parties.length);
       if (select) setSelected(select);
-      else if (!selected && p.parties[0]) setSelected(p.parties[0].id);
+      else if (!selected && isWideLayout() && p.parties[0]) setSelected(p.parties[0].id);
     }).catch((e: ApiError) => setError(e.message));
   }
   useEffect(() => { reload(); }, [query]);
@@ -79,7 +80,7 @@ export function PartiesWorkspace(
   const shown = parties.filter((p) => kindFilter === "all" || p.kind === kindFilter);
 
   return (
-    <section className="workspace">
+    <section className={`workspace${selected ? " picked" : ""}`}>
       <header className="workspace-head">
         <h1>取引先・担当</h1>
         <p>屋号・ペンネーム・旧称は別名として1件にまとめる。統合しても参照は付け替えず、統合先を辿って解決する。</p>
@@ -198,7 +199,7 @@ export function PartiesWorkspace(
         </div>
       ) : (
         <div className="split">
-          <div className="panel">
+          <div className="panel md-list">
             <div className="panel-hd">
               <h2>一覧</h2>
               <ListSearch value={keyword} onChange={setKeyword}
@@ -244,7 +245,8 @@ export function PartiesWorkspace(
             <ListLimit shown={parties.length} />
           </div>
 
-          <div className="stack">
+          <div className="stack md-detail">
+            <DetailBack label="取引先" count={shown.length} onBack={() => setSelected(undefined)} />
             {detail && (
               <>
                 <div className="panel">

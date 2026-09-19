@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ConditionEvents } from "./ConditionEvents.js";
+import { DetailBack, isWideLayout } from "./DetailBack.js";
 import { useReadOnly } from "./read-only.js";
 import { DocumentImport } from "./DocumentImport.js";
 import { ConditionSchedules } from "./ConditionSchedules.js";
@@ -90,7 +91,7 @@ export function ConditionsWorkspace(
       .then((r) => {
         setRows(r.conditions);
         if (select) setSelected(select);
-        else if (!selected && r.conditions[0]) setSelected(r.conditions[0].id);
+        else if (!selected && isWideLayout() && r.conditions[0]) setSelected(r.conditions[0].id);
       })
       .catch((e: ApiError) => setError(e.message));
   }
@@ -225,7 +226,7 @@ export function ConditionsWorkspace(
 
 
   return (
-    <section className="workspace">
+    <section className={`workspace${selected ? " picked" : ""}`}>
       <header className="workspace-head">
         <h1>条件明細</h1>
         <p>
@@ -235,7 +236,7 @@ export function ConditionsWorkspace(
         </p>
       </header>
 
-      <div className="filters">
+      <div className="filters md-list-only">
         {(["all", "in", "out"] as const).map((value) => (
           <button key={value} className="chip" aria-pressed={filter === value}
                   onClick={() => setFilter(value)}>
@@ -305,7 +306,7 @@ export function ConditionsWorkspace(
       {error && <div className="alert">{error}</div>}
 
       <div className="split">
-        <div className="panel">
+        <div className="panel md-list">
           <div className="panel-hd">
             <h2>一覧</h2>
             <ListSearch value={keyword} onChange={setKeyword}
@@ -314,7 +315,7 @@ export function ConditionsWorkspace(
           <ListCount shown={rows.length} keyword={search} onClear={() => setKeyword("")} />
           <div className="tablewrap">
             <table>
-              <thead><tr><th>番号</th><th>種類</th><th>向き</th><th>名称 / 相手先</th><th>載っている契約</th><th className="num">金額・料率</th></tr></thead>
+              <thead><tr><th>番号</th><th>種類</th><th>向き</th><th>名称 / 相手先</th><th className="md-list-extra">載っている契約</th><th className="num">金額・料率</th></tr></thead>
               <tbody>
                 {rows.filter((row) => !hideSettled || row.id === selected || !row.settlement?.done).map((row) => (
                   <tr key={row.id} className={row.id === selected ? "sel" : ""} tabIndex={0}
@@ -364,7 +365,7 @@ export function ConditionsWorkspace(
                     </td>
                     {/* 条件は契約の明細。どの契約の行かが見えないと、条件そのものが
                         書類のように見える。 */}
-                    <td className="faint">
+                    <td className="faint md-list-extra">
                       {row.agreement
                         ? <><span className="code">{row.agreement.agreementNo ?? `#${row.agreement.id}`}</span>
                             <div>{row.agreement.title}</div></>
@@ -392,7 +393,8 @@ export function ConditionsWorkspace(
           <ListLimit shown={rows.length} />
         </div>
 
-        <div className="stack">
+        <div className="stack md-detail">
+          <DetailBack label="条件" count={rows.length} onBack={() => setSelected(undefined)} />
           {detail && (
             <>
               {editing && (

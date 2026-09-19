@@ -3,6 +3,7 @@ import type { MatterDetail, MatterKind, MatterSummary } from "../server/core/mod
 import { api, ApiError, money } from "./api.js";
 import { SearchSelect, searchParties, staffOptions } from "./SearchSelect.js";
 import { CreateForm, int, text } from "./CreateForm.js";
+import { DetailBack, isWideLayout } from "./DetailBack.js";
 import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
 import { DOCUMENT_STYLE_HINT, DOCUMENT_STYLE_LABEL, MATTER_KIND_HINT,
          MATTER_KIND_LABEL as KIND_LABEL, StatusTag } from "./labels.js";
@@ -194,7 +195,7 @@ export function MattersWorkspace(
     if (kind !== "all") params.set("kind", kind);
     if (query.trim()) params.set("q", query.trim());
     api.get<{ matters: MatterSummary[] }>(`/matters${params.toString() ? `?${params}` : ""}`)
-      .then((r) => { setRows(r.matters); if (select) setSelected(select); else if (!selected && r.matters[0]) setSelected(r.matters[0].id); })
+      .then((r) => { setRows(r.matters); if (select) setSelected(select); else if (!selected && isWideLayout() && r.matters[0]) setSelected(r.matters[0].id); })
       .catch((e: ApiError) => setError(e.message));
   }
   useEffect(() => { reloadMatters(); }, [kind, query]);
@@ -220,7 +221,7 @@ export function MattersWorkspace(
   }, [selected]);
 
   return (
-    <section className="workspace">
+    <section className={`workspace${selected ? " picked" : ""}`}>
       <header className="workspace-head">
         <h1>案件</h1>
         <p>すべての作業の入口。取引モデルが扱うものを決め、進め方が文書の作り方を決める。条件・文書・支払・連絡はその下にぶら下がる。</p>
@@ -229,7 +230,7 @@ export function MattersWorkspace(
       <div className="row" style={{ marginBottom: 10 }}>
         {creating === null && (
           <>
-            <button className="btn primary btn-sm" onClick={() => setCreating("matter")}>案件を登録</button>
+            <button className="btn primary btn-sm md-list-only" onClick={() => setCreating("matter")}>案件を登録</button>
             {selected && <button className="btn btn-sm" onClick={() => setCreating("task")}>タスクを追加</button>}
           </>
         )}
@@ -292,7 +293,7 @@ export function MattersWorkspace(
         />
       )}
 
-      <div className="filters">
+      <div className="filters md-list-only">
         {(["all", "work", "outsourcing", "single"] as const).map((value) => (
           <button key={value} className="chip" aria-pressed={kind === value} onClick={() => setKind(value)}>
             {value === "all" ? "すべて" : KIND_LABEL[value]}
@@ -303,7 +304,7 @@ export function MattersWorkspace(
       {error && <div className="alert">{error}</div>}
 
       <div className="split">
-        <div className="panel">
+        <div className="panel md-list">
           <div className="panel-hd">
             <h2>一覧</h2>
             <ListSearch value={keyword} onChange={setKeyword}
@@ -345,7 +346,8 @@ export function MattersWorkspace(
           <ListLimit shown={rows.length} />
         </div>
 
-        <div className="stack">
+        <div className="stack md-detail">
+          <DetailBack label="案件" count={rows.length} onBack={() => setSelected(undefined)} />
           {detail && (
             <>
               <div className="panel">
