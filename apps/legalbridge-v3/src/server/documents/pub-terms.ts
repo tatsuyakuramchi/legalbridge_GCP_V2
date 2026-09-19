@@ -122,9 +122,19 @@ export const PUB_TERMS_VARIABLES: TemplateVariable[] = [
   { name: "許諾言語", label: "許諾言語", type: "languages", group: "IV. 許諾期間・地域・言語", noGuess: true,
     helpText: "空なら条件明細の言語。どの条件にも無ければ日本語" },
 
+  // 翻訳の立て付け（A-034）。同じ「翻訳版の出版」でも、相手によって
+  // 「乙が窓口で再許諾する」と見るか「翻訳は二次的著作物だ」と見るかが違う。
+  // 許諾料の計算（受領対価 × 料率）はどちらも同じで、条文の書き方だけが変わる。
+  { name: "翻訳の扱い", label: "翻訳の扱い（条文の立て付け）", type: "select",
+    options: ["再許諾", "二次的著作物"], group: "V. 許諾料・支払", noGuess: true, default: "再許諾",
+    helpText: "「再許諾」＝乙が窓口として第三者に出させる書き方。「二次的著作物」＝翻訳権（著作権法27条）と28条の権利で書く書き方（取引先がこちらを求めるとき）。"
+      + "許諾料はどちらも 受領する対価（税抜）× 料率 で変わりません。算定の細目は備考欄・特記事項に書きます" },
+  { name: "翻訳物の在庫販売期間", label: "終了後に翻訳物の在庫を販売できる期間",
+    group: "V. 許諾料・支払", noGuess: true, default: "6か月",
+    helpText: "「翻訳の扱い」が二次的著作物のときだけ第３条に出ます" },
   { name: "翻訳版取り分", label: "翻訳版の許諾料（再許諾対価に対する %）", type: "number",
     group: "V. 許諾料・支払", noGuess: true,
-    helpText: "空なら翻訳版の行を出しません（翻訳版を許諾しない条件書）" },
+    helpText: "翻訳版の条件明細があればそちらが使われます。条件明細が無いときだけ、この % で第４条を書きます" },
   { name: "紙の支払時期", label: "紙媒体の支払時期", group: "V. 許諾料・支払", noGuess: true,
     default: "翌月末日", helpText: "「刷部数確定の都度、◯◯までに支払う」の◯◯" },
   { name: "電子の集計期間", label: "電子書籍の集計期間", group: "V. 許諾料・支払", noGuess: true,
@@ -458,6 +468,10 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
     translationConsentMixed: transTitles.some((t) => t.translationConsentRequired)
       && transTitles.some((t) => !t.translationConsentRequired),
     hasTranslation: translationShare != null || transTitles.length > 0,
+    // 翻訳の立て付け（A-034）。条文と一覧の見出しがこれで入れ替わる。
+    translationDerivative: pick("翻訳の扱い") === "二次的著作物",
+    translationColumn: pick("翻訳の扱い") === "二次的著作物" ? "翻訳版" : "翻訳版再許諾",
+    translationSellOff: pick("翻訳物の在庫販売期間") || "6か月",
     translationShare: translationShare == null ? "" : percentText(translationShare),
     payPrint: pick("紙の支払時期") || "翌月末日",
     digitalPeriod: pick("電子の集計期間") || "7月1日〜翌年6月30日",

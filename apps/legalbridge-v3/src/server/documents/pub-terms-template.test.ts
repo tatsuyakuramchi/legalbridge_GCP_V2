@@ -10,7 +10,7 @@ import { bankInfoLine } from "./template-context.js";
 
 /**
  * ひな形の本文は infra/v3 の SQL が運ぶ（本番に流すのはその SQL）。いまの版は
- * 128 が運ぶ2本（1本目＝一覧形式、2本目＝別紙形式）。
+ * 129 が運ぶ2本（1本目＝一覧形式、2本目＝別紙形式）。
  * ここは同じ SQL から本文を取り出して描画し、本文が差す名前と計算ブロックが
  * 出す名前がずれていないかを見張る。片方だけ直すと空欄の紙が出る。
  */
@@ -28,9 +28,9 @@ const bodyOf = (file: string, index = 0) => {
   return sql.slice(start, end);
 };
 /** 一覧形式（作品が少ないとき。一覧は第１条）。 */
-const listHtml = bodyOf("128_pub_license_terms_translation.sql", 0);
+const listHtml = bodyOf("129_pub_license_terms_derivative.sql", 0);
 /** 別紙形式（作品が多いとき。一覧は別紙1）。 */
-const annexHtml = bodyOf("128_pub_license_terms_translation.sql", 1);
+const annexHtml = bodyOf("129_pub_license_terms_derivative.sql", 1);
 // 既存の試験はこれまでどおり別紙形式の本文で通す（項目は2本立てで同じ）。
 const html = annexHtml;
 
@@ -201,4 +201,53 @@ test("翻訳版の条件が無ければ、これまでどおり手入力の取�
   assert.ok(out.includes("対価（税抜）の 50%"), "第４条は手入力の取り分");
   assert.ok(!out.includes("翻訳版再許諾<br>料率／別途合意"), "一覧に列は出ない");
   assert.ok(!out.includes('class="titles withtrans"'), "表の幅も元のまま");
+});
+
+/**
+ * 翻訳の立て付け（A-034）。「翻訳は二次的著作物だ」という取引先のために、
+ * 条文の書き方を条件書ごとに選べる。許諾料の計算は変わらない。
+ */
+const derivCtx = () => withTranslation([
+  trans(4, 10, "星降る夜のはなし", "pub_sub_print", 50, "required"),
+  trans(5, 10, "星降る夜のはなし", "pub_sub_digital", 40, "required")
+]);
+
+test("二次的著作物：翻訳権（27条・28条）で書き、翻訳物の著作権と終了後の扱いが増える", () => {
+  const patch = pubTermsPatch(derivCtx(), { "翻訳の扱い": "二次的著作物", "許諾者連絡先": "甲" });
+  const out = renderDocumentHtml(annexHtml, { taxRate: 10, BANK_INFO: "", ...patch });
+  assert.ok(!out.includes("{{"));
+  assert.ok(out.includes("著作権法第27条・第28条"), "翻訳権の根拠を書く");
+  assert.ok(out.includes("翻訳に通常必要な範囲"), "改変の範囲");
+  assert.ok(out.includes("<th>翻訳物の著作権</th>"), "翻訳部分の著作権は翻訳者に");
+  assert.ok(out.includes("著作権法第28条に基づく権利を留保"));
+  assert.ok(out.includes("<th>終了後の翻訳物</th>"), "終了後の在庫の扱い");
+  assert.ok(out.includes("終了後6か月に限り販売"), "在庫の販売期間は既定の6か月");
+  assert.ok(out.includes("原著作物の題号及び原著作者名"), "第７条に翻訳物の表示");
+  // 立て付けが変わっても、許諾料の計算は受領対価 × 料率のまま。
+  assert.ok(out.includes("受領する対価（税抜）× 料率"), "計算は変えない");
+  assert.ok(out.includes("算定の細目に別段の定めをするときは"), "細目は備考・特記事項へ");
+  // 一覧の見出しと本文の指し先が揃っている。
+  assert.ok(out.includes('<th class="trans">翻訳版<br>料率／別途合意</th>'));
+  assert.ok(out.includes("別紙1「翻訳版」欄"));
+  assert.ok(!out.includes("再許諾先"), "二次的著作物では再許諾先と呼ばない");
+});
+
+test("既定（再許諾）のままなら、これまでの書き方で出る", () => {
+  const patch = pubTermsPatch(derivCtx(), { "許諾者連絡先": "甲" });
+  assert.equal(patch.translationDerivative, false);
+  const out = renderDocumentHtml(annexHtml, { taxRate: 10, BANK_INFO: "", ...patch });
+  assert.ok(out.includes("乙が第三者に再許諾して行わせる翻訳版の出版"));
+  assert.ok(out.includes("乙が再許諾先から受領する対価（税抜）× 料率"));
+  assert.ok(out.includes('<th class="trans">翻訳版再許諾<br>料率／別途合意</th>'));
+  assert.ok(!out.includes("著作権法第27条"), "翻訳権の条文は出さない");
+  assert.ok(!out.includes("翻訳物の著作権"));
+  assert.ok(!out.includes("終了後の翻訳物"));
+});
+
+test("二次的著作物でも、翻訳版の条件が無ければ翻訳の条文は出ない", () => {
+  const patch = pubTermsPatch(context, { "翻訳の扱い": "二次的著作物", "許諾者連絡先": "甲" });
+  const out = renderDocumentHtml(annexHtml, { taxRate: 10, BANK_INFO: "", ...patch });
+  assert.ok(!out.includes("著作権法第27条"));
+  assert.ok(!out.includes("<th>翻訳物の著作権</th>"));
+  assert.ok(!out.includes("<th>終了後の翻訳物</th>"));
 });
