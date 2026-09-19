@@ -24,7 +24,23 @@ import { type PubMedia, pubMediaOfScopes } from "../core/pub-media.js";
 import { pubMediaOfUsage } from "../core/condition-usage.js";
 
 export const PUB_TERMS_KEY = "pub_license_terms_v3";
-export const isPubTermsTemplate = (templateKey: string): boolean => templateKey === PUB_TERMS_KEY;
+/**
+ * 別紙形式。作品が多い条件書で使う。
+ *
+ * 一覧を第１条に置くと、作品 80 点では条文の前に表が 4 ページ半続き、相手が
+ * 先に読みたい条文が 5 ページ目になる。別紙形式は本文（条文と署名欄）を
+ * 2 ページで閉じ、一覧を「別紙1」として後ろに出す。
+ * 作品が数点なら一覧が前にあるほうが読みやすいので、両方を残して選ばせる。
+ * 項目・値の出どころ・一覧の組み方は同じで、本文の組み方だけが違う。
+ */
+export const PUB_TERMS_ANNEX_KEY = "pub_license_terms_v3_annex";
+export const PUB_TERMS_KEYS: readonly string[] = [PUB_TERMS_KEY, PUB_TERMS_ANNEX_KEY];
+export const isPubTermsTemplate = (templateKey: string): boolean => PUB_TERMS_KEYS.includes(templateKey);
+/** 別紙形式か（本文の組み方の違い。警告の出し分けに使う）。 */
+export const isPubTermsAnnex = (templateKey: string): boolean => templateKey === PUB_TERMS_ANNEX_KEY;
+
+/** これを超えたら別紙形式を勧める作品数。A4 縦で本文の前に表が1ページ以上続く目安。 */
+export const PUB_TITLES_ANNEX_HINT = 12;
 
 /** 一覧の行の欄。画面の行編集（LineItems の pub_titles）と本文が同じ名前を読む。 */
 export const PUB_TITLES_FIELD = "pub_titles";
@@ -208,7 +224,7 @@ export function pubTitleSeeds(context: Data): Data[] {
  * 載せられない条件（料率でない・媒体が無い）は黙って落とさず名指しする。
  * 同じ作品に紙が2本あるのも同じ（どちらの料率を載せるか決められない）。
  */
-export function pubTermsWarnings(context: Data): Warning[] {
+export function pubTermsWarnings(context: Data, templateKey: string = PUB_TERMS_KEY): Warning[] {
   const out: Warning[] = [];
   const conditions = list(context.conditions);
   for (const condition of conditions) {
@@ -232,6 +248,19 @@ export function pubTermsWarnings(context: Data): Warning[] {
   const parties = new Set(conditions.map((c) => c.counterpartyId).filter((v) => v != null));
   if (parties.size > 1) {
     out.push({ kind: "other", message: "相手先の違う条件明細が混ざっています。条件書は許諾者1者につき1枚です" });
+  }
+  // どちらのひな形で出すか。作品が多いのに一覧を前に置くと、条文が何ページも
+  // 後ろに行く。逆に数点で別紙にすると、1点のために別紙が1枚増える。
+  const count = pubTitleSeeds(context).length;
+  if (!isPubTermsAnnex(templateKey) && count > PUB_TITLES_ANNEX_HINT) {
+    out.push({ kind: "other",
+      message: `対象の作品が ${count} 点あります。一覧が条文の前に何ページも続くので、`
+             + "ひな形を「出版等利用許諾条件書（V3・別紙形式）」にすると読みやすくなります" });
+  }
+  if (isPubTermsAnnex(templateKey) && count > 0 && count <= 3) {
+    out.push({ kind: "other",
+      message: `対象の作品が ${count} 点です。別紙にするほどの量ではないので、`
+             + "ひな形を「出版等利用許諾条件書（V3・一覧形式）」にすると1枚に収まります" });
   }
   return out;
 }

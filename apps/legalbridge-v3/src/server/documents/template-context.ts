@@ -681,6 +681,6 @@ export function suggestionsFor(
  * ここで足す。発行は止めない。
  */
 export function templateWarnings(templateKey: string, context: Ctx): Warning[] {
-  if (isPubTermsTemplate(templateKey)) return pubTermsWarnings(context);
+  if (isPubTermsTemplate(templateKey)) return pubTermsWarnings(context, templateKey);
   return [];
 }

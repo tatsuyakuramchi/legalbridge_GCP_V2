@@ -9,18 +9,25 @@ import { PUB_TERMS_VARIABLES, pubTermsPatch, pubTitleSeeds } from "./pub-terms.j
 import { bankInfoLine } from "./template-context.js";
 
 /**
- * ひな形の本文は infra/v3/126（r5。初版は 113）の SQL が運ぶ（本番に流すのはその SQL）。
+ * ひな形の本文は infra/v3 の SQL が運ぶ（本番に流すのはその SQL）。一覧形式は 125、
+ * 別紙形式は 127（本文は 126 と同じ）。
  * ここは同じ SQL から本文を取り出して描画し、本文が差す名前と計算ブロックが
  * 出す名前がずれていないかを見張る。片方だけ直すと空欄の紙が出る。
  */
 const here = path.dirname(fileURLToPath(import.meta.url));
-const sql = readFileSync(path.resolve(here, "../../../../../infra/v3/126_pub_license_terms_v3_r5.sql"), "utf8");
-const html = (() => {
+const bodyOf = (file: string) => {
+  const sql = readFileSync(path.resolve(here, `../../../../../infra/v3/${file}`), "utf8");
   const start = sql.indexOf("$html$") + "$html$".length;
   const end = sql.indexOf("$html$", start);
-  assert.ok(start > 5 && end > start, "SQL に $html$ … $html$ の本文がある");
+  assert.ok(start > 5 && end > start, `${file} に $html$ … $html$ の本文がある`);
   return sql.slice(start, end);
-})();
+};
+/** 一覧形式（作品が少ないとき。一覧は第１条）。 */
+const listHtml = bodyOf("125_pub_license_terms_v3_r4.sql");
+/** 別紙形式（作品が多いとき。一覧は別紙1）。127 が 126 の本文を運ぶ。 */
+const annexHtml = bodyOf("127_pub_license_terms_annex.sql");
+// 既存の試験はこれまでどおり別紙形式の本文で通す（項目は2本立てで同じ）。
+const html = annexHtml;
 
 const cond = (over: Record<string, any>) => ({
   direction: "in", kind: "license", pricingModel: "revenue_rate", currency: "JPY",
@@ -109,4 +116,18 @@ test("r5：一覧は別紙1に出て、本文の第１条は点数の要約に�
   assert.ok(!out.includes("第１条一覧"), "参照先は別紙に直っている");
   assert.ok(out.includes("別紙1の「紙」欄"), "第２条・第４条が別紙を指す");
   assert.ok(out.includes("page-break-before: always"), "別紙は改ページして始まる");
+});
+
+test("2本立て：一覧形式は第１条に表、別紙形式は別紙1に表。項目は同じ", () => {
+  // 一覧形式（作品が少ないとき）。表が署名欄より前にある。
+  assert.ok(!listHtml.includes("別紙1　対象著作物一覧"), "一覧形式に別紙は無い");
+  assert.ok(listHtml.indexOf('<table class="titles"') < listHtml.indexOf('class="sign"'), "表は署名欄より前");
+  assert.ok(listHtml.includes("第１条一覧「紙」欄"), "条文は第１条の一覧を指す");
+  // 別紙形式（作品が多いとき）。表は署名欄より後ろ。
+  assert.ok(annexHtml.indexOf('class="sign"') < annexHtml.indexOf("別紙1　対象著作物一覧"), "別紙は署名欄より後ろ");
+  assert.ok(annexHtml.includes("別紙1の「紙」欄"), "条文は別紙を指す");
+  // どちらも同じ名前を差す（項目は1つの定義で足りる）。
+  for (const name of ["docNo", "signDate", "licensorName", "licenseeName", "#each titles"]) {
+    assert.ok(listHtml.includes(name) && annexHtml.includes(name), `${name} は両方にある`);
+  }
 });

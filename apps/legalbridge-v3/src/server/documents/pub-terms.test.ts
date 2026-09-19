@@ -184,3 +184,23 @@ test("利用形態（A-027）が入っていれば媒体の範囲より先に見
   assert.equal(rows[0].copyright, "© 2026 甲野 甲太");
   assert.equal(rows[0].third_party, "挿絵：乙川 乙子");
 });
+
+test("ひな形は2本立て。作品の点数に合わないほうを選んでいたら知らせる", async () => {
+  const { isPubTermsAnnex, pubTermsWarnings, PUB_TERMS_ANNEX_KEY } = await import("./pub-terms.js");
+  assert.equal(isPubTermsTemplate(PUB_TERMS_ANNEX_KEY), true, "別紙形式も出版の条件書として扱う");
+  assert.equal(isPubTermsAnnex(PUB_TERMS_ANNEX_KEY), true);
+  assert.equal(isPubTermsAnnex("pub_license_terms_v3"), false);
+
+  // 作品が多いのに一覧形式 → 別紙形式を勧める
+  const many = { conditions: Array.from({ length: 20 }, (_, i) => ({
+    id: i + 1, conditionNo: `CL-${i}`, name: `作品${i}｜紙出版`, workId: i + 1, work: { title: `作品${i}` },
+    pricingModel: "revenue_rate", ratePct: 10, usageType: "pub_print", counterpartyId: 5, scopes: { media: ["紙"] }
+  })) };
+  const w1 = pubTermsWarnings(many, "pub_license_terms_v3");
+  assert.match(w1.map((x) => x.message).join("｜"), /別紙形式/);
+  assert.equal(pubTermsWarnings(many, PUB_TERMS_ANNEX_KEY).some((x) => /別紙形式|一覧形式/.test(x.message)), false);
+
+  // 作品が数点なのに別紙形式 → 一覧形式を勧める
+  const few = { conditions: many.conditions.slice(0, 2) };
+  assert.match(pubTermsWarnings(few, PUB_TERMS_ANNEX_KEY).map((x) => x.message).join("｜"), /一覧形式/);
+});
