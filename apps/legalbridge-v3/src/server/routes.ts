@@ -362,7 +362,8 @@ export function createRoutes(database: Transactable) {
   // まとめて繋げる。1件ずつしか送れず、10本の条件を付けるのに10回押していた。
   const attachSchema = z.object({
     conditionId: z.number().int().positive().optional(),
-    conditionIds: z.array(z.number().int().positive()).max(200).optional()
+    // 出版は作品 80 点・条件 170 本で1案件になる。
+    conditionIds: z.array(z.number().int().positive()).max(500).optional()
   }).refine((v) => v.conditionId !== undefined || (v.conditionIds?.length ?? 0) > 0,
     { message: "条件を選んでください" });
   router.post("/matters/:id/conditions",
@@ -468,7 +469,7 @@ export function createRoutes(database: Transactable) {
   // 作り直し。間違った条件を指していたときは、ここで差し替える。
   // 発行済みの文書自体は書き換えない（出したものの記録なので）。
   const reissueSchema = reasonSchema.extend({
-    conditionIds: z.array(z.number().int().positive()).max(200).optional()
+    conditionIds: z.array(z.number().int().positive()).max(500).optional()
   });
   router.post("/documents/:id/reissue", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {

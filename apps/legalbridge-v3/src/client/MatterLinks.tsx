@@ -52,6 +52,8 @@ export function MatterConditions(
   const [candidates, setCandidates] = useState<CandidateCondition[]>([]);
   /** 繋ぐ前に選んである条件。1本ずつしか繋げず、10本あれば10回押していた。 */
   const [checked, setChecked] = useState<number[]>([]);
+  /** 候補を何行まで描くか。170本の条件を持つ案件があるので、押して伸ばせるようにする。 */
+  const [shownLimit, setShownLimit] = useState(40);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [made, setMade] = useState<number | null>(null);
@@ -61,6 +63,21 @@ export function MatterConditions(
 
   const allowed = ALLOWED_KINDS[detail.kind] ?? [];
   const linked = new Set(detail.conditions.map((c) => c.id));
+  /** まだ繋いでいない候補。「全部選ぶ」はここを指す。 */
+  const attachable = candidates.filter((c) => !linked.has(c.id));
+  /**
+   * 描く候補。選んだものは必ず出し、次にまだ繋いでいないものを出す。
+   * 繋ぎ済みを先に並べると、170本の案件では「繋げるもの」に辿り着けない。
+   */
+  const shownCandidates = (() => {
+    const chosen = candidates.filter((c) => checked.includes(c.id));
+    const rest = [
+      ...attachable.filter((c) => !checked.includes(c.id)),
+      ...candidates.filter((c) => linked.has(c.id) && !checked.includes(c.id))
+    ];
+    return [...chosen, ...rest.slice(0, Math.max(0, shownLimit - chosen.length))];
+  })();
+  const hiddenCandidates = candidates.length - shownCandidates.length;
 
   // ライセンスは作品が軸。作品ひとつに、取引モデルの違う条件（自社製造・自社販売、
   // 再許諾…）が何本も並ぶ。だから作品を先に決め、条件はそこから1本ずつ作る。
@@ -81,8 +98,9 @@ export function MatterConditions(
   useEffect(() => {
     if (!picking) return;
     const q = search.trim();
-    api.get<{ conditions: CandidateCondition[] }>(`/conditions${q ? `?q=${encodeURIComponent(q)}` : ""}`)
-      .then((r) => setCandidates(r.conditions.filter((c) => allowed.includes(c.kind)).slice(0, 30)))
+    // 既定の 200 件では台帳の新しい順に切られて、繋ぎたい条件が候補に出てこない。
+    api.get<{ conditions: CandidateCondition[] }>(`/conditions?limit=500${q ? `&q=${encodeURIComponent(q)}` : ""}`)
+      .then((r) => setCandidates(r.conditions.filter((c) => allowed.includes(c.kind))))
       .catch(() => setCandidates([]));
   }, [picking, search]);
 
@@ -252,7 +270,7 @@ export function MatterConditions(
                     onClick={() => { setPicking(false); setKeyword(""); setChecked([]); }}>やめる</button>
           </div>
           <div className="picker">
-            {candidates.map((c) => (
+            {shownCandidates.map((c) => (
               <label key={c.id} className="pick">
                 <input type="checkbox" disabled={busy || linked.has(c.id)}
                        checked={linked.has(c.id) || checked.includes(c.id)}
@@ -269,19 +287,27 @@ export function MatterConditions(
               </span>
             )}
           </div>
-          {candidates.some((c) => !linked.has(c.id)) && (
-            <div className="row">
+          {attachable.length > 0 && (
+            <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
               <button className="btn btn-sm primary" disabled={busy || !checked.length}
                       onClick={() => void attachChecked()}>
                 {busy ? "繋いでいます…" : `選んだ ${checked.length} 件を繋ぐ`}
               </button>
-              <button className="btn btn-sm" disabled={busy || !candidates.some((c) => !linked.has(c.id))}
-                      onClick={() => setChecked(candidates.filter((c) => !linked.has(c.id)).map((c) => c.id))}>
-                ここに出ているものを全部選ぶ
+              <button className="btn btn-sm" disabled={busy}
+                      onClick={() => setChecked(attachable.map((c) => c.id))}>
+                候補 {attachable.length} 件を全部選ぶ
               </button>
+              {hiddenCandidates > 0 && (
+                <button className="btn btn-sm" disabled={busy}
+                        onClick={() => setShownLimit((n) => n + 100)}>もっと出す（+100）</button>
+              )}
               {checked.length > 0 && (
                 <button className="btn btn-sm" disabled={busy} onClick={() => setChecked([])}>選び直す</button>
               )}
+              <span className="faint">
+                候補 {candidates.length} 件（繋げる {attachable.length} 件）
+                {hiddenCandidates > 0 && `／うち ${hiddenCandidates} 件は未表示`}
+              </span>
             </div>
           )}
         </div>

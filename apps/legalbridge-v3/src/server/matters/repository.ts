@@ -93,7 +93,9 @@ export class MatterRepository {
     if (!row) return null;
 
     const [conditions, documents, payments, communications, links, tasks] = await Promise.all([
-      this.conditions.list({ matterId: id, limit: 100 }),
+      // 出版は作品 80 点・条件 170 本で1案件になる。100 だと条件タブに出ない
+      // 条件ができ、案件から実績も支払も立てられなくなる。
+      this.conditions.list({ matterId: id, limit: 500 }),
       this.documents(id),
       this.payments(id),
       this.communications(id),
