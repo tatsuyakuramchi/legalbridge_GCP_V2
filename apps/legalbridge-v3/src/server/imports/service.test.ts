@@ -97,3 +97,71 @@ test("作品 CSV：親作品を書くと原作にぶら下がる。当たらな�
   assert.equal(credit.params[3], "© 2026 著者");
   assert.match(r.rows[1].message ?? "", /親作品「無い原作」が見つかりません/);
 });
+
+/**
+ * 作品 CSV の更新（既に登録してある作品に、書いてある列だけを当てる）。
+ * 備考だけをまとめて入れたい、という用がこれ。
+ */
+const updateDb = (hits: Array<Record<string, unknown>> = [{ id: 4, work_code: "WRK-1", title: "既存作品" }]) =>
+  new FakeDatabase((text, params) => {
+    if (text.includes("WHERE lower(btrim(work_code))")) {
+      return String(params?.[0]) === "WRK-1" ? hits : [];
+    }
+    if (text.includes("WHERE btrim(title) = btrim($1) LIMIT 2")) {
+      return String(params?.[0]) === "既存作品" ? hits : [];
+    }
+    // 更新側（WorkWriteService.update）が使うもの
+    if (text.includes("merged_into_id FROM works")) return [{ id: 4, work_code: "WRK-1", title: "既存作品", status: "planning", merged_into_id: null }];
+    if (text.includes("SELECT id FROM works WHERE id")) return [{ id: 4 }];
+    if (text.includes("UPDATE works SET")) return [{ id: 4 }];
+    return undefined;
+  });
+
+test("更新：作品コードで当て、書いてある列だけを直す。空欄の列は触らない", async () => {
+  const db = updateDb();
+  const csv = "作品コード,備考,カナ\nWRK-1,初版1000部,";
+  const r = await new ImportService(db).run({ kind: "works", csv, dryRun: false, actor: "k", mode: "update" });
+  assert.equal(r.mode, "update");
+  assert.equal(r.ok, 1);
+  const q = db.find("UPDATE works SET")!;
+  assert.match(q.text, /remarks = \$2/);
+  assert.doesNotMatch(q.text, /title_kana/, "空欄のカナは触らない");
+  assert.equal(q.params[1], "初版1000部");
+  assert.match(r.rows[0].message ?? "", /備考 を更新しました/);
+});
+
+test("更新：当てる列が全部空なら何もしない（変更なしとして数える）", async () => {
+  const db = updateDb();
+  const r = await new ImportService(db).run({
+    kind: "works", csv: "作品コード,備考\nWRK-1,", dryRun: false, actor: "k", mode: "update" });
+  assert.equal(r.skipped, 1);
+  assert.equal(r.ok, 0);
+  assert.equal(db.find("UPDATE works SET"), undefined);
+});
+
+test("更新：当たらない・複数当たる行は止める。試算では書かない", async () => {
+  const none = await new ImportService(updateDb()).run({
+    kind: "works", csv: "作品コード,備考\nWRK-9,あ", dryRun: true, actor: "k", mode: "update" });
+  assert.equal(none.error, 1);
+  assert.match(none.rows[0].message ?? "", /見つかりません/);
+
+  const many = await new ImportService(updateDb([{ id: 4, work_code: "WRK-1", title: "既存作品" },
+                                                 { id: 5, work_code: "WRK-2", title: "既存作品" }]))
+    .run({ kind: "works", csv: "作品名,備考\n既存作品,あ", dryRun: true, actor: "k", mode: "update" });
+  assert.equal(many.error, 1);
+  assert.match(many.rows[0].message ?? "", /複数あります/);
+
+  const db = updateDb();
+  const dry = await new ImportService(db).run({
+    kind: "works", csv: "作品コード,備考\nWRK-1,あ", dryRun: true, actor: "k", mode: "update" });
+  assert.equal(dry.ok, 1);
+  assert.equal(db.find("UPDATE works SET"), undefined, "試算では書かない");
+});
+
+test("更新：当てる手がかりの見出しが無ければ受け付けない。取引先は更新できない", async () => {
+  const svc = new ImportService(updateDb());
+  await assert.rejects(() => svc.run({ kind: "works", csv: "備考\nあ", dryRun: true, actor: "k", mode: "update" }),
+    /作品コード.*作品名/);
+  await assert.rejects(() => svc.run({ kind: "parties", csv: "名称\n甲", dryRun: true, actor: "k", mode: "update" }),
+    /できません/);
+});

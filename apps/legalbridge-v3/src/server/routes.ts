@@ -359,12 +359,18 @@ export function createRoutes(database: Transactable) {
 
   // 案件に条件・文書を繋ぐ。読む処理はあったが書く処理が無く、
   // 案件の条件タブは常に空だった。
-  const attachSchema = z.object({ conditionId: z.number().int().positive() });
+  // まとめて繋げる。1件ずつしか送れず、10本の条件を付けるのに10回押していた。
+  const attachSchema = z.object({
+    conditionId: z.number().int().positive().optional(),
+    conditionIds: z.array(z.number().int().positive()).max(200).optional()
+  }).refine((v) => v.conditionId !== undefined || (v.conditionIds?.length ?? 0) > 0,
+    { message: "条件を選んでください" });
   router.post("/matters/:id/conditions",
     requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
-      const { conditionId } = attachSchema.parse(req.body ?? {});
-      res.json(await matterLinks.attachCondition(Number(req.params.id), conditionId, actor(res)));
+      const input = attachSchema.parse(req.body ?? {});
+      const ids = input.conditionIds?.length ? input.conditionIds : [input.conditionId as number];
+      res.json(await matterLinks.attachConditions(Number(req.params.id), ids, actor(res)));
     }));
 
   router.delete("/matters/:id/conditions/:conditionId",
@@ -619,7 +625,9 @@ export function createRoutes(database: Transactable) {
   const importSchema = z.object({
     kind: z.enum(["parties", "works", "license_conditions"]),
     csv: z.string().min(1).max(2_000_000),
-    dryRun: z.boolean()
+    dryRun: z.boolean(),
+    // create（新しく作る）か update（既存に当てる）か。既定は create。
+    mode: z.enum(["create", "update"]).optional()
   });
   router.post("/imports", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {

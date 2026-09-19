@@ -1,6 +1,7 @@
 import { inTransaction, int, str, type Queryable, type Transactable } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
+import { MatterLinkService } from "../matters/link-service.js";
 import { assertComplete, bindVariables, type BindingResult } from "./binding.js";
 import { documentWarnings, type Warning } from "./preflight.js";
 import { DocumentContextRepository } from "./context-repository.js";
@@ -66,11 +67,14 @@ export interface IssuedDocument {
 export class DocumentIssueService {
   private readonly repository: DocumentRepository;
   private readonly contexts: DocumentContextRepository;
+  /** 条件を案件に繋ぐ。下書きを作るときに、載せた条件を案件にも付ける。 */
+  private readonly matters: MatterLinkService;
   private readonly conditionWrites: ConditionWriteService;
 
   constructor(private readonly database: Transactable) {
     this.repository = new DocumentRepository(database);
     this.contexts = new DocumentContextRepository(database);
+    this.matters = new MatterLinkService(database);
     this.conditionWrites = new ConditionWriteService(database);
   }
 
@@ -137,9 +141,16 @@ export class DocumentIssueService {
         );
         const id = Number((inserted.rows[0] as { id: number }).id);
         await this.linkConditions(client, id, input.conditionIds);
+        // 案件が決まっていれば、載せた条件を案件にも繋ぐ。文書だけが案件に付いて
+        // 条件が付いていない状態だと、案件の条件タブに出ず、実績も支払も立て
+        // られない。付いているものは触らない。
+        const attached = matterId
+          ? await this.matters.attachWithin(client, matterId, input.conditionIds, actor)
+          : [];
         await recordAudit(client, {
           actor, action: "document.draft", targetType: "document", targetId: id,
-          detail: { templateKey: input.templateKey, conditions: input.conditionIds }
+          detail: { templateKey: input.templateKey, conditions: input.conditionIds,
+                    ...(attached.length ? { attachedToMatter: attached, matterId } : {}) }
         });
         return { id };
       });
@@ -160,7 +171,7 @@ export class DocumentIssueService {
     try {
       return await inTransaction(this.database, async (client) => {
         const head = await client.query(
-          "SELECT id, status FROM documents WHERE id = $1 FOR UPDATE", [documentId]);
+          "SELECT id, status, matter_id FROM documents WHERE id = $1 FOR UPDATE", [documentId]);
         const row = head.rows[0] as Record<string, any> | undefined;
         if (!row) throw new DomainError("NOT_FOUND", `文書 ${documentId} が見つかりません`);
         if (row.status !== "draft") {
@@ -198,6 +209,8 @@ export class DocumentIssueService {
           // 並べ直しも消しも同じ経路にする。差分を取るより、張り直すほうが読める。
           await client.query("DELETE FROM document_conditions WHERE document_id = $1", [documentId]);
           await this.linkConditions(client, documentId, unique);
+          // 差し替えた条件も案件に繋ぐ（下書きを作るときと同じ）。
+          if (row.matter_id) await this.matters.attachWithin(client, Number(row.matter_id), unique, actor);
         }
 
         await recordAudit(client, {

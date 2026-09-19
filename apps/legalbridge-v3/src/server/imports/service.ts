@@ -1,7 +1,7 @@
 import type { Transactable } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { PartyWriteService } from "../parties/write-service.js";
-import { WorkWriteService } from "../works/write-service.js";
+import { WorkWriteService, type WorkPatch } from "../works/write-service.js";
 import { ConditionWriteService, type LicenseSetRow } from "../conditions/write-service.js";
 import { conditionNameFor, parseUsageType } from "../conditions/naming.js";
 import { parseLanguages, parseRegions } from "../core/rights-scope.js";
@@ -21,6 +21,16 @@ import { csvAmount, csvBoolean, parseCsv } from "./parse.js";
 
 export type ImportKind = "parties" | "works" | "license_conditions";
 
+/**
+ * 取り込み方。
+ *   create … 新しく作る（既存と重なる行は飛ばす）
+ *   update … 既に登録してあるものに、CSV に書いてある列だけを当てる
+ *
+ * 備考や著作権表示だけをまとめて入れたい、という用が create では通らなかった。
+ * 同名は「取り込むと2件になります」で弾かれ、作品コードが同じなら止まるため。
+ */
+export type ImportMode = "create" | "update";
+
 export interface ImportSpec {
   kind: ImportKind;
   label: string;
@@ -29,6 +39,12 @@ export interface ImportSpec {
   /** 任意の見出し。 */
   optional: string[];
   sample: string;
+  /** 既存に当てる取り込み（update）ができるか。 */
+  updatable?: boolean;
+  /** update で当てられる列。ここに無い列は読み飛ばす。 */
+  updateColumns?: string[];
+  /** update のときの見本。 */
+  updateSample?: string;
 }
 
 export const IMPORT_SPECS: ImportSpec[] = [
@@ -47,7 +63,12 @@ export const IMPORT_SPECS: ImportSpec[] = [
     optional: ["カナ", "種別", "状態", "事業区分", "作品コード", "親作品", "著作権表示", "第三者権利", "備考"],
     sample: "作品名,カナ,種別,状態,事業区分,作品コード,親作品,著作権表示,第三者権利,備考\n" +
             "原作小説,ゲンサクショウセツ,原作IP,発売済,出版,,,© 2026 著者名,,\n" +
-            "新作ボードゲーム,シンサクボードゲーム,派生作品,企画中,ゲーム,,原作小説,© 2026 著者名 / Arclight,挿絵：〇〇,"
+            "新作ボードゲーム,シンサクボードゲーム,派生作品,企画中,ゲーム,,原作小説,© 2026 著者名 / Arclight,挿絵：〇〇,",
+    updatable: true,
+    updateColumns: ["カナ", "種別", "状態", "事業区分", "著作権表示", "第三者権利", "備考", "作品名"],
+    updateSample: "作品コード,備考\n" +
+                  "WRK-2026-0001,初版1000部。奥付の表記は別紙のとおり\n" +
+                  "WRK-2026-0002,重版分は別途協議"
   },
   {
     kind: "license_conditions", label: "利用許諾条件（作品に紐づく IN の許諾）",
@@ -66,7 +87,7 @@ export const IMPORT_SPECS: ImportSpec[] = [
 export interface RowOutcome {
   /** 1 始まり。見出しを除いた行番号ではなく、ファイル上の行番号。 */
   line: number;
-  status: "ok" | "duplicate" | "error";
+  status: "ok" | "duplicate" | "skip" | "error";
   label: string;
   message?: string;
   id?: number;
@@ -75,10 +96,13 @@ export interface RowOutcome {
 
 export interface ImportReport {
   kind: ImportKind;
+  mode: ImportMode;
   dryRun: boolean;
   total: number;
   ok: number;
   duplicate: number;
+  /** 当てる項目が無く、何もしなかった行（update のとき）。 */
+  skipped: number;
   error: number;
   rows: RowOutcome[];
 }
@@ -131,16 +155,28 @@ export class ImportService {
   }
 
   async run(input: {
-    kind: ImportKind; csv: string; dryRun: boolean; actor: string;
+    kind: ImportKind; csv: string; dryRun: boolean; actor: string; mode?: ImportMode;
   }): Promise<ImportReport> {
     const spec = IMPORT_SPECS.find((s) => s.kind === input.kind);
     if (!spec) throw new DomainError("VALIDATION", `取り込めない種類です: ${input.kind}`);
+    const mode: ImportMode = input.mode ?? "create";
+    if (mode === "update" && !spec.updatable) {
+      throw new DomainError("VALIDATION", `${spec.label}は既存に当てる取り込みができません`);
+    }
 
     const parsed = parseCsv(input.csv);
-    const missing = spec.required.filter((h) => !parsed.headers.includes(h));
-    if (missing.length) {
-      throw new DomainError("VALIDATION",
-        `見出しが足りません: ${missing.join(", ")}。1行目に見出しを入れてください`);
+    if (mode === "update") {
+      // どの作品を直すかが決まればよい。作品コードだけ、作品名だけの CSV でも当てる。
+      if (!parsed.headers.includes("作品コード") && !parsed.headers.includes("作品名")) {
+        throw new DomainError("VALIDATION",
+          "更新には「作品コード」か「作品名」の見出しが要ります。どの作品を直すかが決まりません");
+      }
+    } else {
+      const missing = spec.required.filter((h) => !parsed.headers.includes(h));
+      if (missing.length) {
+        throw new DomainError("VALIDATION",
+          `見出しが足りません: ${missing.join(", ")}。1行目に見出しを入れてください`);
+      }
     }
 
     const rows: RowOutcome[] = [];
@@ -155,7 +191,9 @@ export class ImportService {
       try {
         const outcome = input.kind === "parties"
           ? await this.party(row, input.dryRun, input.actor)
-          : await this.work(row, input.dryRun, input.actor, earlier);
+          : mode === "update"
+            ? await this.workUpdate(row, input.dryRun, input.actor)
+            : await this.work(row, input.dryRun, input.actor, earlier);
         for (const k of [row["作品名"], row["作品コード"]]) {
           const v = String(k ?? "").trim().toLowerCase();
           if (v) earlier.add(v);
@@ -166,19 +204,105 @@ export class ImportService {
         rows.push({
           line,
           status: e?.code === "CONFLICT" ? "duplicate" : "error",
-          label: String(row[spec.required[0]] ?? ""),
-          message: e?.message ?? "登録に失敗しました"
+          label: String(row[spec.required[0]] ?? row["作品コード"] ?? ""),
+          message: e?.message ?? (mode === "update" ? "更新に失敗しました" : "登録に失敗しました")
         });
       }
     }
 
     return {
-      kind: input.kind, dryRun: input.dryRun, total: rows.length,
+      kind: input.kind, mode, dryRun: input.dryRun, total: rows.length,
       ok: rows.filter((r) => r.status === "ok").length,
       duplicate: rows.filter((r) => r.status === "duplicate").length,
+      skipped: rows.filter((r) => r.status === "skip").length,
       error: rows.filter((r) => r.status === "error").length,
       rows
     };
+  }
+
+  /**
+   * 既に登録してある作品に、CSV に書いてある列だけを当てる。
+   *
+   * 当てる先は作品コード（無ければ作品名）で決める。空欄の列は触らない。
+   * 「消す」ための口ではないので、空欄にして消すことはできない。
+   * 親作品はここでは付け替えない（系譜は作品画面で直す）。
+   */
+  private async workUpdate(row: Record<string, string>, dryRun: boolean, actor: string):
+    Promise<Omit<RowOutcome, "line">> {
+    const text = (header: string) => String(row[header] ?? "").trim() || null;
+    const code = text("作品コード");
+    const title = text("作品名");
+    if (!code && !title) throw new DomainError("VALIDATION", "作品コードも作品名も空です");
+
+    const found = code
+      ? await this.database.query(
+          "SELECT id, work_code, title FROM works WHERE lower(btrim(work_code)) = lower(btrim($1)) LIMIT 2", [code])
+      : await this.database.query(
+          "SELECT id, work_code, title FROM works WHERE btrim(title) = btrim($1) LIMIT 2", [title]);
+    const hits = found.rows as Array<{ id: number; work_code: string | null; title: string }>;
+    const label = title ?? code ?? "";
+    if (!hits.length) {
+      throw new DomainError("NOT_FOUND", code
+        ? `作品コード ${code} の作品が見つかりません`
+        : `作品「${title}」が見つかりません。作品コードで指定するか、先に登録してください`);
+    }
+    if (hits.length > 1) {
+      throw new DomainError("VALIDATION", `作品「${label}」が複数あります。作品コードで指定してください`);
+    }
+    const work = hits[0];
+    const who = `${work.work_code ?? `#${work.id}`} ${work.title}`;
+
+    const patch: WorkPatch = {};
+    const changed: string[] = [];
+    const put = <K extends keyof WorkPatch>(header: string, key: K, value: WorkPatch[K]) => {
+      patch[key] = value; changed.push(header);
+    };
+    const kana = text("カナ");
+    if (kana) put("カナ", "titleKana", kana);
+    const kindText = text("種別");
+    if (kindText) {
+      if (!WORK_KIND[kindText]) {
+        throw new DomainError("VALIDATION",
+          `種別は「自社作品」「原作IP」「派生作品」のいずれかです（"${kindText}"）`);
+      }
+      put("種別", "kind", WORK_KIND[kindText]);
+    }
+    const statusText = text("状態");
+    if (statusText) {
+      if (!WORK_STATUS[statusText]) {
+        throw new DomainError("VALIDATION",
+          `状態は「企画中」「制作中」「発売済」「終了」のいずれかです（"${statusText}"）`);
+      }
+      put("状態", "status", WORK_STATUS[statusText]);
+    }
+    const businessLine = text("事業区分");
+    if (businessLine) put("事業区分", "businessLine", businessLine);
+    const copyright = text("著作権表示");
+    if (copyright) put("著作権表示", "copyrightNotice", copyright);
+    const thirdParty = text("第三者権利");
+    if (thirdParty) put("第三者権利", "thirdPartyRights", thirdParty);
+    const remarks = text("備考");
+    if (remarks) put("備考", "remarks", remarks);
+    // コードで当てた行に別の作品名が書いてあれば改名。名前で当てた行は改名できない
+    // （当てる手がかりそのものなので）。
+    if (code && title && title !== String(work.title)) put("作品名", "title", title);
+
+    const notes: string[] = [];
+    if (text("親作品")) notes.push("親作品は更新しません（作品画面で付け替えてください）");
+    const tail = notes.length ? `。${notes.join("／")}` : "";
+
+    if (!changed.length) {
+      return { status: "skip", label, id: Number(work.id), code: work.work_code,
+               message: `${who}：当てる項目がありません（空欄の列は触りません）${tail}` };
+    }
+    const what = changed.join("・");
+    if (dryRun) {
+      return { status: "ok", label, id: Number(work.id), code: work.work_code,
+               message: `${who} の ${what} を更新します${tail}` };
+    }
+    await this.works.update(Number(work.id), patch, actor);
+    return { status: "ok", label, id: Number(work.id), code: work.work_code,
+             message: `${who} の ${what} を更新しました${tail}` };
   }
 
   private async party(row: Record<string, string>, dryRun: boolean, actor: string):
@@ -381,9 +505,10 @@ export class ImportService {
 
     const rows = [...outcomes.values()].sort((a, b) => a.line - b.line);
     return {
-      kind: "license_conditions", dryRun, total: rows.length,
+      kind: "license_conditions", mode: "create", dryRun, total: rows.length,
       ok: rows.filter((r) => r.status === "ok").length,
       duplicate: rows.filter((r) => r.status === "duplicate").length,
+      skipped: 0,
       error: rows.filter((r) => r.status === "error").length,
       rows
     };

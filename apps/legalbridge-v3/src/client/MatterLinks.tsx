@@ -50,6 +50,8 @@ export function MatterConditions(
   const [keyword, setKeyword] = useState("");
   const search = useDebounced(keyword);
   const [candidates, setCandidates] = useState<CandidateCondition[]>([]);
+  /** 繋ぐ前に選んである条件。1本ずつしか繋げず、10本あれば10回押していた。 */
+  const [checked, setChecked] = useState<number[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [made, setMade] = useState<number | null>(null);
@@ -84,11 +86,39 @@ export function MatterConditions(
       .catch(() => setCandidates([]));
   }, [picking, search]);
 
+  /** 作った直後の条件を1本繋ぐ。 */
   async function attach(conditionId: number) {
     setBusy(true); setError(null);
     try {
-      await api.post(`/matters/${detail.id}/conditions`, { conditionId });
+      await api.post(`/matters/${detail.id}/conditions`, { conditionIds: [conditionId] });
       setPicking(false); setKeyword(""); onChanged();
+    } catch (e) { setError((e as ApiError).message); }
+    finally { setBusy(false); }
+  }
+
+  /**
+   * 選んだ条件をまとめて繋ぐ。取引モデルに合わない条件は、その行だけ断られて
+   * 残りは繋がる。断られた理由は画面に出す（黙って落ちると気づけない）。
+   */
+  async function attachChecked() {
+    if (!checked.length) return;
+    setBusy(true); setError(null);
+    try {
+      const r = await api.post<{ attached: number;
+        results: Array<{ conditionId: number; attached: boolean; reason?: string }> }>(
+        `/matters/${detail.id}/conditions`, { conditionIds: checked });
+      const refused = r.results.filter((x) => !x.attached && x.reason && !x.reason.includes("すでに"));
+      if (refused.length) {
+        setError(`${r.attached} 件を繋ぎました。繋げなかったもの: ` +
+          refused.map((x) => {
+            const c = candidates.find((y) => y.id === x.conditionId);
+            return `${c?.conditionNo ?? `#${x.conditionId}`}（${x.reason}）`;
+          }).join("、"));
+      } else {
+        setPicking(false); setKeyword("");
+      }
+      setChecked([]);
+      onChanged();
     } catch (e) { setError((e as ApiError).message); }
     finally { setBusy(false); }
   }
@@ -218,18 +248,19 @@ export function MatterConditions(
           <div className="row">
             <ListSearch value={keyword} onChange={setKeyword}
               placeholder="条件名・条件番号・相手先" label="繋ぐ条件を探す" />
-            <button className="btn btn-sm" onClick={() => { setPicking(false); setKeyword(""); }}>やめる</button>
+            <button className="btn btn-sm"
+                    onClick={() => { setPicking(false); setKeyword(""); setChecked([]); }}>やめる</button>
           </div>
           <div className="picker">
             {candidates.map((c) => (
-              <button key={c.id} className="btn btn-sm" style={{ textAlign: "left" }}
-                      disabled={busy || linked.has(c.id)}
-                      onClick={() => void attach(c.id)}>
-                <span className="row" style={{ gap: 7 }}>
-                  <ConditionLabel c={c} showKind />
-                  {linked.has(c.id) && <span className="faint">繋がっています</span>}
-                </span>
-              </button>
+              <label key={c.id} className="pick">
+                <input type="checkbox" disabled={busy || linked.has(c.id)}
+                       checked={linked.has(c.id) || checked.includes(c.id)}
+                       onChange={(e) => setChecked((prev) => e.target.checked
+                         ? [...prev, c.id] : prev.filter((id) => id !== c.id))} />
+                <ConditionLabel c={c} showKind />
+                {linked.has(c.id) && <span className="faint">繋がっています</span>}
+              </label>
             ))}
             {!candidates.length && (
               <span className="faint">
@@ -238,6 +269,21 @@ export function MatterConditions(
               </span>
             )}
           </div>
+          {candidates.some((c) => !linked.has(c.id)) && (
+            <div className="row">
+              <button className="btn btn-sm primary" disabled={busy || !checked.length}
+                      onClick={() => void attachChecked()}>
+                {busy ? "繋いでいます…" : `選んだ ${checked.length} 件を繋ぐ`}
+              </button>
+              <button className="btn btn-sm" disabled={busy || !candidates.some((c) => !linked.has(c.id))}
+                      onClick={() => setChecked(candidates.filter((c) => !linked.has(c.id)).map((c) => c.id))}>
+                ここに出ているものを全部選ぶ
+              </button>
+              {checked.length > 0 && (
+                <button className="btn btn-sm" disabled={busy} onClick={() => setChecked([])}>選び直す</button>
+              )}
+            </div>
+          )}
         </div>
       )}
 

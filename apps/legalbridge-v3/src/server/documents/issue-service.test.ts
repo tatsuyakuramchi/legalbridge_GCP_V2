@@ -248,7 +248,7 @@ test("現行版のままの下書きは付け替えない", async () => {
 
 test("下書きの基本契約を選び直せる。null で条件の契約に戻す。無い契約は止める", async () => {
   const db = new FakeDatabase((t) => {
-    if (t.includes("SELECT id, status FROM documents WHERE id = $1 FOR UPDATE")) return [{ id: 1, status: "draft" }];
+    if (t.includes("SELECT id, status, matter_id FROM documents WHERE id = $1 FOR UPDATE")) return [{ id: 1, status: "draft", matter_id: null }];
     if (t.includes("SELECT id FROM agreements WHERE id = $1")) return [{ id: 201 }];
     return [];
   });
@@ -258,8 +258,33 @@ test("下書きの基本契約を選び直せる。null で条件の契約に戻
   await svc.updateDraft(1, { agreementId: null }, "k");
   assert.deepEqual(db.all("UPDATE documents SET agreement_id").at(-1)!.params, [1, null]);
   const none = new FakeDatabase((t) => {
-    if (t.includes("SELECT id, status FROM documents WHERE id = $1 FOR UPDATE")) return [{ id: 1, status: "draft" }];
+    if (t.includes("SELECT id, status, matter_id FROM documents WHERE id = $1 FOR UPDATE")) return [{ id: 1, status: "draft", matter_id: null }];
     return [];
   });
   await assert.rejects(() => new DocumentIssueService(none).updateDraft(1, { agreementId: 999 }, "k"), /契約 999/);
+});
+
+test("下書きを作ると、載せた条件を案件にも繋ぐ（案件の条件タブに出る）", async () => {
+  const base = responder();
+  const db = new FakeDatabase((text, params) => {
+    if (text.includes("FROM document_templates t JOIN document_template_versions tv")) {
+      return [{ template_id: 301, version_id: 401, template_key: "purchase_order", label: "発注書",
+                number_prefix: "PO", html_source: "<p>{{DOC_NO}}</p>", variables: [] }];
+    }
+    if (text.includes("INSERT INTO documents")) return [{ id: 55 }];
+    // 案件に繋ぐ側
+    if (text.includes("FROM matters WHERE id")) return [{ id: 501, matter_no: "MTR-1", kind: "outsourcing" }];
+    if (text.includes("FROM conditions WHERE id")) {
+      return [{ id: Number(params?.[0]), condition_no: "CL-1", kind: "service", status: "active" }];
+    }
+    if (text.includes("INSERT INTO matter_links")) return [{ id: 9 }];
+    return base(text);
+  });
+  await new DocumentIssueService(db).createDraft(
+    { templateKey: "purchase_order", conditionIds: [5], matterId: 501 }, "k");
+  const link = db.find("INSERT INTO matter_links")!;
+  assert.equal(link.params[0], 501);
+  assert.equal(link.params[1], "5");
+  const audit = db.all("INSERT INTO audit_events").find((q) => q.params[1] === "document.draft")!;
+  assert.match(String(audit.params[5]), /attachedToMatter/);
 });

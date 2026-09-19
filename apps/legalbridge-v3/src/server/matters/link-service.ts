@@ -54,6 +54,59 @@ export class MatterLinkService {
   }
 
   /**
+   * 条件をまとめて繋ぐ。
+   *
+   * 1件ずつしか繋げず、10本の条件を持つ案件では10回押していた。合わない条件
+   * （取引モデル違い）は、その行だけ理由を返して残りは繋ぐ。案件そのものが
+   * 無いときだけ、全体を止める。
+   */
+  async attachConditions(matterId: number, conditionIds: number[], actor: string): Promise<{
+    attached: number; results: Array<{ conditionId: number; attached: boolean; reason?: string }>;
+  }> {
+    const ids = [...new Set(conditionIds.map(Number).filter((n) => Number.isFinite(n) && n > 0))];
+    if (!ids.length) throw new DomainError("VALIDATION", "条件を選んでください");
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const m = await client.query("SELECT id FROM matters WHERE id = $1", [matterId]);
+        if (!m.rows[0]) throw new DomainError("NOT_FOUND", `案件 ${matterId} が見つかりません`);
+        const results: Array<{ conditionId: number; attached: boolean; reason?: string }> = [];
+        for (const conditionId of ids) {
+          try {
+            results.push(await this.linkCondition(client, matterId, conditionId, actor));
+          } catch (error) {
+            // 断る理由はどれも SELECT の結果から出す（書いてから落ちない）ので、
+            // 拾ってもこのトランザクションは続けられる。
+            results.push({ conditionId, attached: false,
+                           reason: (error as DomainError)?.message ?? "繋げません" });
+          }
+        }
+        return { attached: results.filter((r) => r.attached).length, results };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 別の処理のトランザクションの中から繋ぐ（文書の下書きを作るときなど）。
+   *
+   * 呼ぶ側の主目的は別にあるので、合わない条件は黙って飛ばして繋いだものだけ
+   * 返す。ここで止めると、取引モデルに合わない条件が1本あるだけで文書が作れなく
+   * なってしまう。
+   */
+  async attachWithin(
+    client: Queryable, matterId: number, conditionIds: number[], actor: string
+  ): Promise<number[]> {
+    const attached: number[] = [];
+    for (const conditionId of [...new Set(conditionIds.map(Number))]) {
+      if (!Number.isFinite(conditionId) || conditionId <= 0) continue;
+      try {
+        const r = await this.linkCondition(client, matterId, conditionId, actor);
+        if (r.attached) attached.push(conditionId);
+      } catch { /* 合わない条件は繋がないだけ。文書の作成は止めない。 */ }
+    }
+    return attached;
+  }
+
+  /**
    * 条件の側から案件を付ける。無ければその場で作る。
    *
    * 案件が全体の入口なのに、繋ぐ操作が案件の画面にしか無かった。条件を
