@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ServiceEventForm } from "./ServiceEventForm.js";
+import { AmendPanel } from "./AmendPanel.js";
+import type { AmendField } from "./AmendPanel.js";
 import { api, ApiError, money } from "./api.js";
 import { rewardLabelFor } from "../server/core/reward.js";
 import { CONTRACT_FORMS } from "../server/conditions/contract-form.js";
@@ -29,6 +31,8 @@ interface EventRow {
   scheduleId: number | null; scheduleLabel: string | null;
   deliverable: string | null; inspectedOn: string | null;
   inspectorDept: string | null; inspectorName: string | null;
+  /** 役務の期間（業務委託の実績）。管理者の修正欄で直せる。 */
+  serviceFrom: string | null; serviceTo: string | null;
   /** 出どころの発注番号（系列の決定済み発注書。無ければ条件に控えた番号）。 */
   orderNo?: string | null;
   documentId: number | null; documentNo: string | null;
@@ -135,6 +139,10 @@ export function ConditionEvents(
   // これを先に見せないと、発行を押してから8項目足りないと言われる。
   const [preview, setPreview] = useState<PreviewResponse | null>(null);
   const [manual, setManual] = useState<Record<string, string>>({});
+  // 管理者が記録を直す欄（A-041）。表の上に開く。
+  const [amending, setAmending] = useState<EventRow | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const amendForm = useRef<HTMLDivElement>(null);
   // 実績と同じ理由。フォームは表の上に開くので、下の行から押すと画面の外に出る。
   const issueForm = useRef<HTMLDivElement>(null);
   // 予定の行から開いたとき、フォームが画面の外だと押しても何も起きないように見える。
@@ -265,9 +273,17 @@ export function ConditionEvents(
   // 引き直しが走って消え、発行できたのかどうか分からなくなる。
   useEffect(() => { load(); setError(null); }, [conditionId, reloadKey]);
   useEffect(() => {
-    setAdding(false); setIssuing(null); setIssued(null);
+    setAdding(false); setIssuing(null); setIssued(null); setAmending(null);
     setPreview(null); setManual({});
   }, [conditionId]);
+  // 記録を直せるのは管理者だけ（A-041）。役割でボタンごと出し分ける。
+  useEffect(() => {
+    api.get<{ user?: { role: string } }>("/me")
+      .then((r) => setIsAdmin(r.user?.role === "admin")).catch(() => setIsAdmin(false));
+  }, []);
+  useEffect(() => {
+    if (amending) amendForm.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [amending?.id]);
   // 予定の行の「実績にする」から開く。入力欄は実績の欄ひとつに寄せてある。
   useEffect(() => {
     if (!openForSchedule || !schedules.length) return;
@@ -561,6 +577,36 @@ export function ConditionEvents(
       load(); onChanged();
     } catch (e) { setError((e as ApiError).message); }
     finally { setBusy(false); }
+  }
+
+  /**
+   * 管理者の修正欄に出す項目（A-041）。
+   *
+   * 直せるのは中身だけ。どの条件のものか・どの文書から来たか・取り消したか
+   * どうかは、繋ぎ直しと取り消しの操作が持っている。
+   * 金額に関わる欄は支払が立っていると保存の時点で断られる（サーバ側の判定）。
+   */
+  function amendFields(row: EventRow): AmendField[] {
+    const list: AmendField[] = [
+      { name: "occurredOn", label: "発生日", type: "date", value: row.occurredOn ?? "" },
+      { name: "period", label: "期間", value: row.period ?? "", hint: "2026年上期 など" },
+      { name: "quantity", label: "数量", type: "number", value: asText(row.quantity) },
+      { name: "sampleQuantity", label: "見本数", type: "number", value: asText(row.sampleQuantity) },
+      { name: "unitAmount", label: "単価", type: "number", value: asText(row.unitAmount) },
+      { name: "grossAmount", label: "総額", type: "number", value: asText(row.grossAmount) },
+      { name: "deductions", label: "控除", type: "number", value: asText(row.deductions) },
+      { name: "amount", label: "実額", type: "number", value: asText(row.amount),
+        hint: "総額 − 控除。総額を直したらこちらも合わせてください" },
+      { name: "deliverable", label: "納品物", value: row.deliverable ?? "" },
+      { name: "serviceFrom", label: "役務期間（開始）", type: "date", value: row.serviceFrom ?? "" },
+      { name: "serviceTo", label: "役務期間（終了）", type: "date", value: row.serviceTo ?? "" },
+      { name: "inspectedOn", label: "検収日", type: "date", value: row.inspectedOn ?? "" },
+      { name: "inspectorDept", label: "検収部署", value: row.inspectorDept ?? "" },
+      { name: "inspectorName", label: "検収者", value: row.inspectorName ?? "" },
+      { name: "varianceNote", label: "変更の理由", value: row.varianceNote ?? "" },
+      { name: "note", label: "備考", type: "textarea", value: row.note ?? "" }
+    ];
+    return list;
   }
 
   // 総額と控除を入れたら実額は決まる。入れ違いを起こさないよう先に見せる。
@@ -1155,6 +1201,22 @@ export function ConditionEvents(
         </div>
       )}
 
+      {amending && (
+        <div ref={amendForm} className="panel-bd">
+          <AmendPanel
+            title={`実績 #${amending.id}（${label(amending.eventType)}）を直す`}
+            path={`/conditions/${conditionId}/events/${amending.id}`}
+            fields={amendFields(amending)}
+            targetType="condition" targetId={conditionId}
+            actionPrefix="condition.event_amend"
+            detailMatch={{ key: "eventId", value: amending.id }}
+            note={"金額・数量に関わる欄は、この実績に支払が立っていると直せません"
+              + "（先にその支払を取り消してください）。日付・備考はそのまま直せます。"}
+            onDone={() => { setAmending(null); load(); onChanged(); }}
+            onCancel={() => setAmending(null)} />
+        </div>
+      )}
+
       <div className="tablewrap">
         <table>
           <thead><tr>
@@ -1245,7 +1307,16 @@ export function ConditionEvents(
                           </button>
                         : "未作成"}
                   </td>
-                  <td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    {/* 管理者は取り消さずに中身を直せる（A-041）。文書に繋がった実績でも、
+                        日付・備考は直せるのでここに出す。 */}
+                    {isAdmin && !voided && (
+                      <button className="btn btn-sm" style={{ marginRight: 4 }} disabled={busy}
+                              title="この実績の中身を直す（理由と前後の値を監査に残します）"
+                              onClick={() => setAmending(amending?.id === row.id ? null : row)}>
+                        修正
+                      </button>
+                    )}
                     {editable && !voided && !isLinked(row) && (
                       <button className="btn btn-sm" disabled={busy}
                               onClick={() => void voidEvent(row)}>取り消す</button>

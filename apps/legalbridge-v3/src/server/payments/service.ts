@@ -195,6 +195,36 @@ export class PaymentService {
    * 入口ごとに書いていたころは、片方だけ直して食い違う余地があった。
    * 支払は必ず割当を持つ。根拠のない支払行を残さないための約束。
    */
+  /**
+   * 期日の検査と、上限を超えたときの記録。立てるときと直すとき（amend）で
+   * 同じ判定を使う。直したのに古い判定が残ると、一覧の「要確認」が嘘になる。
+   */
+  private async recordDueIssue(
+    client: Queryable,
+    input: { paymentId: number; applicable: boolean; basis: string | null; dueOn: string | null }
+  ): Promise<DueCheck> {
+    const due = checkPaymentDue({
+      applicable: input.applicable, basisDate: input.basis, dueOn: input.dueOn
+    });
+    if (due.verdict === "over_limit") {
+      await client.query(
+        `INSERT INTO data_quality_issues (rule_code, target_type, target_id, severity, detail)
+         VALUES ('PAYMENT_DUE_OVER_LIMIT', 'payment', $1, 'high', $2::jsonb)
+         ON CONFLICT (rule_code, target_type, target_id) DO UPDATE
+           SET detail = EXCLUDED.detail, detected_at = now(), status = 'open'`,
+        [input.paymentId, JSON.stringify({
+          basis: input.basis, dueOn: input.dueOn,
+          overBy: due.overBy, limitDate: due.limitDate })]);
+    } else {
+      // 上限の内側に戻ったら、開いている記録を閉じる。
+      await client.query(
+        `UPDATE data_quality_issues SET status = 'resolved', resolved_at = now()
+          WHERE rule_code = 'PAYMENT_DUE_OVER_LIMIT' AND target_type = 'payment'
+            AND target_id = $1 AND status = 'open'`, [input.paymentId]);
+    }
+    return due;
+  }
+
   private async writeWithAllocations(
     client: Queryable,
     input: {
@@ -230,9 +260,10 @@ export class PaymentService {
         [paymentId, a.conditionId, a.eventId, a.amount]);
     }
 
-    const due = checkPaymentDue({
+    const due = await this.recordDueIssue(client, {
+      paymentId,
       applicable: input.direction === "out" && isFreelanceActTarget(input.partyKind),
-      basisDate: input.basis, dueOn: input.dueOn
+      basis: input.basis, dueOn: input.dueOn
     });
 
     await recordAudit(client, {
@@ -243,18 +274,6 @@ export class PaymentService {
         basis: input.basis, dueOn: input.dueOn, dueVerdict: due.verdict
       }
     });
-    // 期日が上限を超えていたら、記録として残して一覧で拾えるようにする。
-    if (due.verdict === "over_limit") {
-      await client.query(
-        `INSERT INTO data_quality_issues (rule_code, target_type, target_id, severity, detail)
-         VALUES ('PAYMENT_DUE_OVER_LIMIT', 'payment', $1, 'high', $2::jsonb)
-         ON CONFLICT (rule_code, target_type, target_id) DO UPDATE
-           SET detail = EXCLUDED.detail, detected_at = now(), status = 'open'`,
-        [paymentId, JSON.stringify({
-          basis: input.basis, dueOn: input.dueOn,
-          overBy: due.overBy, limitDate: due.limitDate })]);
-    }
-
     return {
       paymentId, direction: input.direction, amount: input.net,
       tax: input.tax, withholding: input.withholding, dueOn: input.dueOn, due
@@ -575,6 +594,98 @@ export class PaymentService {
             WHERE rule_code = 'PAYMENT_DUE_OVER_LIMIT' AND target_type = 'payment' AND target_id = $1`,
           [paymentId]);
         return { paymentId, paidOn };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 管理者が支払を直す（A-041）。
+   *
+   * 支払は自動で立つ（計算書・検収書から）ので、元の条件や実績が間違っていた
+   * ときは取り消して立て直すのが本筋。とはいえ、期日を1日ずらす・受領日を
+   * 直す・備考を足す、のために取り消して番号を捨てるのは重い。日付と備考は
+   * ここで直せるようにする。
+   *
+   * 金額は直せない。支払の金額は割当（payment_allocations）の合計で、
+   * 割当は実績の金額から来ている。ここだけ書き換えると、経理提出用の明細の
+   * 合計と支払の金額が合わなくなる。金額が違うなら実績を直して（events.amend）、
+   * 支払は取り消して立て直す。
+   *
+   * 直した内容は監査に残す（前後の値と理由）。理由は必須。
+   */
+  async amend(
+    paymentId: number,
+    patch: { dueOn?: string | null; basisReceivedOn?: string | null; paidOn?: string | null;
+             note?: string | null },
+    reason: string,
+    actor: string
+  ) {
+    const why = String(reason ?? "").trim();
+    if (!why) throw new DomainError("VALIDATION", "修正の理由は必須です");
+    const COLUMNS = {
+      dueOn: "due_on", basisReceivedOn: "basis_received_on", paidOn: "paid_on", note: "note"
+    } as const;
+    const keys = (Object.keys(COLUMNS) as Array<keyof typeof COLUMNS>)
+      .filter((k) => patch[k] !== undefined);
+    if (!keys.length) throw new DomainError("VALIDATION", "直す欄がありません");
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const found = await client.query(
+          `SELECT p.id, p.payment_no, p.status, p.amount, p.direction,
+                  p.due_on, p.basis_received_on, p.paid_on, p.note,
+                  party.kind AS party_kind
+             FROM payments p
+             LEFT JOIN parties party ON party.id = p.party_id
+            WHERE p.id = $1 FOR UPDATE OF p`, [paymentId]);
+        const row = found.rows[0] as Record<string, any> | undefined;
+        if (!row) throw new DomainError("NOT_FOUND", `支払 ${paymentId} が見つかりません`);
+        if (String(row.status) === "canceled") {
+          throw new DomainError("CONFLICT", "取り消した支払は直せません。立て直してください");
+        }
+        // 支払済みの日付を消すと「払ったのに未払い」に見える。状態は
+        // markPaid / cancel が持つもので、ここでは動かさない。
+        if (patch.paidOn === null && String(row.status) === "paid") {
+          throw new DomainError("VALIDATION",
+            "支払済みの日は空にできません。取り消すなら取消の操作を使ってください");
+        }
+
+        const before: Record<string, unknown> = {};
+        const after: Record<string, unknown> = {};
+        const sets: string[] = [];
+        const params: unknown[] = [paymentId];
+        for (const key of keys) {
+          const column = COLUMNS[key];
+          const next = key === "note"
+            ? (String(patch.note ?? "").trim() || null)
+            : (patch[key] ?? null);
+          const now = column === "note" ? str(row.note) : dateStr(row[column]);
+          if (next === now) continue;
+          before[key] = now;
+          after[key] = next;
+          params.push(next);
+          sets.push(`${column} = $${params.length}${key === "note" ? "" : "::date"}`);
+        }
+        if (!sets.length) return { paymentId, changed: [] as string[] };
+
+        await client.query(
+          `UPDATE payments SET ${sets.join(", ")}, updated_at = now() WHERE id = $1`, params);
+        await recordAudit(client, {
+          actor, action: "payment.amend", targetType: "payment", targetId: paymentId,
+          detail: { reason: why, paymentNo: str(row.payment_no), before, after }
+        });
+        // 期日か受領日を直したら、期日の検査をやり直す。古い判定が残ると
+        // 一覧の「要確認」が嘘になる。
+        let due: DueCheck | null = null;
+        if ("dueOn" in after || "basisReceivedOn" in after) {
+          due = await this.recordDueIssue(client, {
+            paymentId,
+            applicable: String(row.direction) === "out" && isFreelanceActTarget(str(row.party_kind)),
+            basis: ("basisReceivedOn" in after
+              ? after.basisReceivedOn : dateStr(row.basis_received_on)) as string | null,
+            dueOn: ("dueOn" in after ? after.dueOn : dateStr(row.due_on)) as string | null
+          });
+        }
+        return { paymentId, changed: Object.keys(after), due };
       });
     } catch (error) { throw translate(error); }
   }

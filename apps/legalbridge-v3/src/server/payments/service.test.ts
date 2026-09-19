@@ -413,3 +413,61 @@ test("支払条件が日付そのものなら、その日を期日にする（V1
   const result = await service.createFromStatementDocument(26, "kuramochi");
   assert.equal(result.dueOn, "2026-12-31");
 });
+
+/**
+ * 管理者が支払を直す（A-041）。日付と備考だけ。金額は割当の合計なので、
+ * ここでは触らない（実績を直して立て直す）。
+ */
+const amendDb = (over: Record<string, unknown> = {}) => new FakeDatabase((text) => {
+  if (text.includes("FROM payments p")) {
+    return [{ id: 900, payment_no: "PY-2026-0009", status: "open", amount: 330000,
+              direction: "out", due_on: "2026-08-19", basis_received_on: "2026-06-20",
+              paid_on: null, note: null, party_kind: "individual", ...over }];
+  }
+  return [];
+});
+
+test("支払の修正：期日を直し、前後の値と理由を監査に残す", async () => {
+  const db = amendDb();
+  const r = await new PaymentService(db).amend(
+    900, { dueOn: "2026-07-31" }, "条件の支払条件（翌月末）に合わせる", "admin");
+  assert.deepEqual(r.changed, ["dueOn"]);
+  const q = db.find("UPDATE payments SET")!;
+  assert.match(q.text, /due_on = \$2::date/);
+  const audit = db.find("INSERT INTO audit_events")!;
+  assert.equal(audit.params[1], "payment.amend");
+  const detail = JSON.parse(String(audit.params[5]));
+  assert.equal(detail.reason, "条件の支払条件（翌月末）に合わせる");
+  assert.deepEqual(detail.before, { dueOn: "2026-08-19" });
+  assert.deepEqual(detail.after, { dueOn: "2026-07-31" });
+});
+
+test("支払の修正：期日を直したら、期日超過の判定をやり直す", async () => {
+  // 上限の外へ動かせば記録が open に、内側へ戻せば閉じる。
+  const over = amendDb();
+  const r = await new PaymentService(over).amend(900, { dueOn: "2026-09-30" }, "延期の合意", "admin");
+  assert.equal(r.due?.verdict, "over_limit");
+  assert.ok(over.find("PAYMENT_DUE_OVER_LIMIT"), "記録に残す");
+
+  const back = amendDb({ due_on: "2026-09-30" });
+  const fixed = await new PaymentService(back).amend(900, { dueOn: "2026-07-31" }, "戻す", "admin");
+  assert.equal(fixed.due?.verdict, "ok");
+  assert.match(back.find("PAYMENT_DUE_OVER_LIMIT")!.text, /SET status = 'resolved'/);
+});
+
+test("支払の修正：取り消した支払は直せない。理由は必須", async () => {
+  await assert.rejects(
+    () => new PaymentService(amendDb({ status: "canceled" }))
+      .amend(900, { dueOn: "2026-07-31" }, "訂正", "admin"),
+    /取り消した支払は直せません/);
+  await assert.rejects(
+    () => new PaymentService(amendDb()).amend(900, { dueOn: "2026-07-31" }, " ", "admin"),
+    /修正の理由は必須です/);
+});
+
+test("支払の修正：支払済みの日は空にできない（取り消しは別の操作）", async () => {
+  await assert.rejects(
+    () => new PaymentService(amendDb({ status: "paid", paid_on: "2026-08-15" }))
+      .amend(900, { paidOn: null }, "間違えた", "admin"),
+    /支払済みの日は空にできません/);
+});

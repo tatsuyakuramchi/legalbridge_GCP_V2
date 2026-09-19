@@ -188,7 +188,10 @@ export interface MatterDetail extends MatterSummary {
                      sentAt: string | null; sentVia: string | null;
                      /** 繋がっている合意の状態。executed なら締結済み。 */
                      agreementStatus: string | null }>;
-  payments: Array<{ id: number; paymentNo: string | null; direction: Direction; amount: number; currency: string; dueOn: string | null; status: string }>;
+  payments: Array<{ id: number; paymentNo: string | null; direction: Direction; amount: number;
+                    currency: string; dueOn: string | null; status: string;
+                    /** 管理者が直せる欄（A-041）。 */
+                    basisReceivedOn: string | null; paidOn: string | null; note: string | null }>;
   communications: Array<{ occurredAt: string; action: string; actor: string; detail: Record<string, unknown> }>;
   links: Array<{ targetType: string; targetRef: string; relation: string;
                  snapshot: Record<string, unknown> }>;

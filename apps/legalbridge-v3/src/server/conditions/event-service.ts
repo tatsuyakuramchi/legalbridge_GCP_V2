@@ -146,6 +146,44 @@ export interface EventRow {
   createdBy: string;
 }
 
+/**
+ * 管理者が直せる実績の欄（A-041）。money は「金額に関わる」印で、支払が
+ * 立っているときは触れない。条件・文書・状態は入れない（繋ぎ直しと取り消しの
+ * 操作が持っているもので、ここで書き換えると記録の筋が通らなくなる）。
+ */
+const AMENDABLE = {
+  amount: { column: "amount", kind: "int", money: true },
+  grossAmount: { column: "gross_amount", kind: "int", money: true },
+  deductions: { column: "deductions", kind: "int", money: true },
+  unitAmount: { column: "unit_amount", kind: "int", money: true },
+  quantity: { column: "quantity", kind: "num", money: true },
+  sampleQuantity: { column: "sample_quantity", kind: "num", money: false },
+  occurredOn: { column: "occurred_on", kind: "date", money: false },
+  inspectedOn: { column: "inspected_on", kind: "date", money: false },
+  serviceFrom: { column: "service_from", kind: "date", money: false },
+  serviceTo: { column: "service_to", kind: "date", money: false },
+  period: { column: "period", kind: "text", money: false },
+  deliverable: { column: "deliverable", kind: "text", money: false },
+  inspectorDept: { column: "inspector_dept", kind: "text", money: false },
+  inspectorName: { column: "inspector_name", kind: "text", money: false },
+  varianceNote: { column: "variance_note", kind: "text", money: false },
+  followUp: { column: "follow_up", kind: "text", money: false },
+  followUpDueOn: { column: "follow_up_due_on", kind: "date", money: false },
+  note: { column: "note", kind: "text", money: false }
+} as const satisfies Record<string, { column: string; kind: "int" | "num" | "date" | "text"; money: boolean }>;
+
+/** 直す値を列の型に寄せる。空文字は「空にする」。 */
+function readAmend(kind: "int" | "num" | "date" | "text", value: unknown): unknown {
+  if (value === null) return null;
+  const text = String(value ?? "").trim();
+  if (text === "") return null;
+  if (kind === "text") return text;
+  if (kind === "date") return text.slice(0, 10);
+  const n = Number(text.replace(/[^0-9.-]/g, ""));
+  if (!Number.isFinite(n)) return null;
+  return kind === "int" ? Math.round(n) : n;
+}
+
 export class ConditionEventService {
   constructor(private readonly database: Transactable) {}
 
@@ -412,6 +450,93 @@ export class ConditionEventService {
   }
 
   /** 取り消し。行は残す。理由を必ず添える。 */
+  /**
+   * 管理者が実績を直す（A-041）。
+   *
+   * 実績は入れたあと「取り消してもう一度」しかできなかった。日付を1日
+   * 間違えた・数量を打ち間違えた、のたびに取り消すと、計算書や支払に
+   * 繋がっているものは取り消せず（下の検査で止まる）、直す手が無くなる。
+   *
+   * 直せるのは中身（金額・日付・数量・備考など）だけ。どの条件のものか、
+   * どの文書から来たか、生きているかどうか（status）は動かさない。それらは
+   * 繋ぎ直し・取り消しの操作が持っている。
+   *
+   * 金額に関わる欄は、支払が立っていると直せない。支払の金額は割当を通じて
+   * この実績の金額から来ているので、ここだけ変えると経理提出用の合計と
+   * 支払の金額が合わなくなる。先に支払を取り消してもらう。
+   *
+   * 直した内容は監査に残す（前後の値と理由）。理由は必須。
+   */
+  async amend(
+    conditionId: number, eventId: number,
+    patch: Record<string, unknown>, reason: string, actor: string
+  ) {
+    const why = String(reason ?? "").trim();
+    if (!why) throw new DomainError("VALIDATION", "修正の理由は必須です");
+    const keys = (Object.keys(AMENDABLE) as Array<keyof typeof AMENDABLE>)
+      .filter((k) => patch[k] !== undefined);
+    if (!keys.length) throw new DomainError("VALIDATION", "直す欄がありません");
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const found = await client.query(
+          `SELECT ${Object.values(AMENDABLE).map((c) => `e.${c.column}`).join(", ")},
+                  e.id, e.status, e.document_id, d.document_no
+             FROM condition_events e
+             LEFT JOIN documents d ON d.id = e.document_id
+            WHERE e.id = $1 AND e.condition_id = $2
+              FOR UPDATE OF e`, [eventId, conditionId]);
+        const row = found.rows[0] as Record<string, any> | undefined;
+        if (!row) throw new DomainError("NOT_FOUND", `実績 ${eventId} が見つかりません`);
+        if (String(row.status) === "void") {
+          throw new DomainError("CONFLICT", "取り消した実績は直せません");
+        }
+
+        const before: Record<string, unknown> = {};
+        const after: Record<string, unknown> = {};
+        const sets: string[] = [];
+        const params: unknown[] = [eventId];
+        for (const key of keys) {
+          const { column, kind } = AMENDABLE[key];
+          const next = readAmend(kind, patch[key]);
+          const now = kind === "date" ? dateStr(row[column])
+            : kind === "text" ? str(row[column])
+              : num(row[column]);
+          if (next === now) continue;
+          before[key] = now;
+          after[key] = next;
+          params.push(next);
+          sets.push(`${column} = $${params.length}${kind === "date" ? "::date" : ""}`);
+        }
+        if (!sets.length) return { eventId, changed: [] as string[] };
+
+        // 金額に関わる欄を直すなら、支払が立っていないこと。
+        if (Object.keys(after).some((k) => AMENDABLE[k as keyof typeof AMENDABLE].money)) {
+          const paid = await client.query(
+            `SELECT p.id, p.payment_no FROM payment_allocations a
+               JOIN payments p ON p.id = a.payment_id
+              WHERE a.event_id = $1 AND p.status <> 'canceled' LIMIT 1`, [eventId]);
+          const p = paid.rows[0] as { id: number; payment_no: string | null } | undefined;
+          if (p) {
+            throw new DomainError("CONFLICT",
+              `この実績には支払 ${p.payment_no ?? `#${p.id}`} が立っています。`
+              + "金額を直すには、先にその支払を取り消してください（日付・備考はそのまま直せます）");
+          }
+        }
+
+        await client.query(
+          `UPDATE condition_events SET ${sets.join(", ")} WHERE id = $1`, params);
+        await recordAudit(client, {
+          actor, action: "condition.event_amend", targetType: "condition", targetId: conditionId,
+          detail: {
+            eventId, reason: why, before, after,
+            documentNo: str(row.document_no) ?? (row.document_id ? `#${row.document_id}` : null)
+          }
+        });
+        return { eventId, changed: Object.keys(after) };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
   async void(conditionId: number, eventId: number, reason: string, actor: string) {
     const why = String(reason ?? "").trim();
     if (!why) throw new DomainError("VALIDATION", "取り消しの理由は必須です");

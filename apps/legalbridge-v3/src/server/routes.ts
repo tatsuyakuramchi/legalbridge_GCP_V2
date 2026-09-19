@@ -1397,6 +1397,39 @@ export function createRoutes(database: Transactable) {
         Number(req.params.id), eventSchema.parse(req.body ?? {}), actor(res)));
     }));
 
+  /**
+   * 管理者が実績を直す（A-041）。中身だけを直し、前後の値と理由を監査に残す。
+   * 条件・文書・状態は動かさない（繋ぎ直しと取り消しの操作が持っている）。
+   */
+  const eventAmendSchema = z.object({
+    reason: z.string().trim().min(1).max(500),
+    amount: z.coerce.number().int().nullable().optional(),
+    grossAmount: z.coerce.number().int().nullable().optional(),
+    deductions: z.coerce.number().int().nullable().optional(),
+    unitAmount: z.coerce.number().int().nullable().optional(),
+    quantity: z.coerce.number().nullable().optional(),
+    sampleQuantity: z.coerce.number().nullable().optional(),
+    occurredOn: z.string().date().nullable().optional(),
+    inspectedOn: z.string().date().nullable().optional(),
+    serviceFrom: z.string().date().nullable().optional(),
+    serviceTo: z.string().date().nullable().optional(),
+    period: z.string().trim().max(60).nullable().optional(),
+    deliverable: z.string().trim().max(2000).nullable().optional(),
+    inspectorDept: z.string().trim().max(120).nullable().optional(),
+    inspectorName: z.string().trim().max(120).nullable().optional(),
+    varianceNote: z.string().trim().max(2000).nullable().optional(),
+    followUp: z.string().trim().max(2000).nullable().optional(),
+    followUpDueOn: z.string().date().nullable().optional(),
+    note: z.string().trim().max(2000).nullable().optional()
+  });
+  router.patch("/conditions/:id/events/:eventId",
+    requireRole("admin"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { reason, ...patch } = eventAmendSchema.parse(req.body ?? {});
+      res.json(await conditionEvents.amend(
+        Number(req.params.id), Number(req.params.eventId), patch, reason, actor(res)));
+    }));
+
   router.post("/conditions/:id/events/:eventId/void",
     requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
@@ -2567,6 +2600,23 @@ export function createRoutes(database: Transactable) {
 
   // 支払の取り消し。行は消さず、理由を残して canceled にする。
   // 取り消せば、同じ実績で立て直せる（重複の検査は canceled を見ない）。
+  /**
+   * 管理者が支払を直す（A-041）。日付と備考だけ。金額は割当の合計なので、
+   * 違っていれば実績を直して支払を立て直す。
+   */
+  router.patch("/payments/:id",
+    requireRole("admin"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { reason, ...patch } = z.object({
+        reason: z.string().trim().min(1).max(500),
+        dueOn: z.string().date().nullable().optional(),
+        basisReceivedOn: z.string().date().nullable().optional(),
+        paidOn: z.string().date().nullable().optional(),
+        note: z.string().trim().max(2000).nullable().optional()
+      }).parse(req.body ?? {});
+      res.json(await payments.amend(Number(req.params.id), patch, reason, actor(res)));
+    }));
+
   router.post("/payments/:id/cancel",
     requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
@@ -2646,7 +2696,8 @@ export function createRoutes(database: Transactable) {
   router.get("/audit-events", asyncRoute(async (req, res) => {
     res.json({ events: await ops.auditEvents({
       action: req.query.action ? String(req.query.action) : undefined,
-      targetType: req.query.targetType ? String(req.query.targetType) : undefined
+      targetType: req.query.targetType ? String(req.query.targetType) : undefined,
+      targetId: req.query.targetId ? Number(req.query.targetId) : undefined
     }) });
   }));
 

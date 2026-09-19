@@ -149,7 +149,8 @@ export class MatterRepository {
   /** 支払は案件に属さない（複数案件をまたぐ）。条件の割当経由で辿る。 */
   private async payments(id: number) {
     const r = await this.database.query(
-      `SELECT DISTINCT p.id, p.payment_no, p.direction, p.amount, p.currency, p.due_on, p.status
+      `SELECT DISTINCT p.id, p.payment_no, p.direction, p.amount, p.currency, p.due_on, p.status,
+              p.basis_received_on, p.paid_on, p.note
          FROM payments p
          JOIN payment_allocations a ON a.payment_id = p.id
          JOIN matter_links ml ON ml.target_type = 'condition'
@@ -159,7 +160,9 @@ export class MatterRepository {
     return r.rows.map((p) => ({
       id: Number(p.id), paymentNo: str(p.payment_no), direction: p.direction as "in" | "out",
       amount: Number(p.amount ?? 0), currency: String(p.currency ?? "JPY"),
-      dueOn: dateStr(p.due_on), status: String(p.status)
+      dueOn: dateStr(p.due_on), status: String(p.status),
+      // 管理者が直せる欄（A-041）。画面の修正欄がいまの値を出すのに使う。
+      basisReceivedOn: dateStr(p.basis_received_on), paidOn: dateStr(p.paid_on), note: str(p.note)
     }));
   }
 

@@ -3,6 +3,7 @@ import type { MatterDetail } from "../server/core/model.js";
 import { api, ApiError, money } from "./api.js";
 import { CreateForm, int, text } from "./CreateForm.js";
 import { CONDITION_KIND_LABEL, StatusTag } from "./labels.js";
+import { AmendPanel } from "./AmendPanel.js";
 
 /**
  * 案件の画面から支払を立てる。
@@ -20,12 +21,16 @@ const SETTLEABLE = /inspection|acceptance|delivery|statement|royalty/;
 const today = () => new Date().toISOString().slice(0, 10);
 
 export function MatterPayments(
-  { detail, onChanged, onOpenDocument }: {
+  { detail, onChanged, onOpenDocument, isAdmin }: {
     detail: MatterDetail;
     onChanged: () => void;
     onOpenDocument?: (documentId: number) => void;
+    /** 管理者だけ、立ててある支払の日付と備考を直せる（A-041）。 */
+    isAdmin?: boolean;
   }
 ) {
+  /** 直している支払。 */
+  const [amending, setAmending] = useState<MatterDetail["payments"][number] | null>(null);
   const [mode, setMode] = useState<null | "document" | "condition">(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -173,6 +178,29 @@ export function MatterPayments(
       {error && <div className="alert">{error}</div>}
       {notice && <div className="done-note">{notice}</div>}
 
+      {amending && (
+        <AmendPanel
+          title={`支払 ${amending.paymentNo ?? `#${amending.id}`} を直す`}
+          path={`/payments/${amending.id}`}
+          targetType="payment" targetId={amending.id} actionPrefix="payment.amend"
+          note={"金額はここでは直せません（割当の合計＝実績の金額です）。"
+            + "金額が違うなら実績を直して、この支払は取り消して立て直してください。"}
+          fields={[
+            { name: "dueOn", label: "支払期日", type: "date", value: amending.dueOn ?? "",
+              hint: "条件明細の支払条件から立てた日。合意が違えばここで直す" },
+            { name: "basisReceivedOn", label: "受領日（起算日）", type: "date",
+              value: amending.basisReceivedOn ?? "",
+              hint: "60日の検査はこの日から数える" },
+            { name: "paidOn", label: "支払済みの日", type: "date", value: amending.paidOn ?? "" },
+            { name: "note", label: "備考", type: "textarea", value: amending.note ?? "" }
+          ]}
+          onDone={(changed) => {
+            setNotice(`${amending.paymentNo ?? `#${amending.id}`} を直しました（${changed.join("・") || "変更なし"}）`);
+            setAmending(null); onChanged();
+          }}
+          onCancel={() => setAmending(null)} />
+      )}
+
       <table>
         <thead><tr><th>支払番号</th><th>向き</th><th className="num">金額</th><th>期日</th><th>状態</th><th></th></tr></thead>
         <tbody>
@@ -184,14 +212,21 @@ export function MatterPayments(
               <td className="code">{p.dueOn ?? "—"}</td>
               <td><StatusTag kind="payment" value={p.status} /></td>
               <td style={{ whiteSpace: "nowrap" }}>
-                {p.status === "planned" && (
-                  <span className="row" style={{ gap: 4 }}>
+                <span className="row" style={{ gap: 4, flexWrap: "nowrap" }}>
+                  {p.status === "planned" && (<>
                     <button className="btn btn-sm" disabled={busy} title="今日の日付で支払済みにする"
                             onClick={() => void markPaid(p)}>支払済み</button>
                     <button className="btn btn-sm" disabled={busy} title="行は残し、理由を付けて取り消す"
                             onClick={() => void cancel(p)}>取消</button>
-                  </span>
-                )}
+                  </>)}
+                  {/* 管理者だけ。日付と備考を直し、理由と前後の値を監査に残す。 */}
+                  {isAdmin && p.status !== "canceled" && (
+                    <button className="btn btn-sm" disabled={busy}
+                            aria-pressed={amending?.id === p.id}
+                            title="期日・受領日・備考を直す（理由と前後の値が監査に残る）"
+                            onClick={() => setAmending(amending?.id === p.id ? null : p)}>修正</button>
+                  )}
+                </span>
               </td>
             </tr>
           ))}

@@ -546,7 +546,8 @@ export function MattersWorkspace(
                   )}
 
                   {tab === "payments" && (
-                    <MatterPayments detail={detail} onChanged={relink} onOpenDocument={onOpenDocument} />
+                    <MatterPayments detail={detail} onChanged={relink} onOpenDocument={onOpenDocument}
+                                    isAdmin={isAdmin} />
                   )}
 
                   {tab === "graph" && (

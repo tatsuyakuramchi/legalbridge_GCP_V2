@@ -338,3 +338,85 @@ test("結びつけの検査：無効な文書に結びついたままの実績�
   const q = database.find("FROM condition_events e LEFT JOIN documents d")!;
   assert.match(q.text, /d\.status = 'void'/);
 });
+
+/**
+ * 管理者が実績を直す（A-041）。前後の値と理由を監査に残す。
+ * 金額に関わる欄は、支払が立っていると直せない。
+ */
+const amendDb = (over: Record<string, Array<Record<string, unknown>>> = {}) =>
+  new FakeDatabase((t) => {
+    for (const [fragment, rows] of Object.entries(over)) {
+      if (t.includes(fragment)) return rows;
+    }
+    if (t.includes("FROM condition_events e")) {
+      return [{ id: 9, status: "active", document_id: null, document_no: null,
+                amount: 300000, gross_amount: null, deductions: null, unit_amount: null,
+                quantity: null, sample_quantity: null,
+                occurred_on: "2026-06-30", inspected_on: null,
+                service_from: null, service_to: null, period: "2026上期",
+                deliverable: "挿絵 10点", inspector_dept: null, inspector_name: null,
+                variance_note: null, follow_up: null, follow_up_due_on: null, note: null }];
+    }
+    if (t.includes("FROM payment_allocations a")) return [];
+    return [];
+  });
+
+test("実績の修正：直した欄だけを書き、前後の値と理由を監査に残す", async () => {
+  const database = amendDb();
+  const r = await new ConditionEventService(database).amend(
+    1, 9, { occurredOn: "2026-07-01", note: "納品日を訂正" }, "先方の納品書と突き合わせた", "admin");
+  assert.deepEqual(r.changed, ["occurredOn", "note"]);
+  const q = database.find("UPDATE condition_events SET")!;
+  assert.match(q.text, /occurred_on = \$2::date/);
+  assert.match(q.text, /note = \$3/);
+  assert.doesNotMatch(q.text, /amount/, "触っていない欄は書かない");
+  const audit = database.find("INSERT INTO audit_events")!;
+  assert.equal(audit.params[1], "condition.event_amend");
+  const detail = JSON.parse(String(audit.params[5]));
+  assert.equal(detail.reason, "先方の納品書と突き合わせた");
+  assert.deepEqual(detail.before, { occurredOn: "2026-06-30", note: null });
+  assert.deepEqual(detail.after, { occurredOn: "2026-07-01", note: "納品日を訂正" });
+});
+
+test("実績の修正：値が同じ欄は書かない。理由は必須", async () => {
+  const database = amendDb();
+  const r = await new ConditionEventService(database).amend(
+    1, 9, { occurredOn: "2026-06-30" }, "念のため", "admin");
+  assert.deepEqual(r.changed, []);
+  assert.equal(database.find("UPDATE condition_events SET"), undefined);
+  await assert.rejects(
+    () => new ConditionEventService(amendDb()).amend(1, 9, { amount: 1 }, "  ", "admin"),
+    /修正の理由は必須です/);
+});
+
+test("実績の修正：支払が立っていると金額は直せない（日付は直せる）", async () => {
+  const withPayment = { "FROM payment_allocations a": [{ id: 7, payment_no: "PY-2026-0007" }] };
+  await assert.rejects(
+    () => new ConditionEventService(amendDb(withPayment)).amend(
+      1, 9, { amount: 250000 }, "請求書と合わせる", "admin"),
+    /支払 PY-2026-0007 が立っています/);
+  // 金額に関わらない欄は、支払があっても直せる。
+  const database = amendDb(withPayment);
+  await new ConditionEventService(database).amend(
+    1, 9, { deliverable: "挿絵 12点" }, "納品物の数を訂正", "admin");
+  assert.ok(database.find("UPDATE condition_events SET"));
+});
+
+test("実績の修正：いまの値は列名で引く（列の並びを組み違えない）", async () => {
+  const database = amendDb();
+  await new ConditionEventService(database).amend(
+    1, 9, { note: "訂正" }, "打ち間違い", "admin");
+  const q = database.find("FROM condition_events e")!;
+  // 直せる欄を並べた表から SELECT を組む。ここを組み違えると
+  // 本物の DB では列が無いと言われて落ちる（偽DBは何でも返すので気づけない）。
+  assert.match(q.text, /e\.occurred_on/);
+  assert.match(q.text, /e\.gross_amount/);
+  assert.doesNotMatch(q.text, /object Object/);
+});
+
+test("実績の修正：取り消した実績は直せない", async () => {
+  const database = amendDb({ "FROM condition_events e": [{ id: 9, status: "void", amount: 1 }] });
+  await assert.rejects(
+    () => new ConditionEventService(database).amend(1, 9, { amount: 2 }, "訂正", "admin"),
+    /取り消した実績は直せません/);
+});

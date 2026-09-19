@@ -47,11 +47,15 @@ export class OpsRepository {
   }
 
   /** 監査記録。V2 では12の台帳表に分かれていたものが1本になっている。 */
-  async auditEvents(query: { action?: string; targetType?: string; limit?: number } = {}) {
+  async auditEvents(
+    query: { action?: string; targetType?: string; targetId?: number; limit?: number } = {}
+  ) {
     const where: string[] = [];
     const params: unknown[] = [];
     if (query.action) { params.push(`${query.action}%`); where.push(`action LIKE $${params.length}`); }
     if (query.targetType) { params.push(query.targetType); where.push(`target_type = $${params.length}`); }
+    // 1件ぶんの履歴（「この支払の修正履歴」）を出すため。
+    if (query.targetId) { params.push(query.targetId); where.push(`target_id = $${params.length}`); }
     params.push(Math.min(Math.max(query.limit ?? 200, 1), 500));
     try {
       const r = await this.database.query(
