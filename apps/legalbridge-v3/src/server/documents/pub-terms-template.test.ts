@@ -9,12 +9,12 @@ import { PUB_TERMS_VARIABLES, pubTermsPatch, pubTitleSeeds } from "./pub-terms.j
 import { bankInfoLine } from "./template-context.js";
 
 /**
- * ひな形の本文は infra/v3/125（r4。初版は 113）の SQL が運ぶ（本番に流すのはその SQL）。
+ * ひな形の本文は infra/v3/126（r5。初版は 113）の SQL が運ぶ（本番に流すのはその SQL）。
  * ここは同じ SQL から本文を取り出して描画し、本文が差す名前と計算ブロックが
  * 出す名前がずれていないかを見張る。片方だけ直すと空欄の紙が出る。
  */
 const here = path.dirname(fileURLToPath(import.meta.url));
-const sql = readFileSync(path.resolve(here, "../../../../../infra/v3/125_pub_license_terms_v3_r4.sql"), "utf8");
+const sql = readFileSync(path.resolve(here, "../../../../../infra/v3/126_pub_license_terms_v3_r5.sql"), "utf8");
 const html = (() => {
   const start = sql.indexOf("$html$") + "$html$".length;
   const end = sql.indexOf("$html$", start);
@@ -95,4 +95,18 @@ test("翻訳版なし・署名欄なし・法人の許諾者・期間の定め�
   assert.ok(out.includes("期間の定めなし"));
   assert.ok(!out.includes("第１０条"));
   assert.ok(!out.includes("{{"));
+});
+
+test("r5：一覧は別紙1に出て、本文の第１条は点数の要約になる", () => {
+  const rows = pubTitleSeeds(context);
+  const { out } = render({ pub_titles: rows, "許諾者連絡先": "甲 ／ k@example.test" });
+  // 第１条は要約。一覧そのものは署名欄より後ろ（別紙）にある。
+  assert.ok(out.includes("別紙1「対象著作物一覧」"), "第１条が別紙を指す");
+  assert.ok(out.includes("（全 2 点）"), `作品数が入る: ${out.slice(out.indexOf("別紙1「対象著作物一覧」") - 40, out.indexOf("別紙1「対象著作物一覧」") + 60)}`);
+  assert.ok(out.indexOf('class="sign"') < out.indexOf("別紙1　対象著作物一覧"), "別紙は署名欄より後ろ");
+  assert.ok(out.indexOf("別紙1　対象著作物一覧") < out.indexOf('<table class="titles"'), "別紙の中に一覧がある");
+  // 条文が消えた「第１条一覧」を指したままだと、別紙と食い違う。
+  assert.ok(!out.includes("第１条一覧"), "参照先は別紙に直っている");
+  assert.ok(out.includes("別紙1の「紙」欄"), "第２条・第４条が別紙を指す");
+  assert.ok(out.includes("page-break-before: always"), "別紙は改ページして始まる");
 });

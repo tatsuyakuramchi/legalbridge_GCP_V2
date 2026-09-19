@@ -375,6 +375,7 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
 
     hasBank: Boolean(bank),
     titles,
+    /** 一覧に載る作品の点数。第１条の要約と別紙1の見出しに出る（r5）。 */
     titleCount: titles.length,
     hasAnyDigital: titles.some((t) => t.hasDigital)
   };
