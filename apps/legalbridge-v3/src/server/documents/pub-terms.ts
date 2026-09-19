@@ -369,7 +369,8 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
 
   // 翻訳の立て付け（A-034）。一覧の行の見出しにも条文にも同じ語を使うので、
   // 行を組む前に決めておく（each の中からは外側の値が見えない）。
-  const translationLabel = pick("翻訳の扱い") === "二次的著作物" ? "翻訳版" : "翻訳版再許諾";
+  const translationDerivative = pick("翻訳の扱い") === "二次的著作物";
+  const translationLabel = translationDerivative ? "翻訳版" : "翻訳版再許諾";
 
   const titles = rows.map((row, index) => {
     const print = row.print_condition_id != null ? byId.get(Number(row.print_condition_id)) : undefined;
@@ -411,7 +412,7 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
       translationConsentRequired: transConsent === "要",
       // 作品の下に続ける行（翻訳版・備考）を出すか。どちらも無ければ行を作らない。
       hasNoteRow: Boolean(transText) || text(row.note) !== "",
-      translationLabel
+      translationLabel, translationDerivative
     };
   });
 
@@ -469,7 +470,7 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
       && transTitles.some((t) => !t.translationConsentRequired),
     hasTranslation: translationShare != null || transTitles.length > 0,
     // 翻訳の立て付け（A-034）。条文と一覧の見出しがこれで入れ替わる。
-    translationDerivative: pick("翻訳の扱い") === "二次的著作物",
+    translationDerivative,
     translationLabel,
     translationSellOff: pick("翻訳物の在庫販売期間") || "6か月",
     translationShare: translationShare == null ? "" : percentText(translationShare),

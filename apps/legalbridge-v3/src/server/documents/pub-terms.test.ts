@@ -139,7 +139,8 @@ test("本文の文脈：甲＝取引先、乙＝当社、通知先・源泉・�
     // 翻訳版の再許諾（A-033）。この作品は翻訳版の条件を持たないので空。
     // 備考も無いので、下に続く行も作らない。
     translation: "—", hasTranslation: false, translationConsent: "",
-    translationConsentRequired: false, hasNoteRow: false, translationLabel: "翻訳版再許諾"
+    translationConsentRequired: false, hasNoteRow: false,
+    translationLabel: "翻訳版再許諾", translationDerivative: false
   });
 });
 

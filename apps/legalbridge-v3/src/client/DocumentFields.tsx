@@ -3,6 +3,8 @@ import { useDebounced } from "./ListTools.js";
 import { RightsScopePicker } from "./RightsScopePicker.js";
 import { SnippetPicker } from "./SnippetPicker.js";
 import { api } from "./api.js";
+import { splitContact, joinContactParts, mergeContactPick,
+         type ContactParts } from "../server/documents/contact-line.js";
 
 /**
  * 文書作成フォームの入力欄。ひな形の項目を区分ごとに縦に並べる。
@@ -117,6 +119,17 @@ export function DocumentFields(
     api.get<{ candidates: Candidate[] }>(`/quote-sources?${params}`)
       .then((r) => setQuoteHits(r.candidates)).catch(() => setQuoteHits([]));
   }, [quoteFor, quoteSearch, partyId]);
+
+  /**
+   * 候補を欄に入れる。通知先（contact）の欄だけは別の扱いにする。
+   *
+   * 通知先は 部署／氏名／メール／電話 の4つを1行に畳んだもので、候補は
+   * 「◯◯ のメール」のように1つぶんしか持っていない。そのまま入れると、
+   * 入れたつもりのない3つが消える（「検索すると一括で変わる」）。
+   * どこに入る値かを札と値から決めて、そこだけ差し替える。
+   */
+  const pickInto = (f: FormField, current: string, c: Candidate) =>
+    onPick(f.name, f.type === "contact" ? mergeContactPick(current, c.label, c.value) : c.value);
 
   const toggle = (set: Set<string>, name: string) => {
     const next = new Set(set);
@@ -274,7 +287,7 @@ export function DocumentFields(
                                 <button key={`${c.label}:${c.value}`} type="button"
                                         className="btn btn-sm" style={CAND_STYLE}
                                         title={`${c.source}\n${c.value}`}
-                                        onClick={() => { onPick(f.name, c.value); setQuoteFor(null); }}>
+                                        onClick={() => { pickInto(f, value, c); setQuoteFor(null); }}>
                                   {brief(c.value)}
                                   <span className="faint" style={{ marginLeft: 4 }}>{c.label}</span>
                                 </button>
@@ -289,7 +302,7 @@ export function DocumentFields(
                           <button key={`${c.label}:${c.value}`} type="button"
                                   className="btn btn-sm" style={CAND_STYLE}
                                   title={`${c.source}／${c.label}\n${c.value}`}
-                                  onClick={() => onPick(f.name, c.value)}>
+                                  onClick={() => pickInto(f, value, c)}>
                             {brief(c.value)}
                             <span className="faint" style={{ marginLeft: 4 }}>{c.label}</span>
                           </button>
@@ -313,29 +326,10 @@ export function DocumentFields(
 /**
  * 通知先（部署 ／ 氏名 ／ メール ／ 電話）の欄。
  *
- * 紙には 1 行で出るが、1 つの欄に「／」区切りで打たせると甲と乙で書き方が
- * 揃わない（乙は自動で 4 つ揃うのに、甲は電話だけ、のように）。4 つの欄で
- * 編集し、値は紙と同じ 1 行（" ／ " 区切り）で持つ。
+ * 紙には1行で出るが、1つの欄に「／」区切りで打たせると甲と乙で書き方が
+ * 揃わない（乙は自動で4つ揃うのに、甲は電話だけ、のように）。4つの欄で
+ * 編集し、値は紙と同じ1行で持つ。行き来と候補の入れ方は contact-line.ts。
  */
-const CONTACT_SEP = " ／ ";
-type ContactParts = { department: string; name: string; email: string; phone: string };
-
-/** 1 行を 4 つに戻す。メールは @、電話は数字で見分け、残りは 部署・氏名 の順。 */
-function splitContact(line: string): ContactParts {
-  const parts = String(line ?? "").split(/\s*[／/]\s*/).map((x) => x.trim()).filter(Boolean);
-  const out: ContactParts = { department: "", name: "", email: "", phone: "" };
-  const rest: string[] = [];
-  for (const x of parts) {
-    if (!out.email && x.includes("@")) out.email = x;
-    else if (!out.phone && /^[\d０-９+＋()（）\-‐－ー\s]{6,}$/.test(x)) out.phone = x;
-    else rest.push(x);
-  }
-  if (rest.length >= 2) { out.department = rest[0]; out.name = rest.slice(1).join(" "); }
-  else if (rest.length === 1) out.name = rest[0];
-  return out;
-}
-const joinContactParts = (v: ContactParts) =>
-  [v.department, v.name, v.email, v.phone].map((x) => x.trim()).filter(Boolean).join(CONTACT_SEP);
 
 function ContactEditor(
   { value, candidates, side, onChange }: {
@@ -373,7 +367,10 @@ function ContactEditor(
         {cell("phone", "電話", "03-0000-0000", "tel")}
       </div>
       <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
-        <span className="faint">紙には「{joinContactParts(v) || "（空）"}」と出ます</span>
+        <span className="faint">
+          紙には「{joinContactParts(v) || "（空）"}」と出ます。
+          「候補」「探して入れる」で選んだものは、選んだ1つぶん（氏名・部署・メール・電話のどれか）だけが入ります
+        </span>
         {fill.map((x) => (
           <button key={x.who} type="button" className="linky"
                   onClick={() => onChange(joinContactParts(x.parts))}>{x.who}を入れる</button>

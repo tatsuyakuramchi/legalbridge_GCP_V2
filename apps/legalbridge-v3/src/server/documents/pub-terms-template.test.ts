@@ -10,7 +10,7 @@ import { bankInfoLine } from "./template-context.js";
 
 /**
  * ひな形の本文は infra/v3 の SQL が運ぶ（本番に流すのはその SQL）。いまの版は
- * 130 が運ぶ2本（1本目＝一覧形式、2本目＝別紙形式）。
+ * 131 が運ぶ2本（1本目＝一覧形式、2本目＝別紙形式）。
  * ここは同じ SQL から本文を取り出して描画し、本文が差す名前と計算ブロックが
  * 出す名前がずれていないかを見張る。片方だけ直すと空欄の紙が出る。
  */
@@ -28,9 +28,9 @@ const bodyOf = (file: string, index = 0) => {
   return sql.slice(start, end);
 };
 /** 一覧形式（作品が少ないとき。一覧は第１条）。 */
-const listHtml = bodyOf("130_pub_license_terms_note_row.sql", 0);
+const listHtml = bodyOf("131_pub_license_terms_derivative_scope.sql", 0);
 /** 別紙形式（作品が多いとき。一覧は別紙1）。 */
-const annexHtml = bodyOf("130_pub_license_terms_note_row.sql", 1);
+const annexHtml = bodyOf("131_pub_license_terms_derivative_scope.sql", 1);
 // 既存の試験はこれまでどおり別紙形式の本文で通す（項目は2本立てで同じ）。
 const html = annexHtml;
 
@@ -75,7 +75,8 @@ test("本文が差す名前はすべて計算ブロックから出る（空欄�
   // 行の中の名前（no / title …）は each の文脈なので、外側の値には無くてよい。
   const rowNames = new Set(["no", "title", "edition", "copyright", "thirdParty", "printRate", "printExclusivity",
     "digitalRate", "digitalExclusivity", "note", "hasPrint", "hasDigital",
-    "translation", "hasTranslation", "translationConsent", "hasNoteRow"]);
+    "translation", "hasTranslation", "translationConsent", "hasNoteRow",
+    "translationLabel", "translationDerivative"]);
   const outside = blanks.filter((name) => !rowNames.has(name));
   assert.deepEqual(outside, [], `空欄で出る差し込み: ${outside.join(", ")}`);
   assert.ok(!out.includes("{{"), "差し込みが残っていない");
@@ -209,23 +210,25 @@ const derivCtx = () => withTranslation([
   trans(5, 10, "星降る夜のはなし", "pub_sub_digital", 40, "required")
 ]);
 
-test("二次的著作物：翻訳権（27条・28条）で書き、翻訳物の著作権と終了後の扱いが増える", () => {
+test("二次的著作物：翻訳は許諾内容から外れ、二次利用（別途合意）に入る", () => {
   const patch = pubTermsPatch(derivCtx(), { "翻訳の扱い": "二次的著作物", "許諾者連絡先": "甲" });
   const out = renderDocumentHtml(annexHtml, { taxRate: 10, BANK_INFO: "", ...patch });
   assert.ok(!out.includes("{{"));
-  assert.ok(out.includes("著作権法第27条・第28条"), "翻訳権の根拠を書く");
-  assert.ok(out.includes("翻訳に通常必要な範囲"), "改変の範囲");
-  assert.ok(out.includes("<th>翻訳物の著作権</th>"), "翻訳部分の著作権は翻訳者に");
-  assert.ok(out.includes("著作権法第28条に基づく権利を留保"));
-  assert.ok(out.includes("<th>終了後の翻訳物</th>"), "終了後の在庫の扱い");
-  assert.ok(out.includes("終了後6か月に限り販売"), "在庫の販売期間は既定の6か月");
-  assert.ok(out.includes("原著作物の題号及び原著作者名"), "第７条に翻訳物の表示");
-  // 立て付けが変わっても、許諾料の計算は受領対価 × 料率のまま。
-  assert.ok(out.includes("受領する対価（税抜）× 料率"), "計算は変えない");
-  assert.ok(out.includes("算定の細目に別段の定めをするときは"), "細目は備考・特記事項へ");
-  // 一覧の見出しと本文の指し先が揃っている。
-  assert.ok(out.includes('<span class="lbl">翻訳版</span>紙 50%／電子 40%（別途合意 要）'));
-  assert.ok(out.includes("別紙1の「翻訳版」の行"));
+  // 許諾したように読める書き方は残っていない。
+  assert.ok(!out.includes("翻訳物（二次的著作物）を出版・配信することを許諾する"), "許諾しない");
+  assert.ok(!out.includes("<th>翻訳物の著作権</th>"), "許諾を前提にした行は出さない");
+  assert.ok(!out.includes("<th>終了後の翻訳物</th>"));
+  assert.ok(!out.includes("<th>翻訳版</th>"), "第２条・第４条・第５条に翻訳の行は無い");
+  // 二次利用の行にまとめ、別途合意が要ることと、権利が甲に留保されることを書く。
+  assert.ok(out.includes("翻訳（二次的著作物の作成）及び翻訳物の出版・配信、映像化・商品化その他の二次利用は、"
+    + "いずれも本条件書の対象外とし、甲乙の別途合意による。"), "二次利用に入れる");
+  assert.ok(out.includes("著作権法第27条・第28条に定める権利は甲に留保され、本条件書による許諾には含まれない"));
+  assert.ok(out.includes("翻訳について別途合意するときの許諾料の料率は、別紙1の各作品の「翻訳版」の行を目安とする"),
+    "料率は一覧の行を目安として指す");
+  assert.ok(out.includes("別途合意により翻訳物を出版するときは"), "第７条は別途合意のときの表示として書く");
+  // 一覧には料率だけ出す。別途合意は条文で常に要るので、行に要否は出さない。
+  assert.ok(out.includes('<span class="lbl">翻訳版</span>紙 50%／電子 40%<'));
+  assert.ok(!out.includes("別途合意 要）"), "行に要否は出さない");
   assert.ok(!out.includes("再許諾先"), "二次的著作物では再許諾先と呼ばない");
 });
 
@@ -236,15 +239,17 @@ test("既定（再許諾）のままなら、これまでの書き方で出る",
   assert.ok(out.includes("乙が第三者に再許諾して行わせる翻訳版の出版"));
   assert.ok(out.includes("乙が再許諾先から受領する対価（税抜）× 料率"));
   assert.ok(out.includes('<span class="lbl">翻訳版再許諾</span>'));
+  assert.ok(out.includes("別途合意 要）"), "行に要否が出る");
+  assert.ok(out.includes("映像化・商品化その他の二次利用は本条件書の対象外とし、別途合意による。"),
+    "二次利用の行はこれまでどおり");
   assert.ok(!out.includes("著作権法第27条"), "翻訳権の条文は出さない");
-  assert.ok(!out.includes("翻訳物の著作権"));
-  assert.ok(!out.includes("終了後の翻訳物"));
 });
 
-test("二次的著作物でも、翻訳版の条件が無ければ翻訳の条文は出ない", () => {
+test("二次的著作物で翻訳版の条件が無ければ、二次利用は料率を指さない", () => {
   const patch = pubTermsPatch(context, { "翻訳の扱い": "二次的著作物", "許諾者連絡先": "甲" });
   const out = renderDocumentHtml(annexHtml, { taxRate: 10, BANK_INFO: "", ...patch });
-  assert.ok(!out.includes("著作権法第27条"));
+  // 立て付けの宣言（対象外・別途合意）は、条件が無くても書いておく。
+  assert.ok(out.includes("本条件書の対象外とし、甲乙の別途合意による"));
+  assert.ok(!out.includes("の行を目安とする"), "指す先が無いので料率には触れない");
   assert.ok(!out.includes("<th>翻訳物の著作権</th>"));
-  assert.ok(!out.includes("<th>終了後の翻訳物</th>"));
 });
