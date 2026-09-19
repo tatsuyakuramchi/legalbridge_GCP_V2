@@ -52,10 +52,15 @@ export function parsePaymentTerms(text: string | null | undefined): PaymentTerms
   }
   if (monthsAfter === null) return null;
 
+  // 支払日は「払いに近いほう」の月より後ろに書いてある。前を見ると、
+  // 「月末締め翌々月20日払い」の "月末締め" を支払日と読んで末日にしてしまう。
+  const tail = s.slice(bestEnd);
   // 「末払い」「末日払い」
-  if (/末\s*日?\s*(締|払|支払)/.test(s) || /末\s*$/.test(s)) return { monthsAfter, day: "end" };
+  if (/^\s*末\s*日?\s*(締|払|支払)/.test(tail) || /^\s*末\s*$/.test(tail)) {
+    return { monthsAfter, day: "end" };
+  }
   // 「20日払い」「25日支払」
-  const day = s.match(/(\d{1,2})\s*日\s*(締|払|支払)?/);
+  const day = tail.match(/(\d{1,2})\s*日\s*(締|払|支払)?/);
   if (day) {
     const n = Number(day[1]);
     if (n >= 1 && n <= 31) return { monthsAfter, day: n };
@@ -85,4 +90,43 @@ export function payOnFor(dueOn: string | null, terms: PaymentTerms | null): stri
 
   const day = terms.day === "end" ? lastDay(y, m) : Math.min(terms.day, lastDay(y, m));
   return new Date(Date.UTC(y, m, day)).toISOString().slice(0, 10);
+}
+
+/**
+ * 支払条件に書いてある日付そのもの（A-040）。
+ *
+ * V1・V2 から来た条件には「2026-12-31」「2026/12/31」「2026年12月31日」の
+ * ように、規則ではなく日付が入っているものがある。分割払いを
+ * 「2026-11-30、2026-12-31」と並べたものもある。月の規則としては読めないが、
+ * 支払期日そのものなので拾う。
+ */
+export function fixedPayDates(text: string | null | undefined): string[] {
+  const s = String(text ?? "")
+    .replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0));
+  const out: string[] = [];
+  for (const m of s.matchAll(/(\d{4})\s*[-/年]\s*(\d{1,2})\s*[-/月]\s*(\d{1,2})\s*日?/g)) {
+    const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+    if (mo < 1 || mo > 12 || d < 1 || d > 31) continue;
+    const date = new Date(Date.UTC(y, mo - 1, d));
+    // 2026-02-30 のような日は捨てる（黙って 3月2日にしない）。
+    if (date.getUTCMonth() !== mo - 1 || date.getUTCDate() !== d) continue;
+    out.push(date.toISOString().slice(0, 10));
+  }
+  return [...new Set(out)].sort();
+}
+
+/**
+ * 起算日と支払条件から支払期日を出す。月の規則が読めればそれ、読めなければ
+ * 書いてある日付。分割払いのように日付が並んでいるときは、起算日以後の
+ * いちばん早い日（次に来る支払日）。全部過ぎていれば最後の日。
+ */
+export function payDateFromTerms(
+  basis: string | null | undefined, text: string | null | undefined
+): string | null {
+  const basisDay = String(basis ?? "").slice(0, 10) || null;
+  const byRule = payOnFor(basisDay, parsePaymentTerms(text));
+  if (byRule) return byRule;
+  const dates = fixedPayDates(text);
+  if (!dates.length) return null;
+  return (basisDay && dates.find((d) => d >= basisDay)) ?? dates[dates.length - 1];
 }

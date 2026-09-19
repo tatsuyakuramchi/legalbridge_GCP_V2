@@ -19,6 +19,8 @@ interface Options {
   events?: Array<{ id: number; condition_id: number; amount: number; occurred_on?: string }>;
   /** 紙に印字した支払期日（焼き付けた値）。 */
   printedDueOn?: string | null;
+  /** 条件明細の支払条件（「月末締め翌月末払い」）。 */
+  paymentTerms?: string | null;
 }
 
 const responder = (options: Options = {}) => (text: string): Array<Record<string, unknown>> | undefined => {
@@ -31,6 +33,7 @@ const responder = (options: Options = {}) => (text: string): Array<Record<string
               party_kind: options.partyKind ?? "individual", withholding: options.withholding ?? false,
               party_name: "如月 涼", event_id: 700 + i,
               occurred_on: options.occurredOn ?? "2026-06-20",
+              payment_terms: options.paymentTerms ?? null,
               schedule_pay_on: options.schedulePayOn ?? null, ...over }));
   }
   if (text.includes("FROM documents d WHERE d.id = $1")) {
@@ -329,4 +332,84 @@ test("相手先だけの支払はこれまでどおり割当なしで立つ", as
   const r = await service.create({ partyId: 2, direction: "out", amount: 500 }, "k");
   assert.equal(r.id, 901);
   assert.equal(db.all("INSERT INTO payment_allocations").length, 0);
+});
+
+/**
+ * 支払期日は条件明細の支払条件から出す（A-040）。
+ *
+ * 予定の回を立てずに実績から支払を起こすと、これまでは受領日 +60日に落ちて
+ * いた。60日は下請法の上限であって約束の日ではないので、条件に書いてあれば
+ * そちらを使う。紙・予定の回が先なのは変えない。
+ */
+test("予定の回が無ければ、条件の支払条件から期日を出す", async () => {
+  const { service } = svc({ occurredOn: "2026-06-20", paymentTerms: "月末締め翌月末払い" });
+  const result = await service.createFromStatementDocument(26, "kuramochi");
+  assert.equal(result.dueOn, "2026-07-31", "+60日（2026-08-19）ではなく翌月末");
+});
+
+test("支払条件どうしが違えば、いちばん遅い日（全部を満たす日）", async () => {
+  const { service } = svc({
+    occurredOn: "2026-06-20",
+    statements: [
+      { payment_terms: "月末締め翌月末払い" },
+      { net_amount: 57600, tax_amount: 5760, payment_terms: "月末締め翌々月20日払い" }
+    ]
+  });
+  const result = await service.createFromStatementDocument(26, "kuramochi");
+  assert.equal(result.dueOn, "2026-08-20");
+});
+
+test("紙に出した日・予定の回のほうが先（支払条件で上書きしない）", async () => {
+  const printed = await svc({ occurredOn: "2026-06-20", paymentTerms: "月末締め翌月末払い",
+                              printedDueOn: "2026-07-15" })
+    .service.createFromStatementDocument(26, "kuramochi");
+  assert.equal(printed.dueOn, "2026-07-15", "紙が先");
+  const scheduled = await svc({ occurredOn: "2026-06-20", paymentTerms: "月末締め翌月末払い",
+                                schedulePayOn: "2026-07-20" })
+    .service.createFromStatementDocument(26, "kuramochi");
+  assert.equal(scheduled.dueOn, "2026-07-20", "予定の回が先");
+});
+
+test("読めない支払条件は使わない（60日の既定に落ちる）", async () => {
+  // 「30日以内」は締め日が決まらないので日付に落とせない。黙って何かの日を
+  // 作るより、これまでどおり上限を既定にして人に決めてもらう。
+  const { service } = svc({ occurredOn: "2026-06-20", paymentTerms: "検収後30日以内" });
+  const result = await service.createFromStatementDocument(26, "kuramochi");
+  assert.equal(result.dueOn, "2026-08-19");
+});
+
+/**
+ * 検収書からの支払（業務委託）。納品・検収から起こすので、予定の回を立てて
+ * いないことが多い。ここが受領日 +60日に落ちていた。
+ */
+const inspectionDb = (over: Record<string, unknown> = {}) => new FakeDatabase((text) => {
+  if (text.includes("FROM condition_events e")) {
+    return [{ event_id: 700, amount: 300000, occurred_on: "2026-06-20", inspected_on: "2026-06-25",
+              deliverable: "挿絵 10点", condition_id: 5, direction: "in", tax_category: "taxable",
+              currency: "JPY", counterparty_id: 2, payment_terms: null,
+              party_kind: "individual", withholding: true, schedule_pay_on: null, ...over }];
+  }
+  if (text.includes("JOIN payment_allocations a ON a.payment_id = p.id")) return [];
+  if (text.includes("INSERT INTO payments")) return [{ id: 901 }];
+  if (text.includes("UPDATE payments")) {
+    return [{ id: 901, due_on: "2026-08-24", basis_received_on: "2026-06-25" }];
+  }
+  return undefined;
+});
+
+test("検収書：予定の回が無ければ、条件の支払条件から期日を出す", async () => {
+  const withTerms = await new PaymentService(inspectionDb({ payment_terms: "検収月の翌月末払い" }))
+    .createFromInspection(31, "kuramochi");
+  assert.equal(withTerms.dueOn, "2026-07-31", "検収日 2026-06-25 の翌月末");
+
+  // 支払条件が無い条件は、これまでどおり受領日 +60日。
+  const without = await new PaymentService(inspectionDb())
+    .createFromInspection(31, "kuramochi");
+  assert.equal(without.dueOn, "2026-08-24");
+});
+
+test("支払条件が日付そのものなら、その日を期日にする（V1・V2 から来た条件）", async () => {
+  const { service } = svc({ occurredOn: "2026-06-20", paymentTerms: "2026-12-31" });
+  const result = await service.createFromStatementDocument(26, "kuramochi");
+  assert.equal(result.dueOn, "2026-12-31");
 });

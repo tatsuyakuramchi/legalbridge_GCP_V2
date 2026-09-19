@@ -3,6 +3,7 @@ import { dateStr, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { checkPaymentDue, dueLimitFrom, isFreelanceActTarget, type DueCheck } from "./compliance.js";
+import { payDateFromTerms } from "../conditions/payment-terms.js";
 
 /**
  * 合計を、重みの比で割る。端数は最後の1本に寄せる。
@@ -43,6 +44,30 @@ export interface PaymentRow {
  * V2 には割当の表が無く、根拠のない支払行（レガシーの royalty_payments）が
  * 残っていたので、V3 では割当なしで作れないようにする。
  */
+/**
+ * 条件明細の支払条件から支払期日を出す（A-040）。
+ *
+ * 「月末締め翌月末払い」のような文言は条件が持っていて、予定の回（明細）は
+ * それを読んで支払日を出している。予定を立てずに実績から支払を起こすと、
+ * これまでは 60日（下請法の上限）へ落ちていた。上限は「これを超えるな」で
+ * あって約束の日ではないので、条件に書いてあるならそれを使う。
+ *
+ * 条件が複数あるときは、読めた日のいちばん遅い日（全部の条件を満たす日）。
+ * 「月末締め翌月末払い」のような規則のほか、「2026-12-31」のように日付が
+ * 書いてあるものも読む（V1・V2 から来た条件に多い）。
+ * 読めない文言（「30日以内」など。締め日が決まらない）は使わない。
+ */
+export function dueFromPaymentTerms(
+  basis: string | null, terms: Array<string | null | undefined>
+): string | null {
+  if (!basis) return null;
+  const days = terms
+    .map((t) => payDateFromTerms(basis, t))
+    .filter((d): d is string => Boolean(d))
+    .sort();
+  return days[days.length - 1] ?? null;
+}
+
 export class PaymentService {
   constructor(private readonly database: Transactable) {}
 
@@ -251,7 +276,7 @@ export class PaymentService {
       return await inTransaction(this.database, async (client) => {
         const found = await client.query(
           `SELECT s.id AS statement_id, s.condition_id, s.currency, s.net_amount, s.tax_amount,
-                  c.direction, c.tax_category, c.counterparty_id,
+                  c.direction, c.tax_category, c.counterparty_id, c.payment_terms,
                   p.kind AS party_kind, p.withholding,
                   e.id AS event_id, e.occurred_on, sp.pay_on AS schedule_pay_on
              FROM statements s
@@ -285,7 +310,8 @@ export class PaymentService {
         // 期日の出どころは3つある。
         //   1. 紙（文書作成フォームで人が入れた日。入れなければ 2 が出る）
         //   2. 予定明細の支払日（condition_schedules.pay_on）
-        //   3. 実績のいちばん遅い発生日 + 60日（下請法の上限）
+        //   3. 条件明細の支払条件（「月末締め翌月末払い」）を起算日に当てる
+        //   4. 実績のいちばん遅い発生日 + 60日（下請法の上限。どれも無いとき）
         // 支払は 2 → 3 しか見ていなかったので、フォームで 09-18 と入れて
         // 印字した紙に対して、支払が 10-30 で立っていた。焼き付けた値を
         // 先に見る。何がその日を決めたかに関わらず、紙と支払が揃う。
@@ -405,7 +431,9 @@ export class PaymentService {
         const payOns = rows.map((r) => dateStr(r.schedule_pay_on))
           .filter((d): d is string => Boolean(d)).sort();
         const dueOn = options.dueOn ?? printedDueOn
-          ?? payOns[payOns.length - 1] ?? dueLimitFrom(basis);
+          ?? payOns[payOns.length - 1]
+          ?? dueFromPaymentTerms(basis, rows.map((r) => str(r.payment_terms)))
+          ?? dueLimitFrom(basis);
 
         return await this.writeWithAllocations(client, {
           direction, partyId: Number(rows[0].counterparty_id), partyKind: str(rows[0].party_kind),
@@ -505,9 +533,13 @@ export class PaymentService {
         const basis = basisDates[basisDates.length - 1] ?? null;
 
         // 期日は予定の支払日をそのまま使う。回ごとに違えばいちばん遅い日。
+        // 予定を立てていなければ条件の支払条件から出す（A-040）。60日は
+        // 下請法の上限であって約束の日ではないので、どれも無いときだけ。
         const payOns = rows.map((r) => dateStr(r.schedule_pay_on))
           .filter((d): d is string => Boolean(d)).sort();
-        const dueOn = options.dueOn ?? payOns[payOns.length - 1] ?? dueLimitFrom(basis);
+        const dueOn = options.dueOn ?? payOns[payOns.length - 1]
+          ?? dueFromPaymentTerms(basis, rows.map((r) => str(r.payment_terms)))
+          ?? dueLimitFrom(basis);
 
         return await this.writeWithAllocations(client, {
           direction, partyId: Number(rows[0].counterparty_id), partyKind: str(rows[0].party_kind),
