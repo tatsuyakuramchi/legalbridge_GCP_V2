@@ -137,9 +137,9 @@ test("本文の文脈：甲＝取引先、乙＝当社、通知先・源泉・�
     printRate: "10%", printExclusivity: "独占", digitalRate: "—", digitalExclusivity: "—",
     hasPrint: true, hasDigital: false,
     // 翻訳版の再許諾（A-033）。この作品は翻訳版の条件を持たないので空。
-    // showTranslation は行ではなく表の都合（1点でもあれば全行に列が出る）。
-    translation: "—", translationLines: [], hasTranslation: false, translationConsent: "",
-    translationConsentRequired: false, showTranslation: false
+    // 備考も無いので、下に続く行も作らない。
+    translation: "—", hasTranslation: false, translationConsent: "",
+    translationConsentRequired: false, hasNoteRow: false, translationLabel: "翻訳版再許諾"
   });
 });
 

@@ -10,7 +10,7 @@ import { bankInfoLine } from "./template-context.js";
 
 /**
  * ひな形の本文は infra/v3 の SQL が運ぶ（本番に流すのはその SQL）。いまの版は
- * 129 が運ぶ2本（1本目＝一覧形式、2本目＝別紙形式）。
+ * 130 が運ぶ2本（1本目＝一覧形式、2本目＝別紙形式）。
  * ここは同じ SQL から本文を取り出して描画し、本文が差す名前と計算ブロックが
  * 出す名前がずれていないかを見張る。片方だけ直すと空欄の紙が出る。
  */
@@ -28,9 +28,9 @@ const bodyOf = (file: string, index = 0) => {
   return sql.slice(start, end);
 };
 /** 一覧形式（作品が少ないとき。一覧は第１条）。 */
-const listHtml = bodyOf("129_pub_license_terms_derivative.sql", 0);
+const listHtml = bodyOf("130_pub_license_terms_note_row.sql", 0);
 /** 別紙形式（作品が多いとき。一覧は別紙1）。 */
-const annexHtml = bodyOf("129_pub_license_terms_derivative.sql", 1);
+const annexHtml = bodyOf("130_pub_license_terms_note_row.sql", 1);
 // 既存の試験はこれまでどおり別紙形式の本文で通す（項目は2本立てで同じ）。
 const html = annexHtml;
 
@@ -75,7 +75,7 @@ test("本文が差す名前はすべて計算ブロックから出る（空欄�
   // 行の中の名前（no / title …）は each の文脈なので、外側の値には無くてよい。
   const rowNames = new Set(["no", "title", "edition", "copyright", "thirdParty", "printRate", "printExclusivity",
     "digitalRate", "digitalExclusivity", "note", "hasPrint", "hasDigital",
-    "translation", "translationLines", "hasTranslation", "translationConsent", "showTranslation"]);
+    "translation", "hasTranslation", "translationConsent", "hasNoteRow"]);
   const outside = blanks.filter((name) => !rowNames.has(name));
   assert.deepEqual(outside, [], `空欄で出る差し込み: ${outside.join(", ")}`);
   assert.ok(!out.includes("{{"), "差し込みが残っていない");
@@ -158,16 +158,14 @@ test("翻訳版再許諾：一覧に「紙 50%／電子 40%」と別途合意の
   const patch = pubTermsPatch(ctx, { "許諾者連絡先": "甲 ／ k@example.test" });
   const out = renderDocumentHtml(annexHtml, { taxRate: 10, BANK_INFO: "", ...patch });
   assert.ok(!out.includes("{{"));
-  assert.ok(out.includes("翻訳版再許諾<br>料率／別途合意"), "一覧に列が出る");
-  assert.ok(out.includes('class="titles withtrans"'), "列があるぶん幅を詰める");
-  assert.ok(out.includes("<span class=\"m\">紙 50%</span><span class=\"m\">電子 40%</span>"),
-    "紙・電子の率を1つの欄に（行は分ける）");
-  assert.ok(out.includes("別途合意 要"), "要否が同じ欄に添う");
-  assert.ok(out.includes("別紙1「翻訳版再許諾」欄"), "第４条は一覧の欄を指す");
+  assert.ok(out.includes('<span class="lbl">翻訳版再許諾</span>紙 50%／電子 40%（別途合意 要）'),
+    "作品の下の行に1文で出る");
+  assert.ok(!out.includes('class="trans"'), "列は作らない（表の幅は翻訳版なしと同じ）");
+  assert.ok(out.includes("別紙1の「翻訳版再許諾」の行"), "第４条は一覧の行を指す");
   assert.ok(!out.includes("対価（税抜）の 50%"), "条文に率は書かない（作品ごとに違う）");
   assert.ok(out.includes("甲乙が別途書面で合意する"), "第２条は「要」の書き方");
-  // 翻訳版が無い作品の欄は「—」のまま。
-  assert.ok(out.includes('<td class="trans">—</td>'));
+  // 翻訳版が無い作品には、その行を作らない（備考があれば備考だけの行）。
+  assert.ok(out.includes('<span class="lbl">備考</span>初版100部'));
 });
 
 test("翻訳版再許諾：別途合意が作品ごとに違うときは、第２条が一覧の欄で書き分ける", () => {
@@ -199,8 +197,7 @@ test("翻訳版の条件が無ければ、これまでどおり手入力の取�
   const patch = pubTermsPatch(context, { "翻訳版取り分": "50", "許諾者連絡先": "甲 ／ k@example.test" });
   const out = renderDocumentHtml(annexHtml, { taxRate: 10, BANK_INFO: "", ...patch });
   assert.ok(out.includes("対価（税抜）の 50%"), "第４条は手入力の取り分");
-  assert.ok(!out.includes("翻訳版再許諾<br>料率／別途合意"), "一覧に列は出ない");
-  assert.ok(!out.includes('class="titles withtrans"'), "表の幅も元のまま");
+  assert.ok(!out.includes('<span class="lbl">翻訳版再許諾</span>'), "一覧に翻訳版の行は出ない");
 });
 
 /**
@@ -227,8 +224,8 @@ test("二次的著作物：翻訳権（27条・28条）で書き、翻訳物の�
   assert.ok(out.includes("受領する対価（税抜）× 料率"), "計算は変えない");
   assert.ok(out.includes("算定の細目に別段の定めをするときは"), "細目は備考・特記事項へ");
   // 一覧の見出しと本文の指し先が揃っている。
-  assert.ok(out.includes('<th class="trans">翻訳版<br>料率／別途合意</th>'));
-  assert.ok(out.includes("別紙1「翻訳版」欄"));
+  assert.ok(out.includes('<span class="lbl">翻訳版</span>紙 50%／電子 40%（別途合意 要）'));
+  assert.ok(out.includes("別紙1の「翻訳版」の行"));
   assert.ok(!out.includes("再許諾先"), "二次的著作物では再許諾先と呼ばない");
 });
 
@@ -238,7 +235,7 @@ test("既定（再許諾）のままなら、これまでの書き方で出る",
   const out = renderDocumentHtml(annexHtml, { taxRate: 10, BANK_INFO: "", ...patch });
   assert.ok(out.includes("乙が第三者に再許諾して行わせる翻訳版の出版"));
   assert.ok(out.includes("乙が再許諾先から受領する対価（税抜）× 料率"));
-  assert.ok(out.includes('<th class="trans">翻訳版再許諾<br>料率／別途合意</th>'));
+  assert.ok(out.includes('<span class="lbl">翻訳版再許諾</span>'));
   assert.ok(!out.includes("著作権法第27条"), "翻訳権の条文は出さない");
   assert.ok(!out.includes("翻訳物の著作権"));
   assert.ok(!out.includes("終了後の翻訳物"));

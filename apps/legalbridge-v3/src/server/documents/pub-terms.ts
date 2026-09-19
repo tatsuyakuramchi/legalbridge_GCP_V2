@@ -367,7 +367,11 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
   const seeds = pubTitleSeeds(context);
   const rows = list(manual[PUB_TITLES_FIELD]).length ? list(manual[PUB_TITLES_FIELD]) : seeds;
 
-  const titleRows = rows.map((row, index) => {
+  // 翻訳の立て付け（A-034）。一覧の行の見出しにも条文にも同じ語を使うので、
+  // 行を組む前に決めておく（each の中からは外側の値が見えない）。
+  const translationLabel = pick("翻訳の扱い") === "二次的著作物" ? "翻訳版" : "翻訳版再許諾";
+
+  const titles = rows.map((row, index) => {
     const print = row.print_condition_id != null ? byId.get(Number(row.print_condition_id)) : undefined;
     const digital = row.digital_condition_id != null ? byId.get(Number(row.digital_condition_id)) : undefined;
     const transPrint = row.trans_print_condition_id != null ? byId.get(Number(row.trans_print_condition_id)) : undefined;
@@ -377,9 +381,8 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
     // A4 縦に収まらない。片方だけの作品はその媒体だけ出す。
     const transPrintRate = transPrint ? percentText(transPrint.ratePct) : text(row.trans_print_rate);
     const transDigitalRate = transDigital ? percentText(transDigital.ratePct) : text(row.trans_digital_rate);
-    const transLines = [transPrintRate ? `紙 ${transPrintRate}` : "",
-                        transDigitalRate ? `電子 ${transDigitalRate}` : ""].filter(Boolean);
-    const transText = transLines.join("／");
+    const transText = [transPrintRate ? `紙 ${transPrintRate}` : "",
+                       transDigitalRate ? `電子 ${transDigitalRate}` : ""].filter(Boolean).join("／");
     const transConsent = (transPrint || transDigital)
       ? ([transPrint, transDigital].filter(Boolean).some((c) => consentLabel(c!.sublicenseConsent) === "要") ? "要" : "不要")
       : text(row.trans_consent);
@@ -398,22 +401,19 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
         : (text(row.digital_exclusivity) || "—"),
       hasPrint: fromLedger ? Boolean(print) : text(row.print_rate) !== "" && text(row.print_rate) !== "—",
       hasDigital: fromLedger ? Boolean(digital) : text(row.digital_rate) !== "" && text(row.digital_rate) !== "—",
-      // 翻訳版の再許諾（A-033）。紙・電子の率を1つの欄にまとめ、別途合意の要否を添える。
-      // 作品ごとに率が違うので、条文ではなく一覧で持つ。
+      // 翻訳版の再許諾（A-033）。紙・電子の率を1つにまとめ、別途合意の要否を添える。
+      // 作品ごとに率が違うので、条文ではなく一覧で持つ。列にすると紙・電子・要否の
+      // 3行を 22mm に押し込むことになるので、備考と同じ全幅の行に1文で出す（A-035）。
       translation: transText || "—",
-      // 欄は 22mm しかないので、紙と電子は行を分けて出す（「紙 50%／電子」で
-      // 折れると読めない）。文字列のほうは一覧の書き出しや画面で使う。
-      translationLines: transLines,
       hasTranslation: Boolean(transText),
       translationConsent: transConsent,
       // 「要」の作品が1点でもあれば、条文は個別合意が要る側で書く。
-      translationConsentRequired: transConsent === "要"
+      translationConsentRequired: transConsent === "要",
+      // 作品の下に続ける行（翻訳版・備考）を出すか。どちらも無ければ行を作らない。
+      hasNoteRow: Boolean(transText) || text(row.note) !== "",
+      translationLabel
     };
   });
-  // 一覧に「翻訳版再許諾」の列を出すか。1点でも翻訳版の条件があれば全行に出す
-  // （列は表ごと。行ごとに出し入れはできない）。備考の行の colspan もこれで決まる。
-  const showTranslation = titleRows.some((t) => t.hasTranslation);
-  const titles = titleRows.map((t) => ({ ...t, showTranslation }));
 
   // 翻訳版の条件がある作品。別途合意の要否は、この中だけで数える。
   const transTitles = titles.filter((t) => t.hasTranslation);
@@ -470,7 +470,7 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
     hasTranslation: translationShare != null || transTitles.length > 0,
     // 翻訳の立て付け（A-034）。条文と一覧の見出しがこれで入れ替わる。
     translationDerivative: pick("翻訳の扱い") === "二次的著作物",
-    translationColumn: pick("翻訳の扱い") === "二次的著作物" ? "翻訳版" : "翻訳版再許諾",
+    translationLabel,
     translationSellOff: pick("翻訳物の在庫販売期間") || "6か月",
     translationShare: translationShare == null ? "" : percentText(translationShare),
     payPrint: pick("紙の支払時期") || "翌月末日",
