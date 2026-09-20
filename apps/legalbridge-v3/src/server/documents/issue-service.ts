@@ -64,6 +64,33 @@ export interface IssuedDocument {
  * そのまま踏襲する（互換境界）。文書は条件を参照する側なので、
  * 発行しても条件は動かさない。
  */
+/**
+ * 遡及の決定日を読む。空なら今（null）。
+ *
+ * 先の日付は受け取らない。まだ出していない紙に決定日を付けると、
+ * 期日の計算も滞留の集計も未来から始まってしまう。
+ */
+export function readIssuedOn(raw: string | null | undefined, today = new Date()): string | null {
+  const text = String(raw ?? "").trim();
+  if (!text) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    throw new DomainError("VALIDATION", `決定日は 2026-09-01 の形で書いてください（${text}）`);
+  }
+  const parsed = new Date(`${text}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== text) {
+    throw new DomainError("VALIDATION", `決定日が日付として読めません（${text}）`);
+  }
+  const todayInTokyo = new Intl.DateTimeFormat("en-CA",
+    { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit" }).format(today);
+  if (text > todayInTokyo) {
+    throw new DomainError("VALIDATION", `決定日に先の日付は置けません（${text}）`);
+  }
+  if (text < "2000-01-01") {
+    throw new DomainError("VALIDATION", `決定日が古すぎます。打ち間違いではありませんか（${text}）`);
+  }
+  return text;
+}
+
 export class DocumentIssueService {
   private readonly repository: DocumentRepository;
   private readonly contexts: DocumentContextRepository;
@@ -239,8 +266,17 @@ export class DocumentIssueService {
    */
   async issue(
     documentId: number, actor: string,
-    extra: { eventIds?: number[]; royalty?: Record<string, unknown> | null } = {}
+    extra: {
+      eventIds?: number[]; royalty?: Record<string, unknown> | null;
+      /**
+       * 決定日。過去の取引をあとから台帳に入れるときだけ渡す（遡及）。
+       * 省略すれば今。紙に刷った日と台帳の決定日が食い違うと、あとから
+       * 「なぜ9月の紙が今日決定になっているのか」を誰も説明できない。
+       */
+      issuedOn?: string | null;
+    } = {}
   ): Promise<IssuedDocument> {
+    const issuedOn = readIssuedOn(extra.issuedOn);
     try {
       return await inTransaction(this.database, async (client) => {
         const head = await client.query(
@@ -290,7 +326,9 @@ export class DocumentIssueService {
           throw new DomainError("VALIDATION",
             `テンプレート ${template.templateKey} に採番プレフィックスが設定されていません`);
         }
-        const year = currentYearInTokyo();
+        // 採番の年は決定日の年。遡及で去年の紙を入れるときに今年の連番を
+        // 食うと、番号の年と紙の年が合わなくなる。
+        const year = issuedOn ? Number(issuedOn.slice(0, 4)) : currentYearInTokyo();
         const documentNo = formatDocumentNumber(prefix, year, await nextSequence(client, prefix, year));
 
         const context = await this.buildContext(client, {
@@ -324,10 +362,14 @@ export class DocumentIssueService {
         const updated = await client.query(
           `UPDATE documents
               SET document_no = $2, status = 'issued', rendered_values = $3::jsonb,
-                  issued_at = now(), issued_by = $4
+                  -- 遡及のときは日付しか分からない。正午（東京）で置く。
+                  -- 深夜0時で置くと、UTC で日付を切る経路が前日に倒れる。
+                  issued_at = CASE WHEN $5::date IS NULL THEN now()
+                                   ELSE ($5::date + time '12:00') AT TIME ZONE 'Asia/Tokyo' END,
+                  issued_by = $4
             WHERE id = $1 AND status = 'draft'
             RETURNING issued_at`,
-          [documentId, documentNo, JSON.stringify(frozen), actor]
+          [documentId, documentNo, JSON.stringify(frozen), actor, issuedOn]
         );
         if (!updated.rows[0]) throw new DomainError("CONFLICT", "発行中に他の操作と競合しました");
 
@@ -346,6 +388,9 @@ export class DocumentIssueService {
                     ...(versionId !== Number(row.template_version_id)
                       ? { templateVersionWas: Number(row.template_version_id), templateVersion: versionId } : {}),
                     ...(settled.created.length ? { createdConditions: settled.created } : {}),
+                    // 遡及で入れたことは記録に残す。残さないと、決定日が
+                    // 過去なのか入力が遅れただけなのか区別が付かない。
+                    ...(issuedOn ? { backdated: true, issuedOn } : {}),
                     ...(supersedes ? { supersedes } : {}) }
         });
 

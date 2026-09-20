@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { FakeDatabase } from "../core/fake-db.js";
-import { DocumentIssueService } from "./issue-service.js";
+import { DocumentIssueService, readIssuedOn } from "./issue-service.js";
 import { DocumentRepository } from "./repository.js";
 import { DomainError } from "../core/errors.js";
 
@@ -287,4 +287,20 @@ test("下書きを作ると、載せた条件を案件にも繋ぐ（案件の�
   assert.equal(link.params[1], "5");
   const audit = db.all("INSERT INTO audit_events").find((q) => q.params[1] === "document.draft")!;
   assert.match(String(audit.params[5]), /attachedToMatter/);
+});
+
+test("遡及の決定日は日付として読めるものだけ受ける", () => {
+  assert.equal(readIssuedOn(""), null, "空なら今（null）");
+  assert.equal(readIssuedOn(null), null);
+  assert.equal(readIssuedOn("2026-09-07", new Date("2026-09-20T00:00:00Z")), "2026-09-07");
+  assert.throws(() => readIssuedOn("2026/09/07"), /2026-09-01 の形で/);
+  assert.throws(() => readIssuedOn("2026-02-30"), /日付として読めません/);
+  assert.throws(() => readIssuedOn("1999-12-31"), /古すぎます/);
+});
+
+test("決定日に先の日付は置けない。期日も滞留も未来から始まってしまう", () => {
+  // 東京の今日で切る。UTC で切ると、日本の朝に「今日」が弾かれる。
+  const utcMorningInTokyo = new Date("2026-09-20T00:30:00Z");   // 東京では 9/20 9:30
+  assert.equal(readIssuedOn("2026-09-20", utcMorningInTokyo), "2026-09-20");
+  assert.throws(() => readIssuedOn("2026-09-21", utcMorningInTokyo), /先の日付は置けません/);
 });
