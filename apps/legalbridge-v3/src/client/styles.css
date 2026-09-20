@@ -181,6 +181,34 @@ tr.grid-edit td{background:var(--sunken);padding:12px 14px}
 .editsec{border:1px solid var(--line);border-radius:7px;background:var(--surface);padding:9px 11px}
 .editsec h4{margin:0 0 7px;font-size:11.5px;letter-spacing:.06em;color:var(--muted)}
 .editsec .field{grid-template-columns:78px minmax(0,1fr);margin-bottom:6px}
+/* 金額の直し（取り残しの一覧）。1件を1枚のカードにする。 */
+.fixrow{border:1px solid var(--line);border-radius:8px;background:var(--surface);
+  padding:10px 12px}
+.fixrow.hit{border-color:var(--out)}
+.fixhd{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+/* 段を横に並べた帯。隣どうしの枠を重ねて1本の流れに見せる。 */
+.strip{display:flex;align-items:stretch;flex-wrap:wrap;margin-top:9px}
+.strip .step{border:1px solid var(--line);border-right:0;padding:5px 11px;
+  min-width:124px;background:var(--sunken)}
+.strip .step:last-child{border-right:1px solid var(--line);border-radius:0 6px 6px 0}
+.strip .step:first-child{border-radius:6px 0 0 6px}
+.strip .k{display:block;font-size:10px;color:var(--faint);letter-spacing:.05em}
+.strip .v{font-variant-numeric:tabular-nums;font-weight:700}
+.strip .r{display:block;font-size:10px;color:var(--faint)}
+.strip .step.base{background:var(--surface);border-color:var(--line-strong)}
+.strip .step.bad{background:var(--out-soft);border-color:var(--out)}
+.strip .step.bad .v,.strip .step.bad .r{color:var(--out)}
+.strip .step.none .v{color:var(--faint);font-weight:400}
+/* 直し方。段のあいだの順番の縛りを、そのまま番号で出す。 */
+.plan{margin-top:9px;padding:8px 10px;border-radius:6px;background:var(--sunken);font-size:11.5px}
+.plan ol{margin:5px 0 0;padding-left:19px;line-height:1.85}
+.plan li.hand{color:var(--out);font-weight:700}
+.plan li.hand .linky{font-weight:400}
+.plan .why{margin-top:5px;color:var(--faint)}
+.fixbar{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;
+  padding:7px 10px;background:var(--accent-soft);border:1px solid var(--accent);
+  border-radius:7px;font-size:11.5px}
+.rest{border:1px solid var(--line-strong);border-radius:8px}
 /* 予定の1回（金額・期日・支払日）。回の切れ目が読めるように薄く区切る。 */
 .schline{padding-bottom:5px;margin-bottom:5px;border-bottom:1px dotted var(--line)}
 .schline:last-of-type{border-bottom:0;margin-bottom:0}

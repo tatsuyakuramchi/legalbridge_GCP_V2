@@ -24,6 +24,7 @@ import { PartyMergeService } from "./parties/merge-service.js";
 import { MatterRepository } from "./matters/repository.js";
 import { MatterMergeService } from "./matters/merge-service.js";
 import { MatterGridService } from "./matters/grid-service.js";
+import { DriftService } from "./matters/drift-service.js";
 import { ConditionBundleService } from "./conditions/bundle-service.js";
 import { MatterGraphService } from "./matters/graph-service.js";
 import { WorkCreditService } from "./works/credits.js";
@@ -368,6 +369,23 @@ export function createRoutes(database: Transactable) {
    */
   router.get("/matters/:id/grid", asyncRoute(async (req, res) => {
     res.json({ rows: await new MatterGridService(database).rows(Number(req.params.id)) });
+  }));
+
+  /**
+   * 金額の直し。条件と、そこから出した文書・実績・支払の食い違いだけを集める。
+   *
+   * matterId を付けるとその案件の中だけ。付けなければ全社（念のための確認）。
+   * 判定は工程表の札と同じ drift.ts。
+   */
+  router.get("/drift", asyncRoute(async (req, res) => {
+    const raw = String(req.query.matterId ?? "").trim();
+    const matterId = raw === "" ? null : Number(raw);
+    if (matterId !== null && !Number.isInteger(matterId)) {
+      throw new DomainError("VALIDATION", "案件の指定が正しくありません");
+    }
+    const service = new DriftService(database);
+    const [rows, drafts] = await Promise.all([service.rows(matterId), service.drafts(matterId)]);
+    res.json({ rows, drafts });
   }));
 
   // 案件に条件・文書を繋ぐ。読む処理はあったが書く処理が無く、

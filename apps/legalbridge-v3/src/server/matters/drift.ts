@@ -266,3 +266,99 @@ export function driftSummary(flagged: DriftEntry[]): string {
 /** 日付の食い違いがあるか。どちらが正かは機械には決められないので、画面が断る。 */
 export const hasDateDrift = (flagged: DriftEntry[]): boolean =>
   flagged.some((e) => e.field !== "amount");
+
+/**
+ * 直し方の手順。画面はこれを番号付きで出す。
+ *
+ * 手順にするのは、段のあいだに順番の縛りがあるから。支払が立っていると実績の
+ * 金額は直せない（サーバが断る）ので、支払の取り消しが先に来る。押せるボタンだけ
+ * 置いて断られると、なぜ断られたのかが画面に残らない。
+ *
+ * 「機械がやる」のは1回の保存で走るところまで。決定（発行）は人が押す。番号が
+ * 振られて元の版が退き、そこから送信に繋がる行為なので、まとめて自動で通さない。
+ */
+export interface RepairStep {
+  /** auto＝保存のときに走る。hand＝人が押す。 */
+  kind: "auto" | "hand";
+  text: string;
+  /** hand のとき、押す先。画面がボタンを出す。 */
+  go?: { what: "document" | "payment"; id: number };
+}
+
+/** 訂正版を作る対象（画面のチェックと、保存に渡す文書 id）。 */
+export interface RepairDoc {
+  part: "order" | "settlementDoc";
+  id: number;
+  documentNo: string | null;
+}
+
+export interface RepairPlan {
+  steps: RepairStep[];
+  /** 訂正版を作る決定済みの文書。 */
+  reissue: RepairDoc[];
+  /** 支払の期日をこの日にそろえる（保存に渡す）。null なら触らない。 */
+  paymentDueOn: string | null;
+}
+
+/**
+ * @param openDrafts すでに開いている訂正版の下書き（元の文書 id → 下書き id）。
+ *   作りかけのものをもう一度作ろうとするとサーバが断るので、手順のほうを
+ *   「決定する」に差し替える。
+ */
+export function repairPlan(
+  row: GridRow, drift: Drift, openDrafts: Map<number, number> = new Map()
+): RepairPlan {
+  const steps: RepairStep[] = [];
+  const reissue: RepairDoc[] = [];
+  const flagged = drift.flagged;
+  const label = (part: DriftPart) => DRIFT_LABEL[part];
+
+  // 支払の金額は割当の合計なので、ここでは直せない（支払の画面の仕事）。
+  const payAmount = flagged.find((e) => e.part === "payment" && e.field === "amount");
+  if (payAmount && row.payment) {
+    steps.push({
+      kind: "hand",
+      text: `支払 ${row.payment.paymentNo ?? `#${row.payment.id}`} の割当が`
+        + `${typeof payAmount.basis === "number" ? "実績" : "条件"}と合いません。`
+        + "支払の画面で割当を直すか、立て直してください",
+      go: { what: "payment", id: row.payment.id }
+    });
+  }
+
+  for (const part of ["order", "settlementDoc"] as const) {
+    if (!flagged.some((e) => e.part === part)) continue;
+    const doc = row[part];
+    if (!doc) continue;
+    const no = doc.documentNo ?? `#${doc.id}`;
+    const open = openDrafts.get(doc.id);
+    if (open === undefined) {
+      reissue.push({ part, id: doc.id, documentNo: doc.documentNo });
+      steps.push({ kind: "auto", text: `${label(part)} ${no} の訂正版を下書きで作る（明細も引き直す）` });
+      steps.push({
+        kind: "hand", text: `${label(part)} ${no} の訂正版を決定する`,
+        go: { what: "document", id: doc.id }
+      });
+    } else {
+      // もう下書きがある。作り直すのではなく、中身を確かめて決定する番。
+      steps.push({
+        kind: "hand",
+        text: `${label(part)} ${no} の訂正版はもう下書き #${open} にあります。中身を確かめて決定してください`,
+        go: { what: "document", id: open }
+      });
+    }
+  }
+
+  // 支払の期日は保存で直せる。
+  const payDate = flagged.find((e) => e.part === "payment" && e.field === "payment");
+  const paymentDueOn = payDate ? String(payDate.basis) : null;
+  if (payDate && row.payment) {
+    steps.push({
+      kind: "auto",
+      text: `支払 ${row.payment.paymentNo ?? `#${row.payment.id}`} の期日を ${paymentDueOn} にする`
+    });
+  }
+
+  // 決定は人が押す手順なので、自動のぶんより後に並ぶ。読む順に並べ替える。
+  steps.sort((a, b) => Number(a.kind === "hand") - Number(b.kind === "hand"));
+  return { steps, reissue, paymentDueOn };
+}

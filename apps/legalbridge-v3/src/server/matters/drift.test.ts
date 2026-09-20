@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { DRIFT_LABEL, FIELD_LABEL, driftOf, driftSummary, hasDrift } from "./drift.js";
+import { DRIFT_LABEL, FIELD_LABEL, driftOf, driftSummary, hasDrift, repairPlan } from "./drift.js";
 import type { GridRow } from "./grid.js";
 
 /**
@@ -241,4 +241,59 @@ test("同じ条件に発注書が何枚もあれば、金額は比べない（�
   assert.equal(amount.flagged, false);
   assert.match(amount.note!, /発注書が 4 枚/);
   assert.deepEqual(d.flagged.map((e) => e.field), ["delivery"]);
+});
+
+test("直し方は、機械がやるぶんと人が押すぶんに分かれる", () => {
+  const r = row({
+    schedules: { total: 1, done: 0, dueOn: "2026-12-15", payOn: null,
+                 dueVaries: false, payVaries: false },
+    order: doc({ id: 41, documentNo: "ARC-PO-1", amountExTax: 120000, deliveryOn: "2026-11-30" })
+  });
+  const plan = repairPlan(r, driftOf(r)!);
+  assert.deepEqual(plan.steps.map((s) => s.kind), ["auto", "hand"]);
+  assert.match(plan.steps[0].text, /訂正版を下書きで作る/);
+  assert.match(plan.steps[1].text, /訂正版を決定する/);
+  // 決定は文書の画面へ渡す。
+  assert.deepEqual(plan.steps[1].go, { what: "document", id: 41 });
+  assert.deepEqual(plan.reissue, [{ part: "order", id: 41, documentNo: "ARC-PO-1" }]);
+});
+
+test("支払の金額は人に渡す（割当の合計なのでここでは直せない）", () => {
+  const r = delivered(60000, {
+    settlement: settlement({ deliveredAmount: 60000, plannedAmount: 95000 }),
+    payment: { id: 4, paymentNo: "PY-1", status: "planned", dueOn: null, note: null }
+  });
+  const plan = repairPlan(r, driftOf(r)!);
+  assert.deepEqual(plan.steps.map((s) => s.kind), ["hand"]);
+  assert.match(plan.steps[0].text, /割当/);
+  assert.deepEqual(plan.steps[0].go, { what: "payment", id: 4 });
+  assert.deepEqual(plan.reissue, []);
+});
+
+test("支払の期日は保存で直せる（人は要らない）", () => {
+  const r = delivered(95000, {
+    settlement: settlement({ deliveredAmount: 95000, plannedAmount: 95000 }),
+    settlementDoc: doc({ documentNo: "ARC-INS-1", amountExTax: 95000, paymentOn: "2026-10-31" }),
+    payment: { id: 4, paymentNo: "PY-1", status: "planned", dueOn: "2026-09-30", note: null }
+  });
+  const plan = repairPlan(r, driftOf(r)!);
+  assert.deepEqual(plan.steps.map((s) => s.kind), ["auto"]);
+  assert.equal(plan.paymentDueOn, "2026-10-31");
+  assert.match(plan.steps[0].text, /期日を 2026-10-31 に/);
+});
+
+test("食い違いが無ければ手順も無い", () => {
+  const r = row({ order: doc({ amountExTax: 95000 }) });
+  assert.deepEqual(repairPlan(r, driftOf(r)!), { steps: [], reissue: [], paymentDueOn: null });
+});
+
+test("訂正版の下書きがもうあれば、作り直さず「決定する」に変える", () => {
+  // もう一度作ろうとするとサーバが断る。断られる手順を画面に出さない。
+  const r = row({ order: doc({ id: 41, documentNo: "ARC-PO-1" }) });
+  const plan = repairPlan(r, driftOf(r)!, new Map([[41, 105]]));
+  assert.deepEqual(plan.reissue, [], "作り直しには渡さない");
+  assert.deepEqual(plan.steps.map((s) => s.kind), ["hand"]);
+  assert.match(plan.steps[0].text, /もう下書き #105 にあります/);
+  // 押す先は下書きのほう（元の文書を開いても決定できない）。
+  assert.deepEqual(plan.steps[0].go, { what: "document", id: 105 });
 });

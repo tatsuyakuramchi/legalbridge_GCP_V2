@@ -11,9 +11,10 @@ import { MoneyWorkspace } from "./MoneyWorkspace.js";
 import { WorksWorkspace } from "./WorksWorkspace.js";
 import { PartiesWorkspace } from "./PartiesWorkspace.js";
 import { FlowMonitorWorkspace } from "./FlowMonitorWorkspace.js";
+import { DriftWorkspace } from "./DriftWorkspace.js";
 import { OpsWorkspace, HomeWorkspace, type OpsTab } from "./OpsWorkspace.js";
 
-type View = "home" | "matters" | "agreements" | "conditions" | "works" | "parties" | "documents" | "money" | "flows" | "ops";
+type View = "home" | "matters" | "agreements" | "conditions" | "works" | "parties" | "documents" | "money" | "drift" | "flows" | "ops";
 interface Me {
   user?: { email: string; role: string };
   readOnly: boolean;
@@ -36,6 +37,9 @@ const NAV: Array<{ section: string; items: Array<{ view: View; label: string }> 
     { view: "money", label: "お金" }
   ] },
   { section: "監視・運用", items: [
+    // 条件を直したあとに取り残された金額・日付を集めて直す。案件をまたぐので
+    // 工程表（案件1件）とは別の入口にする。
+    { view: "drift", label: "金額の直し" },
     { view: "flows", label: "フロー監視" },
     { view: "ops", label: "運用" }
   ] }
@@ -48,6 +52,8 @@ export function App() {
   const [focus, setFocus] = useState<{ view: View; id: number } | null>(null);
   const [me, setMe] = useState<Me | null>(null);
   const [opsTab, setOpsTab] = useState<OpsTab | undefined>();
+  /** 「金額の直し」を案件の工程表から開いたとき、その案件で絞る。 */
+  const [driftMatter, setDriftMatter] = useState<number | null>(null);
 
   useEffect(() => { api.get<Me>("/me").then(setMe).catch(() => setMe(null)); }, []);
 
@@ -159,6 +165,9 @@ export function App() {
                       aria-current={view === item.view ? "page" : undefined}
                       onClick={() => {
                         if (item.view === "conditions") setConditionId(undefined);
+                        // 左から開いたときは全社に戻す。案件から開いた絞りが
+                        // 残っていると、件数が合わずに見落とす。
+                        if (item.view === "drift") setDriftMatter(null);
                         setFocus(null);
                         setView(item.view);
                       }}>{item.label}</button>
@@ -190,7 +199,8 @@ export function App() {
           <MattersWorkspace key={`m${focusFor("matters") ?? 0}`}
             onOpenCondition={openCondition} initialId={focusFor("matters")}
             onOpen={openEntity} onCompose={startCompose} onOpenDocument={openDocumentAt}
-            onBulkOrders={startBulkOrders} />
+            onBulkOrders={startBulkOrders}
+            onFixDrift={(matterId) => { setDriftMatter(matterId); setView("drift"); }} />
         )}
         {view === "conditions" && (
           <ConditionsWorkspace key={conditionId ?? 0} initialId={conditionId}
@@ -218,6 +228,10 @@ export function App() {
             initialId={focusFor("agreements")} onOpen={openEntity} />
         )}
         {view === "money" && <MoneyWorkspace />}
+        {view === "drift" && (
+          <DriftWorkspace key={`dr${driftMatter ?? 0}`} initialMatterId={driftMatter}
+            onOpenDocument={openDocumentAt} onOpenCondition={openCondition} />
+        )}
         {view === "flows" && <FlowMonitorWorkspace onOpenCondition={openCondition} />}
         {view === "ops" && <OpsWorkspace key={opsTab ?? "quality"} initialTab={opsTab} />}
       </main>

@@ -190,7 +190,7 @@ function Row(
 
 export function MatterGrid(
   { matterId, partyId, reloadKey, onOpenCondition, onOpenDocument, onCompose, onRecordEvent,
-    onOpenPayments }: {
+    onOpenPayments, onFixDrift }: {
     matterId: number;
     /** 取引先で絞っているとき。工程表もそれに合わせる。 */
     partyId?: number | null;
@@ -203,6 +203,8 @@ export function MatterGrid(
     onRecordEvent?: (conditionId: number) => void;
     /** 支払タブを開く。 */
     onOpenPayments?: () => void;
+    /** 「金額の直し」をこの案件で絞って開く。食い違いがあるときだけ出す。 */
+    onFixDrift?: () => void;
   }
 ) {
   const [all, setAll] = useState<GridRow[] | null>(null);
@@ -305,6 +307,13 @@ export function MatterGrid(
             {GRID_FILTER_LABEL[f]} {counts[f]}
           </button>
         ))}
+        {/* 食い違いは1行ずつ直すより、まとめて見たほうが早い。 */}
+        {onFixDrift && counts.drift > 0 && (
+          <button className="btn btn-sm" onClick={onFixDrift}
+                  title="食い違いだけを集めた画面をこの案件で絞って開きます">
+            まとめて直す画面へ
+          </button>
+        )}
         <label className="row" style={{ gap: 5, marginLeft: "auto" }}>
           <input type="checkbox" checked={grouped} onChange={(e) => setGrouped(e.target.checked)} />
           <span className="faint">取引先でまとめる</span>
