@@ -536,16 +536,29 @@ export function ConditionsWorkspace(
                 </div>
                 <div className="tablewrap">
                   <table>
-                    <thead><tr><th>文書番号</th><th>状態</th><th>決定日</th></tr></thead>
+                    <thead><tr><th>文書番号</th><th>状態</th><th>決定日</th><th></th></tr></thead>
                     <tbody>
                       {detail.documents.map((d) => (
                         <tr key={d.id}>
                           <td className="code">{d.documentNo ?? `#${d.id}`}</td>
                           <td><StatusTag kind="document" value={d.status} /></td>
                           <td className="code">{d.issuedAt?.slice(0, 10) ?? "—"}</td>
+                          {/* 一覧から中身へ行けないと、文書番号を控えて文書の画面で
+                              探し直すことになる（案件の文書タブと同じ口）。 */}
+                          <td style={{ whiteSpace: "nowrap" }}>
+                            {onOpenDocument && (
+                              <button className="btn btn-sm"
+                                      title={d.status === "draft"
+                                        ? "文書の画面へ移り、この下書きを開く（「中身を直す」で書き換えられます）"
+                                        : "文書の画面へ移り、この文書を開く"}
+                                      onClick={() => onOpenDocument(d.id)}>
+                                {d.status === "draft" ? "編集" : "開く"}
+                              </button>
+                            )}
+                          </td>
                         </tr>
                       ))}
-                      {!detail.documents.length && <tr><td colSpan={3} className="faint">まだ文書は出ていません</td></tr>}
+                      {!detail.documents.length && <tr><td colSpan={4} className="faint">まだ文書は出ていません</td></tr>}
                     </tbody>
                   </table>
                 </div>
