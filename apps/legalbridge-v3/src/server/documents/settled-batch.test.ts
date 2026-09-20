@@ -240,3 +240,31 @@ test("発注書には発注の数量を刷る。検収の数量は検収書が�
   assert.equal(row.item.ordered_quantity, 12);
   assert.equal(row.item.amount_ex_tax, 96_000, "発注書の金額は発注のまま");
 });
+
+test("支払状態に「なし」と書けば、検収書まで作って支払は立てない", () => {
+  const [row] = readRows(csv(line({ paymentState: "なし", dueOn: "" })));
+  assert.deepEqual(row.issues, []);
+  assert.equal(row.paymentState, "none");
+});
+
+test("支払を立てないのに期日や入金日があれば不備。書いたのに使われないのが一番困る", () => {
+  const [row] = readRows(csv(line({ paymentState: "なし" })));
+  assert.ok(row.issues.some((m) => /支払期日（2026-08-31）があるのに支払状態が なし です/.test(m)));
+  const [row2] = readRows(csv(line({ paymentState: "作らない", dueOn: "", paidOn: "2026-08-30" })));
+  assert.ok(row2.issues.some((m) => /入金日（2026-08-30）があるのに支払状態が なし です/.test(m)));
+});
+
+test("「なし」の言い換えを読む", () => {
+  assert.equal(readPaymentState("なし"), "none");
+  assert.equal(readPaymentState("立てない"), "none");
+  assert.equal(readPaymentState("不要"), "none");
+  assert.equal(readPaymentState("-"), "none");
+});
+
+test("支払の立て方が束の中で食い違えば作らない", () => {
+  const rows = readRows(csv(
+    line({ paymentState: "なし", dueOn: "" }),
+    line({ itemName: "口絵" })
+  ));
+  assert.ok(conflictsOf(groupRows(rows)[0].rows).some((m) => /支払状態が行ごとに違います/.test(m)));
+});

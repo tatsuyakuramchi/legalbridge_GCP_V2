@@ -48,7 +48,7 @@ interface Group {
     agreementNote: string | null; schedules: number;
   };
   orderedOn: string | null; inspectedOn: string | null;
-  dueOn: string | null; paymentState: "planned" | "paid"; paidOn: string | null;
+  dueOn: string | null; paymentState: "planned" | "paid" | "none"; paidOn: string | null;
   specialTerms: string | null; specialTermsNote: string | null;
   rows: Row[];
   orderedTotal: number; inspectedTotal: number;
@@ -78,7 +78,7 @@ interface ResultEntry {
   orderDocumentId?: number; orderDocumentNo?: string | null;
   inspectionDocumentId?: number; inspectionDocumentNo?: string | null;
   eventIds?: number[];
-  paymentNo?: string | null; paymentState?: "planned" | "paid";
+  paymentNo?: string | null; paymentState?: "planned" | "paid" | "none";
 }
 
 interface Batch {
@@ -172,7 +172,9 @@ export function SettledImport(
       + `・条件と予定明細\n`
       + `・発注書と検収書（決定済み・番号が振られます）\n`
       + `・実績 ${preview.summary.events} 件\n`
-      + `・支払 ${preview.summary.payments} 件（合計 ${preview.summary.paymentTotal.toLocaleString()} 円）\n\n`
+      + (preview.summary.payments
+        ? `・支払 ${preview.summary.payments} 件（合計 ${preview.summary.paymentTotal.toLocaleString()} 円）\n\n`
+        : `・支払は立てません\n\n`)
       + `使う番号（見込み）:\n${numbers}\n\n`
       + `決定した文書は取り消せません。間違えたときは無効化するしかありません。進めますか。`)) return;
     setBusy(true); setError(null);
@@ -303,8 +305,13 @@ export function SettledImport(
                         <div className="row" style={{ gap: 18, flexWrap: "wrap" }}>
                           <span>発注日 <b>{g.orderedOn ?? "—"}</b></span>
                           <span>検収日 <b>{g.inspectedOn ?? "—"}</b></span>
-                          <span>支払期日 <b>{g.dueOn ?? "（支払条件から出す）"}</b></span>
-                          <span>支払 <b>{g.paymentState === "paid" ? `支払済み（${g.paidOn ?? "—"}）` : "未払"}</b></span>
+                          {g.paymentState !== "none"
+                            && <span>支払期日 <b>{g.dueOn ?? "（支払条件から出す）"}</b></span>}
+                          <span>支払 <b>{
+                            g.paymentState === "paid" ? `支払済み（${g.paidOn ?? "—"}）`
+                              : g.paymentState === "none" ? "立てない（検収書まで）"
+                              : "未払"
+                          }</b></span>
                         </div>
 
                         {g.specialTerms && (
@@ -430,7 +437,8 @@ export function SettledImport(
                       </td>
                       <td className="num">{r.eventIds?.length ?? 0}</td>
                       <td>
-                        {r.paymentNo ?? "—"}
+                        {r.paymentState === "none" ? <span className="faint">立てていない</span>
+                          : r.paymentNo ?? "—"}
                         {r.paymentState === "paid" && <span className="tag ok" style={{ marginLeft: 6 }}>支払済み</span>}
                       </td>
                       <td>

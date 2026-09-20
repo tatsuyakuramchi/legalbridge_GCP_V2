@@ -25,12 +25,19 @@ import { normalizeDate, readOnOff } from "./batch-service.js";
  * settled-batch-service.ts が持つ。
  */
 
-/** 支払をどの状態で立てるか。 */
-export type SettledPaymentState = "planned" | "paid";
+/**
+ * 支払をどう扱うか。
+ *
+ * none は「支払を立てない」。経理を別で動かしている分や、支払だけ
+ * あとから画面で起こしたい分がある。作ってから取り消すのは記録が
+ * 残って汚れるので、最初から作らない選択を置く。
+ */
+export type SettledPaymentState = "planned" | "paid" | "none";
 
 export const PAYMENT_STATE_WORDS: Array<{ value: SettledPaymentState; label: string; match: RegExp }> = [
   { value: "planned", label: "未払", match: /^(未払|未払い|未|planned|予定)$/i },
-  { value: "paid", label: "支払済み", match: /^(支払済み|支払済|済|paid|入金済み|入金済)$/i }
+  { value: "paid", label: "支払済み", match: /^(支払済み|支払済|済|paid|入金済み|入金済)$/i },
+  { value: "none", label: "作らない", match: /^(なし|無|作らない|立てない|不要|none|skip|-)$/i }
 ];
 
 export function readPaymentState(raw: string): SettledPaymentState | null {
@@ -75,7 +82,8 @@ export const SETTLED_COLUMNS: Array<{
   { key: "varianceNote", label: "変更理由",
     note: "検収数量が数量と違うときは必須。検収書の変更履歴にそのまま出る" },
   { key: "dueOn", label: "支払期日", note: "空なら支払条件から出す" },
-  { key: "paymentState", label: "支払状態", note: "未払 / 支払済み。空なら未払" },
+  { key: "paymentState", label: "支払状態",
+    note: "未払 / 支払済み / なし。空なら未払。「なし」なら検収書まで作って支払は立てない" },
   { key: "paidOn", label: "入金日", note: "支払状態が 支払済み のときは必須" },
   { key: "contract_form", label: "契約形式", aliases: ["契約種別・支払条件"],
     note: "請負 / 委任 / 準委任 など。発注書の「契約種別」に出る" },
@@ -233,6 +241,14 @@ export function readRows(text: string): SettledRow[] {
     if (paymentState === "paid" && !paidOn) issues.push("支払状態が 支払済み なら入金日が要ります");
     if (paymentState === "planned" && paidOn) {
       issues.push(`入金日（${paidOn}）があるのに支払状態が 未払 です`);
+    }
+    if (paymentState === "none" && paidOn) {
+      issues.push(`入金日（${paidOn}）があるのに支払状態が なし です`);
+    }
+    // 支払を立てないなら期日も置き場所が無い。書いてあるのに使われないと、
+    // 「期日を入れたのに支払に出てこない」になる。
+    if (paymentState === "none" && dueOn) {
+      issues.push(`支払期日（${dueOn}）があるのに支払状態が なし です`);
     }
     if (paidOn && inspectedOn && paidOn < inspectedOn) {
       issues.push(`入金日（${paidOn}）が検収日（${inspectedOn}）より前`);

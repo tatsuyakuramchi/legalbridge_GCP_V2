@@ -224,8 +224,12 @@ export class SettledBatchService {
           skipped: groups.filter((g) => g.action === "skip").length,
           choose: groups.filter((g) => g.action === "choose").length,
           events: creatable.reduce((sum, g) => sum + g.rows.length, 0),
-          payments: creatable.length,
-          paymentTotal: creatable.reduce((sum, g) => sum + g.inspectedTotal, 0)
+          // 支払を立てない束は数にも合計にも入れない。確認の文面に出る数が
+          // 実際に作られるものと食い違うと、確認の意味が無くなる。
+          payments: creatable.filter((g) => g.paymentState !== "none").length,
+          paymentTotal: creatable
+            .filter((g) => g.paymentState !== "none")
+            .reduce((sum, g) => sum + g.inspectedTotal, 0)
         }
       };
     } catch (error) { throw translate(error); }
@@ -443,6 +447,17 @@ export class SettledBatchService {
       "UPDATE documents SET batch_id = $2 WHERE id = $1", [inspectionDraft.id, batchId]);
     await this.events.linkDocument(conditionId, eventIds, inspection.id, actor);
 
+    const made: Partial<SettledResultEntry> = {
+      conditionId, conditionNo,
+      orderDocumentId: orderDraft.id, orderDocumentNo: order.documentNo,
+      inspectionDocumentId: inspectionDraft.id, inspectionDocumentNo: inspection.documentNo,
+      eventIds,
+      paymentState: g.paymentState
+    };
+    // 支払を立てない束はここで終わり。検収書まで作ってあるので、あとから
+    // 文書の画面で「支払を立てる」を押せば同じものが起きる。
+    if (g.paymentState === "none") return made;
+
     // 支払。額も源泉も検収書の実績から出す（画面から立てるのと同じ経路）。
     mark("支払");
     const payment = await this.payments.createFromInspection(inspection.id, actor,
@@ -452,14 +467,7 @@ export class SettledBatchService {
       await this.payments.markPaid(payment.paymentId, g.paidOn, actor);
     }
 
-    return {
-      conditionId, conditionNo,
-      orderDocumentId: orderDraft.id, orderDocumentNo: order.documentNo,
-      inspectionDocumentId: inspectionDraft.id, inspectionDocumentNo: inspection.documentNo,
-      eventIds,
-      paymentId: payment.paymentId, paymentNo: payment.paymentNo,
-      paymentState: g.paymentState
-    };
+    return { ...made, paymentId: payment.paymentId, paymentNo: payment.paymentNo };
   }
 
   /** 書類ごとの切り替え。手入力として渡すので、あとから画面で直せる。 */
