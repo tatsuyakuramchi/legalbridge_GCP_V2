@@ -5,6 +5,7 @@ import { SearchSelect, searchParties, staffOptions } from "./SearchSelect.js";
 import { CreateForm, int, text } from "./CreateForm.js";
 import { DetailBack, isWideLayout } from "./DetailBack.js";
 import { MoneyChain } from "./MoneyChain.js";
+import { MatterGrid } from "./MatterGrid.js";
 import { MatterPartyFilter } from "./MatterPartyFilter.js";
 import { filterByParty, partiesOf } from "../server/matters/party-view.js";
 import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
@@ -22,7 +23,7 @@ import { Relations, type EntityKind } from "./Relations.js";
 
 
 
-type Tab = "conditions" | "events" | "documents" | "payments" | "communications" | "graph";
+type Tab = "grid" | "conditions" | "events" | "documents" | "payments" | "communications" | "graph";
 
 /** 統合の下見。サーバの MatterMergePreview と対。 */
 interface MergePreview {
@@ -239,8 +240,9 @@ export function MattersWorkspace(
       .catch((e: ApiError) => setError(e.message));
   }, [selected]);
 
+  // 工程表は8列あるので、開いている間は一覧を畳んで幅を全部渡す（fullwidth）。
   return (
-    <section className={`workspace${selected ? " picked" : ""}`}>
+    <section className={`workspace${selected ? " picked" : ""}${selected && tab === "grid" ? " fullwidth" : ""}`}>
       <header className="workspace-head">
         <h1>案件</h1>
         <p>すべての作業の入口。取引モデルが扱うものを決め、進め方が文書の作り方を決める。条件・文書・支払・連絡はその下にぶら下がる。</p>
@@ -538,7 +540,8 @@ export function MattersWorkspace(
                   <MatterPartyFilter parties={parties} value={party} onChange={setParty} />
 
                   <div className="tabs">
-                    {([["conditions", `条件明細 ${shown.conditions.length}`],
+                    {([["grid", "工程表"],
+                       ["conditions", `条件明細 ${shown.conditions.length}`],
                        ["events", "実績"],
                        ["documents", `文書 ${shown.documents.length}`],
                        ["payments", `支払 ${shown.payments.length}`],
@@ -550,6 +553,15 @@ export function MattersWorkspace(
 
                   {/* どのタブにいても出したままにする。案件に戻れば順番を思い出せるように。 */}
                   <MoneyChain kind={detail.kind} tab={tab} onGo={(next) => setTab(next as Tab)} />
+
+                  {tab === "grid" && (
+                    <MatterGrid matterId={detail.id} partyId={party} reloadKey={linkVersion}
+                      onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument}
+                      onCompose={(conditionIds, eventIds, mid, templateKey) =>
+                        onCompose?.(conditionIds, eventIds, mid ?? detail.id, templateKey)}
+                      onRecordEvent={(id) => { setEventCondition(id); setTab("events"); }}
+                      onOpenPayments={() => setTab("payments")} />
+                  )}
 
                   {tab === "conditions" && (
                     <div className="stack">

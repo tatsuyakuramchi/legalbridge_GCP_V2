@@ -23,6 +23,7 @@ import { PartyWriteService } from "./parties/write-service.js";
 import { PartyMergeService } from "./parties/merge-service.js";
 import { MatterRepository } from "./matters/repository.js";
 import { MatterMergeService } from "./matters/merge-service.js";
+import { MatterGridService } from "./matters/grid-service.js";
 import { MatterGraphService } from "./matters/graph-service.js";
 import { WorkCreditService } from "./works/credits.js";
 import { settlesEvents } from "./documents/settlement-docs.js";
@@ -358,6 +359,14 @@ export function createRoutes(database: Transactable) {
   // 案件の進み具合。段階は保存せず、揃っているものから導く。
   router.get("/matters/:id/flow", asyncRoute(async (req, res) => {
     res.json(await matterLinks.flow(Number(req.params.id)));
+  }));
+
+  /**
+   * 工程表。条件1本を1行に、予定・発注書・実績・検収書・支払を畳んで返す。
+   * 段ごとに引くと、条件36本の案件で問い合わせが200回近くになる。
+   */
+  router.get("/matters/:id/grid", asyncRoute(async (req, res) => {
+    res.json({ rows: await new MatterGridService(database).rows(Number(req.params.id)) });
   }));
 
   // 案件に条件・文書を繋ぐ。読む処理はあったが書く処理が無く、

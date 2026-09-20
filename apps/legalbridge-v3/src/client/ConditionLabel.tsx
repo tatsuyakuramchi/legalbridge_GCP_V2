@@ -52,8 +52,16 @@ export function dealModelLabel(c: { direction: string; pricingModel?: string; us
   return PRICING_MODEL_LABEL[String(c.pricingModel ?? "")] ?? "計算方式なし";
 }
 
-/** 金額の見出し。料率なら率、単価×数量なら単価、それ以外は定額。 */
-export function conditionAmountLabel(c: LabelledCondition): string {
+/**
+ * 金額の見出し。料率なら率、単価×数量なら単価、それ以外は定額。
+ *
+ * 要るのは計算方式と額だけ。条件の全部を求めると、工程表のように
+ * 金額まわりしか持たない行から呼べない。
+ */
+export function conditionAmountLabel(c: {
+  currency?: string; pricingModel?: string;
+  flatAmount?: number | null; unitAmount?: number | null; ratePpm?: number | null;
+}): string {
   const currency = c.currency ?? "JPY";
   if (c.pricingModel === "revenue_rate") return rate(c.ratePpm ?? null);
   if (c.pricingModel === "unit_rate") return `単価 ${money(c.unitAmount ?? null, currency)}`;
