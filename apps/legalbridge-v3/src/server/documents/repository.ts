@@ -59,6 +59,17 @@ export interface DocumentDetail extends DocumentSummary {
    */
   eventIds: number[];
   conditions: Array<{ id: number; conditionNo: string | null; name: string; lineNo: number }>;
+  /**
+   * この文書の実績にもう立っている支払（取消済みを除く）。
+   *
+   * 画面はこれを見て「支払を立てる」を出し分ける。無いと、すでに立てた支払が
+   * あっても押せてしまい、押してから「すでに支払 #26 があります」と断られる。
+   * 断られる操作を差し出さない。
+   */
+  payments: Array<{
+    id: number; paymentNo: string | null; status: string;
+    amount: number; dueOn: string | null;
+  }>;
 }
 
 export interface TemplateSource {
@@ -233,6 +244,18 @@ export class DocumentRepository {
         ORDER BY occurred_on, id`,
       [id, row.status === "draft" ? int(row.supersedes_id) : null]);
 
+    // この文書の実績に立っている支払。訂正版の下書きは前の版の実績を見るので、
+    // 上の events と同じ引き方にそろえる。
+    const payments = await this.database.query(
+      `SELECT DISTINCT y.id, y.payment_no, y.status, y.amount, y.due_on
+         FROM condition_events e
+         JOIN payment_allocations a ON a.event_id = e.id
+         JOIN payments y ON y.id = a.payment_id AND y.status <> 'canceled'
+        WHERE e.status = 'active'
+          AND e.document_id = COALESCE($2::bigint, $1::bigint)
+        ORDER BY y.id`,
+      [id, row.status === "draft" ? int(row.supersedes_id) : null]);
+
     return {
       ...mapSummary(row),
       templateVersionId: int(row.template_version_id),
@@ -244,6 +267,10 @@ export class DocumentRepository {
       conditions: conditions.rows.map((c: Record<string, any>) => ({
         id: Number(c.id), conditionNo: str(c.condition_no),
         name: String(c.name), lineNo: Number(c.line_no)
+      })),
+      payments: (payments.rows as Array<Record<string, any>>).map((y) => ({
+        id: Number(y.id), paymentNo: str(y.payment_no), status: String(y.status),
+        amount: Number(y.amount ?? 0), dueOn: dateStr(y.due_on)
       }))
     };
   }

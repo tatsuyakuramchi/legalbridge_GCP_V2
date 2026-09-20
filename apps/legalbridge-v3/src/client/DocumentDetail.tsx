@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { DOCUMENT_STATE_NOTE, StatusTag } from "./labels.js";
+
 import { Relations, type EntityKind } from "./Relations.js";
 import { DocumentEvents } from "./DocumentEvents.js";
 import { DocumentSend } from "./DocumentSend.js";
@@ -28,6 +29,13 @@ export interface DocumentRow {
   phase: "draft" | "decided" | "sent" | "superseded" | "void";
   sentAt: string | null;
   sentVia: "gmail" | "cloudsign" | null;
+  /**
+   * この文書の実績にもう立っている支払（取消済みを除く）。
+   * 一覧の行には付かないので、詳細を引いたときだけ入る。
+   */
+  payments?: Array<{
+    id: number; paymentNo: string | null; status: string; amount: number; dueOn: string | null;
+  }>;
 }
 
 export interface TemplateOption { templateKey: string; label: string; category: string | null }
@@ -155,10 +163,24 @@ export function DocumentDetail(
                           onClick={() => onReissue(doc.id, doc.documentNo)}>訂正版を作る</button>
               )}
               {/* 当社の支払は検収書か利用許諾計算書から起きる。支払を立てないと
-                  経理提出用の一覧に出ない。 */}
+                  経理提出用の一覧に出ない。
+                  すでに立っていれば押せない。押してから「すでに支払 #26 が
+                  あります」と断られるより、何が立っているかを先に出す。 */}
               {onPayment && (
-                <button className="btn" disabled={busy}
-                        onClick={() => void onPayment(doc.id)}>支払を立てる</button>
+                doc.payments?.length
+                  ? <span className="faint" title="同じ実績に2件の支払は立てられません。立て直すなら、お金の画面でその支払を取り消してください">
+                      支払は立っています：
+                      {doc.payments.map((y) => (
+                        <span key={y.id} style={{ marginLeft: 4 }}>
+                          <span className="code">{y.paymentNo ?? `#${y.id}`}</span>{" "}
+                          <StatusTag kind="payment" value={y.status} />{" "}
+                          ¥{y.amount.toLocaleString("ja-JP")}
+                          {y.dueOn ? `（期日 ${y.dueOn}）` : ""}
+                        </span>
+                      ))}
+                    </span>
+                  : <button className="btn" disabled={busy}
+                            onClick={() => void onPayment(doc.id)}>支払を立てる</button>
               )}
               <button className="btn" disabled={busy}
                       onClick={() => { setDeriving((v) => !v); setDeriveKey(""); }}>

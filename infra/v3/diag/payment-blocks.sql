@@ -19,6 +19,12 @@
 
 SET search_path = v3;
 
+-- PowerShell の窓では、横に広い表が折り返されて読めなくなる。
+-- ページャを止めて、1行を縦に並べる（行ごとに「欄：値」で出る）。
+\pset pager off
+\pset border 0
+
+
 \echo ''
 \echo '=== A. いま開くと「すでに支払があります」で止まる文書 ==================='
 \echo '   決定済みの検収書・計算書のうち、載っている実績に取消済みでない支払の'
@@ -46,7 +52,7 @@ SELECT d.document_no AS "文書",
 \echo '=== B. 支払の出どころと、実績のいまの居場所の食い違い ==================='
 \echo '   「立てたときの文書」は監査記録（payment.create の detail.documentId）。'
 \echo '   documentId が無いものは、条件に宛てて立てた支払か、移行した支払。'
-\echo '   見立てが「そろっている」以外のものが、調べる値打ちのある行。'
+\echo '   見立てが「そろっている」以外のものだけを出す（そろっているものは数だけ）。'
 \echo ''
 
 WITH src AS (
@@ -97,7 +103,26 @@ SELECT COALESCE(p.payment_no, '#' || p.id::text) AS "支払",
   LEFT JOIN documents sd ON sd.id = src.from_doc_id
   LEFT JOIN now_at ON now_at.payment_id = p.id
  WHERE p.status <> 'canceled'
+   -- そろっているものは出さない。実データで 40 行出て、肝心の食い違いが
+   -- ページャに流れて読めなかった。
+   AND NOT (src.from_doc_id IS NOT NULL
+            AND sd.status = 'issued'
+            AND now_at.now_docs IS NOT NULL
+            AND now_at.now_docs LIKE '%' || sd.document_no || '%')
  ORDER BY p.id;
+
+\echo ''
+\echo '   （そろっているものの件数）'
+
+SELECT count(*) AS "そろっている支払"
+  FROM payments p
+  JOIN audit_events a ON a.target_type = 'payment' AND a.target_id = p.id
+                     AND a.action = 'payment.create' AND a.detail ? 'documentId'
+  JOIN documents sd ON sd.id = (a.detail ->> 'documentId')::bigint AND sd.status = 'issued'
+ WHERE p.status <> 'canceled'
+   AND EXISTS (SELECT 1 FROM payment_allocations al
+                 JOIN condition_events ne ON ne.id = al.event_id
+                WHERE al.payment_id = p.id AND ne.document_id = sd.id);
 
 \echo ''
 \echo '=== C. 宙に浮いた割当 =================================================='
