@@ -9,6 +9,7 @@ import { DetailBack } from "./DetailBack.js";
 import { DocumentFields, kindFor, type Candidate, type FormField } from "./DocumentFields.js";
 import { LineItemsEditor, type Row } from "./LineItems.js";
 import { BulkOrders } from "./BulkOrders.js";
+import { SettledImport } from "./SettledImport.js";
 import { StatementBreakdown, type StatementLine, type StatementTotals } from "./StatementLines.js";
 import { LicenseTermsMatrix } from "./LicenseTermsMatrix.js";
 import { ConditionLabel } from "./ConditionLabel.js";
@@ -191,6 +192,8 @@ export function DocumentsWorkspace(
   const [composing, setComposing] = useState(Boolean(start) && !start?.bulk);
   /** 一括作成（CSV）を開いているか。束を作ったら一覧をその束で絞る。 */
   const [bulk, setBulk] = useState(Boolean(start?.bulk));
+  /** 検収済みの遡及取込。発注書の一括作成とは別の口（作るものが違う）。 */
+  const [settled, setSettled] = useState(false);
   const [batchId, setBatchId] = useState<number | null>(null);
 
   useEffect(() => { void reload(); }, [search, scope, batchId]);
@@ -878,8 +881,13 @@ export function DocumentsWorkspace(
             </button>
             {/* 何がまとまるのか分からない名前だった。CSV から作れるのは
                 発注書だけなので、そう書く。 */}
-            <button className="btn" onClick={() => setBulk(true)}>
+            <button className="btn" onClick={() => { setBulk(true); setSettled(false); }}>
               発注書をまとめて作る（CSV）
+            </button>
+            {/* 上は「これから出す紙」、こちらは「もう終わった取引」。
+                同じ CSV の口でも作るものが違うので、入口から分ける。 */}
+            <button className="btn" onClick={() => { setSettled(true); setBulk(false); }}>
+              検収済みをまとめて入れる（CSV）
             </button>
             <span className="faint">
               ひな形から起こします。すでにある文書を見るだけなら、下の一覧から選んでください
@@ -892,6 +900,13 @@ export function DocumentsWorkspace(
             onOpenDocument={(id) => { setSelected(id); }}
             onClose={() => setBulk(false)}
             onCreated={(id) => { setBatchId(id); void reload(); }} />
+        )}
+
+        {settled && !composing && !draft && (
+          <SettledImport initialMatterId={start?.matterId ?? null}
+            onOpenDocument={(id) => { setSelected(id); }}
+            onClose={() => setSettled(false)}
+            onCreated={() => { void reload(); }} />
         )}
 
         {(composing || draft) && (
