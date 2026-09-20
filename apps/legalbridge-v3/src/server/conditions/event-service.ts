@@ -677,6 +677,25 @@ export class ConditionEventService {
     if (!ids.length) throw new DomainError("VALIDATION", "外す実績がありません");
     try {
       return await inTransaction(this.database, async (client) => {
+        // 支払が立っている実績は外させない。
+        //
+        // 外すと、その検収書は実績ゼロの決定済み文書になり、支払は裏付けを
+        // 失って宙に浮く。どちらも画面のどこにも出ないので、経理の段になって
+        // 初めて気づく（実データで ¥88,000 の未払が1件そうなっていた。
+        // 支払を立てた 14 分後に外されていた）。
+        const held = await client.query(
+          `SELECT DISTINCT COALESCE(y.payment_no, '#' || y.id::text) AS name, y.status
+             FROM payment_allocations a
+             JOIN payments y ON y.id = a.payment_id AND y.status <> 'canceled'
+            WHERE a.event_id = ANY($1::bigint[])`, [ids]);
+        const blockers = held.rows as Array<{ name: string; status: string }>;
+        if (blockers.length) {
+          throw new DomainError("CONFLICT",
+            `この実績には支払（${blockers.map((b) => b.name).join("・")}）が立っています。`
+            + "外すと検収書は実績ゼロになり、支払は裏付けを失います。"
+            + "先にお金の画面でその支払を取り消してください");
+        }
+
         // いま見ている文書に結びついているものだけ外す。番号を取り違えたまま
         // 押しても、別の文書の紐づけには手が届かない。
         const updated = await client.query(

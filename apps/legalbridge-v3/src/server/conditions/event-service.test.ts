@@ -464,3 +464,30 @@ test("捨てる理由は必須", async () => {
     () => new ConditionEventService(forDiscard()).discardVoided(5, 22, " ", "admin"),
     /捨てる理由を書いてください/);
 });
+
+// ---- 支払が立っている実績は文書から外させない ------------------------------
+
+test("支払が立っている実績は、文書から外せない", async () => {
+  // 外すと検収書は実績ゼロの決定済み文書になり、支払は裏付けを失う。
+  // どちらも画面に出ないので、経理の段になって初めて気づく。
+  const db = new FakeDatabase((t) => {
+    if (t.includes("FROM payment_allocations a")) {
+      return [{ name: "PAY-2026-0042", status: "planned" }];
+    }
+    return [];
+  });
+  await assert.rejects(
+    () => new ConditionEventService(db).unlinkDocument(1205, [179], 1616, "admin"),
+    /PAY-2026-0042.*外すと検収書は実績ゼロ/s);
+  assert.equal(db.find("SET document_id = NULL"), undefined, "外してはいけない");
+});
+
+test("支払が無ければ、これまでどおり外せる", async () => {
+  const db = new FakeDatabase((t) => {
+    if (t.includes("FROM payment_allocations a")) return [];
+    if (t.includes("SET document_id = NULL")) return [{ id: 179 }];
+    return [];
+  });
+  const r = await new ConditionEventService(db).unlinkDocument(1205, [179], 1616, "admin");
+  assert.equal(r.unlinked, 1);
+});
