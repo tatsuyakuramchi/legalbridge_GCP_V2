@@ -1038,7 +1038,9 @@ export class DocumentBatchService {
    * ちょうど1件のときだけ当てる。決まらなければ付けない。
    * 発注書は基本契約なしでも出せるので、ここは止める理由にしない。
    */
-  private async basicAgreement(
+  // 遡及の一括取込（settled-batch-service）も同じ当て方を使う。名寄せの
+  // 規則が2つに分かれると、同じ CSV が経路によって別の相手に当たる。
+  async basicAgreement(
     client: Queryable, matterId: number, partyId: number, agreementNo: string | null
   ): Promise<{ agreement: AgreementRef | null; note: string | null; missing?: boolean }> {
     const map = (a: any): AgreementRef =>
@@ -1101,7 +1103,7 @@ export class DocumentBatchService {
    * 作品まで見ないと、作品が何本かある案件で、別の作品の条件に発注書が
    * ぶら下がってしまう。作品なしの束は作品なしの条件にだけ当てる。
    */
-  private async existingCondition(
+  async existingCondition(
     client: Queryable, matterId: number, partyId: number, workId: number | null,
     conditionName: string | null
   ) {

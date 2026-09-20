@@ -6,7 +6,7 @@ import {
 } from "./settled-batch.js";
 
 const HEAD = "取引先コード,取引先名,作品コード,作品名,契約番号,条件名,品目・業務名,仕様・成果物,"
-  + "数量,単価（税抜）,発注日,納品日,検収日,検収額（税抜）,支払期日,支払状態,入金日,"
+  + "数量,単価（税抜）,発注日,納品日,検収日,検収額（税抜）,変更理由,支払期日,支払状態,入金日,"
   + "契約形式,支払条件,成果物の帰属先,発注署名欄,承諾署名欄,特約の定型文,特約,備考";
 
 /** 1行ぶんの値。既定は「読める行」で、直したいところだけ渡す。 */
@@ -16,7 +16,7 @@ const line = (over: Partial<Record<string, string>> = {}) => {
     agreementNo: "", conditionName: "", itemName: "表紙", spec: "",
     quantity: "1", unitPrice: "100000",
     orderedOn: "2026-06-01", deliveredOn: "2026-07-20", inspectedOn: "2026-07-25",
-    inspectedAmount: "", dueOn: "2026-08-31", paymentState: "", paidOn: "",
+    inspectedAmount: "", varianceNote: "", dueOn: "2026-08-31", paymentState: "", paidOn: "",
     contractForm: "請負", paymentTerms: "月末締め翌月末払い", ownership: "発注者",
     orderSign: "", acceptSign: "", snippet: "", specialTerms: "", remarks: "",
     ...over
@@ -27,7 +27,8 @@ const line = (over: Partial<Record<string, string>> = {}) => {
   return [base.partyCode, base.partyName, base.workCode, base.workTitle,
           base.agreementNo, base.conditionName, base.itemName, base.spec,
           base.quantity, base.unitPrice, base.orderedOn, base.deliveredOn,
-          base.inspectedOn, base.inspectedAmount, base.dueOn, base.paymentState,
+          base.inspectedOn, base.inspectedAmount, base.varianceNote,
+          base.dueOn, base.paymentState,
           base.paidOn, base.contractForm, base.paymentTerms, base.ownership,
           base.orderSign, base.acceptSign, base.snippet, base.specialTerms,
           base.remarks].map(cell).join(",");
@@ -47,7 +48,7 @@ test("読める行は不備なしで、発注額と検収額が出る", () => {
 test("減額検収は検収額の列に書く。発注額は発注額のまま残る", () => {
   // 発注額を検収額で上書きしてしまうと、検収書の「金額が変わった」判定が
   // 効かなくなり、変更内容の確認欄が出ない。
-  const [row] = readRows(csv(line({ quantity: "12", unitPrice: "8000", inspectedAmount: "88,000" })));
+  const [row] = readRows(csv(line({ quantity: "12", unitPrice: "8000", inspectedAmount: "88,000", varianceNote: "11点に減った" })));
   assert.deepEqual(row.issues, []);
   assert.equal(row.orderedAmount, 96000);
   assert.equal(row.inspectedAmount, 88000);
@@ -102,7 +103,7 @@ test("検収額 0 は弾く。0 の実績からは支払を作れない", () => 
 
 test("束は 取引先・作品・条件名 で分かれ、発注額と検収額を別々に足す", () => {
   const rows = readRows(csv(
-    line({ workCode: "W1", unitPrice: "100000", inspectedAmount: "90000" }),
+    line({ workCode: "W1", unitPrice: "100000", inspectedAmount: "90000", varianceNote: "一部差し戻し" }),
     line({ workCode: "W1", itemName: "口絵", unitPrice: "50000" }),
     line({ workCode: "W2", itemName: "挿絵", unitPrice: "30000" })
   ));
@@ -194,4 +195,17 @@ test("読めない行も捨てない。何行目が何で駄目かを残す", ()
   assert.equal(rows.length, 2);
   assert.equal(rows[1].line, 3, "見出しを 1 行目として数える");
   assert.deepEqual(rows[1].issues, ["品目・業務名が空", "単価が空か読めない"]);
+});
+
+test("額が動いた行に理由が無ければ作らない。紙に「（理由未記入）」と刷られて相手に渡る", () => {
+  const [row] = readRows(csv(line({ inspectedAmount: "90000" })));
+  assert.ok(row.issues.some((m) => /変更理由が要ります/.test(m)));
+  const [ok] = readRows(csv(line({ inspectedAmount: "90000", varianceNote: "一部差し戻し" })));
+  assert.deepEqual(ok.issues, []);
+  assert.equal(ok.varianceNote, "一部差し戻し");
+});
+
+test("額が同じ行に理由は要らない", () => {
+  const [row] = readRows(csv(line({ inspectedAmount: "100000" })));
+  assert.deepEqual(row.issues, []);
 });

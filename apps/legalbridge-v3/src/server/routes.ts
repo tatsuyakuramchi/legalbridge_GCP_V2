@@ -37,6 +37,8 @@ import { DocumentRepository } from "./documents/repository.js";
 import { DocumentIssueService } from "./documents/issue-service.js";
 import { DocumentSendService } from "./documents/send-service.js";
 import { DocumentBatchService, templateCsv } from "./documents/batch-service.js";
+import { SettledBatchService } from "./documents/settled-batch-service.js";
+import { templateCsv as settledTemplateCsv } from "./documents/settled-batch.js";
 import { ChromiumPdfRenderer, MemoryPdfRenderer, type PdfRenderer } from "./documents/pdf-renderer.js";
 import { DocumentStorageService } from "./documents/storage-service.js";
 import { GoogleDriveStorage, MemoryDriveStorage, type DriveStorage } from "./documents/drive-storage.js";
@@ -139,6 +141,10 @@ export function createRoutes(database: Transactable) {
   const communications = new MatterCommunicationService(database, dispatch);
   const sends = new DocumentSendService(database);
   const batches = new DocumentBatchService(database, issues, communications, pdf);
+  // 検収まで終わっている過去の取引をまとめて入れる（遡及）。名寄せは
+  // 発注書の一括作成と同じものを使うので、その束を渡す。
+  const settledBatches = new SettledBatchService(
+    database, issues, conditionEvents, payments, batches);
   const mailSource = buildMailSource();
   const dailyJob = new DailyJob(database, dispatch);
   const mailJob = new MailIntakeJob(database, mailSource);
@@ -1897,6 +1903,41 @@ export function createRoutes(database: Transactable) {
         .find((p) => p === String(req.query.phase ?? "")),
       batchId: req.query.batchId ? Number(req.query.batchId) : undefined
     }) });
+  }));
+
+  // ---- 決済済みの一括取込（遡及）。条件・発注書・実績・検収書・支払を一度に ----
+  // /documents/batches/:id より前に置く（:id に "settled" が当たる）。
+  router.get("/documents/batches/settled/template.csv", (_req, res) => {
+    res.setHeader("content-type", "text/csv; charset=utf-8");
+    res.setHeader("content-disposition", 'attachment; filename="settled_import.csv"');
+    res.send(settledTemplateCsv());
+  });
+  const settledInput = z.object({
+    matterId: z.coerce.number().int().positive(),
+    csv: z.string().min(1).max(2_000_000),
+    choices: z.record(z.string(), z.coerce.number().int().positive()).default({}),
+    workChoices: z.record(z.string(), z.coerce.number().int().positive()).default({})
+  });
+  // 試算。何も作らない。使う番号の見込みまで返す。
+  router.post("/documents/batches/settled/preview", requireRole("admin", "legal"),
+    asyncRoute(async (req, res) => {
+      res.json(await settledBatches.preview(settledInput.parse(req.body ?? {})));
+    }));
+  // 取り込み。ここで番号が振られる。押す前に試算を見せるのは画面の責任。
+  router.post("/documents/batches/settled", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = settledInput.extend({ filename: z.string().trim().max(200).nullable().optional() })
+        .parse(req.body ?? {});
+      res.status(201).json(await settledBatches.create(input, actor(res)));
+    }));
+  router.get("/documents/batches/settled", asyncRoute(async (req, res) => {
+    const matterId = req.query.matterId ? Number(req.query.matterId) : null;
+    res.json({ batches: await settledBatches.list(matterId) });
+  }));
+  router.get("/documents/batches/settled/:id", asyncRoute(async (req, res) => {
+    const batch = await settledBatches.find(Number(req.params.id));
+    if (!batch) return res.status(404).json({ error: "取り込みの束が見つかりません" });
+    res.json(batch);
   }));
 
   // ---- 発注書の一括作成（束）。/documents/:id より前に置く（:id に "batches" が当たる）----

@@ -23,7 +23,19 @@ interface Options {
   paymentTerms?: string | null;
 }
 
+/**
+ * 採番。支払は検収書・計算書から立てるときも番号を振る。
+ * 採番表を返さないと、どの経路のテストも current_value で落ちる。
+ */
+const numbering = (text: string): Array<Record<string, unknown>> | undefined => {
+  if (text.includes("FROM document_sequences")) return [{ x: 1 }];
+  if (text.includes("UPDATE document_sequences")) return [{ current_value: 7 }];
+  return undefined;
+};
+
 const responder = (options: Options = {}) => (text: string): Array<Record<string, unknown>> | undefined => {
+  const numbered = numbering(text);
+  if (numbered) return numbered;
   if (text.includes("FROM statements s")) {
     return (options.statements ?? [{}]).map((over, i) => ({
       statement_id: 800 + i, condition_id: 5 + i * 4,
@@ -43,7 +55,7 @@ const responder = (options: Options = {}) => (text: string): Array<Record<string
   if (text.includes("JOIN payment_allocations a ON a.payment_id = p.id")) {
     return options.duplicated ? [{ id: 55 }] : [];
   }
-  if (text.includes("INSERT INTO payments")) return [{ id: 900 }];
+  if (text.includes("INSERT INTO payments")) return [{ id: 900, payment_no: "PAY-2026-00007" }];
   if (text.includes("UPDATE payments")) return [{ id: 900, due_on: "2026-08-19", basis_received_on: "2026-06-20" }];
   return undefined;
 };
@@ -383,6 +395,8 @@ test("読めない支払条件は使わない（60日の既定に落ちる）", 
  * いないことが多い。ここが受領日 +60日に落ちていた。
  */
 const inspectionDb = (over: Record<string, unknown> = {}) => new FakeDatabase((text) => {
+  const numbered = numbering(text);
+  if (numbered) return numbered;
   if (text.includes("FROM condition_events e")) {
     return [{ event_id: 700, amount: 300000, occurred_on: "2026-06-20", inspected_on: "2026-06-25",
               deliverable: "挿絵 10点", condition_id: 5, direction: "in", tax_category: "taxable",
@@ -390,7 +404,7 @@ const inspectionDb = (over: Record<string, unknown> = {}) => new FakeDatabase((t
               party_kind: "individual", withholding: true, schedule_pay_on: null, ...over }];
   }
   if (text.includes("JOIN payment_allocations a ON a.payment_id = p.id")) return [];
-  if (text.includes("INSERT INTO payments")) return [{ id: 901 }];
+  if (text.includes("INSERT INTO payments")) return [{ id: 901, payment_no: "PAY-2026-00007" }];
   if (text.includes("UPDATE payments")) {
     return [{ id: 901, due_on: "2026-08-24", basis_received_on: "2026-06-25" }];
   }
@@ -419,6 +433,8 @@ test("支払条件が日付そのものなら、その日を期日にする（V1
  * ここでは触らない（実績を直して立て直す）。
  */
 const amendDb = (over: Record<string, unknown> = {}) => new FakeDatabase((text) => {
+  const numbered = numbering(text);
+  if (numbered) return numbered;
   if (text.includes("FROM payments p")) {
     return [{ id: 900, payment_no: "PY-2026-0009", status: "open", amount: 330000,
               direction: "out", due_on: "2026-08-19", basis_received_on: "2026-06-20",
@@ -479,6 +495,8 @@ test("支払の修正：支払済みの日は空にできない（取り消し�
  * お金の画面に並ぶのは PAY-2026-0026 のほうなので、別物だと思って探し回る。
  */
 const blockedDb = (payment: Record<string, unknown>) => new FakeDatabase((text) => {
+  const numbered = numbering(text);
+  if (numbered) return numbered;
   if (text.includes("FROM condition_events e")) {
     return [{ event_id: 700, amount: 300000, occurred_on: "2026-06-20", inspected_on: "2026-06-25",
               deliverable: "挿絵 10点", condition_id: 5, direction: "in", tax_category: "taxable",
@@ -518,4 +536,17 @@ test("番号を持たない支払（移行したもの）は id で呼ぶ", asyn
       assert.doesNotMatch(e.message, /重なっている実績/);
       return true;
     });
+});
+
+test("検収書から立てた支払にも番号を振る。振らないと画面も帳票も id を出す", () => {
+  // 手で立てる経路（create）だけ採番していたので、検収書・計算書から
+  // 立った支払は payment_no が空のまま残り、「支払 #26」と出ていた。
+  const db = inspectionDb();
+  return new PaymentService(db).createFromInspection(1600, "k").then((r) => {
+    assert.equal(r.paymentNo, "PAY-2026-00007");
+    const insert = db.queries.find((q) => q.text.includes("INSERT INTO payments"));
+    assert.ok(insert?.text.includes("payment_no"), "番号を列に入れて挿す");
+    assert.ok(db.queries.some((q) => q.text.includes("UPDATE document_sequences")),
+      "採番表を進める");
+  });
 });

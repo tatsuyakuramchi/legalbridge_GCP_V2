@@ -287,15 +287,20 @@ export class PaymentService {
     },
     actor: string
   ) {
+    // 番号は手で立てる支払（create）と同じように振る。ここで振っていな
+    // かったので、検収書・計算書から立った支払だけ番号が無く、画面にも
+    // 経理の帳票にも「#26」と id が出ていた。
+    const no = await allocateNumber(client, { prefix: "PAY", table: "payments", column: "payment_no" });
     const inserted = await client.query(
       `INSERT INTO payments
-         (direction, party_id, currency, amount, tax_amount, withholding_amount,
+         (payment_no, direction, party_id, currency, amount, tax_amount, withholding_amount,
           basis_received_on, due_on, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::date, $8::date, 'planned')
-       RETURNING id`,
-      [input.direction, input.partyId, input.currency, input.net, input.tax,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::date, $9::date, 'planned')
+       RETURNING id, payment_no`,
+      [no, input.direction, input.partyId, input.currency, input.net, input.tax,
        input.withholding, input.basis, input.dueOn]);
     const paymentId = Number((inserted.rows[0] as { id: number }).id);
+    const paymentNo = str((inserted.rows[0] as { payment_no: string | null }).payment_no);
 
     for (const a of input.allocations) {
       await client.query(
@@ -313,13 +318,13 @@ export class PaymentService {
     await recordAudit(client, {
       actor, action: "payment.create", targetType: "payment", targetId: paymentId,
       detail: {
-        ...input.detail, direction: input.direction,
+        ...input.detail, paymentNo, direction: input.direction,
         amount: input.net, tax: input.tax, withholding: input.withholding,
         basis: input.basis, dueOn: input.dueOn, dueVerdict: due.verdict
       }
     });
     return {
-      paymentId, direction: input.direction, amount: input.net,
+      paymentId, paymentNo, direction: input.direction, amount: input.net,
       tax: input.tax, withholding: input.withholding, dueOn: input.dueOn, due
     };
   }

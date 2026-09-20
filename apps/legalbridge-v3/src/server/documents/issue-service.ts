@@ -338,7 +338,7 @@ export class DocumentIssueService {
           agreementId: row.agreement_id,
           eventIds: extra.eventIds ?? [],
           royalty: extra.royalty ?? null
-        }, documentNo);
+        }, documentNo, issuedOn);
         const manual = settled.manual;
         // プレビューと同じ順で組む。先に一度束縛して、項目に入った値も
         // 計算ブロックへ渡す（条件書の見出しは項目の値そのもの）。
@@ -752,7 +752,12 @@ export class DocumentIssueService {
   }
 
   private async buildContext(
-    client: Queryable, input: Omit<DraftInput, "manualInputs">, documentNumber: string | null
+    client: Queryable, input: Omit<DraftInput, "manualInputs">, documentNumber: string | null,
+    /**
+     * 遡及の決定日。本文の日付も、条件のどの版を使うかも、この日で決まる。
+     * 渡さないと紙の日付だけ過去で、中身は今日の版・今日の日付になる。
+     */
+    issuedOn: string | null = null
   ) {
     const context = await this.contexts.build({
       conditionIds: input.conditionIds,
@@ -760,6 +765,7 @@ export class DocumentIssueService {
       matterId: input.matterId ?? null,
       eventIds: input.eventIds ?? [],
       royalty: input.royalty ?? null,
+      issuedOn,
       documentNumber
     }, client);
     await this.contexts.attachScopes(client, context.conditions);
