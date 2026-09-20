@@ -664,7 +664,12 @@ export class DocumentIssueService {
       actor, action: "document.supersede", targetType: "document", targetId: oldId,
       detail: {
         documentNo: row.document_no, replacedBy: newId, replacedByNo: newDocumentNo,
-        reason, movedEvents: moved.rows.length
+        reason,
+        // 何件動いたかだけでは、あとからその実績を辿れない。訂正版で移った
+        // 実績は無効化で外れた実績と同じくらい追う値打ちがあるので、id を残す
+        // （実データの調査で、1007 → 1008 の移動だけ跡が無く読めなかった）。
+        movedEvents: moved.rows.length,
+        movedEventIds: (moved.rows as Array<{ id: number }>).map((e) => Number(e.id))
       }
     });
   }

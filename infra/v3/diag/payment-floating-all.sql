@@ -112,11 +112,19 @@ SELECT COALESCE(p.payment_no, '#' || p.id::text) AS "支払",
     OR (ev.detail ? 'eventIds'
         AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(ev.detail -> 'eventIds') x
                      WHERE x.value ~ '^[0-9]+$' AND x.value::bigint = m.event_id))
-    OR (ev.action IN ('document.void', 'document.supersede')
+    -- 無効化で外れた実績（releasedEvents は {id, conditionId} の配列）
+    OR (ev.action = 'document.void'
         AND EXISTS (SELECT 1 FROM jsonb_array_elements(
                       CASE WHEN jsonb_typeof(ev.detail -> 'releasedEvents') = 'array'
                            THEN ev.detail -> 'releasedEvents' ELSE '[]'::jsonb END) r
                      WHERE (r ->> 'id')::bigint = m.event_id))
+    -- 訂正版で移った実績。古い記録は件数しか残っていないので辿れない
+    -- （movedEventIds は 2026-09 以降の記録にだけ入る）。
+    OR (ev.action = 'document.supersede'
+        AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(
+                      CASE WHEN jsonb_typeof(ev.detail -> 'movedEventIds') = 'array'
+                           THEN ev.detail -> 'movedEventIds' ELSE '[]'::jsonb END) x
+                     WHERE x.value ~ '^[0-9]+$' AND x.value::bigint = m.event_id))
  ORDER BY p.id, m.event_id, ev.id;
 
 \echo ''
@@ -153,8 +161,8 @@ SELECT COALESCE(p.payment_no, '#' || p.id::text) AS "支払",
  ORDER BY p.id, c.condition_no, d.issued_at NULLS LAST;
 
 \echo ''
-\echo '=== 5. 実績ゼロの決定済み検収書 ========================================'
-\echo '   外された側。紙は出ているのに中身の実績が無い状態。'
+\echo '=== 5. 実績を外された検収書（条件は付いている） ========================'
+\echo '   紙は出ていて条件も繋がっているのに、中身の実績だけが無い状態。'
 \echo '   4 の候補と突き合わせて、どの実績を戻すかを決める。'
 \echo ''
 
@@ -164,11 +172,30 @@ SELECT d.document_no AS "文書", t.template_key AS "ひな形",
   FROM documents d
   JOIN document_template_versions tv ON tv.id = d.template_version_id
   JOIN document_templates t ON t.id = tv.template_id
-  LEFT JOIN document_conditions dc ON dc.document_id = d.id
-  LEFT JOIN conditions c ON c.id = dc.condition_id
+  JOIN document_conditions dc ON dc.document_id = d.id
+  JOIN conditions c ON c.id = dc.condition_id
  WHERE d.status = 'issued'
    AND t.template_key IN ('inspection_certificate', 'royalty_statement')
    AND NOT EXISTS (SELECT 1 FROM condition_events x
                     WHERE x.document_id = d.id AND x.status = 'active')
  GROUP BY d.id, d.document_no, t.template_key, d.issued_at
  ORDER BY d.issued_at NULLS LAST, d.document_no;
+
+\echo ''
+\echo '=== 6. 条件も実績も付いていない決定済み文書（別の話） =================='
+\echo '   外されたのではなく、そもそも中身が繋がっていない。移行や作りかけの'
+\echo '   名残。5 と混ぜると本題が埋もれるので分けて出す（件数だけ）。'
+\echo ''
+
+SELECT t.template_key AS "ひな形", count(*) AS "件数",
+       min(d.issued_at)::date AS "いちばん古い", max(d.issued_at)::date AS "いちばん新しい"
+  FROM documents d
+  JOIN document_template_versions tv ON tv.id = d.template_version_id
+  JOIN document_templates t ON t.id = tv.template_id
+ WHERE d.status = 'issued'
+   AND t.template_key IN ('inspection_certificate', 'royalty_statement')
+   AND NOT EXISTS (SELECT 1 FROM document_conditions dc WHERE dc.document_id = d.id)
+   AND NOT EXISTS (SELECT 1 FROM condition_events x
+                    WHERE x.document_id = d.id AND x.status = 'active')
+ GROUP BY t.template_key
+ ORDER BY t.template_key;
