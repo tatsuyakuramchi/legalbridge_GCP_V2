@@ -895,7 +895,7 @@ export class ConditionWriteService {
    * 失う。何が指しているかを返し、人が判断できるようにする。
    * 予定明細と許諾範囲は条件の一部なので一緒に消える（ON DELETE CASCADE）。
    */
-  async remove(id: number, actor: string): Promise<{ deleted: true; conditionNo: string | null }> {
+  async remove(id: number, actor: string, reason?: string): Promise<{ deleted: true; conditionNo: string | null }> {
     try {
       return await inTransaction(this.database, async (client) => {
         const before = await this.repository.requireExisting(client, id);
@@ -912,9 +912,12 @@ export class ConditionWriteService {
             "。無効化のままにしておいてください");
         }
         await client.query("DELETE FROM conditions WHERE id = $1", [id]);
+        // 理由は任意（条件画面の削除は無効化のときに理由を取っている）。
+        // 片づけの画面からはまとめて消すので、そのときの理由を残す。
+        const why = String(reason ?? "").trim();
         await recordAudit(client, {
           actor, action: "condition.delete", targetType: "condition", targetId: id,
-          detail: { conditionNo: before.condition_no }
+          detail: { conditionNo: before.condition_no, ...(why ? { reason: why } : {}) }
         });
         return { deleted: true, conditionNo: before.condition_no };
       });

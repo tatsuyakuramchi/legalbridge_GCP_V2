@@ -262,6 +262,9 @@ tr.grid-edit td{background:var(--sunken);padding:12px 14px}
   padding:5px 12px;font-size:12px;cursor:pointer}
 /* 暗いテーマの --accent は明るい青。白文字だと読めないので地の色を使う。 */
 .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--ground)}
+/* 元に戻せない操作。押す前に色で分かるようにする。 */
+.btn.danger{background:var(--out);border-color:var(--out);color:var(--ground)}
+.btn.danger:disabled{background:var(--out-soft);border-color:var(--line-strong);color:var(--faint)}
 .alert{border-left:2px solid var(--out);background:var(--out-soft);color:var(--out);
   padding:9px 12px;border-radius:0 6px 6px 0;font-size:12px}
 .note{border:1px dashed var(--line-strong);border-radius:6px;padding:10px 12px;

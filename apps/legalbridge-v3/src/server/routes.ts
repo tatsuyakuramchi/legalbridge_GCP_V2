@@ -19,6 +19,8 @@ import { CONDITION_USAGE_TYPES, type ConditionUsageType } from "./core/condition
 import { isStatementTemplate } from "./documents/template-context.js";
 import { WorkWriteService } from "./works/write-service.js";
 import { LegacyCleanupRepository } from "./ops/legacy-cleanup.js";
+import { LeftoverService } from "./ops/leftovers-service.js";
+import { tally } from "./ops/leftovers.js";
 import { PartyWriteService } from "./parties/write-service.js";
 import { PartyMergeService } from "./parties/merge-service.js";
 import { MatterRepository } from "./matters/repository.js";
@@ -1603,6 +1605,35 @@ export function createRoutes(database: Transactable) {
     const [conditions, works] = await Promise.all([legacyCleanup.conditions(), legacyCleanup.works()]);
     res.json({ conditions, works });
   }));
+
+  /**
+   * 修正の残骸の片づけ。
+   *
+   * 直す作業が残した途中の産物（出していない下書き・取り消した実績・無効に
+   * した条件）を拾って並べる。捨てるのは選ばれたものだけで、何かが指して
+   * いるものは断る。出した文書と取り消した支払は対象にしない（記録なので）。
+   */
+  const leftovers = () => new LeftoverService(database, {
+    documents: issues, events: conditionEvents, conditions: conditionWrites
+  });
+  router.get("/cleanup/leftovers", requireRole("admin", "legal"), asyncRoute(async (_req, res) => {
+    const items = await leftovers().list();
+    res.json({ items, tally: tally(items) });
+  }));
+
+  const disposeSchema = z.object({
+    reason: z.string().trim().min(1).max(500),
+    picks: z.array(z.object({
+      kind: z.enum(["draft", "event", "condition"]),
+      id: z.coerce.number().int()
+    })).min(1).max(200)
+  });
+  // 消す操作なので管理者だけ。条件の削除（既存の2段階）と同じ重さにする。
+  router.post("/cleanup/leftovers/dispose", requireRole("admin"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { reason, picks } = disposeSchema.parse(req.body ?? {});
+      res.json({ results: await leftovers().dispose(picks, reason, actor(res)) });
+    }));
 
   // 台帳。作品と原作（Core Logic）の系譜を1回で返す。
   router.get("/works/tree", asyncRoute(async (req, res) => {

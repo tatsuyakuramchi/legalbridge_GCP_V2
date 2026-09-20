@@ -405,6 +405,72 @@ export class DocumentIssueService {
   }
 
   /**
+   * 出していない文書を捨てる。
+   *
+   * 直す作業は途中の産物を残す。訂正版を作りかけて別の直し方にした下書き、
+   * 選ぶ条件を間違えて作り直した下書き。行としては残り続け、文書の一覧で
+   * 本物に紛れる。
+   *
+   * **一度でも発行したものは捨てない。** 番号を振って出した事実そのものが
+   * 記録で、無効にしてあっても「何を相手に出したか」を追う手がかりになる。
+   * 番号を持っているか、いま発行済み・差し替え済みなら断る。
+   *
+   * 実績が結びついたままなら断る。外してから捨てる（黙って外すと、実績の
+   * 出どころが理由も分からず消える）。条件の紐づけと送信の記録は文書の一部
+   * なので一緒に消える。
+   */
+  async discardDraft(documentId: number, reason: string, actor: string)
+    : Promise<{ deleted: true; documentId: number }> {
+    const note = String(reason ?? "").trim();
+    if (!note) throw new DomainError("VALIDATION", "捨てる理由を書いてください");
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const head = await client.query(
+          `SELECT d.id, d.document_no, d.status, d.supersedes_id,
+                  (SELECT count(*)::int FROM condition_events e WHERE e.document_id = d.id) AS events,
+                  (SELECT count(*)::int FROM matter_communications m WHERE m.document_id = d.id) AS notes,
+                  (SELECT count(*)::int FROM documents x WHERE x.supersedes_id = d.id) AS successors
+             FROM documents d WHERE d.id = $1 FOR UPDATE`, [documentId]);
+        const row = head.rows[0] as {
+          document_no: string | null; status: string; supersedes_id: number | null;
+          events: number; notes: number; successors: number;
+        } | undefined;
+        if (!row) throw new DomainError("NOT_FOUND", `文書 ${documentId} が見つかりません`);
+        if (row.document_no) {
+          throw new DomainError("CONFLICT",
+            `${row.document_no} は番号を振って出した文書です。出した記録は消しません`
+            + "（要らなくなったなら無効にしてください）");
+        }
+        if (row.status === "issued" || row.status === "superseded") {
+          throw new DomainError("CONFLICT",
+            `発行した文書は捨てられません（この文書は ${row.status}）`);
+        }
+        if (Number(row.events ?? 0) > 0) {
+          throw new DomainError("CONFLICT",
+            `この文書には実績が ${row.events} 件結びついています。`
+            + "先に実績の側から外してください");
+        }
+        // やり取りの記録と、この文書を退かせる版。どちらも消すと指す先を失う。
+        if (Number(row.notes ?? 0) > 0) {
+          throw new DomainError("CONFLICT",
+            `この文書にはやり取りの記録が ${row.notes} 件ぶら下がっています。`
+            + "出していない文書のはずなので、案件の記録を確かめてください");
+        }
+        if (Number(row.successors ?? 0) > 0) {
+          throw new DomainError("CONFLICT", "この文書を退かせる版があります。先にそちらを片づけてください");
+        }
+        await client.query("DELETE FROM documents WHERE id = $1", [documentId]);
+        await recordAudit(client, {
+          actor, action: "document.discard", targetType: "document", targetId: documentId,
+          detail: { status: row.status, reason: note,
+                    ...(row.supersedes_id ? { supersedesId: Number(row.supersedes_id) } : {}) }
+        });
+        return { deleted: true, documentId };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
    * 訂正版を作る。発行済みの文書を下書きとして作り直す。
    *
    * 元の文書は消さない。新しい文書から supersedes_id で繋ぎ、理由を持たせる。

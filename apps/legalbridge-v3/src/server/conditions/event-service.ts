@@ -537,6 +537,56 @@ export class ConditionEventService {
     } catch (error) { throw translate(error); }
   }
 
+  /**
+   * 無効にした実績を捨てる。取り消しの2段目。
+   *
+   * 打ち間違えて記録し直した実績は、無効にしても行としては残る。条件を
+   * 消そうとすると「実績があるので消せません」で止まる引き止め役にもなる
+   * （削除の判定は取り消した実績も数える）。
+   *
+   * 捨てるのは**無効にしたものだけ**。生きている実績は納品の記録そのもので、
+   * 消すと検収書と支払の根拠が無くなる。支払の割当と計算書の行が付いている
+   * ものも捨てない。取り消したあとに割当が残っているのは、支払の側がまだ
+   * その実績を指しているということ。
+   */
+  async discardVoided(conditionId: number, eventId: number, reason: string, actor: string)
+    : Promise<{ deleted: true; eventId: number }> {
+    const why = String(reason ?? "").trim();
+    if (!why) throw new DomainError("VALIDATION", "捨てる理由を書いてください");
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const found = await client.query(
+          `SELECT e.id, e.status, e.occurred_on,
+                  (SELECT count(*)::int FROM payment_allocations a WHERE a.event_id = e.id) AS allocations,
+                  (SELECT count(*)::int FROM statement_lines l WHERE l.event_id = e.id) AS statement_lines
+             FROM condition_events e
+            WHERE e.id = $1 AND e.condition_id = $2 FOR UPDATE OF e`, [eventId, conditionId]);
+        const row = found.rows[0] as
+          { status: string; occurred_on: unknown; allocations: number; statement_lines: number } | undefined;
+        if (!row) throw new DomainError("NOT_FOUND", `実績 ${eventId} が見つかりません`);
+        if (row.status !== "void") {
+          throw new DomainError("VALIDATION",
+            "先に取り消してください（取り消し → 削除の2段階）。生きている実績は納品の記録なので消せません");
+        }
+        const held = [
+          ["支払の割当", Number(row.allocations ?? 0)],
+          ["計算書の行", Number(row.statement_lines ?? 0)]
+        ].filter(([, n]) => Number(n) > 0);
+        if (held.length) {
+          throw new DomainError("CONFLICT",
+            "この実績を指しているものがあるので捨てられません："
+            + held.map(([t, n]) => `${t} ${n} 件`).join("、") + "。取り消したままにしておいてください");
+        }
+        await client.query("DELETE FROM condition_events WHERE id = $1", [eventId]);
+        await recordAudit(client, {
+          actor, action: "condition.event.discard", targetType: "condition", targetId: conditionId,
+          detail: { eventId, occurredOn: dateStr(row.occurred_on), reason: why }
+        });
+        return { deleted: true, eventId };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
   async void(conditionId: number, eventId: number, reason: string, actor: string) {
     const why = String(reason ?? "").trim();
     if (!why) throw new DomainError("VALIDATION", "取り消しの理由は必須です");

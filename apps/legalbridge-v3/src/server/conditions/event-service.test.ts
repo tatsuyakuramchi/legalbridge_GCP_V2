@@ -420,3 +420,47 @@ test("実績の修正：取り消した実績は直せない", async () => {
     () => new ConditionEventService(database).amend(1, 9, { amount: 2 }, "訂正", "admin"),
     /取り消した実績は直せません/);
 });
+
+// ---- 無効にした実績を捨てる（取り消しの2段目） ----------------------------
+
+const forDiscard = (over: Record<string, unknown> = {}) => new FakeDatabase((t) => {
+  if (t.includes("FROM condition_events e\n            WHERE e.id")) {
+    return [{ id: 22, status: "void", occurred_on: "2026-09-01",
+              allocations: 0, statement_lines: 0, ...over }];
+  }
+  return [];
+});
+
+test("無効にした実績は捨てられる", async () => {
+  const db = forDiscard();
+  const r = await new ConditionEventService(db).discardVoided(5, 22, "打ち間違いの片づけ", "admin");
+  assert.deepEqual(r, { deleted: true, eventId: 22 });
+  assert.ok(db.find("DELETE FROM condition_events"), "行を消していない");
+  assert.ok(String(db.find("INSERT INTO audit_events")?.params).includes("condition.event.discard"));
+});
+
+test("生きている実績は捨てない（納品の記録そのもの）", async () => {
+  const db = forDiscard({ status: "active" });
+  await assert.rejects(
+    () => new ConditionEventService(db).discardVoided(5, 22, "片づけ", "admin"),
+    /先に取り消してください/);
+  assert.equal(db.find("DELETE FROM condition_events"), undefined, "消してはいけない");
+});
+
+test("支払の割当・計算書の行が付いていれば捨てない", async () => {
+  for (const [over, message] of [
+    [{ allocations: 1 }, /支払の割当 1 件/],
+    [{ statement_lines: 3 }, /計算書の行 3 件/]
+  ] as const) {
+    const db = forDiscard(over);
+    await assert.rejects(
+      () => new ConditionEventService(db).discardVoided(5, 22, "片づけ", "admin"), message);
+    assert.equal(db.find("DELETE FROM condition_events"), undefined);
+  }
+});
+
+test("捨てる理由は必須", async () => {
+  await assert.rejects(
+    () => new ConditionEventService(forDiscard()).discardVoided(5, 22, " ", "admin"),
+    /捨てる理由を書いてください/);
+});

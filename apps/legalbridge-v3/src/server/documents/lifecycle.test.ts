@@ -230,3 +230,62 @@ test("無効化すると、結びついていた実績を解放する（作り�
   const audit = db.find("INSERT INTO audit_events")!;
   assert.deepEqual(JSON.parse(String(audit.params[5])).releasedEvents, [{ id: 70, conditionId: 5 }, { id: 71, conditionId: 5 }]);
 });
+
+// ---- 出していない文書を捨てる（片づけの2段目） ----------------------------
+
+/** discardDraft は documents に別名 d を付けて引く（void とは別の問い合わせ）。 */
+const forDiscard = (row: Record<string, unknown> | undefined) => new FakeDatabase((text) => {
+  if (text.includes("FROM documents d WHERE d.id")) return row ? [row] : [];
+  return undefined;
+});
+const draft = (over: Record<string, unknown> = {}) => ({
+  id: 11, document_no: null, status: "draft", supersedes_id: null,
+  events: 0, notes: 0, successors: 0, ...over
+});
+
+test("番号の無い下書きは捨てられる", async () => {
+  const db = forDiscard(draft());
+  const r = await new DocumentIssueService(db).discardDraft(11, "作りかけの片づけ", "kuramochi");
+  assert.deepEqual(r, { deleted: true, documentId: 11 });
+  assert.ok(db.find("DELETE FROM documents"), "行を消していない");
+  const audit = db.find("INSERT INTO audit_events");
+  assert.ok(String(audit?.params).includes("document.discard"), "監査に残っていない");
+});
+
+test("番号を振って出した文書は捨てない", async () => {
+  // 出した事実そのものが記録。消すと何を相手に出したかを追えなくなる。
+  const db = forDiscard(draft({ document_no: "ARC-PO-2026-0007", status: "void" }));
+  await assert.rejects(
+    () => new DocumentIssueService(db).discardDraft(11, "片づけ", "kuramochi"),
+    /出した文書です。出した記録は消しません/);
+  assert.equal(db.find("DELETE FROM documents"), undefined, "消してはいけない");
+});
+
+test("発行済み・差し替え済みは捨てない", async () => {
+  for (const status of ["issued", "superseded"]) {
+    const db = forDiscard(draft({ status }));
+    await assert.rejects(
+      () => new DocumentIssueService(db).discardDraft(11, "片づけ", "kuramochi"),
+      /発行した文書は捨てられません/);
+    assert.equal(db.find("DELETE FROM documents"), undefined, `${status} を消している`);
+  }
+});
+
+test("実績・やり取りの記録・退かせる版が付いていれば捨てない", async () => {
+  for (const [over, message] of [
+    [{ events: 2 }, /実績が 2 件結びついています/],
+    [{ notes: 1 }, /やり取りの記録が 1 件/],
+    [{ successors: 1 }, /退かせる版があります/]
+  ] as const) {
+    const db = forDiscard(draft(over));
+    await assert.rejects(
+      () => new DocumentIssueService(db).discardDraft(11, "片づけ", "kuramochi"), message);
+    assert.equal(db.find("DELETE FROM documents"), undefined);
+  }
+});
+
+test("理由なしでは捨てられない", async () => {
+  await assert.rejects(
+    () => new DocumentIssueService(forDiscard(draft())).discardDraft(11, "  ", "kuramochi"),
+    /捨てる理由を書いてください/);
+});
