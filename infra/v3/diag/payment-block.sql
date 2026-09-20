@@ -1,4 +1,15 @@
--- 支払が検収書を止めているときの調査。読み取りだけ。Cloud SQL Studio に貼る。
+-- 支払が検収書を止めているときの調査（1件を詳しく）。読み取りだけ。
+--
+-- 使い方（予備系）
+--   1. infra\v3\diag\payment-block.sql の頭の2行を書き換える
+--   2. cd infra\local
+--      docker compose run --rm ops sql /v3/diag/payment-block.sql
+--
+-- 使い方（本番）
+--   Cloud SQL Studio に貼る（\set は使えないので、:payment_id と :'doc_no' を
+--   直に書き換えてから貼る）。
+--
+-- どれを見ればよいか分からないときは、先に payment-blocks.sql（全体の見取り）。
 --
 -- 「この検収書の実績には、すでに支払 #26 があります」で止まったときに、
 -- その支払が何者で、どの実績と重なっていて、いま有効な文書と繋がっているかを見る。
