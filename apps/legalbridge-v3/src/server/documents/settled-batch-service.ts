@@ -414,8 +414,13 @@ export class SettledBatchService {
         eventType: "inspection",
         occurredOn: row.deliveredOn!,
         inspectedOn: row.inspectedOn,
+        // 数量を渡さないと、検収書の「検収数量」が空になり、単価も
+        // 金額から割り戻したものになる。
+        quantity: row.inspectedQuantity,
         amount: row.inspectedAmount,
-        deliverable: String(row.item.spec ?? row.item.item_name ?? "") || null,
+        // 検収書の品目欄になる。仕様を入れると「挿絵」が「モノクロ12点」に
+        // 化け、変更履歴も「モノクロ12点 支払対価」と読みにくくなる。
+        deliverable: String(row.item.item_name ?? "") || null,
         contractForm: (row.item.payment_terms as string | null) ?? null,
         // 減額・増額の理由。検収書の変更履歴にそのまま出る。
         varianceNote: row.varianceNote,

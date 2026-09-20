@@ -26,6 +26,8 @@ interface WorkCandidate { id: number; title: string; workCode: string | null }
 interface Row {
   line: number;
   item: Record<string, unknown>;
+  quantity: number;
+  inspectedQuantity: number;
   orderedAmount: number;
   inspectedAmount: number;
   deliveredOn: string | null;
@@ -340,6 +342,7 @@ export function SettledImport(
                           <table>
                             <thead><tr>
                               <th>行</th><th>品目</th><th>納品日</th>
+                              <th className="num">数量</th><th className="num">検収数量</th>
                               <th className="num">発注額</th><th className="num">検収額</th>
                             </tr></thead>
                             <tbody>
@@ -348,6 +351,12 @@ export function SettledImport(
                                   <td>{r.line}</td>
                                   <td>{String(r.item.item_name ?? "")}</td>
                                   <td>{r.deliveredOn ?? "—"}</td>
+                                  <td className="num">{r.quantity}</td>
+                                  <td className="num">
+                                    {r.inspectedQuantity === r.quantity
+                                      ? r.inspectedQuantity
+                                      : <b>{r.inspectedQuantity}</b>}
+                                  </td>
                                   <td className="num">{money(r.orderedAmount, "JPY")}</td>
                                   <td className="num">
                                     {r.inspectedAmount === r.orderedAmount

@@ -6,7 +6,7 @@ import {
 } from "./settled-batch.js";
 
 const HEAD = "取引先コード,取引先名,作品コード,作品名,契約番号,条件名,品目・業務名,仕様・成果物,"
-  + "数量,単価（税抜）,発注日,納品日,検収日,検収額（税抜）,変更理由,支払期日,支払状態,入金日,"
+  + "数量,単価（税抜）,発注日,納品日,検収日,検収数量,変更理由,支払期日,支払状態,入金日,"
   + "契約形式,支払条件,成果物の帰属先,発注署名欄,承諾署名欄,特約の定型文,特約,備考";
 
 /** 1行ぶんの値。既定は「読める行」で、直したいところだけ渡す。 */
@@ -16,7 +16,7 @@ const line = (over: Partial<Record<string, string>> = {}) => {
     agreementNo: "", conditionName: "", itemName: "表紙", spec: "",
     quantity: "1", unitPrice: "100000",
     orderedOn: "2026-06-01", deliveredOn: "2026-07-20", inspectedOn: "2026-07-25",
-    inspectedAmount: "", varianceNote: "", dueOn: "2026-08-31", paymentState: "", paidOn: "",
+    inspectedQuantity: "", varianceNote: "", dueOn: "2026-08-31", paymentState: "", paidOn: "",
     contractForm: "請負", paymentTerms: "月末締め翌月末払い", ownership: "発注者",
     orderSign: "", acceptSign: "", snippet: "", specialTerms: "", remarks: "",
     ...over
@@ -27,7 +27,7 @@ const line = (over: Partial<Record<string, string>> = {}) => {
   return [base.partyCode, base.partyName, base.workCode, base.workTitle,
           base.agreementNo, base.conditionName, base.itemName, base.spec,
           base.quantity, base.unitPrice, base.orderedOn, base.deliveredOn,
-          base.inspectedOn, base.inspectedAmount, base.varianceNote,
+          base.inspectedOn, base.inspectedQuantity, base.varianceNote,
           base.dueOn, base.paymentState,
           base.paidOn, base.contractForm, base.paymentTerms, base.ownership,
           base.orderSign, base.acceptSign, base.snippet, base.specialTerms,
@@ -45,13 +45,15 @@ test("読める行は不備なしで、発注額と検収額が出る", () => {
   assert.equal(row.paymentState, "planned", "支払状態が空なら未払");
 });
 
-test("減額検収は検収額の列に書く。発注額は発注額のまま残る", () => {
-  // 発注額を検収額で上書きしてしまうと、検収書の「金額が変わった」判定が
-  // 効かなくなり、変更内容の確認欄が出ない。
-  const [row] = readRows(csv(line({ quantity: "12", unitPrice: "8000", inspectedAmount: "88,000", varianceNote: "11点に減った" })));
+test("減額検収は検収数量で書く。金額は単価×検収数量で出す", () => {
+  // 金額を直に書かせると、単価×数量と合計が合わない行が作れてしまい、
+  // あとから何が起きたのか読めなくなる。発注額は発注額のまま残す。
+  // 上書きすると検収書の「金額が変わった」判定が効かず、確認欄が出ない。
+  const [row] = readRows(csv(line({ quantity: "12", unitPrice: "8000", inspectedQuantity: "11", varianceNote: "11点に減った" })));
   assert.deepEqual(row.issues, []);
   assert.equal(row.orderedAmount, 96000);
-  assert.equal(row.inspectedAmount, 88000);
+  assert.equal(row.inspectedQuantity, 11);
+  assert.equal(row.inspectedAmount, 88000, "8000 × 11");
 });
 
 test("日付は 2026/07/25 でも読む", () => {
@@ -96,21 +98,21 @@ test("支払状態の言い換えを読む", () => {
   assert.equal(readPaymentState("保留"), null);
 });
 
-test("検収額 0 は弾く。0 の実績からは支払を作れない", () => {
-  const [row] = readRows(csv(line({ inspectedAmount: "0" })));
-  assert.ok(row.issues.some((m) => /検収額が 0 です/.test(m)));
+test("検収数量 0 は弾く。0 の実績からは支払を作れない", () => {
+  const [row] = readRows(csv(line({ inspectedQuantity: "0" })));
+  assert.ok(row.issues.some((m) => /検収数量が 0 です/.test(m)));
 });
 
 test("束は 取引先・作品・条件名 で分かれ、発注額と検収額を別々に足す", () => {
   const rows = readRows(csv(
-    line({ workCode: "W1", unitPrice: "100000", inspectedAmount: "90000", varianceNote: "一部差し戻し" }),
+    line({ workCode: "W1", quantity: "10", unitPrice: "10000", inspectedQuantity: "9", varianceNote: "一部差し戻し" }),
     line({ workCode: "W1", itemName: "口絵", unitPrice: "50000" }),
     line({ workCode: "W2", itemName: "挿絵", unitPrice: "30000" })
   ));
   const groups = groupRows(rows);
   assert.equal(groups.length, 2);
   assert.equal(groups[0].orderedTotal, 150000);
-  assert.equal(groups[0].inspectedTotal, 140000, "減額分は検収の合計にだけ効く");
+  assert.equal(groups[0].inspectedTotal, 140000, "減った分は検収の合計にだけ効く");
   assert.equal(groups[1].orderedTotal, 30000);
 });
 
@@ -181,6 +183,7 @@ test("雛形はそのまま読み返せて、2行目が減額検収と支払済�
   assert.equal(rows.length, 2);
   assert.deepEqual(rows.flatMap((r) => r.issues), []);
   assert.equal(rows[1].orderedAmount, 96000);
+  assert.equal(rows[1].inspectedQuantity, 11);
   assert.equal(rows[1].inspectedAmount, 88000);
   assert.equal(rows[1].paymentState, "paid");
   assert.equal(rows[1].paidOn, "2026-09-28");
@@ -197,15 +200,43 @@ test("読めない行も捨てない。何行目が何で駄目かを残す", ()
   assert.deepEqual(rows[1].issues, ["品目・業務名が空", "単価が空か読めない"]);
 });
 
-test("額が動いた行に理由が無ければ作らない。紙に「（理由未記入）」と刷られて相手に渡る", () => {
-  const [row] = readRows(csv(line({ inspectedAmount: "90000" })));
-  assert.ok(row.issues.some((m) => /変更理由が要ります/.test(m)));
-  const [ok] = readRows(csv(line({ inspectedAmount: "90000", varianceNote: "一部差し戻し" })));
+test("数量が動いた行に理由が無ければ作らない。紙に「（理由未記入）」と刷られて相手に渡る", () => {
+  const [row] = readRows(csv(line({ quantity: "10", unitPrice: "10000", inspectedQuantity: "9" })));
+  assert.ok(row.issues.some((m) => /検収数量（9）が数量（10）と違います。変更理由が要ります/.test(m)));
+  const [ok] = readRows(csv(line({ quantity: "10", unitPrice: "10000", inspectedQuantity: "9", varianceNote: "一部差し戻し" })));
   assert.deepEqual(ok.issues, []);
   assert.equal(ok.varianceNote, "一部差し戻し");
 });
 
-test("額が同じ行に理由は要らない", () => {
-  const [row] = readRows(csv(line({ inspectedAmount: "100000" })));
+test("数量が同じ行に理由は要らない", () => {
+  const [row] = readRows(csv(line({ quantity: "10", unitPrice: "10000", inspectedQuantity: "10" })));
   assert.deepEqual(row.issues, []);
+});
+
+test("検収数量は小数でも読む（0.5人日）。金額は丸めて整数にする", () => {
+  const [row] = readRows(csv(
+    line({ quantity: "2", unitPrice: "33333", inspectedQuantity: "1.5", varianceNote: "半日ぶん未実施" })));
+  assert.deepEqual(row.issues, []);
+  assert.equal(row.inspectedAmount, 50_000, "33333 × 1.5 = 49999.5 → 丸めて整数（0.5 は切り上げ）");
+});
+
+test("増えた検収も数量で書ける。理由は同じように要る", () => {
+  const [row] = readRows(csv(
+    line({ quantity: "10", unitPrice: "1000", inspectedQuantity: "12", varianceNote: "追加2点" })));
+  assert.deepEqual(row.issues, []);
+  assert.equal(row.orderedAmount, 10_000);
+  assert.equal(row.inspectedAmount, 12_000);
+});
+
+test("検収数量が負なら弾く", () => {
+  const [row] = readRows(csv(line({ inspectedQuantity: "-1", varianceNote: "打ち間違い" })));
+  assert.ok(row.issues.some((m) => /検収数量が負の数です/.test(m)));
+});
+
+test("発注書には発注の数量を刷る。検収の数量は検収書が実績から出す", () => {
+  const [row] = readRows(csv(
+    line({ quantity: "12", unitPrice: "8000", inspectedQuantity: "11", varianceNote: "1点未納" })));
+  assert.equal(row.item.quantity, 12);
+  assert.equal(row.item.ordered_quantity, 12);
+  assert.equal(row.item.amount_ex_tax, 96_000, "発注書の金額は発注のまま");
 });

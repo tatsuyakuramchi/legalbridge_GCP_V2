@@ -65,12 +65,15 @@ export const SETTLED_COLUMNS: Array<{
   { key: "deliveredOn", label: "納品日", required: true, note: "実績の日付。行ごとに違ってよい" },
   { key: "inspectedOn", label: "検収日", required: true,
     note: "検収書の決定日になる。束の中で揃える" },
-  { key: "inspectedAmount", label: "検収額（税抜）",
-    note: "空なら 単価×数量。減額検収はここに実際の額を書く" },
+  // 減額検収は数量で持つ。金額を直に書かせると、単価×数量と紙の合計が
+  // 合わない行が作れてしまい、あとから何が起きたのか読めなくなる。
+  // 紙（V2 の ordered_quantity / inspected_quantity）とも揃う。
+  { key: "inspectedQuantity", label: "検収数量",
+    note: "空なら 数量 と同じ。減らして納品されたらここに実際の数を書く。金額は 単価×検収数量" },
   // 減額（増額）検収は紙に「変更内容の確認」欄が出る（A-034）。その理由が
   // 空だと「（理由未記入）」と刷られて相手に出る。額が動く行では必須にする。
   { key: "varianceNote", label: "変更理由",
-    note: "検収額が発注額と違うときは必須。検収書の変更履歴にそのまま出る" },
+    note: "検収数量が数量と違うときは必須。検収書の変更履歴にそのまま出る" },
   { key: "dueOn", label: "支払期日", note: "空なら支払条件から出す" },
   { key: "paymentState", label: "支払状態", note: "未払 / 支払済み。空なら未払" },
   { key: "paidOn", label: "入金日", note: "支払状態が 支払済み のときは必須" },
@@ -91,17 +94,17 @@ export const SETTLED_COLUMNS: Array<{
 
 export function templateCsv(): string {
   // 2行にする。1行だと「同じ取引先でも作品が違えば別の発注書になる」ことと、
-  // 「減額検収は検収額の列に書く」ことの両方が伝わらない。
+  // 「減額検収は検収数量で書く」ことの両方が伝わらない。
   const examples = [
     ["VD-00317", "合同会社アトリエ蒼", "WRK-10013", "星降る夜のミュゼ", "", "",
      "第4巻 表紙イラスト", "カラー1点", "1", "150000",
-     "2026-06-01", "2026-07-20", "2026-07-25", "150000", "",
+     "2026-06-01", "2026-07-20", "2026-07-25", "", "",
      "2026-08-31", "未払", "",
      "請負", "月末締め翌月末払い", "発注者", "あり", "なし",
      "業務委託の一般特約", "", ""],
     ["VD-00317", "合同会社アトリエ蒼", "WRK-10021", "夜明けのクロニクル", "", "",
      "第1巻 挿絵", "モノクロ12点", "12", "8000",
-     "2026-06-01", "2026-07-31", "2026-08-05", "88000", "納品点数が11点になったため減額",
+     "2026-06-01", "2026-07-31", "2026-08-05", "11", "納品点数が11点になったため減額",
      "2026-09-30", "支払済み", "2026-09-28",
      "請負", "月末締め翌月末払い", "発注者", "あり", "なし",
      "", "", ""]
@@ -134,7 +137,7 @@ export interface SettledRow {
   deliveredOn: string | null;
   /** 検収日。実績にも入り、検収書の決定日にもなる。 */
   inspectedOn: string | null;
-  /** 検収額が発注額と違うときの理由。検収書の変更履歴に出る。 */
+  /** 検収数量が発注数量と違うときの理由。検収書の変更履歴に出る。 */
   varianceNote: string | null;
   /** 支払期日。空なら支払条件・予定から出す。 */
   dueOn: string | null;
@@ -147,9 +150,13 @@ export interface SettledRow {
   specialTermsSnippet: string | null;
   /** 発注明細の1行。発注書の本文がそのまま使う。 */
   item: Record<string, unknown>;
+  /** 発注数量。 */
+  quantity: number;
+  /** 検収数量。空欄なら発注数量と同じ。 */
+  inspectedQuantity: number;
   /** 発注額（単価×数量）。 */
   orderedAmount: number;
-  /** 検収額。空欄なら発注額と同じ。 */
+  /** 検収額（単価×検収数量）。書かせるものではなく、ここで出す。 */
   inspectedAmount: number;
   issues: string[];
 }
@@ -231,19 +238,25 @@ export function readRows(text: string): SettledRow[] {
       issues.push(`入金日（${paidOn}）が検収日（${inspectedOn}）より前`);
     }
 
-    // 検収額。空なら発注額と同じ。減額検収はここに実額を書く。
-    const inspectedRaw = get("inspectedAmount");
-    const inspectedParsed = inspectedRaw ? csvAmount(inspectedRaw) : orderedAmount;
-    if (inspectedParsed === undefined) issues.push(`検収額が読めない（${inspectedRaw}）`);
-    const inspectedAmount = roundAmount(inspectedParsed ?? 0);
-    if (inspectedRaw && inspectedAmount <= 0) {
-      issues.push("検収額が 0 です。0 の実績からは支払を作れません");
+    // 検収数量。空なら発注数量と同じ。減らして納品されたらここに実数を書く。
+    // 金額はここから出す（単価×検収数量）。
+    const inspectedRaw = get("inspectedQuantity");
+    const inspectedQty = inspectedRaw ? csvAmount(inspectedRaw) : quantity;
+    if (inspectedRaw && inspectedQty === undefined) {
+      issues.push(`検収数量が読めない（${inspectedRaw}）`);
     }
-    // 額が動いた行は、紙に変更履歴と署名欄が出る。理由を書かないと
+    if (inspectedQty !== undefined && inspectedQty < 0) issues.push("検収数量が負の数です");
+    if (inspectedQty !== undefined && inspectedQty === 0) {
+      issues.push("検収数量が 0 です。0 の実績からは支払を作れません（検収していない行は外してください）");
+    }
+    const orderedQuantity = quantity ?? 0;
+    const inspectedQuantity = inspectedQty ?? orderedQuantity;
+    const inspectedAmount = roundAmount(inspectedQuantity * (unitPrice ?? 0));
+    // 数量が動いた行は、紙に変更履歴と署名欄が出る。理由を書かないと
     // 「（理由未記入）」と刷られたものが相手に渡る。
     const varianceNote = get("varianceNote") || null;
-    if (inspectedParsed !== undefined && inspectedAmount !== orderedAmount && !varianceNote) {
-      issues.push(`検収額（${inspectedAmount}）が発注額（${orderedAmount}）と違います。変更理由が要ります`);
+    if (inspectedQuantity !== orderedQuantity && !varianceNote) {
+      issues.push(`検収数量（${inspectedQuantity}）が数量（${orderedQuantity}）と違います。変更理由が要ります`);
     }
 
     const ownershipRaw = get("deliverable_ownership");
@@ -270,11 +283,14 @@ export function readRows(text: string): SettledRow[] {
         item_name: itemName, spec: get("spec") || null,
         quantity: quantity ?? null, unit_price: unitPrice ?? null,
         amount_ex_tax: orderedAmount,
+        // 発注書に刷るのは発注の数量。検収の数量は検収書が実績から出す。
+        ordered_quantity: quantity ?? null,
         delivery_date: deliveredOn, payment_date: dueOn,
         deliverable_ownership: ownership || null, calc_method: "FIXED",
         payment_terms: get("contract_form") || null,
         remarks: get("remarks") || null
       },
+      quantity: orderedQuantity, inspectedQuantity,
       orderedAmount, inspectedAmount,
       issues
     };
