@@ -12,10 +12,19 @@ import { api, ApiError, money } from "./api.js";
  * 「足したつもりが二重になる」を起こさないため。
  */
 
+interface EventOption {
+  id: number; occurredOn: string | null; amount: number;
+  documentNo: string | null;
+  /** この支払がいまこの実績を指しているか。 */
+  picked: boolean;
+}
+
 interface Candidate {
   id: number; conditionNo: string | null; name: string;
   direction: string; currency: string;
   flatAmount: number | null; alreadyAllocated: number;
+  /** その条件の実績。どれに対する支払かを選ぶ。 */
+  events: EventOption[];
 }
 
 export interface AllocationTarget {
@@ -30,6 +39,8 @@ export function PaymentAllocation(
 ) {
   const [candidates, setCandidates] = useState<Candidate[] | null>(null);
   const [amounts, setAmounts] = useState<Record<number, string>>({});
+  /** 条件ごとに、どの実績に対する支払か。null は「実績を特定しない」。 */
+  const [picks, setPicks] = useState<Record<number, number | null>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -44,13 +55,24 @@ export function PaymentAllocation(
           const existing = payment.allocations.find((a) => a.conditionNo && a.conditionNo === c.conditionNo);
           if (existing) seeded[c.id] = String(existing.amount);
         }
+        // いま指している実績を初期値にする。触らずに保存しても外れないように。
+        const kept: Record<number, number | null> = {};
+        for (const c of r.candidates) kept[c.id] = c.events.find((e) => e.picked)?.id ?? null;
+        setPicks(kept);
         setAmounts(seeded);
       })
       .catch((e: ApiError) => { setError(e.message); setCandidates([]); });
   }, [payment.id]);
 
   const lines = Object.entries(amounts)
-    .map(([id, raw]) => ({ conditionId: Number(id), amount: Math.round(Number(raw) || 0) }))
+    .map(([id, raw]) => ({
+      conditionId: Number(id),
+      // どの実績に対する支払かを落とさない。落とすと二重払いの見張りが
+      // 効かなくなり、同じ検収書からもう1件支払を立てられてしまう
+      // （見張りは割当の実績で効いている）。
+      eventId: picks[Number(id)] ?? null,
+      amount: Math.round(Number(raw) || 0)
+    }))
     .filter((l) => l.amount !== 0);
   const allocated = lines.reduce((sum, l) => sum + l.amount, 0);
   const remain = payment.amount - allocated;
@@ -125,6 +147,7 @@ export function PaymentAllocation(
               <thead><tr>
                 <th>条件番号</th><th>内容</th><th className="num">条件の金額</th>
                 <th className="num">既存の割当</th><th className="num">この支払から</th>
+                <th>対象の実績</th>
               </tr></thead>
               <tbody>
                 {candidates.map((c) => {
@@ -147,6 +170,27 @@ export function PaymentAllocation(
                             ...amounts, [c.id]: e.target.value.replace(/[^0-9]/g, "")
                           })} />
                         <div className="faint">{value ? money(Number(value), c.currency) : "　"}</div>
+                      </td>
+                      <td>
+                        {/* どの実績に対する支払か。ここが空のまま保存すると、
+                            同じ検収書からもう1件支払を立てられてしまう。 */}
+                        {c.events.length === 0
+                          ? <span className="faint">—</span>
+                          : (
+                            <select value={picks[c.id] ?? ""} disabled={!active}
+                                    aria-label={`${c.conditionNo ?? c.name} の対象の実績`}
+                                    onChange={(e) => setPicks({
+                                      ...picks, [c.id]: e.target.value ? Number(e.target.value) : null
+                                    })}>
+                              <option value="">実績を特定しない</option>
+                              {c.events.map((ev) => (
+                                <option key={ev.id} value={ev.id}>
+                                  {ev.occurredOn ?? "日付なし"}　{money(ev.amount, c.currency)}
+                                  {ev.documentNo ? `　${ev.documentNo}` : "　（文書なし）"}
+                                </option>
+                              ))}
+                            </select>
+                          )}
                       </td>
                     </tr>
                   );

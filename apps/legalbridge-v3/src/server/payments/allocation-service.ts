@@ -1,4 +1,4 @@
-import { inTransaction, type Queryable, type Transactable } from "../core/db.js";
+import { dateStr, inTransaction, type Queryable, type Transactable } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 
@@ -112,11 +112,48 @@ export class PaymentAllocationService {
            ) a ON true
           WHERE y.id = $1 AND c.currency = y.currency
           ORDER BY c.condition_no NULLS LAST, c.id`, [paymentId]);
+
+      // その条件の実績と、この支払がいまどの実績を指しているか。
+      //
+      // 画面は条件ごとに1行なので、実績を返さないと保存のときに実績への
+      // 結びつきが落ちる。落ちると、同じ検収書からもう1件支払を立てられて
+      // しまう（二重払いの見張りは割当の実績で効いているため）。
+      const ids = (r.rows as any[]).map((x) => Number(x.id));
+      const events = ids.length
+        ? await this.database.query(
+            `SELECT e.id, e.condition_id, e.occurred_on, e.amount, d.document_no,
+                    (a.payment_id IS NOT NULL) AS picked
+               FROM condition_events e
+               LEFT JOIN documents d ON d.id = e.document_id
+               LEFT JOIN payment_allocations a
+                      ON a.event_id = e.id AND a.payment_id = $2
+              WHERE e.condition_id IN (
+                      SELECT x.id FROM conditions x
+                       WHERE COALESCE(x.series_id, x.id) IN (
+                             SELECT COALESCE(y2.series_id, y2.id) FROM conditions y2
+                              WHERE y2.id = ANY($1::bigint[])))
+                AND e.status = 'active'
+              ORDER BY e.occurred_on NULLS LAST, e.id`, [ids, paymentId])
+        : { rows: [] as any[] };
+
+      const byCondition = new Map<number, any[]>();
+      for (const e of events.rows as any[]) {
+        const key = Number(e.condition_id);
+        byCondition.set(key, [...(byCondition.get(key) ?? []), {
+          id: Number(e.id),
+          // pg は date 列を Date で返す。String() で切ると「Fri Sep 25」になる。
+          occurredOn: dateStr(e.occurred_on),
+          amount: Number(e.amount ?? 0),
+          documentNo: e.document_no ?? null,
+          picked: e.picked === true
+        }]);
+      }
       return (r.rows as any[]).map((x) => ({
         id: Number(x.id), conditionNo: x.condition_no ?? null, name: String(x.name),
         direction: String(x.direction), currency: String(x.currency),
         flatAmount: x.flat_amount === null ? null : Number(x.flat_amount),
-        alreadyAllocated: Number(x.already_allocated ?? 0)
+        alreadyAllocated: Number(x.already_allocated ?? 0),
+        events: byCondition.get(Number(x.id)) ?? []
       }));
     } catch (error) { throw translate(error); }
   }
