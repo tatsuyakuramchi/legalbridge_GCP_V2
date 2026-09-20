@@ -377,6 +377,17 @@ export function createRoutes(database: Transactable) {
    * matterId を付けるとその案件の中だけ。付けなければ全社（念のための確認）。
    * 判定は工程表の札と同じ drift.ts。
    */
+  /**
+   * 取り残しの件数だけ。ホームの札に出す。
+   *
+   * 一覧と同じ組み立てをするので、ホームの /summary に混ぜると他の数字まで
+   * 待たされる（実データで 0.02 秒が 0.17 秒になった）。別に引いて、札だけ
+   * あとから埋まるようにする。
+   */
+  router.get("/drift/count", asyncRoute(async (_req, res) => {
+    res.json({ count: (await new DriftService(database).rows(null)).length });
+  }));
+
   router.get("/drift", asyncRoute(async (req, res) => {
     const raw = String(req.query.matterId ?? "").trim();
     const matterId = raw === "" ? null : Number(raw);

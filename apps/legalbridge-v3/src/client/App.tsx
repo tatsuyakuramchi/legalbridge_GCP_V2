@@ -194,7 +194,14 @@ export function App() {
             {me.site?.dataAsOf ? `データは ${me.site.dataAsOf} 時点の写しです。` : ""}
           </div>
         )}
-        {view === "home" && <HomeWorkspace onGo={(v, tab) => { setOpsTab(tab); setView(v); }} />}
+        {view === "home" && (
+          <HomeWorkspace onGo={(v, tab) => {
+            setOpsTab(tab);
+            // ホームから開くのは全社ぶん（札の件数と画面の件数を合わせる）。
+            if (v === "drift") setDriftMatter(null);
+            setView(v);
+          }} />
+        )}
         {view === "matters" && (
           <MattersWorkspace key={`m${focusFor("matters") ?? 0}`}
             onOpenCondition={openCondition} initialId={focusFor("matters")}
@@ -230,7 +237,8 @@ export function App() {
         {view === "money" && <MoneyWorkspace />}
         {view === "drift" && (
           <DriftWorkspace key={`dr${driftMatter ?? 0}`} initialMatterId={driftMatter}
-            onOpenDocument={openDocumentAt} onOpenCondition={openCondition} />
+            onOpenDocument={openDocumentAt} onOpenCondition={openCondition}
+            onOpenMatter={(id) => openEntity("matter", id)} />
         )}
         {view === "flows" && <FlowMonitorWorkspace onOpenCondition={openCondition} />}
         {view === "ops" && <OpsWorkspace key={opsTab ?? "quality"} initialTab={opsTab} />}

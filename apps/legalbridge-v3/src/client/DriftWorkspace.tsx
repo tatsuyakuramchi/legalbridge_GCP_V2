@@ -80,10 +80,11 @@ function Chain({ row, drift }: { row: GridRow; drift: Drift }) {
 }
 
 function Plan(
-  { steps, onOpenDocument, onOpenPayment }: {
+  { steps, onOpenDocument, onOpenMatter }: {
     steps: RepairStep[];
     onOpenDocument?: (id: number) => void;
-    onOpenPayment?: (id: number) => void;
+    /** 支払の画面は支払1件では開けない。案件の支払タブへ渡す。 */
+    onOpenMatter?: () => void;
   }
 ) {
   if (!steps.length) return null;
@@ -97,8 +98,8 @@ function Plan(
             {s.kind === "hand" && s.go?.what === "document" && onOpenDocument && (
               <> <button className="linky" onClick={() => onOpenDocument(s.go!.id)}>文書を開く</button></>
             )}
-            {s.kind === "hand" && s.go?.what === "payment" && onOpenPayment && (
-              <> <button className="linky" onClick={() => onOpenPayment(s.go!.id)}>支払を開く</button></>
+            {s.kind === "hand" && s.go?.what === "payment" && onOpenMatter && (
+              <> <button className="linky" onClick={onOpenMatter}>案件を開く</button></>
             )}
           </li>
         ))}
@@ -112,11 +113,13 @@ function Plan(
 }
 
 export function DriftWorkspace(
-  { initialMatterId, onOpenDocument, onOpenCondition }: {
+  { initialMatterId, onOpenDocument, onOpenCondition, onOpenMatter }: {
     /** 案件の画面から開いたとき、その案件で絞った状態で出す。 */
     initialMatterId?: number | null;
     onOpenDocument?: (documentId: number) => void;
     onOpenCondition?: (conditionId: number) => void;
+    /** 支払は1件では開けないので、案件の支払タブへ渡す。 */
+    onOpenMatter?: (matterId: number) => void;
   }
 ) {
   const [data, setData] = useState<Loaded | null>(null);
@@ -305,7 +308,9 @@ export function DriftWorkspace(
               </span>
             </div>
             <Chain row={r.row} drift={r.drift} />
-            <Plan steps={plan.steps} onOpenDocument={onOpenDocument} />
+            <Plan steps={plan.steps} onOpenDocument={onOpenDocument}
+                  onOpenMatter={r.matter && onOpenMatter
+                    ? () => onOpenMatter(r.matter!.id) : undefined} />
             {!plan.steps.some((s) => s.kind === "auto") && (
               <div className="locked" style={{ marginTop: 6 }}>
                 この行に、保存で直せる手順は残っていません。上の赤い手順を押してください。

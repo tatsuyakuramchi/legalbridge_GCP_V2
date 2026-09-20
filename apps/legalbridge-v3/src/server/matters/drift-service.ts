@@ -77,26 +77,31 @@ export class DriftService {
   async rows(matterId: number | null): Promise<DriftRow[]> {
     try {
       const r = await this.database.query(
+        // 足切りを先に済ませてから横結合を差す。条件を全部組み立ててから
+        // 絞ると、1本ごとに予定・実績・文書・支払の横結合が走る（実データで
+        // 127 本のうち残るのは 30 本。4倍ぶん無駄に組んでいた）。
         `SELECT ${GRID_COLUMNS},
                 mt.id AS matter_id, mt.matter_no, mt.title AS matter_title
-           FROM conditions c
+           FROM (
+             SELECT c0.* FROM conditions c0
+              WHERE c0.status NOT IN ('void', 'superseded')
+                AND ($1::bigint IS NULL OR EXISTS (
+                      SELECT 1 FROM matter_links ml
+                       WHERE ml.matter_id = $1 AND ml.target_type = 'condition'
+                         AND ml.target_ref = c0.id::text))
+                -- 決定済みの文書を持たない条件に取り残しは起きない
+                -- （焼き付いた値が無い）。落としても見逃しにならない。
+                AND EXISTS (
+                      SELECT 1 FROM document_conditions dc
+                        JOIN documents d ON d.id = dc.document_id AND d.status = 'issued'
+                        JOIN document_template_versions tv ON tv.id = d.template_version_id
+                        JOIN document_templates t ON t.id = tv.template_id
+                       WHERE dc.condition_id IN (SELECT x.id FROM conditions x
+                              WHERE COALESCE(x.series_id, x.id) = COALESCE(c0.series_id, c0.id))
+                         AND t.template_key IN ${DOC_KEYS})
+           ) c
            ${GRID_JOINS}
            ${MATTER_LATERAL}
-          WHERE c.status NOT IN ('void', 'superseded')
-            AND ($1::bigint IS NULL OR EXISTS (
-                  SELECT 1 FROM matter_links ml
-                   WHERE ml.matter_id = $1 AND ml.target_type = 'condition'
-                     AND ml.target_ref = c.id::text))
-            -- 決定済みの文書を持たない条件に取り残しは起きない（焼き付いた値が
-            -- 無い）。全社の範囲で条件を全部組み立てないための足切り。
-            AND EXISTS (
-                  SELECT 1 FROM document_conditions dc
-                    JOIN documents d ON d.id = dc.document_id AND d.status = 'issued'
-                    JOIN document_template_versions tv ON tv.id = d.template_version_id
-                    JOIN document_templates t ON t.id = tv.template_id
-                   WHERE dc.condition_id IN (SELECT x.id FROM conditions x
-                          WHERE COALESCE(x.series_id, x.id) = COALESCE(c.series_id, c.id))
-                     AND t.template_key IN ${DOC_KEYS})
           ORDER BY mt.matter_no NULLS LAST, p.name NULLS LAST,
                    c.condition_no NULLS LAST, c.id`,
         [matterId]);

@@ -296,17 +296,23 @@ export function OpsWorkspace({ initialTab }: { initialTab?: OpsTab } = {}) {
 
 /** ホーム。数字はすべて条件を起点に導出する。 */
 export function HomeWorkspace(
-  { onGo }: { onGo: (view: "matters" | "money" | "ops", tab?: OpsTab) => void }
+  { onGo }: { onGo: (view: "matters" | "money" | "ops" | "drift", tab?: OpsTab) => void }
 ) {
   const [summary, setSummary] = useState<{
     openMatters: number; dueSoon: number; agRemaining: number;
     qualityHigh: number; inConditions: number; outConditions: number;
   } | null>(null);
+  /**
+   * 金額・日付の取り残し。一覧と同じ組み立てをするので、他の数字と一緒に
+   * 待たせず別に引く（札だけあとから埋まる）。
+   */
+  const [drift, setDrift] = useState<number | null>(null);
   const [deadlines, setDeadlines] = useState<Deadline[]>([]);
 
   useEffect(() => {
     api.get<NonNullable<typeof summary>>("/summary").then(setSummary).catch(() => setSummary(null));
     api.get<{ deadlines: Deadline[] }>("/deadlines?days=14").then((r) => setDeadlines(r.deadlines)).catch(() => setDeadlines([]));
+    api.get<{ count: number }>("/drift/count").then((r) => setDrift(r.count)).catch(() => setDrift(null));
   }, []);
 
   const overdueCount = deadlines.filter((d) => d.overdue).length;
@@ -335,6 +341,12 @@ export function HomeWorkspace(
           <button className={`tile${summary.qualityHigh ? " alert" : ""}`} onClick={() => onGo("ops", "quality")}>
             <span className="lab">重大な不整合</span><span className="val">{summary.qualityHigh}</span>
             <span className="sub">未解決のもの</span>
+          </button>
+          {/* 決定済みの文書に焼き付いた金額・日付が、いまの条件と食い違っているもの。 */}
+          <button className={`tile${drift ? " alert" : ""}`} onClick={() => onGo("drift")}>
+            <span className="lab">金額の取り残し</span>
+            <span className="val">{drift === null ? "…" : drift}</span>
+            <span className="sub">条件を直したのに文書が古いまま</span>
           </button>
         </div>
       )}
