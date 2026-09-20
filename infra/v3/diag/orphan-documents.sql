@@ -21,6 +21,7 @@
 -- rendered_values も中身は出さず、金額と明細の行数だけを数える。
 
 SET search_path = v3;
+
 \pset pager off
 \pset border 0
 
@@ -48,7 +49,8 @@ SELECT t.template_key AS "ひな形",
 
 \echo ''
 \echo '=== 2. 1件ずつの台帳 ==================================================='
-\echo '   金額は紙に刷られた合計（rendered_values の合計欄）。'
+\echo '   金額は紙の合計欄。V2 の紙は合計欄を持たないので、明細行の'
+\echo '   inspected_amount_ex_tax を足した額を出す。'
 \echo '   明細行は納品明細・発注明細の行数。0 なら紙の中身も空。'
 \echo ''
 
@@ -69,10 +71,28 @@ SELECT d.document_no AS "文書", t.template_key AS "ひな形",
        COALESCE(m.matter_no, '（案件なし）') AS "案件",
        COALESCE(d.matter_id::text, '—') AS "案件ID",
        COALESCE(m.counterparty_id::text, '—') AS "相手先ID",
+       -- V2 から移ってきた紙は合計欄を持たない。金額は明細の行に
+       -- inspected_amount_ex_tax として入っているので、無ければ足して出す。
        COALESCE(
          NULLIF(NULLIF(regexp_replace(COALESCE(d.rendered_values ->> 'grandTotalExTax',''), '[^0-9]','','g'),'')::bigint, 0),
          NULLIF(NULLIF(regexp_replace(COALESCE(d.rendered_values ->> 'deliveredAmountExTax',''),'[^0-9]','','g'),'')::bigint, 0),
-         NULLIF(NULLIF(regexp_replace(COALESCE(d.rendered_values ->> 'AMOUNT_EX_TAX',''),'[^0-9]','','g'),'')::bigint, 0)
+         NULLIF(NULLIF(regexp_replace(COALESCE(d.rendered_values ->> 'AMOUNT_EX_TAX',''),'[^0-9]','','g'),'')::bigint, 0),
+         NULLIF((SELECT COALESCE(sum(COALESCE(NULLIF(regexp_replace(
+                          COALESCE(li ->> 'inspected_amount_ex_tax', ''), '[^0-9]', '', 'g'), '')::bigint, 0)), 0)
+                    FROM jsonb_array_elements(COALESCE(
+                           CASE WHEN jsonb_typeof(d.rendered_values -> 'delivery_line_items') = 'array'
+                                THEN d.rendered_values -> 'delivery_line_items' END,
+                           CASE WHEN jsonb_typeof(d.rendered_values -> 'items') = 'array'
+                                THEN d.rendered_values -> 'items' END,
+                           '[]'::jsonb)) li), 0),
+         NULLIF((SELECT COALESCE(sum(COALESCE(NULLIF(regexp_replace(
+                          COALESCE(li ->> 'ordered_amount_ex_tax', ''), '[^0-9]', '', 'g'), '')::bigint, 0)), 0)
+                    FROM jsonb_array_elements(COALESCE(
+                           CASE WHEN jsonb_typeof(d.rendered_values -> 'delivery_line_items') = 'array'
+                                THEN d.rendered_values -> 'delivery_line_items' END,
+                           CASE WHEN jsonb_typeof(d.rendered_values -> 'items') = 'array'
+                                THEN d.rendered_values -> 'items' END,
+                           '[]'::jsonb)) li), 0)
        ) AS "刷られた金額",
        COALESCE(
          CASE WHEN jsonb_typeof(d.rendered_values -> 'delivery_line_items') = 'array'
@@ -312,7 +332,7 @@ SELECT CASE
 \echo '=== 9. 紙に刷られた明細の手がかり ======================================'
 \echo '   rendered_values は V2 の form_data をそのまま持っている。値は出さず、'
 \echo '   行数・金額の合計・項目名（キー）だけを見る。項目名から、その紙が'
-\echo '   何の明細を持っているか分かる。合計が空なら金額のキー名が違う。'
+\echo '   V2 の金額は明細の行に inspected_amount_ex_tax として入っている。'
 \echo ''
 
 WITH orphan AS (
@@ -337,13 +357,12 @@ WITH orphan AS (
 )
 SELECT document_no AS "文書",
        jsonb_array_length(arr) AS "明細行",
-       (SELECT sum(COALESCE(
-                 NULLIF(regexp_replace(COALESCE(li ->> 'amount', ''), '[^0-9]', '', 'g'), '')::bigint,
-                 NULLIF(regexp_replace(COALESCE(li ->> 'lineAmount', ''), '[^0-9]', '', 'g'), '')::bigint,
-                 NULLIF(regexp_replace(COALESCE(li ->> 'amountExTax', ''), '[^0-9]', '', 'g'), '')::bigint,
-                 NULLIF(regexp_replace(COALESCE(li ->> '金額', ''), '[^0-9]', '', 'g'), '')::bigint,
-                 0))
-          FROM jsonb_array_elements(arr) li) AS "明細の合計",
+       (SELECT COALESCE(sum(COALESCE(NULLIF(regexp_replace(
+                 COALESCE(li ->> 'inspected_amount_ex_tax', ''), '[^0-9]', '', 'g'), '')::bigint, 0)), 0)
+          FROM jsonb_array_elements(arr) li) AS "検収額の合計",
+       (SELECT COALESCE(sum(COALESCE(NULLIF(regexp_replace(
+                 COALESCE(li ->> 'ordered_amount_ex_tax', ''), '[^0-9]', '', 'g'), '')::bigint, 0)), 0)
+          FROM jsonb_array_elements(arr) li) AS "発注額の合計",
        (SELECT string_agg(DISTINCT k, '・' ORDER BY k)
           FROM jsonb_array_elements(arr) li, jsonb_object_keys(li) k) AS "明細の項目名"
   FROM lines
@@ -368,7 +387,16 @@ WITH orphan AS (
      AND NOT EXISTS (SELECT 1 FROM condition_events x
                       WHERE x.document_id = d.id AND x.status = 'active')
 )
-SELECT d.document_no AS "文書", m.matter_no AS "案件",
+SELECT d.document_no AS "文書",
+       NULLIF((SELECT COALESCE(sum(COALESCE(NULLIF(regexp_replace(
+                       COALESCE(li ->> 'inspected_amount_ex_tax', ''), '[^0-9]', '', 'g'), '')::bigint, 0)), 0)
+                 FROM jsonb_array_elements(COALESCE(
+                        CASE WHEN jsonb_typeof(d.rendered_values -> 'delivery_line_items') = 'array'
+                             THEN d.rendered_values -> 'delivery_line_items' END,
+                        CASE WHEN jsonb_typeof(d.rendered_values -> 'items') = 'array'
+                             THEN d.rendered_values -> 'items' END,
+                        '[]'::jsonb)) li), 0) AS "紙の金額",
+       m.matter_no AS "案件",
        c.condition_no AS "案件にある条件", c.status AS "条件の状態",
        c.flat_amount AS "条件の金額",
        (SELECT count(*) FROM condition_events e
