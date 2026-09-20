@@ -322,8 +322,10 @@ export function ServiceEventForm(
                     不足分を待つ（期日つきのタスクを案件に立てる）
                   </label>
                 )}
+                {/* 日付は幅いっぱいに伸ばさない。全幅の欄の中にあるので、
+                    放っておくと 1200px の日付欄になる。 */}
                 {f("followUp") === "wait" && (
-                  <label className="field" style={{ marginLeft: 22 }}>
+                  <label className="field" style={{ marginLeft: 22, maxWidth: 240 }}>
                     <span>いつまで待つか</span>
                     <input type="date" value={f("followUpDueOn")} onChange={(e) => set("followUpDueOn", e.target.value)} />
                   </label>
