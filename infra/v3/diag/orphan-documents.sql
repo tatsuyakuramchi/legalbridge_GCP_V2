@@ -12,7 +12,10 @@
 --
 --   A 中身を繋ぎ直すべきもの … 条件を外した記録がある。元は繋がっていた
 --   B 中身が別の場所にあるもの … 計算書の明細（statement_lines）は残っている
---   C 空の紙            … V2 から番号だけ移ってきた。無効化して畳むのが素直
+--   D 紙に中身はあるが繋がりが無い … rendered_values に明細が刷られている。
+--       V2 の condition_lines が無かった文書は 040 で document_conditions が
+--       作られない。紙は中身入り、V3 の繋がりだけ空という形になる。
+--   C 空の紙            … 明細も無い。番号だけ。無効化して畳むのが素直
 --
 -- 相手先名・担当者名・連絡先・口座は一切引かない。相手先は ID だけ出す。
 -- rendered_values も中身は出さず、金額と明細の行数だけを数える。
@@ -201,9 +204,10 @@ SELECT d.document_no AS "文書",
 \echo ''
 \echo '=== 7. 仕分け（機械的な見立て） ========================================'
 \echo '   A 繋ぎ直す … 外された記録がある、または計算書の明細が残っている'
+\echo '   D 紙に中身あり … 明細は刷られているが V3 の繋がりだけ無い（移行）'
 \echo '   B 畳むだけ … 外に出た形跡があり、中身は無い（番号は記録として残す）'
-\echo '   C 空の紙   … V2 から番号だけ移ってきた。無効化して畳むのが素直'
-\echo '   見立てであって決定ではない。2〜6 と突き合わせてから動かす。'
+\echo '   C 空の紙   … 明細も無く番号だけ。無効化して畳むのが素直'
+\echo '   見立てであって決定ではない。2〜6・9・10 と突き合わせてから動かす。'
 \echo ''
 
 WITH orphan AS (
@@ -218,6 +222,12 @@ WITH orphan AS (
                       WHERE x.document_id = d.id AND x.status = 'active')
 ), facts AS (
   SELECT d.id, d.document_no, t.template_key, d.legacy_id,
+         COALESCE(
+           CASE WHEN jsonb_typeof(d.rendered_values -> 'delivery_line_items') = 'array'
+                THEN jsonb_array_length(d.rendered_values -> 'delivery_line_items') END,
+           CASE WHEN jsonb_typeof(d.rendered_values -> 'items') = 'array'
+                THEN jsonb_array_length(d.rendered_values -> 'items') END,
+           0) AS printed_lines,
          EXISTS (SELECT 1 FROM statement_lines sl
                    JOIN statements s ON s.id = sl.statement_id
                   WHERE s.document_id = d.id) AS has_lines,
@@ -234,12 +244,13 @@ WITH orphan AS (
     JOIN document_template_versions tv ON tv.id = d.template_version_id
     JOIN document_templates t ON t.id = tv.template_id
 )
-SELECT document_no AS "文書", template_key AS "ひな形",
+SELECT document_no AS "文書", template_key AS "ひな形", printed_lines AS "明細行",
        CASE
-         WHEN has_lines    THEN 'A 繋ぎ直す（計算書の明細が残っている）'
-         WHEN was_detached THEN 'A 繋ぎ直す（外された記録がある）'
-         WHEN has_next     THEN '— 後の版あり（中身は新しい版へ）'
-         WHEN went_out     THEN 'B 畳むだけ（外に出ている・中身は無い）'
+         WHEN has_lines     THEN 'A 繋ぎ直す（計算書の明細が残っている）'
+         WHEN was_detached  THEN 'A 繋ぎ直す（外された記録がある）'
+         WHEN has_next      THEN '— 後の版あり（中身は新しい版へ）'
+         WHEN printed_lines > 0 THEN 'D 紙に中身あり・繋がりだけ無い'
+         WHEN went_out      THEN 'B 畳むだけ（外に出ている・中身は無い）'
          WHEN legacy_id IS NOT NULL THEN 'C 空の紙（V2 から番号だけ）'
          ELSE 'C 空の紙（V3 で作ったが中身が無い）'
        END AS "見立て"
@@ -262,6 +273,12 @@ WITH orphan AS (
                       WHERE x.document_id = d.id AND x.status = 'active')
 ), facts AS (
   SELECT d.id,
+         COALESCE(
+           CASE WHEN jsonb_typeof(d.rendered_values -> 'delivery_line_items') = 'array'
+                THEN jsonb_array_length(d.rendered_values -> 'delivery_line_items') END,
+           CASE WHEN jsonb_typeof(d.rendered_values -> 'items') = 'array'
+                THEN jsonb_array_length(d.rendered_values -> 'items') END,
+           0) AS printed_lines,
          EXISTS (SELECT 1 FROM statement_lines sl
                    JOIN statements s ON s.id = sl.statement_id
                   WHERE s.document_id = d.id) AS has_lines,
@@ -278,10 +295,11 @@ WITH orphan AS (
     JOIN documents d ON d.id = o.id
 )
 SELECT CASE
-         WHEN has_lines    THEN 'A 繋ぎ直す（計算書の明細）'
-         WHEN was_detached THEN 'A 繋ぎ直す（外された記録）'
-         WHEN has_next     THEN '— 後の版あり'
-         WHEN went_out     THEN 'B 畳むだけ'
+         WHEN has_lines     THEN 'A 繋ぎ直す（計算書の明細）'
+         WHEN was_detached  THEN 'A 繋ぎ直す（外された記録）'
+         WHEN has_next      THEN '— 後の版あり'
+         WHEN printed_lines > 0 THEN 'D 紙に中身あり・繋がりだけ無い'
+         WHEN went_out      THEN 'B 畳むだけ'
          WHEN legacy_id IS NOT NULL THEN 'C 空の紙（V2）'
          ELSE 'C 空の紙（V3）'
        END AS "見立て",
@@ -289,3 +307,79 @@ SELECT CASE
   FROM facts
  GROUP BY 1
  ORDER BY 1;
+
+\echo ''
+\echo '=== 9. 紙に刷られた明細の手がかり ======================================'
+\echo '   rendered_values は V2 の form_data をそのまま持っている。値は出さず、'
+\echo '   行数・金額の合計・項目名（キー）だけを見る。項目名から、その紙が'
+\echo '   何の明細を持っているか分かる。合計が空なら金額のキー名が違う。'
+\echo ''
+
+WITH orphan AS (
+  SELECT d.id
+    FROM documents d
+    JOIN document_template_versions tv ON tv.id = d.template_version_id
+    JOIN document_templates t ON t.id = tv.template_id
+   WHERE d.status = 'issued'
+     AND t.template_key IN ('inspection_certificate', 'royalty_statement')
+     AND NOT EXISTS (SELECT 1 FROM document_conditions dc WHERE dc.document_id = d.id)
+     AND NOT EXISTS (SELECT 1 FROM condition_events x
+                      WHERE x.document_id = d.id AND x.status = 'active')
+), lines AS (
+  SELECT d.id, d.document_no,
+         COALESCE(
+           CASE WHEN jsonb_typeof(d.rendered_values -> 'delivery_line_items') = 'array'
+                THEN d.rendered_values -> 'delivery_line_items' END,
+           CASE WHEN jsonb_typeof(d.rendered_values -> 'items') = 'array'
+                THEN d.rendered_values -> 'items' END,
+           '[]'::jsonb) AS arr
+    FROM orphan o JOIN documents d ON d.id = o.id
+)
+SELECT document_no AS "文書",
+       jsonb_array_length(arr) AS "明細行",
+       (SELECT sum(COALESCE(
+                 NULLIF(regexp_replace(COALESCE(li ->> 'amount', ''), '[^0-9]', '', 'g'), '')::bigint,
+                 NULLIF(regexp_replace(COALESCE(li ->> 'lineAmount', ''), '[^0-9]', '', 'g'), '')::bigint,
+                 NULLIF(regexp_replace(COALESCE(li ->> 'amountExTax', ''), '[^0-9]', '', 'g'), '')::bigint,
+                 NULLIF(regexp_replace(COALESCE(li ->> '金額', ''), '[^0-9]', '', 'g'), '')::bigint,
+                 0))
+          FROM jsonb_array_elements(arr) li) AS "明細の合計",
+       (SELECT string_agg(DISTINCT k, '・' ORDER BY k)
+          FROM jsonb_array_elements(arr) li, jsonb_object_keys(li) k) AS "明細の項目名"
+  FROM lines
+ WHERE jsonb_array_length(arr) > 0
+ ORDER BY document_no;
+
+\echo ''
+\echo '=== 10. 繋ぎ直す先の候補（その案件にある条件と実績） ==================='
+\echo '   紙に中身があるのに繋がりが無い文書は、同じ案件の条件に結び直せる'
+\echo '   ことが多い。「文書未付与の実績」が立っている条件が第一候補。'
+\echo '   条件名は出さない（案件番号と条件番号でアプリ側を開いて確かめる）。'
+\echo ''
+
+WITH orphan AS (
+  SELECT d.id
+    FROM documents d
+    JOIN document_template_versions tv ON tv.id = d.template_version_id
+    JOIN document_templates t ON t.id = tv.template_id
+   WHERE d.status = 'issued'
+     AND t.template_key IN ('inspection_certificate', 'royalty_statement')
+     AND NOT EXISTS (SELECT 1 FROM document_conditions dc WHERE dc.document_id = d.id)
+     AND NOT EXISTS (SELECT 1 FROM condition_events x
+                      WHERE x.document_id = d.id AND x.status = 'active')
+)
+SELECT d.document_no AS "文書", m.matter_no AS "案件",
+       c.condition_no AS "案件にある条件", c.status AS "条件の状態",
+       c.flat_amount AS "条件の金額",
+       (SELECT count(*) FROM condition_events e
+         WHERE e.condition_id = c.id AND e.status = 'active') AS "実績",
+       (SELECT count(*) FROM condition_events e
+         WHERE e.condition_id = c.id AND e.status = 'active'
+           AND e.document_id IS NULL) AS "文書未付与の実績"
+  FROM orphan o
+  JOIN documents d ON d.id = o.id
+  JOIN matters m ON m.id = d.matter_id
+  -- 条件は案件に属さない（参照されるだけ）。繋がりは matter_links にある。
+  JOIN matter_links ml ON ml.matter_id = m.id AND ml.target_type = 'condition'
+  JOIN conditions c ON c.id = ml.target_ref::bigint
+ ORDER BY d.document_no, c.condition_no;
