@@ -114,7 +114,7 @@ export class MatterRepository {
   private async documents(id: number) {
     const r = await this.database.query(
       `SELECT d.id, d.document_no, d.status, d.issued_at, v.template_label,
-              v.counterparty, t.template_key, a.status AS agreement_status,
+              v.counterparty, v.counterparty_id, t.template_key, a.status AS agreement_status,
               snd.sent_at, snd.sent_via
          FROM documents d
          LEFT JOIN v_document_display v ON v.document_id = d.id
@@ -136,6 +136,8 @@ export class MatterRepository {
       templateLabel: str(d.template_label),
       // 相手先。番号と種別だけでは、どれが誰あての1枚か読めない。
       counterparty: str(d.counterparty),
+      // 相手先を絞って見るための id（1案件に20社以上のことがある）。
+      counterpartyId: d.counterparty_id ? Number(d.counterparty_id) : null,
       // ひな形の種類。画面が「発注書だけ」を選り分けるのに要る
       // （名前で見分けると「発注書 (国内)」の表記に依存する）。
       templateKey: str(d.template_key),
@@ -150,11 +152,22 @@ export class MatterRepository {
   private async payments(id: number) {
     const r = await this.database.query(
       `SELECT DISTINCT p.id, p.payment_no, p.direction, p.amount, p.currency, p.due_on, p.status,
-              p.basis_received_on, p.paid_on, p.note
+              p.basis_received_on, p.paid_on, p.note,
+              cp.counterparty_id, cp.counterparty_name
          FROM payments p
          JOIN payment_allocations a ON a.payment_id = p.id
          JOIN matter_links ml ON ml.target_type = 'condition'
                              AND ml.target_ref = a.condition_id::text
+         -- 支払の相手先。支払そのものは持っていないので、割当先の条件から引く。
+         -- 1件の支払は1社あて（条件をまたいでも払い先は同じ）なので先頭でよい。
+         LEFT JOIN LATERAL (
+           SELECT c.counterparty_id, pt.name AS counterparty_name
+             FROM payment_allocations x
+             JOIN conditions c ON c.id = x.condition_id
+             LEFT JOIN parties pt ON pt.id = c.counterparty_id
+            WHERE x.payment_id = p.id AND c.counterparty_id IS NOT NULL
+            ORDER BY x.id LIMIT 1
+         ) cp ON true
         WHERE ml.matter_id = $1
         ORDER BY p.due_on NULLS LAST, p.id`, [id]);
     return r.rows.map((p) => ({
@@ -162,7 +175,10 @@ export class MatterRepository {
       amount: Number(p.amount ?? 0), currency: String(p.currency ?? "JPY"),
       dueOn: dateStr(p.due_on), status: String(p.status),
       // 管理者が直せる欄（A-041）。画面の修正欄がいまの値を出すのに使う。
-      basisReceivedOn: dateStr(p.basis_received_on), paidOn: dateStr(p.paid_on), note: str(p.note)
+      basisReceivedOn: dateStr(p.basis_received_on), paidOn: dateStr(p.paid_on), note: str(p.note),
+      // 相手先を絞って見るため（1案件に20社以上のことがある）。
+      counterpartyId: p.counterparty_id ? Number(p.counterparty_id) : null,
+      counterparty: str(p.counterparty_name)
     }));
   }
 

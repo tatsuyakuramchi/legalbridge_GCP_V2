@@ -183,7 +183,10 @@ export interface MatterDetail extends MatterSummary {
   conditions: ConditionSummary[];
   documents: Array<{ id: number; documentNo: string | null; status: string;
                      templateLabel: string | null; templateKey: string | null;
-                     counterparty: string | null; issuedAt: string | null;
+                     counterparty: string | null;
+                     /** 相手先ごとに絞って見るための id。 */
+                     counterpartyId: number | null;
+                     issuedAt: string | null;
                      /** 最後に送った日時と口（gmail / cloudsign）。 */
                      sentAt: string | null; sentVia: string | null;
                      /** 繋がっている合意の状態。executed なら締結済み。 */
@@ -191,7 +194,9 @@ export interface MatterDetail extends MatterSummary {
   payments: Array<{ id: number; paymentNo: string | null; direction: Direction; amount: number;
                     currency: string; dueOn: string | null; status: string;
                     /** 管理者が直せる欄（A-041）。 */
-                    basisReceivedOn: string | null; paidOn: string | null; note: string | null }>;
+                    basisReceivedOn: string | null; paidOn: string | null; note: string | null;
+                    /** 払い先。支払は持たないので割当先の条件から引いている。 */
+                    counterpartyId: number | null; counterparty: string | null }>;
   communications: Array<{ occurredAt: string; action: string; actor: string; detail: Record<string, unknown> }>;
   links: Array<{ targetType: string; targetRef: string; relation: string;
                  snapshot: Record<string, unknown> }>;

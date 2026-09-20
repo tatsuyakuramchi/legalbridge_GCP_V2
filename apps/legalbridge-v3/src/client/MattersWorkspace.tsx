@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { MatterDetail, MatterKind, MatterSummary } from "../server/core/model.js";
 import { api, ApiError, money } from "./api.js";
 import { SearchSelect, searchParties, staffOptions } from "./SearchSelect.js";
 import { CreateForm, int, text } from "./CreateForm.js";
 import { DetailBack, isWideLayout } from "./DetailBack.js";
 import { MoneyChain } from "./MoneyChain.js";
+import { MatterPartyFilter } from "./MatterPartyFilter.js";
+import { filterByParty, partiesOf } from "../server/matters/party-view.js";
 import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
 import { DOCUMENT_STYLE_HINT, DOCUMENT_STYLE_LABEL, MATTER_KIND_HINT,
          MATTER_KIND_LABEL as KIND_LABEL, StatusTag } from "./labels.js";
@@ -144,6 +146,11 @@ export function MattersWorkspace(
   const [channels, setChannels] =
     useState<Array<{ channel: string; mode: "off" | "dry_run" | "live"; configured: boolean }>>([]);
   const [isAdmin, setIsAdmin] = useState(false);
+  /**
+   * 取引先で絞る（1案件に20社以上のことがある）。選んでいる間は、条件明細・
+   * 実績・文書・支払の4タブが揃ってその社のぶんだけになる。
+   */
+  const [party, setParty] = useState<number | null>(null);
   useEffect(() => {
     api.get<{ drive: { matterFolders: boolean };
               channels: Array<{ channel: string; mode: "off" | "dry_run" | "live"; configured: boolean }> }>(
@@ -154,6 +161,17 @@ export function MattersWorkspace(
       .then((r) => setIsAdmin(r.user?.role === "admin")).catch(() => undefined);
   }, []);
   const relink = () => { setLinkVersion((v) => v + 1); reloadDetail(); };
+
+  /**
+   * 取引先の一覧と、絞り込んだあとの案件の中身。
+   *
+   * 絞り込みは見せ方だけなので、読み直さずここで写しを作る。案件そのもの
+   * （工程・取引モデル・相手先）は元の detail のまま出す。
+   */
+  const parties = useMemo(() => (detail ? partiesOf(detail) : []), [detail]);
+  const shown = useMemo(() => (detail ? filterByParty(detail, party) : null), [detail, party]);
+  // 別の案件へ移ったら絞り込みは解く（前の案件の社が残ると空の画面になる）。
+  useEffect(() => { setParty(null); }, [selected]);
 
   // 進め方を変えると次にやることが変わるので、進み具合も引き直す。
   // 担当者を決めるときにしか要らないので、開いたときに取りに行く。
@@ -349,7 +367,8 @@ export function MattersWorkspace(
 
         <div className="stack md-detail">
           <DetailBack label="案件" count={rows.length} onBack={() => setSelected(undefined)} />
-          {detail && (
+          {/* shown は detail から作る写しなので、detail があるときだけ出る。 */}
+          {detail && shown && (
             <>
               <div className="panel">
                 <div className="panel-hd">
@@ -514,11 +533,15 @@ export function MattersWorkspace(
               <div className="panel">
                 <div className="panel-hd"><h2>この案件の中身</h2></div>
                 <div className="panel-bd">
+                  {/* 取引先で絞る。選ぶと下の4タブが揃ってその社のぶんだけになる。
+                      タブの数字も絞ったあとの数に変わる（数と中身が食い違わない）。 */}
+                  <MatterPartyFilter parties={parties} value={party} onChange={setParty} />
+
                   <div className="tabs">
-                    {([["conditions", `条件明細 ${detail.conditions.length}`],
+                    {([["conditions", `条件明細 ${shown.conditions.length}`],
                        ["events", "実績"],
-                       ["documents", `文書 ${detail.documents.length}`],
-                       ["payments", `支払 ${detail.payments.length}`],
+                       ["documents", `文書 ${shown.documents.length}`],
+                       ["payments", `支払 ${shown.payments.length}`],
                        ["communications", `操作の記録 ${detail.communications.length}`],
                        ["graph", "整理"]] as const).map(([key, label]) => (
                       <button key={key} aria-selected={tab === key} onClick={() => setTab(key as Tab)}>{label}</button>
@@ -530,29 +553,29 @@ export function MattersWorkspace(
 
                   {tab === "conditions" && (
                     <div className="stack">
-                      <MatterConditions detail={detail} onChanged={relink}
+                      <MatterConditions detail={shown} onChanged={relink}
                         onOpenCondition={onOpenCondition} onCompose={onCompose}
                         onRecordEvent={(id) => { setEventCondition(id); setTab("events"); }} />
                       {/* 取引モデルが何本あっても計算書は1枚。条件ごとに1枚ずつ
                           出す口しか無く、束ねる手段が画面にもサーバにも無かった。 */}
-                      <MatterStatement detail={detail}
+                      <MatterStatement detail={shown}
                         onChanged={relink} onOpenDocument={onOpenDocument} />
                     </div>
                   )}
 
                   {tab === "events" && (
-                    <MatterEvents detail={detail} conditionId={eventCondition} onPick={setEventCondition}
+                    <MatterEvents detail={shown} conditionId={eventCondition} onPick={setEventCondition}
                       onCompose={onCompose} onOpenDocument={onOpenDocument} onChanged={relink} />
                   )}
 
                   {tab === "documents" && (
-                    <MatterDocuments detail={detail} onChanged={relink}
+                    <MatterDocuments detail={shown} onChanged={relink}
                       onOpenDocument={onOpenDocument} onCompose={onCompose}
                       onBulkOrders={onBulkOrders} channels={channels} isAdmin={isAdmin} />
                   )}
 
                   {tab === "payments" && (
-                    <MatterPayments detail={detail} onChanged={relink} onOpenDocument={onOpenDocument}
+                    <MatterPayments detail={shown} onChanged={relink} onOpenDocument={onOpenDocument}
                                     isAdmin={isAdmin} />
                   )}
 
