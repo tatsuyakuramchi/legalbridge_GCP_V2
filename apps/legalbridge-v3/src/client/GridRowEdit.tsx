@@ -3,7 +3,8 @@ import { api, ApiError } from "./api.js";
 import { StatusTag } from "./labels.js";
 import { SECTION_LABEL, type BundleSection, type ReissuedDraft }
   from "../server/conditions/bundle-service.js";
-import { DRIFT_LABEL, driftOf } from "../server/matters/drift.js";
+import { DRIFT_LABEL, FIELD_LABEL, driftOf, driftSummary, hasDateDrift }
+  from "../server/matters/drift.js";
 import type { GridRow } from "../server/matters/grid.js";
 
 /**
@@ -24,7 +25,7 @@ interface ScheduleLine {
   eventId: number | null;
 }
 interface EventLine {
-  id: number; status: string; occurredOn: string | null;
+  id: number; status: string; occurredOn: string | null; inspectedOn: string | null;
   quantity: number | null; amount: number;
 }
 interface ConditionHead {
@@ -33,6 +34,8 @@ interface ConditionHead {
 
 const text = (v: unknown) => (v === null || v === undefined ? "" : String(v));
 const yen = (n: number) => `¥${n.toLocaleString("ja-JP")}`;
+/** 金額は ¥ を付け、日付はそのまま。行の欄で出し分ける。 */
+const shown = (v: number | string) => (typeof v === "number" ? yen(v) : v);
 /** 空欄は「変えない」ではなく「空にする」。日付と備考はそれでよい。 */
 const orNull = (v: string) => (v.trim() === "" ? null : v.trim());
 
@@ -74,11 +77,16 @@ export function GridRowEdit(
         termStart: text(condition?.termStart),
         termEnd: text(condition?.termEnd),
         eventOccurredOn: text(ev?.occurredOn),
+        eventInspectedOn: text(ev?.inspectedOn),
         eventQuantity: text(ev?.quantity),
         eventAmount: text(ev?.amount),
         paymentDueOn: text(row.payment?.dueOn),
         paymentNote: text(row.payment?.note),
-        ...Object.fromEntries((s?.lines ?? []).map((l) => [`sch${l.id}`, String(l.plannedAmount)]))
+        ...Object.fromEntries((s?.lines ?? []).flatMap((l) => [
+          [`sch${l.id}`, String(l.plannedAmount)],
+          [`schDue${l.id}`, text(l.dueOn)],
+          [`schPay${l.id}`, text(l.payOn)]
+        ]))
       });
     });
   }, [row.conditionId, row.events.latestId]);
@@ -95,18 +103,21 @@ export function GridRowEdit(
   });
 
   /**
-   * いまの条件の金額に、直せる段を全部そろえる。
+   * いまの条件・予定・実績に、直せる段を全部そろえる。
    *
-   * 直すのは実績と予定（条件はそれ自体が基準）。決定済みの文書は書き換えられ
-   * ないので、訂正版を作るほうに印を付ける。押しただけでは保存しない。
+   * 直せるのは生きている値（条件・予定・実績・支払）だけ。決定済みの文書は
+   * 書き換えられないので、訂正版を作るほうに印を付ける（訂正版の中身は
+   * サーバが新しい値で引き直す）。押しただけでは保存しない。
    */
   function alignAll() {
     if (!drift) return;
-    const amount = String(drift.conditionAmount);
+    const t = drift.targets;
     const next = { ...v };
-    if (event && !moneyLocked) next.eventAmount = amount;
+    if (t.amount !== null && event && !moneyLocked) next.eventAmount = String(t.amount);
     // 回が1つだけなら、その回＝条件の総額。分納は回ごとの配分が要るので触らない。
-    if (lines?.length === 1) next[`sch${lines[0].id}`] = amount;
+    if (t.amount !== null && lines?.length === 1) next[`sch${lines[0].id}`] = String(t.amount);
+    // 支払の期日は、検収書に書いた支払期日（無ければ予定の支払日）に寄せる。
+    if (t.paymentDueOn && row.payment) next.paymentDueOn = t.paymentDueOn;
     setV(next);
     const docs = drift.flagged
       .filter((e) => e.part === "order" || e.part === "settlementDoc")
@@ -133,11 +144,16 @@ export function GridRowEdit(
       if (Object.keys(condition).length) body.condition = condition;
 
       // 予定は入れ替えなので、1行でも直したら全部の行を送る。
-      if (lines?.length && lines.some((l) => v[`sch${l.id}`] !== String(l.plannedAmount))) {
+      const scheduleChanged = lines?.some((l) =>
+        v[`sch${l.id}`] !== String(l.plannedAmount)
+        || v[`schDue${l.id}`] !== text(l.dueOn)
+        || v[`schPay${l.id}`] !== text(l.payOn));
+      if (lines?.length && scheduleChanged) {
         body.schedules = lines.map((l) => ({
           seq: l.seq, label: l.label, triggerKind: l.triggerKind,
           plannedAmount: Number(v[`sch${l.id}`] || 0),
-          dueOn: l.dueOn, payOn: l.payOn, contractForm: l.contractForm,
+          dueOn: orNull(v[`schDue${l.id}`] ?? ""), payOn: orNull(v[`schPay${l.id}`] ?? ""),
+          contractForm: l.contractForm,
           serviceFrom: l.serviceFrom, serviceTo: l.serviceTo
         }));
       }
@@ -145,6 +161,7 @@ export function GridRowEdit(
       if (event) {
         const e: Record<string, unknown> = { id: event.id };
         if (v.eventOccurredOn !== text(event.occurredOn)) e.occurredOn = orNull(v.eventOccurredOn);
+        if (v.eventInspectedOn !== text(event.inspectedOn)) e.inspectedOn = orNull(v.eventInspectedOn);
         if (!moneyLocked) {
           if (v.eventQuantity !== text(event.quantity)) e.quantity = orNull(v.eventQuantity);
           if (v.eventAmount !== text(event.amount)) e.amount = orNull(v.eventAmount);
@@ -181,8 +198,8 @@ export function GridRowEdit(
       // 訂正版は下書きなので、作っただけでは相手に何も出ていない。
       // 「作った」で終わらせず、次に何をするかまで言う。
       const drafts = (r.reissued ?? []);
-      const repriced = drafts.filter((d) => d.repriced);
-      const manual = drafts.filter((d) => d.needsManualFix);
+      const repriced = drafts.flatMap((d) => d.repriced);
+      const manual = drafts.filter((d) => d.pending.length);
       onDone(`${row.conditionNo ?? `#${row.conditionId}`} を直しました（${done}）`
         // 版が増えたことを黙らない。工程表の行も新しい版に入れ替わる。
         + (r.revisedTo ? "。実績があるので条件は改訂になり、新しい版に切り替わりました" : "")
@@ -191,10 +208,10 @@ export function GridRowEdit(
               + " の訂正版を作りました。文書の画面で中身を確かめてから決定してください"
             : "")
         // 引き直したことも黙らない（人の打った明細を機械が書き換えている）。
-        + (repriced.length ? `。明細も引き直しました：${repriced.map((d) => d.repriced).join("／")}` : "")
+        + (repriced.length ? `。明細も引き直しました：${repriced.join("／")}` : "")
         + (manual.length
-            ? `。${manual.map((d) => d.documentNo ?? `#${d.documentId}`).join("・")} は`
-              + "手入力の明細に金額が入っています。そのままだと古い金額で出るので、明細を直してください"
+            ? `。${manual.map((d) => `${d.documentNo ?? `#${d.documentId}`}（${d.pending.join("・")}）`).join("／")}`
+              + " は引き直せませんでした。そのままだと古い値で出るので、下書きを開いて明細を直してください"
             : ""));
     } catch (e) { setError((e as ApiError).message); }
     finally { setBusy(false); }
@@ -211,40 +228,46 @@ export function GridRowEdit(
       {drift && drift.flagged.length > 0 && (
         <div className="drift">
           <div className="row">
-            <b>金額が食い違っています</b>
+            <b>{driftSummary(drift.flagged)}が食い違っています</b>
             <span className="faint">
-              条件を直しても、決定済みの文書は出したときの金額のまま残ります
+              条件や予定を直しても、決定済みの文書は出したときの値のまま残ります
             </span>
           </div>
           <table>
             <tbody>
-              <tr className="now">
-                <td>いまの条件</td>
-                <td className="right"><b>{yen(drift.conditionAmount)}</b></td>
-                <td className="faint">発注書はこれと比べます</td>
-              </tr>
-              {drift.deliveredAmount !== null && (
-                <tr className="now">
-                  <td>実績の合計</td>
-                  <td className="right"><b>{yen(drift.deliveredAmount)}</b></td>
-                  <td className="faint">検収書と支払はこれと比べます</td>
+              {drift.bases.map((b) => (
+                <tr key={b.key} className="now">
+                  <td>{b.label}</td>
+                  <td className="right"><b>{shown(b.value)}</b></td>
+                  <td className="faint">{b.hint}</td>
                 </tr>
-              )}
+              ))}
               {drift.entries.map((e) => (
-                <tr key={`${e.part}${e.ref ?? ""}`} className={e.flagged ? "out" : undefined}>
-                  <td>{DRIFT_LABEL[e.part]}{e.ref ? <span className="faint code">　{e.ref}</span> : null}</td>
-                  <td className="right">{yen(e.amount)}</td>
+                <tr key={`${e.part}${e.field}${e.ref ?? ""}`} className={e.flagged ? "out" : undefined}>
+                  <td>
+                    {DRIFT_LABEL[e.part]} <span className="faint">{FIELD_LABEL[e.field]}</span>
+                    {e.ref ? <span className="faint code">　{e.ref}</span> : null}
+                  </td>
+                  <td className="right">{shown(e.value)}</td>
                   <td className={e.flagged ? "diff" : "faint"}>
-                    {e.note ?? (e.diff === 0 ? `${e.basisLabel}と一致`
-                      : `${e.basisLabel}より ${e.diff > 0 ? "＋" : "−"}${yen(Math.abs(e.diff))}`)}
+                    {e.note ?? (e.value === e.basis ? `${e.basisLabel}と一致`
+                      : e.diff !== null
+                        ? `${e.basisLabel}より ${e.diff > 0 ? "＋" : "−"}${yen(Math.abs(e.diff))}`
+                        : `${e.basisLabel}は ${shown(e.basis)}`)}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          {hasDateDrift(drift.flagged) && (
+            <div className="locked" style={{ marginTop: 6 }}>
+              日付は、どちらが正しいかを機械では決められません。相手に出した文書の日で
+              進めるなら、<b>予定・実績の欄をその日に直して</b>ください（訂正版は要りません）。
+            </div>
+          )}
           <div className="row" style={{ marginTop: 6 }}>
             <button className="btn btn-sm" onClick={alignAll}>
-              いまの条件の金額（{yen(drift.conditionAmount)}）に全部そろえる
+              いまの条件・予定・実績に全部そろえる
             </button>
             <span className="faint">
               欄に入れるだけです。保存は下のボタンで、文書は訂正版の下書きになります
@@ -285,12 +308,30 @@ export function GridRowEdit(
               <h4>予定（{lines.length} 回）</h4>
               {lines.length === 0 && <div className="locked">回がありません。条件の画面で作ります。</div>}
               {lines.map((l) => (
-                <label className="field" key={l.id}>
-                  <span>第{l.seq}回</span>
-                  <input value={v[`sch${l.id}`] ?? ""}
-                         onChange={(e) => setV({ ...v, [`sch${l.id}`]: e.target.value })} />
-                </label>
+                <div key={l.id} className="schline">
+                  <label className="field">
+                    <span>第{l.seq}回 金額</span>
+                    <input value={v[`sch${l.id}`] ?? ""}
+                           onChange={(e) => setV({ ...v, [`sch${l.id}`]: e.target.value })} />
+                  </label>
+                  <label className="field">
+                    <span>　期日</span>
+                    <input type="date" value={v[`schDue${l.id}`] ?? ""}
+                           onChange={(e) => setV({ ...v, [`schDue${l.id}`]: e.target.value })} />
+                  </label>
+                  <label className="field">
+                    <span>　支払日</span>
+                    <input type="date" value={v[`schPay${l.id}`] ?? ""}
+                           onChange={(e) => setV({ ...v, [`schPay${l.id}`]: e.target.value })} />
+                  </label>
+                </div>
               ))}
+              {lines.length > 0 && (
+                <div className="locked">
+                  発注書の納品予定日・支払期日はここから出ます。決定済みの発注書は
+                  出したときの日付のままなので、直したら訂正版を作ります。
+                </div>
+              )}
               {lines.some((l) => l.eventId) && (
                 <div className="locked">実績の付いた回があります。金額を直すと実績との差分が出ます。</div>
               )}
@@ -330,9 +371,12 @@ export function GridRowEdit(
               <h4>実績{event ? `（直近 1 件／全 ${row.events.count} 件）` : ""}</h4>
               {event ? (
                 <>
-                  <label className="field"><span>発生日</span>
+                  <label className="field"><span>納品日</span>
                     <input type="date" value={v.eventOccurredOn ?? ""}
                            onChange={(e) => setV({ ...v, eventOccurredOn: e.target.value })} /></label>
+                  <label className="field"><span>検収日</span>
+                    <input type="date" value={v.eventInspectedOn ?? ""}
+                           onChange={(e) => setV({ ...v, eventInspectedOn: e.target.value })} /></label>
                   <label className="field"><span>数量</span>
                     <input value={v.eventQuantity ?? ""} disabled={moneyLocked}
                            onChange={(e) => setV({ ...v, eventQuantity: e.target.value })} /></label>
@@ -388,7 +432,10 @@ export function GridRowEdit(
                   <label className="field"><span>備考</span>
                     <input value={v.paymentNote ?? ""}
                            onChange={(e) => setV({ ...v, paymentNote: e.target.value })} /></label>
-                  <div className="locked">金額は割当の合計です。ここでは直せません。</div>
+                  <div className="locked">
+                    金額は割当の合計です。ここでは直せません。
+                    期日は検収書に書いた支払期日（無ければ予定の支払日）に合わせます。
+                  </div>
                 </>
               ) : <div className="locked">まだありません。支払タブで起こします。</div>}
             </div>

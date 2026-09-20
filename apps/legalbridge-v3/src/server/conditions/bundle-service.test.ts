@@ -159,7 +159,7 @@ test("訂正版は、条件を直したあとに作る", async () => {
     3, { condition: { flatAmount: 95000 }, reissue: [41] }, "発注額の訂正", "admin");
   assert.deepEqual(r.applied.map((a) => a.section), ["condition", "reissue"]);
   assert.deepEqual(r.reissued, [{
-    documentId: 41, documentNo: "ARC-PO-1", draftId: 941, repriced: null, needsManualFix: false
+    documentId: 41, documentNo: "ARC-PO-1", draftId: 941, repriced: [], pending: []
   }]);
   // 条件 → 訂正版 の順。先に作ると古い金額の下書きになる。
   assert.deepEqual(calls.map((c) => c.split(":")[0]), ["condition", "reissue"]);
@@ -215,8 +215,8 @@ test("訂正版に引き継いだ手入力の明細を、新しい金額に引�
       manual_inputs: { items: [{ item_name: "表紙イラスト", quantity: 1, unit_price: 120000, amount_ex_tax: 120000 }] }
     }]
   }), p).apply(3, { condition: { flatAmount: 95000 }, reissue: [41] }, "訂正", "admin");
-  assert.equal(r.reissued[0].repriced, "表紙イラスト ¥120,000 → ¥95,000");
-  assert.equal(r.reissued[0].needsManualFix, false);
+  assert.deepEqual(r.reissued[0].repriced, ["表紙イラスト ¥120,000 → ¥95,000"]);
+  assert.deepEqual(r.reissued[0].pending, []);
 });
 
 test("引き直せない明細は、引き直さずに「人が直して」と返す", async () => {
@@ -229,8 +229,8 @@ test("引き直せない明細は、引き直さずに「人が直して」と�
                                { item_name: "口絵", amount_ex_tax: 40000 }] }
     }]
   }), p).apply(3, { condition: { flatAmount: 95000 }, reissue: [41] }, "訂正", "admin");
-  assert.equal(r.reissued[0].repriced, null);
-  assert.equal(r.reissued[0].needsManualFix, true);
+  assert.deepEqual(r.reissued[0].repriced, []);
+  assert.match(r.reissued[0].pending[0], /明細が 2 行/);
 });
 
 test("条件を何本も載せた文書の明細は引き直さない", async () => {
@@ -242,6 +242,6 @@ test("条件を何本も載せた文書の明細は引き直さない", async ()
       manual_inputs: { items: [{ item_name: "表紙", amount_ex_tax: 120000 }] }
     }]
   }), p).apply(3, { condition: { flatAmount: 95000 }, reissue: [41] }, "訂正", "admin");
-  assert.equal(r.reissued[0].repriced, null);
-  assert.equal(r.reissued[0].needsManualFix, true);
+  assert.deepEqual(r.reissued[0].repriced, []);
+  assert.match(r.reissued[0].pending[0], /1本ぶんに分けられません/);
 });

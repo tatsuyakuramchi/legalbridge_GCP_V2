@@ -1,11 +1,12 @@
 import type { Transactable } from "../core/db.js";
+import { dateStr } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import type { ConditionWriteService } from "./write-service.js";
 import type { ConditionScheduleService, ScheduleLine } from "./schedule-service.js";
 import type { ConditionEventService } from "./event-service.js";
 import type { PaymentService } from "../payments/service.js";
 import type { DocumentIssueService } from "../documents/issue-service.js";
-import { repriceManualAmounts } from "../documents/reprice.js";
+import { redraftManualInputs } from "../documents/reprice.js";
 import { targetAmountOf } from "./settlement.js";
 
 /**
@@ -59,18 +60,18 @@ export interface ReissuedDraft {
   /** 作った訂正版の下書き。 */
   draftId: number;
   /**
-   * 引き継いだ手入力の明細を新しい金額に引き直した。その1行（画面に出す）。
-   * 引き直していなければ null。
+   * 引き継いだ手入力の明細を引き直した中身（「表紙イラスト ¥120,000 → ¥95,000」
+   * 「納品日 2026-11-30 → 2026-12-15」）。画面にそのまま出す。
    */
-  repriced: string | null;
+  repriced: string[];
   /**
-   * 手入力の明細に金額が残っていて、機械には引き直せない。
+   * 引き直せなかった欄と、その理由。
    *
-   * 手入力は条件より強い（人が打った額が勝つ）ので、このままだと決定しても
-   * 古い金額で出る。明細が2本以上あるときなど、どの行が減ったのかは書いた人に
+   * 手入力は条件・予定より強い（人が打った値が勝つ）ので、このままだと決定しても
+   * 古い値で出る。明細が2本以上あるときなど、どの行が変わったのかは書いた人に
    * しか分からないので、画面で「開いて直して」と言う。
    */
-  needsManualFix: boolean;
+  pending: string[];
 }
 
 export interface BundleResult {
@@ -90,6 +91,9 @@ export interface BundleResult {
   /** 作った訂正版の下書き。 */
   reissued: ReissuedDraft[];
 }
+
+/** 結果の文書。明細を実績から組むので、引き直す日付も実績から取る。 */
+const SETTLEMENT_TEMPLATES = new Set(["inspection_certificate", "royalty_statement"]);
 
 /** 金額に関わる欄。実績はこれを直すときだけ支払の有無を見る。 */
 const EVENT_MONEY = ["amount", "grossAmount", "deductions", "unitAmount", "quantity"];
@@ -272,12 +276,17 @@ export class ConditionBundleService {
     revisedTo: number | null, out: ReissuedDraft[]
   ): Promise<string> {
     const head = await this.database.query(
-      `SELECT d.document_no, d.manual_inputs,
+      `SELECT d.document_no, d.manual_inputs, t.template_key,
               (SELECT array_agg(dc.condition_id ORDER BY dc.line_no, dc.condition_id)
                  FROM document_conditions dc WHERE dc.document_id = d.id) AS condition_ids
-         FROM documents d WHERE d.id = $1`, [documentId]);
-    const row = head.rows[0] as
-      { document_no?: string | null; manual_inputs?: unknown; condition_ids?: number[] | null };
+         FROM documents d
+         LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
+         LEFT JOIN document_templates t ON t.id = tv.template_id
+        WHERE d.id = $1`, [documentId]);
+    const row = head.rows[0] as {
+      document_no?: string | null; manual_inputs?: unknown;
+      template_key?: string | null; condition_ids?: number[] | null;
+    };
     const linked = (row.condition_ids ?? []).map(Number);
 
     // この条件の系列（改訂の全版）と、いまの金額。
@@ -299,28 +308,75 @@ export class ConditionBundleService {
 
     // 手入力の明細を引き直す。この条件だけを載せた文書に限る（何本も載って
     // いると、総額のどこがこの条件のぶんか分けられない）。
-    const now = versions.find((r) => Number(r.id) === (revisedTo ?? conditionId));
-    const newAmount = targetAmountOf({
-      pricingModel: now?.pricing_model, flatAmount: now?.flat_amount === null ? null : Number(now?.flat_amount)
-    });
     const only = linked.length > 0 && linked.every((id) => old.has(id) || id === revisedTo);
-    let repriced: string | null = null;
-    if (only && newAmount !== null) {
-      const next = repriceManualAmounts(row.manual_inputs, newAmount);
+    const target = only
+      ? await this.redraftTarget(revisedTo ?? conditionId, versions, row.template_key ?? null) : null;
+    let repriced: string[] = [];
+    let pending: string[] = [];
+    if (target) {
+      const next = redraftManualInputs(row.manual_inputs, target);
       if (next) {
-        await this.database.query(
-          "UPDATE documents SET manual_inputs = $2::jsonb WHERE id = $1",
-          [made.id, JSON.stringify(next.manual)]);
-        repriced = next.line;
+        if (next.lines.length) {
+          await this.database.query(
+            "UPDATE documents SET manual_inputs = $2::jsonb WHERE id = $1",
+            [made.id, JSON.stringify(next.manual)]);
+        }
+        repriced = next.lines;
+        pending = next.pending;
       }
+    } else if (hasManualAmounts(row.manual_inputs)) {
+      pending = ["金額・日付（条件を何本も載せた文書なので、1本ぶんに分けられません）"];
     }
 
-    out.push({
-      documentId, documentNo: row.document_no ?? null, draftId: made.id,
-      repriced,
-      needsManualFix: repriced === null && hasManualAmounts(row.manual_inputs)
-    });
+    out.push({ documentId, documentNo: row.document_no ?? null, draftId: made.id, repriced, pending });
     return row.document_no ?? `#${documentId}`;
+  }
+
+  /**
+   * 引き直す先。発注書は条件と予定明細から、検収書は実績から出る
+   * （本文がそこから組まれるので、手入力もそこに合わせる）。
+   *
+   * 日付は「ぜんぶ同じとき」だけ返す。回ごとにずれているなら、まとめた1日は
+   * そもそも無い（本文も「A 〜 B（明細参照）」とまとめ書きになる）。
+   */
+  private async redraftTarget(
+    conditionId: number,
+    versions: Array<{ id: number; pricing_model: string; flat_amount: number | null }>,
+    templateKey: string | null
+  ) {
+    const now = versions.find((r) => Number(r.id) === conditionId);
+    const amountExTax = targetAmountOf({
+      pricingModel: now?.pricing_model,
+      flatAmount: now?.flat_amount === null || now?.flat_amount === undefined
+        ? null : Number(now.flat_amount)
+    });
+    const ids = versions.map((r) => Number(r.id));
+    // dateStr を通す。pg は date 列を Date で返すので、String() で切ると
+    // 「Tue Dec 15」になって紙に載る。
+    const one = (kinds: unknown, value: unknown) =>
+      (Number(kinds ?? 0) === 1 ? dateStr(value) : null);
+
+    // 結果の文書（検収書・計算書）の明細は実績から組む。日付も実績のもの。
+    if (SETTLEMENT_TEMPLATES.has(templateKey ?? "")) {
+      const ev = await this.database.query(
+        `SELECT count(DISTINCT e.occurred_on)::int AS kinds, max(e.occurred_on) AS occurred_on
+           FROM condition_events e
+          WHERE e.condition_id = ANY($1::bigint[]) AND e.status = 'active'`, [ids]);
+      const e = (ev.rows[0] ?? {}) as Record<string, unknown>;
+      return { amountExTax, deliveryOn: one(e.kinds, e.occurred_on), paymentOn: null };
+    }
+
+    // 条件の文書（発注書）の明細は予定明細から組む（orderLinesFrom）。
+    const sch = await this.database.query(
+      `SELECT count(DISTINCT s.due_on)::int AS due_kinds, max(s.due_on) AS due_on,
+              count(DISTINCT s.pay_on)::int AS pay_kinds, max(s.pay_on) AS pay_on
+         FROM condition_schedules s WHERE s.condition_id = ANY($1::bigint[])`, [ids]);
+    const r = (sch.rows[0] ?? {}) as Record<string, unknown>;
+    return {
+      amountExTax,
+      deliveryOn: one(r.due_kinds, r.due_on),
+      paymentOn: one(r.pay_kinds, r.pay_on)
+    };
   }
 }
 

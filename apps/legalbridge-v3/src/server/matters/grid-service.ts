@@ -32,14 +32,45 @@ const RESULT_KEYS = "('inspection_certificate', 'royalty_statement')";
 const documentLateral = (alias: string, keys: string) => `
   LEFT JOIN LATERAL (
     SELECT d.id, d.document_no, d.status,
-           -- 決定したときに焼き付いた税抜額。どのひな形も AMOUNT_EX_TAX を持つ。
-           -- 「120,000」のような整形済みの文字なので、数字だけ取り出す。
-           NULLIF(regexp_replace(
-             COALESCE(d.rendered_values ->> 'AMOUNT_EX_TAX', ''), '[^0-9]', '', 'g'), '')::bigint
-             AS amount_ex_tax,
+           -- 決定したときに紙へ載った税抜の合計。
+           --
+           -- AMOUNT_EX_TAX は条件（または実績）から出した額で、明細の合計とは
+           -- 限らない。発注書の明細は人が打てるので、決定済み 23 枚のうち 9 枚が
+           -- 「AMOUNT_EX_TAX ¥100,000 ／ 明細の合計 ¥135,000」のように食い違って
+           -- いた。相手が読むのは明細の合計のほうなので、そちらを先に採る。
+           --   発注書   … grandTotalExTax（明細＋その他手数料）
+           --   検収書   … deliveredAmountExTax（納品額）
+           --   明細なし … AMOUNT_EX_TAX
+           -- 0 は「明細が無い」なので次の欄を見る（明細ゼロ行の発注書は
+           -- itemsSubtotalExTax に 0 が入る。拾うと総額 ¥0 として鳴る）。
+           COALESCE(
+             NULLIF(NULLIF(regexp_replace(COALESCE(d.rendered_values ->> 'grandTotalExTax', ''),
+               '[^0-9]', '', 'g'), '')::bigint, 0),
+             NULLIF(NULLIF(regexp_replace(COALESCE(d.rendered_values ->> 'deliveredAmountExTax', ''),
+               '[^0-9]', '', 'g'), '')::bigint, 0),
+             NULLIF(NULLIF(regexp_replace(COALESCE(d.rendered_values ->> 'AMOUNT_EX_TAX', ''),
+               '[^0-9]', '', 'g'), '')::bigint, 0)
+           ) AS amount_ex_tax,
+           -- 同じ系列に、その段のいま有効な文書が何枚あるか。追加発注のように
+           -- 何枚にも分かれていると、1枚の総額は条件の総額と合わなくて当たり前。
+           --
+           -- 数えるのは issued だけ。下書き（作りかけの訂正版）と superseded
+           -- （訂正版に退いた旧版）を混ぜると、直そうとしただけで枚数が増えて
+           -- 「比べられません」に化ける。
+           (SELECT count(DISTINCT d2.id)::int
+              FROM document_conditions dc2
+              JOIN documents d2 ON d2.id = dc2.document_id AND d2.status = 'issued'
+              JOIN document_template_versions tv2 ON tv2.id = d2.template_version_id
+              JOIN document_templates t2 ON t2.id = tv2.template_id
+             WHERE dc2.condition_id IN ${SERIES} AND t2.template_key IN ${keys}) AS sibling_count,
            (SELECT count(DISTINCT COALESCE(x.series_id, x.id))::int
               FROM document_conditions dx JOIN conditions x ON x.id = dx.condition_id
              WHERE dx.document_id = d.id) AS condition_count,
+           -- 焼き付いた日付。回ごとに違う発注書はまとめ書きが入るので、
+           -- 日付として読めるかは画面の側（drift.ts）で判じる。
+           NULLIF(d.rendered_values ->> 'DELIVERY_DATE', '') AS delivery_on,
+           NULLIF(d.rendered_values ->> 'INSPECTION_DATE', '') AS inspection_on,
+           NULLIF(d.rendered_values ->> 'PAYMENT_DATE', '') AS payment_on,
            (SELECT max(a.occurred_at) FROM audit_events a
              WHERE a.target_type = 'document' AND a.target_id = d.id
                AND a.action IN ('gmail.send', 'cloudsign.send')) AS sent_at
@@ -62,7 +93,11 @@ const doc = (row: Record<string, any>, prefix: string): GridDocument | null => {
     documentNo: str(row[`${prefix}_no`]),
     phase: phaseOf(String(row[`${prefix}_status`]), row[`${prefix}_sent_at`]),
     amountExTax: int(row[`${prefix}_amount_ex_tax`]),
-    conditionCount: Number(row[`${prefix}_condition_count`] ?? 1)
+    conditionCount: Number(row[`${prefix}_condition_count`] ?? 1),
+    siblingCount: Number(row[`${prefix}_sibling_count`] ?? 1),
+    deliveryOn: str(row[`${prefix}_delivery_on`]),
+    inspectionOn: str(row[`${prefix}_inspection_on`]),
+    paymentOn: str(row[`${prefix}_payment_on`])
   };
 };
 
@@ -77,15 +112,24 @@ export class MatterGridService {
                 p.id AS party_id, p.name AS party_name,
                 ${SETTLEMENT_COLUMNS},
                 sch.total AS schedule_total, sch.done AS schedule_done,
+                sch.due_on AS schedule_due_on, sch.pay_on AS schedule_pay_on,
+                sch.due_kinds, sch.pay_kinds,
                 ev.count AS event_count, ev.latest_on AS event_latest_on, ev.latest_id AS event_latest_id,
+                ev.latest_inspected_on AS event_latest_inspected_on,
                 po.id AS order_id, po.document_no AS order_no, po.status AS order_status,
                 po.sent_at AS order_sent_at,
                 po.amount_ex_tax AS order_amount_ex_tax,
                 po.condition_count AS order_condition_count,
+                po.sibling_count AS order_sibling_count,
+                po.delivery_on AS order_delivery_on, po.inspection_on AS order_inspection_on,
+                po.payment_on AS order_payment_on,
                 rs.id AS result_id, rs.document_no AS result_no, rs.status AS result_status,
                 rs.sent_at AS result_sent_at,
                 rs.amount_ex_tax AS result_amount_ex_tax,
                 rs.condition_count AS result_condition_count,
+                rs.sibling_count AS result_sibling_count,
+                rs.delivery_on AS result_delivery_on, rs.inspection_on AS result_inspection_on,
+                rs.payment_on AS result_payment_on,
                 pay.id AS payment_id, pay.payment_no, pay.status AS payment_status,
                 pay.due_on AS payment_due_on, pay.note AS payment_note
            FROM matter_links ml
@@ -97,12 +141,18 @@ export class MatterGridService {
              SELECT count(*)::int AS total,
                     count(*) FILTER (WHERE EXISTS (
                       SELECT 1 FROM condition_events e
-                       WHERE e.schedule_id = s.id AND e.status = 'active'))::int AS done
+                       WHERE e.schedule_id = s.id AND e.status = 'active'))::int AS done,
+                    -- 回ごとに日付が違えば、発注書はまとめ書きになる。
+                    -- 種類が1つのときだけ「この日」と言える（NULL は数えない）。
+                    count(DISTINCT s.due_on)::int AS due_kinds, max(s.due_on) AS due_on,
+                    count(DISTINCT s.pay_on)::int AS pay_kinds, max(s.pay_on) AS pay_on
                FROM condition_schedules s WHERE s.condition_id = c.id
            ) sch ON true
            -- 実績は系列ぜんぶから。改訂しても消えない。
            LEFT JOIN LATERAL (
              SELECT count(*)::int AS count, max(e.occurred_on) AS latest_on,
+                    -- 検収日は納品日と別の日になりうる。入っていなければ納品日。
+                    max(COALESCE(e.inspected_on, e.occurred_on)) AS latest_inspected_on,
                     (SELECT x.id FROM condition_events x
                       WHERE x.condition_id IN ${SERIES} AND x.status = 'active'
                       ORDER BY x.occurred_on DESC NULLS LAST, x.id DESC LIMIT 1) AS latest_id
@@ -137,11 +187,17 @@ export class MatterGridService {
         ratePpm: int(row.rate_ppm),
         status: String(row.status),
         settlement: settlementOf(row),
-        schedules: { total: Number(row.schedule_total ?? 0), done: Number(row.schedule_done ?? 0) },
+        schedules: {
+          total: Number(row.schedule_total ?? 0), done: Number(row.schedule_done ?? 0),
+          dueOn: Number(row.due_kinds ?? 0) === 1 ? dateStr(row.schedule_due_on) : null,
+          payOn: Number(row.pay_kinds ?? 0) === 1 ? dateStr(row.schedule_pay_on) : null,
+          dueVaries: Number(row.due_kinds ?? 0) > 1, payVaries: Number(row.pay_kinds ?? 0) > 1
+        },
         order: doc(row, "order"),
         events: {
           count: Number(row.event_count ?? 0), latestOn: dateStr(row.event_latest_on),
-          latestId: int(row.event_latest_id)
+          latestId: int(row.event_latest_id),
+          latestInspectedOn: dateStr(row.event_latest_inspected_on)
         },
         settlementDoc: doc(row, "result"),
         payment: row.payment_id

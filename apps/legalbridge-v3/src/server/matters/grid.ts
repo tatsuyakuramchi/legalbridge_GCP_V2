@@ -27,6 +27,23 @@ export interface GridDocument {
   amountExTax: number | null;
   /** その文書に載っている条件の本数。2本以上は1本ぶんと比べられない。 */
   conditionCount: number;
+  /**
+   * 同じ条件の系列に、その段の文書が何枚あるか。
+   *
+   * 追加発注のように何枚にも分かれていると、1枚の総額が条件の総額と合わなくて
+   * 当たり前になる。金額はそのとき比べない（日付は足し算でないので比べる）。
+   */
+  siblingCount: number;
+  /**
+   * 焼き付いた日付。発注書は納品予定日と支払期日、検収書は実納品日と検収日。
+   *
+   * 回ごとに日付が違う発注書は「2026-10-31 〜 2026-11-30 (明細参照)」のような
+   * まとめ書きが入る。素のまま持って、日付として読めるかは drift.ts が判じる
+   * （ここで落とすと「まとめ書きだから比べない」と言えなくなる）。
+   */
+  deliveryOn: string | null;
+  inspectionOn: string | null;
+  paymentOn: string | null;
 }
 
 export interface GridRow {
@@ -47,10 +64,27 @@ export interface GridRow {
   /** 条件の版（有効・適用待ちなど）。決着とは別の軸。 */
   status: string;
   settlement: ConditionSettlement;
-  schedules: { total: number; done: number };
+  /**
+   * 予定の回と、日付。
+   *
+   * 発注書の納品予定日・支払期日はここから出る（orderLinesFrom）。回ごとに
+   * 違えば発注書はまとめ書きになるので、そのときは比べない。
+   */
+  schedules: {
+    total: number; done: number;
+    dueOn: string | null; payOn: string | null;
+    dueVaries: boolean; payVaries: boolean;
+  };
   order: GridDocument | null;
-  /** latestId は「まとめて直す」の下敷き。直すのは直近の1件だけ。 */
-  events: { count: number; latestOn: string | null; latestId: number | null };
+  /**
+   * latestId は「まとめて直す」の下敷き。直すのは直近の1件だけ。
+   * latestOn は納品日、latestInspectedOn は検収日（無ければ納品日）。
+   * 検収書の実納品日・検収日はこの2つから出る。
+   */
+  events: {
+    count: number; latestOn: string | null; latestId: number | null;
+    latestInspectedOn: string | null;
+  };
   settlementDoc: GridDocument | null;
   payment: {
     id: number; paymentNo: string | null; status: string;
@@ -86,7 +120,7 @@ export const GRID_FILTER_LABEL: Record<GridFilter, string> = {
   settlementDoc: "検収書がまだ",
   payment: "支払がまだ",
   settled: "払い切り",
-  drift: "金額が食い違い"
+  drift: "金額・日付が食い違い"
 };
 
 /** 段で絞る。払い切り（完了扱いを含む）だけは「済んだもの」を集める。 */

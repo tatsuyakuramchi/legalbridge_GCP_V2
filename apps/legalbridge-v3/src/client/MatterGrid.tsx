@@ -7,7 +7,8 @@ import {
   GRID_FILTER_LABEL, applyFilter, filterCounts, groupByParty,
   type GridDocument, type GridFilter, type GridRow
 } from "../server/matters/grid.js";
-import { driftOf, type Drift, type DriftPart } from "../server/matters/drift.js";
+import { driftOf, driftSummary, FIELD_LABEL, type Drift, type DriftPart }
+  from "../server/matters/drift.js";
 
 /**
  * 工程表。条件1本を1行に、予定・発注書・実績・検収書・支払を横に並べる。
@@ -25,19 +26,24 @@ const FILTERS: GridFilter[] =
 const yen = (n: number) => `¥${n.toLocaleString("ja-JP")}`;
 
 /**
- * その段の金額が、いまの条件とずれている印。
+ * その段の値が、生きている側（条件・予定・実績）とずれている印。
  *
- * 決定済みの文書は出したときの金額を焼き付けて持つので、条件を直しても
- * ついてこない。セルの中に出さないと、行を開くまで気づけない。
+ * 決定済みの文書は出したときの金額と日付を焼き付けて持つので、条件や予定を
+ * 直してもついてこない。セルの中に出さないと、行を開くまで気づけない。
  */
 function DriftTag({ drift, part }: { drift: Drift | null; part: DriftPart }) {
-  const hit = drift?.flagged.find((e) => e.part === part);
-  if (!hit) return null;
+  const hits = drift?.flagged.filter((e) => e.part === part) ?? [];
+  if (!hits.length) return null;
   return (
     <div style={{ marginTop: 3 }}>
-      <span className="tag out" title={`いまの条件は ${yen(drift!.conditionAmount)}`}>
-        {yen(hit.amount)}
-      </span>
+      {hits.map((e) => (
+        <span key={e.field} className="tag out" style={{ marginRight: 3 }}
+              title={`${FIELD_LABEL[e.field]}：${e.basisLabel}は ${
+                typeof e.basis === "number" ? yen(e.basis) : e.basis}`}>
+          {e.field === "amount" ? yen(e.value as number)
+            : `${FIELD_LABEL[e.field]} ${e.value}`}
+        </span>
+      ))}
     </div>
   );
 }
@@ -113,8 +119,8 @@ function Row(
           {" "}<SettlementTag settlement={row.settlement} compact />
           {drift && drift.flagged.length > 0 && (
             <>{" "}<span className="tag out"
-                         title="発注書・検収書・実績・支払のどれかが、いまの条件と違う金額です。「まとめて直す」で揃えられます">
-              金額が食い違い
+                         title="発注書・検収書・支払のどれかが、いまの条件・予定・実績と違う値です。「まとめて直す」で揃えられます">
+              {driftSummary(drift.flagged)}が食い違い
             </span></>
           )}
         </div>
