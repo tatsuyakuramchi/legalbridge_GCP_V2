@@ -678,7 +678,7 @@ export function ConditionsWorkspace(
                 onCompose={onCompose}
                 onChanged={refreshFlow} />
 
-              <ConditionMatters detail={detail} onDone={async () => {
+              <ConditionMatters detail={detail} onOpen={onOpen} onDone={async () => {
                 setDetail(await api.get<DetailResponse>(`/conditions/${detail.id}`));
                 refreshFlow();
               }} />

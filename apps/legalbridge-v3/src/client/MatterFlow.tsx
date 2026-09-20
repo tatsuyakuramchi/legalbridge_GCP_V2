@@ -9,14 +9,17 @@ import { api, ApiError } from "./api.js";
  * 「済」の根拠を一緒に出すので、印が合っているかを画面で確かめられる。
  */
 
-type FlowTab = "conditions" | "documents" | "payments" | "communications";
+type FlowTab = "conditions" | "events" | "documents" | "payments" | "communications";
 interface FlowStep {
   no: number; name: string; done: boolean; detail: string;
   /** その作業をする場所（案件の中身のタブ）。 */
   tab?: FlowTab;
+  /** そこで押す操作の呼び名。 */
+  action?: string;
 }
 const TAB_LABEL: Record<FlowTab, string> = {
-  conditions: "条件明細", documents: "文書", payments: "支払", communications: "操作の記録"
+  conditions: "条件明細", events: "実績", documents: "文書",
+  payments: "支払", communications: "操作の記録"
 };
 interface Flow { steps: FlowStep[]; current: FlowStep | null }
 
@@ -72,9 +75,20 @@ export function MatterFlow(
             <span className="faint" style={{ marginLeft: 8 }}>{step.detail}</span>
           </div>
         ))}
+        {/* 「次にやること」は読むだけでなく押せるようにする。名前が分かっても
+            どのタブかを探し直すのでは、結局そこで止まる。 */}
         {flow.current
-          ? <div className="trace-line" style={{ marginTop: 4 }}>
+          ? <div className="trace-line" style={{ marginTop: 6 }}>
               次にやること：<b>{flow.current.name}</b>
+              {flow.current.tab && onGo && (
+                <button type="button" className="btn btn-sm primary" style={{ marginLeft: 8 }}
+                        title={`${TAB_LABEL[flow.current.tab]}タブへ移ります`}
+                        onClick={() => onGo(flow.current!.tab!)}>
+                  {/* 押した先で何をするかを書く。段階の名前をもう一度出すと
+                      「支払　支払タブを開く」のように重なって読みにくい。 */}
+                  {flow.current.action ?? `${TAB_LABEL[flow.current.tab]}タブを開く`}
+                </button>
+              )}
             </div>
           : <div className="trace-line" style={{ marginTop: 4, color: "var(--ok)" }}>
               すべて揃っています。案件を完了にできます

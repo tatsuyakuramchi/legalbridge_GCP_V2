@@ -93,7 +93,11 @@ export function ConditionCounterparty(
  * 参照の向きは変えていない（案件 → 条件）。外しても条件は消えない。
  */
 export function ConditionMatters(
-  { detail, onDone }: { detail: ConditionDetail; onDone: () => void }
+  { detail, onDone, onOpen }: {
+    detail: ConditionDetail; onDone: () => void;
+    /** 案件を開く。実績も文書も支払も案件から辿るので、戻り道が要る。 */
+    onOpen?: (kind: "matter", id: number) => void;
+  }
 ) {
   const [mode, setMode] = useState<"closed" | "find" | "create">("closed");
   const [keyword, setKeyword] = useState("");
@@ -161,19 +165,30 @@ export function ConditionMatters(
         {error && <div className="alert">{error}</div>}
         {note && <div className="note ok">{note}</div>}
 
-        {detail.matters.length ? (
+        {detail.matters.length ? (<>
+          <p className="faint" style={{ margin: 0 }}>
+            実績（納品・検収・売上）を入れる、検収書・計算書を作る、支払を起こす——
+            この流れは案件の画面にまとまっています。
+          </p>
           <div className="picker">
             {detail.matters.map((m) => (
               <div key={m.id} className="pick">
                 <span className="code">{m.matterNo ?? `#${m.id}`}</span>
                 <span>{m.title}</span>
                 <span className="faint">{matterKindLabel(m.kind)}／{m.status}</span>
-                <button className="btn btn-sm" style={{ marginLeft: "auto" }} disabled={busy}
+                {/* 実績・文書・支払は案件から辿る。開く道が無いと、ここで行き止まる。 */}
+                {onOpen && (
+                  <button className="btn btn-sm primary" style={{ marginLeft: "auto" }}
+                          title="案件を開く。この条件の実績・文書・支払が1画面にまとまっている"
+                          onClick={() => onOpen("matter", m.id)}>案件を開く</button>
+                )}
+                <button className="btn btn-sm" style={onOpen ? undefined : { marginLeft: "auto" }}
+                        disabled={busy}
                         onClick={() => void detach(m.id, m.matterNo ?? `#${m.id}`)}>外す</button>
               </div>
             ))}
           </div>
-        ) : (
+        </>) : (
           <p className="faint" style={{ margin: 0 }}>
             この条件はどの案件にも付いていません。案件に付けると、進み具合・期日・
             文書がひとつの画面にまとまります。

@@ -4,6 +4,7 @@ import { api, ApiError, money } from "./api.js";
 import { SearchSelect, searchParties, staffOptions } from "./SearchSelect.js";
 import { CreateForm, int, text } from "./CreateForm.js";
 import { DetailBack, isWideLayout } from "./DetailBack.js";
+import { MoneyChain } from "./MoneyChain.js";
 import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
 import { DOCUMENT_STYLE_HINT, DOCUMENT_STYLE_LABEL, MATTER_KIND_HINT,
          MATTER_KIND_LABEL as KIND_LABEL, StatusTag } from "./labels.js";
@@ -523,6 +524,9 @@ export function MattersWorkspace(
                       <button key={key} aria-selected={tab === key} onClick={() => setTab(key as Tab)}>{label}</button>
                     ))}
                   </div>
+
+                  {/* どのタブにいても出したままにする。案件に戻れば順番を思い出せるように。 */}
+                  <MoneyChain kind={detail.kind} tab={tab} onGo={(next) => setTab(next as Tab)} />
 
                   {tab === "conditions" && (
                     <div className="stack">

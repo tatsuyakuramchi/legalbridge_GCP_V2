@@ -63,8 +63,11 @@ export interface FlowStep {
   /**
    * この段階の作業をする場所。案件の中身のタブ名。
    * 工程を見て「次はこれ」と分かっても、どこで手を動かすかが分からなければ止まる。
+   * 納品・検収・受領の実績は「実績」タブに入れる（条件明細タブではない）。
    */
-  tab?: "conditions" | "documents" | "payments" | "communications";
+  tab?: "conditions" | "events" | "documents" | "payments" | "communications";
+  /** その段階で押す操作の呼び名。移った先で何をするかを一言で出す。 */
+  action?: string;
 }
 
 const doc = (facts: FlowFacts) =>
@@ -145,10 +148,12 @@ function licenseSteps(f: FlowFacts): FlowStep[] {
       ? { no: 3, name: "契約書の締結", tab: "documents", done: true,
           detail: `合意 ${f.agreementNo ?? ""} 締結済み`.trim() }
       : documentStep(f, 3, "契約書の締結"),
-    { no: 4, name: "実績の受領", tab: "conditions", done: received > 0,
+    { no: 4, name: "実績の受領", tab: "events", action: "実績を足す", done: received > 0,
       detail: received > 0
-        ? `実績 ${received} 件（直近 ${f.latestEventOn ?? "—"}）` : "実績の記録がない" },
-    { no: 5, name: "計算書と分配", tab: "payments", done: f.statements > 0 || f.payments.paid > 0,
+        ? `実績 ${received} 件（直近 ${f.latestEventOn ?? "—"}）`
+        : "実績の記録がない。売上・製造・再許諾の受領を実績タブに入れる" },
+    { no: 5, name: "計算書と分配", tab: "payments", action: "支払を起こす",
+      done: f.statements > 0 || f.payments.paid > 0,
       detail: f.statements > 0
         ? `計算書 ${f.statements} 件` : f.payments.paid > 0
           ? `支払済み ${f.payments.paid} 件` : "計算書も支払もない" }
@@ -166,18 +171,21 @@ function outsourcingSteps(f: FlowFacts): FlowStep[] {
         : "締結済みの合意に紐づいていない" },
     // 発注書も検収書も条件明細から出る。ここが無いと「文書を作る」で
     // 選ぶものが無く、どこで登録するのかが画面から読めない。
-    { no: 2, name: "条件明細の登録", tab: "conditions", done: f.activeConditionCount > 0,
+    { no: 2, name: "条件明細の登録", tab: "conditions", action: "条件を登録する",
+      done: f.activeConditionCount > 0,
       detail: f.activeConditionCount > 0
         ? `有効な条件 ${f.activeConditionCount} 件`
         : "委託の中身（金額・納期・支払条件）を条件明細に入れる。発注書はここから出る" },
     documentStep(f, 3, "発注"),
-    { no: 4, name: "納品・報告", tab: "conditions", done: delivered > 0,
+    { no: 4, name: "納品・報告", tab: "events", action: "実績を足す", done: delivered > 0,
       detail: delivered > 0
         ? `納品・製造の実績 ${delivered} 件（直近 ${f.latestEventOn ?? "—"}）`
-        : "納品の記録がない。条件明細の実績に入れる" },
-    { no: 5, name: "検収", tab: "conditions", done: inspected > 0,
-      detail: inspected > 0 ? `検収の実績 ${inspected} 件` : "検収の記録がない。条件明細の実績に入れる" },
-    { no: 6, name: "支払", tab: "payments",
+        : "納品の記録がない。実績タブで条件を選んで入れる" },
+    { no: 5, name: "検収", tab: "events", action: "検収の実績を足す", done: inspected > 0,
+      detail: inspected > 0
+        ? `検収の実績 ${inspected} 件`
+        : "検収の記録がない。実績タブで検収を入れ、そこから検収書を作る" },
+    { no: 6, name: "支払", tab: "payments", action: "支払を起こす",
       // 定額の条件が全部払い切れて初めて済。1件払っただけでは済にしない。
       done: f.fixedConditions && f.fixedConditions.total > 0
         ? f.fixedConditions.done >= f.fixedConditions.total
