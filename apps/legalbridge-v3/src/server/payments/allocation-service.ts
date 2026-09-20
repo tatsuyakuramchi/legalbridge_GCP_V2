@@ -100,16 +100,31 @@ export class PaymentAllocationService {
     try {
       const r = await this.database.query(
         `SELECT c.id, c.condition_no, c.name, c.direction, c.currency, c.flat_amount,
-                COALESCE(a.allocated, 0) AS already_allocated
+                COALESCE(c.series_id, c.id) AS series_id,
+                COALESCE(a.allocated, 0) AS already_allocated,
+                COALESCE(h.here, 0) AS allocated_here
            FROM payments y
            JOIN v_party_resolved pr ON pr.party_id = y.party_id
            JOIN conditions c ON c.status = 'active'
            JOIN v_party_resolved cp ON cp.party_id = c.counterparty_id
                                    AND cp.resolved_id = pr.resolved_id
+           -- 条件は版が変わると別の行になる。割当は旧版に付いたまま残る
+           -- ことがあるので、金額は版をまたいだ系列で数える。系列で見ないと
+           -- 画面は「割当なし」に見え、全体置き換えで保存した瞬間に
+           -- 旧版の割当が消える。
            LEFT JOIN LATERAL (
-             SELECT SUM(amount) AS allocated FROM payment_allocations
-              WHERE condition_id = c.id
+             SELECT SUM(al.amount) AS allocated
+               FROM payment_allocations al
+               JOIN conditions cx ON cx.id = al.condition_id
+              WHERE COALESCE(cx.series_id, cx.id) = COALESCE(c.series_id, c.id)
            ) a ON true
+           LEFT JOIN LATERAL (
+             SELECT SUM(al.amount) AS here
+               FROM payment_allocations al
+               JOIN conditions cx ON cx.id = al.condition_id
+              WHERE COALESCE(cx.series_id, cx.id) = COALESCE(c.series_id, c.id)
+                AND al.payment_id = y.id
+           ) h ON true
           WHERE y.id = $1 AND c.currency = y.currency
           ORDER BY c.condition_no NULLS LAST, c.id`, [paymentId]);
 
@@ -121,25 +136,27 @@ export class PaymentAllocationService {
       const ids = (r.rows as any[]).map((x) => Number(x.id));
       const events = ids.length
         ? await this.database.query(
-            `SELECT e.id, e.condition_id, e.occurred_on, e.amount, d.document_no,
+            `SELECT e.id, COALESCE(x.series_id, x.id) AS series_id,
+                    e.occurred_on, e.amount, d.document_no,
                     (a.payment_id IS NOT NULL) AS picked
                FROM condition_events e
+               JOIN conditions x ON x.id = e.condition_id
                LEFT JOIN documents d ON d.id = e.document_id
                LEFT JOIN payment_allocations a
                       ON a.event_id = e.id AND a.payment_id = $2
-              WHERE e.condition_id IN (
-                      SELECT x.id FROM conditions x
-                       WHERE COALESCE(x.series_id, x.id) IN (
-                             SELECT COALESCE(y2.series_id, y2.id) FROM conditions y2
-                              WHERE y2.id = ANY($1::bigint[])))
+              WHERE COALESCE(x.series_id, x.id) IN (
+                      SELECT COALESCE(y2.series_id, y2.id) FROM conditions y2
+                       WHERE y2.id = ANY($1::bigint[]))
                 AND e.status = 'active'
               ORDER BY e.occurred_on NULLS LAST, e.id`, [ids, paymentId])
         : { rows: [] as any[] };
 
-      const byCondition = new Map<number, any[]>();
+      // 束ねる鍵は条件の ID ではなく系列。条件 ID で束ねると、旧版に付いた
+      // ままの実績が改訂版の行に出てこず、付け替えようがなくなる。
+      const bySeries = new Map<number, any[]>();
       for (const e of events.rows as any[]) {
-        const key = Number(e.condition_id);
-        byCondition.set(key, [...(byCondition.get(key) ?? []), {
+        const key = Number(e.series_id);
+        bySeries.set(key, [...(bySeries.get(key) ?? []), {
           id: Number(e.id),
           // pg は date 列を Date で返す。String() で切ると「Fri Sep 25」になる。
           occurredOn: dateStr(e.occurred_on),
@@ -153,7 +170,10 @@ export class PaymentAllocationService {
         direction: String(x.direction), currency: String(x.currency),
         flatAmount: x.flat_amount === null ? null : Number(x.flat_amount),
         alreadyAllocated: Number(x.already_allocated ?? 0),
-        events: byCondition.get(Number(x.id)) ?? []
+        // この支払がいまこの系列に割り当てている額。画面はこれを初期値に
+        // する。条件番号の一致で探すと改訂版の行に入らない。
+        allocatedHere: Number(x.allocated_here ?? 0),
+        events: bySeries.get(Number(x.series_id)) ?? []
       }));
     } catch (error) { throw translate(error); }
   }
@@ -162,7 +182,8 @@ export class PaymentAllocationService {
     if (!lines.length) return;
     const ids = [...new Set(lines.map((l) => l.conditionId))];
     const r = await client.query(
-      `SELECT c.id, c.currency, c.status, pr.resolved_id AS party_resolved
+      `SELECT c.id, c.currency, c.status, pr.resolved_id AS party_resolved,
+              COALESCE(c.series_id, c.id) AS series_id
          FROM conditions c
          JOIN v_party_resolved pr ON pr.party_id = c.counterparty_id
         WHERE c.id = ANY($1::bigint[])`, [ids]);
@@ -186,6 +207,49 @@ export class PaymentAllocationService {
         // 相手先が違う支払を条件に付けると、条件ごとの消化額が別人の支払で埋まる。
         throw new DomainError("VALIDATION",
           `条件 ${id} の相手先が支払の相手先と違います`);
+      }
+    }
+
+    await this.assertEvents(client, lines, rows);
+  }
+
+  /**
+   * 「どの実績に対する支払か」の指し先を確かめる。
+   *
+   * ここが違う実績や無効な実績を指すと、二重払いの見張り（割当の実績で
+   * 効いている）がすり抜ける。指した先が別の条件の実績なら、その検収書は
+   * 支払が立っていないように見え、もう1件立てられてしまう。
+   */
+  private async assertEvents(
+    client: Queryable, lines: Allocation[],
+    conditions: Array<{ id: unknown; series_id: unknown }>
+  ) {
+    const eventIds = [...new Set(
+      lines.map((l) => l.eventId).filter((x): x is number => typeof x === "number"))];
+    if (!eventIds.length) return;
+
+    const r = await client.query(
+      `SELECT e.id, e.status, COALESCE(x.series_id, x.id) AS series_id
+         FROM condition_events e
+         JOIN conditions x ON x.id = e.condition_id
+        WHERE e.id = ANY($1::bigint[])`, [eventIds]);
+    const found = r.rows as any[];
+
+    // 条件は版をまたいで同じ系列。旧版の実績を改訂版の割当に付けるのは正しい。
+    const seriesOf = new Map<number, number>();
+    for (const c of conditions) seriesOf.set(Number(c.id), Number(c.series_id));
+
+    for (const l of lines) {
+      if (typeof l.eventId !== "number") continue;
+      const e = found.find((x) => Number(x.id) === l.eventId);
+      if (!e) throw new DomainError("NOT_FOUND", `実績 ${l.eventId} が見つかりません`);
+      if (String(e.status) !== "active") {
+        throw new DomainError("VALIDATION",
+          `実績 ${l.eventId} は無効です。有効な実績にだけ結べます`);
+      }
+      if (Number(e.series_id) !== seriesOf.get(l.conditionId)) {
+        throw new DomainError("VALIDATION",
+          `実績 ${l.eventId} は条件 ${l.conditionId} の実績ではありません`);
       }
     }
   }

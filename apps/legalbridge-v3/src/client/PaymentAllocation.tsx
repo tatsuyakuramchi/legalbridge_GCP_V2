@@ -23,6 +23,8 @@ interface Candidate {
   id: number; conditionNo: string | null; name: string;
   direction: string; currency: string;
   flatAmount: number | null; alreadyAllocated: number;
+  /** この支払がいまこの条件（版をまたいだ系列）に割り当てている額。 */
+  allocatedHere: number;
   /** その条件の実績。どれに対する支払かを選ぶ。 */
   events: EventOption[];
 }
@@ -50,10 +52,14 @@ export function PaymentAllocation(
       .then((r) => {
         setCandidates(r.candidates);
         // すでに割り当ててある分を初期値にする。開いただけで消えないように。
+        //
+        // 条件番号の一致で探してはいけない。条件が改訂されると割当は旧版
+        // （CL-…）に付いたまま、候補は改訂版（CL-…-R2）で出るので一致せず、
+        // 金額欄が空で開く。全体置き換えなので、そのまま保存すると割当が
+        // 消える。サーバが系列で数えた額をそのまま使う。
         const seeded: Record<number, string> = {};
         for (const c of r.candidates) {
-          const existing = payment.allocations.find((a) => a.conditionNo && a.conditionNo === c.conditionNo);
-          if (existing) seeded[c.id] = String(existing.amount);
+          if (c.allocatedHere) seeded[c.id] = String(c.allocatedHere);
         }
         // いま指している実績を初期値にする。触らずに保存しても外れないように。
         const kept: Record<number, number | null> = {};
