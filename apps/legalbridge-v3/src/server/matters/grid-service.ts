@@ -67,12 +67,13 @@ export class MatterGridService {
                 p.id AS party_id, p.name AS party_name,
                 ${SETTLEMENT_COLUMNS},
                 sch.total AS schedule_total, sch.done AS schedule_done,
-                ev.count AS event_count, ev.latest_on AS event_latest_on,
+                ev.count AS event_count, ev.latest_on AS event_latest_on, ev.latest_id AS event_latest_id,
                 po.id AS order_id, po.document_no AS order_no, po.status AS order_status,
                 po.sent_at AS order_sent_at,
                 rs.id AS result_id, rs.document_no AS result_no, rs.status AS result_status,
                 rs.sent_at AS result_sent_at,
-                pay.id AS payment_id, pay.payment_no, pay.status AS payment_status
+                pay.id AS payment_id, pay.payment_no, pay.status AS payment_status,
+                pay.due_on AS payment_due_on, pay.note AS payment_note
            FROM matter_links ml
            JOIN conditions c ON ml.target_type = 'condition' AND c.id::text = ml.target_ref
            LEFT JOIN parties p ON p.id = c.counterparty_id
@@ -87,7 +88,10 @@ export class MatterGridService {
            ) sch ON true
            -- 実績は系列ぜんぶから。改訂しても消えない。
            LEFT JOIN LATERAL (
-             SELECT count(*)::int AS count, max(e.occurred_on) AS latest_on
+             SELECT count(*)::int AS count, max(e.occurred_on) AS latest_on,
+                    (SELECT x.id FROM condition_events x
+                      WHERE x.condition_id IN ${SERIES} AND x.status = 'active'
+                      ORDER BY x.occurred_on DESC NULLS LAST, x.id DESC LIMIT 1) AS latest_id
                FROM condition_events e
               WHERE e.condition_id IN ${SERIES} AND e.status = 'active'
            ) ev ON true
@@ -95,7 +99,7 @@ export class MatterGridService {
            ${documentLateral("rs", RESULT_KEYS)}
            -- 支払。取り消したものは持っていないものとして扱う。
            LEFT JOIN LATERAL (
-             SELECT y.id, y.payment_no, y.status
+             SELECT y.id, y.payment_no, y.status, y.due_on, y.note
                FROM payment_allocations al
                JOIN payments y ON y.id = al.payment_id
               WHERE al.condition_id IN ${SERIES} AND y.status <> 'canceled'
@@ -121,10 +125,17 @@ export class MatterGridService {
         settlement: settlementOf(row),
         schedules: { total: Number(row.schedule_total ?? 0), done: Number(row.schedule_done ?? 0) },
         order: doc(row, "order"),
-        events: { count: Number(row.event_count ?? 0), latestOn: dateStr(row.event_latest_on) },
+        events: {
+          count: Number(row.event_count ?? 0), latestOn: dateStr(row.event_latest_on),
+          latestId: int(row.event_latest_id)
+        },
         settlementDoc: doc(row, "result"),
         payment: row.payment_id
-          ? { id: Number(row.payment_id), paymentNo: str(row.payment_no), status: String(row.payment_status) }
+          ? {
+              id: Number(row.payment_id), paymentNo: str(row.payment_no),
+              status: String(row.payment_status),
+              dueOn: dateStr(row.payment_due_on), note: str(row.payment_note)
+            }
           : null
       }));
     } catch (error) { throw translate(error); }

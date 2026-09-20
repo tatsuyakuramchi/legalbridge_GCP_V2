@@ -24,6 +24,7 @@ import { PartyMergeService } from "./parties/merge-service.js";
 import { MatterRepository } from "./matters/repository.js";
 import { MatterMergeService } from "./matters/merge-service.js";
 import { MatterGridService } from "./matters/grid-service.js";
+import { ConditionBundleService } from "./conditions/bundle-service.js";
 import { MatterGraphService } from "./matters/graph-service.js";
 import { WorkCreditService } from "./works/credits.js";
 import { settlesEvents } from "./documents/settlement-docs.js";
@@ -1437,6 +1438,44 @@ export function createRoutes(database: Transactable) {
       const { reason, ...patch } = eventAmendSchema.parse(req.body ?? {});
       res.json(await conditionEvents.amend(
         Number(req.params.id), Number(req.params.eventId), patch, reason, actor(res)));
+    }));
+
+  /**
+   * 工程表の「まとめて直す」（条件1本を段をまたいで直す）。
+   *
+   * 条件・予定・実績・支払を1回で送る。断られると分かっているもの（無効な
+   * 条件・支払が立っている実績の金額）は、何も書く前に止める。
+   * 実績と支払は A-041 と同じ扱いなので admin だけ。
+   */
+  const conditionBundleSchema = z.object({
+    reason: z.string().trim().min(1).max(500),
+    condition: economicsSchema.optional(),
+    schedules: z.array(scheduleLine).max(200).optional(),
+    event: z.object({ id: z.coerce.number().int() }).and(eventAmendSchema.omit({ reason: true })).optional(),
+    payment: z.object({
+      id: z.coerce.number().int(),
+      dueOn: z.string().date().nullable().optional(),
+      basisReceivedOn: z.string().date().nullable().optional(),
+      paidOn: z.string().date().nullable().optional(),
+      note: z.string().trim().max(2000).nullable().optional()
+    }).optional()
+  });
+  router.patch("/conditions/:id/bundle",
+    requireRole("admin"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { reason, schedules, ...rest } = conditionBundleSchema.parse(req.body ?? {});
+      const bundle = new ConditionBundleService(database, {
+        conditions: conditionWrites, schedules: conditionSchedules,
+        events: conditionEvents, payments
+      });
+      res.json(await bundle.apply(Number(req.params.id), {
+        ...rest,
+        schedules: schedules?.map((l) => ({
+          ...l, label: l.label ?? null, dueOn: l.dueOn ?? null, payOn: l.payOn ?? null,
+          contractForm: l.contractForm ?? null,
+          serviceFrom: l.serviceFrom ?? null, serviceTo: l.serviceTo ?? null
+        }))
+      }, reason, actor(res)));
     }));
 
   router.post("/conditions/:id/events/:eventId/void",

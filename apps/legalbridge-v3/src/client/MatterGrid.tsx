@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "./api.js";
 import { SettlementTag, StatusTag } from "./labels.js";
 import { conditionAmountLabel } from "./ConditionLabel.js";
+import { GridRowEdit } from "./GridRowEdit.js";
 import {
   GRID_FILTER_LABEL, applyFilter, filterCounts, groupByParty,
   type GridDocument, type GridFilter, type GridRow
@@ -47,7 +48,7 @@ function DocCell(
 
 function Row(
   { row, picked, onPick, onOpenCondition, onOpenDocument, onCompose, onRecordEvent,
-    onOpenPayments, indent }: {
+    onOpenPayments, onEdit, editing, indent }: {
     row: GridRow;
     picked: boolean;
     onPick: (on: boolean) => void;
@@ -58,6 +59,9 @@ function Row(
     onRecordEvent?: (conditionId: number) => void;
     /** 支払タブへ移る。支払はここでは起こさず、既存の口へ渡す。 */
     onOpenPayments?: () => void;
+    /** まとめて直す欄を開く・閉じる（管理者のときだけ渡す）。 */
+    onEdit?: () => void;
+    editing?: boolean;
     /** 取引先でまとめているとき、取引先の列を畳んで条件を下げる。 */
     indent?: boolean;
   }
@@ -133,6 +137,14 @@ function Row(
                       onClick={onOpenPayments}>起こす</button>
             : <span className="faint">—</span>}
       </td>
+      <td style={{ whiteSpace: "nowrap" }}>
+        {/* 段をまたいで直すのは A-041 と同じ扱いなので管理者だけ。 */}
+        {onEdit && (
+          <button className="btn btn-sm" aria-pressed={editing}
+                  title="この条件の 条件・予定・実績・支払 を1回でまとめて直す"
+                  onClick={onEdit}>{editing ? "閉じる" : "まとめて直す"}</button>
+        )}
+      </td>
     </tr>
   );
 }
@@ -159,13 +171,23 @@ export function MatterGrid(
   const [filter, setFilter] = useState<GridFilter>("all");
   const [grouped, setGrouped] = useState(false);
   const [picked, setPicked] = useState<Set<number>>(new Set());
+  /** まとめて直す欄を開いている条件。1行ずつ（複数行を同時に直すと事故が起きる）。 */
+  const [editing, setEditing] = useState<number | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [version, setVersion] = useState(0);
+
+  useEffect(() => {
+    api.get<{ user?: { role: string } }>("/me")
+      .then((r) => setIsAdmin(r.user?.role === "admin")).catch(() => setIsAdmin(false));
+  }, []);
 
   useEffect(() => {
     setError(null);
     api.get<{ rows: GridRow[] }>(`/matters/${matterId}/grid`)
       .then((r) => setAll(r.rows))
       .catch((e: ApiError) => { setError(e.message); setAll([]); });
-  }, [matterId, reloadKey]);
+  }, [matterId, reloadKey, version]);
 
   // 案件の取引先の絞り込みをそのまま効かせる。工程表だけ別の社が出ると混乱する。
   const mine = useMemo(
@@ -203,19 +225,37 @@ export function MatterGrid(
       <th className="stage-hd">実績<span className="stage-sub">納品・検収</span></th>
       <th className="stage-hd">検収書<span className="stage-sub">結果の文書</span></th>
       <th className="stage-hd">支払<span className="stage-sub">起こす・払う</span></th>
+      <th></th>
     </tr>
   );
-  const rowOf = (r: GridRow, indent?: boolean) => (
-    <Row key={r.conditionId} row={r} indent={indent}
-         picked={picked.has(r.conditionId)}
-         onPick={(on) => setPicked((prev) => {
-           const next = new Set(prev);
-           if (on) next.add(r.conditionId); else next.delete(r.conditionId);
-           return next;
-         })}
-         onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument}
-         onCompose={onCompose} onRecordEvent={onRecordEvent} onOpenPayments={onOpenPayments} />
-  );
+  const rowOf = (r: GridRow, indent?: boolean) => {
+    const open = editing === r.conditionId;
+    return [
+      <Row key={r.conditionId} row={r} indent={indent}
+           picked={picked.has(r.conditionId)}
+           onPick={(on) => setPicked((prev) => {
+             const next = new Set(prev);
+             if (on) next.add(r.conditionId); else next.delete(r.conditionId);
+             return next;
+           })}
+           onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument}
+           onCompose={onCompose} onRecordEvent={onRecordEvent} onOpenPayments={onOpenPayments}
+           editing={open}
+           onEdit={isAdmin ? () => { setNotice(null); setEditing(open ? null : r.conditionId); } : undefined} />,
+      open ? (
+        <tr key={`e${r.conditionId}`} className="grid-edit">
+          <td></td>
+          <GridRowEdit row={r} onOpenDocument={onOpenDocument}
+            onCancel={() => setEditing(null)}
+            onDone={(message) => {
+              setEditing(null); setNotice(message);
+              // 直した値をそのまま出す（読み直さないと古い数字が残る）。
+              setVersion((x) => x + 1);
+            }} />
+        </tr>
+      ) : null
+    ];
+  };
 
   return (
     <div className="stack" style={{ gap: 10 }}>
@@ -255,6 +295,8 @@ export function MatterGrid(
         </div>
       )}
 
+      {notice && <div className="note ok">{notice}</div>}
+
       <div className="tablewrap grid-wrap">
         <table>
           <thead>{head}</thead>
@@ -262,7 +304,7 @@ export function MatterGrid(
             {grouped
               ? groups.map((g) => [
                   <tr key={`g${g.id ?? "none"}`} className="grid-grp">
-                    <td colSpan={7}>
+                    <td colSpan={8}>
                       <b>{g.name}</b>
                       <span className="faint">　条件 {g.tally.conditions} 本</span>
                       <span className="faint">
@@ -274,7 +316,7 @@ export function MatterGrid(
                 ])
               : rows.map((r) => rowOf(r))}
             {!rows.length && (
-              <tr><td colSpan={grouped ? 7 : 8} className="faint">
+              <tr><td colSpan={grouped ? 8 : 9} className="faint">
                 {GRID_FILTER_LABEL[filter]} に当てはまる条件はありません。
               </td></tr>
             )}

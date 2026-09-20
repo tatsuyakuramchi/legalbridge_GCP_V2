@@ -41,9 +41,14 @@ export interface GridRow {
   settlement: ConditionSettlement;
   schedules: { total: number; done: number };
   order: GridDocument | null;
-  events: { count: number; latestOn: string | null };
+  /** latestId は「まとめて直す」の下敷き。直すのは直近の1件だけ。 */
+  events: { count: number; latestOn: string | null; latestId: number | null };
   settlementDoc: GridDocument | null;
-  payment: { id: number; paymentNo: string | null; status: string } | null;
+  payment: {
+    id: number; paymentNo: string | null; status: string;
+    /** まとめて直す欄の初期値。 */
+    dueOn: string | null; note: string | null;
+  } | null;
 }
 
 /**
