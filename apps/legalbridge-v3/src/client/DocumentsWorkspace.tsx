@@ -335,6 +335,27 @@ export function DocumentsWorkspace(
 
   const current = selected === null ? null : byId.get(selected) ?? null;
 
+  /**
+   * 選んだ文書だけ、詳細を引き直して一覧の行に混ぜる。
+   *
+   * 一覧の行は詳細だけの欄（立っている支払など）を持たない。持たないまま
+   * 画面に渡すと「支払は立っていない」と読めてしまい、すでに立っている
+   * 支払があってもボタンが出て、押してから断られる。
+   *
+   * 詳細は一覧の上位互換なので、そのまま上書きしてよい。
+   */
+  useEffect(() => {
+    if (selected === null) return;
+    let alive = true;
+    api.get<DocumentRow>(`/documents/${selected}`)
+      .then((one) => {
+        if (!alive || !one) return;
+        setDocuments((prev) => prev.map((d) => (d.id === one.id ? { ...d, ...one } : d)));
+      })
+      .catch(() => { /* 一覧の行のままでも読むぶんには困らない */ });
+    return () => { alive = false; };
+  }, [selected]);
+
   /** サーバへ渡す手入力。文字の欄と、直した明細の行を合わせたもの。 */
   const inputs = useMemo(() => ({ ...manual, ...lines }), [manual, lines]);
 
