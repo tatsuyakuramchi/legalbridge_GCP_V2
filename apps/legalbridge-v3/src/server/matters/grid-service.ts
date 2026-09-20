@@ -32,6 +32,14 @@ const RESULT_KEYS = "('inspection_certificate', 'royalty_statement')";
 const documentLateral = (alias: string, keys: string) => `
   LEFT JOIN LATERAL (
     SELECT d.id, d.document_no, d.status,
+           -- 決定したときに焼き付いた税抜額。どのひな形も AMOUNT_EX_TAX を持つ。
+           -- 「120,000」のような整形済みの文字なので、数字だけ取り出す。
+           NULLIF(regexp_replace(
+             COALESCE(d.rendered_values ->> 'AMOUNT_EX_TAX', ''), '[^0-9]', '', 'g'), '')::bigint
+             AS amount_ex_tax,
+           (SELECT count(DISTINCT COALESCE(x.series_id, x.id))::int
+              FROM document_conditions dx JOIN conditions x ON x.id = dx.condition_id
+             WHERE dx.document_id = d.id) AS condition_count,
            (SELECT max(a.occurred_at) FROM audit_events a
              WHERE a.target_type = 'document' AND a.target_id = d.id
                AND a.action IN ('gmail.send', 'cloudsign.send')) AS sent_at
@@ -52,7 +60,9 @@ const doc = (row: Record<string, any>, prefix: string): GridDocument | null => {
   return {
     id,
     documentNo: str(row[`${prefix}_no`]),
-    phase: phaseOf(String(row[`${prefix}_status`]), row[`${prefix}_sent_at`])
+    phase: phaseOf(String(row[`${prefix}_status`]), row[`${prefix}_sent_at`]),
+    amountExTax: int(row[`${prefix}_amount_ex_tax`]),
+    conditionCount: Number(row[`${prefix}_condition_count`] ?? 1)
   };
 };
 
@@ -70,8 +80,12 @@ export class MatterGridService {
                 ev.count AS event_count, ev.latest_on AS event_latest_on, ev.latest_id AS event_latest_id,
                 po.id AS order_id, po.document_no AS order_no, po.status AS order_status,
                 po.sent_at AS order_sent_at,
+                po.amount_ex_tax AS order_amount_ex_tax,
+                po.condition_count AS order_condition_count,
                 rs.id AS result_id, rs.document_no AS result_no, rs.status AS result_status,
                 rs.sent_at AS result_sent_at,
+                rs.amount_ex_tax AS result_amount_ex_tax,
+                rs.condition_count AS result_condition_count,
                 pay.id AS payment_id, pay.payment_no, pay.status AS payment_status,
                 pay.due_on AS payment_due_on, pay.note AS payment_note
            FROM matter_links ml

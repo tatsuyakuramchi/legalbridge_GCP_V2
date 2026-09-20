@@ -183,6 +183,21 @@ tr.grid-edit td{background:var(--sunken);padding:12px 14px}
 .editsec .field{grid-template-columns:78px minmax(0,1fr);margin-bottom:6px}
 /* 直せない欄は隠さず、理由ごと出す。押せないだけだと理由が分からない。 */
 .locked{font-size:11px;color:var(--faint);line-height:1.6}
+/* 金額の食い違い。条件を直すと、決定済みの文書は出した額のまま取り残される。 */
+.drift{margin-bottom:12px;padding:8px 11px;border:1px solid var(--out);
+  border-radius:7px;background:var(--out-soft);font-size:11.5px}
+.drift table,.drift tbody,.drift tr{margin-top:0;width:auto;background:none;border:0}
+.drift table{margin-top:6px}
+.drift td{padding:2px 14px 2px 0;border:0;background:none;white-space:nowrap}
+.drift td.right{text-align:right;font-variant-numeric:tabular-nums}
+.drift tr.now td{border-bottom:1px solid var(--line-strong)}
+.drift tr.out td{color:var(--out)}
+.drift td.diff{font-weight:700}
+/* 訂正版を作る印。決定済みの文書はこれ以外に直す道がない。 */
+.revise{display:flex;align-items:flex-start;gap:7px;margin-top:8px;
+  padding:7px 9px;border:1px dashed var(--line-strong);border-radius:6px;
+  font-size:11.5px;cursor:pointer}
+.revise input{flex:0 0 auto;margin:2px 0 0}
 .stagefilter{display:flex;align-items:center;flex-wrap:wrap;gap:6px;font-size:11.5px}
 /* 選んだ行に効く操作。選んでいる間だけ出すので、目立たせてよい。 */
 .bulkbar{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;

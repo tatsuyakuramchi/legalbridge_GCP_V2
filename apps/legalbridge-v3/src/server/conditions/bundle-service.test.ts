@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { FakeDatabase } from "../core/fake-db.js";
-import { ConditionBundleService, SECTION_LABEL } from "./bundle-service.js";
+import { ConditionBundleService, SECTION_LABEL, hasManualAmounts } from "./bundle-service.js";
 import type { BundlePatch } from "./bundle-service.js";
 
 /**
@@ -34,6 +34,12 @@ const parts = (over: Record<string, unknown> = {}) => {
         return { paymentId: 4, changed: Object.keys(a[1] as object), due: null };
       }
     },
+    documents: {
+      reissue: async (...a: unknown[]) => {
+        calls.push(`reissue:${a[0]}:${JSON.stringify(a[3] ?? null)}`);
+        return { id: 900 + Number(a[0]), supersedesId: Number(a[0]) };
+      }
+    },
     ...over
   } as never;
 };
@@ -44,6 +50,13 @@ const db = (over: Record<string, Array<Record<string, unknown>>> = {}) =>
     if (t.includes("FROM conditions WHERE id")) return [{ status: "active" }];
     if (t.includes("FROM condition_events e WHERE e.id")) return [{ status: "active", blocking_no: null }];
     if (t.includes("FROM payments WHERE id")) return [{ status: "planned" }];
+    // 訂正版の下見と、下書きを作る前の下調べは、どちらも documents を引く。
+    // 細かいほう（条件の紐づけまで見るほう）を先に判じる。
+    if (t.includes("FROM document_conditions dc WHERE dc.document_id")) {
+      return [{ document_no: "ARC-PO-1", manual_inputs: {}, condition_ids: [3] }];
+    }
+    if (t.includes("FROM documents d WHERE d.id")) return [{ status: "issued", document_no: "ARC-PO-1", open_draft: null }];
+    if (t.includes("FROM conditions x, conditions c")) return [{ id: 3 }];
     return [];
   });
 
@@ -136,4 +149,57 @@ test("段の名前が全部ある（画面の見出しに使う）", () => {
   for (const key of ["condition", "schedules", "event", "payment"] as const) {
     assert.ok(SECTION_LABEL[key], `${key} の名前が無い`);
   }
+});
+
+test("訂正版は、条件を直したあとに作る", async () => {
+  const p = parts();
+  const r = await new ConditionBundleService(db(), p).apply(
+    3, { condition: { flatAmount: 95000 }, reissue: [41] }, "発注額の訂正", "admin");
+  assert.deepEqual(r.applied.map((a) => a.section), ["condition", "reissue"]);
+  assert.deepEqual(r.reissued, [{
+    documentId: 41, documentNo: "ARC-PO-1", draftId: 941, keepsManualAmounts: false
+  }]);
+  // 条件 → 訂正版 の順。先に作ると古い金額の下書きになる。
+  assert.deepEqual(calls.map((c) => c.split(":")[0]), ["condition", "reissue"]);
+});
+
+test("条件が改訂になったら、訂正版は新しい版を指す", async () => {
+  // 引き継いだままだと旧版（古い金額）を指すので、直した意味がなくなる。
+  const p = parts({
+    conditions: { updateEconomics: async () => ({ changed: [], resolvesThrough: [], revisedTo: 822 }) }
+  });
+  await new ConditionBundleService(db(), p).apply(
+    3, { condition: { flatAmount: 95000 }, reissue: [41] }, "訂正", "admin");
+  assert.ok(calls.includes("reissue:41:[822]"), calls.join(" / "));
+});
+
+test("改訂が無ければ、条件の紐づけはそのまま引き継ぐ", async () => {
+  const p = parts();
+  await new ConditionBundleService(db(), p).apply(3, { reissue: [41] }, "訂正", "admin");
+  assert.ok(calls.includes("reissue:41:null"), calls.join(" / "));
+});
+
+test("決定済みでない文書・すでに訂正版がある文書は、何も書く前に止める", async () => {
+  for (const [rows, message] of [
+    [[{ status: "draft", document_no: "ARC-PO-1", open_draft: null }], /決定済みではない/],
+    [[{ status: "issued", document_no: "ARC-PO-1", open_draft: 77 }], /もう訂正版の下書きがあります/]
+  ] as const) {
+    const p = parts();
+    await assert.rejects(
+      () => new ConditionBundleService(
+        db({ "FROM documents d WHERE d.id": rows as never }), p)
+        .apply(3, { condition: { flatAmount: 95000 }, reissue: [41] }, "訂正", "admin"),
+      message);
+    assert.deepEqual(calls, [], "止まったのに書いている");
+  }
+});
+
+test("手入力の明細に金額があるかを見分ける（訂正版に引き継がれる）", () => {
+  assert.equal(hasManualAmounts({}), false);
+  assert.equal(hasManualAmounts({ items: [] }), false);
+  assert.equal(hasManualAmounts({ items: [{ item_name: "挿絵", amount_ex_tax: "" }] }), false);
+  assert.equal(hasManualAmounts({ items: [{ item_name: "挿絵", amount_ex_tax: 120000 }] }), true);
+  assert.equal(hasManualAmounts({ delivery_line_items: [{ 金額: "95,000" }] }), true);
+  // 金額の入っていない手入力（業務内容だけ）は引き継いでも困らない。
+  assert.equal(hasManualAmounts({ items: [{ spec: "A4 カラー" }] }), false);
 });

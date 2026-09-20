@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "./api.js";
 import { StatusTag } from "./labels.js";
-import { SECTION_LABEL, type BundleSection } from "../server/conditions/bundle-service.js";
+import { SECTION_LABEL, type BundleSection, type ReissuedDraft }
+  from "../server/conditions/bundle-service.js";
+import { DRIFT_LABEL, driftOf } from "../server/matters/drift.js";
 import type { GridRow } from "../server/matters/grid.js";
 
 /**
@@ -30,6 +32,7 @@ interface ConditionHead {
 }
 
 const text = (v: unknown) => (v === null || v === undefined ? "" : String(v));
+const yen = (n: number) => `¥${n.toLocaleString("ja-JP")}`;
 /** 空欄は「変えない」ではなく「空にする」。日付と備考はそれでよい。 */
 const orNull = (v: string) => (v.trim() === "" ? null : v.trim());
 
@@ -46,6 +49,8 @@ export function GridRowEdit(
   const [event, setEvent] = useState<EventLine | null>(null);
   const [v, setV] = useState<Record<string, string>>({});
   const [reason, setReason] = useState("");
+  /** 訂正版を作る決定済みの文書。下書きを作るところまでで、決定も送信もしない。 */
+  const [reissue, setReissue] = useState<Set<number>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -80,6 +85,39 @@ export function GridRowEdit(
 
   // 金額に関わる欄は、支払が立っていると直せない（サーバが断る）。
   const moneyLocked = Boolean(row.payment);
+
+  /** 条件と、焼き付いた文書・実績・支払の金額のずれ。 */
+  const drift = driftOf(row);
+  const toggleReissue = (id: number, on: boolean) => setReissue((prev) => {
+    const next = new Set(prev);
+    if (on) next.add(id); else next.delete(id);
+    return next;
+  });
+
+  /**
+   * いまの条件の金額に、直せる段を全部そろえる。
+   *
+   * 直すのは実績と予定（条件はそれ自体が基準）。決定済みの文書は書き換えられ
+   * ないので、訂正版を作るほうに印を付ける。押しただけでは保存しない。
+   */
+  function alignAll() {
+    if (!drift) return;
+    const amount = String(drift.conditionAmount);
+    const next = { ...v };
+    if (event && !moneyLocked) next.eventAmount = amount;
+    // 回が1つだけなら、その回＝条件の総額。分納は回ごとの配分が要るので触らない。
+    if (lines?.length === 1) next[`sch${lines[0].id}`] = amount;
+    setV(next);
+    const docs = drift.flagged
+      .filter((e) => e.part === "order" || e.part === "settlementDoc")
+      .map((e) => (e.part === "order" ? row.order?.id : row.settlementDoc?.id))
+      .filter((id): id is number => Boolean(id));
+    setReissue(new Set([...reissue, ...docs]));
+  }
+
+  /** 決定済みの文書に「訂正版を作る」を出す。下書きは直接直せるので出さない。 */
+  const reissuable = (doc: GridRow["order"]) =>
+    Boolean(doc && doc.phase !== "draft");
 
   async function save() {
     setBusy(true); setError(null);
@@ -121,12 +159,15 @@ export function GridRowEdit(
         if (Object.keys(p).length > 1) body.payment = p;
       }
 
+      if (reissue.size) body.reissue = [...reissue];
+
       if (Object.keys(body).length <= 1) { setError("直した欄がありません"); setBusy(false); return; }
 
       const r = await api.patch<{
         applied: Array<{ section: BundleSection; changed: string[] }>;
         stoppedAt: { section: BundleSection; message: string } | null;
         revisedTo: number | null;
+        reissued: ReissuedDraft[];
       }>(`/conditions/${row.conditionId}/bundle`, body);
 
       const done = r.applied.map((a) => SECTION_LABEL[a.section]).join("・");
@@ -137,9 +178,21 @@ export function GridRowEdit(
         setBusy(false);
         return;
       }
+      // 訂正版は下書きなので、作っただけでは相手に何も出ていない。
+      // 「作った」で終わらせず、次に何をするかまで言う。
+      const drafts = (r.reissued ?? []);
+      const manual = drafts.filter((d) => d.keepsManualAmounts);
       onDone(`${row.conditionNo ?? `#${row.conditionId}`} を直しました（${done}）`
         // 版が増えたことを黙らない。工程表の行も新しい版に入れ替わる。
-        + (r.revisedTo ? "。実績があるので条件は改訂になり、新しい版に切り替わりました" : ""));
+        + (r.revisedTo ? "。実績があるので条件は改訂になり、新しい版に切り替わりました" : "")
+        + (drafts.length
+            ? `。${drafts.map((d) => `${d.documentNo ?? `#${d.documentId}`}（下書き #${d.draftId}）`).join("・")}`
+              + " の訂正版を作りました。文書の画面で中身を確かめてから決定してください"
+            : "")
+        + (manual.length
+            ? `。${manual.map((d) => d.documentNo ?? `#${d.documentId}`).join("・")} は`
+              + "手入力の明細に金額が入っています。そのままだと古い金額で出るので、明細を直してください"
+            : ""));
     } catch (e) { setError((e as ApiError).message); }
     finally { setBusy(false); }
   }
@@ -151,6 +204,52 @@ export function GridRowEdit(
         <span className="faint">直した欄だけを送ります。1回の保存で段ぶんが揃います</span>
       </div>
       {error && <div className="alert">{error}</div>}
+
+      {drift && drift.flagged.length > 0 && (
+        <div className="drift">
+          <div className="row">
+            <b>金額が食い違っています</b>
+            <span className="faint">
+              条件を直しても、決定済みの文書は出したときの金額のまま残ります
+            </span>
+          </div>
+          <table>
+            <tbody>
+              <tr className="now">
+                <td>いまの条件</td>
+                <td className="right"><b>{yen(drift.conditionAmount)}</b></td>
+                <td className="faint">発注書はこれと比べます</td>
+              </tr>
+              {drift.deliveredAmount !== null && (
+                <tr className="now">
+                  <td>実績の合計</td>
+                  <td className="right"><b>{yen(drift.deliveredAmount)}</b></td>
+                  <td className="faint">検収書と支払はこれと比べます</td>
+                </tr>
+              )}
+              {drift.entries.map((e) => (
+                <tr key={`${e.part}${e.ref ?? ""}`} className={e.flagged ? "out" : undefined}>
+                  <td>{DRIFT_LABEL[e.part]}{e.ref ? <span className="faint code">　{e.ref}</span> : null}</td>
+                  <td className="right">{yen(e.amount)}</td>
+                  <td className={e.flagged ? "diff" : "faint"}>
+                    {e.note ?? (e.diff === 0 ? `${e.basisLabel}と一致`
+                      : `${e.basisLabel}より ${e.diff > 0 ? "＋" : "−"}${yen(Math.abs(e.diff))}`)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="row" style={{ marginTop: 6 }}>
+            <button className="btn btn-sm" onClick={alignAll}>
+              いまの条件の金額（{yen(drift.conditionAmount)}）に全部そろえる
+            </button>
+            <span className="faint">
+              欄に入れるだけです。保存は下のボタンで、文書は訂正版の下書きになります
+            </span>
+          </div>
+        </div>
+      )}
+
       {!lines ? <div className="faint">読み込んでいます…</div> : (
         <>
           <div className="editgrid">
@@ -203,10 +302,22 @@ export function GridRowEdit(
                     <StatusTag kind="document" value={row.order.phase} />です。
                     {row.order.phase !== "draft" && <>中身は直せません。直すなら訂正版を作ります。</>}
                   </div>
-                  {onOpenDocument && (
-                    <div className="row" style={{ marginTop: 6 }}>
+                  <div className="row" style={{ marginTop: 6 }}>
+                    {onOpenDocument && (
                       <button className="btn btn-sm" onClick={() => onOpenDocument(row.order!.id)}>開く</button>
-                    </div>
+                    )}
+                  </div>
+                  {reissuable(row.order) && (
+                    <label className="revise">
+                      <input type="checkbox" checked={reissue.has(row.order.id)}
+                             onChange={(e) => toggleReissue(row.order!.id, e.target.checked)} />
+                      <span>
+                        {row.order.documentNo ?? `#${row.order.id}`} の<b>訂正版</b>を作る
+                        <div className="faint">
+                          下書きで作ります。決定も送信もここではしません
+                        </div>
+                      </span>
+                    </label>
                   )}
                 </>
               ) : <div className="locked">まだありません。</div>}
@@ -242,11 +353,23 @@ export function GridRowEdit(
                     {row.settlementDoc.documentNo ?? `#${row.settlementDoc.id}`} は
                     <StatusTag kind="document" value={row.settlementDoc.phase} />です。
                   </div>
-                  {onOpenDocument && (
-                    <div className="row" style={{ marginTop: 6 }}>
+                  <div className="row" style={{ marginTop: 6 }}>
+                    {onOpenDocument && (
                       <button className="btn btn-sm"
                               onClick={() => onOpenDocument(row.settlementDoc!.id)}>開く</button>
-                    </div>
+                    )}
+                  </div>
+                  {reissuable(row.settlementDoc) && (
+                    <label className="revise">
+                      <input type="checkbox" checked={reissue.has(row.settlementDoc.id)}
+                             onChange={(e) => toggleReissue(row.settlementDoc!.id, e.target.checked)} />
+                      <span>
+                        {row.settlementDoc.documentNo ?? `#${row.settlementDoc.id}`} の<b>訂正版</b>を作る
+                        <div className="faint">
+                          下書きで作ります。決定も送信もここではしません
+                        </div>
+                      </span>
+                    </label>
                   )}
                 </>
               ) : <div className="locked">まだありません。実績から作ります。</div>}
@@ -275,7 +398,7 @@ export function GridRowEdit(
           </label>
           <div className="row" style={{ marginTop: 8 }}>
             <button className="btn primary" disabled={busy || !reason.trim()} onClick={() => void save()}>
-              この行をまとめて保存する
+              この行をまとめて保存する{reissue.size ? `（訂正版 ${reissue.size} 枚も作る）` : ""}
             </button>
             <button className="btn" disabled={busy} onClick={onCancel}>やめる</button>
             <span className="faint">前後の値と理由は監査に残ります</span>

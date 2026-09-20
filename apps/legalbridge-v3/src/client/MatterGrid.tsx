@@ -7,6 +7,7 @@ import {
   GRID_FILTER_LABEL, applyFilter, filterCounts, groupByParty,
   type GridDocument, type GridFilter, type GridRow
 } from "../server/matters/grid.js";
+import { driftOf, type Drift, type DriftPart } from "../server/matters/drift.js";
 
 /**
  * 工程表。条件1本を1行に、予定・発注書・実績・検収書・支払を横に並べる。
@@ -18,7 +19,28 @@ import {
  * ここは読む画面。押すとその段の画面へ移る（作る・開くは既存の口を使う）。
  */
 
-const FILTERS: GridFilter[] = ["all", "order", "event", "settlementDoc", "payment", "settled"];
+const FILTERS: GridFilter[] =
+  ["all", "order", "event", "settlementDoc", "payment", "settled", "drift"];
+
+const yen = (n: number) => `¥${n.toLocaleString("ja-JP")}`;
+
+/**
+ * その段の金額が、いまの条件とずれている印。
+ *
+ * 決定済みの文書は出したときの金額を焼き付けて持つので、条件を直しても
+ * ついてこない。セルの中に出さないと、行を開くまで気づけない。
+ */
+function DriftTag({ drift, part }: { drift: Drift | null; part: DriftPart }) {
+  const hit = drift?.flagged.find((e) => e.part === part);
+  if (!hit) return null;
+  return (
+    <div style={{ marginTop: 3 }}>
+      <span className="tag out" title={`いまの条件は ${yen(drift!.conditionAmount)}`}>
+        {yen(hit.amount)}
+      </span>
+    </div>
+  );
+}
 
 /** 文書のセル。あれば番号と段階、無ければ作る口。 */
 function DocCell(
@@ -67,6 +89,7 @@ function Row(
   }
 ) {
   const money = conditionAmountLabel(row);
+  const drift = driftOf(row);
   return (
     <tr className={picked ? "sel" : undefined}>
       <td><input type="checkbox" checked={picked} onChange={(e) => onPick(e.target.checked)}
@@ -88,6 +111,12 @@ function Row(
         <div style={{ marginTop: 3 }}>
           <StatusTag kind="condition" value={row.status} />
           {" "}<SettlementTag settlement={row.settlement} compact />
+          {drift && drift.flagged.length > 0 && (
+            <>{" "}<span className="tag out"
+                         title="発注書・検収書・実績・支払のどれかが、いまの条件と違う金額です。「まとめて直す」で揃えられます">
+              金額が食い違い
+            </span></>
+          )}
         </div>
       </td>
       <td>
@@ -101,6 +130,7 @@ function Row(
       <td>
         <DocCell doc={row.order} make="作る" onOpen={onOpenDocument}
                  onMake={onCompose && (() => onCompose([row.conditionId], [], undefined, "purchase_order"))} />
+        <DriftTag drift={drift} part="order" />
       </td>
       <td>
         {row.events.count
@@ -113,6 +143,7 @@ function Row(
                   : `${row.events.count} 件`}
               </div>
               <div className="faint">直近 {row.events.latestOn ?? "—"}</div>
+              <DriftTag drift={drift} part="event" />
             </>
           : onRecordEvent
             ? <button className="btn btn-sm" onClick={() => onRecordEvent(row.conditionId)}>記録する</button>
@@ -124,12 +155,14 @@ function Row(
         <DocCell doc={row.settlementDoc} make="実績から作る" onOpen={onOpenDocument}
                  onMake={row.events.count && onRecordEvent
                    ? () => onRecordEvent(row.conditionId) : undefined} />
+        <DriftTag drift={drift} part="settlementDoc" />
       </td>
       <td>
         {row.payment
           ? <>
               <div className="code">{row.payment.paymentNo ?? `#${row.payment.id}`}</div>
               <div style={{ marginTop: 3 }}><StatusTag kind="payment" value={row.payment.status} /></div>
+              <DriftTag drift={drift} part="payment" />
             </>
           : onOpenPayments
             ? <button className="btn btn-sm"

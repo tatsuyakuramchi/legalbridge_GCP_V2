@@ -1458,7 +1458,9 @@ export function createRoutes(database: Transactable) {
       basisReceivedOn: z.string().date().nullable().optional(),
       paidOn: z.string().date().nullable().optional(),
       note: z.string().trim().max(2000).nullable().optional()
-    }).optional()
+    }).optional(),
+    // 訂正版を作る決定済みの文書。作るのは下書きまで（決定も送信もしない）。
+    reissue: z.array(z.coerce.number().int()).max(10).optional()
   });
   router.patch("/conditions/:id/bundle",
     requireRole("admin"), requireWritable,
@@ -1466,7 +1468,7 @@ export function createRoutes(database: Transactable) {
       const { reason, schedules, ...rest } = conditionBundleSchema.parse(req.body ?? {});
       const bundle = new ConditionBundleService(database, {
         conditions: conditionWrites, schedules: conditionSchedules,
-        events: conditionEvents, payments
+        events: conditionEvents, payments, documents: issues
       });
       res.json(await bundle.apply(Number(req.params.id), {
         ...rest,

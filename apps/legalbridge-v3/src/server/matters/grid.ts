@@ -1,4 +1,5 @@
 import type { ConditionSettlement } from "../conditions/settlement.js";
+import { hasDrift } from "./drift.js";
 
 /**
  * 工程表の1行（条件1本）。
@@ -19,6 +20,13 @@ export interface GridDocument {
   documentNo: string | null;
   /** 画面に出す段階（下書き／決定済み／送信済み／訂正版あり）。 */
   phase: string;
+  /**
+   * 決定したときに焼き付いた税抜額。下書きは持たない（決定時に条件から引く）。
+   * 条件の金額とのずれを見るのはこの値（drift.ts）。
+   */
+  amountExTax: number | null;
+  /** その文書に載っている条件の本数。2本以上は1本ぶんと比べられない。 */
+  conditionCount: number;
 }
 
 export interface GridRow {
@@ -68,7 +76,8 @@ export function isPending(row: GridRow, stage: Stage): boolean {
   }
 }
 
-export type GridFilter = "all" | "order" | "event" | "settlementDoc" | "payment" | "settled";
+export type GridFilter =
+  | "all" | "order" | "event" | "settlementDoc" | "payment" | "settled" | "drift";
 
 export const GRID_FILTER_LABEL: Record<GridFilter, string> = {
   all: "すべて",
@@ -76,13 +85,17 @@ export const GRID_FILTER_LABEL: Record<GridFilter, string> = {
   event: "実績がまだ",
   settlementDoc: "検収書がまだ",
   payment: "支払がまだ",
-  settled: "払い切り"
+  settled: "払い切り",
+  drift: "金額が食い違い"
 };
 
 /** 段で絞る。払い切り（完了扱いを含む）だけは「済んだもの」を集める。 */
 export function applyFilter(rows: GridRow[], filter: GridFilter): GridRow[] {
   if (filter === "all") return rows;
   if (filter === "settled") return rows.filter((r) => r.settlement.done);
+  // 食い違いは段の進み具合と別の軸。払い切った条件でも、焼き付いた額と
+  // 今の条件が違えば出す（むしろ払ったあとに気づくほうが困る）。
+  if (filter === "drift") return rows.filter(hasDrift);
   // 払い切った条件は、どの段が空でも「まだ」には数えない（もう作らない）。
   return rows.filter((r) => !r.settlement.done && isPending(r, filter));
 }
@@ -95,7 +108,8 @@ export function filterCounts(rows: GridRow[]): Record<GridFilter, number> {
     event: applyFilter(rows, "event").length,
     settlementDoc: applyFilter(rows, "settlementDoc").length,
     payment: applyFilter(rows, "payment").length,
-    settled: applyFilter(rows, "settled").length
+    settled: applyFilter(rows, "settled").length,
+    drift: applyFilter(rows, "drift").length
   };
 }
 

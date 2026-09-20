@@ -4,6 +4,7 @@ import type { ConditionWriteService } from "./write-service.js";
 import type { ConditionScheduleService, ScheduleLine } from "./schedule-service.js";
 import type { ConditionEventService } from "./event-service.js";
 import type { PaymentService } from "../payments/service.js";
+import type { DocumentIssueService } from "../documents/issue-service.js";
 
 /**
  * 条件1本を、段をまたいでまとめて直す（工程表の「まとめて直す」）。
@@ -34,13 +35,36 @@ export interface BundlePatch {
   event?: { id: number } & Record<string, unknown>;
   /** 支払1件。 */
   payment?: { id: number } & Record<string, unknown>;
+  /**
+   * 訂正版を作る決定済みの文書（発注書・検収書）。
+   *
+   * 決定した文書は書き換えない（出した紙の記録なので）。直す道は訂正版だけで、
+   * ここで作るのは**下書き**。決定も送信もしない。条件を直したあとに作るので、
+   * 新しい金額で出せる状態の下書きになる。
+   */
+  reissue?: number[];
 }
 
-export type BundleSection = "condition" | "schedules" | "event" | "payment";
+export type BundleSection = "condition" | "schedules" | "event" | "payment" | "reissue";
 
 export const SECTION_LABEL: Record<BundleSection, string> = {
-  condition: "条件", schedules: "予定", event: "実績", payment: "支払"
+  condition: "条件", schedules: "予定", event: "実績", payment: "支払", reissue: "訂正版"
 };
+
+export interface ReissuedDraft {
+  documentId: number;
+  documentNo: string | null;
+  /** 作った訂正版の下書き。 */
+  draftId: number;
+  /**
+   * 元の文書に手入力の明細（金額つき）があり、下書きに引き継がれた。
+   *
+   * 手入力は条件より強い（人が打った額が勝つ）ので、引き継いだままだと
+   * 決定しても古い金額で出る。消すと業務内容の記述まで消えるので、画面で
+   * 「開いて確かめて」と言うに留める。
+   */
+  keepsManualAmounts: boolean;
+}
 
 export interface BundleResult {
   conditionId: number;
@@ -56,6 +80,8 @@ export interface BundleResult {
    * 驚くので、増えたことを黙らずに返す。
    */
   revisedTo: number | null;
+  /** 作った訂正版の下書き。 */
+  reissued: ReissuedDraft[];
 }
 
 /** 金額に関わる欄。実績はこれを直すときだけ支払の有無を見る。 */
@@ -69,6 +95,7 @@ export class ConditionBundleService {
       schedules: ConditionScheduleService;
       events: ConditionEventService;
       payments: PaymentService;
+      documents: DocumentIssueService;
     }
   ) {}
 
@@ -107,6 +134,25 @@ export class ConditionBundleService {
       }
     }
 
+    for (const documentId of patch.reissue ?? []) {
+      const d = await this.database.query(
+        `SELECT d.status, d.document_no,
+                (SELECT x.id FROM documents x
+                  WHERE x.supersedes_id = d.id AND x.status = 'draft' LIMIT 1) AS open_draft
+           FROM documents d WHERE d.id = $1`, [documentId]);
+      const row = d.rows[0] as { status?: string; document_no?: string | null; open_draft?: number | null } | undefined;
+      if (!row) throw new DomainError("NOT_FOUND", `文書 ${documentId} が見つかりません`);
+      const name = row.document_no ?? `#${documentId}`;
+      if (row.status !== "issued") {
+        throw new DomainError("CONFLICT",
+          `${name} は決定済みではないので訂正版を作れません（いまは ${row.status}）`);
+      }
+      if (row.open_draft) {
+        throw new DomainError("CONFLICT",
+          `${name} にはもう訂正版の下書きがあります（#${row.open_draft}）。それを直してください`);
+      }
+    }
+
     if (patch.payment) {
       const pay = await this.database.query(
         "SELECT status FROM payments WHERE id = $1", [patch.payment.id]);
@@ -131,6 +177,7 @@ export class ConditionBundleService {
     const applied: BundleResult["applied"] = [];
     let stoppedAt: BundleResult["stoppedAt"] = null;
     let revisedTo: number | null = null;
+    const reissued: ReissuedDraft[] = [];
 
     // 上の段から順に。手前が止まったら、その先は書かない（数字が半端に進む）。
     const steps: Array<{ section: BundleSection; run: () => Promise<string[]> }> = [];
@@ -177,6 +224,18 @@ export class ConditionBundleService {
         }
       });
     }
+    if (patch.reissue?.length) {
+      steps.push({
+        section: "reissue",
+        run: async () => {
+          const made: string[] = [];
+          for (const documentId of patch.reissue!) {
+            made.push(await this.reissueOne(conditionId, documentId, why, actor, revisedTo, reissued));
+          }
+          return made;
+        }
+      });
+    }
     if (!steps.length) throw new DomainError("VALIDATION", "直す欄がありません");
 
     for (const step of steps) {
@@ -188,6 +247,68 @@ export class ConditionBundleService {
       }
     }
 
-    return { conditionId, applied, stoppedAt, revisedTo };
+    return { conditionId, applied, stoppedAt, revisedTo, reissued };
   }
+
+  /**
+   * 決定済みの文書1枚の訂正版（下書き）を作る。
+   *
+   * 条件が改訂になっていたら、下書きが指す条件を新しい版に張り替える。
+   * 引き継いだままだと旧版（古い金額）を指すので、せっかく条件を直しても
+   * 訂正版が元と同じ金額で出る。
+   */
+  private async reissueOne(
+    conditionId: number, documentId: number, why: string, actor: string,
+    revisedTo: number | null, out: ReissuedDraft[]
+  ): Promise<string> {
+    const head = await this.database.query(
+      `SELECT d.document_no, d.manual_inputs,
+              (SELECT array_agg(dc.condition_id ORDER BY dc.line_no, dc.condition_id)
+                 FROM document_conditions dc WHERE dc.document_id = d.id) AS condition_ids
+         FROM documents d WHERE d.id = $1`, [documentId]);
+    const row = head.rows[0] as
+      { document_no?: string | null; manual_inputs?: unknown; condition_ids?: number[] | null };
+    const linked = (row.condition_ids ?? []).map(Number);
+
+    let relink: number[] | undefined;
+    if (revisedTo) {
+      // この条件の系列のぶんだけ、新しい版に差し替える。他の条件は触らない。
+      const series = await this.database.query(
+        `SELECT x.id FROM conditions x, conditions c
+          WHERE c.id = $1 AND COALESCE(x.series_id, x.id) = COALESCE(c.series_id, c.id)`,
+        [conditionId]);
+      const old = new Set((series.rows as Array<{ id: number }>).map((r) => Number(r.id)));
+      const swapped = [...new Set(linked.map((id) => (old.has(id) ? revisedTo : id)))];
+      if (swapped.join(",") !== linked.join(",")) relink = swapped;
+    }
+
+    const made = await this.parts.documents.reissue(documentId, why, actor, relink);
+    out.push({
+      documentId, documentNo: row.document_no ?? null, draftId: made.id,
+      keepsManualAmounts: hasManualAmounts(row.manual_inputs)
+    });
+    return row.document_no ?? `#${documentId}`;
+  }
+}
+
+/**
+ * 手入力の明細に金額が入っているか。
+ *
+ * 手入力は条件より強い（打った額が勝つ）。訂正版に引き継がれるので、
+ * 金額を直したつもりでも古い額のまま出る。画面で注意を出すために見る。
+ */
+const MANUAL_MONEY_KEYS = ["items", "delivery_line_items", "other_fees", "expenses"];
+
+export function hasManualAmounts(manual: unknown): boolean {
+  const values = (manual ?? {}) as Record<string, unknown>;
+  return MANUAL_MONEY_KEYS.some((key) => {
+    const rows = values[key];
+    if (!Array.isArray(rows)) return false;
+    return rows.some((r) => {
+      if (!r || typeof r !== "object") return false;
+      const cell = r as Record<string, unknown>;
+      return Object.keys(cell).some((k) =>
+        /amount|金額|単価|price/i.test(k) && String(cell[k] ?? "").trim() !== "");
+    });
+  });
 }
