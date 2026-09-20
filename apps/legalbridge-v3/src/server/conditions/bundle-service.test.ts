@@ -56,7 +56,9 @@ const db = (over: Record<string, Array<Record<string, unknown>>> = {}) =>
       return [{ document_no: "ARC-PO-1", manual_inputs: {}, condition_ids: [3] }];
     }
     if (t.includes("FROM documents d WHERE d.id")) return [{ status: "issued", document_no: "ARC-PO-1", open_draft: null }];
-    if (t.includes("FROM conditions x, conditions c")) return [{ id: 3 }];
+    if (t.includes("FROM conditions x, conditions c")) {
+      return [{ id: 3, pricing_model: "fixed", flat_amount: 95000 }];
+    }
     return [];
   });
 
@@ -157,7 +159,7 @@ test("訂正版は、条件を直したあとに作る", async () => {
     3, { condition: { flatAmount: 95000 }, reissue: [41] }, "発注額の訂正", "admin");
   assert.deepEqual(r.applied.map((a) => a.section), ["condition", "reissue"]);
   assert.deepEqual(r.reissued, [{
-    documentId: 41, documentNo: "ARC-PO-1", draftId: 941, keepsManualAmounts: false
+    documentId: 41, documentNo: "ARC-PO-1", draftId: 941, repriced: null, needsManualFix: false
   }]);
   // 条件 → 訂正版 の順。先に作ると古い金額の下書きになる。
   assert.deepEqual(calls.map((c) => c.split(":")[0]), ["condition", "reissue"]);
@@ -202,4 +204,44 @@ test("手入力の明細に金額があるかを見分ける（訂正版に引�
   assert.equal(hasManualAmounts({ delivery_line_items: [{ 金額: "95,000" }] }), true);
   // 金額の入っていない手入力（業務内容だけ）は引き継いでも困らない。
   assert.equal(hasManualAmounts({ items: [{ spec: "A4 カラー" }] }), false);
+});
+
+test("訂正版に引き継いだ手入力の明細を、新しい金額に引き直す", async () => {
+  // 手入力は条件より強い。張り替えただけでは、紙に古い金額が載ったまま出る。
+  const p = parts();
+  const r = await new ConditionBundleService(db({
+    "FROM document_conditions dc WHERE dc.document_id": [{
+      document_no: "ARC-PO-1", condition_ids: [3],
+      manual_inputs: { items: [{ item_name: "表紙イラスト", quantity: 1, unit_price: 120000, amount_ex_tax: 120000 }] }
+    }]
+  }), p).apply(3, { condition: { flatAmount: 95000 }, reissue: [41] }, "訂正", "admin");
+  assert.equal(r.reissued[0].repriced, "表紙イラスト ¥120,000 → ¥95,000");
+  assert.equal(r.reissued[0].needsManualFix, false);
+});
+
+test("引き直せない明細は、引き直さずに「人が直して」と返す", async () => {
+  // 明細が2本。どの行が減ったのかは書いた人にしか分からない。
+  const p = parts();
+  const r = await new ConditionBundleService(db({
+    "FROM document_conditions dc WHERE dc.document_id": [{
+      document_no: "ARC-PO-1", condition_ids: [3],
+      manual_inputs: { items: [{ item_name: "表紙", amount_ex_tax: 80000 },
+                               { item_name: "口絵", amount_ex_tax: 40000 }] }
+    }]
+  }), p).apply(3, { condition: { flatAmount: 95000 }, reissue: [41] }, "訂正", "admin");
+  assert.equal(r.reissued[0].repriced, null);
+  assert.equal(r.reissued[0].needsManualFix, true);
+});
+
+test("条件を何本も載せた文書の明細は引き直さない", async () => {
+  // 総額のどこがこの条件のぶんか分けられない。
+  const p = parts();
+  const r = await new ConditionBundleService(db({
+    "FROM document_conditions dc WHERE dc.document_id": [{
+      document_no: "ARC-PO-1", condition_ids: [3, 99],
+      manual_inputs: { items: [{ item_name: "表紙", amount_ex_tax: 120000 }] }
+    }]
+  }), p).apply(3, { condition: { flatAmount: 95000 }, reissue: [41] }, "訂正", "admin");
+  assert.equal(r.reissued[0].repriced, null);
+  assert.equal(r.reissued[0].needsManualFix, true);
 });

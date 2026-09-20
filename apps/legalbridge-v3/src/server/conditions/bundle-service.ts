@@ -5,6 +5,8 @@ import type { ConditionScheduleService, ScheduleLine } from "./schedule-service.
 import type { ConditionEventService } from "./event-service.js";
 import type { PaymentService } from "../payments/service.js";
 import type { DocumentIssueService } from "../documents/issue-service.js";
+import { repriceManualAmounts } from "../documents/reprice.js";
+import { targetAmountOf } from "./settlement.js";
 
 /**
  * 条件1本を、段をまたいでまとめて直す（工程表の「まとめて直す」）。
@@ -57,13 +59,18 @@ export interface ReissuedDraft {
   /** 作った訂正版の下書き。 */
   draftId: number;
   /**
-   * 元の文書に手入力の明細（金額つき）があり、下書きに引き継がれた。
-   *
-   * 手入力は条件より強い（人が打った額が勝つ）ので、引き継いだままだと
-   * 決定しても古い金額で出る。消すと業務内容の記述まで消えるので、画面で
-   * 「開いて確かめて」と言うに留める。
+   * 引き継いだ手入力の明細を新しい金額に引き直した。その1行（画面に出す）。
+   * 引き直していなければ null。
    */
-  keepsManualAmounts: boolean;
+  repriced: string | null;
+  /**
+   * 手入力の明細に金額が残っていて、機械には引き直せない。
+   *
+   * 手入力は条件より強い（人が打った額が勝つ）ので、このままだと決定しても
+   * 古い金額で出る。明細が2本以上あるときなど、どの行が減ったのかは書いた人に
+   * しか分からないので、画面で「開いて直して」と言う。
+   */
+  needsManualFix: boolean;
 }
 
 export interface BundleResult {
@@ -256,6 +263,9 @@ export class ConditionBundleService {
    * 条件が改訂になっていたら、下書きが指す条件を新しい版に張り替える。
    * 引き継いだままだと旧版（古い金額）を指すので、せっかく条件を直しても
    * 訂正版が元と同じ金額で出る。
+   *
+   * 引き継いだ手入力の明細も、引き直せるなら引き直す。手入力は条件より強いので、
+   * 張り替えただけでは紙に古い金額が載ったまま出る。
    */
   private async reissueOne(
     conditionId: number, documentId: number, why: string, actor: string,
@@ -270,22 +280,45 @@ export class ConditionBundleService {
       { document_no?: string | null; manual_inputs?: unknown; condition_ids?: number[] | null };
     const linked = (row.condition_ids ?? []).map(Number);
 
+    // この条件の系列（改訂の全版）と、いまの金額。
+    const series = await this.database.query(
+      `SELECT x.id, x.pricing_model, x.flat_amount FROM conditions x, conditions c
+        WHERE c.id = $1 AND COALESCE(x.series_id, x.id) = COALESCE(c.series_id, c.id)`,
+      [conditionId]);
+    const versions = series.rows as Array<{ id: number; pricing_model: string; flat_amount: number | null }>;
+    const old = new Set(versions.map((r) => Number(r.id)));
+
     let relink: number[] | undefined;
     if (revisedTo) {
       // この条件の系列のぶんだけ、新しい版に差し替える。他の条件は触らない。
-      const series = await this.database.query(
-        `SELECT x.id FROM conditions x, conditions c
-          WHERE c.id = $1 AND COALESCE(x.series_id, x.id) = COALESCE(c.series_id, c.id)`,
-        [conditionId]);
-      const old = new Set((series.rows as Array<{ id: number }>).map((r) => Number(r.id)));
       const swapped = [...new Set(linked.map((id) => (old.has(id) ? revisedTo : id)))];
       if (swapped.join(",") !== linked.join(",")) relink = swapped;
     }
 
     const made = await this.parts.documents.reissue(documentId, why, actor, relink);
+
+    // 手入力の明細を引き直す。この条件だけを載せた文書に限る（何本も載って
+    // いると、総額のどこがこの条件のぶんか分けられない）。
+    const now = versions.find((r) => Number(r.id) === (revisedTo ?? conditionId));
+    const newAmount = targetAmountOf({
+      pricingModel: now?.pricing_model, flatAmount: now?.flat_amount === null ? null : Number(now?.flat_amount)
+    });
+    const only = linked.length > 0 && linked.every((id) => old.has(id) || id === revisedTo);
+    let repriced: string | null = null;
+    if (only && newAmount !== null) {
+      const next = repriceManualAmounts(row.manual_inputs, newAmount);
+      if (next) {
+        await this.database.query(
+          "UPDATE documents SET manual_inputs = $2::jsonb WHERE id = $1",
+          [made.id, JSON.stringify(next.manual)]);
+        repriced = next.line;
+      }
+    }
+
     out.push({
       documentId, documentNo: row.document_no ?? null, draftId: made.id,
-      keepsManualAmounts: hasManualAmounts(row.manual_inputs)
+      repriced,
+      needsManualFix: repriced === null && hasManualAmounts(row.manual_inputs)
     });
     return row.document_no ?? `#${documentId}`;
   }

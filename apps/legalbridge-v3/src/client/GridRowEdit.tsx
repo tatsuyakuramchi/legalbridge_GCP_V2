@@ -181,7 +181,8 @@ export function GridRowEdit(
       // 訂正版は下書きなので、作っただけでは相手に何も出ていない。
       // 「作った」で終わらせず、次に何をするかまで言う。
       const drafts = (r.reissued ?? []);
-      const manual = drafts.filter((d) => d.keepsManualAmounts);
+      const repriced = drafts.filter((d) => d.repriced);
+      const manual = drafts.filter((d) => d.needsManualFix);
       onDone(`${row.conditionNo ?? `#${row.conditionId}`} を直しました（${done}）`
         // 版が増えたことを黙らない。工程表の行も新しい版に入れ替わる。
         + (r.revisedTo ? "。実績があるので条件は改訂になり、新しい版に切り替わりました" : "")
@@ -189,6 +190,8 @@ export function GridRowEdit(
             ? `。${drafts.map((d) => `${d.documentNo ?? `#${d.documentId}`}（下書き #${d.draftId}）`).join("・")}`
               + " の訂正版を作りました。文書の画面で中身を確かめてから決定してください"
             : "")
+        // 引き直したことも黙らない（人の打った明細を機械が書き換えている）。
+        + (repriced.length ? `。明細も引き直しました：${repriced.map((d) => d.repriced).join("／")}` : "")
         + (manual.length
             ? `。${manual.map((d) => d.documentNo ?? `#${d.documentId}`).join("・")} は`
               + "手入力の明細に金額が入っています。そのままだと古い金額で出るので、明細を直してください"
