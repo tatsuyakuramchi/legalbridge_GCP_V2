@@ -68,6 +68,50 @@ export function dueFromPaymentTerms(
   return days[days.length - 1] ?? null;
 }
 
+/**
+ * 二重払いを止めた支払の名乗り。
+ *
+ * 内部の id（「支払 #26」）だけでは、お金の画面で探しても見つからない。
+ * あちらに並ぶのは PAY-2026-0026 のほうで、別物だと思って探し回ることになる。
+ * 番号・状態・金額・期日と、**この文書のどの実績と重なっているか**まで出す。
+ *
+ * 「出どころの検収書」は書かない。payments は文書への列を持たず、繋がりは
+ * 割当 → 実績 → 実績のいまの document_id という辿り方しかない。実績の
+ * document_id は訂正版を出せば移り、元を無効にすれば外れるので、いま辿れる
+ * 文書は「支払を立てたときの文書」とは限らない。確かめようのないものを
+ * 書くと、人はそれを信じて別のところを探す。
+ */
+const BLOCKING_PAYMENT_SQL = `
+  p.id, p.payment_no, p.status, p.amount, p.due_on`;
+
+interface BlockingPayment {
+  id: number; payment_no: string | null; status: string;
+  amount: string | number | null; due_on: unknown;
+  /** この文書と重なっている実績（日付と金額）。無ければ空。 */
+  overlap?: string | null;
+}
+
+/** 画面と同じ語。支払1件の状態。 */
+const PAYMENT_STATE_LABEL: Record<string, string> = {
+  planned: "未払", approved: "未払", paid: "支払済み", canceled: "取消済み"
+};
+
+/** 止めた支払を、人が次に動ける言い方にする。 */
+function blockedBy(row: BlockingPayment, what: string): DomainError {
+  const name = row.payment_no ?? `#${row.id}`;
+  const facts = [
+    PAYMENT_STATE_LABEL[row.status] ?? row.status,
+    row.amount === null || row.amount === undefined
+      ? null : `¥${Number(row.amount).toLocaleString("ja-JP")}`,
+    dateStr(row.due_on) ? `期日 ${dateStr(row.due_on)}` : null
+  ].filter(Boolean).join("・");
+  return new DomainError("CONFLICT",
+    `${what}の実績には、すでに支払 ${name}（${facts}）が立っています。`
+    + (row.overlap ? `重なっている実績：${row.overlap}。` : "")
+    + "二重に払わないために止めています。"
+    + `立て直すなら、お金の画面で ${name} を取り消してから作り直してください`);
+}
+
 export class PaymentService {
   constructor(private readonly database: Transactable) {}
 
@@ -393,7 +437,7 @@ export class PaymentService {
         });
 
         const duplicated = await client.query(
-          `SELECT p.id
+          `SELECT ${BLOCKING_PAYMENT_SQL}
              FROM payments p
              JOIN payment_allocations a ON a.payment_id = p.id
              JOIN unnest($1::bigint[], $2::bigint[]) AS t(condition_id, event_id)
@@ -404,8 +448,7 @@ export class PaymentService {
           [allocations.map((a) => a.conditionId),
            allocations.map((a) => a.eventId ?? 0)]);
         if (duplicated.rows[0]) {
-          throw new DomainError("CONFLICT",
-            `この計算書にはすでに支払 #${(duplicated.rows[0] as { id: number }).id} があります`);
+          throw blockedBy(duplicated.rows[0] as unknown as BlockingPayment, "この計算書");
         }
 
         // 権利を許諾する側（out）は受け取る側なので入金、取得側（in）は支払。
@@ -508,13 +551,21 @@ export class PaymentService {
 
         // 同じ実績に二重に支払を立てない。直すなら先の支払を取り消す。
         const duplicated = await client.query(
-          `SELECT p.id FROM payments p
+          `SELECT ${BLOCKING_PAYMENT_SQL},
+                  (SELECT string_agg(
+                            COALESCE(e2.occurred_on::text, '日付なし')
+                            || ' ¥' || to_char(COALESCE(e2.amount, 0), 'FM999,999,999,999'), '・'
+                            ORDER BY e2.occurred_on)
+                     FROM payment_allocations a2
+                     JOIN condition_events e2 ON e2.id = a2.event_id
+                    WHERE a2.payment_id = p.id AND a2.event_id = ANY($1::bigint[])) AS overlap
+             FROM payments p
              JOIN payment_allocations a ON a.payment_id = p.id
-            WHERE a.event_id = ANY($1::bigint[]) AND p.status <> 'canceled'`,
+            WHERE a.event_id = ANY($1::bigint[]) AND p.status <> 'canceled'
+            LIMIT 1`,
           [rows.map((r) => Number(r.event_id))]);
         if (duplicated.rows[0]) {
-          throw new DomainError("CONFLICT",
-            `この検収書の実績にはすでに支払 #${(duplicated.rows[0] as { id: number }).id} があります`);
+          throw blockedBy(duplicated.rows[0] as unknown as BlockingPayment, "この検収書");
         }
 
         // 権利を許諾する側（out）は受け取る側なので入金、取得側（in）は支払。

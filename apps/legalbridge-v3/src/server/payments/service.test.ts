@@ -471,3 +471,51 @@ test("支払の修正：支払済みの日は空にできない（取り消し�
       .amend(900, { paidOn: null }, "間違えた", "admin"),
     /支払済みの日は空にできません/);
 });
+
+/**
+ * 二重払いを止めたときの言い方。
+ *
+ * 止めること自体は正しい。困るのは「支払 #26 があります」だけ言われることで、
+ * お金の画面に並ぶのは PAY-2026-0026 のほうなので、別物だと思って探し回る。
+ */
+const blockedDb = (payment: Record<string, unknown>) => new FakeDatabase((text) => {
+  if (text.includes("FROM condition_events e")) {
+    return [{ event_id: 700, amount: 300000, occurred_on: "2026-06-20", inspected_on: "2026-06-25",
+              deliverable: "挿絵 10点", condition_id: 5, direction: "in", tax_category: "taxable",
+              currency: "JPY", counterparty_id: 2, payment_terms: null,
+              party_kind: "individual", withholding: true, schedule_pay_on: null }];
+  }
+  if (text.includes("JOIN payment_allocations a ON a.payment_id = p.id")) return [payment];
+  return undefined;
+});
+
+test("二重払いを止めるとき、番号・状態・金額・期日と重なっている実績を出す", async () => {
+  await assert.rejects(
+    () => new PaymentService(blockedDb({
+      id: 26, payment_no: "PAY-2026-0026", status: "planned",
+      amount: 330000, due_on: "2026-08-24", overlap: "2026-06-20 ¥300,000"
+    })).createFromInspection(31, "kuramochi"),
+    (e: Error) => {
+      // お金の画面で探せる番号で呼ぶ。内部の id ではない。
+      assert.match(e.message, /支払 PAY-2026-0026/);
+      assert.match(e.message, /未払・¥330,000・期日 2026-08-24/);
+      assert.match(e.message, /重なっている実績：2026-06-20 ¥300,000/);
+      assert.match(e.message, /PAY-2026-0026 を取り消してから/);
+      return true;
+    });
+});
+
+test("番号を持たない支払（移行したもの）は id で呼ぶ", async () => {
+  // 移行した支払は payment_no が空のことがある。「#4」としか呼べないので、
+  // そう呼ぶ。空欄のまま「支払 （未払）」と出すより探せる。
+  await assert.rejects(
+    () => new PaymentService(blockedDb({
+      id: 4, payment_no: null, status: "paid", amount: 120000, due_on: null, overlap: null
+    })).createFromInspection(31, "kuramochi"),
+    (e: Error) => {
+      assert.match(e.message, /支払 #4（支払済み・¥120,000）/);
+      // 重なりが引けなければ、その一文ごと出さない（空の文を出さない）。
+      assert.doesNotMatch(e.message, /重なっている実績/);
+      return true;
+    });
+});
