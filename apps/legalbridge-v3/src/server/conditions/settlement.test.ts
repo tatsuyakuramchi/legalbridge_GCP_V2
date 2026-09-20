@@ -4,13 +4,13 @@ import { isSettled, settlementOf, settlementState, targetAmountOf } from "./sett
 
 const fixed = { pricingModel: "fixed", flatAmount: 100000, eventCount: 0, plannedAmount: 0, paidAmount: 0 };
 
-test("定額の条件は 未着手 → 検収済み → 支払予定 → 一部 → 支払済み と進む", () => {
+test("定額の条件は 未着手 → 検収済み → 支払を立てた → 一部 → 払い切り と進む", () => {
   assert.equal(settlementState(fixed), "open");
   assert.equal(settlementState({ ...fixed, eventCount: 1 }), "inspected");
   assert.equal(settlementState({ ...fixed, eventCount: 1, plannedAmount: 100000 }), "payment_planned");
   assert.equal(settlementState({ ...fixed, eventCount: 2, paidAmount: 60000, plannedAmount: 40000 }), "partly_paid");
   assert.equal(settlementState({ ...fixed, eventCount: 2, paidAmount: 100000 }), "paid");
-  assert.equal(settlementState({ ...fixed, paidAmount: 120000 }), "paid", "払い過ぎでも支払済み");
+  assert.equal(settlementState({ ...fixed, paidAmount: 120000 }), "paid", "払い過ぎでも払い切り");
   assert.equal(isSettled("paid"), true);
   assert.equal(isSettled("partly_paid"), false);
 });

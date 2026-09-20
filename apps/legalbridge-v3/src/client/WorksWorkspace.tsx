@@ -1133,10 +1133,6 @@ export function WorksWorkspace(
   );
 }
 
-const PAYMENT_STATUS_LABEL: Record<string, string> = {
-  planned: "予定", approved: "承認済み", paid: "支払済み", canceled: "取消"
-};
-
 /**
  * 作品の動き。実績 → 計算書 → 文書 → 支払 の順に並べる。
  * 権利の話（上限・展開）とは別の軸なので、パネルを分けてある。
@@ -1238,7 +1234,7 @@ function WorkActivity(
                       <td>{p.direction === "in" ? "入金" : "支払"}</td>
                       <td className="num">{money(p.amount, p.currency)}</td>
                       <td className="code">{p.dueOn ?? "—"}</td>
-                      <td>{PAYMENT_STATUS_LABEL[p.status] ?? p.status}</td>
+                      <td><StatusTag kind="payment" value={p.status} /></td>
                     </tr>
                   ))}
                 </tbody>

@@ -194,7 +194,7 @@ test("済の理由を必ず添える（印だけでは確かめようがない�
 test("業務委託の「支払」は、定額の条件が全部払い切れて済になる（1件払っただけでは済にしない）", () => {
   const half = buildFlow(facts({ payments: { total: 2, paid: 1 }, fixedConditions: { total: 2, done: 1 } }));
   assert.equal(half[5].done, false);
-  assert.match(half[5].detail, /2 本のうち 1 本が支払済み/);
+  assert.match(half[5].detail, /2 本のうち 1 本が払い切り/);
   const all = buildFlow(facts({ payments: { total: 2, paid: 2 }, fixedConditions: { total: 2, done: 2 } }));
   assert.equal(all[5].done, true);
   // 定額の条件が無い（料率だけ）なら、これまでどおり支払の件数で見る。

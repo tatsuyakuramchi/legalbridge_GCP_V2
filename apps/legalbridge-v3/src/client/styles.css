@@ -130,6 +130,13 @@ tbody tr.sel{background:var(--accent-soft)}
 .tag.out{background:var(--out-soft);border-color:transparent;color:var(--out);font-weight:700}
 .tag.ok{background:var(--ok-soft);border-color:transparent;color:var(--ok)}
 .tag.accent{background:var(--accent-soft);border-color:transparent;color:var(--accent)}
+/* 「版・生死」の札（条件・実績）。進み具合の札は塗りつぶし、こちらは枠だけ。
+   同じ形だと「有効」（版）と「払い切り」（進み具合）が同列に読めてしまう。 */
+.tag.ghost{background:transparent;border:1px solid var(--line-strong);
+  color:var(--muted);font-weight:400}
+.tag.ghost.accent{border-color:var(--line-strong);color:var(--muted)}
+.tag.ghost.warn{border-color:var(--warn);color:var(--warn)}
+.tag.ghost.out{border-color:var(--out);color:var(--out);font-weight:400}
 .chips{display:flex;flex-wrap:wrap;gap:5px}
 
 .filters{display:flex;gap:6px;flex-wrap:wrap}

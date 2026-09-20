@@ -3,6 +3,7 @@ import { ServiceEventForm } from "./ServiceEventForm.js";
 import { AmendPanel } from "./AmendPanel.js";
 import type { AmendField } from "./AmendPanel.js";
 import { api, ApiError, money } from "./api.js";
+import { StatusTag } from "./labels.js";
 import { rewardLabelFor } from "../server/core/reward.js";
 import { CONTRACT_FORMS } from "../server/conditions/contract-form.js";
 import { readNumberInput } from "../server/core/number-input.js";
@@ -621,7 +622,7 @@ export function ConditionEvents(
         <span className="faint">
           {rows.filter((r) => r.status === "active").length} 件
           {rows.some((r) => r.status === "void") &&
-            `　（取消 ${rows.filter((r) => r.status === "void").length} 件を含む）`}
+            `　（無効 ${rows.filter((r) => r.status === "void").length} 件を含む）`}
         </span>
         {editable && !adding && (
           <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={() => start()}>実績を足す</button>
@@ -1242,7 +1243,8 @@ export function ConditionEvents(
                   </td>
                   <td className="code">{row.occurredOn ?? "—"}</td>
                   <td>{label(row.eventType)}
-                    {voided && <span className="tag out" style={{ marginLeft: 5 }}>取消</span>}</td>
+                    {/* 文書・条件と同じ「無効」に揃える（DB もどれも void）。 */}
+                    {voided && <StatusTag kind="event" value="void" />}</td>
                   <td className="faint">
                     {row.period ?? "—"}
                     {/* どの回に繋がっているか。繋がっていない実績は検収書の支払日が空になる。 */}

@@ -47,10 +47,17 @@ const toDraft = (l: {
   contractForm: l.contractForm ?? "", serviceFrom: l.serviceFrom ?? "", serviceTo: l.serviceTo ?? ""
 });
 
-const STATUS: Record<Row["status"], { label: string; tone: string }> = {
-  planned: { label: "予定", tone: "" },
-  recorded: { label: "実績あり", tone: "accent" },
-  paid: { label: "支払済み", tone: "ok" }
+/**
+ * 予定の行の状態。
+ *
+ * 「支払済み」はこの回に割り当てた支払1件の状態で、支払の札と同じ事実を指す
+ * （条件1本を払い切ったという意味ではない。そちらは「払い切り」）。
+ * どの単位の話かが読めるよう、補足を添える。
+ */
+const STATUS: Record<Row["status"], { label: string; tone: string; hint: string }> = {
+  planned: { label: "予定", tone: "", hint: "この回の実績がまだ無い" },
+  recorded: { label: "実績あり", tone: "accent", hint: "この回の実績を記録した。支払はまだ" },
+  paid: { label: "支払済み", tone: "ok", hint: "この回に割り当てた支払が支払済み" }
 };
 
 export function ConditionSchedules(
@@ -285,6 +292,7 @@ export function ConditionSchedules(
                       onClick={() => onRecord?.(l.id)}>実績にする</button>
                   ) : (
                     <span className={STATUS[l.status].tone ? `tag ${STATUS[l.status].tone}` : "tag"}
+                          title={STATUS[l.status].hint}
                           style={{ whiteSpace: "nowrap" }}>
                       {STATUS[l.status].label}
                     </span>

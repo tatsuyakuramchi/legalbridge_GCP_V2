@@ -191,7 +191,8 @@ function outsourcingSteps(f: FlowFacts): FlowStep[] {
         ? f.fixedConditions.done >= f.fixedConditions.total
         : f.payments.paid > 0,
       detail: f.fixedConditions && f.fixedConditions.total > 0
-        ? `定額の条件 ${f.fixedConditions.total} 本のうち ${f.fixedConditions.done} 本が支払済み`
+        // 条件の軸なので「払い切り」。支払1件の「支払済み」と語を分ける。
+        ? `定額の条件 ${f.fixedConditions.total} 本のうち ${f.fixedConditions.done} 本が払い切り`
           + (f.payments.total > 0 ? `（支払 ${f.payments.total} 件、うち ${f.payments.paid} 件支払済み）` : "")
         : f.payments.total > 0
           ? `支払 ${f.payments.total} 件のうち ${f.payments.paid} 件が支払済み`

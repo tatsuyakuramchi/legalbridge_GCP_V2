@@ -22,9 +22,17 @@ export type SettlementState =
   | "in_progress"     // 料率などで実績・支払が動いている
   | "expired";        // 料率などで期間が過ぎた
 
+/**
+ * 画面に出す語。
+ *
+ * ここは「条件1本がどこまで進んだか」の軸なので、支払1件の状態と同じ語を
+ * 使わない。「支払済み」は支払1件の札なので、条件のほうは「払い切り」と呼ぶ
+ * （同じ語だと、1件払ったのか条件が終わったのかが読めない）。
+ */
 export const SETTLEMENT_LABEL: Record<SettlementState, string> = {
-  open: "未着手", inspected: "検収済み・未払", payment_planned: "支払予定", partly_paid: "一部支払済み",
-  paid: "支払済み", closed: "完了扱い", in_progress: "進行中", expired: "期間終了"
+  open: "未着手", inspected: "検収済み・未払", payment_planned: "支払を立てた",
+  partly_paid: "一部払い済み", paid: "払い切り",
+  closed: "完了扱い", in_progress: "進行中", expired: "期間終了"
 };
 
 export interface ConditionSettlement {
