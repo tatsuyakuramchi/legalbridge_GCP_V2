@@ -199,3 +199,46 @@ SELECT t.template_key AS "ひな形", count(*) AS "件数",
                     WHERE x.document_id = d.id AND x.status = 'active')
  GROUP BY t.template_key
  ORDER BY t.template_key;
+
+\echo ''
+\echo '=== 7. 戻す先の候補になる文書の中身（実績1件ずつ） ====================='
+\echo '   4 に挙がった文書に、いま何が載っているかを1件ずつ開く。'
+\echo '   支払がまとめる実績（浮いているものを含む）に ← を付ける。'
+\echo '   戻す先を決める前に、いまの中身と見比べる。'
+\echo ''
+
+WITH floating AS (
+  SELECT DISTINCT p.id AS payment_id
+    FROM payments p
+    JOIN payment_allocations a ON a.payment_id = p.id
+    JOIN condition_events e ON e.id = a.event_id
+   WHERE p.status <> 'canceled' AND e.document_id IS NULL
+), mine AS (
+  SELECT DISTINCT f.payment_id, a.condition_id, a.event_id
+    FROM floating f
+    JOIN payment_allocations a ON a.payment_id = f.payment_id
+), targets AS (
+  -- 浮いた支払が関わる条件を載せている、決定済みの検収書・計算書
+  SELECT DISTINCT d.id AS document_id
+    FROM mine
+    JOIN document_conditions dc ON dc.condition_id = mine.condition_id
+    JOIN documents d ON d.id = dc.document_id AND d.status = 'issued'
+    JOIN document_template_versions tv ON tv.id = d.template_version_id
+    JOIN document_templates t ON t.id = tv.template_id
+   WHERE t.template_key IN ('inspection_certificate', 'royalty_statement')
+)
+SELECT d.document_no AS "文書",
+       c.condition_no AS "載っている条件",
+       e.id AS "実績", e.occurred_on AS "納品日", e.amount AS "実績の額",
+       CASE WHEN e.id IS NULL THEN '（実績なし）'
+            WHEN e.id IN (SELECT event_id FROM mine WHERE event_id IS NOT NULL)
+              THEN '← 浮いた支払がまとめる実績'
+            ELSE '' END AS "印"
+  FROM targets
+  JOIN documents d ON d.id = targets.document_id
+  LEFT JOIN document_conditions dc ON dc.document_id = d.id
+  LEFT JOIN conditions c ON c.id = dc.condition_id
+  LEFT JOIN condition_events e ON e.document_id = d.id AND e.status = 'active'
+                              AND e.condition_id IN (SELECT x.id FROM conditions x
+                                   WHERE COALESCE(x.series_id, x.id) = COALESCE(c.series_id, c.id))
+ ORDER BY d.document_no, c.condition_no, e.id;
