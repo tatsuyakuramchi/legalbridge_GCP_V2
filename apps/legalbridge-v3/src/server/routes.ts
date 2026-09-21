@@ -45,6 +45,7 @@ import { SettledExportService } from "./documents/settled-export.js";
 import { diffSettled } from "./documents/settled-diff.js";
 import { rawRows } from "./documents/settled-batch.js";
 import { MatterTeardownService } from "./documents/teardown-service.js";
+import { ConditionDuplicateService } from "./conditions/duplicates.js";
 import { ChromiumPdfRenderer, MemoryPdfRenderer, type PdfRenderer } from "./documents/pdf-renderer.js";
 import { DocumentStorageService } from "./documents/storage-service.js";
 import { GoogleDriveStorage, MemoryDriveStorage, type DriveStorage } from "./documents/drive-storage.js";
@@ -2089,6 +2090,30 @@ export function createRoutes(database: Transactable) {
         .parse(req.body ?? {});
       res.json(await new MatterTeardownService(database)
         .run(Number(req.params.id), input, actor(res)));
+    }));
+
+  /**
+   * 同じ内容で重複している条件明細。
+   *
+   * 見つけるだけで、何を残すかは決めない（2本以上が中身を持っていたら
+   * 機械では決めない）。畳むときも、実績・文書・支払を抱えた条件には
+   * 手を出さない。抱えたまま無効にすると、発行済みの紙が無効な条件を
+   * 指したまま残る。
+   */
+  router.get("/matters/:id/duplicate-conditions",
+    requireRole("admin", "legal"),
+    asyncRoute(async (req, res) => {
+      res.json(await new ConditionDuplicateService(database).forMatter(Number(req.params.id)));
+    }));
+  router.post("/matters/:id/duplicate-conditions/void",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        conditionIds: z.array(z.coerce.number().int().positive()).min(1).max(500),
+        reason: z.string().trim().min(1).max(500)
+      }).parse(req.body ?? {});
+      res.json(await new ConditionDuplicateService(database)
+        .voidAll(Number(req.params.id), input.conditionIds, input.reason, actor(res)));
     }));
 
   const settledInput = z.object({

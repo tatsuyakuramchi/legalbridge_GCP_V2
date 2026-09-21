@@ -15,6 +15,7 @@ import { MatterFlow } from "./MatterFlow.js";
 import { MatterTimeline } from "./MatterTimeline.js";
 import { MatterDrive } from "./MatterDrive.js";
 import { MatterConditions, MatterDocuments } from "./MatterLinks.js";
+import { DuplicateConditions } from "./DuplicateConditions.js";
 import { MatterStatement } from "./MatterStatement.js";
 import { MatterEvents } from "./MatterEvents.js";
 import { MatterPayments } from "./MatterPayments.js";
@@ -592,6 +593,19 @@ export function MattersWorkspace(
                   {tab === "payments" && (
                     <MatterPayments detail={shown} onChanged={relink} onOpenDocument={onOpenDocument}
                                     isAdmin={isAdmin} />
+                  )}
+
+                  {tab === "graph" && (
+                    <div className="panel" style={{ marginBottom: 14 }}>
+                      <div className="panel-hd">
+                        <h2>同じ内容で重複している条件明細</h2>
+                        <span className="faint">見つけるだけで、残すものは決めません</span>
+                      </div>
+                      <div className="panel-bd">
+                        <DuplicateConditions matterId={detail.id} onChanged={relink}
+                          onOpenCondition={onOpenCondition} />
+                      </div>
+                    </div>
                   )}
 
                   {tab === "graph" && (
