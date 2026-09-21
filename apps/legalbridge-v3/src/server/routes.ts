@@ -42,6 +42,8 @@ import { DocumentBatchService, templateCsv } from "./documents/batch-service.js"
 import { SettledBatchService } from "./documents/settled-batch-service.js";
 import { templateCsv as settledTemplateCsv } from "./documents/settled-batch.js";
 import { SettledExportService } from "./documents/settled-export.js";
+import { diffSettled } from "./documents/settled-diff.js";
+import { rawRows } from "./documents/settled-batch.js";
 import { ChromiumPdfRenderer, MemoryPdfRenderer, type PdfRenderer } from "./documents/pdf-renderer.js";
 import { DocumentStorageService } from "./documents/storage-service.js";
 import { GoogleDriveStorage, MemoryDriveStorage, type DriveStorage } from "./documents/drive-storage.js";
@@ -2033,6 +2035,26 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       const made = await new SettledExportService(database).forMatter(Number(req.params.id));
       res.json(made);
+    }));
+
+  /**
+   * 上げ直す CSV と、いまの現物の差。
+   *
+   * 試算（preview）は「何ができるか」を出すが、「もとと何が違うか」は出さない。
+   * 金額を直すために上げ直しているのに、どこを直したのかが画面に出ないまま
+   * 押すことになる。直した覚えのない列が動いていても気づけない。読むだけ。
+   */
+  router.post("/documents/batches/settled/diff",
+    requireRole("admin", "legal"),
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        matterId: z.coerce.number().int().positive(),
+        csv: z.string().min(1).max(2_000_000)
+      }).parse(req.body ?? {});
+      const current = await new SettledExportService(database).forMatter(input.matterId);
+      res.json(diffSettled(
+        current.rows as Array<Record<string, unknown>>,
+        rawRows(input.csv)));
     }));
 
   const settledInput = z.object({

@@ -10,6 +10,7 @@ import { DocumentFields, kindFor, type Candidate, type FormField } from "./Docum
 import { LineItemsEditor, type Row } from "./LineItems.js";
 import { BulkOrders } from "./BulkOrders.js";
 import { SettledImport } from "./SettledImport.js";
+import { SearchSelect, type SearchOption } from "./SearchSelect.js";
 import { StatementBreakdown, type StatementLine, type StatementTotals } from "./StatementLines.js";
 import { LicenseTermsMatrix } from "./LicenseTermsMatrix.js";
 import { ConditionLabel } from "./ConditionLabel.js";
@@ -19,6 +20,13 @@ import { PUB_TERMS_TEMPLATE_HINT } from "../server/documents/pub-terms.js";
 interface TemplateRow {
   id: number; templateKey: string; label: string; category: string | null; numberPrefix: string | null;
 }
+
+/** 一覧を案件で絞るときの選択肢。 */
+const searchMattersForList = async (q: string): Promise<SearchOption[]> => {
+  const r = await api.get<{ matters: Array<{ id: number; matterNo: string | null; title: string }> }>(
+    `/matters?q=${encodeURIComponent(q)}`);
+  return r.matters.map((m) => ({ value: String(m.id), label: `${m.matterNo ?? `#${m.id}`} ${m.title}` }));
+};
 
 /** 一覧の絞り込み。人が見る段階（下書き → 決定 → 送信）に、繋ぎ直し用の1つを足す。 */
 const SCOPES = [
@@ -197,8 +205,14 @@ export function DocumentsWorkspace(
   /** 検収済みの遡及取込。発注書の一括作成とは別の口（作るものが違う）。 */
   const [settled, setSettled] = useState(false);
   const [batchId, setBatchId] = useState<number | null>(null);
+  /**
+   * 一覧を案件で絞る。取り込みも作成もこの画面からやるので、上げ直した紙が
+   * どれかを見るのに、毎回 200 件の一覧から目で探していた。
+   */
+  const [listMatter, setListMatter] = useState("");
+  const [listMatterLabel, setListMatterLabel] = useState<string | null>(null);
 
-  useEffect(() => { void reload(); }, [search, scope, batchId]);
+  useEffect(() => { void reload(); }, [search, scope, batchId, listMatter]);
 
   /**
    * 他の画面から文書を指定して来たとき。
@@ -239,7 +253,8 @@ export function DocumentsWorkspace(
           ...(search.trim() ? { q: search.trim() } : {}),
           ...(scope === "unlinked" ? { unlinked: "1" } : {}),
           ...(scope === "draft" || scope === "decided" || scope === "sent" ? { phase: scope } : {}),
-          ...(batchId ? { batchId: String(batchId) } : {})
+          ...(batchId ? { batchId: String(batchId) } : {}),
+          ...(listMatter ? { matterId: listMatter } : {})
         })}`),
         // 出版の条件書は条件 170 本で1通になる。既定の 200 では台帳の新しい順に
         // 切られて、載せたい条件が候補に出てこない。
@@ -1321,6 +1336,22 @@ export function DocumentsWorkspace(
                 {batchId && (
                   <button className="chip" aria-pressed onClick={() => setBatchId(null)}
                           title="この束の絞り込みを外す">一括 #{batchId} ×</button>
+                )}
+                {/* 案件で絞る。選ぶと札になり、押すと外れる（束の絞りと同じ形）。 */}
+                {listMatter ? (
+                  <button className="chip" aria-pressed
+                          onClick={() => { setListMatter(""); setListMatterLabel(null); }}
+                          title="案件の絞り込みを外す">
+                    {listMatterLabel ?? `案件 #${listMatter}`} ×
+                  </button>
+                ) : (
+                  <span style={{ minWidth: 230 }}>
+                    <SearchSelect value={listMatter}
+                      onChange={(value, option) => {
+                        setListMatter(value); setListMatterLabel(option?.label ?? null);
+                      }}
+                      search={searchMattersForList} placeholder="案件で絞る" />
+                  </span>
                 )}
               </div>
               {scope === "unlinked" && (

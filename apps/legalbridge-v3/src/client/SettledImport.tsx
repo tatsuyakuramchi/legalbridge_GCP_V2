@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, money, saveCsv } from "./api.js";
 import { SearchSelect, type SearchOption } from "./SearchSelect.js";
+import type { SettledDiff } from "../server/documents/settled-diff.js";
 
 /**
  * 決済済みの一括取込（遡及）。
@@ -131,6 +132,9 @@ export function SettledImport(
   const [notes, setNotes] = useState<Array<{ conditionNo: string | null;
                                              conditionName: string; note: string }>>([]);
   const [allNotes, setAllNotes] = useState(false);
+  /** いまの現物との差。上げ直す前に「どこを直したか」を出す。 */
+  const [diff, setDiff] = useState<SettledDiff | null>(null);
+  const [allSame, setAllSame] = useState(false);
 
   async function exportMatter() {
     if (!matterId) return;
@@ -171,6 +175,18 @@ export function SettledImport(
   }, [initialMatterId]);
 
   // CSV と案件と候補の選択が揃うたびに試算し直す。何も作らない。
+  // 差分は試算と別に引く。試算は「何ができるか」、差分は「もとと何が違うか」。
+  useEffect(() => {
+    if (!csv || !matterId) { setDiff(null); return; }
+    let live = true;
+    api.post<SettledDiff>("/documents/batches/settled/diff",
+      { matterId: Number(matterId), csv: csv.text })
+      .then((d) => { if (live) { setDiff(d); setAllSame(false); } })
+      // 差分が引けなくても取り込みは止めない（現物が無い案件もある）。
+      .catch(() => { if (live) setDiff(null); });
+    return () => { live = false; };
+  }, [csv, matterId]);
+
   useEffect(() => {
     if (!csv || !matterId) { setPreview(null); return; }
     let live = true;
@@ -288,6 +304,8 @@ export function SettledImport(
                      }} />
               {csv && <span className="faint">{csv.name}</span>}
             </label>
+
+            {diff && <DiffPanel diff={diff} all={allSame} onAll={setAllSame} />}
 
             {preview && (
               <>
@@ -542,3 +560,105 @@ export function SettledImport(
     </div>
   );
 }
+
+/**
+ * いまの現物と、上げ直す CSV の差。
+ *
+ * 押すと番号を振って紙を作ってしまうので、その前に「どこを直したか」を出す。
+ * 直した覚えのない列が動いていたら、そこで気づける。合計の増減をいちばん
+ * 大きく出す。金額を直すために上げ直しているので、そこが本題になる。
+ */
+function DiffPanel({ diff, all, onAll }: {
+  diff: SettledDiff; all: boolean; onAll: (v: boolean) => void;
+}) {
+  const { summary } = diff;
+  const moved = diff.rows.filter((r) => r.kind !== "same");
+  const shown = all ? diff.rows : moved;
+
+  return (
+    <div className="panel">
+      <div className="panel-hd">
+        <h2>いまの現物との差</h2>
+        <span className="faint">
+          直す {summary.changed}／足す {summary.added}／消える {summary.removed}／
+          そのまま {summary.same}
+        </span>
+      </div>
+      <div className="panel-bd stack">
+        <div className="row" style={{ gap: 22 }}>
+          <div><div className="faint">いまの合計（税抜）</div>
+            <div className="num">{money(summary.beforeTotal)}</div></div>
+          <div><div className="faint">上げ直したあと</div>
+            <div className="num">{money(summary.afterTotal)}</div></div>
+          <div><div className="faint">増減</div>
+            <div className="num" style={{
+              color: summary.delta === 0 ? undefined
+                : summary.delta < 0 ? "var(--out)" : "var(--ok)"
+            }}>
+              {summary.delta > 0 ? "+" : ""}{money(summary.delta)}
+            </div></div>
+        </div>
+
+        {diff.ambiguous.length > 0 && (
+          <div className="note warn">
+            同じ条件に同じ品目名が2行あります（{diff.ambiguous.join("／")}）。
+            どちらと比べるか決められないので、この差分には出ません。
+            品目名を分けるか、上げ直したあとに目で確かめてください。
+          </div>
+        )}
+
+        {!moved.length ? (
+          <p className="faint">いまの現物と同じです。上げ直しても中身は変わりません。</p>
+        ) : (
+          <div className="tablewrap">
+            <table>
+              <thead><tr>
+                <th></th><th>取引先／条件</th><th>品目</th><th>変わるところ</th>
+                <th className="num">いま</th><th className="num">あと</th>
+              </tr></thead>
+              <tbody>
+                {shown.map((row) => (
+                  <tr key={row.key} className={row.kind === "same" ? "older" : ""}>
+                    <td><span className={`tag ${KIND_TONE[row.kind]}`}>{KIND_LABEL[row.kind]}</span></td>
+                    <td>
+                      <div>{row.partyName || "—"}</div>
+                      <div className="faint">{row.conditionName}</div>
+                    </td>
+                    <td>{row.itemName}</td>
+                    <td>
+                      {row.fields.length === 0
+                        ? <span className="faint">—</span>
+                        : row.fields.map((f) => (
+                          <div key={f.key}>
+                            <span className="faint">{f.label}</span>{" "}
+                            <span className="code">{f.before || "（空）"}</span>
+                            {" → "}
+                            <b className="code">{f.after || "（空）"}</b>
+                          </div>
+                        ))}
+                    </td>
+                    <td className="num">{row.beforeAmount === null ? "—" : money(row.beforeAmount)}</td>
+                    <td className="num">{row.afterAmount === null ? "—" : money(row.afterAmount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {summary.same > 0 && (
+          <button className="btn btn-sm" onClick={() => onAll(!all)}>
+            {all ? "変わる行だけ出す" : `そのままの ${summary.same} 行も出す`}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const KIND_LABEL: Record<string, string> = {
+  changed: "直す", added: "足す", removed: "消える", same: "そのまま"
+};
+const KIND_TONE: Record<string, string> = {
+  changed: "warn", added: "ok", removed: "out", same: "ghost"
+};

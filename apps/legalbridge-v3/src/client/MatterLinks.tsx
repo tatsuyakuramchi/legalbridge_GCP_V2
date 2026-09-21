@@ -518,6 +518,11 @@ export function MatterDocuments(
    * 要らない行を Excel で消す作業になる。
    */
   const [picked, setPicked] = useState<Set<number>>(new Set());
+  /** 決済済みの書き出し。人に決めてもらうことは CSV に出せないので画面に出す。 */
+  const [settledNotes, setSettledNotes] = useState<
+    { rows: number; notes: Array<{ conditionNo: string | null;
+                                   conditionName: string; note: string }> } | null>(null);
+  const [showAllNotes, setShowAllNotes] = useState(false);
   const [exported, setExported] =
     useState<{ rows: number; documents: number;
                skipped: Array<{ documentNo: string | null; reason: string }> } | null>(null);
@@ -558,6 +563,28 @@ export function MatterDocuments(
       setIssued(r.results);
       setPicked(new Set());
       onChanged();
+    } catch (e) { setError((e as ApiError).message); }
+    finally { setBusy(false); }
+  }
+
+  /**
+   * 決済済みの取引をまるごと書き出す。発注書・検収書・支払を1行にまとめた形で、
+   * 「紙は出してあるが金額が一部違う」ときに、表計算で金額だけ直して入れ直す。
+   *
+   * 案件まるごと出す。決済済みは発注書1枚では完結しない（検収書と支払が
+   * 付いてくる）ので、文書を名指しで選ぶ形にはしない。
+   */
+  async function exportSettled() {
+    setBusy(true); setError(null); setSettledNotes(null);
+    try {
+      const made = await api.get<{
+        matter: { matterNo: string | null }; rows: unknown[];
+        notes: Array<{ conditionNo: string | null; conditionName: string; note: string }>;
+        csv: string;
+      }>(`/matters/${detail.id}/settled-export`);
+      if (!made.rows.length) setError("書き出せる条件明細がありませんでした");
+      else saveCsv(made.csv, `settled_${made.matter.matterNo ?? detail.id}.csv`);
+      setSettledNotes({ rows: made.rows.length, notes: made.notes });
     } catch (e) { setError((e as ApiError).message); }
     finally { setBusy(false); }
   }
@@ -672,7 +699,48 @@ export function MatterDocuments(
         </div>
       )}
 
+      {/*
+        決済済みの取引をまるごと書き出す。上の一括作成が「これから出す紙」なら、
+        こちらは「もう終わった取引の作り直し」。発注書だけでは完結しない
+        （検収書と支払が付いてくる）ので、案件まるごと出す。
+        文書を1枚も選んでいなくても要るので、選択の帯には入れない。
+      */}
+      {!picking && (
+        <div className="row">
+          <button className="btn btn-sm" disabled={busy}
+                  onClick={() => void exportSettled()}>
+            決済済みを CSV に出す（作り直し用）
+          </button>
+          <span className="faint">
+            いまの発注書・検収書・支払を1行にまとめて出します。金額を直したら、
+            文書の画面の「検収済みをまとめて入れる（CSV）」から上げ直してください
+          </span>
+        </div>
+      )}
+
       {error && <div className="alert">{error}</div>}
+
+      {settledNotes && (
+        <div className={settledNotes.notes.length ? "note warn" : "note ok"}>
+          明細 {settledNotes.rows} 行を出しました。金額を直したら、文書の画面の
+          「検収済みをまとめて入れる（CSV）」から上げ直してください。
+          {settledNotes.notes.length > 0 && (
+            <div style={{ marginTop: 4 }}>
+              <b>人に決めてもらうこと（{settledNotes.notes.length}）</b>
+              <ul style={{ margin: "4px 0 0" }}>
+                {(showAllNotes ? settledNotes.notes : settledNotes.notes.slice(0, 8))
+                  .map((n, i) => <li key={i}>{n.conditionNo ?? n.conditionName}：{n.note}</li>)}
+              </ul>
+              {settledNotes.notes.length > 8 && (
+                <button className="btn btn-sm" style={{ marginTop: 4 }}
+                  onClick={() => setShowAllNotes(!showAllNotes)}>
+                  {showAllNotes ? "畳む" : `ほか ${settledNotes.notes.length - 8} 件を出す`}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {exported && (
         <div className={exported.skipped.length ? "note warn" : "note ok"}>
