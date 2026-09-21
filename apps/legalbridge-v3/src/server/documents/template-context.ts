@@ -15,6 +15,7 @@
 import {
   aggregateItemDates, computeInspectionTotals, inspectionTaxBreakdown,
   num, purchaseOrderTotals, rows, taxRatePercentFor, yen, type Row, pickRow } from "./legacy-totals.js";
+import { foldPeriodicLines } from "./periodic-fold.js";
 import { royaltyStatementPatch } from "./royalty-patch.js";
 import { isLicenseTermsTemplate, licenseTermsPatch, licenseTermsSeeds,
          licenseTermsSuggestions } from "./license-terms.js";
@@ -197,7 +198,8 @@ function rewardBreakdown(condition: Ctx, event: Ctx, spec: unknown): Row {
 export function deliveryLinesFrom(context: Ctx): Row[] {
   const events = (context.events ?? []) as Ctx[];
   if (events.length) {
-    return events.map((event) => {
+    // 定期課金の回が続くところは1行に畳む（同じ内容の行が縦に並ばないように）。
+    return foldPeriodicLines(events.map((event) => {
       const condition = (context.conditions ?? []).find((c: Ctx) => c.id === event.conditionId)
         ?? context.condition ?? {};
       const spec = condition.spec ?? condition.notes ?? event.note ?? "";
@@ -213,6 +215,9 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
         // この行の元になった発注書。条件をまたぐ検収書で行ごとに違う。
         order_no: orderNoFor(context, condition.id),
         condition_no: condition.conditionNo ?? null,
+        // 畳むときのまとまりの単位と、まとめの品目名。紙には出ない。
+        condition_id: condition.id ?? null,
+        condition_name: condition.name ?? null,
         // 名前は本番のひな形が差しているものに合わせる。inspected_quantity と
         // paid_date は検収書の本文が直接読む列で、別名では出ない。
         quantity: event.quantity ?? null,
@@ -243,7 +248,8 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
         calc_method: calcMethodOf(condition),
         reward_label: rewardLabelOf(condition)
       };
-    });
+    // 畳んだ行は仕様に「全12回（毎月）…」が足されるので、まとめと本文を割り直す。
+    })).map((line) => (line.folded ? { ...line, ...splitSpec(line.spec) } : line));
   }
   // 実績を選んでいなければ、載せた条件を1本1行にする（手数料・経費は別の表）。
   // 以前は条件が1本のときしか行を作らず、委託料と実費の2本を載せると行が
@@ -288,12 +294,16 @@ export function orderLinesFrom(context: Ctx): Row[] {
     .filter((c) => isSettlementKind(c.kind)).map((c) => c.id));
   const schedules = ((context.schedules ?? []) as Ctx[]).filter((s) => !settlementIds.has(s.conditionId));
   if (schedules.length) {
-    return schedules.map((s) => {
+    // 定期課金の回が続くところは1行に畳む（同じ内容の行が縦に並ばないように）。
+    return foldPeriodicLines(schedules.map((s) => {
       const condition = (context.conditions ?? []).find((c: Ctx) => c.id === s.conditionId)
         ?? context.condition ?? {};
       return {
         item_name: s.label ?? condition.name ?? "",
         spec: specOf(condition),
+        // 畳むときのまとまりの単位と、まとめの品目名。紙には出ない。
+        condition_id: condition.id ?? null,
+        condition_name: condition.name ?? null,
         deliverable_ownership: ownershipOf(condition),
         // 本文は 数量×単価 を印字する。空だと「¥0」が出るので、1 × 金額 で置く。
         quantity: 1,
@@ -309,7 +319,7 @@ export function orderLinesFrom(context: Ctx): Row[] {
         calc_method: calcMethodOf(condition),
         reward_label: rewardLabelOf(condition)
       };
-    });
+    }));
   }
   // 選んだ条件は、金額が決まっていなくても1行にする。
   //

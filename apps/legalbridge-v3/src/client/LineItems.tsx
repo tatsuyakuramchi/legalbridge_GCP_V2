@@ -36,6 +36,19 @@ const matches = (c: ShowWhen, row: Row) => {
 export const visible = (col: Column, row: Row) =>
   !col.showWhen || (Array.isArray(col.showWhen) ? col.showWhen.every((c) => matches(c, row)) : matches(col.showWhen, row));
 
+/**
+ * 定期支払の「回をまとめた行」かどうか。まとめた行の日付の欄には
+ * 「2026-04-28 〜 2027-03-28」のような期間が入るので、日付の枠では出せない
+ * （日付の枠は期間を受け取れず、空欄に見えてしまう）。文字の枠に切り替える。
+ */
+const foldedOnly: ShowWhen = { field: "folded", truthy: true };
+const notFolded: ShowWhen = { field: "folded", truthy: false };
+const dateOrRange = (name: string, label: string): Column[] => [
+  { name, label, type: "date", showWhen: notFolded },
+  { name, label: `${label}（期間）`, showWhen: foldedOnly,
+    helpText: "まとめた回の最初と最後。回ごとに分けたいなら「行を足す」で分ける" }
+];
+
 const royaltyOnly: ShowWhen = { field: "calc_method", anyOf: ["ROYALTY"] };
 const subscriptionOnly: ShowWhen = { field: "calc_method", anyOf: ["SUBSCRIPTION"] };
 const notSubscription: ShowWhen = { field: "calc_method", anyOf: ["", "FIXED", "ROYALTY"] };
@@ -127,8 +140,8 @@ export const INSPECTION_COLUMNS: Column[] = [
   { name: "inspected_quantity", label: "検収数量", type: "number" },
   { name: "ordered_amount_ex_tax", label: "予定額（税抜）", type: "number", helpText: "発注時の金額。検収金額と違えば変更履歴に出る" },
   { name: "inspected_amount_ex_tax", label: "検収金額（税抜）", type: "number" },
-  { name: "delivery_date", label: "納品日", type: "date" },
-  { name: "paid_date", label: "支払日", type: "date" },
+  ...dateOrRange("delivery_date", "納品日"),
+  ...dateOrRange("paid_date", "支払日"),
   { name: "inspection_status", label: "扱い", type: "select",
     options: [{ value: "now", label: "今回検収する" }, { value: "paid", label: "支払済み（前回まで）" }, { value: "skip", label: "対象外" }] },
   { name: "changeNote", label: "金額変更の理由", showWhen: { field: "hasChange", truthy: true } },
@@ -177,6 +190,16 @@ const pubTitleSubtitle = (row: Row): string => {
     + (Array.isArray(row.condition_ids) && row.condition_ids.length ? "" : "（手で足した行）");
 };
 
+/**
+ * 畳んだ定期支払の行の添え字。「2026年4月分 〜 2027年3月分　全12回（毎月）…」。
+ *
+ * 定期課金の条件は回ごとに予定明細を立てるが、紙に同じ行を12本並べても
+ * 読めないので、同じ内容の回は1行にまとめて出している。何回ぶんをまとめた
+ * 行なのかは行の見出しで分かるようにしておく。
+ */
+const foldedSubtitle = (row: Row): string =>
+  (row.folded ? show(row.period_summary) : "");
+
 export const LINE_SECTIONS: Record<string, {
   title: string; columns: Column[]; intl?: Column[]; hint: string;
   /** 行の見出しに添える文字（条件から出た値の確認用）。 */
@@ -185,11 +208,13 @@ export const LINE_SECTIONS: Record<string, {
   pub_titles: { title: "対象著作物（出版条件書の一覧）", columns: PUB_TITLE_COLUMNS, subtitle: pubTitleSubtitle,
            hint: "選んだ条件明細から、作品1点が1行。紙・電子の料率と独占区分は条件明細の写しで、"
                + "ここでは直せない（直すなら条件を直す）。著作権表示・共同著作・備考はここで入れる" },
-  items: { title: "発注明細", columns: ITEM_COLUMNS, intl: INTL_ITEM_COLUMNS,
-           hint: "予定明細（無ければ条件の総額）から組んだ行。帰属先・支払方法・納期・支払日はここで入れる" },
-  delivery_line_items: { title: "納品明細", columns: INSPECTION_COLUMNS,
+  items: { title: "発注明細", columns: ITEM_COLUMNS, intl: INTL_ITEM_COLUMNS, subtitle: foldedSubtitle,
+           hint: "予定明細（無ければ条件の総額）から組んだ行。帰属先・支払方法・納期・支払日はここで入れる。"
+               + "定期支払は同じ内容の回を1行にまとめ、数量を回数として出す（額の違う回はそこで分かれる）" },
+  delivery_line_items: { title: "納品明細", columns: INSPECTION_COLUMNS, subtitle: foldedSubtitle,
            hint: "選んだ実績が1行ずつ。検収金額が予定額と違えば変更履歴に出る。"
-               + "業績連動の行は、別で計算した金額と根拠をここに入れる" },
+               + "業績連動の行は、別で計算した金額と根拠をここに入れる。"
+               + "定期支払は同じ額の回を1行にまとめる（変更のあった回は分かれる）" },
   other_fees: { title: "その他手数料", columns: FEE_COLUMNS, hint: "無ければ空のまま" },
   expenses: { title: "経費", columns: EXPENSE_COLUMNS, hint: "税込で入れる。無ければ空のまま" },
   rs_line_labels: { title: "計算書の行の見出し", columns: STATEMENT_LABEL_COLUMNS,
