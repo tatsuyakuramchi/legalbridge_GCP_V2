@@ -7,6 +7,7 @@ import { ConditionsWorkspace } from "./ConditionsWorkspace.js";
 import { AgreementsWorkspace } from "./AgreementsWorkspace.js";
 import type { EntityKind } from "./Relations.js";
 import { DocumentsWorkspace } from "./DocumentsWorkspace.js";
+import { ClosingWorkspace } from "./ClosingWorkspace.js";
 import { MoneyWorkspace } from "./MoneyWorkspace.js";
 import { WorksWorkspace } from "./WorksWorkspace.js";
 import { PartiesWorkspace } from "./PartiesWorkspace.js";
@@ -14,7 +15,7 @@ import { FlowMonitorWorkspace } from "./FlowMonitorWorkspace.js";
 import { DriftWorkspace } from "./DriftWorkspace.js";
 import { OpsWorkspace, HomeWorkspace, type OpsTab } from "./OpsWorkspace.js";
 
-type View = "home" | "matters" | "agreements" | "conditions" | "works" | "parties" | "documents" | "money" | "drift" | "flows" | "ops";
+type View = "home" | "matters" | "agreements" | "conditions" | "works" | "parties" | "documents" | "closing" | "money" | "drift" | "flows" | "ops";
 interface Me {
   user?: { email: string; role: string };
   readOnly: boolean;
@@ -34,6 +35,9 @@ const NAV: Array<{ section: string; items: Array<{ view: View; label: string }> 
     { view: "works", label: "作品" },
     { view: "parties", label: "取引先・担当" },
     { view: "documents", label: "文書" },
+    // 文書とお金のあいだ。予定 → 実績 → 決済文書 → 支払 を1本の表で進める
+    // ところなので、紙の話と金の話の継ぎ目に置く。
+    { view: "closing", label: "支払文書処理" },
     { view: "money", label: "お金" }
   ] },
   { section: "監視・運用", items: [
@@ -242,6 +246,9 @@ export function App() {
         {view === "agreements" && (
           <AgreementsWorkspace key={`a${focusFor("agreements") ?? 0}`}
             initialId={focusFor("agreements")} onOpen={openEntity} />
+        )}
+        {view === "closing" && (
+          <ClosingWorkspace onOpenCondition={openCondition} onOpenDocument={openDocumentAt} />
         )}
         {view === "money" && <MoneyWorkspace />}
         {view === "drift" && (

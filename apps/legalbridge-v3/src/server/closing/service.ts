@@ -40,6 +40,8 @@ export interface CandidateRow {
   currency: string;
   /** 料率は売上報告が来るまで金額が出ない。画面はこれで入力欄を変える。 */
   needsReport: boolean;
+  /** 料率（百万分率）。料率の条件を並べるときに画面に出す。 */
+  ratePpm: number | null;
   /** その条件の決済文書の呼び名（検収書／計算書）。 */
   documentLabel: string;
   party: { id: number; name: string } | null;
@@ -156,7 +158,7 @@ const PRINTED_DUE_SQL = `CASE WHEN jsonb_typeof(d.rendered_values) = 'object' TH
 /** 条件の輪郭。候補一覧でも、回の一覧の頭でも同じものを出す。 */
 const CONDITION_HEAD = `
   SELECT c.id, c.condition_no, c.name, c.kind, c.pricing_model, c.direction, c.currency,
-         c.term_start, c.term_end,
+         c.rate_ppm, c.term_start, c.term_end,
          p.id AS party_id, p.name AS party_name,
          w.id AS work_id, w.title AS work_title,
          m.id AS matter_id, m.title AS matter_title,
@@ -358,19 +360,15 @@ export class ClosingService {
       const { from, to } = monthRange(month);
       const args: unknown[] = [from, to];
       const base = narrowBy(scope, args);
+      // 並ぶのは「その月に締め日が来る予定明細」だけ。予定を立てずに入れた
+      // 実績はここに混ぜない。手元の写しでは9月の12行のうち10行がそれで、
+      // 締めるべき2行が埋もれた。あれは strays() の別枠で出す。
       const planned = await this.database.query(
         `${PERIOD_SELECT} WHERE s.due_on >= $1 AND s.due_on < $2${base}
           ORDER BY s.due_on, c.id, s.seq`, args);
-      // 予定の無い実績は実績日で月に入れる。締め日が無いので、そこで切るしかない。
-      const loose = await this.database.query(
-        `${UNPLANNED_SELECT} AND e.occurred_on >= $1 AND e.occurred_on < $2${base}
-          ORDER BY e.occurred_on, e.id`, args);
 
       const today = this.todayStr();
-      const rows = [
-        ...(planned.rows as any[]).map((row) => periodRow(row, today, false)),
-        ...(loose.rows as any[]).map((row) => periodRow(row, today, true))
-      ];
+      const rows = (planned.rows as any[]).map((row) => periodRow(row, today, false));
       const counts: Record<Step, number> = { event: 0, document: 0, payment: 0, done: 0 };
       for (const row of rows) counts[row.step] += 1;
       return { month, from, to, rows, counts };
@@ -491,6 +489,7 @@ function headRow(row: any): CandidateRow {
     direction: String(row.direction ?? "out"),
     currency: String(row.currency ?? "JPY"),
     needsReport: needsReport(row.pricing_model),
+    ratePpm: int(row.rate_ppm),
     documentLabel: documentFor(kind).label,
     party: row.party_id ? { id: Number(row.party_id), name: String(row.party_name ?? "") } : null,
     work: row.work_id ? { id: Number(row.work_id), name: String(row.work_title ?? "") } : null,
@@ -552,7 +551,9 @@ export function periodRow(row: any, today: string, unplanned: boolean): PeriodRo
     state: stateLabel({ step, pricingModel: row.pricing_model, kind, closingOn, today }),
     due,
     monthKey: monthKeyOf(closingOn),
-    lateDays: step === "done" ? 0 : lateDays(closingOn, today),
+    // 浮いた実績に締め日は無い（due_on に実績日を入れてある）。実績日からの
+    // 日数を「遅れ」と呼ぶと、入れた翌日から赤くなる。遅れは予定の回だけ。
+    lateDays: step === "done" || unplanned ? 0 : lateDays(closingOn, today),
     unplanned
   };
 }

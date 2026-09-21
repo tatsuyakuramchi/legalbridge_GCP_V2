@@ -188,8 +188,35 @@ test("月の表も取引先で絞れる", async () => {
   const q = db.find("FROM condition_schedules s")!;
   assert.match(q.text, /c\.counterparty_id = \$3/);
   assert.deepEqual(q.params, ["2026-09-01", "2026-10-01", 3]);
-  // 浮いた実績の側も同じ絞りを通す。
-  assert.match(db.find("e.schedule_id IS NULL")!.text, /c\.counterparty_id = \$3/);
+});
+
+test("月の表は予定明細だけ（浮いた実績は混ぜない）", async () => {
+  const db = new FakeDatabase((t) => {
+    if (t.includes("FROM condition_schedules s")) return [line()];
+    return [];
+  });
+  const view = await new ClosingService(db, TODAY).month("2026-09");
+  assert.equal(view.rows.length, 1);
+  assert.equal(view.rows[0]?.unplanned, false);
+  // 浮いた実績の照会は流さない。別枠（strays）の仕事。
+  assert.equal(db.find("e.schedule_id IS NULL"), undefined);
+});
+
+test("浮いた実績は「遅れ」と数えない（締め日が無い）", () => {
+  const loose = periodRow({
+    schedule_id: null, seq: null, label: null, planned_amount: null,
+    due_on: "2026-09-01", pay_on: null, service_from: null, service_to: null,
+    condition_id: 7, condition_no: null, condition_name: "浮いた実績",
+    kind: "service", pricing_model: "fixed", currency: "JPY", payment_terms: null,
+    party_id: 3, party_name: "受託者名", matter_id: null, matter_title: null,
+    event_id: 900, event_on: "2026-09-01", event_amount: 12000,
+    document_id: null, document_no: null, document_status: null, printed_due_on: null,
+    payment_id: null, payment_no: null, payment_status: null, paid_on: null,
+    allocated_amount: 0
+  }, "2026-09-21", true);
+  assert.equal(loose.lateDays, 0);
+  // 予定の回なら同じ日付で20日遅れになる。
+  assert.equal(periodRow(line({ due_on: "2026-09-01" }), "2026-09-21", false).lateDays, 20);
 });
 
 test("月の指定が YYYY-MM でなければ断る", async () => {
