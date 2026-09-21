@@ -450,10 +450,16 @@ SELECT d.document_no AS "文書", li.ord AS "行",
  ORDER BY d.document_no, li.ord;
 
 \echo ''
-\echo '=== 12. 重複の疑い（同じ案件・同じ金額・同じ行数の紙） ================='
+\echo '=== 12. 重複の疑い（本文まで同じ紙） ==================================='
 \echo '   V2 から同じ紙が何枚も移ってきていることがある。繋ぎ直す前に'
 \echo '   どれが本物かを決めないと、同じ実績を何枚もの紙へ結ぶことになる'
 \echo '   （実績は1枚の文書しか指せないので、結局どれかが空のまま残る）。'
+\echo ''
+\echo '   以前は「同じ案件・同じ金額・同じ行数」で数えていた。それでは'
+\echo '   同じ業務を4人に出した検収書が重複に見える（明細が全部同じで、'
+\echo '   違うのは相手先・発注番号・振込先だけ）。実際にそれで本物を'
+\echo '   3枚無効にした。ここは明細を抜いた本文まるごとで数える。'
+\echo '   金額と行数だけが一致する組は 12b に別に出す。'
 \echo ''
 
 WITH orphan AS (
@@ -476,16 +482,61 @@ WITH orphan AS (
                    '[]'::jsonb)) li) AS total,
          COALESCE(CASE WHEN jsonb_typeof(d.rendered_values -> 'delivery_line_items') = 'array'
                        THEN jsonb_array_length(d.rendered_values -> 'delivery_line_items') END, 0) AS lines
+         ,
+         -- 明細を抜いた本文まるごと。相手先・発注番号・振込先はここに入る。
+         md5(((d.rendered_values - 'items') - 'delivery_line_items')::text) AS head,
+         COALESCE(d.rendered_values ->> 'counterparty',
+                  d.rendered_values ->> 'VENDOR_NAME', '—') AS party
     FROM orphan o JOIN documents d ON d.id = o.id
 )
 SELECT m.matter_no AS "案件", p.total AS "金額", p.lines AS "明細行",
        count(*) AS "枚数",
        string_agg(p.document_no || '（' || p.issued_at::date || '・legacy ' || COALESCE(p.legacy_id::text, '—') || '）',
-                  '　' ORDER BY p.document_no) AS "同じ中身の紙"
+                  '　' ORDER BY p.document_no) AS "本文まで同じ紙"
   FROM paper p LEFT JOIN matters m ON m.id = p.matter_id
  -- 明細ゼロの紙どうしは「同じ中身」ではなく「どちらも空」。数えると
  -- 空の計算書が丸ごと1組の重複に見えて、本題が埋もれる。
  WHERE p.lines > 0
- GROUP BY m.matter_no, p.total, p.lines
+ GROUP BY m.matter_no, p.head, p.total, p.lines
 HAVING count(*) > 1
+ ORDER BY count(*) DESC, m.matter_no;
+
+\echo ''
+\echo '=== 12b. 似ているが別の紙（明細は同じ・本文が違う） ===================='
+\echo '   金額も行数も同じだが、相手先や発注番号が違う紙。畳んではいけない。'
+\echo '   同じ業務を複数人に同じ条件で出すと、必ずこの形になる。'
+\echo ''
+
+WITH orphan AS (
+  SELECT d.id
+    FROM documents d
+    JOIN document_template_versions tv ON tv.id = d.template_version_id
+    JOIN document_templates t ON t.id = tv.template_id
+   WHERE d.status = 'issued'
+     AND t.template_key IN ('inspection_certificate', 'royalty_statement')
+     AND NOT EXISTS (SELECT 1 FROM document_conditions dc WHERE dc.document_id = d.id)
+     AND NOT EXISTS (SELECT 1 FROM condition_events x
+                      WHERE x.document_id = d.id AND x.status = 'active')
+), paper AS (
+  SELECT d.id, d.document_no, d.matter_id, d.issued_at,
+         (SELECT COALESCE(sum(COALESCE(NULLIF(regexp_replace(
+                   COALESCE(li ->> 'inspected_amount_ex_tax', ''), '[^0-9]', '', 'g'), '')::bigint, 0)), 0)
+            FROM jsonb_array_elements(COALESCE(
+                   CASE WHEN jsonb_typeof(d.rendered_values -> 'delivery_line_items') = 'array'
+                        THEN d.rendered_values -> 'delivery_line_items' END,
+                   '[]'::jsonb)) li) AS total,
+         COALESCE(CASE WHEN jsonb_typeof(d.rendered_values -> 'delivery_line_items') = 'array'
+                       THEN jsonb_array_length(d.rendered_values -> 'delivery_line_items') END, 0) AS lines,
+         md5(((d.rendered_values - 'items') - 'delivery_line_items')::text) AS head,
+         COALESCE(d.rendered_values ->> 'counterparty',
+                  d.rendered_values ->> 'VENDOR_NAME', '—') AS party
+    FROM orphan o JOIN documents d ON d.id = o.id
+)
+SELECT m.matter_no AS "案件", p.total AS "金額", p.lines AS "明細行",
+       count(DISTINCT p.head) AS "別の本文の数",
+       string_agg(p.document_no || '（' || p.party || '）', '　' ORDER BY p.document_no) AS "紙と相手"
+  FROM paper p LEFT JOIN matters m ON m.id = p.matter_id
+ WHERE p.lines > 0
+ GROUP BY m.matter_no, p.total, p.lines
+HAVING count(DISTINCT p.head) > 1
  ORDER BY count(*) DESC, m.matter_no;
