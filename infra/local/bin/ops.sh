@@ -10,7 +10,10 @@
 #   ops fresh             本番データなしで開発用 DB を作る（模擬データ）
 #   ops grants            ランタイムロールの権限を当て直す
 #   ops upgrade           手元の DB を今のスキーマに合わせる（列を足したあと）
-#   ops sql <file>        SQL を流す（infra/v3 の診断は /v3/095_… で指せる）
+#   ops sql <file> [名前=値 ...]
+#                         SQL を流す（infra/v3 の診断は /v3/095_… で指せる）。
+#                         名前=値 を足すと照会の :'名前' に入る
+#                         （例: ops sql /v3/diag/party-documents.sql q=取引先名）
 #   ops status            写しの一覧と、いま入っているデータの時点
 #   ops netcheck [host port]
 #                         同期に要る Google の口へ、コンテナから届くかを見る。
@@ -788,8 +791,19 @@ case "${1:-}" in
   fresh) fresh ;;
   grants) apply_grants ;;
   upgrade) upgrade ;;
-  sql) [ -n "${2:-}" ] || die "使い方: ops sql /v3/095_diagnose_condition.sql"
-       psql -v ON_ERROR_STOP=1 -f "$2" ;;
+  sql) [ -n "${2:-}" ] || die "使い方: ops sql /v3/095_diagnose_condition.sql [名前=値 ...]"
+       # 3つ目以降は SQL に渡す変数（名前=値）。照会の中で :'名前' と書いた
+       # ところに入る。ファイルは読み取り専用で入っているので、探す語を
+       # 変えるたびに PC 側のファイルを書き換えなくて済むようにする。
+       sql_file="$2"; shift 2
+       sql_vars=()
+       for pair in "$@"; do
+         case "$pair" in
+           *=*) sql_vars+=(-v "$pair") ;;
+           *) die "変数は 名前=値 の形で渡す（例: q=取引先名）" ;;
+         esac
+       done
+       psql -v ON_ERROR_STOP=1 "${sql_vars[@]+"${sql_vars[@]}"}" -f "$sql_file" ;;
   status) status ;;
   *) sed -n '2,15p' "$0"; exit 2 ;;
 esac
