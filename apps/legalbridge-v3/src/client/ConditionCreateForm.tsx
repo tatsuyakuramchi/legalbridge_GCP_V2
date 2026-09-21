@@ -128,9 +128,16 @@ export function ConditionCreateForm(
                     { value: "unit_rate", label: "単価×数量" }, { value: "subscription", label: "定期課金" },
                     { value: "none", label: "計算しない" }],
           hint: "選んだ方式に必要な値が無いと登録できない" },
-        { name: "flatAmount", label: "定額（最小通貨単位）", type: "money", required: true,
-          visibleWhen: (v) => v.pricingModel === "fixed",
-          hint: (v) => minorUnitHint(v.currency) },
+        // 定期課金は「1回あたり」をこの欄に入れる（計算も period_amount として読む）。
+        // 出していなかったので、定期課金の条件は金額を持てないまま作られていた。
+        { name: "flatAmount",
+          label: (v) => v.pricingModel === "subscription"
+            ? "1回あたりの金額（最小通貨単位）" : "定額（最小通貨単位）",
+          type: "money", required: true,
+          visibleWhen: (v) => v.pricingModel === "fixed" || v.pricingModel === "subscription",
+          hint: (v) => v.pricingModel === "subscription"
+            ? `毎月・毎期のいちどぶん。総額ではない。${minorUnitHint(v.currency)}`
+            : minorUnitHint(v.currency) },
         { name: "ratePct", label: "料率（%）", type: "number", required: true,
           visibleWhen: (v) => v.pricingModel === "revenue_rate",
           placeholder: "12.5", hint: "小数で入れる。12.5 は 12.5%" },

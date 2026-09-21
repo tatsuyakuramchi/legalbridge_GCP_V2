@@ -16,7 +16,8 @@ export type FieldType = "text" | "number" | "money" | "date" | "select" | "searc
 
 export interface Field {
   name: string;
-  label: string;
+  /** 見出し。計算方式で意味が変わる欄（定額／1回あたり）は関数で渡す。 */
+  label: string | ((values: Record<string, string>) => string);
   type?: FieldType;
   required?: boolean;
   placeholder?: string;
@@ -81,7 +82,10 @@ export function CreateForm(props: CreateFormProps) {
         <div className="form-grid">
           {visible.map((f) => (
             <label key={f.name} className={f.type === "textarea" ? "field wide" : "field"}>
-              <span>{f.label}{f.required && <em className="req"> 必須</em>}</span>
+              <span>
+                {typeof f.label === "function" ? f.label(values) : f.label}
+                {f.required && <em className="req"> 必須</em>}
+              </span>
               {f.type === "select" ? (
                 <select value={values[f.name] ?? ""} onChange={(e) => set(f.name, e.target.value)}>
                   <option value="">—</option>
@@ -142,7 +146,10 @@ export function CreateForm(props: CreateFormProps) {
           </button>
           <button className="btn" onClick={props.onCancel} disabled={busy}>やめる</button>
           {missing.length > 0 && (
-            <span className="faint">{missing.map((f) => f.label).join("・")} が未入力です</span>
+            <span className="faint">
+              {missing.map((f) => (typeof f.label === "function" ? f.label(values) : f.label)).join("・")}
+              {" が未入力です"}
+            </span>
           )}
         </div>
       </div>

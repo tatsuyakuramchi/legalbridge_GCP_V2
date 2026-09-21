@@ -345,7 +345,11 @@ export function ConditionEdit(
           {detail.pricingModel === "revenue_rate" &&
             field("ratePct", "料率（%）", { type: "number", hint: `小数で入れる。いまの値 ${rate(detail.ratePpm)}` })}
           {detail.pricingModel !== "revenue_rate" &&
-            field("flatAmount", "定額（最小通貨単位）", { type: "number",
+            // 定期課金はこの欄が「1回あたり」。登録の画面と呼び方を揃える。
+            field("flatAmount",
+              detail.pricingModel === "subscription"
+                ? "1回あたりの金額（最小通貨単位）" : "定額（最小通貨単位）",
+              { type: "number",
               hint: computedFlat === null
                 ? `${minorUnitHint(detail.currency)}　いまの値 ${money(detail.flatAmount, detail.currency)}`
                 : `単価×個数 = ${computedFlat.toLocaleString("ja-JP")}。直せば手の値が勝つ` })}

@@ -268,3 +268,15 @@ test("指しているものがあれば消さず、何が指しているかを�
   });
   assert.equal(db.all("DELETE FROM conditions").length, 0);
 });
+
+test("定期課金も金額が要る。空だと毎月の額を持たない条件ができる", async () => {
+  // flat_amount を「1回あたり」として読むので、ここが空だと計算が 0 になる。
+  // 画面も定期課金のとき金額欄を出していなかったので、素通りしていた。
+  const db = new FakeDatabase(() => []);
+  await assert.rejects(
+    () => new ConditionWriteService(db).create({
+      name: "月次保守", direction: "in", kind: "service",
+      counterpartyId: 1, currency: "JPY", pricingModel: "subscription"
+    }, "k"),
+    /1回あたりの金額を入れてください/);
+});

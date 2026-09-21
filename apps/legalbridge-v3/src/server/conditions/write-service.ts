@@ -146,11 +146,15 @@ function validateConditionInput(input: ConditionInput): void {
   if (!name) throw new DomainError("VALIDATION", "条件名は必須です");
   const pricing = input.pricingModel ?? "none";
   const flatAmount = flatAmountOf(input);
+  // 定期課金も金額が要る。flat_amount を「1回あたり」として読むので、
+  // 空のまま作ると毎月の額を持たない条件になる（計算も 0 になる）。
   const required: Record<string, unknown> = {
-    unit_rate: input.unitAmount, revenue_rate: input.ratePpm, fixed: flatAmount
+    unit_rate: input.unitAmount, revenue_rate: input.ratePpm,
+    fixed: flatAmount, subscription: flatAmount
   };
   if (pricing in required && (required[pricing] === undefined || required[pricing] === null)) {
-    const label = { unit_rate: "単価", revenue_rate: "料率", fixed: "定額" }[pricing as string];
+    const label = { unit_rate: "単価", revenue_rate: "料率", fixed: "定額",
+                    subscription: "1回あたりの金額" }[pricing as string];
     throw new DomainError("VALIDATION", `${label}を入れてください。値の無い計算方式は選べません`);
   }
   if (input.ratePpm !== undefined && input.ratePpm !== null
