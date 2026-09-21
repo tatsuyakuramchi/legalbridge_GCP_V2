@@ -145,11 +145,17 @@ docker compose run --rm ops upgrade
 入れ替わったかどうかは `/health` で分かる。
 
 ```powershell
-curl http://localhost:8080/health
+Invoke-RestMethod http://localhost:8080/health | ConvertTo-Json
 ```
+
+（PowerShell の `curl` は `Invoke-WebRequest` の別名で、中身が包み紙に
+入って出る。`Invoke-RestMethod` なら中身がそのまま読める。）
 
 `client.builtAt` が `git pull` より後の時刻なら、サーバは新しい。
 そのうえで画面が古ければブラウザ側なので、Ctrl+F5（強制再読み込み）。
+
+書き込めるかどうかは同じ答えの `readOnly` で分かる。`.env` を直接見るなら
+`Select-String READ_ONLY .env`。
 
 ## 支払文書処理を使うとき
 
