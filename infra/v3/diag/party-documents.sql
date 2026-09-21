@@ -176,7 +176,8 @@ WITH target AS (
       OR COALESCE(p.representative_name, '') ILIKE '%' || :'q' || '%'
       OR EXISTS (SELECT 1 FROM unnest(p.aliases) a WHERE a ILIKE '%' || :'q' || '%')
       OR EXISTS (SELECT 1 FROM v3.party_contacts c
-                  WHERE c.party_id = p.id AND COALESCE(c.name, '') ILIKE '%' || :'q' || '%'),
+                  WHERE c.party_id = p.id AND COALESCE(c.name, '') ILIKE '%' || :'q' || '%')
+),
 mine AS (
   -- その取引先の案件。取引先が案件に直に付いていないこともある（V2 から来た
   -- 案件は counterparty_id が空のことがある）ので、条件からも辿る。
@@ -281,7 +282,8 @@ WITH target AS (
       OR COALESCE(p.representative_name, '') ILIKE '%' || :'q' || '%'
       OR EXISTS (SELECT 1 FROM unnest(p.aliases) a WHERE a ILIKE '%' || :'q' || '%')
       OR EXISTS (SELECT 1 FROM v3.party_contacts c
-                  WHERE c.party_id = p.id AND COALESCE(c.name, '') ILIKE '%' || :'q' || '%'),
+                  WHERE c.party_id = p.id AND COALESCE(c.name, '') ILIKE '%' || :'q' || '%')
+),
 mine AS (
   -- その取引先の案件。取引先が案件に直に付いていないこともある（V2 から来た
   -- 案件は counterparty_id が空のことがある）ので、条件からも辿る。
