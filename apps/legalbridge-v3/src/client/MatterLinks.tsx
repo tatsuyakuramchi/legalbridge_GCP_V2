@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { TeardownPlan, TeardownResult } from "../server/documents/teardown-service.js";
 import type { MatterDetail, MatterKind } from "../server/core/model.js";
 import { api, ApiError, saveCsv } from "./api.js";
 import { ListSearch, useDebounced } from "./ListTools.js";
@@ -518,6 +519,10 @@ export function MatterDocuments(
    * 要らない行を Excel で消す作業になる。
    */
   const [picked, setPicked] = useState<Set<number>>(new Set());
+  /** 畳む前の下見と、畳んだ結果。 */
+  const [teardown, setTeardown] = useState<TeardownPlan | null>(null);
+  const [tornDown, setTornDown] = useState<TeardownResult | null>(null);
+
   /** 決済済みの書き出し。人に決めてもらうことは CSV に出せないので画面に出す。 */
   const [settledNotes, setSettledNotes] = useState<
     { rows: number; notes: Array<{ conditionNo: string | null;
@@ -585,6 +590,26 @@ export function MatterDocuments(
       if (!made.rows.length) setError("書き出せる条件明細がありませんでした");
       else saveCsv(made.csv, `settled_${made.matter.matterNo ?? detail.id}.csv`);
       setSettledNotes({ rows: made.rows.length, notes: made.notes });
+    } catch (e) { setError((e as ApiError).message); }
+    finally { setBusy(false); }
+  }
+
+  async function planTeardown() {
+    setBusy(true); setError(null); setTornDown(null);
+    try {
+      setTeardown(await api.post<TeardownPlan>(
+        `/matters/${detail.id}/teardown/preview`, { reason: "" }));
+    } catch (e) { setError((e as ApiError).message); }
+    finally { setBusy(false); }
+  }
+
+  async function runTeardown(reason: string, voidConditions: boolean) {
+    setBusy(true); setError(null);
+    try {
+      setTornDown(await api.post<TeardownResult>(
+        `/matters/${detail.id}/teardown`, { reason, voidConditions }));
+      setTeardown(null);
+      onChanged();
     } catch (e) { setError((e as ApiError).message); }
     finally { setBusy(false); }
   }
@@ -709,12 +734,41 @@ export function MatterDocuments(
         <div className="row">
           <button className="btn btn-sm" disabled={busy}
                   onClick={() => void exportSettled()}>
-            決済済みを CSV に出す（作り直し用）
+            ① 決済済みを CSV に出す（作り直し用）
+          </button>
+          {/*
+            畳むのは書き出したあと。先に畳むと、書き出すものが無くなる
+            （紙も実績も消えた条件からは、条件の金額しか出てこない）。
+            順番を番号で見せる。
+          */}
+          <button className="btn btn-sm" disabled={busy}
+                  onClick={() => void planTeardown()}>
+            ② 旧分を畳む（無効にする）
           </button>
           <span className="faint">
-            いまの発注書・検収書・支払を1行にまとめて出します。金額を直したら、
-            文書の画面の「検収済みをまとめて入れる（CSV）」から上げ直してください
+            ① で出した CSV の金額を直し、② で古い紙と支払を畳んでから、
+            文書の画面の「検収済みをまとめて入れる（CSV）」で上げ直します
           </span>
+        </div>
+      )}
+
+      {teardown && (
+        <TeardownPanel plan={teardown} busy={busy}
+          onCancel={() => setTeardown(null)}
+          onRun={(reason, voidConditions) => void runTeardown(reason, voidConditions)} />
+      )}
+
+      {tornDown && (
+        <div className={tornDown.failed ? "note warn" : "note ok"}>
+          畳みました：済 {tornDown.ok}／止まった {tornDown.failed}
+          {tornDown.skipped ? `／触らなかった ${tornDown.skipped}` : ""}
+          {tornDown.outcomes.filter((o) => !o.ok).length > 0 && (
+            <ul style={{ margin: "4px 0 0" }}>
+              {tornDown.outcomes.filter((o) => !o.ok).map((o) => (
+                <li key={`${o.step}-${o.id}`}>{o.label}：{o.error}</li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 
@@ -922,3 +976,97 @@ const ALLOWED_KINDS: Record<MatterKind, string[]> = {
   // サーバ側の CONDITION_KINDS_BY_MATTER と同じ並びにしておくこと。
   single: ["license", "product", "service", "expense", "fee"]
 };
+
+/**
+ * 畳む前の下見。
+ *
+ * 押すと紙が無効になって番号は戻らない。何が無効になるかを全部出し、
+ * 理由を書かせてから初めて押せるようにする。
+ */
+function TeardownPanel({ plan, busy, onRun, onCancel }: {
+  plan: TeardownPlan; busy: boolean;
+  onRun: (reason: string, voidConditions: boolean) => void;
+  onCancel: () => void;
+}) {
+  const [reason, setReason] = useState("");
+  const [voidConditions, setVoidConditions] = useState(false);
+
+  return (
+    <div className="panel">
+      <div className="panel-hd">
+        <h2>旧分を畳みます</h2>
+        <span className="faint">{plan.matter.matterNo} {plan.matter.title}</span>
+      </div>
+      <div className="panel-bd stack">
+        <div className="row" style={{ gap: 22 }}>
+          <div><div className="faint">支払を取り消す</div>
+            <div className="num">{plan.summary.payments}</div></div>
+          <div><div className="faint">文書を無効にする</div>
+            <div className="num">{plan.summary.documents}</div></div>
+          <div><div className="faint">実績を取り消す</div>
+            <div className="num">{plan.summary.events}</div></div>
+          <div><div className="faint">畳む額（税抜）</div>
+            <div className="num">{money(plan.summary.amount)}</div></div>
+          {plan.summary.blocked > 0 && (
+            <div><div className="faint">触らない</div>
+              <div className="num" style={{ color: "var(--out)" }}>{plan.summary.blocked}</div></div>
+          )}
+        </div>
+
+        {plan.warnings.map((w, i) => (
+          <div key={i} className={/新しい条件番号|番号も戻りません/.test(w) ? "alert" : "note"}>{w}</div>
+        ))}
+
+        {plan.documents.length > 0 && (
+          <div className="tablewrap">
+            <table>
+              <thead><tr><th>文書</th><th>種別</th><th>順</th></tr></thead>
+              <tbody>
+                {[...plan.documents]
+                  .sort((a, b) => Number(b.settlement) - Number(a.settlement) || a.id - b.id)
+                  .map((d) => (
+                    <tr key={d.id}>
+                      <td className="code">{d.documentNo ?? `#${d.id}`}</td>
+                      <td>{d.templateLabel ?? "—"}</td>
+                      <td className="faint">
+                        {/* 決済文書が先。無効にすると実績が解放され、実績を取り消せる。 */}
+                        {d.settlement ? "先（実績を解放する）" : "あと"}
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {plan.payments.filter((p) => p.blocked).length > 0 && (
+          <div className="note warn">
+            触らない支払：
+            {plan.payments.filter((p) => p.blocked)
+              .map((p) => `${p.paymentNo ?? `#${p.id}`}（${p.blocked}）`).join("／")}
+          </div>
+        )}
+
+        <label className="field">
+          <span className="flabel">畳む理由（必須。監査に残ります）</span>
+          <input value={reason} onChange={(e) => setReason(e.target.value)}
+            placeholder="例：発注金額の誤りのため、正しい金額で作り直す" />
+        </label>
+
+        <label className="row" style={{ gap: 6 }}>
+          <input type="checkbox" checked={voidConditions}
+            onChange={(e) => setVoidConditions(e.target.checked)} />
+          <span>条件明細も無効にする（入れ直しは新しい条件番号になります）</span>
+        </label>
+
+        <div className="row">
+          <button className="btn" onClick={onCancel}>やめる</button>
+          <button className="btn danger" disabled={busy || !reason.trim()}
+            onClick={() => onRun(reason.trim(), voidConditions)}>
+            {busy ? "畳んでいます…" : "畳む"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

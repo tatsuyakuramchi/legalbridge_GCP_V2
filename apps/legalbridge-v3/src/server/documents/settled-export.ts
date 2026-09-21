@@ -1,6 +1,6 @@
 import { type Queryable, dateStr, int, num, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
-import { SETTLED_COLUMNS, toCsv } from "./settled-batch.js";
+import { SETTLED_COLUMNS, readRows, toCsv } from "./settled-batch.js";
 
 /**
  * 案件の現物を、遡及一括取込の CSV で書き出す。
@@ -86,10 +86,11 @@ export class SettledExportService {
         notes.push(...made.notes);
       }
 
+      const csv = toCsv(rows);
       return {
         matter: { id: Number(matter.id), matterNo: str(matter.matter_no),
                   title: String(matter.title ?? "") },
-        rows, notes, csv: toCsv(rows)
+        rows, notes: [...notes, ...importIssues(csv, rows)], csv
       };
     } catch (error) { throw translate(error); }
   }
@@ -231,6 +232,34 @@ export class SettledExportService {
 }
 
 // ---------------------------------------------------------------------------
+
+/**
+ * 書き出した CSV を、取り込みと同じ目で読み直して不備を拾う。
+ *
+ * 台帳から素直に書き出すと、取り込みが受け付けない行ができることがある。
+ * 実際に出たのは「検収数量が数量と違うのに変更理由が空」。減額は台帳では
+ * 金額にしか残っておらず、理由の文は紙のどこにも無いので、書き出しようが
+ * ない。それでも取り込みは理由を要る。
+ *
+ * 上げ直してから「飛ばす」と言われても、そこで初めて気づくことになる。
+ * 書き出した時点で、取り込みが何を言うかを先に出す。
+ */
+export function importIssues(csv: string, rows: ExportRow[]): ExportNote[] {
+  let read;
+  try { read = readRows(csv); } catch { return []; }
+  const out: ExportNote[] = [];
+  for (const [i, row] of read.entries()) {
+    if (!row.issues.length) continue;
+    const source = rows[i] ?? {};
+    out.push({
+      conditionNo: null,
+      conditionName: String(source.conditionName ?? ""),
+      note: `「${String(source.item_name ?? "")}」は、このままでは取り込みに弾かれます：`
+        + row.issues.join("／")
+    });
+  }
+  return out;
+}
 
 /**
  * その行の検収数量。数量どおりに納まっていれば空（取り込みが数量に揃える）。

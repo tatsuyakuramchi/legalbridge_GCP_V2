@@ -44,6 +44,7 @@ import { templateCsv as settledTemplateCsv } from "./documents/settled-batch.js"
 import { SettledExportService } from "./documents/settled-export.js";
 import { diffSettled } from "./documents/settled-diff.js";
 import { rawRows } from "./documents/settled-batch.js";
+import { MatterTeardownService } from "./documents/teardown-service.js";
 import { ChromiumPdfRenderer, MemoryPdfRenderer, type PdfRenderer } from "./documents/pdf-renderer.js";
 import { DocumentStorageService } from "./documents/storage-service.js";
 import { GoogleDriveStorage, MemoryDriveStorage, type DriveStorage } from "./documents/drive-storage.js";
@@ -2055,6 +2056,34 @@ export function createRoutes(database: Transactable) {
       res.json(diffSettled(
         current.rows as Array<Record<string, unknown>>,
         rawRows(input.csv)));
+    }));
+
+  /**
+   * 案件の決済済みの取引を、作り直しのために畳む。
+   *
+   * 消すのではなく無効にする。発行した文書は番号を振って相手に出した記録なので、
+   * 無効として残るだけで番号も戻らない。押す前に全部出す（preview）。
+   */
+  const teardownInput = z.object({
+    conditionIds: z.array(z.coerce.number().int().positive()).max(500).optional(),
+    // 既定は false。条件まで無効にすると、入れ直しが新しい条件番号で作られる。
+    voidConditions: z.boolean().optional(),
+    reason: z.string().trim().max(500).default("")
+  });
+  router.post("/matters/:id/teardown/preview",
+    requireRole("admin", "legal"),
+    asyncRoute(async (req, res) => {
+      const input = teardownInput.parse(req.body ?? {});
+      res.json(await new MatterTeardownService(database)
+        .preview(Number(req.params.id), input));
+    }));
+  router.post("/matters/:id/teardown",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = teardownInput.extend({ reason: z.string().trim().min(1).max(500) })
+        .parse(req.body ?? {});
+      res.json(await new MatterTeardownService(database)
+        .run(Number(req.params.id), input, actor(res)));
     }));
 
   const settledInput = z.object({

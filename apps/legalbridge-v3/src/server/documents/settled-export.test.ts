@@ -220,3 +220,37 @@ test("金額でしか減額が残っていない紙を、減った額のまま�
   assert.equal(made.rows[1]?.quantity, "12");
   assert.equal(made.rows[1]?.unit_price, "8000");
 });
+
+test("取り込みが弾く行を、書き出した時点で言う", async () => {
+  const made = await new SettledExportService(db({
+    "'items'": [{ id: 50, document_no: "PO", issued_at: "2026-06-01T00:00:00Z",
+      values: { items: [{ item_name: "挿絵", quantity: 12, unit_price: 8000 }] } }],
+    // 減額は金額にしか残っていない。理由の文は紙のどこにも無い。
+    "FROM condition_events e\n        WHERE": [
+      { id: 97, occurred_on: "2026-07-22", quantity: null, amount: 88000,
+        deliverable: null, note: null, document_id: 60 }
+    ],
+    "e.document_id = d.id": [{ id: 60, document_no: "INS", issued_at: "2026-07-25T00:00:00Z",
+      values: { delivery_line_items: [{ inspected_quantity: null, changeNote: "" }] } }]
+  })).forMatter(1);
+  assert.equal(made.rows[0]?.inspectedQuantity, "11");
+  assert.equal(made.rows[0]?.varianceNote, "");
+  // 上げ直してから「飛ばす」と言われるのでは遅い。
+  const said = made.notes.map((n) => n.note).join("\n");
+  assert.match(said, /このままでは取り込みに弾かれます/);
+  assert.match(said, /変更理由/);
+});
+
+test("不備のない行では何も言わない", async () => {
+  const made = await new SettledExportService(db({
+    "'items'": [{ id: 50, document_no: "PO", issued_at: "2026-06-01T00:00:00Z",
+      values: { items: [{ item_name: "表紙", quantity: 1, unit_price: 150000 }] } }],
+    "FROM condition_events e\n        WHERE": [
+      { id: 96, occurred_on: "2026-07-20", quantity: 1, amount: 150000,
+        deliverable: null, note: null, document_id: 60 }
+    ],
+    "e.document_id = d.id": [{ id: 60, document_no: "INS", issued_at: "2026-07-25T00:00:00Z",
+      values: { delivery_line_items: [{ inspected_quantity: 1 }] } }]
+  })).forMatter(1);
+  assert.equal(made.notes.filter((n) => /弾かれます/.test(n.note)).length, 0);
+});
