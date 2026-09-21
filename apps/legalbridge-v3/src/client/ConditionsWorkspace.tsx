@@ -44,9 +44,14 @@ type WriteResult = {
 };
 
 export function ConditionsWorkspace(
-  { initialId, onCompose, onOpen, onOpenDocument }:
+  { initialId, initialSchedule, onCompose, onOpen, onOpenDocument }:
   {
     initialId?: number;
+    /**
+     * 開いた直後に実績のフォームを出す回。支払文書処理から
+     * 「実績を入れる」で来たとき、その回を指して渡ってくる。
+     */
+    initialSchedule?: number | null;
     onCompose?: (conditionIds: number[], eventIds?: number[], matterId?: number | null,
                  templateKey?: string | null) => void;
     /** 決めた文書をそのまま開く。 */
@@ -112,7 +117,7 @@ export function ConditionsWorkspace(
   // 予定から実績にしたのに実績の表が古いままだと、入ったのかどうか分からない。
   const [flowVersion, setFlowVersion] = useState(0);
   // 予定の行から「実績にする」を押したとき、その回を実績のフォームに渡す。
-  const [recordSchedule, setRecordSchedule] = useState<number | null>(null);
+  const [recordSchedule, setRecordSchedule] = useState<number | null>(initialSchedule ?? null);
   // 読み取り専用なら、登録の欄そのものを出さない（押してから断られない）。
   const readOnly = useReadOnly();
   /**

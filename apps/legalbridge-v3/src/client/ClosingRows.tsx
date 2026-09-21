@@ -9,7 +9,8 @@ import { STEP_TONE, type PeriodRow } from "./closing-types.js";
  * 変えて、同じ表に2つの入口を付ける。
  */
 export function ClosingRows({
-  rows, showParty = true, selected, onSelect, onOpenCondition, onOpenDocument, empty
+  rows, showParty = true, selected, onSelect,
+  onOpenCondition, onOpenDocument, onRecord, empty
 }: {
   rows: PeriodRow[];
   /** 条件1本を見ているときは相手先の列を畳む（全行同じなので邪魔になる）。 */
@@ -19,6 +20,15 @@ export function ClosingRows({
   onSelect?: (next: Set<number>) => void;
   onOpenCondition?: (id: number) => void;
   onOpenDocument?: (id: number) => void;
+  /**
+   * その回の実績を入れに行く。条件明細の画面の実績フォームを、この回を
+   * 指した状態で開く。
+   *
+   * まとめて締めるのは「予定どおりの額でよい回」だけ。予定と実績が違う回は
+   * 理由が要るし、料率は売上報告そのものを入れないと金額が出ない。どちらも
+   * 既存のフォームの仕事なので、ここでは入口だけ出して送る。
+   */
+  onRecord?: (conditionId: number, scheduleId: number) => void;
   empty?: string;
 }) {
   // 選べるのは予定の回だけ。浮いた実績は個別に締める。
@@ -92,12 +102,19 @@ export function ClosingRows({
                     : money(row.plannedAmount, row.currency)}
                 </td>
                 <td>
-                  {row.eventId === null
-                    ? <span className="faint">—</span>
-                    : <>
+                  {row.eventId !== null
+                    ? <>
                         <div className="num">{money(row.eventAmount, row.currency)}</div>
                         <div className="faint code">{row.eventOn ?? ""}</div>
-                      </>}
+                      </>
+                    // 締め日の前に「実績を入れる」は出さない。まだ起きていない
+                    // ことを入れる欄を出しても、入れる中身が無い。
+                    : onRecord && id !== null && !notYet(row.closingOn)
+                    ? <button className="btn btn-sm"
+                        onClick={() => onRecord(row.conditionId, id)}>
+                        {row.pricingModel === "revenue_rate" ? "報告を入れる" : "実績を入れる"}
+                      </button>
+                    : <span className="faint">—</span>}
                 </td>
                 <td>
                   {row.documentId === null
@@ -125,13 +142,17 @@ export function ClosingRows({
   );
 }
 
+/** 締め日がまだ来ていないか。サーバの notYet と同じ線。 */
+const notYet = (closingOn: string | null) =>
+  !!closingOn && closingOn > new Date().toISOString().slice(0, 10);
+
 /**
  * その回を選べるか。サーバの refusalFor と同じ線で切る（そこで断られる行に
  * チェックを付けさせない）。
  */
 const canClose = (row: PeriodRow): row is PeriodRow & { scheduleId: number } =>
   row.scheduleId !== null && row.step !== "done"
-  && !!row.closingOn && row.closingOn <= new Date().toISOString().slice(0, 10);
+  && !!row.closingOn && !notYet(row.closingOn);
 
 /**
  * 支払期日と、それがどこから来たか。

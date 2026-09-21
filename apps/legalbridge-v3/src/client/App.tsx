@@ -69,7 +69,11 @@ export function App() {
     try { localStorage.setItem("lb.railSlim", railSlim ? "1" : "0"); } catch { /* 使えなくても困らない */ }
   }, [railSlim]);
 
-  const openCondition = (id: number) => { setConditionId(id); setView("conditions"); };
+  /** 開いた直後に実績のフォームを出す回。支払文書処理から渡ってくる。 */
+  const [conditionSchedule, setConditionSchedule] = useState<number | null>(null);
+  const openCondition = (id: number, scheduleId: number | null = null) => {
+    setConditionId(id); setConditionSchedule(scheduleId); setView("conditions");
+  };
 
   /**
    * つながりから相手を開く。どの画面のどの関連から押しても、同じところへ行く。
@@ -222,7 +226,8 @@ export function App() {
             onFixDrift={(matterId) => { setDriftMatter(matterId); setView("drift"); }} />
         )}
         {view === "conditions" && (
-          <ConditionsWorkspace key={conditionId ?? 0} initialId={conditionId}
+          <ConditionsWorkspace key={`${conditionId ?? 0}-${conditionSchedule ?? 0}`}
+                               initialId={conditionId} initialSchedule={conditionSchedule}
                                onCompose={startCompose} onOpen={openEntity}
                                onOpenDocument={openDocumentAt} />
         )}
@@ -248,7 +253,8 @@ export function App() {
             initialId={focusFor("agreements")} onOpen={openEntity} />
         )}
         {view === "closing" && (
-          <ClosingWorkspace onOpenCondition={openCondition} onOpenDocument={openDocumentAt} />
+          <ClosingWorkspace onOpenCondition={openCondition} onOpenDocument={openDocumentAt}
+            onRecord={(conditionId, scheduleId) => openCondition(conditionId, scheduleId)} />
         )}
         {view === "money" && <MoneyWorkspace />}
         {view === "drift" && (

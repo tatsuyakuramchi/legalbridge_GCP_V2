@@ -25,9 +25,11 @@ import {
 
 type Tab = "month" | "find" | "strays";
 
-export function ClosingWorkspace({ onOpenCondition, onOpenDocument }: {
+export function ClosingWorkspace({ onOpenCondition, onOpenDocument, onRecord }: {
   onOpenCondition: (id: number) => void;
   onOpenDocument: (id: number) => void;
+  /** その回の実績を入れに行く（条件明細の画面の実績フォームへ）。 */
+  onRecord: (conditionId: number, scheduleId: number) => void;
 }) {
   const [tab, setTab] = useState<Tab>("month");
   const [month, setMonth] = useState(thisMonth());
@@ -95,17 +97,20 @@ export function ClosingWorkspace({ onOpenCondition, onOpenDocument }: {
           {view && (
             <ClosingRows rows={view.rows} selected={selected} onSelect={setSelected}
               onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument}
+              onRecord={onRecord}
               empty={`${monthLabel(month)}に締め日が来る回はありません。予定がまだ無いものは「支払文書をつくる」から探せます。`} />
           )}
         </div>
       )}
 
       {tab === "find" && (
-        <FindPanel onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument} />
+        <FindPanel onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument}
+          onRecord={onRecord} />
       )}
 
       {tab === "strays" && (
-        <StraysPanel onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument} />
+        <StraysPanel onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument}
+          onRecord={onRecord} />
       )}
     </section>
   );
@@ -121,9 +126,10 @@ const WHERE_LABEL: Record<Where, string> = {
   party: "取引先", work: "作品", matter: "案件", q: "語で探す"
 };
 
-function FindPanel({ onOpenCondition, onOpenDocument }: {
+function FindPanel({ onOpenCondition, onOpenDocument, onRecord }: {
   onOpenCondition: (id: number) => void;
   onOpenDocument: (id: number) => void;
+  onRecord: (conditionId: number, scheduleId: number) => void;
 }) {
   const [where, setWhere] = useState<Where>("party");
   const [value, setValue] = useState("");
@@ -314,6 +320,7 @@ function FindPanel({ onOpenCondition, onOpenDocument }: {
             <ClosingRows rows={picked.rows} showParty={false}
               selected={selected} onSelect={setSelected}
               onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument}
+              onRecord={onRecord}
               empty="この条件にはまだ回が並んでいません。" />
             {!picked.rows.length && (
               <div className="row">
@@ -371,9 +378,10 @@ const searchMatters = async (q: string): Promise<SearchOption[]> => {
 // 月の表からこぼれるもの
 // ---------------------------------------------------------------------------
 
-function StraysPanel({ onOpenCondition, onOpenDocument }: {
+function StraysPanel({ onOpenCondition, onOpenDocument, onRecord }: {
   onOpenCondition: (id: number) => void;
   onOpenDocument: (id: number) => void;
+  onRecord: (conditionId: number, scheduleId: number) => void;
 }) {
   const [strays, setStrays] = useState<StrayView | null>(null);
   const [gaps, setGaps] = useState<RoyaltyGap[] | null>(null);
@@ -415,6 +423,7 @@ function StraysPanel({ onOpenCondition, onOpenDocument }: {
         <div className="panel-bd">
           <ClosingRows rows={strays?.overdue ?? []}
             onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument}
+            onRecord={onRecord}
             empty="ありません。" />
         </div>
       </div>
