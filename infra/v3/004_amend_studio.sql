@@ -1521,6 +1521,10 @@ SELECT * FROM (
            WHERE table_schema='v3' AND table_name='conditions'
              AND column_name IN ('auto_renew', 'renew_months', 'renew_stopped_on'))::text
   UNION ALL
+  SELECT 41, '条件明細の納期（A-041。列があること）',
+         (SELECT count(*) FROM information_schema.columns
+           WHERE table_schema='v3' AND table_name='conditions' AND column_name='delivery_due')::text
+  UNION ALL
   SELECT 33, '翻訳版再許諾と別途合意（A-033。列 1 と CHECK 1 で 2 であること）',
          ((SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='conditions' AND column_name = 'sublicense_consent')

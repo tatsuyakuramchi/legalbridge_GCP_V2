@@ -116,14 +116,14 @@ export function templateCsv(): string {
   const examples = [
     ["VD-00317", "合同会社アトリエ蒼", "WRK-10013", "星降る夜のミュゼ", "", "", "", "",
      "第4巻 表紙イラスト", "カラー1点", "1", "150000",
-     "2026-06-01", "2026-07-20", "2026-07-25", "", "",
+     "2026-06-01", "2026-07-20", "2026-07-20", "2026-07-25", "", "",
      "初版",
      "2026-08-31", "未払", "",
      "請負", "月末締め翌月末払い", "発注者", "あり", "なし",
      "業務委託の一般特約", "", ""],
     ["VD-00317", "合同会社アトリエ蒼", "WRK-10021", "夜明けのクロニクル", "", "", "", "",
      "第1巻 挿絵", "モノクロ12点", "12", "8000",
-     "2026-06-01", "2026-07-31", "2026-08-05", "11", "納品点数が11点になったため減額",
+     "2026-06-01", "2026-07-31", "2026-07-31", "2026-08-05", "11", "納品点数が11点になったため減額",
      "変更履歴付",
      "2026-09-30", "支払済み", "2026-09-28",
      "請負", "月末締め翌月末払い", "発注者", "あり", "なし",
@@ -161,6 +161,8 @@ export interface SettledRow {
   deliveredOn: string | null;
   /** 検収日。実績にも入り、検収書の決定日にもなる。 */
   inspectedOn: string | null;
+  /** 納期。条件明細に残り、発注書の「納期」に出る。納品日とは別。 */
+  deliveryDue: string | null;
   /** 変更履歴付のときの理由。検収書の変更履歴に出る。 */
   varianceNote: string | null;
   /**
@@ -231,6 +233,9 @@ export function readRows(text: string): SettledRow[] {
     const orderedOn = readRequiredDate(get("orderedOn"), "発注日", issues);
     const deliveredOn = readRequiredDate(get("deliveredOn"), "納品日", issues);
     const inspectedOn = readRequiredDate(get("inspectedOn"), "検収日", issues);
+    const dueRaw0 = get("deliveryDue");
+    const deliveryDue = dueRaw0 ? normalizeDate(dueRaw0) : null;
+    if (dueRaw0 && !deliveryDue) issues.push(`納期が日付として読めない（${dueRaw0}）`);
     // 日付の前後。逆になっていれば列を取り違えている。金額より先に気づける。
     if (orderedOn && deliveredOn && deliveredOn < orderedOn) {
       issues.push(`納品日（${deliveredOn}）が発注日（${orderedOn}）より前`);
@@ -324,7 +329,7 @@ export function readRows(text: string): SettledRow[] {
       conditionNo: get("conditionNo") || null,
       oldHandling: oldHandling ?? "keep",
       conditionName: get("conditionName") || null,
-      orderedOn, deliveredOn, inspectedOn, varianceNote,
+      orderedOn, deliveredOn, inspectedOn, deliveryDue, varianceNote,
       revision: revision ?? "first",
       dueOn,
       paymentState, paidOn,
@@ -429,6 +434,8 @@ export function conflictsOf(rows: SettledRow[]): string[] {
       ? ["入金日が行ごとに違います。1束から立つ支払は1件です"] : []),
     ...(differs(rows, (r) => r.agreementNo)
       ? ["契約番号が行ごとに違います。1つの条件に契約は1つです"] : []),
+    ...(differs(rows, (r) => r.deliveryDue)
+      ? ["納期が行ごとに違います。1つの条件に納期は1つです"] : []),
     ...(differs(rows, (r) => r.oldHandling)
       ? ["旧分の扱いが行ごとに違います。1つの条件に1つです"] : []),
     ...(differs(rows, (r) => r.orderSign === null ? "" : r.orderSign ? "あり" : "なし")

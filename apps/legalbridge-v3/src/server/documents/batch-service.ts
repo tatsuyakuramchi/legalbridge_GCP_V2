@@ -627,7 +627,11 @@ export class DocumentBatchService {
               // どの作品の仕事か辿れない。
               workId: g.work?.id ?? null,
               pricingModel: "fixed", flatAmount: g.total, currency: "JPY",
-              termEnd: g.rows.map((r) => r.item.delivery_date as string | null).filter(Boolean).sort().pop() ?? null,
+              // 納期は納期の列へ。ここは長らく term_end に書いていたが、
+              // 契約期間の終了日と納期は別物で、許諾の条件では term_end は
+              // 許諾期間の終わりになる。紙の「納期」は delivery_due を先に見る。
+              deliveryDue: g.rows.map((r) => r.item.delivery_date as string | null)
+                .filter(Boolean).sort().pop() ?? null,
               // 支払条件。以前はここへ支払日を並べて入れていたが、この欄は
               // 「月末締め翌月末払い」のような条件を書くところで、解析して
               // 支払日を導く先でもある。日付は各回の予定明細（pay_on）が持つ。

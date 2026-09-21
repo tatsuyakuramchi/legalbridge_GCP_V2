@@ -600,3 +600,25 @@ test("発注書の経費合計：金額（税込）の欄が空文字で amount 
   assert.equal(c.expensesTotalIncTax, 2004);
   assert.equal(c.expensesTotalIncTaxStr, "2,004");
 });
+
+// ---------------------------------------------------------------------------
+// 納期（A-041）
+//
+// 納期と契約期間の終了日は別物。業務委託では同じ日になることが多いので
+// 気づかれなかったが、許諾の条件では term_end は許諾期間の終わりであって
+// 納期ではない。紙の「納期」は条件の納期を先に見る。
+// ---------------------------------------------------------------------------
+
+test("発注書の納期は、条件の納期を先に見る", () => {
+  const [line] = orderLinesFrom(ctx({ schedules: [], conditions: [
+    condition({ deliveryDue: "2026-11-30", termEnd: "2027-03-31" })
+  ] }));
+  assert.equal(line?.delivery_date, "2026-11-30");
+});
+
+test("納期が空なら契約期間の終了日に落ちる（置き場が無かったころの紙）", () => {
+  const [line] = orderLinesFrom(ctx({ schedules: [], conditions: [
+    condition({ deliveryDue: null, termEnd: "2027-03-31" })
+  ] }));
+  assert.equal(line?.delivery_date, "2027-03-31");
+});

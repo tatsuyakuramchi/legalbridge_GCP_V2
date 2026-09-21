@@ -270,7 +270,9 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
     // 単発の1行は数量を持たない。総額がそのまま単価にあたる。
     unit_price: condition.unitAmount ?? condition.flatAmount,
     payment_terms: contractFormFor(condition.contractForm),
-    delivery_date: condition.termEnd ?? null,
+    // 納期。条件が持っていればそれ。無ければ契約期間の終了日に落ちる
+    // （納期の置き場が無かったころの紙は、そこに入れてあった）。
+    delivery_date: condition.deliveryDue ?? condition.termEnd ?? null,
     payment_date: null,
     paid_date: null,
     amount_ex_tax: condition.flatAmount,
@@ -341,7 +343,7 @@ export function orderLinesFrom(context: Ctx): Row[] {
       payment_terms: contractFormFor(c.contractForm),
       term_start: c.termStart ?? null,
       term_end: c.termEnd ?? null,
-      delivery_date: c.termEnd ?? null,
+      delivery_date: c.deliveryDue ?? c.termEnd ?? null,
       payment_date: null,
       // 定額があればそれ。単価建ての条件は 単価 × 個数。どちらも無ければ 0。
       amount_ex_tax: c.flatAmount

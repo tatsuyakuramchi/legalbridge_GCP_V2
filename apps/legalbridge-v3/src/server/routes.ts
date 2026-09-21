@@ -1045,6 +1045,8 @@ export function createRoutes(database: Transactable) {
     ...renewalFields,
     termStart: z.string().date().nullable().optional(),
     termEnd: z.string().date().nullable().optional(),
+    // 納期。いつまでに納めるか。契約期間の終了日とは別。
+    deliveryDue: z.string().date().nullable().optional(),
     currency: z.string().trim().length(3).optional(),
     pricingModel: z.enum(["fixed", "unit_rate", "revenue_rate", "subscription", "none"]).optional(),
     ratePpm: z.coerce.number().int().min(0).max(1_000_000).nullable().optional(),
@@ -1230,6 +1232,8 @@ export function createRoutes(database: Transactable) {
     agAmount: z.coerce.number().int().nullable().optional(),
     termStart: z.string().date().nullable().optional(),
     termEnd: z.string().date().nullable().optional(),
+    // 納期。いつまでに納めるか。契約期間の終了日とは別。
+    deliveryDue: z.string().date().nullable().optional(),
     paymentTerms: z.string().trim().max(300).nullable().optional(),
     contractForm: z.string().trim().max(60).nullable().optional(),
     taxCategory: z.enum(["taxable", "reduced", "exempt"]).optional(),

@@ -385,7 +385,9 @@ export class SettledBatchService {
         direction: "in", kind: "service", counterpartyId: party.id,
         workId: g.work?.id ?? null,
         pricingModel: "fixed", flatAmount: g.orderedTotal, currency: "JPY",
+        // 検収済みの取引なので、契約期間の終わりは検収日でよい。納期は別の列。
         termEnd: g.inspectedOn,
+        deliveryDue: sameAcross(g.rows, (r) => r.deliveryDue),
         paymentTerms: sameAcross(g.rows, (r) => r.paymentTerms),
         contractForm: sameAcross(g.rows, (r) => (r.item.payment_terms as string | null) ?? null),
         notes: [...new Set(g.rows.map((r) => r.item.remarks as string | null).filter(Boolean))].join("\n") || null,

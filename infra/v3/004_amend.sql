@@ -1508,6 +1508,32 @@ SELECT count(*) AS 更新の列
  WHERE table_schema='v3' AND table_name='conditions'
    AND column_name IN ('auto_renew', 'renew_months', 'renew_stopped_on');
 
+-- ---------------------------------------------------------------------
+-- A-041 条件明細の納期
+--
+--   いつまでに納めてもらうか。契約期間の終了日とは別のもの。
+--
+--   これまで納期の置き場が無く、発注書の「納期」は
+--     実績の発生日 → 契約期間の終了日 → 予定明細の締め日
+--   に落ちていた。一括作成にいたっては、CSV の納期を term_end に書き込んで
+--   いた（batch-service）。業務委託では両方が同じ日になることが多いので
+--   気づかれなかったが、
+--     契約期間の終了日 … その契約がいつまで有効か
+--     納期            … その成果物をいつまでに納めるか
+--   は別物で、許諾の条件では term_end は許諾期間の終わりであって納期ではない。
+--
+--   回ごとに納期が違う分納は、これまでどおり予定明細の締め日（due_on）で
+--   持つ。ここは条件1本に1つの納期。
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS delivery_due date;
+COMMENT ON COLUMN v3.conditions.delivery_due IS
+  '納期。いつまでに納めるか。契約期間の終了日（term_end）とは別。回ごとに違うなら予定明細の due_on。';
+
+\echo '--- 条件明細の納期（A-041。列があること） ---'
+SELECT count(*) AS 納期の列
+  FROM information_schema.columns
+ WHERE table_schema='v3' AND table_name='conditions' AND column_name='delivery_due';
+
 \echo '--- 翻訳版再許諾と別途合意（A-033。列と CHECK があること） ---'
 SELECT (SELECT count(*) FROM information_schema.columns
          WHERE table_schema='v3' AND table_name='conditions' AND column_name='sublicense_consent') AS 合意の列,

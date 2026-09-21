@@ -9,7 +9,7 @@ import { SETTLEMENT_COLUMNS, SETTLEMENT_LATERAL_SQL, settlementOf } from "./sett
 const SUMMARY_COLUMNS = `
   c.id, c.condition_no, c.direction, c.kind, c.name, c.currency, c.pricing_model,
   c.rate_ppm, c.flat_amount, c.unit_amount, c.quantity, c.mg_amount, c.ag_amount,
-  c.term_start, c.term_end, c.status, c.effective_from, c.usage_type,
+  c.term_start, c.term_end, c.delivery_due, c.status, c.effective_from, c.usage_type,
   p.id AS party_id, p.name AS party_name, p.kind AS party_kind,
   w.id AS work_id, w.work_code, w.title AS work_title,
   -- 条件は契約の明細。どの契約の行かは一覧でも見えないと、独立した書類に見える。
@@ -51,6 +51,7 @@ function mapSummary(row: Record<string, any>): ConditionSummary {
     agAmount: int(row.ag_amount),
     termStart: dateStr(row.term_start),
     termEnd: dateStr(row.term_end),
+    deliveryDue: dateStr(row.delivery_due),
     effectiveFrom: dateStr(row.effective_from),
     status: row.status,
     usageType: (row.usage_type ?? null) as ConditionSummary["usageType"],
@@ -269,7 +270,7 @@ export class ConditionRepository {
         `SELECT c.id, c.condition_no, c.name, c.status, c.superseded_by_id, c.effective_from,
                 c.pricing_model, c.rate_ppm, c.flat_amount, c.unit_amount, c.quantity,
                 c.mg_amount, c.ag_amount, c.currency,
-                c.term_start, c.term_end, c.tax_category, c.payment_terms, c.contract_form,
+                c.term_start, c.term_end, c.delivery_due, c.tax_category, c.payment_terms, c.contract_form,
                 c.notes,
                 c.created_at, c.updated_at,
                 p.id AS party_id, p.name AS party_name,
@@ -302,6 +303,7 @@ export class ConditionRepository {
         agAmount: int(row.ag_amount),
         termStart: dateStr(row.term_start),
         termEnd: dateStr(row.term_end),
+        deliveryDue: dateStr(row.delivery_due),
         taxCategory: String(row.tax_category),
         paymentTerms: str(row.payment_terms),
         contractForm: str(row.contract_form),

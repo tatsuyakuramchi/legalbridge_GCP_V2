@@ -54,7 +54,7 @@ export interface SettledExport {
 interface CondRow {
   id: number; condition_no: string | null; name: string; kind: string;
   unit_amount: unknown; flat_amount: unknown; quantity: unknown;
-  payment_terms: string | null; contract_form: string | null;
+  payment_terms: string | null; contract_form: string | null; delivery_due: unknown;
   deliverable_ownership: string | null;
   party_code: string | null; party_name: string | null;
   work_code: string | null; work_title: string | null;
@@ -81,7 +81,7 @@ export class SettledExportService {
       const conds = await this.database.query(
         `SELECT c.id, c.condition_no, c.name, c.kind,
                 c.unit_amount, c.flat_amount, c.quantity,
-                c.payment_terms, c.contract_form, c.deliverable_ownership,
+                c.payment_terms, c.contract_form, c.deliverable_ownership, c.delivery_due,
                 p.party_code, p.name AS party_name,
                 w.work_code, w.title AS work_title,
                 a.agreement_no
@@ -183,6 +183,8 @@ export class SettledExportService {
       conditionName: cond.name,
       orderedOn: dateStr(order?.issued_at) ?? "",
       inspectedOn: dateStr(inspection?.issued_at) ?? "",
+      // 納期は条件が持っている。紙の納品日（実際に納まった日）とは別。
+      deliveryDue: dateStr(cond.delivery_due) ?? "",
       dueOn: dateStr(payment?.due_on) ?? "",
       paymentState: payStateOf(payment),
       paidOn: dateStr(payment?.paid_on) ?? "",

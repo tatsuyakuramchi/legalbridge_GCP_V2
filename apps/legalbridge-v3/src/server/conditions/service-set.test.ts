@@ -36,8 +36,8 @@ test("委託料・実費・手数料を1トランザクションで作り、案�
   assert.deepEqual(r.conditions.map((c) => [c.usageType, c.id]), [["service", 101], ["expense", 102], ["fee", 103]]);
   const inserts = db.queries.filter((q) => q.text.includes("INSERT INTO conditions"));
   // [kind, name, pricing_model, unit_amount, flat_amount, tax_category, contract_form, deliverable_ownership, quantity]
-  assert.deepEqual(inserts.map((q) => [q.params[3], q.params[4], q.params[14], q.params[16], q.params[17], q.params[20],
-                                       q.params[28], q.params[25], q.params[27]]),
+  assert.deepEqual(inserts.map((q) => [q.params[3], q.params[4], q.params[15], q.params[17], q.params[18], q.params[21],
+                                       q.params[29], q.params[26], q.params[28]]),
     [["service", "英語版 翻訳", "unit_rate", 12, 120000, "taxable", "ukeoi", "orderer", 10000],
      ["expense", "英語版 翻訳 実費", "fixed", null, 30000, "exempt", null, null, null],
      ["fee", "振込手数料", "fixed", null, 440, "taxable", null, null, null]]);

@@ -109,6 +109,10 @@ export function ConditionCreateForm(
           hint: "計算書の契約名・契約番号はここから出る" },
         { name: "termStart", label: "開始", type: "date" },
         { name: "termEnd", label: "終了", type: "date" },
+        // 納期は契約期間の終了日とは別。業務委託では同じ日になることが多いが、
+        // 許諾の終了日は許諾がいつまで有効かで、納期ではない。
+        { name: "deliveryDue", label: "納期", type: "date",
+          hint: "いつまでに納めてもらうか。発注書の「納期」に出る。契約期間の終了日とは別" },
         // 自動更新（A-039）。更新した回数は持たず、終了日・単位・今日から数える。
         { name: "autoRenew", label: "自動更新", type: "select",
           options: [{ value: "", label: "しない" }, { value: "1", label: "する" }],

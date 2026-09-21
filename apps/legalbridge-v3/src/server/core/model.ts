@@ -42,6 +42,8 @@ export interface ConditionSummary {
   agAmount: number | null;
   termStart: string | null;
   termEnd: string | null;
+  /** 納期。いつまでに納めるか。契約期間の終了日とは別。 */
+  deliveryDue: string | null;
   status: ConditionStatus;
   /** この版が適用され始める日。契約期間（termStart）とは別。 */
   effectiveFrom: string | null;
@@ -132,6 +134,8 @@ export interface ConditionRevision {
   agAmount: number | null;
   termStart: string | null;
   termEnd: string | null;
+  /** 納期。いつまでに納めるか。契約期間の終了日とは別。 */
+  deliveryDue: string | null;
   taxCategory: string;
   paymentTerms: string | null;
   /** 契約形式（請負・委任など）。支払条件とは別。 */

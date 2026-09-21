@@ -34,6 +34,10 @@ export const SETTLED_COLUMNS: Array<{
   // ここから下が遡及のための列。1枚の紙に1つの日付なので、束の中で揃える。
   { key: "orderedOn", label: "発注日", required: true,
     note: "発注書の決定日になる。束（同じ取引先・作品・条件名）の中で揃える" },
+  // 納期。いつまでに納めてもらうか。納品日（実際に納まった日）とは別で、
+  // 条件明細に残る（発注書の「納期」に出る）。
+  { key: "deliveryDue", label: "納期", aliases: ["納入期日"],
+    note: "いつまでに納めるか。空なら条件のものを引き継ぐ。納品日とは別" },
   { key: "deliveredOn", label: "納品日", required: true, note: "実績の日付。行ごとに違ってよい" },
   { key: "inspectedOn", label: "検収日", required: true,
     note: "検収書の決定日になる。束の中で揃える" },

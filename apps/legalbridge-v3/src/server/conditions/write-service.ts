@@ -207,6 +207,8 @@ export interface ConditionInput {
   renewStoppedOn?: string | null;
   termStart?: string | null;
   termEnd?: string | null;
+  /** 納期。いつまでに納めるか。契約期間の終了日とは別。 */
+  deliveryDue?: string | null;
   currency?: string;
   pricingModel?: "fixed" | "unit_rate" | "revenue_rate" | "subscription" | "none";
   ratePpm?: number | null;
@@ -247,6 +249,8 @@ export interface EconomicsPatch {
   agAmount?: number | null;
   termStart?: string | null;
   termEnd?: string | null;
+  /** 納期。いつまでに納めるか。契約期間の終了日とは別。 */
+  deliveryDue?: string | null;
   paymentTerms?: string | null;
   contractForm?: string | null;
   taxCategory?: "taxable" | "reduced" | "exempt";
@@ -269,6 +273,7 @@ export interface EconomicsPatch {
 const ECONOMICS_COLUMNS: Record<keyof EconomicsPatch, string> = {
   name: "name", ratePpm: "rate_ppm", flatAmount: "flat_amount", unitAmount: "unit_amount",
   mgAmount: "mg_amount", agAmount: "ag_amount", termStart: "term_start", termEnd: "term_end",
+  deliveryDue: "delivery_due",
   paymentTerms: "payment_terms", taxCategory: "tax_category", notes: "notes",
   quantity: "quantity", contractForm: "contract_form",
   workId: "work_id", exclusivity: "exclusivity", sublicenseConsent: "sublicense_consent",
@@ -280,7 +285,7 @@ const ECONOMICS_COLUMNS: Record<keyof EconomicsPatch, string> = {
 // 改訂で引き継ぐ列（id・状態・監査列を除く条件の中身すべて）。
 const COPY_COLUMNS = [
   "condition_no", "agreement_id", "parent_id", "direction", "kind", "name", "counterparty_id",
-  "work_id", "work_part_id", "exclusivity", "sublicensable", "sublicense_consent", "term_start", "term_end",
+  "work_id", "work_part_id", "exclusivity", "sublicensable", "sublicense_consent", "term_start", "term_end", "delivery_due",
   "currency", "pricing_model", "rate_ppm", "unit_amount", "flat_amount", "mg_amount", "ag_amount",
   "royalty_base", "deductible_costs", "tax_category", "withholding_note", "payment_terms",
   "cycle", "notes", "series_id", "effective_from", "spec", "deliverable_ownership", "order_no",
@@ -564,20 +569,21 @@ export class ConditionWriteService {
         const inserted = await client.query(
           `INSERT INTO conditions (condition_no, agreement_id, direction, kind, name, counterparty_id,
                                    work_id, work_part_id, exclusivity, sublicensable, sublicense_consent,
-                                   term_start, term_end, currency, pricing_model,
+                                   term_start, term_end, delivery_due, currency, pricing_model,
                                    rate_ppm, unit_amount, flat_amount, mg_amount, ag_amount,
                                    tax_category, payment_terms, cycle, status, notes,
                                    spec, deliverable_ownership, order_no,
                                    quantity, contract_form, usage_type,
                                    auto_renew, renew_months, renew_stopped_on)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-                   $16, $17, $18, $19, $20, $21, $22, $23, 'active', $24, $25, $26, $27,
-                   $28, $29, $30, $31, $32, $33)
+                   $16, $17, $18, $19, $20, $21, $22, $23, $24, 'active', $25, $26, $27, $28,
+                   $29, $30, $31, $32, $33, $34)
            RETURNING id, condition_no`,
           [no, input.agreementId ?? null, input.direction, input.kind, name, input.counterpartyId,
            input.workId ?? null, input.workPartId ?? null,
            input.exclusivity ?? null, input.sublicensable ?? null, input.sublicenseConsent ?? null,
-           input.termStart ?? null, input.termEnd ?? null, input.currency ?? "JPY", pricing,
+           input.termStart ?? null, input.termEnd ?? null, input.deliveryDue ?? null,
+           input.currency ?? "JPY", pricing,
            input.ratePpm ?? null, input.unitAmount ?? null, flatAmount,
            input.mgAmount ?? null, input.agAmount ?? null,
            input.taxCategory ?? "taxable", input.paymentTerms ?? null, input.cycle ?? null,

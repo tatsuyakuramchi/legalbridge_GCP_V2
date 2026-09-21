@@ -74,6 +74,7 @@ export function ConditionEdit(
     workId: detail.work ? String(detail.work.id) : "",
     termStart: detail.termStart ?? "",
     termEnd: detail.termEnd ?? "",
+    deliveryDue: detail.deliveryDue ?? "",
     autoRenew: detail.autoRenew ? "1" : "",
     renewMonths: detail.renewMonths ? String(detail.renewMonths) : "",
     renewStoppedOn: detail.renewStoppedOn ?? "",
@@ -133,6 +134,7 @@ export function ConditionEdit(
     const pairs: Array<[string, unknown]> = [
       ["termStart", patchText(v.termStart, detail.termStart)],
       ["termEnd", patchText(v.termEnd, detail.termEnd)],
+      ["deliveryDue", patchText(v.deliveryDue, detail.deliveryDue)],
       ["renewStoppedOn", patchText(v.renewStoppedOn, detail.renewStoppedOn)],
       ["paymentTerms", patchText(v.paymentTerms, detail.paymentTerms)],
       ["contractForm", patchText(v.contractForm, detail.contractForm)],
@@ -305,6 +307,10 @@ export function ConditionEdit(
           </label>
           {field("termStart", "開始", { type: "date" })}
           {field("termEnd", "終了", { type: "date", hint: "空欄は期限なし" })}
+          {/* 納期は契約期間の終了日とは別。許諾の終了日は許諾がいつまで有効かで、
+              納期ではない。発注書の「納期」はこちらを先に見る。 */}
+          {field("deliveryDue", "納期", { type: "date",
+            hint: "いつまでに納めてもらうか。契約期間の終了日とは別" })}
           {/*
             自動更新（A-039）。更新した回数は持たず、終了日・単位・基準日から
             数える。止めたい日が来たら「更新を止めた日」を入れる。
