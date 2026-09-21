@@ -99,10 +99,25 @@ WITH body AS (
                         WHEN jsonb_typeof(d.rendered_values -> 'items') = 'array'
                         THEN d.rendered_values -> 'items'
                         ELSE '[]'::jsonb END) WITH ORDINALITY AS r(line, ord)) AS shape,
-         -- 明細を抜いた本文まるごと。相手先・発注番号・振込先はここに入る。
-         CASE WHEN jsonb_typeof(d.rendered_values) = 'object'
-              THEN md5(((d.rendered_values - 'items') - 'delivery_line_items')::text)
-              ELSE md5(d.rendered_values::text) END AS head
+         -- 「誰あてに・どの発注から・何を」の指紋。文書番号と発行日は
+         -- 1枚ごとに必ず違うので入れない（入れると一致が原理的に起きない）。
+         md5(
+           COALESCE(d.rendered_values ->> 'counterparty',
+                    d.rendered_values ->> 'VENDOR_NAME', '')
+           || '｜' || COALESCE(NULLIF(COALESCE(d.rendered_values ->> 'parent_po_number',
+                                               d.rendered_values ->> 'ORDER_NO', ''),
+                                      COALESCE(d.document_no, '')), '')
+           || '｜' || COALESCE(d.matter_id::text, '')
+           || '｜' || COALESCE((
+                SELECT string_agg((li ->> 'item_name') || '=' ||
+                         COALESCE(li ->> 'inspected_amount_ex_tax',
+                                  li ->> 'amount_ex_tax', ''), '／' ORDER BY n)
+                  FROM jsonb_array_elements(
+                         CASE WHEN jsonb_typeof(d.rendered_values -> 'delivery_line_items') = 'array'
+                              THEN d.rendered_values -> 'delivery_line_items'
+                              WHEN jsonb_typeof(d.rendered_values -> 'items') = 'array'
+                              THEN d.rendered_values -> 'items'
+                              ELSE '[]'::jsonb END) WITH ORDINALITY AS t(li, n)), '')) AS head
     FROM v3.documents d
    WHERE d.document_no = ANY(
            SELECT btrim(v) FROM unnest(string_to_array(:'docs', ',')) AS v
@@ -113,14 +128,13 @@ SELECT b.document_no                                     AS 文書番号,
        b.issued_on                                       AS 発行日,
        b.legacy_id                                       AS V2の元id,
        count(*) OVER (PARTITION BY b.shape)              AS 明細が同じ枚数,
-       count(*) OVER (PARTITION BY b.head)               AS 本文も同じ枚数,
+       count(*) OVER (PARTITION BY b.head)               AS 相手も発注も同じ枚数,
        CASE
-         -- 本文まで同じなら、ほんとうに同じ紙。
          WHEN count(*) OVER (PARTITION BY b.head) > 1
-           THEN '本文まで同じ。重複とみてよい'
+           THEN '相手も発注元も明細も同じ。重複とみてよい'
          WHEN count(*) OVER (PARTITION BY b.shape) > 1
-           THEN '明細は同じだが本文が違う。別の紙（4節で何が違うか見る）'
-         ELSE '明細も本文も違う。別の紙'
+           THEN '明細は同じだが相手か発注元が違う。別の紙（4節で何が違うか見る）'
+         ELSE '明細も違う。別の紙'
        END                                               AS 見立て
   FROM body b
  ORDER BY b.issued_on NULLS LAST, b.document_no;

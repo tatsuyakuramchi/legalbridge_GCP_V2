@@ -450,7 +450,7 @@ SELECT d.document_no AS "文書", li.ord AS "行",
  ORDER BY d.document_no, li.ord;
 
 \echo ''
-\echo '=== 12. 重複の疑い（本文まで同じ紙） ==================================='
+\echo '=== 12. 重複の疑い（相手も発注元も明細も同じ紙） ======================='
 \echo '   V2 から同じ紙が何枚も移ってきていることがある。繋ぎ直す前に'
 \echo '   どれが本物かを決めないと、同じ実績を何枚もの紙へ結ぶことになる'
 \echo '   （実績は1枚の文書しか指せないので、結局どれかが空のまま残る）。'
@@ -483,10 +483,24 @@ WITH orphan AS (
          COALESCE(CASE WHEN jsonb_typeof(d.rendered_values -> 'delivery_line_items') = 'array'
                        THEN jsonb_array_length(d.rendered_values -> 'delivery_line_items') END, 0) AS lines
          ,
-         -- 明細を抜いた本文まるごと。相手先・発注番号・振込先はここに入る。
-         CASE WHEN jsonb_typeof(d.rendered_values) = 'object'
-              THEN md5(((d.rendered_values - 'items') - 'delivery_line_items')::text)
-              ELSE md5(d.rendered_values::text) END AS head,
+         -- 「誰あてに・どの発注から・何を」の指紋。文書番号と発行日は入れない。
+         md5(
+           COALESCE(d.rendered_values ->> 'counterparty',
+                    d.rendered_values ->> 'VENDOR_NAME', '')
+           || '｜' || COALESCE(NULLIF(COALESCE(d.rendered_values ->> 'parent_po_number',
+                                               d.rendered_values ->> 'ORDER_NO', ''),
+                                      COALESCE(d.document_no, '')), '')
+           || '｜' || COALESCE(d.matter_id::text, '')
+           || '｜' || COALESCE((
+                SELECT string_agg((li ->> 'item_name') || '=' ||
+                         COALESCE(li ->> 'inspected_amount_ex_tax',
+                                  li ->> 'amount_ex_tax', ''), '／' ORDER BY n)
+                  FROM jsonb_array_elements(
+                         CASE WHEN jsonb_typeof(d.rendered_values -> 'delivery_line_items') = 'array'
+                              THEN d.rendered_values -> 'delivery_line_items'
+                              WHEN jsonb_typeof(d.rendered_values -> 'items') = 'array'
+                              THEN d.rendered_values -> 'items'
+                              ELSE '[]'::jsonb END) WITH ORDINALITY AS t(li, n)), '')) AS head,
          COALESCE(d.rendered_values ->> 'counterparty',
                   d.rendered_values ->> 'VENDOR_NAME', '—') AS party
     FROM orphan o JOIN documents d ON d.id = o.id
@@ -494,7 +508,7 @@ WITH orphan AS (
 SELECT m.matter_no AS "案件", p.total AS "金額", p.lines AS "明細行",
        count(*) AS "枚数",
        string_agg(p.document_no || '（' || p.issued_at::date || '・legacy ' || COALESCE(p.legacy_id::text, '—') || '）',
-                  '　' ORDER BY p.document_no) AS "本文まで同じ紙"
+                  '　' ORDER BY p.document_no) AS "重複とみてよい紙"
   FROM paper p LEFT JOIN matters m ON m.id = p.matter_id
  -- 明細ゼロの紙どうしは「同じ中身」ではなく「どちらも空」。数えると
  -- 空の計算書が丸ごと1組の重複に見えて、本題が埋もれる。
@@ -504,7 +518,7 @@ HAVING count(*) > 1
  ORDER BY count(*) DESC, m.matter_no;
 
 \echo ''
-\echo '=== 12b. 似ているが別の紙（明細は同じ・本文が違う） ===================='
+\echo '=== 12b. 似ているが別の紙（明細は同じ・相手か発注元が違う） ============'
 \echo '   金額も行数も同じだが、相手先や発注番号が違う紙。畳んではいけない。'
 \echo '   同じ業務を複数人に同じ条件で出すと、必ずこの形になる。'
 \echo ''
@@ -529,15 +543,29 @@ WITH orphan AS (
                    '[]'::jsonb)) li) AS total,
          COALESCE(CASE WHEN jsonb_typeof(d.rendered_values -> 'delivery_line_items') = 'array'
                        THEN jsonb_array_length(d.rendered_values -> 'delivery_line_items') END, 0) AS lines,
-         CASE WHEN jsonb_typeof(d.rendered_values) = 'object'
-              THEN md5(((d.rendered_values - 'items') - 'delivery_line_items')::text)
-              ELSE md5(d.rendered_values::text) END AS head,
+md5(
+           COALESCE(d.rendered_values ->> 'counterparty',
+                    d.rendered_values ->> 'VENDOR_NAME', '')
+           || '｜' || COALESCE(NULLIF(COALESCE(d.rendered_values ->> 'parent_po_number',
+                                               d.rendered_values ->> 'ORDER_NO', ''),
+                                      COALESCE(d.document_no, '')), '')
+           || '｜' || COALESCE(d.matter_id::text, '')
+           || '｜' || COALESCE((
+                SELECT string_agg((li ->> 'item_name') || '=' ||
+                         COALESCE(li ->> 'inspected_amount_ex_tax',
+                                  li ->> 'amount_ex_tax', ''), '／' ORDER BY n)
+                  FROM jsonb_array_elements(
+                         CASE WHEN jsonb_typeof(d.rendered_values -> 'delivery_line_items') = 'array'
+                              THEN d.rendered_values -> 'delivery_line_items'
+                              WHEN jsonb_typeof(d.rendered_values -> 'items') = 'array'
+                              THEN d.rendered_values -> 'items'
+                              ELSE '[]'::jsonb END) WITH ORDINALITY AS t(li, n)), '')) AS head,
          COALESCE(d.rendered_values ->> 'counterparty',
                   d.rendered_values ->> 'VENDOR_NAME', '—') AS party
     FROM orphan o JOIN documents d ON d.id = o.id
 )
 SELECT m.matter_no AS "案件", p.total AS "金額", p.lines AS "明細行",
-       count(DISTINCT p.head) AS "別の本文の数",
+       count(DISTINCT p.head) AS "別の相手・発注の数",
        string_agg(p.document_no || '（' || p.party || '）', '　' ORDER BY p.document_no) AS "紙と相手"
   FROM paper p LEFT JOIN matters m ON m.id = p.matter_id
  WHERE p.lines > 0

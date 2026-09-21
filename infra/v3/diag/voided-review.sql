@@ -8,8 +8,16 @@
 --   出した唯一の紙だった、ということが起きる（実際に3枚起きた）。
 --
 --   ここは無効にした文書を並べ、1枚ずつ「控えがあるか」を見る。
---     控えがある … 同じ本文の紙が有効なまま残っている。重複で正しい
---     控えが無い … その内容の紙はこれ1枚だけだった。戻すか、確かめる
+--     控えがある … 同じ相手・同じ発注・同じ明細の紙が有効なまま残っている
+--     控えが無い … その組み合わせの紙はこれ1枚だけだった。戻すか、確かめる
+--
+--   比べるのは「誰あてに・どの発注から・何を」の3つ。文書番号と発行日は
+--   1枚ごとに必ず違うので、指紋に入れない（入れると2枚が一致することが
+--   原理的に無くなり、全部が「控えが無い」になる）。
+--
+--   ★ 理由の欄も見ること
+--     「中身が無いため」「金額修正のため」のように、控えが無くても
+--     無効のままでよいものがある。見立ては「戻せ」ではなく「確かめろ」。
 --
 --   ★ 使い方
 --     docker compose run --rm ops sql /v3/diag/voided-review.sql
@@ -35,12 +43,32 @@
 -- ---------------------------------------------------------------------
 -- 1. 無効にした文書。控えがあるかどうかで仕分ける
 -- ---------------------------------------------------------------------
-WITH v AS (
+WITH fp AS (
+  -- 全文書の指紋。無効にした紙と、生きている紙を同じ物差しで比べる。
+  SELECT d.id, d.status, md5(
+           COALESCE(d.rendered_values ->> 'counterparty',
+                    d.rendered_values ->> 'VENDOR_NAME', '')
+           -- 発注元の紙。自分の番号が入っている文書があるので、そのときは
+           -- 空として扱う（入れると1枚ごとに必ず違う指紋になる）。
+           || '｜' || COALESCE(NULLIF(COALESCE(d.rendered_values ->> 'parent_po_number',
+                                               d.rendered_values ->> 'ORDER_NO', ''),
+                                      COALESCE(d.document_no, '')), '')
+           || '｜' || COALESCE(d.matter_id::text, '')
+           || '｜' || COALESCE((
+                SELECT string_agg((li ->> 'item_name') || '=' ||
+                         COALESCE(li ->> 'inspected_amount_ex_tax',
+                                  li ->> 'amount_ex_tax', ''), '／' ORDER BY n)
+                  FROM jsonb_array_elements(
+                         CASE WHEN jsonb_typeof(d.rendered_values -> 'delivery_line_items') = 'array'
+                              THEN d.rendered_values -> 'delivery_line_items'
+                              WHEN jsonb_typeof(d.rendered_values -> 'items') = 'array'
+                              THEN d.rendered_values -> 'items'
+                              ELSE '[]'::jsonb END) WITH ORDINALITY AS t(li, n)), '')) AS key
+    FROM v3.documents d
+),
+v AS (
   SELECT d.id, d.document_no, d.matter_id, d.issued_at, d.legacy_id,
          COALESCE(t.template_key, '（版が無い）') AS template_key,
-         CASE WHEN jsonb_typeof(d.rendered_values) = 'object'
-              THEN md5(((d.rendered_values - 'items') - 'delivery_line_items')::text)
-              ELSE md5(d.rendered_values::text) END AS head,
          COALESCE(d.rendered_values ->> 'counterparty',
                   d.rendered_values ->> 'VENDOR_NAME', '—')                 AS party,
          COALESCE(d.rendered_values ->> 'parent_po_number',
@@ -68,19 +96,13 @@ SELECT v.document_no                                     AS 文書番号,
        NULLIF(v.po, '')                                  AS 発注番号,
        lv.occurred_at::date                               AS 無効にした日,
        left(COALESCE(lv.reason, ''), 40)                 AS 理由,
-       (SELECT count(*) FROM v3.documents x
-         WHERE x.status <> 'void'
-           AND CASE WHEN jsonb_typeof(x.rendered_values) = 'object'
-                       THEN md5(((x.rendered_values - 'items') - 'delivery_line_items')::text)
-                       ELSE md5(x.rendered_values::text) END = v.head)  AS 同じ本文の有効な紙,
+       (SELECT count(*) FROM fp a JOIN fp b ON b.key = a.key
+         WHERE a.id = v.id AND b.status <> 'void')       AS 控えの数,
        CASE
-         WHEN (SELECT count(*) FROM v3.documents x
-                WHERE x.status <> 'void'
-                  AND CASE WHEN jsonb_typeof(x.rendered_values) = 'object'
-                       THEN md5(((x.rendered_values - 'items') - 'delivery_line_items')::text)
-                       ELSE md5(x.rendered_values::text) END = v.head) > 0
+         WHEN (SELECT count(*) FROM fp a JOIN fp b ON b.key = a.key
+                WHERE a.id = v.id AND b.status <> 'void') > 0
            THEN '控えがある。重複で正しい'
-         ELSE '控えが無い。この内容の紙はこれだけ。戻すか確かめる'
+         ELSE '控えが無い。この相手・この発注・この明細の紙はこれだけ'
        END                                               AS 見立て
   FROM v
   LEFT JOIN v3.matters m ON m.id = v.matter_id
@@ -99,11 +121,30 @@ SELECT v.document_no                                     AS 文書番号,
 
 \echo ''
 \echo '--- 控えが無い文書を戻すコマンド。中身を見てから、戻すものだけ貼る ----'
-WITH v AS (
-  SELECT d.id, d.document_no,
-         CASE WHEN jsonb_typeof(d.rendered_values) = 'object'
-              THEN md5(((d.rendered_values - 'items') - 'delivery_line_items')::text)
-              ELSE md5(d.rendered_values::text) END AS head
+WITH fp AS (
+  SELECT d.id, d.status, md5(
+           COALESCE(d.rendered_values ->> 'counterparty',
+                    d.rendered_values ->> 'VENDOR_NAME', '')
+           -- 発注元の紙。自分の番号が入っている文書があるので、そのときは
+           -- 空として扱う（入れると1枚ごとに必ず違う指紋になる）。
+           || '｜' || COALESCE(NULLIF(COALESCE(d.rendered_values ->> 'parent_po_number',
+                                               d.rendered_values ->> 'ORDER_NO', ''),
+                                      COALESCE(d.document_no, '')), '')
+           || '｜' || COALESCE(d.matter_id::text, '')
+           || '｜' || COALESCE((
+                SELECT string_agg((li ->> 'item_name') || '=' ||
+                         COALESCE(li ->> 'inspected_amount_ex_tax',
+                                  li ->> 'amount_ex_tax', ''), '／' ORDER BY n)
+                  FROM jsonb_array_elements(
+                         CASE WHEN jsonb_typeof(d.rendered_values -> 'delivery_line_items') = 'array'
+                              THEN d.rendered_values -> 'delivery_line_items'
+                              WHEN jsonb_typeof(d.rendered_values -> 'items') = 'array'
+                              THEN d.rendered_values -> 'items'
+                              ELSE '[]'::jsonb END) WITH ORDINALITY AS t(li, n)), '')) AS key
+    FROM v3.documents d
+),
+v AS (
+  SELECT d.id, d.document_no
     FROM v3.documents d
     LEFT JOIN v3.matters mm ON mm.id = d.matter_id
    WHERE d.status = 'void'
@@ -117,11 +158,8 @@ SELECT format(
          || ' -Body ([Text.Encoding]::UTF8.GetBytes(''{"reason":"重複ではなかったため戻す"}''))',
          v.document_no, v.id)
   FROM v
- WHERE NOT EXISTS (SELECT 1 FROM v3.documents x
-                    WHERE x.status <> 'void'
-                      AND CASE WHEN jsonb_typeof(x.rendered_values) = 'object'
-                       THEN md5(((x.rendered_values - 'items') - 'delivery_line_items')::text)
-                       ELSE md5(x.rendered_values::text) END = v.head)
+ WHERE NOT EXISTS (SELECT 1 FROM fp a JOIN fp b ON b.key = a.key
+                    WHERE a.id = v.id AND b.status <> 'void')
  ORDER BY v.document_no;
 
 \echo ''
