@@ -38,7 +38,9 @@
 WITH v AS (
   SELECT d.id, d.document_no, d.matter_id, d.issued_at, d.legacy_id,
          COALESCE(t.template_key, '（版が無い）') AS template_key,
-         md5(((d.rendered_values - 'items') - 'delivery_line_items')::text) AS head,
+         CASE WHEN jsonb_typeof(d.rendered_values) = 'object'
+              THEN md5(((d.rendered_values - 'items') - 'delivery_line_items')::text)
+              ELSE md5(d.rendered_values::text) END AS head,
          COALESCE(d.rendered_values ->> 'counterparty',
                   d.rendered_values ->> 'VENDOR_NAME', '—')                 AS party,
          COALESCE(d.rendered_values ->> 'parent_po_number',
@@ -68,11 +70,15 @@ SELECT v.document_no                                     AS 文書番号,
        left(COALESCE(lv.reason, ''), 40)                 AS 理由,
        (SELECT count(*) FROM v3.documents x
          WHERE x.status <> 'void'
-           AND md5(((x.rendered_values - 'items') - 'delivery_line_items')::text) = v.head)  AS 同じ本文の有効な紙,
+           AND CASE WHEN jsonb_typeof(x.rendered_values) = 'object'
+                       THEN md5(((x.rendered_values - 'items') - 'delivery_line_items')::text)
+                       ELSE md5(x.rendered_values::text) END = v.head)  AS 同じ本文の有効な紙,
        CASE
          WHEN (SELECT count(*) FROM v3.documents x
                 WHERE x.status <> 'void'
-                  AND md5(((x.rendered_values - 'items') - 'delivery_line_items')::text) = v.head) > 0
+                  AND CASE WHEN jsonb_typeof(x.rendered_values) = 'object'
+                       THEN md5(((x.rendered_values - 'items') - 'delivery_line_items')::text)
+                       ELSE md5(x.rendered_values::text) END = v.head) > 0
            THEN '控えがある。重複で正しい'
          ELSE '控えが無い。この内容の紙はこれだけ。戻すか確かめる'
        END                                               AS 見立て
@@ -95,7 +101,9 @@ SELECT v.document_no                                     AS 文書番号,
 \echo '--- 控えが無い文書を戻すコマンド。中身を見てから、戻すものだけ貼る ----'
 WITH v AS (
   SELECT d.id, d.document_no,
-         md5(((d.rendered_values - 'items') - 'delivery_line_items')::text) AS head
+         CASE WHEN jsonb_typeof(d.rendered_values) = 'object'
+              THEN md5(((d.rendered_values - 'items') - 'delivery_line_items')::text)
+              ELSE md5(d.rendered_values::text) END AS head
     FROM v3.documents d
     LEFT JOIN v3.matters mm ON mm.id = d.matter_id
    WHERE d.status = 'void'
@@ -111,7 +119,9 @@ SELECT format(
   FROM v
  WHERE NOT EXISTS (SELECT 1 FROM v3.documents x
                     WHERE x.status <> 'void'
-                      AND md5(((x.rendered_values - 'items') - 'delivery_line_items')::text) = v.head)
+                      AND CASE WHEN jsonb_typeof(x.rendered_values) = 'object'
+                       THEN md5(((x.rendered_values - 'items') - 'delivery_line_items')::text)
+                       ELSE md5(x.rendered_values::text) END = v.head)
  ORDER BY v.document_no;
 
 \echo ''

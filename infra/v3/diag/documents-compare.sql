@@ -100,7 +100,9 @@ WITH body AS (
                         THEN d.rendered_values -> 'items'
                         ELSE '[]'::jsonb END) WITH ORDINALITY AS r(line, ord)) AS shape,
          -- 明細を抜いた本文まるごと。相手先・発注番号・振込先はここに入る。
-         md5(((d.rendered_values - 'items') - 'delivery_line_items')::text) AS head
+         CASE WHEN jsonb_typeof(d.rendered_values) = 'object'
+              THEN md5(((d.rendered_values - 'items') - 'delivery_line_items')::text)
+              ELSE md5(d.rendered_values::text) END AS head
     FROM v3.documents d
    WHERE d.document_no = ANY(
            SELECT btrim(v) FROM unnest(string_to_array(:'docs', ',')) AS v
@@ -139,7 +141,9 @@ WITH body AS (
 flat AS (
   SELECT b.document_no, kv.key, kv.value
     FROM body b
-   CROSS JOIN LATERAL jsonb_each(b.v) AS kv(key, value)
+   CROSS JOIN LATERAL jsonb_each(
+           CASE WHEN jsonb_typeof(b.v) = 'object' THEN b.v ELSE '{}'::jsonb END)
+         AS kv(key, value)
    WHERE jsonb_typeof(kv.value) IN ('string', 'number', 'boolean')
 ),
 varying AS (

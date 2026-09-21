@@ -484,7 +484,9 @@ WITH orphan AS (
                        THEN jsonb_array_length(d.rendered_values -> 'delivery_line_items') END, 0) AS lines
          ,
          -- 明細を抜いた本文まるごと。相手先・発注番号・振込先はここに入る。
-         md5(((d.rendered_values - 'items') - 'delivery_line_items')::text) AS head,
+         CASE WHEN jsonb_typeof(d.rendered_values) = 'object'
+              THEN md5(((d.rendered_values - 'items') - 'delivery_line_items')::text)
+              ELSE md5(d.rendered_values::text) END AS head,
          COALESCE(d.rendered_values ->> 'counterparty',
                   d.rendered_values ->> 'VENDOR_NAME', '—') AS party
     FROM orphan o JOIN documents d ON d.id = o.id
@@ -527,7 +529,9 @@ WITH orphan AS (
                    '[]'::jsonb)) li) AS total,
          COALESCE(CASE WHEN jsonb_typeof(d.rendered_values -> 'delivery_line_items') = 'array'
                        THEN jsonb_array_length(d.rendered_values -> 'delivery_line_items') END, 0) AS lines,
-         md5(((d.rendered_values - 'items') - 'delivery_line_items')::text) AS head,
+         CASE WHEN jsonb_typeof(d.rendered_values) = 'object'
+              THEN md5(((d.rendered_values - 'items') - 'delivery_line_items')::text)
+              ELSE md5(d.rendered_values::text) END AS head,
          COALESCE(d.rendered_values ->> 'counterparty',
                   d.rendered_values ->> 'VENDOR_NAME', '—') AS party
     FROM orphan o JOIN documents d ON d.id = o.id
