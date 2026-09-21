@@ -86,6 +86,27 @@ const asyncRoute =
 
 export function createRoutes(database: Transactable) {
   const router = Router();
+
+  /**
+   * 経路に入っている番号は、数でなければその場で 400 にする。
+   *
+   * これまでは Number(req.params.id) が NaN のまま SQL まで届き、
+   * 500「サーバ内部でエラーが発生しました」になっていた。打ち間違いや、
+   * 貼り損ねたコマンド（.../conditions/…/void）が「サーバの不具合」に
+   * 見えてしまい、どこが悪いのか読めない。
+   *
+   * ここに挙げない経路の名前（kind・relation・templateKey・key・name・
+   * source・dataset・fileId・targetId）は数とは限らないので触らない。
+   */
+  for (const name of ["id", "eventId", "conditionId", "matterId", "documentId",
+                      "scheduleId", "partId", "contactId", "creditId"]) {
+    router.param(name, (_request, _response, next, value) => {
+      if (/^\d+$/.test(String(value))) return next();
+      next(new DomainError("VALIDATION",
+        `${name} は番号で指定してください（受け取った値：${String(value).slice(0, 40)}）`));
+    });
+  }
+
   const conditions = new ConditionRepository(database);
   const conditionWrites = new ConditionWriteService(database);
   const conditionExport = new ConditionExportService(database);
@@ -2411,9 +2432,11 @@ export function createRoutes(database: Transactable) {
 
   // ローカル保存（DRIVE_STORAGE=local）のファイルを返す。Drive の閲覧リンクの代わり。
   // 認証の内側（/api/v3）に置くので、予備系でも誰でも開けるファイルにはならない。
-  router.get("/local-files/:id", asyncRoute(async (req, res) => {
+  // :id ではなく :fileId。Drive のファイル id は数ではないので、上の
+  // 「番号でなければ 400」に引っかからない名前にしてある。
+  router.get("/local-files/:fileId", asyncRoute(async (req, res) => {
     if (!(drive instanceof LocalFileStorage)) throw new DomainError("NOT_FOUND", "ローカル保存は使っていません");
-    const file = await drive.downloadFile(String(req.params.id));
+    const file = await drive.downloadFile(String(req.params.fileId));
     res.type(file.mimeType)
        .setHeader("content-disposition",
          `inline; filename*=UTF-8''${encodeURIComponent(file.filename)}`);
