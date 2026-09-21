@@ -152,6 +152,11 @@ SELECT c.condition_no                                    AS 条件番号,
        (SELECT string_agg(x.document_no, '／' ORDER BY x.document_no)
           FROM doc x WHERE x.condition_id = c.id
            AND x.template_key IN ('inspection_certificate', 'royalty_statement'))  AS 決済文書,
+       -- ひな形の版が付いていない文書（V2 から来て版が繋がらなかったもの）。
+       -- 発注書か検収書かが機械には分からないので、別の欄に出す。
+       (SELECT string_agg(x.document_no, '／' ORDER BY x.document_no)
+          FROM doc x WHERE x.condition_id = c.id
+           AND x.template_key IS NULL)                   AS 種別不明の文書,
        (SELECT count(*) FROM v3.payment_allocations al
          WHERE al.condition_id = c.id)                   AS 支払の割当
   FROM v3.conditions c
@@ -171,15 +176,28 @@ WITH target AS (
       OR COALESCE(p.representative_name, '') ILIKE '%' || :'q' || '%'
       OR EXISTS (SELECT 1 FROM unnest(p.aliases) a WHERE a ILIKE '%' || :'q' || '%')
       OR EXISTS (SELECT 1 FROM v3.party_contacts c
-                  WHERE c.party_id = p.id AND COALESCE(c.name, '') ILIKE '%' || :'q' || '%')
+                  WHERE c.party_id = p.id AND COALESCE(c.name, '') ILIKE '%' || :'q' || '%'),
+mine AS (
+  -- その取引先の案件。取引先が案件に直に付いていないこともある（V2 から来た
+  -- 案件は counterparty_id が空のことがある）ので、条件からも辿る。
+  SELECT m.id FROM v3.matters m
+   WHERE m.counterparty_id IN (SELECT id FROM target)
+      OR EXISTS (SELECT 1 FROM v3.matter_links l
+                  JOIN v3.conditions c ON c.id::text = l.target_ref
+                 WHERE l.matter_id = m.id AND l.target_type = 'condition'
+                   AND c.counterparty_id IN (SELECT id FROM target))
 )
 SELECT d.document_no                                     AS 文書番号,
-       t.template_key                                    AS ひな形,
+       COALESCE(t.template_key, '（版が無い）')          AS ひな形,
        d.status                                          AS 状態,
        d.issued_at::date                                 AS 発行日,
        m.matter_no                                       AS 案件番号,
        (SELECT count(*) FROM v3.document_conditions dc
          WHERE dc.document_id = d.id)                    AS 繋がっている条件,
+       (SELECT string_agg(c.condition_no, '／' ORDER BY c.condition_no)
+          FROM v3.document_conditions dc
+          JOIN v3.conditions c ON c.id = dc.condition_id
+         WHERE dc.document_id = d.id)                    AS 繋がり先,
        (SELECT count(*) FROM v3.condition_events e
          WHERE e.document_id = d.id AND e.status = 'active')           AS 結ばれた実績,
        CASE WHEN d.supersedes_id IS NOT NULL THEN '訂正版' ELSE '' END AS 版
@@ -187,14 +205,14 @@ SELECT d.document_no                                     AS 文書番号,
   LEFT JOIN v3.document_template_versions tv ON tv.id = d.template_version_id
   LEFT JOIN v3.document_templates t ON t.id = tv.template_id
   LEFT JOIN v3.matters m ON m.id = d.matter_id
- WHERE m.counterparty_id IN (SELECT id FROM target)
+ WHERE d.matter_id IN (SELECT id FROM mine)
     OR EXISTS (SELECT 1 FROM v3.document_conditions dc
                 JOIN v3.conditions c ON c.id = dc.condition_id
                WHERE dc.document_id = d.id AND c.counterparty_id IN (SELECT id FROM target))
     OR EXISTS (SELECT 1 FROM v3.condition_events e
                 JOIN v3.conditions c ON c.id = e.condition_id
                WHERE e.document_id = d.id AND c.counterparty_id IN (SELECT id FROM target))
- ORDER BY t.template_key, d.document_no;
+ ORDER BY COALESCE(t.template_key, 'zz'), d.document_no;
 
 -- ---------------------------------------------------------------------
 -- 5. 条件はあるのに発注書が無い（＝紙を作るところから）
@@ -263,7 +281,16 @@ WITH target AS (
       OR COALESCE(p.representative_name, '') ILIKE '%' || :'q' || '%'
       OR EXISTS (SELECT 1 FROM unnest(p.aliases) a WHERE a ILIKE '%' || :'q' || '%')
       OR EXISTS (SELECT 1 FROM v3.party_contacts c
-                  WHERE c.party_id = p.id AND COALESCE(c.name, '') ILIKE '%' || :'q' || '%')
+                  WHERE c.party_id = p.id AND COALESCE(c.name, '') ILIKE '%' || :'q' || '%'),
+mine AS (
+  -- その取引先の案件。取引先が案件に直に付いていないこともある（V2 から来た
+  -- 案件は counterparty_id が空のことがある）ので、条件からも辿る。
+  SELECT m.id FROM v3.matters m
+   WHERE m.counterparty_id IN (SELECT id FROM target)
+      OR EXISTS (SELECT 1 FROM v3.matter_links l
+                  JOIN v3.conditions c ON c.id::text = l.target_ref
+                 WHERE l.matter_id = m.id AND l.target_type = 'condition'
+                   AND c.counterparty_id IN (SELECT id FROM target))
 )
 SELECT d.document_no                                     AS 文書番号,
        t.template_key                                    AS ひな形,
@@ -281,7 +308,7 @@ SELECT d.document_no                                     AS 文書番号,
   LEFT JOIN v3.matters m ON m.id = d.matter_id
  WHERE d.status <> 'void'
    AND NOT EXISTS (SELECT 1 FROM v3.document_conditions dc WHERE dc.document_id = d.id)
-   AND (m.counterparty_id IN (SELECT id FROM target)
+   AND (d.matter_id IN (SELECT id FROM mine)
         OR EXISTS (SELECT 1 FROM v3.condition_events e
                     JOIN v3.conditions c ON c.id = e.condition_id
                    WHERE e.document_id = d.id AND c.counterparty_id IN (SELECT id FROM target)))
