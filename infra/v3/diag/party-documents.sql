@@ -345,6 +345,10 @@ SELECT y.payment_no                                      AS 支払番号,
 
 -- ---------------------------------------------------------------------
 -- 9. 仕分け。条件1本ごとに、次に何をすればよいか
+--
+--    「発注の側」と「次にすること（決済の側）」は別の欄にしてある。
+--    ひとつの文にまとめると、片方が片付いた条件でもう片方が言えなくなる
+--    （検収書を繋いだ途端に発注書の話が消える、が実際に起きた）。
 -- ---------------------------------------------------------------------
 WITH target AS (
   SELECT p.id FROM v3.parties p
@@ -394,18 +398,22 @@ SELECT condition_no                                      AS 条件番号,
        settles                                           AS 決済文書,
        unknown_docs                                      AS 種別不明の文書,
        allocs                                            AS 支払の割当,
+       -- 発注の側と決済の側は別の話なので、1つの文にまとめない。
+       -- まとめると、片方が片付いた条件でもう片方が言えなくなる。
        CASE
-         -- 版の無い文書が付いているときは、発注書か検収書かが機械には
-         -- 分からない。数が 0 だからといって「無い」と言ってはいけない。
-         WHEN orders = 0 AND settles = 0 AND unknown_docs > 0
-           THEN 'H ひな形の版が無い文書が付いている。中身を確かめる（document-detail.sql）'
-         WHEN orders = 0 AND events = 0 THEN 'A 発注書を作る（実績もまだ）'
-         WHEN orders = 0 AND events > 0 THEN 'B 実績はある。発注書が無い（遡及で作るか、検収書だけで通すか）'
-         WHEN events = 0 THEN 'C 発注書はある。実績を足す'
-         WHEN settles = 0 THEN 'D 実績はある。検収書を作る'
-         WHEN tied < events THEN 'E 検収書はある。実績を結ぶ（文書 → 対象の実績 → 結ぶものを選ぶ）'
-         WHEN allocs = 0 THEN 'F 検収書まで繋がった。支払を立てる'
-         ELSE 'G 繋がっている'
+         WHEN orders > 0 THEN '発注書あり'
+         -- 版の無い文書が付いているときは、発注書かどうかが機械には分からない。
+         -- 数が 0 だからといって「無い」と言ってはいけない。
+         WHEN unknown_docs > 0 THEN '版の無い文書が付いている。発注書かどうか確かめる'
+         ELSE '発注書なし（遡及で作るか、検収書だけで通すか）'
+       END                                               AS 発注の側,
+       CASE
+         WHEN events = 0 THEN 'A 実績を足す'
+         WHEN tied < events
+           THEN format('B 実績 %s 件が決済文書に結ばれていない（検収書を作るか、'
+                       || 'すでにある検収書に結ぶ）', events - tied)
+         WHEN allocs = 0 THEN 'C 検収書まで繋がった。支払を立てる'
+         ELSE 'D 繋がっている'
        END                                               AS 次にすること
   FROM state
  ORDER BY condition_no;
