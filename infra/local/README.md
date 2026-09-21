@@ -8,7 +8,8 @@ GCP（Cloud Run・Cloud SQL）が止まったときに、手元の PC で前夜�
 - Backlog・Slack・メール・CloudSign は止めたまま（設定しない＝送らない）
 - ファイルは Google Drive のリンクのまま。GCP と Google Workspace は別物なので、
   Cloud Run が落ちても Drive のリンクは開けることが多い
-- 本番 DB にはつながない。同期のときだけ読み取り専用ロールで写しを取る
+- 本番 DB へ書き込むことはない。つなぐのは写しを取るとき（`ops sync`）と、
+  読むだけの照会を流すとき（`ops sql-prod`）だけ。どちらも読み取り専用ロール
 
 停止中に文書を **作る**（決定・送信）ことは、この段階では対象外。
 
@@ -100,6 +101,29 @@ infra/local/
    ```
 
    http://localhost:8080 を開くと、左下に「予備系／データ YYYY-MM-DD HH:MM 時点」と出る。
+
+## 照会を流す
+
+棚卸しや診断の SQL は `infra/v3` に置いてあり、ops コンテナから `/v3/…` で指せる。
+
+```bash
+# 手元の写しに対して流す
+docker compose run --rm ops sql /v3/diag/orphan-documents.sql
+docker compose run --rm ops sql /v3/diag/party-documents.sql q=取引先名
+
+# 本番に対して流す（読むだけ）
+docker compose run --rm ops sql-prod /v3/diag/orphan-documents.sql
+docker compose run --rm ops sql-prod /v3/diag/party-documents.sql q=取引先名
+```
+
+`名前=値` を足すと、照会の中の `:'名前'` に入る。ファイルを書き換えなくてよい。
+
+`sql-prod` は書き込みを口ごと閉じる（`default_transaction_read_only`）。
+照会に UPDATE が紛れ込んでいても本番では実行されない。つなぐのも写しを取る役
+（読み取り専用ロール）なので、二重に守られている。`SYNC_DB_PASSWORD` が要る。
+
+Cloud SQL Studio でも同じ照会を流せるが、`\set` も `\echo` も効かない。
+先頭の `\` で始まる行を消し、`:'q'` を `'値'` のように引用符ごと置き換えること。
 
 ## コードを更新したとき
 

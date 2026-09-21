@@ -10,6 +10,9 @@
 #   ops fresh             本番データなしで開発用 DB を作る（模擬データ）
 #   ops grants            ランタイムロールの権限を当て直す
 #   ops upgrade           手元の DB を今のスキーマに合わせる（列を足したあと）
+#   ops sql-prod <file> [名前=値 ...]
+#                         読むだけの照会を本番へ流す（書き込みは口ごと閉じる）
+#                         例: ops sql-prod /v3/diag/orphan-documents.sql
 #   ops sql <file> [名前=値 ...]
 #                         SQL を流す（infra/v3 の診断は /v3/095_… で指せる）。
 #                         名前=値 を足すと照会の :'名前' に入る
@@ -642,11 +645,12 @@ SQL
       (SELECT count(*) FROM v3.party_bank_accounts) AS 口座;"
 }
 
-sync_proxy() {
+# 本番へつなぐ口を開ける。開いた先は REMOTE_HOST / REMOTE_PORT に入る。
+# 写しを取るとき（sync）と、読むだけの照会を流すとき（sql-prod）の両方で使う。
+open_remote() {
   [ -n "${SYNC_DB_PASSWORD:-}" ] || die "SYNC_DB_PASSWORD が空です（.env）"
-  mkdir -p "$DUMPS"
 
-  # 写しを取りに行く先。既定はこのコンテナが上げる Proxy。
+  # つなぎに行く先。既定はこのコンテナが上げる Proxy。
   # 社内ネットワークが 3307 番を塞いでいる場合は、Proxy を PC 側で動かして
   # SYNC_DB_HOST=host.docker.internal を .env に書く（README「Proxy を PC 側で動かす」）。
   local host="${SYNC_DB_HOST:-127.0.0.1}" port="${SYNC_DB_PORT:-5433}"
@@ -671,7 +675,10 @@ sync_proxy() {
     cloud-sql-proxy --credentials-file="$cred" --quota-project "$project" \
       --port "$port" "$CLOUD_SQL_INSTANCE" > /tmp/proxy.log 2>&1 &
     proxy=$!
-    trap 'kill $proxy 2>/dev/null || true' EXIT
+    # 途中で落ちても Proxy を残さない。trap は関数を抜けたあとに走るので、
+    # 関数の中だけの変数ではなく REMOTE_PROXY を見る。
+    REMOTE_PROXY="$proxy"
+    trap 'kill ${REMOTE_PROXY:-0} 2>/dev/null || true' EXIT
     for _ in $(seq 1 30); do
       pg_isready -h "$host" -p "$port" -q && break
       sleep 1
@@ -688,6 +695,20 @@ sync_proxy() {
       die "Proxy がつながりません"
     fi
   fi
+  REMOTE_HOST="$host"; REMOTE_PORT="$port"; REMOTE_PROXY="$proxy"
+}
+
+# 開けた口を閉じる。PC 側の Proxy を使っているときは何もしない。
+close_remote() {
+  [ -n "${REMOTE_PROXY:-}" ] && kill "$REMOTE_PROXY" 2>/dev/null || true
+  REMOTE_PROXY=""
+  trap - EXIT
+}
+
+sync_proxy() {
+  mkdir -p "$DUMPS"
+  open_remote
+  local host="$REMOTE_HOST" port="$REMOTE_PORT" proxy="$REMOTE_PROXY"
 
   local file="$DUMPS/v3_$(date '+%Y%m%d_%H%M').dump"
   log "本番の v3 スキーマを写す → $file"
@@ -781,6 +802,36 @@ sync() {
   esac
 }
 
+# 読むだけの照会を本番へ流す。
+#
+#   棚卸しの照会は本番でも同じものを流したい。Cloud SQL Studio は \set も
+#   \echo も効かないので、そのたびに手で書き換えることになっていた。
+#
+#   書き込みは口ごと閉じる（default_transaction_read_only）。照会に UPDATE が
+#   紛れ込んでいても本番では実行されない。つなぐのも写しを取る役（読み取り
+#   専用のロール）なので、二重に守られる。
+sql_prod() {
+  local file="${1:-}"; shift || true
+  [ -n "$file" ] || die "使い方: ops sql-prod /v3/diag/orphan-documents.sql [名前=値 ...]"
+  local vars=()
+  local pair
+  for pair in "$@"; do
+    case "$pair" in
+      *=*) vars+=(-v "$pair") ;;
+      *) die "変数は 名前=値 の形で渡す（例: q=取引先名）" ;;
+    esac
+  done
+  open_remote
+  log "本番へ読み取り専用でつなぐ（$SYNC_DB_USER@$REMOTE_HOST:$REMOTE_PORT/$REMOTE_DB_NAME）"
+  local rc=0
+  PGPASSWORD="$SYNC_DB_PASSWORD" \
+  PGOPTIONS="-c default_transaction_read_only=on -c client_min_messages=warning" \
+    psql -h "$REMOTE_HOST" -p "$REMOTE_PORT" -U "$SYNC_DB_USER" -d "$REMOTE_DB_NAME" \
+         -v ON_ERROR_STOP=1 "${vars[@]+"${vars[@]}"}" -f "$file" || rc=$?
+  close_remote
+  [ "$rc" -eq 0 ] || die "照会が止まりました（上のエラーを見る）"
+}
+
 case "${1:-}" in
   netcheck) shift; netcheck "$@" ;;
   sync) sync ;;
@@ -791,6 +842,7 @@ case "${1:-}" in
   fresh) fresh ;;
   grants) apply_grants ;;
   upgrade) upgrade ;;
+  sql-prod) shift; sql_prod "$@" ;;
   sql) [ -n "${2:-}" ] || die "使い方: ops sql /v3/095_diagnose_condition.sql [名前=値 ...]"
        # 3つ目以降は SQL に渡す変数（名前=値）。照会の中で :'名前' と書いた
        # ところに入る。ファイルは読み取り専用で入っているので、探す語を
