@@ -374,6 +374,13 @@ state AS (
             LEFT JOIN v3.document_templates t ON t.id = tv.template_id
            WHERE dc.condition_id = c.id AND d.status <> 'void'
              AND t.template_key IN ('inspection_certificate', 'royalty_statement')) AS settles,
+         -- ひな形の版が付いていない文書。発注書とも決済文書とも数えられない
+         -- ので、別に数える。これを見ないと「文書が無い」と読み違える。
+         (SELECT count(*) FROM v3.document_conditions dc
+            JOIN v3.documents d ON d.id = dc.document_id
+            LEFT JOIN v3.document_template_versions tv ON tv.id = d.template_version_id
+           WHERE dc.condition_id = c.id AND d.status <> 'void'
+             AND tv.id IS NULL)                                                AS unknown_docs,
          (SELECT count(*) FROM v3.payment_allocations al
            WHERE al.condition_id = c.id)                                       AS allocs
     FROM v3.conditions c
@@ -385,8 +392,13 @@ SELECT condition_no                                      AS 条件番号,
        events                                            AS 実績,
        tied                                              AS 結ばれた実績,
        settles                                           AS 決済文書,
+       unknown_docs                                      AS 種別不明の文書,
        allocs                                            AS 支払の割当,
        CASE
+         -- 版の無い文書が付いているときは、発注書か検収書かが機械には
+         -- 分からない。数が 0 だからといって「無い」と言ってはいけない。
+         WHEN orders = 0 AND settles = 0 AND unknown_docs > 0
+           THEN 'H ひな形の版が無い文書が付いている。中身を確かめる（document-detail.sql）'
          WHEN orders = 0 AND events = 0 THEN 'A 発注書を作る（実績もまだ）'
          WHEN orders = 0 AND events > 0 THEN 'B 実績はある。発注書が無い（遡及で作るか、検収書だけで通すか）'
          WHEN events = 0 THEN 'C 発注書はある。実績を足す'
