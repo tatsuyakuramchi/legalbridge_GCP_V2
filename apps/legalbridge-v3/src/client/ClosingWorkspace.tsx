@@ -155,6 +155,23 @@ function FindPanel({ onOpenCondition, onOpenDocument }: {
     finally { setBusy(false); }
   }
 
+  /**
+   * その候補で次にすること。行を押しても右端のボタンを押しても同じところへ行く。
+   * 押す場所で行き先が変わると、押した人は覚えていられない。
+   */
+  const actionOf = (c: CandidateRow) =>
+    c.periodCount ? "回を見る"
+    : c.needsReport && c.termStart && c.termEnd ? "算定期間を並べる"
+    // 料率以外の予定明細は金額が要る。条件画面の予定明細タブへ送る
+    // （同じ欄を2つ作らない）。
+    : "条件を開いて組む";
+
+  const go = (c: CandidateRow) => {
+    if (c.periodCount) return void open(c.id);
+    if (c.needsReport && c.termStart && c.termEnd) return setBuilding(c);
+    onOpenCondition(c.id);
+  };
+
   async function open(id: number) {
     setBusy(true); setError(null);
     try {
@@ -232,9 +249,17 @@ function FindPanel({ onOpenCondition, onOpenDocument }: {
                     </tr></thead>
                     <tbody>
                       {rows.map((c) => (
-                        <tr key={c.id} className={picked?.condition.id === c.id ? "sel" : ""}>
+                        // 行ごと押せる。CSS が行に指のかたちを付けるので、
+                        // 右端のボタンだけが効く作りだと「押しても開かない」に見える。
+                        <tr key={c.id} tabIndex={0}
+                            className={picked?.condition.id === c.id ? "sel" : undefined}
+                            onClick={() => go(c)}
+                            onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && go(c)}>
                           <td>
-                            <div>{c.name}</div>
+                            {/* 名前は条件明細の画面へ。行の押し先（回を見る）とは別。 */}
+                            <button className="linky" onClick={(e) => {
+                              e.stopPropagation(); onOpenCondition(c.id);
+                            }}>{c.name}</button>
                             <div className="faint code">{c.conditionNo ?? `#${c.id}`}</div>
                             <div className="faint">{c.party?.name ?? "—"}</div>
                           </td>
@@ -249,19 +274,12 @@ function FindPanel({ onOpenCondition, onOpenDocument }: {
                           <td className="num">{c.periodCount}</td>
                           <td className="num">{c.openCount}</td>
                           <td className="code">{c.nextClosingOn ?? "—"}</td>
-                          <td>{
-                            c.periodCount
-                              ? <button className="btn btn-sm" onClick={() => open(c.id)}>回を見る</button>
-                              : c.needsReport && c.termStart && c.termEnd
-                              ? <button className="btn btn-sm" onClick={() => setBuilding(c)}>
-                                  算定期間を並べる
-                                </button>
-                              // 料率以外の予定明細は金額が要る。条件画面の
-                              // 予定明細タブに送る（同じ欄を2つ作らない）。
-                              : <button className="btn btn-sm" onClick={() => onOpenCondition(c.id)}>
-                                  条件を開いて組む
-                                </button>
-                          }</td>
+                          <td>
+                            <button className="btn btn-sm"
+                              onClick={(e) => { e.stopPropagation(); go(c); }}>
+                              {actionOf(c)}
+                            </button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -296,7 +314,14 @@ function FindPanel({ onOpenCondition, onOpenDocument }: {
             <ClosingRows rows={picked.rows} showParty={false}
               selected={selected} onSelect={setSelected}
               onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument}
-              empty="この条件にはまだ回が並んでいません。「こぼれたもの」から算定期間を並べられます。" />
+              empty="この条件にはまだ回が並んでいません。" />
+            {!picked.rows.length && (
+              <div className="row">
+                <button className="btn accent" onClick={() => go(picked.condition)}>
+                  {actionOf(picked.condition)}
+                </button>
+              </div>
+            )}
             <p className="faint">
               ③ は月の表と同じ行です。予定明細1回が1行、列も同じ。
               違うのは切り口だけで、月で切るか条件で切るかです。
