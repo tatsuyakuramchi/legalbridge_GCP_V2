@@ -13,6 +13,7 @@ import { MatterWriteService } from "./matters/write-service.js";
 import { MatterLinkService, CONDITION_KINDS_BY_MATTER } from "./matters/link-service.js";
 import { ConditionExportService } from "./conditions/export.js";
 import { ClosingService } from "./closing/service.js";
+import { ClosingCloseService } from "./closing/close-service.js";
 import { LinkService } from "./links/service.js";
 import { RELATIONS, type EntityKind } from "./links/relations.js";
 import { DOCUMENT_STYLES } from "./matters/flow.js";
@@ -114,6 +115,7 @@ export function createRoutes(database: Transactable) {
   const conditionEvents = new ConditionEventService(database);
   const conditionSchedules = new ConditionScheduleService(database);
   const closing = new ClosingService(database);
+  const closingClose = new ClosingCloseService(database);
   const matters = new MatterRepository(database);
   const works = new WorkRepository(database);
   const documents = new DocumentRepository(database);
@@ -1371,6 +1373,26 @@ export function createRoutes(database: Transactable) {
   router.get("/closing/conditions/:id", asyncRoute(async (req, res) => {
     res.json(await closing.periods(Number(req.params.id)));
   }));
+
+  // まとめて締める。何が起きるかを先に出してから実行する。
+  const closeSchema = z.object({
+    scheduleIds: z.array(z.coerce.number().int().positive()).min(1).max(200)
+  });
+  router.post("/closing/preview",
+    requireRole("admin", "legal"),
+    asyncRoute(async (req, res) => {
+      const { scheduleIds } = closeSchema.parse(req.body ?? {});
+      res.json(await closingClose.preview(scheduleIds));
+    }));
+
+  // 1件でも止まったら終わり、にはしない。できたものはでき、落ちたものは
+  // 理由を返す。途中で止めると、どこまで進んだのか画面から読めなくなる。
+  router.post("/closing/run",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { scheduleIds } = closeSchema.parse(req.body ?? {});
+      res.json(await closingClose.run(scheduleIds, actor(res)));
+    }));
 
   // 月の表からこぼれるもの（締め日を過ぎた回・予定の無い実績）。
   router.get("/closing/strays", asyncRoute(async (req, res) => {

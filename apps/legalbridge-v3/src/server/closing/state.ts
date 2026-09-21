@@ -40,13 +40,24 @@ export function stepOf(row: {
  */
 export function stateLabel(row: {
   step: Step; pricingModel: string | null | undefined; kind: string | null | undefined;
+  /** 締め日と今日。締め日がまだ来ていない回は「待ち」ではない。 */
+  closingOn?: string | null; today?: string | null;
 }): string {
   switch (row.step) {
-    case "event": return needsReport(row.pricingModel) ? "報告待ち" : "実績待ち";
+    case "event":
+      // 締め日の前に「実績待ち」と出すと、催促する相手がいない行が並ぶ。
+      if (notYet(row.closingOn, row.today)) return "これから";
+      return needsReport(row.pricingModel) ? "報告待ち" : "実績待ち";
     case "document": return `${documentFor(row.kind).label}待ち`;
     case "payment": return "支払待ち";
     default: return "締め済";
   }
+}
+
+/** 締め日がまだ来ていないか。来ていない回は締められない（紙の日付が先になる）。 */
+export function notYet(closingOn: string | null | undefined, today: string | null | undefined): boolean {
+  const on = String(closingOn ?? "").trim(), now = String(today ?? "").trim();
+  return !!on && !!now && on > now;
 }
 
 // ---------------------------------------------------------------------------

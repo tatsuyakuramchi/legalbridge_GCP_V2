@@ -549,7 +549,7 @@ export function periodRow(row: any, today: string, unplanned: boolean): PeriodRo
     paidOn: dateStr(row.paid_on),
     paidAmount: Number(row.allocated_amount ?? 0),
     step,
-    state: stateLabel({ step, pricingModel: row.pricing_model, kind }),
+    state: stateLabel({ step, pricingModel: row.pricing_model, kind, closingOn, today }),
     due,
     monthKey: monthKeyOf(closingOn),
     lateDays: step === "done" ? 0 : lateDays(closingOn, today),
