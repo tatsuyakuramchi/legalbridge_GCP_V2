@@ -2336,7 +2336,16 @@ export function createRoutes(database: Transactable) {
 
   // 実績は下書きに保存していないので、発行のときに渡せるようにする。
   const issueSchema = z.object({
-    eventIds: z.array(z.coerce.number().int().positive()).max(200).default([])
+    eventIds: z.array(z.coerce.number().int().positive()).max(200).default([]),
+    /**
+     * 決定日。遡って出す紙のためにある。
+     *
+     * 過ぎた月の検収書を今日の日付で出すと、紙の日付と検収日が食い違う。
+     * 一括取り込み（settled_import）は前から遡って出していたのに、
+     * 1枚ずつ出す口には無かった。中身の検めは issue-service が持っている
+     * （YYYY-MM-DD だけ・実在する日・東京で未来でない・2000年以降）。
+     */
+    issuedOn: z.string().trim().min(1).nullable().optional()
   });
   /**
    * 1枚を発行する。まとめて決定するときもここを通す。
@@ -2347,7 +2356,8 @@ export function createRoutes(database: Transactable) {
    * 訂正版なら、前の版が持っている実績は空いているものとして扱う
    * （発行の瞬間にこちらへ移る）。
    */
-  const issueOne = async (id: number, eventIds: number[], who: string) => {
+  const issueOne = async (id: number, eventIds: number[], who: string,
+                         issuedOn?: string | null) => {
     const draft = await documents.find(id);
     if (!draft) throw new DomainError("NOT_FOUND", `文書 ${id} が見つかりません`);
     const groups = await eventGroupsFor(draft.conditions.map((c) => c.id), eventIds,
@@ -2361,7 +2371,10 @@ export function createRoutes(database: Transactable) {
         await conditionEvents.assertLinkable(conditionId, ids, draft.supersedesId);
       }
     }
-    const issued = await issues.issue(id, who, eventIds.length ? { eventIds } : {});
+    const issued = await issues.issue(id, who, {
+      ...(eventIds.length ? { eventIds } : {}),
+      ...(issuedOn === undefined ? {} : { issuedOn })
+    });
     // 前の版から移らなかったぶんを結ぶ。すでにこの文書を指している実績は
     // linkDocument 側で素通りする。
     if (settles) {
@@ -2375,8 +2388,8 @@ export function createRoutes(database: Transactable) {
   router.post("/documents/:id/issue",
     requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
-      const { eventIds } = issueSchema.parse(req.body ?? {});
-      res.json(await issueOne(Number(req.params.id), eventIds, actor(res)));
+      const { eventIds, issuedOn } = issueSchema.parse(req.body ?? {});
+      res.json(await issueOne(Number(req.params.id), eventIds, actor(res), issuedOn));
     }));
 
   /**
