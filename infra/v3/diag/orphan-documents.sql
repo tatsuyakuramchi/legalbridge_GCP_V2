@@ -411,3 +411,81 @@ SELECT d.document_no AS "文書",
   JOIN matter_links ml ON ml.matter_id = m.id AND ml.target_type = 'condition'
   JOIN conditions c ON c.id = ml.target_ref::bigint
  ORDER BY d.document_no, c.condition_no;
+
+\echo ''
+\echo '=== 11. 明細を1行ずつ（条件の金額と突き合わせる） ======================'
+\echo '   10 の「条件の金額」と、この行の検収額を見比べる。条件が2本ある紙は'
+\echo '   行ごとにどちらへ当てるかがここで決まる。'
+\echo '   品目名は出さない（業務委託の品目に人の名前が入ることがある）。'
+\echo ''
+
+WITH orphan AS (
+  SELECT d.id
+    FROM documents d
+    JOIN document_template_versions tv ON tv.id = d.template_version_id
+    JOIN document_templates t ON t.id = tv.template_id
+   WHERE d.status = 'issued'
+     AND t.template_key IN ('inspection_certificate', 'royalty_statement')
+     AND NOT EXISTS (SELECT 1 FROM document_conditions dc WHERE dc.document_id = d.id)
+     AND NOT EXISTS (SELECT 1 FROM condition_events x
+                      WHERE x.document_id = d.id AND x.status = 'active')
+)
+SELECT d.document_no AS "文書", li.ord AS "行",
+       li.v ->> 'delivery_date' AS "納品日",
+       li.v ->> 'inspected_on' AS "検収日",
+       li.v ->> 'ordered_quantity' AS "発注数量",
+       li.v ->> 'inspected_quantity' AS "検収数量",
+       COALESCE(NULLIF(regexp_replace(COALESCE(li.v ->> 'unit_price', ''), '[^0-9]', '', 'g'), '')::bigint, 0) AS "単価",
+       COALESCE(NULLIF(regexp_replace(COALESCE(li.v ->> 'ordered_amount_ex_tax', ''), '[^0-9]', '', 'g'), '')::bigint, 0) AS "発注額",
+       COALESCE(NULLIF(regexp_replace(COALESCE(li.v ->> 'inspected_amount_ex_tax', ''), '[^0-9]', '', 'g'), '')::bigint, 0) AS "検収額",
+       li.v ->> 'change_reason' AS "変更理由"
+  FROM orphan o
+  JOIN documents d ON d.id = o.id
+  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(
+         CASE WHEN jsonb_typeof(d.rendered_values -> 'delivery_line_items') = 'array'
+              THEN d.rendered_values -> 'delivery_line_items' END,
+         CASE WHEN jsonb_typeof(d.rendered_values -> 'items') = 'array'
+              THEN d.rendered_values -> 'items' END,
+         '[]'::jsonb)) WITH ORDINALITY AS li(v, ord)
+ ORDER BY d.document_no, li.ord;
+
+\echo ''
+\echo '=== 12. 重複の疑い（同じ案件・同じ金額・同じ行数の紙） ================='
+\echo '   V2 から同じ紙が何枚も移ってきていることがある。繋ぎ直す前に'
+\echo '   どれが本物かを決めないと、同じ実績を何枚もの紙へ結ぶことになる'
+\echo '   （実績は1枚の文書しか指せないので、結局どれかが空のまま残る）。'
+\echo ''
+
+WITH orphan AS (
+  SELECT d.id
+    FROM documents d
+    JOIN document_template_versions tv ON tv.id = d.template_version_id
+    JOIN document_templates t ON t.id = tv.template_id
+   WHERE d.status = 'issued'
+     AND t.template_key IN ('inspection_certificate', 'royalty_statement')
+     AND NOT EXISTS (SELECT 1 FROM document_conditions dc WHERE dc.document_id = d.id)
+     AND NOT EXISTS (SELECT 1 FROM condition_events x
+                      WHERE x.document_id = d.id AND x.status = 'active')
+), paper AS (
+  SELECT d.id, d.document_no, d.matter_id, d.issued_at, d.legacy_id,
+         (SELECT COALESCE(sum(COALESCE(NULLIF(regexp_replace(
+                   COALESCE(li ->> 'inspected_amount_ex_tax', ''), '[^0-9]', '', 'g'), '')::bigint, 0)), 0)
+            FROM jsonb_array_elements(COALESCE(
+                   CASE WHEN jsonb_typeof(d.rendered_values -> 'delivery_line_items') = 'array'
+                        THEN d.rendered_values -> 'delivery_line_items' END,
+                   '[]'::jsonb)) li) AS total,
+         COALESCE(CASE WHEN jsonb_typeof(d.rendered_values -> 'delivery_line_items') = 'array'
+                       THEN jsonb_array_length(d.rendered_values -> 'delivery_line_items') END, 0) AS lines
+    FROM orphan o JOIN documents d ON d.id = o.id
+)
+SELECT m.matter_no AS "案件", p.total AS "金額", p.lines AS "明細行",
+       count(*) AS "枚数",
+       string_agg(p.document_no || '（' || p.issued_at::date || '・legacy ' || COALESCE(p.legacy_id::text, '—') || '）',
+                  '　' ORDER BY p.document_no) AS "同じ中身の紙"
+  FROM paper p LEFT JOIN matters m ON m.id = p.matter_id
+ -- 明細ゼロの紙どうしは「同じ中身」ではなく「どちらも空」。数えると
+ -- 空の計算書が丸ごと1組の重複に見えて、本題が埋もれる。
+ WHERE p.lines > 0
+ GROUP BY m.matter_no, p.total, p.lines
+HAVING count(*) > 1
+ ORDER BY count(*) DESC, m.matter_no;
