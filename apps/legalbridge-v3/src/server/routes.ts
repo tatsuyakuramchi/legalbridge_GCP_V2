@@ -2034,8 +2034,13 @@ export function createRoutes(database: Transactable) {
   router.get("/matters/:id/settled-export",
     requireRole("admin", "legal"),
     asyncRoute(async (req, res) => {
-      const made = await new SettledExportService(database).forMatter(Number(req.params.id));
-      res.json(made);
+      // mode=first_edition … 検収まで終わっている取引を「いま文書化する」。
+      // 当初からの変更ではないので、数量は実際に検収した数にして、
+      // 検収数量と変更理由は空にする（起きていない減額を紙に刷らない）。
+      const mode = String(req.query.mode ?? "") === "first_edition"
+        ? "first_edition" as const : "as_is" as const;
+      res.json(await new SettledExportService(database)
+        .forMatter(Number(req.params.id), mode));
     }));
 
   /**

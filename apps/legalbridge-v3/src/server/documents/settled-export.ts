@@ -20,6 +20,23 @@ import { SETTLED_COLUMNS, readRows, toCsv } from "./settled-batch.js";
 /** CSV の1行。鍵は SETTLED_COLUMNS のもの。 */
 export type ExportRow = Record<string, unknown>;
 
+/**
+ * 何を作り直すのか。
+ *
+ * as_is … 現物どおり。当初の発注数量と検収数量の差も、そのまま写す。
+ *         紙に「変更内容の確認」が出ていた取引を、そのまま作り直すとき。
+ *
+ * first_edition … 初版として出す。検収まで終わっている取引を「いま文書化する」
+ *         のであって、当初からの変更ではない。数量は実際に検収した数にして、
+ *         検収数量と変更理由は空にする。発注書と検収書が同じ数を言うので、
+ *         紙に「変更内容の確認」は出ない。
+ *
+ *         RR241 のように「紙が無い／金額が違うので、事実どおりに作り直す」
+ *         場合はこちら。as_is で出すと、起きていない減額を紙に刷ることになり、
+ *         そのうえ取り込みが変更理由を要求してくる。
+ */
+export type ExportMode = "as_is" | "first_edition";
+
 export interface ExportNote {
   conditionNo: string | null;
   conditionName: string;
@@ -54,7 +71,7 @@ interface PayRow { status: string; due_on: unknown; paid_on: unknown }
 export class SettledExportService {
   constructor(private readonly database: Queryable) {}
 
-  async forMatter(matterId: number): Promise<SettledExport> {
+  async forMatter(matterId: number, mode: ExportMode = "as_is"): Promise<SettledExport> {
     try {
       const head = await this.database.query(
         "SELECT id, matter_no, title FROM matters WHERE id = $1", [matterId]);
@@ -81,7 +98,7 @@ export class SettledExportService {
       const rows: ExportRow[] = [];
       const notes: ExportNote[] = [];
       for (const cond of conds.rows as unknown as CondRow[]) {
-        const made = await this.rowsFor(cond);
+        const made = await this.rowsFor(cond, mode);
         rows.push(...made.rows);
         notes.push(...made.notes);
       }
@@ -96,7 +113,9 @@ export class SettledExportService {
   }
 
   /** 条件1本ぶんの行。紙があれば紙の明細、無ければ実績、どちらも無ければ条件そのもの。 */
-  private async rowsFor(cond: CondRow): Promise<{ rows: ExportRow[]; notes: ExportNote[] }> {
+  private async rowsFor(
+    cond: CondRow, mode: ExportMode
+  ): Promise<{ rows: ExportRow[]; notes: ExportNote[] }> {
     const notes: ExportNote[] = [];
     const say = (note: string) =>
       notes.push({ conditionNo: str(cond.condition_no), conditionName: cond.name, note });
@@ -182,16 +201,21 @@ export class SettledExportService {
           ?? divide(num(item.amount_ex_tax), quantity)
           ?? num(cond.unit_amount) ?? num(cond.flat_amount);
         const name = str(item.item_name) ?? cond.name;
+        const inspected = inspectedQtyOf({ quantity, unitPrice, del, ev, name, say });
+        const settled = firstEditionLine({
+          mode, quantity, unitPrice, inspected, amount: num(ev?.amount), name, say
+        });
         return {
           ...base,
           item_name: name,
           spec: str(item.spec) ?? str(item.description) ?? "",
-          quantity: fmtNum(quantity),
-          unit_price: fmtNum(unitPrice),
+          quantity: fmtNum(settled.quantity),
+          unit_price: fmtNum(settled.unitPrice),
           deliveredOn: dateStr(ev?.occurred_on) ?? base.inspectedOn,
-          inspectedQuantity: fmtNum(
-            inspectedQtyOf({ quantity, unitPrice, del, ev, name, say })),
-          varianceNote: str(del?.changeNote) ?? str(ev?.note) ?? "",
+          inspectedQuantity: fmtNum(settled.inspected),
+          // 初版は「当初からの変更」ではないので、変更理由も持たせない。
+          varianceNote: mode === "first_edition"
+            ? "" : str(del?.changeNote) ?? str(ev?.note) ?? "",
           contract_form: str(item.payment_terms) ?? str(cond.contract_form) ?? "",
           deliverable_ownership:
             OWNERSHIP_LABEL[String(item.deliverable_ownership ?? "")] ?? base.deliverable_ownership
@@ -298,6 +322,40 @@ export function inspectedQtyOf(input: {
     + `${paid.toLocaleString()} 円ですが、単価で割り切れません。`
     + "検収数量を入れてください（空のままだと発注どおりの額で作り直されます）");
   return null;
+}
+
+/**
+ * 初版として出すときの数量と単価。
+ *
+ * 検収まで終わっている取引を「いま文書化する」のだから、発注書も検収書も
+ * 実際に検収した数を言えばよい。数量を当初のまま残して検収数量で減らすと、
+ * 起きていない減額を紙に刷ることになる。
+ *
+ * 単価で割り切れない額（発注 96,000 に対して実績 90,000 など）は、数量では
+ * 表せない。1式としてその額を単価に置く。刻みが失われるので、そう書き添える。
+ */
+export function firstEditionLine(input: {
+  mode: ExportMode;
+  quantity: number;
+  unitPrice: number | null;
+  inspected: number | null;
+  amount: number | null;
+  name: string;
+  say: (note: string) => void;
+}): { quantity: number; unitPrice: number | null; inspected: number | null } {
+  const { mode, quantity, unitPrice, inspected, amount, name, say } = input;
+  if (mode !== "first_edition") return { quantity, unitPrice, inspected };
+
+  // 実際に検収した数が分かる（発注どおりも含む）。その数で1本にする。
+  if (inspected !== null) return { quantity: inspected, unitPrice, inspected: null };
+
+  // 数で表せない。1式として実額を置く。
+  if (amount !== null && unitPrice !== null && amount !== unitPrice * quantity) {
+    say(`「${name}」は数量では表せない額（${amount.toLocaleString()} 円）なので、`
+      + "1式として単価に置きました。数量と単価の刻みが要るなら手で直してください");
+    return { quantity: 1, unitPrice: amount, inspected: null };
+  }
+  return { quantity, unitPrice, inspected: null };
 }
 
 const OWNERSHIP_LABEL: Record<string, string> = { orderer: "発注者", contractor: "受注者" };

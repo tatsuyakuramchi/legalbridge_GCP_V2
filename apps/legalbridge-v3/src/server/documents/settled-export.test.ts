@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { FakeDatabase } from "../core/fake-db.js";
-import { SettledExportService, inspectedQtyOf, itemsOf, payStateOf } from "./settled-export.js";
+import { SettledExportService, firstEditionLine, inspectedQtyOf, itemsOf, payStateOf } from "./settled-export.js";
 import { SETTLED_COLUMNS } from "./settled-batch.js";
 
 const cond = (over: Record<string, unknown> = {}) => ({
@@ -253,4 +253,63 @@ test("不備のない行では何も言わない", async () => {
       values: { delivery_line_items: [{ inspected_quantity: 1 }] } }]
   })).forMatter(1);
   assert.equal(made.notes.filter((n) => /弾かれます/.test(n.note)).length, 0);
+});
+
+// ---------------------------------------------------------------------------
+// 初版として出す（検収まで終わっているのを、いま文書化する）
+// ---------------------------------------------------------------------------
+
+test("初版は実際に検収した数で1本にする（起きていない減額を刷らない）", () => {
+  const said: string[] = [];
+  const at = (over: Record<string, unknown> = {}) => firstEditionLine({
+    mode: "first_edition", quantity: 12, unitPrice: 8000, inspected: 11,
+    amount: 88000, name: "挿絵", say: (n) => said.push(n), ...over
+  });
+  assert.deepEqual(at(), { quantity: 11, unitPrice: 8000, inspected: null });
+  // 発注どおりなら（検収数量なし）そのまま。
+  assert.deepEqual(at({ inspected: null, amount: 96000 }),
+    { quantity: 12, unitPrice: 8000, inspected: null });
+  assert.equal(said.length, 0);
+});
+
+test("現物どおりのときは触らない", () => {
+  assert.deepEqual(firstEditionLine({
+    mode: "as_is", quantity: 12, unitPrice: 8000, inspected: 11,
+    amount: 88000, name: "挿絵", say: () => {}
+  }), { quantity: 12, unitPrice: 8000, inspected: 11 });
+});
+
+test("数量で表せない額は1式にして、刻みが消えたことを言う", () => {
+  const said: string[] = [];
+  const got = firstEditionLine({
+    mode: "first_edition", quantity: 12, unitPrice: 8000, inspected: null,
+    amount: 90000, name: "挿絵", say: (n) => said.push(n)
+  });
+  assert.deepEqual(got, { quantity: 1, unitPrice: 90000, inspected: null });
+  assert.match(said[0] ?? "", /1式として単価に置きました/);
+});
+
+test("初版で書き出すと、取り込みに弾かれる行が消える", async () => {
+  const fixture = {
+    "'items'": [{ id: 50, document_no: "PO", issued_at: "2026-06-01T00:00:00Z",
+      values: { items: [{ item_name: "挿絵", quantity: 12, unit_price: 8000 }] } }],
+    "FROM condition_events e\n        WHERE": [
+      { id: 97, occurred_on: "2026-07-22", quantity: null, amount: 88000,
+        deliverable: null, note: null, document_id: 60 }
+    ],
+    "e.document_id = d.id": [{ id: 60, document_no: "INS", issued_at: "2026-07-25T00:00:00Z",
+      values: { delivery_line_items: [{ inspected_quantity: null, changeNote: "" }] } }]
+  };
+  const asIs = await new SettledExportService(db(fixture)).forMatter(1);
+  assert.match(asIs.notes.map((n) => n.note).join("\n"), /弾かれます/);
+
+  const first = await new SettledExportService(db(fixture)).forMatter(1, "first_edition");
+  assert.equal(first.rows[0]?.quantity, "11");
+  assert.equal(first.rows[0]?.unit_price, "8000");
+  assert.equal(first.rows[0]?.inspectedQuantity, "");
+  assert.equal(first.rows[0]?.varianceNote, "");
+  // 発注書と検収書が同じ数を言うので、紙に「変更内容の確認」は出ない。
+  assert.equal(first.notes.filter((n) => /弾かれます/.test(n.note)).length, 0);
+  // 額は変わらない。11 × 8,000 = 88,000。
+  assert.equal(Number(first.rows[0]?.quantity) * Number(first.rows[0]?.unit_price), 88000);
 });

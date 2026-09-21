@@ -519,6 +519,13 @@ export function MatterDocuments(
    * 要らない行を Excel で消す作業になる。
    */
   const [picked, setPicked] = useState<Set<number>>(new Set());
+  /**
+   * 書き出し方。既定は初版。
+   * 紙が無いか金額が違うので作り直す、というのがこの動線の主な用なので、
+   * 「いま事実どおりに文書化する」を既定にする。
+   */
+  const [exportMode, setExportMode] = useState<"as_is" | "first_edition">("first_edition");
+
   /** 畳む前の下見と、畳んだ結果。 */
   const [teardown, setTeardown] = useState<TeardownPlan | null>(null);
   const [tornDown, setTornDown] = useState<TeardownResult | null>(null);
@@ -579,14 +586,14 @@ export function MatterDocuments(
    * 案件まるごと出す。決済済みは発注書1枚では完結しない（検収書と支払が
    * 付いてくる）ので、文書を名指しで選ぶ形にはしない。
    */
-  async function exportSettled() {
+  async function exportSettled(mode: "as_is" | "first_edition") {
     setBusy(true); setError(null); setSettledNotes(null);
     try {
       const made = await api.get<{
         matter: { matterNo: string | null }; rows: unknown[];
         notes: Array<{ conditionNo: string | null; conditionName: string; note: string }>;
         csv: string;
-      }>(`/matters/${detail.id}/settled-export`);
+      }>(`/matters/${detail.id}/settled-export?mode=${mode}`);
       if (!made.rows.length) setError("書き出せる条件明細がありませんでした");
       else saveCsv(made.csv, `settled_${made.matter.matterNo ?? detail.id}.csv`);
       setSettledNotes({ rows: made.rows.length, notes: made.notes });
@@ -733,9 +740,19 @@ export function MatterDocuments(
       {!picking && (
         <div className="row">
           <button className="btn btn-sm" disabled={busy}
-                  onClick={() => void exportSettled()}>
+                  onClick={() => void exportSettled(exportMode)}>
             ① 決済済みを CSV に出す（作り直し用）
           </button>
+          {/*
+            何を作り直すのかで、書き出す中身が変わる。検収まで終わっている取引を
+            いま文書化するなら、当初からの変更ではないので初版。数量を当初のまま
+            残して検収数量で減らすと、起きていない減額を紙に刷ることになる。
+          */}
+          <select value={exportMode} disabled={busy}
+                  onChange={(e) => setExportMode(e.target.value as typeof exportMode)}>
+            <option value="first_edition">初版として（検収済みをいま文書化する）</option>
+            <option value="as_is">現物どおり（当初の発注と検収の差も写す）</option>
+          </select>
           {/*
             畳むのは書き出したあと。先に畳むと、書き出すものが無くなる
             （紙も実績も消えた条件からは、条件の金額しか出てこない）。
@@ -747,7 +764,10 @@ export function MatterDocuments(
           </button>
           <span className="faint">
             ① で出した CSV の金額を直し、② で古い紙と支払を畳んでから、
-            文書の画面の「検収済みをまとめて入れる（CSV）」で上げ直します
+            文書の画面の「検収済みをまとめて入れる（CSV）」で上げ直します。
+            {exportMode === "first_edition"
+              ? "初版なので、発注書と検収書は同じ数量を言います（変更内容の確認は出ません）"
+              : "紙に出ていた当初の発注数量と検収数量の差を、そのまま写します"}
           </span>
         </div>
       )}
