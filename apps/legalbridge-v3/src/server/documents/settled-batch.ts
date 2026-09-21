@@ -41,6 +41,37 @@ export const PAYMENT_STATE_WORDS: Array<{ value: SettledPaymentState; label: str
   { value: "none", label: "作らない", match: /^(なし|無|作らない|立てない|不要|none|skip|-)$/i }
 ];
 
+/**
+ * 版の扱い。
+ *
+ * 同じ「発注 12 点・検収 11 点」でも、意味が2つある。
+ *   当初 12 点で発注していて、あとから 11 点に減った → 変更履歴付（amended）
+ *   はじめから 11 点の取引を、いま紙にする          → 初版（first）
+ *
+ * 前者は紙に変更履歴と署名欄が出て、理由が要る。後者は変更そのものが無い。
+ * 台帳の数字を見ても区別できない（減額の記録は金額にしか残っていないことが
+ * ある）ので、人に書いてもらう。
+ */
+export type SettledRevision = "first" | "amended";
+
+export const REVISION_WORDS: Array<{ value: SettledRevision; label: string; match: RegExp }> = [
+  { value: "first", label: "初版", match: /^(初版|新規|first|なし|無)$/i },
+  { value: "amended", label: "変更履歴付",
+    match: /^(変更履歴付|変更履歴付き|変更履歴|変更|改訂|amended|あり)$/i }
+];
+
+/**
+ * 空欄のときは数字から察する。検収数量が書いてあって数量と違えば変更、
+ * そうでなければ初版。列を足す前に作った CSV が、これまでと同じに通る。
+ */
+export function readRevision(
+  raw: string, inspectedQuantity: number, orderedQuantity: number
+): SettledRevision | null {
+  const text = String(raw ?? "").trim();
+  if (!text) return inspectedQuantity !== orderedQuantity ? "amended" : "first";
+  return REVISION_WORDS.find((w) => w.match.test(text))?.value ?? null;
+}
+
 export function readPaymentState(raw: string): SettledPaymentState | null {
   const text = String(raw ?? "").trim();
   if (!text) return "planned";           // 書いていなければ未払。立てるだけ立てる
@@ -57,16 +88,19 @@ export function readPaymentState(raw: string): SettledPaymentState | null {
 export function templateCsv(): string {
   // 2行にする。1行だと「同じ取引先でも作品が違えば別の発注書になる」ことと、
   // 「減額検収は検収数量で書く」ことの両方が伝わらない。
+  // 1行目は初版（いま紙にするだけ）、2行目は変更履歴付（当初から減った）。
   const examples = [
     ["VD-00317", "合同会社アトリエ蒼", "WRK-10013", "星降る夜のミュゼ", "", "",
      "第4巻 表紙イラスト", "カラー1点", "1", "150000",
      "2026-06-01", "2026-07-20", "2026-07-25", "", "",
+     "初版",
      "2026-08-31", "未払", "",
      "請負", "月末締め翌月末払い", "発注者", "あり", "なし",
      "業務委託の一般特約", "", ""],
     ["VD-00317", "合同会社アトリエ蒼", "WRK-10021", "夜明けのクロニクル", "", "",
      "第1巻 挿絵", "モノクロ12点", "12", "8000",
      "2026-06-01", "2026-07-31", "2026-08-05", "11", "納品点数が11点になったため減額",
+     "変更履歴付",
      "2026-09-30", "支払済み", "2026-09-28",
      "請負", "月末締め翌月末払い", "発注者", "あり", "なし",
      "", "", ""]
@@ -99,8 +133,13 @@ export interface SettledRow {
   deliveredOn: string | null;
   /** 検収日。実績にも入り、検収書の決定日にもなる。 */
   inspectedOn: string | null;
-  /** 検収数量が発注数量と違うときの理由。検収書の変更履歴に出る。 */
+  /** 変更履歴付のときの理由。検収書の変更履歴に出る。 */
   varianceNote: string | null;
+  /**
+   * 当初からの変更として残すか（amended）、初版として出すか（first）。
+   * 初版は発注数量と検収数量が同じなので、紙に変更履歴も署名欄も出ない。
+   */
+  revision: SettledRevision;
   /** 支払期日。空なら支払条件・予定から出す。 */
   dueOn: string | null;
   paymentState: SettledPaymentState | null;
@@ -217,8 +256,21 @@ export function readRows(text: string): SettledRow[] {
     // 数量が動いた行は、紙に変更履歴と署名欄が出る。理由を書かないと
     // 「（理由未記入）」と刷られたものが相手に渡る。
     const varianceNote = get("varianceNote") || null;
-    if (inspectedQuantity !== orderedQuantity && !varianceNote) {
-      issues.push(`検収数量（${inspectedQuantity}）が数量（${orderedQuantity}）と違います。変更理由が要ります`);
+    const revision = readRevision(get("revision"), inspectedQuantity, orderedQuantity);
+    if (revision === null) {
+      issues.push(`版は 初版 か 変更履歴付（${get("revision")}）`);
+    } else if (revision === "amended") {
+      if (inspectedQuantity === orderedQuantity) {
+        issues.push("変更履歴付ですが、検収数量が数量と同じです。"
+          + "変わっていないなら 初版 にしてください");
+      } else if (!varianceNote) {
+        issues.push(`検収数量（${inspectedQuantity}）が数量（${orderedQuantity}）と違います。変更理由が要ります`);
+      }
+    } else if (inspectedQuantity !== orderedQuantity) {
+      // 初版なのに数が食い違う。そのまま通すと、起きていない減額の履歴が
+      // 紙に刷られる。どちらのつもりなのかは人にしか決められない。
+      issues.push(`初版ですが、検収数量（${inspectedQuantity}）が数量（${orderedQuantity}）と違います。`
+        + "初版なら数量に実際の数を書いてください（変更として残すなら 変更履歴付 に）");
     }
 
     const ownershipRaw = get("deliverable_ownership");
@@ -234,7 +286,9 @@ export function readRows(text: string): SettledRow[] {
       workTitle: get("workTitle") || null,
       agreementNo: get("agreementNo") || null,
       conditionName: get("conditionName") || null,
-      orderedOn, deliveredOn, inspectedOn, varianceNote, dueOn,
+      orderedOn, deliveredOn, inspectedOn, varianceNote,
+      revision: revision ?? "first",
+      dueOn,
       paymentState, paidOn,
       orderSign: readOnOff(get("orderSign")),
       acceptSign: readOnOff(get("acceptSign")),

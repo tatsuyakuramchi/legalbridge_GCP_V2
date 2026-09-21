@@ -216,6 +216,10 @@ export class SettledExportService {
           // 初版は「当初からの変更」ではないので、変更理由も持たせない。
           varianceNote: mode === "first_edition"
             ? "" : str(del?.changeNote) ?? str(ev?.note) ?? "",
+          // 版は行ごとに書く。同じ案件でも、初版で出す行と変更として残す行が
+          // 混ざる（当初から減っていた人と、紙が無いだけの人）。
+          revision: mode === "first_edition" ? "初版"
+            : settled.inspected !== null ? "変更履歴付" : "初版",
           contract_form: str(item.payment_terms) ?? str(cond.contract_form) ?? "",
           deliverable_ownership:
             OWNERSHIP_LABEL[String(item.deliverable_ownership ?? "")] ?? base.deliverable_ownership
@@ -237,6 +241,8 @@ export class SettledExportService {
           deliveredOn: dateStr(ev.occurred_on) ?? "",
           inspectedQuantity: "",
           varianceNote: str(ev.note) ?? "",
+          // 紙が無いので、当初との差そのものが無い。
+          revision: "初版",
           contract_form: str(cond.contract_form) ?? ""
         };
       }), notes };
@@ -249,7 +255,7 @@ export class SettledExportService {
       item_name: cond.name, spec: "",
       quantity: fmtNum(num(cond.quantity) ?? 1),
       unit_price: fmtNum(num(cond.unit_amount) ?? num(cond.flat_amount)),
-      deliveredOn: "", inspectedQuantity: "", varianceNote: "",
+      deliveredOn: "", inspectedQuantity: "", varianceNote: "", revision: "初版",
       contract_form: str(cond.contract_form) ?? ""
     }], notes };
   }

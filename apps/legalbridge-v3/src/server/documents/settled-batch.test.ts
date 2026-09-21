@@ -1,12 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  conflictsOf, groupRows, ownershipOfRows, readPaymentState, readRows,
+  conflictsOf, groupRows, ownershipOfRows, readPaymentState, readRevision, readRows,
   scheduleLinesFrom, templateCsv, toCsv, type SettledRow
 } from "./settled-batch.js";
 
 const HEAD = "取引先コード,取引先名,作品コード,作品名,契約番号,条件名,品目・業務名,仕様・成果物,"
-  + "数量,単価（税抜）,発注日,納品日,検収日,検収数量,変更理由,支払期日,支払状態,入金日,"
+  + "数量,単価（税抜）,発注日,納品日,検収日,検収数量,変更理由,版,支払期日,支払状態,入金日,"
   + "契約形式,支払条件,成果物の帰属先,発注署名欄,承諾署名欄,特約の定型文,特約,備考";
 
 /** 1行ぶんの値。既定は「読める行」で、直したいところだけ渡す。 */
@@ -16,7 +16,8 @@ const line = (over: Partial<Record<string, string>> = {}) => {
     agreementNo: "", conditionName: "", itemName: "表紙", spec: "",
     quantity: "1", unitPrice: "100000",
     orderedOn: "2026-06-01", deliveredOn: "2026-07-20", inspectedOn: "2026-07-25",
-    inspectedQuantity: "", varianceNote: "", dueOn: "2026-08-31", paymentState: "", paidOn: "",
+    inspectedQuantity: "", varianceNote: "", revision: "",
+    dueOn: "2026-08-31", paymentState: "", paidOn: "",
     contractForm: "請負", paymentTerms: "月末締め翌月末払い", ownership: "発注者",
     orderSign: "", acceptSign: "", snippet: "", specialTerms: "", remarks: "",
     ...over
@@ -27,7 +28,7 @@ const line = (over: Partial<Record<string, string>> = {}) => {
   return [base.partyCode, base.partyName, base.workCode, base.workTitle,
           base.agreementNo, base.conditionName, base.itemName, base.spec,
           base.quantity, base.unitPrice, base.orderedOn, base.deliveredOn,
-          base.inspectedOn, base.inspectedQuantity, base.varianceNote,
+          base.inspectedOn, base.inspectedQuantity, base.varianceNote, base.revision,
           base.dueOn, base.paymentState,
           base.paidOn, base.contractForm, base.paymentTerms, base.ownership,
           base.orderSign, base.acceptSign, base.snippet, base.specialTerms,
@@ -267,4 +268,75 @@ test("支払の立て方が束の中で食い違えば作らない", () => {
     line({ itemName: "口絵" })
   ));
   assert.ok(conflictsOf(groupRows(rows)[0].rows).some((m) => /支払状態が行ごとに違います/.test(m)));
+});
+
+
+// ---------------------------------------------------------------------------
+// 版（初版 / 変更履歴付）
+//
+// 同じ「発注 12 点・検収 11 点」でも、当初から減ったのか、はじめから 11 点
+// だったのかで意味が違う。台帳の数字では区別できないので、人が書く。
+// ---------------------------------------------------------------------------
+
+test("空欄なら数字から察する（版の列を足す前の CSV がそのまま通る）", () => {
+  assert.equal(readRevision("", 11, 12), "amended");
+  assert.equal(readRevision("", 12, 12), "first");
+  assert.equal(readRevision("  ", 11, 12), "amended");
+});
+
+test("書いてあればそれに従う", () => {
+  assert.equal(readRevision("初版", 11, 12), "first");
+  assert.equal(readRevision("変更履歴付", 11, 12), "amended");
+  assert.equal(readRevision("変更履歴", 12, 12), "amended");
+  assert.equal(readRevision("あり", 12, 12), "amended");
+  assert.equal(readRevision("なし", 11, 12), "first");
+  assert.equal(readRevision("第2版", 12, 12), null);
+});
+
+test("変更履歴付なら変更理由が要る（求めるのは正しい）", () => {
+  const [bad] = readRows(csv(line({
+    quantity: "12", unitPrice: "8000", inspectedQuantity: "11", revision: "変更履歴付" })));
+  assert.match(bad.issues.join("／"), /変更理由が要ります/);
+
+  const [ok] = readRows(csv(line({
+    quantity: "12", unitPrice: "8000", inspectedQuantity: "11", revision: "変更履歴付",
+    varianceNote: "納品点数が11点になったため減額" })));
+  assert.deepEqual(ok.issues, []);
+  assert.equal(ok.revision, "amended");
+  assert.equal(ok.inspectedAmount, 88000);
+});
+
+test("初版なら変更理由は要らない（当初からの変更そのものが無い）", () => {
+  const [row] = readRows(csv(line({
+    quantity: "11", unitPrice: "8000", inspectedQuantity: "", revision: "初版" })));
+  assert.deepEqual(row.issues, []);
+  assert.equal(row.revision, "first");
+  // 額は変更履歴付と同じ。違うのは紙に履歴が出るかどうかだけ。
+  assert.equal(row.inspectedAmount, 88000);
+  assert.equal(row.orderedAmount, 88000);
+});
+
+test("初版なのに数が食い違えば断る（起きていない減額を刷らない）", () => {
+  const [row] = readRows(csv(line({
+    quantity: "12", unitPrice: "8000", inspectedQuantity: "11", revision: "初版" })));
+  assert.match(row.issues.join("／"), /初版ですが、検収数量（11）が数量（12）と違います/);
+  assert.match(row.issues.join("／"), /変更として残すなら 変更履歴付/);
+});
+
+test("変更履歴付なのに変わっていなければ断る", () => {
+  const [row] = readRows(csv(line({
+    quantity: "12", unitPrice: "8000", inspectedQuantity: "12", revision: "変更履歴付" })));
+  assert.match(row.issues.join("／"), /変わっていないなら 初版 に/);
+});
+
+test("読めない版は断る", () => {
+  const [row] = readRows(csv(line({ revision: "第2版" })));
+  assert.match(row.issues.join("／"), /版は 初版 か 変更履歴付/);
+});
+
+test("雛形は初版と変更履歴付を1行ずつ見せる", () => {
+  const rows = readRows(templateCsv());
+  assert.equal(rows[0]?.revision, "first");
+  assert.equal(rows[1]?.revision, "amended");
+  assert.deepEqual(rows.flatMap((r) => r.issues), []);
 });
