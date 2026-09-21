@@ -12,9 +12,16 @@ import { SETTLED_COLUMNS } from "./settled-columns.js";
  * 以降が全部「変わった」に見える。
  */
 
-/** 突き合わせの鍵。同じ条件の同じ品目は1行のはず。 */
-export const rowKey = (row: Record<string, unknown>): string =>
-  `${text(row.conditionName)}\u0000${text(row.item_name)}`;
+/**
+ * 突き合わせの鍵。同じ条件の同じ品目は1行のはず。
+ *
+ * 条件番号があればそれを使う。名前で合わせると、条件名を直しただけの行が
+ * 「1行消えて1行増えた」に見え、金額を見比べられなくなる。
+ */
+export const rowKey = (row: Record<string, unknown>): string => {
+  const no = text(row.conditionNo);
+  return `${no || text(row.conditionName)}\u0000${text(row.item_name)}`;
+};
 
 export type ChangeKind = "added" | "removed" | "changed" | "same";
 

@@ -17,6 +17,10 @@ export const SETTLED_COLUMNS: Array<{
   { key: "workTitle", label: "作品名", note: "登録名に一致" },
   { key: "agreementNo", label: "契約番号",
     note: "空なら取引先から自動で当てる。「なし」と書けば基本契約なしの発注にする" },
+  // 名前だけで当てると、同名の条件が2本ある取引先で取り違える。番号は
+  // その1本を必ず指す。書き出しは必ず入れる（人が手で作る CSV では空でよい）。
+  { key: "conditionNo", label: "条件番号", aliases: ["条件明細番号", "条件コード"],
+    note: "空なら取引先・作品・条件名で当てる。書けばその条件に確実に載る" },
   { key: "conditionName", label: "条件名", note: "空なら自動。書けば同じ取引先・作品でも別の条件になる" },
   { key: "item_name", label: "品目・業務名", required: true, note: "" },
   { key: "spec", label: "仕様・成果物", note: "" },

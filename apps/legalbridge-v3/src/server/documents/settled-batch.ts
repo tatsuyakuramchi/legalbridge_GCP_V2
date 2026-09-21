@@ -90,14 +90,14 @@ export function templateCsv(): string {
   // 「減額検収は検収数量で書く」ことの両方が伝わらない。
   // 1行目は初版（いま紙にするだけ）、2行目は変更履歴付（当初から減った）。
   const examples = [
-    ["VD-00317", "合同会社アトリエ蒼", "WRK-10013", "星降る夜のミュゼ", "", "",
+    ["VD-00317", "合同会社アトリエ蒼", "WRK-10013", "星降る夜のミュゼ", "", "", "",
      "第4巻 表紙イラスト", "カラー1点", "1", "150000",
      "2026-06-01", "2026-07-20", "2026-07-25", "", "",
      "初版",
      "2026-08-31", "未払", "",
      "請負", "月末締め翌月末払い", "発注者", "あり", "なし",
      "業務委託の一般特約", "", ""],
-    ["VD-00317", "合同会社アトリエ蒼", "WRK-10021", "夜明けのクロニクル", "", "",
+    ["VD-00317", "合同会社アトリエ蒼", "WRK-10021", "夜明けのクロニクル", "", "", "",
      "第1巻 挿絵", "モノクロ12点", "12", "8000",
      "2026-06-01", "2026-07-31", "2026-08-05", "11", "納品点数が11点になったため減額",
      "変更履歴付",
@@ -126,6 +126,8 @@ export interface SettledRow {
   workCode: string | null;
   workTitle: string | null;
   agreementNo: string | null;
+  /** 条件番号。書いてあればその条件に確実に載る（名前より強い）。 */
+  conditionNo: string | null;
   conditionName: string | null;
   /** 発注書の決定日。 */
   orderedOn: string | null;
@@ -285,6 +287,7 @@ export function readRows(text: string): SettledRow[] {
       workCode: get("workCode") || null,
       workTitle: get("workTitle") || null,
       agreementNo: get("agreementNo") || null,
+      conditionNo: get("conditionNo") || null,
       conditionName: get("conditionName") || null,
       orderedOn, deliveredOn, inspectedOn, varianceNote,
       revision: revision ?? "first",
@@ -313,8 +316,13 @@ export function readRows(text: string): SettledRow[] {
   });
 }
 
-/** 束の鍵。同じ取引先・作品・条件名の行が1つの条件・1枚の発注書になる。 */
+/**
+ * 束の鍵。同じ取引先・作品・条件名の行が1つの条件・1枚の発注書になる。
+ * 条件番号が書いてあればそれだけで決まる（同名の条件が2本あっても混ざらない）。
+ */
 export function groupKeyOf(row: SettledRow): string {
+  const no = String(row.conditionNo ?? "").trim();
+  if (no) return `no\u0001${no}`;
   return [row.partyCode ?? "", row.partyName ?? "", row.workCode ?? "", row.workTitle ?? "",
           row.conditionName ?? ""].join("\u0001");
 }
@@ -325,6 +333,7 @@ export interface SettledGroupRows {
   partyName: string | null;
   workCode: string | null;
   workTitle: string | null;
+  conditionNo: string | null;
   conditionName: string | null;
   rows: SettledRow[];
   /** 発注額の合計。条件の金額になる。 */
@@ -341,7 +350,7 @@ export function groupRows(rows: SettledRow[]): SettledGroupRows[] {
       key,
       partyCode: row.partyCode, partyName: row.partyName,
       workCode: row.workCode, workTitle: row.workTitle,
-      conditionName: row.conditionName,
+      conditionNo: row.conditionNo, conditionName: row.conditionName,
       rows: [], orderedTotal: 0, inspectedTotal: 0
     };
     group.rows.push(row);

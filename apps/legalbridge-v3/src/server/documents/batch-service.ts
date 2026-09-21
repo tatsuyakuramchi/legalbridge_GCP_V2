@@ -1103,6 +1103,41 @@ export class DocumentBatchService {
    * 作品まで見ないと、作品が何本かある案件で、別の作品の条件に発注書が
    * ぶら下がってしまう。作品なしの束は作品なしの条件にだけ当てる。
    */
+  /**
+   * 条件番号で名指しで当てる。
+   *
+   * 名前で当てる規則は、同名の条件が2本ある取引先で取り違える。書き出した
+   * CSV は番号を持っているので、番号があるときはそれだけを見る。
+   * 番号が案件に無い／相手先が食い違うときは、当てずに理由を返す
+   * （近そうな条件に黙って載せるほうが害が大きい）。
+   */
+  async conditionByNo(
+    client: Queryable, matterId: number, conditionNo: string, partyId: number | null
+  ): Promise<{ id: number; conditionNo: string | null } | { error: string }> {
+    const r = await client.query(
+      `SELECT c.id, c.condition_no, c.status, c.counterparty_id, p.name AS party_name,
+              EXISTS (SELECT 1 FROM matter_links ml
+                       WHERE ml.matter_id = $2 AND ml.target_type = 'condition'
+                         AND ml.target_ref = c.id::text) AS on_matter
+         FROM conditions c
+         LEFT JOIN parties p ON p.id = c.counterparty_id
+        WHERE btrim(c.condition_no) = btrim($1)`, [conditionNo, matterId]);
+    const row = r.rows[0] as {
+      id: number; condition_no: string | null; status: string;
+      counterparty_id: number | null; party_name: string | null; on_matter: boolean;
+    } | undefined;
+    if (!row) return { error: `条件番号 ${conditionNo} が見つかりません` };
+    if (row.status !== "active" && row.status !== "draft") {
+      return { error: `条件番号 ${conditionNo} は ${row.status} です。有効な条件を指してください` };
+    }
+    if (!row.on_matter) return { error: `条件番号 ${conditionNo} はこの案件に載っていません` };
+    if (partyId && Number(row.counterparty_id) !== partyId) {
+      return { error: `条件番号 ${conditionNo} の相手先は ${row.party_name ?? "（不明）"} です。`
+        + "行の取引先と食い違っています" };
+    }
+    return { id: Number(row.id), conditionNo: str(row.condition_no) };
+  }
+
   async existingCondition(
     client: Queryable, matterId: number, partyId: number, workId: number | null,
     conditionName: string | null

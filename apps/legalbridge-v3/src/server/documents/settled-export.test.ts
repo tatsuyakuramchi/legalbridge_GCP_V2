@@ -313,3 +313,10 @@ test("初版で書き出すと、取り込みに弾かれる行が消える", as
   // 額は変わらない。11 × 8,000 = 88,000。
   assert.equal(Number(first.rows[0]?.quantity) * Number(first.rows[0]?.unit_price), 88000);
 });
+
+
+test("書き出しは条件番号を入れる（名前だけだと同名の条件を取り違える）", async () => {
+  const made = await new SettledExportService(db()).forMatter(1);
+  assert.equal(made.rows[0]?.conditionNo, "CL-2026-00001");
+  assert.equal(made.rows[0]?.conditionName, "挿絵 制作委託");
+});

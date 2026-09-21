@@ -172,8 +172,10 @@ export class SettledExportService {
       workTitle: str(cond.work_title) ?? "",
       // 基本契約が無い発注は「なし」と書く。空だと取引先から自動で当てにいく。
       agreementNo: str(cond.agreement_no) ?? "なし",
-      // 条件名は必ず書く。空にすると取り込みが同じ取引先・作品の条件を
-      // 1本にまとめてしまい、人ごとに分かれている13本が崩れる。
+      // 条件番号を必ず書く。名前だけだと、同名の条件が2本ある取引先で
+      // 取り違える。番号があれば取り込みはその1本に確実に載せる。
+      conditionNo: str(cond.condition_no) ?? "",
+      // 条件名も書く。番号の無い条件（新しく作る行）でも束が分かれるように。
       conditionName: cond.name,
       orderedOn: dateStr(order?.issued_at) ?? "",
       inspectedOn: dateStr(inspection?.issued_at) ?? "",

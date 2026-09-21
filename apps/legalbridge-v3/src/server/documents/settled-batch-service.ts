@@ -168,7 +168,16 @@ export class SettledBatchService {
         const stuck = resolution === "missing" || workResolution === "missing";
         const choosing = resolution === "ambiguous" || workResolution === "ambiguous";
 
-        const condition = party && (workResolution === "none" || workResolution === "resolved")
+        // 条件番号が書いてあれば、それだけを見る。名前で当てる規則は同名の
+        // 条件が2本ある取引先で取り違える。書き出した CSV は番号を持っている。
+        const byNo = g.conditionNo
+          ? await this.batch.conditionByNo(this.database, input.matterId,
+                                           g.conditionNo, party?.id ?? null)
+          : null;
+        const conditionNoIssue = byNo && "error" in byNo ? byNo.error : null;
+        const condition = byNo && !("error" in byNo) ? byNo
+          : g.conditionNo ? null
+          : party && (workResolution === "none" || workResolution === "resolved")
           ? await this.batch.existingCondition(this.database, input.matterId, party.id,
                                                work?.id ?? null, g.conditionName)
           : null;
@@ -181,6 +190,7 @@ export class SettledBatchService {
         const terms = await this.resolveSpecialTerms(g.rows);
 
         const issues = [
+          ...(conditionNoIssue ? [`${conditionNoIssue}。この束は飛ばす`] : []),
           ...(resolution === "missing" ? ["取引先が未登録（コードも名前も当たらない）。この束は飛ばす"] : []),
           ...(resolution === "ambiguous" ? ["候補が複数。どれかを選ぶ"] : []),
           ...(workResolution === "missing"
@@ -192,7 +202,7 @@ export class SettledBatchService {
           ...g.rows.flatMap((r) => r.issues.map((m) => `${r.line} 行目：${m}`))
         ];
         const blocking = g.rows.some((r) => r.issues.length > 0)
-          || mixed.length > 0 || badAgreement || terms.missing;
+          || mixed.length > 0 || badAgreement || terms.missing || !!conditionNoIssue;
 
         groups.push({
           ...g, resolution, party, candidates: resolved.candidates,

@@ -5,7 +5,7 @@ import {
   scheduleLinesFrom, templateCsv, toCsv, type SettledRow
 } from "./settled-batch.js";
 
-const HEAD = "取引先コード,取引先名,作品コード,作品名,契約番号,条件名,品目・業務名,仕様・成果物,"
+const HEAD = "取引先コード,取引先名,作品コード,作品名,契約番号,条件番号,条件名,品目・業務名,仕様・成果物,"
   + "数量,単価（税抜）,発注日,納品日,検収日,検収数量,変更理由,版,支払期日,支払状態,入金日,"
   + "契約形式,支払条件,成果物の帰属先,発注署名欄,承諾署名欄,特約の定型文,特約,備考";
 
@@ -13,7 +13,7 @@ const HEAD = "取引先コード,取引先名,作品コード,作品名,契約�
 const line = (over: Partial<Record<string, string>> = {}) => {
   const base: Record<string, string> = {
     partyCode: "VD-1", partyName: "甲社", workCode: "", workTitle: "",
-    agreementNo: "", conditionName: "", itemName: "表紙", spec: "",
+    agreementNo: "", conditionNo: "", conditionName: "", itemName: "表紙", spec: "",
     quantity: "1", unitPrice: "100000",
     orderedOn: "2026-06-01", deliveredOn: "2026-07-20", inspectedOn: "2026-07-25",
     inspectedQuantity: "", varianceNote: "", revision: "",
@@ -26,7 +26,7 @@ const line = (over: Partial<Record<string, string>> = {}) => {
   // 試すつもりのテストが「列の取り違え」を試すものになる。
   const cell = (v: string) => (/[",]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
   return [base.partyCode, base.partyName, base.workCode, base.workTitle,
-          base.agreementNo, base.conditionName, base.itemName, base.spec,
+          base.agreementNo, base.conditionNo, base.conditionName, base.itemName, base.spec,
           base.quantity, base.unitPrice, base.orderedOn, base.deliveredOn,
           base.inspectedOn, base.inspectedQuantity, base.varianceNote, base.revision,
           base.dueOn, base.paymentState,
@@ -339,4 +339,38 @@ test("雛形は初版と変更履歴付を1行ずつ見せる", () => {
   assert.equal(rows[0]?.revision, "first");
   assert.equal(rows[1]?.revision, "amended");
   assert.deepEqual(rows.flatMap((r) => r.issues), []);
+});
+
+// ---------------------------------------------------------------------------
+// 条件番号
+// ---------------------------------------------------------------------------
+
+test("条件番号が書いてあれば、それだけで束が決まる", () => {
+  // 取引先も作品も条件名も違うのに、同じ番号を指していれば同じ束。
+  const rows = readRows(csv(
+    line({ conditionNo: "CL-2026-00775", conditionName: "挿絵", itemName: "表紙" }),
+    line({ conditionNo: "CL-2026-00775", conditionName: "別の名前", itemName: "本文" })));
+  assert.equal(groupRows(rows).length, 1);
+  assert.equal(groupRows(rows)[0]?.conditionNo, "CL-2026-00775");
+});
+
+test("番号が違えば、名前が同じでも別の束（同名の条件を取り違えない）", () => {
+  const rows = readRows(csv(
+    line({ conditionNo: "CL-2026-00775", conditionName: "挿絵 制作委託" }),
+    line({ conditionNo: "CL-2026-00777", conditionName: "挿絵 制作委託" })));
+  assert.equal(groupRows(rows).length, 2);
+});
+
+test("番号が無ければ、これまでどおり取引先・作品・条件名で束ねる", () => {
+  const rows = readRows(csv(
+    line({ conditionName: "挿絵 制作委託", itemName: "表紙" }),
+    line({ conditionName: "挿絵 制作委託", itemName: "本文" }),
+    line({ conditionName: "別の条件", itemName: "口絵" })));
+  assert.equal(groupRows(rows).length, 2);
+});
+
+test("条件番号は行にそのまま残る", () => {
+  const [row] = readRows(csv(line({ conditionNo: " CL-2026-00775 " })));
+  assert.equal(row.conditionNo, "CL-2026-00775");
+  assert.equal(readRows(csv(line()))[0]!.conditionNo, null);
 });

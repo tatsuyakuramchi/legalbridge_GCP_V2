@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { amountOf, changesBetween, diffSettled, rowKey } from "./settled-diff.js";
 
 const row = (over: Record<string, unknown> = {}) => ({
-  partyName: "受託者名", conditionName: "挿絵 制作委託", item_name: "挿絵",
+  partyName: "受託者名", conditionNo: "CL-2026-00001",
+  conditionName: "挿絵 制作委託", item_name: "挿絵",
   quantity: "12", unit_price: "8000", inspectedQuantity: "", varianceNote: "",
   orderedOn: "2026-06-01", deliveredOn: "2026-07-22", inspectedOn: "2026-07-25",
   dueOn: "2026-09-30", paymentState: "未払", ...over
@@ -80,9 +81,24 @@ test("同じ条件に同じ品目が2行あれば、決められないと言う"
   assert.equal(diff.summary.changed, 0);
 });
 
-test("鍵は条件名と品目名だけで作る（別の条件の同じ品目は別の行）", () => {
-  assert.notEqual(rowKey(row({ conditionName: "A" })), rowKey(row({ conditionName: "B" })));
+test("鍵は条件番号と品目名で作る（条件名を直しただけで別の行にしない）", () => {
+  assert.equal(rowKey(row({ conditionName: "名前を直した" })), rowKey(row()));
+  assert.notEqual(rowKey(row({ conditionNo: "CL-2" })), rowKey(row()));
   assert.equal(rowKey(row({ dueOn: "2027-01-01" })), rowKey(row()));
+});
+
+test("条件番号が無ければ条件名で合わせる（人が手で作った CSV）", () => {
+  const noNo = (over: Record<string, unknown> = {}) => row({ conditionNo: "", ...over });
+  assert.notEqual(rowKey(noNo({ conditionName: "A" })), rowKey(noNo({ conditionName: "B" })));
+  assert.equal(rowKey(noNo()), rowKey(noNo()));
+});
+
+test("条件名を直しても、金額の差として読める", () => {
+  const diff = diffSettled([row()], [row({ conditionName: "名前を直した", unit_price: "7000" })]);
+  assert.equal(diff.summary.changed, 1);
+  assert.equal(diff.summary.added, 0);
+  assert.equal(diff.summary.removed, 0);
+  assert.deepEqual(diff.rows[0]?.fields.map((f) => f.key), ["conditionName", "unit_price"]);
 });
 
 test("空の突き合わせでも落ちない", () => {
