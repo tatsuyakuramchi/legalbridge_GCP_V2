@@ -72,7 +72,11 @@ v AS (
          COALESCE(d.rendered_values ->> 'counterparty',
                   d.rendered_values ->> 'VENDOR_NAME', '—')                 AS party,
          COALESCE(d.rendered_values ->> 'parent_po_number',
-                  d.rendered_values ->> 'ORDER_NO', '')                     AS po
+                  d.rendered_values ->> 'ORDER_NO', '')                     AS po,
+         COALESCE(CASE WHEN jsonb_typeof(d.rendered_values -> 'delivery_line_items') = 'array'
+                       THEN jsonb_array_length(d.rendered_values -> 'delivery_line_items')
+                       WHEN jsonb_typeof(d.rendered_values -> 'items') = 'array'
+                       THEN jsonb_array_length(d.rendered_values -> 'items') END, 0)  AS lines
     FROM v3.documents d
     LEFT JOIN v3.document_template_versions tv ON tv.id = d.template_version_id
     LEFT JOIN v3.document_templates t ON t.id = tv.template_id
@@ -96,9 +100,14 @@ SELECT v.document_no                                     AS 文書番号,
        NULLIF(v.po, '')                                  AS 発注番号,
        lv.occurred_at::date                               AS 無効にした日,
        left(COALESCE(lv.reason, ''), 40)                 AS 理由,
+       v.lines                                           AS 明細行,
        (SELECT count(*) FROM fp a JOIN fp b ON b.key = a.key
          WHERE a.id = v.id AND b.status <> 'void')       AS 控えの数,
        CASE
+         -- 明細も相手も無い紙は、指紋がほとんど空になる。そういう紙どうしは
+         -- 中身が同じなのではなく「どちらも空」なので、控えの数は当てにならない。
+         WHEN v.lines = 0 AND v.party = '—'
+           THEN '中身が無い紙。重複かどうかは判じない（控えの数は見ない）'
          WHEN (SELECT count(*) FROM fp a JOIN fp b ON b.key = a.key
                 WHERE a.id = v.id AND b.status <> 'void') > 0
            THEN '控えがある。重複で正しい'
@@ -144,7 +153,11 @@ WITH fp AS (
     FROM v3.documents d
 ),
 v AS (
-  SELECT d.id, d.document_no
+  SELECT d.id, d.document_no,
+         COALESCE(CASE WHEN jsonb_typeof(d.rendered_values -> 'delivery_line_items') = 'array'
+                       THEN jsonb_array_length(d.rendered_values -> 'delivery_line_items')
+                       WHEN jsonb_typeof(d.rendered_values -> 'items') = 'array'
+                       THEN jsonb_array_length(d.rendered_values -> 'items') END, 0)  AS lines
     FROM v3.documents d
     LEFT JOIN v3.matters mm ON mm.id = d.matter_id
    WHERE d.status = 'void'
@@ -160,6 +173,8 @@ SELECT format(
   FROM v
  WHERE NOT EXISTS (SELECT 1 FROM fp a JOIN fp b ON b.key = a.key
                     WHERE a.id = v.id AND b.status <> 'void')
+   -- 明細の無い紙は戻しても中身が無い。候補から外す。
+   AND v.lines > 0
  ORDER BY v.document_no;
 
 \echo ''
