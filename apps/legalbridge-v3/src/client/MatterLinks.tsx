@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import type { TeardownPlan, TeardownResult } from "../server/documents/teardown-service.js";
+import { readCsv } from "./SettledImport.js";
+import type { TeardownPlan, TeardownResult } from "../server/documents/teardown-types.js";
 import type { MatterDetail, MatterKind } from "../server/core/model.js";
 import { api, ApiError, saveCsv } from "./api.js";
 import { ListSearch, useDebounced } from "./ListTools.js";
@@ -528,6 +529,8 @@ export function MatterDocuments(
 
   /** 畳む前の下見と、畳んだ結果。 */
   const [teardown, setTeardown] = useState<TeardownPlan | null>(null);
+  /** 下見に渡した CSV。実行でも同じものを渡す。 */
+  const [teardownCsv, setTeardownCsv] = useState<string | null>(null);
   const [tornDown, setTornDown] = useState<TeardownResult | null>(null);
 
   /** 決済済みの書き出し。人に決めてもらうことは CSV に出せないので画面に出す。 */
@@ -601,12 +604,17 @@ export function MatterDocuments(
     finally { setBusy(false); }
   }
 
-  async function planTeardown() {
+  /**
+   * 畳む前の下見。CSV を渡すと「旧分」の列で対象が決まる（13人ぶんを
+   * 表計算で一目見ながら決められる）。渡さなければ案件まるごと。
+   */
+  async function planTeardown(csv: string | null = null) {
     setBusy(true); setError(null); setTornDown(null);
     try {
+      setTeardownCsv(csv);
       setTeardown(await api.post<TeardownPlan>(
-        `/matters/${detail.id}/teardown/preview`, { reason: "" }));
-    } catch (e) { setError((e as ApiError).message); }
+        `/matters/${detail.id}/teardown/preview`, { reason: "", csv }));
+    } catch (e) { setError((e as ApiError).message); setTeardownCsv(null); }
     finally { setBusy(false); }
   }
 
@@ -614,8 +622,10 @@ export function MatterDocuments(
     setBusy(true); setError(null);
     try {
       setTornDown(await api.post<TeardownResult>(
-        `/matters/${detail.id}/teardown`, { reason, voidConditions }));
-      setTeardown(null);
+        `/matters/${detail.id}/teardown`,
+        // CSV で来たときは、そちらが条件も畳むかまで持っている。
+        teardownCsv ? { reason, csv: teardownCsv } : { reason, voidConditions }));
+      setTeardown(null); setTeardownCsv(null);
       onChanged();
     } catch (e) { setError((e as ApiError).message); }
     finally { setBusy(false); }
@@ -760,10 +770,24 @@ export function MatterDocuments(
           */}
           <button className="btn btn-sm" disabled={busy}
                   onClick={() => void planTeardown()}>
-            ② 旧分を畳む（無効にする）
+            ② 旧分を畳む（案件まるごと）
           </button>
+          {/*
+            ① で出した CSV の「旧分」の列で、どの条件をどこまで畳むかを言える。
+            画面のチェックより、表計算で13人ぶんを一目見ながら決めるほうが速い。
+          */}
+          <label className="btn btn-sm" style={{ cursor: "pointer" }}>
+            ② CSV の「旧分」で畳む
+            <input type="file" accept=".csv,text/csv" style={{ display: "none" }}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (file) void readCsv(file).then((text) => planTeardown(text));
+              }} />
+          </label>
           <span className="faint">
-            ① で出した CSV の金額を直し、② で古い紙と支払を畳んでから、
+            ① で出した CSV の「旧分」に 畳む／無効 を書いて ② に渡せます。
+            ① の金額を直し、② で古い紙と支払を畳んでから、
             文書の画面の「検収済みをまとめて入れる（CSV）」で上げ直します。
             {exportMode === "first_edition"
               ? "「版」の列に 初版 が入ります。発注書と検収書が同じ数量を言うので、紙に変更履歴は出ません"
@@ -1012,6 +1036,10 @@ function TeardownPanel({ plan, busy, onRun, onCancel }: {
 }) {
   const [reason, setReason] = useState("");
   const [voidConditions, setVoidConditions] = useState(false);
+  const [allDocs, setAllDocs] = useState(false);
+  // 決済文書が先。無効にすると実績が解放され、実績を取り消せる。
+  const ordered = [...plan.documents]
+    .sort((a, b) => Number(b.settlement) - Number(a.settlement) || a.id - b.id);
 
   return (
     <div className="panel">
@@ -1044,9 +1072,7 @@ function TeardownPanel({ plan, busy, onRun, onCancel }: {
             <table>
               <thead><tr><th>文書</th><th>種別</th><th>順</th></tr></thead>
               <tbody>
-                {[...plan.documents]
-                  .sort((a, b) => Number(b.settlement) - Number(a.settlement) || a.id - b.id)
-                  .map((d) => (
+                {ordered.slice(0, allDocs ? ordered.length : 12).map((d) => (
                     <tr key={d.id}>
                       <td className="code">{d.documentNo ?? `#${d.id}`}</td>
                       <td>{d.templateLabel ?? "—"}</td>
@@ -1058,6 +1084,12 @@ function TeardownPanel({ plan, busy, onRun, onCancel }: {
                   ))}
               </tbody>
             </table>
+            {/* 案件が大きいと数十枚出る。全部並べると理由の欄まで届かない。 */}
+            {ordered.length > 12 && (
+              <button className="btn btn-sm" onClick={() => setAllDocs(!allDocs)}>
+                {allDocs ? "畳む" : `ほか ${ordered.length - 12} 枚を出す`}
+              </button>
+            )}
           </div>
         )}
 

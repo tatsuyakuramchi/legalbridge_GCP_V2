@@ -2072,6 +2072,9 @@ export function createRoutes(database: Transactable) {
    */
   const teardownInput = z.object({
     conditionIds: z.array(z.coerce.number().int().positive()).max(500).optional(),
+    // 書き出した CSV の「旧分」の列で、どの条件をどこまで畳むかを言える。
+    // 渡されたら conditionIds と voidConditions より優先する。
+    csv: z.string().max(2_000_000).nullable().optional(),
     // 既定は false。条件まで無効にすると、入れ直しが新しい条件番号で作られる。
     voidConditions: z.boolean().optional(),
     reason: z.string().trim().max(500).default("")

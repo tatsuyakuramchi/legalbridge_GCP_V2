@@ -102,7 +102,7 @@ const searchMatters = async (q: string): Promise<SearchOption[]> => {
 };
 
 /** ブラウザで文字コードを判定して読む。UTF-8 で化けたら Shift_JIS で読み直す。 */
-async function readCsv(file: File): Promise<string> {
+export async function readCsv(file: File): Promise<string> {
   const buf = await file.arrayBuffer();
   const utf8 = new TextDecoder("utf-8", { fatal: false }).decode(buf);
   if (!utf8.includes("�")) return utf8;

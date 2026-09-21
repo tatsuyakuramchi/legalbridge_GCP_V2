@@ -22,6 +22,11 @@ export const SETTLED_COLUMNS: Array<{
   { key: "conditionNo", label: "条件番号", aliases: ["条件明細番号", "条件コード"],
     note: "空なら取引先・作品・条件名で当てる。書けばその条件に確実に載る" },
   { key: "conditionName", label: "条件名", note: "空なら自動。書けば同じ取引先・作品でも別の条件になる" },
+  // 旧分をどうするか。条件番号を指しているときだけ効く（新しく作る行には
+  // 畳む相手がいない）。画面のチェックと同じことを CSV で言えるようにする。
+  // 表計算なら13人ぶんを一目で見ながら決められる。
+  { key: "oldHandling", label: "旧分", aliases: ["旧分の扱い"],
+    note: "残す（既定）／畳む（旧の紙・支払・実績を無効に）／無効（条件も無効に）" },
   { key: "item_name", label: "品目・業務名", required: true, note: "" },
   { key: "spec", label: "仕様・成果物", note: "" },
   { key: "quantity", label: "数量", note: "空なら 1" },

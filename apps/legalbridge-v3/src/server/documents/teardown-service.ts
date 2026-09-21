@@ -6,6 +6,11 @@ import { ConditionEventService } from "../conditions/event-service.js";
 import { ConditionWriteService } from "../conditions/write-service.js";
 import { PaymentService } from "../payments/service.js";
 import { settlesEvents } from "./settlement-docs.js";
+import type {
+  PlanCondition, PlanDocument, PlanEvent, PlanPayment,
+  Step, TeardownInput, TeardownOutcome, TeardownPlan, TeardownResult
+} from "./teardown-types.js";
+import { groupRows, readRows } from "./settled-batch.js";
 
 /**
  * 案件の決済済みの取引を、作り直しのために畳む。
@@ -32,58 +37,11 @@ import { settlesEvents } from "./settlement-docs.js";
  * 解放されるので、文書が先。支払は実績への割当を持つので、いちばん先。
  */
 
-export type Step = "payment" | "document" | "event" | "condition";
 
-export interface TeardownInput {
-  /** 畳む条件を絞る。空なら案件の条件すべて。 */
-  conditionIds?: number[];
-  /**
-   * 条件まで無効にするか。既定は false（残す）。
-   * true にすると入れ直しで新しい条件番号になる。
-   */
-  voidConditions?: boolean;
-  reason: string;
-}
 
-export interface PlanPayment {
-  id: number; paymentNo: string | null; amount: number;
-  status: string; paidOn: string | null; blocked: string | null;
-}
-export interface PlanDocument {
-  id: number; documentNo: string | null; templateLabel: string | null;
-  settlement: boolean; status: string; blocked: string | null;
-}
-export interface PlanEvent {
-  id: number; conditionId: number; conditionNo: string | null;
-  occurredOn: string | null; amount: number; documentNo: string | null;
-}
-export interface PlanCondition {
-  id: number; conditionNo: string | null; name: string; partyName: string | null;
-}
 
-export interface TeardownPlan {
-  matter: { id: number; matterNo: string | null; title: string };
-  payments: PlanPayment[];
-  documents: PlanDocument[];
-  events: PlanEvent[];
-  conditions: PlanCondition[];
-  voidConditions: boolean;
-  summary: {
-    payments: number; documents: number; events: number; conditions: number;
-    blocked: number; amount: number;
-  };
-  /** 人に読んでほしいこと。押す前に出す。 */
-  warnings: string[];
-}
 
-export interface TeardownOutcome {
-  step: Step; id: number; label: string; ok: boolean; error: string | null;
-}
 
-export interface TeardownResult {
-  ok: number; failed: number; skipped: number;
-  outcomes: TeardownOutcome[];
-}
 
 export class MatterTeardownService {
   constructor(
@@ -103,7 +61,15 @@ export class MatterTeardownService {
         { id: number; matter_no: string | null; title: string } | undefined;
       if (!matter) throw new DomainError("NOT_FOUND", `案件 ${matterId} が見つかりません`);
 
-      const only = (input.conditionIds ?? []).filter((n) => Number.isInteger(n) && n > 0);
+      // CSV が来ていれば、そこから対象を決める。
+      const fromCsv = input.csv ? await this.readCsv(input.csv) : null;
+      const only = fromCsv
+        ? fromCsv.foldIds
+        : (input.conditionIds ?? []).filter((n) => Number.isInteger(n) && n > 0);
+      if (fromCsv && !only.length) {
+        throw new DomainError("VALIDATION",
+          "CSV の「旧分」が全部「残す」です。畳む条件に 畳む か 無効 を書いてください");
+      }
       const conds = await this.database.query(
         `SELECT c.id, c.condition_no, c.name, p.name AS party_name
            FROM conditions c
@@ -174,13 +140,16 @@ export class MatterTeardownService {
         amount: Number(row.amount ?? 0), documentNo: str(row.document_no)
       }));
 
-      const voidConditions = input.voidConditions === true;
+      const voidConditions = fromCsv ? fromCsv.voidIds.length > 0 : input.voidConditions === true;
       const blocked = payments.filter((p) => p.blocked).length;
       return {
         matter: { id: Number(matter.id), matterNo: str(matter.matter_no),
                   title: String(matter.title ?? "") },
         payments, documents, events,
-        conditions: voidConditions ? conditions : [],
+        // CSV なら「無効」と書いた条件だけを畳む。画面からなら全部か全部でないか。
+        conditions: !voidConditions ? []
+          : fromCsv ? conditions.filter((c) => fromCsv.voidIds.includes(c.id))
+          : conditions,
         voidConditions,
         summary: {
           payments: payments.filter((p) => !p.blocked).length,
@@ -193,6 +162,37 @@ export class MatterTeardownService {
         warnings: warningsFor({ payments, documents, voidConditions, blocked })
       };
     } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * CSV の「旧分」を読む。条件番号で指しているものだけを見る。
+   *
+   * 番号の無い行（新しく作る行）は畳む相手がいないので見ない。読み取りの
+   * 規則は取り込みと同じものを通す（見出しの揺れも同じに吸う）。
+   */
+  private async readCsv(csv: string): Promise<{ foldIds: number[]; voidIds: number[] }> {
+    const groups = groupRows(readRows(csv))
+      .filter((g) => g.oldHandling !== "keep" && g.conditionNo);
+    if (!groups.length) return { foldIds: [], voidIds: [] };
+
+    const found = await this.database.query(
+      `SELECT id, condition_no FROM conditions
+        WHERE btrim(condition_no) = ANY($1::text[])`,
+      [groups.map((g) => String(g.conditionNo).trim())]);
+    const byNo = new Map<string, number>(
+      (found.rows as Array<{ id: number; condition_no: string }>)
+        .map((r) => [String(r.condition_no).trim(), Number(r.id)]));
+
+    const missing = groups.filter((g) => !byNo.has(String(g.conditionNo).trim()));
+    if (missing.length) {
+      throw new DomainError("NOT_FOUND",
+        `条件番号が見つかりません：${missing.map((g) => g.conditionNo).join("・")}`);
+    }
+    const idOf = (g: typeof groups[number]) => byNo.get(String(g.conditionNo).trim())!;
+    return {
+      foldIds: groups.map(idOf),
+      voidIds: groups.filter((g) => g.oldHandling === "void").map(idOf)
+    };
   }
 
   /**
@@ -289,4 +289,7 @@ export function warningsFor(input: {
   return out;
 }
 
-
+export type {
+  PlanCondition, PlanDocument, PlanEvent, PlanPayment,
+  Step, TeardownInput, TeardownOutcome, TeardownPlan, TeardownResult
+};

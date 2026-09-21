@@ -72,6 +72,30 @@ export function readRevision(
   return REVISION_WORDS.find((w) => w.match.test(text))?.value ?? null;
 }
 
+/**
+ * 旧分の扱い。作り直すとき、いまある紙と条件をどうするか。
+ *
+ *   keep … 触らない（既定）。追加で作るだけのとき
+ *   fold … 旧の紙・支払・実績を無効にする。条件は残す（入れ直しの受け皿になる）
+ *   void … 上に加えて条件も無効にする。重複や、もう使わない条件
+ *
+ * 条件を無効にすると、取り込みは有効な条件しか当てにいかないので、入れ直しは
+ * 新しい条件番号で作られる。同じ条件へ入れ直すなら fold まで。
+ */
+export type SettledOldHandling = "keep" | "fold" | "void";
+
+export const OLD_HANDLING_WORDS: Array<{ value: SettledOldHandling; label: string; match: RegExp }> = [
+  { value: "keep", label: "残す", match: /^(残す|そのまま|keep|-)$/i },
+  { value: "fold", label: "畳む", match: /^(畳む|たたむ|無効にする|紙を無効|fold)$/i },
+  { value: "void", label: "無効", match: /^(無効|条件も無効|重複|void)$/i }
+];
+
+export function readOldHandling(raw: string): SettledOldHandling | null {
+  const text = String(raw ?? "").trim();
+  if (!text) return "keep";
+  return OLD_HANDLING_WORDS.find((w) => w.match.test(text))?.value ?? null;
+}
+
 export function readPaymentState(raw: string): SettledPaymentState | null {
   const text = String(raw ?? "").trim();
   if (!text) return "planned";           // 書いていなければ未払。立てるだけ立てる
@@ -90,14 +114,14 @@ export function templateCsv(): string {
   // 「減額検収は検収数量で書く」ことの両方が伝わらない。
   // 1行目は初版（いま紙にするだけ）、2行目は変更履歴付（当初から減った）。
   const examples = [
-    ["VD-00317", "合同会社アトリエ蒼", "WRK-10013", "星降る夜のミュゼ", "", "", "",
+    ["VD-00317", "合同会社アトリエ蒼", "WRK-10013", "星降る夜のミュゼ", "", "", "", "",
      "第4巻 表紙イラスト", "カラー1点", "1", "150000",
      "2026-06-01", "2026-07-20", "2026-07-25", "", "",
      "初版",
      "2026-08-31", "未払", "",
      "請負", "月末締め翌月末払い", "発注者", "あり", "なし",
      "業務委託の一般特約", "", ""],
-    ["VD-00317", "合同会社アトリエ蒼", "WRK-10021", "夜明けのクロニクル", "", "", "",
+    ["VD-00317", "合同会社アトリエ蒼", "WRK-10021", "夜明けのクロニクル", "", "", "", "",
      "第1巻 挿絵", "モノクロ12点", "12", "8000",
      "2026-06-01", "2026-07-31", "2026-08-05", "11", "納品点数が11点になったため減額",
      "変更履歴付",
@@ -128,6 +152,8 @@ export interface SettledRow {
   agreementNo: string | null;
   /** 条件番号。書いてあればその条件に確実に載る（名前より強い）。 */
   conditionNo: string | null;
+  /** 旧分の扱い。条件番号を指しているときだけ効く。 */
+  oldHandling: SettledOldHandling;
   conditionName: string | null;
   /** 発注書の決定日。 */
   orderedOn: string | null;
@@ -258,6 +284,14 @@ export function readRows(text: string): SettledRow[] {
     // 数量が動いた行は、紙に変更履歴と署名欄が出る。理由を書かないと
     // 「（理由未記入）」と刷られたものが相手に渡る。
     const varianceNote = get("varianceNote") || null;
+    const oldHandling = readOldHandling(get("oldHandling"));
+    if (oldHandling === null) {
+      issues.push(`旧分は 残す / 畳む / 無効（${get("oldHandling")}）`);
+    } else if (oldHandling !== "keep" && !get("conditionNo")) {
+      // 畳む相手が決まらない。名前で当てた条件を畳むと、同名の別の条件を
+      // 巻き込む。番号を書いてもらう。
+      issues.push(`旧分を「${oldHandling === "fold" ? "畳む" : "無効"}」にするなら条件番号が要ります`);
+    }
     const revision = readRevision(get("revision"), inspectedQuantity, orderedQuantity);
     if (revision === null) {
       issues.push(`版は 初版 か 変更履歴付（${get("revision")}）`);
@@ -288,6 +322,7 @@ export function readRows(text: string): SettledRow[] {
       workTitle: get("workTitle") || null,
       agreementNo: get("agreementNo") || null,
       conditionNo: get("conditionNo") || null,
+      oldHandling: oldHandling ?? "keep",
       conditionName: get("conditionName") || null,
       orderedOn, deliveredOn, inspectedOn, varianceNote,
       revision: revision ?? "first",
@@ -335,6 +370,8 @@ export interface SettledGroupRows {
   workTitle: string | null;
   conditionNo: string | null;
   conditionName: string | null;
+  /** 束の旧分の扱い。行ごとに違えば不備として弾く。 */
+  oldHandling: SettledOldHandling;
   rows: SettledRow[];
   /** 発注額の合計。条件の金額になる。 */
   orderedTotal: number;
@@ -351,6 +388,7 @@ export function groupRows(rows: SettledRow[]): SettledGroupRows[] {
       partyCode: row.partyCode, partyName: row.partyName,
       workCode: row.workCode, workTitle: row.workTitle,
       conditionNo: row.conditionNo, conditionName: row.conditionName,
+      oldHandling: row.oldHandling,
       rows: [], orderedTotal: 0, inspectedTotal: 0
     };
     group.rows.push(row);
@@ -391,6 +429,8 @@ export function conflictsOf(rows: SettledRow[]): string[] {
       ? ["入金日が行ごとに違います。1束から立つ支払は1件です"] : []),
     ...(differs(rows, (r) => r.agreementNo)
       ? ["契約番号が行ごとに違います。1つの条件に契約は1つです"] : []),
+    ...(differs(rows, (r) => r.oldHandling)
+      ? ["旧分の扱いが行ごとに違います。1つの条件に1つです"] : []),
     ...(differs(rows, (r) => r.orderSign === null ? "" : r.orderSign ? "あり" : "なし")
       ? ["発注署名欄が行ごとに違います。書類ごとの切り替えです"] : []),
     ...(differs(rows, (r) => r.acceptSign === null ? "" : r.acceptSign ? "あり" : "なし")

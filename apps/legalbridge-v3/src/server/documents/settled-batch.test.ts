@@ -1,11 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  conflictsOf, groupRows, ownershipOfRows, readPaymentState, readRevision, readRows,
-  scheduleLinesFrom, templateCsv, toCsv, type SettledRow
+  conflictsOf, groupRows, ownershipOfRows, readOldHandling, readPaymentState, readRevision,
+  readRows, scheduleLinesFrom, templateCsv, toCsv, type SettledRow
 } from "./settled-batch.js";
 
-const HEAD = "取引先コード,取引先名,作品コード,作品名,契約番号,条件番号,条件名,品目・業務名,仕様・成果物,"
+const HEAD = "取引先コード,取引先名,作品コード,作品名,契約番号,条件番号,条件名,旧分,品目・業務名,仕様・成果物,"
   + "数量,単価（税抜）,発注日,納品日,検収日,検収数量,変更理由,版,支払期日,支払状態,入金日,"
   + "契約形式,支払条件,成果物の帰属先,発注署名欄,承諾署名欄,特約の定型文,特約,備考";
 
@@ -13,7 +13,8 @@ const HEAD = "取引先コード,取引先名,作品コード,作品名,契約�
 const line = (over: Partial<Record<string, string>> = {}) => {
   const base: Record<string, string> = {
     partyCode: "VD-1", partyName: "甲社", workCode: "", workTitle: "",
-    agreementNo: "", conditionNo: "", conditionName: "", itemName: "表紙", spec: "",
+    agreementNo: "", conditionNo: "", conditionName: "", oldHandling: "",
+    itemName: "表紙", spec: "",
     quantity: "1", unitPrice: "100000",
     orderedOn: "2026-06-01", deliveredOn: "2026-07-20", inspectedOn: "2026-07-25",
     inspectedQuantity: "", varianceNote: "", revision: "",
@@ -26,7 +27,8 @@ const line = (over: Partial<Record<string, string>> = {}) => {
   // 試すつもりのテストが「列の取り違え」を試すものになる。
   const cell = (v: string) => (/[",]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
   return [base.partyCode, base.partyName, base.workCode, base.workTitle,
-          base.agreementNo, base.conditionNo, base.conditionName, base.itemName, base.spec,
+          base.agreementNo, base.conditionNo, base.conditionName, base.oldHandling,
+          base.itemName, base.spec,
           base.quantity, base.unitPrice, base.orderedOn, base.deliveredOn,
           base.inspectedOn, base.inspectedQuantity, base.varianceNote, base.revision,
           base.dueOn, base.paymentState,
@@ -373,4 +375,50 @@ test("条件番号は行にそのまま残る", () => {
   const [row] = readRows(csv(line({ conditionNo: " CL-2026-00775 " })));
   assert.equal(row.conditionNo, "CL-2026-00775");
   assert.equal(readRows(csv(line()))[0]!.conditionNo, null);
+});
+
+// ---------------------------------------------------------------------------
+// 旧分の扱い（残す / 畳む / 無効）
+// ---------------------------------------------------------------------------
+
+test("旧分は空欄なら残す", () => {
+  assert.equal(readOldHandling(""), "keep");
+  assert.equal(readOldHandling("残す"), "keep");
+  assert.equal(readOldHandling("畳む"), "fold");
+  assert.equal(readOldHandling("無効"), "void");
+  assert.equal(readOldHandling("重複"), "void");
+  assert.equal(readOldHandling("けす"), null);
+});
+
+test("畳む・無効には条件番号が要る（名前で当てると別の条件を巻き込む）", () => {
+  const [bad] = readRows(csv(line({ oldHandling: "畳む" })));
+  assert.match(bad.issues.join("／"), /条件番号が要ります/);
+
+  const [ok] = readRows(csv(line({ oldHandling: "畳む", conditionNo: "CL-2026-00775" })));
+  assert.deepEqual(ok.issues, []);
+  assert.equal(ok.oldHandling, "fold");
+});
+
+test("残すなら条件番号が無くてもよい（新しく作る行）", () => {
+  const [row] = readRows(csv(line()));
+  assert.deepEqual(row.issues, []);
+  assert.equal(row.oldHandling, "keep");
+});
+
+test("読めない旧分は断る", () => {
+  const [row] = readRows(csv(line({ oldHandling: "けす", conditionNo: "CL-1" })));
+  assert.match(row.issues.join("／"), /旧分は 残す \/ 畳む \/ 無効/);
+});
+
+test("束の中で旧分が食い違えば不備", () => {
+  const rows = readRows(csv(
+    line({ conditionNo: "CL-1", oldHandling: "畳む", itemName: "表紙" }),
+    line({ conditionNo: "CL-1", oldHandling: "無効", itemName: "本文" })));
+  const [group] = groupRows(rows);
+  assert.match(conflictsOf(group.rows).join("／"), /旧分の扱いが行ごとに違います/);
+});
+
+test("束は旧分を持つ", () => {
+  const rows = readRows(csv(line({ conditionNo: "CL-1", oldHandling: "無効" })));
+  assert.equal(groupRows(rows)[0]?.oldHandling, "void");
 });

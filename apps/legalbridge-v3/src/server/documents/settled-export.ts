@@ -175,6 +175,10 @@ export class SettledExportService {
       // 条件番号を必ず書く。名前だけだと、同名の条件が2本ある取引先で
       // 取り違える。番号があれば取り込みはその1本に確実に載せる。
       conditionNo: str(cond.condition_no) ?? "",
+      // 旧分の既定。紙か実績か支払を持っている条件だけ「畳む」を入れておく。
+      // 作り直しのために書き出しているので、持っていれば畳む相手がいる。
+      // 「無効」（条件も畳む）は入れない。重複かどうかは人にしか決められない。
+      oldHandling: "",
       // 条件名も書く。番号の無い条件（新しく作る行）でも束が分かれるように。
       conditionName: cond.name,
       orderedOn: dateStr(order?.issued_at) ?? "",
@@ -189,6 +193,8 @@ export class SettledExportService {
 
     if (!base.orderedOn) say("発注書が見つかりません。発注日を入れてください");
     if (!base.inspectedOn) say("検収書が見つかりません。検収日を入れてください");
+
+    if (order || inspection || payment || eventRows.length) base.oldHandling = "畳む";
 
     const items = itemsOf(order?.values);
     const delivery = itemsOf(inspection?.values, "delivery_line_items");
