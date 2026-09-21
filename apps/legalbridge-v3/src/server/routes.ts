@@ -12,6 +12,7 @@ import { ConditionScheduleService, TRIGGER_KINDS, EVENT_TYPE_BY_TRIGGER,
 import { MatterWriteService } from "./matters/write-service.js";
 import { MatterLinkService, CONDITION_KINDS_BY_MATTER } from "./matters/link-service.js";
 import { ConditionExportService } from "./conditions/export.js";
+import { ClosingService } from "./closing/service.js";
 import { LinkService } from "./links/service.js";
 import { RELATIONS, type EntityKind } from "./links/relations.js";
 import { DOCUMENT_STYLES } from "./matters/flow.js";
@@ -112,6 +113,7 @@ export function createRoutes(database: Transactable) {
   const conditionExport = new ConditionExportService(database);
   const conditionEvents = new ConditionEventService(database);
   const conditionSchedules = new ConditionScheduleService(database);
+  const closing = new ClosingService(database);
   const matters = new MatterRepository(database);
   const works = new WorkRepository(database);
   const documents = new DocumentRepository(database);
@@ -1315,7 +1317,8 @@ export function createRoutes(database: Transactable) {
     startOn: z.string().date(),
     count: z.coerce.number().int().min(1).max(120),
     everyMonths: z.coerce.number().int().min(1).max(12).optional(),
-    amount: z.coerce.number().int().positive(),
+    // 料率は 0 で組める（金額は売上報告が来てから入る）。
+    amount: z.coerce.number().int().min(0),
     triggerKind: z.enum(["on_execution", "on_delivery", "on_inspection", "periodic"]).optional(),
     labelSuffix: z.string().trim().max(20).optional(),
     // 画面で上書きしたいときだけ。既定は条件の支払条件。
@@ -1336,6 +1339,45 @@ export function createRoutes(database: Transactable) {
         contractForm: condition?.contractForm ?? null
       }) });
     }));
+
+  // ---- 支払文書処理 ----
+  //
+  // 定期課金も料率も、予定 → 実績 → 決済文書 → 支払 の4手で進む。これまでは
+  // その4手が4つの画面に散っていて、「今月どこまで済んだか」を見る場所が
+  // 無かった。読むだけの経路を3本置く（書くのは既存の入口のまま）。
+
+  const scopeOf = (query: Record<string, unknown>) => {
+    const num = (name: string) => {
+      const raw = String(query[name] ?? "").trim();
+      if (!raw) return null;
+      const value = Number(raw);
+      if (!Number.isInteger(value) || value <= 0) {
+        throw new DomainError("VALIDATION", `${name} は番号で指定してください`);
+      }
+      return value;
+    };
+    return {
+      workId: num("workId"), partyId: num("partyId"), matterId: num("matterId"),
+      conditionId: num("conditionId"), q: String(query.q ?? "").trim() || null
+    };
+  };
+
+  // 条件を探す。作品・取引先・案件・語のどれからでも同じ形で返る。
+  router.get("/closing/candidates", asyncRoute(async (req, res) => {
+    res.json({ rows: await closing.candidates(scopeOf(req.query as Record<string, unknown>)) });
+  }));
+
+  // 1つの条件の回。予定の無い実績も同じ表に混ぜて返す（見落とさないため）。
+  router.get("/closing/conditions/:id", asyncRoute(async (req, res) => {
+    res.json(await closing.periods(Number(req.params.id)));
+  }));
+
+  // 月の表。締め日がその月に入る回を全部。
+  router.get("/closing", asyncRoute(async (req, res) => {
+    const month = String(req.query.month ?? "").trim()
+      || new Date().toISOString().slice(0, 7);
+    res.json(await closing.month(month, scopeOf(req.query as Record<string, unknown>)));
+  }));
 
   // 実績（条件明細の数値）。記録は消さず、取り消しは void で残す。
   // 検収書がそのまま使う項目。実績に入れておけば文書を作るとき人が入れずに済む。

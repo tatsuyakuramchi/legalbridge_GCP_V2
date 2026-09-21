@@ -254,8 +254,8 @@ export class ConditionScheduleService {
     try {
       return await inTransaction(this.database, async (client) => {
         const head = await client.query(
-          "SELECT id, status FROM conditions WHERE id = $1", [conditionId]);
-        const condition = head.rows[0] as { status: string } | undefined;
+          "SELECT id, status, pricing_model FROM conditions WHERE id = $1", [conditionId]);
+        const condition = head.rows[0] as { status: string; pricing_model: string } | undefined;
         if (!condition) throw new DomainError("NOT_FOUND", `条件 ${conditionId} が見つかりません`);
         if (condition.status === "superseded" || condition.status === "void") {
           throw new DomainError("CONFLICT",
@@ -268,8 +268,15 @@ export class ConditionScheduleService {
         if (new Set(seqs).size !== seqs.length) {
           throw new DomainError("VALIDATION", "明細の番号が重複しています");
         }
-        if (lines.some((l) => Math.round(l.plannedAmount) <= 0)) {
-          throw new DomainError("VALIDATION", "0円以下の明細は置けません。要らない行は外してください");
+        // 料率の条件は、売上報告が来るまで金額が出ない。それでも「いつ締めるか」
+        // は契約で決まっているので、0円の回を先に並べる（算定期間の暦）。
+        // 金額の決まっている契約で0円の行を置かせると、払い忘れが並ぶだけ。
+        const floor = condition.pricing_model === "revenue_rate" ? 0 : 1;
+        if (lines.some((l) => Math.round(l.plannedAmount) < floor)) {
+          throw new DomainError("VALIDATION",
+            floor === 0
+              ? "マイナスの明細は置けません"
+              : "0円以下の明細は置けません。要らない行は外してください");
         }
 
         // 実績の付いた行を消そうとしていないか先に確かめる。

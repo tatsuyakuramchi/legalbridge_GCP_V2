@@ -63,7 +63,9 @@ const db = (over: Record<string, Array<Record<string, unknown>>> = {}) =>
     for (const [fragment, rows] of Object.entries(over)) {
       if (t.includes(fragment)) return rows;
     }
-    if (t.includes("SELECT id, status FROM conditions")) return [{ id: 1, status: "active" }];
+    if (t.includes("FROM conditions WHERE id = $1")) {
+      return [{ id: 1, status: "active", pricing_model: "subscription" }];
+    }
     if (t.includes("UPDATE condition_schedules")) return [];
     return [];
   });
@@ -99,9 +101,21 @@ test("番号の重複と0円は受け付けない", async () => {
   await assert.rejects(() => s.replace(1, [line(1, { plannedAmount: 0 })], "a"), /0円以下/);
 });
 
+test("料率の条件は0円の回を並べられる（算定期間の暦。金額は報告が来てから）", async () => {
+  const royalty = db({ "FROM conditions WHERE id = $1": [
+    { id: 1, status: "active", pricing_model: "revenue_rate" }] });
+  await new ConditionScheduleService(royalty).replace(1, [line(1, { plannedAmount: 0 })], "a");
+  assert.ok(royalty.find("condition_schedules"), "0円でも書き込む");
+  // マイナスは料率でも置けない。
+  await assert.rejects(
+    () => new ConditionScheduleService(db({ "FROM conditions WHERE id = $1": [
+      { id: 1, status: "active", pricing_model: "revenue_rate" }] }))
+      .replace(1, [line(1, { plannedAmount: -1 })], "a"), /マイナスの明細/);
+});
+
 test("旧版・無効の条件の明細は変えられない", async () => {
   await assert.rejects(
-    () => new ConditionScheduleService(db({ "SELECT id, status FROM conditions": [{ status: "superseded" }] }))
+    () => new ConditionScheduleService(db({ "FROM conditions WHERE id = $1": [{ status: "superseded" }] }))
       .replace(1, [line(1)], "a"), /旧版の明細は変えられません/);
 });
 
