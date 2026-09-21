@@ -100,6 +100,28 @@ export interface PeriodsView {
   total: { planned: number; recorded: number; paid: number };
 }
 
+export interface StrayView {
+  /** 締め日を過ぎたのに実績・報告が入っていない回。月をまたいで溜まる。 */
+  overdue: PeriodRow[];
+  /** 予定を立てずに実績だけ入った回。締められるが、予定との差が見られない。 */
+  unplanned: PeriodRow[];
+}
+
+export interface RoyaltyGap {
+  id: number;
+  conditionNo: string | null;
+  name: string;
+  party: { id: number; name: string } | null;
+  work: { id: number; name: string } | null;
+  ratePpm: number | null;
+  termStart: string | null;
+  termEnd: string | null;
+  /** 契約期間が入っていれば画面から並べられる。空なら条件を先に直す。 */
+  schedulable: boolean;
+  /** 契約期間から出る回数の目安（周期は並べるときに選ぶ）。 */
+  monthSpan: number | null;
+}
+
 export interface MonthView {
   month: string;
   from: string;
@@ -335,19 +357,7 @@ export class ClosingService {
       }
       const { from, to } = monthRange(month);
       const args: unknown[] = [from, to];
-      const narrow = () => {
-        const parts: string[] = [];
-        if (scope.partyId) { args.push(scope.partyId); parts.push(`c.counterparty_id = $${args.length}`); }
-        if (scope.workId) { args.push(scope.workId); parts.push(`c.work_id = $${args.length}`); }
-        if (scope.matterId) {
-          args.push(scope.matterId);
-          parts.push(`EXISTS (SELECT 1 FROM matter_links ml WHERE ml.matter_id = $${args.length}
-                        AND ml.target_type = 'condition' AND ml.target_ref = c.id::text)`);
-        }
-        return parts.length ? ` AND ${parts.join(" AND ")}` : "";
-      };
-
-      const base = narrow();
+      const base = narrowBy(scope, args);
       const planned = await this.database.query(
         `${PERIOD_SELECT} WHERE s.due_on >= $1 AND s.due_on < $2${base}
           ORDER BY s.due_on, c.id, s.seq`, args);
@@ -367,6 +377,74 @@ export class ClosingService {
     } catch (error) { throw translate(error); }
   }
 
+  /**
+   * 月の表からこぼれるもの。
+   *
+   * 表に並ぶのは「その月に締め日が来る予定明細」だけ。締め日を過ぎたまま
+   * 止まっている回は翌月の表に出てこないし、予定を立てずに入れた実績は
+   * どの月の表にも出てこない。放っておくと棚卸しで拾うことになる。
+   */
+  async strays(scope: ClosingScope = {}, limit = 200): Promise<StrayView> {
+    try {
+      const today = this.todayStr();
+      const args: unknown[] = [today];
+      const narrow = narrowBy(scope, args);
+      args.push(limit);
+      const cap = `$${args.length}`;
+
+      const overdue = await this.database.query(
+        `${PERIOD_SELECT} WHERE s.due_on < $1 AND e.id IS NULL${narrow}
+          ORDER BY s.due_on LIMIT ${cap}`, args);
+      const loose = await this.database.query(
+        `${UNPLANNED_SELECT} AND e.occurred_on <= $1${narrow}
+          ORDER BY e.occurred_on DESC, e.id DESC LIMIT ${cap}`, args);
+
+      return {
+        overdue: (overdue.rows as any[]).map((row) => periodRow(row, today, false)),
+        unplanned: (loose.rows as any[]).map((row) => periodRow(row, today, true))
+      };
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 料率なのに算定期間が1回も並んでいない条件。
+   *
+   * 月の表は予定明細を並べたものなので、予定が0本の条件は出てきようがない。
+   * 手元の写しでは料率85本のうち84本が並んでいなかった。ここから1本ずつ
+   * 拾う。一括では並べない——契約期間の入力が怪しい条件が混ざっていると、
+   * 間違った期が84本ぶん並ぶ。
+   */
+  async royaltyGaps(limit = 200): Promise<RoyaltyGap[]> {
+    try {
+      const r = await this.database.query(
+        `SELECT c.id, c.condition_no, c.name, c.rate_ppm, c.term_start, c.term_end,
+                p.id AS party_id, p.name AS party_name,
+                w.id AS work_id, w.title AS work_title
+           FROM conditions c
+           LEFT JOIN parties p ON p.id = c.counterparty_id
+           LEFT JOIN works   w ON w.id = c.work_id
+          WHERE c.pricing_model = 'revenue_rate'
+            AND c.status IN ('active', 'scheduled')
+            AND NOT EXISTS (SELECT 1 FROM condition_schedules s WHERE s.condition_id = c.id)
+          ORDER BY (c.term_start IS NULL OR c.term_end IS NULL), c.id
+          LIMIT $1`, [limit]);
+      return (r.rows as any[]).map((row) => {
+        const termStart = dateStr(row.term_start), termEnd = dateStr(row.term_end);
+        return {
+          id: Number(row.id),
+          conditionNo: str(row.condition_no),
+          name: String(row.name ?? ""),
+          party: row.party_id ? { id: Number(row.party_id), name: String(row.party_name ?? "") } : null,
+          work: row.work_id ? { id: Number(row.work_id), name: String(row.work_title ?? "") } : null,
+          ratePpm: int(row.rate_ppm),
+          termStart, termEnd,
+          schedulable: !!(termStart && termEnd),
+          monthSpan: monthsBetween(termStart, termEnd)
+        };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
   private todayStr(): string {
     return this.today().toISOString().slice(0, 10);
   }
@@ -375,6 +453,32 @@ export class ClosingService {
 // ---------------------------------------------------------------------------
 
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+
+/**
+ * 取引先・作品・案件で絞る節。args に番号を積みながら組む。
+ * 月の表も別枠も同じ絞りを通す（片方だけ効くと件数が合わない）。
+ */
+function narrowBy(scope: ClosingScope, args: unknown[]): string {
+  const parts: string[] = [];
+  if (scope.partyId) { args.push(scope.partyId); parts.push(`c.counterparty_id = $${args.length}`); }
+  if (scope.workId) { args.push(scope.workId); parts.push(`c.work_id = $${args.length}`); }
+  if (scope.matterId) {
+    args.push(scope.matterId);
+    parts.push(`EXISTS (SELECT 1 FROM matter_links ml WHERE ml.matter_id = $${args.length}
+                  AND ml.target_type = 'condition' AND ml.target_ref = c.id::text)`);
+  }
+  return parts.length ? ` AND ${parts.join(" AND ")}` : "";
+}
+
+/** 契約期間が何か月あるか。何回ぶん並ぶかの目安に使う。 */
+export function monthsBetween(from: string | null, to: string | null): number | null {
+  if (!from || !to) return null;
+  const a = { y: Number(from.slice(0, 4)), m: Number(from.slice(5, 7)) };
+  const b = { y: Number(to.slice(0, 4)), m: Number(to.slice(5, 7)) };
+  if (!a.y || !b.y) return null;
+  const months = (b.y - a.y) * 12 + (b.m - a.m) + 1;
+  return months > 0 ? months : null;
+}
 
 function headRow(row: any): CandidateRow {
   const kind = String(row.kind ?? "");

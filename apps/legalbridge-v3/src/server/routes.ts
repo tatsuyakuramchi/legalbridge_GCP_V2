@@ -1372,6 +1372,16 @@ export function createRoutes(database: Transactable) {
     res.json(await closing.periods(Number(req.params.id)));
   }));
 
+  // 月の表からこぼれるもの（締め日を過ぎた回・予定の無い実績）。
+  router.get("/closing/strays", asyncRoute(async (req, res) => {
+    res.json(await closing.strays(scopeOf(req.query as Record<string, unknown>)));
+  }));
+
+  // 料率なのに算定期間が1回も並んでいない条件。ここから1本ずつ並べる。
+  router.get("/closing/royalty-gaps", asyncRoute(async (_req, res) => {
+    res.json({ rows: await closing.royaltyGaps() });
+  }));
+
   // 月の表。締め日がその月に入る回を全部。
   router.get("/closing", asyncRoute(async (req, res) => {
     const month = String(req.query.month ?? "").trim()

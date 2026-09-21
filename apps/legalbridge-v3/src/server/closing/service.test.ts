@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { FakeDatabase } from "../core/fake-db.js";
-import { ClosingService, periodRow, printedDue } from "./service.js";
+import { ClosingService, monthsBetween, periodRow, printedDue } from "./service.js";
 
 const TODAY = () => new Date("2026-09-21T00:00:00Z");
 
@@ -195,4 +195,56 @@ test("月の表も取引先で絞れる", async () => {
 test("月の指定が YYYY-MM でなければ断る", async () => {
   const db = new FakeDatabase(() => []);
   await assert.rejects(() => new ClosingService(db, TODAY).month("2026/09"), /YYYY-MM/);
+});
+
+// ---------------------------------------------------------------------------
+
+test("別枠：締め日を過ぎた回は実績の無いものだけ", async () => {
+  const db = new FakeDatabase((t) => {
+    if (t.includes("e.schedule_id IS NULL")) return [];
+    if (t.includes("FROM condition_schedules s")) {
+      return [line({ due_on: new Date("2026-07-31T00:00:00Z") })];
+    }
+    return [];
+  });
+  const view = await new ClosingService(db, TODAY).strays();
+  assert.equal(view.overdue.length, 1);
+  assert.equal(view.overdue[0]?.lateDays, 52);
+  const q = db.find("FROM condition_schedules s")!;
+  assert.match(q.text, /s\.due_on < \$1 AND e\.id IS NULL/);
+  assert.equal(q.params[0], "2026-09-21");
+});
+
+test("別枠も取引先で絞れる（月の表と同じ絞り）", async () => {
+  const db = new FakeDatabase(() => []);
+  await new ClosingService(db, TODAY).strays({ partyId: 3 });
+  const q = db.find("FROM condition_schedules s")!;
+  assert.match(q.text, /c\.counterparty_id = \$2/);
+  assert.match(db.find("e.schedule_id IS NULL")!.text, /c\.counterparty_id = \$2/);
+  assert.deepEqual(q.params, ["2026-09-21", 3, 200]);
+});
+
+test("契約期間から回数の目安を出す（空なら画面から並べない）", async () => {
+  const db = new FakeDatabase((t) => (t.includes("revenue_rate") ? [
+    { id: 1, condition_no: "CL-1", name: "紙版｜出版許諾", rate_ppm: 100000,
+      term_start: new Date("2024-04-01T00:00:00Z"), term_end: new Date("2029-03-31T00:00:00Z"),
+      party_id: 3, party_name: "株式会社◆◆", work_id: null, work_title: null },
+    { id: 2, condition_no: "CL-2", name: "電子版｜再許諾", rate_ppm: 125000,
+      term_start: null, term_end: null,
+      party_id: 3, party_name: "株式会社◆◆", work_id: null, work_title: null }
+  ] : []));
+  const rows = await new ClosingService(db, TODAY).royaltyGaps();
+  assert.equal(rows[0]?.schedulable, true);
+  assert.equal(rows[0]?.monthSpan, 60);
+  assert.equal(rows[1]?.schedulable, false);
+  assert.equal(rows[1]?.monthSpan, null);
+  // 予定が1本でもある条件は出さない。
+  assert.match(db.find("revenue_rate")!.text, /NOT EXISTS \(SELECT 1 FROM condition_schedules/);
+});
+
+test("契約期間の月数は両端を含む", () => {
+  assert.equal(monthsBetween("2024-04-01", "2029-03-31"), 60);
+  assert.equal(monthsBetween("2026-04-01", "2026-04-30"), 1);
+  assert.equal(monthsBetween("2026-04-01", "2026-03-31"), null);
+  assert.equal(monthsBetween(null, "2026-03-31"), null);
 });
