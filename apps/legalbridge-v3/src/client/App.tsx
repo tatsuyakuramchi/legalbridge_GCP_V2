@@ -108,7 +108,15 @@ export function App() {
                templateKey?: string | null;
                bulk?: boolean } | null>(null);
   /** 他の画面の「編集」から文書の画面へ来たときの相手。 */
-  const [openDocument, setOpenDocument] = useState<number | undefined>();
+  /**
+   * 開く文書。ID だけだと、同じ文書をもう一度開けない。
+   *
+   * 一覧へ戻ってから同じ番号を開き直すと、ID が変わらないので状態が動かず、
+   * 画面へ「開き直せ」が伝わらない。押しても一覧のままになっていた。
+   * 押すたびに増える番号を添えて、同じ文書でも合図が飛ぶようにする。
+   */
+  const [openDocument, setOpenDocument] =
+    useState<{ id: number; nonce: number } | undefined>();
   // 条件は複数受ける。発注書のように1枚で2件以上の条件を載せる書類があるので、
   // 案件から来たときはその案件の条件をまとめて選んだ状態にする。
   // 案件も受ける。案件や条件の画面から作った文書は、その案件に載せる。
@@ -140,7 +148,7 @@ export function App() {
     setCompose(null);
     setFocus(null);
     setConditionId(undefined);
-    setOpenDocument(documentId);
+    setOpenDocument((prev) => ({ id: documentId, nonce: (prev?.nonce ?? 0) + 1 }));
     setView("documents");
   };
 
@@ -226,8 +234,9 @@ export function App() {
         {view === "documents" && (
           <DocumentsWorkspace
             key={compose ? `c${compose.bulk ? "bulk" : ""}${compose.matterId ?? ""}${compose.conditionIds.join("-")}`
-                          : openDocument ? `d${openDocument}` : "docs"}
-            start={compose ?? undefined} openDocumentId={openDocument}
+                          : openDocument ? `d${openDocument.id}` : "docs"}
+            start={compose ?? undefined} openDocumentId={openDocument?.id}
+            openNonce={openDocument?.nonce}
             onOpen={openEntity} />
         )}
         {view === "agreements" && (

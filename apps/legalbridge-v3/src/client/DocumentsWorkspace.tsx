@@ -79,7 +79,7 @@ function Refs(
 }
 
 export function DocumentsWorkspace(
-  { start, openDocumentId, onOpen }: {
+  { start, openDocumentId, openNonce, onOpen }: {
     start?: { conditionIds: number[]; eventIds: number[]; matterId?: number | null;
               /**
                * 呼んだ側が決めているひな形。計算書のように「何を作るか」が
@@ -91,6 +91,8 @@ export function DocumentsWorkspace(
               bulk?: boolean };
     /** 他の画面から「編集」で来たときの文書。下書きならそのままフォームに載せる。 */
     openDocumentId?: number;
+    /** 押すたびに増える番号。同じ文書をもう一度開く合図。 */
+    openNonce?: number;
     onOpen?: (kind: EntityKind, id: number) => void;
   } = {}
 ) {
@@ -211,7 +213,9 @@ export function DocumentsWorkspace(
   useEffect(() => {
     if (!openDocumentId) return;
     setSelected(openDocumentId);
-  }, [openDocumentId]);
+    // openNonce も見る。一覧へ戻ってから同じ文書を開き直すと ID が変わらず、
+    // ここが走らないので一覧のままになっていた。
+  }, [openDocumentId, openNonce]);
 
   // 別の文書に移ったら、前の文書で開いた欄は閉じる。
   useEffect(() => { setLinkConditions(false); }, [selected]);
