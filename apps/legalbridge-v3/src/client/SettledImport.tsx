@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, ApiError, money } from "./api.js";
+import { api, ApiError, money, saveCsv } from "./api.js";
 import { SearchSelect, type SearchOption } from "./SearchSelect.js";
 
 /**
@@ -126,6 +126,27 @@ export function SettledImport(
   }
 ) {
   const [matterId, setMatterId] = useState(initialMatterId ? String(initialMatterId) : "");
+  /** 現物の書き出し。人に決めてもらうことは CSV に出せないので画面に出す。 */
+  const [exporting, setExporting] = useState(false);
+  const [notes, setNotes] = useState<Array<{ conditionNo: string | null;
+                                             conditionName: string; note: string }>>([]);
+  const [allNotes, setAllNotes] = useState(false);
+
+  async function exportMatter() {
+    if (!matterId) return;
+    setExporting(true); setError(null); setNotes([]); setAllNotes(false);
+    try {
+      const made = await api.get<{
+        matter: { matterNo: string | null };
+        rows: unknown[];
+        notes: Array<{ conditionNo: string | null; conditionName: string; note: string }>;
+        csv: string;
+      }>(`/matters/${matterId}/settled-export`);
+      saveCsv(made.csv, `settled_${made.matter.matterNo ?? matterId}.csv`);
+      setNotes(made.notes);
+    } catch (e) { setError((e as ApiError).message); }
+    finally { setExporting(false); }
+  }
   const [matterLabel, setMatterLabel] = useState<string | null>(null);
   const [csv, setCsv] = useState<{ name: string; text: string } | null>(null);
   const [choices, setChoices] = useState<Record<string, number>>({});
@@ -229,7 +250,33 @@ export function SettledImport(
               <a className="btn btn-sm" href="/api/v3/documents/batches/settled/template.csv">
                 雛形をダウンロード
               </a>
+              {/*
+                いま台帳にあるものを、この取り込みと同じ形で書き出す。
+                「紙は出してあるが金額が一部違う。作り直したい」ときに、
+                26列を手で打ち直さずに済む。読むだけで何も作らない。
+              */}
+              <button className="btn btn-sm" disabled={!matterId || exporting}
+                onClick={() => exportMatter()}>
+                {exporting ? "書き出しています…" : "この案件の現物を書き出す"}
+              </button>
             </div>
+
+            {notes.length > 0 && (
+              <div className="note">
+                <strong>書き出しで人に決めてもらうこと（{notes.length}）</strong>
+                <ul>
+                  {(allNotes ? notes : notes.slice(0, 12)).map((n, i) => (
+                    <li key={i}>{n.conditionNo ?? n.conditionName}：{n.note}</li>
+                  ))}
+                </ul>
+                {/* 案件が大きいと数十件出る。全部並べると下が読めない。 */}
+                {notes.length > 12 && (
+                  <button className="btn btn-sm" onClick={() => setAllNotes(!allNotes)}>
+                    {allNotes ? "畳む" : `ほか ${notes.length - 12} 件を出す`}
+                  </button>
+                )}
+              </div>
+            )}
 
             <label className="field">
               <span>CSV</span>

@@ -41,6 +41,7 @@ import { DocumentSendService } from "./documents/send-service.js";
 import { DocumentBatchService, templateCsv } from "./documents/batch-service.js";
 import { SettledBatchService } from "./documents/settled-batch-service.js";
 import { templateCsv as settledTemplateCsv } from "./documents/settled-batch.js";
+import { SettledExportService } from "./documents/settled-export.js";
 import { ChromiumPdfRenderer, MemoryPdfRenderer, type PdfRenderer } from "./documents/pdf-renderer.js";
 import { DocumentStorageService } from "./documents/storage-service.js";
 import { GoogleDriveStorage, MemoryDriveStorage, type DriveStorage } from "./documents/drive-storage.js";
@@ -2020,6 +2021,20 @@ export function createRoutes(database: Transactable) {
     res.setHeader("content-disposition", 'attachment; filename="settled_import.csv"');
     res.send(settledTemplateCsv());
   });
+  /**
+   * 案件の現物を、遡及一括の CSV で書き出す。
+   *
+   * 「紙は出してあるが金額が一部違う。作り直したい」ときの入口。手で打ち直すと
+   * そこで転記を間違えるので、いま台帳にあるものをそのまま吐く。表計算で金額
+   * だけ直して、同じ画面から入れ直せる。読むだけで、何も作らない。
+   */
+  router.get("/matters/:id/settled-export",
+    requireRole("admin", "legal"),
+    asyncRoute(async (req, res) => {
+      const made = await new SettledExportService(database).forMatter(Number(req.params.id));
+      res.json(made);
+    }));
+
   const settledInput = z.object({
     matterId: z.coerce.number().int().positive(),
     csv: z.string().min(1).max(2_000_000),
