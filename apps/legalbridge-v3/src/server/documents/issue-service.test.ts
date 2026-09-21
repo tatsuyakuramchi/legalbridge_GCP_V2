@@ -304,3 +304,66 @@ test("決定日に先の日付は置けない。期日も滞留も未来から�
   assert.equal(readIssuedOn("2026-09-20", utcMorningInTokyo), "2026-09-20");
   assert.throws(() => readIssuedOn("2026-09-21", utcMorningInTokyo), /先の日付は置けません/);
 });
+
+// ---- 無効化の取り消し ---------------------------------------------------
+
+/**
+ * 同じ業務を複数人に出した検収書は、明細が完全に同じで、違うのは相手先・
+ * 発注番号・振込先だけ。明細だけを見て重複と判じると本物を消してしまう。
+ * 戻せなければ、相手に出した記録が消えたままになる。
+ */
+const unvoidResponder = (
+  options: { status?: string; documentNo?: string | null; detail?: Record<string, unknown> } = {}
+) => (text: string): Array<Record<string, unknown>> | undefined => {
+  if (text.includes("FROM documents WHERE id = $1 FOR UPDATE")) {
+    return [{ id: 1, document_no: options.documentNo === undefined ? "ARC-INS-2026-0059" : options.documentNo,
+              status: options.status ?? "void" }];
+  }
+  if (text.includes("FROM audit_events")) {
+    return [{ detail: options.detail ?? { from: "issued", releasedEvents: [{ id: 11 }, { id: 12 }] } }];
+  }
+  if (text.includes("UPDATE condition_events SET document_id")) return [{ id: 11 }, { id: 12 }];
+  return undefined;
+};
+
+const issuesFor = (responderFn: (text: string) => Array<Record<string, unknown>> | undefined) => {
+  const db = new FakeDatabase(responderFn);
+  return { db, service: new DocumentIssueService(db, new DocumentRepository(db)) };
+};
+
+test("無効化を取り消すと、決定済みに戻り、解放した実績も戻る", async () => {
+  const { service } = issuesFor(unvoidResponder());
+  const out = await service.unvoid(1, "重複ではなく別の相手の紙だったため", "me");
+  assert.equal(out.status, "issued");
+  assert.equal(out.restoredEvents, 2);
+  assert.deepEqual(out.skippedEvents, []);
+});
+
+test("その後べつの文書に結ばれた実績は戻さず、名前を返す", async () => {
+  // 12 だけが戻り、11 は戻らない（すでに別の文書に結ばれている）。
+  const { service } = issuesFor((text) => (
+    text.includes("UPDATE condition_events SET document_id") ? [{ id: 12 }] : unvoidResponder()(text)));
+  const out = await service.unvoid(1, "戻す", "me");
+  assert.equal(out.restoredEvents, 1);
+  assert.deepEqual(out.skippedEvents, [11]);
+});
+
+test("番号の無い文書は下書きに戻す", async () => {
+  const { service } = issuesFor(unvoidResponder({
+    documentNo: null, detail: { from: "draft" } }));
+  const out = await service.unvoid(1, "戻す", "me");
+  assert.equal(out.status, "draft");
+  assert.equal(out.restoredEvents, 0);
+});
+
+test("無効でない文書は取り消せない", async () => {
+  const { service } = issuesFor(unvoidResponder({ status: "issued" }));
+  await assert.rejects(() => service.unvoid(1, "戻す", "me"),
+    (e: unknown) => e instanceof DomainError && /無効になっていません/.test(e.message));
+});
+
+test("取り消しにも理由が要る", async () => {
+  const { service } = issuesFor(unvoidResponder());
+  await assert.rejects(() => service.unvoid(1, "  ", "me"),
+    (e: unknown) => e instanceof DomainError && e.code === "VALIDATION");
+});

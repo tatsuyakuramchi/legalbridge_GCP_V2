@@ -450,6 +450,77 @@ export class DocumentIssueService {
   }
 
   /**
+   * 無効化を取り消す。
+   *
+   * 無効化は「出した紙を無かったことにする」操作なので、取り違えると
+   * 相手に出した記録が消える。実際に起きた：同じ業務を4人に出した検収書は、
+   * 明細（品目・金額・回）が4枚とも完全に同じで、違うのは相手先・発注番号・
+   * 振込先だけだった。明細だけを見て重複と判じ、3枚を無効にしてしまった。
+   *
+   * 戻すときは、無効にしたときに解放した実績も一緒に戻す。どの実績だったかは
+   * 監査記録（document.void の releasedEvents）に残してある。ただし、その後
+   * 別の文書に結ばれた実績は戻さない（いま結ばれている先のほうが新しい）。
+   * 戻せなかったものは名前を返して、人が見られるようにする。
+   */
+  async unvoid(documentId: number, reason: string, actor: string): Promise<{
+    id: number; documentNo: string | null; status: string;
+    restoredEvents: number; skippedEvents: number[];
+  }> {
+    const note = String(reason ?? "").trim();
+    if (!note) {
+      throw new DomainError("VALIDATION", "無効化を取り消す理由を書いてください");
+    }
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const head = await client.query(
+          "SELECT id, document_no, status FROM documents WHERE id = $1 FOR UPDATE", [documentId]);
+        const row = head.rows[0] as { id: number; document_no: string | null; status: string } | undefined;
+        if (!row) throw new DomainError("NOT_FOUND", `文書 ${documentId} が見つかりません`);
+        if (row.status !== "void") {
+          throw new DomainError("CONFLICT", "この文書は無効になっていません");
+        }
+
+        // 直近の無効化の記録。そこに「何から無効にしたか」と「どの実績を
+        // 解放したか」が入っている。
+        const past = await client.query(
+          `SELECT detail FROM audit_events
+            WHERE action = 'document.void' AND target_type = 'document' AND target_id = $1
+            ORDER BY id DESC LIMIT 1`, [documentId]);
+        const detail = ((past.rows[0] as { detail?: Record<string, unknown> } | undefined)?.detail
+          ?? {}) as Record<string, unknown>;
+        // 番号が振られている文書は決定済み。番号が無ければ下書きに戻す。
+        const back = String(detail.from ?? "") === "draft" || !row.document_no ? "draft" : "issued";
+        await client.query("UPDATE documents SET status = $2 WHERE id = $1", [documentId, back]);
+
+        const released = Array.isArray(detail.releasedEvents)
+          ? (detail.releasedEvents as Array<{ id?: unknown }>)
+              .map((e) => Number(e?.id)).filter((n) => Number.isFinite(n))
+          : [];
+        let restoredEvents = 0;
+        const skippedEvents: number[] = [];
+        if (released.length) {
+          const back2 = await client.query(
+            `UPDATE condition_events SET document_id = $2
+              WHERE id = ANY($1::bigint[]) AND status = 'active' AND document_id IS NULL
+              RETURNING id`, [released, documentId]);
+          restoredEvents = back2.rowCount ?? 0;
+          const done = new Set((back2.rows as Array<{ id: number }>).map((e) => Number(e.id)));
+          for (const id of released) if (!done.has(id)) skippedEvents.push(id);
+        }
+
+        await recordAudit(client, {
+          actor, action: "document.unvoid", targetType: "document", targetId: documentId,
+          detail: { documentNo: row.document_no, to: back, reason: note,
+                    ...(restoredEvents ? { restoredEvents } : {}),
+                    ...(skippedEvents.length ? { skippedEvents } : {}) }
+        });
+        return { id: documentId, documentNo: row.document_no, status: back,
+                 restoredEvents, skippedEvents };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
    * 出していない文書を捨てる。
    *
    * 直す作業は途中の産物を残す。訂正版を作りかけて別の直し方にした下書き、

@@ -7,11 +7,13 @@
 --   定期課金の月ごとの検収書は、金額も品目も毎月同じ。納品日が空欄だと
 --   中身が完全に一致して見えるので、重複判定だけで畳むと本物を消す。
 --
---   見分ける手がかりは、紙の中身ではなく外側にある。
---     ・発行日が月ごとにずれているか（ずれていれば月ごとの紙）
---     ・V2 の元 id（legacy_id）が連番か
---     ・結ばれていた実績が違う回か
---   3節にそれを並べる。
+--   もっと危ないのは、同じ業務を複数の相手に出した紙。明細（品目・金額・回）
+--   が全部同じで、違うのは相手先・発注番号・振込先だけ。明細だけを見て
+--   重複と判じると、本物を消す（実際に3枚消した）。
+--
+--   そこで3節は、明細を除いた本文まるごとの指紋を取って見分ける。
+--   4節は、文書ごとに値が違う差し込みの名前を並べる（何が違うのかが分かる）。
+--   口座・連絡先にあたる名前の値は出さない。
 --
 --   ★ 使い方
 --     docker compose run --rm ops sql /v3/diag/documents-compare.sql \
@@ -96,7 +98,9 @@ WITH body AS (
                         THEN d.rendered_values -> 'delivery_line_items'
                         WHEN jsonb_typeof(d.rendered_values -> 'items') = 'array'
                         THEN d.rendered_values -> 'items'
-                        ELSE '[]'::jsonb END) WITH ORDINALITY AS r(line, ord)) AS shape
+                        ELSE '[]'::jsonb END) WITH ORDINALITY AS r(line, ord)) AS shape,
+         -- 明細を抜いた本文まるごと。相手先・発注番号・振込先はここに入る。
+         md5(((d.rendered_values - 'items') - 'delivery_line_items')::text) AS head
     FROM v3.documents d
    WHERE d.document_no = ANY(
            SELECT btrim(v) FROM unnest(string_to_array(:'docs', ',')) AS v
@@ -106,14 +110,46 @@ SELECT b.document_no                                     AS 文書番号,
        b.status                                          AS 状態,
        b.issued_on                                       AS 発行日,
        b.legacy_id                                       AS V2の元id,
-       count(*) OVER (PARTITION BY b.shape)              AS 同じ中身の枚数,
-       count(*) OVER (PARTITION BY b.shape, b.issued_on) AS うち発行日も同じ,
+       count(*) OVER (PARTITION BY b.shape)              AS 明細が同じ枚数,
+       count(*) OVER (PARTITION BY b.head)               AS 本文も同じ枚数,
        CASE
-         WHEN count(*) OVER (PARTITION BY b.shape) = 1
-           THEN '中身が違う。別の紙'
-         WHEN count(*) OVER (PARTITION BY b.shape, b.issued_on) > 1
-           THEN '中身も発行日も同じ。重複の疑い'
-         ELSE '中身は同じだが発行日が違う。回ごとの紙とみる'
+         -- 本文まで同じなら、ほんとうに同じ紙。
+         WHEN count(*) OVER (PARTITION BY b.head) > 1
+           THEN '本文まで同じ。重複とみてよい'
+         WHEN count(*) OVER (PARTITION BY b.shape) > 1
+           THEN '明細は同じだが本文が違う。別の紙（4節で何が違うか見る）'
+         ELSE '明細も本文も違う。別の紙'
        END                                               AS 見立て
   FROM body b
  ORDER BY b.issued_on NULLS LAST, b.document_no;
+
+-- ---------------------------------------------------------------------
+-- 4. 文書ごとに値が違う差し込み。何が違うのかを名前で出す
+--
+--    口座・連絡先にあたる名前（bank・account・holder・口座・tel・email・
+--    address・住所・電話）の値は出さない。違うことだけを出す。
+-- ---------------------------------------------------------------------
+WITH body AS (
+  SELECT d.document_no, d.rendered_values AS v
+    FROM v3.documents d
+   WHERE d.document_no = ANY(
+           SELECT btrim(v) FROM unnest(string_to_array(:'docs', ',')) AS v
+            WHERE btrim(v) <> '')
+),
+flat AS (
+  SELECT b.document_no, kv.key, kv.value
+    FROM body b
+   CROSS JOIN LATERAL jsonb_each(b.v) AS kv(key, value)
+   WHERE jsonb_typeof(kv.value) IN ('string', 'number', 'boolean')
+),
+varying AS (
+  SELECT key FROM flat GROUP BY key HAVING count(DISTINCT value::text) > 1
+)
+SELECT f.key                                             AS 差し込み,
+       f.document_no                                     AS 文書番号,
+       CASE WHEN f.key ~* '(bank|account|holder|tel|phone|email|address|口座|名義|電話|住所)'
+            THEN '（伏せる）'
+            ELSE left(trim(both '"' from f.value::text), 60) END  AS 値
+  FROM flat f
+  JOIN varying x ON x.key = f.key
+ ORDER BY f.key, f.document_no;

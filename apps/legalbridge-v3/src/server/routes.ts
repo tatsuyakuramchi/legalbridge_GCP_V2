@@ -561,6 +561,19 @@ export function createRoutes(database: Transactable) {
       const { reason } = reasonSchema.parse(req.body ?? {});
       res.json(await issues.void(Number(req.params.id), reason, actor(res)));
     }));
+  /**
+   * 無効化を取り消す。
+   *
+   * 無効化は取り違えると相手に出した記録が消える操作なのに、戻す道が
+   * 無かった。同じ業務を複数人に出した検収書は明細が完全に同じで、違うのは
+   * 相手先・発注番号・振込先だけ。明細だけを見て重複と判じると、本物を
+   * 消してしまう（実際に3枚消した）。
+   */
+  router.post("/documents/:id/unvoid", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { reason } = reasonSchema.parse(req.body ?? {});
+      res.json(await issues.unvoid(Number(req.params.id), reason, actor(res)));
+    }));
   // 作り直し。間違った条件を指していたときは、ここで差し替える。
   // 発行済みの文書自体は書き換えない（出したものの記録なので）。
   const reissueSchema = reasonSchema.extend({
