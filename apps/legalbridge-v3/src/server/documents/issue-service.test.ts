@@ -328,7 +328,7 @@ const unvoidResponder = (
 
 const issuesFor = (responderFn: (text: string) => Array<Record<string, unknown>> | undefined) => {
   const db = new FakeDatabase(responderFn);
-  return { db, service: new DocumentIssueService(db, new DocumentRepository(db)) };
+  return { db, service: new DocumentIssueService(db) };
 };
 
 test("無効化を取り消すと、決定済みに戻り、解放した実績も戻る", async () => {
