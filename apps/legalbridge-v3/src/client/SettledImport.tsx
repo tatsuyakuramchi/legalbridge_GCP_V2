@@ -112,13 +112,18 @@ const TEMPLATE_LABEL: Record<string, string> = {
 };
 
 export function SettledImport(
-  { initialMatterId, initialCsv, compact, onOpenDocument, onClose, onCreated }: {
+  { initialMatterId, initialCsv, initialBatchId, compact, onOpenDocument, onClose, onCreated }: {
     initialMatterId?: number | null;
     /**
      * すでに選んである CSV。作り直しの画面から渡ってくる。
      * 同じファイルを2回選ばせないために、ここでは選び直さない。
      */
     initialCsv?: { name: string; text: string } | null;
+    /**
+     * もう入れ終わった束。作り直しの ⑤ に戻ってきたとき、CSV を入れ直させる
+     * のではなく、その結果を出す（同じ CSV を2回入れると実績と紙が2重になる）。
+     */
+    initialBatchId?: number | null;
     /**
      * 作り直しの画面の中に入っているか。案件はもう決まっていて、書き出しも
      * 雛形も前の手で済んでいるので、その段は出さない。
@@ -155,7 +160,8 @@ export function SettledImport(
     finally { setExporting(false); }
   }
   const [matterLabel, setMatterLabel] = useState<string | null>(null);
-  const [csv, setCsv] = useState<{ name: string; text: string } | null>(initialCsv ?? null);
+  const [csv, setCsv] = useState<{ name: string; text: string } | null>(
+    initialBatchId ? null : initialCsv ?? null);
   const [choices, setChoices] = useState<Record<string, number>>({});
   const [workChoices, setWorkChoices] = useState<Record<string, number>>({});
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -169,6 +175,10 @@ export function SettledImport(
     api.get<{ batches: BatchHead[] }>(`/documents/batches/settled${q}`)
       .then((r) => setRecent(r.batches)).catch(() => undefined);
   }, [batch?.id, matterId]);
+
+  useEffect(() => {
+    if (initialBatchId) void open(initialBatchId);
+  }, [initialBatchId]);
 
   useEffect(() => {
     if (!initialMatterId) return;
@@ -290,10 +300,9 @@ export function SettledImport(
             {/* 作り直しの画面から来たときは、③でもう選んである。2回選ばせない。 */}
             {!compact && (
               <CsvBar busy={exporting}
-                exports={matterId
-                  ? [{ value: "settled", label: "この案件の現物（作り直し用）",
-                       run: () => exportMatter() }]
-                  : undefined}
+                exports={[{ value: "settled", label: "この案件の現物（作り直し用）",
+                            disabled: matterId ? undefined : "先に案件を選んでください",
+                            run: () => exportMatter() }]}
                 onPick={(text, name) => setCsv({ name, text })}
                 picked={csv?.name ?? null}
                 onClearPick={() => setCsv(null)}
@@ -474,8 +483,12 @@ export function SettledImport(
             <div className="panel-hd">
               <h3>取り込みの結果</h3>
               <span className="faint">{batch.sourceFilename ?? "—"}／{batch.rowCount} 行</span>
-              <button className="btn btn-sm" style={{ marginLeft: "auto" }}
-                      onClick={() => setBatch(null)}>もう1件入れる</button>
+              {/* 作り直しの画面では CSV は ③ で選ぶ。ここで空にすると、
+                  選ぶ口の無い空の段が残る。 */}
+              {!compact && (
+                <button className="btn btn-sm" style={{ marginLeft: "auto" }}
+                        onClick={() => setBatch(null)}>もう1件入れる</button>
+              )}
             </div>
             <div className="tablewrap">
               <table>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, ApiError, saveCsv } from "./api.js";
 import { CsvBar } from "./CsvBar.js";
 import { TeardownPanel } from "./TeardownPanel.js";
@@ -61,11 +61,26 @@ export function SettledRebuild(
   const [diff, setDiff] = useState<SettledDiff | null>(null);
   const [allSame, setAllSame] = useState(false);
 
+  const [diffError, setDiffError] = useState<string | null>(null);
+
   /** ④ 畳む。 */
   const [plan, setPlan] = useState<TeardownPlan | null>(null);
   const [tornDown, setTornDown] = useState<TeardownResult | null>(null);
 
+  /**
+   * ⑤ 入れ終わった束。ここが入ると ⑤ は結果を出すだけになり、同じ CSV を
+   * もう一度入れる口は出さない（2回入れると実績と紙が2重になる）。
+   */
+  const [imported, setImported] = useState<number | null>(null);
+
   const go = (n: number) => { setStep(n); setFar((f) => Math.max(f, n)); setError(null); };
+
+  function close() {
+    // 途中で閉じると選んだ CSV が外れる。④ まで済んでいると、⑤ をやり残す。
+    if (csv && imported === null
+        && !window.confirm("作り直しの途中です。閉じると選んだ CSV が外れます。閉じますか。")) return;
+    onClose();
+  }
 
   async function exportSettled() {
     setBusy(true); setError(null); setExported(null); setAllNotes(false);
@@ -83,15 +98,24 @@ export function SettledRebuild(
     finally { setBusy(false); }
   }
 
-  /** ③ 選んだ中身を、いまの台帳と突き合わせる。何も作らない。 */
-  async function pick(text: string, name: string) {
-    setCsv({ name, text }); setDiff(null); setAllSame(false); setError(null);
-    try {
-      setDiff(await api.post<SettledDiff>("/documents/batches/settled/diff",
-        { matterId, csv: text }));
-    // 差分が引けなくても止めない（現物の無い案件もある）。
-    } catch { setDiff(null); }
-  }
+  /**
+   * ③ 選んだ中身を、いまの台帳と突き合わせる。何も作らない。
+   *
+   * 比べる形は ① で書き出した形に揃える。初版で出した CSV を現物どおりと
+   * 比べると、直していない行まで「数量が変わった」と出て、どこを直したのか
+   * 読めなくなる。読めない CSV（見出し違いなど）はここで言う。⑤ まで行って
+   * から弾かれるより早い。
+   */
+  useEffect(() => {
+    if (!csv) { setDiff(null); setDiffError(null); return; }
+    let live = true;
+    setDiff(null); setDiffError(null); setAllSame(false);
+    api.post<SettledDiff>("/documents/batches/settled/diff",
+      { matterId, csv: csv.text, mode })
+      .then((d) => { if (live) setDiff(d); })
+      .catch((e: ApiError) => { if (live) setDiffError(e.message); });
+    return () => { live = false; };
+  }, [csv, mode, matterId]);
 
   /** ④ 下見。「旧分」の列で、どの条件をどこまで畳むかが決まる。 */
   async function planTeardown() {
@@ -111,17 +135,16 @@ export function SettledRebuild(
         // CSV で来たときは、そちらが条件も畳むかまで持っている。
         csv ? { reason, csv: csv.text } : { reason, voidConditions });
       setTornDown(r); setPlan(null); onChanged();
-      if (!r.failed) go(4);
     } catch (e) { setError((e as ApiError).message); }
     finally { setBusy(false); }
   }
 
   const done = [
-    exported !== null,
+    exported !== null || far > 0,
     far > 1,
     csv !== null,
     tornDown !== null,
-    false
+    imported !== null
   ];
 
   return (
@@ -129,7 +152,7 @@ export function SettledRebuild(
       <div className="panel-hd">
         <h2>決済済みを作り直す</h2>
         <span className="faint">{matterLabel}</span>
-        <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={onClose}>閉じる</button>
+        <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={close}>閉じる</button>
       </div>
 
       <div className="steps">
@@ -221,15 +244,36 @@ export function SettledRebuild(
               <div className="step-note">
                 直した CSV をここで一度だけ選びます。④ と ⑤ でも同じものを使うので、選び直しは要りません。
               </div>
-              <CsvBar title="③ 確かめる" onPick={(text, name) => void pick(text, name)}
-                picked={csv?.name ?? null} onClearPick={() => { setCsv(null); setDiff(null); }}
+              <CsvBar title="③ 確かめる" onPick={(text, name) => setCsv({ name, text })}
+                picked={csv?.name ?? null} onClearPick={() => setCsv(null)}
                 uploadLabel="直した CSV を選ぶ"
                 note="選んだだけでは台帳は動きません。いまの中身との違いを出します" />
 
-              {diff && <DiffPanel diff={diff} all={allSame} onAll={setAllSame} />}
+              {diffError && (
+                <div className="alert">
+                  この CSV は読めません：{diffError}
+                  <div className="faint">見出しを雛形どおりに直してから選び直してください</div>
+                </div>
+              )}
+
+              {csv && !diff && !diffError && <div className="faint">突き合わせています…</div>}
+
+              {diff && (
+                <>
+                  <label className="row" style={{ gap: 6 }}>
+                    <span className="faint">比べる形</span>
+                    <select value={mode} onChange={(e) => setMode(e.target.value as Mode)}>
+                      <option value="first_edition">初版として書き出したもの</option>
+                      <option value="as_is">現物どおり書き出したもの</option>
+                    </select>
+                    <span className="faint">① と同じにします。違う形と比べると、直していない行まで動いて見えます</span>
+                  </label>
+                  <DiffPanel diff={diff} all={allSame} onAll={setAllSame} />
+                </>
+              )}
 
               <div className="row">
-                <button className="btn" disabled={!csv} onClick={() => go(3)}>
+                <button className="btn" disabled={!csv || !!diffError} onClick={() => go(3)}>
                   次へ（④ 旧分を畳む）
                 </button>
               </div>
@@ -254,7 +298,7 @@ export function SettledRebuild(
                     <button className="linky" onClick={() => go(2)}>③ で選ぶ</button>
                   </div>}
 
-              {!plan && !tornDown && (
+              {!plan && !tornDown && imported === null && (
                 <div className="row">
                   <button className="btn" disabled={busy} onClick={() => void planTeardown()}>
                     {busy ? "調べています…" : "何が畳まれるか見る"}
@@ -262,6 +306,9 @@ export function SettledRebuild(
                   {/* 畳むものが無い（新規に入れるだけ）案件もある。 */}
                   <button className="linky" onClick={() => go(4)}>畳まずに ⑤ へ</button>
                 </div>
+              )}
+              {imported !== null && !tornDown && (
+                <div className="note">⑤ まで済んでいます。ここで畳むと、入れ直したものまで畳みます。</div>
               )}
 
               {plan && (
@@ -282,7 +329,16 @@ export function SettledRebuild(
                     </ul>
                   )}
                   <div className="row" style={{ marginTop: 6 }}>
-                    <button className="btn" onClick={() => go(4)}>次へ（⑤ 入れ直す）</button>
+                    {imported === null && (
+                      <button className="btn" onClick={() => go(4)}>次へ（⑤ 入れ直す）</button>
+                    )}
+                    {/* 止まったものがあれば、直してからもう一度見られる。 */}
+                    {tornDown.failed > 0 && imported === null && (
+                      <button className="btn btn-sm" disabled={busy}
+                        onClick={() => { setTornDown(null); void planTeardown(); }}>
+                        もう一度見る
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
@@ -290,7 +346,18 @@ export function SettledRebuild(
           )}
 
           {step === 4 && (
-            csv
+            imported !== null
+              ? <>
+                  <div className="note ok">
+                    入れ終わっています（取込 #{imported}）。同じ CSV をもう一度入れる口は出しません。
+                    足りない分があれば、閉じてから ① からやり直してください。
+                  </div>
+                  <SettledImport compact initialMatterId={matterId} initialBatchId={imported}
+                    onOpenDocument={(id) => onOpenDocument?.(id)}
+                    onClose={onClose}
+                    onCreated={() => onChanged()} />
+                </>
+              : csv
               ? <>
                   <div className="step-note">
                     ③ で選んだ CSV をそのまま入れます。試算を見てから流してください。
@@ -299,7 +366,7 @@ export function SettledRebuild(
                   <SettledImport compact initialMatterId={matterId} initialCsv={csv}
                     onOpenDocument={(id) => onOpenDocument?.(id)}
                     onClose={onClose}
-                    onCreated={() => onChanged()} />
+                    onCreated={(batchId) => { setImported(batchId); onChanged(); }} />
                 </>
               : <div className="note warn">
                   入れる CSV がありません。

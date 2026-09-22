@@ -19,6 +19,11 @@ export interface CsvExport {
   /** 押したときに走る。CSV を落とすのは呼ぶ側の仕事。 */
   run?: () => void | Promise<void>;
   /**
+   * いまは押せない理由（「先に案件を選んでください」など）。
+   * 段ごと消すと、書き出せる画面なのかどうかが分からなくなる。
+   */
+  disabled?: string;
+  /**
    * ブラウザにそのまま取らせる口。run の代わりに渡す。
    * 全件出力のように、画面で受けるものが何も無いときはこちら。
    */
@@ -63,13 +68,13 @@ export function CsvBar({
           )}
           {outs.length === 1 && <span>{outs[0]!.label}</span>}
           {extra}
-          {chosen?.href
+          {chosen?.href && !chosen.disabled
             ? <a className="btn btn-sm ghost" href={chosen.href}>書き出す</a>
-            : <button className="btn btn-sm ghost" disabled={busy || !chosen?.run}
-                onClick={() => void chosen?.run?.()}>
+            : <button className="btn btn-sm ghost" disabled={busy || !chosen?.run || !!chosen?.disabled}
+                title={chosen?.disabled} onClick={() => void chosen?.run?.()}>
                 {busy ? "書き出しています…" : "書き出す"}
               </button>}
-          <span className="faint">読むだけ。台帳は動きません</span>
+          <span className="faint">{chosen?.disabled ?? "読むだけ。台帳は動きません"}</span>
         </div>
       )}
 

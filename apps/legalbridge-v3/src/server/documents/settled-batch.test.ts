@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   conflictsOf, groupRows, ownershipOfRows, readOldHandling, readPaymentState, readRevision,
-  readRows, scheduleLinesFrom, templateCsv, toCsv, type SettledRow
+  rawRows, readRows, scheduleLinesFrom, templateCsv, toCsv, type SettledRow
 } from "./settled-batch.js";
 
 const HEAD = "取引先コード,取引先名,作品コード,作品名,契約番号,条件番号,条件名,旧分,品目・業務名,仕様・成果物,"
@@ -421,4 +421,8 @@ test("束の中で旧分が食い違えば不備", () => {
 test("束は旧分を持つ", () => {
   const rows = readRows(csv(line({ conditionNo: "CL-1", oldHandling: "無効" })));
   assert.equal(groupRows(rows)[0]?.oldHandling, "void");
+});
+
+test("rawRows も見出しを検査する（差分で別物の CSV が「全部消える」と出ない）", () => {
+  assert.throws(() => rawRows("a,b,c\n1,2,3\n"), /見出しが雛形と合いません/);
 });

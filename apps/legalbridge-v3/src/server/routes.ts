@@ -2060,9 +2060,12 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       const input = z.object({
         matterId: z.coerce.number().int().positive(),
-        csv: z.string().min(1).max(2_000_000)
+        csv: z.string().min(1).max(2_000_000),
+        // 何と比べるか。初版で書き出した CSV を現物どおりと比べると、
+        // 直していない行まで「数量が変わった」と出る。書き出した形と同じ形で比べる。
+        mode: z.enum(["as_is", "first_edition"]).default("as_is")
       }).parse(req.body ?? {});
-      const current = await new SettledExportService(database).forMatter(input.matterId);
+      const current = await new SettledExportService(database).forMatter(input.matterId, input.mode);
       res.json(diffSettled(
         current.rows as Array<Record<string, unknown>>,
         rawRows(input.csv)));

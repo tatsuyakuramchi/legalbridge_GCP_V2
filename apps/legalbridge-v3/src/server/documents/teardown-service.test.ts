@@ -114,3 +114,21 @@ test("押す前の注意：支払済みは残す", () => {
                           voidConditions: false, blocked: 1 });
   assert.match(w.join("\n"), /支払済みの支払が 1 件/);
 });
+
+test("差し替え済みの旧版は下見で「触らない」にし、実行で飛ばす（止まった扱いにしない）", async () => {
+  const plan = await new MatterTeardownService(db({
+    "FROM documents d": [
+      { id: 60, document_no: "ARC-PO-0049", status: "superseded",
+        template_key: "purchase_order", template_name: "発注書" },
+      { id: 61, document_no: "ARC-PO-0058", status: "issued",
+        template_key: "purchase_order", template_name: "発注書" }
+    ]
+  })).preview(1, { reason: "x" });
+
+  const old = plan.documents.find((d) => d.id === 60)!;
+  assert.match(old.blocked ?? "", /差し替え済み/);
+  assert.equal(plan.documents.find((d) => d.id === 61)!.blocked, null);
+  // 無効にする枚数には旧版を数えない。触らない数に入れる。
+  assert.equal(plan.summary.documents, 1);
+  assert.equal(plan.summary.blocked, 1);
+});

@@ -468,3 +468,29 @@ test("手数料の条件も bigint の条件番号で自分の行を拾う", asy
   assert.equal(made.rows[0]?.item_name, "送料");
   assert.equal(made.rows[0]?.unit_price, "3000");
 });
+
+test("部分一致で2本に当たる品目は、より近い条件のものにする（両方に複製しない）", async () => {
+  const order = {
+    id: 50, document_no: "PO", issued_at: "2026-06-01T00:00:00Z",
+    values: { items: [
+      { item_name: "挿絵", quantity: 12, unit_price: 8000 },
+      { item_name: "表紙 挿絵", quantity: 1, unit_price: 150000 }
+    ] }
+  };
+  const linked = [
+    { id: 7, kind: "service", name: "挿絵" },
+    { id: 8, kind: "service", name: "表紙 挿絵" }
+  ];
+  const a = await new SettledExportService(db({
+    "FROM conditions c": [cond({ id: 7, name: "挿絵" })],
+    "'items'": [order], "FROM document_conditions dc": linked
+  })).forMatter(1);
+  const b = await new SettledExportService(db({
+    "FROM conditions c": [cond({ id: 8, name: "表紙 挿絵" })],
+    "'items'": [order], "FROM document_conditions dc": linked
+  })).forMatter(1);
+
+  // 「表紙 挿絵」は「挿絵」にも部分一致するが、「表紙 挿絵」の条件のほうが近い。
+  assert.deepEqual(a.rows.map((r) => r.item_name), ["挿絵"]);
+  assert.deepEqual(b.rows.map((r) => r.item_name), ["表紙 挿絵"]);
+});

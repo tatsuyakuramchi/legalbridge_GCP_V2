@@ -203,21 +203,31 @@ function readRequiredDate(
   return value;
 }
 
-export function readRows(text: string): SettledRow[] {
-  const parsed = parseCsv(text, { maxRows: 1000 });
-  const known = SETTLED_COLUMNS.some((c) => parsed.headers.includes(c.label)
-    || parsed.headers.includes(c.key)
-    || (c.aliases ?? []).some((a) => parsed.headers.includes(a)));
+/**
+ * 見出しが雛形のものか。違えば、行を読む前に止める。
+ *
+ * 取り込みも差分も同じ検査を通す。差分だけ素通しにすると、別物の CSV を
+ * 選んだときに「全部消える」と出て、読めない CSV だと分からない。
+ */
+function checkHeaders(headers: string[]): void {
+  const known = SETTLED_COLUMNS.some((c) => headers.includes(c.label)
+    || headers.includes(c.key)
+    || (c.aliases ?? []).some((a) => headers.includes(a)));
   if (!known) {
     throw new DomainError("VALIDATION",
-      `見出しが雛形と合いません。雛形をダウンロードして、その列名で作ってください（読んだ見出し: ${parsed.headers.slice(0, 5).join(", ")}）`);
+      `見出しが雛形と合いません。雛形をダウンロードして、その列名で作ってください（読んだ見出し: ${headers.slice(0, 5).join(", ")}）`);
   }
   for (const column of SETTLED_COLUMNS.filter((c) => c.required)) {
-    if (!parsed.headers.includes(column.label) && !parsed.headers.includes(column.key)) {
+    if (!headers.includes(column.label) && !headers.includes(column.key)) {
       throw new DomainError("VALIDATION",
         `「${column.label}」の列がありません。雛形をダウンロードし直して、その列名で作ってください`);
     }
   }
+}
+
+export function readRows(text: string): SettledRow[] {
+  const parsed = parseCsv(text, { maxRows: 1000 });
+  checkHeaders(parsed.headers);
   return parsed.rows.map((row, i) => {
     const get = (key: string) => String(pick(row, SETTLED_COLUMNS.find((c) => c.key === key)!)).trim();
     const issues: string[] = [];
@@ -484,6 +494,7 @@ export function scheduleLinesFrom(rows: SettledRow[]) {
  */
 export function rawRows(text: string): Array<Record<string, string>> {
   const parsed = parseCsv(text, { maxRows: 1000 });
+  checkHeaders(parsed.headers);
   return parsed.rows.map((row) =>
     Object.fromEntries(SETTLED_COLUMNS.map((c) => [c.key, String(pick(row, c) ?? "").trim()])));
 }

@@ -325,8 +325,15 @@ export class SettledExportService {
     // 1本しかぶら下がっていない（ふつうの発注書）。分ける必要がない。
     if (!others.length) return { items, ownLines: false };
 
-    // 委託料の条件が2本以上ある紙。品目名で当たるものだけを自分の行にする。
-    const mine = items.filter((it) => sameLabel(str(it.item_name), cond.name));
+    // 委託料の条件が2本以上ある紙。品目名で、自分にいちばん近い明細だけを
+    // 自分の行にする。「挿絵」と「表紙 挿絵」のように部分一致で両方に当たる
+    // 名前があるので、他の条件のほうが近い明細は取らない（取ると複製が戻る）。
+    const mine = items.filter((it) => {
+      const name = str(it.item_name);
+      const me = labelScore(name, cond.name);
+      if (!me) return false;
+      return others.every((o) => labelScore(name, o.name) < me);
+    });
     if (mine.length) return { items: mine, ownLines: false };
 
     say(`発注書 ${str(order.document_no) ?? `#${order.id}`} には条件が `
@@ -339,12 +346,16 @@ export class SettledExportService {
 /** 発注書の items に出ない種類。自分の行は other_fees / expenses にある。 */
 const isOwnLineKind = (kind: unknown): boolean => kind === "fee" || kind === "expense";
 
-/** 品目名と条件名を、空白と全角半角の揺れを均して比べる。 */
-function sameLabel(a: string | null, b: string | null): boolean {
+/**
+ * 品目名が条件名にどれだけ近いか。2＝同じ、1＝片方がもう片方を含む、0＝別物。
+ * 空白と全角半角の揺れは均す。
+ */
+function labelScore(item: string | null, cond: string | null): number {
   const norm = (v: string | null) => String(v ?? "").replace(/[\s\u3000]+/g, "").toLowerCase();
-  const x = norm(a), y = norm(b);
-  if (!x || !y) return false;
-  return x === y || x.includes(y) || y.includes(x);
+  const x = norm(item), y = norm(cond);
+  if (!x || !y) return 0;
+  if (x === y) return 2;
+  return x.includes(y) || y.includes(x) ? 1 : 0;
 }
 
 // ---------------------------------------------------------------------------

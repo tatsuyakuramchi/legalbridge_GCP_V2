@@ -20,7 +20,9 @@ export function TeardownPanel({ plan, busy, onRun, onCancel }: {
   const [allDocs, setAllDocs] = useState(false);
   // 決済文書が先。無効にすると実績が解放され、実績を取り消せる。
   const ordered = [...plan.documents]
+    .filter((d) => !d.blocked)
     .sort((a, b) => Number(b.settlement) - Number(a.settlement) || a.id - b.id);
+  const untouched = plan.documents.filter((d) => d.blocked);
 
   return (
     <div className="panel">
@@ -38,6 +40,11 @@ export function TeardownPanel({ plan, busy, onRun, onCancel }: {
             <div className="num">{plan.summary.events}</div></div>
           <div><div className="faint">畳む額（税抜）</div>
             <div className="num">{money(plan.summary.amount)}</div></div>
+          {/* 条件まで消すときだけ出す。0 を並べると「条件も畳む」が既定に見える。 */}
+          {plan.summary.conditions > 0 && (
+            <div><div className="faint">条件明細を無効にする</div>
+              <div className="num" style={{ color: "var(--out)" }}>{plan.summary.conditions}</div></div>
+          )}
           {plan.summary.blocked > 0 && (
             <div><div className="faint">触らない</div>
               <div className="num" style={{ color: "var(--out)" }}>{plan.summary.blocked}</div></div>
@@ -81,6 +88,12 @@ export function TeardownPanel({ plan, busy, onRun, onCancel }: {
               .map((p) => `${p.paymentNo ?? `#${p.id}`}（${p.blocked}）`).join("／")}
           </div>
         )}
+        {untouched.length > 0 && (
+          <div className="note">
+            触らない文書：
+            {untouched.map((d) => `${d.documentNo ?? `#${d.id}`}（${d.blocked}）`).join("／")}
+          </div>
+        )}
 
         <label className="field">
           <span className="flabel">畳む理由（必須。監査に残ります）</span>
@@ -88,11 +101,32 @@ export function TeardownPanel({ plan, busy, onRun, onCancel }: {
             placeholder="例：発注金額の誤りのため、正しい金額で作り直す" />
         </label>
 
-        <label className="row" style={{ gap: 6 }}>
-          <input type="checkbox" checked={voidConditions}
-            onChange={(e) => setVoidConditions(e.target.checked)} />
-          <span>条件明細も無効にする（入れ直しは新しい条件番号になります）</span>
-        </label>
+        {/*
+          CSV の「旧分」で来たときは、どの条件を無効にするかは CSV が決めている。
+          ここにチェックを出すと、入れても効かない箱になる。代わりに、無効に
+          なる条件を番号で並べる（消える条件を押す前に読めるように）。
+        */}
+        {plan.fromCsv ? (
+          plan.conditions.length > 0 ? (
+            <div className="note warn">
+              <b>CSV の「旧分」が 無効 の条件（{plan.conditions.length}）</b>
+              ：入れ直すと新しい条件番号になります
+              <div className="row" style={{ gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+                {plan.conditions.map((c) => (
+                  <span key={c.id} className="code">{c.conditionNo ?? `#${c.id}`}</span>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="faint">条件明細は残します（CSV の「旧分」に 無効 の行はありません）</div>
+          )
+        ) : (
+          <label className="row" style={{ gap: 6 }}>
+            <input type="checkbox" checked={voidConditions}
+              onChange={(e) => setVoidConditions(e.target.checked)} />
+            <span>条件明細も無効にする（入れ直しは新しい条件番号になります）</span>
+          </label>
+        )}
 
         <div className="row">
           <button className="btn" onClick={onCancel}>やめる</button>

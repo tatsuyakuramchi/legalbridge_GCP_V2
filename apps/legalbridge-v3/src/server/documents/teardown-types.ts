@@ -49,8 +49,14 @@ export interface TeardownPlan {
   payments: PlanPayment[];
   documents: PlanDocument[];
   events: PlanEvent[];
+  /** 無効にする条件。CSV なら「無効」と書いた行のものだけ。 */
   conditions: PlanCondition[];
   voidConditions: boolean;
+  /**
+   * CSV の「旧分」で対象を決めたか。そのときは画面の「条件明細も無効にする」
+   * は効かない（CSV の列が優先する）ので、画面はチェックを出さない。
+   */
+  fromCsv: boolean;
   summary: {
     payments: number; documents: number; events: number; conditions: number;
     blocked: number; amount: number;

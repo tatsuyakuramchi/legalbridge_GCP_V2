@@ -123,7 +123,12 @@ export class MatterTeardownService {
         id: Number(row.id), documentNo: str(row.document_no),
         templateLabel: str(row.template_name),
         settlement: settlesEvents(str(row.template_key)),
-        status: String(row.status), blocked: null
+        status: String(row.status),
+        // 差し替え済み（訂正版が出ている）旧版は無効にできない規則。新しい版の
+        // ほうが同じ条件に繋がっているので、そちらを畳めば足りる。下見に載せて
+        // 実行で「止まった」と出すより、最初から触らないと言う。
+        blocked: String(row.status) === "superseded"
+          ? "差し替え済み。新しい版のほうを畳みます" : null
       }));
 
       const evs = await this.database.query(
@@ -141,21 +146,26 @@ export class MatterTeardownService {
       }));
 
       const voidConditions = fromCsv ? fromCsv.voidIds.length > 0 : input.voidConditions === true;
-      const blocked = payments.filter((p) => p.blocked).length;
+      const voided: PlanCondition[] = !voidConditions ? []
+        : fromCsv ? conditions.filter((c) => fromCsv.voidIds.includes(c.id))
+        : conditions;
+      const blocked = payments.filter((p) => p.blocked).length
+        + documents.filter((d) => d.blocked).length;
       return {
         matter: { id: Number(matter.id), matterNo: str(matter.matter_no),
                   title: String(matter.title ?? "") },
         payments, documents, events,
         // CSV なら「無効」と書いた条件だけを畳む。画面からなら全部か全部でないか。
-        conditions: !voidConditions ? []
-          : fromCsv ? conditions.filter((c) => fromCsv.voidIds.includes(c.id))
-          : conditions,
+        conditions: voided,
         voidConditions,
+        fromCsv: fromCsv !== null,
         summary: {
           payments: payments.filter((p) => !p.blocked).length,
-          documents: documents.length,
+          documents: documents.filter((d) => !d.blocked).length,
           events: events.length,
-          conditions: voidConditions ? conditions.length : 0,
+          // 実際に無効にする本数。CSV で「無効」と書いた行だけを数える
+          // （畳む相手の全本数を出すと、無効にしない条件まで消えると読める）。
+          conditions: voided.length,
           blocked,
           amount: events.reduce((a, e) => a + e.amount, 0)
         },
@@ -230,6 +240,7 @@ export class MatterTeardownService {
     const ordered = [...plan.documents].sort((a, b) =>
       Number(b.settlement) - Number(a.settlement) || a.id - b.id);
     for (const doc of ordered) {
+      if (doc.blocked) { skipped += 1; continue; }
       await attempt("document", doc.id, doc.documentNo ?? `#${doc.id}`,
         () => this.issues.void(doc.id, why, actor));
     }

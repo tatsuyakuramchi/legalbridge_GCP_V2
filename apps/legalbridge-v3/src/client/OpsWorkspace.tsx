@@ -181,7 +181,7 @@ export function OpsWorkspace({ initialTab }: { initialTab?: OpsTab } = {}) {
             </p>
             {/* 6つ並べると、どれも同じ見た目のボタンになる。何を出すかは
                 選ばせて、押すところは1つにする。 */}
-            <CsvBar title="一覧の出力"
+            <CsvBar
               exports={[["conditions", "条件"], ["balances", "条件の消化と残高"], ["payments", "支払"],
                         ["statements", "計算書"], ["documents", "文書"], ["parties", "取引先"]]
                 .map(([key, label]) => ({ value: key!, label: label!,

@@ -247,11 +247,10 @@ export function BulkOrders(
             <div className="fbody">
               {/* 出す・入れる・雛形。並びは他の画面と同じにしてある。 */}
               <CsvBar busy={busy}
-                exports={matterId
-                  ? [{ value: "orders", label: "この案件の決定済み発注書",
-                       run: () => exportCsv({ matterId: Number(matterId) },
-                                            `orders-matter-${matterId}.csv`) }]
-                  : undefined}
+                exports={[{ value: "orders", label: "この案件の決定済み発注書",
+                            disabled: matterId ? undefined : "先に案件を選んでください",
+                            run: () => exportCsv({ matterId: Number(matterId) },
+                                                 `orders-matter-${matterId}.csv`) }]}
                 onPick={(text, name) => { setChoices({}); setWorkChoices({}); setCsv({ name, text }); }}
                 picked={csv?.name ?? null}
                 onClearPick={() => { setCsv(null); setChoices({}); setWorkChoices({}); }}
