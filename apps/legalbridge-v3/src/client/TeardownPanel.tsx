@@ -49,7 +49,24 @@ export function TeardownPanel({ plan, busy, onRun, onCancel }: {
             <div><div className="faint">触らない</div>
               <div className="num" style={{ color: "var(--out)" }}>{plan.summary.blocked}</div></div>
           )}
+          {plan.summary.kept > 0 && (
+            <div><div className="faint">支払ありで残す条件</div>
+              <div className="num">{plan.summary.kept}</div></div>
+          )}
         </div>
+
+        {plan.kept.length > 0 && (
+          <div className="note">
+            <b>支払が立っているので残す条件（{plan.kept.length}）</b>
+            <div className="row" style={{ gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+              {plan.kept.map((c) => (
+                <span key={c.id} className="code" title={`支払 ${c.paymentNos.join("・")}`}>
+                  {c.conditionNo ?? `#${c.id}`}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
 
         {plan.warnings.map((w, i) => (
           <div key={i} className={/新しい条件番号|番号も戻りません/.test(w) ? "alert" : "note"}>{w}</div>

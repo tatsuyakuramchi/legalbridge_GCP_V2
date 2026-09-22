@@ -2203,6 +2203,8 @@ export function createRoutes(database: Transactable) {
     csv: z.string().max(2_000_000).nullable().optional(),
     // 既定は false。条件まで無効にすると、入れ直しが新しい条件番号で作られる。
     voidConditions: z.boolean().optional(),
+    // 既定 true。支払が立っている条件は触らない。
+    keepPaid: z.boolean().optional(),
     reason: z.string().trim().max(500).default("")
   });
   router.post("/matters/:id/teardown/preview",

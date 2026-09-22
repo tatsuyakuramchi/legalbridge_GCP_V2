@@ -22,6 +22,12 @@ export interface TeardownInput {
    * true にすると入れ直しで新しい条件番号になる。
    */
   voidConditions?: boolean;
+  /**
+   * 支払が立っている条件（取り消していない支払の割当がある）は触らないか。
+   * 既定 true。作り直しで「支払のあるものは残し、それ以外を全部畳む」ができる。
+   * CSV の「旧分」で来たときは CSV が優先する。
+   */
+  keepPaid?: boolean;
   reason: string;
 }
 
@@ -44,8 +50,16 @@ export interface PlanCondition {
   id: number; conditionNo: string | null; name: string; partyName: string | null;
 }
 
+/** 支払が立っているので触らない条件。 */
+export interface PlanKept extends PlanCondition {
+  paymentNos: string[];
+}
+
 export interface TeardownPlan {
   matter: { id: number; matterNo: string | null; title: string };
+  /** 支払が立っているので触らない条件（keepPaid のとき）。紙も実績もそのまま。 */
+  kept: PlanKept[];
+  keepPaid: boolean;
   payments: PlanPayment[];
   documents: PlanDocument[];
   events: PlanEvent[];
@@ -59,7 +73,7 @@ export interface TeardownPlan {
   fromCsv: boolean;
   summary: {
     payments: number; documents: number; events: number; conditions: number;
-    blocked: number; amount: number;
+    blocked: number; amount: number; kept: number;
   };
   /** 人に読んでほしいこと。押す前に出す。 */
   warnings: string[];

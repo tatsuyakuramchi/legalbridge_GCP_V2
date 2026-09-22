@@ -7,7 +7,7 @@ import { ConditionWriteService } from "../conditions/write-service.js";
 import { PaymentService } from "../payments/service.js";
 import { settlesEvents } from "./settlement-docs.js";
 import type {
-  PlanCondition, PlanDocument, PlanEvent, PlanPayment,
+  PlanCondition, PlanDocument, PlanEvent, PlanKept, PlanPayment,
   Step, TeardownInput, TeardownOutcome, TeardownPlan, TeardownResult
 } from "./teardown-types.js";
 import { groupRows, readRows } from "./settled-batch.js";
@@ -80,13 +80,34 @@ export class MatterTeardownService {
                            AND ml.target_ref = c.id::text)
             AND ($2::bigint[] = '{}'::bigint[] OR c.id = ANY($2::bigint[]))
           ORDER BY p.name, c.id`, [matterId, only]);
-      const conditions: PlanCondition[] = (conds.rows as any[]).map((row) => ({
+      let conditions: PlanCondition[] = (conds.rows as any[]).map((row) => ({
         id: Number(row.id), conditionNo: str(row.condition_no),
         name: String(row.name ?? ""), partyName: str(row.party_name)
       }));
+
+      // 支払が立っている条件は触らない（既定）。作り直しで「支払のあるものは残し、
+      // それ以外を全部畳む」ができる。CSV の「旧分」で来たときは CSV が決める。
+      const keepPaid = !fromCsv && input.keepPaid !== false;
+      let kept: PlanKept[] = [];
+      if (keepPaid && conditions.length) {
+        const held = await this.database.query(
+          `SELECT c.id, string_agg(DISTINCT COALESCE(y.payment_no, '#' || y.id::text), '・') AS nos
+             FROM conditions c
+             JOIN condition_events e ON e.condition_id = c.id
+             JOIN payment_allocations al ON al.event_id = e.id
+             JOIN payments y ON y.id = al.payment_id AND y.status <> 'canceled'
+            WHERE c.id = ANY($1::bigint[])
+            GROUP BY c.id`, [conditions.map((c) => c.id)]);
+        const nosById = new Map((held.rows as any[]).map((r) => [Number(r.id), String(r.nos ?? "")]));
+        kept = conditions.filter((c) => nosById.has(c.id))
+          .map((c) => ({ ...c, paymentNos: (nosById.get(c.id) ?? "").split("・").filter(Boolean) }));
+        conditions = conditions.filter((c) => !nosById.has(c.id));
+      }
+      const keptIds = kept.map((c) => c.id);
       const ids = conditions.map((c) => c.id);
       if (!ids.length) {
-        throw new DomainError("VALIDATION", "畳む条件明細がありません");
+        throw new DomainError("VALIDATION",
+          kept.length ? "畳む条件明細がありません（残っているのは支払が立っている条件だけです）" : "畳む条件明細がありません");
       }
 
       // 支払。条件の実績への割当から辿る。
@@ -119,6 +140,17 @@ export class MatterTeardownService {
               OR EXISTS (SELECT 1 FROM condition_events e
                           WHERE e.document_id = d.id AND e.condition_id = ANY($1::bigint[])))
           ORDER BY d.id`, [ids]);
+      // 残す条件（支払あり）にも繋がっている文書は無効にしない。1枚の発注書に
+      // 委託料と実費が載っていて、片方だけ支払済み、ということがある。
+      const shared = keptIds.length
+        ? new Set(((await this.database.query(
+            `SELECT DISTINCT d.id FROM documents d
+              WHERE EXISTS (SELECT 1 FROM document_conditions dc
+                             WHERE dc.document_id = d.id AND dc.condition_id = ANY($1::bigint[]))
+                 OR EXISTS (SELECT 1 FROM condition_events e
+                             WHERE e.document_id = d.id AND e.condition_id = ANY($1::bigint[]))`,
+            [keptIds])).rows as any[]).map((r) => Number(r.id)))
+        : new Set<number>();
       const documents: PlanDocument[] = (docs.rows as any[]).map((row) => ({
         id: Number(row.id), documentNo: str(row.document_no),
         templateLabel: str(row.template_name),
@@ -128,7 +160,10 @@ export class MatterTeardownService {
         // ほうが同じ条件に繋がっているので、そちらを畳めば足りる。下見に載せて
         // 実行で「止まった」と出すより、最初から触らないと言う。
         blocked: String(row.status) === "superseded"
-          ? "差し替え済み。新しい版のほうを畳みます" : null
+          ? "差し替え済み。新しい版のほうを畳みます"
+          : shared.has(Number(row.id))
+          ? "支払が立っている条件にも繋がっています。残します"
+          : null
       }));
 
       const evs = await this.database.query(
@@ -154,6 +189,7 @@ export class MatterTeardownService {
       return {
         matter: { id: Number(matter.id), matterNo: str(matter.matter_no),
                   title: String(matter.title ?? "") },
+        kept, keepPaid,
         payments, documents, events,
         // CSV なら「無効」と書いた条件だけを畳む。画面からなら全部か全部でないか。
         conditions: voided,
@@ -167,9 +203,10 @@ export class MatterTeardownService {
           // （畳む相手の全本数を出すと、無効にしない条件まで消えると読める）。
           conditions: voided.length,
           blocked,
-          amount: events.reduce((a, e) => a + e.amount, 0)
+          amount: events.reduce((a, e) => a + e.amount, 0),
+          kept: kept.length
         },
-        warnings: warningsFor({ payments, documents, voidConditions, blocked })
+        warnings: warningsFor({ payments, documents, voidConditions, blocked, kept: kept.length })
       };
     } catch (error) { throw translate(error); }
   }
@@ -277,9 +314,12 @@ export class MatterTeardownService {
 /** 押す前に読んでほしいこと。 */
 export function warningsFor(input: {
   payments: PlanPayment[]; documents: PlanDocument[];
-  voidConditions: boolean; blocked: number;
+  voidConditions: boolean; blocked: number; kept?: number;
 }): string[] {
   const out: string[] = [];
+  if (input.kept) {
+    out.push(`支払が立っている条件が ${input.kept} 本あります。その条件と紙・実績・支払はそのまま残します`);
+  }
   const numbered = input.documents.filter((d) => d.documentNo).length;
   if (numbered) {
     out.push(`番号を振って出した文書が ${numbered} 枚あります。`

@@ -66,8 +66,9 @@ export function SettledRebuild(
 
   const [diffError, setDiffError] = useState<string | null>(null);
 
-  /** ④ 畳む。 */
+  /** ④ 畳む。支払が立っている条件は触らないのが既定。 */
   const [plan, setPlan] = useState<TeardownPlan | null>(null);
+  const [keepPaid, setKeepPaid] = useState(true);
   const [tornDown, setTornDown] = useState<TeardownResult | null>(null);
 
   /**
@@ -125,7 +126,7 @@ export function SettledRebuild(
     setBusy(true); setError(null);
     try {
       setPlan(await api.post<TeardownPlan>(
-        `/matters/${matterId}/teardown/preview`, { reason: "", csv: csv?.text ?? null }));
+        `/matters/${matterId}/teardown/preview`, { reason: "", csv: csv?.text ?? null, keepPaid }));
     } catch (e) { setError((e as ApiError).message); }
     finally { setBusy(false); }
   }
@@ -136,7 +137,7 @@ export function SettledRebuild(
       const r = await api.post<TeardownResult>(
         `/matters/${matterId}/teardown`,
         // CSV で来たときは、そちらが条件も畳むかまで持っている。
-        csv ? { reason, csv: csv.text } : { reason, voidConditions });
+        csv ? { reason, csv: csv.text } : { reason, voidConditions, keepPaid });
       setTornDown(r); setPlan(null); onChanged();
     } catch (e) { setError((e as ApiError).message); }
     finally { setBusy(false); }
@@ -285,6 +286,12 @@ export function SettledRebuild(
                 <button className="btn" disabled={!csv || !!diffError} onClick={() => go(3)}>
                   次へ（④ 旧分を畳む）
                 </button>
+                {/* 直さず、いまあるものを全部畳んで一から入れ直すこともある。 */}
+                {!csv && (
+                  <button className="linky" onClick={() => go(3)}>
+                    CSV なしで ④ へ（案件まるごと畳む）
+                  </button>
+                )}
               </div>
             </>
           )}
@@ -303,9 +310,17 @@ export function SettledRebuild(
                     <span className="faint">「旧分」の列のとおりに畳みます</span>
                   </div>
                 : <div className="note warn">
-                    CSV がありません。案件まるごと畳むことになります。
+                    CSV がありません。案件まるごと畳みます（支払が立っている条件を残すかは下で選べます）。
                     <button className="linky" onClick={() => go(2)}>③ で選ぶ</button>
                   </div>}
+
+              {!csv && !plan && !tornDown && (
+                <label className="row" style={{ gap: 6 }}>
+                  <input type="checkbox" checked={keepPaid} onChange={(e) => setKeepPaid(e.target.checked)} />
+                  <span>支払が立っている条件は触らない</span>
+                  <span className="faint">（その条件の紙・実績・支払はそのまま。外すと、未払の支払も取り消して畳みます）</span>
+                </label>
+              )}
 
               {!plan && !tornDown && imported === null && (
                 <div className="row">
