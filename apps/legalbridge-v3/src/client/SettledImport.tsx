@@ -52,6 +52,13 @@ interface Group {
   };
   orderedOn: string | null; inspectedOn: string | null;
   dueOn: string | null; paymentState: "planned" | "paid" | "none"; paidOn: string | null;
+  /** 決済の組。同じ 検収日・支払 の行が1枚の検収書と1件の支払になる。 */
+  settlements: Array<{
+    inspectedOn: string | null; dueOn: string | null;
+    paymentState: "planned" | "paid" | "none"; paidOn: string | null;
+    lines: number[]; inspectedTotal: number;
+  }>;
+  existing: { events: number; documents: number; payments: number } | null;
   specialTerms: string | null; specialTermsNote: string | null;
   rows: Row[];
   orderedTotal: number; inspectedTotal: number;
@@ -82,6 +89,12 @@ interface ResultEntry {
   inspectionDocumentId?: number; inspectionDocumentNo?: string | null;
   eventIds?: number[];
   paymentNo?: string | null; paymentState?: "planned" | "paid" | "none";
+  settlements?: Array<{
+    inspectedOn: string | null;
+    inspectionDocumentId: number; inspectionDocumentNo: string | null;
+    eventIds: number[];
+    paymentId?: number; paymentNo?: string | null; paymentState: "planned" | "paid" | "none";
+  }>;
 }
 
 interface Batch {
@@ -381,16 +394,23 @@ export function SettledImport(
                         </div>
 
                         <div className="row" style={{ gap: 18, flexWrap: "wrap" }}>
-                          <span>発注日 <b>{g.orderedOn ?? "—"}</b></span>
-                          <span>検収日 <b>{g.inspectedOn ?? "—"}</b></span>
-                          {g.paymentState !== "none"
-                            && <span>支払期日 <b>{g.dueOn ?? "（支払条件から出す）"}</b></span>}
-                          <span>支払 <b>{
-                            g.paymentState === "paid" ? `支払済み（${g.paidOn ?? "—"}）`
-                              : g.paymentState === "none" ? "立てない（検収書まで）"
-                              : "未払"
-                          }</b></span>
+                          <span>発注日 <b>{g.orderedOn ?? "—"}</b>（発注書 1 枚）</span>
                         </div>
+                        {/* 検収書と支払は決済の組ごと。1枚の発注書に検収が何回かあるのがふつう。 */}
+                        {g.settlements.map((p, i) => (
+                          <div key={i} className="row" style={{ gap: 18, flexWrap: "wrap", paddingLeft: 12 }}>
+                            <span className="faint">{g.settlements.length > 1 ? `検収 ${i + 1}` : "検収"}</span>
+                            <span>検収日 <b>{p.inspectedOn ?? "—"}</b></span>
+                            <span>行 {p.lines.join("・")}／検収 {money(p.inspectedTotal, "JPY")}</span>
+                            {p.paymentState !== "none"
+                              && <span>支払期日 <b>{p.dueOn ?? "（支払条件から出す）"}</b></span>}
+                            <span>支払 <b>{
+                              p.paymentState === "paid" ? `支払済み（${p.paidOn ?? "—"}）`
+                                : p.paymentState === "none" ? "立てない（検収書まで）"
+                                : "未払"
+                            }</b></span>
+                          </div>
+                        ))}
 
                         {g.specialTerms && (
                           <div className="faint" style={{ whiteSpace: "pre-wrap" }}>
@@ -512,17 +532,34 @@ export function SettledImport(
                           : "—"}
                       </td>
                       <td>
-                        {r.inspectionDocumentId
-                          ? <button className="btn btn-sm" onClick={() => onOpenDocument(r.inspectionDocumentId!)}>
-                              {r.inspectionDocumentNo}
+                        {(r.settlements?.length ? r.settlements : r.inspectionDocumentId
+                          ? [{ inspectedOn: null, inspectionDocumentId: r.inspectionDocumentId,
+                               inspectionDocumentNo: r.inspectionDocumentNo ?? null, eventIds: r.eventIds ?? [],
+                               paymentNo: r.paymentNo, paymentState: r.paymentState ?? "planned" }]
+                          : []).map((p) => (
+                          <div key={p.inspectionDocumentId}>
+                            <button className="btn btn-sm" onClick={() => onOpenDocument(p.inspectionDocumentId)}>
+                              {p.inspectionDocumentNo}
                             </button>
-                          : "—"}
+                            {p.inspectedOn && <span className="faint" style={{ marginLeft: 4 }}>{p.inspectedOn}</span>}
+                          </div>
+                        ))}
+                        {!r.inspectionDocumentId && "—"}
                       </td>
                       <td className="num">{r.eventIds?.length ?? 0}</td>
                       <td>
-                        {r.paymentState === "none" ? <span className="faint">立てていない</span>
-                          : r.paymentNo ?? "—"}
-                        {r.paymentState === "paid" && <span className="tag ok" style={{ marginLeft: 6 }}>支払済み</span>}
+                        {(r.settlements?.length ? r.settlements
+                          : r.inspectionDocumentId
+                          ? [{ inspectionDocumentId: r.inspectionDocumentId, paymentNo: r.paymentNo,
+                               paymentState: r.paymentState ?? "planned" }]
+                          : []).map((p) => (
+                          <div key={p.inspectionDocumentId}>
+                            {p.paymentState === "none" ? <span className="faint">立てていない</span>
+                              : p.paymentNo ?? "—"}
+                            {p.paymentState === "paid" && <span className="tag ok" style={{ marginLeft: 6 }}>支払済み</span>}
+                          </div>
+                        ))}
+                        {!r.inspectionDocumentId && "—"}
                       </td>
                       <td>
                         {r.status === "created" ? <span className="tag ok">入れた</span> : (

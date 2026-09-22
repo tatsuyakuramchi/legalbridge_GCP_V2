@@ -224,10 +224,15 @@ function outsourcingSteps(f: FlowFacts, block: FlowBlock): FlowStep[] {
         ? `有効な条件 ${service} 件`
         : "委託の中身（金額・納期・支払条件）を条件明細に入れる。発注書はここから出る" },
     { ...documentStep(f, 0, "発注"), block },
-    { no: 0, name: "納品・報告", tab: "events", action: "実績を足す", block, done: delivered > 0,
+    // 検収の実績は納品を含む（納まっていないものは検収できない）。検収済みを
+    // まとめて入れたときは検収の実績しか無いので、ここが未済のまま残っていた。
+    { no: 0, name: "納品・報告", tab: "events", action: "実績を足す", block,
+      done: delivered > 0 || inspected > 0,
       detail: delivered > 0
         ? `納品・製造の実績 ${delivered} 件（直近 ${f.latestEventOn ?? "—"}）`
-        : "納品の記録がない。実績タブで条件を選んで入れる" },
+        : inspected > 0
+          ? `検収の実績 ${inspected} 件（納品は検収に含む）`
+          : "納品の記録がない。実績タブで条件を選んで入れる" },
     { no: 0, name: "検収", tab: "events", action: "検収の実績を足す", block, done: inspected > 0,
       detail: inspected > 0
         ? `検収の実績 ${inspected} 件`

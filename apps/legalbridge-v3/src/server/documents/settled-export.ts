@@ -66,7 +66,7 @@ interface EventRow {
   id: number; occurred_on: unknown; quantity: unknown; amount: unknown;
   deliverable: string | null; note: string | null; document_id: number | null;
 }
-interface PayRow { status: string; due_on: unknown; paid_on: unknown }
+interface PayRow { status: string; due_on: unknown; paid_on: unknown; event_id?: unknown }
 
 export class SettledExportService {
   constructor(private readonly database: Queryable) {}
@@ -153,17 +153,32 @@ export class SettledExportService {
           AND EXISTS (SELECT 1 FROM condition_events e
                        WHERE e.document_id = d.id AND e.condition_id = $1 AND e.status = 'active')
         ORDER BY d.issued_at DESC NULLS LAST, d.id DESC`, [cond.id]);
-    const inspection = (settle.rows as unknown as DocRow[])[0] ?? null;
+    const settleDocs = settle.rows as unknown as DocRow[];
+    const inspection = settleDocs[0] ?? null;
+    // 検収書は条件に何枚もある（1枚の発注書に検収が何回か）。実績ごとに、
+    // その実績が結ばれている検収書を引く。1枚目に全部寄せると、別の回の
+    // 検収日や検収数量が写る。
+    const docById = new Map(settleDocs.map((d) => [String(d.id), d]));
+    const docOf = (ev: EventRow | null): DocRow | null =>
+      (ev?.document_id !== null && ev?.document_id !== undefined
+        ? docById.get(String(ev.document_id)) : null) ?? inspection;
+    // その検収書の中で何行目の実績か（納品明細と同じ並び）。
+    const indexInDoc = (ev: EventRow): number =>
+      eventRows.filter((e) => String(e.document_id) === String(ev.document_id))
+        .findIndex((e) => String(e.id) === String(ev.id));
 
+    // 支払も実績ごと（決済の組ごとに1件）。実績が分からなければ新しいもの。
     const pays = await this.database.query(
-      `SELECT y.status, y.due_on, y.paid_on
+      `SELECT y.status, y.due_on, y.paid_on, al.event_id
          FROM payments y
-        WHERE y.status <> 'canceled'
-          AND EXISTS (SELECT 1 FROM payment_allocations al
-                       JOIN condition_events e ON e.id = al.event_id
-                      WHERE al.payment_id = y.id AND e.condition_id = $1)
+         JOIN payment_allocations al ON al.payment_id = y.id
+         JOIN condition_events e ON e.id = al.event_id
+        WHERE y.status <> 'canceled' AND e.condition_id = $1
         ORDER BY y.id DESC`, [cond.id]);
-    const payment = (pays.rows as unknown as PayRow[])[0] ?? null;
+    const payRows = pays.rows as unknown as PayRow[];
+    const payment = payRows[0] ?? null;
+    const payOf = (ev: EventRow | null): PayRow | null =>
+      (ev ? payRows.find((y) => String(y.event_id) === String(ev.id)) : null) ?? payment;
 
     const base = {
       partyCode: str(cond.party_code) ?? "",
@@ -205,10 +220,27 @@ export class SettledExportService {
     const delivery = line.ownLines ? [] : itemsOf(inspection?.values, "delivery_line_items");
 
     // ① 紙の明細がある。1行が1明細。
+    // 実績は品目名（納品物）で当て、当たらなければ並び順で当てる。
+    // まとめて入れた取引は納品物に品目名が入っているので、検収が何回かに
+    // 分かれていても、その品目の実績・検収書・支払に正しく当たる。
     if (items.length) {
+      const norm = (v: unknown) => String(v ?? "").replace(/[\s\u3000]+/g, "").toLowerCase();
+      const taken = new Set<string>();
+      const eventFor = (item: Record<string, unknown>, i: number): EventRow | null => {
+        const byName = eventRows.filter((e) =>
+          !taken.has(String(e.id)) && norm(e.deliverable) && norm(e.deliverable) === norm(item.item_name));
+        const ev = byName.length === 1 ? byName[0]
+          : (eventRows[i] && !taken.has(String(eventRows[i].id)) ? eventRows[i] : null);
+        if (ev) taken.add(String(ev.id));
+        return ev;
+      };
       return { rows: items.map((item, i) => {
-        const ev = eventRows[i] ?? null;
-        const del = delivery[i] ?? null;
+        const ev = eventFor(item, i);
+        const evDoc = docOf(ev);
+        const evPay = payOf(ev);
+        const del = line.ownLines ? null
+          : ev && evDoc ? (itemsOf(evDoc.values, "delivery_line_items")[indexInDoc(ev)] ?? null)
+          : delivery[i] ?? null;
         const quantity = num(item.quantity) ?? 1;
         const unitPrice = num(item.unit_price)
           ?? divide(num(item.amount_ex_tax), quantity)
@@ -220,6 +252,11 @@ export class SettledExportService {
         });
         return {
           ...base,
+          // 検収日と支払は、その実績の検収書・支払のもの（回ごとに違う）。
+          inspectedOn: dateStr(evDoc?.issued_at) ?? base.inspectedOn,
+          dueOn: dateStr(evPay?.due_on) ?? (ev ? "" : base.dueOn),
+          paymentState: ev ? payStateOf(evPay) : base.paymentState,
+          paidOn: dateStr(evPay?.paid_on) ?? (ev ? "" : base.paidOn),
           item_name: name,
           spec: str(item.spec) ?? str(item.description) ?? "",
           quantity: fmtNum(settled.quantity),
@@ -245,8 +282,14 @@ export class SettledExportService {
       say("発注書の明細が読めないので、実績から組みました。品目名を確かめてください");
       return { rows: eventRows.map((ev) => {
         const quantity = num(ev.quantity) ?? 1;
+        const evDoc = docOf(ev);
+        const evPay = payOf(ev);
         return {
           ...base,
+          inspectedOn: dateStr(evDoc?.issued_at) ?? base.inspectedOn,
+          dueOn: dateStr(evPay?.due_on) ?? "",
+          paymentState: payStateOf(evPay),
+          paidOn: dateStr(evPay?.paid_on) ?? "",
           item_name: str(ev.deliverable) ?? cond.name,
           spec: "",
           quantity: fmtNum(quantity),

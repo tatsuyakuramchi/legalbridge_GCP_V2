@@ -1087,7 +1087,7 @@ export class DocumentBatchService {
     if (inMatter.rows.length === 1) return { agreement: map(inMatter.rows[0]), note: null };
     if (inMatter.rows.length > 1) {
       return { agreement: null,
-               note: "この案件でこの取引先の基本契約が複数使われています。条件明細を作ってから選んでください" };
+               note: "この案件でこの取引先の基本契約が複数使われています。基本契約なしで作ります。特定の契約に載せるなら「契約番号」の列に書いてください" };
     }
     const executed = await client.query(
       `SELECT id, agreement_no, title FROM agreements
@@ -1096,7 +1096,7 @@ export class DocumentBatchService {
     if (executed.rows.length === 1) return { agreement: map(executed.rows[0]), note: null };
     if (executed.rows.length > 1) {
       return { agreement: null,
-               note: "この取引先の締結済みの基本契約が複数あります。条件明細を作ってから選んでください" };
+               note: "この取引先の締結済みの基本契約が複数あります。基本契約なしで作ります。特定の契約に載せるなら「契約番号」の列に書いてください" };
     }
     return { agreement: null, note: "締結済みの基本契約が見つかりません（基本契約なしの発注として作ります）" };
   }

@@ -12,8 +12,8 @@ import {
   type WorkCandidate, type WorkResolution
 } from "./batch-service.js";
 import {
-  conflictsOf, groupRows, ownershipOfRows, readRows, sameAcross, scheduleLinesFrom,
-  type SettledGroupRows, type SettledPaymentState, type SettledRow
+  conflictsOf, deliveryDueOf, groupRows, ownershipOfRows, readRows, sameAcross, scheduleLinesFrom,
+  settlementsOf, type SettledGroupRows, type SettledPaymentState, type SettledRow
 } from "./settled-batch.js";
 
 /**
@@ -52,12 +52,27 @@ export interface SettledGroup extends SettledGroupRows {
     agreementNote: string | null;
     schedules: number;
   };
-  /** 束の日付と支払。束で1つに決まる値なので、ここに畳んで見せる。 */
+  /** 発注日。束（1枚の発注書）で1つ。 */
   orderedOn: string | null;
+  /** 検収日・支払。束の中で1つに決まるときだけ入る（違えば null。settlements を見る）。 */
   inspectedOn: string | null;
   dueOn: string | null;
   paymentState: SettledPaymentState;
   paidOn: string | null;
+  /**
+   * 決済の組。同じ 検収日・支払期日・支払状態・入金日 の行が1枚の検収書と
+   * 1件の支払になる。1枚の発注書に検収が何回かあるのがふつう。
+   */
+  settlements: Array<{
+    inspectedOn: string | null; dueOn: string | null;
+    paymentState: SettledPaymentState; paidOn: string | null;
+    lines: number[]; inspectedTotal: number;
+  }>;
+  /**
+   * 既存の条件に載せるとき、その条件がいま持っているもの。畳まずに入れると2重になる。
+   * paid は支払済みの支払（畳めない。お金は出ているので、入れ直しでも新しく立てない）。
+   */
+  existing: { events: number; documents: number; payments: number; paid: number } | null;
   /** 特約。定型文の名前を書いていれば、その本文に解決したもの。 */
   specialTerms: string | null;
   specialTermsNote: string | null;
@@ -96,12 +111,19 @@ export interface SettledResultEntry {
   conditionNo?: string | null;
   orderDocumentId?: number;
   orderDocumentNo?: string | null;
+  /** 最初の検収書と支払（1組のときはこれだけ）。組が複数なら settlements に全部入る。 */
   inspectionDocumentId?: number;
   inspectionDocumentNo?: string | null;
   eventIds?: number[];
   paymentId?: number;
   paymentNo?: string | null;
   paymentState?: SettledPaymentState;
+  settlements?: Array<{
+    inspectedOn: string | null;
+    inspectionDocumentId: number; inspectionDocumentNo: string | null;
+    eventIds: number[];
+    paymentId?: number; paymentNo?: string | null; paymentState: SettledPaymentState;
+  }>;
   /** どこまで進んで落ちたか。途中で落ちた束の後始末に要る。 */
   stage?: string;
 }
@@ -114,6 +136,16 @@ export interface SettledBatchRecord {
   createdBy: string | null;
   createdAt: string;
   result: SettledResultEntry[];
+}
+
+/**
+ * この決済の組に支払を立てるか。「なし」は立てない。支払済みの支払が畳めずに
+ * 残っている条件（作り直し）では、「支払済み」の組にも立てない。
+ */
+function makesPayment(g: SettledGroup, part: SettledGroup["settlements"][number]): boolean {
+  if (part.paymentState === "none") return false;
+  if (part.paymentState === "paid" && g.existing && g.existing.paid > 0 && g.oldHandling !== "keep") return false;
+  return true;
 }
 
 export class SettledBatchService {
@@ -189,6 +221,21 @@ export class SettledBatchService {
 
         const terms = await this.resolveSpecialTerms(g.rows);
 
+        // 既存の条件に載せる束。その条件が紙・実績・支払をまだ持っていれば、
+        // 畳まずに入れると2重になる。「畳む」と書いてあるのに残っているなら、
+        // ④ を通っていない（順番違い）ので止める。「残す」なら追加で載せる
+        // ことになるので、そう書いて通す。
+        const existing = condition ? await this.holdingsOf(condition.id) : null;
+        const holding = existing && (existing.events + existing.documents + existing.payments > 0);
+        const holdingText = existing
+          ? `紙 ${existing.documents} 枚・実績 ${existing.events} 件・未払の支払 ${existing.payments} 件` : "";
+        const stale = Boolean(holding && g.oldHandling !== "keep");
+        // 支払済みの支払は畳めない（お金は出ている）。入れ直しても、支払済みの組に
+        // 新しい支払は立てない。立てると同じお金が2件になる。
+        const paidKept = existing && existing.paid > 0 && g.oldHandling !== "keep"
+          ? `支払済みの支払 ${existing.paid} 件は取り消せないので残します。この取り込みでは「支払済み」の組に新しい支払を立てません（検収書までを作り直します）`
+          : null;
+
         const issues = [
           ...(conditionNoIssue ? [`${conditionNoIssue}。この束は飛ばす`] : []),
           ...(resolution === "missing" ? ["取引先が未登録（コードも名前も当たらない）。この束は飛ばす"] : []),
@@ -199,10 +246,17 @@ export class SettledBatchService {
           ...mixed,
           ...(badAgreement && basic.note ? [`${basic.note}。この束は飛ばす`] : []),
           ...(terms.note && terms.missing ? [`${terms.note}。この束は飛ばす`] : []),
+          ...(stale
+            ? [`条件 ${condition!.conditionNo ?? ""} には旧分（${holdingText}）が残っています。`
+               + "旧分を「畳む」にしているので、先に「決済済みを作り直す」の ④ 旧分を畳む を通してから入れてください。この束は飛ばす"]
+            : holding
+            ? [`条件 ${condition!.conditionNo ?? ""} には ${holdingText} があります。旧分は「残す」なので、追加で載せます（2重になっていないか確かめてください）`]
+            : []),
+          ...(paidKept ? [paidKept] : []),
           ...g.rows.flatMap((r) => r.issues.map((m) => `${r.line} 行目：${m}`))
         ];
         const blocking = g.rows.some((r) => r.issues.length > 0)
-          || mixed.length > 0 || badAgreement || terms.missing || !!conditionNoIssue;
+          || mixed.length > 0 || badAgreement || terms.missing || !!conditionNoIssue || stale;
 
         groups.push({
           ...g, resolution, party, candidates: resolved.candidates,
@@ -218,6 +272,11 @@ export class SettledBatchService {
           dueOn: sameAcross(g.rows, (r) => r.dueOn),
           paymentState: sameAcross(g.rows, (r) => r.paymentState) ?? "planned",
           paidOn: sameAcross(g.rows, (r) => r.paidOn),
+          settlements: settlementsOf(g.rows).map((p) => ({
+            inspectedOn: p.inspectedOn, dueOn: p.dueOn, paymentState: p.paymentState, paidOn: p.paidOn,
+            lines: p.rows.map((r) => r.line), inspectedTotal: p.inspectedTotal
+          })),
+          existing,
           specialTerms: terms.text, specialTermsNote: terms.note,
           issues,
           action: stuck ? "skip" : choosing ? "choose" : blocking ? "skip" : "create"
@@ -234,12 +293,13 @@ export class SettledBatchService {
           skipped: groups.filter((g) => g.action === "skip").length,
           choose: groups.filter((g) => g.action === "choose").length,
           events: creatable.reduce((sum, g) => sum + g.rows.length, 0),
-          // 支払を立てない束は数にも合計にも入れない。確認の文面に出る数が
-          // 実際に作られるものと食い違うと、確認の意味が無くなる。
-          payments: creatable.filter((g) => g.paymentState !== "none").length,
-          paymentTotal: creatable
-            .filter((g) => g.paymentState !== "none")
-            .reduce((sum, g) => sum + g.inspectedTotal, 0)
+          // 支払は決済の組ごとに1件。立てない組は数にも合計にも入れない。確認の
+          // 文面に出る数が実際に作られるものと食い違うと、確認の意味が無くなる。
+          payments: creatable.reduce((sum, g) =>
+            sum + g.settlements.filter((p) => makesPayment(g, p)).length, 0),
+          paymentTotal: creatable.reduce((sum, g) =>
+            sum + g.settlements.filter((p) => makesPayment(g, p))
+              .reduce((t, p) => t + p.inspectedTotal, 0), 0)
         }
       };
     } catch (error) { throw translate(error); }
@@ -254,10 +314,11 @@ export class SettledBatchService {
   private async peekNumbers(groups: SettledGroup[]): Promise<SettledNumberPeek[]> {
     if (!groups.length) return [];
     const out: SettledNumberPeek[] = [];
-    for (const [templateKey, dateOf] of [
-      [ORDER_TEMPLATE, (g: SettledGroup) => g.orderedOn],
-      [INSPECTION_TEMPLATE, (g: SettledGroup) => g.inspectedOn]
-    ] as Array<[string, (g: SettledGroup) => string | null]>) {
+    // 発注書は束に1枚、検収書は決済の組ごとに1枚。
+    for (const [templateKey, datesOf] of [
+      [ORDER_TEMPLATE, (g: SettledGroup) => [g.orderedOn]],
+      [INSPECTION_TEMPLATE, (g: SettledGroup) => g.settlements.map((p) => p.inspectedOn)]
+    ] as Array<[string, (g: SettledGroup) => Array<string | null>]>) {
       const prefixRow = await this.database.query(
         `SELECT t.number_prefix FROM document_templates t WHERE t.template_key = $1`, [templateKey]);
       const prefix = String((prefixRow.rows[0] as { number_prefix?: string } | undefined)?.number_prefix ?? "")
@@ -266,9 +327,10 @@ export class SettledBatchService {
       // 年ごとに数える。去年の紙と今年の紙が混ざった CSV は連番も分かれる。
       const byYear = new Map<number, number>();
       for (const g of groups) {
-        const on = dateOf(g);
-        const year = on ? Number(on.slice(0, 4)) : new Date().getFullYear();
-        byYear.set(year, (byYear.get(year) ?? 0) + 1);
+        for (const on of datesOf(g)) {
+          const year = on ? Number(on.slice(0, 4)) : new Date().getFullYear();
+          byYear.set(year, (byYear.get(year) ?? 0) + 1);
+        }
       }
       for (const [year, count] of [...byYear.entries()].sort((a, b) => a[0] - b[0])) {
         const seq = await this.database.query(
@@ -281,6 +343,27 @@ export class SettledBatchService {
       }
     }
     return out;
+  }
+
+  /** 既存の条件がいま持っている紙・実績・支払。畳まずに入れると2重になるものの数。 */
+  private async holdingsOf(conditionId: number):
+    Promise<{ events: number; documents: number; payments: number; paid: number }> {
+    const r = await this.database.query(
+      `SELECT (SELECT count(*) FROM condition_events e
+                WHERE e.condition_id = $1 AND e.status = 'active')::int AS events,
+              (SELECT count(*) FROM documents d
+                JOIN document_conditions dc ON dc.document_id = d.id
+                WHERE dc.condition_id = $1 AND d.status <> 'void')::int AS documents,
+              (SELECT count(DISTINCT y.id) FROM payments y
+                JOIN payment_allocations al ON al.payment_id = y.id
+                WHERE al.condition_id = $1 AND y.status NOT IN ('canceled', 'paid'))::int AS payments,
+              (SELECT count(DISTINCT y.id) FROM payments y
+                JOIN payment_allocations al ON al.payment_id = y.id
+                WHERE al.condition_id = $1 AND y.status = 'paid')::int AS paid`,
+      [conditionId]);
+    const row = r.rows[0] as { events: number; documents: number; payments: number; paid: number } | undefined;
+    return { events: Number(row?.events ?? 0), documents: Number(row?.documents ?? 0),
+             payments: Number(row?.payments ?? 0), paid: Number(row?.paid ?? 0) };
   }
 
   /**
@@ -386,8 +469,9 @@ export class SettledBatchService {
         workId: g.work?.id ?? null,
         pricingModel: "fixed", flatAmount: g.orderedTotal, currency: "JPY",
         // 検収済みの取引なので、契約期間の終わりは検収日でよい。納期は別の列。
-        termEnd: g.inspectedOn,
-        deliveryDue: sameAcross(g.rows, (r) => r.deliveryDue),
+        // 検収が何回かあるなら、いちばん遅い検収日。
+        termEnd: g.settlements.map((p) => p.inspectedOn).filter(Boolean).sort().at(-1) ?? null,
+        deliveryDue: deliveryDueOf(g.rows),
         paymentTerms: sameAcross(g.rows, (r) => r.paymentTerms),
         contractForm: sameAcross(g.rows, (r) => (r.item.payment_terms as string | null) ?? null),
         notes: [...new Set(g.rows.map((r) => r.item.remarks as string | null).filter(Boolean))].join("\n") || null,
@@ -447,39 +531,56 @@ export class SettledBatchService {
       eventIds.push(added.id);
     }
 
-    // 検収書。決定日は検収日。実績を結んでから支払を立てる。
-    mark("検収書");
-    const inspectionDraft = await this.issues.createDraft({
-      templateKey: INSPECTION_TEMPLATE, conditionIds: [conditionId], matterId,
-      manualInputs: { _batchId: batchId, ...(g.specialTerms ? { SPECIAL_TERMS: g.specialTerms } : {}) }
-    }, actor);
-    const inspection = await this.issues.issue(inspectionDraft.id, actor,
-      { issuedOn: g.inspectedOn, eventIds });
-    await this.database.query(
-      "UPDATE documents SET batch_id = $2 WHERE id = $1", [inspectionDraft.id, batchId]);
-    await this.events.linkDocument(conditionId, eventIds, inspection.id, actor);
-
+    // 検収書。決済の組（同じ検収日・支払）ごとに1枚。決定日は検収日。
+    // 実績を結んでから支払を立てる。
+    const byLine = new Map(g.rows.map((r, i) => [r.line, eventIds[i]]));
     const made: Partial<SettledResultEntry> = {
       conditionId, conditionNo,
       orderDocumentId: orderDraft.id, orderDocumentNo: order.documentNo,
-      inspectionDocumentId: inspectionDraft.id, inspectionDocumentNo: inspection.documentNo,
-      eventIds,
-      paymentState: g.paymentState
+      eventIds, settlements: []
     };
-    // 支払を立てない束はここで終わり。検収書まで作ってあるので、あとから
-    // 文書の画面で「支払を立てる」を押せば同じものが起きる。
-    if (g.paymentState === "none") return made;
+    for (const [index, part] of g.settlements.entries()) {
+      const tag = g.settlements.length > 1 ? `（${index + 1}組目 ${part.inspectedOn ?? ""}）` : "";
+      mark(`検収書${tag}`);
+      const partEvents = part.lines.map((line) => byLine.get(line)!).filter((id) => id !== undefined);
+      const inspectionDraft = await this.issues.createDraft({
+        templateKey: INSPECTION_TEMPLATE, conditionIds: [conditionId], matterId,
+        manualInputs: { _batchId: batchId, ...(g.specialTerms ? { SPECIAL_TERMS: g.specialTerms } : {}) }
+      }, actor);
+      const inspection = await this.issues.issue(inspectionDraft.id, actor,
+        { issuedOn: part.inspectedOn, eventIds: partEvents });
+      await this.database.query(
+        "UPDATE documents SET batch_id = $2 WHERE id = $1", [inspectionDraft.id, batchId]);
+      await this.events.linkDocument(conditionId, partEvents, inspection.id, actor);
 
-    // 支払。額も源泉も検収書の実績から出す（画面から立てるのと同じ経路）。
-    mark("支払");
-    const payment = await this.payments.createFromInspection(inspection.id, actor,
-      { dueOn: g.dueOn });
-    if (g.paymentState === "paid" && g.paidOn) {
-      mark("入金の記録");
-      await this.payments.markPaid(payment.paymentId, g.paidOn, actor);
+      const entry: NonNullable<SettledResultEntry["settlements"]>[number] = {
+        inspectedOn: part.inspectedOn,
+        inspectionDocumentId: inspectionDraft.id, inspectionDocumentNo: inspection.documentNo,
+        eventIds: partEvents, paymentState: part.paymentState
+      };
+      // 支払を立てない組はここで終わり。検収書まで作ってあるので、あとから
+      // 文書の画面で「支払を立てる」を押せば同じものが起きる。
+      // 支払済みの支払が畳めずに残っている条件では、支払済みの組にも立てない（同じお金が2件になる）。
+      if (makesPayment(g, part)) {
+        // 支払。額も源泉も検収書の実績から出す（画面から立てるのと同じ経路）。
+        mark(`支払${tag}`);
+        const payment = await this.payments.createFromInspection(inspection.id, actor,
+          { dueOn: part.dueOn });
+        entry.paymentId = payment.paymentId; entry.paymentNo = payment.paymentNo;
+        if (part.paymentState === "paid" && part.paidOn) {
+          mark(`入金の記録${tag}`);
+          await this.payments.markPaid(payment.paymentId, part.paidOn, actor);
+        }
+      }
+      made.settlements!.push(entry);
+      if (index === 0) {
+        made.inspectionDocumentId = entry.inspectionDocumentId;
+        made.inspectionDocumentNo = entry.inspectionDocumentNo;
+        made.paymentId = entry.paymentId; made.paymentNo = entry.paymentNo;
+        made.paymentState = entry.paymentState;
+      }
     }
-
-    return { ...made, paymentId: payment.paymentId, paymentNo: payment.paymentNo };
+    return made;
   }
 
   /** 書類ごとの切り替え。手入力として渡すので、あとから画面で直せる。 */

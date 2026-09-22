@@ -120,7 +120,7 @@ export function templateCsv(): string {
      "初版",
      "2026-08-31", "未払", "",
      "請負", "月末締め翌月末払い", "発注者", "あり", "なし",
-     "業務委託の一般特約", "", ""],
+     "", "", ""],
     ["VD-00317", "合同会社アトリエ蒼", "WRK-10021", "夜明けのクロニクル", "", "", "", "",
      "第1巻 挿絵", "モノクロ12点", "12", "8000",
      "2026-06-01", "2026-07-31", "2026-07-31", "2026-08-05", "11", "納品点数が11点になったため減額",
@@ -432,20 +432,14 @@ const differs = <T>(rows: SettledRow[], pickValue: (r: SettledRow) => T | null) 
  */
 export function conflictsOf(rows: SettledRow[]): string[] {
   return [
+    // 発注書は束に1枚。発注日が違うなら別の発注なので、条件名で束を分けてもらう。
     ...(differs(rows, (r) => r.orderedOn)
-      ? ["発注日が行ごとに違います。1枚の発注書に決定日は1つです"] : []),
-    ...(differs(rows, (r) => r.inspectedOn)
-      ? ["検収日が行ごとに違います。1枚の検収書に決定日は1つです"] : []),
-    ...(differs(rows, (r) => r.dueOn)
-      ? ["支払期日が行ごとに違います。1束から立つ支払は1件です"] : []),
-    ...(differs(rows, (r) => r.paymentState)
-      ? ["支払状態が行ごとに違います。1束から立つ支払は1件です"] : []),
-    ...(differs(rows, (r) => r.paidOn)
-      ? ["入金日が行ごとに違います。1束から立つ支払は1件です"] : []),
+      ? ["発注日が行ごとに違います。1枚の発注書に決定日は1つです（別の発注なら条件名を分けてください）"] : []),
+    // 検収日・支払期日・支払状態・入金日は行ごとに違ってよい。同じ組の行が
+    // 1枚の検収書と1件の支払になる（settlementsOf）。1枚の発注書に何回かの
+    // 検収があるのがふつうで、ここを縛ると実際の取引がほぼ全部弾かれる。
     ...(differs(rows, (r) => r.agreementNo)
       ? ["契約番号が行ごとに違います。1つの条件に契約は1つです"] : []),
-    ...(differs(rows, (r) => r.deliveryDue)
-      ? ["納期が行ごとに違います。1つの条件に納期は1つです"] : []),
     ...(differs(rows, (r) => r.oldHandling)
       ? ["旧分の扱いが行ごとに違います。1つの条件に1つです"] : []),
     ...(differs(rows, (r) => r.orderSign === null ? "" : r.orderSign ? "あり" : "なし")
@@ -457,6 +451,45 @@ export function conflictsOf(rows: SettledRow[]): string[] {
     ...(differs(rows, (r) => r.specialTermsSnippet)
       ? ["特約の定型文が行ごとに違います。1枚の発注書に特約は1つです"] : [])
   ];
+}
+
+/**
+ * 決済の組。同じ 検収日・支払期日・支払状態・入金日 の行が、1枚の検収書と
+ * 1件の支払になる。1束（1発注書）に検収が何回かあるのがふつうなので、
+ * 束の中をここで分ける。検収日の順に並べる。
+ */
+export interface SettledSettlement {
+  key: string;
+  inspectedOn: string | null;
+  dueOn: string | null;
+  paymentState: SettledPaymentState;
+  paidOn: string | null;
+  rows: SettledRow[];
+  /** この組の検収額の合計。支払の額になる。 */
+  inspectedTotal: number;
+}
+
+export function settlementsOf(rows: SettledRow[]): SettledSettlement[] {
+  const map = new Map<string, SettledSettlement>();
+  for (const row of rows) {
+    const state = row.paymentState ?? "planned";
+    const key = [row.inspectedOn ?? "", row.dueOn ?? "", state, row.paidOn ?? ""].join("\u0001");
+    const s = map.get(key) ?? {
+      key, inspectedOn: row.inspectedOn, dueOn: row.dueOn, paymentState: state, paidOn: row.paidOn,
+      rows: [], inspectedTotal: 0
+    };
+    s.rows.push(row);
+    s.inspectedTotal += row.inspectedAmount;
+    map.set(key, s);
+  }
+  return [...map.values()].sort((a, b) =>
+    (a.inspectedOn ?? "").localeCompare(b.inspectedOn ?? "") || a.rows[0].line - b.rows[0].line);
+}
+
+/** 束の納期。行ごとに違えば、いちばん遅いものを条件に持たせる（発注書の行には行ごとの納品日が出る）。 */
+export function deliveryDueOf(rows: SettledRow[]): string | null {
+  const dues = rows.map((r) => r.deliveryDue).filter((d): d is string => Boolean(d));
+  return dues.length ? dues.sort().at(-1)! : null;
 }
 
 /** 束の行の帰属先が全部同じならそれを条件に持たせる。混ざっていれば決めない。 */

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  conflictsOf, groupRows, ownershipOfRows, readOldHandling, readPaymentState, readRevision,
+  conflictsOf, groupRows, ownershipOfRows, readOldHandling, readPaymentState, readRevision, settlementsOf,
   rawRows, readRows, scheduleLinesFrom, templateCsv, toCsv, type SettledRow
 } from "./settled-batch.js";
 
@@ -119,24 +119,37 @@ test("束は 取引先・作品・条件名 で分かれ、発注額と検収額
   assert.equal(groups[1].orderedTotal, 30000);
 });
 
-test("束の中で日付や支払が食い違えば作らずに返す", () => {
+test("検収日が行ごとに違えば、1束のまま検収書を分ける（発注書は1枚）", () => {
+  // 1枚の発注書に検収が何回かあるのがふつう。ここを弾くと実際の取引がほぼ全部止まる。
   const rows = readRows(csv(
     line({ inspectedOn: "2026-07-25" }),
-    line({ itemName: "口絵", inspectedOn: "2026-08-01" })
+    line({ itemName: "口絵", inspectedOn: "2026-08-01", deliveredOn: "2026-07-30" })
   ));
   const [group] = groupRows(rows);
-  const issues = conflictsOf(group.rows);
-  assert.ok(issues.some((m) => /検収日が行ごとに違います/.test(m)));
+  assert.deepEqual(conflictsOf(group.rows), []);
+  const parts = settlementsOf(group.rows);
+  assert.equal(parts.length, 2);
+  assert.deepEqual(parts.map((p) => p.inspectedOn), ["2026-07-25", "2026-08-01"]);
+  assert.equal(parts[0].rows[0].line, 2);
 });
 
-test("支払の欄が食い違えば、どれを採るかをこちらで決めない", () => {
+test("支払の欄が行ごとに違えば、支払も組ごとに分ける", () => {
   const rows = readRows(csv(
     line({ paymentState: "支払済み", paidOn: "2026-08-30" }),
     line({ itemName: "口絵" })
   ));
-  const issues = conflictsOf(groupRows(rows)[0].rows);
-  assert.ok(issues.some((m) => /支払状態が行ごとに違います/.test(m)));
-  assert.ok(issues.some((m) => /入金日が行ごとに違います/.test(m)));
+  assert.deepEqual(conflictsOf(groupRows(rows)[0].rows), []);
+  const parts = settlementsOf(groupRows(rows)[0].rows);
+  assert.equal(parts.length, 2);
+  assert.deepEqual(parts.map((p) => p.paymentState).sort(), ["paid", "planned"]);
+});
+
+test("発注日が行ごとに違えば別の発注。条件名で分けてもらう", () => {
+  const rows = readRows(csv(
+    line({ orderedOn: "2026-06-01" }),
+    line({ itemName: "口絵", orderedOn: "2026-06-15" })
+  ));
+  assert.match(conflictsOf(groupRows(rows)[0].rows).join("／"), /発注日が行ごとに違います.*条件名を分けて/);
 });
 
 test("納品日は行ごとに違ってよい。実績は行ごとに立つ", () => {
@@ -264,12 +277,14 @@ test("「なし」の言い換えを読む", () => {
   assert.equal(readPaymentState("-"), "none");
 });
 
-test("支払の立て方が束の中で食い違えば作らない", () => {
+test("支払の立て方が束の中で違えば、立てる組と立てない組に分かれる", () => {
   const rows = readRows(csv(
     line({ paymentState: "なし", dueOn: "" }),
     line({ itemName: "口絵" })
   ));
-  assert.ok(conflictsOf(groupRows(rows)[0].rows).some((m) => /支払状態が行ごとに違います/.test(m)));
+  const parts = settlementsOf(groupRows(rows)[0].rows);
+  assert.equal(parts.length, 2);
+  assert.deepEqual(parts.map((p) => p.paymentState).sort(), ["none", "planned"]);
 });
 
 
