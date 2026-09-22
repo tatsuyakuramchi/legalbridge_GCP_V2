@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, money, saveCsv } from "./api.js";
 import { CsvBar } from "./CsvBar.js";
+import { useReadOnly } from "./read-only.js";
 import { SearchSelect, type SearchOption } from "./SearchSelect.js";
 
 /**
@@ -94,6 +95,7 @@ export function BulkOrders(
   }
 ) {
   const orderTemplates = templates.filter((t) => t.templateKey === "purchase_order" || t.templateKey === "intl_purchase_order");
+  const readOnly = useReadOnly();
   const [templateKey, setTemplateKey] = useState(orderTemplates[0]?.templateKey ?? "purchase_order");
   const [matterId, setMatterId] = useState(initialMatterId ? String(initialMatterId) : "");
   /** 案件から来たときは、その案件の名前を出して固定する。押せば選び直せる。 */
@@ -334,7 +336,9 @@ export function BulkOrders(
             取引先も作品もここでは作りません。未登録の束は飛ばし、登録してから残りだけ再アップロードしてください。
           </div>
           <div className="row">
-            <button className="btn primary" disabled={busy || !ready.length} onClick={() => void create()}>
+            <button className="btn primary" disabled={busy || readOnly || !ready.length}
+                    title={readOnly ? "いまは読み取り専用です。突き合わせまでで、作るのは本番で" : undefined}
+                    onClick={() => void create()}>
               {busy ? "作っています…"
                 : revising > 0
                   ? `下書きを ${ready.length} 件作る（うち訂正版 ${revising} 件）`

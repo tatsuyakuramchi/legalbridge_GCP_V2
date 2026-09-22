@@ -594,6 +594,8 @@ tr[aria-selected="true"] td{background:var(--accent-soft)}
 .dir.out{color:var(--accent)}
 .dir.in{color:var(--out)}
 .dir.tpl{color:var(--faint);font-weight:400}
+/* a に .btn を付けると下線がボタンの中に出ていた（雛形・書き出し・Excel）。 */
+a.btn{text-decoration:none}
 /* 出す＝枠線だけ（読むだけ）。入れる＝塗り（台帳が動く）。 */
 .btn.ghost{background:none;border:1px solid var(--line-strong);color:var(--ink)}
 .btn.load{background:var(--out);border-color:var(--out);color:#fff;font-weight:700}

@@ -338,7 +338,7 @@ export class SettledExportService {
 
     say(`発注書 ${str(order.document_no) ?? `#${order.id}`} には条件が `
       + `${others.length + 1} 本ぶら下がっていて、どの明細がこの条件のものか`
-      + `決められません。実績から組みました`);
+      + `決められません。紙は写さず、実績か条件から組みました`);
     return { items: [], ownLines: false };
   }
 }

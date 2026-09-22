@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, ApiError, money, saveCsv } from "./api.js";
 import { SearchSelect, type SearchOption } from "./SearchSelect.js";
 import { CsvBar } from "./CsvBar.js";
+import { useReadOnly } from "./read-only.js";
 import type { SettledDiff } from "../server/documents/settled-diff.js";
 
 /**
@@ -134,6 +135,7 @@ export function SettledImport(
     onCreated: (batchId: number) => void;
   }
 ) {
+  const readOnly = useReadOnly();
   const [matterId, setMatterId] = useState(initialMatterId ? String(initialMatterId) : "");
   /** 現物の書き出し。人に決めてもらうことは CSV に出せないので画面に出す。 */
   const [exporting, setExporting] = useState(false);
@@ -463,12 +465,13 @@ export function SettledImport(
                 </div>
 
                 <div className="row">
-                  <button className="btn primary" disabled={busy || !preview.summary.creatable}
+                  <button className="btn primary" disabled={busy || readOnly || !preview.summary.creatable}
                           onClick={() => void run()}>
                     {busy ? "取り込み中…" : `${preview.summary.creatable} 件を台帳に入れる`}
                   </button>
                   <span className="faint">
-                    {preview.summary.creatable
+                    {readOnly ? "いまは読み取り専用です。試算までで、入れるのは本番で"
+                      : preview.summary.creatable
                       ? "押すと番号が振られます。決定した文書は取り消せません"
                       : "作れる束がありません。上の不備を直して CSV を上げ直してください"}
                   </span>

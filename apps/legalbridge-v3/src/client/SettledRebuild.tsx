@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, saveCsv } from "./api.js";
 import { CsvBar } from "./CsvBar.js";
+import { useReadOnly } from "./read-only.js";
 import { TeardownPanel } from "./TeardownPanel.js";
 import { SettledImport, DiffPanel } from "./SettledImport.js";
 import type { SettledDiff } from "../server/documents/settled-diff.js";
@@ -43,6 +44,8 @@ export function SettledRebuild(
     onClose: () => void;
   }
 ) {
+  /** 予備系は読み取り専用。①〜③ は読むだけなのでできる。④⑤ は台帳が動くので止める。 */
+  const readOnly = useReadOnly();
   const [step, setStep] = useState(0);
   /** いちばん先まで行った手。戻るのは自由、飛ばして先へは行かせない。 */
   const [far, setFar] = useState(0);
@@ -171,6 +174,12 @@ export function SettledRebuild(
         </div>
 
         <div className="step-body stack">
+          {readOnly && (
+            <div className="note">
+              いまは読み取り専用です。① 書き出す〜③ 確かめる まではできますが、
+              ④ 旧分を畳む と ⑤ 入れ直す は本番でしかできません。
+            </div>
+          )}
           {error && <div className="alert">{error}</div>}
 
           {step === 0 && (
@@ -300,7 +309,9 @@ export function SettledRebuild(
 
               {!plan && !tornDown && imported === null && (
                 <div className="row">
-                  <button className="btn" disabled={busy} onClick={() => void planTeardown()}>
+                  <button className="btn" disabled={busy || readOnly}
+                    title={readOnly ? "読み取り専用です" : undefined}
+                    onClick={() => void planTeardown()}>
                     {busy ? "調べています…" : "何が畳まれるか見る"}
                   </button>
                   {/* 畳むものが無い（新規に入れるだけ）案件もある。 */}

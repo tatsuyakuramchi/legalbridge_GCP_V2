@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { CsvBar } from "./CsvBar.js";
+import { useReadOnly } from "./read-only.js";
 import { api, ApiError } from "./api.js";
 
 interface Spec {
@@ -29,6 +30,7 @@ const STATUS_LABEL: Record<Mode, Record<RowOutcome["status"], string>> = {
  * マスタを壊したあとにしか気づけない。
  */
 export function CsvImport({ initialKind }: { initialKind?: string } = {}) {
+  const readOnly = useReadOnly();
   const [specs, setSpecs] = useState<Spec[]>([]);
   const [kind, setKind] = useState<string>(initialKind ?? "parties");
   /**
@@ -133,9 +135,11 @@ export function CsvImport({ initialKind }: { initialKind?: string } = {}) {
           <button className="btn" onClick={() => run(true)} disabled={busy || !csv.trim()}>
             {busy ? "確認中…" : "試算する"}
           </button>
-          <button className="btn primary" onClick={() => run(false)} disabled={busy || !canApply}>
+          <button className="btn primary" onClick={() => run(false)} disabled={busy || readOnly || !canApply}
+                  title={readOnly ? "いまは読み取り専用です。試算までで、登録は本番で" : undefined}>
             {updating ? "更新する" : "登録する"}{report?.dryRun ? `（${report.ok} 件）` : ""}
           </button>
+          {readOnly && <span className="faint">いまは読み取り専用です。試算まで</span>}
           {!canApply && csv.trim() && (
             <span className="faint">まず試算してください。結果を見ないと登録できません</span>
           )}
