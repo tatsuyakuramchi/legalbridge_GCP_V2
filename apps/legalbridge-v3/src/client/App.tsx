@@ -34,16 +34,19 @@ const NAV: Array<{ section: string; items: Array<{ view: View; label: string }> 
     { view: "conditions", label: "条件明細" },
     { view: "works", label: "作品" },
     { view: "parties", label: "取引先・担当" },
-    { view: "documents", label: "文書" },
-    // 文書とお金のあいだ。予定 → 実績 → 決済文書 → 支払 を1本の表で進める
-    // ところなので、紙の話と金の話の継ぎ目に置く。
+    { view: "documents", label: "文書" }
+  ] },
+  // 文書とお金のあいだ。予定 → 実績 → 決済文書 → 支払 を1本の表で進める
+  // ところなので、紙の話と金の話の継ぎ目に、見出しを付けて置く
+  // （見出しが無いと「横断で見る」の続きに読めて、何をする所か分からなかった）。
+  { section: "お金の流れ", items: [
     { view: "closing", label: "支払文書処理" },
     { view: "money", label: "お金" }
   ] },
   { section: "監視・運用", items: [
     // 条件を直したあとに取り残された金額・日付を集めて直す。案件をまたぐので
-    // 工程表（案件1件）とは別の入口にする。
-    { view: "drift", label: "金額の直し" },
+    // 工程表（案件1件）とは別の入口にする。ホームの札「金額の取り残し」と同じ語にする。
+    { view: "drift", label: "金額の取り残し" },
     { view: "flows", label: "フロー監視" },
     { view: "ops", label: "運用" }
   ] }

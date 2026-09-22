@@ -330,6 +330,15 @@ export function HomeWorkspace(
         <p>条件を起点に、期限・消化・整合の三つだけを見る。画面ごとの集計差は生じない。</p>
       </header>
 
+      {/* 初めての人が「どこから始めるか」を探さなくて済むように、順番を 1 行で。 */}
+      <div className="note">
+        初めての取引はここから：<b>案件を登録</b> → 相手先 → 契約 → 条件明細 → 文書 → 支払
+        <button className="btn btn-sm primary" style={{ marginLeft: 10 }} onClick={() => onGo("matters")}>
+          案件を登録する
+        </button>
+        <span className="faint" style={{ marginLeft: 8 }}>案件の中の工程表が、次にやることを順に出します</span>
+      </div>
+
       {summary && (
         <div className="tiles">
           <button className="tile" onClick={() => onGo("matters")}>

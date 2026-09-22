@@ -29,7 +29,10 @@ button,input,select{font:inherit;color:inherit}
 
 .app{display:grid;grid-template-columns:210px minmax(0,1fr);min-height:100vh}
 .rail{background:var(--surface);border-right:1px solid var(--line);padding:16px 0 12px;
-  display:flex;flex-direction:column;gap:2px;position:sticky;top:0;height:100vh}
+  display:flex;flex-direction:column;gap:2px;position:sticky;top:0;height:100vh;
+  /* 画面が低い・拡大しているとき、下の項目（運用・アカウント）が届かなくなっていた。
+     レール自体を縦に送れるようにする。 */
+  overflow-y:auto;overflow-x:hidden}
 .wordmark{padding:0 18px 14px;display:flex;flex-direction:column}
 .wordmark b{font-size:16px;letter-spacing:.05em}
 .wordmark span{font-size:10px;letter-spacing:.16em;color:var(--faint)}
@@ -642,7 +645,8 @@ a.btn{text-decoration:none}
 .ask-help{font-size:11.5px;color:var(--faint);margin:2px 0 8px}
 .opt{display:block;padding:6px 8px;border-radius:6px;font-size:12px;border:1px solid transparent}
 .opt.on{background:var(--surface);border-color:var(--line)}
-.sub{margin:4px 0 0 26px;display:flex;flex-direction:column;gap:4px}
+/* .sub は tile・graph-row で使っているので別名にする。 */
+.ask-sub{margin:4px 0 0 26px;display:flex;flex-direction:column;gap:4px}
 .btn.danger{background:var(--out);border-color:var(--out);color:#fff}
 .btn.danger:disabled{opacity:.5}
 table.compact th,table.compact td{padding:4px 8px}

@@ -225,7 +225,7 @@ export function DriftWorkspace(
 
   return (
     <div className="stack">
-      <h1>金額の直し</h1>
+      <h1>金額の取り残し</h1>
       <p className="lede">
         条件や予定を直したあとに取り残された金額・日付を、ここだけで揃えます。
         決定済みの文書は書き換えられないので、訂正版の下書きを作るところまでを1回で行います。

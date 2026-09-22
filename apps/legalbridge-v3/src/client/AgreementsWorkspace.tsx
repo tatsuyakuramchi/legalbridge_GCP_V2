@@ -516,7 +516,7 @@ function AgreementCreate({ preset, onDone, onCancel }: {
               {" "}<b>はい</b><span className="faint">　どれですか</span>
             </label>
             {hasConditions && (
-              <div className="sub">
+              <div className="ask-sub">
                 {(["master", "supplement", "standalone"] as AgreementKind[]).map((k) => (
                   <label key={k} className={`opt${kind === k ? " on" : ""}`}>
                     <input type="radio" name="kind" checked={kind === k} onChange={() => setKind(k)} />
