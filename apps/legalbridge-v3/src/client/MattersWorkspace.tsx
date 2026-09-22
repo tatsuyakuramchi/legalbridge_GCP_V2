@@ -21,6 +21,9 @@ import { MatterEvents } from "./MatterEvents.js";
 import { MatterPayments } from "./MatterPayments.js";
 import { MatterGraph } from "./MatterGraph.js";
 import { Relations, type EntityKind } from "./Relations.js";
+import { AxisPanel, ContinuePanel, FamilyPanel, MatterKindTags, StatusPanel,
+         searchMatters, searchWorks, treeOrder } from "./MatterAxis.js";
+import { BUSINESS_LINE_LABEL } from "./labels.js";
 
 
 
@@ -250,7 +253,7 @@ export function MattersWorkspace(
     <section className={`workspace${selected ? " picked" : ""}${selected && tab === "grid" ? " fullwidth" : ""}`}>
       <header className="workspace-head">
         <h1>案件</h1>
-        <p>すべての作業の入口。取引モデルが扱うものを決め、進め方が文書の作り方を決める。条件・文書・支払・連絡はその下にぶら下がる。</p>
+        <p>すべての作業の入口。案件は 作品ごと（制作委託 → 許諾、または許諾のみ）か 業務ごと（店舗事業・管理事業）に立て、どちらにも属さないものは その他案件。条件・文書・支払・連絡はその下にぶら下がり、付帯する契約が終わるまで開いたまま。</p>
       </header>
 
       <div className="row" style={{ marginBottom: 10 }}>
@@ -266,22 +269,47 @@ export function MattersWorkspace(
         <CreateForm
           title="案件の登録"
           path="/matters"
-          initial={{ kind: "single" }}
+          initial={{ kind: "work", production: "" }}
           fields={[
-            { name: "title", label: "案件名", required: true },
-            { name: "kind", label: "取引モデル", type: "select", required: true,
+            { name: "kind", label: "案件の種類", type: "select", required: true,
               options: (["work", "outsourcing", "single"] as const).map((k) => ({
-                value: k, label: KIND_LABEL[k]
+                value: k, label: KIND_LABEL[k], hint: MATTER_KIND_HINT[k]
               })),
-              hint: "何を扱うか。使える条件の種類・必要な文書・検査をこれが決める。後から変えると影響が大きい" },
+              hint: (v) => MATTER_KIND_HINT[v.kind] ?? "" },
+            // 作品案件：作品 1 つが軸。制作委託の有無は人が決める（未決定なら条件から推す）。
+            { name: "workId", label: "作品", type: "search", search: searchWorks,
+              placeholder: "作品名・作品コードで探す", visibleWhen: (v) => v.kind === "work",
+              hint: "案件の軸。件名は「作品名｜制作＋許諾」または「作品名｜許諾のみ」で自動で付く" },
+            { name: "production", label: "制作委託", type: "select",
+              options: [{ value: "true", label: "あり（制作委託 → 許諾）" },
+                        { value: "false", label: "なし（許諾のみ）" }],
+              visibleWhen: (v) => v.kind === "work",
+              hint: "どちらか分からなければ空のまま（未決定）。委託料の条件や 成果物が受注者に帰属する条件を繋ぐと自動で「あり」になる" },
+            // 業務案件：事業区分と業務名が軸。
+            { name: "businessLine", label: "事業区分", type: "select",
+              options: [{ value: "store", label: BUSINESS_LINE_LABEL.store },
+                        { value: "admin", label: BUSINESS_LINE_LABEL.admin }],
+              visibleWhen: (v) => v.kind === "outsourcing",
+              hint: "店舗事業の業務委託か、管理事業の業務委託か" },
+            { name: "businessName", label: "業務名", placeholder: "例：店舗内装デザイン",
+              visibleWhen: (v) => v.kind === "outsourcing",
+              hint: "件名は「事業区分｜相手先｜業務名」で自動で付く" },
+            { name: "title", label: (v) => v.kind === "single" ? "案件名" : "件名（空なら自動で付く）",
+              hint: (v) => v.kind === "single"
+                ? "その他案件は軸を持たないので、件名は人が付ける"
+                : "入れると手で付けた件名になる（軸を変えても組み直さない）" },
+            { name: "parentId", label: "親の案件", type: "search", search: searchMatters([]),
+              placeholder: "プロジェクトなど、上に置く案件を探す",
+              hint: "プロジェクト → 作品 → 補助の業務委託 のように孫まで置ける。無ければ空" },
             { name: "documentStyle", label: "進め方", type: "select",
               options: (["counterparty_review", "own_draft", "own_template"] as const).map((k) => ({
                 value: k, label: DOCUMENT_STYLE_LABEL[k]
               })),
               hint: "どうやって文書を作るか。分からなければ空のままでよい（後から詳細で入れられる）" },
             { name: "counterpartyId", label: "相手先", type: "search",
-              search: searchParties, placeholder: "取引先名・コードで探す" },
-            { name: "ownerStaffId", label: "担当者", type: "search",
+              search: searchParties, placeholder: "取引先名・コードで探す",
+              hint: (v) => v.kind === "single" ? "無くてもよい" : "作品案件・業務案件は相手先が要る" },
+            { name: "ownerStaffId", label: "担当者", type: "search", required: true,
               options: staffOptions(staff), placeholder: "氏名・部署で探す" },
             { name: "dueOn", label: "期日", type: "date" },
             { name: "requesterEmail", label: "依頼者メール" },
@@ -289,6 +317,11 @@ export function MattersWorkspace(
           ]}
           toPayload={(v) => ({
             title: text(v.title), kind: v.kind, documentStyle: text(v.documentStyle),
+            workId: v.kind === "work" ? int(v.workId) : null,
+            production: v.kind === "work" && v.production ? v.production === "true" : null,
+            businessLine: v.kind === "outsourcing" ? text(v.businessLine) : null,
+            businessName: v.kind === "outsourcing" ? text(v.businessName) : null,
+            parentId: int(v.parentId),
             counterpartyId: int(v.counterpartyId), ownerStaffId: int(v.ownerStaffId),
             dueOn: text(v.dueOn), requesterEmail: text(v.requesterEmail), remarks: text(v.remarks)
           })}
@@ -339,16 +372,22 @@ export function MattersWorkspace(
           <ListCount shown={rows.length} keyword={query} onClear={() => setKeyword("")} />
           <div className="tablewrap">
             <table>
-              <thead><tr><th>案件番号</th><th>取引モデル</th><th>件名 / 相手先</th><th>状態</th><th>期日</th></tr></thead>
+              <thead><tr><th>案件番号</th><th>種類</th><th>件名 / 相手先</th><th>状態</th><th>期日</th></tr></thead>
               <tbody>
-                {rows.map((row) => (
+                {/* 親の直下に子を置く（孫まで）。親が一覧に無い子は上の階層に出す。 */}
+                {treeOrder(rows).map(({ row, depth }) => (
                   <tr key={row.id} className={row.id === selected ? "sel" : ""}
                       tabIndex={0} aria-selected={row.id === selected}
                       onClick={() => setSelected(row.id)}
                       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelected(row.id); } }}>
                     <td className="code">{row.matterNo ?? `#${row.id}`}</td>
-                    <td><span className="tag accent">{KIND_LABEL[row.kind]}</span></td>
-                    <td>{row.title}<div className="faint">{row.counterparty?.name ?? "—"}</div></td>
+                    <td><MatterKindTags m={row} /></td>
+                    <td style={depth ? { paddingLeft: 12 + depth * 16 } : undefined}>
+                      {depth > 0 && <span className="faint" style={{ marginRight: 4 }}>└</span>}
+                      {row.title}
+                      {row.parentNo && !depth && <span className="faint" style={{ marginLeft: 6 }}>（親：{row.parentNo}）</span>}
+                      <div className="faint">{row.counterparty?.name ?? "—"}</div>
+                    </td>
                     <td>
                       <StatusTag kind="matter" value={row.status} />
                       {/* 定額の条件が全部払い切れた案件。支払が終わったかを一覧で見分ける。 */}
@@ -380,7 +419,7 @@ export function MattersWorkspace(
               <div className="panel">
                 <div className="panel-hd">
                   <h2 className="code">{detail.matterNo ?? `#${detail.id}`}</h2>
-                  <span className="tag accent">{KIND_LABEL[detail.kind]}</span>
+                  <MatterKindTags m={detail} />
                   <StatusTag kind="matter" value={detail.status} />
                   {detail.mergedIntoId && <span className="tag warn">統合済み</span>}
                   {!detail.mergedIntoId && !merging && (
@@ -451,7 +490,9 @@ export function MattersWorkspace(
                             ? () => onRegisterAgreement(detail.counterparty!.id, detail.counterparty!.name ?? null)
                             : undefined} />
                   <dl className="dl">
-                    <dt>取引モデル</dt>
+                    <AxisPanel detail={detail} onChanged={relink} onError={setError} />
+                    <StatusPanel detail={detail} onChanged={relink} onError={setError} />
+                    <dt>種類</dt>
                     <dd>
                       {kindEdit ? (
                         <div className="row">
@@ -472,7 +513,7 @@ export function MattersWorkspace(
                       <div className="faint">{MATTER_KIND_HINT[detail.kind]}</div>
                       {kindEdit && (
                         <div className="faint">
-                          変えると扱える条件の種類と工程が変わります。
+                          変えると扱える条件の種類と工程が変わります（作品案件は許諾料・製品に加えて委託料系も持てる）。
                           いま繋がっている条件が使えなくなる組み合わせは断られます
                         </div>
                       )}
@@ -539,6 +580,9 @@ export function MattersWorkspace(
                   </dl>
                 </div>
               </div>
+
+              <FamilyPanel detail={detail} onOpen={(id) => setSelected(id)} onChanged={relink} onError={setError} />
+              <ContinuePanel detail={detail} />
 
               <div className="panel">
                 <div className="panel-hd"><h2>この案件の中身</h2></div>

@@ -380,10 +380,14 @@ export function createRoutes(database: Transactable) {
 
   router.get("/matters", asyncRoute(async (req, res) => {
     const kind = req.query.kind as "work" | "outsourcing" | "single" | undefined;
+    const parent = req.query.parentId === undefined ? undefined
+      : req.query.parentId === "" || req.query.parentId === "null" ? null
+      : Number(req.query.parentId);
     res.json({ matters: await matters.list({
       keyword: String(req.query.q ?? ""),
       kind: kind && ["work", "outsourcing", "single"].includes(kind) ? kind : undefined,
-      openOnly: req.query.open === "1"
+      openOnly: req.query.open === "1",
+      parentId: parent === undefined || (parent !== null && !Number.isFinite(parent)) ? undefined : parent
     }) });
   }));
 
@@ -999,8 +1003,14 @@ export function createRoutes(database: Transactable) {
     }));
 
   const matterSchema = z.object({
-    title: z.string().trim().min(1).max(300),
+    // 件名は軸（作品／事業区分・相手先・業務名）から組めるので任意。その他案件は必須（サービス側で確認）。
+    title: z.string().trim().max(300).nullable().optional(),
     kind: z.enum(["work", "outsourcing", "single"]),
+    workId: z.coerce.number().int().positive().nullable().optional(),
+    businessLine: z.enum(["store", "admin"]).nullable().optional(),
+    businessName: z.string().trim().max(300).nullable().optional(),
+    production: z.boolean().nullable().optional(),
+    parentId: z.coerce.number().int().positive().nullable().optional(),
     documentStyle: z.enum(["counterparty_review", "own_draft", "own_template"])
       .nullable().optional(),
     ownerStaffId: z.coerce.number().int().positive().nullable().optional(),
@@ -1032,6 +1042,43 @@ export function createRoutes(database: Transactable) {
    * 繋がっている条件が新しいモデルで使えないときは断る（理由と条件番号を返す）。
    */
   const matterKindSchema = z.object({ kind: z.enum(["work", "outsourcing", "single"]) });
+
+  // A-044 案件の軸（作品／事業区分・業務名／制作委託の有無／件名の手入力）。
+  const matterAxisSchema = z.object({
+    title: z.string().trim().max(300).nullable().optional(),
+    workId: z.coerce.number().int().positive().nullable().optional(),
+    businessLine: z.enum(["store", "admin"]).nullable().optional(),
+    businessName: z.string().trim().max(300).nullable().optional(),
+    production: z.boolean().nullable().optional()
+  });
+  router.patch("/matters/:id/axis", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await matterWrites.updateAxis(
+        Number(req.params.id), matterAxisSchema.parse(req.body ?? {}), actor(res)));
+    }));
+
+  // 親子（プロジェクト → 作品 → 補助の業務委託 まで、孫を許す）。
+  const matterParentSchema = z.object({
+    parentId: z.coerce.number().int().positive().nullable()
+  });
+  router.patch("/matters/:id/parent", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { parentId } = matterParentSchema.parse(req.body ?? {});
+      res.json(await matterWrites.setParent(Number(req.params.id), parentId, actor(res)));
+    }));
+
+  // 関連（並列。どちらの案件も独立したまま）。
+  const matterRelationSchema = z.object({ matterId: z.coerce.number().int().positive() });
+  router.post("/matters/:id/relations", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { matterId } = matterRelationSchema.parse(req.body ?? {});
+      res.json(await matterWrites.relate(Number(req.params.id), matterId, actor(res)));
+    }));
+  router.delete("/matters/:id/relations/:otherId", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await matterWrites.relate(
+        Number(req.params.id), Number(req.params.otherId), actor(res), true));
+    }));
   router.patch("/matters/:id/kind", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       const { kind } = matterKindSchema.parse(req.body ?? {});

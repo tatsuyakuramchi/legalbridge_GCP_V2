@@ -1,7 +1,8 @@
 import type { Transactable } from "../core/db.js";
-import { dateStr, str } from "../core/db.js";
+import { dateStr, int, str } from "../core/db.js";
+import { termHistory } from "../agreements/term-history.js";
 import { translate } from "../core/errors.js";
-import type { MatterDetail, MatterKind, MatterStatus, MatterSummary } from "../core/model.js";
+import type { MatterAgreementRef, MatterDetail, MatterKind, MatterRef, MatterStatus, MatterSummary } from "../core/model.js";
 import { ConditionRepository } from "../conditions/repository.js";
 
 function mapSummary(row: Record<string, any>): MatterSummary {
@@ -20,7 +21,27 @@ function mapSummary(row: Record<string, any>): MatterSummary {
     documentStyle: (str(row.document_style) as MatterSummary["documentStyle"]) ?? null,
     settled: { fixed: Number(row.fixed_count ?? 0), done: Number(row.done_count ?? 0) },
     mergedIntoId: row.merged_into_id ? Number(row.merged_into_id) : null,
-    mergedIntoNo: str(row.merged_into_no)
+    mergedIntoNo: str(row.merged_into_no),
+    work: row.work_id
+      ? { id: Number(row.work_id), workCode: str(row.work_code), title: String(row.work_title ?? "") }
+      : null,
+    businessLine: (str(row.business_line) as MatterSummary["businessLine"]) ?? null,
+    businessName: str(row.business_name),
+    production: row.production === null || row.production === undefined ? null : Boolean(row.production),
+    parentId: row.parent_id ? Number(row.parent_id) : null,
+    parentNo: str(row.parent_no),
+    parentTitle: str(row.parent_title),
+    childCount: Number(row.child_count ?? 0),
+    titleManual: row.title_manual !== false,
+    remappedFrom: str(row.remapped_from)
+  };
+}
+
+function mapRef(row: Record<string, any>): MatterRef {
+  return {
+    id: Number(row.id), matterNo: str(row.matter_no), title: String(row.title ?? ""),
+    kind: row.kind as MatterKind, status: row.status as MatterStatus,
+    counterparty: str(row.party_name)
   };
 }
 
@@ -29,7 +50,12 @@ const SUMMARY_COLUMNS = `
   m.merged_into_id, mi.matter_no AS merged_into_no,
   s.name AS owner_name,
   p.id AS party_id, p.name AS party_name, p.kind AS party_kind,
-  fx.fixed_count, fx.done_count`;
+  fx.fixed_count, fx.done_count,
+  m.work_id, w.work_code, w.title AS work_title,
+  m.business_line, m.business_name, m.production, m.parent_id,
+  mp.matter_no AS parent_no, mp.title AS parent_title,
+  (SELECT count(*)::int FROM matters k WHERE k.parent_id = m.id) AS child_count,
+  m.title_manual, m.remapped_from`;
 
 // 定額の条件が何本あって何本が払い切れたか。一覧に「支払済み」の札を出すため。
 const SUMMARY_FROM = `
@@ -37,6 +63,8 @@ const SUMMARY_FROM = `
   LEFT JOIN staff   s ON s.id = m.owner_staff_id
   LEFT JOIN parties p ON p.id = m.counterparty_id
   LEFT JOIN matters mi ON mi.id = m.merged_into_id
+  LEFT JOIN works   w  ON w.id = m.work_id
+  LEFT JOIN matters mp ON mp.id = m.parent_id
   LEFT JOIN LATERAL (
     -- 改訂の予約中は旧版と新版が両方 active なので系列で1本と数え、
     -- 支払の割当は旧版の id に残るので系列の全版で足す。
@@ -62,7 +90,9 @@ export class MatterRepository {
     this.conditions = new ConditionRepository(database);
   }
 
-  async list(query: { keyword?: string; kind?: MatterKind; openOnly?: boolean; limit?: number } = {}) {
+  async list(query: { keyword?: string; kind?: MatterKind; openOnly?: boolean; limit?: number;
+                      /** 親で絞る。プロジェクトの子だけを出す。 */
+                      parentId?: number | null } = {}) {
     // 統合済みの案件は一覧に出さない。開けば統合先へ飛ぶ。
     const where: string[] = ["m.merged_into_id IS NULL"];
     const params: unknown[] = [];
@@ -73,6 +103,7 @@ export class MatterRepository {
     }
     if (query.kind) { params.push(query.kind); where.push(`m.kind = $${params.length}`); }
     if (query.openOnly) where.push("m.status NOT IN ('done','canceled')");
+    if (query.parentId) { params.push(query.parentId); where.push(`m.parent_id = $${params.length}`); }
     params.push(Math.min(Math.max(query.limit ?? 200, 1), 500));
     try {
       const r = await this.database.query(
@@ -92,7 +123,7 @@ export class MatterRepository {
     const row = head.rows[0] as Record<string, any> | undefined;
     if (!row) return null;
 
-    const [conditions, documents, payments, communications, links, tasks] = await Promise.all([
+    const [conditions, documents, payments, communications, links, tasks, family, agreements] = await Promise.all([
       // 出版は作品 80 点・条件 170 本で1案件になる。100 だと条件タブに出ない
       // 条件ができ、案件から実績も支払も立てられなくなる。
       this.conditions.list({ matterId: id, limit: 500 }),
@@ -100,15 +131,73 @@ export class MatterRepository {
       this.payments(id),
       this.communications(id),
       this.links(id),
-      this.tasks(id)
+      this.tasks(id),
+      this.family(id, row.parent_id ? Number(row.parent_id) : null),
+      this.agreements(id)
     ]);
 
     return {
       ...mapSummary(row),
       remarks: str(row.remarks),
       driveFolderUrl: str(row.drive_folder_url),
-      conditions, documents, payments, communications, links, tasks
+      conditions, documents, payments, communications, links, tasks,
+      ...family, agreements
     };
+  }
+
+  /** 親・子・関連。案件どうしの繋がり（A-044）。 */
+  private async family(id: number, parentId: number | null) {
+    const REF = `SELECT m.id, m.matter_no, m.title, m.kind, m.status, p.name AS party_name
+                   FROM matters m LEFT JOIN parties p ON p.id = m.counterparty_id`;
+    const [parent, children, related] = await Promise.all([
+      parentId ? this.database.query(`${REF} WHERE m.id = $1`, [parentId]) : Promise.resolve({ rows: [] as any[] }),
+      this.database.query(`${REF} WHERE m.parent_id = $1 ORDER BY m.id`, [id]),
+      this.database.query(
+        `${REF} WHERE m.id IN (SELECT b_id FROM matter_relations WHERE a_id = $1
+                              UNION SELECT a_id FROM matter_relations WHERE b_id = $1)
+          ORDER BY m.id`, [id])
+    ]);
+    return {
+      parent: parent.rows[0] ? mapRef(parent.rows[0] as any) : null,
+      children: (children.rows as any[]).map(mapRef),
+      related: (related.rows as any[]).map(mapRef)
+    };
+  }
+
+  /**
+   * 付帯する契約と、いまの終了日。完了の判定と「継続」の欄に使う。
+   * 条件の合意と文書の合意から辿る。補助文書は親に畳んで見る。
+   */
+  private async agreements(id: number): Promise<MatterAgreementRef[]> {
+    const r = await this.database.query(
+      `SELECT DISTINCT a.id, a.agreement_no, a.title, a.kind, a.status, a.effective_on, a.executed_on,
+              a.expires_on, a.auto_renewal, a.renewal_months, a.renewal_stopped_on, a.terminated_on
+         FROM agreements a
+        WHERE COALESCE(a.kind, 'master') IN ('master', 'standalone')
+          AND (a.id IN (SELECT COALESCE(pa.id, x.id) FROM matter_links ml
+                          JOIN conditions c ON ml.target_type = 'condition' AND c.id::text = ml.target_ref
+                          JOIN agreements x ON x.id = c.agreement_id
+                          LEFT JOIN agreements pa ON pa.id = x.parent_id
+                         WHERE ml.matter_id = $1)
+            OR a.id IN (SELECT COALESCE(pa.id, x.id) FROM documents d
+                          JOIN agreements x ON x.id = d.agreement_id
+                          LEFT JOIN agreements pa ON pa.id = x.parent_id
+                         WHERE d.matter_id = $1))
+        ORDER BY a.id`, [id]);
+    const today = new Date().toISOString().slice(0, 10);
+    return (r.rows as any[]).map((a) => {
+      const h = termHistory({
+        termStart: dateStr(a.effective_on) ?? dateStr(a.executed_on), termEnd: dateStr(a.expires_on),
+        autoRenew: a.auto_renewal === true, renewMonths: int(a.renewal_months),
+        renewStoppedOn: dateStr(a.renewal_stopped_on), terminatedOn: dateStr(a.terminated_on)
+      }, today);
+      const live = String(a.status) === "executed" && !a.terminated_on
+        && (h.currentEnd === null || h.currentEnd >= today);
+      return {
+        id: Number(a.id), agreementNo: str(a.agreement_no), title: String(a.title ?? ""),
+        kind: String(a.kind ?? "master"), status: String(a.status), currentEnd: h.currentEnd, live
+      };
+    });
   }
 
   private async documents(id: number) {

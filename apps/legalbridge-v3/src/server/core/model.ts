@@ -178,11 +178,46 @@ export interface MatterSummary {
   /** 統合先（A-029）。入っていればこの案件は統合済みで、中身は統合先にある。 */
   mergedIntoId: number | null;
   mergedIntoNo: string | null;
+  /** 作品案件の軸（A-044）。 */
+  work: WorkRef | null;
+  /** 業務案件の事業区分と業務名。 */
+  businessLine: "store" | "admin" | null;
+  businessName: string | null;
+  /** 作品案件に制作委託があるか。null は未決定。 */
+  production: boolean | null;
+  /** 親案件（プロジェクト）。孫まで許す。 */
+  parentId: number | null;
+  parentNo: string | null;
+  parentTitle: string | null;
+  childCount: number;
+  /** 件名を人が上書きしたか。false なら軸から自動で組む。 */
+  titleManual: boolean;
+  /** 旧 3 種類から規則で移した印（元の kind）。 */
+  remappedFrom: string | null;
+}
+
+/** 案件の見出しだけ（親・子・関連の一覧に使う）。 */
+export interface MatterRef {
+  id: number; matterNo: string | null; title: string; kind: MatterKind; status: MatterStatus;
+  counterparty: string | null;
+}
+
+/** 案件に付帯する契約と、いまの終了日。完了の判定に使う。 */
+export interface MatterAgreementRef {
+  id: number; agreementNo: string | null; title: string; kind: string; status: string;
+  currentEnd: string | null;
+  /** 生きているか（締結済みで、終了日が来ていない・解除されていない）。 */
+  live: boolean;
 }
 
 export interface MatterDetail extends MatterSummary {
   remarks: string | null;
   driveFolderUrl: string | null;
+  parent: MatterRef | null;
+  children: MatterRef[];
+  related: MatterRef[];
+  /** 付帯する契約（条件と文書から辿る）。 */
+  agreements: MatterAgreementRef[];
   /** 案件は所有せず参照するだけ。ここに並ぶのは全部リンク。 */
   conditions: ConditionSummary[];
   documents: Array<{ id: number; documentNo: string | null; status: string;

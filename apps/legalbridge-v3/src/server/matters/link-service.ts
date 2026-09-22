@@ -2,7 +2,7 @@ import { dateStr, inTransaction, type Queryable, type Transactable } from "../co
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { buildFlow, currentStep, type DocumentStyle, type FlowFacts, type FlowStep } from "./flow.js";
-import { MATTER_NUMBER, type MatterKind } from "./write-service.js";
+import { MATTER_NUMBER, liveAgreementsOf, type MatterKind } from "./write-service.js";
 import { allocateNumber } from "../core/numbering.js";
 
 /**
@@ -21,18 +21,22 @@ import { allocateNumber } from "../core/numbering.js";
  * 案件の種別が中身を決める、という V3 の設計をそのまま選択肢にする。
  */
 export const CONDITION_KINDS_BY_MATTER: Record<MatterKind, Array<{ value: string; label: string }>> = {
+  // 作品案件は 制作委託 → 許諾 の流れをひとつで包むので、委託料系も繋げる。
+  // 委託料系を繋いだ時点で「制作委託あり」に倒す（linkCondition）。
   work: [
     { value: "license", label: "許諾料" },
-    { value: "product", label: "製品（グッズ等）" }
+    { value: "product", label: "製品（グッズ等）" },
+    { value: "service", label: "委託料" },
+    { value: "expense", label: "実費" },
+    { value: "fee", label: "手数料" }
   ],
   outsourcing: [
     { value: "service", label: "委託料" },
     { value: "expense", label: "実費" },
     { value: "fee", label: "手数料" }
   ],
-  // 文書作成でも、金銭の条件を持つ文書はある（自社のひな形から出す覚書など）。
-  // 中身が決め打ちにならないので、どの種類も繋げるようにしておく。
-  // 進め方が自社テンプレートドラフト型なら、ひな形の明細は条件から埋まる。
+  // その他案件（新しい契約スキームの立案・プロジェクト単位の運用）でも、
+  // 金銭の条件を持つことはある。中身が決め打ちにならないので、どの種類も繋げる。
   single: [
     { value: "license", label: "許諾料" },
     { value: "product", label: "製品（グッズ等）" },
@@ -197,12 +201,14 @@ export class MatterLinkService {
     client: Queryable, matterId: number, conditionId: number, actor: string
   ) {
     const m = await client.query(
-      "SELECT id, matter_no, kind FROM matters WHERE id = $1", [matterId]);
-    const matter = m.rows[0] as { id: number; matter_no: string | null; kind: MatterKind } | undefined;
+      "SELECT id, matter_no, kind, production FROM matters WHERE id = $1", [matterId]);
+    const matter = m.rows[0] as
+      { id: number; matter_no: string | null; kind: MatterKind; production: boolean | null } | undefined;
     if (!matter) throw new DomainError("NOT_FOUND", `案件 ${matterId} が見つかりません`);
 
     const c = await client.query(
-      "SELECT id, condition_no, kind, status FROM conditions WHERE id = $1", [conditionId]);
+      "SELECT id, condition_no, kind, status, deliverable_ownership FROM conditions WHERE id = $1",
+      [conditionId]);
     const condition = c.rows[0] as any;
     if (!condition) throw new DomainError("NOT_FOUND", `条件 ${conditionId} が見つかりません`);
 
@@ -232,6 +238,17 @@ export class MatterLinkService {
         actor, action: "matter.attach_condition", targetType: "matter", targetId: matterId,
         detail: { conditionId, conditionNo: condition.condition_no, matterNo: matter.matter_no }
       });
+      // 作品案件に委託料系の条件、または成果物が受注者に帰属する条件を繋いだら、
+      // 「制作委託あり」が未決定のうちは自動で あり に倒す。人が なし と決めたものは触らない。
+      const productionLike = ["service", "expense", "fee"].includes(String(condition.kind))
+        || condition.deliverable_ownership === "contractor";
+      if (matter.kind === "work" && matter.production === null && productionLike) {
+        await client.query("UPDATE matters SET production = true WHERE id = $1", [matterId]);
+        await recordAudit(client, {
+          actor, action: "matter.update", targetType: "matter", targetId: matterId,
+          detail: { production: true, reason: "condition", conditionId }
+        });
+      }
     }
     return { attached: added, conditionId, reason: added ? undefined : "すでに繋がっています" };
   }
@@ -304,14 +321,16 @@ export class MatterLinkService {
   async flow(matterId: number): Promise<{ steps: FlowStep[]; current: FlowStep | null; facts: FlowFacts }> {
     try {
       const head = await this.database.query(
-        "SELECT id, kind, status, document_style FROM matters WHERE id = $1", [matterId]);
+        `SELECT m.id, m.kind, m.status, m.document_style, m.work_id, m.production, w.title AS work_title
+           FROM matters m LEFT JOIN works w ON w.id = m.work_id WHERE m.id = $1`, [matterId]);
       const matter = head.rows[0] as
-        { kind: MatterKind; status: string; document_style: string | null } | undefined;
+        { kind: MatterKind; status: string; document_style: string | null;
+          work_id: number | string | null; production: boolean | null; work_title: string | null } | undefined;
       if (!matter) throw new DomainError("NOT_FOUND", `案件 ${matterId} が見つかりません`);
 
       const conditions = await this.database.query(
-        `SELECT c.id, c.status, c.work_id, a.agreement_no, a.status AS agreement_status,
-                a.kind AS agreement_kind
+        `SELECT c.id, c.status, c.work_id, c.kind, c.deliverable_ownership,
+                a.agreement_no, a.status AS agreement_status, a.kind AS agreement_kind
            FROM matter_links ml
            JOIN conditions c ON c.id::text = ml.target_ref
            LEFT JOIN agreements a ON a.id = c.agreement_id
@@ -377,6 +396,14 @@ export class MatterLinkService {
                 AND c.pricing_model IN ('fixed', 'unit_rate') AND COALESCE(c.flat_amount, 0) > 0`, [ids])
         : { rows: [{ fixed: 0, done: 0 }] };
 
+      const tasks = await this.database.query(
+        `SELECT count(*)::int AS total, count(*) FILTER (WHERE status = 'done')::int AS done
+           FROM tasks WHERE matter_id = $1`, [matterId]);
+      const children = await this.database.query(
+        `SELECT count(*)::int AS total, count(*) FILTER (WHERE status <> 'done')::int AS open
+           FROM matters WHERE parent_id = $1`, [matterId]);
+      const live = await liveAgreementsOf(this.database, matterId);
+
       const byType: Record<string, number> = {};
       let latest: string | null = null;
       for (const e of events.rows as any[]) {
@@ -414,6 +441,23 @@ export class MatterLinkService {
         fixedConditions: {
           total: Number((settled.rows[0] as any)?.fixed ?? 0),
           done: Number((settled.rows[0] as any)?.done ?? 0)
+        },
+        workId: matter.work_id === null || matter.work_id === undefined ? null : Number(matter.work_id),
+        workTitle: matter.work_title ?? null,
+        production: matter.production ?? null,
+        serviceConditions: rows.filter((r) => r.status === "active"
+          && ["service", "expense", "fee"].includes(String(r.kind))).length,
+        licenseConditions: rows.filter((r) => r.status === "active"
+          && ["license", "product"].includes(String(r.kind))).length,
+        contractorOwned: rows.filter((r) => r.deliverable_ownership === "contractor").length,
+        liveAgreements: live.map((a) => ({ agreementNo: a.agreementNo, kind: a.kind, currentEnd: a.currentEnd })),
+        children: {
+          total: Number((children.rows[0] as any)?.total ?? 0),
+          open: Number((children.rows[0] as any)?.open ?? 0)
+        },
+        tasks: {
+          total: Number((tasks.rows[0] as any)?.total ?? 0),
+          done: Number((tasks.rows[0] as any)?.done ?? 0)
         }
       };
 
@@ -424,16 +468,15 @@ export class MatterLinkService {
 }
 
 const labelOf = (kind: MatterKind) =>
-  ({ work: "ライセンス", outsourcing: "業務委託", single: "文書作成" })[kind] ?? kind;
+  ({ work: "作品案件", outsourcing: "業務案件", single: "その他案件" })[kind] ?? kind;
 
 /**
- * 条件の種類から取引モデルを決める。CONDITION_KINDS_BY_MATTER の逆引き。
- * 対応を二箇所に書くとずれるので、表から引く。
+ * 条件の種類から案件の種類を決める（条件から案件を新しく作るとき）。
+ * 委託料系は作品案件にも繋げるが、条件だけから作るなら業務案件が自然。
+ * 許諾料・製品は作品案件。表の逆引きだと重なりで最初に見つかったものになるので、明示する。
  */
-function matterKindForCondition(conditionKind: string): MatterKind | null {
-  for (const [kind, kinds] of Object.entries(CONDITION_KINDS_BY_MATTER) as
-       Array<[MatterKind, Array<{ value: string }>]>) {
-    if (kinds.some((k) => k.value === conditionKind)) return kind;
-  }
+export function matterKindForCondition(conditionKind: string): MatterKind | null {
+  if (conditionKind === "license" || conditionKind === "product") return "work";
+  if (conditionKind === "service" || conditionKind === "expense" || conditionKind === "fee") return "outsourcing";
   return null;
 }

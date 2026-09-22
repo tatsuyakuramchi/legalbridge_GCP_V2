@@ -32,19 +32,19 @@ test("同じモデルなら何もしない", async () => {
 });
 
 test("繋がっている条件が使えなくなるなら断る（条件番号を添えて）", async () => {
-  // 業務委託の委託料が繋がったままライセンスへ変えると、辿れるのに繋ぎ直せない条件が残る。
-  const d = db([{ kind: "service", condition_no: "CL-2026-00410" }], "outsourcing");
+  // 作品案件の許諾料が繋がったまま業務案件へ変えると、辿れるのに繋ぎ直せない条件が残る。
+  const d = db([{ kind: "license", condition_no: "CL-2026-00410" }], "work");
   await assert.rejects(
-    () => new MatterWriteService(d).changeKind(3, "work", "a"),
+    () => new MatterWriteService(d).changeKind(3, "outsourcing", "a"),
     /CL-2026-00410.*先に条件を外して/s);
   assert.equal(d.find("UPDATE matters SET kind"), undefined);
 });
 
 test("新しいモデルでも使える条件なら、繋がったまま変えられる", async () => {
-  // 文書作成はどの種類も繋げるので、業務委託から移しても条件は残せる。
+  // 作品案件は制作委託を包むので、業務案件の委託料は繋がったまま移せる。
   const d = db([{ kind: "service", condition_no: "CL-2026-00410" }], "outsourcing");
-  await new MatterWriteService(d).changeKind(3, "single", "a");
-  assert.deepEqual(d.find("UPDATE matters SET kind")!.params, [3, "single"]);
+  await new MatterWriteService(d).changeKind(3, "work", "a");
+  assert.deepEqual(d.find("UPDATE matters SET kind")!.params, [3, "work"]);
 });
 
 test("無い案件は分かる理由で断る", async () => {

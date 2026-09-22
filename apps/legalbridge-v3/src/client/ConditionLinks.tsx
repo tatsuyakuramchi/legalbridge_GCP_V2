@@ -252,7 +252,7 @@ export function ConditionMatters(
 }
 
 const matterKindLabel = (kind: string) =>
-  ({ work: "ライセンス", outsourcing: "業務委託", single: "文書作成" })[kind] ?? kind;
+  ({ work: "作品案件", outsourcing: "業務案件", single: "その他案件" })[kind] ?? kind;
 
 export function ConditionScopes(
   { detail, onDone }: { detail: ConditionDetail; onDone: () => void }

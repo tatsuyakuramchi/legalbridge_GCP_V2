@@ -1627,3 +1627,100 @@ SELECT (SELECT count(*) FROM information_schema.columns
                                'terminated_on', 'renewal_months', 'renewal_stopped_on'))
      + (SELECT count(*) FROM information_schema.tables
          WHERE table_schema='v3' AND table_name='term_events') AS 列と表;
+
+-- ---------------------------------------------------------------------
+-- A-044 案件の再定義：作品案件／業務案件／その他案件、親子と関連、継続
+--
+--   案件は「1 つの依頼を受けてから終わるまで追う単位」。中身（契約・条件・
+--   文書・支払）は案件の外に残る（制御であって所有ではない。これまでどおり）。
+--
+--   kind の値は変えない。意味を読み替える。
+--     work        … 作品案件。作品 1 つを追う。制作委託（任意）→ 許諾 → 継続
+--     outsourcing … 業務案件。業務 1 つを追う（店舗事業・管理事業の業務委託）
+--     single      … その他案件。決まった軸を持たない（新しい契約スキームの
+--                   立案、プロジェクト単位の運用）。受付 → 検討 → 決定 → 完了
+--
+--     work_id        … 作品案件の軸
+--     business_line  … 業務案件の事業区分（store 店舗事業／admin 管理事業）
+--     business_name  … 業務案件の業務名
+--     production     … 作品案件に制作委託があるか。null は人がまだ決めていない。
+--                      成果物の帰属先が受注者の条件が付いたら自動で true
+--     parent_id      … 親案件。孫まで許す（プロジェクト → 作品案件 → 補助の業務案件）
+--     title_manual   … 件名を人が上書きしたか（false なら軸から自動で組む）
+--     remapped_from  … 旧 3 種類から規則で移した案件の印（元の kind）
+--
+--   関連（並列。案件そのものは独立）は matter_relations に置く。
+--   完了は、付帯する契約が全部終わり、子の案件が全部完了してから。
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.matters ADD COLUMN IF NOT EXISTS work_id bigint REFERENCES v3.works(id);
+ALTER TABLE v3.matters ADD COLUMN IF NOT EXISTS business_line text;
+ALTER TABLE v3.matters ADD COLUMN IF NOT EXISTS business_name text;
+ALTER TABLE v3.matters ADD COLUMN IF NOT EXISTS production boolean;
+ALTER TABLE v3.matters ADD COLUMN IF NOT EXISTS parent_id bigint REFERENCES v3.matters(id);
+ALTER TABLE v3.matters ADD COLUMN IF NOT EXISTS title_manual boolean NOT NULL DEFAULT true;
+ALTER TABLE v3.matters ADD COLUMN IF NOT EXISTS remapped_from text;
+COMMENT ON COLUMN v3.matters.work_id IS '作品案件の軸。';
+COMMENT ON COLUMN v3.matters.business_line IS '業務案件の事業区分。store 店舗事業／admin 管理事業。';
+COMMENT ON COLUMN v3.matters.production IS '作品案件に制作委託があるか。null は未決定。帰属先が受注者の条件が付けば自動で true。';
+COMMENT ON COLUMN v3.matters.parent_id IS '親案件。孫まで許す。';
+COMMENT ON COLUMN v3.matters.title_manual IS '件名を人が上書きしたか。false なら軸から自動で組む。';
+COMMENT ON COLUMN v3.matters.remapped_from IS '旧 3 種類から規則で移した案件の印（元の kind）。';
+DO $a044$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.matters'::regclass AND conname = 'matters_business_line_chk') THEN
+    ALTER TABLE v3.matters ADD CONSTRAINT matters_business_line_chk
+      CHECK (business_line IS NULL OR business_line IN ('store', 'admin'));
+  END IF;
+END
+$a044$;
+CREATE INDEX IF NOT EXISTS matters_parent_idx ON v3.matters (parent_id);
+
+CREATE TABLE IF NOT EXISTS v3.matter_relations (
+  id         bigserial PRIMARY KEY,
+  a_id       bigint NOT NULL REFERENCES v3.matters(id) ON DELETE CASCADE,
+  b_id       bigint NOT NULL REFERENCES v3.matters(id) ON DELETE CASCADE,
+  note       text,
+  created_by text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (a_id < b_id),
+  UNIQUE (a_id, b_id)
+);
+COMMENT ON TABLE v3.matter_relations IS '案件の関連（並列）。上下は無く、案件そのものは独立。a_id < b_id で 1 行。';
+GRANT SELECT, INSERT, UPDATE, DELETE ON v3.matter_relations TO legalbridge_v3_runtime;
+GRANT USAGE, SELECT ON SEQUENCE v3.matter_relations_id_seq TO legalbridge_v3_runtime;
+
+-- 旧 3 種類からの移し替え（1 回だけ。印の無いものだけ触る）。
+--   業務委託で作品の付いた条件が繋がっている → 作品案件（制作あり）
+--   ライセンス                               → 作品案件のまま。作品を軸に写す
+--   文書作成                                 → その他案件のまま（値は single のまま）
+UPDATE v3.matters m
+   SET kind = 'work', production = true, remapped_from = 'outsourcing',
+       work_id = (SELECT c.work_id FROM v3.matter_links ml
+                    JOIN v3.conditions c ON ml.target_type = 'condition' AND c.id::text = ml.target_ref
+                   WHERE ml.matter_id = m.id AND c.work_id IS NOT NULL
+                   GROUP BY c.work_id ORDER BY count(*) DESC LIMIT 1),
+       updated_at = now()
+ WHERE m.kind = 'outsourcing' AND m.remapped_from IS NULL
+   AND EXISTS (SELECT 1 FROM v3.matter_links ml
+                 JOIN v3.conditions c ON ml.target_type = 'condition' AND c.id::text = ml.target_ref
+                WHERE ml.matter_id = m.id AND c.work_id IS NOT NULL);
+UPDATE v3.matters m
+   SET work_id = (SELECT c.work_id FROM v3.matter_links ml
+                    JOIN v3.conditions c ON ml.target_type = 'condition' AND c.id::text = ml.target_ref
+                   WHERE ml.matter_id = m.id AND c.work_id IS NOT NULL
+                   GROUP BY c.work_id ORDER BY count(*) DESC LIMIT 1),
+       remapped_from = COALESCE(m.remapped_from, 'work')
+ WHERE m.kind = 'work' AND m.work_id IS NULL AND m.remapped_from IS NULL
+   AND EXISTS (SELECT 1 FROM v3.matter_links ml
+                 JOIN v3.conditions c ON ml.target_type = 'condition' AND c.id::text = ml.target_ref
+                WHERE ml.matter_id = m.id AND c.work_id IS NOT NULL);
+UPDATE v3.matters SET remapped_from = 'single' WHERE kind = 'single' AND remapped_from IS NULL;
+
+\echo '--- 案件の再定義（A-044。列 7 と表 1 で 8 であること） ---'
+SELECT (SELECT count(*) FROM information_schema.columns
+         WHERE table_schema='v3' AND table_name='matters'
+           AND column_name IN ('work_id', 'business_line', 'business_name', 'production',
+                               'parent_id', 'title_manual', 'remapped_from'))
+     + (SELECT count(*) FROM information_schema.tables
+         WHERE table_schema='v3' AND table_name='matter_relations') AS 列と表;

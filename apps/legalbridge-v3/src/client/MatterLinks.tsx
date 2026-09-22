@@ -156,8 +156,8 @@ export function MatterConditions(
   if (!allowed.length) {
     return (
       <div className="note">
-        {MATTER_KIND_LABEL[detail.kind]}モデルの案件は条件を持ちません。
-        条件が要るなら、取引モデルを変えてください。
+        {MATTER_KIND_LABEL[detail.kind]}は条件を持ちません。
+        条件が要るなら、案件の種類を変えてください。
       </div>
     );
   }
@@ -166,7 +166,7 @@ export function MatterConditions(
     <div className="stack">
       <div className="row">
         <span className="faint">
-          {MATTER_KIND_LABEL[detail.kind]}モデルの案件に繋げるのは
+          {MATTER_KIND_LABEL[detail.kind]}に繋げるのは
           <b>{allowed.map((k) => CONDITION_KIND_LABEL[k] ?? k).join("・")}</b> の条件です
         </span>
         {!picking && !making && (
@@ -885,9 +885,10 @@ export function MatterDocuments(
 
 /** 取引モデルごとに繋げる条件の種類。サーバの CONDITION_KINDS_BY_MATTER と対。 */
 const ALLOWED_KINDS: Record<MatterKind, string[]> = {
-  work: ["license", "product"],
+  // 作品案件は 制作委託 → 許諾 を包むので委託料系も繋げる（繋ぐと制作委託ありになる）。
+  work: ["license", "product", "service", "expense", "fee"],
   outsourcing: ["service", "expense", "fee"],
-  // 文書作成でも金銭の条件を持つ文書はある（自社のひな形から出す覚書など）。
+  // その他案件でも金銭の条件を持つことはある。
   // サーバ側の CONDITION_KINDS_BY_MATTER と同じ並びにしておくこと。
   single: ["license", "product", "service", "expense", "fee"]
 };

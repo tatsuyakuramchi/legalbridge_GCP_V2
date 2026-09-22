@@ -13,7 +13,8 @@ const facts = (over: Partial<FlowFacts> = {}): FlowFacts => ({
 
 test("何も無い案件は、最初の段階が「いま」になる", () => {
   const steps = buildFlow(facts());
-  assert.deepEqual(steps.map((s) => s.done), [false, false, false, false, false, false]);
+  // 末尾の「継続」は状態なので、契約が無ければ済（完了にできる）。
+  assert.deepEqual(steps.map((s) => s.done), [false, false, false, false, false, false, true]);
   assert.equal(currentStep(steps)?.name, "基本契約の確認");
 });
 
@@ -24,7 +25,7 @@ test("何も無い案件は、最初の段階が「いま」になる", () => {
 test("業務委託は 発注の前に 条件明細の登録 を置く", () => {
   const steps = buildFlow(facts({ agreementExecuted: true }));
   assert.deepEqual(steps.map((s) => s.name),
-    ["基本契約の確認", "条件明細の登録", "発注", "納品・報告", "検収", "支払"]);
+    ["基本契約の確認", "条件明細の登録", "発注", "納品・報告", "検収", "支払", "継続"]);
   assert.equal(currentStep(steps)?.name, "条件明細の登録");
   assert.match(steps[1].detail, /発注書はここから出る/);
 
@@ -52,7 +53,7 @@ test("業務委託は 合意→発注→納品→検収→支払 の順で埋ま
     issuedDocuments: [{ documentNo: "ARC-PO-2026-0031", label: "発注書" }],
     events: { delivery: 1 }, latestEventOn: "2026-06-30"
   }));
-  assert.deepEqual(steps.map((s) => s.done), [true, false, true, true, false, false]);
+  assert.deepEqual(steps.map((s) => s.done), [true, false, true, true, false, false, true]);
   assert.equal(currentStep(steps)?.name, "条件明細の登録");
   assert.match(steps[0].detail, /AGR-2026-0012 締結済み/);
   assert.match(steps[3].detail, /2026-06-30/);
@@ -73,33 +74,79 @@ test("支払は「支払済み」になって初めて済（予定だけでは�
   assert.equal(paid[5].done, true);
 });
 
-test("ライセンスは作品への紐づけから始まる", () => {
+test("作品案件は作品の登録から始まる", () => {
   const steps = buildFlow(facts({ matterKind: "work" }));
-  assert.equal(steps[0].name, "権利の上限確認");
+  assert.equal(steps[0].name, "作品の登録");
+  assert.equal(steps[0].block, "work");
   assert.match(steps[0].detail, /許諾できる上限が決まらない/);
 
   const withWork = buildFlow(facts({
-    matterKind: "work", conditionsWithWork: 2, activeConditionCount: 2 }));
+    matterKind: "work", workId: 7, workTitle: "作品A", licenseConditions: 2, activeConditionCount: 2 }));
   assert.deepEqual(withWork.slice(0, 2).map((s) => s.done), [true, true]);
+  assert.match(withWork[0].detail, /作品「作品A」/);
 });
 
-test("ライセンスの実績は 売上・製造・再許諾の受領 を数える", () => {
+test("作品案件は 作品 → 許諾 → 継続 の順。制作委託があれば 作品 → 制作委託 → 許諾", () => {
+  const plain = buildFlow(facts({ matterKind: "work" }));
+  assert.deepEqual(plain.map((s) => s.block),
+    ["work", "license", "license", "license", "license", "continue"]);
+
+  // 人が「制作委託あり」と決めた。
+  const decided = buildFlow(facts({ matterKind: "work", production: true }));
+  assert.deepEqual(decided.map((s) => s.name),
+    ["作品の登録", "基本契約の確認", "条件明細の登録", "発注", "納品・報告", "検収", "支払",
+     "条件の合意", "契約書の締結", "実績の受領", "計算書と分配", "継続"]);
+  assert.equal(decided[1].block, "production");
+
+  // 未決定でも、委託料の条件か成果物が相手に帰属する条件が繋がれば制作委託を出す。
+  const inferred = buildFlow(facts({ matterKind: "work", production: null, contractorOwned: 1 }));
+  assert.ok(inferred.some((s) => s.block === "production"));
+  // 人が「なし」と決めたら、条件があっても出さない。
+  const off = buildFlow(facts({ matterKind: "work", production: false, serviceConditions: 3 }));
+  assert.ok(!off.some((s) => s.block === "production"));
+});
+
+test("許諾の実績は 売上・製造・再許諾の受領 を数える", () => {
   const steps = buildFlow(facts({
     matterKind: "work", events: { sales: 4, inspection: 9 }, latestEventOn: "2026-06-30" }));
+  assert.equal(steps[3].name, "実績の受領");
   assert.equal(steps[3].done, true, "売上は実績として数える");
-  assert.match(steps[3].detail, /実績 4 件/, "検収はライセンスでは数えない");
+  assert.match(steps[3].detail, /実績 4 件/, "検収は許諾では数えない");
 });
 
-test("文書作成は条件を持たないので、文書と案件の状態だけで進む", () => {
+test("その他案件は 受付 → 検討 → 決定 → 完了 の簡単な制御で進む", () => {
   const steps = buildFlow(facts({ matterKind: "single" }));
-  assert.equal(steps.length, 4);
+  assert.deepEqual(steps.map((s) => s.name), ["受付", "検討", "決定", "完了"]);
   assert.equal(steps[0].done, true, "案件が立っている時点で受付は済");
-  assert.equal(currentStep(steps)?.name, "文書の用意");
+  assert.equal(currentStep(steps)?.name, "検討");
+
+  const considering = buildFlow(facts({ matterKind: "single", tasks: { total: 3, done: 1 } }));
+  assert.equal(considering[1].done, true);
+  assert.match(considering[1].detail, /タスク 1／3/);
+  assert.equal(currentStep(considering)?.name, "決定");
 
   const done = buildFlow(facts({
     matterKind: "single", matterStatus: "done",
     issuedDocuments: [{ documentNo: "ARC-NDA-2026-0001", label: "NDA" }] }));
   assert.equal(currentStep(done), null, "すべて済なら次にやることは無い");
+});
+
+test("継続は状態であって作業ではない（次にやることに数えない・生きている契約があれば未済）", () => {
+  const all = buildFlow(facts({
+    agreementExecuted: true, activeConditionCount: 1,
+    issuedDocuments: [{ documentNo: "ARC-PO-2026-0031", label: "発注書" }],
+    events: { delivery: 1, inspection: 1 }, payments: { total: 1, paid: 1 },
+    liveAgreements: [{ agreementNo: "ARC-SVC-2026-0001", kind: "master", currentEnd: "2027-03-31" }]
+  }));
+  const last = all[all.length - 1];
+  assert.equal(last.name, "継続");
+  assert.equal(last.optional, true);
+  assert.equal(last.done, false);
+  assert.match(last.detail, /ARC-SVC-2026-0001 〜2027-03-31/);
+  assert.equal(currentStep(all), null, "工程は全部済。継続は次にやることに数えない");
+
+  const kids = buildFlow(facts({ children: { total: 2, open: 1 } }));
+  assert.match(kids[kids.length - 1].detail, /開いている子の案件 1／2/);
 });
 
 // ---- 進め方（何をするか） ----
@@ -146,7 +193,7 @@ test("進め方が未設定なら、それを次にやることとして出す",
   assert.match(steps[2].detail, /進め方が未設定/);
 });
 
-test("ライセンスでも進め方が段階の名前を決める", () => {
+test("作品案件でも進め方が段階の名前を決める", () => {
   const steps = buildFlow(facts({ matterKind: "work", documentStyle: "counterparty_review" }));
   assert.equal(steps[2].name, "相手方の文書を確認");
 
@@ -163,26 +210,17 @@ test("ライセンスでも進め方が段階の名前を決める", () => {
  *   他社レビュー型・自社ドラフト型 … 外で作った文書を登録する。条件は要るときだけ
  *   自社テンプレート型             … ひな形の中身が条件から埋まるので、条件明細が要る
  */
-test("文書作成モデルでも進め方が効く", () => {
-  const template = buildFlow(facts({ matterKind: "single", documentStyle: "own_template" }));
-  assert.deepEqual(template.map((s) => s.name),
-    ["相談の受付", "条件明細の登録", "ひな形から文書を決定", "締結", "完了"]);
-  assert.equal(currentStep(template)?.name, "条件明細の登録");
-
-  for (const style of ["counterparty_review", "own_draft"] as const) {
-    const steps = buildFlow(facts({ matterKind: "single", documentStyle: style }));
-    assert.equal(steps.length, 4, `${style} に条件明細の段階は挟まない`);
-    assert.match(steps[1].detail, /外で作った文書を登録/);
-    assert.match(steps[1].detail, /条件明細も登録/, "要るときは条件も登録できると分かる");
-  }
-});
-
-test("文書作成モデルでも条件明細を持てる", () => {
-  // 覚書のように金銭の条件を持つ文書がある。持てないと、ひな形の明細が埋まらない。
+test("その他案件でも文書と条件を持てる（検討の根拠になる）", () => {
+  // 新しい契約スキームの立案なら、文書の下書きや金銭の条件を持つことがある。
   const withCondition = buildFlow(facts({
     matterKind: "single", documentStyle: "own_template", activeConditionCount: 1 }));
   assert.equal(withCondition[1].done, true);
-  assert.match(withCondition[1].detail, /有効な条件 1 件/);
+  assert.match(withCondition[1].detail, /条件 1 件/);
+
+  const decided = buildFlow(facts({
+    matterKind: "single", issuedDocuments: [{ documentNo: "ARC-MOU-2026-0001", label: "覚書" }] }));
+  assert.equal(decided[2].done, true);
+  assert.match(decided[2].detail, /ARC-MOU-2026-0001/);
 });
 
 test("済の理由を必ず添える（印だけでは確かめようがない）", () => {

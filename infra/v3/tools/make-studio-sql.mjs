@@ -248,6 +248,14 @@ SELECT * FROM (
         + (SELECT count(*) FROM information_schema.tables
             WHERE table_schema='v3' AND table_name='term_events'))::text
   UNION ALL
+  SELECT 44, '案件の再定義（A-044。列 7 と表 1 で 8 であること）',
+         ((SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='v3' AND table_name='matters'
+              AND column_name IN ('work_id', 'business_line', 'business_name', 'production',
+                                  'parent_id', 'title_manual', 'remapped_from'))
+        + (SELECT count(*) FROM information_schema.tables
+            WHERE table_schema='v3' AND table_name='matter_relations'))::text
+  UNION ALL
   SELECT 33, '翻訳版再許諾と別途合意（A-033。列 1 と CHECK 1 で 2 であること）',
          ((SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='conditions' AND column_name = 'sublicense_consent')
