@@ -77,7 +77,7 @@ const backlogIssue = (detail: MatterDetail): string | null =>
   detail.links.find((l) => l.targetType === "backlog_issue")?.targetRef ?? null;
 
 export function MattersWorkspace(
-  { onOpenCondition, initialId, onOpen, onOpenDocument, onCompose, onBulkOrders, onFixDrift, onRegisterAgreement }: {
+  { onOpenCondition, initialId, onOpen, onOpenDocument, onCompose, onBulkOrders, onSettledImport, onFixDrift, onRegisterAgreement }: {
     onOpenCondition: (id: number) => void;
     initialId?: number;
     onOpen?: (kind: EntityKind, id: number) => void;
@@ -88,6 +88,8 @@ export function MattersWorkspace(
                  templateKey?: string | null) => void;
     /** 発注書の一括作成（CSV）へ、この案件を決めた状態で移る。 */
     onBulkOrders?: (matterId: number) => void;
+    /** 検収済みの一括取込（発注書〜検収書〜支払を一気に）へ、この案件を決めた状態で移る。 */
+    onSettledImport?: (matterId: number) => void;
     /** 「金額の直し」をこの案件で絞って開く。 */
     onFixDrift?: (matterId: number) => void;
     /** 契約の画面へ、この案件の相手先を入れた状態で登録を開く。 */
@@ -676,7 +678,8 @@ export function MattersWorkspace(
                   {tab === "documents" && (
                     <MatterDocuments detail={shown} onChanged={relink}
                       onOpenDocument={onOpenDocument} onCompose={onCompose}
-                      onBulkOrders={onBulkOrders} channels={channels} isAdmin={isAdmin} />
+                      onBulkOrders={onBulkOrders} onSettledImport={onSettledImport}
+                      channels={channels} isAdmin={isAdmin} />
                   )}
 
                   {tab === "payments" && (

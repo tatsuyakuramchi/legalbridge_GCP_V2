@@ -256,8 +256,14 @@ export function BulkOrders(
                 onPick={(text, name) => { setChoices({}); setWorkChoices({}); setCsv({ name, text }); }}
                 picked={csv?.name ?? null}
                 onClearPick={() => { setCsv(null); setChoices({}); setWorkChoices({}); }}
-                templates={[{ label: "発注書", href: "/api/v3/documents/batches/template.csv" }]}
-                note="UTF-8 か Shift_JIS。1行 = 1品目。同じ取引先・同じ作品の行が1枚にまとまる" />
+                templates={[
+                  { label: "発注書", href: "/api/v3/documents/batches/template.csv" },
+                  // ここは「これから出す発注書」の口。検収まで終わった取引を一気に入れる
+                  // 雛形も並べておく（探しに行った先で見つからなかった）。
+                  { label: "検収済み（発注書〜検収書〜支払を一気に）",
+                    href: "/api/v3/documents/batches/settled/template.csv" }
+                ]}
+                note="UTF-8 か Shift_JIS。1行 = 1品目。同じ取引先・同じ作品の行が1枚にまとまる。検収まで終わった取引は、この画面ではなく「検収済みをまとめて入れる」から入れる" />
               {exported && (
                 <div className={exported.skipped.length ? "note warn" : "note ok"}
                      style={{ marginTop: 6 }}>

@@ -497,7 +497,7 @@ export function serviceBundles(conditions: MatterDetail["conditions"]): ServiceB
 }
 
 export function MatterDocuments(
-  { detail, onChanged, onOpenDocument, onCompose, onBulkOrders, channels, isAdmin }: {
+  { detail, onChanged, onOpenDocument, onCompose, onBulkOrders, onSettledImport, channels, isAdmin }: {
     detail: MatterDetail;
     onChanged: () => void;
     /** 文書の画面へ移って、その文書を開く。 */
@@ -506,6 +506,8 @@ export function MatterDocuments(
     onCompose?: (conditionIds: number[], eventIds?: number[], matterId?: number | null) => void;
     /** 発注書の一括作成（CSV）へ、この案件を決めた状態で移る。 */
     onBulkOrders?: (matterId: number) => void;
+    /** 検収済みの一括取込（発注書〜検収書〜支払を一気に）へ、この案件を決めた状態で移る。 */
+    onSettledImport?: (matterId: number) => void;
     /** 送信のできる口。メールと CloudSign の on/off を出し分ける。 */
     channels?: Array<{ channel: string; mode: "off" | "dry_run" | "live"; configured: boolean }>;
     isAdmin?: boolean;
@@ -655,6 +657,18 @@ export function MatterDocuments(
           <span className="faint">
             発注先が何社もある業務委託向け。取引先と作品の組ごとに1枚ずつ下書きを起こし、
             条件明細もその場で作ります
+          </span>
+        </div>
+      )}
+      {/* もう検収まで終わっている取引は、こちら。条件 → 発注書 → 実績 → 検収書 → 支払 を一気に作る。 */}
+      {onSettledImport && !picking && (
+        <div className="row">
+          <button className="btn btn-sm" onClick={() => onSettledImport(detail.id)}>
+            ↑ 検収済みをまとめて入れる
+          </button>
+          <span className="faint">
+            検収まで終わった取引を CSV から一気に。条件明細・発注書・実績・検収書・支払まで作ります
+            （雛形はその画面の「雛形（空）」から）
           </span>
         </div>
       )}

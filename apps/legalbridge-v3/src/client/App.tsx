@@ -126,7 +126,7 @@ export function App() {
   const [compose, setCompose] =
     useState<{ conditionIds: number[]; eventIds: number[]; matterId: number | null;
                templateKey?: string | null;
-               bulk?: boolean } | null>(null);
+               bulk?: boolean; settled?: boolean } | null>(null);
   /** 他の画面の「編集」から文書の画面へ来たときの相手。 */
   /**
    * 開く文書。ID だけだと、同じ文書をもう一度開けない。
@@ -158,6 +158,13 @@ export function App() {
    */
   const startBulkOrders = (matterId: number) => {
     setCompose({ conditionIds: [], eventIds: [], matterId, bulk: true });
+    setFocus(null);
+    setOpenDocument(undefined);
+    setView("documents");
+  };
+  /** 案件から「検収済みをまとめて入れる」へ。案件を入れた状態で開く。 */
+  const startSettledImport = (matterId: number) => {
+    setCompose({ conditionIds: [], eventIds: [], matterId, settled: true });
     setFocus(null);
     setOpenDocument(undefined);
     setView("documents");
@@ -235,6 +242,7 @@ export function App() {
             onOpenCondition={openCondition} initialId={focusFor("matters")}
             onOpen={openEntity} onCompose={startCompose} onOpenDocument={openDocumentAt}
             onBulkOrders={startBulkOrders}
+            onSettledImport={startSettledImport}
             onRegisterAgreement={startAgreement}
             onFixDrift={(matterId) => { setDriftMatter(matterId); setView("drift"); }} />
         )}

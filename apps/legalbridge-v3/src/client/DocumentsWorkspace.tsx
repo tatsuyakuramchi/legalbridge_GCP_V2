@@ -96,7 +96,9 @@ export function DocumentsWorkspace(
                */
               templateKey?: string | null;
               /** 案件から「発注書をまとめて作る」で来た。一括作成を開いた状態にする。 */
-              bulk?: boolean };
+              bulk?: boolean;
+              /** 案件から「検収済みをまとめて入れる」で来た。 */
+              settled?: boolean };
     /** 他の画面から「編集」で来たときの文書。下書きならそのままフォームに載せる。 */
     openDocumentId?: number;
     /** 押すたびに増える番号。同じ文書をもう一度開く合図。 */
@@ -203,7 +205,7 @@ export function DocumentsWorkspace(
   /** 一括作成（CSV）を開いているか。束を作ったら一覧をその束で絞る。 */
   const [bulk, setBulk] = useState(Boolean(start?.bulk));
   /** 検収済みの遡及取込。発注書の一括作成とは別の口（作るものが違う）。 */
-  const [settled, setSettled] = useState(false);
+  const [settled, setSettled] = useState(Boolean(start?.settled));
   const [batchId, setBatchId] = useState<number | null>(null);
   /**
    * 一覧を案件で絞る。取り込みも作成もこの画面からやるので、上げ直した紙が
