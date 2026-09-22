@@ -261,6 +261,9 @@ SELECT * FROM (
            WHERE COALESCE(a.kind, 'master') IN ('master', 'standalone') AND a.domain IS NULL
              AND EXISTS (SELECT 1 FROM v3.documents d WHERE d.document_no = a.agreement_no))::text
   UNION ALL
+  SELECT 46, '支払の採番漏れ（A-046。0 であること）',
+         (SELECT count(*) FROM v3.payments WHERE payment_no IS NULL)::text
+  UNION ALL
   SELECT 33, '翻訳版再許諾と別途合意（A-033。列 1 と CHECK 1 で 2 であること）',
          ((SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='conditions' AND column_name = 'sublicense_consent')

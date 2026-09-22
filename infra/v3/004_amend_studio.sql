@@ -1314,6 +1314,256 @@ BEGIN
 END
 $a039$;
 
+-- ---------------------------------------------------------------------
+-- A-041 条件明細の納期
+--
+--   いつまでに納めてもらうか。契約期間の終了日とは別のもの。
+--
+--   これまで納期の置き場が無く、発注書の「納期」は
+--     実績の発生日 → 契約期間の終了日 → 予定明細の締め日
+--   に落ちていた。一括作成にいたっては、CSV の納期を term_end に書き込んで
+--   いた（batch-service）。業務委託では両方が同じ日になることが多いので
+--   気づかれなかったが、
+--     契約期間の終了日 … その契約がいつまで有効か
+--     納期            … その成果物をいつまでに納めるか
+--   は別物で、許諾の条件では term_end は許諾期間の終わりであって納期ではない。
+--
+--   回ごとに納期が違う分納は、これまでどおり予定明細の締め日（due_on）で
+--   持つ。ここは条件1本に1つの納期。
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS delivery_due date;
+COMMENT ON COLUMN v3.conditions.delivery_due IS
+  '納期。いつまでに納めるか。契約期間の終了日（term_end）とは別。回ごとに違うなら予定明細の due_on。';
+
+-- ---------------------------------------------------------------------
+-- A-043 契約（合意）の種類・親・解除・更新の記録
+--
+--   契約はこれまで V2 から移した器しか無く、画面からは作れなかった。
+--   作れるようにするにあたり、何を作るかを列で持つ。
+--
+--     kind      … master（基本契約）／standalone（単体契約）／supplement（補助文書。
+--                 基本契約の下で条件を定める・一部を直す覚書）／termination（解除合意）
+--                 ／document（文書だけ。NDA など条件明細を持たないもの）
+--     domain    … service（業務委託）／license（ライセンス）。番号の頭が決まる
+--                 （SVC／LIC、単体は ISA／ILT）
+--     parent_id … 補助文書・解除合意がぶら下がる親（基本契約か単体契約）
+--     counterparty_ref_no … 相手方が付けた契約番号
+--     terminated_on       … 解除日。ここで契約が終わる（消さない）
+--     renewal_months      … 自動更新の単位（月）。空なら当初の期間と同じ長さ
+--     renewal_stopped_on  … 不更新を決めた日。以後は更新しない（その期間は満了まで）
+--
+--   更新の履歴は行で持たない。開始日・当初の終了日・更新の単位・今日から
+--   計算で出す（条件の A-039 と同じ理屈）。計算で出ないものだけ term_events に
+--   記録する：合意による更新（覚書で期間を変えた）・不更新・解除。
+--   条件明細も同じ表を使う（target_type = 'condition'）。
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.agreements ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'master';
+ALTER TABLE v3.agreements ADD COLUMN IF NOT EXISTS domain text;
+ALTER TABLE v3.agreements ADD COLUMN IF NOT EXISTS parent_id bigint REFERENCES v3.agreements(id);
+ALTER TABLE v3.agreements ADD COLUMN IF NOT EXISTS counterparty_ref_no text;
+ALTER TABLE v3.agreements ADD COLUMN IF NOT EXISTS terminated_on date;
+ALTER TABLE v3.agreements ADD COLUMN IF NOT EXISTS renewal_months integer;
+ALTER TABLE v3.agreements ADD COLUMN IF NOT EXISTS renewal_stopped_on date;
+COMMENT ON COLUMN v3.agreements.kind IS
+  'master 基本契約／standalone 単体契約／supplement 補助文書／termination 解除合意／document 文書だけ';
+COMMENT ON COLUMN v3.agreements.domain IS 'service 業務委託／license ライセンス。番号の頭（SVC・LIC・ISA・ILT）が決まる。';
+COMMENT ON COLUMN v3.agreements.parent_id IS '補助文書・解除合意の親（基本契約か単体契約）。';
+COMMENT ON COLUMN v3.agreements.terminated_on IS '解除日。契約はここで終わる。行は消さない。';
+COMMENT ON COLUMN v3.agreements.renewal_months IS '自動更新の単位（月）。空なら当初の期間と同じ長さ。';
+COMMENT ON COLUMN v3.agreements.renewal_stopped_on IS '不更新を決めた日。以後は更新しない（その期間は満了まで有効）。';
+
+DO $a043$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.agreements'::regclass AND conname = 'agreements_kind_chk') THEN
+    ALTER TABLE v3.agreements ADD CONSTRAINT agreements_kind_chk
+      CHECK (kind IN ('master', 'standalone', 'supplement', 'termination', 'document'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.agreements'::regclass AND conname = 'agreements_domain_chk') THEN
+    ALTER TABLE v3.agreements ADD CONSTRAINT agreements_domain_chk
+      CHECK (domain IS NULL OR domain IN ('service', 'license'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.agreements'::regclass AND conname = 'agreements_renewal_months_chk') THEN
+    ALTER TABLE v3.agreements ADD CONSTRAINT agreements_renewal_months_chk
+      CHECK (renewal_months IS NULL OR (renewal_months > 0 AND renewal_months <= 120));
+  END IF;
+END
+$a043$;
+
+CREATE TABLE IF NOT EXISTS v3.term_events (
+  id               bigserial PRIMARY KEY,
+  target_type      text NOT NULL CHECK (target_type IN ('agreement', 'condition')),
+  target_id        bigint NOT NULL,
+  -- renewed 合意による更新（終了日を決め直した）／declined 不更新／terminated 解除
+  kind             text NOT NULL CHECK (kind IN ('renewed', 'declined', 'terminated')),
+  on_date          date NOT NULL,
+  -- renewed のときの新しい終了日。declined・terminated は空。
+  new_end          date,
+  -- 根拠になった補助文書・解除合意。
+  ref_agreement_id bigint REFERENCES v3.agreements(id),
+  note             text,
+  source_url       text,
+  created_by       text,
+  created_at       timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS term_events_target_idx ON v3.term_events (target_type, target_id, on_date);
+COMMENT ON TABLE v3.term_events IS
+  '更新の記録。計算で出ないもの（合意更新・不更新・解除）だけを置く。履歴の行そのものは計算で出す。';
+GRANT SELECT, INSERT, UPDATE ON v3.term_events TO legalbridge_v3_runtime;
+GRANT USAGE, SELECT ON SEQUENCE v3.term_events_id_seq TO legalbridge_v3_runtime;
+
+-- ---------------------------------------------------------------------
+-- A-044 案件の再定義：作品案件／業務案件／その他案件、親子と関連、継続
+--
+--   案件は「1 つの依頼を受けてから終わるまで追う単位」。中身（契約・条件・
+--   文書・支払）は案件の外に残る（制御であって所有ではない。これまでどおり）。
+--
+--   kind の値は変えない。意味を読み替える。
+--     work        … 作品案件。作品 1 つを追う。制作委託（任意）→ 許諾 → 継続
+--     outsourcing … 業務案件。業務 1 つを追う（店舗事業・管理事業の業務委託）
+--     single      … その他案件。決まった軸を持たない（新しい契約スキームの
+--                   立案、プロジェクト単位の運用）。受付 → 検討 → 決定 → 完了
+--
+--     work_id        … 作品案件の軸
+--     business_line  … 業務案件の事業区分（store 店舗事業／admin 管理事業）
+--     business_name  … 業務案件の業務名
+--     production     … 作品案件に制作委託があるか。null は人がまだ決めていない。
+--                      成果物の帰属先が受注者の条件が付いたら自動で true
+--     parent_id      … 親案件。孫まで許す（プロジェクト → 作品案件 → 補助の業務案件）
+--     title_manual   … 件名を人が上書きしたか（false なら軸から自動で組む）
+--     remapped_from  … 旧 3 種類から規則で移した案件の印（元の kind）
+--
+--   関連（並列。案件そのものは独立）は matter_relations に置く。
+--   完了は、付帯する契約が全部終わり、子の案件が全部完了してから。
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.matters ADD COLUMN IF NOT EXISTS work_id bigint REFERENCES v3.works(id);
+ALTER TABLE v3.matters ADD COLUMN IF NOT EXISTS business_line text;
+ALTER TABLE v3.matters ADD COLUMN IF NOT EXISTS business_name text;
+ALTER TABLE v3.matters ADD COLUMN IF NOT EXISTS production boolean;
+ALTER TABLE v3.matters ADD COLUMN IF NOT EXISTS parent_id bigint REFERENCES v3.matters(id);
+ALTER TABLE v3.matters ADD COLUMN IF NOT EXISTS title_manual boolean NOT NULL DEFAULT true;
+ALTER TABLE v3.matters ADD COLUMN IF NOT EXISTS remapped_from text;
+COMMENT ON COLUMN v3.matters.work_id IS '作品案件の軸。';
+COMMENT ON COLUMN v3.matters.business_line IS '業務案件の事業区分。store 店舗事業／admin 管理事業。';
+COMMENT ON COLUMN v3.matters.production IS '作品案件に制作委託があるか。null は未決定。帰属先が受注者の条件が付けば自動で true。';
+COMMENT ON COLUMN v3.matters.parent_id IS '親案件。孫まで許す。';
+COMMENT ON COLUMN v3.matters.title_manual IS '件名を人が上書きしたか。false なら軸から自動で組む。';
+COMMENT ON COLUMN v3.matters.remapped_from IS '旧 3 種類から規則で移した案件の印（元の kind）。';
+DO $a044$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.matters'::regclass AND conname = 'matters_business_line_chk') THEN
+    ALTER TABLE v3.matters ADD CONSTRAINT matters_business_line_chk
+      CHECK (business_line IS NULL OR business_line IN ('store', 'admin'));
+  END IF;
+END
+$a044$;
+CREATE INDEX IF NOT EXISTS matters_parent_idx ON v3.matters (parent_id);
+
+CREATE TABLE IF NOT EXISTS v3.matter_relations (
+  id         bigserial PRIMARY KEY,
+  a_id       bigint NOT NULL REFERENCES v3.matters(id) ON DELETE CASCADE,
+  b_id       bigint NOT NULL REFERENCES v3.matters(id) ON DELETE CASCADE,
+  note       text,
+  created_by text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (a_id < b_id),
+  UNIQUE (a_id, b_id)
+);
+COMMENT ON TABLE v3.matter_relations IS '案件の関連（並列）。上下は無く、案件そのものは独立。a_id < b_id で 1 行。';
+GRANT SELECT, INSERT, UPDATE, DELETE ON v3.matter_relations TO legalbridge_v3_runtime;
+GRANT USAGE, SELECT ON SEQUENCE v3.matter_relations_id_seq TO legalbridge_v3_runtime;
+
+-- 旧 3 種類からの移し替え（1 回だけ。印の無いものだけ触る）。
+--   業務委託で作品の付いた条件が繋がっている → 作品案件（制作あり）
+--   ライセンス                               → 作品案件のまま。作品を軸に写す
+--   文書作成                                 → その他案件のまま（値は single のまま）
+UPDATE v3.matters m
+   SET kind = 'work', production = true, remapped_from = 'outsourcing',
+       work_id = (SELECT c.work_id FROM v3.matter_links ml
+                    JOIN v3.conditions c ON ml.target_type = 'condition' AND c.id::text = ml.target_ref
+                   WHERE ml.matter_id = m.id AND c.work_id IS NOT NULL
+                   GROUP BY c.work_id ORDER BY count(*) DESC LIMIT 1),
+       updated_at = now()
+ WHERE m.kind = 'outsourcing' AND m.remapped_from IS NULL
+   AND EXISTS (SELECT 1 FROM v3.matter_links ml
+                 JOIN v3.conditions c ON ml.target_type = 'condition' AND c.id::text = ml.target_ref
+                WHERE ml.matter_id = m.id AND c.work_id IS NOT NULL);
+UPDATE v3.matters m
+   SET work_id = (SELECT c.work_id FROM v3.matter_links ml
+                    JOIN v3.conditions c ON ml.target_type = 'condition' AND c.id::text = ml.target_ref
+                   WHERE ml.matter_id = m.id AND c.work_id IS NOT NULL
+                   GROUP BY c.work_id ORDER BY count(*) DESC LIMIT 1),
+       remapped_from = COALESCE(m.remapped_from, 'work')
+ WHERE m.kind = 'work' AND m.work_id IS NULL AND m.remapped_from IS NULL
+   AND EXISTS (SELECT 1 FROM v3.matter_links ml
+                 JOIN v3.conditions c ON ml.target_type = 'condition' AND c.id::text = ml.target_ref
+                WHERE ml.matter_id = m.id AND c.work_id IS NOT NULL);
+UPDATE v3.matters SET remapped_from = 'single' WHERE kind = 'single' AND remapped_from IS NULL;
+
+-- ---------------------------------------------------------------------------
+-- 文書由来の契約行を「文書のみ」にする（A-045）
+--
+-- V2 は計算書や発注書を出すたびに contracts に 1 行作っていた（document_number が
+-- 文書番号）。020 はそれを全部 agreements に写したので、ARC-ROY-… のような
+-- 「契約」が締結済みで並び、案件の束の見出しや契約の確認に基本契約として出ていた。
+-- 番号が文書番号と同じものは契約ではなく文書の記録なので kind を document にする。
+-- 人が V3 で登録した契約（domain が入っている）は触らない。
+-- ---------------------------------------------------------------------------
+UPDATE v3.agreements a
+   SET kind = 'document'
+ WHERE COALESCE(a.kind, 'master') IN ('master', 'standalone')
+   AND a.domain IS NULL
+   AND EXISTS (SELECT 1 FROM v3.documents d WHERE d.document_no = a.agreement_no);
+
+-- ---------------------------------------------------------------------
+-- A-046 支払の採番漏れを埋める
+--
+--   支払番号（PAY-YYYY-NNNNN）は、支払を立てるときに振る直しを入れる前に
+--   立てた支払と、020 が移行で番号の重複を避けて空にした支払には無い。
+--   番号の無い支払は画面で「#26」のように内部の id で出ていて、
+--   お金の画面の PAY-… と同じものだと分からなかった。
+--
+--   立てた年（東京）ごとに、既に使われている最大の連番と採番表
+--   （document_sequences）の値の大きいほうの続きから、id 順に振る。
+--   採番表もその最大まで進めるので、次に立てる支払とはぶつからない。
+--   番号のある支払は触らない。何度流しても 2 回目以降は何もしない。
+-- ---------------------------------------------------------------------
+DO $a046$
+DECLARE
+  r record;
+  yr int;
+  seq int;
+  no text;
+BEGIN
+  FOR r IN
+    SELECT id, extract(year FROM (created_at AT TIME ZONE 'Asia/Tokyo'))::int AS y
+      FROM v3.payments
+     WHERE payment_no IS NULL
+     ORDER BY id
+  LOOP
+    yr := r.y;
+    SELECT GREATEST(
+             COALESCE((SELECT max(substr(p.payment_no, 10)::int) FROM v3.payments p
+                        WHERE p.payment_no ~ ('^PAY-' || yr || '-[0-9]+$')), 0),
+             COALESCE((SELECT s.current_value FROM v3.document_sequences s
+                        WHERE s.prefix = 'PAY' AND s.year = yr), 0))
+      INTO seq;
+    LOOP
+      seq := seq + 1;
+      no := 'PAY-' || yr || '-' || lpad(seq::text, 5, '0');
+      EXIT WHEN NOT EXISTS (SELECT 1 FROM v3.payments p WHERE p.payment_no = no);
+    END LOOP;
+    UPDATE v3.payments SET payment_no = no, updated_at = now() WHERE id = r.id;
+    INSERT INTO v3.document_sequences (prefix, year, current_value) VALUES ('PAY', yr, seq)
+    ON CONFLICT (prefix, year) DO UPDATE
+      SET current_value = GREATEST(v3.document_sequences.current_value, EXCLUDED.current_value);
+  END LOOP;
+END
+$a046$;
+
 COMMIT;
 
 
@@ -1545,6 +1795,9 @@ SELECT * FROM (
          (SELECT count(*) FROM v3.agreements a
            WHERE COALESCE(a.kind, 'master') IN ('master', 'standalone') AND a.domain IS NULL
              AND EXISTS (SELECT 1 FROM v3.documents d WHERE d.document_no = a.agreement_no))::text
+  UNION ALL
+  SELECT 46, '支払の採番漏れ（A-046。0 であること）',
+         (SELECT count(*) FROM v3.payments WHERE payment_no IS NULL)::text
   UNION ALL
   SELECT 33, '翻訳版再許諾と別途合意（A-033。列 1 と CHECK 1 で 2 であること）',
          ((SELECT count(*) FROM information_schema.columns
