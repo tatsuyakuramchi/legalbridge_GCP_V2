@@ -201,7 +201,8 @@ export function DocumentsWorkspace(
    * もう作ると決めている。ここで閉じておくと、飛んだ先で何も起きていないように
    * 見える（条件と実績は選ばれているのに、それが隠れたフォームの中にある）。
    */
-  const [composing, setComposing] = useState(Boolean(start) && !start?.bulk);
+  // 一括作成・検収済みの取込で来たときは、作成フォームではなくその画面を開く。
+  const [composing, setComposing] = useState(Boolean(start) && !start?.bulk && !start?.settled);
   /** 一括作成（CSV）を開いているか。束を作ったら一覧をその束で絞る。 */
   const [bulk, setBulk] = useState(Boolean(start?.bulk));
   /** 検収済みの遡及取込。発注書の一括作成とは別の口（作るものが違う）。 */

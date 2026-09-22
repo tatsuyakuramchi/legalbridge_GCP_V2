@@ -666,9 +666,11 @@ export function MatterDocuments(
           <button className="btn btn-sm" onClick={() => onSettledImport(detail.id)}>
             ↑ 検収済みをまとめて入れる
           </button>
+          <a className="linky" href="/api/v3/documents/batches/settled/template.csv" download>
+            雛形（空の CSV）を落とす
+          </a>
           <span className="faint">
             検収まで終わった取引を CSV から一気に。条件明細・発注書・実績・検収書・支払まで作ります
-            （雛形はその画面の「雛形（空）」から）
           </span>
         </div>
       )}

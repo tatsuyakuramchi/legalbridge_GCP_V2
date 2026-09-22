@@ -263,7 +263,7 @@ export function App() {
         )}
         {view === "documents" && (
           <DocumentsWorkspace
-            key={compose ? `c${compose.bulk ? "bulk" : ""}${compose.matterId ?? ""}${compose.conditionIds.join("-")}`
+            key={compose ? `c${compose.bulk ? "bulk" : ""}${compose.settled ? "settled" : ""}${compose.matterId ?? ""}${compose.conditionIds.join("-")}`
                           : openDocument ? `d${openDocument.id}` : "docs"}
             start={compose ?? undefined} openDocumentId={openDocument?.id}
             openNonce={openDocument?.nonce}
