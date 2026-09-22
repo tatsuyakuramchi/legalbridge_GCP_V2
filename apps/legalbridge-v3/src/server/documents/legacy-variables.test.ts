@@ -305,6 +305,10 @@ test("代表者（A-032）：法人は代表者の欄が先。無ければ署名
   assert.equal(at("代表者行", noRep), undefined, "肩書・氏名が無ければ行は出さない");
   // 個人は本人。
   assert.equal(at("受託者代表者名"), "吉澤淳郎");
+  // ただし「代表者名様」は個人には出さない（宛名の「氏名 様」がもう一度刷られていた）。
+  const person = { condition: { counterparty: { name: "個人 一郎", kind: "individual" } } };
+  assert.equal(at("代表者名様", person), undefined);
+  assert.equal(at("代表者名様", corp), "甲野 一郎 様");
 });
 
 test("通知先の 1 行（contact_line）：主担当の 部署 ／ 氏名 ／ メール ／ 電話。空は飛ばす", async () => {

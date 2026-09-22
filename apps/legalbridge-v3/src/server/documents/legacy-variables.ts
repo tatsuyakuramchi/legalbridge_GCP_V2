@@ -154,8 +154,12 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown; noSuffix?: s
             "許諾者代表者", "受託者代表者", "representativeName"],
     get: (c) => representativeName(c) },
   // V1 はこの欄に「様」まで含めて持っていた（本文は敬称を付けない）。
+  // 個人で代表者の欄が無いときは出さない。代表者＝本人なので、宛名の
+  // 「氏名 様」の下にもう一度「氏名 様」が刷られていた。
   { names: ["VENDOR_REPRESENTATIVE_SAMA", "代表者名様"],
     get: (c) => {
+      const party = c.condition?.counterparty ?? {};
+      if (party.kind === "individual" && !String(party.representativeName ?? "").trim()) return undefined;
       const name = representativeName(c);
       return name ? `${name} 様` : undefined;
     } },
