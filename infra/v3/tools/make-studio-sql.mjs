@@ -256,6 +256,11 @@ SELECT * FROM (
         + (SELECT count(*) FROM information_schema.tables
             WHERE table_schema='v3' AND table_name='matter_relations'))::text
   UNION ALL
+  SELECT 45, '文書由来の契約行（A-045。0 であること）',
+         (SELECT count(*) FROM v3.agreements a
+           WHERE COALESCE(a.kind, 'master') IN ('master', 'standalone') AND a.domain IS NULL
+             AND EXISTS (SELECT 1 FROM v3.documents d WHERE d.document_no = a.agreement_no))::text
+  UNION ALL
   SELECT 33, '翻訳版再許諾と別途合意（A-033。列 1 と CHECK 1 で 2 であること）',
          ((SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='conditions' AND column_name = 'sublicense_consent')

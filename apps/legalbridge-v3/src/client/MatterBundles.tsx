@@ -150,7 +150,12 @@ function CellView({ cell, last }: { cell: Cell; last?: boolean }) {
   );
 }
 
-const AGREEMENT_KIND: Record<string, string> = { master: "基本契約", standalone: "単体契約" };
+/** 契約の札。側（業務委託／許諾）が分かるものはそれも書く。移行した契約は側が空なので「契約」。 */
+function agreementLabel(a: { kind: string; domain: string | null }): string {
+  const side = a.domain === "service" ? "業務委託" : a.domain === "license" ? "許諾" : null;
+  const kind = a.kind === "standalone" ? "単体契約" : a.kind === "master" ? "基本契約" : "契約";
+  return side ? `${kind}（${side}）` : a.domain === null ? "契約" : kind;
+}
 
 export function MatterBundles(
   { detail, reloadKey, onOpenCondition, onOpenDocument, onCompose, onRecordEvent, onOpenPayments,
@@ -340,7 +345,9 @@ export function MatterBundles(
                   ? <><b>{p.name}</b><span className="faint code">{p.partyCode ?? ""}</span></>
                   : <b className="faint">（相手先なし）</b>}
                 {p && (p.agreement
-                  ? <span className="tag ok">{AGREEMENT_KIND[p.agreement.kind] ?? p.agreement.kind} {p.agreement.agreementNo ?? ""}</span>
+                  ? <span className="tag ok" title={p.agreement.domain ? undefined : "移行した契約で、業務委託か許諾かの区別が付いていません。契約の画面で直せます"}>
+                      {agreementLabel(p.agreement)} {p.agreement.agreementNo ?? ""}
+                    </span>
                   : <span className="tag out">契約なし</span>)}
                 {b.done && <span className="tag ok">完了</span>}
                 <span className="tag ghost">条件 {b.rows.length}</span>

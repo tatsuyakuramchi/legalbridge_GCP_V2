@@ -242,38 +242,57 @@ export class MatterGridService {
    */
   async parties(matterId: number): Promise<GridParty[]> {
     try {
+      // 束の側（委託料・実費・手数料＝業務委託／許諾料・製品＝許諾）に合う契約だけを引く。
+      //   1. 条件が紐づいている契約（人が付けたもの）
+      //   2. その取引先の締結済みの基本契約・単体契約のうち、側が合うもの。
+      //      移行した契約は側（domain）が空なので、番号が文書番号と同じもの
+      //      （V2 では計算書や発注書ごとに契約の行があった）は契約と見なさない。
+      //      業務委託の束に許諾の契約（ARC-LIC）を出さない。
       const r = await this.database.query(
-        `SELECT p.id, p.name, p.party_code,
+        `WITH mine AS (
+           SELECT c.counterparty_id AS party_id,
+                  bool_or(c.kind IN ('service', 'expense', 'fee')) AS has_service,
+                  bool_or(c.kind IN ('license', 'product')) AS has_license
+             FROM matter_links ml
+             JOIN conditions c ON ml.target_type = 'condition' AND c.id::text = ml.target_ref
+            WHERE ml.matter_id = $1 AND c.counterparty_id IS NOT NULL
+              AND c.status NOT IN ('void', 'superseded')
+            GROUP BY c.counterparty_id
+         )
+         SELECT p.id, p.name, p.party_code,
                 COALESCE(
                   (SELECT a.id FROM matter_links ml
                      JOIN conditions c ON ml.target_type = 'condition' AND c.id::text = ml.target_ref
                      JOIN agreements a ON a.id = c.agreement_id
                     WHERE ml.matter_id = $1 AND c.counterparty_id = p.id
+                      AND c.status NOT IN ('void', 'superseded')
                       AND a.status = 'executed' AND a.terminated_on IS NULL
                       AND COALESCE(a.kind, 'master') IN ('master', 'standalone')
                     ORDER BY a.id DESC LIMIT 1),
                   (SELECT a.id FROM agreements a
                     WHERE a.counterparty_id = p.id AND a.status = 'executed' AND a.terminated_on IS NULL
                       AND COALESCE(a.kind, 'master') IN ('master', 'standalone')
-                    ORDER BY a.executed_on DESC NULLS LAST, a.id DESC LIMIT 1)
+                      AND (a.domain IS NULL
+                           OR (a.domain = 'service' AND mine.has_service)
+                           OR (a.domain = 'license' AND mine.has_license AND NOT mine.has_service))
+                      AND NOT EXISTS (SELECT 1 FROM documents d WHERE d.document_no = a.agreement_no)
+                    ORDER BY (a.domain IS NOT NULL) DESC, a.executed_on DESC NULLS LAST, a.id DESC LIMIT 1)
                 ) AS agreement_id
            FROM parties p
-          WHERE p.id IN (SELECT c.counterparty_id FROM matter_links ml
-                           JOIN conditions c ON ml.target_type = 'condition' AND c.id::text = ml.target_ref
-                          WHERE ml.matter_id = $1 AND c.counterparty_id IS NOT NULL
-                            AND c.status NOT IN ('void', 'superseded'))
+           JOIN mine ON mine.party_id = p.id
           ORDER BY p.name`, [matterId]);
       const ids = (r.rows as any[]).map((x) => int(x.agreement_id)).filter((x): x is number => x !== null);
       const agreements = ids.length
         ? await this.database.query(
-            `SELECT id, agreement_no, kind FROM agreements WHERE id = ANY($1::bigint[])`, [ids])
+            `SELECT id, agreement_no, kind, domain FROM agreements WHERE id = ANY($1::bigint[])`, [ids])
         : { rows: [] as any[] };
       const byId = new Map((agreements.rows as any[]).map((a) => [Number(a.id), a]));
       return (r.rows as any[]).map((x) => {
         const a = int(x.agreement_id) !== null ? byId.get(int(x.agreement_id)!) : undefined;
         return {
           id: Number(x.id), name: String(x.name ?? ""), partyCode: str(x.party_code),
-          agreement: a ? { id: Number(a.id), agreementNo: str(a.agreement_no), kind: String(a.kind ?? "master") } : null
+          agreement: a ? { id: Number(a.id), agreementNo: str(a.agreement_no), kind: String(a.kind ?? "master"),
+                           domain: str(a.domain) } : null
         };
       });
     } catch (error) { throw translate(error); }

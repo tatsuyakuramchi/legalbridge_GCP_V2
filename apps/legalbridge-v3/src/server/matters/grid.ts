@@ -100,8 +100,8 @@ export interface GridParty {
   id: number;
   name: string;
   partyCode: string | null;
-  /** 締結済みで解除されていない基本契約か単体契約。無ければ null。 */
-  agreement: { id: number; agreementNo: string | null; kind: string } | null;
+  /** 締結済みで解除されていない基本契約か単体契約。無ければ null。domain は service／license／空（移行分）。 */
+  agreement: { id: number; agreementNo: string | null; kind: string; domain: string | null } | null;
 }
 
 /**

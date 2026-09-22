@@ -1724,3 +1724,23 @@ SELECT (SELECT count(*) FROM information_schema.columns
                                'parent_id', 'title_manual', 'remapped_from'))
      + (SELECT count(*) FROM information_schema.tables
          WHERE table_schema='v3' AND table_name='matter_relations') AS 列と表;
+
+-- ---------------------------------------------------------------------------
+-- 文書由来の契約行を「文書のみ」にする（A-045）
+--
+-- V2 は計算書や発注書を出すたびに contracts に 1 行作っていた（document_number が
+-- 文書番号）。020 はそれを全部 agreements に写したので、ARC-ROY-… のような
+-- 「契約」が締結済みで並び、案件の束の見出しや契約の確認に基本契約として出ていた。
+-- 番号が文書番号と同じものは契約ではなく文書の記録なので kind を document にする。
+-- 人が V3 で登録した契約（domain が入っている）は触らない。
+-- ---------------------------------------------------------------------------
+UPDATE v3.agreements a
+   SET kind = 'document'
+ WHERE COALESCE(a.kind, 'master') IN ('master', 'standalone')
+   AND a.domain IS NULL
+   AND EXISTS (SELECT 1 FROM v3.documents d WHERE d.document_no = a.agreement_no);
+
+\echo '--- 文書由来の契約行（A-045。0 であること） ---'
+SELECT count(*) AS 残り FROM v3.agreements a
+ WHERE COALESCE(a.kind, 'master') IN ('master', 'standalone') AND a.domain IS NULL
+   AND EXISTS (SELECT 1 FROM v3.documents d WHERE d.document_no = a.agreement_no);
