@@ -83,7 +83,7 @@ test("検収書と支払の金額は、条件ではなく実績と比べる", ()
   const ok = delivered(60000, {
     settlementDoc: doc({ documentNo: "ARC-INS-1", amountExTax: 60000 }),
     settlement: settlement({ deliveredAmount: 60000, plannedAmount: 60000 }),
-    payment: { id: 4, paymentNo: "PY-1", status: "planned", dueOn: null, note: null }
+    payment: { id: 4, paymentNo: "PY-1", status: "planned", dueOn: null, note: null, amount: null, paidOn: null }
   });
   assert.deepEqual(driftOf(ok)!.flagged, []);
 
@@ -126,7 +126,7 @@ test("支払の期日は、検収書に書いた支払期日と比べる", () =>
   const withDoc = delivered(95000, {
     settlement: settlement({ deliveredAmount: 95000, plannedAmount: 95000 }),
     settlementDoc: doc({ documentNo: "ARC-INS-1", amountExTax: 95000, paymentOn: "2026-10-31" }),
-    payment: { id: 4, paymentNo: "PY-1", status: "planned", dueOn: "2026-09-30", note: null }
+    payment: { id: 4, paymentNo: "PY-1", status: "planned", dueOn: "2026-09-30", note: null, amount: null, paidOn: null }
   });
   assert.deepEqual(seen(withDoc), [["payment", "payment", "2026-09-30", "2026-10-31"]]);
   assert.equal(driftOf(withDoc)!.flagged[0].basisLabel, "検収書");
@@ -136,7 +136,7 @@ test("支払の期日は、検収書に書いた支払期日と比べる", () =>
     schedules: { total: 1, done: 1, dueOn: null, payOn: "2026-10-31",
                  dueVaries: false, payVaries: false },
     settlement: settlement({ deliveredAmount: 95000, plannedAmount: 95000 }),
-    payment: { id: 4, paymentNo: "PY-1", status: "planned", dueOn: "2026-09-30", note: null }
+    payment: { id: 4, paymentNo: "PY-1", status: "planned", dueOn: "2026-09-30", note: null, amount: null, paidOn: null }
   });
   assert.equal(driftOf(withSchedule)!.flagged[0].basisLabel, "予定");
 });
@@ -187,7 +187,7 @@ test("分納の途中は、食い違いではない", () => {
     schedules: { total: 2, done: 1, dueOn: null, payOn: null, dueVaries: true, payVaries: true },
     settlementDoc: doc({ documentNo: "ARC-INS-1", amountExTax: 47500 }),
     settlement: settlement({ deliveredAmount: 47500, paidAmount: 47500 }),
-    payment: { id: 4, paymentNo: "PY-1", status: "paid", dueOn: null, note: null }
+    payment: { id: 4, paymentNo: "PY-1", status: "paid", dueOn: null, note: null, amount: null, paidOn: null }
   });
   assert.deepEqual(driftOf(r)!.flagged, []);
 });
@@ -261,7 +261,7 @@ test("直し方は、機械がやるぶんと人が押すぶんに分かれる",
 test("支払の金額は人に渡す（割当の合計なのでここでは直せない）", () => {
   const r = delivered(60000, {
     settlement: settlement({ deliveredAmount: 60000, plannedAmount: 95000 }),
-    payment: { id: 4, paymentNo: "PY-1", status: "planned", dueOn: null, note: null }
+    payment: { id: 4, paymentNo: "PY-1", status: "planned", dueOn: null, note: null, amount: null, paidOn: null }
   });
   const plan = repairPlan(r, driftOf(r)!);
   assert.deepEqual(plan.steps.map((s) => s.kind), ["hand"]);
@@ -274,7 +274,7 @@ test("支払の期日は保存で直せる（人は要らない）", () => {
   const r = delivered(95000, {
     settlement: settlement({ deliveredAmount: 95000, plannedAmount: 95000 }),
     settlementDoc: doc({ documentNo: "ARC-INS-1", amountExTax: 95000, paymentOn: "2026-10-31" }),
-    payment: { id: 4, paymentNo: "PY-1", status: "planned", dueOn: "2026-09-30", note: null }
+    payment: { id: 4, paymentNo: "PY-1", status: "planned", dueOn: "2026-09-30", note: null, amount: null, paidOn: null }
   });
   const plan = repairPlan(r, driftOf(r)!);
   assert.deepEqual(plan.steps.map((s) => s.kind), ["auto"]);

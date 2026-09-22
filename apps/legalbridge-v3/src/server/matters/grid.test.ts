@@ -77,7 +77,7 @@ test("取引先でまとめると、社ごとの小計が付く", () => {
   const rows = [
     row({ conditionId: 1, counterparty: { id: 10, name: "みなも工房" },
           order: { id: 1, documentNo: "PO-1", phase: "decided", amountExTax: null, conditionCount: 1, siblingCount: 1, deliveryOn: null, inspectionOn: null, paymentOn: null },
-          payment: { id: 1, paymentNo: "PY-1", status: "paid", dueOn: null, note: null } }),
+          payment: { id: 1, paymentNo: "PY-1", status: "paid", dueOn: null, note: null, amount: null, paidOn: null } }),
     row({ conditionId: 2, counterparty: { id: 20, name: "夜半堂" } }),
     row({ conditionId: 3, counterparty: { id: 10, name: "みなも工房" } }),
     row({ conditionId: 4, counterparty: null })

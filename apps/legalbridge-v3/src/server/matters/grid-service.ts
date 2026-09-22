@@ -3,7 +3,7 @@ import { dateStr, int, str } from "../core/db.js";
 import { translate } from "../core/errors.js";
 import { SETTLEMENT_COLUMNS, SETTLEMENT_LATERAL_SQL, settlementOf } from "../conditions/settlement.js";
 import { phaseOf } from "../documents/repository.js";
-import type { GridDocument, GridRow } from "./grid.js";
+import type { GridDocument, GridParty, GridRow } from "./grid.js";
 
 /**
  * 工程表の行を引く。
@@ -133,7 +133,8 @@ export const GRID_COLUMNS = `c.id, c.condition_no, c.name, c.kind, c.status, c.c
                 rs.delivery_on AS result_delivery_on, rs.inspection_on AS result_inspection_on,
                 rs.payment_on AS result_payment_on,
                 pay.id AS payment_id, pay.payment_no, pay.status AS payment_status,
-                pay.due_on AS payment_due_on, pay.note AS payment_note`;
+                pay.due_on AS payment_due_on, pay.note AS payment_note,
+                pay.amount AS payment_amount, pay.paid_on AS payment_paid_on`;
 
 /**
  * 行を組み立てる横結合。`FROM ... conditions c` のあとに差す。
@@ -169,7 +170,7 @@ export const GRID_JOINS = `
            ${documentLateral("rs", RESULT_KEYS)}
            -- 支払。取り消したものは持っていないものとして扱う。
            LEFT JOIN LATERAL (
-             SELECT y.id, y.payment_no, y.status, y.due_on, y.note
+             SELECT y.id, y.payment_no, y.status, y.due_on, y.note, y.amount, y.paid_on
                FROM payment_allocations al
                JOIN payments y ON y.id = al.payment_id
               WHERE al.condition_id IN ${SERIES} AND y.status <> 'canceled'
@@ -208,10 +209,13 @@ export const gridRowOf = (row: Record<string, any>): GridRow => ({
     ? {
         id: Number(row.payment_id), paymentNo: str(row.payment_no),
         status: String(row.payment_status),
-        dueOn: dateStr(row.payment_due_on), note: str(row.payment_note)
+        dueOn: dateStr(row.payment_due_on), note: str(row.payment_note),
+        amount: int(row.payment_amount), paidOn: dateStr(row.payment_paid_on)
       }
     : null
 });
+
+
 
 export class MatterGridService {
   constructor(private readonly database: Transactable) {}
@@ -227,6 +231,51 @@ export class MatterGridService {
             AND c.status NOT IN ('void', 'superseded')
           ORDER BY p.name NULLS LAST, c.condition_no NULLS LAST, c.id`, [matterId]);
       return (r.rows as any[]).map(gridRowOf);
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 案件に出てくる取引先と、その契約。
+   *
+   * 条件が契約に紐づいていればそれ、無ければその取引先の締結済みの基本契約・
+   * 単体契約のうち新しいもの。どちらも無ければ「契約なし」で、束の見出しが赤くなる。
+   */
+  async parties(matterId: number): Promise<GridParty[]> {
+    try {
+      const r = await this.database.query(
+        `SELECT p.id, p.name, p.party_code,
+                COALESCE(
+                  (SELECT a.id FROM matter_links ml
+                     JOIN conditions c ON ml.target_type = 'condition' AND c.id::text = ml.target_ref
+                     JOIN agreements a ON a.id = c.agreement_id
+                    WHERE ml.matter_id = $1 AND c.counterparty_id = p.id
+                      AND a.status = 'executed' AND a.terminated_on IS NULL
+                      AND COALESCE(a.kind, 'master') IN ('master', 'standalone')
+                    ORDER BY a.id DESC LIMIT 1),
+                  (SELECT a.id FROM agreements a
+                    WHERE a.counterparty_id = p.id AND a.status = 'executed' AND a.terminated_on IS NULL
+                      AND COALESCE(a.kind, 'master') IN ('master', 'standalone')
+                    ORDER BY a.executed_on DESC NULLS LAST, a.id DESC LIMIT 1)
+                ) AS agreement_id
+           FROM parties p
+          WHERE p.id IN (SELECT c.counterparty_id FROM matter_links ml
+                           JOIN conditions c ON ml.target_type = 'condition' AND c.id::text = ml.target_ref
+                          WHERE ml.matter_id = $1 AND c.counterparty_id IS NOT NULL
+                            AND c.status NOT IN ('void', 'superseded'))
+          ORDER BY p.name`, [matterId]);
+      const ids = (r.rows as any[]).map((x) => int(x.agreement_id)).filter((x): x is number => x !== null);
+      const agreements = ids.length
+        ? await this.database.query(
+            `SELECT id, agreement_no, kind FROM agreements WHERE id = ANY($1::bigint[])`, [ids])
+        : { rows: [] as any[] };
+      const byId = new Map((agreements.rows as any[]).map((a) => [Number(a.id), a]));
+      return (r.rows as any[]).map((x) => {
+        const a = int(x.agreement_id) !== null ? byId.get(int(x.agreement_id)!) : undefined;
+        return {
+          id: Number(x.id), name: String(x.name ?? ""), partyCode: str(x.party_code),
+          agreement: a ? { id: Number(a.id), agreementNo: str(a.agreement_no), kind: String(a.kind ?? "master") } : null
+        };
+      });
     } catch (error) { throw translate(error); }
   }
 }

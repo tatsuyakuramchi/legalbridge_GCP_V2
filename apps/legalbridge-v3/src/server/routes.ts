@@ -469,7 +469,10 @@ export function createRoutes(database: Transactable) {
    * 段ごとに引くと、条件36本の案件で問い合わせが200回近くになる。
    */
   router.get("/matters/:id/grid", asyncRoute(async (req, res) => {
-    res.json({ rows: await new MatterGridService(database).rows(Number(req.params.id)) });
+    const grid = new MatterGridService(database);
+    const id = Number(req.params.id);
+    const [rows, parties] = await Promise.all([grid.rows(id), grid.parties(id)]);
+    res.json({ rows, parties });
   }));
 
   /**

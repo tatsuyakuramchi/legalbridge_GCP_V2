@@ -90,7 +90,18 @@ export interface GridRow {
     id: number; paymentNo: string | null; status: string;
     /** まとめて直す欄の初期値。 */
     dueOn: string | null; note: string | null;
+    /** 束の見出しの合計に使う。 */
+    amount: number | null; paidOn: string | null;
   } | null;
+}
+
+/** 束の見出しに出す取引先。契約の有無をここで引く（契約なしは赤で出す）。 */
+export interface GridParty {
+  id: number;
+  name: string;
+  partyCode: string | null;
+  /** 締結済みで解除されていない基本契約か単体契約。無ければ null。 */
+  agreement: { id: number; agreementNo: string | null; kind: string } | null;
 }
 
 /**

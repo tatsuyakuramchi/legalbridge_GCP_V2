@@ -6,6 +6,7 @@ import { CreateForm, int, text } from "./CreateForm.js";
 import { DetailBack, isWideLayout } from "./DetailBack.js";
 import { MoneyChain } from "./MoneyChain.js";
 import { MatterGrid } from "./MatterGrid.js";
+import { MatterBundles } from "./MatterBundles.js";
 import { MatterPartyFilter } from "./MatterPartyFilter.js";
 import { filterByParty, partiesOf } from "../server/matters/party-view.js";
 import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
@@ -27,7 +28,12 @@ import { BUSINESS_LINE_LABEL } from "./labels.js";
 
 
 
-type Tab = "grid" | "conditions" | "events" | "documents" | "payments" | "communications" | "graph";
+/**
+ * 案件の中身のタブ。既定は「取引先ごと」（束）。条件明細・実績・文書・支払の
+ * 種類別の表は「一覧」に畳み、その中で切り替える（横断の一括操作と CSV の置き場）。
+ */
+type Tab = "bundles" | "grid" | "conditions" | "events" | "documents" | "payments" | "communications" | "graph";
+const LIST_TABS: Tab[] = ["conditions", "events", "documents", "payments", "grid"];
 
 /** 統合の下見。サーバの MatterMergePreview と対。 */
 interface MergePreview {
@@ -94,7 +100,10 @@ export function MattersWorkspace(
   // タブが持っていない紐づけだけ。ここに条件や文書を出すと3か所目になる。
   const externalLinks = (detail?.links ?? []).filter((l) => !OWNED_BY_TABS.has(l.targetType));
   const [kind, setKind] = useState<MatterKind | "all">("all");
-  const [tab, setTab] = useState<Tab>("conditions");
+  const [tab, setTab] = useState<Tab>("bundles");
+  /** 「一覧」で最後に開いていた表。タブを戻しても同じ表に戻る。 */
+  const [listTab, setListTab] = useState<Tab>("conditions");
+  const goTab = (t: Tab) => { setTab(t); if (LIST_TABS.includes(t)) setListTab(t); };
   /** 実績タブで開いている条件。条件明細タブの「実績」から来たときはその条件。 */
   const [eventCondition, setEventCondition] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -242,7 +251,7 @@ export function MattersWorkspace(
 
   useEffect(() => {
     if (!selected) return;
-    setTab("conditions"); setEventCondition(null);
+    setTab("bundles"); setEventCondition(null);
     setBacklog(null); setIssueKey(""); setStyleEdit(false);
     api.get<MatterDetail>(`/matters/${selected}`).then(setDetail)
       .catch((e: ApiError) => setError(e.message));
@@ -485,7 +494,7 @@ export function MattersWorkspace(
                   )}
                   <div className="title">{detail.title}</div>
                   <MatterFlow matterId={detail.id} reloadKey={linkVersion}
-                          onGo={(t) => setTab(t)}
+                          onGo={(t) => goTab(t)}
                           onRegisterAgreement={onRegisterAgreement && detail.counterparty
                             ? () => onRegisterAgreement(detail.counterparty!.id, detail.counterparty!.name ?? null)
                             : undefined} />
@@ -589,30 +598,61 @@ export function MattersWorkspace(
                 <div className="panel-bd">
                   {/* 取引先で絞る。選ぶと下の4タブが揃ってその社のぶんだけになる。
                       タブの数字も絞ったあとの数に変わる（数と中身が食い違わない）。 */}
-                  <MatterPartyFilter parties={parties} value={party} onChange={setParty} />
+                  {LIST_TABS.includes(tab) && (
+                    <MatterPartyFilter parties={parties} value={party} onChange={setParty} />
+                  )}
 
                   <div className="tabs">
-                    {([["grid", "工程表"],
-                       ["conditions", `条件明細 ${shown.conditions.length}`],
-                       ["events", "実績"],
-                       ["documents", `文書 ${shown.documents.length}`],
-                       ["payments", `支払 ${shown.payments.length}`],
+                    {([["bundles", "取引先ごと"],
+                       ["list", "一覧"],
                        ["communications", `操作の記録 ${detail.communications.length}`],
-                       ["graph", "整理"]] as const).map(([key, label]) => (
-                      <button key={key} aria-selected={tab === key} onClick={() => setTab(key as Tab)}>{label}</button>
-                    ))}
+                       ["graph", "整理"]] as const).map(([key, label]) => {
+                      const on = key === "list" ? LIST_TABS.includes(tab) : tab === key;
+                      return (
+                        <button key={key} aria-selected={on}
+                                onClick={() => goTab(key === "list" ? listTab : key as Tab)}>{label}</button>
+                      );
+                    })}
                   </div>
+                  {LIST_TABS.includes(tab) && (
+                    <div className="row" style={{ marginBottom: 10 }}>
+                      <div className="chips">
+                        {([["conditions", `条件明細 ${shown.conditions.length}`],
+                           ["events", "実績"],
+                           ["documents", `文書 ${shown.documents.length}`],
+                           ["payments", `支払 ${shown.payments.length}`],
+                           ["grid", "工程表（表）"]] as const).map(([key, label]) => (
+                          <button key={key} className="chip" aria-pressed={tab === key}
+                                  onClick={() => goTab(key as Tab)}>{label}</button>
+                        ))}
+                      </div>
+                      <span className="faint">まとめて何かする・CSV はここ。1社ずつ追うなら「取引先ごと」へ</span>
+                    </div>
+                  )}
 
                   {/* どのタブにいても出したままにする。案件に戻れば順番を思い出せるように。 */}
-                  <MoneyChain kind={detail.kind} tab={tab} onGo={(next) => setTab(next as Tab)} />
+                  {LIST_TABS.includes(tab) && (
+                    <MoneyChain kind={detail.kind} tab={tab} onGo={(next) => goTab(next as Tab)} />
+                  )}
+
+                  {tab === "bundles" && (
+                    <MatterBundles detail={detail} reloadKey={linkVersion}
+                      onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument}
+                      onCompose={(conditionIds, eventIds, mid, templateKey) =>
+                        onCompose?.(conditionIds, eventIds, mid ?? detail.id, templateKey)}
+                      onRecordEvent={(id) => { setEventCondition(id); goTab("events"); }}
+                      onOpenPayments={() => goTab("payments")}
+                      onRegisterAgreement={onRegisterAgreement}
+                      onOpenList={(k) => goTab(k)} />
+                  )}
 
                   {tab === "grid" && (
                     <MatterGrid matterId={detail.id} partyId={party} reloadKey={linkVersion}
                       onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument}
                       onCompose={(conditionIds, eventIds, mid, templateKey) =>
                         onCompose?.(conditionIds, eventIds, mid ?? detail.id, templateKey)}
-                      onRecordEvent={(id) => { setEventCondition(id); setTab("events"); }}
-                      onOpenPayments={() => setTab("payments")}
+                      onRecordEvent={(id) => { setEventCondition(id); goTab("events"); }}
+                      onOpenPayments={() => goTab("payments")}
                       onFixDrift={onFixDrift && (() => onFixDrift(detail.id))} />
                   )}
 
@@ -620,7 +660,7 @@ export function MattersWorkspace(
                     <div className="stack">
                       <MatterConditions detail={shown} onChanged={relink}
                         onOpenCondition={onOpenCondition} onCompose={onCompose}
-                        onRecordEvent={(id) => { setEventCondition(id); setTab("events"); }} />
+                        onRecordEvent={(id) => { setEventCondition(id); goTab("events"); }} />
                       {/* 取引モデルが何本あっても計算書は1枚。条件ごとに1枚ずつ
                           出す口しか無く、束ねる手段が画面にもサーバにも無かった。 */}
                       <MatterStatement detail={shown}
