@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, money, saveCsv } from "./api.js";
+import { CsvBar } from "./CsvBar.js";
 import { SearchSelect, type SearchOption } from "./SearchSelect.js";
 
 /**
@@ -71,14 +72,6 @@ const searchMatters = async (q: string): Promise<SearchOption[]> => {
     `/matters?q=${encodeURIComponent(q)}`);
   return r.matters.map((m) => ({ value: String(m.id), label: `${m.matterNo ?? `#${m.id}`} ${m.title}`, hint: m.status }));
 };
-
-/** ブラウザで文字コードを判定して読む。UTF-8 で化けたら Shift_JIS で読み直す。 */
-async function readCsv(file: File): Promise<string> {
-  const buf = await file.arrayBuffer();
-  const utf8 = new TextDecoder("utf-8", { fatal: false }).decode(buf);
-  if (!utf8.includes("�")) return utf8;
-  try { return new TextDecoder("shift_jis").decode(buf); } catch { return utf8; }
-}
 
 const TONE = { create: "ok", choose: "warn", skip: "out" } as const;
 const ACTION_LABEL = { create: "作る", choose: "選ぶ", skip: "飛ばす" } as const;
@@ -252,30 +245,18 @@ export function BulkOrders(
             </div></div>
           <div className="frow"><div className="flabel"><span>CSV</span></div>
             <div className="fbody">
-              <div className="row">
-                <a className="btn" href="/api/v3/documents/batches/template.csv">雛形をダウンロード</a>
-                {/* 直すときは、いまの中身を出して書き換えるほうが早い。
-                    19列を人が組み直すのは現実的でない。 */}
-                <button className="btn" disabled={busy || !matterId}
-                        title={matterId ? undefined : "先に案件を選んでください"}
-                        onClick={() => void exportCsv(
-                          { matterId: Number(matterId) }, `orders-matter-${matterId}.csv`)}>
-                  この案件の決定済み発注書を出す
-                </button>
-                <label className="btn primary" style={{ cursor: "pointer" }}>
-                  ファイルを選ぶ
-                  <input type="file" accept=".csv,text/csv" style={{ display: "none" }}
-                         onChange={async (e) => {
-                           const f = e.target.files?.[0]; if (!f) return;
-                           setChoices({}); setWorkChoices({});
-                           setCsv({ name: f.name, text: await readCsv(f) });
-                         }} />
-                </label>
-                {csv && <span className="code">{csv.name}</span>}
-                <span className="faint">
-                  UTF-8 か Shift_JIS。1行 = 1品目。同じ取引先・同じ作品の行が1枚にまとまる
-                </span>
-              </div>
+              {/* 出す・入れる・雛形。並びは他の画面と同じにしてある。 */}
+              <CsvBar busy={busy}
+                exports={matterId
+                  ? [{ value: "orders", label: "この案件の決定済み発注書",
+                       run: () => exportCsv({ matterId: Number(matterId) },
+                                            `orders-matter-${matterId}.csv`) }]
+                  : undefined}
+                onPick={(text, name) => { setChoices({}); setWorkChoices({}); setCsv({ name, text }); }}
+                picked={csv?.name ?? null}
+                onClearPick={() => { setCsv(null); setChoices({}); setWorkChoices({}); }}
+                templates={[{ label: "発注書", href: "/api/v3/documents/batches/template.csv" }]}
+                note="UTF-8 か Shift_JIS。1行 = 1品目。同じ取引先・同じ作品の行が1枚にまとまる" />
               {exported && (
                 <div className={exported.skipped.length ? "note warn" : "note ok"}
                      style={{ marginTop: 6 }}>

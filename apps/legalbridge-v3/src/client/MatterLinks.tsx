@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-import { readCsv } from "./SettledImport.js";
-import type { TeardownPlan, TeardownResult } from "../server/documents/teardown-types.js";
+import { SettledRebuild } from "./SettledRebuild.js";
 import type { MatterDetail, MatterKind } from "../server/core/model.js";
 import { api, ApiError, saveCsv } from "./api.js";
 import { ListSearch, useDebounced } from "./ListTools.js";
@@ -521,23 +520,10 @@ export function MatterDocuments(
    */
   const [picked, setPicked] = useState<Set<number>>(new Set());
   /**
-   * 書き出し方。既定は初版。
-   * 紙が無いか金額が違うので作り直す、というのがこの動線の主な用なので、
-   * 「いま事実どおりに文書化する」を既定にする。
+   * 決済済みの作り直し（書き出す → 直す → 確かめる → 旧分を畳む → 入れ直す）。
+   * 順番を間違えると取り返せないので、手順ごと1つの画面に閉じてある。
    */
-  const [exportMode, setExportMode] = useState<"as_is" | "first_edition">("first_edition");
-
-  /** 畳む前の下見と、畳んだ結果。 */
-  const [teardown, setTeardown] = useState<TeardownPlan | null>(null);
-  /** 下見に渡した CSV。実行でも同じものを渡す。 */
-  const [teardownCsv, setTeardownCsv] = useState<string | null>(null);
-  const [tornDown, setTornDown] = useState<TeardownResult | null>(null);
-
-  /** 決済済みの書き出し。人に決めてもらうことは CSV に出せないので画面に出す。 */
-  const [settledNotes, setSettledNotes] = useState<
-    { rows: number; notes: Array<{ conditionNo: string | null;
-                                   conditionName: string; note: string }> } | null>(null);
-  const [showAllNotes, setShowAllNotes] = useState(false);
+  const [rebuilding, setRebuilding] = useState(false);
   const [exported, setExported] =
     useState<{ rows: number; documents: number;
                skipped: Array<{ documentNo: string | null; reason: string }> } | null>(null);
@@ -577,55 +563,6 @@ export function MatterDocuments(
         "/documents/issue-many", { documentIds: pickedDrafts });
       setIssued(r.results);
       setPicked(new Set());
-      onChanged();
-    } catch (e) { setError((e as ApiError).message); }
-    finally { setBusy(false); }
-  }
-
-  /**
-   * 決済済みの取引をまるごと書き出す。発注書・検収書・支払を1行にまとめた形で、
-   * 「紙は出してあるが金額が一部違う」ときに、表計算で金額だけ直して入れ直す。
-   *
-   * 案件まるごと出す。決済済みは発注書1枚では完結しない（検収書と支払が
-   * 付いてくる）ので、文書を名指しで選ぶ形にはしない。
-   */
-  async function exportSettled(mode: "as_is" | "first_edition") {
-    setBusy(true); setError(null); setSettledNotes(null);
-    try {
-      const made = await api.get<{
-        matter: { matterNo: string | null }; rows: unknown[];
-        notes: Array<{ conditionNo: string | null; conditionName: string; note: string }>;
-        csv: string;
-      }>(`/matters/${detail.id}/settled-export?mode=${mode}`);
-      if (!made.rows.length) setError("書き出せる条件明細がありませんでした");
-      else saveCsv(made.csv, `settled_${made.matter.matterNo ?? detail.id}.csv`);
-      setSettledNotes({ rows: made.rows.length, notes: made.notes });
-    } catch (e) { setError((e as ApiError).message); }
-    finally { setBusy(false); }
-  }
-
-  /**
-   * 畳む前の下見。CSV を渡すと「旧分」の列で対象が決まる（13人ぶんを
-   * 表計算で一目見ながら決められる）。渡さなければ案件まるごと。
-   */
-  async function planTeardown(csv: string | null = null) {
-    setBusy(true); setError(null); setTornDown(null);
-    try {
-      setTeardownCsv(csv);
-      setTeardown(await api.post<TeardownPlan>(
-        `/matters/${detail.id}/teardown/preview`, { reason: "", csv }));
-    } catch (e) { setError((e as ApiError).message); setTeardownCsv(null); }
-    finally { setBusy(false); }
-  }
-
-  async function runTeardown(reason: string, voidConditions: boolean) {
-    setBusy(true); setError(null);
-    try {
-      setTornDown(await api.post<TeardownResult>(
-        `/matters/${detail.id}/teardown`,
-        // CSV で来たときは、そちらが条件も畳むかまで持っている。
-        teardownCsv ? { reason, csv: teardownCsv } : { reason, voidConditions }));
-      setTeardown(null); setTeardownCsv(null);
       onChanged();
     } catch (e) { setError((e as ApiError).message); }
     finally { setBusy(false); }
@@ -708,7 +645,7 @@ export function MatterDocuments(
       {onBulkOrders && !picking && (
         <div className="row">
           <button className="btn btn-sm" onClick={() => onBulkOrders(detail.id)}>
-            発注書をまとめて作る（CSV）
+            ↑ 発注書をまとめて作る
           </button>
           <span className="faint">
             発注先が何社もある業務委託向け。取引先と作品の組ごとに1枚ずつ下書きを起こし、
@@ -742,111 +679,38 @@ export function MatterDocuments(
       )}
 
       {/*
-        決済済みの取引をまるごと書き出す。上の一括作成が「これから出す紙」なら、
-        こちらは「もう終わった取引の作り直し」。発注書だけでは完結しない
-        （検収書と支払が付いてくる）ので、案件まるごと出す。
-        文書を1枚も選んでいなくても要るので、選択の帯には入れない。
+        決済済みの作り直し。上の一括作成が「これから出す紙」なら、
+        こちらは「もう終わった取引の作り直し」。書き出す → 直す → 確かめる →
+        旧分を畳む → 入れ直す、まで1本道で、順番を間違えると取り返せない。
+        入口だけ置いて、中身は専用の画面に任せる。
       */}
-      {!picking && (
+      {!picking && !rebuilding && (
         <div className="row">
-          <button className="btn btn-sm" disabled={busy}
-                  onClick={() => void exportSettled(exportMode)}>
-            ① 決済済みを CSV に出す（作り直し用）
+          <button className="btn btn-sm" onClick={() => setRebuilding(true)}>
+            決済済みを作り直す
           </button>
-          {/*
-            何を作り直すのかで、書き出す中身が変わる。検収まで終わっている取引を
-            いま文書化するなら、当初からの変更ではないので初版。数量を当初のまま
-            残して検収数量で減らすと、起きていない減額を紙に刷ることになる。
-          */}
-          <select value={exportMode} disabled={busy}
-                  onChange={(e) => setExportMode(e.target.value as typeof exportMode)}>
-            <option value="first_edition">初版として（検収済みをいま文書化する）</option>
-            <option value="as_is">現物どおり（当初の発注と検収の差も写す）</option>
-          </select>
-          {/*
-            畳むのは書き出したあと。先に畳むと、書き出すものが無くなる
-            （紙も実績も消えた条件からは、条件の金額しか出てこない）。
-            順番を番号で見せる。
-          */}
-          <button className="btn btn-sm" disabled={busy}
-                  onClick={() => void planTeardown()}>
-            ② 旧分を畳む（案件まるごと）
-          </button>
-          {/*
-            ① で出した CSV の「旧分」の列で、どの条件をどこまで畳むかを言える。
-            画面のチェックより、表計算で13人ぶんを一目見ながら決めるほうが速い。
-          */}
-          <label className="btn btn-sm" style={{ cursor: "pointer" }}>
-            ② CSV の「旧分」で畳む
-            <input type="file" accept=".csv,text/csv" style={{ display: "none" }}
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                e.target.value = "";
-                if (file) void readCsv(file).then((text) => planTeardown(text));
-              }} />
-          </label>
           <span className="faint">
-            ① で出した CSV の「旧分」に 畳む／無効 を書いて ② に渡せます。
-            ① の金額を直し、② で古い紙と支払を畳んでから、
-            文書の画面の「検収済みをまとめて入れる（CSV）」で上げ直します。
-            {exportMode === "first_edition"
-              ? "「版」の列に 初版 が入ります。発注書と検収書が同じ数量を言うので、紙に変更履歴は出ません"
-              : "当初から減っていた行だけ「版」が 変更履歴付 になり、変更理由が要ります"}
-            {"　"}行ごとに「版」の列で直せます
-            （初版＝いま文書にするだけ／変更履歴付＝当初から変わった）
+            紙は出してあるが金額が違う、というとき。いまの中身を CSV に出して直し、
+            古い紙と支払を畳んでから入れ直します
           </span>
         </div>
       )}
 
-      {teardown && (
-        <TeardownPanel plan={teardown} busy={busy}
-          onCancel={() => setTeardown(null)}
-          onRun={(reason, voidConditions) => void runTeardown(reason, voidConditions)} />
-      )}
-
-      {tornDown && (
-        <div className={tornDown.failed ? "note warn" : "note ok"}>
-          畳みました：済 {tornDown.ok}／止まった {tornDown.failed}
-          {tornDown.skipped ? `／触らなかった ${tornDown.skipped}` : ""}
-          {tornDown.outcomes.filter((o) => !o.ok).length > 0 && (
-            <ul style={{ margin: "4px 0 0" }}>
-              {tornDown.outcomes.filter((o) => !o.ok).map((o) => (
-                <li key={`${o.step}-${o.id}`}>{o.label}：{o.error}</li>
-              ))}
-            </ul>
-          )}
-        </div>
+      {rebuilding && (
+        <SettledRebuild matterId={detail.id}
+          matterLabel={`${detail.matterNo ?? `#${detail.id}`} ${detail.title}`}
+          onOpenDocument={onOpenDocument}
+          onChanged={onChanged}
+          onClose={() => { setRebuilding(false); onChanged(); }} />
       )}
 
       {error && <div className="alert">{error}</div>}
-
-      {settledNotes && (
-        <div className={settledNotes.notes.length ? "note warn" : "note ok"}>
-          明細 {settledNotes.rows} 行を出しました。金額を直したら、文書の画面の
-          「検収済みをまとめて入れる（CSV）」から上げ直してください。
-          {settledNotes.notes.length > 0 && (
-            <div style={{ marginTop: 4 }}>
-              <b>人に決めてもらうこと（{settledNotes.notes.length}）</b>
-              <ul style={{ margin: "4px 0 0" }}>
-                {(showAllNotes ? settledNotes.notes : settledNotes.notes.slice(0, 8))
-                  .map((n, i) => <li key={i}>{n.conditionNo ?? n.conditionName}：{n.note}</li>)}
-              </ul>
-              {settledNotes.notes.length > 8 && (
-                <button className="btn btn-sm" style={{ marginTop: 4 }}
-                  onClick={() => setShowAllNotes(!showAllNotes)}>
-                  {showAllNotes ? "畳む" : `ほか ${settledNotes.notes.length - 8} 件を出す`}
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-      )}
 
       {exported && (
         <div className={exported.skipped.length ? "note warn" : "note ok"}>
           発注書 {exported.documents} 枚・明細 {exported.rows} 行を出しました。
           直すところを書き換え、<b>修正理由</b>を入れてから
-          「発注書をまとめて作る（CSV）」で上げ直してください。
+          「↑ 発注書をまとめて作る」で上げ直してください。
           {exported.skipped.length > 0 && (
             <div style={{ marginTop: 4 }}>
               出せなかったもの {exported.skipped.length} 件：
@@ -879,9 +743,9 @@ export function MatterDocuments(
                   onClick={() => void decidePicked()}>
             選んだ {pickedDrafts.length} 件をまとめて決定
           </button>
-          <button className="btn btn-sm" disabled={busy || !pickedIds.length}
+          <button className="btn btn-sm ghost" disabled={busy || !pickedIds.length}
                   onClick={() => void exportPicked()}>
-            選んだ {pickedIds.length} 件を CSV に出す（一括修正用）
+            ↓ 選んだ {pickedIds.length} 件を書き出す（一括修正用）
           </button>
           {/* 同じ取引先へ何枚かを1通・1封筒で送る。1枚ずつ送ると、相手の
               受信箱が同じ件名で埋まってどれが何の組か読めなくなる。 */}
@@ -1029,98 +893,3 @@ const ALLOWED_KINDS: Record<MatterKind, string[]> = {
  * 押すと紙が無効になって番号は戻らない。何が無効になるかを全部出し、
  * 理由を書かせてから初めて押せるようにする。
  */
-function TeardownPanel({ plan, busy, onRun, onCancel }: {
-  plan: TeardownPlan; busy: boolean;
-  onRun: (reason: string, voidConditions: boolean) => void;
-  onCancel: () => void;
-}) {
-  const [reason, setReason] = useState("");
-  const [voidConditions, setVoidConditions] = useState(false);
-  const [allDocs, setAllDocs] = useState(false);
-  // 決済文書が先。無効にすると実績が解放され、実績を取り消せる。
-  const ordered = [...plan.documents]
-    .sort((a, b) => Number(b.settlement) - Number(a.settlement) || a.id - b.id);
-
-  return (
-    <div className="panel">
-      <div className="panel-hd">
-        <h2>旧分を畳みます</h2>
-        <span className="faint">{plan.matter.matterNo} {plan.matter.title}</span>
-      </div>
-      <div className="panel-bd stack">
-        <div className="row" style={{ gap: 22 }}>
-          <div><div className="faint">支払を取り消す</div>
-            <div className="num">{plan.summary.payments}</div></div>
-          <div><div className="faint">文書を無効にする</div>
-            <div className="num">{plan.summary.documents}</div></div>
-          <div><div className="faint">実績を取り消す</div>
-            <div className="num">{plan.summary.events}</div></div>
-          <div><div className="faint">畳む額（税抜）</div>
-            <div className="num">{money(plan.summary.amount)}</div></div>
-          {plan.summary.blocked > 0 && (
-            <div><div className="faint">触らない</div>
-              <div className="num" style={{ color: "var(--out)" }}>{plan.summary.blocked}</div></div>
-          )}
-        </div>
-
-        {plan.warnings.map((w, i) => (
-          <div key={i} className={/新しい条件番号|番号も戻りません/.test(w) ? "alert" : "note"}>{w}</div>
-        ))}
-
-        {plan.documents.length > 0 && (
-          <div className="tablewrap">
-            <table>
-              <thead><tr><th>文書</th><th>種別</th><th>順</th></tr></thead>
-              <tbody>
-                {ordered.slice(0, allDocs ? ordered.length : 12).map((d) => (
-                    <tr key={d.id}>
-                      <td className="code">{d.documentNo ?? `#${d.id}`}</td>
-                      <td>{d.templateLabel ?? "—"}</td>
-                      <td className="faint">
-                        {/* 決済文書が先。無効にすると実績が解放され、実績を取り消せる。 */}
-                        {d.settlement ? "先（実績を解放する）" : "あと"}
-                      </td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-            {/* 案件が大きいと数十枚出る。全部並べると理由の欄まで届かない。 */}
-            {ordered.length > 12 && (
-              <button className="btn btn-sm" onClick={() => setAllDocs(!allDocs)}>
-                {allDocs ? "畳む" : `ほか ${ordered.length - 12} 枚を出す`}
-              </button>
-            )}
-          </div>
-        )}
-
-        {plan.payments.filter((p) => p.blocked).length > 0 && (
-          <div className="note warn">
-            触らない支払：
-            {plan.payments.filter((p) => p.blocked)
-              .map((p) => `${p.paymentNo ?? `#${p.id}`}（${p.blocked}）`).join("／")}
-          </div>
-        )}
-
-        <label className="field">
-          <span className="flabel">畳む理由（必須。監査に残ります）</span>
-          <input value={reason} onChange={(e) => setReason(e.target.value)}
-            placeholder="例：発注金額の誤りのため、正しい金額で作り直す" />
-        </label>
-
-        <label className="row" style={{ gap: 6 }}>
-          <input type="checkbox" checked={voidConditions}
-            onChange={(e) => setVoidConditions(e.target.checked)} />
-          <span>条件明細も無効にする（入れ直しは新しい条件番号になります）</span>
-        </label>
-
-        <div className="row">
-          <button className="btn" onClick={onCancel}>やめる</button>
-          <button className="btn danger" disabled={busy || !reason.trim()}
-            onClick={() => onRun(reason.trim(), voidConditions)}>
-            {busy ? "畳んでいます…" : "畳む"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}

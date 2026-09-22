@@ -499,9 +499,9 @@ export function WorksWorkspace(
           <button className="btn primary btn-sm" onClick={() => setCreating("work")}>作品を登録</button>
           <button className="btn btn-sm" onClick={() => setCreating("source")}>原作を登録</button>
           <button className="btn btn-sm" onClick={() => setCreating("import_works")}
-                  title="作品を CSV でまとめて登録する（試算してから登録）">作品を一括登録（CSV）</button>
+                  title="作品を CSV でまとめて登録する（試算してから登録）">↑ 作品を一括登録</button>
           <button className="btn btn-sm" onClick={() => setCreating("import_conditions")}
-                  title="作品に紐づく利用許諾条件を CSV でまとめて登録する。条件名は 作品名｜取引モデル で付く">条件を一括登録（CSV）</button>
+                  title="作品に紐づく利用許諾条件を CSV でまとめて登録する。条件名は 作品名｜取引モデル で付く">↑ 条件を一括登録</button>
         </>)}
         <button className="btn btn-sm" style={{ marginLeft: "auto" }} aria-pressed={cleanupOpen}
                 onClick={() => setCleanupOpen((v) => !v)}>

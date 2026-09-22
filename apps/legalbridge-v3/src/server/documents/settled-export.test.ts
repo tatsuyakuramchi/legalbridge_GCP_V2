@@ -320,3 +320,151 @@ test("書き出しは条件番号を入れる（名前だけだと同名の条�
   assert.equal(made.rows[0]?.conditionNo, "CL-2026-00001");
   assert.equal(made.rows[0]?.conditionName, "挿絵 制作委託");
 });
+
+/*
+ * 1枚の発注書に条件が何本もぶら下がるとき。
+ *
+ * 業務委託は 委託料＋実費＋手数料 が組で動き、実費と手数料の条件は発注書を
+ * 決めたときに自動でできて、同じ紙に繋がる。その紙の items は委託料のもの
+ * だけで、実費と手数料は other_fees / expenses に条件番号つきで載っている。
+ * 分けずに書き出すと、同じ明細が条件の数だけ複製され、合計が何倍にもなる。
+ * そのまま上げ直せば、払っていない額の紙が刷られる。
+ */
+
+const sharedOrder = {
+  id: 50, document_no: "ARC-PO-2026-0054", issued_at: "2026-06-01T00:00:00Z",
+  values: {
+    items: [{ item_name: "挿絵 制作委託", quantity: 1, unit_price: 200000 }],
+    other_fees: [{ fee_name: "送料", amount: 3000, condition_id: 77, remarks: "着払い分" }],
+    expenses: [{ expense_name: "交通費", amount_inc_tax: 12000, condition_id: 78 }]
+  }
+};
+
+test("手数料の条件は、発注書の品目ではなく自分の行（other_fees）から出す", async () => {
+  const made = await new SettledExportService(db({
+    "FROM conditions c": [cond({ id: 77, condition_no: "CL-2026-00077",
+                                 name: "送料", kind: "fee",
+                                 unit_amount: null, flat_amount: 3000 })],
+    "'items'": [sharedOrder]
+  })).forMatter(1);
+
+  assert.equal(made.rows.length, 1);
+  assert.equal(made.rows[0]?.item_name, "送料");
+  assert.equal(made.rows[0]?.unit_price, "3000");
+  // 委託料の 200,000 は手数料の条件の行に出てこない。
+  assert.equal(made.rows.filter((r) => r.unit_price === "200000").length, 0);
+});
+
+test("経費の条件は税込の実費をそのまま出す（税を重ねない）", async () => {
+  const made = await new SettledExportService(db({
+    "FROM conditions c": [cond({ id: 78, condition_no: "CL-2026-00078",
+                                 name: "交通費", kind: "expense",
+                                 unit_amount: null, flat_amount: 12000 })],
+    "'items'": [sharedOrder]
+  })).forMatter(1);
+
+  assert.equal(made.rows.length, 1);
+  assert.equal(made.rows[0]?.item_name, "交通費");
+  assert.equal(made.rows[0]?.unit_price, "12000");
+});
+
+test("委託料の条件は、実費・手数料がぶら下がっていても品目をそのまま出す", async () => {
+  const made = await new SettledExportService(db({
+    "FROM conditions c": [cond({ id: 7, name: "挿絵 制作委託" })],
+    "'items'": [sharedOrder],
+    // 紙には fee / expense の条件も繋がっている。
+    "FROM document_conditions dc": [
+      { id: 7, kind: "service", name: "挿絵 制作委託" },
+      { id: 77, kind: "fee", name: "送料" },
+      { id: 78, kind: "expense", name: "交通費" }
+    ]
+  })).forMatter(1);
+
+  assert.equal(made.rows.length, 1);
+  assert.equal(made.rows[0]?.unit_price, "200000");
+});
+
+test("委託料の条件が2本ぶら下がる紙は、品目名で当たるものだけを自分の行にする", async () => {
+  const order = {
+    id: 50, document_no: "ARC-PO-2026-0034", issued_at: "2026-06-01T00:00:00Z",
+    values: { items: [
+      { item_name: "挿絵 制作委託", quantity: 1, unit_price: 200000 },
+      { item_name: "監修", quantity: 1, unit_price: 50000 }
+    ] }
+  };
+  const made = await new SettledExportService(db({
+    "FROM conditions c": [cond({ id: 7, name: "監修" })],
+    "'items'": [order],
+    "FROM document_conditions dc": [
+      { id: 7, kind: "service", name: "監修" },
+      { id: 8, kind: "service", name: "挿絵 制作委託" }
+    ]
+  })).forMatter(1);
+
+  assert.equal(made.rows.length, 1);
+  assert.equal(made.rows[0]?.item_name, "監修");
+  assert.equal(made.rows[0]?.unit_price, "50000");
+});
+
+test("どの明細のものか決められない条件は、紙を写さず実績から組んで人に言う", async () => {
+  const order = {
+    id: 50, document_no: "ARC-PO-2026-0034", issued_at: "2026-06-01T00:00:00Z",
+    values: { items: [{ item_name: "挿絵 第4巻 制作委託", quantity: 1, unit_price: 784000 }] }
+  };
+  const made = await new SettledExportService(db({
+    "FROM conditions c": [cond({ id: 7, name: "追加イラスト 制作委託" })],
+    "'items'": [order],
+    "FROM document_conditions dc": [
+      { id: 7, kind: "service", name: "追加イラスト 制作委託" },
+      { id: 1, kind: "service", name: "挿絵 第4巻 制作委託" }
+    ],
+    "FROM condition_events e\n        WHERE": [
+      { id: 90, occurred_on: "2026-09-25", quantity: null, amount: 95000,
+        deliverable: "追加イラスト", note: null, document_id: null }
+    ]
+  })).forMatter(1);
+
+  assert.equal(made.rows.length, 1);
+  // 他の条件の 784,000 を写さない。
+  assert.equal(made.rows[0]?.unit_price, "95000");
+  assert.match(made.notes.map((n) => n.note).join("\n"), /どの明細がこの条件のものか/);
+});
+
+test("条件の id は bigint（文字列）で来る。自分の条件を自分で除ける", async () => {
+  const order = {
+    id: "113", document_no: "ARC-PO-2026-0061", issued_at: "2026-06-01T00:00:00Z",
+    values: { items: [
+      { item_name: "表紙イラスト", quantity: 1, unit_price: 150000 },
+      { item_name: "挿絵", quantity: 12, unit_price: 8000 }
+    ] }
+  };
+  const made = await new SettledExportService(db({
+    // node-postgres は bigint を文字列で返す。品目名と条件名は揃っていない。
+    "FROM conditions c": [cond({ id: "825", condition_no: "CL-2026-00777",
+                                 name: "遡及テストC" })],
+    "'items'": [order],
+    "FROM document_conditions dc": [{ id: "825", kind: "service", name: "遡及テストC" }]
+  })).forMatter(1);
+
+  // ぶら下がっているのは自分1本。紙の明細はそのまま自分のもの。
+  assert.equal(made.rows.length, 2);
+  assert.equal(made.rows[0]?.unit_price, "150000");
+  assert.equal(made.notes.filter((n) => /どの明細がこの条件のものか/.test(n.note)).length, 0);
+});
+
+test("手数料の条件も bigint の条件番号で自分の行を拾う", async () => {
+  const made = await new SettledExportService(db({
+    "FROM conditions c": [cond({ id: "77", condition_no: "CL-2026-00077",
+                                 name: "送料", kind: "fee",
+                                 unit_amount: null, flat_amount: 3000 })],
+    "'items'": [{ id: "50", document_no: "PO", issued_at: "2026-06-01T00:00:00Z",
+                  values: {
+                    items: [{ item_name: "挿絵 制作委託", quantity: 1, unit_price: 200000 }],
+                    other_fees: [{ fee_name: "送料", amount: 3000, condition_id: "77" }]
+                  } }]
+  })).forMatter(1);
+
+  assert.equal(made.rows.length, 1);
+  assert.equal(made.rows[0]?.item_name, "送料");
+  assert.equal(made.rows[0]?.unit_price, "3000");
+});

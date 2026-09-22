@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { StatusTag } from "./labels.js";
+import { CsvBar } from "./CsvBar.js";
 import { api, ApiError, money } from "./api.js";
 import { CsvImport } from "./CsvImport.js";
 import { Leftovers } from "./Leftovers.js";
@@ -178,12 +179,13 @@ export function OpsWorkspace({ initialTab }: { initialTab?: OpsTab } = {}) {
               画面の一覧には表示上限があるが、ここからは全件出る。経理提出や V1 との
               突き合わせに使う。金額は主単位の数値で出すので、そのまま合計できる。
             </p>
-            <div className="chips">
-              {[["conditions", "条件"], ["balances", "条件の消化と残高"], ["payments", "支払"],
-                ["statements", "計算書"], ["documents", "文書"], ["parties", "取引先"]].map(([key, label]) => (
-                <a key={key} className="btn btn-sm" href={`/api/v3/exports/${key}.csv`}>{label}</a>
-              ))}
-            </div>
+            {/* 6つ並べると、どれも同じ見た目のボタンになる。何を出すかは
+                選ばせて、押すところは1つにする。 */}
+            <CsvBar title="一覧の出力"
+              exports={[["conditions", "条件"], ["balances", "条件の消化と残高"], ["payments", "支払"],
+                        ["statements", "計算書"], ["documents", "文書"], ["parties", "取引先"]]
+                .map(([key, label]) => ({ value: key!, label: label!,
+                                          href: `/api/v3/exports/${key}.csv` }))} />
           </div>
         </div>
         </div>

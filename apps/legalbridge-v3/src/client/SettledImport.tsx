@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, money, saveCsv } from "./api.js";
 import { SearchSelect, type SearchOption } from "./SearchSelect.js";
+import { CsvBar } from "./CsvBar.js";
 import type { SettledDiff } from "../server/documents/settled-diff.js";
 
 /**
@@ -101,14 +102,6 @@ const searchMatters = async (q: string): Promise<SearchOption[]> => {
   }));
 };
 
-/** ブラウザで文字コードを判定して読む。UTF-8 で化けたら Shift_JIS で読み直す。 */
-export async function readCsv(file: File): Promise<string> {
-  const buf = await file.arrayBuffer();
-  const utf8 = new TextDecoder("utf-8", { fatal: false }).decode(buf);
-  if (!utf8.includes("�")) return utf8;
-  try { return new TextDecoder("shift_jis").decode(buf); } catch { return utf8; }
-}
-
 const TONE = { create: "ok", choose: "warn", skip: "out" } as const;
 const ACTION_LABEL = { create: "作る", choose: "選ぶ", skip: "飛ばす" } as const;
 const RES_LABEL = { resolved: "取引先 1件に決定", ambiguous: "候補が複数", missing: "取引先が未登録" } as const;
@@ -119,8 +112,18 @@ const TEMPLATE_LABEL: Record<string, string> = {
 };
 
 export function SettledImport(
-  { initialMatterId, onOpenDocument, onClose, onCreated }: {
+  { initialMatterId, initialCsv, compact, onOpenDocument, onClose, onCreated }: {
     initialMatterId?: number | null;
+    /**
+     * すでに選んである CSV。作り直しの画面から渡ってくる。
+     * 同じファイルを2回選ばせないために、ここでは選び直さない。
+     */
+    initialCsv?: { name: string; text: string } | null;
+    /**
+     * 作り直しの画面の中に入っているか。案件はもう決まっていて、書き出しも
+     * 雛形も前の手で済んでいるので、その段は出さない。
+     */
+    compact?: boolean;
     onOpenDocument: (id: number) => void;
     onClose: () => void;
     onCreated: (batchId: number) => void;
@@ -152,7 +155,7 @@ export function SettledImport(
     finally { setExporting(false); }
   }
   const [matterLabel, setMatterLabel] = useState<string | null>(null);
-  const [csv, setCsv] = useState<{ name: string; text: string } | null>(null);
+  const [csv, setCsv] = useState<{ name: string; text: string } | null>(initialCsv ?? null);
   const [choices, setChoices] = useState<Record<string, number>>({});
   const [workChoices, setWorkChoices] = useState<Record<string, number>>({});
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -231,26 +234,29 @@ export function SettledImport(
   }
 
   return (
-    <div className="panel create-form">
-      <div className="panel-hd">
-        <h2>検収済みをまとめて入れる（CSV）</h2>
-        <span className="faint">条件・発注書・実績・検収書・支払を一度に</span>
-        <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={onClose}>閉じる</button>
-      </div>
+    <div className={compact ? "stack" : "panel create-form"}>
+      {!compact && (
+        <div className="panel-hd">
+          <h2>検収済みをまとめて入れる</h2>
+          <span className="faint">条件・発注書・実績・検収書・支払を一度に</span>
+          <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={onClose}>閉じる</button>
+        </div>
+      )}
 
-      <div className="panel-bd stack">
-        <div className="note">
+      <div className={compact ? "stack" : "panel-bd stack"}>
+        {!compact && <div className="note">
           もう検収まで終わっていて、支払だけが残っている取引を入れるための口です。
           <b>発注書と検収書は決定済みで作られ、番号が振られます。</b>
           これから出す発注書を作るなら「発注書をまとめて作る」のほうを使ってください。
-        </div>
+        </div>}
 
         {error && <div className="alert">{error}</div>}
 
         {!batch && (
           <>
-            <div className="row" style={{ gap: 16, alignItems: "flex-end" }}>
-              <label className="field">
+            {/* 案件だけ。雛形と現物の書き出しは下の CSV 帯にまとめてある。 */}
+            {!compact && (
+              <label className="field" style={{ maxWidth: 460 }}>
                 <span>案件</span>
                 {initialMatterId && matterId === String(initialMatterId) ? (
                   <span className="row" style={{ gap: 8 }}>
@@ -262,22 +268,9 @@ export function SettledImport(
                                 placeholder="案件番号か件名で探す" />
                 )}
               </label>
-              {/* 発注書の一括作成と同じく、ブラウザにそのまま取らせる。 */}
-              <a className="btn btn-sm" href="/api/v3/documents/batches/settled/template.csv">
-                雛形をダウンロード
-              </a>
-              {/*
-                いま台帳にあるものを、この取り込みと同じ形で書き出す。
-                「紙は出してあるが金額が一部違う。作り直したい」ときに、
-                26列を手で打ち直さずに済む。読むだけで何も作らない。
-              */}
-              <button className="btn btn-sm" disabled={!matterId || exporting}
-                onClick={() => exportMatter()}>
-                {exporting ? "書き出しています…" : "この案件の現物を書き出す"}
-              </button>
-            </div>
+            )}
 
-            {notes.length > 0 && (
+            {notes.length > 0 && !compact && (
               <div className="note">
                 <strong>書き出しで人に決めてもらうこと（{notes.length}）</strong>
                 <ul>
@@ -294,18 +287,27 @@ export function SettledImport(
               </div>
             )}
 
-            <label className="field">
-              <span>CSV</span>
-              <input type="file" accept=".csv,text/csv"
-                     onChange={(e) => {
-                       const file = e.target.files?.[0];
-                       if (!file) { setCsv(null); return; }
-                       void readCsv(file).then((text) => setCsv({ name: file.name, text }));
-                     }} />
-              {csv && <span className="faint">{csv.name}</span>}
-            </label>
+            {/* 作り直しの画面から来たときは、③でもう選んである。2回選ばせない。 */}
+            {!compact && (
+              <CsvBar busy={exporting}
+                exports={matterId
+                  ? [{ value: "settled", label: "この案件の現物（作り直し用）",
+                       run: () => exportMatter() }]
+                  : undefined}
+                onPick={(text, name) => setCsv({ name, text })}
+                picked={csv?.name ?? null}
+                onClearPick={() => setCsv(null)}
+                templates={[{ label: "検収済み", href: "/api/v3/documents/batches/settled/template.csv" }]} />
+            )}
+            {compact && csv && (
+              <div className="filecard">
+                <span className="dir in"><span className="arrow">↑</span></span>
+                <span className="name">{csv.name}</span>
+                <span className="faint">③ で選んだものをそのまま使います</span>
+              </div>
+            )}
 
-            {diff && <DiffPanel diff={diff} all={allSame} onAll={setAllSame} />}
+            {diff && !compact && <DiffPanel diff={diff} all={allSame} onAll={setAllSame} />}
 
             {preview && (
               <>
@@ -531,7 +533,7 @@ export function SettledImport(
           </>
         )}
 
-        {recent.length > 0 && !preview && (
+        {recent.length > 0 && !preview && !compact && (
           <div className="stack">
             <div className="faint">最近の取り込み</div>
             <div className="tablewrap">
@@ -568,7 +570,7 @@ export function SettledImport(
  * 直した覚えのない列が動いていたら、そこで気づける。合計の増減をいちばん
  * 大きく出す。金額を直すために上げ直しているので、そこが本題になる。
  */
-function DiffPanel({ diff, all, onAll }: {
+export function DiffPanel({ diff, all, onAll }: {
   diff: SettledDiff; all: boolean; onAll: (v: boolean) => void;
 }) {
   const { summary } = diff;

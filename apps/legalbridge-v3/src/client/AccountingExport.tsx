@@ -153,10 +153,10 @@ export function AccountingExport() {
           </div>
           <div className="panel-bd row">
             <a className="btn primary" href={`/api/v3/exports/accounting.xls?${query()}&groupKey=${encodeURIComponent(g.key)}`}>
-              経理提出用Excel（{g.count}件）
+              ↓ 経理提出用Excel（{g.count}件）
             </a>
-            <a className="btn" href={`/api/v3/exports/accounting.xls?${query()}&groupKey=${encodeURIComponent(g.key)}&layout=breakdown`}>
-              内訳一覧
+            <a className="btn ghost" href={`/api/v3/exports/accounting.xls?${query()}&groupKey=${encodeURIComponent(g.key)}&layout=breakdown`}>
+              ↓ 内訳一覧
             </a>
             <button className="btn" disabled={busy === g.key} onClick={() => void mark(g)}>
               {busy === g.key ? "記録中…" : "出力済みにする"}

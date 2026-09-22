@@ -198,8 +198,11 @@ export class SettledExportService {
 
     if (order || inspection || payment || eventRows.length) base.oldHandling = "畳む";
 
-    const items = itemsOf(order?.values);
-    const delivery = itemsOf(inspection?.values, "delivery_line_items");
+    const line = await this.linesFor(cond, order, say);
+    const items = line.items;
+    // 実費・手数料の行は発注書の items と並びが揃っていない。検収書の
+    // 納品明細を番号で当てると、別の品目の検収数量を写してしまう。
+    const delivery = line.ownLines ? [] : itemsOf(inspection?.values, "delivery_line_items");
 
     // ① 紙の明細がある。1行が1明細。
     if (items.length) {
@@ -269,6 +272,79 @@ export class SettledExportService {
       contract_form: str(cond.contract_form) ?? ""
     }], notes };
   }
+
+  /**
+   * 発注書の明細のうち、**この条件のもの**。
+   *
+   * 1枚の発注書に何本かの条件がぶら下がることがある。業務委託は
+   * 委託料・実費・手数料が組で動き、実費と手数料の条件は発注書を決めた
+   * ときに自動でできて、同じ紙に繋がる。このとき items に載っているのは
+   * 委託料の明細だけで、実費と手数料は other_fees / expenses に条件番号
+   * つきで載っている。
+   *
+   * 何も分けずに items をそのまま返すと、同じ明細が条件の数だけ複製され、
+   * 書き出した CSV の合計が実際の何倍にもなる。そのまま上げ直せば、
+   * 払っていない額の紙が刷られる。
+   */
+  private async linesFor(
+    cond: CondRow, order: DocRow | null, say: (note: string) => void
+  ): Promise<{ items: Array<Record<string, unknown>>; ownLines: boolean }> {
+    const items = itemsOf(order?.values);
+    if (!order) return { items, ownLines: false };
+    // conditions.id は bigint。node-postgres は文字列で返すので、
+    // 数として揃えてから比べる（=== で比べると必ず外れる）。
+    const myId = int(cond.id);
+
+    // 実費・手数料は items に出ない。自分の行を条件番号で拾う。
+    if (isOwnLineKind(cond.kind)) {
+      const own = [
+        ...itemsOf(order.values, "other_fees").map((r) => ({
+          item_name: str(r.fee_name) ?? cond.name, quantity: 1,
+          unit_price: num(r.amount), condition_id: r.condition_id,
+          spec: "", remarks: str(r.remarks) ?? ""
+        })),
+        ...itemsOf(order.values, "expenses").map((r) => ({
+          item_name: str(r.expense_name) ?? cond.name, quantity: 1,
+          // 経費は税込の実費。税を重ねない。
+          unit_price: num(r.amount_inc_tax), condition_id: r.condition_id,
+          spec: "", remarks: str(r.remarks) ?? ""
+        }))
+      ].filter((r) => int(r.condition_id) === myId);
+      if (own.length) return { items: own, ownLines: true };
+      // 紙に自分の行が無いなら、実績か条件から組む（②③へ落とす）。
+      return { items: [], ownLines: true };
+    }
+
+    const linked = await this.database.query(
+      `SELECT c.id, c.kind, c.name
+         FROM document_conditions dc
+         JOIN conditions c ON c.id = dc.condition_id
+        WHERE dc.document_id = $1`, [order.id]);
+    const others = (linked.rows as unknown as Array<{ id: number; kind: string; name: string }>)
+      .filter((c) => int(c.id) !== myId && !isOwnLineKind(c.kind));
+    // 1本しかぶら下がっていない（ふつうの発注書）。分ける必要がない。
+    if (!others.length) return { items, ownLines: false };
+
+    // 委託料の条件が2本以上ある紙。品目名で当たるものだけを自分の行にする。
+    const mine = items.filter((it) => sameLabel(str(it.item_name), cond.name));
+    if (mine.length) return { items: mine, ownLines: false };
+
+    say(`発注書 ${str(order.document_no) ?? `#${order.id}`} には条件が `
+      + `${others.length + 1} 本ぶら下がっていて、どの明細がこの条件のものか`
+      + `決められません。実績から組みました`);
+    return { items: [], ownLines: false };
+  }
+}
+
+/** 発注書の items に出ない種類。自分の行は other_fees / expenses にある。 */
+const isOwnLineKind = (kind: unknown): boolean => kind === "fee" || kind === "expense";
+
+/** 品目名と条件名を、空白と全角半角の揺れを均して比べる。 */
+function sameLabel(a: string | null, b: string | null): boolean {
+  const norm = (v: string | null) => String(v ?? "").replace(/[\s\u3000]+/g, "").toLowerCase();
+  const x = norm(a), y = norm(b);
+  if (!x || !y) return false;
+  return x === y || x.includes(y) || y.includes(x);
 }
 
 // ---------------------------------------------------------------------------

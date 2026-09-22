@@ -901,12 +901,12 @@ export function DocumentsWorkspace(
             {/* 何がまとまるのか分からない名前だった。CSV から作れるのは
                 発注書だけなので、そう書く。 */}
             <button className="btn" onClick={() => { setBulk(true); setSettled(false); }}>
-              発注書をまとめて作る（CSV）
+              ↑ 発注書をまとめて作る
             </button>
             {/* 上は「これから出す紙」、こちらは「もう終わった取引」。
                 同じ CSV の口でも作るものが違うので、入口から分ける。 */}
             <button className="btn" onClick={() => { setSettled(true); setBulk(false); }}>
-              検収済みをまとめて入れる（CSV）
+              ↑ 検収済みをまとめて入れる
             </button>
             <span className="faint">
               ひな形から起こします。すでにある文書を見るだけなら、下の一覧から選んでください

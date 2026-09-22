@@ -262,9 +262,9 @@ export function ConditionsWorkspace(
         {/* 一括修正（CSV の「登録済みに当てる」）は、今なにが入っているかを
             手元に出せないと直しようがない。絞り込んだぶんをそのまま書き出す。 */}
         {!creating && (
-          <a className="btn btn-sm" href={`/api/v3/conditions/export${exportQuery}`}
+          <a className="btn btn-sm ghost" href={`/api/v3/conditions/export${exportQuery}`}
              title="いま絞り込んでいる条件を CSV で書き出す。見出しは取込と同じなので、直してそのまま取り込める">
-            CSV で書き出す
+            ↓ 書き出す（絞り込んだぶん）
           </a>
         )}
         {!creating && (

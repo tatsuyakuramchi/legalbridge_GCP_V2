@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { CsvBar } from "./CsvBar.js";
 import { api, ApiError } from "./api.js";
 
 interface Spec {
@@ -36,6 +37,8 @@ export function CsvImport({ initialKind }: { initialKind?: string } = {}) {
    */
   const [mode, setMode] = useState<Mode>("create");
   const [csv, setCsv] = useState("");
+  /** 選んだファイルの名前。選んだかどうかが読めないと、貼り付けと見分けがつかない。 */
+  const [picked, setPicked] = useState<string | null>(null);
   const [report, setReport] = useState<Report | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -56,11 +59,6 @@ export function CsvImport({ initialKind }: { initialKind?: string } = {}) {
       setReport(await api.post<Report>("/imports", { kind, csv, dryRun, mode }));
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); setReport(null); }
     finally { setBusy(false); }
-  }
-
-  async function pickFile(file: File) {
-    setCsv(await file.text());
-    setReport(null);
   }
 
   return (
@@ -90,12 +88,19 @@ export function CsvImport({ initialKind }: { initialKind?: string } = {}) {
               </select>
             </label>
           )}
-          <label className="field">
-            <span>ファイル</span>
-            <input type="file" accept=".csv,text/csv"
-                   onChange={(e) => { const f = e.target.files?.[0]; if (f) void pickFile(f); }} />
-          </label>
         </div>
+
+        {/* 出す・入れるを分けて出す。見本は「雛形（空）」の段に置く。 */}
+        <CsvBar style={{ margin: "10px 0" }}
+          onPick={(text, name) => { setCsv(text); setPicked(name); setReport(null); }}
+          picked={picked}
+          onClearPick={() => { setCsv(""); setPicked(null); setReport(null); }}
+          templates={spec
+            ? [{ label: `${spec.label}の見本`,
+                 href: `data:text/csv;charset=utf-8,${encodeURIComponent("\ufeff" + sample)}`,
+                 download: `${spec.kind}${updating ? "-update" : ""}.csv` }]
+            : undefined}
+          note="UTF-8 か Shift_JIS。下の欄に貼り付けても同じです" />
 
         {spec && (
           <p className="faint">
@@ -114,11 +119,6 @@ export function CsvImport({ initialKind }: { initialKind?: string } = {}) {
                     onClick={() => { setCsv(sample); setReport(null); }}>
               見本を入れる
             </button>
-            <a className="btn btn-sm" style={{ marginLeft: 6 }}
-               download={`${spec.kind}${updating ? "-update" : ""}.csv`}
-               href={`data:text/csv;charset=utf-8,${encodeURIComponent("\ufeff" + sample)}`}>
-              見本を CSV で保存
-            </a>
           </p>
         )}
 
