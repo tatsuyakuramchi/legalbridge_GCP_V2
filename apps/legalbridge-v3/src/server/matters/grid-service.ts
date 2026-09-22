@@ -260,6 +260,29 @@ export class MatterGridService {
             GROUP BY c.counterparty_id
          )
          SELECT p.id, p.name, p.party_code,
+                -- その相手に決定済みの発注書があるか、あるならそれが基本契約ありと言っているか。
+                -- 基本契約を結ばず発注書の約款だけで取引する相手は「契約なし」が正常。
+                (SELECT count(DISTINCT d.id)::int
+                   FROM matter_links ml
+                   JOIN conditions c ON ml.target_type = 'condition' AND c.id::text = ml.target_ref
+                   JOIN document_conditions dc ON dc.condition_id = c.id
+                   JOIN documents d ON d.id = dc.document_id AND d.status <> 'void' AND d.status <> 'draft'
+                   JOIN document_template_versions tv ON tv.id = d.template_version_id
+                   JOIN document_templates t ON t.id = tv.template_id
+                  WHERE ml.matter_id = $1 AND c.counterparty_id = p.id
+                    AND t.template_key IN ('purchase_order', 'intl_purchase_order')) AS orders,
+                (SELECT count(DISTINCT d.id)::int
+                   FROM matter_links ml
+                   JOIN conditions c ON ml.target_type = 'condition' AND c.id::text = ml.target_ref
+                   JOIN document_conditions dc ON dc.condition_id = c.id
+                   JOIN documents d ON d.id = dc.document_id AND d.status <> 'void' AND d.status <> 'draft'
+                   JOIN document_template_versions tv ON tv.id = d.template_version_id
+                   JOIN document_templates t ON t.id = tv.template_id
+                  WHERE ml.matter_id = $1 AND c.counterparty_id = p.id
+                    AND t.template_key IN ('purchase_order', 'intl_purchase_order')
+                    AND lower(COALESCE(d.rendered_values ->> 'HAS_BASE_CONTRACT',
+                                       d.manual_inputs ->> 'HAS_BASE_CONTRACT', ''))
+                        IN ('true', 'はい', '1', 'あり')) AS orders_claiming_base,
                 COALESCE(
                   (SELECT a.id FROM matter_links ml
                      JOIN conditions c ON ml.target_type = 'condition' AND c.id::text = ml.target_ref
@@ -289,10 +312,17 @@ export class MatterGridService {
       const byId = new Map((agreements.rows as any[]).map((a) => [Number(a.id), a]));
       return (r.rows as any[]).map((x) => {
         const a = int(x.agreement_id) !== null ? byId.get(int(x.agreement_id)!) : undefined;
+        const orders = Number(x.orders ?? 0);
+        const claiming = Number(x.orders_claiming_base ?? 0);
+        const contract: GridParty["contract"] = a ? "agreement"
+          : claiming > 0 ? "claimed"
+          : orders > 0 ? "spot"
+          : "none";
         return {
           id: Number(x.id), name: String(x.name ?? ""), partyCode: str(x.party_code),
           agreement: a ? { id: Number(a.id), agreementNo: str(a.agreement_no), kind: String(a.kind ?? "master"),
-                           domain: str(a.domain) } : null
+                           domain: str(a.domain) } : null,
+          contract, orders
         };
       });
     } catch (error) { throw translate(error); }

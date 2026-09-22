@@ -102,6 +102,16 @@ export interface GridParty {
   partyCode: string | null;
   /** 締結済みで解除されていない基本契約か単体契約。無ければ null。domain は service／license／空（移行分）。 */
   agreement: { id: number; agreementNo: string | null; kind: string; domain: string | null } | null;
+  /**
+   * 契約の状態。
+   *   agreement … 登録された契約がある
+   *   spot      … 契約は無いが、発注書を「基本契約なし（約款）」で出している。正常
+   *   claimed   … 発注書は基本契約ありと言っているのに、契約が登録されていない。要登録
+   *   none      … 契約も発注書も無い。要登録（または発注書を出す）
+   */
+  contract: "agreement" | "spot" | "claimed" | "none";
+  /** 決定済みの発注書の枚数。 */
+  orders: number;
 }
 
 /**

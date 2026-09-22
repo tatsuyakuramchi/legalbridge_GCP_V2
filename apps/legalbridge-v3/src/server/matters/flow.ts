@@ -72,6 +72,8 @@ export interface FlowFacts {
   children?: { total: number; open: number };
   /** タスク。その他案件はこれで進む。 */
   tasks?: { total: number; done: number };
+  /** 「基本契約なし（発注書の約款）」で決定した発注書の枚数。契約が無くても正常な取引。 */
+  spotOrders?: number;
 }
 
 /** 工程のブロック。作品案件は 作品 → 制作委託 → 許諾 → 継続、業務案件は 業務委託 → 継続。 */
@@ -211,11 +213,15 @@ function outsourcingSteps(f: FlowFacts, block: FlowBlock): FlowStep[] {
   const service = f.serviceConditions ?? f.activeConditionCount;
   return [
     // 基本契約でも単体契約でも済。契約なしのままなら未済で「契約を登録する」。
+    // 基本契約を結ばず、発注書の約款だけで取引する相手もいる（1回きりの原稿制作など）。
+    // その発注書が決定していれば、契約が無くても済にする。
     { no: 0, name: "基本契約の確認", tab: "documents", action: "契約を登録する", block,
-      done: f.agreementExecuted,
+      done: f.agreementExecuted || (f.spotOrders ?? 0) > 0,
       detail: f.agreementExecuted
         ? agreementDetail(f)
-        : "この相手と締結済みの契約（基本契約か単体契約）がない。契約を登録すると済になる" },
+        : (f.spotOrders ?? 0) > 0
+          ? `基本契約なし（発注書の約款）で発注 ${f.spotOrders} 枚。契約を結ぶなら登録する`
+          : "この相手と締結済みの契約（基本契約か単体契約）がない。契約を登録するか、基本契約なしで発注書を出すと済になる" },
     // 発注書も検収書も条件明細から出る。ここが無いと「文書を作る」で
     // 選ぶものが無く、どこで登録するのかが画面から読めない。
     { no: 0, name: "条件明細の登録", tab: "conditions", action: "条件を登録する", block,

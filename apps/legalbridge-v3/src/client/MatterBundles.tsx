@@ -226,7 +226,8 @@ export function MatterBundles(
     stuck: bundles.reduce((s, b) => s + b.stuck, 0),
     unpaid: bundles.reduce((s, b) => s + b.unpaid, 0),
     paid: (rows ?? []).reduce((s, r) => s + r.settlement.paidAmount, 0),
-    noContract: bundles.filter((b) => b.party && !b.party.agreement).length
+    // 「契約なし」に数えるのは登録が要る相手だけ。発注書の約款で取引している相手は正常。
+    noContract: bundles.filter((b) => b.party && (b.party.contract === "none" || b.party.contract === "claimed")).length
   }), [bundles, rows]);
 
   const shown = useMemo(() => {
@@ -235,7 +236,7 @@ export function MatterBundles(
       if (filter === "stuck" && !b.stuck) return false;
       if (filter === "unpaid" && !b.unpaid) return false;
       if (filter === "done" && !b.done) return false;
-      if (filter === "nocontract" && (!b.party || b.party.agreement)) return false;
+      if (filter === "nocontract" && !(b.party && (b.party.contract === "none" || b.party.contract === "claimed"))) return false;
       if (needle) {
         const hay = [b.party?.name, b.party?.partyCode, ...b.rows.map((r) => r.name), ...b.rows.map((r) => r.conditionNo)]
           .filter(Boolean).join(" ").toLowerCase();
@@ -348,7 +349,15 @@ export function MatterBundles(
                   ? <span className="tag ok" title={p.agreement.domain ? undefined : "移行した契約で、業務委託か許諾かの区別が付いていません。契約の画面で直せます"}>
                       {agreementLabel(p.agreement)} {p.agreement.agreementNo ?? ""}
                     </span>
-                  : <span className="tag out">契約なし</span>)}
+                  : p.contract === "spot"
+                  ? <span className="tag ghost" title="基本契約を結ばず、発注書の約款で取引している相手。契約の登録は要りません">
+                      基本契約なし（発注書の約款）
+                    </span>
+                  : p.contract === "claimed"
+                  ? <span className="tag out" title="発注書には「基本契約に基づく」と書いてあるのに、その契約が登録されていません">
+                      発注書は基本契約あり・未登録
+                    </span>
+                  : <span className="tag out" title="契約も発注書もまだ無い相手">契約なし</span>)}
                 {b.done && <span className="tag ok">完了</span>}
                 <span className="tag ghost">条件 {b.rows.length}</span>
                 {b.stuck > 0 && !open && <span className="tag out">詰まり {b.stuck}</span>}
@@ -357,7 +366,7 @@ export function MatterBundles(
                 <span>発注 <b>{yen(b.ordered)}</b></span>
                 <span>検収 <b>{b.inspected ? yen(b.inspected) : "—"}</b></span>
                 <span>未払残 <b>{yen(b.unpaid)}</b></span>
-                {p && !p.agreement && onRegisterAgreement && (
+                {p && (p.contract === "none" || p.contract === "claimed") && onRegisterAgreement && (
                   <button className="btn btn-sm primary" disabled={readOnly}
                           onClick={() => onRegisterAgreement(p.id, p.name)}>契約を登録する</button>
                 )}

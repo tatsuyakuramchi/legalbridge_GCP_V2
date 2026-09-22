@@ -348,7 +348,9 @@ export class MatterLinkService {
       const ids = [...new Set([...linkedIds, ...(series.rows as any[]).map((r) => Number(r.id))])];
 
       const documents = await this.database.query(
-        `SELECT d.status, d.document_no, d.template_version_id, t.label
+        `SELECT d.status, d.document_no, d.template_version_id, t.label, t.template_key,
+                lower(COALESCE(d.rendered_values ->> 'HAS_BASE_CONTRACT',
+                               d.manual_inputs ->> 'HAS_BASE_CONTRACT', '')) AS has_base
            FROM documents d
            LEFT JOIN document_template_versions v ON v.id = d.template_version_id
            LEFT JOIN document_templates t ON t.id = v.template_id
@@ -458,7 +460,11 @@ export class MatterLinkService {
         tasks: {
           total: Number((tasks.rows[0] as any)?.total ?? 0),
           done: Number((tasks.rows[0] as any)?.done ?? 0)
-        }
+        },
+        spotOrders: (documents.rows as any[]).filter((d) =>
+          d.status === "issued"
+          && ["purchase_order", "intl_purchase_order"].includes(String(d.template_key ?? ""))
+          && !["true", "はい", "1", "あり"].includes(String(d.has_base ?? ""))).length
       };
 
       const steps = buildFlow(facts);
