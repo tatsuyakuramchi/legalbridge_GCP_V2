@@ -1358,18 +1358,24 @@ export function createRoutes(database: Transactable) {
     spec: z.string().trim().max(4000).nullable().optional(),
     deliverableOwnership: z.enum(["orderer", "contractor"]).nullable().optional(),
     orderNo: z.string().trim().max(60).nullable().optional(),
-    usageType: usageTypeSchema
+    usageType: usageTypeSchema,
+    // 直接編集のときだけ通る（サービス側で確かめる）。
+    kind: z.enum(["license", "product", "service", "expense", "fee"]).optional(),
+    pricingModel: z.enum(["fixed", "unit_rate", "revenue_rate", "subscription", "none"]).optional()
   });
   // effectiveFrom に未来の日付を渡すと「予約された改訂」になる。
   // 契約変更を締結した日に記録できないと、適用開始日まで人が覚えているしかない。
+  // inPlace は台帳の整理用。実績や文書があっても改訂にせず、その場で書き換える
+  // （支払が立っている条件は断る）。
   router.patch("/conditions/:id",
     requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
-      const { effectiveFrom, ...patch } = economicsSchema.extend({
-        effectiveFrom: z.string().date().nullable().optional()
+      const { effectiveFrom, inPlace, ...patch } = economicsSchema.extend({
+        effectiveFrom: z.string().date().nullable().optional(),
+        inPlace: z.boolean().optional()
       }).parse(req.body ?? {});
       res.json(await conditionWrites.updateEconomics(
-        Number(req.params.id), patch, actor(res), effectiveFrom ?? null));
+        Number(req.params.id), patch, actor(res), effectiveFrom ?? null, { inPlace: inPlace === true }));
     }));
 
   // 無効化 → 削除の2段階。無効化は理由必須で、参照があってもできる。

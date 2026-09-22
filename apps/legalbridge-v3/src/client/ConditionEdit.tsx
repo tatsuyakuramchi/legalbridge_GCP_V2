@@ -70,6 +70,8 @@ export function ConditionEdit(
 ) {
   const [v, setV] = useState<Values>({
     name: detail.name,
+    kind: detail.kind,
+    pricingModel: detail.pricingModel,
     counterpartyId: detail.counterparty ? String(detail.counterparty.id) : "",
     workId: detail.work ? String(detail.work.id) : "",
     termStart: detail.termStart ?? "",
@@ -103,6 +105,13 @@ export function ConditionEdit(
   const [busy, setBusy] = useState(false);
   // 適用開始日。未来を入れると「予約された改訂」になり、いまの版は生きたまま残る。
   const [effectiveFrom, setEffectiveFrom] = useState("");
+  /**
+   * 直接編集。実績や文書があっても改訂（新版の作成）にせず、その場で書き換える。
+   * 台帳の整理（移行データの直し）のための口。支払が立っている条件では使えない
+   * （払った額の根拠が書き換わる）。種類と計算方式もこのときだけ変えられる。
+   */
+  const [inPlace, setInPlace] = useState(false);
+  const hasPayment = ["payment_planned", "partly_paid", "paid"].includes(detail.settlement?.state ?? "");
   const set = (k: string, value: string) => setV({ ...v, [k]: value });
 
   useEffect(() => {
@@ -122,7 +131,9 @@ export function ConditionEdit(
 
   const later = effectiveFrom !== "" && effectiveFrom > today();
   // 実績があると、保存は改訂（旧版を残して新版を作る）になる。
-  const willRevise = detail.events.length > 0;
+  const willRevise = detail.events.length > 0 && !inPlace;
+  /** 金額の欄は、直接編集で計算方式を変えたときはその方式に合わせて出す。 */
+  const pm = inPlace ? v.pricingModel : detail.pricingModel;
   const readOnly = detail.status === "void" || detail.status === "superseded";
 
   /** 金額・期間・作品・独占性。PATCH /conditions/:id。 */
@@ -174,6 +185,9 @@ export function ConditionEdit(
       patch.ratePpm = ppm;
     }
     if (v.taxCategory !== detail.taxCategory) patch.taxCategory = v.taxCategory;
+    // 種類と計算方式は直接編集のときだけ送る。
+    if (inPlace && v.kind !== detail.kind) patch.kind = v.kind;
+    if (inPlace && v.pricingModel !== detail.pricingModel) patch.pricingModel = v.pricingModel;
     return patch;
   }
 
@@ -208,7 +222,7 @@ export function ConditionEdit(
       }
       if (Object.keys(patch).length) {
         onDone(await api.patch<EditResult>(`/conditions/${detail.id}`,
-          { ...patch, effectiveFrom: effectiveFrom || null }));
+          { ...patch, effectiveFrom: effectiveFrom || null, ...(inPlace ? { inPlace: true } : {}) }));
       } else {
         onDone({ changed: [
           ...(counterpartyChanged ? [{ target: "conditions（相手先）", rows: 1 }] : []),
@@ -269,8 +283,23 @@ export function ConditionEdit(
       </div>
 
       <div className="panel-bd">
+        <label className="row" style={{ gap: 8, marginBottom: 8, alignItems: "flex-start" }}>
+          <input type="checkbox" checked={inPlace} disabled={hasPayment}
+                 onChange={(e) => setInPlace(e.target.checked)} style={{ marginTop: 3 }} />
+          <span>
+            <b>直接編集</b>（改訂にせず、その場で書き換える。種類と計算方式も変えられる）
+            <small className="faint" style={{ display: "block" }}>
+              {hasPayment
+                ? "支払が立っている条件は直接編集できません。支払を取り消すか、改訂で直してください"
+                : "台帳の整理用。決定済みの文書は焼き付いた値のまま残るので、金額を変えると「金額の取り残し」に出ます"}
+            </small>
+          </span>
+        </label>
         <div className={willRevise || later ? "note warn" : "note"} style={{ marginBottom: 12 }}>
-          {later
+          {inPlace
+            ? <>直接編集です。実績が {detail.events.length} 件あっても<b>改訂にせず、この条件をその場で書き換えます</b>。
+                条件番号は変わりません。</>
+            : later
             ? <>適用開始日が先なので、保存すると<b>{effectiveFrom} から効く改訂として予約します</b>。
                 いまの版はその日まで生きたままで、集計にも計算書にも今までどおり使われます。
                 当日になると自動で切り替わります（人が押す必要はありません）。</>
@@ -287,8 +316,18 @@ export function ConditionEdit(
           {field("name", "条件名")}
           {fixed("向き", detail.direction === "in" ? "IN 取得（費用側）" : "OUT 許諾（収入側）",
             "向きは変えられません。逆向きなら新しい条件を作ってください")}
-          {fixed("種類", CONDITION_KIND_LABEL[detail.kind] ?? detail.kind,
-            "種類は案件の取引モデルと結びついているので変えられません")}
+          {inPlace
+            ? <label className="field">
+                <span>種類</span>
+                <select value={v.kind} onChange={(e) => set("kind", e.target.value)}>
+                  {(["license", "product", "service", "expense", "fee"] as const).map((k) => (
+                    <option key={k} value={k}>{CONDITION_KIND_LABEL[k] ?? k}</option>
+                  ))}
+                </select>
+                <small className="faint">案件で使える種類の範囲だけ通ります</small>
+              </label>
+            : fixed("種類", CONDITION_KIND_LABEL[detail.kind] ?? detail.kind,
+                "種類は案件の取引モデルと結びついているので変えられません（直接編集なら変えられます）")}
           <label className="field">
             <span>相手先</span>
             <SearchSelect value={v.counterpartyId} search={searchParties}
@@ -333,8 +372,16 @@ export function ConditionEdit(
               { type: "date", hint: "入れるとその日で回数が止まる（いまの期間は満了まで有効）" })}
           </>)}
           {fixed("通貨", detail.currency, "通貨は変えられません。金額の意味が変わるため")}
-          {fixed("計算方式", PRICING_LABEL[detail.pricingModel] ?? detail.pricingModel,
-            "計算方式は変えられません。変えると過去の計算根拠が変わるので、新しい条件を作ってください")}
+          {inPlace
+            ? <label className="field">
+                <span>計算方式</span>
+                <select value={v.pricingModel} onChange={(e) => set("pricingModel", e.target.value)}>
+                  {Object.entries(PRICING_LABEL).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+                </select>
+                <small className="faint">定額なら定額の金額、単価×数量なら単価、料率なら料率を一緒に入れてください</small>
+              </label>
+            : fixed("計算方式", PRICING_LABEL[detail.pricingModel] ?? detail.pricingModel,
+                "計算方式は変えられません。変えると過去の計算根拠が変わるので、新しい条件を作ってください（直接編集なら変えられます）")}
 
           {/*
             * 単価・個数は計算方式によらず出す。これまで単価は「単価×数量」の
@@ -342,18 +389,18 @@ export function ConditionEdit(
             * 検収書を作るたびに人が明細へ打ち直すことになり、経理提出用の
             * 単価の列も空のままだった。条件が持てば、紙にも帳票にも流れる。
             */}
-          {detail.pricingModel !== "revenue_rate" && (<>
+          {pm !== "revenue_rate" && (<>
             {field("unitAmount", "単価（最小通貨単位）", { type: "number",
               hint: `${minorUnitHint(detail.currency)}　いまの値 ${money(detail.unitAmount, detail.currency)}` })}
             {field("quantity", "個数", { type: "number",
               placeholder: "1", hint: "小数も入る（0.5人月など）。単価×個数が定額に入る" })}
           </>)}
-          {detail.pricingModel === "revenue_rate" &&
+          {pm === "revenue_rate" &&
             field("ratePct", "料率（%）", { type: "number", hint: `小数で入れる。いまの値 ${rate(detail.ratePpm)}` })}
-          {detail.pricingModel !== "revenue_rate" &&
+          {pm !== "revenue_rate" &&
             // 定期課金はこの欄が「1回あたり」。登録の画面と呼び方を揃える。
             field("flatAmount",
-              detail.pricingModel === "subscription"
+              pm === "subscription"
                 ? "1回あたりの金額（最小通貨単位）" : "定額（最小通貨単位）",
               { type: "number",
               hint: computedFlat === null
@@ -461,7 +508,8 @@ export function ConditionEdit(
         <div className="row">
           <button className="btn primary" disabled={busy || !changedCount}
                   onClick={() => void save()}>
-            {busy ? "保存中…" : later ? `${effectiveFrom} からの改訂を予約`
+            {busy ? "保存中…" : inPlace ? "直接書き換えて保存"
+              : later ? `${effectiveFrom} からの改訂を予約`
               : willRevise && Object.keys(patch).length ? "改訂して保存" : "保存する"}
           </button>
           <button className="btn" onClick={onCancel} disabled={busy}>やめる</button>

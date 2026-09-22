@@ -1,5 +1,6 @@
 import { dateStr, inTransaction, type Queryable, type Transactable } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
+import { CONDITION_KINDS_BY_MATTER } from "../matters/link-service.js";
 import { recordAudit } from "../core/audit.js";
 import { ConditionRepository } from "./repository.js";
 import { allocateNumber } from "../core/numbering.js";
@@ -268,9 +269,13 @@ export interface EconomicsPatch {
   deliverableOwnership?: "orderer" | "contractor" | null;
   orderNo?: string | null;
   usageType?: ConditionUsageType | null;
+  /** 直接編集のときだけ変えられる。種類は案件で使える範囲、計算方式は金額の欄と一緒に。 */
+  kind?: "license" | "product" | "service" | "expense" | "fee";
+  pricingModel?: "fixed" | "unit_rate" | "revenue_rate" | "subscription" | "none";
 }
 
 const ECONOMICS_COLUMNS: Record<keyof EconomicsPatch, string> = {
+  kind: "kind", pricingModel: "pricing_model",
   name: "name", ratePpm: "rate_ppm", flatAmount: "flat_amount", unitAmount: "unit_amount",
   mgAmount: "mg_amount", agAmount: "ag_amount", termStart: "term_start", termEnd: "term_end",
   deliveryDue: "delivery_due",
@@ -672,12 +677,17 @@ export class ConditionWriteService {
    * 実績（condition_events）を持つ条件は履歴を壊さないため改訂（新しい行）にする。
    */
   async updateEconomics(
-    id: number, patch: EconomicsPatch, actor: string, effectiveFrom?: string | null
+    id: number, patch: EconomicsPatch, actor: string, effectiveFrom?: string | null,
+    options: { inPlace?: boolean } = {}
   ): Promise<WriteResult> {
     const entries = (Object.keys(patch) as Array<keyof EconomicsPatch>)
       .filter((key) => patch[key] !== undefined)
       .map((key) => ({ column: ECONOMICS_COLUMNS[key], value: patch[key] as unknown }));
     if (!entries.length) throw new DomainError("VALIDATION", "変更する項目がありません");
+    // 種類と計算方式は直接編集のときだけ。改訂で変えると、過去の計算根拠が別物になる。
+    if ((patch.kind !== undefined || patch.pricingModel !== undefined) && !options.inPlace) {
+      throw new DomainError("VALIDATION", "種類と計算方式は「直接編集」のときだけ変えられます");
+    }
 
     try {
       return await inTransaction(this.database, async (client) => {
@@ -691,6 +701,33 @@ export class ConditionWriteService {
         if (patch.workId) {
           const w = await client.query("SELECT id FROM works WHERE id = $1", [patch.workId]);
           if (!w.rows[0]) throw new DomainError("NOT_FOUND", `作品 ${patch.workId} が見つかりません`);
+        }
+
+        // 直接編集：実績や文書があっても改訂にせず、その場で書き換える。
+        // 台帳の整理（移行データの直し）のための口。支払が立っている条件は断る
+        // （払った額の根拠が書き換わる）。決定済みの文書は焼き付いた値のまま残る。
+        if (options.inPlace) {
+          const paid = await client.query(
+            `SELECT string_agg(DISTINCT COALESCE(y.payment_no, '#' || y.id::text), '・') AS nos, count(DISTINCT y.id)::int AS n
+               FROM payment_allocations al
+               JOIN payments y ON y.id = al.payment_id
+              WHERE y.status <> 'canceled'
+                AND al.condition_id IN (SELECT x.id FROM conditions x
+                                         WHERE COALESCE(x.series_id, x.id) = COALESCE($2::bigint, $1::bigint))`,
+            [id, before.series_id ?? null]);
+          const row = paid.rows[0] as { nos: string | null; n: number } | undefined;
+          if (row && Number(row.n) > 0) {
+            throw new DomainError("CONFLICT",
+              `支払が立っているので直接編集できません（${row.nos ?? ""}）。支払を取り消すか、改訂で直してください`);
+          }
+          if (patch.kind !== undefined) await this.assertKindAllowed(client, id, patch.kind);
+          const result = await this.updateInPlace(client, id, entries, actor,
+            effectiveFrom ? { effective_from: effectiveFrom } : {});
+          await recordAudit(client, {
+            actor, action: "condition.update", targetType: "condition", targetId: id,
+            detail: { patch, mode: "in_place_forced" }
+          });
+          return result;
         }
 
         // 未来の日付を指定されたら「予約」にする。契約変更を締結した日に
@@ -974,6 +1011,21 @@ export class ConditionWriteService {
   }
 
   /** その場で書き換える。実績が無い版と、まだ効いていない予約の版に使う。 */
+  /** 種類の変更は、その条件が載っている案件で使える種類の範囲だけ。 */
+  private async assertKindAllowed(client: Queryable, id: number, kind: string) {
+    const r = await client.query(
+      `SELECT m.id, m.matter_no, m.kind FROM matter_links ml
+         JOIN matters m ON m.id = ml.matter_id
+        WHERE ml.target_type = 'condition' AND ml.target_ref = $1::text`, [String(id)]);
+    for (const m of r.rows as Array<{ matter_no: string | null; kind: string }>) {
+      const allowed = (CONDITION_KINDS_BY_MATTER as Record<string, Array<{ value: string; label: string }>>)[m.kind] ?? [];
+      if (allowed.length && !allowed.some((k) => k.value === kind)) {
+        throw new DomainError("VALIDATION",
+          `案件 ${m.matter_no ?? ""} では ${kind} の条件は使えません（使えるのは ${allowed.map((k) => k.label).join("・")}）`);
+      }
+    }
+  }
+
   private async updateInPlace(
     client: Queryable, id: number, entries: Array<{ column: string; value: unknown }>,
     actor: string, extra: Record<string, unknown> = {}
