@@ -409,7 +409,7 @@ export function usageBundleLines(
   events: Array<{
     eventId?: number | null;
     productName?: string | null; methodLabel?: string | null; basisNote?: string | null;
-    outConditionNo?: string | null; outConditionName?: string | null;
+    outConditionNo?: string | null; outAgreementNo?: string | null; outConditionName?: string | null;
     outPartyName?: string | null; outScopes?: string | null;
     outCurrency?: string | null;
     basis: number; ratePct?: number | null; amount?: number | null;
@@ -421,7 +421,8 @@ export function usageBundleLines(
     conditionId: null,
     eventId: e.eventId ?? null,
     contractTitle: outContractTitle(e),
-    contractNumber: e.outConditionNo ?? "",
+    // 合意があれば合意番号。無ければ従来どおり条件番号。
+    contractNumber: e.outAgreementNo ?? e.outConditionNo ?? "",
     conditionName: e.productName ?? "",
     methodLabel: usageMethodLabel(e),
     salesJpy: e.basis,

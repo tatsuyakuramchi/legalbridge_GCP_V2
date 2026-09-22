@@ -170,6 +170,7 @@ export class RoyaltyStatementService {
               e.usage_type, e.out_condition_id, e.unit_amount, e.payment_stage, e.tax_included,
               COALESCE(e.rate_ppm, c.rate_ppm) AS rate_ppm,
               oc.condition_no AS out_condition_no, oc.name AS out_condition_name,
+              oa.agreement_no AS out_agreement_no,
               op.name AS out_party_name, oc.currency AS out_currency,
               -- 製品名は利用形態で決める（product-name.ts）。ここは材料だけ引く。
               w.title AS in_work_title, w.kind AS in_work_kind, ow.title AS out_work_title,
@@ -182,6 +183,7 @@ export class RoyaltyStatementService {
                OR c.id = $2) AS same_series
          FROM condition_events e JOIN conditions c ON c.id = e.condition_id
          LEFT JOIN conditions oc ON oc.id = e.out_condition_id
+         LEFT JOIN agreements oa ON oa.id = oc.agreement_id
          LEFT JOIN parties op ON op.id = oc.counterparty_id
          LEFT JOIN works w ON w.id = c.work_id
          LEFT JOIN works ow ON ow.id = oc.work_id
@@ -321,6 +323,7 @@ export class RoyaltyStatementService {
         basisNote: basisNoteOf(shape),
         outConditionId: int(e.out_condition_id),
         outConditionNo: str(e.out_condition_no),
+        outAgreementNo: str(e.out_agreement_no),
         outConditionName: str(e.out_condition_name),
         outPartyName: str(e.out_party_name),
         outCurrency: str(e.out_currency),

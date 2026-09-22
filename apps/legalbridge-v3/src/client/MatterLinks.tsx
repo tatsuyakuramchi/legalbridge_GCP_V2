@@ -258,6 +258,11 @@ export function MatterConditions(
             ...(last?.agreement ? { agreementId: String(last.agreement.id) } : {}),
             ...(last ? { currency: last.currency } : {})
           }}
+          presetLabels={{
+            counterpartyId: detail.counterparty?.name ?? last?.counterparty?.name ?? null,
+            workId: work?.title ?? null,
+            agreementId: last?.agreement ? `${last.agreement.agreementNo ?? ""} ${last.agreement.title ?? ""}`.trim() : null
+          }}
           onDone={(created) => { setMaking(false); setMade(created.id); void attach(created.id); }}
           onCancel={() => setMaking(false)} />
       )}

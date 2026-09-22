@@ -1,5 +1,6 @@
 import type { Transactable } from "../core/db.js";
-import { dateStr, str } from "../core/db.js";
+import { dateStr, int, str } from "../core/db.js";
+import { termHistory } from "../agreements/term-history.js";
 import { translate } from "../core/errors.js";
 
 /**
@@ -12,7 +13,7 @@ import { translate } from "../core/errors.js";
  * 相手先は統合を辿って探す。名寄せ前の名前で引いても見つかるようにする。
  */
 
-export type Verdict = "covered" | "expiring" | "expired" | "none" | "ambiguous";
+export type Verdict = "covered" | "expiring" | "expired" | "terminated" | "none" | "ambiguous";
 
 export interface ContractCheckMatch {
   partyId: number;
@@ -32,7 +33,12 @@ export interface ContractCheckResult {
   matches: ContractCheckMatch[];
   agreements: Array<{
     id: number; agreementNo: string | null; title: string; status: string;
+    /** master 基本契約／standalone 単体契約／supplement 補助文書／termination 解除合意／document 文書だけ */
+    kind: string;
     effectiveOn: string | null; expiresOn: string | null; autoRenewal: boolean;
+    /** いまの終了日（更新履歴の最終行）。当初の終了日とは違うことがある。 */
+    currentEnd: string | null;
+    terminatedOn: string | null;
     daysToExpiry: number | null;
   }>;
   conditions: Array<{
@@ -110,7 +116,8 @@ export class ContractCheckRepository {
       const [ag, cond] = await Promise.all([
         this.database.query(
           `SELECT a.id, a.agreement_no, a.title, a.status, a.effective_on, a.expires_on,
-                  a.auto_renewal,
+                  a.auto_renewal, a.kind, a.renewal_months, a.renewal_stopped_on, a.terminated_on,
+                  a.executed_on,
                   CASE WHEN a.expires_on IS NULL THEN NULL
                        ELSE (a.expires_on - current_date) END AS days_to_expiry
              FROM agreements a
@@ -125,12 +132,24 @@ export class ContractCheckRepository {
             ORDER BY c.term_end DESC NULLS FIRST, c.id DESC LIMIT 50`, [partyId])
       ]);
 
-      const agreements = (ag.rows as any[]).map((x) => ({
-        id: Number(x.id), agreementNo: str(x.agreement_no), title: String(x.title),
-        status: String(x.status), effectiveOn: dateStr(x.effective_on),
-        expiresOn: dateStr(x.expires_on), autoRenewal: x.auto_renewal === true,
-        daysToExpiry: x.days_to_expiry === null ? null : Number(x.days_to_expiry)
-      }));
+      const agreements = (ag.rows as any[]).map((x) => {
+        // 自動更新の契約は当初の終了日を過ぎても生きている。更新履歴の最終行を見る。
+        const h = termHistory({
+          termStart: dateStr(x.effective_on) ?? dateStr(x.executed_on), termEnd: dateStr(x.expires_on),
+          autoRenew: x.auto_renewal === true, renewMonths: int(x.renewal_months),
+          renewStoppedOn: dateStr(x.renewal_stopped_on), terminatedOn: dateStr(x.terminated_on)
+        });
+        const sqlDays = x.days_to_expiry === null || x.days_to_expiry === undefined ? null : Number(x.days_to_expiry);
+        const moved = h.currentEnd && h.currentEnd !== dateStr(x.expires_on);
+        return {
+          id: Number(x.id), agreementNo: str(x.agreement_no), title: String(x.title),
+          status: String(x.status), kind: String(x.kind ?? "master"),
+          effectiveOn: dateStr(x.effective_on), expiresOn: dateStr(x.expires_on),
+          autoRenewal: x.auto_renewal === true,
+          currentEnd: h.currentEnd, terminatedOn: dateStr(x.terminated_on),
+          daysToExpiry: moved ? daysUntil(h.currentEnd!) : sqlDays
+        };
+      });
       const conditions = (cond.rows as any[]).map((x) => ({
         id: Number(x.id), conditionNo: str(x.condition_no), name: String(x.name),
         direction: String(x.direction), status: String(x.status),
@@ -147,23 +166,40 @@ function verdictFor(
   partyName: string,
   agreements: ContractCheckResult["agreements"]
 ): { verdict: Verdict; message: string; needsLegalReview: boolean } {
-  const executed = agreements.filter((a) => a.status === "executed");
+  // 取引の契約だけを見る。補助文書・解除合意は親の状態に畳まれる。
+  // NDA など「文書だけ」は取引の契約ではない。
+  const trade = agreements.filter((a) => a.kind === "master" || a.kind === "standalone" || !a.kind);
+  const executed = trade.filter((a) => a.status === "executed" && !a.terminatedOn);
   if (!executed.length) {
-    const drafts = agreements.filter((a) => a.status === "draft" || a.status === "negotiating");
+    const terminated = trade.filter((a) => a.status === "terminated" || a.terminatedOn);
+    if (terminated.length) {
+      const latest = terminated[0];
+      return {
+        verdict: "terminated", needsLegalReview: true,
+        message: `${partyName} との契約は ${latest.terminatedOn ?? "—"} に解除されています。` +
+                 "新しい発注はできません。法務に相談してください。"
+      };
+    }
+    const drafts = trade.filter((a) => a.status === "draft" || a.status === "negotiating");
+    const docsOnly = agreements.filter((a) => a.kind === "document").length;
     return {
       verdict: "none", needsLegalReview: true,
       message: drafts.length
         ? `${partyName} との契約は交渉中・下書きの段階です（${drafts.length} 件）。締結前に発注しないでください。`
-        : `${partyName} との締結済みの契約が見つかりません。法務に相談してください。`
+        : `${partyName} との締結済みの契約が見つかりません。` +
+          (docsOnly ? "（NDA などの文書はありますが、取引の契約ではありません）" : "") +
+          "法務に相談してください。"
     };
   }
+  const kindWord = (a: ContractCheckResult["agreements"][number]) =>
+    a.kind === "standalone" ? "単体契約" : "基本契約";
 
   // 期限なしの締結済み契約が1つでもあれば、期間の心配は要らない。
   const openEnded = executed.filter((a) => a.expiresOn === null);
   if (openEnded.length) {
     return {
       verdict: "covered", needsLegalReview: false,
-      message: `${partyName} とは締結済みの契約があります（期限の定めなし）。`
+      message: `${partyName} とは締結済みの${kindWord(openEnded[0])}があります（期限の定めなし）。`
     };
   }
 
@@ -193,6 +229,9 @@ function verdictFor(
 
   return {
     verdict: "covered", needsLegalReview: false,
-    message: `${partyName} とは有効な契約があります（${furthest.expiresOn} まで）。`
+    message: `${partyName} とは有効な${kindWord(furthest)}があります（${furthest.currentEnd ?? furthest.expiresOn} まで）。`
   };
 }
+
+const daysUntil = (day: string): number =>
+  Math.round((Date.parse(`${day}T00:00:00Z`) - Date.parse(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`)) / 86400000);

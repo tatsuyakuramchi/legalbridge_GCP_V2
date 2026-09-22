@@ -310,7 +310,8 @@ export class MatterLinkService {
       if (!matter) throw new DomainError("NOT_FOUND", `案件 ${matterId} が見つかりません`);
 
       const conditions = await this.database.query(
-        `SELECT c.id, c.status, c.work_id, a.agreement_no, a.status AS agreement_status
+        `SELECT c.id, c.status, c.work_id, a.agreement_no, a.status AS agreement_status,
+                a.kind AS agreement_kind
            FROM matter_links ml
            JOIN conditions c ON c.id::text = ml.target_ref
            LEFT JOIN agreements a ON a.id = c.agreement_id
@@ -394,6 +395,8 @@ export class MatterLinkService {
         conditionsWithWork: rows.filter((r) => r.work_id !== null).length,
         agreementExecuted: rows.some((r) => r.agreement_status === "executed"),
         agreementNo: rows.find((r) => r.agreement_status === "executed")?.agreement_no ?? null,
+        // 基本契約でも単体契約でも済。どちらかは工程の根拠に書く。
+        agreementKind: (rows.find((r) => r.agreement_status === "executed")?.agreement_kind as string | undefined) ?? null,
         issuedDocuments: (documents.rows as any[])
           .filter((d) => d.status === "issued")
           .map((d) => ({ documentNo: d.document_no ?? null, label: d.label ?? null })),

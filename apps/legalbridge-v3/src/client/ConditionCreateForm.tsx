@@ -50,7 +50,7 @@ const renewMonths = (v: unknown) => {
 };
 
 export function ConditionCreateForm(
-  { title = "条件の登録", preset, onDone, onCancel }: {
+  { title = "条件の登録", preset, presetLabels, onDone, onCancel, onRegisterAgreement }: {
     title?: string;
     /**
      * 分かっている項目を埋めた状態で開く。案件から作るなら相手先も
@@ -60,12 +60,32 @@ export function ConditionCreateForm(
     preset?: Partial<Record<
       "direction" | "kind" | "counterpartyId" | "workId" | "agreementId"
       | "currency" | "taxCategory" | "pricingModel" | "name", string>>;
+    /** preset の検索項目の表示名。無いと「#2」と出る。 */
+    presetLabels?: Partial<Record<"counterpartyId" | "workId" | "agreementId", string | null>>;
     onDone: (created: { id: number }) => void;
     onCancel: () => void;
+    /** 相手先に締結済みの契約が無いとき、その場で契約の登録へ移る口。 */
+    onRegisterAgreement?: (partyId: number) => void;
   }
 ) {
   const [works, setWorks] = useState<Array<{ id: number; title: string }>>([]);
   const [agreements, setAgreements] = useState<Agreement[]>([]);
+  /**
+   * 相手先を選んだら、その相手の締結済み契約（基本契約・単体契約）を引く。
+   * 1 本なら自動で入れる。無ければ「契約を登録する／契約なしで続ける」。
+   * 2 本以上なら選んでもらう。契約なしの条件が黙って増えないようにする。
+   */
+  const [partyFor, setPartyFor] = useState<string>("");
+  const [candidates, setCandidates] = useState<Agreement[] | null>(null);
+  const [noAgreement, setNoAgreement] = useState(false);
+  useEffect(() => {
+    if (!partyFor) { setCandidates(null); return; }
+    let live = true;
+    api.get<{ agreements: Agreement[] }>(`/parties/${partyFor}/agreements`)
+      .then((r) => { if (live) setCandidates(r.agreements); })
+      .catch(() => { if (live) setCandidates([]); });
+    return () => { live = false; };
+  }, [partyFor]);
 
   useEffect(() => {
     api.get<{ works: Array<{ id: number; title: string }> }>("/works")
@@ -80,6 +100,14 @@ export function ConditionCreateForm(
 <CreateForm
       title={title}
       path="/conditions"
+      onValues={(v, set) => {
+        const party = String(v.counterpartyId ?? "");
+        if (party !== partyFor) { setPartyFor(party); setNoAgreement(false); return; }
+        // 候補が 1 本で、まだ何も入っていなければ自動で入れる。人が空にしたら戻さない。
+        if (candidates && candidates.length === 1 && !v.agreementId && !noAgreement) {
+          set("agreementId", String(candidates[0]!.id));
+        }
+      }}
       initial={{ direction: "in", kind: "service", pricingModel: "fixed",
                  currency: "JPY", taxCategory: "taxable", ...preset }}
       fields={[
@@ -95,18 +123,26 @@ export function ConditionCreateForm(
           hint: "許諾料・製品はライセンスの案件、委託料・実費・手数料は業務委託の案件に繋がる" },
         // 取引先は 2,500 件ある。一覧から選ばせず、名前で探して決める。
         { name: "counterpartyId", label: "相手先", type: "search", required: true,
-          search: searchParties, placeholder: "取引先名・コードで探す" },
+          search: searchParties, placeholder: "取引先名・コードで探す",
+          valueLabel: presetLabels?.counterpartyId ?? null },
         { name: "workId", label: "作品（許諾なら原作か、原作を兼ねる作品）", type: "search",
           options: works.map((w) => ({ value: String(w.id), label: w.title })),
           hint: "ライセンスの条件は作品にぶら下げる。ここが空だと権利の上限を計算できない" },
         // 相手先が分かっているときは、その相手先の契約だけを候補にする。
         { name: "agreementId", label: "契約（合意）", type: "search",
-          options: agreements
-            .filter((a) => !preset?.counterpartyId
-              || String(a.counterparty?.id ?? "") === preset.counterpartyId)
+          valueLabel: presetLabels?.agreementId ?? null,
+          options: (candidates && candidates.length ? candidates : agreements)
+            .filter((a) => !partyFor || String(a.counterparty?.id ?? "") === partyFor)
             .map((a) => ({ value: String(a.id), label: a.title,
                            hint: [a.agreementNo, a.counterparty?.name].filter(Boolean).join("／") })),
-          hint: "計算書の契約名・契約番号はここから出る" },
+          hint: (v) => !partyFor ? "相手先を選ぶと、その相手の締結済み契約を当てます"
+            : candidates === null ? "契約を引いています…"
+            : candidates.length === 1 && v.agreementId === String(candidates[0]!.id)
+              ? `この相手の締結済み契約は 1 本なので入れました（${candidates[0]!.agreementNo ?? candidates[0]!.title}）`
+            : candidates.length > 1 ? `締結済みの契約が ${candidates.length} 本あります。どちらの下に置くか選んでください`
+            : candidates.length === 0 ? (noAgreement ? "契約なしで登録します。工程と契約チェックに「契約なし」と出ます"
+                                                     : "この相手には締結済みの契約がありません")
+            : "計算書の契約名・契約番号はここから出る" },
         { name: "termStart", label: "開始", type: "date" },
         { name: "termEnd", label: "終了", type: "date" },
         // 納期は契約期間の終了日とは別。業務委託では同じ日になることが多いが、
@@ -239,6 +275,21 @@ export function ConditionCreateForm(
       }}
   onDone={onDone}
   onCancel={onCancel}
-/>
+>
+  {/* 相手に締結済みの契約が無い。黙って契約なしの条件を増やさず、ここで決めてもらう。 */}
+  {partyFor && candidates && candidates.length === 0 && !noAgreement && (
+    <div className="note warn" style={{ marginTop: 8 }}>
+      この相手には締結済みの契約（基本契約か単体契約）がありません。
+      <span className="row" style={{ gap: 8, marginTop: 6 }}>
+        {onRegisterAgreement && (
+          <button type="button" className="btn btn-sm primary"
+                  onClick={() => onRegisterAgreement(Number(partyFor))}>契約を登録する</button>
+        )}
+        <button type="button" className="btn btn-sm" onClick={() => setNoAgreement(true)}>契約なしで続ける</button>
+        <span className="faint">契約なしで登録した条件は、工程と契約チェックに「契約なし」と出ます</span>
+      </span>
+    </div>
+  )}
+</CreateForm>
   );
 }

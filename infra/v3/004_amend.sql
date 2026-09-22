@@ -1540,3 +1540,90 @@ SELECT (SELECT count(*) FROM information_schema.columns
        (SELECT count(*) FROM pg_constraint
          WHERE conrelid='v3.conditions'::regclass AND conname='conditions_usage_type_chk'
            AND pg_get_constraintdef(oid) LIKE '%pub_sub_print%') AS 翻訳版を許す;
+
+-- ---------------------------------------------------------------------
+-- A-043 契約（合意）の種類・親・解除・更新の記録
+--
+--   契約はこれまで V2 から移した器しか無く、画面からは作れなかった。
+--   作れるようにするにあたり、何を作るかを列で持つ。
+--
+--     kind      … master（基本契約）／standalone（単体契約）／supplement（補助文書。
+--                 基本契約の下で条件を定める・一部を直す覚書）／termination（解除合意）
+--                 ／document（文書だけ。NDA など条件明細を持たないもの）
+--     domain    … service（業務委託）／license（ライセンス）。番号の頭が決まる
+--                 （SVC／LIC、単体は ISA／ILT）
+--     parent_id … 補助文書・解除合意がぶら下がる親（基本契約か単体契約）
+--     counterparty_ref_no … 相手方が付けた契約番号
+--     terminated_on       … 解除日。ここで契約が終わる（消さない）
+--     renewal_months      … 自動更新の単位（月）。空なら当初の期間と同じ長さ
+--     renewal_stopped_on  … 不更新を決めた日。以後は更新しない（その期間は満了まで）
+--
+--   更新の履歴は行で持たない。開始日・当初の終了日・更新の単位・今日から
+--   計算で出す（条件の A-039 と同じ理屈）。計算で出ないものだけ term_events に
+--   記録する：合意による更新（覚書で期間を変えた）・不更新・解除。
+--   条件明細も同じ表を使う（target_type = 'condition'）。
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.agreements ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'master';
+ALTER TABLE v3.agreements ADD COLUMN IF NOT EXISTS domain text;
+ALTER TABLE v3.agreements ADD COLUMN IF NOT EXISTS parent_id bigint REFERENCES v3.agreements(id);
+ALTER TABLE v3.agreements ADD COLUMN IF NOT EXISTS counterparty_ref_no text;
+ALTER TABLE v3.agreements ADD COLUMN IF NOT EXISTS terminated_on date;
+ALTER TABLE v3.agreements ADD COLUMN IF NOT EXISTS renewal_months integer;
+ALTER TABLE v3.agreements ADD COLUMN IF NOT EXISTS renewal_stopped_on date;
+COMMENT ON COLUMN v3.agreements.kind IS
+  'master 基本契約／standalone 単体契約／supplement 補助文書／termination 解除合意／document 文書だけ';
+COMMENT ON COLUMN v3.agreements.domain IS 'service 業務委託／license ライセンス。番号の頭（SVC・LIC・ISA・ILT）が決まる。';
+COMMENT ON COLUMN v3.agreements.parent_id IS '補助文書・解除合意の親（基本契約か単体契約）。';
+COMMENT ON COLUMN v3.agreements.terminated_on IS '解除日。契約はここで終わる。行は消さない。';
+COMMENT ON COLUMN v3.agreements.renewal_months IS '自動更新の単位（月）。空なら当初の期間と同じ長さ。';
+COMMENT ON COLUMN v3.agreements.renewal_stopped_on IS '不更新を決めた日。以後は更新しない（その期間は満了まで有効）。';
+
+DO $a043$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.agreements'::regclass AND conname = 'agreements_kind_chk') THEN
+    ALTER TABLE v3.agreements ADD CONSTRAINT agreements_kind_chk
+      CHECK (kind IN ('master', 'standalone', 'supplement', 'termination', 'document'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.agreements'::regclass AND conname = 'agreements_domain_chk') THEN
+    ALTER TABLE v3.agreements ADD CONSTRAINT agreements_domain_chk
+      CHECK (domain IS NULL OR domain IN ('service', 'license'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.agreements'::regclass AND conname = 'agreements_renewal_months_chk') THEN
+    ALTER TABLE v3.agreements ADD CONSTRAINT agreements_renewal_months_chk
+      CHECK (renewal_months IS NULL OR (renewal_months > 0 AND renewal_months <= 120));
+  END IF;
+END
+$a043$;
+
+CREATE TABLE IF NOT EXISTS v3.term_events (
+  id               bigserial PRIMARY KEY,
+  target_type      text NOT NULL CHECK (target_type IN ('agreement', 'condition')),
+  target_id        bigint NOT NULL,
+  -- renewed 合意による更新（終了日を決め直した）／declined 不更新／terminated 解除
+  kind             text NOT NULL CHECK (kind IN ('renewed', 'declined', 'terminated')),
+  on_date          date NOT NULL,
+  -- renewed のときの新しい終了日。declined・terminated は空。
+  new_end          date,
+  -- 根拠になった補助文書・解除合意。
+  ref_agreement_id bigint REFERENCES v3.agreements(id),
+  note             text,
+  source_url       text,
+  created_by       text,
+  created_at       timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS term_events_target_idx ON v3.term_events (target_type, target_id, on_date);
+COMMENT ON TABLE v3.term_events IS
+  '更新の記録。計算で出ないもの（合意更新・不更新・解除）だけを置く。履歴の行そのものは計算で出す。';
+GRANT SELECT, INSERT, UPDATE ON v3.term_events TO legalbridge_v3_runtime;
+GRANT USAGE, SELECT ON SEQUENCE v3.term_events_id_seq TO legalbridge_v3_runtime;
+
+\echo '--- 契約の種類・親・解除・更新の記録（A-043。列 7 と表 1 で 8 であること） ---'
+SELECT (SELECT count(*) FROM information_schema.columns
+         WHERE table_schema='v3' AND table_name='agreements'
+           AND column_name IN ('kind', 'domain', 'parent_id', 'counterparty_ref_no',
+                               'terminated_on', 'renewal_months', 'renewal_stopped_on'))
+     + (SELECT count(*) FROM information_schema.tables
+         WHERE table_schema='v3' AND table_name='term_events') AS 列と表;

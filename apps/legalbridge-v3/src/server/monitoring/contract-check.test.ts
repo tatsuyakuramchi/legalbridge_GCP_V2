@@ -25,7 +25,7 @@ test("有効な契約があれば、そう言い切る", async () => {
   const r = await build([party()], [agreement()]).check("株式会社甲");
   assert.equal(r.verdict, "covered");
   assert.equal(r.needsLegalReview, false);
-  assert.match(r.message, /有効な契約があります/);
+  assert.match(r.message, /有効な基本契約があります/);
 });
 
 test("期限の定めが無い契約は期間を心配しない", async () => {
@@ -104,4 +104,35 @@ test("短すぎる入力では引かない", async () => {
   assert.equal(r.verdict, "none");
   assert.equal(r.needsLegalReview, false, "入力不足は法務の問題ではない");
   assert.match(r.message, /2文字以上/);
+});
+
+test("単体契約でも「あり」。語で基本契約と区別する", async () => {
+  const r = await build([party()], [agreement({ kind: "standalone", expires_on: null, days_to_expiry: null })])
+    .check("株式会社甲");
+  assert.equal(r.verdict, "covered");
+  assert.match(r.message, /単体契約/);
+});
+
+test("解除された契約は「解除済み」。新しい発注はさせない", async () => {
+  const r = await build([party()], [agreement({ status: "terminated", terminated_on: new Date(2026, 8, 30) })])
+    .check("株式会社甲");
+  assert.equal(r.verdict, "terminated");
+  assert.equal(r.needsLegalReview, true);
+  assert.match(r.message, /解除されています/);
+});
+
+test("NDA（文書だけ）は取引の契約ではない", async () => {
+  const r = await build([party()], [agreement({ kind: "document", agreement_no: null })]).check("株式会社甲");
+  assert.equal(r.verdict, "none");
+  assert.match(r.message, /取引の契約ではありません/);
+});
+
+test("自動更新の契約は当初の終了日を過ぎても生きている（更新履歴の最終行で見る）", async () => {
+  const r = await build([party()], [agreement({
+    effective_on: new Date(Date.UTC(2020, 3, 1)), expires_on: new Date(Date.UTC(2021, 2, 31)),
+    auto_renewal: true, renewal_months: 12, days_to_expiry: -2000
+  })]).check("株式会社甲");
+  assert.equal(r.verdict, "covered");
+  assert.ok((r.agreements[0]?.daysToExpiry ?? -1) >= 0);
+  assert.notEqual(r.agreements[0]?.currentEnd, "2021-03-31");
 });

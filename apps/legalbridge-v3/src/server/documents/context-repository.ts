@@ -327,6 +327,7 @@ export class DocumentContextRepository {
               e.expected_amount, e.variance_note,
               e.usage_type, e.out_condition_id,
               oc.condition_no AS out_condition_no, oc.name AS out_condition_name,
+              oa.agreement_no AS out_agreement_no,
               op.name AS out_party_name, ow.title AS out_work_title,
               w.title AS in_work_title, w.kind AS in_work_kind,
               ${CHILD_TITLES_SQL("c.work_id")} AS child_titles,
@@ -340,6 +341,7 @@ export class DocumentContextRepository {
          JOIN conditions c ON c.id = e.condition_id
          LEFT JOIN condition_schedules s ON s.id = e.schedule_id
          LEFT JOIN conditions oc ON oc.id = e.out_condition_id
+         LEFT JOIN agreements oa ON oa.id = oc.agreement_id
          LEFT JOIN parties    op ON op.id = oc.counterparty_id
          LEFT JOIN works      ow ON ow.id = oc.work_id
          LEFT JOIN works      w  ON w.id = c.work_id
@@ -388,6 +390,8 @@ export class DocumentContextRepository {
         outCondition: row.out_condition_id ? {
           id: Number(row.out_condition_id),
           conditionNo: str(row.out_condition_no),
+          // 紙の「契約番号」。合意があれば合意番号、無ければ条件番号。
+          agreementNo: str(row.out_agreement_no),
           name: str(row.out_condition_name),
           partyName: str(row.out_party_name),
           workTitle: str(row.out_work_title)

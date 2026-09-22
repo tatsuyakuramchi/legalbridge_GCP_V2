@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { api, ApiError } from "./api.js";
 import { SearchSelect, type SearchOption } from "./SearchSelect.js";
 import { RightsScopePicker } from "./RightsScopePicker.js";
@@ -49,6 +49,11 @@ export interface CreateFormProps {
   /** 409 のときに出す「それでも作る」の再送。渡さなければ再送しない。 */
   retryOnConflict?: { label: string; extra: Record<string, unknown> };
   children?: ReactNode;
+  /**
+   * 値が変わるたびに呼ぶ。他の項目を引いて埋めたいとき（相手先を選んだら
+   * その相手の契約を当てる、など）に使う。set で他の項目を書き換えられる。
+   */
+  onValues?: (values: Record<string, string>, set: (name: string, value: string) => void) => void;
 }
 
 export function CreateForm(props: CreateFormProps) {
@@ -57,6 +62,7 @@ export function CreateForm(props: CreateFormProps) {
   const [busy, setBusy] = useState(false);
 
   const set = (name: string, value: string) => setValues((v) => ({ ...v, [name]: value }));
+  useEffect(() => { props.onValues?.(values, set); }, [values]);
 
   async function submit(extra: Record<string, unknown> = {}) {
     setBusy(true); setError(null);

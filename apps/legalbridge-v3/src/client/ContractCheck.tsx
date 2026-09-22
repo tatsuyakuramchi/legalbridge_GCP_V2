@@ -2,7 +2,7 @@ import { useState } from "react";
 import { StatusTag } from "./labels.js";
 import { api, ApiError } from "./api.js";
 
-type Verdict = "covered" | "expiring" | "expired" | "none" | "ambiguous";
+type Verdict = "covered" | "expiring" | "expired" | "terminated" | "none" | "ambiguous";
 interface Result {
   query: string; verdict: Verdict; message: string; needsLegalReview: boolean;
   matches: Array<{ partyId: number; partyName: string; partyCode: string | null; matchedOn: string }>;
@@ -21,6 +21,7 @@ const VERDICT: Record<Verdict, { label: string; tone: string }> = {
   covered: { label: "契約あり", tone: "good" },
   expiring: { label: "まもなく満了", tone: "warn" },
   expired: { label: "満了済み", tone: "danger" },
+  terminated: { label: "解除済み", tone: "danger" },
   none: { label: "契約なし", tone: "danger" },
   ambiguous: { label: "候補が複数", tone: "warn" }
 };

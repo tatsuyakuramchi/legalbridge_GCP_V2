@@ -1,6 +1,7 @@
+import { termHistory } from "../agreements/term-history.js";
 import { inTransaction, type Queryable, type Transactable } from "../core/db.js";
 import { scanWorkParts } from "../ops/quality-scan.js";
-import { dateStr } from "../core/db.js";
+import { dateStr, int } from "../core/db.js";
 import { translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import type { DispatchService } from "../integrations/dispatch-service.js";
@@ -156,14 +157,34 @@ export class DailyJob {
   private async collect(client: Queryable): Promise<DailyFinding[]> {
     // 1本のトランザクション接続に同時に問い合わせない（pg は多重実行を
     // 受け付けない。並べても速くならず、pg@9 では動かなくなる）。
-    const agreements = await client.query(
+    // 自動更新の契約は当初の終了日を過ぎても生きている。更新履歴の最終行
+    // （いまの終了日）で見る。SQL で当初の終了日を見ると、更新のたびに
+    // 「満了」が並ぶ。
+    const agreementRows = await client.query(
       `SELECT a.id, a.agreement_no, a.title, a.expires_on, a.auto_renewal,
-              a.renewal_notice_months, p.name AS party,
+              a.renewal_notice_months, a.renewal_months, a.renewal_stopped_on,
+              a.terminated_on, a.effective_on, a.executed_on, a.kind, p.name AS party,
               (a.expires_on - current_date) AS days
          FROM agreements a JOIN parties p ON p.id = a.counterparty_id
         WHERE a.status = 'executed' AND a.expires_on IS NOT NULL
-          AND a.expires_on <= current_date + $1::int
-        ORDER BY a.expires_on`, [EXPIRY_NOTICE_DAYS]);
+          AND a.terminated_on IS NULL
+          AND COALESCE(a.kind, 'master') IN ('master', 'standalone')
+        ORDER BY a.expires_on`);
+    const today = new Date().toISOString().slice(0, 10);
+    const agreements = { rows: (agreementRows.rows as any[]).map((a) => {
+      const h = termHistory({
+        termStart: dateStr(a.effective_on) ?? dateStr(a.executed_on), termEnd: dateStr(a.expires_on),
+        autoRenew: a.auto_renewal === true, renewMonths: int(a.renewal_months),
+        renewStoppedOn: dateStr(a.renewal_stopped_on), terminatedOn: dateStr(a.terminated_on)
+      }, today);
+      // 更新で終了日が動いたときだけ数え直す。動いていなければ SQL の日数のまま。
+      const end = h.currentEnd ?? dateStr(a.expires_on)!;
+      const moved = h.currentEnd !== null && h.currentEnd !== dateStr(a.expires_on);
+      const days = moved
+        ? Math.round((Date.parse(`${end}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86400000)
+        : Number(a.days);
+      return { ...a, expires_on: end, days };
+    }).filter((a) => a.days <= EXPIRY_NOTICE_DAYS) };
 
     const tasks = await client.query(
       `SELECT t.id, t.title, t.due_at, m.matter_no, m.title AS matter_title,

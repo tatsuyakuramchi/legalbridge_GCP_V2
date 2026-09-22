@@ -18,9 +18,13 @@ import { ServiceSetForm } from "./ServiceSetForm.js";
 import type { ConditionDetail, ConditionSummary, EnvelopeCheck, RightsEnvelope } from "../server/core/model.js";
 import { api, ApiError, money, rate } from "./api.js";
 import { CreateForm, int, text } from "./CreateForm.js";
+import { TermHistoryTable } from "./TermHistory.js";
+import type { TermHistory } from "../server/agreements/term-history.js";
 
 type DetailResponse = ConditionDetail & {
   envelopeCheck: { envelope: RightsEnvelope; check: EnvelopeCheck } | null;
+  /** 更新履歴（A-043）。自分の規則が無ければ契約の規則を借りる。 */
+  termHistory: TermHistory;
 };
 type RoyaltyPreview = {
   fee: {
@@ -474,7 +478,13 @@ export function ConditionsWorkspace(
                   <dl className="dl">
                     <dt>相手先</dt><dd>{detail.counterparty?.name ?? "未設定"}</dd>
                     <dt>作品</dt><dd>{detail.work?.title ?? "—"}{detail.workPartName ? `／${detail.workPartName}` : ""}</dd>
-                    <dt>期間</dt><dd className="code">{detail.termStart ?? "—"} → {detail.termEnd ?? "期限なし"}</dd>
+                    <dt>期間</dt><dd className="code">{detail.termStart ?? "—"} → {detail.termHistory?.currentEnd ?? detail.termEnd ?? "期限なし"}
+                      {detail.termHistory && detail.termHistory.currentEnd !== detail.termEnd && (
+                        <span className="faint" style={{ marginLeft: 6 }}>（当初 {detail.termEnd ?? "期限なし"}）</span>
+                      )}</dd>
+                    {detail.termHistory && detail.termHistory.rows.length > 0 && (
+                      <><dt>更新履歴</dt><dd><TermHistoryTable history={detail.termHistory} compact /></dd></>
+                    )}
                     <dt>算定</dt><dd>{
                       detail.pricingModel === "revenue_rate" ? `売上料率 ${rate(detail.ratePpm)}`
                       : detail.pricingModel === "unit_rate" ? `単価 ${money(detail.unitAmount, detail.currency)} × 数量`

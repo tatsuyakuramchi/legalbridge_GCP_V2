@@ -125,7 +125,7 @@ const AGREEMENT: Record<string, Entry> = {
   negotiating: { label: "交渉中", tone: "accent" },
   executed: { label: "締結済み", tone: "ok" },
   expired: { label: "満了", tone: "warn" },
-  terminated: { label: "解約", tone: "out" }
+  terminated: { label: "解除", tone: "out" }
 };
 
 const PARTY: Record<string, Entry> = {

@@ -24,10 +24,12 @@ const TAB_LABEL: Record<FlowTab, string> = {
 interface Flow { steps: FlowStep[]; current: FlowStep | null }
 
 export function MatterFlow(
-  { matterId, reloadKey, onGo }:
+  { matterId, reloadKey, onGo, onRegisterAgreement }:
   { matterId: number; reloadKey: number;
     /** 段階を押したときに移る先。案件の中身のタブを開く。 */
-    onGo?: (tab: FlowTab) => void }
+    onGo?: (tab: FlowTab) => void;
+    /** 「基本契約の確認」が未済のとき、その場で契約の登録へ移る口（相手先入り）。 */
+    onRegisterAgreement?: () => void }
 ) {
   const [flow, setFlow] = useState<Flow | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -80,7 +82,12 @@ export function MatterFlow(
         {flow.current
           ? <div className="trace-line" style={{ marginTop: 6 }}>
               次にやること：<b>{flow.current.name}</b>
-              {flow.current.tab && onGo && (
+              {/* 契約は案件の中のタブでは登録できない。契約の画面へ、相手先を入れた状態で移る。 */}
+              {flow.current.action === "契約を登録する" && onRegisterAgreement ? (
+                <button type="button" className="btn btn-sm primary" style={{ marginLeft: 8 }}
+                        title="契約の画面へ移ります（相手先が入った状態）"
+                        onClick={onRegisterAgreement}>契約を登録する</button>
+              ) : flow.current.tab && onGo && (
                 <button type="button" className="btn btn-sm primary" style={{ marginLeft: 8 }}
                         title={`${TAB_LABEL[flow.current.tab]}タブへ移ります`}
                         onClick={() => onGo(flow.current!.tab!)}>

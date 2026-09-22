@@ -1525,6 +1525,14 @@ SELECT * FROM (
          (SELECT count(*) FROM information_schema.columns
            WHERE table_schema='v3' AND table_name='conditions' AND column_name='delivery_due')::text
   UNION ALL
+  SELECT 43, '契約の種類・親・解除・更新の記録（A-043。列 7 と表 1 で 8 であること）',
+         ((SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='v3' AND table_name='agreements'
+              AND column_name IN ('kind', 'domain', 'parent_id', 'counterparty_ref_no',
+                                  'terminated_on', 'renewal_months', 'renewal_stopped_on'))
+        + (SELECT count(*) FROM information_schema.tables
+            WHERE table_schema='v3' AND table_name='term_events'))::text
+  UNION ALL
   SELECT 33, '翻訳版再許諾と別途合意（A-033。列 1 と CHECK 1 で 2 であること）',
          ((SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='conditions' AND column_name = 'sublicense_consent')

@@ -107,6 +107,15 @@ export function App() {
   /** その画面に渡す選択。別の画面へ移ったら持ち越さない。 */
   const focusFor = (view: View) => (focus && focus.view === view ? focus.id : undefined);
 
+  /** 案件の工程から「契約を登録する」で来たとき。相手先を入れた状態で契約の登録を開く。 */
+  const [agreementPreset, setAgreementPreset] =
+    useState<{ partyId: number; partyName: string | null; nonce: number } | null>(null);
+  const startAgreement = (partyId: number, partyName: string | null) => {
+    setAgreementPreset({ partyId, partyName, nonce: Date.now() });
+    setFocus(null);
+    setView("agreements");
+  };
+
   /**
    * 文書を作りに行く。条件と実績を選んだ状態で「文書」画面を開く。
    * 作成のフォームは1つだけにしてあるので、どこから入っても同じものを見る。
@@ -223,6 +232,7 @@ export function App() {
             onOpenCondition={openCondition} initialId={focusFor("matters")}
             onOpen={openEntity} onCompose={startCompose} onOpenDocument={openDocumentAt}
             onBulkOrders={startBulkOrders}
+            onRegisterAgreement={startAgreement}
             onFixDrift={(matterId) => { setDriftMatter(matterId); setView("drift"); }} />
         )}
         {view === "conditions" && (
@@ -249,8 +259,10 @@ export function App() {
             onOpen={openEntity} />
         )}
         {view === "agreements" && (
-          <AgreementsWorkspace key={`a${focusFor("agreements") ?? 0}`}
-            initialId={focusFor("agreements")} onOpen={openEntity} />
+          <AgreementsWorkspace key={`a${focusFor("agreements") ?? 0}-${agreementPreset?.nonce ?? 0}`}
+            initialId={focusFor("agreements")} onOpen={openEntity}
+            createPreset={agreementPreset
+              ? { partyId: agreementPreset.partyId, partyName: agreementPreset.partyName } : null} />
         )}
         {view === "closing" && (
           <ClosingWorkspace onOpenCondition={openCondition} onOpenDocument={openDocumentAt}

@@ -103,7 +103,9 @@ export function statementLabelRows(context: Ctx): Row[] {
         productName: event.productName ?? out.workTitle ?? condition.work?.title ?? "",
         contractTitle: [out.partyName, out.name]
           .map((x: unknown) => String(x ?? "").trim()).filter(Boolean).join("　"),
-        contractNumber: out.conditionNo ?? ""
+        // 相手に見せる「契約番号」。合意があればその番号、無ければ条件番号
+        // （条件番号を契約番号として刷ると、相手が持つ契約書と突き合わない）。
+        contractNumber: out.agreementNo ?? out.conditionNo ?? ""
       };
     });
 }

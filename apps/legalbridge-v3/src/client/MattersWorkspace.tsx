@@ -68,7 +68,7 @@ const backlogIssue = (detail: MatterDetail): string | null =>
   detail.links.find((l) => l.targetType === "backlog_issue")?.targetRef ?? null;
 
 export function MattersWorkspace(
-  { onOpenCondition, initialId, onOpen, onOpenDocument, onCompose, onBulkOrders, onFixDrift }: {
+  { onOpenCondition, initialId, onOpen, onOpenDocument, onCompose, onBulkOrders, onFixDrift, onRegisterAgreement }: {
     onOpenCondition: (id: number) => void;
     initialId?: number;
     onOpen?: (kind: EntityKind, id: number) => void;
@@ -81,6 +81,8 @@ export function MattersWorkspace(
     onBulkOrders?: (matterId: number) => void;
     /** 「金額の直し」をこの案件で絞って開く。 */
     onFixDrift?: (matterId: number) => void;
+    /** 契約の画面へ、この案件の相手先を入れた状態で登録を開く。 */
+    onRegisterAgreement?: (partyId: number, partyName: string | null) => void;
   }
 ) {
   const [rows, setRows] = useState<MatterSummary[]>([]);
@@ -444,7 +446,10 @@ export function MattersWorkspace(
                   )}
                   <div className="title">{detail.title}</div>
                   <MatterFlow matterId={detail.id} reloadKey={linkVersion}
-                          onGo={(t) => setTab(t)} />
+                          onGo={(t) => setTab(t)}
+                          onRegisterAgreement={onRegisterAgreement && detail.counterparty
+                            ? () => onRegisterAgreement(detail.counterparty!.id, detail.counterparty!.name ?? null)
+                            : undefined} />
                   <dl className="dl">
                     <dt>取引モデル</dt>
                     <dd>

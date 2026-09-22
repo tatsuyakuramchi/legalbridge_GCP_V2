@@ -1,4 +1,5 @@
 import { inTransaction, int, str, type Queryable, type Transactable } from "../core/db.js";
+import { ensureAgreementForTerms } from "../agreements/auto.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { MatterLinkService } from "../matters/link-service.js";
@@ -382,9 +383,17 @@ export class DocumentIssueService {
             str(row.supersede_reason), actor);
         }
 
+        // 条件書（個別利用許諾条件書・出版条件書）は相手と結ぶ契約そのもの。
+        // 決定した瞬間に合意の器を立てる（基本契約があれば補助文書、無ければ単体契約）。
+        const auto = await ensureAgreementForTerms(client, {
+          documentId, documentNo, templateKey: template.templateKey, templateLabel: template.label,
+          conditionIds, agreementId: int(row.agreement_id), issuedOn
+        }, actor);
+
         await recordAudit(client, {
           actor, action: "document.issue", targetType: "document", targetId: documentId,
           detail: { documentNo, templateKey: template.templateKey, conditions: conditionIds,
+                    ...(auto ? { agreement: auto } : {}),
                     ...(versionId !== Number(row.template_version_id)
                       ? { templateVersionWas: Number(row.template_version_id), templateVersion: versionId } : {}),
                     ...(settled.created.length ? { createdConditions: settled.created } : {}),

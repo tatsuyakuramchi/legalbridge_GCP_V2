@@ -45,6 +45,8 @@ import { SettledExportService } from "./documents/settled-export.js";
 import { diffSettled } from "./documents/settled-diff.js";
 import { rawRows } from "./documents/settled-batch.js";
 import { MatterTeardownService } from "./documents/teardown-service.js";
+import { AgreementService, termInputForCondition } from "./agreements/service.js";
+import { termHistory } from "./agreements/term-history.js";
 import { ConditionDuplicateService } from "./conditions/duplicates.js";
 import { ChromiumPdfRenderer, MemoryPdfRenderer, type PdfRenderer } from "./documents/pdf-renderer.js";
 import { DocumentStorageService } from "./documents/storage-service.js";
@@ -155,6 +157,7 @@ export function createRoutes(database: Transactable) {
   const matterGraph = new MatterGraphService(database);
   const receivables = new ReceivableRepository(database);
   const contractCheck = new ContractCheckRepository(database);
+  const agreements = new AgreementService(database);
   const search = new SearchRepository(database);
   const exports = new ExportRepository(database);
   const paymentReport = new PaymentReportRepository(database);
@@ -234,39 +237,97 @@ export function createRoutes(database: Transactable) {
   // 条件は契約の明細であって、それ自体が契約書ではない。器である契約に
   // 画面が無かったので、条件が独立した書類のように見えていた。
   router.get("/agreements", asyncRoute(async (req, res) => {
-    const q = String(req.query.q ?? "").trim();
-    const r = await database.query(
-      `SELECT a.id, a.agreement_no, a.title, a.direction, a.status,
-              a.executed_on, a.effective_on, a.expires_on,
-              p.id AS party_id, p.name AS party_name,
-              (SELECT count(*) FROM conditions c WHERE c.agreement_id = a.id)::int AS condition_count,
-              (SELECT count(*) FROM documents d WHERE d.agreement_id = a.id)::int AS document_count,
-              (SELECT COALESCE(sum(c.flat_amount), 0) FROM conditions c
-                WHERE c.agreement_id = a.id AND c.status = 'active')::bigint AS total_flat
-         FROM agreements a JOIN parties p ON p.id = a.counterparty_id
-        WHERE ($1 = '' OR a.title ILIKE $1 OR COALESCE(a.agreement_no,'') ILIKE $1
-               OR p.name ILIKE $1)
-        ORDER BY a.id DESC LIMIT 200`, [q ? `%${q}%` : ""]);
-    res.json({ agreements: (r.rows as Array<Record<string, any>>).map(mapAgreement) });
+    res.json({ agreements: await agreements.list({
+      keyword: String(req.query.q ?? ""),
+      partyId: req.query.partyId ? Number(req.query.partyId) : null,
+      executedOnly: String(req.query.executed ?? "") === "1"
+    }) });
   }));
+
+  /** 条件登録の候補。締結済みの基本契約・単体契約だけ。 */
+  router.get("/parties/:id/agreements", asyncRoute(async (req, res) => {
+    res.json({ agreements: await agreements.candidatesFor(Number(req.params.id)) });
+  }));
+
+  const agreementBody = z.object({
+    counterpartyId: z.coerce.number().int().positive(),
+    direction: z.enum(["in", "out"]),
+    kind: z.enum(["master", "standalone", "supplement", "termination", "document"]),
+    domain: z.enum(["service", "license"]).nullable().optional(),
+    parentId: z.coerce.number().int().positive().nullable().optional(),
+    title: z.string().trim().min(1).max(200),
+    status: z.enum(["draft", "negotiating", "executed"]).nullable().optional(),
+    executedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+    effectiveOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+    expiresOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+    autoRenewal: z.boolean().nullable().optional(),
+    renewalMonths: z.coerce.number().int().min(1).max(120).nullable().optional(),
+    renewalNoticeMonths: z.coerce.number().int().min(0).max(36).nullable().optional(),
+    counterpartyRefNo: z.string().trim().max(100).nullable().optional(),
+    sourceUrl: z.string().trim().max(2000).nullable().optional()
+  });
+
+  router.post("/agreements", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = agreementBody.parse(req.body ?? {});
+      res.status(201).json(await agreements.create(input, actor(res)));
+    }));
+
+  router.patch("/agreements/:id", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = agreementBody.partial().parse(req.body ?? {});
+      await agreements.update(Number(req.params.id), input, actor(res));
+      res.json({ ok: true });
+    }));
+
+  router.post("/agreements/:id/execute", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({ on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+                               note: z.string().max(500).nullable().optional() }).parse(req.body ?? {});
+      await agreements.execute(Number(req.params.id), input, actor(res));
+      res.json({ ok: true });
+    }));
+
+  router.post("/agreements/:id/decline", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({ on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+                               note: z.string().max(500).nullable().optional() }).parse(req.body ?? {});
+      await agreements.decline(Number(req.params.id), input, actor(res));
+      res.json({ ok: true });
+    }));
+
+  router.post("/agreements/:id/renew", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({ on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+                               newEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+                               refAgreementId: z.coerce.number().int().positive().nullable().optional(),
+                               note: z.string().max(500).nullable().optional() }).parse(req.body ?? {});
+      await agreements.renew(Number(req.params.id), input, actor(res));
+      res.json({ ok: true });
+    }));
+
+  const terminateBody = z.object({
+    on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    scope: z.enum(["whole", "conditions"]),
+    conditionIds: z.array(z.coerce.number().int().positive()).optional()
+  });
+  router.post("/agreements/:id/terminate/preview", requireRole("admin", "legal"),
+    asyncRoute(async (req, res) => {
+      res.json(await agreements.terminatePlan(Number(req.params.id), terminateBody.parse(req.body ?? {})));
+    }));
+  router.post("/agreements/:id/terminate", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = terminateBody.extend({
+        reason: z.string().trim().min(1).max(500),
+        sourceUrl: z.string().trim().max(2000).nullable().optional()
+      }).parse(req.body ?? {});
+      res.json(await agreements.terminate(Number(req.params.id), input, actor(res)));
+    }));
 
   router.get("/agreements/:id", asyncRoute(async (req, res) => {
     const id = Number(req.params.id);
-    const head = await database.query(
-      `SELECT a.id, a.agreement_no, a.title, a.direction, a.status,
-              a.executed_on, a.effective_on, a.expires_on, a.auto_renewal,
-              a.renewal_notice_months, a.source_url,
-              p.id AS party_id, p.name AS party_name,
-              -- 一覧と同じ数を出す。0 を置いていたので、詳細だけ「条件 0 件」と
-              -- 出ていた（一覧では正しく数えている）。
-              (SELECT count(*) FROM conditions c WHERE c.agreement_id = a.id)::int AS condition_count,
-              (SELECT count(*) FROM documents d WHERE d.agreement_id = a.id)::int AS document_count,
-              (SELECT COALESCE(sum(c.flat_amount), 0) FROM conditions c
-                WHERE c.agreement_id = a.id AND c.status = 'active')::bigint AS total_flat
-         FROM agreements a JOIN parties p ON p.id = a.counterparty_id
-        WHERE a.id = $1`, [id]);
-    const row = head.rows[0] as Record<string, any> | undefined;
-    if (!row) return res.status(404).json({ error: "契約が見つかりません" });
+    const found = await agreements.find(id);
+    if (!found) return res.status(404).json({ error: "契約が見つかりません" });
     // 明細（条件）はこの契約の中身。まとめて出す。
     const lines = await database.query(
       `SELECT c.id, c.condition_no, c.name, c.kind, c.status, c.direction, c.currency,
@@ -290,12 +351,10 @@ export function createRoutes(database: Transactable) {
         GROUP BY w.id, w.work_code, w.title
         ORDER BY w.title`, [id]);
     res.json({
-      agreement: {
-        ...mapAgreement(row),
-        autoRenewal: row.auto_renewal === true,
-        renewalNoticeMonths: row.renewal_notice_months ?? null,
-        sourceUrl: row.source_url ?? null
-      },
+      agreement: found.agreement,
+      parent: found.parent,
+      children: found.children,
+      history: found.history,
       conditions: (lines.rows as Array<Record<string, any>>).map((c) => ({
         id: Number(c.id), conditionNo: c.condition_no ?? null, name: String(c.name),
         kind: String(c.kind), status: String(c.status), direction: String(c.direction),
@@ -555,13 +614,17 @@ export function createRoutes(database: Transactable) {
   router.get("/conditions/:id", asyncRoute(async (req, res) => {
     const detail = await conditions.find(Number(req.params.id));
     if (!detail) return res.status(404).json({ error: "条件が見つかりません" });
+    // 更新履歴。自分の規則が無ければ親の契約の規則を借りる。契約が解除されていれば同じ日で切れる。
+    const parentAgreement = detail.agreementId ? (await agreements.find(detail.agreementId))?.agreement ?? null : null;
+    const termEvents = (await agreements.eventsFor(database, "condition", [detail.id])).get(detail.id) ?? [];
+    const history = termHistory(termInputForCondition(detail, parentAgreement, termEvents));
     // OUT条件なら、作品の権利包絡と照合した結果を添える。
     let envelopeCheck = null;
     if (detail.direction === "out" && detail.work) {
       const envelope = await works.envelope(detail.work.id);
       if (envelope) envelopeCheck = { envelope, check: checkAgainstEnvelope(detail, envelope) };
     }
-    res.json({ ...detail, envelopeCheck });
+    res.json({ ...detail, envelopeCheck, termHistory: history });
   }));
 
   const reasonSchema = z.object({ reason: z.string().trim().min(1).max(1000) });

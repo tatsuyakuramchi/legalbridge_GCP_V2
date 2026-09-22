@@ -36,9 +36,11 @@ export interface FlowFacts {
   activeConditionCount: number;
   /** 作品に紐づいている条件の数。権利の上限を確かめられるかの目安。 */
   conditionsWithWork: number;
-  /** 締結済みの合意に紐づく条件があるか。 */
+  /** 締結済みの合意に紐づく条件があるか。基本契約でも単体契約でもよい。 */
   agreementExecuted: boolean;
   agreementNo: string | null;
+  /** その合意の種類（master 基本契約／standalone 単体契約）。根拠の文に出す。 */
+  agreementKind?: string | null;
   issuedDocuments: Array<{ documentNo: string | null; label: string | null }>;
   draftDocuments: number;
   /** 取り込んだ文書（テンプレートを持たない＝相手方から受け取ったもの）。 */
@@ -129,6 +131,12 @@ function documentStep(f: FlowFacts, no: number, fallbackName: string): FlowStep 
   };
 }
 
+/** 「基本契約 ARC-SVC-2026-0001 締結済み」。種類を書かないと、単体契約を基本契約と読む。 */
+const agreementDetail = (f: FlowFacts): string => {
+  const kind = f.agreementKind === "standalone" ? "単体契約" : f.agreementKind === "master" ? "基本契約" : "合意";
+  return `${kind} ${f.agreementNo ?? ""} 締結済み`.replace(/\s+/g, " ").trim();
+};
+
 const eventsOf = (facts: FlowFacts, types: string[]) =>
   types.reduce((sum, t) => sum + (facts.events[t] ?? 0), 0);
 
@@ -146,7 +154,7 @@ function licenseSteps(f: FlowFacts): FlowStep[] {
         : "条件が登録されていない" },
     f.agreementExecuted
       ? { no: 3, name: "契約書の締結", tab: "documents", done: true,
-          detail: `合意 ${f.agreementNo ?? ""} 締結済み`.trim() }
+          detail: agreementDetail(f) }
       : documentStep(f, 3, "契約書の締結"),
     { no: 4, name: "実績の受領", tab: "events", action: "実績を足す", done: received > 0,
       detail: received > 0
@@ -165,10 +173,12 @@ function outsourcingSteps(f: FlowFacts): FlowStep[] {
   const delivered = eventsOf(f, ["delivery", "manufacturing", "service_period"]);
   const inspected = eventsOf(f, ["inspection"]);
   return [
-    { no: 1, name: "基本契約の確認", tab: "documents", done: f.agreementExecuted,
+    // 基本契約でも単体契約でも済。契約なしのままなら未済で「契約を登録する」。
+    { no: 1, name: "基本契約の確認", tab: "documents", action: "契約を登録する",
+      done: f.agreementExecuted,
       detail: f.agreementExecuted
-        ? `合意 ${f.agreementNo ?? ""} 締結済み`.trim()
-        : "締結済みの合意に紐づいていない" },
+        ? agreementDetail(f)
+        : "この相手と締結済みの契約（基本契約か単体契約）がない。契約を登録すると済になる" },
     // 発注書も検収書も条件明細から出る。ここが無いと「文書を作る」で
     // 選ぶものが無く、どこで登録するのかが画面から読めない。
     { no: 2, name: "条件明細の登録", tab: "conditions", action: "条件を登録する",
@@ -224,8 +234,7 @@ function documentSteps(f: FlowFacts): FlowStep[] {
   steps.push({
     no: next + 1, name: "締結", tab: "documents",
     done: f.agreementExecuted || f.issuedDocuments.length > 0,
-    detail: f.agreementExecuted
-      ? `合意 ${f.agreementNo ?? ""} 締結済み`.trim() : doc(f)
+    detail: f.agreementExecuted ? agreementDetail(f) : doc(f)
   });
   steps.push({
     no: next + 2, name: "完了", tab: "communications", done: f.matterStatus === "done",
