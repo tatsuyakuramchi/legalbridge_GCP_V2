@@ -289,7 +289,9 @@ const COPY_COLUMNS = [
   "currency", "pricing_model", "rate_ppm", "unit_amount", "flat_amount", "mg_amount", "ag_amount",
   "royalty_base", "deductible_costs", "tax_category", "withholding_note", "payment_terms",
   "cycle", "notes", "series_id", "effective_from", "spec", "deliverable_ownership", "order_no",
-  "quantity", "contract_form", "auto_renew", "renew_months", "renew_stopped_on"
+  "quantity", "contract_form", "auto_renew", "renew_months", "renew_stopped_on",
+  // 利用形態も版をまたいで引き継ぐ（落とすと改訂した許諾条件が形態なしになる）。
+  "usage_type"
 ];
 
 export class ConditionWriteService {
@@ -1082,10 +1084,18 @@ export class ConditionWriteService {
       `SELECT split_part(condition_no, '-R', 1) AS base FROM conditions WHERE id = $1`, [id]);
     const base = (r.rows[0] as { base: string | null } | undefined)?.base ?? null;
     if (!base) return null;                       // 番号が無い条件はそのまま番号なしで作る
+    // 使われている版番号のいちばん大きいものの次。数（count+1）で決めると、
+    // 途中の版を削除した系列（R2 を消して R3 が残る）で番号がぶつかり、
+    // 一意制約で落ちて「サーバ内部でエラー」になっていた。
     const used = await client.query(
-      `SELECT count(*)::int AS n FROM conditions
+      `SELECT condition_no FROM conditions
         WHERE condition_no = $1 OR condition_no LIKE $1 || '-R%'`, [base]);
-    return `${base}-R${Number((used.rows[0] as { n: number }).n) + 1}`;
+    let max = 1;
+    for (const row of used.rows as Array<{ condition_no: string }>) {
+      const m = /-R(\d+)$/.exec(String(row.condition_no ?? ""));
+      if (m) max = Math.max(max, Number(m[1]));
+    }
+    return `${base}-R${max + 1}`;
   }
 
   /** 書き換えないが参照で追随するものを数える。UI に「反映先」として出す。 */
