@@ -311,6 +311,18 @@ test("代表者（A-032）：法人は代表者の欄が先。無ければ署名
   assert.equal(at("代表者名様", corp), "甲野 一郎 様");
 });
 
+test("相手側の欄（先方担当者名・VENDOR_CONTACT_NAME）に当社の担当者を当てない", () => {
+  // 「先方担当者名」の末尾が「担当者名」（自社の担当者）に当たり、相手方の担当者欄に
+  // 当社の担当者が刷られていた。相手側の欄は手入力（候補から入れる）のまま空にする。
+  const c = ctx({ owner: { name: "自社 太郎", department: "編集部" } });
+  assert.equal(resolveLegacyVariable("VENDOR_CONTACT_NAME", c, "先方担当者名"), undefined);
+  assert.equal(resolveLegacyVariable("先方担当者名", c), undefined);
+  assert.equal(resolveLegacyVariable("受託者担当者", c, "受託者 担当者名"), undefined);
+  // 自社側はこれまでどおり。
+  assert.equal(resolveLegacyVariable("STAFF_NAME", c, "担当者名"), "自社 太郎");
+  assert.equal(resolveLegacyVariable("申請者", c, "申請者 担当者名"), "自社 太郎");
+});
+
 test("通知先の 1 行（contact_line）：主担当の 部署 ／ 氏名 ／ メール ／ 電話。空は飛ばす", async () => {
   const { resolveLegacyDbField } = await import("./legacy-variables.js");
   const c = ctx({ contacts: [{ role: "primary", name: "甲野 甲太", email: "k@example.test", phone: null, department: "編集部" }] });

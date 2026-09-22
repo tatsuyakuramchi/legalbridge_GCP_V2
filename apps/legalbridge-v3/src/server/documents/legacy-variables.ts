@@ -60,7 +60,7 @@ export function agreementRefText(title: unknown, no: unknown): string | undefine
  * ACCEPT_REPLY_DUE_DATE）が軒並み発行日で埋まり、受注者が記入する承諾日まで
  * 自動で入っていた。「発行日」の末尾一致（検収書発行日）は残す。
  */
-const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown; noSuffix?: string[] }> = [
+const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown; noSuffix?: string[]; own?: boolean }> = [
   // ---- 文書そのもの ----
   // 「発注番号」はここにもあり、この表は先に見つかったほうが勝つ。発注書では
   // 自分の番号が正しいのでこのままにする。検収書で親の発注番号を出したいときは
@@ -198,9 +198,12 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown; noSuffix?: s
     get: (c) => c.bank?.holderKana },
 
   // ---- 自社の担当者 ----
-  { names: ["STAFF_NAME", "担当者名", "申請者名", "requester"],
+  // own: 自社側の欄。「先方担当者名」のような相手側の欄の末尾に「担当者名」が
+  // 当たって、相手方の担当者欄に当社の担当者が刷られていた。相手側と分かる
+  // 名前（先方・相手先・取引先・受託者・VENDOR …）には、この印の欄を当てない。
+  { names: ["STAFF_NAME", "担当者名", "申請者名", "requester"], own: true,
     get: (c) => c.owner?.name },
-  { names: ["STAFF_DEPARTMENT", "担当者部署", "申請部署"],
+  { names: ["STAFF_DEPARTMENT", "担当者部署", "申請部署"], own: true,
     get: (c) => c.owner?.department },
   // 検収者は「誰が検収したか」の記録なので、実績にあればそちらが正しい。
   // 実績に無いときだけ案件の担当者で代える（従来の動き）。
@@ -208,10 +211,10 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown; noSuffix?: s
     get: (c) => c.event?.inspectorName ?? c.owner?.name },
   { names: ["inspector_dept", "検収者部署"],
     get: (c) => c.event?.inspectorDept ?? c.owner?.department },
-  { names: ["STAFF_EMAIL", "inspectorEmail", "申請者メール", "検収者メールアドレス"],
+  { names: ["STAFF_EMAIL", "inspectorEmail", "申請者メール", "検収者メールアドレス"], own: true,
     get: (c) => c.owner?.email },
-  { names: ["STAFF_PHONE", "担当者電話"], get: (c) => c.owner?.phone },
-  { names: ["監修者"], get: (c) => c.owner?.name },
+  { names: ["STAFF_PHONE", "担当者電話"], own: true, get: (c) => c.owner?.phone },
+  { names: ["監修者"], own: true, get: (c) => c.owner?.name },
   { names: ["inspectorName"], get: (c) => c.event?.inspectorName ?? c.owner?.name },
   { names: ["inspectorDept"], get: (c) => c.event?.inspectorDept ?? c.owner?.department },
 
@@ -223,11 +226,11 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown; noSuffix?: s
             "アークライト住所", "自社住所"],
     get: (c) => c.company?.address },
   { names: ["COMPANY_REP", "COMPANY_REPRESENTATIVE", "PARTY_A_REP", "Licensee_代表者名",
-            "アークライト代表者氏名", "代表者名"],
+            "アークライト代表者氏名", "代表者名"], own: true,
     get: (c) => c.company?.rep ?? c.company?.representative },
   { names: ["COMPANY_INVOICE_NO", "自社インボイス番号"],
     get: (c) => c.company?.invoiceNo },
-  { names: ["COMPANY_TEL", "自社電話"], get: (c) => c.company?.tel },
+  { names: ["COMPANY_TEL", "自社電話"], own: true, get: (c) => c.company?.tel },
   { names: ["COMPANY_POSTAL_CODE", "自社郵便番号"], get: (c) => c.company?.postalCode },
   // 自社プロファイルは10項目あるのに、別名を用意していたのは6項目だけだった。
   // 残りは設定に入れても書類に出ない（入れた側からは入ったように見える）。
@@ -379,6 +382,10 @@ const segments = (v: string): string[] =>
  *
  * どれにも当たらなければ undefined。当てずっぽうでは埋めない。
  */
+/** 相手側の欄と分かる語。自社側の欄（担当者名など）を末尾で当てない。 */
+const COUNTERPARTY_SIDE =
+  /先方|相手先|相手方|相手|取引先|受託者|許諾者|受注者|委託先|発注先|vendor|licensor|counterparty|contractor|party_b/i;
+
 export function resolveLegacyVariable(name: string, context: Ctx, label?: string): unknown {
   const keys = [String(name ?? "").trim(), String(label ?? "").trim()].filter(Boolean);
   if (!keys.length) return undefined;
@@ -400,8 +407,12 @@ export function resolveLegacyVariable(name: string, context: Ctx, label?: string
   // 同じ形で「許諾者種別」に相手先の名前が入る当たり方も止まる。
   const matches: Array<{ length: number; entry: typeof RESOLVERS[number] }> = [];
   for (const key of keys) {
+    // 相手側と分かる名前には、自社側（担当者名・担当者電話・代表者名 …）の欄を
+    // 末尾で当てない。「先方担当者名」に当社の担当者が入っていた。
+    const partySide = COUNTERPARTY_SIDE.test(key);
     for (const flat of segments(key)) {
       for (const entry of RESOLVERS) {
+        if (partySide && entry.own) continue;
         for (const candidate of entry.names) {
           if (entry.noSuffix?.includes(candidate)) continue;
           const target = normalize(candidate);
