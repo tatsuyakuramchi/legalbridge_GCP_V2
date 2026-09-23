@@ -19,6 +19,7 @@ import { LinkService } from "./links/service.js";
 import { RELATIONS, type EntityKind } from "./links/relations.js";
 import { DOCUMENT_STYLES } from "./matters/flow.js";
 import { CONDITION_USAGE_TYPES, type ConditionUsageType } from "./core/condition-usage.js";
+import { BUSINESS_LINE_VALUES } from "./matters/title.js";
 import { isStatementTemplate } from "./documents/template-context.js";
 import { WorkWriteService } from "./works/write-service.js";
 import { LegacyCleanupRepository } from "./ops/legacy-cleanup.js";
@@ -1011,7 +1012,7 @@ export function createRoutes(database: Transactable) {
     title: z.string().trim().max(300).nullable().optional(),
     kind: z.enum(["work", "outsourcing", "single"]),
     workId: z.coerce.number().int().positive().nullable().optional(),
-    businessLine: z.enum(["store", "admin"]).nullable().optional(),
+    businessLine: z.enum(BUSINESS_LINE_VALUES).nullable().optional(),
     businessName: z.string().trim().max(300).nullable().optional(),
     production: z.boolean().nullable().optional(),
     parentId: z.coerce.number().int().positive().nullable().optional(),
@@ -1051,7 +1052,7 @@ export function createRoutes(database: Transactable) {
   const matterAxisSchema = z.object({
     title: z.string().trim().max(300).nullable().optional(),
     workId: z.coerce.number().int().positive().nullable().optional(),
-    businessLine: z.enum(["store", "admin"]).nullable().optional(),
+    businessLine: z.enum(BUSINESS_LINE_VALUES).nullable().optional(),
     businessName: z.string().trim().max(300).nullable().optional(),
     production: z.boolean().nullable().optional()
   });

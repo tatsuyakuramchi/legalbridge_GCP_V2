@@ -1,6 +1,6 @@
 import { inTransaction, dateStr, int, str, type Queryable, type Transactable } from "../core/db.js";
 import { termHistory } from "../agreements/term-history.js";
-import { composeMatterTitle } from "./title.js";
+import { type BusinessLine, composeMatterTitle } from "./title.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { allocateNumber } from "../core/numbering.js";
@@ -15,7 +15,7 @@ export interface MatterInput {
   /** 作品案件の軸。 */
   workId?: number | null;
   /** 業務案件の事業区分と業務名。 */
-  businessLine?: "store" | "admin" | null;
+  businessLine?: BusinessLine | null;
   businessName?: string | null;
   /** 作品案件に制作委託があるか。null は未決定。 */
   production?: boolean | null;
@@ -62,7 +62,7 @@ export class MatterWriteService {
       throw new DomainError("VALIDATION", "作品案件は作品を選んでください（作品 1 つが 1 案件）");
     }
     if (input.kind === "outsourcing" && (!input.businessLine || !String(input.businessName ?? "").trim())) {
-      throw new DomainError("VALIDATION", "業務案件は事業区分（店舗事業／管理事業）と業務名を入れてください");
+      throw new DomainError("VALIDATION", "業務案件は事業区分（出版事業／ボードゲーム事業／イベント事業／店舗事業／管理事業／その他）と業務名を入れてください");
     }
     if (input.kind === "single" && !manualTitle) {
       throw new DomainError("VALIDATION", "その他案件は件名を入れてください");
@@ -138,7 +138,7 @@ export class MatterWriteService {
    */
   async updateAxis(
     id: number,
-    patch: { title?: string | null; workId?: number | null; businessLine?: "store" | "admin" | null;
+    patch: { title?: string | null; workId?: number | null; businessLine?: BusinessLine | null;
              businessName?: string | null; production?: boolean | null },
     actor: string
   ) {
@@ -158,7 +158,7 @@ export class MatterWriteService {
           if (!w.rows[0]) throw new DomainError("NOT_FOUND", `作品 ${workId} が見つかりません`);
           workTitle = String((w.rows[0] as { title: string }).title);
         }
-        const businessLine = patch.businessLine !== undefined ? patch.businessLine : (str(cur.business_line) as "store" | "admin" | null);
+        const businessLine = patch.businessLine !== undefined ? patch.businessLine : (str(cur.business_line) as BusinessLine | null);
         const businessName = patch.businessName !== undefined ? str(patch.businessName) : str(cur.business_name);
         const production = patch.production !== undefined ? patch.production
           : (cur.production === null || cur.production === undefined ? null : Boolean(cur.production));

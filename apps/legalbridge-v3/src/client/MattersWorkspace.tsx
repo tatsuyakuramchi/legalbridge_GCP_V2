@@ -24,7 +24,7 @@ import { MatterGraph } from "./MatterGraph.js";
 import { Relations, type EntityKind } from "./Relations.js";
 import { AxisPanel, ContinuePanel, FamilyPanel, MatterKindTags, StatusPanel,
          searchMatters, searchWorks, treeOrder } from "./MatterAxis.js";
-import { BUSINESS_LINE_LABEL } from "./labels.js";
+import { BUSINESS_LINES } from "../server/matters/title.js";
 
 
 
@@ -298,8 +298,7 @@ export function MattersWorkspace(
               hint: "どちらか分からなければ空のまま（未決定）。委託料の条件や 成果物が受注者に帰属する条件を繋ぐと自動で「あり」になる" },
             // 業務案件：事業区分と業務名が軸。
             { name: "businessLine", label: "事業区分", type: "select",
-              options: [{ value: "store", label: BUSINESS_LINE_LABEL.store },
-                        { value: "admin", label: BUSINESS_LINE_LABEL.admin }],
+              options: BUSINESS_LINES.map((b) => ({ value: b.value, label: b.label, hint: b.hint })),
               visibleWhen: (v) => v.kind === "outsourcing",
               hint: "店舗事業の業務委託か、管理事業の業務委託か" },
             { name: "businessName", label: "業務名", placeholder: "例：店舗内装デザイン",

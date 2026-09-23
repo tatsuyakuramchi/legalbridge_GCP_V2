@@ -192,7 +192,7 @@ export interface MatterSummary {
   /** 作品案件の軸（A-044）。 */
   work: WorkRef | null;
   /** 業務案件の事業区分と業務名。 */
-  businessLine: "store" | "admin" | null;
+  businessLine: "publishing" | "boardgame" | "event" | "store" | "admin" | "other" | null;
   businessName: string | null;
   /** 作品案件に制作委託があるか。null は未決定。 */
   production: boolean | null;

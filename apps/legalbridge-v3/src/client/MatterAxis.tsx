@@ -3,6 +3,7 @@ import type { MatterDetail, MatterSummary } from "../server/core/model.js";
 import { api, ApiError } from "./api.js";
 import { SearchSelect, type SearchOption } from "./SearchSelect.js";
 import { BUSINESS_LINE_LABEL, MATTER_KIND_LABEL, StatusTag } from "./labels.js";
+import { BUSINESS_LINES } from "../server/matters/title.js";
 import { useReadOnly } from "./read-only.js";
 
 /**
@@ -165,8 +166,7 @@ export function AxisPanel(
                   <span className="faint">事業区分</span>
                   <select value={line} onChange={(e) => setLine(e.target.value)}>
                     <option value="">未設定</option>
-                    <option value="store">{BUSINESS_LINE_LABEL.store}</option>
-                    <option value="admin">{BUSINESS_LINE_LABEL.admin}</option>
+                    {BUSINESS_LINES.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
                   </select>
                 </label>
                 <label className="row" style={{ gap: 6 }}>

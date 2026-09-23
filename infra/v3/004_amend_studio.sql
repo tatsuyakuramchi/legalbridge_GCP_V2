@@ -1632,6 +1632,29 @@ ALTER TABLE v3.staff ADD COLUMN IF NOT EXISTS department_en text;
 COMMENT ON COLUMN v3.staff.name_en IS '氏名の英語表記（海外版の書類）。空なら日本語のまま出る。';
 COMMENT ON COLUMN v3.staff.department_en IS '部署の英語表記（海外版の書類）。空なら日本語のまま出る。';
 
+-- ---------------------------------------------------------------------
+-- A-050 業務案件の事業区分を増やす
+--
+--   店舗事業／管理事業の 2 つでは、作品に紐づかない業務委託（出版の編集・
+--   ボードゲーム事業の外注・イベントの運営委託など）の置き場所が無かった。
+--     publishing 出版事業／boardgame ボードゲーム事業／event イベント事業／
+--     store 店舗事業／admin 管理事業／other その他
+--   既存の store / admin はそのまま。
+-- ---------------------------------------------------------------------
+DO $a050$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_constraint
+              WHERE conrelid = 'v3.matters'::regclass AND conname = 'matters_business_line_chk') THEN
+    ALTER TABLE v3.matters DROP CONSTRAINT matters_business_line_chk;
+  END IF;
+  ALTER TABLE v3.matters ADD CONSTRAINT matters_business_line_chk
+    CHECK (business_line IS NULL
+           OR business_line IN ('publishing', 'boardgame', 'event', 'store', 'admin', 'other'));
+END
+$a050$;
+COMMENT ON COLUMN v3.matters.business_line IS
+  '業務案件の事業区分。publishing 出版事業／boardgame ボードゲーム事業／event イベント事業／store 店舗事業／admin 管理事業／other その他。';
+
 COMMIT;
 
 
@@ -1882,6 +1905,11 @@ SELECT * FROM (
   SELECT 49, '担当者の英語表記（A-049。列 2 であること）',
          (SELECT count(*) FROM information_schema.columns
            WHERE table_schema='v3' AND table_name='staff' AND column_name IN ('name_en', 'department_en'))::text
+  UNION ALL
+  SELECT 50, '事業区分の増設（A-050。CHECK に publishing があること＝1）',
+         (SELECT count(*) FROM pg_constraint
+           WHERE conrelid='v3.matters'::regclass AND conname='matters_business_line_chk'
+             AND pg_get_constraintdef(oid) LIKE '%publishing%')::text
   UNION ALL
   SELECT 33, '翻訳版再許諾と別途合意（A-033。列 1 と CHECK 1 で 2 であること）',
          ((SELECT count(*) FROM information_schema.columns

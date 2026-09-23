@@ -11,9 +11,24 @@
  *   その他   … 組まない（軸が無い）。人が打つ
  */
 export type MatterKind = "work" | "outsourcing" | "single";
-export type BusinessLine = "store" | "admin";
+/**
+ * 業務案件の事業区分（A-050）。作品に紐づかない業務委託の置き場所。
+ * 出版の編集委託・ボードゲーム事業の外注・イベントの運営委託は作品案件では
+ * ないので、ここで分ける。並びは画面の選択肢の順。
+ */
+export type BusinessLine = "publishing" | "boardgame" | "event" | "store" | "admin" | "other";
 
-export const BUSINESS_LINE_LABEL: Record<BusinessLine, string> = { store: "店舗事業", admin: "管理事業" };
+export const BUSINESS_LINES: Array<{ value: BusinessLine; label: string; hint: string }> = [
+  { value: "publishing", label: "出版事業", hint: "編集・校正・デザインなど、作品に紐づかない出版の業務委託" },
+  { value: "boardgame", label: "ボードゲーム事業", hint: "作品に紐づかないボードゲーム事業の外注" },
+  { value: "event", label: "イベント事業", hint: "イベントの運営・設営・出展の委託" },
+  { value: "store", label: "店舗事業", hint: "店舗の運営に関わる業務委託" },
+  { value: "admin", label: "管理事業", hint: "総務・経理・システムなど管理部門の業務委託" },
+  { value: "other", label: "その他", hint: "上のどれにも当たらないもの" }
+];
+export const BUSINESS_LINE_VALUES = BUSINESS_LINES.map((b) => b.value) as [BusinessLine, ...BusinessLine[]];
+export const BUSINESS_LINE_LABEL: Record<BusinessLine, string> =
+  Object.fromEntries(BUSINESS_LINES.map((b) => [b.value, b.label])) as Record<BusinessLine, string>;
 
 export interface TitleAxis {
   kind: MatterKind;

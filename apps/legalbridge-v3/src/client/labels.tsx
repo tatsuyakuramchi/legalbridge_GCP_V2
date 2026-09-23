@@ -73,7 +73,7 @@ export const MATTER_KIND_HINT: Record<string, string> = {
 };
 
 /** 業務案件の事業区分。 */
-export const BUSINESS_LINE_LABEL: Record<string, string> = { store: "店舗事業", admin: "管理事業" };
+export { BUSINESS_LINE_LABEL } from "../server/matters/title.js";
 
 /**
  * 進め方。取引モデルが「何を扱うか」を決めるのに対し、これは「どうやって文書を作るか」を
