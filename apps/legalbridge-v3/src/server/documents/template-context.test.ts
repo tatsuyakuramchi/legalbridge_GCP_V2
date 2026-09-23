@@ -634,3 +634,63 @@ test("納期が空なら契約期間の終了日に落ちる（置き場が無�
   ] }));
   assert.equal(line?.delivery_date, "2027-03-31");
 });
+
+// ---- 発注書：1 ページ目の概要と利用許諾条件（A-048） ------------------------
+
+test("発注書：明細の件数・契約種別・帰属先・支払条件を 1 行にまとめる", () => {
+  const c = buildTemplateContext("purchase_order",
+    ctx({ conditions: [condition({ paymentTerms: "月末締め翌月末払い", deliverableOwnership: "contractor" })],
+          condition: condition({ paymentTerms: "月末締め翌月末払い" }), events: [] }),
+    { items: [{ item_name: "表紙", amount_ex_tax: 10000, payment_terms: "請負", deliverable_ownership: "受注者" },
+              { item_name: "挿絵", amount_ex_tax: 20000, payment_terms: "請負", deliverable_ownership: "発注者" }],
+      other_fees: [{ fee_name: "変換", amount: 500 }],
+      expenses: [{ expense_name: "交通費", amount_inc_tax: 1000 }, { expense_name: "書籍", amount_inc_tax: 2000 }] });
+  assert.equal(c.items_count, 2);
+  assert.equal(c.other_fees_count, 1);
+  assert.equal(c.expenses_count, 2);
+  assert.equal(c.contract_form_summary, "請負");
+  assert.equal(c.ownership_summary, "発注者・受注者（明細参照）");
+  assert.equal(c.has_contractor_owned, true);
+  assert.equal(c.payment_terms_summary, "月末締め翌月末払い");
+  // 受注者帰属なのに許諾条件が無い → 「別途定める」の印。
+  assert.equal(c.license_terms_missing, true);
+  assert.deepEqual(c.license_terms, []);
+});
+
+test("発注書：利用許諾条件は許諾料の扱いで料率・額の欄を出し分ける", () => {
+  const c = buildTemplateContext("purchase_order",
+    ctx({ events: [],
+          licenseTerms: [
+            { usageType: "pub_print", pricingModel: "revenue_rate", ratePct: 8, mgAmount: 100000, agAmount: null,
+              currency: "JPY", termStart: "2026-10-01", termEnd: "2029-09-30", regions: ["日本"], languages: ["日本語"],
+              licenseFeeBasis: "separate", conditionNo: "CL-1", exclusivity: "exclusive" },
+            { usageType: "pub_digital", pricingModel: "revenue_rate", ratePct: 0, mgAmount: null, agAmount: null,
+              currency: "JPY", termStart: null, termEnd: null, regions: [], languages: [],
+              licenseFeeBasis: "included", conditionNo: "CL-2" },
+            { usageType: "in_house", pricingModel: "revenue_rate", ratePct: 0, mgAmount: 5, agAmount: null,
+              currency: "JPY", termStart: "2026-10-01", termEnd: null, regions: [], languages: ["英語"],
+              licenseFeeBasis: "free", conditionNo: "CL-3" }
+          ] }),
+    { items: [{ item_name: "設定画", amount_ex_tax: 10000, deliverable_ownership: "受注者" }] });
+  const rows = c.license_terms as Array<Record<string, string>>;
+  assert.equal(rows.length, 3);
+  assert.deepEqual(rows[0], { usage: "出版（紙）（独占）", fee: "8 %", guarantee: "MG ¥ 100,000",
+                              term: "2026/10/01 〜 2029/09/30", scope: "日本 ／ 日本語", condition_no: "CL-1" });
+  assert.equal(rows[1].fee, "利用許諾料は業務委託報酬に含む");
+  assert.equal(rows[1].guarantee, "—");
+  assert.equal(rows[1].term, "期間の定めなし");
+  assert.equal(rows[1].scope, "全世界 ／ 全言語");
+  assert.equal(rows[2].fee, "無償");
+  assert.equal(rows[2].guarantee, "—", "含む・無償のときは MG/AG を出さない");
+  assert.equal(rows[2].term, "2026/10/01 〜 （定めなし）");
+  assert.equal(c.license_terms_missing, false);
+  assert.equal(c.ownership_summary, "受注者");
+});
+
+test("発注書：発注者帰属だけなら許諾条件の印は立たない", () => {
+  const c = buildTemplateContext("purchase_order", ctx({ events: [] }),
+    { items: [{ item_name: "表紙", amount_ex_tax: 10000, deliverable_ownership: "発注者" }] });
+  assert.equal(c.has_contractor_owned, false);
+  assert.equal(c.license_terms_missing, false);
+  assert.equal(c.ownership_summary, "発注者");
+});

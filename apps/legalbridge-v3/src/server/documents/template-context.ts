@@ -25,6 +25,7 @@ import type { Warning } from "./preflight.js";
 import { expenseLinesFrom, feeLinesFrom, isSettlementKind } from "./settlement-conditions.js";
 import { calcMethodFor, ownershipLabelOf, rewardLabelFor } from "../core/reward.js";
 import { contractFormFor } from "../conditions/contract-form.js";
+import { conditionUsageLabel } from "../core/condition-usage.js";
 
 type Ctx = Record<string, any>;
 
@@ -624,6 +625,69 @@ function paymentGroups(paid: Row[], now: Row[], taxRate: number, context: Ctx) {
   ];
 }
 
+/** 発注書の「利用許諾条件」の 1 行。台帳の許諾条件を紙の語に直す。 */
+export interface LicenseTermRow {
+  usage: string;
+  fee: string;
+  guarantee: string;
+  term: string;
+  scope: string;
+  condition_no: string;
+}
+
+const compactDate = (value: unknown): string => {
+  const m = String(value ?? "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[1]}/${m[2]}/${m[3]}` : String(value ?? "");
+};
+
+const moneyOf = (amount: unknown, currency: string): string => {
+  const n = Number(amount);
+  if (!Number.isFinite(n)) return "";
+  return currency === "JPY" || !currency ? `¥ ${yen(n)}` : `${currency} ${n.toLocaleString("ja-JP")}`;
+};
+
+/**
+ * 利用許諾条件（成果物を受注者に留保する品目に付くもの）を、発注書の表の行にする。
+ *
+ * 料率・額は許諾料の扱い（A-048）で出し分ける。「業務委託報酬に含む」は
+ * 追加の許諾料が 0 円という意味なので、率や額の代わりにその旨を書く。
+ */
+export function licenseTermRows(context: Ctx): LicenseTermRow[] {
+  return ((context.licenseTerms ?? []) as Ctx[]).map((t) => {
+    const currency = String(t.currency ?? "JPY");
+    const basis = String(t.licenseFeeBasis ?? "separate");
+    let fee: string;
+    if (basis === "included") fee = "利用許諾料は業務委託報酬に含む";
+    else if (basis === "free") fee = "無償";
+    else if (t.ratePct !== null && t.ratePct !== undefined && String(t.pricingModel) === "revenue_rate") {
+      fee = `${t.ratePct} %`;
+    } else if (String(t.pricingModel) === "unit_rate" && t.unitAmount !== null && t.unitAmount !== undefined) {
+      fee = `${moneyOf(t.unitAmount, currency)}／単位`;
+    } else if (t.flatAmount !== null && t.flatAmount !== undefined && Number(t.flatAmount) > 0) {
+      fee = moneyOf(t.flatAmount, currency);
+    } else if (t.ratePct !== null && t.ratePct !== undefined) {
+      fee = `${t.ratePct} %`;
+    } else fee = "別途定める";
+    const guarantee = basis === "separate"
+      ? [t.mgAmount ? `MG ${moneyOf(t.mgAmount, currency)}` : "",
+         t.agAmount ? `AG ${moneyOf(t.agAmount, currency)}` : ""].filter(Boolean).join("／") || "—"
+      : "—";
+    const term = t.termStart || t.termEnd
+      ? `${t.termStart ? compactDate(t.termStart) : ""} 〜 ${t.termEnd ? compactDate(t.termEnd) : "（定めなし）"}`
+      : "期間の定めなし";
+    const regions = ((t.regions ?? []) as string[]).filter(Boolean);
+    const languages = ((t.languages ?? []) as string[]).filter(Boolean);
+    const scope = `${regions.length ? regions.join("・") : "全世界"} ／ ${languages.length ? languages.join("・") : "全言語"}`;
+    const usage = [conditionUsageLabel(t.usageType) || (t.name ?? ""),
+                   t.exclusivity === "exclusive" ? "（独占）" : ""].join("");
+    return { usage, fee, guarantee, term, scope, condition_no: String(t.conditionNo ?? "") };
+  });
+}
+
+/** 明細の値の重複を除いて「／」で繋ぐ。1 ページ目の発注概要の 1 行に使う。 */
+const distinctJoin = (values: unknown[]): string =>
+  [...new Set(values.map((v) => String(v ?? "").trim()).filter(Boolean))].join("／");
+
 function orderBlock(templateKey: string, context: Ctx, manual: Record<string, unknown>) {
   const items = rows(manual.items).length ? rows(manual.items) : orderLinesFrom(context);
   const otherFees = rows(manual.other_fees);
@@ -636,10 +700,29 @@ function orderBlock(templateKey: string, context: Ctx, manual: Record<string, un
   // 行は欄を空文字で持つので、amount にだけ額がある行の合計が 0 と出ていた）。
   const expensesTotalIncTax = expenses.reduce((sum, e) =>
     sum + num(pickRow(e, "amount_inc_tax", "amount")), 0);
+  // 1 ページ目の発注概要（行数が決まった表）。明細は 2 ページ目からなので、
+  // 件数・契約種別・帰属先・支払条件はここで 1 行にまとめる。
+  const ownerships = [...new Set(items.map((r) => String(r.deliverable_ownership ?? "").trim()).filter(Boolean))];
+  const hasContractorOwned = ownerships.includes("受注者") || ownerships.includes("contractor");
+  const licenseTerms = licenseTermRows(context);
+  const paymentTermsSummary = distinctJoin(((context.conditions ?? []) as Ctx[])
+    .filter((c) => !isSettlementKind(c.kind)).map((c) => c.paymentTerms));
   return {
     items,
     other_fees: otherFees,
     expenses,
+    items_count: items.length,
+    other_fees_count: otherFees.length,
+    expenses_count: expenses.length,
+    contract_form_summary: distinctJoin(items.map((r) => r.payment_terms)),
+    ownership_summary: ownerships.length > 1 ? "発注者・受注者（明細参照）"
+      : ownershipLabelOf(ownerships[0]) ?? ownerships[0] ?? "",
+    has_contractor_owned: hasContractorOwned,
+    payment_terms_summary: paymentTermsSummary,
+    // 利用許諾条件（A-048）。受注者帰属の品目があるのに台帳に無ければ、本文は
+    // 「利用許諾の条件は別途定める」と 1 行で出す（黙って空にしない）。
+    license_terms: licenseTerms,
+    license_terms_missing: hasContractorOwned && !licenseTerms.length,
     itemsSubtotalExTax: totals.itemsSubtotalExTax,
     otherFeesTotal: totals.otherFeesTotal,
     // 明細も手数料も無い発注書は総額を手入力する運用が残っている。

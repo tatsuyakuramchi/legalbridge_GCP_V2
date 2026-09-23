@@ -63,6 +63,11 @@ export class DocumentContextRepository {
       // 決めているのは作品の取得条件なので、書類に並ぶのもそれ）。
       const workIds = [...new Set(conditions.map((c) => c.workId).filter((id): id is number => Boolean(id)))];
       const acquisitions = workIds.length ? await this.acquisitions(client, workIds) : [];
+      // 成果物を受注者に留保する条件の 作品 × 受注者 に付いている利用許諾条件。
+      // 発注書の「利用許諾条件」の表はここから組む（A-048）。作品が条件に無ければ
+      // 案件の作品で引く。
+      const licenseTerms = await this.licenseTermsFor(client, conditions, matter?.workId ?? null,
+                                                      input.issuedOn ?? dateStr(new Date()) ?? "");
 
       const currency = conditions[0]?.currency ?? "JPY";
       /**
@@ -126,6 +131,11 @@ export class DocumentContextRepository {
          * 個別利用許諾条件書の「構成要素」の表はここから組む。
          */
         acquisitions,
+        /**
+         * 受注者帰属の成果物に付く利用許諾条件（作品 × 受注者、決定日時点の版）。
+         * 発注書の「利用許諾条件」の表。無ければ空（本文は「別途定める」と出す）。
+         */
+        licenseTerms,
         /** 実績が1件のときはこちら。検収書はこの日付と金額を使う。 */
         event: events[0] ?? null,
         /** その実績の予定明細。支払期日はここから来る。 */
@@ -574,14 +584,16 @@ export class DocumentContextRepository {
 
   private async matter(client: Queryable, id: number) {
     const r = await client.query(
-      `SELECT m.id, m.matter_no, m.title, m.kind, s.name AS owner_name
+      `SELECT m.id, m.matter_no, m.title, m.kind, m.work_id, s.name AS owner_name
          FROM matters m LEFT JOIN staff s ON s.id = m.owner_staff_id
         WHERE m.id = $1`, [id]);
     const row = r.rows[0] as Record<string, any> | undefined;
     if (!row) return null;
     return {
       id: Number(row.id), no: str(row.matter_no), title: String(row.title ?? ""),
-      kind: String(row.kind), ownerName: str(row.owner_name)
+      kind: String(row.kind), ownerName: str(row.owner_name),
+      /** 作品案件の軸（A-044）。条件に作品が無いときの許諾条件の引き先。 */
+      workId: int(row.work_id)
     };
   }
 
@@ -598,6 +610,73 @@ export class DocumentContextRepository {
    * 許諾できる上限を決めているのは作品の取得条件なので、条件書に並べる
    * 構成要素もそれ。範囲（地域・言語）は取得条件に付いた範囲をそのまま出す。
    */
+  /**
+   * 受注者帰属の条件に付く利用許諾条件（A-048）。
+   *
+   * 成果物の帰属先が受注者の発注では、発注者は成果物を許諾で使う。その条件は
+   * 台帳の利用許諾条件（kind=license・direction=in）に、同じ作品 × 同じ受注者で
+   * 立っている。決定日時点で効いている版（active、または適用開始日が来ている
+   * scheduled）を引く。発注書はこれを表にする。無ければ空を返す（本文は
+   * 「利用許諾の条件は別途定める」と 1 行で出す）。
+   */
+  private async licenseTermsFor(
+    client: Queryable,
+    conditions: Array<{ workId: number | null; counterpartyId: number | null; deliverableOwnership: string | null }>,
+    matterWorkId: number | null, asOf: string
+  ) {
+    const pairs = conditions
+      .filter((c) => c.deliverableOwnership === "contractor")
+      .map((c) => ({ workId: c.workId ?? matterWorkId, partyId: c.counterpartyId }))
+      .filter((p): p is { workId: number; partyId: number } => Boolean(p.workId && p.partyId));
+    if (!pairs.length) return [];
+    const workIds = [...new Set(pairs.map((p) => p.workId))];
+    const partyIds = [...new Set(pairs.map((p) => p.partyId))];
+    const r = await client.query(
+      `SELECT c.id, c.condition_no, c.name, c.work_id, c.counterparty_id, c.usage_type,
+              c.pricing_model, c.rate_ppm, c.flat_amount, c.unit_amount, c.mg_amount, c.ag_amount,
+              c.currency, c.term_start, c.term_end, c.exclusivity, c.license_fee_basis,
+              w.title AS work_title,
+              (SELECT array_agg(s.label ORDER BY s.sort_order, s.label)
+                 FROM condition_scopes s WHERE s.condition_id = c.id AND s.scope_type = 'region')   AS regions,
+              (SELECT array_agg(s.label ORDER BY s.sort_order, s.label)
+                 FROM condition_scopes s WHERE s.condition_id = c.id AND s.scope_type = 'language') AS languages
+         FROM conditions c
+         LEFT JOIN works w ON w.id = c.work_id
+        WHERE c.kind = 'license' AND c.direction = 'in'
+          AND c.work_id = ANY($1::bigint[]) AND c.counterparty_id = ANY($2::bigint[])
+          AND (c.status = 'active'
+               OR (c.status = 'scheduled' AND c.effective_from IS NOT NULL AND c.effective_from <= $3::date))
+        ORDER BY c.work_id, c.usage_type NULLS LAST, c.id`, [workIds, partyIds, asOf]);
+    return (r.rows as Array<Record<string, any>>)
+      .filter((row) => pairs.some((p) => p.workId === Number(row.work_id) && p.partyId === Number(row.counterparty_id)))
+      .map((row) => {
+        const currency = String(row.currency ?? "JPY");
+        return {
+          id: Number(row.id),
+          conditionNo: str(row.condition_no),
+          name: String(row.name ?? ""),
+          workId: Number(row.work_id),
+          counterpartyId: Number(row.counterparty_id),
+          workTitle: str(row.work_title),
+          usageType: str(row.usage_type),
+          pricingModel: String(row.pricing_model ?? "none"),
+          ratePct: row.rate_ppm === null || row.rate_ppm === undefined ? null : Number(row.rate_ppm) / 10000,
+          flatAmount: toMajor(int(row.flat_amount), currency),
+          unitAmount: toMajor(int(row.unit_amount), currency),
+          mgAmount: toMajor(int(row.mg_amount), currency),
+          agAmount: toMajor(int(row.ag_amount), currency),
+          currency,
+          termStart: dateStr(row.term_start),
+          termEnd: dateStr(row.term_end),
+          exclusivity: str(row.exclusivity),
+          /** 許諾料の扱い（A-048）。separate / included / free。 */
+          licenseFeeBasis: String(row.license_fee_basis ?? "separate"),
+          regions: (row.regions ?? []) as string[],
+          languages: (row.languages ?? []) as string[]
+        };
+      });
+  }
+
   private async acquisitions(client: Queryable, workIds: number[]) {
     const r = await client.query(
       `SELECT c.id, c.condition_no, c.name, c.rate_ppm, c.currency,
