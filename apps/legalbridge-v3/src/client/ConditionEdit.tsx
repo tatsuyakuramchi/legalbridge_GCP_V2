@@ -5,7 +5,8 @@ import { api, ApiError, money, rate } from "./api.js";
 import type { ConditionDetail } from "../server/core/model.js";
 import { CONDITION_KIND_LABEL } from "./labels.js";
 import { SearchSelect, searchParties } from "./SearchSelect.js";
-import { CONTRACT_FORMS } from "../server/conditions/contract-form.js";
+import { CONTRACT_FORMS, CONTRACT_FORMS_EN } from "../server/conditions/contract-form.js";
+import { PAYMENT_TERMS_PRESETS_EN, PAYMENT_TERMS_PRESETS_JA } from "../server/conditions/payment-terms.js";
 import { minorUnitHint } from "./ConditionCreateForm.js";
 import { CONDITION_USAGE_TYPES, isSublicensingUsage } from "../server/core/condition-usage.js";
 
@@ -476,13 +477,25 @@ export function ConditionEdit(
                    onChange={(e) => set("contractForm", e.target.value)} />
             <datalist id="contract-forms">
               {CONTRACT_FORMS.map((f) => <option key={f} value={f} />)}
+              {CONTRACT_FORMS_EN.map((f) => <option key={f} value={f} />)}
             </datalist>
             <small className="faint">
-              発注書・検収書の「契約種別」に出る。一覧に無い形は直接書ける
+              発注書・検収書の「契約種別」に出る。一覧に無い形は直接書ける（海外版は英語で）
             </small>
           </label>
-          {field("paymentTerms", "支払条件", { placeholder: "月末締め翌月末払い など",
-            hint: "予定明細の支払期日はここから出す。契約形式（請負）はひとつ上の欄へ" })}
+          <label className="field">
+            <span>支払条件</span>
+            <input list="payment-terms-presets" value={v.paymentTerms}
+                   placeholder="月末締め翌月末払い など"
+                   onChange={(e) => set("paymentTerms", e.target.value)} />
+            <datalist id="payment-terms-presets">
+              {PAYMENT_TERMS_PRESETS_JA.map((f) => <option key={f} value={f} />)}
+              {PAYMENT_TERMS_PRESETS_EN.map((f) => <option key={f} value={f} />)}
+            </datalist>
+            <small className="faint">
+              予定明細の支払期日はここから出す。海外の相手なら英語の定型文（Net 30 など）を選ぶ。契約形式（請負）はひとつ上の欄へ
+            </small>
+          </label>
           {field("spec", "仕様・成果物", { type: "textarea",
             placeholder: "カラーイラスト1点（表紙用）、A4 相当 など",
             hint: "発注書・検収書の明細の「仕様・成果物」にそのまま出る" })}

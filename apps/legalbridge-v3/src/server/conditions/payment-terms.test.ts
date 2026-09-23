@@ -82,3 +82,23 @@ test("支払期日：規則が読めればそれ、読めなければ書いて�
   assert.equal(payDateFromTerms("2026-06-20", "検収後30日"), null, "読めないものは出さない");
   assert.equal(payDateFromTerms("2026-06-20", "請負"), null);
 });
+
+// ---- 英語の支払条件（海外版） --------------------------------------------
+
+test("英語：Net 30 / within N days / N days after は起点日に日数を足す", () => {
+  assert.equal(payOnFor("2026-10-31", parsePaymentTerms("Net 30 days after acceptance of deliverables")), "2026-11-30");
+  assert.equal(payOnFor("2026-10-31", parsePaymentTerms("Payment within 14 days after acceptance of deliverables")), "2026-11-14");
+  assert.equal(payOnFor("2026-01-31", parsePaymentTerms("Net 60 days after receipt of invoice")), "2026-04-01");
+  assert.equal(payOnFor("2026-10-05", parsePaymentTerms("Payment in full upon acceptance of deliverables")), "2026-10-05");
+});
+
+test("英語：end of the month following は翌月末、分割は読まない", () => {
+  assert.equal(payOnFor("2026-10-05", parsePaymentTerms("Payment by the end of the month following the month of acceptance")), "2026-11-30");
+  assert.equal(payOnFor("2026-10-05", parsePaymentTerms("by the end of the second month following acceptance")), "2026-12-31");
+  assert.equal(parsePaymentTerms("50% upon order confirmation, 50% upon acceptance of deliverables"), null);
+  assert.equal(parsePaymentTerms("to be agreed"), null);
+});
+
+test("英語の規則は日本語の言い回しを邪魔しない", () => {
+  assert.deepEqual(parsePaymentTerms("月末締め翌月末払い"), { monthsAfter: 1, day: "end" });
+});

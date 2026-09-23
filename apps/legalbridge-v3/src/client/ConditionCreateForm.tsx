@@ -7,6 +7,7 @@ import { searchParties } from "./SearchSelect.js";
 import { minorPerMajor } from "../server/royalty/economics.js";
 import { CONDITION_USAGE_TYPES, isSublicensingUsage } from "../server/core/condition-usage.js";
 import { conditionNameFor } from "../server/conditions/naming.js";
+import { PAYMENT_TERMS_PRESETS_EN, PAYMENT_TERMS_PRESETS_JA } from "../server/conditions/payment-terms.js";
 
 /**
  * 金額の欄の補足。通貨で単位が変わる。
@@ -197,7 +198,9 @@ export function ConditionCreateForm(
         { name: "taxCategory", label: "税区分", type: "select",
           options: [{ value: "taxable", label: "課税" }, { value: "reduced", label: "軽減" },
                     { value: "exempt", label: "非課税" }] },
-        { name: "paymentTerms", label: "支払条件", placeholder: "検収後30日 など" },
+        { name: "paymentTerms", label: "支払条件", placeholder: "検収後30日 など",
+          suggestions: [...PAYMENT_TERMS_PRESETS_JA, ...PAYMENT_TERMS_PRESETS_EN],
+          hint: "予定明細の支払期日はここから出す。海外の相手なら英語の定型文（Net 30 など）を選ぶ" },
         // 発注書・検収書の明細はここから出る。備考を仕様代わりにしない。
         { name: "spec", label: "仕様・成果物", type: "textarea",
           placeholder: "カラーイラスト1点（表紙用）、A4 相当 など",

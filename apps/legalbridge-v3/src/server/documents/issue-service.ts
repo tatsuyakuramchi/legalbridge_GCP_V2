@@ -139,7 +139,7 @@ export class DocumentIssueService {
         binding,
         templateLabel: template.label,
         templateVersionId: template.templateVersionId,
-        candidates: buildCandidates(context),
+        candidates: buildCandidates(context, template.templateKey),
         // 宣言済みの項目は binding.missing が別に報告する。重ねない。
         warnings: [
           ...documentWarnings(template.htmlSource, values, template.variables.map((v) => v.name)),

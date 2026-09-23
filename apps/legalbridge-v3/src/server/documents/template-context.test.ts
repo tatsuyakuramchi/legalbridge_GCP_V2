@@ -757,3 +757,22 @@ test("海外版：利用許諾条件の行は英語（含む＝included、無償
   assert.equal(rows[2].fee, "License fee included in the service fee");
   assert.equal(rows[2].term, "No fixed term");
 });
+
+test("海外版：行の契約種別も英語で刷る（英語で書いてあればそのまま）", () => {
+  const c = buildTemplateContext("intl_purchase_order", ctx({ events: [] }),
+    { items: [{ item_name: "a", amount_ex_tax: 1, payment_terms: "請負" },
+              { item_name: "b", amount_ex_tax: 1, payment_terms: "Service Agreement" }] });
+  const items = c.items as Array<Record<string, unknown>>;
+  assert.equal(items[0].payment_terms, "Contract for Work");
+  assert.equal(items[1].payment_terms, "Service Agreement");
+  assert.equal(c.contract_form_summary, "Contract for Work / Service Agreement");
+});
+
+test("海外版：種の行の契約種別は英語で入る（編集欄にも英語で出る）", () => {
+  const seeds = seedLines("intl_purchase_order",
+    ctx({ events: [], conditions: [condition({ contractForm: "請負" })], condition: condition({ contractForm: "請負" }) }));
+  assert.equal(seeds.items[0].payment_terms, "Contract for Work");
+  const ja = seedLines("purchase_order",
+    ctx({ events: [], conditions: [condition({ contractForm: "請負" })], condition: condition({ contractForm: "請負" }) }));
+  assert.equal(ja.items[0].payment_terms, "請負");
+});

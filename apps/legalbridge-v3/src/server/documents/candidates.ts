@@ -11,6 +11,8 @@
  * 選ばせるので間違いが起きにくく、移行済みのひな形すべてに今日から効く。
  */
 
+import { PAYMENT_TERMS_PRESETS_EN, PAYMENT_TERMS_PRESETS_JA } from "../conditions/payment-terms.js";
+
 export type CandidateKind = "date" | "amount" | "text";
 
 export interface Candidate {
@@ -21,7 +23,12 @@ export interface Candidate {
   /** どこから来たか。画面のまとまりに使う。 */
   source: string;
   kind: CandidateKind;
+  /** 決まった欄にだけ出す候補（支払条件の定型文など）。無ければ種類の合う欄すべてに出す。 */
+  forFields?: string[];
 }
+
+/** 支払条件の欄の名前（ひな形ごとに揺れる）。定型文はここにだけ出す。 */
+const PAYMENT_TERMS_FIELDS = ["PAYMENT_TERMS", "paymentConditionSummary", "支払条件", "payment_terms"];
 
 const isBlank = (v: unknown) =>
   v === null || v === undefined || (typeof v === "string" && v.trim() === "");
@@ -33,16 +40,20 @@ const amount = (v: unknown) =>
 /**
  * 文脈から候補を組み立てる。空の値は出さない（選べない候補は邪魔なだけ）。
  */
-export function buildCandidates(context: Record<string, any>): Candidate[] {
+export function buildCandidates(context: Record<string, any>, templateKey?: string | null): Candidate[] {
   const out: Candidate[] = [];
-  const add = (source: string, label: string, value: unknown, kind: CandidateKind) => {
+  const add = (source: string, label: string, value: unknown, kind: CandidateKind, forFields?: string[]) => {
     if (isBlank(value)) return;
     const text = kind === "amount" ? amount(value) : String(value);
     if (!text.trim()) return;
     // 同じ値が同じ名前で二度出ないようにする。
     if (out.some((c) => c.label === label && c.value === text)) return;
-    out.push({ label, value: text, source, kind });
+    out.push({ label, value: text, source, kind, ...(forFields ? { forFields } : {}) });
   };
+
+  // 支払条件の定型文。海外版は英語、それ以外は日本語。支払条件の欄にだけ出す。
+  const presets = templateKey === "intl_purchase_order" ? PAYMENT_TERMS_PRESETS_EN : PAYMENT_TERMS_PRESETS_JA;
+  for (const p of presets) add("定型文", "支払条件", p, "text", PAYMENT_TERMS_FIELDS);
 
   const today = new Date().toISOString().slice(0, 10);
   add("今日", "今日の日付", today, "date");

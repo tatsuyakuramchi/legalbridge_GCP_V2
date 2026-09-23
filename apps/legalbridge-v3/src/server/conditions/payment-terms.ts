@@ -15,6 +15,57 @@ export interface PaymentTerms {
   monthsAfter: number;
   /** 支払日。月末なら "end"。 */
   day: "end" | number;
+  /**
+   * 起点の日から何日後か（海外版の "Net 30" / "within 30 days"）。
+   * 入っていれば月の規則（monthsAfter / day）は使わず、起点日 + 日数で出す。
+   */
+  daysAfter?: number;
+}
+
+/**
+ * 支払条件の定型文。海外版の発注書は英語で書くので、英語の言い回しを揃えて
+ * おく（読めるものだけ載せる：Net 30 / within N days / end of the following month）。
+ * 画面（条件の登録・編集、文書の候補）はここから出す。
+ */
+export const PAYMENT_TERMS_PRESETS_JA: string[] = [
+  "月末締め翌月末払い", "検収月の翌月末払い", "月末締め翌々月末払い", "検収後30日以内", "納品月の翌月20日払い"
+];
+export const PAYMENT_TERMS_PRESETS_EN: string[] = [
+  "Net 30 days after acceptance of deliverables",
+  "Net 30 days after receipt of invoice",
+  "Net 60 days after receipt of invoice",
+  "Payment by the end of the month following the month of acceptance",
+  "Payment within 14 days after acceptance of deliverables",
+  "Payment in full upon acceptance of deliverables",
+  "50% upon order confirmation, 50% upon acceptance of deliverables"
+];
+
+/**
+ * 英語の支払条件。
+ *   "Net 30", "net 30 days", "within 30 days", "30 days after/from …" → 起点日 + 30 日
+ *   "end of the month following …", "end of the following month"      → 翌月末
+ *   "end of the second month following …"                            → 翌々月末
+ *   "end of the month", "by month-end"                                 → 当月末
+ *   "upon acceptance", "on acceptance", "upon delivery"                → 起点日当日
+ * 分割（50% …）のように 1 日に決まらないものは null。
+ */
+function parseEnglishTerms(s: string): PaymentTerms | null {
+  const t = s.toLowerCase();
+  if (!/[a-z]/.test(t)) return null;
+  if (/%/.test(t) && /,|and/.test(t)) return null;
+  const net = t.match(/\bnet\s*(\d{1,3})\b/) ?? t.match(/\bwithin\s*(\d{1,3})\s*(calendar\s*|business\s*)?days?\b/)
+    ?? t.match(/\b(\d{1,3})\s*days?\s*(after|from|following)\b/);
+  if (net) {
+    const n = Number(net[1]);
+    if (n >= 0 && n <= 365) return { monthsAfter: 0, day: "end", daysAfter: n };
+  }
+  if (/end of the (second|2nd) month following/.test(t)) return { monthsAfter: 2, day: "end" };
+  if (/end of the (month following|following month|next month)/.test(t)) return { monthsAfter: 1, day: "end" };
+  if (/\b(end of (the|this|that) month|month-end|end of month)\b/.test(t)) return { monthsAfter: 0, day: "end" };
+  if (/\b(up)?on (acceptance|delivery|completion|receipt)\b/.test(t) || /\bin full (up)?on\b/.test(t)) {
+    return { monthsAfter: 0, day: "end", daysAfter: 0 };
+  }
+  return null;
 }
 
 // 具体的なものから並べる。「翌々月」は「翌月」を含むので、順番が入れ替わると
@@ -29,6 +80,11 @@ const MONTHS: Array<[RegExp, number]> = [
 export function parsePaymentTerms(text: string | null | undefined): PaymentTerms | null {
   const raw = String(text ?? "").trim();
   if (!raw) return null;
+  // 英語の言い回し（海外版）。日本語の月の語が無いときだけ試す。
+  if (!/[月日]/.test(raw)) {
+    const en = parseEnglishTerms(raw);
+    if (en) return en;
+  }
   // 全角数字を半角に寄せる。V1 の文言は表記が揺れている。
   const s = raw
     .replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
@@ -81,6 +137,10 @@ export function payOnFor(dueOn: string | null, terms: PaymentTerms | null): stri
   if (!dueOn || !terms) return null;
   const base = new Date(`${dueOn}T00:00:00Z`);
   if (Number.isNaN(base.getTime())) return null;
+  // 日数の規則（Net 30）。起点日にそのまま足す。
+  if (terms.daysAfter !== undefined) {
+    return new Date(base.getTime() + terms.daysAfter * 86_400_000).toISOString().slice(0, 10);
+  }
 
   const year = base.getUTCFullYear();
   const month = base.getUTCMonth() + terms.monthsAfter;

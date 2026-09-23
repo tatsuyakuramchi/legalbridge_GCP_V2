@@ -33,6 +33,8 @@ export interface Field {
   visibleWhen?: (values: Record<string, string>) => boolean;
   /** type "search" で、初期値の表示名（案件から相手先を引き継いだときなど。無いと「#2」と出る）。 */
   valueLabel?: string | null;
+  /** 文字の欄の候補（datalist）。選べるが打てる。支払条件・契約形式の定型文に使う。 */
+  suggestions?: string[];
 }
 
 export interface CreateFormProps {
@@ -116,11 +118,19 @@ export function CreateForm(props: CreateFormProps) {
                 <input type="checkbox" checked={values[f.name] === "1"}
                   onChange={(e) => set(f.name, e.target.checked ? "1" : "")} />
               ) : (
-                <input
-                  type={f.type === "date" ? "date" : f.type === "number" || f.type === "money" ? "number" : "text"}
-                  inputMode={f.type === "money" || f.type === "number" ? "numeric" : undefined}
-                  value={values[f.name] ?? ""} placeholder={f.placeholder}
-                  onChange={(e) => set(f.name, e.target.value)} />
+                <>
+                  <input
+                    type={f.type === "date" ? "date" : f.type === "number" || f.type === "money" ? "number" : "text"}
+                    inputMode={f.type === "money" || f.type === "number" ? "numeric" : undefined}
+                    list={f.suggestions?.length ? `${f.name}-suggestions` : undefined}
+                    value={values[f.name] ?? ""} placeholder={f.placeholder}
+                    onChange={(e) => set(f.name, e.target.value)} />
+                  {f.suggestions?.length ? (
+                    <datalist id={`${f.name}-suggestions`}>
+                      {f.suggestions.map((s) => <option key={s} value={s} />)}
+                    </datalist>
+                  ) : null}
+                </>
               )}
               {(typeof f.hint === "function" ? f.hint(values) : f.hint) && (
                 <small className="faint">

@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { api } from "./api.js";
 import { CreateForm, type Field } from "./CreateForm.js";
 import { searchParties } from "./SearchSelect.js";
-import { CONTRACT_FORMS } from "../server/conditions/contract-form.js";
+import { CONTRACT_FORMS, CONTRACT_FORMS_EN } from "../server/conditions/contract-form.js";
+import { PAYMENT_TERMS_PRESETS_EN, PAYMENT_TERMS_PRESETS_JA } from "../server/conditions/payment-terms.js";
 import { minorUnitHint } from "./ConditionCreateForm.js";
 
 /**
@@ -89,7 +90,8 @@ export function ServiceSetForm(
                            hint: [a.agreementNo, a.counterparty?.name].filter(Boolean).join("／") })),
           hint: "業務委託基本契約書。同じ案件でも契約や相手先が違えば別の業務になる" },
         { name: "contractForm", label: "契約形式", type: "select",
-          options: [{ value: "", label: "（未定）" }, ...CONTRACT_FORMS.map((f) => ({ value: f, label: f }))],
+          options: [{ value: "", label: "（未定）" }, ...CONTRACT_FORMS.map((f) => ({ value: f, label: f })),
+                    ...CONTRACT_FORMS_EN.map((f) => ({ value: f, label: `${f}（海外版）` }))],
           hint: "請負／準委任など。発注書の明細に出る" },
         { name: "deliverableOwnership", label: "成果物の帰属先", type: "select",
           options: [{ value: "", label: "（未定）" }, { value: "orderer", label: "発注者（譲渡型）" },
@@ -98,7 +100,9 @@ export function ServiceSetForm(
         { name: "termEnd", label: "納期・終了", type: "date" },
         { name: "currency", label: "通貨", type: "select", required: true,
           options: [{ value: "JPY", label: "JPY 円" }, { value: "USD", label: "USD" }, { value: "EUR", label: "EUR" }] },
-        { name: "paymentTerms", label: "支払条件", placeholder: "検収後30日 など" },
+        { name: "paymentTerms", label: "支払条件", placeholder: "検収後30日 など",
+          suggestions: [...PAYMENT_TERMS_PRESETS_JA, ...PAYMENT_TERMS_PRESETS_EN],
+          hint: "予定明細の支払期日はここから出す。海外の相手なら英語の定型文（Net 30 など）を選ぶ" },
         { name: "taxCategory", label: "委託料・手数料の税区分", type: "select",
           options: [{ value: "taxable", label: "課税" }, { value: "reduced", label: "軽減" },
                     { value: "exempt", label: "非課税" }],

@@ -11,6 +11,7 @@
  */
 import { SnippetPicker } from "./SnippetPicker.js";
 import { roundAmount } from "../server/core/rounding.js";
+import { CONTRACT_FORMS_EN } from "../server/conditions/contract-form.js";
 
 export type Row = Record<string, unknown>;
 
@@ -25,6 +26,8 @@ export interface Column {
   helpText?: string;
   /** 数量×単価から自動で入る列。手で直せば手の値が勝つ。 */
   computed?: boolean;
+  /** 文字の欄の候補（datalist）。選べるが打てる。 */
+  suggestions?: string[];
 }
 
 const matches = (c: ShowWhen, row: Row) => {
@@ -100,11 +103,71 @@ export const ITEM_COLUMNS: Column[] = [
     options: [{ value: "SAME_MONTH", label: "当月" }, { value: "NEXT_MONTH", label: "翌月" }, { value: "MONTH_AFTER_NEXT", label: "翌々月" }] }
 ];
 
-/** 海外発注書だけ。サブスクの支払日を英文でそのまま印字する。 */
-export const INTL_ITEM_COLUMNS: Column[] = ITEM_COLUMNS.flatMap((c) => c.name === "billing_timing"
-  ? [c, { name: "billing_note", label: "支払日の任意設定（英文・そのまま印字）", showWhen: subscriptionOnly,
-          helpText: "例: within 30 days after receipt of invoice" } satisfies Column]
-  : [c]);
+/**
+ * 海外発注書の品目。紙に出る語は英語なので、選択肢と候補も英語にする
+ * （値の内部表現は国内版と同じ：帰属先は 発注者／受注者、支払方法は FIXED …）。
+ * 見出しは日本語＋英語で、どの欄がどこに出るか分かるようにする。
+ */
+const INTL_LABELS: Record<string, string> = {
+  item_name: "品目・業務名（Item / Deliverable）", spec: "仕様・成果物（Specification）",
+  quantity: "数量（Qty）", unit_price: "単価（Unit Price）", amount_ex_tax: "金額（Amount）",
+  payment_terms: "契約種別（Contract type）", deliverable_ownership: "成果物の帰属先（Ownership）",
+  calc_method: "支払方法（Payment）", delivery_date: "納期（Delivery）", payment_date: "支払日（Payment date）",
+  reward_label: "確定報酬の名称（Fee label）", calc_type: "計算式（Formula）", fixed_kind: "固定値の支払（Fixed fee）",
+  subscription_cycle: "サブスクの周期（Cycle）", rate_pct: "料率（Rate %）", base_price_label: "基準価格（Base price）",
+  formula_text: "計算式の補足（Formula note）", guarantee_type: "最低保証（Guarantee）", mg_amount: "MG",
+  ag_amount: "AG", cycle: "周期（Cycle）", term_start: "役務提供期間 開始（Service from）",
+  term_end: "役務提供期間 終了（Service to）", billing_day: "毎周期の支払日（Billing day）", billing_timing: "支払月（Billing month）"
+};
+const INTL_OPTIONS: Record<string, Array<{ value: string; label: string }>> = {
+  deliverable_ownership: [{ value: "発注者", label: "Purchaser (assignment)" }, { value: "受注者", label: "Contractor (licensed)" }],
+  calc_method: [{ value: "FIXED", label: "Fixed fee" }, { value: "ROYALTY", label: "Performance-based (license / incentive fee)" },
+                { value: "SUBSCRIPTION", label: "Recurring" }],
+  calc_type: [{ value: "BASE_QTY_RATE", label: "Base price × units × rate" }, { value: "BASE_RATE", label: "Base price × rate" },
+              { value: "FIXED", label: "Fixed amount" }, { value: "SUBSCRIPTION", label: "Subscription" }],
+  fixed_kind: [{ value: "LUMP", label: "Lump sum" }, { value: "INSTALLMENT", label: "Installments" }],
+  subscription_cycle: [{ value: "MONTHLY", label: "Monthly" }, { value: "ANNUAL", label: "Annual" }],
+  guarantee_type: [{ value: "NONE", label: "None" }, { value: "MG", label: "MG (minimum guarantee)" }, { value: "AG", label: "AG (advance guarantee)" }],
+  cycle: [{ value: "MONTHLY", label: "Monthly" }, { value: "QUARTERLY", label: "Quarterly" },
+          { value: "SEMIANNUAL", label: "Semi-annual" }, { value: "ANNUAL", label: "Annual" }],
+  billing_timing: [{ value: "SAME_MONTH", label: "Same month" }, { value: "NEXT_MONTH", label: "Following month" },
+                   { value: "MONTH_AFTER_NEXT", label: "Second month following" }]
+};
+const INTL_HELP: Record<string, string> = {
+  payment_terms: "紙の Contract type にそのまま出る。英語で（候補から選べる）",
+  deliverable_ownership: "Contractor（受注者）にすると License Terms の表が出る",
+  calc_method: "未選択は Fixed fee として出る",
+  reward_label: "金額が 0 なら “Fee included in the license fee” と出る。未入力時は “Fee”",
+  term_end: "空欄なら “ongoing” と出る",
+  billing_day: "0 または 31 で末日（end of month）"
+};
+export const INTL_ITEM_COLUMNS: Column[] = ITEM_COLUMNS.flatMap((c) => {
+  const col: Column = {
+    ...c,
+    label: INTL_LABELS[c.name] ?? c.label,
+    ...(INTL_OPTIONS[c.name] ? { options: INTL_OPTIONS[c.name] } : {}),
+    ...(INTL_HELP[c.name] ? { helpText: INTL_HELP[c.name] } : {}),
+    ...(c.name === "payment_terms" ? { suggestions: CONTRACT_FORMS_EN } : {})
+  };
+  // サブスクの支払日を英文でそのまま印字する欄（海外版だけ）。
+  return c.name === "billing_timing"
+    ? [col, { name: "billing_note", label: "支払日の任意設定（英文・そのまま印字）", showWhen: subscriptionOnly,
+              helpText: "例: within 30 days after receipt of invoice" } satisfies Column]
+    : [col];
+});
+
+/** 海外発注書の手数料・経費。見出しを英語付きに。 */
+export const INTL_FEE_COLUMNS: Column[] = [
+  { name: "fee_name", label: "手数料名（Description）" },
+  { name: "amount", label: "金額（Amount, excl. tax）", type: "number" },
+  { name: "remarks", label: "備考（Remarks）", type: "textarea" }
+];
+export const INTL_EXPENSE_COLUMNS: Column[] = [
+  { name: "expense_name", label: "経費名（Description）" },
+  { name: "spent_date", label: "利用日（Date）", type: "date" },
+  { name: "amount_inc_tax", label: "金額（Amount, at actual cost）", type: "number" },
+  { name: "remarks", label: "備考（Remarks）", type: "textarea" }
+];
 
 /**
  * 計算書の行の見出し。金額と料率は計算から出すので、ここでは直せない。
@@ -215,8 +278,8 @@ export const LINE_SECTIONS: Record<string, {
            hint: "選んだ実績が1行ずつ。検収金額が予定額と違えば変更履歴に出る。"
                + "業績連動の行は、別で計算した金額と根拠をここに入れる。"
                + "定期支払は同じ額の回を1行にまとめる（変更のあった回は分かれる）" },
-  other_fees: { title: "その他手数料", columns: FEE_COLUMNS, hint: "無ければ空のまま" },
-  expenses: { title: "経費", columns: EXPENSE_COLUMNS, hint: "税込で入れる。無ければ空のまま" },
+  other_fees: { title: "その他手数料", columns: FEE_COLUMNS, intl: INTL_FEE_COLUMNS, hint: "無ければ空のまま" },
+  expenses: { title: "経費", columns: EXPENSE_COLUMNS, intl: INTL_EXPENSE_COLUMNS, hint: "税込で入れる。無ければ空のまま" },
   rs_line_labels: { title: "計算書の行の見出し", columns: STATEMENT_LABEL_COLUMNS,
            hint: "選んだ実績が1行ずつ。金額と料率は計算から出すので直せない。"
                + "紙に出る文字だけを整える（相手に見せる呼び方が違うとき）" }
@@ -301,9 +364,17 @@ export function LineItemsEditor(
                                      onInsert={(v) => update(i, c, v)} />
                     </>
                   ) : (
-                    <input type={c.type === "date" ? "date" : "text"}
-                           inputMode={c.type === "number" ? "numeric" : undefined}
-                           value={show(row[c.name])} onChange={(e) => update(i, c, e.target.value)} />
+                    <>
+                      <input type={c.type === "date" ? "date" : "text"}
+                             inputMode={c.type === "number" ? "numeric" : undefined}
+                             list={c.suggestions?.length ? `line-${name}-${c.name}-suggestions` : undefined}
+                             value={show(row[c.name])} onChange={(e) => update(i, c, e.target.value)} />
+                      {c.suggestions?.length ? (
+                        <datalist id={`line-${name}-${c.name}-suggestions`}>
+                          {c.suggestions.map((s) => <option key={s} value={s} />)}
+                        </datalist>
+                      ) : null}
+                    </>
                   )}
                   {c.helpText && <small className="faint">{c.helpText}</small>}
                 </label>

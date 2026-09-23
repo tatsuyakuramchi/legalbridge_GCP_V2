@@ -25,7 +25,9 @@ export interface FormField {
   helpText: string | null; placeholder: string | null; options: string[] | null;
   readonly: boolean;
 }
-export interface Candidate { label: string; value: string; source: string; kind: "date" | "amount" | "text" }
+export interface Candidate { label: string; value: string; source: string; kind: "date" | "amount" | "text";
+  /** 決まった欄にだけ出す候補（支払条件の定型文など）。 */
+  forFields?: string[] }
 
 const SOURCE_LABEL =
   { computed: "計算", auto: "自動", suggested: "文案", manual: "手入力" } as const;
@@ -173,7 +175,8 @@ export function DocumentFields(
               const value = f.name in manual ? manual[f.name] : show(f.value);
               const blank = !String(value ?? "").trim();
               const want = kindFor(f.name, f.label, f.type);
-              const fits = candidates.filter((c) => !want || c.kind === want);
+              const fits = candidates.filter((c) => (!want || c.kind === want)
+                && (!c.forFields || c.forFields.includes(f.name)));
               const inline = want === "date" || want === "amount";
               const open = inline || opened.has(f.name);
               return (

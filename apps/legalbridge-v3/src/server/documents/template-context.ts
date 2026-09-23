@@ -24,7 +24,7 @@ import { PUB_TITLES_FIELD, isPubTermsTemplate, pubTermsPatch, pubTermsSuggestion
 import type { Warning } from "./preflight.js";
 import { expenseLinesFrom, feeLinesFrom, isSettlementKind } from "./settlement-conditions.js";
 import { calcMethodFor, ownershipLabelOf, rewardLabelFor } from "../core/reward.js";
-import { contractFormFor } from "../conditions/contract-form.js";
+import { contractFormEn, contractFormFor } from "../conditions/contract-form.js";
 import { CONDITION_USAGE_TYPES, conditionUsageLabel } from "../core/condition-usage.js";
 import { formatDateEn } from "./rendering.js";
 
@@ -65,8 +65,13 @@ export function seedLines(templateKey: string, context: Ctx): Record<string, Row
   if (isLicenseTermsTemplate(templateKey)) return licenseTermsSeeds(context) as Record<string, Row[]>;
   if (isPubTermsTemplate(templateKey)) return { [PUB_TITLES_FIELD]: pubTitleSeeds(context) as Row[] };
   const out: Record<string, Row[]> = {};
+  // 海外版の発注書は行の契約種別も英語で持たせる（編集欄にも英語で出る）。
+  const intl = templateKey === "intl_purchase_order";
+  const itemsOf = () => intl
+    ? orderLinesFrom(context).map((r) => (r.payment_terms ? { ...r, payment_terms: contractFormEn(r.payment_terms) } : r))
+    : orderLinesFrom(context);
   for (const name of lineFieldsFor(templateKey)) {
-    out[name] = name === "items" ? orderLinesFrom(context)
+    out[name] = name === "items" ? itemsOf()
       : name === "delivery_line_items" ? deliveryLinesFrom(context)
       : name === "rs_line_labels" ? statementLabelRows(context)
       // 手数料・経費は繋がっている fee / expense の条件から。決定のときに行から
@@ -674,13 +679,6 @@ export const USAGE_LABEL_EN: Record<string, string> = {
   pub_sub_digital: "Translation sublicense (digital)"
 };
 
-/** 海外版の書類に出す契約形式の英語。表に無い語はそのまま。 */
-export const CONTRACT_FORM_EN: Record<string, string> = {
-  請負: "Contract for Work", 委任: "Mandate", 準委任: "Quasi-mandate", 売買: "Sale",
-  派遣: "Staffing", 業務提携: "Business alliance", 利用許諾: "License"
-};
-const contractFormEn = (value: unknown): string =>
-  String(value ?? "").split("／").map((v) => CONTRACT_FORM_EN[v.trim()] ?? v.trim()).filter(Boolean).join(" / ");
 
 const moneyOf = (amount: unknown, currency: string, lang: "ja" | "en" = "ja"): string => {
   const n = Number(amount);
@@ -750,11 +748,15 @@ const distinctJoin = (values: unknown[]): string =>
   [...new Set(values.map((v) => String(v ?? "").trim()).filter(Boolean))].join("／");
 
 function orderBlock(templateKey: string, context: Ctx, manual: Record<string, unknown>) {
-  const items = rows(manual.items).length ? rows(manual.items) : orderLinesFrom(context);
+  const intl = templateKey === "intl_purchase_order";
+  // 海外版は行の契約種別（請負 など）も英語で刷る。英語で書いてあればそのまま。
+  const rawItems = rows(manual.items).length ? rows(manual.items) : orderLinesFrom(context);
+  const items = intl
+    ? rawItems.map((r) => (r.payment_terms ? { ...r, payment_terms: contractFormEn(r.payment_terms) } : r))
+    : rawItems;
   const otherFees = rows(manual.other_fees);
   const expenses = rows(manual.expenses);
   const totals = purchaseOrderTotals({ items, other_fees: otherFees });
-  const intl = templateKey === "intl_purchase_order";
   const deliveryDate = aggregateItemDates(items, "delivery_date", intl);
   const paymentDate = aggregateItemDates(items, "payment_date", intl);
   // 空文字は「無い」として次の列を見る（?? だと "" が拾われて 0 になる。画面の

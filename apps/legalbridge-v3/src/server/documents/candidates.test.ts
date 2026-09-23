@@ -86,3 +86,13 @@ test("振込先を候補に出す。1行にまとめたものも用意する", (
 test("口座が無い取引先では、振込先の候補を出さない", () => {
   assert.equal(buildCandidates(ctx()).some((c) => c.source === "振込先"), false);
 });
+
+test("支払条件の定型文は支払条件の欄にだけ出す。海外版は英語", () => {
+  const ja = buildCandidates(ctx(), "purchase_order").filter((c) => c.source === "定型文");
+  assert.ok(ja.length >= 3);
+  assert.ok(ja.every((c) => c.forFields?.includes("PAYMENT_TERMS")));
+  assert.ok(ja.some((c) => c.value === "月末締め翌月末払い"));
+  const en = buildCandidates(ctx(), "intl_purchase_order").filter((c) => c.source === "定型文");
+  assert.ok(en.some((c) => c.value.startsWith("Net 30 days")));
+  assert.ok(en.every((c) => /^[A-Za-z0-9 %,]+$/.test(c.value)), "海外版の定型文は英語だけ");
+});
