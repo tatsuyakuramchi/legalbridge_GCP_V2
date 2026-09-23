@@ -5,6 +5,7 @@ import { useReadOnly } from "./read-only.js";
 import { SignSwitch, SignTag } from "./SignState.js";
 import { SendMany } from "./SendMany.js";
 import { exportDocumentsZip, type ExportProgress } from "./exportZip.js";
+import { LicenseSetForm } from "./LicenseSetForm.js";
 import type { GridDocument, GridParty, GridRow } from "../server/matters/grid.js";
 import type { MatterDetail } from "../server/core/model.js";
 
@@ -228,6 +229,8 @@ export function MatterBundles(
   const [checked, setChecked] = useState<Set<number>>(new Set());
   /** PDF を作っている最中の進み具合。null なら作っていない。 */
   const [exporting, setExporting] = useState<ExportProgress | null>(null);
+  /** 許諾条件を足している行（受注者帰属なのに許諾条件が無い条件）。 */
+  const [licenseFor, setLicenseFor] = useState<GridRow | null>(null);
 
   useEffect(() => {
     setError(null);
@@ -366,6 +369,19 @@ export function MatterBundles(
             : row.name}
           <span className="faint code">{row.conditionNo ?? `#${row.conditionId}`} ／ {conditionAmountLabel(row)}</span>
           {row.settlement.done && <span className="tag ok" style={{ marginTop: 2 }}>払い切り</span>}
+          {row.deliverableOwnership === "contractor" && row.licenseCount === 0 && (
+            // 受注者帰属なのに、同じ作品 × 受注者の利用許諾条件が無い。発注書の
+            // 「利用許諾条件」が「別途定める」で出る。ここから足せる。
+            <span className="row" style={{ gap: 6, marginTop: 2, flexWrap: "wrap" }}>
+              <span className="tag warn" title="成果物の帰属先が受注者なのに、同じ作品 × 受注者の利用許諾条件が登録されていません。発注書の利用許諾条件は「別途定める」と出ます">
+                許諾条件がありません
+              </span>
+              {!readOnly && row.workId && row.counterparty && (
+                <button type="button" className="linky" onClick={() => setLicenseFor(row)}>許諾条件を足す</button>
+              )}
+              {!row.workId && <span className="faint">（作品を付けてから）</span>}
+            </span>
+          )}
         </div>
         <CellView cell={cells.order} sign={sign} />
         <CellView cell={cells.delivery} />
@@ -383,6 +399,18 @@ export function MatterBundles(
           <span>{notice}</span>
           <button type="button" className="linky" onClick={() => setNotice(null)}>閉じる</button>
         </div>
+      )}
+      {licenseFor && licenseFor.workId && licenseFor.counterparty && (
+        <LicenseSetForm
+          preset={{ counterpartyId: String(licenseFor.counterparty.id), workId: String(licenseFor.workId),
+                    matterId: String(matterId) }}
+          presetLabels={{ counterpartyId: licenseFor.counterparty.name }}
+          onDone={(created) => {
+            setLicenseFor(null);
+            setNotice(`利用許諾条件を ${created.conditions.length} 本作りました（${licenseFor.name}）。発注書を作り直すと利用許諾条件の表に出ます`);
+            setBump((n) => n + 1);
+          }}
+          onCancel={() => setLicenseFor(null)} />
       )}
       <div className="bkpi">
         <div><div className="faint">取引先</div><div className="n">{kpi.parties}</div></div>

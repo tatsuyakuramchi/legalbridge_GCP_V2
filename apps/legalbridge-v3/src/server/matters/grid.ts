@@ -67,6 +67,15 @@ export interface GridRow {
   /** 条件の版（有効・適用待ちなど）。決着とは別の軸。 */
   status: string;
   settlement: ConditionSettlement;
+  /** 作品。許諾条件を足すときの軸（作品 × 受注者）。 */
+  workId: number | null;
+  /** 成果物の帰属先。orderer=発注者 / contractor=受注者。 */
+  deliverableOwnership: "orderer" | "contractor" | null;
+  /**
+   * 同じ作品 × 同じ受注者に付いている利用許諾条件の本数（A-048）。
+   * 受注者帰属なのに 0 なら、発注書の利用許諾条件が「別途定める」になる。
+   */
+  licenseCount: number;
   /**
    * 予定の回と、日付。
    *

@@ -115,7 +115,9 @@ const doc = (row: Record<string, any>, prefix: string): GridDocument | null => {
  */
 export const GRID_COLUMNS = `c.id, c.condition_no, c.name, c.kind, c.status, c.currency,
                 c.pricing_model, c.flat_amount, c.unit_amount, c.rate_ppm, c.term_end,
+                c.work_id, c.deliverable_ownership,
                 p.id AS party_id, p.name AS party_name,
+                lic.count AS license_count,
                 ${SETTLEMENT_COLUMNS},
                 sch.total AS schedule_total, sch.done AS schedule_done,
                 sch.due_on AS schedule_due_on, sch.pay_on AS schedule_pay_on,
@@ -147,6 +149,13 @@ export const GRID_COLUMNS = `c.id, c.condition_no, c.name, c.kind, c.status, c.c
 export const GRID_JOINS = `
            LEFT JOIN parties p ON p.id = c.counterparty_id
            ${SETTLEMENT_LATERAL_SQL}
+           -- 同じ作品 × 同じ受注者の利用許諾条件（A-048）。受注者帰属の行の印に使う。
+           LEFT JOIN LATERAL (
+             SELECT count(*)::int AS count FROM conditions l
+              WHERE l.kind = 'license' AND l.direction = 'in'
+                AND l.work_id = c.work_id AND l.counterparty_id = c.counterparty_id
+                AND l.status IN ('active', 'scheduled')
+           ) lic ON true
            -- 予定の回と、そのうち実績の付いた回。
            LEFT JOIN LATERAL (
              SELECT count(*)::int AS total,
@@ -196,6 +205,10 @@ export const gridRowOf = (row: Record<string, any>): GridRow => ({
   ratePpm: int(row.rate_ppm),
   status: String(row.status),
   settlement: settlementOf(row),
+  workId: int(row.work_id),
+  deliverableOwnership: row.deliverable_ownership === "orderer" || row.deliverable_ownership === "contractor"
+    ? row.deliverable_ownership : null,
+  licenseCount: Number(row.license_count ?? 0),
   schedules: {
     total: Number(row.schedule_total ?? 0), done: Number(row.schedule_done ?? 0),
     dueOn: Number(row.due_kinds ?? 0) === 1 ? dateStr(row.schedule_due_on) : null,

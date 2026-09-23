@@ -48,8 +48,10 @@ const renewMonths = (v: unknown) => {
 };
 
 export function LicenseSetForm(
-  { preset, onDone, onCancel }: {
+  { preset, presetLabels, onDone, onCancel }: {
     preset?: Partial<Record<"counterpartyId" | "workId" | "agreementId" | "matterId", string>>;
+    /** 先に入れてある id の見た目（取引先名など）。無ければ id がそのまま出る。 */
+    presetLabels?: Record<string, string | null | undefined>;
     onDone: (created: LicenseSetCreated) => void;
     onCancel: () => void;
   }
@@ -114,6 +116,7 @@ export function LicenseSetForm(
       fields={[
         { name: "counterpartyId", label: "許諾者（権利者）", type: "search", required: true,
           search: searchParties, placeholder: "取引先名・コードで探す",
+          valueLabel: presetLabels?.counterpartyId ?? null,
           hint: "個別利用許諾条件書の Licensor" },
         { name: "workId", label: "原作（Core Logic）／原作を兼ねる作品", type: "search", required: true,
           options: works.map((w) => ({ value: String(w.id), label: w.title })),

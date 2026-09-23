@@ -24,7 +24,7 @@ const row = (over: Partial<GridRow> = {}): GridRow => ({
   conditionId: 1, conditionNo: "CL-1", name: "挿絵 5点", kind: "service",
   counterparty: { id: 10, name: "みなも工房" },
   pricingModel: "fixed", currency: "JPY", flatAmount: 95000, unitAmount: null, ratePpm: null,
-  status: "active", settlement: settlement(),
+  status: "active", settlement: settlement(), workId: null, deliverableOwnership: null, licenseCount: 0,
   schedules: { total: 0, done: 0, dueOn: null, payOn: null, dueVaries: false, payVaries: false },
   order: null,
   events: { count: 0, latestOn: null, latestId: null, latestInspectedOn: null },
