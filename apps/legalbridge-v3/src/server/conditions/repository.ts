@@ -2,7 +2,7 @@ import type { Queryable, Transactable } from "../core/db.js";
 import { dateStr, int, num, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import type {
-  ConditionDetail, ConditionRevision, ConditionScope, ConditionSummary, Direction, ScopeType
+  ConditionDetail, ConditionRevision, ConditionScope, ConditionSummary, Direction, LicenseFeeBasis, ScopeType
 } from "../core/model.js";
 import { SETTLEMENT_COLUMNS, SETTLEMENT_LATERAL_SQL, settlementOf } from "./settlement.js";
 
@@ -115,7 +115,7 @@ export class ConditionRepository {
     const detail = await this.database.query(
       `SELECT ${SUMMARY_COLUMNS},
               c.agreement_id, c.parent_id, c.work_part_id, c.exclusivity, c.sublicensable,
-              c.sublicense_consent, c.auto_renew, c.renew_months, c.renew_stopped_on,
+              c.sublicense_consent, c.license_fee_basis, c.auto_renew, c.renew_months, c.renew_stopped_on,
               c.tax_category, c.payment_terms, c.contract_form, c.cycle, c.notes,
               c.spec, c.deliverable_ownership, c.order_no,
               pc.condition_no AS parent_condition_no,
@@ -149,6 +149,7 @@ export class ConditionRepository {
       sublicensable: row.sublicensable === null || row.sublicensable === undefined
         ? null : Boolean(row.sublicensable),
       sublicenseConsent: (str(row.sublicense_consent) as "covered" | "required" | null) ?? null,
+      licenseFeeBasis: (str(row.license_fee_basis) as LicenseFeeBasis | null) ?? "separate",
       autoRenew: row.auto_renew === null || row.auto_renew === undefined ? null : Boolean(row.auto_renew),
       renewMonths: int(row.renew_months),
       renewStoppedOn: dateStr(row.renew_stopped_on),

@@ -290,6 +290,51 @@ test("登録：別途合意は翻訳版再許諾だけの列。読めない値�
   assert.match(r.rows[1].message ?? "", /別途合意は「要」か「不要」です/);
 });
 
+/**
+ * 許諾料の扱い（A-048）。「業務委託報酬に含む」「無償」なら料率は空でよく、
+ * 0% の許諾として立つ。読めない語は行ごとに止める。
+ */
+test("登録：許諾料の扱いが「含む」「無償」なら料率は空でも立つ", async () => {
+  const db = build();
+  const csv = [
+    "作品名,許諾者,取引モデル,料率,許諾料の扱い",
+    "ito,権利者名,自社製造・自社販売,,業務委託報酬に含む",
+    "ito,権利者名,自社製造・他社販売,,無償",
+    "ito,権利者名,紙出版,,",
+    "ito,権利者名,電子出版,10,たぶん含む"
+  ].join("\n");
+  const r = await new ImportService(db).run({ kind: "license_conditions", csv, dryRun: true, actor: "k" });
+  assert.equal(r.ok, 2, JSON.stringify(r.rows));
+  assert.equal(r.error, 2);
+  assert.match(r.rows[2].message ?? "", /料率は 0〜100/);
+  assert.match(r.rows[3].message ?? "", /許諾料の扱いは/);
+});
+
+test("登録：許諾料の扱いは列に入り、別途は separate", async () => {
+  const db = build();
+  const csv = [
+    "作品名,許諾者,取引モデル,料率,許諾料の扱い",
+    "ito,権利者名,自社製造・自社販売,,業務委託報酬に含む",
+    "ito,権利者名,自社製造・他社販売,3,"
+  ].join("\n");
+  const r = await new ImportService(db).run({ kind: "license_conditions", csv, dryRun: false, actor: "k" });
+  assert.equal(r.ok, 2, JSON.stringify(r.rows));
+  const inserts = db.all("INSERT INTO conditions");
+  assert.equal(inserts.length, 2);
+  assert.ok(inserts[0].params.includes("included"));
+  assert.ok(inserts[1].params.includes("separate"));
+});
+
+test("条件の更新：許諾料の扱いだけを直せる", async () => {
+  const db = condDb();
+  const r = await new ImportService(db).run({
+    kind: "license_conditions", csv: "条件番号,許諾料の扱い\nCL-1,無償", dryRun: false, actor: "k", mode: "update" });
+  assert.equal(r.ok, 1, JSON.stringify(r.rows));
+  const q = db.find("UPDATE conditions SET")!;
+  assert.match(q.text, /license_fee_basis = \$2/);
+  assert.equal(q.params[1], "free");
+});
+
 test("条件の更新：別途合意だけを直せる", async () => {
   const db = condDb();
   const r = await new ImportService(db).run({

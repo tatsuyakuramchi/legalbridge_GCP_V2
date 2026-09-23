@@ -1132,6 +1132,8 @@ export function createRoutes(database: Transactable) {
     .nullable().optional();
   /** 再許諾ごとの別途合意（A-033）。covered=不要／required=要。 */
   const sublicenseConsentSchema = z.enum(["covered", "required"]).nullable().optional();
+  /** 許諾料の扱い（A-048）。separate=別途／included=業務委託報酬に含む／free=無償。 */
+  const licenseFeeBasisSchema = z.enum(["separate", "included", "free"]).nullable().optional();
   /**
    * 自動更新（A-039）。期間そのものは termStart / termEnd。
    * 更新した回数は持たない（終了日・単位・基準日から数える）。
@@ -1156,6 +1158,7 @@ export function createRoutes(database: Transactable) {
     exclusivity: z.enum(["exclusive", "non_exclusive"]).nullable().optional(),
     sublicensable: z.boolean().nullable().optional(),
     sublicenseConsent: sublicenseConsentSchema,
+    licenseFeeBasis: licenseFeeBasisSchema,
     ...renewalFields,
     termStart: z.string().date().nullable().optional(),
     termEnd: z.string().date().nullable().optional(),
@@ -1261,13 +1264,15 @@ export function createRoutes(database: Transactable) {
     rows: z.array(z.object({
       usageType: z.enum(
         CONDITION_USAGE_TYPES.map((t) => t.value) as [ConditionUsageType, ...ConditionUsageType[]]),
-      ratePct: z.coerce.number().min(0).max(100),
+      // 率は「含む」「無償」のとき空でよい（サービス側で 0 にする）。
+      ratePct: z.coerce.number().min(0).max(100).default(0),
       exclusivity: z.enum(["exclusive", "non_exclusive"]).nullable().optional(),
       mgAmount: z.coerce.number().int().min(0).nullable().optional(),
       agAmount: z.coerce.number().int().min(0).nullable().optional(),
       sublicensee: z.string().trim().max(200).nullable().optional(),
       purpose: z.string().trim().max(200).nullable().optional(),
-      sublicenseConsent: sublicenseConsentSchema
+      sublicenseConsent: sublicenseConsentSchema,
+      licenseFeeBasis: licenseFeeBasisSchema
     })).min(1).max(20)
   });
   /** 業務委託の条件を業務1つぶん（委託料＋実費＋手数料）まとめて登録する。 */
@@ -1355,6 +1360,7 @@ export function createRoutes(database: Transactable) {
     workId: z.coerce.number().int().positive().nullable().optional(),
     exclusivity: z.enum(["exclusive", "non_exclusive"]).nullable().optional(),
     sublicenseConsent: sublicenseConsentSchema,
+    licenseFeeBasis: licenseFeeBasisSchema,
     ...renewalFields,
     spec: z.string().trim().max(4000).nullable().optional(),
     deliverableOwnership: z.enum(["orderer", "contractor"]).nullable().optional(),

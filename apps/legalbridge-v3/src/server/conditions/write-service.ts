@@ -6,7 +6,7 @@ import { ConditionRepository } from "./repository.js";
 import { allocateNumber } from "../core/numbering.js";
 import { roundAmount } from "../core/rounding.js";
 import { readContractForm } from "./contract-form.js";
-import type { ConditionScope } from "../core/model.js";
+import type { ConditionScope, LicenseFeeBasis } from "../core/model.js";
 import { PUB_MEDIA_LABEL, pubMediaOf, type PubMedia } from "../core/pub-media.js";
 import { conditionNameFor } from "./naming.js";
 import { conditionUsageLabel, pubMediaOfUsage, usageOfPubMedia,
@@ -73,6 +73,8 @@ export interface LicenseSetRow {
   purpose?: string | null;
   /** 再許諾の別途合意（A-033）。翻訳版の条文と一覧の印が出し分かれる。 */
   sublicenseConsent?: "covered" | "required" | null;
+  /** 許諾料の扱い（A-048）。included / free のときは率が無くてもよい。 */
+  licenseFeeBasis?: LicenseFeeBasis | null;
 }
 export interface LicenseSetInput {
   matterId?: number | null;
@@ -200,6 +202,8 @@ export interface ConditionInput {
   sublicensable?: boolean | null;
   /** 再許諾の別途合意（A-033）。covered=不要 / required=要。空は「要」扱い。 */
   sublicenseConsent?: "covered" | "required" | null;
+  /** 許諾料の扱い（A-048）。空は separate（別途）。 */
+  licenseFeeBasis?: LicenseFeeBasis | null;
   /** 自動更新（A-039）。許諾期間の更新を条件ごとに持つ。更新した回数は導く。 */
   autoRenew?: boolean | null;
   /** 更新の単位（月）。12 = 1年。空は 12 として扱う。 */
@@ -261,6 +265,8 @@ export interface EconomicsPatch {
   exclusivity?: "exclusive" | "non_exclusive" | null;
   /** 再許諾の別途合意（A-033）。 */
   sublicenseConsent?: "covered" | "required" | null;
+  /** 許諾料の扱い（A-048）。 */
+  licenseFeeBasis?: LicenseFeeBasis | null;
   /** 自動更新（A-039）。期間そのものは termStart / termEnd。 */
   autoRenew?: boolean | null;
   renewMonths?: number | null;
@@ -282,6 +288,7 @@ const ECONOMICS_COLUMNS: Record<keyof EconomicsPatch, string> = {
   paymentTerms: "payment_terms", taxCategory: "tax_category", notes: "notes",
   quantity: "quantity", contractForm: "contract_form",
   workId: "work_id", exclusivity: "exclusivity", sublicenseConsent: "sublicense_consent",
+  licenseFeeBasis: "license_fee_basis",
   autoRenew: "auto_renew", renewMonths: "renew_months", renewStoppedOn: "renew_stopped_on",
   spec: "spec", deliverableOwnership: "deliverable_ownership", orderNo: "order_no",
   usageType: "usage_type"
@@ -290,7 +297,7 @@ const ECONOMICS_COLUMNS: Record<keyof EconomicsPatch, string> = {
 // 改訂で引き継ぐ列（id・状態・監査列を除く条件の中身すべて）。
 const COPY_COLUMNS = [
   "condition_no", "agreement_id", "parent_id", "direction", "kind", "name", "counterparty_id",
-  "work_id", "work_part_id", "exclusivity", "sublicensable", "sublicense_consent", "term_start", "term_end", "delivery_due",
+  "work_id", "work_part_id", "exclusivity", "sublicensable", "sublicense_consent", "license_fee_basis", "term_start", "term_end", "delivery_due",
   "currency", "pricing_model", "rate_ppm", "unit_amount", "flat_amount", "mg_amount", "ag_amount",
   "royalty_base", "deductible_costs", "tax_category", "withholding_note", "payment_terms",
   "cycle", "notes", "series_id", "effective_from", "spec", "deliverable_ownership", "order_no",
@@ -356,6 +363,11 @@ export class ConditionWriteService {
     const rows = (input.rows ?? []).filter((r) => r && r.usageType);
     if (!rows.length) throw new DomainError("VALIDATION", "利用形態を1つ以上選び、料率を入れてください");
     for (const row of rows) {
+      // 許諾料の扱い（A-048）が「含む」「無償」なら率は無くてよい（0 として持つ）。
+      if (row.licenseFeeBasis && row.licenseFeeBasis !== "separate") {
+        row.ratePct = Number(row.ratePct) || 0;
+        row.mgAmount = null; row.agAmount = null;
+      }
       const rate = Number(row.ratePct);
       if (!Number.isFinite(rate) || rate < 0 || rate > 100) {
         throw new DomainError("VALIDATION", `${conditionUsageLabel(row.usageType)}の料率は 0〜100（%）で入れてください`);
@@ -410,7 +422,8 @@ export class ConditionWriteService {
       notes: input.notes ?? null,
       scopes,
       usageType: row.usageType,
-      sublicenseConsent: row.sublicenseConsent ?? null
+      sublicenseConsent: row.sublicenseConsent ?? null,
+      licenseFeeBasis: row.licenseFeeBasis ?? null
     }));
     for (const one of inputs) validateConditionInput(one);
 
@@ -581,10 +594,10 @@ export class ConditionWriteService {
                                    tax_category, payment_terms, cycle, status, notes,
                                    spec, deliverable_ownership, order_no,
                                    quantity, contract_form, usage_type,
-                                   auto_renew, renew_months, renew_stopped_on)
+                                   auto_renew, renew_months, renew_stopped_on, license_fee_basis)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
                    $16, $17, $18, $19, $20, $21, $22, $23, $24, 'active', $25, $26, $27, $28,
-                   $29, $30, $31, $32, $33, $34)
+                   $29, $30, $31, $32, $33, $34, $35)
            RETURNING id, condition_no`,
           [no, input.agreementId ?? null, input.direction, input.kind, name, input.counterpartyId,
            input.workId ?? null, input.workPartId ?? null,
@@ -597,7 +610,8 @@ export class ConditionWriteService {
            input.notes ?? null, input.spec ?? null, input.deliverableOwnership ?? null,
            input.orderNo ?? null,
            input.quantity ?? null, readContractForm(input.contractForm), input.usageType ?? null,
-           input.autoRenew ?? null, input.renewMonths ?? null, input.renewStoppedOn ?? null]);
+           input.autoRenew ?? null, input.renewMonths ?? null, input.renewStoppedOn ?? null,
+           input.licenseFeeBasis ?? "separate"]);
         const row = inserted.rows[0] as { id: number; condition_no: string | null };
         const id = Number(row.id);
 

@@ -3,6 +3,11 @@ import { translate } from "../core/errors.js";
 import { USAGE_NAME_LABEL } from "./naming.js";
 import type { ConditionUsageType } from "../core/condition-usage.js";
 
+/** 許諾料の扱い（A-048）の CSV 表記。取込（imports/service.ts の FEE_BASIS）と対。 */
+const LICENSE_FEE_BASIS_CSV: Record<string, string> = {
+  separate: "", included: "業務委託報酬に含む", free: "無償"
+};
+
 /**
  * 利用許諾条件の書き出し（CSV）。
  *
@@ -18,7 +23,7 @@ import type { ConditionUsageType } from "../core/condition-usage.js";
 /** 取込（license_conditions）と同じ見出し。並びも合わせる。 */
 export const CONDITION_EXPORT_HEADERS = [
   "条件番号", "作品コード", "作品名", "許諾者コード", "許諾者", "契約番号",
-  "取引モデル", "料率", "独占", "MG", "AG", "別途合意", "開始日", "終了日",
+  "取引モデル", "料率", "独占", "MG", "AG", "別途合意", "許諾料の扱い", "開始日", "終了日",
   "自動更新", "更新の単位", "更新停止日", "通貨",
   "支払条件", "地域", "言語", "備考", "状態"
 ] as const;
@@ -81,7 +86,7 @@ export class ConditionExportService {
     try {
       const r = await this.database.query(
         `SELECT c.condition_no, c.usage_type, c.rate_ppm, c.exclusivity, c.mg_amount, c.ag_amount,
-                c.sublicense_consent, c.term_start, c.term_end,
+                c.sublicense_consent, c.license_fee_basis, c.term_start, c.term_end,
                 c.auto_renew, c.renew_months, c.renew_stopped_on, c.currency, c.payment_terms, c.notes, c.status,
                 w.work_code, w.title AS work_title,
                 p.party_code, p.name AS party_name,
@@ -115,6 +120,8 @@ export class ConditionExportService {
         int(x.ag_amount) ?? "",
         // 別途合意（A-033）。翻訳版再許諾だけが持つ。それ以外は空。
         x.sublicense_consent === "required" ? "要" : x.sublicense_consent === "covered" ? "不要" : "",
+        // 許諾料の扱い（A-048）。別途は空で書く（取込で空＝別途）。
+        LICENSE_FEE_BASIS_CSV[String(x.license_fee_basis ?? "")] ?? "",
         dateStr(x.term_start) ?? "",
         dateStr(x.term_end) ?? "",
         // 自動更新（A-039）。更新した回数は書き出さない（数えるもの）。

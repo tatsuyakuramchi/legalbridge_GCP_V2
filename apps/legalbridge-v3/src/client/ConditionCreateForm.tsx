@@ -235,6 +235,13 @@ export function ConditionCreateForm(
           options: [{ value: "covered", label: "不要（本条件書で許諾済み）" },
                     { value: "required", label: "要（再許諾先ごとに別途合意）" }],
           hint: "出版条件書の翻訳版の欄と本文（第4条）に出る" },
+        // 許諾料の扱い（A-048）。受注者帰属の成果物を使う許諾で「報酬に含む」「無償」を選べる。
+        { name: "licenseFeeBasis", label: "許諾料の扱い", type: "select",
+          visibleWhen: (v) => v.kind === "license" && v.direction === "in",
+          options: [{ value: "separate", label: "別途（料率・額で定める）" },
+                    { value: "included", label: "業務委託報酬に含む（追加の許諾料なし）" },
+                    { value: "free", label: "無償" }],
+          hint: "発注書の利用許諾条件の「料率・額」に出る。含む／無償なら料率は空でよい" },
         { name: "languages", label: "言語（許諾範囲）", type: "languages",
           visibleWhen: (v) => v.kind === "license" },
         { name: "notes", label: "備考", type: "textarea" }
@@ -268,6 +275,7 @@ export function ConditionCreateForm(
           exclusivity: text(v.exclusivity), taxCategory: v.taxCategory,
           usageType: v.kind === "license" ? text(v.usageType) : undefined,
           sublicenseConsent: isSublicensingUsage(v.usageType) ? text(v.sublicenseConsent) : undefined,
+          licenseFeeBasis: v.kind === "license" ? (text(v.licenseFeeBasis) ?? undefined) : undefined,
           paymentTerms: text(v.paymentTerms), notes: text(v.notes),
           spec: text(v.spec), deliverableOwnership: text(v.deliverableOwnership),
           scopes: scopes.length ? scopes : undefined

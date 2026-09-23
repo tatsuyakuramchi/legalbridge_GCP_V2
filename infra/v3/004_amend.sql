@@ -1592,6 +1592,30 @@ UPDATE v3.documents d
    AND EXISTS (SELECT 1 FROM jsonb_each(d.manual_inputs) AS x
                 WHERE jsonb_typeof(x.value) = 'string' AND (x.value #>> '{}') IN ('true', 'false'));
 
+-- ---------------------------------------------------------------------
+-- A-048 許諾料の扱い（成果物が受注者帰属のときの利用許諾の対価）
+--
+--   成果物の帰属先が受注者の発注では、発注者は成果物を「利用許諾」で使う。
+--   その許諾料は、別途（率や額で定める）のほかに「業務委託報酬に含む」
+--   （追加の許諾料は 0 円）と「無償」がある。率も額も空にしただけでは
+--   紙に「未定」と出てしまい、含む／無償の区別も付かない。列で持つ。
+--     separate … 別途定める（率・額・MG・AG を使う）。既定
+--     included … 業務委託報酬に含む（紙は「利用許諾料は業務委託報酬に含む」）
+--     free     … 無償
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS license_fee_basis text NOT NULL DEFAULT 'separate';
+COMMENT ON COLUMN v3.conditions.license_fee_basis IS
+  '許諾料の扱い（separate=別途 / included=業務委託報酬に含む / free=無償）。許諾条件だけが意味を持つ。';
+DO $a048$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.conditions'::regclass AND conname = 'conditions_license_fee_basis_chk') THEN
+    ALTER TABLE v3.conditions ADD CONSTRAINT conditions_license_fee_basis_chk
+      CHECK (license_fee_basis IN ('separate', 'included', 'free'));
+  END IF;
+END
+$a048$;
+
 COMMIT;
 
 -- 確認
@@ -1831,3 +1855,9 @@ SELECT count(*) AS 残り FROM v3.documents d
  WHERE jsonb_typeof(d.rendered_values) = 'object'
    AND EXISTS (SELECT 1 FROM jsonb_each(d.rendered_values) AS x
                 WHERE jsonb_typeof(x.value) = 'string' AND (x.value #>> '{}') IN ('true', 'false'));
+
+\echo '--- 許諾料の扱い（A-048。列 1 と CHECK 1 で 2 であること） ---'
+SELECT (SELECT count(*) FROM information_schema.columns
+         WHERE table_schema='v3' AND table_name='conditions' AND column_name='license_fee_basis')
+     + (SELECT count(*) FROM pg_constraint
+         WHERE conrelid='v3.conditions'::regclass AND conname='conditions_license_fee_basis_chk') AS 列とCHECK;

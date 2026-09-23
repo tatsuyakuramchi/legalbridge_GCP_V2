@@ -270,6 +270,12 @@ SELECT * FROM (
              AND EXISTS (SELECT 1 FROM jsonb_each(d.rendered_values) AS x
                           WHERE jsonb_typeof(x.value) = 'string' AND (x.value #>> '{}') IN ('true', 'false')))::text
   UNION ALL
+  SELECT 48, '許諾料の扱い（A-048。列 1 と CHECK 1 で 2 であること）',
+         ((SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='v3' AND table_name='conditions' AND column_name='license_fee_basis')
+        + (SELECT count(*) FROM pg_constraint
+            WHERE conrelid='v3.conditions'::regclass AND conname='conditions_license_fee_basis_chk'))::text
+  UNION ALL
   SELECT 33, '翻訳版再許諾と別途合意（A-033。列 1 と CHECK 1 で 2 であること）',
          ((SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='conditions' AND column_name = 'sublicense_consent')

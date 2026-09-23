@@ -12,6 +12,12 @@ export type ConditionStatus = "draft" | "active" | "scheduled" | "superseded" | 
 export type MatterKind = "work" | "outsourcing" | "single";
 export type MatterStatus = "open" | "waiting" | "blocked" | "done" | "canceled";
 export type ScopeType = "region" | "language" | "media" | "channel";
+/** 許諾料の扱い（A-048）。 */
+export type LicenseFeeBasis = "separate" | "included" | "free";
+export const LICENSE_FEE_BASIS_VALUES: readonly LicenseFeeBasis[] = ["separate", "included", "free"];
+export const LICENSE_FEE_BASIS_LABEL: Record<LicenseFeeBasis, string> = {
+  separate: "別途", included: "業務委託報酬に含む", free: "無償"
+};
 
 export interface PartyRef { id: number; name: string; kind: "corporate" | "individual" }
 export interface WorkRef { id: number; workCode: string | null; title: string }
@@ -69,6 +75,11 @@ export interface ConditionDetail extends ConditionSummary {
    * covered=不要（この条件書で許諾済み）／required=要（相手ごとに別途合意）。
    */
   sublicenseConsent: "covered" | "required" | null;
+  /**
+   * 許諾料の扱い（A-048）。受注者帰属の成果物を使う許諾の対価。
+   * separate=別途（率・額）／included=業務委託報酬に含む／free=無償。許諾条件だけが意味を持つ。
+   */
+  licenseFeeBasis: LicenseFeeBasis;
   /**
    * 自動更新（A-039）。許諾期間（termStart / termEnd）を条件ごとに更新する。
    * 更新した回数は持たない。終了日・単位・基準日から数える（renewal.ts）。

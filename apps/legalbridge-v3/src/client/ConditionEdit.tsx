@@ -90,6 +90,7 @@ export function ConditionEdit(
     exclusivity: detail.exclusivity ?? "",
     usageType: detail.usageType ?? "",
     sublicenseConsent: detail.sublicenseConsent ?? "",
+    licenseFeeBasis: detail.licenseFeeBasis ?? "separate",
     taxCategory: detail.taxCategory,
     paymentTerms: detail.paymentTerms ?? "",
     contractForm: detail.contractForm ?? "",
@@ -161,7 +162,8 @@ export function ConditionEdit(
       ["workId", patchInt(v.workId, detail.work?.id ?? null)],
       ["exclusivity", patchText(v.exclusivity, detail.exclusivity)],
       ["usageType", patchText(v.usageType, detail.usageType)],
-      ["sublicenseConsent", patchText(v.sublicenseConsent, detail.sublicenseConsent)]
+      ["sublicenseConsent", patchText(v.sublicenseConsent, detail.sublicenseConsent)],
+      ["licenseFeeBasis", patchText(v.licenseFeeBasis, detail.licenseFeeBasis ?? "separate")]
     ];
     for (const [key, value] of pairs) if (value !== undefined) patch[key] = value;
 
@@ -435,6 +437,18 @@ export function ConditionEdit(
                 <option value="required">要（再許諾先ごとに別途合意）</option>
               </select>
               <small className="faint">出版条件書の翻訳版の欄と本文（第4条）に出る</small>
+            </label>
+          )}
+          {detail.kind === "license" && detail.direction === "in" && (
+            <label className="field">
+              <span>許諾料の扱い</span>
+              <select value={v.licenseFeeBasis}
+                      onChange={(e) => set("licenseFeeBasis", e.target.value)}>
+                <option value="separate">別途（料率・額で定める）</option>
+                <option value="included">業務委託報酬に含む（追加の許諾料なし）</option>
+                <option value="free">無償</option>
+              </select>
+              <small className="faint">発注書の利用許諾条件の「料率・額」に出る（A-048）</small>
             </label>
           )}
           {detail.kind === "license" && (

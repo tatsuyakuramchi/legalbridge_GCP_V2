@@ -79,7 +79,7 @@ export const IMPORT_SPECS: ImportSpec[] = [
     kind: "license_conditions", label: "利用許諾条件（作品に紐づく IN の許諾）",
     required: ["作品名", "許諾者", "取引モデル", "料率"],
     optional: ["作品コード", "許諾者コード", "契約番号", "独占", "MG", "AG", "再許諾先", "目的",
-               "別途合意", "開始日", "終了日", "自動更新", "更新の単位", "更新停止日",
+               "別途合意", "許諾料の扱い", "開始日", "終了日", "自動更新", "更新の単位", "更新停止日",
                "通貨", "支払条件", "地域", "言語", "備考"],
     sample: "作品名,作品コード,許諾者,許諾者コード,契約番号,取引モデル,料率,独占,MG,AG,再許諾先,目的,別途合意,開始日,終了日,自動更新,更新の単位,更新停止日,通貨,支払条件,地域,言語,備考\n" +
             "ito,,権利者名,,AGR-2026-0001,自社製造・自社販売,2,非独占,100000,,,,,2026-10-01,2031-09-30,する,1年,,JPY,,全世界,,\n" +
@@ -92,7 +92,7 @@ export const IMPORT_SPECS: ImportSpec[] = [
     updatable: true,
     updateHint: "当てる先は 条件番号。無ければ 作品名（または作品コード）＋取引モデルで当てます" +
                 "（再許諾は 再許諾先 も見ます）。作品・許諾者・契約・通貨は替えられません（条件の画面で）",
-    updateColumns: ["料率", "独占", "MG", "AG", "別途合意", "開始日", "終了日",
+    updateColumns: ["料率", "独占", "MG", "AG", "別途合意", "許諾料の扱い", "開始日", "終了日",
                     "自動更新", "更新の単位", "更新停止日", "支払条件", "地域", "言語", "備考"],
     updateSample: "条件番号,料率,開始日,終了日\n" +
                   "CL-2026-00451,11,2026-10-01,2031-09-30\n" +
@@ -187,6 +187,13 @@ const AUTO_RENEW: Record<string, boolean> = {
 };
 
 /** 再許諾ごとの別途合意（A-033）。翻訳版再許諾の行だけが持つ。 */
+/** 許諾料の扱い（A-048）。空は「別途」。 */
+export const FEE_BASIS: Record<string, "separate" | "included" | "free"> = {
+  別途: "separate", 別途定める: "separate", separate: "separate",
+  業務委託報酬に含む: "included", 報酬に含む: "included", 含む: "included", included: "included",
+  無償: "free", 無料: "free", free: "free"
+};
+
 const CONSENT: Record<string, "covered" | "required"> = {
   要: "required", 必要: "required", 要合意: "required", required: "required",
   不要: "covered", 不要合意: "covered", 許諾済み: "covered", covered: "covered"
@@ -591,9 +598,15 @@ export class ImportService {
       throw new DomainError("VALIDATION",
         `取引モデルは${USAGE_CHOICES}のいずれかです（"${String(row["取引モデル"] ?? "").trim()}"）`);
     }
+    // 許諾料の扱い（A-048）。「業務委託報酬に含む」「無償」なら料率は空でよい。
+    const basisText = String(row["許諾料の扱い"] ?? "").trim();
+    if (basisText && !FEE_BASIS[basisText]) {
+      throw new DomainError("VALIDATION", `許諾料の扱いは「別途」「業務委託報酬に含む」「無償」のいずれかです（"${basisText}"）`);
+    }
+    const licenseFeeBasis = basisText ? FEE_BASIS[basisText] : "separate";
     const rateText = String(row["料率"] ?? "").trim().replace(/[%％]/g, "");
-    const ratePct = Number(rateText);
-    if (!rateText || !Number.isFinite(ratePct) || ratePct < 0 || ratePct > 100) {
+    const ratePct = rateText ? Number(rateText) : (licenseFeeBasis === "separate" ? NaN : 0);
+    if (!Number.isFinite(ratePct) || ratePct < 0 || ratePct > 100) {
       throw new DomainError("VALIDATION", `料率は 0〜100（%）で入れてください（"${String(row["料率"] ?? "").trim()}"）`);
     }
     const exclText = String(row["独占"] ?? "").trim();
@@ -670,7 +683,8 @@ export class ImportService {
         usageType, ratePct, exclusivity: exclText ? EXCLUSIVITY[exclText] : "non_exclusive",
         mgAmount: csvAmount(row["MG"]) ?? null, agAmount: csvAmount(row["AG"]) ?? null,
         sublicensee, purpose,
-        sublicenseConsent: isSublicensingUsage(usageType) && consentText ? CONSENT[consentText] : null
+        sublicenseConsent: isSublicensingUsage(usageType) && consentText ? CONSENT[consentText] : null,
+        licenseFeeBasis
       }
     };
   }
@@ -784,6 +798,13 @@ export class ImportService {
         throw new DomainError("VALIDATION", `別途合意は「要」か「不要」です（"${consentText}"）`);
       }
       put("別途合意", "sublicenseConsent", CONSENT[consentText]);
+    }
+    const basisText = text("許諾料の扱い");
+    if (basisText) {
+      if (!FEE_BASIS[basisText]) {
+        throw new DomainError("VALIDATION", `許諾料の扱いは「別途」「業務委託報酬に含む」「無償」のいずれかです（"${basisText}"）`);
+      }
+      put("許諾料の扱い", "licenseFeeBasis", FEE_BASIS[basisText]);
     }
     const termStart = text("開始日");
     if (termStart) put("開始日", "termStart", csvDate(row["開始日"]));
