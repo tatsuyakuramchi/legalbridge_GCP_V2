@@ -47,7 +47,7 @@ interface PreviewResponse {
   /** 入力欄の横に出す候補。押すとその値が入る。 */
   candidates: Candidate[];
   /** 本文が差しているのに空で出る項目。止めはしないが、出す前に見せる。 */
-  warnings: Array<{ kind: "bank" | "company" | "other"; message: string }>;
+  warnings: Array<{ kind: "bank" | "company" | "staff" | "other"; message: string }>;
   /** 明細の欄と、条件・予定・実績から組んだ種の行。 */
   lines: Array<{ name: string; rows: Row[] }>;
   /** 計算書か。金額の枠（対象期間・実績・試算）を出すかどうか。 */

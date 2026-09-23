@@ -817,3 +817,18 @@ test("海外版：担当者と自社の電話は国際表記（+81）に直し�
   const ja = buildTemplateContext("purchase_order", ctx({ events: [], owner, company }), { items: [{ item_name: "a", amount_ex_tax: 1 }] });
   assert.equal("STAFF_PHONE" in ja, false);
 });
+
+test("海外版：自社・担当者の英語表記が無ければ決める前に警告する（入っていれば出さない）", () => {
+  const none = templateWarnings("intl_purchase_order",
+    ctx({ company: { name: "株式会社サンプル" }, owner: { name: "山田 太郎", department: "海外事業部" } }));
+  assert.equal(none.length, 2);
+  assert.equal(none[0].kind, "company");
+  assert.match(none[0].message, /会社名（英語）・住所（英語）・代表者（英語）/);
+  assert.equal(none[1].kind, "staff");
+  assert.match(none[1].message, /氏名（英語）・部門（英語）/);
+  const filled = templateWarnings("intl_purchase_order",
+    ctx({ company: { nameEn: "Sample Inc.", addressEn: "Tokyo", repEn: "CEO: T. Yamada" },
+          owner: { name: "Patrick Flanagan", department: "Overseas", nameEn: null, departmentEn: null } }));
+  assert.equal(filled.length, 0, "英語で登録してある担当者には出さない");
+  assert.equal(templateWarnings("purchase_order", ctx({ company: { name: "株式会社サンプル" } })).length, 0);
+});

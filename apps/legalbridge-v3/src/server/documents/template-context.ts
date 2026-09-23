@@ -900,5 +900,40 @@ export function suggestionsFor(
  */
 export function templateWarnings(templateKey: string, context: Ctx): Warning[] {
   if (isPubTermsTemplate(templateKey)) return pubTermsWarnings(context, templateKey);
+  if (templateKey === "intl_purchase_order") return intlCompanyWarnings(context);
   return [];
+}
+
+/**
+ * 海外版の発注書で、自社と担当者の英語表記が無いところ。設定と担当者マスタに
+ * 一度入れれば、以後の海外版はすべて英語で出る。入れていないと日本語のまま
+ * 紙に出るので、決める前に気づけるように出す。
+ */
+export function intlCompanyWarnings(context: Ctx): Warning[] {
+  const company = (context.company ?? {}) as Record<string, unknown>;
+  const owner = (context.owner ?? null) as Record<string, unknown> | null;
+  const blank = (v: unknown) => !String(v ?? "").trim();
+  const out: Warning[] = [];
+  const missing = [
+    blank(company.nameEn) ? "会社名（英語）" : "",
+    blank(company.addressEn) ? "住所（英語）" : "",
+    blank(company.repEn) ? "代表者（英語）" : ""
+  ].filter(Boolean);
+  if (missing.length) {
+    out.push({ kind: "company",
+      message: `自社の ${missing.join("・")} が未設定です。海外版の From（Purchaser）が日本語のまま出ます。`
+        + "運用 › 設定 › 自社情報 に一度入れれば、以後の海外版はすべて英語で出ます" });
+  }
+  if (owner) {
+    const staffMissing = [
+      blank(owner.nameEn) && /[぀-ヿ一-鿿]/.test(String(owner.name ?? "")) ? "氏名（英語）" : "",
+      blank(owner.departmentEn) && /[぀-ヿ一-鿿]/.test(String(owner.department ?? "")) ? "部門（英語）" : ""
+    ].filter(Boolean);
+    if (staffMissing.length) {
+      out.push({ kind: "staff",
+        message: `担当者「${String(owner.name ?? "")}」の ${staffMissing.join("・")} が未設定です。`
+          + "取引先・担当 › 担当者 の「直す」で入れれば、以後の海外版は英語で出ます" });
+    }
+  }
+  return out;
 }
