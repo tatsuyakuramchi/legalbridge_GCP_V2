@@ -52,6 +52,8 @@ export interface DispatchReceipt {
   /** 外部サービス側のID。監査記録に残す。 */
   externalId: string;
   threadRef?: string | null;
+  /** 相手にはまだ届いていない（CloudSign に下書きを作っただけ）。 */
+  draft?: boolean;
   raw?: Record<string, unknown>;
 }
 
@@ -149,13 +151,21 @@ export class GmailAdapter implements DispatchAdapter {
   }
 }
 
-/** CloudSign。書類を作って参加者を付け、送信する（3手続き）。 */
+/**
+ * CloudSign。書類を作って参加者を付ける。
+ *
+ * 既定は**下書きで止める**。相手へ送るのは人が CloudSign の画面で中身を見て
+ * からにする（発注書の宛名に余計な文字が入ったまま相手に届いた、を二度と
+ * 起こさない）。台帳には「下書きあり」と残り、送ったら人が「送信済」を記録する。
+ * autoSend を立てると、作ったその場で送る（以前の動き）。
+ */
 export class CloudSignAdapter implements DispatchAdapter {
   readonly channel = "cloudsign";
   constructor(
     private readonly clientId: string,
     private readonly baseUrl = "https://api.cloudsign.jp",
-    private readonly fetchImpl: typeof fetch = fetch
+    private readonly fetchImpl: typeof fetch = fetch,
+    private readonly options: { autoSend?: boolean } = {}
   ) {}
   get configured() { return Boolean(this.clientId); }
 
@@ -221,13 +231,17 @@ export class CloudSignAdapter implements DispatchAdapter {
       if (!added.ok) return fail("CloudSign", added);
     }
 
+    const raw = { documentId, files: files.length, signers: signers.length,
+                  reportees: (request.reportees ?? []).length };
+    if (!this.options.autoSend) {
+      // 下書きのまま置く。送信は CloudSign の画面から。
+      return { externalId: documentId, draft: true, raw: { ...raw, draft: true } };
+    }
     const sent = await this.fetchImpl(`${this.baseUrl}/documents/${documentId}`, {
       method: "POST", headers: auth
     });
     if (!sent.ok) return fail("CloudSign", sent);
-    return { externalId: documentId, raw: { documentId, files: files.length,
-                                            signers: signers.length,
-                                            reportees: (request.reportees ?? []).length } };
+    return { externalId: documentId, raw };
   }
 }
 
@@ -268,6 +282,8 @@ export class MemoryAdapter implements DispatchAdapter {
   constructor(readonly channel: string) {}
   async send(request: DispatchRequest): Promise<DispatchReceipt> {
     this.sent.push(request);
-    return { externalId: `${this.channel}-${this.sent.length}`, threadRef: null };
+    // CloudSign は本物も下書きで止めるので、手元でも同じ形にしておく。
+    return { externalId: `${this.channel}-${this.sent.length}`, threadRef: null,
+             ...(this.channel === "cloudsign" ? { draft: true } : {}) };
   }
 }

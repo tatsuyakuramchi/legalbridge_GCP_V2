@@ -63,10 +63,13 @@ test("CloudSign：1つの封筒に書類を何枚も入れ、署名者は順番�
                    { email: "mgr@example.com", name: "部長 花子" }],
     reportees: [{ email: "cc@arclight.co.jp", name: "法務" }]
   };
-  await adapter.send(request);
+  const receipt = await adapter.send(request);
   const urls = calls.map((c) => c.url);
-  // トークン → 書類を作る → ファイル2枚 → 参加者2人 → 確認者1人 → 送信
+  // トークン → 書類を作る → ファイル2枚 → 参加者2人 → 確認者1人。送信はしない（下書き）
   assert.equal(urls.filter((u) => u.endsWith("/files")).length, 2);
+  assert.equal(receipt.draft, true, "既定は下書きで止める");
+  assert.ok(!calls.some((c) => /\/documents\/[^/]+$/.test(c.url) && c.init.method === "POST"),
+    "書類そのものへの POST（送信）は打たない");
   assert.equal(urls.filter((u) => u.endsWith("/participants")).length, 2);
   assert.equal(urls.filter((u) => u.endsWith("/reportees")).length, 1);
 
@@ -91,6 +94,15 @@ test("CloudSign：署名者を書かなければ、宛先を1人の署名者と�
   assert.equal(participants.length, 1);
   assert.equal(new URLSearchParams(String(participants[0].init.body)).get("email"),
                "only@example.com");
+});
+
+test("CloudSign：autoSend を立てたときだけ、作ったその場で送る", async () => {
+  const { calls, impl } = recorder();
+  const adapter = new CloudSignAdapter("client", "https://cs.test", impl, { autoSend: true });
+  const receipt = await adapter.send({ recipient: "only@example.com", subject: "件名", body: "本文",
+                                       attachment: pdf("one.pdf") });
+  assert.notEqual(receipt.draft, true);
+  assert.ok(calls.some((c) => /\/documents\/[^/]+$/.test(c.url) && c.init.method === "POST"), "送信の POST がある");
 });
 
 test("CloudSign：書類が無ければ送らない", async () => {

@@ -23,7 +23,9 @@ test("jsonb のオブジェクトでも JSON 文字列でも読める。日付�
 test("副問い合わせは文書への記録だけを見て、いちばん新しいものを採る", () => {
   const sql = signStateSql("d.id");
   assert.match(sql, /a\.target_type = 'document' AND a\.target_id = d\.id/);
-  assert.match(sql, /a\.action = 'cloudsign\.send'/);
+  assert.match(sql, /'cloudsign\.send', 'cloudsign\.draft'/);
+  assert.deepEqual(signStateOf({ status: "drafted", at: "2026-09-23", source: "cloudsign" }),
+    { status: "drafted", at: "2026-09-23", source: "cloudsign" });
   assert.match(sql, /'cloudsign\.applied'/);
   assert.match(sql, /ORDER BY a\.occurred_at DESC, a\.id DESC/);
   assert.ok(!sql.includes("gmail.send"), "メールで送ったのは CloudSign の状態ではない");

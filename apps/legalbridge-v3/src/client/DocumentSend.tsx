@@ -21,7 +21,7 @@ interface Recipients {
   counterparty: { name: string; email: string | null } | null;
   contacts: Array<{ name: string | null; email: string; role: string | null }>;
 }
-interface Outcome { sent: boolean; duplicated?: boolean; gate: { reasons: string[]; mode: string };
+interface Outcome { sent: boolean; duplicated?: boolean; draft?: boolean; gate: { reasons: string[]; mode: string };
                     preview?: { recipient: string; bodyPreview: string } }
 
 const day = (iso: string | null) => (iso ? iso.slice(0, 10) : "");
@@ -83,7 +83,8 @@ export function DocumentSend(
   }
 
   const describe = (o: Outcome, what: string) =>
-    o.sent ? `${what}を送りました`
+    o.sent && o.draft ? `${what}を CloudSign に下書きとして作りました。送信は CloudSign の画面から行い、送ったら手で「送った」と記録してください`
+      : o.sent ? `${what}を送りました`
       : o.duplicated ? `同じ${what}をすでに送っています（二度は送りません）`
       : o.preview ? `検証モードのため送っていません。送るなら：${o.preview.recipient} へ`
       : `送りませんでした：${o.gate.reasons.join("／")}`;
@@ -224,11 +225,11 @@ export function DocumentSend(
                     ))}
                   </div>
                 )}
-                <div className="faint" style={{ marginTop: 3 }}>{documentNo ?? "この文書"} の PDF を CloudSign に載せて送ります。結果が届くと「締結」が済になります</div>
+                <div className="faint" style={{ marginTop: 3 }}>{documentNo ?? "この文書"} の PDF を CloudSign に<b>下書き</b>として載せます（相手にはまだ届きません）。CloudSign の画面で確かめてから送り、送ったら下の「手で記録する」で「送った」と残します。結果が届くと「締結」が済になります</div>
               </div></div>
             <div className="row">
               <button className="btn primary" disabled={busy || !isAdmin || !signer.trim()} onClick={() => void sign()}>
-                CloudSign で署名依頼を送る
+                CloudSign に下書きを作る
               </button>
             </div>
             {/* 予備系では連携が無い。CloudSign の画面から直接送ったぶんを、ここで手で記録する。 */}

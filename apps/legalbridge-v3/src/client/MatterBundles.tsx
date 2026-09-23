@@ -478,7 +478,7 @@ export function MatterBundles(
         <span><i style={{ background: "var(--warn)" }}></i>待ち（支払待ち）</span>
         <span><i style={{ background: "var(--ok)" }}></i>済</span>
         <span><i style={{ background: "var(--line-strong)" }}></i>まだ</span>
-        <span><span className="tag ghost">CS</span> CloudSign の状態（未送信／送信済／締結済／取下げ）。押すと手で直せます</span>
+        <span><span className="tag ghost">CS</span> CloudSign の状態（未送信／下書き／送信済／締結済／取下げ）。押すと手で直せます</span>
         {onOpenList && (
           <button className="linky" style={{ marginLeft: "auto" }} onClick={() => onOpenList("conditions")}>
             種類別の表（条件明細・実績・文書・支払）は「一覧」へ

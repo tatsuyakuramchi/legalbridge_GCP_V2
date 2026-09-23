@@ -14,7 +14,7 @@ import {
  */
 
 const CLASS: Record<SignStatus, string> = {
-  unsent: "ghost", sent: "accent", executed: "ok", terminated: "out"
+  unsent: "ghost", drafted: "warn", sent: "accent", executed: "ok", terminated: "out"
 };
 const md = (d: string | null) => (d ? d.slice(5) : null);
 const today = () => new Date().toISOString().slice(0, 10);

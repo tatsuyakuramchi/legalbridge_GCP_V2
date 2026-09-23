@@ -59,7 +59,7 @@ export class DocumentSendService {
       const r = await this.database.query(
         `SELECT occurred_at, action, actor, detail FROM audit_events
           WHERE (target_type = 'document' AND target_id = $1
-                 AND action IN ('gmail.send', 'gmail.blocked', 'document.confirmed', 'cloudsign.send', 'cloudsign.blocked'))
+                 AND action IN ('gmail.send', 'gmail.blocked', 'document.confirmed', 'cloudsign.send', 'cloudsign.draft', 'cloudsign.blocked'))
              OR (action = 'cloudsign.applied' AND (detail->>'documentId')::bigint = $1)
           ORDER BY occurred_at, id`, [documentId]);
       const events: SendEvent[] = r.rows.map((e: Record<string, any>) => ({
@@ -71,6 +71,7 @@ export class DocumentSendService {
       const mail = last("gmail.send");
       const confirmed = last("document.confirmed");
       const sign = last("cloudsign.send");
+      const drafted = last("cloudsign.draft");
       const applied = [...events].reverse().find((e) => e.action === "cloudsign.applied" && e.detail.applied === true) ?? null;
       const executed = String(doc.agreement_status ?? "") === "executed";
 
@@ -88,7 +89,9 @@ export class DocumentSendService {
             ? sign.detail.manual === true
               ? `${String(sign.detail.recipient ?? "")} へ署名依頼（システム外で送付。${sign.actor} が記録${sign.detail.externalId ? `／CloudSign #${String(sign.detail.externalId)}` : ""}）`
               : `${String(sign.detail.recipient ?? "")} へ署名依頼（CloudSign #${String(sign.detail.externalId ?? "")}）`
-            : "署名者のメールアドレスを入れて送る。システム外で送ったなら手で記録できる" },
+            : drafted
+              ? `CloudSign に下書きあり（#${String(drafted.detail.externalId ?? "")}）。CloudSign の画面で中身を見て送り、送ったらここで「送った」と記録する`
+              : "署名者を入れると CloudSign に下書きができる。送信は CloudSign の画面から。送ったら手で記録する" },
         { key: "executed", name: "締結", done: executed, at: executed ? (applied?.at ?? (doc.agreement_at ? new Date(String(doc.agreement_at)).toISOString() : null)) : null,
           detail: executed
             ? applied?.detail.manual === true ? `合意が締結済み（${applied.actor} が手で記録）` : "合意が締結済み"
@@ -113,7 +116,7 @@ export class DocumentSendService {
    */
   async recordCloudSign(
     documentId: number,
-    input: { status: "sent" | "executed" | "terminated" | "unsent"; at?: string | null;
+    input: { status: "sent" | "executed" | "terminated" | "unsent" | "drafted"; at?: string | null;
              externalId?: string | null; signer?: string | null; note?: string | null },
     actor: string
   ): Promise<{ id: number; status: string; agreementUpdated: boolean }> {
@@ -154,24 +157,25 @@ export class DocumentSendService {
           return { id: documentId, status: "sent", agreementUpdated: false };
         }
 
-        // 未送信に戻す。CloudSign の記録が古い・間違っているときに、人が現状を
-        // 上書きする。合意には触らない（送っていないものを締結とは言わない）。
-        if (input.status === "unsent") {
+        // 未送信に戻す・下書きあり。CloudSign の記録が古い・間違っているときに、
+        // 人が現状を上書きする。合意には触らない（送っていないものを締結とは言わない）。
+        if (input.status === "unsent" || input.status === "drafted") {
+          const label = input.status === "unsent" ? "未送信に戻した" : "CloudSign に下書きあり";
           await recordAudit(client, {
             actor, action: "cloudsign.applied", targetType: "document", targetId: documentId, occurredAt: at,
-            detail: { manual: true, applied: false, status: "unsent", documentId, documentNo: no, note,
-                      reason: "未送信に戻した（手で記録）" }
+            detail: { manual: true, applied: false, status: input.status, documentId, documentNo: no, note,
+                      externalId, reason: `${label}（手で記録）` }
           });
           if (matterId) {
             await recordCommunication(client, {
               matterId, channel: "cloudsign", direction: "out", actor,
               counterpart: signer ?? "", subject: `${no} の CloudSign の状態`,
-              body: `${no} の CloudSign の状態を未送信に戻した（手で記録）${note ? `：${note}` : ""}`,
+              body: `${no} の CloudSign の状態：${label}（手で記録）${note ? `：${note}` : ""}`,
               externalRef: externalId, documentId,
-              evidence: { manual: true, status: "unsent", at: input.at ?? null }
+              evidence: { manual: true, status: input.status, at: input.at ?? null }
             });
           }
-          return { id: documentId, status: "unsent", agreementUpdated: false };
+          return { id: documentId, status: input.status, agreementUpdated: false };
         }
 
         // 締結・辞退。合意に繋がっていれば合意の状態を動かす（文書は出力物）。

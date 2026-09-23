@@ -27,6 +27,7 @@ interface Outcome {
   gate: { reasons: string[]; mode: string };
   preview?: { recipient: string; bodyPreview: string };
   externalId?: string;
+  draft?: boolean;
 }
 
 export function SendMany(
@@ -134,7 +135,7 @@ export function SendMany(
           <button aria-selected={way === "cloudsign"} onClick={() => setWay("cloudsign")}
                   disabled={!isAdmin}
                   title={isAdmin ? undefined : "署名依頼は admin だけです"}>
-            CloudSign で署名依頼（{label[modeOf("cloudsign")]}）
+            CloudSign に下書きを作る（{label[modeOf("cloudsign")]}）
           </button>
         </div>
 
@@ -171,7 +172,9 @@ export function SendMany(
         )}
         {way === "cloudsign" && (
           <div className="note">
-            {documents.length} 枚を1つの封筒に入れて送ります。署名者は並べた順に署名します。
+            {documents.length} 枚を1つの封筒に入れて、CloudSign に<b>下書き</b>として作ります（相手にはまだ届きません）。
+            CloudSign の画面で中身を確かめてから送ってください。署名者は並べた順に署名します。
+            送ったら、束の画面の「CS」の札で「送信済」を記録します。
             {prefilled && <div className="faint" style={{ marginTop: 4 }}>{prefilled}</div>}
           </div>
         )}
@@ -180,7 +183,9 @@ export function SendMany(
         {outcome && (
           <div className={outcome.sent ? "note ok" : "note warn"}>
             {outcome.sent
-              ? `送りました${outcome.externalId ? `（${outcome.externalId}）` : ""}`
+              ? outcome.draft
+                ? `CloudSign に下書きを作りました${outcome.externalId ? `（${outcome.externalId}）` : ""}。送信は CloudSign の画面から行ってください`
+                : `送りました${outcome.externalId ? `（${outcome.externalId}）` : ""}`
               : outcome.duplicated
                 ? "同じ内容をすでに送っています（二重には送りません）"
                 : `送っていません：${outcome.gate.reasons.join("／")}`}
@@ -195,7 +200,7 @@ export function SendMany(
         <div className="row">
           <button className="btn primary" disabled={busy || !ready || parties.length > 1}
                   onClick={() => void send()}>
-            {busy ? "送っています…" : way === "mail" ? "メールで送る" : "CloudSign で署名依頼を出す"}
+            {busy ? "送っています…" : way === "mail" ? "メールで送る" : "CloudSign に下書きを作る"}
           </button>
           <span className="faint">
             送る前に、宛先と添える書類を確かめてください。送った記録は案件のやり取りに残ります

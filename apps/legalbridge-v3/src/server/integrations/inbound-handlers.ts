@@ -44,23 +44,37 @@ export async function handleCloudSign(
     p.documentID ?? p.documentId ?? p.document_id ?? input.externalId ?? "").trim();
   const rawStatus = String(p.status ?? p.event ?? p.type ?? "");
   const status = mapCloudSignStatus(rawStatus);
+  // CloudSign の画面から送った（下書き → 送信）は合意を動かさないが、文書の
+  // 状態としては「送信済」になる。束の画面がこれを読む。
+  const sentNow = !status && /^(sent|sending|send)$/i.test(rawStatus.trim());
 
-  if (!status) {
+  if (!status && !sentNow) {
     return { applied: false, detail: { reason: "途中経過のため合意は動かさない", rawStatus } };
   }
 
-  // 送信時の監査記録から、その外部IDで送った文書を引く。
+  // 送信時（または下書きを作ったとき）の監査記録から、その外部IDの文書を引く。
   const found = await client.query(
     `SELECT a.target_id AS document_id, d.document_no, d.agreement_id
        FROM audit_events a
        JOIN documents d ON d.id = a.target_id
-      WHERE a.action = 'cloudsign.send' AND a.target_type = 'document'
+      WHERE a.action IN ('cloudsign.send', 'cloudsign.draft') AND a.target_type = 'document'
         AND a.detail->>'externalId' = $1
       ORDER BY a.id DESC LIMIT 1`, [documentRef]);
   const row = found.rows[0] as any;
 
   if (!row) {
-    return { applied: false, detail: { reason: "この外部IDで送った文書が見つからない", documentRef, status } };
+    return { applied: false, detail: { reason: "この外部IDで送った文書が見つからない", documentRef, status: status ?? rawStatus } };
+  }
+
+  if (sentNow) {
+    await recordAudit(client, {
+      actor: "system", action: "cloudsign.applied", targetType: "document", targetId: Number(row.document_id),
+      detail: { status: "sent", applied: true, externalId: documentRef,
+                documentId: Number(row.document_id), documentNo: row.document_no,
+                reason: "CloudSign の画面から送信された" }
+    });
+    return { applied: true, detail: { reason: "CloudSign の画面から送信された。文書の状態を送信済にした",
+                                      documentId: Number(row.document_id), documentNo: row.document_no, status: "sent" } };
   }
   // 文書そのものにも結果を残す。発注書や検収書は合意を持たないので、合意の
   // 状態だけでは「この 1 枚が締結されたか」が読めない。束の画面はこれを読む。

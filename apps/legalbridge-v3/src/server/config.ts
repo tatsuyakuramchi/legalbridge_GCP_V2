@@ -42,6 +42,7 @@ export interface Config {
   /** 取り込む受信メールを絞る Gmail のラベル。空なら取り込みごと無効。 */
   gmailIntakeLabel: string;
   cloudSignClientId: string;
+  cloudSignAutoSend: boolean;
   backlogHost: string;
   backlogApiKey: string;
   backlogProjectId: string;
@@ -101,6 +102,8 @@ export const config: Config = {
   gmailSender: (process.env.GMAIL_SENDER ?? "").trim(),
   gmailIntakeLabel: (process.env.GMAIL_INTAKE_LABEL ?? "").trim(),
   cloudSignClientId: (process.env.CLOUDSIGN_CLIENT_ID ?? "").trim(),
+  /** true にすると CloudSign に作ったその場で送る。既定は下書きで止め、送信は CloudSign の画面から。 */
+  cloudSignAutoSend: bool(process.env.CLOUDSIGN_AUTO_SEND, false),
   backlogHost: (process.env.BACKLOG_HOST ?? "").trim(),
   backlogApiKey: (process.env.BACKLOG_API_KEY ?? "").trim(),
   backlogProjectId: (process.env.BACKLOG_PROJECT_ID ?? "").trim(),

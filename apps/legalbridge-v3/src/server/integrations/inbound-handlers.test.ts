@@ -41,12 +41,24 @@ test("署名完了で動かすのは合意であって文書ではない", async
     "文書は出力物。署名されたのは合意そのもの");
 });
 
-test("途中経過は記録するが何も動かさない", async () => {
+test("途中経過（閲覧など）は記録するが何も動かさない", async () => {
   const db = build([sent()]);
-  const r = await handleCloudSign(db, { externalId: "cs-1", payload: { status: "sent" } });
+  const r = await handleCloudSign(db, { externalId: "cs-1", payload: { status: "viewed" } });
   assert.equal(r.applied, false);
   assert.match(String(r.detail.reason), /途中経過/);
   assert.ok(!db.queries.some((q) => q.text.includes("UPDATE agreements")));
+});
+
+test("CloudSign の画面から送信されたら、合意は動かさず文書を送信済にする", async () => {
+  const db = build([sent()]);
+  const r = await handleCloudSign(db, { externalId: "cs-1", payload: { status: "sent" } });
+  assert.equal(r.applied, true);
+  assert.ok(!db.queries.some((q) => q.text.includes("UPDATE agreements")));
+  const audit = db.find("INSERT INTO audit_events")!;
+  assert.equal(audit.params[2], "document");
+  const detail = JSON.parse(String(audit.params[5]));
+  assert.equal(detail.status, "sent");
+  assert.ok(db.find("FROM audit_events a")!.text.includes("cloudsign.draft"), "下書きの外部IDでも引ける");
 });
 
 test("送った覚えのない外部IDは黙って捨てず、理由を残す", async () => {

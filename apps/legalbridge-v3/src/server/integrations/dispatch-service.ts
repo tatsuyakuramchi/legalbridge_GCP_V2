@@ -18,6 +18,8 @@ export interface DispatchOutcome {
   preview?: { recipient: string; subject: string | null; bodyPreview: string; attachment: string | null };
   /** 冪等キーで重複と判定した場合。 */
   duplicated?: boolean;
+  /** 相手にはまだ届いていない（CloudSign に下書きを作っただけ）。 */
+  draft?: boolean;
 }
 
 /**
@@ -102,11 +104,14 @@ export class DispatchService {
 
     try {
       await this.record(input, {
-        action: `${input.channel}.send`,
+        // 下書きで止めたものは .send にしない。.send は「相手に届いた」の記録で、
+        // 文書の「送信済み」と CloudSign の状態はそこから引いている。
+        action: receipt.draft ? `${input.channel}.draft` : `${input.channel}.send`,
         idempotencyKey: key,
         detail: {
           recipient: input.request.recipient, subject: input.request.subject ?? null,
           externalId: receipt.externalId, threadRef: receipt.threadRef ?? null,
+          ...(receipt.draft ? { draft: true } : {}),
           attachment: files.map((f) => f.filename).join("、") || null,
           // 誰に届いたかを記録に残す。あとから「この1通は誰に行ったか」を辿る。
           cc: input.request.cc ?? [], bcc: input.request.bcc ?? []
@@ -122,7 +127,8 @@ export class DispatchService {
 
     return {
       channel: input.channel, sent: true, gate,
-      externalId: receipt.externalId, threadRef: receipt.threadRef ?? null
+      externalId: receipt.externalId, threadRef: receipt.threadRef ?? null,
+      ...(receipt.draft ? { draft: true } : {})
     };
   }
 

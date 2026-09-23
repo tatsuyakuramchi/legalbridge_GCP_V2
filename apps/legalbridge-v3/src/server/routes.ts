@@ -3358,14 +3358,17 @@ export function createRoutes(database: Transactable) {
    */
   const markSent = async (
     ids: number[], channel: "gmail" | "cloudsign", externalId: string | null,
-    detail: Record<string, unknown>, who: string
+    detail: Record<string, unknown>, who: string, draft = false
   ) => {
+    // CloudSign に下書きを作っただけなら .draft。相手に届いたときの .send とは別。
+    const action = draft ? `${channel}.draft` : `${channel}.send`;
     await inTransaction(database, async (client) => {
       for (const id of ids) {
         await recordAudit(client, {
-          actor: who, action: `${channel}.send`, targetType: "document", targetId: id,
-          idempotencyKey: `${channel}.send:multi:${externalId ?? "none"}:${id}`,
-          detail: { ...detail, externalId, documentIds: ids, partOfBundle: ids.length > 1 }
+          actor: who, action, targetType: "document", targetId: id,
+          idempotencyKey: `${action}:multi:${externalId ?? "none"}:${id}`,
+          detail: { ...detail, externalId, documentIds: ids, partOfBundle: ids.length > 1,
+                    ...(draft ? { draft: true } : {}) }
         });
       }
     });
@@ -3464,15 +3467,18 @@ export function createRoutes(database: Transactable) {
         }
       });
       if (outcome.sent) {
+        const draft = Boolean(outcome.draft);
         await markSent(ids, "cloudsign", outcome.externalId ?? null,
                        { subject, signers: input.signers.map((x) => x.email),
-                         reportees: input.reportees.map((x) => x.email) }, who);
+                         reportees: input.reportees.map((x) => x.email) }, who, draft);
         if (matterId) {
           await inTransaction(database, async (client) => {
             await recordCommunication(client, {
               matterId, channel: "cloudsign", direction: "out", actor: who,
               counterpart: input.signers.map((x) => x.email).join(", "),
-              subject, body: `${numbers.join("・")} の署名依頼を CloudSign で送った`,
+              subject, body: draft
+                ? `${numbers.join("・")} の署名依頼を CloudSign に下書きとして作った（送信は CloudSign の画面から）`
+                : `${numbers.join("・")} の署名依頼を CloudSign で送った`,
               externalRef: outcome.externalId ?? null, documentId: ids[0],
               evidence: { cloudSignDocumentId: outcome.externalId ?? null,
                           signers: input.signers, reportees: input.reportees,
@@ -3501,7 +3507,7 @@ export function createRoutes(database: Transactable) {
    * unsent＝未送信に戻す（CloudSign の記録が古い・間違っているとき）。
    */
   const cloudSignManualSchema = z.object({
-    status: z.enum(["sent", "executed", "terminated", "unsent"]),
+    status: z.enum(["sent", "executed", "terminated", "unsent", "drafted"]),
     at: z.string().date().nullable().optional(),
     externalId: z.string().trim().max(120).nullable().optional(),
     signer: z.string().trim().max(200).nullable().optional(),
@@ -3535,7 +3541,9 @@ export function createRoutes(database: Transactable) {
           await recordCommunication(client, {
             matterId: document.matterId!, channel: "cloudsign", direction: "out", actor: who,
             counterpart: input.recipient, subject,
-            body: `${document.documentNo ?? ""} の署名依頼を CloudSign で送った`,
+            body: outcome.draft
+              ? `${document.documentNo ?? ""} の署名依頼を CloudSign に下書きとして作った（送信は CloudSign の画面から）`
+              : `${document.documentNo ?? ""} の署名依頼を CloudSign で送った`,
             externalRef: outcome.externalId ?? null, documentId: id,
             evidence: { cloudSignDocumentId: outcome.externalId ?? null }
           });

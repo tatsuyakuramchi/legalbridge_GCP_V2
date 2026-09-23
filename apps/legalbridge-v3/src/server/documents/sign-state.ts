@@ -12,7 +12,7 @@
  *
  * 依存を持たない（画面からも読む）。
  */
-export type SignStatus = "unsent" | "sent" | "executed" | "terminated";
+export type SignStatus = "unsent" | "drafted" | "sent" | "executed" | "terminated";
 
 export interface SignState {
   status: SignStatus;
@@ -22,10 +22,11 @@ export interface SignState {
   source: "cloudsign" | "manual" | null;
 }
 
-export const SIGN_STATUSES: SignStatus[] = ["unsent", "sent", "executed", "terminated"];
+export const SIGN_STATUSES: SignStatus[] = ["unsent", "drafted", "sent", "executed", "terminated"];
 
+/** drafted は CloudSign に下書きがあるが相手にはまだ送っていない。送信は CloudSign の画面から。 */
 export const SIGN_STATUS_LABEL: Record<SignStatus, string> = {
-  unsent: "未送信", sent: "送信済", executed: "締結済", terminated: "取下げ"
+  unsent: "未送信", drafted: "下書き", sent: "送信済", executed: "締結済", terminated: "取下げ"
 };
 
 export const UNSENT: SignState = { status: "unsent", at: null, source: null };
@@ -36,14 +37,16 @@ export const UNSENT: SignState = { status: "unsent", at: null, source: null };
  */
 export function signStateSql(docId: string): string {
   return `(SELECT jsonb_build_object('status', s.status, 'at', s.on_day, 'source', s.source)
-     FROM (SELECT CASE WHEN a.action = 'cloudsign.send' THEN 'sent' ELSE a.detail ->> 'status' END AS status,
+     FROM (SELECT CASE WHEN a.action = 'cloudsign.send' THEN 'sent'
+                       WHEN a.action = 'cloudsign.draft' THEN 'drafted'
+                       ELSE a.detail ->> 'status' END AS status,
                   to_char(a.occurred_at AT TIME ZONE 'Asia/Tokyo', 'YYYY-MM-DD') AS on_day,
                   CASE WHEN COALESCE(a.detail ->> 'manual', 'false') = 'true' THEN 'manual' ELSE 'cloudsign' END AS source
              FROM audit_events a
             WHERE a.target_type = 'document' AND a.target_id = ${docId}
-              AND (a.action = 'cloudsign.send'
+              AND (a.action IN ('cloudsign.send', 'cloudsign.draft')
                    OR (a.action = 'cloudsign.applied'
-                       AND a.detail ->> 'status' IN ('sent', 'executed', 'terminated', 'unsent')))
+                       AND a.detail ->> 'status' IN ('sent', 'drafted', 'executed', 'terminated', 'unsent')))
             ORDER BY a.occurred_at DESC, a.id DESC
             LIMIT 1) s)`;
 }

@@ -47,7 +47,8 @@ export function buildAdapters(): Partial<Record<IntegrationChannel, DispatchAdap
     ...(config.gmailSender
       ? { gmail: new GmailAdapter(accessToken(auth), config.gmailSender) } : {}),
     ...(config.cloudSignClientId
-      ? { cloudsign: new CloudSignAdapter(config.cloudSignClientId) } : {}),
+      ? { cloudsign: new CloudSignAdapter(config.cloudSignClientId, undefined, undefined,
+                                          { autoSend: config.cloudSignAutoSend }) } : {}),
     ...(config.backlogHost && config.backlogApiKey && config.backlogProjectId
       ? { backlog: new BacklogAdapter(config.backlogHost, config.backlogApiKey, config.backlogProjectId) }
       : {})
