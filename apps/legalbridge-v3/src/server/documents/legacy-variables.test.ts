@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resolveLegacyVariable } from "./legacy-variables.js";
+import { resolveLegacyVariable, normalizeInvoiceNo } from "./legacy-variables.js";
 import { bindVariables } from "./binding.js";
 
 const ctx = (over: Record<string, any> = {}) => ({
@@ -329,4 +329,15 @@ test("通知先の 1 行（contact_line）：主担当の 部署 ／ 氏名 ／ 
   assert.equal(resolveLegacyDbField("vendor.contact_line", c), "編集部 ／ 甲野 甲太 ／ k@example.test");
   assert.equal(resolveLegacyDbField("staff.contact_line", c), "法務部 ／ 川島 純子 ／ j@arclight.co.jp");
   assert.equal(resolveLegacyDbField("vendor.contact_line", ctx({ contacts: [] })), undefined, "主担当が無ければ空のまま");
+});
+
+test("登録番号は T＋13 桁にそろえる（T の重なり・ハイフン・全角・T 抜けを直す）", () => {
+  assert.equal(normalizeInvoiceNo("T1234567890123"), "T1234567890123");
+  assert.equal(normalizeInvoiceNo("1234567890123"), "T1234567890123");
+  assert.equal(normalizeInvoiceNo("TT1234567890123"), "T1234567890123");
+  assert.equal(normalizeInvoiceNo("T-1234-5678-90123"), "T1234567890123");
+  assert.equal(normalizeInvoiceNo("Ｔ1234567890123 "), "T1234567890123");
+  assert.equal(normalizeInvoiceNo("登録なし"), "登録なし", "13 桁に読めなければそのまま");
+  assert.equal(normalizeInvoiceNo(""), undefined);
+  assert.equal(normalizeInvoiceNo(null), undefined);
 });

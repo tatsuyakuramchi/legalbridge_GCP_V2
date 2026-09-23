@@ -44,6 +44,23 @@ function latestDate(c: Ctx, pick: (e: Ctx) => unknown, fallback?: unknown): unkn
   return dates.reduce((a, b) => (b > a ? b : a));
 }
 
+/**
+ * 適格請求書発行事業者の登録番号を「T＋13 桁」にそろえる。
+ *
+ * 台帳には「T1234567890123」「1234567890123」「T-1234…」「ＴＴ1234…」が
+ * 混ざって入りうる。紙に出すのは T が 1 つの形。ひな形の側で「T{{…}}」と
+ * 書いてあるとそれでも二重になるので、そちらは 145 で本文を直す。
+ * 13 桁の形に読めなければ、入っている文字をそのまま返す（黙って落とさない）。
+ */
+export function normalizeInvoiceNo(value: unknown): string | undefined {
+  if (value === null || value === undefined) return undefined;
+  const raw = String(value).trim();
+  if (!raw) return undefined;
+  const compact = raw.replace(/[Ｔｔ]/g, "T").replace(/[\s\-‐‑–—－ー]/g, "").toUpperCase();
+  const m = compact.match(/^T*(\d{13})$/);
+  return m ? `T${m[1]}` : raw;
+}
+
 export function agreementRefText(title: unknown, no: unknown): string | undefined {
   const name = String(title ?? "").trim();
   const number = String(no ?? "").trim();
@@ -134,7 +151,7 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown; noSuffix?: s
     // 両方で使うため、真偽値にすると片方が常に偽になる。
     get: (c) => (c.condition?.counterparty?.kind === "individual" ? "" : "法人") },
   { names: ["VENDOR_INVOICE_NO", "インボイス登録番号", "invoiceNo"],
-    get: (c) => c.condition?.counterparty?.invoiceNo },
+    get: (c) => normalizeInvoiceNo(c.condition?.counterparty?.invoiceNo) },
   { names: ["VENDOR_CORPORATE_NO", "法人番号"],
     get: (c) => c.condition?.counterparty?.corporateNo },
   // 相手先の担当者（氏名・部署・メール・電話）は自動で入れない。
@@ -171,7 +188,7 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown; noSuffix?: s
   { names: ["INVOICE_REGISTRATION_NUMBER", "invoiceRegistrationNumber", "counterpartyTni",
             "licensor_t_number", "T番号",
             "登録番号", "適格請求書発行事業者登録番号"],
-    get: (c) => c.condition?.counterparty?.invoiceNo },
+    get: (c) => normalizeInvoiceNo(c.condition?.counterparty?.invoiceNo) },
   { names: ["WITHHOLDING_TAX", "源泉徴収"],
     get: (c) => (c.condition?.counterparty?.withholding === true ? "対象"
       : c.condition?.counterparty?.withholding === false ? "対象外" : undefined) },
@@ -461,7 +478,7 @@ const DB_FIELD_SOURCES: Record<string, (c: Ctx) => Record<string, unknown>> = {
       // 付き、個人は本人に落ちるので、ここは自動で入れてよい。
       contact_line: contactLine([primary.department, primary.name, primary.email, primary.phone]),
       representative_title: party.representativeTitle,
-      invoice_registration_number: party.invoiceNo,
+      invoice_registration_number: normalizeInvoiceNo(party.invoiceNo),
       corporate_number: party.corporateNo,
       // 法人／個人。条件書の「許諾者種別」がここから決まる。
       entity_type: party.kind === "individual" ? "個人" : party.kind ? "法人" : undefined,
