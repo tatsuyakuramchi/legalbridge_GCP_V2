@@ -743,6 +743,21 @@ export function licenseTermRows(context: Ctx, lang: "ja" | "en" = "ja"): License
   });
 }
 
+/**
+ * 海外版の発注書の From（Purchaser）。設定の英語表記（nameEn / addressEn / repEn /
+ * telIntl）があればそれで PARTY_A_* を置き換える。空なら日本語の値をそのまま
+ * 使う（何も返さない＝束縛の値が残る）。
+ */
+export function companyEn(company: Record<string, unknown>): Record<string, string> {
+  const pick = (key: string) => String(company[key] ?? "").trim();
+  const out: Record<string, string> = {};
+  if (pick("nameEn")) { out.PARTY_A_NAME = pick("nameEn"); out.COMPANY_NAME = pick("nameEn"); }
+  if (pick("addressEn")) { out.PARTY_A_ADDRESS = pick("addressEn"); out.COMPANY_ADDRESS = pick("addressEn"); }
+  if (pick("repEn")) { out.PARTY_A_REP = pick("repEn"); out.COMPANY_REP = pick("repEn"); }
+  if (pick("telIntl")) out.COMPANY_TEL = pick("telIntl");
+  return out;
+}
+
 /** 明細の値の重複を除いて「／」で繋ぐ。1 ページ目の発注概要の 1 行に使う。 */
 const distinctJoin = (values: unknown[]): string =>
   [...new Set(values.map((v) => String(v ?? "").trim()).filter(Boolean))].join("／");
@@ -793,10 +808,12 @@ function orderBlock(templateKey: string, context: Ctx, manual: Record<string, un
     payment_terms_summary: paymentTermsSummary,
     delivery_summary: summarizeDates(deliveryDate, lang),
     payment_summary: summarizeDates(paymentDate, lang),
-    // 海外版だけが使う値。通貨コード（JPY 246,000 と書く）と源泉徴収の英語。
+    // 海外版だけが使う値。通貨コード（JPY 246,000 と書く）と源泉徴収の英語、
+    // 自社の英語表記（設定の 会社名（英語）など。空なら日本語のまま）。
     ...(intl ? {
       currency_code: currency,
-      withholding_label: withholding === true ? "Applicable" : withholding === false ? "Not applicable" : ""
+      withholding_label: withholding === true ? "Applicable" : withholding === false ? "Not applicable" : "",
+      ...companyEn(context.company ?? {})
     } : {}),
     // 利用許諾条件（A-048）。受注者帰属の品目があるのに台帳に無ければ、本文は
     // 「利用許諾の条件は別途定める」と 1 行で出す（黙って空にしない）。

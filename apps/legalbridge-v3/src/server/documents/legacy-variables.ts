@@ -256,6 +256,11 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown; noSuffix?: s
   // 相手先の口座（BANK_NAME 系）とは別物。こちらは自社の入金先。
   { names: ["COMPANY_BANK_INFO", "自社振込先", "入金先"], get: (c) => c.company?.bankInfo },
   { names: ["COMPANY_SEAL_NOTE", "捺印備考"], get: (c) => c.company?.sealNote },
+  // 英語表記（海外版）。海外版の発注書は PARTY_A_* をこれで置き換える（template-context）。
+  { names: ["COMPANY_NAME_EN", "自社名（英語）"], get: (c) => c.company?.nameEn },
+  { names: ["COMPANY_ADDRESS_EN", "自社住所（英語）"], get: (c) => c.company?.addressEn },
+  { names: ["COMPANY_REP_EN", "自社代表者（英語）"], own: true, get: (c) => c.company?.repEn },
+  { names: ["COMPANY_TEL_INTL", "自社電話（国際表記）"], own: true, get: (c) => c.company?.telIntl },
 
   // ---- 件名・案件 ----
   { names: ["PROJECT_TITLE", "CONTRACT_TITLE", "基本契約名", "件名", "title",

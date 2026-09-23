@@ -776,3 +776,18 @@ test("海外版：種の行の契約種別は英語で入る（編集欄にも�
     ctx({ events: [], conditions: [condition({ contractForm: "請負" })], condition: condition({ contractForm: "請負" }) }));
   assert.equal(ja.items[0].payment_terms, "請負");
 });
+
+test("海外版：自社の英語表記があれば From（Purchaser）をそれで置き換える。無ければ触らない", () => {
+  const company = { name: "株式会社サンプル", address: "東京都", rep: "代表取締役 山田", tel: "03-0000-0000",
+                    nameEn: "Sample Inc.", addressEn: "1-2 Kanda, Tokyo, Japan", repEn: "Representative Director: Taro Yamada", telIntl: "+81-3-0000-0000" };
+  const c = buildTemplateContext("intl_purchase_order", ctx({ events: [], company }), { items: [{ item_name: "a", amount_ex_tax: 1 }] });
+  assert.equal(c.PARTY_A_NAME, "Sample Inc.");
+  assert.equal(c.PARTY_A_ADDRESS, "1-2 Kanda, Tokyo, Japan");
+  assert.equal(c.PARTY_A_REP, "Representative Director: Taro Yamada");
+  assert.equal(c.COMPANY_TEL, "+81-3-0000-0000");
+  const bare = buildTemplateContext("intl_purchase_order", ctx({ events: [], company: { name: "株式会社サンプル" } }),
+    { items: [{ item_name: "a", amount_ex_tax: 1 }] });
+  assert.equal("PARTY_A_NAME" in bare, false, "英語表記が空なら束縛の日本語がそのまま残る");
+  const ja = buildTemplateContext("purchase_order", ctx({ events: [], company }), { items: [{ item_name: "a", amount_ex_tax: 1 }] });
+  assert.equal("PARTY_A_NAME" in ja, false, "国内版は英語表記を使わない");
+});

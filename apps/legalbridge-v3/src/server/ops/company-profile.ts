@@ -18,7 +18,9 @@
 
 export type CompanyProfileField =
   | "name" | "nameKana" | "postalCode" | "address" | "tel"
-  | "fax" | "rep" | "invoiceNo" | "bankInfo" | "sealNote";
+  | "fax" | "rep" | "invoiceNo" | "bankInfo" | "sealNote"
+  // 海外版の書類（intl_purchase_order）に出す英語表記。空なら日本語のまま出る。
+  | "nameEn" | "addressEn" | "repEn" | "telIntl";
 
 export interface CompanyProfileFieldSpec {
   name: CompanyProfileField;
@@ -39,7 +41,13 @@ export const COMPANY_PROFILE_FIELDS: CompanyProfileFieldSpec[] = [
   { name: "invoiceNo", label: "適格請求書発行事業者番号（T番号）",
     placeholder: "T1234567890123" },
   { name: "bankInfo", label: "自社の振込先（銀行・支店・口座）", long: true },
-  { name: "sealNote", label: "捺印・備考", long: true }
+  { name: "sealNote", label: "捺印・備考", long: true },
+  // 海外版の発注書の From（Purchaser）に出す英語表記。空なら日本語の値がそのまま出る。
+  { name: "nameEn", label: "会社名（英語）", placeholder: "Arclight Inc." },
+  { name: "addressEn", label: "住所（英語）",
+    placeholder: "Fuunzo Bldg. 2F, 1-2 Kanda-Ogawamachi, Chiyoda-ku, Tokyo 101-0052, Japan", long: true },
+  { name: "repEn", label: "代表者（英語）", placeholder: "Representative Director: Taro Yamada" },
+  { name: "telIntl", label: "電話番号（国際表記）", placeholder: "+81-3-6811-0730" }
 ];
 
 export type CompanyProfile = Record<CompanyProfileField, string>;

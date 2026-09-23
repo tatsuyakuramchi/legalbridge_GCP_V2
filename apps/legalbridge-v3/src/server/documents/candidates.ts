@@ -198,7 +198,8 @@ const CONTACT_ROLE: Record<string, string> = {
 
 const COMPANY_LABEL: Record<string, string> = {
   name: "自社名", address: "自社住所", tel: "自社電話", representative: "代表者名",
-  invoiceNo: "自社インボイス番号", department: "自社部署"
+  invoiceNo: "自社インボイス番号", department: "自社部署",
+  nameEn: "自社名（英語）", addressEn: "自社住所（英語）", repEn: "代表者名（英語）", telIntl: "自社電話（国際表記）"
 };
 
 /**
