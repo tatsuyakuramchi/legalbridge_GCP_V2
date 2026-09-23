@@ -3,6 +3,7 @@ import { SETTLED_COLUMNS, pick } from "./settled-columns.js";
 import { csvAmount, parseCsv } from "../imports/parse.js";
 import { roundAmount } from "../core/rounding.js";
 import { normalizeDate, readOnOff } from "./batch-service.js";
+import { readLicenseSpec, type LicenseSpec } from "./order-license-columns.js";
 
 /**
  * 決済済みの一括取込（遡及）。CSV の読み取りと検証。
@@ -119,14 +120,15 @@ export function templateCsv(): string {
      "2026-06-01", "2026-07-20", "2026-07-20", "2026-07-25", "", "",
      "初版",
      "2026-08-31", "未払", "",
-     "請負", "月末締め翌月末払い", "発注者", "あり", "なし",
+     "請負", "月末締め翌月末払い", "発注者", "", "", "", "", "", "", "", "", "あり", "なし",
      "", "", ""],
     ["VD-00317", "合同会社アトリエ蒼", "WRK-10021", "夜明けのクロニクル", "", "", "", "",
      "第1巻 挿絵", "モノクロ12点", "12", "8000",
      "2026-06-01", "2026-07-31", "2026-07-31", "2026-08-05", "11", "納品点数が11点になったため減額",
      "変更履歴付",
      "2026-09-30", "支払済み", "2026-09-28",
-     "請負", "月末締め翌月末払い", "発注者", "あり", "なし",
+     "請負", "月末締め翌月末払い", "受注者", "出版（紙）", "8", "", "別途", "2026-08-01", "2029-07-31", "日本", "日本語",
+     "あり", "なし",
      "", "", ""]
   ].map((row) => Object.fromEntries(SETTLED_COLUMNS.map((c, i) => [c.key, row[i]])));
   return toCsv(examples);
@@ -152,6 +154,8 @@ export interface SettledRow {
   agreementNo: string | null;
   /** 条件番号。書いてあればその条件に確実に載る（名前より強い）。 */
   conditionNo: string | null;
+  /** 受注者帰属の成果物の利用許諾（A-048）。列が空なら null。 */
+  license: LicenseSpec | null;
   /** 旧分の扱い。条件番号を指しているときだけ効く。 */
   oldHandling: SettledOldHandling;
   conditionName: string | null;
@@ -328,6 +332,7 @@ export function readRows(text: string): SettledRow[] {
     const ownership = /受注/.test(ownershipRaw) ? "受注者"
       : /発注/.test(ownershipRaw) ? "発注者" : ownershipRaw ? null : "";
     if (ownership === null) issues.push(`成果物の帰属先は 発注者 か 受注者（${ownershipRaw}）`);
+    const license = readLicenseSpec(get, ownership, issues);
 
     return {
       line: i + 2,
@@ -337,6 +342,7 @@ export function readRows(text: string): SettledRow[] {
       workTitle: get("workTitle") || null,
       agreementNo: get("agreementNo") || null,
       conditionNo: get("conditionNo") || null,
+      license,
       oldHandling: oldHandling ?? "keep",
       conditionName: get("conditionName") || null,
       orderedOn, deliveredOn, inspectedOn, deliveryDue, varianceNote,

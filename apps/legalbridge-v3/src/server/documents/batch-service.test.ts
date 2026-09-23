@@ -26,7 +26,8 @@ VD-00317,合同会社アトリエ蒼,WRK-10021,,,,表紙イラスト,カラー1�
 test("雛形の見出しは列の定義から出す（BOM 付き）。例は作品違いの2行", () => {
   const csv = templateCsv();
   assert.ok(csv.startsWith("﻿取引先コード,取引先名,作品コード,作品名,契約番号,条件名,品目・業務名"));
-  assert.ok(csv.includes("成果物の帰属先,発注署名欄,承諾署名欄,支払方法,備考,一括修正,修正理由"));
+  assert.ok(csv.includes("成果物の帰属先,許諾利用形態,許諾料率,許諾額,許諾料の扱い,許諾期間開始,許諾期間終了,許諾地域,許諾言語,"
+    + "発注署名欄,承諾署名欄,支払方法,備考,一括修正,修正理由"));
   // 1行だけだと「作品が違えば別の発注書」が伝わらない。
   assert.equal(csv.trimEnd().split("\n").length, 3);
   // 契約形式と支払条件は別の列。1つにまとめていたので「請負」と書くと
@@ -618,4 +619,50 @@ test("書き出した CSV は、そのまま読み直せる", () => {
   // 修正理由は空で出す。人が書くまでは上げても飛ぶ。
   assert.equal(row.fixReason, null);
   assert.deepEqual(row.issues, []);
+});
+
+
+// ---- 許諾の列（A-048） ------------------------------------------------------
+
+const HEAD_L = "取引先コード,取引先名,作品コード,作品名,品目・業務名,数量,単価（税抜）,起点,成果物の帰属先,"
+  + "許諾利用形態,許諾料率,許諾額,許諾料の扱い,許諾期間開始,許諾期間終了,許諾地域,許諾言語";
+
+test("許諾の列：帰属先＝受注者の行から利用許諾条件の入力を読む（含む・無償なら率は持たない）", () => {
+  const rows = readRows(`${HEAD_L}
+VD-00317,合同会社アトリエ蒼,WRK-10013,,設定画,1,40000,検収後,受注者,出版（紙）,8,,別途,2026-10-01,2029-09-30,日本,日本語
+VD-00317,合同会社アトリエ蒼,WRK-10013,,挿絵,1,10000,検収後,受注者,出版（電子）,,,業務委託報酬に含む,,,,
+VD-00317,合同会社アトリエ蒼,WRK-10013,,バナー,1,10000,検収後,受注者,自社製造・自社販売,5,,無償,,,,
+VD-00317,合同会社アトリエ蒼,WRK-10013,,表紙,1,80000,検収後,発注者,,,,,,,,`);
+  assert.deepEqual(rows.map((r) => r.issues), [[], [], [], []]);
+  assert.equal(rows[0].license?.usageType, "pub_print");
+  assert.equal(rows[0].license?.ratePct, 8);
+  assert.equal(rows[0].license?.feeBasis, "separate");
+  assert.deepEqual(rows[0].license?.scopes.map((s) => [s.scopeType, s.label]), [["region", "日本"], ["language", "日本語"]]);
+  assert.equal(rows[1].license?.feeBasis, "included");
+  assert.equal(rows[1].license?.ratePct, null);
+  assert.equal(rows[2].license?.feeBasis, "free");
+  assert.equal(rows[2].license?.ratePct, null, "無償なら率は捨てる");
+  assert.equal(rows[3].license, null, "空なら作らない");
+});
+
+test("許諾の列：発注者帰属の行に書けば不備、読めない値も不備", () => {
+  const rows = readRows(`${HEAD_L}
+VD-00317,合同会社アトリエ蒼,WRK-10013,,表紙,1,80000,検収後,発注者,出版（紙）,8,,,,,,
+VD-00317,合同会社アトリエ蒼,WRK-10013,,設定画,1,40000,検収後,受注者,なんとなく,8,,,,,,
+VD-00317,合同会社アトリエ蒼,WRK-10013,,設定画,1,40000,検収後,受注者,出版（紙）,8,50000,,,,,
+VD-00317,合同会社アトリエ蒼,WRK-10013,,設定画,1,40000,検収後,受注者,出版（紙）,,,たぶん含む,,,,
+VD-00317,合同会社アトリエ蒼,WRK-10013,,設定画,1,40000,検収後,受注者,出版（紙）,8,,,2029-01-01,2026-01-01,,`);
+  assert.match(rows[0].issues[0], /帰属先 が 受注者 の行だけ/);
+  assert.match(rows[1].issues[0], /許諾利用形態が読めない/);
+  assert.match(rows[2].issues[0], /片方だけ/);
+  assert.match(rows[3].issues[0], /許諾料の扱いは/);
+  assert.match(rows[4].issues[0], /終了が開始より前/);
+});
+
+test("突き合わせ：許諾の列を書いた束に作品が無ければ飛ばす", async () => {
+  const { svc } = build();
+  const r = await svc.preview({ templateKey: "purchase_order", matterId: 3, csv: `${HEAD_L}
+VD-00317,合同会社アトリエ蒼,,,設定画,1,40000,検収後,受注者,出版（紙）,8,,,,,,` });
+  assert.equal(r.groups[0].action, "skip");
+  assert.match(r.groups[0].issues.join(" "), /作品（作品コードか作品名）が要る/);
 });

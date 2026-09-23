@@ -9,6 +9,7 @@ import { CONDITION_USAGE_TYPES, isSublicensingUsage,
 import { parseLanguages, parseRegions } from "../core/rights-scope.js";
 import type { ConditionScope } from "../core/model.js";
 import { csvAmount, csvBoolean, parseCsv } from "./parse.js";
+import { FEE_BASIS } from "./fee-basis.js";
 
 /**
  * CSV の一括取込。
@@ -187,13 +188,6 @@ const AUTO_RENEW: Record<string, boolean> = {
 };
 
 /** 再許諾ごとの別途合意（A-033）。翻訳版再許諾の行だけが持つ。 */
-/** 許諾料の扱い（A-048）。空は「別途」。 */
-export const FEE_BASIS: Record<string, "separate" | "included" | "free"> = {
-  別途: "separate", 別途定める: "separate", separate: "separate",
-  業務委託報酬に含む: "included", 報酬に含む: "included", 含む: "included", included: "included",
-  無償: "free", 無料: "free", free: "free"
-};
-
 const CONSENT: Record<string, "covered" | "required"> = {
   要: "required", 必要: "required", 要合意: "required", required: "required",
   不要: "covered", 不要合意: "covered", 許諾済み: "covered", covered: "covered"

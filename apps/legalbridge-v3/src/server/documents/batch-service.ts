@@ -4,6 +4,9 @@ import { recordAudit } from "../core/audit.js";
 import { parseCsv, csvAmount } from "../imports/parse.js";
 import { ConditionWriteService } from "../conditions/write-service.js";
 import { roundAmount } from "../core/rounding.js";
+import { normalizeDate } from "./csv-date.js";
+import { LICENSE_COLUMNS, createLicenseConditions, licenseInputsFor, readLicenseSpec,
+         type LicenseSpec } from "./order-license-columns.js";
 import { ConditionScheduleService, TRIGGER_KINDS,
          type ScheduleLine, type TriggerKind } from "../conditions/schedule-service.js";
 import { MatterLinkService } from "../matters/link-service.js";
@@ -63,6 +66,8 @@ export const ORDER_COLUMNS: Array<{
     note: "例: 月末締め翌月末払い。ここから各回の支払期日を出す" },
   { key: "deliverable_ownership", label: "成果物の帰属先",
     note: "発注者 か 受注者。空ならその行に帰属先を出さない" },
+  // 受注者帰属の成果物の利用許諾（A-048）。書けば許諾条件も一緒に作る。
+  ...LICENSE_COLUMNS,
   // 書類の見た目の切り替え。束ごとの値なので全行に同じものを書く。
   { key: "orderSign", label: "発注署名欄", note: "あり / なし。空なら なし（発注者は署名しない）" },
   { key: "acceptSign", label: "承諾署名欄", note: "あり / なし。空なら あり（受注者だけが署名する欄）" },
@@ -79,10 +84,12 @@ export function templateCsv(): string {
   const examples = [
     ["VD-00317", "合同会社アトリエ蒼", "WRK-10013", "星降る夜のミュゼ", "", "",
      "第4巻 表紙イラスト", "カラー1点", "1", "150000", "検収後", "2026-10-31", "2026-11-30",
-     "請負", "月末締め翌月末払い", "発注者", "あり", "なし", "固定額", "", "", ""],
+     "請負", "月末締め翌月末払い", "発注者", "", "", "", "", "", "", "", "",
+     "あり", "なし", "固定額", "", "", ""],
     ["VD-00317", "合同会社アトリエ蒼", "WRK-10021", "夜明けのクロニクル", "", "",
      "第1巻 挿絵", "モノクロ12点", "12", "8000", "検収後", "2026-11-30", "2026-12-31",
-     "請負", "月末締め翌月末払い", "発注者", "あり", "なし", "固定額", "", "", ""]
+     "請負", "月末締め翌月末払い", "受注者", "出版（紙）", "8", "", "別途", "2026-12-01", "2029-11-30", "日本", "日本語",
+     "あり", "なし", "固定額", "", "", ""]
   ].map((row) => Object.fromEntries(ORDER_COLUMNS.map((c, i) => [c.key, row[i]])));
   return toCsv(examples);
 }
@@ -124,19 +131,14 @@ export interface BatchRow {
    * 紙に出る契約形式（請負）とは別で、そちらは item.payment_terms が持つ。
    */
   paymentTerms: string | null;
+  /** 受注者帰属の成果物の利用許諾（A-048）。列が空なら null。 */
+  license: LicenseSpec | null;
   item: Record<string, unknown>;
   amount: number;
   issues: string[];
 }
 
-/** 2026/10/31 も 2026-10-31 も読む。読めなければ null（呼ぶ側が不備にする）。 */
-export const normalizeDate = (v: string | undefined): string | null => {
-  const s = String(v ?? "").trim();
-  if (!s) return null;
-  const m = s.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/);
-  if (!m) return null;
-  return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
-};
+export { normalizeDate };
 
 /**
  * 起点の読み取り。雛形の言葉（検収後）でも、短く書いた言葉（検収）でも、
@@ -229,6 +231,7 @@ export function readRows(text: string): BatchRow[] {
     // 数量は小数を取る（0.5人日）。掛けた金額に端数が出ると、条件明細の
     // 金額欄（整数）へ渡すところで落ちる。行ごとに四捨五入して整数にする。
     const amount = roundAmount((quantity ?? 0) * (unitPrice ?? 0));
+    const license = readLicenseSpec(get, ownership, issues);
     return {
       line: i + 2,
       partyCode: get("partyCode") || null,
@@ -237,6 +240,7 @@ export function readRows(text: string): BatchRow[] {
       workTitle: get("workTitle") || null,
       agreementNo: get("agreementNo") || null,
       conditionName: get("conditionName") || null,
+      license,
       triggerKind,
       orderSign: readOnOff(get("orderSign")),
       acceptSign: readOnOff(get("acceptSign")),
@@ -445,6 +449,8 @@ export interface BatchResultEntry {
   documentId?: number; reason?: string;
   /** 訂正版が退かせる相手の文書番号（発行した時点で退く）。 */
   supersedesNo?: string | null;
+  /** 一緒に作った（または既にあった）利用許諾条件の番号（A-048）。 */
+  licenseConditionNos?: string[];
 }
 
 export interface BatchRecord {
@@ -543,6 +549,8 @@ export class DocumentBatchService {
         // 決定済みの発注書を直す束。相手が1枚に決まるときだけ直せる。
         const fix = await this.resolveFix(g, condition?.id ?? null, input.templateKey,
                                           stuck || choosing);
+        // 許諾条件は 作品 × 受注者 に立つ。作品なしの束では作れない。
+        const licenseNeedsWork = workResolution === "none" && g.rows.some((r) => r.license);
         const issues = [
           ...(resolution === "missing" ? ["取引先が未登録（コードも名前も当たらない）。この束は飛ばす"] : []),
           ...(resolution === "ambiguous" ? ["候補が複数。どれかを選ぶ"] : []),
@@ -552,10 +560,11 @@ export class DocumentBatchService {
           ...mixed,
           ...(badAgreement && basic.note ? [`${basic.note}。この束は飛ばす`] : []),
           ...(fix.on && fix.note ? [`${fix.note}。この束は飛ばす`] : []),
+          ...(licenseNeedsWork ? ["許諾の列を書くなら作品（作品コードか作品名）が要る。この束は飛ばす"] : []),
           ...g.rows.flatMap((r) => r.issues.map((m) => `${r.line} 行目：${m}`))
         ];
         const blocking = g.rows.some((r) => r.issues.length > 0)
-          || mixed.length > 0 || badAgreement || Boolean(fix.on && fix.note);
+          || mixed.length > 0 || badAgreement || Boolean(fix.on && fix.note) || licenseNeedsWork;
         groups.push({
           ...g, resolution, party, candidates: resolved.candidates,
           workResolution, work, workCandidates: foundWork.candidates,
@@ -655,6 +664,18 @@ export class DocumentBatchService {
           } else {
             await this.matters.attachCondition(input.matterId, conditionId, actor);
           }
+          // 受注者帰属の成果物の利用許諾条件（A-048）。列が書いてあれば、同じ
+          // 作品 × 受注者に利用形態ごとに 1 本。既にあれば作らない。
+          const licenses = g.work
+            ? await createLicenseConditions(this.database, this.conditions,
+                licenseInputsFor(g.rows.map((r) => r.license), {
+                  counterpartyId: g.party.id, workId: g.work.id, workTitle: g.work.title,
+                  agreementId: g.condition.agreement?.id ?? null, matterId: input.matterId
+                }), actor)
+            : [];
+          for (const l of licenses) {
+            if (!l.existed) await this.matters.attachCondition(input.matterId, l.id, actor);
+          }
           const manualInputs = {
             items: g.rows.map((r) => r.item), _batchId: batchId,
             // 書類ごとの切り替え。手入力として渡すので、人がそのあと画面で
@@ -681,6 +702,7 @@ export class DocumentBatchService {
           result.push({ key: g.key, partyName: g.party.name,
                         status: g.fix.on ? "revised" : "created", partyId: g.party.id,
                         conditionId, conditionNo, documentId: draft.id,
+                        ...(licenses.length ? { licenseConditionNos: licenses.map((l) => l.conditionNo ?? String(l.id)) } : {}),
                         ...(g.fix.on ? { supersedesNo: g.fix.documentNo } : {}) });
         } catch (error) {
           result.push({ key: g.key, partyName: g.party.name, status: "failed",

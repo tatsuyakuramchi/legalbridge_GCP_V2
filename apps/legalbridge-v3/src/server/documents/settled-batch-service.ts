@@ -3,6 +3,7 @@ import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { ConditionWriteService } from "../conditions/write-service.js";
 import { ConditionScheduleService } from "../conditions/schedule-service.js";
+import { createLicenseConditions, licenseInputsFor } from "./order-license-columns.js";
 import { ConditionEventService } from "../conditions/event-service.js";
 import { MatterLinkService } from "../matters/link-service.js";
 import { PaymentService } from "../payments/service.js";
@@ -236,6 +237,8 @@ export class SettledBatchService {
           ? `支払済みの支払 ${existing.paid} 件は取り消せないので残します。この取り込みでは「支払済み」の組に新しい支払を立てません（検収書までを作り直します）`
           : null;
 
+        // 許諾条件は 作品 × 受注者 に立つ。作品なしの束では作れない。
+        const licenseNeedsWork = workResolution === "none" && g.rows.some((r) => r.license);
         const issues = [
           ...(conditionNoIssue ? [`${conditionNoIssue}。この束は飛ばす`] : []),
           ...(resolution === "missing" ? ["取引先が未登録（コードも名前も当たらない）。この束は飛ばす"] : []),
@@ -253,10 +256,12 @@ export class SettledBatchService {
             ? [`条件 ${condition!.conditionNo ?? ""} には ${holdingText} があります。旧分は「残す」なので、追加で載せます（2重になっていないか確かめてください）`]
             : []),
           ...(paidKept ? [paidKept] : []),
+          ...(licenseNeedsWork ? ["許諾の列を書くなら作品（作品コードか作品名）が要る。この束は飛ばす"] : []),
           ...g.rows.flatMap((r) => r.issues.map((m) => `${r.line} 行目：${m}`))
         ];
         const blocking = g.rows.some((r) => r.issues.length > 0)
-          || mixed.length > 0 || badAgreement || terms.missing || !!conditionNoIssue || stale;
+          || mixed.length > 0 || badAgreement || terms.missing || !!conditionNoIssue || stale
+          || licenseNeedsWork;
 
         groups.push({
           ...g, resolution, party, candidates: resolved.candidates,
@@ -486,6 +491,20 @@ export class SettledBatchService {
       if (lines.length) await this.schedules.replace(conditionId, lines, actor);
     } else {
       await this.matters.attachCondition(matterId, conditionId, actor);
+    }
+    // 受注者帰属の成果物の利用許諾条件（A-048）。列が書いてあれば、同じ
+    // 作品 × 受注者に利用形態ごとに 1 本。既にあれば作らない。許諾の開始は
+    // 空なら発注日。
+    if (g.work && g.rows.some((r) => r.license)) {
+      mark("許諾条件");
+      const licenses = await createLicenseConditions(this.database, this.conditions,
+        licenseInputsFor(g.rows.map((r) => r.license), {
+          counterpartyId: party.id, workId: g.work.id, workTitle: g.work.title,
+          agreementId: g.condition.agreement?.id ?? null, matterId, issuedOn: g.orderedOn
+        }), actor);
+      for (const l of licenses) {
+        if (!l.existed) await this.matters.attachCondition(matterId, l.id, actor);
+      }
     }
 
     // 発注書。決定日は発注日で焼く。
