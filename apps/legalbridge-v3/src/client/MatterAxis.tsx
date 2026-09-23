@@ -64,7 +64,7 @@ export function MatterKindTags({ m }: { m: MatterSummary }) {
       <span className="tag accent">{MATTER_KIND_LABEL[m.kind]}</span>
       {m.kind === "work" && m.production === true && <span className="tag ghost">制作＋許諾</span>}
       {m.kind === "work" && m.production === false && <span className="tag ghost">許諾のみ</span>}
-      {m.kind === "outsourcing" && m.businessLine && (
+      {m.businessLine && (
         <span className="tag ghost">{BUSINESS_LINE_LABEL[m.businessLine]}</span>
       )}
       {m.childCount > 0 && <span className="tag ghost" title="子の案件を持つ">子 {m.childCount}</span>}
@@ -108,7 +108,7 @@ export function AxisPanel(
       await api.patch(`/matters/${detail.id}/axis`, {
         workId: detail.kind === "work" ? (workId ? Number(workId) : null) : undefined,
         production: detail.kind === "work" ? (production === "" ? null : production === "true") : undefined,
-        businessLine: detail.kind === "outsourcing" ? (line || null) : undefined,
+        businessLine: line || null,
         businessName: detail.kind === "outsourcing" ? (name.trim() || null) : undefined,
         // 手で付けるなら件名を送る。自動に戻すなら null（サーバが軸から組み直す）。
         title: manual || detail.kind === "single" ? title.trim() : null
@@ -163,19 +163,20 @@ export function AxisPanel(
             ) : (
               <>
                 <label className="row" style={{ gap: 6 }}>
-                  <span className="faint">事業区分</span>
-                  <select value={line} onChange={(e) => setLine(e.target.value)}>
-                    <option value="">未設定</option>
-                    {BUSINESS_LINES.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
-                  </select>
-                </label>
-                <label className="row" style={{ gap: 6 }}>
                   <span className="faint">業務名</span>
                   <input className="inline-input" value={name} placeholder="例：店舗内装デザイン"
                          onChange={(e) => setName(e.target.value)} style={{ minWidth: 240 }} />
                 </label>
               </>
             )}
+            {/* 事業区分は案件の最初の軸。作品案件にも付ける（業務案件は必須）。 */}
+            <label className="row" style={{ gap: 6 }}>
+              <span className="faint">事業区分</span>
+              <select value={line} onChange={(e) => setLine(e.target.value)}>
+                <option value="">未設定</option>
+                {BUSINESS_LINES.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
+              </select>
+            </label>
             <label className="row" style={{ gap: 6 }}>
               <input type="checkbox" checked={manual} onChange={(e) => setManual(e.target.checked)} />
               <span>件名を手で付ける</span>
@@ -197,6 +198,7 @@ export function AxisPanel(
                   {detail.work ? detail.work.title : <span className="tag warn">作品が未設定</span>}
                   {detail.work?.workCode && <span className="faint code" style={{ marginLeft: 6 }}>{detail.work.workCode}</span>}
                   <span className="faint" style={{ marginLeft: 8 }}>制作委託：{PRODUCTION_LABEL(detail.production)}</span>
+                  <span className="faint" style={{ marginLeft: 8 }}>事業：{detail.businessLine ? BUSINESS_LINE_LABEL[detail.businessLine] : "未設定"}</span>
                 </span>
               ) : (
                 <span>

@@ -62,7 +62,7 @@ export class MatterWriteService {
       throw new DomainError("VALIDATION", "作品案件は作品を選んでください（作品 1 つが 1 案件）");
     }
     if (input.kind === "outsourcing" && (!input.businessLine || !String(input.businessName ?? "").trim())) {
-      throw new DomainError("VALIDATION", "業務案件は事業区分（出版事業／ボードゲーム事業／イベント事業／店舗事業／管理事業／その他）と業務名を入れてください");
+      throw new DomainError("VALIDATION", "業務案件は事業区分（店舗事業／出版事業／ボードゲーム事業／企画事業／管理事業部）と業務名を入れてください");
     }
     if (input.kind === "single" && !manualTitle) {
       throw new DomainError("VALIDATION", "その他案件は件名を入れてください");

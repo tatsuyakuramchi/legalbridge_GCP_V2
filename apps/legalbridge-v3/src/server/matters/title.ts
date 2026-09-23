@@ -12,19 +12,21 @@
  */
 export type MatterKind = "work" | "outsourcing" | "single";
 /**
- * 業務案件の事業区分（A-050）。作品に紐づかない業務委託の置き場所。
- * 出版の編集委託・ボードゲーム事業の外注・イベントの運営委託は作品案件では
- * ないので、ここで分ける。並びは画面の選択肢の順。
+ * 事業区分（A-050）。案件の最初の軸。
+ *
+ *   事業 × 作品（あり／なし） × 業務委託 × 条件明細（業務委託報酬） × 条件明細（利用許諾報酬）
+ *
+ * 作品案件にも付けられる（どの事業の作品か）。業務案件は必須（作品が無いので
+ * 事業と業務名が軸になる）。並びは画面の選択肢の順。
  */
-export type BusinessLine = "publishing" | "boardgame" | "event" | "store" | "admin" | "other";
+export type BusinessLine = "store" | "publishing" | "boardgame" | "planning" | "admin";
 
 export const BUSINESS_LINES: Array<{ value: BusinessLine; label: string; hint: string }> = [
-  { value: "publishing", label: "出版事業", hint: "編集・校正・デザインなど、作品に紐づかない出版の業務委託" },
-  { value: "boardgame", label: "ボードゲーム事業", hint: "作品に紐づかないボードゲーム事業の外注" },
-  { value: "event", label: "イベント事業", hint: "イベントの運営・設営・出展の委託" },
-  { value: "store", label: "店舗事業", hint: "店舗の運営に関わる業務委託" },
-  { value: "admin", label: "管理事業", hint: "総務・経理・システムなど管理部門の業務委託" },
-  { value: "other", label: "その他", hint: "上のどれにも当たらないもの" }
+  { value: "store", label: "店舗事業", hint: "店舗の運営・内装・販促など" },
+  { value: "publishing", label: "出版事業", hint: "出版物の企画・編集・制作。作品があれば作品案件に" },
+  { value: "boardgame", label: "ボードゲーム事業", hint: "ボードゲームの企画・制作・販売。作品があれば作品案件に" },
+  { value: "planning", label: "企画事業", hint: "イベント・受託企画など" },
+  { value: "admin", label: "管理事業部", hint: "総務・経理・システムなど管理部門の業務委託" }
 ];
 export const BUSINESS_LINE_VALUES = BUSINESS_LINES.map((b) => b.value) as [BusinessLine, ...BusinessLine[]];
 export const BUSINESS_LINE_LABEL: Record<BusinessLine, string> =

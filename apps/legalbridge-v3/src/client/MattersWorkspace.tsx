@@ -296,11 +296,13 @@ export function MattersWorkspace(
                         { value: "false", label: "なし（許諾のみ）" }],
               visibleWhen: (v) => v.kind === "work",
               hint: "どちらか分からなければ空のまま（未決定）。委託料の条件や 成果物が受注者に帰属する条件を繋ぐと自動で「あり」になる" },
-            // 業務案件：事業区分と業務名が軸。
+            // 事業区分は案件の最初の軸（事業 × 作品 × 業務委託 × 条件明細）。
+            // 作品案件にも付ける。業務案件は作品が無いので事業区分と業務名が軸になる。
             { name: "businessLine", label: "事業区分", type: "select",
               options: BUSINESS_LINES.map((b) => ({ value: b.value, label: b.label, hint: b.hint })),
-              visibleWhen: (v) => v.kind === "outsourcing",
-              hint: "店舗事業の業務委託か、管理事業の業務委託か" },
+              hint: (v) => v.kind === "outsourcing"
+                ? "業務案件は必須。件名は「事業区分｜相手先｜業務名」で自動で付く"
+                : "どの事業の案件か。作品案件でも付けておくと事業ごとに追える" },
             { name: "businessName", label: "業務名", placeholder: "例：店舗内装デザイン",
               visibleWhen: (v) => v.kind === "outsourcing",
               hint: "件名は「事業区分｜相手先｜業務名」で自動で付く" },
@@ -329,7 +331,7 @@ export function MattersWorkspace(
             title: text(v.title), kind: v.kind, documentStyle: text(v.documentStyle),
             workId: v.kind === "work" ? int(v.workId) : null,
             production: v.kind === "work" && v.production ? v.production === "true" : null,
-            businessLine: v.kind === "outsourcing" ? text(v.businessLine) : null,
+            businessLine: text(v.businessLine),
             businessName: v.kind === "outsourcing" ? text(v.businessName) : null,
             parentId: int(v.parentId),
             counterpartyId: int(v.counterpartyId), ownerStaffId: int(v.ownerStaffId),

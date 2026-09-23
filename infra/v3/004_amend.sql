@@ -1629,12 +1629,14 @@ COMMENT ON COLUMN v3.staff.name_en IS '氏名の英語表記（海外版の書�
 COMMENT ON COLUMN v3.staff.department_en IS '部署の英語表記（海外版の書類）。空なら日本語のまま出る。';
 
 -- ---------------------------------------------------------------------
--- A-050 業務案件の事業区分を増やす
+-- A-050 事業区分を増やし、作品案件にも付けられるようにする
 --
 --   店舗事業／管理事業の 2 つでは、作品に紐づかない業務委託（出版の編集・
---   ボードゲーム事業の外注・イベントの運営委託など）の置き場所が無かった。
---     publishing 出版事業／boardgame ボードゲーム事業／event イベント事業／
---     store 店舗事業／admin 管理事業／other その他
+--   ボードゲーム事業の外注・イベントの企画運営など）の置き場所が無かった。
+--   案件は 事業 × 作品（あり／なし） × 業務委託 × 条件明細 の軸で見るので、
+--   事業区分を最初の軸にして作品案件にも付ける（列は同じ business_line）。
+--     store 店舗事業／publishing 出版事業／boardgame ボードゲーム事業／
+--     planning 企画事業／admin 管理事業部
 --   既存の store / admin はそのまま。
 -- ---------------------------------------------------------------------
 DO $a050$
@@ -1645,11 +1647,11 @@ BEGIN
   END IF;
   ALTER TABLE v3.matters ADD CONSTRAINT matters_business_line_chk
     CHECK (business_line IS NULL
-           OR business_line IN ('publishing', 'boardgame', 'event', 'store', 'admin', 'other'));
+           OR business_line IN ('store', 'publishing', 'boardgame', 'planning', 'admin'));
 END
 $a050$;
 COMMENT ON COLUMN v3.matters.business_line IS
-  '業務案件の事業区分。publishing 出版事業／boardgame ボードゲーム事業／event イベント事業／store 店舗事業／admin 管理事業／other その他。';
+  '事業区分（作品案件にも付く）。store 店舗事業／publishing 出版事業／boardgame ボードゲーム事業／planning 企画事業／admin 管理事業部。';
 
 COMMIT;
 
@@ -1901,7 +1903,7 @@ SELECT (SELECT count(*) FROM information_schema.columns
 SELECT count(*) AS 列 FROM information_schema.columns
  WHERE table_schema='v3' AND table_name='staff' AND column_name IN ('name_en', 'department_en');
 
-\echo '--- 事業区分の増設（A-050。CHECK に publishing があること＝1） ---'
+\echo '--- 事業区分の増設（A-050。CHECK に planning があること＝1） ---'
 SELECT count(*) AS CHECK数 FROM pg_constraint
  WHERE conrelid='v3.matters'::regclass AND conname='matters_business_line_chk'
-   AND pg_get_constraintdef(oid) LIKE '%publishing%';
+   AND pg_get_constraintdef(oid) LIKE '%planning%';

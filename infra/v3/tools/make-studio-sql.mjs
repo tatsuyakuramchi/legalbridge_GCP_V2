@@ -280,10 +280,10 @@ SELECT * FROM (
          (SELECT count(*) FROM information_schema.columns
            WHERE table_schema='v3' AND table_name='staff' AND column_name IN ('name_en', 'department_en'))::text
   UNION ALL
-  SELECT 50, '事業区分の増設（A-050。CHECK に publishing があること＝1）',
+  SELECT 50, '事業区分の増設（A-050。CHECK に planning があること＝1）',
          (SELECT count(*) FROM pg_constraint
            WHERE conrelid='v3.matters'::regclass AND conname='matters_business_line_chk'
-             AND pg_get_constraintdef(oid) LIKE '%publishing%')::text
+             AND pg_get_constraintdef(oid) LIKE '%planning%')::text
   UNION ALL
   SELECT 33, '翻訳版再許諾と別途合意（A-033。列 1 と CHECK 1 で 2 であること）',
          ((SELECT count(*) FROM information_schema.columns
