@@ -20,15 +20,15 @@
 --   CSS を足し、<body>…</body> を丸ごと置き換えた新しい版を作って
 --   current_version_id を差し替える。項目の宣言（variables）は現行版のまま。
 --   適用済み（本文に data-layout="po-v3-2026-09r2" がある）なら何もしない。同じレイアウトの
---   古い改訂（甲乙ありの版など）が入っていれば、147 より前の版の head を
---   下敷きにして新しい改訂に置き換える（手で前の版に戻さなくてよい）。
+--   古い改訂が入っていれば、147 より前の版の head を下敷きにして
+--   新しい改訂に置き換える（手で前の版に戻さなくてよい）。
 --
 --   実行: Cloud SQL Studio にそのまま貼る／ローカルは
 --         docker compose run --rm ops sql /v3/147_po_layout_v3.sql
 --   戻すとき: UPDATE v3.document_templates SET current_version_id = <前の版id>
 --            WHERE template_key = 'purchase_order';（前の版id は NOTICE に出る）
 --   注意: すでに決定した文書は決定時の版で描画される。直すなら訂正版を出す。
---   元の本文と CSS: infra/v3/templates/purchase_order_v3_body.html / _css.txt
+--   元の本文と CSS: infra/v3/templates/purchase_order_v3_body.html / purchase_order_v3_css.txt
 --   （このファイルは infra/v3/tools/make-po-layout-sql.mjs が組み立てる）
 -- =====================================================================
 
@@ -39,6 +39,8 @@ DECLARE
   src text;
   head text;
   new_html text;
+  body_text text;
+  terms_partial text;
   tpl_id bigint;
   from_version bigint;
   from_no int;
@@ -536,7 +538,8 @@ BEGIN
   IF (length(head) - length(replace(head, '</style>', ''))) / length('</style>') <> 1 THEN
     RAISE EXCEPTION '</style> が <head> に 1 箇所ではありません。146 で現行版を確かめてください';
   END IF;
-  new_html := replace(head, '</style>', css_add || E'\n</style>') || new_body || E'\n</html>\n';
+  body_text := new_body;
+  new_html := replace(head, '</style>', css_add || E'\n</style>') || body_text || E'\n</html>\n';
 
   SELECT COALESCE(max(version_no), 0) + 1 INTO next_no
     FROM v3.document_template_versions WHERE template_id = tpl_id;

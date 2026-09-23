@@ -718,3 +718,42 @@ test("発注書：利用許諾条件の行は利用形態の定義順に並ぶ",
   assert.deepEqual((c.license_terms as Array<{ usage: string }>).map((r) => r.usage),
     ["自社製造・自社販売", "再許諾", "出版（紙）"]);
 });
+
+// ---- 海外版の発注書（英語の値） ----------------------------------------------
+
+test("海外版：日付・帰属先・契約種別・源泉・通貨が英語で出る", () => {
+  assert.equal(summarizeDates("2026-10-31", "en"), "October 31, 2026");
+  assert.equal(summarizeDates("2026-10-31 – 2026-11-30 (see details)", "en"),
+    "October 31, 2026 – November 30, 2026 (see details)");
+  const c = buildTemplateContext("intl_purchase_order",
+    ctx({ events: [], condition: condition({ currency: "USD", counterparty: { withholding: true } }) }),
+    { items: [{ item_name: "a", amount_ex_tax: 10, delivery_date: "2026-10-31", payment_terms: "請負", deliverable_ownership: "受注者" },
+              { item_name: "b", amount_ex_tax: 20, delivery_date: "2026-11-30", payment_terms: "請負", deliverable_ownership: "発注者" }] });
+  assert.equal(c.delivery_summary, "October 31, 2026 – November 30, 2026 (see details)");
+  assert.equal(c.contract_form_summary, "Contract for Work");
+  assert.equal(c.ownership_summary, "Purchaser / Contractor (see details)");
+  assert.equal(c.withholding_label, "Applicable");
+  assert.equal(c.currency_code, "USD");
+  assert.equal(c.license_terms_missing, true);
+});
+
+test("海外版：利用許諾条件の行は英語（含む＝included、無償＝Royalty-free、通貨コード付き）", () => {
+  const c = buildTemplateContext("intl_purchase_order",
+    ctx({ events: [], licenseTerms: [
+      { usageType: "pub_print", pricingModel: "revenue_rate", ratePct: 8, mgAmount: 100000, currency: "JPY",
+        termStart: "2026-10-01", termEnd: "2029-09-30", regions: ["日本"], languages: ["日本語"], licenseFeeBasis: "separate", exclusivity: "exclusive" },
+      { usageType: "pub_digital", pricingModel: "revenue_rate", ratePct: 0, currency: "JPY", licenseFeeBasis: "included" },
+      { usageType: "in_house", pricingModel: "fixed", flatAmount: 1234.5, currency: "USD", licenseFeeBasis: "separate", termStart: "2026-10-01" }
+    ] }),
+    { items: [{ item_name: "x", amount_ex_tax: 1, deliverable_ownership: "受注者" }] });
+  const rows = c.license_terms as Array<Record<string, string>>;
+  assert.equal(rows[0].usage, "In-house manufacture & sale");
+  assert.equal(rows[0].fee, "USD 1,234.50");
+  assert.equal(rows[0].term, "2026/10/01 – (no end date)");
+  assert.equal(rows[0].scope, "Worldwide / All languages");
+  assert.equal(rows[1].usage, "Print publishing (exclusive)");
+  assert.equal(rows[1].guarantee, "MG JPY 100,000");
+  assert.equal(rows[1].scope, "日本 / 日本語");
+  assert.equal(rows[2].fee, "License fee included in the service fee");
+  assert.equal(rows[2].term, "No fixed term");
+});

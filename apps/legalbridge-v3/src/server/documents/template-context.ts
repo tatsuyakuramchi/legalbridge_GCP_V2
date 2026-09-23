@@ -26,6 +26,7 @@ import { expenseLinesFrom, feeLinesFrom, isSettlementKind } from "./settlement-c
 import { calcMethodFor, ownershipLabelOf, rewardLabelFor } from "../core/reward.js";
 import { contractFormFor } from "../conditions/contract-form.js";
 import { CONDITION_USAGE_TYPES, conditionUsageLabel } from "../core/condition-usage.js";
+import { formatDateEn } from "./rendering.js";
 
 type Ctx = Record<string, any>;
 
@@ -650,17 +651,44 @@ const jaDate = (value: unknown): string => {
  * 明細の日付のまとめ（aggregateItemDates の「A 〜 B (明細参照)」）を、1 ページ目の
  * 表に置く日本語にする。1 日なら「2026年10月31日」、幅があれば
  * 「2026年10月31日 〜 2026年11月30日（明細参照）」。
+ * 海外版（en）は「October 31, 2026 – November 30, 2026 (see details)」。
  */
-export function summarizeDates(aggregate: string): string {
+export function summarizeDates(aggregate: string, lang: "ja" | "en" = "ja"): string {
   const s = String(aggregate ?? "").trim();
   if (!s) return "";
-  const m = s.match(/^(\S+)\s*〜\s*(\S+)/);
+  const m = s.match(/^(\S+)\s*[〜–]\s*(\S+)/);
+  if (lang === "en") {
+    return m ? `${formatDateEn(m[1])} – ${formatDateEn(m[2])} (see details)` : formatDateEn(s);
+  }
   return m ? `${jaDate(m[1])} 〜 ${jaDate(m[2])}（明細参照）` : jaDate(s);
 }
 
-const moneyOf = (amount: unknown, currency: string): string => {
+/** 海外版の書類に出す利用形態の英語。 */
+export const USAGE_LABEL_EN: Record<string, string> = {
+  in_house: "In-house manufacture & sale",
+  sublicense: "Sublicense",
+  oem: "Manufacture for third-party sale",
+  pub_print: "Print publishing",
+  pub_digital: "Digital publishing",
+  pub_sub_print: "Translation sublicense (print)",
+  pub_sub_digital: "Translation sublicense (digital)"
+};
+
+/** 海外版の書類に出す契約形式の英語。表に無い語はそのまま。 */
+export const CONTRACT_FORM_EN: Record<string, string> = {
+  請負: "Contract for Work", 委任: "Mandate", 準委任: "Quasi-mandate", 売買: "Sale",
+  派遣: "Staffing", 業務提携: "Business alliance", 利用許諾: "License"
+};
+const contractFormEn = (value: unknown): string =>
+  String(value ?? "").split("／").map((v) => CONTRACT_FORM_EN[v.trim()] ?? v.trim()).filter(Boolean).join(" / ");
+
+const moneyOf = (amount: unknown, currency: string, lang: "ja" | "en" = "ja"): string => {
   const n = Number(amount);
   if (!Number.isFinite(n)) return "";
+  if (lang === "en") {
+    const hasFraction = Math.abs(n % 1) > 1e-9;
+    return `${currency || "JPY"} ${n.toLocaleString("en-US", { minimumFractionDigits: hasFraction ? 2 : 0, maximumFractionDigits: 2 })}`;
+  }
   return currency === "JPY" || !currency ? `¥ ${yen(n)}` : `${currency} ${n.toLocaleString("ja-JP")}`;
 };
 
@@ -670,7 +698,8 @@ const moneyOf = (amount: unknown, currency: string): string => {
  * 料率・額は許諾料の扱い（A-048）で出し分ける。「業務委託報酬に含む」は
  * 追加の許諾料が 0 円という意味なので、率や額の代わりにその旨を書く。
  */
-export function licenseTermRows(context: Ctx): LicenseTermRow[] {
+export function licenseTermRows(context: Ctx, lang: "ja" | "en" = "ja"): LicenseTermRow[] {
+  const en = lang === "en";
   // 並びは利用形態の定義順（自社製造・自社販売 → 再許諾 → … → 出版）。
   const order = (t: Ctx) => {
     const i = CONDITION_USAGE_TYPES.findIndex((u) => u.value === t.usageType);
@@ -682,29 +711,36 @@ export function licenseTermRows(context: Ctx): LicenseTermRow[] {
     const currency = String(t.currency ?? "JPY");
     const basis = String(t.licenseFeeBasis ?? "separate");
     let fee: string;
-    if (basis === "included") fee = "利用許諾料は業務委託報酬に含む";
-    else if (basis === "free") fee = "無償";
+    if (basis === "included") fee = en ? "License fee included in the service fee" : "利用許諾料は業務委託報酬に含む";
+    else if (basis === "free") fee = en ? "Royalty-free" : "無償";
     else if (t.ratePct !== null && t.ratePct !== undefined && String(t.pricingModel) === "revenue_rate") {
       fee = `${t.ratePct} %`;
     } else if (String(t.pricingModel) === "unit_rate" && t.unitAmount !== null && t.unitAmount !== undefined) {
-      fee = `${moneyOf(t.unitAmount, currency)}／単位`;
+      fee = en ? `${moneyOf(t.unitAmount, currency, "en")} per unit` : `${moneyOf(t.unitAmount, currency)}／単位`;
     } else if (t.flatAmount !== null && t.flatAmount !== undefined && Number(t.flatAmount) > 0) {
-      fee = moneyOf(t.flatAmount, currency);
+      fee = moneyOf(t.flatAmount, currency, lang);
     } else if (t.ratePct !== null && t.ratePct !== undefined) {
       fee = `${t.ratePct} %`;
-    } else fee = "別途定める";
+    } else fee = en ? "To be agreed separately" : "別途定める";
     const guarantee = basis === "separate"
-      ? [t.mgAmount ? `MG ${moneyOf(t.mgAmount, currency)}` : "",
-         t.agAmount ? `AG ${moneyOf(t.agAmount, currency)}` : ""].filter(Boolean).join("／") || "—"
+      ? [t.mgAmount ? `MG ${moneyOf(t.mgAmount, currency, lang)}` : "",
+         t.agAmount ? `AG ${moneyOf(t.agAmount, currency, lang)}` : ""].filter(Boolean).join(en ? " / " : "／") || "—"
       : "—";
     const term = t.termStart || t.termEnd
-      ? `${t.termStart ? compactDate(t.termStart) : ""} 〜 ${t.termEnd ? compactDate(t.termEnd) : "（定めなし）"}`
-      : "期間の定めなし";
+      ? (en
+        ? `${t.termStart ? compactDate(t.termStart) : ""} – ${t.termEnd ? compactDate(t.termEnd) : "(no end date)"}`
+        : `${t.termStart ? compactDate(t.termStart) : ""} 〜 ${t.termEnd ? compactDate(t.termEnd) : "（定めなし）"}`)
+      : (en ? "No fixed term" : "期間の定めなし");
     const regions = ((t.regions ?? []) as string[]).filter(Boolean);
     const languages = ((t.languages ?? []) as string[]).filter(Boolean);
-    const scope = `${regions.length ? regions.join("・") : "全世界"} ／ ${languages.length ? languages.join("・") : "全言語"}`;
-    const usage = [conditionUsageLabel(t.usageType) || (t.name ?? ""),
-                   t.exclusivity === "exclusive" ? "（独占）" : ""].join("");
+    const scope = en
+      ? `${regions.length ? regions.join(", ") : "Worldwide"} / ${languages.length ? languages.join(", ") : "All languages"}`
+      : `${regions.length ? regions.join("・") : "全世界"} ／ ${languages.length ? languages.join("・") : "全言語"}`;
+    const usage = en
+      ? [USAGE_LABEL_EN[String(t.usageType)] ?? conditionUsageLabel(t.usageType) ?? String(t.name ?? ""),
+         t.exclusivity === "exclusive" ? " (exclusive)" : ""].join("")
+      : [conditionUsageLabel(t.usageType) || (t.name ?? ""),
+         t.exclusivity === "exclusive" ? "（独占）" : ""].join("");
     return { usage, fee, guarantee, term, scope, condition_no: String(t.conditionNo ?? "") };
   });
 }
@@ -729,9 +765,14 @@ function orderBlock(templateKey: string, context: Ctx, manual: Record<string, un
   // 件数・契約種別・帰属先・支払条件はここで 1 行にまとめる。
   const ownerships = [...new Set(items.map((r) => String(r.deliverable_ownership ?? "").trim()).filter(Boolean))];
   const hasContractorOwned = ownerships.includes("受注者") || ownerships.includes("contractor");
-  const licenseTerms = licenseTermRows(context);
+  const lang: "ja" | "en" = intl ? "en" : "ja";
+  const licenseTerms = licenseTermRows(context, lang);
   const paymentTermsSummary = distinctJoin(((context.conditions ?? []) as Ctx[])
     .filter((c) => !isSettlementKind(c.kind)).map((c) => c.paymentTerms));
+  const ownershipEn = (v: string) => (v === "受注者" || v === "contractor" ? "Contractor"
+    : v === "発注者" || v === "orderer" ? "Purchaser" : v);
+  const withholding = context.condition?.counterparty?.withholding;
+  const currency = String(context.condition?.currency ?? context.totals?.currency ?? "JPY");
   return {
     items,
     other_fees: otherFees,
@@ -739,13 +780,22 @@ function orderBlock(templateKey: string, context: Ctx, manual: Record<string, un
     items_count: items.length,
     other_fees_count: otherFees.length,
     expenses_count: expenses.length,
-    contract_form_summary: distinctJoin(items.map((r) => r.payment_terms)),
-    ownership_summary: ownerships.length > 1 ? "発注者・受注者（明細参照）"
+    contract_form_summary: intl
+      ? contractFormEn(distinctJoin(items.map((r) => r.payment_terms)))
+      : distinctJoin(items.map((r) => r.payment_terms)),
+    ownership_summary: intl
+      ? (ownerships.length > 1 ? "Purchaser / Contractor (see details)" : ownershipEn(ownerships[0] ?? ""))
+      : ownerships.length > 1 ? "発注者・受注者（明細参照）"
       : ownershipLabelOf(ownerships[0]) ?? ownerships[0] ?? "",
     has_contractor_owned: hasContractorOwned,
     payment_terms_summary: paymentTermsSummary,
-    delivery_summary: summarizeDates(deliveryDate),
-    payment_summary: summarizeDates(paymentDate),
+    delivery_summary: summarizeDates(deliveryDate, lang),
+    payment_summary: summarizeDates(paymentDate, lang),
+    // 海外版だけが使う値。通貨コード（JPY 246,000 と書く）と源泉徴収の英語。
+    ...(intl ? {
+      currency_code: currency,
+      withholding_label: withholding === true ? "Applicable" : withholding === false ? "Not applicable" : ""
+    } : {}),
     // 利用許諾条件（A-048）。受注者帰属の品目があるのに台帳に無ければ、本文は
     // 「利用許諾の条件は別途定める」と 1 行で出す（黙って空にしない）。
     license_terms: licenseTerms,

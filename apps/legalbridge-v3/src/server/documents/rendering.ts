@@ -8,6 +8,8 @@ export function registerLegacyHelpers(handlebars: HelperRegistry) {
   handlebars.registerHelper("formatCurrency", formatCurrency);
   handlebars.registerHelper("formatDate", formatDate);
   handlebars.registerHelper("formatDateCompact", formatDateCompact);
+  // 海外版の書類。"September 23, 2026"。日付でない文字列（範囲のまとめ）はそのまま。
+  handlebars.registerHelper("formatDateEn", formatDateEn);
   handlebars.registerHelper("add", (a, b) => Number(a) + Number(b));
   handlebars.registerHelper("multiply", (a, b) => (Number(a) || 0) * (Number(b) || 0));
   handlebars.registerHelper("index1", (index) => Number(index) + 1);
@@ -79,6 +81,16 @@ function formatDate(value: unknown) {
         day: "numeric",
         timeZone: "Asia/Tokyo"
       });
+}
+
+export function formatDateEn(value: unknown) {
+  if (!value) return "";
+  const s = String(value);
+  if (!/^\d{4}-\d{2}-\d{2}/.test(s)) return s;
+  const date = new Date(s);
+  return Number.isNaN(date.getTime())
+    ? s
+    : date.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric", timeZone: "Asia/Tokyo" });
 }
 
 function formatDateCompact(value: unknown) {
