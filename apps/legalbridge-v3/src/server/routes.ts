@@ -3522,22 +3522,23 @@ export function createRoutes(database: Transactable) {
     }));
 
   /**
-   * 取引先を選んで、決定済みの文書の最新版を PDF で 1 つの ZIP に落とす。
+   * 取引先を選んで、決定済みの文書の最新版を落とす。
    *
    * 束の画面から使う。訂正版に退いた旧版（superseded）と無効（void）と下書きは
-   * 入れない。取引先ごとにフォルダを分け、中は文書番号.pdf。取り込んだ文書は
-   * Drive のファイルをそのまま入れる。読めなかった文書は ZIP の中の
-   * 「読めなかった文書.txt」に理由を残す（黙って欠けると気づけない）。
+   * 入れない。取引先ごとにフォルダを分け、中は文書番号.pdf。
+   *
+   *   GET …/export-documents?parties=  … 何を落とすかの一覧（画面はこれを見て
+   *                                       1 枚ずつ PDF を取り、手元で ZIP に組む。
+   *                                       「何枚目を作っているか」を出せる）
+   *   GET …/documents.zip?parties=      … サーバで ZIP まで作って返す（一度に）
    */
-  router.get("/matters/:id/documents.zip", asyncRoute(async (req, res) => {
-    const matterId = Number(req.params.id);
-    const parties = String(req.query.parties ?? "").split(",")
+  const exportList = async (matterId: number, rawParties: unknown) => {
+    const parties = String(rawParties ?? "").split(",")
       .map((v) => Number(v.trim())).filter((n) => Number.isInteger(n) && n > 0);
     if (!parties.length) throw new DomainError("VALIDATION", "取引先を選んでください");
     const head = await database.query("SELECT matter_no FROM matters WHERE id = $1", [matterId]);
     if (!head.rows[0]) throw new DomainError("NOT_FOUND", `案件 ${matterId} が見つかりません`);
     const matterNo = str((head.rows[0] as { matter_no: string | null }).matter_no) ?? `matter-${matterId}`;
-
     const rows = await database.query(
       `SELECT d.id, d.document_no, v.counterparty, v.counterparty_id
          FROM documents d
@@ -3547,18 +3548,42 @@ export function createRoutes(database: Transactable) {
     if (!rows.rows.length) {
       throw new DomainError("NOT_FOUND", "選んだ取引先に決定済みの文書がありません");
     }
+    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    return {
+      parties, matterNo,
+      zipName: `${matterNo}_文書_${stamp}.zip`,
+      documents: (rows.rows as Array<Record<string, unknown>>).map((r) => ({
+        id: Number(r.id),
+        documentNo: str(r.document_no) ?? `document-${Number(r.id)}`,
+        folder: safeFileName(str(r.counterparty) ?? "相手先なし")
+      }))
+    };
+  };
 
+  router.get("/matters/:id/export-documents", asyncRoute(async (req, res) => {
+    const matterId = Number(req.params.id);
+    const list = await exportList(matterId, req.query.parties);
+    await inTransaction(database, async (client) => {
+      await recordAudit(client, {
+        actor: actor(res), action: "document.export_zip", targetType: "matter", targetId: matterId,
+        detail: { parties: list.parties, documents: list.documents.length, via: "client" }
+      });
+    });
+    res.json(list);
+  }));
+
+  router.get("/matters/:id/documents.zip", asyncRoute(async (req, res) => {
+    const matterId = Number(req.params.id);
+    const list = await exportList(matterId, req.query.parties);
     const entries: ZipEntry[] = [];
     const failed: string[] = [];
-    for (const r of rows.rows as Array<Record<string, unknown>>) {
-      const id = Number(r.id);
-      const no = str(r.document_no) ?? `document-${id}`;
-      const folder = safeFileName(str(r.counterparty) ?? "相手先なし");
+    for (const doc of list.documents) {
       try {
-        const { attachment } = await pdfOf(id);
-        entries.push({ name: `${folder}/${safeFileName(attachment.filename, `${no}.pdf`)}`, data: attachment.data });
+        const { attachment } = await pdfOf(doc.id);
+        entries.push({ name: `${doc.folder}/${safeFileName(attachment.filename, `${doc.documentNo}.pdf`)}`,
+                       data: attachment.data });
       } catch (error) {
-        failed.push(`${no}（${folder}）：${(error as Error).message}`);
+        failed.push(`${doc.documentNo}（${doc.folder}）：${(error as Error).message}`);
       }
     }
     if (failed.length) {
@@ -3567,15 +3592,13 @@ export function createRoutes(database: Transactable) {
     await inTransaction(database, async (client) => {
       await recordAudit(client, {
         actor: actor(res), action: "document.export_zip", targetType: "matter", targetId: matterId,
-        detail: { parties, documents: entries.length - (failed.length ? 1 : 0), failed: failed.length }
+        detail: { parties: list.parties, documents: entries.length - (failed.length ? 1 : 0), failed: failed.length }
       });
     });
-    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-    const filename = `${matterNo}_文書_${stamp}.zip`;
     res.type("application/zip")
        .setHeader("content-disposition",
-         `attachment; filename="${matterNo}_documents_${stamp}.zip"; filename*=UTF-8''${encodeURIComponent(filename)}`);
-    res.send(buildZip(entries));
+         `attachment; filename="${list.matterNo}_documents.zip"; filename*=UTF-8''${encodeURIComponent(list.zipName)}`);
+    res.send(Buffer.from(buildZip(entries)));
   }));
 
   // 署名依頼。書類の実体が要るので PDF は必ず付ける。

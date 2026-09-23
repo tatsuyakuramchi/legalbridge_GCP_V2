@@ -4,6 +4,7 @@ import { conditionAmountLabel } from "./ConditionLabel.js";
 import { useReadOnly } from "./read-only.js";
 import { SignSwitch, SignTag } from "./SignState.js";
 import { SendMany } from "./SendMany.js";
+import { exportDocumentsZip, type ExportProgress } from "./exportZip.js";
 import type { GridDocument, GridParty, GridRow } from "../server/matters/grid.js";
 import type { MatterDetail } from "../server/core/model.js";
 
@@ -225,6 +226,8 @@ export function MatterBundles(
   const [sendingParty, setSendingParty] = useState<string | null>(null);
   /** PDF をまとめて落とす相手（取引先 id）。 */
   const [checked, setChecked] = useState<Set<number>>(new Set());
+  /** PDF を作っている最中の進み具合。null なら作っていない。 */
+  const [exporting, setExporting] = useState<ExportProgress | null>(null);
 
   useEffect(() => {
     setError(null);
@@ -308,7 +311,21 @@ export function MatterBundles(
   const zipTargets = single
     ? bundles.filter((b) => b.party).map((b) => b.party!.id)
     : [...checked].filter((id) => bundles.some((b) => b.party?.id === id));
-  const zipHref = `/api/v3/matters/${matterId}/documents.zip?parties=${zipTargets.join(",")}`;
+  async function exportZip() {
+    if (!zipTargets.length || exporting) return;
+    setError(null);
+    setExporting({ done: 0, total: 0, current: null, failed: 0 });
+    try {
+      const r = await exportDocumentsZip(matterId, zipTargets, setExporting);
+      setNotice(r.failed.length
+        ? `${r.zipName} を落としました（${r.documents} 枚。${r.failed.length} 枚は読めず、ZIP の中の「読めなかった文書.txt」に理由があります）`
+        : `${r.zipName} を落としました（${r.documents} 枚）`);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setExporting(null);
+    }
+  }
   const togglePick = (id: number) => setChecked((prev) => {
     const next = new Set(prev);
     if (next.has(id)) next.delete(id); else next.add(id);
@@ -422,11 +439,23 @@ export function MatterBundles(
               </>
             )}
           </div>
-          {zipTargets.length
-            ? <a className="btn btn-sm primary" href={zipHref} download
-                 title="訂正版に退いた旧版・無効・下書きは入りません。取引先ごとのフォルダに文書番号.pdf で入ります">
+          {exporting
+            ? <div className="exporting" role="status" aria-live="polite">
+                <i className="spin"></i>
+                <span>
+                  PDF を作っています…
+                  {exporting.total ? ` ${Math.min(exporting.done + 1, exporting.total)} / ${exporting.total} 枚目` : ""}
+                  {exporting.current ? <span className="code faint">　{exporting.current}</span> : null}
+                </span>
+                {exporting.total > 0 && (
+                  <span className="bar"><i style={{ width: `${Math.round((exporting.done / exporting.total) * 100)}%` }}></i></span>
+                )}
+              </div>
+            : zipTargets.length
+            ? <button type="button" className="btn btn-sm primary" onClick={() => void exportZip()}
+                      title="訂正版に退いた旧版・無効・下書きは入りません。取引先ごとのフォルダに文書番号.pdf で入ります">
                 {single ? "最新の文書を PDF でダウンロード" : `選んだ ${zipTargets.length} 社の最新文書を PDF でダウンロード`}
-              </a>
+              </button>
             : <button type="button" className="btn btn-sm" disabled>取引先を選ぶと PDF でダウンロードできます</button>}
         </div>
       )}

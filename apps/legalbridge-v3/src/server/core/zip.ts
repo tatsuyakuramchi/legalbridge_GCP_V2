@@ -1,5 +1,3 @@
-import { crc32 } from "node:zlib";
-
 /**
  * 最小の ZIP 書き出し（圧縮なし・保存のみ）。
  *
@@ -7,14 +5,36 @@ import { crc32 } from "node:zlib";
  * 保存だけで足りる。ライブラリを足さずに済ませる（依存を増やすと本番の
  * ビルド（Cloud Build の npm ci）と予備系の両方に効く）。
  *
+ * Node にも画面（ブラウザ）にも依存しない（Uint8Array と TextEncoder だけ）。
+ * 画面側で 1 枚ずつ PDF を取りながら ZIP を組むと「何枚目を作っているか」を
+ * 出せるので、同じ書き出しを両方から使う。
+ *
  * ファイル名は UTF-8（汎用ビット 11）。Windows のエクスプローラーも macOS も
  * 日本語名をそのまま読める。
  */
 export interface ZipEntry {
   /** ZIP の中のパス。区切りは `/`。 */
   name: string;
-  data: Buffer;
+  data: Uint8Array;
   mtime?: Date;
+}
+
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n += 1) {
+    let c = n;
+    for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+export function crc32(data: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (let i = 0; i < data.length; i += 1) {
+    crc = CRC_TABLE[(crc ^ data[i]) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
 }
 
 function dosDateTime(d: Date): { date: number; time: number } {
@@ -24,63 +44,74 @@ function dosDateTime(d: Date): { date: number; time: number } {
   return { date, time };
 }
 
-export function buildZip(entries: ZipEntry[]): Buffer {
-  const locals: Buffer[] = [];
-  const centrals: Buffer[] = [];
+function header(size: number): { buf: Uint8Array; view: DataView } {
+  const buf = new Uint8Array(size);
+  return { buf, view: new DataView(buf.buffer) };
+}
+
+export function buildZip(entries: ZipEntry[]): Uint8Array {
+  const encoder = new TextEncoder();
+  const parts: Uint8Array[] = [];
+  const centrals: Uint8Array[] = [];
   let offset = 0;
   for (const entry of entries) {
-    const name = Buffer.from(entry.name.replace(/\\/g, "/"), "utf8");
+    const name = encoder.encode(entry.name.replace(/\\/g, "/"));
     const { date, time } = dosDateTime(entry.mtime ?? new Date());
-    const crc = crc32(entry.data) >>> 0;
+    const crc = crc32(entry.data);
     const size = entry.data.length;
 
-    const local = Buffer.alloc(30);
-    local.writeUInt32LE(0x04034b50, 0);
-    local.writeUInt16LE(20, 4);          // version needed
-    local.writeUInt16LE(0x0800, 6);      // flags: UTF-8 names
-    local.writeUInt16LE(0, 8);           // method: store
-    local.writeUInt16LE(time, 10);
-    local.writeUInt16LE(date, 12);
-    local.writeUInt32LE(crc, 14);
-    local.writeUInt32LE(size, 18);
-    local.writeUInt32LE(size, 22);
-    local.writeUInt16LE(name.length, 26);
-    local.writeUInt16LE(0, 28);
-    locals.push(local, name, entry.data);
+    const local = header(30);
+    local.view.setUint32(0, 0x04034b50, true);
+    local.view.setUint16(4, 20, true);          // version needed
+    local.view.setUint16(6, 0x0800, true);      // flags: UTF-8 names
+    local.view.setUint16(8, 0, true);           // method: store
+    local.view.setUint16(10, time, true);
+    local.view.setUint16(12, date, true);
+    local.view.setUint32(14, crc, true);
+    local.view.setUint32(18, size, true);
+    local.view.setUint32(22, size, true);
+    local.view.setUint16(26, name.length, true);
+    local.view.setUint16(28, 0, true);
+    parts.push(local.buf, name, entry.data);
 
-    const central = Buffer.alloc(46);
-    central.writeUInt32LE(0x02014b50, 0);
-    central.writeUInt16LE(20, 4);        // version made by
-    central.writeUInt16LE(20, 6);        // version needed
-    central.writeUInt16LE(0x0800, 8);
-    central.writeUInt16LE(0, 10);
-    central.writeUInt16LE(time, 12);
-    central.writeUInt16LE(date, 14);
-    central.writeUInt32LE(crc, 16);
-    central.writeUInt32LE(size, 20);
-    central.writeUInt32LE(size, 24);
-    central.writeUInt16LE(name.length, 28);
-    central.writeUInt16LE(0, 30);        // extra
-    central.writeUInt16LE(0, 32);        // comment
-    central.writeUInt16LE(0, 34);        // disk
-    central.writeUInt16LE(0, 36);        // internal attrs
-    central.writeUInt32LE(0, 38);        // external attrs
-    central.writeUInt32LE(offset, 42);
-    centrals.push(central, name);
+    const central = header(46);
+    central.view.setUint32(0, 0x02014b50, true);
+    central.view.setUint16(4, 20, true);        // version made by
+    central.view.setUint16(6, 20, true);        // version needed
+    central.view.setUint16(8, 0x0800, true);
+    central.view.setUint16(10, 0, true);
+    central.view.setUint16(12, time, true);
+    central.view.setUint16(14, date, true);
+    central.view.setUint32(16, crc, true);
+    central.view.setUint32(20, size, true);
+    central.view.setUint32(24, size, true);
+    central.view.setUint16(28, name.length, true);
+    central.view.setUint16(30, 0, true);        // extra
+    central.view.setUint16(32, 0, true);        // comment
+    central.view.setUint16(34, 0, true);        // disk
+    central.view.setUint16(36, 0, true);        // internal attrs
+    central.view.setUint32(38, 0, true);        // external attrs
+    central.view.setUint32(42, offset, true);
+    centrals.push(central.buf, name);
 
-    offset += local.length + name.length + size;
+    offset += local.buf.length + name.length + size;
   }
   const centralSize = centrals.reduce((n, b) => n + b.length, 0);
-  const end = Buffer.alloc(22);
-  end.writeUInt32LE(0x06054b50, 0);
-  end.writeUInt16LE(0, 4);
-  end.writeUInt16LE(0, 6);
-  end.writeUInt16LE(entries.length, 8);
-  end.writeUInt16LE(entries.length, 10);
-  end.writeUInt32LE(centralSize, 12);
-  end.writeUInt32LE(offset, 16);
-  end.writeUInt16LE(0, 20);
-  return Buffer.concat([...locals, ...centrals, end]);
+  const end = header(22);
+  end.view.setUint32(0, 0x06054b50, true);
+  end.view.setUint16(4, 0, true);
+  end.view.setUint16(6, 0, true);
+  end.view.setUint16(8, entries.length, true);
+  end.view.setUint16(10, entries.length, true);
+  end.view.setUint32(12, centralSize, true);
+  end.view.setUint32(16, offset, true);
+  end.view.setUint16(20, 0, true);
+
+  const all = [...parts, ...centrals, end.buf];
+  const out = new Uint8Array(all.reduce((n, b) => n + b.length, 0));
+  let at = 0;
+  for (const b of all) { out.set(b, at); at += b.length; }
+  return out;
 }
 
 /** ファイル名に使えない文字を落とす（フォルダ区切りは別に組む）。 */

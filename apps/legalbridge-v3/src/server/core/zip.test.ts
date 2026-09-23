@@ -4,13 +4,21 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildZip, safeFileName } from "./zip.js";
+import { crc32 as nodeCrc32 } from "node:zlib";
+import { buildZip, crc32, safeFileName } from "./zip.js";
+
+test("crc32 は Node の実装と同じ値になる", () => {
+  for (const s of ["", "a", "%PDF-1.4 dummy", "合同会社アトリエ蒼"]) {
+    const bytes = Buffer.from(s, "utf8");
+    assert.equal(crc32(bytes), nodeCrc32(bytes) >>> 0, s);
+  }
+});
 
 test("ZIP は unzip で開けて、日本語名と中身がそのまま戻る", () => {
-  const zip = buildZip([
+  const zip = Buffer.from(buildZip([
     { name: "合同会社アトリエ蒼/ARC-PO-2026-0080.pdf", data: Buffer.from("%PDF-1.4 dummy") },
     { name: "読めなかった文書.txt", data: Buffer.from("ARC-IN-2026-0001：Drive から読めない\n", "utf8") }
-  ]);
+  ]));
   assert.equal(zip.readUInt32LE(0), 0x04034b50);
   const dir = mkdtempSync(join(tmpdir(), "zip-"));
   writeFileSync(join(dir, "a.zip"), zip);
@@ -27,7 +35,7 @@ test("ZIP は unzip で開けて、日本語名と中身がそのまま戻る", 
 });
 
 test("空でも壊れた ZIP にはならない", () => {
-  const zip = buildZip([]);
+  const zip = Buffer.from(buildZip([]));
   assert.equal(zip.length, 22);
   assert.equal(zip.readUInt32LE(0), 0x06054b50);
 });
