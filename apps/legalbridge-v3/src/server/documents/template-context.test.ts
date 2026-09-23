@@ -791,3 +791,14 @@ test("海外版：自社の英語表記があれば From（Purchaser）をそれ
   const ja = buildTemplateContext("purchase_order", ctx({ events: [], company }), { items: [{ item_name: "a", amount_ex_tax: 1 }] });
   assert.equal("PARTY_A_NAME" in ja, false, "国内版は英語表記を使わない");
 });
+
+test("海外版：担当者の英語表記があれば From の担当（部署・氏名）をそれで置き換える", () => {
+  const owner = { name: "山田 太郎", department: "海外事業部", nameEn: "Taro Yamada", departmentEn: "Overseas Business Dept." };
+  const c = buildTemplateContext("intl_purchase_order", ctx({ events: [], owner }), { items: [{ item_name: "a", amount_ex_tax: 1 }] });
+  assert.equal(c.STAFF_NAME, "Taro Yamada");
+  assert.equal(c.STAFF_DEPARTMENT, "Overseas Business Dept.");
+  const bare = buildTemplateContext("intl_purchase_order", ctx({ events: [], owner: { name: "山田 太郎" } }), { items: [{ item_name: "a", amount_ex_tax: 1 }] });
+  assert.equal("STAFF_NAME" in bare, false);
+  const ja = buildTemplateContext("purchase_order", ctx({ events: [], owner }), { items: [{ item_name: "a", amount_ex_tax: 1 }] });
+  assert.equal("STAFF_NAME" in ja, false);
+});

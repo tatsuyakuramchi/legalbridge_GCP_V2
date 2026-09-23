@@ -42,6 +42,9 @@ export interface StaffInput {
   department?: string | null;
   phone?: string | null;
   status?: "active" | "retired";
+  /** 英語表記（A-049）。海外版の書類だけが使う。空なら日本語のまま。 */
+  nameEn?: string | null;
+  departmentEn?: string | null;
 }
 
 export interface BankAccountInput {
@@ -457,6 +460,8 @@ export class PartyWriteService {
     if (input.email !== undefined) put("email", blankToNull(input.email));
     if (input.department !== undefined) put("department", blankToNull(input.department));
     if (input.phone !== undefined) put("phone", blankToNull(input.phone));
+    if (input.nameEn !== undefined) put("name_en", blankToNull(input.nameEn));
+    if (input.departmentEn !== undefined) put("department_en", blankToNull(input.departmentEn));
     if (input.status !== undefined) put("status", input.status);
     if (!sets.length) throw new DomainError("VALIDATION", "直す項目がありません");
 
@@ -464,7 +469,7 @@ export class PartyWriteService {
       return await inTransaction(this.database, async (client) => {
         const r = await client.query(
           `UPDATE staff SET ${sets.join(", ")} WHERE id = $1
-           RETURNING id, staff_code, name, email, department, phone, status`, params);
+           RETURNING id, staff_code, name, email, department, phone, status, name_en, department_en`, params);
         const row = r.rows[0] as Record<string, any> | undefined;
         if (!row) throw new DomainError("NOT_FOUND", `担当者 ${id} が見つかりません`);
 
@@ -475,7 +480,8 @@ export class PartyWriteService {
         return {
           id: Number(row.id), staffCode: row.staff_code ?? null, name: String(row.name),
           email: row.email ?? null, department: row.department ?? null,
-          phone: row.phone ?? null, status: String(row.status)
+          phone: row.phone ?? null, status: String(row.status),
+          nameEn: row.name_en ?? null, departmentEn: row.department_en ?? null
         };
       });
     } catch (error) { throw translate(error); }

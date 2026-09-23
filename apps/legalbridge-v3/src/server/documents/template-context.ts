@@ -758,6 +758,15 @@ export function companyEn(company: Record<string, unknown>): Record<string, stri
   return out;
 }
 
+/** 海外版の From の担当（部署・氏名）。担当者マスタの英語表記があればそれ（A-049）。 */
+export function staffEn(owner: Record<string, unknown> | null | undefined): Record<string, string> {
+  const pick = (key: string) => String(owner?.[key] ?? "").trim();
+  const out: Record<string, string> = {};
+  if (pick("nameEn")) out.STAFF_NAME = pick("nameEn");
+  if (pick("departmentEn")) out.STAFF_DEPARTMENT = pick("departmentEn");
+  return out;
+}
+
 /** 明細の値の重複を除いて「／」で繋ぐ。1 ページ目の発注概要の 1 行に使う。 */
 const distinctJoin = (values: unknown[]): string =>
   [...new Set(values.map((v) => String(v ?? "").trim()).filter(Boolean))].join("／");
@@ -813,7 +822,8 @@ function orderBlock(templateKey: string, context: Ctx, manual: Record<string, un
     ...(intl ? {
       currency_code: currency,
       withholding_label: withholding === true ? "Applicable" : withholding === false ? "Not applicable" : "",
-      ...companyEn(context.company ?? {})
+      ...companyEn(context.company ?? {}),
+      ...staffEn(context.owner)
     } : {}),
     // 利用許諾条件（A-048）。受注者帰属の品目があるのに台帳に無ければ、本文は
     // 「利用許諾の条件は別途定める」と 1 行で出す（黙って空にしない）。

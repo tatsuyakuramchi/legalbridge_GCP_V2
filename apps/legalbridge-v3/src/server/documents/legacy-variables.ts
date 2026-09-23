@@ -231,6 +231,9 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown; noSuffix?: s
   { names: ["STAFF_EMAIL", "inspectorEmail", "申請者メール", "検収者メールアドレス"], own: true,
     get: (c) => c.owner?.email },
   { names: ["STAFF_PHONE", "担当者電話"], own: true, get: (c) => c.owner?.phone },
+  // 英語表記（A-049）。海外版の発注書は STAFF_NAME / STAFF_DEPARTMENT をこれで置き換える。
+  { names: ["STAFF_NAME_EN", "担当者名（英語）"], own: true, get: (c) => c.owner?.nameEn },
+  { names: ["STAFF_DEPARTMENT_EN", "担当者部署（英語）"], own: true, get: (c) => c.owner?.departmentEn },
   { names: ["監修者"], own: true, get: (c) => c.owner?.name },
   { names: ["inspectorName"], get: (c) => c.event?.inspectorName ?? c.owner?.name },
   { names: ["inspectorDept"], get: (c) => c.event?.inspectorDept ?? c.owner?.department },

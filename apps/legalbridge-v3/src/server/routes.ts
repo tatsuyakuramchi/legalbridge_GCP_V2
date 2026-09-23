@@ -3159,7 +3159,10 @@ export function createRoutes(database: Transactable) {
     email: z.string().trim().max(200).nullable().optional(),
     department: z.string().trim().max(120).nullable().optional(),
     phone: z.string().trim().max(60).nullable().optional(),
-    status: z.enum(["active", "retired"]).optional()
+    status: z.enum(["active", "retired"]).optional(),
+    // 英語表記（A-049）。海外版の書類だけが使う。
+    nameEn: z.string().trim().max(120).nullable().optional(),
+    departmentEn: z.string().trim().max(120).nullable().optional()
   });
   router.patch("/staff/:id",
     requireRole("admin", "legal"), requireWritable,

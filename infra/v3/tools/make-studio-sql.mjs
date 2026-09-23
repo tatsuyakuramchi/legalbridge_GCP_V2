@@ -276,6 +276,10 @@ SELECT * FROM (
         + (SELECT count(*) FROM pg_constraint
             WHERE conrelid='v3.conditions'::regclass AND conname='conditions_license_fee_basis_chk'))::text
   UNION ALL
+  SELECT 49, '担当者の英語表記（A-049。列 2 であること）',
+         (SELECT count(*) FROM information_schema.columns
+           WHERE table_schema='v3' AND table_name='staff' AND column_name IN ('name_en', 'department_en'))::text
+  UNION ALL
   SELECT 33, '翻訳版再許諾と別途合意（A-033。列 1 と CHECK 1 で 2 であること）',
          ((SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='conditions' AND column_name = 'sublicense_consent')

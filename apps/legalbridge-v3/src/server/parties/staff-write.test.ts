@@ -57,3 +57,13 @@ test("いない担当者には何もしない", async () => {
     () => new PartyWriteService(db([])).updateStaff(9, { email: "x@y.z" }, "k"),
     /見つかりません/);
 });
+
+test("英語表記（氏名・部署）を入れられる。空文字は消す", async () => {
+  const d = db([{ ...ROW, name_en: "Takashi Asai", department_en: null }]);
+  const r = await new PartyWriteService(d).updateStaff(3, { nameEn: "Takashi Asai", departmentEn: "  " }, "k");
+  const q = d.find("UPDATE staff")!;
+  assert.match(setClause(q.text), /name_en = \$2, department_en = \$3/);
+  assert.deepEqual(q.params, [3, "Takashi Asai", null]);
+  assert.equal(r.nameEn, "Takashi Asai");
+  assert.equal(r.departmentEn, null);
+});

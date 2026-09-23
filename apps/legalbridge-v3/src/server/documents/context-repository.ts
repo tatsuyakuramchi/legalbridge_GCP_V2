@@ -324,7 +324,9 @@ export class DocumentContextRepository {
     return {
       name: String(row.name), email: str(row.email),
       department: str(row.department), phone: str(row.staff_row?.phone),
-      staffCode: str(row.staff_code)
+      staffCode: str(row.staff_code),
+      // 英語表記（A-049）。列を名指しせず行から読む（当てる前でも落ちない）。
+      nameEn: str(row.staff_row?.name_en), departmentEn: str(row.staff_row?.department_en)
     };
   }
 

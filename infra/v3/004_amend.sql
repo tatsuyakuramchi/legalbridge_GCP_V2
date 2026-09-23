@@ -1616,6 +1616,18 @@ BEGIN
 END
 $a048$;
 
+-- ---------------------------------------------------------------------
+-- A-049 担当者の英語表記（氏名・部署）
+--
+--   海外版の発注書の From（Purchaser）には担当者の部署と氏名も出る。自社情報の
+--   英語表記だけでは担当の行が日本語のまま残るので、担当者にも英語の欄を持つ。
+--   空なら日本語のまま出る（国内版は使わない）。
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.staff ADD COLUMN IF NOT EXISTS name_en text;
+ALTER TABLE v3.staff ADD COLUMN IF NOT EXISTS department_en text;
+COMMENT ON COLUMN v3.staff.name_en IS '氏名の英語表記（海外版の書類）。空なら日本語のまま出る。';
+COMMENT ON COLUMN v3.staff.department_en IS '部署の英語表記（海外版の書類）。空なら日本語のまま出る。';
+
 COMMIT;
 
 -- 確認
@@ -1861,3 +1873,7 @@ SELECT (SELECT count(*) FROM information_schema.columns
          WHERE table_schema='v3' AND table_name='conditions' AND column_name='license_fee_basis')
      + (SELECT count(*) FROM pg_constraint
          WHERE conrelid='v3.conditions'::regclass AND conname='conditions_license_fee_basis_chk') AS 列とCHECK;
+
+\echo '--- 担当者の英語表記（A-049。列 2 であること） ---'
+SELECT count(*) AS 列 FROM information_schema.columns
+ WHERE table_schema='v3' AND table_name='staff' AND column_name IN ('name_en', 'department_en');
