@@ -223,6 +223,8 @@ export function MatterBundles(
   const [bump, setBump] = useState(0);
   /** CloudSign でまとめて送っている束（取引先のキー）。 */
   const [sendingParty, setSendingParty] = useState<string | null>(null);
+  /** PDF をまとめて落とす相手（取引先 id）。 */
+  const [checked, setChecked] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     setError(null);
@@ -230,7 +232,7 @@ export function MatterBundles(
       .then((r) => { setRows(r.rows); setParties(r.parties ?? []); })
       .catch((e: ApiError) => { setError(e.message); setRows([]); });
   }, [matterId, reloadKey, bump]);
-  useEffect(() => { setOpened(null); setFilter("all"); setQ(""); }, [matterId]);
+  useEffect(() => { setOpened(null); setFilter("all"); setQ(""); setChecked(new Set()); }, [matterId]);
 
   const h = { onOpenDocument, onCompose, onRecordEvent, onOpenPayments };
   const sign = {
@@ -302,6 +304,16 @@ export function MatterBundles(
 
   const single = bundles.length === 1;
   const keyOf = (b: Bundle) => String(b.party?.id ?? "none");
+  // PDF の一括ダウンロード。相手が 1 社だけの案件は選ばせずにその相手。
+  const zipTargets = single
+    ? bundles.filter((b) => b.party).map((b) => b.party!.id)
+    : [...checked].filter((id) => bundles.some((b) => b.party?.id === id));
+  const zipHref = `/api/v3/matters/${matterId}/documents.zip?parties=${zipTargets.join(",")}`;
+  const togglePick = (id: number) => setChecked((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
   const isOpen = (b: Bundle) => single || filter !== "all" || Boolean(q.trim())
     || (opened ? opened.has(keyOf(b)) : b.stuck > 0 || b.unpaid > 0);
   const toggle = (b: Bundle) => setOpened((prev) => {
@@ -390,6 +402,35 @@ export function MatterBundles(
         </div>
       )}
 
+      {/* 最新の文書を PDF でまとめて落とす。取引先にチェックを入れて押す。 */}
+      {bundles.some((b) => b.party) && (
+        <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
+          <div className="row" style={{ flexWrap: "wrap" }}>
+            <span className="faint">
+              {single ? "この相手の決定済みの文書（最新版）を PDF でまとめて落とせます"
+                : "取引先にチェックを入れると、決定済みの文書（最新版）を PDF でまとめて落とせます"}
+            </span>
+            {!single && (
+              <>
+                <button type="button" className="linky"
+                        onClick={() => setChecked(new Set(shown.filter((b) => b.party).map((b) => b.party!.id)))}>
+                  表示中の {shown.filter((b) => b.party).length} 社を選ぶ
+                </button>
+                {checked.size > 0 && (
+                  <button type="button" className="linky" onClick={() => setChecked(new Set())}>選択を外す</button>
+                )}
+              </>
+            )}
+          </div>
+          {zipTargets.length
+            ? <a className="btn btn-sm primary" href={zipHref} download
+                 title="訂正版に退いた旧版・無効・下書きは入りません。取引先ごとのフォルダに文書番号.pdf で入ります">
+                {single ? "最新の文書を PDF でダウンロード" : `選んだ ${zipTargets.length} 社の最新文書を PDF でダウンロード`}
+              </a>
+            : <button type="button" className="btn btn-sm" disabled>取引先を選ぶと PDF でダウンロードできます</button>}
+        </div>
+      )}
+
       {shown.map((b) => {
         const open = isOpen(b);
         const p = b.party;
@@ -399,7 +440,11 @@ export function MatterBundles(
             <div className="bundle-hd">
               <div className="who">
                 {single ? null : p
-                  ? <><b>{p.name}</b><span className="faint code">{p.partyCode ?? ""}</span></>
+                  ? <>
+                      <input type="checkbox" checked={checked.has(p.id)} onChange={() => togglePick(p.id)}
+                             title="PDF でまとめて落とす相手に入れる" aria-label={`${p.name} を PDF の対象にする`} />
+                      <b>{p.name}</b><span className="faint code">{p.partyCode ?? ""}</span>
+                    </>
                   : <b className="faint">（相手先なし）</b>}
                 {p && (p.agreement
                   ? <span className="tag ok" title={p.agreement.domain ? undefined : "移行した契約で、業務委託か許諾かの区別が付いていません。契約の画面で直せます"}>

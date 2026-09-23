@@ -3,6 +3,7 @@ import { z } from "zod";
 import { dateStr, int, inTransaction, str, type Transactable } from "./core/db.js";
 import { DomainError, statusFor } from "./core/errors.js";
 import { recordAudit } from "./core/audit.js";
+import { buildZip, safeFileName, type ZipEntry } from "./core/zip.js";
 import { requireRole, requireWritable } from "./auth.js";
 import { ConditionRepository } from "./conditions/repository.js";
 import { ConditionWriteService } from "./conditions/write-service.js";
@@ -3519,6 +3520,63 @@ export function createRoutes(database: Transactable) {
       const input = cloudSignManualSchema.parse(req.body ?? {});
       res.json(await sends.recordCloudSign(Number(req.params.id), input, actor(res)));
     }));
+
+  /**
+   * 取引先を選んで、決定済みの文書の最新版を PDF で 1 つの ZIP に落とす。
+   *
+   * 束の画面から使う。訂正版に退いた旧版（superseded）と無効（void）と下書きは
+   * 入れない。取引先ごとにフォルダを分け、中は文書番号.pdf。取り込んだ文書は
+   * Drive のファイルをそのまま入れる。読めなかった文書は ZIP の中の
+   * 「読めなかった文書.txt」に理由を残す（黙って欠けると気づけない）。
+   */
+  router.get("/matters/:id/documents.zip", asyncRoute(async (req, res) => {
+    const matterId = Number(req.params.id);
+    const parties = String(req.query.parties ?? "").split(",")
+      .map((v) => Number(v.trim())).filter((n) => Number.isInteger(n) && n > 0);
+    if (!parties.length) throw new DomainError("VALIDATION", "取引先を選んでください");
+    const head = await database.query("SELECT matter_no FROM matters WHERE id = $1", [matterId]);
+    if (!head.rows[0]) throw new DomainError("NOT_FOUND", `案件 ${matterId} が見つかりません`);
+    const matterNo = str((head.rows[0] as { matter_no: string | null }).matter_no) ?? `matter-${matterId}`;
+
+    const rows = await database.query(
+      `SELECT d.id, d.document_no, v.counterparty, v.counterparty_id
+         FROM documents d
+         JOIN v_document_display v ON v.document_id = d.id
+        WHERE d.matter_id = $1 AND d.status = 'issued' AND v.counterparty_id = ANY($2::bigint[])
+        ORDER BY v.counterparty, d.issued_at, d.id`, [matterId, parties]);
+    if (!rows.rows.length) {
+      throw new DomainError("NOT_FOUND", "選んだ取引先に決定済みの文書がありません");
+    }
+
+    const entries: ZipEntry[] = [];
+    const failed: string[] = [];
+    for (const r of rows.rows as Array<Record<string, unknown>>) {
+      const id = Number(r.id);
+      const no = str(r.document_no) ?? `document-${id}`;
+      const folder = safeFileName(str(r.counterparty) ?? "相手先なし");
+      try {
+        const { attachment } = await pdfOf(id);
+        entries.push({ name: `${folder}/${safeFileName(attachment.filename, `${no}.pdf`)}`, data: attachment.data });
+      } catch (error) {
+        failed.push(`${no}（${folder}）：${(error as Error).message}`);
+      }
+    }
+    if (failed.length) {
+      entries.push({ name: "読めなかった文書.txt", data: Buffer.from(`${failed.join("\n")}\n`, "utf8") });
+    }
+    await inTransaction(database, async (client) => {
+      await recordAudit(client, {
+        actor: actor(res), action: "document.export_zip", targetType: "matter", targetId: matterId,
+        detail: { parties, documents: entries.length - (failed.length ? 1 : 0), failed: failed.length }
+      });
+    });
+    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    const filename = `${matterNo}_文書_${stamp}.zip`;
+    res.type("application/zip")
+       .setHeader("content-disposition",
+         `attachment; filename="${matterNo}_documents_${stamp}.zip"; filename*=UTF-8''${encodeURIComponent(filename)}`);
+    res.send(buildZip(entries));
+  }));
 
   // 署名依頼。書類の実体が要るので PDF は必ず付ける。
   router.post("/documents/:id/sign",
