@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { bindVariables, blankedNames, parseVariables, pick, assertComplete } from "./binding.js";
+import { bindVariables, blankedNames, coerceBoolean, parseVariables, pick, assertComplete } from "./binding.js";
 import { DomainError } from "../core/errors.js";
 
 const context = {
@@ -281,4 +281,23 @@ test("「空にする」と決めた自動の欄は、自動の値があって�
   assert.equal(blank.fields[0].source, "manual");
   assert.deepEqual(blank.missing, []);
   assert.deepEqual([...blankedNames({ __blank: ["A", " ", "B"] })], ["A", "B"]);
+});
+
+test("真偽の欄は、既定値や手入力が文字列でも真偽値にそろえる（\"false\" が「あり」にならない）", () => {
+  // V2 のひな形は真偽の欄の既定値を文字列の "false" で持っていた。本文の {{#if}} は
+  // 空でない文字列を「あり」と見るので、発注者の署名欄まで刷られていた。
+  const variables = [
+    { name: "SHOW_ORDER_SIGN_SECTION", type: "boolean", default: "false" },
+    { name: "SHOW_SIGN_SECTION", type: "boolean", default: "true" },
+    { name: "HAS_BASE_CONTRACT", type: "boolean" },
+    { name: "NOTE", type: "text" }
+  ];
+  const r = bindVariables(variables, {}, { HAS_BASE_CONTRACT: "なし", NOTE: "false" });
+  assert.equal(r.values.SHOW_ORDER_SIGN_SECTION, false);
+  assert.equal(r.values.SHOW_SIGN_SECTION, true);
+  assert.equal(r.values.HAS_BASE_CONTRACT, false);
+  assert.equal(r.values.NOTE, "false", "文字の欄はそのまま");
+  assert.equal(coerceBoolean("あり"), true);
+  assert.equal(coerceBoolean("たぶん"), "たぶん", "読めない文字列は落とさない");
+  assert.equal(coerceBoolean(false), false);
 });

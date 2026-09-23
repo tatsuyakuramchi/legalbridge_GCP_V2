@@ -117,6 +117,25 @@ export function pick(context: unknown, path: string): unknown {
 const isEmpty = (value: unknown) =>
   value === null || value === undefined || (typeof value === "string" && value.trim() === "");
 
+/**
+ * 真偽の欄の値を真偽値にそろえる。
+ *
+ * V2 のひな形は真偽の欄の既定値を文字列の "false" で持っていた。文字列の
+ * "false" は本文の {{#if}} で「あり」扱いになるので、発注書に発注者の署名欄
+ * （SHOW_ORDER_SIGN_SECTION）まで刷られ、基本契約なし（HAS_BASE_CONTRACT）の
+ * 約款が付かなかった。CSV や画面からは真偽値が来るが、既定値や手入力の文字列
+ * が混ざっても紙が変わらないよう、焼き付ける前にここでそろえる。
+ * 読めない文字列はそのまま返す（黙って落とさない）。
+ */
+export function coerceBoolean(value: unknown): unknown {
+  if (typeof value === "boolean") return value;
+  if (typeof value !== "string") return value;
+  const text = value.trim();
+  if (/^(true|yes|y|on|1|はい|あり|有|要|○|◯|◎)$/i.test(text)) return true;
+  if (/^(false|no|n|off|0|いいえ|なし|無|不要|×|✕)$/i.test(text)) return false;
+  return value;
+}
+
 export interface BindOptions {
   /** ひな形のキー。どの項目を人に入力させるかの判定に使う。 */
   templateKey?: string;
@@ -256,7 +275,7 @@ export function bindVariables(
       }
       continue;
     }
-    values[variable.name] = value;
+    values[variable.name] = variable.type === "boolean" ? coerceBoolean(value) : value;
   }
 
   return { values, missing, derived, fields };

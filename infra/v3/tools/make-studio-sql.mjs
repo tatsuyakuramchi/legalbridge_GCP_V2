@@ -264,6 +264,12 @@ SELECT * FROM (
   SELECT 46, '支払の採番漏れ（A-046。0 であること）',
          (SELECT count(*) FROM v3.payments WHERE payment_no IS NULL)::text
   UNION ALL
+  SELECT 47, '文字列のまま焼き付いた真偽の値（A-047。0 であること）',
+         (SELECT count(*) FROM v3.documents d
+           WHERE jsonb_typeof(d.rendered_values) = 'object'
+             AND EXISTS (SELECT 1 FROM jsonb_each(d.rendered_values) AS x
+                          WHERE jsonb_typeof(x.value) = 'string' AND (x.value #>> '{}') IN ('true', 'false')))::text
+  UNION ALL
   SELECT 33, '翻訳版再許諾と別途合意（A-033。列 1 と CHECK 1 で 2 であること）',
          ((SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='conditions' AND column_name = 'sublicense_consent')

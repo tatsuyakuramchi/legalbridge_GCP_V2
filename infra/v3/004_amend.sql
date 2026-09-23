@@ -1560,6 +1560,38 @@ BEGIN
 END
 $a046$;
 
+-- ---------------------------------------------------------------------
+-- A-047 焼き付いた真偽の値が文字列だったものを真偽値にそろえる
+--
+--   V2 のひな形は真偽の欄（発注署名欄・承諾署名欄・基本契約の有無など）の
+--   既定値を文字列の "false" / "true" で持っていた。CSV の欄を空にして作った
+--   発注書はその既定値のまま決定され、rendered_values に文字列で焼き付いた。
+--   本文の {{#if}} は空でない文字列を「あり」と見るので、"false" の発注書に
+--   発注者の署名欄まで刷られ、基本契約なしの約款が付かなかった。
+--
+--   紙の意図（あり／なし）は変えず、型だけをそろえる。対象は値がちょうど
+--   'true' か 'false' の文字列である項目だけ。手入力（manual_inputs）も同じ。
+--   何度流しても 2 回目以降は何もしない。
+-- ---------------------------------------------------------------------
+UPDATE v3.documents d
+   SET rendered_values = (
+         SELECT jsonb_object_agg(x.key,
+                  CASE WHEN jsonb_typeof(x.value) = 'string' AND (x.value #>> '{}') IN ('true', 'false')
+                       THEN to_jsonb((x.value #>> '{}')::boolean) ELSE x.value END)
+           FROM jsonb_each(d.rendered_values) AS x)
+ WHERE jsonb_typeof(d.rendered_values) = 'object'
+   AND EXISTS (SELECT 1 FROM jsonb_each(d.rendered_values) AS x
+                WHERE jsonb_typeof(x.value) = 'string' AND (x.value #>> '{}') IN ('true', 'false'));
+UPDATE v3.documents d
+   SET manual_inputs = (
+         SELECT jsonb_object_agg(x.key,
+                  CASE WHEN jsonb_typeof(x.value) = 'string' AND (x.value #>> '{}') IN ('true', 'false')
+                       THEN to_jsonb((x.value #>> '{}')::boolean) ELSE x.value END)
+           FROM jsonb_each(d.manual_inputs) AS x)
+ WHERE jsonb_typeof(d.manual_inputs) = 'object'
+   AND EXISTS (SELECT 1 FROM jsonb_each(d.manual_inputs) AS x
+                WHERE jsonb_typeof(x.value) = 'string' AND (x.value #>> '{}') IN ('true', 'false'));
+
 COMMIT;
 
 -- 確認
@@ -1793,3 +1825,9 @@ SELECT count(*) AS 残り FROM v3.agreements a
 
 \echo '--- 支払の採番漏れ（A-046。0 であること） ---'
 SELECT count(*) AS 番号の無い支払 FROM v3.payments WHERE payment_no IS NULL;
+
+\echo '--- 文字列のまま焼き付いた真偽の値（A-047。0 であること） ---'
+SELECT count(*) AS 残り FROM v3.documents d
+ WHERE jsonb_typeof(d.rendered_values) = 'object'
+   AND EXISTS (SELECT 1 FROM jsonb_each(d.rendered_values) AS x
+                WHERE jsonb_typeof(x.value) = 'string' AND (x.value #>> '{}') IN ('true', 'false'));
