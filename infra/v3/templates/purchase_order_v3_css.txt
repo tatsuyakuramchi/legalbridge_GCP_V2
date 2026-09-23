@@ -1,0 +1,24 @@
+  /* ---- 147: 1 ページ目固定レイアウト（概要・支払情報・承諾欄）と 2 ページ目からの明細 ---- */
+  @page { size: A4; margin: 12mm 12mm 14mm; }
+  .page-break { page-break-before: always; break-before: page; }
+  .sheet-title { display:flex; justify-content:space-between; align-items:flex-end; border-bottom:1px solid #111; padding-bottom:3px; margin-bottom:8px; }
+  .sheet-title h2 { font-size:12pt; margin:0; letter-spacing:2px; }
+  .sheet-title .doc-sub { font-size:8.5pt; }
+  table.summary.compact th, table.summary.compact td { padding:5px 8px; }
+  table.sign2 { width:100%; margin-top:6px; font-size:9.5pt; page-break-inside:avoid; }
+  table.sign2 th { background:#f3f3f3; border:1px solid #cfcfcf; padding:5px 8px; text-align:left; }
+  table.sign2 td { border:1px solid #cfcfcf; padding:8px 10px; vertical-align:top; }
+  .sign-cell { min-height:26mm; }
+  .sign-cell .who { font-weight:800; font-size:10.5pt; }
+  .sign-line { display:flex; align-items:flex-end; gap:8px; margin-top:6px; }
+  .sign-line .lbl { font-size:8.5pt; color:#555; padding-bottom:2px; white-space:nowrap; }
+  .sign-line .ul { border-bottom:1px solid #333; height:7.5mm; display:flex; align-items:flex-end; padding:0 4px 1px; font-size:12pt; line-height:1; }
+  .sign-line .ul.date { flex:0 0 44mm; }
+  .sign-line .ul.name { flex:1; height:9mm; }
+  .accept-note { font-size:8.5pt; color:#555; margin:0 0 4px; line-height:1.5; }
+  .foot-note { font-size:8pt; color:#777; margin-top:6px; }
+  .section-mark.first { margin-top:4px; }
+  table.items thead { display:table-header-group; }
+  table.items tr { page-break-inside:avoid; }
+  .section-mark { page-break-after: avoid; break-after: avoid-page; }
+  .terms-box, .callout { page-break-inside: avoid; break-inside: avoid-page; }

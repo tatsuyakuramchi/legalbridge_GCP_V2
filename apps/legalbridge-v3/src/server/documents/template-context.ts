@@ -25,7 +25,7 @@ import type { Warning } from "./preflight.js";
 import { expenseLinesFrom, feeLinesFrom, isSettlementKind } from "./settlement-conditions.js";
 import { calcMethodFor, ownershipLabelOf, rewardLabelFor } from "../core/reward.js";
 import { contractFormFor } from "../conditions/contract-form.js";
-import { conditionUsageLabel } from "../core/condition-usage.js";
+import { CONDITION_USAGE_TYPES, conditionUsageLabel } from "../core/condition-usage.js";
 
 type Ctx = Record<string, any>;
 
@@ -640,6 +640,24 @@ const compactDate = (value: unknown): string => {
   return m ? `${m[1]}/${m[2]}/${m[3]}` : String(value ?? "");
 };
 
+/** 「2026-10-31」→「2026年10月31日」。日付でなければそのまま。 */
+const jaDate = (value: unknown): string => {
+  const m = String(value ?? "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[1]}年${Number(m[2])}月${Number(m[3])}日` : String(value ?? "");
+};
+
+/**
+ * 明細の日付のまとめ（aggregateItemDates の「A 〜 B (明細参照)」）を、1 ページ目の
+ * 表に置く日本語にする。1 日なら「2026年10月31日」、幅があれば
+ * 「2026年10月31日 〜 2026年11月30日（明細参照）」。
+ */
+export function summarizeDates(aggregate: string): string {
+  const s = String(aggregate ?? "").trim();
+  if (!s) return "";
+  const m = s.match(/^(\S+)\s*〜\s*(\S+)/);
+  return m ? `${jaDate(m[1])} 〜 ${jaDate(m[2])}（明細参照）` : jaDate(s);
+}
+
 const moneyOf = (amount: unknown, currency: string): string => {
   const n = Number(amount);
   if (!Number.isFinite(n)) return "";
@@ -653,7 +671,14 @@ const moneyOf = (amount: unknown, currency: string): string => {
  * 追加の許諾料が 0 円という意味なので、率や額の代わりにその旨を書く。
  */
 export function licenseTermRows(context: Ctx): LicenseTermRow[] {
-  return ((context.licenseTerms ?? []) as Ctx[]).map((t) => {
+  // 並びは利用形態の定義順（自社製造・自社販売 → 再許諾 → … → 出版）。
+  const order = (t: Ctx) => {
+    const i = CONDITION_USAGE_TYPES.findIndex((u) => u.value === t.usageType);
+    return i < 0 ? CONDITION_USAGE_TYPES.length : i;
+  };
+  const terms = [...((context.licenseTerms ?? []) as Ctx[])]
+    .sort((a, b) => order(a) - order(b) || Number(a.id ?? 0) - Number(b.id ?? 0));
+  return terms.map((t) => {
     const currency = String(t.currency ?? "JPY");
     const basis = String(t.licenseFeeBasis ?? "separate");
     let fee: string;
@@ -719,6 +744,8 @@ function orderBlock(templateKey: string, context: Ctx, manual: Record<string, un
       : ownershipLabelOf(ownerships[0]) ?? ownerships[0] ?? "",
     has_contractor_owned: hasContractorOwned,
     payment_terms_summary: paymentTermsSummary,
+    delivery_summary: summarizeDates(deliveryDate),
+    payment_summary: summarizeDates(paymentDate),
     // 利用許諾条件（A-048）。受注者帰属の品目があるのに台帳に無ければ、本文は
     // 「利用許諾の条件は別途定める」と 1 行で出す（黙って空にしない）。
     license_terms: licenseTerms,

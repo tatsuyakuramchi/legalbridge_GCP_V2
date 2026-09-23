@@ -430,7 +430,7 @@ export class DocumentContextRepository {
     const result = await client.query(
       `SELECT c.id, c.condition_no, c.name, c.direction, c.kind, c.currency, c.pricing_model,
               c.rate_ppm, c.unit_amount, c.quantity, c.flat_amount, c.mg_amount, c.ag_amount,
-              c.term_start, c.term_end, c.tax_category, c.payment_terms, c.contract_form,
+              c.term_start, c.term_end, c.delivery_due, c.tax_category, c.payment_terms, c.contract_form,
               c.cycle,
               c.agreement_id, c.exclusivity, c.sublicensable, c.sublicense_consent,
               c.auto_renew, c.renew_months, c.renew_stopped_on,
@@ -483,6 +483,8 @@ export class DocumentContextRepository {
         flatAmountMinor: int(row.flat_amount) ?? 0,
         termStart: dateStr(row.term_start),
         termEnd: dateStr(row.term_end),
+        /** 納期。予定明細の無い条件の発注書の行はこれを納期にする。 */
+        deliveryDue: dateStr(row.delivery_due),
         taxCategory: String(row.tax_category ?? "taxable"),
         paymentTerms: str(row.payment_terms),
         contractForm: str(row.contract_form),

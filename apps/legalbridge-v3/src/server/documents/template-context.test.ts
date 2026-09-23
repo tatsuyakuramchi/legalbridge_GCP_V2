@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   accountTypeLabel, bankInfoLine, buildTemplateContext, calcMethodOf, deliveryLinesFrom,
-  lineFieldsFor, orderLinesFrom, rewardLabelOf, seedLines, splitSpec, suggestionsFor, taxRateFor
+  lineFieldsFor, orderLinesFrom, rewardLabelOf, seedLines, splitSpec, suggestionsFor, summarizeDates, taxRateFor
 } from "./template-context.js";
 import { computeInspectionTotals, inspectionTaxBreakdown, purchaseOrderTotals } from "./legacy-totals.js";
 
@@ -672,17 +672,18 @@ test("発注書：利用許諾条件は許諾料の扱いで料率・額の欄�
               licenseFeeBasis: "free", conditionNo: "CL-3" }
           ] }),
     { items: [{ item_name: "設定画", amount_ex_tax: 10000, deliverable_ownership: "受注者" }] });
+  // 並びは利用形態の定義順（自社製造・自社販売 → 出版（紙） → 出版（電子））。
   const rows = c.license_terms as Array<Record<string, string>>;
   assert.equal(rows.length, 3);
-  assert.deepEqual(rows[0], { usage: "出版（紙）（独占）", fee: "8 %", guarantee: "MG ¥ 100,000",
+  assert.deepEqual(rows[1], { usage: "出版（紙）（独占）", fee: "8 %", guarantee: "MG ¥ 100,000",
                               term: "2026/10/01 〜 2029/09/30", scope: "日本 ／ 日本語", condition_no: "CL-1" });
-  assert.equal(rows[1].fee, "利用許諾料は業務委託報酬に含む");
-  assert.equal(rows[1].guarantee, "—");
-  assert.equal(rows[1].term, "期間の定めなし");
-  assert.equal(rows[1].scope, "全世界 ／ 全言語");
-  assert.equal(rows[2].fee, "無償");
-  assert.equal(rows[2].guarantee, "—", "含む・無償のときは MG/AG を出さない");
-  assert.equal(rows[2].term, "2026/10/01 〜 （定めなし）");
+  assert.equal(rows[2].fee, "利用許諾料は業務委託報酬に含む");
+  assert.equal(rows[2].guarantee, "—");
+  assert.equal(rows[2].term, "期間の定めなし");
+  assert.equal(rows[2].scope, "全世界 ／ 全言語");
+  assert.equal(rows[0].fee, "無償");
+  assert.equal(rows[0].guarantee, "—", "含む・無償のときは MG/AG を出さない");
+  assert.equal(rows[0].term, "2026/10/01 〜 （定めなし）");
   assert.equal(c.license_terms_missing, false);
   assert.equal(c.ownership_summary, "受注者");
 });
@@ -693,4 +694,27 @@ test("発注書：発注者帰属だけなら許諾条件の印は立たない",
   assert.equal(c.has_contractor_owned, false);
   assert.equal(c.license_terms_missing, false);
   assert.equal(c.ownership_summary, "発注者");
+});
+
+test("発注書：納期・支払期日のまとめは日本語の日付にする", () => {
+  assert.equal(summarizeDates("2026-10-31"), "2026年10月31日");
+  assert.equal(summarizeDates("2026-10-31 〜 2026-11-30 (明細参照)"), "2026年10月31日 〜 2026年11月30日（明細参照）");
+  assert.equal(summarizeDates(""), "");
+  const c = buildTemplateContext("purchase_order", ctx({ events: [] }),
+    { items: [{ item_name: "a", amount_ex_tax: 1, delivery_date: "2026-10-31", payment_date: "2026-12-31" },
+              { item_name: "b", amount_ex_tax: 1, delivery_date: "2026-11-30", payment_date: "2026-12-31" }] });
+  assert.equal(c.delivery_summary, "2026年10月31日 〜 2026年11月30日（明細参照）");
+  assert.equal(c.payment_summary, "2026年12月31日");
+});
+
+test("発注書：利用許諾条件の行は利用形態の定義順に並ぶ", () => {
+  const c = buildTemplateContext("purchase_order",
+    ctx({ events: [], licenseTerms: [
+      { id: 3, usageType: "pub_print", pricingModel: "revenue_rate", ratePct: 8, currency: "JPY", licenseFeeBasis: "separate" },
+      { id: 1, usageType: "in_house", pricingModel: "revenue_rate", ratePct: 2, currency: "JPY", licenseFeeBasis: "separate" },
+      { id: 2, usageType: "sublicense", pricingModel: "revenue_rate", ratePct: 50, currency: "JPY", licenseFeeBasis: "separate" }
+    ] }),
+    { items: [{ item_name: "x", amount_ex_tax: 1, deliverable_ownership: "受注者" }] });
+  assert.deepEqual((c.license_terms as Array<{ usage: string }>).map((r) => r.usage),
+    ["自社製造・自社販売", "再許諾", "出版（紙）"]);
 });
