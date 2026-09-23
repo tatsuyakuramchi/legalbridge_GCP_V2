@@ -802,3 +802,18 @@ test("海外版：担当者の英語表記があれば From の担当（部署�
   const ja = buildTemplateContext("purchase_order", ctx({ events: [], owner }), { items: [{ item_name: "a", amount_ex_tax: 1 }] });
   assert.equal("STAFF_NAME" in ja, false);
 });
+
+test("海外版：担当者と自社の電話は国際表記（+81）に直して出す。国内版はそのまま", () => {
+  const owner = { name: "山田", phone: "03-6811-0730" };
+  const company = { name: "株式会社サンプル", tel: "03-0000-0000" };
+  const c = buildTemplateContext("intl_purchase_order", ctx({ events: [], owner, company }), { items: [{ item_name: "a", amount_ex_tax: 1 }] });
+  assert.equal(c.STAFF_PHONE, "+81-3-6811-0730");
+  assert.equal(c.COMPANY_TEL, "+81-3-0000-0000");
+  const withIntl = buildTemplateContext("intl_purchase_order",
+    ctx({ events: [], owner: { name: "山田", phone: "+1 212 555 0100" }, company: { ...company, telIntl: "+81-3-9999-9999" } }),
+    { items: [{ item_name: "a", amount_ex_tax: 1 }] });
+  assert.equal(withIntl.STAFF_PHONE, "+1-212-555-0100");
+  assert.equal(withIntl.COMPANY_TEL, "+81-3-9999-9999", "国際表記の欄があればそちらが勝つ");
+  const ja = buildTemplateContext("purchase_order", ctx({ events: [], owner, company }), { items: [{ item_name: "a", amount_ex_tax: 1 }] });
+  assert.equal("STAFF_PHONE" in ja, false);
+});

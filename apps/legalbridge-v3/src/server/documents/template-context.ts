@@ -27,6 +27,7 @@ import { calcMethodFor, ownershipLabelOf, rewardLabelFor } from "../core/reward.
 import { contractFormEn, contractFormFor } from "../conditions/contract-form.js";
 import { CONDITION_USAGE_TYPES, conditionUsageLabel } from "../core/condition-usage.js";
 import { formatDateEn } from "./rendering.js";
+import { toInternationalPhone } from "../core/phone.js";
 
 type Ctx = Record<string, any>;
 
@@ -754,16 +755,23 @@ export function companyEn(company: Record<string, unknown>): Record<string, stri
   if (pick("nameEn")) { out.PARTY_A_NAME = pick("nameEn"); out.COMPANY_NAME = pick("nameEn"); }
   if (pick("addressEn")) { out.PARTY_A_ADDRESS = pick("addressEn"); out.COMPANY_ADDRESS = pick("addressEn"); }
   if (pick("repEn")) { out.PARTY_A_REP = pick("repEn"); out.COMPANY_REP = pick("repEn"); }
+  // 国際表記の欄が空でも、国内の電話番号を +81 に直して出す。
   if (pick("telIntl")) out.COMPANY_TEL = pick("telIntl");
+  else if (pick("tel")) out.COMPANY_TEL = toInternationalPhone(pick("tel"));
   return out;
 }
 
-/** 海外版の From の担当（部署・氏名）。担当者マスタの英語表記があればそれ（A-049）。 */
+/**
+ * 海外版の From の担当（部署・氏名・電話）。担当者マスタの英語表記があればそれ
+ * （A-049）。電話は国内表記のまま登録してあるので、紙にするときだけ国際表記
+ * （+81-3-…）に直す。すでに + で始まっていればそのまま。
+ */
 export function staffEn(owner: Record<string, unknown> | null | undefined): Record<string, string> {
   const pick = (key: string) => String(owner?.[key] ?? "").trim();
   const out: Record<string, string> = {};
   if (pick("nameEn")) out.STAFF_NAME = pick("nameEn");
   if (pick("departmentEn")) out.STAFF_DEPARTMENT = pick("departmentEn");
+  if (pick("phone")) out.STAFF_PHONE = toInternationalPhone(pick("phone"));
   return out;
 }
 
