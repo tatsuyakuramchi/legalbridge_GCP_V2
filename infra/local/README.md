@@ -157,6 +157,101 @@ Invoke-RestMethod http://localhost:8080/health | ConvertTo-Json
 書き込めるかどうかは同じ答えの `readOnly` で分かる。`.env` を直接見るなら
 `Select-String READ_ONLY .env`。
 
+## 社外から使う（Cloudflare Tunnel）
+
+別の PC や社外からブラウザで使えるようにする。PC から Cloudflare へ外向きの
+トンネルを張り、手前の Cloudflare Access がログイン（Google かメールの確認コード）を
+させる。ルーターのポート開放も固定 IP も要らない。50 人までは無料。
+
+```
+社外のブラウザ ──https──▶ Cloudflare（Access でログイン）
+                                  │  トンネル（PC から外向き）
+                      この PC の docker compose ── tunnel ─▶ app:8080
+```
+
+アプリは Access が付けてくる署名付きトークンを検証し、メールで人を見分ける
+（`AUTH_MODE=cloudflare`）。役割はメールで決まり、操作の記録にも本人のメールが残る。
+ヘッダのメールだけは信じないので、トンネルを通らない直アクセスで名乗ることはできない。
+
+### 1. ドメインを用意する（会社のドメインは使わない）
+
+1. Cloudflare のアカウントを作る（会社のメールで）。
+2. ダッシュボードの **Domain Registration › Register Domains** で、LegalBridge 専用の
+   ドメインを 1 つ取る（例: `arclight-lb.com`）。年額は数千円程度。Cloudflare で取った
+   ドメインは最初から Cloudflare の DNS に載るので、DNS の移し替えは要らない。
+
+### 2. トンネルを作る
+
+1. **Zero Trust › Networks › Tunnels › Create a tunnel**。種類は **Cloudflared**、名前は `legalbridge-local`。
+2. 表示されるインストール用のコマンドの中の、長いトークン（`eyJ…`）だけを控える。
+   インストールはしない（Docker で動かす）。
+3. **Public Hostname** を 1 つ足す。
+   - Subdomain: `app`、Domain: 取ったドメイン（→ `app.arclight-lb.com`）
+   - Service: Type `HTTP`、URL `app:8080`
+
+### 3. ログインを付ける（Access）
+
+1. **Zero Trust › Access › Applications › Add an application › Self-hosted**。
+   - Application domain: `app.arclight-lb.com`
+   - Session Duration: 24 hours など
+2. ログイン方法（**Settings › Authentication**）。まずは **One-time PIN**（メールに届く
+   6 桁のコード）が設定なしで使える。Google でログインさせるなら Google を足す。
+3. ポリシー: Action **Allow**、Include **Emails ending in** `@arclight.co.jp`。
+   社外の人（翻訳者など）を入れるときは、Include に **Emails** でその人を足す。
+4. 保存したアプリの **Overview** にある **Application Audience (AUD) Tag** を控える。
+5. チームのドメイン（`xxxx.cloudflareaccess.com`）を控える
+   （**Settings › Custom Pages** の Team domain）。
+
+### 4. この PC に設定する
+
+`.env` に足す（`.env.example` の「社外から使う」の欄）。
+
+```
+APP_PORT=127.0.0.1:8080
+TUNNEL_TOKEN=eyJ…（2 で控えたもの）
+AUTH_MODE=cloudflare
+CF_ACCESS_TEAM_DOMAIN=xxxx.cloudflareaccess.com
+CF_ACCESS_AUD=（3 で控えた AUD タグ）
+ADMIN_EMAILS=kuramochi@arclight.co.jp
+LEGAL_EMAILS=
+REQUESTER_DOMAINS=arclight.co.jp
+```
+
+- `APP_PORT=127.0.0.1:8080` で、LAN からの直アクセスを塞ぐ。この PC のブラウザも
+  `https://app.arclight-lb.com` から入る（`localhost:8080` はログインが無いので 401 になる）。
+- 役割は ADMIN_EMAILS（管理者）→ LEGAL_EMAILS（法務）→ REQUESTER_DOMAINS（依頼者）の順に当てる。
+  どれにも当たらない人は Access を通っても 403。
+- 書き込ませるなら `READ_ONLY=false`。
+
+起動する。
+
+```powershell
+docker compose up -d --build app
+docker compose --profile tunnel up -d
+```
+
+`https://app.arclight-lb.com` を開き、ログインを通ると画面が出る。
+
+### 止める・戻す
+
+```powershell
+docker compose stop tunnel        # 社外からの口だけ閉じる
+```
+
+認証なしの手元専用に戻すなら、`.env` の `AUTH_MODE` と `APP_PORT` を消して
+`docker compose up -d app`。
+
+### 気をつけること
+
+- **この PC を切ると誰も使えない。** 電源の設定でスリープを止める。Windows の更新で
+  再起動したあとは Docker Desktop が自動で立ち上がるようにしておく（コンテナは
+  `restart: unless-stopped` で戻る）。
+- **データはこの PC の中にある。** BitLocker でディスクを暗号化し、写しを取っておく。
+- **通信は Cloudflare を通る。** 経路は暗号化されるが、中継で一度復号される。
+  口座番号や個人の連絡先が載る画面なので、社内で了承を取っておく。
+- **トンネルのトークンは鍵と同じ。** 漏れたら Tunnels の画面でトンネルを消して作り直す。
+- 51 人目からは 1 人あたり月 $7 かかる（Zero Trust の有料プラン）。
+
 ## 支払文書処理を使うとき
 
 「文書」と「お金」のあいだの**支払文書処理**は、予定 → 実績 → 決済文書 → 支払を

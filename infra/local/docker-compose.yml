@@ -50,7 +50,14 @@ services:
       DB_POOL_MAX: "5"
       # 予備系は読み取り専用が既定。開発で書き込むときは .env で false にする。
       READ_ONLY: ${READ_ONLY:-true}
-      AUTH_MODE: disabled
+      # 認証。既定は disabled（全員が LOCAL_USER_* を名乗る）。Cloudflare Tunnel で
+      # 社外に出すときは cloudflare にし、Access のトークンを検証して人ごとに役割を決める。
+      AUTH_MODE: ${AUTH_MODE:-disabled}
+      CF_ACCESS_TEAM_DOMAIN: ${CF_ACCESS_TEAM_DOMAIN:-}
+      CF_ACCESS_AUD: ${CF_ACCESS_AUD:-}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      LEGAL_EMAILS: ${LEGAL_EMAILS:-}
+      REQUESTER_DOMAINS: ${REQUESTER_DOMAINS:-}
       LOCAL_USER_EMAIL: ${LOCAL_USER_EMAIL:-backup@local}
       LOCAL_USER_ROLE: ${LOCAL_USER_ROLE:-admin}
       SITE_LABEL: ${SITE_LABEL:-予備系}
@@ -67,6 +74,20 @@ services:
       TZ: Asia/Tokyo
     volumes:
       - ./data:/data
+
+  # 社外から使うときの口（Cloudflare Tunnel）。PC から Cloudflare へ外向きにつなぐので、
+  # ルーターのポート開放も固定 IP も要らない。普段の up では立たない（profile: tunnel）。
+  #   docker compose --profile tunnel up -d
+  # 手順は README の「社外から使う（Cloudflare Tunnel）」。
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    depends_on:
+      - app
 
   ops:
     build: ./ops

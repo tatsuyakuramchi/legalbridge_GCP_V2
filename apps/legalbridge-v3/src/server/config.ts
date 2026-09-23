@@ -17,7 +17,16 @@ export interface Config {
   /** v3 スキーマ以外を見せない。public への読み書きは V1 のものなので触らない。 */
   databaseSchema: string;
   readOnly: boolean;
-  authMode: "disabled" | "iap";
+  /**
+   * 利用者の見分け方。
+   *   disabled   … 認証なし。全員が LOCAL_USER_EMAIL / LOCAL_USER_ROLE を名乗る（予備系・開発）
+   *   iap        … Google IAP（Cloud Run）。前段が検証したメールのヘッダを読む
+   *   cloudflare … Cloudflare Access（Tunnel でローカル版を社外に出すとき）。署名付きトークンを検証する
+   */
+  authMode: "disabled" | "iap" | "cloudflare";
+  /** Cloudflare Access のチームのドメインと、アプリの AUD タグ（authMode=cloudflare のとき必須）。 */
+  cfAccessTeamDomain: string;
+  cfAccessAud: string;
   /** 認証なしで動かすときに名乗る利用者（予備系・開発用）。役割の見え方を試すため。 */
   localUserEmail: string;
   localUserRole: "admin" | "legal" | "requester";
@@ -78,7 +87,10 @@ export const config: Config = {
   databasePassword: process.env.DB_PASSWORD,
   databaseSchema: (process.env.DB_SCHEMA ?? "v3").trim(),
   readOnly: bool(process.env.READ_ONLY, false),
-  authMode: process.env.AUTH_MODE === "iap" ? "iap" : "disabled",
+  authMode: process.env.AUTH_MODE === "iap" ? "iap"
+    : process.env.AUTH_MODE === "cloudflare" ? "cloudflare" : "disabled",
+  cfAccessTeamDomain: (process.env.CF_ACCESS_TEAM_DOMAIN ?? "").trim(),
+  cfAccessAud: (process.env.CF_ACCESS_AUD ?? "").trim(),
   localUserEmail: (process.env.LOCAL_USER_EMAIL ?? "").trim() || "dev@local",
   localUserRole: localRole(process.env.LOCAL_USER_ROLE),
   siteLabel: (process.env.SITE_LABEL ?? "").trim(),

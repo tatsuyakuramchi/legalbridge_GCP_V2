@@ -1,8 +1,16 @@
 import type { NextFunction, Request, Response } from "express";
 import { config } from "./config.js";
+import { AccessTokenError, AccessVerifier, accessTokenOf } from "./cf-access.js";
 
 export type UserRole = "admin" | "legal" | "requester";
-export interface AuthenticatedUser { email: string; role: UserRole; source: "disabled" | "iap" }
+export interface AuthenticatedUser { email: string; role: UserRole; source: "disabled" | "iap" | "cloudflare" }
+
+/** Cloudflare Access の検証器。authMode=cloudflare のときだけ作る（設定が欠けていれば起動で止まる）。 */
+let accessVerifier: AccessVerifier | null = null;
+const verifierFor = () => (accessVerifier ??= new AccessVerifier(
+  { teamDomain: config.cfAccessTeamDomain, audience: config.cfAccessAud }));
+/** 試験用。検証器を差し替える。 */
+export function setAccessVerifierForTest(v: AccessVerifier | null) { accessVerifier = v; }
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -19,6 +27,21 @@ function roleFor(email: string): UserRole | null {
 }
 
 export function authenticate(request: Request, response: Response, next: NextFunction) {
+  if (config.authMode === "cloudflare" && request.path !== "/health" && !request.path.startsWith("/internal/")) {
+    // 署名付きトークンを確かめてからメールを使う。ヘッダのメールだけは信じない。
+    const token = accessTokenOf(request.header("cf-access-jwt-assertion"), request.header("cookie"));
+    if (!token) return response.status(401).json({ error: "Cloudflare Access のログインを通っていません" });
+    verifierFor().verify(token).then((email) => {
+      const role = roleFor(email);
+      if (!role) return response.status(403).json({ error: "利用が許可されていません", email });
+      response.locals.currentUser = { email, role, source: "cloudflare" };
+      return next();
+    }).catch((error: unknown) => {
+      if (error instanceof AccessTokenError) return response.status(401).json({ error: error.message });
+      return next(error);
+    });
+    return;
+  }
   if (request.path === "/health") return next();
   // 内部の受信口はユーザー認証を通さない。各受信口が署名か共有シークレットで守る。
   if (request.path.startsWith("/internal/")) return next();
