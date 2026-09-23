@@ -28,7 +28,8 @@ const sql = `-- ================================================================
 --   ・受領確認（承諾）：受注者の欄（名前・住所・法人で担当者の登録があるとき
 --     だけ担当）と、承諾日（12pt が入る下線）・署名の欄。押印欄は無い（署名式）。
 --   ・発注署名欄＝あり（SHOW_ORDER_SIGN_SECTION）のときは、同じ場所に
---     発注者（甲）・受注者（乙）の署名欄（署名日・署名）を出す。
+--     発注者・受注者の署名欄（署名日・署名）を出す（甲・乙の表記は使わない）。
+--   ・Word に貼っても枠が再現できるよう、箱と署名の下線は表（セルの罫線）で組む。
 --   ・成果物の帰属先が受注者の品目があれば「■ 利用許諾条件」の表（利用形態／
 --     料率・額／MG・AG／期間／地域・言語）を出す。台帳に無ければ
 --     「利用許諾の条件は別途定める」と 1 行で出す。値はアプリが
@@ -107,7 +108,7 @@ SELECT t.template_key AS ひな形, v.version_no AS 版, v.id AS 版id,
        (strpos(v.html_source, '${MARK}') > 0) AS 新レイアウト,
        (strpos(v.html_source, 'class="page-break"') > 0) AS 改ページ,
        (strpos(v.html_source, '■ 受領確認（承諾）') > 0) AS 承諾欄,
-       (strpos(v.html_source, '発注者（甲）') > 0) AS 甲乙署名欄,
+       (strpos(v.html_source, 'sign-both') > 0) AS 両者署名欄,
        (strpos(v.html_source, '■ 利用許諾条件') > 0) AS 利用許諾条件,
        (strpos(v.html_source, 'class="sign-box"') = 0) AS 押印欄なし,
        jsonb_array_length(COALESCE(v.variables, '[]'::jsonb)) AS 項目数

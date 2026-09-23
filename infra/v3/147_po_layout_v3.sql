@@ -9,7 +9,8 @@
 --   ・受領確認（承諾）：受注者の欄（名前・住所・法人で担当者の登録があるとき
 --     だけ担当）と、承諾日（12pt が入る下線）・署名の欄。押印欄は無い（署名式）。
 --   ・発注署名欄＝あり（SHOW_ORDER_SIGN_SECTION）のときは、同じ場所に
---     発注者（甲）・受注者（乙）の署名欄（署名日・署名）を出す。
+--     発注者・受注者の署名欄（署名日・署名）を出す（甲・乙の表記は使わない）。
+--   ・Word に貼っても枠が再現できるよう、箱と署名の下線は表（セルの罫線）で組む。
 --   ・成果物の帰属先が受注者の品目があれば「■ 利用許諾条件」の表（利用形態／
 --     料率・額／MG・AG／期間／地域・言語）を出す。台帳に無ければ
 --     「利用許諾の条件は別途定める」と 1 行で出す。値はアプリが
@@ -43,30 +44,50 @@ DECLARE
   new_id bigint;
   body_pos int;
   css_add constant text := $q$
-  /* ---- 147: 1 ページ目固定レイアウト（概要・支払情報・承諾欄）と 2 ページ目からの明細 ---- */
+  /* ---- 147: 1 ページ目固定レイアウト（概要・支払情報・承諾欄）と 2 ページ目からの明細 ----
+     Word に貼っても枠が再現できるよう、箱と署名の下線は表（セルの罫線）で組む。
+     flex・grid・div の枠線は使わない。見た目はシンプルに：細い灰の罫線、薄い灰の見出しセル。 */
   @page { size: A4; margin: 12mm 12mm 14mm; }
+  body { color: #222; }
+  hr.rule { border-top: 1px solid #333; margin: 0 0 12px; }
+  .vendor-name { border-bottom: 1px solid #333; }
+  .party td + td { border-left: 1px solid #d9d9d9; }
+  p.section-mark { font-size: 10pt; font-weight: 700; letter-spacing: .04em; margin: 12px 0 5px; padding: 0 0 3px;
+                   border: 0; border-bottom: 1px solid #bdbdbd; page-break-after: avoid; break-after: avoid-page; }
+  p.section-mark.first { margin-top: 4px; }
+  table.summary th, table.items th { background: #f4f4f2; border: 1px solid #d9d9d9; color: #333; font-weight: 600; }
+  table.summary td, table.items td { border: 1px solid #d9d9d9; }
+  table.summary.compact th, table.summary.compact td { padding: 5px 8px; }
+  table.items { margin-top: 2px; }
+  .item-detail td { border-top: 1px dashed #d9d9d9; }
+  .total-amount { font-size: 13pt; font-weight: 700; }
+  .tag { background: #eef1f4; color: #334; }
   .page-break { page-break-before: always; break-before: page; }
-  .sheet-title { display:flex; justify-content:space-between; align-items:flex-end; border-bottom:1px solid #111; padding-bottom:3px; margin-bottom:8px; }
-  .sheet-title h2 { font-size:12pt; margin:0; letter-spacing:2px; }
-  .sheet-title .doc-sub { font-size:8.5pt; }
-  table.summary.compact th, table.summary.compact td { padding:5px 8px; }
-  table.sign2 { width:100%; margin-top:6px; font-size:9.5pt; page-break-inside:avoid; }
-  table.sign2 th { background:#f3f3f3; border:1px solid #cfcfcf; padding:5px 8px; text-align:left; }
-  table.sign2 td { border:1px solid #cfcfcf; padding:8px 10px; vertical-align:top; }
-  .sign-cell { min-height:26mm; }
-  .sign-cell .who { font-weight:800; font-size:10.5pt; }
-  .sign-line { display:flex; align-items:flex-end; gap:8px; margin-top:6px; }
-  .sign-line .lbl { font-size:8.5pt; color:#555; padding-bottom:2px; white-space:nowrap; }
-  .sign-line .ul { border-bottom:1px solid #333; height:7.5mm; display:flex; align-items:flex-end; padding:0 4px 1px; font-size:12pt; line-height:1; }
-  .sign-line .ul.date { flex:0 0 44mm; }
-  .sign-line .ul.name { flex:1; height:9mm; }
-  .accept-note { font-size:8.5pt; color:#555; margin:0 0 4px; line-height:1.5; }
-  .foot-note { font-size:8pt; color:#777; margin-top:6px; }
-  .section-mark.first { margin-top:4px; }
-  table.items thead { display:table-header-group; }
-  table.items tr { page-break-inside:avoid; }
-  .section-mark { page-break-after: avoid; break-after: avoid-page; }
-  .terms-box, .callout { page-break-inside: avoid; break-inside: avoid-page; }
+  table.sheet-title { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+  table.sheet-title td { border: 0; border-bottom: 1px solid #333; padding: 0 0 3px; vertical-align: bottom; }
+  table.sheet-title td.t { font-size: 12pt; font-weight: 700; letter-spacing: 2px; }
+  table.sheet-title td.doc-sub { font-size: 8.5pt; color: #555; }
+  table.box { width: 100%; border-collapse: collapse; margin-top: 4px; }
+  table.box td { border: 1px solid #d9d9d9; padding: 8px 10px; font-size: 9pt; }
+  table.sign2 { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 9.5pt; page-break-inside: avoid; }
+  table.sign2 th { background: #f4f4f2; border: 1px solid #d9d9d9; padding: 5px 8px; text-align: left; font-weight: 600; color: #333; }
+  table.sign2 td { border: 1px solid #d9d9d9; padding: 8px 10px; vertical-align: top; }
+  table.sign2 p { margin: 0; }
+  table.sign2 p.who { font-weight: 700; font-size: 10.5pt; margin-bottom: 2px; }
+  table.sign2 p.muted { font-size: 9pt; color: #555; }
+  table.sign-lines { border-collapse: collapse; width: 100%; margin-top: 6px; }
+  table.sign-lines td { border: 0; padding: 0; vertical-align: bottom; }
+  table.sign-lines td.lbl { width: 14mm; font-size: 8.5pt; color: #555; padding: 0 0 2px; white-space: nowrap; }
+  table.sign-lines td.ul { border-bottom: 1px solid #333; height: 7.5mm; font-size: 12pt; line-height: 1; padding: 0 4px 1px; }
+  table.sign-lines td.ul.date { width: 44mm; }
+  table.sign-lines td.ul.name { height: 9mm; }
+  table.sign-lines td.pad { width: auto; }
+  table.sign-lines tr + tr td { padding-top: 5px; }
+  table.sign-lines tr + tr td.ul { padding-top: 0; }
+  p.accept-note { font-size: 8.5pt; color: #555; margin: 0 0 4px; line-height: 1.5; }
+  p.foot-note { font-size: 8pt; color: #777; margin: 6px 0 0; }
+  table.items thead { display: table-header-group; }
+  table.items tr, table.box { page-break-inside: avoid; break-inside: avoid-page; }
 $q$;
   new_body constant text := $q$<body data-layout="po-v3-2026-09">
 
@@ -110,7 +131,7 @@ $q$;
 </table>
 
 <!-- ===== 発注概要（行数固定。明細は次ページ） ===== -->
-<div class="section-mark">■ 発注概要</div>
+<p class="section-mark">■ 発注概要</p>
 <table class="summary compact">
   <tr>
     <th>確定額 小計（税抜）</th>
@@ -159,7 +180,7 @@ $q$;
 </table>
 
 <!-- ===== 支払情報 ===== -->
-<div class="section-mark">■ 支払情報</div>
+<p class="section-mark">■ 支払情報</p>
 <table class="summary compact">
   <tr>
     <th>支払条件</th>
@@ -192,73 +213,73 @@ $q$;
 
 {{#if SHOW_ORDER_SIGN_SECTION}}
 <!-- ===== 署名欄（発注者・受注者の両方が署名するとき） ===== -->
-<div class="section-mark">■ 署名欄</div>
+<p class="section-mark">■ 署名欄</p>
 <p class="accept-note">発注者および受注者は、本発注書の内容に合意し、下記に署名する。{{#if HAS_BASE_CONTRACT}}本発注書は基本契約{{#if MASTER_CONTRACT_REF}}（{{MASTER_CONTRACT_REF}}）{{/if}}に基づき発行され、定めのない事項は当該基本契約の定めによる。{{else}}本発注書には別紙「業務委託基本契約約款（スポット契約用・2026年改正法対応版）」が適用される。{{/if}}</p>
-<table class="sign2">
+<table class="sign2 sign-both" cellspacing="0" cellpadding="0">
   <tr>
-    <th style="width:50%;">発注者（甲）</th>
-    <th style="width:50%;">受注者（乙）</th>
+    <th style="width:50%;">発注者</th>
+    <th style="width:50%;">受注者</th>
   </tr>
   <tr>
-    <td>
-      <div class="sign-cell">
-        <div class="who">{{PARTY_A_NAME}}</div>
-        <div class="muted">{{PARTY_A_ADDRESS}}</div>
-        {{#if PARTY_A_REP}}<div class="muted">{{PARTY_A_REP}}</div>{{/if}}
-        <div class="sign-line"><span class="lbl">署名日</span><span class="ul date"></span></div>
-        <div class="sign-line"><span class="lbl">署名</span><span class="ul name"></span></div>
-      </div>
+    <td style="height:30mm;">
+      <p class="who">{{PARTY_A_NAME}}</p>
+      <p class="muted">{{PARTY_A_ADDRESS}}</p>
+      {{#if PARTY_A_REP}}<p class="muted">{{PARTY_A_REP}}</p>{{/if}}
+      <table class="sign-lines" cellspacing="0" cellpadding="0">
+        <tr><td class="lbl">署名日</td><td class="ul date"></td><td class="pad"></td></tr>
+        <tr><td class="lbl">署名</td><td class="ul name" colspan="2"></td></tr>
+      </table>
     </td>
-    <td>
-      <div class="sign-cell">
-        <div class="who">{{VENDOR_NAME}}</div>
-        {{#if VENDOR_ADDRESS}}<div class="muted">{{VENDOR_ADDRESS}}</div>{{/if}}
-        {{#if (eq VENDOR_IS_CORPORATION "法人")}}{{#if VENDOR_REPRESENTATIVE_LINE}}<div class="muted">{{VENDOR_REPRESENTATIVE_LINE}}</div>{{/if}}{{#if VENDOR_CONTACT_NAME}}<div class="muted">担当: {{VENDOR_CONTACT_NAME}}</div>{{/if}}{{/if}}
-        <div class="sign-line"><span class="lbl">署名日</span><span class="ul date"></span></div>
-        <div class="sign-line"><span class="lbl">署名</span><span class="ul name"></span></div>
-      </div>
+    <td style="height:30mm;">
+      <p class="who">{{VENDOR_NAME}}</p>
+      {{#if VENDOR_ADDRESS}}<p class="muted">{{VENDOR_ADDRESS}}</p>{{/if}}
+      {{#if (eq VENDOR_IS_CORPORATION "法人")}}{{#if VENDOR_REPRESENTATIVE_LINE}}<p class="muted">{{VENDOR_REPRESENTATIVE_LINE}}</p>{{/if}}{{#if VENDOR_CONTACT_NAME}}<p class="muted">担当: {{VENDOR_CONTACT_NAME}}</p>{{/if}}{{/if}}
+      <table class="sign-lines" cellspacing="0" cellpadding="0">
+        <tr><td class="lbl">署名日</td><td class="ul date"></td><td class="pad"></td></tr>
+        <tr><td class="lbl">署名</td><td class="ul name" colspan="2"></td></tr>
+      </table>
     </td>
   </tr>
 </table>
 {{else}}{{#if (or ACCEPT_METHOD SHOW_SIGN_SECTION)}}
 <!-- ===== 受領確認（承諾）：受注者だけが署名する ===== -->
-<div class="section-mark">■ 受領確認（承諾）</div>
+<p class="section-mark">■ 受領確認（承諾）</p>
 <p class="accept-note">{{#if ACCEPT_METHOD}}{{ACCEPT_METHOD}}{{else}}本発注書の内容を確認のうえ、下記に承諾日と署名を記入してご返送ください。{{/if}}{{#if ACCEPT_REPLY_DUE_DATE}}　返信期限: {{formatDate ACCEPT_REPLY_DUE_DATE}}。{{/if}}{{#if ACCEPT_BY_PERFORMANCE}}　なお、受注者が本発注に基づく業務へ着手した場合、その時点で本発注内容に承諾したものとして取り扱うことがあります。{{/if}}{{#if HAS_BASE_CONTRACT}}　本発注書は基本契約{{#if MASTER_CONTRACT_REF}}（{{MASTER_CONTRACT_REF}}）{{/if}}に基づき発行され、定めのない事項は当該基本契約の定めによります。{{else}}　本発注書には別紙「業務委託基本契約約款（スポット契約用・2026年改正法対応版）」が適用され、受注者は本発注書を承諾することにより当該約款にも同意したものとみなします。{{/if}}</p>
 {{#if SHOW_SIGN_SECTION}}
-<table class="sign2">
+<table class="sign2 sign-accept" cellspacing="0" cellpadding="0">
   <tr>
     <th style="width:40%;">受注者</th>
     <th>承諾日・署名</th>
   </tr>
   <tr>
-    <td>
-      <div class="sign-cell">
-        <div class="who">{{VENDOR_NAME}}</div>
-        {{#if VENDOR_ADDRESS}}<div class="muted">{{VENDOR_ADDRESS}}</div>{{/if}}
-        {{#if (eq VENDOR_IS_CORPORATION "法人")}}{{#if VENDOR_CONTACT_NAME}}<div class="muted" style="margin-top:6px;">担当: {{VENDOR_CONTACT_NAME}}</div>{{/if}}{{/if}}
-      </div>
+    <td style="height:26mm;">
+      <p class="who">{{VENDOR_NAME}}</p>
+      {{#if VENDOR_ADDRESS}}<p class="muted">{{VENDOR_ADDRESS}}</p>{{/if}}
+      {{#if (eq VENDOR_IS_CORPORATION "法人")}}{{#if VENDOR_CONTACT_NAME}}<p class="muted" style="margin-top:6px;">担当: {{VENDOR_CONTACT_NAME}}</p>{{/if}}{{/if}}
     </td>
-    <td>
-      <div class="sign-cell">
-        <div class="sign-line" style="margin-top:0;"><span class="lbl">承諾日</span><span class="ul date">{{#if VENDOR_ACCEPT_DATE}}{{formatDate VENDOR_ACCEPT_DATE}}{{/if}}</span></div>
-        <div class="sign-line"><span class="lbl">署名</span><span class="ul name">{{#if VENDOR_ACCEPT_NAME}}<span style="font-size:9pt;color:#555;">{{VENDOR_ACCEPT_NAME}}</span>{{/if}}</span></div>
-        <div class="muted" style="margin-top:3px; font-size:8pt;">{{#if (eq VENDOR_IS_CORPORATION "法人")}}受注者の権限ある代表者または担当者が署名{{else}}受注者本人が署名{{/if}}</div>
-      </div>
+    <td style="height:26mm;">
+      <table class="sign-lines" cellspacing="0" cellpadding="0">
+        <tr><td class="lbl">承諾日</td><td class="ul date">{{#if VENDOR_ACCEPT_DATE}}{{formatDate VENDOR_ACCEPT_DATE}}{{/if}}</td><td class="pad"></td></tr>
+        <tr><td class="lbl">署名</td><td class="ul name" colspan="2">{{#if VENDOR_ACCEPT_NAME}}<span style="font-size:9pt;color:#555;">{{VENDOR_ACCEPT_NAME}}</span>{{/if}}</td></tr>
+      </table>
+      <p class="muted" style="margin-top:3px; font-size:8pt;">{{#if (eq VENDOR_IS_CORPORATION "法人")}}受注者の権限ある代表者または担当者が署名{{else}}受注者本人が署名{{/if}}</p>
     </td>
   </tr>
 </table>
 {{/if}}
 {{/if}}{{/if}}
-<div class="foot-note">※ 業務明細{{#if SPECIAL_TERMS}}・特約{{/if}}・通知先は次ページ。{{#unless HAS_BASE_CONTRACT}}基本契約がないため、標準約款を別紙として末尾に添付。{{/unless}}</div>
+<p class="foot-note">※ 業務明細{{#if SPECIAL_TERMS}}・特約{{/if}}・通知先は次ページ。{{#unless HAS_BASE_CONTRACT}}基本契約がないため、標準約款を別紙として末尾に添付。{{/unless}}</p>
 
 <!-- ===== 2 ページ目：明細 ===== -->
-<div class="page-break"></div>
-<div class="sheet-title">
-  <h2>発注書　別紙（明細）</h2>
-  <div class="doc-sub">書類番号: {{ORDER_NO}}{{#if PROJECT_TITLE}}　／　件名: {{PROJECT_TITLE}}{{/if}}</div>
-</div>
+<p class="page-break" style="page-break-before:always; margin:0; height:0;"></p>
+<table class="sheet-title" cellspacing="0" cellpadding="0">
+  <tr>
+    <td class="t">発注書　別紙（明細）</td>
+    <td class="doc-sub" style="text-align:right;">書類番号: {{ORDER_NO}}{{#if PROJECT_TITLE}}　／　件名: {{PROJECT_TITLE}}{{/if}}</td>
+  </tr>
+</table>
 
-<div class="section-mark first">■ 業務明細</div>
+<p class="section-mark first">■ 業務明細</p>
 <table class="items">
   <thead>
     <tr>
@@ -338,7 +359,7 @@ $q$;
 <!-- ===== その他手数料 ===== -->
 {{#if other_fees}}
 {{#if (gt (length other_fees) 0)}}
-<div class="section-mark">■ その他手数料（税抜・合計に加算）</div>
+<p class="section-mark">■ その他手数料（税抜・合計に加算）</p>
 <table class="items">
   <thead>
     <tr>
@@ -379,7 +400,7 @@ $q$;
 <!-- ===== 経費 ===== -->
 {{#if expenses}}
 {{#if (gt (length expenses) 0)}}
-<div class="section-mark">■ 経費（交通費等／税込み額）</div>
+<p class="section-mark">■ 経費（交通費等／税込み額）</p>
 <table class="items">
   <thead>
     <tr>
@@ -413,10 +434,10 @@ $q$;
 
 <!-- ===== 利用許諾条件（成果物を受注者に留保する品目があるとき） ===== -->
 {{#if has_contractor_owned}}
-<div class="section-mark">■ 利用許諾条件（成果物の権利を受注者に留保する品目）</div>
+<p class="section-mark">■ 利用許諾条件（成果物の権利を受注者に留保する品目）</p>
 <p style="margin:0 0 4px; font-size:8.5pt; color:#555;">成果物の帰属先が「受注者」の品目については、その権利を受注者に留保し、発注者は下記の条件で利用許諾を受けます。</p>
 {{#if license_terms_missing}}
-<div class="callout">利用許諾の条件は別途定める。</div>
+<table class="box" cellspacing="0" cellpadding="0"><tr><td>利用許諾の条件は別途定める。</td></tr></table>
 {{else}}
 <table class="items">
   <thead>
@@ -446,24 +467,22 @@ $q$;
 
 <!-- ===== 特約事項 ===== -->
 {{#if SPECIAL_TERMS}}
-<div class="section-mark">■ 特約</div>
-<div class="terms-box" style="margin-top:4px;">
-  <div style="white-space:pre-wrap;">{{SPECIAL_TERMS}}</div>
-</div>
+<p class="section-mark">■ 特約</p>
+<table class="box" cellspacing="0" cellpadding="0"><tr><td style="white-space:pre-wrap;">{{SPECIAL_TERMS}}</td></tr></table>
 {{/if}}
 
 <!-- ===== 備考 ===== -->
 {{#if REMARKS}}
-<div class="section-mark">■ 備考</div>
-<div class="terms-box" style="margin-top:4px;">
-  {{#if REMARKS_FIXED}}<div style="white-space:pre-wrap;">{{REMARKS_FIXED}}</div>{{/if}}
-  {{#if REMARKS_FREE}}<div style="white-space:pre-wrap; margin-top:{{#if REMARKS_FIXED}}8px{{else}}0{{/if}};">{{REMARKS_FREE}}</div>{{/if}}
-  {{#unless (or REMARKS_FIXED REMARKS_FREE)}}<div style="white-space:pre-wrap;">{{REMARKS}}</div>{{/unless}}
-</div>
+<p class="section-mark">■ 備考</p>
+<table class="box" cellspacing="0" cellpadding="0"><tr><td>
+  {{#if REMARKS_FIXED}}<p style="white-space:pre-wrap; margin:0;">{{REMARKS_FIXED}}</p>{{/if}}
+  {{#if REMARKS_FREE}}<p style="white-space:pre-wrap; margin:{{#if REMARKS_FIXED}}8px{{else}}0{{/if}} 0 0;">{{REMARKS_FREE}}</p>{{/if}}
+  {{#unless (or REMARKS_FIXED REMARKS_FREE)}}<p style="white-space:pre-wrap; margin:0;">{{REMARKS}}</p>{{/unless}}
+</td></tr></table>
 {{/if}}
 
 <!-- ===== 通知先 ===== -->
-<div class="section-mark">■ 通知先</div>
+<p class="section-mark">■ 通知先</p>
 <table class="summary compact">
   <tr>
     <th>発注先（受注者）</th>
@@ -523,7 +542,7 @@ SELECT t.template_key AS ひな形, v.version_no AS 版, v.id AS 版id,
        (strpos(v.html_source, 'data-layout="po-v3-2026-09"') > 0) AS 新レイアウト,
        (strpos(v.html_source, 'class="page-break"') > 0) AS 改ページ,
        (strpos(v.html_source, '■ 受領確認（承諾）') > 0) AS 承諾欄,
-       (strpos(v.html_source, '発注者（甲）') > 0) AS 甲乙署名欄,
+       (strpos(v.html_source, 'sign-both') > 0) AS 両者署名欄,
        (strpos(v.html_source, '■ 利用許諾条件') > 0) AS 利用許諾条件,
        (strpos(v.html_source, 'class="sign-box"') = 0) AS 押印欄なし,
        jsonb_array_length(COALESCE(v.variables, '[]'::jsonb)) AS 項目数
