@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   accountTypeLabel, bankInfoLine, buildTemplateContext, calcMethodOf, deliveryLinesFrom,
-  lineFieldsFor, orderLinesFrom, rewardLabelOf, seedLines, splitSpec, suggestionsFor, summarizeDates, taxRateFor
+  lineFieldsFor, orderLinesFrom, rewardLabelOf, seedLines, splitSpec, suggestionsFor, summarizeDates, taxRateFor, templateWarnings
 } from "./template-context.js";
 import { computeInspectionTotals, inspectionTaxBreakdown, purchaseOrderTotals } from "./legacy-totals.js";
 
