@@ -645,7 +645,8 @@ export function MattersWorkspace(
                       onRecordEvent={(id) => { setEventCondition(id); goTab("events"); }}
                       onOpenPayments={() => goTab("payments")}
                       onRegisterAgreement={onRegisterAgreement}
-                      onOpenList={(k) => goTab(k)} />
+                      onOpenList={(k) => goTab(k)}
+                      channels={channels} isAdmin={isAdmin} />
                   )}
 
                   {tab === "grid" && (

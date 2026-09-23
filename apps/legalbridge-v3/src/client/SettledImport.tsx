@@ -576,6 +576,13 @@ export function SettledImport(
                 </tbody>
               </table>
             </div>
+            {batch.result.some((r) => r.status === "created") && (
+              <div className="note">
+                作った発注書と検収書を相手に送るには、案件を開いた最初の画面（取引先ごとの束）で、
+                その相手の「CloudSign でまとめて送る」を押します。発注書と検収書が 1 つの封筒に入り、
+                署名者には取引先の署名者（無ければ主担当）が入ります。
+              </div>
+            )}
             {batch.result.some((r) => r.status === "failed") && (
               <div className="note warn">
                 途中で落ちた束があります。<b>どこまで進んだかは「失敗（…）」の括弧</b>に出ています。

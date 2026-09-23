@@ -3,6 +3,7 @@ import { api, ApiError } from "./api.js";
 import { conditionAmountLabel } from "./ConditionLabel.js";
 import { useReadOnly } from "./read-only.js";
 import { SignSwitch, SignTag } from "./SignState.js";
+import { SendMany } from "./SendMany.js";
 import type { GridDocument, GridParty, GridRow } from "../server/matters/grid.js";
 import type { MatterDetail } from "../server/core/model.js";
 
@@ -132,6 +133,12 @@ interface Bundle {
   ordered: number;
   inspected: number;
   done: boolean;
+  /**
+   * 決定済みで CloudSign にまだ送っていない文書（発注書・検収書）。同じ発注書に
+   * 条件が何本も載っていれば 1 枚に数える。納品済みで発注書と検収書を一緒に
+   * 作った相手には、この 2 枚を 1 封筒で送るのが一番早い。
+   */
+  unsent: GridDocument[];
 }
 
 function CellView(
@@ -182,7 +189,7 @@ function agreementLabel(a: { kind: string; domain: string | null }): string {
 
 export function MatterBundles(
   { detail, reloadKey, onOpenCondition, onOpenDocument, onCompose, onRecordEvent, onOpenPayments,
-    onRegisterAgreement, onOpenList }: {
+    onRegisterAgreement, onOpenList, channels, isAdmin }: {
     detail: MatterDetail;
     reloadKey?: number;
     onOpenCondition?: (conditionId: number) => void;
@@ -195,6 +202,9 @@ export function MatterBundles(
     onRegisterAgreement?: (partyId: number, partyName: string | null) => void;
     /** 「一覧」タブへ（条件を作る・繋ぐはそちら）。 */
     onOpenList?: (kind: "conditions" | "events" | "documents" | "payments") => void;
+    /** 送る手段の状態（CloudSign が動くか）。無ければ送る釦は出さない。 */
+    channels?: Array<{ channel: string; mode: "off" | "dry_run" | "live"; configured: boolean }> | null;
+    isAdmin?: boolean;
   }
 ) {
   const readOnly = useReadOnly();
@@ -211,6 +221,8 @@ export function MatterBundles(
   const [signEditing, setSignEditing] = useState<number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [bump, setBump] = useState(0);
+  /** CloudSign でまとめて送っている束（取引先のキー）。 */
+  const [sendingParty, setSendingParty] = useState<string | null>(null);
 
   useEffect(() => {
     setError(null);
@@ -235,9 +247,14 @@ export function MatterBundles(
       const key = String(row.counterparty?.id ?? "none");
       const b = byParty.get(key) ?? {
         party: parties.find((p) => p.id === row.counterparty?.id) ?? null,
-        rows: [], stuck: 0, unpaid: 0, ordered: 0, inspected: 0, done: true
+        rows: [], stuck: 0, unpaid: 0, ordered: 0, inspected: 0, done: true, unsent: []
       };
       b.rows.push(row);
+      for (const d of [row.order, row.settlementDoc]) {
+        if (d && d.phase !== "draft" && d.sign.status === "unsent" && !b.unsent.some((x) => x.id === d.id)) {
+          b.unsent.push(d);
+        }
+      }
       const cells = cellsOf(row, matterId, {});
       if (Object.values(cells).some((c) => c.state === "now")) b.stuck += 1;
       if (row.settlement.targetAmount !== null && !row.settlement.done) {
@@ -409,6 +426,15 @@ export function MatterBundles(
                   <button className="btn btn-sm primary" disabled={readOnly}
                           onClick={() => onRegisterAgreement(p.id, p.name)}>契約を登録する</button>
                 )}
+                {p && b.unsent.length > 0 && channels && (
+                  <button className="btn btn-sm" disabled={readOnly || !isAdmin}
+                          title={isAdmin
+                            ? `決定済みで未送信の ${b.unsent.map((d) => d.documentNo ?? `#${d.id}`).join("・")} を 1 つの封筒で送ります`
+                            : "署名依頼は admin だけです"}
+                          onClick={() => setSendingParty(sendingParty === keyOf(b) ? null : keyOf(b))}>
+                    CloudSign でまとめて送る（{b.unsent.length} 枚）
+                  </button>
+                )}
                 {!single && (
                   <button className="btn btn-sm" onClick={() => toggle(b)}>
                     {open ? "畳む" : `${b.rows.length} 行を開く`}
@@ -416,6 +442,17 @@ export function MatterBundles(
                 )}
               </div>
             </div>
+            {sendingParty === keyOf(b) && p && channels && (
+              <div style={{ padding: "0 10px 10px" }}>
+                <SendMany
+                  title={`${p.name} へ ${b.unsent.length} 枚を 1 封筒で送る`}
+                  documents={b.unsent.map((d) => ({ id: d.id, documentNo: d.documentNo, counterparty: p.name }))}
+                  channels={channels} isAdmin={Boolean(isAdmin)}
+                  initialWay="cloudsign" prefillSigners
+                  onDone={() => { setSendingParty(null); setNotice(`${p.name}：CloudSign で送りました`); setBump((n) => n + 1); }}
+                  onClose={() => setSendingParty(null)} />
+              </div>
+            )}
             {open && (
               <div className="bchain-wrap">
                 <div className="bchain cols">
