@@ -67,7 +67,7 @@ export function CloudSignManual(
         ))}
       </div>
       {status === "executed" && hasAgreement === false && (
-        <div className="note warn">{no} は合意に繋がっていません。締結は合意の状態を動かすので、先に「つながり」から合意を付けてください。</div>
+        <div className="note">{no} は合意に繋がっていないので、締結はこの文書の状態としてだけ残ります（発注書・検収書はこれで足ります）。契約書なら先に「つながり」から合意を付けてください。</div>
       )}
       <div className="frow"><div className="flabel"><span>日付</span></div>
         <div className="fbody"><input type="date" value={at} onChange={(e) => setAt(e.target.value)} /></div></div>
@@ -78,7 +78,7 @@ export function CloudSignManual(
       <div className="frow"><div className="flabel"><span>ひとこと</span></div>
         <div className="fbody"><input value={note} placeholder="任意" onChange={(e) => setNote(e.target.value)} /></div></div>
       <div className="row">
-        <button className="btn primary" disabled={busy || (status === "executed" && hasAgreement === false)} onClick={() => void submit()}>
+        <button className="btn primary" disabled={busy} onClick={() => void submit()}>
           {LABEL[status]}と記録する
         </button>
         {onClose && <button className="btn" onClick={onClose}>閉じる</button>}

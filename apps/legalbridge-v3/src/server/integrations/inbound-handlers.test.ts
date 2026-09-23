@@ -57,12 +57,31 @@ test("送った覚えのない外部IDは黙って捨てず、理由を残す", 
   assert.equal(r.detail.documentRef, "unknown");
 });
 
-test("合意に紐づかない文書は状態を動かせない", async () => {
+test("合意に紐づかない文書は合意を動かさず、文書の状態としてだけ記録する", async () => {
   const db = build([sent({ agreement_id: null })]);
   const r = await handleCloudSign(db, { externalId: "cs-1", payload: { status: "completed" } });
-  assert.equal(r.applied, false);
+  assert.equal(r.applied, true);
   assert.match(String(r.detail.reason), /合意に紐づいていない/);
   assert.equal(r.detail.documentNo, "ARC-LIC-2026-0003");
+  assert.ok(!db.queries.some((q) => q.text.includes("UPDATE agreements")));
+  const audit = db.find("INSERT INTO audit_events")!;
+  assert.equal(audit.params[1], "cloudsign.applied");
+  assert.equal(audit.params[2], "document");
+  assert.equal(audit.params[3], 7);
+  const detail = JSON.parse(String(audit.params[5]));
+  assert.equal(detail.status, "executed");
+  assert.equal(detail.applied, true);
+});
+
+test("署名完了は文書にも残る（束の画面が読む）", async () => {
+  const db = build([sent()]);
+  await handleCloudSign(db, { externalId: "cs-1", payload: { status: "declined" } });
+  const audit = db.find("INSERT INTO audit_events")!;
+  assert.equal(audit.params[2], "document");
+  assert.equal(audit.params[3], 7);
+  const detail = JSON.parse(String(audit.params[5]));
+  assert.equal(detail.status, "terminated");
+  assert.equal(detail.agreementId, 4);
 });
 
 test("すでにその状態なら二度書かない", async () => {

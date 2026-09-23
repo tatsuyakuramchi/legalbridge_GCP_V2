@@ -128,10 +128,19 @@ test("締結を手で記録すると合意が executed になり、cloudsign.app
   assert.match(String(kept.params[7]), /締結した（手で記録）/);
 });
 
-test("合意に繋がっていない文書には締結を記録できない。下書きには何も記録できない", async () => {
-  await assert.rejects(
-    () => new DocumentSendService(manualDb("issued", null)).recordCloudSign(5, { status: "executed" }, "k"),
-    /合意に繋がっていない/);
+test("合意に繋がっていない文書の締結は、合意を動かさず文書の状態としてだけ残る。下書きには何も記録できない", async () => {
+  const db = manualDb("issued", null);
+  const r = await new DocumentSendService(db).recordCloudSign(5, { status: "executed", at: "2026-09-12" }, "k");
+  assert.equal(r.status, "executed");
+  assert.equal(r.agreementUpdated, false);
+  assert.equal(db.find("UPDATE agreements"), undefined, "合意が無いので動かすものが無い");
+  const audit = db.find("INSERT INTO audit_events")!;
+  assert.equal(audit.params[1], "cloudsign.applied");
+  assert.equal(audit.params[3], 5);
+  const detail = JSON.parse(String(audit.params[5]));
+  assert.equal(detail.status, "executed");
+  assert.equal(detail.applied, true);
+  assert.match(String(detail.reason), /文書の状態としてだけ/);
   await assert.rejects(
     () => new DocumentSendService(manualDb("draft")).recordCloudSign(5, { status: "sent" }, "k"),
     /決定済みの文書だけ/);
@@ -145,4 +154,19 @@ test("手で記録した署名依頼と締結は、段の説明に「手で記�
   assert.match(t.steps[2].detail, /システム外で送付/);
   assert.match(t.steps[3].detail, /手で記録/);
   assert.equal(t.hasAgreement, true);
+});
+
+test("未送信に戻すと cloudsign.applied（status=unsent・manual）が残り、合意は動かさない", async () => {
+  const db = manualDb();
+  const r = await new DocumentSendService(db).recordCloudSign(5, { status: "unsent", at: "2026-09-20", note: "送っていなかった" }, "k");
+  assert.equal(r.status, "unsent");
+  assert.equal(r.agreementUpdated, false);
+  assert.equal(db.find("UPDATE agreements"), undefined);
+  const audit = db.find("INSERT INTO audit_events")!;
+  assert.equal(audit.params[1], "cloudsign.applied");
+  const detail = JSON.parse(String(audit.params[5]));
+  assert.equal(detail.manual, true);
+  assert.equal(detail.status, "unsent");
+  assert.match(String(audit.params[6]), /^2026-09-20/);
+  assert.ok(db.find("INSERT INTO matter_communications"), "やり取りにも残す");
 });

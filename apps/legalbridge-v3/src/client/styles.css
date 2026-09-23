@@ -682,6 +682,11 @@ table.compact th,table.compact td{padding:4px 8px}
 .bcell.now .st{color:var(--out);font-weight:700}
 .bcell.wait .st{color:var(--warn)}
 .bcell .sub{color:var(--faint);font-size:11px}
+.bcell .sign{display:flex;flex-direction:column;gap:4px;align-items:flex-start}
+.tagbtn{cursor:pointer;font:inherit;line-height:inherit}
+.tagbtn:disabled{cursor:default;opacity:.6}
+.tagbtn .faint{font-weight:400;margin-left:2px}
+.signsw{display:flex;flex-direction:column;gap:6px;padding:8px;border:1px solid var(--line-strong);border-radius:6px;background:var(--surface);min-width:220px;font-weight:400;color:var(--ink)}
 .bcell .act{margin-top:3px}
 .bfold{border:1px solid var(--line);border-radius:8px;background:var(--sunken);padding:8px 14px;color:var(--muted);font-size:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .blegend{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:var(--muted)}

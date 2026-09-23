@@ -1,5 +1,6 @@
 import type { ConditionSettlement } from "../conditions/settlement.js";
 import { hasDrift } from "./drift.js";
+import type { SignState } from "../documents/sign-state.js";
 
 /**
  * 工程表の1行（条件1本）。
@@ -20,6 +21,8 @@ export interface GridDocument {
   documentNo: string | null;
   /** 画面に出す段階（下書き／決定済み／送信済み／訂正版あり）。 */
   phase: string;
+  /** CloudSign の状態（未送信／送信済／締結済／取下げ）。手で直せる。 */
+  sign: SignState;
   /**
    * 決定したときに焼き付いた税抜額。下書きは持たない（決定時に条件から引く）。
    * 条件の金額とのずれを見るのはこの値（drift.ts）。

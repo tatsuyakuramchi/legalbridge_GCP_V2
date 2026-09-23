@@ -16,7 +16,8 @@ const settlement = (over: Partial<GridRow["settlement"]> = {}): GridRow["settlem
 const doc = (over: Partial<NonNullable<GridRow["order"]>> = {}) => ({
   id: 1, documentNo: "ARC-PO-2026-1033", phase: "decided",
   amountExTax: 120000, conditionCount: 1, siblingCount: 1,
-  deliveryOn: null, inspectionOn: null, paymentOn: null, ...over
+  deliveryOn: null, inspectionOn: null, paymentOn: null,
+  sign: { status: "unsent" as const, at: null, source: null }, ...over
 });
 
 const row = (over: Partial<GridRow> = {}): GridRow => ({

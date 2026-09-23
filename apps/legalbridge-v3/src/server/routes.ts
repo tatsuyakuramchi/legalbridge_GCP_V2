@@ -3497,10 +3497,11 @@ export function createRoutes(database: Transactable) {
 
   /**
    * システム外で扱った CloudSign の状態を手で記録する（予備系で連携が無いとき）。
-   * sent＝署名依頼を送った、executed＝締結した、terminated＝辞退・取下げ。
+   * sent＝署名依頼を送った、executed＝締結した、terminated＝辞退・取下げ、
+   * unsent＝未送信に戻す（CloudSign の記録が古い・間違っているとき）。
    */
   const cloudSignManualSchema = z.object({
-    status: z.enum(["sent", "executed", "terminated"]),
+    status: z.enum(["sent", "executed", "terminated", "unsent"]),
     at: z.string().date().nullable().optional(),
     externalId: z.string().trim().max(120).nullable().optional(),
     signer: z.string().trim().max(200).nullable().optional(),

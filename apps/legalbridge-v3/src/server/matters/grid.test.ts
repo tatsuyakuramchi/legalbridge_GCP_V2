@@ -26,7 +26,7 @@ test("段ごとの「まだ」の判定", () => {
   assert.equal(isPending(bare, "payment"), true);
 
   // 下書きの発注書も「ある」。作り直すのは訂正版の話で、この画面の仕事ではない。
-  const drafted = row({ order: { id: 5, documentNo: null, phase: "draft", amountExTax: null, conditionCount: 1, siblingCount: 1, deliveryOn: null, inspectionOn: null, paymentOn: null } });
+  const drafted = row({ order: { id: 5, documentNo: null, phase: "draft", amountExTax: null, conditionCount: 1, siblingCount: 1, deliveryOn: null, inspectionOn: null, paymentOn: null, sign: { status: "unsent", at: null, source: null } } });
   assert.equal(isPending(drafted, "order"), false);
 
   // 予定は、回があって全部消化していれば済み。
@@ -46,9 +46,9 @@ test("払い切った条件は、段が空でも「まだ」に数えない", ()
 
 test("段で絞ると、その段が空の行だけが残る", () => {
   const rows = [
-    row({ conditionId: 1, order: { id: 1, documentNo: "PO-1", phase: "decided", amountExTax: null, conditionCount: 1, siblingCount: 1, deliveryOn: null, inspectionOn: null, paymentOn: null } }),
+    row({ conditionId: 1, order: { id: 1, documentNo: "PO-1", phase: "decided", amountExTax: null, conditionCount: 1, siblingCount: 1, deliveryOn: null, inspectionOn: null, paymentOn: null, sign: { status: "unsent", at: null, source: null } } }),
     row({ conditionId: 2 }),
-    row({ conditionId: 3, order: { id: 3, documentNo: "PO-3", phase: "draft", amountExTax: null, conditionCount: 1, siblingCount: 1, deliveryOn: null, inspectionOn: null, paymentOn: null },
+    row({ conditionId: 3, order: { id: 3, documentNo: "PO-3", phase: "draft", amountExTax: null, conditionCount: 1, siblingCount: 1, deliveryOn: null, inspectionOn: null, paymentOn: null, sign: { status: "unsent", at: null, source: null } },
           events: { count: 2, latestOn: "2026-09-01", latestId: 77, latestInspectedOn: "2026-09-01" } })
   ];
   assert.deepEqual(applyFilter(rows, "order").map((r) => r.conditionId), [2]);
@@ -59,7 +59,7 @@ test("段で絞ると、その段が空の行だけが残る", () => {
 test("札の件数は、押す前にどこに何件あるかを出す", () => {
   const rows = [
     row({ conditionId: 1, settlement: settlement({ state: "paid", done: true }) }),
-    row({ conditionId: 2, order: { id: 2, documentNo: "PO-2", phase: "decided", amountExTax: null, conditionCount: 1, siblingCount: 1, deliveryOn: null, inspectionOn: null, paymentOn: null } }),
+    row({ conditionId: 2, order: { id: 2, documentNo: "PO-2", phase: "decided", amountExTax: null, conditionCount: 1, siblingCount: 1, deliveryOn: null, inspectionOn: null, paymentOn: null, sign: { status: "unsent", at: null, source: null } } }),
     row({ conditionId: 3 })
   ];
   const counts = filterCounts(rows);
@@ -76,7 +76,7 @@ test("札の件数は、押す前にどこに何件あるかを出す", () => {
 test("取引先でまとめると、社ごとの小計が付く", () => {
   const rows = [
     row({ conditionId: 1, counterparty: { id: 10, name: "みなも工房" },
-          order: { id: 1, documentNo: "PO-1", phase: "decided", amountExTax: null, conditionCount: 1, siblingCount: 1, deliveryOn: null, inspectionOn: null, paymentOn: null },
+          order: { id: 1, documentNo: "PO-1", phase: "decided", amountExTax: null, conditionCount: 1, siblingCount: 1, deliveryOn: null, inspectionOn: null, paymentOn: null, sign: { status: "unsent", at: null, source: null } },
           payment: { id: 1, paymentNo: "PY-1", status: "paid", dueOn: null, note: null, amount: null, paidOn: null } }),
     row({ conditionId: 2, counterparty: { id: 20, name: "夜半堂" } }),
     row({ conditionId: 3, counterparty: { id: 10, name: "みなも工房" } }),

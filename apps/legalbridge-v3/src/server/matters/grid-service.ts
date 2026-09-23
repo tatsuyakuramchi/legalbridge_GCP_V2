@@ -3,6 +3,7 @@ import { dateStr, int, str } from "../core/db.js";
 import { translate } from "../core/errors.js";
 import { SETTLEMENT_COLUMNS, SETTLEMENT_LATERAL_SQL, settlementOf } from "../conditions/settlement.js";
 import { phaseOf } from "../documents/repository.js";
+import { signStateOf, signStateSql } from "../documents/sign-state.js";
 import type { GridDocument, GridParty, GridRow } from "./grid.js";
 
 /**
@@ -75,7 +76,9 @@ const documentLateral = (alias: string, keys: string) => `
            NULLIF(d.rendered_values ->> 'PAYMENT_DATE', '') AS payment_on,
            (SELECT max(a.occurred_at) FROM audit_events a
              WHERE a.target_type = 'document' AND a.target_id = d.id
-               AND a.action IN ('gmail.send', 'cloudsign.send')) AS sent_at
+               AND a.action IN ('gmail.send', 'cloudsign.send')) AS sent_at,
+           -- CloudSign の状態（送った／締結／取下げ）。束の画面に出す。
+           ${signStateSql("d.id")} AS sign
       FROM document_conditions dc
       JOIN documents d ON d.id = dc.document_id
       JOIN document_template_versions tv ON tv.id = d.template_version_id
@@ -94,6 +97,7 @@ const doc = (row: Record<string, any>, prefix: string): GridDocument | null => {
     id,
     documentNo: str(row[`${prefix}_no`]),
     phase: phaseOf(String(row[`${prefix}_status`]), row[`${prefix}_sent_at`]),
+    sign: signStateOf(row[`${prefix}_sign`]),
     amountExTax: int(row[`${prefix}_amount_ex_tax`]),
     conditionCount: Number(row[`${prefix}_condition_count`] ?? 1),
     siblingCount: Number(row[`${prefix}_sibling_count`] ?? 1),
@@ -119,14 +123,14 @@ export const GRID_COLUMNS = `c.id, c.condition_no, c.name, c.kind, c.status, c.c
                 ev.count AS event_count, ev.latest_on AS event_latest_on, ev.latest_id AS event_latest_id,
                 ev.latest_inspected_on AS event_latest_inspected_on,
                 po.id AS order_id, po.document_no AS order_no, po.status AS order_status,
-                po.sent_at AS order_sent_at,
+                po.sent_at AS order_sent_at, po.sign AS order_sign,
                 po.amount_ex_tax AS order_amount_ex_tax,
                 po.condition_count AS order_condition_count,
                 po.sibling_count AS order_sibling_count,
                 po.delivery_on AS order_delivery_on, po.inspection_on AS order_inspection_on,
                 po.payment_on AS order_payment_on,
                 rs.id AS result_id, rs.document_no AS result_no, rs.status AS result_status,
-                rs.sent_at AS result_sent_at,
+                rs.sent_at AS result_sent_at, rs.sign AS result_sign,
                 rs.amount_ex_tax AS result_amount_ex_tax,
                 rs.condition_count AS result_condition_count,
                 rs.sibling_count AS result_sibling_count,

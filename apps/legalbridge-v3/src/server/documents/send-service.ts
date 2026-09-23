@@ -113,7 +113,7 @@ export class DocumentSendService {
    */
   async recordCloudSign(
     documentId: number,
-    input: { status: "sent" | "executed" | "terminated"; at?: string | null;
+    input: { status: "sent" | "executed" | "terminated" | "unsent"; at?: string | null;
              externalId?: string | null; signer?: string | null; note?: string | null },
     actor: string
   ): Promise<{ id: number; status: string; agreementUpdated: boolean }> {
@@ -154,11 +154,29 @@ export class DocumentSendService {
           return { id: documentId, status: "sent", agreementUpdated: false };
         }
 
-        // 締結・辞退。動かすのは合意の状態（文書は出力物）。合意が無ければ記録だけ残す。
-        if (input.status === "executed" && !agreementId) {
-          throw new DomainError("VALIDATION",
-            `${no} は合意に繋がっていないので、締結を記録できません。「つながり」から合意を付けてから記録してください`);
+        // 未送信に戻す。CloudSign の記録が古い・間違っているときに、人が現状を
+        // 上書きする。合意には触らない（送っていないものを締結とは言わない）。
+        if (input.status === "unsent") {
+          await recordAudit(client, {
+            actor, action: "cloudsign.applied", targetType: "document", targetId: documentId, occurredAt: at,
+            detail: { manual: true, applied: false, status: "unsent", documentId, documentNo: no, note,
+                      reason: "未送信に戻した（手で記録）" }
+          });
+          if (matterId) {
+            await recordCommunication(client, {
+              matterId, channel: "cloudsign", direction: "out", actor,
+              counterpart: signer ?? "", subject: `${no} の CloudSign の状態`,
+              body: `${no} の CloudSign の状態を未送信に戻した（手で記録）${note ? `：${note}` : ""}`,
+              externalRef: externalId, documentId,
+              evidence: { manual: true, status: "unsent", at: input.at ?? null }
+            });
+          }
+          return { id: documentId, status: "unsent", agreementUpdated: false };
         }
+
+        // 締結・辞退。合意に繋がっていれば合意の状態を動かす（文書は出力物）。
+        // 発注書や検収書のように合意を持たない文書は、文書の状態としてだけ残す。
+        // 束の画面はこの記録を読むので、合意が無くても「締結済」と出る。
         let agreementUpdated = false;
         if (agreementId) {
           const updated = await client.query(
@@ -174,7 +192,7 @@ export class DocumentSendService {
           actor, action: "cloudsign.applied", targetType: "document", targetId: documentId, occurredAt: at,
           detail: { manual: true, applied: agreementUpdated || input.status === "executed", status: input.status,
                     documentId, documentNo: no, agreementId, externalId, note,
-                    ...(agreementId ? {} : { reason: "合意に繋がっていないため状態は動かしていない" }) }
+                    ...(agreementId ? {} : { reason: "合意に繋がっていないので、文書の状態としてだけ記録" }) }
         });
         if (matterId) {
           const label = input.status === "executed" ? "締結した" : "辞退・取下げになった";

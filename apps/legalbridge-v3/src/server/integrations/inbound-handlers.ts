@@ -62,11 +62,23 @@ export async function handleCloudSign(
   if (!row) {
     return { applied: false, detail: { reason: "この外部IDで送った文書が見つからない", documentRef, status } };
   }
+  // 文書そのものにも結果を残す。発注書や検収書は合意を持たないので、合意の
+  // 状態だけでは「この 1 枚が締結されたか」が読めない。束の画面はこれを読む。
+  const documentId = Number(row.document_id);
+  const stamp = async (applied: boolean, extra: Record<string, unknown>) => {
+    await recordAudit(client, {
+      actor: "system", action: "cloudsign.applied", targetType: "document", targetId: documentId,
+      detail: { status, applied, externalId: documentRef, documentId, documentNo: row.document_no,
+                agreementId: row.agreement_id ? Number(row.agreement_id) : null, ...extra }
+    });
+  };
+
   if (!row.agreement_id) {
+    await stamp(true, { reason: "合意に紐づいていないので、文書の状態としてだけ記録" });
     return {
-      applied: false,
-      detail: { reason: "文書が合意に紐づいていないため状態を動かせない",
-                documentId: Number(row.document_id), documentNo: row.document_no, status }
+      applied: true,
+      detail: { reason: "文書が合意に紐づいていないため合意は動かさず、文書の状態だけ記録した",
+                documentId, documentNo: row.document_no, status }
     };
   }
 
@@ -74,6 +86,7 @@ export async function handleCloudSign(
     `UPDATE agreements SET status = $2, updated_at = now()
       WHERE id = $1 AND status <> $2 RETURNING agreement_no, status`,
     [row.agreement_id, status]);
+  await stamp(true, {});
 
   return {
     applied: (updated.rowCount ?? 0) > 0,

@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "./api.js";
 import { conditionAmountLabel } from "./ConditionLabel.js";
 import { useReadOnly } from "./read-only.js";
-import type { GridParty, GridRow } from "../server/matters/grid.js";
+import { SignSwitch, SignTag } from "./SignState.js";
+import type { GridDocument, GridParty, GridRow } from "../server/matters/grid.js";
 import type { MatterDetail } from "../server/core/model.js";
 
 /**
@@ -29,6 +30,8 @@ interface Cell {
   action?: { label: string; run: () => void } | null;
   /** 番号を押したときに開く文書。 */
   open?: (() => void) | null;
+  /** 決定済みの文書。CloudSign の状態の札を出し、手で直せるようにする。 */
+  doc?: GridDocument | null;
 }
 
 const yen = (n: number) => `¥${n.toLocaleString("ja-JP")}`;
@@ -65,7 +68,8 @@ function cellsOf(
   } else {
     order = { state: "ok", label: row.order.documentNo ?? `#${row.order.id}`,
       sub: row.order.conditionCount > 1 ? `同じ発注書（${row.order.conditionCount} 本）` : null,
-      open: h.onOpenDocument ? () => h.onOpenDocument!(row.order!.id) : null };
+      open: h.onOpenDocument ? () => h.onOpenDocument!(row.order!.id) : null,
+      doc: row.order };
   }
 
   // 納品（実績）。
@@ -87,7 +91,8 @@ function cellsOf(
       label: row.settlementDoc.documentNo ?? `#${row.settlementDoc.id}`,
       sub: row.settlementDoc.phase === "draft" ? "下書き"
         : row.settlementDoc.amountExTax !== null ? yen(row.settlementDoc.amountExTax) : null,
-      open: h.onOpenDocument ? () => h.onOpenDocument!(row.settlementDoc!.id) : null };
+      open: h.onOpenDocument ? () => h.onOpenDocument!(row.settlementDoc!.id) : null,
+      doc: row.settlementDoc.phase === "draft" ? null : row.settlementDoc };
   } else if (row.events.count) {
     settlement = now({ state: "now", label: "実績はあるが未作成",
       action: h.onRecordEvent ? { label: "検収書を作る", run: () => h.onRecordEvent!(id) } : null });
@@ -129,7 +134,15 @@ interface Bundle {
   done: boolean;
 }
 
-function CellView({ cell, last }: { cell: Cell; last?: boolean }) {
+function CellView(
+  { cell, last, sign }: {
+    cell: Cell; last?: boolean;
+    /** CloudSign の札。editing がこの文書ならスイッチを開く。 */
+    sign?: { editing: number | null; open: (id: number) => void; close: () => void;
+             done: (message: string) => void; readOnly: boolean } | null;
+  }
+) {
+  const d = cell.doc ?? null;
   return (
     <div className={`bcell ${cell.state}${last ? " last" : ""}`}>
       <div className="st">
@@ -140,6 +153,16 @@ function CellView({ cell, last }: { cell: Cell; last?: boolean }) {
           : <span>{cell.label}</span>}
       </div>
       {cell.sub && <div className="sub">{cell.sub}</div>}
+      {d && sign && (
+        <div className="sign">
+          <SignTag sign={d.sign} disabled={sign.readOnly}
+                   onClick={() => (sign.editing === d.id ? sign.close() : sign.open(d.id))} />
+          {sign.editing === d.id && (
+            <SignSwitch documentId={d.id} documentNo={d.documentNo} current={d.sign}
+                        onDone={sign.done} onClose={sign.close} />
+          )}
+        </div>
+      )}
       {cell.action && (
         <div className="act">
           <button type="button" className={`btn btn-sm${cell.state === "now" ? " primary" : ""}`}
@@ -184,16 +207,26 @@ export function MatterBundles(
   const [q, setQ] = useState("");
   /** 開いている束。既定は詰まりと未払のある束だけ。 */
   const [opened, setOpened] = useState<Set<string> | null>(null);
+  /** CloudSign の状態を手で直しているセル（文書 id）。 */
+  const [signEditing, setSignEditing] = useState<number | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [bump, setBump] = useState(0);
 
   useEffect(() => {
     setError(null);
     api.get<{ rows: GridRow[]; parties: GridParty[] }>(`/matters/${matterId}/grid`)
       .then((r) => { setRows(r.rows); setParties(r.parties ?? []); })
       .catch((e: ApiError) => { setError(e.message); setRows([]); });
-  }, [matterId, reloadKey]);
+  }, [matterId, reloadKey, bump]);
   useEffect(() => { setOpened(null); setFilter("all"); setQ(""); }, [matterId]);
 
   const h = { onOpenDocument, onCompose, onRecordEvent, onOpenPayments };
+  const sign = {
+    editing: signEditing, readOnly,
+    open: (id: number) => setSignEditing(id),
+    close: () => setSignEditing(null),
+    done: (message: string) => { setSignEditing(null); setNotice(message); setBump((n) => n + 1); }
+  };
 
   const bundles = useMemo<Bundle[]>(() => {
     if (!rows) return [];
@@ -288,9 +321,9 @@ export function MatterBundles(
           <span className="faint code">{row.conditionNo ?? `#${row.conditionId}`} ／ {conditionAmountLabel(row)}</span>
           {row.settlement.done && <span className="tag ok" style={{ marginTop: 2 }}>払い切り</span>}
         </div>
-        <CellView cell={cells.order} />
+        <CellView cell={cells.order} sign={sign} />
         <CellView cell={cells.delivery} />
-        <CellView cell={cells.settlement} />
+        <CellView cell={cells.settlement} sign={sign} />
         <CellView cell={cells.payment} />
         <div className="faint">{row.payment?.note ?? ""}</div>
       </div>
@@ -299,6 +332,12 @@ export function MatterBundles(
 
   return (
     <div className="stack" style={{ gap: 10 }}>
+      {notice && (
+        <div className="note ok row" style={{ justifyContent: "space-between" }}>
+          <span>{notice}</span>
+          <button type="button" className="linky" onClick={() => setNotice(null)}>閉じる</button>
+        </div>
+      )}
       <div className="bkpi">
         <div><div className="faint">取引先</div><div className="n">{kpi.parties}</div></div>
         <div><div className="faint">条件</div><div className="n">{kpi.conditions}</div></div>
@@ -402,6 +441,7 @@ export function MatterBundles(
         <span><i style={{ background: "var(--warn)" }}></i>待ち（支払待ち）</span>
         <span><i style={{ background: "var(--ok)" }}></i>済</span>
         <span><i style={{ background: "var(--line-strong)" }}></i>まだ</span>
+        <span><span className="tag ghost">CS</span> CloudSign の状態（未送信／送信済／締結済／取下げ）。押すと手で直せます</span>
         {onOpenList && (
           <button className="linky" style={{ marginLeft: "auto" }} onClick={() => onOpenList("conditions")}>
             種類別の表（条件明細・実績・文書・支払）は「一覧」へ
