@@ -11,7 +11,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
 const body = readFileSync(join(root, "templates/purchase_order_v3_body.html"), "utf8").trimEnd();
 const css = readFileSync(join(root, "templates/purchase_order_v3_css.txt"), "utf8").trimEnd();
-const MARK = 'data-layout="po-v3-2026-09"';
+const MARK = 'data-layout="po-v3-2026-09r2"';
+// 同じレイアウトの古い改訂（r1 …）を見分ける目印。これがあれば「置き換え」になる。
+const FAMILY = 'data-layout="po-v3';
 if (!body.includes(MARK)) throw new Error(`本文に目印 ${MARK} がありません`);
 for (const [name, text] of [["本文", body], ["CSS", css]]) {
   if (text.includes("$q$")) throw new Error(`${name}に $q$ が含まれています（引用符と衝突）`);
@@ -38,7 +40,9 @@ const sql = `-- ================================================================
 --   やり方は 120・137 と同じ。現行版の <head>（CSS）を残して </style> の前に
 --   CSS を足し、<body>…</body> を丸ごと置き換えた新しい版を作って
 --   current_version_id を差し替える。項目の宣言（variables）は現行版のまま。
---   適用済み（本文に ${MARK} がある）なら何もしない。
+--   適用済み（本文に ${MARK} がある）なら何もしない。同じレイアウトの
+--   古い改訂（甲乙ありの版など）が入っていれば、147 より前の版の head を
+--   下敷きにして新しい改訂に置き換える（手で前の版に戻さなくてよい）。
 --
 --   実行: Cloud SQL Studio にそのまま貼る／ローカルは
 --         docker compose run --rm ops sql /v3/147_po_layout_v3.sql
@@ -59,6 +63,8 @@ DECLARE
   tpl_id bigint;
   from_version bigint;
   from_no int;
+  base_version bigint;
+  base_no int;
   next_no int;
   new_id bigint;
   body_pos int;
@@ -77,6 +83,18 @@ BEGIN
   IF strpos(src, '${MARK}') > 0 THEN
     RAISE NOTICE '147: 適用済み（本文に ${MARK} がある）。何もしません';
     RETURN;
+  END IF;
+  -- 同じレイアウトの古い改訂が入っていれば、147 より前の版（元の head/CSS を
+  -- 持つ版）を下敷きにして置き換える。手で前の版に戻す必要はない。
+  IF strpos(src, '${FAMILY}') > 0 THEN
+    SELECT v.id, v.version_no, v.html_source INTO base_version, base_no, src
+      FROM v3.document_template_versions v
+     WHERE v.template_id = tpl_id AND strpos(v.html_source, '${FAMILY}') = 0
+     ORDER BY v.version_no DESC LIMIT 1;
+    IF src IS NULL THEN
+      RAISE EXCEPTION '147 より前の版が見つかりません（146 で書き出した本文から作り直してください）';
+    END IF;
+    RAISE NOTICE '147: 古い改訂（版 %）を置き換える。head は版 % から', from_no, base_no;
   END IF;
   body_pos := strpos(src, '<body');
   IF body_pos = 0 THEN

@@ -19,7 +19,9 @@
 --   やり方は 120・137 と同じ。現行版の <head>（CSS）を残して </style> の前に
 --   CSS を足し、<body>…</body> を丸ごと置き換えた新しい版を作って
 --   current_version_id を差し替える。項目の宣言（variables）は現行版のまま。
---   適用済み（本文に data-layout="po-v3-2026-09" がある）なら何もしない。
+--   適用済み（本文に data-layout="po-v3-2026-09r2" がある）なら何もしない。同じレイアウトの
+--   古い改訂（甲乙ありの版など）が入っていれば、147 より前の版の head を
+--   下敷きにして新しい改訂に置き換える（手で前の版に戻さなくてよい）。
 --
 --   実行: Cloud SQL Studio にそのまま貼る／ローカルは
 --         docker compose run --rm ops sql /v3/147_po_layout_v3.sql
@@ -40,6 +42,8 @@ DECLARE
   tpl_id bigint;
   from_version bigint;
   from_no int;
+  base_version bigint;
+  base_no int;
   next_no int;
   new_id bigint;
   body_pos int;
@@ -89,7 +93,7 @@ DECLARE
   table.items thead { display: table-header-group; }
   table.items tr, table.box { page-break-inside: avoid; break-inside: avoid-page; }
 $q$;
-  new_body constant text := $q$<body data-layout="po-v3-2026-09">
+  new_body constant text := $q$<body data-layout="po-v3-2026-09r2">
 
 <!-- ===== ヘッダ ===== -->
 <div class="doc-head">
@@ -508,9 +512,21 @@ BEGIN
   IF src IS NULL THEN
     RAISE EXCEPTION 'purchase_order のひな形が見つかりません';
   END IF;
-  IF strpos(src, 'data-layout="po-v3-2026-09"') > 0 THEN
-    RAISE NOTICE '147: 適用済み（本文に data-layout="po-v3-2026-09" がある）。何もしません';
+  IF strpos(src, 'data-layout="po-v3-2026-09r2"') > 0 THEN
+    RAISE NOTICE '147: 適用済み（本文に data-layout="po-v3-2026-09r2" がある）。何もしません';
     RETURN;
+  END IF;
+  -- 同じレイアウトの古い改訂が入っていれば、147 より前の版（元の head/CSS を
+  -- 持つ版）を下敷きにして置き換える。手で前の版に戻す必要はない。
+  IF strpos(src, 'data-layout="po-v3') > 0 THEN
+    SELECT v.id, v.version_no, v.html_source INTO base_version, base_no, src
+      FROM v3.document_template_versions v
+     WHERE v.template_id = tpl_id AND strpos(v.html_source, 'data-layout="po-v3') = 0
+     ORDER BY v.version_no DESC LIMIT 1;
+    IF src IS NULL THEN
+      RAISE EXCEPTION '147 より前の版が見つかりません（146 で書き出した本文から作り直してください）';
+    END IF;
+    RAISE NOTICE '147: 古い改訂（版 %）を置き換える。head は版 % から', from_no, base_no;
   END IF;
   body_pos := strpos(src, '<body');
   IF body_pos = 0 THEN
@@ -539,7 +555,7 @@ COMMIT;
 
 -- 確認：現行版に目印があり、承諾欄・署名欄・利用許諾条件・改ページが揃っていること
 SELECT t.template_key AS ひな形, v.version_no AS 版, v.id AS 版id,
-       (strpos(v.html_source, 'data-layout="po-v3-2026-09"') > 0) AS 新レイアウト,
+       (strpos(v.html_source, 'data-layout="po-v3-2026-09r2"') > 0) AS 新レイアウト,
        (strpos(v.html_source, 'class="page-break"') > 0) AS 改ページ,
        (strpos(v.html_source, '■ 受領確認（承諾）') > 0) AS 承諾欄,
        (strpos(v.html_source, 'sign-both') > 0) AS 両者署名欄,
