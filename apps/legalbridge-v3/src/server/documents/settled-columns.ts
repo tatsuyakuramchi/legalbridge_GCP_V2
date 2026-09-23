@@ -67,8 +67,8 @@ export const SETTLED_COLUMNS: Array<{
   { key: "payment_terms", label: "支払条件", note: "例: 月末締め翌月末払い" },
   { key: "deliverable_ownership", label: "成果物の帰属先",
     note: "発注者 か 受注者。空ならその行に帰属先を出さない" },
-  { key: "orderSign", label: "発注署名欄", note: "あり / なし。空なら なし" },
-  { key: "acceptSign", label: "承諾署名欄", note: "あり / なし。空なら なし" },
+  { key: "orderSign", label: "発注署名欄", note: "あり / なし。空なら なし（発注者は署名しない）" },
+  { key: "acceptSign", label: "承諾署名欄", note: "あり / なし。空なら あり（受注者だけが署名する欄）" },
   // 特約は毎回同じ文面を貼ることが多いので、定型文の名前でも呼べるようにする。
   { key: "specialTermsSnippet", label: "特約の定型文",
     note: "定型文（特約）の名前。全行に長文を貼らずに済む" },

@@ -452,9 +452,21 @@ test("検収書の見出しの料率・帰属先は、条件が1件に決まる�
     reward_label: "利用許諾料", rate_pct: 8
   });
   assert.deepEqual(suggestionsFor("purchase_order", context), {
+    SHOW_SIGN_SECTION: true, SHOW_ORDER_SIGN_SECTION: false,
     calc_method: "ROYALTY", deliverable_ownership: "受注者",
     reward_label: "利用許諾料", rate_pct: 8
   });
+});
+
+test("発注書の署名欄は、承諾署名欄だけを出すのが既定（条件が決まらなくても）", () => {
+  // 両方の既定が「あり」だと、CSV で欄を空にしたまま作った発注書に
+  // 発注者も署名する欄と受注者だけが署名する欄の両方が刷られる。
+  assert.deepEqual(suggestionsFor("purchase_order", { conditions: [] }),
+    { SHOW_SIGN_SECTION: true, SHOW_ORDER_SIGN_SECTION: false });
+  assert.deepEqual(suggestionsFor("intl_purchase_order", { conditions: [] }),
+    { SHOW_SIGN_SECTION: true, SHOW_ORDER_SIGN_SECTION: false });
+  // 検収書の署名欄は金額が変わったときだけ（計算で決める）ので、ここでは触らない。
+  assert.deepEqual(suggestionsFor("inspection_certificate", { conditions: [] }), {});
 });
 
 test("条件が複数なら見出しの料率は埋めない（行ごとに違う）", () => {

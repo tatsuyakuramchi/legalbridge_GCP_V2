@@ -673,10 +673,17 @@ export function suggestionsFor(
   // 条件が1件に決まるときは台帳から引ける。ここを空のまま出すと「料率 ％」だけが
   // 残った紙になる。ひな形が from を持っていればそちらが勝つ。
   if (INSPECTION_KEYS.has(templateKey) || PURCHASE_ORDER_KEYS.has(templateKey)) {
+    // 発注書の署名欄。承諾署名欄（受注者だけが署名）を出し、発注署名欄（発注者
+    // も署名）は出さないのが普通の形。V2 のひな形は両方の既定が「あり」で、
+    // CSV で欄を空にしたまま作ると両方の署名欄が刷られた。人が欄で決めれば
+    // そちらが勝つ（手入力が先）。
+    const signDefaults = PURCHASE_ORDER_KEYS.has(templateKey)
+      ? { SHOW_SIGN_SECTION: true, SHOW_ORDER_SIGN_SECTION: false } : {};
     const condition = singleCondition(context) ?? context.condition;
-    if (!condition) return {};
+    if (!condition) return signDefaults;
     const reward = rewardLabelOf(condition);
     return {
+      ...signDefaults,
       calc_method: calcMethodOf(condition),
       ...(ownershipOf(condition) ? { deliverable_ownership: ownershipOf(condition) } : {}),
       ...(reward ? { reward_label: reward } : {}),

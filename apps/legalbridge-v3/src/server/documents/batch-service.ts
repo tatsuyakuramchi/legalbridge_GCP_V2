@@ -64,8 +64,8 @@ export const ORDER_COLUMNS: Array<{
   { key: "deliverable_ownership", label: "成果物の帰属先",
     note: "発注者 か 受注者。空ならその行に帰属先を出さない" },
   // 書類の見た目の切り替え。束ごとの値なので全行に同じものを書く。
-  { key: "orderSign", label: "発注署名欄", note: "あり / なし。空なら なし" },
-  { key: "acceptSign", label: "承諾署名欄", note: "あり / なし。空なら なし" },
+  { key: "orderSign", label: "発注署名欄", note: "あり / なし。空なら なし（発注者は署名しない）" },
+  { key: "acceptSign", label: "承諾署名欄", note: "あり / なし。空なら あり（受注者だけが署名する欄）" },
   { key: "calc_method", label: "支払方法", note: "固定額 だけ。空なら固定額" },
   { key: "remarks", label: "備考", note: "" },
   // 末尾。既に決定した発注書を直すときだけ使う。
