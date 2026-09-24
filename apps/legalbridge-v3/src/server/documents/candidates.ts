@@ -108,6 +108,12 @@ export function buildCandidates(context: Record<string, any>, templateKey?: stri
     add("振込先", "口座種別", ACCOUNT_TYPE[bank.accountType] ?? bank.accountType, "text");
     add("振込先", "口座番号", bank.accountNumber, "text");
     add("振込先", "口座名義（カナ）", bank.holderKana, "text");
+    // 海外送金（A-051）。空なら add が出さない。
+    add("振込先", "受取人名（英字）", bank.holderName, "text");
+    add("振込先", "SWIFT/BIC", bank.swiftBic, "text");
+    add("振込先", "IBAN", bank.iban, "text");
+    add("振込先", "Routing No.", bank.routingNumber, "text");
+    add("振込先", "銀行の住所", bank.address, "text");
     // 1行にまとめたもの。多くの書類はこの形で1行に書く。
     const line = [bank.bankName, bank.branchName,
                   ACCOUNT_TYPE[bank.accountType] ?? bank.accountType,

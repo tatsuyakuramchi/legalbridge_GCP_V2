@@ -1,4 +1,4 @@
-<body data-layout="ipo-v3-2026-09r1">
+<body data-layout="ipo-v3-2026-09r2">
 
 <!-- ===== ヘッダ ===== -->
 <div class="doc-head">
@@ -100,10 +100,14 @@
     <th>Payment Due</th>
     <td>{{#if payment_summary}}{{payment_summary}}{{else}}{{#if PAYMENT_DATE}}{{formatDateEn PAYMENT_DATE}}{{else}}See details{{/if}}{{/if}}</td>
   </tr>
-  {{#if BANK_NAME}}
+  {{#if (or BANK_NAME (or IBAN SWIFT_BIC))}}
   <tr>
     <th>Bank Account</th>
-    <td>Bank: {{BANK_NAME}}{{#if BRANCH_NAME}}, {{BRANCH_NAME}}{{/if}}{{#if SWIFT_CODE}}　SWIFT: {{SWIFT_CODE}}{{/if}}{{#if ACCOUNT_NUMBER}}　Account No.: {{ACCOUNT_NUMBER}}{{/if}}{{#if ACCOUNT_HOLDER_KANA}}　Beneficiary: {{ACCOUNT_HOLDER_KANA}}{{/if}}<div class="amount-note">Bank charges: the Purchaser bears remitting bank charges; the Contractor bears intermediary and receiving bank charges.</div></td>
+    <td><div class="bank-lines">
+      <div>{{#if BANK_NAME}}<b>{{BANK_NAME}}</b>{{/if}}{{#if BRANCH_NAME}}, {{BRANCH_NAME}}{{/if}}{{#if SWIFT_BIC}}<span class="sep">SWIFT/BIC: {{SWIFT_BIC}}</span>{{/if}}{{#if BANK_COUNTRY}}<span class="sep">Country: {{BANK_COUNTRY}}</span>{{/if}}</div>
+      <div>{{#if BENEFICIARY_NAME}}Beneficiary: {{BENEFICIARY_NAME}}{{/if}}{{#if ACCOUNT_NUMBER}}<span class="sep">Account No.: {{ACCOUNT_NUMBER}}</span>{{/if}}{{#if IBAN}}<span class="sep">IBAN: {{IBAN}}</span>{{/if}}{{#if ROUTING_NUMBER}}<span class="sep">Routing No.: {{ROUTING_NUMBER}}</span>{{/if}}{{#if BANK_CURRENCY}}<span class="sep">Currency: {{BANK_CURRENCY}}</span>{{/if}}</div>
+      {{#if (or BANK_ADDRESS (or INTERMEDIARY_BANK_NAME INTERMEDIARY_BANK_SWIFT))}}<div>{{#if BANK_ADDRESS}}Bank Address: {{BANK_ADDRESS}}{{/if}}{{#if (or INTERMEDIARY_BANK_NAME INTERMEDIARY_BANK_SWIFT)}}<span class="sep">Intermediary: {{INTERMEDIARY_BANK_NAME}}{{#if INTERMEDIARY_BANK_SWIFT}}{{#if INTERMEDIARY_BANK_NAME}} / {{/if}}SWIFT {{INTERMEDIARY_BANK_SWIFT}}{{/if}}</span>{{/if}}</div>{{/if}}
+    </div><div class="amount-note">Bank charges: the Purchaser bears remitting bank charges; the Contractor bears intermediary and receiving bank charges.</div></td>
   </tr>
   {{else}}{{#if BANK_INFO}}
   <tr>

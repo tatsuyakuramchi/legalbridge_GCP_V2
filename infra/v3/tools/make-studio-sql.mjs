@@ -285,6 +285,16 @@ SELECT * FROM (
            WHERE conrelid='v3.matters'::regclass AND conname='matters_business_line_chk'
              AND pg_get_constraintdef(oid) LIKE '%planning%')::text
   UNION ALL
+  SELECT 51, '海外の振込先（A-051。列 10 と CHECK 1 で 11 であること）',
+         ((SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='v3' AND table_name='party_bank_accounts'
+              AND column_name IN ('account_scope', 'account_holder_name', 'swift_bic', 'iban',
+                                  'routing_number', 'bank_country', 'bank_address', 'currency',
+                                  'intermediary_bank_swift', 'intermediary_bank_name'))
+        + (SELECT count(*) FROM pg_constraint
+            WHERE conrelid='v3.party_bank_accounts'::regclass
+              AND conname='party_bank_accounts_scope_chk'))::text
+  UNION ALL
   SELECT 33, '翻訳版再許諾と別途合意（A-033。列 1 と CHECK 1 で 2 であること）',
          ((SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='conditions' AND column_name = 'sublicense_consent')

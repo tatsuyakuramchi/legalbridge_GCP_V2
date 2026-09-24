@@ -9,8 +9,11 @@
 --     Attn）と Date（12pt が入る 44mm の下線）・Signature。押印欄は無い。
 --   ・発注署名欄＝あり なら同じ場所に Purchaser / Contractor の署名欄。
 --   ・金額は通貨コード付き（JPY 246,000 / USD 2,460.00）。日付は英語表記。
---   ・Bank Account は SWIFT / Account No. / Beneficiary、手数料は remitting＝発注者・
+--   ・Bank Account は取引先の海外口座（A-051）から Bank・Branch・SWIFT/BIC・Country／
+--     Beneficiary・Account No.・IBAN・Routing No.・Currency／Bank Address・Intermediary を
+--     小さめの 2〜3 行で出す（空の項目は出さない）。手数料は remitting＝発注者・
 --     receiving＝受注者。Withholding Tax は Applicable / Not applicable。
+--     r2：r1 は銀行名しか出なかった（SWIFT などの差し込み先が無かった）。
 --   ・約款（Standard Terms）の partial は現行版の本文にある {{> 名前}} を拾って
 --     同じ名前で差す。現行版に無ければ約款は付けない。
 --   ・CSS は全部を書く（現行版の head に頼らない）。
@@ -18,7 +21,7 @@
 --   やり方は 120・137 と同じ。現行版の <head>（CSS）を残して </style> の前に
 --   CSS を足し、<body>…</body> を丸ごと置き換えた新しい版を作って
 --   current_version_id を差し替える。項目の宣言（variables）は現行版のまま。
---   適用済み（本文に data-layout="ipo-v3-2026-09r1" がある）なら何もしない。同じレイアウトの
+--   適用済み（本文に data-layout="ipo-v3-2026-09r2" がある）なら何もしない。同じレイアウトの
 --   古い改訂が入っていれば、148 より前の版の head を下敷きにして
 --   新しい改訂に置き換える（手で前の版に戻さなくてよい）。
 --
@@ -74,6 +77,9 @@ DECLARE
   table.summary.compact th, table.summary.compact td { padding: 5px 8px; }
   .total-amount { font-size: 13pt; font-weight: 700; }
   .amount-note { font-size: 8.5pt; color: #555; }
+  /* 振込先（A-051）。1 ページ目に収めるため小さめ・詰めた行間で 2〜3 行に。 */
+  .bank-lines { font-size: 8.5pt; line-height: 1.35; }
+  .bank-lines .sep::before { content: " · "; color: #888; }
   table.items { width: 100%; font-size: 9pt; margin-top: 2px; table-layout: fixed; }
   table.items th { background: #f4f4f2; border: 1px solid #d9d9d9; padding: 6px 8px; color: #333; font-weight: 600; }
   table.items td { border: 1px solid #d9d9d9; padding: 6px 8px; vertical-align: top; }
@@ -112,7 +118,7 @@ DECLARE
   table.items thead { display: table-header-group; }
   table.items tr, table.box { page-break-inside: avoid; break-inside: avoid-page; }
 $q$;
-  new_body constant text := $q$<body data-layout="ipo-v3-2026-09r1">
+  new_body constant text := $q$<body data-layout="ipo-v3-2026-09r2">
 
 <!-- ===== ヘッダ ===== -->
 <div class="doc-head">
@@ -214,10 +220,14 @@ $q$;
     <th>Payment Due</th>
     <td>{{#if payment_summary}}{{payment_summary}}{{else}}{{#if PAYMENT_DATE}}{{formatDateEn PAYMENT_DATE}}{{else}}See details{{/if}}{{/if}}</td>
   </tr>
-  {{#if BANK_NAME}}
+  {{#if (or BANK_NAME (or IBAN SWIFT_BIC))}}
   <tr>
     <th>Bank Account</th>
-    <td>Bank: {{BANK_NAME}}{{#if BRANCH_NAME}}, {{BRANCH_NAME}}{{/if}}{{#if SWIFT_CODE}}　SWIFT: {{SWIFT_CODE}}{{/if}}{{#if ACCOUNT_NUMBER}}　Account No.: {{ACCOUNT_NUMBER}}{{/if}}{{#if ACCOUNT_HOLDER_KANA}}　Beneficiary: {{ACCOUNT_HOLDER_KANA}}{{/if}}<div class="amount-note">Bank charges: the Purchaser bears remitting bank charges; the Contractor bears intermediary and receiving bank charges.</div></td>
+    <td><div class="bank-lines">
+      <div>{{#if BANK_NAME}}<b>{{BANK_NAME}}</b>{{/if}}{{#if BRANCH_NAME}}, {{BRANCH_NAME}}{{/if}}{{#if SWIFT_BIC}}<span class="sep">SWIFT/BIC: {{SWIFT_BIC}}</span>{{/if}}{{#if BANK_COUNTRY}}<span class="sep">Country: {{BANK_COUNTRY}}</span>{{/if}}</div>
+      <div>{{#if BENEFICIARY_NAME}}Beneficiary: {{BENEFICIARY_NAME}}{{/if}}{{#if ACCOUNT_NUMBER}}<span class="sep">Account No.: {{ACCOUNT_NUMBER}}</span>{{/if}}{{#if IBAN}}<span class="sep">IBAN: {{IBAN}}</span>{{/if}}{{#if ROUTING_NUMBER}}<span class="sep">Routing No.: {{ROUTING_NUMBER}}</span>{{/if}}{{#if BANK_CURRENCY}}<span class="sep">Currency: {{BANK_CURRENCY}}</span>{{/if}}</div>
+      {{#if (or BANK_ADDRESS (or INTERMEDIARY_BANK_NAME INTERMEDIARY_BANK_SWIFT))}}<div>{{#if BANK_ADDRESS}}Bank Address: {{BANK_ADDRESS}}{{/if}}{{#if (or INTERMEDIARY_BANK_NAME INTERMEDIARY_BANK_SWIFT)}}<span class="sep">Intermediary: {{INTERMEDIARY_BANK_NAME}}{{#if INTERMEDIARY_BANK_SWIFT}}{{#if INTERMEDIARY_BANK_NAME}} / {{/if}}SWIFT {{INTERMEDIARY_BANK_SWIFT}}{{/if}}</span>{{/if}}</div>{{/if}}
+    </div><div class="amount-note">Bank charges: the Purchaser bears remitting bank charges; the Contractor bears intermediary and receiving bank charges.</div></td>
   </tr>
   {{else}}{{#if BANK_INFO}}
   <tr>
@@ -526,8 +536,8 @@ BEGIN
   IF src IS NULL THEN
     RAISE EXCEPTION 'intl_purchase_order のひな形が見つかりません';
   END IF;
-  IF strpos(src, 'data-layout="ipo-v3-2026-09r1"') > 0 THEN
-    RAISE NOTICE '148: 適用済み（本文に data-layout="ipo-v3-2026-09r1" がある）。何もしません';
+  IF strpos(src, 'data-layout="ipo-v3-2026-09r2"') > 0 THEN
+    RAISE NOTICE '148: 適用済み（本文に data-layout="ipo-v3-2026-09r2" がある）。何もしません';
     RETURN;
   END IF;
   -- 同じレイアウトの古い改訂が入っていれば、148 より前の版（元の head/CSS を
@@ -579,9 +589,10 @@ COMMIT;
 
 -- 確認：現行版に目印があり、承諾欄・署名欄・利用許諾条件・改ページが揃っていること
 SELECT t.template_key AS ひな形, v.version_no AS 版, v.id AS 版id,
-       (strpos(v.html_source, 'data-layout="ipo-v3-2026-09r1"') > 0) AS 新レイアウト,
+       (strpos(v.html_source, 'data-layout="ipo-v3-2026-09r2"') > 0) AS 新レイアウト,
        (strpos(v.html_source, 'class="page-break"') > 0) AS 改ページ,
        (strpos(v.html_source, '■ ACCEPTANCE') > 0) AS acceptance,
+       (strpos(v.html_source, 'SWIFT/BIC: {{SWIFT_BIC}}') > 0) AS bank_details,
        (strpos(v.html_source, 'sign-both') > 0) AS signatures,
        (strpos(v.html_source, '■ LICENSE TERMS') > 0) AS license_terms,
        (strpos(v.html_source, '{{> ') > 0) AS terms_partial,

@@ -393,6 +393,30 @@ export function bankInfoLine(bank: Ctx | null | undefined): string {
   ].filter((v) => v !== null && v !== undefined && String(v).trim() !== "").join(" / ");
 }
 
+/**
+ * 海外送金の振込先（A-051）。海外版の発注書の Bank Account 欄が使う。
+ * 受取人名（BENEFICIARY_NAME）は英字の account_holder_name を優先し、無ければ名義カナ。
+ * ACCOUNT_HOLDER は国内の書類で名義カナの別名として使われているので触らない。
+ * 国内の口座では SWIFT などが空なので、本文の {{#if}} で出ない。
+ */
+export function overseasBankVars(bank: Ctx | null | undefined): Record<string, string> {
+  const v = (x: unknown) => (x === null || x === undefined ? "" : String(x).trim());
+  return {
+    ACCOUNT_SCOPE: v(bank?.scope) || (bank ? "domestic" : ""),
+    BENEFICIARY_NAME: v(bank?.holderName) || v(bank?.holderKana),
+    ACCOUNT_HOLDER_NAME: v(bank?.holderName),
+    SWIFT_BIC: v(bank?.swiftBic),
+    SWIFT_CODE: v(bank?.swiftBic),
+    IBAN: v(bank?.iban),
+    ROUTING_NUMBER: v(bank?.routingNumber),
+    BANK_COUNTRY: v(bank?.country),
+    BANK_ADDRESS: v(bank?.address),
+    BANK_CURRENCY: v(bank?.currency),
+    INTERMEDIARY_BANK_NAME: v(bank?.intermediaryName),
+    INTERMEDIARY_BANK_SWIFT: v(bank?.intermediarySwift)
+  };
+}
+
 /** 通貨記号。本文は {{moneyUnit}}{{金額}} の形で差す。 */
 export function moneyUnitFor(currency: string): string {
   return ({ JPY: "¥", USD: "$", EUR: "€", GBP: "£", CNY: "¥", TWD: "NT$", KRW: "₩" } as
@@ -444,7 +468,8 @@ export function buildTemplateContext(
     BRANCH_NAME: bank?.branchName ?? "",
     ACCOUNT_TYPE: accountTypeLabel(bank?.accountType),
     ACCOUNT_NUMBER: bank?.accountNumber ?? "",
-    ACCOUNT_HOLDER_KANA: bank?.holderKana ?? ""
+    ACCOUNT_HOLDER_KANA: bank?.holderKana ?? "",
+    ...overseasBankVars(bank)
   };
 
   if (INSPECTION_KEYS.has(templateKey)) {

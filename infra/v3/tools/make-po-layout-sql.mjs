@@ -39,7 +39,7 @@ const TARGETS = [
   {
     no: "148", key: "intl_purchase_order", label: "海外版の発注書",
     body: "templates/intl_purchase_order_v3_body.html", css: "templates/intl_purchase_order_v3_css.txt",
-    mark: 'data-layout="ipo-v3-2026-09r1"', family: 'data-layout="ipo-v3',
+    mark: 'data-layout="ipo-v3-2026-09r2"', family: 'data-layout="ipo-v3',
     out: "148_intl_po_layout_v3.sql",
     // 約款の partial 名は現行版の本文から拾って差す（海外版の約款名はここでは決めない）。
     termsPlaceholder: "__TERMS_BLOCK__",
@@ -52,12 +52,16 @@ const TARGETS = [
 --     Attn）と Date（12pt が入る 44mm の下線）・Signature。押印欄は無い。
 --   ・発注署名欄＝あり なら同じ場所に Purchaser / Contractor の署名欄。
 --   ・金額は通貨コード付き（JPY 246,000 / USD 2,460.00）。日付は英語表記。
---   ・Bank Account は SWIFT / Account No. / Beneficiary、手数料は remitting＝発注者・
+--   ・Bank Account は取引先の海外口座（A-051）から Bank・Branch・SWIFT/BIC・Country／
+--     Beneficiary・Account No.・IBAN・Routing No.・Currency／Bank Address・Intermediary を
+--     小さめの 2〜3 行で出す（空の項目は出さない）。手数料は remitting＝発注者・
 --     receiving＝受注者。Withholding Tax は Applicable / Not applicable。
+--     r2：r1 は銀行名しか出なかった（SWIFT などの差し込み先が無かった）。
 --   ・約款（Standard Terms）の partial は現行版の本文にある {{> 名前}} を拾って
 --     同じ名前で差す。現行版に無ければ約款は付けない。
 --   ・CSS は全部を書く（現行版の head に頼らない）。`,
     checks: `       (strpos(v.html_source, '■ ACCEPTANCE') > 0) AS acceptance,
+       (strpos(v.html_source, 'SWIFT/BIC: {{SWIFT_BIC}}') > 0) AS bank_details,
        (strpos(v.html_source, 'sign-both') > 0) AS signatures,
        (strpos(v.html_source, '■ LICENSE TERMS') > 0) AS license_terms,
        (strpos(v.html_source, '{{> ') > 0) AS terms_partial,`

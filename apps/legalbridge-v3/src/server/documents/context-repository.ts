@@ -224,26 +224,36 @@ export class DocumentContextRepository {
    * 権限が無い環境でも書類の作成そのものは止めないよう、失敗は握って null を返す。
    */
   private async bank(client: Queryable, partyId: number) {
+    let row: Record<string, any> | undefined;
     try {
+      // 行を jsonb で読む。海外の列（A-051）がまだ無いデータベースでも失敗せず、
+      // 無い列は空として扱える（トランザクションの接続で渡ってくることがあり、
+      // 失敗して読み直す形にはできない）。
       const r = await client.query(
-        `SELECT bank_name, branch_name, account_type, account_number, account_holder_kana
-           FROM party_bank_accounts WHERE party_id = $1`, [partyId]);
-      const row = r.rows[0] as Record<string, any> | undefined;
-      if (!row) return null;
-      const bank = {
-        bankName: str(row.bank_name), branchName: str(row.branch_name),
-        accountType: str(row.account_type), accountNumber: str(row.account_number),
-        holderKana: str(row.account_holder_kana)
-      };
-      // 口座種別しか入っていない行は口座ではない（V1 のフォームの初期値
-      // 「普通」だけが保存されたもの。移行時点で98件あった）。
-      // 種別だけを書類に出すと、振込先があるように見えてしまう。
-      const payable = bank.bankName ?? bank.accountNumber ?? bank.holderKana ?? bank.branchName;
-      return payable === null || payable === undefined ? null : bank;
+        "SELECT to_jsonb(b) AS row FROM party_bank_accounts b WHERE b.party_id = $1", [partyId]);
+      row = (r.rows[0] as { row?: Record<string, any> } | undefined)?.row;
     } catch {
       // 口座表への権限が無い環境（閉じたまま運用する場合）。書類は作れる。
       return null;
     }
+    if (!row) return null;
+    const bank = {
+      bankName: str(row.bank_name), branchName: str(row.branch_name),
+      accountType: str(row.account_type), accountNumber: str(row.account_number),
+      holderKana: str(row.account_holder_kana),
+      scope: str(row.account_scope) ?? "domestic",
+      holderName: str(row.account_holder_name),
+      swiftBic: str(row.swift_bic), iban: str(row.iban), routingNumber: str(row.routing_number),
+      country: str(row.bank_country), address: str(row.bank_address), currency: str(row.currency),
+      intermediarySwift: str(row.intermediary_bank_swift),
+      intermediaryName: str(row.intermediary_bank_name)
+    };
+    // 口座種別しか入っていない行は口座ではない（V1 のフォームの初期値
+    // 「普通」だけが保存されたもの。移行時点で98件あった）。
+    // 種別だけを書類に出すと、振込先があるように見えてしまう。
+    const payable = bank.bankName ?? bank.accountNumber ?? bank.holderKana ?? bank.branchName
+      ?? bank.iban ?? bank.swiftBic ?? bank.holderName;
+    return payable === null || payable === undefined ? null : bank;
   }
 
   /**

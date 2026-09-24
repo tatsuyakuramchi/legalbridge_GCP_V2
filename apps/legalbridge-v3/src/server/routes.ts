@@ -934,7 +934,28 @@ export function createRoutes(database: Transactable) {
     branchName: z.string().trim().max(120).nullable().optional(),
     accountType: z.string().trim().max(20).nullable().optional(),
     accountNumber: z.string().trim().max(40).nullable().optional(),
-    accountHolderKana: z.string().trim().max(200).nullable().optional()
+    accountHolderKana: z.string().trim().max(200).nullable().optional(),
+    // 海外送金（A-051）。空は NULL（write-service が揃える）。
+    accountScope: z.enum(["domestic", "overseas"]).nullable().optional(),
+    accountHolderName: z.string().trim().max(200).nullable().optional(),
+    swiftBic: z.string().trim().toUpperCase()
+      .refine((v) => v === "" || /^[A-Z0-9]{8}([A-Z0-9]{3})?$/.test(v),
+        "SWIFT/BIC は英数字 8 桁か 11 桁です").nullable().optional(),
+    iban: z.string().trim().toUpperCase().transform((v) => v.replace(/\s+/g, ""))
+      .refine((v) => v === "" || /^[A-Z]{2}[0-9]{2}[A-Z0-9]{8,30}$/.test(v),
+        "IBAN の形式が違います（国コード2文字＋数字2桁＋最大30桁）").nullable().optional(),
+    routingNumber: z.string().trim().max(40).nullable().optional(),
+    bankCountry: z.string().trim().toUpperCase()
+      .refine((v) => v === "" || /^[A-Z]{2}$/.test(v), "国は 2 文字の国コードです（例 US）")
+      .nullable().optional(),
+    bankAddress: z.string().trim().max(300).nullable().optional(),
+    currency: z.string().trim().toUpperCase()
+      .refine((v) => v === "" || /^[A-Z]{3}$/.test(v), "通貨は 3 文字のコードです（例 USD）")
+      .nullable().optional(),
+    intermediaryBankSwift: z.string().trim().toUpperCase()
+      .refine((v) => v === "" || /^[A-Z0-9]{8}([A-Z0-9]{3})?$/.test(v),
+        "中継銀行の SWIFT/BIC は英数字 8 桁か 11 桁です").nullable().optional(),
+    intermediaryBankName: z.string().trim().max(200).nullable().optional()
   });
   router.get("/parties/:id/bank-account",
     requireRole("admin", "legal"),

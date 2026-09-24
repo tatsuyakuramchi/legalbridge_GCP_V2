@@ -1653,6 +1653,107 @@ $a050$;
 COMMENT ON COLUMN v3.matters.business_line IS
   '事業区分（作品案件にも付く）。store 店舗事業／publishing 出版事業／boardgame ボードゲーム事業／planning 企画事業／admin 管理事業部。';
 
+-- ---------------------------------------------------------------------
+-- A-051 海外の振込先（SWIFT・IBAN・受取人名など）
+--
+--   口座表は国内の 5 項目（銀行・支店・種別・番号・名義カナ）しか持たず、
+--   海外の取引先は銀行名だけが入っていた。海外版の発注書の Bank Account 欄に
+--   送金に要る情報を出すため、V2（infra/gcp/sql/082、#130）と同じ名前で列を足す。
+--     account_scope domestic／overseas（既定 domestic）
+--     account_holder_name 受取人名（英字）。海外は名義カナの代わりにこちらを出す
+--     swift_bic・iban・routing_number・bank_country・bank_address・currency・
+--     intermediary_bank_swift・intermediary_bank_name
+--   V2 側で既に入力された海外口座（public.vendor_bank_accounts の is_primary 行）が
+--   あれば、V3 の空いている欄にだけ写す。V2 に列が無い（082 未適用）なら何もしない。
+--   値は画面にも監査にも出さない（件数だけ）。
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.party_bank_accounts ADD COLUMN IF NOT EXISTS account_scope text NOT NULL DEFAULT 'domestic';
+ALTER TABLE v3.party_bank_accounts ADD COLUMN IF NOT EXISTS account_holder_name text;
+ALTER TABLE v3.party_bank_accounts ADD COLUMN IF NOT EXISTS swift_bic text;
+ALTER TABLE v3.party_bank_accounts ADD COLUMN IF NOT EXISTS iban text;
+ALTER TABLE v3.party_bank_accounts ADD COLUMN IF NOT EXISTS routing_number text;
+ALTER TABLE v3.party_bank_accounts ADD COLUMN IF NOT EXISTS bank_country text;
+ALTER TABLE v3.party_bank_accounts ADD COLUMN IF NOT EXISTS bank_address text;
+ALTER TABLE v3.party_bank_accounts ADD COLUMN IF NOT EXISTS currency text;
+ALTER TABLE v3.party_bank_accounts ADD COLUMN IF NOT EXISTS intermediary_bank_swift text;
+ALTER TABLE v3.party_bank_accounts ADD COLUMN IF NOT EXISTS intermediary_bank_name text;
+DO $a051$
+DECLARE
+  copied int;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.party_bank_accounts'::regclass
+                    AND conname = 'party_bank_accounts_scope_chk') THEN
+    ALTER TABLE v3.party_bank_accounts ADD CONSTRAINT party_bank_accounts_scope_chk
+      CHECK (account_scope IN ('domestic', 'overseas'));
+  END IF;
+
+  IF to_regclass('public.vendor_bank_accounts') IS NULL
+     OR (SELECT count(*) FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'vendor_bank_accounts'
+            AND column_name IN ('account_scope', 'swift_bic', 'iban', 'routing_number',
+                                'account_holder_name', 'bank_country', 'bank_address',
+                                'currency', 'intermediary_bank_swift',
+                                'intermediary_bank_name', 'is_primary', 'vendor_id')) < 12 THEN
+    RAISE NOTICE 'A-051: V2 の海外口座の列が無い。写すものは無い';
+    RETURN;
+  END IF;
+
+  EXECUTE $copy$
+    WITH src AS (
+      SELECT DISTINCT ON (p.id) p.id AS party_id, a.*
+        FROM public.vendor_bank_accounts a
+        JOIN v3.parties p ON p.legacy_id = a.vendor_id
+       WHERE a.is_primary IS TRUE AND a.account_scope = 'overseas'
+       ORDER BY p.id, a.id DESC
+    ), up AS (
+      INSERT INTO v3.party_bank_accounts AS b
+        (party_id, account_scope, bank_name, branch_name, account_number,
+         account_holder_name, swift_bic, iban, routing_number, bank_country,
+         bank_address, currency, intermediary_bank_swift, intermediary_bank_name)
+      SELECT party_id, 'overseas', NULLIF(btrim(bank_name), ''), NULLIF(btrim(branch_name), ''),
+             NULLIF(btrim(account_number), ''), NULLIF(btrim(account_holder_name), ''),
+             NULLIF(btrim(swift_bic), ''), NULLIF(btrim(iban), ''),
+             NULLIF(btrim(routing_number), ''), NULLIF(btrim(bank_country), ''),
+             NULLIF(btrim(bank_address), ''), NULLIF(btrim(currency), ''),
+             NULLIF(btrim(intermediary_bank_swift), ''), NULLIF(btrim(intermediary_bank_name), '')
+        FROM src
+      ON CONFLICT (party_id) DO UPDATE SET
+        account_scope = 'overseas',
+        bank_name = COALESCE(b.bank_name, EXCLUDED.bank_name),
+        branch_name = COALESCE(b.branch_name, EXCLUDED.branch_name),
+        account_number = COALESCE(b.account_number, EXCLUDED.account_number),
+        account_holder_name = COALESCE(b.account_holder_name, EXCLUDED.account_holder_name),
+        swift_bic = COALESCE(b.swift_bic, EXCLUDED.swift_bic),
+        iban = COALESCE(b.iban, EXCLUDED.iban),
+        routing_number = COALESCE(b.routing_number, EXCLUDED.routing_number),
+        bank_country = COALESCE(b.bank_country, EXCLUDED.bank_country),
+        bank_address = COALESCE(b.bank_address, EXCLUDED.bank_address),
+        currency = COALESCE(b.currency, EXCLUDED.currency),
+        intermediary_bank_swift = COALESCE(b.intermediary_bank_swift, EXCLUDED.intermediary_bank_swift),
+        intermediary_bank_name = COALESCE(b.intermediary_bank_name, EXCLUDED.intermediary_bank_name),
+        updated_at = now()
+      RETURNING 1
+    )
+    SELECT count(*) FROM up
+  $copy$ INTO copied;
+  RAISE NOTICE 'A-051: V2 の海外口座を % 件写した（空いている欄だけ）', copied;
+END
+$a051$;
+COMMENT ON COLUMN v3.party_bank_accounts.account_scope IS
+  'domestic 国内／overseas 海外。海外は受取人名（account_holder_name）と SWIFT・IBAN などを使う。';
+
+-- 海外の口座は支店名・名義カナが無くて当然。A-012 の「欠けた振込先」から外す
+-- （銀行名・受取人名・口座番号か IBAN・SWIFT が揃っていれば送金できる）。
+UPDATE v3.data_quality_issues q
+   SET status = 'resolved', resolved_at = now()
+ WHERE q.rule_code = 'PARTY_BANK_INCOMPLETE' AND q.status = 'open'
+   AND EXISTS (
+     SELECT 1 FROM v3.party_bank_accounts b
+      WHERE b.party_id = q.target_id AND b.account_scope = 'overseas'
+        AND b.bank_name IS NOT NULL AND b.account_holder_name IS NOT NULL
+        AND COALESCE(b.account_number, b.iban) IS NOT NULL AND b.swift_bic IS NOT NULL);
+
 COMMIT;
 
 -- 確認
@@ -1907,3 +2008,13 @@ SELECT count(*) AS 列 FROM information_schema.columns
 SELECT count(*) AS CHECK数 FROM pg_constraint
  WHERE conrelid='v3.matters'::regclass AND conname='matters_business_line_chk'
    AND pg_get_constraintdef(oid) LIKE '%planning%';
+
+\echo '--- 海外の振込先（A-051。列 10 と CHECK 1 で 11 であること） ---'
+SELECT (SELECT count(*) FROM information_schema.columns
+         WHERE table_schema='v3' AND table_name='party_bank_accounts'
+           AND column_name IN ('account_scope', 'account_holder_name', 'swift_bic', 'iban',
+                               'routing_number', 'bank_country', 'bank_address', 'currency',
+                               'intermediary_bank_swift', 'intermediary_bank_name'))
+     + (SELECT count(*) FROM pg_constraint
+         WHERE conrelid='v3.party_bank_accounts'::regclass
+           AND conname='party_bank_accounts_scope_chk') AS 列とCHECK;

@@ -47,3 +47,27 @@ test("いない取引先には書かない", async () => {
     /見つかりません/);
   assert.ok(!d.find("INSERT INTO party_bank_accounts"));
 });
+
+test("海外口座（A-051）：送られてきた項目だけ書き、監査には値を残さない", async () => {
+  const d = db();
+  await new PartyWriteService(d).saveBankAccount(3, {
+    ...FULL, accountHolderKana: null, accountScope: "overseas",
+    accountHolderName: "EXAMPLE STUDIO LLC", swiftBic: "EXAMUS33", iban: " ",
+    currency: "USD"
+  }, "kuramochi");
+  const q = d.find("UPDATE party_bank_accounts")!;
+  assert.match(q.text, /account_scope = \$2/);
+  assert.match(q.text, /swift_bic = /);
+  assert.doesNotMatch(q.text, /routing_number/, "送られていない項目は触らない");
+  assert.deepEqual(q.params, [3, "overseas", "EXAMPLE STUDIO LLC", "EXAMUS33", null, "USD"]);
+  const dumped = JSON.stringify(d.find("INSERT INTO audit_events")!.params);
+  assert.doesNotMatch(dumped, /EXAMUS33|EXAMPLE STUDIO/, "SWIFT や受取人名が監査に漏れている");
+  assert.match(dumped, /swift_bic/);
+  assert.match(dumped, /overseas/);
+});
+
+test("海外の項目が送られてこなければ（A-051 前の画面・DB）国内の5項目だけ書く", async () => {
+  const d = db();
+  await new PartyWriteService(d).saveBankAccount(3, FULL, "kuramochi");
+  assert.ok(!d.find("UPDATE party_bank_accounts"));
+});

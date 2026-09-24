@@ -53,7 +53,34 @@ export interface BankAccountInput {
   accountType?: string | null;
   accountNumber?: string | null;
   accountHolderKana?: string | null;
+  /**
+   * 海外送金（A-051）。undefined の項目は触らない（A-051 を当てる前の
+   * データベースでも国内の5項目は直せるように、送られてきたときだけ書く）。
+   */
+  accountScope?: "domestic" | "overseas" | null;
+  accountHolderName?: string | null;
+  swiftBic?: string | null;
+  iban?: string | null;
+  routingNumber?: string | null;
+  bankCountry?: string | null;
+  bankAddress?: string | null;
+  currency?: string | null;
+  intermediaryBankSwift?: string | null;
+  intermediaryBankName?: string | null;
 }
+
+/** 入力の名前 → 列名。海外送金の項目（A-051）。 */
+const OVERSEAS_BANK_COLUMNS = {
+  accountHolderName: "account_holder_name",
+  swiftBic: "swift_bic",
+  iban: "iban",
+  routingNumber: "routing_number",
+  bankCountry: "bank_country",
+  bankAddress: "bank_address",
+  currency: "currency",
+  intermediaryBankSwift: "intermediary_bank_swift",
+  intermediaryBankName: "intermediary_bank_name"
+} as const;
 
 export interface PartyContactInput {
   role: string;
@@ -416,13 +443,33 @@ export class PartyWriteService {
           [partyId, values.bank_name, values.branch_name, values.account_type,
            values.account_number, values.account_holder_kana]);
 
+        // 海外の項目は送られてきたものだけ書く。
+        const overseas: Record<string, string | null> = {};
+        if (input.accountScope !== undefined) {
+          overseas.account_scope = input.accountScope === "overseas" ? "overseas" : "domestic";
+        }
+        for (const [key, column] of Object.entries(OVERSEAS_BANK_COLUMNS)) {
+          const value = input[key as keyof typeof OVERSEAS_BANK_COLUMNS];
+          if (value !== undefined) overseas[column] = clean(value);
+        }
+        const columns = Object.keys(overseas);
+        if (columns.length) {
+          await client.query(
+            `UPDATE party_bank_accounts SET ${columns.map((c, i) => `${c} = $${i + 2}`).join(", ")}
+              WHERE party_id = $1`,
+            [partyId, ...columns.map((c) => overseas[c])]);
+        }
+        const touched = { ...values, ...overseas };
+        delete (touched as Record<string, unknown>).account_scope;
+
         await recordAudit(client, {
           actor, action: "party.save_bank_account", targetType: "party", targetId: partyId,
           // 値は残さない。入れたか空にしたかだけ。
           detail: {
             partyName: row.name,
-            filled: Object.entries(values).filter(([, v]) => v !== null).map(([k]) => k),
-            cleared: Object.entries(values).filter(([, v]) => v === null).map(([k]) => k)
+            ...(overseas.account_scope ? { scope: overseas.account_scope } : {}),
+            filled: Object.entries(touched).filter(([, v]) => v !== null).map(([k]) => k),
+            cleared: Object.entries(touched).filter(([, v]) => v === null).map(([k]) => k)
           }
         });
         return { partyId };

@@ -213,6 +213,22 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown; noSuffix?: s
             "account_holder_kana", "accountHolder", "accountHolderKana",
             "口座名義", "口座名義カナ", "口座名義人"],
     get: (c) => c.bank?.holderKana },
+  // 海外送金（A-051）。V2 の 083 と同じ名前。
+  { names: ["BENEFICIARY_NAME", "ACCOUNT_HOLDER_NAME", "account_holder_name", "beneficiary",
+            "受取人名"],
+    get: (c) => c.bank?.holderName ?? c.bank?.holderKana },
+  { names: ["SWIFT_BIC", "SWIFT_CODE", "swift_bic", "swiftCode", "swift"],
+    get: (c) => c.bank?.swiftBic },
+  { names: ["IBAN", "iban"], get: (c) => c.bank?.iban },
+  { names: ["ROUTING_NUMBER", "routing_number", "routingNumber", "ABA"],
+    get: (c) => c.bank?.routingNumber },
+  { names: ["BANK_COUNTRY", "bank_country", "bankCountry"], get: (c) => c.bank?.country },
+  { names: ["BANK_ADDRESS", "bank_address", "bankAddress"], get: (c) => c.bank?.address },
+  { names: ["BANK_CURRENCY", "bank_currency"], get: (c) => c.bank?.currency },
+  { names: ["INTERMEDIARY_BANK_NAME", "intermediary_bank_name"],
+    get: (c) => c.bank?.intermediaryName },
+  { names: ["INTERMEDIARY_BANK_SWIFT", "intermediary_bank_swift"],
+    get: (c) => c.bank?.intermediarySwift },
 
   // ---- 自社の担当者 ----
   // own: 自社側の欄。「先方担当者名」のような相手側の欄の末尾に「担当者名」が
@@ -495,7 +511,17 @@ const DB_FIELD_SOURCES: Record<string, (c: Ctx) => Record<string, unknown>> = {
       branch_name: bank.branchName,
       account_type: accountTypeLabel(bank.accountType),
       account_number: bank.accountNumber,
-      account_holder_kana: bank.holderKana
+      account_holder_kana: bank.holderKana,
+      account_scope: bank.scope,
+      account_holder_name: bank.holderName,
+      swift_bic: bank.swiftBic,
+      iban: bank.iban,
+      routing_number: bank.routingNumber,
+      bank_country: bank.country,
+      bank_address: bank.address,
+      bank_currency: bank.currency,
+      intermediary_bank_swift: bank.intermediarySwift,
+      intermediary_bank_name: bank.intermediaryName
     };
   },
   staff: (c) => ({

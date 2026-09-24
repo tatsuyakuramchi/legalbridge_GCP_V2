@@ -117,14 +117,28 @@ export class PartyRepository {
    */
   async bankAccount(partyId: number) {
     try {
+      // jsonb で読む。海外の列（A-051）がまだ無くても失敗しない。
       const r = await this.database.query(
-        `SELECT bank_name, branch_name, account_type, account_number, account_holder_kana
-           FROM party_bank_accounts WHERE party_id = $1`, [partyId]);
-      const row = r.rows[0] as Record<string, any> | undefined;
+        "SELECT to_jsonb(b) AS row FROM party_bank_accounts b WHERE b.party_id = $1", [partyId]);
+      const row = (r.rows[0] as { row?: Record<string, any> } | undefined)?.row;
+      // 海外の項目を画面に出してよいか（列があるか）。無ければ国内の5項目だけ直せる。
+      const cols = await this.database.query(
+        `SELECT count(*)::int AS n FROM information_schema.columns
+          WHERE table_name = 'party_bank_accounts' AND column_name = 'swift_bic'
+            AND table_schema = ANY (current_schemas(false))`);
+      const overseasReady = Number((cols.rows[0] as { n?: number } | undefined)?.n ?? 0) > 0;
       return {
         bankName: str(row?.bank_name), branchName: str(row?.branch_name),
         accountType: str(row?.account_type), accountNumber: str(row?.account_number),
         accountHolderKana: str(row?.account_holder_kana),
+        accountScope: str(row?.account_scope) ?? "domestic",
+        accountHolderName: str(row?.account_holder_name),
+        swiftBic: str(row?.swift_bic), iban: str(row?.iban),
+        routingNumber: str(row?.routing_number), bankCountry: str(row?.bank_country),
+        bankAddress: str(row?.bank_address), currency: str(row?.currency),
+        intermediaryBankSwift: str(row?.intermediary_bank_swift),
+        intermediaryBankName: str(row?.intermediary_bank_name),
+        overseasReady,
         exists: Boolean(row)
       };
     } catch (error) { throw translate(error); }

@@ -23,6 +23,9 @@
   table.summary.compact th, table.summary.compact td { padding: 5px 8px; }
   .total-amount { font-size: 13pt; font-weight: 700; }
   .amount-note { font-size: 8.5pt; color: #555; }
+  /* 振込先（A-051）。1 ページ目に収めるため小さめ・詰めた行間で 2〜3 行に。 */
+  .bank-lines { font-size: 8.5pt; line-height: 1.35; }
+  .bank-lines .sep::before { content: " · "; color: #888; }
   table.items { width: 100%; font-size: 9pt; margin-top: 2px; table-layout: fixed; }
   table.items th { background: #f4f4f2; border: 1px solid #d9d9d9; padding: 6px 8px; color: #333; font-weight: 600; }
   table.items td { border: 1px solid #d9d9d9; padding: 6px 8px; vertical-align: top; }
