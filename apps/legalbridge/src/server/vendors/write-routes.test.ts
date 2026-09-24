@@ -152,6 +152,62 @@ test("法務ロールには口座情報を返さない（canEditBank=false）", 
   assert.equal(fetched.body.vendor.vendorName, "株式会社サンプル");
 });
 
+test("管理者は海外銀行口座を登録し編集用取得で返せる", async () => {
+  const { app } = appFor({ enabled: true, role: "admin" });
+  const created = await request(app).post("/api/v2/vendors").send({
+    vendorName: "Noa Vassalli",
+    accountScope: "overseas",
+    bankName: "Intesa Sanpaolo S.p.A.",
+    swiftBic: "BCITITMM",
+    iban: "IT77A0306909400100000067552",
+    accountHolderName: "NOA VASSALLI",
+    bankCountry: "IT",
+    bankCurrency: "EUR",
+    intermediaryBankName: "Example Correspondent Bank",
+    intermediaryBankSwift: "EXAMPLEXX"
+  });
+  assert.equal(created.status, 201);
+  const fetched = await request(app).get(`/api/v2/vendors/${created.body.id}`);
+  assert.equal(fetched.status, 200);
+  assert.equal(fetched.body.vendor.accountScope, "overseas");
+  assert.equal(fetched.body.vendor.swiftBic, "BCITITMM");
+  assert.equal(fetched.body.vendor.iban, "IT77A0306909400100000067552");
+  assert.equal(fetched.body.vendor.accountHolderName, "NOA VASSALLI");
+  assert.equal(fetched.body.vendor.bankCountry, "IT");
+  assert.equal(fetched.body.vendor.bankCurrency, "EUR");
+  assert.equal(fetched.body.vendor.intermediaryBankSwift, "EXAMPLEXX");
+});
+
+test("法務ロールには海外口座情報も返さない", async () => {
+  const admin = appFor({ enabled: true, role: "admin" });
+  const created = await request(admin.app).post("/api/v2/vendors").send({
+    vendorName: "海外取引先", accountScope: "overseas",
+    bankName: "Foreign Bank", swiftBic: "ABCDEFGH", iban: "GB00TEST00000000000000"
+  });
+  const legal = express();
+  legal.use(express.json());
+  legal.use((_request, response, next) => {
+    response.locals.currentUser = { email: "legal@arclight.co.jp", subject: "t", role: "legal", source: "disabled" };
+    next();
+  });
+  legal.use("/api/v2", createVendorWriteRouter(admin.repository, true));
+  const fetched = await request(legal).get(`/api/v2/vendors/${created.body.id}`);
+  assert.equal(fetched.status, 200);
+  assert.equal(fetched.body.canEditBank, false);
+  assert.equal(fetched.body.vendor.swiftBic, undefined);
+  assert.equal(fetched.body.vendor.iban, undefined);
+  assert.equal(fetched.body.vendor.accountHolderName, undefined);
+});
+
+test("法務ロールが海外口座情報を送ると403で拒否する", async () => {
+  const { app } = appFor({ enabled: true, role: "legal" });
+  const created = await request(app).post("/api/v2/vendors").send({ vendorName: "取引先" });
+  const patched = await request(app).patch(`/api/v2/vendors/${created.body.id}`)
+    .send({ accountScope: "overseas", swiftBic: "ABCDEFGH" });
+  assert.equal(patched.status, 403);
+  assert.equal(patched.body.code, "VENDOR_BANK_FORBIDDEN");
+});
+
 test("法務ロールが口座情報を送ると403で拒否する", async () => {
   const { app } = appFor({ enabled: true, role: "legal" });
   const created = await request(app).post("/api/v2/vendors").send({ vendorName: "取引先" });

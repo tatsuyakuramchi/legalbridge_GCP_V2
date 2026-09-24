@@ -37,6 +37,17 @@ export const vendorCreateSchema = z.object({
   accountType: nullableText(50),
   accountNumber: nullableText(50),
   accountHolderKana: nullableText(100),
+  // 海外送金（vendor_bank_accounts のメイン口座へ保存）。
+  accountScope: z.enum(["domestic", "overseas"]).optional(),
+  swiftBic: nullableText(20),
+  iban: nullableText(64),
+  routingNumber: nullableText(40),
+  accountHolderName: nullableText(255),
+  bankCountry: nullableText(2),
+  bankAddress: nullableText(1000),
+  bankCurrency: nullableText(3),
+  intermediaryBankSwift: nullableText(20),
+  intermediaryBankName: nullableText(255),
   bankInfo: nullableText(1000),
   isInvoiceIssuer: z.boolean().optional().default(false),
   withholdingEnabled: z.boolean().optional().default(false),
@@ -64,6 +75,16 @@ export const vendorUpdateSchema = z.object({
   accountType: nullableText(50).optional(),
   accountNumber: nullableText(50).optional(),
   accountHolderKana: nullableText(100).optional(),
+  accountScope: z.enum(["domestic", "overseas"]).optional(),
+  swiftBic: nullableText(20).optional(),
+  iban: nullableText(64).optional(),
+  routingNumber: nullableText(40).optional(),
+  accountHolderName: nullableText(255).optional(),
+  bankCountry: nullableText(2).optional(),
+  bankAddress: nullableText(1000).optional(),
+  bankCurrency: nullableText(3).optional(),
+  intermediaryBankSwift: nullableText(20).optional(),
+  intermediaryBankName: nullableText(255).optional(),
   bankInfo: nullableText(1000).optional(),
   isInvoiceIssuer: z.boolean().optional(),
   withholdingEnabled: z.boolean().optional(),
@@ -74,7 +95,10 @@ export const vendorUpdateSchema = z.object({
 
 // 口座情報のキー（管理者限定の判定に使う。ルート・クライアント双方の単一情報源）。
 export const BANK_FIELD_KEYS = [
-  "bankName", "branchName", "accountType", "accountNumber", "accountHolderKana", "bankInfo"
+  "bankName", "branchName", "accountType", "accountNumber", "accountHolderKana",
+  "accountScope", "swiftBic", "iban", "routingNumber", "accountHolderName",
+  "bankCountry", "bankAddress", "bankCurrency", "intermediaryBankSwift",
+  "intermediaryBankName", "bankInfo"
 ] as const;
 
 export type VendorCreateInput = z.infer<typeof vendorCreateSchema>;

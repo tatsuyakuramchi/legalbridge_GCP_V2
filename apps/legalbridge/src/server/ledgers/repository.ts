@@ -26,28 +26,67 @@ export class PgLedgerRepository implements LedgerRepository {
           WHERE $1 = '%%' OR vendor_code ILIKE $1 OR vendor_name ILIKE $1
              OR COALESCE(trade_name, '') ILIKE $1 OR COALESCE(pen_name, '') ILIKE $1
           ORDER BY is_active DESC, vendor_name LIMIT $2`, [keyword, bounded]);
-      return result.rows.map((row) => ({
-        id: String(row.id), type, code: row.vendor_code, title: row.vendor_name,
-        // 台帳は無効も表示する（再有効化の導線を残す）。ピッカー/横断検索は有効のみ（P1-4）。
-        subtitle: [row.is_active === false ? "【無効】" : null, row.trade_name, row.pen_name, row.entity_type]
-          .filter(Boolean).join("・"),
-        // マスキング撤廃（2026-08-19 利用者決定）: 台帳は住所・電話・メールを実値で表示し、
-        // 口座情報も出す（PDF出力・印刷でも実値のまま）。
-        detail: {
-          状態: row.is_active === false ? "無効" : "有効",
-          取引先区分: row.entity_type, 住所: row.address,
-          電話番号: row.phone, メール: row.email,
-          担当部署: row.contact_department, 担当者: row.contact_name,
-          担当者メール: row.contact_email, "署名者メール（電子契約）": row.signer_email,
-          代表者: row.vendor_rep, インボイス登録: Boolean(row.is_invoice_issuer),
-          インボイス番号: row.invoice_registration_number,
-          源泉徴収対象: Boolean(row.withholding_enabled),
-          振込先: [row.bank_name, row.branch_name,
-            [row.account_type, row.account_number].filter(Boolean).join(" ")]
-            .filter(Boolean).join(" ") || null,
-          口座名義カナ: row.account_holder_kana
+      const bankByVendor = new Map<number, Record<string, unknown>>();
+      const ids = result.rows.map((row) => Number(row.id)).filter(Number.isFinite);
+      if (ids.length) {
+        try {
+          const banks = await this.database.query(
+            `SELECT DISTINCT ON (vendor_id)
+                    vendor_id, bank_name, branch_name, account_type, account_number,
+                    account_holder_kana, account_scope, swift_bic, iban, routing_number,
+                    account_holder_name, bank_country, bank_address, currency,
+                    intermediary_bank_swift, intermediary_bank_name
+               FROM vendor_bank_accounts
+              WHERE vendor_id = ANY($1::int[])
+              ORDER BY vendor_id, is_primary DESC, sort_order ASC, id ASC`,
+            [ids]
+          );
+          for (const bank of banks.rows) bankByVendor.set(Number(bank.vendor_id), bank);
+        } catch (error) {
+          const code = (error as { code?: string })?.code;
+          if (code !== "42P01" && code !== "42703" && code !== "42501") throw error;
         }
-      }));
+      }
+      return result.rows.map((row) => {
+        const bank = bankByVendor.get(Number(row.id)) ?? {};
+        const scope = bank.account_scope === "overseas" ? "海外" : "国内";
+        const bankName = bank.bank_name ?? row.bank_name;
+        const branchName = bank.branch_name ?? row.branch_name;
+        const accountType = bank.account_type ?? row.account_type;
+        const accountNumber = bank.account_number ?? row.account_number;
+        const holderKana = bank.account_holder_kana ?? row.account_holder_kana;
+        return {
+          id: String(row.id), type, code: row.vendor_code, title: row.vendor_name,
+          // 台帳は無効も表示する（再有効化の導線を残す）。ピッカー/横断検索は有効のみ（P1-4）。
+          subtitle: [row.is_active === false ? "【無効】" : null, row.trade_name, row.pen_name, row.entity_type]
+            .filter(Boolean).join("・"),
+          // マスキング撤廃（2026-08-19 利用者決定）: 台帳は住所・電話・メールを実値で表示し、
+          // 口座情報も出す（PDF出力・印刷でも実値のまま）。
+          detail: {
+            状態: row.is_active === false ? "無効" : "有効",
+            取引先区分: row.entity_type, 住所: row.address,
+            電話番号: row.phone, メール: row.email,
+            担当部署: row.contact_department, 担当者: row.contact_name,
+            担当者メール: row.contact_email, "署名者メール（電子契約）": row.signer_email,
+            代表者: row.vendor_rep, インボイス登録: Boolean(row.is_invoice_issuer),
+            インボイス番号: row.invoice_registration_number,
+            源泉徴収対象: Boolean(row.withholding_enabled),
+            口座区分: scope,
+            振込先: [bankName, branchName, [accountType, accountNumber].filter(Boolean).join(" ")]
+              .filter(Boolean).join(" ") || null,
+            口座名義カナ: holderKana,
+            "Account Holder": bank.account_holder_name ?? null,
+            "SWIFT / BIC": bank.swift_bic ?? null,
+            IBAN: bank.iban ?? null,
+            "Routing / ABA / Sort Code": bank.routing_number ?? null,
+            銀行所在国: bank.bank_country ?? null,
+            銀行所在地: bank.bank_address ?? null,
+            送金通貨: bank.currency ?? null,
+            中継銀行: [bank.intermediary_bank_name, bank.intermediary_bank_swift]
+              .filter(Boolean).join(" / ") || null
+          }
+        };
+      });
     }
     if (type === "materials") {
       const result = await this.database.query(

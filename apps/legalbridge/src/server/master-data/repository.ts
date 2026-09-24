@@ -49,13 +49,56 @@ export class PgMasterDataRepository implements MasterDataRepository {
           LIMIT $2`,
         [keyword, boundedLimit]
       );
-      return result.rows.map((row) => ({
-        id: String(row.id),
-        type,
-        label: row.vendor_name,
-        description: [row.vendor_code, row.entity_type, row.contact_name].filter(Boolean).join("・"),
-        values: row
-      }));
+      // 海外送金情報は vendor_bank_accounts の primary 口座を正とする。
+      // 082 未適用環境では従来の vendors.bank_* だけで継続できるよう縮退する。
+      const bankByVendor = new Map<number, Record<string, unknown>>();
+      const vendorIds = result.rows.map((row) => Number(row.id)).filter(Number.isFinite);
+      if (vendorIds.length) {
+        try {
+          const banks = await this.database.query(
+            `SELECT DISTINCT ON (vendor_id)
+                    vendor_id, bank_name, branch_name, account_type, account_number,
+                    account_holder_kana, account_scope, swift_bic, iban, routing_number,
+                    account_holder_name, bank_country, bank_address, currency,
+                    intermediary_bank_swift, intermediary_bank_name
+               FROM vendor_bank_accounts
+              WHERE vendor_id = ANY($1::int[])
+              ORDER BY vendor_id, is_primary DESC, sort_order ASC, id ASC`,
+            [vendorIds]
+          );
+          for (const bank of banks.rows) bankByVendor.set(Number(bank.vendor_id), bank);
+        } catch (error) {
+          const code = (error as { code?: string })?.code;
+          if (code !== "42P01" && code !== "42703" && code !== "42501") throw error;
+        }
+      }
+      return result.rows.map((row) => {
+        const bank = bankByVendor.get(Number(row.id));
+        return {
+          id: String(row.id),
+          type,
+          label: row.vendor_name,
+          description: [row.vendor_code, row.entity_type, row.contact_name].filter(Boolean).join("・"),
+          values: {
+            ...row,
+            bank_name: bank?.bank_name ?? row.bank_name,
+            branch_name: bank?.branch_name ?? row.branch_name,
+            account_type: bank?.account_type ?? row.account_type,
+            account_number: bank?.account_number ?? row.account_number,
+            account_holder_kana: bank?.account_holder_kana ?? row.account_holder_kana,
+            account_scope: bank?.account_scope ?? "domestic",
+            swift_bic: bank?.swift_bic ?? null,
+            iban: bank?.iban ?? null,
+            routing_number: bank?.routing_number ?? null,
+            account_holder_name: bank?.account_holder_name ?? null,
+            bank_country: bank?.bank_country ?? null,
+            bank_address: bank?.bank_address ?? null,
+            currency: bank?.currency ?? null,
+            intermediary_bank_swift: bank?.intermediary_bank_swift ?? null,
+            intermediary_bank_name: bank?.intermediary_bank_name ?? null
+          }
+        };
+      });
     }
     if (type === "staff") {
       const result = await this.database.query(
