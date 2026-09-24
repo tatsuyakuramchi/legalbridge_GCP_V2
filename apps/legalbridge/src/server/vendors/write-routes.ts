@@ -20,6 +20,7 @@ function statusFor(code: string) {
   if (code === "VENDOR_NOT_FOUND") return 404;
   if (code === "VENDOR_CONFLICT") return 409;
   if (code === "VENDOR_REQUIRED") return 422;
+  if (code === "VENDOR_BANK_SCHEMA_MISSING" || code === "VENDOR_BANK_PERMISSION_MISSING") return 503;
   return 400;
 }
 
