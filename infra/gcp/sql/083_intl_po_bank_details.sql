@@ -43,6 +43,7 @@ DECLARE
   tpl_id bigint;
   next_no int;
   new_id bigint;
+  f record;
   bank_token constant text := '{{BANK_NAME}}';
   marker constant text := 'lb-intl-bank-details';
   bank_block constant text := $bank$
