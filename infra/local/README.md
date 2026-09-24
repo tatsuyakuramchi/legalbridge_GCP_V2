@@ -173,6 +173,38 @@ Invoke-RestMethod http://localhost:8080/health | ConvertTo-Json
 （`AUTH_MODE=cloudflare`）。役割はメールで決まり、操作の記録にも本人のメールが残る。
 ヘッダのメールだけは信じないので、トンネルを通らない直アクセスで名乗ることはできない。
 
+### 0. まず無料で試す（Quick Tunnel）
+
+ドメインもアカウントも無しで、数分で社外から開ける URL が出る。ただし
+**ログインが付かない**（URL を知っている人は誰でも入れる）ので、見せるだけ・短い間だけにする。
+
+1. `.env` を見せるだけの設定にする（口座番号などは admin / legal にしか出ない）。
+
+   ```
+   READ_ONLY=true
+   LOCAL_USER_ROLE=requester
+   ```
+
+2. 起動して、URL を拾う。
+
+   ```powershell
+   docker compose up -d app
+   docker compose --profile quicktunnel up -d
+   docker compose logs quicktunnel | Select-String trycloudflare
+   ```
+
+   `https://○○○.trycloudflare.com` が出る。これを見せたい人にだけ渡す。
+
+3. 終わったら必ず閉じる。
+
+   ```powershell
+   docker compose stop quicktunnel
+   ```
+
+- 起動し直すたびに URL が変わる（前の URL は使えなくなる）。
+- 同時に 200 リクエストまで。数人で見る分には足りる。
+- 本格的に使うなら下の 1〜4（専用ドメイン＋Access のログイン）に移る。
+
 ### 1. ドメインを用意する（会社のドメインは使わない）
 
 1. Cloudflare のアカウントを作る（会社のメールで）。

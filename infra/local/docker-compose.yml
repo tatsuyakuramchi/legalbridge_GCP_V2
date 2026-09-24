@@ -89,6 +89,18 @@ services:
     depends_on:
       - app
 
+  # お試し用の口（Cloudflare の Quick Tunnel）。アカウントもドメインも要らず無料。
+  # 起動するたびに https://○○.trycloudflare.com の URL が変わり、ログインは付かない。
+  # URL を知っている人は誰でも入れるので、READ_ONLY=true・LOCAL_USER_ROLE=requester で
+  # 短い間だけ使う。URL は docker compose logs quicktunnel に出る。
+  #   docker compose --profile quicktunnel up -d
+  quicktunnel:
+    image: cloudflare/cloudflared:latest
+    profiles: ["quicktunnel"]
+    command: tunnel --no-autoupdate --url http://app:8080
+    depends_on:
+      - app
+
   ops:
     build: ./ops
     profiles: ["ops"]
