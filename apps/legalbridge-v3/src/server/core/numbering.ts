@@ -57,8 +57,18 @@ export async function maxUsedSequence(
  * 初回は移行データの最大値から始める。そうしないと 1 から振り直しになり、
  * 既存の番号と何百回もぶつかる。
  */
+/**
+ * 1 回の採番で試す回数の既定。採番表が既存の番号より遅れていると、使用済みの
+ * 番号を 1 つずつ飛ばして進む。以前は 50 回で、本番の行を取り込んだ手元の DB
+ * のように採番表が数十番遅れていると「番号を確保できませんでした」で作品の
+ * 登録が止まっていた。飛ばす 1 回は一意索引を引くだけなので、多めにしてよい。
+ * 最大値へ一気に飛ばさないのは、手で入れた外れ値（9001 番など）があると
+ * 番号が大きく飛んでしまうため。
+ */
+export const ALLOCATE_ATTEMPTS = 5000;
+
 export async function allocateNumber(
-  client: Queryable, spec: NumberSpec, now = new Date(), attempts = 50
+  client: Queryable, spec: NumberSpec, now = new Date(), attempts = ALLOCATE_ATTEMPTS
 ): Promise<string> {
   const year = currentYearInTokyo(now);
   const width = spec.width ?? 5;

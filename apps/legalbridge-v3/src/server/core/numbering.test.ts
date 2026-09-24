@@ -57,6 +57,21 @@ test("未採番なら移行データの最大値から始める", async () => {
   assert.equal(seed.params[2], 240, "1 からではなく既存の続きから始める");
 });
 
+test("採番表が既存の番号より数十番遅れていても、使用済みを飛ばして空き番号を返す（作品の登録で止まった件）", async () => {
+  // 採番表は 3 のまま、作品は 80 番まで使われている（本番の行を取り込んだ手元の DB）。
+  let current = 3;
+  const db = new FakeDatabase((text, params) => {
+    if (text.includes("SELECT 1 FROM document_sequences")) return [{ x: 1 }];
+    if (text.includes("UPDATE document_sequences")) { current += 1; return [{ current_value: current }]; }
+    if (text.includes("FROM works WHERE work_code")) {
+      return Number(String(params[0]).slice(-5)) <= 80 ? [{ x: 1 }] : [];
+    }
+    return [];
+  });
+  const WORK: NumberSpec = { prefix: "WRK", table: "works", column: "work_code" };
+  assert.equal(await allocateNumber(db, WORK, new Date("2026-09-24T00:00:00Z")), "WRK-2026-00081");
+});
+
 test("空きが見つからなければ黙って壊さず止まる", async () => {
   let current = 0;
   const db = new FakeDatabase((text) => {

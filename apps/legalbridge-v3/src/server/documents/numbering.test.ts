@@ -28,3 +28,22 @@ test("連番はプレフィックスと年ごとに1つ進む", async () => {
   assert.equal(await nextSequence(db, "RS", 2026), 8);
   assert.deepEqual(db.find("document_sequences")!.params, ["RS", 2026]);
 });
+
+test("進めた番号の文書がもうあれば、空いている番号まで進める（採番表の遅れ）", async () => {
+  let current = 10;
+  const db = new FakeDatabase((text, params) => {
+    if (text.includes("INSERT INTO document_sequences")) { current += 1; return [{ current_value: current }]; }
+    if (text.includes("FROM documents WHERE document_no")) {
+      return ["ARC-PO-2026-0011", "ARC-PO-2026-0012"].includes(String(params[0])) ? [{ x: 1 }] : [];
+    }
+    return undefined;
+  });
+  assert.equal(await nextSequence(db, "PO", 2026), 13);
+});
+
+test("空き番号が見つからなければ止まる（黙って重複させない）", async () => {
+  const db = new FakeDatabase((text) =>
+    text.includes("INSERT INTO document_sequences") ? [{ current_value: 1 }]
+      : text.includes("FROM documents WHERE document_no") ? [{ x: 1 }] : undefined);
+  await assert.rejects(() => nextSequence(db, "PO", 2026, 3), /3 回試しても確保できません/);
+});
