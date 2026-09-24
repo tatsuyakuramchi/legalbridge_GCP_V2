@@ -113,7 +113,7 @@ export function CsvImport({ config, onCancel, onDone }: { config: CsvImportConfi
 // マスタ別の列定義（ヘッダ別名を1か所に集約）。
 export const vendorCsvConfig: CsvImportConfig = {
   kicker: "IMPORT VENDORS", title: "取引先CSV取込", unit: "取引先",
-  note: "1行目にヘッダ（取引先名 / 取引先コード / 種別 / メール 等）、2行目以降にデータを貼り付けてください。取引先名は必須。カンマ区切り、囲み文字なしの簡易CSVに対応します。",
+  note: "1行目にヘッダ（取引先名 / 取引先コード / 種別 / メール / 口座情報 等）、2行目以降にデータを貼り付けてください。取引先名は必須。海外口座は口座区分=overseas とし、SWIFT/BIC・IBAN等を利用できます。カンマ区切り、囲み文字なしの簡易CSVに対応します。",
   sampleText: "取引先名,種別,メール\n株式会社アークライト,法人,info@example.com",
   endpoint: "/api/v2/vendors/import",
   columns: [
@@ -136,7 +136,17 @@ export const vendorCsvConfig: CsvImportConfig = {
     { field: "branchName", label: "支店名", headers: ["支店名", "branch_name", "branchname"] },
     { field: "accountType", label: "口座種別", headers: ["口座種別", "預金種別", "account_type", "accounttype"] },
     { field: "accountNumber", label: "口座番号", headers: ["口座番号", "account_number", "accountnumber"] },
-    { field: "accountHolderKana", label: "口座名義カナ", headers: ["口座名義カナ", "名義人カナ", "account_holder_kana", "accountholderkana"] }
+    { field: "accountHolderKana", label: "口座名義カナ", headers: ["口座名義カナ", "名義人カナ", "account_holder_kana", "accountholderkana"] },
+    { field: "accountScope", label: "口座区分", headers: ["口座区分", "国内海外", "account_scope", "accountscope"] },
+    { field: "swiftBic", label: "SWIFT/BIC", headers: ["swift", "swift/bic", "swift_bic", "swiftbic", "bic"] },
+    { field: "iban", label: "IBAN", headers: ["iban"] },
+    { field: "routingNumber", label: "Routing/ABA/Sort Code", headers: ["routing", "routing_number", "routingnumber", "aba", "sort_code", "sortcode"] },
+    { field: "accountHolderName", label: "口座名義（英字）", headers: ["口座名義英字", "口座名義（英字）", "account_holder_name", "accountholdername", "beneficiary_name"] },
+    { field: "bankCountry", label: "銀行所在国", headers: ["銀行所在国", "bank_country", "bankcountry", "country"] },
+    { field: "bankAddress", label: "銀行所在地", headers: ["銀行所在地", "bank_address", "bankaddress"] },
+    { field: "bankCurrency", label: "送金通貨", headers: ["送金通貨", "currency", "bank_currency", "bankcurrency"] },
+    { field: "intermediaryBankSwift", label: "中継銀行SWIFT", headers: ["中継銀行swift", "intermediary_bank_swift", "intermediarybankswift"] },
+    { field: "intermediaryBankName", label: "中継銀行名", headers: ["中継銀行名", "intermediary_bank_name", "intermediarybankname"] }
   ]
 };
 
