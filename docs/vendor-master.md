@@ -68,7 +68,14 @@ psql "$RUNTIME_ADMIN_DSN" \
 
 ### 4.2 海外銀行口座カラム・権限（082）
 
-082は実行前後に `information_schema.columns` を出力し、実DBの `vendor_bank_accounts` 列を確認する。変更はすべて additive / `IF NOT EXISTS` で、共有DB側ですでに0014相当が適用済みでも再実行可能。
+まずread-only preflightで実DBの列・型・権限を確認する。
+
+```bash
+psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
+  -f infra/gcp/sql/082_vendor_overseas_bank_accounts_preflight.sql
+```
+
+その後、082本体を適用する。本体も実行前後に `information_schema.columns` を出力する。変更はすべて additive / `IF NOT EXISTS` で、共有DB側ですでに0014相当が適用済みでも再実行可能。
 
 ```bash
 psql "$RUNTIME_ADMIN_DSN" -v ON_ERROR_STOP=1 \
