@@ -259,7 +259,9 @@ export class PgVendorWriteRepository implements VendorWriteRepository {
         );
         vendorCode = numbered.rows[0]?.vendor_code ?? vendorCode;
       }
-      if (hasBankPayload(input)) {
+      // 新規作成時は実際の口座値がある場合だけ子テーブルへ書く。
+      // UI は口座区分(domestic)だけ送ることがあるため、それだけで空行を作らない。
+      if (hasMeaningfulBankValue(input)) {
         await upsertPrimaryBankAccount(client as unknown as Queryable, id, input);
       }
       await client.query("COMMIT");
