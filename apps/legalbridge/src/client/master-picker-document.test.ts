@@ -78,3 +78,45 @@ test("契約名が無い文書は番号を契約名に使う", () => {
 test("項目を持たないテンプレートには何も入れない", () => {
   assert.deepEqual(buildPatch(schemaOf({ name: "件名", label: "件名" }), {}, CONTRACT), {});
 });
+
+
+test("海外取引先の銀行口座を海外発注書の送金欄へ引用できる", () => {
+  const schema = {
+    ...schemaOf(
+      { name: "BANK_NAME", label: "Beneficiary Bank", type: "text" },
+      { name: "SWIFT_BIC", label: "SWIFT / BIC", type: "text" },
+      { name: "IBAN", label: "IBAN", type: "text" },
+      { name: "ACCOUNT_HOLDER", label: "Account Holder", type: "text" },
+      { name: "ACCOUNT_HOLDER_LOCAL", label: "Local Account Holder", type: "text" },
+      { name: "BANK_COUNTRY", label: "Bank Country", type: "text" },
+      { name: "BANK_CURRENCY", label: "Currency", type: "text" },
+      { name: "INTERMEDIARY_BANK", label: "Intermediary Bank", type: "text" }
+    ),
+    templateKey: "intl_purchase_order"
+  };
+  const patch = buildPatch(schema, {}, {
+    id: "88", type: "vendor" as const, label: "Noa Vassalli",
+    values: {
+      vendor_name: "Noa Vassalli",
+      entity_type: "個人",
+      bank_name: "Intesa Sanpaolo S.p.A.",
+      account_scope: "overseas",
+      swift_bic: "BCITITMM",
+      iban: "IT77A0306909400100000067552",
+      account_holder_name: "NOA VASSALLI",
+      account_holder_kana: "Noa Vassalli",
+      bank_country: "IT",
+      currency: "EUR",
+      intermediary_bank_name: "Correspondent Bank",
+      intermediary_bank_swift: "CORRITMM"
+    }
+  });
+  assert.equal(patch.BANK_NAME, "Intesa Sanpaolo S.p.A.");
+  assert.equal(patch.SWIFT_BIC, "BCITITMM");
+  assert.equal(patch.IBAN, "IT77A0306909400100000067552");
+  assert.equal(patch.ACCOUNT_HOLDER, "NOA VASSALLI");
+  assert.equal(patch.ACCOUNT_HOLDER_LOCAL, "Noa Vassalli");
+  assert.equal(patch.BANK_COUNTRY, "IT");
+  assert.equal(patch.BANK_CURRENCY, "EUR");
+  assert.equal(patch.INTERMEDIARY_BANK, "Correspondent Bank / CORRITMM");
+});
