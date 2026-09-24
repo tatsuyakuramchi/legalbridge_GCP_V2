@@ -231,6 +231,12 @@ function applyVendorAliases(schema: DocumentFormSchema, patch: DocumentFormData,
     VENDOR_CONTACT_DEPARTMENT: "contact_department", VENDOR_CONTACT_PHONE: "phone",
     BANK_NAME: "bank_name", BRANCH_NAME: "branch_name", ACCOUNT_TYPE: "account_type",
     ACCOUNT_NUMBER: "account_number", ACCOUNT_HOLDER_KANA: "account_holder_kana",
+    ACCOUNT_SCOPE: "account_scope", SWIFT_BIC: "swift_bic", IBAN: "iban",
+    ROUTING_NUMBER: "routing_number", ACCOUNT_HOLDER: "account_holder_name",
+    ACCOUNT_HOLDER_LOCAL: "account_holder_kana", BANK_COUNTRY: "bank_country",
+    BANK_ADDRESS: "bank_address", BANK_CURRENCY: "currency",
+    INTERMEDIARY_BANK_SWIFT: "intermediary_bank_swift",
+    INTERMEDIARY_BANK_NAME: "intermediary_bank_name",
     INVOICE_REGISTRATION_NUMBER: "invoice_registration_number",
     Licensor_名称: "vendor_name", Licensor_氏名会社名: "vendor_name",
     Licensor_住所: "address", Licensor_代表者名: "vendor_rep",
@@ -253,9 +259,20 @@ function applyVendorAliases(schema: DocumentFormSchema, patch: DocumentFormData,
     counterpartyTni: "invoice_registration_number",
     // camelCase の振込先欄（検収書・報告系テンプレ）。
     bankName: "bank_name", branchName: "branch_name", accountType: "account_type",
-    accountNo: "account_number", accountHolder: "account_holder_kana"
+    accountNo: "account_number", accountHolder: "account_holder_kana",
+    swiftBic: "swift_bic", iban: "iban", routingNumber: "routing_number",
+    accountHolderName: "account_holder_name", bankCountry: "bank_country",
+    bankAddress: "bank_address", bankCurrency: "currency"
   };
   applyExistingFields(schema, patch, values, aliases);
+  // 海外POの既存テンプレは中継銀行を1欄で受ける版もあるため、名称＋SWIFTを連結する。
+  const intermediaryBank = [values.intermediary_bank_name, values.intermediary_bank_swift]
+    .filter((value) => value != null && String(value).trim()).join(" / ");
+  setIfField(schema, patch, "INTERMEDIARY_BANK", intermediaryBank);
+  // 海外側の英字名義が未登録なら、国内互換の名義欄をフォールバックにする。
+  if (!values.account_holder_name) {
+    setIfField(schema, patch, "ACCOUNT_HOLDER", values.account_holder_kana);
+  }
   // 区分（法人/個人）はスキーマに入力欄が無くても formData に記録する。
   // license_master などは区分の欄を持たないが、法人専用項目（代表者）の必須解除
   // （isCorporateOnlyFieldHidden）と PDF の出し分け（context-adapter が
