@@ -140,6 +140,10 @@ function buildPurchaseOrderContext(source: Data) {
 
   return {
     ...source,
+    // 基本契約フラグはフォーム保存値が文字列で残っていても真偽値に正規化する。
+    // 海外発注書の Standard Terms 添付条件（081）はこの値をそのまま参照する。
+    HAS_BASE_CONTRACT: toBoolean(pick(source, "HAS_BASE_CONTRACT", "has_base_contract")),
+    MASTER_CONTRACT_REF: pick(source, "MASTER_CONTRACT_REF", "master_contract_ref"),
     契約類型: pick(source, "SERVICE_ENGAGEMENT_TYPE", "CONTRACT_TYPE", "契約類型"),
     業務区分: pick(source, "SERVICE_CATEGORY", "業務区分"),
     成果物有無: pick(source, "DELIVERABLE_REQUIRED", "成果物有無"),
