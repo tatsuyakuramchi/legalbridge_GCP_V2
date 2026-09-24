@@ -146,22 +146,27 @@ async function upsertPrimaryBankAccount(q: Queryable, vendorId: number, input: B
         return value !== undefined && value !== null && String(value).trim() !== "";
       }) ? "overseas" : "domestic");
 
+  const isOverseas = accountScope === "overseas";
   const values = {
     bankName: choose<string>(source, "bankName", existing?.bank_name ?? null),
     branchName: choose<string>(source, "branchName", existing?.branch_name ?? null),
     accountType: choose<string>(source, "accountType", existing?.account_type ?? null),
     accountNumber: choose<string>(source, "accountNumber", existing?.account_number ?? null),
     accountHolderKana: choose<string>(source, "accountHolderKana", existing?.account_holder_kana ?? null),
-    accountScope: accountScope === "overseas" ? "overseas" : "domestic",
-    swiftBic: choose<string>(source, "swiftBic", existing?.swift_bic ?? null),
-    iban: choose<string>(source, "iban", existing?.iban ?? null),
-    routingNumber: choose<string>(source, "routingNumber", existing?.routing_number ?? null),
-    accountHolderName: choose<string>(source, "accountHolderName", existing?.account_holder_name ?? null),
-    bankCountry: choose<string>(source, "bankCountry", existing?.bank_country ?? null),
-    bankAddress: choose<string>(source, "bankAddress", existing?.bank_address ?? null),
-    bankCurrency: choose<string>(source, "bankCurrency", existing?.currency ?? null),
-    intermediaryBankSwift: choose<string>(source, "intermediaryBankSwift", existing?.intermediary_bank_swift ?? null),
-    intermediaryBankName: choose<string>(source, "intermediaryBankName", existing?.intermediary_bank_name ?? null)
+    accountScope: isOverseas ? "overseas" : "domestic",
+    // 国内へ切り替えたとき海外固有値を残すと、後日の帳票引用で古いSWIFT/IBANが
+    // 混入するため明示的に消す。海外のときだけ既存値/入力値を保持する。
+    swiftBic: isOverseas ? choose<string>(source, "swiftBic", existing?.swift_bic ?? null) : null,
+    iban: isOverseas ? choose<string>(source, "iban", existing?.iban ?? null) : null,
+    routingNumber: isOverseas ? choose<string>(source, "routingNumber", existing?.routing_number ?? null) : null,
+    accountHolderName: isOverseas ? choose<string>(source, "accountHolderName", existing?.account_holder_name ?? null) : null,
+    bankCountry: isOverseas ? choose<string>(source, "bankCountry", existing?.bank_country ?? null) : null,
+    bankAddress: isOverseas ? choose<string>(source, "bankAddress", existing?.bank_address ?? null) : null,
+    bankCurrency: isOverseas ? choose<string>(source, "bankCurrency", existing?.currency ?? null) : null,
+    intermediaryBankSwift: isOverseas
+      ? choose<string>(source, "intermediaryBankSwift", existing?.intermediary_bank_swift ?? null) : null,
+    intermediaryBankName: isOverseas
+      ? choose<string>(source, "intermediaryBankName", existing?.intermediary_bank_name ?? null) : null
   };
 
   let bankId: number;
