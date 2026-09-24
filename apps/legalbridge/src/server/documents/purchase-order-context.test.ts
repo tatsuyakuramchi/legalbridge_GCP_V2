@@ -146,3 +146,26 @@ test("REMARKS だけの旧データは定型備考として表示する（後方
   assert.equal(result.REMARKS_FIXED, "旧テンプレの備考");
   assert.equal(result.SPECIAL_TERMS, "");
 });
+
+
+test("海外発注書の基本契約フラグを真偽値に正規化する", () => {
+  const withMaster = buildTemplateDocumentContext("intl_purchase_order", {
+    HAS_BASE_CONTRACT: "true",
+    MASTER_CONTRACT_REF: "Master Services Agreement No. 2026-01",
+    items: []
+  });
+  assert.equal(withMaster.HAS_BASE_CONTRACT, true);
+  assert.equal(withMaster.MASTER_CONTRACT_REF, "Master Services Agreement No. 2026-01");
+
+  const withoutMaster = buildTemplateDocumentContext("intl_purchase_order", {
+    HAS_BASE_CONTRACT: "false",
+    items: []
+  });
+  assert.equal(withoutMaster.HAS_BASE_CONTRACT, false);
+});
+
+test("海外発注書で基本契約フラグ未設定なら基本契約なしとして扱う", () => {
+  const result = buildTemplateDocumentContext("intl_purchase_order", { items: [] });
+  assert.equal(result.HAS_BASE_CONTRACT, false);
+  assert.equal(result.MASTER_CONTRACT_REF, "");
+});

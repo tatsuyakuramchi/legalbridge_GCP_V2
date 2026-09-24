@@ -144,7 +144,10 @@ type VendorValues = {
   contactEmail: string; signerEmail: string; address: string;
   invoiceRegistrationNumber: string; vendorRep: string; corporateNumber: string;
   bankName: string; branchName: string; accountType: string; accountNumber: string;
-  accountHolderKana: string; bankInfo: string;
+  accountHolderKana: string; accountScope: "domestic" | "overseas";
+  swiftBic: string; iban: string; routingNumber: string; accountHolderName: string;
+  bankCountry: string; bankAddress: string; bankCurrency: string;
+  intermediaryBankSwift: string; intermediaryBankName: string; bankInfo: string;
   isInvoiceIssuer: boolean; withholdingEnabled: boolean; isActive: boolean;
 };
 const emptyVendor: VendorValues = {
@@ -153,12 +156,20 @@ const emptyVendor: VendorValues = {
   contactEmail: "", signerEmail: "", address: "",
   invoiceRegistrationNumber: "", vendorRep: "", corporateNumber: "",
   bankName: "", branchName: "", accountType: "", accountNumber: "",
-  accountHolderKana: "", bankInfo: "",
+  accountHolderKana: "", accountScope: "domestic",
+  swiftBic: "", iban: "", routingNumber: "", accountHolderName: "",
+  bankCountry: "", bankAddress: "", bankCurrency: "",
+  intermediaryBankSwift: "", intermediaryBankName: "", bankInfo: "",
   isInvoiceIssuer: false, withholdingEnabled: false, isActive: true
 };
 // 口座情報は管理者のみ編集可（サーバ側でも 403 で守る）。非管理者は送信対象から外すため、
 // 空文字で上書きして既存値を消す事故が起きない。
-const BANK_KEYS = ["bankName", "branchName", "accountType", "accountNumber", "accountHolderKana", "bankInfo"] as const;
+const BANK_KEYS = [
+  "bankName", "branchName", "accountType", "accountNumber", "accountHolderKana",
+  "accountScope", "swiftBic", "iban", "routingNumber", "accountHolderName",
+  "bankCountry", "bankAddress", "bankCurrency", "intermediaryBankSwift",
+  "intermediaryBankName", "bankInfo"
+] as const;
 
 function VendorForm({ vendorId, onCancel, onSaved }: { vendorId?: number; onCancel: () => void; onSaved: () => void }) {
   const isEdit = vendorId !== undefined;
@@ -189,7 +200,13 @@ function VendorForm({ vendorId, onCancel, onSaved }: { vendorId?: number; onCanc
           vendorRep: v.vendorRep ?? "", corporateNumber: v.corporateNumber ?? "",
           bankName: v.bankName ?? "", branchName: v.branchName ?? "",
           accountType: v.accountType ?? "", accountNumber: v.accountNumber ?? "",
-          accountHolderKana: v.accountHolderKana ?? "", bankInfo: v.bankInfo ?? "",
+          accountHolderKana: v.accountHolderKana ?? "",
+          accountScope: v.accountScope === "overseas" ? "overseas" : "domestic",
+          swiftBic: v.swiftBic ?? "", iban: v.iban ?? "", routingNumber: v.routingNumber ?? "",
+          accountHolderName: v.accountHolderName ?? "", bankCountry: v.bankCountry ?? "",
+          bankAddress: v.bankAddress ?? "", bankCurrency: v.bankCurrency ?? "",
+          intermediaryBankSwift: v.intermediaryBankSwift ?? "",
+          intermediaryBankName: v.intermediaryBankName ?? "", bankInfo: v.bankInfo ?? "",
           isInvoiceIssuer: Boolean(v.isInvoiceIssuer), withholdingEnabled: Boolean(v.withholdingEnabled),
           isActive: v.isActive !== false
         });
@@ -269,27 +286,68 @@ function VendorForm({ vendorId, onCancel, onSaved }: { vendorId?: number; onCanc
         placeholder="13桁" maxLength={20} /></label>
     </div>
     <label>住所<input value={values.address} onChange={(e) => set("address", e.target.value)} /></label>
-    <h3 className="detail-kicker">振込先（発注書・支払通知書へ差し込み）</h3>
+    <h3 className="detail-kicker">メイン振込先（発注書・支払通知書へ差し込み）</h3>
     {canEditBank ? <>
       <div className="matter-form-grid">
-        <label>金融機関名<input value={values.bankName} onChange={(e) => set("bankName", e.target.value)}
-          placeholder="例: きらぼし銀行" maxLength={100} /></label>
-        <label>支店名<input value={values.branchName} onChange={(e) => set("branchName", e.target.value)}
-          placeholder="例: 神田中央支店" maxLength={100} /></label>
-        <label>口座種別<select value={["普通", "当座", ""].includes(values.accountType) ? values.accountType : "__legacy"}
-          onChange={(e) => { if (e.target.value !== "__legacy") set("accountType", e.target.value); }}>
-          <option value="">未設定</option>
-          <option value="普通">普通</option>
-          <option value="当座">当座</option>
-          {!["普通", "当座", ""].includes(values.accountType) && <option value="__legacy">{values.accountType}（旧データ）</option>}
+        <label>口座区分<select value={values.accountScope}
+          onChange={(e) => set("accountScope", e.target.value === "overseas" ? "overseas" : "domestic")}>
+          <option value="domestic">国内銀行</option>
+          <option value="overseas">海外銀行</option>
         </select></label>
-        <label>口座番号<input value={values.accountNumber} onChange={(e) => set("accountNumber", e.target.value)}
-          placeholder="7桁" maxLength={50} /></label>
-        <label>口座名義（カナ）<input value={values.accountHolderKana} onChange={(e) => set("accountHolderKana", e.target.value)}
-          placeholder="例: カ)アークライト" maxLength={100} /></label>
+        <label>金融機関名 / Beneficiary Bank<input value={values.bankName}
+          onChange={(e) => set("bankName", e.target.value)}
+          placeholder={values.accountScope === "overseas" ? "例: Intesa Sanpaolo S.p.A." : "例: きらぼし銀行"}
+          maxLength={100} /></label>
+        <label>支店名 / Branch<input value={values.branchName}
+          onChange={(e) => set("branchName", e.target.value)}
+          placeholder={values.accountScope === "overseas" ? "任意" : "例: 神田中央支店"} maxLength={100} /></label>
+        {values.accountScope === "domestic" ? <>
+          <label>口座種別<select value={["普通", "当座", ""].includes(values.accountType) ? values.accountType : "__legacy"}
+            onChange={(e) => { if (e.target.value !== "__legacy") set("accountType", e.target.value); }}>
+            <option value="">未設定</option>
+            <option value="普通">普通</option>
+            <option value="当座">当座</option>
+            {!["普通", "当座", ""].includes(values.accountType) && <option value="__legacy">{values.accountType}（旧データ）</option>}
+          </select></label>
+          <label>口座番号<input value={values.accountNumber} onChange={(e) => set("accountNumber", e.target.value)}
+            placeholder="7桁" maxLength={50} /></label>
+          <label>口座名義（カナ）<input value={values.accountHolderKana} onChange={(e) => set("accountHolderKana", e.target.value)}
+            placeholder="例: カ)アークライト" maxLength={100} /></label>
+        </> : <>
+          <label>SWIFT / BIC<input value={values.swiftBic} onChange={(e) => set("swiftBic", e.target.value.toUpperCase())}
+            placeholder="例: BCITITMM" maxLength={20} /></label>
+          <label>IBAN<input value={values.iban} onChange={(e) => set("iban", e.target.value.replace(/\s/g, "").toUpperCase())}
+            placeholder="例: IT77A0306909400100000067552" maxLength={64} /></label>
+          <label>Routing / ABA / Sort Code<input value={values.routingNumber}
+            onChange={(e) => set("routingNumber", e.target.value)}
+            placeholder="国・銀行に応じて記入" maxLength={40} /></label>
+          <label>Account Number<input value={values.accountNumber} onChange={(e) => set("accountNumber", e.target.value)}
+            placeholder="IBANとは別に必要な場合" maxLength={50} /></label>
+          <label>Account Type<input value={values.accountType} onChange={(e) => set("accountType", e.target.value)}
+            placeholder="例: Checking / Current" maxLength={50} /></label>
+          <label>Account Holder (Latin)<input value={values.accountHolderName}
+            onChange={(e) => set("accountHolderName", e.target.value)}
+            placeholder="例: NOA VASSALLI" maxLength={255} /></label>
+          <label>口座名義（現地表記・任意）<input value={values.accountHolderKana}
+            onChange={(e) => set("accountHolderKana", e.target.value)}
+            placeholder="必要な場合のみ" maxLength={100} /></label>
+          <label>銀行所在国<input value={values.bankCountry} onChange={(e) => set("bankCountry", e.target.value.toUpperCase())}
+            placeholder="ISO 2文字: IT / US / GB" maxLength={2} /></label>
+          <label>送金通貨<input value={values.bankCurrency} onChange={(e) => set("bankCurrency", e.target.value.toUpperCase())}
+            placeholder="ISO 3文字: EUR / USD / GBP" maxLength={3} /></label>
+          <label>銀行所在地<input value={values.bankAddress} onChange={(e) => set("bankAddress", e.target.value)}
+            placeholder="Bank address" maxLength={1000} /></label>
+          <label>中継銀行名<input value={values.intermediaryBankName}
+            onChange={(e) => set("intermediaryBankName", e.target.value)}
+            placeholder="Intermediary bank (if required)" maxLength={255} /></label>
+          <label>中継銀行 SWIFT<input value={values.intermediaryBankSwift}
+            onChange={(e) => set("intermediaryBankSwift", e.target.value.toUpperCase())}
+            placeholder="Intermediary SWIFT/BIC" maxLength={20} /></label>
+        </>}
       </div>
       <label>銀行情報メモ<input value={values.bankInfo} onChange={(e) => set("bankInfo", e.target.value)}
-        placeholder="海外送金のSWIFT/IBAN等、上記に収まらない情報" maxLength={1000} /></label>
+        placeholder="追加の送金指図、Correspondent bank情報等" maxLength={1000} /></label>
+      <p className="muted-note">現在のV2画面ではメイン振込先1口座を編集します。DBの vendor_bank_accounts は複数口座を保持し、他の登録済み口座は削除しません。</p>
     </> : <p className="muted-note">口座情報の表示・編集は管理者のみです（他の項目はこのまま編集・保存できます）。</p>}
     <label className="task-primary-toggle"><input type="checkbox" checked={values.isInvoiceIssuer} onChange={(e) => set("isInvoiceIssuer", e.target.checked)} />インボイス発行事業者</label>
     <label className="task-primary-toggle"><input type="checkbox" checked={values.withholdingEnabled} onChange={(e) => set("withholdingEnabled", e.target.checked)} />源泉徴収対象</label>
