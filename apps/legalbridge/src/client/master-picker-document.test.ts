@@ -84,13 +84,19 @@ test("海外取引先の銀行口座を海外発注書の送金欄へ引用で�
   const schema = {
     ...schemaOf(
       { name: "BANK_NAME", label: "Beneficiary Bank", type: "text" },
-      { name: "SWIFT_BIC", label: "SWIFT / BIC", type: "text" },
-      { name: "IBAN", label: "IBAN", type: "text" },
-      { name: "ACCOUNT_HOLDER", label: "Account Holder", type: "text" },
+      { name: "BRANCH_NAME", label: "Branch", type: "hidden", hidden: true, readonly: true },
+      { name: "ACCOUNT_NUMBER", label: "Account Number", type: "hidden", hidden: true, readonly: true },
+      { name: "SWIFT_BIC", label: "SWIFT / BIC", type: "hidden", hidden: true, readonly: true },
+      { name: "IBAN", label: "IBAN", type: "hidden", hidden: true, readonly: true },
+      { name: "ROUTING_NUMBER", label: "Routing / ABA / Sort Code", type: "hidden", hidden: true, readonly: true },
+      { name: "ACCOUNT_HOLDER", label: "Account Holder", type: "hidden", hidden: true, readonly: true },
       { name: "ACCOUNT_HOLDER_LOCAL", label: "Local Account Holder", type: "text" },
-      { name: "BANK_COUNTRY", label: "Bank Country", type: "text" },
-      { name: "BANK_CURRENCY", label: "Currency", type: "text" },
-      { name: "INTERMEDIARY_BANK", label: "Intermediary Bank", type: "text" }
+      { name: "BANK_COUNTRY", label: "Bank Country", type: "hidden", hidden: true, readonly: true },
+      { name: "BANK_ADDRESS", label: "Bank Address", type: "hidden", hidden: true, readonly: true },
+      { name: "BANK_CURRENCY", label: "Currency", type: "hidden", hidden: true, readonly: true },
+      { name: "INTERMEDIARY_BANK_NAME", label: "Intermediary Bank", type: "hidden", hidden: true, readonly: true },
+      { name: "INTERMEDIARY_BANK_SWIFT", label: "Intermediary Bank SWIFT", type: "hidden", hidden: true, readonly: true },
+      { name: "INTERMEDIARY_BANK", label: "Intermediary Bank (combined)", type: "text" }
     ),
     templateKey: "intl_purchase_order"
   };
@@ -100,23 +106,33 @@ test("海外取引先の銀行口座を海外発注書の送金欄へ引用で�
       vendor_name: "Noa Vassalli",
       entity_type: "個人",
       bank_name: "Intesa Sanpaolo S.p.A.",
+      branch_name: "Milano Centro",
+      account_number: "00000067552",
       account_scope: "overseas",
       swift_bic: "BCITITMM",
       iban: "IT77A0306909400100000067552",
+      routing_number: "03069",
       account_holder_name: "NOA VASSALLI",
       account_holder_kana: "Noa Vassalli",
       bank_country: "IT",
+      bank_address: "Piazza Paolo Ferrari 10, Milano, Italy",
       currency: "EUR",
       intermediary_bank_name: "Correspondent Bank",
       intermediary_bank_swift: "CORRITMM"
     }
   });
   assert.equal(patch.BANK_NAME, "Intesa Sanpaolo S.p.A.");
+  assert.equal(patch.BRANCH_NAME, "Milano Centro");
+  assert.equal(patch.ACCOUNT_NUMBER, "00000067552");
   assert.equal(patch.SWIFT_BIC, "BCITITMM");
   assert.equal(patch.IBAN, "IT77A0306909400100000067552");
+  assert.equal(patch.ROUTING_NUMBER, "03069");
   assert.equal(patch.ACCOUNT_HOLDER, "NOA VASSALLI");
   assert.equal(patch.ACCOUNT_HOLDER_LOCAL, "Noa Vassalli");
   assert.equal(patch.BANK_COUNTRY, "IT");
+  assert.equal(patch.BANK_ADDRESS, "Piazza Paolo Ferrari 10, Milano, Italy");
   assert.equal(patch.BANK_CURRENCY, "EUR");
+  assert.equal(patch.INTERMEDIARY_BANK_NAME, "Correspondent Bank");
+  assert.equal(patch.INTERMEDIARY_BANK_SWIFT, "CORRITMM");
   assert.equal(patch.INTERMEDIARY_BANK, "Correspondent Bank / CORRITMM");
 });
