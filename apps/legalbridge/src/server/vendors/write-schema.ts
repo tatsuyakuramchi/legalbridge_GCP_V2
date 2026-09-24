@@ -38,7 +38,7 @@ export const vendorCreateSchema = z.object({
   accountNumber: nullableText(50),
   accountHolderKana: nullableText(100),
   // 海外送金（vendor_bank_accounts のメイン口座へ保存）。
-  accountScope: z.enum(["domestic", "overseas"]).optional().default("domestic"),
+  accountScope: z.enum(["domestic", "overseas"]).optional(),
   swiftBic: nullableText(20),
   iban: nullableText(64),
   routingNumber: nullableText(40),
