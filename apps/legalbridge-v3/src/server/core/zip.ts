@@ -76,7 +76,11 @@ export function buildZip(entries: ZipEntry[]): Uint8Array {
 
     const central = header(46);
     central.view.setUint32(0, 0x02014b50, true);
-    central.view.setUint16(4, 20, true);        // version made by
+    // version made by：上位バイトは作成元の OS。0（MS-DOS）にすると、Debian・Ubuntu の
+    // unzip は UTF-8 の印があっても名前を DOS の文字コード（CP437/CP866）として読み替え、
+    // 日本語名が化ける（Cloud Build の node:22 と、UTF-8 の端末で実際に起きた）。
+    // 3（Unix）にすれば名前はそのまま使われる。Windows・macOS は UTF-8 の印だけを見る。
+    central.view.setUint16(4, (3 << 8) | 20, true);
     central.view.setUint16(6, 20, true);        // version needed
     central.view.setUint16(8, 0x0800, true);
     central.view.setUint16(10, 0, true);
@@ -90,7 +94,9 @@ export function buildZip(entries: ZipEntry[]): Uint8Array {
     central.view.setUint16(32, 0, true);        // comment
     central.view.setUint16(34, 0, true);        // disk
     central.view.setUint16(36, 0, true);        // internal attrs
-    central.view.setUint32(38, 0, true);        // external attrs
+    // external attrs：Unix を名乗るので、上位 16 ビットに通常ファイルの権限（0644）を入れる。
+    // 0 のままだと、展開したファイルが誰も読めない権限になる。
+    central.view.setUint32(38, (0o100644 << 16) >>> 0, true);
     central.view.setUint32(42, offset, true);
     centrals.push(central.buf, name);
 
