@@ -17,6 +17,9 @@
 #                         SQL を流す（infra/v3 の診断は /v3/095_… で指せる）。
 #                         名前=値 を足すと照会の :'名前' に入る
 #                         （例: ops sql /v3/diag/party-documents.sql q=取引先名）
+#   ops push-export       ローカルの v3 の中身を、本番へ入れ直す SQL 1本にまとめる
+#                         （本番が止まっていた間にローカルで作業した分を持ち帰る。
+#                           流すのは Cloud Shell の psql。docs/v3-push-local-to-prod.md）
 #   ops status            写しの一覧と、いま入っているデータの時点
 #   ops netcheck [host port]
 #                         同期に要る Google の口へ、コンテナから届くかを見る。
@@ -318,6 +321,247 @@ upgrade() {
   local rows
   rows=$(psql -Atq -c "SELECT count(*) FROM v3.matters" 2>/dev/null || echo '?')
   log "完了（案件 ${rows} 件。データはそのまま）"
+}
+
+# ---------------------------------------------------------------------
+# ローカルの v3 の中身で本番を入れ直す SQL を作る（本番へは流さない）。
+#
+#   本番が止まっている間、ローカルを正として作業した分を持ち帰るためのもの。
+#   本番は写しを取った時点から変わっていないこと（確かめる SQL を先頭に入れる）が前提。
+#
+#   できるファイル（/dumps/push/v3_push_YYYYmmdd_HHMM.sql）は 1 トランザクションで:
+#     1. 本番が写しの時点から変わっていないか（audit_events）を確かめ、変わっていれば止める
+#     2. 列の並びがローカルと本番で同じかを確かめ、違えば止める（004 の当て忘れ）
+#     3. 外部キーを一時的に「最後に確かめる」にし、利用者の引き金を止める
+#        （Cloud SQL には superuser が無く、ローカルの取り込みと同じ止め方はできない）
+#     4. v3 の全部の表を空にして、ローカルの中身を入れる（番号の採番表・連番も）
+#     5. ローカルにしか無い PDF の保存先（/local-files/）を消す（本番では本文から作り直す）
+#     6. 外部キーを確かめて元に戻し、表ごとの行数がローカルと同じかを数える
+#     7. 入れ直した記録を audit_events に残す
+#   途中で 1 つでも失敗すれば何も変わらない。
+#
+#   中身は口座番号・名義・連絡先を含む本番の写し。置き場所と消し忘れに気をつける。
+# ---------------------------------------------------------------------
+push_export() {
+  local dir="$DUMPS/push" ts out body
+  ts=$(date +%Y%m%d_%H%M)
+  mkdir -p "$dir"
+  out="$dir/v3_push_${ts}.sql"
+  body="$dir/.body_${ts}.sql"
+
+  # 写しの時点：取り込み（import-rows）の行が持つ xmin の、操作記録の最後の時刻。
+  # 取り込みは全部の表を 1 トランザクションで入れるので、全表で最も多い xmin がそれ。
+  local import_xid import_tables since
+  read -r import_xid import_tables < <(psql -Atq -F ' ' -c "
+    SELECT x.xid, count(*) FROM pg_tables t
+      CROSS JOIN LATERAL xmltable('/table/row'
+        PASSING query_to_xml(format('SELECT xmin::text AS xid, count(*) AS n FROM v3.%I GROUP BY 1', t.tablename), false, false, '')
+        COLUMNS xid text PATH 'xid', n bigint PATH 'n') AS x
+     WHERE t.schemaname = 'v3' GROUP BY x.xid ORDER BY sum(x.n) DESC LIMIT 1")
+  if [ -n "${PUSH_SINCE:-}" ]; then
+    since="$PUSH_SINCE"
+  else
+    [ "${import_tables:-0}" -ge 10 ] || die "取り込み（import-rows）の時点が分かりません。PUSH_SINCE='2026-09-09 21:13:53+09' のように指定してください"
+    since=$(psql -Atq -c "SELECT to_char(max(occurred_at), 'YYYY-MM-DD\"T\"HH24:MI:SS.USOF') FROM v3.audit_events WHERE xmin::text = '$import_xid'")
+  fi
+  [ -n "$since" ] || die "写しの時点が決まりません"
+  log "写しの時点: $since（これより後に本番で操作があれば、流したときに止まる）"
+
+  log "ローカルの中身を書き出す（pg_dump --data-only）"
+  # \restrict / \unrestrict は新しい pg_dump が付ける psql の命令。Cloud Shell の
+  # psql が古いと知らない命令で止まるので落とす。
+  # 循環する外部キーの警告が出るが、流す側で外部キーを最後に確かめるので問題ない。
+  pg_dump --data-only --schema=v3 --no-owner --no-privileges 2>"$body.err" \
+    | grep -v -E '^\\(restrict|unrestrict) ' > "$body"
+  if grep -v -E 'circular foreign-key|^pg_dump: (detail|hint):' "$body.err" | grep -q .; then
+    cat "$body.err" >&2; rm -f "$body" "$body.err"; die "pg_dump が失敗しました"
+  fi
+  rm -f "$body.err"
+
+  local cols counts tables
+  cols=$(psql -Atq -c "
+    SELECT string_agg(format('(%L,%L,%s)', c.table_name, c.column_name, c.ordinal_position), E',\n' ORDER BY c.table_name, c.ordinal_position)
+      FROM information_schema.columns c
+      JOIN information_schema.tables t ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+     WHERE c.table_schema = 'v3' AND t.table_type = 'BASE TABLE'")
+  counts=$(psql -Atq -c "
+    SELECT string_agg(format('(%L,%s)', t.tablename, x.n), E',\n' ORDER BY t.tablename)
+      FROM pg_tables t
+      CROSS JOIN LATERAL xmltable('/table/row'
+        PASSING query_to_xml(format('SELECT count(*) AS n FROM v3.%I', t.tablename), false, false, '')
+        COLUMNS n bigint PATH 'n') AS x
+     WHERE t.schemaname = 'v3'")
+  tables=$(psql -Atq -c "SELECT string_agg(format('v3.%I', tablename), ', ' ORDER BY tablename) FROM pg_tables WHERE schemaname = 'v3'")
+  local local_files
+  local_files=$(psql -Atq -c "SELECT count(*) FROM v3.documents WHERE storage_url LIKE '%/local-files/%'")
+
+  {
+    cat <<EOF
+-- =====================================================================
+-- 本番 v3 をローカルの中身で入れ直す（ops push-export が ${ts} に作成）
+--
+--   写しの時点: ${since}
+--   流すのは Cloud Shell の psql（postgres ロール）。Studio では流せない。
+--     psql -v ON_ERROR_STOP=1 -v confirm_push=REPLACE_V3_WITH_LOCAL -f $(basename "$out")
+--   手順: docs/v3-push-local-to-prod.md
+--
+--   口座番号・名義・連絡先を含む。流し終えたら Cloud Shell とローカルの両方から消す。
+-- =====================================================================
+\\set ON_ERROR_STOP on
+\\pset pager off
+
+\\if :{?confirm_push}
+\\else
+  \\echo 'Run with: -v confirm_push=REPLACE_V3_WITH_LOCAL'
+  \\quit
+\\endif
+SELECT :'confirm_push' = 'REPLACE_V3_WITH_LOCAL' AS confirmed \\gset
+\\if :confirmed
+\\else
+  \\echo '確認の値が違います。何も変えていません。'
+  \\quit
+\\endif
+
+-- 1. 本番が写しの時点から変わっていないか
+DO \$guard\$
+DECLARE n bigint;
+BEGIN
+  IF current_database() <> 'legalbridge' THEN
+    RAISE EXCEPTION 'legalbridge ではないデータベースにつながっています: %', current_database();
+  END IF;
+  SELECT count(*) INTO n FROM v3.audit_events
+   WHERE occurred_at > TIMESTAMPTZ '${since}' AND action <> 'job.daily';
+  IF n > 0 THEN
+    RAISE EXCEPTION '本番に写しの時点（${since}）より後の操作が % 件あります。入れ直すと消えるので止めます', n;
+  END IF;
+END
+\$guard\$;
+
+-- 2. 列の並びが同じか（本番に 004_amend を当て忘れていないか）
+CREATE TEMP TABLE push_local_columns (table_name text, column_name text, ordinal int);
+INSERT INTO push_local_columns VALUES
+${cols};
+DO \$cols\$
+DECLARE diff text;
+BEGIN
+  SELECT string_agg(format('%s.%s（%s）', table_name, column_name, side), '、' ORDER BY table_name, column_name)
+    INTO diff
+    FROM (
+      SELECT l.table_name, l.column_name, 'ローカルだけ' AS side
+        FROM push_local_columns l
+       WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema = 'v3' AND c.table_name = l.table_name AND c.column_name = l.column_name)
+      UNION ALL
+      SELECT c.table_name, c.column_name, '本番だけ'
+        FROM information_schema.columns c
+        JOIN information_schema.tables t ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+       WHERE c.table_schema = 'v3' AND t.table_type = 'BASE TABLE'
+         AND NOT EXISTS (SELECT 1 FROM push_local_columns l
+                          WHERE l.table_name = c.table_name AND l.column_name = c.column_name)
+    ) d;
+  IF diff IS NOT NULL THEN
+    RAISE EXCEPTION '列がローカルと本番で違います（先に 004_amend を当てる）: %', diff;
+  END IF;
+END
+\$cols\$;
+
+CREATE TEMP TABLE push_expected (table_name text, n bigint);
+INSERT INTO push_expected VALUES
+${counts};
+
+BEGIN;
+SET LOCAL lock_timeout = '15s';
+
+-- 3. 外部キーを「最後に確かめる」に。戻すために名前を控える。
+CREATE TEMP TABLE push_fk ON COMMIT DROP AS
+SELECT format('%I.%I', n.nspname, c.relname) AS rel, con.conname
+  FROM pg_constraint con
+  JOIN pg_class c ON c.oid = con.conrelid
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+ WHERE con.contype = 'f' AND n.nspname = 'v3' AND NOT con.condeferrable;
+DO \$defer\$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT * FROM push_fk LOOP
+    EXECUTE format('ALTER TABLE %s ALTER CONSTRAINT %I DEFERRABLE INITIALLY DEFERRED', r.rel, r.conname);
+  END LOOP;
+END
+\$defer\$;
+SET CONSTRAINTS ALL DEFERRED;
+
+-- 利用者の引き金（条件の系列番号など）を止める。入れる値はローカルで決まっている。
+CREATE TEMP TABLE push_triggers ON COMMIT DROP AS
+SELECT DISTINCT format('%I.%I', n.nspname, c.relname) AS rel
+  FROM pg_trigger tg
+  JOIN pg_class c ON c.oid = tg.tgrelid
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+ WHERE n.nspname = 'v3' AND NOT tg.tgisinternal;
+DO \$trg\$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT * FROM push_triggers LOOP
+    EXECUTE format('ALTER TABLE %s DISABLE TRIGGER USER', r.rel);
+  END LOOP;
+END
+\$trg\$;
+
+-- 4. 空にして入れる
+TRUNCATE ${tables};
+
+EOF
+    cat "$body"
+    cat <<EOF
+
+-- 5. ローカルにしか無い PDF の保存先を消す（本番では文書の本文から作り直す）。${local_files} 件
+UPDATE v3.documents SET storage_url = NULL WHERE storage_url LIKE '%/local-files/%';
+
+-- 6. 外部キーを確かめて戻す。引き金も戻す。
+SET CONSTRAINTS ALL IMMEDIATE;
+DO \$restore\$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT * FROM push_fk LOOP
+    EXECUTE format('ALTER TABLE %s ALTER CONSTRAINT %I NOT DEFERRABLE', r.rel, r.conname);
+  END LOOP;
+  FOR r IN SELECT * FROM push_triggers LOOP
+    EXECUTE format('ALTER TABLE %s ENABLE TRIGGER USER', r.rel);
+  END LOOP;
+END
+\$restore\$;
+
+-- 行数がローカルと同じか
+DO \$count\$
+DECLARE r record; got bigint; bad text := '';
+BEGIN
+  FOR r IN SELECT * FROM push_expected LOOP
+    EXECUTE format('SELECT count(*) FROM v3.%I', r.table_name) INTO got;
+    IF got <> r.n THEN bad := bad || format('%s: ローカル %s / 本番 %s、', r.table_name, r.n, got); END IF;
+  END LOOP;
+  IF bad <> '' THEN RAISE EXCEPTION '行数が合いません: %', bad; END IF;
+END
+\$count\$;
+
+-- 7. 入れ直した記録
+INSERT INTO v3.audit_events (actor, action, target_type, target_id, detail)
+VALUES ('ops@push', 'ops.push_from_local', 'system', 0,
+        jsonb_build_object('since', '${since}', 'exportedAt', '${ts}',
+                           'tables', (SELECT count(*) FROM push_expected),
+                           'rows', (SELECT sum(n) FROM push_expected)));
+
+COMMIT;
+
+\\echo ''
+\\echo '=== 入れ直した結果（表ごとの行数） ==='
+SELECT e.table_name AS 表, e.n AS 行数 FROM push_expected e ORDER BY e.table_name;
+EOF
+  } > "$out"
+  rm -f "$body"
+  chmod 600 "$out"
+
+  local size; size=$(du -h "$out" | cut -f1)
+  log "できました: $out（$size）"
+  log "表 $(echo "$counts" | wc -l) 本・PDF の保存先を消す文書 ${local_files} 件"
+  log "中身は口座番号・名義・連絡先を含む。Cloud Shell へ上げて流したら、両方から消すこと"
 }
 
 # ---------------------------------------------------------------------
@@ -856,6 +1100,7 @@ case "${1:-}" in
          esac
        done
        psql -v ON_ERROR_STOP=1 "${sql_vars[@]+"${sql_vars[@]}"}" -f "$sql_file" ;;
+  push-export) push_export ;;
   status) status ;;
   *) sed -n '2,15p' "$0"; exit 2 ;;
 esac
