@@ -14,7 +14,8 @@
     "dev:v3": "npm run dev -w @legalbridge/v3",
     "build:v3": "npm run build -w @legalbridge/v3",
     "typecheck:v3": "npm run typecheck -w @legalbridge/v3",
-    "test:v3": "npm run test -w @legalbridge/v3"
+    "test:v3": "npm run test -w @legalbridge/v3",
+    "test:v3:ci": "npm run test:ci -w @legalbridge/v3"
   },
   "devDependencies": {
     "typescript": "^5.9.3"

@@ -56,7 +56,10 @@ steps:
       - |
         npm ci
         npm run typecheck:v3
-        npm run test:v3
+        # 結果は点で出し、落ちた試験だけを最後に詳しく出す。1400 件を超える試験を
+        # TAP で全部出すと 64KB を超え、GitHub のチェック画面ではどの試験が
+        # 落ちたかが切れて見えなくなる（2026-09-25 に実際そうなった）。
+        npm run test:v3:ci
         npm run build:v3
 
   - id: build-image
