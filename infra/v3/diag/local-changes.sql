@@ -10,8 +10,8 @@
 --   docker compose run --rm ops sql-prod /v3/diag/local-changes.sql "since=2026-09-20 02:00"
 --
 -- since は写しを取った時点（日本時間）。
--- 省略すると、ローカルの操作者（…@local。既定は backup@local）以外の最後の操作の
--- 時刻を起点にする。CSV で取り込んだとき（ops status が「不明」）は、これが写しの時点。
+-- 省略すると、取り込み（ops import-rows）で入った操作記録の最後の時刻を起点にする
+-- （取り込んだ行はみな同じ xmin を持つ）。ops status が「不明」でも写しの時点が分かる。
 -- 本番へ流すときは since を必ず指定する（ローカルで出た起点をそのまま使う）。
 -- 名前・住所・口座・メールは出さない。出すのは件数と番号だけ。
 
@@ -20,20 +20,38 @@
   \set since ''
 \endif
 
+-- 取り込み（ops import-rows）は 1 つのトランザクションで全部の表の全部の行を入れる。
+-- その行はみな同じ xmin を持つ。全部の表を通していちばん多くの行が持つ xmin を
+-- 「取り込み」とみなす（ローカルの一括登録は数表・数百行なので、これを超えない）。
+-- 取り込んだ操作記録の最後の時刻が写しの時点。
+SELECT x.xid AS import_xid, sum(x.n) AS import_rows, count(*) AS import_tables
+  FROM pg_tables t
+  CROSS JOIN LATERAL xmltable('/table/row'
+    PASSING query_to_xml(format('SELECT xmin::text AS xid, count(*) AS n FROM v3.%I GROUP BY 1', t.tablename),
+                         false, false, '')
+    COLUMNS xid text PATH 'xid', n bigint PATH 'n') AS x
+ WHERE t.schemaname = 'v3'
+ GROUP BY x.xid ORDER BY sum(x.n) DESC LIMIT 1 \gset
+
+\echo ''
+\echo '=== 取り込みとみなしたトランザクション（表の数が 30 前後なら import-rows の取り込み。数表しかなければ取り込みは見つかっていない） ==='
+SELECT :'import_xid' AS xmin, :'import_rows' AS 行数, :'import_tables' AS 表の数;
+
 SELECT COALESCE(
          NULLIF(:'since', '')::timestamp AT TIME ZONE 'Asia/Tokyo',
-         (SELECT max(occurred_at) FROM v3.audit_events WHERE actor NOT LIKE '%@local'),
+         (SELECT max(occurred_at) FROM v3.audit_events WHERE xmin::text = :'import_xid'),
          now() - interval '14 days') AS since \gset
 
 \echo ''
-\echo '=== 0. 操作者ごとの期間（…@local がローカルでの操作） ==='
-SELECT CASE WHEN actor LIKE '%@local' THEN actor ELSE '（本番の利用者）' END AS 操作者,
+\echo '=== 0. 取り込んだ記録と、取り込み後の記録（ローカルでは取り込み後＝ローカルの操作） ==='
+SELECT CASE WHEN xmin::text = :'import_xid' THEN '取り込んだ（本番の写し）' ELSE '取り込み後' END AS 区分,
+       CASE WHEN actor LIKE '%@local' THEN actor ELSE '（利用者）' END AS 操作者,
        count(*) AS 件数,
        min(occurred_at) AT TIME ZONE 'Asia/Tokyo' AS 最初,
        max(occurred_at) AT TIME ZONE 'Asia/Tokyo' AS 最後
   FROM v3.audit_events
  WHERE action NOT IN ('job.daily')
- GROUP BY 1 ORDER BY 最後;
+ GROUP BY 1, 2 ORDER BY 1, 最後;
 
 \echo ''
 \echo '=== 対象の期間 ==='
@@ -52,7 +70,7 @@ SELECT action AS 操作, count(*) AS 件数,
 
 \echo ''
 \echo '=== 2. 誰が操作したか ==='
-SELECT CASE WHEN actor LIKE '%@local' THEN actor ELSE '（本番の利用者）' END AS 操作者, count(*) AS 件数
+SELECT CASE WHEN actor LIKE '%@local' THEN actor ELSE '（利用者）' END AS 操作者, count(*) AS 件数
   FROM v3.audit_events
  WHERE occurred_at > :'since'::timestamptz AND action NOT IN ('job.daily')
  GROUP BY 1 ORDER BY count(*) DESC;
@@ -119,3 +137,16 @@ ORDER BY 1, 2;
 \echo '=== 7. 番号の採番表（document_sequences）: いまの値 ==='
 SELECT prefix AS 接頭辞, year AS 年, current_value AS 現在値
   FROM v3.document_sequences ORDER BY prefix, year;
+
+\echo ''
+\echo '=== 8. 表ごとの行：取り込んだまま／取り込み後に追加・変更（xmin で判定。ローカルで流す） ==='
+\echo '    ※ ops upgrade（004_amend）で直した行も「取り込み後」に数える。消した行はここには出ない'
+SELECT t.tablename AS 表, x.total AS 全部, x.kept AS 取り込んだまま, x.total - x.kept AS 取り込み後に追加・変更
+  FROM pg_tables t
+  CROSS JOIN LATERAL xmltable('/table/row'
+    PASSING query_to_xml(format(
+      'SELECT count(*) AS total, count(*) FILTER (WHERE xmin::text = %L) AS kept FROM v3.%I',
+      :'import_xid', t.tablename), false, false, '')
+    COLUMNS total bigint PATH 'total', kept bigint PATH 'kept') AS x
+ WHERE t.schemaname = 'v3'
+ ORDER BY (x.total - x.kept) DESC, t.tablename;
