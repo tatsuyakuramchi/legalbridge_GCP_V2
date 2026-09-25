@@ -370,9 +370,12 @@ push_export() {
   log "ローカルの中身を書き出す（pg_dump --data-only）"
   # \restrict / \unrestrict は新しい pg_dump が付ける psql の命令。Cloud Shell の
   # psql が古いと知らない命令で止まるので落とす。
+  # SET transaction_timeout は PostgreSQL 17 からの設定で、ローカル（17）の pg_dump が
+  # 付けるが、本番（Cloud SQL）が 16 以下だと知らない設定として止まる。0（無制限）は
+  # 既定値と同じなので落としてよい。
   # 循環する外部キーの警告が出るが、流す側で外部キーを最後に確かめるので問題ない。
   pg_dump --data-only --schema=v3 --no-owner --no-privileges 2>"$body.err" \
-    | grep -v -E '^\\(restrict|unrestrict) ' > "$body"
+    | grep -v -E '^\\(restrict|unrestrict) |^SET transaction_timeout = ' > "$body"
   if grep -v -E 'circular foreign-key|^pg_dump: (detail|hint):' "$body.err" | grep -q .; then
     cat "$body.err" >&2; rm -f "$body" "$body.err"; die "pg_dump が失敗しました"
   fi
