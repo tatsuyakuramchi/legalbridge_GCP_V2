@@ -6,10 +6,13 @@
 --
 -- 使い方（infra/local で）:
 --   docker compose run --rm ops status            … 「いま入っているデータの時点」を控える
---   docker compose run --rm ops sql /v3/diag/local-changes.sql "since=2026-09-20 02:00"
+--   docker compose run --rm ops sql /v3/diag/local-changes.sql
 --   docker compose run --rm ops sql-prod /v3/diag/local-changes.sql "since=2026-09-20 02:00"
 --
--- since は写しを取った時点（日本時間）。省略すると直近 14 日。
+-- since は写しを取った時点（日本時間）。
+-- 省略すると、ローカルの操作者（…@local。既定は backup@local）以外の最後の操作の
+-- 時刻を起点にする。CSV で取り込んだとき（ops status が「不明」）は、これが写しの時点。
+-- 本番へ流すときは since を必ず指定する（ローカルで出た起点をそのまま使う）。
 -- 名前・住所・口座・メールは出さない。出すのは件数と番号だけ。
 
 \if :{?since}
@@ -17,8 +20,20 @@
   \set since ''
 \endif
 
-SELECT COALESCE(NULLIF(:'since', '')::timestamp AT TIME ZONE 'Asia/Tokyo', now() - interval '14 days')
-       AS since \gset
+SELECT COALESCE(
+         NULLIF(:'since', '')::timestamp AT TIME ZONE 'Asia/Tokyo',
+         (SELECT max(occurred_at) FROM v3.audit_events WHERE actor NOT LIKE '%@local'),
+         now() - interval '14 days') AS since \gset
+
+\echo ''
+\echo '=== 0. 操作者ごとの期間（…@local がローカルでの操作） ==='
+SELECT CASE WHEN actor LIKE '%@local' THEN actor ELSE '（本番の利用者）' END AS 操作者,
+       count(*) AS 件数,
+       min(occurred_at) AT TIME ZONE 'Asia/Tokyo' AS 最初,
+       max(occurred_at) AT TIME ZONE 'Asia/Tokyo' AS 最後
+  FROM v3.audit_events
+ WHERE action NOT IN ('job.daily')
+ GROUP BY 1 ORDER BY 最後;
 
 \echo ''
 \echo '=== 対象の期間 ==='
@@ -37,10 +52,10 @@ SELECT action AS 操作, count(*) AS 件数,
 
 \echo ''
 \echo '=== 2. 誰が操作したか ==='
-SELECT actor AS 操作者, count(*) AS 件数
+SELECT CASE WHEN actor LIKE '%@local' THEN actor ELSE '（本番の利用者）' END AS 操作者, count(*) AS 件数
   FROM v3.audit_events
  WHERE occurred_at > :'since'::timestamptz AND action NOT IN ('job.daily')
- GROUP BY actor ORDER BY count(*) DESC;
+ GROUP BY 1 ORDER BY count(*) DESC;
 
 \echo ''
 \echo '=== 3. 新しくできた行（created_at が起点より後）: 表ごとの件数 ==='
