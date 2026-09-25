@@ -19,10 +19,24 @@ async function keepMail(client: Queryable, matterId: number, mail: InboundMail, 
   });
 }
 
+/** 受付箱に写すメールの原票。受付で案件に繋ぐとき、やり取りの記録に書き戻す。 */
+export function mailPayload(mail: InboundMail) {
+  return {
+    messageId: mail.messageId, threadId: mail.threadId, rfcMessageId: mail.rfcMessageId,
+    from: mail.from, fromName: mail.fromName, to: mail.to, subject: mail.subject,
+    body: String(mail.body ?? "").slice(0, 20000), receivedAt: mail.receivedAt,
+    attachments: mail.attachments
+  };
+}
+
 /**
- * 受信メールを案件にする。
+ * 受信メールを取り込む。
  *
- * 規則は Slack の受付（intake-service.ts）と揃える。
+ * 既にある案件のやり取り（同じスレッド・本文の案件番号・こちらが出した文書番号）は
+ * 案件に紐づける。どの案件にも当たらない新しいメールは、案件を立てずに受付箱へ入れる
+ * （docs/v3-request-inbox.md）。法務が受け付けたときに案件になる。
+ *
+ * 規則は Slack の受付と揃える。
  *   - 取引先は「はっきり1件に決まる」ときだけ紐づける。新しく作らない。
  *   - 決まらなかったことは課題として残す。放置されないように。
  * メール特有の事情は2つ。
@@ -32,7 +46,11 @@ async function keepMail(client: Queryable, matterId: number, mail: InboundMail, 
  * 取り込みの冪等キーはメッセージID。同じメールを二度読んでも案件は増えない。
  */
 
-export type IntakeAction = "created" | "linked" | "duplicate" | "skipped";
+/**
+ * queued   … 受付箱に入れた（新しいメール）
+ * appended … 受付前の依頼と同じスレッドの続き。同じ依頼に書き足した
+ */
+export type IntakeAction = "queued" | "appended" | "linked" | "duplicate" | "skipped";
 
 export interface MailIntakeResult {
   action: IntakeAction;
@@ -40,6 +58,8 @@ export interface MailIntakeResult {
   matterId: number | null;
   matterNo: string | null;
   counterpartyId: number | null;
+  requestId?: number | null;
+  requestNo?: string | null;
   reason?: string;
 }
 
@@ -62,7 +82,8 @@ export class EmailIntakeService {
       return await inTransaction(this.database, async (client) => {
         const seen = await client.query(
           `SELECT 1 FROM audit_events
-            WHERE action IN ('mail.intake', 'mail.link') AND detail->>'messageId' = $1
+            WHERE action IN ('mail.intake', 'mail.link', 'mail.queue', 'mail.append')
+              AND detail->>'messageId' = $1
             LIMIT 1`, [mail.messageId]);
         if (seen.rows[0]) {
           return { ...base, action: "duplicate" as const, reason: "取り込み済み" };
@@ -70,7 +91,7 @@ export class EmailIntakeService {
 
         const existing = await this.findMatter(client, mail, reading);
         if (existing) return await this.link(client, mail, reading, existing);
-        return await this.create(client, mail, reading);
+        return await this.queue(client, mail, reading);
       });
     } catch (error) { throw translate(error); }
   }
@@ -131,17 +152,45 @@ export class EmailIntakeService {
     };
   }
 
-  /** 新しく案件を立てる。 */
-  private async create(
+  /**
+   * 受付箱に入れる。受付前の依頼と同じスレッドの続きなら、その依頼に書き足す
+   * （返信のたびに依頼が増えないように）。
+   */
+  private async queue(
     client: Queryable, mail: InboundMail, reading: MailReading
   ): Promise<MailIntakeResult> {
     const email = reading.sender.email;
+    const base = { messageId: mail.messageId, matterId: null, matterNo: null };
+
+    if (mail.threadId) {
+      const prior = await client.query(
+        `SELECT id, request_no, counterparty_id FROM intake_requests
+          WHERE email_thread_id = $1 ORDER BY id LIMIT 1 FOR UPDATE`, [mail.threadId]);
+      const row = prior.rows[0] as any;
+      if (row) {
+        await client.query(
+          `UPDATE intake_requests
+              SET source_payload = jsonb_set(source_payload, '{followUps}',
+                    COALESCE(source_payload->'followUps', '[]'::jsonb) || $2::jsonb),
+                  updated_at = now()
+            WHERE id = $1`, [row.id, JSON.stringify([mailPayload(mail)])]);
+        await recordAudit(client, {
+          actor: email || "mail", action: "mail.append", targetType: "intake_request",
+          targetId: Number(row.id),
+          detail: { messageId: mail.messageId, threadId: mail.threadId, subject: mail.subject }
+        });
+        return { ...base, action: "appended", counterpartyId: row.counterparty_id ?? null,
+                 requestId: Number(row.id), requestNo: row.request_no ?? null };
+      }
+    }
 
     // 社内からの転送なら依頼者。社外なら相手先の候補として見る。
     const staff = email
-      ? await client.query("SELECT id, name FROM staff WHERE lower(email) = $1 LIMIT 2", [email])
+      ? await client.query(
+          "SELECT id, name, slack_user_id FROM staff WHERE lower(email) = $1 LIMIT 2", [email])
       : { rows: [] as any[] };
     const internal = staff.rows.length === 1;
+    const staffRow = internal ? staff.rows[0] as any : null;
 
     let counterpartyId: number | null = null;
     if (!internal && email) {
@@ -156,53 +205,30 @@ export class EmailIntakeService {
       if (found.rows.length === 1) counterpartyId = Number((found.rows[0] as any).id);
     }
 
-    const matterNo = await allocateNumber(
-      client, { prefix: "MTR", table: "matters", column: "matter_no" });
-
+    const requestNo = await allocateNumber(
+      client, { prefix: "REQ", table: "intake_requests", column: "request_no" });
     const inserted = await client.query(
-      `INSERT INTO matters (matter_no, title, kind, status, counterparty_id,
-                            requester_email, remarks, created_by)
-       VALUES ($1, $2, $3, 'open', $4, $5, $6, $7)
-       RETURNING id, matter_no`,
-      [matterNo, reading.title, reading.kind, counterpartyId,
-       internal ? email : null, describeMail(mail, reading), email || "mail"]);
-    const row = inserted.rows[0] as { id: number; matter_no: string | null };
-    const matterId = Number(row.id);
-
-    if (mail.threadId) {
-      await client.query(
-        `INSERT INTO matter_links (matter_id, target_type, target_ref, relation, snapshot)
-         VALUES ($1, 'email_thread', $2, 'origin', $3::jsonb)
-         ON CONFLICT (matter_id, target_type, target_ref) DO NOTHING`,
-        [matterId, mail.threadId, JSON.stringify({
-          firstSubject: mail.subject, firstFrom: email, receivedAt: mail.receivedAt,
-          attachments: mail.attachments.map((a) => a.filename)
-        })]);
-    }
-
-    await keepMail(client, matterId, mail, reading);
-
-    // 差出人がどこの誰か決まらなかった。人が当てるまで残す。
-    if (!internal && !counterpartyId) {
-      await client.query(
-        `INSERT INTO data_quality_issues (rule_code, target_type, target_id, severity, detail)
-         VALUES ('MAIL_SENDER_UNRESOLVED', 'matter', $1, 'medium', $2::jsonb)
-         ON CONFLICT (rule_code, target_type, target_id) DO UPDATE SET
-           detail = EXCLUDED.detail, detected_at = now(), status = 'open'`,
-        [matterId, JSON.stringify({ from: email, subject: mail.subject, matterNo: row.matter_no })]);
-    }
+      `INSERT INTO intake_requests
+         (request_no, source, state, kind, title, detail, counterparty_name, counterparty_id,
+          requester_email, requester_name, requester_slack_id,
+          email_thread_id, email_message_id, source_payload, created_by)
+       VALUES ($1, 'email', 'new', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13)
+       RETURNING id`,
+      [requestNo, reading.kind, reading.title, describeMail(mail, reading),
+       internal ? null : (reading.sender.name ?? email ?? null), counterpartyId,
+       email || null, internal ? String(staffRow.name) : reading.sender.name,
+       internal ? staffRow.slack_user_id ?? null : null,
+       mail.threadId || null, mail.messageId, JSON.stringify(mailPayload(mail)), email || "mail"]);
+    const requestId = Number((inserted.rows[0] as any).id);
 
     await recordAudit(client, {
       actor: email || "mail",
-      action: "mail.intake", targetType: "matter", targetId: matterId,
+      action: "mail.queue", targetType: "intake_request", targetId: requestId,
       detail: { messageId: mail.messageId, threadId: mail.threadId, subject: mail.subject,
-                matterNo: row.matter_no, kind: reading.kind, internal,
-                counterpartyId, attachments: mail.attachments.map((a) => a.filename) }
+                requestNo, kind: reading.kind, internal, counterpartyId,
+                attachments: mail.attachments.map((a) => a.filename) }
     });
 
-    return {
-      action: "created", messageId: mail.messageId, matterId,
-      matterNo: row.matter_no ?? null, counterpartyId
-    };
+    return { ...base, action: "queued", counterpartyId, requestId, requestNo };
   }
 }

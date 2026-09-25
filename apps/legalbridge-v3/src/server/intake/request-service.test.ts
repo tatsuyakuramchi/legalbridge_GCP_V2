@@ -190,3 +190,24 @@ test("受付済みは受付箱に戻せない（案件が動いている）", as
     t.includes("SELECT state FROM intake_requests") ? [{ state: "accepted" }] : undefined);
   await assert.rejects(service(d).svc.reopen(7, "x"), /戻せません/);
 });
+
+// ---- メールの依頼 ----
+
+test("メールの依頼を受け付けると、スレッドを案件に繋ぎ、原文と続きのメールをやり取りに残す", async () => {
+  const payload = {
+    messageId: "m1", threadId: "t1", from: "田中 <tanaka@example.co.jp>", to: ["legal@x"],
+    subject: "発注について", body: "本文1", receivedAt: "2026-09-25T01:00:00Z", attachments: [],
+    followUps: [{ messageId: "m2", threadId: "t1", from: "田中 <tanaka@example.co.jp>", to: ["legal@x"],
+                  subject: "Re: 発注について", body: "本文2", receivedAt: "2026-09-25T02:00:00Z", attachments: [] }]
+  };
+  const d = build({ row: open({ source: "email", backlog_issue_key: null, email_thread_id: "t1",
+                                source_payload: payload, counterparty_id: 3, requester_slack_id: null }) });
+  const r = await service(d).svc.accept(7, { mode: "new", kind: "outsourcing" }, "legal@x");
+  assert.equal(r.matterId, 42);
+  assert.equal(d.find("INSERT INTO matters")!.params[3], 3, "取り込み時に推した相手先を使う");
+  const link = d.all("INSERT INTO matter_links").find((q) => q.text.includes("'email_thread'"))!;
+  assert.deepEqual([link.params[0], link.params[1]], [42, "t1"]);
+  const kept = d.all("INSERT INTO matter_communications");
+  assert.deepEqual(kept.map((q) => q.params[8]), ["m1", "m2"]);
+  assert.deepEqual(kept.map((q) => q.params[7]), ["本文1", "本文2"]);
+});

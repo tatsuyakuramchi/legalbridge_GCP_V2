@@ -1762,7 +1762,8 @@ UPDATE v3.data_quality_issues q
 --   依頼と案件の間に受付箱を置く。受付箱の1行＝依頼1件。
 --     - Slack の送信で入る（同時に Backlog に起案する）
 --     - Backlog を読みに行って入る（V1 の Slack 受付・GAS・直接起票の課題）
---     - 口頭・メールの依頼を法務が手で入れる
+--     - 受信メールで入る（既存の案件のやり取りに当たらない、新しいメール）
+--     - 口頭の依頼を法務が手で入れる
 --   受け付けたら案件に繋ぐ（新しく立てるか、既存の案件へ）。工程は保存しない。
 --   Backlog の中身は写し（backlog_snapshot）。こちらからは書き換えない。
 --   行は消さない（DELETE を与えない）。対象外にしたものは受付箱に戻せる。
@@ -1770,7 +1771,7 @@ UPDATE v3.data_quality_issues q
 CREATE TABLE IF NOT EXISTS v3.intake_requests (
   id                 bigserial PRIMARY KEY,
   request_no         text UNIQUE,
-  source             text NOT NULL CHECK (source IN ('slack', 'backlog', 'manual')),
+  source             text NOT NULL CHECK (source IN ('slack', 'backlog', 'email', 'manual')),
   -- new=未処理 / on_hold=保留 / accepted=受付済 / duplicate=重複 / dismissed=対象外
   state              text NOT NULL DEFAULT 'new'
                      CHECK (state IN ('new', 'on_hold', 'accepted', 'duplicate', 'dismissed')),
@@ -1779,6 +1780,8 @@ CREATE TABLE IF NOT EXISTS v3.intake_requests (
   title              text NOT NULL,
   detail             text,
   counterparty_name  text,
+  -- 相手先の推定（メールの差出人が取引先の連絡先に1件だけ当たったときなど）。受付で確定する。
+  counterparty_id    bigint REFERENCES v3.parties(id),
   due_on             date,
   requester_slack_id text,
   requester_name     text,
@@ -1789,6 +1792,10 @@ CREATE TABLE IF NOT EXISTS v3.intake_requests (
   backlog_status     text,
   backlog_updated_at timestamptz,
   backlog_snapshot   jsonb NOT NULL DEFAULT '{}'::jsonb,
+  -- メールの原票。受付で案件に繋ぐとき、スレッドとやり取りの記録に写す。
+  email_thread_id    text,
+  email_message_id   text UNIQUE,
+  source_payload     jsonb NOT NULL DEFAULT '{}'::jsonb,
   -- 受け付けたあとに Backlog 側が更新された。既読にすると消える。
   has_unseen_update  boolean NOT NULL DEFAULT false,
   matter_id          bigint REFERENCES v3.matters(id),
@@ -1812,6 +1819,26 @@ CREATE INDEX IF NOT EXISTS intake_requests_open_idx
   WHERE state IN ('new', 'on_hold') OR has_unseen_update;
 CREATE INDEX IF NOT EXISTS intake_requests_matter_idx
   ON v3.intake_requests (matter_id) WHERE matter_id IS NOT NULL;
+
+-- 先に流した版（メールの列が無い）にも追いつかせる。
+ALTER TABLE v3.intake_requests ADD COLUMN IF NOT EXISTS counterparty_id bigint REFERENCES v3.parties(id);
+ALTER TABLE v3.intake_requests ADD COLUMN IF NOT EXISTS email_thread_id text;
+ALTER TABLE v3.intake_requests ADD COLUMN IF NOT EXISTS email_message_id text UNIQUE;
+ALTER TABLE v3.intake_requests ADD COLUMN IF NOT EXISTS source_payload jsonb NOT NULL DEFAULT '{}'::jsonb;
+DO $a052$
+DECLARE con text;
+BEGIN
+  SELECT conname INTO con FROM pg_constraint
+   WHERE conrelid = 'v3.intake_requests'::regclass AND contype = 'c'
+     AND pg_get_constraintdef(oid) LIKE '%source%' AND pg_get_constraintdef(oid) NOT LIKE '%email%';
+  IF con IS NOT NULL THEN
+    EXECUTE format('ALTER TABLE v3.intake_requests DROP CONSTRAINT %I', con);
+    ALTER TABLE v3.intake_requests ADD CONSTRAINT intake_requests_source_check
+      CHECK (source IN ('slack', 'backlog', 'email', 'manual'));
+  END IF;
+END $a052$;
+CREATE INDEX IF NOT EXISTS intake_requests_thread_idx
+  ON v3.intake_requests (email_thread_id) WHERE email_thread_id IS NOT NULL;
 
 -- 行は消さない。003_grants.sql も同じ内容にしてある。
 REVOKE ALL ON v3.intake_requests FROM legalbridge_v3_runtime;
@@ -2083,6 +2110,7 @@ SELECT (SELECT count(*) FROM information_schema.columns
          WHERE conrelid='v3.party_bank_accounts'::regclass
            AND conname='party_bank_accounts_scope_chk') AS 列とCHECK;
 
-\echo '--- 依頼の受付箱（A-052。表 1 であること） ---'
-SELECT count(*) AS 表 FROM information_schema.tables
- WHERE table_schema='v3' AND table_name='intake_requests';
+\echo '--- 依頼の受付箱（A-052。メールの列まであれば 4 であること） ---'
+SELECT count(*) AS 列 FROM information_schema.columns
+ WHERE table_schema='v3' AND table_name='intake_requests'
+   AND column_name IN ('counterparty_id', 'email_thread_id', 'email_message_id', 'source_payload');

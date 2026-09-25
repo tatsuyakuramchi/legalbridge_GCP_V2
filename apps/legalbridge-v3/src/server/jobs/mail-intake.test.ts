@@ -16,12 +16,13 @@ const db = (opts: { cursor?: string | null; failOn?: string } = {}) =>
     if (t.includes("FROM settings WHERE key")) {
       return opts.cursor ? [{ since: opts.cursor }] : [];
     }
-    if (opts.failOn && t.includes("INSERT INTO matters")
-        && String(params[1]).includes(opts.failOn)) {
+    // 新しいメールは受付箱に入る（docs/v3-request-inbox.md）。件名は3番目の値。
+    if (opts.failOn && t.includes("INSERT INTO intake_requests")
+        && String(params[2]).includes(opts.failOn)) {
       throw new Error("わざと落とす");
     }
     if (t.includes("UPDATE document_sequences")) return [{ current_value: 1 }];
-    if (t.includes("INSERT INTO matters")) return [{ id: 1, matter_no: "MTR-2026-00001" }];
+    if (t.includes("INSERT INTO intake_requests")) return [{ id: 1 }];
     return [];
   });
 
@@ -41,7 +42,7 @@ test("栞から後を取り、取り込んだら栞を進める", async () => {
 
   assert.equal(report.ran, true);
   assert.equal(report.fetched, 2);
-  assert.equal(report.counts.created, 2);
+  assert.equal(report.counts.queued, 2);
   assert.equal(report.cursorAfter, "2026-09-03T00:00:00.000Z");
   assert.equal(database.find("INSERT INTO settings")!.params[1],
     JSON.stringify({ since: "2026-09-03T00:00:00.000Z" }));
@@ -55,7 +56,7 @@ test("1通落ちても残りは取り込む", async () => {
   ]);
   const report = await new MailIntakeJob(db({ failOn: "b の件" }), source).run();
 
-  assert.equal(report.counts.created, 2);
+  assert.equal(report.counts.queued, 2);
   assert.equal(report.counts.failed, 1);
   assert.equal(report.failures[0].messageId, "b");
 });

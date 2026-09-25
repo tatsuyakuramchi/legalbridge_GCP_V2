@@ -19,14 +19,19 @@ export interface IntakeRow {
   title: string;
   detail: string | null;
   counterpartyName: string | null;
+  counterpartyId: number | null;
   dueOn: string | null;
   requesterSlackId: string | null;
   requesterName: string | null;
+  requesterEmail: string | null;
   backlogIssueKey: string | null;
   backlogStatus: string | null;
   backlogUpdatedAt: string | null;
   backlogSnapshot: Record<string, unknown>;
   hasUnseenUpdate: boolean;
+  /** メールの原票（差出人・宛先・添付・続きのメール）。メール以外は空。 */
+  mail: { from: string | null; to: string[]; attachments: string[];
+          followUps: Array<{ subject: string | null; from: string | null; receivedAt: string | null }> } | null;
   matterId: number | null;
   matterNo: string | null;
   matterTitle: string | null;
@@ -48,6 +53,18 @@ const SELECT = `
 const iso = (v: unknown): string | null =>
   v === null || v === undefined ? null : v instanceof Date ? v.toISOString() : String(v);
 
+function mailOf(p: Record<string, any>): IntakeRow["mail"] {
+  const follow = Array.isArray(p.followUps) ? p.followUps : [];
+  return {
+    from: p.from ?? null,
+    to: Array.isArray(p.to) ? p.to.map(String) : [],
+    attachments: (Array.isArray(p.attachments) ? p.attachments : []).map((a: any) => String(a?.filename ?? a)),
+    followUps: follow.map((m: any) => ({
+      subject: m?.subject ?? null, from: m?.from ?? null, receivedAt: m?.receivedAt ?? null
+    }))
+  };
+}
+
 export function toRow(r: Record<string, any>): IntakeRow {
   return {
     id: Number(r.id),
@@ -58,14 +75,17 @@ export function toRow(r: Record<string, any>): IntakeRow {
     title: String(r.title),
     detail: r.detail ?? null,
     counterpartyName: r.counterparty_name ?? null,
+    counterpartyId: r.counterparty_id === null || r.counterparty_id === undefined ? null : Number(r.counterparty_id),
     dueOn: dateStr(r.due_on),
     requesterSlackId: r.requester_slack_id ?? null,
     requesterName: r.requester_name ?? null,
+    requesterEmail: r.requester_email ?? null,
     backlogIssueKey: r.backlog_issue_key ?? null,
     backlogStatus: r.backlog_status ?? null,
     backlogUpdatedAt: iso(r.backlog_updated_at),
     backlogSnapshot: (r.backlog_snapshot ?? {}) as Record<string, unknown>,
     hasUnseenUpdate: Boolean(r.has_unseen_update),
+    mail: r.source === "email" ? mailOf(r.source_payload ?? {}) : null,
     matterId: r.matter_id === null || r.matter_id === undefined ? null : Number(r.matter_id),
     matterNo: r.matter_no ?? null,
     matterTitle: r.matter_title ?? null,

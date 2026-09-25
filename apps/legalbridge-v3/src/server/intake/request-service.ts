@@ -7,6 +7,7 @@ import type { DispatchService } from "../integrations/dispatch-service.js";
 import type { IntakeSubmission } from "../integrations/slack-intake.js";
 import { REQUEST_TYPES } from "../integrations/slack-intake.js";
 import { openMatter, resolveCounterparty } from "../integrations/intake-service.js";
+import { recordCommunication } from "../matters/communication-service.js";
 
 /**
  * 受付箱の書き込み。docs/v3-request-inbox.md
@@ -240,7 +241,8 @@ export class IntakeRequestService {
         let matterTitle = title;
         let owner: string | null = null;
         if (input.mode === "new") {
-          let counterpartyId = input.counterpartyId ?? null;
+          // 相手先：画面で選んだもの → 取り込み時の推定（メールの差出人など）→ 名前から。
+          let counterpartyId = input.counterpartyId ?? (row.counterparty_id ? Number(row.counterparty_id) : null);
           if (!counterpartyId) {
             counterpartyId = (await resolveCounterparty(client, row.counterparty_name ?? null))?.id ?? null;
           }
@@ -297,6 +299,44 @@ export class IntakeRequestService {
              VALUES ($1, 'backlog_issue', $2, 'origin', $3::jsonb)
              ON CONFLICT (matter_id, target_type, target_ref) DO NOTHING`,
             [matterId, row.backlog_issue_key, JSON.stringify({ requestNo: row.request_no, acceptedBy: actor })]);
+        }
+
+        // メールの依頼。スレッドを案件に繋ぎ（以後の返信は案件のやり取りに入る）、
+        // 受付箱にあいだ溜まっていた原文をやり取りの記録に書き戻す。
+        if (row.email_thread_id) {
+          const other = await client.query(
+            `SELECT l.matter_id, m.matter_no FROM matter_links l JOIN matters m ON m.id = l.matter_id
+              WHERE l.target_type = 'email_thread' AND l.target_ref = $1 AND l.matter_id <> $2
+              LIMIT 1`, [row.email_thread_id, matterId]);
+          const o = other.rows[0] as any;
+          if (o) {
+            throw new DomainError("CONFLICT",
+              `このメールのスレッドは案件 ${o.matter_no ?? o.matter_id} に繋がっています`);
+          }
+          const payload = (row.source_payload ?? {}) as Record<string, any>;
+          await client.query(
+            `INSERT INTO matter_links (matter_id, target_type, target_ref, relation, snapshot)
+             VALUES ($1, 'email_thread', $2, 'origin', $3::jsonb)
+             ON CONFLICT (matter_id, target_type, target_ref) DO NOTHING`,
+            [matterId, row.email_thread_id, JSON.stringify({
+              firstSubject: payload.subject ?? null, firstFrom: payload.from ?? null,
+              receivedAt: payload.receivedAt ?? null, requestNo: row.request_no
+            })]);
+          const mails = [payload, ...((payload.followUps ?? []) as Array<Record<string, any>>)]
+            .filter((m) => m && m.messageId);
+          for (const m of mails) {
+            await recordCommunication(client, {
+              matterId, channel: "email", direction: "in",
+              occurredAt: m.receivedAt ?? null,
+              actor: String(m.from ?? "mail"),
+              counterpart: Array.isArray(m.to) ? m.to.join(", ") : null,
+              subject: m.subject ?? null, body: m.body ?? null,
+              externalRef: String(m.messageId),
+              evidence: { threadId: m.threadId ?? null, rfcMessageId: m.rfcMessageId ?? null,
+                          from: m.from ?? null, to: m.to ?? [], attachments: m.attachments ?? [],
+                          viaIntake: row.request_no }
+            });
+          }
         }
 
         await client.query(

@@ -91,6 +91,7 @@ import { buildAdapters, buildBacklogReader, buildDispatch, buildMailSource } fro
 import { IntakeRepository, type IntakeTab } from "./intake/repository.js";
 import { IntakeRequestService } from "./intake/request-service.js";
 import { BacklogPullJob } from "./intake/backlog-pull.js";
+import { FlowNoticeJob } from "./matters/flow-notice.js";
 import { MailIntakeJob } from "./jobs/mail-intake.js";
 import { BacklogService } from "./integrations/backlog-service.js";
 import type { IntegrationChannel } from "./integrations/gate.js";
@@ -789,6 +790,13 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       const since = (req.body ?? {}).since;
       res.json(await backlogPull.run({ since: typeof since === "string" && since ? since : null }));
+    }));
+
+  // 工程の節目を依頼者に知らせる。手で1回動かして結果を見るためのもの。
+  // 定期実行は /internal/jobs/flow-notice（Cloud Scheduler）。
+  router.post("/jobs/flow-notice", requireRole("admin"), requireWritable,
+    asyncRoute(async (_req, res) => {
+      res.json(await flowNoticeJob(database, dispatch, communications, matterLinks).run());
     }));
 
   // 受信メールの取り込み。手で1回動かして結果を見るためのもの。
@@ -3958,6 +3966,23 @@ function parseForm(raw: Buffer): Record<string, string> {
   return out;
 }
 
+/** 工程の通知ジョブを組む。画面の経路と /internal で同じものを使う。 */
+function flowNoticeJob(
+  database: Transactable, dispatch: ReturnType<typeof buildDispatch>,
+  communications: MatterCommunicationService, links: MatterLinkService
+) {
+  return new FlowNoticeJob({
+    database,
+    flowOf: (matterId) => links.flow(matterId),
+    sendToMatter: async (matterId, body) =>
+      (await communications.sendSlack(matterId, { body }, "system:flow-notice")).outcome.sent,
+    sendDm: async (matterId, slackId, body) => (await dispatch.dispatch({
+      channel: "slack", targetType: "matter", targetId: matterId, actor: "system:flow-notice",
+      request: { recipient: slackId, body }
+    })).sent
+  });
+}
+
 /** Webhook 受信。ユーザー認証は通さず、共有シークレットと署名で守る。 */
 export function createWebhookRouter(database: Transactable) {
   const router = Router();
@@ -3968,6 +3993,8 @@ export function createWebhookRouter(database: Transactable) {
     backlogIssueTypeId: config.backlogIssueTypeId
   });
   const jobs: Record<string, (body: any) => Promise<unknown>> = {
+    "flow-notice": () => flowNoticeJob(database, dispatch,
+      new MatterCommunicationService(database, dispatch), new MatterLinkService(database)).run(),
     "backlog-pull": (body) => new BacklogPullJob(database, buildBacklogReader(), () => ({
       mode: config.integrationModes.backlog, readOnly: config.readOnly
     })).run({ since: typeof body?.since === "string" && body.since ? body.since : null }),

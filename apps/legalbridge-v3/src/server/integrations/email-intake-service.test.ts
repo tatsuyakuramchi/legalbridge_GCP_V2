@@ -69,74 +69,81 @@ test("こちらが出した文書番号への返信も同じ案件に寄せる",
   assert.equal(r.matterId, 11);
 });
 
-test("差出人が1件に決まるときだけ相手先を紐づける", async () => {
-  const database = db({ "FROM party_contacts pc": [{ id: 3 }] });
-  const r = await new EmailIntakeService(database).accept(mail());
+// ---- 新しいメールは受付箱へ（docs/v3-request-inbox.md）----
 
-  assert.equal(r.action, "created");
-  assert.equal(r.counterpartyId, 3);
-  assert.equal(database.find("INSERT INTO matters")!.params[3], 3);
-  assert.equal(database.find("INSERT INTO data_quality_issues"), undefined);
+const queued = (database: FakeDatabase) => database.find("INSERT INTO intake_requests")!;
+
+test("どの案件にも当たらない新しいメールは、案件を立てずに受付箱に入れる", async () => {
+  const database = db({ "INSERT INTO intake_requests": [{ id: 9 }] });
+  const r = await new EmailIntakeService(database).accept(mail());
+  assert.equal(r.action, "queued");
+  assert.equal(r.requestId, 9);
+  assert.equal(r.requestNo, "REQ-2026-00219");
+  assert.equal(database.find("INSERT INTO matters"), undefined, "受け付けるまで案件は立てない");
+  const q = queued(database);
+  assert.match(q.text, /'email', 'new'/);
+  assert.equal(q.params[9], "t1", "スレッドを控える（受付で案件に繋ぐ）");
+  assert.equal(q.params[10], "m1");
+  assert.match(String(q.params[11]), /よろしくお願いします。/, "原文を写しとして持つ");
 });
 
-test("2件当たったら決めない。課題として残す", async () => {
-  const database = db({ "FROM party_contacts pc": [{ id: 3 }, { id: 4 }] });
+test("差出人が1件に決まるときだけ相手先を推す", async () => {
+  const database = db({ "FROM party_contacts pc": [{ id: 3 }], "INSERT INTO intake_requests": [{ id: 9 }] });
   const r = await new EmailIntakeService(database).accept(mail());
+  assert.equal(r.counterpartyId, 3);
+  assert.equal(queued(database).params[5], 3);
 
-  assert.equal(r.counterpartyId, null);
-  const issue = database.find("INSERT INTO data_quality_issues")!;
-  assert.equal(issue.params[0], 42);
-  assert.match(issue.text, /MAIL_SENDER_UNRESOLVED/);
+  const two = db({ "FROM party_contacts pc": [{ id: 3 }, { id: 4 }], "INSERT INTO intake_requests": [{ id: 9 }] });
+  assert.equal((await new EmailIntakeService(two).accept(mail())).counterpartyId, null, "2件当たったら決めない");
 });
 
 test("取引先は決して作らない（表記ゆれがマスタに増える経路を塞ぐ）", async () => {
-  const database = db();
+  const database = db({ "INSERT INTO intake_requests": [{ id: 9 }] });
   await new EmailIntakeService(database).accept(mail());
   assert.equal(database.find("INSERT INTO parties"), undefined);
 });
 
-test("社内からの転送は依頼者として記録し、相手先を探さない", async () => {
+test("社内からの転送は依頼者として記録し、Slack の宛先も引く。相手先は探さない", async () => {
   const database = db({
-    "FROM staff WHERE lower(email)": [{ id: 2, name: "法務 太郎" }]
+    "FROM staff WHERE lower(email)": [{ id: 2, name: "法務 太郎", slack_user_id: "U777" }],
+    "INSERT INTO intake_requests": [{ id: 9 }]
   });
   const r = await new EmailIntakeService(database).accept(mail());
-
   assert.equal(r.counterpartyId, null);
   assert.equal(database.find("FROM party_contacts pc"), undefined, "社内の人を取引先に当てない");
-  assert.equal(database.find("INSERT INTO matters")!.params[4], "tanaka@example.co.jp");
-  assert.equal(database.find("INSERT INTO data_quality_issues"), undefined,
-    "社内からの転送は差出人が不明なわけではない");
+  const q = queued(database);
+  assert.equal(q.params[4], null, "相手先の記載にしない");
+  assert.deepEqual(q.params.slice(6, 9), ["tanaka@example.co.jp", "法務 太郎", "U777"]);
 });
 
-test("発注の言葉があれば業務委託の案件として立てる", async () => {
-  const database = db();
+test("発注の言葉があれば業務委託として推す", async () => {
+  const database = db({ "INSERT INTO intake_requests": [{ id: 9 }] });
   await new EmailIntakeService(database).accept(mail());
-  assert.equal(database.find("INSERT INTO matters")!.params[2], "outsourcing");
+  assert.equal(queued(database).params[1], "outsourcing");
 });
 
-test("添付の名前は案件に残す", async () => {
-  const database = db();
-  await new EmailIntakeService(database).accept(mail({
-    attachments: [{ filename: "業務委託契約書.pdf", mimeType: "application/pdf", size: 1 }]
-  }));
-  assert.match(String(database.find("INSERT INTO matters")!.params[5]), /業務委託契約書\.pdf/);
-  assert.match(String(database.find("INSERT INTO matter_links")!.params[2]), /業務委託契約書\.pdf/);
+test("受付前の依頼と同じスレッドの続きは、新しい依頼にせず書き足す", async () => {
+  const database = db({ "WHERE email_thread_id = $1": [{ id: 9, request_no: "REQ-2026-00100" }] });
+  const r = await new EmailIntakeService(database).accept(mail({ messageId: "m2", subject: "Re: イラスト制作の発注について" }));
+  assert.equal(r.action, "appended");
+  assert.equal(r.requestNo, "REQ-2026-00100");
+  assert.equal(database.find("INSERT INTO intake_requests"), undefined);
+  const upd = database.find("SET source_payload = jsonb_set")!;
+  assert.equal(upd.params[0], 9);
+  assert.match(String(upd.params[1]), /"messageId":"m2"/);
 });
 
-test("受け取ったメールは案件のやり取りとして本文ごと残す（新規でも紐づけでも）", async () => {
-  const created = db();
-  await new EmailIntakeService(created).accept(mail({ attachments: [{ filename: "draft.pdf", mimeType: "application/pdf", size: 10 }] }));
-  const kept = created.find("INSERT INTO matter_communications")!;
+test("案件に当たったメールは、案件のやり取りとして本文ごと残す", async () => {
+  const linked = db({ "target_type = 'email_thread'": [{ id: 42, matter_no: "MTR-2026-00219" }] });
+  await new EmailIntakeService(linked).accept(mail({
+    messageId: "m2", attachments: [{ filename: "draft.pdf", mimeType: "application/pdf", size: 10 }] }));
+  const kept = linked.find("INSERT INTO matter_communications")!;
   assert.equal(kept.params[0], 42);
   assert.equal(kept.params[1], "email");
   assert.equal(kept.params[2], "in");
   assert.equal(kept.params[4], "tanaka@example.co.jp");
   assert.equal(kept.params[6], "イラスト制作の発注について");
   assert.equal(kept.params[7], "よろしくお願いします。");
-  assert.equal(kept.params[8], "m1", "メッセージIDで二度書かない");
+  assert.equal(kept.params[8], "m2", "メッセージIDで二度書かない");
   assert.match(String(kept.params[11]), /draft\.pdf/, "添付の一覧も証憑に入れる");
-
-  const linked = db({ "target_type = 'email_thread'": [{ id: 42, matter_no: "MTR-2026-00219" }] });
-  await new EmailIntakeService(linked).accept(mail({ messageId: "m2" }));
-  assert.equal(linked.find("INSERT INTO matter_communications")!.params[8], "m2");
 });

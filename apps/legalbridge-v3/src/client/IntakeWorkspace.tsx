@@ -7,7 +7,7 @@ import { DetailBack, isWideLayout } from "./DetailBack.js";
  * 依頼の受付箱。docs/v3-request-inbox.md
  *
  * Slack の依頼は送信と同時に、Backlog の課題（V1 の Slack 受付・GAS・直接起票）は
- * 取得でここに入る。届いただけでは案件にしない。法務がここで判断する：
+ * 取得で、既存の案件に当たらない新しいメールは受信の取り込みでここに入る。届いただけでは案件にしない。法務がここで判断する：
  *   新規案件で受付 ／ 既存の案件へ接続 ／ 重複 ／ 保留 ／ 対象外
  * 受け付けた依頼は案件の工程の先頭「受付」に繋がる。
  *
@@ -20,13 +20,15 @@ const KIND_LABEL: Record<Kind, string> = { outsourcing: "業務委託・発注",
 const STATE_LABEL: Record<string, string> = {
   new: "未処理", on_hold: "保留", accepted: "受付済", duplicate: "重複", dismissed: "対象外"
 };
-const SOURCE_LABEL: Record<string, string> = { slack: "Slack", backlog: "Backlog", manual: "手動" };
+const SOURCE_LABEL: Record<string, string> = { slack: "Slack", backlog: "Backlog", email: "メール", manual: "手動" };
 const DISMISS_REASONS = ["誤起票", "テスト投稿", "法務の対象外", "その他"];
 
 interface Request {
   id: number; requestNo: string | null; source: string; state: string; kind: Kind | null;
   title: string; detail: string | null; counterpartyName: string | null; dueOn: string | null;
-  requesterSlackId: string | null; requesterName: string | null;
+  requesterSlackId: string | null; requesterName: string | null; requesterEmail: string | null;
+  mail: { from: string | null; to: string[]; attachments: string[];
+          followUps: Array<{ subject: string | null; from: string | null; receivedAt: string | null }> } | null;
   backlogIssueKey: string | null; backlogStatus: string | null; backlogUpdatedAt: string | null;
   backlogSnapshot: Record<string, any>; hasUnseenUpdate: boolean;
   matterId: number | null; matterNo: string | null; matterTitle: string | null;
@@ -124,7 +126,7 @@ export function IntakeWorkspace(
       <header className="workspace-head">
         <h1>受付箱</h1>
         <p>
-          Slack の依頼は送信と同時に、Backlog の課題は取得でここに入ります。届いただけでは案件にしません。
+          Slack の依頼は送信と同時に、Backlog の課題は取得で、新しいメールは受信の取り込みでここに入ります。届いただけでは案件にしません。
           受け付けると案件の工程の先頭「受付」に繋がり、依頼者に Slack で知らせます。Backlog は読むだけです。
         </p>
       </header>
@@ -243,7 +245,11 @@ function Original({ request: r }: { request: Request }) {
       <div className="panel-bd stack">
         <div><b>{r.title}</b></div>
         <div className="form-grid">
-          <div className="field"><span>依頼者</span><div>{r.requesterName ?? "—"}{r.requesterSlackId ? `（Slack ${r.requesterSlackId}）` : ""}</div></div>
+          <div className="field"><span>依頼者</span><div>{r.requesterName ?? "—"}{r.requesterSlackId ? `（Slack ${r.requesterSlackId}）` : ""}{r.requesterEmail && !r.requesterSlackId ? `（${r.requesterEmail}）` : ""}</div></div>
+          {r.mail && <div className="field"><span>差出人</span><div>{r.mail.from ?? "—"}</div></div>}
+          {r.mail && r.mail.attachments.length > 0 && (
+            <div className="field"><span>添付</span><div>{r.mail.attachments.join("、")}</div></div>
+          )}
           <div className="field"><span>相手先の記載</span><div>{r.counterpartyName ?? "—"}</div></div>
           <div className="field"><span>希望の期日</span><div>{r.dueOn ?? "—"}</div></div>
           <div className="field"><span>届いた日時</span><div>{when(r.createdAt)}</div></div>
@@ -252,6 +258,15 @@ function Original({ request: r }: { request: Request }) {
           ))}
         </div>
         {r.detail && <pre className="locked" style={{ whiteSpace: "pre-wrap", margin: 0 }}>{r.detail}</pre>}
+        {r.mail && r.mail.followUps.length > 0 && (
+          <div className="note">
+            同じスレッドの続きのメール {r.mail.followUps.length} 通：
+            {r.mail.followUps.map((m, i) => (
+              <div key={i} className="faint">{when(m.receivedAt)}　{m.from ?? ""}　{m.subject ?? ""}</div>
+            ))}
+            <div className="faint">受け付けると、メールのスレッドごと案件のやり取りに入ります。</div>
+          </div>
+        )}
         {r.state === "on_hold" && r.reason && (
           <div className="note warn">保留：{r.reason}{r.holdUntil ? `（再確認 ${r.holdUntil}）` : ""}</div>
         )}

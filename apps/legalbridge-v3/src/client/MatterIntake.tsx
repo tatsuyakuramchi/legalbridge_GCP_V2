@@ -12,7 +12,7 @@ interface Linked {
   hasUnseenUpdate: boolean; duplicateOfNo: string | null; handledAt: string | null; createdAt: string;
 }
 
-const SOURCE: Record<string, string> = { slack: "Slack", backlog: "Backlog", manual: "手動" };
+const SOURCE: Record<string, string> = { slack: "Slack", backlog: "Backlog", email: "メール", manual: "手動" };
 
 export function MatterIntake({ matterId, reloadKey }: { matterId: number; reloadKey?: number }) {
   const [items, setItems] = useState<Linked[] | null>(null);
