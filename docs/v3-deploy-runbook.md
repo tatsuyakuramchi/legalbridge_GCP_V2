@@ -286,21 +286,22 @@ psql "$ADMIN_DSN" -c "DROP SCHEMA v3 CASCADE;"   # V1・V2 は無傷
 
 ### 6.0 どのブランチから実行するか
 
-**`main` では実行できない。** V3 のファイルは `main` に1つも入っていない
-（`Dockerfile.v3` も `infra/v3/` も無い）。必ず `claude/v3` に切り替えてから submit する。
+**`main` から実行する。** 2026-09-25 に V3 を `main` に統合した（PR #129）。
+それまでの `claude/v3` は使わない。
 
 ```bash
-git fetch origin claude/v3
-git checkout claude/v3
+git fetch origin main
+git checkout main
+git pull --ff-only
 git status --short        # 空であること。中途半端な変更を載せない
 git log --oneline -1      # 載せるコミットを控える
 ```
 
-V3 が V2 に何も足し引きしていないことは、いつでもここで確認できる:
+V3 の変更が V2 に手を入れていないことは、いつでもここで確認できる:
 
 ```bash
-git diff --name-status v3-base...claude/v3 | grep -v '^A'
-# → package.json と package-lock.json の2行だけが正常。
+git diff --name-status 6ac38fa main -- apps/legalbridge infra/gcp Dockerfile
+# → 空が正常（6ac38fa は統合したときの V2 の最終版。V2 は以後変えない）。
 #   apps/legalbridge/ が出てきたら V2 に手が入っている。
 ```
 
@@ -392,9 +393,9 @@ gcloud run revisions list --service=legalbridge-v3 --region=asia-northeast1 \
   --format='table(metadata.name, metadata.labels.git-sha, metadata.creationTimestamp)'
 ```
 
-返ってきたSHAは `git show <SHA>` でそのまま辿れる。V2 側と混同しないよう、
-**`git branch -a --contains <SHA>` に `claude/v3` だけが出ること**も確認しておく
-（`main` が出たらそれは V2 のコミットで、V3 のイメージではない）。
+返ってきたSHAは `git show <SHA>` でそのまま辿れる。統合後は V2 も V3 も
+`main` に入っているので、ブランチでは見分けられない。**`git show --stat <SHA>`
+に `apps/legalbridge-v3/` か `infra/v3/` が含まれること**で V3 のコミットと確かめる。
 
 ### 画面の確認（ブラウザ）
 

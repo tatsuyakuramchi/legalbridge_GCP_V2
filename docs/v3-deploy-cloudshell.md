@@ -46,18 +46,17 @@ gcloud config set project legalbridge-488506
 cd ~
 git clone https://github.com/tatsuyakuramchi/legalbridge_GCP_V2.git
 cd legalbridge_GCP_V2
-git checkout claude/v3
+git checkout main
 git log --oneline -1
 ```
 
-V3 が V2 に手を入れていないことを確認する（**この2行以外が出たら中止**）:
+（2026-09-25 に V3 を main に統合した。V3 は main から出す。以前の `claude/v3` は使わない）
+
+V3 が V2 に手を入れていないことを確認する（**何か出たら中止**）:
 
 ```bash
-git fetch origin v3-base
-git diff --name-status origin/v3-base...claude/v3 | grep -v '^A'
-# 期待:
-#   M	package-lock.json
-#   M	package.json
+git diff --name-status 6ac38fa main -- apps/legalbridge infra/gcp Dockerfile
+# 6ac38fa は統合したときの V2 の最終版（#130 まで）。V2 は以後変えないので、空が正常
 ```
 
 ---
@@ -434,7 +433,7 @@ Cloud Shell には週50時間の上限があり、デプロイのたびに使っ
 | 項目 | 値 |
 |---|---|
 | イベント | ブランチに push する |
-| ブランチ | `^claude/v3$` |
+| ブランチ | `^main$`（2026-09-25 までは `^claude/v3$`） |
 | 構成 | Cloud Build 構成ファイル `infra/v3/cloudbuild.yaml` |
 | サービス アカウント | `legalbridge-v3-build@legalbridge-488506.iam.gserviceaccount.com` |
 
@@ -459,7 +458,7 @@ Cloud Shell には週50時間の上限があり、デプロイのたびに使っ
 各シークレットに対して：
 - `roles/secretmanager.secretAccessor`
 
-**注意**：トリガーを入れると `claude/v3` への push が全部デプロイになる。
+**注意**：トリガーを入れると `main` への push が全部デプロイになる。
 まだ試したくない変更も載るので、それが困るならブランチを分ける。
 
 ### 文書の発行は V3 からだけ行う（2026-09-08 の取り決め）
