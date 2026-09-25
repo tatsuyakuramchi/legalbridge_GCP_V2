@@ -1033,12 +1033,12 @@ END $a027$;
 -- 埋め戻し（1）備考の「取引形態: …」から。入っているものは触らない。
 UPDATE v3.conditions
    SET usage_type = CASE
-         WHEN notes ~ '取引形態[:：]\s*自社製造・自社販売' THEN 'in_house'
-         WHEN notes ~ '取引形態[:：]\s*権利許諾'           THEN 'sublicense'
-         WHEN notes ~ '取引形態[:：]\s*自社製造・他社販売' THEN 'oem'
+         WHEN notes ~ '取引形態[:：][[:space:]]*自社製造・自社販売' THEN 'in_house'
+         WHEN notes ~ '取引形態[:：][[:space:]]*権利許諾'           THEN 'sublicense'
+         WHEN notes ~ '取引形態[:：][[:space:]]*自社製造・他社販売' THEN 'oem'
        END
  WHERE usage_type IS NULL
-   AND notes ~ '取引形態[:：]\s*(自社製造・自社販売|権利許諾|自社製造・他社販売)';
+   AND notes ~ '取引形態[:：][[:space:]]*(自社製造・自社販売|権利許諾|自社製造・他社販売)';
 
 -- 埋め戻し（2）許諾範囲の媒体から。紙と電子の両方が付いた条件は決められないので触らない。
 WITH media AS (
@@ -1791,7 +1791,7 @@ SELECT template_key, label, category
   FROM v3.document_templates
  WHERE is_active
    AND category IS DISTINCT FROM 'partial'
-   AND template_key NOT LIKE '\_%'
+   AND left(template_key, 1) <> '_'
    AND COALESCE(btrim(number_prefix), '') = ''
  ORDER BY category NULLS LAST, label;
 

@@ -69,7 +69,7 @@ SELECT * FROM (
          (SELECT count(*)::text FROM v3.document_templates
            WHERE is_active
              AND category IS DISTINCT FROM 'partial'
-             AND template_key NOT LIKE '\\_%'
+             AND left(template_key, 1) <> '_'
              AND COALESCE(btrim(number_prefix), '') = '')
   UNION ALL
   SELECT 8, '自社プロファイル',
@@ -345,7 +345,15 @@ export function buildStudioSql(source) {
     .filter((line) => !line.startsWith("\\"))   // psql のクライアント機能を落とす
     .join("\n")
     .replace(/\n{3,}/g, "\n\n");
-  return HEADER + changes.trimStart() + "\n" + CHECKS;
+  const output = HEADER + changes.trimStart() + "\n" + CHECKS;
+  // Studio は文字列の中の \ でも「syntax error at or near "\"」で落ちることがある
+  // （2026-09-25 に実際に落ちた）。\ を 1 文字も残さない。正規表現は [[:space:]]、
+  // LIKE の \_ は left(...) などで書く。
+  const at = output.split("\n").findIndex((line) => line.includes("\\"));
+  if (at >= 0) {
+    throw new Error(`Studio 用に \\ が残っています（${at + 1} 行目）: ${output.split("\n")[at].trim()}`);
+  }
+  return output;
 }
 
 // コマンドとして呼ばれたときだけ書き出す（試験からの import では動かさない）。
