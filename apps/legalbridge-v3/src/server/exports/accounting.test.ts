@@ -25,7 +25,7 @@ const source = (over: Partial<AccountingSource> = {}): AccountingSource => ({
 
 // ---- V1 から引き継ぐ規則 ----
 
-test("列名と順番は V1 のまま", () => {
+test("確認用の Excel：先頭は V1 と同じ並び（消費税と内訳の列が付く）", () => {
   const headers = ACCOUNTING_COLUMNS.map((c) => c.header);
   assert.deepEqual(headers.slice(0, 6),
     ["件名", "支払日", "部署", "取引先コード", "氏名", "氏名（カナ）"]);

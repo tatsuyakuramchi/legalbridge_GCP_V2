@@ -92,15 +92,19 @@ const PAYMENTS_SQL = `
 const DOCUMENT_SQL = `
   SELECT al.payment_id, count(DISTINCT e.document_id) AS documents,
          min(e.document_id) AS document_id,
-         (array_agg(d.rendered_values ORDER BY d.id))[1] AS rendered_values
+         (array_agg(d.rendered_values ORDER BY d.id))[1] AS rendered_values,
+         (array_agg(d.document_no ORDER BY d.id))[1] AS document_no,
+         (array_agg(t.template_key ORDER BY d.id))[1] AS template_key
     FROM payment_allocations al
     JOIN condition_events e ON e.id = al.event_id
     JOIN documents d ON d.id = e.document_id AND d.status = 'issued'
+    LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
+    LEFT JOIN document_templates t ON t.id = tv.template_id
    WHERE al.payment_id = ANY($1::bigint[])
    GROUP BY al.payment_id`;
 
 const LINES_SQL = `
-  SELECT al.payment_id, al.amount, c.condition_no, c.name, c.tax_category,
+  SELECT al.payment_id, al.amount, c.condition_no, c.name, c.tax_category, c.kind,
          c.currency, c.unit_amount,
          e.quantity, e.occurred_on
     FROM payment_allocations al
@@ -204,13 +208,22 @@ export class AccountingExportRepository {
 
       // 書類の明細を先に取る。あれば支払内容はこちらを使う。
       const docLines = new Map<number, DocumentLine[]>();
+      const docOf = new Map<number, NonNullable<AccountingSource["document"]>>();
       if (ids.length) {
         const docs = await this.database.query(DOCUMENT_SQL, [ids]);
         for (const d of docs.rows as any[]) {
           if (Number(d.documents) !== 1) continue;
+          docOf.set(Number(d.payment_id), {
+            id: Number(d.document_id), number: str(d.document_no), templateKey: str(d.template_key)
+          });
           const lines = documentLinesFrom(d.rendered_values);
           if (lines.length) docLines.set(Number(d.payment_id), lines);
         }
+      }
+      const kindsOf = new Map<number, string[]>();
+      for (const l of lines.rows as any[]) {
+        const id = Number(l.payment_id);
+        kindsOf.set(id, [...(kindsOf.get(id) ?? []), String(l.kind ?? "")]);
       }
 
       const byPayment = new Map<number, AllocationLine[]>();
@@ -256,7 +269,9 @@ export class AccountingExportRepository {
           matterNo: str(r.matter_no),
           matterTitle: str(r.matter_title),
           lines: byPayment.get(id) ?? [],
-          documentLines: docLines.get(id)
+          documentLines: docLines.get(id),
+          document: docOf.get(id) ?? null,
+          conditionKinds: kindsOf.get(id) ?? []
         };
         return buildAccountingRow(source);
       });

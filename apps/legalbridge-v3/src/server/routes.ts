@@ -72,7 +72,11 @@ import { SearchRepository } from "./search/repository.js";
 import { ExportRepository, DATASETS, type Dataset } from "./exports/repository.js";
 import { filename, withBom } from "./exports/csv.js";
 import { AccountingExportLedger, AccountingExportRepository } from "./exports/accounting-repository.js";
-import { ACCOUNTING_COLUMNS, BREAKDOWN_COLUMNS, totalRow } from "./exports/accounting.js";
+import {
+  ACCOUNTING_COLUMNS, BREAKDOWN_COLUMNS, totalRow,
+  V1_ACCOUNTING_HEADERS, v1AccountingCells, v1FileStem, v1SheetName
+} from "./exports/accounting.js";
+import { buildXlsx } from "./exports/xlsx.js";
 import { XLS_MIME, toXls, withXlsBom, xlsFilename } from "./exports/xls.js";
 import { PaymentReportRepository } from "./exports/payment-report.js";
 import { ImportService, IMPORT_SPECS, type ImportKind } from "./imports/service.js";
@@ -745,6 +749,75 @@ export function createRoutes(database: Transactable) {
         groups.length === 1 ? groups[0].paymentDate : `${query.from}_${query.to}`
       ]))}`);
     res.send(withXlsBom(toXls(sheet, breakdown ? BREAKDOWN_COLUMNS : ACCOUNTING_COLUMNS, rows)));
+  }));
+
+  /**
+   * 経理提出用（V1 形式）。経理へ渡している実物と同じ形で出す。
+   *   ・種別 × 個人／法人 ごとに 1 ファイル（束の中をさらに分ける）
+   *   ・xlsx（シート名「検収書(個人)」、ファイル名「検収書_個人_<支払日>.xlsx」、52 列）
+   *   ・withPdf=1（既定）なら各文書の PDF と一緒に zip にする。PDF を作れなかった
+   *     支払は「PDF未生成.txt」に並べ、件数を X-Pdf-Failures で返す
+   * 出力済みの記録はしない（画面の「出力済みにする」で別に付ける）。
+   */
+  const v1Schema = accountingSchema.extend({
+    groupKey: z.string().min(1).max(400),
+    category: z.enum(["検収書", "利用許諾料計算書"]),
+    entity: z.enum(["個人", "法人"]),
+    withPdf: z.enum(["1", "0"]).optional().default("1")
+  });
+  router.get("/exports/accounting/v1", requireRole("admin", "legal"),
+    asyncRoute(async (req, res) => {
+    const query = v1Schema.parse(req.query);
+    const result = await accounting.build(query);
+    const group = result.groups.find((g) => g.key === query.groupKey);
+    if (!group) return res.status(404).json({ error: "対象の束がありません（読み込み直してください）" });
+    const rows = group.rows.filter((r) => r.category === query.category && r.entity === query.entity);
+    if (!rows.length) {
+      return res.status(404).json({ error: `この束に${query.category}（${query.entity}）の支払はありません` });
+    }
+
+    const stem = v1FileStem(query.category, query.entity, group.paymentDate);
+    const xlsx = buildXlsx([{
+      name: v1SheetName(query.category, query.entity),
+      rows: [V1_ACCOUNTING_HEADERS, ...rows.map(v1AccountingCells)]
+    }]);
+    const disposition = (name: string) =>
+      `attachment; filename="${name.replace(/[^A-Za-z0-9._-]/g, "_")}"; filename*=UTF-8''${encodeURIComponent(name)}`;
+    res.setHeader("cache-control", "no-store");
+    if (query.withPdf === "0") {
+      res.setHeader("content-type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("content-disposition", disposition(`${stem}.xlsx`));
+      return res.send(xlsx);
+    }
+
+    const entries: ZipEntry[] = [{ name: `${stem}.xlsx`, data: xlsx }];
+    const missing: string[] = [];
+    const seen = new Set<number>();
+    for (const row of rows) {
+      const label = row.documentNo ?? row.paymentNo ?? `支払${row.paymentId}`;
+      if (!row.documentId) { missing.push(`${label}（元になった書類がありません）`); continue; }
+      if (seen.has(row.documentId)) continue;
+      seen.add(row.documentId);
+      try {
+        const rendered = await issues.renderIssued(row.documentId);
+        entries.push({
+          name: `${rendered.documentNo ?? row.documentNo ?? `document-${row.documentId}`}.pdf`,
+          data: await pdf.render(rendered.html)
+        });
+      } catch {
+        missing.push(`${label}（PDF を作れませんでした）`);
+      }
+    }
+    if (missing.length) {
+      entries.push({
+        name: "PDF未生成.txt",
+        data: Buffer.from(`PDF を同梱できなかった支払：\r\n${missing.join("\r\n")}\r\n`, "utf8")
+      });
+    }
+    res.setHeader("content-type", "application/zip");
+    res.setHeader("content-disposition", disposition(`${stem}.zip`));
+    res.setHeader("x-pdf-failures", String(missing.length));
+    res.send(Buffer.from(buildZip(entries)));
   }));
 
   const markSchema = z.object({ paymentIds: z.array(z.number().int().positive()).min(1).max(1000),

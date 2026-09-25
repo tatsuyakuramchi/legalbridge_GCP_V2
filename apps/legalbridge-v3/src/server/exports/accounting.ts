@@ -66,6 +66,10 @@ export interface AccountingSource {
    * 手で起こした支払には無いので、そのときは割当から組む。
    */
   documentLines?: DocumentLine[];
+  /** 元になった書類（1件に決まるときだけ）。V1 形式の種別と PDF の同梱に使う。 */
+  document?: { id: number; number: string | null; templateKey: string | null } | null;
+  /** 割当の条件の種類（license／service …）。書類が無い支払の種別を決める。 */
+  conditionKinds?: string[];
 }
 
 /** 検収書の明細1行。V2 の inspectionSlots が読んでいた項目に合わせる。 */
@@ -106,6 +110,29 @@ export interface AccountingRow {
    */
   flags: string[];
   withholdingExpected: number;
+  /** V1 形式の出力単位（種別 × 個人／法人）。 */
+  category: AccountingCategory;
+  entity: AccountingEntity;
+  documentId: number | null;
+  documentNo: string | null;
+}
+
+/** V1 の種別。ファイル名とシート名の頭に付く。 */
+export type AccountingCategory = "検収書" | "利用許諾料計算書";
+export type AccountingEntity = "個人" | "法人";
+export const ACCOUNTING_CATEGORIES: AccountingCategory[] = ["検収書", "利用許諾料計算書"];
+export const ACCOUNTING_ENTITIES: AccountingEntity[] = ["個人", "法人"];
+
+/**
+ * 種別。書類があればそのひな形で決める（計算書なら利用許諾料計算書）。
+ * 書類の無い支払は条件の種類で決める（許諾の支払なら利用許諾料計算書）。
+ */
+export function categoryOf(
+  templateKey: string | null | undefined, conditionKinds: string[] = []
+): AccountingCategory {
+  if (templateKey) return templateKey === "royalty_statement" ? "利用許諾料計算書" : "検収書";
+  return conditionKinds.length > 0 && conditionKinds.every((k) => k === "license")
+    ? "利用許諾料計算書" : "検収書";
 }
 
 const emptySlot = (): AccountingSlot =>
@@ -231,7 +258,11 @@ export function buildAccountingRow(source: AccountingSource): AccountingRow {
     netTransfer: afterTax + reimbursement,
     invoiceRegistration: source.party.invoiceNo ?? "",
     taxable10, reduced8, exempt,
-    flags, withholdingExpected
+    flags, withholdingExpected,
+    category: categoryOf(source.document?.templateKey, source.conditionKinds),
+    entity: source.party.kind === "individual" ? "個人" : "法人",
+    documentId: source.document?.id ?? null,
+    documentNo: source.document?.number ?? null
   };
 }
 
@@ -249,6 +280,8 @@ export interface AccountingGroup {
   };
   /** この束に何件の要確認があるか。 */
   flagged: number;
+  /** V1 形式で出せるファイル（種別 × 個人／法人）と件数。 */
+  v1Files: Array<{ category: AccountingCategory; entity: AccountingEntity; count: number }>;
 }
 
 /**
@@ -265,7 +298,7 @@ export function groupAccounting(rows: AccountingRow[], owners: Map<number, strin
     if (!group) {
       group = {
         key, paymentDate: row.paymentDate, owner, currency: row.currency,
-        count: 0, rows: [], flagged: 0,
+        count: 0, rows: [], flagged: 0, v1Files: [],
         totals: { subtotal: 0, consumptionTax: 0, withholdingTax: 0, reimbursement: 0, netTransfer: 0 }
       };
       groups.set(key, group);
@@ -278,6 +311,14 @@ export function groupAccounting(rows: AccountingRow[], owners: Map<number, strin
     group.totals.withholdingTax += row.withholdingTax;
     group.totals.reimbursement += row.reimbursement;
     group.totals.netTransfer += row.netTransfer;
+    const file = group.v1Files.find((f) => f.category === row.category && f.entity === row.entity);
+    if (file) file.count += 1;
+    else group.v1Files.push({ category: row.category, entity: row.entity, count: 1 });
+  }
+  for (const group of groups.values()) {
+    group.v1Files.sort((a, b) =>
+      ACCOUNTING_CATEGORIES.indexOf(a.category) - ACCOUNTING_CATEGORIES.indexOf(b.category)
+      || ACCOUNTING_ENTITIES.indexOf(a.entity) - ACCOUNTING_ENTITIES.indexOf(b.entity));
   }
   // 支払期日の昇順（空は末尾）→ 担当者名。V1 と同じ並び。
   return [...groups.values()].sort((a, b) => {
@@ -362,6 +403,57 @@ export function totalRow(group: AccountingGroup): AccountingRow {
     taxable10: group.rows.reduce((s, r) => s + r.taxable10, 0),
     reduced8: group.rows.reduce((s, r) => s + r.reduced8, 0),
     exempt: group.rows.reduce((s, r) => s + r.exempt, 0),
-    flags: [], withholdingExpected: group.rows.reduce((s, r) => s + r.withholdingExpected, 0)
+    flags: [], withholdingExpected: group.rows.reduce((s, r) => s + r.withholdingExpected, 0),
+    category: "検収書", entity: "法人", documentId: null, documentNo: null
   };
 }
+
+// ---------------------------------------------------------------------
+// V1 形式（経理へ渡している実物の列）
+// ---------------------------------------------------------------------
+
+/** 全角数字（１〜８）。V1 の見出しは括弧の中の数字が全角。 */
+const zenkaku = (n: number): string => String(n).replace(/[0-9]/g, (d) =>
+  String.fromCharCode(d.charCodeAt(0) + 0xFEE0));
+
+/**
+ * V1 の経理提出用の列（52 列）。実際に経理へ渡している表の見出しをそのまま使う。
+ *   ・括弧の中の数字は全角（１〜８）。
+ *   ・「納品日(１)」だけ括弧が半角（ほかは全角の括弧）。
+ *   ・消費税の列は無い。小計は税込で、小計 − 源泉税 ＝ 税引後、
+ *     税引後 ＋ 立替金 ＝ 差引振込額 になる。
+ * 列名・順番・表記は変えない（経理側の取り込みが見出しで照合している）。
+ */
+export const V1_ACCOUNTING_HEADERS: string[] = [
+  "件名", "支払日", "部署", "取引先コード", "氏名", "氏名（カナ）",
+  ...Array.from({ length: ACCOUNTING_SLOT_COUNT }, (_, i) => {
+    const n = zenkaku(i + 1);
+    return [`支払内容（${n}）`, `単価（${n}）`, `数量（${n}）`, `金額（${n}）`, `納品日(${n})`];
+  }).flat(),
+  "立替金", "小計", "源泉税", "税引後", "差引振込額", "インボイス登録"
+];
+
+/** 1 行分のセル。空の欄は空のまま（0 を入れない）、金額は数値のまま。 */
+export function v1AccountingCells(row: AccountingRow): Array<string | number | null> {
+  const cell = (v: string | number | ""): string | number | null => (v === "" ? null : v);
+  return [
+    row.title, row.paymentDate, row.department, row.vendorCode, row.vendorName, row.vendorNameKana,
+    ...row.slots.flatMap((s) => [
+      cell(s.content), cell(s.unitPrice), cell(s.quantity), cell(s.amount), cell(s.deliveryDate)
+    ]),
+    row.reimbursement,
+    // 小計は税込（消費税の列が無いので、ここに含める）。
+    row.subtotal + row.consumptionTax,
+    row.withholdingTax, row.afterTax, row.netTransfer,
+    cell(row.invoiceRegistration)
+  ];
+}
+
+/** V1 のファイル名の本体（拡張子なし）。例：検収書_個人_2026-09-30 */
+export function v1FileStem(category: AccountingCategory, entity: AccountingEntity, paymentDate: string): string {
+  return `${category}_${entity}_${paymentDate || "期日未設定"}`;
+}
+
+/** V1 のシート名。例：検収書(個人) */
+export const v1SheetName = (category: AccountingCategory, entity: AccountingEntity): string =>
+  `${category}(${entity})`;

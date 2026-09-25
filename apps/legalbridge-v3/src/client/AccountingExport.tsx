@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { api, ApiError } from "./api.js";
 
 /**
- * 経理提出用の帳票（V1 互換レイアウト）。
+ * 経理提出用の帳票。経理へ渡すのは V1 形式（種別 × 個人／法人ごとの xlsx と
+ * 各文書の PDF を zip で）。確認用の Excel は要確認の列付きで別に出せる。
  *
  * 束ねごとに中身を確かめてから Excel にする。V1・V2 は一覧を見て
  * そのまま落とすだけだったが、V3 は「要確認」を先に見せる。
@@ -15,10 +16,12 @@ interface Row {
   subtotal: number; consumptionTax: number; withholdingTax: number; withholdingExpected: number;
   reimbursement: number; netTransfer: number; currency: string;
   slots: Array<{ content: string }>; flags: string[];
+  category: string; entity: string; documentNo: string | null;
 }
 interface Group {
   key: string; paymentDate: string; owner: string; currency: string;
   count: number; flagged: number; rows: Row[];
+  v1Files: Array<{ category: string; entity: string; count: number }>;
   totals: { subtotal: number; consumptionTax: number; withholdingTax: number;
             reimbursement: number; netTransfer: number };
 }
@@ -70,7 +73,7 @@ export function AccountingExport() {
       <div className="panel">
         <div className="panel-hd">
           <h2>経理提出用の帳票</h2>
-          <span className="faint">旧システムと同じ列並び（支払内容×8・立替金・源泉税・差引振込額）</span>
+          <span className="faint">旧システム（V1）と同じ形：種別 × 個人／法人ごとの xlsx（52 列）＋ 各文書の PDF を zip で</span>
         </div>
         <div className="panel-bd">
           <div className="row">
@@ -124,13 +127,15 @@ export function AccountingExport() {
           </div>
           <div className="tablewrap">
             <table>
-              <thead><tr><th>支払番号</th><th>件名</th><th>取引先</th><th>支払内容</th>
+              <thead><tr><th>支払番号</th><th>種別</th><th>件名</th><th>取引先</th><th>支払内容</th>
                 <th className="right">小計</th><th className="right">消費税</th>
                 <th className="right">源泉税</th><th className="right">差引振込額</th><th>要確認</th></tr></thead>
               <tbody>
                 {g.rows.map((r) => (
                   <tr key={r.paymentId}>
                     <td className="code">{r.paymentNo ?? `#${r.paymentId}`}</td>
+                    <td className="faint">{r.category}（{r.entity}）
+                      {!r.documentNo && <div className="faint">書類なし</div>}</td>
                     <td>{r.title || "—"}</td>
                     <td>{r.vendorName}</td>
                     <td className="faint">{r.slots[0]?.content || "—"}</td>
@@ -152,8 +157,22 @@ export function AccountingExport() {
             </table>
           </div>
           <div className="panel-bd row">
-            <a className="btn primary" href={`/api/v3/exports/accounting.xls?${query()}&groupKey=${encodeURIComponent(g.key)}`}>
-              ↓ 経理提出用Excel（{g.count}件）
+            {g.v1Files.map((f) => {
+              const href = `/api/v3/exports/accounting/v1?${query()}&groupKey=${encodeURIComponent(g.key)}`
+                + `&category=${encodeURIComponent(f.category)}&entity=${encodeURIComponent(f.entity)}`;
+              return (
+                <span key={`${f.category}-${f.entity}`} className="row" style={{ gap: 4 }}>
+                  <a className="btn primary" href={href}>
+                    ↓ {f.category}_{f.entity}（{f.count}件・PDF 付き zip）
+                  </a>
+                  <a className="btn ghost btn-sm" href={`${href}&withPdf=0`}>xlsx だけ</a>
+                </span>
+              );
+            })}
+          </div>
+          <div className="panel-bd row">
+            <a className="btn ghost" href={`/api/v3/exports/accounting.xls?${query()}&groupKey=${encodeURIComponent(g.key)}`}>
+              ↓ 確認用Excel（要確認の列付き）
             </a>
             <a className="btn ghost" href={`/api/v3/exports/accounting.xls?${query()}&groupKey=${encodeURIComponent(g.key)}&layout=breakdown`}>
               ↓ 内訳一覧
