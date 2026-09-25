@@ -61,7 +61,7 @@ docker compose run --rm ops push-export
 
 ## 3. 本番の表をローカルと同じ形にする（Cloud SQL Studio）
 
-`infra/v3/004_amend_studio.sql` を Studio で流す。最後の確認一覧で **51 番が 11** なら OK。
+`infra/v3/004_amend_studio.sql` を Studio で流す。最後の確認一覧で **51 番が 11、52 番が 4** なら OK。
 
 147・148（発注書のひな形）は流さなくてよい。ひな形もローカルの中身ごと入れ直す。
 

@@ -295,6 +295,18 @@ SELECT * FROM (
             WHERE conrelid='v3.party_bank_accounts'::regclass
               AND conname='party_bank_accounts_scope_chk'))::text
   UNION ALL
+  SELECT 52, '支払の割り当ての形（A-052。主キーが id・UNIQUE・CHECK・event_id が NULL 可で 4 であること）',
+         ((SELECT count(*) FROM pg_constraint
+            WHERE conrelid='v3.payment_allocations'::regclass AND conname='payment_allocations_pkey'
+              AND pg_get_constraintdef(oid) = 'PRIMARY KEY (id)')
+        + (SELECT count(*) FROM pg_constraint
+            WHERE conrelid='v3.payment_allocations'::regclass
+              AND conname IN ('payment_allocations_payment_id_condition_id_event_id_key',
+                              'payment_allocations_amount_check'))
+        + (SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='v3' AND table_name='payment_allocations'
+              AND column_name='event_id' AND is_nullable='YES'))::text
+  UNION ALL
   SELECT 33, '翻訳版再許諾と別途合意（A-033。列 1 と CHECK 1 で 2 であること）',
          ((SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='conditions' AND column_name = 'sublicense_consent')

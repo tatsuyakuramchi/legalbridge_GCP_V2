@@ -1754,6 +1754,59 @@ UPDATE v3.data_quality_issues q
         AND b.bank_name IS NOT NULL AND b.account_holder_name IS NOT NULL
         AND COALESCE(b.account_number, b.iban) IS NOT NULL AND b.swift_bic IS NOT NULL);
 
+-- ---------------------------------------------------------------------
+-- A-052 支払の割り当て（payment_allocations）を今の形にする
+--
+--   最初の形は (payment_id, condition_id, event_id) が主キーで、event_id は
+--   NULL 可と宣言しながら主キーのせいで実質 NOT NULL だった（実績を特定できない
+--   支払を割り当てられない）。001_schema は 2026-09-08 に代理キー id・
+--   UNIQUE NULLS NOT DISTINCT・金額 0 の禁止へ直したが、CREATE TABLE IF NOT EXISTS
+--   なので、先に表ができていた本番には届いていなかった（2026-09-25 の入れ直しで判明）。
+--   既にある行には id を振る。組み合わせの重複は元の主キーが防いでいたので無い。
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.payment_allocations ADD COLUMN IF NOT EXISTS id bigserial;
+DO $a052$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_constraint
+              WHERE conrelid = 'v3.payment_allocations'::regclass
+                AND conname = 'payment_allocations_pkey'
+                AND pg_get_constraintdef(oid) <> 'PRIMARY KEY (id)') THEN
+    ALTER TABLE v3.payment_allocations DROP CONSTRAINT payment_allocations_pkey;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.payment_allocations'::regclass AND contype = 'p') THEN
+    ALTER TABLE v3.payment_allocations ADD CONSTRAINT payment_allocations_pkey PRIMARY KEY (id);
+  END IF;
+  ALTER TABLE v3.payment_allocations ALTER COLUMN event_id DROP NOT NULL;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.payment_allocations'::regclass
+                    AND conname = 'payment_allocations_payment_id_condition_id_event_id_key') THEN
+    ALTER TABLE v3.payment_allocations
+      ADD CONSTRAINT payment_allocations_payment_id_condition_id_event_id_key
+      UNIQUE NULLS NOT DISTINCT (payment_id, condition_id, event_id);
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.payment_allocations'::regclass
+                    AND conname = 'payment_allocations_amount_check') THEN
+    -- 0 円の割り当てが既にあっても止めない（NOT VALID で新しい行だけ確かめる）。
+    IF EXISTS (SELECT 1 FROM v3.payment_allocations WHERE amount = 0) THEN
+      ALTER TABLE v3.payment_allocations
+        ADD CONSTRAINT payment_allocations_amount_check CHECK (amount <> 0) NOT VALID;
+      RAISE NOTICE 'A-052: 0 円の割り当てが % 件ある（CHECK は新しい行だけに効かせた）',
+        (SELECT count(*) FROM v3.payment_allocations WHERE amount = 0);
+    ELSE
+      ALTER TABLE v3.payment_allocations
+        ADD CONSTRAINT payment_allocations_amount_check CHECK (amount <> 0);
+    END IF;
+  END IF;
+END
+$a052$;
+GRANT USAGE, SELECT ON SEQUENCE v3.payment_allocations_id_seq TO legalbridge_v3_runtime;
+COMMENT ON TABLE v3.payment_allocations IS
+  '支払を条件へ割り当てる。1件の支払を複数条件に分けられる。合計は支払額を超えない。';
+
 COMMIT;
 
 -- 確認
@@ -2018,3 +2071,15 @@ SELECT (SELECT count(*) FROM information_schema.columns
      + (SELECT count(*) FROM pg_constraint
          WHERE conrelid='v3.party_bank_accounts'::regclass
            AND conname='party_bank_accounts_scope_chk') AS 列とCHECK;
+
+\echo '--- 支払の割り当ての形（A-052。主キーが id・UNIQUE・CHECK・event_id が NULL 可で 4 であること） ---'
+SELECT (SELECT count(*) FROM pg_constraint
+         WHERE conrelid='v3.payment_allocations'::regclass AND conname='payment_allocations_pkey'
+           AND pg_get_constraintdef(oid) = 'PRIMARY KEY (id)')
+     + (SELECT count(*) FROM pg_constraint
+         WHERE conrelid='v3.payment_allocations'::regclass
+           AND conname IN ('payment_allocations_payment_id_condition_id_event_id_key',
+                           'payment_allocations_amount_check'))
+     + (SELECT count(*) FROM information_schema.columns
+         WHERE table_schema='v3' AND table_name='payment_allocations'
+           AND column_name='event_id' AND is_nullable='YES') AS 形;
