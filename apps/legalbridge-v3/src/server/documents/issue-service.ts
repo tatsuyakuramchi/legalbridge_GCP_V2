@@ -1,0 +1,888 @@
+import { inTransaction, int, str, type Queryable, type Transactable } from "../core/db.js";
+import { ensureAgreementForTerms } from "../agreements/auto.js";
+import { DomainError, translate } from "../core/errors.js";
+import { recordAudit } from "../core/audit.js";
+import { MatterLinkService } from "../matters/link-service.js";
+import { assertComplete, bindVariables, type BindingResult } from "./binding.js";
+import { documentWarnings, type Warning } from "./preflight.js";
+import { DocumentContextRepository } from "./context-repository.js";
+import { DocumentRepository } from "./repository.js";
+import { renderDocumentHtml } from "./render.js";
+import { buildTemplateContext, seedLines, suggestionsFor, templateWarnings } from "./template-context.js";
+import { resolveAllLegacyVariables } from "./legacy-variables.js";
+import { buildCandidates, type Candidate } from "./candidates.js";
+import { currentYearInTokyo, formatDocumentNumber, nextSequence, normalizePrefix } from "./numbering.js";
+import { materializeSettlementRows } from "./settlement-conditions.js";
+import { ConditionWriteService } from "../conditions/write-service.js";
+
+export interface DraftInput {
+  templateKey: string;
+  conditionIds: number[];
+  matterId?: number | null;
+  agreementId?: number | null;
+  manualInputs?: Record<string, unknown>;
+  /** 実績。検収書はここの日付と金額を使う。 */
+  eventIds?: number[];
+  /** 計算結果。計算書は発行の時点でこれが要る。 */
+  royalty?: Record<string, unknown> | null;
+}
+
+/** プレビューでの文書番号。発行のときに本物へ置き換わる。 */
+export const PREVIEW_NUMBER = "（決定時に採番）";
+
+export interface PreviewResult {
+  html: string;
+  binding: BindingResult;
+  templateLabel: string;
+  templateVersionId: number;
+  /** 入力欄に出す候補。ひな形が供給元を宣言していなくても人が選べる。 */
+  candidates: Candidate[];
+  /**
+   * 本文が差しているのに空で出る項目。止めはしない（欠けたまま出すのが
+   * 正しいこともある）が、発行の前に人が見て決められるようにする。
+   */
+  warnings: Warning[];
+  /**
+   * 明細の欄。ひな形が行を持つとき（発注書・検収書）、条件・予定・実績から
+   * 組んだ行を種として返す。画面はこれを初期値にして行ごとに直せる。
+   * 直した行は manualInputs の同じ名前（items など）で返ってくる。
+   */
+  lines: Array<{ name: string; rows: Array<Record<string, unknown>> }>;
+}
+
+export interface IssuedDocument {
+  id: number;
+  documentNo: string;
+  templateVersionId: number;
+  issuedAt: string;
+  conditionIds: number[];
+}
+
+/**
+ * 文書の作成と発行。
+ *
+ * V2 との違いは値の出どころだけで、採番形式・テンプレート本文・Handlebars ヘルパは
+ * そのまま踏襲する（互換境界）。文書は条件を参照する側なので、
+ * 発行しても条件は動かさない。
+ */
+/**
+ * 遡及の決定日を読む。空なら今（null）。
+ *
+ * 先の日付は受け取らない。まだ出していない紙に決定日を付けると、
+ * 期日の計算も滞留の集計も未来から始まってしまう。
+ */
+export function readIssuedOn(raw: string | null | undefined, today = new Date()): string | null {
+  const text = String(raw ?? "").trim();
+  if (!text) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    throw new DomainError("VALIDATION", `決定日は 2026-09-01 の形で書いてください（${text}）`);
+  }
+  const parsed = new Date(`${text}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== text) {
+    throw new DomainError("VALIDATION", `決定日が日付として読めません（${text}）`);
+  }
+  const todayInTokyo = new Intl.DateTimeFormat("en-CA",
+    { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit" }).format(today);
+  if (text > todayInTokyo) {
+    throw new DomainError("VALIDATION", `決定日に先の日付は置けません（${text}）`);
+  }
+  if (text < "2000-01-01") {
+    throw new DomainError("VALIDATION", `決定日が古すぎます。打ち間違いではありませんか（${text}）`);
+  }
+  return text;
+}
+
+export class DocumentIssueService {
+  private readonly repository: DocumentRepository;
+  private readonly contexts: DocumentContextRepository;
+  /** 条件を案件に繋ぐ。下書きを作るときに、載せた条件を案件にも付ける。 */
+  private readonly matters: MatterLinkService;
+  private readonly conditionWrites: ConditionWriteService;
+
+  constructor(private readonly database: Transactable) {
+    this.repository = new DocumentRepository(database);
+    this.contexts = new DocumentContextRepository(database);
+    this.matters = new MatterLinkService(database);
+    this.conditionWrites = new ConditionWriteService(database);
+  }
+
+  /** 発行せずに中身を確認する。必須の未入力もここで分かる。 */
+  async preview(input: DraftInput): Promise<PreviewResult> {
+    try {
+      const template = await this.repository.templateSource(this.database, { templateKey: input.templateKey });
+      // 番号は発行のときにしか決まらない。プレビューで空にすると必須の未入力に
+      // 数えられ、発行ボタンが永久に押せなくなる。何が入るかを書いておく。
+      const context = await this.buildContext(this.database, input, PREVIEW_NUMBER);
+      const manual = input.manualInputs ?? {};
+      // 明細・合計・消費税。本文はこれを差すだけなので、作らないと空欄で出る。
+      // 先に一度束縛して、項目に入った値も計算ブロックに渡す（条件書は本文の
+      // 見出しが項目の値そのものなので、手入力だけでは空欄になる）。
+      const first = bindVariables(template.variables, context, manual,
+        { templateKey: template.templateKey });
+      // 文案（条件から組み立てた地域・言語・許諾範囲）。1回目の束縛で埋まった
+      // 値を見るので、人が欄で直していればそちらで組み直る。本文もこれを差すので、
+      // 計算ブロックより先に作って渡す。
+      const suggested = suggestionsFor(template.templateKey, context, first.values);
+      const computed = buildTemplateContext(template.templateKey, context, manual,
+        { ...suggested, ...first.values });
+      const binding = bindVariables(template.variables, context, manual,
+        { templateKey: template.templateKey, computed, suggested });
+      // 候補は文脈そのものから作る。ひな形の宣言には依らない。
+      const partials = await this.repository.partials();
+      // 文案は宣言済みの項目なら bindVariables が入れている（手入力が勝つ）。
+      // 本文が宣言の無い名前を差していることがあり、そのぶんがここに残る。
+      // 入れないと、料率や帰属先のように台帳から引ける値が空欄で紙に出る。
+      const values = { ...resolveAllLegacyVariables(context), ...suggested,
+                       ...computed, ...binding.values };
+      return {
+        html: renderDocumentHtml(template.htmlSource, values, partials),
+        binding,
+        templateLabel: template.label,
+        templateVersionId: template.templateVersionId,
+        candidates: buildCandidates(context, template.templateKey),
+        // 宣言済みの項目は binding.missing が別に報告する。重ねない。
+        warnings: [
+          ...documentWarnings(template.htmlSource, values, template.variables.map((v) => v.name)),
+          // ひな形ごとの警告（出版の条件書：一覧に載せられない条件明細）。
+          ...templateWarnings(template.templateKey, context)
+        ],
+        lines: Object.entries(seedLines(template.templateKey, context))
+          .map(([name, rows]) => ({ name, rows }))
+      };
+    } catch (error) { throw translate(error); }
+  }
+
+  /** 下書きの作成。番号は振らない。 */
+  async createDraft(input: DraftInput, actor: string): Promise<{ id: number }> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const template = await this.repository.templateSource(client, { templateKey: input.templateKey });
+        await this.assertConditionsIssuable(client, input.conditionIds);
+        // 案件が渡されなければ、条件の載っている案件を引く。条件の画面から作った
+        // 文書が案件に出てこない、という穴を塞ぐ。複数の案件に載っていれば決めない。
+        const matterId = input.matterId ?? await this.matterOfConditions(client, input.conditionIds);
+        const inserted = await client.query(
+          `INSERT INTO documents (template_version_id, matter_id, agreement_id, status, manual_inputs)
+           VALUES ($1, $2, $3, 'draft', $4::jsonb) RETURNING id`,
+          [template.templateVersionId, matterId, input.agreementId ?? null,
+           JSON.stringify(input.manualInputs ?? {})]
+        );
+        const id = Number((inserted.rows[0] as { id: number }).id);
+        await this.linkConditions(client, id, input.conditionIds);
+        // 案件が決まっていれば、載せた条件を案件にも繋ぐ。文書だけが案件に付いて
+        // 条件が付いていない状態だと、案件の条件タブに出ず、実績も支払も立て
+        // られない。付いているものは触らない。
+        const attached = matterId
+          ? await this.matters.attachWithin(client, matterId, input.conditionIds, actor)
+          : [];
+        await recordAudit(client, {
+          actor, action: "document.draft", targetType: "document", targetId: id,
+          detail: { templateKey: input.templateKey, conditions: input.conditionIds,
+                    ...(attached.length ? { attachedToMatter: attached, matterId } : {}) }
+        });
+        return { id };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 下書きの手入力と条件を差し替える。
+   *
+   * 発行は下書きに保存された manual_inputs しか見ない。直す口が無いと、
+   * 作り直した下書きは中身を直せないまま発行するしかなくなる。
+   */
+  async updateDraft(
+    documentId: number,
+    input: { manualInputs?: Record<string, unknown>; conditionIds?: number[]; agreementId?: number | null },
+    actor: string
+  ): Promise<{ id: number }> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const head = await client.query(
+          "SELECT id, status, matter_id FROM documents WHERE id = $1 FOR UPDATE", [documentId]);
+        const row = head.rows[0] as Record<string, any> | undefined;
+        if (!row) throw new DomainError("NOT_FOUND", `文書 ${documentId} が見つかりません`);
+        if (row.status !== "draft") {
+          throw new DomainError("CONFLICT", `下書きだけ直せます（この文書は ${row.status}）`);
+        }
+
+        if (input.manualInputs) {
+          await client.query(
+            "UPDATE documents SET manual_inputs = $2::jsonb WHERE id = $1",
+            [documentId, JSON.stringify(input.manualInputs)]);
+        }
+
+        // 基本契約（発注書の準拠契約）。条件に契約が付いていないときや、別の
+        // 契約に基づく発注のときに人が選ぶ。null は「条件の契約に従う」。
+        if (input.agreementId !== undefined) {
+          if (input.agreementId !== null) {
+            const a = await client.query("SELECT id FROM agreements WHERE id = $1", [input.agreementId]);
+            if (!a.rows[0]) throw new DomainError("NOT_FOUND", `契約 ${input.agreementId} が見つかりません`);
+          }
+          await client.query("UPDATE documents SET agreement_id = $2 WHERE id = $1", [documentId, input.agreementId]);
+        }
+
+        if (input.conditionIds) {
+          const unique = [...new Set(input.conditionIds.map((n) => Number(n)))];
+          if (unique.length) {
+            const found = await client.query(
+              "SELECT id FROM conditions WHERE id = ANY($1::bigint[])", [unique]);
+            if (found.rows.length !== unique.length) {
+              const known = new Set((found.rows as Array<{ id: number }>).map((r) => Number(r.id)));
+              throw new DomainError("NOT_FOUND",
+                `条件が見つかりません：${unique.filter((id) => !known.has(id)).join(", ")}`);
+            }
+          }
+          await this.assertConditionsIssuable(client, unique);
+          // 並べ直しも消しも同じ経路にする。差分を取るより、張り直すほうが読める。
+          await client.query("DELETE FROM document_conditions WHERE document_id = $1", [documentId]);
+          await this.linkConditions(client, documentId, unique);
+          // 差し替えた条件も案件に繋ぐ（下書きを作るときと同じ）。
+          if (row.matter_id) await this.matters.attachWithin(client, Number(row.matter_id), unique, actor);
+        }
+
+        await recordAudit(client, {
+          actor, action: "document.draft.update", targetType: "document", targetId: documentId,
+          detail: {
+            ...(input.manualInputs ? { fields: Object.keys(input.manualInputs) } : {}),
+            ...(input.conditionIds ? { conditions: input.conditionIds } : {}),
+            ...(input.agreementId !== undefined ? { agreementId: input.agreementId } : {})
+          }
+        });
+        return { id: documentId };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 発行。採番して確定値を焼き付ける。
+   * 焼き付けた値（rendered_values）は記録であって参照元ではない。
+   */
+  /**
+   * 発行。本文はここで確定して rendered_values に凍結する。
+   *
+   * extra は下書きに保存していない文脈（実績・計算結果）。発行のときにしか
+   * 使わないので列を増やさず、作った経路から渡す。計算書は「先に計算 →
+   * その値で発行」でないと、本文に金額が載らない。
+   */
+  async issue(
+    documentId: number, actor: string,
+    extra: {
+      eventIds?: number[]; royalty?: Record<string, unknown> | null;
+      /**
+       * 決定日。過去の取引をあとから台帳に入れるときだけ渡す（遡及）。
+       * 省略すれば今。紙に刷った日と台帳の決定日が食い違うと、あとから
+       * 「なぜ9月の紙が今日決定になっているのか」を誰も説明できない。
+       */
+      issuedOn?: string | null;
+    } = {}
+  ): Promise<IssuedDocument> {
+    const issuedOn = readIssuedOn(extra.issuedOn);
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const head = await client.query(
+          `SELECT id, status, template_version_id, matter_id, agreement_id, manual_inputs,
+                  supersedes_id, supersede_reason
+             FROM documents WHERE id = $1 FOR UPDATE`, [documentId]);
+        const row = head.rows[0] as Record<string, any> | undefined;
+        if (!row) throw new DomainError("NOT_FOUND", `文書 ${documentId} が見つかりません`);
+        if (row.status !== "draft") {
+          throw new DomainError("CONFLICT", `この文書はすでに ${row.status} です`);
+        }
+        if (!row.template_version_id) {
+          throw new DomainError("VALIDATION", "テンプレートが設定されていない文書は発行できません");
+        }
+        // 下書きは作ったときの版を指している。ひな形を改訂したあとに決定すると、
+        // 画面のプレビュー（現行版）と紙（下書きの版）が食い違うので、決定の
+        // 時点で現行版に付け替える。決定済みの文書は版を固定したまま。
+        const versionId = await this.rebindToCurrentVersion(client, documentId, Number(row.template_version_id));
+
+        const template = await this.repository.templateSource(client, { versionId });
+        const linked = await client.query(
+          "SELECT condition_id FROM document_conditions WHERE document_id = $1 ORDER BY line_no",
+          [documentId]);
+        const conditionIds = linked.rows.map((c) => Number((c as { condition_id: number }).condition_id));
+        await this.assertConditionsIssuable(client, conditionIds);
+
+        // 発注書・検収書の手数料・経費の行で、条件の無いものは条件にする。
+        // 台帳に無い行が紙にだけ残ると、実績も支払も付けられない。
+        const settled = await materializeSettlementRows(client, this.conditionWrites, {
+          documentId, templateKey: template.templateKey, matterId: int(row.matter_id),
+          conditionIds, manual: (row.manual_inputs as Record<string, unknown>) ?? {}
+        }, actor);
+        if (settled.created.length) {
+          await client.query("UPDATE documents SET manual_inputs = $2::jsonb WHERE id = $1",
+            [documentId, JSON.stringify(settled.manual)]);
+          conditionIds.push(...settled.created.map((c) => c.id));
+        }
+
+        // 部分テンプレートは他のひな形に差し込む断片で、それ自体は書類ではない
+        // （発注書の末尾に付く約款など）。採番の話になる前に断る。
+        if (template.category === "partial") {
+          throw new DomainError("VALIDATION",
+            `${template.templateKey} は他のひな形に差し込む部品で、単独では発行できません`);
+        }
+        const prefix = normalizePrefix(template.numberPrefix);
+        if (!prefix) {
+          throw new DomainError("VALIDATION",
+            `テンプレート ${template.templateKey} に採番プレフィックスが設定されていません`);
+        }
+        // 採番の年は決定日の年。遡及で去年の紙を入れるときに今年の連番を
+        // 食うと、番号の年と紙の年が合わなくなる。
+        const year = issuedOn ? Number(issuedOn.slice(0, 4)) : currentYearInTokyo();
+        const documentNo = formatDocumentNumber(prefix, year, await nextSequence(client, prefix, year));
+
+        const context = await this.buildContext(client, {
+          templateKey: template.templateKey,
+          conditionIds,
+          matterId: row.matter_id,
+          agreementId: row.agreement_id,
+          eventIds: extra.eventIds ?? [],
+          royalty: extra.royalty ?? null
+        }, documentNo, issuedOn);
+        const manual = settled.manual;
+        // プレビューと同じ順で組む。先に一度束縛して、項目に入った値も
+        // 計算ブロックへ渡す（条件書の見出しは項目の値そのもの）。
+        const first = bindVariables(template.variables, context, manual,
+          { templateKey: template.templateKey });
+        const suggested = suggestionsFor(template.templateKey, context, first.values);
+        const computed = buildTemplateContext(template.templateKey, context, manual,
+          { ...suggested, ...first.values });
+        const binding = bindVariables(template.variables, context, manual,
+          { templateKey: template.templateKey, computed, suggested });
+        assertComplete(binding);
+
+        // 焼き付けるのは計算ブロックも含めた一式。本文は明細表も合計も
+        // ここから差す。宣言のある変数だけを保存すると、あとで組み直した
+        // ときに表と合計が消える。
+        // 本文は宣言の無い名前も差す（DOC_NO・STAFF_NAME・moneyUnit …）。
+        // 対応表が解決できるものを土台に置き、計算結果と束縛した値を上に乗せる。
+        const frozen = { ...resolveAllLegacyVariables(context), ...suggested,
+                         ...computed, ...binding.values };
+
+        const updated = await client.query(
+          `UPDATE documents
+              SET document_no = $2, status = 'issued', rendered_values = $3::jsonb,
+                  -- 遡及のときは日付しか分からない。正午（東京）で置く。
+                  -- 深夜0時で置くと、UTC で日付を切る経路が前日に倒れる。
+                  issued_at = CASE WHEN $5::date IS NULL THEN now()
+                                   ELSE ($5::date + time '12:00') AT TIME ZONE 'Asia/Tokyo' END,
+                  issued_by = $4
+            WHERE id = $1 AND status = 'draft'
+            RETURNING issued_at`,
+          [documentId, documentNo, JSON.stringify(frozen), actor, issuedOn]
+        );
+        if (!updated.rows[0]) throw new DomainError("CONFLICT", "発行中に他の操作と競合しました");
+
+        // 訂正版なら、ここで元と入れ替える。作るときではなく発行の瞬間に退かせる
+        // ので、下書きを捨てても元は有効なまま残る。人が2手に分けてやることでは
+        // ないし、2手に分けると途中で有効な版がゼロになる時間ができる。
+        const supersedes = int(row.supersedes_id);
+        if (supersedes) {
+          await this.supersede(client, supersedes, documentId, documentNo,
+            str(row.supersede_reason), actor);
+        }
+
+        // 条件書（個別利用許諾条件書・出版条件書）は相手と結ぶ契約そのもの。
+        // 決定した瞬間に合意の器を立てる（基本契約があれば補助文書、無ければ単体契約）。
+        const auto = await ensureAgreementForTerms(client, {
+          documentId, documentNo, templateKey: template.templateKey, templateLabel: template.label,
+          conditionIds, agreementId: int(row.agreement_id), issuedOn
+        }, actor);
+
+        await recordAudit(client, {
+          actor, action: "document.issue", targetType: "document", targetId: documentId,
+          detail: { documentNo, templateKey: template.templateKey, conditions: conditionIds,
+                    ...(auto ? { agreement: auto } : {}),
+                    ...(versionId !== Number(row.template_version_id)
+                      ? { templateVersionWas: Number(row.template_version_id), templateVersion: versionId } : {}),
+                    ...(settled.created.length ? { createdConditions: settled.created } : {}),
+                    // 遡及で入れたことは記録に残す。残さないと、決定日が
+                    // 過去なのか入力が遅れただけなのか区別が付かない。
+                    ...(issuedOn ? { backdated: true, issuedOn } : {}),
+                    ...(supersedes ? { supersedes } : {}) }
+        });
+
+        return {
+          id: documentId,
+          documentNo,
+          templateVersionId: template.templateVersionId,
+          issuedAt: new Date(String((updated.rows[0] as { issued_at: string }).issued_at)).toISOString(),
+          conditionIds
+        };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 発行済み文書の無効化。
+   *
+   * 行は消さない。発行した事実そのものが記録なので、消すと「何を出したか」を
+   * 追えなくなる。status を void にして理由を監査に残す。
+   * 保管先（Drive）のファイルにも触らない。外に出したものは取り消せない。
+   */
+  async void(documentId: number, reason: string, actor: string)
+    : Promise<{ id: number; documentNo: string | null; releasedEvents: number }> {
+    const note = String(reason ?? "").trim();
+    if (!note) {
+      throw new DomainError("VALIDATION", "無効にする理由を書いてください。理由なしでは無効にできません");
+    }
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const head = await client.query(
+          "SELECT id, document_no, status FROM documents WHERE id = $1 FOR UPDATE", [documentId]);
+        const row = head.rows[0] as { id: number; document_no: string | null; status: string } | undefined;
+        if (!row) throw new DomainError("NOT_FOUND", `文書 ${documentId} が見つかりません`);
+        if (row.status === "void") throw new DomainError("CONFLICT", "この文書はすでに無効です");
+        if (row.status === "superseded") {
+          throw new DomainError("CONFLICT",
+            "差し替え済みの文書は無効にできません。差し替えた新しい版を無効にしてください");
+        }
+
+        await client.query(
+          "UPDATE documents SET status = 'void' WHERE id = $1", [documentId]);
+        // この文書に結びついていた実績を解放する。結んだままだと「別の文書に
+        // 結びついている」と弾かれ、無効にした文書を作り直せなかった。
+        const released = await client.query(
+          "UPDATE condition_events SET document_id = NULL WHERE document_id = $1 RETURNING id, condition_id",
+          [documentId]);
+        const releasedEvents = (released.rows as Array<{ id: number; condition_id: number }>)
+          .map((e) => ({ id: Number(e.id), conditionId: Number(e.condition_id) }));
+        await recordAudit(client, {
+          actor, action: "document.void", targetType: "document", targetId: documentId,
+          detail: { documentNo: row.document_no, from: row.status, reason: note,
+                    ...(releasedEvents.length ? { releasedEvents } : {}) }
+        });
+        return { id: documentId, documentNo: row.document_no, releasedEvents: releasedEvents.length };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 無効化を取り消す。
+   *
+   * 無効化は「出した紙を無かったことにする」操作なので、取り違えると
+   * 相手に出した記録が消える。実際に起きた：同じ業務を4人に出した検収書は、
+   * 明細（品目・金額・回）が4枚とも完全に同じで、違うのは相手先・発注番号・
+   * 振込先だけだった。明細だけを見て重複と判じ、3枚を無効にしてしまった。
+   *
+   * 戻すときは、無効にしたときに解放した実績も一緒に戻す。どの実績だったかは
+   * 監査記録（document.void の releasedEvents）に残してある。ただし、その後
+   * 別の文書に結ばれた実績は戻さない（いま結ばれている先のほうが新しい）。
+   * 戻せなかったものは名前を返して、人が見られるようにする。
+   */
+  async unvoid(documentId: number, reason: string, actor: string): Promise<{
+    id: number; documentNo: string | null; status: string;
+    restoredEvents: number; skippedEvents: number[];
+  }> {
+    const note = String(reason ?? "").trim();
+    if (!note) {
+      throw new DomainError("VALIDATION", "無効化を取り消す理由を書いてください");
+    }
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const head = await client.query(
+          "SELECT id, document_no, status FROM documents WHERE id = $1 FOR UPDATE", [documentId]);
+        const row = head.rows[0] as { id: number; document_no: string | null; status: string } | undefined;
+        if (!row) throw new DomainError("NOT_FOUND", `文書 ${documentId} が見つかりません`);
+        if (row.status !== "void") {
+          throw new DomainError("CONFLICT", "この文書は無効になっていません");
+        }
+
+        // 直近の無効化の記録。そこに「何から無効にしたか」と「どの実績を
+        // 解放したか」が入っている。
+        const past = await client.query(
+          `SELECT detail FROM audit_events
+            WHERE action = 'document.void' AND target_type = 'document' AND target_id = $1
+            ORDER BY id DESC LIMIT 1`, [documentId]);
+        const detail = ((past.rows[0] as { detail?: Record<string, unknown> } | undefined)?.detail
+          ?? {}) as Record<string, unknown>;
+        // 番号が振られている文書は決定済み。番号が無ければ下書きに戻す。
+        const back = String(detail.from ?? "") === "draft" || !row.document_no ? "draft" : "issued";
+        await client.query("UPDATE documents SET status = $2 WHERE id = $1", [documentId, back]);
+
+        const released = Array.isArray(detail.releasedEvents)
+          ? (detail.releasedEvents as Array<{ id?: unknown }>)
+              .map((e) => Number(e?.id)).filter((n) => Number.isFinite(n))
+          : [];
+        let restoredEvents = 0;
+        const skippedEvents: number[] = [];
+        if (released.length) {
+          const back2 = await client.query(
+            `UPDATE condition_events SET document_id = $2
+              WHERE id = ANY($1::bigint[]) AND status = 'active' AND document_id IS NULL
+              RETURNING id`, [released, documentId]);
+          restoredEvents = back2.rowCount ?? 0;
+          const done = new Set((back2.rows as Array<{ id: number }>).map((e) => Number(e.id)));
+          for (const id of released) if (!done.has(id)) skippedEvents.push(id);
+        }
+
+        await recordAudit(client, {
+          actor, action: "document.unvoid", targetType: "document", targetId: documentId,
+          detail: { documentNo: row.document_no, to: back, reason: note,
+                    ...(restoredEvents ? { restoredEvents } : {}),
+                    ...(skippedEvents.length ? { skippedEvents } : {}) }
+        });
+        return { id: documentId, documentNo: row.document_no, status: back,
+                 restoredEvents, skippedEvents };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 出していない文書を捨てる。
+   *
+   * 直す作業は途中の産物を残す。訂正版を作りかけて別の直し方にした下書き、
+   * 選ぶ条件を間違えて作り直した下書き。行としては残り続け、文書の一覧で
+   * 本物に紛れる。
+   *
+   * **一度でも発行したものは捨てない。** 番号を振って出した事実そのものが
+   * 記録で、無効にしてあっても「何を相手に出したか」を追う手がかりになる。
+   * 番号を持っているか、いま発行済み・差し替え済みなら断る。
+   *
+   * 実績が結びついたままなら断る。外してから捨てる（黙って外すと、実績の
+   * 出どころが理由も分からず消える）。条件の紐づけと送信の記録は文書の一部
+   * なので一緒に消える。
+   */
+  async discardDraft(documentId: number, reason: string, actor: string)
+    : Promise<{ deleted: true; documentId: number }> {
+    const note = String(reason ?? "").trim();
+    if (!note) throw new DomainError("VALIDATION", "捨てる理由を書いてください");
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const head = await client.query(
+          `SELECT d.id, d.document_no, d.status, d.supersedes_id,
+                  (SELECT count(*)::int FROM condition_events e WHERE e.document_id = d.id) AS events,
+                  (SELECT count(*)::int FROM matter_communications m WHERE m.document_id = d.id) AS notes,
+                  (SELECT count(*)::int FROM documents x WHERE x.supersedes_id = d.id) AS successors
+             FROM documents d WHERE d.id = $1 FOR UPDATE`, [documentId]);
+        const row = head.rows[0] as {
+          document_no: string | null; status: string; supersedes_id: number | null;
+          events: number; notes: number; successors: number;
+        } | undefined;
+        if (!row) throw new DomainError("NOT_FOUND", `文書 ${documentId} が見つかりません`);
+        if (row.document_no) {
+          throw new DomainError("CONFLICT",
+            `${row.document_no} は番号を振って出した文書です。出した記録は消しません`
+            + "（要らなくなったなら無効にしてください）");
+        }
+        if (row.status === "issued" || row.status === "superseded") {
+          throw new DomainError("CONFLICT",
+            `発行した文書は捨てられません（この文書は ${row.status}）`);
+        }
+        if (Number(row.events ?? 0) > 0) {
+          throw new DomainError("CONFLICT",
+            `この文書には実績が ${row.events} 件結びついています。`
+            + "先に実績の側から外してください");
+        }
+        // やり取りの記録と、この文書を退かせる版。どちらも消すと指す先を失う。
+        if (Number(row.notes ?? 0) > 0) {
+          throw new DomainError("CONFLICT",
+            `この文書にはやり取りの記録が ${row.notes} 件ぶら下がっています。`
+            + "出していない文書のはずなので、案件の記録を確かめてください");
+        }
+        if (Number(row.successors ?? 0) > 0) {
+          throw new DomainError("CONFLICT", "この文書を退かせる版があります。先にそちらを片づけてください");
+        }
+        await client.query("DELETE FROM documents WHERE id = $1", [documentId]);
+        await recordAudit(client, {
+          actor, action: "document.discard", targetType: "document", targetId: documentId,
+          detail: { status: row.status, reason: note,
+                    ...(row.supersedes_id ? { supersedesId: Number(row.supersedes_id) } : {}) }
+        });
+        return { deleted: true, documentId };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 訂正版を作る。発行済みの文書を下書きとして作り直す。
+   *
+   * 元の文書は消さない。新しい文書から supersedes_id で繋ぎ、理由を持たせる。
+   * 条件・実績・手入力を引き継ぐので、そのまま直して発行し直せる。値は発行時に
+   * 条件から引き直すため、条件を直してから作り直せば新しい値で出る。
+   * 条件の紐づけは差し替えられるようにしてある（間違った条件を指していたとき）。
+   *
+   * **元が退くのは訂正版を発行した瞬間**（issue の中）。ここではまだ退かせない。
+   * 先に退かせると、下書きを捨てたときに有効な版がゼロになる。
+   *
+   * 発行済みの文書そのものは書き換えない（出したものの記録なので）。
+   * 直す唯一の道がこれになる。
+   */
+  async reissue(
+    documentId: number, reason: string, actor: string,
+    conditionIds?: number[]
+  ): Promise<{ id: number; supersedesId: number }> {
+    const note = String(reason ?? "").trim();
+    if (!note) {
+      throw new DomainError("VALIDATION", "作り直す理由を書いてください");
+    }
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const head = await client.query(
+          `SELECT id, document_no, status, template_version_id, matter_id, agreement_id, manual_inputs
+             FROM documents WHERE id = $1 FOR UPDATE`, [documentId]);
+        const row = head.rows[0] as Record<string, any> | undefined;
+        if (!row) throw new DomainError("NOT_FOUND", `文書 ${documentId} が見つかりません`);
+        if (row.status !== "issued") {
+          throw new DomainError("CONFLICT",
+            `発行済みの文書だけ作り直せます（この文書は ${row.status}）`);
+        }
+        if (!row.template_version_id) {
+          throw new DomainError("VALIDATION",
+            "テンプレートを持たない取込文書は作り直せません。新しく登録してください");
+        }
+        // 訂正版の下書きが1つでも開いていたら、もう1枚作らせない。
+        // 溜めても発行できるのは1枚だけ（発行した時点でこの版は退く）なので、
+        // 残りは行き場のない下書きになる。
+        const open = await client.query(
+          `SELECT id FROM documents
+            WHERE supersedes_id = $1 AND status = 'draft' LIMIT 1`, [documentId]);
+        if (open.rows.length) {
+          throw new DomainError("CONFLICT",
+            `この文書にはもう訂正版の下書きがあります（#${(open.rows[0] as { id: number }).id}）。` +
+            "それを直して発行してください");
+        }
+
+        const created = await client.query(
+          `INSERT INTO documents (template_version_id, matter_id, agreement_id, status,
+                                  manual_inputs, supersedes_id, supersede_reason)
+           VALUES ($1, $2, $3, 'draft', $4::jsonb, $5, $6) RETURNING id`,
+          [row.template_version_id, row.matter_id, row.agreement_id,
+           JSON.stringify(row.manual_inputs ?? {}), documentId, note]);
+        const newId = Number((created.rows[0] as { id: number }).id);
+
+        if (conditionIds && conditionIds.length) {
+          // 条件を指定し直した。実在と重複だけ確かめて、その並びで繋ぐ。
+          const unique = [...new Set(conditionIds.map((n) => Number(n)))];
+          const found = await client.query(
+            "SELECT id FROM conditions WHERE id = ANY($1::bigint[])", [unique]);
+          if (found.rows.length !== unique.length) {
+            const known = new Set((found.rows as Array<{ id: number }>).map((r) => Number(r.id)));
+            throw new DomainError("NOT_FOUND",
+              `条件が見つかりません：${unique.filter((id) => !known.has(id)).join(", ")}`);
+          }
+          await this.linkConditions(client, newId, unique);
+        } else {
+          // 既定は引き継ぎ。参照方向は文書→条件なので、行を複製する。
+          await client.query(
+            `INSERT INTO document_conditions (document_id, condition_id, line_no)
+             SELECT $2, condition_id, line_no FROM document_conditions WHERE document_id = $1
+             ON CONFLICT (document_id, condition_id) DO NOTHING`, [documentId, newId]);
+        }
+
+        // 元はまだ退かせない。訂正版を発行した瞬間に入れ替える（issue の中）。
+        // ここで退かせると、下書きを捨てたときに有効な版がゼロになる。
+        await recordAudit(client, {
+          actor, action: "document.reissue", targetType: "document", targetId: documentId,
+          detail: { documentNo: row.document_no, newDocumentId: newId, reason: note,
+                    ...(conditionIds?.length ? { conditionIds } : {}) }
+        });
+        return { id: newId, supersedesId: documentId };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 下敷きにして次の文書を作る。
+   *
+   * 訂正版（reissue）と違い、前の文書は退かない。発注書を決めたあとに同じ
+   * 条件・同じ手入力で検収書を起こす、契約書から覚書を起こす、といった
+   * 「次の書類」の入口。ひな形を変えられるのがここの要点で、変えないなら
+   * 同じひな形の別の1枚になる（複数回発注するときなど）。
+   *
+   * 引き継ぐのは 条件明細・案件・合意・手入力。実績は引き継がない（次の書類が
+   * どの実績についてかは、作るときに選ぶ）。手入力はひな形が違えば使われない
+   * 項目も混ざるが、同じ名前の項目（担当者・部署など）はそのまま埋まる。
+   */
+  async derive(
+    documentId: number,
+    input: { templateKey?: string | null; conditionIds?: number[] },
+    actor: string
+  ): Promise<{ id: number; baseId: number; templateKey: string }> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const head = await client.query(
+          `SELECT d.id, d.document_no, d.status, d.template_version_id, d.matter_id,
+                  d.agreement_id, d.manual_inputs, t.template_key
+             FROM documents d
+             LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
+             LEFT JOIN document_templates t ON t.id = tv.template_id
+            WHERE d.id = $1`, [documentId]);
+        const row = head.rows[0] as Record<string, any> | undefined;
+        if (!row) throw new DomainError("NOT_FOUND", `文書 ${documentId} が見つかりません`);
+        if (row.status === "void") {
+          throw new DomainError("CONFLICT", "無効にした文書は下敷きにできません");
+        }
+        const templateKey = String(input.templateKey ?? row.template_key ?? "").trim();
+        if (!templateKey) {
+          throw new DomainError("VALIDATION",
+            "ひな形を持たない取込文書を下敷きにするときは、ひな形を選んでください");
+        }
+        // 下敷きと同じひな形でも、版は現行のものを使う（古い版で新しい書類を作らない）。
+        const template = await this.repository.templateSource(client, { templateKey });
+        if (template.category === "partial") {
+          throw new DomainError("VALIDATION",
+            `${templateKey} は他のひな形に差し込む部品で、単独では作れません`);
+        }
+
+        const created = await client.query(
+          `INSERT INTO documents (template_version_id, matter_id, agreement_id, status, manual_inputs)
+           VALUES ($1, $2, $3, 'draft', $4::jsonb) RETURNING id`,
+          [template.templateVersionId, row.matter_id, row.agreement_id,
+           JSON.stringify(row.manual_inputs ?? {})]);
+        const newId = Number((created.rows[0] as { id: number }).id);
+
+        if (input.conditionIds && input.conditionIds.length) {
+          const unique = [...new Set(input.conditionIds.map((n) => Number(n)))];
+          const found = await client.query(
+            "SELECT id FROM conditions WHERE id = ANY($1::bigint[])", [unique]);
+          if (found.rows.length !== unique.length) {
+            const known = new Set((found.rows as Array<{ id: number }>).map((r) => Number(r.id)));
+            throw new DomainError("NOT_FOUND",
+              `条件が見つかりません：${unique.filter((id) => !known.has(id)).join(", ")}`);
+          }
+          await this.assertConditionsIssuable(client, unique);
+          await this.linkConditions(client, newId, unique);
+        } else {
+          await client.query(
+            `INSERT INTO document_conditions (document_id, condition_id, line_no)
+             SELECT $2, condition_id, line_no FROM document_conditions WHERE document_id = $1
+             ON CONFLICT (document_id, condition_id) DO NOTHING`, [documentId, newId]);
+        }
+
+        await recordAudit(client, {
+          actor, action: "document.derive", targetType: "document", targetId: newId,
+          detail: { baseDocumentId: documentId, baseDocumentNo: row.document_no,
+                    templateKey, fromTemplateKey: row.template_key ?? null }
+        });
+        return { id: newId, baseId: documentId, templateKey };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 前の版を退かせる。訂正版の発行と同じトランザクションで走る。
+   *
+   * 実績（condition_events.document_id）も一緒に移す。移さないと、実績が
+   * 前の版に取られたままになり、「すでに別の文書に結びついています。作り直す
+   * なら先にその文書を無効にしてください」で止まる。それが差し替えを2手に
+   * していた原因なので、ここで引き取る。
+   */
+  private async supersede(
+    client: Queryable, oldId: number, newId: number,
+    newDocumentNo: string, reason: string | null, actor: string
+  ) {
+    const old = await client.query(
+      "SELECT id, document_no, status FROM documents WHERE id = $1 FOR UPDATE", [oldId]);
+    const row = old.rows[0] as { document_no: string | null; status: string } | undefined;
+    if (!row) throw new DomainError("NOT_FOUND", `差し替える元の文書 ${oldId} が見つかりません`);
+    // 元がすでに無効・差し替え済みなら、退かせるものが無い。訂正版は普通に出す。
+    if (row.status !== "issued") return;
+
+    const moved = await client.query(
+      `UPDATE condition_events SET document_id = $2 WHERE document_id = $1 RETURNING id`,
+      [oldId, newId]);
+    await client.query("UPDATE documents SET status = 'superseded' WHERE id = $1", [oldId]);
+
+    await recordAudit(client, {
+      actor, action: "document.supersede", targetType: "document", targetId: oldId,
+      detail: {
+        documentNo: row.document_no, replacedBy: newId, replacedByNo: newDocumentNo,
+        reason,
+        // 何件動いたかだけでは、あとからその実績を辿れない。訂正版で移った
+        // 実績は無効化で外れた実績と同じくらい追う値打ちがあるので、id を残す
+        // （実データの調査で、1007 → 1008 の移動だけ跡が無く読めなかった）。
+        movedEvents: moved.rows.length,
+        movedEventIds: (moved.rows as Array<{ id: number }>).map((e) => Number(e.id))
+      }
+    });
+  }
+
+  /**
+   * 下書きのひな形の版を現行版に付け替える。改訂前に作った下書きが古い版の
+   * まま紙になるのを防ぐ。現行版が同じか無ければそのまま。使う版 id を返す。
+   */
+  private async rebindToCurrentVersion(client: Queryable, documentId: number, versionId: number): Promise<number> {
+    const r = await client.query(
+      `SELECT t.current_version_id
+         FROM document_templates t JOIN document_template_versions tv ON tv.template_id = t.id
+        WHERE tv.id = $1`, [versionId]);
+    const current = (r.rows[0] as { current_version_id: number | null } | undefined)?.current_version_id;
+    if (!current || Number(current) === versionId) return versionId;
+    await client.query("UPDATE documents SET template_version_id = $2 WHERE id = $1", [documentId, Number(current)]);
+    return Number(current);
+  }
+
+  /** 発行済み文書を、そのときの版と焼き付けた値で描き直す。 */
+  async renderIssued(documentId: number): Promise<{ html: string; documentNo: string | null }> {
+    const document = await this.repository.find(documentId);
+    if (!document) throw new DomainError("NOT_FOUND", `文書 ${documentId} が見つかりません`);
+    if (!document.templateVersionId) {
+      throw new DomainError("VALIDATION", "テンプレートを持たない文書は描画できません");
+    }
+    const template = await this.repository.templateSource(this.database, {
+      versionId: document.templateVersionId
+    });
+    const partials = await this.repository.partials();
+    return {
+      html: renderDocumentHtml(template.htmlSource, document.renderedValues, partials),
+      documentNo: document.documentNo
+    };
+  }
+
+  private async buildContext(
+    client: Queryable, input: Omit<DraftInput, "manualInputs">, documentNumber: string | null,
+    /**
+     * 遡及の決定日。本文の日付も、条件のどの版を使うかも、この日で決まる。
+     * 渡さないと紙の日付だけ過去で、中身は今日の版・今日の日付になる。
+     */
+    issuedOn: string | null = null
+  ) {
+    const context = await this.contexts.build({
+      conditionIds: input.conditionIds,
+      agreementId: input.agreementId ?? null,
+      matterId: input.matterId ?? null,
+      eventIds: input.eventIds ?? [],
+      royalty: input.royalty ?? null,
+      issuedOn,
+      documentNumber
+    }, client);
+    await this.contexts.attachScopes(client, context.conditions);
+    return context as unknown as Record<string, unknown>;
+  }
+
+  /** 条件が載っている案件。1つに決まるときだけ返す。 */
+  private async matterOfConditions(client: Queryable, conditionIds: number[]): Promise<number | null> {
+    if (!conditionIds.length) return null;
+    const r = await client.query(
+      `SELECT DISTINCT matter_id FROM matter_links
+        WHERE target_type = 'condition' AND target_ref = ANY($1::text[])`,
+      [conditionIds.map(String)]);
+    return r.rows.length === 1 ? Number((r.rows[0] as { matter_id: number }).matter_id) : null;
+  }
+
+  private async linkConditions(client: Queryable, documentId: number, conditionIds: number[]) {
+    for (const [index, conditionId] of conditionIds.entries()) {
+      await client.query(
+        `INSERT INTO document_conditions (document_id, condition_id, line_no)
+         VALUES ($1, $2, $3) ON CONFLICT (document_id, condition_id) DO NOTHING`,
+        [documentId, conditionId, index + 1]
+      );
+    }
+  }
+
+  /** 無効・旧版の条件からは文書を出さない。 */
+  private async assertConditionsIssuable(client: Queryable, conditionIds: number[]) {
+    if (!conditionIds.length) return;
+    const r = await client.query(
+      `SELECT id, condition_no, status FROM conditions
+        WHERE id = ANY($1::bigint[]) AND status IN ('void', 'superseded')`,
+      [conditionIds]
+    );
+    if (r.rows.length) {
+      const names = r.rows.map((c: Record<string, any>) => c.condition_no ?? `#${c.id}`).join("、");
+      throw new DomainError("CONFLICT", `無効または旧版の条件は文書にできません: ${names}`);
+    }
+  }
+}

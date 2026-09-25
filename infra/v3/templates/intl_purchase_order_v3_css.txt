@@ -1,0 +1,65 @@
+  /* ---- 148: international purchase order, same layout as 147 (fixed page 1, schedule from page 2).
+     Boxes and signature lines are table cells so the document survives a paste into Word.
+     Written in full (does not rely on the older head), so the page renders the same on any prior version. */
+  @page { size: A4; margin: 12mm 12mm 14mm; }
+  body { font-family: "Helvetica Neue", Arial, "Noto Sans CJK JP", "Meiryo", sans-serif; font-size: 10pt; line-height: 1.5; color: #222; margin: 0; padding: 16px; }
+  h1.doc-title { font-size: 20pt; margin: 0 0 4px; letter-spacing: 4px; font-weight: 700; }
+  .doc-head { text-align: center; margin-bottom: 8px; }
+  .doc-sub { font-size: 9pt; color: #555; }
+  hr.rule { border: none; border-top: 1px solid #333; margin: 0 0 12px; }
+  table { border-collapse: collapse; }
+  .party { width: 100%; margin-bottom: 12px; }
+  .party td { vertical-align: top; }
+  .party td + td { border-left: 1px solid #d9d9d9; }
+  .party .vlabel { font-size: 8pt; font-weight: 700; color: #555; margin-bottom: 3px; letter-spacing: .06em; text-transform: uppercase; }
+  .vendor-name { font-size: 13pt; font-weight: 700; border-bottom: 1px solid #333; padding-bottom: 3px; margin-bottom: 6px; }
+  .muted { font-size: 9pt; color: #555; }
+  p.section-mark { font-size: 10pt; font-weight: 700; letter-spacing: .04em; margin: 12px 0 5px; padding: 0 0 3px;
+                   border: 0; border-bottom: 1px solid #bdbdbd; page-break-after: avoid; break-after: avoid-page; }
+  p.section-mark.first { margin-top: 4px; }
+  table.summary { width: 100%; margin-bottom: 12px; font-size: 10pt; }
+  table.summary th { width: 30%; background: #f4f4f2; border: 1px solid #d9d9d9; padding: 7px 8px; text-align: left; color: #333; font-weight: 600; }
+  table.summary td { border: 1px solid #d9d9d9; padding: 7px 8px; }
+  table.summary.compact th, table.summary.compact td { padding: 5px 8px; }
+  .total-amount { font-size: 13pt; font-weight: 700; }
+  .amount-note { font-size: 8.5pt; color: #555; }
+  /* 振込先（A-051）。1 ページ目に収めるため小さめ・詰めた行間で 2〜3 行に。 */
+  .bank-lines { font-size: 8.5pt; line-height: 1.35; }
+  .bank-lines .sep::before { content: " · "; color: #888; }
+  table.items { width: 100%; font-size: 9pt; margin-top: 2px; table-layout: fixed; }
+  table.items th { background: #f4f4f2; border: 1px solid #d9d9d9; padding: 6px 8px; color: #333; font-weight: 600; }
+  table.items td { border: 1px solid #d9d9d9; padding: 6px 8px; vertical-align: top; }
+  table.items th.l, table.items td.l { text-align: left; }
+  .center { text-align: center; }
+  .right { text-align: right; }
+  .item-main td { border-bottom: none; padding: 8px 8px 4px; }
+  .item-detail td { border-top: 1px dashed #d9d9d9; padding: 3px 8px 8px; font-size: 8.5pt; color: #555; }
+  .item-detail ul { margin: 4px 0 0; padding-left: 16px; color: #333; line-height: 1.55; }
+  .tag { display: inline-block; font-size: 7.5pt; font-weight: 700; background: #eef1f4; color: #334; border-radius: 3px; padding: 1px 5px; margin-right: 4px; }
+  .incl-note { font-size: 7.5pt; color: #92400e; }
+  .page-break { page-break-before: always; break-before: page; }
+  table.sheet-title { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+  table.sheet-title td { border: 0; border-bottom: 1px solid #333; padding: 0 0 3px; vertical-align: bottom; }
+  table.sheet-title td.t { font-size: 12pt; font-weight: 700; letter-spacing: 2px; }
+  table.sheet-title td.doc-sub { font-size: 8.5pt; color: #555; }
+  table.box { width: 100%; border-collapse: collapse; margin-top: 4px; }
+  table.box td { border: 1px solid #d9d9d9; padding: 8px 10px; font-size: 9pt; }
+  table.sign2 { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 9.5pt; page-break-inside: avoid; }
+  table.sign2 th { background: #f4f4f2; border: 1px solid #d9d9d9; padding: 5px 8px; text-align: left; font-weight: 600; color: #333; }
+  table.sign2 td { border: 1px solid #d9d9d9; padding: 8px 10px; vertical-align: top; }
+  table.sign2 p { margin: 0; }
+  table.sign2 p.who { font-weight: 700; font-size: 10.5pt; margin-bottom: 2px; }
+  table.sign2 p.muted { font-size: 9pt; color: #555; }
+  table.sign-lines { border-collapse: collapse; width: 100%; margin-top: 6px; }
+  table.sign-lines td { border: 0; padding: 0; vertical-align: bottom; }
+  table.sign-lines td.lbl { width: 18mm; font-size: 8.5pt; color: #555; padding: 0 0 2px; white-space: nowrap; }
+  table.sign-lines td.ul { border-bottom: 1px solid #333; height: 7.5mm; font-size: 12pt; line-height: 1; padding: 0 4px 1px; }
+  table.sign-lines td.ul.date { width: 44mm; }
+  table.sign-lines td.ul.name { height: 9mm; }
+  table.sign-lines td.pad { width: auto; }
+  table.sign-lines tr + tr td { padding-top: 5px; }
+  table.sign-lines tr + tr td.ul { padding-top: 0; }
+  p.accept-note { font-size: 8.5pt; color: #555; margin: 0 0 4px; line-height: 1.5; }
+  p.foot-note { font-size: 8pt; color: #777; margin: 6px 0 0; }
+  table.items thead { display: table-header-group; }
+  table.items tr, table.box { page-break-inside: avoid; break-inside: avoid-page; }

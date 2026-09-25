@@ -1,0 +1,744 @@
+import type { Queryable, Transactable } from "../core/db.js";
+import { dateStr, int, num, str } from "../core/db.js";
+import { DomainError, translate } from "../core/errors.js";
+import { taxRatePercentFor } from "./legacy-totals.js";
+import { CHILD_TITLES_SQL, SOURCE_TITLES_SQL, originalWorkTitle, statementProductName } from "../royalty/product-name.js";
+
+/**
+ * テンプレート変数の供給元になる文脈を、条件・合意・当事者・作品から組み立てる。
+ * ここが V2 の form_data に相当する位置だが、値は全部ドメインから来る。
+ */
+export interface DocumentContextInput {
+  conditionIds: number[];
+  agreementId?: number | null;
+  matterId?: number | null;
+  documentNumber?: string | null;
+  issuedOn?: string | null;
+  /** 実績。検収書・納品書はここの日付と金額が要る。 */
+  eventIds?: number[];
+  /** 計算結果。利用許諾料計算書は、発行の時点でこれが要る。 */
+  royalty?: Record<string, unknown> | null;
+}
+
+const MINOR: Record<string, number> = { JPY: 1, KRW: 1, VND: 1 };
+/** 最小通貨単位から表示用の額へ戻す。 */
+export const toMajor = (amount: number | null, currency: string): number | null =>
+  amount === null || amount === undefined ? null : amount / (MINOR[currency] ?? 100);
+
+const honorificFor = (kind: string | null) => (kind === "individual" ? "様" : "御中");
+
+export class DocumentContextRepository {
+  constructor(private readonly database: Transactable) {}
+
+  async build(input: DocumentContextInput, client: Queryable = this.database) {
+    try {
+      const conditions = await this.conditions(client, input.conditionIds, input.issuedOn ?? dateStr(new Date()));
+      if (input.conditionIds.length && !conditions.length) {
+        throw new DomainError("NOT_FOUND", "指定された条件が見つかりません");
+      }
+      const agreementId = input.agreementId ?? conditions[0]?.agreementId ?? null;
+      // 案件は文書に指定されていなくても、条件から辿れば分かる。
+      // 辿らないと担当者（検収者）と件名が空のままになり、案件を指定して
+      // 作ったときだけ埋まる、という不揃いな画面になっていた。
+      const matterId = input.matterId ?? await this.matterIdForConditions(client, input.conditionIds);
+      // client はトランザクションの接続で渡ってくることがある。1本の接続に
+      // 同時に問い合わせられないので、順に読む。
+      const agreement = agreementId ? await this.agreement(client, agreementId) : null;
+      const matter = matterId ? await this.matter(client, matterId) : null;
+      const company = await this.company(client);
+      const events = input.eventIds?.length ? await this.events(client, input.eventIds) : [];
+      // 予定明細。発注書の明細表はここから組む（これから何回いくら払うか）。
+      const schedules = conditions.length ? await this.schedules(client, conditions.map((c) => c.id)) : [];
+      // 取引先の担当者（署名者・請求先）と、案件の担当スタッフ。
+      // 書類の宛名や検収者はここから引ける。
+      const partyId = conditions[0]?.counterpartyId ?? null;
+      const contacts = partyId ? await this.contacts(client, partyId) : [];
+      const bank = partyId ? await this.bank(client, partyId) : null;
+      const owner = matterId ? await this.owner(client, matterId) : null;
+      // 同じ条件から出ている他の書類。検収書は親の発注番号を見出しに出す。
+      const related = input.conditionIds.length
+        ? await this.relatedDocuments(client, input.conditionIds) : [];
+      const backlogKey = matterId ? await this.backlogKey(client, matterId) : null;
+      // 作品の取得条件。条件書の「構成要素」はここから並ぶ（許諾できる上限を
+      // 決めているのは作品の取得条件なので、書類に並ぶのもそれ）。
+      const workIds = [...new Set(conditions.map((c) => c.workId).filter((id): id is number => Boolean(id)))];
+      const acquisitions = workIds.length ? await this.acquisitions(client, workIds) : [];
+      // 成果物を受注者に留保する条件の 作品 × 受注者 に付いている利用許諾条件。
+      // 発注書の「利用許諾条件」の表はここから組む（A-048）。作品が条件に無ければ
+      // 案件の作品で引く。
+      const licenseTerms = await this.licenseTermsFor(client, conditions, matter?.workId ?? null,
+                                                      input.issuedOn ?? dateStr(new Date()) ?? "");
+
+      const currency = conditions[0]?.currency ?? "JPY";
+      /**
+       * 合計。**実績を選んでいればその金額が対象**で、条件の総額ではない。
+       * ここが条件の総額だけを見ていたので、実績から出した検収書の消費税が
+       * つねに 0 円になっていた（税抜は実績、消費税は条件、という取り合わせ）。
+       *
+       * 税率は条件の税区分ごと（課税10% / 軽減8% / 非課税0%）。区分をまとめて
+       * 10% で掛けると、軽減や非課税の混じった書類が合わなくなる。
+       */
+      const bases = events.length
+        ? events.map((e) => ({
+            minor: e.amountMinor,
+            taxCategory: conditions.find((c) => c.id === e.conditionId)?.taxCategory ?? "taxable"
+          }))
+        : conditions.map((c) => ({ minor: c.flatAmountMinor ?? 0, taxCategory: c.taxCategory }));
+      const exTax = bases.reduce((sum, b) => sum + b.minor, 0);
+      // 端数は税区分ごとに切り上げる。区分をまたいで足してから切り上げると
+      // 1円ずれる（V1 の inspectionTaxBreakdown と同じ扱い）。
+      const byCategory = new Map<string, number>();
+      for (const b of bases) {
+        byCategory.set(b.taxCategory, (byCategory.get(b.taxCategory) ?? 0) + b.minor);
+      }
+      let tax = 0;
+      for (const [category, minor] of byCategory) {
+        tax += Math.ceil((minor * taxRatePercentFor(category)) / 100);
+      }
+      const taxRate = bases.length
+        ? Math.max(...bases.map((b) => taxRatePercentFor(b.taxCategory)))
+        : 10;
+
+      return {
+        document: {
+          number: input.documentNumber ?? null,
+          issuedOn: input.issuedOn ?? dateStr(new Date())
+        },
+        company,
+        matter,
+        agreement,
+        conditions,
+        /** 単一条件のテンプレートはこちらを使う。 */
+        condition: conditions[0] ?? null,
+        events,
+        /** 予定明細。発注書・支払通知書の明細はここから組む。 */
+        schedules,
+        /** 取引先の担当者。role ごとに引ける（primary / signer / billing）。 */
+        contacts,
+        /** 振込先。支払通知書・請求書はこれが無いと成立しない。 */
+        bank,
+        /** 案件の担当スタッフ。検収者の既定になりうる。 */
+        owner,
+        /**
+         * 同じ条件から出ている書類。検収書の見出しに出る「発注番号」は
+         * この中の発注書から来る。人に打たせるものではない。
+         */
+        related,
+        /** 案件に繋がっている Backlog 課題のキー。 */
+        backlogKey,
+        /**
+         * この文書の条件が指している作品の取得条件（IN）。
+         * 個別利用許諾条件書の「構成要素」の表はここから組む。
+         */
+        acquisitions,
+        /**
+         * 受注者帰属の成果物に付く利用許諾条件（作品 × 受注者、決定日時点の版）。
+         * 発注書の「利用許諾条件」の表。無ければ空（本文は「別途定める」と出す）。
+         */
+        licenseTerms,
+        /** 実績が1件のときはこちら。検収書はこの日付と金額を使う。 */
+        event: events[0] ?? null,
+        /** その実績の予定明細。支払期日はここから来る。 */
+        schedule: events[0]?.schedule ?? null,
+        /** 計算書の金額。試算の結果をそのまま渡す。無ければ null。 */
+        royalty: input.royalty ?? null,
+        totals: {
+          exTax: toMajor(exTax, currency),
+          tax: toMajor(tax, currency),
+          incTax: toMajor(exTax + tax, currency),
+          /** 本文の「消費税(x%)」に差す率。 */
+          taxRate,
+          currency
+        }
+      };
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 実績。検収書の「実納品日」「納品額」はここから来る。
+   * これまでコンテキストに入っておらず、実績から検収書を作っても
+   * 日付も金額も人が打ち直すことになっていた。
+   */
+  /**
+   * 予定明細。発注書は「これから何回いくら払うか」を書く書類なので、
+   * 明細行の出どころはここ以外にない。
+   */
+  private async schedules(client: Queryable, conditionIds: number[]) {
+    const r = await client.query(
+      `SELECT s.id, s.condition_id, s.seq, s.trigger_kind, s.planned_amount,
+              s.due_on, s.pay_on, s.label, s.contract_form, s.service_from, s.service_to,
+              c.currency
+         FROM condition_schedules s JOIN conditions c ON c.id = s.condition_id
+        WHERE s.condition_id = ANY($1::bigint[])
+        ORDER BY s.condition_id, s.seq`, [conditionIds]);
+    return (r.rows as Array<Record<string, any>>).map((row) => {
+      const currency = String(row.currency ?? "JPY");
+      return {
+        id: Number(row.id),
+        conditionId: Number(row.condition_id),
+        seq: Number(row.seq),
+        triggerKind: String(row.trigger_kind),
+        plannedAmount: toMajor(int(row.planned_amount), currency),
+        dueOn: dateStr(row.due_on),
+        payOn: dateStr(row.pay_on),
+        label: str(row.label),
+        contractForm: str(row.contract_form),
+        serviceFrom: dateStr(row.service_from),
+        serviceTo: dateStr(row.service_to),
+        currency
+      };
+    });
+  }
+
+  /**
+   * 取引先の担当者。1 行 = 1 人で役割は印（A-032）。本文は役割で引くので、
+   * 役割ごとに 1 件に開いて返す（同じ人が 2 つの役割なら 2 件）。
+   * 個人は本人が窓口：役割の人がいなければ本人の氏名・メール・電話に落とす。
+   */
+  private async contacts(client: Queryable, partyId: number) {
+    const r = await client.query(
+      `SELECT roles, role, name, email, phone, department FROM party_contacts
+        WHERE party_id = $1 ORDER BY id`, [partyId]);
+    const out: Array<{ role: string; name: string | null; email: string | null; phone: string | null; department: string | null }> = [];
+    for (const row of r.rows as Array<Record<string, any>>) {
+      const roles: string[] = Array.isArray(row.roles) && row.roles.length ? row.roles.map(String)
+        : row.role ? [String(row.role)] : [];
+      for (const role of roles) {
+        if (out.some((x) => x.role === role)) continue;
+        out.push({ role, name: str(row.name), email: str(row.email), phone: str(row.phone), department: str(row.department) });
+      }
+    }
+    const p = await client.query("SELECT kind, name, email, phone FROM parties WHERE id = $1", [partyId]);
+    const party = p.rows[0] as Record<string, any> | undefined;
+    if (party && String(party.kind) === "individual") {
+      for (const role of ["primary", "signer", "billing"]) {
+        if (out.some((x) => x.role === role)) continue;
+        out.push({ role, name: str(party.name), email: str(party.email), phone: str(party.phone), department: null });
+      }
+    }
+    return out;
+  }
+
+  /**
+   * 振込先。読み取りだけ許可してある（003_grants）。
+   * 権限が無い環境でも書類の作成そのものは止めないよう、失敗は握って null を返す。
+   */
+  private async bank(client: Queryable, partyId: number) {
+    let row: Record<string, any> | undefined;
+    try {
+      // 行を jsonb で読む。海外の列（A-051）がまだ無いデータベースでも失敗せず、
+      // 無い列は空として扱える（トランザクションの接続で渡ってくることがあり、
+      // 失敗して読み直す形にはできない）。
+      const r = await client.query(
+        "SELECT to_jsonb(b) AS row FROM party_bank_accounts b WHERE b.party_id = $1", [partyId]);
+      row = (r.rows[0] as { row?: Record<string, any> } | undefined)?.row;
+    } catch {
+      // 口座表への権限が無い環境（閉じたまま運用する場合）。書類は作れる。
+      return null;
+    }
+    if (!row) return null;
+    const bank = {
+      bankName: str(row.bank_name), branchName: str(row.branch_name),
+      accountType: str(row.account_type), accountNumber: str(row.account_number),
+      holderKana: str(row.account_holder_kana),
+      scope: str(row.account_scope) ?? "domestic",
+      holderName: str(row.account_holder_name),
+      swiftBic: str(row.swift_bic), iban: str(row.iban), routingNumber: str(row.routing_number),
+      country: str(row.bank_country), address: str(row.bank_address), currency: str(row.currency),
+      intermediarySwift: str(row.intermediary_bank_swift),
+      intermediaryName: str(row.intermediary_bank_name)
+    };
+    // 口座種別しか入っていない行は口座ではない（V1 のフォームの初期値
+    // 「普通」だけが保存されたもの。移行時点で98件あった）。
+    // 種別だけを書類に出すと、振込先があるように見えてしまう。
+    const payable = bank.bankName ?? bank.accountNumber ?? bank.holderKana ?? bank.branchName
+      ?? bank.iban ?? bank.swiftBic ?? bank.holderName;
+    return payable === null || payable === undefined ? null : bank;
+  }
+
+  /**
+   * 条件から案件を辿る。参照は案件 → 条件の向きしか無いので反転して読む。
+   * 複数に繋がっているときはいちばん古い案件（元の取引）を使う。
+   */
+  private async matterIdForConditions(client: Queryable, conditionIds: number[]) {
+    if (!conditionIds.length) return null;
+    const r = await client.query(
+      `SELECT ml.matter_id
+         FROM matter_links ml
+        WHERE ml.target_type = 'condition'
+          AND ml.target_ref = ANY($1::text[])
+        ORDER BY ml.matter_id
+        LIMIT 1`, [conditionIds.map((id) => String(id))]);
+    const row = r.rows[0] as { matter_id: number } | undefined;
+    return row ? Number(row.matter_id) : null;
+  }
+
+  /**
+   * 同じ条件から出ている書類。種別ごとに新しいものを1件。
+   * 検収書が「どの発注に対する検収か」を書けるのは、これが読めるときだけ。
+   */
+  /**
+   * 同じ条件から出ている書類。条件ごと・ひな形ごとに最新の1件。
+   * 検収書は条件をまたいで1枚にできるので、行ごとにその条件の発注番号を
+   * 出せるよう、どの条件の書類かを持たせる。
+   */
+  /**
+   * その条件から出した文書（発注書など）。検収書の行の発注番号はここから引く。
+   *
+   * 条件を改訂すると新しい id になるが、発注書は旧版の id に繋がったまま残る。
+   * 今の版の id だけで探すと、改訂した条件の検収書で発注番号が空になる
+   * （実績と同じ壊れ方）。系列（改訂の全版）で探し、結果は頼まれた id に付ける。
+   */
+  private async relatedDocuments(client: Queryable, conditionIds: number[]) {
+    const r = await client.query(
+      `WITH wanted AS (
+         SELECT y.id, COALESCE(y.series_id, y.id) AS series
+           FROM conditions y WHERE y.id = ANY($1::bigint[])
+       )
+       SELECT DISTINCT ON (w.id, t.template_key)
+              d.id, d.document_no, d.issued_at, t.template_key, w.id AS condition_id
+         FROM wanted w
+         JOIN conditions x ON COALESCE(x.series_id, x.id) = w.series
+         JOIN document_conditions dc ON dc.condition_id = x.id
+         JOIN documents d ON d.id = dc.document_id
+         JOIN document_template_versions tv ON tv.id = d.template_version_id
+         JOIN document_templates t ON t.id = tv.template_id
+        WHERE d.status = 'issued'
+        ORDER BY w.id, t.template_key, d.id DESC`, [conditionIds]);
+    return (r.rows as Array<Record<string, any>>).map((row) => ({
+      id: Number(row.id),
+      conditionId: Number(row.condition_id),
+      documentNo: str(row.document_no),
+      templateKey: str(row.template_key),
+      issuedAt: row.issued_at ? new Date(String(row.issued_at)).toISOString() : null
+    }));
+  }
+
+  /** 案件に繋がっている Backlog 課題。書類の見出しに出るものがある。 */
+  private async backlogKey(client: Queryable, matterId: number) {
+    const r = await client.query(
+      `SELECT target_ref FROM matter_links
+        WHERE matter_id = $1 AND target_type = 'backlog_issue'
+        ORDER BY id LIMIT 1`, [matterId]);
+    return str((r.rows[0] as { target_ref?: string } | undefined)?.target_ref);
+  }
+
+  /** 案件の担当者。検収書の「検収者」はたいていこの人。 */
+  private async owner(client: Queryable, matterId: number) {
+    const r = await client.query(
+      `SELECT s.name, s.email, s.department, s.staff_code, to_jsonb(s) AS staff_row
+         FROM matters m JOIN staff s ON s.id = m.owner_staff_id
+        WHERE m.id = $1`, [matterId]);
+    const row = r.rows[0] as Record<string, any> | undefined;
+    if (!row) return null;
+    return {
+      name: String(row.name), email: str(row.email),
+      department: str(row.department), phone: str(row.staff_row?.phone),
+      staffCode: str(row.staff_code),
+      // 英語表記（A-049）。列を名指しせず行から読む（当てる前でも落ちない）。
+      nameEn: str(row.staff_row?.name_en), departmentEn: str(row.staff_row?.department_en)
+    };
+  }
+
+  private async events(client: Queryable, ids: number[]) {
+    const r = await client.query(
+      `SELECT e.id, e.condition_id, e.event_type, e.occurred_on, e.period, e.quantity,
+              e.gross_amount, e.deductions, e.amount, e.note,
+              e.deliverable, e.inspected_on, e.inspector_dept, e.inspector_name,
+              e.contract_form, e.service_from, e.service_to,
+              e.expected_amount, e.variance_note,
+              e.usage_type, e.out_condition_id,
+              oc.condition_no AS out_condition_no, oc.name AS out_condition_name,
+              oa.agreement_no AS out_agreement_no,
+              op.name AS out_party_name, ow.title AS out_work_title,
+              w.title AS in_work_title, w.kind AS in_work_kind,
+              ${CHILD_TITLES_SQL("c.work_id")} AS child_titles,
+              e.work_id AS event_work_id, ew.title AS event_work_title,
+              s.contract_form AS schedule_contract_form,
+              s.service_from AS schedule_service_from, s.service_to AS schedule_service_to,
+              c.currency, s.label AS schedule_label, s.seq AS schedule_seq,
+              s.due_on AS schedule_due_on, s.pay_on AS schedule_pay_on,
+              s.planned_amount AS schedule_planned
+         FROM condition_events e
+         JOIN conditions c ON c.id = e.condition_id
+         LEFT JOIN condition_schedules s ON s.id = e.schedule_id
+         LEFT JOIN conditions oc ON oc.id = e.out_condition_id
+         LEFT JOIN agreements oa ON oa.id = oc.agreement_id
+         LEFT JOIN parties    op ON op.id = oc.counterparty_id
+         LEFT JOIN works      ow ON ow.id = oc.work_id
+         LEFT JOIN works      w  ON w.id = c.work_id
+         LEFT JOIN works      ew ON ew.id = e.work_id
+        WHERE e.id = ANY($1::bigint[]) AND e.status = 'active'
+        ORDER BY e.occurred_on, e.id`, [ids]);
+    return (r.rows as Array<Record<string, any>>).map((row) => {
+      const currency = String(row.currency ?? "JPY");
+      return {
+        id: Number(row.id),
+        conditionId: Number(row.condition_id),
+        eventType: String(row.event_type),
+        occurredOn: dateStr(row.occurred_on),
+        period: str(row.period) ?? str(row.schedule_label),
+        seq: int(row.schedule_seq),
+        // 数量は小数を持てる（原稿の頁数 2.5 など。列は numeric(14,4)）。ここで
+        // 整数に切っていたので、検収書の「今回数量」だけ小数が落ちていた。
+        quantity: num(row.quantity),
+        grossAmount: toMajor(int(row.gross_amount), currency),
+        deductions: toMajor(int(row.deductions), currency),
+        amount: toMajor(int(row.amount), currency),
+        amountMinor: int(row.amount) ?? 0,
+        /** その回の予定額。実績と違えば「金額変更」として本文の変更履歴に出る。 */
+        plannedAmount: toMajor(int(row.schedule_planned), currency),
+        /**
+         * 記録のときに確かめた条件どおりの額（A-030）。予定明細が無い業務委託でも
+         * ここと実額が違えば「金額変更」として変更履歴と署名欄が出る。
+         */
+        expectedAmount: toMajor(int(row.expected_amount), currency),
+        /** 差分の記録（不足納品など）。変更履歴の「理由」に出す。 */
+        varianceNote: str(row.variance_note),
+        // 契約形式と役務提供期間は、実績が持っていなければ予定の回から継ぐ。
+        usageType: str(row.usage_type),
+        /** 計算書の行の製品名。利用形態で決まる（product-name.ts）。 */
+        productName: statementProductName({
+          usageType: str(row.usage_type), outConditionName: str(row.out_condition_name),
+          outWorkTitle: str(row.out_work_title), inWorkTitle: str(row.in_work_title),
+          inWorkKind: str(row.in_work_kind),
+          childTitles: Array.isArray(row.child_titles) ? row.child_titles : null,
+          eventWorkTitle: str(row.event_work_title)
+        }) || null,
+        /** 実績が指す当社作品（A-027）。 */
+        workId: int(row.event_work_id),
+        workTitle: str(row.event_work_title),
+        // 許諾先。紙の「対象契約」と製品名の既定値になる。
+        outCondition: row.out_condition_id ? {
+          id: Number(row.out_condition_id),
+          conditionNo: str(row.out_condition_no),
+          // 紙の「契約番号」。合意があれば合意番号、無ければ条件番号。
+          agreementNo: str(row.out_agreement_no),
+          name: str(row.out_condition_name),
+          partyName: str(row.out_party_name),
+          workTitle: str(row.out_work_title)
+        } : null,
+        contractForm: str(row.contract_form) ?? str(row.schedule_contract_form),
+        serviceFrom: dateStr(row.service_from) ?? dateStr(row.schedule_service_from),
+        serviceTo: dateStr(row.service_to) ?? dateStr(row.schedule_service_to),
+        note: str(row.note),
+        currency,
+        /** 検収書がそのまま使う項目。実績に入っていれば文書側で人が入れずに済む。 */
+        deliverable: str(row.deliverable),
+        inspectedOn: dateStr(row.inspected_on),
+        inspectorDept: str(row.inspector_dept),
+        inspectorName: str(row.inspector_name),
+        /** その回の予定。支払期日は支払通知書に要る。 */
+        schedule: row.schedule_seq === null ? null : {
+          seq: int(row.schedule_seq), label: str(row.schedule_label),
+          dueOn: dateStr(row.schedule_due_on), payOn: dateStr(row.schedule_pay_on)
+        }
+      };
+    });
+  }
+
+  private async conditions(client: Queryable, ids: number[], asOf: string | null = null) {
+    if (!ids.length) return [];
+    const result = await client.query(
+      `SELECT c.id, c.condition_no, c.name, c.direction, c.kind, c.currency, c.pricing_model,
+              c.rate_ppm, c.unit_amount, c.quantity, c.flat_amount, c.mg_amount, c.ag_amount,
+              c.term_start, c.term_end, c.delivery_due, c.tax_category, c.payment_terms, c.contract_form,
+              c.cycle,
+              c.agreement_id, c.exclusivity, c.sublicensable, c.sublicense_consent,
+              c.auto_renew, c.renew_months, c.renew_stopped_on,
+              c.notes, c.spec, c.deliverable_ownership,
+              c.order_no, c.usage_type,
+              c.counterparty_id, c.work_id, c.work_part_id,
+              p.name AS party_name, p.name_kana AS party_kana, p.kind AS party_kind,
+              p.invoice_no AS party_invoice_no, p.corporate_no AS party_corporate_no,
+              p.withholding AS party_withholding,
+              -- 住所・電話・メールは A-008 で足した列。当てる前のデータベースでも
+              -- 落ちないよう、列を名指しせず行ごと受けて読む。
+              to_jsonb(p) AS party_row,
+              w.title AS work_title, w.work_code, w.kind AS work_kind,
+              -- クレジット表記は決定日時点の行（A-031）。無ければ作品の列。
+              COALESCE(wc.copyright_notice, w.copyright_notice) AS work_copyright,
+              COALESCE(wc.third_party_rights, w.third_party_rights) AS work_third_party,
+              wp.name AS part_name,
+              wp.part_type AS part_type,
+              ${SOURCE_TITLES_SQL("c.work_id")} AS source_titles
+         FROM conditions c
+         LEFT JOIN parties p    ON p.id = c.counterparty_id
+         LEFT JOIN works w      ON w.id = c.work_id
+         LEFT JOIN LATERAL (
+           SELECT x.copyright_notice, x.third_party_rights FROM work_credits x
+            WHERE x.work_id = w.id AND x.effective_from <= COALESCE($2::date, current_date)
+            ORDER BY x.effective_from DESC, x.id DESC LIMIT 1
+         ) wc ON true
+         LEFT JOIN work_parts wp ON wp.id = c.work_part_id
+        WHERE c.id = ANY($1::bigint[])
+        ORDER BY array_position($1::bigint[], c.id)`,
+      [ids, asOf]
+    );
+    return result.rows.map((row: Record<string, any>) => {
+      const currency = String(row.currency ?? "JPY");
+      return {
+        id: Number(row.id),
+        conditionNo: str(row.condition_no),
+        name: String(row.name ?? ""),
+        direction: String(row.direction),
+        kind: String(row.kind),
+        currency,
+        pricingModel: String(row.pricing_model),
+        ratePct: row.rate_ppm === null || row.rate_ppm === undefined
+          ? null : Number(row.rate_ppm) / 10000,
+        unitAmount: toMajor(int(row.unit_amount), currency),
+        quantity: num(row.quantity),
+        flatAmount: toMajor(int(row.flat_amount), currency),
+        mgAmount: toMajor(int(row.mg_amount), currency),
+        agAmount: toMajor(int(row.ag_amount), currency),
+        flatAmountMinor: int(row.flat_amount) ?? 0,
+        termStart: dateStr(row.term_start),
+        termEnd: dateStr(row.term_end),
+        /** 納期。予定明細の無い条件の発注書の行はこれを納期にする。 */
+        deliveryDue: dateStr(row.delivery_due),
+        taxCategory: String(row.tax_category ?? "taxable"),
+        paymentTerms: str(row.payment_terms),
+        contractForm: str(row.contract_form),
+        cycle: str(row.cycle),
+        exclusivity: str(row.exclusivity),
+        /** 書類に印字する言い方。列は enum なので、そのまま出すと英語が出る。 */
+        exclusivityLabel: row.exclusivity === "exclusive" ? "独占"
+          : row.exclusivity === "non_exclusive" ? "非独占" : null,
+        sublicensable: row.sublicensable,
+        // 再許諾の別途合意（A-033）。条件書の条文と一覧の印が出し分かれる。
+        sublicenseConsent: str(row.sublicense_consent),
+        // 自動更新（A-039）。更新した回数は条件書を組むときに数える。
+        autoRenew: row.auto_renew === null || row.auto_renew === undefined ? null : Boolean(row.auto_renew),
+        renewMonths: int(row.renew_months),
+        renewStoppedOn: dateStr(row.renew_stopped_on),
+        notes: str(row.notes),
+        spec: str(row.spec),
+        deliverableOwnership: str(row.deliverable_ownership),
+        /** 外部で出した発注番号。V3 の発注書が無いときの控え。 */
+        orderNo: str(row.order_no),
+        /** 利用形態（A-027）。条件書の行・取引形態の当てはめはこれが先。 */
+        usageType: str(row.usage_type),
+        agreementId: int(row.agreement_id),
+        counterpartyId: int(row.counterparty_id),
+        /** 作品。条件書の構成要素は、この作品の取得条件から並ぶ。 */
+        workId: int(row.work_id),
+        /**
+         * この条件が指している素材（パート）。条件書の構成要素の行はこれで
+         * まとまる。同じ素材に取引形態のぶんだけ条件明細が並ぶのが移行後の形。
+         */
+        workPartId: int(row.work_part_id),
+        counterparty: {
+          name: str(row.party_name) ?? "",
+          kana: str(row.party_kana),
+          kind: str(row.party_kind),
+          invoiceNo: str(row.party_invoice_no),
+          corporateNo: str(row.party_corporate_no),
+          address: str(row.party_row?.address),
+          phone: str(row.party_row?.phone),
+          email: str(row.party_row?.email),
+          /** 代表者（法人）。宛名・署名欄に出す。 */
+          representativeTitle: str(row.party_row?.representative_title),
+          representativeName: str(row.party_row?.representative_name),
+          withholding: row.party_withholding === true,
+          honorific: honorificFor(str(row.party_kind))
+        },
+        work: { title: str(row.work_title), code: str(row.work_code), part: str(row.part_name),
+                kind: str(row.work_kind),
+                /** 著作権表示・第三者権利（A-027）。出版条件書の一覧の種。 */
+                copyrightNotice: str(row.work_copyright),
+                thirdPartyRights: str(row.work_third_party),
+                /**
+                 * 原作名。作品が原作ならその名前、当社作品なら系譜の親の原作名。
+                 * 計算書の件名「◯◯ 利用許諾料のご報告」はこれを差す。
+                 */
+                sourceTitle: originalWorkTitle({
+                  inWorkTitle: str(row.work_title), inWorkKind: str(row.work_kind),
+                  sourceTitles: Array.isArray(row.source_titles) ? row.source_titles : null
+                }) || null,
+                /** 素材の種別（game_design / illustration …）。構成上の役割を決めるのに使う。 */
+                partType: str(row.part_type) },
+        scopes: { region: [] as string[], language: [] as string[], media: [] as string[] }
+      };
+    }).map((condition, index, all) => ({ ...condition, index: index + 1, total: all.length }));
+  }
+
+  private async agreement(client: Queryable, id: number) {
+    const r = await client.query(
+      `SELECT a.id, a.agreement_no, a.title, a.direction, a.status,
+              a.executed_on, a.effective_on, a.expires_on,
+              a.auto_renewal, a.renewal_notice_months,
+              p.name AS party_name, p.name_kana AS party_kana, p.kind AS party_kind,
+              p.invoice_no, p.corporate_no
+         FROM agreements a LEFT JOIN parties p ON p.id = a.counterparty_id
+        WHERE a.id = $1`, [id]);
+    const row = r.rows[0] as Record<string, any> | undefined;
+    if (!row) return null;
+    return {
+      id: Number(row.id),
+      no: str(row.agreement_no),
+      title: String(row.title ?? ""),
+      direction: String(row.direction),
+      status: String(row.status),
+      executedOn: dateStr(row.executed_on),
+      effectiveOn: dateStr(row.effective_on),
+      expiresOn: dateStr(row.expires_on),
+      autoRenewal: row.auto_renewal === true,
+      renewalNoticeMonths: int(row.renewal_notice_months),
+      counterparty: {
+        name: str(row.party_name) ?? "",
+        kana: str(row.party_kana),
+        kind: str(row.party_kind),
+        honorific: honorificFor(str(row.party_kind)),
+        invoiceNo: str(row.invoice_no),
+        corporateNo: str(row.corporate_no)
+      }
+    };
+  }
+
+  private async matter(client: Queryable, id: number) {
+    const r = await client.query(
+      `SELECT m.id, m.matter_no, m.title, m.kind, m.work_id, s.name AS owner_name
+         FROM matters m LEFT JOIN staff s ON s.id = m.owner_staff_id
+        WHERE m.id = $1`, [id]);
+    const row = r.rows[0] as Record<string, any> | undefined;
+    if (!row) return null;
+    return {
+      id: Number(row.id), no: str(row.matter_no), title: String(row.title ?? ""),
+      kind: String(row.kind), ownerName: str(row.owner_name),
+      /** 作品案件の軸（A-044）。条件に作品が無いときの許諾条件の引き先。 */
+      workId: int(row.work_id)
+    };
+  }
+
+  /** 自社情報は settings から（V2 の会社プロファイルに相当）。 */
+  private async company(client: Queryable) {
+    const r = await client.query("SELECT value FROM settings WHERE key = 'company_profile'");
+    const value = (r.rows[0] as { value?: Record<string, unknown> } | undefined)?.value;
+    return (value && typeof value === "object" ? value : {}) as Record<string, unknown>;
+  }
+
+  /**
+   * 作品の取得条件（IN）。個別利用許諾条件書の「構成要素」の表になる。
+   *
+   * 許諾できる上限を決めているのは作品の取得条件なので、条件書に並べる
+   * 構成要素もそれ。範囲（地域・言語）は取得条件に付いた範囲をそのまま出す。
+   */
+  /**
+   * 受注者帰属の条件に付く利用許諾条件（A-048）。
+   *
+   * 成果物の帰属先が受注者の発注では、発注者は成果物を許諾で使う。その条件は
+   * 台帳の利用許諾条件（kind=license・direction=in）に、同じ作品 × 同じ受注者で
+   * 立っている。決定日時点で効いている版（active、または適用開始日が来ている
+   * scheduled）を引く。発注書はこれを表にする。無ければ空を返す（本文は
+   * 「利用許諾の条件は別途定める」と 1 行で出す）。
+   */
+  private async licenseTermsFor(
+    client: Queryable,
+    conditions: Array<{ workId: number | null; counterpartyId: number | null; deliverableOwnership: string | null }>,
+    matterWorkId: number | null, asOf: string
+  ) {
+    const pairs = conditions
+      .filter((c) => c.deliverableOwnership === "contractor")
+      .map((c) => ({ workId: c.workId ?? matterWorkId, partyId: c.counterpartyId }))
+      .filter((p): p is { workId: number; partyId: number } => Boolean(p.workId && p.partyId));
+    if (!pairs.length) return [];
+    const workIds = [...new Set(pairs.map((p) => p.workId))];
+    const partyIds = [...new Set(pairs.map((p) => p.partyId))];
+    const r = await client.query(
+      `SELECT c.id, c.condition_no, c.name, c.work_id, c.counterparty_id, c.usage_type,
+              c.pricing_model, c.rate_ppm, c.flat_amount, c.unit_amount, c.mg_amount, c.ag_amount,
+              c.currency, c.term_start, c.term_end, c.exclusivity, c.license_fee_basis,
+              w.title AS work_title,
+              (SELECT array_agg(s.label ORDER BY s.sort_order, s.label)
+                 FROM condition_scopes s WHERE s.condition_id = c.id AND s.scope_type = 'region')   AS regions,
+              (SELECT array_agg(s.label ORDER BY s.sort_order, s.label)
+                 FROM condition_scopes s WHERE s.condition_id = c.id AND s.scope_type = 'language') AS languages
+         FROM conditions c
+         LEFT JOIN works w ON w.id = c.work_id
+        WHERE c.kind = 'license' AND c.direction = 'in'
+          AND c.work_id = ANY($1::bigint[]) AND c.counterparty_id = ANY($2::bigint[])
+          AND (c.status = 'active'
+               OR (c.status = 'scheduled' AND c.effective_from IS NOT NULL AND c.effective_from <= $3::date))
+        ORDER BY c.work_id, c.usage_type NULLS LAST, c.id`, [workIds, partyIds, asOf]);
+    return (r.rows as Array<Record<string, any>>)
+      .filter((row) => pairs.some((p) => p.workId === Number(row.work_id) && p.partyId === Number(row.counterparty_id)))
+      .map((row) => {
+        const currency = String(row.currency ?? "JPY");
+        return {
+          id: Number(row.id),
+          conditionNo: str(row.condition_no),
+          name: String(row.name ?? ""),
+          workId: Number(row.work_id),
+          counterpartyId: Number(row.counterparty_id),
+          workTitle: str(row.work_title),
+          usageType: str(row.usage_type),
+          pricingModel: String(row.pricing_model ?? "none"),
+          ratePct: row.rate_ppm === null || row.rate_ppm === undefined ? null : Number(row.rate_ppm) / 10000,
+          flatAmount: toMajor(int(row.flat_amount), currency),
+          unitAmount: toMajor(int(row.unit_amount), currency),
+          mgAmount: toMajor(int(row.mg_amount), currency),
+          agAmount: toMajor(int(row.ag_amount), currency),
+          currency,
+          termStart: dateStr(row.term_start),
+          termEnd: dateStr(row.term_end),
+          exclusivity: str(row.exclusivity),
+          /** 許諾料の扱い（A-048）。separate / included / free。 */
+          licenseFeeBasis: String(row.license_fee_basis ?? "separate"),
+          regions: (row.regions ?? []) as string[],
+          languages: (row.languages ?? []) as string[]
+        };
+      });
+  }
+
+  private async acquisitions(client: Queryable, workIds: number[]) {
+    const r = await client.query(
+      `SELECT c.id, c.condition_no, c.name, c.rate_ppm, c.currency,
+              c.mg_amount, c.ag_amount,
+              p.name AS party_name, wp.name AS part_name, w.title AS work_title,
+              a.agreement_no,
+              (SELECT array_agg(s.label ORDER BY s.sort_order, s.label)
+                 FROM condition_scopes s
+                WHERE s.condition_id = c.id AND s.scope_type = 'region')   AS regions,
+              (SELECT array_agg(s.label ORDER BY s.sort_order, s.label)
+                 FROM condition_scopes s
+                WHERE s.condition_id = c.id AND s.scope_type = 'language') AS languages
+         FROM conditions c
+         LEFT JOIN parties p     ON p.id = c.counterparty_id
+         LEFT JOIN works w       ON w.id = c.work_id
+         LEFT JOIN work_parts wp ON wp.id = c.work_part_id
+         LEFT JOIN agreements a  ON a.id = c.agreement_id
+        WHERE c.work_id = ANY($1::bigint[])
+          AND c.direction = 'in' AND c.status = 'active'
+        ORDER BY wp.part_no NULLS LAST, c.id`, [workIds]);
+    return (r.rows as Array<Record<string, any>>).map((row) => ({
+      id: Number(row.id),
+      conditionNo: str(row.condition_no),
+      name: String(row.name ?? ""),
+      partName: str(row.part_name),
+      workTitle: str(row.work_title),
+      counterparty: str(row.party_name),
+      agreementNo: str(row.agreement_no),
+      ratePct: row.rate_ppm === null || row.rate_ppm === undefined
+        ? null : Number(row.rate_ppm) / 10000,
+      currency: String(row.currency ?? "JPY"),
+      regions: (row.regions ?? []) as string[],
+      languages: (row.languages ?? []) as string[]
+    }));
+  }
+
+  /** 範囲は行数が多いので条件をまとめて1回で引く。 */
+  async attachScopes(client: Queryable, conditions: Array<{ id: number; scopes: Record<string, string[]> }>) {
+    if (!conditions.length) return;
+    const r = await client.query(
+      `SELECT condition_id, scope_type, label FROM condition_scopes
+        WHERE condition_id = ANY($1::bigint[]) ORDER BY sort_order, label`,
+      [conditions.map((c) => c.id)]
+    );
+    for (const row of r.rows as Array<Record<string, any>>) {
+      const target = conditions.find((c) => c.id === Number(row.condition_id));
+      const bucket = target?.scopes[String(row.scope_type)];
+      if (bucket) bucket.push(String(row.label));
+    }
+  }
+}

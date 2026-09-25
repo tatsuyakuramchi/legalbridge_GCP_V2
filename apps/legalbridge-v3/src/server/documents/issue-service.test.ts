@@ -1,0 +1,369 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { FakeDatabase } from "../core/fake-db.js";
+import { DocumentIssueService, readIssuedOn } from "./issue-service.js";
+import { DocumentRepository } from "./repository.js";
+import { DomainError } from "../core/errors.js";
+
+interface Options { status?: string; blockedConditions?: Array<Record<string, unknown>>; variables?: unknown }
+
+const responder = (options: Options = {}) => (text: string): Array<Record<string, unknown>> | undefined => {
+  if (text.includes("FROM documents WHERE id = $1 FOR UPDATE")) {
+    return [{ id: 1, status: options.status ?? "draft", template_version_id: 401,
+              matter_id: 501, agreement_id: 201, manual_inputs: { PERIOD: "2026上期" } }];
+  }
+  if (text.includes("FROM document_template_versions tv JOIN document_templates t")) {
+    return [{ template_id: 301, version_id: 401, template_key: "royalty_statement",
+              label: "利用許諾料計算書", number_prefix: "RS",
+              html_source: "<h1>{{LICENSEE_NAME}} {{HONORIFIC}}</h1><p>{{PERIOD}}</p><p>{{DOC_NO}}</p>",
+              variables: options.variables ?? [
+                { name: "LICENSEE_NAME", from: "agreement.counterparty.name", required: true },
+                { name: "HONORIFIC", from: "agreement.counterparty.honorific" },
+                { name: "PERIOD", from: "manual", required: true, label: "対象期間" },
+                { name: "DOC_NO", from: "document.number" }
+              ] }];
+  }
+  if (text.includes("FROM document_conditions WHERE document_id")) return [{ condition_id: 5 }];
+  if (text.includes("AND status IN ('void', 'superseded')")) return options.blockedConditions ?? [];
+  if (text.includes("INSERT INTO document_sequences")) return [{ current_value: 7 }];
+  if (text.includes("FROM conditions c")) {
+    return [{ id: 5, condition_no: "CL-2026-00042", name: "繁体字版 電子書籍 配信許諾",
+              direction: "out", kind: "license", currency: "JPY", pricing_model: "revenue_rate",
+              rate_ppm: 125000, flat_amount: null, mg_amount: 1200000, ag_amount: 800000,
+              tax_category: "taxable", agreement_id: 201,
+              party_name: "晨光數位出版", party_kind: "corporate", work_title: "星降る夜のミュゼ" }];
+  }
+  if (text.includes("FROM agreements a")) {
+    return [{ id: 201, agreement_no: "AGR-2026-0088", title: "繁体字版 配信許諾契約",
+              direction: "out", status: "executed",
+              party_name: "晨光數位出版", party_kind: "corporate" }];
+  }
+  if (text.includes("FROM matters m")) return [{ id: 501, matter_no: "MTR-2026-00218", title: "繁体字版 配信許諾", kind: "work" }];
+  if (text.includes("FROM settings WHERE key")) return [{ value: { name: "株式会社サンプル出版" } }];
+  if (text.includes("FROM condition_scopes")) return [{ condition_id: 5, scope_type: "region", label: "台湾" }];
+  if (text.includes("UPDATE documents")) return [{ issued_at: "2026-09-07T10:00:00Z" }];
+  return undefined;
+};
+
+test("発行で採番し、確定値を焼き付ける", async () => {
+  const db = new FakeDatabase(responder());
+  const result = await new DocumentIssueService(db).issue(1, "kuramochi");
+
+  assert.equal(result.documentNo, "ARC-RS-2026-0007");
+  assert.deepEqual(result.conditionIds, [5]);
+
+  const update = db.find("UPDATE documents");
+  const values = JSON.parse(String(update!.params[2]));
+  assert.equal(values.LICENSEE_NAME, "晨光數位出版", "相手先は合意から解決する");
+  assert.equal(values.HONORIFIC, "御中", "法人は御中");
+  assert.equal(values.PERIOD, "2026上期", "手入力はそのまま");
+  assert.equal(values.DOC_NO, "ARC-RS-2026-0007", "採番した番号が文脈に入る");
+
+  const audit = db.find("INSERT INTO audit_events");
+  assert.equal(audit!.params[1], "document.issue");
+  assert.ok(db.texts.includes("COMMIT"));
+});
+
+test("下書き以外は発行できない", async () => {
+  const db = new FakeDatabase(responder({ status: "issued" }));
+  await assert.rejects(
+    () => new DocumentIssueService(db).issue(1, "kuramochi"),
+    (e: unknown) => e instanceof DomainError && e.code === "CONFLICT");
+  assert.ok(db.texts.includes("ROLLBACK"));
+  assert.equal(db.all("INSERT INTO document_sequences").length, 0, "採番を進めない");
+});
+
+test("無効・旧版の条件からは文書を出さない", async () => {
+  const db = new FakeDatabase(responder({
+    blockedConditions: [{ id: 5, condition_no: "CL-2026-00042", status: "superseded" }]
+  }));
+  await assert.rejects(
+    () => new DocumentIssueService(db).issue(1, "kuramochi"),
+    (e: unknown) => e instanceof DomainError && e.code === "CONFLICT" && /CL-2026-00042/.test(e.message));
+  assert.equal(db.all("INSERT INTO document_sequences").length, 0);
+});
+
+test("必須項目が埋まっていなければ発行を止める", async () => {
+  const db = new FakeDatabase(responder({
+    variables: [{ name: "SIGNER", from: "manual", required: true, label: "署名者" }]
+  }));
+  await assert.rejects(
+    () => new DocumentIssueService(db).issue(1, "kuramochi"),
+    (e: unknown) => e instanceof DomainError && e.code === "VALIDATION" && /署名者/.test(e.message));
+  assert.ok(db.texts.includes("ROLLBACK"), "採番ごと巻き戻す");
+});
+
+test("下書きの作成では採番しない", async () => {
+  const db = new FakeDatabase((text) => {
+    if (text.includes("FROM document_templates t JOIN document_template_versions tv")) {
+      return [{ template_id: 301, version_id: 401, template_key: "royalty_statement",
+                label: "利用許諾料計算書", number_prefix: "RS", html_source: "<p/>", variables: [] }];
+    }
+    if (text.includes("AND status IN ('void', 'superseded')")) return [];
+    if (text.includes("INSERT INTO documents")) return [{ id: 42 }];
+    return undefined;
+  });
+  const result = await new DocumentIssueService(db).createDraft(
+    { templateKey: "royalty_statement", conditionIds: [5, 6] }, "kuramochi");
+
+  assert.equal(result.id, 42);
+  assert.equal(db.all("INSERT INTO document_sequences").length, 0);
+  assert.equal(db.all("INSERT INTO document_conditions").length, 2, "条件を行番号つきで結ぶ");
+  assert.deepEqual(db.all("INSERT INTO document_conditions")[1].params, [42, 6, 2]);
+});
+
+test("作り直しで条件を差し替えられる（間違った条件を指していたとき）", async () => {
+  const db = new FakeDatabase((t) => {
+    if (t.includes("FROM documents WHERE id")) {
+      return [{ id: 1, document_no: "ARC-RST-2026-0001", status: "issued",
+                template_version_id: 3, matter_id: null, agreement_id: null, manual_inputs: {} }];
+    }
+    if (t.includes("INSERT INTO documents")) return [{ id: 9 }];
+    if (t.includes("SELECT id FROM conditions WHERE id = ANY")) return [{ id: 7 }, { id: 8 }];
+    return [];
+  });
+  await new DocumentIssueService(db).reissue(1, "条件の取り違え", "a", [7, 8]);
+
+  // 引き継ぎの複製ではなく、指定した条件で繋ぎ直す。
+  assert.equal(db.find("SELECT $2, condition_id, line_no FROM document_conditions"), undefined);
+  const links = db.all("INSERT INTO document_conditions");
+  assert.equal(links.length, 2);
+  assert.deepEqual(links.map((q) => q.params[1]), [7, 8]);
+});
+
+test("指定した条件が実在しなければ作り直さない", async () => {
+  const db = new FakeDatabase((t) => {
+    if (t.includes("FROM documents WHERE id")) {
+      return [{ id: 1, document_no: "D", status: "issued",
+                template_version_id: 3, matter_id: null, agreement_id: null, manual_inputs: {} }];
+    }
+    if (t.includes("INSERT INTO documents")) return [{ id: 9 }];
+    if (t.includes("SELECT id FROM conditions WHERE id = ANY")) return [{ id: 7 }];
+    return [];
+  });
+  await assert.rejects(
+    () => new DocumentIssueService(db).reissue(1, "取り違え", "a", [7, 999]),
+    /条件が見つかりません：999/);
+});
+
+test("条件を指定しなければ、これまでどおり引き継ぐ", async () => {
+  const db = new FakeDatabase((t) => {
+    if (t.includes("FROM documents WHERE id")) {
+      return [{ id: 1, document_no: "D", status: "issued",
+                template_version_id: 3, matter_id: null, agreement_id: null, manual_inputs: {} }];
+    }
+    if (t.includes("INSERT INTO documents")) return [{ id: 9 }];
+    return [];
+  });
+  await new DocumentIssueService(db).reissue(1, "誤字", "a");
+  assert.ok(db.find("SELECT $2, condition_id, line_no FROM document_conditions"));
+});
+
+// ---- 差し込み用の部分テンプレート ----
+
+test("部分テンプレートは category='partial' で探す（本番の持ち方）", async () => {
+  // V2 は kind='partial' で持ち、名前は template_key そのもの
+  // （{{> terms_spot_2026}}）。移行でそれが category に入る。
+  // template_key の "_" 始まりで探していたため1件も見つからず、
+  // 部分を差し込むひな形が全部落ちていた。
+  const db = new FakeDatabase((t) =>
+    t.includes("t.category = 'partial'")
+      ? [{ template_key: "terms_spot_2026", html_source: "<p>共通条項</p>" }] : []);
+  const partials = await new DocumentRepository(db).partials();
+  assert.equal(partials["terms_spot_2026"], "<p>共通条項</p>");
+});
+
+test('"_" 始まりの名前でも引ける（どちらの規約でも動くように）', async () => {
+  const db = new FakeDatabase((t) =>
+    t.includes("t.category = 'partial'")
+      ? [{ template_key: "_footer", html_source: "<p>脚注</p>" }] : []);
+  const partials = await new DocumentRepository(db).partials();
+  assert.equal(partials["_footer"], "<p>脚注</p>");
+  assert.equal(partials["footer"], "<p>脚注</p>");
+});
+
+test("部分テンプレートはひな形の選択肢に出さない（単独では発行できない）", async () => {
+  const db = new FakeDatabase(() => []);
+  await new DocumentRepository(db).listTemplates();
+  const q = db.find("FROM document_templates t")!;
+  assert.match(q.text, /t\.category IS DISTINCT FROM 'partial'/);
+});
+
+test("版の無いひな形は選択肢に出さない（選ぶと必ず404になる）", async () => {
+  const db = new FakeDatabase(() => []);
+  await new DocumentRepository(db).listTemplates();
+  const q = db.find("FROM document_templates t")!;
+  assert.doesNotMatch(q.text, /LEFT JOIN document_template_versions/,
+    "外部結合だと版の無いひな形まで並び、既定で選ばれた瞬間に作成が止まる");
+  assert.match(q.text, /JOIN document_template_versions tv ON tv\.id = t\.current_version_id/);
+});
+
+test("案件を渡さずに作った下書きは、条件の載っている案件に載せる（1つに決まるときだけ）", async () => {
+  const build = (matters: Array<{ matter_id: number }>) => new FakeDatabase((text) => {
+    if (text.includes("FROM document_templates t JOIN document_template_versions tv")) {
+      return [{ template_id: 301, version_id: 401, template_key: "purchase_order",
+                label: "発注書", number_prefix: "PO", html_source: "<p/>", variables: [] }];
+    }
+    if (text.includes("AND status IN ('void', 'superseded')")) return [];
+    if (text.includes("SELECT DISTINCT matter_id FROM matter_links")) return matters;
+    if (text.includes("INSERT INTO documents")) return [{ id: 42 }];
+    return undefined;
+  });
+  const one = build([{ matter_id: 3 }]);
+  await new DocumentIssueService(one).createDraft({ templateKey: "purchase_order", conditionIds: [5] }, "k");
+  assert.equal(one.find("INSERT INTO documents")!.params[1], 3, "条件の案件に載せる");
+
+  const two = build([{ matter_id: 3 }, { matter_id: 4 }]);
+  await new DocumentIssueService(two).createDraft({ templateKey: "purchase_order", conditionIds: [5] }, "k");
+  assert.equal(two.find("INSERT INTO documents")!.params[1], null, "2つの案件に載っていれば決めない");
+
+  const given = build([{ matter_id: 3 }]);
+  await new DocumentIssueService(given).createDraft({ templateKey: "purchase_order", conditionIds: [5], matterId: 9 }, "k");
+  assert.equal(given.find("INSERT INTO documents")!.params[1], 9, "渡された案件が優先");
+});
+
+test("改訂前に作った下書きは、決定のときに現行版へ付け替える（プレビューと紙を揃える）", async () => {
+  const base = responder();
+  const db = new FakeDatabase((text) => {
+    if (text.includes("SELECT t.current_version_id")) return [{ current_version_id: 402 }];
+    return base(text);
+  });
+  await new DocumentIssueService(db).issue(1, "kuramochi");
+  const rebind = db.find("UPDATE documents SET template_version_id");
+  assert.deepEqual(rebind!.params, [1, 402]);
+  const src = db.find("FROM document_template_versions tv JOIN document_templates t");
+  assert.equal(src!.params[0], 402, "本文は現行版で描く");
+  assert.equal(db.find("INSERT INTO audit_events")!.params[1], "document.issue");
+});
+
+test("現行版のままの下書きは付け替えない", async () => {
+  const base = responder();
+  const db = new FakeDatabase((text) => {
+    if (text.includes("SELECT t.current_version_id")) return [{ current_version_id: 401 }];
+    return base(text);
+  });
+  await new DocumentIssueService(db).issue(1, "kuramochi");
+  assert.equal(db.find("UPDATE documents SET template_version_id"), undefined);
+});
+
+test("下書きの基本契約を選び直せる。null で条件の契約に戻す。無い契約は止める", async () => {
+  const db = new FakeDatabase((t) => {
+    if (t.includes("SELECT id, status, matter_id FROM documents WHERE id = $1 FOR UPDATE")) return [{ id: 1, status: "draft", matter_id: null }];
+    if (t.includes("SELECT id FROM agreements WHERE id = $1")) return [{ id: 201 }];
+    return [];
+  });
+  const svc = new DocumentIssueService(db);
+  await svc.updateDraft(1, { agreementId: 201 }, "k");
+  assert.deepEqual(db.find("UPDATE documents SET agreement_id")!.params, [1, 201]);
+  await svc.updateDraft(1, { agreementId: null }, "k");
+  assert.deepEqual(db.all("UPDATE documents SET agreement_id").at(-1)!.params, [1, null]);
+  const none = new FakeDatabase((t) => {
+    if (t.includes("SELECT id, status, matter_id FROM documents WHERE id = $1 FOR UPDATE")) return [{ id: 1, status: "draft", matter_id: null }];
+    return [];
+  });
+  await assert.rejects(() => new DocumentIssueService(none).updateDraft(1, { agreementId: 999 }, "k"), /契約 999/);
+});
+
+test("下書きを作ると、載せた条件を案件にも繋ぐ（案件の条件タブに出る）", async () => {
+  const base = responder();
+  const db = new FakeDatabase((text, params) => {
+    if (text.includes("FROM document_templates t JOIN document_template_versions tv")) {
+      return [{ template_id: 301, version_id: 401, template_key: "purchase_order", label: "発注書",
+                number_prefix: "PO", html_source: "<p>{{DOC_NO}}</p>", variables: [] }];
+    }
+    if (text.includes("INSERT INTO documents")) return [{ id: 55 }];
+    // 案件に繋ぐ側
+    if (text.includes("FROM matters WHERE id")) return [{ id: 501, matter_no: "MTR-1", kind: "outsourcing" }];
+    if (text.includes("FROM conditions WHERE id")) {
+      return [{ id: Number(params?.[0]), condition_no: "CL-1", kind: "service", status: "active" }];
+    }
+    if (text.includes("INSERT INTO matter_links")) return [{ id: 9 }];
+    return base(text);
+  });
+  await new DocumentIssueService(db).createDraft(
+    { templateKey: "purchase_order", conditionIds: [5], matterId: 501 }, "k");
+  const link = db.find("INSERT INTO matter_links")!;
+  assert.equal(link.params[0], 501);
+  assert.equal(link.params[1], "5");
+  const audit = db.all("INSERT INTO audit_events").find((q) => q.params[1] === "document.draft")!;
+  assert.match(String(audit.params[5]), /attachedToMatter/);
+});
+
+test("遡及の決定日は日付として読めるものだけ受ける", () => {
+  assert.equal(readIssuedOn(""), null, "空なら今（null）");
+  assert.equal(readIssuedOn(null), null);
+  assert.equal(readIssuedOn("2026-09-07", new Date("2026-09-20T00:00:00Z")), "2026-09-07");
+  assert.throws(() => readIssuedOn("2026/09/07"), /2026-09-01 の形で/);
+  assert.throws(() => readIssuedOn("2026-02-30"), /日付として読めません/);
+  assert.throws(() => readIssuedOn("1999-12-31"), /古すぎます/);
+});
+
+test("決定日に先の日付は置けない。期日も滞留も未来から始まってしまう", () => {
+  // 東京の今日で切る。UTC で切ると、日本の朝に「今日」が弾かれる。
+  const utcMorningInTokyo = new Date("2026-09-20T00:30:00Z");   // 東京では 9/20 9:30
+  assert.equal(readIssuedOn("2026-09-20", utcMorningInTokyo), "2026-09-20");
+  assert.throws(() => readIssuedOn("2026-09-21", utcMorningInTokyo), /先の日付は置けません/);
+});
+
+// ---- 無効化の取り消し ---------------------------------------------------
+
+/**
+ * 同じ業務を複数人に出した検収書は、明細が完全に同じで、違うのは相手先・
+ * 発注番号・振込先だけ。明細だけを見て重複と判じると本物を消してしまう。
+ * 戻せなければ、相手に出した記録が消えたままになる。
+ */
+const unvoidResponder = (
+  options: { status?: string; documentNo?: string | null; detail?: Record<string, unknown> } = {}
+) => (text: string): Array<Record<string, unknown>> | undefined => {
+  if (text.includes("FROM documents WHERE id = $1 FOR UPDATE")) {
+    return [{ id: 1, document_no: options.documentNo === undefined ? "ARC-INS-2026-0059" : options.documentNo,
+              status: options.status ?? "void" }];
+  }
+  if (text.includes("FROM audit_events")) {
+    return [{ detail: options.detail ?? { from: "issued", releasedEvents: [{ id: 11 }, { id: 12 }] } }];
+  }
+  if (text.includes("UPDATE condition_events SET document_id")) return [{ id: 11 }, { id: 12 }];
+  return undefined;
+};
+
+const issuesFor = (responderFn: (text: string) => Array<Record<string, unknown>> | undefined) => {
+  const db = new FakeDatabase(responderFn);
+  return { db, service: new DocumentIssueService(db) };
+};
+
+test("無効化を取り消すと、決定済みに戻り、解放した実績も戻る", async () => {
+  const { service } = issuesFor(unvoidResponder());
+  const out = await service.unvoid(1, "重複ではなく別の相手の紙だったため", "me");
+  assert.equal(out.status, "issued");
+  assert.equal(out.restoredEvents, 2);
+  assert.deepEqual(out.skippedEvents, []);
+});
+
+test("その後べつの文書に結ばれた実績は戻さず、名前を返す", async () => {
+  // 12 だけが戻り、11 は戻らない（すでに別の文書に結ばれている）。
+  const { service } = issuesFor((text) => (
+    text.includes("UPDATE condition_events SET document_id") ? [{ id: 12 }] : unvoidResponder()(text)));
+  const out = await service.unvoid(1, "戻す", "me");
+  assert.equal(out.restoredEvents, 1);
+  assert.deepEqual(out.skippedEvents, [11]);
+});
+
+test("番号の無い文書は下書きに戻す", async () => {
+  const { service } = issuesFor(unvoidResponder({
+    documentNo: null, detail: { from: "draft" } }));
+  const out = await service.unvoid(1, "戻す", "me");
+  assert.equal(out.status, "draft");
+  assert.equal(out.restoredEvents, 0);
+});
+
+test("無効でない文書は取り消せない", async () => {
+  const { service } = issuesFor(unvoidResponder({ status: "issued" }));
+  await assert.rejects(() => service.unvoid(1, "戻す", "me"),
+    (e: unknown) => e instanceof DomainError && /無効になっていません/.test(e.message));
+});
+
+test("取り消しにも理由が要る", async () => {
+  const { service } = issuesFor(unvoidResponder());
+  await assert.rejects(() => service.unvoid(1, "  ", "me"),
+    (e: unknown) => e instanceof DomainError && e.code === "VALIDATION");
+});

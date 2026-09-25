@@ -1,0 +1,397 @@
+import { useState } from "react";
+import type { Row } from "./LineItems.js";
+
+/**
+ * 個別利用許諾条件書の2つの表。
+ *
+ *   取引形態（v3_conds）… 固定3種。どの形態で許諾するかと、その条件（地域・
+ *                          言語・数量・AG・MG・通貨）。id は 1/2/3 固定で、
+ *                          構成要素の料率マップの鍵になるので変えない。
+ *   構成要素（v3_lcs）  … 原作を組み立てている素材。許諾の対象そのものが
+ *                          コアロジック、追加の許諾料が発生するものが
+ *                          サブコンポーネント。加算型の適用料率は、ここに
+ *                          並ぶ料率の合計（コアの基本＋サブの追加）になる。
+ *
+ * 種は条件明細から入れてある（V1・V2 は全部手打ちだった）。移行後のデータは
+ * 「同じ素材に、取引形態のぶんだけ条件明細が並ぶ」形なので、素材でまとめれば
+ * 行が立ち、形態で割れば料率の列になる。ここで直したものが本文にそのまま出る。
+ */
+
+const REGION_PRESETS = ["全世界", "日本", "全世界（日本を除く）", "北米", "欧州", "アジア", "中国", "韓国", "台湾"];
+const LANGUAGE_PRESETS = ["全言語", "日本語", "英語", "日本語・英語", "中国語（簡体字）", "中国語（繁体字）", "韓国語"];
+
+const CALC_LABEL: Record<string, string> = {
+  BASE_QTY_RATE: "基準価格×個数×料率", BASE_RATE: "実効料率", FIXED: "固定額",
+  SUBSCRIPTION: "サブスク", SUPPLY_QTY: "供給価格×個数×料率"
+};
+
+export type MatrixName = "v3_conds" | "v3_lcs" | "v3_sublicensees" | "v3_special_extras";
+
+const text = (v: unknown) => (v == null ? "" : String(v));
+const rates = (row: Row): Record<string, unknown> =>
+  row.rates && typeof row.rates === "object" ? row.rates as Record<string, unknown> : {};
+
+export function LicenseTermsMatrix(
+  { deals, materials, sublicensees, extras, seedDeals, seedMaterials, onChange }: {
+    /** いま画面が持っている行。null なら種のまま（まだ直していない）。 */
+    deals: Row[] | null;
+    materials: Row[] | null;
+    /** サブライセンシーと特記事項は V3 のデータから導けないので、種は空。 */
+    sublicensees: Row[] | null;
+    extras: Row[] | null;
+    seedDeals: Row[];
+    seedMaterials: Row[];
+    onChange: (name: MatrixName, rows: Row[] | null) => void;
+  }
+) {
+  const [open, setOpen] = useState(true);
+  const dealRows = deals ?? seedDeals;
+  const materialRows = materials ?? seedMaterials;
+  const slRows = sublicensees ?? [];
+  const extraRows = extras ?? [];
+  // 載せる形態だけを数える。載せない形態の料率の列は構成要素にも出さない。
+  const used = dealRows.filter((d) => d.use !== false);
+  const addons = used.filter((d) => Boolean(d.addon));
+
+  const setDeal = (index: number, patch: Row) =>
+    onChange("v3_conds", dealRows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  const setMaterial = (index: number, patch: Row) =>
+    onChange("v3_lcs", materialRows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  const setRate = (index: number, dealId: unknown, value: string) =>
+    setMaterial(index, { rates: { ...rates(materialRows[index]), [String(dealId)]: value } });
+
+  /**
+   * 決定する前に見せる。V1・V2 は「素材コードが無い」を警告していたが、V3 は
+   * 素材コードを移行していないので、その警告は毎回出て意味を失う。V3 で実際に
+   * 確かめられるのは、紙が成立しない組み合わせのほう。
+   */
+  const warnings = [
+    ...(used.length ? [] : ["載せる取引形態がありません。1つ以上選んでください"]),
+    // 加算型なのに料率がどこにも無ければ、適用料率が「—」で出る。
+    ...addons.filter((d) => !materialRows.some(
+        (row) => String(rates(row)[String(d.id)] ?? "").trim() !== ""))
+      .map((d) => `${text(d.name)}（加算型）の料率が構成要素に1つも入っていません`),
+    // 非加算型は構成要素の料率を持たない。実効料率をここに入れないと空欄で出る。
+    ...used.filter((d) => !d.addon && !String(d.fixedRate ?? "").trim())
+      .map((d) => `${text(d.name)}（非加算型）の実効料率が空です`),
+    /**
+     * 同じ素材が複数の根拠文書で並んでいる。改訂（新しい条件書が前のを
+     * 差し替えた）なら、新しいほうだけを載せる。両方載せると料率が二重に
+     * 合算される。どちらが正かは人しか知らないので、落とさずに出す。
+     */
+    ...[...materialRows.reduce((map, row) => {
+      const name = text(row.name).trim();
+      if (name) map.set(name, (map.get(name) ?? new Set<string>()).add(text(row.source_doc).trim()));
+      return map;
+    }, new Map<string, Set<string>>())]
+      .filter(([, docs]) => docs.size > 1)
+      .map(([name, docs]) =>
+        `構成要素「${name}」が ${[...docs].map((d) => d || "根拠なし").join("・")} の`
+        + "2つ以上で並んでいます。改訂なら新しいほうだけを載せてください（料率が二重に合算されます）"),
+    ...used.filter((d) => d.rateConflict)
+      .map((d) => `${text(d.name)} に当たった条件明細で料率が割れています（${text(d.conditionNo)}）。`
+        + "実効料率は1つしか書けないので、どれを書くか決めてください"),
+    ...used.filter((d) => d.assignedFrom === "order")
+      .map((d) => `${text(d.name)} は条件明細の並び順から推定しました。違っていれば直してください`)
+  ];
+
+  const changed = deals !== null || materials !== null;
+  const setSl = (index: number, patch: Row) =>
+    onChange("v3_sublicensees", slRows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  const setExtra = (index: number, patch: Row) =>
+    onChange("v3_special_extras", extraRows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  const slField = (index: number, key: string, label: string, list?: string) => (
+    <label className="field">
+      <span>{label}</span>
+      <input list={list} value={text(slRows[index][key])}
+             onChange={(e) => setSl(index, { [key]: e.target.value })} />
+    </label>
+  );
+
+  return (
+    <div className="panel">
+      <div className="panel-hd">
+        <h2>取引形態と構成要素</h2>
+        <span className="faint">
+          条件明細と作品の取得条件から入れてあります{changed ? "（直しました）" : ""}
+        </span>
+        <span className="row" style={{ marginLeft: "auto" }}>
+          {changed && (
+            <button className="btn btn-sm"
+                    onClick={() => { onChange("v3_conds", null); onChange("v3_lcs", null); }}>
+              種に戻す
+            </button>
+          )}
+          <button className="btn btn-sm" onClick={() => setOpen(!open)}>
+            {open ? "畳む" : "開く"}
+          </button>
+        </span>
+      </div>
+
+      {open && (
+        <div className="panel-bd stack">
+          {warnings.map((w) => <div key={w} className="note warn">{w}</div>)}
+
+          <datalist id="v3-region-presets">
+            {REGION_PRESETS.map((v) => <option key={v} value={v} />)}
+          </datalist>
+          <datalist id="v3-lang-presets">
+            {LANGUAGE_PRESETS.map((v) => <option key={v} value={v} />)}
+          </datalist>
+
+          <div className="stack" style={{ gap: 6 }}>
+            <div className="row">
+              <b>取引形態</b>
+              <span className="faint">
+                この条件書で許諾するものだけ選びます（{used.length}／{dealRows.length}）。
+                加算型は構成要素の料率の合計が実効料率、非加算型は実効料率をここに入れます
+              </span>
+            </div>
+            {dealRows.map((deal, index) => (
+              <div key={String(deal.id ?? index)} className="trace"
+                   style={deal.use === false ? { opacity: 0.55 } : undefined}>
+                <div className="row">
+                  {/* 3種すべてを毎回許諾するわけではない。載せるものだけ選ぶ。 */}
+                  <label className="row" style={{ gap: 6 }}>
+                    <input type="checkbox" checked={deal.use !== false}
+                           onChange={(e) => setDeal(index, { use: e.target.checked })} />
+                    <b>{text(deal.name)}</b>
+                  </label>
+                  <span className="tag">{deal.addon ? "加算型" : "非加算型"}</span>
+                  <span className="faint">
+                    {CALC_LABEL[text(deal.calc_type)] ?? "—"}／基準: {text(deal.basePrice) || "—"}
+                  </span>
+                  {deal.conditionNo ? (
+                    <span className="code faint" style={{ marginLeft: "auto" }}>
+                      {text(deal.conditionNo)} から
+                      {deal.assignedFrom === "order" ? "（並び順から推定）" : ""}
+                    </span>
+                  ) : (
+                    <span className="faint" style={{ marginLeft: "auto" }}>条件明細なし</span>
+                  )}
+                </div>
+                {deal.use === false ? (
+                  <span className="faint">この条件書には載せません</span>
+                ) : (
+                <div className="row">
+                  {!deal.addon && (
+                    <label className="field">
+                      <span>実効料率（%）</span>
+                      <input type="number" value={text(deal.fixedRate)}
+                             onChange={(e) => setDeal(index, { fixedRate: e.target.value })} />
+                    </label>
+                  )}
+                  <label className="field">
+                    <span>今回地域</span>
+                    <input list="v3-region-presets" value={text(deal.reg)}
+                           onChange={(e) => setDeal(index, { reg: e.target.value })} />
+                  </label>
+                  <label className="field">
+                    <span>今回言語</span>
+                    <input list="v3-lang-presets" value={text(deal.lang)}
+                           onChange={(e) => setDeal(index, { lang: e.target.value })} />
+                  </label>
+                  <label className="field">
+                    <span>数量</span>
+                    <input value={text(deal.qty)}
+                           onChange={(e) => setDeal(index, { qty: e.target.value })} />
+                  </label>
+                  <label className="field">
+                    <span>AG</span>
+                    <input type="number" value={text(deal.ag)}
+                           onChange={(e) => setDeal(index, { ag: e.target.value })} />
+                  </label>
+                  <label className="field">
+                    <span>MG</span>
+                    <input type="number" value={text(deal.mg)}
+                           onChange={(e) => setDeal(index, { mg: e.target.value })} />
+                  </label>
+                  <label className="field">
+                    <span>通貨</span>
+                    <input value={text(deal.cur)}
+                           onChange={(e) => setDeal(index, { cur: e.target.value })} />
+                  </label>
+                </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <div className="stack" style={{ gap: 6 }}>
+            <div className="row">
+              <b>構成要素</b>
+              <span className="faint">
+                条件明細が指している素材を並べています。コアロジックが許諾の対象、
+                サブコンポーネントが追加許諾料の出る要素。加算型の適用料率は
+                この列の合計です
+              </span>
+              <button className="btn btn-sm" style={{ marginLeft: "auto" }}
+                      onClick={() => onChange("v3_lcs", [...materialRows, {
+                        material_code: "", name: "", holder: "",
+                        // 1行目は許諾の対象そのもの、2行目以降は追加の要素。
+                        role: materialRows.length ? "sub" : "core",
+                        region: "全世界", language: "全言語", rates: {}
+                      }])}>
+                行を足す
+              </button>
+            </div>
+            <div className="tablewrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>役割</th><th>素材コード</th><th>名称</th><th>権利元</th>
+                    <th>地域</th><th>言語</th>
+                    {addons.map((d) => (
+                      <th key={String(d.id)} className="num">{text(d.name)}<br />料率(%)</th>
+                    ))}
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {materialRows.map((row, index) => (
+                    <tr key={index}>
+                      <td>
+                        {/* 許諾の対象そのものか、追加許諾料の出る要素か。 */}
+                        <select value={row.role === "sub" ? "sub" : "core"}
+                                onChange={(e) => setMaterial(index, { role: e.target.value })}>
+                          <option value="core">コアロジック</option>
+                          <option value="sub">サブコンポーネント</option>
+                        </select>
+                      </td>
+                      <td>
+                        <input className="code" value={text(row.material_code)}
+                               onChange={(e) => setMaterial(index, { material_code: e.target.value })} />
+                      </td>
+                      <td>
+                        <input value={text(row.name)}
+                               onChange={(e) => setMaterial(index, { name: e.target.value })} />
+                      </td>
+                      <td>
+                        <input value={text(row.holder)}
+                               onChange={(e) => setMaterial(index, { holder: e.target.value })} />
+                      </td>
+                      <td>
+                        <input list="v3-region-presets" value={text(row.region)}
+                               onChange={(e) => setMaterial(index, { region: e.target.value })} />
+                      </td>
+                      <td>
+                        <input list="v3-lang-presets" value={text(row.language)}
+                               onChange={(e) => setMaterial(index, { language: e.target.value })} />
+                      </td>
+                      {addons.map((d) => (
+                        <td key={String(d.id)} className="num">
+                          <input type="number" style={{ width: 70 }}
+                                 value={text(rates(row)[String(d.id)])}
+                                 onChange={(e) => setRate(index, d.id, e.target.value)} />
+                        </td>
+                      ))}
+                      <td>
+                        <button className="btn btn-sm"
+                                onClick={() => onChange("v3_lcs", materialRows.filter((_, i) => i !== index))}>
+                          外す
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {!materialRows.length && (
+                    <tr>
+                      <td colSpan={7 + addons.length} className="faint">
+                        構成要素がありません。この条件書に載せる条件明細を選ぶと、
+                        その条件が指している素材がここに並びます
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+                {/* 紙に出るのは合計のほう。ここで見えていないと、足し忘れも
+                    足しすぎも決定するまで分からない。 */}
+                {addons.length > 0 && materialRows.length > 0 && (
+                  <tfoot>
+                    <tr>
+                      <td colSpan={6}>適用料率（加算型＝構成要素料率の合算）</td>
+                      {addons.map((d) => {
+                        const total = materialRows.reduce((sum, row) => {
+                          const value = Number.parseFloat(String(rates(row)[String(d.id)] ?? ""));
+                          return sum + (Number.isFinite(value) ? value : 0);
+                        }, 0);
+                        return (
+                          <td key={String(d.id)} className="num">
+                            <b>{total > 0 ? `${+total.toFixed(2)}%` : "—"}</b>
+                          </td>
+                        );
+                      })}
+                      <td></td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+          </div>
+
+          {/* サブライセンシー。本文は再許諾先の一覧をここから出す。
+              V3 のデータから導けない（まだ相手が決まっていない段階で書く）ので、
+              種は空。欄が無いと、本文の表を埋める手段がどこにも無くなる。 */}
+          <div className="stack" style={{ gap: 6 }}>
+            <div className="row">
+              <b>サブライセンシー</b>
+              <span className="faint">再許諾を出す先。決まっているぶんだけ書きます</span>
+              <button className="btn btn-sm" style={{ marginLeft: "auto" }}
+                      onClick={() => onChange("v3_sublicensees", [...slRows, {
+                        slPartner: "", slRegion: "", slLang: "",
+                        slCond: "", slRate: "", slDate: "", slNote: ""
+                      }])}>
+                行を足す
+              </button>
+            </div>
+            {slRows.map((_, index) => (
+              <div key={index} className="trace">
+                <div className="row">
+                  {slField(index, "slPartner", "再許諾先")}
+                  {slField(index, "slRegion", "地域", "v3-region-presets")}
+                  {slField(index, "slLang", "言語", "v3-lang-presets")}
+                  {slField(index, "slCond", "取引形態", "v3-deal-names")}
+                  {slField(index, "slRate", "料率（%）")}
+                  {slField(index, "slDate", "開始日")}
+                  {slField(index, "slNote", "備考")}
+                  <button className="btn btn-sm"
+                          onClick={() => onChange("v3_sublicensees", slRows.filter((_, i) => i !== index))}>
+                    外す
+                  </button>
+                </div>
+              </div>
+            ))}
+            {!slRows.length && <span className="faint">まだありません</span>}
+          </div>
+          <datalist id="v3-deal-names">
+            {used.map((d, i) => <option key={i} value={text(d.name)} />)}
+          </datalist>
+
+          {/* 特記事項。条項の追加。 */}
+          <div className="stack" style={{ gap: 6 }}>
+            <div className="row">
+              <b>特記事項</b>
+              <span className="faint">この条件書だけの取り決め</span>
+              <button className="btn btn-sm" style={{ marginLeft: "auto" }}
+                      onClick={() => onChange("v3_special_extras",
+                        [...extraRows, { seId: String(extraRows.length + 1), seText: "" }])}>
+                行を足す
+              </button>
+            </div>
+            {extraRows.map((row, index) => (
+              <div key={index} className="row">
+                <input style={{ width: 60 }} value={text(row.seId)}
+                       onChange={(e) => setExtra(index, { seId: e.target.value })} />
+                <textarea rows={2} style={{ flex: 1 }} value={text(row.seText)}
+                          onChange={(e) => setExtra(index, { seText: e.target.value })} />
+                <button className="btn btn-sm"
+                        onClick={() => onChange("v3_special_extras", extraRows.filter((_, i) => i !== index))}>
+                  外す
+                </button>
+              </div>
+            ))}
+            {!extraRows.length && <span className="faint">まだありません</span>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

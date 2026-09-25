@@ -1,0 +1,20 @@
+# gcloud builds submit のアップロード対象から外すもの。
+# このファイルがあると gcloud は .gitignore を見なくなるので、
+# .gitignore の内容もここに含めておく。
+.git/
+.gitignore
+node_modules/
+.npm-cache/
+dist/
+coverage/
+*.log
+*.tsbuildinfo
+.env
+.env.local
+.env.*.local
+
+# 作業ディレクトリに置かれがちなもの（イメージには不要）
+cloud-sql-proxy
+cloud_sql_proxy
+FETCH_HEAD
+*.tgz

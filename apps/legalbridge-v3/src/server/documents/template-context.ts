@@ -1,0 +1,964 @@
+/**
+ * ひな形ごとの計算ブロック。
+ *
+ * 移行したひな形の本文は V1 のものそのままで、合計を自分では計算しない。
+ * 「消費税」「税込合計」「明細表」はサーバが組んだ値を差すだけなので、
+ * それを作る側が無いと消費税が空欄のまま書類が出る（実際に出た）。
+ *
+ * V1 は form_data の配列から組んでいた（template-context-adapters.ts）。
+ * V3 は同じ形を **条件・予定・実績から** 組む。人が明細を打ち直さずに済む、
+ * というのが V3 の建て付けなので、供給元はドメインでなければならない。
+ *
+ * 出す名前は V1 と同じにしてある。名前を変えると本文が差せなくなる。
+ */
+
+import {
+  aggregateItemDates, computeInspectionTotals, inspectionTaxBreakdown,
+  num, purchaseOrderTotals, rows, taxRatePercentFor, yen, type Row, pickRow } from "./legacy-totals.js";
+import { foldPeriodicLines } from "./periodic-fold.js";
+import { royaltyStatementPatch } from "./royalty-patch.js";
+import { isLicenseTermsTemplate, licenseTermsPatch, licenseTermsSeeds,
+         licenseTermsSuggestions } from "./license-terms.js";
+import { PUB_TITLES_FIELD, isPubTermsTemplate, pubTermsPatch, pubTermsSuggestions,
+         pubTermsWarnings, pubTitleSeeds } from "./pub-terms.js";
+import type { Warning } from "./preflight.js";
+import { expenseLinesFrom, feeLinesFrom, isSettlementKind } from "./settlement-conditions.js";
+import { calcMethodFor, ownershipLabelOf, rewardLabelFor } from "../core/reward.js";
+import { contractFormEn, contractFormFor } from "../conditions/contract-form.js";
+import { CONDITION_USAGE_TYPES, conditionUsageLabel } from "../core/condition-usage.js";
+import { formatDateEn } from "./rendering.js";
+import { toInternationalPhone } from "../core/phone.js";
+
+type Ctx = Record<string, any>;
+
+const INSPECTION_KEYS = new Set(["inspection_certificate", "delivery_note", "acceptance_certificate"]);
+const PURCHASE_ORDER_KEYS = new Set(["purchase_order", "intl_purchase_order"]);
+/**
+ * 計算書のひな形。本文の金額は手入力ではなく、条件と実績からの試算で決まる。
+ * 画面もここを見て入力の枠を出し分ける（別々に書くと片方だけ増えて食い違う）。
+ */
+export const isStatementTemplate = (templateKey: string): boolean =>
+  templateKey === "royalty_statement";
+
+/**
+ * ひな形ごとの明細の欄。画面はここに挙がった名前の分だけ行の編集欄を出す。
+ * 発注書は items / 手数料 / 経費、検収書は納品明細 / 手数料 / 経費。
+ */
+export function lineFieldsFor(templateKey: string): string[] {
+  if (PURCHASE_ORDER_KEYS.has(templateKey)) return ["items", "other_fees", "expenses"];
+  if (INSPECTION_KEYS.has(templateKey)) return ["delivery_line_items", "other_fees", "expenses"];
+  // 条件書は「明細」ではなく2つの表（取引形態・構成要素）。画面は名前で
+  // 専用の編集欄に振り分ける。
+  if (isLicenseTermsTemplate(templateKey)) {
+    return ["v3_conds", "v3_lcs", "v3_sublicensees", "v3_special_extras"];
+  }
+  // 出版の条件書は「対象著作物の一覧」1つ。作品1点が1行で、紙・電子の条件が畳まれる。
+  if (isPubTermsTemplate(templateKey)) return [PUB_TITLES_FIELD];
+  // 計算書は金額を計算から出すので明細を人が打つことはない。ただし紙に出る
+  // 文字（製品名・対象契約）は直せないと困る。作品名やアウト条件の名前が
+  // そのまま出るので、相手に見せる呼び方と食い違うことがある。
+  if (isStatementTemplate(templateKey)) return ["rs_line_labels"];
+  return [];
+}
+
+/** 条件・予定・実績から組んだ「種」の行。画面の編集欄の初期値。 */
+export function seedLines(templateKey: string, context: Ctx): Record<string, Row[]> {
+  if (isLicenseTermsTemplate(templateKey)) return licenseTermsSeeds(context) as Record<string, Row[]>;
+  if (isPubTermsTemplate(templateKey)) return { [PUB_TITLES_FIELD]: pubTitleSeeds(context) as Row[] };
+  const out: Record<string, Row[]> = {};
+  // 海外版の発注書は行の契約種別も英語で持たせる（編集欄にも英語で出る）。
+  const intl = templateKey === "intl_purchase_order";
+  const itemsOf = () => intl
+    ? orderLinesFrom(context).map((r) => (r.payment_terms ? { ...r, payment_terms: contractFormEn(r.payment_terms) } : r))
+    : orderLinesFrom(context);
+  for (const name of lineFieldsFor(templateKey)) {
+    out[name] = name === "items" ? itemsOf()
+      : name === "delivery_line_items" ? deliveryLinesFrom(context)
+      : name === "rs_line_labels" ? statementLabelRows(context)
+      // 手数料・経費は繋がっている fee / expense の条件から。決定のときに行から
+      // 作った条件が、作り直しでも同じ行として戻る。
+      : name === "other_fees" ? feeLinesFrom((context.conditions ?? []) as Ctx[])
+      : name === "expenses" ? expenseLinesFrom((context.conditions ?? []) as Ctx[])
+      : [];
+  }
+  return out;
+}
+
+export { OWNERSHIP_LABEL } from "../core/reward.js";
+const ownershipOf = (condition: Ctx) => ownershipLabelOf(condition?.deliverableOwnership);
+/** 明細の支払方法。FIXED / ROYALTY / SUBSCRIPTION。判定は画面と共通。 */
+export const calcMethodOf = (condition: Ctx): string => calcMethodFor(condition?.pricingModel);
+/** 業績連動のときの報酬の名前（利用許諾料・インセンティブ報酬）。判定は画面と共通。 */
+export const rewardLabelOf = (condition: Ctx): string | null =>
+  rewardLabelFor(condition?.pricingModel, condition?.deliverableOwnership);
+
+/**
+ * 計算書の行の見出し（人が直せるぶん）。実績1件が1行。
+ *
+ * 金額と料率は計算から出すのでここには置かない。置くと、人が打った金額と
+ * 計算した金額のどちらが紙に出るのか読めなくなる。
+ */
+export function statementLabelRows(context: Ctx): Row[] {
+  return ((context.events ?? []) as Ctx[])
+    .filter((event) => event.usageType)
+    .map((event) => {
+      const condition = (context.conditions ?? []).find((c: Ctx) => c.id === event.conditionId)
+        ?? context.condition ?? {};
+      const out = event.outCondition ?? {};
+      return {
+        eventId: event.id,
+        // 利用形態で決まる（自社販売＝当社作品名、再許諾・他社販売＝条件名）。
+        productName: event.productName ?? out.workTitle ?? condition.work?.title ?? "",
+        contractTitle: [out.partyName, out.name]
+          .map((x: unknown) => String(x ?? "").trim()).filter(Boolean).join("　"),
+        // 相手に見せる「契約番号」。合意があればその番号、無ければ条件番号
+        // （条件番号を契約番号として刷ると、相手が持つ契約書と突き合わない）。
+        contractNumber: out.agreementNo ?? out.conditionNo ?? ""
+      };
+    });
+}
+
+/** 仕様・成果物。専用の欄があればそれ、無ければ備考（以前はこれが仕様代わりだった）。 */
+const specOf = (condition: Ctx) => condition?.spec ?? condition?.notes ?? "";
+
+/**
+ * 仕様の本文を「1行のまとめ」と「残りの全文」に分ける。
+ *
+ * 検収書の「成果物・業務内容」の列は幅が 33% しかなく、●審判業務…のような
+ * 長文をそのまま刷ると 1 行が 20 行分の高さになっていた。改訂したひな形は
+ * 行に spec_head（先頭の行。イベント名・日時など）だけを出し、その直下に
+ * 表の幅いっぱいの行を足して spec_body（残り）を刷る。古いひな形は spec を
+ * そのまま読むので、spec は変えない。
+ */
+export function splitSpec(text: unknown): { spec_head: string; spec_body: string; has_spec_body: boolean } {
+  const lines = String(text ?? "").replace(/\r\n?/g, "\n").split("\n").map((l) => l.trim());
+  const first = lines.findIndex((l) => l !== "");
+  if (first < 0) return { spec_head: "", spec_body: "", has_spec_body: false };
+  const head = lines[first];
+  const body = lines.slice(first + 1).filter((l) => l !== "").join("\n");
+  // 先頭が●の箇条書きなら、まとめにせず全文を下の行へ（見出しに箇条書きが来ると読みにくい）。
+  if (/^[●・■◆]/.test(head)) {
+    const all = lines.filter((l) => l !== "").join("\n");
+    return { spec_head: "", spec_body: all, has_spec_body: all !== "" };
+  }
+  return { spec_head: head, spec_body: body, has_spec_body: body !== "" };
+}
+
+/**
+ * その条件から出ている発注書の番号。検収書の行に「発注番号」として出す。
+ * 条件をまたぐ検収書では行ごとに違う番号になる。
+ */
+function orderNoFor(context: Ctx, conditionId: unknown): string | null {
+  const related = (context.related ?? []) as Ctx[];
+  const mine = related.filter((d) => Number(d.conditionId) === Number(conditionId)
+    && (d.templateKey === "purchase_order" || d.templateKey === "intl_purchase_order"));
+  const nos = [...new Set(mine.map((d) => String(d.documentNo ?? "")).filter(Boolean))];
+  if (nos.length) return nos.join("・");
+  // V3 で出した発注書が無いときは、条件に控えた外部の番号を使う。
+  // 移行した条件は発注書が V1・V2 側にあるので、ここが埋まっていないと空欄になる。
+  const condition = (context.conditions ?? []).find((c: Ctx) => c.id === conditionId);
+  const fallback = String(condition?.orderNo ?? "").trim();
+  return fallback || null;
+}
+
+/** 相手先が「1件の条件」に決まるときだけ、条件から明細を組める。 */
+const singleCondition = (c: Ctx) => (c.conditions?.length === 1 ? c.conditions[0] : null);
+
+/**
+ * 業績連動の内訳。検収書の行の下に「利用許諾料（料率 8% ／ 基準 …）／ 算定根拠」を出す。
+ *
+ * 料率は条件が持っていて、算定の根拠は実績のメモに書いてある。どちらも
+ * すでに入っているのに紙まで届いておらず、人が明細へ同じことを打ち直していた。
+ *
+ * 仕様の欄がメモを使っているときは根拠を入れない。同じ文が2行続いて出る。
+ * 明細で人が入れた値のほうが強い（rows(manual.items) がこの結果を置き換える）。
+ */
+/**
+ * 明細の単価。条件が単価を持っていればそれを使い、無ければ 金額 ÷ 数量。
+ *
+ * 割り切れないときは置かない。丸めた単価は 単価×数量≠金額 になり、
+ * 書類でも経理の表でも二つの数が食い違う。
+ */
+function unitPriceOf(held: unknown, amount: unknown, quantity: unknown): number | null {
+  if (held !== null && held !== undefined && String(held) !== "") return num(held);
+  const total = num(amount, Number.NaN);
+  const count = num(quantity, Number.NaN);
+  if (!Number.isFinite(total) || !Number.isFinite(count) || count === 0) return null;
+  const unit = Math.round((total / count) * 100) / 100;
+  return unit * count === total ? unit : null;
+}
+
+function rewardBreakdown(condition: Ctx, event: Ctx, spec: unknown): Row {
+  if (calcMethodOf(condition) !== "ROYALTY") return {};
+  const note = String(event?.note ?? "").trim();
+  return {
+    ...(condition?.ratePct === null || condition?.ratePct === undefined
+      ? {} : { rate_pct: condition.ratePct }),
+    ...(note && note !== String(spec ?? "").trim() ? { formula_text: note } : {})
+  };
+}
+
+/**
+ * 検収・納品の明細を実績から組む。
+ *
+ * 実績（condition_events）1件が明細1行。検収書は「どの回の分か」を書く
+ * 書類なので、行の出どころは実績以外にありえない。実績を選ばずに作った
+ * ときだけ、条件そのものを1行として置く（単発の業務委託）。
+ */
+export function deliveryLinesFrom(context: Ctx): Row[] {
+  const events = (context.events ?? []) as Ctx[];
+  if (events.length) {
+    // 定期課金の回が続くところは1行に畳む（同じ内容の行が縦に並ばないように）。
+    return foldPeriodicLines(events.map((event) => {
+      const condition = (context.conditions ?? []).find((c: Ctx) => c.id === event.conditionId)
+        ?? context.condition ?? {};
+      const spec = condition.spec ?? condition.notes ?? event.note ?? "";
+      return {
+        // 分納は回ごとに成果物が違う。実績に書いてあればそれを使う。
+        item_name: event.deliverable ?? condition.name ?? condition.work?.title ?? "",
+        // 業務内容の本文。仕様の欄が無い条件は備考で代える。
+        spec,
+        description: spec,
+        ...splitSpec(spec),
+        ...rewardBreakdown(condition, event, spec),
+        deliverable_ownership: ownershipOf(condition),
+        // この行の元になった発注書。条件をまたぐ検収書で行ごとに違う。
+        order_no: orderNoFor(context, condition.id),
+        condition_no: condition.conditionNo ?? null,
+        // 畳むときのまとまりの単位と、まとめの品目名。紙には出ない。
+        condition_id: condition.id ?? null,
+        condition_name: condition.name ?? null,
+        // 名前は本番のひな形が差しているものに合わせる。inspected_quantity と
+        // paid_date は検収書の本文が直接読む列で、別名では出ない。
+        quantity: event.quantity ?? null,
+        inspected_quantity: event.quantity ?? null,
+        // 単価。条件が持っていればそれ、無ければ 金額 ÷ 数量。検収書の本文は
+        // 単価を刷らないが、経理提出用の帳票がこの値を読む。空のままだと
+        // 経理の単価の列が全部空欄になる。
+        unit_price: unitPriceOf(condition.unitAmount, event.amount, event.quantity),
+        // 契約種別・支払条件の欄には契約形式（請負・委任）を出す。実績 →
+        // 予定 → 条件 の順に、書いてあるものを使う。
+        payment_terms: contractFormFor(event.contractForm, condition.contractForm),
+        // 定期払いの役務提供期間。本文の「役務提供期間」がここを読む。
+        term_start: event.serviceFrom ?? null,
+        term_end: event.serviceTo ?? null,
+        delivery_date: event.occurredOn ?? null,
+        inspection_date: event.inspectedOn ?? event.occurredOn ?? null,
+        payment_date: event.schedule?.payOn ?? event.schedule?.dueOn ?? null,
+        paid_date: event.schedule?.payOn ?? null,
+        amount_ex_tax: event.amount ?? 0,
+        inspected_amount_ex_tax: event.amount ?? 0,
+        // 予定額。ここと違えば「金額変更」として本文の変更履歴に出る。予定明細が
+        // 無ければ、記録のときに確かめた条件どおりの額（A-030 の expected）で代える。
+        ordered_amount_ex_tax: event.plannedAmount ?? event.expectedAmount ?? null,
+        // 差分の記録。変更履歴の「理由」になる。
+        changeNote: event.varianceNote ?? "",
+        tax_category: condition.taxCategory ?? "taxable",
+        inspection_status: "now",
+        calc_method: calcMethodOf(condition),
+        reward_label: rewardLabelOf(condition)
+      };
+    // 畳んだ行は仕様に「全12回（毎月）…」が足されるので、まとめと本文を割り直す。
+    })).map((line) => (line.folded ? { ...line, ...splitSpec(line.spec) } : line));
+  }
+  // 実績を選んでいなければ、載せた条件を1本1行にする（手数料・経費は別の表）。
+  // 以前は条件が1本のときしか行を作らず、委託料と実費の2本を載せると行が
+  // 0 になってひな形の単票の枝（列の数が見出しと合わない古い行）に落ちていた。
+  return ((context.conditions ?? []) as Ctx[])
+    .filter((c) => !isSettlementKind(c.kind) && num(c.flatAmount) > 0)
+    .map((condition) => ({
+    item_name: condition.name ?? "",
+    spec: specOf(condition),
+    description: specOf(condition),
+    ...splitSpec(specOf(condition)),
+    ...rewardBreakdown(condition, {}, specOf(condition)),
+    deliverable_ownership: ownershipOf(condition),
+    order_no: orderNoFor(context, condition.id),
+    condition_no: condition.conditionNo ?? null,
+    quantity: null,
+    inspected_quantity: null,
+    // 単発の1行は数量を持たない。総額がそのまま単価にあたる。
+    unit_price: condition.unitAmount ?? condition.flatAmount,
+    payment_terms: contractFormFor(condition.contractForm),
+    // 納期。条件が持っていればそれ。無ければ契約期間の終了日に落ちる
+    // （納期の置き場が無かったころの紙は、そこに入れてあった）。
+    delivery_date: condition.deliveryDue ?? condition.termEnd ?? null,
+    payment_date: null,
+    paid_date: null,
+    amount_ex_tax: condition.flatAmount,
+    inspected_amount_ex_tax: condition.flatAmount,
+    ordered_amount_ex_tax: condition.flatAmount,
+    tax_category: condition.taxCategory ?? "taxable",
+    inspection_status: "now",
+    calc_method: calcMethodOf(condition),
+    reward_label: rewardLabelOf(condition)
+  }));
+}
+
+/**
+ * 発注の明細を予定から組む。
+ *
+ * 発注書は「これから何回いくら払うか」を書く書類なので、行は予定明細
+ * （condition_schedules）。予定を持たない条件は総額を1行にする。
+ */
+export function orderLinesFrom(context: Ctx): Row[] {
+  const settlementIds = new Set(((context.conditions ?? []) as Ctx[])
+    .filter((c) => isSettlementKind(c.kind)).map((c) => c.id));
+  const schedules = ((context.schedules ?? []) as Ctx[]).filter((s) => !settlementIds.has(s.conditionId));
+  if (schedules.length) {
+    // 定期課金の回が続くところは1行に畳む（同じ内容の行が縦に並ばないように）。
+    return foldPeriodicLines(schedules.map((s) => {
+      const condition = (context.conditions ?? []).find((c: Ctx) => c.id === s.conditionId)
+        ?? context.condition ?? {};
+      return {
+        item_name: s.label ?? condition.name ?? "",
+        spec: specOf(condition),
+        // 畳むときのまとまりの単位と、まとめの品目名。紙には出ない。
+        condition_id: condition.id ?? null,
+        condition_name: condition.name ?? null,
+        deliverable_ownership: ownershipOf(condition),
+        // 本文は 数量×単価 を印字する。空だと「¥0」が出るので、1 × 金額 で置く。
+        quantity: 1,
+        unit_price: s.plannedAmount ?? 0,
+        payment_terms: contractFormFor(s.contractForm, condition.contractForm),
+        // 定期払いの回は、受け持つ役務提供期間を持つ。本文がそのまま差す。
+        term_start: s.serviceFrom ?? null,
+        term_end: s.serviceTo ?? null,
+        delivery_date: s.dueOn ?? null,
+        payment_date: s.payOn ?? null,
+        amount_ex_tax: s.plannedAmount ?? 0,
+        tax_category: condition.taxCategory ?? "taxable",
+        calc_method: calcMethodOf(condition),
+        reward_label: rewardLabelOf(condition)
+      };
+    }));
+  }
+  // 選んだ条件は、金額が決まっていなくても1行にする。
+  //
+  // 以前は「定額のある条件」だけを拾っていた。料率型・定期課金・単価型の条件は
+  // 定額を持たないので1行も出ず、品目名も仕様も空のまま、金額 ¥0 の行だけが
+  // 残る発注書になっていた。人がその条件を選んでいる以上、何を頼んだのかは
+  // 紙に出さないといけない。金額が無いのは、フォームが「未入力」として出す。
+  // 手数料・経費の条件は別の表（その他手数料・経費）に出す。品目に混ぜると
+  // 同じ額が2回載る。
+  return ((context.conditions ?? []) as Ctx[])
+    .filter((c) => !isSettlementKind(c.kind))
+    .map((c: Ctx) => ({
+      item_name: c.name ?? "",
+      spec: specOf(c),
+      deliverable_ownership: ownershipOf(c),
+      // 条件に個数があればそれを使う。無ければ「一式1」として出す。
+      quantity: c.quantity ?? 1,
+      unit_price: c.unitAmount ?? c.flatAmount ?? 0,
+      payment_terms: contractFormFor(c.contractForm),
+      term_start: c.termStart ?? null,
+      term_end: c.termEnd ?? null,
+      delivery_date: c.deliveryDue ?? c.termEnd ?? null,
+      payment_date: null,
+      // 定額があればそれ。単価建ての条件は 単価 × 個数。どちらも無ければ 0。
+      amount_ex_tax: c.flatAmount
+        ?? (c.unitAmount === null || c.unitAmount === undefined
+              ? 0 : Number(c.unitAmount) * Number(c.quantity ?? 1)),
+      tax_category: c.taxCategory ?? "taxable",
+      calc_method: calcMethodOf(c),
+      reward_label: rewardLabelOf(c)
+    }));
+}
+
+/**
+ * 税率（%）。条件の税区分から引く。
+ * 手入力があればそれを優先する（軽減税率の例外を人が指定する場合）。
+ */
+export function taxRateFor(context: Ctx, manual: Record<string, unknown>): number {
+  const typed = manual.taxRate ?? manual.tax_rate;
+  if (typed !== undefined && typed !== null && String(typed).trim() !== "") {
+    return Math.max(0, num(typed, 10));
+  }
+  const conditions = (context.conditions ?? []) as Ctx[];
+  if (!conditions.length) return taxRatePercentFor(context.condition?.taxCategory);
+  // 区分が混在するときは、いちばん高い率を全体の表示率にする。内訳は
+  // taxBreakdown 側に区分ごとで出る（本文の「消費税(x%)」は1つしか出せない）。
+  return Math.max(...conditions.map((c) => taxRatePercentFor(c.taxCategory)));
+}
+
+/** 振込先の1行表記。V1 の buildPurchaseOrderContext と同じ並び。 */
+export function bankInfoLine(bank: Ctx | null | undefined): string {
+  if (!bank) return "";
+  const type = accountTypeLabel(bank.accountType);
+  return [
+    bank.bankName,
+    bank.branchName,
+    [type, bank.accountNumber].filter(Boolean).join(" "),
+    bank.holderKana
+  ].filter((v) => v !== null && v !== undefined && String(v).trim() !== "").join(" / ");
+}
+
+/**
+ * 海外送金の振込先（A-051）。海外版の発注書の Bank Account 欄が使う。
+ * 受取人名（BENEFICIARY_NAME）は英字の account_holder_name を優先し、無ければ名義カナ。
+ * ACCOUNT_HOLDER は国内の書類で名義カナの別名として使われているので触らない。
+ * 国内の口座では SWIFT などが空なので、本文の {{#if}} で出ない。
+ */
+export function overseasBankVars(bank: Ctx | null | undefined): Record<string, string> {
+  const v = (x: unknown) => (x === null || x === undefined ? "" : String(x).trim());
+  return {
+    ACCOUNT_SCOPE: v(bank?.scope) || (bank ? "domestic" : ""),
+    BENEFICIARY_NAME: v(bank?.holderName) || v(bank?.holderKana),
+    ACCOUNT_HOLDER_NAME: v(bank?.holderName),
+    SWIFT_BIC: v(bank?.swiftBic),
+    SWIFT_CODE: v(bank?.swiftBic),
+    IBAN: v(bank?.iban),
+    ROUTING_NUMBER: v(bank?.routingNumber),
+    BANK_COUNTRY: v(bank?.country),
+    BANK_ADDRESS: v(bank?.address),
+    BANK_CURRENCY: v(bank?.currency),
+    INTERMEDIARY_BANK_NAME: v(bank?.intermediaryName),
+    INTERMEDIARY_BANK_SWIFT: v(bank?.intermediarySwift)
+  };
+}
+
+/** 通貨記号。本文は {{moneyUnit}}{{金額}} の形で差す。 */
+export function moneyUnitFor(currency: string): string {
+  return ({ JPY: "¥", USD: "$", EUR: "€", GBP: "£", CNY: "¥", TWD: "NT$", KRW: "₩" } as
+    Record<string, string>)[String(currency).toUpperCase()] ?? `${currency} `;
+}
+
+/** 口座種別。DB は英字で持つが、書類に出すのは日本語。 */
+export function accountTypeLabel(value: unknown): string {
+  const key = String(value ?? "").trim().toLowerCase();
+  if (!key) return "";
+  return ({
+    ordinary: "普通", futsu: "普通", "普通": "普通", "普通預金": "普通",
+    checking: "当座", touza: "当座", "当座": "当座", "当座預金": "当座",
+    savings: "貯蓄", "貯蓄": "貯蓄", "貯蓄預金": "貯蓄"
+  } as Record<string, string>)[key] ?? String(value);
+}
+
+/**
+ * ひな形ごとの計算ブロックを組む。
+ *
+ * 手入力が明細を持っているならそちらが正（人が直した明細を計算で消さない）。
+ * 明細が1行でもあれば、金額は明細から計算して手入力より優先する。V1 と同じ
+ * 規則：行があるのに手入力が勝つと、本文の表と合計がずれる。
+ */
+export function buildTemplateContext(
+  templateKey: string, context: Ctx, manual: Record<string, unknown> = {},
+  /**
+   * 束縛の結果（項目に実際に入った値）。条件書のように「項目の値をそのまま
+   * 本文の見出しに出す」ひな形は、手入力だけでは足りない（自動で埋まった
+   * 契約書番号・発行日・許諾者名が本文で空になる）。渡さなければ手入力だけ見る。
+   */
+  bound: Record<string, unknown> = {}
+): Record<string, unknown> {
+  const bank = context.bank ?? null;
+  const currency = String(context.condition?.currency ?? context.totals?.currency ?? "JPY");
+  const common: Record<string, unknown> = {
+    taxRate: taxRateFor(context, manual),
+    /**
+     * 本文だけが使う変数。field_schema に宣言が無いので束縛の経路に乗らず、
+     * ここで入れないと本文が空になる。計算書は moneyUnit を31か所で差している。
+     */
+    moneyUnit: moneyUnitFor(currency),
+    DOC_NO: context.document?.number ?? "",
+    documentDate: context.document?.issuedOn ?? "",
+    // 軽減税率の対象か。本文は識別マーク（※）の有無に使う。
+    isReducedTax: String(context.condition?.taxCategory ?? "") === "reduced",
+    BANK_INFO: bankInfoLine(bank),
+    BANK_NAME: bank?.bankName ?? "",
+    BRANCH_NAME: bank?.branchName ?? "",
+    ACCOUNT_TYPE: accountTypeLabel(bank?.accountType),
+    ACCOUNT_NUMBER: bank?.accountNumber ?? "",
+    ACCOUNT_HOLDER_KANA: bank?.holderKana ?? "",
+    ...overseasBankVars(bank)
+  };
+
+  if (INSPECTION_KEYS.has(templateKey)) {
+    return { ...common, ...inspectionBlock(context, manual, Number(common.taxRate)) };
+  }
+  if (PURCHASE_ORDER_KEYS.has(templateKey)) {
+    return { ...common, ...orderBlock(templateKey, context, manual) };
+  }
+  if (isLicenseTermsTemplate(templateKey)) {
+    return { ...common, ...licenseTermsPatch(context, { ...bound, ...manual }) };
+  }
+  if (isPubTermsTemplate(templateKey)) {
+    return { ...common, ...pubTermsPatch(context, { ...bound, ...manual }) };
+  }
+  if (isStatementTemplate(templateKey)) {
+    const patch = royaltyStatementPatch(context, manual, Number(common.taxRate));
+    return patch ? { ...common, ...patch } : common;
+  }
+  return common;
+}
+
+/**
+ * 実績が載っている条件の定額の合計。予定明細が無い分割納品の「発注総額」に使う。
+ * 実績を選んでいなければ、選んだ条件すべての定額。
+ */
+function conditionTotalFor(context: Ctx): number {
+  const conditions = (context.conditions ?? []) as Ctx[];
+  const events = (context.events ?? []) as Ctx[];
+  const referenced = new Set(events.map((e) => Number(e.conditionId)));
+  const target = referenced.size
+    ? conditions.filter((c) => referenced.has(Number(c.id))) : conditions;
+  return target.reduce((sum, c) => sum + num(c.flatAmount), 0);
+}
+
+function inspectionBlock(context: Ctx, manual: Record<string, unknown>, taxRate: number) {
+  const lines = rows(manual.delivery_line_items).length
+    ? rows(manual.delivery_line_items)
+    : deliveryLinesFrom(context);
+  const otherFees = rows(manual.other_fees);
+  const expenses = rows(manual.expenses);
+  const source: Row = { delivery_line_items: lines, other_fees: otherFees, expenses, taxRate };
+  const totals = computeInspectionTotals(source);
+  const breakdown = inspectionTaxBreakdown(source);
+
+  // 仕様の「1行のまとめ」と「残り」は、いま入っている spec から出し直す。種の行を
+  // 画面で直したとき、種に付いていた spec_head が古いままにならないように。
+  for (const line of lines) {
+    if (line.spec !== undefined || line.description !== undefined) {
+      Object.assign(line, splitSpec(line.spec ?? line.description ?? ""));
+    }
+  }
+  const visible = lines.filter((l) => String(l.inspection_status ?? "now") !== "skip");
+  const paid = visible.filter((l) => String(l.inspection_status ?? "") === "paid");
+  const now = visible.filter((l) => String(l.inspection_status ?? "now") === "now");
+
+  // 進捗（検収率・検収済額・発注総額・未検収額）。予定額を持つ行から出す。
+  //
+  // 予定明細を作らずに分割で実績を入れていくと、行に予定額が無い。そのとき
+  // 行の額を足すと発注総額＝検収済額になり、未検収額が常に 0 と出てしまう。
+  // 予定額を1行も持たないなら、実績が載っている条件の定額の合計を発注総額にする。
+  const lineAmount = (l: Row) => num(l.inspected_amount_ex_tax ?? l.amount_ex_tax ?? l.amount);
+  const hasOrdered = visible.some((l) => Number.isFinite(num(l.ordered_amount_ex_tax, Number.NaN)));
+  const orderedTotal = hasOrdered
+    ? visible.reduce((sum, l) => {
+        const ordered = num(l.ordered_amount_ex_tax, Number.NaN);
+        return sum + (Number.isFinite(ordered) ? ordered : lineAmount(l));
+      }, 0)
+    : conditionTotalFor(context) || visible.reduce((sum, l) => sum + lineAmount(l), 0);
+  const inspectedSoFar = [...paid, ...now].reduce((sum, l) => sum + lineAmount(l), 0);
+  const progress = visible.length && orderedTotal > 0 ? {
+    totalOrderAmountStr: yen(orderedTotal),
+    inspectedAmountStr: yen(inspectedSoFar),
+    pendingAmountStr: yen(Math.max(0, orderedTotal - inspectedSoFar)),
+    inspectedPct: Math.min(100, Math.round((inspectedSoFar / orderedTotal) * 100))
+  } : {};
+
+  // 金額変更（予定との差）は本文の変更履歴に出す。理由は書けないので
+  // 「（理由未記入）」のまま出す。黙って消すより残すほうがよい。
+  // 変更の注記は行にも付ける。支払日ごとの表示は行の直下に出すため。
+  for (const line of visible) {
+    const ordered = num(line.ordered_amount_ex_tax, Number.NaN);
+    const actual = lineAmount(line);
+    const changed = Number.isFinite(ordered) && ordered !== actual;
+    line.hasChange = changed;
+    line.changeLabel = changed ? `支払対価 ¥${yen(ordered)} → ¥${yen(actual)}` : "";
+    line.changeNote = changed ? String(line.changeNote ?? "") : "";
+  }
+
+  const changeLogs = now.flatMap((l) => {
+    const ordered = num(l.ordered_amount_ex_tax, Number.NaN);
+    const actual = lineAmount(l);
+    if (!Number.isFinite(ordered) || ordered === actual) return [];
+    return [{
+      changedAt: String(context.document?.issuedOn ?? ""),
+      fieldLabel: `${String(l.item_name ?? "明細")} 支払対価`,
+      beforeValue: `¥${yen(ordered)}`,
+      afterValue: `¥${yen(actual)}`,
+      reason: String(l.changeNote ?? "").trim() || "（理由未記入）"
+    }];
+  });
+
+  const taxableSubtotal = totals.deliveredExTax + totals.otherFeesExTax;
+  const combinedTax = Math.ceil((taxableSubtotal * taxRate) / 100);
+  const taxableTotal = taxableSubtotal + combinedTax;
+
+  // 明細が1行も無いときは、金額は手入力に任せる（単票フォールバック）。
+  const lineTotals = lines.length ? {
+    deliveredAmountStr: yen(totals.deliveredExTax),
+    taxAmountStr: yen(totals.tax),
+    totalAmountStr: yen(totals.totalIncTax),
+    // 数値で欲しい本文もあるので両方出す。
+    deliveredAmountExTax: totals.deliveredExTax,
+    taxAmount: totals.tax,
+    totalAmountIncTax: totals.totalIncTax
+  } : {};
+
+  return {
+    ...lineTotals,
+    ...progress,
+    delivery_line_items: now,
+    items: now,
+    expenses,
+    other_fees: otherFees,
+    changeLogs,
+    hasChangeLogs: changeLogs.length > 0,
+    // 金額が当初から変わった検収書は、相手の確認（署名）欄を出す。変更履歴と同じ
+    // 条件にしてあるので、履歴が出るのに署名欄が無い／その逆は起きない。
+    needsSignature: changeLogs.length > 0,
+    useGroupedInspection: paid.length > 0,
+    paymentGroups: paid.length ? paymentGroups(paid, now, taxRate, context) : [],
+    otherFeesTaxable: totals.otherFeesExTax > 0,
+    hasSettlement: totals.hasSettlement,
+    otherFeesTotalStr: yen(totals.otherFeesExTax),
+    expensesTotalIncTaxStr: yen(totals.expensesIncTax),
+    taxableSubtotalExTaxStr: yen(taxableSubtotal),
+    combinedTaxStr: yen(combinedTax),
+    taxableTotalIncTaxStr: yen(taxableTotal),
+    grandTotalPayableStr: yen(taxableTotal + totals.expensesIncTax),
+    // 経理提出用の税区分内訳。列がある本文だけが使う。
+    taxBreakdown: breakdown
+  };
+}
+
+/** 支払日ごとのまとまり。区切りごとに端数処理する（課税仕入れの時期が違う）。 */
+function paymentGroups(paid: Row[], now: Row[], taxRate: number, context: Ctx) {
+  const build = (date: string, isPaid: boolean, lines: Row[]) => {
+    const subtotal = lines.reduce((sum, l) =>
+      sum + num(l.inspected_amount_ex_tax ?? l.amount_ex_tax ?? l.amount), 0);
+    const tax = Math.ceil((subtotal * taxRate) / 100);
+    return {
+      date, isPaid, taxRate,
+      lines: lines.map((l) => ({
+        item_name: l.item_name ?? "",
+        spec: l.spec ?? "",
+        delivery_date: l.delivery_date ?? "",
+        amount_ex_tax: num(l.inspected_amount_ex_tax ?? l.amount_ex_tax ?? l.amount),
+        hasChange: l.hasChange === true,
+        changeLabel: l.changeLabel ?? "",
+        changeNote: l.changeNote ?? "",
+        // 業績連動のぶん。報酬計算書を別に作らず、この行の下に内訳を書く。
+        // ここで拾わないと、人が明細に入れても本文まで届かない。
+        deliverable_ownership: l.deliverable_ownership ?? "",
+        calc_method: l.calc_method ?? "",
+        reward_label: l.reward_label ?? "",
+        rate_pct: l.rate_pct ?? "",
+        base_price_label: l.base_price_label ?? "",
+        formula_text: l.formula_text ?? ""
+      })),
+      subtotalStr: yen(subtotal),
+      taxAmountStr: yen(tax),
+      totalIncTaxStr: yen(subtotal + tax)
+    };
+  };
+  const byDate = new Map<string, Row[]>();
+  for (const line of paid) {
+    const date = String(line.payment_date ?? line.paid_date ?? "").trim() || "（支払日未入力）";
+    byDate.set(date, [...(byDate.get(date) ?? []), line]);
+  }
+  return [
+    ...[...byDate.entries()].sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, lines]) => build(date, true, lines)),
+    ...(now.length
+      ? [build(String(now[0]?.payment_date ?? context.schedule?.payOn ?? ""), false, now)]
+      : [])
+  ];
+}
+
+/** 発注書の「利用許諾条件」の 1 行。台帳の許諾条件を紙の語に直す。 */
+export interface LicenseTermRow {
+  usage: string;
+  fee: string;
+  guarantee: string;
+  term: string;
+  scope: string;
+  condition_no: string;
+}
+
+const compactDate = (value: unknown): string => {
+  const m = String(value ?? "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[1]}/${m[2]}/${m[3]}` : String(value ?? "");
+};
+
+/** 「2026-10-31」→「2026年10月31日」。日付でなければそのまま。 */
+const jaDate = (value: unknown): string => {
+  const m = String(value ?? "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[1]}年${Number(m[2])}月${Number(m[3])}日` : String(value ?? "");
+};
+
+/**
+ * 明細の日付のまとめ（aggregateItemDates の「A 〜 B (明細参照)」）を、1 ページ目の
+ * 表に置く日本語にする。1 日なら「2026年10月31日」、幅があれば
+ * 「2026年10月31日 〜 2026年11月30日（明細参照）」。
+ * 海外版（en）は「October 31, 2026 – November 30, 2026 (see details)」。
+ */
+export function summarizeDates(aggregate: string, lang: "ja" | "en" = "ja"): string {
+  const s = String(aggregate ?? "").trim();
+  if (!s) return "";
+  const m = s.match(/^(\S+)\s*[〜–]\s*(\S+)/);
+  if (lang === "en") {
+    return m ? `${formatDateEn(m[1])} – ${formatDateEn(m[2])} (see details)` : formatDateEn(s);
+  }
+  return m ? `${jaDate(m[1])} 〜 ${jaDate(m[2])}（明細参照）` : jaDate(s);
+}
+
+/** 海外版の書類に出す利用形態の英語。 */
+export const USAGE_LABEL_EN: Record<string, string> = {
+  in_house: "In-house manufacture & sale",
+  sublicense: "Sublicense",
+  oem: "Manufacture for third-party sale",
+  pub_print: "Print publishing",
+  pub_digital: "Digital publishing",
+  pub_sub_print: "Translation sublicense (print)",
+  pub_sub_digital: "Translation sublicense (digital)"
+};
+
+
+const moneyOf = (amount: unknown, currency: string, lang: "ja" | "en" = "ja"): string => {
+  const n = Number(amount);
+  if (!Number.isFinite(n)) return "";
+  if (lang === "en") {
+    const hasFraction = Math.abs(n % 1) > 1e-9;
+    return `${currency || "JPY"} ${n.toLocaleString("en-US", { minimumFractionDigits: hasFraction ? 2 : 0, maximumFractionDigits: 2 })}`;
+  }
+  return currency === "JPY" || !currency ? `¥ ${yen(n)}` : `${currency} ${n.toLocaleString("ja-JP")}`;
+};
+
+/**
+ * 利用許諾条件（成果物を受注者に留保する品目に付くもの）を、発注書の表の行にする。
+ *
+ * 料率・額は許諾料の扱い（A-048）で出し分ける。「業務委託報酬に含む」は
+ * 追加の許諾料が 0 円という意味なので、率や額の代わりにその旨を書く。
+ */
+export function licenseTermRows(context: Ctx, lang: "ja" | "en" = "ja"): LicenseTermRow[] {
+  const en = lang === "en";
+  // 並びは利用形態の定義順（自社製造・自社販売 → 再許諾 → … → 出版）。
+  const order = (t: Ctx) => {
+    const i = CONDITION_USAGE_TYPES.findIndex((u) => u.value === t.usageType);
+    return i < 0 ? CONDITION_USAGE_TYPES.length : i;
+  };
+  const terms = [...((context.licenseTerms ?? []) as Ctx[])]
+    .sort((a, b) => order(a) - order(b) || Number(a.id ?? 0) - Number(b.id ?? 0));
+  return terms.map((t) => {
+    const currency = String(t.currency ?? "JPY");
+    const basis = String(t.licenseFeeBasis ?? "separate");
+    let fee: string;
+    if (basis === "included") fee = en ? "License fee included in the service fee" : "利用許諾料は業務委託報酬に含む";
+    else if (basis === "free") fee = en ? "Royalty-free" : "無償";
+    else if (t.ratePct !== null && t.ratePct !== undefined && String(t.pricingModel) === "revenue_rate") {
+      fee = `${t.ratePct} %`;
+    } else if (String(t.pricingModel) === "unit_rate" && t.unitAmount !== null && t.unitAmount !== undefined) {
+      fee = en ? `${moneyOf(t.unitAmount, currency, "en")} per unit` : `${moneyOf(t.unitAmount, currency)}／単位`;
+    } else if (t.flatAmount !== null && t.flatAmount !== undefined && Number(t.flatAmount) > 0) {
+      fee = moneyOf(t.flatAmount, currency, lang);
+    } else if (t.ratePct !== null && t.ratePct !== undefined) {
+      fee = `${t.ratePct} %`;
+    } else fee = en ? "To be agreed separately" : "別途定める";
+    const guarantee = basis === "separate"
+      ? [t.mgAmount ? `MG ${moneyOf(t.mgAmount, currency, lang)}` : "",
+         t.agAmount ? `AG ${moneyOf(t.agAmount, currency, lang)}` : ""].filter(Boolean).join(en ? " / " : "／") || "—"
+      : "—";
+    const term = t.termStart || t.termEnd
+      ? (en
+        ? `${t.termStart ? compactDate(t.termStart) : ""} – ${t.termEnd ? compactDate(t.termEnd) : "(no end date)"}`
+        : `${t.termStart ? compactDate(t.termStart) : ""} 〜 ${t.termEnd ? compactDate(t.termEnd) : "（定めなし）"}`)
+      : (en ? "No fixed term" : "期間の定めなし");
+    const regions = ((t.regions ?? []) as string[]).filter(Boolean);
+    const languages = ((t.languages ?? []) as string[]).filter(Boolean);
+    const scope = en
+      ? `${regions.length ? regions.join(", ") : "Worldwide"} / ${languages.length ? languages.join(", ") : "All languages"}`
+      : `${regions.length ? regions.join("・") : "全世界"} ／ ${languages.length ? languages.join("・") : "全言語"}`;
+    const usage = en
+      ? [USAGE_LABEL_EN[String(t.usageType)] ?? conditionUsageLabel(t.usageType) ?? String(t.name ?? ""),
+         t.exclusivity === "exclusive" ? " (exclusive)" : ""].join("")
+      : [conditionUsageLabel(t.usageType) || (t.name ?? ""),
+         t.exclusivity === "exclusive" ? "（独占）" : ""].join("");
+    return { usage, fee, guarantee, term, scope, condition_no: String(t.conditionNo ?? "") };
+  });
+}
+
+/**
+ * 海外版の発注書の From（Purchaser）。設定の英語表記（nameEn / addressEn / repEn /
+ * telIntl）があればそれで PARTY_A_* を置き換える。空なら日本語の値をそのまま
+ * 使う（何も返さない＝束縛の値が残る）。
+ */
+export function companyEn(company: Record<string, unknown>): Record<string, string> {
+  const pick = (key: string) => String(company[key] ?? "").trim();
+  const out: Record<string, string> = {};
+  if (pick("nameEn")) { out.PARTY_A_NAME = pick("nameEn"); out.COMPANY_NAME = pick("nameEn"); }
+  if (pick("addressEn")) { out.PARTY_A_ADDRESS = pick("addressEn"); out.COMPANY_ADDRESS = pick("addressEn"); }
+  if (pick("repEn")) { out.PARTY_A_REP = pick("repEn"); out.COMPANY_REP = pick("repEn"); }
+  // 国際表記の欄が空でも、国内の電話番号を +81 に直して出す。
+  if (pick("telIntl")) out.COMPANY_TEL = pick("telIntl");
+  else if (pick("tel")) out.COMPANY_TEL = toInternationalPhone(pick("tel"));
+  return out;
+}
+
+/**
+ * 海外版の From の担当（部署・氏名・電話）。担当者マスタの英語表記があればそれ
+ * （A-049）。電話は国内表記のまま登録してあるので、紙にするときだけ国際表記
+ * （+81-3-…）に直す。すでに + で始まっていればそのまま。
+ */
+export function staffEn(owner: Record<string, unknown> | null | undefined): Record<string, string> {
+  const pick = (key: string) => String(owner?.[key] ?? "").trim();
+  const out: Record<string, string> = {};
+  if (pick("nameEn")) out.STAFF_NAME = pick("nameEn");
+  if (pick("departmentEn")) out.STAFF_DEPARTMENT = pick("departmentEn");
+  if (pick("phone")) out.STAFF_PHONE = toInternationalPhone(pick("phone"));
+  return out;
+}
+
+/** 明細の値の重複を除いて「／」で繋ぐ。1 ページ目の発注概要の 1 行に使う。 */
+const distinctJoin = (values: unknown[]): string =>
+  [...new Set(values.map((v) => String(v ?? "").trim()).filter(Boolean))].join("／");
+
+function orderBlock(templateKey: string, context: Ctx, manual: Record<string, unknown>) {
+  const intl = templateKey === "intl_purchase_order";
+  // 海外版は行の契約種別（請負 など）も英語で刷る。英語で書いてあればそのまま。
+  const rawItems = rows(manual.items).length ? rows(manual.items) : orderLinesFrom(context);
+  const items = intl
+    ? rawItems.map((r) => (r.payment_terms ? { ...r, payment_terms: contractFormEn(r.payment_terms) } : r))
+    : rawItems;
+  const otherFees = rows(manual.other_fees);
+  const expenses = rows(manual.expenses);
+  const totals = purchaseOrderTotals({ items, other_fees: otherFees });
+  const deliveryDate = aggregateItemDates(items, "delivery_date", intl);
+  const paymentDate = aggregateItemDates(items, "payment_date", intl);
+  // 空文字は「無い」として次の列を見る（?? だと "" が拾われて 0 になる。画面の
+  // 行は欄を空文字で持つので、amount にだけ額がある行の合計が 0 と出ていた）。
+  const expensesTotalIncTax = expenses.reduce((sum, e) =>
+    sum + num(pickRow(e, "amount_inc_tax", "amount")), 0);
+  // 1 ページ目の発注概要（行数が決まった表）。明細は 2 ページ目からなので、
+  // 件数・契約種別・帰属先・支払条件はここで 1 行にまとめる。
+  const ownerships = [...new Set(items.map((r) => String(r.deliverable_ownership ?? "").trim()).filter(Boolean))];
+  const hasContractorOwned = ownerships.includes("受注者") || ownerships.includes("contractor");
+  const lang: "ja" | "en" = intl ? "en" : "ja";
+  const licenseTerms = licenseTermRows(context, lang);
+  const paymentTermsSummary = distinctJoin(((context.conditions ?? []) as Ctx[])
+    .filter((c) => !isSettlementKind(c.kind)).map((c) => c.paymentTerms));
+  const ownershipEn = (v: string) => (v === "受注者" || v === "contractor" ? "Contractor"
+    : v === "発注者" || v === "orderer" ? "Purchaser" : v);
+  const withholding = context.condition?.counterparty?.withholding;
+  const currency = String(context.condition?.currency ?? context.totals?.currency ?? "JPY");
+  return {
+    items,
+    other_fees: otherFees,
+    expenses,
+    items_count: items.length,
+    other_fees_count: otherFees.length,
+    expenses_count: expenses.length,
+    contract_form_summary: intl
+      ? contractFormEn(distinctJoin(items.map((r) => r.payment_terms)))
+      : distinctJoin(items.map((r) => r.payment_terms)),
+    ownership_summary: intl
+      ? (ownerships.length > 1 ? "Purchaser / Contractor (see details)" : ownershipEn(ownerships[0] ?? ""))
+      : ownerships.length > 1 ? "発注者・受注者（明細参照）"
+      : ownershipLabelOf(ownerships[0]) ?? ownerships[0] ?? "",
+    has_contractor_owned: hasContractorOwned,
+    payment_terms_summary: paymentTermsSummary,
+    delivery_summary: summarizeDates(deliveryDate, lang),
+    payment_summary: summarizeDates(paymentDate, lang),
+    // 海外版だけが使う値。通貨コード（JPY 246,000 と書く）と源泉徴収の英語、
+    // 自社の英語表記（設定の 会社名（英語）など。空なら日本語のまま）。
+    ...(intl ? {
+      currency_code: currency,
+      withholding_label: withholding === true ? "Applicable" : withholding === false ? "Not applicable" : "",
+      ...companyEn(context.company ?? {}),
+      ...staffEn(context.owner)
+    } : {}),
+    // 利用許諾条件（A-048）。受注者帰属の品目があるのに台帳に無ければ、本文は
+    // 「利用許諾の条件は別途定める」と 1 行で出す（黙って空にしない）。
+    license_terms: licenseTerms,
+    license_terms_missing: hasContractorOwned && !licenseTerms.length,
+    itemsSubtotalExTax: totals.itemsSubtotalExTax,
+    otherFeesTotal: totals.otherFeesTotal,
+    // 明細も手数料も無い発注書は総額を手入力する運用が残っている。
+    // 行があるときだけ計算値で上書きする。
+    ...(items.length || otherFees.length ? { grandTotalExTax: totals.grandTotalExTax } : {}),
+    expensesTotalIncTax,
+    expensesTotalIncTaxStr: yen(expensesTotalIncTax),
+    itemsSubtotalExTaxStr: yen(totals.itemsSubtotalExTax),
+    otherFeesTotalStr: yen(totals.otherFeesTotal),
+    grandTotalExTaxStr: yen(totals.grandTotalExTax),
+    summaryDeliveryDate: deliveryDate,
+    summaryPaymentDate: paymentDate,
+    ...(intl ? { summaryCompletionDate: deliveryDate } : {}),
+    DELIVERY_DATE: deliveryDate,
+    PAYMENT_DATE: paymentDate
+  };
+}
+
+/**
+ * ひな形ごとの文案。長文の欄を、条件から組み立てた文で先に埋めておく。
+ *
+ * 計算（buildTemplateContext）と違って、人が直したらそちらが勝つ。台帳の値
+ * ではなく下書きなので、いつもと違うことを書く余地を残す。
+ */
+export function suggestionsFor(
+  templateKey: string, context: Ctx, bound: Record<string, unknown> = {}
+): Record<string, unknown> {
+  if (isLicenseTermsTemplate(templateKey)) return licenseTermsSuggestions(context, bound);
+  if (isPubTermsTemplate(templateKey)) return pubTermsSuggestions(context, bound);
+  // 発注書・検収書の本文は、明細の外（見出しのあたり）でも料率と帰属先を差している。
+  // 条件が1件に決まるときは台帳から引ける。ここを空のまま出すと「料率 ％」だけが
+  // 残った紙になる。ひな形が from を持っていればそちらが勝つ。
+  if (INSPECTION_KEYS.has(templateKey) || PURCHASE_ORDER_KEYS.has(templateKey)) {
+    // 発注書の署名欄。承諾署名欄（受注者だけが署名）を出し、発注署名欄（発注者
+    // も署名）は出さないのが普通の形。V2 のひな形は両方の既定が「あり」で、
+    // CSV で欄を空にしたまま作ると両方の署名欄が刷られた。人が欄で決めれば
+    // そちらが勝つ（手入力が先）。
+    const signDefaults = PURCHASE_ORDER_KEYS.has(templateKey)
+      ? { SHOW_SIGN_SECTION: true, SHOW_ORDER_SIGN_SECTION: false } : {};
+    const condition = singleCondition(context) ?? context.condition;
+    if (!condition) return signDefaults;
+    const reward = rewardLabelOf(condition);
+    return {
+      ...signDefaults,
+      calc_method: calcMethodOf(condition),
+      ...(ownershipOf(condition) ? { deliverable_ownership: ownershipOf(condition) } : {}),
+      ...(reward ? { reward_label: reward } : {}),
+      ...(condition.ratePct === null || condition.ratePct === undefined
+        ? {} : { rate_pct: condition.ratePct })
+    };
+  }
+  return {};
+}
+
+/**
+ * ひな形ごとの警告。決定する前に画面に出す。
+ *
+ * 出版の条件書は、載せられない条件明細（料率でない・媒体が無い）を黙って
+ * 落とさず名指しする。差し込みの空欄（documentWarnings）とは別の種類なので、
+ * ここで足す。発行は止めない。
+ */
+export function templateWarnings(templateKey: string, context: Ctx): Warning[] {
+  if (isPubTermsTemplate(templateKey)) return pubTermsWarnings(context, templateKey);
+  if (templateKey === "intl_purchase_order") return intlCompanyWarnings(context);
+  return [];
+}
+
+/**
+ * 海外版の発注書で、自社と担当者の英語表記が無いところ。設定と担当者マスタに
+ * 一度入れれば、以後の海外版はすべて英語で出る。入れていないと日本語のまま
+ * 紙に出るので、決める前に気づけるように出す。
+ */
+export function intlCompanyWarnings(context: Ctx): Warning[] {
+  const company = (context.company ?? {}) as Record<string, unknown>;
+  const owner = (context.owner ?? null) as Record<string, unknown> | null;
+  const blank = (v: unknown) => !String(v ?? "").trim();
+  const out: Warning[] = [];
+  const missing = [
+    blank(company.nameEn) ? "会社名（英語）" : "",
+    blank(company.addressEn) ? "住所（英語）" : "",
+    blank(company.repEn) ? "代表者（英語）" : ""
+  ].filter(Boolean);
+  if (missing.length) {
+    out.push({ kind: "company",
+      message: `自社の ${missing.join("・")} が未設定です。海外版の From（Purchaser）が日本語のまま出ます。`
+        + "運用 › 設定 › 自社情報 に一度入れれば、以後の海外版はすべて英語で出ます" });
+  }
+  if (owner) {
+    const staffMissing = [
+      blank(owner.nameEn) && /[぀-ヿ一-鿿]/.test(String(owner.name ?? "")) ? "氏名（英語）" : "",
+      blank(owner.departmentEn) && /[぀-ヿ一-鿿]/.test(String(owner.department ?? "")) ? "部門（英語）" : ""
+    ].filter(Boolean);
+    if (staffMissing.length) {
+      out.push({ kind: "staff",
+        message: `担当者「${String(owner.name ?? "")}」の ${staffMissing.join("・")} が未設定です。`
+          + "取引先・担当 › 担当者 の「直す」で入れれば、以後の海外版は英語で出ます" });
+    }
+  }
+  return out;
+}

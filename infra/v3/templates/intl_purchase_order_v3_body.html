@@ -1,0 +1,410 @@
+<body data-layout="ipo-v3-2026-09r2">
+
+<!-- ===== ヘッダ ===== -->
+<div class="doc-head">
+  <h1 class="doc-title">PURCHASE ORDER</h1>
+  <div class="doc-sub">
+    Date: {{#if 発注日}}{{formatDateEn 発注日}}{{else}}{{#if order_date}}{{formatDateEn order_date}}{{else}}{{formatDateEn (or ORDER_DATE (concat ORDER_DATE_YEAR "-" ORDER_DATE_MONTH "-" ORDER_DATE_DAY))}}{{/if}}{{/if}}
+    　／　PO No.: {{ORDER_NO}}{{#if isReissue}}{{#unless (eq showReissueBanner false)}}　(supersedes {{BASE_DOC_NO}}){{/unless}}{{/if}}
+  </div>
+</div>
+<hr class="rule">
+
+<!-- ===== 宛先 ＋ 発注者 ===== -->
+<table class="party">
+  <tr>
+    <td style="width:50%; padding-right:12px;">
+      <div class="vlabel">To (Contractor)</div>
+      <div class="vendor-name">{{VENDOR_NAME}}</div>
+      {{#if VENDOR_REPRESENTATIVE_LINE}}<div style="margin-top:3px; font-size:10pt;">{{VENDOR_REPRESENTATIVE_LINE}}</div>{{/if}}
+      {{#if VENDOR_CONTACT_NAME}}<div class="muted">Attn: {{VENDOR_CONTACT_NAME}}</div>{{/if}}
+      {{#if VENDOR_ADDRESS}}<div class="muted">{{VENDOR_ADDRESS}}</div>{{/if}}
+      {{#if INVOICE_REGISTRATION_NUMBER}}<div class="muted" style="margin-top:2px;">Tax ID / VAT No.: {{INVOICE_REGISTRATION_NUMBER}}</div>{{/if}}
+      <div style="margin-top:10px; font-size:9pt;">We hereby place the following order. Please review and confirm.</div>
+      {{#if PROJECT_TITLE}}<div style="margin-top:8px; font-size:10pt;">Subject: <strong>{{PROJECT_TITLE}}</strong></div>{{/if}}
+    </td>
+    <td style="width:50%; padding-left:12px; border-left:1px solid #cfcfcf;">
+      <div class="vlabel">From (Purchaser)</div>
+      <div style="font-weight:900; font-size:12pt; margin-bottom:4px;">{{PARTY_A_NAME}}</div>
+      <div style="white-space:pre-wrap;">{{PARTY_A_ADDRESS}}</div>
+      {{#if PARTY_A_REP}}<div style="margin-top:2px;">{{PARTY_A_REP}}</div>{{/if}}
+      {{#if STAFF_NAME}}
+      <div style="margin-top:8px; padding-top:6px; border-top:1px solid #cfcfcf; font-size:9pt;">
+        {{#if STAFF_DEPARTMENT}}<strong>Dept.:</strong> {{STAFF_DEPARTMENT}}<br>{{/if}}
+        <strong>Contact:</strong> {{STAFF_NAME}}<br>
+        {{#if STAFF_PHONE}}Tel: {{STAFF_PHONE}}<br>{{/if}}
+        {{#if STAFF_EMAIL}}E-mail: {{STAFF_EMAIL}}{{/if}}
+      </div>
+      {{/if}}
+    </td>
+  </tr>
+</table>
+
+<!-- ===== ORDER SUMMARY (fixed rows; details on the next page) ===== -->
+<p class="section-mark">■ ORDER SUMMARY</p>
+<table class="summary compact">
+  <tr>
+    <th>Fixed Fee Subtotal (excl. tax)</th>
+    <td>
+      {{#if (gt grandTotalExTax 0)}}
+      <strong class="total-amount">{{currency_code}} {{formatMoney grandTotalExTax}}</strong>
+      <span class="amount-note">　Taxes, if any, are handled as stated in the Payment section.</span>
+      {{#if has_performance_incentive}}
+      <div class="amount-note" style="margin-top:2px; color:#92400e;">The fee for this order is the fixed fee above plus the incentive fee calculated as stated in the details.</div>
+      {{/if}}
+      {{else}}
+      {{#if has_performance_incentive}}
+      <strong style="color:#92400e;">Fee: incentive-based</strong>
+      <span class="amount-note">／ calculated as stated in the details</span>
+      {{else}}
+      <strong style="color:#92400e;">Fee: included in the license fee</strong>
+      <span class="amount-note">／ calculated as stated in the details</span>
+      {{/if}}
+      {{/if}}
+    </td>
+  </tr>
+  <tr>
+    <th>Line Items</th>
+    <td>Services {{items_count}}{{#if other_fees_count}} · Other Fees {{other_fees_count}}{{/if}}{{#if expenses_count}} · Expenses {{expenses_count}}{{/if}} (see next page)</td>
+  </tr>
+  <tr>
+    <th>Contract Type</th>
+    <td>{{#if contract_form_summary}}{{contract_form_summary}}{{else}}See details{{/if}}</td>
+  </tr>
+  <tr>
+    <th>Delivery <span style="font-size:8pt;color:#888;font-weight:400;">(or service period)</span></th>
+    <td>{{#if delivery_summary}}{{delivery_summary}}{{else}}{{#if DELIVERY_DATE}}{{formatDateEn DELIVERY_DATE}}{{else}}See details{{/if}}{{/if}}</td>
+  </tr>
+  <tr>
+    <th>Ownership of Deliverables</th>
+    <td>{{#if ownership_summary}}{{ownership_summary}}{{else}}Purchaser{{/if}}{{#if has_contractor_owned}}<span class="amount-note">　License terms for Contractor-owned items: see next page</span>{{/if}}</td>
+  </tr>
+  <tr>
+    <th>Master Agreement</th>
+    <td>{{#if HAS_BASE_CONTRACT}}Yes{{#if MASTER_CONTRACT_REF}} ({{MASTER_CONTRACT_REF}}){{/if}}{{else}}None (the attached Standard Terms apply){{/if}}</td>
+  </tr>
+  <tr>
+    <th>Special Terms</th>
+    <td>{{#if SPECIAL_TERMS}}Yes (see next page){{else}}None{{/if}}</td>
+  </tr>
+</table>
+
+<!-- ===== PAYMENT ===== -->
+<p class="section-mark">■ PAYMENT</p>
+<table class="summary compact">
+  <tr>
+    <th>Payment Terms</th>
+    <td>{{#if payment_terms_summary}}{{payment_terms_summary}}{{else}}{{#if PAYMENT_TERMS}}{{PAYMENT_TERMS}}{{else}}See details{{/if}}{{/if}}</td>
+  </tr>
+  <tr>
+    <th>Payment Due</th>
+    <td>{{#if payment_summary}}{{payment_summary}}{{else}}{{#if PAYMENT_DATE}}{{formatDateEn PAYMENT_DATE}}{{else}}See details{{/if}}{{/if}}</td>
+  </tr>
+  {{#if (or BANK_NAME (or IBAN SWIFT_BIC))}}
+  <tr>
+    <th>Bank Account</th>
+    <td><div class="bank-lines">
+      <div>{{#if BANK_NAME}}<b>{{BANK_NAME}}</b>{{/if}}{{#if BRANCH_NAME}}, {{BRANCH_NAME}}{{/if}}{{#if SWIFT_BIC}}<span class="sep">SWIFT/BIC: {{SWIFT_BIC}}</span>{{/if}}{{#if BANK_COUNTRY}}<span class="sep">Country: {{BANK_COUNTRY}}</span>{{/if}}</div>
+      <div>{{#if BENEFICIARY_NAME}}Beneficiary: {{BENEFICIARY_NAME}}{{/if}}{{#if ACCOUNT_NUMBER}}<span class="sep">Account No.: {{ACCOUNT_NUMBER}}</span>{{/if}}{{#if IBAN}}<span class="sep">IBAN: {{IBAN}}</span>{{/if}}{{#if ROUTING_NUMBER}}<span class="sep">Routing No.: {{ROUTING_NUMBER}}</span>{{/if}}{{#if BANK_CURRENCY}}<span class="sep">Currency: {{BANK_CURRENCY}}</span>{{/if}}</div>
+      {{#if (or BANK_ADDRESS (or INTERMEDIARY_BANK_NAME INTERMEDIARY_BANK_SWIFT))}}<div>{{#if BANK_ADDRESS}}Bank Address: {{BANK_ADDRESS}}{{/if}}{{#if (or INTERMEDIARY_BANK_NAME INTERMEDIARY_BANK_SWIFT)}}<span class="sep">Intermediary: {{INTERMEDIARY_BANK_NAME}}{{#if INTERMEDIARY_BANK_SWIFT}}{{#if INTERMEDIARY_BANK_NAME}} / {{/if}}SWIFT {{INTERMEDIARY_BANK_SWIFT}}{{/if}}</span>{{/if}}</div>{{/if}}
+    </div><div class="amount-note">Bank charges: the Purchaser bears remitting bank charges; the Contractor bears intermediary and receiving bank charges.</div></td>
+  </tr>
+  {{else}}{{#if BANK_INFO}}
+  <tr>
+    <th>Bank Account</th>
+    <td><span style="white-space:pre-wrap;">{{BANK_INFO}}</span><div class="amount-note">Bank charges: the Purchaser bears remitting bank charges; the Contractor bears intermediary and receiving bank charges.</div></td>
+  </tr>
+  {{/if}}{{/if}}
+  <tr>
+    <th>Withholding Tax</th>
+    <td>{{#if withholding_label}}{{withholding_label}}{{#if (eq withholding_label "Applicable")}} (subject to the applicable tax treaty; a certificate of residency may be requested){{/if}}{{else}}—{{/if}}</td>
+  </tr>
+</table>
+
+{{#if SHOW_ORDER_SIGN_SECTION}}
+<!-- ===== SIGNATURES (both parties sign) ===== -->
+<p class="section-mark">■ SIGNATURES</p>
+<p class="accept-note">The Purchaser and the Contractor agree to the terms of this Purchase Order and sign below. {{#if HAS_BASE_CONTRACT}}This Purchase Order is issued under the master agreement{{#if MASTER_CONTRACT_REF}} ({{MASTER_CONTRACT_REF}}){{/if}}; matters not provided for herein are governed by that agreement.{{else}}Where no master agreement is in place, the attached Standard Terms form part of this Purchase Order.{{/if}}</p>
+<table class="sign2 sign-both" cellspacing="0" cellpadding="0">
+  <tr>
+    <th style="width:50%;">Purchaser</th>
+    <th style="width:50%;">Contractor</th>
+  </tr>
+  <tr>
+    <td style="height:30mm;">
+      <p class="who">{{PARTY_A_NAME}}</p>
+      <p class="muted">{{PARTY_A_ADDRESS}}</p>
+      {{#if PARTY_A_REP}}<p class="muted">{{PARTY_A_REP}}</p>{{/if}}
+      <table class="sign-lines" cellspacing="0" cellpadding="0">
+        <tr><td class="lbl">Date</td><td class="ul date"></td><td class="pad"></td></tr>
+        <tr><td class="lbl">Signature</td><td class="ul name" colspan="2"></td></tr>
+      </table>
+    </td>
+    <td style="height:30mm;">
+      <p class="who">{{VENDOR_NAME}}</p>
+      {{#if VENDOR_ADDRESS}}<p class="muted">{{VENDOR_ADDRESS}}</p>{{/if}}
+      {{#if (eq VENDOR_IS_CORPORATION "法人")}}{{#if VENDOR_REPRESENTATIVE_LINE}}<p class="muted">{{VENDOR_REPRESENTATIVE_LINE}}</p>{{/if}}{{#if VENDOR_CONTACT_NAME}}<p class="muted">Attn: {{VENDOR_CONTACT_NAME}}</p>{{/if}}{{/if}}
+      <table class="sign-lines" cellspacing="0" cellpadding="0">
+        <tr><td class="lbl">Date</td><td class="ul date"></td><td class="pad"></td></tr>
+        <tr><td class="lbl">Signature</td><td class="ul name" colspan="2"></td></tr>
+      </table>
+    </td>
+  </tr>
+</table>
+{{else}}{{#if (or ACCEPT_METHOD SHOW_SIGN_SECTION)}}
+<!-- ===== ACCEPTANCE (the Contractor alone signs) ===== -->
+<p class="section-mark">■ ACCEPTANCE</p>
+<p class="accept-note">{{#if ACCEPT_METHOD}}{{ACCEPT_METHOD}}{{else}}Please confirm your acceptance of this Purchase Order by dating and signing below and returning a copy to the Purchaser.{{/if}}{{#if ACCEPT_REPLY_DUE_DATE}} Please reply by {{formatDateEn ACCEPT_REPLY_DUE_DATE}}.{{/if}}{{#if ACCEPT_BY_PERFORMANCE}} If the Contractor commences the work under this Purchase Order, such commencement shall be deemed acceptance of this Purchase Order.{{/if}}{{#if HAS_BASE_CONTRACT}} This Purchase Order is issued under the master agreement{{#if MASTER_CONTRACT_REF}} ({{MASTER_CONTRACT_REF}}){{/if}}; matters not provided for herein are governed by that agreement.{{else}} Where no master agreement is in place, the attached Standard Terms form part of this Purchase Order, and acceptance of this Purchase Order constitutes acceptance of those terms.{{/if}}</p>
+{{#if SHOW_SIGN_SECTION}}
+<table class="sign2 sign-accept" cellspacing="0" cellpadding="0">
+  <tr>
+    <th style="width:40%;">Contractor</th>
+    <th>Date &amp; Signature</th>
+  </tr>
+  <tr>
+    <td style="height:26mm;">
+      <p class="who">{{VENDOR_NAME}}</p>
+      {{#if VENDOR_ADDRESS}}<p class="muted">{{VENDOR_ADDRESS}}</p>{{/if}}
+      {{#if (eq VENDOR_IS_CORPORATION "法人")}}{{#if VENDOR_CONTACT_NAME}}<p class="muted" style="margin-top:6px;">Attn: {{VENDOR_CONTACT_NAME}}</p>{{/if}}{{/if}}
+    </td>
+    <td style="height:26mm;">
+      <table class="sign-lines" cellspacing="0" cellpadding="0">
+        <tr><td class="lbl">Date</td><td class="ul date">{{#if VENDOR_ACCEPT_DATE}}{{formatDateEn VENDOR_ACCEPT_DATE}}{{/if}}</td><td class="pad"></td></tr>
+        <tr><td class="lbl">Signature</td><td class="ul name" colspan="2">{{#if VENDOR_ACCEPT_NAME}}<span style="font-size:9pt;color:#555;">{{VENDOR_ACCEPT_NAME}}</span>{{/if}}</td></tr>
+      </table>
+      <p class="muted" style="margin-top:3px; font-size:8pt;">{{#if (eq VENDOR_IS_CORPORATION "法人")}}Signed by an authorized signatory or the contact person of the Contractor{{else}}Signed by the Contractor{{/if}}</p>
+    </td>
+  </tr>
+</table>
+{{/if}}
+{{/if}}{{/if}}
+<p class="foot-note">Line items{{#if SPECIAL_TERMS}}, special terms{{/if}} and notices follow on the next page.{{#unless HAS_BASE_CONTRACT}} As no master agreement is in place, the Standard Terms are attached at the end.{{/unless}}</p>
+
+<!-- ===== Page 2: schedule ===== -->
+<p class="page-break" style="page-break-before:always; margin:0; height:0;"></p>
+<table class="sheet-title" cellspacing="0" cellpadding="0">
+  <tr>
+    <td class="t">PURCHASE ORDER — SCHEDULE</td>
+    <td class="doc-sub" style="text-align:right;">PO No.: {{ORDER_NO}}{{#if PROJECT_TITLE}}　／　Subject: {{PROJECT_TITLE}}{{/if}}</td>
+  </tr>
+</table>
+
+<p class="section-mark first">■ LINE ITEMS</p>
+<table class="items">
+  <thead>
+    <tr>
+      <th style="width:5%;">No</th>
+      <th class="l" style="width:47%;">Item / Deliverable</th>
+      <th class="center" style="width:10%;">Qty</th>
+      <th class="right" style="width:18%;">Unit Price</th>
+      <th class="right" style="width:20%;">Amount (excl. tax)</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{#if items}}
+    {{#each items}}
+    <tr class="item-main">
+      <td class="center">{{or line_no (index1 @index)}}</td>
+      <td class="l">
+        {{#if category}}<span class="tag">{{category}}</span>{{/if}}
+        <strong style="font-size:10pt;">{{item_name}}</strong>
+      </td>
+      <td class="right">{{or quantity qty}}</td>
+      <td class="right">{{#if (eq calc_method "ROYALTY")}}{{#if (gt (or amount_ex_tax amount) 0)}}{{formatMoney (or unit_price unitPrice)}}{{else}}<span style="color:#888;">-</span>{{/if}}{{else}}{{formatMoney (or unit_price unitPrice)}}{{/if}}</td>
+      <td class="right">{{#if (eq calc_method "ROYALTY")}}{{#if (gt (or amount_ex_tax amount) 0)}}<strong>{{formatMoney (or amount_ex_tax amount)}}</strong><div class="incl-note">{{or reward_label "Fee"}} ({{#if (eq deliverable_ownership "受注者")}}license fee{{else}}incentive fee{{/if}} separately)</div>{{else}}<div class="incl-note">Fee included in the<br>{{#if (eq deliverable_ownership "受注者")}}license fee{{else}}incentive fee{{/if}}</div>{{/if}}{{else}}<strong>{{formatMoney (or amount_ex_tax amount)}}</strong>{{/if}}</td>
+    </tr>
+    <tr class="item-detail">
+      <td></td>
+      <td colspan="4">
+        {{#if payment_terms}}Contract type: {{payment_terms}}　／　{{/if}}Ownership: {{#if (eq deliverable_ownership "受注者")}}Contractor (licensed to the Purchaser){{else}}Purchaser (assignment){{/if}}
+        　／　Payment: {{#if (eq calc_method "SUBSCRIPTION")}}recurring{{else}}{{#if (eq calc_method "ROYALTY")}}{{#if (eq deliverable_ownership "受注者")}}license fee{{else}}incentive fee{{/if}}{{else}}fixed fee{{/if}}{{/if}}
+        　／　{{#if (eq calc_method "SUBSCRIPTION")}}Service period{{else}}Delivery{{/if}}: {{#if (eq calc_method "SUBSCRIPTION")}}{{#if term_start}}{{formatDateCompact term_start}}{{else}}—{{/if}} – {{#if term_end}}{{formatDateCompact term_end}}{{else}}ongoing{{/if}}{{else}}{{formatDateEn delivery_date}}{{/if}}
+        　／　Payment date: {{#if (eq calc_method "SUBSCRIPTION")}}{{or (billingDayLabelEn billing_day cycle billing_timing) "not set"}}{{else}}{{#if (eq calc_method "ROYALTY")}}{{#unless (gt (or amount_ex_tax amount) 0)}}{{#if (eq deliverable_ownership "受注者")}}per royalty statement{{else}}per incentive fee calculation{{/if}}{{else}}{{formatDateEn payment_date}}{{/unless}}{{else}}{{formatDateEn payment_date}}{{/if}}{{/if}}
+        {{#if (or spec detailText)}}
+        <ul>
+          {{#if spec}}<li style="white-space:pre-line;">{{spec}}</li>{{/if}}
+          {{#if detailText}}<li>{{detailText}}</li>{{/if}}
+        </ul>
+        {{/if}}
+        {{#if payment_schedule}}
+        <div style="margin-top:4px; font-weight:700;">Payment schedule</div>
+        <table style="width:100%; border-collapse:collapse; font-size:8.5pt;">
+          <tr><th class="l" style="width:8%;">#</th><th class="l">Scheduled date</th><th class="right" style="width:30%;">Amount</th></tr>
+          {{#each payment_schedule}}
+          <tr>
+            <td class="center">{{index1 @index}}</td>
+            <td>{{date}}</td>
+            <td class="right">{{#if amount}}{{formatMoney amount}}{{/if}}</td>
+          </tr>
+          {{/each}}
+        </table>
+        {{/if}}
+      </td>
+    </tr>
+    {{/each}}
+    {{else}}
+    <tr class="item-main">
+      <td class="center">1</td>
+      <td class="l"><strong style="font-size:10pt;">{{ITEM_NAME}}</strong></td>
+      <td class="right">1</td>
+      <td class="right">-</td>
+      <td class="right"><strong>{{currency_code}} {{formatMoney grandTotalExTax}}</strong></td>
+    </tr>
+    <tr class="item-detail">
+      <td></td>
+      <td colspan="4">
+        {{#if PAYMENT_TERMS}}Contract type: {{PAYMENT_TERMS}}　／　{{/if}}Payment: {{#if (eq CALC_METHOD "SUBSCRIPTION")}}recurring{{else}}{{#if (eq CALC_METHOD "ROYALTY")}}license fee{{else}}fixed fee{{/if}}{{/if}}
+        　／　Delivery: {{formatDateEn DELIVERY_DATE}}
+        　／　Payment date: {{summaryPaymentTerms}}
+      </td>
+    </tr>
+    {{/if}}
+    <tr>
+      <td colspan="4" class="right"><strong>Fixed Fee Subtotal (excl. tax)</strong></td>
+      <td class="right">{{#if (gt (or itemsSubtotalExTax grandTotalExTax) 0)}}<strong>{{currency_code}} {{formatMoney (or itemsSubtotalExTax grandTotalExTax)}}</strong>{{else}}<span style="color:#888;">—</span>{{/if}}</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ===== OTHER FEES ===== -->
+{{#if other_fees}}
+{{#if (gt (length other_fees) 0)}}
+<p class="section-mark">■ OTHER FEES (excl. tax, added to the total)</p>
+<table class="items">
+  <thead>
+    <tr>
+      <th style="width:6mm;">No</th>
+      <th class="l">Description</th>
+      <th class="right" style="width:30mm;">Amount (excl. tax)</th>
+      <th class="l">Remarks</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{#each other_fees}}
+    <tr>
+      <td class="center">{{or line_no (index1 @index)}}</td>
+      <td class="l"><strong>{{fee_name}}</strong></td>
+      <td class="right">{{formatMoney amount}}</td>
+      <td class="l">{{remarks}}</td>
+    </tr>
+    {{/each}}
+    <tr>
+      <td colspan="2" class="right"><strong>Other Fees Subtotal (excl. tax)</strong></td>
+      <td class="right"><strong>{{currency_code}} {{formatMoney otherFeesTotal}}</strong></td>
+      <td></td>
+    </tr>
+  </tbody>
+</table>
+<table class="summary compact" style="margin-top:6px;">
+  <tr>
+    <th style="width:40%;">Order Total (excl. tax: services + other fees)</th>
+    <td>
+      <strong class="total-amount">{{currency_code}} {{formatMoney grandTotalExTax}}</strong>
+      <span class="amount-note">　Services {{currency_code}} {{formatMoney (or itemsSubtotalExTax grandTotalExTax)}} + Other Fees {{currency_code}} {{formatMoney otherFeesTotal}}</span>
+    </td>
+  </tr>
+</table>
+{{/if}}
+{{/if}}
+
+<!-- ===== EXPENSES ===== -->
+{{#if expenses}}
+{{#if (gt (length expenses) 0)}}
+<p class="section-mark">■ EXPENSES (reimbursed at actual cost)</p>
+<table class="items">
+  <thead>
+    <tr>
+      <th style="width:6mm;">No</th>
+      <th class="l">Description</th>
+      <th class="center" style="width:28mm;">Date</th>
+      <th class="right" style="width:26mm;">Amount</th>
+      <th class="l">Remarks</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{#each expenses}}
+    <tr>
+      <td class="center">{{or line_no (index1 @index)}}</td>
+      <td class="l"><strong>{{expense_name}}</strong>{{#if spec}}<div style="font-size:8pt;color:#666;">{{spec}}</div>{{/if}}</td>
+      <td class="center">{{formatDateEn spent_date}}</td>
+      <td class="right">{{formatMoney amount_inc_tax}}</td>
+      <td class="l">{{remarks}}</td>
+    </tr>
+    {{/each}}
+    <tr>
+      <td colspan="3" class="right"><strong>Expenses Total</strong></td>
+      <td class="right"><strong>{{currency_code}} {{formatMoney expensesTotalIncTax}}</strong></td>
+      <td></td>
+    </tr>
+  </tbody>
+</table>
+<p style="margin-top:4px; font-size:8.5pt; color:#555;">Expenses are reimbursed at actual cost. Please attach the original receipts (or copies) for each item listed above.</p>
+{{/if}}
+{{/if}}
+
+<!-- ===== LICENSE TERMS (items whose rights remain with the Contractor) ===== -->
+{{#if has_contractor_owned}}
+<p class="section-mark">■ LICENSE TERMS (items whose rights remain with the Contractor)</p>
+<p style="margin:0 0 4px; font-size:8.5pt; color:#555;">For items marked “Ownership: Contractor”, the Contractor retains the rights in the deliverable and grants the Purchaser a license on the terms below.</p>
+{{#if license_terms_missing}}
+<table class="box" cellspacing="0" cellpadding="0"><tr><td>License terms to be agreed separately.</td></tr></table>
+{{else}}
+<table class="items">
+  <thead>
+    <tr>
+      <th class="l" style="width:22%;">Usage</th>
+      <th class="l" style="width:22%;">Rate / Fee</th>
+      <th class="l" style="width:14%;">MG / AG</th>
+      <th class="l" style="width:20%;">Term</th>
+      <th class="l" style="width:22%;">Territory / Language</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{#each license_terms}}
+    <tr>
+      <td class="l">{{usage}}{{#if condition_no}}<div style="font-size:7.5pt;color:#666;">{{condition_no}}</div>{{/if}}</td>
+      <td class="l">{{fee}}</td>
+      <td class="l">{{guarantee}}</td>
+      <td class="l">{{term}}</td>
+      <td class="l">{{scope}}</td>
+    </tr>
+    {{/each}}
+  </tbody>
+</table>
+<p style="margin-top:4px; font-size:8.5pt; color:#555;">Rate-based license fees are not included in the Fixed Fee Subtotal and are calculated and paid separately under a royalty statement.</p>
+{{/if}}
+{{/if}}
+
+<!-- ===== SPECIAL TERMS ===== -->
+{{#if SPECIAL_TERMS}}
+<p class="section-mark">■ SPECIAL TERMS</p>
+<table class="box" cellspacing="0" cellpadding="0"><tr><td style="white-space:pre-wrap;">{{SPECIAL_TERMS}}</td></tr></table>
+{{/if}}
+
+<!-- ===== REMARKS ===== -->
+{{#if REMARKS}}
+<p class="section-mark">■ REMARKS</p>
+<table class="box" cellspacing="0" cellpadding="0"><tr><td>
+  {{#if REMARKS_FIXED}}<p style="white-space:pre-wrap; margin:0;">{{REMARKS_FIXED}}</p>{{/if}}
+  {{#if REMARKS_FREE}}<p style="white-space:pre-wrap; margin:{{#if REMARKS_FIXED}}8px{{else}}0{{/if}} 0 0;">{{REMARKS_FREE}}</p>{{/if}}
+  {{#unless (or REMARKS_FIXED REMARKS_FREE)}}<p style="white-space:pre-wrap; margin:0;">{{REMARKS}}</p>{{/unless}}
+</td></tr></table>
+{{/if}}
+
+<!-- ===== NOTICES ===== -->
+<p class="section-mark">■ NOTICES</p>
+<table class="summary compact">
+  <tr>
+    <th>To the Contractor</th>
+    <td>{{#if VENDOR_CONTACT_NAME}}Attn: {{VENDOR_CONTACT_NAME}}{{else}}{{VENDOR_NAME}}{{/if}}{{#if VENDOR_CONTACT_PHONE}}　／　Tel: {{VENDOR_CONTACT_PHONE}}{{/if}}{{#if VENDOR_EMAIL}}　／　E-mail: {{VENDOR_EMAIL}}{{/if}}</td>
+  </tr>
+  <tr>
+    <th>To the Purchaser</th>
+    <td>{{#if STAFF_NAME}}Attn: {{STAFF_NAME}}{{else}}{{PARTY_A_NAME}}{{/if}}{{#if STAFF_PHONE}}　／　Tel: {{STAFF_PHONE}}{{/if}}{{#if STAFF_EMAIL}}　／　E-mail: {{STAFF_EMAIL}}{{/if}}</td>
+  </tr>
+</table>
+<p style="font-size:9pt; color:#555;">Notices and other communications concerning this Purchase Order shall be sent to the contacts above. Where a master agreement exists, its notice clause prevails.</p>
+
+{{!-- Standard Terms (partial) are attached at the end where no master agreement exists. The partial name is taken from the previous version by the 148 SQL. --}}
+__TERMS_BLOCK__
+</body>

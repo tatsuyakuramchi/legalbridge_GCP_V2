@@ -1,0 +1,308 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { renderDocumentHtml } from "./render.js";
+import { blankPlaceholders } from "./preflight.js";
+import { PUB_TERMS_VARIABLES, pubTermsPatch, pubTitleSeeds } from "./pub-terms.js";
+import { bankInfoLine } from "./template-context.js";
+
+/**
+ * ひな形の本文は infra/v3 の SQL が運ぶ（本番に流すのはその SQL）。いまの版は
+ * 133 が運ぶ2本（1本目＝一覧形式、2本目＝別紙形式）。
+ * ここは同じ SQL から本文を取り出して描画し、本文が差す名前と計算ブロックが
+ * 出す名前がずれていないかを見張る。片方だけ直すと空欄の紙が出る。
+ */
+const here = path.dirname(fileURLToPath(import.meta.url));
+/** SQL の n 本目（0 始まり）の $html$ … $html$ を取り出す。 */
+const bodyOf = (file: string, index = 0) => {
+  const sql = readFileSync(path.resolve(here, `../../../../../infra/v3/${file}`), "utf8");
+  let from = 0;
+  for (let i = 0; i < index; i += 1) {
+    from = sql.indexOf("$html$", sql.indexOf("$html$", from) + 6) + 6;
+  }
+  const start = sql.indexOf("$html$", from) + "$html$".length;
+  const end = sql.indexOf("$html$", start);
+  assert.ok(start > 5 && end > start, `${file} に ${index + 1} 本目の $html$ … $html$ がある`);
+  return sql.slice(start, end);
+};
+/** 一覧形式（作品が少ないとき。一覧は第１条）。 */
+const listHtml = bodyOf("133_pub_terms_work_period.sql", 0);
+/** 別紙形式（作品が多いとき。一覧は別紙1）。 */
+const annexHtml = bodyOf("133_pub_terms_work_period.sql", 1);
+// 既存の試験はこれまでどおり別紙形式の本文で通す（項目は2本立てで同じ）。
+const html = annexHtml;
+
+const cond = (over: Record<string, any>) => ({
+  direction: "in", kind: "license", pricingModel: "revenue_rate", currency: "JPY",
+  exclusivity: "non_exclusive", exclusivityLabel: "非独占", notes: null, counterpartyId: 5,
+  termStart: "2026-10-01", termEnd: "2031-09-30",
+  scopes: { region: ["全世界"], language: ["日本語"], media: [] as string[] }, ...over
+});
+const context: Record<string, any> = {
+  document: { number: "ARC-PUBT-2026-0041", issuedOn: "2026-10-01" },
+  company: { name: "株式会社サンプル出版", address: "東京都文京区本郷", rep: "代表取締役 乙山 乙子", invoiceNo: "T9876543210987" },
+  agreement: { no: "ARC-PUBM-2025-0003", title: "出版等利用許諾基本契約書", autoRenewal: true, renewalNoticeMonths: 1 },
+  contacts: [{ role: "primary", name: "甲野 甲太", email: "kono@example.test", phone: "03-0000-0000", department: null }],
+  owner: { name: "編集 花子", email: "hanako@example.test", phone: "03-1111-1111", department: "編集部" },
+  bank: { bankName: "〇〇銀行", branchName: "本店", accountType: "ordinary", accountNumber: "0000000", holderKana: "コウノ コウタ" },
+  conditions: [
+    cond({ id: 1, conditionNo: "CL-2026-00451", name: "星降る夜のはなし（単行本）", workId: 10,
+      work: { title: "星降る夜のはなし" }, ratePct: 11, notes: "初版100部（見本・献本除く）", scopes: { region: ["全世界"], language: ["日本語"], media: ["紙"] } }),
+    cond({ id: 2, conditionNo: "CL-2026-00452", name: "星降る夜のはなし（単行本）", workId: 10,
+      work: { title: "星降る夜のはなし" }, ratePct: 15, scopes: { region: ["全世界"], language: ["日本語"], media: ["電子"] } }),
+    cond({ id: 3, conditionNo: "CL-2026-00453", name: "ねこの図書館 ①", workId: 11,
+      work: { title: "ねこの図書館" }, ratePct: 10, exclusivity: "exclusive", exclusivityLabel: "独占", scopes: { region: [], language: [], media: ["紙"] } })
+  ]
+};
+context.condition = { ...context.conditions[0],
+  counterparty: { name: "甲野 甲太", kind: "individual", address: "東京都千代田区", invoiceNo: null, withholding: true } };
+
+function render(manual: Record<string, unknown>) {
+  const patch = pubTermsPatch(context, manual);
+  const values = { taxRate: 10, BANK_INFO: bankInfoLine(context.bank), ...patch };
+  return { out: renderDocumentHtml(html, values), values };
+}
+
+test("本文が差す名前はすべて計算ブロックから出る（空欄で出る差し込みが無い）", () => {
+  const rows = pubTitleSeeds(context);
+  rows[0] = { ...rows[0], copyright: "© 2026 甲野 甲太", third_party: "なし" };
+  const { out, values } = render({ pub_titles: rows, "翻訳版取り分": "50", "特記事項": "電子署名で締結する。",
+    // 相手先の担当者は自動で入らないので、手入力（候補から入れる想定）。
+    "許諾者連絡先": "甲野 甲太 ／ kono@example.test ／ 03-0000-0000" });
+  const blanks = blankPlaceholders(html, values, PUB_TERMS_VARIABLES.map((v) => v.name));
+  // 行の中の名前（no / title …）は each の文脈なので、外側の値には無くてよい。
+  const rowNames = new Set(["no", "title", "edition", "copyright", "thirdParty", "printRate", "printExclusivity",
+    "digitalRate", "digitalExclusivity", "note", "hasPrint", "hasDigital",
+    "translation", "hasTranslation", "translationConsent", "hasNoteRow",
+    "translationLabel", "translationDerivative", "term", "hasTerm"]);
+  const outside = blanks.filter((name) => !rowNames.has(name));
+  assert.deepEqual(outside, [], `空欄で出る差し込み: ${outside.join(", ")}`);
+  assert.ok(!out.includes("{{"), "差し込みが残っていない");
+  assert.ok(out.includes("size: A4 portrait"), "A4 縦");
+  assert.ok(out.includes("2026年10月1日"), "締結日は和暦風の表記");
+  assert.ok(out.includes("11%／非独占"), "紙の料率と独占区分");
+  assert.ok(out.includes("15%／非独占"), "電子の料率と独占区分");
+  assert.ok(out.includes("<td class=\"c\">—</td>"), "電子の無い作品は「—」だけ");
+  assert.ok(out.includes("10%／独占"));
+  assert.ok(out.includes("© 2026 甲野 甲太"));
+  assert.ok(out.includes("初版100部（見本・献本除く）"));
+  assert.ok(out.includes("対価（税抜）の 50%"), "翻訳版の行");
+  assert.ok(out.includes("〇〇銀行 / 本店 / 普通 0000000 / コウノ コウタ"), "振込先は取引先の口座");
+  assert.ok(out.includes("源泉徴収し"), "個人の許諾者は源泉あり");
+  assert.ok(out.includes("甲野 甲太 ／ kono@example.test ／ 03-0000-0000"), "手で入れた通知先が出る");
+  assert.ok(out.includes("編集部 ／ 編集 花子"));
+  assert.ok(out.includes("1か月前までに"), "合意の更新通知が入る");
+  assert.ok(out.includes("第１０条"), "特記事項あり");
+});
+
+test("翻訳版なし・署名欄なし・法人の許諾者・期間の定めなし", () => {
+  const corp = { ...context, condition: { ...context.condition,
+    counterparty: { name: "株式会社甲", kind: "corporate", withholding: false } },
+    conditions: context.conditions.map((c: any) => ({ ...c, termEnd: null })) };
+  const patch = pubTermsPatch(corp, { "署名欄": "表示しない", "特記事項": "" });
+  const out = renderDocumentHtml(html, { taxRate: 10, BANK_INFO: "", ...patch });
+  assert.ok(!out.includes("翻訳版"), "翻訳版の行が無い");
+  assert.ok(!out.includes("class=\"sign\""), "署名欄が無い");
+  assert.ok(out.includes("甲が法人であるため源泉徴収は行わない"));
+  assert.ok(out.includes("期間の定めなし"));
+  assert.ok(!out.includes("第１０条"));
+  assert.ok(!out.includes("{{"));
+});
+
+test("r5：一覧は別紙1に出て、本文の第１条は点数の要約になる", () => {
+  const rows = pubTitleSeeds(context);
+  const { out } = render({ pub_titles: rows, "許諾者連絡先": "甲 ／ k@example.test" });
+  // 第１条は要約。一覧そのものは署名欄より後ろ（別紙）にある。
+  assert.ok(out.includes("別紙1「対象著作物一覧」"), "第１条が別紙を指す");
+  assert.ok(out.includes("（全 2 点）"), `作品数が入る: ${out.slice(out.indexOf("別紙1「対象著作物一覧」") - 40, out.indexOf("別紙1「対象著作物一覧」") + 60)}`);
+  assert.ok(out.indexOf('class="sign"') < out.indexOf("別紙1　対象著作物一覧"), "別紙は署名欄より後ろ");
+  assert.ok(out.indexOf("別紙1　対象著作物一覧") < out.indexOf('<table class="titles"'), "別紙の中に一覧がある");
+  // 条文が消えた「第１条一覧」を指したままだと、別紙と食い違う。
+  assert.ok(!out.includes("第１条一覧"), "参照先は別紙に直っている");
+  assert.ok(out.includes("別紙1の「紙」欄"), "第２条・第４条が別紙を指す");
+  assert.ok(out.includes("page-break-before: always"), "別紙は改ページして始まる");
+});
+
+test("2本立て：一覧形式は第１条に表、別紙形式は別紙1に表。項目は同じ", () => {
+  // 一覧形式（作品が少ないとき）。表が署名欄より前にある。
+  assert.ok(!listHtml.includes("別紙1　対象著作物一覧"), "一覧形式に別紙は無い");
+  assert.ok(listHtml.indexOf('<table class="titles"') < listHtml.indexOf('class="sign"'), "表は署名欄より前");
+  assert.ok(listHtml.includes("第１条一覧「紙」欄"), "条文は第１条の一覧を指す");
+  // 別紙形式（作品が多いとき）。表は署名欄より後ろ。
+  assert.ok(annexHtml.indexOf('class="sign"') < annexHtml.indexOf("別紙1　対象著作物一覧"), "別紙は署名欄より後ろ");
+  assert.ok(annexHtml.includes("別紙1の「紙」欄"), "条文は別紙を指す");
+  // どちらも同じ名前を差す（項目は1つの定義で足りる）。
+  for (const name of ["docNo", "signDate", "licensorName", "licenseeName", "#each titles"]) {
+    assert.ok(listHtml.includes(name) && annexHtml.includes(name), `${name} は両方にある`);
+  }
+});
+
+/**
+ * 翻訳版再許諾（A-033）。作品ごとに率が違うので、条文に率は書かず一覧の欄に出す。
+ * 別途合意の要否も作品ごとなので、第２条は 要／不要／混在 で言い方が変わる。
+ */
+const withTranslation = (over: Array<Record<string, any>>): Record<string, any> =>
+  ({ ...context, conditions: [...context.conditions, ...over] });
+const trans = (id: number, workId: number, title: string, usageType: string,
+               ratePct: number, consent: "covered" | "required") =>
+  cond({ id, conditionNo: `CL-2026-004${id}`, name: `${title}｜翻訳版再許諾`, workId,
+         work: { title }, ratePct, usageType, sublicenseConsent: consent,
+         scopes: { region: ["全世界"], language: [], media: [] } });
+
+test("翻訳版再許諾：一覧に「紙 50%／電子 40%」と別途合意の要否が出て、第４条が一覧を指す", () => {
+  const ctx = withTranslation([
+    trans(4, 10, "星降る夜のはなし", "pub_sub_print", 50, "required"),
+    trans(5, 10, "星降る夜のはなし", "pub_sub_digital", 40, "required")
+  ]);
+  const patch = pubTermsPatch(ctx, { "許諾者連絡先": "甲 ／ k@example.test" });
+  const out = renderDocumentHtml(annexHtml, { taxRate: 10, BANK_INFO: "", ...patch });
+  assert.ok(!out.includes("{{"));
+  assert.ok(out.includes('<span class="lbl">翻訳版再許諾</span>紙 50%／電子 40%（別途合意 要）'),
+    "作品の下の行に1文で出る");
+  assert.ok(!out.includes('class="trans"'), "列は作らない（表の幅は翻訳版なしと同じ）");
+  assert.ok(out.includes("別紙1の「翻訳版再許諾」の行"), "第４条は一覧の行を指す");
+  assert.ok(!out.includes("対価（税抜）の 50%"), "条文に率は書かない（作品ごとに違う）");
+  assert.ok(out.includes("甲乙が別途書面で合意する"), "第２条は「要」の書き方");
+  // 翻訳版が無い作品には、その行を作らない（備考があれば備考だけの行）。
+  assert.ok(out.includes('<span class="lbl">備考</span>初版100部'));
+});
+
+test("翻訳版再許諾：別途合意が作品ごとに違うときは、第２条が一覧の欄で書き分ける", () => {
+  const ctx = withTranslation([
+    trans(4, 10, "星降る夜のはなし", "pub_sub_print", 50, "required"),
+    trans(6, 11, "ねこの図書館", "pub_sub_print", 30, "covered")
+  ]);
+  const patch = pubTermsPatch(ctx, { "許諾者連絡先": "甲 ／ k@example.test" });
+  assert.equal(patch.translationConsentMixed, true);
+  const out = renderDocumentHtml(annexHtml, { taxRate: 10, BANK_INFO: "", ...patch });
+  assert.ok(out.includes("「別途合意 要」とある作品は"), "要の作品の書き方");
+  assert.ok(out.includes("「別途合意 不要」とある作品は"), "不要の作品の書き方");
+  assert.ok(out.includes("紙 50%"), "作品ごとの率");
+  assert.ok(out.includes("紙 30%"));
+});
+
+test("翻訳版再許諾：すべて不要なら、第２条は個別の承諾を要しないと書く", () => {
+  const ctx = withTranslation([trans(4, 10, "星降る夜のはなし", "pub_sub_print", 50, "covered")]);
+  const patch = pubTermsPatch(ctx, { "許諾者連絡先": "甲 ／ k@example.test" });
+  assert.equal(patch.translationConsentAllCovered, true);
+  assert.equal(patch.translationConsentRequired, false);
+  const out = renderDocumentHtml(annexHtml, { taxRate: 10, BANK_INFO: "", ...patch });
+  assert.ok(out.includes("甲の個別の事前承諾を要しない"));
+  assert.ok(!out.includes("「別途合意 要」とある作品は"));
+  assert.ok(out.includes("別途合意 不要"), "一覧の欄には要否が出る");
+});
+
+test("翻訳版の条件が無ければ、これまでどおり手入力の取り分で書く（列は出ない）", () => {
+  const patch = pubTermsPatch(context, { "翻訳版取り分": "50", "許諾者連絡先": "甲 ／ k@example.test" });
+  const out = renderDocumentHtml(annexHtml, { taxRate: 10, BANK_INFO: "", ...patch });
+  assert.ok(out.includes("対価（税抜）の 50%"), "第４条は手入力の取り分");
+  assert.ok(!out.includes('<span class="lbl">翻訳版再許諾</span>'), "一覧に翻訳版の行は出ない");
+});
+
+/**
+ * 翻訳の立て付け（A-034）。「翻訳は二次的著作物だ」という取引先のために、
+ * 条文の書き方を条件書ごとに選べる。許諾料の計算は変わらない。
+ */
+const derivCtx = () => withTranslation([
+  trans(4, 10, "星降る夜のはなし", "pub_sub_print", 50, "required"),
+  trans(5, 10, "星降る夜のはなし", "pub_sub_digital", 40, "required")
+]);
+
+test("二次的著作物：翻訳は許諾内容から外れ、二次利用（別途合意）に入る", () => {
+  const patch = pubTermsPatch(derivCtx(), { "翻訳の扱い": "二次的著作物", "許諾者連絡先": "甲" });
+  const out = renderDocumentHtml(annexHtml, { taxRate: 10, BANK_INFO: "", ...patch });
+  assert.ok(!out.includes("{{"));
+  // 許諾したように読める書き方は残っていない。
+  assert.ok(!out.includes("翻訳物（二次的著作物）を出版・配信することを許諾する"), "許諾しない");
+  assert.ok(!out.includes("<th>翻訳物の著作権</th>"), "許諾を前提にした行は出さない");
+  assert.ok(!out.includes("<th>終了後の翻訳物</th>"));
+  assert.ok(!out.includes("<th>翻訳版</th>"), "第２条・第４条・第５条に翻訳の行は無い");
+  // 二次利用の行にまとめ、別途合意が要ることと、権利が甲に留保されることを書く。
+  assert.ok(out.includes("翻訳（二次的著作物の作成）及び翻訳物の出版・配信、映像化・商品化その他の二次利用は、"
+    + "いずれも本条件書の対象外とし、甲乙の別途合意による。"), "二次利用に入れる");
+  assert.ok(out.includes("著作権法第27条・第28条に定める権利は甲に留保され、本条件書による許諾には含まれない"));
+  assert.ok(out.includes("翻訳について別途合意するときの許諾料の料率は、別紙1の各作品の「翻訳版」の行を目安とする"),
+    "料率は一覧の行を目安として指す");
+  assert.ok(out.includes("別途合意により翻訳物を出版するときは"), "第７条は別途合意のときの表示として書く");
+  // 一覧には料率だけ出す。別途合意は条文で常に要るので、行に要否は出さない。
+  assert.ok(out.includes('<span class="lbl">翻訳版</span>紙 50%／電子 40%<'));
+  assert.ok(!out.includes("別途合意 要）"), "行に要否は出さない");
+  assert.ok(!out.includes("再許諾先"), "二次的著作物では再許諾先と呼ばない");
+});
+
+test("既定（再許諾）のままなら、これまでの書き方で出る", () => {
+  const patch = pubTermsPatch(derivCtx(), { "許諾者連絡先": "甲" });
+  assert.equal(patch.translationDerivative, false);
+  const out = renderDocumentHtml(annexHtml, { taxRate: 10, BANK_INFO: "", ...patch });
+  assert.ok(out.includes("乙が第三者に再許諾して行わせる翻訳版の出版"));
+  assert.ok(out.includes("乙が再許諾先から受領する対価（税抜）× 料率"));
+  assert.ok(out.includes('<span class="lbl">翻訳版再許諾</span>'));
+  assert.ok(out.includes("別途合意 要）"), "行に要否が出る");
+  assert.ok(out.includes("映像化・商品化その他の二次利用は本条件書の対象外とし、別途合意による。"),
+    "二次利用の行はこれまでどおり");
+  assert.ok(!out.includes("著作権法第27条"), "翻訳権の条文は出さない");
+});
+
+test("二次的著作物で翻訳版の条件が無ければ、二次利用は料率を指さない", () => {
+  const patch = pubTermsPatch(context, { "翻訳の扱い": "二次的著作物", "許諾者連絡先": "甲" });
+  const out = renderDocumentHtml(annexHtml, { taxRate: 10, BANK_INFO: "", ...patch });
+  // 立て付けの宣言（対象外・別途合意）は、条件が無くても書いておく。
+  assert.ok(out.includes("本条件書の対象外とし、甲乙の別途合意による"));
+  assert.ok(!out.includes("の行を目安とする"), "指す先が無いので料率には触れない");
+  assert.ok(!out.includes("<th>翻訳物の著作権</th>"));
+});
+
+/**
+ * 作品ごとの許諾期間と更新（A-039）。備考と同じ行に1文で出る。
+ * 回数は終了日・単位・締結日から数えるので、紙に出る満了日が動く。
+ */
+test("許諾期間：作品ごとに備考と同じ行へ出し、更新した回数だけ満了日が進む", () => {
+  const ctx = {
+    ...context,
+    conditions: context.conditions.map((c: any, i: number) => (i === 0
+      ? { ...c, termStart: "2026-10-01", termEnd: "2031-09-30",
+          autoRenew: true, renewMonths: 12, renewStoppedOn: null }
+      : { ...c, termStart: "2026-10-01", termEnd: "2029-09-30", autoRenew: false }))
+  };
+  const patch = pubTermsPatch(ctx, { "締結日": "2033-05-01", "許諾者連絡先": "甲" });
+  const out = renderDocumentHtml(annexHtml, { taxRate: 10, BANK_INFO: "", ...patch });
+  assert.ok(!out.includes("{{"));
+  // 2031.9.30 の満了を2回またいだので、いまの期間は 2033.9.30 まで。
+  assert.ok(out.includes('<span class="lbl">許諾期間</span>2026.10.1〜2033.9.30（更新 2回）'),
+    "更新した回数と、更新後の満了日");
+  assert.ok(out.includes('<span class="lbl">許諾期間</span>2026.10.1〜2029.9.30（更新なし）'),
+    "自動更新しない作品");
+  assert.ok(out.includes("一覧の「許諾期間」の行による"), "第３条が作品ごとの期間を指す");
+  // 備考と同じ行に並ぶ（行は増えない）。
+  assert.ok(out.includes('（更新 2回）<span class="lbl">備考</span>初版100部'));
+});
+
+test("許諾期間：止めた作品は「以後更新しない」。決定済みの紙は締結日で固まる", () => {
+  const base = (over: Record<string, unknown>) => ({
+    ...context,
+    conditions: context.conditions.map((c: any) => ({
+      ...c, termStart: "2026-10-01", termEnd: "2031-09-30",
+      autoRenew: true, renewMonths: 12, ...over
+    }))
+  });
+  const stopped = pubTermsPatch(base({ renewStoppedOn: "2033-05-01" }),
+    { "締結日": "2040-01-01", "許諾者連絡先": "甲" });
+  const out = renderDocumentHtml(annexHtml, { taxRate: 10, BANK_INFO: "", ...stopped });
+  assert.ok(out.includes("2026.10.1〜2033.9.30（更新 2回・以後更新しない）"));
+
+  // 同じ条件でも、締結日が違えば回数が違う（決定した紙はその日で固まる）。
+  const early = pubTermsPatch(base({}), { "締結日": "2031-09-30", "許諾者連絡先": "甲" });
+  const outEarly = renderDocumentHtml(annexHtml, { taxRate: 10, BANK_INFO: "", ...early });
+  assert.ok(outEarly.includes("2026.10.1〜2031.9.30（更新 0回）"));
+});
+
+test("許諾期間：期間を持たない条件なら行を出さない（これまでの紙は変わらない）", () => {
+  const patch = pubTermsPatch({ ...context,
+    conditions: context.conditions.map((c: any) => ({ ...c, termStart: null, termEnd: null })) },
+    { "許諾者連絡先": "甲" });
+  const out = renderDocumentHtml(annexHtml, { taxRate: 10, BANK_INFO: "", ...patch });
+  assert.ok(!out.includes('<span class="lbl">許諾期間</span>'));
+  assert.ok(!out.includes("一覧の「許諾期間」の行による"));
+});
