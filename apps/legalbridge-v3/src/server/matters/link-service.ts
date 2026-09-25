@@ -467,6 +467,23 @@ export class MatterLinkService {
           && !["true", "はい", "1", "あり"].includes(String(d.has_base ?? ""))).length
       };
 
+      // 受付箱から繋いだ依頼。表がまだ無い環境（004 の A-052 未適用）では出さない。
+      try {
+        const intake = await this.database.query(
+          `SELECT count(*)::int AS total,
+                  count(*) FILTER (WHERE has_unseen_update)::int AS unseen,
+                  COALESCE(array_agg(COALESCE(backlog_issue_key, request_no) ORDER BY created_at), '{}') AS keys
+             FROM intake_requests
+            WHERE matter_id = $1 AND state IN ('accepted', 'duplicate')`, [matterId]);
+        const i = intake.rows[0] as any;
+        facts.intake = {
+          total: Number(i?.total ?? 0), unseen: Number(i?.unseen ?? 0),
+          keys: ((i?.keys ?? []) as unknown[]).filter(Boolean).map(String)
+        };
+      } catch (error) {
+        if ((error as { code?: string })?.code !== "42P01") throw error;
+      }
+
       const steps = buildFlow(facts);
       return { steps, current: currentStep(steps), facts };
     } catch (error) { throw translate(error); }

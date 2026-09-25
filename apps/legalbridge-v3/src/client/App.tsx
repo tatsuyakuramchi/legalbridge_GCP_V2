@@ -14,8 +14,9 @@ import { PartiesWorkspace } from "./PartiesWorkspace.js";
 import { FlowMonitorWorkspace } from "./FlowMonitorWorkspace.js";
 import { DriftWorkspace } from "./DriftWorkspace.js";
 import { OpsWorkspace, HomeWorkspace, type OpsTab } from "./OpsWorkspace.js";
+import { IntakeWorkspace } from "./IntakeWorkspace.js";
 
-type View = "home" | "matters" | "agreements" | "conditions" | "works" | "parties" | "documents" | "closing" | "money" | "drift" | "flows" | "ops";
+type View = "home" | "intake" | "matters" | "agreements" | "conditions" | "works" | "parties" | "documents" | "closing" | "money" | "drift" | "flows" | "ops";
 interface Me {
   user?: { email: string; role: string };
   readOnly: boolean;
@@ -26,6 +27,8 @@ interface Me {
 const NAV: Array<{ section: string; items: Array<{ view: View; label: string }> }> = [
   { section: "入口", items: [
     { view: "home", label: "ホーム" },
+    // 依頼はまず受付箱に入る。受け付けると案件になる（docs/v3-request-inbox.md）。
+    { view: "intake", label: "受付箱" },
     { view: "matters", label: "案件" }
   ] },
   { section: "横断で見る", items: [
@@ -63,6 +66,13 @@ export function App() {
   const [driftMatter, setDriftMatter] = useState<number | null>(null);
 
   useEffect(() => { api.get<Me>("/me").then(setMe).catch(() => setMe(null)); }, []);
+
+  /** 受付箱の未処理＋更新あり。左の桁に件数を出して、届いた依頼を見落とさない。 */
+  const [intakeCount, setIntakeCount] = useState(0);
+  useEffect(() => {
+    api.get<{ new: number; updated: number }>("/intake/counts")
+      .then((c) => setIntakeCount(c.new + c.updated)).catch(() => setIntakeCount(0));
+  }, [view]);
 
   /** 左の桁を畳んでいるか。畳んだ状態はこの端末に覚えておく。 */
   const [railSlim, setRailSlim] = useState(() => {
@@ -205,7 +215,10 @@ export function App() {
                         if (item.view === "drift") setDriftMatter(null);
                         setFocus(null);
                         setView(item.view);
-                      }}>{item.label}</button>
+                      }}>{item.label}
+                      {item.view === "intake" && intakeCount > 0 && (
+                        <span className="tag warn" style={{ marginLeft: 6 }}>{intakeCount}</span>
+                      )}</button>
             ))}
           </div>
         ))}
@@ -236,6 +249,10 @@ export function App() {
             if (v === "drift") setDriftMatter(null);
             setView(v);
           }} />
+        )}
+        {view === "intake" && (
+          <IntakeWorkspace onOpenMatter={(id) => openEntity("matter", id)}
+            onCountsChange={(c) => setIntakeCount(c.new + c.updated)} />
         )}
         {view === "matters" && (
           <MattersWorkspace key={`m${focusFor("matters") ?? 0}`}

@@ -2,8 +2,8 @@ import { GoogleAuth } from "google-auth-library";
 import { config } from "../config.js";
 import type { Transactable } from "../core/db.js";
 import {
-  BacklogAdapter, CloudSignAdapter, GmailAdapter, MemoryAdapter, SlackAdapter,
-  type DispatchAdapter
+  BacklogAdapter, CloudSignAdapter, GmailAdapter, MemoryAdapter, MemoryBacklogReader, SlackAdapter,
+  type BacklogReader, type DispatchAdapter
 } from "./adapters.js";
 import { DispatchService } from "./dispatch-service.js";
 import type { IntegrationChannel } from "./gate.js";
@@ -72,4 +72,14 @@ export function buildMailSource(): MailSource | null {
   if (useMemory()) return new MemoryMailSource([]);
   if (!config.gmailIntakeLabel) return null;
   return new GmailMailSource(accessToken(googleAuth()), config.gmailIntakeLabel);
+}
+
+/**
+ * Backlog を読む口（受付箱の取得）。接続情報が無ければ作らない（ジョブが理由を返して終わる）。
+ * 送信の段階（BACKLOG_MODE）はジョブ側で見る。
+ */
+export function buildBacklogReader(): BacklogReader | null {
+  if (useMemory()) return new MemoryBacklogReader([]);
+  if (!(config.backlogHost && config.backlogApiKey && config.backlogProjectId)) return null;
+  return new BacklogAdapter(config.backlogHost, config.backlogApiKey, config.backlogProjectId);
 }

@@ -273,6 +273,60 @@ export class BacklogAdapter implements DispatchAdapter {
     const body = await response.json() as { issueKey?: string; id?: number };
     return { externalId: String(body.issueKey ?? body.id ?? ""), raw: body };
   }
+
+  /**
+   * 課題の一覧を読む（受付箱の取得に使う）。書き込みはしない。
+   * 失敗は例外にする。空の配列を返すと「課題が0件」と区別できず、栞を進めてしまう。
+   */
+  async listIssues(params: Record<string, string | number>): Promise<BacklogIssue[]> {
+    const query = new URLSearchParams({ apiKey: this.apiKey });
+    query.append("projectId[]", this.projectId);
+    for (const [k, v] of Object.entries(params)) query.append(k, String(v));
+    const response = await this.fetchImpl(`https://${this.host}/api/v2/issues?${query.toString()}`);
+    if (!response.ok) {
+      const detail = (await response.text()).slice(0, 500);
+      throw new Error(`Backlog の課題一覧を読めませんでした (${response.status}): ${detail}`);
+    }
+    const body = await response.json();
+    if (!Array.isArray(body)) throw new Error("Backlog の課題一覧が配列ではありません");
+    return body as BacklogIssue[];
+  }
+}
+
+/** Backlog の課題（受付箱で使う項目だけ）。 */
+export interface BacklogIssue {
+  id: number;
+  issueKey: string;
+  summary?: string | null;
+  description?: string | null;
+  issueType?: { name?: string | null } | null;
+  status?: { name?: string | null } | null;
+  createdUser?: { name?: string | null } | null;
+  dueDate?: string | null;
+  created?: string | null;
+  updated?: string | null;
+  customFields?: Array<{ name?: string | null; value?: unknown }> | null;
+}
+
+/** 課題を読む口。本物は BacklogAdapter、手元とテストは MemoryBacklogReader。 */
+export interface BacklogReader {
+  readonly configured: boolean;
+  listIssues(params: Record<string, string | number>): Promise<BacklogIssue[]>;
+}
+
+/** 手元とテスト用。渡した課題を更新順に、ページで切って返す。 */
+export class MemoryBacklogReader implements BacklogReader {
+  readonly configured = true;
+  readonly calls: Array<Record<string, string | number>> = [];
+  constructor(public issues: BacklogIssue[] = []) {}
+  async listIssues(params: Record<string, string | number>): Promise<BacklogIssue[]> {
+    this.calls.push(params);
+    const offset = Number(params.offset ?? 0);
+    const count = Number(params.count ?? 100);
+    const sorted = [...this.issues].sort((a, b) =>
+      String(a.updated ?? "").localeCompare(String(b.updated ?? "")));
+    return sorted.slice(offset, offset + count);
+  }
 }
 
 /** 送らずに記録だけ残す。未設定の環境とテストで使う。 */

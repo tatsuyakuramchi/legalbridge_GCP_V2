@@ -239,3 +239,31 @@ test("業務委託の「支払」は、定額の条件が全部払い切れて�
   const rate = buildFlow(facts({ payments: { total: 1, paid: 1 }, fixedConditions: { total: 0, done: 0 } }));
   assert.equal(rate[5].done, true);
 });
+
+// ---- 受付（docs/v3-request-inbox.md）----
+
+test("受付箱から繋いだ依頼があれば、どのフローにも先頭に「受付」を出す", () => {
+  const intake = { total: 2, unseen: 1, keys: ["LEGAL-9001", "LEGAL-9002"] };
+  for (const kind of ["outsourcing", "work"] as const) {
+    const steps = buildFlow(facts({ matterKind: kind, intake }));
+    assert.equal(steps[0].name, "受付");
+    assert.equal(steps[0].done, true);
+    assert.equal(steps[0].tab, "communications");
+    assert.match(steps[0].detail, /依頼 2 件（LEGAL-9001・LEGAL-9002）/);
+    assert.match(steps[0].detail, /更新あり 1 件/);
+    assert.equal(steps[0].no, 1);
+    assert.notEqual(currentStep(steps)?.name, "受付", "受付は済なので「いま」にならない");
+  }
+});
+
+test("その他案件は元の「受付」の根拠を差し替えるだけ（二重に出さない）", () => {
+  const steps = buildFlow(facts({ matterKind: "single", intake: { total: 1, unseen: 0, keys: ["REQ-2026-00001"] } }));
+  assert.equal(steps.filter((s) => s.name === "受付").length, 1);
+  assert.match(steps[0].detail, /REQ-2026-00001/);
+});
+
+test("受付箱を通っていない案件は、そう書く。渡されなければ従来どおり", () => {
+  const none = buildFlow(facts({ intake: { total: 0, unseen: 0, keys: [] } }));
+  assert.match(none[0].detail, /受付箱を通っていない/);
+  assert.notEqual(buildFlow(facts())[0].name, "受付");
+});

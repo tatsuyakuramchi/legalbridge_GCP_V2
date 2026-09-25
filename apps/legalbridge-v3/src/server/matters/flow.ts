@@ -74,6 +74,11 @@ export interface FlowFacts {
   tasks?: { total: number; done: number };
   /** 「基本契約なし（発注書の約款）」で決定した発注書の枚数。契約が無くても正常な取引。 */
   spotOrders?: number;
+  /**
+   * 受付箱から繋いだ依頼（docs/v3-request-inbox.md）。渡されたときだけ、
+   * どのフローにも先頭に「受付」を出す。keys は Backlog の課題キー（無ければ依頼番号）。
+   */
+  intake?: { total: number; unseen: number; keys: string[] };
 }
 
 /** 工程のブロック。作品案件は 作品 → 制作委託 → 許諾 → 継続、業務案件は 業務委託 → 継続。 */
@@ -315,6 +320,19 @@ export function hasProduction(f: FlowFacts): boolean {
   return (f.serviceConditions ?? 0) > 0 || (f.contractorOwned ?? 0) > 0;
 }
 
+/** 「受付」の根拠。受付箱から繋いだ依頼があれば、それを書く。 */
+function intakeDetail(f: FlowFacts): string {
+  const i = f.intake;
+  if (!i || i.total === 0) return "案件が立っている（受付箱を通っていない）";
+  const keys = i.keys.slice(0, 2).join("・") + (i.total > 2 ? ` ほか ${i.total - 2} 件` : "");
+  return `依頼 ${i.total} 件（${keys}）` + (i.unseen ? `。Backlog の更新あり ${i.unseen} 件` : "");
+}
+
+/** 受付。案件が立っていれば済（受け付けた＝案件がある）。 */
+function intakeStep(f: FlowFacts, block: FlowBlock): FlowStep {
+  return { no: 0, name: "受付", tab: "communications", block, done: true, detail: intakeDetail(f) };
+}
+
 export function buildFlow(facts: FlowFacts): FlowStep[] {
   let steps: FlowStep[];
   if (facts.matterKind === "work") {
@@ -330,6 +348,11 @@ export function buildFlow(facts: FlowFacts): FlowStep[] {
     // その他案件（プロジェクト）は、付帯する契約か子の案件があるときだけ継続を出す。
     steps = [...otherSteps(facts),
              ...(facts.liveAgreements?.length || facts.children?.total ? continueStep(facts) : [])];
+  }
+  if (facts.intake) {
+    // その他案件は元から先頭が「受付」。根拠だけ依頼の中身に差し替える。
+    if (steps[0]?.name === "受付") steps[0] = { ...steps[0], detail: intakeDetail(facts) };
+    else steps = [intakeStep(facts, steps[0]?.block ?? "other"), ...steps];
   }
   return steps.map((s, i) => ({ ...s, no: i + 1 }));
 }

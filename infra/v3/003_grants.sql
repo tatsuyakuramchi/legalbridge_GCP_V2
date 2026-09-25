@@ -105,6 +105,9 @@ REVOKE UPDATE, DELETE, TRUNCATE ON v3.matter_communications FROM legalbridge_v3_
 -- （貼った文面の出どころを後から辿れるようにしておく）。
 REVOKE DELETE, TRUNCATE ON v3.text_snippets FROM legalbridge_v3_runtime;
 
+-- 依頼の受付箱は消さない。対象外にしたものも受付箱に戻せるように残す（A-052）。
+REVOKE DELETE, TRUNCATE ON v3.intake_requests FROM legalbridge_v3_runtime;
+
 -- テンプレート本文は読み取りのみ。改訂は管理者の運用でやる（互換境界）。
 REVOKE INSERT, UPDATE, DELETE ON v3.document_templates FROM legalbridge_v3_runtime;
 REVOKE INSERT, UPDATE, DELETE ON v3.document_template_versions FROM legalbridge_v3_runtime;

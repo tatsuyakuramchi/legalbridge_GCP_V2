@@ -84,11 +84,13 @@ import { MonitoringRepository } from "./monitoring/repository.js";
 import { ReceivableRepository } from "./monitoring/receivables.js";
 import { ContractCheckRepository } from "./monitoring/contract-check.js";
 import { DailyJob } from "./jobs/daily.js";
-import { IntakeService } from "./integrations/intake-service.js";
 import {
   INTAKE_COMMANDS, buildIntakeModal, parseSubmission
 } from "./integrations/slack-intake.js";
-import { buildAdapters, buildDispatch, buildMailSource } from "./integrations/factory.js";
+import { buildAdapters, buildBacklogReader, buildDispatch, buildMailSource } from "./integrations/factory.js";
+import { IntakeRepository, type IntakeTab } from "./intake/repository.js";
+import { IntakeRequestService } from "./intake/request-service.js";
+import { BacklogPullJob } from "./intake/backlog-pull.js";
 import { MailIntakeJob } from "./jobs/mail-intake.js";
 import { BacklogService } from "./integrations/backlog-service.js";
 import type { IntegrationChannel } from "./integrations/gate.js";
@@ -190,6 +192,14 @@ export function createRoutes(database: Transactable) {
   const backlog = new BacklogService(database, dispatch, {
     host: config.backlogHost, issueTypeId: config.backlogIssueTypeId
   });
+  // 依頼の受付箱（docs/v3-request-inbox.md）。
+  const intakeRepo = new IntakeRepository(database);
+  const intakeRequests = new IntakeRequestService(database, dispatch, {
+    backlogIssueTypeId: config.backlogIssueTypeId
+  });
+  const backlogPull = new BacklogPullJob(database, buildBacklogReader(), () => ({
+    mode: config.integrationModes.backlog, readOnly: config.readOnly
+  }));
   const matterFolders = new MatterFolderStorageService(
     database,
     config.driveMatterParentFolderId
@@ -699,6 +709,87 @@ export function createRoutes(database: Transactable) {
   router.get("/jobs/daily/preview", asyncRoute(async (_req, res) => {
     res.json(await dailyJob.run());
   }));
+
+  // ---- 依頼の受付箱（docs/v3-request-inbox.md）----
+  // 届いた依頼は案件にせず受付箱に入れ、法務が受け付けたときに案件を立てる（繋ぐ）。
+  router.get("/intake/counts", asyncRoute(async (_req, res) => {
+    res.json(await intakeRepo.counts());
+  }));
+  router.get("/intake", asyncRoute(async (req, res) => {
+    const tab = String(req.query.state ?? "new");
+    if (!["new", "on_hold", "updated", "all"].includes(tab)) {
+      throw new DomainError("VALIDATION", "state は new / on_hold / updated / all のいずれかです");
+    }
+    res.json({ items: await intakeRepo.list(tab as IntakeTab) });
+  }));
+  router.get("/intake/:id", asyncRoute(async (req, res) => {
+    res.json(await intakeRepo.find(Number(req.params.id)));
+  }));
+  const intakeKind = z.enum(["work", "outsourcing", "single"]);
+  const intakeDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional();
+  const intakeManualSchema = z.object({
+    title: z.string().trim().min(1).max(300),
+    kind: intakeKind.nullable().optional(),
+    detail: z.string().trim().max(8000).nullable().optional(),
+    counterpartyName: z.string().trim().max(300).nullable().optional(),
+    dueOn: intakeDate,
+    requesterName: z.string().trim().max(200).nullable().optional(),
+    requesterSlackId: z.string().trim().max(40).nullable().optional()
+  });
+  router.post("/intake", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await intakeRequests.createManual(intakeManualSchema.parse(req.body ?? {}), actor(res)));
+    }));
+  const intakeAcceptSchema = z.object({
+    mode: z.enum(["new", "existing"]),
+    matterId: z.coerce.number().int().positive().nullable().optional(),
+    kind: intakeKind,
+    title: z.string().trim().max(300).nullable().optional(),
+    counterpartyId: z.coerce.number().int().positive().nullable().optional(),
+    ownerStaffId: z.coerce.number().int().positive().nullable().optional(),
+    dueOn: intakeDate
+  });
+  router.post("/intake/:id/accept", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await intakeRequests.accept(
+        Number(req.params.id), intakeAcceptSchema.parse(req.body ?? {}), actor(res)));
+    }));
+  router.post("/intake/:id/duplicate", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { duplicateOfId } = z.object({ duplicateOfId: z.coerce.number().int().positive() })
+        .parse(req.body ?? {});
+      res.json(await intakeRequests.duplicate(Number(req.params.id), duplicateOfId, actor(res)));
+    }));
+  router.post("/intake/:id/hold", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { reason, until } = z.object({
+        reason: z.string().trim().min(1).max(2000), until: intakeDate
+      }).parse(req.body ?? {});
+      res.json(await intakeRequests.hold(Number(req.params.id), reason, until ?? null, actor(res)));
+    }));
+  router.post("/intake/:id/dismiss", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { reason } = z.object({ reason: z.string().trim().min(1).max(2000) }).parse(req.body ?? {});
+      res.json(await intakeRequests.dismiss(Number(req.params.id), reason, actor(res)));
+    }));
+  router.post("/intake/:id/reopen", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await intakeRequests.reopen(Number(req.params.id), actor(res)));
+    }));
+  router.post("/intake/:id/seen", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await intakeRequests.markSeen(Number(req.params.id), actor(res)));
+    }));
+  router.get("/matters/:id/intake", asyncRoute(async (req, res) => {
+    res.json({ items: await intakeRepo.forMatter(Number(req.params.id)) });
+  }));
+  // Backlog を読みに行く。手で1回動かして結果を見るためのもの。
+  // 定期実行は /internal/jobs/backlog-pull（Cloud Scheduler）。
+  router.post("/jobs/backlog-pull", requireRole("admin"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const since = (req.body ?? {}).since;
+      res.json(await backlogPull.run({ since: typeof since === "string" && since ? since : null }));
+    }));
 
   // 受信メールの取り込み。手で1回動かして結果を見るためのもの。
   // 定期実行は /internal/jobs/mail-intake（Cloud Scheduler）。
@@ -3872,8 +3963,14 @@ export function createWebhookRouter(database: Transactable) {
   const router = Router();
   // 受信の記録と送信は同じ設定で動かす（画面側と食い違わせない）。
   const dispatch = buildDispatch(database);
-  const intake = new IntakeService(database);
+  // Slack の依頼は受付箱に入れ、Backlog に起案する（docs/v3-request-inbox.md）。
+  const intakeRequests = new IntakeRequestService(database, dispatch, {
+    backlogIssueTypeId: config.backlogIssueTypeId
+  });
   const jobs: Record<string, (body: any) => Promise<unknown>> = {
+    "backlog-pull": (body) => new BacklogPullJob(database, buildBacklogReader(), () => ({
+      mode: config.integrationModes.backlog, readOnly: config.readOnly
+    })).run({ since: typeof body?.since === "string" && body.since ? body.since : null }),
     daily: (body) => new DailyJob(database, dispatch).run({
       notifyChannel: body?.notifyChannel, notifyTo: body?.notifyTo
     }),
@@ -3906,7 +4003,7 @@ export function createWebhookRouter(database: Transactable) {
     });
   }));
 
-  // モーダルの送信。ここで案件が立つ。
+  // モーダルの送信。受付箱に入れて Backlog に起案する（案件は受付箱で受け付けたときに立つ）。
   router.post("/slack/interactions", asyncRoute(async (req, res) => {
     const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from("");
     if (!verifySlack(req, raw)) return res.status(401).json({ error: "signature verification failed" });
@@ -3919,9 +4016,14 @@ export function createWebhookRouter(database: Transactable) {
     if (payload.type !== "view_submission") return res.json({});   // 他の対話は無視
 
     try {
-      const result = await intake.accept(parseSubmission(payload));
-      // Slack はモーダルを閉じるために空の 200 を求める。文面は別途返す。
+      const submission = parseSubmission(payload);
+      const result = await intakeRequests.registerFromSlack(submission);
+      // Slack はモーダルを閉じるために 3 秒以内の 200 を求める。受付箱に入った時点で返し、
+      // Backlog の起案と依頼者への確認は後で行う（失敗しても受付箱には入っている）。
       res.json({ response_action: "clear", legalbridge: result });
+      void intakeRequests.followUpSlack(result, submission).catch((error) =>
+        console.error("intake follow-up failed", { requestId: result.requestId, message: (error as Error)?.message }));
+      return;
     } catch (error) {
       const e = error as DomainError;
       // 入力の誤りはモーダルに出す。閉じさせない。

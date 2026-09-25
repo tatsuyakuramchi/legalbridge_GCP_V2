@@ -295,6 +295,10 @@ SELECT * FROM (
             WHERE conrelid='v3.party_bank_accounts'::regclass
               AND conname='party_bank_accounts_scope_chk'))::text
   UNION ALL
+  SELECT 52, '依頼の受付箱（A-052。表 1 であること）',
+         (SELECT count(*) FROM information_schema.tables
+           WHERE table_schema='v3' AND table_name='intake_requests')::text
+  UNION ALL
   SELECT 33, '翻訳版再許諾と別途合意（A-033。列 1 と CHECK 1 で 2 であること）',
          ((SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='conditions' AND column_name = 'sublicense_consent')
