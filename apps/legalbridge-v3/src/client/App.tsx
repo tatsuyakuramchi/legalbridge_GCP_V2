@@ -16,8 +16,9 @@ import { DriftWorkspace } from "./DriftWorkspace.js";
 import { OpsWorkspace, HomeWorkspace, type OpsTab } from "./OpsWorkspace.js";
 import { IntakeWorkspace } from "./IntakeWorkspace.js";
 import { RingiWorkspace } from "./RingiWorkspace.js";
+import { RptWorkspace } from "./RptWorkspace.js";
 
-type View = "home" | "intake" | "matters" | "agreements" | "conditions" | "works" | "parties" | "documents" | "ringi" | "closing" | "money" | "drift" | "flows" | "ops";
+type View = "home" | "intake" | "matters" | "agreements" | "conditions" | "works" | "parties" | "documents" | "ringi" | "rpt" | "closing" | "money" | "drift" | "flows" | "ops";
 interface Me {
   user?: { email: string; role: string };
   readOnly: boolean;
@@ -40,7 +41,9 @@ const NAV: Array<{ section: string; items: Array<{ view: View; label: string }> 
     { view: "parties", label: "取引先・担当" },
     { view: "documents", label: "文書" },
     // 稟議（R-）と取締役会決議（B-）。文書・契約に繋いで /法務検索 で引ける。
-    { view: "ringi", label: "稟議" }
+    { view: "ringi", label: "稟議" },
+    // 取引が会社法の利益相反・会計の関連当事者に当たるかの判定と、取締役会の議案。
+    { view: "rpt", label: "関連当事者" }
   ] },
   // 文書とお金のあいだ。予定 → 実績 → 決済文書 → 支払 を1本の表で進める
   // ところなので、紙の話と金の話の継ぎ目に、見出しを付けて置く
@@ -303,6 +306,7 @@ export function App() {
           <RingiWorkspace key={`r${focusFor("ringi") ?? 0}`} initialId={focusFor("ringi")}
                           onOpen={(kind, id) => openEntity(kind, id)} />
         )}
+        {view === "rpt" && <RptWorkspace />}
         {view === "money" && <MoneyWorkspace />}
         {view === "drift" && (
           <DriftWorkspace key={`dr${driftMatter ?? 0}`} initialMatterId={driftMatter}

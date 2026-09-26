@@ -101,6 +101,7 @@ import { parseCompanyProfile } from "./ops/company-profile-schema.js";
 import { DELIVERY_ALERT_KEY, parseDeliveryAlertSettings } from "./ops/delivery-alert-settings.js";
 import { DeliveryAlertJob } from "./jobs/delivery-alert.js";
 import { RingiService, type RingiTarget } from "./ringi/service.js";
+import { RptService } from "./rpt/service.js";
 import { SnippetService } from "./snippets/service.js";
 
 const asyncRoute =
@@ -181,6 +182,7 @@ export function createRoutes(database: Transactable) {
   const ops = new OpsRepository(database);
   const snippets = new SnippetService(database);
   const ringi = new RingiService(database);
+  const rpt = new RptService(database);
   const monitoring = new MonitoringRepository(database);
 
   // 外部連携は factory で組む。/internal 側と同じものを使う。
@@ -3492,6 +3494,72 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       const input = z.object({ targetType: ringiTarget, targetId: z.number().int().positive() }).parse(req.body ?? {});
       res.json(await ringi.unlink(Number(req.params.id), input.targetType, input.targetId, actor(res)));
+    }));
+
+  // ---- 関連当事者（A-054）----
+  // 判定と台帳の読みは全員（V1 もガイドに埋め込んで誰でも判定できた）。
+  // 台帳を直す・議案を起票する・議案一覧は admin/legal。
+  const judgeSchema = z.object({
+    a: z.string().max(40), b: z.string().max(40), txn: z.string().max(20),
+    amount: z.number().nullable().optional(), competing: z.boolean().optional(),
+    thresholds: z.object({ company: z.number().nullable().optional(), person: z.number().nullable().optional() }).optional()
+  });
+  router.get("/rpt/masters", asyncRoute(async (_req, res) => { res.json(await rpt.masters()); }));
+  router.post("/rpt/judge", asyncRoute(async (req, res) => {
+    res.json(await rpt.judge(judgeSchema.parse(req.body ?? {})));
+  }));
+  router.put("/rpt/entities/:partyId", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({ hasBoard: z.boolean() }).parse(req.body ?? {});
+      res.json(await rpt.saveEntity(Number(req.params.partyId), input, actor(res)));
+    }));
+  router.post("/rpt/entities/:partyId/void", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => { res.json(await rpt.voidEntity(Number(req.params.partyId), actor(res))); }));
+  router.put("/rpt/entities/:partyId/shareholdings", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({ shareholders: z.array(z.object({
+        holderKind: z.enum(["party", "officer"]), holderId: z.number().int().positive(), pct: z.number()
+      })).max(50) }).parse(req.body ?? {});
+      res.json(await rpt.setShareholdings(Number(req.params.partyId), input.shareholders, actor(res)));
+    }));
+  router.post("/rpt/officers", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        id: z.number().int().positive().optional(), name: z.string().trim().max(100),
+        staffId: z.number().int().positive().nullable().optional(),
+        roles: z.array(z.object({ partyId: z.number().int().positive(), title: z.string().max(20) })).max(50)
+      }).parse(req.body ?? {});
+      res.json(await rpt.saveOfficer(input, actor(res)));
+    }));
+  router.post("/rpt/officers/:id/void", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => { res.json(await rpt.voidOfficer(Number(req.params.id), actor(res))); }));
+  router.put("/rpt/thresholds", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({ company: z.number().nullable(), person: z.number().nullable() }).parse(req.body ?? {});
+      res.json(await rpt.saveThresholds(input, actor(res)));
+    }));
+  router.get("/rpt/agenda", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
+    res.json({ agenda: await rpt.agenda({
+      from: req.query.from ? String(req.query.from) : undefined, to: req.query.to ? String(req.query.to) : undefined
+    }) });
+  }));
+  router.get("/rpt/agenda/:ringiId/judgement", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
+    res.json({ judgement: await rpt.agendaJudgement(Number(req.params.ringiId)) });
+  }));
+  router.post("/rpt/agenda", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = judgeSchema.extend({
+        meetingOn: z.string().max(10).nullable().optional(), note: z.string().max(2000).nullable().optional()
+      }).parse(req.body ?? {});
+      res.status(201).json(await rpt.fileAgenda(input, actor(res)));
+    }));
+  router.patch("/rpt/agenda/:ringiId", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        status: z.string().max(20), meetingOn: z.string().max(10).nullable().optional(),
+        note: z.string().max(2000).nullable().optional()
+      }).parse(req.body ?? {});
+      res.json(await rpt.setAgendaStatus(Number(req.params.ringiId), input, actor(res)));
     }));
 
   // ---- 定型文 ----
