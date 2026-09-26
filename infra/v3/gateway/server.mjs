@@ -85,7 +85,7 @@ const send = (res, status, body, type = "application/json; charset=utf-8") => {
 
 export const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://gateway");
-  if (req.method === "GET" && url.pathname === "/healthz") return send(res, 200, { status: "ok" });
+  if (req.method === "GET" && url.pathname === "/health") return send(res, 200, { status: "ok" });
   if (!allowed(req.method, url.pathname)) return send(res, 404, { error: "not found" });
 
   try {

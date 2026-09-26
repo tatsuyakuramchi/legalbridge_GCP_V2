@@ -38,6 +38,7 @@ V3_URL=$(gcloud run services describe legalbridge-v3 --region=$REGION --format='
 ```bash
 gcloud iam service-accounts create legalbridge-v3-gateway --display-name="LegalBridge V3 gateway"
 GW_SA=legalbridge-v3-gateway@${PROJECT}.iam.gserviceaccount.com
+sleep 30   # 作った直後は "does not exist" で断られる。反映を待つ
 gcloud run services add-iam-policy-binding legalbridge-v3 --region=$REGION \
   --member="serviceAccount:${GW_SA}" --role=roles/run.invoker
 ```
@@ -58,7 +59,7 @@ GW_URL=$(gcloud run services describe legalbridge-v3-gateway --region=$REGION --
 確かめる（`ok` と `404` が出ればよい）:
 
 ```bash
-curl -s ${GW_URL}/healthz; echo
+curl -s ${GW_URL}/health; echo   # /healthz は Cloud Run が予約していて届かない
 curl -s -o /dev/null -w "%{http_code}\n" ${GW_URL}/api/v3/ringi
 ```
 
