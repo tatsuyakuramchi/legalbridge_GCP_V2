@@ -1,0 +1,7 @@
+{
+  "name": "legalbridge-v3-gateway",
+  "private": true,
+  "type": "module",
+  "description": "V3 の外向きの口。Slack と依頼者の資料アップロードのパスだけを V3 へ中継する（server.mjs）",
+  "scripts": { "start": "node server.mjs" }
+}

@@ -47,9 +47,12 @@ substitutions:
   _BACKLOG_PROJECT_KEY: ""
   # /法務検索 を使ってよい Slack チャンネル ID（カンマ区切り）。空ならどこでも
   _SLACK_SEARCH_CHANNELS: ""
-  # 外（依頼者・Slack）から開けるこのサービスの URL。資料アップロードのリンクに使う。
-  #   署名の鍵は _SECRETS_EXTRA で UPLOAD_SIGNING_SECRET=legalbridge-v3-upload-signing-secret:latest
+  # 外（依頼者・Slack）から開ける URL。V3 の外向きの口（legalbridge-v3-gateway）の URL を入れる。
+  # 資料アップロードのリンクに使う（docs/v3-gateway.md）。
   _PUBLIC_BASE_URL: ""
+  # 資料アップロードのリンクの署名の鍵（Secret Manager の名前）。空なら配線しない。
+  # _SECRETS_EXTRA（カンマ区切り）を触らずに足せるよう、別に置く。
+  _UPLOAD_SECRET: ""
   # 課題を立てるときの課題種別ID。空だと宛先未解決でゲートが止める。
   _BACKLOG_ISSUE_TYPE_ID: ""
   _BACKLOG_PROJECT_ID: ""
@@ -101,6 +104,7 @@ steps:
         SECRETS="DB_PASSWORD=${_DB_PASSWORD_SECRET}:latest"
         SECRETS="$${SECRETS},WEBHOOK_TOKEN=${_WEBHOOK_TOKEN_SECRET}:latest"
         if [ -n "${_SECRETS_EXTRA}" ]; then SECRETS="$${SECRETS},${_SECRETS_EXTRA}"; fi
+        if [ -n "${_UPLOAD_SECRET}" ]; then SECRETS="$${SECRETS},UPLOAD_SIGNING_SECRET=${_UPLOAD_SECRET}:latest"; fi
         echo "配線するシークレット: $${SECRETS}"
 
         gcloud run deploy "${_SERVICE}" \

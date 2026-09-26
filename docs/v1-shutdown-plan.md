@@ -70,19 +70,14 @@ V1 とは、リポジトリ `LegalBridge_AI_GCP` から動いている次のも�
 
 ## 2. 止める前に要るもの（順番どおり）
 
-1. **`/internal/slack/*` を外から届くようにする。** V3 は `--no-allow-unauthenticated` なので、
-   このままでは Slack から届かない。`/internal/slack/commands` と `/internal/slack/interactions`
-   だけを通す経路を用意する（Load Balancer＋サーバーレス NEG で、パスを絞る）。この 2 つは
-   Slack の署名で守っている（署名シークレットが無ければ常に 401）。
+1. **外向きの口（`legalbridge-v3-gateway`）を立てる。** V3 本体は非公開のまま、Slack と
+   依頼者の資料アップロードの 4 つのパスだけを中継する公開サービスを別に置く（`docs/v3-gateway.md`）。
    Backlog は取得（pull）にしたので、Backlog の webhook を外から受ける必要は無い。
-   CloudSign の webhook を受けるなら、同じ経路に `/internal/webhooks/cloudsign` を足し、
-   `x-lb-webhook-token` は経路側で付けるか IP で守る（`v3-deploy-cloudshell.md` 手順8.7）。
 2. **V3 の定期実行を入れる**（Cloud Scheduler、OIDC＋`x-lb-webhook-token`）:
    `daily`（平日朝）・`delivery-alert`（毎朝 9 時）・`mail-intake`・`backlog-pull`（5 分ごと）・`flow-notice`（15 分ごと）。
 3. **SQL を流す**：`004_amend.sql` → `003_grants.sql`（受付箱・稟議・関連当事者・資料アップロードの表）→
    `050_migrate_ringi_rpt.sql`（V1 の稟議・関連当事者を写す。何度流しても同じ）。
-   資料アップロードは秘密 `UPLOAD_SIGNING_SECRET` と `PUBLIC_BASE_URL` を入れる。外から届く経路には
-   `/internal/slack/*` に加えて `/internal/upload`（ページと `/internal/upload/file`）も通す（署名付きリンクで守っている）。
+   資料アップロードは秘密と `PUBLIC_BASE_URL`（口の URL）を Cloud Build のトリガーに入れる（`docs/v3-gateway.md` 手順 3）。
 4. **🔧 の穴を埋める**（最低限：発注書の納期アラート）。❓ は決めてから。
 5. **Slack アプリの Request URL を V3 に切り替える**（`/法務依頼`・`/法務検索`・Interactivity）。
    切り替えた時点で V1 の GAS には届かなくなる。`SLACK_SEARCH_CHANNELS` に V1 の
