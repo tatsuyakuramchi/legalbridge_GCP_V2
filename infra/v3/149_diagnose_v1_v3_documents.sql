@@ -135,6 +135,8 @@ SELECT d.document_number              AS 文書番号,
 --   （V3 側に同じ番号が無いので、重なったまま発行される）。
 --   判定が「V3が遅れている」の行は、次に V3 で発行する前に 040 を流し直すか、
 --   採番表を V1 の最大まで進める。
+--   連番は年ごと。1000 飛ばしは 2026 年の分だけなので、V1 でも文書を出すなら
+--   年が変わる前に翌年の分も飛ばしておく。
 -- ---------------------------------------------------------------------
 WITH used AS (
   SELECT 'V1' AS src, m[1] AS prefix, m[2]::int AS year, m[3]::int AS seq
@@ -170,6 +172,12 @@ SELECT k.prefix                         AS 記号,
          WHEN COALESCE(n.current_value, mx.v3_max, 0)
               < GREATEST(COALESCE(mx.v1_max, 0), COALESCE(s.v1_seq, 0))
            THEN 'V3が遅れている（次の発行が V1 と重なりうる）'
+         -- 2026-09-08 の取り決めで V3 の文書の連番は 1000 から先に飛ばしてある
+         -- （docs/v3-deploy-cloudshell.md「文書の発行は V3 からだけ行う」）。
+         -- V1 がそこまで追いつかない限り重ならない。
+         WHEN COALESCE(n.current_value, 0) >= 1000
+              AND GREATEST(COALESCE(mx.v1_max, 0), COALESCE(s.v1_seq, 0)) < 1000
+           THEN '番号帯を分けてある（V3 は 1001〜）'
          WHEN COALESCE(mx.v3_max, 0) > GREATEST(COALESCE(mx.v1_max, 0), COALESCE(s.v1_seq, 0))
            THEN 'V3が先行（V1 の次の発行が V3 と重なりうる）'
          ELSE '問題なし'
