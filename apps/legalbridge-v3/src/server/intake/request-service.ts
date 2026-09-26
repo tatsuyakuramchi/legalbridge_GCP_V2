@@ -7,6 +7,7 @@ import type { DispatchService } from "../integrations/dispatch-service.js";
 import type { IntakeSubmission } from "../integrations/slack-intake.js";
 import { REQUEST_TYPES } from "../integrations/slack-intake.js";
 import { openMatter, resolveCounterparty } from "../integrations/intake-service.js";
+import { attachUploadsToMatter } from "./upload-service.js";
 import { recordCommunication } from "../matters/communication-service.js";
 
 /**
@@ -78,14 +79,17 @@ export function requestIssueDescription(input: {
 
 /** Slack 受付の直後に依頼者へ返す文面。 */
 export function submitAcknowledgement(input: {
-  requestNo: string | null; issueKey: string | null; submission: IntakeSubmission;
+  requestNo: string | null; issueKey: string | null; submission: IntakeSubmission; uploadUrl?: string | null;
 }): string {
   const s = input.submission;
   const lines = [
     `依頼を送信しました：*${input.requestNo ?? "（番号未採番）"}*${input.issueKey ? `（${input.issueKey}）` : ""}`,
     `種類：${KIND_LABEL[s.kind] ?? s.kind}`,
     `件名：${s.title}`,
-    "法務が内容を確認して受け付けます。受け付けたら Slack でお知らせします。"
+    "法務が内容を確認して受け付けます。受け付けたら Slack でお知らせします。",
+    ...(input.uploadUrl
+      ? [`📎 レビューしてほしい文書・参考資料は <${input.uploadUrl}|資料アップロードページ> から上げてください（30 日有効）。`]
+      : [])
   ];
   return lines.join("\n");
 }
@@ -94,7 +98,11 @@ export class IntakeRequestService {
   constructor(
     private readonly database: Transactable,
     private readonly dispatch: DispatchService | null,
-    private readonly options: { backlogIssueTypeId: string }
+    private readonly options: {
+      backlogIssueTypeId: string;
+      /** 依頼者に渡す資料アップロードのリンク。作れなければ null（案内を出さない）。 */
+      uploadLink?: (requestId: number) => string | null;
+    }
   ) {}
 
   /**
@@ -174,7 +182,8 @@ export class IntakeRequestService {
       backlogReason = "Backlog の送信口がありません";
     }
 
-    const message = submitAcknowledgement({ requestNo, issueKey, submission });
+    const uploadUrl = this.options.uploadLink?.(requestId) ?? null;
+    const message = submitAcknowledgement({ requestNo, issueKey, submission, uploadUrl });
     await this.notify(requestId, submission.requesterSlackId || null, message, actor);
     return { requestId, requestNo, issueKey, ...(backlogReason ? { backlogReason } : {}), message };
   }
@@ -338,6 +347,9 @@ export class IntakeRequestService {
             });
           }
         }
+
+        // 依頼者がリンクから上げた資料も案件に繋ぐ（案件のやり取りに Drive のファイルとして出る）。
+        await attachUploadsToMatter(client, id, matterId);
 
         await client.query(
           `UPDATE intake_requests

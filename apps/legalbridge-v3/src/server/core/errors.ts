@@ -4,7 +4,8 @@ export type DomainErrorCode =
   | "FORBIDDEN"
   | "VALIDATION"
   | "READ_ONLY"
-  | "DB_FORBIDDEN";
+  | "DB_FORBIDDEN"
+  | "UNAVAILABLE";
 
 export class DomainError extends Error {
   constructor(readonly code: DomainErrorCode, message: string, readonly detail?: unknown) {

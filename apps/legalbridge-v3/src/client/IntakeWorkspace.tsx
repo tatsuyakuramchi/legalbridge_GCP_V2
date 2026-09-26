@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "./api.js";
 import { useReadOnly } from "./read-only.js";
 import { DetailBack, isWideLayout } from "./DetailBack.js";
+import { UploadsPanel } from "./UploadsPanel.js";
 
 /**
  * 依頼の受付箱。docs/v3-request-inbox.md
@@ -215,6 +216,7 @@ export function IntakeWorkspace(
             {!detail ? <div className="faint">読み込んでいます…</div> : (
               <>
                 <Original request={detail.request} />
+                <UploadsPanel target="intake" id={detail.request.id} canWrite={canWrite} />
                 <Decision detail={detail} canWrite={canWrite} staff={staff}
                           onDone={(msg, matterId) => { reload(msg); if (matterId) setLastMatter(matterId); }}
                           onOpenMatter={onOpenMatter} onError={setError} />

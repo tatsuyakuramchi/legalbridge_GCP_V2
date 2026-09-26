@@ -102,6 +102,7 @@ import { DELIVERY_ALERT_KEY, parseDeliveryAlertSettings } from "./ops/delivery-a
 import { DeliveryAlertJob } from "./jobs/delivery-alert.js";
 import { RingiService, type RingiTarget } from "./ringi/service.js";
 import { RptService } from "./rpt/service.js";
+import { RequesterUploadService } from "./intake/upload-service.js";
 import { SnippetService } from "./snippets/service.js";
 
 const asyncRoute =
@@ -145,16 +146,7 @@ export function createRoutes(database: Transactable) {
   const pdf: PdfRenderer = process.env.PDF_RENDERER === "memory"
     ? new MemoryPdfRenderer() : new ChromiumPdfRenderer();
 
-  // Drive は未設定でも起動する。保存を呼んだときだけ 503 で理由を返す。
-  const drive: DriveStorage | null =
-    process.env.DRIVE_STORAGE === "memory" ? new MemoryDriveStorage()
-    : process.env.DRIVE_STORAGE === "local" ? new LocalFileStorage(process.env.LOCAL_FILES_DIR || "./data/files")
-    : config.driveFolderId
-      ? new GoogleDriveStorage(config.driveFolderId, {
-          keyFilePath: config.driveKeyFilePath || undefined,
-          environmentTag: config.driveEnvironmentTag
-        })
-      : null;
+  const drive = buildDrive();
   const storage = new DocumentStorageService(database, drive, pdf);
   const documentImports = new DocumentImportService(database, drive);
   const royalty = new RoyaltyStatementService(database);
@@ -204,8 +196,10 @@ export function createRoutes(database: Transactable) {
   });
   // 依頼の受付箱（docs/v3-request-inbox.md）。
   const intakeRepo = new IntakeRepository(database);
+  const uploads = buildUploads(database, drive);
   const intakeRequests = new IntakeRequestService(database, dispatch, {
-    backlogIssueTypeId: config.backlogIssueTypeId
+    backlogIssueTypeId: config.backlogIssueTypeId,
+    uploadLink: (requestId) => uploads.link("r", requestId).url
   });
   const backlogPull = new BacklogPullJob(database, buildBacklogReader(), () => ({
     mode: config.integrationModes.backlog, readOnly: config.readOnly
@@ -726,6 +720,18 @@ export function createRoutes(database: Transactable) {
   // 今日なら何を誰に送るか（送らない）。設定画面の確認用。
   router.get("/jobs/delivery-alert/preview", requireRole("admin", "legal"),
     asyncRoute(async (_req, res) => { res.json(await deliveryAlertJob.run({ preview: true })); }));
+
+  // ---- 依頼者の資料アップロード（A-055）----
+  // 依頼者に渡す署名付きリンク（30 日有効）と、上がった資料の一覧。
+  // アップロードそのものは /internal/upload（依頼者は V3 に入れないので認証の外）。
+  for (const [path, target] of [["intake", "r"], ["matters", "m"]] as const) {
+    router.get(`/${path}/:id/uploads`, asyncRoute(async (req, res) => {
+      const id = Number(req.params.id);
+      res.json({ uploads: await uploads.list(target === "m" ? { matterId: id } : { requestId: id }) });
+    }));
+    router.post(`/${path}/:id/upload-link`, requireRole("admin", "legal"),
+      asyncRoute(async (req, res) => { res.json(uploads.link(target, Number(req.params.id))); }));
+  }
 
   // ---- 依頼の受付箱（docs/v3-request-inbox.md）----
   // 届いた依頼は案件にせず受付箱に入れ、法務が受け付けたときに案件を立てる（繋ぐ）。
@@ -4106,6 +4112,25 @@ function parseForm(raw: Buffer): Record<string, string> {
   return out;
 }
 
+/** Drive は未設定でも起動する。保存を呼んだときだけ 503 で理由を返す。 */
+export function buildDrive(): DriveStorage | null {
+  return process.env.DRIVE_STORAGE === "memory" ? new MemoryDriveStorage()
+    : process.env.DRIVE_STORAGE === "local" ? new LocalFileStorage(process.env.LOCAL_FILES_DIR || "./data/files")
+    : config.driveFolderId
+      ? new GoogleDriveStorage(config.driveFolderId, {
+          keyFilePath: config.driveKeyFilePath || undefined,
+          environmentTag: config.driveEnvironmentTag
+        })
+      : null;
+}
+
+/** 依頼者の資料アップロード（署名付きリンク）。画面の経路・Slack・アップロードのページで同じものを使う。 */
+export function buildUploads(database: Transactable, drive: DriveStorage | null = buildDrive()) {
+  return new RequesterUploadService(database, drive, {
+    secret: config.uploadSigningSecret, publicBaseUrl: config.publicBaseUrl
+  });
+}
+
 /** 納期アラートを組む。画面の経路と /internal で同じものを使う。 */
 function deliveryAlerts(database: Transactable, dispatch: ReturnType<typeof buildDispatch>) {
   return new DeliveryAlertJob({
@@ -4140,8 +4165,11 @@ export function createWebhookRouter(database: Transactable) {
   // 受信の記録と送信は同じ設定で動かす（画面側と食い違わせない）。
   const dispatch = buildDispatch(database);
   // Slack の依頼は受付箱に入れ、Backlog に起案する（docs/v3-request-inbox.md）。
+  // 依頼者への確認に、資料アップロードのリンクを添える（A-055）。
+  const uploadsForSlack = buildUploads(database);
   const intakeRequests = new IntakeRequestService(database, dispatch, {
-    backlogIssueTypeId: config.backlogIssueTypeId
+    backlogIssueTypeId: config.backlogIssueTypeId,
+    uploadLink: (requestId) => uploadsForSlack.link("r", requestId).url
   });
   const jobs: Record<string, (body: any) => Promise<unknown>> = {
     "delivery-alert": () => deliveryAlerts(database, dispatch).run(),

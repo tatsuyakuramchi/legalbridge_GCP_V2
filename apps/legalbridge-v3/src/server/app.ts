@@ -7,7 +7,8 @@ import { config } from "./config.js";
 import { authenticate } from "./auth.js";
 import { checkDatabase, getPool } from "./db/pool.js";
 import type { Transactable } from "./core/db.js";
-import { createRoutes, createWebhookRouter, errorHandler } from "./routes.js";
+import { buildUploads, createRoutes, createWebhookRouter, errorHandler } from "./routes.js";
+import { createUploadRouter } from "./intake/upload-page.js";
 
 /**
  * 予備系で「どの環境で、いつ時点のデータを見ているか」を画面に出すための情報。
@@ -51,6 +52,9 @@ export function createApp(database: Transactable | null = getPool() as Transacta
   // Webhook は署名検証に生の本文が要るので、JSON パーサより前に置く。
   // ユーザー認証も通さない（各受信口が共有シークレットか署名で守る）。
   if (database) {
+    // 依頼者の資料アップロード（A-055）。1 ファイル 30MB まで受けるので、/internal の
+    // 2MB の上限より手前に置く。署名付きのリンクで守る（依頼者は V3 に入れない）。
+    app.use("/internal/upload", createUploadRouter(database, buildUploads(database)));
     app.use("/internal", express.raw({ type: "*/*", limit: "2mb" }), createWebhookRouter(database));
   }
 

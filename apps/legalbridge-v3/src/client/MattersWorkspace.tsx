@@ -14,6 +14,7 @@ import { DOCUMENT_STYLE_HINT, DOCUMENT_STYLE_LABEL, MATTER_KIND_HINT,
          MATTER_KIND_LABEL as KIND_LABEL, StatusTag } from "./labels.js";
 import { MatterFlow } from "./MatterFlow.js";
 import { MatterTimeline } from "./MatterTimeline.js";
+import { UploadsPanel } from "./UploadsPanel.js";
 import { MatterIntake } from "./MatterIntake.js";
 import { MatterDrive } from "./MatterDrive.js";
 import { MatterConditions, MatterDocuments } from "./MatterLinks.js";
@@ -709,6 +710,7 @@ export function MattersWorkspace(
                   )}
 
                   {tab === "communications" && <MatterIntake matterId={detail.id} reloadKey={linkVersion} />}
+                  {tab === "communications" && <UploadsPanel target="matters" id={detail.id} />}
                   {tab === "communications" && (
                     <table>
                       <thead><tr><th>日時</th><th>操作</th><th>実行者</th></tr></thead>

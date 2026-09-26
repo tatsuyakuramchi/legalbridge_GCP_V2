@@ -49,7 +49,7 @@ V1 とは、リポジトリ `LegalBridge_AI_GCP` から動いている次のも�
 
 | V1 | V3 | 扱い |
 |---|---|---|
-| 発注書ごとの納期 7・3・1 日前と超過のアラート（依頼者 DM・部署チャンネル） | 納期アラートを足す（通知の内容・通知先は設定画面で） | 🔧 対応中 |
+| 発注書ごとの納期 7・3・1 日前と超過のアラート（依頼者 DM・部署チャンネル） | 納期アラート（運用 → 設定で、何日前・超過・文面・送り先チャンネル・部署ごとのチャンネルを変える） | ✅ |
 | 契約ごとの更新通知を、その契約のチャンネルへ | 同上（1通の一覧） | 🔧 か、一覧で足りるなら ✅ |
 | 検収待ちのダイジェスト（`inspection-digest`） | 無し | 🔧 か 🗑 |
 | 期間満了の契約を自動で `expired` に | 無し（判定は日付から導く） | 🗑（V3 は状態を保存せず導く） |
@@ -62,9 +62,9 @@ V1 とは、リポジトリ `LegalBridge_AI_GCP` から動いている次のも�
 | 作品・受取マップ・条件明細・支払の Excel・文書の生成・取込 | 各画面 | ✅ |
 | 契約チェックのポータル（GAS `doGet`、`contract_check.html`） | 画面「契約チェック」と `/法務検索` | ✅（入口の URL が変わる） |
 | 法務ガイド（`/portal`・`/guide`・`/g/:key`、版と閲覧制限つき） | release/api に残す（保守対象） | ✅（移さない） |
-| 関連当事者（RPT：`gas/RPT.gs`、取締役会の議題） | V3 に入れる | 🔧 対応中 |
-| 稟議（`/search/ringi`、稟議と文書の紐付け） | V3 に入れる | 🔧 対応中 |
-| 依頼者の資料アップロード（署名付きリンク、課題キーで紐付け） | V3 に入れる | 🔧 対応中 |
+| 関連当事者（RPT：`gas/RPT.gs`、取締役会の議題） | 画面「関連当事者」（判定・会社と役員・役会議案・判定根拠）。議案は稟議の B- 番号 | ✅ |
+| 稟議（`/search/ringi`、稟議と文書の紐付け） | 画面「稟議」と `/法務検索`（R-/B-/5 桁） | ✅ |
+| 依頼者の資料アップロード（署名付きリンク、課題キーで紐付け） | 署名付きリンク（30 日）→ `/internal/upload`。/法務依頼 の確認 DM に添付、受付箱・案件から発行 | ✅ |
 | CloudSign の一括状態同期（定期） | 文書ごとの状態確認はある。定期の同期は無し | 🔧 か 🗑（webhook が届けば不要） |
 | Drive リンクの健全性チェック | 無し | 🗑 |
 
@@ -78,8 +78,11 @@ V1 とは、リポジトリ `LegalBridge_AI_GCP` から動いている次のも�
    CloudSign の webhook を受けるなら、同じ経路に `/internal/webhooks/cloudsign` を足し、
    `x-lb-webhook-token` は経路側で付けるか IP で守る（`v3-deploy-cloudshell.md` 手順8.7）。
 2. **V3 の定期実行を入れる**（Cloud Scheduler、OIDC＋`x-lb-webhook-token`）:
-   `daily`（平日朝）・`mail-intake`・`backlog-pull`（5 分ごと）・`flow-notice`（15 分ごと）。
-3. **SQL を流す**：`004_amend.sql` → `003_grants.sql`（受付箱の表）。
+   `daily`（平日朝）・`delivery-alert`（毎朝 9 時）・`mail-intake`・`backlog-pull`（5 分ごと）・`flow-notice`（15 分ごと）。
+3. **SQL を流す**：`004_amend.sql` → `003_grants.sql`（受付箱・稟議・関連当事者・資料アップロードの表）→
+   `050_migrate_ringi_rpt.sql`（V1 の稟議・関連当事者を写す。何度流しても同じ）。
+   資料アップロードは秘密 `UPLOAD_SIGNING_SECRET` と `PUBLIC_BASE_URL` を入れる。外から届く経路には
+   `/internal/slack/*` に加えて `/internal/upload`（ページと `/internal/upload/file`）も通す（署名付きリンクで守っている）。
 4. **🔧 の穴を埋める**（最低限：発注書の納期アラート）。❓ は決めてから。
 5. **Slack アプリの Request URL を V3 に切り替える**（`/法務依頼`・`/法務検索`・Interactivity）。
    切り替えた時点で V1 の GAS には届かなくなる。`SLACK_SEARCH_CHANNELS` に V1 の

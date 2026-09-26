@@ -63,6 +63,10 @@ export interface Config {
   backlogIssueTypeId: string;
   /** 内部エンドポイント（Webhook受信）の共有シークレット。 */
   webhookToken: string;
+  /** 依頼者の資料アップロードのリンクに付ける署名の鍵。空ならリンクを作らない・受け付けない。 */
+  uploadSigningSecret: string;
+  /** 外（依頼者・Slack）から開けるこのサービスの URL。アップロードのリンクに使う。 */
+  publicBaseUrl: string;
 }
 
 const list = (v: string | undefined) =>
@@ -126,5 +130,7 @@ export const config: Config = {
   backlogProjectId: (process.env.BACKLOG_PROJECT_ID ?? "").trim(),
   backlogProjectKey: (process.env.BACKLOG_PROJECT_KEY ?? "").trim(),
   backlogIssueTypeId: (process.env.BACKLOG_ISSUE_TYPE_ID ?? "").trim(),
-  webhookToken: (process.env.WEBHOOK_TOKEN ?? "").trim()
+  webhookToken: (process.env.WEBHOOK_TOKEN ?? "").trim(),
+  uploadSigningSecret: (process.env.UPLOAD_SIGNING_SECRET ?? "").trim(),
+  publicBaseUrl: (process.env.PUBLIC_BASE_URL ?? "").trim()
 };
