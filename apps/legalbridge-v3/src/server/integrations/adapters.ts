@@ -90,6 +90,31 @@ export class SlackAdapter implements DispatchAdapter {
     if (!body.ok) throw new Error(`Slack への送信に失敗しました: ${body.error ?? "unknown"}`);
     return { externalId: String(body.ts ?? ""), threadRef: String(body.ts ?? ""), raw: body };
   }
+
+  /**
+   * モーダルを開く（views.open）。スラッシュコマンドへの応答本文では開けない。
+   * trigger_id の寿命は 3 秒なので、受けたその場で呼ぶ。
+   * 依頼者が自分で押した操作への応答で、誰かに何かを送るものではないので、
+   * 送信の段階開放（dispatch のゲート）は通さない。
+   */
+  async openView(triggerId: string, view: unknown): Promise<void> {
+    const response = await this.fetchImpl("https://slack.com/api/views.open", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${this.botToken}`, "content-type": "application/json; charset=utf-8" },
+      body: JSON.stringify({ trigger_id: triggerId, view })
+    });
+    if (!response.ok) return fail("Slack", response);
+    const body = await response.json() as { ok?: boolean; error?: string };
+    if (!body.ok) throw new Error(`Slack のモーダルを開けませんでした: ${body.error ?? "unknown"}`);
+  }
+}
+
+/** モーダルを開く口。テストと手元では記録だけする。 */
+export interface SlackViewOpener { openView(triggerId: string, view: unknown): Promise<void> }
+
+export class MemoryViewOpener implements SlackViewOpener {
+  readonly opened: Array<{ triggerId: string; view: any }> = [];
+  async openView(triggerId: string, view: unknown) { this.opened.push({ triggerId, view }); }
 }
 
 /** Gmail。RFC822 を base64url にして users.messages.send へ渡す。 */

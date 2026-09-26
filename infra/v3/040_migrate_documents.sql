@@ -61,20 +61,39 @@ ON CONFLICT (legacy_id) WHERE legacy_id IS NOT NULL DO UPDATE SET
   category = EXCLUDED.category, number_prefix = EXCLUDED.number_prefix,
   is_active = EXCLUDED.is_active;
 
+-- V3 で改版したひな形（113・120・137・145・147・148 など。legacy_id の無い版）がある。
+-- 流し直すときに、それを壊さない:
+--   ・V3 で作った版があるひな形では、V1 の新しい版を V3 の最大の次へ並べて入れる
+--     （そのまま入れると UNIQUE (template_id, version_no) で止まる）
+--   ・現行版が V3 で作った版なら、V1 の現行版へ差し戻さない
 INSERT INTO v3.document_template_versions (template_id, version_no, html_source, variables, legacy_id)
-SELECT nt.id, v.version_no, v.html_source,
-       COALESCE(v.field_schema, '[]'::jsonb), v.id
+SELECT nt.id,
+       CASE WHEN EXISTS (SELECT 1 FROM v3.document_template_versions x
+                          WHERE x.template_id = nt.id AND x.legacy_id IS NULL)
+            THEN (SELECT max(x.version_no) FROM v3.document_template_versions x WHERE x.template_id = nt.id)
+                 + ROW_NUMBER() OVER (PARTITION BY nt.id ORDER BY v.version_no)
+            ELSE v.version_no END,
+       v.html_source, COALESCE(v.field_schema, '[]'::jsonb), v.id
   FROM public.document_template_versions v
   JOIN v3.document_templates nt ON nt.legacy_id = v.template_id
-ON CONFLICT (legacy_id) WHERE legacy_id IS NOT NULL DO UPDATE SET
-  html_source = EXCLUDED.html_source, variables = EXCLUDED.variables;
+ WHERE NOT EXISTS (SELECT 1 FROM v3.document_template_versions x WHERE x.legacy_id = v.id);
+
+UPDATE v3.document_template_versions nv
+   SET html_source = v.html_source, variables = COALESCE(v.field_schema, '[]'::jsonb)
+  FROM public.document_template_versions v
+ WHERE nv.legacy_id = v.id
+   AND (nv.html_source IS DISTINCT FROM v.html_source
+        OR nv.variables IS DISTINCT FROM COALESCE(v.field_schema, '[]'::jsonb));
 
 UPDATE v3.document_templates nt
    SET current_version_id = nv.id
   FROM public.document_templates t
   JOIN v3.document_template_versions nv ON nv.legacy_id = t.current_version_id
  WHERE nt.legacy_id = t.id
-   AND nt.current_version_id IS DISTINCT FROM nv.id;
+   AND nt.current_version_id IS DISTINCT FROM nv.id
+   -- V3 で改版して現行にしたものは V3 が正。差し戻さない。
+   AND NOT EXISTS (SELECT 1 FROM v3.document_template_versions cur
+                    WHERE cur.id = nt.current_version_id AND cur.legacy_id IS NULL);
 
 -- ---------------------------------------------------------------------
 -- 文書

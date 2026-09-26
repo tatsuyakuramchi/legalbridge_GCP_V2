@@ -2,8 +2,8 @@ import { GoogleAuth } from "google-auth-library";
 import { config } from "../config.js";
 import type { Transactable } from "../core/db.js";
 import {
-  BacklogAdapter, CloudSignAdapter, GmailAdapter, MemoryAdapter, MemoryBacklogReader, SlackAdapter,
-  type BacklogReader, type DispatchAdapter
+  BacklogAdapter, CloudSignAdapter, GmailAdapter, MemoryAdapter, MemoryBacklogReader, MemoryViewOpener, SlackAdapter,
+  type BacklogReader, type DispatchAdapter, type SlackViewOpener
 } from "./adapters.js";
 import { DispatchService } from "./dispatch-service.js";
 import type { IntegrationChannel } from "./gate.js";
@@ -53,6 +53,12 @@ export function buildAdapters(): Partial<Record<IntegrationChannel, DispatchAdap
       ? { backlog: new BacklogAdapter(config.backlogHost, config.backlogApiKey, config.backlogProjectId) }
       : {})
   };
+}
+
+/** Slack のモーダルを開く口。トークンが無ければ null（コマンドは文字だけで返す）。 */
+export function buildSlackViews(): SlackViewOpener | null {
+  if (useMemory()) return new MemoryViewOpener();
+  return config.slackBotToken ? new SlackAdapter(config.slackBotToken) : null;
 }
 
 export function buildDispatch(

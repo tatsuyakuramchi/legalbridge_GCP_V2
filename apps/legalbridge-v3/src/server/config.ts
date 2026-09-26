@@ -47,6 +47,8 @@ export interface Config {
   dispatchAllowlist: string[];
   slackBotToken: string;
   slackSigningSecret: string;
+  /** /法務検索 を使ってよいチャンネル。空ならどこでも（V1 の ALLOWED_SEARCH_CHANNEL_IDS）。 */
+  slackSearchChannels: string[];
   gmailSender: string;
   /** 取り込む受信メールを絞る Gmail のラベル。空なら取り込みごと無効。 */
   gmailIntakeLabel: string;
@@ -55,6 +57,8 @@ export interface Config {
   backlogHost: string;
   backlogApiKey: string;
   backlogProjectId: string;
+  /** Backlog の画面で課題を探すリンク用のプロジェクトキー（例 LEGAL）。 */
+  backlogProjectKey: string;
   /** 課題を立てるときの課題種別ID。空だと宛先未解決でゲートが止める。 */
   backlogIssueTypeId: string;
   /** 内部エンドポイント（Webhook受信）の共有シークレット。 */
@@ -111,6 +115,7 @@ export const config: Config = {
   dispatchAllowlist: list(process.env.DISPATCH_ALLOWLIST),
   slackBotToken: (process.env.SLACK_BOT_TOKEN ?? "").trim(),
   slackSigningSecret: (process.env.SLACK_SIGNING_SECRET ?? "").trim(),
+  slackSearchChannels: list(process.env.SLACK_SEARCH_CHANNELS),
   gmailSender: (process.env.GMAIL_SENDER ?? "").trim(),
   gmailIntakeLabel: (process.env.GMAIL_INTAKE_LABEL ?? "").trim(),
   cloudSignClientId: (process.env.CLOUDSIGN_CLIENT_ID ?? "").trim(),
@@ -119,6 +124,7 @@ export const config: Config = {
   backlogHost: (process.env.BACKLOG_HOST ?? "").trim(),
   backlogApiKey: (process.env.BACKLOG_API_KEY ?? "").trim(),
   backlogProjectId: (process.env.BACKLOG_PROJECT_ID ?? "").trim(),
+  backlogProjectKey: (process.env.BACKLOG_PROJECT_KEY ?? "").trim(),
   backlogIssueTypeId: (process.env.BACKLOG_ISSUE_TYPE_ID ?? "").trim(),
   webhookToken: (process.env.WEBHOOK_TOKEN ?? "").trim()
 };

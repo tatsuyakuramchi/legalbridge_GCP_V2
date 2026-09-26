@@ -84,10 +84,12 @@ import { MonitoringRepository } from "./monitoring/repository.js";
 import { ReceivableRepository } from "./monitoring/receivables.js";
 import { ContractCheckRepository } from "./monitoring/contract-check.js";
 import { DailyJob } from "./jobs/daily.js";
+import { parseSubmission } from "./integrations/slack-intake.js";
+import { SlackCommandHandler } from "./integrations/slack-commands.js";
+import { LegalSearchService } from "./search/legal-search.js";
 import {
-  INTAKE_COMMANDS, buildIntakeModal, parseSubmission
-} from "./integrations/slack-intake.js";
-import { buildAdapters, buildBacklogReader, buildDispatch, buildMailSource } from "./integrations/factory.js";
+  buildAdapters, buildBacklogReader, buildDispatch, buildMailSource, buildSlackViews
+} from "./integrations/factory.js";
 import { IntakeRepository, type IntakeTab } from "./intake/repository.js";
 import { IntakeRequestService } from "./intake/request-service.js";
 import { BacklogPullJob } from "./intake/backlog-pull.js";
@@ -4014,20 +4016,25 @@ export function createWebhookRouter(database: Transactable) {
     rawBody: raw
   });
 
-  // スラッシュコマンド。モーダルの定義を返し、Slack 側で開かせる。
+  // /法務依頼 と /法務検索。V1（GAS・release/api）の Slack の受け口の置き換え。
+  const legalSearch = new LegalSearchService(database);
+  const slackCommands = new SlackCommandHandler({
+    search: (keyword) => legalSearch.search(keyword),
+    views: buildSlackViews(),
+    searchChannels: config.slackSearchChannels,
+    backlogHost: config.backlogHost || undefined,
+    backlogProjectKey: config.backlogProjectKey || undefined,
+    audit: (entry) => inTransaction(database, (client) => recordAudit(client, {
+      actor: `slack:${entry.userId || "unknown"}`, action: "slack.search", targetType: "search",
+      detail: { keyword: entry.keyword, hits: entry.hits }
+    }))
+  });
+
+  // スラッシュコマンド。モーダルは views.open で開く（応答本文では開けない）。
   router.post("/slack/commands", asyncRoute(async (req, res) => {
     const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from("");
     if (!verifySlack(req, raw)) return res.status(401).json({ error: "signature verification failed" });
-
-    const form = parseForm(raw);
-    if (!INTAKE_COMMANDS.has(String(form.command ?? ""))) {
-      return res.json({ response_type: "ephemeral", text: "知らないコマンドです。" });
-    }
-    // trigger_id を添えて返す。views.open は呼び出し側（Slack アプリ）が行う。
-    res.json({
-      trigger_id: form.trigger_id,
-      view: buildIntakeModal({ channelId: form.channel_id })
-    });
+    res.json(await slackCommands.command(parseForm(raw)));
   }));
 
   // モーダルの送信。受付箱に入れて Backlog に起案する（案件は受付箱で受け付けたときに立つ）。
@@ -4041,6 +4048,7 @@ export function createWebhookRouter(database: Transactable) {
     catch { return res.status(400).json({ error: "payload を読み取れません" }); }
 
     if (payload.type !== "view_submission") return res.json({});   // 他の対話は無視
+    if (slackCommands.isSearchSubmission(payload)) return res.json(await slackCommands.searchSubmission(payload));
 
     try {
       const submission = parseSubmission(payload);

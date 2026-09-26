@@ -653,6 +653,7 @@ psql -c "SELECT value FROM v3.settings WHERE key='mail_intake_cursor';"
 | 設定 | 値 |
 |---|---|
 | Slash Command | `/法務依頼` → `{URL}/internal/slack/commands` |
+| Slash Command | `/法務検索` → `{URL}/internal/slack/commands`（同じ URL） |
 | Interactivity | Request URL → `{URL}/internal/slack/interactions` |
 | Event Subscriptions | `{URL}/internal/webhooks/slack` |
 | 必要な権限 | `commands`, `chat:write`, `views:open` |
@@ -667,6 +668,19 @@ gcloud builds submit --config infra/v3/cloudbuild.yaml \
   --substitutions=^@^_GIT_SHA=$(git rev-parse --short HEAD)@_SLACK_MODE=dry_run@_SECRETS_EXTRA=SLACK_BOT_TOKEN=legalbridge-v3-slack-bot-token:latest,SLACK_SIGNING_SECRET=legalbridge-v3-slack-signing-secret:latest \
   .
 ```
+
+モーダルは V3 が `views.open` で開く（Bot トークンが要る。無いと「開けませんでした」と文字で返す）。
+
+`/法務検索` の設定（任意）:
+
+| 環境変数 | 意味 |
+|---|---|
+| `SLACK_SEARCH_CHANNELS` | 使ってよいチャンネル ID（カンマ区切り）。空ならどこでも。V1 の `ALLOWED_SEARCH_CHANNEL_IDS` と同じ値を入れる |
+| `BACKLOG_PROJECT_KEY` | 結果の「Backlog で関連課題を検索」ボタンのプロジェクトキー（例 `LEGAL`）。空ならボタンを出さない |
+
+`/法務検索 キーワード` はその場で本人にだけ結果を返す。キーワード無しならフォームが開く。
+取引先に当たれば画面の「契約チェック」と同じ判定に、直近の文書と進行中の案件を足して出す。
+番号（案件・文書・条件・REQ・Backlog キー）でも引ける。誰が何を引いたかは監査記録（`slack.search`）に残る。
 
 受付フォーム自体は送信を伴わないので `SLACK_MODE=off` でも動く。
 `dry_run` / `live` は V3 から Slack へ**送る**ときに効く。
