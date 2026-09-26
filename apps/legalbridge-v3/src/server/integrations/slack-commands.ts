@@ -98,7 +98,7 @@ export class SlackCommandHandler {
   private async run(userId: string, keyword: string) {
     const result = await this.deps.search(keyword);
     const hits = (result.party ? 1 : 0) + result.partyNames.length + result.hits.length
-      + result.requests.length + result.backlogMatters.length;
+      + result.requests.length + result.backlogMatters.length + result.ringi.length;
     await this.deps.audit?.({ userId, keyword: result.keyword, hits })
       .catch((error) => console.error("search audit failed", (error as Error)?.message));
     return result;

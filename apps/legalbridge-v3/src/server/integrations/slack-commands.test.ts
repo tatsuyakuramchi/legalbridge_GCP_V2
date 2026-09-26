@@ -7,7 +7,7 @@ import { INTAKE_CALLBACK_ID } from "./slack-intake.js";
 import type { LegalSearchResult } from "../search/legal-search.js";
 
 const result = (over: Partial<LegalSearchResult> = {}): LegalSearchResult => ({
-  keyword: "株式会社甲", party: null, partyNames: [], hits: [], requests: [], backlogMatters: [], ...over
+  keyword: "株式会社甲", party: null, partyNames: [], hits: [], requests: [], backlogMatters: [], ringi: [], ...over
 });
 const covered: LegalSearchResult["party"] = {
   partyCode: "PTY-5", name: "株式会社甲", matchedOn: "正式名称と一致",

@@ -108,6 +108,13 @@ REVOKE DELETE, TRUNCATE ON v3.text_snippets FROM legalbridge_v3_runtime;
 -- 依頼の受付箱は消さない。対象外にしたものも受付箱に戻せるように残す（A-052）。
 REVOKE DELETE, TRUNCATE ON v3.intake_requests FROM legalbridge_v3_runtime;
 
+-- 稟議は消さない（取り下げは cancelled）。議案・役員・資料の記録も消さない（A-053〜055）。
+-- 繋ぎ（ringi_links）と、丸ごと差し替える役職・株主構成は消せるままにする。
+REVOKE DELETE, TRUNCATE ON v3.ringi FROM legalbridge_v3_runtime;
+REVOKE DELETE, TRUNCATE ON v3.ringi_related_party FROM legalbridge_v3_runtime;
+REVOKE DELETE, TRUNCATE ON v3.officers FROM legalbridge_v3_runtime;
+REVOKE DELETE, TRUNCATE ON v3.requester_uploads FROM legalbridge_v3_runtime;
+
 -- テンプレート本文は読み取りのみ。改訂は管理者の運用でやる（互換境界）。
 REVOKE INSERT, UPDATE, DELETE ON v3.document_templates FROM legalbridge_v3_runtime;
 REVOKE INSERT, UPDATE, DELETE ON v3.document_template_versions FROM legalbridge_v3_runtime;

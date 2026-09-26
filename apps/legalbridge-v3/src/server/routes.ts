@@ -98,6 +98,9 @@ import { MailIntakeJob } from "./jobs/mail-intake.js";
 import { BacklogService } from "./integrations/backlog-service.js";
 import type { IntegrationChannel } from "./integrations/gate.js";
 import { parseCompanyProfile } from "./ops/company-profile-schema.js";
+import { DELIVERY_ALERT_KEY, parseDeliveryAlertSettings } from "./ops/delivery-alert-settings.js";
+import { DeliveryAlertJob } from "./jobs/delivery-alert.js";
+import { RingiService, type RingiTarget } from "./ringi/service.js";
 import { SnippetService } from "./snippets/service.js";
 
 const asyncRoute =
@@ -177,6 +180,7 @@ export function createRoutes(database: Transactable) {
   const imports = new ImportService(database);
   const ops = new OpsRepository(database);
   const snippets = new SnippetService(database);
+  const ringi = new RingiService(database);
   const monitoring = new MonitoringRepository(database);
 
   // 外部連携は factory で組む。/internal 側と同じものを使う。
@@ -191,6 +195,7 @@ export function createRoutes(database: Transactable) {
     database, issues, conditionEvents, payments, batches);
   const mailSource = buildMailSource();
   const dailyJob = new DailyJob(database, dispatch);
+  const deliveryAlertJob = deliveryAlerts(database, dispatch);
   const mailJob = new MailIntakeJob(database, mailSource);
   const backlog = new BacklogService(database, dispatch, {
     host: config.backlogHost, issueTypeId: config.backlogIssueTypeId
@@ -712,6 +717,13 @@ export function createRoutes(database: Transactable) {
   router.get("/jobs/daily/preview", asyncRoute(async (_req, res) => {
     res.json(await dailyJob.run());
   }));
+
+  // 納期アラート。定期実行は /internal/jobs/delivery-alert（Cloud Scheduler、平日朝）。
+  router.post("/jobs/delivery-alert", requireRole("admin"),
+    asyncRoute(async (_req, res) => { res.json(await deliveryAlertJob.run()); }));
+  // 今日なら何を誰に送るか（送らない）。設定画面の確認用。
+  router.get("/jobs/delivery-alert/preview", requireRole("admin", "legal"),
+    asyncRoute(async (_req, res) => { res.json(await deliveryAlertJob.run({ preview: true })); }));
 
   // ---- 依頼の受付箱（docs/v3-request-inbox.md）----
   // 届いた依頼は案件にせず受付箱に入れ、法務が受け付けたときに案件を立てる（繋ぐ）。
@@ -3419,9 +3431,67 @@ export function createRoutes(database: Transactable) {
       const key = String(req.params.key);
       // 自社情報だけは形を確かめる。書類に差し込む先が決まっているので、
       // 打ち間違えたキーが黙って入ると、どこにも出ないまま「入れたつもり」になる。
-      const value = key === "company_profile"
+      let value = key === "company_profile"
         ? parseCompanyProfile(input.value) : input.value;
+      // 納期アラートも形を確かめる。チャンネル名を ID の欄に入れたまま保存すると、
+      // 毎朝どこにも届かないまま「設定したつもり」になる。
+      if (key === DELIVERY_ALERT_KEY) {
+        const parsed = parseDeliveryAlertSettings(input.value);
+        if (parsed.errors.length) throw new DomainError("VALIDATION", parsed.errors.join(" ／ "));
+        value = parsed.value;
+      }
       res.json(await ops.saveSetting(key, value, actor(res)));
+    }));
+
+  // ---- 稟議（R-）・取締役会決議（B-）（A-053）----
+  // 読みは全員。登録・直す・繋ぐは admin/legal。消さない（取り下げは cancelled）。
+  const ringiSchema = z.object({
+    ringiNo: z.string().trim().max(20).optional(),
+    title: z.string().trim().max(300).optional(),
+    category: z.string().trim().max(50).nullable().optional(),
+    ownerName: z.string().trim().max(100).nullable().optional(),
+    ownerDepartment: z.string().trim().max(100).nullable().optional(),
+    approvedOn: z.string().trim().max(10).nullable().optional(),
+    backlogIssueKey: z.string().trim().max(40).nullable().optional(),
+    status: z.string().trim().max(20).optional(),
+    totalBudget: z.number().nullable().optional(),
+    remarks: z.string().max(2000).nullable().optional()
+  });
+  const ringiTarget = z.enum(["document", "agreement", "condition", "matter", "work"]);
+  router.get("/ringi", asyncRoute(async (req, res) => {
+    res.json({ ringi: await ringi.list({
+      q: req.query.q ? String(req.query.q) : undefined,
+      status: req.query.status ? String(req.query.status) : undefined
+    }) });
+  }));
+  router.get("/ringi/for/:type/:id", asyncRoute(async (req, res) => {
+    const type = ringiTarget.parse(req.params.type) as RingiTarget;
+    res.json({ ringi: await ringi.forTarget(type, Number(req.params.id)) });
+  }));
+  router.get("/ringi/:id", asyncRoute(async (req, res) => {
+    res.json(await ringi.get(Number(req.params.id)));
+  }));
+  router.post("/ringi", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.status(201).json(await ringi.create(ringiSchema.parse(req.body ?? {}), actor(res)));
+    }));
+  router.patch("/ringi/:id", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await ringi.update(Number(req.params.id), ringiSchema.parse(req.body ?? {}), actor(res)));
+    }));
+  router.post("/ringi/:id/links", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        ref: z.string().trim().max(60).optional(),
+        targetType: ringiTarget.optional(),
+        targetId: z.number().int().positive().optional()
+      }).parse(req.body ?? {});
+      res.json(await ringi.link(Number(req.params.id), input, actor(res)));
+    }));
+  router.post("/ringi/:id/links/remove", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({ targetType: ringiTarget, targetId: z.number().int().positive() }).parse(req.body ?? {});
+      res.json(await ringi.unlink(Number(req.params.id), input.targetType, input.targetId, actor(res)));
     }));
 
   // ---- 定型文 ----
@@ -3968,6 +4038,17 @@ function parseForm(raw: Buffer): Record<string, string> {
   return out;
 }
 
+/** 納期アラートを組む。画面の経路と /internal で同じものを使う。 */
+function deliveryAlerts(database: Transactable, dispatch: ReturnType<typeof buildDispatch>) {
+  return new DeliveryAlertJob({
+    database,
+    send: async (conditionId, recipient, body) => (await dispatch.dispatch({
+      channel: "slack", targetType: "condition", targetId: conditionId, actor: "system:delivery-alert",
+      request: { recipient, body }
+    })).sent
+  });
+}
+
 /** 工程の通知ジョブを組む。画面の経路と /internal で同じものを使う。 */
 function flowNoticeJob(
   database: Transactable, dispatch: ReturnType<typeof buildDispatch>,
@@ -3995,6 +4076,7 @@ export function createWebhookRouter(database: Transactable) {
     backlogIssueTypeId: config.backlogIssueTypeId
   });
   const jobs: Record<string, (body: any) => Promise<unknown>> = {
+    "delivery-alert": () => deliveryAlerts(database, dispatch).run(),
     "flow-notice": () => flowNoticeJob(database, dispatch,
       new MatterCommunicationService(database, dispatch), new MatterLinkService(database)).run(),
     "backlog-pull": (body) => new BacklogPullJob(database, buildBacklogReader(), () => ({

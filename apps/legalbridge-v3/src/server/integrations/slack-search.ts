@@ -32,7 +32,7 @@ export function buildSearchModal(initialKeyword = "") {
         element: {
           type: "plain_text_input", action_id: "value", min_length: 2, max_length: 100,
           ...(initialKeyword ? { initial_value: initialKeyword.slice(0, 100) } : {}),
-          placeholder: { type: "plain_text", text: "取引先名、案件番号、文書番号、REQ 番号、Backlog キーなど" }
+          placeholder: { type: "plain_text", text: "取引先名、案件番号、文書番号、稟議番号、REQ 番号、Backlog キーなど" }
         }
       },
       {
@@ -62,6 +62,12 @@ const REQUEST_STATE: Record<string, string> = {
 };
 const DOCUMENT_STATUS: Record<string, string> = {
   draft: "下書き", issued: "発行済", superseded: "差し替え済", void: "無効"
+};
+const RINGI_STATUS: Record<string, string> = {
+  open: "起案中", approved: "承認", rejected: "否決", closed: "完了", cancelled: "取り下げ"
+};
+const RINGI_TARGET: Record<string, string> = {
+  document: "文書", agreement: "契約", condition: "条件", matter: "案件", work: "作品"
 };
 const HIT_LABEL: Record<string, string> = {
   matter: "案件", condition: "条件", document: "文書", work: "作品"
@@ -130,6 +136,18 @@ export function renderSearchBlocks(
       `*🏢 取引先の候補が ${result.partyNames.length} 件あります。名前を絞って検索してください。*\n`
       + result.partyNames.map((n) => `・${n}`).join("\n")));
   }
+  if (result.ringi.length) {
+    found = true;
+    const lines = result.ringi.map((r) => {
+      const head = `・\`${r.ringiNo}\` ${r.title}　${RINGI_STATUS[r.status] ?? r.status}`
+        + (r.approvedOn ? `　承認 ${r.approvedOn}` : "") + (r.ownerDepartment ? `　${r.ownerDepartment}` : "");
+      const links = (r.links ?? []).slice(0, 15).map((l) =>
+        `　　${RINGI_TARGET[l.targetType] ?? l.targetType}　${l.code ? `\`${l.code}\` ` : ""}${l.title}`);
+      const more = r.links && r.links.length > 15 ? [`　　…ほか ${r.links.length - 15} 件`] : [];
+      return [head, ...links, ...more].join("\n");
+    });
+    blocks.push({ type: "divider" }, section(`*📝 稟議*\n${lines.join("\n")}`));
+  }
   if (result.backlogMatters.length) {
     found = true;
     blocks.push({ type: "divider" }, section(`*📌 Backlog の課題に繋がっている案件*\n${result.backlogMatters.map((m) =>
@@ -165,7 +183,7 @@ export function renderSearchBlocks(
 /** 通知やスクリーンリーダー向けの一行。 */
 export function searchSummaryText(result: LegalSearchResult): string {
   const n = (result.party ? 1 : 0) + result.partyNames.length + result.hits.length
-    + result.requests.length + result.backlogMatters.length;
+    + result.requests.length + result.backlogMatters.length + result.ringi.length;
   return `法務検索「${result.keyword}」：${n ? `${n} 件` : "該当なし"}`;
 }
 

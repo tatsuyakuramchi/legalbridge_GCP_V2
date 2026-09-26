@@ -2,6 +2,7 @@ import type { Transactable } from "../core/db.js";
 import { dateStr, str } from "../core/db.js";
 import { translate } from "../core/errors.js";
 import { SearchRepository, type SearchHit } from "./repository.js";
+import { RingiService, normalizeRingiNo, type Ringi, type RingiLink } from "../ringi/service.js";
 import { ContractCheckRepository, type ContractCheckResult, type Verdict } from "../monitoring/contract-check.js";
 
 /**
@@ -11,8 +12,9 @@ import { ContractCheckRepository, type ContractCheckResult, type Verdict } from 
  * の2つ。取引先に当たれば契約の状況（基本契約・個別の合意・直近の文書・進行中の案件）を、
  * 番号に当たればその案件・文書・依頼を返す。
  *
- * V1 の稟議番号検索（5桁の数字）は V3 に稟議の表が無いので持ってこない。
- * 用途（contract_purposes）からの推奨判定も V3 には無いので、状況の表示だけにする。
+ * 稟議番号（R-00012・B-00001・5 桁の数字）ならその稟議と繋がっている文書・契約を出す
+ * （V1 の稟議検索と同じ）。件名などの部分一致でも稟議を引く。
+ * 用途（contract_purposes）からの推奨判定は V3 には無いので、状況の表示だけにする。
  */
 
 export type AgreementLine = ContractCheckResult["agreements"][number];
@@ -53,26 +55,39 @@ export interface LegalSearchResult {
   requests: RequestLine[];
   /** Backlog の課題キーから辿った案件。 */
   backlogMatters: Array<MatterLine & { issueKey: string }>;
+  /** 稟議。番号で当たれば1件（繋がっているものつき）、部分一致なら数件。 */
+  ringi: Array<Ringi & { links?: RingiLink[] }>;
 }
 
 export class LegalSearchService {
   private readonly repository: SearchRepository;
   private readonly contracts: ContractCheckRepository;
+  private readonly ringiService: RingiService;
   constructor(private readonly database: Transactable) {
     this.repository = new SearchRepository(database);
     this.contracts = new ContractCheckRepository(database);
+    this.ringiService = new RingiService(database);
+  }
+
+  /** 稟議番号なら1件を繋がりつきで、そうでなければ部分一致で数件。 */
+  private async ringiFor(q: string): Promise<LegalSearchResult["ringi"]> {
+    if (normalizeRingiNo(q)) {
+      const one = await this.ringiService.findByNo(q);
+      if (one) return [one];
+    }
+    return (await this.ringiService.list({ q, limit: 5 })).slice(0, 5);
   }
 
   async search(keyword: string): Promise<LegalSearchResult> {
     const q = keyword.trim().slice(0, 100);
     const empty: LegalSearchResult = {
-      keyword: q, party: null, partyNames: [], hits: [], requests: [], backlogMatters: []
+      keyword: q, party: null, partyNames: [], hits: [], requests: [], backlogMatters: [], ringi: []
     };
     if (q.length < 2) return empty;
     const like = `%${q}%`;
 
     try {
-      const [check, hits, requestRows, backlogRows] = await Promise.all([
+      const [check, hits, requestRows, backlogRows, ringi] = await Promise.all([
         this.contracts.check(q),
         this.repository.search(q, 5),
         this.database.query(
@@ -86,7 +101,8 @@ export class LegalSearchService {
           `SELECT l.target_ref AS issue_key, m.matter_no, m.title, m.status
              FROM matter_links l JOIN matters m ON m.id = l.matter_id
             WHERE l.target_type = 'backlog_issue' AND upper(l.target_ref) = upper($1)
-            LIMIT 5`, [q])
+            LIMIT 5`, [q]),
+        this.ringiFor(q)
       ]);
 
       const single = check.matches.length === 1 ? check.matches[0] : null;
@@ -105,7 +121,8 @@ export class LegalSearchService {
         backlogMatters: (backlogRows.rows as any[]).map((r) => ({
           issueKey: String(r.issue_key), matterNo: str(r.matter_no),
           title: String(r.title), status: String(r.status)
-        }))
+        })),
+        ringi
       };
     } catch (error) { throw translate(error); }
   }

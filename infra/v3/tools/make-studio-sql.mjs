@@ -295,6 +295,14 @@ SELECT * FROM (
             WHERE conrelid='v3.party_bank_accounts'::regclass
               AND conname='party_bank_accounts_scope_chk'))::text
   UNION ALL
+  SELECT 53, '稟議・関連当事者・資料アップロード（A-053〜055。表 7 と列 5 で 12 であること）',
+         ((SELECT count(*) FROM information_schema.tables
+            WHERE table_schema='v3' AND table_name IN ('ringi', 'ringi_links', 'officers', 'officer_roles',
+                                                      'party_shareholdings', 'ringi_related_party', 'requester_uploads'))
+        + (SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='v3' AND table_name='parties'
+              AND column_name IN ('rpt_entity', 'has_board', 'related_party', 'related_party_type', 'related_party_note')))::text
+  UNION ALL
   SELECT 52, '依頼の受付箱（A-052。メールの列まであれば 4 であること）',
          (SELECT count(*) FROM information_schema.columns
            WHERE table_schema='v3' AND table_name='intake_requests'

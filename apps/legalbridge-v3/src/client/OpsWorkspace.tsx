@@ -6,6 +6,7 @@ import { CsvImport } from "./CsvImport.js";
 import { Leftovers } from "./Leftovers.js";
 import { AccountingExport } from "./AccountingExport.js";
 import { CompanyProfileForm } from "./CompanyProfileForm.js";
+import { DeliveryAlertForm } from "./DeliveryAlertForm.js";
 import { TextSnippets } from "./TextSnippets.js";
 
 interface Issue {
@@ -54,6 +55,9 @@ const SOURCE_LABEL: Record<string, string> = {
 
 export type OpsTab = "quality" | "deadlines" | "leftovers" | "exports" | "imports" | "snippets"
   | "audit" | "integrations" | "settings";
+
+/** 専用のフォームで編集する設定。下の一覧には生の JSON を出さない。 */
+const FORM_KEYS = new Set(["company_profile", "delivery_alert"]);
 
 export function OpsWorkspace({ initialTab }: { initialTab?: OpsTab } = {}) {
   const [tab, setTab] = useState<OpsTab>(initialTab ?? "quality");
@@ -271,6 +275,9 @@ export function OpsWorkspace({ initialTab }: { initialTab?: OpsTab } = {}) {
         <CompanyProfileForm
           value={settings.find((s) => s.key === "company_profile")?.value}
           onSaved={() => void reload()} />
+        <DeliveryAlertForm
+          value={settings.find((s) => s.key === "delivery_alert")?.value}
+          onSaved={() => void reload()} />
         <div className="panel">
           <div className="panel-hd">
             <h2>その他の設定</h2><span className="faint">管理者のみ</span>
@@ -279,15 +286,15 @@ export function OpsWorkspace({ initialTab }: { initialTab?: OpsTab } = {}) {
             <table>
               <thead><tr><th>キー</th><th>値</th><th>更新</th></tr></thead>
               <tbody>
-                {/* 自社情報は上のフォームで編集する。生のJSONを二重に出さない。 */}
-                {settings.filter((s) => s.key !== "company_profile").map((s) => (
+                {/* 自社情報・納期アラートは上のフォームで編集する。生のJSONを二重に出さない。 */}
+                {settings.filter((s) => !FORM_KEYS.has(s.key)).map((s) => (
                   <tr key={s.key}>
                     <td className="code">{s.key}</td>
                     <td className="code faint">{JSON.stringify(s.value)}</td>
                     <td className="code">{s.updatedAt?.slice(0, 10) ?? "—"}</td>
                   </tr>
                 ))}
-                {settings.filter((s) => s.key !== "company_profile").length === 0 && (
+                {settings.filter((s) => !FORM_KEYS.has(s.key)).length === 0 && (
                   <tr><td colSpan={3} className="faint">他に設定はありません</td></tr>
                 )}
               </tbody>

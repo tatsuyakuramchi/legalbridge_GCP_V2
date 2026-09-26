@@ -1849,6 +1849,159 @@ REVOKE ALL ON v3.intake_requests FROM legalbridge_v3_runtime;
 GRANT SELECT, INSERT, UPDATE ON v3.intake_requests TO legalbridge_v3_runtime;
 GRANT USAGE, SELECT ON SEQUENCE v3.intake_requests_id_seq TO legalbridge_v3_runtime;
 
+-- ---------------------------------------------------------------------
+-- A-053 稟議（V1 の ringi_records・ringi_documents などの置き換え）
+--   稟議（R-00001）と取締役会決議（B-00001）の台帳。文書・契約・条件・案件・作品と
+--   多対多で繋ぐ（V1 は文書・契約・条件・作品ごとに別の表だった）。
+--   稟議は消さない（取り下げは status='cancelled'）。繋ぎは外せる（監査に残す）。
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS v3.ringi (
+  id               bigserial PRIMARY KEY,
+  ringi_no         text NOT NULL UNIQUE CHECK (ringi_no ~ '^(R|B)-[0-9]{5}$'),
+  decision_type    text NOT NULL DEFAULT 'ringi'
+                   CHECK (decision_type IN ('ringi', 'board_resolution')),
+  title            text NOT NULL,
+  category         text,
+  owner_name       text,
+  owner_department text,
+  approved_on      date,
+  backlog_issue_key text,
+  status           text NOT NULL DEFAULT 'open'
+                   CHECK (status IN ('open', 'approved', 'rejected', 'closed', 'cancelled')),
+  total_budget     numeric(15,2),
+  remarks          text,
+  legacy_id        integer,
+  created_by       text,
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  updated_at       timestamptz NOT NULL DEFAULT now(),
+  CHECK ((decision_type = 'board_resolution') = (ringi_no LIKE 'B-%'))
+);
+COMMENT ON TABLE v3.ringi IS '稟議（R-）と取締役会決議（B-）。消さない。取り下げは cancelled。';
+CREATE UNIQUE INDEX IF NOT EXISTS ringi_legacy_uq ON v3.ringi (legacy_id) WHERE legacy_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS v3.ringi_links (
+  ringi_id    bigint NOT NULL REFERENCES v3.ringi(id),
+  target_type text NOT NULL CHECK (target_type IN ('document', 'agreement', 'condition', 'matter', 'work')),
+  target_id   bigint NOT NULL,
+  linked_at   timestamptz NOT NULL DEFAULT now(),
+  linked_by   text,
+  PRIMARY KEY (ringi_id, target_type, target_id)
+);
+CREATE INDEX IF NOT EXISTS ringi_links_target_idx ON v3.ringi_links (target_type, target_id);
+
+REVOKE ALL ON v3.ringi FROM legalbridge_v3_runtime;
+GRANT SELECT, INSERT, UPDATE ON v3.ringi TO legalbridge_v3_runtime;
+GRANT USAGE, SELECT ON SEQUENCE v3.ringi_id_seq TO legalbridge_v3_runtime;
+GRANT SELECT, INSERT, UPDATE, DELETE ON v3.ringi_links TO legalbridge_v3_runtime;
+
+-- ---------------------------------------------------------------------
+-- A-054 関連当事者（V1 の gas/RPT.gs・migrations/0077 の置き換え）
+--   会社法の利益相反・競業（356条）と、会計基準の関連当事者（基準第11号）を判定する
+--   ための台帳。会社は取引先（parties）に印を付けて持つ。
+--   役員の役職・株主構成は「丸ごと差し替え」で直すので、行を消せるようにする
+--   （差し替え前の中身は監査に残す）。
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.parties ADD COLUMN IF NOT EXISTS rpt_entity boolean NOT NULL DEFAULT false;
+ALTER TABLE v3.parties ADD COLUMN IF NOT EXISTS has_board boolean NOT NULL DEFAULT false;
+ALTER TABLE v3.parties ADD COLUMN IF NOT EXISTS related_party boolean NOT NULL DEFAULT false;
+ALTER TABLE v3.parties ADD COLUMN IF NOT EXISTS related_party_type text;
+ALTER TABLE v3.parties ADD COLUMN IF NOT EXISTS related_party_note text;
+COMMENT ON COLUMN v3.parties.rpt_entity IS '関連当事者の判定に使う会社（グループ会社・役員の関係会社など）。';
+COMMENT ON COLUMN v3.parties.has_board IS '取締役会を置いているか。承認機関（取締役会／株主総会）の判定に使う。';
+CREATE INDEX IF NOT EXISTS parties_rpt_idx ON v3.parties (id) WHERE rpt_entity;
+
+CREATE TABLE IF NOT EXISTS v3.officers (
+  id          bigserial PRIMARY KEY,
+  officer_key text NOT NULL UNIQUE,         -- 職員コード、社外役員は氏名
+  name        text NOT NULL,
+  staff_id    bigint REFERENCES v3.staff(id),
+  voided_at   timestamptz,
+  legacy_id   integer,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS officers_legacy_uq ON v3.officers (legacy_id) WHERE legacy_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS v3.officer_roles (
+  id          bigserial PRIMARY KEY,
+  officer_id  bigint NOT NULL REFERENCES v3.officers(id),
+  party_id    bigint NOT NULL REFERENCES v3.parties(id),
+  title       text NOT NULL CHECK (title IN ('代表取締役', '取締役', '社外取締役', '監査役', '執行役員', '会計参与')),
+  is_director boolean NOT NULL DEFAULT true,
+  UNIQUE (officer_id, party_id, title)
+);
+
+CREATE TABLE IF NOT EXISTS v3.party_shareholdings (
+  id                bigserial PRIMARY KEY,
+  party_id          bigint NOT NULL REFERENCES v3.parties(id),
+  holder_kind       text NOT NULL CHECK (holder_kind IN ('party', 'officer')),
+  holder_party_id   bigint REFERENCES v3.parties(id),
+  holder_officer_id bigint REFERENCES v3.officers(id),
+  voting_pct        numeric(7,4) NOT NULL CHECK (voting_pct > 0 AND voting_pct <= 100),
+  CHECK ((holder_kind = 'party') = (holder_party_id IS NOT NULL)),
+  CHECK ((holder_kind = 'officer') = (holder_officer_id IS NOT NULL)),
+  CHECK (holder_party_id IS NULL OR holder_party_id <> party_id)
+);
+CREATE INDEX IF NOT EXISTS party_shareholdings_party_idx ON v3.party_shareholdings (party_id);
+
+-- 取締役会の議案（稟議の B- 番号に 1 対 1 で付く）。
+CREATE TABLE IF NOT EXISTS v3.ringi_related_party (
+  ringi_id          bigint PRIMARY KEY REFERENCES v3.ringi(id),
+  party_id          bigint REFERENCES v3.parties(id),
+  meeting_on        date,
+  txn_type          text NOT NULL,
+  party_a           text NOT NULL,
+  party_b           text NOT NULL,
+  amount_ex_tax     numeric(15,2),
+  is_conflict       boolean NOT NULL DEFAULT false,
+  is_related_party  boolean NOT NULL DEFAULT false,
+  related_category  text,
+  conflict_types    jsonb NOT NULL DEFAULT '[]'::jsonb,
+  excluded_officers jsonb NOT NULL DEFAULT '[]'::jsonb,
+  judgement         jsonb NOT NULL DEFAULT '{}'::jsonb,
+  rp_status         text NOT NULL DEFAULT 'pending'
+                    CHECK (rp_status IN ('pending', 'approved', 'rejected', 'deferred')),
+  note              text,
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  updated_at        timestamptz NOT NULL DEFAULT now()
+);
+COMMENT ON COLUMN v3.ringi_related_party.judgement IS '起票したときの判定書（画面の判定結果をそのまま）。';
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON v3.officer_roles, v3.party_shareholdings TO legalbridge_v3_runtime;
+GRANT SELECT, INSERT, UPDATE ON v3.officers, v3.ringi_related_party TO legalbridge_v3_runtime;
+REVOKE DELETE, TRUNCATE ON v3.officers, v3.ringi_related_party FROM legalbridge_v3_runtime;
+GRANT USAGE, SELECT ON SEQUENCE v3.officers_id_seq, v3.officer_roles_id_seq,
+                                v3.party_shareholdings_id_seq TO legalbridge_v3_runtime;
+
+-- ---------------------------------------------------------------------
+-- A-055 依頼者の資料アップロード（V1 の /attachments/upload の置き換え）
+--   依頼者は署名付きのリンクから資料を上げる（V3 に入れない人でも上げられる）。
+--   ファイルは Drive、ここにはその記録。依頼（受付箱）か案件に繋ぐ。消さない。
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS v3.requester_uploads (
+  id                bigserial PRIMARY KEY,
+  upload_no         text NOT NULL UNIQUE,              -- ATT-YYYY-NNNNN
+  intake_request_id bigint REFERENCES v3.intake_requests(id),
+  matter_id         bigint REFERENCES v3.matters(id),
+  kind              text NOT NULL DEFAULT 'reference'
+                    CHECK (kind IN ('counterparty_draft', 'own_draft', 'reference')),
+  file_name         text NOT NULL,
+  mime_type         text,
+  size_bytes        bigint,
+  drive_file_id     text,
+  drive_url         text,
+  uploader_email    text,
+  note              text,
+  uploaded_at       timestamptz NOT NULL DEFAULT now(),
+  CHECK (intake_request_id IS NOT NULL OR matter_id IS NOT NULL)
+);
+CREATE INDEX IF NOT EXISTS requester_uploads_matter_idx ON v3.requester_uploads (matter_id);
+CREATE INDEX IF NOT EXISTS requester_uploads_request_idx ON v3.requester_uploads (intake_request_id);
+
+REVOKE ALL ON v3.requester_uploads FROM legalbridge_v3_runtime;
+GRANT SELECT, INSERT, UPDATE ON v3.requester_uploads TO legalbridge_v3_runtime;
+GRANT USAGE, SELECT ON SEQUENCE v3.requester_uploads_id_seq TO legalbridge_v3_runtime;
+
 COMMIT;
 
 
@@ -2114,6 +2267,14 @@ SELECT * FROM (
         + (SELECT count(*) FROM pg_constraint
             WHERE conrelid='v3.party_bank_accounts'::regclass
               AND conname='party_bank_accounts_scope_chk'))::text
+  UNION ALL
+  SELECT 53, '稟議・関連当事者・資料アップロード（A-053〜055。表 7 と列 5 で 12 であること）',
+         ((SELECT count(*) FROM information_schema.tables
+            WHERE table_schema='v3' AND table_name IN ('ringi', 'ringi_links', 'officers', 'officer_roles',
+                                                      'party_shareholdings', 'ringi_related_party', 'requester_uploads'))
+        + (SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='v3' AND table_name='parties'
+              AND column_name IN ('rpt_entity', 'has_board', 'related_party', 'related_party_type', 'related_party_note')))::text
   UNION ALL
   SELECT 52, '依頼の受付箱（A-052。メールの列まであれば 4 であること）',
          (SELECT count(*) FROM information_schema.columns
