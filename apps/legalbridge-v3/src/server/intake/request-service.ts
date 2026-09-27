@@ -5,7 +5,7 @@ import { allocateNumber } from "../core/numbering.js";
 import type { MatterKind } from "../matters/write-service.js";
 import type { DispatchService } from "../integrations/dispatch-service.js";
 import type { IntakeSubmission } from "../integrations/slack-intake.js";
-import { REQUEST_TYPES } from "../integrations/slack-intake.js";
+import { REQUEST_TYPES, requestLabel } from "../integrations/slack-intake.js";
 import { openMatter, resolveCounterparty } from "../integrations/intake-service.js";
 import { attachUploadsToMatter } from "./upload-service.js";
 import { recordCommunication } from "../matters/communication-service.js";
@@ -22,9 +22,6 @@ import { recordCommunication } from "../matters/communication-service.js";
  */
 
 export type IntakeState = "new" | "on_hold" | "accepted" | "duplicate" | "dismissed";
-
-const KIND_LABEL: Record<string, string> =
-  Object.fromEntries(REQUEST_TYPES.map((t) => [t.value, t.label]));
 
 export interface SubmitResult {
   requestId: number;
@@ -66,7 +63,8 @@ export function requestIssueDescription(input: {
   const s = input.submission;
   const lines = [
     `依頼番号：${input.requestNo ?? "（未採番）"}`,
-    `種類：${KIND_LABEL[s.kind] ?? s.kind}`,
+    `依頼の内容：${requestLabel(s)}`,
+    ...(s.targetDocNo ? [`対象の番号：${s.targetDocNo}`] : []),
     `相手先：${s.counterpartyName ?? "（未記載）"}`,
     `希望の期日：${s.dueOn ?? "（未記載）"}`,
     `依頼者：${s.requesterSlackId ? `<@${s.requesterSlackId}>` : ""}${s.requesterName ? ` ${s.requesterName}` : ""}`
@@ -84,8 +82,9 @@ export function submitAcknowledgement(input: {
   const s = input.submission;
   const lines = [
     `依頼を送信しました：*${input.requestNo ?? "（番号未採番）"}*${input.issueKey ? `（${input.issueKey}）` : ""}`,
-    `種類：${KIND_LABEL[s.kind] ?? s.kind}`,
+    `依頼の内容：${requestLabel(s)}`,
     `件名：${s.title}`,
+    ...(s.targetDocNo ? [`対象の番号：${s.targetDocNo}`] : []),
     "法務が内容を確認して受け付けます。受け付けたら Slack でお知らせします。",
     ...(input.uploadUrl
       ? [`📎 レビューしてほしい文書・参考資料は <${input.uploadUrl}|資料アップロードページ> から上げてください（30 日有効）。`]
@@ -128,15 +127,18 @@ export class IntakeRequestService {
         const inserted = await client.query(
           `INSERT INTO intake_requests
              (request_no, source, state, kind, title, detail, counterparty_name, due_on,
-              requester_slack_id, requester_name, created_by)
-           VALUES ($1, 'slack', 'new', $2, $3, $4, $5, $6, $7, $8, $9)
+              requester_slack_id, requester_name, created_by, source_payload)
+           VALUES ($1, 'slack', 'new', $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
            RETURNING id, request_no`,
           [no, submission.kind, submission.title, submission.detail, submission.counterpartyName,
-           submission.dueOn, submission.requesterSlackId || null, submission.requesterName, actor]);
+           submission.dueOn, submission.requesterSlackId || null, submission.requesterName, actor,
+           // 依頼者が選んだ内容と支払の対象番号。表の列にはせず原票に残す（受付箱で見せる）。
+           JSON.stringify({ purpose: submission.purpose ?? null, targetDocNo: submission.targetDocNo ?? null })]);
         const row = inserted.rows[0] as { id: number; request_no: string | null };
         await recordAudit(client, {
           actor, action: "intake.submit", targetType: "intake_request", targetId: Number(row.id),
-          detail: { source: "slack", requestNo: row.request_no, kind: submission.kind }
+          detail: { source: "slack", requestNo: row.request_no, kind: submission.kind,
+                    purpose: submission.purpose ?? null }
         });
         return { requestId: Number(row.id), requestNo: row.request_no ?? null };
       });

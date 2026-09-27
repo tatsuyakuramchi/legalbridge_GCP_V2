@@ -84,7 +84,7 @@ import { MonitoringRepository } from "./monitoring/repository.js";
 import { ReceivableRepository } from "./monitoring/receivables.js";
 import { ContractCheckRepository } from "./monitoring/contract-check.js";
 import { DailyJob } from "./jobs/daily.js";
-import { parseSubmission } from "./integrations/slack-intake.js";
+import { IntakeFieldError, parseSubmission } from "./integrations/slack-intake.js";
 import { SlackCommandHandler } from "./integrations/slack-commands.js";
 import { LegalSearchService } from "./search/legal-search.js";
 import {
@@ -4242,7 +4242,7 @@ export function createWebhookRouter(database: Transactable) {
       // 入力の誤りはモーダルに出す。閉じさせない。
       return res.json({
         response_action: "errors",
-        errors: { title: e?.message ?? "受け付けられませんでした" }
+        errors: { [e instanceof IntakeFieldError ? e.block : "title"]: e?.message ?? "受け付けられませんでした" }
       });
     }
   }));

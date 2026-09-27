@@ -1,5 +1,6 @@
 import { dateStr, type Queryable } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
+import { purposeOf } from "../integrations/slack-intake.js";
 
 /**
  * 受付箱の読み取り。
@@ -16,6 +17,11 @@ export interface IntakeRow {
   source: string;
   state: string;
   kind: string | null;
+  /** 依頼者が選んだ内容（Slack の /法務依頼）と、その表示。無ければ null。 */
+  purpose: string | null;
+  purposeLabel: string | null;
+  /** 支払の書類（検収書・利用許諾計算書）の対象の発注書番号・契約書番号。 */
+  targetDocNo: string | null;
   title: string;
   detail: string | null;
   counterpartyName: string | null;
@@ -66,12 +72,17 @@ function mailOf(p: Record<string, any>): IntakeRow["mail"] {
 }
 
 export function toRow(r: Record<string, any>): IntakeRow {
+  const payload = (r.source === "slack" ? r.source_payload ?? {} : {}) as Record<string, any>;
+  const purpose = purposeOf(payload.purpose);
   return {
     id: Number(r.id),
     requestNo: r.request_no ?? null,
     source: String(r.source),
     state: String(r.state),
     kind: r.kind ?? null,
+    purpose: purpose?.value ?? null,
+    purposeLabel: purpose?.label ?? null,
+    targetDocNo: payload.targetDocNo ? String(payload.targetDocNo) : null,
     title: String(r.title),
     detail: r.detail ?? null,
     counterpartyName: r.counterparty_name ?? null,

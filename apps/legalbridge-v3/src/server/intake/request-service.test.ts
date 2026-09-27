@@ -8,6 +8,7 @@ import {
   IntakeRequestService, requestIssueDescription, requestIssueSummary, submitAcknowledgement
 } from "./request-service.js";
 import type { IntakeSubmission } from "../integrations/slack-intake.js";
+import { toRow } from "./repository.js";
 
 const submission: IntakeSubmission = {
   kind: "outsourcing", title: "追加アートワーク発注", counterpartyName: "株式会社甲",
@@ -210,4 +211,40 @@ test("メールの依頼を受け付けると、スレッドを案件に繋ぎ�
   const kept = d.all("INSERT INTO matter_communications");
   assert.deepEqual(kept.map((q) => q.params[8]), ["m1", "m2"]);
   assert.deepEqual(kept.map((q) => q.params[7]), ["本文1", "本文2"]);
+});
+
+// ---- 依頼の内容（依頼者の言葉）と支払の対象番号 ----
+
+const payment: IntakeSubmission = {
+  ...submission, purpose: "inspection", targetDocNo: "ARC-PO-2026-1001", title: "9月納品分の検収"
+};
+
+test("依頼者が選んだ内容と対象の番号を原票に残す", async () => {
+  const d = build();
+  const { svc } = service(d);
+  await svc.registerFromSlack(payment);
+  const ins = d.find("INSERT INTO intake_requests")!;
+  assert.deepEqual(JSON.parse(String(ins.params.at(-1))),
+    { purpose: "inspection", targetDocNo: "ARC-PO-2026-1001" });
+});
+
+test("Backlog の課題と確認の DM に、依頼の内容と対象の番号を書く", () => {
+  const body = requestIssueDescription({ requestNo: "REQ-2026-00012", submission: payment });
+  assert.match(body, /依頼の内容：納品を受けたので支払いたい（検収書）/);
+  assert.match(body, /対象の番号：ARC-PO-2026-1001/);
+  const dm = submitAcknowledgement({ requestNo: "REQ-2026-00012", issueKey: null, submission: payment });
+  assert.match(dm, /検収書/);
+  assert.match(dm, /ARC-PO-2026-1001/);
+  // 内容を選ばない依頼（手動・古い依頼）は法務側の分類を出す
+  assert.match(requestIssueDescription({ requestNo: null, submission }), /依頼の内容：業務委託・発注/);
+});
+
+test("受付箱の行は、Slack の原票から依頼の内容と対象の番号を読む", () => {
+  const row = toRow({ id: 1, source: "slack", state: "new", title: "t", created_at: "2026-09-27",
+    source_payload: { purpose: "royalty", targetDocNo: "LIC-2026-1003" } });
+  assert.equal(row.purposeLabel, "利用許諾料を支払いたい（利用許諾計算書）");
+  assert.equal(row.targetDocNo, "LIC-2026-1003");
+  const mail = toRow({ id: 2, source: "email", state: "new", title: "t", created_at: "2026-09-27",
+    source_payload: { purpose: "royalty" } });
+  assert.equal(mail.purpose, null, "メールの原票は別の形なので読まない");
 });

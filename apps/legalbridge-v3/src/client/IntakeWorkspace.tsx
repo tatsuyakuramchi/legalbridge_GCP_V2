@@ -26,6 +26,7 @@ const DISMISS_REASONS = ["誤起票", "テスト投稿", "法務の対象外", "
 
 interface Request {
   id: number; requestNo: string | null; source: string; state: string; kind: Kind | null;
+  purpose: string | null; purposeLabel: string | null; targetDocNo: string | null;
   title: string; detail: string | null; counterpartyName: string | null; dueOn: string | null;
   requesterSlackId: string | null; requesterName: string | null; requesterEmail: string | null;
   mail: { from: string | null; to: string[]; attachments: string[];
@@ -191,7 +192,10 @@ export function IntakeWorkspace(
                       {r.hasUnseenUpdate && <span className="tag warn">Backlog 更新あり</span>}
                     </td>
                     <td className="faint">{SOURCE_LABEL[r.source] ?? r.source}</td>
-                    <td className="faint">{r.kind ? KIND_LABEL[r.kind] : "推定なし"}</td>
+                    <td className="faint">
+                      {r.kind ? KIND_LABEL[r.kind] : "推定なし"}
+                      {r.purposeLabel && <div title="依頼者が選んだ内容">{r.purposeLabel}</div>}
+                    </td>
                     <td className="faint">
                       {tab === "all" ? STATE_LABEL[r.state] ?? r.state
                         : tab === "on_hold" ? `再確認 ${r.holdUntil ?? "—"}` : when(r.createdAt)}
@@ -252,6 +256,8 @@ function Original({ request: r }: { request: Request }) {
           {r.mail && r.mail.attachments.length > 0 && (
             <div className="field"><span>添付</span><div>{r.mail.attachments.join("、")}</div></div>
           )}
+          {r.purposeLabel && <div className="field"><span>依頼の内容</span><div>{r.purposeLabel}</div></div>}
+          {r.targetDocNo && <div className="field"><span>対象の番号</span><div className="code">{r.targetDocNo}</div></div>}
           <div className="field"><span>相手先の記載</span><div>{r.counterpartyName ?? "—"}</div></div>
           <div className="field"><span>希望の期日</span><div>{r.dueOn ?? "—"}</div></div>
           <div className="field"><span>届いた日時</span><div>{when(r.createdAt)}</div></div>

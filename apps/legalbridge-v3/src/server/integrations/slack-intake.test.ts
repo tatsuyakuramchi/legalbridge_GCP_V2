@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { FakeDatabase } from "../core/fake-db.js";
 import {
-  buildAcknowledgement, buildIntakeModal, INTAKE_CALLBACK_ID, parseSubmission
+  buildAcknowledgement, buildIntakeModal, INTAKE_CALLBACK_ID, IntakeFieldError, parseSubmission,
+  REQUEST_PURPOSES
 } from "./slack-intake.js";
 import { IntakeService } from "./intake-service.js";
 
@@ -29,11 +30,44 @@ test("フォームは依頼の種類と件名を必須にする", () => {
   assert.deepEqual(required, ["kind", "title"]);
 });
 
-test("種類は案件の取引モデルに1対1で対応する", () => {
+test("選択肢は依頼者の言葉で、説明つき。支払の書類（検収書・利用許諾計算書）もある", () => {
   const modal = buildIntakeModal();
   const kind = modal.blocks.find((b: any) => b.block_id === "kind") as any;
-  assert.deepEqual(kind.element.options.map((o: any) => o.value),
-    ["outsourcing", "work", "single"]);
+  assert.equal(kind.element.type, "radio_buttons");
+  const values = kind.element.options.map((o: any) => o.value);
+  assert.ok(values.includes("inspection") && values.includes("royalty"));
+  for (const o of kind.element.options) {
+    assert.ok(o.description?.text, `${o.value} に説明がある`);
+    assert.ok(o.text.text.length <= 75 && o.description.text.length <= 75, "Slack の上限（75 文字）");
+  }
+  assert.ok(kind.element.options.length <= 10, "ラジオボタンは 10 個まで");
+  assert.doesNotMatch(JSON.stringify(kind), /取引モデル|取適法/, "法務の分類の言葉を見せない");
+});
+
+test("依頼の内容から、法務側の分類（取引モデル）を当てる", () => {
+  const as = (v: string) => parseSubmission(payload({ view: view({
+    kind: { value: { selected_option: { value: v } } },
+    target_doc: { value: { value: "ARC-PO-2026-1001" } } }) }));
+  assert.equal(as("inspection").kind, "outsourcing");
+  assert.equal(as("royalty").kind, "work");
+  assert.equal(as("nda").kind, "single");
+  assert.equal(as("inspection").purpose, "inspection");
+  assert.equal(as("inspection").targetDocNo, "ARC-PO-2026-1001");
+  for (const p of REQUEST_PURPOSES) assert.equal(as(p.value).kind, p.kind);
+});
+
+test("開いたままの古いフォーム（取引モデルで選んだもの）も受け付ける", () => {
+  const s = parseSubmission(payload());   // kind = "outsourcing"
+  assert.equal(s.kind, "outsourcing");
+  assert.equal(s.purpose, "order");
+});
+
+test("検収書・利用許諾計算書は、対象の番号が無ければその欄にエラーを出す", () => {
+  for (const v of ["inspection", "royalty"]) {
+    const p = payload({ view: view({ kind: { value: { selected_option: { value: v } } } }) });
+    assert.throws(() => parseSubmission(p), (e: any) =>
+      e instanceof IntakeFieldError && e.block === "target_doc" && /番号を書いてください/.test(e.message));
+  }
 });
 
 test("送信内容を読み取る", () => {
@@ -57,7 +91,7 @@ test("空欄は null にする。空文字を業務データに入れない", ()
 
 test("種類も件名も無ければ受け付けない", () => {
   const noKind = { ...view(), state: { values: { ...view().state.values, kind: { value: {} } } } };
-  assert.throws(() => parseSubmission({ ...payload(), view: noKind }), /種類を選んでください/);
+  assert.throws(() => parseSubmission({ ...payload(), view: noKind }), /何をお願いしたいかを選んでください/);
   const noTitle = { ...view(), state: { values: { ...view().state.values, title: { value: { value: "" } } } } };
   assert.throws(() => parseSubmission({ ...payload(), view: noTitle }), /件名を書いてください/);
 });
@@ -122,6 +156,7 @@ test("返す文面に案件番号を必ず入れる", () => {
   });
   assert.match(msg, /MTR-2026-00220/);
   assert.match(msg, /未登録のため、法務側で登録します/);
+  assert.match(msg, /依頼の内容：社外に仕事を頼みたい/);
 });
 
 test("フォームの最後に、資料は送信後の DM のリンクから上げると案内する", () => {
