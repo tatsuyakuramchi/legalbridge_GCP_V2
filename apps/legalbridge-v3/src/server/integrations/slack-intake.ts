@@ -160,6 +160,50 @@ export function buildIntakeModal(options: { channelId?: string } = {}) {
   };
 }
 
+/**
+ * 送信後にモーダルを差し替える完了画面。依頼番号と、その依頼専用の資料アップロードの
+ * リンク（ボタン）を出す。リンクが作れない（鍵・公開 URL が未設定）ときは案内だけにする。
+ */
+export function buildCompletionView(input: {
+  requestNo: string | null; submission: IntakeSubmission; uploadUrl: string | null;
+}) {
+  const s = input.submission;
+  const summary = [
+    `*依頼番号*　${input.requestNo ?? "（採番できませんでした。法務から連絡します）"}`,
+    `*依頼の内容*　${requestLabel(s)}`,
+    `*件名*　${s.title}`,
+    ...(s.targetDocNo ? [`*対象の番号*　${s.targetDocNo}`] : [])
+  ].join("\n");
+  const blocks: any[] = [
+    { type: "section", text: { type: "mrkdwn", text: "✅ *依頼を受け付けました*" } },
+    { type: "section", text: { type: "mrkdwn", text: summary } },
+    { type: "divider" }
+  ];
+  if (input.uploadUrl) {
+    blocks.push(
+      { type: "section",
+        text: { type: "mrkdwn",
+          text: "📎 *資料アップロードページ*\nレビューしてほしい文書・参考資料は、下のボタンから上げてください"
+            + "（この依頼専用・30 日有効）。同じリンクを DM でもお送りします。" },
+        accessory: { type: "button", action_id: "open_upload", style: "primary",
+                     text: { type: "plain_text", text: "資料をアップロードする" }, url: input.uploadUrl } },
+      { type: "context", elements: [{ type: "mrkdwn", text: `ボタンが開かないときは <${input.uploadUrl}|こちらのリンク> から` }] }
+    );
+  } else {
+    blocks.push({ type: "context", elements: [{ type: "mrkdwn",
+      text: "📎 資料は、このあと届く DM の案内に従って法務へ送ってください。" }] });
+  }
+  blocks.push({ type: "context", elements: [{ type: "mrkdwn",
+    text: "法務が内容を確認して受け付けます。進み具合は Slack でお知らせします。" }] });
+  return {
+    type: "modal",
+    callback_id: `${INTAKE_CALLBACK_ID}_done`,
+    title: { type: "plain_text", text: "法務への依頼" },
+    close: { type: "plain_text", text: "閉じる" },
+    blocks
+  };
+}
+
 const pick = (state: any, block: string): string | null => {
   const v = state?.values?.[block]?.value;
   const raw = v?.value ?? v?.selected_option?.value ?? v?.selected_date ?? null;

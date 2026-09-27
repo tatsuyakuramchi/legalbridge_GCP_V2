@@ -108,6 +108,12 @@ export class IntakeRequestService {
    * Slack の送信。受付箱に入れて、Backlog にも課題を立てる（V1 と同じ体験）。
    * 課題が立たなくても受付箱には入る。止まった理由は返す。
    */
+  /** その依頼の資料アップロードのリンク。作れなければ null（完了画面・確認の DM で使う）。 */
+  uploadUrlFor(requestId: number): string | null {
+    try { return this.options.uploadLink?.(requestId) ?? null; }
+    catch { return null; }
+  }
+
   async submitFromSlack(submission: IntakeSubmission): Promise<SubmitResult> {
     const registered = await this.registerFromSlack(submission);
     return this.followUpSlack(registered, submission);
@@ -184,7 +190,7 @@ export class IntakeRequestService {
       backlogReason = "Backlog の送信口がありません";
     }
 
-    const uploadUrl = this.options.uploadLink?.(requestId) ?? null;
+    const uploadUrl = this.uploadUrlFor(requestId);
     const message = submitAcknowledgement({ requestNo, issueKey, submission, uploadUrl });
     await this.notify(requestId, submission.requesterSlackId || null, message, actor);
     return { requestId, requestNo, issueKey, ...(backlogReason ? { backlogReason } : {}), message };

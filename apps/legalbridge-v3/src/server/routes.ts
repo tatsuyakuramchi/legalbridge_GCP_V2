@@ -84,7 +84,7 @@ import { MonitoringRepository } from "./monitoring/repository.js";
 import { ReceivableRepository } from "./monitoring/receivables.js";
 import { ContractCheckRepository } from "./monitoring/contract-check.js";
 import { DailyJob } from "./jobs/daily.js";
-import { IntakeFieldError, parseSubmission } from "./integrations/slack-intake.js";
+import { buildCompletionView, IntakeFieldError, parseSubmission } from "./integrations/slack-intake.js";
 import { SlackCommandHandler } from "./integrations/slack-commands.js";
 import { LegalSearchService } from "./search/legal-search.js";
 import {
@@ -4231,9 +4231,16 @@ export function createWebhookRouter(database: Transactable) {
     try {
       const submission = parseSubmission(payload);
       const result = await intakeRequests.registerFromSlack(submission);
-      // Slack はモーダルを閉じるために 3 秒以内の 200 を求める。受付箱に入った時点で返し、
+      // Slack は 3 秒以内の 200 を求める。受付箱に入った時点で返し、
       // Backlog の起案と依頼者への確認は後で行う（失敗しても受付箱には入っている）。
-      res.json({ response_action: "clear", legalbridge: result });
+      // モーダルは閉じずに完了画面へ差し替え、依頼番号と資料アップロードのボタンを見せる。
+      res.json({
+        response_action: "update",
+        view: buildCompletionView({
+          requestNo: result.requestNo, submission, uploadUrl: intakeRequests.uploadUrlFor(result.requestId)
+        }),
+        legalbridge: result
+      });
       void intakeRequests.followUpSlack(result, submission).catch((error) =>
         console.error("intake follow-up failed", { requestId: result.requestId, message: (error as Error)?.message }));
       return;

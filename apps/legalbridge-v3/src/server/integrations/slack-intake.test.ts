@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { FakeDatabase } from "../core/fake-db.js";
 import {
-  buildAcknowledgement, buildIntakeModal, INTAKE_CALLBACK_ID, IntakeFieldError, parseSubmission,
+  buildAcknowledgement, buildCompletionView, buildIntakeModal, INTAKE_CALLBACK_ID, IntakeFieldError, parseSubmission,
   REQUEST_PURPOSES
 } from "./slack-intake.js";
 import { IntakeService } from "./intake-service.js";
@@ -164,4 +164,22 @@ test("フォームの最後に、資料は送信後の DM のリンクから上�
   assert.equal(last.type, "context");
   assert.match(last.elements[0].text, /送信後に届く DM/);
   assert.match(last.elements[0].text, /資料アップロードページ/);
+});
+
+test("送信後は完了画面に差し替え、依頼番号と資料アップロードのボタンを出す", () => {
+  const url = "https://gw.example/internal/upload?t=r.7.1.sig";
+  const v = buildCompletionView({ requestNo: "REQ-2026-00012", submission: parseSubmission(payload()), uploadUrl: url });
+  const text = JSON.stringify(v);
+  assert.equal(v.type, "modal");
+  assert.equal((v as any).submit, undefined, "完了画面に送信ボタンは無い");
+  assert.match(text, /依頼を受け付けました/);
+  assert.match(text, /REQ-2026-00012/);
+  const button = v.blocks.map((b: any) => b.accessory).find((a: any) => a?.type === "button");
+  assert.equal(button.url, url);
+});
+
+test("リンクを作れないときは、ボタンを出さずに案内だけにする", () => {
+  const v = buildCompletionView({ requestNo: "REQ-2026-00012", submission: parseSubmission(payload()), uploadUrl: null });
+  assert.ok(!v.blocks.some((b: any) => b.accessory?.type === "button"));
+  assert.match(JSON.stringify(v), /DM の案内/);
 });
