@@ -4238,9 +4238,9 @@ export function createWebhookRouter(database: Transactable) {
         response_action: "update",
         view: buildCompletionView({
           requestNo: result.requestNo, submission, uploadUrl: intakeRequests.uploadUrlFor(result.requestId)
-        }),
-        legalbridge: result
+        })
       });
+      console.info("slack intake submitted", { requestId: result.requestId, requestNo: result.requestNo });
       void intakeRequests.followUpSlack(result, submission).catch((error) =>
         console.error("intake follow-up failed", { requestId: result.requestId, message: (error as Error)?.message }));
       return;
