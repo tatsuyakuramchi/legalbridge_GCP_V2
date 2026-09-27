@@ -24,6 +24,17 @@ interface Recipients {
 interface Outcome { sent: boolean; duplicated?: boolean; draft?: boolean; gate: { reasons: string[]; mode: string };
                     preview?: { recipient: string; bodyPreview: string } }
 
+type Purpose = "owner_check" | "party_check" | "delivery";
+interface Draft {
+  to: Array<{ name: string | null; email: string }>; cc: Array<{ name: string | null; email: string }>;
+  subject: string; body: string; warnings: string[];
+}
+const PURPOSES: Array<{ value: Purpose; label: string; hint: string }> = [
+  { value: "owner_check", label: "担当者への確認", hint: "依頼した事業部の担当者へ。相手に出す前に内容を確かめてもらう" },
+  { value: "party_check", label: "取引先への内容確認", hint: "取引先へ。問題なければ CloudSign で締結に進む" },
+  { value: "delivery", label: "取引先へ送付（検収書・計算書など）", hint: "取引先へ書類を送る。検収書・利用許諾計算書は専用の文面" }
+];
+
 const day = (iso: string | null) => (iso ? iso.slice(0, 10) : "");
 
 export function DocumentSend(
@@ -49,6 +60,9 @@ export function DocumentSend(
   const [subject, setSubject] = useState(`${documentNo ?? ""} ${templateLabel ?? "文書"} のご確認`.trim());
   const [body, setBody] = useState(
     `${templateLabel ?? "文書"}をお送りします。内容をご確認のうえ、問題なければご返信ください。`);
+  // 文面（設定の mail_templates から組んだ下書き）
+  const [purpose, setPurpose] = useState<Purpose | null>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
   // 確認
   const [via, setVia] = useState("メールの返信");
   const [confirmNote, setConfirmNote] = useState("");
@@ -56,7 +70,6 @@ export function DocumentSend(
   const [signer, setSigner] = useState("");
 
   const modeOf = (ch: string) => channels.find((c) => c.channel === ch)?.mode ?? "off";
-  const ownerEmail = recipients?.owner?.email ?? null;
 
   async function load() {
     const t = await api.get<Timeline>(`/documents/${documentId}/sends`);
@@ -74,13 +87,21 @@ export function DocumentSend(
     }
   }, [documentId, matterId]);
 
-  function pick(kind: "owner" | "party") {
-    if (!recipients) return;
-    if (kind === "owner") { setTo(ownerEmail ? [ownerEmail] : []); setCc([]); return; }
-    const partyEmails = recipients.contacts.map((c) => c.email);
-    if (!partyEmails.length && recipients.counterparty?.email) partyEmails.push(recipients.counterparty.email);
-    setTo(partyEmails); setCc(ownerEmail ? [ownerEmail] : []);
+  async function loadDraft(p: Purpose) {
+    setError(null);
+    try {
+      const d = await api.get<Draft>(`/documents/${documentId}/mail-draft?purpose=${p}`);
+      setPurpose(p);
+      setTo(d.to.map((x) => x.email)); setCc(d.cc.map((x) => x.email)); setExtra("");
+      setSubject(d.subject); setBody(d.body); setWarnings(d.warnings);
+    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
   }
+  // 最初に開いたとき、支払の書類は送付、それ以外は担当者への確認の下書きを入れておく。
+  useEffect(() => {
+    if (open === "mail" && purpose === null) {
+      void loadDraft(/検収|計算書/.test(templateLabel ?? "") ? "delivery" : "owner_check");
+    }
+  }, [open]);
 
   const describe = (o: Outcome, what: string) =>
     o.sent && o.draft ? `${what}を CloudSign に下書きとして作りました。送信は CloudSign の画面から行い、送ったら手で「送った」と記録してください`
@@ -157,15 +178,14 @@ export function DocumentSend(
               <div className="note warn">メール送信は{modeOf("gmail") === "dry_run" ? "検証モード（送らずに宛先と本文を確かめる）" : "無効"}です</div>
             )}
             <div className="row" style={{ flexWrap: "wrap" }}>
-              <span className="faint">宛先の型：</span>
-              <button className="chip" aria-pressed={to.length > 0 && cc.length === 0 && to[0] === ownerEmail}
-                      disabled={!ownerEmail} onClick={() => pick("owner")}>
-                担当者だけ{recipients?.owner ? `（${recipients.owner.name}）` : matterId ? "（担当者未設定）" : "（案件なし）"}
-              </button>
-              <button className="chip" aria-pressed={cc.length > 0} disabled={!recipients} onClick={() => pick("party")}>
-                取引先へ、担当者を cc に{recipients?.counterparty ? `（${recipients.counterparty.name}）` : ""}
-              </button>
+              <span className="faint">何のメールか：</span>
+              {PURPOSES.map((p) => (
+                <button key={p.value} className="chip" aria-pressed={purpose === p.value} title={p.hint}
+                        disabled={busy} onClick={() => void loadDraft(p.value)}>{p.label}</button>
+              ))}
             </div>
+            <div className="faint">宛先・件名・本文は、運用 → 設定 → 「メールの文面」から組みます。送る前にここで直せます。</div>
+            {warnings.map((w) => <div key={w} className="note warn">{w}</div>)}
             <div className="frow"><div className="flabel"><span>To</span></div>
               <div className="fbody row" style={{ flexWrap: "wrap", gap: 4 }}>
                 {to.map((a) => <span key={a} className="chip" title="外す" onClick={() => setTo(to.filter((x) => x !== a))}>{a} ×</span>)}
@@ -180,11 +200,11 @@ export function DocumentSend(
             <div className="frow"><div className="flabel"><span>件名</span></div>
               <div className="fbody"><input value={subject} onChange={(e) => setSubject(e.target.value)} /></div></div>
             <div className="frow"><div className="flabel"><span>本文</span></div>
-              <div className="fbody"><textarea rows={5} value={body} onChange={(e) => setBody(e.target.value)} />
+              <div className="fbody"><textarea rows={14} value={body} onChange={(e) => setBody(e.target.value)} />
                 <div className="faint" style={{ marginTop: 3 }}>{documentNo ?? "この文書"} の PDF を添えます</div></div></div>
             <div className="row">
               <button className="btn primary" disabled={busy || !(to.length || extra.trim()) || !subject.trim() || !body.trim()}
-                      onClick={() => void sendMail()}>内容確認のメールを送る</button>
+                      onClick={() => void sendMail()}>メールを送る</button>
               <button className="linky" onClick={() => setOpen("cloudsign")}>飛ばして CloudSign へ</button>
             </div>
           </div>

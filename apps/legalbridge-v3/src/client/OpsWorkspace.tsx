@@ -7,6 +7,7 @@ import { Leftovers } from "./Leftovers.js";
 import { AccountingExport } from "./AccountingExport.js";
 import { CompanyProfileForm } from "./CompanyProfileForm.js";
 import { DeliveryAlertForm } from "./DeliveryAlertForm.js";
+import { MailTemplatesForm } from "./MailTemplatesForm.js";
 import { TextSnippets } from "./TextSnippets.js";
 
 interface Issue {
@@ -57,7 +58,7 @@ export type OpsTab = "quality" | "deadlines" | "leftovers" | "exports" | "import
   | "audit" | "integrations" | "settings";
 
 /** 専用のフォームで編集する設定。下の一覧には生の JSON を出さない。 */
-const FORM_KEYS = new Set(["company_profile", "delivery_alert"]);
+const FORM_KEYS = new Set(["company_profile", "delivery_alert", "mail_templates"]);
 
 export function OpsWorkspace({ initialTab }: { initialTab?: OpsTab } = {}) {
   const [tab, setTab] = useState<OpsTab>(initialTab ?? "quality");
@@ -278,6 +279,9 @@ export function OpsWorkspace({ initialTab }: { initialTab?: OpsTab } = {}) {
         <DeliveryAlertForm
           value={settings.find((s) => s.key === "delivery_alert")?.value}
           onSaved={() => void reload()} />
+        <MailTemplatesForm
+          value={settings.find((s) => s.key === "mail_templates")?.value}
+          onSaved={() => void reload()} />
         <div className="panel">
           <div className="panel-hd">
             <h2>その他の設定</h2><span className="faint">管理者のみ</span>
@@ -286,7 +290,7 @@ export function OpsWorkspace({ initialTab }: { initialTab?: OpsTab } = {}) {
             <table>
               <thead><tr><th>キー</th><th>値</th><th>更新</th></tr></thead>
               <tbody>
-                {/* 自社情報・納期アラートは上のフォームで編集する。生のJSONを二重に出さない。 */}
+                {/* 自社情報・納期アラート・メールの文面は上のフォームで編集する。生のJSONを二重に出さない。 */}
                 {settings.filter((s) => !FORM_KEYS.has(s.key)).map((s) => (
                   <tr key={s.key}>
                     <td className="code">{s.key}</td>

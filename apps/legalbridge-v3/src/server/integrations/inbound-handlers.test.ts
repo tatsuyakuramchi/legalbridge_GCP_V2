@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { FakeDatabase } from "../core/fake-db.js";
 import {
   applyInbound, backlogIssueKey, handleBacklog, handleCloudSign, isBacklogClosed,
-  mapCloudSignStatus
+  mapCloudSignStatus, isCloudSignSent
 } from "./inbound-handlers.js";
 
 const sent = (over: Record<string, unknown> = {}) => ({
@@ -256,4 +256,15 @@ test("Slack：bot の投稿・無関係なチャンネル・出来事以外は�
     payload: { type: "url_verification", challenge: "x" } });
   assert.equal(verify.applied, false);
   assert.equal(db.find("INSERT INTO matter_communications"), undefined);
+});
+
+test("CloudSign の数の状態：2 は締結、3 は取消・却下（締結ではない）、1 は送信済", () => {
+  assert.equal(mapCloudSignStatus("2"), "executed");
+  assert.equal(mapCloudSignStatus("3"), "terminated");
+  assert.equal(mapCloudSignStatus("1"), null);
+  assert.equal(mapCloudSignStatus("13"), null);
+  assert.equal(mapCloudSignStatus("", "COMPLETED : 締結しました"), "executed");
+  assert.equal(mapCloudSignStatus("", "REJECTED : 却下"), "terminated");
+  assert.ok(isCloudSignSent("1"));
+  assert.ok(!isCloudSignSent("2"));
 });

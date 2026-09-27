@@ -24,13 +24,30 @@ export interface HandledResult {
   detail: Record<string, unknown>;
 }
 
-/** CloudSign の状態を V3 の合意の状態へ。対応の付かないものは null。 */
-export function mapCloudSignStatus(status: string): "executed" | "terminated" | null {
+/**
+ * CloudSign の状態を V3 の合意の状態へ。対応の付かないものは null。
+ *
+ * CloudSign の webhook の status は数（V1 が本番で確かめた値）：
+ *   1 = 先方確認中（送信済） / 2 = 締結済 / 3 = 取消・却下 / 13 = インポート
+ * text にも "COMPLETED : …" "REJECTED : …" のような説明が来るので、それも見る。
+ * （以前は "3" を締結扱いにしていた。3 は取消・却下なので、却下が締結になっていた。）
+ */
+export function mapCloudSignStatus(status: string, text = ""): "executed" | "terminated" | null {
   const s = String(status ?? "").trim().toLowerCase();
-  if (["completed", "signed", "done", "3"].includes(s)) return "executed";
-  if (["declined", "canceled", "cancelled", "rejected", "4"].includes(s)) return "terminated";
-  return null;   // sent / viewed などは途中経過。合意の状態は動かさない。
+  const t = String(text ?? "").trim().toLowerCase();
+  if (s === "2" || ["completed", "signed", "done", "concluded"].includes(s) || /^(completed|concluded)\b/.test(t)) {
+    return "executed";
+  }
+  if (s === "3" || ["declined", "canceled", "cancelled", "rejected"].includes(s)
+      || /^(rejected|declined|canceled|cancelled)\b/.test(t)) {
+    return "terminated";
+  }
+  return null;   // 1（先方確認中）・sent / viewed などは途中経過。合意の状態は動かさない。
 }
+
+/** 相手へ送られた（下書き → 送信）ことを示す状態か。 */
+export const isCloudSignSent = (status: string, text = "") =>
+  /^(1|sent|sending|send)$/i.test(String(status ?? "").trim()) || /^sent\b/i.test(String(text ?? "").trim());
 
 /**
  * CloudSign の署名結果。
@@ -43,10 +60,11 @@ export async function handleCloudSign(
   const documentRef = String(
     p.documentID ?? p.documentId ?? p.document_id ?? input.externalId ?? "").trim();
   const rawStatus = String(p.status ?? p.event ?? p.type ?? "");
-  const status = mapCloudSignStatus(rawStatus);
+  const text = String(p.text ?? "");
+  const status = mapCloudSignStatus(rawStatus, text);
   // CloudSign の画面から送った（下書き → 送信）は合意を動かさないが、文書の
   // 状態としては「送信済」になる。束の画面がこれを読む。
-  const sentNow = !status && /^(sent|sending|send)$/i.test(rawStatus.trim());
+  const sentNow = !status && isCloudSignSent(rawStatus, text);
 
   if (!status && !sentNow) {
     return { applied: false, detail: { reason: "途中経過のため合意は動かさない", rawStatus } };

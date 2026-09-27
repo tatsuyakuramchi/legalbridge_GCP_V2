@@ -52,6 +52,7 @@ export interface Config {
   gmailSender: string;
   /** 取り込む受信メールを絞る Gmail のラベル。空なら取り込みごと無効。 */
   gmailIntakeLabel: string;
+  gmailDelegationSa: string;
   cloudSignClientId: string;
   cloudSignAutoSend: boolean;
   backlogHost: string;
@@ -122,6 +123,8 @@ export const config: Config = {
   slackSearchChannels: list(process.env.SLACK_SEARCH_CHANNELS),
   gmailSender: (process.env.GMAIL_SENDER ?? "").trim(),
   gmailIntakeLabel: (process.env.GMAIL_INTAKE_LABEL ?? "").trim(),
+  /** Gmail の代理の JWT に署名する SA。空なら実行中の SA（integrations/gmail-auth.ts）。 */
+  gmailDelegationSa: (process.env.GMAIL_DELEGATION_SA ?? "").trim(),
   cloudSignClientId: (process.env.CLOUDSIGN_CLIENT_ID ?? "").trim(),
   /** true にすると CloudSign に作ったその場で送る。既定は下書きで止め、送信は CloudSign の画面から。 */
   cloudSignAutoSend: bool(process.env.CLOUDSIGN_AUTO_SEND, false),

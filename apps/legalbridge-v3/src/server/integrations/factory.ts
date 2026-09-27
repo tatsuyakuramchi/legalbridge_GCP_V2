@@ -1,4 +1,3 @@
-import { GoogleAuth } from "google-auth-library";
 import { config } from "../config.js";
 import type { Transactable } from "../core/db.js";
 import {
@@ -7,6 +6,7 @@ import {
 } from "./adapters.js";
 import { DispatchService } from "./dispatch-service.js";
 import type { IntegrationChannel } from "./gate.js";
+import { delegatedToken, GMAIL_READ_SCOPE, GMAIL_SEND_SCOPE } from "./gmail-auth.js";
 import { GmailMailSource, MemoryMailSource, type MailSource } from "./mail-source.js";
 
 /**
@@ -19,20 +19,15 @@ import { GmailMailSource, MemoryMailSource, type MailSource } from "./mail-sourc
 
 const useMemory = () => process.env.DISPATCH_ADAPTERS === "memory";
 
-/** Gmail の送信と読み取り。読み取りは受信箱を丸ごとではなくラベルに絞る。 */
-const googleAuth = () => new GoogleAuth({
-  ...(config.driveKeyFilePath ? { keyFile: config.driveKeyFilePath } : {}),
-  scopes: [
-    "https://www.googleapis.com/auth/gmail.send",
-    "https://www.googleapis.com/auth/gmail.readonly"
-  ]
+/**
+ * Gmail の送信と読み取り。どちらも送信元（GMAIL_SENDER）のメールボックスの代理で使う
+ * （ドメイン全体委任。gmail-auth.ts）。スコープは用途ごとに分ける。
+ */
+const gmailToken = (scope: string) => delegatedToken({
+  sender: config.gmailSender, scope,
+  keyFilePath: config.driveKeyFilePath || undefined,
+  delegationSa: config.gmailDelegationSa || undefined
 });
-
-const accessToken = (auth: GoogleAuth) => async () => {
-  const token = await (await auth.getClient()).getAccessToken();
-  if (!token.token) throw new Error("Gmail のアクセストークンを取得できませんでした");
-  return token.token;
-};
 
 export function buildAdapters(): Partial<Record<IntegrationChannel, DispatchAdapter>> {
   if (useMemory()) {
@@ -41,11 +36,10 @@ export function buildAdapters(): Partial<Record<IntegrationChannel, DispatchAdap
       cloudsign: new MemoryAdapter("cloudsign"), backlog: new MemoryAdapter("backlog")
     };
   }
-  const auth = googleAuth();
   return {
     ...(config.slackBotToken ? { slack: new SlackAdapter(config.slackBotToken) } : {}),
     ...(config.gmailSender
-      ? { gmail: new GmailAdapter(accessToken(auth), config.gmailSender) } : {}),
+      ? { gmail: new GmailAdapter(gmailToken(GMAIL_SEND_SCOPE), config.gmailSender) } : {}),
     ...(config.cloudSignClientId
       ? { cloudsign: new CloudSignAdapter(config.cloudSignClientId, undefined, undefined,
                                           { autoSend: config.cloudSignAutoSend }) } : {}),
@@ -77,7 +71,7 @@ export function buildDispatch(
 export function buildMailSource(): MailSource | null {
   if (useMemory()) return new MemoryMailSource([]);
   if (!config.gmailIntakeLabel) return null;
-  return new GmailMailSource(accessToken(googleAuth()), config.gmailIntakeLabel);
+  return new GmailMailSource(gmailToken(GMAIL_READ_SCOPE), config.gmailIntakeLabel);
 }
 
 /**

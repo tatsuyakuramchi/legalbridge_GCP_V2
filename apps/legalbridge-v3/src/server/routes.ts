@@ -40,6 +40,7 @@ import { checkAgainstEnvelope } from "./works/envelope.js";
 import { DocumentRepository } from "./documents/repository.js";
 import { DocumentIssueService } from "./documents/issue-service.js";
 import { DocumentSendService } from "./documents/send-service.js";
+import { MailDraftService } from "./documents/mail-draft.js";
 import { DocumentBatchService, templateCsv } from "./documents/batch-service.js";
 import { SettledBatchService } from "./documents/settled-batch-service.js";
 import { templateCsv as settledTemplateCsv } from "./documents/settled-batch.js";
@@ -99,6 +100,7 @@ import { BacklogService } from "./integrations/backlog-service.js";
 import type { IntegrationChannel } from "./integrations/gate.js";
 import { parseCompanyProfile } from "./ops/company-profile-schema.js";
 import { DELIVERY_ALERT_KEY, parseDeliveryAlertSettings } from "./ops/delivery-alert-settings.js";
+import { MAIL_TEMPLATES_KEY, parseMailTemplates } from "./ops/mail-templates.js";
 import { DeliveryAlertJob } from "./jobs/delivery-alert.js";
 import { RingiService, type RingiTarget } from "./ringi/service.js";
 import { RptService } from "./rpt/service.js";
@@ -3448,6 +3450,12 @@ export function createRoutes(database: Transactable) {
         if (parsed.errors.length) throw new DomainError("VALIDATION", parsed.errors.join(" ／ "));
         value = parsed.value;
       }
+      // メールの文面も形を確かめる。知らない {差込} はそのまま相手に届いてしまう。
+      if (key === MAIL_TEMPLATES_KEY) {
+        const parsed = parseMailTemplates(input.value);
+        if (parsed.errors.length) throw new DomainError("VALIDATION", parsed.errors.join(" ／ "));
+        value = parsed.value;
+      }
       res.json(await ops.saveSetting(key, value, actor(res)));
     }));
 
@@ -3604,6 +3612,16 @@ export function createRoutes(database: Transactable) {
 
   // ---- 外部送信 ----
   // ---- 送る：内容確認のメール → 相手の確認 → CloudSign → 締結 ----
+  /**
+   * 送るメールの下書き（宛先・件名・本文）。文面は設定（mail_templates）から取る。
+   * purpose = owner_check（担当者への確認）／party_check（取引先への内容確認）／
+   *           delivery（取引先への送付。検収書・利用許諾計算書は専用の文面）
+   */
+  router.get("/documents/:id/mail-draft", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
+    const purpose = z.enum(["owner_check", "party_check", "delivery"]).parse(String(req.query.purpose ?? ""));
+    res.json(await new MailDraftService(database).draft(Number(req.params.id), purpose));
+  }));
+
   router.get("/documents/:id/sends", asyncRoute(async (req, res) => {
     res.json(await sends.timeline(Number(req.params.id)));
   }));
@@ -4301,7 +4319,10 @@ export function createWebhookRouter(database: Transactable) {
       } catch { /* JSON でなければ普通の受信として続ける */ }
     } else {
       // 他は共有シークレット。未設定なら受け口ごと閉じる。
-      if (!config.webhookToken || req.header("x-lb-webhook-token") !== config.webhookToken) {
+      // CloudSign の webhook は見出しを足せないので、URL の ?key= でも受ける（口を通して届く）。
+      const given = req.header("x-lb-webhook-token")
+        ?? (source === "cloudsign" && typeof req.query.key === "string" ? req.query.key : undefined);
+      if (!config.webhookToken || given !== config.webhookToken) {
         return res.status(config.webhookToken ? 401 : 404).json({ error: "unauthorized" });
       }
     }
@@ -4310,10 +4331,15 @@ export function createWebhookRouter(database: Transactable) {
     try { payload = JSON.parse(raw.toString("utf8")) as Record<string, unknown>; }
     catch { payload = { raw: raw.toString("utf8").slice(0, 2000) }; }
 
-    const externalId = String(
-      payload.event_id ?? payload.id ?? payload.documentID ?? payload.documentId ??
-      req.header("x-lb-event-id") ?? ""
-    );
+    // CloudSign は同じ書類について「送信 → 締結」と何度か届く。書類IDだけで重複を
+    // 判定すると 2 通目（締結）が捨てられるので、状態まで含めて 1 つの出来事とする。
+    const csDoc = source === "cloudsign" ? String(payload.documentID ?? payload.documentId ?? "") : "";
+    const externalId = csDoc
+      ? `${csDoc}:${String(payload.status ?? "")}`
+      : String(
+          payload.event_id ?? payload.id ?? payload.documentID ?? payload.documentId ??
+          req.header("x-lb-event-id") ?? ""
+        );
     if (!externalId) return res.status(400).json({ error: "external id is required" });
 
     res.json(await dispatch.receiveWebhook({ source, externalId, payload }));

@@ -13,6 +13,7 @@
 //     POST /internal/upload/file         … そのファイル（同上。1 ファイル 30MB まで）
 //     POST /internal/jobs/{delivery-alert,daily,mail-intake,backlog-pull,flow-notice}
 //                                        … 定期実行（V3 本体の共有シークレットで守る）
+//     POST /internal/webhooks/cloudsign  … CloudSign の結果（?key= の共有シークレットで守る）
 //
 //   V3 へは、この口のサービスアカウントの ID トークンを付けて呼ぶ
 //   （V3 側でこのアカウントに roles/run.invoker を付ける）。
@@ -59,7 +60,10 @@ export const ROUTES = [
   ["POST", "/internal/jobs/daily"],
   ["POST", "/internal/jobs/mail-intake"],
   ["POST", "/internal/jobs/backlog-pull"],
-  ["POST", "/internal/jobs/flow-notice"]
+  ["POST", "/internal/jobs/flow-notice"],
+  // CloudSign の webhook（送信・締結・却下）。CloudSign は見出しを足せないので、
+  // 共有シークレットは URL の ?key= で渡す（V3 本体で照合する）。
+  ["POST", "/internal/webhooks/cloudsign"]
 ];
 export const allowed = (method, pathname) =>
   ROUTES.some(([m, p]) => m === method && p === pathname);
