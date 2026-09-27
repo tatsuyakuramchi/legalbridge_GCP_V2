@@ -30,6 +30,8 @@ label{display:block;margin-top:14px;font-weight:600;font-size:13px}
 select,input[type=text],input[type=email],textarea{width:100%;padding:8px;border:1px solid var(--line);border-radius:6px;background:transparent;color:inherit;font:inherit}
 .drop{margin-top:14px;border:2px dashed var(--line);border-radius:8px;padding:28px;text-align:center;cursor:pointer}
 .drop.on{border-color:var(--accent)}
+.sr{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden}
+.drop{display:block;font-weight:400}
 button{margin-top:16px;padding:10px 18px;border:0;border-radius:6px;background:var(--accent);color:#fff;font:inherit;font-weight:600;cursor:pointer}
 button:disabled{opacity:.5;cursor:default}
 ul{padding-left:18px}.ok{color:var(--accent)}.bad{color:var(--bad)}
@@ -48,8 +50,8 @@ ul{padding-left:18px}.ok{color:var(--accent)}.bad{color:var(--bad)}
   <input id="email" type="email" autocomplete="email" placeholder="you@example.com">
   <label for="note">ひとこと（任意）</label>
   <input id="note" type="text" maxlength="500" placeholder="第2版です、など">
-  <div id="drop" class="drop" tabindex="0">ここにファイルをドロップ、または押して選ぶ<br><span class="muted">1 ファイル 30MB まで。複数まとめて選べます</span></div>
-  <input id="file" type="file" multiple hidden>
+  <input id="file" type="file" multiple class="sr">
+  <label id="drop" for="file" class="drop">ここを押してファイルを選ぶ（パソコンはドロップでも可）<br><span class="muted">1 ファイル 30MB まで。複数まとめて選べます</span></label>
   <ul id="list"></ul>
   <button id="send" disabled>アップロードする</button>
 </div>
@@ -63,7 +65,6 @@ ul{padding-left:18px}.ok{color:var(--accent)}.bad{color:var(--bad)}
     li.textContent=f.file.name+"（"+Math.ceil(f.file.size/1024).toLocaleString()+" KB）"+(f.file.size>max?" — 30MB を超えています":""); if(f.file.size>max) li.className="bad"; list.appendChild(li); });
     send.disabled=!files.some(function(f){return f.file.size<=max && !f.done;}); }
   function add(fl){ for(var i=0;i<fl.length;i++) files.push({file:fl[i],i:files.length}); show(); }
-  drop.onclick=function(){ input.click(); }; drop.onkeydown=function(e){ if(e.key==="Enter"||e.key===" ") input.click(); };
   input.onchange=function(){ add(input.files); input.value=""; };
   drop.ondragover=function(e){ e.preventDefault(); drop.classList.add("on"); };
   drop.ondragleave=function(){ drop.classList.remove("on"); };
@@ -76,7 +77,7 @@ ul{padding-left:18px}.ok{color:var(--accent)}.bad{color:var(--bad)}
       try{
         var q="?t="+encodeURIComponent(token)+"&kind="+encodeURIComponent(kind)+"&name="+encodeURIComponent(f.file.name)
           +"&email="+encodeURIComponent(email)+"&note="+encodeURIComponent(note);
-        var r=await fetch(location.pathname.replace(/\/+$/,"")+"/file"+q,{method:"POST",headers:{"content-type":f.file.type||"application/octet-stream"},body:f.file});
+        var r=await fetch(location.pathname.replace(/[/]+$/,"")+"/file"+q,{method:"POST",headers:{"content-type":f.file.type||"application/octet-stream"},body:f.file});
         var j=await r.json().catch(function(){return {};});
         if(!r.ok) throw new Error(j.error||("送れませんでした（"+r.status+"）"));
         f.done=true; li.className="ok"; li.textContent="✓ "+f.file.name+"（受付番号 "+j.uploadNo+"）";
