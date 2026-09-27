@@ -101,3 +101,22 @@ V1 とは、リポジトリ `LegalBridge_AI_GCP` から動いている次のも�
   2 件は V3 で追加。`040` はこの 4 件を V1 の版に戻さないように直した（2026-09-26）。
 - V3 だけで発行した文書が 224 件ある。V1 の検索・一覧には出ない（V1 を止めれば問題でなくなる）。
 - V1 の文書で V3 に無いものが 3 件（2026-07-21 作成・番号なし）。中身を確かめて要否を決める。
+
+## 4. 実施の記録（2026-09-27）
+
+| 手順 | 状態 |
+|---|---|
+| 口（`legalbridge-v3-gateway`、IAP の JWT）と資料アップロードの鍵・公開 URL | 済 |
+| V3 の定期実行（口経由）：`delivery-alert`（毎朝 9 時）・`backlog-pull`（5 分）・`flow-notice`（15 分） | 済。`daily`・`mail-intake` は未設定 |
+| webhook トークンの入れ替え（版 6。古い版は無効に） | 済 |
+| V3 の本番の送信（`SLACK_MODE`・`BACKLOG_MODE` = live、許可リスト解除） | 済 |
+| Slack アプリの Request URL を口へ（`/法務依頼`・`/法務検索`・Interactivity） | 済 |
+| V1 の Scheduler（`daily-checks`）・V2 の Scheduler（`lb-v2-*`） | 停止済 |
+| `legalbridge-document-worker`・`legalbridge-admin-ui`・`legalbridge-v2` | `--ingress=internal`（削除はしていない） |
+| Cloud Build：`legalbridge-admin-ui-main`・`legalbridge-document-worker-release` | 無効 |
+| Cloud Build：`legalbridge-search-api-release`（asia-northeast1、`release/api`） | **残す** |
+| Backlog の webhook・GAS のデプロイ | 画面で停止（担当者が実施） |
+
+戻すとき：Slack の Request URL を GAS に戻す／`--ingress=all`／トリガーを `disabled: false` で import し直す。
+
+1〜2 週間、worker・admin-ui・v2 へのリクエストが 0 のままなら、サービスを削除して完了。
