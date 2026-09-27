@@ -21,6 +21,7 @@
 //     PORT              既定 8080（Cloud Run が入れる）
 //     AUDIENCES         ID トークンの宛先の候補（カンマ区切り）。IAP が付いた V3 は
 //                       https://<サービス>-<プロジェクト番号>.<リージョン>.run.app を受け付ける
+//     GATEWAY_AUTH      oidc（既定：ID トークン）／ iap-jwt（V3 に IAP が付いているとき。自分で署名した JWT）
 //     GATEWAY_NO_AUTH=1 手元の試験用。ID トークンを付けない
 // =====================================================================
 
@@ -74,6 +75,32 @@ async function idToken(audience) {
 /** いま使う宛先（通ったものを先頭に寄せる）。 */
 let working = 0;
 
+// V3 本体に IAP が付いていて、IAP が Google 管理の OAuth クライアントを使っているとき、
+// サービスアカウントの ID トークン（OIDC）は受け付けられない（"Invalid JWT audience"）。
+// 代わりに、口のサービスアカウントが自分で署名した JWT（aud = 守られている URL/*）を送る。
+// 署名は IAM Credentials の signJwt（口のアカウントに自分自身の Token Creator が要る）。
+const MODE = (process.env.GATEWAY_AUTH ?? "oidc").trim();   // "oidc" | "iap-jwt"
+let signed = { token: "", until: 0 };
+async function metadata(path) {
+  const r = await fetch(`http://metadata.google.internal/computeMetadata/v1/${path}`, { headers: { "Metadata-Flavor": "Google" } });
+  if (!r.ok) throw new Error(`メタデータを読めませんでした (${path}: ${r.status})`);
+  return r.text();
+}
+async function iapJwt() {
+  if (signed.token && Date.now() < signed.until) return signed.token;
+  const email = (await metadata("instance/service-accounts/default/email")).trim();
+  const access = JSON.parse(await metadata("instance/service-accounts/default/token")).access_token;
+  const now = Math.floor(Date.now() / 1000);
+  const payload = JSON.stringify({ iss: email, sub: email, aud: `${UPSTREAM}/*`, iat: now, exp: now + 3600 });
+  const r = await fetch(`https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${encodeURIComponent(email)}:signJwt`, {
+    method: "POST", headers: { authorization: `Bearer ${access}`, "content-type": "application/json" },
+    body: JSON.stringify({ payload })
+  });
+  if (!r.ok) throw new Error(`JWT に署名できませんでした (${r.status}: ${(await r.text()).slice(0, 200)})`);
+  signed = { token: (await r.json()).signedJwt, until: Date.now() + 50 * 60 * 1000 };
+  return signed.token;
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -111,7 +138,13 @@ export const server = http.createServer(async (req, res) => {
     // パスは許したものをそのまま使い、クエリだけ引き継ぐ（署名付きリンクの t= など）。
     // IAP に宛先違いで断られたら、次の候補の宛先で取り直して 1 回ずつ試す。
     let upstream;
-    for (let i = 0; i < AUDIENCES.length; i += 1) {
+    if (MODE === "iap-jwt" && !NO_AUTH) {
+      headers.authorization = `Bearer ${await iapJwt()}`;
+      upstream = await fetch(`${UPSTREAM}${url.pathname}${url.search}`, {
+        method: req.method, headers, body, redirect: "manual"
+      });
+    }
+    for (let i = 0; !upstream && i < AUDIENCES.length; i += 1) {
       const idx = (working + i) % AUDIENCES.length;
       const token = await idToken(AUDIENCES[idx]);
       if (token) headers.authorization = `Bearer ${token}`;
@@ -138,5 +171,5 @@ export const server = http.createServer(async (req, res) => {
 });
 
 if (process.env.GATEWAY_NO_LISTEN !== "1") {
-  server.listen(PORT, () => console.log(`legalbridge-v3-gateway :${PORT} → ${UPSTREAM}（宛先の候補 ${AUDIENCES.join(" / ")}）`));
+  server.listen(PORT, () => console.log(`legalbridge-v3-gateway :${PORT} → ${UPSTREAM}（${MODE === "iap-jwt" ? `IAP の JWT aud=${UPSTREAM}/*` : `宛先の候補 ${AUDIENCES.join(" / ")}`}）`));
 }
