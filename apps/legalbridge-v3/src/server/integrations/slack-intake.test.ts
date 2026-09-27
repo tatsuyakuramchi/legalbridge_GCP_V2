@@ -123,3 +123,10 @@ test("返す文面に案件番号を必ず入れる", () => {
   assert.match(msg, /MTR-2026-00220/);
   assert.match(msg, /未登録のため、法務側で登録します/);
 });
+
+test("フォームの最後に、資料は送信後の DM のリンクから上げると案内する", () => {
+  const last = buildIntakeModal().blocks.at(-1) as any;
+  assert.equal(last.type, "context");
+  assert.match(last.elements[0].text, /送信後に届く DM/);
+  assert.match(last.elements[0].text, /資料アップロードページ/);
+});

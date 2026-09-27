@@ -80,6 +80,14 @@ export function buildIntakeModal(options: { channelId?: string } = {}) {
         type: "input", block_id: "detail", optional: true,
         label: { type: "plain_text", text: "詳しい内容" },
         element: { type: "plain_text_input", action_id: "value", multiline: true }
+      },
+      // 資料はフォームでは受け取らない（依頼番号が決まる前はリンクを作れない）。
+      // 送信後の確認 DM に、その依頼専用のアップロード用リンクが付く（A-055）。
+      {
+        type: "context",
+        elements: [{ type: "mrkdwn",
+          text: "📎 *レビューしてほしい文書・参考資料の添付方法*：依頼の送信後に届く DM の"
+            + "「資料アップロードページ」のリンクから上げてください（この依頼専用・30 日有効）。" }]
       }
     ]
   };
