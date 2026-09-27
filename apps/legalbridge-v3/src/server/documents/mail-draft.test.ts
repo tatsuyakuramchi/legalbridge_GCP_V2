@@ -80,3 +80,11 @@ test("金額は整形済みを優先し、数だけなら桁区切りに", () =>
   assert.equal(amountOf({ totalAmount: 250000 }), "¥250,000");
   assert.equal(amountOf({}), "");
 });
+
+test("取引先へのメールには、設定のいつも入れる cc（経理）を足す。担当者への確認には足さない", async () => {
+  const settings = [{ key: "mail_templates", value: { partyCc: ["keiri@example.com"] } }];
+  const party = await new MailDraftService(build({ settings })).draft(5, "delivery");
+  assert.deepEqual(party.cc.map((p) => p.email), ["biz@example.com", "keiri@example.com"]);
+  const owner = await new MailDraftService(build({ settings })).draft(5, "owner_check");
+  assert.ok(!owner.cc.some((p) => p.email === "keiri@example.com"));
+});

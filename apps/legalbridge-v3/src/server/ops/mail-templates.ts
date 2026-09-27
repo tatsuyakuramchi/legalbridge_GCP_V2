@@ -23,6 +23,8 @@ export interface MailTemplate { subject: string; body: string }
 export interface MailTemplates {
   /** 本文の {署名} に入る。 */
   signature: string;
+  /** 取引先へ送るメール（内容確認・送付）にいつも cc で入れる宛先。V1 の EMAIL_CC（経理など）。 */
+  partyCc: string[];
   templates: Record<MailTemplateKind, MailTemplate>;
 }
 
@@ -57,6 +59,7 @@ const DEFAULT_SIGNATURE =
 
 export const DEFAULT_MAIL_TEMPLATES: MailTemplates = {
   signature: DEFAULT_SIGNATURE,
+  partyCc: [],
   templates: {
     owner_check: {
       subject: "【内容確認のお願い】{文書名}（{文書番号}）{相手先}",
@@ -152,7 +155,12 @@ export function parseMailTemplates(input: unknown): { value: MailTemplates; erro
   }
   const signature = String(src.signature ?? d.signature);
   if (signature.length > 2000) errors.push("署名は 2000 字までです");
-  return { value: { signature, templates }, errors: [...new Set(errors)] };
+  const rawCc = Array.isArray(src.partyCc) ? src.partyCc
+    : typeof src.partyCc === "string" ? src.partyCc.split(/[,、\s]+/) : d.partyCc;
+  const partyCc = [...new Set(rawCc.map((v: unknown) => String(v ?? "").trim()).filter(Boolean))] as string[];
+  for (const e of partyCc) if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) errors.push(`cc の「${e}」はメールアドレスの形ではありません`);
+  if (partyCc.length > 10) errors.push("いつも入れる cc は 10 件までです");
+  return { value: { signature, partyCc, templates }, errors: [...new Set(errors)] };
 }
 
 /** 保存されている値を読む。壊れていても既定値で埋める（送る画面を止めない）。 */

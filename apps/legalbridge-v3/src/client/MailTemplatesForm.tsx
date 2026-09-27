@@ -26,8 +26,12 @@ export function MailTemplatesForm({ value, onSaved }: { value: unknown; onSaved:
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [showSample, setShowSample] = useState(false);
+  const [ccText, setCcText] = useState("");
 
-  useEffect(() => { setDraft(readMailTemplates(value)); }, [JSON.stringify(value)]);
+  useEffect(() => {
+    const v = readMailTemplates(value);
+    setDraft(v); setCcText(v.partyCc.join(", "));
+  }, [JSON.stringify(value)]);
 
   const current = draft.templates[kind];
   const setCurrent = (patch: Partial<{ subject: string; body: string }>) => {
@@ -36,7 +40,7 @@ export function MailTemplatesForm({ value, onSaved }: { value: unknown; onSaved:
   };
 
   async function save() {
-    const parsed = parseMailTemplates(draft);
+    const parsed = parseMailTemplates({ ...draft, partyCc: ccText });
     if (parsed.errors.length) { setError(parsed.errors.join(" ／ ")); return; }
     setBusy(true); setError(null); setSaved(false);
     try {
@@ -93,6 +97,12 @@ export function MailTemplatesForm({ value, onSaved }: { value: unknown; onSaved:
           <span>署名（本文の {"{署名}"} に入る。全部の文面で共通）</span>
           <textarea rows={6} value={draft.signature}
                     onChange={(e) => { setDraft({ ...draft, signature: e.target.value }); setSaved(false); }} />
+        </label>
+
+        <label className="field wide">
+          <span>取引先へのメール（内容確認・送付）にいつも cc で入れる宛先（カンマ区切り。経理など）</span>
+          <input value={ccText} placeholder="keiri@example.com"
+                 onChange={(e) => { setCcText(e.target.value); setSaved(false); }} />
         </label>
 
         <div className="faint">

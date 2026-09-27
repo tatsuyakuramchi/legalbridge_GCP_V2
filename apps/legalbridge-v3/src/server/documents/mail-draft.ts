@@ -13,6 +13,7 @@ import {
  *   owner_check … 依頼した事業部の担当者（案件の依頼者）へ。法務の担当を cc
  *   party_check … 取引先の主担当（無ければ連絡先の全員）へ。依頼者を cc
  *   delivery    … 取引先の請求先（無ければ主担当）へ。依頼者を cc
+ * 取引先へのメール（party_check・delivery）には、設定の「いつも入れる cc」も足す。
  * 下書きを返すだけで送らない。人が画面で直してから送る。
  */
 
@@ -115,6 +116,9 @@ export class MailDraftService {
       } else {
         to = partyPeople(purpose === "delivery" ? ["billing", "primary"] : ["primary"]);
         cc = requesterP ? [requesterP] : ownerP ? [ownerP] : [];
+        // 取引先へのメールにいつも入れる cc（経理など。V1 の EMAIL_CC）。
+        cc = [...cc, ...templates.partyCc.map((email) => ({ name: null, email }))]
+          .filter((c, i, all) => all.findIndex((x) => x.email.toLowerCase() === c.email.toLowerCase()) === i);
         if (!to.length) warnings.push("取引先にメールアドレスの登録がありません。宛先を入れてください");
       }
       cc = cc.filter((c) => !to.some((t) => t.email.toLowerCase() === c.email.toLowerCase()));

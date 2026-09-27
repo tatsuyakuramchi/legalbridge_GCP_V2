@@ -42,3 +42,8 @@ test("差し込み、宛名が無ければ「様」だけの行を出さない",
   assert.match(r.body, /（署名）$/);
   assert.doesNotMatch(r.body, /\{/);
 });
+
+test("いつも入れる cc はメールアドレスだけ。カンマ区切りの文字でも読む", () => {
+  assert.deepEqual(parseMailTemplates({ partyCc: "keiri@example.com, keiri@example.com" }).value.partyCc, ["keiri@example.com"]);
+  assert.ok(parseMailTemplates({ partyCc: ["経理"] }).errors.some((e) => /メールアドレスの形ではありません/.test(e)));
+});
