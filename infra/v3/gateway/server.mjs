@@ -11,6 +11,8 @@
 //     POST /internal/slack/interactions  … モーダルの送信（同上）
 //     GET  /internal/upload              … 依頼者の資料アップロードのページ（署名付きリンクで守る）
 //     POST /internal/upload/file         … そのファイル（同上。1 ファイル 30MB まで）
+//     POST /internal/jobs/{delivery-alert,daily,mail-intake,backlog-pull,flow-notice}
+//                                        … 定期実行（V3 本体の共有シークレットで守る）
 //
 //   V3 へは、この口のサービスアカウントの ID トークンを付けて呼ぶ
 //   （V3 側でこのアカウントに roles/run.invoker を付ける）。
@@ -49,13 +51,22 @@ export const ROUTES = [
   ["POST", "/internal/slack/commands"],
   ["POST", "/internal/slack/interactions"],
   ["GET", "/internal/upload"],
-  ["POST", "/internal/upload/file"]
+  ["POST", "/internal/upload/file"],
+  // 定期実行（Cloud Scheduler）。V3 本体に IAP が付いていると Scheduler の OIDC トークンは
+  // IAP に断られる（"Invalid JWT audience"）ので、口を通す。守りは V3 本体の共有シークレット
+  // （x-lb-webhook-token。無い・違えば 401）。
+  ["POST", "/internal/jobs/delivery-alert"],
+  ["POST", "/internal/jobs/daily"],
+  ["POST", "/internal/jobs/mail-intake"],
+  ["POST", "/internal/jobs/backlog-pull"],
+  ["POST", "/internal/jobs/flow-notice"]
 ];
 export const allowed = (method, pathname) =>
   ROUTES.some(([m, p]) => m === method && p === pathname);
 
 /** V3 へ渡すヘッダ。署名の検証に要るものと本文の形だけ。 */
-const PASS_REQUEST = ["content-type", "x-slack-signature", "x-slack-request-timestamp", "user-agent", "accept", "accept-language"];
+const PASS_REQUEST = ["content-type", "x-slack-signature", "x-slack-request-timestamp", "x-lb-webhook-token",
+                      "user-agent", "accept", "accept-language"];
 const PASS_RESPONSE = ["content-type", "cache-control", "referrer-policy", "content-security-policy"];
 
 // ID トークンは 1 時間もつ。50 分で取り直す。宛先ごとに持つ。

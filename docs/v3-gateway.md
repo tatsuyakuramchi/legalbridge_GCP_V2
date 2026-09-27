@@ -20,6 +20,7 @@ V3 本体を外に開くと、画面も API も全部開いてしまう。
 | `POST /internal/slack/interactions` | 同上 |
 | `GET /internal/upload` | 署名付きリンク（HMAC・30 日） |
 | `POST /internal/upload/file` | 同上。1 ファイル 30MB まで |
+| `POST /internal/jobs/{delivery-alert,daily,mail-intake,backlog-pull,flow-notice}` | 共有シークレット（`x-lb-webhook-token`）。定期実行用 |
 
 これ以外のパスは 404（`..` を使った抜け道も含む）。V3 本体へは口のサービスアカウントの
 ID トークンを付けて呼ぶので、V3 本体は非公開のまま。社内の人の使い方は変わらない。
@@ -124,6 +125,27 @@ gcloud run services describe legalbridge-v3 --region=$REGION \
 画面の受付箱で依頼を1つ開き、「依頼者の資料」→「アップロード用リンクを作る」。
 `https://legalbridge-v3-gateway-…/internal/upload?t=…` のリンクが出れば完了。
 スマートフォン（社外の回線）でそのリンクを開き、小さなファイルを上げて、受付箱に出ることを確かめる。
+
+### 3.5 定期実行（Cloud Scheduler）は口を通す
+
+V3 本体は IAP 付きなので、Scheduler の OIDC トークンで直接呼ぶと IAP に 401 で断られる。
+定期実行は口の `/internal/jobs/<名前>` を呼ぶ（口はジョブの 5 つだけ通す）。
+守りは V3 本体の共有シークレット（`x-lb-webhook-token`）。
+
+```bash
+GW_URL=$(gcloud run services describe legalbridge-v3-gateway --region=$REGION --format='value(status.url)')
+TOKEN="$(gcloud secrets versions access latest --secret=legalbridge-v3-webhook-token)"
+
+# 納期アラート（毎朝 9 時・東京。超過は平日だけかは設定画面で決める）
+gcloud scheduler jobs create http legalbridge-v3-delivery-alert \
+  --location=$REGION --schedule="0 9 * * *" --time-zone="Asia/Tokyo" \
+  --uri="${GW_URL}/internal/jobs/delivery-alert" --http-method=POST \
+  --headers="Content-Type=application/json,x-lb-webhook-token=${TOKEN}" --message-body='{}'
+```
+
+既に V3 本体を直接呼ぶジョブ（`legalbridge-v3-daily`・`-mail` など）を作ってあるなら、
+`gcloud scheduler jobs update http <名前> --location=$REGION --uri="${GW_URL}/internal/jobs/<名前>"` で
+宛先を口に替え、OIDC を外す（`--clear-auth-token`）。
 
 ### 4. Slack を V3 に向けるとき（あとで）
 
