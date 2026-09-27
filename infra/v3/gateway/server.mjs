@@ -19,12 +19,21 @@
 //   環境変数
 //     UPSTREAM          V3 本体の URL（https://legalbridge-v3-xxxx.a.run.app）。必須
 //     PORT              既定 8080（Cloud Run が入れる）
+//     AUDIENCES         ID トークンの宛先の候補（カンマ区切り）。IAP が付いた V3 は
+//                       https://<サービス>-<プロジェクト番号>.<リージョン>.run.app を受け付ける
 //     GATEWAY_NO_AUTH=1 手元の試験用。ID トークンを付けない
 // =====================================================================
 
 import http from "node:http";
 
 const UPSTREAM = (process.env.UPSTREAM ?? "").replace(/\/+$/, "");
+// ID トークンの宛先（audience）の候補。V3 本体に IAP が付いていると、IAP が受け付ける宛先は
+// サービスの URL のうち決まった一方だけのことがある（2026-09-27 に "Invalid JWT audience" で断られた）。
+// 候補を順に試し、通ったものを覚える。既定は UPSTREAM だけ。
+const AUDIENCES = [...new Set([
+  ...(process.env.AUDIENCES ?? "").split(",").map((s) => s.trim().replace(/\/+$/, "")).filter(Boolean),
+  UPSTREAM
+])];
 const PORT = Number(process.env.PORT ?? 8080);
 const NO_AUTH = process.env.GATEWAY_NO_AUTH === "1";
 const MAX_BODY = 31 * 1024 * 1024;
@@ -48,18 +57,22 @@ export const allowed = (method, pathname) =>
 const PASS_REQUEST = ["content-type", "x-slack-signature", "x-slack-request-timestamp", "user-agent", "accept", "accept-language"];
 const PASS_RESPONSE = ["content-type", "cache-control", "referrer-policy", "content-security-policy"];
 
-// ID トークンは 1 時間もつ。50 分で取り直す。
-let cached = { token: "", until: 0 };
-async function idToken() {
+// ID トークンは 1 時間もつ。50 分で取り直す。宛先ごとに持つ。
+const cache = new Map();
+async function idToken(audience) {
   if (NO_AUTH) return "";
-  if (cached.token && Date.now() < cached.until) return cached.token;
+  const hit = cache.get(audience);
+  if (hit && Date.now() < hit.until) return hit.token;
   const url = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity"
-    + `?audience=${encodeURIComponent(UPSTREAM)}&format=full`;
+    + `?audience=${encodeURIComponent(audience)}&format=full`;
   const r = await fetch(url, { headers: { "Metadata-Flavor": "Google" } });
   if (!r.ok) throw new Error(`ID トークンを取れませんでした (${r.status})`);
-  cached = { token: (await r.text()).trim(), until: Date.now() + 50 * 60 * 1000 };
-  return cached.token;
+  const token = (await r.text()).trim();
+  cache.set(audience, { token, until: Date.now() + 50 * 60 * 1000 });
+  return token;
 }
+/** いま使う宛先（通ったものを先頭に寄せる）。 */
+let working = 0;
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -92,15 +105,24 @@ export const server = http.createServer(async (req, res) => {
     const body = req.method === "GET" ? undefined : await readBody(req);
     const headers = {};
     for (const h of PASS_REQUEST) if (req.headers[h]) headers[h] = String(req.headers[h]);
-    const token = await idToken();
-    if (token) headers.authorization = `Bearer ${token}`;
     const fwd = req.headers["x-forwarded-for"];
     headers["x-forwarded-for"] = String(fwd ?? req.socket.remoteAddress ?? "");
 
     // パスは許したものをそのまま使い、クエリだけ引き継ぐ（署名付きリンクの t= など）。
-    const upstream = await fetch(`${UPSTREAM}${url.pathname}${url.search}`, {
-      method: req.method, headers, body, redirect: "manual"
-    });
+    // IAP に宛先違いで断られたら、次の候補の宛先で取り直して 1 回ずつ試す。
+    let upstream;
+    for (let i = 0; i < AUDIENCES.length; i += 1) {
+      const idx = (working + i) % AUDIENCES.length;
+      const token = await idToken(AUDIENCES[idx]);
+      if (token) headers.authorization = `Bearer ${token}`;
+      upstream = await fetch(`${UPSTREAM}${url.pathname}${url.search}`, {
+        method: req.method, headers, body, redirect: "manual"
+      });
+      if (upstream.status !== 401 || NO_AUTH) { working = idx; break; }
+      const text = await upstream.clone().text().catch(() => "");
+      if (!/audience/i.test(text)) { working = idx; break; }
+      console.warn("gateway: IAP が宛先を受け付けなかった", AUDIENCES[idx]);
+    }
     const out = { "x-content-type-options": "nosniff" };
     for (const h of PASS_RESPONSE) {
       const v = upstream.headers.get(h);
@@ -116,5 +138,5 @@ export const server = http.createServer(async (req, res) => {
 });
 
 if (process.env.GATEWAY_NO_LISTEN !== "1") {
-  server.listen(PORT, () => console.log(`legalbridge-v3-gateway :${PORT} → ${UPSTREAM}`));
+  server.listen(PORT, () => console.log(`legalbridge-v3-gateway :${PORT} → ${UPSTREAM}（宛先の候補 ${AUDIENCES.join(" / ")}）`));
 }

@@ -66,6 +66,24 @@ curl -s -o /dev/null -w "%{http_code}\n" ${GW_URL}/api/v3/ringi
 > `--allow-unauthenticated` が組織のポリシー（許可するドメインの制限）で断られたら、
 > エラーをそのまま法務システム担当へ。口だけを例外にするか、ロードバランサ経由に切り替える。
 
+### 2.5 V3 本体に IAP が付いているとき（本番はこれ）
+
+V3 本体は Cloud Run の IAP（`run.googleapis.com/iap-enabled: 'true'`）で守っている。
+IAP は Cloud Run の呼び出し権限とは別に見るので、口のサービスアカウントに IAP を通る許可を付け、
+ID トークンの宛先を IAP が受け付けるもの（プロジェクト番号入りの URL）にする。
+これが無いと口からの中継は `Invalid IAP credentials: Invalid bearer token. Invalid JWT audience.`（401）で断られる。
+
+```bash
+PROJECT_NUMBER=$(gcloud projects describe $PROJECT --format='value(projectNumber)')
+gcloud iap web add-iam-policy-binding --region=$REGION --resource-type=cloud-run --service=legalbridge-v3 \
+  --member="serviceAccount:${GW_SA}" --role=roles/iap.httpsResourceAccessor
+gcloud run deploy legalbridge-v3-gateway --source=infra/v3/gateway --region=$REGION \
+  --allow-unauthenticated --service-account="${GW_SA}" --memory=256Mi --max-instances=3 \
+  --set-env-vars="^|^UPSTREAM=${V3_URL}|AUDIENCES=https://legalbridge-v3-${PROJECT_NUMBER}.${REGION}.run.app"
+```
+
+口は宛先の候補（`AUDIENCES` と `UPSTREAM`）を順に試し、IAP に通ったものを覚える。
+
 ### 3. 資料アップロードの鍵と URL を V3 本体に入れる
 
 ```bash
