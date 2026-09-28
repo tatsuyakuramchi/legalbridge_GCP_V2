@@ -258,6 +258,8 @@ export function App() {
         )}
         {view === "intake" && (
           <IntakeWorkspace onOpenMatter={(id) => openEntity("matter", id)}
+            onCompose={(ids, templateKey) => startCompose(ids, [], null, templateKey)}
+            onOpenDocument={openDocumentAt}
             onCountsChange={(c) => setIntakeCount(c.new + c.updated)} />
         )}
         {view === "matters" && (

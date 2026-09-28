@@ -9,6 +9,10 @@ import { REQUEST_TYPES, requestLabel } from "../integrations/slack-intake.js";
 import { openMatter, resolveCounterparty } from "../integrations/intake-service.js";
 import { attachUploadsToMatter } from "./upload-service.js";
 import { recordCommunication } from "../matters/communication-service.js";
+import {
+  isPaymentPurpose, normalizeDocNo, paymentDocLabel, resolvePaymentTarget,
+  type PaymentPurpose, type PaymentTarget
+} from "./payment-request.js";
 
 /**
  * 受付箱の書き込み。docs/v3-request-inbox.md
@@ -33,8 +37,16 @@ export interface SubmitResult {
 }
 
 export interface AcceptInput {
-  /** new=新規案件で受付 / existing=既存の案件へ接続 */
-  mode: "new" | "existing";
+  /**
+   * new=新規案件で受付 / existing=既存の案件へ接続 /
+   * direct=案件にせず処理（検収書・利用許諾計算書の依頼だけ。A-058）
+   */
+  mode: "new" | "existing" | "direct";
+  /** direct：依頼の種類（Slack で選ばれていなければ画面で選ぶ）と対象の番号。 */
+  purpose?: PaymentPurpose | null;
+  targetDocNo?: string | null;
+  /** direct：対象の条件。空なら対象の番号から引き当てたもの。 */
+  conditionIds?: number[] | null;
   matterId?: number | null;
   kind: MatterKind;
   title?: string | null;
@@ -45,10 +57,37 @@ export interface AcceptInput {
 
 export interface AcceptResult {
   requestId: number;
-  matterId: number;
+  /** 案件にせず処理したときは null。 */
+  matterId: number | null;
   matterNo: string | null;
   createdMatter: boolean;
+  handling: "matter" | "direct";
   notified: boolean;
+}
+
+/** 依頼の原票から、選ばれた依頼の内容と対象の番号を読む。 */
+export function paymentOf(row: Record<string, any>): { purpose: PaymentPurpose | null; targetDocNo: string | null } {
+  const p = (row.source_payload ?? {}) as Record<string, any>;
+  return {
+    purpose: isPaymentPurpose(p.purpose) ? p.purpose : null,
+    targetDocNo: p.targetDocNo ? String(p.targetDocNo) : null
+  };
+}
+
+/**
+ * 発注書が案件に入っている検収書は、その案件で作る（案件の工程・スレッドに揃える）。
+ * 別の受け方をしようとしたら止める。
+ */
+export function assertInspectionMatter(
+  purpose: PaymentPurpose | null, target: PaymentTarget | null,
+  input: { mode: AcceptInput["mode"]; matterId?: number | null }
+): void {
+  if (purpose !== "inspection" || !target?.matter || !target.documentId) return;
+  if (input.mode === "existing" && Number(input.matterId) === target.matter.id) return;
+  const m = target.matter;
+  throw new DomainError("CONFLICT",
+    `発注書 ${target.documentNo ?? target.docNo} は案件 ${m.matterNo ?? `#${m.id}`}（${m.title}）に入っています。`
+    + "検収書はその案件で作るので、この案件へ接続して受け付けてください");
 }
 
 /** Slack 受付で Backlog に立てる課題の件名。依頼番号を頭に置く（取得のときに突き合わせる）。 */
@@ -240,6 +279,7 @@ export class IntakeRequestService {
    * Backlog の課題があれば案件にも繋ぐ（受信で案件を辿れるように）。
    */
   async accept(id: number, input: AcceptInput, actor: string): Promise<AcceptResult> {
+    if (input.mode === "direct") return this.acceptDirect(id, input, actor);
     if (!REQUEST_TYPES.some((t) => t.value === input.kind)) {
       throw new DomainError("VALIDATION", "依頼の種類を選んでください");
     }
@@ -251,6 +291,12 @@ export class IntakeRequestService {
         const row = await this.lockOpen(client, id);
         requester = row.requester_slack_id ?? null;
         const title = String(input.title ?? row.title).trim() || String(row.title);
+        // 検収書の依頼で、発注書が案件に入っているなら、その案件へ繋ぐほかは受けない。
+        const pay = paymentOf(row);
+        if (pay.purpose === "inspection") {
+          assertInspectionMatter(pay.purpose,
+            await resolvePaymentTarget(client, pay.purpose, pay.targetDocNo), input);
+        }
 
         let matterId: number;
         let matterNo: string | null;
@@ -361,7 +407,7 @@ export class IntakeRequestService {
 
         await client.query(
           `UPDATE intake_requests
-              SET state = 'accepted', matter_id = $2, kind = $3, title = $4,
+              SET state = 'accepted', handling = 'matter', matter_id = $2, kind = $3, title = $4,
                   due_on = COALESCE($5::date, due_on), has_unseen_update = false,
                   reason = NULL, hold_until = NULL,
                   handled_at = now(), handled_by = $6, updated_at = now()
@@ -383,12 +429,210 @@ export class IntakeRequestService {
             : `${matterNo ?? `#${matterId}`} ${matterTitle} の案件で対応します`,
           `担当：${owner ?? "（これから決めます）"}`
         ].join("\n");
-        return { requestId: id, matterId, matterNo, createdMatter };
+        return { requestId: id, matterId, matterNo, createdMatter, handling: "matter" as const };
       });
     } catch (error) { throw translate(error); }
 
     const notified = await this.notify(id, requester, message, actor);
     return { ...result, notified };
+  }
+
+  /**
+   * 案件にせず処理する（A-058）。検収書・利用許諾計算書の依頼だけ。
+   *
+   * 依頼そのものを小さなチケットにする。担当・期日は依頼に持ち、対象の番号から
+   * 引き当てた条件を依頼に繋ぐ（作った文書・支払はそこから辿る）。
+   */
+  private async acceptDirect(id: number, input: AcceptInput, actor: string): Promise<AcceptResult> {
+    let requester: string | null = null;
+    let message = "";
+    let result: Omit<AcceptResult, "notified">;
+    try {
+      result = await inTransaction(this.database, async (client) => {
+        const row = await this.lockOpen(client, id);
+        requester = row.requester_slack_id ?? null;
+        const pay = paymentOf(row);
+        const purpose = pay.purpose ?? (isPaymentPurpose(input.purpose) ? input.purpose : null);
+        if (!purpose) {
+          throw new DomainError("VALIDATION",
+            "案件にせず処理できるのは、検収書・利用許諾計算書の依頼だけです（依頼の内容を選んでください）");
+        }
+        const targetDocNo = normalizeDocNo(input.targetDocNo) ?? normalizeDocNo(pay.targetDocNo);
+        const target = await resolvePaymentTarget(client, purpose, targetDocNo);
+        assertInspectionMatter(purpose, target, input);
+
+        // 対象の条件。画面で選び直していればそれ、無ければ引き当てたもの。
+        const conditionIds = [...new Set((input.conditionIds?.length
+          ? input.conditionIds : target?.conditions.map((c) => c.id) ?? []).map(Number))]
+          .filter((n) => Number.isFinite(n) && n > 0);
+        if (!conditionIds.length) {
+          throw new DomainError("VALIDATION", targetDocNo
+            ? `${purpose === "inspection" ? "発注書" : "契約書"}番号 ${targetDocNo} から条件を引き当てられません。`
+              + "番号を直すか、対象の条件を選んでください"
+            : `${purpose === "inspection" ? "発注書" : "契約書"}番号を入れてください（どの契約の支払かが分からないと作れません）`);
+        }
+        const found = await client.query(
+          "SELECT id FROM conditions WHERE id = ANY($1::bigint[])", [conditionIds]);
+        if (found.rows.length !== conditionIds.length) {
+          throw new DomainError("NOT_FOUND", "選んだ条件の一部が見つかりません");
+        }
+
+        const title = String(input.title ?? row.title).trim() || String(row.title);
+        const kind = purpose === "inspection" ? "outsourcing" : "work";
+        const payload = { ...(row.source_payload ?? {}), purpose, targetDocNo };
+        await client.query(
+          `UPDATE intake_requests
+              SET state = 'accepted', handling = 'direct', matter_id = NULL, kind = $2, title = $3,
+                  due_on = COALESCE($4::date, due_on), assignee_staff_id = $5,
+                  counterparty_id = COALESCE(counterparty_id, $6),
+                  source_payload = $7::jsonb, has_unseen_update = false,
+                  reason = NULL, hold_until = NULL, done_at = NULL, done_by = NULL,
+                  handled_at = now(), handled_by = $8, updated_at = now()
+            WHERE id = $1`,
+          [id, kind, title, input.dueOn ?? null, input.ownerStaffId ?? null,
+           target?.counterpartyId ?? null, JSON.stringify(payload), actor]);
+        await client.query(
+          "DELETE FROM intake_request_links WHERE request_id = $1 AND target_type = 'condition'", [id]);
+        for (const conditionId of conditionIds) {
+          await client.query(
+            `INSERT INTO intake_request_links (request_id, target_type, target_id, created_by)
+             VALUES ($1, 'condition', $2, $3) ON CONFLICT DO NOTHING`, [id, conditionId, actor]);
+        }
+        await recordAudit(client, {
+          actor, action: "intake.accept", targetType: "intake_request", targetId: id,
+          detail: { handling: "direct", purpose, targetDocNo, conditionIds, requestNo: row.request_no }
+        });
+
+        const owner = input.ownerStaffId
+          ? ((await client.query("SELECT name FROM staff WHERE id = $1", [input.ownerStaffId])).rows[0] as any)?.name ?? null
+          : null;
+        const label = paymentDocLabel(purpose);
+        message = [
+          `依頼を受け付けました：*${row.request_no ?? `#${id}`}*`,
+          `${label}を作ります${targetDocNo ? `（対象：${targetDocNo}）` : ""}。`,
+          `担当：${owner ?? "（これから決めます）"}`,
+          "進み具合（作成・送付・支払予定・支払）はこのスレッドでお知らせします。"
+        ].join("\n");
+        return { requestId: id, matterId: null, matterNo: null, createdMatter: false, handling: "direct" as const };
+      });
+    } catch (error) { throw translate(error); }
+    const notified = await this.notify(id, requester, message, actor);
+    return { ...result, notified };
+  }
+
+  /** 案件にせず処理している依頼の担当・期日を変える。 */
+  async assign(id: number, input: { staffId?: number | null; dueOn?: string | null }, actor: string)
+    : Promise<{ requestId: number }> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        await this.lockDirect(client, id);
+        await client.query(
+          `UPDATE intake_requests
+              SET assignee_staff_id = $2, due_on = $3::date, updated_at = now()
+            WHERE id = $1`, [id, input.staffId ?? null, input.dueOn ?? null]);
+        await recordAudit(client, {
+          actor, action: "intake.assign", targetType: "intake_request", targetId: id,
+          detail: { staffId: input.staffId ?? null, dueOn: input.dueOn ?? null }
+        });
+        return { requestId: id };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 文書を手で繋ぐ・外す。自動の引き当て（依頼より後に作った、依頼の条件の文書）に
+   * 当たらないとき（依頼の前に作っていた、別の条件で作った）に使う。
+   */
+  async linkDocument(id: number, documentRef: { documentId?: number | null; documentNo?: string | null },
+                     actor: string): Promise<{ requestId: number; documentId: number }> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        await this.lockDirect(client, id);
+        const no = normalizeDocNo(documentRef.documentNo);
+        const d = await client.query(
+          `SELECT id, document_no, status FROM documents
+            WHERE ${documentRef.documentId ? "id = $1" : "upper(document_no) = $1"}`,
+          [documentRef.documentId ?? no]);
+        const doc = d.rows[0] as any;
+        if (!doc) throw new DomainError("NOT_FOUND", `文書 ${documentRef.documentId ?? no ?? ""} が見つかりません`);
+        if (doc.status === "void") throw new DomainError("CONFLICT", "無効にした文書は繋げません");
+        await client.query(
+          `INSERT INTO intake_request_links (request_id, target_type, target_id, created_by)
+           VALUES ($1, 'document', $2, $3) ON CONFLICT DO NOTHING`, [id, doc.id, actor]);
+        await recordAudit(client, {
+          actor, action: "intake.link", targetType: "intake_request", targetId: id,
+          detail: { documentId: Number(doc.id), documentNo: doc.document_no ?? null }
+        });
+        return { requestId: id, documentId: Number(doc.id) };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  async unlinkDocument(id: number, documentId: number, actor: string): Promise<{ requestId: number }> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        await this.lockDirect(client, id);
+        await client.query(
+          `DELETE FROM intake_request_links
+            WHERE request_id = $1 AND target_type = 'document' AND target_id = $2`, [id, documentId]);
+        await recordAudit(client, {
+          actor, action: "intake.unlink", targetType: "intake_request", targetId: id, detail: { documentId }
+        });
+        return { requestId: id };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 対応完了にする（支払の記録が V3 に無い、支払まで待たずに閉じる、など）。
+   * 依頼者に知らせるのは工程の知らせ（ジョブ）に任せる。二重に送らない。
+   */
+  async complete(id: number, note: string | null, actor: string): Promise<{ requestId: number }> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const row = await this.lockDirect(client, id);
+        if (row.done_at) throw new DomainError("CONFLICT", "この依頼は対応完了にしてあります");
+        await client.query(
+          `UPDATE intake_requests SET done_at = now(), done_by = $2, updated_at = now() WHERE id = $1`,
+          [id, actor]);
+        await recordAudit(client, {
+          actor, action: "intake.done", targetType: "intake_request", targetId: id,
+          detail: { note: note?.trim() || null }
+        });
+        return { requestId: id };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /** 対応完了を取り消す（まだ終わっていなかった）。 */
+  async uncomplete(id: number, actor: string): Promise<{ requestId: number }> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        await this.lockDirect(client, id);
+        await client.query(
+          `UPDATE intake_requests SET done_at = NULL, done_by = NULL, updated_at = now() WHERE id = $1`, [id]);
+        await recordAudit(client, {
+          actor, action: "intake.undone", targetType: "intake_request", targetId: id
+        });
+        return { requestId: id };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /** 案件にせず処理している依頼を取る。 */
+  private async lockDirect(client: Queryable, id: number): Promise<Record<string, any>> {
+    const r = await client.query("SELECT * FROM intake_requests WHERE id = $1 FOR UPDATE", [id]);
+    const row = r.rows[0] as Record<string, any> | undefined;
+    if (!row) throw new DomainError("NOT_FOUND", `依頼 ${id} が見つかりません`);
+    if (row.state !== "accepted" || row.handling !== "direct") {
+      throw new DomainError("CONFLICT", "案件にせず処理している依頼ではありません");
+    }
+    return row;
+  }
+
+  /** 工程の知らせ（ジョブ）から送る。依頼のスレッドに返す。 */
+  async notifyProgress(id: number, slackId: string, text: string): Promise<boolean> {
+    return this.notify(id, slackId, text, "system:intake-progress");
   }
 
   /** 重複として閉じる。重複元が案件に繋がっていれば、その案件の「受付」に参考として出す。 */
@@ -525,10 +769,27 @@ export class IntakeRequestService {
   private async notify(requestId: number, slackId: string | null, text: string, actor: string): Promise<boolean> {
     if (!this.dispatch || !slackId || !text) return false;
     try {
-      const outcome = await this.dispatch.dispatch({
+      // 依頼ごとに DM を1本のスレッドにまとめる。最初の DM（送信の確認）が親。
+      const t = await this.database.query(
+        "SELECT slack_thread_ts FROM intake_requests WHERE id = $1", [requestId]);
+      const threadRef = ((t.rows[0] as any)?.slack_thread_ts as string | null | undefined) ?? null;
+      const send = (thread: string | null) => this.dispatch!.dispatch({
         channel: "slack", targetType: "intake_request", targetId: requestId, actor,
-        request: { recipient: slackId, body: text }
+        request: { recipient: slackId, body: text, ...(thread ? { threadRef: thread } : {}) }
       });
+      let outcome;
+      try {
+        outcome = await send(threadRef);
+      } catch (error) {
+        // スレッドに返せなかったとき（親が消えた等）は、スレッドなしで送り直す。
+        if (!threadRef) throw error;
+        outcome = await send(null);
+      }
+      if (outcome.sent && !threadRef && outcome.threadRef) {
+        await this.database.query(
+          `UPDATE intake_requests SET slack_thread_ts = $2
+            WHERE id = $1 AND slack_thread_ts IS NULL`, [requestId, outcome.threadRef]);
+      }
       return outcome.sent;
     } catch (error) {
       console.error("intake slack notify failed", { requestId, message: (error as Error)?.message });

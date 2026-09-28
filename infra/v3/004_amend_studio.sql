@@ -2058,6 +2058,70 @@ COMMENT ON COLUMN v3.parties.residency IS 'resident=居住者（国内）/ non_r
 COMMENT ON COLUMN v3.parties.treaty_rate_pct IS '租税条約の源泉の税率（%）。届出書・居住者証明書が支払日までにあるときだけ使う。無ければ国内法 20.42%';
 COMMENT ON COLUMN v3.parties.treaty_docs_received_on IS '租税条約の届出書・居住者証明書を受け取った日。支払日より後なら条約の税率は使わない';
 
+-- ---------------------------------------------------------------------
+-- A-058 支払文書の依頼を案件にせず処理する（docs/v3-request-inbox.md §8）
+--   検収書・利用許諾計算書の依頼は、毎期の定型業務で案件にするほどのやり取りが無い。
+--   受付箱で「案件にせず処理」を選ぶと、依頼そのものを小さなチケットとして追う。
+--     - handling：matter=案件で対応 / direct=案件にせず処理
+--     - 担当者・対応完了の日時
+--     - 依頼者への Slack の DM を1本のスレッドにまとめる（最初の DM の ts）
+--   依頼に繋ぐもの（intake_request_links）：
+--     - condition … 対象の番号（契約書番号）から引き当てた条件
+--     - document  … 人が手で繋いだ文書（自動の引き当てに当たらないとき）
+--   工程（受付→作成→送付→支払予定→支払）は保存しない。文書・送付・支払から導く。
+--   発注書が案件に入っている検収書の依頼は、その案件へ接続する（直で処理しない）。
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.intake_requests ADD COLUMN IF NOT EXISTS handling text;
+ALTER TABLE v3.intake_requests ADD COLUMN IF NOT EXISTS assignee_staff_id bigint REFERENCES v3.staff(id);
+ALTER TABLE v3.intake_requests ADD COLUMN IF NOT EXISTS done_at timestamptz;
+ALTER TABLE v3.intake_requests ADD COLUMN IF NOT EXISTS done_by text;
+ALTER TABLE v3.intake_requests ADD COLUMN IF NOT EXISTS slack_thread_ts text;
+DO $a058$
+DECLARE con text;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.intake_requests'::regclass AND conname = 'intake_requests_handling_chk') THEN
+    ALTER TABLE v3.intake_requests ADD CONSTRAINT intake_requests_handling_chk
+      CHECK (handling IS NULL OR handling IN ('matter', 'direct'));
+  END IF;
+  -- 受付済は案件が要る、を「案件で対応なら」に緩める。
+  SELECT conname INTO con FROM pg_constraint
+   WHERE conrelid = 'v3.intake_requests'::regclass AND contype = 'c'
+     AND pg_get_constraintdef(oid) LIKE '%accepted%' AND pg_get_constraintdef(oid) LIKE '%matter_id%'
+     AND pg_get_constraintdef(oid) NOT LIKE '%direct%';
+  IF con IS NOT NULL THEN
+    EXECUTE format('ALTER TABLE v3.intake_requests DROP CONSTRAINT %I', con);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.intake_requests'::regclass AND conname = 'intake_requests_accepted_chk') THEN
+    ALTER TABLE v3.intake_requests ADD CONSTRAINT intake_requests_accepted_chk
+      CHECK (state <> 'accepted' OR matter_id IS NOT NULL OR handling = 'direct');
+  END IF;
+END $a058$;
+UPDATE v3.intake_requests SET handling = 'matter'
+ WHERE state = 'accepted' AND matter_id IS NOT NULL AND handling IS NULL;
+CREATE INDEX IF NOT EXISTS intake_requests_direct_idx
+  ON v3.intake_requests (done_at, due_on) WHERE handling = 'direct';
+CREATE INDEX IF NOT EXISTS intake_requests_slack_thread_idx
+  ON v3.intake_requests (slack_thread_ts) WHERE slack_thread_ts IS NOT NULL;
+COMMENT ON COLUMN v3.intake_requests.handling IS 'matter=案件で対応 / direct=案件にせず処理（検収書・計算書の依頼）';
+COMMENT ON COLUMN v3.intake_requests.slack_thread_ts IS '依頼者への最初の DM の ts。以後の知らせはこのスレッドに返す';
+
+CREATE TABLE IF NOT EXISTS v3.intake_request_links (
+  request_id  bigint NOT NULL REFERENCES v3.intake_requests(id),
+  target_type text NOT NULL CHECK (target_type IN ('condition', 'document')),
+  target_id   bigint NOT NULL,
+  created_by  text,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (request_id, target_type, target_id)
+);
+COMMENT ON TABLE v3.intake_request_links IS
+  '案件にせず処理する依頼（A-058）に繋ぐ条件・文書。工程はここから導く。';
+CREATE INDEX IF NOT EXISTS intake_request_links_target_idx
+  ON v3.intake_request_links (target_type, target_id);
+-- 繋ぎは付け外しできる（人が繋いだ文書を外す）。
+GRANT SELECT, INSERT, DELETE ON v3.intake_request_links TO legalbridge_v3_runtime;
+
 COMMIT;
 
 
@@ -2331,6 +2395,16 @@ SELECT * FROM (
         + (SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='parties'
               AND column_name IN ('rpt_entity', 'has_board', 'related_party', 'related_party_type', 'related_party_note')))::text
+  UNION ALL
+  SELECT 58, '支払文書の依頼を案件にせず処理（A-058。列 5・CHECK 2・表 1 で 8 であること）',
+         ((SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='v3' AND table_name='intake_requests'
+              AND column_name IN ('handling', 'assignee_staff_id', 'done_at', 'done_by', 'slack_thread_ts'))
+        + (SELECT count(*) FROM pg_constraint
+            WHERE conrelid='v3.intake_requests'::regclass
+              AND conname IN ('intake_requests_handling_chk', 'intake_requests_accepted_chk'))
+        + (SELECT count(*) FROM information_schema.tables
+            WHERE table_schema='v3' AND table_name='intake_request_links'))::text
   UNION ALL
   SELECT 57, '非居住者と租税条約（A-057。列 5 と CHECK 2 で 7 であること）',
          ((SELECT count(*) FROM information_schema.columns
