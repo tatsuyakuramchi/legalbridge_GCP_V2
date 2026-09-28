@@ -14,7 +14,7 @@ import type { ConditionRevision } from "../server/core/model.js";
  */
 
 const TAX_LABEL: Record<string, string> = {
-  taxable: "課税 10%", reduced: "軽減 8%", exempt: "非課税・不課税"
+  taxable: "課税 10%", reduced: "軽減 8%", exempt: "非課税・不課税", included: "税込（海外・内税）"
 };
 
 interface FieldDiff { label: string; before: string; after: string }

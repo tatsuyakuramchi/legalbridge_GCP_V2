@@ -41,7 +41,7 @@ export interface PublishingSetInput {
   termStart?: string | null;
   termEnd?: string | null;
   currency?: string;
-  taxCategory?: "taxable" | "reduced" | "exempt";
+  taxCategory?: "taxable" | "reduced" | "exempt" | "included";
   paymentTerms?: string | null;
   notes?: string | null;
   /** 地域・言語。媒体はここではなく print / digital で決まる。 */
@@ -94,7 +94,7 @@ export interface LicenseSetInput {
   renewMonths?: number | null;
   renewStoppedOn?: string | null;
   currency?: string;
-  taxCategory?: "taxable" | "reduced" | "exempt";
+  taxCategory?: "taxable" | "reduced" | "exempt" | "included";
   paymentTerms?: string | null;
   notes?: string | null;
   scopes?: ConditionScope[];
@@ -126,7 +126,7 @@ export interface ServiceSetInput {
   termStart?: string | null;
   termEnd?: string | null;
   currency?: string;
-  taxCategory?: "taxable" | "reduced" | "exempt";
+  taxCategory?: "taxable" | "reduced" | "exempt" | "included";
   paymentTerms?: string | null;
   contractForm?: string | null;
   deliverableOwnership?: "orderer" | "contractor" | null;
@@ -223,7 +223,7 @@ export interface ConditionInput {
   flatAmount?: number | null;
   mgAmount?: number | null;
   agAmount?: number | null;
-  taxCategory?: "taxable" | "reduced" | "exempt";
+  taxCategory?: "taxable" | "reduced" | "exempt" | "included";
   paymentTerms?: string | null;
   /** 契約形式（請負・委任など）。支払条件とは別のもの。 */
   contractForm?: string | null;
@@ -258,7 +258,7 @@ export interface EconomicsPatch {
   deliveryDue?: string | null;
   paymentTerms?: string | null;
   contractForm?: string | null;
-  taxCategory?: "taxable" | "reduced" | "exempt";
+  taxCategory?: "taxable" | "reduced" | "exempt" | "included";
   notes?: string | null;
   /** 作品と独占性。登録のときに入れられるのに、編集で直せなかった。 */
   workId?: number | null;

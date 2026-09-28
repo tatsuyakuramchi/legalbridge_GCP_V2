@@ -89,7 +89,7 @@ export interface ConditionDetail extends ConditionSummary {
   renewMonths: number | null;
   /** 更新を止めた日。以後は更新しない（その期間は満了まで有効）。 */
   renewStoppedOn: string | null;
-  taxCategory: "taxable" | "reduced" | "exempt";
+  taxCategory: "taxable" | "reduced" | "exempt" | "included";
   /** 支払条件。「月末締め翌月末払い」。読んで支払期日を出す。 */
   paymentTerms: string | null;
   /** 契約形式（請負・委任など）。紙に書く語。支払条件とは別。 */

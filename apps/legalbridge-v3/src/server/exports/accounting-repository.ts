@@ -233,7 +233,7 @@ export class AccountingExportRepository {
         list.push({
           conditionNo: str(l.condition_no),
           name: String(l.name ?? ""),
-          taxCategory: (["taxable", "reduced", "exempt"].includes(String(l.tax_category))
+          taxCategory: (["taxable", "reduced", "exempt", "included"].includes(String(l.tax_category))
             ? String(l.tax_category) : "taxable") as AllocationLine["taxCategory"],
           amount: major(l.amount, l.currency),
           quantity: l.quantity === null || l.quantity === undefined ? null : Number(l.quantity),

@@ -23,7 +23,7 @@ type Row = Record<string, unknown>;
 /** この処理が効くひな形。発注書と検収書は同じ行（other_fees / expenses）を持つ。 */
 const SETTLEMENT_TEMPLATES = new Set([
   "purchase_order", "intl_purchase_order",
-  "inspection_certificate", "delivery_note", "acceptance_certificate"
+  "inspection_certificate", "intl_inspection_certificate", "delivery_note", "acceptance_certificate"
 ]);
 
 const text = (v: unknown) => String(v ?? "").trim();
@@ -100,7 +100,8 @@ export async function materializeSettlementRows(
       pricingModel: "fixed",
       flatAmount: p.amount ?? 0,
       // 手数料は税抜で受け、経費は税込の実費なので消費税を重ねない。
-      taxCategory: p.kind === "expense" ? "exempt" : "taxable",
+      // 海外の取引（元の条件が税込・内税）の手数料は、元の条件と同じく税込にする。
+      taxCategory: p.kind === "expense" ? "exempt" : primary.tax_category === "included" ? "included" : "taxable",
       termStart: dateStr(primary.term_start), termEnd: dateStr(primary.term_end),
       notes: p.kind === "expense"
         ? [text(p.row.spent_date) ? `利用日 ${text(p.row.spent_date)}` : "", text(p.row.remarks), "税込の実費"]

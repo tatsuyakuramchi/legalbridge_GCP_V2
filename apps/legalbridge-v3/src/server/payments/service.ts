@@ -470,7 +470,7 @@ export class PaymentService {
             ? consumptionTax(amount, taxRateFor({
                 id: 0, conditionNo: null, currency, pricingModel: "none",
                 ratePpm: null, unitAmount: null, flatAmount: null, mgAmount: null, agAmount: null,
-                taxCategory: String(r.tax_category ?? "taxable") as "taxable" | "reduced" | "exempt"
+                taxCategory: String(r.tax_category ?? "taxable") as "taxable" | "reduced" | "exempt" | "included"
               }))
             : Number(r.tax_amount);
         }
@@ -587,7 +587,7 @@ export class PaymentService {
           const rate = taxRateFor({
             id: 0, conditionNo: null, currency, pricingModel: "none",
             ratePpm: null, unitAmount: null, flatAmount: null, mgAmount: null, agAmount: null,
-            taxCategory: String(r.tax_category ?? "taxable") as "taxable" | "reduced" | "exempt"
+            taxCategory: String(r.tax_category ?? "taxable") as "taxable" | "reduced" | "exempt" | "included"
           });
           tax += consumptionTax(amount, rate);
         }

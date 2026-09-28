@@ -9,8 +9,8 @@
 --   発注書の本文との整合：
 --   ・約款 6.5 条は「発注書に別段の定めが無ければ、報酬は受注者の VAT・売上税等を含む」。
 --     発注書は金額欄に「(excl. tax)」と書いていて、発注書が約款に優先するため、
---     税が別に上乗せされると読めてしまう。「(excl. tax)」を外し、基本契約なしのときは
---     「受注者の VAT 等を含む（約款 6.5 条）」と書く。
+--     税が別に上乗せされると読めてしまう。「(excl. tax)」を外し、「受注者の VAT 等を含む」と書く
+--     （海外の取引は基本契約の有無にかかわらず税込・内税。約款の条番号は基本契約なしのときだけ）。
 --   ・銀行手数料（6.3 条）・源泉徴収と居住者証明書（6.2・6.4 条）・通知先（18 条）・
 --     成果物の権利の帰属（7 条）は、発注書に書いてある内容と約款が合っている（変更なし）。
 --
@@ -161,9 +161,11 @@ BEGIN
     RAISE EXCEPTION 'intl_purchase_order のひな形が見つかりません';
   END IF;
   new_html := src;
-  -- 税の注記は置き換えた後の文にも元の文が入るので、済んでいれば置き換えない（2 回流しても入れ子にしない）。
-  IF strpos(new_html, 'Article 6.5') = 0 THEN
-    new_html := replace(new_html, 'Taxes, if any, are handled as stated in the Payment section.', '{{#if HAS_BASE_CONTRACT}}Taxes, if any, are handled as stated in the Payment section.{{else}}Inclusive of any VAT, sales or similar taxes chargeable by the Contractor (Standard Terms, Article 6.5). Withholding tax: see the Payment section.{{/if}}');
+  -- 税の注記。海外の取引は基本契約の有無にかかわらず税込（内税）。151 の前の版（基本契約ありは
+  -- 旧文言のまま）を流した後でも、この版に揃う。済んでいれば何もしない（2 回流しても入れ子にしない）。
+  new_html := replace(new_html, '{{#if HAS_BASE_CONTRACT}}Taxes, if any, are handled as stated in the Payment section.{{else}}Inclusive of any VAT, sales or similar taxes chargeable by the Contractor (Standard Terms, Article 6.5). Withholding tax: see the Payment section.{{/if}}', 'Inclusive of any VAT, sales or similar taxes chargeable by the Contractor{{#unless HAS_BASE_CONTRACT}} (Standard Terms, Article 6.5){{/unless}}; no tax is added to this amount. Withholding tax: see the Payment section.');
+  IF strpos(new_html, 'Inclusive of any VAT') = 0 THEN
+    new_html := replace(new_html, 'Taxes, if any, are handled as stated in the Payment section.', 'Inclusive of any VAT, sales or similar taxes chargeable by the Contractor{{#unless HAS_BASE_CONTRACT}} (Standard Terms, Article 6.5){{/unless}}; no tax is added to this amount. Withholding tax: see the Payment section.');
   END IF;
   new_html := replace(new_html, 'Order Total (excl. tax: services + other fees)', 'Order Total (services + other fees)');
   new_html := replace(new_html, '■ OTHER FEES (excl. tax, added to the total)', '■ OTHER FEES (added to the total)');

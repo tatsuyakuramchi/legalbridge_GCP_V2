@@ -138,3 +138,8 @@ test("円建ての条件に円の報告。レートは要らない", () => {
   const terms = buildFeeTerms({ ...base, currency: "JPY" }, { salesInput: 1200000 });
   assert.deepEqual(terms, { type: "revenue", base_amount: 1200000, rate_pct: 12.5 });
 });
+
+test("税込（海外・内税）は税率 0（上乗せしない）", async () => {
+  const { TAX_RATE_BY_CATEGORY } = await import("./economics.js");
+  assert.equal(TAX_RATE_BY_CATEGORY.included, 0);
+});

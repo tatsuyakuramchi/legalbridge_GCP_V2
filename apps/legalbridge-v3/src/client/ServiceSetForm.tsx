@@ -105,7 +105,8 @@ export function ServiceSetForm(
           hint: "予定明細の支払期日はここから出す。海外の相手なら英語の定型文（Net 30 など）を選ぶ" },
         { name: "taxCategory", label: "委託料・手数料の税区分", type: "select",
           options: [{ value: "taxable", label: "課税" }, { value: "reduced", label: "軽減" },
-                    { value: "exempt", label: "非課税" }],
+                    { value: "exempt", label: "非課税" },
+                    { value: "included", label: "税込（海外・内税）" }],
           hint: "実費は税込の立替なので、いつも非課税で持つ" },
         ...serviceFields,
         { name: "notes", label: "備考", type: "textarea" }

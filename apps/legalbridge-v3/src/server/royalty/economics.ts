@@ -32,7 +32,7 @@ export interface ConditionEconomics {
   flatAmount: number | null;   // 最小通貨単位
   mgAmount: number | null;     // 最小通貨単位
   agAmount: number | null;     // 最小通貨単位
-  taxCategory: "taxable" | "reduced" | "exempt";
+  taxCategory: "taxable" | "reduced" | "exempt" | "included";
 }
 
 /** 実績の報告値。画面や取込から来る。金額は最小通貨単位。 */
@@ -57,7 +57,9 @@ export interface ReportedResult {
 }
 
 export const TAX_RATE_BY_CATEGORY: Record<ConditionEconomics["taxCategory"], number> = {
-  taxable: 10, reduced: 8, exempt: 0
+  taxable: 10, reduced: 8, exempt: 0,
+  // 税込（海外・内税）。海外の取引は消費税・VAT 等を金額に含め、上乗せも内訳も出さない（約款 6.5 条）。
+  included: 0
 };
 
 /**

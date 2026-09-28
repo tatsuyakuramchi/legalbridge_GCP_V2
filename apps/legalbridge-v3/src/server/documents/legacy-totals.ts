@@ -11,18 +11,20 @@
 
 import { roundAmount } from "../core/rounding.js";
 
-export type TaxCategory = "taxable" | "reduced" | "exempt";
+export type TaxCategory = "taxable" | "reduced" | "exempt" | "included";
 
 /** 税区分ごとの税率（%）。V1 の TAX_CATEGORY_OPTIONS と同じ。 */
 export const TAX_RATE_PERCENT: Record<TaxCategory, number> = {
   taxable: 10,
   reduced: 8,
-  exempt: 0
+  exempt: 0,
+  /** 税込（海外・内税）。消費税・VAT 等は金額に含まれ、上乗せしない。 */
+  included: 0
 };
 
 export function taxCategoryOf(value: unknown): TaxCategory | null {
   const s = String(value ?? "");
-  return s === "taxable" || s === "reduced" || s === "exempt" ? s : null;
+  return s === "taxable" || s === "reduced" || s === "exempt" || s === "included" ? s : null;
 }
 
 /** 税率（%）。区分が無いものは課税10%として扱う（V1 の既定と同じ）。 */
@@ -156,7 +158,7 @@ export function purchaseOrderTotals(source: Row): PurchaseOrderTotals {
  * 全部同じ日付ならその日付、ばらけていれば「最古 〜 最新 (明細参照)」。
  */
 export function aggregateItemDates(
-  items: unknown, field: "delivery_date" | "payment_date", intl = false
+  items: unknown, field: "delivery_date" | "payment_date" | "inspection_date", intl = false
 ): string {
   const dates = rows(items)
     .filter((row) => String(row.calc_method ?? "") !== "SUBSCRIPTION")

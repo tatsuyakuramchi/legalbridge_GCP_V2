@@ -32,7 +32,7 @@ export interface AccountingSlot {
 export interface AllocationLine {
   conditionNo: string | null;
   name: string;
-  taxCategory: "taxable" | "reduced" | "exempt";
+  taxCategory: "taxable" | "reduced" | "exempt" | "included";
   /** 主要通貨単位。最小単位のままここへ渡さない。 */
   amount: number;
   quantity: number | null;
@@ -102,6 +102,8 @@ export interface AccountingRow {
   taxable10: number;
   reduced8: number;
   exempt: number;
+  /** 税込（海外・内税）。消費税を上乗せしない報酬。立替金ではなく小計に入る（源泉の対象にもなる）。 */
+  taxIncluded: number;
   /**
    * 気づけるようにするための印。黙って空欄・0 を出さない。
    *   unallocated       … 割当が無い。支払内容の欄が埋まらない
@@ -212,8 +214,10 @@ export function buildAccountingRow(source: AccountingSource): AccountingRow {
   const taxable10 = covered ? byCategory("taxable") : source.amount;
   const reduced8 = covered ? byCategory("reduced") : 0;
   const exempt = covered ? byCategory("exempt") : 0;
+  const taxIncluded = covered ? byCategory("included") : 0;
 
-  const subtotal = taxable10 + reduced8;
+  // 税込（海外）は報酬なので小計に入れる。非課税（立替金）とは分ける。
+  const subtotal = taxable10 + reduced8 + taxIncluded;
   const reimbursement = exempt;
   const consumptionTax = source.taxAmount;
   const withholdingTax = source.withholdingAmount;
@@ -257,7 +261,7 @@ export function buildAccountingRow(source: AccountingSource): AccountingRow {
     reimbursement, subtotal, consumptionTax, withholdingTax, afterTax,
     netTransfer: afterTax + reimbursement,
     invoiceRegistration: source.party.invoiceNo ?? "",
-    taxable10, reduced8, exempt,
+    taxable10, reduced8, exempt, taxIncluded,
     flags, withholdingExpected,
     category: categoryOf(source.document?.templateKey, source.conditionKinds),
     entity: source.party.kind === "individual" ? "個人" : "法人",
@@ -363,6 +367,7 @@ export const ACCOUNTING_COLUMNS: Array<XlsColumn<AccountingRow>> = [
   { header: "課税対象（10%）税抜", value: (r) => r.taxable10 },
   { header: "課税対象（8%）税抜", value: (r) => r.reduced8 },
   { header: "非課税・不課税", value: (r) => r.exempt },
+  { header: "税込（海外・内税）", value: (r) => r.taxIncluded },
   { header: "通貨", value: (r) => r.currency },
   { header: "支払番号", value: (r) => r.paymentNo ?? "" },
   // 経理が受け取った表の中で「確かめるべき行」が分かるようにする。
@@ -378,6 +383,7 @@ export const BREAKDOWN_COLUMNS: Array<XlsColumn<AccountingRow>> = [
   { header: "課税対象（10%）税抜", value: (r) => r.taxable10 },
   { header: "課税対象（8%）税抜", value: (r) => r.reduced8 },
   { header: "非課税・不課税", value: (r) => r.exempt },
+  { header: "税込（海外・内税）", value: (r) => r.taxIncluded },
   { header: "消費税", value: (r) => r.consumptionTax },
   { header: "源泉税", value: (r) => r.withholdingTax },
   { header: "源泉税（計算値）", value: (r) => r.withholdingExpected },
@@ -403,6 +409,7 @@ export function totalRow(group: AccountingGroup): AccountingRow {
     taxable10: group.rows.reduce((s, r) => s + r.taxable10, 0),
     reduced8: group.rows.reduce((s, r) => s + r.reduced8, 0),
     exempt: group.rows.reduce((s, r) => s + r.exempt, 0),
+    taxIncluded: group.rows.reduce((s, r) => s + r.taxIncluded, 0),
     flags: [], withholdingExpected: group.rows.reduce((s, r) => s + r.withholdingExpected, 0),
     category: "検収書", entity: "法人", documentId: null, documentNo: null
   };

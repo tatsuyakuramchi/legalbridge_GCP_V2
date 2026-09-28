@@ -303,6 +303,11 @@ SELECT * FROM (
             WHERE table_schema='v3' AND table_name='parties'
               AND column_name IN ('rpt_entity', 'has_board', 'related_party', 'related_party_type', 'related_party_note')))::text
   UNION ALL
+  SELECT 56, '税区分「税込（海外・内税）」（A-056。CHECK に included があること＝1）',
+         (SELECT count(*) FROM pg_constraint
+           WHERE conrelid='v3.conditions'::regclass AND conname='conditions_tax_category_chk'
+             AND pg_get_constraintdef(oid) LIKE '%included%')::text
+  UNION ALL
   SELECT 52, '依頼の受付箱（A-052。メールの列まであれば 4 であること）',
          (SELECT count(*) FROM information_schema.columns
            WHERE table_schema='v3' AND table_name='intake_requests'

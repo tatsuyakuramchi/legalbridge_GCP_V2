@@ -50,7 +50,7 @@ export interface MatterGraph {
 }
 
 const ORDER_KEYS = new Set(["purchase_order", "intl_purchase_order"]);
-const INSPECTION_KEYS = new Set(["inspection_certificate", "acceptance_certificate", "delivery_note"]);
+const INSPECTION_KEYS = new Set(["inspection_certificate", "intl_inspection_certificate", "acceptance_certificate", "delivery_note"]);
 
 /** 機械的に見つかる不整合。純粋関数にして試験できるようにしてある。 */
 export function findIssues(g: Omit<MatterGraph, "issues">): GraphIssue[] {

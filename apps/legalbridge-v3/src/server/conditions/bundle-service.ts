@@ -93,7 +93,7 @@ export interface BundleResult {
 }
 
 /** 結果の文書。明細を実績から組むので、引き直す日付も実績から取る。 */
-const SETTLEMENT_TEMPLATES = new Set(["inspection_certificate", "royalty_statement"]);
+const SETTLEMENT_TEMPLATES = new Set(["inspection_certificate", "intl_inspection_certificate", "royalty_statement"]);
 
 /** 金額に関わる欄。実績はこれを直すときだけ支払の有無を見る。 */
 const EVENT_MONEY = ["amount", "grossAmount", "deductions", "unitAmount", "quantity"];

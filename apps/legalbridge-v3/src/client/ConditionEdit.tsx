@@ -468,6 +468,7 @@ export function ConditionEdit(
               <option value="taxable">課税</option>
               <option value="reduced">軽減</option>
               <option value="exempt">非課税</option>
+              <option value="included">税込（海外・内税）</option>
             </select>
           </label>
           <label className="field">

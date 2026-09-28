@@ -15,6 +15,16 @@
 
 import { calculateFee, type FeeResult } from "../royalty/calc.js";
 import { computeStatementLine, convertToJpy } from "../royalty/fx.js";
+
+/**
+ * 税率（%）。未入力だけ 10% にする。0%（非課税・税込の海外）を 10% にしない。
+ * 以前は `Number(x) || 10` で、0 も未入力とみなして 10% の消費税を足していた。
+ */
+export function taxRateOrDefault(value: unknown): number {
+  if (value === null || value === undefined || String(value).trim() === "") return 10;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 10;
+}
 import { taxOf } from "../royalty/rounding.js";
 
 type Data = Record<string, unknown>;
@@ -164,7 +174,7 @@ export interface MultiStatementInput {
 }
 
 export function multiStatementPatch(input: MultiStatementInput): Data {
-  const taxRate = Number(input.taxRatePct) || 10;
+  const taxRate = taxRateOrDefault(input.taxRatePct);
   const ratePct = Number(input.ratePct) || 0;
   const lines = input.receipts.map((row) => {
     // 換算は行ごと。pre は fx の convertToJpy（round）、支払は ceil。
@@ -283,7 +293,7 @@ function feeFor(entry: BundleEntry, taxRatePct: number): FeeResult {
 export function bundleStatementPatch(
   input: { entries: BundleEntry[]; taxRatePct?: number }
 ): Data {
-  const taxRate = Number(input.taxRatePct) || 10;
+  const taxRate = taxRateOrDefault(input.taxRatePct);
   const computed = input.entries.filter(bundleEntryActive).map((entry) => {
     const fee = feeFor(entry, taxRate);
     const salesJpy = entry.calcType === "event"
@@ -504,7 +514,7 @@ export function applyLineLabels(lines: BundleLine[], source: Data): BundleLine[]
 export function bundleLinesPatch(
   input: { lines: BundleLine[]; taxRatePct?: number; taxTotal?: number | null }
 ): Data {
-  const taxRate = Number(input.taxRatePct) || 10;
+  const taxRate = taxRateOrDefault(input.taxRatePct);
   const lineGroups = input.lines.map((line) => ({
     contractTitle: line.contractTitle,
     contractNumber: line.contractNumber,

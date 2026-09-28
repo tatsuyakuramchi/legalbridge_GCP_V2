@@ -26,7 +26,7 @@ const SERIES = `(SELECT x.id FROM conditions x
 /** 発注書のひな形。条件の側の文書。 */
 const ORDER_KEYS = "('purchase_order', 'intl_purchase_order')";
 /** 結果の文書。検収書と計算書。 */
-const RESULT_KEYS = "('inspection_certificate', 'royalty_statement')";
+const RESULT_KEYS = "('inspection_certificate', 'intl_inspection_certificate', 'royalty_statement')";
 
 /**
  * 系列に繋がった文書のうち、その段の代表を1枚。

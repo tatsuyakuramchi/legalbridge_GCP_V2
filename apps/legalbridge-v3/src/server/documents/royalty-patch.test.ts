@@ -277,3 +277,12 @@ test("受領情報：許諾先が混ざったら入金企業は空にする", ()
   assert.equal(patch.payerCompany, "", "混ざったら出さない");
   assert.equal(patch.intakeCurrency, "", "通貨も混ざったら出さない");
 });
+
+test("税率 0%（非課税・税込の海外）を 10% にしない。未入力だけ 10%", async () => {
+  const { taxRateOrDefault } = await import("./royalty-patch.js");
+  assert.equal(taxRateOrDefault(0), 0);
+  assert.equal(taxRateOrDefault("0"), 0);
+  assert.equal(taxRateOrDefault(8), 8);
+  assert.equal(taxRateOrDefault(undefined), 10);
+  assert.equal(taxRateOrDefault(""), 10);
+});

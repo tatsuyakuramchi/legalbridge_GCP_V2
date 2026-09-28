@@ -491,7 +491,7 @@ export function ConditionsWorkspace(
                       : money(detail.flatAmount, detail.currency)
                     }</dd>
                     <dt>税区分</dt><dd>{
-                      { taxable: "課税 10%", reduced: "軽減 8%", exempt: "非課税・不課税" }[detail.taxCategory]
+                      ({ taxable: "課税 10%", reduced: "軽減 8%", exempt: "非課税・不課税", included: "税込（海外・内税）" } as Record<string, string>)[detail.taxCategory]
                     }</dd>
                     {detail.paymentTerms && (<><dt>支払条件</dt><dd>{detail.paymentTerms}</dd></>)}
                     {detail.spec && (<><dt>仕様・成果物</dt><dd style={{ whiteSpace: "pre-wrap" }}>{detail.spec}</dd></>)}

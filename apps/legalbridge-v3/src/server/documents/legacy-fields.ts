@@ -55,7 +55,7 @@ const INSPECTION_FALLBACK_FIELDS = new Set([
 export function isInspectionFallbackFieldHidden(
   templateKey: string, fieldName: string, values: Record<string, unknown>
 ): boolean {
-  if (templateKey !== "inspection_certificate") return false;
+  if (templateKey !== "inspection_certificate" && templateKey !== "intl_inspection_certificate") return false;
   if (!INSPECTION_FALLBACK_FIELDS.has(fieldName)) return false;
   const lines = values.delivery_line_items;
   return Array.isArray(lines) && lines.length > 0;

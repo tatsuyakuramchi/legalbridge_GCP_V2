@@ -832,3 +832,38 @@ test("海外版：自社・担当者の英語表記が無ければ決める前�
   assert.equal(filled.length, 0, "英語で登録してある担当者には出さない");
   assert.equal(templateWarnings("purchase_order", ctx({ company: { name: "株式会社サンプル" } })).length, 0);
 });
+
+// ---- 海外用の検収書（Acceptance Certificate）：税込・内税 --------------------------
+
+test("海外用の検収書は税を上乗せしない（条件が課税でも税率 0、金額は税込の総額）", () => {
+  const c = buildTemplateContext("intl_inspection_certificate",
+    ctx({ condition: condition({ currency: "USD", counterparty: { withholding: true } }) }),
+    { other_fees: [{ fee_name: "Rush fee", amount_ex_tax: 20000 }],
+      expenses: [{ expense_name: "Courier", amount_inc_tax: 3000 }] });
+  assert.equal(c.taxRate, 0);
+  assert.equal(c.taxAmountStr, "0");
+  assert.equal(c.combinedTaxStr, "0");
+  assert.equal(c.grandTotalPayable, 280000 + 20000 + 3000);
+  assert.equal(c.currency_code, "USD");
+  assert.equal(c.withholding_label, "Applicable");
+  assert.equal(c.summaryPaymentDate, "2026-09-20");
+  assert.equal(c.acceptanceDate, "2026-08-31");
+});
+
+test("税込（海外・内税）の条件は、国内の検収書でも消費税を足さない", () => {
+  const c = buildTemplateContext("inspection_certificate",
+    ctx({ conditions: [condition({ taxCategory: "included" })], condition: condition({ taxCategory: "included" }) }), {});
+  assert.equal(c.taxRate, 0);
+  assert.equal(c.totalAmountStr, "280,000");
+});
+
+test("国内の検収書の計算は変わらない（課税 10%）", () => {
+  const c = buildTemplateContext("inspection_certificate", ctx(), {});
+  assert.equal(c.taxRate, 10);
+  assert.equal(c.grandTotalPayable, 308000);
+  assert.equal(c.currency_code, undefined);
+});
+
+test("海外用の検収書は検収書として明細の欄を持つ", () => {
+  assert.deepEqual(lineFieldsFor("intl_inspection_certificate"), ["delivery_line_items", "other_fees", "expenses"]);
+});

@@ -397,3 +397,17 @@ test("受領額 × 料率の行は、単価が金額・数量が1として出る
   assert.equal(slot.unitPrice, 73680, "金額 ÷ 1");
   assert.equal(slot.amount, 73680);
 });
+
+test("税込（海外・内税）は報酬として小計に入る。立替金には振らない（源泉の対象にもなる）", () => {
+  const r = buildAccountingRow(source({
+    amount: 300000, taxAmount: 0, withholdingAmount: 0,
+    party: { code: "P-900", name: "Sample Studio Ltd.", kana: null, kind: "corporate", invoiceNo: null, withholding: false },
+    lines: [line({ taxCategory: "included" })]
+  }));
+  assert.equal(r.taxIncluded, 300000);
+  assert.equal(r.subtotal, 300000);
+  assert.equal(r.reimbursement, 0);
+  assert.equal(r.taxable10, 0);
+  assert.equal(r.netTransfer, 300000);
+  assert.ok(ACCOUNTING_COLUMNS.some((c) => c.header === "税込（海外・内税）"));
+});

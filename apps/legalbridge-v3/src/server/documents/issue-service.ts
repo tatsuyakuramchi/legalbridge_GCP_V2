@@ -8,7 +8,12 @@ import { documentWarnings, type Warning } from "./preflight.js";
 import { DocumentContextRepository } from "./context-repository.js";
 import { DocumentRepository } from "./repository.js";
 import { renderDocumentHtml } from "./render.js";
-import { buildTemplateContext, seedLines, suggestionsFor, templateWarnings } from "./template-context.js";
+import {
+  buildTemplateContext, INTL_INSPECTION_KEY, seedLines, suggestionsFor, templateWarnings
+} from "./template-context.js";
+
+/** 決定したら条件を税込（海外・内税）にするひな形。 */
+const INTL_TAX_INCLUDED_TEMPLATES = new Set(["intl_purchase_order", INTL_INSPECTION_KEY]);
 import { resolveAllLegacyVariables } from "./legacy-variables.js";
 import { buildCandidates, type Candidate } from "./candidates.js";
 import { currentYearInTokyo, formatDocumentNumber, nextSequence, normalizePrefix } from "./numbering.js";
@@ -107,8 +112,10 @@ export class DocumentIssueService {
   }
 
   /** 発行せずに中身を確認する。必須の未入力もここで分かる。 */
-  async preview(input: DraftInput): Promise<PreviewResult> {
+  async preview(requested: DraftInput): Promise<PreviewResult> {
     try {
+      const input = { ...requested,
+        templateKey: await this.resolveTemplateKey(this.database, requested.templateKey, requested.conditionIds) };
       const template = await this.repository.templateSource(this.database, { templateKey: input.templateKey });
       // 番号は発行のときにしか決まらない。プレビューで空にすると必須の未入力に
       // 数えられ、発行ボタンが永久に押せなくなる。何が入るかを書いておく。
@@ -152,10 +159,34 @@ export class DocumentIssueService {
     } catch (error) { throw translate(error); }
   }
 
+  /**
+   * 検収書を頼まれても、海外の取引なら海外用の検収書（Acceptance Certificate）にする。
+   * 海外の取引 ＝ 委託・許諾の条件（手数料・経費を除く）が、どれも税込（海外・内税）か、
+   * 決定済みの海外発注書に載っている。海外用のひな形がまだ無ければ、そのまま。
+   */
+  private async resolveTemplateKey(client: Queryable, templateKey: string, conditionIds: number[]): Promise<string> {
+    if (templateKey !== "inspection_certificate" || !conditionIds?.length) return templateKey;
+    const r = await client.query(
+      `SELECT bool_and(c.tax_category = 'included' OR EXISTS (
+                SELECT 1 FROM document_conditions dc
+                  JOIN documents d ON d.id = dc.document_id AND d.status = 'issued'
+                  JOIN document_template_versions tv ON tv.id = d.template_version_id
+                  JOIN document_templates t ON t.id = tv.template_id
+                 WHERE dc.condition_id = c.id AND t.template_key = 'intl_purchase_order'))
+                FILTER (WHERE c.kind NOT IN ('fee', 'expense')) AS cross_border,
+              EXISTS (SELECT 1 FROM document_templates t
+                       WHERE t.template_key = $2 AND t.is_active AND t.current_version_id IS NOT NULL) AS has_template
+         FROM conditions c WHERE c.id = ANY($1::bigint[])`, [conditionIds, INTL_INSPECTION_KEY]);
+    const row = r.rows[0] as { cross_border: boolean | null; has_template: boolean } | undefined;
+    return row?.cross_border === true && row.has_template === true ? INTL_INSPECTION_KEY : templateKey;
+  }
+
   /** 下書きの作成。番号は振らない。 */
-  async createDraft(input: DraftInput, actor: string): Promise<{ id: number }> {
+  async createDraft(requested: DraftInput, actor: string): Promise<{ id: number }> {
     try {
       return await inTransaction(this.database, async (client) => {
+        const input = { ...requested,
+          templateKey: await this.resolveTemplateKey(client, requested.templateKey, requested.conditionIds) };
         const template = await this.repository.templateSource(client, { templateKey: input.templateKey });
         await this.assertConditionsIssuable(client, input.conditionIds);
         // 案件が渡されなければ、条件の載っている案件を引く。条件の画面から作った
@@ -314,6 +345,22 @@ export class DocumentIssueService {
           await client.query("UPDATE documents SET manual_inputs = $2::jsonb WHERE id = $1",
             [documentId, JSON.stringify(settled.manual)]);
           conditionIds.push(...settled.created.map((c) => c.id));
+        }
+
+        // 海外の書類（海外発注書・海外用の検収書）を決めたら、その条件は税込（海外・内税）に
+        // する。支払・会計・計算書が消費税を上乗せしないように（約款 6.5 条）。経費と非課税は触らない。
+        const madeIncluded = INTL_TAX_INCLUDED_TEMPLATES.has(template.templateKey) && conditionIds.length
+          ? (await client.query(
+              `UPDATE conditions SET tax_category = 'included', updated_at = now()
+                WHERE id = ANY($1::bigint[]) AND tax_category IN ('taxable', 'reduced')
+                  AND kind NOT IN ('expense')
+              RETURNING id`, [conditionIds])).rows.map((r) => Number((r as { id: number }).id))
+          : [];
+        for (const id of madeIncluded) {
+          await recordAudit(client, {
+            actor, action: "condition.tax_included", targetType: "condition", targetId: id,
+            detail: { reason: `${template.templateKey} を決定した（海外の取引は税込・内税）`, documentId }
+          });
         }
 
         // 部分テンプレートは他のひな形に差し込む断片で、それ自体は書類ではない

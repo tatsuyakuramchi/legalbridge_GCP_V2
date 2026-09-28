@@ -1998,6 +1998,32 @@ REVOKE ALL ON v3.requester_uploads FROM legalbridge_v3_runtime;
 GRANT SELECT, INSERT, UPDATE ON v3.requester_uploads TO legalbridge_v3_runtime;
 GRANT USAGE, SELECT ON SEQUENCE v3.requester_uploads_id_seq TO legalbridge_v3_runtime;
 
+-- ---------------------------------------------------------------------
+-- A-056 税区分「税込（海外・内税）」（included）
+--   海外（クロスボーダー）の取引は、消費税・VAT 等を金額に含め、上乗せも内訳も出さない
+--   （海外発注書の約款 6.5 条）。非課税（exempt）で代用すると、会計の出力で立替金に振られ、
+--   源泉の対象からも外れるので、別の区分にする。税率は 0（上乗せしない）、会計では小計に入る。
+-- ---------------------------------------------------------------------
+DO $a056$
+DECLARE con text;
+BEGIN
+  FOR con IN
+    SELECT conname FROM pg_constraint
+     WHERE conrelid = 'v3.conditions'::regclass AND contype = 'c'
+       AND pg_get_constraintdef(oid) LIKE '%tax_category%'
+       AND pg_get_constraintdef(oid) NOT LIKE '%included%'
+  LOOP
+    EXECUTE format('ALTER TABLE v3.conditions DROP CONSTRAINT %I', con);
+  END LOOP;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.conditions'::regclass AND conname = 'conditions_tax_category_chk') THEN
+    ALTER TABLE v3.conditions ADD CONSTRAINT conditions_tax_category_chk
+      CHECK (tax_category IN ('taxable', 'reduced', 'exempt', 'included'));
+  END IF;
+END $a056$;
+COMMENT ON COLUMN v3.conditions.tax_category IS
+  '税区分。taxable=課税10% / reduced=軽減8% / exempt=非課税・不課税（立替金） / included=税込（海外・内税。上乗せしない）';
+
 COMMIT;
 
 -- 確認
@@ -2275,3 +2301,8 @@ SELECT (SELECT count(*) FROM information_schema.tables
      + (SELECT count(*) FROM information_schema.columns
          WHERE table_schema='v3' AND table_name='parties'
            AND column_name IN ('rpt_entity', 'has_board', 'related_party', 'related_party_type', 'related_party_note')) AS 表と列;
+
+\echo '--- 税区分「税込（海外・内税）」（A-056。CHECK に included があること＝1） ---'
+SELECT count(*) AS CHECK数 FROM pg_constraint
+ WHERE conrelid='v3.conditions'::regclass AND conname='conditions_tax_category_chk'
+   AND pg_get_constraintdef(oid) LIKE '%included%';

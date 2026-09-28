@@ -31,7 +31,12 @@ import { toInternationalPhone } from "../core/phone.js";
 
 type Ctx = Record<string, any>;
 
-const INSPECTION_KEYS = new Set(["inspection_certificate", "delivery_note", "acceptance_certificate"]);
+const INSPECTION_KEYS = new Set(["inspection_certificate", "intl_inspection_certificate", "delivery_note", "acceptance_certificate"]);
+/**
+ * 海外用の検収書（Acceptance Certificate）。英文で、金額は消費税・VAT 等を含む総額として出す
+ * （海外発注書の約款 6.5 条）。税を上乗せも内訳もしないので、税率は条件によらず 0 で組む。
+ */
+export const INTL_INSPECTION_KEY = "intl_inspection_certificate";
 const PURCHASE_ORDER_KEYS = new Set(["purchase_order", "intl_purchase_order"]);
 /**
  * 計算書のひな形。本文の金額は手入力ではなく、条件と実績からの試算で決まる。
@@ -453,7 +458,8 @@ export function buildTemplateContext(
   const bank = context.bank ?? null;
   const currency = String(context.condition?.currency ?? context.totals?.currency ?? "JPY");
   const common: Record<string, unknown> = {
-    taxRate: taxRateFor(context, manual),
+    // 海外用の検収書は税を上乗せしない（金額は税込・内税）。条件の税区分によらず 0。
+    taxRate: templateKey === INTL_INSPECTION_KEY ? 0 : taxRateFor(context, manual),
     /**
      * 本文だけが使う変数。field_schema に宣言が無いので束縛の経路に乗らず、
      * ここで入れないと本文が空になる。計算書は moneyUnit を31か所で差している。
@@ -473,7 +479,10 @@ export function buildTemplateContext(
   };
 
   if (INSPECTION_KEYS.has(templateKey)) {
-    return { ...common, ...inspectionBlock(context, manual, Number(common.taxRate)) };
+    const block = inspectionBlock(context, manual, Number(common.taxRate));
+    return templateKey === INTL_INSPECTION_KEY
+      ? { ...common, ...block, ...intlInspectionExtras(context, block) }
+      : { ...common, ...block };
   }
   if (PURCHASE_ORDER_KEYS.has(templateKey)) {
     return { ...common, ...orderBlock(templateKey, context, manual) };
@@ -608,8 +617,33 @@ function inspectionBlock(context: Ctx, manual: Record<string, unknown>, taxRate:
     combinedTaxStr: yen(combinedTax),
     taxableTotalIncTaxStr: yen(taxableTotal),
     grandTotalPayableStr: yen(taxableTotal + totals.expensesIncTax),
+    // 数でも出す（海外用は通貨コード付きで formatMoney に渡す）。
+    grandTotalPayable: taxableTotal + totals.expensesIncTax,
     // 経理提出用の税区分内訳。列がある本文だけが使う。
     taxBreakdown: breakdown
+  };
+}
+
+/**
+ * 海外用の検収書（Acceptance Certificate）だけが使う値。
+ * 通貨コード・源泉徴収の英語・自社と担当の英語表記・支払予定日・受入日。
+ * 金額は inspectionBlock の値（税率 0 で組んであるので、そのまま税込の総額）。
+ */
+function intlInspectionExtras(context: Ctx, block: Record<string, unknown>) {
+  const currency = String(context.condition?.currency ?? context.totals?.currency ?? "JPY");
+  const withholding = context.condition?.counterparty?.withholding;
+  const lines = rows(block.delivery_line_items);
+  const paymentDate = aggregateItemDates(lines, "payment_date", true)
+    || String(context.schedule?.payOn ?? "");
+  const acceptedOn = aggregateItemDates(lines, "inspection_date", true)
+    || String(context.document?.issuedOn ?? "");
+  return {
+    currency_code: currency,
+    withholding_label: withholding === true ? "Applicable" : withholding === false ? "Not applicable" : "",
+    summaryPaymentDate: paymentDate,
+    acceptanceDate: acceptedOn,
+    ...companyEn(context.company ?? {}),
+    ...staffEn(context.owner)
   };
 }
 

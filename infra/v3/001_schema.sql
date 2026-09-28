@@ -257,7 +257,8 @@ CREATE TABLE IF NOT EXISTS v3.conditions (
   royalty_base     text,
   deductible_costs text,
   tax_category     text NOT NULL DEFAULT 'taxable'
-                   CHECK (tax_category IN ('taxable', 'reduced', 'exempt')),
+                   CONSTRAINT conditions_tax_category_chk
+                   CHECK (tax_category IN ('taxable', 'reduced', 'exempt', 'included')),
   withholding_note text,
   payment_terms    text,
   cycle            text,

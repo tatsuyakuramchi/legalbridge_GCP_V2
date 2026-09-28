@@ -168,7 +168,7 @@ $q$;
     <td>
       {{#if (gt grandTotalExTax 0)}}
       <strong class="total-amount">{{currency_code}} {{formatMoney grandTotalExTax}}</strong>
-      <span class="amount-note">　{{#if HAS_BASE_CONTRACT}}Taxes, if any, are handled as stated in the Payment section.{{else}}Inclusive of any VAT, sales or similar taxes chargeable by the Contractor (Standard Terms, Article 6.5). Withholding tax: see the Payment section.{{/if}}</span>
+      <span class="amount-note">　Inclusive of any VAT, sales or similar taxes chargeable by the Contractor{{#unless HAS_BASE_CONTRACT}} (Standard Terms, Article 6.5){{/unless}}; no tax is added to this amount. Withholding tax: see the Payment section.</span>
       {{#if has_performance_incentive}}
       <div class="amount-note" style="margin-top:2px; color:#92400e;">The fee for this order is the fixed fee above plus the incentive fee calculated as stated in the details.</div>
       {{/if}}

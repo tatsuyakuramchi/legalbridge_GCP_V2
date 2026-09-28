@@ -154,7 +154,8 @@ export function PubConditionSetForm(
 
         { name: "taxCategory", label: "税区分", type: "select",
           options: [{ value: "taxable", label: "課税" }, { value: "reduced", label: "軽減" },
-                    { value: "exempt", label: "非課税" }] },
+                    { value: "exempt", label: "非課税" },
+                    { value: "included", label: "税込（海外・内税）" }] },
         { name: "regions", label: "地域（許諾範囲）", type: "regions",
           hint: "何も選ばなければ全世界" },
         { name: "languages", label: "言語（許諾範囲）", type: "languages",
