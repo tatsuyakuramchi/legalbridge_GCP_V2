@@ -3,7 +3,7 @@ import { CHILD_TITLES_SQL, statementProductName } from "./product-name.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { calculateFee, type FeeResult } from "./calc.js";
-import { computeRoyaltyPayment, resolveWithholdingEnabled, type PaymentBreakdown } from "./tax.js";
+import { computeRoyaltyPayment, resolveWithholdingEnabled, withholdingPartyOf, type PaymentBreakdown } from "./tax.js";
 import {
   buildAdjustments, buildFeeTerms, ppmToPct, taxRateFor, toMajor, toMinor,
   type ConditionEconomics, type ReportedResult
@@ -593,12 +593,14 @@ export class RoyaltyStatementService {
 
     const withholdingEnabled = resolveWithholdingEnabled({
       vendorWithholdingEnabled: condition.counterpartyWithholding,
-      entityType: condition.counterpartyKind
+      entityType: condition.counterpartyKind,
+      residency: condition.withholdingParty?.residency ?? null
     });
     const payment = computeRoyaltyPayment({
       subtotalExTax: fee.actual_ex_tax,
       taxRatePct: taxRateFor(condition),
-      withholdingEnabled
+      withholdingEnabled,
+      withholdingParty: condition.withholdingParty ?? null
     });
 
     const currency = condition.currency;
@@ -642,7 +644,8 @@ export class RoyaltyStatementService {
               c.rate_ppm, c.unit_amount, c.flat_amount, c.mg_amount, c.ag_amount,
               c.tax_category, c.status,
               a.title AS agreement_title, a.agreement_no,
-              p.withholding, p.kind AS party_kind
+              p.withholding, p.kind AS party_kind,
+              p.residency, p.treaty_rate_pct, p.treaty_docs_received_on
          FROM conditions c
          LEFT JOIN parties p ON p.id = c.counterparty_id
          LEFT JOIN agreements a ON a.id = c.agreement_id
@@ -665,6 +668,8 @@ export class RoyaltyStatementService {
       taxCategory: String(row.tax_category ?? "taxable") as ConditionEconomics["taxCategory"],
       counterpartyWithholding: row.withholding === true,
       counterpartyKind: row.party_kind ? String(row.party_kind) : null,
+      // 非居住者と租税条約（A-057）。源泉の税率が変わる。
+      withholdingParty: withholdingPartyOf(row),
       // 束ねた計算書の1行に印字する。条件名・契約名・契約番号が無いと、
       // 何本もの取引モデルが並んだときにどの行が何の分か読めない。
       name: String(row.name ?? ""),

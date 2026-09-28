@@ -625,6 +625,29 @@ function inspectionBlock(context: Ctx, manual: Record<string, unknown>, taxRate:
 }
 
 /**
+ * 海外の書類の源泉の欄に出す税率の文（A-057）。約款 6.2・6.4 条と同じ規則で書く。
+ *   非居住者で源泉あり … 「20.42% (Japanese domestic rate)」。条約の税率があれば、
+ *                         書類を支払日までに受け取っていれば条約の税率、まだなら「受け取れば条約の税率」
+ *   それ以外           … 空（本文は従来の案内を出す）
+ */
+export function withholdingRateTextEn(counterparty: Ctx | null | undefined, payOn?: string | null): string {
+  if (counterparty?.withholding !== true || counterparty?.residency !== "non_resident") return "";
+  const treaty = counterparty.treatyRatePct;
+  const country = String(counterparty.residenceCountry ?? "").trim();
+  const treatyName = country ? `the Japan–${country} tax treaty` : "the applicable tax treaty";
+  if (treaty === null || treaty === undefined || !Number.isFinite(Number(treaty))) {
+    return "20.42% (Japanese domestic rate for non-residents)";
+  }
+  const docsOn = String(counterparty.treatyDocsReceivedOn ?? "").slice(0, 10);
+  const by = String(payOn ?? "").slice(0, 10);
+  if (docsOn && (!by || docsOn <= by)) {
+    return `${Number(treaty)}% under ${treatyName} (treaty application form and certificate of residence received)`;
+  }
+  return `20.42% (Japanese domestic rate); ${Number(treaty)}% under ${treatyName} if the treaty application form `
+    + "and a certificate of residence are received before the payment date";
+}
+
+/**
  * 海外用の検収書（Acceptance Certificate）だけが使う値。
  * 通貨コード・源泉徴収の英語・自社と担当の英語表記・支払予定日・受入日。
  * 金額は inspectionBlock の値（税率 0 で組んであるので、そのまま税込の総額）。
@@ -640,6 +663,7 @@ function intlInspectionExtras(context: Ctx, block: Record<string, unknown>) {
   return {
     currency_code: currency,
     withholding_label: withholding === true ? "Applicable" : withholding === false ? "Not applicable" : "",
+    withholding_rate_text: withholdingRateTextEn(context.condition?.counterparty, paymentDate),
     summaryPaymentDate: paymentDate,
     acceptanceDate: acceptedOn,
     ...companyEn(context.company ?? {}),
@@ -889,6 +913,8 @@ function orderBlock(templateKey: string, context: Ctx, manual: Record<string, un
     ...(intl ? {
       currency_code: currency,
       withholding_label: withholding === true ? "Applicable" : withholding === false ? "Not applicable" : "",
+      withholding_rate_text: withholdingRateTextEn(context.condition?.counterparty,
+        /^\d{4}-\d{2}-\d{2}$/.test(paymentDate) ? paymentDate : null),
       ...companyEn(context.company ?? {}),
       ...staffEn(context.owner)
     } : {}),

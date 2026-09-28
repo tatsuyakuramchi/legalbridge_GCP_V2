@@ -237,7 +237,7 @@ $q$;
   {{/if}}{{/if}}
   <tr>
     <th>Withholding Tax</th>
-    <td>{{#if withholding_label}}{{withholding_label}}{{#if (eq withholding_label "Applicable")}} (subject to the applicable tax treaty; a certificate of residency may be requested){{/if}}{{else}}—{{/if}}</td>
+    <td>{{#if withholding_label}}{{withholding_label}}{{#if (eq withholding_label "Applicable")}}{{#if withholding_rate_text}} — {{withholding_rate_text}}{{else}} (subject to the applicable tax treaty; a certificate of residency may be requested){{/if}}{{/if}}{{else}}—{{/if}}</td>
   </tr>
 </table>
 

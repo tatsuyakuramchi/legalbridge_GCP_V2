@@ -53,3 +53,10 @@ test("基本契約に基づく発注なら、約款の条番号は出さない�
   assert.doesNotMatch(out, /Standard Terms/);
   assert.match(out, /Inclusive of any VAT/);
 });
+
+test("Acceptance Certificate：非居住者の源泉の税率を出す", () => {
+  const nr = { ...context, condition: { ...context.condition,
+    counterparty: { withholding: true, residency: "non_resident", residenceCountry: "United States" } } };
+  const out = renderDocumentHtml(html, { ...buildTemplateContext("intl_inspection_certificate", nr, {}) });
+  assert.match(out, /Applicable: 20\.42% \(Japanese domestic rate for non-residents\) — the Purchaser will deduct/);
+});

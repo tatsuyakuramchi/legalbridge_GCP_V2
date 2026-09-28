@@ -192,6 +192,13 @@ export function MatterPayments(
               value: amending.basisReceivedOn ?? "",
               hint: "60日の検査はこの日から数える" },
             { name: "paidOn", label: "支払済みの日", type: "date", value: amending.paidOn ?? "" },
+            ...(amending.status !== "paid" ? [{
+              name: "withholdingAmount", label: "源泉税額", type: "number" as const,
+              value: String(amending.withholdingAmount ?? 0),
+              hint: amending.currency === "JPY"
+                ? "自動の計算（非居住者は 20.42%、条約の書類があれば条約の税率）が合わないときに直す"
+                : `最小通貨単位で入れる（${amending.currency} は 100 分の 1 単位）`
+            }] : []),
             { name: "note", label: "備考", type: "textarea", value: amending.note ?? "" }
           ]}
           onDone={(changed) => {

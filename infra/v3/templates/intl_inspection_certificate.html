@@ -135,7 +135,7 @@ as of {{#if acceptanceDate}}{{formatDateEn acceptanceDate}}{{else}}the date of t
   </tr>
   <tr>
     <th>Withholding Tax</th>
-    <td>{{#if withholding_label}}{{withholding_label}}{{#if (eq withholding_label "Applicable")}} — the Purchaser will deduct and remit withholding tax as required by law. A reduced rate or exemption under an applicable tax treaty applies only if a certificate of residence and other required documents are provided before the payment date{{#unless HAS_BASE_CONTRACT}} (Standard Terms, Articles 6.2 and 6.4){{/unless}}.{{/if}}{{else}}—{{/if}}</td>
+    <td>{{#if withholding_label}}{{withholding_label}}{{#if (eq withholding_label "Applicable")}}{{#if withholding_rate_text}}: {{withholding_rate_text}}{{/if}} — the Purchaser will deduct and remit withholding tax as required by law. A reduced rate or exemption under an applicable tax treaty applies only if a certificate of residence and other required documents are provided before the payment date{{#unless HAS_BASE_CONTRACT}} (Standard Terms, Articles 6.2 and 6.4){{/unless}}.{{/if}}{{else}}—{{/if}}</td>
   </tr>
 </table>
 

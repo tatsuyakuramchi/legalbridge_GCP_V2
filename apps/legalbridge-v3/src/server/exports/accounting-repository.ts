@@ -1,3 +1,4 @@
+import { withholdingPartyOf } from "../royalty/tax.js";
 import type { Transactable } from "../core/db.js";
 import { dateStr, str } from "../core/db.js";
 import { translate } from "../core/errors.js";
@@ -45,6 +46,7 @@ const PAYMENTS_SQL = `
          y.due_on, y.paid_on, y.status,
          p.party_code, p.name AS party_name, p.name_kana, p.kind AS party_kind,
          p.invoice_no, p.withholding,
+         p.residency, p.treaty_rate_pct, p.treaty_docs_received_on,
          -- 氏名（カナ）は V1・V2 と同じく振込口座の名義カナを出す。経理はこの
          -- 列を振込名義の照合に使う。口座が無いときだけ取引先のカナで代える。
          b.account_holder_kana,
@@ -262,7 +264,8 @@ export class AccountingExportRepository {
             code: str(r.party_code), name: String(r.party_name ?? ""),
             kana: str(r.account_holder_kana) ?? str(r.name_kana),
             kind: r.party_kind === "individual" ? "individual" : "corporate",
-            invoiceNo: str(r.invoice_no), withholding: r.withholding === true
+            invoiceNo: str(r.invoice_no), withholding: r.withholding === true,
+            ...withholdingPartyOf(r)
           },
           ownerName: str(r.owner_name),
           ownerDepartment: str(r.owner_department),

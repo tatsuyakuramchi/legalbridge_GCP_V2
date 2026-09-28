@@ -18,8 +18,11 @@ export function splitToTotal(total: number, weights: number[]): number[] {
   const head = weights.slice(0, -1).map((w) => Math.round((total * w) / sum));
   return [...head, total - head.reduce((a, b) => a + b, 0)];
 }
-import { consumptionTax, resolveWithholdingEnabled, withholdingTax } from "../royalty/tax.js";
+import { consumptionTax, resolveWithholdingEnabled, withholdingFor, withholdingPartyOf } from "../royalty/tax.js";
+
+export { withholdingPartyOf };
 import { taxRateFor } from "../royalty/economics.js";
+
 import { allocateNumber } from "../core/numbering.js";
 
 export interface PaymentRow {
@@ -346,6 +349,7 @@ export class PaymentService {
           `SELECT s.id AS statement_id, s.condition_id, s.currency, s.net_amount, s.tax_amount,
                   c.direction, c.tax_category, c.counterparty_id, c.payment_terms,
                   p.kind AS party_kind, p.withholding,
+                  p.residency, p.treaty_rate_pct, p.treaty_docs_received_on,
                   e.id AS event_id, e.occurred_on, sp.pay_on AS schedule_pay_on
              FROM statements s
              JOIN conditions c ON c.id = s.condition_id
@@ -478,9 +482,9 @@ export class PaymentService {
 
         const withholdingEnabled = direction === "out" && resolveWithholdingEnabled({
           vendorWithholdingEnabled: rows[0].withholding === true,
-          entityType: str(rows[0].party_kind)
+          entityType: str(rows[0].party_kind),
+          residency: str(rows[0].residency)
         });
-        const withholding = withholdingEnabled ? withholdingTax(net + tax, true) : 0;
 
         // 起算日は実績のいちばん遅い日。全部が出そろってからでないと支払は起きない。
         const dates = rows.map((r) => dateStr(r.occurred_on))
@@ -501,6 +505,8 @@ export class PaymentService {
           ?? payOns[payOns.length - 1]
           ?? dueFromPaymentTerms(basis, rows.map((r) => str(r.payment_terms)))
           ?? dueLimitFrom(basis);
+        // 源泉は期日で決まる（租税条約の書類が支払日までに届いているか）。期日の後で計算する。
+        const withholding = withholdingFor(net + tax, withholdingEnabled, withholdingPartyOf(rows[0]), dueOn).amount;
 
         return await this.writeWithAllocations(client, {
           direction, partyId: Number(rows[0].counterparty_id), partyKind: str(rows[0].party_kind),
@@ -530,6 +536,7 @@ export class PaymentService {
                   c.id AS condition_id, c.direction, c.tax_category, c.currency,
                   c.counterparty_id, c.payment_terms,
                   p.kind AS party_kind, p.withholding,
+                  p.residency, p.treaty_rate_pct, p.treaty_docs_received_on,
                   s.pay_on AS schedule_pay_on
              FROM condition_events e
              JOIN conditions c ON c.id = e.condition_id
@@ -595,9 +602,9 @@ export class PaymentService {
 
         const withholdingEnabled = direction === "out" && resolveWithholdingEnabled({
           vendorWithholdingEnabled: rows[0].withholding === true,
-          entityType: str(rows[0].party_kind)
+          entityType: str(rows[0].party_kind),
+          residency: str(rows[0].residency)
         });
-        const withholding = withholdingEnabled ? withholdingTax(net + tax, true) : 0;
 
         // 起算日は検収日（無ければ納品日）のいちばん遅い日。全部が済んでからでないと
         // 支払は起きない。
@@ -615,6 +622,8 @@ export class PaymentService {
         const dueOn = options.dueOn ?? payOns[payOns.length - 1]
           ?? dueFromPaymentTerms(basis, rows.map((r) => str(r.payment_terms)))
           ?? dueLimitFrom(basis);
+        // 源泉は期日で決まる（租税条約の書類が支払日までに届いているか）。期日の後で計算する。
+        const withholding = withholdingFor(net + tax, withholdingEnabled, withholdingPartyOf(rows[0]), dueOn).amount;
 
         return await this.writeWithAllocations(client, {
           direction, partyId: Number(rows[0].counterparty_id), partyKind: str(rows[0].party_kind),
@@ -672,14 +681,20 @@ export class PaymentService {
   async amend(
     paymentId: number,
     patch: { dueOn?: string | null; basisReceivedOn?: string | null; paidOn?: string | null;
-             note?: string | null },
+             note?: string | null;
+             /**
+              * 源泉税額（保存と同じ単位）。租税条約の書類が後から届いた・国内源泉所得に当たらない
+              * と分かった、など自動の計算が合わないときに直す（A-057）。支払済みは直せない。
+              */
+             withholdingAmount?: number },
     reason: string,
     actor: string
   ) {
     const why = String(reason ?? "").trim();
     if (!why) throw new DomainError("VALIDATION", "修正の理由は必須です");
     const COLUMNS = {
-      dueOn: "due_on", basisReceivedOn: "basis_received_on", paidOn: "paid_on", note: "note"
+      dueOn: "due_on", basisReceivedOn: "basis_received_on", paidOn: "paid_on", note: "note",
+      withholdingAmount: "withholding_amount"
     } as const;
     const keys = (Object.keys(COLUMNS) as Array<keyof typeof COLUMNS>)
       .filter((k) => patch[k] !== undefined);
@@ -688,7 +703,7 @@ export class PaymentService {
       return await inTransaction(this.database, async (client) => {
         const found = await client.query(
           `SELECT p.id, p.payment_no, p.status, p.amount, p.direction,
-                  p.due_on, p.basis_received_on, p.paid_on, p.note,
+                  p.due_on, p.basis_received_on, p.paid_on, p.note, p.withholding_amount, p.tax_amount,
                   party.kind AS party_kind
              FROM payments p
              LEFT JOIN parties party ON party.id = p.party_id
@@ -705,6 +720,17 @@ export class PaymentService {
             "支払済みの日は空にできません。取り消すなら取消の操作を使ってください");
         }
 
+        if (patch.withholdingAmount !== undefined) {
+          if (String(row.status) === "paid") {
+            throw new DomainError("CONFLICT", "支払済みの源泉は直せません（納付の記録と合わなくなる）");
+          }
+          const w = Number(patch.withholdingAmount);
+          if (!Number.isInteger(w) || w < 0) throw new DomainError("VALIDATION", "源泉税額は 0 以上の整数で入れてください");
+          if (w > Number(row.amount ?? 0) + Number(row.tax_amount ?? 0)) {
+            throw new DomainError("VALIDATION", "源泉税額が支払額（税込）を超えています");
+          }
+        }
+
         const before: Record<string, unknown> = {};
         const after: Record<string, unknown> = {};
         const sets: string[] = [];
@@ -713,13 +739,16 @@ export class PaymentService {
           const column = COLUMNS[key];
           const next = key === "note"
             ? (String(patch.note ?? "").trim() || null)
+            : key === "withholdingAmount" ? Number(patch.withholdingAmount)
             : (patch[key] ?? null);
-          const now = column === "note" ? str(row.note) : dateStr(row[column]);
+          const now = column === "note" ? str(row.note)
+            : key === "withholdingAmount" ? Number(row.withholding_amount ?? 0)
+            : dateStr(row[column]);
           if (next === now) continue;
           before[key] = now;
           after[key] = next;
           params.push(next);
-          sets.push(`${column} = $${params.length}${key === "note" ? "" : "::date"}`);
+          sets.push(`${column} = $${params.length}${key === "note" ? "" : key === "withholdingAmount" ? "::bigint" : "::date"}`);
         }
         if (!sets.length) return { paymentId, changed: [] as string[] };
 

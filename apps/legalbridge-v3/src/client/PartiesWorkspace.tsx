@@ -18,6 +18,9 @@ interface PartyDetail extends Party {
   address: string | null; phone: string | null; email: string | null;
   /** 代表者（法人）。宛名・署名欄に出す・出さないを選ぶ。個人は null。 */
   representativeTitle: string | null; representativeName: string | null;
+  /** 非居住者と租税条約（A-057）。 */
+  residency?: "resident" | "non_resident"; residenceCountry?: string | null;
+  treatyRatePct?: number | null; treatyDocsReceivedOn?: string | null; treatyNote?: string | null;
   /** 連絡先は 1 行 = 1 人。roles は 主担当／署名者／請求先 の印（複数可）。 */
   contacts: Array<{ id: number; roles: string[]; role: string; name: string | null; email: string | null;
                     phone: string | null; department: string | null }>;
@@ -278,7 +281,12 @@ export function PartiesWorkspace(
                         : "—"}</dd>
                       <dt>カナ</dt><dd>{detail.nameKana ?? "—"}</dd>
                       <dt>登録番号</dt><dd className="code">{detail.invoiceNo ?? "—"}</dd>
-                      <dt>源泉</dt><dd>{detail.withholding ? "対象" : detail.kind === "individual" ? "個人のため対象" : "対象外"}</dd>
+                      <dt>源泉</dt><dd>{detail.residency === "non_resident"
+                        ? `${detail.withholding ? "対象" : "対象外"}（非居住者${detail.residenceCountry ? `・${detail.residenceCountry}` : ""}。`
+                          + (detail.treatyRatePct !== null && detail.treatyRatePct !== undefined
+                            ? `条約 ${detail.treatyRatePct}%${detail.treatyDocsReceivedOn ? `・書類 ${detail.treatyDocsReceivedOn} 受領` : "・書類未受領"}）`
+                            : "国内法 20.42%）")
+                        : detail.withholding ? "対象" : detail.kind === "individual" ? "個人のため対象" : "対象外"}</dd>
                       {/* 代表者は宛名・署名欄に出す人。担当者（連絡先）とは別。 */}
                       {detail.kind !== "individual" && (
                         <>
@@ -451,6 +459,11 @@ function PartyEdit(
     representativeTitle: party.representativeTitle ?? "",
     representativeName: party.representativeName ?? "",
     withholding: party.withholding,
+    residency: party.residency ?? "resident",
+    residenceCountry: party.residenceCountry ?? "",
+    treatyRatePct: party.treatyRatePct === null || party.treatyRatePct === undefined ? "" : String(party.treatyRatePct),
+    treatyDocsReceivedOn: party.treatyDocsReceivedOn ?? "",
+    treatyNote: party.treatyNote ?? "",
     address: party.address ?? "",
     phone: party.phone ?? "",
     email: party.email ?? "",
@@ -473,6 +486,12 @@ function PartyEdit(
         representativeTitle: v.kind === "individual" ? "" : v.representativeTitle,
         representativeName: v.kind === "individual" ? "" : v.representativeName,
         withholding: v.withholding,
+        residency: v.residency,
+        residenceCountry: v.residenceCountry,
+        // 空は「条約の税率なし」。0 は 0%（免除）として送る。
+        treatyRatePct: v.treatyRatePct.trim() === "" ? null : Number(v.treatyRatePct),
+        treatyDocsReceivedOn: v.treatyDocsReceivedOn || null,
+        treatyNote: v.treatyNote,
         address: v.address, phone: v.phone, email: v.email,
         aliases: v.aliases.split("\n").map((a) => a.trim()).filter(Boolean),
         status: v.status
@@ -527,10 +546,53 @@ function PartyEdit(
             <input type="checkbox" checked={v.withholding} disabled={busy}
                    onChange={(e) => setV({ ...v, withholding: e.target.checked })} />
             <small className="faint">
-              個人は区分だけで対象になります。法人でも対象なら入れてください
+              {v.residency === "non_resident"
+                ? "非居住者は印を付けたときだけ引きます（著作権の対価など国内源泉所得にあたるとき）"
+                : "個人は区分だけで対象になります。法人でも対象なら入れてください"}
             </small>
           </span>
         </label>
+        <label className="field">
+          <span>居住者・非居住者</span>
+          <span className="stack" style={{ gap: 2 }}>
+            <select value={v.residency} disabled={busy}
+                    onChange={(e) => setV({ ...v, residency: e.target.value as "resident" | "non_resident" })}>
+              <option value="resident">居住者（国内）</option>
+              <option value="non_resident">非居住者（海外）</option>
+            </select>
+            <small className="faint">非居住者の源泉は国内法 20.42%。租税条約の書類が支払日までにあれば条約の税率</small>
+          </span>
+        </label>
+        {v.residency === "non_resident" && (
+          <>
+            <label className="field">
+              <span>居住国</span>
+              <input value={v.residenceCountry} placeholder="United States" disabled={busy}
+                     onChange={(e) => setV({ ...v, residenceCountry: e.target.value })} />
+            </label>
+            <label className="field">
+              <span>租税条約の税率（%）</span>
+              <span className="stack" style={{ gap: 2 }}>
+                <input value={v.treatyRatePct} placeholder="10（免除なら 0）" inputMode="decimal" disabled={busy}
+                       onChange={(e) => setV({ ...v, treatyRatePct: e.target.value })} />
+                <small className="faint">空なら条約を使わない（20.42%）</small>
+              </span>
+            </label>
+            <label className="field">
+              <span>条約の書類を受け取った日</span>
+              <span className="stack" style={{ gap: 2 }}>
+                <input type="date" value={v.treatyDocsReceivedOn} disabled={busy}
+                       onChange={(e) => setV({ ...v, treatyDocsReceivedOn: e.target.value })} />
+                <small className="faint">租税条約の届出書・居住者証明書。支払日より後なら条約の税率は使いません</small>
+              </span>
+            </label>
+            <label className="field">
+              <span>条約のメモ</span>
+              <input value={v.treatyNote} placeholder="日米租税条約 12 条（使用料）など" disabled={busy}
+                     onChange={(e) => setV({ ...v, treatyNote: e.target.value })} />
+            </label>
+          </>
+        )}
         <label className="field">
           <span>状態</span>
           <span className="stack" style={{ gap: 2 }}>

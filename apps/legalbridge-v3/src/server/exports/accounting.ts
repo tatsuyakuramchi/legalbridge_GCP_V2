@@ -1,3 +1,4 @@
+import { resolveWithholdingEnabled, withholdingFor } from "../royalty/tax.js";
 import type { XlsColumn } from "./xls.js";
 
 /**
@@ -54,6 +55,8 @@ export interface AccountingSource {
   party: {
     code: string | null; name: string; kana: string | null;
     kind: "corporate" | "individual"; invoiceNo: string | null; withholding: boolean;
+    /** 非居住者と租税条約（A-057）。無ければ居住者。 */
+    residency?: string | null; treatyRatePct?: number | null; treatyDocsReceivedOn?: string | null;
   };
   ownerName: string | null;
   ownerDepartment: string | null;
@@ -185,16 +188,20 @@ export function fitSlots(slots: AccountingSlot[]): AccountingSlot[] {
   return fitted;
 }
 
-/** 源泉の期待値。V1 と同じく税込ベース。判定も V1 と同じ（個人か源泉ONなら対象）。 */
+/**
+ * 源泉の期待値。税込ベース。判定は V1 と同じ（個人か源泉ONなら対象）だが、非居住者は
+ * 源泉ONのときだけ対象で、税率は国内法 20.42% か租税条約の税率（A-057。royalty/tax.ts）。
+ */
 export function expectedWithholding(
   subtotal: number, consumptionTax: number,
-  party: { kind: string; withholding: boolean }
+  party: { kind: string; withholding: boolean; residency?: string | null;
+           treatyRatePct?: number | null; treatyDocsReceivedOn?: string | null },
+  payOn?: string | null
 ): number {
-  if (!(party.withholding || party.kind === "individual")) return 0;
-  const base = subtotal + consumptionTax;
-  if (base <= 0) return 0;
-  if (base <= 1_000_000) return Math.floor(base * 0.1021);
-  return Math.floor(1_000_000 * 0.1021) + Math.floor((base - 1_000_000) * 0.2042);
+  const enabled = resolveWithholdingEnabled({
+    vendorWithholdingEnabled: party.withholding, entityType: party.kind, residency: party.residency ?? null
+  });
+  return withholdingFor(subtotal + consumptionTax, enabled, party, payOn).amount;
 }
 
 export function buildAccountingRow(source: AccountingSource): AccountingRow {
@@ -223,7 +230,8 @@ export function buildAccountingRow(source: AccountingSource): AccountingRow {
   const withholdingTax = source.withholdingAmount;
   const afterTax = subtotal + consumptionTax - withholdingTax;
 
-  const withholdingExpected = expectedWithholding(subtotal, consumptionTax, source.party);
+  const withholdingExpected = expectedWithholding(subtotal, consumptionTax, source.party,
+    source.paidOn ?? source.dueOn);
   // 源泉が違うと申告が狂う。黙って出さずに印を付ける。
   if (withholdingExpected !== withholdingTax) flags.push("withholdingGap");
 

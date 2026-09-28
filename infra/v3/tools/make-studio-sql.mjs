@@ -303,6 +303,15 @@ SELECT * FROM (
             WHERE table_schema='v3' AND table_name='parties'
               AND column_name IN ('rpt_entity', 'has_board', 'related_party', 'related_party_type', 'related_party_note')))::text
   UNION ALL
+  SELECT 57, '非居住者と租税条約（A-057。列 5 と CHECK 2 で 7 であること）',
+         ((SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='v3' AND table_name='parties'
+              AND column_name IN ('residency', 'residence_country', 'treaty_rate_pct',
+                                  'treaty_docs_received_on', 'treaty_note'))
+        + (SELECT count(*) FROM pg_constraint
+            WHERE conrelid='v3.parties'::regclass
+              AND conname IN ('parties_residency_chk', 'parties_treaty_rate_chk')))::text
+  UNION ALL
   SELECT 56, '税区分「税込（海外・内税）」（A-056。CHECK に included があること＝1）',
          (SELECT count(*) FROM pg_constraint
            WHERE conrelid='v3.conditions'::regclass AND conname='conditions_tax_category_chk'

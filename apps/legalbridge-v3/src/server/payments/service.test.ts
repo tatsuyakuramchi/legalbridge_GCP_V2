@@ -550,3 +550,20 @@ test("検収書から立てた支払にも番号を振る。振らないと画�
       "採番表を進める");
   });
 });
+
+test("支払の修正：源泉税額を直せる（条約の書類が後から届いた等）。前後の値を監査に残す", async () => {
+  const db = amendDb({ withholding_amount: 67386, tax_amount: 0 });
+  const r = await new PaymentService(db).amend(900, { withholdingAmount: 33000 }, "条約の届出書を受領（10%）", "admin");
+  assert.deepEqual(r.changed, ["withholdingAmount"]);
+  assert.match(db.find("UPDATE payments SET")!.text, /withholding_amount = \$2::bigint/);
+  const detail = JSON.parse(String(db.find("INSERT INTO audit_events")!.params[5]));
+  assert.deepEqual(detail.before, { withholdingAmount: 67386 });
+  assert.deepEqual(detail.after, { withholdingAmount: 33000 });
+});
+
+test("支払の修正：支払済みの源泉と、支払額を超える源泉は直せない", async () => {
+  await assert.rejects(new PaymentService(amendDb({ status: "paid", withholding_amount: 1 }))
+    .amend(900, { withholdingAmount: 0 }, "x", "admin"), /支払済みの源泉は直せません/);
+  await assert.rejects(new PaymentService(amendDb({ tax_amount: 0 }))
+    .amend(900, { withholdingAmount: 330001 }, "x", "admin"), /支払額（税込）を超えています/);
+});

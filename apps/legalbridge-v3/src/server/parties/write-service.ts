@@ -11,6 +11,17 @@ export interface PartyInput {
   invoiceNo?: string | null;
   corporateNo?: string | null;
   withholding?: boolean;
+  /**
+   * 非居住者（海外）か（A-057）。非居住者は源泉の税率が国内法 20.42%、租税条約の書類が
+   * 支払日までにあれば条約の税率。個人でも自動では源泉の対象にしない。
+   */
+  residency?: "resident" | "non_resident";
+  residenceCountry?: string | null;
+  /** 租税条約の源泉の税率（%）。0 もありうる。 */
+  treatyRatePct?: number | null;
+  /** 租税条約の届出書・居住者証明書を受け取った日。 */
+  treatyDocsReceivedOn?: string | null;
+  treatyNote?: string | null;
   /** 書類の本文に載る連絡先。契約書の頭書きと請求書の宛先が使う。 */
   address?: string | null;
   phone?: string | null;
@@ -22,6 +33,20 @@ export interface PartyInput {
   representativeName?: string | null;
   /** 登録と同時に入れる主担当（法人）。別の表で入れ直す手間を省く。 */
   primaryContact?: { name?: string | null; email?: string | null; department?: string | null } | null;
+}
+
+/** 非居住者と租税条約（A-057）の読み出し。一覧・詳細・更新の戻りで同じ形にする。 */
+export function residencyOf(row: Record<string, any>) {
+  const rate = row.treaty_rate_pct;
+  const on = row.treaty_docs_received_on;
+  return {
+    residency: (row.residency === "non_resident" ? "non_resident" : "resident") as "resident" | "non_resident",
+    residenceCountry: row.residence_country ?? null,
+    treatyRatePct: rate === null || rate === undefined ? null : Number(rate),
+    treatyDocsReceivedOn: on === null || on === undefined ? null
+      : on instanceof Date ? on.toISOString().slice(0, 10) : String(on).slice(0, 10),
+    treatyNote: row.treaty_note ?? null
+  };
 }
 
 export const CONTACT_ROLES = ["primary", "signer", "billing"] as const;
@@ -162,8 +187,11 @@ export class PartyWriteService {
           `INSERT INTO parties (party_code, kind, name, name_kana, aliases,
                                 invoice_no, corporate_no, withholding,
                                 address, phone, email, status,
-                                representative_title, representative_name)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'active', $12, $13)
+                                representative_title, representative_name,
+                                residency, residence_country, treaty_rate_pct,
+                                treaty_docs_received_on, treaty_note)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'active', $12, $13,
+                   $14, $15, $16, $17, $18)
            RETURNING id, party_code`,
           [code, input.kind, name, input.nameKana ?? null,
            input.aliases ?? [], input.invoiceNo ?? null, input.corporateNo ?? null,
@@ -171,7 +199,9 @@ export class PartyWriteService {
            blank(input.address), blank(input.phone), blank(input.email),
            // 代表者は法人だけ。個人は本人が代表なので持たない。
            input.kind === "individual" ? null : blank(input.representativeTitle),
-           input.kind === "individual" ? null : blank(input.representativeName)]);
+           input.kind === "individual" ? null : blank(input.representativeName),
+           input.residency ?? "resident", blank(input.residenceCountry),
+           input.treatyRatePct ?? null, blank(input.treatyDocsReceivedOn), blank(input.treatyNote)]);
         const row = inserted.rows[0] as { id: number; party_code: string | null };
 
         // 登録と同時に主担当を 1 人入れる（法人）。個人は本人が窓口なので要らない。
@@ -235,6 +265,11 @@ export class PartyWriteService {
     if (input.invoiceNo !== undefined) put("invoice_no", blank(input.invoiceNo));
     if (input.corporateNo !== undefined) put("corporate_no", blank(input.corporateNo));
     if (input.withholding !== undefined) put("withholding", input.withholding === true);
+    if (input.residency !== undefined) put("residency", input.residency);
+    if (input.residenceCountry !== undefined) put("residence_country", blank(input.residenceCountry));
+    if (input.treatyRatePct !== undefined) put("treaty_rate_pct", input.treatyRatePct);
+    if (input.treatyDocsReceivedOn !== undefined) put("treaty_docs_received_on", blank(input.treatyDocsReceivedOn));
+    if (input.treatyNote !== undefined) put("treaty_note", blank(input.treatyNote));
     if (input.address !== undefined) put("address", blank(input.address));
     if (input.phone !== undefined) put("phone", blank(input.phone));
     if (input.email !== undefined) put("email", blank(input.email));
@@ -266,7 +301,8 @@ export class PartyWriteService {
         const r = await client.query(
           `UPDATE parties SET ${sets.join(", ")}, updated_at = now() WHERE id = $1
            RETURNING id, party_code, name, kind, name_kana, aliases, invoice_no,
-                     corporate_no, withholding, address, phone, email, status`, params);
+                     corporate_no, withholding, address, phone, email, status,
+                     residency, residence_country, treaty_rate_pct, treaty_docs_received_on, treaty_note`, params);
         const row = r.rows[0] as Record<string, any>;
 
         await recordAudit(client, {
@@ -285,6 +321,7 @@ export class PartyWriteService {
           aliases: (row.aliases ?? []) as string[],
           invoiceNo: row.invoice_no ?? null, corporateNo: row.corporate_no ?? null,
           withholding: row.withholding === true,
+          ...residencyOf(row),
           address: row.address ?? null, phone: row.phone ?? null, email: row.email ?? null,
           status: String(row.status)
         };

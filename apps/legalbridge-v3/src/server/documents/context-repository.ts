@@ -541,6 +541,12 @@ export class DocumentContextRepository {
           representativeTitle: str(row.party_row?.representative_title),
           representativeName: str(row.party_row?.representative_name),
           withholding: row.party_withholding === true,
+          // 非居住者と租税条約（A-057）。海外の書類の源泉の欄に税率を出す。
+          residency: str(row.party_row?.residency) ?? "resident",
+          residenceCountry: str(row.party_row?.residence_country),
+          treatyRatePct: row.party_row?.treaty_rate_pct === null || row.party_row?.treaty_rate_pct === undefined
+            ? null : Number(row.party_row.treaty_rate_pct),
+          treatyDocsReceivedOn: str(row.party_row?.treaty_docs_received_on)?.slice(0, 10) ?? null,
           honorific: honorificFor(str(row.party_kind))
         },
         work: { title: str(row.work_title), code: str(row.work_code), part: str(row.part_name),

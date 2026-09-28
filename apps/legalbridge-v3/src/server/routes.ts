@@ -1075,6 +1075,12 @@ export function createRoutes(database: Transactable) {
     invoiceNo: z.string().trim().max(40).nullable().optional(),
     corporateNo: z.string().trim().max(40).nullable().optional(),
     withholding: z.boolean().optional(),
+    // 非居住者と租税条約（A-057）。源泉の税率の出し方が変わる。
+    residency: z.enum(["resident", "non_resident"]).optional(),
+    residenceCountry: z.string().trim().max(100).nullable().optional(),
+    treatyRatePct: z.coerce.number().min(0).max(20.42).nullable().optional(),
+    treatyDocsReceivedOn: z.string().trim().max(10).nullable().optional(),
+    treatyNote: z.string().trim().max(1000).nullable().optional(),
     // 書類の頭書き・宛先に出る連絡先。入れる口が無く、移行と CSV 取込で
     // 入ったきりだった。
     address: z.string().trim().max(500).nullable().optional(),
@@ -3338,7 +3344,9 @@ export function createRoutes(database: Transactable) {
         dueOn: z.string().date().nullable().optional(),
         basisReceivedOn: z.string().date().nullable().optional(),
         paidOn: z.string().date().nullable().optional(),
-        note: z.string().trim().max(2000).nullable().optional()
+        note: z.string().trim().max(2000).nullable().optional(),
+        // 源泉税額（A-057）。租税条約の書類が後から届いた、などで自動の計算を直す。
+        withholdingAmount: z.coerce.number().int().min(0).optional()
       }).parse(req.body ?? {});
       res.json(await payments.amend(Number(req.params.id), patch, reason, actor(res)));
     }));

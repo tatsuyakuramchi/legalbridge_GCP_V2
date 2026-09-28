@@ -246,6 +246,8 @@ export interface MatterDetail extends MatterSummary {
                     currency: string; dueOn: string | null; status: string;
                     /** 管理者が直せる欄（A-041）。 */
                     basisReceivedOn: string | null; paidOn: string | null; note: string | null;
+                    /** 源泉税額（保存と同じ単位）。管理者が直せる（A-057）。 */
+                    withholdingAmount?: number;
                     /** 払い先。支払は持たないので割当先の条件から引いている。 */
                     counterpartyId: number | null; counterparty: string | null }>;
   communications: Array<{ occurredAt: string; action: string; actor: string; detail: Record<string, unknown> }>;

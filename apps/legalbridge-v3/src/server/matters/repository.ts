@@ -241,7 +241,7 @@ export class MatterRepository {
   private async payments(id: number) {
     const r = await this.database.query(
       `SELECT DISTINCT p.id, p.payment_no, p.direction, p.amount, p.currency, p.due_on, p.status,
-              p.basis_received_on, p.paid_on, p.note,
+              p.basis_received_on, p.paid_on, p.note, p.withholding_amount,
               cp.counterparty_id, cp.counterparty_name
          FROM payments p
          JOIN payment_allocations a ON a.payment_id = p.id
@@ -265,6 +265,7 @@ export class MatterRepository {
       dueOn: dateStr(p.due_on), status: String(p.status),
       // 管理者が直せる欄（A-041）。画面の修正欄がいまの値を出すのに使う。
       basisReceivedOn: dateStr(p.basis_received_on), paidOn: dateStr(p.paid_on), note: str(p.note),
+      withholdingAmount: Number(p.withholding_amount ?? 0),
       // 相手先を絞って見るため（1案件に20社以上のことがある）。
       counterpartyId: p.counterparty_id ? Number(p.counterparty_id) : null,
       counterparty: str(p.counterparty_name)

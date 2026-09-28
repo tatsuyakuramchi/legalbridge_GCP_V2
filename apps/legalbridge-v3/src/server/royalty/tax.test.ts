@@ -61,3 +61,44 @@ test("支払内訳：税抜→+消費税→税込→−源泉→+立替→振込
   assert.equal(noWh.withholdingTax, 0);
   assert.equal(noWh.netTransfer, 110000);
 });
+
+// ---- 非居住者と租税条約（A-057） ----
+
+test("非居住者：国内法は一律 20.42%（居住者の段階税率ではない）", async () => {
+  const { withholdingFor } = await import("./tax.js");
+  const r = withholdingFor(1_500_000, true, { residency: "non_resident" }, "2026-10-31");
+  assert.equal(r.amount, 306300);          // floor(1,500,000 × 20.42%)
+  assert.equal(r.ratePct, 20.42);
+  assert.equal(r.basis, "non_resident_domestic");
+  // 居住者なら二段
+  assert.equal(withholdingFor(1_500_000, true, { residency: "resident" }).amount, 204200);
+});
+
+test("非居住者：租税条約の書類が支払日までにあれば条約の税率（0% も）", async () => {
+  const { withholdingFor } = await import("./tax.js");
+  const party = { residency: "non_resident", treatyRatePct: 10, treatyDocsReceivedOn: "2026-10-01" };
+  assert.deepEqual(withholdingFor(100000, true, party, "2026-10-31"),
+    { amount: 10000, ratePct: 10, basis: "treaty" });
+  // 書類が支払日の後 → 国内法
+  assert.equal(withholdingFor(100000, true, party, "2026-09-30").amount, 20420);
+  // 書類を受け取っていない → 国内法
+  assert.equal(withholdingFor(100000, true, { residency: "non_resident", treatyRatePct: 10 }, "2026-10-31").amount, 20420);
+  // 免除（0%）
+  assert.equal(withholdingFor(100000, true, { ...party, treatyRatePct: 0 }, "2026-10-31").amount, 0);
+  // 対象外なら 0
+  assert.equal(withholdingFor(100000, false, party, "2026-10-31").amount, 0);
+});
+
+test("非居住者は個人でも自動では源泉の対象にしない（源泉の印を付けたときだけ）", () => {
+  assert.equal(resolveWithholdingEnabled({ entityType: "individual", residency: "non_resident" }), false);
+  assert.equal(resolveWithholdingEnabled({ entityType: "individual", residency: "non_resident", vendorWithholdingEnabled: true }), true);
+  assert.equal(resolveWithholdingEnabled({ entityType: "individual", residency: "resident" }), true);
+});
+
+test("計算書の支払内訳も非居住者の税率で引く", () => {
+  const r = computeRoyaltyPayment({ subtotalExTax: 100000, taxRatePct: 0, withholdingEnabled: true,
+    withholdingParty: { residency: "non_resident" }, payOn: "2026-10-31" });
+  assert.equal(r.consumptionTax, 0);
+  assert.equal(r.withholdingTax, 20420);
+  assert.equal(r.netTransfer, 79580);
+});

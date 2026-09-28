@@ -10,7 +10,8 @@
  *   - 課税ベースは **税込額**（税抜小計 + 消費税）。
  *   - 100万円以下：`floor(税込 × 10.21%)`
  *   - 100万円超過分：`floor(1,000,000 × 10.21%) + floor((税込 − 1,000,000) × 20.42%)`
- *   - 租税条約・非居住者・国別レートはV1にも無く、本スライスの対象外。
+ *   - 非居住者（A-057）は withholdingFor を使う：国内法の一律 20.42%（所得税法 212 条）、
+ *     租税条約の書類が支払日までにあれば条約の税率。海外発注書の約款 6.2・6.4 条と同じ。
  *
  * 源泉対象の判定：
  *   - `vendors.withholding_enabled === true`、または
@@ -52,9 +53,12 @@ export function resolveWithholdingEnabled(input: {
   vendorWithholdingEnabled?: boolean | null;
   entityType?: string | null;
   formOverride?: boolean | null;
+  /** 非居住者は「個人なら自動で対象」にしない（海外で行う役務は原則として源泉が要らない）。 */
+  residency?: string | null;
 }): boolean {
   if (input.formOverride === true) return true;
   if (input.vendorWithholdingEnabled === true) return true;
+  if (input.residency === "non_resident") return false;
   const entity = String(input.entityType ?? "").toLowerCase();
   if (entity === "個人" || entity === "individual") return true;
   return false;
@@ -76,6 +80,62 @@ export function withholdingTax(taxIncludedAmount: number, enabled: boolean): num
   );
 }
 
+/** 非居住者の源泉の国内法の税率（%）。所得税 20% ＋ 復興特別所得税（2.1%）。 */
+export const NON_RESIDENT_RATE_PCT = 20.42;
+
+/** 源泉の税率を決める取引先の情報（A-057）。 */
+export interface WithholdingParty {
+  residency?: string | null;
+  treatyRatePct?: number | null;
+  /** 租税条約の届出書・居住者証明書を受け取った日（YYYY-MM-DD）。 */
+  treatyDocsReceivedOn?: string | null;
+}
+
+export interface WithholdingResult {
+  amount: number;
+  /** 使った税率（%）。居住者の段階税率は null（10.21%／20.42% の二段）。 */
+  ratePct: number | null;
+  basis: "none" | "resident" | "non_resident_domestic" | "treaty";
+}
+
+/**
+ * 源泉税額（居住者・非居住者の両方）。課税ベースは税込額（海外は税込・内税なのでそのまま）。
+ *
+ *   居住者       … これまでどおり 10.21%（100万円超は 20.42%）の二段 floor
+ *   非居住者     … 国内法の一律 20.42%。租税条約の税率があり、書類を支払日までに（支払日が
+ *                   分からなければ今日までに）受け取っていれば条約の税率（0% もありうる）
+ * 丸めは floor。税率はベーシスポイントの整数で掛ける（浮動小数点の誤差で 1 円ずれないように）。
+ */
+export function withholdingFor(
+  taxIncludedAmount: number, enabled: boolean, party: WithholdingParty | null | undefined,
+  payOn?: string | null, today: string = new Date().toISOString().slice(0, 10)
+): WithholdingResult {
+  const base = Number(taxIncludedAmount) || 0;
+  if (!enabled || base <= 0) return { amount: 0, ratePct: null, basis: "none" };
+  if (party?.residency !== "non_resident") {
+    return { amount: withholdingTax(base, true), ratePct: null, basis: "resident" };
+  }
+  const treaty = party.treatyRatePct;
+  const docsOn = String(party.treatyDocsReceivedOn ?? "").slice(0, 10);
+  const by = String(payOn ?? "").slice(0, 10) || today;
+  const useTreaty = treaty !== null && treaty !== undefined && Number.isFinite(Number(treaty))
+    && Boolean(docsOn) && docsOn <= by;
+  const ratePct = useTreaty ? Number(treaty) : NON_RESIDENT_RATE_PCT;
+  const bp = Math.round(ratePct * 100);
+  return { amount: Math.floor((base * bp) / 10000), ratePct, basis: useTreaty ? "treaty" : "non_resident_domestic" };
+}
+
+/** 取引先の行から、源泉の税率を決める情報（A-057）を取り出す。 */
+export function withholdingPartyOf(row: Record<string, any>): WithholdingParty {
+  const on = row.treaty_docs_received_on;
+  return {
+    residency: row.residency ?? null,
+    treatyRatePct: row.treaty_rate_pct === null || row.treaty_rate_pct === undefined ? null : Number(row.treaty_rate_pct),
+    treatyDocsReceivedOn: on === null || on === undefined ? null
+      : on instanceof Date ? on.toISOString().slice(0, 10) : String(on).slice(0, 10)
+  };
+}
+
 export type PaymentBreakdown = {
   subtotalExTax: number;   // 税抜小計
   consumptionTax: number;  // 消費税
@@ -95,11 +155,14 @@ export function computeRoyaltyPayment(input: {
   taxRatePct?: number;
   withholdingEnabled: boolean;
   reimbursementIncTax?: number;
+  /** 非居住者と租税条約（A-057）。無ければ居住者として計算する。 */
+  withholdingParty?: WithholdingParty | null;
+  payOn?: string | null;
 }): PaymentBreakdown {
   const subtotal = Number(input.subtotalExTax) || 0;
   const ctax = consumptionTax(subtotal, input.taxRatePct ?? 10);
   const taxIncluded = subtotal + ctax;
-  const wh = withholdingTax(taxIncluded, input.withholdingEnabled);
+  const wh = withholdingFor(taxIncluded, input.withholdingEnabled, input.withholdingParty, input.payOn).amount;
   const afterTax = taxIncluded - wh;
   const reimbursement = Number(input.reimbursementIncTax) || 0;
   return {

@@ -411,3 +411,11 @@ test("税込（海外・内税）は報酬として小計に入る。立替金�
   assert.equal(r.netTransfer, 300000);
   assert.ok(ACCOUNTING_COLUMNS.some((c) => c.header === "税込（海外・内税）"));
 });
+
+test("非居住者の源泉の照合は国内法 20.42%／条約の税率で見る", () => {
+  const party = { kind: "individual", withholding: true, residency: "non_resident",
+                  treatyRatePct: 10, treatyDocsReceivedOn: "2026-10-01" };
+  assert.equal(expectedWithholding(100000, 0, party, "2026-10-31"), 10000);
+  assert.equal(expectedWithholding(100000, 0, { ...party, treatyDocsReceivedOn: null }, "2026-10-31"), 20420);
+  assert.equal(expectedWithholding(100000, 0, { ...party, withholding: false }, "2026-10-31"), 0, "非居住者の個人は自動で対象にしない");
+});

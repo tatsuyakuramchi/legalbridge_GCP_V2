@@ -1,6 +1,7 @@
 import type { Transactable } from "../core/db.js";
 import { str } from "../core/db.js";
 import { translate } from "../core/errors.js";
+import { residencyOf } from "./write-service.js";
 
 export interface PartySummary {
   id: number; partyCode: string | null; name: string; kind: "corporate" | "individual";
@@ -8,6 +9,9 @@ export interface PartySummary {
 }
 
 export interface PartyDetail extends PartySummary {
+  /** 非居住者と租税条約（A-057）。 */
+  residency: "resident" | "non_resident"; residenceCountry: string | null;
+  treatyRatePct: number | null; treatyDocsReceivedOn: string | null; treatyNote: string | null;
   nameKana: string | null; invoiceNo: string | null; corporateNo: string | null;
   /** 書類の頭書き・宛先に出る連絡先。 */
   address: string | null; phone: string | null; email: string | null;
@@ -57,7 +61,8 @@ export class PartyRepository {
       const head = await this.database.query(
         `SELECT id, party_code, name, name_kana, kind, aliases, withholding, status,
                 merged_into_id, invoice_no, corporate_no, address, phone, email,
-                representative_title, representative_name
+                representative_title, representative_name,
+                residency, residence_country, treaty_rate_pct, treaty_docs_received_on, treaty_note
            FROM parties WHERE id = $1`, [id]);
       const row = head.rows[0] as Record<string, any> | undefined;
       if (!row) return null;
@@ -80,6 +85,7 @@ export class PartyRepository {
 
       return {
         ...mapSummary(row),
+        ...residencyOf(row),
         nameKana: str(row.name_kana),
         invoiceNo: str(row.invoice_no),
         corporateNo: str(row.corporate_no),

@@ -2028,6 +2028,36 @@ END $a056$;
 COMMENT ON COLUMN v3.conditions.tax_category IS
   '税区分。taxable=課税10% / reduced=軽減8% / exempt=非課税・不課税（立替金） / included=税込（海外・内税。上乗せしない）';
 
+-- ---------------------------------------------------------------------
+-- A-057 非居住者と租税条約（源泉徴収）
+--   非居住者への支払の源泉は、国内法では一律 20.42%（所得税法 212 条）で、居住者の
+--   10.21%／20.42% の段階とは違う。租税条約の届出書・居住者証明書が支払日までに届いて
+--   いれば条約の税率（0% を含む）。海外発注書の約款 6.2・6.4 条と同じ規則。
+--   引くかどうか（国内源泉所得か）は、これまでどおり withholding の印で人が決める。
+--   非居住者は「個人なら自動で対象」にしない（海外で行う役務は原則として源泉が要らない）。
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.parties ADD COLUMN IF NOT EXISTS residency text NOT NULL DEFAULT 'resident';
+ALTER TABLE v3.parties ADD COLUMN IF NOT EXISTS residence_country text;
+ALTER TABLE v3.parties ADD COLUMN IF NOT EXISTS treaty_rate_pct numeric(5,2);
+ALTER TABLE v3.parties ADD COLUMN IF NOT EXISTS treaty_docs_received_on date;
+ALTER TABLE v3.parties ADD COLUMN IF NOT EXISTS treaty_note text;
+DO $a057$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.parties'::regclass AND conname = 'parties_residency_chk') THEN
+    ALTER TABLE v3.parties ADD CONSTRAINT parties_residency_chk
+      CHECK (residency IN ('resident', 'non_resident'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.parties'::regclass AND conname = 'parties_treaty_rate_chk') THEN
+    ALTER TABLE v3.parties ADD CONSTRAINT parties_treaty_rate_chk
+      CHECK (treaty_rate_pct IS NULL OR (treaty_rate_pct >= 0 AND treaty_rate_pct <= 20.42));
+  END IF;
+END $a057$;
+COMMENT ON COLUMN v3.parties.residency IS 'resident=居住者（国内）/ non_resident=非居住者（海外）。源泉の税率の出し方が変わる';
+COMMENT ON COLUMN v3.parties.treaty_rate_pct IS '租税条約の源泉の税率（%）。届出書・居住者証明書が支払日までにあるときだけ使う。無ければ国内法 20.42%';
+COMMENT ON COLUMN v3.parties.treaty_docs_received_on IS '租税条約の届出書・居住者証明書を受け取った日。支払日より後なら条約の税率は使わない';
+
 COMMIT;
 
 
@@ -2301,6 +2331,15 @@ SELECT * FROM (
         + (SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='parties'
               AND column_name IN ('rpt_entity', 'has_board', 'related_party', 'related_party_type', 'related_party_note')))::text
+  UNION ALL
+  SELECT 57, '非居住者と租税条約（A-057。列 5 と CHECK 2 で 7 であること）',
+         ((SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='v3' AND table_name='parties'
+              AND column_name IN ('residency', 'residence_country', 'treaty_rate_pct',
+                                  'treaty_docs_received_on', 'treaty_note'))
+        + (SELECT count(*) FROM pg_constraint
+            WHERE conrelid='v3.parties'::regclass
+              AND conname IN ('parties_residency_chk', 'parties_treaty_rate_chk')))::text
   UNION ALL
   SELECT 56, '税区分「税込（海外・内税）」（A-056。CHECK に included があること＝1）',
          (SELECT count(*) FROM pg_constraint

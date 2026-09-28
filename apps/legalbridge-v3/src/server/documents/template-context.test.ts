@@ -867,3 +867,28 @@ test("国内の検収書の計算は変わらない（課税 10%）", () => {
 test("海外用の検収書は検収書として明細の欄を持つ", () => {
   assert.deepEqual(lineFieldsFor("intl_inspection_certificate"), ["delivery_line_items", "other_fees", "expenses"]);
 });
+
+// ---- 非居住者の源泉の税率（A-057）------------------------------------------
+
+test("源泉の欄の税率：非居住者は 20.42%、条約の書類が支払日までにあれば条約の税率", async () => {
+  const { withholdingRateTextEn } = await import("./template-context.js");
+  const nr = { withholding: true, residency: "non_resident", residenceCountry: "United Kingdom" };
+  assert.equal(withholdingRateTextEn(nr, "2026-10-31"), "20.42% (Japanese domestic rate for non-residents)");
+  assert.match(withholdingRateTextEn({ ...nr, treatyRatePct: 10 }, "2026-10-31"),
+    /^20\.42% \(Japanese domestic rate\); 10% under the Japan–United Kingdom tax treaty if/);
+  assert.match(withholdingRateTextEn({ ...nr, treatyRatePct: 0, treatyDocsReceivedOn: "2026-10-01" }, "2026-10-31"),
+    /^0% under the Japan–United Kingdom tax treaty \(treaty application form and certificate of residence received\)/);
+  assert.equal(withholdingRateTextEn({ ...nr, withholding: false }, "2026-10-31"), "", "源泉なしなら出さない");
+  assert.equal(withholdingRateTextEn({ withholding: true, residency: "resident" }), "", "居住者は従来の案内");
+});
+
+test("海外発注書・Acceptance Certificate に源泉の税率の文が入る", () => {
+  const cp = { withholding: true, residency: "non_resident", treatyRatePct: 10, treatyDocsReceivedOn: "2026-08-01" };
+  const po = buildTemplateContext("intl_purchase_order",
+    ctx({ events: [], condition: condition({ currency: "USD", counterparty: cp }) }),
+    { items: [{ item_name: "a", amount_ex_tax: 10, payment_date: "2026-10-31" }] });
+  assert.match(String(po.withholding_rate_text), /^10% under the applicable tax treaty/);
+  const ac = buildTemplateContext("intl_inspection_certificate",
+    ctx({ condition: condition({ currency: "USD", counterparty: cp }) }), {});
+  assert.match(String(ac.withholding_rate_text), /^10% under/);
+});
