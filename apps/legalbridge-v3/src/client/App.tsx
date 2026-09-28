@@ -116,6 +116,8 @@ export function App() {
    */
   const openHit = (hit: SearchHit) => {
     if (hit.target === "condition") return openCondition(hit.id);
+    if (hit.target === "agreement") return openEntity("agreement", hit.id);
+    if (hit.target === "request") { setConditionId(undefined); setFocus({ view: "intake", id: hit.id }); setView("intake"); return; }
     setConditionId(undefined);
     const next = ({ matter: "matters", document: "documents", party: "parties",
                     work: "works", payment: "money" } as const)[hit.target];

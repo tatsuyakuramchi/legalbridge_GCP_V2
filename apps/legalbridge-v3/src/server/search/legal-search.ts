@@ -89,7 +89,8 @@ export class LegalSearchService {
     try {
       const [check, hits, requestRows, backlogRows, ringi] = await Promise.all([
         this.contracts.check(q),
-        this.repository.search(q, 5),
+        // Slack の返事は、これまでどおりの種類だけ（契約・依頼は別の欄で返している）。
+        this.repository.search(q, 5, ["matter", "condition", "document", "work", "party", "payment"]),
         this.database.query(
           `SELECT r.request_no, r.title, r.state, r.backlog_issue_key, m.matter_no
              FROM intake_requests r LEFT JOIN matters m ON m.id = r.matter_id

@@ -70,7 +70,7 @@ import { PaymentService } from "./payments/service.js";
 import { PaymentAllocationService } from "./payments/allocation-service.js";
 import { PartyRepository } from "./parties/repository.js";
 import { OpsRepository } from "./ops/repository.js";
-import { SearchRepository } from "./search/repository.js";
+import { SEARCH_TARGETS, SearchRepository, normalizeQuery, type SearchTarget } from "./search/repository.js";
 import { ExportRepository, DATASETS, type Dataset } from "./exports/repository.js";
 import { filename, withBom } from "./exports/csv.js";
 import { AccountingExportLedger, AccountingExportRepository } from "./exports/accounting-repository.js";
@@ -1111,10 +1111,14 @@ export function createRoutes(database: Transactable) {
   }));
 
   // 横断検索。2文字未満は引かない（全件走査になるだけで役に立たない）。
+  // type を付けるとその種類だけを多めに引く（画面の「もっと見る」）。
   router.get("/search", asyncRoute(async (req, res) => {
     const q = String(req.query.q ?? "").trim().slice(0, 100);
-    if (q.length < 2) return res.json({ query: q, results: [] });
-    res.json({ query: q, results: await search.search(q) });
+    if (normalizeQuery(q).length < 2) return res.json({ query: q, results: [], more: {} });
+    const type = String(req.query.type ?? "");
+    const targets = SEARCH_TARGETS.includes(type as SearchTarget) ? [type as SearchTarget] : undefined;
+    const found = await search.find(q, { targets, limitPerType: targets ? 40 : 6 });
+    res.json({ query: q, ...found });
   }));
 
   // ---------------------------------------------------------------------
