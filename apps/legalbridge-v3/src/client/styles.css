@@ -743,3 +743,21 @@ table.compact th,table.compact td{padding:4px 8px}
   gap: 10px; align-items: start; padding: 7px 6px; }
 @media (max-width: 1100px) { .ledger-detail > aside { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 760px) { .ledger-round, .ledger-part-row { grid-template-columns: minmax(0, 1fr); } }
+
+/* 利用許諾計算：左に回、右にその回の中身（1 報告 → 2 計算書 → 3 送付・支払）。 */
+.ledger-head { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+.ledger-term-chip { border: 1px solid var(--line); border-radius: 4px; padding: 1px 8px; font-size: 12px; background: var(--surface); white-space: nowrap; }
+.ledger-split { display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); gap: 14px; align-items: start; }
+@media (max-width: 900px) { .ledger-split { grid-template-columns: minmax(0, 1fr); } }
+.ledger-split .ledger-round { display: flex; flex-direction: column; gap: 2px; padding: 7px 10px; text-align: left; }
+.ledger-split .ledger-round[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.ledger-step { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 10px; align-items: start; }
+.step-no { width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 12px; font-weight: 700;
+  display: grid; place-items: center; margin-top: 2px; }
+.step-no.done { background: var(--ok); }
+.step-no.todo { background: var(--sunken); color: var(--muted); }
+.ledger-calc { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 320px); gap: 14px; align-items: start; }
+@media (max-width: 1100px) { .ledger-calc { grid-template-columns: minmax(0, 1fr); } }
+table.report td { vertical-align: middle; }
+table.report tr.wait td { background: var(--warn-soft); }
+table.report tr.edit td { background: var(--accent-soft); }

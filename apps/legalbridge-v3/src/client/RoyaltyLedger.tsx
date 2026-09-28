@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "./api.js";
 import { useReadOnly } from "./read-only.js";
-import { ConditionEvents } from "./ConditionEvents.js";
+import { RoundReport } from "./RoundReport.js";
 import { RoyaltyCloses } from "./RoyaltyCloses.js";
 import { StatementBreakdown, type StatementLine, type StatementTotals } from "./StatementLines.js";
 import { roundTargets, roundTitle } from "./RoundPicker.js";
 import type {
-  LedgerCondition, LedgerView, Round, RoundPart, WorkRoyaltyParty
+  LedgerCondition, LedgerView, Round, WorkRoyaltyParty
 } from "../server/royalty/ledger-service.js";
+import type { DocBack } from "./WorksWorkspace.js";
 
 /**
  * 作品 › 利用許諾計算（許諾料の台帳）。docs/royalty-ledger.md
@@ -27,6 +28,10 @@ const yen = (n: number | null | undefined, currency = "JPY") =>
     ? `¥${Number(n).toLocaleString("ja-JP")}` : `${currency} ${(Number(n) / 100).toLocaleString("en-US")}`;
 const pct = (ppm: number | null) => (ppm === null ? "—" : `${ppm / 10000}%`);
 const md = (iso: string | null) => (iso ? `${Number(iso.slice(5, 7))}/${Number(iso.slice(8, 10))}` : "—");
+
+/** まだ数字の無い行の数。来るはずの行と、行の無い報告待ちの条件。 */
+const waitingLinesOf = (r: Round) => r.parts
+  .reduce((n, p) => n + (p.state === "waiting" || p.state === "before" ? Math.max(p.expected.length, 1) : p.expected.length), 0);
 
 const ROUND_STATE: Record<string, { label: string; tag: string }> = {
   before: { label: "締め前", tag: "" },
@@ -65,9 +70,9 @@ export function RoyaltyLedger(
      * 計算書を作る。その回の条件と実績を選んだ状態で文書の画面へ移る。
      * 中身の確認・手入力・下書き保存・決定は文書の画面でする（台帳からいきなり決定しない）。
      */
-    onCompose?: (conditionIds: number[], eventIds: number[], templateKey: string | null) => void;
+    onCompose?: (conditionIds: number[], eventIds: number[], templateKey: string | null, back: DocBack) => void;
     initialPartyId?: number | null;
-    onOpenDocument?: (documentId: number) => void;
+    onOpenDocument?: (documentId: number, back?: DocBack | null) => void;
     /** 作家・作品 → 依頼。受付箱のその依頼を開く。 */
     onOpenRequest?: (requestId: number) => void;
   }
@@ -101,7 +106,7 @@ export function RoyaltyLedger(
     api.get<LedgerView>(`/royalty-ledger?partyId=${partyId}${allWorks ? "" : `&workId=${workId}`}`)
       .then((v) => {
         setView(v);
-        setSelected((cur) => cur && v.rounds.some((r) => r.key === cur) ? cur : v.rounds.find((r) => r.state !== "before")?.key ?? v.rounds[0]?.key ?? null);
+        setSelected((cur) => cur && [...v.rounds, ...v.history].some((r) => r.key === cur) ? cur : v.rounds.find((r) => r.state !== "before")?.key ?? v.rounds[0]?.key ?? null);
       })
       .catch((e: ApiError) => setError(e.message));
   }, [partyId, allWorks, workId, version]);
@@ -109,6 +114,7 @@ export function RoyaltyLedger(
   const reload = (message?: string) => { if (message) setNotice(message); setError(null); setVersion((n) => n + 1); };
   const openRequests = useOpenRequests(version);
   const [bulkOpen, setBulkOpen] = useState(false);
+  const [settings, setSettings] = useState(false);
   const [bulkBefore, setBulkBefore] = useState(new Date().toISOString().slice(0, 10));
   async function linkRequest(requestId: number, round: Round, unlink = false) {
     try {
@@ -127,7 +133,11 @@ export function RoyaltyLedger(
   }
   const oldWaiting = view ? view.rounds.flatMap((r) => r.parts).filter((p) => p.state === "waiting").length : 0;
   const party = parties?.find((p) => p.id === partyId) ?? null;
-  const round = view?.rounds.find((r) => r.key === selected) ?? null;
+  const round = [...(view?.rounds ?? []), ...(view?.history ?? [])].find((r) => r.key === selected) ?? null;
+  /** 文書の画面から戻る先。この作家 × この作品。 */
+  const back: DocBack | null = view ? { label: `${view.party.name} × ${view.scope?.workTitle ?? "全作品"}`, workId, partyId: view.party.id } : null;
+  const openDoc = onOpenDocument ? (id: number) => onOpenDocument(id, back) : undefined;
+  const composeWith = onCompose && back ? (ids: number[], events: number[], key: string | null) => onCompose(ids, events, key, back) : undefined;
 
   async function setBundle(bundle: "per_work" | "per_party") {
     if (!view) return;
@@ -168,56 +178,72 @@ export function RoyaltyLedger(
 
       {view && (
         <>
-          <div className="panel">
-            <div className="panel-hd">
-              <h2>{view.party.name}{allWorks ? " × 全作品" : ` × ${view.scope?.workTitle ?? ""}`}</h2>
-              <span className="faint">{view.party.kind === "individual" ? "個人" : "法人"}・{view.party.residency === "non_resident" ? "非居住者" : "居住者"}</span>
-              <span className="row" style={{ marginLeft: "auto", gap: 6 }}>
-                <span className="chips" role="group" aria-label="見る範囲">
-                  <button className="chip" aria-pressed={!allWorks} onClick={() => { setAllWorks(false); setSelected(null); }}>この作品</button>
-                  <button className="chip" aria-pressed={allWorks} onClick={() => { setAllWorks(true); setSelected(null); }}>
-                    この作家の全作品{party ? `（${party.otherWorks + 1}）` : ""}
-                  </button>
-                </span>
-                <span className="faint">計算書のまとめ方</span>
-                <span className="chips" role="group" aria-label="計算書のまとめ方">
-                  <button className="chip" disabled={!canWrite} aria-pressed={view.party.bundle === "per_work"}
-                          onClick={() => void setBundle("per_work")}>作品ごと</button>
-                  <button className="chip" disabled={!canWrite} aria-pressed={view.party.bundle === "per_party"}
-                          onClick={() => void setBundle("per_party")}>作家でまとめる</button>
-                </span>
+          {/* 見出し：作家 × 作品。条件と締めの設定は押したときだけ開く。 */}
+          <div className="ledger-head">
+            <div className="stack" style={{ gap: 0 }}>
+              <h2 style={{ margin: 0 }}>{view.party.name}{allWorks ? " × 全作品" : ` × ${view.scope?.workTitle ?? ""}`}</h2>
+              <span className="faint">
+                {view.party.kind === "individual" ? "個人" : "法人"}・{view.party.residency === "non_resident" ? "非居住者" : "居住者"}
+                　· 計算書は{view.party.bundle === "per_party" ? "作家でまとめる" : "作品ごと"}
               </span>
             </div>
-            <div className="panel-bd">
-              <Terms conditions={view.conditions} allWorks={allWorks} canWrite={canWrite}
-                     onChanged={reload} onError={setError} />
-              {!allWorks && view.party.bundle === "per_party" && (
-                <div className="faint" style={{ marginTop: 6 }}>
-                  この作家は「作家でまとめる」です。同じ支払日の他の作品とは、「この作家の全作品」から1枚で出します。
-                </div>
-              )}
+            <div className="row" style={{ gap: 6, marginLeft: "auto" }}>
+              <span className="chips" role="group" aria-label="見る範囲">
+                <button className="chip" aria-pressed={!allWorks} onClick={() => { setAllWorks(false); setSelected(null); }}>この作品</button>
+                <button className="chip" aria-pressed={allWorks} onClick={() => { setAllWorks(true); setSelected(null); }}>
+                  この作家の全作品{party ? `（${party.otherWorks + 1}）` : ""}
+                </button>
+              </span>
+              {view.conditions.map((c) => (
+                <span key={c.id} className="ledger-term-chip">
+                  <span className="faint">{c.usageLabel}</span> <b>{c.pricingModel === "unit_rate" ? yen(c.unitAmount, c.currency) : pct(c.ratePpm)}</b>
+                  <span className="faint"> · {c.timing === "event" ? "イベント式" : `締め ${c.schedules} 回`}</span>
+                </span>
+              ))}
+              <button className="btn btn-sm" aria-pressed={settings} onClick={() => setSettings(!settings)}>条件と締めの設定…</button>
             </div>
           </div>
-
-          <div className="panel">
-            <div className="panel-hd">
-              <h2>開いている回</h2>
-              <span className="faint">支払まで終わっていない回。締めがずれた契約も、支払日が同じなら1つの回</span>
-              {canWrite && oldWaiting > 0 && (
-                <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={() => setBulkOpen(!bulkOpen)}>
-                  空の回をまとめて報告なしに…
-                </button>
-              )}
+          {settings && (
+            <div className="panel">
+              <div className="panel-hd"><h2>条件と締め</h2><span className="faint">出し方と締めの時期だけ。料率・MG・AG は条件明細で</span>
+                <span className="row" style={{ marginLeft: "auto", gap: 6 }}>
+                  <span className="faint">計算書のまとめ方</span>
+                  <span className="chips" role="group" aria-label="計算書のまとめ方">
+                    <button className="chip" disabled={!canWrite} aria-pressed={view.party.bundle === "per_work"} onClick={() => void setBundle("per_work")}>作品ごと</button>
+                    <button className="chip" disabled={!canWrite} aria-pressed={view.party.bundle === "per_party"} onClick={() => void setBundle("per_party")}>作家でまとめる</button>
+                  </span>
+                </span>
+              </div>
+              <div className="panel-bd">
+                <Terms conditions={view.conditions} allWorks={allWorks} canWrite={canWrite} onChanged={reload} onError={setError} />
+                {canWrite && oldWaiting > 0 && (
+                  <div className="row" style={{ marginTop: 8 }}>
+                    {!bulkOpen && <button className="btn btn-sm" onClick={() => setBulkOpen(true)}>空の回をまとめて報告なしに…</button>}
+                    {bulkOpen && (
+                      <div className="note row" style={{ gap: 8 }}>
+                        <span>締めが</span>
+                        <input type="date" value={bulkBefore} onChange={(e) => setBulkBefore(e.target.value)} aria-label="この日より前" />
+                        <span>より前で、実績の無い回（報告待ち）をすべて「報告なし」にします。実績のある回・締め前の回はそのままです。あとで1本ずつ取り消せます。</span>
+                        <button className="btn btn-sm primary" onClick={() => void skipBefore()}>報告なしにする</button>
+                        <button className="btn btn-sm" onClick={() => setBulkOpen(false)}>やめる</button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
-            <div className="panel-bd stack">
-              {bulkOpen && (
-                <div className="note row" style={{ gap: 8 }}>
-                  <span>締めが</span>
-                  <input type="date" value={bulkBefore} onChange={(e) => setBulkBefore(e.target.value)} aria-label="この日より前" />
-                  <span>より前で、実績の無い回（報告待ち）をすべて「報告なし」にします。実績のある回・締め前の回はそのままです。あとで1本ずつ取り消せます。</span>
-                  <button className="btn btn-sm primary" onClick={() => void skipBefore()}>報告なしにする</button>
-                </div>
-              )}
+          )}
+
+          {/* 左に回の一覧、右にその回の中身。 */}
+          <div className="ledger-split">
+            <div className="stack" style={{ gap: 6 }}>
+              <div className="row" style={{ justifyContent: "space-between" }}>
+                <h2 style={{ margin: 0 }}>回</h2>
+                <span className="faint">支払日でまとめる</span>
+              </div>
+              {view.rounds.map((r) => <RoundCard key={r.key} round={r} view={view} selected={r.key === selected}
+                                                 onSelect={() => setSelected(r.key)} />)}
+              {!view.rounds.length && <span className="faint">開いている回はありません。締めを作ると回が出ます。</span>}
               {view.requests.length > 0 && (
                 <div className="note stack" style={{ gap: 4 }}>
                   <b>回を選んでいない依頼</b>
@@ -227,30 +253,22 @@ export function RoyaltyLedger(
                         ? <button className="tag pin" onClick={() => onOpenRequest(q.id)}>{q.requestNo ?? `#${q.id}`}</button>
                         : <span className="tag pin">{q.requestNo ?? `#${q.id}`}</span>}
                       <span>{q.title}</span>
-                      <span className="faint">担当 {q.assigneeName ?? "未定"}</span>
                       {canWrite && round && (
-                        <button className="btn btn-sm" onClick={() => void linkRequest(q.id, round)}>選んでいる回（{roundTitle(round)}）に紐づける</button>
+                        <button className="linky" onClick={() => void linkRequest(q.id, round)}>{roundTitle(round)}に付ける</button>
                       )}
                     </div>
                   ))}
                 </div>
               )}
-              <div className="ledger-rounds">
-                {view.rounds.map((r) => <RoundCard key={r.key} round={r} view={view} selected={r.key === selected}
-                                                   onSelect={() => setSelected(r.key)} />)}
-                {!view.rounds.length && <span className="faint">開いている回はありません。</span>}
-              </div>
+              <History view={view} onSelect={(key) => setSelected(key)} selected={selected} />
             </div>
+            {round
+              ? <RoundDetail key={`${round.key}-${version}`} round={round} view={view} canWrite={canWrite}
+                             onChanged={reload} onError={setError} onOpenDocument={openDoc}
+                             openRequests={openRequests} onLink={linkRequest} onOpenRequest={onOpenRequest}
+                             onCompose={composeWith} />
+              : <div className="panel"><div className="panel-bd faint">左で回を選ぶと、ここに報告の表と計算書が出ます。</div></div>}
           </div>
-
-          {round && (
-            <RoundDetail key={`${round.key}-${version}`} round={round} view={view} canWrite={canWrite}
-                         onChanged={reload} onError={setError} onOpenDocument={onOpenDocument}
-                         openRequests={openRequests} onLink={linkRequest} onOpenRequest={onOpenRequest}
-                         onCompose={onCompose} />
-          )}
-
-          <History view={view} onOpenDocument={onOpenDocument} />
         </>
       )}
     </div>
@@ -314,34 +332,27 @@ function Terms(
 function RoundCard({ round: r, view, selected, onSelect }: { round: Round; view: LedgerView; selected: boolean; onSelect: () => void }) {
   const n = r.parts.length;
   const done = r.parts.filter((p) => p.state !== "waiting" && p.state !== "before").length;
+  const waiting = r.open && (r.state === "input" || r.state === "ready") ? waitingLinesOf(r) : 0;
   const periods = [...new Set(r.parts.map((p) => p.label).filter(Boolean))];
   const works = r.workIds.map((id) => view.works.find((w) => w.id === id)?.title).filter(Boolean);
   const st = ROUND_STATE[r.state] ?? { label: r.state, tag: "" };
   return (
     <button className="ledger-round" aria-pressed={selected} onClick={onSelect}>
-      <span className="stack" style={{ gap: 0 }}>
-        <span className="row" style={{ gap: 6 }}>
-          <span className={`tag ${r.kind === "event" ? "warn" : ""}`}>{r.kind === "event" ? "製造" : "期"}</span>
-          <b>{roundTitle(r)}</b>
-          {works.length === 1 && view.works.length > 1 && <span className="faint">{works[0]}</span>}
-        </span>
-        <span className="faint">
-          {r.kind === "event" ? `支払 ${r.payOn ?? "（支払条件から出せない）"}` : `締め ${periods.slice(0, 3).join("・")}${periods.length > 3 ? " ほか" : ""}`}
-        </span>
+      <span className="row" style={{ gap: 6, justifyContent: "space-between" }}>
+        <b>{periods.length ? periods.slice(0, 2).join("・") : roundTitle(r)}{periods.length > 2 ? " ほか" : ""}</b>
+        <span className={`tag ${waiting ? "warn" : st.tag}`}>{waiting ? `報告待ち ${waiting}` : st.label}</span>
       </span>
-      <span className="stack" style={{ gap: 2 }}>
-        <span className="faint">{works.length > 1 ? `${works.length} 作品 · ` : ""}実績 {done}/{n}</span>
-        <span className="bar"><i style={{ width: `${n ? (done / n) * 100 : 0}%` }} /></span>
+      <span className="faint">
+        {r.kind === "event" ? `製造 ${r.closeOn ?? ""}` : `締め ${md(r.closeOn)}`} · 支払 {r.payOn ? md(r.payOn) : "—"}
+        {works.length > 1 ? ` · ${works.length} 作品` : works.length === 1 && view.works.length > 1 ? ` · ${works[0]}` : ""}
+        {r.requests.map((q) => <span key={q.id} className="tag pin" style={{ marginLeft: 4 }}>{q.requestNo ?? `#${q.id}`}</span>)}
       </span>
-      <span className="row" style={{ gap: 4, justifyContent: "flex-end" }}>
-        <span className={`tag ${st.tag}`}>{st.label}</span>
-        {r.requests.map((q) => <span key={q.id} className="tag pin">{q.requestNo ?? `#${q.id}`}</span>)}
-      </span>
+      {r.open && <span className="bar"><i style={{ width: `${n ? (done / n) * 100 : 0}%` }} /></span>}
     </button>
   );
 }
 
-/** 選んだ回：作品・条件ごとの実績、今期は無し、来るはずの行、計算書。 */
+/** 選んだ回：1 報告を入れる → 2 計算書を作る → 3 送付・支払。上から下へ進むだけ。 */
 function RoundDetail(
   { round: r, view, canWrite, onChanged, onError, onOpenDocument, openRequests, onLink, onOpenRequest, onCompose }: {
     round: Round; view: LedgerView; canWrite: boolean;
@@ -354,25 +365,17 @@ function RoundDetail(
   }
 ) {
   const [pickRequest, setPickRequest] = useState("");
-  const [filter, setFilter] = useState<"all" | "waiting" | "reported" | "done">("all");
-  const [q, setQ] = useState("");
-  const [recording, setRecording] = useState<string | null>(null);
-  /** 「来るはず」の行から開いたとき、その行の利用形態・許諾先・言語を入れておく。 */
-  const [preset, setPreset] = useState<{ usageType?: string | null; outConditionId?: number | null; languages?: string[] } | null>(null);
   const [preview, setPreview] = useState<{ lines: StatementLine[]; totals: StatementTotals } | null>(null);
-  /** 試算で弾かれた理由。回の中の話なので、画面の上ではなく計算書の欄に出す。 */
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [templates, setTemplates] = useState<Array<{ templateKey: string; label: string }>>([]);
   const [templateKey, setTemplateKey] = useState("");
-  const cond = (id: number) => view.conditions.find((c) => c.id === id)!;
-  const partKey = (p: RoundPart) => `${p.conditionId}:${p.scheduleId ?? ""}:${p.eventId ?? ""}`;
 
   // 計算書に入れるのは、まだ文書に結ばれていない実績。
   const entries = useMemo(() => r.parts
     .map((p) => ({ conditionId: p.conditionId, eventIds: p.events.filter((e) => !e.documentId).map((e) => e.id),
                    period: p.label ?? null }))
     .filter((e) => e.eventIds.length), [r]);
-  const waiting = r.parts.filter((p) => p.state === "waiting" || p.state === "before");
+  const waitingLines = r.open && r.state !== "issued" ? waitingLinesOf(r) : 0;
 
   useEffect(() => {
     if (!entries.length) { setPreview(null); setPreviewError(null); return; }
@@ -381,7 +384,6 @@ function RoundDetail(
       .then((x) => { if (live) { setPreview(x); setPreviewError(null); } })
       .catch((e: ApiError) => { if (live) { setPreview(null); setPreviewError(e.message); } });
     return () => { live = false; };
-    // 実績を足した・直したときも試算し直す（件数だけ見ると、入れ替わりを見落とす）。
   }, [r.key, entries.map((e) => `${e.conditionId}:${e.eventIds.join("-")}`).join(",")]);
   useEffect(() => {
     api.get<{ templates: Array<{ templateKey: string; label: string }> }>("/document-templates")
@@ -393,137 +395,93 @@ function RoundDetail(
       .catch(() => undefined);
   }, []);
 
-  async function skip(p: RoundPart, undo = false) {
-    if (!p.scheduleId) return;
-    try {
-      if (undo) await api.del(`/royalty-ledger/skips?conditionId=${p.conditionId}&scheduleId=${p.scheduleId}`);
-      else await api.post("/royalty-ledger/skips", { conditionId: p.conditionId, scheduleId: p.scheduleId });
-      onChanged(undo ? "「報告なし」を取り消しました" : "報告なしにしました");
-    } catch (e) { onError((e as ApiError).message); }
-  }
   /** 文書の画面へ。この回のまだ文書に結ばれていない実績と、その条件を選んだ状態で開く。 */
   function compose() {
     if (!onCompose) return;
     onCompose(entries.map((e) => e.conditionId), entries.flatMap((e) => e.eventIds), templateKey || null);
   }
 
-  const bucket = (p: RoundPart) => p.state === "waiting" || p.state === "before" ? "waiting"
-    : p.state === "reported" ? "reported" : "done";
-  const counts = { all: r.parts.length, waiting: 0, reported: 0, done: 0 };
-  r.parts.forEach((p) => counts[bucket(p)]++);
-  const order = { waiting: 0, reported: 1, done: 2 };
-  const list = r.parts
-    .filter((p) => filter === "all" || bucket(p) === filter)
-    .filter((p) => !q || `${cond(p.conditionId).workTitle ?? ""}${cond(p.conditionId).usageLabel}`.includes(q))
-    .sort((a, b) => order[bucket(a)] - order[bucket(b)]);
   const st = ROUND_STATE[r.state] ?? { label: r.state, tag: "" };
+  const periods = [...new Set(r.parts.map((p) => p.label).filter(Boolean))];
+  const step1Done = !waitingLines && r.parts.every((p) => p.state === "issued" || p.state === "skipped" || p.state === "reported");
+  const step2Done = r.documents.length > 0 && !entries.length;
+  const canCompose = canWrite && Boolean(templateKey) && Boolean(preview) && Boolean(onCompose) && entries.length > 0;
+  const pending = new Set(view.requests.map((x) => x.id));
+  const candidates = openRequests
+    .filter((x) => !r.requests.some((y) => y.id === x.id))
+    .sort((a, b) => Number(pending.has(b.id)) - Number(pending.has(a.id)));
 
   return (
-    <div className="ledger-detail">
-      <div className="panel">
-        <div className="panel-hd">
-          <h2>{roundTitle(r)}</h2>
-          <span className={`tag ${st.tag}`}>{st.label}</span>
-          <span className="chips" style={{ marginLeft: "auto" }} role="group" aria-label="絞り込み">
-            {(["all", "waiting", "reported", "done"] as const).map((f) => (
-              <button key={f} className="chip" aria-pressed={filter === f} onClick={() => setFilter(f)}>
-                {{ all: "すべて", waiting: "報告待ち", reported: "入力済", done: "済・無し" }[f]} {counts[f]}
-              </button>
-            ))}
-          </span>
-          {r.parts.length > 6 && (
-            <input className="inline-input" placeholder="作品名で探す" value={q} onChange={(e) => setQ(e.target.value)} />
-          )}
+    <div className="panel">
+      <div className="panel-hd">
+        <h2>{periods.length ? periods.join("・") : roundTitle(r)}の回</h2>
+        <span className="faint">{r.kind === "event" ? `製造 ${r.closeOn ?? ""}` : `締め ${r.closeOn ?? "—"}`} · 支払 {r.payOn ?? "—"}</span>
+        <span className={`tag ${st.tag}`} style={{ marginLeft: "auto" }}>{st.label}</span>
+      </div>
+      <div className="panel-bd stack" style={{ gap: 14 }}>
+        {/* 1 報告を入れる */}
+        <div className="ledger-step">
+          <span className={`step-no ${step1Done ? "done" : ""}`}>1</span>
+          <div className="stack" style={{ gap: 4, minWidth: 0 }}>
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <b>報告を入れる</b>
+              <span className="faint">相手から来た数字を行に打つ。発生日は締め日で入る。</span>
+            </div>
+            <RoundReport round={r} view={view} canWrite={canWrite} onChanged={onChanged} onError={onError} onOpenDocument={onOpenDocument} />
+          </div>
         </div>
-        <div className="panel-bd stack" style={{ gap: 0 }}>
-          {list.map((p) => {
-            const c = cond(p.conditionId);
-            const ps = PART_STATE[p.state] ?? { label: p.state, tag: "" };
-            const key = partKey(p);
-            return (
-              <div key={key} className={`ledger-part${p.state === "waiting" ? " waiting" : ""}`}>
-                <div className="ledger-part-row">
-                  <span className="stack" style={{ gap: 0 }}>
-                    <span>{c.workTitle ?? "—"} · {c.usageLabel}</span>
-                    <span className="faint code">{c.conditionNo ?? `#${c.id}`}</span>
-                  </span>
-                  <span className="stack" style={{ gap: 0 }}>
-                    <span>{p.label ?? p.closeOn ?? ""}</span>
-                    <span className="faint">{p.eventId !== null ? "" : `締め ${p.closeOn ?? "—"}${p.payOn ? ` · 支払 ${p.payOn}` : ""}`}</span>
-                  </span>
-                  <span className="stack" style={{ gap: 0 }}>
-                    {p.events.map((e) => (
-                      <span key={e.id} className="faint">
-                        {e.occurredOn} {e.outName ? `${e.outName} ` : e.workTitle ? `${e.workTitle} ` : ""}
-                        {[...(e.languages ?? []), ...(e.regions ?? [])].length ? `［${[...(e.languages ?? []), ...(e.regions ?? [])].join("・")}］ ` : ""}
-                        {e.quantity !== null ? `${e.quantity.toLocaleString()} 個 ` : ""}
-                        {e.grossAmount !== null ? `報告 ${yen(e.grossAmount, c.currency)}` : ""}
-                        {e.documentId ? " · 計算書済 " : ""}
-                        {e.documentId && (onOpenDocument
-                          ? <button className="linky code" title="決定した計算書を開く"
-                                    onClick={() => onOpenDocument(e.documentId!)}>{e.documentNo ?? `#${e.documentId}`}</button>
-                          : <span className="code">{e.documentNo ?? `#${e.documentId}`}</span>)}
-                      </span>
-                    ))}
-                    {p.expected.map((x, i) => (
-                      <span key={i} className="row" style={{ gap: 6, color: "var(--warn)" }}>
-                        来るはず：{x.outName ?? x.workTitle ?? x.usageType ?? "前の回の行"}
-                        {[...(x.languages ?? []), ...(x.regions ?? [])].length ? `［${[...(x.languages ?? []), ...(x.regions ?? [])].join("・")}］` : ""}
-                        （{x.why}）
-                        {canWrite && p.state !== "issued" && !p.skipped && (
-                          <button className="btn btn-sm" onClick={() => {
-                            setPreset({ usageType: x.usageType, outConditionId: x.outConditionId, languages: x.languages ?? [] });
-                            setRecording(key);
-                          }}>この行を入れる</button>
-                        )}
-                      </span>
-                    ))}
-                    {!p.events.length && !p.expected.length && <span className="faint">実績なし</span>}
-                  </span>
-                  <span className="row" style={{ gap: 4, justifyContent: "flex-end" }}>
-                    <span className={`tag ${ps.tag}`}>{ps.label}</span>
-                    {canWrite && p.state !== "issued" && !p.skipped && (
-                      <button className="btn btn-sm" onClick={() => {
-                        setPreset(["in_house", "sublicense", "oem"].includes(c.usageType ?? "") ? { usageType: c.usageType } : null);
-                        setRecording(recording === key ? null : key);
-                      }}>実績を入れる</button>
-                    )}
-                    {canWrite && p.scheduleId && !p.events.length && !p.skipped && (
-                      <button className="btn btn-sm" title="この回は報告が来なかった" onClick={() => void skip(p)}>報告なし</button>
-                    )}
-                    {canWrite && p.skipped && p.scheduleId && (
-                      <button className="btn btn-sm" onClick={() => void skip(p, true)}>取り消す</button>
-                    )}
-                  </span>
+
+        {/* 2 計算書を作る */}
+        <div className="ledger-step">
+          <span className={`step-no ${step2Done ? "done" : entries.length ? "" : "todo"}`}>2</span>
+          <div className="stack" style={{ gap: 4, minWidth: 0 }}>
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <b>計算書を作る</b>
+              <span className="faint">{entries.length ? "入力済の報告で試算しています" : r.documents.length ? "この回の報告はすべて計算書に入っています" : "報告を入れると試算が出ます"}</span>
+            </div>
+            {entries.length > 0 && (
+              <div className="stack" style={{ gap: 8 }}>
+                <div className="row" style={{ gap: 8 }}>
+                  {canWrite && (
+                    <button className="btn primary" disabled={!canCompose} onClick={compose}
+                            title={waitingLines ? `報告待ちが ${waitingLines} 行あります（待たずに出すと入力済の分だけの計算書になります）` : ""}>
+                      計算書を作る（文書の画面へ）
+                    </button>
+                  )}
+                  {canWrite && templates.length > 1 && (
+                    <select value={templateKey} onChange={(e) => setTemplateKey(e.target.value)} aria-label="ひな形">
+                      {templates.map((t) => <option key={t.templateKey} value={t.templateKey}>{t.label}</option>)}
+                    </select>
+                  )}
+                  <span className="faint">文書の画面で本文を確かめ、見出しを直して決定します。決定するまで番号は振られません。</span>
                 </div>
-                {recording === key && (
-                  <div style={{ padding: "6px 0 10px" }}>
-                    <ConditionEvents conditionId={c.id} currency={c.currency} pricingModel={c.pricingModel}
-                      ratePpm={c.ratePpm} direction="in" kind="license"
-                      conditionUnitAmount={c.unitAmount} workTitle={c.workTitle} workId={c.workId}
-                      editable={canWrite} openForSchedule={p.scheduleId} preset={preset}
-                      onOpenDocument={onOpenDocument}
-                      onChanged={() => { setRecording(null); onChanged("実績を入れました"); }} />
+                {waitingLines > 0 && (
+                  <div className="note warn">
+                    報告待ちが {waitingLines} 行あります。待たずに出すと入力済の分だけの計算書になります（残りは「報告なし」にするか、あとで別の計算書に）。
                   </div>
                 )}
+                {preview && <StatementBreakdown lines={preview.lines} totals={preview.totals} />}
+                {previewError && <div className="alert">試算できません：{previewError}</div>}
               </div>
-            );
-          })}
-          {!list.length && <div className="faint">当たる行はありません。</div>}
+            )}
+          </div>
         </div>
-      </div>
 
-      <aside className="stack">
-        <div className="panel">
-          <div className="panel-hd"><h2>この回の計算書</h2>
-            <span className="faint">{view.party.bundle === "per_party" ? "作家でまとめる" : "作品ごと"}</span></div>
-          <div className="panel-bd stack">
+        {/* 3 送付・支払 */}
+        <div className="ledger-step">
+          <span className={`step-no ${r.state === "paid" || r.state === "nopay" ? "done" : r.documents.length ? "" : "todo"}`}>3</span>
+          <div className="stack" style={{ gap: 4, minWidth: 0 }}>
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <b>送付・支払</b>
+              <span className="faint">決定した文書のページで進める</span>
+            </div>
             {r.documents.map((d) => (
               <div key={d.id} className="row" style={{ gap: 6 }}>
                 {onOpenDocument
                   ? <button className="linky code" onClick={() => onOpenDocument(d.id)}>{d.documentNo ?? `#${d.id}`}</button>
                   : <span className="code">{d.documentNo ?? `#${d.id}`}</span>}
                 <span className="tag ok">決定</span>{d.sent && <span className="tag ok">送付済</span>}
+                <span className="faint">差引 {yen(d.net)}</span>
               </div>
             ))}
             {r.payments.map((x) => (
@@ -532,126 +490,60 @@ function RoundDetail(
                 {x.status === "paid" ? ` 支払済 ${x.paidOn ?? ""}` : ` 支払予定 ${x.dueOn ?? "—"}`}
               </div>
             ))}
-            {entries.length > 0 && (
-              <>
-                {preview && <StatementBreakdown lines={preview.lines} totals={preview.totals} />}
-                {previewError && (
-                  <div className="alert">試算できません：{previewError}。「実績を入れる」から該当の実績を直してください。</div>
-                )}
-                {waiting.length > 0 && (
-                  <div className="note warn">
-                    報告待ち・締め前が {waiting.length} 本あります。待たずに出すと、入力済の分だけの計算書になります
-                    （残りは「報告なし」にするか、あとで別の計算書にします）。
-                  </div>
-                )}
-                {canWrite && (
-                  <div className="row">
-                    <select value={templateKey} onChange={(e) => setTemplateKey(e.target.value)} aria-label="ひな形">
-                      {templates.map((t) => <option key={t.templateKey} value={t.templateKey}>{t.label}</option>)}
-                    </select>
-                    <button className="btn primary" disabled={!templateKey || !preview || !onCompose} onClick={compose}>
-                      この回の計算書を作る（文書の画面へ）
-                    </button>
-                  </div>
-                )}
-              </>
-            )}
-            {!entries.length && !r.documents.length && <div className="faint">まだ計算書に入れる実績がありません。</div>}
-            {entries.length > 0 && (
-              <div className="faint">文書の画面で中身を確かめ、手入力の項目を埋めて、下書き保存・決定します。決定するまで番号は振られません。</div>
-            )}
-          </div>
-        </div>
-        <div className="panel">
-          <div className="panel-hd"><h2>受付箱の依頼</h2><span className="faint">選んで紐づける</span></div>
-          <div className="panel-bd stack" style={{ gap: 6 }}>
-            {r.requests.map((x) => (
-              <div key={x.id}>
-                <span className="row" style={{ gap: 6 }}>
+            {!r.documents.length && <span className="faint">この回の計算書はまだありません。</span>}
+            <div className="row" style={{ gap: 6, marginTop: 4 }}>
+              <span className="faint">受付箱の依頼：</span>
+              {r.requests.map((x) => (
+                <span key={x.id} className="row" style={{ gap: 4 }}>
                   {onOpenRequest
                     ? <button className="tag pin" onClick={() => onOpenRequest(x.id)} title="受付箱で開く">{x.requestNo ?? `#${x.id}`}</button>
                     : <span className="tag pin">{x.requestNo ?? `#${x.id}`}</span>}
-                  <span>{x.title}</span>{x.done && <span className="tag ok">対応完了</span>}
-                  {canWrite && <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={() => onLink(x.id, r, true)}>外す</button>}
+                  <span className="faint">{x.title}{x.done ? "（対応完了）" : ""}</span>
+                  {canWrite && <button className="linky" onClick={() => onLink(x.id, r, true)}>外す</button>}
                 </span>
-                <div className="faint">担当 {x.assigneeName ?? "未定"} · 期日 {x.dueOn ?? "—"}</div>
-              </div>
-            ))}
-            {!r.requests.length && <div className="faint">この回に紐づけた依頼はありません。</div>}
-            {canWrite && (() => {
-              // 候補：まだこの回に繋いでいない、案件にせず処理中の依頼。この作家・作品の依頼を先に。
-              const pending = new Set(view.requests.map((x) => x.id));
-              const candidates = openRequests
-                .filter((x) => !r.requests.some((y) => y.id === x.id))
-                .sort((a, b) => Number(pending.has(b.id)) - Number(pending.has(a.id)));
-              return candidates.length > 0 && (
-                <div className="row" style={{ gap: 6 }}>
+              ))}
+              {!r.requests.length && <span className="faint">なし</span>}
+              {canWrite && candidates.length > 0 && (
+                <>
                   <select value={pickRequest} onChange={(e) => setPickRequest(e.target.value)} aria-label="紐づける依頼">
                     <option value="">依頼を選ぶ…</option>
                     {candidates.map((x) => (
-                      <option key={x.id} value={x.id}>
-                        {pending.has(x.id) ? "★ " : ""}{x.requestNo ?? `#${x.id}`} {x.title}{x.requesterName ? `（${x.requesterName}）` : ""}
-                      </option>
+                      <option key={x.id} value={x.id}>{pending.has(x.id) ? "★ " : ""}{x.requestNo ?? `#${x.id}`} {x.title}{x.requesterName ? `（${x.requesterName}）` : ""}</option>
                     ))}
                   </select>
-                  <button className="btn btn-sm primary" disabled={!pickRequest}
-                          onClick={() => { onLink(Number(pickRequest), r); setPickRequest(""); }}>この回に紐づける</button>
-                </div>
-              );
-            })()}
-            <div className="faint">紐づけた依頼は、この回で作った計算書で工程（作成→送付→支払予定→支払）が進み、依頼者に Slack で知らせます。★ はこの作家・作品の依頼です。</div>
+                  <button className="btn btn-sm" disabled={!pickRequest} onClick={() => { onLink(Number(pickRequest), r); setPickRequest(""); }}>この回に付ける</button>
+                </>
+              )}
+            </div>
+            <span className="faint">付けた依頼は、この回の計算書で工程（作成→送付→支払予定→支払）が進み、依頼者に Slack で知らせます。★ はこの作家・作品の依頼。</span>
           </div>
         </div>
-      </aside>
+      </div>
     </div>
   );
 }
 
-/** これまでの回。年ごとに畳む。 */
-function History({ view, onOpenDocument }: { view: LedgerView; onOpenDocument?: (documentId: number) => void }) {
+/** これまでの回。年ごとに畳む。押すと右にその回が出る。 */
+function History({ view, onSelect, selected }: {
+  view: LedgerView;
+  onSelect: (key: string) => void; selected: string | null;
+}) {
   const years = [...new Set(view.history.map((r) => (r.payOn ?? r.closeOn ?? "").slice(0, 4)).filter(Boolean))];
   const [year, setYear] = useState<string>(years[0] ?? "");
   useEffect(() => { if (!years.includes(year)) setYear(years[0] ?? ""); }, [years.join(",")]);
   if (!view.history.length) return null;
   const rows = view.history.filter((r) => (r.payOn ?? r.closeOn ?? "").startsWith(year));
-  const titles = (r: Round) => {
-    const t = r.workIds.map((id) => view.works.find((w) => w.id === id)?.title).filter(Boolean) as string[];
-    return t.length > 1 ? `${t[0]} ほか${t.length - 1}作品` : t[0] ?? "";
-  };
   return (
-    <div className="panel">
-      <div className="panel-hd">
-        <h2>これまでの回</h2>
+    <div className="stack" style={{ gap: 6, marginTop: 8 }}>
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <span className="faint" style={{ letterSpacing: ".1em" }}>終わった回</span>
         <span className="chips">
           {years.map((y) => (
-            <button key={y} className="chip" aria-pressed={y === year} onClick={() => setYear(y)}>
-              {y}年 {view.history.filter((r) => (r.payOn ?? r.closeOn ?? "").startsWith(y)).length}
-            </button>
+            <button key={y} className="chip" aria-pressed={y === year} onClick={() => setYear(y)}>{y}年</button>
           ))}
         </span>
       </div>
-      <div className="tablewrap">
-        <table>
-          <thead><tr><th>回</th><th>作品</th><th>計算書</th><th className="num">お支払い</th><th>状態</th></tr></thead>
-          <tbody>
-            {rows.map((r) => {
-              const st = ROUND_STATE[r.state] ?? { label: r.state, tag: "" };
-              return (
-                <tr key={r.key}>
-                  <td><span className={`tag ${r.kind === "event" ? "warn" : ""}`}>{r.kind === "event" ? "製造" : "期"}</span> {roundTitle(r)}
-                    <div className="faint">{[...new Set(r.parts.map((p) => p.label).filter(Boolean))].slice(0, 3).join("・")}</div></td>
-                  <td>{titles(r)}</td>
-                  <td>{r.documents.map((d) => onOpenDocument
-                    ? <button key={d.id} className="linky code" onClick={() => onOpenDocument(d.id)}>{d.documentNo ?? `#${d.id}`}</button>
-                    : <span key={d.id} className="code">{d.documentNo}</span>)}{!r.documents.length && <span className="faint">—</span>}</td>
-                  <td className="num">{r.payments.length ? yen(r.payments.reduce((a, x) => a + x.amount, 0)) : "—"}</td>
-                  <td><span className={`tag ${st.tag}`}>{st.label}</span></td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      {rows.map((r) => <RoundCard key={r.key} round={r} view={view} selected={r.key === selected} onSelect={() => onSelect(r.key)} />)}
     </div>
   );
 }

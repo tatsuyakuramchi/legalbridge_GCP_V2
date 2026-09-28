@@ -87,7 +87,7 @@ function Refs(
 }
 
 export function DocumentsWorkspace(
-  { start, openDocumentId, openNonce, onOpen }: {
+  { start, openDocumentId, openNonce, onOpen, onBack }: {
     start?: { conditionIds: number[]; eventIds: number[]; matterId?: number | null;
               /**
                * 呼んだ側が決めているひな形。計算書のように「何を作るか」が
@@ -104,6 +104,8 @@ export function DocumentsWorkspace(
     /** 押すたびに増える番号。同じ文書をもう一度開く合図。 */
     openNonce?: number;
     onOpen?: (kind: EntityKind, id: number) => void;
+    /** 台帳から来たとき、その回へ戻る。 */
+    onBack?: { label: string; go: () => void };
   } = {}
 ) {
   const [templates, setTemplates] = useState<TemplateRow[]>([]);
@@ -866,6 +868,11 @@ export function DocumentsWorkspace(
   return (
     <section className={`workspace${selected === null ? "" : " picked"}`}>
       <header className="workspace-head">
+        {onBack && (
+          <div className="row" style={{ marginBottom: 4 }}>
+            <button className="linky" onClick={() => { if (confirmDiscard()) onBack.go(); }}>← {onBack.label} の台帳へ戻る</button>
+          </div>
+        )}
         <h1>文書</h1>
         <p>文書は条件の出力物。相手先も件名も条件と合意から解決するので、入力するのはそこから決まらないものだけ。</p>
       </header>
@@ -884,6 +891,7 @@ export function DocumentsWorkspace(
               setComposing(false); setDraft(null); setBulk(false);
               setSelected(issued.id); setIssued(null);
             }}>決定した文書のページへ</button>
+            {onBack && <button className="btn btn-sm" onClick={onBack.go}>← {onBack.label} の台帳へ戻る</button>}
             {issued.again && (
               <button className="btn btn-sm" onClick={() => { setIssued(null); setComposing(true); }}>
                 続けてもう1枚作る
