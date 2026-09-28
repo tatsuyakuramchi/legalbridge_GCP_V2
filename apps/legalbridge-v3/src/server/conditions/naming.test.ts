@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { conditionNameFor, parseUsageType } from "./naming.js";
+import { conditionNameFor, outConditionNameFor, parseUsageType } from "./naming.js";
 
 test("条件名は 作品名｜取引モデル。出版は「紙出版」「電子出版」", () => {
   assert.equal(conditionNameFor({ workTitle: "ito", usageType: "in_house" }), "ito｜自社製造・自社販売");
@@ -28,4 +28,13 @@ test("取引モデルの文字列は表記ゆれごと利用形態に戻す", ()
   assert.equal(parseUsageType("pub_digital"), "pub_digital");
   assert.equal(parseUsageType("配信"), null);
   assert.equal(parseUsageType(""), null);
+});
+
+test("OUT の条件名は 作品名｜許諾言語｜許諾地域｜相手先名。空は飛ばし、複数は・で繋ぐ", () => {
+  assert.equal(outConditionNameFor({ workTitle: "ito", languages: "英語", regions: "アメリカ合衆国、カナダ", partyName: "Alpha Games" }),
+    "ito｜英語｜アメリカ合衆国・カナダ｜Alpha Games");
+  assert.equal(outConditionNameFor({ workTitle: "ito", languages: ["英語", "フランス語"], partyName: "Alpha Games" }),
+    "ito｜英語・フランス語｜Alpha Games");
+  assert.equal(outConditionNameFor({ workTitle: "ito", partyName: " " }), "ito");
+  assert.equal(outConditionNameFor({ workTitle: "" }), "");
 });

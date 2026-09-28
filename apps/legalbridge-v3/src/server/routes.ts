@@ -1834,11 +1834,15 @@ export function createRoutes(database: Transactable) {
   router.get("/conditions/:id/out-candidates", asyncRoute(async (req, res) => {
     const q = String(req.query.q ?? "").trim();
     const like = `%${q}%`;
+    // 実績の使い方（再許諾／自社製造・他社販売）。OUT 条件が別の形態を
+    // 持っていれば候補から外す（選んでも登録で止まる）。形態なしの旧い OUT は残す。
+    const usage = ["sublicense", "oem"].includes(String(req.query.usage ?? ""))
+      ? String(req.query.usage) : "";
     const r = await database.query(
       `SELECT c.id, c.condition_no, c.name, c.status,
               -- 他社販売の受領価格は、許諾したアウト条件が決めている。
               -- 単価を持つ条件なら、実績の欄の既定値にする。
-              c.pricing_model, c.unit_amount, c.currency,
+              c.pricing_model, c.unit_amount, c.currency, c.usage_type,
               p.name AS party_name, w.title AS work_title,
               (SELECT string_agg(sc.label, '・' ORDER BY sc.scope_type, sc.sort_order, sc.label)
                  FROM condition_scopes sc WHERE sc.condition_id = c.id) AS scopes
@@ -1854,10 +1858,13 @@ export function createRoutes(database: Transactable) {
           -- のか「作品が違って隠れている」のかが分からないまま手が止まる。
           AND ($1 = '' OR c.name ILIKE $3 OR c.condition_no ILIKE $3
                OR p.name ILIKE $3 OR w.title ILIKE $3)
+          AND ($4 = '' OR c.usage_type IS NULL OR c.usage_type NOT IN ('sublicense', 'oem')
+               OR c.usage_type = $4)
         ORDER BY (c.work_id IS NOT DISTINCT FROM $2::bigint) DESC,
+                 (c.usage_type IS NOT DISTINCT FROM NULLIF($4, '')) DESC,
                  c.condition_no NULLS LAST, c.id
         LIMIT 50`,
-      [q, await workIdOfCondition(Number(req.params.id)), like]);
+      [q, await workIdOfCondition(Number(req.params.id)), like, usage]);
     // 許諾（OUT）の条件が1件も無いのか、探した言葉に当たらないだけなのかを
     // 画面が言い分けられるようにする。0件の理由が分からないと次の手が決まらない。
     const total = await database.query(
@@ -1869,7 +1876,8 @@ export function createRoutes(database: Transactable) {
         id: Number(c.id), conditionNo: str(c.condition_no), name: String(c.name ?? ""),
         status: String(c.status), partyName: str(c.party_name),
         workTitle: str(c.work_title), scopes: str(c.scopes),
-        pricingModel: String(c.pricing_model ?? "none"), unitAmount: int(c.unit_amount)
+        pricingModel: String(c.pricing_model ?? "none"), unitAmount: int(c.unit_amount),
+        usageType: str(c.usage_type)
       }))
     });
   }));

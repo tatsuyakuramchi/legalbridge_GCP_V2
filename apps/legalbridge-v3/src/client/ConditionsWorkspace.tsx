@@ -12,6 +12,7 @@ import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
 import { CONDITION_KIND_LABEL, SettlementTag, StatusTag } from "./labels.js";
 import { conditionAmountLabel, dealModelLabel, isLicenseCondition } from "./ConditionLabel.js";
 import { ConditionCreateForm } from "./ConditionCreateForm.js";
+import { OutConditionForm } from "./OutConditionForm.js";
 import { PubConditionSetForm } from "./PubConditionSetForm.js";
 import { LicenseSetForm } from "./LicenseSetForm.js";
 import { ServiceSetForm } from "./ServiceSetForm.js";
@@ -78,6 +79,9 @@ export function ConditionsWorkspace(
   const [creating, setCreating] = useState<false | "one" | "publishing" | "license" | "service">(false);
   const [keyword, setKeyword] = useState("");
   const [editing, setEditing] = useState(false);
+  /** イン条件（再許諾・他社販売）から許諾先（OUT）を作る欄。 */
+  const [addingOut, setAddingOut] = useState(false);
+  const [outAdded, setOutAdded] = useState<string | null>(null);
   const search = useDebounced(keyword);
 
   /** 一覧の絞り込み。書き出しにも同じものを渡す。 */
@@ -110,7 +114,7 @@ export function ConditionsWorkspace(
     if (!selected) return;
     // ここでは結果を消さない。改訂は保存の直後に選択が新版へ移るので、
     // 消すと「改訂しました」が出た瞬間に消える。消すのは行を選んだときだけ。
-    setEditing(false);
+    setEditing(false); setAddingOut(false); setOutAdded(null);
     api.get<DetailResponse>(`/conditions/${selected}`)
       .then(setDetail)
       .catch((e: ApiError) => setError(e.message));
@@ -419,6 +423,32 @@ export function ConditionsWorkspace(
                     reload();
                   }} />
               )}
+              {/* 許諾先（OUT）。作品・取引形態・許諾範囲はこのイン条件から入れる。 */}
+              {addingOut && (
+                <OutConditionForm
+                  preset={{
+                    usageType: detail.usageType === "oem" ? "oem" : "sublicense",
+                    currency: detail.currency,
+                    ...(detail.work ? { workId: String(detail.work.id) } : {}),
+                    regions: detail.scopes.filter((x) => x.scopeType === "region").map((x) => x.label).join("、"),
+                    languages: detail.scopes.filter((x) => x.scopeType === "language").map((x) => x.label).join("、")
+                  }}
+                  presetLabels={{ workId: detail.work?.title ?? null }}
+                  onCancel={() => setAddingOut(false)}
+                  onDone={(r) => {
+                    setAddingOut(false);
+                    setOutAdded(r.conditionNo ?? `#${r.id}`);
+                    // 実績の「許諾したアウト条件」の候補を引き直す。
+                    setFlowVersion((n) => n + 1);
+                    reload();
+                  }} />
+              )}
+              {outAdded && !addingOut && (
+                <div className="note ok">
+                  許諾先 {outAdded} を登録しました。下の実績で「許諾したアウト条件」に選べます。
+                  <button className="btn btn-sm" style={{ marginLeft: 8 }} onClick={() => setOutAdded(null)}>閉じる</button>
+                </div>
+              )}
 
               <div className="panel">
                 <div className="panel-hd">
@@ -442,6 +472,13 @@ export function ConditionsWorkspace(
                       {onCompose && (
                         <button className="btn btn-sm primary"
                                 onClick={() => onCompose([detail.id], [], detail.matters[0]?.id ?? null)}>この条件で文書を作る</button>
+                      )}
+                      {detail.direction === "in" && detail.kind === "license"
+                        && (detail.usageType === "sublicense" || detail.usageType === "oem") && !addingOut && (
+                        <button className="btn btn-sm" onClick={() => { setAddingOut(true); setOutAdded(null); }}
+                                title="この許諾を再許諾・他社販売する相手先（OUT 条件）を作る">
+                          許諾先を追加
+                        </button>
                       )}
                       <button className="btn btn-sm" onClick={() => setEditing(true)}>編集</button>
                       {/* 削除は 無効化 → 削除 の2段階。無効化は理由必須で、参照が
