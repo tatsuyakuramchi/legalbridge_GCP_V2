@@ -702,7 +702,8 @@ export function WorksWorkspace(
           )}
           {work && pane === "royalty" && (
             <RoyaltyLedger workId={work.id} initialPartyId={initialLedgerParty ?? null} onOpenDocument={onOpenDocument}
-                           onOpenRequest={onOpenRequest} />
+                           onOpenRequest={onOpenRequest}
+                           onCompose={onCompose ? (ids, events, key) => onCompose(ids, events, null, key) : undefined} />
           )}
           {work && pane === "work" && (<>
             <div className="panel">

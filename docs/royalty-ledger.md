@@ -98,7 +98,7 @@
 | PUT | `/api/v3/royalty-ledger/timing`（`conditionId`・`timing`） | admin / legal |
 | PUT | `/api/v3/royalty-ledger/bundle`（`partyId`・`bundle`） | admin / legal |
 
-計算書の試算と作成は既存の `/statement-documents/preview`・`/statement-documents`（その回の、まだ文書に結ばれていない実績）。
+計算書の試算は既存の `/statement-documents/preview`（その回の、まだ文書に結ばれていない実績）。台帳からは計算書を直接決定しない。「この回の計算書を作る」は文書の画面を、その回の条件・実績・ひな形を選んだ状態で開き、そこで中身と手入力の項目（行の見出しなど）を確かめて、下書き保存・決定する。
 
 ## 7. データ（`infra/v3/004_amend.sql` A-059）
 
