@@ -27,6 +27,8 @@ const TAX_DIVISOR = 1 + RECEIPT_TAX_RATE_PCT / 100;
 
 interface EventRow {
   id: number; eventType: string; occurredOn: string | null; period: string | null;
+  /** この報告の言語・地域（A-061）。 */
+  languages?: string[]; regions?: string[];
   quantity: number | null; sampleQuantity: number | null;
   grossAmount: number | null; deductions: number; amount: number;
   status: string; note: string | null;
@@ -60,6 +62,8 @@ interface OutCondition {
   id: number; conditionNo: string | null; name: string;
   status: string; partyName: string | null; workTitle: string | null; scopes: string | null;
   pricingModel: string; unitAmount: number | null;
+  /** 許諾言語・地域（A-061）。2つ以上なら、報告がどの言語・地域の分かを選ぶ。 */
+  languages?: string[]; regions?: string[];
   /** 取引形態（再許諾／自社製造・他社販売）。旧い OUT 条件は持っていない。 */
   usageType?: string | null;
 }
@@ -92,7 +96,7 @@ interface PreviewResponse {
 export function ConditionEvents(
   { conditionId, currency, editable, matterId, pricingModel, deliverableOwnership, reloadKey,
     ratePpm, conditionUnitAmount, conditionQuantity, direction, workTitle, workId, kind,
-    openForSchedule, onOpened, onCompose, onOpenDocument, onChanged }:
+    openForSchedule, onOpened, onCompose, onOpenDocument, onChanged, preset }:
   { conditionId: number; currency: string; editable: boolean;
     /** 条件の種類。委託料・実費・手数料は業務委託の記録の流れ（ServiceEventForm）を出す。 */
     kind?: string | null;
@@ -101,6 +105,11 @@ export function ConditionEvents(
     deliverableOwnership?: string | null;
     /** 予定の行の「実績にする」から渡された回。この回でフォームを開く。 */
     openForSchedule?: number | null;
+    /**
+     * フォームを開いたときに入れておく値（許諾料の台帳の「来るはず」の行から）。
+     * 利用形態・許諾先・この報告の言語。
+     */
+    preset?: { usageType?: string | null; outConditionId?: number | null; languages?: string[] } | null;
     onOpened?: () => void;
     /** 計算方式。料率・単価×数量なら実績の束から計算書を出せる。 */
     pricingModel?: string;
@@ -299,6 +308,13 @@ export function ConditionEvents(
   useEffect(() => {
     if (!openForSchedule || !schedules.length) return;
     start(openForSchedule);
+    if (preset?.usageType) {
+      // 許諾料の回から開いたときは、予定の回（定期）から「役務の期間」を継がない。
+      setV((cur) => ({ ...cur, ...usageDefaults(preset.usageType!),
+                       eventType: preset.usageType === "sublicense" ? "sublicense_receipt" : "sales",
+                       ...(preset.outConditionId ? { outConditionId: String(preset.outConditionId) } : {}),
+                       ...(preset.languages?.length ? { languages: preset.languages.join("、") } : {}) }));
+    }
     onOpened?.();
     addForm.current?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [openForSchedule, schedules.length]);
@@ -453,6 +469,10 @@ export function ConditionEvents(
     if (badNumberField) return badNumberField;
     if (usage) {
       if (usage.needsOutCondition && !f("outConditionId")) return "許諾したアウト条件を選んでください";
+      // 1本の許諾で複数言語を出しているなら、報告はどの言語の分かを決める（A-061）。
+      if (usage.needsOutCondition && (pickedOut?.languages?.length ?? 0) > 1 && !f("languages").trim()) {
+        return `どの言語の報告かを選んでください（許諾先は ${pickedOut!.languages!.join("・")}）`;
+      }
       if (usageBasis === null) {
         return usage.value === "sublicense" || lumpSum
           ? "受領額を入れてください"
@@ -544,6 +564,9 @@ export function ConditionEvents(
         serviceTo: f("serviceTo") || null,
         usageType: f("usageType") || null,
         outConditionId: f("outConditionId") ? Number(f("outConditionId")) : null,
+        // この報告の言語・地域（A-061）。計算書の製品名・許諾範囲になる。
+        languages: f("languages").split("、").map((x) => x.trim()).filter(Boolean),
+        regions: f("regions").split("、").map((x) => x.trim()).filter(Boolean),
         // どの当社作品の売上か（A-027）。計算書の製品名になる。
         workId: f("workId") ? Number(f("workId")) : null,
         unitAmount: rounded("unitAmount"),
@@ -782,7 +805,7 @@ export function ConditionEvents(
                     const price = usage?.value === "oem" && !lumpSum
                       && chosenOut?.pricingModel === "unit_rate"
                       ? asText(chosenOut.unitAmount) : null;
-                    setV({ ...v, outConditionId: e.target.value,
+                    setV({ ...v, outConditionId: e.target.value, languages: "", regions: "",
                            ...(price ? { unitAmount: price } : {}) });
                   }}>
                   <option value="">（選んでください）</option>
@@ -792,8 +815,12 @@ export function ConditionEvents(
                     </option>
                   ))}
                 </select>
+                {pickedOut && ((pickedOut.languages?.length ?? 0) > 1 || (pickedOut.regions?.length ?? 0) > 1) && (
+                  <ScopeChoice out={pickedOut} languages={f("languages")} regions={f("regions")}
+                    onChange={(k, value) => setV((cur) => ({ ...cur, [k]: value }))} />
+                )}
                 {pickedOut?.scopes
-                  ? <small className="faint">許諾範囲：{pickedOut.scopes}（計算書に出ます）</small>
+                  ? <small className="faint">許諾範囲：{pickedOut.scopes}（計算書には、この報告の言語・地域があればそれを出します）</small>
                   : outFound.length
                   ? <small className="faint">
                       {workTitle ? `${workTitle} の許諾を上に出しています。` : ""}
@@ -1292,6 +1319,9 @@ export function ConditionEvents(
                       {row.outConditionNo && (
                         <div className="faint">{row.outConditionNo}　{row.outConditionName}</div>
                       )}
+                      {[...(row.languages ?? []), ...(row.regions ?? [])].length > 0 && (
+                        <span className="tag accent">{[...(row.languages ?? []), ...(row.regions ?? [])].join("・")}</span>
+                      )}
                       {row.ratePpm !== null && row.ratePpm !== undefined && (
                         <div className="faint">
                           {row.unitAmount ? `${money(row.unitAmount, currency)} × ` : ""}
@@ -1386,5 +1416,40 @@ export function ConditionEvents(
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * この報告の言語・地域（A-061）。1本の許諾で英語・フランス語を出していて、
+ * 報告が言語ごとに来るとき、どの言語の分かを選ぶ。地域も同じ（2つ以上あるときだけ出す）。
+ * 値は「、」で繋いだ表示名。
+ */
+function ScopeChoice(
+  { out, languages, regions, onChange }: {
+    out: { languages?: string[]; regions?: string[] };
+    languages: string; regions: string;
+    onChange: (key: "languages" | "regions", value: string) => void;
+  }
+) {
+  const row = (key: "languages" | "regions", label: string, all: string[], value: string) => {
+    const picked = value.split("、").filter(Boolean);
+    const toggle = (x: string) => onChange(key, (picked.includes(x) ? picked.filter((y) => y !== x) : [...picked, x])
+      .sort((a, b) => all.indexOf(a) - all.indexOf(b)).join("、"));
+    return (
+      <span className="row" style={{ gap: 6, marginTop: 4 }}>
+        <span className="faint">{label}</span>
+        {all.map((x) => (
+          <label key={x} className="row" style={{ gap: 3 }}>
+            <input type="checkbox" checked={picked.includes(x)} onChange={() => toggle(x)} />{x}
+          </label>
+        ))}
+      </span>
+    );
+  };
+  return (
+    <span className="stack" style={{ gap: 0 }}>
+      {(out.languages?.length ?? 0) > 1 && row("languages", "この報告の言語", out.languages!, languages)}
+      {(out.regions?.length ?? 0) > 1 && row("regions", "この報告の地域（任意）", out.regions!, regions)}
+    </span>
   );
 }

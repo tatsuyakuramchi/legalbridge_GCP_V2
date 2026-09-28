@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { originalWorkTitle, statementProductName } from "./product-name.js";
+import { eventScopeLabel, originalWorkTitle, statementProductName } from "./product-name.js";
 
 /**
  * 計算書の製品名の決め方。件名は原作名、明細は利用形態で変わる。
@@ -40,4 +40,11 @@ test("件名の原作名：原作ならそのまま、当社作品なら系譜�
 test("実績が作品を指していれば（A-027）それが最優先。推測はしない", () => {
   assert.equal(statementProductName({ usageType: "in_house", inWorkTitle: "ito 原作", inWorkKind: "source_ip",
     childTitles: ["ito", "ito クラシック"], eventWorkTitle: "ito クラシック" }), "ito クラシック");
+});
+
+test("実績に言語・地域があれば製品名の後ろに添える（A-061）", () => {
+  assert.equal(statementProductName({ usageType: "sublicense", outConditionName: "ito｜英語・フランス語｜欧州｜Alpha",
+                                      eventScope: eventScopeLabel(["フランス語"], []) }),
+               "ito｜英語・フランス語｜欧州｜Alpha（フランス語）");
+  assert.equal(eventScopeLabel([], null), null);
 });

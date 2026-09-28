@@ -303,6 +303,11 @@ SELECT * FROM (
             WHERE table_schema='v3' AND table_name='parties'
               AND column_name IN ('rpt_entity', 'has_board', 'related_party', 'related_party_type', 'related_party_note')))::text
   UNION ALL
+  SELECT 61, '実績の言語・地域（A-061。列 2 であること）',
+         (SELECT count(*) FROM information_schema.columns
+           WHERE table_schema='v3' AND table_name='condition_events'
+             AND column_name IN ('scope_languages', 'scope_regions'))::text
+  UNION ALL
   SELECT 60, '依頼と許諾料の回の紐づけ（A-060。CHECK に schedule があること＝1）',
          (SELECT count(*) FROM pg_constraint
            WHERE conrelid='v3.intake_request_links'::regclass AND conname='intake_request_links_type_chk'

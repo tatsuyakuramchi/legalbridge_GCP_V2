@@ -97,3 +97,17 @@ test("決まった回は、支払・送付・AG 充当だけ（支払なし）�
   const paid = settleRound({ ...base, payments: [{ ...pay, status: "paid" }] });
   assert.equal(paid.state, "paid"); assert.equal(paid.open, false);
 });
+
+test("1本の許諾で英語・フランス語を出していれば、報告は言語ごとに1行で待つ（A-061）", () => {
+  const out = { id: 60, name: "ito｜英語・フランス語｜欧州｜Alpha", usageType: "sublicense", workId: 1,
+                termStart: null, languages: ["英語", "フランス語"] };
+  const rounds = buildRounds({
+    conditions: [cond(1, { usageType: "sublicense" })], schedules: Q(1),
+    events: [ev(1, 1, "2026-06-10", { usageType: "sublicense", outConditionId: 60, outName: out.name, languages: ["英語"] })],
+    skips: [], outs: [out], bundle: "single_work", today: "2026-10-05"
+  });
+  const q2 = rounds.find((r) => r.payOn === "2026-07-31")!;
+  assert.deepEqual(q2.parts[0].expected.map((x) => x.languages), [["フランス語"]], "英語は来た、フランス語はまだ");
+  const q3 = rounds.find((r) => r.payOn === "2026-10-31")!;
+  assert.deepEqual(q3.parts[0].expected.map((x) => x.languages?.join("")).sort(), ["フランス語", "英語"]);
+});

@@ -2186,6 +2186,21 @@ BEGIN
   END IF;
 END $a060$;
 
+
+-- ---------------------------------------------------------------------
+-- A-061 実績の言語・地域（docs/royalty-ledger.md §3.1）
+--   1本の許諾（OUT 条件）で英語・フランス語を出していても、相手からの報告は
+--   英語版・フランス語版で別々に来る。条件は利用形態ごとに1本のまま、言語・地域は
+--   実績が持つ。台帳の行（来るはずの行）と計算書の製品名・許諾範囲はこれで分ける。
+--   空は「指定なし」（許諾先・条件の範囲全体）。値は表示名（英語・北米 など）。
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.condition_events ADD COLUMN IF NOT EXISTS scope_languages text[];
+ALTER TABLE v3.condition_events ADD COLUMN IF NOT EXISTS scope_regions text[];
+COMMENT ON COLUMN v3.condition_events.scope_languages IS
+  'この実績（報告）の言語。空は指定なし。1本の許諾で複数言語を出していて報告が言語ごとに来るときに入れる（A-061）';
+COMMENT ON COLUMN v3.condition_events.scope_regions IS
+  'この実績（報告）の地域。空は指定なし（A-061）';
+
 COMMIT;
 
 -- 確認
@@ -2501,3 +2516,7 @@ SELECT (SELECT count(*) FROM information_schema.columns
 SELECT count(*) AS CHECK数 FROM pg_constraint
  WHERE conrelid='v3.intake_request_links'::regclass AND conname='intake_request_links_type_chk'
    AND pg_get_constraintdef(oid) LIKE '%schedule%';
+
+\echo '--- 実績の言語・地域（A-061。列 2 であること） ---'
+SELECT count(*) AS 列 FROM information_schema.columns
+ WHERE table_schema='v3' AND table_name='condition_events' AND column_name IN ('scope_languages', 'scope_regions');

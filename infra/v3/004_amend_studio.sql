@@ -2187,6 +2187,20 @@ BEGIN
   END IF;
 END $a060$;
 
+-- ---------------------------------------------------------------------
+-- A-061 実績の言語・地域（docs/royalty-ledger.md §3.1）
+--   1本の許諾（OUT 条件）で英語・フランス語を出していても、相手からの報告は
+--   英語版・フランス語版で別々に来る。条件は利用形態ごとに1本のまま、言語・地域は
+--   実績が持つ。台帳の行（来るはずの行）と計算書の製品名・許諾範囲はこれで分ける。
+--   空は「指定なし」（許諾先・条件の範囲全体）。値は表示名（英語・北米 など）。
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.condition_events ADD COLUMN IF NOT EXISTS scope_languages text[];
+ALTER TABLE v3.condition_events ADD COLUMN IF NOT EXISTS scope_regions text[];
+COMMENT ON COLUMN v3.condition_events.scope_languages IS
+  'この実績（報告）の言語。空は指定なし。1本の許諾で複数言語を出していて報告が言語ごとに来るときに入れる（A-061）';
+COMMENT ON COLUMN v3.condition_events.scope_regions IS
+  'この実績（報告）の地域。空は指定なし（A-061）';
+
 COMMIT;
 
 
@@ -2460,6 +2474,11 @@ SELECT * FROM (
         + (SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='parties'
               AND column_name IN ('rpt_entity', 'has_board', 'related_party', 'related_party_type', 'related_party_note')))::text
+  UNION ALL
+  SELECT 61, '実績の言語・地域（A-061。列 2 であること）',
+         (SELECT count(*) FROM information_schema.columns
+           WHERE table_schema='v3' AND table_name='condition_events'
+             AND column_name IN ('scope_languages', 'scope_regions'))::text
   UNION ALL
   SELECT 60, '依頼と許諾料の回の紐づけ（A-060。CHECK に schedule があること＝1）',
          (SELECT count(*) FROM pg_constraint

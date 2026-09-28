@@ -64,6 +64,12 @@ export interface EventInput {
   usageType?: UsageType | null;
   /** 相手へ許諾したアウト条件。再許諾・他社販売で要る。 */
   outConditionId?: number | null;
+  /**
+   * この報告の言語・地域（A-061）。1本の許諾で英語・フランス語を出していて、
+   * 報告が言語ごとに来るときに入れる。空は指定なし。値は表示名。
+   */
+  languages?: string[] | null;
+  regions?: string[] | null;
   /** どの当社作品の売上か（A-027）。自社製造・自社販売の計算書の製品名になる。 */
   workId?: number | null;
   /** 基準価格（自社販売）／受領価格1個あたり（他社販売）。 */
@@ -126,6 +132,9 @@ export interface EventRow {
   outConditionId: number | null;
   outConditionNo: string | null;
   outConditionName: string | null;
+  /** 実績の言語・地域（A-061）。 */
+  languages: string[];
+  regions: string[];
   unitAmount: number | null;
   ratePpm: number | null;
   paymentStage: string | null;
@@ -172,6 +181,39 @@ const AMENDABLE = {
   note: { column: "note", kind: "text", money: false }
 } as const satisfies Record<string, { column: string; kind: "int" | "num" | "date" | "text"; money: boolean }>;
 
+/** 言語・地域の並び。空・重複を落とし、無ければ null（指定なし）。 */
+export function scopeList(v: unknown): string[] | null {
+  const list = [...new Set((Array.isArray(v) ? v : String(v ?? "").split(/[、,／/・]/))
+    .map((x) => String(x ?? "").trim()).filter(Boolean))];
+  return list.length ? list : null;
+}
+
+/**
+ * 実績の言語・地域が、許諾先（OUT 条件）の許諾範囲に入っているか（A-061）。
+ * 許諾先が範囲を持たない、全言語・全世界なら見ない。英語・フランス語を許諾した
+ * 相手から「ドイツ語版」の報告を入れようとしたら止める（許諾の外の売上になる）。
+ */
+async function assertEventScope(client: Queryable, outConditionId: number | null,
+                                languages: unknown, regions: unknown): Promise<void> {
+  if (!outConditionId) return;
+  const langs = scopeList(languages) ?? [];
+  const regs = scopeList(regions) ?? [];
+  if (!langs.length && !regs.length) return;
+  const r = await client.query(
+    `SELECT scope_type, label FROM condition_scopes WHERE condition_id = $1`, [outConditionId]);
+  const of = (type: string) => (r.rows as any[]).filter((x) => x.scope_type === type).map((x) => String(x.label));
+  const check = (given: string[], allowed: string[], universal: string, what: string) => {
+    if (!allowed.length || allowed.includes(universal)) return;
+    const outside = given.filter((g) => !allowed.includes(g));
+    if (outside.length) {
+      throw new DomainError("VALIDATION",
+        `${outside.join("・")} は許諾先の許諾${what}（${allowed.join("・")}）に入っていません`);
+    }
+  };
+  check(langs, of("language"), "全言語", "言語");
+  check(regs, of("region"), "全世界", "地域");
+}
+
 /** 直す値を列の型に寄せる。空文字は「空にする」。 */
 function readAmend(kind: "int" | "num" | "date" | "text", value: unknown): unknown {
   if (value === null) return null;
@@ -196,7 +238,7 @@ export class ConditionEventService {
                 e.deliverable, e.inspected_on, e.inspector_dept, e.inspector_name,
                 e.contract_form, e.service_from, e.service_to,
                 e.usage_type, e.out_condition_id, e.unit_amount, e.rate_ppm, e.payment_stage,
-                e.tax_included,
+                e.tax_included, e.scope_languages, e.scope_regions,
                 oc.condition_no AS out_condition_no, oc.name AS out_condition_name,
                 e.document_id, d.document_no, d.status AS document_status, e.created_at, e.created_by,
                 e.condition_id, ec.condition_no AS own_condition_no,
@@ -252,6 +294,8 @@ export class ConditionEventService {
         outConditionId: int(row.out_condition_id),
         outConditionNo: str(row.out_condition_no),
         outConditionName: str(row.out_condition_name),
+        languages: Array.isArray(row.scope_languages) ? row.scope_languages.map(String) : [],
+        regions: Array.isArray(row.scope_regions) ? row.scope_regions.map(String) : [],
         unitAmount: int(row.unit_amount),
         ratePpm: int(row.rate_ppm),
         paymentStage: str(row.payment_stage),
@@ -335,6 +379,7 @@ export class ConditionEventService {
               "許諾料は作者から取った権利に対して払うものなので、実績はイン条件に載せます");
           }
           await this.assertOutCondition(client, conditionId, input.outConditionId ?? null, usageType);
+          await assertEventScope(client, input.outConditionId ?? null, input.languages, input.regions);
           if (input.workId) {
             const w = await client.query("SELECT id FROM works WHERE id = $1", [input.workId]);
             if (!w.rows[0]) throw new DomainError("NOT_FOUND", `作品 ${input.workId} が見つかりません`);
@@ -387,11 +432,12 @@ export class ConditionEventService {
               contract_form, service_from, service_to,
               usage_type, out_condition_id, unit_amount, rate_ppm, payment_stage,
               tax_included, work_id,
-              expected_quantity, expected_amount, variance_note, follow_up, follow_up_due_on)
+              expected_quantity, expected_amount, variance_note, follow_up, follow_up_due_on,
+              scope_languages, scope_regions)
            VALUES ($1, $2, $3, $4::date, $5, $6, $7, $8, $9, $10, $11, $12,
                    $13, $14::date, $15, $16, $17, $18::date, $19::date,
                    $20, $21, $22, $23, $24, $25, $26,
-                   $27, $28, $29, $30, $31::date)
+                   $27, $28, $29, $30, $31::date, $32::text[], $33::text[])
            RETURNING id`,
           [conditionId, scheduleId, input.eventType, occurredOn, period,
            input.quantity ?? null, input.sampleQuantity ?? null,
@@ -403,7 +449,8 @@ export class ConditionEventService {
            input.paymentStage ?? null, input.taxIncluded ?? null, input.workId ?? null,
            input.expectedQuantity ?? null,
            input.expectedAmount === null || input.expectedAmount === undefined ? null : Math.round(input.expectedAmount),
-           str(input.varianceNote), input.followUp ?? null, input.followUpDueOn || null]);
+           str(input.varianceNote), input.followUp ?? null, input.followUpDueOn || null,
+           scopeList(input.languages), scopeList(input.regions)]);
         const id = Number((inserted.rows[0] as { id: number }).id);
 
         await recordAudit(client, {

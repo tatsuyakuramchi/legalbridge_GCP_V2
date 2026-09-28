@@ -1,5 +1,5 @@
 import { dateStr, int, inTransaction, str, type Queryable, type Transactable } from "../core/db.js";
-import { CHILD_TITLES_SQL, statementProductName } from "./product-name.js";
+import { CHILD_TITLES_SQL, statementProductName, eventScopeLabel } from "./product-name.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { calculateFee, type FeeResult } from "./calc.js";
@@ -168,6 +168,7 @@ export class RoyaltyStatementService {
       `SELECT e.id, e.condition_id, e.event_type, e.occurred_on, e.period, e.quantity,
               e.sample_quantity, e.gross_amount, e.amount, e.document_id, e.status, e.note,
               e.usage_type, e.out_condition_id, e.unit_amount, e.payment_stage, e.tax_included,
+              e.scope_languages, e.scope_regions,
               COALESCE(e.rate_ppm, c.rate_ppm) AS rate_ppm,
               oc.condition_no AS out_condition_no, oc.name AS out_condition_name,
               oa.agreement_no AS out_agreement_no,
@@ -327,12 +328,14 @@ export class RoyaltyStatementService {
         outConditionName: str(e.out_condition_name),
         outPartyName: str(e.out_party_name),
         outCurrency: str(e.out_currency),
-        outScopes: str(e.out_scopes),
+        // 実績が言語・地域を持っていれば、その報告の範囲を紙に出す（許諾先の範囲全体ではなく）。
+        outScopes: eventScopeLabel(e.scope_languages, e.scope_regions) ?? str(e.out_scopes),
         productName: statementProductName({
           usageType, outConditionName: str(e.out_condition_name), outWorkTitle: str(e.out_work_title),
           inWorkTitle: str(e.in_work_title), inWorkKind: str(e.in_work_kind),
           childTitles: Array.isArray(e.child_titles) ? e.child_titles : null,
-          eventWorkTitle: str(e.event_work_title)
+          eventWorkTitle: str(e.event_work_title),
+          eventScope: eventScopeLabel(e.scope_languages, e.scope_regions)
         }) || null,
         unitAmount: int(e.unit_amount),
         ratePct,
