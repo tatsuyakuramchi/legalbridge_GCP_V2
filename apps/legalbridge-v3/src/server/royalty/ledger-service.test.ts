@@ -55,6 +55,20 @@ test("イベント式は実績1件が1回。支払日は支払条件から", () 
   assert.equal(rounds[0].payOn, "2026-09-30");
 });
 
+test("来るはずの行：言語×地域で1行（英語×北米・英語×欧州・フランス語×欧州）", () => {
+  const out = { id: 61, name: "ito｜英語・フランス語｜北米・欧州｜Alpha", usageType: "sublicense", workId: 1,
+                termStart: null, languages: ["英語", "フランス語"], regions: ["北米", "欧州"] };
+  const rounds = buildRounds({
+    conditions: [cond(1, { usageType: "sublicense" })], schedules: Q(1),
+    events: [ev(1, 1, "2026-06-10", { usageType: "sublicense", outConditionId: 61, outName: out.name,
+                                     languages: ["英語"], regions: ["北米"] })],
+    skips: [], outs: [out], bundle: "single_work", today: "2026-10-05"
+  });
+  const q2 = rounds.find((r) => r.payOn === "2026-07-31")!;
+  const rest = q2.parts[0].expected.map((x) => `${x.languages?.join("")}×${x.regions?.join("")}`).sort();
+  assert.deepEqual(rest, ["フランス語×北米", "フランス語×欧州", "英語×欧州"], "英語×北米は来た。残り3組");
+});
+
 test("来るはずの行：前の回にあった許諾先と、生きている許諾先", () => {
   const rounds = buildRounds({
     conditions: [cond(1, { usageType: "sublicense" })], schedules: Q(1),

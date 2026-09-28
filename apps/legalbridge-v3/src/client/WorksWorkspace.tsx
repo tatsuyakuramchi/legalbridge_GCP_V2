@@ -18,6 +18,9 @@ import { CONDITION_KIND_LABEL, EVENT_TYPE_LABEL, StatusTag } from "./labels.js";
 import { useReadOnly } from "./read-only.js";
 import { DetailBack, isWideLayout } from "./DetailBack.js";
 
+/** 文書の画面から戻る先（作品 › 利用許諾計算 の作家）。 */
+export interface DocBack { label: string; workId: number; partyId: number }
+
 /**
  * 作品台帳。
  *
@@ -145,7 +148,7 @@ export function WorksWorkspace(
     onOpen?: (kind: EntityKind, id: number) => void;
     /** 文書の画面へ、選んだ条件を載せた状態で移る。台帳から文書を作る入口。 */
     onCompose?: (conditionIds: number[], eventIds?: number[], matterId?: number | null,
-                 templateKey?: string | null) => void;
+                 templateKey?: string | null, back?: DocBack | null) => void;
   }
 ) {
   const readOnly = useReadOnly();
@@ -703,7 +706,7 @@ export function WorksWorkspace(
           {work && pane === "royalty" && (
             <RoyaltyLedger workId={work.id} initialPartyId={initialLedgerParty ?? null} onOpenDocument={onOpenDocument}
                            onOpenRequest={onOpenRequest}
-                           onCompose={onCompose ? (ids, events, key) => onCompose(ids, events, null, key) : undefined} />
+                           onCompose={onCompose ? (ids, events, key, back) => onCompose(ids, events, null, key, back) : undefined} />
           )}
           {work && pane === "work" && (<>
             <div className="panel">

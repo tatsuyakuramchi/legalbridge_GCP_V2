@@ -96,8 +96,8 @@ const addDays = (iso: string, n: number) => {
 export interface ScheduleLite { id: number; conditionId: number; seq: number; dueOn: string | null; payOn: string | null; label: string | null }
 export interface OutLite {
   id: number; name: string; usageType: string | null; workId: number | null; termStart: string | null;
-  /** 許諾言語。2つ以上なら、報告は言語ごとに来るものとして1言語1行で待つ。 */
-  languages?: string[];
+  /** 許諾言語・許諾地域。報告は 言語×地域 ごとに来るものとして、1組1行で待つ。 */
+  languages?: string[]; regions?: string[];
 }
 
 /**
@@ -180,18 +180,22 @@ export function buildRounds(input: {
         for (const o of input.outs.filter((x) => x.usageType === c.usageType
             && (x.workId === null || x.workId === c.workId)
             && (!x.termStart || !p.closeOn || x.termStart <= p.closeOn))) {
-          // 許諾言語が2つ以上なら、報告は言語ごとに来るので1言語1行で待つ。
+          // 報告は 言語×地域 ごとに来る（英語×北米、英語×欧州、フランス語×欧州）。
+          // 1組1行で待つ。「全言語」「全世界」は分けない（1行）。
           const langs = (o.languages ?? []).filter((l) => l !== "全言語");
-          const each = langs.length > 1 ? langs.map((l) => [l]) : [[] as string[]];
-          for (const ls of each) {
-            const hit = p.events.some((e) => e.outConditionId === o.id
-              && (!ls.length || (e.languages ?? []).includes(ls[0])));
-            const k = `${c.usageType}|${o.id}||${ls.join("・")}|`;
-            const already = [...expected.values()].some((x) => x.outConditionId === o.id
-              && (!ls.length || (x.languages ?? []).includes(ls[0])));
+          const regs = (o.regions ?? []).filter((r) => r !== "全世界");
+          const ls = langs.length > 1 ? langs : [null];
+          const rs = regs.length > 1 ? regs : [null];
+          for (const l of ls) for (const r of rs) {
+            const match = (e: { languages?: string[]; regions?: string[] }) =>
+              (!l || (e.languages ?? []).includes(l)) && (!r || (e.regions ?? []).includes(r));
+            const hit = p.events.some((e) => e.outConditionId === o.id && match(e));
+            const already = [...expected.values()].some((x) => x.outConditionId === o.id && match(x));
             if (!hit && !already) {
-              expected.set(k, { usageType: c.usageType, outConditionId: o.id, outName: o.name,
-                                workId: null, workTitle: null, why: "生きている許諾先", languages: ls, regions: [] });
+              expected.set(`${c.usageType}|${o.id}||${l ?? ""}|${r ?? ""}`,
+                { usageType: c.usageType, outConditionId: o.id, outName: o.name,
+                  workId: null, workTitle: null, why: "生きている許諾先",
+                  languages: l ? [l] : [], regions: r ? [r] : [] });
             }
           }
         }
@@ -392,13 +396,16 @@ export class RoyaltyLedgerService {
       const outs = workIds.length ? ((await q.query(
         `SELECT id, name, usage_type, work_id, term_start,
                 (SELECT array_agg(sc.label ORDER BY sc.sort_order, sc.label) FROM condition_scopes sc
-                  WHERE sc.condition_id = conditions.id AND sc.scope_type = 'language') AS languages
+                  WHERE sc.condition_id = conditions.id AND sc.scope_type = 'language') AS languages,
+                (SELECT array_agg(sc.label ORDER BY sc.sort_order, sc.label) FROM condition_scopes sc
+                  WHERE sc.condition_id = conditions.id AND sc.scope_type = 'region') AS regions
            FROM conditions
           WHERE direction = 'out' AND status IN ('active', 'scheduled')
             AND usage_type IN ('sublicense', 'oem') AND work_id = ANY($1::bigint[])`, [workIds])).rows as any[])
         .map((o): OutLite => ({ id: Number(o.id), name: String(o.name), usageType: str(o.usage_type),
                                 workId: int(o.work_id), termStart: dateStr(o.term_start),
-                                languages: Array.isArray(o.languages) ? o.languages.map(String) : [] }))
+                                languages: Array.isArray(o.languages) ? o.languages.map(String) : [],
+                                regions: Array.isArray(o.regions) ? o.regions.map(String) : [] }))
         : [];
 
       const conditions: LedgerCondition[] = rows.map((c) => ({

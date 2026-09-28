@@ -9,7 +9,7 @@ import type { EntityKind } from "./Relations.js";
 import { DocumentsWorkspace } from "./DocumentsWorkspace.js";
 import { ClosingWorkspace } from "./ClosingWorkspace.js";
 import { MoneyWorkspace } from "./MoneyWorkspace.js";
-import { WorksWorkspace } from "./WorksWorkspace.js";
+import { WorksWorkspace, type DocBack } from "./WorksWorkspace.js";
 import { PartiesWorkspace } from "./PartiesWorkspace.js";
 import { FlowMonitorWorkspace } from "./FlowMonitorWorkspace.js";
 import { DriftWorkspace } from "./DriftWorkspace.js";
@@ -162,10 +162,20 @@ export function App() {
   // 条件は複数受ける。発注書のように1枚で2件以上の条件を載せる書類があるので、
   // 案件から来たときはその案件の条件をまとめて選んだ状態にする。
   // 案件も受ける。案件や条件の画面から作った文書は、その案件に載せる。
+  /**
+   * 文書の画面から戻る先（台帳の回）。台帳から計算書を作りに来た・台帳から
+   * 決定した文書を開いたときに持つ。文書の画面の上に「← 台帳へ戻る」を出す。
+   */
+  const [docBack, setDocBack] = useState<DocBack | null>(null);
+  const goBack = (back: DocBack) => {
+    setLedgerParty(back.partyId); setConditionId(undefined); setCompose(null); setOpenDocument(undefined);
+    setFocus({ view: "works", id: back.workId }); setView("works");
+  };
   const startCompose = (
     conditionIds: number[], eventIds: number[] = [], matterId: number | null = null,
-    templateKey: string | null = null
+    templateKey: string | null = null, back: DocBack | null = null
   ) => {
+    setDocBack(back);
     setCompose({ conditionIds, eventIds, matterId, templateKey });
     setFocus(null);
     setOpenDocument(undefined);
@@ -193,7 +203,8 @@ export function App() {
   };
 
   /** 文書の画面へ移って、その文書を開く。下書きならそのまま編集に入る。 */
-  const openDocumentAt = (documentId: number) => {
+  const openDocumentAt = (documentId: number, back: DocBack | null = null) => {
+    setDocBack(back);
     setCompose(null);
     setFocus(null);
     setConditionId(undefined);
@@ -305,6 +316,7 @@ export function App() {
                           : openDocument ? `d${openDocument.id}` : "docs"}
             start={compose ?? undefined} openDocumentId={openDocument?.id}
             openNonce={openDocument?.nonce}
+            onBack={docBack ? { label: docBack.label, go: () => goBack(docBack) } : undefined}
             onOpen={openEntity} />
         )}
         {view === "agreements" && (
