@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ServiceEventForm } from "./ServiceEventForm.js";
+import { OutConditionForm } from "./OutConditionForm.js";
 import { AmendPanel } from "./AmendPanel.js";
 import type { AmendField } from "./AmendPanel.js";
 import { api, ApiError, money } from "./api.js";
@@ -59,6 +60,8 @@ interface OutCondition {
   id: number; conditionNo: string | null; name: string;
   status: string; partyName: string | null; workTitle: string | null; scopes: string | null;
   pricingModel: string; unitAmount: number | null;
+  /** 取引形態（再許諾／自社製造・他社販売）。旧い OUT 条件は持っていない。 */
+  usageType?: string | null;
 }
 interface ScheduleRow {
   id: number; seq: number; label: string | null; triggerKind: string;
@@ -127,6 +130,9 @@ export function ConditionEvents(
   /** 許諾（OUT）の条件が世の中に何件あるか。0件の理由を言い分けるために使う。 */
   const [outTotal, setOutTotal] = useState<number | null>(null);
   const [outQuery, setOutQuery] = useState("");
+  /** 実績入力の途中で許諾先（OUT）を作る欄。作ったらそのまま選んだ状態で戻る。 */
+  const [creatingOut, setCreatingOut] = useState(false);
+  const [outReload, setOutReload] = useState(0);
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -234,15 +240,19 @@ export function ConditionEvents(
   useEffect(() => {
     if (!usageTypes.length) return;
     let live = true;
+    // 実績の使い方を渡すと、別の取引形態の許諾は候補から外れる（選んでも登録で止まる）。
+    const params = new URLSearchParams();
+    if (outQuery.trim()) params.set("q", outQuery.trim());
+    if (v.usageType === "sublicense" || v.usageType === "oem") params.set("usage", v.usageType);
     api.get<{ conditions: OutCondition[]; total: number }>(
-      `/conditions/${conditionId}/out-candidates${outQuery.trim() ? `?q=${encodeURIComponent(outQuery.trim())}` : ""}`)
+      `/conditions/${conditionId}/out-candidates${params.size ? `?${params}` : ""}`)
       .then((r) => { if (live) { setOutFound(r.conditions); setOutTotal(r.total); } })
       .catch((e: ApiError) => {
         // 黙って空にしない。候補が出ない理由が読めないと、そこで手が止まる。
         if (live) { setOutFound([]); setOutTotal(null); setError(e.message); }
       });
     return () => { live = false; };
-  }, [conditionId, outQuery, usageTypes.length]);
+  }, [conditionId, outQuery, usageTypes.length, v.usageType, outReload, reloadKey]);
 
   // 束を変えたら試算し直す。保存しない。
   useEffect(() => {
@@ -758,7 +768,7 @@ export function ConditionEvents(
                 {!outFound.length && (
                   <small className="danger" style={{ marginTop: 4 }}>
                     {outTotal === 0
-                      ? "許諾（OUT）の条件がまだ1件もありません。条件明細 → 条件を登録 で、向きを「OUT 許諾」にして作ってください"
+                      ? "許諾（OUT）の条件がまだ1件もありません。下の「＋ この場で許諾先を作る」で作れます"
                       : outQuery.trim()
                       ? `「${outQuery.trim()}」に当たる許諾がありません（許諾は全部で ${outTotal ?? "?"} 件）。言葉を変えるか、空にして一覧から選んでください`
                       : "候補を読み込んでいます"}
@@ -788,10 +798,31 @@ export function ConditionEvents(
                   ? <small className="faint">
                       {workTitle ? `${workTitle} の許諾を上に出しています。` : ""}
                       {outFound.length} 件（ほかの作品の許諾も選べます）。
-                      無ければ 条件明細 → 条件を登録 で作ってから戻ってください
+                      無ければ下の「＋ この場で許諾先を作る」で作れます
                     </small>
                   : null}
               </label>
+            )}
+            {usage?.needsOutCondition && (
+              <div style={{ gridColumn: "1 / -1" }}>
+                {creatingOut ? (
+                  <OutConditionForm
+                    preset={{ usageType: usage.value, currency,
+                              ...(workId ? { workId: String(workId) } : {}) }}
+                    presetLabels={{ workId: workTitle ?? null }}
+                    onDone={(created) => {
+                      setCreatingOut(false);
+                      setOutQuery("");
+                      setOutReload((n) => n + 1);
+                      setV((cur) => ({ ...cur, outConditionId: String(created.id) }));
+                    }}
+                    onCancel={() => setCreatingOut(false)} />
+                ) : (
+                  <button type="button" className="btn btn-sm" onClick={() => setCreatingOut(true)}>
+                    ＋ この場で許諾先を作る
+                  </button>
+                )}
+              </div>
             )}
             {/*
               * 受領元が海外なら税込、国内なら税別で報告が来る。許諾料は税別に

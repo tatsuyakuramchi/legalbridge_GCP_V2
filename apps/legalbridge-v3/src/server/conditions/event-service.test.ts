@@ -491,3 +491,18 @@ test("支払が無ければ、これまでどおり外せる", async () => {
   const r = await new ConditionEventService(db).unlinkDocument(1205, [179], 1616, "admin");
   assert.equal(r.unlinked, 1);
 });
+
+test("OUT 条件の取引形態と実績の使い方が違えば止める。形態を持たない旧い OUT は通す", async () => {
+  const sub = input({ usageType: "sublicense", outConditionId: 7, grossAmount: 1000000, amount: 1000000, ratePpm: 100000 });
+  await assert.rejects(
+    () => new ConditionEventService(db({
+      "condition_no, usage_type FROM conditions": [{ id: 7, direction: "out", status: "active", condition_no: "C-7", usage_type: "oem" }]
+    })).add(1, sub, "a"),
+    /C-7 は自社製造・他社販売の許諾です。再許諾の実績には使えません/);
+  for (const held of ["sublicense", null]) {
+    const r = await new ConditionEventService(db({
+      "condition_no, usage_type FROM conditions": [{ id: 7, direction: "out", status: "active", condition_no: "C-7", usage_type: held }]
+    })).add(1, sub, "a");
+    assert.equal(r.id, 9);
+  }
+});

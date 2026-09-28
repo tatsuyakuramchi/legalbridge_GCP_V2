@@ -95,6 +95,7 @@ import { IntakeRepository, type IntakeTab } from "./intake/repository.js";
 import { IntakeRequestService } from "./intake/request-service.js";
 import { BacklogPullJob } from "./intake/backlog-pull.js";
 import { FlowNoticeJob } from "./matters/flow-notice.js";
+import { RequestProgressNoticeJob } from "./intake/progress-notice.js";
 import { MailIntakeJob } from "./jobs/mail-intake.js";
 import { BacklogService } from "./integrations/backlog-service.js";
 import type { IntegrationChannel } from "./integrations/gate.js";
@@ -742,8 +743,8 @@ export function createRoutes(database: Transactable) {
   }));
   router.get("/intake", asyncRoute(async (req, res) => {
     const tab = String(req.query.state ?? "new");
-    if (!["new", "on_hold", "updated", "all"].includes(tab)) {
-      throw new DomainError("VALIDATION", "state は new / on_hold / updated / all のいずれかです");
+    if (!["new", "on_hold", "updated", "direct", "all"].includes(tab)) {
+      throw new DomainError("VALIDATION", "state は new / on_hold / updated / direct / all のいずれかです");
     }
     res.json({ items: await intakeRepo.list(tab as IntakeTab) });
   }));
@@ -766,9 +767,14 @@ export function createRoutes(database: Transactable) {
       res.json(await intakeRequests.createManual(intakeManualSchema.parse(req.body ?? {}), actor(res)));
     }));
   const intakeAcceptSchema = z.object({
-    mode: z.enum(["new", "existing"]),
+    mode: z.enum(["new", "existing", "direct"]),
+    // 案件にせず処理（検収書・計算書の依頼）のときだけ使う。
+    purpose: z.enum(["inspection", "royalty"]).nullable().optional(),
+    targetDocNo: z.string().trim().max(100).nullable().optional(),
+    conditionIds: z.array(z.coerce.number().int().positive()).max(50).nullable().optional(),
     matterId: z.coerce.number().int().positive().nullable().optional(),
-    kind: intakeKind,
+    // 案件にせず処理のときは依頼の内容から決まるので要らない。
+    kind: intakeKind.optional(),
     title: z.string().trim().max(300).nullable().optional(),
     counterpartyId: z.coerce.number().int().positive().nullable().optional(),
     ownerStaffId: z.coerce.number().int().positive().nullable().optional(),
@@ -776,8 +782,43 @@ export function createRoutes(database: Transactable) {
   });
   router.post("/intake/:id/accept", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
+      const input = intakeAcceptSchema.parse(req.body ?? {});
+      if (input.mode !== "direct" && !input.kind) {
+        throw new DomainError("VALIDATION", "依頼の種類を選んでください");
+      }
       res.json(await intakeRequests.accept(
-        Number(req.params.id), intakeAcceptSchema.parse(req.body ?? {}), actor(res)));
+        Number(req.params.id), { ...input, kind: input.kind ?? "single" }, actor(res)));
+    }));
+  // ---- 案件にせず処理している依頼（A-058）。担当・期日・文書の繋ぎ・対応完了 ----
+  router.post("/intake/:id/assign", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        staffId: z.coerce.number().int().positive().nullable().optional(), dueOn: intakeDate
+      }).parse(req.body ?? {});
+      res.json(await intakeRequests.assign(Number(req.params.id), input, actor(res)));
+    }));
+  router.post("/intake/:id/documents", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        documentId: z.coerce.number().int().positive().nullable().optional(),
+        documentNo: z.string().trim().max(100).nullable().optional()
+      }).parse(req.body ?? {});
+      if (!input.documentId && !input.documentNo) throw new DomainError("VALIDATION", "文書番号を入れてください");
+      res.json(await intakeRequests.linkDocument(Number(req.params.id), input, actor(res)));
+    }));
+  router.delete("/intake/:id/documents/:documentId", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await intakeRequests.unlinkDocument(
+        Number(req.params.id), Number(req.params.documentId), actor(res)));
+    }));
+  router.post("/intake/:id/done", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { note } = z.object({ note: z.string().trim().max(2000).nullable().optional() }).parse(req.body ?? {});
+      res.json(await intakeRequests.complete(Number(req.params.id), note ?? null, actor(res)));
+    }));
+  router.post("/intake/:id/undone", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await intakeRequests.uncomplete(Number(req.params.id), actor(res)));
     }));
   router.post("/intake/:id/duplicate", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
@@ -820,7 +861,7 @@ export function createRoutes(database: Transactable) {
   // 定期実行は /internal/jobs/flow-notice（Cloud Scheduler）。
   router.post("/jobs/flow-notice", requireRole("admin"), requireWritable,
     asyncRoute(async (_req, res) => {
-      res.json(await flowNoticeJob(database, dispatch, communications, matterLinks).run());
+      res.json(await flowNoticeJob(database, dispatch, communications, matterLinks, intakeRequests).run());
     }));
 
   // 受信メールの取り込み。手で1回動かして結果を見るためのもの。
@@ -1834,11 +1875,15 @@ export function createRoutes(database: Transactable) {
   router.get("/conditions/:id/out-candidates", asyncRoute(async (req, res) => {
     const q = String(req.query.q ?? "").trim();
     const like = `%${q}%`;
+    // 実績の使い方（再許諾／自社製造・他社販売）。OUT 条件が別の形態を
+    // 持っていれば候補から外す（選んでも登録で止まる）。形態なしの旧い OUT は残す。
+    const usage = ["sublicense", "oem"].includes(String(req.query.usage ?? ""))
+      ? String(req.query.usage) : "";
     const r = await database.query(
       `SELECT c.id, c.condition_no, c.name, c.status,
               -- 他社販売の受領価格は、許諾したアウト条件が決めている。
               -- 単価を持つ条件なら、実績の欄の既定値にする。
-              c.pricing_model, c.unit_amount, c.currency,
+              c.pricing_model, c.unit_amount, c.currency, c.usage_type,
               p.name AS party_name, w.title AS work_title,
               (SELECT string_agg(sc.label, '・' ORDER BY sc.scope_type, sc.sort_order, sc.label)
                  FROM condition_scopes sc WHERE sc.condition_id = c.id) AS scopes
@@ -1854,10 +1899,13 @@ export function createRoutes(database: Transactable) {
           -- のか「作品が違って隠れている」のかが分からないまま手が止まる。
           AND ($1 = '' OR c.name ILIKE $3 OR c.condition_no ILIKE $3
                OR p.name ILIKE $3 OR w.title ILIKE $3)
+          AND ($4 = '' OR c.usage_type IS NULL OR c.usage_type NOT IN ('sublicense', 'oem')
+               OR c.usage_type = $4)
         ORDER BY (c.work_id IS NOT DISTINCT FROM $2::bigint) DESC,
+                 (c.usage_type IS NOT DISTINCT FROM NULLIF($4, '')) DESC,
                  c.condition_no NULLS LAST, c.id
         LIMIT 50`,
-      [q, await workIdOfCondition(Number(req.params.id)), like]);
+      [q, await workIdOfCondition(Number(req.params.id)), like, usage]);
     // 許諾（OUT）の条件が1件も無いのか、探した言葉に当たらないだけなのかを
     // 画面が言い分けられるようにする。0件の理由が分からないと次の手が決まらない。
     const total = await database.query(
@@ -1869,7 +1917,8 @@ export function createRoutes(database: Transactable) {
         id: Number(c.id), conditionNo: str(c.condition_no), name: String(c.name ?? ""),
         status: String(c.status), partyName: str(c.party_name),
         workTitle: str(c.work_title), scopes: str(c.scopes),
-        pricingModel: String(c.pricing_model ?? "none"), unitAmount: int(c.unit_amount)
+        pricingModel: String(c.pricing_model ?? "none"), unitAmount: int(c.unit_amount),
+        usageType: str(c.usage_type)
       }))
     });
   }));
@@ -4171,9 +4220,14 @@ function deliveryAlerts(database: Transactable, dispatch: ReturnType<typeof buil
 /** 工程の通知ジョブを組む。画面の経路と /internal で同じものを使う。 */
 function flowNoticeJob(
   database: Transactable, dispatch: ReturnType<typeof buildDispatch>,
-  communications: MatterCommunicationService, links: MatterLinkService
+  communications: MatterCommunicationService, links: MatterLinkService,
+  intakeRequests: IntakeRequestService
 ) {
-  return new FlowNoticeJob({
+  // 案件の工程と、案件にせず処理している依頼（A-058）の工程を同じ定期実行で知らせる。
+  const requests = new RequestProgressNoticeJob({
+    database, send: (requestId, slackId, body) => intakeRequests.notifyProgress(requestId, slackId, body)
+  });
+  const matters = new FlowNoticeJob({
     database,
     flowOf: (matterId) => links.flow(matterId),
     sendToMatter: async (matterId, body) =>
@@ -4183,6 +4237,12 @@ function flowNoticeJob(
       request: { recipient: slackId, body }
     })).sent
   });
+  return {
+    run: async () => {
+      const report = await matters.run();
+      return { ...report, requests: await requests.run() };
+    }
+  };
 }
 
 /** Webhook 受信。ユーザー認証は通さず、共有シークレットと署名で守る。 */
@@ -4200,7 +4260,7 @@ export function createWebhookRouter(database: Transactable) {
   const jobs: Record<string, (body: any) => Promise<unknown>> = {
     "delivery-alert": () => deliveryAlerts(database, dispatch).run(),
     "flow-notice": () => flowNoticeJob(database, dispatch,
-      new MatterCommunicationService(database, dispatch), new MatterLinkService(database)).run(),
+      new MatterCommunicationService(database, dispatch), new MatterLinkService(database), intakeRequests).run(),
     "backlog-pull": (body) => new BacklogPullJob(database, buildBacklogReader(), () => ({
       mode: config.integrationModes.backlog, readOnly: config.readOnly
     })).run({ since: typeof body?.since === "string" && body.since ? body.since : null }),

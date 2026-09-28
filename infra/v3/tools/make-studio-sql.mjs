@@ -303,6 +303,16 @@ SELECT * FROM (
             WHERE table_schema='v3' AND table_name='parties'
               AND column_name IN ('rpt_entity', 'has_board', 'related_party', 'related_party_type', 'related_party_note')))::text
   UNION ALL
+  SELECT 58, '支払文書の依頼を案件にせず処理（A-058。列 5・CHECK 2・表 1 で 8 であること）',
+         ((SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='v3' AND table_name='intake_requests'
+              AND column_name IN ('handling', 'assignee_staff_id', 'done_at', 'done_by', 'slack_thread_ts'))
+        + (SELECT count(*) FROM pg_constraint
+            WHERE conrelid='v3.intake_requests'::regclass
+              AND conname IN ('intake_requests_handling_chk', 'intake_requests_accepted_chk'))
+        + (SELECT count(*) FROM information_schema.tables
+            WHERE table_schema='v3' AND table_name='intake_request_links'))::text
+  UNION ALL
   SELECT 57, '非居住者と租税条約（A-057。列 5 と CHECK 2 で 7 であること）',
          ((SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='parties'

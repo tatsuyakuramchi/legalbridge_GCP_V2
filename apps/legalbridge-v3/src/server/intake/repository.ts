@@ -1,15 +1,20 @@
 import { dateStr, type Queryable } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { purposeOf } from "../integrations/slack-intake.js";
+import {
+  isPaymentPurpose, loadProgress, resolvePaymentTarget, type PaymentTarget, type RequestProgress
+} from "./payment-request.js";
 
 /**
  * 受付箱の読み取り。
  *
- * 一覧のタブは3つ。未処理（new）、保留（on_hold）、更新あり（受付済みで
- * 受付後に Backlog が更新されたもの）。対象外・重複・受付済みは「すべて」で見る。
+ * 一覧のタブは4つ。未処理（new）、保留（on_hold）、更新あり（受付済みで
+ * 受付後に Backlog が更新されたもの・依頼者が DM のスレッドに返信したもの）、
+ * 対応中（案件にせず処理している依頼。A-058）。対象外・重複・受付済みは「すべて」で見る。
  */
 
-export type IntakeTab = "new" | "on_hold" | "updated" | "all";
+/** direct＝案件にせず処理している依頼のうち、まだ終わっていないもの（対応中）。 */
+export type IntakeTab = "new" | "on_hold" | "updated" | "direct" | "all";
 
 export interface IntakeRow {
   id: number;
@@ -48,13 +53,23 @@ export interface IntakeRow {
   handledAt: string | null;
   handledBy: string | null;
   createdAt: string;
+  /** matter=案件で対応 / direct=案件にせず処理（A-058）。受付前は null。 */
+  handling: "matter" | "direct" | null;
+  assigneeStaffId: number | null;
+  assigneeName: string | null;
+  doneAt: string | null;
+  doneBy: string | null;
+  /** 案件にせず処理している依頼の工程。一覧（対応中）と詳細で入る。 */
+  progress?: RequestProgress | null;
 }
 
 const SELECT = `
-  SELECT r.*, m.matter_no, m.title AS matter_title, d.request_no AS duplicate_of_no
+  SELECT r.*, m.matter_no, m.title AS matter_title, d.request_no AS duplicate_of_no,
+         st.name AS assignee_name
     FROM intake_requests r
     LEFT JOIN matters m ON m.id = r.matter_id
-    LEFT JOIN intake_requests d ON d.id = r.duplicate_of_id`;
+    LEFT JOIN intake_requests d ON d.id = r.duplicate_of_id
+    LEFT JOIN staff st ON st.id = r.assignee_staff_id`;
 
 const iso = (v: unknown): string | null =>
   v === null || v === undefined ? null : v instanceof Date ? v.toISOString() : String(v);
@@ -72,7 +87,10 @@ function mailOf(p: Record<string, any>): IntakeRow["mail"] {
 }
 
 export function toRow(r: Record<string, any>): IntakeRow {
-  const payload = (r.source === "slack" ? r.source_payload ?? {} : {}) as Record<string, any>;
+  // 依頼の内容と対象の番号。Slack は送信のとき、それ以外は「案件にせず処理」で受け付けたときに入る。
+  // メールの原票は別の形（差出人・本文）なので、受け付けるまでは読まない。
+  const payload = (r.source === "slack" || r.handling === "direct"
+    ? r.source_payload ?? {} : {}) as Record<string, any>;
   const purpose = purposeOf(payload.purpose);
   return {
     id: Number(r.id),
@@ -106,9 +124,17 @@ export function toRow(r: Record<string, any>): IntakeRow {
     holdUntil: dateStr(r.hold_until),
     handledAt: iso(r.handled_at),
     handledBy: r.handled_by ?? null,
-    createdAt: iso(r.created_at) ?? ""
+    createdAt: iso(r.created_at) ?? "",
+    handling: r.handling === "direct" || r.handling === "matter" ? r.handling : null,
+    assigneeStaffId: r.assignee_staff_id === null || r.assignee_staff_id === undefined ? null : Number(r.assignee_staff_id),
+    assigneeName: r.assignee_name ?? null,
+    doneAt: iso(r.done_at),
+    doneBy: r.done_by ?? null
   };
 }
+
+/** 依頼者の DM のスレッドへの返信（案件にせず処理している依頼）。 */
+export interface IntakeReply { at: string; user: string; text: string }
 
 export interface MatterCandidate { id: number; matterNo: string | null; title: string; status: string; why: string }
 export interface DuplicateCandidate { id: number; requestNo: string | null; title: string; state: string; why: string }
@@ -120,44 +146,94 @@ export class IntakeRepository {
     const where = tab === "new" ? "r.state = 'new'"
       : tab === "on_hold" ? "r.state = 'on_hold'"
       : tab === "updated" ? "r.state = 'accepted' AND r.has_unseen_update"
+      : tab === "direct" ? "r.state = 'accepted' AND r.handling = 'direct' AND r.done_at IS NULL"
       : "TRUE";
-    // 保留は再確認日が来たものを上に。それ以外は新しい順。
-    const order = tab === "on_hold"
-      ? "r.hold_until NULLS LAST, r.created_at DESC" : "r.created_at DESC";
+    // 保留は再確認日が来たものを上に。対応中は期日の近い順。それ以外は新しい順。
+    const order = tab === "on_hold" ? "r.hold_until NULLS LAST, r.created_at DESC"
+      : tab === "direct" ? "r.due_on NULLS LAST, r.created_at"
+      : "r.created_at DESC";
     try {
       const r = await this.database.query(
         `${SELECT} WHERE ${where} ORDER BY ${order} LIMIT 300`);
-      return (r.rows as any[]).map(toRow);
+      const rows = (r.rows as any[]).map(toRow);
+      // 対応中は工程まで出す（どこで止まっているかを一覧で見る）。
+      if (tab === "direct") {
+        for (const row of rows) row.progress = await this.progressOf(row);
+      }
+      return rows;
     } catch (error) { throw translate(error); }
   }
 
+  /** 案件にせず処理している依頼の工程。それ以外は null。 */
+  async progressOf(row: IntakeRow): Promise<RequestProgress | null> {
+    if (row.handling !== "direct" || !isPaymentPurpose(row.purpose)) return null;
+    return loadProgress(this.database, {
+      id: row.id, purpose: row.purpose, createdAt: row.createdAt,
+      acceptedAt: row.handledAt, doneAt: row.doneAt
+    });
+  }
+
   /** タブの件数。ナビとホームの札に出す。 */
-  async counts(): Promise<{ new: number; onHold: number; updated: number; holdDue: number }> {
+  async counts(): Promise<{ new: number; onHold: number; updated: number; holdDue: number;
+                            direct: number; directOverdue: number }> {
     try {
       const r = await this.database.query(
         `SELECT count(*) FILTER (WHERE state = 'new')::int AS new,
                 count(*) FILTER (WHERE state = 'on_hold')::int AS on_hold,
                 count(*) FILTER (WHERE state = 'accepted' AND has_unseen_update)::int AS updated,
-                count(*) FILTER (WHERE state = 'on_hold' AND hold_until <= CURRENT_DATE)::int AS hold_due
+                count(*) FILTER (WHERE state = 'on_hold' AND hold_until <= CURRENT_DATE)::int AS hold_due,
+                count(*) FILTER (WHERE state = 'accepted' AND handling = 'direct' AND done_at IS NULL)::int AS direct,
+                count(*) FILTER (WHERE state = 'accepted' AND handling = 'direct' AND done_at IS NULL
+                                   AND due_on < CURRENT_DATE)::int AS direct_overdue
            FROM intake_requests`);
       const row = (r.rows[0] ?? {}) as any;
       return { new: Number(row.new ?? 0), onHold: Number(row.on_hold ?? 0),
-               updated: Number(row.updated ?? 0), holdDue: Number(row.hold_due ?? 0) };
+               updated: Number(row.updated ?? 0), holdDue: Number(row.hold_due ?? 0),
+               direct: Number(row.direct ?? 0), directOverdue: Number(row.direct_overdue ?? 0) };
     } catch (error) { throw translate(error); }
   }
 
   /** 1件と、受付の判断に使う候補（接続先の案件・重複の可能性）。 */
   async find(id: number): Promise<{ request: IntakeRow; matterCandidates: MatterCandidate[];
-                                    duplicateCandidates: DuplicateCandidate[] }> {
+                                    duplicateCandidates: DuplicateCandidate[];
+                                    target: PaymentTarget | null;
+                                    conditions: Array<{ id: number; conditionNo: string | null; name: string }>;
+                                    replies: IntakeReply[] }> {
     try {
       const r = await this.database.query(`${SELECT} WHERE r.id = $1`, [id]);
       const raw = r.rows[0] as any;
       if (!raw) throw new DomainError("NOT_FOUND", `依頼 ${id} が見つかりません`);
       const request = toRow(raw);
+      request.progress = await this.progressOf(request);
+      // 検収書・計算書の依頼は、対象の番号から条件と案件を引き当てて見せる
+      // （発注書が案件に入っていれば、その案件へ繋ぐ）。
+      const target = isPaymentPurpose(request.purpose)
+        ? await resolvePaymentTarget(this.database, request.purpose, request.targetDocNo) : null;
+      const linked = request.handling === "direct"
+        ? (await this.database.query(
+            `SELECT c.id, c.condition_no, c.name FROM intake_request_links l
+               JOIN conditions c ON c.id = l.target_id
+              WHERE l.request_id = $1 AND l.target_type = 'condition'
+              ORDER BY c.condition_no NULLS LAST, c.id`, [id])).rows as any[]
+        : [];
+      const replies = (await this.database.query(
+        `SELECT occurred_at, actor, detail FROM audit_events
+          WHERE action = 'intake.reply' AND target_type = 'intake_request' AND target_id = $1
+          ORDER BY occurred_at, id`, [id])).rows as any[];
+      const matterCandidates = await this.matterCandidates(request);
+      // 発注書の案件を候補の先頭に置く。
+      if (target?.matter && !matterCandidates.some((m) => m.id === target.matter!.id)) {
+        matterCandidates.unshift({ ...target.matter,
+          why: `${request.purpose === "inspection" ? "発注書" : "契約書"} ${target.documentNo ?? target.docNo} の案件` });
+      }
       return {
-        request,
-        matterCandidates: await this.matterCandidates(request),
-        duplicateCandidates: await this.duplicateCandidates(request)
+        request, matterCandidates,
+        duplicateCandidates: await this.duplicateCandidates(request),
+        target,
+        conditions: linked.map((c) => ({ id: Number(c.id), conditionNo: c.condition_no ?? null, name: String(c.name) })),
+        replies: replies.map((x) => ({
+          at: iso(x.occurred_at) ?? "", user: String(x.actor ?? ""), text: String(x.detail?.text ?? "")
+        }))
       };
     } catch (error) { throw translate(error); }
   }

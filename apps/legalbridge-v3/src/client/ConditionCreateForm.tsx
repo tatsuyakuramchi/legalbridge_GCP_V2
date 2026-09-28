@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "./api.js";
 import { parseLanguages, parseRegions } from "../server/core/rights-scope.js";
 import { CreateForm } from "./CreateForm.js";
+import { OutConditionForm } from "./OutConditionForm.js";
 import { CONDITION_KIND_LABEL } from "./labels.js";
 import { searchParties } from "./SearchSelect.js";
 import { minorPerMajor } from "../server/royalty/economics.js";
@@ -79,6 +80,13 @@ export function ConditionCreateForm(
   const [partyFor, setPartyFor] = useState<string>("");
   const [candidates, setCandidates] = useState<Agreement[] | null>(null);
   const [noAgreement, setNoAgreement] = useState(false);
+  /**
+   * 許諾（OUT）は再許諾か自社製造・他社販売の相手先なので、専用のフォームで受ける。ここで向きを OUT に
+   * 切り替えると、発注（IN）向けの欄が並んだまま取引形態を選べなかった。
+   * 切り替えた時点の相手先・作品・契約・通貨を引き継いで差し替える。
+   */
+  const [outFrom, setOutFrom] = useState<Record<string, string> | null>(
+    preset?.direction === "out" ? { ...preset } : null);
   useEffect(() => {
     if (!partyFor) { setCandidates(null); return; }
     let live = true;
@@ -97,11 +105,36 @@ export function ConditionCreateForm(
       .then((a) => setAgreements(a.agreements)).catch(() => undefined);
   }, []);
 
+  if (outFrom) {
+    const carry = (k: "workId" | "counterpartyId" | "agreementId") =>
+      outFrom[k] ? { [k]: outFrom[k]! } : {};
+    return (
+      <div className="stack">
+        <div className="note">
+          許諾（OUT）は再許諾か自社製造・他社販売の相手先なので、専用のフォームで登録します。
+          <button type="button" className="btn btn-sm" style={{ marginLeft: 8 }}
+                  onClick={() => setOutFrom(null)}>取得（IN）の登録に戻る</button>
+        </div>
+        <OutConditionForm
+          preset={{ ...carry("workId"), ...carry("counterpartyId"), ...carry("agreementId"),
+                    ...(outFrom.currency ? { currency: outFrom.currency } : {}),
+                    ...(outFrom.name ? { name: outFrom.name } : {}) }}
+          presetLabels={{
+            workId: works.find((w) => String(w.id) === outFrom.workId)?.title ?? null,
+            counterpartyId: outFrom.counterpartyId === preset?.counterpartyId ? presetLabels?.counterpartyId ?? null : null,
+            agreementId: outFrom.agreementId === preset?.agreementId ? presetLabels?.agreementId ?? null : null
+          }}
+          onDone={onDone} onCancel={onCancel} />
+      </div>
+    );
+  }
+
   return (
 <CreateForm
       title={title}
       path="/conditions"
       onValues={(v, set) => {
+        if (v.direction === "out") { setOutFrom({ ...v }); return; }
         const party = String(v.counterpartyId ?? "");
         if (party !== partyFor) { setPartyFor(party); setNoAgreement(false); return; }
         // 候補が 1 本で、まだ何も入っていなければ自動で入れる。人が空にしたら戻さない。

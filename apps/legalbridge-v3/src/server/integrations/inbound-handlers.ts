@@ -269,6 +269,29 @@ export async function handleSlack(
         AND (target_ref = $1 OR (snapshot->>'channelId' = $2 AND snapshot->>'threadTs' = $3))
       LIMIT 1`, [slackRef(channel, thread), channel, thread]);
   if (byThread.rows[0]) { matterId = Number((byThread.rows[0] as any).matter_id); how = "thread"; }
+  // 依頼の DM のスレッドへの返信（A-058）。案件に繋がっていれば案件のやり取りに、
+  // 案件にせず処理している依頼なら依頼に残し、受付箱の「更新あり」に出す。
+  if (!matterId && ev.channel_type === "im" && user && ev.thread_ts) {
+    const byRequest = await client.query(
+      `SELECT id, request_no, matter_id FROM intake_requests
+        WHERE slack_thread_ts = $1 AND requester_slack_id = $2 LIMIT 1`, [String(ev.thread_ts), user]);
+    const request = byRequest.rows[0] as any;
+    if (request?.matter_id) {
+      matterId = Number(request.matter_id); how = "request_thread";
+    } else if (request) {
+      const requestId = Number(request.id);
+      const occurred = Number.isFinite(Number(ts)) ? new Date(Number(ts) * 1000).toISOString() : null;
+      await recordAudit(client, {
+        actor: user, action: "intake.reply", targetType: "intake_request", targetId: requestId,
+        occurredAt: occurred, idempotencyKey: `intake-reply:${slackRef(channel, ts)}`,
+        detail: { text: String(ev.text ?? ""), channel, ts, eventId: input.externalId }
+      });
+      await client.query(
+        `UPDATE intake_requests SET has_unseen_update = true, updated_at = now() WHERE id = $1`, [requestId]);
+      return { applied: true, detail: { requestId, requestNo: request.request_no ?? null,
+                                         matchedBy: "request_thread" } };
+    }
+  }
   if (!matterId && ev.channel_type === "im" && user) {
     const byDm = await client.query(
       `SELECT id FROM matters WHERE requester_slack_id = $1

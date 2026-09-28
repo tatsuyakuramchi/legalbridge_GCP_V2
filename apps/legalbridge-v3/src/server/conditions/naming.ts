@@ -86,3 +86,32 @@ export function parseUsageType(text: unknown): ConditionUsageType | null {
   };
   return alias[s] ?? alias[s.replace(/[・･]/g, "")] ?? null;
 }
+
+export interface OutNamingInput {
+  workTitle: string;
+  /** 許諾言語。表示名を「、」で繋いだ文字列か、名前の配列。 */
+  languages?: string | string[] | null;
+  /** 許諾地域。同上。 */
+  regions?: string | string[] | null;
+  /** 相手先（再許諾先・販売先）の名前。 */
+  partyName?: string | null;
+}
+
+/**
+ * 許諾（OUT）の条件名の初期値。
+ *
+ *   作品名｜許諾言語｜許諾地域｜相手先名
+ *
+ * 再許諾・自社製造・他社販売の実績では、OUT 条件の条件名がそのまま
+ * 利用許諾料計算書の「製品名」に出る。自由記述だと人によって書き方が割れ、
+ * どの言語・地域の許諾ぶんの行かが紙から読めなかった。空の項目は飛ばす。
+ * 言語・地域が複数なら「・」で繋ぐ（区切りの｜と混ざらないように）。
+ */
+export function outConditionNameFor(input: OutNamingInput): string {
+  const list = (v: string | string[] | null | undefined) =>
+    (Array.isArray(v) ? v : String(v ?? "").split(/[、,／/・]/))
+      .map((s) => String(s ?? "").trim()).filter(Boolean).join("・");
+  return [String(input.workTitle ?? "").trim(), list(input.languages), list(input.regions),
+          String(input.partyName ?? "").trim()]
+    .filter(Boolean).join(NAME_SEPARATOR);
+}

@@ -334,7 +334,7 @@ export class ConditionEventService {
               "利用形態を付けられるのは取得（IN）の条件の実績だけです。" +
               "許諾料は作者から取った権利に対して払うものなので、実績はイン条件に載せます");
           }
-          await this.assertOutCondition(client, conditionId, input.outConditionId ?? null);
+          await this.assertOutCondition(client, conditionId, input.outConditionId ?? null, usageType);
           if (input.workId) {
             const w = await client.query("SELECT id FROM works WHERE id = $1", [input.workId]);
             if (!w.rows[0]) throw new DomainError("NOT_FOUND", `作品 ${input.workId} が見つかりません`);
@@ -426,19 +426,25 @@ export class ConditionEventService {
    * 向きが OUT であること、生きている版であること、自分自身でないこと。
    * ここを見ないと、取得の条件や無効な版を「許諾先」として指した実績が
    * できてしまい、紙に出す許諾地域が別の契約のものになる。
+   *
+   * OUT 条件が取引形態（再許諾／自社製造・他社販売）を持っていれば、実績の
+   * 使い方と合っていることも見る。再許諾の実績に他社販売の許諾を選ぶと、
+   * 計算書の製品名・算定の形が別の取引のものになる。形態を持たない旧い
+   * OUT 条件は見ない（移行データは持っていない）。
    */
   private async assertOutCondition(
-    client: Queryable, conditionId: number, outConditionId: number | null
+    client: Queryable, conditionId: number, outConditionId: number | null,
+    usageType: UsageType | null = null
   ): Promise<void> {
     if (!outConditionId) return;
     if (outConditionId === conditionId) {
       throw new DomainError("VALIDATION", "自分自身をアウト条件には指せません");
     }
     const found = await client.query(
-      "SELECT id, direction, status, condition_no FROM conditions WHERE id = $1",
+      "SELECT id, direction, status, condition_no, usage_type FROM conditions WHERE id = $1",
       [outConditionId]);
     const row = found.rows[0] as
-      { direction: string; status: string; condition_no: string | null } | undefined;
+      { direction: string; status: string; condition_no: string | null; usage_type?: string | null } | undefined;
     if (!row) throw new DomainError("NOT_FOUND", `条件 ${outConditionId} が見つかりません`);
     const tag = row.condition_no ?? `#${outConditionId}`;
     if (row.direction !== "out") {
@@ -446,6 +452,11 @@ export class ConditionEventService {
     }
     if (row.status !== "active" && row.status !== "draft" && row.status !== "scheduled") {
       throw new DomainError("VALIDATION", `${tag} は使える状態ではありません（${row.status}）`);
+    }
+    const held = row.usage_type ?? null;
+    if (usageType && (held === "sublicense" || held === "oem") && held !== usageType) {
+      throw new DomainError("VALIDATION",
+        `${tag} は${usageTypeLabel(held)}の許諾です。${usageTypeLabel(usageType)}の実績には使えません`);
     }
   }
 

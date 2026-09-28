@@ -11,6 +11,7 @@ import { ConditionEdit, type EditResult } from "./ConditionEdit.js";
 import { ConditionCreateForm } from "./ConditionCreateForm.js";
 import { PubConditionSetForm } from "./PubConditionSetForm.js";
 import { LicenseSetForm } from "./LicenseSetForm.js";
+import { OutConditionForm } from "./OutConditionForm.js";
 import { conditionUsageLabel } from "../server/core/condition-usage.js";
 import { CONDITION_KIND_LABEL, EVENT_TYPE_LABEL, StatusTag } from "./labels.js";
 import { useReadOnly } from "./read-only.js";
@@ -156,7 +157,7 @@ export function WorksWorkspace(
   const [activity, setActivity] = useState<Activity | null>(null);
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [editing, setEditing] = useState<ConditionDetail | null>(null);
-  const [creating, setCreating] = useState<"work" | "source" | "part" | "condition" | "publishing" | "license" | "import_works" | "import_conditions" | null>(null);
+  const [creating, setCreating] = useState<"work" | "source" | "part" | "condition" | "publishing" | "license" | "out" | "import_works" | "import_conditions" | null>(null);
   /** クレジット表記の履歴（A-031）。重版で変わる著作権表示を適用開始日つきで持つ。 */
   const [credits, setCredits] = useState<Credit[]>([]);
   const [creditForm, setCreditForm] = useState<{ effectiveFrom: string; edition: string; copyrightNotice: string; thirdPartyRights: string; note: string } | null>(null);
@@ -976,6 +977,12 @@ export function WorksWorkspace(
                     出版セット（紙・電子）
                   </button>
                 )}
+                {editable && creating === null && (
+                  <button className="btn btn-sm" onClick={() => setCreating("out")}
+                          title="この作品を再許諾・他社販売する相手先（OUT 条件）を作る">
+                    許諾先（OUT）を登録
+                  </button>
+                )}
               </div>
               {creating === "condition" && (
                 <div className="panel-bd">
@@ -987,6 +994,13 @@ export function WorksWorkspace(
               {creating === "publishing" && (
                 <div className="panel-bd">
                   <PubConditionSetForm preset={{ workId: String(work.id) }}
+                    onDone={() => { setCreating(null); void reloadWork(); void reloadTree(); }}
+                    onCancel={() => setCreating(null)} />
+                </div>
+              )}
+              {creating === "out" && (
+                <div className="panel-bd">
+                  <OutConditionForm preset={{ workId: String(work.id) }} presetLabels={{ workId: work.title }}
                     onDone={() => { setCreating(null); void reloadWork(); void reloadTree(); }}
                     onCancel={() => setCreating(null)} />
                 </div>
