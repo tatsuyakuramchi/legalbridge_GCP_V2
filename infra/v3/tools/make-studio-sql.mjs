@@ -303,6 +303,20 @@ SELECT * FROM (
             WHERE table_schema='v3' AND table_name='parties'
               AND column_name IN ('rpt_entity', 'has_board', 'related_party', 'related_party_type', 'related_party_note')))::text
   UNION ALL
+  SELECT 60, '依頼と許諾料の回の紐づけ（A-060。CHECK に schedule があること＝1）',
+         (SELECT count(*) FROM pg_constraint
+           WHERE conrelid='v3.intake_request_links'::regclass AND conname='intake_request_links_type_chk'
+             AND pg_get_constraintdef(oid) LIKE '%schedule%')::text
+  UNION ALL
+  SELECT 59, '許諾料の台帳（A-059。列 2・CHECK 2・表 1 で 5 であること）',
+         ((SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='v3' AND ((table_name='conditions' AND column_name='statement_timing')
+                                      OR (table_name='parties' AND column_name='royalty_bundle')))
+        + (SELECT count(*) FROM pg_constraint
+            WHERE conname IN ('conditions_statement_timing_chk', 'parties_royalty_bundle_chk'))
+        + (SELECT count(*) FROM information_schema.tables
+            WHERE table_schema='v3' AND table_name='royalty_round_skips'))::text
+  UNION ALL
   SELECT 58, '支払文書の依頼を案件にせず処理（A-058。列 5・CHECK 2・表 1 で 8 であること）',
          ((SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='intake_requests'

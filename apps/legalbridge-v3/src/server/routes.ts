@@ -62,6 +62,7 @@ import { MatterCommunicationService, driveIdFromUrl, recordCommunication } from 
 import { config } from "./config.js";
 import { verifySlackSignature } from "./integrations/signature.js";
 import { RoyaltyStatementService } from "./royalty/statement-service.js";
+import { RoyaltyLedgerService } from "./royalty/ledger-service.js";
 import { PAYMENT_STAGES, USAGE_TYPES } from "./royalty/usage-type.js";
 import { bundleLinesFor, bundleTotals } from "./royalty/bundle.js";
 import { applyLineLabels } from "./documents/royalty-patch.js";
@@ -69,7 +70,7 @@ import { PaymentService } from "./payments/service.js";
 import { PaymentAllocationService } from "./payments/allocation-service.js";
 import { PartyRepository } from "./parties/repository.js";
 import { OpsRepository } from "./ops/repository.js";
-import { SearchRepository } from "./search/repository.js";
+import { SEARCH_TARGETS, SearchRepository, normalizeQuery, type SearchTarget } from "./search/repository.js";
 import { ExportRepository, DATASETS, type Dataset } from "./exports/repository.js";
 import { filename, withBom } from "./exports/csv.js";
 import { AccountingExportLedger, AccountingExportRepository } from "./exports/accounting-repository.js";
@@ -153,6 +154,7 @@ export function createRoutes(database: Transactable) {
   const storage = new DocumentStorageService(database, drive, pdf);
   const documentImports = new DocumentImportService(database, drive);
   const royalty = new RoyaltyStatementService(database);
+  const royaltyLedger = new RoyaltyLedgerService(database);
   const payments = new PaymentService(database);
   const allocations = new PaymentAllocationService(database);
   const parties = new PartyRepository(database);
@@ -811,6 +813,19 @@ export function createRoutes(database: Transactable) {
       res.json(await intakeRequests.unlinkDocument(
         Number(req.params.id), Number(req.params.documentId), actor(res)));
     }));
+  // 許諾料の回に繋ぐ・外す（A-060）。回は予定明細の行か実績で指す。
+  const roundLinkSchema = z.object({
+    scheduleIds: z.array(z.coerce.number().int().positive()).max(100).optional(),
+    eventIds: z.array(z.coerce.number().int().positive()).max(100).optional()
+  });
+  router.post("/intake/:id/rounds", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await intakeRequests.linkRounds(Number(req.params.id), roundLinkSchema.parse(req.body ?? {}), actor(res)));
+    }));
+  router.post("/intake/:id/rounds/unlink", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await intakeRequests.linkRounds(Number(req.params.id), roundLinkSchema.parse(req.body ?? {}), actor(res), true));
+    }));
   router.post("/intake/:id/done", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       const { note } = z.object({ note: z.string().trim().max(2000).nullable().optional() }).parse(req.body ?? {});
@@ -1096,10 +1111,14 @@ export function createRoutes(database: Transactable) {
   }));
 
   // 横断検索。2文字未満は引かない（全件走査になるだけで役に立たない）。
+  // type を付けるとその種類だけを多めに引く（画面の「もっと見る」）。
   router.get("/search", asyncRoute(async (req, res) => {
     const q = String(req.query.q ?? "").trim().slice(0, 100);
-    if (q.length < 2) return res.json({ query: q, results: [] });
-    res.json({ query: q, results: await search.search(q) });
+    if (normalizeQuery(q).length < 2) return res.json({ query: q, results: [], more: {} });
+    const type = String(req.query.type ?? "");
+    const targets = SEARCH_TARGETS.includes(type as SearchTarget) ? [type as SearchTarget] : undefined;
+    const found = await search.find(q, { targets, limitPerType: targets ? 40 : 6 });
+    res.json({ query: q, ...found });
   }));
 
   // ---------------------------------------------------------------------
@@ -2161,6 +2180,63 @@ export function createRoutes(database: Transactable) {
   router.get("/works/tree", asyncRoute(async (req, res) => {
     res.json(await works.tree(String(req.query.q ?? ""), String(req.query.archived ?? "") === "1"));
   }));
+
+  // ---- 許諾料の台帳（作品 › 利用許諾計算。docs/royalty-ledger.md）----
+  // 作品を許諾している作家の一覧。
+  router.get("/works/:id/royalty", asyncRoute(async (req, res) => {
+    res.json(await royaltyLedger.forWork(Number(req.params.id)));
+  }));
+  // 台帳。workId を付ければ作家 × その作品、付けなければ作家 × 全作品。
+  router.get("/royalty-ledger", asyncRoute(async (req, res) => {
+    const input = z.object({
+      partyId: z.coerce.number().int().positive(),
+      workId: z.coerce.number().int().positive().nullable().optional()
+    }).parse(req.query ?? {});
+    res.json(await royaltyLedger.ledger(input.partyId, input.workId ?? null));
+  }));
+  // 今期は無し（その回は報告が来なかった）。DELETE で取り消す。
+  const ledgerSkipSchema = z.object({
+    conditionId: z.coerce.number().int().positive(),
+    scheduleId: z.coerce.number().int().positive(),
+    reason: z.string().trim().max(500).nullable().optional()
+  });
+  router.post("/royalty-ledger/skips", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = ledgerSkipSchema.parse(req.body ?? {});
+      res.json(await royaltyLedger.skip(input.conditionId, input.scheduleId, input.reason ?? null, actor(res)));
+    }));
+  router.delete("/royalty-ledger/skips", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = ledgerSkipSchema.parse(req.query ?? {});
+      res.json(await royaltyLedger.skip(input.conditionId, input.scheduleId, null, actor(res), true));
+    }));
+  // 古い空の回をまとめて報告なしにする。before より前の締めで、実績の無い回だけ。
+  router.post("/royalty-ledger/skips/before", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        partyId: z.coerce.number().int().positive(),
+        workId: z.coerce.number().int().positive().nullable().optional(),
+        before: z.string().date()
+      }).parse(req.body ?? {});
+      res.json(await royaltyLedger.skipBefore(input.partyId, input.workId ?? null, input.before, actor(res)));
+    }));
+  // 計算書の出し方（条件）と、作家の計算書のまとめ方（取引先）。null で既定に戻す。
+  router.put("/royalty-ledger/timing", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        conditionId: z.coerce.number().int().positive(),
+        timing: z.enum(["periodic", "event"]).nullable()
+      }).parse(req.body ?? {});
+      res.json(await royaltyLedger.setTiming(input.conditionId, input.timing, actor(res)));
+    }));
+  router.put("/royalty-ledger/bundle", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        partyId: z.coerce.number().int().positive(),
+        bundle: z.enum(["per_work", "per_party"]).nullable()
+      }).parse(req.body ?? {});
+      res.json(await royaltyLedger.setBundle(input.partyId, input.bundle, actor(res)));
+    }));
 
   router.get("/works/:id", asyncRoute(async (req, res) => {
     const work = await works.find(Number(req.params.id));

@@ -2122,6 +2122,71 @@ CREATE INDEX IF NOT EXISTS intake_request_links_target_idx
 -- 繋ぎは付け外しできる（人が繋いだ文書を外す）。
 GRANT SELECT, INSERT, DELETE ON v3.intake_request_links TO legalbridge_v3_runtime;
 
+-- ---------------------------------------------------------------------
+-- A-059 許諾料の台帳（作品 › 利用許諾計算。docs/royalty-ledger.md）
+--   作家 × 作品（作家 × N 作品）で、条件を毎期くり返し使って計算書を出す。
+--     - conditions.statement_timing：計算書の出し方。
+--         periodic=時限式（予定明細の締めで回る）/ event=イベント式（製造・刷のたびに回る）
+--         空なら利用形態から決める（紙出版はイベント式、それ以外は時限式）。
+--     - parties.royalty_bundle：作家の計算書のまとめ方。
+--         per_work=作品ごと（既定）/ per_party=作家でまとめる（同じ支払日の回を1枚に）
+--     - royalty_round_skips：その回は報告が無かった（今期は無し）。条件 × 予定明細の回。
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS statement_timing text;
+ALTER TABLE v3.parties ADD COLUMN IF NOT EXISTS royalty_bundle text;
+DO $a059$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.conditions'::regclass AND conname = 'conditions_statement_timing_chk') THEN
+    ALTER TABLE v3.conditions ADD CONSTRAINT conditions_statement_timing_chk
+      CHECK (statement_timing IS NULL OR statement_timing IN ('periodic', 'event'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.parties'::regclass AND conname = 'parties_royalty_bundle_chk') THEN
+    ALTER TABLE v3.parties ADD CONSTRAINT parties_royalty_bundle_chk
+      CHECK (royalty_bundle IS NULL OR royalty_bundle IN ('per_work', 'per_party'));
+  END IF;
+END $a059$;
+COMMENT ON COLUMN v3.conditions.statement_timing IS
+  '計算書の出し方。periodic=時限式（締めで回る）/ event=イベント式（製造・刷のたび）。空は利用形態から';
+COMMENT ON COLUMN v3.parties.royalty_bundle IS
+  '許諾料の計算書のまとめ方。per_work=作品ごと / per_party=作家でまとめる（同じ支払日の回を1枚に）。空は作品ごと';
+
+CREATE TABLE IF NOT EXISTS v3.royalty_round_skips (
+  condition_id bigint NOT NULL REFERENCES v3.conditions(id),
+  schedule_id  bigint NOT NULL REFERENCES v3.condition_schedules(id) ON DELETE CASCADE,
+  reason       text,
+  created_by   text,
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (condition_id, schedule_id)
+);
+COMMENT ON TABLE v3.royalty_round_skips IS
+  '許諾料の回で「今期は無し」（報告が来なかった）にしたもの。取り消せる。A-059';
+GRANT SELECT, INSERT, DELETE ON v3.royalty_round_skips TO legalbridge_v3_runtime;
+
+-- ---------------------------------------------------------------------
+-- A-060 依頼と許諾料の回を、人が選んで紐づける（docs/royalty-ledger.md §5）
+--   計算書の依頼を台帳のどの回の分かは、自動では決めない。依頼の画面からも
+--   台帳の回からも選んで繋ぐ。繋ぎ先は回を作っているもの：
+--     schedule … 時限式の回（予定明細の1行）
+--     event    … イベント式の回（製造・刷の実績1件）
+-- ---------------------------------------------------------------------
+DO $a060$
+DECLARE con text;
+BEGIN
+  SELECT conname INTO con FROM pg_constraint
+   WHERE conrelid = 'v3.intake_request_links'::regclass AND contype = 'c'
+     AND pg_get_constraintdef(oid) LIKE '%target_type%' AND pg_get_constraintdef(oid) NOT LIKE '%schedule%';
+  IF con IS NOT NULL THEN
+    EXECUTE format('ALTER TABLE v3.intake_request_links DROP CONSTRAINT %I', con);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.intake_request_links'::regclass AND conname = 'intake_request_links_type_chk') THEN
+    ALTER TABLE v3.intake_request_links ADD CONSTRAINT intake_request_links_type_chk
+      CHECK (target_type IN ('condition', 'document', 'schedule', 'event'));
+  END IF;
+END $a060$;
+
 COMMIT;
 
 
@@ -2395,6 +2460,20 @@ SELECT * FROM (
         + (SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='parties'
               AND column_name IN ('rpt_entity', 'has_board', 'related_party', 'related_party_type', 'related_party_note')))::text
+  UNION ALL
+  SELECT 60, '依頼と許諾料の回の紐づけ（A-060。CHECK に schedule があること＝1）',
+         (SELECT count(*) FROM pg_constraint
+           WHERE conrelid='v3.intake_request_links'::regclass AND conname='intake_request_links_type_chk'
+             AND pg_get_constraintdef(oid) LIKE '%schedule%')::text
+  UNION ALL
+  SELECT 59, '許諾料の台帳（A-059。列 2・CHECK 2・表 1 で 5 であること）',
+         ((SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='v3' AND ((table_name='conditions' AND column_name='statement_timing')
+                                      OR (table_name='parties' AND column_name='royalty_bundle')))
+        + (SELECT count(*) FROM pg_constraint
+            WHERE conname IN ('conditions_statement_timing_chk', 'parties_royalty_bundle_chk'))
+        + (SELECT count(*) FROM information_schema.tables
+            WHERE table_schema='v3' AND table_name='royalty_round_skips'))::text
   UNION ALL
   SELECT 58, '支払文書の依頼を案件にせず処理（A-058。列 5・CHECK 2・表 1 で 8 であること）',
          ((SELECT count(*) FROM information_schema.columns

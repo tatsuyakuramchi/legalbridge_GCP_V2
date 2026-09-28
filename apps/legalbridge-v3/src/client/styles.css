@@ -348,19 +348,31 @@ tr.overdue td { background: var(--out-soft); }
   border: 1px solid var(--line-strong); border-radius: 6px; font: inherit;
   color: var(--ink); background: var(--surface);
 }
+/* 左の桁は sticky で重なりの層を作る。後ろに並ぶ本文の sticky な見出しが、
+   桁の中から広げた検索結果の上に描かれないよう、桁を本文より上の層にする。 */
+.rail { z-index: 40; }
+/* 結果は左の桁（約200px）に収めると件名と手がかりが詰まって読めない。本文の上に広げる。 */
 .search-results {
-  position: absolute; z-index: 20; left: 12px; right: 12px; top: 100%;
-  max-height: 60vh; overflow: auto; background: var(--surface);
+  position: fixed; z-index: 30; left: 12px; top: 120px;
+  width: min(680px, calc(100vw - 32px));
+  max-height: 70vh; overflow: auto; background: var(--surface);
   border: 1px solid var(--line-strong); border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0,0,0,.18); padding: 6px;
 }
 .search-group + .search-group { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 6px; }
 .search-group-hd { font-size: 11px; color: var(--muted); padding: 2px 6px; }
 .search-hit {
-  display: flex; flex-direction: column; gap: 1px; width: 100%; text-align: left;
-  padding: 6px; border: 0; background: none; border-radius: 6px; cursor: pointer; font: inherit;
+  display: grid; grid-template-columns: minmax(120px, 170px) minmax(0, 1fr); column-gap: 10px; row-gap: 1px;
+  width: 100%; text-align: left; align-items: baseline;
+  padding: 5px 6px; border: 0; background: none; border-radius: 6px; cursor: pointer; font: inherit; color: inherit;
 }
-.search-hit:hover, .search-hit:focus-visible { background: var(--sunken); }
+.search-hit .code { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.search-hit .search-context { grid-column: 2; font-size: 11.5px; }
+.search-hit:hover, .search-hit:focus-visible, .search-hit[aria-selected="true"] { background: var(--accent-soft); }
+.search-hit mark { background: var(--warn-soft); color: inherit; border-radius: 2px; padding: 0 1px; }
+.search-more { display: block; padding: 3px 6px; font-size: 12px; }
+.search-help { border-top: 1px solid var(--line); margin-top: 6px; padding: 5px 6px 1px; font-size: 11px; }
+@media (max-width: 760px) { .search-hit { grid-template-columns: minmax(0, 1fr); } .search-hit .search-context { grid-column: 1; } }
 .search-title { font-size: 13px; }
 
 /* 一覧の絞り込み。件数と上限をここに出す（黙って200件で切らない）。 */
@@ -701,3 +713,33 @@ table.compact th,table.compact td{padding:4px 8px}
 .exporting .bar i{display:block;height:100%;background:var(--accent);transition:width .2s}
 @keyframes spin{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion: reduce){.exporting .spin{animation:none;border-top-color:var(--line-strong)}}
+
+/* ── 許諾料の台帳（作品 › 利用許諾計算。A-059）─────────────────────────── */
+.tag.pin { background: #EFE7F6; border-color: transparent; color: #7A4FA0; }
+@media (prefers-color-scheme:dark){ .tag.pin { background: #2A2033; color: #C3A3E0; } }
+.ledger-parties { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
+.ledger-party { display: flex; flex-direction: column; gap: 2px; text-align: left; cursor: pointer;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--surface); padding: 8px 12px; }
+.ledger-party:hover { border-color: var(--accent); }
+.ledger-party[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.ledger-terms { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.ledger-term { display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--line); border-radius: 5px; padding: 7px 10px; }
+.ledger-term b.num { font-size: 17px; }
+.ledger-rounds { display: flex; flex-direction: column; gap: 6px; }
+.ledger-round { display: grid; grid-template-columns: minmax(200px, 1.3fr) minmax(160px, 1fr) minmax(160px, auto);
+  gap: 12px; align-items: center; text-align: left; cursor: pointer;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--surface); padding: 8px 12px; }
+.ledger-round:hover { border-color: var(--accent); }
+.ledger-round[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.ledger-round .bar { display: block; height: 6px; border-radius: 3px; background: var(--sunken); overflow: hidden; }
+.ledger-round .bar i { display: block; height: 100%; background: var(--ok); }
+.ledger-detail { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; align-items: start; }
+/* 計算書の内訳は6列の表なので、実績の下に全幅で出す。依頼はその横に細く。 */
+.ledger-detail > aside { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 320px); gap: 14px; align-items: start; }
+.ledger-part { border-bottom: 1px solid var(--line); }
+.ledger-part:last-child { border-bottom: 0; }
+.ledger-part.waiting { background: var(--warn-soft); }
+.ledger-part-row { display: grid; grid-template-columns: minmax(160px, 1.1fr) minmax(120px, .8fr) minmax(180px, 1.6fr) auto;
+  gap: 10px; align-items: start; padding: 7px 6px; }
+@media (max-width: 1100px) { .ledger-detail > aside { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 760px) { .ledger-round, .ledger-part-row { grid-template-columns: minmax(0, 1fr); } }

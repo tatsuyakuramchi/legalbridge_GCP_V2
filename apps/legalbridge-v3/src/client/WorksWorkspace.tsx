@@ -12,6 +12,7 @@ import { ConditionCreateForm } from "./ConditionCreateForm.js";
 import { PubConditionSetForm } from "./PubConditionSetForm.js";
 import { LicenseSetForm } from "./LicenseSetForm.js";
 import { OutConditionForm } from "./OutConditionForm.js";
+import { RoyaltyLedger } from "./RoyaltyLedger.js";
 import { conditionUsageLabel } from "../server/core/condition-usage.js";
 import { CONDITION_KIND_LABEL, EVENT_TYPE_LABEL, StatusTag } from "./labels.js";
 import { useReadOnly } from "./read-only.js";
@@ -133,9 +134,14 @@ interface Credit {
 }
 
 export function WorksWorkspace(
-  { onOpenCondition, initialId, onOpen, onCompose }: {
+  { onOpenCondition, initialId, onOpen, onCompose, initialLedgerParty, onOpenDocument, onOpenRequest }: {
+    /** 作家・作品 → 依頼。受付箱のその依頼を開く。 */
+    onOpenRequest?: (requestId: number) => void;
     onOpenCondition: (id: number) => void;
     initialId?: number;
+    /** 利用許諾計算（許諾料の台帳）をこの作家で開く。受付箱の依頼から来たとき。 */
+    initialLedgerParty?: number | null;
+    onOpenDocument?: (documentId: number) => void;
     onOpen?: (kind: EntityKind, id: number) => void;
     /** 文書の画面へ、選んだ条件を載せた状態で移る。台帳から文書を作る入口。 */
     onCompose?: (conditionIds: number[], eventIds?: number[], matterId?: number | null,
@@ -150,6 +156,8 @@ export function WorksWorkspace(
   const [includeVoid, setIncludeVoid] = useState(false);
   const [kindFilter, setKindFilter] = useState<"all" | "source" | "work">("all");
   const [selected, setSelected] = useState<number | undefined>(initialId);
+  /** 作品の中の見出し。利用許諾計算（許諾料の台帳）は作品の情報とは別の作業なので切り替える。 */
+  const [pane, setPane] = useState<"work" | "royalty">(initialLedgerParty ? "royalty" : "work");
   const [work, setWork] = useState<WorkDetail | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
   const [envelope, setEnvelope] = useState<RightsEnvelope | null>(null);
@@ -686,7 +694,17 @@ export function WorksWorkspace(
         <div className="stack md-detail">
           <DetailBack label="作品" count={tree.works.length} onBack={() => setSelected(undefined)} />
           {!work && <div className="panel"><div className="panel-bd faint">左から作品を選んでください</div></div>}
-          {work && (<>
+          {work && (
+            <div className="tabs" role="tablist" aria-label="作品の見出し">
+              <button role="tab" aria-selected={pane === "work"} onClick={() => setPane("work")}>作品</button>
+              <button role="tab" aria-selected={pane === "royalty"} onClick={() => setPane("royalty")}>利用許諾計算</button>
+            </div>
+          )}
+          {work && pane === "royalty" && (
+            <RoyaltyLedger workId={work.id} initialPartyId={initialLedgerParty ?? null} onOpenDocument={onOpenDocument}
+                           onOpenRequest={onOpenRequest} />
+          )}
+          {work && pane === "work" && (<>
             <div className="panel">
               <div className="panel-hd">
                 <h2 className="code">{work.workCode ?? `#${work.id}`}</h2>
