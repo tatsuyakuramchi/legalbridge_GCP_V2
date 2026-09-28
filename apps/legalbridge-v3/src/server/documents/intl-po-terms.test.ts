@@ -35,3 +35,17 @@ test("基本契約ありなら約款は付けない", () => {
 test("約款は改ページして始める", () => {
   assert.match(terms, /page-break-before:always/);
 });
+
+test("海外発注書：受注者のメール・住所は入力欄（CONTRACTOR_*）の値を通知先に出す（約款 18 条）", () => {
+  const body = readFileSync(new URL("../../../../../infra/v3/templates/intl_purchase_order_v3_body.html", import.meta.url), "utf8");
+  const out = renderDocumentHtml(body, {
+    VENDOR_NAME: "Noa Vassalli", CONTRACTOR_EMAIL: "noa@example.com", CONTRACTOR_ADDRESS: "Via Quintino Sella 2, Milano, Italy",
+    HAS_BASE_CONTRACT: true
+  }, { terms_spot_intl_2026: terms });
+  assert.match(out, /To the Contractor<\/th>\s*<td>Noa Vassalli[^<]*E-mail: noa@example\.com/);
+  assert.match(out, /Via Quintino Sella 2, Milano, Italy/);
+  // 入力欄が空なら取引先マスタの値
+  const fallback = renderDocumentHtml(body, { VENDOR_NAME: "Noa", VENDOR_EMAIL: "master@example.com", HAS_BASE_CONTRACT: true },
+    { terms_spot_intl_2026: terms });
+  assert.match(fallback, /E-mail: master@example\.com/);
+});

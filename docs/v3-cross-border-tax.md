@@ -33,6 +33,7 @@ psql -v ON_ERROR_STOP=1 -v confirm_v3_grants=GRANT_V3_RUNTIME -f infra/v3/003_gr
 psql -v ON_ERROR_STOP=1 -f infra/v3/151_intl_po_terms_rev20260928.sql   # 約款と海外発注書の税の表示
 psql -v ON_ERROR_STOP=1 -f infra/v3/152_intl_inspection_certificate.sql # 海外用の検収書
 psql -v ON_ERROR_STOP=1 -f infra/v3/153_intl_po_withholding_rate.sql    # 海外発注書の源泉の欄（A-057）
+psql -v ON_ERROR_STOP=1 -f infra/v3/154_intl_po_contractor_fields.sql    # 海外発注書の受注者のメール・住所（通知先）
 ```
 
 アプリは main への push で自動デプロイされる（A-056 より先にアプリが動いても、`included` を

@@ -135,10 +135,10 @@ $q$;
   <tr>
     <td style="width:50%; padding-right:12px;">
       <div class="vlabel">To (Contractor)</div>
-      <div class="vendor-name">{{VENDOR_NAME}}</div>
+      <div class="vendor-name">{{or CONTRACTOR_NAME VENDOR_NAME}}</div>
       {{#if VENDOR_REPRESENTATIVE_LINE}}<div style="margin-top:3px; font-size:10pt;">{{VENDOR_REPRESENTATIVE_LINE}}</div>{{/if}}
       {{#if VENDOR_CONTACT_NAME}}<div class="muted">Attn: {{VENDOR_CONTACT_NAME}}</div>{{/if}}
-      {{#if VENDOR_ADDRESS}}<div class="muted">{{VENDOR_ADDRESS}}</div>{{/if}}
+      {{#if (or CONTRACTOR_ADDRESS VENDOR_ADDRESS)}}<div class="muted">{{or CONTRACTOR_ADDRESS VENDOR_ADDRESS}}</div>{{/if}}
       {{#if INVOICE_REGISTRATION_NUMBER}}<div class="muted" style="margin-top:2px;">Tax ID / VAT No.: {{INVOICE_REGISTRATION_NUMBER}}</div>{{/if}}
       <div style="margin-top:10px; font-size:9pt;">We hereby place the following order. Please review and confirm.</div>
       {{#if PROJECT_TITLE}}<div style="margin-top:8px; font-size:10pt;">Subject: <strong>{{PROJECT_TITLE}}</strong></div>{{/if}}
@@ -261,8 +261,8 @@ $q$;
       </table>
     </td>
     <td style="height:30mm;">
-      <p class="who">{{VENDOR_NAME}}</p>
-      {{#if VENDOR_ADDRESS}}<p class="muted">{{VENDOR_ADDRESS}}</p>{{/if}}
+      <p class="who">{{or CONTRACTOR_NAME VENDOR_NAME}}</p>
+      {{#if (or CONTRACTOR_ADDRESS VENDOR_ADDRESS)}}<p class="muted">{{or CONTRACTOR_ADDRESS VENDOR_ADDRESS}}</p>{{/if}}
       {{#if (eq VENDOR_IS_CORPORATION "法人")}}{{#if VENDOR_REPRESENTATIVE_LINE}}<p class="muted">{{VENDOR_REPRESENTATIVE_LINE}}</p>{{/if}}{{#if VENDOR_CONTACT_NAME}}<p class="muted">Attn: {{VENDOR_CONTACT_NAME}}</p>{{/if}}{{/if}}
       <table class="sign-lines" cellspacing="0" cellpadding="0">
         <tr><td class="lbl">Date</td><td class="ul date"></td><td class="pad"></td></tr>
@@ -283,8 +283,8 @@ $q$;
   </tr>
   <tr>
     <td style="height:26mm;">
-      <p class="who">{{VENDOR_NAME}}</p>
-      {{#if VENDOR_ADDRESS}}<p class="muted">{{VENDOR_ADDRESS}}</p>{{/if}}
+      <p class="who">{{or CONTRACTOR_NAME VENDOR_NAME}}</p>
+      {{#if (or CONTRACTOR_ADDRESS VENDOR_ADDRESS)}}<p class="muted">{{or CONTRACTOR_ADDRESS VENDOR_ADDRESS}}</p>{{/if}}
       {{#if (eq VENDOR_IS_CORPORATION "法人")}}{{#if VENDOR_CONTACT_NAME}}<p class="muted" style="margin-top:6px;">Attn: {{VENDOR_CONTACT_NAME}}</p>{{/if}}{{/if}}
     </td>
     <td style="height:26mm;">
@@ -516,7 +516,7 @@ $q$;
 <table class="summary compact">
   <tr>
     <th>To the Contractor</th>
-    <td>{{#if VENDOR_CONTACT_NAME}}Attn: {{VENDOR_CONTACT_NAME}}{{else}}{{VENDOR_NAME}}{{/if}}{{#if VENDOR_CONTACT_PHONE}}　／　Tel: {{VENDOR_CONTACT_PHONE}}{{/if}}{{#if VENDOR_EMAIL}}　／　E-mail: {{VENDOR_EMAIL}}{{/if}}</td>
+    <td>{{#if VENDOR_CONTACT_NAME}}Attn: {{VENDOR_CONTACT_NAME}}{{else}}{{or CONTRACTOR_NAME VENDOR_NAME}}{{/if}}{{#if VENDOR_CONTACT_PHONE}}　／　Tel: {{VENDOR_CONTACT_PHONE}}{{/if}}{{#if (or CONTRACTOR_EMAIL VENDOR_EMAIL)}}　／　E-mail: {{or CONTRACTOR_EMAIL VENDOR_EMAIL}}{{/if}}</td>
   </tr>
   <tr>
     <th>To the Purchaser</th>
