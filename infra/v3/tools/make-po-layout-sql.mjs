@@ -43,6 +43,7 @@ const TARGETS = [
     out: "148_intl_po_layout_v3.sql",
     // 約款の partial 名は現行版の本文から拾って差す（海外版の約款名はここでは決めない）。
     termsPlaceholder: "__TERMS_BLOCK__",
+    termsFallback: "terms_spot_intl_2026",
     title: "海外版の発注書のひな形：国内版（147）と同じレイアウトに（Page 1 固定・署名式・License Terms）",
     intro: `--   国内版（147）と同じ考え方。1 ページ目を To/From・Order Summary・Payment・
 --   Acceptance（または Signatures）の行数が決まった表だけで組み、Line Items・
@@ -79,8 +80,12 @@ function build(t) {
     throw new Error(`${t.body} に約款の差し込み位置 ${t.termsPlaceholder} がありません`);
   }
   const termsSql = t.termsPlaceholder ? `
-  -- 約款の partial 名は現行版から拾う（{{> 名前}}）。無ければ約款は付けない。
-  terms_partial := substring(src from '\\{\\{>\\s*([A-Za-z0-9_]+)\\s*\\}\\}');
+  -- 約款の partial 名は現行版から拾う（{{> 名前}}）。無ければ、登録済みの既定の約款
+  -- （${t.termsFallback}。150 などで登録）を使う。どちらも無ければ約款は付けない。
+  terms_partial := COALESCE(
+    substring(src from '\\{\\{>\\s*([A-Za-z0-9_]+)\\s*\\}\\}'),
+    (SELECT p.template_key FROM v3.document_templates p
+      WHERE p.template_key = '${t.termsFallback}' AND p.category = 'partial' AND p.is_active));
   IF terms_partial IS NULL THEN
     RAISE NOTICE '${t.no}: 現行版に約款の partial（{{> …}}）が無いので、約款は付けません';
     body_text := replace(body_text, '${t.termsPlaceholder}', '');

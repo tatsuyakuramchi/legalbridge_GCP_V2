@@ -561,8 +561,12 @@ BEGIN
     RAISE EXCEPTION '</style> が <head> に 1 箇所ではありません。146 で現行版を確かめてください';
   END IF;
   body_text := new_body;
-  -- 約款の partial 名は現行版から拾う（{{> 名前}}）。無ければ約款は付けない。
-  terms_partial := substring(src from '\{\{>\s*([A-Za-z0-9_]+)\s*\}\}');
+  -- 約款の partial 名は現行版から拾う（{{> 名前}}）。無ければ、登録済みの既定の約款
+  -- （terms_spot_intl_2026。150 などで登録）を使う。どちらも無ければ約款は付けない。
+  terms_partial := COALESCE(
+    substring(src from '\{\{>\s*([A-Za-z0-9_]+)\s*\}\}'),
+    (SELECT p.template_key FROM v3.document_templates p
+      WHERE p.template_key = 'terms_spot_intl_2026' AND p.category = 'partial' AND p.is_active));
   IF terms_partial IS NULL THEN
     RAISE NOTICE '148: 現行版に約款の partial（{{> …}}）が無いので、約款は付けません';
     body_text := replace(body_text, '__TERMS_BLOCK__', '');
