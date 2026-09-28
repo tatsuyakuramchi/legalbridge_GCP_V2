@@ -50,12 +50,16 @@ export interface LedgerEvent {
   workId: number | null; workTitle: string | null;
   quantity: number | null; unitAmount: number | null; grossAmount: number | null; amount: number;
   documentId: number | null;
+  /** この報告の言語・地域（A-061）。空は指定なし。 */
+  languages?: string[]; regions?: string[];
 }
 
 /** 来るはずの行（前の回にあった・生きている許諾先がある）。 */
 export interface ExpectedLine {
   usageType: string | null; outConditionId: number | null; outName: string | null;
   workId: number | null; workTitle: string | null; why: string;
+  /** 言語ごとに報告が来る許諾は、言語ごとに1行（A-061）。 */
+  languages?: string[]; regions?: string[];
 }
 
 export type PartState = "before" | "waiting" | "reported" | "skipped" | "issued";
@@ -88,7 +92,11 @@ const addDays = (iso: string, n: number) => {
 };
 
 export interface ScheduleLite { id: number; conditionId: number; seq: number; dueOn: string | null; payOn: string | null; label: string | null }
-export interface OutLite { id: number; name: string; usageType: string | null; workId: number | null; termStart: string | null }
+export interface OutLite {
+  id: number; name: string; usageType: string | null; workId: number | null; termStart: string | null;
+  /** 許諾言語。2つ以上なら、報告は言語ごとに来るものとして1言語1行で待つ。 */
+  languages?: string[];
+}
 
 /**
  * 回を組み立てる（純粋関数）。
@@ -150,8 +158,10 @@ export function buildRounds(input: {
         expected: [], state: "before" });
     }
     // 来るはずの行。前の回の行と、生きている許諾先。
-    const keyOf = (e: { usageType: string | null; outConditionId: number | null; workId: number | null }) =>
-      `${e.usageType ?? ""}|${e.outConditionId ?? ""}|${e.workId ?? ""}`;
+    // 行の見分け：利用形態・許諾先・作品・言語×地域（A-061。英語版とフランス語版は別の行）。
+    const keyOf = (e: { usageType: string | null; outConditionId: number | null; workId: number | null;
+                        languages?: string[]; regions?: string[] }) =>
+      `${e.usageType ?? ""}|${e.outConditionId ?? ""}|${e.workId ?? ""}|${(e.languages ?? []).join("・")}|${(e.regions ?? []).join("・")}`;
     const periodic = mine.filter((p) => p.scheduleId);
     periodic.forEach((p, i) => {
       const have = new Set(p.events.map(keyOf));
@@ -160,18 +170,27 @@ export function buildRounds(input: {
         const k = keyOf(e);
         if (!have.has(k)) {
           expected.set(k, { usageType: e.usageType, outConditionId: e.outConditionId, outName: e.outName,
-                            workId: e.workId, workTitle: e.workTitle, why: "前の回にあった" });
+                            workId: e.workId, workTitle: e.workTitle, why: "前の回にあった",
+                            languages: e.languages ?? [], regions: e.regions ?? [] });
         }
       }
       if (c.usageType === "sublicense" || c.usageType === "oem") {
         for (const o of input.outs.filter((x) => x.usageType === c.usageType
             && (x.workId === null || x.workId === c.workId)
             && (!x.termStart || !p.closeOn || x.termStart <= p.closeOn))) {
-          const k = `${c.usageType}|${o.id}|`;
-          const hit = p.events.some((e) => e.outConditionId === o.id);
-          if (!hit && ![...expected.keys()].some((x) => x.startsWith(`${c.usageType}|${o.id}|`))) {
-            expected.set(k, { usageType: c.usageType, outConditionId: o.id, outName: o.name,
-                              workId: null, workTitle: null, why: "生きている許諾先" });
+          // 許諾言語が2つ以上なら、報告は言語ごとに来るので1言語1行で待つ。
+          const langs = (o.languages ?? []).filter((l) => l !== "全言語");
+          const each = langs.length > 1 ? langs.map((l) => [l]) : [[] as string[]];
+          for (const ls of each) {
+            const hit = p.events.some((e) => e.outConditionId === o.id
+              && (!ls.length || (e.languages ?? []).includes(ls[0])));
+            const k = `${c.usageType}|${o.id}||${ls.join("・")}|`;
+            const already = [...expected.values()].some((x) => x.outConditionId === o.id
+              && (!ls.length || (x.languages ?? []).includes(ls[0])));
+            if (!hit && !already) {
+              expected.set(k, { usageType: c.usageType, outConditionId: o.id, outName: o.name,
+                                workId: null, workTitle: null, why: "生きている許諾先", languages: ls, regions: [] });
+            }
           }
         }
       }
@@ -340,7 +359,8 @@ export class RoyaltyLedgerService {
       const events = allIds.length ? ((await q.query(
         `SELECT e.id, e.condition_id, e.schedule_id, e.event_type, e.occurred_on, e.period, e.usage_type,
                 e.out_condition_id, oc.name AS out_name, e.work_id, ew.title AS work_title,
-                e.quantity, e.unit_amount, e.gross_amount, e.amount, e.document_id, d.status AS document_status
+                e.quantity, e.unit_amount, e.gross_amount, e.amount, e.document_id, d.status AS document_status,
+                e.scope_languages, e.scope_regions
            FROM condition_events e
            LEFT JOIN conditions oc ON oc.id = e.out_condition_id
            LEFT JOIN works ew ON ew.id = e.work_id
@@ -356,7 +376,9 @@ export class RoyaltyLedgerService {
           quantity: e.quantity === null ? null : Number(e.quantity), unitAmount: int(e.unit_amount),
           grossAmount: int(e.gross_amount), amount: Number(e.amount ?? 0),
           // 無効にした文書に付いたままの実績は、まだ出していない扱い。
-          documentId: e.document_id && e.document_status === "issued" ? Number(e.document_id) : null
+          documentId: e.document_id && e.document_status === "issued" ? Number(e.document_id) : null,
+          languages: Array.isArray(e.scope_languages) ? e.scope_languages.map(String) : [],
+          regions: Array.isArray(e.scope_regions) ? e.scope_regions.map(String) : []
         }))
         : [];
       const skips = ids.length ? ((await q.query(
@@ -365,11 +387,15 @@ export class RoyaltyLedgerService {
         : [];
       const workIds = [...new Set(rows.map((c) => int(c.work_id)).filter((x): x is number => !!x))];
       const outs = workIds.length ? ((await q.query(
-        `SELECT id, name, usage_type, work_id, term_start FROM conditions
+        `SELECT id, name, usage_type, work_id, term_start,
+                (SELECT array_agg(sc.label ORDER BY sc.sort_order, sc.label) FROM condition_scopes sc
+                  WHERE sc.condition_id = conditions.id AND sc.scope_type = 'language') AS languages
+           FROM conditions
           WHERE direction = 'out' AND status IN ('active', 'scheduled')
             AND usage_type IN ('sublicense', 'oem') AND work_id = ANY($1::bigint[])`, [workIds])).rows as any[])
         .map((o): OutLite => ({ id: Number(o.id), name: String(o.name), usageType: str(o.usage_type),
-                                workId: int(o.work_id), termStart: dateStr(o.term_start) }))
+                                workId: int(o.work_id), termStart: dateStr(o.term_start),
+                                languages: Array.isArray(o.languages) ? o.languages.map(String) : [] }))
         : [];
 
       const conditions: LedgerCondition[] = rows.map((c) => ({

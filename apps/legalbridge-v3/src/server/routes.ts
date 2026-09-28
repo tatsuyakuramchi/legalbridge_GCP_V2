@@ -1836,6 +1836,9 @@ export function createRoutes(database: Transactable) {
     // 権利の使い方。利用許諾料計算書はこれで算定の形が決まる。
     usageType: z.enum(["in_house", "sublicense", "oem"]).nullable().optional(),
     outConditionId: z.coerce.number().int().positive().nullable().optional(),
+    // この報告の言語・地域（A-061）。表示名の並び。
+    languages: z.array(z.string().trim().min(1).max(60)).max(30).nullable().optional(),
+    regions: z.array(z.string().trim().min(1).max(60)).max(60).nullable().optional(),
     /** どの当社作品の売上か（A-027）。自社製造・自社販売の計算書の製品名になる。 */
     workId: z.coerce.number().int().positive().nullable().optional(),
     /** 基準価格（自社販売）／受領価格1個あたり（他社販売）。 */
@@ -1905,7 +1908,12 @@ export function createRoutes(database: Transactable) {
               c.pricing_model, c.unit_amount, c.currency, c.usage_type,
               p.name AS party_name, w.title AS work_title,
               (SELECT string_agg(sc.label, '・' ORDER BY sc.scope_type, sc.sort_order, sc.label)
-                 FROM condition_scopes sc WHERE sc.condition_id = c.id) AS scopes
+                 FROM condition_scopes sc WHERE sc.condition_id = c.id) AS scopes,
+              -- 実績の言語・地域を選ぶ候補（A-061）
+              (SELECT array_agg(sc.label ORDER BY sc.sort_order, sc.label)
+                 FROM condition_scopes sc WHERE sc.condition_id = c.id AND sc.scope_type = 'language') AS languages,
+              (SELECT array_agg(sc.label ORDER BY sc.sort_order, sc.label)
+                 FROM condition_scopes sc WHERE sc.condition_id = c.id AND sc.scope_type = 'region') AS regions
          FROM conditions c
          LEFT JOIN parties p ON p.id = c.counterparty_id
          LEFT JOIN works   w ON w.id = c.work_id
@@ -1937,7 +1945,9 @@ export function createRoutes(database: Transactable) {
         status: String(c.status), partyName: str(c.party_name),
         workTitle: str(c.work_title), scopes: str(c.scopes),
         pricingModel: String(c.pricing_model ?? "none"), unitAmount: int(c.unit_amount),
-        usageType: str(c.usage_type)
+        usageType: str(c.usage_type),
+        languages: Array.isArray(c.languages) ? c.languages.map(String) : [],
+        regions: Array.isArray(c.regions) ? c.regions.map(String) : []
       }))
     });
   }));

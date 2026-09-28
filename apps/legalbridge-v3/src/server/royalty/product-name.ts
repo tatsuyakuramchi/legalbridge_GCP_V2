@@ -26,14 +26,29 @@ export interface ProductNameSource {
   childTitles?: Array<string | null> | null;
   /** 実績が指している当社作品（A-027）。あればこれが最優先。 */
   eventWorkTitle?: string | null;
+  /** 実績の言語・地域（A-061）。報告が言語ごとに来るとき、製品名の後ろに添える。 */
+  eventScope?: string | null;
+}
+
+/** 実績の言語・地域を1つの表記に（英語・北米）。空なら null。 */
+export function eventScopeLabel(languages: unknown, regions: unknown): string | null {
+  const list = (v: unknown) => (Array.isArray(v) ? v : []).map((x) => String(x ?? "").trim()).filter(Boolean);
+  const all = [...list(languages), ...list(regions)];
+  return all.length ? all.join("・") : null;
 }
 
 const text = (v: unknown) => String(v ?? "").trim();
 const titles = (v: Array<string | null> | null | undefined) =>
   [...new Set((v ?? []).map(text).filter(Boolean))];
 
-/** 明細の行の製品名。 */
+/** 明細の行の製品名。実績に言語・地域があれば後ろに添える（英語版とフランス語版を分ける）。 */
 export function statementProductName(s: ProductNameSource): string {
+  const base = baseProductName(s);
+  const scope = text(s.eventScope);
+  return base && scope ? `${base}（${scope}）` : base;
+}
+
+function baseProductName(s: ProductNameSource): string {
   const usage = text(s.usageType);
   if (usage === "sublicense" || usage === "oem") {
     return text(s.outConditionName) || text(s.outWorkTitle) || text(s.inWorkTitle);

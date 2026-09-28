@@ -2,7 +2,7 @@ import type { Queryable, Transactable } from "../core/db.js";
 import { dateStr, int, num, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { taxRatePercentFor } from "./legacy-totals.js";
-import { CHILD_TITLES_SQL, SOURCE_TITLES_SQL, originalWorkTitle, statementProductName } from "../royalty/product-name.js";
+import { CHILD_TITLES_SQL, SOURCE_TITLES_SQL, originalWorkTitle, statementProductName, eventScopeLabel } from "../royalty/product-name.js";
 
 /**
  * テンプレート変数の供給元になる文脈を、条件・合意・当事者・作品から組み立てる。
@@ -347,7 +347,7 @@ export class DocumentContextRepository {
               e.deliverable, e.inspected_on, e.inspector_dept, e.inspector_name,
               e.contract_form, e.service_from, e.service_to,
               e.expected_amount, e.variance_note,
-              e.usage_type, e.out_condition_id,
+              e.usage_type, e.out_condition_id, e.scope_languages, e.scope_regions,
               oc.condition_no AS out_condition_no, oc.name AS out_condition_name,
               oa.agreement_no AS out_agreement_no,
               op.name AS out_party_name, ow.title AS out_work_title,
@@ -403,8 +403,11 @@ export class DocumentContextRepository {
           outWorkTitle: str(row.out_work_title), inWorkTitle: str(row.in_work_title),
           inWorkKind: str(row.in_work_kind),
           childTitles: Array.isArray(row.child_titles) ? row.child_titles : null,
-          eventWorkTitle: str(row.event_work_title)
+          eventWorkTitle: str(row.event_work_title),
+          eventScope: eventScopeLabel(row.scope_languages, row.scope_regions)
         }) || null,
+        /** 実績の言語・地域（A-061）。 */
+        scope: eventScopeLabel(row.scope_languages, row.scope_regions),
         /** 実績が指す当社作品（A-027）。 */
         workId: int(row.event_work_id),
         workTitle: str(row.event_work_title),

@@ -348,6 +348,8 @@ function RoundDetail(
   const [filter, setFilter] = useState<"all" | "waiting" | "reported" | "done">("all");
   const [q, setQ] = useState("");
   const [recording, setRecording] = useState<string | null>(null);
+  /** 「来るはず」の行から開いたとき、その行の利用形態・許諾先・言語を入れておく。 */
+  const [preset, setPreset] = useState<{ usageType?: string | null; outConditionId?: number | null; languages?: string[] } | null>(null);
   const [preview, setPreview] = useState<{ lines: StatementLine[]; totals: StatementTotals } | null>(null);
   /** 試算で弾かれた理由。回の中の話なので、画面の上ではなく計算書の欄に出す。 */
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -372,7 +374,8 @@ function RoundDetail(
       .then((x) => { if (live) { setPreview(x); setPreviewError(null); } })
       .catch((e: ApiError) => { if (live) { setPreview(null); setPreviewError(e.message); } });
     return () => { live = false; };
-  }, [r.key, entries.length]);
+    // 実績を足した・直したときも試算し直す（件数だけ見ると、入れ替わりを見落とす）。
+  }, [r.key, entries.map((e) => `${e.conditionId}:${e.eventIds.join("-")}`).join(",")]);
   useEffect(() => {
     api.get<{ templates: Array<{ templateKey: string; label: string }> }>("/document-templates")
       .then((x) => {
@@ -451,14 +454,23 @@ function RoundDetail(
                     {p.events.map((e) => (
                       <span key={e.id} className="faint">
                         {e.occurredOn} {e.outName ? `${e.outName} ` : e.workTitle ? `${e.workTitle} ` : ""}
+                        {[...(e.languages ?? []), ...(e.regions ?? [])].length ? `［${[...(e.languages ?? []), ...(e.regions ?? [])].join("・")}］ ` : ""}
                         {e.quantity !== null ? `${e.quantity.toLocaleString()} 個 ` : ""}
                         {e.grossAmount !== null ? `報告 ${yen(e.grossAmount, c.currency)}` : ""}
                         {e.documentId ? " · 計算書済" : ""}
                       </span>
                     ))}
                     {p.expected.map((x, i) => (
-                      <span key={i} style={{ color: "var(--warn)" }}>
-                        来るはず：{x.outName ?? x.workTitle ?? x.usageType ?? "前の回の行"}（{x.why}）
+                      <span key={i} className="row" style={{ gap: 6, color: "var(--warn)" }}>
+                        来るはず：{x.outName ?? x.workTitle ?? x.usageType ?? "前の回の行"}
+                        {[...(x.languages ?? []), ...(x.regions ?? [])].length ? `［${[...(x.languages ?? []), ...(x.regions ?? [])].join("・")}］` : ""}
+                        （{x.why}）
+                        {canWrite && p.state !== "issued" && !p.skipped && (
+                          <button className="btn btn-sm" onClick={() => {
+                            setPreset({ usageType: x.usageType, outConditionId: x.outConditionId, languages: x.languages ?? [] });
+                            setRecording(key);
+                          }}>この行を入れる</button>
+                        )}
                       </span>
                     ))}
                     {!p.events.length && !p.expected.length && <span className="faint">実績なし</span>}
@@ -466,7 +478,10 @@ function RoundDetail(
                   <span className="row" style={{ gap: 4, justifyContent: "flex-end" }}>
                     <span className={`tag ${ps.tag}`}>{ps.label}</span>
                     {canWrite && p.state !== "issued" && !p.skipped && (
-                      <button className="btn btn-sm" onClick={() => setRecording(recording === key ? null : key)}>実績を入れる</button>
+                      <button className="btn btn-sm" onClick={() => {
+                        setPreset(["in_house", "sublicense", "oem"].includes(c.usageType ?? "") ? { usageType: c.usageType } : null);
+                        setRecording(recording === key ? null : key);
+                      }}>実績を入れる</button>
                     )}
                     {canWrite && p.scheduleId && !p.events.length && !p.skipped && (
                       <button className="btn btn-sm" title="この回は報告が来なかった" onClick={() => void skip(p)}>報告なし</button>
@@ -481,7 +496,7 @@ function RoundDetail(
                     <ConditionEvents conditionId={c.id} currency={c.currency} pricingModel={c.pricingModel}
                       ratePpm={c.ratePpm} direction="in" kind="license"
                       conditionUnitAmount={c.unitAmount} workTitle={c.workTitle} workId={c.workId}
-                      editable={canWrite} openForSchedule={p.scheduleId}
+                      editable={canWrite} openForSchedule={p.scheduleId} preset={preset}
                       onOpenDocument={onOpenDocument}
                       onChanged={() => { setRecording(null); onChanged("実績を入れました"); }} />
                   </div>
