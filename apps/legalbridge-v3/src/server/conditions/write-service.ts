@@ -303,7 +303,9 @@ const COPY_COLUMNS = [
   "cycle", "notes", "series_id", "effective_from", "spec", "deliverable_ownership", "order_no",
   "quantity", "contract_form", "auto_renew", "renew_months", "renew_stopped_on",
   // 利用形態も版をまたいで引き継ぐ（落とすと改訂した許諾条件が形態なしになる）。
-  "usage_type"
+  "usage_type",
+  // 計算書の出し方（A-059）。改訂しても時限式・イベント式は変わらない。
+  "statement_timing"
 ];
 
 export class ConditionWriteService {

@@ -62,6 +62,7 @@ import { MatterCommunicationService, driveIdFromUrl, recordCommunication } from 
 import { config } from "./config.js";
 import { verifySlackSignature } from "./integrations/signature.js";
 import { RoyaltyStatementService } from "./royalty/statement-service.js";
+import { RoyaltyLedgerService } from "./royalty/ledger-service.js";
 import { PAYMENT_STAGES, USAGE_TYPES } from "./royalty/usage-type.js";
 import { bundleLinesFor, bundleTotals } from "./royalty/bundle.js";
 import { applyLineLabels } from "./documents/royalty-patch.js";
@@ -153,6 +154,7 @@ export function createRoutes(database: Transactable) {
   const storage = new DocumentStorageService(database, drive, pdf);
   const documentImports = new DocumentImportService(database, drive);
   const royalty = new RoyaltyStatementService(database);
+  const royaltyLedger = new RoyaltyLedgerService(database);
   const payments = new PaymentService(database);
   const allocations = new PaymentAllocationService(database);
   const parties = new PartyRepository(database);
@@ -2161,6 +2163,53 @@ export function createRoutes(database: Transactable) {
   router.get("/works/tree", asyncRoute(async (req, res) => {
     res.json(await works.tree(String(req.query.q ?? ""), String(req.query.archived ?? "") === "1"));
   }));
+
+  // ---- 許諾料の台帳（作品 › 利用許諾計算。docs/royalty-ledger.md）----
+  // 作品を許諾している作家の一覧。
+  router.get("/works/:id/royalty", asyncRoute(async (req, res) => {
+    res.json(await royaltyLedger.forWork(Number(req.params.id)));
+  }));
+  // 台帳。workId を付ければ作家 × その作品、付けなければ作家 × 全作品。
+  router.get("/royalty-ledger", asyncRoute(async (req, res) => {
+    const input = z.object({
+      partyId: z.coerce.number().int().positive(),
+      workId: z.coerce.number().int().positive().nullable().optional()
+    }).parse(req.query ?? {});
+    res.json(await royaltyLedger.ledger(input.partyId, input.workId ?? null));
+  }));
+  // 今期は無し（その回は報告が来なかった）。DELETE で取り消す。
+  const ledgerSkipSchema = z.object({
+    conditionId: z.coerce.number().int().positive(),
+    scheduleId: z.coerce.number().int().positive(),
+    reason: z.string().trim().max(500).nullable().optional()
+  });
+  router.post("/royalty-ledger/skips", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = ledgerSkipSchema.parse(req.body ?? {});
+      res.json(await royaltyLedger.skip(input.conditionId, input.scheduleId, input.reason ?? null, actor(res)));
+    }));
+  router.delete("/royalty-ledger/skips", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = ledgerSkipSchema.parse(req.query ?? {});
+      res.json(await royaltyLedger.skip(input.conditionId, input.scheduleId, null, actor(res), true));
+    }));
+  // 計算書の出し方（条件）と、作家の計算書のまとめ方（取引先）。null で既定に戻す。
+  router.put("/royalty-ledger/timing", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        conditionId: z.coerce.number().int().positive(),
+        timing: z.enum(["periodic", "event"]).nullable()
+      }).parse(req.body ?? {});
+      res.json(await royaltyLedger.setTiming(input.conditionId, input.timing, actor(res)));
+    }));
+  router.put("/royalty-ledger/bundle", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        partyId: z.coerce.number().int().positive(),
+        bundle: z.enum(["per_work", "per_party"]).nullable()
+      }).parse(req.body ?? {});
+      res.json(await royaltyLedger.setBundle(input.partyId, input.bundle, actor(res)));
+    }));
 
   router.get("/works/:id", asyncRoute(async (req, res) => {
     const work = await works.find(Number(req.params.id));

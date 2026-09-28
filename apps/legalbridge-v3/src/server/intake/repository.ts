@@ -197,7 +197,8 @@ export class IntakeRepository {
   async find(id: number): Promise<{ request: IntakeRow; matterCandidates: MatterCandidate[];
                                     duplicateCandidates: DuplicateCandidate[];
                                     target: PaymentTarget | null;
-                                    conditions: Array<{ id: number; conditionNo: string | null; name: string }>;
+                                    conditions: Array<{ id: number; conditionNo: string | null; name: string;
+                                                        workId: number | null; workTitle: string | null; partyId: number | null }>;
                                     replies: IntakeReply[] }> {
     try {
       const r = await this.database.query(`${SELECT} WHERE r.id = $1`, [id]);
@@ -211,8 +212,10 @@ export class IntakeRepository {
         ? await resolvePaymentTarget(this.database, request.purpose, request.targetDocNo) : null;
       const linked = request.handling === "direct"
         ? (await this.database.query(
-            `SELECT c.id, c.condition_no, c.name FROM intake_request_links l
+            `SELECT c.id, c.condition_no, c.name, c.work_id, w.title AS work_title, c.counterparty_id
+               FROM intake_request_links l
                JOIN conditions c ON c.id = l.target_id
+               LEFT JOIN works w ON w.id = c.work_id
               WHERE l.request_id = $1 AND l.target_type = 'condition'
               ORDER BY c.condition_no NULLS LAST, c.id`, [id])).rows as any[]
         : [];
@@ -230,7 +233,9 @@ export class IntakeRepository {
         request, matterCandidates,
         duplicateCandidates: await this.duplicateCandidates(request),
         target,
-        conditions: linked.map((c) => ({ id: Number(c.id), conditionNo: c.condition_no ?? null, name: String(c.name) })),
+        conditions: linked.map((c) => ({ id: Number(c.id), conditionNo: c.condition_no ?? null, name: String(c.name),
+          workId: c.work_id ? Number(c.work_id) : null, workTitle: c.work_title ?? null,
+          partyId: c.counterparty_id ? Number(c.counterparty_id) : null })),
         replies: replies.map((x) => ({
           at: iso(x.occurred_at) ?? "", user: String(x.actor ?? ""), text: String(x.detail?.text ?? "")
         }))

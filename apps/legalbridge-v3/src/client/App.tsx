@@ -123,6 +123,10 @@ export function App() {
     setView(next);
   };
 
+  /** 作品の利用許諾計算をこの作家で開く（受付箱の依頼から）。作品画面を離れたら消す。 */
+  const [ledgerParty, setLedgerParty] = useState<number | null>(null);
+  useEffect(() => { if (view !== "works") setLedgerParty(null); }, [view]);
+
   /** その画面に渡す選択。別の画面へ移ったら持ち越さない。 */
   const focusFor = (view: View) => (focus && focus.view === view ? focus.id : undefined);
 
@@ -260,6 +264,10 @@ export function App() {
           <IntakeWorkspace onOpenMatter={(id) => openEntity("matter", id)}
             onCompose={(ids, templateKey) => startCompose(ids, [], null, templateKey)}
             onOpenDocument={openDocumentAt}
+            onOpenLedger={(workId, partyId) => {
+              setLedgerParty(partyId); setConditionId(undefined);
+              setFocus({ view: "works", id: workId }); setView("works");
+            }}
             onCountsChange={(c) => setIntakeCount(c.new + c.updated)} />
         )}
         {view === "matters" && (
@@ -278,8 +286,9 @@ export function App() {
                                onOpenDocument={openDocumentAt} />
         )}
         {view === "works" && (
-          <WorksWorkspace key={`w${focusFor("works") ?? 0}`}
+          <WorksWorkspace key={`w${focusFor("works") ?? 0}-${ledgerParty ?? 0}`}
             onOpenCondition={openCondition} initialId={focusFor("works")}
+            initialLedgerParty={ledgerParty} onOpenDocument={openDocumentAt}
             onOpen={openEntity} onCompose={startCompose} />
         )}
         {view === "parties" && (

@@ -64,7 +64,8 @@ interface Detail {
   matterCandidates: Array<{ id: number; matterNo: string | null; title: string; status: string; why: string }>;
   duplicateCandidates: Array<{ id: number; requestNo: string | null; title: string; state: string; why: string }>;
   target: Target | null;
-  conditions: Array<{ id: number; conditionNo: string | null; name: string }>;
+  conditions: Array<{ id: number; conditionNo: string | null; name: string;
+                      workId: number | null; workTitle: string | null; partyId: number | null }>;
   replies: Array<{ at: string; user: string; text: string }>;
 }
 interface Counts { new: number; onHold: number; updated: number; holdDue: number; direct?: number; directOverdue?: number }
@@ -78,7 +79,9 @@ interface MatterHit { id: number; matterNo: string | null; title: string; status
 const when = (iso: string | null) => (iso ? iso.slice(5, 16).replace("T", " ").replace("-", "/") : "—");
 
 export function IntakeWorkspace(
-  { onOpenMatter, onCountsChange, onCompose, onOpenDocument }: {
+  { onOpenMatter, onCountsChange, onCompose, onOpenDocument, onOpenLedger }: {
+    /** 計算書の依頼を、作品の利用許諾計算（許諾料の台帳）で開く。 */
+    onOpenLedger?: (workId: number, partyId: number) => void;
     onOpenMatter?: (matterId: number) => void;
     /** 依頼の条件を載せた状態で文書の画面へ移る（案件にせず処理している依頼）。 */
     onCompose?: (conditionIds: number[], templateKey: string | null) => void;
@@ -280,7 +283,7 @@ export function IntakeWorkspace(
                 {detail.request.handling === "direct" && detail.request.state === "accepted" && (
                   <Ticket detail={detail} canWrite={canWrite} staff={staff}
                           onChanged={(msg) => reload(msg, true)} onError={setError}
-                          onCompose={onCompose} onOpenDocument={onOpenDocument} />
+                          onCompose={onCompose} onOpenDocument={onOpenDocument} onOpenLedger={onOpenLedger} />
                 )}
                 <UploadsPanel target="intake" id={detail.request.id} canWrite={canWrite} />
                 <Decision detail={detail} canWrite={canWrite} staff={staff}
@@ -728,7 +731,8 @@ function StageBar({ progress, compact = false }: { progress: Progress | null; co
  * 依頼者からの返信。文書はこの依頼の条件から作る。
  */
 function Ticket(
-  { detail, canWrite, staff, onChanged, onError, onCompose, onOpenDocument }: {
+  { detail, canWrite, staff, onChanged, onError, onCompose, onOpenDocument, onOpenLedger }: {
+    onOpenLedger?: (workId: number, partyId: number) => void;
     detail: Detail; canWrite: boolean; staff: Staff[];
     onChanged: (message: string) => void;
     onError: (message: string) => void;
@@ -798,7 +802,22 @@ function Ticket(
           {detail.conditions.map((c) => (
             <div key={c.id}><span className="code">{c.conditionNo ?? `#${c.id}`}</span> {c.name}</div>
           ))}
-          {canWrite && onCompose && detail.conditions.length > 0 && !r.doneAt && (
+          {r.purpose === "royalty" && onOpenLedger && (() => {
+            // 計算書は作品の台帳（利用許諾計算）で回ごとに出す。依頼の条件の作品・作家で開く。
+            const works = [...new Map(detail.conditions.filter((c) => c.workId && c.partyId)
+              .map((c) => [c.workId!, c])).values()];
+            return works.length > 0 && (
+              <div className="row" style={{ gap: 6 }}>
+                {works.map((c) => (
+                  <button key={c.workId} className="btn btn-sm primary" onClick={() => onOpenLedger(c.workId!, c.partyId!)}>
+                    {c.workTitle ?? "作品"} の利用許諾計算で開く
+                  </button>
+                ))}
+                <span className="faint">回ごとに実績を揃えて計算書を出します。出した計算書はこの依頼の工程に入ります</span>
+              </div>
+            );
+          })()}
+          {canWrite && onCompose && detail.conditions.length > 0 && !r.doneAt && r.purpose !== "royalty" && (
             <div>
               <button className="btn btn-sm primary"
                       onClick={() => onCompose(detail.conditions.map((c) => c.id),
