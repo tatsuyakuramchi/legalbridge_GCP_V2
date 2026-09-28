@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "./api.js";
 import { useReadOnly } from "./read-only.js";
 import { ConditionEvents } from "./ConditionEvents.js";
-import { ConditionSchedules } from "./ConditionSchedules.js";
+import { RoyaltyCloses } from "./RoyaltyCloses.js";
 import { StatementBreakdown, type StatementLine, type StatementTotals } from "./StatementLines.js";
 import { roundTargets, roundTitle } from "./RoundPicker.js";
 import type {
@@ -289,21 +289,23 @@ function Terms(
                 <option value="event">イベント式（製造・刷のたび）</option>
               </select>
             </label>
-            {c.timing === "periodic" && !c.schedules && (
+            {c.timing === "periodic" && (
               <span className="row" style={{ gap: 4 }}>
-                <span className="tag warn">予定明細なし</span>
-                {canWrite && <button className="btn btn-sm" onClick={() => setScheduling(scheduling === c.id ? null : c.id)}>締めを作る</button>}
+                {c.schedules ? <span className="faint">締め {c.schedules} 回</span> : <span className="tag warn">締めなし</span>}
+                {canWrite && (
+                  <button className="btn btn-sm" onClick={() => setScheduling(scheduling === c.id ? null : c.id)}>
+                    {c.schedules ? "締めを足す" : "締めを作る"}
+                  </button>
+                )}
               </span>
             )}
           </div>
         ))}
       </div>
-      {scheduling && (
-        <div className="note stack">
-          <span>締め日（予定明細）を作ると、その回ごとに実績を集めて計算書を出せます。四半期なら間隔を 3 にします。</span>
-          <ConditionSchedules conditionId={scheduling} editable={canWrite}
-                              onChanged={() => { setScheduling(null); onChanged("予定明細を作りました"); }} />
-        </div>
+      {scheduling && conditions.some((c) => c.id === scheduling) && (
+        <RoyaltyCloses key={scheduling} condition={conditions.find((c) => c.id === scheduling)!}
+                       onCancel={() => setScheduling(null)}
+                       onSaved={(m) => { setScheduling(null); onChanged(m); }} />
       )}
     </div>
   );
@@ -456,7 +458,11 @@ function RoundDetail(
                         {[...(e.languages ?? []), ...(e.regions ?? [])].length ? `［${[...(e.languages ?? []), ...(e.regions ?? [])].join("・")}］ ` : ""}
                         {e.quantity !== null ? `${e.quantity.toLocaleString()} 個 ` : ""}
                         {e.grossAmount !== null ? `報告 ${yen(e.grossAmount, c.currency)}` : ""}
-                        {e.documentId ? " · 計算書済" : ""}
+                        {e.documentId ? " · 計算書済 " : ""}
+                        {e.documentId && (onOpenDocument
+                          ? <button className="linky code" title="決定した計算書を開く"
+                                    onClick={() => onOpenDocument(e.documentId!)}>{e.documentNo ?? `#${e.documentId}`}</button>
+                          : <span className="code">{e.documentNo ?? `#${e.documentId}`}</span>)}
                       </span>
                     ))}
                     {p.expected.map((x, i) => (

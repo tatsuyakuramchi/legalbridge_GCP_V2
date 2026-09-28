@@ -50,6 +50,8 @@ export interface LedgerEvent {
   workId: number | null; workTitle: string | null;
   quantity: number | null; unitAmount: number | null; grossAmount: number | null; amount: number;
   documentId: number | null;
+  /** 結ばれた計算書の番号。台帳から決定した文書のページへ行く。 */
+  documentNo?: string | null;
   /** この報告の言語・地域（A-061）。空は指定なし。 */
   languages?: string[]; regions?: string[];
 }
@@ -359,7 +361,7 @@ export class RoyaltyLedgerService {
       const events = allIds.length ? ((await q.query(
         `SELECT e.id, e.condition_id, e.schedule_id, e.event_type, e.occurred_on, e.period, e.usage_type,
                 e.out_condition_id, oc.name AS out_name, e.work_id, ew.title AS work_title,
-                e.quantity, e.unit_amount, e.gross_amount, e.amount, e.document_id, d.status AS document_status,
+                e.quantity, e.unit_amount, e.gross_amount, e.amount, e.document_id, d.status AS document_status, d.document_no,
                 e.scope_languages, e.scope_regions
            FROM condition_events e
            LEFT JOIN conditions oc ON oc.id = e.out_condition_id
@@ -377,6 +379,7 @@ export class RoyaltyLedgerService {
           grossAmount: int(e.gross_amount), amount: Number(e.amount ?? 0),
           // 無効にした文書に付いたままの実績は、まだ出していない扱い。
           documentId: e.document_id && e.document_status === "issued" ? Number(e.document_id) : null,
+          documentNo: e.document_id && e.document_status === "issued" ? str(e.document_no) : null,
           languages: Array.isArray(e.scope_languages) ? e.scope_languages.map(String) : [],
           regions: Array.isArray(e.scope_regions) ? e.scope_regions.map(String) : []
         }))
