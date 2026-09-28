@@ -584,6 +584,52 @@ export class IntakeRequestService {
   }
 
   /**
+   * 許諾料の回（台帳）に繋ぐ・外す（A-060）。自動では繋がない。依頼の画面からも、
+   * 台帳の回からも人が選ぶ。回は 予定明細の行（時限式）か実績（イベント式）で指す。
+   * 繋ぐとき、その回の条件も依頼に繋ぐ（依頼 → 作家・作品 が辿れるように）。
+   */
+  async linkRounds(id: number, input: { scheduleIds?: number[]; eventIds?: number[] }, actor: string,
+                   unlink = false): Promise<{ requestId: number; linked: number }> {
+    const scheduleIds = [...new Set((input.scheduleIds ?? []).map(Number).filter((n) => n > 0))];
+    const eventIds = [...new Set((input.eventIds ?? []).map(Number).filter((n) => n > 0))];
+    if (!scheduleIds.length && !eventIds.length) throw new DomainError("VALIDATION", "繋ぐ回を選んでください");
+    try {
+      return await inTransaction(this.database, async (client) => {
+        await this.lockDirect(client, id);
+        if (unlink) {
+          await client.query(
+            `DELETE FROM intake_request_links
+              WHERE request_id = $1 AND ((target_type = 'schedule' AND target_id = ANY($2::bigint[]))
+                                      OR (target_type = 'event' AND target_id = ANY($3::bigint[])))`,
+            [id, scheduleIds, eventIds]);
+        } else {
+          const conds = await client.query(
+            `SELECT condition_id AS id, 'schedule' AS t, id AS target FROM condition_schedules WHERE id = ANY($1::bigint[])
+             UNION ALL
+             SELECT condition_id, 'event', id FROM condition_events WHERE id = ANY($2::bigint[])`,
+            [scheduleIds, eventIds]);
+          if (conds.rows.length !== scheduleIds.length + eventIds.length) {
+            throw new DomainError("NOT_FOUND", "選んだ回が見つかりません");
+          }
+          for (const row of conds.rows as any[]) {
+            await client.query(
+              `INSERT INTO intake_request_links (request_id, target_type, target_id, created_by)
+               VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`, [id, row.t, row.target, actor]);
+            await client.query(
+              `INSERT INTO intake_request_links (request_id, target_type, target_id, created_by)
+               VALUES ($1, 'condition', $2, $3) ON CONFLICT DO NOTHING`, [id, row.id, actor]);
+          }
+        }
+        await recordAudit(client, {
+          actor, action: unlink ? "intake.unlink_round" : "intake.link_round", targetType: "intake_request",
+          targetId: id, detail: { scheduleIds, eventIds }
+        });
+        return { requestId: id, linked: scheduleIds.length + eventIds.length };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
    * 対応完了にする（支払の記録が V3 に無い、支払まで待たずに閉じる、など）。
    * 依頼者に知らせるのは工程の知らせ（ジョブ）に任せる。二重に送らない。
    */

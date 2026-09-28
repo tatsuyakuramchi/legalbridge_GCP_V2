@@ -2162,6 +2162,30 @@ COMMENT ON TABLE v3.royalty_round_skips IS
   '許諾料の回で「今期は無し」（報告が来なかった）にしたもの。取り消せる。A-059';
 GRANT SELECT, INSERT, DELETE ON v3.royalty_round_skips TO legalbridge_v3_runtime;
 
+
+-- ---------------------------------------------------------------------
+-- A-060 依頼と許諾料の回を、人が選んで紐づける（docs/royalty-ledger.md §5）
+--   計算書の依頼を台帳のどの回の分かは、自動では決めない。依頼の画面からも
+--   台帳の回からも選んで繋ぐ。繋ぎ先は回を作っているもの：
+--     schedule … 時限式の回（予定明細の1行）
+--     event    … イベント式の回（製造・刷の実績1件）
+-- ---------------------------------------------------------------------
+DO $a060$
+DECLARE con text;
+BEGIN
+  SELECT conname INTO con FROM pg_constraint
+   WHERE conrelid = 'v3.intake_request_links'::regclass AND contype = 'c'
+     AND pg_get_constraintdef(oid) LIKE '%target_type%' AND pg_get_constraintdef(oid) NOT LIKE '%schedule%';
+  IF con IS NOT NULL THEN
+    EXECUTE format('ALTER TABLE v3.intake_request_links DROP CONSTRAINT %I', con);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.intake_request_links'::regclass AND conname = 'intake_request_links_type_chk') THEN
+    ALTER TABLE v3.intake_request_links ADD CONSTRAINT intake_request_links_type_chk
+      CHECK (target_type IN ('condition', 'document', 'schedule', 'event'));
+  END IF;
+END $a060$;
+
 COMMIT;
 
 -- 確認
@@ -2472,3 +2496,8 @@ SELECT (SELECT count(*) FROM information_schema.columns
          WHERE conname IN ('conditions_statement_timing_chk', 'parties_royalty_bundle_chk'))
      + (SELECT count(*) FROM information_schema.tables
          WHERE table_schema='v3' AND table_name='royalty_round_skips') AS 列とCHECKと表;
+
+\echo '--- 依頼と許諾料の回の紐づけ（A-060。CHECK に schedule があること＝1） ---'
+SELECT count(*) AS CHECK数 FROM pg_constraint
+ WHERE conrelid='v3.intake_request_links'::regclass AND conname='intake_request_links_type_chk'
+   AND pg_get_constraintdef(oid) LIKE '%schedule%';

@@ -133,6 +133,14 @@ export function toRow(r: Record<string, any>): IntakeRow {
   };
 }
 
+/** 依頼に繋いだ許諾料の回（A-060）。予定明細の行（時限式）か実績（イベント式）。 */
+export interface IntakeRound {
+  kind: "schedule" | "event"; targetId: number; label: string | null;
+  closeOn: string | null; payOn: string | null;
+  conditionId: number; usageType: string | null;
+  workId: number | null; workTitle: string | null; partyId: number | null; partyName: string | null;
+}
+
 /** 依頼者の DM のスレッドへの返信（案件にせず処理している依頼）。 */
 export interface IntakeReply { at: string; user: string; text: string }
 
@@ -199,6 +207,8 @@ export class IntakeRepository {
                                     target: PaymentTarget | null;
                                     conditions: Array<{ id: number; conditionNo: string | null; name: string;
                                                         workId: number | null; workTitle: string | null; partyId: number | null }>;
+                                    rounds: IntakeRound[];
+                                    ledgers: Array<{ partyId: number; partyName: string; workId: number; workTitle: string }>;
                                     replies: IntakeReply[] }> {
     try {
       const r = await this.database.query(`${SELECT} WHERE r.id = $1`, [id]);
@@ -212,13 +222,41 @@ export class IntakeRepository {
         ? await resolvePaymentTarget(this.database, request.purpose, request.targetDocNo) : null;
       const linked = request.handling === "direct"
         ? (await this.database.query(
-            `SELECT c.id, c.condition_no, c.name, c.work_id, w.title AS work_title, c.counterparty_id
+            `SELECT c.id, c.condition_no, c.name, c.work_id, w.title AS work_title, c.counterparty_id,
+                    p.name AS party_name
                FROM intake_request_links l
                JOIN conditions c ON c.id = l.target_id
                LEFT JOIN works w ON w.id = c.work_id
+               LEFT JOIN parties p ON p.id = c.counterparty_id
               WHERE l.request_id = $1 AND l.target_type = 'condition'
               ORDER BY c.condition_no NULLS LAST, c.id`, [id])).rows as any[]
         : [];
+      const roundRows = request.handling === "direct"
+        ? (await this.database.query(
+            `SELECT 'schedule' AS kind, s.id AS target_id, s.label, s.due_on AS close_on, s.pay_on,
+                    c.id AS condition_id, c.usage_type, c.work_id, w.title AS work_title,
+                    c.counterparty_id, p.name AS party_name
+               FROM intake_request_links l
+               JOIN condition_schedules s ON s.id = l.target_id
+               JOIN conditions c ON c.id = s.condition_id
+               LEFT JOIN works w ON w.id = c.work_id LEFT JOIN parties p ON p.id = c.counterparty_id
+              WHERE l.request_id = $1 AND l.target_type = 'schedule'
+             UNION ALL
+             SELECT 'event', e.id, e.period, e.occurred_on, NULL,
+                    c.id, c.usage_type, c.work_id, w.title, c.counterparty_id, p.name
+               FROM intake_request_links l
+               JOIN condition_events e ON e.id = l.target_id
+               JOIN conditions c ON c.id = e.condition_id
+               LEFT JOIN works w ON w.id = c.work_id LEFT JOIN parties p ON p.id = c.counterparty_id
+              WHERE l.request_id = $1 AND l.target_type = 'event'
+              ORDER BY 4`, [id])).rows as any[]
+        : [];
+      const rounds: IntakeRound[] = roundRows.map((x) => ({
+        kind: x.kind === "event" ? "event" : "schedule", targetId: Number(x.target_id), label: x.label ?? null,
+        closeOn: dateStr(x.close_on), payOn: dateStr(x.pay_on), conditionId: Number(x.condition_id),
+        usageType: x.usage_type ?? null, workId: x.work_id ? Number(x.work_id) : null, workTitle: x.work_title ?? null,
+        partyId: x.counterparty_id ? Number(x.counterparty_id) : null, partyName: x.party_name ?? null
+      }));
       const replies = (await this.database.query(
         `SELECT occurred_at, actor, detail FROM audit_events
           WHERE action = 'intake.reply' AND target_type = 'intake_request' AND target_id = $1
@@ -236,6 +274,15 @@ export class IntakeRepository {
         conditions: linked.map((c) => ({ id: Number(c.id), conditionNo: c.condition_no ?? null, name: String(c.name),
           workId: c.work_id ? Number(c.work_id) : null, workTitle: c.work_title ?? null,
           partyId: c.counterparty_id ? Number(c.counterparty_id) : null })),
+        rounds,
+        // 依頼 → 作家・作品。繋いだ条件と回から、台帳（作家 × 作品）を並べる。
+        ledgers: [...new Map([
+          ...linked.filter((c) => c.work_id && c.counterparty_id).map((c) => [`${c.counterparty_id}:${c.work_id}`, {
+            partyId: Number(c.counterparty_id), partyName: String(c.party_name ?? ""), workId: Number(c.work_id),
+            workTitle: String(c.work_title ?? "") }] as const),
+          ...rounds.filter((r) => r.workId && r.partyId).map((r) => [`${r.partyId}:${r.workId}`, {
+            partyId: r.partyId!, partyName: r.partyName ?? "", workId: r.workId!, workTitle: r.workTitle ?? "" }] as const)
+        ]).values()],
         replies: replies.map((x) => ({
           at: iso(x.occurred_at) ?? "", user: String(x.actor ?? ""), text: String(x.detail?.text ?? "")
         }))

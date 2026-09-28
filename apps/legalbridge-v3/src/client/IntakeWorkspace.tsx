@@ -3,6 +3,7 @@ import { api, ApiError } from "./api.js";
 import { useReadOnly } from "./read-only.js";
 import { DetailBack, isWideLayout } from "./DetailBack.js";
 import { UploadsPanel } from "./UploadsPanel.js";
+import { RoundPicker, roundTargets } from "./RoundPicker.js";
 
 /**
  * 依頼の受付箱。docs/v3-request-inbox.md
@@ -67,6 +68,10 @@ interface Detail {
   conditions: Array<{ id: number; conditionNo: string | null; name: string;
                       workId: number | null; workTitle: string | null; partyId: number | null }>;
   replies: Array<{ at: string; user: string; text: string }>;
+  rounds: Array<{ kind: "schedule" | "event"; targetId: number; label: string | null; closeOn: string | null;
+                  payOn: string | null; conditionId: number; usageType: string | null;
+                  workId: number | null; workTitle: string | null; partyId: number | null; partyName: string | null }>;
+  ledgers: Array<{ partyId: number; partyName: string; workId: number; workTitle: string }>;
 }
 interface Counts { new: number; onHold: number; updated: number; holdDue: number; direct?: number; directOverdue?: number }
 /** 案件にせず処理できる依頼の内容（A-058）。 */
@@ -79,7 +84,9 @@ interface MatterHit { id: number; matterNo: string | null; title: string; status
 const when = (iso: string | null) => (iso ? iso.slice(5, 16).replace("T", " ").replace("-", "/") : "—");
 
 export function IntakeWorkspace(
-  { onOpenMatter, onCountsChange, onCompose, onOpenDocument, onOpenLedger }: {
+  { onOpenMatter, onCountsChange, onCompose, onOpenDocument, onOpenLedger, initialId }: {
+    /** この依頼を選んだ状態で開く（作家・作品の台帳から来たとき）。 */
+    initialId?: number;
     /** 計算書の依頼を、作品の利用許諾計算（許諾料の台帳）で開く。 */
     onOpenLedger?: (workId: number, partyId: number) => void;
     onOpenMatter?: (matterId: number) => void;
@@ -91,10 +98,10 @@ export function IntakeWorkspace(
   }
 ) {
   const readOnly = useReadOnly();
-  const [tab, setTab] = useState<Tab>("new");
+  const [tab, setTab] = useState<Tab>(initialId ? "all" : "new");
   const [items, setItems] = useState<Request[] | null>(null);
   const [counts, setCounts] = useState<Counts | null>(null);
-  const [selected, setSelected] = useState<number | undefined>();
+  const [selected, setSelected] = useState<number | undefined>(initialId);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -802,21 +809,50 @@ function Ticket(
           {detail.conditions.map((c) => (
             <div key={c.id}><span className="code">{c.conditionNo ?? `#${c.id}`}</span> {c.name}</div>
           ))}
-          {r.purpose === "royalty" && onOpenLedger && (() => {
-            // 計算書は作品の台帳（利用許諾計算）で回ごとに出す。依頼の条件の作品・作家で開く。
-            const works = [...new Map(detail.conditions.filter((c) => c.workId && c.partyId)
-              .map((c) => [c.workId!, c])).values()];
-            return works.length > 0 && (
-              <div className="row" style={{ gap: 6 }}>
-                {works.map((c) => (
-                  <button key={c.workId} className="btn btn-sm primary" onClick={() => onOpenLedger(c.workId!, c.partyId!)}>
-                    {c.workTitle ?? "作品"} の利用許諾計算で開く
-                  </button>
-                ))}
-                <span className="faint">回ごとに実績を揃えて計算書を出します。出した計算書はこの依頼の工程に入ります</span>
-              </div>
-            );
-          })()}
+          {r.purpose === "royalty" && (
+            <div className="stack" style={{ gap: 6 }}>
+              <b>作家・作品と回</b>
+              {detail.ledgers.map((l) => (
+                <div key={`${l.partyId}:${l.workId}`} className="stack" style={{ gap: 2 }}>
+                  <span className="row" style={{ gap: 6 }}>
+                    <span>{l.partyName} × {l.workTitle}</span>
+                    {onOpenLedger && (
+                      <button className="btn btn-sm" onClick={() => onOpenLedger(l.workId, l.partyId)}>台帳で開く</button>
+                    )}
+                  </span>
+                  {(() => {
+                    // 1つの回は条件の数だけ予定明細の行を持つ。支払日（製造は実績）ごとに1行にまとめる。
+                    const groups = new Map<string, Detail["rounds"]>();
+                    for (const x of detail.rounds.filter((y) => y.partyId === l.partyId && y.workId === l.workId)) {
+                      const k = x.kind === "event" ? `e${x.targetId}` : `s${x.payOn ?? x.closeOn}`;
+                      groups.set(k, [...(groups.get(k) ?? []), x]);
+                    }
+                    return [...groups.entries()].map(([k, xs]) => (
+                      <span key={k} className="row" style={{ gap: 6, marginLeft: 12 }}>
+                        <span className={`tag ${xs[0].kind === "event" ? "warn" : ""}`}>{xs[0].kind === "event" ? "製造" : "期"}</span>
+                        <span>{[...new Set(xs.map((x) => x.label ?? x.closeOn))].join("・")}</span>
+                        <span className="faint">締め {xs[0].closeOn ?? "—"}{xs[0].payOn ? ` · 支払 ${xs[0].payOn}` : ""}</span>
+                        {canWrite && (
+                          <button className="btn btn-sm" disabled={busy}
+                                  onClick={() => call(() => post("rounds/unlink", {
+                                    scheduleIds: xs.filter((x) => x.kind === "schedule").map((x) => x.targetId),
+                                    eventIds: xs.filter((x) => x.kind === "event").map((x) => x.targetId)
+                                  }), "回を外しました")}>外す</button>
+                        )}
+                      </span>
+                    ));
+                  })()}
+                </div>
+              ))}
+              {!detail.rounds.length && (
+                <div className="faint">まだ回を選んでいません。どの回（締め・製造）の計算書の依頼かを選んでください。</div>
+              )}
+              {canWrite && !r.doneAt && (
+                <RoundPicker ledgers={detail.ledgers} busy={busy}
+                             onPick={(round) => void call(() => post("rounds", roundTargets(round)), "回に紐づけました")} />
+              )}
+            </div>
+          )}
           {canWrite && onCompose && detail.conditions.length > 0 && !r.doneAt && r.purpose !== "royalty" && (
             <div>
               <button className="btn btn-sm primary"

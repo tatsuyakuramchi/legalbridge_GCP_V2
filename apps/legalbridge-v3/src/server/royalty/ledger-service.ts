@@ -64,15 +64,13 @@ export interface RoundPart {
   conditionId: number; scheduleId: number | null; eventId: number | null;
   label: string | null; periodFrom: string | null; closeOn: string | null; payOn: string | null;
   events: LedgerEvent[]; skipped: boolean; expected: ExpectedLine[]; state: PartState;
-  /** 人が「今期は無し」にしたのではなく、あとの回に実績があるので無しと読んだ。 */
-  implied?: boolean;
 }
 
 export type RoundState = "before" | "input" | "ready" | "issued" | "sent" | "scheduled" | "paid" | "skipped" | "nopay";
 
 export interface RoundDocument { id: number; documentNo: string | null; status: string; sent: boolean; net: number }
 export interface RoundPayment { id: number; paymentNo: string | null; status: string; amount: number; dueOn: string | null; paidOn: string | null }
-export interface RoundRequest { id: number; requestNo: string | null; title: string; assigneeName: string | null; dueOn: string | null }
+export interface RoundRequest { id: number; requestNo: string | null; title: string; assigneeName: string | null; dueOn: string | null; done: boolean }
 
 export interface Round {
   key: string; kind: "period" | "event";
@@ -179,13 +177,9 @@ export function buildRounds(input: {
       }
       p.expected = [...expected.values()];
     });
-    // 実績の無いまま過ぎた回でも、あとの回に実績があれば「その回は報告が無かった」と
-    // 読む（V3 より前から続く条件の古い予定明細が、報告待ちとして並び続けないように）。
-    const lastReported = periodic.filter((p) => p.events.length).map((p) => p.closeOn).filter(Boolean).sort().at(-1);
+    // 実績の無いまま過ぎた回は、人が「報告なし」にするまで報告待ちのまま出す
+    // （古い予定明細は skipBefore でまとめて報告なしにできる）。
     for (const p of mine) {
-      if (!p.events.length && p.scheduleId && lastReported && p.closeOn && p.closeOn < lastReported) {
-        p.skipped = true; p.implied = true;
-      }
       p.state = p.skipped ? "skipped"
         : p.events.length && p.events.every((e) => e.documentId) ? "issued"
         : p.events.length ? "reported"
@@ -262,6 +256,8 @@ export interface WorkRoyaltyParty {
   requests: RoundRequest[];
 }
 
+const eventIds0 = (events: LedgerEvent[]) => events.map((e) => e.id);
+
 export class RoyaltyLedgerService {
   constructor(private readonly database: Transactable) {}
 
@@ -288,7 +284,8 @@ export class RoyaltyLedgerService {
           waiting: view.rounds.flatMap((x) => x.parts).filter((p) => p.state === "waiting").length,
           nextPayOn: view.rounds.map((x) => x.payOn ?? x.closeOn).filter(Boolean).sort()[0] ?? null,
           otherWorks: Number((others.rows[0] as any)?.n ?? 0),
-          requests: view.requests
+          requests: [...view.requests, ...view.rounds.flatMap((x) => x.requests)]
+            .filter((x, i, a) => a.findIndex((y) => y.id === x.id) === i)
         });
       }
       return { parties: out.sort((a, b) => a.name.localeCompare(b.name, "ja")) };
@@ -404,17 +401,33 @@ export class RoyaltyLedgerService {
            FROM payments p JOIN payment_allocations al ON al.payment_id = p.id
           WHERE al.event_id = ANY($1::bigint[])`, [eventIds])).rows as any[] : [];
 
-      // 依頼（受付箱で案件にせず処理した計算書の依頼）。条件が重なる、まだ終わっていないもの。
-      const reqs = allIds.length ? (await q.query(
-        `SELECT DISTINCT r.id, r.request_no, r.title, r.due_on, st.name AS assignee_name, l.target_id AS condition_id
+      // 依頼（受付箱で案件にせず処理した計算書の依頼）。回へは人が選んで繋ぐ（自動では付けない）。
+      //   linkedReqs … 回（予定明細の行・実績）に繋いだ依頼
+      //   pendingReqs … この作家・作品（条件）に繋がっているが、まだ回を選んでいない依頼
+      const scheduleIds = schedules.map((x) => x.id);
+      const linkedReqs = (scheduleIds.length || eventIds0(events).length) ? (await q.query(
+        `SELECT r.id, r.request_no, r.title, r.due_on, r.done_at, st.name AS assignee_name,
+                l.target_type, l.target_id
+           FROM intake_request_links l
+           JOIN intake_requests r ON r.id = l.request_id
+           LEFT JOIN staff st ON st.id = r.assignee_staff_id
+          WHERE (l.target_type = 'schedule' AND l.target_id = ANY($1::bigint[]))
+             OR (l.target_type = 'event' AND l.target_id = ANY($2::bigint[]))
+          ORDER BY r.id`, [scheduleIds, eventIds0(events)])).rows as any[] : [];
+      const pendingReqs = allIds.length ? (await q.query(
+        `SELECT DISTINCT r.id, r.request_no, r.title, r.due_on, r.done_at, st.name AS assignee_name
            FROM intake_requests r
            JOIN intake_request_links l ON l.request_id = r.id AND l.target_type = 'condition'
            LEFT JOIN staff st ON st.id = r.assignee_staff_id
           WHERE r.state = 'accepted' AND r.handling = 'direct' AND r.done_at IS NULL
             AND l.target_id = ANY($1::bigint[])
-          ORDER BY r.id`, [allIds])).rows as any[] : [];
+            AND NOT EXISTS (SELECT 1 FROM intake_request_links x
+                             WHERE x.request_id = r.id
+                               AND ((x.target_type = 'schedule' AND x.target_id = ANY($2::bigint[]))
+                                 OR (x.target_type = 'event' AND x.target_id = ANY($3::bigint[]))))
+          ORDER BY r.id`, [allIds, scheduleIds, eventIds0(events)])).rows as any[] : [];
       const requestOf = (x: any): RoundRequest => ({ id: Number(x.id), requestNo: str(x.request_no),
-        title: String(x.title), assigneeName: str(x.assignee_name), dueOn: dateStr(x.due_on) });
+        title: String(x.title), assigneeName: str(x.assignee_name), dueOn: dateStr(x.due_on), done: Boolean(x.done_at) });
 
       const settled = built.map((round) => {
         const evIds = new Set(round.parts.flatMap((p) => p.events.map((e) => e.id)));
@@ -429,15 +442,13 @@ export class RoyaltyLedgerService {
         return settleRound(round);
       });
 
-      // 依頼は、その条件を含む開いている回のうち一番早いものに付ける。
+      // 繋いだ依頼を、その予定明細の行・実績を含む回に出す。
       const openRounds = settled.filter((r) => r.open);
-      const placed = new Set<number>();
-      for (const x of reqs) {
-        const cond = currentOf.get(Number(x.condition_id));
-        const target = openRounds.find((r) => r.parts.some((p) => p.conditionId === cond));
-        if (placed.has(Number(x.id))) continue;
-        placed.add(Number(x.id));
-        if (target) target.requests.push(requestOf(x));
+      for (const round of settled) {
+        const hits = linkedReqs.filter((x) => round.parts.some((p) =>
+          (x.target_type === "schedule" && p.scheduleId === Number(x.target_id))
+          || (x.target_type === "event" && p.eventId === Number(x.target_id))));
+        round.requests = hits.map(requestOf).filter((x, i, a) => a.findIndex((y) => y.id === x.id) === i);
       }
 
       const worksList = [...new Map(conditions.filter((c) => c.workId).map((c) =>
@@ -449,9 +460,8 @@ export class RoyaltyLedgerService {
         works: worksList,
         conditions,
         rounds: openRounds,
-        // 実績が無いまま過ぎた回（あとの回に実績があるので無しと読んだもの）だけの回は並べない。
-        history: settled.filter((r) => !r.open && !r.parts.every((p) => p.implied)).reverse(),
-        requests: reqs.map(requestOf).filter((x, i, a) => a.findIndex((y) => y.id === x.id) === i)
+        history: settled.filter((r) => !r.open).reverse(),
+        requests: pendingReqs.map(requestOf)
       };
     } catch (error) { throw translate(error); }
   }
@@ -486,7 +496,7 @@ export class RoyaltyLedgerService {
                      OR (e.schedule_id IS NULL AND e.occurred_on <= s.due_on
                          AND (s.prev_due IS NULL OR e.occurred_on > s.prev_due)))
               LIMIT 1`, [conditionId, scheduleId]);
-          if (has.rows[0]) throw new DomainError("CONFLICT", "この回には実績が入っています。今期は無しにはできません");
+          if (has.rows[0]) throw new DomainError("CONFLICT", "この回には実績が入っています。報告なしにはできません");
           await client.query(
             `INSERT INTO royalty_round_skips (condition_id, schedule_id, reason, created_by)
              VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`, [conditionId, scheduleId, reason, actor]);
@@ -496,6 +506,30 @@ export class RoyaltyLedgerService {
           detail: { scheduleId, reason }
         });
         return { conditionId, scheduleId, skipped: !undo };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 古い空の回をまとめて「報告なし」にする。V3 より前から続く条件は、実績の無い
+   * 過去の予定明細が報告待ちとして並ぶ。人が日付を決めて、それより前の締めの
+   * 空の回を一度に閉じる（実績のある回・締め前の回には触らない）。
+   */
+  async skipBefore(partyId: number, workId: number | null, before: string, actor: string) {
+    const view = await this.ledger(partyId, workId);
+    const targets = view.rounds.flatMap((r) => r.parts)
+      .filter((p) => p.scheduleId && p.state === "waiting" && p.closeOn && p.closeOn < before);
+    try {
+      return await inTransaction(this.database, async (client) => {
+        for (const p of targets) {
+          await client.query(
+            `INSERT INTO royalty_round_skips (condition_id, schedule_id, reason, created_by)
+             VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
+            [p.conditionId, p.scheduleId, `${before} より前の空の回をまとめて報告なし`, actor]);
+        }
+        await recordAudit(client, { actor, action: "royalty.skip_before", targetType: "party", targetId: partyId,
+          detail: { workId, before, count: targets.length } });
+        return { count: targets.length };
       });
     } catch (error) { throw translate(error); }
   }

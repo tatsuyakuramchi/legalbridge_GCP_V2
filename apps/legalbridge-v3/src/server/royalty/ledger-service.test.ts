@@ -69,13 +69,13 @@ test("来るはずの行：前の回にあった許諾先と、生きている�
   assert.deepEqual(q2.parts[0].expected.map((x) => x.outName), [], "Beta は 7月から");
 });
 
-test("今期は無し・あとの回に実績がある空の回は無しと読む。締め前は before", () => {
+test("空のまま過ぎた回は、人が報告なしにするまで報告待ち。締め前は before", () => {
   const rounds = buildRounds({
     conditions: [cond(1)], schedules: [...Q(1), { id: 3, conditionId: 1, seq: 3, dueOn: "2026-12-31", payOn: "2027-01-31", label: "10〜12月" }],
     events: [ev(1, 1, "2026-09-10")], skips: [], outs: [], bundle: "single_work", today: "2026-12-01"
   });
-  assert.equal(rounds.find((r) => r.payOn === "2026-07-31")!.state, "skipped");
-  assert.equal(rounds.find((r) => r.payOn === "2026-07-31")!.parts[0].implied, true);
+  assert.equal(rounds.find((r) => r.payOn === "2026-07-31")!.state, "input", "あとの回に実績があっても自動では閉じない");
+  assert.equal(rounds.find((r) => r.payOn === "2026-07-31")!.parts[0].state, "waiting");
   assert.equal(rounds.find((r) => r.payOn === "2027-01-31")!.state, "before");
   const skipped = buildRounds({
     conditions: [cond(1)], schedules: Q(1), events: [], skips: [{ conditionId: 1, scheduleId: 2 }], outs: [],

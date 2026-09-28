@@ -277,6 +277,12 @@ export async function loadProgress(
               ON l.request_id = $1 AND l.target_type = 'document' AND l.target_id = d.id
       WHERE d.status IN ('draft', 'issued')
         AND (l.target_id IS NOT NULL
+             -- 許諾料の回に繋いだ依頼（A-060）：その回の実績を載せた計算書
+             OR EXISTS (SELECT 1 FROM condition_events re
+                          JOIN intake_request_links rl ON rl.request_id = $1
+                           AND ((rl.target_type = 'schedule' AND re.schedule_id = rl.target_id)
+                             OR (rl.target_type = 'event' AND re.id = rl.target_id))
+                         WHERE re.document_id = d.id)
              OR (d.created_at >= $2::timestamptz
                  AND EXISTS (
                    SELECT 1 FROM document_conditions dc JOIN conditions c ON c.id = dc.condition_id

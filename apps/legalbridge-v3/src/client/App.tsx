@@ -261,7 +261,8 @@ export function App() {
           }} />
         )}
         {view === "intake" && (
-          <IntakeWorkspace onOpenMatter={(id) => openEntity("matter", id)}
+          <IntakeWorkspace key={`i${focusFor("intake") ?? 0}`} initialId={focusFor("intake")}
+            onOpenMatter={(id) => openEntity("matter", id)}
             onCompose={(ids, templateKey) => startCompose(ids, [], null, templateKey)}
             onOpenDocument={openDocumentAt}
             onOpenLedger={(workId, partyId) => {
@@ -289,6 +290,7 @@ export function App() {
           <WorksWorkspace key={`w${focusFor("works") ?? 0}-${ledgerParty ?? 0}`}
             onOpenCondition={openCondition} initialId={focusFor("works")}
             initialLedgerParty={ledgerParty} onOpenDocument={openDocumentAt}
+            onOpenRequest={(id) => { setFocus({ view: "intake", id }); setView("intake"); }}
             onOpen={openEntity} onCompose={startCompose} />
         )}
         {view === "parties" && (

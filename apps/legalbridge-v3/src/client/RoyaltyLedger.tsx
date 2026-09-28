@@ -4,6 +4,7 @@ import { useReadOnly } from "./read-only.js";
 import { ConditionEvents } from "./ConditionEvents.js";
 import { ConditionSchedules } from "./ConditionSchedules.js";
 import { StatementBreakdown, type StatementLine, type StatementTotals } from "./StatementLines.js";
+import { roundTargets, roundTitle } from "./RoundPicker.js";
 import type {
   LedgerCondition, LedgerView, Round, RoundPart, WorkRoyaltyParty
 } from "../server/royalty/ledger-service.js";
@@ -42,19 +43,28 @@ const PART_STATE: Record<string, { label: string; tag: string }> = {
   before: { label: "締め前", tag: "" },
   waiting: { label: "報告待ち", tag: "warn" },
   reported: { label: "入力済", tag: "accent" },
-  skipped: { label: "今期は無し", tag: "" },
+  skipped: { label: "報告なし", tag: "" },
   issued: { label: "計算書済", tag: "ok" }
 };
 
-const roundTitle = (r: Round) => r.kind === "event"
-  ? `${r.closeOn ?? ""} 製造`
-  : r.key.startsWith("x:") ? `${r.closeOn ?? ""} 予定の外` : `${md(r.payOn ?? r.closeOn)} 支払の回`;
+/** 開いている依頼（受付箱で案件にせず処理した計算書の依頼）。回に繋ぐ候補。 */
+interface OpenRequest { id: number; requestNo: string | null; title: string; purpose: string | null;
+                        requesterName: string | null; assigneeName: string | null }
+const useOpenRequests = (version: number) => {
+  const [list, setList] = useState<OpenRequest[]>([]);
+  useEffect(() => {
+    api.get<{ items: OpenRequest[] }>("/intake?state=direct").then((r) => setList(r.items)).catch(() => setList([]));
+  }, [version]);
+  return list;
+};
 
 export function RoyaltyLedger(
-  { workId, initialPartyId, onOpenDocument }: {
+  { workId, initialPartyId, onOpenDocument, onOpenRequest }: {
     workId: number;
     initialPartyId?: number | null;
     onOpenDocument?: (documentId: number) => void;
+    /** 作家・作品 → 依頼。受付箱のその依頼を開く。 */
+    onOpenRequest?: (requestId: number) => void;
   }
 ) {
   const readOnly = useReadOnly();
@@ -92,6 +102,25 @@ export function RoyaltyLedger(
   }, [partyId, allWorks, workId, version]);
 
   const reload = (message?: string) => { if (message) setNotice(message); setError(null); setVersion((n) => n + 1); };
+  const openRequests = useOpenRequests(version);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkBefore, setBulkBefore] = useState(new Date().toISOString().slice(0, 10));
+  async function linkRequest(requestId: number, round: Round, unlink = false) {
+    try {
+      await api.post(`/intake/${requestId}/rounds${unlink ? "/unlink" : ""}`, roundTargets(round));
+      reload(unlink ? "依頼を外しました" : "依頼をこの回に紐づけました");
+    } catch (e) { setError((e as ApiError).message); }
+  }
+  async function skipBefore() {
+    if (!view) return;
+    try {
+      const r = await api.post<{ count: number }>("/royalty-ledger/skips/before",
+        { partyId: view.party.id, workId: allWorks ? null : workId, before: bulkBefore });
+      setBulkOpen(false);
+      reload(`${bulkBefore} より前の空の回 ${r.count} 件を報告なしにしました`);
+    } catch (e) { setError((e as ApiError).message); }
+  }
+  const oldWaiting = view ? view.rounds.flatMap((r) => r.parts).filter((p) => p.state === "waiting").length : 0;
   const party = parties?.find((p) => p.id === partyId) ?? null;
   const round = view?.rounds.find((r) => r.key === selected) ?? null;
 
@@ -169,8 +198,38 @@ export function RoyaltyLedger(
             <div className="panel-hd">
               <h2>開いている回</h2>
               <span className="faint">支払まで終わっていない回。締めがずれた契約も、支払日が同じなら1つの回</span>
+              {canWrite && oldWaiting > 0 && (
+                <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={() => setBulkOpen(!bulkOpen)}>
+                  空の回をまとめて報告なしに…
+                </button>
+              )}
             </div>
-            <div className="panel-bd">
+            <div className="panel-bd stack">
+              {bulkOpen && (
+                <div className="note row" style={{ gap: 8 }}>
+                  <span>締めが</span>
+                  <input type="date" value={bulkBefore} onChange={(e) => setBulkBefore(e.target.value)} aria-label="この日より前" />
+                  <span>より前で、実績の無い回（報告待ち）をすべて「報告なし」にします。実績のある回・締め前の回はそのままです。あとで1本ずつ取り消せます。</span>
+                  <button className="btn btn-sm primary" onClick={() => void skipBefore()}>報告なしにする</button>
+                </div>
+              )}
+              {view.requests.length > 0 && (
+                <div className="note stack" style={{ gap: 4 }}>
+                  <b>回を選んでいない依頼</b>
+                  {view.requests.map((q) => (
+                    <div key={q.id} className="row" style={{ gap: 6 }}>
+                      {onOpenRequest
+                        ? <button className="tag pin" onClick={() => onOpenRequest(q.id)}>{q.requestNo ?? `#${q.id}`}</button>
+                        : <span className="tag pin">{q.requestNo ?? `#${q.id}`}</span>}
+                      <span>{q.title}</span>
+                      <span className="faint">担当 {q.assigneeName ?? "未定"}</span>
+                      {canWrite && round && (
+                        <button className="btn btn-sm" onClick={() => void linkRequest(q.id, round)}>選んでいる回（{roundTitle(round)}）に紐づける</button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
               <div className="ledger-rounds">
                 {view.rounds.map((r) => <RoundCard key={r.key} round={r} view={view} selected={r.key === selected}
                                                    onSelect={() => setSelected(r.key)} />)}
@@ -181,7 +240,8 @@ export function RoyaltyLedger(
 
           {round && (
             <RoundDetail key={`${round.key}-${version}`} round={round} view={view} canWrite={canWrite}
-                         onChanged={reload} onError={setError} onOpenDocument={onOpenDocument} />
+                         onChanged={reload} onError={setError} onOpenDocument={onOpenDocument}
+                         openRequests={openRequests} onLink={linkRequest} onOpenRequest={onOpenRequest} />
           )}
 
           <History view={view} onOpenDocument={onOpenDocument} />
@@ -275,12 +335,16 @@ function RoundCard({ round: r, view, selected, onSelect }: { round: Round; view:
 
 /** 選んだ回：作品・条件ごとの実績、今期は無し、来るはずの行、計算書。 */
 function RoundDetail(
-  { round: r, view, canWrite, onChanged, onError, onOpenDocument }: {
+  { round: r, view, canWrite, onChanged, onError, onOpenDocument, openRequests, onLink, onOpenRequest }: {
     round: Round; view: LedgerView; canWrite: boolean;
     onChanged: (message?: string) => void; onError: (m: string) => void;
     onOpenDocument?: (documentId: number) => void;
+    openRequests: OpenRequest[];
+    onLink: (requestId: number, round: Round, unlink?: boolean) => void;
+    onOpenRequest?: (requestId: number) => void;
   }
 ) {
+  const [pickRequest, setPickRequest] = useState("");
   const [filter, setFilter] = useState<"all" | "waiting" | "reported" | "done">("all");
   const [q, setQ] = useState("");
   const [recording, setRecording] = useState<string | null>(null);
@@ -324,7 +388,7 @@ function RoundDetail(
     try {
       if (undo) await api.del(`/royalty-ledger/skips?conditionId=${p.conditionId}&scheduleId=${p.scheduleId}`);
       else await api.post("/royalty-ledger/skips", { conditionId: p.conditionId, scheduleId: p.scheduleId });
-      onChanged(undo ? "「今期は無し」を取り消しました" : "今期は無しにしました");
+      onChanged(undo ? "「報告なし」を取り消しました" : "報告なしにしました");
     } catch (e) { onError((e as ApiError).message); }
   }
   async function issue() {
@@ -400,14 +464,14 @@ function RoundDetail(
                     {!p.events.length && !p.expected.length && <span className="faint">実績なし</span>}
                   </span>
                   <span className="row" style={{ gap: 4, justifyContent: "flex-end" }}>
-                    <span className={`tag ${ps.tag}`}>{p.implied ? "報告なし" : ps.label}</span>
+                    <span className={`tag ${ps.tag}`}>{ps.label}</span>
                     {canWrite && p.state !== "issued" && !p.skipped && (
                       <button className="btn btn-sm" onClick={() => setRecording(recording === key ? null : key)}>実績を入れる</button>
                     )}
                     {canWrite && p.scheduleId && !p.events.length && !p.skipped && (
-                      <button className="btn btn-sm" title="この回は報告が来なかった" onClick={() => void skip(p)}>今期は無し</button>
+                      <button className="btn btn-sm" title="この回は報告が来なかった" onClick={() => void skip(p)}>報告なし</button>
                     )}
-                    {canWrite && p.skipped && !p.implied && p.scheduleId && (
+                    {canWrite && p.skipped && p.scheduleId && (
                       <button className="btn btn-sm" onClick={() => void skip(p, true)}>取り消す</button>
                     )}
                   </span>
@@ -457,7 +521,7 @@ function RoundDetail(
                 {waiting.length > 0 && (
                   <div className="note warn">
                     報告待ち・締め前が {waiting.length} 本あります。待たずに出すと、入力済の分だけの計算書になります
-                    （残りは「今期は無し」にするか、あとで別の計算書にします）。
+                    （残りは「報告なし」にするか、あとで別の計算書にします）。
                   </div>
                 )}
                 {canWrite && (
@@ -478,20 +542,46 @@ function RoundDetail(
             )}
           </div>
         </div>
-        {r.requests.length > 0 && (
-          <div className="panel">
-            <div className="panel-hd"><h2>受付箱の依頼</h2></div>
-            <div className="panel-bd stack" style={{ gap: 4 }}>
-              {r.requests.map((x) => (
-                <div key={x.id}>
-                  <span className="tag pin">{x.requestNo ?? `#${x.id}`}</span> {x.title}
-                  <div className="faint">担当 {x.assigneeName ?? "未定"} · 期日 {x.dueOn ?? "—"}</div>
+        <div className="panel">
+          <div className="panel-hd"><h2>受付箱の依頼</h2><span className="faint">選んで紐づける</span></div>
+          <div className="panel-bd stack" style={{ gap: 6 }}>
+            {r.requests.map((x) => (
+              <div key={x.id}>
+                <span className="row" style={{ gap: 6 }}>
+                  {onOpenRequest
+                    ? <button className="tag pin" onClick={() => onOpenRequest(x.id)} title="受付箱で開く">{x.requestNo ?? `#${x.id}`}</button>
+                    : <span className="tag pin">{x.requestNo ?? `#${x.id}`}</span>}
+                  <span>{x.title}</span>{x.done && <span className="tag ok">対応完了</span>}
+                  {canWrite && <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={() => onLink(x.id, r, true)}>外す</button>}
+                </span>
+                <div className="faint">担当 {x.assigneeName ?? "未定"} · 期日 {x.dueOn ?? "—"}</div>
+              </div>
+            ))}
+            {!r.requests.length && <div className="faint">この回に紐づけた依頼はありません。</div>}
+            {canWrite && (() => {
+              // 候補：まだこの回に繋いでいない、案件にせず処理中の依頼。この作家・作品の依頼を先に。
+              const pending = new Set(view.requests.map((x) => x.id));
+              const candidates = openRequests
+                .filter((x) => !r.requests.some((y) => y.id === x.id))
+                .sort((a, b) => Number(pending.has(b.id)) - Number(pending.has(a.id)));
+              return candidates.length > 0 && (
+                <div className="row" style={{ gap: 6 }}>
+                  <select value={pickRequest} onChange={(e) => setPickRequest(e.target.value)} aria-label="紐づける依頼">
+                    <option value="">依頼を選ぶ…</option>
+                    {candidates.map((x) => (
+                      <option key={x.id} value={x.id}>
+                        {pending.has(x.id) ? "★ " : ""}{x.requestNo ?? `#${x.id}`} {x.title}{x.requesterName ? `（${x.requesterName}）` : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <button className="btn btn-sm primary" disabled={!pickRequest}
+                          onClick={() => { onLink(Number(pickRequest), r); setPickRequest(""); }}>この回に紐づける</button>
                 </div>
-              ))}
-              <div className="faint">この回で作った計算書で、依頼の工程（作成→送付→支払予定→支払）が進み、依頼者に Slack で知らせます。</div>
-            </div>
+              );
+            })()}
+            <div className="faint">紐づけた依頼は、この回で作った計算書で工程（作成→送付→支払予定→支払）が進み、依頼者に Slack で知らせます。★ はこの作家・作品の依頼です。</div>
           </div>
-        )}
+        </div>
       </aside>
     </div>
   );

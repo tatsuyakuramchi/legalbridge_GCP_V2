@@ -134,7 +134,9 @@ interface Credit {
 }
 
 export function WorksWorkspace(
-  { onOpenCondition, initialId, onOpen, onCompose, initialLedgerParty, onOpenDocument }: {
+  { onOpenCondition, initialId, onOpen, onCompose, initialLedgerParty, onOpenDocument, onOpenRequest }: {
+    /** 作家・作品 → 依頼。受付箱のその依頼を開く。 */
+    onOpenRequest?: (requestId: number) => void;
     onOpenCondition: (id: number) => void;
     initialId?: number;
     /** 利用許諾計算（許諾料の台帳）をこの作家で開く。受付箱の依頼から来たとき。 */
@@ -699,7 +701,8 @@ export function WorksWorkspace(
             </div>
           )}
           {work && pane === "royalty" && (
-            <RoyaltyLedger workId={work.id} initialPartyId={initialLedgerParty ?? null} onOpenDocument={onOpenDocument} />
+            <RoyaltyLedger workId={work.id} initialPartyId={initialLedgerParty ?? null} onOpenDocument={onOpenDocument}
+                           onOpenRequest={onOpenRequest} />
           )}
           {work && pane === "work" && (<>
             <div className="panel">

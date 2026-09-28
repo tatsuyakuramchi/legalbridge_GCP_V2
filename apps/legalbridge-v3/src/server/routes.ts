@@ -813,6 +813,19 @@ export function createRoutes(database: Transactable) {
       res.json(await intakeRequests.unlinkDocument(
         Number(req.params.id), Number(req.params.documentId), actor(res)));
     }));
+  // 許諾料の回に繋ぐ・外す（A-060）。回は予定明細の行か実績で指す。
+  const roundLinkSchema = z.object({
+    scheduleIds: z.array(z.coerce.number().int().positive()).max(100).optional(),
+    eventIds: z.array(z.coerce.number().int().positive()).max(100).optional()
+  });
+  router.post("/intake/:id/rounds", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await intakeRequests.linkRounds(Number(req.params.id), roundLinkSchema.parse(req.body ?? {}), actor(res)));
+    }));
+  router.post("/intake/:id/rounds/unlink", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await intakeRequests.linkRounds(Number(req.params.id), roundLinkSchema.parse(req.body ?? {}), actor(res), true));
+    }));
   router.post("/intake/:id/done", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       const { note } = z.object({ note: z.string().trim().max(2000).nullable().optional() }).parse(req.body ?? {});
@@ -2192,6 +2205,16 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       const input = ledgerSkipSchema.parse(req.query ?? {});
       res.json(await royaltyLedger.skip(input.conditionId, input.scheduleId, null, actor(res), true));
+    }));
+  // 古い空の回をまとめて報告なしにする。before より前の締めで、実績の無い回だけ。
+  router.post("/royalty-ledger/skips/before", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        partyId: z.coerce.number().int().positive(),
+        workId: z.coerce.number().int().positive().nullable().optional(),
+        before: z.string().date()
+      }).parse(req.body ?? {});
+      res.json(await royaltyLedger.skipBefore(input.partyId, input.workId ?? null, input.before, actor(res)));
     }));
   // 計算書の出し方（条件）と、作家の計算書のまとめ方（取引先）。null で既定に戻す。
   router.put("/royalty-ledger/timing", requireRole("admin", "legal"), requireWritable,
