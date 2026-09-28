@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { renderDocumentHtml } from "./render.js";
 
 /**
- * 海外発注書の標準約款（PR #130 の Cross-Border Spot Order 用）。基本契約なしのときだけ末尾に付く（infra/v3/150）。
+ * 海外発注書の標準約款（Cross-Border Spot Order 用・2026 改訂版 Rev. 2026-09-28）。基本契約なしのときだけ末尾に付く（infra/v3/151）。
  * 部分テンプレートの本文は infra/v3/templates/terms_spot_intl_2026.html。
  */
 const terms = readFileSync(new URL("../../../../../infra/v3/templates/terms_spot_intl_2026.html", import.meta.url), "utf8");
@@ -19,7 +19,10 @@ const render = (values: Record<string, unknown>) =>
 test("基本契約なしなら Cross-Border 用の Standard Terms が付き、発注書の番号が入る", () => {
   const html = render({ HAS_BASE_CONTRACT: false, ORDER_NO: "ARC-IPO-2026-1001" });
   assert.match(html, /STANDARD TERMS AND CONDITIONS FOR SERVICE OUTSOURCING/);
-  assert.match(html, /Article 18 — Language; Matters Not Stipulated/);
+  assert.match(html, /Article 21 — Language; Matters Not Stipulated/);
+  assert.equal((html.match(/<h3/g) ?? []).length, 21, "全 21 条");
+  assert.doesNotMatch(html, /\[●\]/, "原本の [●] は発注書番号で埋める");
+  assert.match(html, /Rev\. 2026-09-28/);
   assert.match(html, /Exhibit to Purchase Order No\. ARC-IPO-2026-1001/);
   assert.match(html, /governed by the laws of Japan/);
 });

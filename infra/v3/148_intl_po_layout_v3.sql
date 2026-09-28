@@ -164,11 +164,11 @@ $q$;
 <p class="section-mark">■ ORDER SUMMARY</p>
 <table class="summary compact">
   <tr>
-    <th>Fixed Fee Subtotal (excl. tax)</th>
+    <th>Fixed Fee Subtotal</th>
     <td>
       {{#if (gt grandTotalExTax 0)}}
       <strong class="total-amount">{{currency_code}} {{formatMoney grandTotalExTax}}</strong>
-      <span class="amount-note">　Taxes, if any, are handled as stated in the Payment section.</span>
+      <span class="amount-note">　{{#if HAS_BASE_CONTRACT}}Taxes, if any, are handled as stated in the Payment section.{{else}}Inclusive of any VAT, sales or similar taxes chargeable by the Contractor (Standard Terms, Article 6.5). Withholding tax: see the Payment section.{{/if}}</span>
       {{#if has_performance_incentive}}
       <div class="amount-note" style="margin-top:2px; color:#92400e;">The fee for this order is the fixed fee above plus the incentive fee calculated as stated in the details.</div>
       {{/if}}
@@ -317,7 +317,7 @@ $q$;
       <th class="l" style="width:47%;">Item / Deliverable</th>
       <th class="center" style="width:10%;">Qty</th>
       <th class="right" style="width:18%;">Unit Price</th>
-      <th class="right" style="width:20%;">Amount (excl. tax)</th>
+      <th class="right" style="width:20%;">Amount</th>
     </tr>
   </thead>
   <tbody>
@@ -380,7 +380,7 @@ $q$;
     </tr>
     {{/if}}
     <tr>
-      <td colspan="4" class="right"><strong>Fixed Fee Subtotal (excl. tax)</strong></td>
+      <td colspan="4" class="right"><strong>Fixed Fee Subtotal</strong></td>
       <td class="right">{{#if (gt (or itemsSubtotalExTax grandTotalExTax) 0)}}<strong>{{currency_code}} {{formatMoney (or itemsSubtotalExTax grandTotalExTax)}}</strong>{{else}}<span style="color:#888;">—</span>{{/if}}</td>
     </tr>
   </tbody>
@@ -389,13 +389,13 @@ $q$;
 <!-- ===== OTHER FEES ===== -->
 {{#if other_fees}}
 {{#if (gt (length other_fees) 0)}}
-<p class="section-mark">■ OTHER FEES (excl. tax, added to the total)</p>
+<p class="section-mark">■ OTHER FEES (added to the total)</p>
 <table class="items">
   <thead>
     <tr>
       <th style="width:6mm;">No</th>
       <th class="l">Description</th>
-      <th class="right" style="width:30mm;">Amount (excl. tax)</th>
+      <th class="right" style="width:30mm;">Amount</th>
       <th class="l">Remarks</th>
     </tr>
   </thead>
@@ -409,7 +409,7 @@ $q$;
     </tr>
     {{/each}}
     <tr>
-      <td colspan="2" class="right"><strong>Other Fees Subtotal (excl. tax)</strong></td>
+      <td colspan="2" class="right"><strong>Other Fees Subtotal</strong></td>
       <td class="right"><strong>{{currency_code}} {{formatMoney otherFeesTotal}}</strong></td>
       <td></td>
     </tr>
@@ -417,7 +417,7 @@ $q$;
 </table>
 <table class="summary compact" style="margin-top:6px;">
   <tr>
-    <th style="width:40%;">Order Total (excl. tax: services + other fees)</th>
+    <th style="width:40%;">Order Total (services + other fees)</th>
     <td>
       <strong class="total-amount">{{currency_code}} {{formatMoney grandTotalExTax}}</strong>
       <span class="amount-note">　Services {{currency_code}} {{formatMoney (or itemsSubtotalExTax grandTotalExTax)}} + Other Fees {{currency_code}} {{formatMoney otherFeesTotal}}</span>

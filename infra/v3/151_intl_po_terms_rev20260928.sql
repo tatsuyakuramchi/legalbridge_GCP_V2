@@ -1,4 +1,35 @@
-{{!-- 海外発注書の標準約款（Cross-Border Spot Order 用・2026 改訂版 Rev. 2026-09-28・全 21 条）。
+-- =====================================================================
+-- 151 海外発注書の標準約款を 2026 改訂版（Rev. 2026-09-28・全 21 条）に差し替え、
+--     発注書の本文の税の表示を約款に合わせる
+--
+--   約款：Arclight_Standard_Terms_Service_Outsourcing_2026_Rev20260928_EN.pdf と同じ本文
+--   （infra/v3/templates/terms_spot_intl_2026.html。PDF と単語単位で照合済み）。
+--   原本の「Exhibit to Purchase Order No. [●]」には発注書番号（ORDER_NO）を差し込む。
+--
+--   発注書の本文との整合：
+--   ・約款 6.5 条は「発注書に別段の定めが無ければ、報酬は受注者の VAT・売上税等を含む」。
+--     発注書は金額欄に「(excl. tax)」と書いていて、発注書が約款に優先するため、
+--     税が別に上乗せされると読めてしまう。「(excl. tax)」を外し、基本契約なしのときは
+--     「受注者の VAT 等を含む（約款 6.5 条）」と書く。
+--   ・銀行手数料（6.3 条）・源泉徴収と居住者証明書（6.2・6.4 条）・通知先（18 条）・
+--     成果物の権利の帰属（7 条）は、発注書に書いてある内容と約款が合っている（変更なし）。
+--
+--   1. 部分テンプレート terms_spot_intl_2026 を新しい版にする（150 で登録済み。無ければ作る）
+--   2. 海外発注書の現行版に、約款の差し込みが無ければ足し、税の表示を直した新しい版を作る
+--   何度流しても同じ（済んでいれば何もしない）。
+--
+--   実行: psql -v ON_ERROR_STOP=1 -f infra/v3/151_intl_po_terms_rev20260928.sql
+--   戻すとき: UPDATE v3.document_templates SET current_version_id = <前の版id>
+--            WHERE template_key IN ('intl_purchase_order', 'terms_spot_intl_2026') …（前の版id は NOTICE に出る）
+--   注意: すでに決定した文書は決定時の版で描画される（約款は描画のときの版が差し込まれる点に注意：
+--         決定済みの海外発注書を描き直すと新しい約款が付く）。
+-- =====================================================================
+
+BEGIN;
+
+DO $do$
+DECLARE
+  terms_html constant text := $terms${{!-- 海外発注書の標準約款（Cross-Border Spot Order 用・2026 改訂版 Rev. 2026-09-28・全 21 条）。
      基本契約なしのとき、海外発注書の末尾に差し込む（infra/v3/151）。
      本文は Arclight_Standard_Terms_Service_Outsourcing_2026_Rev20260928_EN.pdf と同じ。
      原本の「Purchase Order No. [●]」には発注書番号を差し込む。 --}}
@@ -85,3 +116,92 @@
   <p style="margin:0 0 1.4mm; padding-left:1.4em; text-indent:-1.4em;">2. Any matter not stipulated in the Agreement shall be resolved through good-faith consultation between the parties.</p>
   <p style="margin:6mm 0 0; font-size:8pt; color:#555; text-align:right;">Arclight Standard Terms for Service Outsourcing — 2026 Revised Edition (Rev. 2026-09-28)</p>
 </section>
+$terms$;
+  partial_id bigint;
+  partial_cur text;
+  partial_from bigint;
+  tpl_id bigint;
+  from_version bigint;
+  from_no int;
+  src text;
+  new_html text;
+  next_no int;
+  new_id bigint;
+BEGIN
+  -- 1. 約款
+  SELECT t.id, t.current_version_id, v.html_source INTO partial_id, partial_from, partial_cur
+    FROM v3.document_templates t
+    LEFT JOIN v3.document_template_versions v ON v.id = t.current_version_id
+   WHERE t.template_key = 'terms_spot_intl_2026';
+  IF partial_id IS NULL THEN
+    INSERT INTO v3.document_templates (template_key, label, category, is_active)
+    VALUES ('terms_spot_intl_2026', '海外発注書の標準約款（Cross-Border Spot Order 用）', 'partial', true)
+    RETURNING id INTO partial_id;
+  END IF;
+  IF partial_cur IS DISTINCT FROM terms_html THEN
+    SELECT COALESCE(max(version_no), 0) + 1 INTO next_no
+      FROM v3.document_template_versions WHERE template_id = partial_id;
+    INSERT INTO v3.document_template_versions (template_id, version_no, html_source, variables, comment, created_by)
+    VALUES (partial_id, next_no, terms_html, '[]'::jsonb,
+            '151: 2026 改訂版（Rev. 2026-09-28・全 21 条）', 'sql:151')
+    RETURNING id INTO new_id;
+    UPDATE v3.document_templates SET current_version_id = new_id, category = 'partial', is_active = true
+     WHERE id = partial_id;
+    RAISE NOTICE '151: 約款 terms_spot_intl_2026 前の版 id=% → 新しい版 id=%（版 %）', partial_from, new_id, next_no;
+  ELSE
+    RAISE NOTICE '151: 約款は 2026-09-28 版になっています';
+  END IF;
+
+  -- 2. 海外発注書
+  SELECT t.id, v.id, v.version_no, v.html_source INTO tpl_id, from_version, from_no, src
+    FROM v3.document_templates t
+    JOIN v3.document_template_versions v ON v.id = t.current_version_id
+   WHERE t.template_key = 'intl_purchase_order';
+  IF src IS NULL THEN
+    RAISE EXCEPTION 'intl_purchase_order のひな形が見つかりません';
+  END IF;
+  new_html := src;
+  -- 税の注記は置き換えた後の文にも元の文が入るので、済んでいれば置き換えない（2 回流しても入れ子にしない）。
+  IF strpos(new_html, 'Article 6.5') = 0 THEN
+    new_html := replace(new_html, 'Taxes, if any, are handled as stated in the Payment section.', '{{#if HAS_BASE_CONTRACT}}Taxes, if any, are handled as stated in the Payment section.{{else}}Inclusive of any VAT, sales or similar taxes chargeable by the Contractor (Standard Terms, Article 6.5). Withholding tax: see the Payment section.{{/if}}');
+  END IF;
+  new_html := replace(new_html, 'Order Total (excl. tax: services + other fees)', 'Order Total (services + other fees)');
+  new_html := replace(new_html, '■ OTHER FEES (excl. tax, added to the total)', '■ OTHER FEES (added to the total)');
+  new_html := replace(new_html, ' (excl. tax)', '');
+  IF strpos(new_html, '{{> terms_spot_intl_2026}}') = 0 AND strpos(new_html, 'lb-intl-standard-terms') = 0 THEN
+    IF strpos(new_html, '</body>') = 0 THEN
+      RAISE EXCEPTION '</body> が見つかりません。146 で現行版を書き出して確かめてください';
+    END IF;
+    new_html := regexp_replace(new_html, '</body>',
+      E'{{#unless HAS_BASE_CONTRACT}}\n{{> terms_spot_intl_2026}}\n{{/unless}}\n</body>');
+  END IF;
+  IF new_html = src THEN
+    RAISE NOTICE '151: 海外発注書は直し済み。何もしません';
+    RETURN;
+  END IF;
+
+  SELECT COALESCE(max(version_no), 0) + 1 INTO next_no
+    FROM v3.document_template_versions WHERE template_id = tpl_id;
+  INSERT INTO v3.document_template_versions (template_id, version_no, html_source, variables, comment, created_by)
+  SELECT tpl_id, next_no, new_html, v.variables,
+         format('151: 税の表示を約款（6.5 条）に合わせる・約款の差し込み（%s 版から）', from_no), 'sql:151'
+    FROM v3.document_template_versions v WHERE v.id = from_version
+  RETURNING id INTO new_id;
+  UPDATE v3.document_templates SET current_version_id = new_id WHERE id = tpl_id;
+  RAISE NOTICE '151: intl_purchase_order 前の版 id=%（版 %）→ 新しい版 id=%（版 %）', from_version, from_no, new_id, next_no;
+END
+$do$;
+
+COMMIT;
+
+-- 確認
+SELECT t.template_key AS ひな形, v.version_no AS 版, v.id AS 版id,
+       (strpos(v.html_source, 'Rev. 2026-09-28') > 0) AS 約款_2026_09_28版,
+       (strpos(v.html_source, 'Article 21 — Language') > 0) AS 第21条まで,
+       (strpos(v.html_source, '{{> terms_spot_intl_2026}}') > 0) AS 約款の差し込み,
+       (strpos(v.html_source, 'excl. tax') = 0) AS 税抜の表示なし,
+       (strpos(v.html_source, 'Article 6.5') > 0) AS 税の注記
+  FROM v3.document_templates t
+  JOIN v3.document_template_versions v ON v.id = t.current_version_id
+ WHERE t.template_key IN ('intl_purchase_order', 'terms_spot_intl_2026')
+ ORDER BY 1;
