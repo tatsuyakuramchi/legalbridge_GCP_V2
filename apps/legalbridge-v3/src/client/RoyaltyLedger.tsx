@@ -59,8 +59,13 @@ const useOpenRequests = (version: number) => {
 };
 
 export function RoyaltyLedger(
-  { workId, initialPartyId, onOpenDocument, onOpenRequest }: {
+  { workId, initialPartyId, onOpenDocument, onOpenRequest, onCompose }: {
     workId: number;
+    /**
+     * 計算書を作る。その回の条件と実績を選んだ状態で文書の画面へ移る。
+     * 中身の確認・手入力・下書き保存・決定は文書の画面でする（台帳からいきなり決定しない）。
+     */
+    onCompose?: (conditionIds: number[], eventIds: number[], templateKey: string | null) => void;
     initialPartyId?: number | null;
     onOpenDocument?: (documentId: number) => void;
     /** 作家・作品 → 依頼。受付箱のその依頼を開く。 */
@@ -241,7 +246,8 @@ export function RoyaltyLedger(
           {round && (
             <RoundDetail key={`${round.key}-${version}`} round={round} view={view} canWrite={canWrite}
                          onChanged={reload} onError={setError} onOpenDocument={onOpenDocument}
-                         openRequests={openRequests} onLink={linkRequest} onOpenRequest={onOpenRequest} />
+                         openRequests={openRequests} onLink={linkRequest} onOpenRequest={onOpenRequest}
+                         onCompose={onCompose} />
           )}
 
           <History view={view} onOpenDocument={onOpenDocument} />
@@ -335,13 +341,14 @@ function RoundCard({ round: r, view, selected, onSelect }: { round: Round; view:
 
 /** 選んだ回：作品・条件ごとの実績、今期は無し、来るはずの行、計算書。 */
 function RoundDetail(
-  { round: r, view, canWrite, onChanged, onError, onOpenDocument, openRequests, onLink, onOpenRequest }: {
+  { round: r, view, canWrite, onChanged, onError, onOpenDocument, openRequests, onLink, onOpenRequest, onCompose }: {
     round: Round; view: LedgerView; canWrite: boolean;
     onChanged: (message?: string) => void; onError: (m: string) => void;
     onOpenDocument?: (documentId: number) => void;
     openRequests: OpenRequest[];
     onLink: (requestId: number, round: Round, unlink?: boolean) => void;
     onOpenRequest?: (requestId: number) => void;
+    onCompose?: (conditionIds: number[], eventIds: number[], templateKey: string | null) => void;
   }
 ) {
   const [pickRequest, setPickRequest] = useState("");
@@ -355,8 +362,6 @@ function RoundDetail(
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [templates, setTemplates] = useState<Array<{ templateKey: string; label: string }>>([]);
   const [templateKey, setTemplateKey] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [issued, setIssued] = useState<{ id: number; documentNo: string | null } | null>(null);
   const cond = (id: number) => view.conditions.find((c) => c.id === id)!;
   const partKey = (p: RoundPart) => `${p.conditionId}:${p.scheduleId ?? ""}:${p.eventId ?? ""}`;
 
@@ -394,16 +399,10 @@ function RoundDetail(
       onChanged(undo ? "「報告なし」を取り消しました" : "報告なしにしました");
     } catch (e) { onError((e as ApiError).message); }
   }
-  async function issue() {
-    setBusy(true);
-    try {
-      const x = await api.post<{ document: { id: number; documentNo: string | null } }>("/statement-documents", {
-        templateKey, entries
-      });
-      setIssued(x.document);
-      onChanged(`計算書 ${x.document.documentNo ?? `#${x.document.id}`} を作りました`);
-    } catch (e) { onError((e as ApiError).message); }
-    finally { setBusy(false); }
+  /** 文書の画面へ。この回のまだ文書に結ばれていない実績と、その条件を選んだ状態で開く。 */
+  function compose() {
+    if (!onCompose) return;
+    onCompose(entries.map((e) => e.conditionId), entries.flatMap((e) => e.eventIds), templateKey || null);
   }
 
   const bucket = (p: RoundPart) => p.state === "waiting" || p.state === "before" ? "waiting"
@@ -544,16 +543,16 @@ function RoundDetail(
                     <select value={templateKey} onChange={(e) => setTemplateKey(e.target.value)} aria-label="ひな形">
                       {templates.map((t) => <option key={t.templateKey} value={t.templateKey}>{t.label}</option>)}
                     </select>
-                    <button className="btn primary" disabled={busy || !templateKey || !preview} onClick={() => void issue()}>
-                      {busy ? "作成中…" : "この回の計算書を作る"}
+                    <button className="btn primary" disabled={!templateKey || !preview || !onCompose} onClick={compose}>
+                      この回の計算書を作る（文書の画面へ）
                     </button>
                   </div>
                 )}
               </>
             )}
             {!entries.length && !r.documents.length && <div className="faint">まだ計算書に入れる実績がありません。</div>}
-            {issued && onOpenDocument && (
-              <button className="btn btn-sm" onClick={() => onOpenDocument(issued.id)}>作った計算書を開く（送付へ）</button>
+            {entries.length > 0 && (
+              <div className="faint">文書の画面で中身を確かめ、手入力の項目を埋めて、下書き保存・決定します。決定するまで番号は振られません。</div>
             )}
           </div>
         </div>
