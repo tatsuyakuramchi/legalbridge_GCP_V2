@@ -163,7 +163,8 @@ export function DocumentsWorkspace(
   /** 旧版を開いている文書。既定は畳む（いまの版だけを読めるようにする）。 */
   const [unfolded, setUnfolded] = useState<Set<number>>(new Set());
   // 決定した結果。番号だけでなく id も持つ（そのまま開けるように）。
-  const [issued, setIssued] = useState<{ id: number; documentNo: string } | null>(null);
+  /** 決定した文書。again は「作成のフォームから決定した」（続けてもう1枚作れる）。 */
+  const [issued, setIssued] = useState<{ id: number; documentNo: string; again?: boolean } | null>(null);
   // 決定したことに気づかず同じ画面を見続けないよう、結果まで運ぶ。
   const issuedRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
@@ -640,7 +641,7 @@ export function DocumentsWorkspace(
           "/documents/compose", body);
         done = { id: result.document.id, documentNo: result.document.documentNo };
       }
-      setIssued(done);
+      setIssued({ ...done, again: true });
       // 手で打った項目だけ覚える。日付と金額は毎回変わるので覚えない
       // （前回の日付が入ったまま気づかず発行してしまう）。
       const keep: Record<string, string> = {};
@@ -660,6 +661,11 @@ export function DocumentsWorkspace(
       setManual(keep); setLines({}); setPickedFields(new Set());
       setDraft(null); setPickedEvents([]); setStmt(null); setStmtPeriod("");
       await reload();
+      // 決定した文書は直せない。作成のフォームを開いたままにすると、決定した
+      // ものを直せるように見える（直すと失敗する）。フォームを閉じ、決定した
+      // 文書のページを開く。
+      setComposing(false); setBulk(false); setRendered(null); setSavedAt("");
+      setSelected(done.id);
       // 長いフォームの下で押すと、上に出た結果が見えない。結果まで運ぶ。
       issuedRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
@@ -870,16 +876,16 @@ export function DocumentsWorkspace(
           <div className="row">
             <b>決定しました</b>
             <span className="code">{issued.documentNo}</span>
-            <span className="faint">番号が振られ、中身は直せなくなりました</span>
+            <span className="faint">番号が振られ、中身は直せなくなりました。下に決定した文書を開いています（送付・支払・無効化はそこから）</span>
           </div>
           <div className="row">
             <button className="btn primary btn-sm" onClick={() => {
               // 一覧と詳細は作成中は出ないので、閉じてから開く。
               setComposing(false); setDraft(null); setBulk(false);
               setSelected(issued.id); setIssued(null);
-            }}>この文書を開く</button>
-            {(composing || draft) && (
-              <button className="btn btn-sm" onClick={() => setIssued(null)}>
+            }}>決定した文書のページへ</button>
+            {issued.again && (
+              <button className="btn btn-sm" onClick={() => { setIssued(null); setComposing(true); }}>
                 続けてもう1枚作る
               </button>
             )}

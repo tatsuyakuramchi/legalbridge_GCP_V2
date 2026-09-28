@@ -254,8 +254,8 @@ export class ConditionScheduleService {
     try {
       return await inTransaction(this.database, async (client) => {
         const head = await client.query(
-          "SELECT id, status, pricing_model FROM conditions WHERE id = $1", [conditionId]);
-        const condition = head.rows[0] as { status: string; pricing_model: string } | undefined;
+          "SELECT id, status, pricing_model, kind FROM conditions WHERE id = $1", [conditionId]);
+        const condition = head.rows[0] as { status: string; pricing_model: string; kind?: string } | undefined;
         if (!condition) throw new DomainError("NOT_FOUND", `条件 ${conditionId} が見つかりません`);
         if (condition.status === "superseded" || condition.status === "void") {
           throw new DomainError("CONFLICT",
@@ -271,7 +271,10 @@ export class ConditionScheduleService {
         // 料率の条件は、売上報告が来るまで金額が出ない。それでも「いつ締めるか」
         // は契約で決まっているので、0円の回を先に並べる（算定期間の暦）。
         // 金額の決まっている契約で0円の行を置かせると、払い忘れが並ぶだけ。
-        const floor = condition.pricing_model === "revenue_rate" ? 0 : 1;
+        // 許諾の単価（1個あたり○円）も同じ。数量は報告が来るまで分からない。
+        const royalty = condition.pricing_model === "revenue_rate"
+          || (condition.pricing_model === "unit_rate" && condition.kind === "license");
+        const floor = royalty ? 0 : 1;
         if (lines.some((l) => Math.round(l.plannedAmount) < floor)) {
           throw new DomainError("VALIDATION",
             floor === 0

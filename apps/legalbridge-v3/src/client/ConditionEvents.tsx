@@ -1345,7 +1345,10 @@ export function ConditionEvents(
                   {/* 決済文書：この実績に基づいて作った検収書／計算書。支払はここから起こる。 */}
                   <td className="faint" style={{ whiteSpace: "nowrap" }}>
                     {row.documentNo
-                      ? <><span className="code">{row.documentNo}</span>
+                      ? <>{onOpenDocument && row.documentId
+                            ? <button className="linky code" title="文書のページを開く（決定した文書はそこで見る・送る・無効にする）"
+                                      onClick={() => onOpenDocument(row.documentId!)}>{row.documentNo}</button>
+                            : <span className="code">{row.documentNo}</span>}
                           {row.documentStatus === "void"
                             ? <span className="tag danger" style={{ marginLeft: 4 }}>無効</span>
                             : <span className="tag ok" style={{ marginLeft: 4 }}>作成済</span>}

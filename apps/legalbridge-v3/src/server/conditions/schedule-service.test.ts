@@ -113,6 +113,17 @@ test("料率の条件は0円の回を並べられる（算定期間の暦。金�
       .replace(1, [line(1, { plannedAmount: -1 })], "a"), /マイナスの明細/);
 });
 
+test("許諾の単価（1個あたり）も0円の締めを並べられる。業務の単価は並べられない", async () => {
+  const license = db({ "FROM conditions WHERE id = $1": [
+    { id: 1, status: "active", pricing_model: "unit_rate", kind: "license" }] });
+  await new ConditionScheduleService(license).replace(1, [line(1, { plannedAmount: 0 })], "a");
+  assert.ok(license.find("condition_schedules"), "0円でも書き込む");
+  await assert.rejects(
+    () => new ConditionScheduleService(db({ "FROM conditions WHERE id = $1": [
+      { id: 1, status: "active", pricing_model: "unit_rate", kind: "outsourcing" }] }))
+      .replace(1, [line(1, { plannedAmount: 0 })], "a"), /0円以下/);
+});
+
 test("旧版・無効の条件の明細は変えられない", async () => {
   await assert.rejects(
     () => new ConditionScheduleService(db({ "FROM conditions WHERE id = $1": [{ status: "superseded" }] }))
