@@ -120,7 +120,7 @@ test("予定の行（A-062）：from_on 以降の回で来るはずとして待�
 
 test("決まった回は、支払・送付・AG 充当だけ（支払なし）で閉じる", () => {
   const base: Round = { key: "p", kind: "period", payOn: null, closeOn: null, workIds: [], parts: [],
-    documents: [{ id: 1, documentNo: "RS-1", status: "issued", sent: false, net: 100 }], payments: [],
+    documents: [{ id: 1, documentNo: "RS-1", status: "issued", sent: false, net: 100, paymentIds: [] }], payments: [],
     requests: [], state: "issued", open: true };
   assert.equal(settleRound(base).state, "issued");
   assert.equal(settleRound({ ...base, documents: [{ ...base.documents[0], sent: true }] }).state, "sent");

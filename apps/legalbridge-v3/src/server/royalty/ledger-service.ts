@@ -85,7 +85,11 @@ export interface RoundPart {
 
 export type RoundState = "before" | "input" | "ready" | "issued" | "sent" | "scheduled" | "paid" | "skipped" | "nopay";
 
-export interface RoundDocument { id: number; documentNo: string | null; status: string; sent: boolean; net: number }
+export interface RoundDocument {
+  id: number; documentNo: string | null; status: string; sent: boolean; net: number;
+  /** この計算書の実績に割り当てた支払（取り消していないもの）。空なら「支払なし」。 */
+  paymentIds: number[];
+}
 export interface RoundPayment { id: number; paymentNo: string | null; status: string; amount: number; dueOn: string | null; paidOn: string | null }
 export interface RoundRequest { id: number; requestNo: string | null; title: string; assigneeName: string | null; dueOn: string | null; done: boolean }
 
@@ -521,9 +525,14 @@ export class RoyaltyLedgerService {
       const settled = built.map((round) => {
         const evIds = new Set(round.parts.flatMap((p) => p.events.map((e) => e.id)));
         const dIds = new Set(round.parts.flatMap((p) => p.events.map((e) => e.documentId)).filter(Boolean));
-        round.documents = docs.filter((d) => dIds.has(Number(d.id))).map((d) => ({
-          id: Number(d.id), documentNo: str(d.document_no), status: String(d.status),
-          sent: Boolean(d.sent), net: Number(d.net ?? 0) }));
+        round.documents = docs.filter((d) => dIds.has(Number(d.id))).map((d) => {
+          const docEvents = new Set(round.parts.flatMap((p) => p.events.filter((e) => e.documentId === Number(d.id)).map((e) => e.id)));
+          return {
+            id: Number(d.id), documentNo: str(d.document_no), status: String(d.status),
+            sent: Boolean(d.sent), net: Number(d.net ?? 0),
+            paymentIds: [...new Set(pays.filter((x) => docEvents.has(Number(x.event_id)) && x.status !== "canceled").map((x) => Number(x.id)))]
+          };
+        });
         const seen = new Set<number>();
         round.payments = pays.filter((x) => evIds.has(Number(x.event_id)) && !seen.has(Number(x.id)) && seen.add(Number(x.id)))
           .map((x) => ({ id: Number(x.id), paymentNo: str(x.payment_no), status: String(x.status),
@@ -608,6 +617,65 @@ export class RoyaltyLedgerService {
       const r = await events.amend(input.conditionId, input.eventId, patch, input.reason, actor);
       return { eventId: input.eventId, documentId: row.document_status === "issued" ? int(row.document_id) : null,
                documentNo: str(row.document_no), changed: r.changed };
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 許諾先（OUT 条件）から見た報告。台帳で入れた実績は許諾料を払う IN 条件に付くので、
+   * OUT 条件の画面ではここから引いて見せる（IN 条件・締め・計算書へのリンク付き）。
+   */
+  async outReports(outConditionId: number): Promise<{
+    events: Array<{ id: number; occurredOn: string | null; period: string | null; languages: string[]; regions: string[];
+                    quantity: number | null; grossAmount: number | null; amount: number; currency: string;
+                    inConditionId: number; inConditionNo: string | null; partyName: string | null;
+                    workId: number | null; workTitle: string | null;
+                    documentId: number | null; documentNo: string | null; documentStatus: string | null }>;
+    inConditions: Array<{ id: number; conditionNo: string | null; usageLabel: string; partyId: number | null; partyName: string | null;
+                          workId: number | null; workTitle: string | null; schedules: number; nextCloseOn: string | null }>;
+  }> {
+    try {
+      const series = `(SELECT id FROM conditions WHERE COALESCE(series_id, id) =
+                        (SELECT COALESCE(series_id, id) FROM conditions WHERE id = $1))`;
+      const ev = (await this.database.query(
+        `SELECT e.id, e.occurred_on, e.period, e.scope_languages, e.scope_regions, e.quantity, e.gross_amount, e.amount,
+                c.id AS in_id, c.condition_no AS in_no, c.currency, p.name AS party_name, w.id AS work_id, w.title AS work_title,
+                d.id AS document_id, d.document_no, d.status AS document_status
+           FROM condition_events e
+           JOIN conditions c ON c.id = e.condition_id
+           LEFT JOIN parties p ON p.id = c.counterparty_id
+           LEFT JOIN works w ON w.id = c.work_id
+           LEFT JOIN documents d ON d.id = e.document_id
+          WHERE e.out_condition_id IN ${series} AND e.status = 'active'
+          ORDER BY e.occurred_on DESC, e.id DESC`, [outConditionId])).rows as any[];
+      const ins = (await this.database.query(
+        `SELECT c.id, c.condition_no, c.usage_type, c.counterparty_id, p.name AS party_name, w.id AS work_id, w.title AS work_title,
+                (SELECT count(*)::int FROM condition_schedules s WHERE s.condition_id = c.id) AS schedules,
+                (SELECT min(s.due_on) FROM condition_schedules s WHERE s.condition_id = c.id AND s.due_on >= CURRENT_DATE) AS next_close
+           FROM conditions c
+           LEFT JOIN parties p ON p.id = c.counterparty_id
+           LEFT JOIN works w ON w.id = c.work_id
+          WHERE c.direction = 'in' AND c.kind = 'license' AND c.status IN ('active', 'scheduled')
+            AND c.usage_type = (SELECT usage_type FROM conditions WHERE id = $1)
+            AND (c.work_id = (SELECT work_id FROM conditions WHERE id = $1)
+                 OR c.id IN (SELECT DISTINCT condition_id FROM condition_events WHERE out_condition_id IN ${series}))
+          ORDER BY w.title NULLS LAST, c.id`, [outConditionId])).rows as any[];
+      return {
+        events: ev.map((e) => ({
+          id: Number(e.id), occurredOn: dateStr(e.occurred_on), period: str(e.period),
+          languages: Array.isArray(e.scope_languages) ? e.scope_languages.map(String) : [],
+          regions: Array.isArray(e.scope_regions) ? e.scope_regions.map(String) : [],
+          quantity: e.quantity === null ? null : Number(e.quantity), grossAmount: int(e.gross_amount), amount: Number(e.amount ?? 0),
+          currency: String(e.currency ?? "JPY"),
+          inConditionId: Number(e.in_id), inConditionNo: str(e.in_no), partyName: str(e.party_name),
+          workId: int(e.work_id), workTitle: str(e.work_title),
+          documentId: int(e.document_id), documentNo: str(e.document_no), documentStatus: str(e.document_status)
+        })),
+        inConditions: ins.map((c) => ({
+          id: Number(c.id), conditionNo: str(c.condition_no), usageLabel: conditionUsageLabel(str(c.usage_type)),
+          partyId: int(c.counterparty_id), partyName: str(c.party_name), workId: int(c.work_id), workTitle: str(c.work_title),
+          schedules: Number(c.schedules ?? 0), nextCloseOn: dateStr(c.next_close)
+        }))
+      };
     } catch (error) { throw translate(error); }
   }
 

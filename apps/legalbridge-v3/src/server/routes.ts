@@ -2222,6 +2222,10 @@ export function createRoutes(database: Transactable) {
       const input = ledgerSkipSchema.parse(req.query ?? {});
       res.json(await royaltyLedger.skip(input.conditionId, input.scheduleId, null, actor(res), true));
     }));
+  // 許諾先（OUT 条件）から見た報告。台帳で入れた実績は IN 条件に付くので、OUT の画面はここから引く。
+  router.get("/conditions/:id/out-reports", asyncRoute(async (req, res) => {
+    res.json(await royaltyLedger.outReports(Number(req.params.id)));
+  }));
   // 決定した計算書に載った報告を例外的に直す（admin）。直したあと、台帳から訂正版を出し直す。
   router.post("/royalty-ledger/corrections", requireRole("admin"), requireWritable,
     asyncRoute(async (req, res) => {

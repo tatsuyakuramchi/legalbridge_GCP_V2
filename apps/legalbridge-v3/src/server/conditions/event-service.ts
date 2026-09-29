@@ -145,6 +145,8 @@ export interface EventRow {
   documentNo: string | null;
   /** 結びついている文書の状態。void なら空いている扱い（作り直せる）。 */
   documentStatus: string | null;
+  /** この実績に割り当てた支払（取り消していないもの）。無ければ「支払なし」。 */
+  paymentId: number | null; paymentNo: string | null; paymentStatus: string | null;
   /** 予定との差分（A-030）。 */
   expectedQuantity: number | null;
   expectedAmount: number | null;
@@ -248,6 +250,7 @@ export class ConditionEventService {
                 e.tax_included, e.scope_languages, e.scope_regions,
                 oc.condition_no AS out_condition_no, oc.name AS out_condition_name,
                 e.document_id, d.document_no, d.status AS document_status, e.created_at, e.created_by,
+                pay.payment_id, pay.payment_no, pay.payment_status,
                 e.condition_id, ec.condition_no AS own_condition_no,
                 e.expected_quantity, e.expected_amount, e.variance_note, e.follow_up, e.follow_up_due_on,
                 COALESCE(po.document_no, ec.order_no) AS order_no
@@ -256,6 +259,14 @@ export class ConditionEventService {
            LEFT JOIN condition_schedules s ON s.id = e.schedule_id
            LEFT JOIN conditions oc ON oc.id = e.out_condition_id
            LEFT JOIN conditions ec ON ec.id = e.condition_id
+           -- この実績に割り当てた支払（取り消していないもの）。計算書・検収書を出したのに
+           -- 支払が立っていないことに、一覧で気づけるようにする。
+           LEFT JOIN LATERAL (
+             SELECT p.id AS payment_id, p.payment_no, p.status AS payment_status
+               FROM payment_allocations al JOIN payments p ON p.id = al.payment_id
+              WHERE al.event_id = e.id AND p.status <> 'canceled'
+              ORDER BY p.id DESC LIMIT 1
+           ) pay ON true
            -- 出どころの発注書。条件の系列（改訂の全版）に繋いだ決定済みの発注書のうち最新。
            -- 無ければ条件に控えた外部の発注番号（移行した条件は発注書が V1・V2 側にある）。
            LEFT JOIN LATERAL (
@@ -312,6 +323,7 @@ export class ConditionEventService {
         documentId: int(row.document_id),
         documentNo: str(row.document_no),
         documentStatus: str(row.document_status),
+        paymentId: int(row.payment_id), paymentNo: str(row.payment_no), paymentStatus: str(row.payment_status),
         expectedQuantity: num(row.expected_quantity),
         expectedAmount: int(row.expected_amount),
         varianceNote: str(row.variance_note),
