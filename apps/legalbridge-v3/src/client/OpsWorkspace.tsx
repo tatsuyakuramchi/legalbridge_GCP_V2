@@ -313,7 +313,11 @@ export function OpsWorkspace({ initialTab }: { initialTab?: OpsTab } = {}) {
 
 /** ホーム。数字はすべて条件を起点に導出する。 */
 export function HomeWorkspace(
-  { onGo }: { onGo: (view: "matters" | "money" | "ops" | "drift", tab?: OpsTab) => void }
+  { onGo, intakeCount = 0, dailyCount = 0 }: {
+    onGo: (view: "matters" | "money" | "ops" | "drift" | "intake" | "daily", tab?: OpsTab) => void;
+    /** 受付箱の未処理＋返信あり、デイリータスクの終わっていない作業（左の桁と同じ数）。 */
+    intakeCount?: number; dailyCount?: number;
+  }
 ) {
   const [summary, setSummary] = useState<{
     openMatters: number; dueSoon: number; agRemaining: number;
@@ -352,6 +356,15 @@ export function HomeWorkspace(
 
       {summary && (
         <div className="tiles">
+          {/* 入口の 2 つ。振り分けていない依頼と、軽微な作業の残り。 */}
+          <button className={`tile${intakeCount ? " alert" : ""}`} onClick={() => onGo("intake")}>
+            <span className="lab">受付箱</span><span className="val">{intakeCount}</span>
+            <span className="sub">振り分けていない依頼・返信あり</span>
+          </button>
+          <button className="tile" onClick={() => onGo("daily")}>
+            <span className="lab">デイリータスク</span><span className="val">{dailyCount}</span>
+            <span className="sub">軽微な作業の残り</span>
+          </button>
           <button className="tile" onClick={() => onGo("matters")}>
             <span className="lab">対応中の案件</span><span className="val">{summary.openMatters}</span>
             <span className="sub">IN {summary.inConditions} ／ OUT {summary.outConditions} 条件</span>

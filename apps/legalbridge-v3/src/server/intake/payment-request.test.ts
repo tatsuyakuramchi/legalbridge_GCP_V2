@@ -51,3 +51,12 @@ test("発注書が案件に入っている検収書は、その案件へ繋ぐ�
   assertInspectionMatter("royalty", target, { mode: "direct" });
   assertInspectionMatter("inspection", { ...target, matter: null }, { mode: "direct" });
 });
+
+test("定型文書・その他は 受付 → 作成 → 送付 まで。支払の段は無く、完了は人が付ける", () => {
+  const p = progressOf(facts({ purpose: "template",
+    documents: [{ id: 1, documentNo: "NDA-1", status: "issued", pinned: true }], sentAt: "2026-09-29T00:00:00.000Z" }));
+  assert.deepEqual(p.stages.map((s) => s.key), ["accepted", "created", "sent"]);
+  assert.equal(p.complete, false, "送っただけでは完了にしない");
+  assert.equal(p.current, null, "段はすべて済んでいる");
+  assert.equal(progressOf(facts({ purpose: "other", doneAt: "2026-10-01T00:00:00.000Z" })).complete, true);
+});

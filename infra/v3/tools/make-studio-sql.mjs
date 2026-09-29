@@ -303,6 +303,13 @@ SELECT * FROM (
             WHERE table_schema='v3' AND table_name='parties'
               AND column_name IN ('rpt_entity', 'has_board', 'related_party', 'related_party_type', 'related_party_note')))::text
   UNION ALL
+  SELECT 64, 'デイリータスク（A-064。列 5・CHECK 2 で 7 であること）',
+         ((SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='v3' AND table_name='tasks'
+              AND column_name IN ('request_id', 'purpose', 'done_at', 'done_by', 'created_at'))
+          + (SELECT count(*) FROM pg_constraint
+              WHERE conrelid='v3.tasks'::regclass AND conname IN ('tasks_purpose_chk', 'tasks_owner_chk')))::text
+  UNION ALL
   SELECT 63, '許諾先専用の IN 条件（A-063。列 1 であること）',
          (SELECT count(*) FROM information_schema.columns
            WHERE table_schema='v3' AND table_name='conditions' AND column_name='target_party_id')::text

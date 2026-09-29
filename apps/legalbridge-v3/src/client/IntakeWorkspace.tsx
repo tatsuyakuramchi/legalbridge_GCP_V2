@@ -3,24 +3,26 @@ import { api, ApiError } from "./api.js";
 import { useReadOnly } from "./read-only.js";
 import { DetailBack, isWideLayout } from "./DetailBack.js";
 import { UploadsPanel } from "./UploadsPanel.js";
-import { RoundPicker, roundTargets } from "./RoundPicker.js";
+import { StatusTag } from "./labels.js";
 
 /**
  * 依頼の受付箱。docs/v3-request-inbox.md
  *
  * Slack の依頼は送信と同時に、Backlog の課題（V1 の Slack 受付・GAS・直接起票）は
- * 取得で、既存の案件に当たらない新しいメールは受信の取り込みでここに入る。届いただけでは案件にしない。法務がここで判断する：
- *   新規案件で受付 ／ 既存の案件へ接続 ／ 重複 ／ 保留 ／ 対象外
- * 受け付けた依頼は案件の工程の先頭「受付」に繋がる。
+ * 取得で、既存の案件に当たらない新しいメールは受信の取り込みでここに入る。届いただけでは案件にしない。
  *
- * 検収書・利用許諾計算書の依頼は「案件にせず処理」もできる（A-058）。依頼そのものを
- * 小さなチケットにして、担当・期日と 受付→作成→送付→支払予定→支払 を「対応中」で追う。
+ * 受付箱は振り分けるだけ（A-064）。法務がここで決めるのは 2 択＋例外：
+ *   軽微 → デイリータスク（検収書・利用許諾計算書・定型文書など。作業テーブルで追う）
+ *   大きい → 案件にする（新規、または既存の案件へ接続）
+ *   保留 ／ 重複 ／ 対象外
+ * 振り分けた依頼はここから消え、続きはデイリータスクか案件で進める。
+ * 迷ったら軽微で受けてよい（デイリータスクから「案件に移す」ことができる）。
+ *
  * 発注書が案件に入っている検収書は、その案件へ繋ぐ（案件の中で作る）。
- *
  * Backlog の中身は原票として読むだけ。こちらからは書き換えない。
  */
 
-type Tab = "new" | "on_hold" | "updated" | "direct" | "all";
+type Tab = "new" | "on_hold" | "updated" | "all";
 type Kind = "work" | "outsourcing" | "single";
 const KIND_LABEL: Record<Kind, string> = { outsourcing: "業務委託・発注", work: "作品の権利", single: "その他の相談" };
 const STATE_LABEL: Record<string, string> = {
@@ -28,7 +30,16 @@ const STATE_LABEL: Record<string, string> = {
 };
 const SOURCE_LABEL: Record<string, string> = { slack: "Slack", backlog: "Backlog", email: "メール", manual: "手動" };
 const DISMISS_REASONS = ["誤起票", "テスト投稿", "法務の対象外", "その他"];
+/** デイリータスクの種別。支払の書類（検収書・計算書）は対象の番号から条件を引き当てる。 */
+const DAILY_PURPOSE_LABEL: Record<string, string> = {
+  inspection: "検収書", royalty: "利用許諾計算書", template: "定型文書（当社ひな形の NDA など）", other: "その他の軽微な作業"
+};
+const isPayment = (p: string | null | undefined) => p === "inspection" || p === "royalty";
 
+interface TaskRef {
+  id: number; status: string; matterId: number | null;
+  assigneeStaffId: number | null; assigneeName: string | null; dueOn: string | null; doneAt: string | null;
+}
 interface Request {
   id: number; requestNo: string | null; source: string; state: string; kind: Kind | null;
   purpose: string | null; purposeLabel: string | null; targetDocNo: string | null;
@@ -43,15 +54,7 @@ interface Request {
   reason: string | null; holdUntil: string | null; handledAt: string | null; handledBy: string | null;
   createdAt: string;
   handling: "matter" | "direct" | null;
-  assigneeStaffId: number | null; assigneeName: string | null;
-  doneAt: string | null; doneBy: string | null;
-  progress?: Progress | null;
-}
-interface Stage { key: string; label: string; done: boolean; at: string | null; detail: string }
-interface Progress {
-  stages: Stage[]; current: Stage | null; complete: boolean;
-  documents: Array<{ id: number; documentNo: string | null; status: string; pinned: boolean }>;
-  payments: Array<{ id: number; paymentNo: string | null; status: string; dueOn: string | null; paidOn: string | null }>;
+  task: TaskRef | null;
 }
 interface Target {
   docNo: string; documentId: number | null; documentNo: string | null;
@@ -65,34 +68,27 @@ interface Detail {
   matterCandidates: Array<{ id: number; matterNo: string | null; title: string; status: string; why: string }>;
   duplicateCandidates: Array<{ id: number; requestNo: string | null; title: string; state: string; why: string }>;
   target: Target | null;
-  conditions: Array<{ id: number; conditionNo: string | null; name: string;
-                      workId: number | null; workTitle: string | null; partyId: number | null }>;
   replies: Array<{ at: string; user: string; text: string }>;
-  rounds: Array<{ kind: "schedule" | "event"; targetId: number; label: string | null; closeOn: string | null;
-                  payOn: string | null; conditionId: number; usageType: string | null;
-                  workId: number | null; workTitle: string | null; partyId: number | null; partyName: string | null }>;
-  ledgers: Array<{ partyId: number; partyName: string; workId: number; workTitle: string }>;
 }
-interface Counts { new: number; onHold: number; updated: number; holdDue: number; direct?: number; directOverdue?: number }
-/** 案件にせず処理できる依頼の内容（A-058）。 */
-const PAYMENT_PURPOSE_LABEL: Record<string, string> = { inspection: "検収書", royalty: "利用許諾計算書" };
-const isPayment = (p: string | null | undefined) => p === "inspection" || p === "royalty";
-const today = () => new Date().toISOString().slice(0, 10);
+interface Counts { new: number; onHold: number; updated: number; holdDue: number }
 interface Staff { id: number; name: string; status?: string }
 interface MatterHit { id: number; matterNo: string | null; title: string; status: string }
 
 const when = (iso: string | null) => (iso ? iso.slice(5, 16).replace("T", " ").replace("-", "/") : "—");
 
+/** 振り分けたあとの行き先。受付済は「デイリーへ」「案件へ」で見分ける。 */
+function destinationOf(r: Request): string {
+  if (r.state !== "accepted") return STATE_LABEL[r.state] ?? r.state;
+  return r.handling === "direct" ? "デイリーへ" : "案件へ";
+}
+
 export function IntakeWorkspace(
-  { onOpenMatter, onCountsChange, onCompose, onOpenDocument, onOpenLedger, initialId }: {
-    /** この依頼を選んだ状態で開く（作家・作品の台帳から来たとき）。 */
+  { onOpenMatter, onOpenTask, onCountsChange, initialId }: {
+    /** この依頼を選んだ状態で開く（検索・作家の台帳から来たとき）。 */
     initialId?: number;
-    /** 計算書の依頼を、作品の利用許諾計算（許諾料の台帳）で開く。 */
-    onOpenLedger?: (workId: number, partyId: number) => void;
     onOpenMatter?: (matterId: number) => void;
-    /** 依頼の条件を載せた状態で文書の画面へ移る（案件にせず処理している依頼）。 */
-    onCompose?: (conditionIds: number[], templateKey: string | null) => void;
-    onOpenDocument?: (documentId: number) => void;
+    /** デイリータスクにした依頼の作業を開く。 */
+    onOpenTask?: (taskId: number) => void;
     /** 左の桁の件数を合わせる。 */
     onCountsChange?: (counts: Counts) => void;
   }
@@ -110,8 +106,8 @@ export function IntakeWorkspace(
   const [version, setVersion] = useState(0);
   const [pulling, setPulling] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
-  /** 直前に受け付けた先。知らせの横から案件を開けるようにする。 */
-  const [lastMatter, setLastMatter] = useState<number | null>(null);
+  /** 直前に振り分けた先。知らせの横から開けるようにする。 */
+  const [last, setLast] = useState<{ matterId?: number | null; taskId?: number | null } | null>(null);
 
   const canWrite = !readOnly && (role === "admin" || role === "legal");
 
@@ -141,7 +137,7 @@ export function IntakeWorkspace(
 
   const reload = (message?: string, keepSelection = false) => {
     if (message) setNotice(message);
-    setLastMatter(null);
+    setLast(null);
     if (!keepSelection) setSelected(undefined);
     setVersion((v) => v + 1);
   };
@@ -161,8 +157,7 @@ export function IntakeWorkspace(
 
   const tabs: Array<[Tab, string, number | undefined]> = [
     ["new", "未処理", counts?.new], ["on_hold", "保留", counts?.onHold],
-    ["updated", "更新あり", counts?.updated], ["direct", "対応中", counts?.direct],
-    ["all", "すべて", undefined]
+    ["updated", "返信・更新あり", counts?.updated], ["all", "すべて", undefined]
   ];
 
   return (
@@ -170,8 +165,8 @@ export function IntakeWorkspace(
       <header className="workspace-head">
         <h1>受付箱</h1>
         <p>
-          Slack の依頼は送信と同時に、Backlog の課題は取得で、新しいメールは受信の取り込みでここに入ります。届いただけでは案件にしません。
-          受け付けると案件の工程の先頭「受付」に繋がり、依頼者に Slack で知らせます。Backlog は読むだけです。
+          届いた依頼を振り分けるだけの場所です。軽微ならデイリータスク、大きければ案件にします。
+          振り分けた依頼はここから消え、続きはデイリータスクか案件で進めます。依頼者には Slack で知らせます。Backlog は読むだけです。
         </p>
       </header>
 
@@ -179,8 +174,11 @@ export function IntakeWorkspace(
       {notice && (
         <div className="note ok">
           {notice}
-          {lastMatter && onOpenMatter && (
-            <> <button className="linky" onClick={() => onOpenMatter(lastMatter)}>案件を開く</button></>
+          {last?.matterId && onOpenMatter && (
+            <> <button className="linky" onClick={() => onOpenMatter(last.matterId!)}>案件を開く</button></>
+          )}
+          {last?.taskId && onOpenTask && (
+            <> <button className="linky" onClick={() => onOpenTask(last.taskId!)}>デイリータスクで開く</button></>
           )}
         </div>
       )}
@@ -195,8 +193,6 @@ export function IntakeWorkspace(
           </button>
         )}
         {counts?.holdDue ? <span className="tag warn">再確認日の来た保留 {counts.holdDue} 件</span> : null}
-        {counts?.directOverdue
-          ? <span className="tag warn">期日を過ぎた対応中 {counts.directOverdue} 件</span> : null}
       </div>
 
       {manualOpen && canWrite && (
@@ -217,31 +213,10 @@ export function IntakeWorkspace(
           <div className="tablewrap">
             <table>
               <thead>
-                {tab === "direct"
-                  ? <tr><th>依頼</th><th>件名</th><th>担当</th><th>期日</th><th>いまの段</th></tr>
-                  : <tr><th>依頼</th><th>件名</th><th>経路</th><th>種類</th><th>{tab === "all" ? "状態" : "届いた日"}</th></tr>}
+                <tr><th>依頼</th><th>件名</th><th>経路</th><th>種類</th><th>{tab === "all" ? "行き先" : "届いた日"}</th></tr>
               </thead>
               <tbody>
-                {tab === "direct" && (items ?? []).map((r) => (
-                  <tr key={r.id} aria-selected={selected === r.id} style={{ cursor: "pointer" }}
-                      onClick={() => setSelected(r.id)}>
-                    <td>
-                      <div className="code">{r.requestNo ?? `#${r.id}`}</div>
-                      <div className="faint">{PAYMENT_PURPOSE_LABEL[r.purpose ?? ""] ?? ""}</div>
-                    </td>
-                    <td>
-                      <div>{r.title}</div>
-                      <div className="faint">
-                        {r.targetDocNo ? `対象 ${r.targetDocNo}` : ""}{r.requesterName ? `　依頼者 ${r.requesterName}` : ""}
-                      </div>
-                      {r.hasUnseenUpdate && <span className="tag warn">依頼者から返信あり</span>}
-                    </td>
-                    <td className="faint">{r.assigneeName ?? "未定"}</td>
-                    <td className={r.dueOn && r.dueOn < today() ? "danger" : "faint"}>{r.dueOn ?? "—"}</td>
-                    <td><StageBar progress={r.progress ?? null} compact /></td>
-                  </tr>
-                ))}
-                {tab !== "direct" && (items ?? []).map((r) => (
+                {(items ?? []).map((r) => (
                   <tr key={r.id} aria-selected={selected === r.id} style={{ cursor: "pointer" }}
                       onClick={() => setSelected(r.id)}>
                     <td>
@@ -254,7 +229,7 @@ export function IntakeWorkspace(
                         {r.counterpartyName ?? "相手先の記載なし"}
                         {r.requesterName ? `　依頼者 ${r.requesterName}` : ""}
                       </div>
-                      {r.hasUnseenUpdate && <span className="tag warn">Backlog 更新あり</span>}
+                      {r.hasUnseenUpdate && <span className="tag warn">返信・更新あり</span>}
                     </td>
                     <td className="faint">{SOURCE_LABEL[r.source] ?? r.source}</td>
                     <td className="faint">
@@ -262,16 +237,19 @@ export function IntakeWorkspace(
                       {r.purposeLabel && <div title="依頼者が選んだ内容">{r.purposeLabel}</div>}
                     </td>
                     <td className="faint">
-                      {tab === "all" ? STATE_LABEL[r.state] ?? r.state
-                        : tab === "on_hold" ? `再確認 ${r.holdUntil ?? "—"}` : when(r.createdAt)}
+                      {tab === "all" ? (
+                        <>
+                          {destinationOf(r)}
+                          {r.task && <div><StatusTag kind="task" value={r.task.status} /></div>}
+                        </>
+                      ) : tab === "on_hold" ? `再確認 ${r.holdUntil ?? "—"}` : when(r.createdAt)}
                     </td>
                   </tr>
                 ))}
                 {items && !items.length && (
                   <tr><td colSpan={5} className="faint">
                     {tab === "new" ? "未処理の依頼はありません。" : tab === "on_hold" ? "保留中の依頼はありません。"
-                      : tab === "updated" ? "受付後に Backlog で更新された依頼・返信のあった依頼はありません。"
-                      : tab === "direct" ? "案件にせず処理している依頼で、終わっていないものはありません。"
+                      : tab === "updated" ? "振り分けたあとに返信・Backlog の更新があった依頼はありません。"
                       : "依頼はありません。"}
                   </td></tr>
                 )}
@@ -287,15 +265,10 @@ export function IntakeWorkspace(
             {!detail ? <div className="faint">読み込んでいます…</div> : (
               <>
                 <Original request={detail.request} />
-                {detail.request.handling === "direct" && detail.request.state === "accepted" && (
-                  <Ticket detail={detail} canWrite={canWrite} staff={staff}
-                          onChanged={(msg) => reload(msg, true)} onError={setError}
-                          onCompose={onCompose} onOpenDocument={onOpenDocument} onOpenLedger={onOpenLedger} />
-                )}
                 <UploadsPanel target="intake" id={detail.request.id} canWrite={canWrite} />
                 <Decision detail={detail} canWrite={canWrite} staff={staff}
-                          onDone={(msg, matterId) => { reload(msg); if (matterId) setLastMatter(matterId); }}
-                          onOpenMatter={onOpenMatter} onError={setError} />
+                          onDone={(msg, dest) => { reload(msg); if (dest) setLast(dest); }}
+                          onOpenMatter={onOpenMatter} onOpenTask={onOpenTask} onError={setError} />
               </>
             )}
           </div>
@@ -313,7 +286,7 @@ function Original({ request: r }: { request: Request }) {
     <div className="panel">
       <div className="panel-hd">
         <h2>{r.requestNo ?? `#${r.id}`}</h2>
-        <span className="tag">{STATE_LABEL[r.state] ?? r.state}</span>
+        <span className="tag">{destinationOf(r)}</span>
         <span className="faint">{SOURCE_LABEL[r.source] ?? r.source}</span>
         {r.backlogIssueKey && <span className="faint code">{r.backlogIssueKey}</span>}
         {r.backlogStatus && <span className="tag ghost" title="Backlog のステータスは起案時のまま置き、更新しません">
@@ -344,7 +317,7 @@ function Original({ request: r }: { request: Request }) {
             {r.mail.followUps.map((m, i) => (
               <div key={i} className="faint">{when(m.receivedAt)}　{m.from ?? ""}　{m.subject ?? ""}</div>
             ))}
-            <div className="faint">受け付けると、メールのスレッドごと案件のやり取りに入ります。</div>
+            <div className="faint">案件にすると、メールのスレッドごと案件のやり取りに入ります。</div>
           </div>
         )}
         {r.state === "on_hold" && r.reason && (
@@ -357,30 +330,33 @@ function Original({ request: r }: { request: Request }) {
   );
 }
 
-/** 判断。未処理・保留なら受付のフォーム、処理済みならその結果と戻し方。 */
+/** 振り分け。未処理・保留なら 軽微／大きい の 2 択のフォーム、振り分け済みならその行き先と戻し方。 */
 function Decision(
-  { detail, canWrite, staff, onDone, onOpenMatter, onError }: {
+  { detail, canWrite, staff, onDone, onOpenMatter, onOpenTask, onError }: {
     detail: Detail; canWrite: boolean; staff: Staff[];
-    onDone: (message: string, matterId?: number) => void;
+    onDone: (message: string, dest?: { matterId?: number | null; taskId?: number | null }) => void;
     onOpenMatter?: (matterId: number) => void;
+    onOpenTask?: (taskId: number) => void;
     onError: (message: string) => void;
   }
 ) {
   const r = detail.request;
   const open = r.state === "new" || r.state === "on_hold";
+  const target = detail.target;
+  // 発注書が案件に入っている検収書は、その案件へ繋ぐほかは受けない（サーバも止める）。
+  const lockedMatter = r.purpose === "inspection" && target?.documentId && target.matter ? target.matter : null;
+  const firstCandidate = detail.matterCandidates[0]?.id;
+  /** 軽微の既定：支払の書類と NDA。交渉のある依頼（レビュー・許諾・取引）は案件が既定。 */
+  const dailyByDefault = isPayment(r.purpose) || r.purpose === "nda";
+  const [route, setRoute] = useState<"daily" | "matter">(lockedMatter ? "matter" : dailyByDefault ? "daily" : "matter");
+  const [purpose, setPurpose] = useState<string>(
+    isPayment(r.purpose) ? r.purpose! : r.purpose === "nda" ? "template" : "other");
   const [kind, setKind] = useState<Kind | "">(r.kind ?? "");
   const [title, setTitle] = useState(r.title);
   const [owner, setOwner] = useState<number | "">("");
   const [dueOn, setDueOn] = useState(r.dueOn ?? "");
-  const firstCandidate = detail.matterCandidates[0]?.id;
-  const target = detail.target;
-  // 発注書が案件に入っている検収書は、その案件へ繋ぐほかは受けない（サーバも止める）。
-  const lockedMatter = r.purpose === "inspection" && target?.documentId && target.matter ? target.matter : null;
-  const [purpose, setPurpose] = useState<string>(r.purpose ?? "");
   const [dest, setDest] = useState<string>(
-    lockedMatter ? String(lockedMatter.id)
-      : isPayment(r.purpose) ? "direct"
-      : firstCandidate && r.kind !== null ? String(firstCandidate) : "new");
+    lockedMatter ? String(lockedMatter.id) : firstCandidate && r.kind !== null ? String(firstCandidate) : "new");
   const [docNo, setDocNo] = useState(r.targetDocNo ?? "");
   const [conditionIds, setConditionIds] = useState<number[]>(target?.conditions.map((c) => c.id) ?? []);
   const [search, setSearch] = useState("");
@@ -392,6 +368,7 @@ function Decision(
   const [dismissReason, setDismissReason] = useState(/テスト/.test(r.title) ? "テスト投稿" : "誤起票");
   const [dupOf, setDupOf] = useState<number | "">(detail.duplicateCandidates[0]?.id ?? "");
   const [dupNo, setDupNo] = useState("");
+  const [busy, setBusy] = useState(false);
   /** 依頼番号（REQ-…）から重複元を引く。候補に無い依頼を指すとき用。 */
   const findByNo = async () => {
     try {
@@ -400,7 +377,6 @@ function Decision(
       if (hit) setDupOf(hit.id); else onError(`${dupNo} という依頼は見つかりません`);
     } catch (e) { onError((e as ApiError).message); }
   };
-  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (dest !== "pick" || search.trim().length < 2) { setHits([]); return; }
@@ -415,15 +391,16 @@ function Decision(
     setBusy(true);
     try {
       const x = await api.post<any>(`/intake/${r.id}/${path}`, body);
-      onDone(message(x), x?.matterId);
+      onDone(message(x), { matterId: x?.matterId ?? null, taskId: x?.taskId ?? null });
     } catch (e) { onError((e as ApiError).message); }
     finally { setBusy(false); }
   };
 
-  const direct = dest === "direct";
-  const matterId = dest === "new" || direct ? null : dest === "pick" ? picked?.id ?? null : Number(dest);
-  const acceptable = direct
-    ? isPayment(purpose) && (conditionIds.length > 0 || docNo.trim() !== "")
+  const daily = route === "daily";
+  const payment = isPayment(purpose);
+  const matterId = dest === "new" ? null : dest === "pick" ? picked?.id ?? null : Number(dest);
+  const acceptable = daily
+    ? Boolean(purpose) && (!payment || conditionIds.length > 0 || docNo.trim() !== "")
     : Boolean(kind) && (dest === "new" || matterId);
   const notified = (x: any) => (x?.notified ? "。依頼者に Slack で知らせました" : "");
 
@@ -431,21 +408,38 @@ function Decision(
     return (
       <div className="panel">
         <div className="panel-bd stack">
+          {r.handling === "direct" && r.task && (
+            <div className="row" style={{ gap: 8 }}>
+              <span>行き先：デイリータスク</span>
+              <StatusTag kind="task" value={r.task.status} />
+              <span className="faint">担当 {r.task.assigneeName ?? "未定"}　期日 {r.task.dueOn ?? "—"}</span>
+              {onOpenTask && <button className="linky" onClick={() => onOpenTask(r.task!.id)}>デイリータスクで開く</button>}
+            </div>
+          )}
           {r.matterId && (
             <div className="row" style={{ gap: 8 }}>
-              <span>接続先：</span>
+              <span>行き先：案件</span>
               {onOpenMatter
                 ? <button className="linky" onClick={() => onOpenMatter(r.matterId!)}>{r.matterNo ?? `#${r.matterId}`} {r.matterTitle}</button>
                 : <span>{r.matterNo ?? `#${r.matterId}`} {r.matterTitle}</span>}
             </div>
           )}
           {r.hasUnseenUpdate && r.handling === "direct" && (
-            <div className="note warn">依頼者から Slack のスレッドに返信がありました（下の「依頼者からの返信」）。</div>
+            <div className="note warn">依頼者から Slack のスレッドに返信がありました（デイリータスクの詳細で読めます）。</div>
           )}
           {r.hasUnseenUpdate && r.handling !== "direct" && (
             <div className="note warn">
-              受け付けたあとに Backlog が更新されました（{r.backlogStatus ?? "—"}・{when(r.backlogUpdatedAt)}）。
+              振り分けたあとに Backlog が更新されました（{r.backlogStatus ?? "—"}・{when(r.backlogUpdatedAt)}）。
               案件は自動では動きません。内容を確かめて、必要なら案件側で対応してください。
+            </div>
+          )}
+          {detail.replies.length > 0 && r.handling !== "direct" && (
+            <div className="stack" style={{ gap: 4 }}>
+              <b>依頼者からの返信（Slack のスレッド）</b>
+              {detail.replies.map((x, i) => (
+                <div key={i} className="note"><div className="faint">{when(x.at)}</div>
+                  <div style={{ whiteSpace: "pre-wrap" }}>{x.text}</div></div>
+              ))}
             </div>
           )}
           <div className="faint">{STATE_LABEL[r.state]}：{r.handledBy ?? "—"}（{when(r.handledAt)}）</div>
@@ -466,7 +460,7 @@ function Decision(
 
   return (
     <div className="panel">
-      <div className="panel-hd"><h2>受付</h2></div>
+      <div className="panel-hd"><h2>振り分け</h2></div>
       <div className="panel-bd stack">
         {detail.duplicateCandidates.length > 0 && (
           <div className="note warn">
@@ -474,66 +468,75 @@ function Decision(
               `${d.requestNo ?? `#${d.id}`} ${d.title}（${d.why}）`).join(" ／ ")}
           </div>
         )}
-        {!canWrite && <div className="faint">受け付けられるのは管理者・法務だけです。</div>}
-        <div className="form-grid">
-          <label className="field"><span>依頼の種類{!direct && <em className="req"> 必須</em>}</span>
-            <select value={kind} disabled={!canWrite || direct} onChange={(e) => setKind(e.target.value as Kind)}>
-              <option value="">選んでください</option>
-              {(Object.keys(KIND_LABEL) as Kind[]).map((k) => <option key={k} value={k}>{KIND_LABEL[k]}</option>)}
-            </select>
-          </label>
-          <label className="field"><span>件名</span>
-            <input value={title} disabled={!canWrite} onChange={(e) => setTitle(e.target.value)} />
-          </label>
-          <label className="field"><span>法務担当</span>
-            <select value={owner} disabled={!canWrite || (dest !== "new" && !direct)}
-                    onChange={(e) => setOwner(e.target.value ? Number(e.target.value) : "")}>
-              <option value="">あとで決める</option>
-              {staff.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-          </label>
-          <label className="field"><span>期日</span>
-            <input type="date" value={dueOn} disabled={!canWrite} onChange={(e) => setDueOn(e.target.value)} />
-          </label>
-        </div>
-        <div className="faint">相手先は取引先マスタで1件に決まれば紐づけます。決まらなければ記載を案件の備考に残し、要確認に積みます。</div>
+        {detail.replies.length > 0 && (
+          <div className="stack" style={{ gap: 4 }}>
+            <b>依頼者からの返信（Slack のスレッド）</b>
+            {detail.replies.map((x, i) => (
+              <div key={i} className="note"><div className="faint">{when(x.at)}</div>
+                <div style={{ whiteSpace: "pre-wrap" }}>{x.text}</div></div>
+            ))}
+          </div>
+        )}
+        {!canWrite && <div className="faint">振り分けられるのは管理者・法務だけです。</div>}
 
-        {lockedMatter && (
+        {lockedMatter ? (
           <div className="note">
             発注書 {target?.documentNo ?? target?.docNo} は案件 {lockedMatter.matterNo ?? `#${lockedMatter.id}`}（{lockedMatter.title}）に入っています。
             検収書はその案件で作るので、この案件へ繋いで受け付けます。
           </div>
+        ) : (
+          <div className="stack" style={{ gap: 6 }}>
+            <b>どこで進めるか</b>
+            <div className="row" style={{ gap: 8, alignItems: "stretch" }}>
+              <button className="tile" style={{ flex: 1 }} aria-pressed={daily} disabled={!canWrite}
+                      onClick={() => setRoute("daily")}>
+                <span className="lab" style={{ color: daily ? "var(--in)" : undefined, fontWeight: 700, fontSize: 13 }}>
+                  {daily ? "● " : "○ "}軽微 → デイリータスク
+                </span>
+                <span className="sub">文書 1 通・交渉なし・数日で終わる。検収書、利用許諾計算書、定型の NDA など</span>
+              </button>
+              <button className="tile" style={{ flex: 1 }} aria-pressed={!daily} disabled={!canWrite}
+                      onClick={() => setRoute("matter")}>
+                <span className="lab" style={{ color: !daily ? "var(--accent)" : undefined, fontWeight: 700, fontSize: 13 }}>
+                  {!daily ? "● " : "○ "}大きい → 案件にする
+                </span>
+                <span className="sub">交渉がある、文書が複数、関係者が多い、数週間以上かかる</span>
+              </button>
+            </div>
+            <div className="note warn">迷ったら軽微で受けてください。デイリータスクから、あとで「案件に移す」ことができます。</div>
+          </div>
         )}
-        <div className="stack" style={{ gap: 6 }}>
-          <b>接続先</b>
-          {!lockedMatter && (
-            <label className="row" style={{ gap: 6 }}>
-              <input type="radio" name={`dest${r.id}`} checked={direct} disabled={!canWrite}
-                     onChange={() => setDest("direct")} />
-              <span>
-                案件にせず処理（検収書・利用許諾計算書）
-                <span className="faint">　担当・期日と、作成→送付→支払予定→支払 を「対応中」で追い、依頼者に Slack で知らせます</span>
-              </span>
-            </label>
-          )}
-          {direct && (
-            <div className="stack" style={{ gap: 6, marginLeft: 22 }}>
-              <div className="form-grid">
-                <label className="field"><span>依頼の内容<em className="req"> 必須</em></span>
-                  <select value={purpose} disabled={!canWrite || isPayment(r.purpose)}
-                          onChange={(e) => setPurpose(e.target.value)}>
-                    <option value="">選んでください</option>
-                    <option value="inspection">検収書</option>
-                    <option value="royalty">利用許諾計算書</option>
-                  </select>
-                </label>
+
+        {daily && !lockedMatter && (
+          <div className="stack" style={{ gap: 8 }}>
+            <div className="form-grid">
+              <label className="field"><span>種別<em className="req"> 必須</em></span>
+                <select value={purpose} disabled={!canWrite || isPayment(r.purpose)}
+                        onChange={(e) => setPurpose(e.target.value)}>
+                  {Object.keys(DAILY_PURPOSE_LABEL).map((k) => <option key={k} value={k}>{DAILY_PURPOSE_LABEL[k]}</option>)}
+                </select>
+              </label>
+              {payment && (
                 <label className="field">
                   <span>{purpose === "inspection" ? "発注書番号" : "契約書番号"}</span>
-                  <input value={docNo} disabled={!canWrite} className="code"
-                         onChange={(e) => setDocNo(e.target.value)} />
+                  <input value={docNo} disabled={!canWrite} className="code" onChange={(e) => setDocNo(e.target.value)} />
                 </label>
-              </div>
-              {target && docNo.trim() === (r.targetDocNo ?? "").trim() ? (
+              )}
+              <label className="field"><span>件名</span>
+                <input value={title} disabled={!canWrite} onChange={(e) => setTitle(e.target.value)} />
+              </label>
+              <label className="field"><span>担当</span>
+                <select value={owner} disabled={!canWrite} onChange={(e) => setOwner(e.target.value ? Number(e.target.value) : "")}>
+                  <option value="">あとで決める</option>
+                  {staff.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </label>
+              <label className="field"><span>期日</span>
+                <input type="date" value={dueOn} disabled={!canWrite} onChange={(e) => setDueOn(e.target.value)} />
+              </label>
+            </div>
+            {payment && (
+              target && docNo.trim() === (r.targetDocNo ?? "").trim() ? (
                 target.conditions.length ? (
                   <div className="stack" style={{ gap: 2 }}>
                     <span className="faint">
@@ -553,63 +556,95 @@ function Decision(
               ) : (
                 <div className="faint">
                   {docNo.trim()
-                    ? "受け付けるときに、この番号から条件を引き当てます"
+                    ? "登録するときに、この番号から条件を引き当てます"
                     : r.targetDocNo ? `${r.targetDocNo} に当たる発注書・契約書が見つかりません。番号を直してください`
-                    : "番号を入れると、受け付けるときに条件を引き当てます"}
+                    : "番号を入れると、登録するときに条件を引き当てます"}
+                </div>
+              )
+            )}
+            {!payment && <div className="faint">条件は持ちません。作った文書はデイリータスクの詳細で番号を入れて繋ぎます。</div>}
+          </div>
+        )}
+
+        {!daily && (
+          <div className="stack" style={{ gap: 8 }}>
+            <div className="stack" style={{ gap: 6 }}>
+              <b>繋ぎ先</b>
+              {!lockedMatter && (
+                <label className="row" style={{ gap: 6 }}>
+                  <input type="radio" name={`dest${r.id}`} checked={dest === "new"} disabled={!canWrite} onChange={() => setDest("new")} />
+                  新しい案件をつくる
+                </label>
+              )}
+              {detail.matterCandidates.filter((c) => !lockedMatter || c.id === lockedMatter.id).map((c) => (
+                <label key={c.id} className="row" style={{ gap: 6 }}>
+                  <input type="radio" name={`dest${r.id}`} checked={dest === String(c.id)} disabled={!canWrite}
+                         onChange={() => setDest(String(c.id))} />
+                  <span>{c.matterNo ?? `#${c.id}`} {c.title} <span className="faint">（{c.why}）</span></span>
+                </label>
+              ))}
+              {!lockedMatter && (
+                <label className="row" style={{ gap: 6 }}>
+                  <input type="radio" name={`dest${r.id}`} checked={dest === "pick"} disabled={!canWrite} onChange={() => setDest("pick")} />
+                  他の案件を選ぶ
+                </label>
+              )}
+              {dest === "pick" && (
+                <div className="stack" style={{ gap: 4, marginLeft: 22 }}>
+                  <input className="inline-input" placeholder="案件番号・件名で探す" value={search}
+                         onChange={(e) => { setSearch(e.target.value); setPicked(null); }} />
+                  {hits.map((h) => (
+                    <button key={h.id} className="linky" style={{ textAlign: "left" }}
+                            aria-pressed={picked?.id === h.id} onClick={() => setPicked(h)}>
+                      {picked?.id === h.id ? "● " : ""}{h.matterNo ?? `#${h.id}`} {h.title}
+                    </button>
+                  ))}
                 </div>
               )}
             </div>
-          )}
-          {!lockedMatter && (
-            <label className="row" style={{ gap: 6 }}>
-              <input type="radio" name={`dest${r.id}`} checked={dest === "new"} disabled={!canWrite} onChange={() => setDest("new")} />
-              新規案件で受付
-            </label>
-          )}
-          {detail.matterCandidates.filter((c) => !lockedMatter || c.id === lockedMatter.id).map((c) => (
-            <label key={c.id} className="row" style={{ gap: 6 }}>
-              <input type="radio" name={`dest${r.id}`} checked={dest === String(c.id)} disabled={!canWrite}
-                     onChange={() => setDest(String(c.id))} />
-              <span>{c.matterNo ?? `#${c.id}`} {c.title} <span className="faint">（{c.why}）</span></span>
-            </label>
-          ))}
-          {!lockedMatter && (
-            <label className="row" style={{ gap: 6 }}>
-              <input type="radio" name={`dest${r.id}`} checked={dest === "pick"} disabled={!canWrite} onChange={() => setDest("pick")} />
-              他の案件を選ぶ
-            </label>
-          )}
-          {dest === "pick" && (
-            <div className="stack" style={{ gap: 4, marginLeft: 22 }}>
-              <input className="inline-input" placeholder="案件番号・件名で探す" value={search}
-                     onChange={(e) => { setSearch(e.target.value); setPicked(null); }} />
-              {hits.map((h) => (
-                <button key={h.id} className="linky" style={{ textAlign: "left" }}
-                        aria-pressed={picked?.id === h.id} onClick={() => setPicked(h)}>
-                  {picked?.id === h.id ? "● " : ""}{h.matterNo ?? `#${h.id}`} {h.title}
-                </button>
-              ))}
+            <div className="form-grid">
+              <label className="field"><span>依頼の種類<em className="req"> 必須</em></span>
+                <select value={kind} disabled={!canWrite} onChange={(e) => setKind(e.target.value as Kind)}>
+                  <option value="">選んでください</option>
+                  {(Object.keys(KIND_LABEL) as Kind[]).map((k) => <option key={k} value={k}>{KIND_LABEL[k]}</option>)}
+                </select>
+              </label>
+              <label className="field"><span>件名</span>
+                <input value={title} disabled={!canWrite} onChange={(e) => setTitle(e.target.value)} />
+              </label>
+              <label className="field"><span>法務担当</span>
+                <select value={owner} disabled={!canWrite || dest !== "new"}
+                        onChange={(e) => setOwner(e.target.value ? Number(e.target.value) : "")}>
+                  <option value="">あとで決める</option>
+                  {staff.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </label>
+              <label className="field"><span>期日</span>
+                <input type="date" value={dueOn} disabled={!canWrite} onChange={(e) => setDueOn(e.target.value)} />
+              </label>
             </div>
-          )}
-        </div>
+            <div className="faint">相手先は取引先マスタで1件に決まれば紐づけます。決まらなければ記載を案件の備考に残し、要確認に積みます。</div>
+          </div>
+        )}
 
         {canWrite && (
           <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
             <button className="btn btn-sm" disabled={busy} onClick={() => setSide(side === "dismiss" ? "" : "dismiss")}>対象外…</button>
             <button className="btn btn-sm" disabled={busy} onClick={() => setSide(side === "hold" ? "" : "hold")}>保留…</button>
             <button className="btn btn-sm" disabled={busy} onClick={() => setSide(side === "duplicate" ? "" : "duplicate")}>重複…</button>
-            <button className="btn btn-sm primary" style={{ marginLeft: "auto" }} disabled={busy || !acceptable}
-                    onClick={() => run("accept", direct ? {
-                      mode: "direct", purpose, targetDocNo: docNo.trim() || null,
-                      conditionIds: docNo.trim() === (r.targetDocNo ?? "").trim() ? conditionIds : null,
+            <span className="faint" style={{ marginLeft: "auto" }}>依頼者に Slack で受付を知らせます</span>
+            <button className="btn btn-sm primary" disabled={busy || !acceptable}
+                    onClick={() => run("accept", daily && !lockedMatter ? {
+                      mode: "direct", purpose, targetDocNo: payment ? docNo.trim() || null : null,
+                      conditionIds: payment && docNo.trim() === (r.targetDocNo ?? "").trim() ? conditionIds : null,
                       title, ownerStaffId: owner || null, dueOn: dueOn || null
                     } : {
                       mode: dest === "new" ? "new" : "existing", matterId, kind,
                       title, ownerStaffId: owner || null, dueOn: dueOn || null
                     }, (x) => x.handling === "direct"
-                      ? `${r.requestNo ?? ""} を受け付けました（案件にせず処理。「対応中」で追えます）${notified(x)}`
-                      : `${r.requestNo ?? ""} を受け付け、${x.matterNo ?? `#${x.matterId}`} の「受付」に繋ぎました${notified(x)}`)}>
-              {direct ? "受け付ける（案件にせず処理）" : "受け付けて案件に繋ぐ"}
+                      ? `${r.requestNo ?? ""} をデイリータスクに登録しました${notified(x)}`
+                      : `${r.requestNo ?? ""} を案件 ${x.matterNo ?? `#${x.matterId}`} にしました${notified(x)}`)}>
+              {daily && !lockedMatter ? "デイリータスクに登録" : "案件にして受け付ける"}
             </button>
           </div>
         )}
@@ -620,7 +655,7 @@ function Decision(
               <textarea rows={2} value={holdReason} onChange={(e) => setHoldReason(e.target.value)} /></label>
             <label className="field"><span>再確認日</span>
               <input type="date" value={holdUntil} onChange={(e) => setHoldUntil(e.target.value)} /></label>
-            <div className="faint">依頼者に Slack で確認を送ります。返信はその DM で受けます。</div>
+            <div className="faint">依頼者に Slack で確認を送ります。返信は「返信・更新あり」に出ます。</div>
             <button className="btn btn-sm" disabled={busy || !holdReason.trim()}
                     onClick={() => run("hold", { reason: holdReason, until: holdUntil || null },
                       (x) => `保留にしました${notified(x)}`)}>保留にする</button>
@@ -700,236 +735,6 @@ function ManualForm({ onDone, onError }: { onDone: (message: string) => void; on
         <label className="field"><span>内容</span>
           <textarea rows={3} value={detail} onChange={(e) => setDetail(e.target.value)} /></label>
         <div><button className="btn btn-sm primary" disabled={busy || !ok} onClick={save}>受付箱に入れる</button></div>
-      </div>
-    </div>
-  );
-}
-
-/** 工程の帯。済んだ段・いまの段・まだの段を並べる。 */
-function StageBar({ progress, compact = false }: { progress: Progress | null; compact?: boolean }) {
-  if (!progress) return <span className="faint">—</span>;
-  if (compact) {
-    return progress.complete
-      ? <span className="tag ok">完了</span>
-      : <span title={progress.current?.detail ?? ""}>
-          <span className="tag accent">{progress.current?.label ?? "—"}</span>
-          <span className="faint" style={{ marginLeft: 6 }}>
-            {progress.stages.filter((s) => s.done).length}/{progress.stages.length}
-          </span>
-        </span>;
-  }
-  return (
-    <div className="row" style={{ gap: 4, flexWrap: "wrap" }}>
-      {progress.stages.map((s, i) => (
-        <span key={s.key} className="row" style={{ gap: 4 }}>
-          {i > 0 && <span className="faint">→</span>}
-          <span className={`tag ${s.done ? "ok" : progress.current?.key === s.key ? "accent" : "ghost"}`}
-                title={s.detail}>
-            {s.done ? "✓ " : ""}{s.label}
-          </span>
-        </span>
-      ))}
-    </div>
-  );
-}
-
-/**
- * 案件にせず処理している依頼（A-058）。担当・期日、工程、作った文書と支払、
- * 依頼者からの返信。文書はこの依頼の条件から作る。
- */
-function Ticket(
-  { detail, canWrite, staff, onChanged, onError, onCompose, onOpenDocument, onOpenLedger }: {
-    onOpenLedger?: (workId: number, partyId: number) => void;
-    detail: Detail; canWrite: boolean; staff: Staff[];
-    onChanged: (message: string) => void;
-    onError: (message: string) => void;
-    onCompose?: (conditionIds: number[], templateKey: string | null) => void;
-    onOpenDocument?: (documentId: number) => void;
-  }
-) {
-  const r = detail.request;
-  const p = r.progress ?? null;
-  const label = PAYMENT_PURPOSE_LABEL[r.purpose ?? ""] ?? "文書";
-  const [assignee, setAssignee] = useState<number | "">(r.assigneeStaffId ?? "");
-  const [dueOn, setDueOn] = useState(r.dueOn ?? "");
-  const [docNo, setDocNo] = useState("");
-  const [busy, setBusy] = useState(false);
-  useEffect(() => { setAssignee(r.assigneeStaffId ?? ""); setDueOn(r.dueOn ?? ""); }, [r.id, r.assigneeStaffId, r.dueOn]);
-
-  const call = async (fn: () => Promise<unknown>, message: string) => {
-    setBusy(true);
-    try { await fn(); onChanged(message); }
-    catch (e) { onError((e as ApiError).message); }
-    finally { setBusy(false); }
-  };
-  const post = (path: string, body: unknown) => api.post(`/intake/${r.id}/${path}`, body);
-
-  return (
-    <div className="panel">
-      <div className="panel-hd">
-        <h2>対応（案件にせず処理）</h2>
-        <span className="tag">{label}</span>
-        {r.doneAt ? <span className="tag ok">対応完了</span>
-          : r.dueOn && r.dueOn < today() ? <span className="tag warn">期日超過</span> : null}
-      </div>
-      <div className="panel-bd stack">
-        <StageBar progress={p} />
-        {p && (
-          <div className="stack" style={{ gap: 2 }}>
-            {p.stages.map((s) => (
-              <div key={s.key} className="faint">
-                {s.done ? "✓" : "・"} {s.label}：{s.detail || "—"}{s.at ? `（${when(s.at)}）` : ""}
-              </div>
-            ))}
-          </div>
-        )}
-
-        <div className="form-grid">
-          <label className="field"><span>担当</span>
-            <select value={assignee} disabled={!canWrite || busy}
-                    onChange={(e) => setAssignee(e.target.value ? Number(e.target.value) : "")}>
-              <option value="">未定</option>
-              {staff.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-          </label>
-          <label className="field"><span>期日</span>
-            <input type="date" value={dueOn} disabled={!canWrite || busy} onChange={(e) => setDueOn(e.target.value)} />
-          </label>
-        </div>
-        {canWrite && (assignee !== (r.assigneeStaffId ?? "") || dueOn !== (r.dueOn ?? "")) && (
-          <div>
-            <button className="btn btn-sm" disabled={busy}
-                    onClick={() => call(() => post("assign", { staffId: assignee || null, dueOn: dueOn || null }),
-                                        "担当・期日を変えました")}>担当・期日を保存</button>
-          </div>
-        )}
-
-        <div className="stack" style={{ gap: 4 }}>
-          <b>対象の条件</b>
-          {detail.conditions.map((c) => (
-            <div key={c.id}><span className="code">{c.conditionNo ?? `#${c.id}`}</span> {c.name}</div>
-          ))}
-          {r.purpose === "royalty" && (
-            <div className="stack" style={{ gap: 6 }}>
-              <b>作家・作品と回</b>
-              {detail.ledgers.map((l) => (
-                <div key={`${l.partyId}:${l.workId}`} className="stack" style={{ gap: 2 }}>
-                  <span className="row" style={{ gap: 6 }}>
-                    <span>{l.partyName} × {l.workTitle}</span>
-                    {onOpenLedger && (
-                      <button className="btn btn-sm" onClick={() => onOpenLedger(l.workId, l.partyId)}>台帳で開く</button>
-                    )}
-                  </span>
-                  {(() => {
-                    // 1つの回は条件の数だけ予定明細の行を持つ。支払日（製造は実績）ごとに1行にまとめる。
-                    const groups = new Map<string, Detail["rounds"]>();
-                    for (const x of detail.rounds.filter((y) => y.partyId === l.partyId && y.workId === l.workId)) {
-                      const k = x.kind === "event" ? `e${x.targetId}` : `s${x.payOn ?? x.closeOn}`;
-                      groups.set(k, [...(groups.get(k) ?? []), x]);
-                    }
-                    return [...groups.entries()].map(([k, xs]) => (
-                      <span key={k} className="row" style={{ gap: 6, marginLeft: 12 }}>
-                        <span className={`tag ${xs[0].kind === "event" ? "warn" : ""}`}>{xs[0].kind === "event" ? "製造" : "期"}</span>
-                        <span>{[...new Set(xs.map((x) => x.label ?? x.closeOn))].join("・")}</span>
-                        <span className="faint">締め {xs[0].closeOn ?? "—"}{xs[0].payOn ? ` · 支払 ${xs[0].payOn}` : ""}</span>
-                        {canWrite && (
-                          <button className="btn btn-sm" disabled={busy}
-                                  onClick={() => call(() => post("rounds/unlink", {
-                                    scheduleIds: xs.filter((x) => x.kind === "schedule").map((x) => x.targetId),
-                                    eventIds: xs.filter((x) => x.kind === "event").map((x) => x.targetId)
-                                  }), "回を外しました")}>外す</button>
-                        )}
-                      </span>
-                    ));
-                  })()}
-                </div>
-              ))}
-              {!detail.rounds.length && (
-                <div className="faint">まだ回を選んでいません。どの回（締め・製造）の計算書の依頼かを選んでください。</div>
-              )}
-              {canWrite && !r.doneAt && (
-                <RoundPicker ledgers={detail.ledgers} busy={busy}
-                             onPick={(round) => void call(() => post("rounds", roundTargets(round)), "回に紐づけました")} />
-              )}
-            </div>
-          )}
-          {canWrite && onCompose && detail.conditions.length > 0 && !r.doneAt && r.purpose !== "royalty" && (
-            <div>
-              <button className="btn btn-sm primary"
-                      onClick={() => onCompose(detail.conditions.map((c) => c.id),
-                                               r.purpose === "royalty" ? "royalty_statement" : null)}>
-                この条件で{label}を作る
-              </button>
-              <span className="faint" style={{ marginLeft: 8 }}>
-                作った{label}は、この依頼の工程に自動で入ります
-              </span>
-            </div>
-          )}
-        </div>
-
-        <div className="stack" style={{ gap: 4 }}>
-          <b>文書</b>
-          {p?.documents.length ? p.documents.map((d) => (
-            <div key={d.id} className="row" style={{ gap: 8 }}>
-              {onOpenDocument
-                ? <button className="linky code" onClick={() => onOpenDocument(d.id)}>{d.documentNo ?? `#${d.id}`}</button>
-                : <span className="code">{d.documentNo ?? `#${d.id}`}</span>}
-              <span className="faint">{d.status === "issued" ? "決定" : "下書き"}{d.pinned ? "・手で繋いだ" : ""}</span>
-              {canWrite && d.pinned && (
-                <button className="btn btn-sm" disabled={busy}
-                        onClick={() => call(() => api.del(`/intake/${r.id}/documents/${d.id}`), "文書を外しました")}>外す</button>
-              )}
-            </div>
-          )) : <div className="faint">まだありません。この依頼の条件で作った{label}は、ここに自動で入ります</div>}
-          {canWrite && (
-            <div className="row" style={{ gap: 6 }}>
-              <input className="inline-input code" placeholder="文書番号（自動で入らないときに手で繋ぐ）"
-                     value={docNo} onChange={(e) => setDocNo(e.target.value)} />
-              <button className="btn btn-sm" disabled={busy || !docNo.trim()}
-                      onClick={() => call(() => post("documents", { documentNo: docNo.trim() }).then(() => setDocNo("")),
-                                          "文書を繋ぎました")}>繋ぐ</button>
-            </div>
-          )}
-        </div>
-
-        {p && p.payments.length > 0 && (
-          <div className="stack" style={{ gap: 4 }}>
-            <b>支払</b>
-            {p.payments.map((x) => (
-              <div key={x.id} className="faint">
-                <span className="code">{x.paymentNo ?? `#${x.id}`}</span>　
-                {x.status === "paid" ? `支払済み ${x.paidOn ?? ""}` : x.status === "canceled" ? "取消"
-                  : `支払予定日 ${x.dueOn ?? "—"}`}
-              </div>
-            ))}
-          </div>
-        )}
-
-        {detail.replies.length > 0 && (
-          <div className="stack" style={{ gap: 4 }}>
-            <b>依頼者からの返信（Slack のスレッド）</b>
-            {detail.replies.map((x, i) => (
-              <div key={i} className="note">
-                <div className="faint">{when(x.at)}</div>
-                <div style={{ whiteSpace: "pre-wrap" }}>{x.text}</div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {canWrite && (
-          <div className="row" style={{ gap: 8 }}>
-            {!r.doneAt ? (
-              <button className="btn btn-sm" disabled={busy}
-                      title="支払の記録が V3 に無いなど、支払を待たずに閉じる。依頼者には完了を知らせます"
-                      onClick={() => call(() => post("done", {}), "対応完了にしました")}>対応完了にする</button>
-            ) : (
-              <button className="btn btn-sm" disabled={busy}
-                      onClick={() => call(() => post("undone", {}), "対応完了を取り消しました")}>対応完了を取り消す</button>
-            )}
-            <span className="faint">進み具合（作成・送付・支払予定・支払）は、依頼者の Slack の DM のスレッドに自動で知らせます</span>
-          </div>
-        )}
       </div>
     </div>
   );

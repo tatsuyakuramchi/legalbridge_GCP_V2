@@ -16,6 +16,8 @@ import { MatterFlow } from "./MatterFlow.js";
 import { MatterTimeline } from "./MatterTimeline.js";
 import { UploadsPanel } from "./UploadsPanel.js";
 import { MatterIntake } from "./MatterIntake.js";
+import { MatterTasks } from "./MatterTasks.js";
+import { useReadOnly } from "./read-only.js";
 import { MatterDrive } from "./MatterDrive.js";
 import { MatterConditions, MatterDocuments } from "./MatterLinks.js";
 import { DuplicateConditions } from "./DuplicateConditions.js";
@@ -34,7 +36,7 @@ import { BUSINESS_LINES } from "../server/matters/title.js";
  * 案件の中身のタブ。既定は「取引先ごと」（束）。条件明細・実績・文書・支払の
  * 種類別の表は「一覧」に畳み、その中で切り替える（横断の一括操作と CSV の置き場）。
  */
-type Tab = "bundles" | "grid" | "conditions" | "events" | "documents" | "payments" | "communications" | "graph";
+type Tab = "bundles" | "grid" | "conditions" | "events" | "documents" | "payments" | "tasks" | "communications" | "graph";
 const LIST_TABS: Tab[] = ["conditions", "events", "documents", "payments", "grid"];
 
 /** 統合の下見。サーバの MatterMergePreview と対。 */
@@ -168,6 +170,7 @@ export function MattersWorkspace(
   const [channels, setChannels] =
     useState<Array<{ channel: string; mode: "off" | "dry_run" | "live"; configured: boolean }>>([]);
   const [isAdmin, setIsAdmin] = useState(false);
+  const readOnly = useReadOnly();
   /**
    * 取引先で絞る（1案件に20社以上のことがある）。選んでいる間は、条件明細・
    * 実績・文書・支払の4タブが揃ってその社のぶんだけになる。
@@ -610,6 +613,8 @@ export function MattersWorkspace(
                   <div className="tabs">
                     {([["bundles", "取引先ごと"],
                        ["list", "一覧"],
+                       // 案件の中の作業（A-064）。状態はデイリータスクと同じ 4 つ。
+                       ["tasks", `作業 ${detail.tasks.filter((t) => t.status !== "done").length}`],
                        ["communications", `操作の記録 ${detail.communications.length}`],
                        ["graph", "整理"]] as const).map(([key, label]) => {
                       const on = key === "list" ? LIST_TABS.includes(tab) : tab === key;
@@ -707,6 +712,11 @@ export function MattersWorkspace(
                   {tab === "graph" && (
                     <MatterGraph matterId={detail.id} reloadKey={linkVersion} onChanged={relink}
                       onOpenDocument={onOpenDocument} onOpenCondition={onOpenCondition} />
+                  )}
+
+                  {tab === "tasks" && (
+                    <MatterTasks detail={detail} canWrite={!readOnly} onChanged={reloadDetail}
+                                 onAdd={() => setCreating("task")} />
                   )}
 
                   {tab === "communications" && <MatterIntake matterId={detail.id} reloadKey={linkVersion} />}

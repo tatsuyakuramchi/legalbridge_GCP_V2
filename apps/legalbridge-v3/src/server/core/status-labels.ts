@@ -28,10 +28,14 @@ const MATTER: Record<string, Entry> = {
   canceled: { label: "中止", tone: "" }
 };
 
+/**
+ * 作業（案件の中の作業とデイリータスク。A-064）。4 つだけ。
+ * blocked は「先方の返事・支払を待っている」なので「待ち」。案件の「停滞」とは別の軸。
+ */
 const TASK: Record<string, Entry> = {
   todo: { label: "未着手", tone: "" },
-  doing: { label: "着手中", tone: "accent" },
-  blocked: { label: "停滞", tone: "out" },
+  doing: { label: "作業中", tone: "accent" },
+  blocked: { label: "待ち", tone: "warn" },
   done: { label: "完了", tone: "ok" }
 };
 

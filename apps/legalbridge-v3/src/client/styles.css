@@ -306,6 +306,9 @@ tr.grid-edit td{background:var(--sunken);padding:12px 14px}
 .tile .lab{font-size:11px;color:var(--muted)}
 .tile .val{font-family:var(--mono);font-size:22px;font-variant-numeric:tabular-nums}
 .tile .sub{font-size:11px;color:var(--faint)}
+/* 2 択の札（受付箱の 軽微／大きい）。選んでいるほうを枠で示す。 */
+.tile[aria-pressed="true"]{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
+.tile:disabled{cursor:default}
 .tile.alert{border-color:var(--out);background:var(--out-soft)}
 .tile.alert .val{color:var(--out)}
 .pipe-step.flag{background:var(--out-soft);border-color:var(--out)}

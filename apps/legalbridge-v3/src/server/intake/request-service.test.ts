@@ -248,3 +248,54 @@ test("受付箱の行は、Slack の原票から依頼の内容と対象の番�
     source_payload: { purpose: "royalty" } });
   assert.equal(mail.purpose, null, "メールの原票は別の形なので読まない");
 });
+
+// ---- 軽微 → デイリータスク（A-064） ----
+
+test("軽微（定型文書）で受けると、依頼をデイリーへにし、作業（tasks）を 1 行起こす", async () => {
+  const d = new FakeDatabase((t) => {
+    if (t.includes("SELECT * FROM intake_requests WHERE id = $1 FOR UPDATE")) {
+      return [open({ source_payload: { purpose: "nda" }, kind: "single" })];
+    }
+    if (t.includes("INSERT INTO tasks")) return [{ id: 99 }];
+    return undefined;
+  });
+  const { svc, slack } = service(d, { slack: "live" });
+  const r = await svc.accept(7, { mode: "direct", purpose: "template", kind: "single", ownerStaffId: null,
+                                  dueOn: "2026-10-02" }, "legal@x");
+  assert.deepEqual([r.handling, r.matterId, r.taskId], ["direct", null, 99]);
+  assert.equal(d.find("INSERT INTO matters"), undefined, "案件は立てない");
+  const upd = d.find("SET state = 'accepted', handling = 'direct'")!;
+  assert.equal(upd.params[1], "single", "取引モデルは依頼のまま");
+  assert.equal(upd.params[3], "2026-10-02");
+  const task = d.find("INSERT INTO tasks")!;
+  assert.deepEqual(task.params.slice(0, 4), [7, "追加アートワーク発注", "template", null]);
+  assert.match(task.text, /ON CONFLICT \(request_id\)/, "受付箱に戻して受け直しても行は 1 つ");
+  assert.equal(d.find("INSERT INTO intake_request_links"), undefined, "定型文書は条件を持たない");
+  assert.match(slack.sent[0].body, /定型文書を作ります/);
+  assert.doesNotMatch(slack.sent[0].body, /支払予定/, "支払の無い依頼に支払の案内はしない");
+});
+
+test("軽微（検収書）は対象の番号から条件を引き当て、依頼に繋いでから作業を起こす", async () => {
+  const d = new FakeDatabase((t) => {
+    if (t.includes("SELECT * FROM intake_requests WHERE id = $1 FOR UPDATE")) {
+      return [open({ source_payload: { purpose: "inspection", targetDocNo: "ARC-PO-2026-1001" } })];
+    }
+    if (t.includes("WHERE upper(d.document_no) = $1")) return [{ id: 50, document_no: "ARC-PO-2026-1001", agreement_id: null, matter_id: null }];
+    if (t.includes("FROM document_conditions WHERE document_id")) return [{ condition_id: 11 }];
+    if (t.includes("FROM conditions c LEFT JOIN parties p")) return [{ id: 11, condition_no: "C-11", name: "制作", counterparty_id: 5, party_name: "甲" }];
+    if (t.includes("SELECT id FROM conditions WHERE id = ANY")) return [{ id: 11 }];
+    if (t.includes("INSERT INTO tasks")) return [{ id: 100 }];
+    return undefined;
+  });
+  const { svc } = service(d);
+  const r = await svc.accept(7, { mode: "direct", kind: "outsourcing" }, "legal@x");
+  assert.equal(r.taskId, 100);
+  const link = d.find("INSERT INTO intake_request_links")!;
+  assert.deepEqual(link.params.slice(0, 2), [7, 11]);
+  assert.equal(d.find("INSERT INTO tasks")!.params[2], "inspection");
+});
+
+test("軽微にするには種別が要る（Slack の内容にも画面にも無ければ止める）", async () => {
+  const d = build({ row: open({ source_payload: {} }) });
+  await assert.rejects(service(d).svc.accept(7, { mode: "direct", kind: "single" }, "x"), /種別/);
+});

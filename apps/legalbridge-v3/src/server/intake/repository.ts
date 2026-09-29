@@ -2,19 +2,30 @@ import { dateStr, type Queryable } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { purposeOf } from "../integrations/slack-intake.js";
 import {
-  isPaymentPurpose, loadProgress, resolvePaymentTarget, type PaymentTarget, type RequestProgress
+  isDailyPurpose, isPaymentPurpose, loadProgress, resolvePaymentTarget,
+  type DailyPurpose, type PaymentTarget, type RequestProgress
 } from "./payment-request.js";
+
+/** 依頼の種別（デイリータスクの purpose）。原票に無ければ「その他」。 */
+export function purposeOfTask(row: { purpose: string | null }): DailyPurpose {
+  return isDailyPurpose(row.purpose) ? row.purpose : "other";
+}
 
 /**
  * 受付箱の読み取り。
  *
- * 一覧のタブは4つ。未処理（new）、保留（on_hold）、更新あり（受付済みで
- * 受付後に Backlog が更新されたもの・依頼者が DM のスレッドに返信したもの）、
- * 対応中（案件にせず処理している依頼。A-058）。対象外・重複・受付済みは「すべて」で見る。
+ * 受付箱は振り分けだけ（A-064）。一覧のタブは 未処理（new）、保留（on_hold）、
+ * 返信・更新あり（振り分けたあとに Backlog が更新された・依頼者が DM のスレッドに
+ * 返信した）、すべて。振り分けたあとの作業はデイリータスク（tasks）か案件で追う。
  */
 
-/** direct＝案件にせず処理している依頼のうち、まだ終わっていないもの（対応中）。 */
-export type IntakeTab = "new" | "on_hold" | "updated" | "direct" | "all";
+export type IntakeTab = "new" | "on_hold" | "updated" | "all";
+
+/** 依頼から起こした作業（A-064）。デイリータスクにした依頼だけ持つ。 */
+export interface IntakeTaskRef {
+  id: number; status: string; matterId: number | null;
+  assigneeStaffId: number | null; assigneeName: string | null; dueOn: string | null; doneAt: string | null;
+}
 
 export interface IntakeRow {
   id: number;
@@ -53,23 +64,24 @@ export interface IntakeRow {
   handledAt: string | null;
   handledBy: string | null;
   createdAt: string;
-  /** matter=案件で対応 / direct=案件にせず処理（A-058）。受付前は null。 */
+  /** matter=案件へ / direct=デイリータスクへ（A-058・A-064）。振り分ける前は null。 */
   handling: "matter" | "direct" | null;
-  assigneeStaffId: number | null;
-  assigneeName: string | null;
-  doneAt: string | null;
-  doneBy: string | null;
-  /** 案件にせず処理している依頼の工程。一覧（対応中）と詳細で入る。 */
+  /** 依頼から起こした作業。デイリータスクにした依頼だけ。担当・期日・完了はこちら。 */
+  task: IntakeTaskRef | null;
+  /** デイリータスクの工程。詳細で入る。 */
   progress?: RequestProgress | null;
 }
 
 const SELECT = `
   SELECT r.*, m.matter_no, m.title AS matter_title, d.request_no AS duplicate_of_no,
-         st.name AS assignee_name
+         t.id AS task_id, t.status AS task_status, t.matter_id AS task_matter_id,
+         t.assignee_staff_id AS task_assignee_staff_id, t.due_at AS task_due_at, t.done_at AS task_done_at,
+         st.name AS task_assignee_name
     FROM intake_requests r
     LEFT JOIN matters m ON m.id = r.matter_id
     LEFT JOIN intake_requests d ON d.id = r.duplicate_of_id
-    LEFT JOIN staff st ON st.id = r.assignee_staff_id`;
+    LEFT JOIN tasks t ON t.request_id = r.id
+    LEFT JOIN staff st ON st.id = t.assignee_staff_id`;
 
 const iso = (v: unknown): string | null =>
   v === null || v === undefined ? null : v instanceof Date ? v.toISOString() : String(v);
@@ -98,8 +110,9 @@ export function toRow(r: Record<string, any>): IntakeRow {
     source: String(r.source),
     state: String(r.state),
     kind: r.kind ?? null,
-    purpose: purpose?.value ?? null,
-    purposeLabel: purpose?.label ?? null,
+    // 定型文書・その他は受付箱で選ぶ種別（Slack の依頼の内容には無い）。
+    purpose: purpose?.value ?? (isDailyPurpose(payload.purpose) ? payload.purpose : null),
+    purposeLabel: purpose?.label ?? (payload.purpose === "template" ? "定型文書" : payload.purpose === "other" ? "その他" : null),
     targetDocNo: payload.targetDocNo ? String(payload.targetDocNo) : null,
     title: String(r.title),
     detail: r.detail ?? null,
@@ -126,11 +139,22 @@ export function toRow(r: Record<string, any>): IntakeRow {
     handledBy: r.handled_by ?? null,
     createdAt: iso(r.created_at) ?? "",
     handling: r.handling === "direct" || r.handling === "matter" ? r.handling : null,
-    assigneeStaffId: r.assignee_staff_id === null || r.assignee_staff_id === undefined ? null : Number(r.assignee_staff_id),
-    assigneeName: r.assignee_name ?? null,
-    doneAt: iso(r.done_at),
-    doneBy: r.done_by ?? null
+    task: r.task_id ? {
+      id: Number(r.task_id), status: String(r.task_status ?? "todo"),
+      matterId: r.task_matter_id ? Number(r.task_matter_id) : null,
+      assigneeStaffId: r.task_assignee_staff_id ? Number(r.task_assignee_staff_id) : null,
+      assigneeName: r.task_assignee_name ?? null,
+      dueOn: taskDueOn(r.task_due_at), doneAt: iso(r.task_done_at)
+    } : null
   };
+}
+
+/** 作業の期日（timestamptz）を日本の日付に。 */
+export function taskDueOn(v: unknown): string | null {
+  if (!v) return null;
+  const d = v instanceof Date ? v : new Date(String(v));
+  if (Number.isNaN(d.getTime())) return dateStr(v);
+  return new Date(d.getTime() + 9 * 3600 * 1000).toISOString().slice(0, 10);
 }
 
 /** 依頼に繋いだ許諾料の回（A-060）。予定明細の行（時限式）か実績（イベント式）。 */
@@ -151,53 +175,42 @@ export class IntakeRepository {
   constructor(private readonly database: Queryable) {}
 
   async list(tab: IntakeTab = "new"): Promise<IntakeRow[]> {
+    // 返信・更新ありは、振り分けたあとの依頼（保留・受付済）に来たもの。未処理は未処理のタブで読む。
     const where = tab === "new" ? "r.state = 'new'"
       : tab === "on_hold" ? "r.state = 'on_hold'"
-      : tab === "updated" ? "r.state = 'accepted' AND r.has_unseen_update"
-      : tab === "direct" ? "r.state = 'accepted' AND r.handling = 'direct' AND r.done_at IS NULL"
+      : tab === "updated" ? "r.state <> 'new' AND r.has_unseen_update"
       : "TRUE";
-    // 保留は再確認日が来たものを上に。対応中は期日の近い順。それ以外は新しい順。
-    const order = tab === "on_hold" ? "r.hold_until NULLS LAST, r.created_at DESC"
-      : tab === "direct" ? "r.due_on NULLS LAST, r.created_at"
-      : "r.created_at DESC";
+    // 保留は再確認日が来たものを上に。それ以外は新しい順。
+    const order = tab === "on_hold" ? "r.hold_until NULLS LAST, r.created_at DESC" : "r.created_at DESC";
     try {
       const r = await this.database.query(
         `${SELECT} WHERE ${where} ORDER BY ${order} LIMIT 300`);
-      const rows = (r.rows as any[]).map(toRow);
-      // 対応中は工程まで出す（どこで止まっているかを一覧で見る）。
-      if (tab === "direct") {
-        for (const row of rows) row.progress = await this.progressOf(row);
-      }
-      return rows;
+      return (r.rows as any[]).map(toRow);
     } catch (error) { throw translate(error); }
   }
 
-  /** 案件にせず処理している依頼の工程。それ以外は null。 */
+  /** デイリータスクにした依頼の工程。それ以外は null。完了は作業（tasks）の done_at。 */
   async progressOf(row: IntakeRow): Promise<RequestProgress | null> {
-    if (row.handling !== "direct" || !isPaymentPurpose(row.purpose)) return null;
+    if (row.handling !== "direct" || !row.task) return null;
+    const purpose = purposeOfTask(row);
     return loadProgress(this.database, {
-      id: row.id, purpose: row.purpose, createdAt: row.createdAt,
-      acceptedAt: row.handledAt, doneAt: row.doneAt
+      id: row.id, purpose, createdAt: row.createdAt,
+      acceptedAt: row.handledAt, doneAt: row.task.doneAt
     });
   }
 
   /** タブの件数。ナビとホームの札に出す。 */
-  async counts(): Promise<{ new: number; onHold: number; updated: number; holdDue: number;
-                            direct: number; directOverdue: number }> {
+  async counts(): Promise<{ new: number; onHold: number; updated: number; holdDue: number }> {
     try {
       const r = await this.database.query(
         `SELECT count(*) FILTER (WHERE state = 'new')::int AS new,
                 count(*) FILTER (WHERE state = 'on_hold')::int AS on_hold,
-                count(*) FILTER (WHERE state = 'accepted' AND has_unseen_update)::int AS updated,
-                count(*) FILTER (WHERE state = 'on_hold' AND hold_until <= CURRENT_DATE)::int AS hold_due,
-                count(*) FILTER (WHERE state = 'accepted' AND handling = 'direct' AND done_at IS NULL)::int AS direct,
-                count(*) FILTER (WHERE state = 'accepted' AND handling = 'direct' AND done_at IS NULL
-                                   AND due_on < CURRENT_DATE)::int AS direct_overdue
+                count(*) FILTER (WHERE state <> 'new' AND has_unseen_update)::int AS updated,
+                count(*) FILTER (WHERE state = 'on_hold' AND hold_until <= CURRENT_DATE)::int AS hold_due
            FROM intake_requests`);
       const row = (r.rows[0] ?? {}) as any;
       return { new: Number(row.new ?? 0), onHold: Number(row.on_hold ?? 0),
-               updated: Number(row.updated ?? 0), holdDue: Number(row.hold_due ?? 0),
-               direct: Number(row.direct ?? 0), directOverdue: Number(row.direct_overdue ?? 0) };
+               updated: Number(row.updated ?? 0), holdDue: Number(row.hold_due ?? 0) };
     } catch (error) { throw translate(error); }
   }
 
