@@ -304,6 +304,8 @@ export interface WorkRoyaltyParty {
   requests: RoundRequest[];
   /** 次にすること。報告待ちの行がある最初の回。無ければ null（締め前など）。 */
   next: { roundKey: string; label: string; waiting: number; closeOn: string | null } | null;
+  /** 時限式なのに締めが無い条件。回が立たないので、先に締めを作る案内を出す。 */
+  noClose: Array<{ id: number; usageLabel: string }>;
 }
 
 const eventIds0 = (events: LedgerEvent[]) => events.map((e) => e.id);
@@ -336,6 +338,8 @@ export class RoyaltyLedgerService {
           otherWorks: Number((others.rows[0] as any)?.n ?? 0),
           requests: [...view.requests, ...view.rounds.flatMap((x) => x.requests)]
             .filter((x, i, a) => a.findIndex((y) => y.id === x.id) === i),
+          noClose: view.conditions.filter((c) => c.timing === "periodic" && !c.schedules)
+            .map((c) => ({ id: c.id, usageLabel: c.usageLabel })),
           next: (() => {
             const waitingOf = (x: Round) => x.parts.reduce((n, p) =>
               n + (p.state === "waiting" ? Math.max(p.expected.length, 1) : p.state === "before" ? 0 : p.expected.length), 0);
