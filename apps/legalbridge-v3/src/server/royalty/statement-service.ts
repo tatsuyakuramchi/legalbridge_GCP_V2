@@ -594,7 +594,7 @@ export class RoyaltyStatementService {
     // 対象日に効いていた版で計算する。渡された版とずれたら、黙って差し替えずに
     // 結果へ載せる（なぜその料率になったのかが画面から読めないと検算できない）。
     const usedId = resolved?.id ?? input.conditionId;
-    const condition = await this.loadCondition(client, usedId);
+    const condition = await this.loadCondition(client, usedId, { historical: Boolean(resolved) });
     const agConsumedBefore = await this.agConsumedBefore(client, usedId);
 
     const terms = buildFeeTerms(condition, input.reported);
@@ -647,7 +647,7 @@ export class RoyaltyStatementService {
     };
   }
 
-  private async loadCondition(client: Queryable, id: number) {
+  private async loadCondition(client: Queryable, id: number, options: { historical?: boolean } = {}) {
     const r = await client.query(
       `SELECT c.id, c.condition_no, c.name, c.kind, c.direction, c.currency, c.pricing_model,
               c.counterparty_id,
@@ -662,7 +662,9 @@ export class RoyaltyStatementService {
         WHERE c.id = $1`, [id]);
     const row = r.rows[0] as Record<string, any> | undefined;
     if (!row) throw new DomainError("NOT_FOUND", `条件 ${id} が見つかりません`);
-    if (row.status === "void" || row.status === "superseded") {
+    // 対象日に効いていた版（historical）は旧版でも計算してよい。改訂（期間の更新
+    // など）のあとで、改訂前の日付の報告を計算できなくなるのを防ぐ。
+    if (row.status === "void" || (row.status === "superseded" && !options.historical)) {
       throw new DomainError("CONFLICT", "無効または旧版の条件では計算できません");
     }
     return {

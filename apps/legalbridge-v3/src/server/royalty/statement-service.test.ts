@@ -201,13 +201,15 @@ test("束ね：文書がばらばらなら断る", async () => {
     (e: unknown) => e instanceof DomainError && /1枚の文書/.test(e.message));
 });
 
-test("無効・旧版の条件では計算しない", async () => {
-  for (const status of ["void", "superseded"]) {
-    const { service: royalty } = service({ conditionStatus: status });
-    await assert.rejects(
-      () => royalty.preview({ conditionId: 5, period: "2026上期", reported: { salesInput: 1 } }),
-      (e: unknown) => e instanceof DomainError && e.code === "CONFLICT");
-  }
+test("無効の条件では計算しない。旧版は「対象日に効いていた版」として計算できる", async () => {
+  const { service: voided } = service({ conditionStatus: "void" });
+  await assert.rejects(
+    () => voided.preview({ conditionId: 5, period: "2026上期", reported: { salesInput: 1 } }),
+    (e: unknown) => e instanceof DomainError && e.code === "CONFLICT");
+  // 改訂（期間の更新など）のあとでも、改訂前の日付の報告はその日に効いていた版（旧版）で計算する。
+  const { service: superseded } = service({ conditionStatus: "superseded" });
+  const r = await superseded.preview({ conditionId: 5, period: "2026上期", reported: { salesInput: 1 } });
+  assert.ok(r, "旧版でも計算できる");
 });
 
 // ---- 契約変更の適用開始日 ----
