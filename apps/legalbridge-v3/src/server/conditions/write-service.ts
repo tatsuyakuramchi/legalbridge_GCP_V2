@@ -348,11 +348,7 @@ export class ConditionWriteService {
           const made = conditionNameFor({ workTitle: (w.rows[0] as { title?: string } | undefined)?.title ?? "",
                                           usageType: input.usageType,
                                           sublicensee, purpose: input.purpose });
-          if (!made) {
-            throw new DomainError("VALIDATION", input.usageType === "sublicense"
-              ? "再許諾は再許諾先の名称を入れてください（条件名に入ります）"
-              : `作品 ${input.workId} が見つかりません`);
-          }
+          if (!made) throw new DomainError("VALIDATION", `作品 ${input.workId} が見つかりません`);
           input = { ...input, name: made };
         }
         validateConditionInput(input);
