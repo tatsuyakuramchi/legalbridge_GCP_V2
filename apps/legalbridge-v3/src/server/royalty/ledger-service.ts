@@ -113,6 +113,8 @@ export interface OutLite {
   id: number; name: string; usageType: string | null; workId: number | null; termStart: string | null;
   /** 許諾言語・許諾地域。報告は 言語×地域 ごとに来るものとして、1組1行で待つ。 */
   languages?: string[]; regions?: string[];
+  /** この許諾先の改訂の全版の id。古い版を指す報告も同じ許諾先として扱う。 */
+  seriesIds?: number[];
 }
 
 /**
@@ -203,12 +205,23 @@ export function buildRounds(input: {
           // 1つでも行に持たせる（報告の言語・地域が実績に入り、計算書の製品名・許諾範囲に出る）。
           const ls = langs.length ? langs : [null];
           const rs = regs.length ? regs : [null];
+          const sameOut = (id: number | null) => id !== null && (id === o.id || (o.seriesIds ?? []).includes(id));
+          // 前の回から来た行は、いまの許諾範囲に合わせる。途中で許諾言語・地域を変えた
+          // 許諾先では、古い言語・地域の行を待ち続けない（範囲の外の行は落とし、
+          // 古い版を指す行はいまの版に寄せる）。
+          for (const [k, x] of [...expected.entries()]) {
+            if (x.why !== "前の回にあった" || !sameOut(x.outConditionId)) continue;
+            const within = (given: string[] | undefined, allowed: string[]) =>
+              !(given ?? []).length || !allowed.length || (given ?? []).every((g) => allowed.includes(g));
+            if (!within(x.languages, langs) || !within(x.regions, regs)) { expected.delete(k); continue; }
+            x.outConditionId = o.id; x.outName = o.name;
+          }
           for (const l of ls) for (const r of rs) {
             // 言語・地域を持たない報告・行（A-061 より前のもの）は、その組を覆っているとみなす。
             const match = (e: { languages?: string[]; regions?: string[] }) =>
               (!l || !(e.languages ?? []).length || (e.languages ?? []).includes(l))
               && (!r || !(e.regions ?? []).length || (e.regions ?? []).includes(r));
-            const hit = p.events.some((e) => e.outConditionId === o.id && match(e));
+            const hit = p.events.some((e) => sameOut(e.outConditionId) && match(e));
             if (hit) continue;
             const dup = [...expected.values()].find((x) => x.outConditionId === o.id && match(x));
             if (dup) {
@@ -461,6 +474,8 @@ export class RoyaltyLedgerService {
       const workIds = [...new Set(rows.map((c) => int(c.work_id)).filter((x): x is number => !!x))];
       const outs = workIds.length ? ((await q.query(
         `SELECT id, name, usage_type, work_id, term_start,
+                (SELECT array_agg(x.id) FROM conditions x
+                  WHERE COALESCE(x.series_id, x.id) = COALESCE(conditions.series_id, conditions.id)) AS series_ids,
                 (SELECT array_agg(sc.label ORDER BY sc.sort_order, sc.label) FROM condition_scopes sc
                   WHERE sc.condition_id = conditions.id AND sc.scope_type = 'language') AS languages,
                 (SELECT array_agg(sc.label ORDER BY sc.sort_order, sc.label) FROM condition_scopes sc
@@ -471,7 +486,8 @@ export class RoyaltyLedgerService {
         .map((o): OutLite => ({ id: Number(o.id), name: String(o.name), usageType: str(o.usage_type),
                                 workId: int(o.work_id), termStart: dateStr(o.term_start),
                                 languages: Array.isArray(o.languages) ? o.languages.map(String) : [],
-                                regions: Array.isArray(o.regions) ? o.regions.map(String) : [] }))
+                                regions: Array.isArray(o.regions) ? o.regions.map(String) : [],
+                                seriesIds: Array.isArray(o.series_ids) ? o.series_ids.map(Number) : [] }))
         : [];
 
       const conditions: LedgerCondition[] = rows.map((c) => ({

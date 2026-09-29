@@ -83,6 +83,20 @@ test("来るはずの行：前の回の地域なしの行は許諾先の地域�
     ["フランス語×欧州", "英語×欧州"], "前の回から来た英語の行は 欧州 で埋まり、行は2本だけ");
 });
 
+test("来るはずの行：途中で許諾言語・地域を変えたら、前の回から来た古い行は落とし、いまの範囲で待つ", () => {
+  // 前の回：英語×北米で報告があった。その後、許諾先を フランス語×フランス だけに変えた。
+  const out = { id: 65, name: "ホラー｜フランス語｜フランス｜DPG", usageType: "sublicense", workId: 1,
+                termStart: null, languages: ["フランス語"], regions: ["フランス"], seriesIds: [65, 60] };
+  const q3 = buildRounds({
+    conditions: [cond(1, { usageType: "sublicense" })], schedules: Q(1),
+    // 古い版（id 60）を指す報告でも、同じ許諾先として扱う。
+    events: [ev(1, 1, "2026-06-10", { usageType: "sublicense", outConditionId: 60, outName: "旧", languages: ["英語"], regions: ["北米"] })],
+    skips: [], outs: [out], bundle: "single_work", today: "2026-10-05"
+  }).find((r) => r.payOn === "2026-10-31")!;
+  assert.deepEqual(q3.parts[0].expected.map((x) => [x.outConditionId, x.languages?.join(""), x.regions?.join("")]),
+    [[65, "フランス語", "フランス"]], "英語×北米の古い行は残らず、フランス語×フランス を待つ");
+});
+
 test("来るはずの行：言語×地域で1行（英語×北米・英語×欧州・フランス語×欧州）", () => {
   const out = { id: 61, name: "ito｜英語・フランス語｜北米・欧州｜Alpha", usageType: "sublicense", workId: 1,
                 termStart: null, languages: ["英語", "フランス語"], regions: ["北米", "欧州"] };
