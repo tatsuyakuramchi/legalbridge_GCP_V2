@@ -17,6 +17,7 @@ import type { LedgerCondition, LedgerEvent, LedgerView, Round, RoundPart } from 
 const yen = (n: number | null | undefined, currency = "JPY") =>
   n === null || n === undefined ? "—" : currency === "JPY"
     ? `¥${Number(n).toLocaleString("ja-JP")}` : `${currency} ${(Number(n) / 100).toLocaleString("en-US")}`;
+const iso = (d: Date) => d.toISOString().slice(0, 10);
 const numOf = (s: string) => { const n = Number(String(s).replace(/[,，]/g, "")); return Number.isFinite(n) ? n : 0; };
 
 /** 表の1行。入力済（event）か、来るはず（expected）か、まだ何も無い条件（blank）。 */
@@ -29,6 +30,7 @@ interface Line {
   outConditionId: number | null; outName: string | null;
   languages: string[]; regions: string[];
   why: string | null;
+  planId: number | null;
 }
 
 /** 行に打つ数字。利用形態で使う欄が違う。 */
@@ -52,10 +54,13 @@ export function eventTypeFor(usage: string | null, condition: LedgerCondition): 
 }
 
 export function RoundReport(
-  { round, view, canWrite, onChanged, onError, onOpenDocument }: {
+  { round, view, canWrite, onChanged, onError, onOpenDocument, adding, setAdding }: {
     round: Round; view: LedgerView; canWrite: boolean;
     onChanged: (message?: string) => void; onError: (m: string) => void;
     onOpenDocument?: (documentId: number) => void;
+    /** 表の上のフォーム。報告を追加／予定を作る。開く条件（作品）を指定できる。 */
+    adding: { mode: "report" | "plan"; conditionId?: number } | null;
+    setAdding: (a: { mode: "report" | "plan"; conditionId?: number } | null) => void;
   }
 ) {
   const cond = (id: number) => view.conditions.find((c) => c.id === id)!;
@@ -65,25 +70,45 @@ export function RoundReport(
       const c = cond(p.conditionId);
       for (const e of p.events) {
         out.push({ key: `e${e.id}`, part: p, condition: c, event: e, outConditionId: e.outConditionId, outName: e.outName,
-                   languages: e.languages ?? [], regions: e.regions ?? [], why: null });
+                   languages: e.languages ?? [], regions: e.regions ?? [], why: null, planId: null });
       }
       p.expected.forEach((x, i) => {
         out.push({ key: `x${p.conditionId}:${p.scheduleId ?? ""}:${i}`, part: p, condition: c, event: null,
                    outConditionId: x.outConditionId, outName: x.outName,
-                   languages: x.languages ?? [], regions: x.regions ?? [], why: x.why });
+                   languages: x.languages ?? [], regions: x.regions ?? [], why: x.why, planId: x.planId ?? null });
       });
       if (!p.events.length && !p.expected.length) {
         out.push({ key: `b${p.conditionId}:${p.scheduleId ?? p.eventId ?? ""}`, part: p, condition: c, event: null,
-                   outConditionId: null, outName: null, languages: [], regions: [], why: null });
+                   outConditionId: null, outName: null, languages: [], regions: [], why: null, planId: null });
       }
     }
     return out;
   }, [round]);
 
+  /** 作品ごとの区切り。作家 × 全作品で見ているときだけ帯を出す。回に締めの無い作品も帯だけ出す。 */
+  const groups = useMemo(() => {
+    const many = view.works.length > 1;
+    const byWork = new Map<number, Line[]>();
+    for (const l of lines) {
+      const w = l.condition.workId ?? 0;
+      byWork.set(w, [...(byWork.get(w) ?? []), l]);
+    }
+    const order = many ? view.works.map((w) => w.id) : [...byWork.keys()];
+    for (const k of byWork.keys()) if (!order.includes(k)) order.push(k);
+    return order.map((workId) => {
+      const conds = view.conditions.filter((c) => (c.workId ?? 0) === workId);
+      return {
+        workId, band: many,
+        title: view.works.find((w) => w.id === workId)?.title ?? conds[0]?.workTitle ?? "—",
+        terms: conds.map((c) => `${c.usageLabel} ${c.pricingModel === "unit_rate" ? yen(c.unitAmount, c.currency) : `${(c.ratePpm ?? 0) / 10000}%`}`).join(" · "),
+        lines: byWork.get(workId) ?? []
+      };
+    });
+  }, [lines, view]);
+
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [busy, setBusy] = useState(false);
-  const [adding, setAdding] = useState(false);
 
   function startEdit(l: Line) {
     const usage = l.condition.usageType && ["in_house", "sublicense", "oem"].includes(l.condition.usageType) ? l.condition.usageType : null;
@@ -134,6 +159,10 @@ export function RoundReport(
       onChanged(undo ? "「報告なし」を取り消しました" : "報告なしにしました");
     } catch (e) { onError((e as ApiError).message); }
   }
+  async function unplan(id: number) {
+    try { await api.del(`/royalty-ledger/plans/${id}`); onChanged("予定を外しました"); }
+    catch (e) { onError((e as ApiError).message); }
+  }
   async function voidEvent(e: LedgerEvent) {
     const reason = window.prompt("この報告を取り消します。理由（監査に残ります）：", "入力違い");
     if (reason === null) return;
@@ -147,18 +176,50 @@ export function RoundReport(
   const stateOf = (l: Line) => l.event
     ? (l.event.documentId ? { label: "計算書済", tag: "ok" } : { label: "入力済", tag: "accent" })
     : l.part.skipped ? { label: "報告なし", tag: "" }
+    : l.planId && l.part.state === "before" ? { label: "予定", tag: "pin" }
     : l.part.state === "before" ? { label: "締め前", tag: "" }
+    : l.planId ? { label: "予定（報告待ち）", tag: "pin" }
     : { label: "報告待ち", tag: "warn" };
 
+  const firstWait = lines.find((l) => !l.event && !l.part.skipped && l.part.state !== "before");
   return (
     <div className="stack" style={{ gap: 6 }}>
+      {canWrite && !adding && (
+        <div className="report-actions">
+          <button className="btn primary btn-big" onClick={() => setAdding({ mode: "report" })}>＋ 報告を追加</button>
+          <button className="btn btn-big" onClick={() => setAdding({ mode: "plan" })}>＋ 予定を作る</button>
+          <span className="faint">報告を追加＝数字が来た。予定を作る＝まだ数字は無いが、この許諾先から来るはず（以後の回でも待つ）。</span>
+          {firstWait && <span className="faint" style={{ marginLeft: "auto" }}>来るはずの行はもう並んでいます。まずは黄色の行へ。</span>}
+        </div>
+      )}
+      {adding && (
+        <AddLine key={`${adding.mode}-${adding.conditionId ?? ""}`} mode={adding.mode} round={round} view={view}
+                 conditionId={adding.conditionId ?? null} onCancel={() => setAdding(null)}
+                 onAdded={(m) => { setAdding(null); onChanged(m); }} onError={onError} />
+      )}
       <div className="tablewrap">
         <table className="report">
           <thead>
             <tr><th>行（許諾先・製品）</th><th>言語・地域</th><th className="num">数量</th><th className="num">単価・受領額</th><th>発生日</th><th>状態</th><th></th></tr>
           </thead>
           <tbody>
-            {lines.map((l) => {
+            {groups.map((g) => [
+              g.band && (
+                <tr key={`w${g.workId}`} className="work">
+                  <td colSpan={7}>
+                    <span className="row" style={{ gap: 8 }}>
+                      <span>{g.title}</span>
+                      <span className="faint">{g.terms}</span>
+                      {g.lines.length === 0 && <span className="faint">この回に締めなし（「条件と締めの設定…」で締めを作る）</span>}
+                      {canWrite && g.lines.length > 0 && (
+                        <button className="btn btn-sm" style={{ marginLeft: "auto" }}
+                                onClick={() => setAdding({ mode: "report", conditionId: g.lines[0].condition.id })}>＋ この作品の報告を追加</button>
+                      )}
+                    </span>
+                  </td>
+                </tr>
+              ),
+              ...g.lines.map((l) => {
               const c = l.condition;
               const usage = c.usageType && ["in_house", "sublicense", "oem"].includes(c.usageType) ? c.usageType : null;
               const f = fieldsFor(usage, c.pricingModel);
@@ -166,7 +227,7 @@ export function RoundReport(
               const isEdit = editing === l.key && draft;
               const head = l.outName ?? l.event?.workTitle ?? c.workTitle ?? "—";
               return (
-                <tr key={l.key} className={isEdit ? "edit" : st.tag === "warn" ? "wait" : ""}>
+                <tr key={l.key} className={isEdit ? "edit" : l.planId && !l.event ? "plan" : st.tag === "warn" ? "wait" : ""}>
                   <td>
                     <div>{head}</div>
                     <div className="faint">{c.workTitle && l.outName ? `${c.workTitle} · ` : ""}{c.usageLabel}{l.why ? `（${l.why}）` : ""}</div>
@@ -226,6 +287,9 @@ export function RoundReport(
                           {canWrite && !l.event && !l.part.skipped && l.part.scheduleId && !l.part.events.length && (
                             <button className="btn btn-sm" disabled={busy} title="この回は報告が来なかった" onClick={() => void skip(l.part)}>報告なし</button>
                           )}
+                          {canWrite && !l.event && l.planId && (
+                            <button className="btn btn-sm" disabled={busy} title="予定の行を消す（実績は消えない）" onClick={() => void unplan(l.planId!)}>予定を外す</button>
+                          )}
                           {canWrite && l.part.skipped && l.part.scheduleId && (
                             <button className="btn btn-sm" disabled={busy} onClick={() => void skip(l.part, true)}>取り消す</button>
                           )}
@@ -235,34 +299,26 @@ export function RoundReport(
                   )}
                 </tr>
               );
-            })}
+            })])}
             {!lines.length && <tr><td colSpan={7} className="faint">この回に行はありません。</td></tr>}
           </tbody>
         </table>
       </div>
-      {canWrite && !adding && (
-        <div className="row">
-          <button className="btn btn-sm" onClick={() => setAdding(true)}>＋ 予定にない報告を足す</button>
-          <span className="faint">許諾先と言語・地域を選ぶだけ。新しい許諾先は作品の「OUT 条件」で作ってから。</span>
-        </div>
-      )}
-      {adding && (
-        <AddLine round={round} view={view} onCancel={() => setAdding(false)}
-                 onAdded={(m) => { setAdding(false); onChanged(m); }} onError={onError} />
-      )}
     </div>
   );
 }
 
 /** 予定にない報告の行を足す：条件（作品・利用形態）→ 許諾先 → 言語 → 地域。 */
 function AddLine(
-  { round, view, onCancel, onAdded, onError }: {
-    round: Round; view: LedgerView; onCancel: () => void;
+  { mode, round, view, conditionId, onCancel, onAdded, onError }: {
+    mode: "report" | "plan"; round: Round; view: LedgerView; conditionId: number | null; onCancel: () => void;
     onAdded: (message: string) => void; onError: (m: string) => void;
   }
 ) {
   const parts = round.parts.filter((p) => !p.skipped && p.state !== "issued");
-  const [partKey, setPartKey] = useState(parts[0] ? `${parts[0].conditionId}:${parts[0].scheduleId ?? ""}` : "");
+  const first = parts.find((p) => p.conditionId === conditionId) ?? parts[0];
+  const [partKey, setPartKey] = useState(first ? `${first.conditionId}:${first.scheduleId ?? ""}` : "");
+  const [fromWhen, setFromWhen] = useState<"this" | "next">("this");
   const part = parts.find((p) => `${p.conditionId}:${p.scheduleId ?? ""}` === partKey) ?? null;
   const cond = part ? view.conditions.find((c) => c.id === part.conditionId)! : null;
   const usage = cond?.usageType && ["sublicense", "oem"].includes(cond.usageType) ? cond.usageType : null;
@@ -285,6 +341,22 @@ function AddLine(
   const inHouse = cond.usageType === "in_house";
   const f = fieldsFor(usage ?? (inHouse ? "in_house" : null), cond.pricingModel);
 
+  async function plan() {
+    if (!cond || !part) return;
+    setBusy(true);
+    try {
+      // この回から＝この回の期間の始まり（無ければ締め日）。次の回から＝この回の締めの翌日。
+      const fromOn = fromWhen === "this"
+        ? (part.periodFrom ?? part.closeOn ?? draft.on)
+        : iso(new Date(new Date(`${part.closeOn ?? draft.on}T00:00:00Z`).getTime() + 86_400_000));
+      await api.post("/royalty-ledger/plans", {
+        conditionId: cond.id, outConditionId: usage ? Number(outId) || null : null,
+        languages: language ? [language] : [], regions: region ? [region] : [], fromOn
+      });
+      onAdded("予定を置きました");
+    } catch (e) { onError((e as ApiError).message); }
+    finally { setBusy(false); }
+  }
   async function add() {
     if (!cond || !part) return;
     setBusy(true);
@@ -306,11 +378,15 @@ function AddLine(
     finally { setBusy(false); }
   }
 
+  const isPlan = mode === "plan";
   return (
-    <div className="note stack" style={{ gap: 6 }}>
-      <b>予定にない報告を足す</b>
+    <div className={`note stack${isPlan ? " pin" : ""}`} style={{ gap: 6 }}>
+      <b>{isPlan ? "予定を作る" : "報告を追加"}</b>
+      <span className="faint">{isPlan
+        ? "数字はまだ無い。この許諾先・言語・地域から報告が来るはず、という行を置く。以後の回でも「来るはず」として待つ。"
+        : "記録すると入力済の行になり、以後の回でも「来るはず」として待つ。"}</span>
       <div className="row" style={{ gap: 8 }}>
-        <label className="row" style={{ gap: 4 }}><span className="faint">条件</span>
+        <label className="row" style={{ gap: 4 }}><span className="faint">作品 · 利用形態</span>
           <select value={partKey} onChange={(e) => setPartKey(e.target.value)}>
             {parts.map((p) => { const c = view.conditions.find((x) => x.id === p.conditionId)!;
               return <option key={`${p.conditionId}:${p.scheduleId ?? ""}`} value={`${p.conditionId}:${p.scheduleId ?? ""}`}>{c.workTitle ?? ""} · {c.usageLabel}</option>; })}
@@ -335,6 +411,18 @@ function AddLine(
             </select></label>
         )}
       </div>
+      {isPlan ? (
+        <div className="row" style={{ gap: 8 }}>
+          <label className="row" style={{ gap: 4 }}><span className="faint">いつから</span>
+            <select value={fromWhen} onChange={(e) => setFromWhen(e.target.value as "this" | "next")}>
+              <option value="this">この回（{part.label ?? part.closeOn ?? ""}）から</option>
+              <option value="next">次の回から</option>
+            </select></label>
+          <button className="btn btn-sm primary" disabled={busy || (Boolean(usage) && !outId)} onClick={() => void plan()}>予定を置く</button>
+          <button className="btn btn-sm" disabled={busy} onClick={onCancel}>やめる</button>
+          <span className="faint">置いた行は「予定」の色で並び、数字が来たら「数字を入れる」。来なければ「報告なし」か「予定を外す」。</span>
+        </div>
+      ) : (
       <div className="row" style={{ gap: 8 }}>
         {f.quantity && <input className="inline-input num" style={{ width: 90 }} placeholder="数量" aria-label="数量" value={draft.quantity} onChange={(e) => setDraft({ ...draft, quantity: e.target.value })} />}
         {f.unit && <input className="inline-input num" style={{ width: 110 }} placeholder={usage === "oem" ? "単価" : "基準価格"} aria-label="単価" value={draft.unit} onChange={(e) => setDraft({ ...draft, unit: e.target.value })} />}
@@ -344,6 +432,7 @@ function AddLine(
         <button className="btn btn-sm primary" disabled={busy || (Boolean(usage) && !outId)} onClick={() => void add()}>記録</button>
         <button className="btn btn-sm" disabled={busy} onClick={onCancel}>やめる</button>
       </div>
+      )}
     </div>
   );
 }

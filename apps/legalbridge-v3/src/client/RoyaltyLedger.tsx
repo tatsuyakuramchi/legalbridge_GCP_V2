@@ -115,6 +115,7 @@ export function RoyaltyLedger(
   const openRequests = useOpenRequests(version);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [settings, setSettings] = useState(false);
+  const [adding, setAdding] = useState<{ mode: "report" | "plan"; conditionId?: number } | null>(null);
   const [bulkBefore, setBulkBefore] = useState(new Date().toISOString().slice(0, 10));
   async function linkRequest(requestId: number, round: Round, unlink = false) {
     try {
@@ -162,12 +163,14 @@ export function RoyaltyLedger(
       <div className="ledger-parties">
         {(parties ?? []).map((p) => (
           <button key={p.id} className="ledger-party" aria-pressed={p.id === partyId}
-                  onClick={() => { setPartyId(p.id); setSelected(null); }}>
+                  onClick={() => { setPartyId(p.id); setSelected(p.next?.roundKey ?? null); }}>
             <b>{p.name}</b>
             <span className="faint">{p.conditions.map((c) => `${c.usageLabel} ${pct(c.ratePpm)}`).join("・")}</span>
+            {p.next
+              ? <span className="ledger-next">▶ 次：{p.next.label}の回に報告待ちが {p.next.waiting} 行</span>
+              : <span className="faint">▶ 次：{p.nextPayOn ? `締め前（次の支払 ${md(p.nextPayOn)}）。いま入れるものはありません` : "締めがありません（条件と締めの設定…）"}</span>}
             <span className="row" style={{ gap: 4 }}>
               <span className="tag">開いている回 {p.openRounds}</span>
-              {p.waiting > 0 && <span className="tag warn">報告待ち {p.waiting}</span>}
               {p.nextPayOn && <span className="tag">次の支払 {md(p.nextPayOn)}</span>}
               {p.requests.map((r) => <span key={r.id} className="tag pin">{r.requestNo ?? `#${r.id}`}</span>)}
             </span>
@@ -194,7 +197,8 @@ export function RoyaltyLedger(
                   この作家の全作品{party ? `（${party.otherWorks + 1}）` : ""}
                 </button>
               </span>
-              {view.conditions.map((c) => (
+              {view.conditions.length > 3 && <span className="ledger-term-chip"><span className="faint">{view.works.length} 作品 · {view.conditions.length} 条件</span></span>}
+              {view.conditions.length <= 3 && view.conditions.map((c) => (
                 <span key={c.id} className="ledger-term-chip">
                   <span className="faint">{c.usageLabel}</span> <b>{c.pricingModel === "unit_rate" ? yen(c.unitAmount, c.currency) : pct(c.ratePpm)}</b>
                   <span className="faint"> · {c.timing === "event" ? "イベント式" : `締め ${c.schedules} 回`}</span>
@@ -234,6 +238,39 @@ export function RoyaltyLedger(
             </div>
           )}
 
+          {/* 手順の帯：いまどこにいて、次に何をするか。 */}
+          {(() => {
+            const waiting = round ? waitingLinesOf(round) : 0;
+            const periods = round ? [...new Set(round.parts.map((p) => p.label).filter(Boolean))] : [];
+            const entriesLeft = round ? round.parts.some((p) => p.events.some((e) => !e.documentId)) : false;
+            const stage = !round ? 1 : waiting > 0 ? 3 : entriesLeft ? 4 : round.documents.length ? 5 : 3;
+            const cls = (n: number) => `g${stage === n ? " on" : stage > n ? " done" : ""}`;
+            return (
+              <div className="ledger-guide">
+                <div className={cls(1)}><span className="k">1 作家</span><b>{view.party.name}</b>
+                  <span className="faint">{view.works.length} 作品 · {view.conditions.length} 条件</span></div>
+                <div className={cls(2)}><span className="k">2 回</span><b>{round ? (periods.join("・") || roundTitle(round)) : "左で回を選ぶ"}</b>
+                  <span className="faint">{round ? `締め ${md(round.closeOn)} · 支払 ${round.payOn ? md(round.payOn) : "—"}` : "報告待ちのある回から"}</span></div>
+                <div className={cls(3)}><span className="k">3 報告を入れる</span>
+                  <b>{!round ? "—" : waiting > 0 ? `報告待ち ${waiting} 行` : "入力済"}</b>
+                  <span className="faint">来た数字を行に打つ。来ないものは「報告なし」</span>
+                  {round && waiting > 0 && (
+                    <button className="btn btn-sm primary" style={{ alignSelf: "flex-start", marginTop: 2 }}
+                            onClick={() => document.querySelector("table.report tr.wait, table.report tr.plan")?.scrollIntoView({ block: "center", behavior: "smooth" })}>
+                      最初の報告待ちへ ↓
+                    </button>
+                  )}
+                  {round && waiting === 0 && canWrite && !entriesLeft && !round.documents.length && (
+                    <button className="btn btn-sm" style={{ alignSelf: "flex-start", marginTop: 2 }} onClick={() => setAdding({ mode: "report" })}>＋ 報告を追加</button>
+                  )}
+                </div>
+                <div className={cls(4)}><span className="k">4 計算書</span>
+                  <b>{!round ? "—" : round.documents.length && !entriesLeft ? "決定済" : entriesLeft && waiting === 0 ? "作れる" : "まだ"}</b>
+                  <span className="faint">全行が入力済か報告なしになると作れる</span></div>
+              </div>
+            );
+          })()}
+
           {/* 左に回の一覧、右にその回の中身。 */}
           <div className="ledger-split">
             <div className="stack" style={{ gap: 6 }}>
@@ -266,7 +303,7 @@ export function RoyaltyLedger(
               ? <RoundDetail key={`${round.key}-${version}`} round={round} view={view} canWrite={canWrite}
                              onChanged={reload} onError={setError} onOpenDocument={openDoc}
                              openRequests={openRequests} onLink={linkRequest} onOpenRequest={onOpenRequest}
-                             onCompose={composeWith} />
+                             onCompose={composeWith} adding={adding} setAdding={setAdding} />
               : <div className="panel"><div className="panel-bd faint">左で回を選ぶと、ここに報告の表と計算書が出ます。</div></div>}
           </div>
         </>
@@ -354,7 +391,7 @@ function RoundCard({ round: r, view, selected, onSelect }: { round: Round; view:
 
 /** 選んだ回：1 報告を入れる → 2 計算書を作る → 3 送付・支払。上から下へ進むだけ。 */
 function RoundDetail(
-  { round: r, view, canWrite, onChanged, onError, onOpenDocument, openRequests, onLink, onOpenRequest, onCompose }: {
+  { round: r, view, canWrite, onChanged, onError, onOpenDocument, openRequests, onLink, onOpenRequest, onCompose, adding, setAdding }: {
     round: Round; view: LedgerView; canWrite: boolean;
     onChanged: (message?: string) => void; onError: (m: string) => void;
     onOpenDocument?: (documentId: number) => void;
@@ -362,6 +399,8 @@ function RoundDetail(
     onLink: (requestId: number, round: Round, unlink?: boolean) => void;
     onOpenRequest?: (requestId: number) => void;
     onCompose?: (conditionIds: number[], eventIds: number[], templateKey: string | null) => void;
+    adding: { mode: "report" | "plan"; conditionId?: number } | null;
+    setAdding: (a: { mode: "report" | "plan"; conditionId?: number } | null) => void;
   }
 ) {
   const [pickRequest, setPickRequest] = useState("");
@@ -427,7 +466,8 @@ function RoundDetail(
               <b>報告を入れる</b>
               <span className="faint">相手から来た数字を行に打つ。発生日は締め日で入る。</span>
             </div>
-            <RoundReport round={r} view={view} canWrite={canWrite} onChanged={onChanged} onError={onError} onOpenDocument={onOpenDocument} />
+            <RoundReport round={r} view={view} canWrite={canWrite} onChanged={onChanged} onError={onError} onOpenDocument={onOpenDocument}
+                         adding={adding} setAdding={setAdding} />
           </div>
         </div>
 

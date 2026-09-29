@@ -2220,6 +2220,26 @@ export function createRoutes(database: Transactable) {
       const input = ledgerSkipSchema.parse(req.query ?? {});
       res.json(await royaltyLedger.skip(input.conditionId, input.scheduleId, null, actor(res), true));
     }));
+  // 予定の行（A-062）。この許諾先・言語・地域から from 以降の回に報告が来るはず。
+  router.post("/royalty-ledger/plans", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        conditionId: z.coerce.number().int().positive(),
+        outConditionId: z.coerce.number().int().positive().nullable().optional(),
+        languages: z.array(z.string().trim().min(1).max(60)).max(30).optional(),
+        regions: z.array(z.string().trim().min(1).max(60)).max(60).optional(),
+        fromOn: z.string().date(),
+        note: z.string().trim().max(500).nullable().optional()
+      }).parse(req.body ?? {});
+      res.status(201).json(await royaltyLedger.plan({
+        conditionId: input.conditionId, outConditionId: input.outConditionId ?? null,
+        languages: input.languages ?? [], regions: input.regions ?? [], fromOn: input.fromOn, note: input.note ?? null
+      }, actor(res)));
+    }));
+  router.delete("/royalty-ledger/plans/:id", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await royaltyLedger.unplan(Number(req.params.id), actor(res)));
+    }));
   // 古い空の回をまとめて報告なしにする。before より前の締めで、実績の無い回だけ。
   router.post("/royalty-ledger/skips/before", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {

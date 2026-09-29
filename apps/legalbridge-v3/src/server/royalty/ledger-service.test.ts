@@ -99,6 +99,25 @@ test("空のまま過ぎた回は、人が報告なしにするまで報告待�
   assert.equal(skipped.find((r) => r.payOn === "2026-07-31")!.state, "input", "報告待ち");
 });
 
+test("予定の行（A-062）：from_on 以降の回で来るはずとして待ち、数字が来れば消える", () => {
+  const out = { id: 62, name: "ito｜韓国語｜韓国｜Beta", usageType: "sublicense", workId: 1, termStart: null, languages: ["韓国語"], regions: ["韓国"] };
+  const plan = { id: 7, conditionId: 1, outConditionId: 62, outName: out.name, languages: ["韓国語"], regions: ["韓国"], fromOn: "2026-09-01" };
+  const rounds = buildRounds({
+    conditions: [cond(1, { usageType: "sublicense" })], schedules: Q(1),
+    events: [], skips: [], outs: [], plans: [plan], bundle: "single_work", today: "2026-10-05"
+  });
+  const q2 = rounds.find((r) => r.payOn === "2026-07-31")!;
+  assert.equal(q2.parts[0].expected.filter((x) => x.planId).length, 0, "6/30 締めは from_on より前");
+  const q3 = rounds.find((r) => r.payOn === "2026-10-31")!;
+  assert.deepEqual(q3.parts[0].expected.map((x) => [x.planId, x.why]), [[7, "予定"]]);
+  const got = buildRounds({
+    conditions: [cond(1, { usageType: "sublicense" })], schedules: Q(1),
+    events: [ev(9, 1, "2026-09-20", { usageType: "sublicense", outConditionId: 62, outName: out.name, languages: ["韓国語"], regions: ["韓国"] })],
+    skips: [], outs: [], plans: [plan], bundle: "single_work", today: "2026-10-05"
+  }).find((r) => r.payOn === "2026-10-31")!;
+  assert.equal(got.parts[0].expected.length, 0, "数字が来たら予定の行は消える");
+});
+
 test("決まった回は、支払・送付・AG 充当だけ（支払なし）で閉じる", () => {
   const base: Round = { key: "p", kind: "period", payOn: null, closeOn: null, workIds: [], parts: [],
     documents: [{ id: 1, documentNo: "RS-1", status: "issued", sent: false, net: 100 }], payments: [],

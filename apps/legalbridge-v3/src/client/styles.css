@@ -761,3 +761,22 @@ table.compact th,table.compact td{padding:4px 8px}
 table.report td { vertical-align: middle; }
 table.report tr.wait td { background: var(--warn-soft); }
 table.report tr.edit td { background: var(--accent-soft); }
+
+/* 利用許諾計算：入口（次にすること・手順の帯）、報告を追加／予定を作る、作品の帯、予定の行。 */
+.ledger-party .ledger-next { color: var(--accent); font-weight: 700; font-size: 12px; }
+.ledger-guide { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--surface); }
+.ledger-guide .g { padding: 8px 12px; display: flex; flex-direction: column; gap: 1px; border-right: 1px solid var(--line); min-width: 0; }
+.ledger-guide .g:last-child { border-right: 0; }
+.ledger-guide .g.on { background: var(--accent-soft); }
+.ledger-guide .g.done { color: var(--muted); }
+.ledger-guide .g .k { font-size: 11px; letter-spacing: .12em; color: var(--faint); }
+.ledger-guide .g.on .k { color: var(--accent); }
+@media (max-width: 900px) { .ledger-guide { grid-template-columns: repeat(2, minmax(0, 1fr)); } .ledger-guide .g { border-bottom: 1px solid var(--line); } }
+.report-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 8px 12px; border: 1px dashed var(--line-strong); border-radius: 6px; background: var(--ground); }
+.btn.btn-big { padding: 6px 16px; font-size: 13px; font-weight: 700; }
+table.report tr.work td { background: var(--sunken); padding: 5px 8px; font-weight: 700; border-top: 2px solid var(--line-strong); }
+table.report tr.work td .faint { font-weight: 400; }
+table.report tr.plan td { background: var(--pin-soft); }
+.note.pin { border-left-color: var(--pin); background: var(--pin-soft); }
+table.report td:last-child .row { flex-wrap: wrap; }
+table.report tr.work td .row .btn { margin-left: auto; }
