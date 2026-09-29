@@ -3,6 +3,9 @@ import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { conditionUsageLabel } from "../core/condition-usage.js";
 import { parsePaymentTerms, payOnFor } from "../conditions/payment-terms.js";
+import { basisOf, type UsageType } from "./usage-type.js";
+import { ppmToPct } from "./economics.js";
+import { roundRoyalty } from "./rounding.js";
 
 /**
  * 許諾料の台帳（作品 › 利用許諾計算）。docs/royalty-ledger.md
@@ -553,6 +556,58 @@ export class RoyaltyLedgerService {
   }
 
   /** 今期は無し（その回は報告が来なかった）。取り消しは undo。 */
+  /**
+   * 決定した計算書に載った報告を例外的に直す。
+   *
+   * 数字（数量・単価・受領額・発生日）を直し、利用形態のある実績は許諾料
+   * （実額）も条件の料率で計算し直す。直した実績はまだ元の計算書に結ばれた
+   * ままなので、続けて台帳から訂正版を出す（/statement-documents に
+   * supersedesId を付けて出すと、決定の瞬間に元が退いて実績が移る）。
+   * 支払が立っていれば直せない（events.amend が止める）。
+   */
+  async correct(
+    input: { conditionId: number; eventId: number; reason: string;
+             quantity?: number | null; unitAmount?: number | null; grossAmount?: number | null; occurredOn?: string | null },
+    events: { amend: (conditionId: number, eventId: number, patch: Record<string, unknown>, reason: string, actor: string)
+                => Promise<{ eventId: number; changed: string[] }> },
+    actor: string
+  ): Promise<{ eventId: number; documentId: number | null; documentNo: string | null; changed: string[] }> {
+    try {
+      const row = (await this.database.query(
+        `SELECT e.id, e.condition_id, e.usage_type, e.quantity, e.sample_quantity, e.unit_amount, e.gross_amount,
+                e.payment_stage, e.tax_included, e.out_condition_id, COALESCE(e.rate_ppm, c.rate_ppm) AS rate_ppm,
+                e.document_id, d.document_no, d.status AS document_status
+           FROM condition_events e JOIN conditions c ON c.id = e.condition_id
+           LEFT JOIN documents d ON d.id = e.document_id
+          WHERE e.id = $1 AND e.condition_id = $2 AND e.status = 'active'`, [input.eventId, input.conditionId])).rows[0] as any;
+      if (!row) throw new DomainError("NOT_FOUND", `実績 ${input.eventId} が見つかりません`);
+      const patch: Record<string, unknown> = {};
+      if (input.quantity !== undefined) patch.quantity = input.quantity;
+      if (input.unitAmount !== undefined) patch.unitAmount = input.unitAmount;
+      if (input.grossAmount !== undefined) patch.grossAmount = input.grossAmount;
+      if (input.occurredOn !== undefined) patch.occurredOn = input.occurredOn;
+      const usage = str(row.usage_type);
+      if (usage) {
+        // 許諾料は入れ直させない。直した根拠に料率を掛けて出す（記録のときと同じ式）。
+        const basis = basisOf({
+          usageType: usage as UsageType,
+          unitAmount: input.unitAmount !== undefined ? input.unitAmount : int(row.unit_amount),
+          quantity: input.quantity !== undefined ? input.quantity : (row.quantity === null ? null : Number(row.quantity)),
+          sampleQuantity: row.sample_quantity === null ? null : Number(row.sample_quantity),
+          grossAmount: input.grossAmount !== undefined ? input.grossAmount : int(row.gross_amount),
+          paymentStage: row.payment_stage ?? null, taxIncluded: row.tax_included ?? null
+        }, "この報告");
+        patch.amount = roundRoyalty((basis * ppmToPct(int(row.rate_ppm))) / 100);
+      } else if (input.grossAmount !== undefined) {
+        // 利用形態なし（出版など）は 総額＝実額。
+        patch.amount = input.grossAmount;
+      }
+      const r = await events.amend(input.conditionId, input.eventId, patch, input.reason, actor);
+      return { eventId: input.eventId, documentId: row.document_status === "issued" ? int(row.document_id) : null,
+               documentNo: str(row.document_no), changed: r.changed };
+    } catch (error) { throw translate(error); }
+  }
+
   /** 予定の行を置く（A-062）。許諾先は、その条件の作品の OUT 条件に限る。 */
   async plan(input: { conditionId: number; outConditionId: number | null; languages: string[]; regions: string[];
                       fromOn: string; note?: string | null }, actor: string): Promise<{ id: number }> {

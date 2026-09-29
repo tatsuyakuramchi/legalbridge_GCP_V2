@@ -54,13 +54,17 @@ export function eventTypeFor(usage: string | null, condition: LedgerCondition): 
 }
 
 export function RoundReport(
-  { round, view, canWrite, onChanged, onError, onOpenDocument, adding, setAdding }: {
+  { round, view, canWrite, onChanged, onError, onOpenDocument, adding, setAdding, isAdmin = false, onReissue }: {
     round: Round; view: LedgerView; canWrite: boolean;
     onChanged: (message?: string) => void; onError: (m: string) => void;
     onOpenDocument?: (documentId: number) => void;
     /** 表の上のフォーム。報告を追加／予定を作る。開く条件（作品）を指定できる。 */
     adding: { mode: "report" | "plan"; conditionId?: number } | null;
     setAdding: (a: { mode: "report" | "plan"; conditionId?: number } | null) => void;
+    /** admin だけ、決定した計算書に載った報告を例外的に直せる。 */
+    isAdmin?: boolean;
+    /** 直したあと、その計算書の訂正版を出し直す（文書の画面へ）。 */
+    onReissue?: (documentId: number, reason: string) => void;
   }
 ) {
   const cond = (id: number) => view.conditions.find((c) => c.id === id)!;
@@ -108,6 +112,8 @@ export function RoundReport(
 
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
+  /** 決定した計算書に載った報告の例外修正（admin）。理由が要る。 */
+  const [correcting, setCorrecting] = useState<{ key: string; reason: string } | null>(null);
   const [busy, setBusy] = useState(false);
 
   function startEdit(l: Line) {
@@ -120,6 +126,35 @@ export function RoundReport(
     setEditing(l.key); void usage;
   }
 
+  function startCorrect(l: Line) {
+    const e = l.event!;
+    setDraft({ quantity: e.quantity === null ? "" : String(e.quantity), unit: e.unitAmount ? String(e.unitAmount) : "",
+               gross: e.grossAmount === null ? "" : String(e.grossAmount), taxIncluded: false,
+               on: e.occurredOn ?? "", note: "" });
+    setCorrecting({ key: l.key, reason: "" }); setEditing(l.key);
+  }
+  async function correct(l: Line) {
+    if (!draft || !correcting || !l.event) return;
+    const c = l.condition;
+    const usage = c.usageType && ["in_house", "sublicense", "oem"].includes(c.usageType) ? c.usageType : null;
+    const f = fieldsFor(usage, c.pricingModel);
+    if (!correcting.reason.trim()) { onError("修正の理由を書いてください（監査に残ります）"); return; }
+    setBusy(true);
+    try {
+      const r = await api.post<{ documentId: number | null; documentNo: string | null }>("/royalty-ledger/corrections", {
+        conditionId: c.id, eventId: l.event.id, reason: correcting.reason.trim(),
+        ...(f.quantity ? { quantity: numOf(draft.quantity) || null } : {}),
+        ...(f.unit ? { unitAmount: numOf(draft.unit) || null } : {}),
+        ...(f.gross ? { grossAmount: numOf(draft.gross) || null } : {}),
+        occurredOn: draft.on || null
+      });
+      const reason = correcting.reason.trim();
+      setEditing(null); setDraft(null); setCorrecting(null);
+      if (r.documentId && onReissue) onReissue(r.documentId, reason);
+      else onChanged("報告を直しました");
+    } catch (e) { onError((e as ApiError).message); }
+    finally { setBusy(false); }
+  }
   async function record(l: Line) {
     if (!draft) return;
     const c = l.condition;
@@ -252,12 +287,26 @@ export function RoundReport(
                         </span>
                       </td>
                       <td><input className="inline-input" type="date" value={draft.on} aria-label="発生日" onChange={(e) => setDraft({ ...draft, on: e.target.value })} /></td>
-                      <td><span className="tag accent">入力中</span></td>
+                      <td><span className="tag accent">{correcting ? "例外修正" : "入力中"}</span></td>
                       <td>
-                        <span className="row" style={{ gap: 4, flexWrap: "nowrap" }}>
-                          <button className="btn btn-sm primary" disabled={busy} onClick={() => void record(l)}>記録</button>
-                          <button className="btn btn-sm" disabled={busy} onClick={() => { setEditing(null); setDraft(null); }}>やめる</button>
-                        </span>
+                        {correcting?.key === l.key ? (
+                          <span className="stack" style={{ gap: 4 }}>
+                            <input className="inline-input" placeholder="修正の理由（必須・監査に残る）" aria-label="修正の理由"
+                                   value={correcting.reason} onChange={(e) => setCorrecting({ key: l.key, reason: e.target.value })} />
+                            <span className="row" style={{ gap: 4, flexWrap: "nowrap" }}>
+                              <button className="btn btn-sm primary" disabled={busy || !correcting.reason.trim()} onClick={() => void correct(l)}>
+                                直して訂正版を出す
+                              </button>
+                              <button className="btn btn-sm" disabled={busy} onClick={() => { setEditing(null); setDraft(null); setCorrecting(null); }}>やめる</button>
+                            </span>
+                            <span className="faint">許諾料は料率で計算し直します。決定すると元の計算書 {l.event?.documentNo ?? ""} は「訂正版あり」に退きます。</span>
+                          </span>
+                        ) : (
+                          <span className="row" style={{ gap: 4, flexWrap: "nowrap" }}>
+                            <button className="btn btn-sm primary" disabled={busy} onClick={() => void record(l)}>記録</button>
+                            <button className="btn btn-sm" disabled={busy} onClick={() => { setEditing(null); setDraft(null); }}>やめる</button>
+                          </span>
+                        )}
                       </td>
                     </>
                   ) : (
@@ -280,6 +329,11 @@ export function RoundReport(
                             : <span className="code">{l.event.documentNo ?? `#${l.event.documentId}`}</span>)}
                           {canWrite && l.event && !l.event.documentId && (
                             <button className="btn btn-sm" disabled={busy} onClick={() => void voidEvent(l.event!)}>取り消す</button>
+                          )}
+                          {isAdmin && l.event?.documentId && onReissue && (
+                            <button className="btn btn-sm" disabled={busy || editing !== null}
+                                    title="例外：決定した計算書に載った数字を直し、訂正版を出し直す（admin）"
+                                    onClick={() => startCorrect(l)}>修正して出し直す</button>
                           )}
                           {canWrite && !l.event && !l.part.skipped && (
                             <button className="btn btn-sm primary" disabled={busy || editing !== null} onClick={() => startEdit(l)}>数字を入れる</button>

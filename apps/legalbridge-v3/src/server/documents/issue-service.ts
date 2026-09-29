@@ -30,6 +30,9 @@ export interface DraftInput {
   eventIds?: number[];
   /** 計算結果。計算書は発行の時点でこれが要る。 */
   royalty?: Record<string, unknown> | null;
+  /** 訂正版として作る。発行の瞬間にこの文書を退かせ、実績を移す。 */
+  supersedesId?: number | null;
+  supersedeReason?: string | null;
 }
 
 /** プレビューでの文書番号。発行のときに本物へ置き換わる。 */
@@ -192,11 +195,18 @@ export class DocumentIssueService {
         // 案件が渡されなければ、条件の載っている案件を引く。条件の画面から作った
         // 文書が案件に出てこない、という穴を塞ぐ。複数の案件に載っていれば決めない。
         const matterId = input.matterId ?? await this.matterOfConditions(client, input.conditionIds);
+        if (input.supersedesId) {
+          const prev = (await client.query("SELECT status FROM documents WHERE id = $1", [input.supersedesId])).rows[0] as any;
+          if (!prev) throw new DomainError("NOT_FOUND", `訂正する元の文書 ${input.supersedesId} が見つかりません`);
+          if (prev.status !== "issued") throw new DomainError("CONFLICT", `決定済みの文書だけ訂正版を出せます（${prev.status}）`);
+        }
         const inserted = await client.query(
-          `INSERT INTO documents (template_version_id, matter_id, agreement_id, status, manual_inputs)
-           VALUES ($1, $2, $3, 'draft', $4::jsonb) RETURNING id`,
+          `INSERT INTO documents (template_version_id, matter_id, agreement_id, status, manual_inputs,
+                                  supersedes_id, supersede_reason)
+           VALUES ($1, $2, $3, 'draft', $4::jsonb, $5, $6) RETURNING id`,
           [template.templateVersionId, matterId, input.agreementId ?? null,
-           JSON.stringify(input.manualInputs ?? {})]
+           JSON.stringify(input.manualInputs ?? {}),
+           input.supersedesId ?? null, input.supersedesId ? str(input.supersedeReason) : null]
         );
         const id = Number((inserted.rows[0] as { id: number }).id);
         await this.linkConditions(client, id, input.conditionIds);

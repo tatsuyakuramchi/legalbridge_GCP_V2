@@ -98,7 +98,9 @@ export function DocumentsWorkspace(
               /** 案件から「発注書をまとめて作る」で来た。一括作成を開いた状態にする。 */
               bulk?: boolean;
               /** 案件から「検収済みをまとめて入れる」で来た。 */
-              settled?: boolean };
+              settled?: boolean;
+              /** 計算書の訂正版。退かせる元の文書と理由。 */
+              supersedesId?: number | null; reason?: string | null };
     /** 他の画面から「編集」で来たときの文書。下書きならそのままフォームに載せる。 */
     openDocumentId?: number;
     /** 押すたびに増える番号。同じ文書をもう一度開く合図。 */
@@ -559,6 +561,7 @@ export function DocumentsWorkspace(
     let live = true;
     api.post<{ lines: StatementLine[]; totals: StatementTotals }>("/statement-documents/preview", {
       entries: stmtEntries.map((e) => ({ ...e, period: stmtPeriod.trim() || null })),
+      supersedesId: start?.supersedesId ?? null,
       // 直した見出し（製品名・対象契約）を試算にも効かせる。ここを渡さないと、
       // 画面で直したのに試算と紙で違う文字が出る。
       manualInputs: inputs
@@ -633,7 +636,9 @@ export function DocumentsWorkspace(
           "/statement-documents", {
             templateKey, matterId,
             manualInputs: inputs,
-            entries: stmtEntries.map((e) => ({ ...e, period: stmtPeriod.trim() || null }))
+            entries: stmtEntries.map((e) => ({ ...e, period: stmtPeriod.trim() || null })),
+            // 訂正版：決定の瞬間に元の計算書が退き、実績がこちらへ移る。
+            supersedesId: start?.supersedesId ?? null, reason: start?.reason ?? null
           });
         done = { id: result.document.id, documentNo: result.document.documentNo };
       } else {
@@ -874,6 +879,12 @@ export function DocumentsWorkspace(
           </div>
         )}
         <h1>文書</h1>
+        {start?.supersedesId && (
+          <div className="note warn">
+            <b>計算書の訂正版</b>　元の計算書 #{start.supersedesId} を退かせて出し直します（理由：{start.reason ?? "—"}）。
+            決定するまで元の版は有効なままです。
+          </div>
+        )}
         <p>文書は条件の出力物。相手先も件名も条件と合意から解決するので、入力するのはそこから決まらないものだけ。</p>
       </header>
 
