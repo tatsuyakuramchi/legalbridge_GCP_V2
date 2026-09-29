@@ -34,7 +34,10 @@ interface Line {
 }
 
 /** 行に打つ数字。利用形態で使う欄が違う。 */
-interface Draft { quantity: string; unit: string; gross: string; taxIncluded: boolean; on: string; note: string }
+interface Draft { quantity: string; unit: string; gross: string; taxIncluded: boolean; on: string; note: string;
+                  /** 例外修正で直す言語・地域（「・」区切り）。 */
+                  languages?: string; regions?: string }
+const splitScope = (s: string | undefined) => String(s ?? "").split(/[・,、\s]+/).map((x) => x.trim()).filter(Boolean);
 
 /** 利用形態ごとに、どの欄を使うか。 */
 function fieldsFor(usage: string | null, pricingModel: string) {
@@ -114,6 +117,7 @@ export function RoundReport(
   const [draft, setDraft] = useState<Draft | null>(null);
   /** 決定した計算書に載った報告の例外修正（admin）。理由が要る。 */
   const [correcting, setCorrecting] = useState<{ key: string; reason: string } | null>(null);
+  const [scopeHints, setScopeHints] = useState<{ languages: string[]; regions: string[] } | null>(null);
   const [busy, setBusy] = useState(false);
 
   function startEdit(l: Line) {
@@ -130,8 +134,16 @@ export function RoundReport(
     const e = l.event!;
     setDraft({ quantity: e.quantity === null ? "" : String(e.quantity), unit: e.unitAmount ? String(e.unitAmount) : "",
                gross: e.grossAmount === null ? "" : String(e.grossAmount), taxIncluded: false,
-               on: e.occurredOn ?? "", note: "" });
+               on: e.occurredOn ?? "", note: "",
+               languages: (e.languages ?? []).join("・"), regions: (e.regions ?? []).join("・") });
     setCorrecting({ key: l.key, reason: "" }); setEditing(l.key);
+    // 許諾先の許諾言語・地域を候補に出す（範囲の外は記録で弾かれる）。
+    if (l.outConditionId) {
+      const usage = l.condition.usageType === "oem" ? "oem" : "sublicense";
+      api.get<{ conditions: Array<{ id: number; languages: string[]; regions: string[] }> }>(`/conditions/${l.condition.id}/out-candidates?usage=${usage}`)
+        .then((r) => { const o = r.conditions.find((x) => x.id === l.outConditionId); if (o) setScopeHints({ languages: o.languages, regions: o.regions }); })
+        .catch(() => undefined);
+    } else setScopeHints(null);
   }
   async function correct(l: Line) {
     if (!draft || !correcting || !l.event) return;
@@ -146,7 +158,8 @@ export function RoundReport(
         ...(f.quantity ? { quantity: numOf(draft.quantity) || null } : {}),
         ...(f.unit ? { unitAmount: numOf(draft.unit) || null } : {}),
         ...(f.gross ? { grossAmount: numOf(draft.gross) || null } : {}),
-        occurredOn: draft.on || null
+        occurredOn: draft.on || null,
+        languages: splitScope(draft.languages), regions: splitScope(draft.regions)
       });
       const reason = correcting.reason.trim();
       setEditing(null); setDraft(null); setCorrecting(null);
@@ -267,7 +280,19 @@ export function RoundReport(
                     <div>{head}</div>
                     <div className="faint">{c.workTitle && l.outName ? `${c.workTitle} · ` : ""}{c.usageLabel}{l.why ? `（${l.why}）` : ""}</div>
                   </td>
-                  <td>{scope(l).length ? scope(l).join("・") : <span className="faint">—</span>}</td>
+                  <td>
+                    {isEdit && correcting?.key === l.key ? (
+                      <span className="stack" style={{ gap: 3 }}>
+                        <input className="inline-input" style={{ width: 120 }} list={`langs-${l.key}`} placeholder="言語" aria-label="言語"
+                               value={draft.languages ?? ""} onChange={(e) => setDraft({ ...draft, languages: e.target.value })} />
+                        <input className="inline-input" style={{ width: 120 }} list={`regs-${l.key}`} placeholder="地域" aria-label="地域"
+                               value={draft.regions ?? ""} onChange={(e) => setDraft({ ...draft, regions: e.target.value })} />
+                        <datalist id={`langs-${l.key}`}>{(scopeHints?.languages ?? []).map((x) => <option key={x} value={x} />)}</datalist>
+                        <datalist id={`regs-${l.key}`}>{(scopeHints?.regions ?? []).map((x) => <option key={x} value={x} />)}</datalist>
+                        <span className="faint">複数は「・」で区切る</span>
+                      </span>
+                    ) : scope(l).length ? scope(l).join("・") : <span className="faint">—</span>}
+                  </td>
                   {isEdit ? (
                     <>
                       <td className="num">

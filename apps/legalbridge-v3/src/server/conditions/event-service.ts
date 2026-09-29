@@ -177,9 +177,12 @@ const AMENDABLE = {
   inspectorName: { column: "inspector_name", kind: "text", money: false },
   varianceNote: { column: "variance_note", kind: "text", money: false },
   followUp: { column: "follow_up", kind: "text", money: false },
+  // 報告の言語・地域（A-061）。計算書の製品名の「（フランス語）」と許諾範囲の欄はここから出る。
+  languages: { column: "scope_languages", kind: "list", money: false },
+  regions: { column: "scope_regions", kind: "list", money: false },
   followUpDueOn: { column: "follow_up_due_on", kind: "date", money: false },
   note: { column: "note", kind: "text", money: false }
-} as const satisfies Record<string, { column: string; kind: "int" | "num" | "date" | "text"; money: boolean }>;
+} as const satisfies Record<string, { column: string; kind: "int" | "num" | "date" | "text" | "list"; money: boolean }>;
 
 /** 言語・地域の並び。空・重複を落とし、無ければ null（指定なし）。 */
 export function scopeList(v: unknown): string[] | null {
@@ -215,8 +218,12 @@ async function assertEventScope(client: Queryable, outConditionId: number | null
 }
 
 /** 直す値を列の型に寄せる。空文字は「空にする」。 */
-function readAmend(kind: "int" | "num" | "date" | "text", value: unknown): unknown {
+function readAmend(kind: "int" | "num" | "date" | "text" | "list", value: unknown): unknown {
   if (value === null) return null;
+  if (kind === "list") {
+    const list = scopeList(value) ?? [];
+    return list.length ? list : null;
+  }
   const text = String(value ?? "").trim();
   if (text === "") return null;
   if (kind === "text") return text;
@@ -538,7 +545,7 @@ export class ConditionEventService {
       return await inTransaction(this.database, async (client) => {
         const found = await client.query(
           `SELECT ${Object.values(AMENDABLE).map((c) => `e.${c.column}`).join(", ")},
-                  e.id, e.status, e.document_id, d.document_no
+                  e.id, e.status, e.document_id, e.out_condition_id, d.document_no
              FROM condition_events e
              LEFT JOIN documents d ON d.id = e.document_id
             WHERE e.id = $1 AND e.condition_id = $2
@@ -558,14 +565,21 @@ export class ConditionEventService {
           const next = readAmend(kind, patch[key]);
           const now = kind === "date" ? dateStr(row[column])
             : kind === "text" ? str(row[column])
+            : kind === "list" ? (Array.isArray(row[column]) && row[column].length ? row[column].map(String) : null)
               : num(row[column]);
-          if (next === now) continue;
+          if (JSON.stringify(next) === JSON.stringify(now)) continue;
           before[key] = now;
           after[key] = next;
           params.push(next);
-          sets.push(`${column} = $${params.length}${kind === "date" ? "::date" : ""}`);
+          sets.push(`${column} = $${params.length}${kind === "date" ? "::date" : kind === "list" ? "::text[]" : ""}`);
         }
         if (!sets.length) return { eventId, changed: [] as string[] };
+        // 言語・地域を直すなら、許諾先の許諾範囲の中であること（記録のときと同じ検査）。
+        if ("languages" in after || "regions" in after) {
+          await assertEventScope(client, int(row.out_condition_id),
+            "languages" in after ? after.languages : row.scope_languages,
+            "regions" in after ? after.regions : row.scope_regions);
+        }
 
         // 金額に関わる欄を直すなら、支払が立っていないこと。
         if (Object.keys(after).some((k) => AMENDABLE[k as keyof typeof AMENDABLE].money)) {
