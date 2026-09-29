@@ -57,7 +57,7 @@ export function eventTypeFor(usage: string | null, condition: LedgerCondition): 
 }
 
 export function RoundReport(
-  { round, view, canWrite, onChanged, onError, onOpenDocument, adding, setAdding, isAdmin = false, onReissue }: {
+  { round, view, canWrite, onChanged, onError, onOpenDocument, adding, setAdding, isAdmin = false, onReissue, onCreatePayment }: {
     round: Round; view: LedgerView; canWrite: boolean;
     onChanged: (message?: string) => void; onError: (m: string) => void;
     onOpenDocument?: (documentId: number) => void;
@@ -68,6 +68,8 @@ export function RoundReport(
     isAdmin?: boolean;
     /** 直したあと、その計算書の訂正版を出し直す（文書の画面へ）。 */
     onReissue?: (documentId: number, reason: string) => void;
+    /** 決定した計算書に支払が無いとき、その場で立てる。 */
+    onCreatePayment?: (documentId: number) => void;
   }
 ) {
   const cond = (id: number) => view.conditions.find((c) => c.id === id)!;
@@ -355,6 +357,18 @@ export function RoundReport(
                           {canWrite && l.event && !l.event.documentId && (
                             <button className="btn btn-sm" disabled={busy} onClick={() => void voidEvent(l.event!)}>取り消す</button>
                           )}
+                          {(() => {
+                            const d = l.event?.documentId ? round.documents.find((x) => x.id === l.event!.documentId) : null;
+                            if (!d || d.status !== "issued") return null;
+                            if (d.paymentIds.length) return <span className="tag ok">支払あり</span>;
+                            if (d.net <= 0) return <span className="tag">支払なし（差引 0）</span>;
+                            return (
+                              <>
+                                <span className="tag warn">支払なし</span>
+                                {onCreatePayment && <button className="btn btn-sm" disabled={busy} onClick={() => onCreatePayment(d.id)}>支払を立てる</button>}
+                              </>
+                            );
+                          })()}
                           {isAdmin && l.event?.documentId && onReissue && (
                             <button className="btn btn-sm" disabled={busy || editing !== null}
                                     title="例外：決定した計算書に載った数字を直し、訂正版を出し直す（admin）"

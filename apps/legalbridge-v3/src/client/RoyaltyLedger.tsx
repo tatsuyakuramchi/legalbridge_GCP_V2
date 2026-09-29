@@ -459,6 +459,13 @@ function RoundDetail(
       .catch(() => undefined);
   }, []);
 
+  /** 決定した計算書から支払を立てる。経理提出用の帳票は支払から作られる。 */
+  async function createPayment(d: { id: number; documentNo: string | null }) {
+    try {
+      const x = await api.post<{ paymentId: number; amount: number; dueOn: string | null }>(`/documents/${d.id}/payment`, {});
+      onChanged(`${d.documentNo ?? `#${d.id}`} の支払 #${x.paymentId}（${yen(x.amount)}${x.dueOn ? ` · 支払期日 ${x.dueOn}` : ""}）を立てました。経理提出用は「運用」の出力タブから`);
+    } catch (e) { onError((e as ApiError).message); }
+  }
   /**
    * 訂正版を出し直す。その計算書に結ばれた実績（直したものを含む）と条件を選んだ状態で
    * 文書の画面を開く。決定すると元の計算書が退き、実績が新しい版に移る。
@@ -502,7 +509,8 @@ function RoundDetail(
               <span className="faint">相手から来た数字を行に打つ。発生日は締め日で入る。</span>
             </div>
             <RoundReport round={r} view={view} canWrite={canWrite} onChanged={onChanged} onError={onError} onOpenDocument={onOpenDocument}
-                         adding={adding} setAdding={setAdding} isAdmin={isAdmin} onReissue={onCompose ? reissue : undefined} />
+                         adding={adding} setAdding={setAdding} isAdmin={isAdmin} onReissue={onCompose ? reissue : undefined}
+                         onCreatePayment={canWrite ? (id) => void createPayment(r.documents.find((d) => d.id === id) ?? { id, documentNo: null }) : undefined} />
           </div>
         </div>
 
@@ -557,6 +565,13 @@ function RoundDetail(
                   : <span className="code">{d.documentNo ?? `#${d.id}`}</span>}
                 <span className="tag ok">決定</span>{d.sent && <span className="tag ok">送付済</span>}
                 <span className="faint">差引 {yen(d.net)}</span>
+                {d.status === "issued" && !d.paymentIds.length && d.net > 0 && (
+                  <>
+                    <span className="tag warn">支払なし</span>
+                    {canWrite && <button className="btn btn-sm primary" onClick={() => void createPayment(d)}>支払を立てる</button>}
+                  </>
+                )}
+                {d.status === "issued" && !d.paymentIds.length && d.net <= 0 && <span className="tag">支払なし（差引 0）</span>}
               </div>
             ))}
             {r.payments.map((x) => (

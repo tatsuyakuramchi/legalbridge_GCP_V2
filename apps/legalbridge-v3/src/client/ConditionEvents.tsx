@@ -42,6 +42,8 @@ interface EventRow {
   documentId: number | null; documentNo: string | null;
   /** 結びついている文書の状態。無効なら空いている扱い。 */
   documentStatus: string | null;
+  /** この実績に割り当てた支払。無ければ「支払なし」。 */
+  paymentId?: number | null; paymentNo?: string | null; paymentStatus?: string | null;
   /** 予定との差分（A-030）。 */
   expectedQuantity: number | null; expectedAmount: number | null;
   varianceNote: string | null; followUp: string | null; followUpDueOn: string | null;
@@ -144,6 +146,7 @@ export function ConditionEvents(
   const [outReload, setOutReload] = useState(0);
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [v, setV] = useState<Record<string, string>>({});
   // 実績から文書（検収書など）を作るときの状態。行を選んでテンプレートを決める。
@@ -587,6 +590,18 @@ export function ConditionEvents(
   }
 
   /** 文書との結びつけを外す。二重発行の安全ガードを人が外す口。 */
+  /** 決定した文書から支払を立てる。経理提出用の帳票は支払から作られる。 */
+  async function createPaymentFor(row: EventRow) {
+    if (!row.documentId) return;
+    setBusy(true); setError(null);
+    try {
+      const r = await api.post<{ paymentId: number; amount: number; dueOn: string | null }>(`/documents/${row.documentId}/payment`, {});
+      setNotice(`${row.documentNo ?? `#${row.documentId}`} の支払 #${r.paymentId}（${money(r.amount, currency)}${r.dueOn ? ` · 支払期日 ${r.dueOn}` : ""}）を立てました。経理提出用は「運用」の出力タブから`);
+      load(); onChanged();
+    } catch (e) { setError((e as ApiError).message); }
+    finally { setBusy(false); }
+  }
+
   async function unlinkEvent(row: EventRow) {
     if (!row.documentId) return;
     const why = row.documentStatus === "void"
@@ -1059,6 +1074,7 @@ export function ConditionEvents(
             </label>
           </div>
           {error && <div className="alert">{error}</div>}
+      {notice && <div className="note ok">{notice}</div>}
           <div className="row">
             {/*
               * 押せない理由は必ず出す。利用形態のある実績は実額の欄が無い
@@ -1352,6 +1368,17 @@ export function ConditionEvents(
                           {row.documentStatus === "void"
                             ? <span className="tag danger" style={{ marginLeft: 4 }}>無効</span>
                             : <span className="tag ok" style={{ marginLeft: 4 }}>作成済</span>}
+                          {/* 文書は出たのに支払が立っていない、に気づけるように。経理提出は支払から作る。 */}
+                          {row.documentStatus === "issued" && (row.paymentNo || row.paymentId
+                            ? <span className="tag ok" style={{ marginLeft: 4 }} title={row.paymentStatus ?? ""}>支払 {row.paymentNo ?? `#${row.paymentId}`}</span>
+                            : <>
+                                <span className="tag warn" style={{ marginLeft: 4 }}>支払なし</span>
+                                {editable && !voided && row.documentId && (
+                                  <button className="btn btn-sm" style={{ marginLeft: 4 }} disabled={busy}
+                                          title="この文書から支払を立てる（経理提出用の帳票は支払から作る）"
+                                          onClick={() => void createPaymentFor(row)}>支払を立てる</button>
+                                )}
+                              </>)}
                           {/* 結びつけを外す。無効にした文書から作り直すときや、取り違えたとき。 */}
                           {editable && !voided && (
                             <button className="linky" style={{ marginLeft: 6 }} disabled={busy}

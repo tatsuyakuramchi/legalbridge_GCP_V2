@@ -4,6 +4,7 @@ import { DetailBack, isWideLayout } from "./DetailBack.js";
 import { useReadOnly } from "./read-only.js";
 import { DocumentImport } from "./DocumentImport.js";
 import { ConditionSchedules } from "./ConditionSchedules.js";
+import { OutReports } from "./OutReports.js";
 import { ConditionRevisions } from "./ConditionRevisions.js";
 import { ConditionEdit } from "./ConditionEdit.js";
 import { ConditionMatters, ConditionScopes } from "./ConditionLinks.js";
@@ -721,6 +722,13 @@ export function ConditionsWorkspace(
               <ConditionRevisions conditionId={detail.id} onOpen={(id) => {
                 setResult(null); setSelected(id);
               }} />
+
+              {detail.direction === "out" && detail.kind === "license" && (
+                <OutReports conditionId={detail.id} reloadKey={flowVersion}
+                            onOpenCondition={(id) => { setResult(null); setSelected(id); }}
+                            onOpenWork={onOpen ? (id) => onOpen("work", id) : undefined}
+                            onOpenDocument={onOpenDocument} />
+              )}
 
               <ConditionSchedules conditionId={detail.id} reloadKey={flowVersion}
                 flatAmount={detail.pricingModel === "fixed" ? detail.flatAmount : null} currency={detail.currency}
