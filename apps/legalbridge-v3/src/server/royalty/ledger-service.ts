@@ -62,6 +62,14 @@ export interface ExpectedLine {
   workId: number | null; workTitle: string | null; why: string;
   /** 言語ごとに報告が来る許諾は、言語ごとに1行（A-061）。 */
   languages?: string[]; regions?: string[];
+  /** 人が置いた「予定」の行なら、その id（A-062。「予定を外す」で消す）。 */
+  planId?: number;
+}
+
+/** 人が置いた「予定」の行（A-062）。from_on 以降の回で来るはずとして待つ。 */
+export interface PlanLite {
+  id: number; conditionId: number; outConditionId: number | null; outName: string | null;
+  languages: string[]; regions: string[]; fromOn: string;
 }
 
 export type PartState = "before" | "waiting" | "reported" | "skipped" | "issued";
@@ -114,6 +122,7 @@ export function buildRounds(input: {
   events: LedgerEvent[];
   skips: Array<{ conditionId: number; scheduleId: number }>;
   outs: OutLite[];
+  plans?: PlanLite[];
   /** 1作品の中で見ているか。作家でまとめないときも、1作品の中は支払日でまとめる。 */
   bundle: Bundle | "single_work";
   today: string;
@@ -200,6 +209,20 @@ export function buildRounds(input: {
           }
         }
       }
+      // 人が置いた予定の行（A-062）。締めが from_on 以降の回で待つ。
+      for (const pl of (input.plans ?? []).filter((x) => x.conditionId === c.id)) {
+        if (p.closeOn && p.closeOn < pl.fromOn) continue;
+        const match = (e: { outConditionId: number | null; languages?: string[]; regions?: string[] }) =>
+          (e.outConditionId ?? null) === (pl.outConditionId ?? null)
+          && pl.languages.every((l) => (e.languages ?? []).includes(l))
+          && pl.regions.every((r) => (e.regions ?? []).includes(r));
+        if (p.events.some(match)) continue;
+        const dup = [...expected.entries()].find(([, x]) => match(x));
+        if (dup) { dup[1].planId = pl.id; dup[1].why = "予定"; continue; }
+        expected.set(`plan:${pl.id}`, { usageType: c.usageType, outConditionId: pl.outConditionId, outName: pl.outName,
+                                        workId: null, workTitle: null, why: "予定", languages: pl.languages, regions: pl.regions,
+                                        planId: pl.id });
+      }
       p.expected = [...expected.values()];
     });
     // 実績の無いまま過ぎた回は、人が「報告なし」にするまで報告待ちのまま出す
@@ -279,6 +302,8 @@ export interface WorkRoyaltyParty {
   openRounds: number; waiting: number; nextPayOn: string | null;
   otherWorks: number;
   requests: RoundRequest[];
+  /** 次にすること。報告待ちの行がある最初の回。無ければ null（締め前など）。 */
+  next: { roundKey: string; label: string; waiting: number; closeOn: string | null } | null;
 }
 
 const eventIds0 = (events: LedgerEvent[]) => events.map((e) => e.id);
@@ -310,7 +335,15 @@ export class RoyaltyLedgerService {
           nextPayOn: view.rounds.map((x) => x.payOn ?? x.closeOn).filter(Boolean).sort()[0] ?? null,
           otherWorks: Number((others.rows[0] as any)?.n ?? 0),
           requests: [...view.requests, ...view.rounds.flatMap((x) => x.requests)]
-            .filter((x, i, a) => a.findIndex((y) => y.id === x.id) === i)
+            .filter((x, i, a) => a.findIndex((y) => y.id === x.id) === i),
+          next: (() => {
+            const waitingOf = (x: Round) => x.parts.reduce((n, p) =>
+              n + (p.state === "waiting" ? Math.max(p.expected.length, 1) : p.state === "before" ? 0 : p.expected.length), 0);
+            const hit = view.rounds.find((x) => x.open && waitingOf(x) > 0);
+            if (!hit) return null;
+            const label = [...new Set(hit.parts.map((p) => p.label).filter(Boolean))].slice(0, 2).join("・") || (hit.payOn ?? "");
+            return { roundKey: hit.key, label, waiting: waitingOf(hit), closeOn: hit.closeOn };
+          })()
         });
       }
       return { parties: out.sort((a, b) => a.name.localeCompare(b.name, "ja")) };
@@ -392,6 +425,19 @@ export class RoyaltyLedgerService {
         `SELECT condition_id, schedule_id FROM royalty_round_skips WHERE condition_id = ANY($1::bigint[])`,
         [allIds])).rows as any[]).map((s) => ({ conditionId: currentOf.get(Number(s.condition_id))!, scheduleId: Number(s.schedule_id) }))
         : [];
+      const plans: PlanLite[] = ids.length ? ((await q.query(
+        `SELECT pl.id, pl.condition_id, pl.out_condition_id, oc.name AS out_name,
+                pl.scope_languages, pl.scope_regions, pl.from_on
+           FROM royalty_expected_lines pl
+           LEFT JOIN conditions oc ON oc.id = pl.out_condition_id
+          WHERE pl.condition_id = ANY($1::bigint[])
+          ORDER BY pl.id`, [allIds])).rows as any[])
+        .map((x) => ({ id: Number(x.id), conditionId: currentOf.get(Number(x.condition_id))!,
+                       outConditionId: int(x.out_condition_id), outName: str(x.out_name),
+                       languages: Array.isArray(x.scope_languages) ? x.scope_languages.map(String) : [],
+                       regions: Array.isArray(x.scope_regions) ? x.scope_regions.map(String) : [],
+                       fromOn: dateStr(x.from_on) ?? "0000-01-01" }))
+        : [];
       const workIds = [...new Set(rows.map((c) => int(c.work_id)).filter((x): x is number => !!x))];
       const outs = workIds.length ? ((await q.query(
         `SELECT id, name, usage_type, work_id, term_start,
@@ -420,7 +466,7 @@ export class RoyaltyLedgerService {
         schedules: schedules.filter((s) => s.conditionId === Number(c.id)).length
       }));
 
-      const built = buildRounds({ conditions, schedules, events, skips, outs, today,
+      const built = buildRounds({ conditions, schedules, events, skips, outs, plans, today,
         bundle: workId ? "single_work" : bundle });
 
       // 文書・送付・支払。
@@ -503,6 +549,50 @@ export class RoyaltyLedgerService {
   }
 
   /** 今期は無し（その回は報告が来なかった）。取り消しは undo。 */
+  /** 予定の行を置く（A-062）。許諾先は、その条件の作品の OUT 条件に限る。 */
+  async plan(input: { conditionId: number; outConditionId: number | null; languages: string[]; regions: string[];
+                      fromOn: string; note?: string | null }, actor: string): Promise<{ id: number }> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const c = (await client.query(
+          `SELECT id, usage_type, work_id FROM conditions WHERE id = $1 AND direction = 'in'`, [input.conditionId])).rows[0] as any;
+        if (!c) throw new DomainError("NOT_FOUND", `条件 ${input.conditionId} が見つかりません`);
+        if (input.outConditionId) {
+          const o = (await client.query(
+            `SELECT id FROM conditions WHERE id = $1 AND direction = 'out' AND status IN ('active', 'scheduled', 'draft')`,
+            [input.outConditionId])).rows[0];
+          if (!o) throw new DomainError("NOT_FOUND", "許諾先（OUT 条件）が見つかりません");
+        } else if (c.usage_type === "sublicense" || c.usage_type === "oem") {
+          throw new DomainError("VALIDATION", "再許諾・他社販売の予定は許諾先を選んでください");
+        }
+        const r = await client.query(
+          `INSERT INTO royalty_expected_lines
+             (condition_id, out_condition_id, scope_languages, scope_regions, from_on, note, created_by)
+           VALUES ($1, $2, $3::text[], $4::text[], $5::date, $6, $7) RETURNING id`,
+          [input.conditionId, input.outConditionId, input.languages, input.regions, input.fromOn,
+           str(input.note), actor]);
+        const id = Number((r.rows[0] as any).id);
+        await recordAudit(client, { actor, action: "royalty.plan_add", targetType: "condition", targetId: input.conditionId,
+          detail: { planId: id, outConditionId: input.outConditionId, languages: input.languages, regions: input.regions, fromOn: input.fromOn } });
+        return { id };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /** 予定の行を外す。実績は消えない（予定は「来るはず」の目印なだけ）。 */
+  async unplan(id: number, actor: string): Promise<{ ok: true }> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const r = await client.query("DELETE FROM royalty_expected_lines WHERE id = $1 RETURNING condition_id", [id]);
+        const row = r.rows[0] as any;
+        if (!row) throw new DomainError("NOT_FOUND", "その予定の行はもうありません");
+        await recordAudit(client, { actor, action: "royalty.plan_remove", targetType: "condition",
+          targetId: Number(row.condition_id), detail: { planId: id } });
+        return { ok: true };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
   async skip(conditionId: number, scheduleId: number, reason: string | null, actor: string, undo = false) {
     try {
       return await inTransaction(this.database, async (client) => {

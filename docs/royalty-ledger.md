@@ -65,6 +65,16 @@
 
 文書の画面の上には「← 作家 × 作品 の台帳へ戻る」が出る（台帳から計算書を作りに来たとき・台帳から決定した文書を開いたとき）。条件の出し方・締め・計算書のまとめ方は「条件と締めの設定…」を押したときだけ開く。
 
+### 3.3 予定の行（A-062）
+
+数字はまだ無いが、この許諾先・言語・地域から報告が来るはず、という行を人が先に置く（`royalty_expected_lines`）。回の「＋ 予定を作る」で 作品・利用形態 → 許諾先 → 言語 → 地域 → いつから（この回から／次の回から）を選ぶ。`from_on` 以降の締めの回で「来るはず」として待ち（前の回にあった行と同じ扱い）、数字が来たら「数字を入れる」で実績になり、その回からは予定の行は消える。来なければ「報告なし」（回ごと）か「予定を外す」（行を消す。実績は消えない）。「＋ 報告を追加」で記録した行も、以後の回では自動的に来るはずになる。
+
+### 3.4 入口
+
+- 作家カードに「▶ 次：1〜3月の回に報告待ちが 2 行」を出す（`WorkRoyaltyParty.next`）。押すとその回を開く。報告待ちが無ければ「締め前」「締めがありません」。
+- 回の上の手順の帯（1 作家 → 2 回 → 3 報告を入れる → 4 計算書）で、いまどこにいるかと次の一手（「最初の報告待ちへ ↓」「＋ 報告を追加」）を出す。
+- 作家 × 全作品では、報告の表を作品名の帯で区切る。帯にはその作品の条件と「＋ この作品の報告を追加」。この回に締めの無い作品は帯だけ出す。
+
 ## 4. 回の状態
 
 | 状態 | 条件 |
@@ -104,6 +114,7 @@
 | GET | `/api/v3/works/:id/royalty` | 閲覧（作品を許諾している作家の一覧） |
 | GET | `/api/v3/royalty-ledger?partyId=&workId=` | 閲覧（workId を外すと作家 × 全作品） |
 | POST / DELETE | `/api/v3/royalty-ledger/skips`（`conditionId`・`scheduleId`） | admin / legal |
+| POST / DELETE | `/api/v3/royalty-ledger/plans`・`/plans/:id`（`conditionId`・`outConditionId`・`languages`・`regions`・`fromOn`） | admin / legal |
 | POST | `/api/v3/royalty-ledger/skips/before`（`partyId`・`workId`・`before`） | admin / legal |
 | POST | `/api/v3/intake/:id/rounds` ・ `/rounds/unlink`（`scheduleIds`・`eventIds`） | admin / legal |
 | PUT | `/api/v3/royalty-ledger/timing`（`conditionId`・`timing`） | admin / legal |
@@ -118,6 +129,7 @@
 - `royalty_round_skips(condition_id, schedule_id, reason, created_by, created_at)`。
 - A-060：`intake_request_links.target_type` に `schedule`・`event` を足す。
 - A-061：`condition_events.scope_languages`・`scope_regions`（text[]）。
+- A-062：`royalty_expected_lines(id, condition_id, out_condition_id, scope_languages, scope_regions, from_on, note, created_by, created_at)`。
 
 ## 8. このあと
 

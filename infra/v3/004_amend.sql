@@ -2201,6 +2201,31 @@ COMMENT ON COLUMN v3.condition_events.scope_languages IS
 COMMENT ON COLUMN v3.condition_events.scope_regions IS
   'この実績（報告）の地域。空は指定なし（A-061）';
 
+-- ---------------------------------------------------------------------
+-- A-062 許諾料の台帳の「予定」の行（docs/royalty-ledger.md §3.3）
+--   数字はまだ無いが、この許諾先・言語・地域から報告が来るはず、という行を
+--   人が先に置く。from_on 以降の締めの回で「来るはず」として待つ（前の回に
+--   あった行と同じ扱い）。数字が来たら実績になり、来なければ「報告なし」か
+--   「予定を外す」（行を消す）。
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS v3.royalty_expected_lines (
+  id               bigserial PRIMARY KEY,
+  condition_id     bigint NOT NULL REFERENCES v3.conditions(id),
+  out_condition_id bigint REFERENCES v3.conditions(id),
+  scope_languages  text[],
+  scope_regions    text[],
+  from_on          date NOT NULL,
+  note             text,
+  created_by       text,
+  created_at       timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS royalty_expected_lines_condition_idx
+  ON v3.royalty_expected_lines (condition_id);
+COMMENT ON TABLE v3.royalty_expected_lines IS
+  '許諾料の台帳の「予定」の行。この許諾先・言語・地域から from_on 以降の回に報告が来るはず。A-062';
+GRANT SELECT, INSERT, DELETE ON v3.royalty_expected_lines TO legalbridge_v3_runtime;
+GRANT USAGE, SELECT ON SEQUENCE v3.royalty_expected_lines_id_seq TO legalbridge_v3_runtime;
+
 COMMIT;
 
 -- 確認
@@ -2520,3 +2545,7 @@ SELECT count(*) AS CHECK数 FROM pg_constraint
 \echo '--- 実績の言語・地域（A-061。列 2 であること） ---'
 SELECT count(*) AS 列 FROM information_schema.columns
  WHERE table_schema='v3' AND table_name='condition_events' AND column_name IN ('scope_languages', 'scope_regions');
+
+\echo '--- 台帳の予定の行（A-062。表 1 であること） ---'
+SELECT count(*) AS 表 FROM information_schema.tables
+ WHERE table_schema='v3' AND table_name='royalty_expected_lines';
