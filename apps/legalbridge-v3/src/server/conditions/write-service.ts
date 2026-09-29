@@ -722,6 +722,41 @@ export class ConditionWriteService {
    * 金額・期間などの変更。V2 には存在しなかった経路。
    * 実績（condition_events）を持つ条件は履歴を壊さないため改訂（新しい行）にする。
    */
+  /**
+   * 契約期間の更新。終了日を新しい日付に伸ばす。
+   *
+   * 実績・支払が無ければその場で書き換え、支払が立っていれば改訂（新版）にする。
+   * 料率・締めは変えない。台帳の条件の一覧から、1本ずつでもまとめてでも押せる。
+   */
+  async renewTerm(id: number, newEnd: string, actor: string, reason?: string | null):
+    Promise<{ id: number; conditionNo: string | null; mode: "in_place" | "revised"; from: string | null; to: string }> {
+    try {
+      const before = await this.database.query(
+        "SELECT id, condition_no, status, term_end FROM conditions WHERE id = $1", [id]);
+      const row = before.rows[0] as { condition_no: string | null; status: string; term_end: unknown } | undefined;
+      if (!row) throw new DomainError("NOT_FOUND", `条件 ${id} が見つかりません`);
+      const from = dateStr(row.term_end);
+      if (from && newEnd <= from) {
+        throw new DomainError("VALIDATION", `新しい終了日 ${newEnd} は、いまの終了日 ${from} より後にしてください`);
+      }
+      const why = String(reason ?? "").trim() || `契約期間の更新（${from ?? "期限なし"} → ${newEnd}）`;
+      let mode: "in_place" | "revised" = "in_place";
+      try {
+        await this.updateEconomics(id, { termEnd: newEnd }, actor, null, { inPlace: true });
+      } catch (error) {
+        // 支払が立っている条件は直接書き換えられない。改訂（新版）で伸ばす。
+        if (!(error instanceof DomainError && error.code === "CONFLICT" && /支払が立っている/.test(error.message))) throw error;
+        await this.updateEconomics(id, { termEnd: newEnd }, actor, null);
+        mode = "revised";
+      }
+      await recordAudit(this.database, {
+        actor, action: "condition.renew_term", targetType: "condition", targetId: id,
+        detail: { from, to: newEnd, mode, reason: why }
+      });
+      return { id, conditionNo: row.condition_no, mode, from, to: newEnd };
+    } catch (error) { throw translate(error); }
+  }
+
   async updateEconomics(
     id: number, patch: EconomicsPatch, actor: string, effectiveFrom?: string | null,
     options: { inPlace?: boolean } = {}
