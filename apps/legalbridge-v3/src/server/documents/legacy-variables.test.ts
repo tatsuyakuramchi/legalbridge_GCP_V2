@@ -341,3 +341,18 @@ test("登録番号は T＋13 桁にそろえる（T の重なり・ハイフン�
   assert.equal(normalizeInvoiceNo(""), undefined);
   assert.equal(normalizeInvoiceNo(null), undefined);
 });
+
+test("計算書の件名の原作名：作品をまたいで1枚にまとめたら、載っている作品の原作名を「・」で並べる", () => {
+  assert.equal(at("originalWork", { condition: { work: { title: "ito", sourceTitle: "ito" } } }), "ito");
+  const bundled = {
+    condition: { work: { title: "ito", sourceTitle: "ito" } },
+    conditions: [
+      { work: { title: "ito", sourceTitle: "ito" } },
+      { work: { title: "星降る夜のはなし", sourceTitle: "星降る夜のはなし" } },
+      // 同じ作品の別の条件（利用形態違い）は重ねない
+      { work: { title: "ito", sourceTitle: "ito" } }
+    ]
+  };
+  assert.equal(at("originalWork", bundled), "ito・星降る夜のはなし");
+  assert.equal(at("原作名", bundled), "ito・星降る夜のはなし");
+});

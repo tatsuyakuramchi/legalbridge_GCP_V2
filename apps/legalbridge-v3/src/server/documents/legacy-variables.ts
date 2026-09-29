@@ -287,8 +287,14 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown; noSuffix?: s
     get: (c) => c.matter?.title ?? c.condition?.name },
   // 計算書の件名「◯◯ 利用許諾料のご報告」の◯◯は原作名。イン条件が当社作品に
   // ぶら下がっていても、系譜の親の原作名を出す（無ければ作品名）。
+  // 作品をまたいで 1 枚にまとめた計算書（作家でまとめる）は、載っている作品の原作名を
+  // 「・」で並べる（代表の条件の作品だけが件名に出ると、他の作品の分が読めない）。
   { names: ["originalWork", "原著作物名", "原作名"],
-    get: (c) => c.condition?.work?.sourceTitle ?? c.condition?.work?.title },
+    get: (c) => {
+      const titles = [...new Set(((c.conditions ?? []) as Array<{ work?: { sourceTitle?: string | null; title?: string | null } }>)
+        .map((x) => x?.work?.sourceTitle ?? x?.work?.title).filter((t): t is string => Boolean(t)))];
+      return titles.length > 1 ? titles.join("・") : (c.condition?.work?.sourceTitle ?? c.condition?.work?.title);
+    } },
   { names: ["WORK_TITLE", "作品名", "対象作品予定名", "対象製品予定名"],
     get: (c) => c.condition?.work?.title },
   { names: ["productName", "製品名", "商品名"],
