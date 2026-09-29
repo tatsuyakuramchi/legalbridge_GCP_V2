@@ -200,19 +200,28 @@ export function buildRounds(input: {
           // 1組1行で待つ。「全言語」「全世界」は分けない（1行）。
           const langs = (o.languages ?? []).filter((l) => l !== "全言語");
           const regs = (o.regions ?? []).filter((r) => r !== "全世界");
-          const ls = langs.length > 1 ? langs : [null];
-          const rs = regs.length > 1 ? regs : [null];
+          // 1つでも行に持たせる（報告の言語・地域が実績に入り、計算書の製品名・許諾範囲に出る）。
+          const ls = langs.length ? langs : [null];
+          const rs = regs.length ? regs : [null];
           for (const l of ls) for (const r of rs) {
+            // 言語・地域を持たない報告・行（A-061 より前のもの）は、その組を覆っているとみなす。
             const match = (e: { languages?: string[]; regions?: string[] }) =>
-              (!l || (e.languages ?? []).includes(l)) && (!r || (e.regions ?? []).includes(r));
+              (!l || !(e.languages ?? []).length || (e.languages ?? []).includes(l))
+              && (!r || !(e.regions ?? []).length || (e.regions ?? []).includes(r));
             const hit = p.events.some((e) => e.outConditionId === o.id && match(e));
-            const already = [...expected.values()].some((x) => x.outConditionId === o.id && match(x));
-            if (!hit && !already) {
-              expected.set(`${c.usageType}|${o.id}||${l ?? ""}|${r ?? ""}`,
-                { usageType: c.usageType, outConditionId: o.id, outName: o.name,
-                  workId: null, workTitle: null, why: "生きている許諾先",
-                  languages: l ? [l] : [], regions: r ? [r] : [] });
+            if (hit) continue;
+            const dup = [...expected.values()].find((x) => x.outConditionId === o.id && match(x));
+            if (dup) {
+              // 前の回から来た行が言語・地域を欠いていれば、許諾先の範囲で埋める
+              // （その行に打った報告に言語・地域が入るように）。
+              if (l && !(dup.languages ?? []).length) dup.languages = [l];
+              if (r && !(dup.regions ?? []).length) dup.regions = [r];
+              continue;
             }
+            expected.set(`${c.usageType}|${o.id}||${l ?? ""}|${r ?? ""}`,
+              { usageType: c.usageType, outConditionId: o.id, outName: o.name,
+                workId: null, workTitle: null, why: "生きている許諾先",
+                languages: l ? [l] : [], regions: r ? [r] : [] });
           }
         }
       }

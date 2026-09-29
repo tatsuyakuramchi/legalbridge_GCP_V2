@@ -339,11 +339,11 @@ export class ConditionEventService {
     try {
       return await inTransaction(this.database, async (client) => {
         const head = await client.query(
-          "SELECT id, status, direction, rate_ppm, currency FROM conditions WHERE id = $1",
+          "SELECT id, status, direction, rate_ppm, currency, kind FROM conditions WHERE id = $1",
           [conditionId]);
         const condition = head.rows[0] as {
           id: number; status: string; direction: string;
-          rate_ppm: number | null; currency: string;
+          rate_ppm: number | null; currency: string; kind?: string;
         } | undefined;
         if (!condition) throw new DomainError("NOT_FOUND", `条件 ${conditionId} が見つかりません`);
         if (condition.status !== "active" && condition.status !== "draft") {
@@ -369,7 +369,9 @@ export class ConditionEventService {
         let serviceFrom = input.serviceFrom || null;
         let serviceTo = input.serviceTo || null;
         if (input.scheduleId) {
-          const line = await claimSchedule(client, conditionId, input.scheduleId);
+          // 許諾料の締めには、許諾先 × 言語 × 地域 ごとの報告が何件も付く。
+          const line = await claimSchedule(client, conditionId, input.scheduleId,
+            { allowMany: condition.kind === "license" });
           scheduleId = input.scheduleId;
           occurredOn = occurredOn || (dateStr(line.due_on) ?? occurredOn);
           // 予定の名前を実績の期間に写す。「2026年4月分」がそのまま計算書に出る。

@@ -41,7 +41,9 @@ export const TRIGGER_KINDS: Array<{ value: TriggerKind; label: string; hint: str
  * 「その条件の回か」「もう実績が付いていないか」の規則をここだけに置く。
  */
 export async function claimSchedule(
-  client: Queryable, conditionId: number, scheduleId: number
+  client: Queryable, conditionId: number, scheduleId: number,
+  /** 許諾料の締めは、許諾先 × 言語 × 地域 ごとに報告が来るので、1つの締めに実績が何件も付く。 */
+  options: { allowMany?: boolean } = {}
 ): Promise<{ seq: number; label: string | null; trigger_kind: TriggerKind;
              planned_amount: string | number; due_on: unknown;
              contract_form: string | null; service_from: unknown; service_to: unknown }> {
@@ -58,6 +60,8 @@ export async function claimSchedule(
   if (!line) throw new DomainError("NOT_FOUND", `予定明細 ${scheduleId} が見つかりません`);
 
   // 1つの予定に実績を二重に付けない。直すなら実績を取り消してからにする。
+  // 許諾料の締め（allowMany）は例外：1つの締めに許諾先・言語・地域ごとの報告が並ぶ。
+  if (options.allowMany) return line;
   const already = await client.query(
     "SELECT id FROM condition_events WHERE schedule_id = $1 AND status = 'active'",
     [scheduleId]);
