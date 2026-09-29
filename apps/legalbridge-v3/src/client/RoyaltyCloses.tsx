@@ -14,10 +14,14 @@ import type { LedgerCondition } from "../server/royalty/ledger-service.js";
  */
 
 interface ScheduleRow {
-  seq: number; label: string | null; triggerKind: string; plannedAmount: number;
+  id: number; seq: number; label: string | null; triggerKind: string; plannedAmount: number;
   dueOn: string | null; payOn: string | null; contractForm: string | null;
   serviceFrom: string | null; serviceTo: string | null;
+  /** その回に付いた実績。付いていれば外せない（日付・名前は直せる）。 */
+  eventId: number | null; status: "planned" | "recorded" | "paid";
 }
+/** いまの締めの直し。回（seq）ごとに、直した欄だけ持つ。 */
+interface Edit { label?: string; dueOn?: string; payOn?: string }
 interface Generated {
   seq: number; dueOn: string | null; payOn: string | null;
   serviceFrom?: string | null; serviceTo?: string | null;
@@ -73,6 +77,11 @@ export function RoyaltyCloses(
   }
 ) {
   const [existing, setExisting] = useState<ScheduleRow[] | null>(null);
+  const [edits, setEdits] = useState<Record<number, Edit>>({});
+  const [removed, setRemoved] = useState<Set<number>>(new Set());
+  const dirty = Object.keys(edits).length > 0 || removed.size > 0;
+  const edit = (seq: number, patch: Edit) => setEdits((cur) => ({ ...cur, [seq]: { ...(cur[seq] ?? {}), ...patch } }));
+  const valueOf = (l: ScheduleRow, k: keyof Edit) => (edits[l.seq]?.[k] ?? l[k] ?? "") as string;
   const [months, setMonths] = useState(3);
   const [count, setCount] = useState("4");
   const [start, setStart] = useState("");
@@ -109,26 +118,39 @@ export function RoyaltyCloses(
   }
 
   async function save() {
-    if (!draft || !existing) return;
-    if (draft.some((d) => !d.dueOn)) { setError("締め日が空の回があります"); return; }
+    if (!existing) return;
+    const adding = draft ?? [];
+    if (adding.some((d) => !d.dueOn)) { setError("締め日が空の回があります"); return; }
+    const kept = existing.filter((l) => !removed.has(l.seq));
+    if (kept.some((l) => !valueOf(l, "dueOn"))) { setError("締め日が空の回があります"); return; }
     setError(null); setBusy(true);
     try {
       const top = existing.reduce((m, l) => Math.max(m, l.seq), 0);
       await api.put(`/conditions/${condition.id}/schedules`, {
         lines: [
-          // いまある回はそのまま送り返す（外すと消える）。
-          ...existing.map((l) => ({
-            seq: l.seq, label: l.label, triggerKind: l.triggerKind, plannedAmount: l.plannedAmount,
-            dueOn: l.dueOn, payOn: l.payOn, contractForm: l.contractForm,
-            serviceFrom: l.serviceFrom, serviceTo: l.serviceTo
-          })),
-          ...draft.map((d, i) => ({
+          // いまある回は、直した欄を重ねて送り返す（送らない回は消える）。
+          ...kept.map((l) => {
+            const dueOn = valueOf(l, "dueOn") || null;
+            return {
+              seq: l.seq, label: (valueOf(l, "label") || "").trim() || null, triggerKind: l.triggerKind, plannedAmount: l.plannedAmount,
+              dueOn, payOn: valueOf(l, "payOn") || null, contractForm: l.contractForm,
+              serviceFrom: l.serviceFrom,
+              // 締め日を直したら、その回が受け持つ期間の終わりも合わせる。
+              serviceTo: l.triggerKind === "periodic" && edits[l.seq]?.dueOn ? dueOn : l.serviceTo
+            };
+          }),
+          ...adding.map((d, i) => ({
             seq: top + i + 1, label: d.label.trim() || null, triggerKind: "periodic", plannedAmount: 0,
             dueOn: d.dueOn, payOn: d.payOn || null, serviceFrom: d.from, serviceTo: d.dueOn
           }))
         ]
       });
-      onSaved(`${condition.usageLabel} の締めを ${draft.length} 回作りました`);
+      const parts = [
+        adding.length ? `${adding.length} 回足す` : "",
+        Object.keys(edits).length ? `${Object.keys(edits).length} 回直す` : "",
+        removed.size ? `${removed.size} 回外す` : ""
+      ].filter(Boolean).join("・");
+      onSaved(`${condition.usageLabel} の締め：${parts || "変更なし"}`);
     } catch (e) { setError((e as ApiError).message); }
     finally { setBusy(false); }
   }
@@ -139,7 +161,7 @@ export function RoyaltyCloses(
   return (
     <div className="panel">
       <div className="panel-hd">
-        <h2>締めを{existing?.length ? "足す" : "作る"}</h2>
+        <h2>{existing?.length ? "締めを直す・足す" : "締めを作る"}</h2>
         <span className="faint">{condition.workTitle ?? ""} · {condition.usageLabel}</span>
       </div>
       <div className="panel-bd stack">
@@ -148,7 +170,37 @@ export function RoyaltyCloses(
           {condition.paymentTerms && <> 条件の支払条件：<b>{condition.paymentTerms}</b></>}
         </div>
         {existing && existing.length > 0 && (
-          <div className="faint">いまの締め：{existing.length} 回（最後 {lastClose ?? "—"}）。この後ろに足します。</div>
+          <div className="stack" style={{ gap: 4 }}>
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <b>いまの締め {existing.length} 回</b>
+              <span className="faint">締め日・支払日・対象期間はここで直せます。実績の付いた回は外せません（日付は直せます）。</span>
+            </div>
+            <div className="tablewrap">
+              <table>
+                <thead><tr><th>回</th><th>対象期間</th><th>締め日</th><th>支払日</th><th>実績</th><th></th></tr></thead>
+                <tbody>
+                  {existing.map((l) => (
+                    <tr key={l.seq} style={removed.has(l.seq) ? { opacity: 0.45, textDecoration: "line-through" } : undefined}>
+                      <td className="faint">{l.seq}</td>
+                      <td><input className="inline-input" value={valueOf(l, "label")} aria-label={`${l.seq} 回目の対象期間`}
+                                 disabled={removed.has(l.seq)} onChange={(e) => edit(l.seq, { label: e.target.value })} /></td>
+                      <td><input className="inline-input" type="date" value={valueOf(l, "dueOn")} aria-label={`${l.seq} 回目の締め日`}
+                                 disabled={removed.has(l.seq)} onChange={(e) => edit(l.seq, { dueOn: e.target.value })} /></td>
+                      <td><input className="inline-input" type="date" value={valueOf(l, "payOn")} aria-label={`${l.seq} 回目の支払日`}
+                                 disabled={removed.has(l.seq)} onChange={(e) => edit(l.seq, { payOn: e.target.value })} /></td>
+                      <td>{l.eventId
+                        ? <span className={`tag ${l.status === "paid" ? "ok" : "accent"}`}>{l.status === "paid" ? "支払済" : "実績あり"}</span>
+                        : <span className="faint">なし</span>}</td>
+                      <td>{!l.eventId && (removed.has(l.seq)
+                        ? <button className="linky" onClick={() => setRemoved((s) => { const n = new Set(s); n.delete(l.seq); return n; })}>戻す</button>
+                        : <button className="linky" onClick={() => setRemoved((s) => new Set(s).add(l.seq))}>外す</button>)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="faint">足すなら下で並べて、まとめて「保存する」。最後の締め {lastClose ?? "—"} の後ろに足します。</div>
+          </div>
         )}
         <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "end" }}>
           <label className="stack" style={{ gap: 2 }}>
@@ -202,7 +254,7 @@ export function RoyaltyCloses(
         )}
         {error && <div className="alert">{error}</div>}
         <div className="row" style={{ gap: 6 }}>
-          <button className="btn primary" disabled={busy || !draft?.length} onClick={() => void save()}>保存する</button>
+          <button className="btn primary" disabled={busy || (!draft?.length && !dirty)} onClick={() => void save()}>保存する</button>
           <button className="btn" disabled={busy} onClick={onCancel}>やめる</button>
         </div>
       </div>
