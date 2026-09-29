@@ -115,6 +115,8 @@ export function RoyaltyLedger(
   const openRequests = useOpenRequests(version);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [settings, setSettings] = useState(false);
+  /** 「締めを作る」の案内から開いたとき、その条件の締めのフォームを最初から開く。 */
+  const [scheduleFor, setScheduleFor] = useState<number | null>(null);
   const [adding, setAdding] = useState<{ mode: "report" | "plan"; conditionId?: number } | null>(null);
   const [bulkBefore, setBulkBefore] = useState(new Date().toISOString().slice(0, 10));
   async function linkRequest(requestId: number, round: Round, unlink = false) {
@@ -168,7 +170,9 @@ export function RoyaltyLedger(
             <span className="faint">{p.conditions.map((c) => `${c.usageLabel} ${pct(c.ratePpm)}`).join("・")}</span>
             {p.next
               ? <span className="ledger-next">▶ 次：{p.next.label}の回に報告待ちが {p.next.waiting} 行</span>
-              : <span className="faint">▶ 次：{p.nextPayOn ? `締め前（次の支払 ${md(p.nextPayOn)}）。いま入れるものはありません` : "締めがありません（条件と締めの設定…）"}</span>}
+              : p.noClose.length
+                ? <span className="ledger-next" style={{ color: "var(--warn)" }}>▶ 次：{p.noClose.map((c) => c.usageLabel).join("・")} の締めを作る（回が立ちません）</span>
+                : <span className="faint">▶ 次：{p.nextPayOn ? `締め前（次の支払 ${md(p.nextPayOn)}）。いま入れるものはありません` : "締めがありません（条件と締めの設定…）"}</span>}
             <span className="row" style={{ gap: 4 }}>
               <span className="tag">開いている回 {p.openRounds}</span>
               {p.nextPayOn && <span className="tag">次の支払 {md(p.nextPayOn)}</span>}
@@ -219,7 +223,8 @@ export function RoyaltyLedger(
                 </span>
               </div>
               <div className="panel-bd">
-                <Terms conditions={view.conditions} allWorks={allWorks} canWrite={canWrite} onChanged={reload} onError={setError} />
+                <Terms conditions={view.conditions} allWorks={allWorks} canWrite={canWrite} onChanged={reload} onError={setError}
+                       initialScheduling={scheduleFor} />
                 {canWrite && oldWaiting > 0 && (
                   <div className="row" style={{ marginTop: 8 }}>
                     {!bulkOpen && <button className="btn btn-sm" onClick={() => setBulkOpen(true)}>空の回をまとめて報告なしに…</button>}
@@ -241,6 +246,7 @@ export function RoyaltyLedger(
           {/* 手順の帯：いまどこにいて、次に何をするか。 */}
           {(() => {
             const waiting = round ? waitingLinesOf(round) : 0;
+            const noClose = view.conditions.filter((c) => c.timing === "periodic" && !c.schedules);
             const periods = round ? [...new Set(round.parts.map((p) => p.label).filter(Boolean))] : [];
             const entriesLeft = round ? round.parts.some((p) => p.events.some((e) => !e.documentId)) : false;
             const stage = !round ? 1 : waiting > 0 ? 3 : entriesLeft ? 4 : round.documents.length ? 5 : 3;
@@ -250,7 +256,19 @@ export function RoyaltyLedger(
                 <div className={cls(1)}><span className="k">1 作家</span><b>{view.party.name}</b>
                   <span className="faint">{view.works.length} 作品 · {view.conditions.length} 条件</span></div>
                 <div className={cls(2)}><span className="k">2 回</span><b>{round ? (periods.join("・") || roundTitle(round)) : "左で回を選ぶ"}</b>
-                  <span className="faint">{round ? `締め ${md(round.closeOn)} · 支払 ${round.payOn ? md(round.payOn) : "—"}` : "報告待ちのある回から"}</span></div>
+                  <span className="faint">{round ? `締め ${md(round.closeOn)} · 支払 ${round.payOn ? md(round.payOn) : "—"}` : "報告待ちのある回から"}</span>
+                  {noClose.length > 0 && (
+                    <span className="stack" style={{ gap: 2, marginTop: 2 }}>
+                      <span style={{ color: "var(--warn)", fontSize: 12 }}>
+                        {noClose.map((c) => c.usageLabel).join("・")} は時限式なのに締めがなく、回が立ちません。
+                      </span>
+                      {canWrite && (
+                        <button className="btn btn-sm primary" style={{ alignSelf: "flex-start" }}
+                                onClick={() => { setScheduleFor(noClose[0].id); setSettings(true); }}>締めを作る</button>
+                      )}
+                    </span>
+                  )}
+                </div>
                 <div className={cls(3)}><span className="k">3 報告を入れる</span>
                   <b>{!round ? "—" : waiting > 0 ? `報告待ち ${waiting} 行` : "入力済"}</b>
                   <span className="faint">来た数字を行に打つ。来ないものは「報告なし」</span>
@@ -314,12 +332,13 @@ export function RoyaltyLedger(
 
 /** この組の条件。料率と出し方（時限式／イベント式）。予定明細が無ければその場で作る。 */
 function Terms(
-  { conditions, allWorks, canWrite, onChanged, onError }: {
+  { conditions, allWorks, canWrite, onChanged, onError, initialScheduling = null }: {
     conditions: LedgerCondition[]; allWorks: boolean; canWrite: boolean;
     onChanged: (message?: string) => void; onError: (m: string) => void;
+    initialScheduling?: number | null;
   }
 ) {
-  const [scheduling, setScheduling] = useState<number | null>(null);
+  const [scheduling, setScheduling] = useState<number | null>(initialScheduling);
   async function setTiming(c: LedgerCondition, timing: string) {
     try {
       await api.put("/royalty-ledger/timing", { conditionId: c.id, timing: timing || null });

@@ -315,7 +315,8 @@ function AddLine(
     onAdded: (message: string) => void; onError: (m: string) => void;
   }
 ) {
-  const parts = round.parts.filter((p) => !p.skipped && p.state !== "issued");
+  // 報告なしにした回には足さない。計算書済の回には足せる（遅れて来た報告は次の計算書に載る）。
+  const parts = round.parts.filter((p) => !p.skipped);
   const first = parts.find((p) => p.conditionId === conditionId) ?? parts[0];
   const [partKey, setPartKey] = useState(first ? `${first.conditionId}:${first.scheduleId ?? ""}` : "");
   const [fromWhen, setFromWhen] = useState<"this" | "next">("this");
@@ -337,7 +338,15 @@ function AddLine(
   }, [cond?.id, usage]);
   const out = outs.find((o) => String(o.id) === outId) ?? null;
   useEffect(() => { setLanguage(out?.languages[0] ?? ""); setRegion(out?.regions[0] ?? ""); }, [out?.id]);
-  if (!cond || !part) return <div className="faint">足せる行がありません。</div>;
+  if (!cond || !part) {
+    return (
+      <div className="note stack" style={{ gap: 4 }}>
+        <b>足せる行がありません</b>
+        <span className="faint">この回の条件はすべて「報告なし」です。取り消してから足すか、別の回を選んでください。</span>
+        <button className="btn btn-sm" onClick={onCancel}>閉じる</button>
+      </div>
+    );
+  }
   const inHouse = cond.usageType === "in_house";
   const f = fieldsFor(usage ?? (inHouse ? "in_house" : null), cond.pricingModel);
 
