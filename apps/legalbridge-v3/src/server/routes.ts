@@ -879,7 +879,9 @@ export function createRoutes(database: Transactable) {
     status: z.enum(["todo", "doing", "blocked", "done"]).optional(),
     title: z.string().trim().min(1).max(300).optional(),
     assigneeStaffId: z.coerce.number().int().positive().nullable().optional(),
-    dueOn: intakeDate
+    dueOn: intakeDate,
+    // 依頼者のメール（元の依頼に持つ）。文書のメールの下書きの宛先になる。
+    requesterEmail: z.string().trim().max(200).nullable().optional()
   });
   router.patch("/tasks/:id", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
@@ -2825,6 +2827,8 @@ export function createRoutes(database: Transactable) {
     templateKey: z.string().trim().min(1).max(60),
     conditionIds: z.array(z.coerce.number().int().positive()).max(500).default([]),
     matterId: z.coerce.number().int().positive().nullable().optional(),
+    // デイリータスクから作るとき、その元の依頼（文書を依頼に繋ぐ。A-064）。
+    requestId: z.coerce.number().int().positive().nullable().optional(),
     agreementId: z.coerce.number().int().positive().nullable().optional(),
     manualInputs: z.record(z.string(), z.unknown()).default({}),
     // 候補に出すための文脈。プレビューでは値を見せるだけで、保存はしない。
@@ -3323,6 +3327,8 @@ export function createRoutes(database: Transactable) {
   const bundleSchema = z.object({
     templateKey: z.string().trim().min(1).max(120),
     matterId: z.coerce.number().int().positive().nullable().optional(),
+    // デイリータスクから作るとき、その元の依頼（文書を依頼に繋ぐ。A-064）。
+    requestId: z.coerce.number().int().positive().nullable().optional(),
     agreementId: z.coerce.number().int().positive().nullable().optional(),
     manualInputs: z.record(z.string(), z.unknown()).default({}),
     entries: z.array(calculationSchema.extend({
@@ -3389,7 +3395,7 @@ export function createRoutes(database: Transactable) {
       const draft = await issues.createDraft({
         templateKey: input.templateKey,
         conditionIds: input.entries.map((e) => e.conditionId),
-        matterId: input.matterId ?? null,
+        matterId: input.matterId ?? null, requestId: input.requestId ?? null,
         agreementId: input.agreementId ?? null,
         // 本文はここに焼き付けた行から描く。計算済みなので、印字のときに
         // 計算し直さない（rs_bundle_lines を royalty-patch が拾う）。
@@ -3444,6 +3450,8 @@ export function createRoutes(database: Transactable) {
     conditionIds: z.array(z.coerce.number().int().positive()).max(500).default([]),
     eventIds: z.array(z.coerce.number().int().positive()).max(200).default([]),
     matterId: z.coerce.number().int().positive().nullable().optional(),
+    // デイリータスクから作るとき、その元の依頼（文書を依頼に繋ぐ。A-064）。
+    requestId: z.coerce.number().int().positive().nullable().optional(),
     agreementId: z.coerce.number().int().positive().nullable().optional(),
     manualInputs: z.record(z.string(), z.unknown()).default({}),
     /** 入れると計算書として確定する。条件は1件だけ。 */
@@ -3489,8 +3497,8 @@ export function createRoutes(database: Transactable) {
       // 3. 下書き → 発行。失敗したら下書きは捨てる。
       const draft = await issues.createDraft({
         templateKey: input.templateKey, conditionIds: input.conditionIds,
-        matterId: input.matterId ?? null, agreementId: input.agreementId ?? null,
-        manualInputs: input.manualInputs
+        matterId: input.matterId ?? null, requestId: input.requestId ?? null,
+        agreementId: input.agreementId ?? null, manualInputs: input.manualInputs
       }, who);
       let issued;
       try {

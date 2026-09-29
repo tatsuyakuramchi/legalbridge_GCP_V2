@@ -89,6 +89,8 @@ function Refs(
 export function DocumentsWorkspace(
   { start, openDocumentId, openNonce, onOpen, onBack }: {
     start?: { conditionIds: number[]; eventIds: number[]; matterId?: number | null;
+              /** デイリータスクから来たとき、その元の依頼。作った文書を依頼に繋ぐ。 */
+              requestId?: number | null;
               /**
                * 呼んだ側が決めているひな形。計算書のように「何を作るか」が
                * 移る前から決まっている経路で渡す。渡さないと既定（先頭）の
@@ -423,6 +425,7 @@ export function DocumentsWorkspace(
   const withoutEvents = picked.filter((cid) => !events.some((e) => e.conditionId === cid));
   /** 案件。案件や条件の画面から来たとき、または開いた下書きのもの。無ければサーバが条件から引く。 */
   const matterId = start?.matterId ?? draftMatterId ?? null;
+  const requestId = start?.requestId ?? null;
 
   // 案件が決まっていれば、その案件に紐づく条件だけを候補にする。全社の条件が
   // 並ぶと、同じ名前の別案件の条件や改訂前の版を取り違える。
@@ -500,8 +503,8 @@ export function DocumentsWorkspace(
   ), [isStatement, stmt, inputs]);
   const body = useMemo(() => ({
     templateKey, conditionIds: picked, eventIds: pickedEvents,
-    manualInputs: previewInputs, matterId, agreementId
-  }), [templateKey, picked, pickedEvents, previewInputs, matterId, agreementId]);
+    manualInputs: previewInputs, matterId, agreementId, requestId
+  }), [templateKey, picked, pickedEvents, previewInputs, matterId, agreementId, requestId]);
 
   // 打つたびに問い合わせない。少し待ってからプレビューを取り直す。
   const manualJson = useDebounced(JSON.stringify(previewInputs), 600);
@@ -597,7 +600,7 @@ export function DocumentsWorkspace(
         id = draft.id;
       } else {
         const r = await api.post<{ id: number }>("/documents",
-          { templateKey, conditionIds: picked, manualInputs, matterId, agreementId });
+          { templateKey, conditionIds: picked, manualInputs, matterId, agreementId, requestId });
         id = r.id;
         setDraft({ id, no: null });
       }
@@ -634,7 +637,7 @@ export function DocumentsWorkspace(
         // 計算し直すので、画面に出ている試算の値は送らない。
         const result = await api.post<{ document: { id: number; documentNo: string } }>(
           "/statement-documents", {
-            templateKey, matterId,
+            templateKey, matterId, requestId,
             manualInputs: inputs,
             entries: stmtEntries.map((e) => ({ ...e, period: stmtPeriod.trim() || null })),
             // 訂正版：決定の瞬間に元の計算書が退き、実績がこちらへ移る。

@@ -85,3 +85,10 @@ test("案件に移す（既存）：統合済みの案件には移せない。�
     (t.includes("FROM tasks WHERE id = $1 FOR UPDATE") ? [task({ matter_id: 42 })] : undefined));
   await assert.rejects(new TaskWriteService(already).moveToMatter(9, { mode: "new" }, "x"), /もう案件に入っています/);
 });
+
+test("依頼者のメールは元の依頼に書く。形が悪ければ止める", async () => {
+  const d = new FakeDatabase((t) => (t.includes("FROM tasks WHERE id = $1 FOR UPDATE") ? [task()] : undefined));
+  await new TaskWriteService(d).update(9, { requesterEmail: " Tanaka@Example.co.jp " }, "x");
+  assert.deepEqual(d.find("UPDATE intake_requests SET requester_email")!.params, [7, "tanaka@example.co.jp"]);
+  await assert.rejects(new TaskWriteService(d).update(9, { requesterEmail: "tanaka" }, "x"), /メールの形/);
+});

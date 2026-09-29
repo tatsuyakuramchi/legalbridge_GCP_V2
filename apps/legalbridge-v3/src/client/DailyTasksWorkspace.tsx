@@ -40,7 +40,7 @@ interface Counts { todo: number; doing: number; wait: number; late: number; done
 interface Detail {
   task: Task;
   request: { id: number; requestNo: string | null; title: string; detail: string | null; purpose: string | null;
-             targetDocNo: string | null; requesterName: string | null; requesterSlackId: string | null;
+             targetDocNo: string | null; requesterName: string | null; requesterSlackId: string | null; requesterEmail: string | null;
              counterpartyName: string | null; kind: string | null; handledAt: string | null };
   matterCandidates: Array<{ id: number; matterNo: string | null; title: string; status: string; why: string }>;
   conditions: Array<{ id: number; conditionNo: string | null; name: string;
@@ -60,8 +60,8 @@ export function DailyTasksWorkspace(
     /** この作業を選んだ状態で開く。 */
     initialId?: number;
     onOpenMatter?: (matterId: number) => void;
-    /** 依頼の条件を載せた状態で文書の画面へ移る（案件なし）。 */
-    onCompose?: (conditionIds: number[], templateKey: string | null) => void;
+    /** 依頼の条件を載せた状態で文書の画面へ移る（案件なし。作った文書は依頼に繋がる）。 */
+    onCompose?: (conditionIds: number[], templateKey: string | null, requestId: number) => void;
     onOpenDocument?: (documentId: number) => void;
     /** 計算書の依頼を、作品の利用許諾計算（許諾料の台帳）で開く。 */
     onOpenLedger?: (workId: number, partyId: number) => void;
@@ -283,7 +283,7 @@ function TaskPanel(
     detail: Detail; canWrite: boolean; staff: Staff[];
     onChanged: (message: string) => void;
     onError: (message: string) => void;
-    onCompose?: (conditionIds: number[], templateKey: string | null) => void;
+    onCompose?: (conditionIds: number[], templateKey: string | null, requestId: number) => void;
     onOpenDocument?: (documentId: number) => void;
     onOpenLedger?: (workId: number, partyId: number) => void;
     onOpenRequest?: (requestId: number) => void;
@@ -296,9 +296,15 @@ function TaskPanel(
   const label = t.purposeLabel;
   const [assignee, setAssignee] = useState<number | "">(t.assigneeStaffId ?? "");
   const [dueOn, setDueOn] = useState(t.dueOn ?? "");
+  const [title, setTitle] = useState(t.title);
+  const [requesterEmail, setRequesterEmail] = useState(r.requesterEmail ?? "");
   const [docNo, setDocNo] = useState("");
   const [busy, setBusy] = useState(false);
-  useEffect(() => { setAssignee(t.assigneeStaffId ?? ""); setDueOn(t.dueOn ?? ""); }, [t.id, t.assigneeStaffId, t.dueOn]);
+  useEffect(() => {
+    setAssignee(t.assigneeStaffId ?? ""); setDueOn(t.dueOn ?? ""); setTitle(t.title); setRequesterEmail(r.requesterEmail ?? "");
+  }, [t.id, t.assigneeStaffId, t.dueOn, t.title, r.requesterEmail]);
+  const dirty = assignee !== (t.assigneeStaffId ?? "") || dueOn !== (t.dueOn ?? "")
+    || title.trim() !== t.title || requesterEmail.trim() !== (r.requesterEmail ?? "");
 
   const call = async (fn: () => Promise<unknown>, message: string) => {
     setBusy(true);
@@ -340,6 +346,13 @@ function TaskPanel(
         </div>
 
         <div className="form-grid">
+          <label className="field"><span>件名</span>
+            <input value={title} disabled={!canWrite || busy} onChange={(e) => setTitle(e.target.value)} />
+          </label>
+          <label className="field"><span>依頼者のメール</span>
+            <input type="email" value={requesterEmail} disabled={!canWrite || busy} placeholder="例：tanaka@example.co.jp"
+                   onChange={(e) => setRequesterEmail(e.target.value)} />
+          </label>
           <label className="field"><span>担当</span>
             <select value={assignee} disabled={!canWrite || busy}
                     onChange={(e) => setAssignee(e.target.value ? Number(e.target.value) : "")}>
@@ -351,11 +364,16 @@ function TaskPanel(
             <input type="date" value={dueOn} disabled={!canWrite || busy} onChange={(e) => setDueOn(e.target.value)} />
           </label>
         </div>
-        {canWrite && (assignee !== (t.assigneeStaffId ?? "") || dueOn !== (t.dueOn ?? "")) && (
+        <span className="faint">
+          文書を送るメールの下書きは、ここから埋まります：宛先＝依頼者のメール（無ければ Slack の ID から社員を引く）、cc＝担当、
+          本文の案件番号・案件名＝依頼番号・件名。
+        </span>
+        {canWrite && dirty && (
           <div>
-            <button className="btn btn-sm" disabled={busy}
-                    onClick={() => call(() => patch({ assigneeStaffId: assignee || null, dueOn: dueOn || null }),
-                                        "担当・期日を変えました")}>担当・期日を保存</button>
+            <button className="btn btn-sm" disabled={busy || !title.trim()}
+                    onClick={() => call(() => patch({ title: title.trim(), requesterEmail: requesterEmail.trim() || null,
+                                                      assigneeStaffId: assignee || null, dueOn: dueOn || null }),
+                                        "件名・依頼者・担当・期日を保存しました")}>保存</button>
           </div>
         )}
 
@@ -426,7 +444,7 @@ function TaskPanel(
             {canWrite && onCompose && detail.conditions.length > 0 && t.status !== "done" && t.purpose !== "royalty" && (
               <div>
                 <button className="btn btn-sm primary"
-                        onClick={() => onCompose(detail.conditions.map((c) => c.id), null)}>
+                        onClick={() => onCompose(detail.conditions.map((c) => c.id), null, r.id)}>
                   この条件で{label}を作る
                 </button>
                 <span className="faint" style={{ marginLeft: 8 }}>作った{label}は、この作業の進み具合に自動で入ります</span>

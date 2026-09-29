@@ -24,6 +24,11 @@ export interface DraftInput {
   templateKey: string;
   conditionIds: number[];
   matterId?: number | null;
+  /**
+   * デイリータスク（A-064）から作るとき、その元の依頼。文書を依頼に繋ぎ、作業の
+   * 進み具合とメールの下書き（依頼者・担当・番号）が辿れるようにする。
+   */
+  requestId?: number | null;
   agreementId?: number | null;
   manualInputs?: Record<string, unknown>;
   /** 実績。検収書はここの日付と金額を使う。 */
@@ -211,6 +216,11 @@ export class DocumentIssueService {
         );
         const id = Number((inserted.rows[0] as { id: number }).id);
         await this.linkConditions(client, id, input.conditionIds);
+        if (input.requestId) {
+          await client.query(
+            `INSERT INTO intake_request_links (request_id, target_type, target_id, created_by)
+             VALUES ($1, 'document', $2, $3) ON CONFLICT DO NOTHING`, [input.requestId, id, actor]);
+        }
         // 案件が決まっていれば、載せた条件を案件にも繋ぐ。文書だけが案件に付いて
         // 条件が付いていない状態だと、案件の条件タブに出ず、実績も支払も立て
         // られない。付いているものは触らない。

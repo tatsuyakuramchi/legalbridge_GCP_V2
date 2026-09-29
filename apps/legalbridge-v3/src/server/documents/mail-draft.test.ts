@@ -88,3 +88,54 @@ test("取引先へのメールには、設定のいつも入れる cc（経理�
   const owner = await new MailDraftService(build({ settings })).draft(5, "owner_check");
   assert.ok(!owner.cc.some((p) => p.email === "keiri@example.com"));
 });
+
+// ---- 案件の無い文書（デイリータスクで作ったもの。A-064） ----
+
+const daily = (over: Record<string, any> = {}) => new FakeDatabase((t) => {
+  if (t.includes("FROM documents d")) return [{
+    id: 8, document_no: "NDA-2026-0120", status: "issued", issued_at: "2026-10-01",
+    matter_id: null, rendered_values: {}, counterparty: null, counterparty_id: null,
+    template_key: "nda", template_label: "秘密保持契約書",
+    matter_no: null, matter_title: null, owner_staff_id: null, requester_email: null, requester_slack_id: null
+  }];
+  if (t.includes("FROM intake_request_links l")) return over.origin === undefined ? [{
+    request_no: "REQ-2026-00012", request_title: "NDA の依頼", requester_email: null, requester_slack_id: "U123",
+    requester_name: "開発 太郎", counterparty_id: 3, counterparty_name: "取引先E",
+    task_title: "秘密保持契約（当社ひな形）の締結", assignee_staff_id: 1, ...over.request
+  }] : over.origin;
+  if (t.includes("FROM settings")) return [{ key: "company_profile", value: { name: "株式会社アークライト" } }];
+  if (t.includes("FROM staff WHERE id")) return [{ name: "法務 太郎", email: "legal@example.com" }];
+  if (t.includes("FROM staff WHERE lower(email)")) return [];
+  if (t.includes("FROM staff WHERE slack_user_id")) return over.slackStaff ?? [{ name: "開発 太郎", email: "dev@example.com" }];
+  if (t.includes("FROM party_contacts")) return [];
+  if (t.includes("FROM parties")) return [{ email: "info@e.example" }];
+  return undefined;
+});
+
+test("案件の無い文書は、繋がっている依頼と作業から 依頼者・担当・番号・件名 を取る", async () => {
+  const d = await new MailDraftService(daily()).draft(8, "owner_check");
+  assert.deepEqual(d.to.map((p) => p.email), ["dev@example.com"], "依頼者のメールが無ければ Slack の ID から社員を引く");
+  assert.deepEqual(d.cc.map((p) => p.email), ["legal@example.com"], "作業の担当が cc");
+  assert.match(d.body, /^開発 太郎 さん/);
+  assert.match(d.body, /REQ-2026-00012 秘密保持契約（当社ひな形）の締結 の秘密保持契約書/);
+  assert.deepEqual(d.warnings, []);
+});
+
+test("依頼にメールがあればそれを使う。取引先は依頼の相手先で補う", async () => {
+  const d = await new MailDraftService(daily({ request: { requester_email: "Biz@Example.com" } })).draft(8, "party_check");
+  assert.deepEqual(d.to.map((p) => p.email), ["info@e.example"], "依頼の counterparty_id から取引先のメール");
+  assert.deepEqual(d.cc.map((p) => p.email), ["Biz@Example.com"]);
+  assert.match(d.body, /取引先E 御中/);
+});
+
+test("依頼者のメールも Slack の社員も無ければ、法務の担当を宛先にして警告する", async () => {
+  const d = await new MailDraftService(daily({ slackStaff: [] })).draft(8, "owner_check");
+  assert.deepEqual(d.to.map((p) => p.email), ["legal@example.com"]);
+  assert.match(d.warnings[0], /デイリータスクに依頼者のメールが無い/);
+});
+
+test("案件にもデイリータスクにも繋がっていなければ、その旨を警告する", async () => {
+  const d = await new MailDraftService(daily({ origin: [] })).draft(8, "owner_check");
+  assert.deepEqual(d.to, []);
+  assert.match(d.warnings[0], /案件にもデイリータスクにも繋がっていない/);
+});

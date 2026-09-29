@@ -154,6 +154,8 @@ export function App() {
    */
   const [compose, setCompose] =
     useState<{ conditionIds: number[]; eventIds: number[]; matterId: number | null;
+               /** デイリータスクから来たとき、その元の依頼（作った文書を依頼に繋ぐ）。 */
+               requestId?: number | null;
                templateKey?: string | null;
                bulk?: boolean; settled?: boolean;
                /** 訂正版。退かせる元の文書と理由。 */
@@ -183,10 +185,11 @@ export function App() {
   const startCompose = (
     conditionIds: number[], eventIds: number[] = [], matterId: number | null = null,
     templateKey: string | null = null, back: DocBack | null = null,
-    revise: { supersedesIds: number[]; reason: string } | null = null
+    revise: { supersedesIds: number[]; reason: string } | null = null,
+    requestId: number | null = null
   ) => {
     setDocBack(back);
-    setCompose({ conditionIds, eventIds, matterId, templateKey,
+    setCompose({ conditionIds, eventIds, matterId, requestId, templateKey,
                  supersedesId: revise?.supersedesIds[0] ?? null, supersedesExtraIds: revise?.supersedesIds.slice(1) ?? [],
                  reason: revise?.reason ?? null });
     setFocus(null);
@@ -297,7 +300,7 @@ export function App() {
         {view === "daily" && (
           <DailyTasksWorkspace key={`t${focusFor("daily") ?? 0}`} initialId={focusFor("daily")}
             onOpenMatter={(id) => openEntity("matter", id)}
-            onCompose={(ids, templateKey) => startCompose(ids, [], null, templateKey)}
+            onCompose={(ids, templateKey, requestId) => startCompose(ids, [], null, templateKey, null, null, requestId)}
             onOpenDocument={openDocumentAt}
             onOpenLedger={(workId, partyId) => {
               setLedgerParty(partyId); setConditionId(undefined);

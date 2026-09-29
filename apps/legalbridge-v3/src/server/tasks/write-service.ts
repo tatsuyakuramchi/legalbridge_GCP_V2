@@ -22,6 +22,11 @@ export interface TaskPatch {
   assigneeStaffId?: number | null;
   /** 期日（日本の日付）。null で消す。undefined なら変えない。 */
   dueOn?: string | null;
+  /**
+   * 依頼者のメール。元の依頼（intake_requests.requester_email）に持つ。
+   * 文書のメールの下書きで「担当者への確認」の宛先になる。null で消す。
+   */
+  requesterEmail?: string | null;
 }
 
 export interface MoveInput {
@@ -46,10 +51,21 @@ export class TaskWriteService {
     }
     const title = patch.title === undefined ? undefined : String(patch.title ?? "").trim();
     if (title !== undefined && !title) throw new DomainError("VALIDATION", "件名は空にできません");
+    const requesterEmail = patch.requesterEmail === undefined ? undefined
+      : String(patch.requesterEmail ?? "").trim().toLowerCase() || null;
+    if (requesterEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(requesterEmail)) {
+      throw new DomainError("VALIDATION", "依頼者のメールの形が正しくありません");
+    }
     try {
       return await inTransaction(this.database, async (client) => {
         const row = await lockTask(client, id);
         const status = patch.status ?? String(row.status);
+        if (requesterEmail !== undefined) {
+          if (!row.request_id) throw new DomainError("VALIDATION", "依頼から起こした作業ではないので、依頼者のメールは持てません");
+          await client.query(
+            "UPDATE intake_requests SET requester_email = $2, updated_at = now() WHERE id = $1",
+            [row.request_id, requesterEmail]);
+        }
         await client.query(
           `UPDATE tasks
               SET status = $2,
@@ -67,7 +83,8 @@ export class TaskWriteService {
           actor, action: "task.update", targetType: "task", targetId: id,
           detail: { from: row.status, to: status, matterId: row.matter_id ?? null, requestId: row.request_id ?? null,
                     ...(patch.assigneeStaffId !== undefined ? { assigneeStaffId: patch.assigneeStaffId ?? null } : {}),
-                    ...(patch.dueOn !== undefined ? { dueOn: patch.dueOn ?? null } : {}) }
+                    ...(patch.dueOn !== undefined ? { dueOn: patch.dueOn ?? null } : {}),
+                    ...(requesterEmail !== undefined ? { requesterEmail } : {}) }
         });
         return { id, status };
       });
