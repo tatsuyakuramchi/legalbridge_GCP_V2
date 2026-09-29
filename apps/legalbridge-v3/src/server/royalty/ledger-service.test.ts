@@ -55,6 +55,34 @@ test("イベント式は実績1件が1回。支払日は支払条件から", () 
   assert.equal(rounds[0].payOn, "2026-09-30");
 });
 
+test("来るはずの行：言語・地域が1つでも行に持つ（英語×フランス・フランス語×フランス）", () => {
+  const out = { id: 63, name: "ホラー｜フランス語・英語｜フランス｜DPG", usageType: "sublicense", workId: 1,
+                termStart: null, languages: ["フランス語", "英語"], regions: ["フランス"] };
+  const q = buildRounds({
+    conditions: [cond(1, { usageType: "sublicense" })], schedules: Q(1), events: [], skips: [], outs: [out],
+    bundle: "single_work", today: "2026-10-05"
+  }).find((r) => r.payOn === "2026-07-31")!;
+  assert.deepEqual(q.parts[0].expected.map((x) => `${x.languages?.join("")}×${x.regions?.join("")}`).sort(),
+    ["フランス語×フランス", "英語×フランス"]);
+});
+
+test("来るはずの行：前の回の地域なしの行は許諾先の地域で埋め、地域なしの報告はその組を覆う", () => {
+  const out = { id: 64, name: "ito｜英語・フランス語｜欧州｜Alpha", usageType: "sublicense", workId: 1,
+                termStart: null, languages: ["英語", "フランス語"], regions: ["欧州"] };
+  const rounds = buildRounds({
+    conditions: [cond(1, { usageType: "sublicense" })], schedules: Q(1),
+    // 前の回：地域なしの英語の報告（A-061 より前の形）
+    events: [ev(1, 1, "2026-06-10", { usageType: "sublicense", outConditionId: 64, outName: out.name, languages: ["英語"] })],
+    skips: [], outs: [out], bundle: "single_work", today: "2026-10-05"
+  });
+  const q2 = rounds.find((r) => r.payOn === "2026-07-31")!;
+  assert.deepEqual(q2.parts[0].expected.map((x) => `${x.languages?.join("")}×${x.regions?.join("")}`),
+    ["フランス語×欧州"], "地域なしの英語の報告が 英語×欧州 を覆う");
+  const q3 = rounds.find((r) => r.payOn === "2026-10-31")!;
+  assert.deepEqual(q3.parts[0].expected.map((x) => `${x.languages?.join("")}×${x.regions?.join("")}`).sort(),
+    ["フランス語×欧州", "英語×欧州"], "前の回から来た英語の行は 欧州 で埋まり、行は2本だけ");
+});
+
 test("来るはずの行：言語×地域で1行（英語×北米・英語×欧州・フランス語×欧州）", () => {
   const out = { id: 61, name: "ito｜英語・フランス語｜北米・欧州｜Alpha", usageType: "sublicense", workId: 1,
                 termStart: null, languages: ["英語", "フランス語"], regions: ["北米", "欧州"] };
