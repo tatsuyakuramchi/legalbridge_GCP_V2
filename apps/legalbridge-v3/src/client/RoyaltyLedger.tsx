@@ -482,6 +482,21 @@ function RoundDetail(
     onCompose([...new Set(evs.map((e) => e.conditionId))], evs.map((e) => e.id), templateKey || null,
               { supersedesId: documentId, reason });
   }
+  /**
+   * 決定した計算書を、この回のまだ計算書に入っていない報告と合わせて 1 枚で出し直す。
+   * 元の計算書は退き（訂正版あり）、その報告と今回の報告が新しい 1 枚に載る。
+   * 支払が立っている計算書は対象にしない（払った根拠が変わる）。
+   */
+  function merge(documentId: number) {
+    if (!onCompose) return;
+    const doc = r.documents.find((d) => d.id === documentId);
+    const old = r.parts.flatMap((p) => p.events.filter((e) => e.documentId === documentId));
+    const evs = [...old.map((e) => e.id), ...entries.flatMap((e) => e.eventIds)];
+    const conds = [...new Set([...old.map((e) => e.conditionId), ...entries.map((e) => e.conditionId)])];
+    onCompose(conds, evs, templateKey || null,
+              { supersedesId: documentId, reason: `${doc?.documentNo ?? `#${documentId}`} を退かせ、この回の他の報告と合わせて 1 枚で出し直し` });
+  }
+  const mergeable = r.documents.filter((d) => d.status === "issued" && !d.paymentIds.length);
   /** 文書の画面へ。この回のまだ文書に結ばれていない実績と、その条件を選んだ状態で開く。 */
   function compose() {
     if (!onCompose) return;
@@ -516,7 +531,8 @@ function RoundDetail(
             </div>
             <RoundReport round={r} view={view} canWrite={canWrite} onChanged={onChanged} onError={onError} onOpenDocument={onOpenDocument}
                          adding={adding} setAdding={setAdding} isAdmin={isAdmin} onReissue={onCompose ? reissue : undefined}
-                         onCreatePayment={canWrite ? (id) => void createPayment(r.documents.find((d) => d.id === id) ?? { id, documentNo: null }) : undefined} />
+                         onCreatePayment={canWrite ? (id) => void createPayment(r.documents.find((d) => d.id === id) ?? { id, documentNo: null }) : undefined}
+                         onMerge={canWrite && onCompose && entries.length > 0 ? merge : undefined} />
           </div>
         </div>
 
@@ -544,6 +560,18 @@ function RoundDetail(
                   )}
                   <span className="faint">文書の画面で本文を確かめ、見出しを直して決定します。決定するまで番号は振られません。</span>
                 </div>
+                {canWrite && mergeable.length > 0 && (
+                  <div className="note stack" style={{ gap: 4 }}>
+                    <span>この回にはもう決定した計算書があります。今回の報告と<b>合わせて 1 枚</b>にするなら、その計算書を退かせて出し直します（支払が立っていない計算書だけ）。</span>
+                    <span className="row" style={{ gap: 6 }}>
+                      {mergeable.map((d) => (
+                        <button key={d.id} className="btn btn-sm" onClick={() => merge(d.id)}>
+                          {d.documentNo ?? `#${d.id}`} と合わせて 1 枚で出し直す
+                        </button>
+                      ))}
+                    </span>
+                  </div>
+                )}
                 {waitingLines > 0 && (
                   <div className="note warn">
                     報告待ちが {waitingLines} 行あります。待たずに出すと入力済の分だけの計算書になります（残りは「報告なし」にするか、あとで別の計算書に）。
