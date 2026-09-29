@@ -44,6 +44,8 @@ export interface LedgerCondition {
   timing: Timing; timingExplicit: boolean;
   /** 予定明細（時限式の回）が何行あるか。0 なら回が作れない。 */
   schedules: number;
+  /** 対象の許諾先（A-063）。この許諾先だけに効く料率。空なら一律（その作品の許諾先すべて）。 */
+  targetPartyId?: number | null; targetPartyName?: string | null;
 }
 
 export interface LedgerEvent {
@@ -115,6 +117,8 @@ export interface OutLite {
   languages?: string[]; regions?: string[];
   /** この許諾先の改訂の全版の id。古い版を指す報告も同じ許諾先として扱う。 */
   seriesIds?: number[];
+  /** 許諾先（取引先）。許諾先専用の IN 条件と突き合わせる。 */
+  partyId?: number | null;
 }
 
 /**
@@ -195,8 +199,14 @@ export function buildRounds(input: {
         }
       }
       if (c.usageType === "sublicense" || c.usageType === "oem") {
+        // 許諾先専用の IN 条件（A-063）はその許諾先の OUT だけ。一律の IN 条件は、
+        // 同じ作品・利用形態で専用の条件が持っている許諾先を除いた残り。
+        const claimed = new Set(conditions
+          .filter((x) => x.id !== c.id && x.workId === c.workId && x.usageType === c.usageType && x.targetPartyId)
+          .map((x) => x.targetPartyId!));
         for (const o of input.outs.filter((x) => x.usageType === c.usageType
             && (x.workId === null || x.workId === c.workId)
+            && (c.targetPartyId ? x.partyId === c.targetPartyId : !(x.partyId && claimed.has(x.partyId)))
             && (!x.termStart || !p.closeOn || x.termStart <= p.closeOn))) {
           // 報告は 言語×地域 ごとに来る（英語×北米、英語×欧州、フランス語×欧州）。
           // 1組1行で待つ。「全言語」「全世界」は分けない（1行）。
@@ -327,7 +337,7 @@ export interface LedgerView {
 
 export interface WorkRoyaltyParty {
   id: number; name: string; kind: string; bundle: Bundle;
-  conditions: Array<{ id: number; usageLabel: string; ratePpm: number | null; timing: Timing }>;
+  conditions: Array<{ id: number; usageLabel: string; ratePpm: number | null; timing: Timing; targetPartyName?: string | null }>;
   openRounds: number; waiting: number; nextPayOn: string | null;
   otherWorks: number;
   requests: RoundRequest[];
@@ -360,7 +370,8 @@ export class RoyaltyLedgerService {
           [row.counterparty_id, workId]);
         out.push({
           id: view.party.id, name: view.party.name, kind: view.party.kind, bundle: view.party.bundle,
-          conditions: view.conditions.map((c) => ({ id: c.id, usageLabel: c.usageLabel, ratePpm: c.ratePpm, timing: c.timing })),
+          conditions: view.conditions.map((c) => ({ id: c.id, usageLabel: c.usageLabel, ratePpm: c.ratePpm, timing: c.timing,
+                                                    targetPartyName: c.targetPartyName ?? null })),
           openRounds: view.rounds.length,
           waiting: view.rounds.flatMap((x) => x.parts).filter((p) => p.state === "waiting").length,
           nextPayOn: view.rounds.map((x) => x.payOn ?? x.closeOn).filter(Boolean).sort()[0] ?? null,
@@ -400,10 +411,12 @@ export class RoyaltyLedgerService {
         `SELECT c.id, c.condition_no, c.name, c.usage_type, c.work_id, w.title AS work_title,
                 c.agreement_id, a.agreement_no, c.pricing_model, c.rate_ppm, c.unit_amount,
                 c.mg_amount, c.ag_amount, c.currency, c.payment_terms, c.statement_timing,
+                c.target_party_id, tp.name AS target_party_name,
                 COALESCE(c.series_id, c.id) AS series
            FROM conditions c
            LEFT JOIN works w ON w.id = c.work_id
            LEFT JOIN agreements a ON a.id = c.agreement_id
+           LEFT JOIN parties tp ON tp.id = c.target_party_id
           WHERE c.counterparty_id = $1 AND c.direction = 'in' AND c.kind = 'license'
             AND c.status IN ('active', 'scheduled') AND c.pricing_model IN ('revenue_rate', 'unit_rate')
             AND ($2::bigint IS NULL OR c.work_id = $2)
@@ -473,7 +486,7 @@ export class RoyaltyLedgerService {
         : [];
       const workIds = [...new Set(rows.map((c) => int(c.work_id)).filter((x): x is number => !!x))];
       const outs = workIds.length ? ((await q.query(
-        `SELECT id, name, usage_type, work_id, term_start,
+        `SELECT id, name, usage_type, work_id, term_start, counterparty_id,
                 (SELECT array_agg(x.id) FROM conditions x
                   WHERE COALESCE(x.series_id, x.id) = COALESCE(conditions.series_id, conditions.id)) AS series_ids,
                 (SELECT array_agg(sc.label ORDER BY sc.sort_order, sc.label) FROM condition_scopes sc
@@ -487,7 +500,8 @@ export class RoyaltyLedgerService {
                                 workId: int(o.work_id), termStart: dateStr(o.term_start),
                                 languages: Array.isArray(o.languages) ? o.languages.map(String) : [],
                                 regions: Array.isArray(o.regions) ? o.regions.map(String) : [],
-                                seriesIds: Array.isArray(o.series_ids) ? o.series_ids.map(Number) : [] }))
+                                seriesIds: Array.isArray(o.series_ids) ? o.series_ids.map(Number) : [],
+                                partyId: int(o.counterparty_id) }))
         : [];
 
       const conditions: LedgerCondition[] = rows.map((c) => ({
@@ -499,7 +513,8 @@ export class RoyaltyLedgerService {
         mgAmount: int(c.mg_amount), agAmount: int(c.ag_amount), currency: String(c.currency ?? "JPY"),
         paymentTerms: str(c.payment_terms),
         timing: timingOf(c.statement_timing, c.usage_type), timingExplicit: Boolean(c.statement_timing),
-        schedules: schedules.filter((s) => s.conditionId === Number(c.id)).length
+        schedules: schedules.filter((s) => s.conditionId === Number(c.id)).length,
+        targetPartyId: int(c.target_party_id), targetPartyName: str(c.target_party_name)
       }));
 
       const built = buildRounds({ conditions, schedules, events, skips, outs, plans, today,

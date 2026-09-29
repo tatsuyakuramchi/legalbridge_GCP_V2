@@ -456,6 +456,11 @@ export function ConditionsWorkspace(
                   <h2 className="code">{detail.conditionNo ?? `#${detail.id}`}</h2>
                   <span className="tag">{CONDITION_KIND_LABEL[detail.kind] ?? detail.kind}</span>
                   <span className={`tag ${detail.direction}`}>{detail.direction === "in" ? "IN 取得" : "OUT 許諾"}</span>
+                  {detail.direction === "in" && detail.kind === "license" && (detail.usageType === "sublicense" || detail.usageType === "oem") && (
+                    detail.targetParty
+                      ? <span className="tag pin" title="この許諾先の報告だけがこの料率で計算される">許諾先専用：{detail.targetParty.name}</span>
+                      : <span className="tag" title="この作品の許諾先すべてに効く">一律（全許諾先）</span>
+                  )}
                   <StatusTag kind="condition" value={detail.status} />
                   <SettlementTag settlement={detail.settlement} />
                   {!editing && detail.status !== "void" && detail.status !== "superseded" && (

@@ -171,7 +171,7 @@ export function RoyaltyLedger(
           <button key={p.id} className="ledger-party" aria-pressed={p.id === partyId}
                   onClick={() => { setPartyId(p.id); setSelected(p.next?.roundKey ?? null); }}>
             <b>{p.name}</b>
-            <span className="faint">{p.conditions.map((c) => `${c.usageLabel} ${pct(c.ratePpm)}`).join("・")}</span>
+            <span className="faint">{p.conditions.map((c) => `${c.usageLabel} ${pct(c.ratePpm)}${c.targetPartyName ? `（${c.targetPartyName} 専用）` : ""}`).join("・")}</span>
             {p.next
               ? <span className="ledger-next">▶ 次：{p.next.label}の回に報告待ちが {p.next.waiting} 行</span>
               : p.noClose.length
@@ -209,6 +209,7 @@ export function RoyaltyLedger(
               {view.conditions.length <= 3 && view.conditions.map((c) => (
                 <span key={c.id} className="ledger-term-chip">
                   <span className="faint">{c.usageLabel}</span> <b>{c.pricingModel === "unit_rate" ? yen(c.unitAmount, c.currency) : pct(c.ratePpm)}</b>
+                  {c.targetPartyName && <span className="tag pin" style={{ marginLeft: 4 }}>{c.targetPartyName} 専用</span>}
                   <span className="faint"> · {c.timing === "event" ? "イベント式" : `締め ${c.schedules} 回`}</span>
                 </span>
               ))}
@@ -357,6 +358,11 @@ function Terms(
             <span className="faint">{allWorks && c.workTitle ? `${c.workTitle} · ` : ""}{c.usageLabel}</span>
             <b className="num" style={{ textAlign: "left" }}>{c.pricingModel === "unit_rate" ? yen(c.unitAmount, c.currency) : pct(c.ratePpm)}</b>
             <span className="faint code">{c.conditionNo ?? `#${c.id}`}{c.agreementNo ? ` · ${c.agreementNo}` : ""}</span>
+            {(c.usageType === "sublicense" || c.usageType === "oem") && (
+              c.targetPartyName
+                ? <span className="tag pin">許諾先専用：{c.targetPartyName}</span>
+                : <span className="faint">一律（この作品の許諾先すべて）</span>
+            )}
             {(c.agAmount || c.mgAmount) ? <span className="faint">{c.agAmount ? `AG ${yen(c.agAmount, c.currency)}` : ""} {c.mgAmount ? `MG ${yen(c.mgAmount, c.currency)}` : ""}</span> : null}
             <label className="row" style={{ gap: 4 }}>
               <span className="faint">出し方</span>

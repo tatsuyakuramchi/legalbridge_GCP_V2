@@ -1432,6 +1432,7 @@ export function createRoutes(database: Transactable) {
     // 作品に紐づく許諾（IN）は空でよい（作品名｜取引モデル で付く）。それ以外は必須（サービス側で確かめる）。
     name: z.string().trim().max(300).default(""),
     sublicensee: z.string().trim().max(200).nullable().optional(),
+    targetPartyId: z.coerce.number().int().positive().nullable().optional(),
     purpose: z.string().trim().max(200).nullable().optional(),
     direction: z.enum(["in", "out"]),
     kind: z.enum(["license", "product", "service", "expense", "fee"]),
@@ -1496,6 +1497,7 @@ export function createRoutes(database: Transactable) {
     exclusivity: z.enum(["exclusive", "non_exclusive"]).nullable().optional(),
     consent: sublicenseConsentSchema,
     sublicensee: z.string().trim().max(200).nullable().optional(),
+    targetPartyId: z.coerce.number().int().positive().nullable().optional(),
     purpose: z.string().trim().max(200).nullable().optional()
   }).nullable().optional();
   const publishingSetSchema = z.object({
@@ -1523,6 +1525,7 @@ export function createRoutes(database: Transactable) {
       ratePct: z.coerce.number().min(0).max(100),
       exclusivity: z.enum(["exclusive", "non_exclusive"]).nullable().optional(),
       sublicensee: z.string().trim().max(200).nullable().optional(),
+      targetPartyId: z.coerce.number().int().positive().nullable().optional(),
       purpose: z.string().trim().max(200).nullable().optional()
     }).nullable().optional(),
     // 翻訳版の再許諾（A-033）。紙・電子で率が違うので別々。相手先は決まっていなくてよい。
@@ -1554,6 +1557,7 @@ export function createRoutes(database: Transactable) {
       mgAmount: z.coerce.number().int().min(0).nullable().optional(),
       agAmount: z.coerce.number().int().min(0).nullable().optional(),
       sublicensee: z.string().trim().max(200).nullable().optional(),
+      targetPartyId: z.coerce.number().int().positive().nullable().optional(),
       purpose: z.string().trim().max(200).nullable().optional(),
       sublicenseConsent: sublicenseConsentSchema,
       licenseFeeBasis: licenseFeeBasisSchema
@@ -1644,6 +1648,7 @@ export function createRoutes(database: Transactable) {
     workId: z.coerce.number().int().positive().nullable().optional(),
     exclusivity: z.enum(["exclusive", "non_exclusive"]).nullable().optional(),
     sublicenseConsent: sublicenseConsentSchema,
+    targetPartyId: z.coerce.number().int().positive().nullable().optional(),
     licenseFeeBasis: licenseFeeBasisSchema,
     ...renewalFields,
     spec: z.string().trim().max(4000).nullable().optional(),

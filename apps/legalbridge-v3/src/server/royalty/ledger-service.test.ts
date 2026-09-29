@@ -97,6 +97,20 @@ test("来るはずの行：途中で許諾言語・地域を変えたら、前�
     [[65, "フランス語", "フランス"]], "英語×北米の古い行は残らず、フランス語×フランス を待つ");
 });
 
+test("許諾先専用の IN 条件（A-063）はその許諾先の行だけ。一律の条件からはその許諾先が外れる", () => {
+  const alpha = { id: 70, name: "ito｜英語｜北米｜Alpha", usageType: "sublicense", workId: 1, termStart: null, languages: ["英語"], regions: [], partyId: 501 };
+  const beta = { id: 71, name: "ito｜韓国語｜韓国｜Beta", usageType: "sublicense", workId: 1, termStart: null, languages: ["韓国語"], regions: [], partyId: 502 };
+  const rounds = buildRounds({
+    conditions: [cond(1, { usageType: "sublicense" }),                                  // 一律 50%
+                 cond(2, { usageType: "sublicense", targetPartyId: 501, targetPartyName: "Alpha" })], // Alpha 専用
+    schedules: [...Q(1), ...Q(2, 10)], events: [], skips: [], outs: [alpha, beta], bundle: "single_work", today: "2026-10-05"
+  });
+  const q2 = rounds.find((r) => r.payOn === "2026-07-31")!;
+  const byCond = (id: number) => q2.parts.find((p) => p.conditionId === id)!.expected.map((x) => x.outName);
+  assert.deepEqual(byCond(2), ["ito｜英語｜北米｜Alpha"], "専用の条件には Alpha だけ");
+  assert.deepEqual(byCond(1), ["ito｜韓国語｜韓国｜Beta"], "一律の条件からは Alpha が外れ、Beta だけ");
+});
+
 test("来るはずの行：言語×地域で1行（英語×北米・英語×欧州・フランス語×欧州）", () => {
   const out = { id: 61, name: "ito｜英語・フランス語｜北米・欧州｜Alpha", usageType: "sublicense", workId: 1,
                 termStart: null, languages: ["英語", "フランス語"], regions: ["北米", "欧州"] };

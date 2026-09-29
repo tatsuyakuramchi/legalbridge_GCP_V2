@@ -31,7 +31,12 @@ export const USAGE_NAME_LABEL: Record<ConditionUsageType, string> = {
 };
 
 /** 再許諾先を名前に入れる取引モデル。出版の翻訳版は相手が後から決まるので入れない。 */
-const NEEDS_SUBLICENSEE = new Set<ConditionUsageType>(["sublicense"]);
+/**
+ * 再許諾先は名前に必須ではない（A-063）。IN の再許諾条件はふつう作家×作品で1本
+ * （作品名｜再許諾）で、その作品の許諾先すべてに効く。許諾先専用の料率のときだけ
+ * 対象の許諾先が名前に入る（作品名｜再許諾（許諾先／目的））。
+ */
+const NEEDS_SUBLICENSEE = new Set<ConditionUsageType>([]);
 
 export const NAME_SEPARATOR = "｜";
 

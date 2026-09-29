@@ -90,6 +90,7 @@ export function ConditionEdit(
     agAmount: asMoney(detail.agAmount),
     exclusivity: detail.exclusivity ?? "",
     usageType: detail.usageType ?? "",
+    targetPartyId: detail.targetParty ? String(detail.targetParty.id) : "",
     sublicenseConsent: detail.sublicenseConsent ?? "",
     licenseFeeBasis: detail.licenseFeeBasis ?? "separate",
     taxCategory: detail.taxCategory,
@@ -163,6 +164,7 @@ export function ConditionEdit(
       ["workId", patchInt(v.workId, detail.work?.id ?? null)],
       ["exclusivity", patchText(v.exclusivity, detail.exclusivity)],
       ["usageType", patchText(v.usageType, detail.usageType)],
+      ["targetPartyId", patchInt(v.targetPartyId, detail.targetParty?.id ?? null)],
       ["sublicenseConsent", patchText(v.sublicenseConsent, detail.sublicenseConsent)],
       ["licenseFeeBasis", patchText(v.licenseFeeBasis, detail.licenseFeeBasis ?? "separate")]
     ];
@@ -426,6 +428,20 @@ export function ConditionEdit(
                 {CONDITION_USAGE_TYPES.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
               </select>
               <small className="faint">条件書の行・計算書の製品名はこれで決まる。1本に1つ</small>
+            </label>
+          )}
+          {detail.kind === "license" && detail.direction === "in" && (v.usageType === "sublicense" || v.usageType === "oem") && (
+            <label className="field">
+              <span>対象の許諾先</span>
+              <SearchSelect value={v.targetPartyId} search={searchParties}
+                            placeholder="空なら一律（その作品の許諾先すべてに効く）"
+                            valueLabel={detail.targetParty?.name ?? null}
+                            onChange={(id) => set("targetPartyId", id)} />
+              <small className="faint">
+                {v.targetPartyId
+                  ? "許諾先専用：この許諾先の報告だけがこの料率。一律の条件からはこの許諾先が外れる"
+                  : "一律：この作品の許諾先すべてに効く。特定の許諾先だけ料率が違う契約のときだけ選ぶ"}
+              </small>
             </label>
           )}
           {isSublicensingUsage(v.usageType) && (

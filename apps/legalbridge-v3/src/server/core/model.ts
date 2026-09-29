@@ -32,6 +32,8 @@ export interface ConditionSummary {
   kind: ConditionKind;
   name: string;
   counterparty: PartyRef | null;
+  /** 対象の許諾先（A-063）。この許諾先だけに効く料率のとき。空なら一律。 */
+  targetParty?: { id: number; name: string } | null;
   work: WorkRef | null;
   /** 載っている契約。条件は契約の明細であって、それ自体が契約書ではない。 */
   agreement: { id: number; agreementNo: string | null; title: string } | null;

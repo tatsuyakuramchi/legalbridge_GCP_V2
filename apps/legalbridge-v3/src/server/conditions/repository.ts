@@ -11,6 +11,7 @@ const SUMMARY_COLUMNS = `
   c.rate_ppm, c.flat_amount, c.unit_amount, c.quantity, c.mg_amount, c.ag_amount,
   c.term_start, c.term_end, c.delivery_due, c.status, c.effective_from, c.usage_type,
   p.id AS party_id, p.name AS party_name, p.kind AS party_kind,
+  c.target_party_id, tp.name AS target_party_name,
   w.id AS work_id, w.work_code, w.title AS work_title,
   -- 条件は契約の明細。どの契約の行かは一覧でも見えないと、独立した書類に見える。
   ag.id AS agreement_id, ag.agreement_no, ag.title AS agreement_title,
@@ -20,6 +21,7 @@ const SUMMARY_COLUMNS = `
 const SUMMARY_JOINS = `
   FROM conditions c
   LEFT JOIN parties p ON p.id = c.counterparty_id
+  LEFT JOIN parties tp ON tp.id = c.target_party_id
   LEFT JOIN works   w ON w.id = c.work_id
   LEFT JOIN agreements ag ON ag.id = c.agreement_id
   ${SETTLEMENT_LATERAL_SQL}`;
@@ -33,6 +35,9 @@ function mapSummary(row: Record<string, any>): ConditionSummary {
     name: String(row.name ?? ""),
     counterparty: row.party_id
       ? { id: Number(row.party_id), name: String(row.party_name ?? ""), kind: row.party_kind }
+      : null,
+    targetParty: row.target_party_id
+      ? { id: Number(row.target_party_id), name: String(row.target_party_name ?? "") }
       : null,
     work: row.work_id
       ? { id: Number(row.work_id), workCode: str(row.work_code), title: String(row.work_title ?? "") }
@@ -116,6 +121,7 @@ export class ConditionRepository {
       `SELECT ${SUMMARY_COLUMNS},
               c.agreement_id, c.parent_id, c.work_part_id, c.exclusivity, c.sublicensable,
               c.sublicense_consent, c.license_fee_basis, c.auto_renew, c.renew_months, c.renew_stopped_on,
+              c.target_party_id, tp.name AS target_party_name,
               c.tax_category, c.payment_terms, c.contract_form, c.cycle, c.notes,
               c.spec, c.deliverable_ownership, c.order_no,
               pc.condition_no AS parent_condition_no,
@@ -149,6 +155,7 @@ export class ConditionRepository {
       sublicensable: row.sublicensable === null || row.sublicensable === undefined
         ? null : Boolean(row.sublicensable),
       sublicenseConsent: (str(row.sublicense_consent) as "covered" | "required" | null) ?? null,
+      targetParty: row.target_party_id ? { id: Number(row.target_party_id), name: String(row.target_party_name ?? "") } : null,
       licenseFeeBasis: (str(row.license_fee_basis) as LicenseFeeBasis | null) ?? "separate",
       autoRenew: row.auto_renew === null || row.auto_renew === undefined ? null : Boolean(row.auto_renew),
       renewMonths: int(row.renew_months),
@@ -281,6 +288,7 @@ export class ConditionRepository {
                   WHERE dc.condition_id = c.id) AS document_count
            FROM conditions c
            LEFT JOIN parties p ON p.id = c.counterparty_id
+  LEFT JOIN parties tp ON tp.id = c.target_party_id
           WHERE c.series_id = (SELECT series_id FROM conditions WHERE id = $1)
           ORDER BY c.effective_from NULLS FIRST, c.created_at, c.id`,
         [id]);
@@ -329,6 +337,7 @@ export class ConditionRepository {
            FROM v_condition_balance b
            JOIN conditions c ON c.id = b.condition_id
            LEFT JOIN parties p ON p.id = c.counterparty_id
+  LEFT JOIN parties tp ON tp.id = c.target_party_id
            LEFT JOIN works w   ON w.id = c.work_id
           WHERE c.status = 'active'
             AND (COALESCE(b.mg_amount, 0) > 0 OR COALESCE(b.ag_amount, 0) > 0
