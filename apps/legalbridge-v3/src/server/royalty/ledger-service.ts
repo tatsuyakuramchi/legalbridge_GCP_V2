@@ -567,7 +567,8 @@ export class RoyaltyLedgerService {
    */
   async correct(
     input: { conditionId: number; eventId: number; reason: string;
-             quantity?: number | null; unitAmount?: number | null; grossAmount?: number | null; occurredOn?: string | null },
+             quantity?: number | null; unitAmount?: number | null; grossAmount?: number | null; occurredOn?: string | null;
+             languages?: string[] | null; regions?: string[] | null },
     events: { amend: (conditionId: number, eventId: number, patch: Record<string, unknown>, reason: string, actor: string)
                 => Promise<{ eventId: number; changed: string[] }> },
     actor: string
@@ -586,6 +587,8 @@ export class RoyaltyLedgerService {
       if (input.unitAmount !== undefined) patch.unitAmount = input.unitAmount;
       if (input.grossAmount !== undefined) patch.grossAmount = input.grossAmount;
       if (input.occurredOn !== undefined) patch.occurredOn = input.occurredOn;
+      if (input.languages !== undefined) patch.languages = input.languages;
+      if (input.regions !== undefined) patch.regions = input.regions;
       const usage = str(row.usage_type);
       if (usage) {
         // 許諾料は入れ直させない。直した根拠に料率を掛けて出す（記録のときと同じ式）。

@@ -2012,7 +2012,9 @@ export function createRoutes(database: Transactable) {
     varianceNote: z.string().trim().max(2000).nullable().optional(),
     followUp: z.string().trim().max(2000).nullable().optional(),
     followUpDueOn: z.string().date().nullable().optional(),
-    note: z.string().trim().max(2000).nullable().optional()
+    note: z.string().trim().max(2000).nullable().optional(),
+    languages: z.array(z.string().trim().min(1).max(60)).max(30).nullable().optional(),
+    regions: z.array(z.string().trim().min(1).max(60)).max(60).nullable().optional()
   });
   router.patch("/conditions/:id/events/:eventId",
     requireRole("admin"), requireWritable,
@@ -2230,7 +2232,9 @@ export function createRoutes(database: Transactable) {
         quantity: z.coerce.number().nullable().optional(),
         unitAmount: z.coerce.number().int().nullable().optional(),
         grossAmount: z.coerce.number().int().nullable().optional(),
-        occurredOn: z.string().date().nullable().optional()
+        occurredOn: z.string().date().nullable().optional(),
+        languages: z.array(z.string().trim().min(1).max(60)).max(30).nullable().optional(),
+        regions: z.array(z.string().trim().min(1).max(60)).max(60).nullable().optional()
       }).parse(req.body ?? {});
       res.json(await royaltyLedger.correct(input, conditionEvents, actor(res)));
     }));
