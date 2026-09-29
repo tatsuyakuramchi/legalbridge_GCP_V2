@@ -1674,6 +1674,23 @@ export function createRoutes(database: Transactable) {
         Number(req.params.id), patch, actor(res), effectiveFrom ?? null, { inPlace: inPlace === true }));
     }));
 
+  // 契約期間の更新。1本でもまとめてでも。支払が立っていれば改訂になる。
+  router.post("/conditions-renew-term", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        ids: z.array(z.coerce.number().int().positive()).min(1).max(100),
+        newEnd: z.string().date(),
+        reason: z.string().trim().max(500).nullable().optional()
+      }).parse(req.body ?? {});
+      const done: Array<{ id: number; conditionNo: string | null; mode: string; from: string | null; to: string }> = [];
+      const failed: Array<{ id: number; error: string }> = [];
+      for (const id of input.ids) {
+        try { done.push(await conditionWrites.renewTerm(id, input.newEnd, actor(res), input.reason ?? null)); }
+        catch (e) { failed.push({ id, error: e instanceof Error ? e.message : String(e) }); }
+      }
+      res.json({ done, failed });
+    }));
+
   // 無効化 → 削除の2段階。無効化は理由必須で、参照があってもできる。
   // 削除は無効化済みで、何も指していないものだけ。
   router.post("/conditions/:id/close", requireRole("admin", "legal"), requireWritable,

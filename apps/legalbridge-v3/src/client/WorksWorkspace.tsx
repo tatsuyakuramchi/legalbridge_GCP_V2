@@ -395,6 +395,32 @@ export function WorksWorkspace(
     const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next;
   });
   const picked = conditions.filter((c) => checked.has(c.id));
+  /** 契約期間の更新。対象の条件と新しい終了日。 */
+  const [renewing, setRenewing] = useState<{ ids: number[]; newEnd: string } | null>(null);
+  const plusMonths = (iso: string | null, months: number) => {
+    const d = iso ? new Date(`${iso}T00:00:00Z`) : new Date();
+    const y = d.getUTCFullYear(), m = d.getUTCMonth(), day = d.getUTCDate();
+    const lastSrc = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+    const lastDst = new Date(Date.UTC(y, m + months + 1, 0)).getUTCDate();
+    return new Date(Date.UTC(y, m + months, day === lastSrc ? lastDst : Math.min(day, lastDst))).toISOString().slice(0, 10);
+  };
+  const latestEnd = (ids: number[]) => conditions.filter((c) => ids.includes(c.id)).map((c) => c.termEnd).filter(Boolean).sort().slice(-1)[0] ?? null;
+  const startRenew = (ids: number[]) => setRenewing({ ids, newEnd: plusMonths(latestEnd(ids), 12) });
+  async function renewTerm() {
+    if (!renewing) return;
+    setBusy(true); setError(null); setNotice(null);
+    try {
+      const r = await api.post<{ done: Array<{ conditionNo: string | null; mode: string; from: string | null; to: string }>;
+                                 failed: Array<{ id: number; error: string }> }>("/conditions-renew-term",
+        { ids: renewing.ids, newEnd: renewing.newEnd });
+      const revised = r.done.filter((d) => d.mode === "revised").length;
+      setNotice(`契約期間を ${renewing.newEnd} まで更新しました（${r.done.length} 本${revised ? `。うち ${revised} 本は支払があるので改訂（新版）` : ""}）`
+        + (r.failed.length ? `。できなかったもの：${r.failed.map((f) => `#${f.id} ${f.error}`).join(" / ")}` : ""));
+      setRenewing(null);
+      await reloadWork();
+    } catch (e) { setError((e as ApiError).message); }
+    finally { setBusy(false); }
+  }
 
   async function openEdit(id: number) {
     setError(null);
@@ -1043,6 +1069,7 @@ export function WorksWorkspace(
                             title="選んだ条件を載せた状態で文書の画面へ移る（条件書・計算書）"
                             onClick={() => onCompose(picked.map((c) => c.id))}>この条件で文書を作る</button>
                   )}
+                  <button className="btn btn-sm" disabled={busy} onClick={() => startRenew(picked.map((c) => c.id))}>契約期間を更新</button>
                   <button className="btn btn-sm" disabled={busy} onClick={() => void voidPicked()}>無効化</button>
                   {!moving
                     ? <button className="btn btn-sm" disabled={busy} onClick={() => setMoving(true)}>別の作品へ移す</button>
@@ -1077,6 +1104,31 @@ export function WorksWorkspace(
                     }} />
                 </div>
               )}
+              {renewing && (() => {
+                const targets = conditions.filter((c) => renewing.ids.includes(c.id));
+                const base = latestEnd(renewing.ids);
+                return (
+                  <div className="panel-bd stack" style={{ borderBottom: "1px solid var(--line)", gap: 6 }}>
+                    <div className="row" style={{ gap: 8 }}>
+                      <b>契約期間を更新</b>
+                      <span className="faint">{targets.map((c) => `${c.conditionNo ?? `#${c.id}`}（${c.termEnd ?? "期限なし"}まで）`).join("・")}</span>
+                    </div>
+                    <div className="row" style={{ gap: 8 }}>
+                      <span className="faint">新しい終了日</span>
+                      <input type="date" value={renewing.newEnd} aria-label="新しい終了日"
+                             onChange={(e) => setRenewing({ ...renewing, newEnd: e.target.value })} />
+                      <span className="chips">
+                        {[6, 12, 24].map((m) => (
+                          <button key={m} className="chip" onClick={() => setRenewing({ ...renewing, newEnd: plusMonths(base, m) })}>+{m}か月</button>
+                        ))}
+                      </span>
+                      <button className="btn btn-sm primary" disabled={busy || !renewing.newEnd} onClick={() => void renewTerm()}>更新する</button>
+                      <button className="btn btn-sm" disabled={busy} onClick={() => setRenewing(null)}>やめる</button>
+                    </div>
+                    <span className="faint">料率・締めはそのまま。実績・支払が無ければその場で書き換え、支払が立っていれば改訂（新版）になります。</span>
+                  </div>
+                );
+              })()}
               <div className="tablewrap">
                 <table>
                   <thead><tr>
@@ -1104,6 +1156,10 @@ export function WorksWorkspace(
                         <td className="row" style={{ gap: 4, flexWrap: "nowrap" }}>
                           {editable && c.status !== "superseded" && c.status !== "void" && (
                             <button className="btn btn-sm" onClick={() => void openEdit(c.id)}>編集</button>
+                          )}
+                          {editable && (c.status === "active" || c.status === "scheduled") && (
+                            <button className="btn btn-sm" disabled={busy} title="終了日を伸ばす（支払が立っていれば改訂になる）"
+                                    onClick={() => startRenew([c.id])}>期間更新</button>
                           )}
                           {editable && c.status === "void" && (
                             <button className="btn btn-sm" disabled={busy} onClick={() => void removeCondition(c)}>削除</button>
