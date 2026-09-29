@@ -3298,11 +3298,15 @@ export function createRoutes(database: Transactable) {
     })).min(1).max(50),
     // 訂正版。退かせる元の計算書と理由。元に結ばれた実績はそのまま載せ直せる。
     supersedesId: z.coerce.number().int().positive().nullable().optional(),
+    // 2枚目以降の退かせる計算書（複数を 1 枚にまとめる）。
+    supersedesExtraIds: z.array(z.coerce.number().int().positive()).max(20).optional(),
     reason: z.string().trim().max(500).nullable().optional()
   });
+  const supersedesOf = (input: { supersedesId?: number | null; supersedesExtraIds?: number[] }) =>
+    [...new Set([...(input.supersedesId ? [input.supersedesId] : []), ...(input.supersedesExtraIds ?? [])])];
 
   type BundleEntries = z.infer<typeof bundleSchema>["entries"];
-  const previewBundle = async (entries: BundleEntries, freeDocumentId: number | null = null) => {
+  const previewBundle = async (entries: BundleEntries, freeDocumentIds: number[] = []) => {
     const ids = entries.map((e) => e.conditionId);
     if (new Set(ids).size !== ids.length) {
       throw new DomainError("VALIDATION", "同じ条件を2回は選べません");
@@ -3314,7 +3318,7 @@ export function createRoutes(database: Transactable) {
       previews.push(await royalty.preview({
         conditionId: entry.conditionId, period: entry.period, occurredOn: entry.occurredOn,
         eventType: entry.eventType, reported: entry.reported, eventIds: entry.eventIds,
-        freeDocumentId
+        freeDocumentIds
       }));
     }
     return previews;
@@ -3327,7 +3331,7 @@ export function createRoutes(database: Transactable) {
       const input = bundleSchema.omit({ templateKey: true }).extend({
         templateKey: z.string().trim().max(120).optional()
       }).parse(req.body ?? {});
-      const previews = await previewBundle(input.entries, input.supersedesId ?? null);
+      const previews = await previewBundle(input.entries, supersedesOf(input));
       res.json({
         lines: applyLineLabels(previews.flatMap(bundleLinesFor), input.manualInputs ?? {}),
         totals: bundleTotals(previews),
@@ -3340,10 +3344,11 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       const input = bundleSchema.parse(req.body ?? {});
       const who = actor(res);
-      if (input.supersedesId && !String(input.reason ?? "").trim()) {
+      const supersedes = supersedesOf(input);
+      if (supersedes.length && !String(input.reason ?? "").trim()) {
         throw new DomainError("VALIDATION", "訂正版を出す理由を書いてください");
       }
-      const previews = await previewBundle(input.entries, input.supersedesId ?? null);
+      const previews = await previewBundle(input.entries, supersedes);
       const totals = bundleTotals(previews);
       // 人がフォームで直した見出し（製品名・対象契約）を重ねる。金額は触らせない。
       const lines = applyLineLabels(previews.flatMap(bundleLinesFor), input.manualInputs ?? {});
@@ -3360,9 +3365,11 @@ export function createRoutes(database: Transactable) {
           ...input.manualInputs,
           statementMode: "bundle",
           rs_bundle_lines: lines,
-          rs_bundle_tax: totals.tax
+          rs_bundle_tax: totals.tax,
+          // 2枚目以降の退かせる計算書。決定の瞬間に issue-service が退かせて実績を移す。
+          ...(supersedes.length > 1 ? { _supersedesExtra: supersedes.slice(1) } : {})
         },
-        supersedesId: input.supersedesId ?? null,
+        supersedesId: supersedes[0] ?? null,
         supersedeReason: input.reason ?? null
       }, who);
 
@@ -3384,7 +3391,7 @@ export function createRoutes(database: Transactable) {
             eventType: e.eventType, reported: e.reported, eventIds: e.eventIds,
             documentId: issued.id,
             // 訂正版なら、元から移ってきた実績（いまはこの文書を指す）をそのまま結ぶ。
-            freeDocumentId: input.supersedesId ? issued.id : null
+            freeDocumentId: supersedes.length ? issued.id : null
           })), who);
       } catch (error) {
         await issues.void(issued.id, "計算書を結べなかったため無効", who).catch(() => undefined);

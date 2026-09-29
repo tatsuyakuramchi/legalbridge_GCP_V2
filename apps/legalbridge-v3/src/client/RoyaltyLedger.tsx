@@ -71,7 +71,7 @@ export function RoyaltyLedger(
      * 中身の確認・手入力・下書き保存・決定は文書の画面でする（台帳からいきなり決定しない）。
      */
     onCompose?: (conditionIds: number[], eventIds: number[], templateKey: string | null, back: DocBack,
-                 revise?: { supersedesId: number; reason: string } | null) => void;
+                 revise?: { supersedesIds: number[]; reason: string } | null) => void;
     initialPartyId?: number | null;
     onOpenDocument?: (documentId: number, back?: DocBack | null) => void;
     /** 作家・作品 → 依頼。受付箱のその依頼を開く。 */
@@ -142,7 +142,7 @@ export function RoyaltyLedger(
   const back: DocBack | null = view ? { label: `${view.party.name} × ${view.scope?.workTitle ?? "全作品"}`, workId, partyId: view.party.id } : null;
   const openDoc = onOpenDocument ? (id: number) => onOpenDocument(id, back) : undefined;
   const composeWith = onCompose && back
-    ? (ids: number[], events: number[], key: string | null, revise?: { supersedesId: number; reason: string } | null) =>
+    ? (ids: number[], events: number[], key: string | null, revise?: { supersedesIds: number[]; reason: string } | null) =>
         onCompose(ids, events, key, back, revise)
     : undefined;
 
@@ -428,7 +428,7 @@ function RoundDetail(
     onLink: (requestId: number, round: Round, unlink?: boolean) => void;
     onOpenRequest?: (requestId: number) => void;
     onCompose?: (conditionIds: number[], eventIds: number[], templateKey: string | null,
-                 revise?: { supersedesId: number; reason: string } | null) => void;
+                 revise?: { supersedesIds: number[]; reason: string } | null) => void;
     adding: { mode: "report" | "plan"; conditionId?: number } | null;
     isAdmin: boolean;
     setAdding: (a: { mode: "report" | "plan"; conditionId?: number } | null) => void;
@@ -440,21 +440,26 @@ function RoundDetail(
   const [templates, setTemplates] = useState<Array<{ templateKey: string; label: string }>>([]);
   const [templateKey, setTemplateKey] = useState("");
 
-  // 計算書に入れるのは、まだ文書に結ばれていない実績。
+  /** 「合わせて出す」にした決定済みの計算書。その報告も試算・計算書に入り、決定の瞬間に退く。 */
+  const [merging, setMerging] = useState<Set<number>>(new Set());
+  const toggleMerge = (documentId: number) => setMerging((s) => { const n = new Set(s); if (n.has(documentId)) n.delete(documentId); else n.add(documentId); return n; });
+  // 計算書に入れるのは、まだ文書に結ばれていない実績と、「合わせて出す」にした計算書の実績。
   const entries = useMemo(() => r.parts
-    .map((p) => ({ conditionId: p.conditionId, eventIds: p.events.filter((e) => !e.documentId).map((e) => e.id),
+    .map((p) => ({ conditionId: p.conditionId,
+                   eventIds: p.events.filter((e) => !e.documentId || merging.has(e.documentId)).map((e) => e.id),
                    period: p.label ?? null }))
-    .filter((e) => e.eventIds.length), [r]);
+    .filter((e) => e.eventIds.length), [r, merging]);
   const waitingLines = r.open && r.state !== "issued" ? waitingLinesOf(r) : 0;
 
   useEffect(() => {
     if (!entries.length) { setPreview(null); setPreviewError(null); return; }
     let live = true;
-    api.post<{ lines: StatementLine[]; totals: StatementTotals }>("/statement-documents/preview", { entries })
+    api.post<{ lines: StatementLine[]; totals: StatementTotals }>("/statement-documents/preview",
+      { entries, supersedesId: [...merging][0] ?? null, supersedesExtraIds: [...merging].slice(1) })
       .then((x) => { if (live) { setPreview(x); setPreviewError(null); } })
       .catch((e: ApiError) => { if (live) { setPreview(null); setPreviewError(e.message); } });
     return () => { live = false; };
-  }, [r.key, entries.map((e) => `${e.conditionId}:${e.eventIds.join("-")}`).join(",")]);
+  }, [r.key, entries.map((e) => `${e.conditionId}:${e.eventIds.join("-")}`).join(","), [...merging].join("-")]);
   useEffect(() => {
     api.get<{ templates: Array<{ templateKey: string; label: string }> }>("/document-templates")
       .then((x) => {
@@ -480,27 +485,16 @@ function RoundDetail(
     if (!onCompose) return;
     const evs = r.parts.flatMap((p) => p.events.filter((e) => e.documentId === documentId));
     onCompose([...new Set(evs.map((e) => e.conditionId))], evs.map((e) => e.id), templateKey || null,
-              { supersedesId: documentId, reason });
-  }
-  /**
-   * 決定した計算書を、この回のまだ計算書に入っていない報告と合わせて 1 枚で出し直す。
-   * 元の計算書は退き（訂正版あり）、その報告と今回の報告が新しい 1 枚に載る。
-   * 支払が立っている計算書は対象にしない（払った根拠が変わる）。
-   */
-  function merge(documentId: number) {
-    if (!onCompose) return;
-    const doc = r.documents.find((d) => d.id === documentId);
-    const old = r.parts.flatMap((p) => p.events.filter((e) => e.documentId === documentId));
-    const evs = [...old.map((e) => e.id), ...entries.flatMap((e) => e.eventIds)];
-    const conds = [...new Set([...old.map((e) => e.conditionId), ...entries.map((e) => e.conditionId)])];
-    onCompose(conds, evs, templateKey || null,
-              { supersedesId: documentId, reason: `${doc?.documentNo ?? `#${documentId}`} を退かせ、この回の他の報告と合わせて 1 枚で出し直し` });
+              { supersedesIds: [documentId], reason });
   }
   const mergeable = r.documents.filter((d) => d.status === "issued" && !d.paymentIds.length);
   /** 文書の画面へ。この回のまだ文書に結ばれていない実績と、その条件を選んだ状態で開く。 */
   function compose() {
     if (!onCompose) return;
-    onCompose(entries.map((e) => e.conditionId), entries.flatMap((e) => e.eventIds), templateKey || null);
+    const ids = [...merging];
+    const nos = r.documents.filter((d) => merging.has(d.id)).map((d) => d.documentNo ?? `#${d.id}`);
+    onCompose(entries.map((e) => e.conditionId), entries.flatMap((e) => e.eventIds), templateKey || null,
+              ids.length ? { supersedesIds: ids, reason: `${nos.join("・")} を退かせ、この回の報告と合わせて 1 枚で出し直し` } : null);
   }
 
   const st = ROUND_STATE[r.state] ?? { label: r.state, tag: "" };
@@ -532,7 +526,7 @@ function RoundDetail(
             <RoundReport round={r} view={view} canWrite={canWrite} onChanged={onChanged} onError={onError} onOpenDocument={onOpenDocument}
                          adding={adding} setAdding={setAdding} isAdmin={isAdmin} onReissue={onCompose ? reissue : undefined}
                          onCreatePayment={canWrite ? (id) => void createPayment(r.documents.find((d) => d.id === id) ?? { id, documentNo: null }) : undefined}
-                         onMerge={canWrite && onCompose && entries.length > 0 ? merge : undefined} />
+                         merging={merging} onMerge={canWrite && onCompose ? toggleMerge : undefined} />
           </div>
         </div>
 
@@ -544,13 +538,13 @@ function RoundDetail(
               <b>計算書を作る</b>
               <span className="faint">{entries.length ? "入力済の報告で試算しています" : r.documents.length ? "この回の報告はすべて計算書に入っています" : "報告を入れると試算が出ます"}</span>
             </div>
-            {entries.length > 0 && (
+            {(entries.length > 0 || mergeable.length > 0) && (
               <div className="stack" style={{ gap: 8 }}>
                 <div className="row" style={{ gap: 8 }}>
                   {canWrite && (
                     <button className="btn primary" disabled={!canCompose} onClick={compose}
                             title={waitingLines ? `報告待ちが ${waitingLines} 行あります（待たずに出すと入力済の分だけの計算書になります）` : ""}>
-                      計算書を作る（文書の画面へ）
+                      {merging.size ? `計算書を作る（${merging.size} 枚を退かせて 1 枚に・文書の画面へ）` : "計算書を作る（文書の画面へ）"}
                     </button>
                   )}
                   {canWrite && templates.length > 1 && (
@@ -562,11 +556,11 @@ function RoundDetail(
                 </div>
                 {canWrite && mergeable.length > 0 && (
                   <div className="note stack" style={{ gap: 4 }}>
-                    <span>この回にはもう決定した計算書があります。今回の報告と<b>合わせて 1 枚</b>にするなら、その計算書を退かせて出し直します（支払が立っていない計算書だけ）。</span>
-                    <span className="row" style={{ gap: 6 }}>
+                    <span>この回にはもう決定した計算書があります。<b>合わせて出す</b>にした計算書の報告は上の試算に加わり、「計算書を作る」で退かせて 1 枚にまとめます（支払が立っていない計算書だけ）。</span>
+                    <span className="chips" role="group" aria-label="合わせて出す計算書">
                       {mergeable.map((d) => (
-                        <button key={d.id} className="btn btn-sm" onClick={() => merge(d.id)}>
-                          {d.documentNo ?? `#${d.id}`} と合わせて 1 枚で出し直す
+                        <button key={d.id} className="chip" aria-pressed={merging.has(d.id)} onClick={() => toggleMerge(d.id)}>
+                          {merging.has(d.id) ? "✓ " : ""}{d.documentNo ?? `#${d.id}`}{merging.has(d.id) ? "（合わせて出す）" : " を合わせる"}
                         </button>
                       ))}
                     </span>

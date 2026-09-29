@@ -150,7 +150,7 @@ export function App() {
                templateKey?: string | null;
                bulk?: boolean; settled?: boolean;
                /** 訂正版。退かせる元の文書と理由。 */
-               supersedesId?: number | null; reason?: string | null } | null>(null);
+               supersedesId?: number | null; supersedesExtraIds?: number[]; reason?: string | null } | null>(null);
   /** 他の画面の「編集」から文書の画面へ来たときの相手。 */
   /**
    * 開く文書。ID だけだと、同じ文書をもう一度開けない。
@@ -176,11 +176,12 @@ export function App() {
   const startCompose = (
     conditionIds: number[], eventIds: number[] = [], matterId: number | null = null,
     templateKey: string | null = null, back: DocBack | null = null,
-    revise: { supersedesId: number; reason: string } | null = null
+    revise: { supersedesIds: number[]; reason: string } | null = null
   ) => {
     setDocBack(back);
     setCompose({ conditionIds, eventIds, matterId, templateKey,
-                 supersedesId: revise?.supersedesId ?? null, reason: revise?.reason ?? null });
+                 supersedesId: revise?.supersedesIds[0] ?? null, supersedesExtraIds: revise?.supersedesIds.slice(1) ?? [],
+                 reason: revise?.reason ?? null });
     setFocus(null);
     setOpenDocument(undefined);
     setView("documents");
