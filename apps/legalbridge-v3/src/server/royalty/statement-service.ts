@@ -33,6 +33,8 @@ export interface CalculationInput {
    * その文書に結ばれた実績は「空いている」ものとして扱う。
    */
   freeDocumentId?: number | null;
+  /** 複数の計算書を退かせて 1 枚にするとき。 */
+  freeDocumentIds?: number[] | null;
 }
 
 /** 計算書に載る実績1件。根拠（売上か数量）と、その比で按分した額。 */
@@ -205,7 +207,8 @@ export class RoyaltyStatementService {
       const tag = `実績 #${e.id}（${dateStr(e.occurred_on) ?? "日付なし"}）`;
       if (e.same_series !== true) throw new DomainError("VALIDATION", `${tag} はこの条件の実績ではありません`);
       if (e.status !== "active") throw new DomainError("CONFLICT", `${tag} は取り消されています`);
-      if (e.document_id && Number(e.document_id) !== (input.freeDocumentId ?? null)) {
+      const free = new Set<number>([...(input.freeDocumentIds ?? []), ...(input.freeDocumentId ? [input.freeDocumentId] : [])]);
+      if (e.document_id && !free.has(Number(e.document_id))) {
         throw new DomainError("CONFLICT", `${tag} はすでに別の文書に結ばれています`);
       }
     }

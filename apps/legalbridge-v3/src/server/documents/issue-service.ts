@@ -195,9 +195,10 @@ export class DocumentIssueService {
         // 案件が渡されなければ、条件の載っている案件を引く。条件の画面から作った
         // 文書が案件に出てこない、という穴を塞ぐ。複数の案件に載っていれば決めない。
         const matterId = input.matterId ?? await this.matterOfConditions(client, input.conditionIds);
-        if (input.supersedesId) {
-          const prev = (await client.query("SELECT status FROM documents WHERE id = $1", [input.supersedesId])).rows[0] as any;
-          if (!prev) throw new DomainError("NOT_FOUND", `訂正する元の文書 ${input.supersedesId} が見つかりません`);
+        const extra = Array.isArray((input.manualInputs as any)?._supersedesExtra) ? ((input.manualInputs as any)._supersedesExtra as unknown[]).map(Number) : [];
+        for (const sid of [...(input.supersedesId ? [input.supersedesId] : []), ...extra]) {
+          const prev = (await client.query("SELECT status FROM documents WHERE id = $1", [sid])).rows[0] as any;
+          if (!prev) throw new DomainError("NOT_FOUND", `訂正する元の文書 ${sid} が見つかりません`);
           if (prev.status !== "issued") throw new DomainError("CONFLICT", `決定済みの文書だけ訂正版を出せます（${prev.status}）`);
         }
         const inserted = await client.query(
@@ -438,6 +439,12 @@ export class DocumentIssueService {
         if (supersedes) {
           await this.supersede(client, supersedes, documentId, documentNo,
             str(row.supersede_reason), actor);
+          // 複数の計算書を 1 枚にまとめるとき、2枚目以降も同じ理由で退かせる。
+          const extra = (await client.query(
+            "SELECT manual_inputs->'_supersedesExtra' AS extra FROM documents WHERE id = $1", [documentId])).rows[0] as any;
+          for (const x of (Array.isArray(extra?.extra) ? extra.extra : []).map(Number).filter((n: number) => n > 0 && n !== supersedes)) {
+            await this.supersede(client, x, documentId, documentNo, str(row.supersede_reason), actor);
+          }
         }
 
         // 条件書（個別利用許諾条件書・出版条件書）は相手と結ぶ契約そのもの。

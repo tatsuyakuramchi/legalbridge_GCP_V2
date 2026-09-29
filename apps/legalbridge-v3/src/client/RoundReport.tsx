@@ -57,7 +57,7 @@ export function eventTypeFor(usage: string | null, condition: LedgerCondition): 
 }
 
 export function RoundReport(
-  { round, view, canWrite, onChanged, onError, onOpenDocument, adding, setAdding, isAdmin = false, onReissue, onCreatePayment, onMerge }: {
+  { round, view, canWrite, onChanged, onError, onOpenDocument, adding, setAdding, isAdmin = false, onReissue, onCreatePayment, merging, onMerge }: {
     round: Round; view: LedgerView; canWrite: boolean;
     onChanged: (message?: string) => void; onError: (m: string) => void;
     onOpenDocument?: (documentId: number) => void;
@@ -70,7 +70,8 @@ export function RoundReport(
     onReissue?: (documentId: number, reason: string) => void;
     /** 決定した計算書に支払が無いとき、その場で立てる。 */
     onCreatePayment?: (documentId: number) => void;
-    /** 決定した計算書を、この回の他の報告と合わせて 1 枚で出し直す（支払の無い計算書だけ）。 */
+    /** 「合わせて出す」にした計算書（支払の無い計算書だけ）。押すと切り替わる。 */
+    merging?: Set<number>;
     onMerge?: (documentId: number) => void;
   }
 ) {
@@ -363,9 +364,11 @@ export function RoundReport(
                             const d = l.event?.documentId ? round.documents.find((x) => x.id === l.event!.documentId) : null;
                             if (!d || d.status !== "issued") return null;
                             if (d.paymentIds.length) return <span className="tag ok">支払あり</span>;
+                            const on = merging?.has(d.id) ?? false;
                             const mergeBtn = onMerge && (
-                              <button className="btn btn-sm" disabled={busy} title="この計算書を退かせ、この回の他の報告と合わせて 1 枚で出し直す"
-                                      onClick={() => onMerge(d.id)}>合わせて出し直す</button>
+                              <button className={`btn btn-sm${on ? " primary" : ""}`} disabled={busy} aria-pressed={on}
+                                      title="この計算書の報告を試算に加え、「計算書を作る」で退かせて 1 枚にまとめる"
+                                      onClick={() => onMerge(d.id)}>{on ? "✓ 合わせて出す（外す）" : "合わせて出す"}</button>
                             );
                             if (d.net <= 0) return <><span className="tag">支払なし（差引 0）</span>{mergeBtn}</>;
                             return (

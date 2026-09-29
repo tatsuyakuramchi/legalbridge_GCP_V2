@@ -149,7 +149,7 @@ export function WorksWorkspace(
     /** 文書の画面へ、選んだ条件を載せた状態で移る。台帳から文書を作る入口。 */
     onCompose?: (conditionIds: number[], eventIds?: number[], matterId?: number | null,
                  templateKey?: string | null, back?: DocBack | null,
-                 revise?: { supersedesId: number; reason: string } | null) => void;
+                 revise?: { supersedesIds: number[]; reason: string } | null) => void;
   }
 ) {
   const readOnly = useReadOnly();
