@@ -435,6 +435,7 @@ export function ConditionEdit(
               <span>対象の許諾先</span>
               <SearchSelect value={v.targetPartyId} search={searchParties}
                             placeholder="空なら一律（その作品の許諾先すべてに効く）"
+                            emptyLabel="（一律：対象の許諾先を外す）"
                             valueLabel={detail.targetParty?.name ?? null}
                             onChange={(id) => set("targetPartyId", id)} />
               <small className="faint">
