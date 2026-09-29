@@ -2226,6 +2226,18 @@ COMMENT ON TABLE v3.royalty_expected_lines IS
 GRANT SELECT, INSERT, DELETE ON v3.royalty_expected_lines TO legalbridge_v3_runtime;
 GRANT USAGE, SELECT ON SEQUENCE v3.royalty_expected_lines_id_seq TO legalbridge_v3_runtime;
 
+-- ---------------------------------------------------------------------
+-- A-063 許諾先専用の IN 条件（docs/royalty-ledger.md §3.7）
+--   取得（IN）の再許諾・他社販売の条件は、ふつう作家×作品で1本（一律。その作品の
+--   許諾先すべてに効く）。契約が特定の許諾先だけ別の料率にしているときは、その
+--   許諾先を「対象の許諾先」として持つ（許諾先専用）。台帳はその許諾先の OUT 条件
+--   の行だけをこの条件の下に並べ、一律の条件からは外す。
+--   相手先（counterparty_id）はどちらも作家のまま。
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS target_party_id bigint REFERENCES v3.parties(id);
+COMMENT ON COLUMN v3.conditions.target_party_id IS
+  '対象の許諾先（取引先）。取得（IN）の再許諾・他社販売で、この許諾先だけに効く料率のとき。空なら一律。A-063';
+
 COMMIT;
 
 -- 確認
@@ -2549,3 +2561,7 @@ SELECT count(*) AS 列 FROM information_schema.columns
 \echo '--- 台帳の予定の行（A-062。表 1 であること） ---'
 SELECT count(*) AS 表 FROM information_schema.tables
  WHERE table_schema='v3' AND table_name='royalty_expected_lines';
+
+\echo '--- 許諾先専用の IN 条件（A-063。列 1 であること） ---'
+SELECT count(*) AS 列 FROM information_schema.columns
+ WHERE table_schema='v3' AND table_name='conditions' AND column_name='target_party_id';

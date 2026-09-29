@@ -9,12 +9,12 @@ test("条件名は 作品名｜取引モデル。出版は「紙出版」「電�
   assert.equal(conditionNameFor({ workTitle: "星降る夜のはなし", usageType: "pub_digital" }), "星降る夜のはなし｜電子出版");
 });
 
-test("再許諾は 再許諾先／目的 を名前に含める。再許諾先が無ければ付けられない", () => {
+test("再許諾は 再許諾先／目的 を名前に含める。再許諾先が無ければ 作品名｜再許諾（一律。A-063）", () => {
   assert.equal(conditionNameFor({ workTitle: "ito", usageType: "sublicense", sublicensee: "Alpha Games", purpose: "英語版の製造販売" }),
     "ito｜再許諾（Alpha Games／英語版の製造販売）");
   assert.equal(conditionNameFor({ workTitle: "ito", usageType: "sublicense", sublicensee: "Alpha Games" }),
     "ito｜再許諾（Alpha Games）");
-  assert.equal(conditionNameFor({ workTitle: "ito", usageType: "sublicense" }), null);
+  assert.equal(conditionNameFor({ workTitle: "ito", usageType: "sublicense" }), "ito｜再許諾");
   assert.equal(conditionNameFor({ workTitle: " ", usageType: "in_house" }), null);
 });
 

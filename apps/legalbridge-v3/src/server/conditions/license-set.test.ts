@@ -99,10 +99,11 @@ test("条件名が空なら 作品名｜取引モデル で行ごとに付く。
   ]);
 });
 
-test("再許諾は再許諾先が要る。同じ再許諾先・目的の再許諾が2回なら止める。相手が違う既存の再許諾とは重ならない", async () => {
+test("再許諾は再許諾先なし（一律）で作れる。同じ再許諾先・目的の再許諾が2回なら止める。相手が違う既存の再許諾とは重ならない", async () => {
   const svc = new ConditionWriteService(build([{ condition_no: "CL-1", usage_type: "sublicense", name: "ito｜再許諾（Alpha Games／英語版）", media: null }]));
-  await assert.rejects(() => svc.createLicenseSet({ ...base, title: null, rows: [{ usageType: "sublicense", ratePct: 50 }] }, "k"),
-    /再許諾先の名称/);
+  // 一律（A-063）：再許諾先を入れなくても 作品名｜再許諾 で作れる。
+  const flat = await svc.createLicenseSet({ ...base, title: null, rows: [{ usageType: "sublicense", ratePct: 50 }] }, "k");
+  assert.equal(flat.conditions.length, 1);
   await assert.rejects(() => svc.createLicenseSet({ ...base, title: null, rows: [
     { usageType: "sublicense", ratePct: 50, sublicensee: "X", purpose: "y" },
     { usageType: "sublicense", ratePct: 40, sublicensee: "X", purpose: "y" }] }, "k"), /2回入っています/);

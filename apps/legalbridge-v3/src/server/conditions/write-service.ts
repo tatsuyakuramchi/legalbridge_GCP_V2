@@ -52,7 +52,7 @@ export interface PublishingSetInput {
   translationPrint?: PublishingTranslationTerms | null;
   translationDigital?: PublishingTranslationTerms | null;
   /** 出版の再許諾（翻訳出版など）。再許諾先と目的が条件名に入る。 */
-  sublicense?: (PublishingTerms & { sublicensee?: string | null; purpose?: string | null }) | null;
+  sublicense?: (PublishingTerms & { sublicensee?: string | null; purpose?: string | null; targetPartyId?: number | null }) | null;
 }
 export type PublishingSetResult = Record<PubMedia, { id: number; conditionNo: string | null } | null>
   & { sublicense?: { id: number; conditionNo: string | null } | null;
@@ -67,8 +67,10 @@ export interface LicenseSetRow {
   exclusivity?: "exclusive" | "non_exclusive" | null;
   mgAmount?: number | null;
   agAmount?: number | null;
-  /** 再許諾先の名称。再許諾のときは必須（条件名に入る）。 */
+  /** 再許諾先の名称（条件名に入る）。対象の許諾先を選べばその名前が入る。 */
   sublicensee?: string | null;
+  /** 対象の許諾先（A-063）。この許諾先だけに効く料率のとき。空なら一律。 */
+  targetPartyId?: number | null;
   /** 再許諾の目的。条件名に入る。 */
   purpose?: string | null;
   /** 再許諾の別途合意（A-033）。翻訳版の条文と一覧の印が出し分かれる。 */
@@ -242,6 +244,8 @@ export interface ConditionInput {
   /** 再許諾先の名称・目的。名前が空のとき、規則の条件名に入れる（保存先は名前）。 */
   sublicensee?: string | null;
   purpose?: string | null;
+  /** 対象の許諾先（A-063）。この許諾先だけに効く料率のとき。空なら一律。 */
+  targetPartyId?: number | null;
 }
 
 export interface EconomicsPatch {
@@ -278,6 +282,8 @@ export interface EconomicsPatch {
   /** 直接編集のときだけ変えられる。種類は案件で使える範囲、計算方式は金額の欄と一緒に。 */
   kind?: "license" | "product" | "service" | "expense" | "fee";
   pricingModel?: "fixed" | "unit_rate" | "revenue_rate" | "subscription" | "none";
+  /** 対象の許諾先（A-063）。 */
+  targetPartyId?: number | null;
 }
 
 const ECONOMICS_COLUMNS: Record<keyof EconomicsPatch, string> = {
@@ -291,7 +297,8 @@ const ECONOMICS_COLUMNS: Record<keyof EconomicsPatch, string> = {
   licenseFeeBasis: "license_fee_basis",
   autoRenew: "auto_renew", renewMonths: "renew_months", renewStoppedOn: "renew_stopped_on",
   spec: "spec", deliverableOwnership: "deliverable_ownership", orderNo: "order_no",
-  usageType: "usage_type"
+  usageType: "usage_type",
+  targetPartyId: "target_party_id"
 };
 
 // 改訂で引き継ぐ列（id・状態・監査列を除く条件の中身すべて）。
@@ -305,7 +312,9 @@ const COPY_COLUMNS = [
   // 利用形態も版をまたいで引き継ぐ（落とすと改訂した許諾条件が形態なしになる）。
   "usage_type",
   // 計算書の出し方（A-059）。改訂しても時限式・イベント式は変わらない。
-  "statement_timing"
+  "statement_timing",
+  // 対象の許諾先（A-063）。
+  "target_party_id"
 ];
 
 export class ConditionWriteService {
@@ -329,9 +338,16 @@ export class ConditionWriteService {
         if (!String(input.name ?? "").trim() && input.kind === "license" && input.direction === "in"
             && input.workId && input.usageType) {
           const w = await client.query("SELECT title FROM works WHERE id = $1", [input.workId]);
+          // 対象の許諾先を選んでいれば、その名前を条件名に入れる（許諾先専用と分かる）。
+          let sublicensee = input.sublicensee ?? null;
+          if (!String(sublicensee ?? "").trim() && input.targetPartyId) {
+            const tp = await client.query("SELECT name FROM parties WHERE id = $1", [input.targetPartyId]);
+            if (!tp.rows[0]) throw new DomainError("NOT_FOUND", `対象の許諾先 ${input.targetPartyId} が見つかりません`);
+            sublicensee = String((tp.rows[0] as { name: string }).name);
+          }
           const made = conditionNameFor({ workTitle: (w.rows[0] as { title?: string } | undefined)?.title ?? "",
                                           usageType: input.usageType,
-                                          sublicensee: input.sublicensee, purpose: input.purpose });
+                                          sublicensee, purpose: input.purpose });
           if (!made) {
             throw new DomainError("VALIDATION", input.usageType === "sublicense"
               ? "再許諾は再許諾先の名称を入れてください（条件名に入ります）"
@@ -374,9 +390,18 @@ export class ConditionWriteService {
       if (!Number.isFinite(rate) || rate < 0 || rate > 100) {
         throw new DomainError("VALIDATION", `${conditionUsageLabel(row.usageType)}の料率は 0〜100（%）で入れてください`);
       }
-      if (row.usageType === "sublicense" && !title && !String(row.sublicensee ?? "").trim()) {
-        throw new DomainError("VALIDATION", "再許諾は再許諾先の名称を入れてください（条件名「作品名｜再許諾（再許諾先／目的）」になります）");
+    }
+    // 対象の許諾先の名前を条件名に入れる（A-063）。
+    const targetNames = new Map<number, string>();
+    for (const row of rows) {
+      if (row.targetPartyId && !String(row.sublicensee ?? "").trim() && !targetNames.has(row.targetPartyId)) {
+        const tp = await this.database.query("SELECT name FROM parties WHERE id = $1", [row.targetPartyId]);
+        if (!tp.rows[0]) throw new DomainError("NOT_FOUND", `対象の許諾先 ${row.targetPartyId} が見つかりません`);
+        targetNames.set(row.targetPartyId, String((tp.rows[0] as { name: string }).name));
       }
+    }
+    for (const row of rows) {
+      if (row.targetPartyId && !String(row.sublicensee ?? "").trim()) row.sublicensee = targetNames.get(row.targetPartyId) ?? null;
     }
     const scopes = (input.scopes ?? []).filter((s) => s.scopeType !== "media");
     // 作品名は取引の中で取る（規則で名前を付けるため）。手入力の名前があればそれが勝つ。
@@ -384,13 +409,14 @@ export class ConditionWriteService {
       if (title) return title;
       const made = conditionNameFor({ workTitle: workTitle ?? "", usageType: row.usageType,
                                       sublicensee: row.sublicensee, purpose: row.purpose });
-      if (!made) throw new DomainError("VALIDATION", `条件名を付けられません（作品名が空か、再許諾先が無い）`);
+      if (!made) throw new DomainError("VALIDATION", `条件名を付けられません（作品名が空）`);
       return made;
     };
     // 同じ利用形態が2回：再許諾は相手・目的が違えば別の条件なので、名前で比べる。
     const seen = new Set<string>();
-    const dupKey = (row: LicenseSetRow) => row.usageType === "sublicense"
-      ? `sublicense:${String(row.sublicensee ?? "").trim()}:${String(row.purpose ?? "").trim()}` : row.usageType;
+    // 再許諾・他社販売は、対象の許諾先（無ければ一律）が違えば別の条件。
+    const dupKey = (row: LicenseSetRow) => (row.usageType === "sublicense" || row.usageType === "oem")
+      ? `${row.usageType}:${row.targetPartyId ?? String(row.sublicensee ?? "").trim()}:${String(row.purpose ?? "").trim()}` : row.usageType;
     for (const row of rows) {
       const key = dupKey(row);
       if (seen.has(key)) {
@@ -424,6 +450,7 @@ export class ConditionWriteService {
       notes: input.notes ?? null,
       scopes,
       usageType: row.usageType,
+      targetPartyId: row.targetPartyId ?? null,
       sublicenseConsent: row.sublicenseConsent ?? null,
       licenseFeeBasis: row.licenseFeeBasis ?? null
     }));
@@ -487,7 +514,8 @@ export class ConditionWriteService {
     if (input.digital) rows.push({ usageType: "pub_digital", ratePct: input.digital.ratePct, exclusivity: input.digital.exclusivity ?? null });
     if (input.sublicense) {
       rows.push({ usageType: "sublicense", ratePct: input.sublicense.ratePct, exclusivity: input.sublicense.exclusivity ?? null,
-                  sublicensee: input.sublicense.sublicensee ?? null, purpose: input.sublicense.purpose ?? null });
+                  sublicensee: input.sublicense.sublicensee ?? null, purpose: input.sublicense.purpose ?? null,
+                  targetPartyId: input.sublicense.targetPartyId ?? null });
     }
     // 翻訳版の再許諾（A-033）。紙・電子で1本ずつ。
     for (const [usage, terms] of [["pub_sub_print", input.translationPrint],
@@ -596,10 +624,11 @@ export class ConditionWriteService {
                                    tax_category, payment_terms, cycle, status, notes,
                                    spec, deliverable_ownership, order_no,
                                    quantity, contract_form, usage_type,
-                                   auto_renew, renew_months, renew_stopped_on, license_fee_basis)
+                                   auto_renew, renew_months, renew_stopped_on, license_fee_basis,
+                                   target_party_id)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
                    $16, $17, $18, $19, $20, $21, $22, $23, $24, 'active', $25, $26, $27, $28,
-                   $29, $30, $31, $32, $33, $34, $35)
+                   $29, $30, $31, $32, $33, $34, $35, $36)
            RETURNING id, condition_no`,
           [no, input.agreementId ?? null, input.direction, input.kind, name, input.counterpartyId,
            input.workId ?? null, input.workPartId ?? null,
@@ -613,7 +642,8 @@ export class ConditionWriteService {
            input.orderNo ?? null,
            input.quantity ?? null, readContractForm(input.contractForm), input.usageType ?? null,
            input.autoRenew ?? null, input.renewMonths ?? null, input.renewStoppedOn ?? null,
-           input.licenseFeeBasis ?? "separate"]);
+           input.licenseFeeBasis ?? "separate",
+           input.targetPartyId ?? null]);
         const row = inserted.rows[0] as { id: number; condition_no: string | null };
         const id = Number(row.id);
 

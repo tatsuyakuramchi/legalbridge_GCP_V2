@@ -303,6 +303,10 @@ SELECT * FROM (
             WHERE table_schema='v3' AND table_name='parties'
               AND column_name IN ('rpt_entity', 'has_board', 'related_party', 'related_party_type', 'related_party_note')))::text
   UNION ALL
+  SELECT 63, '許諾先専用の IN 条件（A-063。列 1 であること）',
+         (SELECT count(*) FROM information_schema.columns
+           WHERE table_schema='v3' AND table_name='conditions' AND column_name='target_party_id')::text
+  UNION ALL
   SELECT 62, '台帳の予定の行（A-062。表 1 であること）',
          (SELECT count(*) FROM information_schema.tables
            WHERE table_schema='v3' AND table_name='royalty_expected_lines')::text

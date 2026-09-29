@@ -258,14 +258,20 @@ export function ConditionCreateForm(
           hint: (v) => {
             const t = works.find((w) => String(w.id) === String(v.workId ?? ""))?.title ?? "";
             const made = v.usageType ? conditionNameFor({ workTitle: t, usageType: v.usageType as never,
-                                                         sublicensee: v.sublicensee, purpose: v.purpose }) : null;
+                                                         sublicensee: null, purpose: v.purpose }) : null;
             return made ? `条件名：${made}` : "取得（IN）の許諾で、この条件がどの使い方の料率かを決める。作品を選ぶと 作品名｜取引モデル の条件名が付く";
           } },
-        { name: "sublicensee", label: "再許諾先の名称", required: true, placeholder: "Alpha Games",
+        // 対象の許諾先（A-063）。ふつうは空＝一律（その作品の許諾先すべてに効く）。
+        // 契約が特定の許諾先だけ別の料率にしているときだけ、その許諾先を選ぶ（許諾先専用）。
+        { name: "targetPartyId", label: "対象の許諾先", type: "search",
+          search: searchParties, placeholder: "空なら一律（その作品の許諾先すべてに効く）",
+          visibleWhen: (v) => v.kind === "license" && v.direction === "in" && (v.usageType === "sublicense" || v.usageType === "oem"),
+          hint: (v) => v.targetPartyId
+            ? "許諾先専用：この許諾先の報告だけがこの料率で計算されます。一律の条件からはこの許諾先が外れます"
+            : "一律：この作品の許諾先すべてにこの料率が効きます。特定の許諾先だけ料率が違う契約のときだけ選んでください" },
+        { name: "purpose", label: "再許諾の目的（任意）", placeholder: "英語版の製造販売",
           visibleWhen: (v) => v.kind === "license" && v.direction === "in" && v.usageType === "sublicense",
-          hint: "条件名「作品名｜再許諾（再許諾先／目的）」に入る" },
-        { name: "purpose", label: "再許諾の目的", placeholder: "英語版の製造販売",
-          visibleWhen: (v) => v.kind === "license" && v.direction === "in" && v.usageType === "sublicense" },
+          hint: "条件名に添える（作品名｜再許諾（許諾先／目的））" },
         // 翻訳版の再許諾（A-033）。再許諾先ごとに別途合意が要るかを条件に持たせる。
         { name: "sublicenseConsent", label: "再許諾ごとの別途合意", type: "select",
           visibleWhen: (v) => isSublicensingUsage(v.usageType),
@@ -297,7 +303,7 @@ export function ConditionCreateForm(
         return {
           // 作品に紐づく許諾は名前を送らない（サーバが 作品名｜取引モデル で付ける）。
           name: ruled ? "" : text(v.name), direction: v.direction, kind: v.kind,
-          sublicensee: ruled ? text(v.sublicensee) : undefined, purpose: ruled ? text(v.purpose) : undefined,
+          targetPartyId: ruled ? int(v.targetPartyId) : undefined, purpose: ruled ? text(v.purpose) : undefined,
           counterpartyId: int(v.counterpartyId), workId: int(v.workId),
           agreementId: int(v.agreementId),
           termStart: text(v.termStart), termEnd: text(v.termEnd),

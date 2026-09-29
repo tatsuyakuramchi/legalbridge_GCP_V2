@@ -140,10 +140,11 @@ export function PubConditionSetForm(
         { name: "sublicenseRate", label: "再許諾 料率（%）", type: "number", placeholder: "50",
           hint: (v) => {
             const t = works.find((w) => String(w.id) === String(v.workId ?? ""))?.title ?? "";
-            const made = conditionNameFor({ workTitle: t, usageType: "sublicense", sublicensee: v.sublicensee, purpose: v.purpose });
+            const made = conditionNameFor({ workTitle: t, usageType: "sublicense", sublicensee: null, purpose: v.purpose });
             return `翻訳出版など、相手に許諾して受け取った額 × 料率。空なら再許諾の条件は作らない${made ? `。条件名：${made}` : ""}`;
           } },
-        { name: "sublicensee", label: "再許諾 再許諾先の名称", required: true, placeholder: "海外出版社",
+        { name: "targetPartyId", label: "再許諾 対象の許諾先（特定の許諾先だけの料率のとき）", type: "search",
+          search: searchParties, placeholder: "空なら一律（その作品の許諾先すべてに効く）",
           visibleWhen: (v) => String(v.sublicenseRate ?? "").trim() !== "",
           hint: "条件名「作品名｜再許諾（再許諾先／目的）」に入る" },
         { name: "purpose", label: "再許諾 目的", placeholder: "英語版の翻訳出版",
@@ -183,7 +184,7 @@ export function PubConditionSetForm(
           title: null,
           sublicense: sub === null ? null
             : { ratePct: sub, exclusivity: v.sublicenseExclusivity || null,
-                sublicensee: text(v.sublicensee) ?? null, purpose: text(v.purpose) ?? null },
+                sublicensee: null, targetPartyId: int(v.targetPartyId), purpose: text(v.purpose) ?? null },
           counterpartyId: int(v.counterpartyId), workId: int(v.workId),
           agreementId: int(v.agreementId), matterId: int(v.matterId),
           termStart: text(v.termStart), termEnd: text(v.termEnd),
