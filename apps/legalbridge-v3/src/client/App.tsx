@@ -148,7 +148,9 @@ export function App() {
   const [compose, setCompose] =
     useState<{ conditionIds: number[]; eventIds: number[]; matterId: number | null;
                templateKey?: string | null;
-               bulk?: boolean; settled?: boolean } | null>(null);
+               bulk?: boolean; settled?: boolean;
+               /** 訂正版。退かせる元の文書と理由。 */
+               supersedesId?: number | null; reason?: string | null } | null>(null);
   /** 他の画面の「編集」から文書の画面へ来たときの相手。 */
   /**
    * 開く文書。ID だけだと、同じ文書をもう一度開けない。
@@ -173,10 +175,12 @@ export function App() {
   };
   const startCompose = (
     conditionIds: number[], eventIds: number[] = [], matterId: number | null = null,
-    templateKey: string | null = null, back: DocBack | null = null
+    templateKey: string | null = null, back: DocBack | null = null,
+    revise: { supersedesId: number; reason: string } | null = null
   ) => {
     setDocBack(back);
-    setCompose({ conditionIds, eventIds, matterId, templateKey });
+    setCompose({ conditionIds, eventIds, matterId, templateKey,
+                 supersedesId: revise?.supersedesId ?? null, reason: revise?.reason ?? null });
     setFocus(null);
     setOpenDocument(undefined);
     setView("documents");
@@ -312,7 +316,7 @@ export function App() {
         )}
         {view === "documents" && (
           <DocumentsWorkspace
-            key={compose ? `c${compose.bulk ? "bulk" : ""}${compose.settled ? "settled" : ""}${compose.matterId ?? ""}${compose.conditionIds.join("-")}`
+            key={compose ? `c${compose.bulk ? "bulk" : ""}${compose.settled ? "settled" : ""}${compose.matterId ?? ""}${compose.conditionIds.join("-")}r${compose.supersedesId ?? ""}`
                           : openDocument ? `d${openDocument.id}` : "docs"}
             start={compose ?? undefined} openDocumentId={openDocument?.id}
             openNonce={openDocument?.nonce}

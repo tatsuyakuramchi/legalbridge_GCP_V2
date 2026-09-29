@@ -148,7 +148,8 @@ export function WorksWorkspace(
     onOpen?: (kind: EntityKind, id: number) => void;
     /** 文書の画面へ、選んだ条件を載せた状態で移る。台帳から文書を作る入口。 */
     onCompose?: (conditionIds: number[], eventIds?: number[], matterId?: number | null,
-                 templateKey?: string | null, back?: DocBack | null) => void;
+                 templateKey?: string | null, back?: DocBack | null,
+                 revise?: { supersedesId: number; reason: string } | null) => void;
   }
 ) {
   const readOnly = useReadOnly();
@@ -706,7 +707,7 @@ export function WorksWorkspace(
           {work && pane === "royalty" && (
             <RoyaltyLedger workId={work.id} initialPartyId={initialLedgerParty ?? null} onOpenDocument={onOpenDocument}
                            onOpenRequest={onOpenRequest}
-                           onCompose={onCompose ? (ids, events, key, back) => onCompose(ids, events, null, key, back) : undefined} />
+                           onCompose={onCompose ? (ids, events, key, back, revise) => onCompose(ids, events, null, key, back, revise) : undefined} />
           )}
           {work && pane === "work" && (<>
             <div className="panel">

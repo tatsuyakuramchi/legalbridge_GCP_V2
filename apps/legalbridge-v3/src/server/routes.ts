@@ -2220,6 +2220,20 @@ export function createRoutes(database: Transactable) {
       const input = ledgerSkipSchema.parse(req.query ?? {});
       res.json(await royaltyLedger.skip(input.conditionId, input.scheduleId, null, actor(res), true));
     }));
+  // 決定した計算書に載った報告を例外的に直す（admin）。直したあと、台帳から訂正版を出し直す。
+  router.post("/royalty-ledger/corrections", requireRole("admin"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        conditionId: z.coerce.number().int().positive(),
+        eventId: z.coerce.number().int().positive(),
+        reason: z.string().trim().min(1).max(500),
+        quantity: z.coerce.number().nullable().optional(),
+        unitAmount: z.coerce.number().int().nullable().optional(),
+        grossAmount: z.coerce.number().int().nullable().optional(),
+        occurredOn: z.string().date().nullable().optional()
+      }).parse(req.body ?? {});
+      res.json(await royaltyLedger.correct(input, conditionEvents, actor(res)));
+    }));
   // 予定の行（A-062）。この許諾先・言語・地域から from 以降の回に報告が来るはず。
   router.post("/royalty-ledger/plans", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
@@ -3251,11 +3265,14 @@ export function createRoutes(database: Transactable) {
     manualInputs: z.record(z.string(), z.unknown()).default({}),
     entries: z.array(calculationSchema.extend({
       conditionId: z.coerce.number().int().positive()
-    })).min(1).max(50)
+    })).min(1).max(50),
+    // 訂正版。退かせる元の計算書と理由。元に結ばれた実績はそのまま載せ直せる。
+    supersedesId: z.coerce.number().int().positive().nullable().optional(),
+    reason: z.string().trim().max(500).nullable().optional()
   });
 
   type BundleEntries = z.infer<typeof bundleSchema>["entries"];
-  const previewBundle = async (entries: BundleEntries) => {
+  const previewBundle = async (entries: BundleEntries, freeDocumentId: number | null = null) => {
     const ids = entries.map((e) => e.conditionId);
     if (new Set(ids).size !== ids.length) {
       throw new DomainError("VALIDATION", "同じ条件を2回は選べません");
@@ -3266,7 +3283,8 @@ export function createRoutes(database: Transactable) {
     for (const entry of entries) {
       previews.push(await royalty.preview({
         conditionId: entry.conditionId, period: entry.period, occurredOn: entry.occurredOn,
-        eventType: entry.eventType, reported: entry.reported, eventIds: entry.eventIds
+        eventType: entry.eventType, reported: entry.reported, eventIds: entry.eventIds,
+        freeDocumentId
       }));
     }
     return previews;
@@ -3279,7 +3297,7 @@ export function createRoutes(database: Transactable) {
       const input = bundleSchema.omit({ templateKey: true }).extend({
         templateKey: z.string().trim().max(120).optional()
       }).parse(req.body ?? {});
-      const previews = await previewBundle(input.entries);
+      const previews = await previewBundle(input.entries, input.supersedesId ?? null);
       res.json({
         lines: applyLineLabels(previews.flatMap(bundleLinesFor), input.manualInputs ?? {}),
         totals: bundleTotals(previews),
@@ -3292,7 +3310,10 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       const input = bundleSchema.parse(req.body ?? {});
       const who = actor(res);
-      const previews = await previewBundle(input.entries);
+      if (input.supersedesId && !String(input.reason ?? "").trim()) {
+        throw new DomainError("VALIDATION", "訂正版を出す理由を書いてください");
+      }
+      const previews = await previewBundle(input.entries, input.supersedesId ?? null);
       const totals = bundleTotals(previews);
       // 人がフォームで直した見出し（製品名・対象契約）を重ねる。金額は触らせない。
       const lines = applyLineLabels(previews.flatMap(bundleLinesFor), input.manualInputs ?? {});
@@ -3310,7 +3331,9 @@ export function createRoutes(database: Transactable) {
           statementMode: "bundle",
           rs_bundle_lines: lines,
           rs_bundle_tax: totals.tax
-        }
+        },
+        supersedesId: input.supersedesId ?? null,
+        supersedeReason: input.reason ?? null
       }, who);
 
       let issued;
@@ -3329,7 +3352,9 @@ export function createRoutes(database: Transactable) {
           input.entries.map((e) => ({
             conditionId: e.conditionId, period: e.period, occurredOn: e.occurredOn,
             eventType: e.eventType, reported: e.reported, eventIds: e.eventIds,
-            documentId: issued.id
+            documentId: issued.id,
+            // 訂正版なら、元から移ってきた実績（いまはこの文書を指す）をそのまま結ぶ。
+            freeDocumentId: input.supersedesId ? issued.id : null
           })), who);
       } catch (error) {
         await issues.void(issued.id, "計算書を結べなかったため無効", who).catch(() => undefined);

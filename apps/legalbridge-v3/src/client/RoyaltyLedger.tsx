@@ -70,7 +70,8 @@ export function RoyaltyLedger(
      * 計算書を作る。その回の条件と実績を選んだ状態で文書の画面へ移る。
      * 中身の確認・手入力・下書き保存・決定は文書の画面でする（台帳からいきなり決定しない）。
      */
-    onCompose?: (conditionIds: number[], eventIds: number[], templateKey: string | null, back: DocBack) => void;
+    onCompose?: (conditionIds: number[], eventIds: number[], templateKey: string | null, back: DocBack,
+                 revise?: { supersedesId: number; reason: string } | null) => void;
     initialPartyId?: number | null;
     onOpenDocument?: (documentId: number, back?: DocBack | null) => void;
     /** 作家・作品 → 依頼。受付箱のその依頼を開く。 */
@@ -140,7 +141,10 @@ export function RoyaltyLedger(
   /** 文書の画面から戻る先。この作家 × この作品。 */
   const back: DocBack | null = view ? { label: `${view.party.name} × ${view.scope?.workTitle ?? "全作品"}`, workId, partyId: view.party.id } : null;
   const openDoc = onOpenDocument ? (id: number) => onOpenDocument(id, back) : undefined;
-  const composeWith = onCompose && back ? (ids: number[], events: number[], key: string | null) => onCompose(ids, events, key, back) : undefined;
+  const composeWith = onCompose && back
+    ? (ids: number[], events: number[], key: string | null, revise?: { supersedesId: number; reason: string } | null) =>
+        onCompose(ids, events, key, back, revise)
+    : undefined;
 
   async function setBundle(bundle: "per_work" | "per_party") {
     if (!view) return;
@@ -321,7 +325,7 @@ export function RoyaltyLedger(
               ? <RoundDetail key={`${round.key}-${version}`} round={round} view={view} canWrite={canWrite}
                              onChanged={reload} onError={setError} onOpenDocument={openDoc}
                              openRequests={openRequests} onLink={linkRequest} onOpenRequest={onOpenRequest}
-                             onCompose={composeWith} adding={adding} setAdding={setAdding} />
+                             onCompose={composeWith} adding={adding} setAdding={setAdding} isAdmin={role === "admin"} />
               : <div className="panel"><div className="panel-bd faint">左で回を選ぶと、ここに報告の表と計算書が出ます。</div></div>}
           </div>
         </>
@@ -410,15 +414,17 @@ function RoundCard({ round: r, view, selected, onSelect }: { round: Round; view:
 
 /** 選んだ回：1 報告を入れる → 2 計算書を作る → 3 送付・支払。上から下へ進むだけ。 */
 function RoundDetail(
-  { round: r, view, canWrite, onChanged, onError, onOpenDocument, openRequests, onLink, onOpenRequest, onCompose, adding, setAdding }: {
+  { round: r, view, canWrite, onChanged, onError, onOpenDocument, openRequests, onLink, onOpenRequest, onCompose, adding, setAdding, isAdmin }: {
     round: Round; view: LedgerView; canWrite: boolean;
     onChanged: (message?: string) => void; onError: (m: string) => void;
     onOpenDocument?: (documentId: number) => void;
     openRequests: OpenRequest[];
     onLink: (requestId: number, round: Round, unlink?: boolean) => void;
     onOpenRequest?: (requestId: number) => void;
-    onCompose?: (conditionIds: number[], eventIds: number[], templateKey: string | null) => void;
+    onCompose?: (conditionIds: number[], eventIds: number[], templateKey: string | null,
+                 revise?: { supersedesId: number; reason: string } | null) => void;
     adding: { mode: "report" | "plan"; conditionId?: number } | null;
+    isAdmin: boolean;
     setAdding: (a: { mode: "report" | "plan"; conditionId?: number } | null) => void;
   }
 ) {
@@ -453,6 +459,16 @@ function RoundDetail(
       .catch(() => undefined);
   }, []);
 
+  /**
+   * 訂正版を出し直す。その計算書に結ばれた実績（直したものを含む）と条件を選んだ状態で
+   * 文書の画面を開く。決定すると元の計算書が退き、実績が新しい版に移る。
+   */
+  function reissue(documentId: number, reason: string) {
+    if (!onCompose) return;
+    const evs = r.parts.flatMap((p) => p.events.filter((e) => e.documentId === documentId));
+    onCompose([...new Set(evs.map((e) => e.conditionId))], evs.map((e) => e.id), templateKey || null,
+              { supersedesId: documentId, reason });
+  }
   /** 文書の画面へ。この回のまだ文書に結ばれていない実績と、その条件を選んだ状態で開く。 */
   function compose() {
     if (!onCompose) return;
@@ -486,7 +502,7 @@ function RoundDetail(
               <span className="faint">相手から来た数字を行に打つ。発生日は締め日で入る。</span>
             </div>
             <RoundReport round={r} view={view} canWrite={canWrite} onChanged={onChanged} onError={onError} onOpenDocument={onOpenDocument}
-                         adding={adding} setAdding={setAdding} />
+                         adding={adding} setAdding={setAdding} isAdmin={isAdmin} onReissue={onCompose ? reissue : undefined} />
           </div>
         </div>
 

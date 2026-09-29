@@ -28,6 +28,11 @@ export interface CalculationInput {
    * これまでどおり reported から計算し、確定時に実績を1件作る。
    */
   eventIds?: number[];
+  /**
+   * 訂正版を出すとき、退かせる元の文書（と、発行の瞬間に移った先の新しい文書）。
+   * その文書に結ばれた実績は「空いている」ものとして扱う。
+   */
+  freeDocumentId?: number | null;
 }
 
 /** 計算書に載る実績1件。根拠（売上か数量）と、その比で按分した額。 */
@@ -200,7 +205,9 @@ export class RoyaltyStatementService {
       const tag = `実績 #${e.id}（${dateStr(e.occurred_on) ?? "日付なし"}）`;
       if (e.same_series !== true) throw new DomainError("VALIDATION", `${tag} はこの条件の実績ではありません`);
       if (e.status !== "active") throw new DomainError("CONFLICT", `${tag} は取り消されています`);
-      if (e.document_id) throw new DomainError("CONFLICT", `${tag} はすでに別の文書に結ばれています`);
+      if (e.document_id && Number(e.document_id) !== (input.freeDocumentId ?? null)) {
+        throw new DomainError("CONFLICT", `${tag} はすでに別の文書に結ばれています`);
+      }
     }
 
     // 利用形態が付いている実績は、その形で算定する。
@@ -496,7 +503,7 @@ export class RoyaltyStatementService {
       for (const [i, e] of resolved.events.entries()) {
         await client.query(
           `UPDATE condition_events SET document_id = $2, deductions = $3
-            WHERE id = $1 AND document_id IS NULL`,
+            WHERE id = $1 AND (document_id IS NULL OR document_id = $2)`,
           [e.eventId, input.documentId, offsets[i]]);
       }
       eventId = resolved.events[0].eventId;

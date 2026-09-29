@@ -69,6 +69,14 @@
 
 数字はまだ無いが、この許諾先・言語・地域から報告が来るはず、という行を人が先に置く（`royalty_expected_lines`）。回の「＋ 予定を作る」で 作品・利用形態 → 許諾先 → 言語 → 地域 → いつから（この回から／次の回から）を選ぶ。`from_on` 以降の締めの回で「来るはず」として待ち（前の回にあった行と同じ扱い）、数字が来たら「数字を入れる」で実績になり、その回からは予定の行は消える。来なければ「報告なし」（回ごと）か「予定を外す」（行を消す。実績は消えない）。「＋ 報告を追加」で記録した行も、以後の回では自動的に来るはずになる。
 
+### 3.5 決定した計算書に載った報告の例外修正（admin）
+
+相手の報告が間違っていた・打ち間違えた、が計算書を決定したあとに分かったとき。台帳の「計算書済」の行の「修正して出し直す」（admin だけ）で、数量・単価・受領額・発生日を直し、理由を書いて「直して訂正版を出す」。
+
+1. `POST /royalty-ledger/corrections` … 実績を直す（A-041 の `events.amend` を通す。理由と前後の値が監査に残る）。利用形態のある実績は許諾料（実額）を条件の料率で計算し直す。支払が立っていれば直せない（先に支払を取り消す）。
+2. そのまま文書の画面が開く（`start.supersedesId`・`reason`）。元の計算書に結ばれた実績（直したものを含む）と条件を選んだ状態で、訂正版として試算し直す。`/statement-documents/preview`・`/statement-documents` は `supersedesId` を受け取り、その文書に結ばれた実績を「空いている」ものとして扱う。
+3. 決定すると、元の計算書は「訂正版あり」（superseded）に退き、実績は新しい版に移る（`issue-service.supersede`）。決定するまで元の版は有効なまま。
+
 ### 3.4 入口
 
 - 作家カードに「▶ 次：1〜3月の回に報告待ちが 2 行」を出す（`WorkRoyaltyParty.next`）。押すとその回を開く。報告待ちが無ければ「締め前」「締めがありません」。
@@ -114,6 +122,7 @@
 | GET | `/api/v3/works/:id/royalty` | 閲覧（作品を許諾している作家の一覧） |
 | GET | `/api/v3/royalty-ledger?partyId=&workId=` | 閲覧（workId を外すと作家 × 全作品） |
 | POST / DELETE | `/api/v3/royalty-ledger/skips`（`conditionId`・`scheduleId`） | admin / legal |
+| POST | `/api/v3/royalty-ledger/corrections`（`conditionId`・`eventId`・`reason`・数量/単価/受領額/発生日） | admin |
 | POST / DELETE | `/api/v3/royalty-ledger/plans`・`/plans/:id`（`conditionId`・`outConditionId`・`languages`・`regions`・`fromOn`） | admin / legal |
 | POST | `/api/v3/royalty-ledger/skips/before`（`partyId`・`workId`・`before`） | admin / legal |
 | POST | `/api/v3/intake/:id/rounds` ・ `/rounds/unlink`（`scheduleIds`・`eventIds`） | admin / legal |
