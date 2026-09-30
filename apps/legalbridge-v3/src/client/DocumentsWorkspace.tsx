@@ -10,6 +10,7 @@ import { DocumentFields, kindFor, type Candidate, type FormField } from "./Docum
 import { LineItemsEditor, type Row } from "./LineItems.js";
 import { BulkOrders } from "./BulkOrders.js";
 import { SettledImport } from "./SettledImport.js";
+import { DocumentImport } from "./DocumentImport.js";
 import { SearchSelect, staffOptions, type SearchOption } from "./SearchSelect.js";
 import { StatementBreakdown, type StatementLine, type StatementTotals } from "./StatementLines.js";
 import { LicenseTermsMatrix } from "./LicenseTermsMatrix.js";
@@ -990,6 +991,10 @@ export function DocumentsWorkspace(
               ひな形から起こします。すでにある文書を見るだけなら、下の一覧から選んでください
             </span>
           </div>
+        )}
+        {!composing && !draft && !bulk && !settled && (
+          <DocumentImport matterId={start?.matterId ?? undefined}
+                          onDone={() => void reload()} onOpenDocument={(id) => setSelected(id)} />
         )}
 
         {bulk && !composing && !draft && (

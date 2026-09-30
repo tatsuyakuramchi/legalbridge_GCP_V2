@@ -99,8 +99,10 @@ const LIST_SELECT = `
     WHERE dc.document_id = d.id) AS condition_refs,
   -- 取込文書はひな形を持たないので、種別が空欄になる。登録時に入れた種別で埋める。
   COALESCE(v.template_label, d.manual_inputs->>'documentKind') AS template_label,
-  -- 同じ理由で件名も空になる。
-  COALESCE(v.title, d.manual_inputs->>'title') AS title,
+  -- 同じ理由で件名も空になる。表示の view は件名が無いと文書番号で埋めるので、
+  -- 取込文書は登録時の文書名を先に見る（でないと件名が番号になる）。
+  COALESCE(CASE WHEN d.template_version_id IS NULL THEN NULLIF(d.manual_inputs->>'title', '') END,
+           v.title, d.manual_inputs->>'title') AS title,
   (d.template_version_id IS NULL) AS imported`;
 
 const LIST_FROM = `
