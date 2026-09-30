@@ -2829,6 +2829,8 @@ export function createRoutes(database: Transactable) {
     matterId: z.coerce.number().int().positive().nullable().optional(),
     // デイリータスクから作るとき、その元の依頼（文書を依頼に繋ぐ。A-064）。
     requestId: z.coerce.number().int().positive().nullable().optional(),
+    // 下書きを開き直したプレビュー。案件が無ければ繋がっている依頼を文書から引く。
+    documentId: z.coerce.number().int().positive().nullable().optional(),
     agreementId: z.coerce.number().int().positive().nullable().optional(),
     manualInputs: z.record(z.string(), z.unknown()).default({}),
     // 候補に出すための文脈。プレビューでは値を見せるだけで、保存はしない。
@@ -3048,6 +3050,8 @@ export function createRoutes(database: Transactable) {
       res.json({
         html: result.html,
         templateLabel: result.templateLabel,
+        // 本文に差す当社担当者（人が選んだ／案件の担当／作業の担当）。
+        owner: result.owner,
         missing: result.binding.missing,
         derived: result.binding.derived,
         values: result.binding.values,

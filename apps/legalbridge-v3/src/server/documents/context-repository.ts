@@ -17,6 +17,11 @@ export interface DocumentContextInput {
    * （検収書の【ご連絡先】・検収者）は作業の担当から引く。
    */
   requestId?: number | null;
+  /**
+   * 当社担当者を人が選んだとき（manual_inputs._ownerStaffId）。案件・作業の担当より優先する。
+   * 案件にも作業にも繋がっていない文書や、担当が替わった文書の訂正版の救済。
+   */
+  ownerStaffId?: number | null;
   documentNumber?: string | null;
   issuedOn?: string | null;
   /** 実績。検収書・納品書はここの日付と金額が要る。 */
@@ -71,8 +76,9 @@ export class DocumentContextRepository {
       const partyId = conditions[0]?.counterpartyId ?? null;
       const contacts = partyId ? await this.contacts(client, partyId) : [];
       const bank = partyId ? await this.bank(client, partyId) : null;
-      // 案件が無ければ（デイリータスクの文書）、作業の担当を担当者にする。
-      const owner = matterId ? await this.owner(client, matterId)
+      // 担当者：人が選んだもの → 案件の担当 → （案件が無ければ）デイリータスクの作業の担当。
+      const owner = input.ownerStaffId ? await this.staffById(client, input.ownerStaffId)
+        : matterId ? await this.owner(client, matterId)
         : input.requestId ? await this.ownerOfRequest(client, input.requestId) : null;
       // 同じ条件から出ている他の書類。検収書は親の発注番号を見出しに出す。
       const related = input.conditionIds.length
@@ -348,6 +354,14 @@ export class DocumentContextRepository {
       `SELECT s.name, s.email, s.department, s.staff_code, to_jsonb(s) AS staff_row
          FROM matters m JOIN staff s ON s.id = m.owner_staff_id
         WHERE m.id = $1`, [matterId]);
+    return staffOf(r.rows[0] as Record<string, any> | undefined);
+  }
+
+  /** 人が選んだ担当者。案件の担当と同じ形で返す。 */
+  private async staffById(client: Queryable, staffId: number) {
+    const r = await client.query(
+      `SELECT s.name, s.email, s.department, s.staff_code, to_jsonb(s) AS staff_row
+         FROM staff s WHERE s.id = $1`, [staffId]);
     return staffOf(r.rows[0] as Record<string, any> | undefined);
   }
 
