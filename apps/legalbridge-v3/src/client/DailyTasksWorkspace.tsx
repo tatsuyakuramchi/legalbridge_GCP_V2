@@ -6,6 +6,7 @@ import { UploadsPanel } from "./UploadsPanel.js";
 import { RoundPicker, roundTargets } from "./RoundPicker.js";
 import { StatusTag } from "./labels.js";
 import { SearchSelect, staffOptions, type SearchOption } from "./SearchSelect.js";
+import { DocumentImport } from "./DocumentImport.js";
 
 /**
  * デイリータスク。docs/v3-request-inbox.md §10（A-064）
@@ -534,6 +535,12 @@ function TaskPanel(
                   <button className="btn btn-sm" onClick={() => onCompose([], null, r.id)}>文書の画面で作る</button>
                 } />
               </>)}
+              <Route title="外で作る文書（ワンオフの覚書・念書・通知書、相手方から届いた文書）" steps={[
+                "法務が Word などで作る文書は「番号を先に取る」→ 番号を本文に書き込む → その文書の「ファイルを付ける」",
+                "相手方から届いた文書はそのまま「外で作った文書を登録」"
+              ]} buttons={
+                <DocumentImport requestId={r.id} onDone={() => onChanged("文書を登録しました")} onOpenDocument={onOpenDocument} />
+              } />
               <span className="faint">
                 どの画面で作っても、ここから移って作った文書はこの作業（{r.requestNo ?? `#${r.id}`}）に自動で繋がります
                 （移った先の画面の上に「作業中」の帯が出ます）。自動で入らなかった文書は下の検索で繋げます。

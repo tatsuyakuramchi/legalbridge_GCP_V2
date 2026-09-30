@@ -55,6 +55,7 @@ import { ChromiumPdfRenderer, MemoryPdfRenderer, type PdfRenderer } from "./docu
 import { DocumentStorageService } from "./documents/storage-service.js";
 import { GoogleDriveStorage, MemoryDriveStorage, type DriveStorage } from "./documents/drive-storage.js";
 import { LocalFileStorage } from "./documents/local-file-storage.js";
+import { IMPORT_KINDS } from "./documents/import-kinds.js";
 import { DocumentImportService } from "./documents/import-service.js";
 import { GoogleMatterDriveFolderService, LocalMatterDriveFolderService } from "./documents/drive-folder.js";
 import { MatterFolderStorageService } from "./matters/drive-folder-service.js";
@@ -2564,7 +2565,8 @@ export function createRoutes(database: Transactable) {
     agreementId: z.coerce.number().int().positive().optional(),
     receivedOn: z.string().date().optional(),
     note: z.string().trim().max(2000).optional(),
-    filename: z.string().trim().max(300).optional()
+    filename: z.string().trim().max(300).optional(),
+    requestId: z.coerce.number().int().positive().optional()
   });
   router.post("/documents/import",
     requireRole("admin", "legal"), requireWritable,
@@ -2576,7 +2578,7 @@ export function createRoutes(database: Transactable) {
       res.status(201).json(await documentImports.import({
         title: q.title, documentKind: q.documentKind ?? null,
         conditionIds: ids, matterId: q.matterId ?? null, agreementId: q.agreementId ?? null,
-        receivedOn: q.receivedOn ?? null, note: q.note ?? null,
+        receivedOn: q.receivedOn ?? null, note: q.note ?? null, requestId: q.requestId ?? null,
         file: {
           filename: q.filename ?? q.title,
           mimeType: String(req.headers["content-type"] ?? "").split(";")[0].trim(),
@@ -2585,9 +2587,50 @@ export function createRoutes(database: Transactable) {
       }, actor(res)));
     }));
 
+  /**
+   * 番号を先に取る（ワンオフの文書）。番号だけの下書き（ファイル待ち）ができ、
+   * 本文に番号を書き込んでから /documents/:id/import-file でファイルを付ける。
+   */
+  const reserveSchema = z.object({
+    title: z.string().trim().min(1).max(300),
+    documentKind: z.string().trim().min(1).max(120),
+    conditionIds: z.array(z.coerce.number().int().positive()).max(50).optional(),
+    matterId: z.coerce.number().int().positive().nullable().optional(),
+    agreementId: z.coerce.number().int().positive().nullable().optional(),
+    requestId: z.coerce.number().int().positive().nullable().optional()
+  });
+  router.post("/documents/reserve", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const b = reserveSchema.parse(req.body ?? {});
+      res.status(201).json(await documentImports.reserve({
+        title: b.title, documentKind: b.documentKind, conditionIds: b.conditionIds ?? [],
+        matterId: b.matterId ?? null, agreementId: b.agreementId ?? null, requestId: b.requestId ?? null
+      }, actor(res)));
+    }));
+  const attachQuerySchema = z.object({
+    receivedOn: z.string().date().optional(),
+    note: z.string().trim().max(2000).optional(),
+    filename: z.string().trim().max(300).optional()
+  });
+  router.post("/documents/:id/import-file",
+    requireRole("admin", "legal"), requireWritable,
+    express.raw({ type: () => true, limit: "26mb" }),
+    asyncRoute(async (req, res) => {
+      const q = attachQuerySchema.parse(req.query);
+      res.json(await documentImports.attachFile(Number(req.params.id), {
+        receivedOn: q.receivedOn ?? null, note: q.note ?? null,
+        file: {
+          filename: q.filename ?? "document",
+          mimeType: String(req.headers["content-type"] ?? "").split(";")[0].trim(),
+          data: Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0)
+        }
+      }, actor(res)));
+    }));
+
   // 取り込みが使える状態か。設定されていないボタンを画面に出さないため。
+  // 種別と接頭辞もここで返す（画面と採番で同じ表を使う）。
   router.get("/documents/import-status", (_req, res) => {
-    res.json({ configured: documentImports.configured });
+    res.json({ configured: documentImports.configured, kinds: IMPORT_KINDS });
   });
 
   router.get("/document-templates", asyncRoute(async (_req, res) => {

@@ -43,11 +43,80 @@ test("発行済みとして入る（下書きだと実績にも送付にも繋�
   assert.match(database.find("INSERT INTO documents")!.text, /'issued'/);
 });
 
-test("自社発行と混ざらないよう別のプレフィックスで採番する", async () => {
+test("種別ごとの接頭辞で採番する（自社発行の PO・RS とは混ざらない）", async () => {
   const database = db();
   const r = await new DocumentImportService(database, new MemoryDriveStorage()).import(input(), "a");
+  assert.match(r.documentNo, /^ARC-SVC-\d{4}-0001$/);
+  assert.equal(database.find("INSERT INTO document_sequences")!.params[0], "SVC");
+});
+
+test("種別が表に無ければ IMP", async () => {
+  const database = db();
+  const r = await new DocumentImportService(database, new MemoryDriveStorage())
+    .import(input({ documentKind: "自由記述" }), "a");
   assert.match(r.documentNo, /^ARC-IMP-\d{4}-0001$/);
-  assert.equal(database.find("INSERT INTO document_sequences")!.params[0], "IMP");
+});
+
+test("依頼を付けると依頼に繋がる（デイリータスクの進み具合に数える）", async () => {
+  const database = db();
+  await new DocumentImportService(database, new MemoryDriveStorage()).import(input({ requestId: 9 }), "a");
+  const link = database.find("INSERT INTO intake_request_links")!;
+  assert.deepEqual(link.params, [9, 42, "a"]);
+});
+
+test("番号を先に取る：番号だけの下書き（ファイル待ち）を作って番号を返す", async () => {
+  const database = db();
+  const r = await new DocumentImportService(database, null)
+    .reserve({ title: "覚書（甲社）", documentKind: "覚書", conditionIds: [5], requestId: 9 }, "legal");
+  assert.match(r.documentNo, /^ARC-MOU-\d{4}-0001$/);
+  const insert = database.find("INSERT INTO documents")!;
+  assert.match(insert.text, /'draft'/);
+  assert.match(insert.text, /VALUES \(\$1, NULL,/);
+  assert.match(String(insert.params[3]), /"reserved":true/);
+  assert.deepEqual(database.find("INSERT INTO document_conditions")!.params, [42, 5, 1]);
+  assert.deepEqual(database.find("INSERT INTO intake_request_links")!.params, [9, 42, "legal"]);
+  assert.equal(database.find("INSERT INTO audit_events")!.params[1], "document.reserve");
+});
+
+test("番号を先に取るには種別と文書名が要る", async () => {
+  await assert.rejects(() => new DocumentImportService(db(), null)
+    .reserve({ title: " ", documentKind: "覚書", conditionIds: [] }, "a"), /文書名は必須/);
+  await assert.rejects(() => new DocumentImportService(db(), null)
+    .reserve({ title: "x", documentKind: "", conditionIds: [] }, "a"), /種別を選んで/);
+});
+
+const reservedRow = (over: Record<string, unknown> = {}) => ({
+  id: 42, document_no: "ARC-MOU-2026-0001", status: "draft", template_version_id: null,
+  manual_inputs: { title: "覚書（甲社）", documentKind: "覚書", imported: true, reserved: true }, ...over
+});
+
+test("ファイルを付けると発行済みになる（番号はそのまま）", async () => {
+  const drive = new MemoryDriveStorage();
+  const database = db({
+    "FROM documents WHERE id = $1": [reservedRow()],
+    "UPDATE documents": [{ id: 42, document_no: "ARC-MOU-2026-0001" }],
+    "FROM document_conditions WHERE document_id": [{ condition_id: 5 }]
+  });
+  const r = await new DocumentImportService(database, drive)
+    .attachFile(42, { receivedOn: "2026-09-30", file: pdf() }, "legal");
+  assert.equal(r.documentNo, "ARC-MOU-2026-0001");
+  assert.deepEqual(r.conditionIds, [5]);
+  assert.equal(drive.fileUploads.length, 1);
+  const upd = database.find("UPDATE documents")!;
+  assert.match(upd.text, /status = 'issued'/);
+  assert.match(String(upd.params[4]), /"reserved":false/);
+  assert.equal(database.find("INSERT INTO audit_events")!.params[1], "document.import");
+});
+
+test("ファイルを付けられるのは番号を先に取った下書きだけ", async () => {
+  const svc = (row: Record<string, unknown>) =>
+    new DocumentImportService(db({ "FROM documents WHERE id = $1": [row] }), new MemoryDriveStorage());
+  await assert.rejects(() => svc(reservedRow({ status: "issued" })).attachFile(42, { file: pdf() }, "a"),
+    /もうファイルが付いています/);
+  await assert.rejects(() => svc(reservedRow({ template_version_id: 7 })).attachFile(42, { file: pdf() }, "a"),
+    /番号を先に取った文書/);
+  await assert.rejects(() => new DocumentImportService(db(), new MemoryDriveStorage())
+    .attachFile(99, { file: pdf() }, "a"), /見つかりません/);
 });
 
 test("条件に繋ぐ（繋がないと、どの取引の根拠か分からない文書になる）", async () => {

@@ -4,6 +4,7 @@ import { DOCUMENT_STATE_NOTE, StatusTag } from "./labels.js";
 import { Relations, type EntityKind } from "./Relations.js";
 import { DocumentEvents } from "./DocumentEvents.js";
 import { DocumentSend } from "./DocumentSend.js";
+import { DocumentAttachFile } from "./DocumentImport.js";
 
 /**
  * 文書1件の詳細。
@@ -82,7 +83,10 @@ export function DocumentDetail(
     openConditions?: boolean;
   }
 ) {
-  const note = DOCUMENT_STATE_NOTE[doc.phase] ?? { headline: doc.status, detail: "" };
+  const note = doc.imported && doc.status === "draft"
+    ? { headline: "番号だけ取ってあります（ファイル待ち）。",
+        detail: "番号を本文に書き込んだファイルを付けると決定済みになります。中身はこのシステムでは作りません。" }
+    : DOCUMENT_STATE_NOTE[doc.phase] ?? { headline: doc.status, detail: "" };
   // 連携が全部 off（予備系）でも「送る」は出す。送信の口が無くても、相手の確認と
   // CloudSign の状態は手で記録できるので、閉じてしまうと段が進められない。
   const canSend = doc.status === "issued";
@@ -107,6 +111,7 @@ export function DocumentDetail(
           <span className="tag">{doc.templateLabel ?? "種別なし"}</span>
           <StatusTag kind="document" value={doc.phase} />
           {doc.imported && <span className="tag">取込</span>}
+          {doc.imported && doc.status === "draft" && <span className="tag warn">番号のみ・ファイル待ち</span>}
         </div>
         <div className="panel-bd stack">
           <div className={`state ${doc.phase}`}>
@@ -124,6 +129,21 @@ export function DocumentDetail(
               </span>
             </span>
           </div>
+
+          {/* 番号を先に取った文書。本文に番号を書き込んだファイルを付けると決定済みになる。 */}
+          {doc.imported && doc.status === "draft" && (
+            <div className="note stack" style={{ gap: 6 }}>
+              <span>
+                番号 <b className="code">{doc.documentNo}</b> は取ってありますが、まだファイルがありません。
+                番号を本文に書き込んだファイルを付けると決定済みになり、送付や実績の紐づけができます。
+              </span>
+              <div className="row">
+                <DocumentAttachFile documentId={doc.id} documentNo={doc.documentNo} onDone={onChanged} />
+                <button className="btn" disabled={busy}
+                        onClick={() => onVoid(doc.id, doc.documentNo)}>番号を使わない（破棄）</button>
+              </div>
+            </div>
+          )}
 
           {/* 状態ごとに、できることだけを出す。 */}
           <div className="row">
