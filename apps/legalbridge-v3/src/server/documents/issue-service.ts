@@ -400,10 +400,17 @@ export class DocumentIssueService {
         const year = issuedOn ? Number(issuedOn.slice(0, 4)) : currentYearInTokyo();
         const documentNo = formatDocumentNumber(prefix, year, await nextSequence(client, prefix, year));
 
+        // 案件の無い文書（デイリータスク）は、繋がっている依頼から担当者を引く。
+        const requestId = row.matter_id ? null
+          : int(((await client.query(
+              `SELECT request_id FROM intake_request_links
+                WHERE target_type = 'document' AND target_id = $1 ORDER BY created_at DESC LIMIT 1`,
+              [documentId])).rows[0] as any)?.request_id);
         const context = await this.buildContext(client, {
           templateKey: template.templateKey,
           conditionIds,
           matterId: row.matter_id,
+          requestId,
           agreementId: row.agreement_id,
           eventIds: extra.eventIds ?? [],
           royalty: extra.royalty ?? null
@@ -917,6 +924,7 @@ export class DocumentIssueService {
       conditionIds: input.conditionIds,
       agreementId: input.agreementId ?? null,
       matterId: input.matterId ?? null,
+      requestId: input.requestId ?? null,
       eventIds: input.eventIds ?? [],
       royalty: input.royalty ?? null,
       issuedOn,

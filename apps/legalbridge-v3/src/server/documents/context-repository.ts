@@ -12,6 +12,11 @@ export interface DocumentContextInput {
   conditionIds: number[];
   agreementId?: number | null;
   matterId?: number | null;
+  /**
+   * デイリータスク（A-064）から作るとき、その元の依頼。案件が無いので、担当者
+   * （検収書の【ご連絡先】・検収者）は作業の担当から引く。
+   */
+  requestId?: number | null;
   documentNumber?: string | null;
   issuedOn?: string | null;
   /** 実績。検収書・納品書はここの日付と金額が要る。 */
@@ -26,6 +31,18 @@ export const toMajor = (amount: number | null, currency: string): number | null 
   amount === null || amount === undefined ? null : amount / (MINOR[currency] ?? 100);
 
 const honorificFor = (kind: string | null) => (kind === "individual" ? "様" : "御中");
+
+/** 担当者（社員）の行を、書類に差す形にする。案件の担当もデイリータスクの担当も同じ形。 */
+function staffOf(row: Record<string, any> | undefined) {
+  if (!row) return null;
+  return {
+    name: String(row.name), email: str(row.email),
+    department: str(row.department), phone: str(row.staff_row?.phone),
+    staffCode: str(row.staff_code),
+    // 英語表記（A-049）。列を名指しせず行から読む（当てる前でも落ちない）。
+    nameEn: str(row.staff_row?.name_en), departmentEn: str(row.staff_row?.department_en)
+  };
+}
 
 export class DocumentContextRepository {
   constructor(private readonly database: Transactable) {}
@@ -54,7 +71,9 @@ export class DocumentContextRepository {
       const partyId = conditions[0]?.counterpartyId ?? null;
       const contacts = partyId ? await this.contacts(client, partyId) : [];
       const bank = partyId ? await this.bank(client, partyId) : null;
-      const owner = matterId ? await this.owner(client, matterId) : null;
+      // 案件が無ければ（デイリータスクの文書）、作業の担当を担当者にする。
+      const owner = matterId ? await this.owner(client, matterId)
+        : input.requestId ? await this.ownerOfRequest(client, input.requestId) : null;
       // 同じ条件から出ている他の書類。検収書は親の発注番号を見出しに出す。
       const related = input.conditionIds.length
         ? await this.relatedDocuments(client, input.conditionIds) : [];
@@ -329,15 +348,16 @@ export class DocumentContextRepository {
       `SELECT s.name, s.email, s.department, s.staff_code, to_jsonb(s) AS staff_row
          FROM matters m JOIN staff s ON s.id = m.owner_staff_id
         WHERE m.id = $1`, [matterId]);
-    const row = r.rows[0] as Record<string, any> | undefined;
-    if (!row) return null;
-    return {
-      name: String(row.name), email: str(row.email),
-      department: str(row.department), phone: str(row.staff_row?.phone),
-      staffCode: str(row.staff_code),
-      // 英語表記（A-049）。列を名指しせず行から読む（当てる前でも落ちない）。
-      nameEn: str(row.staff_row?.name_en), departmentEn: str(row.staff_row?.department_en)
-    };
+    return staffOf(r.rows[0] as Record<string, any> | undefined);
+  }
+
+  /** デイリータスクの担当者（依頼から起こした作業の担当）。案件の担当と同じ形で返す。 */
+  private async ownerOfRequest(client: Queryable, requestId: number) {
+    const r = await client.query(
+      `SELECT s.name, s.email, s.department, s.staff_code, to_jsonb(s) AS staff_row
+         FROM tasks t JOIN staff s ON s.id = t.assignee_staff_id
+        WHERE t.request_id = $1`, [requestId]);
+    return staffOf(r.rows[0] as Record<string, any> | undefined);
   }
 
   private async events(client: Queryable, ids: number[]) {
