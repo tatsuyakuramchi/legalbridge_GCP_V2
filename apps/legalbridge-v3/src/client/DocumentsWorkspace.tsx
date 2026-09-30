@@ -10,7 +10,7 @@ import { DocumentFields, kindFor, type Candidate, type FormField } from "./Docum
 import { LineItemsEditor, type Row } from "./LineItems.js";
 import { BulkOrders } from "./BulkOrders.js";
 import { SettledImport } from "./SettledImport.js";
-import { SearchSelect, type SearchOption } from "./SearchSelect.js";
+import { SearchSelect, staffOptions, type SearchOption } from "./SearchSelect.js";
 import { StatementBreakdown, type StatementLine, type StatementTotals } from "./StatementLines.js";
 import { LicenseTermsMatrix } from "./LicenseTermsMatrix.js";
 import { ConditionLabel } from "./ConditionLabel.js";
@@ -1065,14 +1065,16 @@ export function DocumentsWorkspace(
                   担当が替わった計算書の訂正版など、自動で決まらないときはここで選ぶ。 */}
               <label className="field">
                 <span>当社担当者</span>
-                <select value={ownerStaffId} onChange={(e) => setOwnerStaffId(e.target.value ? Number(e.target.value) : "")}>
-                  <option value="">
-                    {spec?.owner && spec.owner.source !== "manual"
-                      ? `自動：${spec.owner.name}（${spec.owner.source === "task" ? "デイリータスクの担当" : "案件の担当"}）`
-                      : "自動（案件か作業に繋がっていないので空欄になります。選んでください）"}
-                  </option>
-                  {staff.map((x) => <option key={x.id} value={x.id}>{x.name}{x.department ? `（${x.department}）` : ""}</option>)}
-                </select>
+                {(() => {
+                  const auto = spec?.owner && spec.owner.source !== "manual"
+                    ? `自動：${spec.owner.name}（${spec.owner.source === "task" ? "デイリータスクの担当" : "案件の担当"}）`
+                    : "自動（案件か作業に繋がっていないので空欄になります。選んでください）";
+                  return (
+                    <SearchSelect value={ownerStaffId === "" ? "" : String(ownerStaffId)} options={staffOptions(staff)}
+                                  emptyLabel={auto} valueLabel={auto} placeholder="氏名・部署で探す"
+                                  onChange={(v) => setOwnerStaffId(v ? Number(v) : "")} />
+                  );
+                })()}
                 <small className="faint">本文の担当者・連絡先・検収者に差されます。空なら案件（無ければデイリータスクの作業）の担当</small>
               </label>
 

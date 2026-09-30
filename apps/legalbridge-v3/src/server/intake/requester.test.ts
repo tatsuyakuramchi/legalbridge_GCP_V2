@@ -1,12 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { resolveRequesterEmail } from "./requester.js";
+import type { Queryable } from "../core/db.js";
 
-function db(rowsBySql: Array<{ when: string; rows: unknown[] }>) {
+function db(rowsBySql: Array<{ when: string; rows: Array<Record<string, unknown>> }>) {
   const calls: Array<{ sql: string; params: unknown[] }> = [];
   return {
     calls,
-    async query(sql: string, params: unknown[] = []) {
+    async query(sql: string, params: unknown[] = []): ReturnType<Queryable["query"]> {
       calls.push({ sql, params });
       const hit = rowsBySql.find((r) => sql.includes(r.when));
       return { rows: hit?.rows ?? [], rowCount: hit?.rows.length ?? 0 };
