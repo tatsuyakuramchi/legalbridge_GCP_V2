@@ -2238,6 +2238,93 @@ ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS target_party_id bigint REFERE
 COMMENT ON COLUMN v3.conditions.target_party_id IS
   '対象の許諾先（取引先）。取得（IN）の再許諾・他社販売で、この許諾先だけに効く料率のとき。空なら一律。A-063';
 
+-- ---------------------------------------------------------------------
+-- A-064 デイリータスク：tasks を「案件の中の作業」と「案件にしない軽微な作業」の両方の
+--       作業テーブルにする（docs/v3-request-inbox.md §10）
+--   受付箱は振り分けだけにし、作業は tasks で追う。
+--     - 軽微な依頼（検収書・計算書・定型文書など）は受付箱から tasks に 1 行起こす
+--       （matter_id が空、request_id が依頼）。画面は「デイリータスク」。
+--     - 大きな依頼は案件にし、案件の中の作業も同じ tasks（matter_id あり）。
+--     - デイリータスクは「案件に移す」で matter_id を埋めるだけ（行は同じ）。
+--   状態は 未着手（todo）／作業中（doing）／待ち（blocked）／完了（done）の 4 つ。
+--   進み具合（受付→作成→送付→支払予定→支払）は保存せず、文書・支払から導く
+--   （A-058 の工程と同じ）。完了は task.done_at。intake_requests.done_at は使わない。
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.tasks ALTER COLUMN matter_id DROP NOT NULL;
+ALTER TABLE v3.tasks ADD COLUMN IF NOT EXISTS request_id bigint REFERENCES v3.intake_requests(id);
+-- 依頼の種別。inspection=検収書 / royalty=利用許諾計算書 / template=定型文書 / other=その他
+ALTER TABLE v3.tasks ADD COLUMN IF NOT EXISTS purpose text;
+ALTER TABLE v3.tasks ADD COLUMN IF NOT EXISTS done_at timestamptz;
+ALTER TABLE v3.tasks ADD COLUMN IF NOT EXISTS done_by text;
+ALTER TABLE v3.tasks ADD COLUMN IF NOT EXISTS created_by text;
+ALTER TABLE v3.tasks ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+ALTER TABLE v3.tasks ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+DO $a064$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.tasks'::regclass AND conname = 'tasks_purpose_chk') THEN
+    ALTER TABLE v3.tasks ADD CONSTRAINT tasks_purpose_chk
+      CHECK (purpose IS NULL OR purpose IN ('inspection', 'royalty', 'template', 'other'));
+  END IF;
+  -- 作業は案件の中か、依頼から起こしたものか、どちらか。宙に浮いた行を作らない。
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.tasks'::regclass AND conname = 'tasks_owner_chk') THEN
+    ALTER TABLE v3.tasks ADD CONSTRAINT tasks_owner_chk
+      CHECK (matter_id IS NOT NULL OR request_id IS NOT NULL);
+  END IF;
+END $a064$;
+-- 依頼 1 件にタスクは 1 行。案件に移しても同じ行を使う。
+CREATE UNIQUE INDEX IF NOT EXISTS tasks_request_uidx ON v3.tasks (request_id) WHERE request_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS tasks_daily_idx ON v3.tasks (status, due_at) WHERE matter_id IS NULL;
+COMMENT ON COLUMN v3.tasks.request_id IS '受付箱から起こした作業の元の依頼。A-064';
+COMMENT ON COLUMN v3.tasks.purpose IS '依頼の種別（inspection / royalty / template / other）。進み具合の導き方が変わる。A-064';
+
+-- 受付箱で「案件にせず処理」していた依頼を、そのままデイリータスクにする。
+INSERT INTO v3.tasks (matter_id, request_id, title, purpose, assignee_staff_id, due_at, status,
+                      done_at, done_by, created_by, created_at)
+SELECT NULL, r.id, r.title,
+       CASE WHEN r.source_payload->>'purpose' IN ('inspection', 'royalty') THEN r.source_payload->>'purpose' ELSE 'other' END,
+       r.assignee_staff_id,
+       CASE WHEN r.due_on IS NULL THEN NULL ELSE (r.due_on::timestamp AT TIME ZONE 'Asia/Tokyo') END,
+       CASE WHEN r.done_at IS NOT NULL THEN 'done' ELSE 'todo' END,
+       r.done_at, r.done_by, COALESCE(r.handled_by, 'migration:a064'), COALESCE(r.handled_at, r.created_at)
+  FROM v3.intake_requests r
+ WHERE r.state = 'accepted' AND r.handling = 'direct'
+   AND NOT EXISTS (SELECT 1 FROM v3.tasks t WHERE t.request_id = r.id);
+
+-- 期限一覧：案件の無い作業（デイリータスク）も出す。
+CREATE OR REPLACE VIEW v3.v_deadlines AS
+SELECT 'matter'::text AS source, m.id AS ref_id, m.matter_no AS ref_no,
+       m.title, m.due_on AS due_on, m.status
+  FROM v3.matters m
+ WHERE m.due_on IS NOT NULL AND m.status NOT IN ('done', 'canceled')
+UNION ALL
+SELECT 'agreement', a.id, a.agreement_no, a.title,
+       CASE WHEN a.auto_renewal AND a.renewal_notice_months IS NOT NULL
+            THEN a.expires_on - (a.renewal_notice_months || ' months')::interval
+            ELSE a.expires_on END::date,
+       a.status
+  FROM v3.agreements a
+ WHERE a.expires_on IS NOT NULL AND a.status = 'executed'
+UNION ALL
+SELECT 'payment', p.id, p.payment_no,
+       COALESCE(pt.name, '') || ' への支払', p.due_on, p.status
+  FROM v3.payments p
+  LEFT JOIN v3.parties pt ON pt.id = p.party_id
+ WHERE p.due_on IS NOT NULL AND p.status IN ('planned', 'approved')
+UNION ALL
+SELECT 'schedule', s.id, c.condition_no, c.name, COALESCE(s.pay_on, s.due_on), c.status
+  FROM v3.condition_schedules s
+  JOIN v3.conditions c ON c.id = s.condition_id
+ WHERE COALESCE(s.pay_on, s.due_on) IS NOT NULL AND c.status = 'active'
+UNION ALL
+SELECT 'task', t.id, COALESCE(m.matter_no, r.request_no), t.title,
+       (t.due_at AT TIME ZONE 'Asia/Tokyo')::date, t.status
+  FROM v3.tasks t
+  LEFT JOIN v3.matters m ON m.id = t.matter_id
+  LEFT JOIN v3.intake_requests r ON r.id = t.request_id
+ WHERE t.due_at IS NOT NULL AND t.status <> 'done';
+
 COMMIT;
 
 
@@ -2511,6 +2598,13 @@ SELECT * FROM (
         + (SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='parties'
               AND column_name IN ('rpt_entity', 'has_board', 'related_party', 'related_party_type', 'related_party_note')))::text
+  UNION ALL
+  SELECT 64, 'デイリータスク（A-064。列 5・CHECK 2 で 7 であること）',
+         ((SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='v3' AND table_name='tasks'
+              AND column_name IN ('request_id', 'purpose', 'done_at', 'done_by', 'created_at'))
+          + (SELECT count(*) FROM pg_constraint
+              WHERE conrelid='v3.tasks'::regclass AND conname IN ('tasks_purpose_chk', 'tasks_owner_chk')))::text
   UNION ALL
   SELECT 63, '許諾先専用の IN 条件（A-063。列 1 であること）',
          (SELECT count(*) FROM information_schema.columns

@@ -10,8 +10,8 @@ import { openMatter, resolveCounterparty } from "../integrations/intake-service.
 import { attachUploadsToMatter } from "./upload-service.js";
 import { recordCommunication } from "../matters/communication-service.js";
 import {
-  isPaymentPurpose, normalizeDocNo, paymentDocLabel, resolvePaymentTarget,
-  type PaymentPurpose, type PaymentTarget
+  isDailyPurpose, isPaymentPurpose, normalizeDocNo, paymentDocLabel, resolvePaymentTarget,
+  type DailyPurpose, type PaymentPurpose, type PaymentTarget
 } from "./payment-request.js";
 
 /**
@@ -39,11 +39,11 @@ export interface SubmitResult {
 export interface AcceptInput {
   /**
    * new=新規案件で受付 / existing=既存の案件へ接続 /
-   * direct=案件にせず処理（検収書・利用許諾計算書の依頼だけ。A-058）
+   * direct=軽微。案件にせずデイリータスクにする（A-058・A-064）
    */
   mode: "new" | "existing" | "direct";
-  /** direct：依頼の種類（Slack で選ばれていなければ画面で選ぶ）と対象の番号。 */
-  purpose?: PaymentPurpose | null;
+  /** direct：依頼の種別（検収書・計算書・定型文書・その他）と、支払の書類なら対象の番号。 */
+  purpose?: DailyPurpose | null;
   targetDocNo?: string | null;
   /** direct：対象の条件。空なら対象の番号から引き当てたもの。 */
   conditionIds?: number[] | null;
@@ -57,12 +57,82 @@ export interface AcceptInput {
 
 export interface AcceptResult {
   requestId: number;
-  /** 案件にせず処理したときは null。 */
+  /** デイリータスクにしたときは null。 */
   matterId: number | null;
   matterNo: string | null;
   createdMatter: boolean;
   handling: "matter" | "direct";
+  /** デイリータスクにしたときの作業（tasks）の id。 */
+  taskId: number | null;
   notified: boolean;
+}
+
+/**
+ * 依頼の原票（Backlog の課題・メールのスレッド・依頼者の資料）を案件に繋ぐ。
+ * 受付箱で案件に繋ぐときと、デイリータスクを案件に移すときで同じことをする。
+ */
+export async function connectRequestToMatter(
+  client: Queryable, row: Record<string, any>, matterId: number, actor: string
+): Promise<void> {
+  const id = Number(row.id);
+  // Backlog の課題を案件に繋ぐ。別の案件に繋がっていれば止める（受信先が決まらなくなる）。
+  if (row.backlog_issue_key) {
+    const other = await client.query(
+      `SELECT l.matter_id, m.matter_no FROM matter_links l JOIN matters m ON m.id = l.matter_id
+        WHERE l.target_type = 'backlog_issue' AND l.target_ref = $1 AND l.matter_id <> $2
+        LIMIT 1`, [row.backlog_issue_key, matterId]);
+    const o = other.rows[0] as any;
+    if (o) {
+      throw new DomainError("CONFLICT",
+        `課題 ${row.backlog_issue_key} は案件 ${o.matter_no ?? o.matter_id} に繋がっています`);
+    }
+    await client.query(
+      `INSERT INTO matter_links (matter_id, target_type, target_ref, relation, snapshot)
+       VALUES ($1, 'backlog_issue', $2, 'origin', $3::jsonb)
+       ON CONFLICT (matter_id, target_type, target_ref) DO NOTHING`,
+      [matterId, row.backlog_issue_key, JSON.stringify({ requestNo: row.request_no, acceptedBy: actor })]);
+  }
+
+  // メールの依頼。スレッドを案件に繋ぎ（以後の返信は案件のやり取りに入る）、
+  // 受付箱にあいだ溜まっていた原文をやり取りの記録に書き戻す。
+  if (row.email_thread_id) {
+    const other = await client.query(
+      `SELECT l.matter_id, m.matter_no FROM matter_links l JOIN matters m ON m.id = l.matter_id
+        WHERE l.target_type = 'email_thread' AND l.target_ref = $1 AND l.matter_id <> $2
+        LIMIT 1`, [row.email_thread_id, matterId]);
+    const o = other.rows[0] as any;
+    if (o) {
+      throw new DomainError("CONFLICT",
+        `このメールのスレッドは案件 ${o.matter_no ?? o.matter_id} に繋がっています`);
+    }
+    const payload = (row.source_payload ?? {}) as Record<string, any>;
+    await client.query(
+      `INSERT INTO matter_links (matter_id, target_type, target_ref, relation, snapshot)
+       VALUES ($1, 'email_thread', $2, 'origin', $3::jsonb)
+       ON CONFLICT (matter_id, target_type, target_ref) DO NOTHING`,
+      [matterId, row.email_thread_id, JSON.stringify({
+        firstSubject: payload.subject ?? null, firstFrom: payload.from ?? null,
+        receivedAt: payload.receivedAt ?? null, requestNo: row.request_no
+      })]);
+    const mails = [payload, ...((payload.followUps ?? []) as Array<Record<string, any>>)]
+      .filter((m) => m && m.messageId);
+    for (const m of mails) {
+      await recordCommunication(client, {
+        matterId, channel: "email", direction: "in",
+        occurredAt: m.receivedAt ?? null,
+        actor: String(m.from ?? "mail"),
+        counterpart: Array.isArray(m.to) ? m.to.join(", ") : null,
+        subject: m.subject ?? null, body: m.body ?? null,
+        externalRef: String(m.messageId),
+        evidence: { threadId: m.threadId ?? null, rfcMessageId: m.rfcMessageId ?? null,
+                    from: m.from ?? null, to: m.to ?? [], attachments: m.attachments ?? [],
+                    viaIntake: row.request_no }
+      });
+    }
+  }
+
+  // 依頼者がリンクから上げた資料も案件に繋ぐ（案件のやり取りに Drive のファイルとして出る）。
+  await attachUploadsToMatter(client, id, matterId);
 }
 
 /** 依頼の原票から、選ばれた依頼の内容と対象の番号を読む。 */
@@ -346,64 +416,7 @@ export class IntakeRequestService {
           matterTitle = String(matter.title);
         }
 
-        // Backlog の課題を案件に繋ぐ。別の案件に繋がっていれば止める（受信先が決まらなくなる）。
-        if (row.backlog_issue_key) {
-          const other = await client.query(
-            `SELECT l.matter_id, m.matter_no FROM matter_links l JOIN matters m ON m.id = l.matter_id
-              WHERE l.target_type = 'backlog_issue' AND l.target_ref = $1 AND l.matter_id <> $2
-              LIMIT 1`, [row.backlog_issue_key, matterId]);
-          const o = other.rows[0] as any;
-          if (o) {
-            throw new DomainError("CONFLICT",
-              `課題 ${row.backlog_issue_key} は案件 ${o.matter_no ?? o.matter_id} に繋がっています`);
-          }
-          await client.query(
-            `INSERT INTO matter_links (matter_id, target_type, target_ref, relation, snapshot)
-             VALUES ($1, 'backlog_issue', $2, 'origin', $3::jsonb)
-             ON CONFLICT (matter_id, target_type, target_ref) DO NOTHING`,
-            [matterId, row.backlog_issue_key, JSON.stringify({ requestNo: row.request_no, acceptedBy: actor })]);
-        }
-
-        // メールの依頼。スレッドを案件に繋ぎ（以後の返信は案件のやり取りに入る）、
-        // 受付箱にあいだ溜まっていた原文をやり取りの記録に書き戻す。
-        if (row.email_thread_id) {
-          const other = await client.query(
-            `SELECT l.matter_id, m.matter_no FROM matter_links l JOIN matters m ON m.id = l.matter_id
-              WHERE l.target_type = 'email_thread' AND l.target_ref = $1 AND l.matter_id <> $2
-              LIMIT 1`, [row.email_thread_id, matterId]);
-          const o = other.rows[0] as any;
-          if (o) {
-            throw new DomainError("CONFLICT",
-              `このメールのスレッドは案件 ${o.matter_no ?? o.matter_id} に繋がっています`);
-          }
-          const payload = (row.source_payload ?? {}) as Record<string, any>;
-          await client.query(
-            `INSERT INTO matter_links (matter_id, target_type, target_ref, relation, snapshot)
-             VALUES ($1, 'email_thread', $2, 'origin', $3::jsonb)
-             ON CONFLICT (matter_id, target_type, target_ref) DO NOTHING`,
-            [matterId, row.email_thread_id, JSON.stringify({
-              firstSubject: payload.subject ?? null, firstFrom: payload.from ?? null,
-              receivedAt: payload.receivedAt ?? null, requestNo: row.request_no
-            })]);
-          const mails = [payload, ...((payload.followUps ?? []) as Array<Record<string, any>>)]
-            .filter((m) => m && m.messageId);
-          for (const m of mails) {
-            await recordCommunication(client, {
-              matterId, channel: "email", direction: "in",
-              occurredAt: m.receivedAt ?? null,
-              actor: String(m.from ?? "mail"),
-              counterpart: Array.isArray(m.to) ? m.to.join(", ") : null,
-              subject: m.subject ?? null, body: m.body ?? null,
-              externalRef: String(m.messageId),
-              evidence: { threadId: m.threadId ?? null, rfcMessageId: m.rfcMessageId ?? null,
-                          from: m.from ?? null, to: m.to ?? [], attachments: m.attachments ?? [],
-                          viaIntake: row.request_no }
-            });
-          }
-        }
-
-        // 依頼者がリンクから上げた資料も案件に繋ぐ（案件のやり取りに Drive のファイルとして出る）。
-        await attachUploadsToMatter(client, id, matterId);
+        await connectRequestToMatter(client, row, matterId, actor);
 
         await client.query(
           `UPDATE intake_requests
@@ -429,7 +442,7 @@ export class IntakeRequestService {
             : `${matterNo ?? `#${matterId}`} ${matterTitle} の案件で対応します`,
           `担当：${owner ?? "（これから決めます）"}`
         ].join("\n");
-        return { requestId: id, matterId, matterNo, createdMatter, handling: "matter" as const };
+        return { requestId: id, matterId, matterNo, createdMatter, handling: "matter" as const, taskId: null };
       });
     } catch (error) { throw translate(error); }
 
@@ -438,10 +451,11 @@ export class IntakeRequestService {
   }
 
   /**
-   * 案件にせず処理する（A-058）。検収書・利用許諾計算書の依頼だけ。
+   * 軽微。案件にせず、デイリータスクにする（A-058・A-064）。
    *
-   * 依頼そのものを小さなチケットにする。担当・期日は依頼に持ち、対象の番号から
-   * 引き当てた条件を依頼に繋ぐ（作った文書・支払はそこから辿る）。
+   * 依頼から作業（tasks）を 1 行起こす。担当・期日・状態は作業に持つ。
+   * 検収書・計算書は対象の番号から引き当てた条件を依頼に繋ぐ（作った文書・支払は
+   * そこから辿る）。定型文書・その他は条件を持たない（文書は手で繋ぐ）。
    */
   private async acceptDirect(id: number, input: AcceptInput, actor: string): Promise<AcceptResult> {
     let requester: string | null = null;
@@ -452,45 +466,49 @@ export class IntakeRequestService {
         const row = await this.lockOpen(client, id);
         requester = row.requester_slack_id ?? null;
         const pay = paymentOf(row);
-        const purpose = pay.purpose ?? (isPaymentPurpose(input.purpose) ? input.purpose : null);
+        const purpose: DailyPurpose | null =
+          pay.purpose ?? (isDailyPurpose(input.purpose) ? input.purpose : null);
         if (!purpose) {
-          throw new DomainError("VALIDATION",
-            "案件にせず処理できるのは、検収書・利用許諾計算書の依頼だけです（依頼の内容を選んでください）");
+          throw new DomainError("VALIDATION", "依頼の種別（検収書・計算書・定型文書・その他）を選んでください");
         }
-        const targetDocNo = normalizeDocNo(input.targetDocNo) ?? normalizeDocNo(pay.targetDocNo);
-        const target = await resolvePaymentTarget(client, purpose, targetDocNo);
-        assertInspectionMatter(purpose, target, input);
+        const payment = isPaymentPurpose(purpose);
+        const targetDocNo = payment ? normalizeDocNo(input.targetDocNo) ?? normalizeDocNo(pay.targetDocNo) : null;
+        const target = payment ? await resolvePaymentTarget(client, purpose, targetDocNo) : null;
+        if (payment) assertInspectionMatter(purpose, target, input);
 
-        // 対象の条件。画面で選び直していればそれ、無ければ引き当てたもの。
-        const conditionIds = [...new Set((input.conditionIds?.length
-          ? input.conditionIds : target?.conditions.map((c) => c.id) ?? []).map(Number))]
-          .filter((n) => Number.isFinite(n) && n > 0);
-        if (!conditionIds.length) {
+        // 対象の条件（支払の書類だけ）。画面で選び直していればそれ、無ければ引き当てたもの。
+        const conditionIds = payment
+          ? [...new Set((input.conditionIds?.length
+              ? input.conditionIds : target?.conditions.map((c) => c.id) ?? []).map(Number))]
+              .filter((n) => Number.isFinite(n) && n > 0)
+          : [];
+        if (payment && !conditionIds.length) {
           throw new DomainError("VALIDATION", targetDocNo
             ? `${purpose === "inspection" ? "発注書" : "契約書"}番号 ${targetDocNo} から条件を引き当てられません。`
               + "番号を直すか、対象の条件を選んでください"
             : `${purpose === "inspection" ? "発注書" : "契約書"}番号を入れてください（どの契約の支払かが分からないと作れません）`);
         }
-        const found = await client.query(
-          "SELECT id FROM conditions WHERE id = ANY($1::bigint[])", [conditionIds]);
-        if (found.rows.length !== conditionIds.length) {
-          throw new DomainError("NOT_FOUND", "選んだ条件の一部が見つかりません");
+        if (conditionIds.length) {
+          const found = await client.query(
+            "SELECT id FROM conditions WHERE id = ANY($1::bigint[])", [conditionIds]);
+          if (found.rows.length !== conditionIds.length) {
+            throw new DomainError("NOT_FOUND", "選んだ条件の一部が見つかりません");
+          }
         }
 
         const title = String(input.title ?? row.title).trim() || String(row.title);
-        const kind = purpose === "inspection" ? "outsourcing" : "work";
+        const kind = purpose === "inspection" ? "outsourcing" : purpose === "royalty" ? "work" : (row.kind ?? "single");
         const payload = { ...(row.source_payload ?? {}), purpose, targetDocNo };
+        const dueOn = input.dueOn ?? dateStr(row.due_on);
         await client.query(
           `UPDATE intake_requests
               SET state = 'accepted', handling = 'direct', matter_id = NULL, kind = $2, title = $3,
-                  due_on = COALESCE($4::date, due_on), assignee_staff_id = $5,
-                  counterparty_id = COALESCE(counterparty_id, $6),
-                  source_payload = $7::jsonb, has_unseen_update = false,
-                  reason = NULL, hold_until = NULL, done_at = NULL, done_by = NULL,
-                  handled_at = now(), handled_by = $8, updated_at = now()
+                  due_on = $4::date, counterparty_id = COALESCE(counterparty_id, $5),
+                  source_payload = $6::jsonb, has_unseen_update = false,
+                  reason = NULL, hold_until = NULL,
+                  handled_at = now(), handled_by = $7, updated_at = now()
             WHERE id = $1`,
-          [id, kind, title, input.dueOn ?? null, input.ownerStaffId ?? null,
-           target?.counterpartyId ?? null, JSON.stringify(payload), actor]);
+          [id, kind, title, dueOn, target?.counterpartyId ?? null, JSON.stringify(payload), actor]);
         await client.query(
           "DELETE FROM intake_request_links WHERE request_id = $1 AND target_type = 'condition'", [id]);
         for (const conditionId of conditionIds) {
@@ -498,9 +516,21 @@ export class IntakeRequestService {
             `INSERT INTO intake_request_links (request_id, target_type, target_id, created_by)
              VALUES ($1, 'condition', $2, $3) ON CONFLICT DO NOTHING`, [id, conditionId, actor]);
         }
+        // 作業を 1 行起こす。受付箱に戻して受け直したときは同じ行を使い直す。
+        const task = await client.query(
+          `INSERT INTO tasks (matter_id, request_id, title, purpose, assignee_staff_id, due_at, status,
+                              created_by, created_at, updated_at)
+           VALUES (NULL, $1, $2, $3, $4, ($5::date::timestamp AT TIME ZONE 'Asia/Tokyo'), 'todo', $6, now(), now())
+           ON CONFLICT (request_id) WHERE request_id IS NOT NULL DO UPDATE SET
+             matter_id = NULL, title = EXCLUDED.title, purpose = EXCLUDED.purpose,
+             assignee_staff_id = EXCLUDED.assignee_staff_id, due_at = EXCLUDED.due_at,
+             status = 'todo', done_at = NULL, done_by = NULL, updated_at = now()
+           RETURNING id`,
+          [id, title, purpose, input.ownerStaffId ?? null, dueOn, actor]);
+        const taskId = Number((task.rows[0] as { id: number }).id);
         await recordAudit(client, {
           actor, action: "intake.accept", targetType: "intake_request", targetId: id,
-          detail: { handling: "direct", purpose, targetDocNo, conditionIds, requestNo: row.request_no }
+          detail: { handling: "direct", purpose, targetDocNo, conditionIds, taskId, requestNo: row.request_no }
         });
 
         const owner = input.ownerStaffId
@@ -511,32 +541,14 @@ export class IntakeRequestService {
           `依頼を受け付けました：*${row.request_no ?? `#${id}`}*`,
           `${label}を作ります${targetDocNo ? `（対象：${targetDocNo}）` : ""}。`,
           `担当：${owner ?? "（これから決めます）"}`,
-          "進み具合（作成・送付・支払予定・支払）はこのスレッドでお知らせします。"
+          ...(payment ? ["進み具合（作成・送付・支払予定・支払）はこのスレッドでお知らせします。"] : [])
         ].join("\n");
-        return { requestId: id, matterId: null, matterNo: null, createdMatter: false, handling: "direct" as const };
+        return { requestId: id, matterId: null, matterNo: null, createdMatter: false,
+                 handling: "direct" as const, taskId };
       });
     } catch (error) { throw translate(error); }
     const notified = await this.notify(id, requester, message, actor);
     return { ...result, notified };
-  }
-
-  /** 案件にせず処理している依頼の担当・期日を変える。 */
-  async assign(id: number, input: { staffId?: number | null; dueOn?: string | null }, actor: string)
-    : Promise<{ requestId: number }> {
-    try {
-      return await inTransaction(this.database, async (client) => {
-        await this.lockDirect(client, id);
-        await client.query(
-          `UPDATE intake_requests
-              SET assignee_staff_id = $2, due_on = $3::date, updated_at = now()
-            WHERE id = $1`, [id, input.staffId ?? null, input.dueOn ?? null]);
-        await recordAudit(client, {
-          actor, action: "intake.assign", targetType: "intake_request", targetId: id,
-          detail: { staffId: input.staffId ?? null, dueOn: input.dueOn ?? null }
-        });
-        return { requestId: id };
-      });
-    } catch (error) { throw translate(error); }
   }
 
   /**
@@ -629,49 +641,13 @@ export class IntakeRequestService {
     } catch (error) { throw translate(error); }
   }
 
-  /**
-   * 対応完了にする（支払の記録が V3 に無い、支払まで待たずに閉じる、など）。
-   * 依頼者に知らせるのは工程の知らせ（ジョブ）に任せる。二重に送らない。
-   */
-  async complete(id: number, note: string | null, actor: string): Promise<{ requestId: number }> {
-    try {
-      return await inTransaction(this.database, async (client) => {
-        const row = await this.lockDirect(client, id);
-        if (row.done_at) throw new DomainError("CONFLICT", "この依頼は対応完了にしてあります");
-        await client.query(
-          `UPDATE intake_requests SET done_at = now(), done_by = $2, updated_at = now() WHERE id = $1`,
-          [id, actor]);
-        await recordAudit(client, {
-          actor, action: "intake.done", targetType: "intake_request", targetId: id,
-          detail: { note: note?.trim() || null }
-        });
-        return { requestId: id };
-      });
-    } catch (error) { throw translate(error); }
-  }
-
-  /** 対応完了を取り消す（まだ終わっていなかった）。 */
-  async uncomplete(id: number, actor: string): Promise<{ requestId: number }> {
-    try {
-      return await inTransaction(this.database, async (client) => {
-        await this.lockDirect(client, id);
-        await client.query(
-          `UPDATE intake_requests SET done_at = NULL, done_by = NULL, updated_at = now() WHERE id = $1`, [id]);
-        await recordAudit(client, {
-          actor, action: "intake.undone", targetType: "intake_request", targetId: id
-        });
-        return { requestId: id };
-      });
-    } catch (error) { throw translate(error); }
-  }
-
-  /** 案件にせず処理している依頼を取る。 */
+  /** デイリータスクにしている依頼を取る（担当・完了は tasks 側。ここは繋ぎの付け外しだけ）。 */
   private async lockDirect(client: Queryable, id: number): Promise<Record<string, any>> {
     const r = await client.query("SELECT * FROM intake_requests WHERE id = $1 FOR UPDATE", [id]);
     const row = r.rows[0] as Record<string, any> | undefined;
     if (!row) throw new DomainError("NOT_FOUND", `依頼 ${id} が見つかりません`);
     if (row.state !== "accepted" || row.handling !== "direct") {
-      throw new DomainError("CONFLICT", "案件にせず処理している依頼ではありません");
+      throw new DomainError("CONFLICT", "デイリータスクにしている依頼ではありません（案件に移した依頼は案件側で扱います）");
     }
     return row;
   }
@@ -679,6 +655,13 @@ export class IntakeRequestService {
   /** 工程の知らせ（ジョブ）から送る。依頼のスレッドに返す。 */
   async notifyProgress(id: number, slackId: string, text: string): Promise<boolean> {
     return this.notify(id, slackId, text, "system:intake-progress");
+  }
+
+  /** 依頼者へ知らせる（デイリータスクを案件に移したときなど）。依頼のスレッドに返す。 */
+  async notifyRequester(id: number, text: string, actor: string): Promise<boolean> {
+    const r = await this.database.query("SELECT requester_slack_id FROM intake_requests WHERE id = $1", [id]);
+    const slackId = ((r.rows[0] as any)?.requester_slack_id as string | null | undefined) ?? null;
+    return this.notify(id, slackId, text, actor);
   }
 
   /** 重複として閉じる。重複元が案件に繋がっていれば、その案件の「受付」に参考として出す。 */

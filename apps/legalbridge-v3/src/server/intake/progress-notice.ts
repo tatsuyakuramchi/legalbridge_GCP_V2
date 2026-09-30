@@ -2,13 +2,13 @@ import { inTransaction, type Transactable } from "../core/db.js";
 import { translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import {
-  firedKeys, isPaymentPurpose, loadProgress, milestoneText, paymentDocLabel, STAGE_LABEL,
-  type PaymentPurpose
+  firedKeys, isDailyPurpose, loadProgress, milestoneText, paymentDocLabel, STAGE_LABEL,
+  type DailyPurpose
 } from "./payment-request.js";
 import { SETTINGS_KEY } from "../matters/flow-notice.js";
 
 /**
- * 案件にせず処理している依頼（A-058）の節目を、依頼者の DM のスレッドに知らせる。
+ * デイリータスクにした依頼（A-058・A-064）の節目を、依頼者の DM のスレッドに知らせる。
  *
  * 案件の工程の知らせ（matters/flow-notice.ts）と同じ作り。工程は保存しないので、
  * 定期的に導き直し、前回までに知らせた節目（audit_events の intake.progress_notice）と
@@ -20,6 +20,7 @@ import { SETTINGS_KEY } from "../matters/flow-notice.js";
  *   - 止めるのは案件の工程の知らせと同じ settings の flow_notice。
  *     段ごとに外すなら {"off": ["送付"]}（段の名前は 作成・送付・支払予定・支払）
  *   - Slack のゲートで止まっても節目は記録する（開けた日に溜まった分が届かないように）
+ *   - 支払まで済んだら、作業（tasks）を自動で完了にする（人が押さなくても一覧から消える）
  */
 
 export interface RequestNoticeDeps {
@@ -50,13 +51,15 @@ export class RequestProgressNoticeJob {
       if (setting.disabled) return { ran: false, reason: "工程の通知は止めてあります（settings の flow_notice）", ...empty };
       const off = new Set(setting.off ?? []);
 
-      // 完了した依頼は完了の知らせのために数日だけ見る。
+      // 完了した依頼は完了の知らせのために数日だけ見る。完了は作業（tasks）の done_at。
       const r = await database.query(
-        `SELECT id, request_no, title, requester_slack_id, source_payload, created_at, handled_at, done_at
-           FROM intake_requests
-          WHERE state = 'accepted' AND handling = 'direct' AND requester_slack_id IS NOT NULL
-            AND (done_at IS NULL OR done_at > now() - interval '3 days')
-          ORDER BY id
+        `SELECT r.id, r.request_no, r.title, r.requester_slack_id, r.source_payload, r.created_at, r.handled_at,
+                t.id AS task_id, t.status AS task_status, t.done_at
+           FROM intake_requests r
+           JOIN tasks t ON t.request_id = r.id AND t.matter_id IS NULL
+          WHERE r.state = 'accepted' AND r.handling = 'direct' AND r.requester_slack_id IS NOT NULL
+            AND (t.done_at IS NULL OR t.done_at > now() - interval '3 days')
+          ORDER BY r.id
           LIMIT $1`, [options.limit ?? 500]);
       const rows = r.rows as any[];
       const ids = rows.map((x) => Number(x.id));
@@ -77,14 +80,26 @@ export class RequestProgressNoticeJob {
       for (const row of rows) {
         const requestId = Number(row.id);
         try {
-          const purpose = (row.source_payload ?? {}).purpose as PaymentPurpose;
-          if (!isPaymentPurpose(purpose)) continue;
+          const raw = (row.source_payload ?? {}).purpose;
+          const purpose: DailyPurpose = isDailyPurpose(raw) ? raw : "other";
           const iso = (v: unknown) => (v ? new Date(String(v)).toISOString() : null);
           const doneAt = iso(row.done_at);
           const progress = await loadProgress(database, {
             id: requestId, purpose, createdAt: iso(row.created_at) ?? new Date(0).toISOString(),
             acceptedAt: iso(row.handled_at), doneAt
           });
+          // 支払まで済んだのに作業が開いたままなら、ここで完了にする。
+          if (progress.complete && !doneAt && row.task_status !== "done") {
+            await inTransaction(database, async (client) => {
+              await client.query(
+                `UPDATE tasks SET status = 'done', done_at = now(), done_by = $2, updated_at = now()
+                  WHERE id = $1 AND status <> 'done'`, [Number(row.task_id), ACTOR]);
+              await recordAudit(client, {
+                actor: ACTOR, action: "task.done", targetType: "task", targetId: Number(row.task_id),
+                detail: { requestId, auto: "paid" }
+              });
+            });
+          }
           const seen = marks.get(requestId) ?? new Set<string>();
           const fresh = firedKeys(progress, doneAt)
             .filter((key) => !seen.has(key))

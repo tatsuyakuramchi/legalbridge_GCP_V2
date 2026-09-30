@@ -199,9 +199,13 @@ export class DocumentRepository {
       const i = params.length;
       // 取り込んだ文書の名前（manual_inputs.title）も件名として当てる。契約も案件も
       // 条件も付いていない取り込み文書は表示名が文書番号に落ちるので、名前で探せなかった。
+      // 条件明細の番号・名前でも当てる（デイリータスクで「この条件の文書」を探して繋ぐ）。
       where.push(`(COALESCE(d.document_no,'') ILIKE $${i} OR COALESCE(v.title,'') ILIKE $${i}
                    OR COALESCE(d.manual_inputs->>'title','') ILIKE $${i}
-                   OR COALESCE(v.counterparty,'') ILIKE $${i})`);
+                   OR COALESCE(v.counterparty,'') ILIKE $${i}
+                   OR EXISTS (SELECT 1 FROM document_conditions dc JOIN conditions c ON c.id = dc.condition_id
+                               WHERE dc.document_id = d.id
+                                 AND (COALESCE(c.condition_no,'') ILIKE $${i} OR COALESCE(c.name,'') ILIKE $${i})))`);
     }
     if (query.status) { params.push(query.status); where.push(`d.status = $${params.length}`); }
     if (query.phase === "draft") where.push("d.status = 'draft'");

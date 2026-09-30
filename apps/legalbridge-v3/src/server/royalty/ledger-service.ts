@@ -539,20 +539,22 @@ export class RoyaltyLedgerService {
       //   pendingReqs … この作家・作品（条件）に繋がっているが、まだ回を選んでいない依頼
       const scheduleIds = schedules.map((x) => x.id);
       const linkedReqs = (scheduleIds.length || eventIds0(events).length) ? (await q.query(
-        `SELECT r.id, r.request_no, r.title, r.due_on, r.done_at, st.name AS assignee_name,
+        `SELECT r.id, r.request_no, r.title, r.due_on, t.done_at, st.name AS assignee_name,
                 l.target_type, l.target_id
            FROM intake_request_links l
            JOIN intake_requests r ON r.id = l.request_id
-           LEFT JOIN staff st ON st.id = r.assignee_staff_id
+           LEFT JOIN tasks t ON t.request_id = r.id
+           LEFT JOIN staff st ON st.id = t.assignee_staff_id
           WHERE (l.target_type = 'schedule' AND l.target_id = ANY($1::bigint[]))
              OR (l.target_type = 'event' AND l.target_id = ANY($2::bigint[]))
           ORDER BY r.id`, [scheduleIds, eventIds0(events)])).rows as any[] : [];
       const pendingReqs = allIds.length ? (await q.query(
-        `SELECT DISTINCT r.id, r.request_no, r.title, r.due_on, r.done_at, st.name AS assignee_name
+        `SELECT DISTINCT r.id, r.request_no, r.title, r.due_on, t.done_at, st.name AS assignee_name
            FROM intake_requests r
            JOIN intake_request_links l ON l.request_id = r.id AND l.target_type = 'condition'
-           LEFT JOIN staff st ON st.id = r.assignee_staff_id
-          WHERE r.state = 'accepted' AND r.handling = 'direct' AND r.done_at IS NULL
+           LEFT JOIN tasks t ON t.request_id = r.id
+           LEFT JOIN staff st ON st.id = t.assignee_staff_id
+          WHERE r.state = 'accepted' AND r.handling = 'direct' AND t.done_at IS NULL
             AND l.target_id = ANY($1::bigint[])
             AND NOT EXISTS (SELECT 1 FROM intake_request_links x
                              WHERE x.request_id = r.id

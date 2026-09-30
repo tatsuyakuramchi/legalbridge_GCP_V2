@@ -94,6 +94,8 @@ import {
 } from "./integrations/factory.js";
 import { IntakeRepository, type IntakeTab } from "./intake/repository.js";
 import { IntakeRequestService } from "./intake/request-service.js";
+import { DailyTaskRepository, type DailyTab } from "./tasks/repository.js";
+import { TaskWriteService } from "./tasks/write-service.js";
 import { BacklogPullJob } from "./intake/backlog-pull.js";
 import { FlowNoticeJob } from "./matters/flow-notice.js";
 import { RequestProgressNoticeJob } from "./intake/progress-notice.js";
@@ -206,6 +208,10 @@ export function createRoutes(database: Transactable) {
     backlogIssueTypeId: config.backlogIssueTypeId,
     uploadLink: (requestId) => uploads.link("r", requestId).url
   });
+  // 作業テーブル（デイリータスク・案件の中の作業。A-064）。
+  const dailyTasks = new DailyTaskRepository(database, intakeRepo);
+  const taskWrites = new TaskWriteService(database,
+    (requestId, text, actor) => intakeRequests.notifyRequester(requestId, text, actor));
   const backlogPull = new BacklogPullJob(database, buildBacklogReader(), () => ({
     mode: config.integrationModes.backlog, readOnly: config.readOnly
   }));
@@ -745,8 +751,8 @@ export function createRoutes(database: Transactable) {
   }));
   router.get("/intake", asyncRoute(async (req, res) => {
     const tab = String(req.query.state ?? "new");
-    if (!["new", "on_hold", "updated", "direct", "all"].includes(tab)) {
-      throw new DomainError("VALIDATION", "state は new / on_hold / updated / direct / all のいずれかです");
+    if (!["new", "on_hold", "updated", "all"].includes(tab)) {
+      throw new DomainError("VALIDATION", "state は new / on_hold / updated / all のいずれかです");
     }
     res.json({ items: await intakeRepo.list(tab as IntakeTab) });
   }));
@@ -770,8 +776,8 @@ export function createRoutes(database: Transactable) {
     }));
   const intakeAcceptSchema = z.object({
     mode: z.enum(["new", "existing", "direct"]),
-    // 案件にせず処理（検収書・計算書の依頼）のときだけ使う。
-    purpose: z.enum(["inspection", "royalty"]).nullable().optional(),
+    // 軽微（デイリータスク）のときだけ使う。検収書・計算書は対象の番号から条件を引き当てる。
+    purpose: z.enum(["inspection", "royalty", "template", "other"]).nullable().optional(),
     targetDocNo: z.string().trim().max(100).nullable().optional(),
     conditionIds: z.array(z.coerce.number().int().positive()).max(50).nullable().optional(),
     matterId: z.coerce.number().int().positive().nullable().optional(),
@@ -791,14 +797,8 @@ export function createRoutes(database: Transactable) {
       res.json(await intakeRequests.accept(
         Number(req.params.id), { ...input, kind: input.kind ?? "single" }, actor(res)));
     }));
-  // ---- 案件にせず処理している依頼（A-058）。担当・期日・文書の繋ぎ・対応完了 ----
-  router.post("/intake/:id/assign", requireRole("admin", "legal"), requireWritable,
-    asyncRoute(async (req, res) => {
-      const input = z.object({
-        staffId: z.coerce.number().int().positive().nullable().optional(), dueOn: intakeDate
-      }).parse(req.body ?? {});
-      res.json(await intakeRequests.assign(Number(req.params.id), input, actor(res)));
-    }));
+  // ---- デイリータスクにした依頼（A-058・A-064）の繋ぎ：文書・許諾料の回 ----
+  // 担当・期日・状態・完了は作業テーブル（/tasks/:id）で扱う。
   router.post("/intake/:id/documents", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       const input = z.object({
@@ -825,15 +825,6 @@ export function createRoutes(database: Transactable) {
   router.post("/intake/:id/rounds/unlink", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       res.json(await intakeRequests.linkRounds(Number(req.params.id), roundLinkSchema.parse(req.body ?? {}), actor(res), true));
-    }));
-  router.post("/intake/:id/done", requireRole("admin", "legal"), requireWritable,
-    asyncRoute(async (req, res) => {
-      const { note } = z.object({ note: z.string().trim().max(2000).nullable().optional() }).parse(req.body ?? {});
-      res.json(await intakeRequests.complete(Number(req.params.id), note ?? null, actor(res)));
-    }));
-  router.post("/intake/:id/undone", requireRole("admin", "legal"), requireWritable,
-    asyncRoute(async (req, res) => {
-      res.json(await intakeRequests.uncomplete(Number(req.params.id), actor(res)));
     }));
   router.post("/intake/:id/duplicate", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
@@ -864,6 +855,49 @@ export function createRoutes(database: Transactable) {
   router.get("/matters/:id/intake", asyncRoute(async (req, res) => {
     res.json({ items: await intakeRepo.forMatter(Number(req.params.id)) });
   }));
+
+  // ---- 作業テーブル（A-064）。デイリータスクの一覧・件数・詳細と、作業の状態変更・案件に移す ----
+  // 案件の中の作業の一覧は案件の詳細（GET /matters/:id の tasks）。状態の変更はここを共用する。
+  const assigneeOf = (q: unknown) => {
+    const n = Number(q);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+  router.get("/tasks/counts", asyncRoute(async (req, res) => {
+    res.json(await dailyTasks.counts(assigneeOf(req.query.assignee)));
+  }));
+  router.get("/tasks", asyncRoute(async (req, res) => {
+    const tab = String(req.query.tab ?? "open");
+    if (!["open", "wait", "late", "done", "all"].includes(tab)) {
+      throw new DomainError("VALIDATION", "tab は open / wait / late / done / all のいずれかです");
+    }
+    res.json({ items: await dailyTasks.list(tab as DailyTab, assigneeOf(req.query.assignee)) });
+  }));
+  router.get("/tasks/:id", asyncRoute(async (req, res) => {
+    res.json(await dailyTasks.find(Number(req.params.id)));
+  }));
+  const taskPatchSchema = z.object({
+    status: z.enum(["todo", "doing", "blocked", "done"]).optional(),
+    title: z.string().trim().min(1).max(300).optional(),
+    assigneeStaffId: z.coerce.number().int().positive().nullable().optional(),
+    dueOn: intakeDate,
+    // 依頼者のメール（元の依頼に持つ）。文書のメールの下書きの宛先になる。
+    requesterEmail: z.string().trim().max(200).nullable().optional()
+  });
+  router.patch("/tasks/:id", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await taskWrites.update(Number(req.params.id), taskPatchSchema.parse(req.body ?? {}), actor(res)));
+    }));
+  const taskMoveSchema = z.object({
+    mode: z.enum(["new", "existing"]),
+    matterId: z.coerce.number().int().positive().nullable().optional(),
+    kind: intakeKind.nullable().optional(),
+    title: z.string().trim().max(300).nullable().optional(),
+    ownerStaffId: z.coerce.number().int().positive().nullable().optional()
+  });
+  router.post("/tasks/:id/move", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await taskWrites.moveToMatter(Number(req.params.id), taskMoveSchema.parse(req.body ?? {}), actor(res)));
+    }));
   // Backlog を読みに行く。手で1回動かして結果を見るためのもの。
   // 定期実行は /internal/jobs/backlog-pull（Cloud Scheduler）。
   router.post("/jobs/backlog-pull", requireRole("admin"), requireWritable,
@@ -2793,6 +2827,8 @@ export function createRoutes(database: Transactable) {
     templateKey: z.string().trim().min(1).max(60),
     conditionIds: z.array(z.coerce.number().int().positive()).max(500).default([]),
     matterId: z.coerce.number().int().positive().nullable().optional(),
+    // デイリータスクから作るとき、その元の依頼（文書を依頼に繋ぐ。A-064）。
+    requestId: z.coerce.number().int().positive().nullable().optional(),
     agreementId: z.coerce.number().int().positive().nullable().optional(),
     manualInputs: z.record(z.string(), z.unknown()).default({}),
     // 候補に出すための文脈。プレビューでは値を見せるだけで、保存はしない。
@@ -3291,6 +3327,8 @@ export function createRoutes(database: Transactable) {
   const bundleSchema = z.object({
     templateKey: z.string().trim().min(1).max(120),
     matterId: z.coerce.number().int().positive().nullable().optional(),
+    // デイリータスクから作るとき、その元の依頼（文書を依頼に繋ぐ。A-064）。
+    requestId: z.coerce.number().int().positive().nullable().optional(),
     agreementId: z.coerce.number().int().positive().nullable().optional(),
     manualInputs: z.record(z.string(), z.unknown()).default({}),
     entries: z.array(calculationSchema.extend({
@@ -3357,7 +3395,7 @@ export function createRoutes(database: Transactable) {
       const draft = await issues.createDraft({
         templateKey: input.templateKey,
         conditionIds: input.entries.map((e) => e.conditionId),
-        matterId: input.matterId ?? null,
+        matterId: input.matterId ?? null, requestId: input.requestId ?? null,
         agreementId: input.agreementId ?? null,
         // 本文はここに焼き付けた行から描く。計算済みなので、印字のときに
         // 計算し直さない（rs_bundle_lines を royalty-patch が拾う）。
@@ -3412,6 +3450,8 @@ export function createRoutes(database: Transactable) {
     conditionIds: z.array(z.coerce.number().int().positive()).max(500).default([]),
     eventIds: z.array(z.coerce.number().int().positive()).max(200).default([]),
     matterId: z.coerce.number().int().positive().nullable().optional(),
+    // デイリータスクから作るとき、その元の依頼（文書を依頼に繋ぐ。A-064）。
+    requestId: z.coerce.number().int().positive().nullable().optional(),
     agreementId: z.coerce.number().int().positive().nullable().optional(),
     manualInputs: z.record(z.string(), z.unknown()).default({}),
     /** 入れると計算書として確定する。条件は1件だけ。 */
@@ -3457,8 +3497,8 @@ export function createRoutes(database: Transactable) {
       // 3. 下書き → 発行。失敗したら下書きは捨てる。
       const draft = await issues.createDraft({
         templateKey: input.templateKey, conditionIds: input.conditionIds,
-        matterId: input.matterId ?? null, agreementId: input.agreementId ?? null,
-        manualInputs: input.manualInputs
+        matterId: input.matterId ?? null, requestId: input.requestId ?? null,
+        agreementId: input.agreementId ?? null, manualInputs: input.manualInputs
       }, who);
       let issued;
       try {

@@ -186,12 +186,14 @@ export class DailyJob {
       return { ...a, expires_on: end, days };
     }).filter((a) => a.days <= EXPIRY_NOTICE_DAYS) };
 
+    // 案件の中の作業と、デイリータスク（案件なし。A-064）の両方。
     const tasks = await client.query(
-      `SELECT t.id, t.title, t.due_at, m.matter_no, m.title AS matter_title,
-              s.name AS assignee,
+      `SELECT t.id, t.title, t.due_at, COALESCE(m.matter_no, r.request_no) AS matter_no,
+              m.title AS matter_title, s.name AS assignee,
               ((t.due_at AT TIME ZONE 'Asia/Tokyo')::date - current_date) AS days
          FROM tasks t
-         JOIN matters m ON m.id = t.matter_id
+         LEFT JOIN matters m ON m.id = t.matter_id
+         LEFT JOIN intake_requests r ON r.id = t.request_id
          LEFT JOIN staff s ON s.id = t.assignee_staff_id
         WHERE t.status <> 'done' AND t.due_at IS NOT NULL
           AND (t.due_at AT TIME ZONE 'Asia/Tokyo')::date < current_date
@@ -223,7 +225,7 @@ export class DailyJob {
     for (const t of tasks.rows as any[]) {
       findings.push({
         kind: "task_overdue",
-        refType: "matter", refId: Number(t.id), refNo: t.matter_no ?? null,
+        refType: "task", refId: Number(t.id), refNo: t.matter_no ?? null,
         title: t.title, dueOn: dateStr(t.due_at), days: Number(t.days),
         detail: { matter: t.matter_title, assignee: t.assignee ?? null }
       });

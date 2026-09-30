@@ -15,10 +15,11 @@ import { FlowMonitorWorkspace } from "./FlowMonitorWorkspace.js";
 import { DriftWorkspace } from "./DriftWorkspace.js";
 import { OpsWorkspace, HomeWorkspace, type OpsTab } from "./OpsWorkspace.js";
 import { IntakeWorkspace } from "./IntakeWorkspace.js";
+import { DailyTasksWorkspace } from "./DailyTasksWorkspace.js";
 import { RingiWorkspace } from "./RingiWorkspace.js";
 import { RptWorkspace } from "./RptWorkspace.js";
 
-type View = "home" | "intake" | "matters" | "agreements" | "conditions" | "works" | "parties" | "documents" | "ringi" | "rpt" | "closing" | "money" | "drift" | "flows" | "ops";
+type View = "home" | "intake" | "daily" | "matters" | "agreements" | "conditions" | "works" | "parties" | "documents" | "ringi" | "rpt" | "closing" | "money" | "drift" | "flows" | "ops";
 interface Me {
   user?: { email: string; role: string };
   readOnly: boolean;
@@ -29,8 +30,10 @@ interface Me {
 const NAV: Array<{ section: string; items: Array<{ view: View; label: string }> }> = [
   { section: "入口", items: [
     { view: "home", label: "ホーム" },
-    // 依頼はまず受付箱に入る。受け付けると案件になる（docs/v3-request-inbox.md）。
+    // 依頼はまず受付箱に入り、そこで振り分ける（docs/v3-request-inbox.md）。
+    // 軽微ならデイリータスク、大きければ案件。どちらも作業テーブルは tasks。
     { view: "intake", label: "受付箱" },
+    { view: "daily", label: "デイリータスク" },
     { view: "matters", label: "案件" }
   ] },
   { section: "横断で見る", items: [
@@ -75,9 +78,13 @@ export function App() {
 
   /** 受付箱の未処理＋更新あり。左の桁に件数を出して、届いた依頼を見落とさない。 */
   const [intakeCount, setIntakeCount] = useState(0);
+  /** デイリータスクの終わっていない作業。 */
+  const [dailyCount, setDailyCount] = useState(0);
   useEffect(() => {
     api.get<{ new: number; updated: number }>("/intake/counts")
       .then((c) => setIntakeCount(c.new + c.updated)).catch(() => setIntakeCount(0));
+    api.get<{ open: number }>("/tasks/counts")
+      .then((c) => setDailyCount(c.open)).catch(() => setDailyCount(0));
   }, [view]);
 
   /** 左の桁を畳んでいるか。畳んだ状態はこの端末に覚えておく。 */
@@ -147,6 +154,8 @@ export function App() {
    */
   const [compose, setCompose] =
     useState<{ conditionIds: number[]; eventIds: number[]; matterId: number | null;
+               /** デイリータスクから来たとき、その元の依頼（作った文書を依頼に繋ぐ）。 */
+               requestId?: number | null;
                templateKey?: string | null;
                bulk?: boolean; settled?: boolean;
                /** 訂正版。退かせる元の文書と理由。 */
@@ -176,10 +185,11 @@ export function App() {
   const startCompose = (
     conditionIds: number[], eventIds: number[] = [], matterId: number | null = null,
     templateKey: string | null = null, back: DocBack | null = null,
-    revise: { supersedesIds: number[]; reason: string } | null = null
+    revise: { supersedesIds: number[]; reason: string } | null = null,
+    requestId: number | null = null
   ) => {
     setDocBack(back);
-    setCompose({ conditionIds, eventIds, matterId, templateKey,
+    setCompose({ conditionIds, eventIds, matterId, requestId, templateKey,
                  supersedesId: revise?.supersedesIds[0] ?? null, supersedesExtraIds: revise?.supersedesIds.slice(1) ?? [],
                  reason: revise?.reason ?? null });
     setFocus(null);
@@ -246,6 +256,9 @@ export function App() {
                       }}>{item.label}
                       {item.view === "intake" && intakeCount > 0 && (
                         <span className="tag warn" style={{ marginLeft: 6 }}>{intakeCount}</span>
+                      )}
+                      {item.view === "daily" && dailyCount > 0 && (
+                        <span className="tag in" style={{ marginLeft: 6 }}>{dailyCount}</span>
                       )}</button>
             ))}
           </div>
@@ -271,7 +284,7 @@ export function App() {
           </div>
         )}
         {view === "home" && (
-          <HomeWorkspace onGo={(v, tab) => {
+          <HomeWorkspace intakeCount={intakeCount} dailyCount={dailyCount} onGo={(v, tab) => {
             setOpsTab(tab);
             // ホームから開くのは全社ぶん（札の件数と画面の件数を合わせる）。
             if (v === "drift") setDriftMatter(null);
@@ -281,13 +294,20 @@ export function App() {
         {view === "intake" && (
           <IntakeWorkspace key={`i${focusFor("intake") ?? 0}`} initialId={focusFor("intake")}
             onOpenMatter={(id) => openEntity("matter", id)}
-            onCompose={(ids, templateKey) => startCompose(ids, [], null, templateKey)}
+            onOpenTask={(taskId) => { setFocus({ view: "daily", id: taskId }); setView("daily"); }}
+            onCountsChange={(c) => setIntakeCount(c.new + c.updated)} />
+        )}
+        {view === "daily" && (
+          <DailyTasksWorkspace key={`t${focusFor("daily") ?? 0}`} initialId={focusFor("daily")}
+            onOpenMatter={(id) => openEntity("matter", id)}
+            onCompose={(ids, templateKey, requestId) => startCompose(ids, [], null, templateKey, null, null, requestId)}
             onOpenDocument={openDocumentAt}
             onOpenLedger={(workId, partyId) => {
               setLedgerParty(partyId); setConditionId(undefined);
               setFocus({ view: "works", id: workId }); setView("works");
             }}
-            onCountsChange={(c) => setIntakeCount(c.new + c.updated)} />
+            onOpenRequest={(id) => { setFocus({ view: "intake", id }); setView("intake"); }}
+            onCountsChange={(c) => setDailyCount(c.open)} />
         )}
         {view === "matters" && (
           <MattersWorkspace key={`m${focusFor("matters") ?? 0}`}

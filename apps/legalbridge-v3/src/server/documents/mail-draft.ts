@@ -15,7 +15,25 @@ import {
  *   delivery    … 取引先の請求先（無ければ主担当）へ。依頼者を cc
  * 取引先へのメール（party_check・delivery）には、設定の「いつも入れる cc」も足す。
  * 下書きを返すだけで送らない。人が画面で直してから送る。
+ *
+ * 案件の無い文書（デイリータスクで作ったもの。A-064）は、繋がっている依頼と作業から
+ * 同じものを取る：依頼者＝依頼の依頼者、法務の担当＝作業の担当、案件番号＝依頼番号、
+ * 案件名＝作業の件名。依頼者のメールが無ければ Slack の ID から社員を引く。
  */
+
+/** 依頼者・担当・番号・件名。案件からでも、依頼と作業からでも同じ形にする。 */
+interface Origin {
+  no: string | null;
+  title: string | null;
+  ownerStaffId: number | null;
+  requesterEmail: string | null;
+  requesterSlackId: string | null;
+  requesterName: string | null;
+  counterpartyId: number | null;
+  counterpartyName: string | null;
+  /** 「案件」か「デイリータスク」か。警告の文に使う。 */
+  label: string;
+}
 
 export interface MailDraft {
   purpose: MailPurpose;
@@ -58,7 +76,7 @@ export class MailDraftService {
         `SELECT d.id, d.document_no, d.status, d.issued_at, d.matter_id, d.rendered_values,
                 v.counterparty, v.counterparty_id, t.template_key,
                 COALESCE(v.template_label, d.manual_inputs->>'documentKind') AS template_label,
-                m.matter_no, m.title AS matter_title, m.owner_staff_id, m.requester_email
+                m.matter_no, m.title AS matter_title, m.owner_staff_id, m.requester_email, m.requester_slack_id
            FROM documents d
            LEFT JOIN v_document_display v ON v.document_id = d.id
            LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
@@ -68,6 +86,17 @@ export class MailDraftService {
       const doc = head.rows[0] as Record<string, any> | undefined;
       if (!doc) throw new DomainError("NOT_FOUND", `文書 ${documentId} が見つかりません`);
 
+      const origin = doc.matter_id
+        ? {
+            no: str(doc.matter_no), title: str(doc.matter_title),
+            ownerStaffId: doc.owner_staff_id ? Number(doc.owner_staff_id) : null,
+            requesterEmail: str(doc.requester_email), requesterSlackId: str(doc.requester_slack_id),
+            requesterName: null, counterpartyId: null, counterpartyName: null, label: "案件"
+          } satisfies Origin
+        : await this.originOfRequest(documentId);
+      const counterpartyId: number | null = doc.counterparty_id ? Number(doc.counterparty_id) : origin?.counterpartyId ?? null;
+      const counterpartyName = str(doc.counterparty) ?? origin?.counterpartyName ?? "";
+
       const settings = await this.database.query(
         "SELECT key, value FROM settings WHERE key = ANY($1::text[])", [[MAIL_TEMPLATES_KEY, "company_profile"]]);
       const setting = (key: string) =>
@@ -75,22 +104,17 @@ export class MailDraftService {
       const templates = readMailTemplates(setting(MAIL_TEMPLATES_KEY));
       const company = String((setting("company_profile") as Record<string, unknown> | undefined)?.name ?? "").trim();
 
-      const owner = doc.owner_staff_id
-        ? (await this.database.query("SELECT name, email FROM staff WHERE id = $1", [doc.owner_staff_id])).rows[0] as any
+      const owner = origin?.ownerStaffId
+        ? (await this.database.query("SELECT name, email FROM staff WHERE id = $1", [origin.ownerStaffId])).rows[0] as any
         : null;
-      const requesterEmail = str(doc.requester_email);
-      const requester = requesterEmail
-        ? ((await this.database.query(
-            "SELECT name, email FROM staff WHERE lower(email) = lower($1) LIMIT 1", [requesterEmail])).rows[0] as any
-          ?? { name: null, email: requesterEmail })
-        : null;
-      const contacts = doc.counterparty_id
+      const requester = await this.requesterOf(origin);
+      const contacts = counterpartyId
         ? (await this.database.query(
             `SELECT name, email, roles FROM party_contacts
-              WHERE party_id = $1 AND email IS NOT NULL AND email <> '' ORDER BY id`, [doc.counterparty_id])).rows as any[]
+              WHERE party_id = $1 AND email IS NOT NULL AND email <> '' ORDER BY id`, [counterpartyId])).rows as any[]
         : [];
-      const partyEmail = doc.counterparty_id
-        ? str(((await this.database.query("SELECT email FROM parties WHERE id = $1", [doc.counterparty_id])).rows[0] as any)?.email)
+      const partyEmail = counterpartyId
+        ? str(((await this.database.query("SELECT email FROM parties WHERE id = $1", [counterpartyId])).rows[0] as any)?.email)
         : null;
 
       const person = (p: any): Person | null => (p?.email ? { name: str(p.name), email: String(p.email) } : null);
@@ -112,7 +136,11 @@ export class MailDraftService {
       if (purpose === "owner_check") {
         to = requesterP ? [requesterP] : ownerP ? [ownerP] : [];
         cc = requesterP && ownerP && ownerP.email !== requesterP.email ? [ownerP] : [];
-        if (!requesterP) warnings.push("案件に依頼者のメールが無いので、宛先を法務の担当にしました。担当者を選び直してください");
+        if (!requesterP) {
+          warnings.push(origin
+            ? `${origin.label}に依頼者のメールが無いので、宛先を法務の担当にしました。${origin.label}で依頼者のメールを入れるか、宛先を直してください`
+            : "この文書は案件にもデイリータスクにも繋がっていないので、宛先を入れてください");
+        }
       } else {
         to = partyPeople(purpose === "delivery" ? ["billing", "primary"] : ["primary"]);
         cc = requesterP ? [requesterP] : ownerP ? [ownerP] : [];
@@ -125,12 +153,12 @@ export class MailDraftService {
 
       const kind = templateKindOf(purpose, str(doc.template_key));
       const rendered = renderMail(templates.templates[kind], templates.signature, {
-        相手先: str(doc.counterparty) ?? "",
+        相手先: counterpartyName,
         宛名: to.length === 1 ? to[0].name ?? "" : "",
         文書番号: str(doc.document_no) ?? "",
         文書名: str(doc.template_label) ?? "書類",
-        案件番号: str(doc.matter_no) ?? "",
-        案件名: str(doc.matter_title) ?? "",
+        案件番号: origin?.no ?? "",
+        案件名: origin?.title ?? "",
         金額: amountOf((doc.rendered_values ?? {}) as Record<string, unknown>),
         発行日: japaneseDate(dateStr(doc.issued_at)),
         会社名: company
@@ -138,5 +166,50 @@ export class MailDraftService {
       if (kind !== "owner_check" && !company) warnings.push("自社情報の会社名が空です（運用 → 設定 → 自社情報）");
       return { purpose, kind, to, cc, subject: rendered.subject, body: rendered.body, warnings };
     } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 案件の無い文書の出どころ。繋がっている依頼（intake_request_links の document）と、
+   * その依頼から起こした作業（デイリータスク）。無ければ null。
+   */
+  private async originOfRequest(documentId: number): Promise<Origin | null> {
+    const r = await this.database.query(
+      `SELECT r.request_no, r.title AS request_title, r.requester_email, r.requester_slack_id, r.requester_name,
+              r.counterparty_id, r.counterparty_name, t.title AS task_title, t.assignee_staff_id
+         FROM intake_request_links l
+         JOIN intake_requests r ON r.id = l.request_id
+         LEFT JOIN tasks t ON t.request_id = r.id
+        WHERE l.target_type = 'document' AND l.target_id = $1
+        ORDER BY l.created_at DESC LIMIT 1`, [documentId]);
+    const x = r.rows[0] as Record<string, any> | undefined;
+    if (!x) return null;
+    return {
+      no: str(x.request_no), title: str(x.task_title) ?? str(x.request_title),
+      ownerStaffId: x.assignee_staff_id ? Number(x.assignee_staff_id) : null,
+      requesterEmail: str(x.requester_email), requesterSlackId: str(x.requester_slack_id),
+      requesterName: str(x.requester_name),
+      counterpartyId: x.counterparty_id ? Number(x.counterparty_id) : null,
+      counterpartyName: str(x.counterparty_name), label: "デイリータスク"
+    };
+  }
+
+  /**
+   * 依頼者。メールがあればそれ（社員なら名前も）。無ければ Slack の ID から社員を引く
+   * （Slack・手で登録した依頼はメールを持たない）。
+   */
+  private async requesterOf(origin: Origin | null): Promise<{ name: string | null; email: string } | null> {
+    if (!origin) return null;
+    if (origin.requesterEmail) {
+      const s = (await this.database.query(
+        "SELECT name, email FROM staff WHERE lower(email) = lower($1) LIMIT 1", [origin.requesterEmail])).rows[0] as any;
+      return s ?? { name: origin.requesterName, email: origin.requesterEmail };
+    }
+    if (origin.requesterSlackId) {
+      const s = (await this.database.query(
+        "SELECT name, email FROM staff WHERE slack_user_id = $1 AND email IS NOT NULL LIMIT 1",
+        [origin.requesterSlackId])).rows[0] as any;
+      if (s?.email) return { name: str(s.name) ?? origin.requesterName, email: String(s.email) };
+    }
+    return null;
   }
 }

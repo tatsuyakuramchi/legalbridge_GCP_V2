@@ -22,9 +22,22 @@ export const PAYMENT_PURPOSES: PaymentPurpose[] = ["inspection", "royalty"];
 export const isPaymentPurpose = (v: unknown): v is PaymentPurpose =>
   v === "inspection" || v === "royalty";
 
+/**
+ * デイリータスク（A-064）にできる依頼の種別。支払の書類のほかに、
+ * 定型文書（当社ひな形の NDA など）と その他 を受ける。
+ * 支払の書類だけが対象の番号から条件を引き当て、支払まで自動で追う。
+ */
+export type DailyPurpose = PaymentPurpose | "template" | "other";
+
+export const DAILY_PURPOSES: DailyPurpose[] = ["inspection", "royalty", "template", "other"];
+
+export const isDailyPurpose = (v: unknown): v is DailyPurpose =>
+  isPaymentPurpose(v) || v === "template" || v === "other";
+
 /** 依頼の種類の呼び名（通知の文面に使う）。 */
-export const paymentDocLabel = (purpose: PaymentPurpose) =>
-  purpose === "inspection" ? "検収書" : "利用許諾計算書";
+export const paymentDocLabel = (purpose: DailyPurpose) =>
+  purpose === "inspection" ? "検収書" : purpose === "royalty" ? "利用許諾計算書"
+    : purpose === "template" ? "定型文書" : "文書";
 
 /** 検収書のテンプレート。graph-service・template-context と同じ集合。 */
 export const INSPECTION_TEMPLATE_KEYS = [
@@ -182,8 +195,9 @@ export interface RequestProgress {
 }
 
 export interface ProgressFacts {
-  purpose: PaymentPurpose;
+  purpose: DailyPurpose;
   acceptedAt: string | null;
+  /** 作業（tasks）の完了日時。人が完了にした、または支払が済んで自動で完了した。 */
   doneAt: string | null;
   documents: Array<{ id: number; documentNo: string | null; status: string; pinned: boolean;
                      issuedAt?: string | null }>;
@@ -195,13 +209,18 @@ export const STAGE_LABEL: Record<StageKey, string> = {
   accepted: "受付", created: "作成", sent: "送付", scheduled: "支払予定", paid: "支払"
 };
 
-/** 事実から工程を導く。純粋関数（試験できるように）。 */
+/**
+ * 事実から工程を導く。純粋関数（試験できるように）。
+ * 支払の書類（検収書・計算書）は 受付→作成→送付→支払予定→支払。
+ * 定型文書・その他は 受付→作成→送付 まで（支払は無い。完了は人が付ける）。
+ */
 export function progressOf(f: ProgressFacts): RequestProgress {
   const label = paymentDocLabel(f.purpose);
+  const payment = isPaymentPurpose(f.purpose);
   const issued = f.documents.filter((d) => d.status === "issued");
   const drafts = f.documents.filter((d) => d.status === "draft");
   const live = f.payments.filter((p) => p.status !== "canceled");
-  const paid = live.length > 0 && live.every((p) => p.status === "paid");
+  const paid = payment && live.length > 0 && live.every((p) => p.status === "paid");
   const nextDue = live.filter((p) => p.status !== "paid").map((p) => p.dueOn).filter(Boolean).sort()[0] ?? null;
   const lastPaid = live.map((p) => p.paidOn).filter(Boolean).sort().reverse()[0] ?? null;
   const nos = (docs: typeof f.documents) => docs.map((d) => d.documentNo ?? `#${d.id}`).join("・");
@@ -216,12 +235,14 @@ export function progressOf(f: ProgressFacts): RequestProgress {
         : `${label}はまだ無い` },
     { key: "sent", label: STAGE_LABEL.sent, done: f.sentAt !== null, at: f.sentAt,
       detail: f.sentAt ? "相手方へ送付した（メールか CloudSign）" : "まだ送っていない" },
-    { key: "scheduled", label: STAGE_LABEL.scheduled, done: live.length > 0, at: null,
-      detail: live.length
-        ? `支払 ${live.map((p) => p.paymentNo ?? `#${p.id}`).join("・")}${nextDue ? `（支払予定日 ${nextDue}）` : ""}`
-        : "支払の予定がまだ無い" },
-    { key: "paid", label: STAGE_LABEL.paid, done: paid, at: paid ? lastPaid : null,
-      detail: paid ? `支払済み${lastPaid ? `（${lastPaid}）` : ""}` : "" }
+    ...(payment ? [
+      { key: "scheduled" as const, label: STAGE_LABEL.scheduled, done: live.length > 0, at: null,
+        detail: live.length
+          ? `支払 ${live.map((p) => p.paymentNo ?? `#${p.id}`).join("・")}${nextDue ? `（支払予定日 ${nextDue}）` : ""}`
+          : "支払の予定がまだ無い" },
+      { key: "paid" as const, label: STAGE_LABEL.paid, done: paid, at: paid ? lastPaid : null,
+        detail: paid ? `支払済み${lastPaid ? `（${lastPaid}）` : ""}` : "" }
+    ] : [])
   ];
   const complete = paid || f.doneAt !== null;
   return {
@@ -234,7 +255,7 @@ export function progressOf(f: ProgressFacts): RequestProgress {
 }
 
 /** 依頼者に知らせる節目の文面。 */
-export function milestoneText(key: StageKey | "done", purpose: PaymentPurpose, p: RequestProgress): string {
+export function milestoneText(key: StageKey | "done", purpose: DailyPurpose, p: RequestProgress): string {
   const label = paymentDocLabel(purpose);
   const issued = p.documents.filter((d) => d.status === "issued").map((d) => d.documentNo ?? `#${d.id}`);
   const live = p.payments.filter((x) => x.status !== "canceled");
@@ -263,10 +284,11 @@ export function firedKeys(p: RequestProgress, doneAt: string | null): Array<Stag
  * 文書は、人が繋いだもの（intake_request_links の document）と、依頼より後に
  * 作られた文書のうち、依頼の条件（改訂の系列ごと）に載っていて依頼の種類に合うもの
  * （検収書のテンプレート／計算書）。無効にした文書は数えない。
+ * 定型文書・その他は条件を持たないので、人が繋いだ文書だけを見る。
  */
 export async function loadProgress(
   q: Queryable,
-  request: { id: number; purpose: PaymentPurpose; createdAt: string; acceptedAt: string | null; doneAt: string | null }
+  request: { id: number; purpose: DailyPurpose; createdAt: string; acceptedAt: string | null; doneAt: string | null }
 ): Promise<RequestProgress> {
   const d = await q.query(
     `SELECT d.id, d.document_no, d.status, d.issued_at, (l.target_id IS NOT NULL) AS pinned
@@ -283,7 +305,7 @@ export async function loadProgress(
                            AND ((rl.target_type = 'schedule' AND re.schedule_id = rl.target_id)
                              OR (rl.target_type = 'event' AND re.id = rl.target_id))
                          WHERE re.document_id = d.id)
-             OR (d.created_at >= $2::timestamptz
+             OR ($3 IN ('inspection', 'royalty') AND d.created_at >= $2::timestamptz
                  AND EXISTS (
                    SELECT 1 FROM document_conditions dc JOIN conditions c ON c.id = dc.condition_id
                     WHERE dc.document_id = d.id
