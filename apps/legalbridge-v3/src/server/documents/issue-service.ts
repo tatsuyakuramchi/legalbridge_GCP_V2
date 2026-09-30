@@ -29,6 +29,8 @@ export interface DraftInput {
    * 進み具合とメールの下書き（依頼者・担当・番号）が辿れるようにする。
    */
   requestId?: number | null;
+  /** 下書きを開き直したプレビューで、その文書。案件が無ければ繋がっている依頼を引くのに使う。 */
+  documentId?: number | null;
   agreementId?: number | null;
   manualInputs?: Record<string, unknown>;
   /** 実績。検収書はここの日付と金額を使う。 */
@@ -46,6 +48,8 @@ export const PREVIEW_NUMBER = "（決定時に採番）";
 export interface PreviewResult {
   html: string;
   binding: BindingResult;
+  /** 本文に差す当社担当者と、その出どころ。画面の「当社担当者」欄の既定の表示に使う。 */
+  owner: { name: string; source: "manual" | "matter" | "task" } | null;
   templateLabel: string;
   templateVersionId: number;
   /** 入力欄に出す候補。ひな形が供給元を宣言していなくても人が選べる。 */
@@ -127,8 +131,16 @@ export class DocumentIssueService {
       const template = await this.repository.templateSource(this.database, { templateKey: input.templateKey });
       // 番号は発行のときにしか決まらない。プレビューで空にすると必須の未入力に
       // 数えられ、発行ボタンが永久に押せなくなる。何が入るかを書いておく。
-      const context = await this.buildContext(this.database, input, PREVIEW_NUMBER);
       const manual = input.manualInputs ?? {};
+      const ownerStaffId = int((manual as Record<string, unknown>)._ownerStaffId);
+      // 下書きを開き直したとき、繋がっている依頼（デイリータスク）は文書から引く。
+      if (!input.matterId && !input.requestId && input.documentId) {
+        input.requestId = int(((await this.database.query(
+          `SELECT request_id FROM intake_request_links
+            WHERE target_type = 'document' AND target_id = $1 ORDER BY created_at DESC LIMIT 1`,
+          [input.documentId])).rows[0] as any)?.request_id);
+      }
+      const context = await this.buildContext(this.database, input, PREVIEW_NUMBER, null, ownerStaffId);
       // 明細・合計・消費税。本文はこれを差すだけなので、作らないと空欄で出る。
       // 先に一度束縛して、項目に入った値も計算ブロックに渡す（条件書は本文の
       // 見出しが項目の値そのものなので、手入力だけでは空欄になる）。
@@ -149,9 +161,12 @@ export class DocumentIssueService {
       // 入れないと、料率や帰属先のように台帳から引ける値が空欄で紙に出る。
       const values = { ...resolveAllLegacyVariables(context), ...suggested,
                        ...computed, ...binding.values };
+      const owner = (context as { owner?: { name?: string } | null }).owner;
       return {
         html: renderDocumentHtml(template.htmlSource, values, partials),
         binding,
+        owner: owner?.name ? { name: String(owner.name),
+                               source: ownerStaffId ? "manual" : input.matterId || !input.requestId ? "matter" : "task" } : null,
         templateLabel: template.label,
         templateVersionId: template.templateVersionId,
         candidates: buildCandidates(context, template.templateKey),
@@ -199,13 +214,16 @@ export class DocumentIssueService {
         await this.assertConditionsIssuable(client, input.conditionIds);
         // 案件が渡されなければ、条件の載っている案件を引く。条件の画面から作った
         // 文書が案件に出てこない、という穴を塞ぐ。複数の案件に載っていれば決めない。
-        const matterId = input.matterId ?? await this.matterOfConditions(client, input.conditionIds);
         const extra = Array.isArray((input.manualInputs as any)?._supersedesExtra) ? ((input.manualInputs as any)._supersedesExtra as unknown[]).map(Number) : [];
+        let inheritedMatterId: number | null = null;
         for (const sid of [...(input.supersedesId ? [input.supersedesId] : []), ...extra]) {
-          const prev = (await client.query("SELECT status FROM documents WHERE id = $1", [sid])).rows[0] as any;
+          const prev = (await client.query("SELECT status, matter_id FROM documents WHERE id = $1", [sid])).rows[0] as any;
           if (!prev) throw new DomainError("NOT_FOUND", `訂正する元の文書 ${sid} が見つかりません`);
           if (prev.status !== "issued") throw new DomainError("CONFLICT", `決定済みの文書だけ訂正版を出せます（${prev.status}）`);
+          inheritedMatterId ??= int(prev.matter_id);
         }
+        // 訂正版は元の版の案件を引き継ぐ（担当者・件名が元と同じ出どころから入る）。
+        const matterId = input.matterId ?? await this.matterOfConditions(client, input.conditionIds) ?? inheritedMatterId;
         const inserted = await client.query(
           `INSERT INTO documents (template_version_id, matter_id, agreement_id, status, manual_inputs,
                                   supersedes_id, supersede_reason)
@@ -220,6 +238,14 @@ export class DocumentIssueService {
           await client.query(
             `INSERT INTO intake_request_links (request_id, target_type, target_id, created_by)
              VALUES ($1, 'document', $2, $3) ON CONFLICT DO NOTHING`, [input.requestId, id, actor]);
+        } else if (input.supersedesId) {
+          // 訂正版は元の版の依頼（デイリータスク）も引き継ぐ。作業の進み具合と
+          // 担当者（【ご連絡先】）が元と同じように入る。
+          await client.query(
+            `INSERT INTO intake_request_links (request_id, target_type, target_id, created_by)
+             SELECT request_id, 'document', $2, $3 FROM intake_request_links
+              WHERE target_type = 'document' AND target_id = ANY($1::bigint[])
+             ON CONFLICT DO NOTHING`, [[input.supersedesId, ...extra], id, actor]);
         }
         // 案件が決まっていれば、載せた条件を案件にも繋ぐ。文書だけが案件に付いて
         // 条件が付いていない状態だと、案件の条件タブに出ず、実績も支払も立て
@@ -414,7 +440,7 @@ export class DocumentIssueService {
           agreementId: row.agreement_id,
           eventIds: extra.eventIds ?? [],
           royalty: extra.royalty ?? null
-        }, documentNo, issuedOn);
+        }, documentNo, issuedOn, int((settled.manual as Record<string, unknown>)?._ownerStaffId));
         const manual = settled.manual;
         // プレビューと同じ順で組む。先に一度束縛して、項目に入った値も
         // 計算ブロックへ渡す（条件書の見出しは項目の値そのもの）。
@@ -732,6 +758,12 @@ export class DocumentIssueService {
           [row.template_version_id, row.matter_id, row.agreement_id,
            JSON.stringify(row.manual_inputs ?? {}), documentId, note]);
         const newId = Number((created.rows[0] as { id: number }).id);
+        // 元の版の依頼（デイリータスク）も引き継ぐ。作業の進み具合と担当者が元と同じように入る。
+        await client.query(
+          `INSERT INTO intake_request_links (request_id, target_type, target_id, created_by)
+           SELECT request_id, 'document', $2, $3 FROM intake_request_links
+            WHERE target_type = 'document' AND target_id = $1
+           ON CONFLICT DO NOTHING`, [documentId, newId, actor]);
 
         if (conditionIds && conditionIds.length) {
           // 条件を指定し直した。実在と重複だけ確かめて、その並びで繋ぐ。
@@ -918,13 +950,16 @@ export class DocumentIssueService {
      * 遡及の決定日。本文の日付も、条件のどの版を使うかも、この日で決まる。
      * 渡さないと紙の日付だけ過去で、中身は今日の版・今日の日付になる。
      */
-    issuedOn: string | null = null
+    issuedOn: string | null = null,
+    /** 人が選んだ当社担当者（manual_inputs._ownerStaffId）。案件・作業の担当より優先。 */
+    ownerStaffId: number | null = null
   ) {
     const context = await this.contexts.build({
       conditionIds: input.conditionIds,
       agreementId: input.agreementId ?? null,
       matterId: input.matterId ?? null,
       requestId: input.requestId ?? null,
+      ownerStaffId,
       eventIds: input.eventIds ?? [],
       royalty: input.royalty ?? null,
       issuedOn,

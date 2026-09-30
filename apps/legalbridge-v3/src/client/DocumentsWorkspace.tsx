@@ -40,6 +40,8 @@ interface Integrations {
 }
 interface PreviewResponse {
   html: string; templateLabel: string;
+  /** 本文に差す当社担当者と出どころ（人が選んだ／案件の担当／作業の担当）。 */
+  owner?: { name: string; source: "manual" | "matter" | "task" } | null;
   missing: Array<{ name: string; label: string }>; derived: string[];
   values: Record<string, unknown>;
   /** 画面に出す項目。区分と出どころ（計算／自動／手入力）付き。 */
@@ -389,7 +391,19 @@ export function DocumentsWorkspace(
   }, [selected]);
 
   /** サーバへ渡す手入力。文字の欄と、直した明細の行を合わせたもの。 */
-  const inputs = useMemo(() => ({ ...manual, ...lines }), [manual, lines]);
+  /**
+   * 当社担当者を人が選ぶ（救済）。空なら自動（案件の担当 → デイリータスクの作業の担当）。
+   * 決定済みの計算書の担当が替わったときなど、訂正版でここを選び直せる。
+   * manual_inputs の _ownerStaffId として文書に残り、プレビュー・保存・決定で同じ人が差される。
+   */
+  const [ownerStaffId, setOwnerStaffId] = useState<number | "">("");
+  const [staff, setStaff] = useState<Array<{ id: number; name: string; department?: string | null; status?: string }>>([]);
+  useEffect(() => {
+    api.get<{ staff: typeof staff }>("/staff")
+      .then((r) => setStaff(r.staff.filter((x) => (x.status ?? "active") === "active"))).catch(() => setStaff([]));
+  }, []);
+  const inputs = useMemo(() => ({ ...manual, ...lines, ...(ownerStaffId ? { _ownerStaffId: ownerStaffId } : {}) }),
+                         [manual, lines, ownerStaffId]);
 
   // 検収書・納品書は実績1件が明細1行。実績を選ぶ枠を出すかどうかの判断に使う。
   const usesDeliveryLines = (spec?.lines ?? []).some((l) => l.name === "delivery_line_items");
@@ -531,11 +545,11 @@ export function DocumentsWorkspace(
     if (!templateKey) { setSpec(null); setRendered(null); return; }
     let live = true;
     api.post<PreviewResponse>("/documents/preview",
-      { templateKey, conditionIds: picked, eventIds: pickedEvents, manualInputs: {}, agreementId })
+      { templateKey, conditionIds: picked, eventIds: pickedEvents, manualInputs: {}, agreementId, matterId, requestId, documentId: draft?.id ?? null })
       .then((r) => { if (live) { setSpec(r); setSpecKey(templateKey); } })
       .catch(() => undefined);
     return () => { live = false; };
-  }, [templateKey, picked.join(","), pickedEvents.join(","), agreementId]);
+  }, [templateKey, picked.join(","), pickedEvents.join(","), agreementId, matterId, requestId, draft?.id]);
 
   // 本文は打った値で作り直す。iframe の中身が変わるだけで、入力欄には触らない。
   useEffect(() => {
@@ -543,11 +557,11 @@ export function DocumentsWorkspace(
     let live = true;
     api.post<PreviewResponse>("/documents/preview",
       { templateKey, conditionIds: picked, eventIds: pickedEvents,
-        manualInputs: JSON.parse(manualJson), agreementId })
+        manualInputs: JSON.parse(manualJson), agreementId, matterId, requestId, documentId: draft?.id ?? null })
       .then((r) => { if (live) setRendered({ html: r.html, templateLabel: r.templateLabel }); })
       .catch(() => undefined);
     return () => { live = false; };
-  }, [templateKey, picked.join(","), pickedEvents.join(","), manualJson]);
+  }, [templateKey, picked.join(","), pickedEvents.join(","), manualJson, matterId, requestId]);
 
   async function runPreview() {
     setError(null); setIssued(null); setBusy(true);
@@ -806,8 +820,9 @@ export function DocumentsWorkspace(
       const arrays: Record<string, Row[]> = {};
       const savedEvents = Array.isArray(d.manualInputs?._eventIds)
         ? (d.manualInputs._eventIds as unknown[]).map(Number).filter((n) => Number.isFinite(n)) : [];
+      setOwnerStaffId(Number(d.manualInputs?._ownerStaffId) > 0 ? Number(d.manualInputs._ownerStaffId) : "");
       for (const [k, v] of Object.entries(d.manualInputs ?? {})) {
-        if (k === "_eventIds") continue;
+        if (k === "_eventIds" || k === "_ownerStaffId") continue;
         if (Array.isArray(v)) arrays[k] = v as Row[];
         else if (v !== null && v !== undefined && typeof v !== "object") values[k] = String(v);
       }
@@ -1017,6 +1032,21 @@ export function DocumentsWorkspace(
                 {PUB_TERMS_TEMPLATE_HINT[templateKey] && (
                   <small className="faint">{PUB_TERMS_TEMPLATE_HINT[templateKey]}</small>
                 )}
+              </label>
+
+              {/* 本文の当社担当者（【ご連絡先】・検収者）。ふつうは案件か作業の担当が自動で入る。
+                  担当が替わった計算書の訂正版など、自動で決まらないときはここで選ぶ。 */}
+              <label className="field">
+                <span>当社担当者</span>
+                <select value={ownerStaffId} onChange={(e) => setOwnerStaffId(e.target.value ? Number(e.target.value) : "")}>
+                  <option value="">
+                    {spec?.owner && spec.owner.source !== "manual"
+                      ? `自動：${spec.owner.name}（${spec.owner.source === "task" ? "デイリータスクの担当" : "案件の担当"}）`
+                      : "自動（案件か作業に繋がっていないので空欄になります。選んでください）"}
+                  </option>
+                  {staff.map((x) => <option key={x.id} value={x.id}>{x.name}{x.department ? `（${x.department}）` : ""}</option>)}
+                </select>
+                <small className="faint">本文の担当者・連絡先・検収者に差されます。空なら案件（無ければデイリータスクの作業）の担当</small>
               </label>
 
               <div className="stack" style={{ gap: 6 }}>
