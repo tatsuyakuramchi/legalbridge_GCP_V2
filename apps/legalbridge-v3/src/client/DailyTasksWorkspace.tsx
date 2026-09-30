@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { api, ApiError } from "./api.js";
 import { useReadOnly } from "./read-only.js";
 import { DetailBack, isWideLayout } from "./DetailBack.js";
@@ -17,6 +17,13 @@ import { SearchSelect, type SearchOption } from "./SearchSelect.js";
  */
 
 type Tab = "open" | "wait" | "late" | "done" | "all";
+
+/** 進めている作業。作品・条件明細の画面へ移るときに App に渡し、そこで作った文書を作業に繋ぐ。 */
+export interface TaskCtx { requestId: number; requestNo: string | null; taskId: number; title: string }
+export type GoTarget =
+  | { kind: "work"; workId: number | null }
+  | { kind: "conditions"; conditionId: number | null }
+  | { kind: "ledger"; workId: number; partyId: number };
 type Status = "todo" | "doing" | "blocked" | "done";
 const STATUSES: Status[] = ["todo", "doing", "blocked", "done"];
 const STATUS_LABEL: Record<Status, string> = { todo: "未着手", doing: "作業中", blocked: "待ち", done: "完了" };
@@ -72,7 +79,7 @@ const searchDocuments = async (q: string): Promise<SearchOption[]> => {
 };
 
 export function DailyTasksWorkspace(
-  { initialId, onOpenMatter, onCompose, onOpenDocument, onOpenLedger, onOpenRequest, onCountsChange }: {
+  { initialId, onOpenMatter, onCompose, onOpenDocument, onOpenLedger, onOpenRequest, onGo, onCountsChange }: {
     /** この作業を選んだ状態で開く。 */
     initialId?: number;
     onOpenMatter?: (matterId: number) => void;
@@ -83,6 +90,8 @@ export function DailyTasksWorkspace(
     onOpenLedger?: (workId: number, partyId: number) => void;
     /** 元の依頼を受付箱で開く。 */
     onOpenRequest?: (requestId: number) => void;
+    /** 作品・条件明細・台帳の画面へ、この作業を持ったまま移る（そこで作った文書が作業に繋がる）。 */
+    onGo?: (ctx: TaskCtx, target: GoTarget) => void;
     /** 左の桁の件数を合わせる。 */
     onCountsChange?: (counts: Counts) => void;
   }
@@ -237,7 +246,7 @@ export function DailyTasksWorkspace(
                 <TaskPanel detail={detail} canWrite={canWrite} staff={staff}
                            onChanged={(msg) => reload(msg)} onError={setError}
                            onCompose={onCompose} onOpenDocument={onOpenDocument} onOpenLedger={onOpenLedger}
-                           onOpenRequest={onOpenRequest} />
+                           onOpenRequest={onOpenRequest} onGo={onGo} />
                 <MovePanel detail={detail} canWrite={canWrite} staff={staff}
                            onMoved={(msg, matterId) => { setLastMatter(matterId); reload(msg, false); }}
                            onError={setError} onOpenMatter={onOpenMatter} />
@@ -295,7 +304,7 @@ export function StatusPicker(
 
 /** 作業の詳細。状態・担当・期日、進み具合、条件・回・文書、依頼者からの返信。 */
 function TaskPanel(
-  { detail, canWrite, staff, onChanged, onError, onCompose, onOpenDocument, onOpenLedger, onOpenRequest }: {
+  { detail, canWrite, staff, onChanged, onError, onCompose, onOpenDocument, onOpenLedger, onOpenRequest, onGo }: {
     detail: Detail; canWrite: boolean; staff: Staff[];
     onChanged: (message: string) => void;
     onError: (message: string) => void;
@@ -303,6 +312,7 @@ function TaskPanel(
     onOpenDocument?: (documentId: number) => void;
     onOpenLedger?: (workId: number, partyId: number) => void;
     onOpenRequest?: (requestId: number) => void;
+    onGo?: (ctx: TaskCtx, target: GoTarget) => void;
   }
 ) {
   const t = detail.task;
@@ -459,36 +469,80 @@ function TaskPanel(
           </div>
         )}
 
-        {canWrite && onCompose && t.status !== "done" && (
-          <div className="note stack" style={{ gap: 6 }}>
-            <b>文書を作る</b>
-            <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-              {detail.conditions.length > 0 && t.purpose !== "royalty" && (
-                <button className="btn btn-sm primary"
-                        onClick={() => onCompose(detail.conditions.map((c) => c.id), null, r.id)}>
-                  この条件で{label}を作る
-                </button>
-              )}
-              {t.purpose === "royalty" && detail.ledgers.length > 0 && onOpenLedger && (
-                <button className="btn btn-sm primary"
-                        onClick={() => onOpenLedger(detail.ledgers[0].workId, detail.ledgers[0].partyId)}>
-                  台帳で計算書を作る
-                </button>
-              )}
-              <button className="btn btn-sm" onClick={() => onCompose([], null, r.id)}>
-                文書の画面で作る（ひな形と条件を選ぶ）
-              </button>
+        {canWrite && onCompose && t.status !== "done" && (() => {
+          const ctx: TaskCtx = { requestId: r.id, requestNo: r.requestNo, taskId: t.id, title: t.title };
+          const workId = detail.conditions.find((c) => c.workId)?.workId ?? detail.ledgers[0]?.workId ?? null;
+          const conditionId = detail.conditions[0]?.id ?? null;
+          const go = (target: GoTarget) => onGo?.(ctx, target);
+          const ledger = detail.ledgers[0];
+          const Step = ({ no, text }: { no: number; text: string }) => (
+            <span className="row" style={{ gap: 6 }}><span className="tag ghost">{no}</span><span>{text}</span></span>
+          );
+          const Route = ({ title, steps, buttons }: { title: string; steps: string[]; buttons: ReactNode }) => (
+            <div className="stack" style={{ gap: 4, padding: "8px 10px", border: "1px solid var(--line)", borderRadius: 6, background: "var(--surface)" }}>
+              <b style={{ fontSize: 12.5 }}>{title}</b>
+              <div className="stack" style={{ gap: 2, fontSize: 12 }}>
+                {steps.map((s, i) => <Step key={i} no={i + 1} text={s} />)}
+              </div>
+              <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>{buttons}</div>
             </div>
-            <span className="faint">
-              {t.purpose === "royalty"
-                ? "計算書は作品の台帳（回を選んで試算 → 決定）から作ります。作った計算書はこの作業に自動で入ります。"
-                : detail.conditions.length > 0
-                ? `作った${label}は、この作業の進み具合に自動で入ります。`
-                : "ひな形（当社の NDA など）と、載せる条件があれば選んで作ります。作った文書はこの作業に自動で繋がります。"}
-              　送るときは、文書の「送る」からメールの下書きが出ます（宛先・件名・本文はこの作業の依頼者・担当・件名から埋まります）。
-            </span>
-          </div>
-        )}
+          );
+          return (
+            <div className="note stack" style={{ gap: 8 }}>
+              <b>文書を作る（作業の道すじ）</b>
+              {t.purpose === "inspection" && (
+                <Route title="検収書" steps={[
+                  "発注の条件明細（発注書に載った条件）を確認する。無ければ条件明細を登録する",
+                  "その条件で検収書を作る → 決定 → 送る"
+                ]} buttons={<>
+                  {detail.conditions.length > 0
+                    ? <button className="btn btn-sm primary" onClick={() => onCompose(detail.conditions.map((c) => c.id), null, r.id)}>この条件で検収書を作る</button>
+                    : <button className="btn btn-sm primary" onClick={() => go({ kind: "conditions", conditionId: null })}>条件明細を登録する</button>}
+                  <button className="btn btn-sm" onClick={() => go({ kind: "conditions", conditionId })}>条件明細の画面を開く</button>
+                </>} />
+              )}
+              {t.purpose === "royalty" && (
+                <Route title="利用許諾計算書" steps={[
+                  "作品の画面の台帳（利用許諾計算）で、どの回（締め・製造）かを選ぶ",
+                  "回の実績を入れて試算 → 決定 → 送る"
+                ]} buttons={<>
+                  {ledger && <button className="btn btn-sm primary" onClick={() => go({ kind: "ledger", workId: ledger.workId, partyId: ledger.partyId })}>台帳で計算書を作る</button>}
+                  <button className="btn btn-sm" onClick={() => go({ kind: "work", workId })}>作品の画面を開く</button>
+                </>} />
+              )}
+              {t.purpose === "template" && (
+                <Route title="定型文書（当社ひな形の NDA など）" steps={[
+                  "文書の画面でひな形を選ぶ（載せる条件があれば選ぶ）",
+                  "決定 → 送る"
+                ]} buttons={
+                  <button className="btn btn-sm primary" onClick={() => onCompose([], null, r.id)}>文書の画面で作る</button>
+                } />
+              )}
+              {t.purpose === "other" && (<>
+                <Route title="利用許諾条件書・基本契約書（ライセンス）" steps={[
+                  "作品の画面で許諾条件（許諾セット）を登録する",
+                  "作品の画面から条件書・契約書を作る → 決定 → 送る"
+                ]} buttons={
+                  <button className="btn btn-sm primary" onClick={() => go({ kind: "work", workId })}>作品の画面を開く</button>
+                } />
+                <Route title="発注書・業務委託・検収書" steps={[
+                  "条件明細（委託料・成果物の条件）を登録する",
+                  "条件明細の画面から発注書・検収書を作る → 決定 → 送る"
+                ]} buttons={
+                  <button className="btn btn-sm primary" onClick={() => go({ kind: "conditions", conditionId })}>条件明細を登録する</button>
+                } />
+                <Route title="定型文書・その他" steps={["文書の画面でひな形を選んで作る → 決定 → 送る"]} buttons={
+                  <button className="btn btn-sm" onClick={() => onCompose([], null, r.id)}>文書の画面で作る</button>
+                } />
+              </>)}
+              <span className="faint">
+                どの画面で作っても、ここから移って作った文書はこの作業（{r.requestNo ?? `#${r.id}`}）に自動で繋がります
+                （移った先の画面の上に「作業中」の帯が出ます）。自動で入らなかった文書は下の検索で繋げます。
+                送るときは文書の「送る」からメールの下書きが出ます（宛先・件名・本文はこの作業の依頼者・担当・件名から埋まります）。
+              </span>
+            </div>
+          );
+        })()}
 
         <div className="stack" style={{ gap: 4 }}>
           <b>文書</b>

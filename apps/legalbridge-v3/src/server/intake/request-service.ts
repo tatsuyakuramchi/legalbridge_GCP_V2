@@ -8,6 +8,7 @@ import type { IntakeSubmission } from "../integrations/slack-intake.js";
 import { REQUEST_TYPES, requestLabel } from "../integrations/slack-intake.js";
 import { openMatter, resolveCounterparty } from "../integrations/intake-service.js";
 import { attachUploadsToMatter } from "./upload-service.js";
+import { resolveRequesterEmail } from "./requester.js";
 import { recordCommunication } from "../matters/communication-service.js";
 import {
   isDailyPurpose, isPaymentPurpose, normalizeDocNo, paymentDocLabel, resolvePaymentTarget,
@@ -53,6 +54,21 @@ export interface AcceptInput {
   counterpartyId?: number | null;
   ownerStaffId?: number | null;
   dueOn?: string | null;
+  /**
+   * 依頼者（事業部の担当者）のメール。空なら依頼のメール → Slack の ID → 名前 から当てる。
+   * 文書のメールの下書きの宛先になる。あとからデイリータスク・案件で直せる。
+   */
+  requesterEmail?: string | null;
+}
+
+/** 受付で確定させる依頼者のメール。画面で入れたもの → 依頼から当てたもの。 */
+async function requesterEmailFor(client: Queryable, row: Record<string, any>, input: AcceptInput): Promise<string | null> {
+  const given = String(input.requesterEmail ?? "").trim().toLowerCase();
+  if (given) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(given)) throw new DomainError("VALIDATION", "依頼者のメールの形が正しくありません");
+    return given;
+  }
+  return resolveRequesterEmail(client, row);
 }
 
 export interface AcceptResult {
@@ -373,6 +389,7 @@ export class IntakeRequestService {
         let createdMatter = false;
         let matterTitle = title;
         let owner: string | null = null;
+        const requesterEmail = await requesterEmailFor(client, row, input);
         if (input.mode === "new") {
           // 相手先：画面で選んだもの → 取り込み時の推定（メールの差出人など）→ 名前から。
           let counterpartyId = input.counterpartyId ?? (row.counterparty_id ? Number(row.counterparty_id) : null);
@@ -390,6 +407,7 @@ export class IntakeRequestService {
             counterpartyWritten: row.counterparty_name ?? null,
             ownerStaffId: input.ownerStaffId ?? null,
             requesterSlackId: row.requester_slack_id ?? null,
+            requesterEmail,
             dueOn: input.dueOn ?? dateStr(row.due_on),
             remarks, createdBy: actor
           });
@@ -414,6 +432,12 @@ export class IntakeRequestService {
           matterId = Number(matter.id);
           matterNo = matter.matter_no ?? null;
           matterTitle = String(matter.title);
+          // 既存の案件に依頼者のメールが無ければ、この依頼のもので埋める（上書きはしない）。
+          if (requesterEmail) {
+            await client.query(
+              "UPDATE matters SET requester_email = $2, updated_at = now() WHERE id = $1 AND requester_email IS NULL",
+              [matterId, requesterEmail]);
+          }
         }
 
         await connectRequestToMatter(client, row, matterId, actor);
@@ -421,11 +445,11 @@ export class IntakeRequestService {
         await client.query(
           `UPDATE intake_requests
               SET state = 'accepted', handling = 'matter', matter_id = $2, kind = $3, title = $4,
-                  due_on = COALESCE($5::date, due_on), has_unseen_update = false,
-                  reason = NULL, hold_until = NULL,
+                  due_on = COALESCE($5::date, due_on), requester_email = COALESCE($7, requester_email),
+                  has_unseen_update = false, reason = NULL, hold_until = NULL,
                   handled_at = now(), handled_by = $6, updated_at = now()
             WHERE id = $1`,
-          [id, matterId, input.kind, title, input.dueOn ?? null, actor]);
+          [id, matterId, input.kind, title, input.dueOn ?? null, actor, requesterEmail]);
         await recordAudit(client, {
           actor, action: "intake.accept", targetType: "intake_request", targetId: id,
           detail: { matterId, matterNo, createdMatter, requestNo: row.request_no }
@@ -500,15 +524,17 @@ export class IntakeRequestService {
         const kind = purpose === "inspection" ? "outsourcing" : purpose === "royalty" ? "work" : (row.kind ?? "single");
         const payload = { ...(row.source_payload ?? {}), purpose, targetDocNo };
         const dueOn = input.dueOn ?? dateStr(row.due_on);
+        // 依頼者のメール（文書のメールの下書きの宛先）。画面で入れたもの → 依頼から当てたもの。
+        const requesterEmail = await requesterEmailFor(client, row, input);
         await client.query(
           `UPDATE intake_requests
               SET state = 'accepted', handling = 'direct', matter_id = NULL, kind = $2, title = $3,
                   due_on = $4::date, counterparty_id = COALESCE(counterparty_id, $5),
-                  source_payload = $6::jsonb, has_unseen_update = false,
-                  reason = NULL, hold_until = NULL,
+                  source_payload = $6::jsonb, requester_email = COALESCE($8, requester_email),
+                  has_unseen_update = false, reason = NULL, hold_until = NULL,
                   handled_at = now(), handled_by = $7, updated_at = now()
             WHERE id = $1`,
-          [id, kind, title, dueOn, target?.counterpartyId ?? null, JSON.stringify(payload), actor]);
+          [id, kind, title, dueOn, target?.counterpartyId ?? null, JSON.stringify(payload), actor, requesterEmail]);
         await client.query(
           "DELETE FROM intake_request_links WHERE request_id = $1 AND target_type = 'condition'", [id]);
         for (const conditionId of conditionIds) {

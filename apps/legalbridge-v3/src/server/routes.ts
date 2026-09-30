@@ -786,7 +786,9 @@ export function createRoutes(database: Transactable) {
     title: z.string().trim().max(300).nullable().optional(),
     counterpartyId: z.coerce.number().int().positive().nullable().optional(),
     ownerStaffId: z.coerce.number().int().positive().nullable().optional(),
-    dueOn: intakeDate
+    dueOn: intakeDate,
+    // 依頼者（事業部の担当者）のメール。空なら依頼から当てる。
+    requesterEmail: z.string().trim().max(200).nullable().optional()
   });
   router.post("/intake/:id/accept", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {

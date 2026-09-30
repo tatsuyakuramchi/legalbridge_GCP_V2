@@ -69,6 +69,8 @@ interface Detail {
   duplicateCandidates: Array<{ id: number; requestNo: string | null; title: string; state: string; why: string }>;
   target: Target | null;
   replies: Array<{ at: string; user: string; text: string }>;
+  /** 依頼者のメールの見込み（依頼のメール → Slack の ID → 名前 から）。受付の欄の初期値。 */
+  requesterEmailGuess?: string | null;
 }
 interface Counts { new: number; onHold: number; updated: number; holdDue: number }
 interface Staff { id: number; name: string; status?: string }
@@ -355,6 +357,8 @@ function Decision(
   const [title, setTitle] = useState(r.title);
   const [owner, setOwner] = useState<number | "">("");
   const [dueOn, setDueOn] = useState(r.dueOn ?? "");
+  /** 依頼者（事業部の担当者）のメール。見込みを入れておき、違えば直す。文書のメールの宛先になる。 */
+  const [requesterEmail, setRequesterEmail] = useState(detail.requesterEmailGuess ?? r.requesterEmail ?? "");
   const [dest, setDest] = useState<string>(
     lockedMatter ? String(lockedMatter.id) : firstCandidate && r.kind !== null ? String(firstCandidate) : "new");
   const [docNo, setDocNo] = useState(r.targetDocNo ?? "");
@@ -534,6 +538,14 @@ function Decision(
               <label className="field"><span>期日</span>
                 <input type="date" value={dueOn} disabled={!canWrite} onChange={(e) => setDueOn(e.target.value)} />
               </label>
+              <label className="field"><span>依頼者のメール</span>
+                <input type="email" value={requesterEmail} disabled={!canWrite} placeholder="依頼から当たらなければ入れる"
+                       onChange={(e) => setRequesterEmail(e.target.value)} />
+              </label>
+            </div>
+            <div className="faint">
+              依頼者のメールは文書を送るメール（担当者への確認）の宛先になります。
+              {detail.requesterEmailGuess ? `依頼から「${detail.requesterEmailGuess}」と当てました。違えば直してください。` : "依頼からは当たりませんでした。分かれば入れてください（あとからも直せます）。"}
             </div>
             {payment && (
               target && docNo.trim() === (r.targetDocNo ?? "").trim() ? (
@@ -622,8 +634,16 @@ function Decision(
               <label className="field"><span>期日</span>
                 <input type="date" value={dueOn} disabled={!canWrite} onChange={(e) => setDueOn(e.target.value)} />
               </label>
+              <label className="field"><span>依頼者のメール</span>
+                <input type="email" value={requesterEmail} disabled={!canWrite} placeholder="依頼から当たらなければ入れる"
+                       onChange={(e) => setRequesterEmail(e.target.value)} />
+              </label>
             </div>
-            <div className="faint">相手先は取引先マスタで1件に決まれば紐づけます。決まらなければ記載を案件の備考に残し、要確認に積みます。</div>
+            <div className="faint">
+              相手先は取引先マスタで1件に決まれば紐づけます。決まらなければ記載を案件の備考に残し、要確認に積みます。
+              依頼者のメールは案件の依頼者になり、文書を送るメール（担当者への確認）の宛先になります。
+              {detail.requesterEmailGuess ? `依頼から「${detail.requesterEmailGuess}」と当てました。` : ""}
+            </div>
           </div>
         )}
 
@@ -637,10 +657,10 @@ function Decision(
                     onClick={() => run("accept", daily && !lockedMatter ? {
                       mode: "direct", purpose, targetDocNo: payment ? docNo.trim() || null : null,
                       conditionIds: payment && docNo.trim() === (r.targetDocNo ?? "").trim() ? conditionIds : null,
-                      title, ownerStaffId: owner || null, dueOn: dueOn || null
+                      title, ownerStaffId: owner || null, dueOn: dueOn || null, requesterEmail: requesterEmail.trim() || null
                     } : {
                       mode: dest === "new" ? "new" : "existing", matterId, kind,
-                      title, ownerStaffId: owner || null, dueOn: dueOn || null
+                      title, ownerStaffId: owner || null, dueOn: dueOn || null, requesterEmail: requesterEmail.trim() || null
                     }, (x) => x.handling === "direct"
                       ? `${r.requestNo ?? ""} をデイリータスクに登録しました${notified(x)}`
                       : `${r.requestNo ?? ""} を案件 ${x.matterNo ?? `#${x.matterId}`} にしました${notified(x)}`)}>

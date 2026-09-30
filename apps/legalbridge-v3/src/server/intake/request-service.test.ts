@@ -120,8 +120,8 @@ test("新規案件で受付: 案件を立て、課題を案件に繋ぎ、依頼
   assert.deepEqual([r.matterId, r.matterNo, r.createdMatter, r.notified], [42, "MTR-2026-00220", true, true]);
   const m = d.find("INSERT INTO matters")!;
   assert.equal(m.params[3], 5, "相手先は1件に決まれば紐づける");
-  assert.equal(m.params[5], "2026-10-09", "期日は依頼のものを引き継ぐ");
-  assert.equal(m.params[8], 3, "担当");
+  assert.equal(m.params[6], "2026-10-09", "期日は依頼のものを引き継ぐ");
+  assert.equal(m.params[9], 3, "担当");
   const link = d.find("INSERT INTO matter_links")!;
   assert.deepEqual([link.params[0], link.params[1]], [42, "LEGAL-9001"]);
   assert.match(link.text, /'origin'/);
